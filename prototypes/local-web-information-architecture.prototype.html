@@ -330,8 +330,14 @@
         color: #fff;
       }
 
-      .button-coral:hover {
+      .button-coral:hover:not(:disabled) {
         background: #9d3e34;
+      }
+
+      .button-coral:disabled {
+        border-color: #cbd3cf;
+        background: #e2e7e4;
+        color: #909b96;
       }
 
       .button-reset {
@@ -1669,6 +1675,288 @@
         margin-top: 15px;
       }
 
+      .c-volume-summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 15px;
+        border: 1px solid var(--line);
+        background: #f8faf8;
+        padding: 10px 13px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .c-volume-summary strong {
+        color: var(--ink-soft);
+      }
+
+      .c-event-table-shell {
+        max-height: 500px;
+        overflow: auto;
+        overscroll-behavior: contain;
+        border: 1px solid var(--line-strong);
+        background: var(--panel);
+      }
+
+      .c-event-table {
+        width: 100%;
+        min-width: 760px;
+        border-collapse: collapse;
+        table-layout: fixed;
+        font-size: 11px;
+      }
+
+      .c-event-table th,
+      .c-event-table td {
+        border-bottom: 1px solid var(--line);
+        padding: 9px 10px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .c-event-table th {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        background: #edf2ee;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .c-event-table tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .c-event-table th:nth-child(1),
+      .c-event-table td:nth-child(1) {
+        width: 48px;
+      }
+
+      .c-event-table th:nth-child(2),
+      .c-event-table td:nth-child(2) {
+        width: 110px;
+      }
+
+      .c-event-table th:nth-child(3),
+      .c-event-table td:nth-child(3) {
+        width: 112px;
+      }
+
+      .c-event-table th:nth-child(5),
+      .c-event-table td:nth-child(5) {
+        width: 88px;
+      }
+
+      .c-event-table th:nth-child(6),
+      .c-event-table td:nth-child(6) {
+        width: 154px;
+      }
+
+      .c-event-index,
+      .c-event-time,
+      .c-event-material {
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 10px;
+      }
+
+      .c-event-time {
+        display: block;
+      }
+
+      .c-event-detail {
+        color: var(--ink-soft);
+        font-weight: 700;
+      }
+
+      .c-event-group {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .c-details-footer,
+      .c-assignment-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 15px;
+        margin-top: 13px;
+      }
+
+      .c-details-footer > span,
+      .c-assignment-actions > span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .c-stage-note {
+        border-left: 3px solid var(--line-strong);
+        background: #f7f9f7;
+        padding: 11px 13px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .c-group-list {
+        display: grid;
+        gap: 9px;
+      }
+
+      .c-group-row {
+        display: grid;
+        grid-template-columns: 38px minmax(0, 1fr);
+        gap: 13px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        padding: 14px;
+      }
+
+      .c-group-row.assigned {
+        border-color: #b9d8c0;
+        background: #fbfdfb;
+      }
+
+      .c-group-number {
+        display: inline-grid;
+        width: 30px;
+        height: 30px;
+        place-items: center;
+        border: 1px solid var(--line-strong);
+        border-radius: 50%;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .c-group-row.assigned .c-group-number {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .c-group-content {
+        min-width: 0;
+      }
+
+      .c-group-heading {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 15px;
+      }
+
+      .c-group-heading h3 {
+        margin-bottom: 3px;
+        font-size: 14px;
+      }
+
+      .c-group-heading p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .c-group-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px 15px;
+        margin-top: 11px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .c-group-meta span:first-child,
+      .c-group-meta span:nth-child(2) {
+        color: var(--ink-soft);
+        font-weight: 750;
+      }
+
+      .c-group-select {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(240px, 310px);
+        align-items: center;
+        gap: 15px;
+        margin-top: 13px;
+        border-top: 1px solid var(--line);
+        padding-top: 11px;
+      }
+
+      .c-group-select label {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .c-group-select select {
+        width: 100%;
+      }
+
+      .c-assignment-progress {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 15px;
+        margin-bottom: 12px;
+        border-left: 3px solid var(--blue);
+        background: var(--blue-soft);
+        padding: 11px 13px;
+      }
+
+      .c-assignment-progress strong {
+        color: var(--blue);
+        font-size: 14px;
+      }
+
+      .c-assignment-progress span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .c-confirmation-summary {
+        display: grid;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        margin-bottom: 14px;
+      }
+
+      .c-confirmation-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        align-items: center;
+        gap: 15px;
+        border-bottom: 1px solid var(--line);
+        padding: 10px 0;
+        font-size: 11px;
+      }
+
+      .c-confirmation-row:last-child {
+        border-bottom: 0;
+      }
+
+      .c-confirmation-row strong,
+      .c-confirmation-row span {
+        display: block;
+      }
+
+      .c-confirmation-row span {
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .c-confirmation-row > span:last-child {
+        color: var(--ink-soft);
+        font-weight: 750;
+        text-align: right;
+      }
+
+      .c-step.is-locked .c-step-body {
+        color: var(--muted);
+      }
+
       /* Evidence view is intentionally a focused overlay, not a permanent audit desk. */
       .evidence-scrim {
         position: fixed;
@@ -2088,6 +2376,30 @@
           text-align: left;
         }
 
+        .c-details-footer,
+        .c-assignment-actions {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .c-group-select {
+          grid-template-columns: 1fr;
+          gap: 7px;
+        }
+
+        .c-group-select select {
+          max-width: 100%;
+        }
+
+        .c-confirmation-row {
+          grid-template-columns: minmax(0, 1fr) auto;
+        }
+
+        .c-confirmation-row > span:last-child {
+          grid-column: 2;
+          grid-row: 1 / span 2;
+        }
+
         .evidence-dialog-body {
           grid-template-columns: 1fr;
         }
@@ -2285,6 +2597,36 @@
           margin-top: 9px;
         }
 
+        .c-volume-summary,
+        .c-assignment-progress {
+          display: block;
+        }
+
+        .c-volume-summary > span,
+        .c-assignment-progress > span {
+          display: block;
+          margin-top: 5px;
+        }
+
+        .c-event-table-shell {
+          max-height: 430px;
+        }
+
+        .c-group-row {
+          grid-template-columns: 32px minmax(0, 1fr);
+          gap: 10px;
+          padding: 12px;
+        }
+
+        .c-group-heading {
+          display: block;
+        }
+
+        .c-group-heading .status-chip {
+          display: inline-flex;
+          margin-top: 8px;
+        }
+
         .evidence-scrim {
           padding: 10px;
         }
@@ -2413,7 +2755,110 @@
         { value: "P-2307", label: "P-2307 · 华东客户交付" },
         { value: "P-1180", label: "P-1180 · 内部培训" },
         { value: "P-3312", label: "P-3312 · 产品调研" },
+        { value: "P-4420", label: "P-4420 · 南京客户培训" },
       ];
+
+      const volumeGroups = [
+        {
+          id: "g1",
+          number: "01",
+          label: "杭州客户交付",
+          period: "08-18 — 08-20",
+          location: "杭州西湖区 · 客户现场",
+          types: "住宿费 · 外地市内交通 · 长途交通",
+          city: "杭州",
+          area: "西湖区",
+          station: "东站",
+          destination: "上海虹桥",
+          localStop: "东站",
+          dayStart: 18,
+          count: 31,
+          pattern: ["住宿费", "外地市内交通", "外地市内交通", "长途交通"],
+        },
+        {
+          id: "g2",
+          number: "02",
+          label: "苏州上线支持",
+          period: "08-21 — 08-23",
+          location: "苏州工业园 · 园区现场",
+          types: "外地市内交通 · 长途交通",
+          city: "苏州",
+          area: "工业园",
+          station: "站",
+          destination: "上海虹桥",
+          localStop: "园区门口",
+          dayStart: 21,
+          count: 24,
+          pattern: ["长途交通", "外地市内交通", "外地市内交通"],
+        },
+        {
+          id: "g3",
+          number: "03",
+          label: "上海产品实施",
+          period: "08-25 — 08-27",
+          location: "上海浦东 · 研发楼",
+          types: "住宿费 · 外地市内交通",
+          city: "上海",
+          area: "浦东",
+          station: "虹桥",
+          destination: "杭州东",
+          localStop: "虹桥站",
+          dayStart: 25,
+          count: 28,
+          pattern: ["外地市内交通", "住宿费", "外地市内交通"],
+        },
+        {
+          id: "g4",
+          number: "04",
+          label: "南京客户培训",
+          period: "08-29 — 08-31",
+          location: "南京鼓楼 · 培训中心",
+          types: "长途交通 · 外地市内交通 · 住宿费",
+          city: "南京",
+          area: "鼓楼",
+          station: "南站",
+          destination: "上海虹桥",
+          localStop: "南站",
+          dayStart: 29,
+          count: 25,
+          pattern: ["长途交通", "外地市内交通", "住宿费"],
+        },
+      ];
+
+      const volumeAmounts = {
+        住宿费: 720,
+        外地市内交通: 78,
+        长途交通: 174,
+      };
+
+      const volumeEvents = volumeGroups.flatMap((group, groupIndex) =>
+        Array.from({ length: group.count }, (_, index) => {
+          const type = group.pattern[(index + groupIndex) % group.pattern.length];
+          const amount = volumeAmounts[type] + index % 4 * (type === "住宿费" ? 12 : 6);
+          const day = group.dayStart + (index % 3);
+          const hour = 8 + ((index * 2 + groupIndex) % 11);
+          const detail =
+            type === "住宿费"
+              ? `${group.city}${group.area} · 入住/离店`
+              : type === "长途交通"
+                ? `${group.city}${group.station} → ${group.destination}`
+                : `${group.city}客户现场 → ${group.city}${index % 2 ? group.localStop : "研发楼"}`;
+          return {
+            id: `v${String(groupIndex * 100 + index + 1).padStart(3, "0")}`,
+            groupId: group.id,
+            index: String(groupIndex * 100 + index + 1).padStart(3, "0"),
+            date: `08-${String(day).padStart(2, "0")}`,
+            time: `${String(hour).padStart(2, "0")}:${index % 2 ? "40" : "15"}`,
+            type,
+            detail,
+            amount,
+            invoice: `INV-${group.id.toUpperCase()}-${String(index + 1).padStart(3, "0")}`,
+          };
+        }),
+      );
+
+      const volumeTotal = volumeEvents.reduce((sum, expense) => sum + expense.amount, 0);
+      const volumeMaterials = volumeEvents.length + 17;
 
       const getInitialVariant = () => {
         const requested = new URLSearchParams(window.location.search).get("variant");
@@ -2426,6 +2871,8 @@
         projectMode: "batch",
         batchProject: "",
         rowProjects: {},
+        cStage: "details",
+        cGroupProjects: {},
         authorization: false,
         saveAuthorization: false,
         erpPhase: "ready",
@@ -2446,6 +2893,16 @@
 
       const allProjectsAssigned = () =>
         expenses.every((expense) => Boolean(selectedProject(expense)));
+
+      const volumeGroupEvents = (group) => volumeEvents.filter((expense) => expense.groupId === group.id);
+
+      const volumeGroupTotal = (group) => volumeGroupEvents(group).reduce((sum, expense) => sum + expense.amount, 0);
+
+      const assignedVolumeGroups = () => volumeGroups.filter((group) => Boolean(state.cGroupProjects[group.id]));
+
+      const assignedVolumeCount = () => assignedVolumeGroups().reduce((sum, group) => sum + group.count, 0);
+
+      const allVolumeGroupsAssigned = () => volumeGroups.every((group) => Boolean(state.cGroupProjects[group.id]));
 
       const setVariant = (key) => {
         state.variant = key;
@@ -2542,7 +2999,7 @@
         `;
       };
 
-      const authorizationBlock = (variantClass = "") => {
+      const authorizationBlock = (variantClass = "", assignmentsReady = allProjectsAssigned()) => {
         if (state.erpPhase !== "ready") {
           const [phaseLabel, phaseTone] = erpPhaseDisplay[state.erpPhase];
           return `
@@ -2556,7 +3013,7 @@
           `;
         }
 
-        const canStart = state.authorization && allProjectsAssigned();
+        const canStart = state.authorization && assignmentsReady;
         return `
           <section class="authorization ${variantClass}" aria-labelledby="authorization-title-${state.variant}">
             <div>
@@ -2570,7 +3027,7 @@
             </div>
             <div class="authorization-cta">
               <button class="button-coral" type="button" data-action="start-erp" ${canStart ? "" : "disabled"}>启动 ERP 草稿创建</button>
-              <small>${allProjectsAssigned() ? "项目归属已齐全" : "先完成项目归属选择"}</small>
+              <small>${assignmentsReady ? "项目归属已齐全" : "先完成项目归属选择"}</small>
             </div>
           </section>
         `;
@@ -2826,6 +3283,124 @@
         </div>
       `;
 
+      const volumeStepClass = (step) => {
+        const order = { details: 1, assignment: 2, confirm: 3 };
+        if (state.cStage === "confirm" && state.erpPhase === "handed-off" && step === "confirm") return "complete";
+        if (order[step] < order[state.cStage]) return "complete";
+        if (order[step] === order[state.cStage]) return "active";
+        return "is-locked";
+      };
+
+      const volumeStepMarker = (step, number) => (volumeStepClass(step) === "complete" ? "✓" : number);
+
+      const volumeEventTable = () => `
+        <div class="c-event-table-shell" aria-label="整理后的费用事件明细">
+          <table class="c-event-table">
+            <caption class="sr-only">${volumeEvents.length} 条费用事件明细</caption>
+            <thead>
+              <tr><th scope="col">编号</th><th scope="col">日期 / 时间</th><th scope="col">类型</th><th scope="col">行程 / 商户</th><th scope="col">金额</th><th scope="col">主要报销凭证</th></tr>
+            </thead>
+            <tbody>
+              ${volumeEvents
+                .map((expense) => {
+                  const group = volumeGroups.find((item) => item.id === expense.groupId);
+                  return `<tr><td class="c-event-index">${expense.index}</td><td><span class="c-event-time">${expense.date}</span><span class="c-event-time">${expense.time}</span></td><td>${expense.type}</td><td><span class="c-event-detail">${expense.detail}</span><span class="c-event-group">${group.label}</span></td><td class="amount">${money(expense.amount)}</td><td class="c-event-material">${expense.invoice}</td></tr>`;
+                })
+                .join("")}
+            </tbody>
+          </table>
+        </div>
+      `;
+
+      const volumeGroupList = () => `
+        <div class="c-group-list">
+          ${volumeGroups
+            .map((group) => {
+              const project = state.cGroupProjects[group.id] || "";
+              return `
+                <article class="c-group-row ${project ? "assigned" : ""}">
+                  <span class="c-group-number">${group.number}</span>
+                  <div class="c-group-content">
+                    <div class="c-group-heading"><div><h3>${group.label}</h3><p>${group.period} · ${group.location}</p></div>${statusChip(project ? "已归属" : "待选择", project ? "complete" : "warning")}</div>
+                    <div class="c-group-meta"><span>${group.count} 条费用事件</span><span>${money(volumeGroupTotal(group))}</span><span>${group.types}</span></div>
+                    <div class="c-group-select"><label for="c-group-project-${group.id}">为这组 ${group.count} 条费用事件选择项目</label><select id="c-group-project-${group.id}" data-control="c-group-project" data-group="${group.id}">${projectOptions(project)}</select></div>
+                  </div>
+                </article>
+              `;
+            })
+            .join("")}
+        </div>
+      `;
+
+      const volumeConfirmationSummary = () => `
+        <div class="c-confirmation-summary" aria-label="项目归属确认摘要">
+          ${volumeGroups
+            .map(
+              (group) => `<div class="c-confirmation-row"><div><strong>${group.label}</strong><span>${group.count} 条费用事件 · ${group.period}</span></div><span>${projectLabel(state.cGroupProjects[group.id])}</span><span>${money(volumeGroupTotal(group))}</span></div>`,
+            )
+            .join("")}
+        </div>
+      `;
+
+      const renderVolumeDetailsStep = () => {
+        const stepClass = volumeStepClass("details");
+        const isActive = state.cStage === "details";
+        return `
+          <article class="c-step ${stepClass}">
+            <span class="c-step-marker">${volumeStepMarker("details", "01")}</span>
+            <div class="c-step-body">
+              <div class="c-step-heading"><div><h2>先确认整理后的费用明细</h2><p>逐条明细只在这里展开一次，按日期、时间、类型、行程或商户、金额和发票编号识别。</p></div>${statusChip(isActive ? "当前步骤" : "已查看", isActive ? "warning" : "complete")}</div>
+              ${
+                isActive
+                  ? `<div class="c-volume-summary"><strong>${volumeEvents.length} 条费用事件 · ${volumeMaterials} 份材料</strong><span>${volumeGroups.length} 个上下文组 · 下一步按组选择项目</span></div>${volumeEventTable()}<div class="c-details-footer"><span>明细只需在此处确认，后续不再重复展开。</span><button class="button-primary" type="button" data-action="c-to-assignment">已查看，选择项目归属</button></div>`
+                  : `<div class="c-complete-line"><strong>${volumeEvents.length} 条费用事件已查看</strong><span>识别依据已保留：时间、类型、行程 / 商户、金额、发票编号。</span><button class="button-quiet" type="button" data-action="c-to-details">返回查看整理明细</button></div>`
+              }
+            </div>
+          </article>
+        `;
+      };
+
+      const renderVolumeAssignmentStep = () => {
+        const stepClass = volumeStepClass("assignment");
+        const isActive = state.cStage === "assignment";
+        const isComplete = state.cStage === "confirm";
+        const assignedCount = assignedVolumeCount();
+        return `
+          <article class="c-step ${stepClass}">
+            <span class="c-step-marker">${volumeStepMarker("assignment", "02")}</span>
+            <div class="c-step-body">
+              <div class="c-step-heading"><div><h2>按费用事件组选择项目</h2><p>同一组只选择一次；选择后立即更新归属数量和项目分布。</p></div>${statusChip(isComplete ? "已归属" : isActive ? "选择中" : "待开始", isComplete ? "complete" : isActive ? "warning" : "")}</div>
+              ${
+                isActive
+                  ? `<div class="c-assignment-progress"><strong>已归属 ${assignedCount} / ${volumeEvents.length} 条</strong><span>已选择 ${assignedVolumeGroups().length} / ${volumeGroups.length} 个费用事件组 · 每组一次选择</span></div>${volumeGroupList()}<div class="c-assignment-actions"><span>${allVolumeGroupsAssigned() ? "4 个费用事件组都已归属，可以进入确认。" : `还剩 ${volumeGroups.length - assignedVolumeGroups().length} 个费用事件组待选择。`}</span><div><button class="button-quiet" type="button" data-action="c-to-details">返回整理明细</button><button class="button-primary" type="button" data-action="c-to-confirm" ${allVolumeGroupsAssigned() ? "" : "disabled"}>确认项目归属</button></div></div>`
+                  : isComplete
+                    ? `${volumeConfirmationSummary()}<div class="c-assignment-actions"><span>已按事件组锁定 ${volumeEvents.length} 条明细的项目归属。</span><button class="button-quiet" type="button" data-action="c-to-assignment">修改项目归属</button></div>`
+                    : `<div class="c-stage-note">完成第 1 步后，这里会按时间和行程上下文分成 ${volumeGroups.length} 组；每组只需要选择一次项目。</div>`
+              }
+            </div>
+          </article>
+        `;
+      };
+
+      const renderVolumeConfirmStep = () => {
+        const stepClass = volumeStepClass("confirm");
+        const isActive = state.cStage === "confirm";
+        const erpLabel = erpPhaseDisplay[state.erpPhase];
+        return `
+          <article class="c-step ${stepClass}">
+            <span class="c-step-marker">${volumeStepMarker("confirm", "03")}</span>
+            <div class="c-step-body">
+              <div class="c-step-heading"><div><h2>确认归属并启动 ERP 草稿</h2><p>确认后才会启动 ERP 草稿创建；不会提交审批、付款或删除。</p></div>${statusChip(isActive ? erpLabel[0] : "待开始", isActive ? erpLabel[1] : "")}</div>
+              ${
+                isActive
+                  ? `<div class="c-erp-preview"><div><h3>将交给 ERP 的内容</h3><p>使用 ERP 就绪快照 v${task.readyVersion}，上传主要报销凭证，写入 ${volumeEvents.length} 条已归属明细；参考材料不会上传。</p></div><dl class="c-erp-facts"><dt>金额</dt><dd>${money(volumeTotal)}</dd><dt>费用事件</dt><dd>${volumeEvents.length} 条</dd><dt>项目组</dt><dd>${volumeGroups.length} 组</dd><dt>权限</dt><dd>只创建草稿</dd></dl></div>${authorizationBlock("c-authorization", allVolumeGroupsAssigned())}${erpStatus("c-erp")}`
+                  : `<div class="c-stage-note">${state.cStage === "details" ? "先查看整理后的费用明细，再选择项目归属。" : `还有 ${volumeGroups.length - assignedVolumeGroups().length} 个费用事件组未完成项目归属。`}</div>`
+              }
+            </div>
+          </article>
+        `;
+      };
+
       const renderVariantC = () => `
         <div class="page page-c">
           <header class="topbar">
@@ -2834,22 +3409,13 @@
           </header>
           <main class="c-main">
             <section class="c-overview">
-              <div><div class="eyebrow">任务进度 · 没有阻塞性待确认项</div><h1>${task.title}</h1><p>${task.employee} · ${task.date}<br /> CLI 已把复杂的材料理解留在后台；你只需要完成一次任务选择并决定是否启动 ERP。</p></div>
-              <div class="c-total-block"><span class="summary-number">${money(task.total)}</span><span class="summary-label">${task.eventCount} 条候选明细</span></div>
+              <div><div class="eyebrow">本次报销 · 已自动整理</div><h1>华东多地客户交付 · 8 月差旅</h1><p>${task.employee} · 2026-08-18 — 2026-08-31<br />已整理 ${volumeEvents.length} 个费用事件，按 ${volumeGroups.length} 个上下文组处理；你只需要确认明细、批量选择项目，再决定是否启动 ERP。</p></div>
+              <div class="c-total-block"><span class="summary-number">${money(volumeTotal)}</span><span class="summary-label">${volumeEvents.length} 个费用事件</span></div>
             </section>
             <section class="c-flow" aria-label="本次报销处理路径">
-              <article class="c-step complete">
-                <span class="c-step-marker">01</span>
-                <div class="c-step-body"><div class="c-step-heading"><div><h2>材料已整理</h2><p>${task.materialCount} 份报销材料已分类，费用事件和字段候选已生成。</p></div>${statusChip("已完成", "complete")}</div><div class="c-complete-line"><strong>纯发票 4 份</strong><span>参考材料按需使用 · 原始材料未改动</span><span>确定性校验通过</span></div><details class="c-review-disclosure"><summary>展开整理摘要</summary><div class="c-review-list">${expenses.slice(0, 3).map((expense) => `<div class="c-review-item"><strong>${expense.title}</strong><span>${money(expense.amount)} · ${expense.category}</span></div>`).join("")}</div></details></div>
-              </article>
-              <article class="c-step active">
-                <span class="c-step-marker">02</span>
-                <div class="c-step-body"><div class="c-step-heading"><div><h2>选择项目归属</h2><p>这是材料无法证明、但启动 ERP 前必须补充的任务选择。</p></div>${statusChip(allProjectsAssigned() ? "已选择" : "需要选择", allProjectsAssigned() ? "complete" : "warning")}</div><div class="c-assignment">${assignmentControl("c-assignment-control")}</div><details class="c-review-disclosure"><summary>查看 ${task.eventCount} 条候选明细</summary><div class="c-review-list">${expenses.map((expense) => `<div class="c-review-item"><strong>${expense.index} · ${expense.title}</strong><span>${money(expense.amount)} · ${projectLabel(selectedProject(expense))}</span></div>`).join("")}</div></details></div>
-              </article>
-              <article class="c-step">
-                <span class="c-step-marker">03</span>
-                <div class="c-step-body"><div class="c-step-heading"><div><h2>创建 ERP 草稿</h2><p>开始后显示运行状态；草稿验证后由用户接管有头 ERP。</p></div>${statusChip(erpPhaseDisplay[state.erpPhase][0], erpPhaseDisplay[state.erpPhase][1])}</div><div class="c-erp-preview"><div><h3>将交给 ERP 的内容</h3><p>使用 ERP 就绪快照 v${task.readyVersion}，上传纯发票，写入 ${task.eventCount} 条候选明细；参考材料不会上传。</p></div><dl class="c-erp-facts"><dt>金额</dt><dd>${money(task.total)}</dd><dt>明细</dt><dd>${task.eventCount} 条</dd><dt>权限</dt><dd>只创建草稿</dd></dl></div>${authorizationBlock("c-authorization")}${erpStatus("c-erp")}</div>
-              </article>
+              ${renderVolumeDetailsStep()}
+              ${renderVolumeAssignmentStep()}
+              ${renderVolumeConfirmStep()}
             </section>
             <p class="demo-note" style="margin: 14px 0 0;">虚构数据 · 这是一次性原型，刷新页面不会保存选择。</p>
           </main>
@@ -2923,8 +3489,27 @@
           state.projectMode = "batch";
           state.authorization = false;
           render();
+        } else if (actionType === "c-to-assignment") {
+          if (state.erpPhase !== "ready") return;
+          state.cStage = "assignment";
+          state.authorization = false;
+          render();
+        } else if (actionType === "c-to-details") {
+          if (state.erpPhase !== "ready") return;
+          state.cStage = "details";
+          state.authorization = false;
+          render();
+        } else if (actionType === "c-to-confirm") {
+          if (!allVolumeGroupsAssigned()) {
+            showToast("先为每个费用事件组选择项目。");
+            return;
+          }
+          state.cStage = "confirm";
+          state.authorization = false;
+          render();
         } else if (actionType === "start-erp") {
-          if (!state.authorization || !allProjectsAssigned()) {
+          const assignmentsReady = state.variant === "C" ? allVolumeGroupsAssigned() : allProjectsAssigned();
+          if (!state.authorization || !assignmentsReady) {
             showToast("先完成项目归属并勾选启动授权。");
             return;
           }
@@ -2947,6 +3532,8 @@
           state.projectMode = "batch";
           state.batchProject = "";
           state.rowProjects = {};
+          state.cStage = "details";
+          state.cGroupProjects = {};
           state.authorization = false;
           state.saveAuthorization = false;
           state.erpPhase = "ready";
@@ -2963,6 +3550,10 @@
           render();
         } else if (control === "row-project") {
           state.rowProjects[event.target.dataset.expense] = event.target.value;
+          state.authorization = false;
+          render();
+        } else if (control === "c-group-project") {
+          state.cGroupProjects[event.target.dataset.group] = event.target.value;
           state.authorization = false;
           render();
         } else if (control === "authorization") {
