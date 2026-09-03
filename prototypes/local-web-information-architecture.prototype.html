@@ -1693,9 +1693,7 @@
       }
 
       .c-selection-toolbar {
-        position: sticky;
-        z-index: 3;
-        top: 10px;
+        position: static;
         display: grid;
         grid-template-columns: minmax(190px, 0.75fr) minmax(0, 1.25fr);
         align-items: center;
@@ -1934,6 +1932,407 @@
         color: var(--ink-soft);
         font-weight: 750;
         text-align: right;
+      }
+
+      .c-filter-line {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+
+      .c-filter-bar {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        border: 1px solid var(--line);
+        background: #f7f9f7;
+        padding: 3px;
+      }
+
+      .c-filter-label {
+        padding: 0 7px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .c-filter-button {
+        min-height: 29px;
+        padding: 0 9px;
+        color: var(--muted);
+        background: transparent;
+        font-size: 10px;
+        white-space: nowrap;
+      }
+
+      .c-filter-button.active {
+        color: var(--blue);
+        background: var(--blue-soft);
+        font-weight: 800;
+      }
+
+      .c-filter-note {
+        color: var(--muted);
+        font-size: 10px;
+        text-align: right;
+      }
+
+      .c-workbench {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 282px;
+        gap: 14px;
+        align-items: start;
+      }
+
+      .c-volume-events {
+        min-width: 0;
+      }
+
+      .c-volume-grid-head,
+      .c-volume-event-row {
+        display: grid;
+        grid-template-columns: 27px 38px 70px 78px minmax(100px, 1fr) 70px 100px 112px;
+        align-items: center;
+        gap: 0;
+      }
+
+      .c-volume-grid-head {
+        position: sticky;
+        z-index: 3;
+        top: 10px;
+        min-height: 36px;
+        border: 1px solid var(--line-strong);
+        border-bottom: 0;
+        color: var(--muted);
+        background: #edf2ee;
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .c-volume-grid-head span,
+      .c-volume-event-row > span {
+        min-width: 0;
+        padding: 0 8px;
+      }
+
+      .c-volume-grid-head span:first-child,
+      .c-volume-event-row > input {
+        margin-left: 9px;
+      }
+
+      .c-volume-region {
+        border: 1px solid var(--line-strong);
+        border-top: 0;
+        background: var(--panel);
+      }
+
+      .c-volume-region-heading {
+        position: sticky;
+        z-index: 2;
+        top: 46px;
+        display: flex;
+        min-height: 39px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        border-top: 1px solid var(--line-strong);
+        border-bottom: 1px solid var(--line);
+        background: #f7f9f7;
+        padding: 0 10px;
+      }
+
+      .c-volume-region-select {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--ink-soft);
+        font-size: 11px;
+        font-weight: 800;
+      }
+
+      .c-volume-region-select input,
+      .c-volume-event-row input {
+        width: 16px;
+        height: 16px;
+        accent-color: var(--blue);
+      }
+
+      .c-volume-region-heading > span {
+        color: var(--muted);
+        font-size: 10px;
+        text-align: right;
+      }
+
+      .c-volume-event-row {
+        min-height: 65px;
+        border-bottom: 1px solid var(--line);
+        cursor: pointer;
+      }
+
+      .c-volume-event-row:last-child {
+        border-bottom: 0;
+      }
+
+      .c-volume-event-row:hover,
+      .c-volume-event-row.is-selected {
+        background: #f5f9ff;
+      }
+
+      .c-volume-event-row > input {
+        grid-column: 1;
+      }
+
+      .c-volume-index,
+      .c-volume-when,
+      .c-volume-proof {
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 10px;
+      }
+
+      .c-volume-when strong,
+      .c-volume-when small,
+      .c-volume-route strong,
+      .c-volume-route small,
+      .c-volume-proof strong,
+      .c-volume-proof small {
+        display: block;
+      }
+
+      .c-volume-when small,
+      .c-volume-route small,
+      .c-volume-proof small {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 9px;
+      }
+
+      .c-volume-kind {
+        color: var(--ink-soft);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .c-volume-route,
+      .c-volume-assignment {
+        overflow: hidden;
+      }
+
+      .c-volume-route strong,
+      .c-volume-proof strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .c-volume-route strong {
+        line-height: 1.35;
+        white-space: normal;
+      }
+
+      .c-volume-proof strong {
+        white-space: nowrap;
+      }
+
+      .c-volume-amount {
+        color: var(--ink);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        font-weight: 800;
+        text-align: right;
+      }
+
+      .c-volume-assignment .project-chip {
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .c-project-panel {
+        position: sticky;
+        z-index: 5;
+        top: 10px;
+        min-width: 0;
+        border: 1px solid #b9cce3;
+        background: #fbfdff;
+        padding: 15px;
+        box-shadow: 0 7px 17px rgb(34 66 103 / 7%);
+      }
+
+      .c-project-panel-heading,
+      .c-project-panel-selection,
+      .c-project-group-heading,
+      .c-project-destination {
+        display: flex;
+        align-items: center;
+      }
+
+      .c-project-panel-heading {
+        justify-content: space-between;
+        gap: 10px;
+        border-bottom: 1px solid #d5e1ef;
+        padding-bottom: 12px;
+      }
+
+      .c-project-panel-heading h3 {
+        margin: 3px 0 0;
+        font-size: 16px;
+      }
+
+      .c-project-count {
+        min-height: 25px;
+        padding: 0 8px;
+        border-radius: 999px;
+        color: var(--blue);
+        background: var(--blue-soft);
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .c-project-panel-selection {
+        justify-content: space-between;
+        gap: 10px;
+        padding: 12px 0;
+      }
+
+      .c-project-panel-selection strong,
+      .c-project-panel-selection span {
+        display: block;
+      }
+
+      .c-project-panel-selection strong {
+        color: var(--blue);
+        font-size: 14px;
+      }
+
+      .c-project-panel-selection span {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 10px;
+        text-align: right;
+      }
+
+      .c-project-group {
+        border-top: 1px solid var(--line);
+        padding-top: 11px;
+      }
+
+      .c-project-group + .c-project-group {
+        margin-top: 12px;
+      }
+
+      .c-project-group-heading {
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 8px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .c-project-list {
+        display: grid;
+        gap: 6px;
+      }
+
+      .c-project-destination {
+        width: 100%;
+        justify-content: space-between;
+        gap: 9px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: var(--panel);
+        color: var(--ink-soft);
+        padding: 9px;
+        text-align: left;
+      }
+
+      .c-project-destination:hover:not(:disabled) {
+        border-color: #8dafd7;
+        background: #f5f9ff;
+      }
+
+      .c-project-destination strong,
+      .c-project-destination small {
+        display: block;
+      }
+
+      .c-project-destination strong {
+        overflow: hidden;
+        font-size: 10px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .c-project-destination small {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 9px;
+      }
+
+      .c-project-destination > span:last-child {
+        flex: 0 0 auto;
+        color: var(--blue);
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .c-project-search {
+        width: 100%;
+        min-height: 35px;
+        border: 1px solid var(--line-strong);
+        border-radius: 5px;
+        background: var(--panel);
+        padding: 0 9px;
+        outline: 0;
+      }
+
+      .c-project-panel-note,
+      .c-empty-state {
+        color: var(--muted);
+        font-size: 10px;
+        line-height: 1.5;
+      }
+
+      .c-project-panel-note {
+        margin: 12px 0 0;
+      }
+
+      .c-empty-state {
+        border: 1px solid var(--line-strong);
+        background: var(--panel);
+        padding: 20px;
+      }
+
+      .c-overwrite-alert {
+        display: block;
+        margin: 0 0 11px;
+        border: 1px solid #e4c47f;
+        background: #fffaf0;
+        padding: 10px;
+      }
+
+      .c-overwrite-alert strong,
+      .c-overwrite-alert span {
+        display: block;
+      }
+
+      .c-overwrite-alert strong {
+        color: #8f5a0c;
+        font-size: 10px;
+      }
+
+      .c-overwrite-alert span {
+        margin-top: 3px;
+        color: #8b6b39;
+        font-size: 9px;
+      }
+
+      .c-overwrite-actions {
+        display: flex;
+        gap: 5px;
+        margin-top: 8px;
       }
 
       .c-step.is-locked .c-step-body {
@@ -2376,6 +2775,117 @@
         .c-selection-actions select {
           width: auto;
           flex: 1 1 210px;
+        }
+
+        .c-filter-line {
+          display: block;
+        }
+
+        .c-filter-bar {
+          max-width: 100%;
+          overflow-x: auto;
+          flex-wrap: nowrap;
+        }
+
+        .c-filter-note {
+          display: block;
+          margin-top: 6px;
+          text-align: left;
+        }
+
+        .c-workbench {
+          grid-template-columns: 1fr;
+        }
+
+        .c-project-panel {
+          position: sticky;
+          z-index: 5;
+          top: 7px;
+          order: -1;
+          padding: 13px;
+        }
+
+        .c-volume-grid-head {
+          display: none;
+        }
+
+        .c-volume-region {
+          border-top: 1px solid var(--line-strong);
+        }
+
+        .c-volume-region-heading {
+          position: static;
+          display: block;
+          padding: 9px 10px;
+        }
+
+        .c-volume-region-heading > span {
+          display: block;
+          margin: 5px 0 0 24px;
+          text-align: left;
+        }
+
+        .c-volume-event-row {
+          grid-template-columns: 27px 46px minmax(0, 1fr) auto;
+          align-items: start;
+          min-height: 0;
+          padding: 11px 0;
+        }
+
+        .c-volume-event-row > input {
+          grid-column: 1;
+          grid-row: 1 / span 5;
+          margin-top: 3px;
+        }
+
+        .c-volume-event-row > span {
+          padding: 0 7px;
+        }
+
+        .c-volume-index {
+          grid-column: 2;
+          grid-row: 1;
+          padding-top: 2px !important;
+        }
+
+        .c-volume-when {
+          grid-column: 3;
+          grid-row: 1;
+        }
+
+        .c-volume-kind {
+          grid-column: 3;
+          grid-row: 2;
+          margin-top: 6px;
+        }
+
+        .c-volume-route {
+          grid-column: 3 / -1;
+          grid-row: 3;
+          margin-top: 7px;
+        }
+
+        .c-volume-amount {
+          grid-column: 4;
+          grid-row: 1;
+          padding-right: 10px !important;
+        }
+
+        .c-volume-proof {
+          grid-column: 3 / -1;
+          grid-row: 4;
+          margin-top: 7px;
+        }
+
+        .c-volume-assignment {
+          grid-column: 3 / -1;
+          grid-row: 5;
+          margin-top: 7px;
+        }
+
+        .c-volume-proof small {
+          display: inline;
+          margin-left: 5px;
         }
 
         .c-confirmation-row {
@@ -2854,13 +3364,16 @@
         rowProjects: {},
         cStage: "details",
         cSelectedVolumeEvents: [],
-        cBatchProject: "",
+        cFilter: "all",
+        cProjectSearch: "",
         cEventProjects: {},
+        cPendingOverwrite: null,
         authorization: false,
         saveAuthorization: false,
         erpPhase: "ready",
         evidenceOpen: false,
         toast: "",
+        pendingFocusId: "",
       };
 
       let toastTimer;
@@ -2895,6 +3408,25 @@
 
       const volumeEventTotal = (events) => events.reduce((sum, expense) => sum + expense.amount, 0);
 
+      const cVisibleVolumeEvents = () =>
+        sortedVolumeEvents.filter((expense) => {
+          if (state.cFilter === "unassigned") return !volumeEventProject(expense);
+          if (state.cFilter === "assigned") return Boolean(volumeEventProject(expense));
+          if (state.cFilter === "selected") return state.cSelectedVolumeEvents.includes(expense.id);
+          return true;
+        });
+
+      const cSelectedVolumeRegions = () => [...new Set(selectedVolumeEvents().map((expense) => expense.region))];
+
+      const cProjectEvents = (project) => sortedVolumeEvents.filter((expense) => volumeEventProject(expense) === project);
+
+      const cUsedProjects = () => projects.filter((project) => cProjectEvents(project.value).length);
+
+      const cUnusedProjects = () => projects.filter((project) => !cProjectEvents(project.value).length);
+
+      const escapeHtml = (value) =>
+        String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+
       const setVariant = (key) => {
         state.variant = key;
         state.evidenceOpen = false;
@@ -2910,13 +3442,15 @@
         setVariant(variants[nextIndex].key);
       };
 
-      const showToast = (message) => {
+      const showToast = (message, focusId = "") => {
         window.clearTimeout(toastTimer);
         state.toast = message;
+        state.pendingFocusId = focusId;
         render();
         toastTimer = window.setTimeout(() => {
           state.toast = "";
-          render();
+          const toast = document.querySelector(".toast");
+          if (toast) toast.remove();
         }, 2700);
       };
 
@@ -3305,43 +3839,153 @@
       `;
 
       const volumeEventTable = () => {
+        const visible = cVisibleVolumeEvents();
+        if (!visible.length) {
+          return `<div class="c-empty-state">当前筛选没有费用事件。切换到“全部”或“待归属”继续选择。</div>`;
+        }
+
+        const visibleIds = new Set(visible.map((expense) => expense.id));
         const selectedIds = new Set(state.cSelectedVolumeEvents);
         return `
-          <div class="c-event-table-shell" aria-label="按区域和时间排序的费用事件明细">
-            <table class="c-event-table">
-              <caption class="sr-only">按区域和时间排序的 ${volumeEvents.length} 条费用事件明细</caption>
-              <thead>
-                <tr><th scope="col" class="c-event-select-cell"><span class="sr-only">选择</span></th><th scope="col">编号</th><th scope="col">日期 / 时间</th><th scope="col">类型</th><th scope="col">行程 / 商户</th><th scope="col">金额</th><th scope="col">主要报销凭证</th><th scope="col">项目归属</th></tr>
-              </thead>
-              ${volumeRegions
-                .map((region) => {
-                  const events = volumeRegionEvents(region);
-                  const selectedCount = events.filter((expense) => selectedIds.has(expense.id)).length;
-                  const allSelected = selectedCount === events.length;
-                  return `
-                    <tbody class="c-event-region" data-region="${region}">
-                      <tr class="c-event-region-row"><td colspan="8"><div class="c-event-region-label"><label><input type="checkbox" data-control="c-region-select" data-region="${region}" ${allSelected ? "checked" : ""} aria-label="选择${region}全部费用事件" /><span>${region}</span></label><span>${selectedCount ? `已选 ${selectedCount} / ` : ""}${events.length} 条 · 仅用于排序，不代表项目归属</span></div></td></tr>
-                      ${events
-                        .map(
-                          (expense) => `<tr><td class="c-event-select-cell"><input type="checkbox" data-control="c-event-select" data-event="${expense.id}" ${selectedIds.has(expense.id) ? "checked" : ""} aria-label="选择费用事件 ${expense.index}" /></td><td class="c-event-index">${expense.index}</td><td><span class="c-event-time">${expense.date}</span><span class="c-event-time">${expense.time}</span></td><td>${expense.type}</td><td class="c-event-detail">${expense.detail}</td><td class="amount">${money(expense.amount)}</td><td class="c-event-material">${expense.invoice}</td><td>${volumeProjectChip(expense)}</td></tr>`,
-                        )
-                        .join("")}
-                    </tbody>
-                  `;
-                })
-                .join("")}
-            </table>
+          <section class="c-volume-events" aria-label="按区域和时间排序的费用事件明细">
+            <div class="c-volume-grid-head" aria-hidden="true"><span></span><span>编号</span><span>日期 / 时间</span><span>类型</span><span>行程 / 商户</span><span>金额</span><span>主要报销凭证</span><span>项目归属</span></div>
+            ${volumeRegions
+              .map((region) => {
+                const events = volumeRegionEvents(region).filter((expense) => visibleIds.has(expense.id));
+                if (!events.length) return "";
+                const selectedCount = events.filter((expense) => selectedIds.has(expense.id)).length;
+                const allSelected = selectedCount === events.length;
+                return `
+                  <section class="c-volume-region" data-region="${region}">
+                    <div class="c-volume-region-heading"><label class="c-volume-region-select"><input id="c-region-${region}" data-focus-id="c-region-${region}" type="checkbox" data-control="c-region-select" data-region="${region}" ${allSelected ? "checked" : ""} aria-label="选择${region}当前显示的费用事件" /><span>${region}</span></label><span>${events.length} 条当前显示 · ${selectedCount ? `已选 ${selectedCount} · ` : ""}仅用于浏览排序</span></div>
+                    ${events
+                      .map(
+                        (expense) => `<label class="c-volume-event-row ${selectedIds.has(expense.id) ? "is-selected" : ""}" data-event-row="${expense.id}"><input id="c-event-${expense.id}" data-focus-id="c-event-${expense.id}" type="checkbox" data-control="c-event-select" data-event="${expense.id}" ${selectedIds.has(expense.id) ? "checked" : ""} aria-label="选择费用事件 ${expense.index}" /><span class="c-volume-index">${expense.index}</span><span class="c-volume-when"><strong>${expense.date}</strong><small>${expense.time}</small></span><span class="c-volume-kind">${expense.type}</span><span class="c-volume-route"><strong>${expense.detail}</strong><small>${expense.region} · 行程上下文</small></span><span class="c-volume-amount">${money(expense.amount)}</span><span class="c-volume-proof"><strong>${expense.invoice}</strong><small>主要报销凭证</small></span><span class="c-volume-assignment">${volumeProjectChip(expense)}</span></label>`,
+                      )
+                      .join("")}
+                  </section>
+                `;
+              })
+              .join("")}
+          </section>
+        `;
+      };
+
+      const cFilterBar = () => {
+        const counts = {
+          all: volumeEvents.length,
+          unassigned: volumeEvents.filter((expense) => !volumeEventProject(expense)).length,
+          assigned: assignedVolumeCount(),
+          selected: state.cSelectedVolumeEvents.length,
+        };
+        return `
+          <div class="c-filter-bar" aria-label="费用事件显示范围">
+            <span class="c-filter-label">显示</span>
+            ${[
+              ["all", "全部"],
+              ["unassigned", "待归属"],
+              ["assigned", "已归属"],
+              ["selected", "已选"],
+            ]
+              .map(
+                ([key, label]) =>
+                  `<button class="c-filter-button ${state.cFilter === key ? "active" : ""}" type="button" data-action="c-set-filter" data-filter="${key}" aria-pressed="${state.cFilter === key}">${label} ${counts[key]}</button>`,
+              )
+              .join("")}
           </div>
         `;
       };
 
+      const cOverwriteNotice = () => {
+        if (!state.cPendingOverwrite) return "";
+        const changed = state.cPendingOverwrite.changed.length;
+        const untouched = selectedVolumeEvents().length - changed;
+        return `
+          <div class="c-overwrite-alert" role="alert">
+            <strong>将变更 ${changed} 条已有归属</strong>
+            <span>${untouched ? `另有 ${untouched} 条未归属或已是同一项目。` : "当前选择均已有其他项目归属。"}<br />目标：${projectLabel(state.cPendingOverwrite.project)}</span>
+            <div class="c-overwrite-actions"><button class="button-secondary" type="button" data-action="c-overwrite-apply" data-mode="unassigned">只处理未归属</button><button class="button-danger" type="button" data-action="c-overwrite-apply" data-mode="all">确认覆盖</button></div>
+          </div>
+        `;
+      };
+
+      const cProjectDestination = (project) => {
+        const assigned = cProjectEvents(project.value);
+        const regions = [...new Set(assigned.map((expense) => expense.region))].join("、");
+        const selectedCount = selectedVolumeEvents().length;
+        return `
+          <button class="c-project-destination" type="button" data-action="c-apply-project" data-project="${project.value}" ${selectedCount ? "" : "disabled"}>
+            <span><strong>${project.label}</strong><small>${assigned.length ? `${assigned.length} 条 · ${regions}` : "尚未使用"}</small></span>
+            <span>${selectedCount ? "归入" : "待选择"}</span>
+          </button>
+        `;
+      };
+
+      const cProjectPanel = () => {
+        const used = cUsedProjects();
+        const query = state.cProjectSearch.trim().toLowerCase();
+        const other = cUnusedProjects().filter((project) => project.label.toLowerCase().includes(query));
+        const selected = selectedVolumeEvents();
+        const selectedRegions = cSelectedVolumeRegions();
+        return `
+          <aside class="c-project-panel" aria-label="项目工作台">
+            <div class="c-project-panel-heading"><div><div class="section-kicker">当前选择的归属目标</div><h3>项目工作台</h3></div><span class="c-project-count">${selected.length} 条</span></div>
+            <div class="c-project-panel-selection"><div><strong>当前选择 ${selected.length} 条</strong><span>${selected.length ? `${selectedRegions.join("、")} · ${money(volumeEventTotal(selected))}` : "先在左侧勾选事件"}</span></div></div>
+            ${cOverwriteNotice()}
+            <div class="c-project-group"><div class="c-project-group-heading"><span>本次已归入</span><span>${used.length} 个项目</span></div><div class="c-project-list">${used.length ? used.map(cProjectDestination).join("") : `<span class="c-project-panel-note" style="margin:0;">选择事件后点击项目目标</span>`}</div></div>
+            <div class="c-project-group"><div class="c-project-group-heading"><span>其他有效项目</span><span>${other.length} 个</span></div><input class="c-project-search" id="c-project-search" data-focus-id="c-project-search" data-control="c-project-search" type="search" value="${escapeHtml(state.cProjectSearch)}" placeholder="查找项目号或名称" aria-label="查找其他有效项目" /><div class="c-project-list" style="margin-top:8px;">${other.length ? other.map(cProjectDestination).join("") : `<span class="c-project-panel-note" style="margin:0;">没有匹配的项目</span>`}</div></div>
+            <p class="c-project-panel-note">项目目标只作用于当前勾选事件；已归入项目不会重复出现在其他有效项目中。</p>
+          </aside>
+        `;
+      };
+
+      const prepareCProject = (project) => {
+        const selected = selectedVolumeEvents();
+        if (!selected.length || !project) {
+          showToast("先勾选费用事件并选择项目。");
+          return;
+        }
+        const changed = selected.filter((expense) => {
+          const current = volumeEventProject(expense);
+          return current && current !== project;
+        });
+        if (changed.length) {
+          state.cPendingOverwrite = { project, changed };
+          render();
+          return;
+        }
+        applyCProject(project, "all");
+      };
+
+      const applyCProject = (project, mode) => {
+        const selection = selectedVolumeEvents();
+        const targetEvents = mode === "unassigned" ? selection.filter((expense) => !volumeEventProject(expense)) : selection;
+        const changedCount = targetEvents.filter((expense) => {
+          const current = volumeEventProject(expense);
+          return current && current !== project;
+        }).length;
+        const newCount = targetEvents.length - changedCount;
+        targetEvents.forEach((expense) => {
+          state.cEventProjects[expense.id] = project;
+        });
+        const nextUnassigned = sortedVolumeEvents.find((expense) => !volumeEventProject(expense));
+        const previousFilter = state.cFilter;
+        if (previousFilter === "all" || previousFilter === "selected") state.cFilter = "unassigned";
+        state.cSelectedVolumeEvents = [];
+        state.cPendingOverwrite = null;
+        state.authorization = false;
+        const message = targetEvents.length
+          ? `已将 ${targetEvents.length} 条费用事件归入 ${projectLabel(project)}${changedCount ? `，新增 ${newCount} 条，更新 ${changedCount} 条` : ""}。`
+          : "没有新的项目归属变更。";
+        showToast(message, nextUnassigned ? `c-event-${nextUnassigned.id}` : "");
+      };
+
       const volumeSelectionToolbar = () => {
         const selectedCount = selectedVolumeEvents().length;
-        const canApply = selectedCount > 0 && Boolean(state.cBatchProject);
         return `
           <div class="c-selection-toolbar" aria-label="批量项目归属操作">
-            <div class="c-selection-count"><strong>已选 ${selectedCount} 条</strong><span>先勾选事件，再将选中事件批量归入你选择的项目。</span></div>
-            <div class="c-selection-actions"><button class="button-quiet" type="button" data-action="c-select-all" ${selectedCount === volumeEvents.length ? "disabled" : ""}>选择全部</button><button class="button-quiet" type="button" data-action="c-clear-selection" ${selectedCount ? "" : "disabled"}>清除选择</button><select data-control="c-batch-project" aria-label="选择批量归入的项目">${projectOptions(state.cBatchProject)}</select><button class="button-primary" type="button" data-action="c-apply-project" ${canApply ? "" : "disabled"}>批量归入项目</button></div>
+            <div class="c-selection-count"><strong>已选 ${selectedCount} 条</strong><span>先勾选事件，再在右侧项目工作台批量归入。</span></div>
+            <div class="c-selection-actions"><button class="button-quiet" type="button" data-action="c-select-all" ${selectedCount === volumeEvents.length ? "disabled" : ""}>选择全部</button><button class="button-quiet" type="button" data-action="c-clear-selection" ${selectedCount ? "" : "disabled"}>清除选择</button></div>
           </div>
         `;
       };
@@ -3349,9 +3993,9 @@
       const syncCSelectionIndicators = () => {
         const selectedIds = new Set(state.cSelectedVolumeEvents);
         document.querySelectorAll('[data-control="c-region-select"]').forEach((control) => {
-          const events = volumeRegionEvents(control.dataset.region);
+          const events = cVisibleVolumeEvents().filter((expense) => expense.region === control.dataset.region);
           const selectedCount = events.filter((expense) => selectedIds.has(expense.id)).length;
-          control.checked = selectedCount === events.length;
+          control.checked = events.length > 0 && selectedCount === events.length;
           control.indeterminate = selectedCount > 0 && selectedCount < events.length;
         });
       };
@@ -3369,7 +4013,7 @@
               <div class="c-step-heading"><div><h2>按区域、时间查看并批量归属项目</h2><p>区域只用于排序，区域内按日期和时间排列；项目归属不由 baox 自动推断。</p></div>${statusChip(isActive ? "当前步骤" : "已完成", isActive ? "warning" : "complete")}</div>
               ${
                 isActive
-                  ? `<div class="c-volume-summary"><strong>已归属 ${assignedCount} / ${volumeEvents.length} 条 · 当前已选 ${selectedCount} 条</strong><span>${volumeMaterials} 份材料 · 同一区域内可选择任意事件组合</span></div>${volumeSelectionToolbar()}${volumeEventTable()}<div class="c-details-footer"><span>${allVolumeEventsAssigned() ? "所有费用事件都已由你归入项目，可以进入确认。" : `还有 ${volumeEvents.length - assignedCount} 条费用事件未归属。`}</span><button class="button-primary" type="button" data-action="c-to-confirm" ${allVolumeEventsAssigned() ? "" : "disabled"}>确认项目归属</button></div>`
+                  ? `<div class="c-volume-summary"><strong>已归属 ${assignedCount} / ${volumeEvents.length} 条 · 当前已选 ${selectedCount} 条</strong><span>${volumeMaterials} 份材料 · 同一区域内可选择任意事件组合</span></div>${volumeSelectionToolbar()}<div class="c-filter-line">${cFilterBar()}<span class="c-filter-note">区域仅用于浏览排序 · 区域内按日期 / 时间排列</span></div><div class="c-workbench">${volumeEventTable()}${cProjectPanel()}</div><div class="c-details-footer"><span>${allVolumeEventsAssigned() ? "所有费用事件都已由你归入项目，可以进入确认。" : `还有 ${volumeEvents.length - assignedCount} 条费用事件未归属。`}</span><button class="button-primary" type="button" data-action="c-to-confirm" ${allVolumeEventsAssigned() ? "" : "disabled"}>确认项目归属</button></div>`
                   : `<div class="c-complete-line"><strong>${volumeEvents.length} 条费用事件已完成项目归属</strong><span>项目分布由用户勾选事件后批量归入形成。</span>${canEdit ? `<button class="button-quiet" type="button" data-action="c-to-details">返回修改事件选择</button>` : ""}</div>`
               }
             </div>
@@ -3455,7 +4099,7 @@
 
       const renderSwitcher = () => {
         const switcher = document.getElementById("prototype-switcher");
-        if (document.body.dataset.env === "production") {
+        if (document.body.dataset.env === "production" || state.variant === "C") {
           switcher.hidden = true;
           return;
         }
@@ -3468,11 +4112,30 @@
         `;
       };
 
-      const render = () => {
+      const captureView = () => ({
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+        focusId: document.activeElement?.id || "",
+      });
+
+      const render = ({ preserve = true } = {}) => {
+        const previous = preserve ? captureView() : null;
         const html = state.variant === "A" ? renderVariantA() : state.variant === "B" ? renderVariantB() : renderVariantC();
         document.getElementById("app").innerHTML = html + evidenceDialog() + (state.toast ? `<div class="toast" role="status">${state.toast}</div>` : "");
-        if (state.variant === "C") syncCSelectionIndicators();
         renderSwitcher();
+        window.requestAnimationFrame(() => {
+          const focusId = state.pendingFocusId || previous?.focusId;
+          if (state.pendingFocusId) state.pendingFocusId = "";
+          if (focusId) {
+            const element = document.getElementById(focusId);
+            if (element) {
+              element.focus({ preventScroll: true });
+              if (previous?.focusId !== focusId) element.scrollIntoView({ block: "center", inline: "nearest" });
+            }
+          }
+          if (previous && previous.focusId === focusId) window.scrollTo(previous.scrollX, previous.scrollY);
+          if (state.variant === "C") syncCSelectionIndicators();
+        });
       };
 
       document.addEventListener("click", (event) => {
@@ -3506,28 +4169,27 @@
           state.authorization = false;
           render();
         } else if (actionType === "c-select-all") {
-          state.cSelectedVolumeEvents = volumeEvents.map((expense) => expense.id);
+          state.cSelectedVolumeEvents = [...new Set([...state.cSelectedVolumeEvents, ...cVisibleVolumeEvents().map((expense) => expense.id)])];
+          state.cPendingOverwrite = null;
           render();
         } else if (actionType === "c-clear-selection") {
           state.cSelectedVolumeEvents = [];
+          state.cPendingOverwrite = null;
           render();
         } else if (actionType === "c-apply-project") {
-          const selected = selectedVolumeEvents();
-          if (!selected.length || !state.cBatchProject) {
-            showToast("先勾选费用事件并选择项目。");
-            return;
-          }
-          const project = state.cBatchProject;
-          selected.forEach((expense) => {
-            state.cEventProjects[expense.id] = project;
-          });
-          state.cSelectedVolumeEvents = [];
-          state.cBatchProject = "";
-          state.authorization = false;
-          showToast(`已将 ${selected.length} 条费用事件归入 ${projectLabel(project)}。`);
+          prepareCProject(action.dataset.project);
+        } else if (actionType === "c-overwrite-apply") {
+          const project = state.cPendingOverwrite?.project;
+          if (project) applyCProject(project, action.dataset.mode);
+        } else if (actionType === "c-set-filter") {
+          state.cFilter = action.dataset.filter;
+          state.cPendingOverwrite = null;
+          render();
         } else if (actionType === "c-to-details") {
           if (state.erpPhase !== "ready") return;
           state.cStage = "details";
+          state.cFilter = "all";
+          state.cPendingOverwrite = null;
           state.authorization = false;
           render();
         } else if (actionType === "c-to-confirm") {
@@ -3565,12 +4227,15 @@
           state.rowProjects = {};
           state.cStage = "details";
           state.cSelectedVolumeEvents = [];
-          state.cBatchProject = "";
+          state.cFilter = "all";
+          state.cProjectSearch = "";
           state.cEventProjects = {};
+          state.cPendingOverwrite = null;
           state.authorization = false;
           state.saveAuthorization = false;
           state.erpPhase = "ready";
           state.evidenceOpen = false;
+          state.pendingFocusId = "";
           showToast("演示已重置。");
         }
       });
@@ -3590,15 +4255,14 @@
           state.cSelectedVolumeEvents = event.target.checked
             ? [...new Set([...state.cSelectedVolumeEvents, eventId])]
             : state.cSelectedVolumeEvents.filter((id) => id !== eventId);
+          state.cPendingOverwrite = null;
           render();
         } else if (control === "c-region-select") {
-          const regionIds = volumeRegionEvents(event.target.dataset.region).map((expense) => expense.id);
+          const regionIds = cVisibleVolumeEvents().filter((expense) => expense.region === event.target.dataset.region).map((expense) => expense.id);
           state.cSelectedVolumeEvents = event.target.checked
             ? [...new Set([...state.cSelectedVolumeEvents, ...regionIds])]
             : state.cSelectedVolumeEvents.filter((id) => !regionIds.includes(id));
-          render();
-        } else if (control === "c-batch-project") {
-          state.cBatchProject = event.target.value;
+          state.cPendingOverwrite = null;
           render();
         } else if (control === "authorization") {
           state.authorization = event.target.checked;
@@ -3607,6 +4271,13 @@
           state.saveAuthorization = event.target.checked;
           render();
         }
+      });
+
+      document.addEventListener("input", (event) => {
+        if (event.target.dataset.control !== "c-project-search") return;
+        state.cProjectSearch = event.target.value;
+        state.cPendingOverwrite = null;
+        render();
       });
 
       window.addEventListener("keydown", (event) => {
