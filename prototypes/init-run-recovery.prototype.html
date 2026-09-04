@@ -1,0 +1,2504 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="baox 初始化与运行异常恢复逻辑原型，仅使用虚构数据。"
+    />
+    <link rel="icon" href="data:," />
+    <title>baox · 初始化与运行异常恢复原型</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #18211f;
+        --ink-soft: #3c4844;
+        --muted: #6c7873;
+        --line: #d5ddd9;
+        --line-strong: #b9c6c0;
+        --canvas: #f2f4f1;
+        --paper: #fffefa;
+        --panel: #ffffff;
+        --terminal: #202a27;
+        --terminal-soft: #2c3935;
+        --accent: #087e72;
+        --accent-deep: #075e56;
+        --accent-soft: #e2f1ee;
+        --blue: #315f9f;
+        --blue-soft: #eaf0f8;
+        --amber: #9a5d0b;
+        --amber-soft: #fff1d7;
+        --red: #ad4337;
+        --red-soft: #fae9e5;
+        --green: #2b7452;
+        --green-soft: #e7f3ec;
+        --shadow: 0 12px 30px rgb(24 33 31 / 8%);
+      }
+
+      * {
+        box-sizing: border-box;
+        letter-spacing: 0;
+      }
+
+      html {
+        min-width: 320px;
+        background: var(--canvas);
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background: var(--canvas);
+        color: var(--ink);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      button {
+        color: inherit;
+        font: inherit;
+      }
+
+      button:focus-visible,
+      [tabindex]:focus-visible {
+        outline: 3px solid rgb(49 95 159 / 30%);
+        outline-offset: 2px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p,
+      ul,
+      ol,
+      dl,
+      pre {
+        margin-top: 0;
+      }
+
+      h1,
+      h2,
+      h3 {
+        letter-spacing: 0;
+      }
+
+      h1 {
+        margin-bottom: 8px;
+        font-size: 30px;
+        line-height: 1.15;
+      }
+
+      h2 {
+        margin-bottom: 8px;
+        font-size: 18px;
+        line-height: 1.3;
+      }
+
+      h3 {
+        margin-bottom: 6px;
+        font-size: 14px;
+        line-height: 1.35;
+      }
+
+      .topbar {
+        display: flex;
+        min-height: 58px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 0 28px;
+        background: var(--terminal);
+        color: #f5faf7;
+      }
+
+      .brand {
+        font-size: 18px;
+        font-weight: 800;
+      }
+
+      .prototype-mark {
+        color: #becbc6;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px;
+      }
+
+      main {
+        width: min(1460px, 100%);
+        margin: 0 auto;
+        padding: 30px 28px 90px;
+      }
+
+      .intro {
+        display: grid;
+        grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.6fr);
+        gap: 36px;
+        align-items: end;
+        margin-bottom: 28px;
+      }
+
+      .eyebrow,
+      .section-kicker {
+        margin-bottom: 7px;
+        color: var(--accent-deep);
+        font-size: 11px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .intro p {
+        max-width: 850px;
+        margin-bottom: 0;
+        color: var(--ink-soft);
+        font-size: 15px;
+      }
+
+      .scope-note {
+        border-left: 3px solid var(--amber);
+        padding: 4px 0 4px 14px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .scope-note strong {
+        color: var(--ink-soft);
+      }
+
+      .scenario-section {
+        margin-bottom: 24px;
+      }
+
+      .scenario-tabs {
+        display: flex;
+        gap: 8px;
+        padding: 3px 1px 12px;
+        overflow-x: auto;
+        scrollbar-width: thin;
+      }
+
+      .scenario-tab {
+        min-height: 40px;
+        flex: 0 0 auto;
+        border: 1px solid var(--line-strong);
+        border-radius: 5px;
+        padding: 8px 12px;
+        background: var(--paper);
+        cursor: pointer;
+        font-weight: 700;
+      }
+
+      .scenario-tab[aria-selected="true"] {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        color: var(--accent-deep);
+      }
+
+      .walkthrough {
+        display: grid;
+        grid-template-columns: minmax(240px, 0.55fr) minmax(0, 1.45fr);
+        gap: 22px;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        padding: 20px 0;
+      }
+
+      .walkthrough-copy p {
+        margin-bottom: 8px;
+        color: var(--ink-soft);
+      }
+
+      .walkthrough-copy small {
+        color: var(--muted);
+      }
+
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 8px;
+        align-content: start;
+        counter-reset: steps;
+      }
+
+      .step-button {
+        position: relative;
+        min-height: 54px;
+        border: 1px solid var(--line-strong);
+        border-radius: 5px;
+        padding: 8px 10px 8px 34px;
+        background: #fff;
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .step-button::before {
+        position: absolute;
+        top: 9px;
+        left: 10px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: var(--canvas);
+        content: attr(data-step-number);
+        font-size: 10px;
+        font-weight: 800;
+        line-height: 18px;
+        text-align: center;
+      }
+
+      .step-button.current {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px rgb(8 126 114 / 12%);
+      }
+
+      .step-button.current::before {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .step-button.complete {
+        border-color: #b7d5c4;
+        background: var(--green-soft);
+        color: var(--green);
+      }
+
+      .step-button:disabled {
+        cursor: default;
+        opacity: 0.55;
+      }
+
+      .status-strip {
+        display: grid;
+        grid-template-columns: minmax(160px, 0.35fr) minmax(0, 1.65fr);
+        min-height: 82px;
+        margin: 24px 0;
+        overflow: hidden;
+        border: 1px solid var(--line-strong);
+        border-radius: 6px;
+        background: var(--paper);
+        box-shadow: var(--shadow);
+      }
+
+      .carrier {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 16px 18px;
+        background: var(--terminal);
+        color: #fff;
+      }
+
+      .carrier small {
+        color: #bbc8c3;
+      }
+
+      .carrier strong {
+        font-size: 20px;
+      }
+
+      .last-change {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        justify-content: center;
+        padding: 15px 20px;
+      }
+
+      .last-change strong {
+        margin-bottom: 3px;
+      }
+
+      .last-change span {
+        color: var(--ink-soft);
+      }
+
+      .last-change.error {
+        background: var(--red-soft);
+      }
+
+      .last-change.warning {
+        background: var(--amber-soft);
+      }
+
+      .last-change.success {
+        background: var(--green-soft);
+      }
+
+      .section-heading {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 18px;
+        margin: 30px 0 12px;
+      }
+
+      .section-heading p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .facts-grid,
+      .surfaces-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .fact-panel,
+      .surface-panel {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--panel);
+      }
+
+      .fact-panel {
+        min-height: 250px;
+        padding: 16px;
+      }
+
+      .fact-panel > header,
+      .surface-panel > header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+
+      .fact-panel h3,
+      .surface-panel h3 {
+        margin-bottom: 0;
+      }
+
+      .chip {
+        display: inline-flex;
+        min-height: 23px;
+        align-items: center;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 2px 8px;
+        background: var(--canvas);
+        color: var(--ink-soft);
+        font-size: 10px;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+
+      .chip.good {
+        border-color: #b7d5c4;
+        background: var(--green-soft);
+        color: var(--green);
+      }
+
+      .chip.warn {
+        border-color: #e5c990;
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .chip.stop {
+        border-color: #e2b4ae;
+        background: var(--red-soft);
+        color: var(--red);
+      }
+
+      dl {
+        display: grid;
+        grid-template-columns: minmax(92px, 0.45fr) minmax(0, 1fr);
+        gap: 8px 12px;
+        margin-bottom: 0;
+      }
+
+      dt {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      dd {
+        min-width: 0;
+        margin: 0;
+        overflow-wrap: anywhere;
+        font-weight: 650;
+      }
+
+      .fact-list {
+        margin: 12px 0 0;
+        padding-left: 18px;
+        color: var(--ink-soft);
+        font-size: 12px;
+      }
+
+      .fact-list li + li {
+        margin-top: 4px;
+      }
+
+      .guardrails {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .guardrail {
+        min-height: 130px;
+        border-left: 4px solid var(--green);
+        padding: 14px 16px;
+        background: var(--green-soft);
+      }
+
+      .guardrail.stop {
+        border-color: var(--red);
+        background: var(--red-soft);
+      }
+
+      .guardrail ul {
+        margin-bottom: 0;
+        padding-left: 18px;
+      }
+
+      .guardrail li + li {
+        margin-top: 4px;
+      }
+
+      .surface-panel {
+        min-height: 300px;
+        overflow: hidden;
+      }
+
+      .surface-panel > header {
+        min-height: 47px;
+        margin-bottom: 0;
+        border-bottom: 1px solid var(--line);
+        padding: 10px 14px;
+      }
+
+      .surface-body {
+        min-height: 251px;
+        padding: 14px;
+      }
+
+      .terminal-panel {
+        border-color: #35433e;
+        background: var(--terminal);
+        color: #eef6f2;
+      }
+
+      .terminal-panel > header {
+        border-color: #40504a;
+      }
+
+      .terminal-panel .chip {
+        border-color: #52625c;
+        background: var(--terminal-soft);
+        color: #d8e3de;
+      }
+
+      pre {
+        margin-bottom: 0;
+        color: #dce8e2;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.65;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      .web-screen,
+      .erp-screen {
+        display: flex;
+        min-height: 220px;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 18px;
+      }
+
+      .screen-message {
+        border-left: 3px solid var(--blue);
+        padding-left: 12px;
+      }
+
+      .screen-message.warn {
+        border-color: var(--amber);
+      }
+
+      .screen-message.stop {
+        border-color: var(--red);
+      }
+
+      .screen-message p {
+        margin-bottom: 0;
+        color: var(--ink-soft);
+      }
+
+      .screen-facts {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .screen-fact {
+        min-width: 0;
+        border-top: 1px solid var(--line);
+        padding-top: 8px;
+      }
+
+      .screen-fact small {
+        display: block;
+        color: var(--muted);
+      }
+
+      .screen-fact strong {
+        overflow-wrap: anywhere;
+      }
+
+      .ephemeral {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .ephemeral-item {
+        min-width: 0;
+        border-top: 2px solid var(--line-strong);
+        padding: 9px 2px 0;
+      }
+
+      .ephemeral-item small {
+        display: block;
+        color: var(--muted);
+      }
+
+      .ephemeral-item strong {
+        overflow-wrap: anywhere;
+      }
+
+      .free-play {
+        margin-top: 32px;
+        border-top: 1px solid var(--line);
+        padding-top: 22px;
+      }
+
+      .action-groups {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .action-group {
+        min-width: 0;
+      }
+
+      .action-group h3 {
+        min-height: 22px;
+        color: var(--ink-soft);
+      }
+
+      .action-buttons {
+        display: grid;
+        gap: 7px;
+      }
+
+      .action-button {
+        min-height: 42px;
+        border: 1px solid var(--line-strong);
+        border-radius: 5px;
+        padding: 8px 10px;
+        background: #fff;
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .action-button:hover {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+      }
+
+      .decision-table-wrap {
+        margin-top: 32px;
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #fff;
+      }
+
+      table {
+        width: 100%;
+        min-width: 920px;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--line);
+        padding: 11px 12px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        background: var(--canvas);
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      td:first-child {
+        font-weight: 750;
+      }
+
+      @media (max-width: 1050px) {
+        .facts-grid,
+        .surfaces-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .fact-panel,
+        .surface-panel {
+          min-height: auto;
+        }
+
+        .action-groups {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 700px) {
+        .topbar {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 2px;
+          padding: 12px 16px;
+        }
+
+        main {
+          padding: 22px 16px 70px;
+        }
+
+        .intro,
+        .walkthrough,
+        .status-strip,
+        .guardrails {
+          grid-template-columns: 1fr;
+        }
+
+        .intro {
+          gap: 18px;
+        }
+
+        h1 {
+          font-size: 26px;
+        }
+
+        .status-strip {
+          min-height: auto;
+        }
+
+        .section-heading {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .ephemeral,
+        .action-groups {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">baox</div>
+      <div class="prototype-mark">THROWAWAY · 异常恢复逻辑原型 · 全部数据虚构</div>
+    </header>
+
+    <main>
+      <section class="intro">
+        <div>
+          <div class="eyebrow">原型问题</div>
+          <h1>异常发生后，用户从哪里安全地继续？</h1>
+          <p>
+            本原型验证：在不改变既定“报销任务阶段 + ERP 动作尝试”模型的前提下，CLI、本地 Web
+            和有头 ERP 浏览器分别承载哪些异常；重新进入时复用哪些持久事实，何时允许继续，何时必须停止写入或转人工。
+          </p>
+        </div>
+        <div class="scope-note">
+          <strong>评审假设：</strong>这是状态与控制权原型，不是终端或 Web 的视觉定稿。页面内存不会持久化，也不会连接
+          Codex、凭据库或 ERP。
+        </div>
+      </section>
+
+      <section class="scenario-section" aria-labelledby="scenario-title">
+        <div class="section-heading">
+          <div>
+            <div class="section-kicker">引导路径</div>
+            <h2 id="scenario-title">逐条走异常边界</h2>
+          </div>
+          <p>切换路径会重置为固定起点；按编号点击步骤。</p>
+        </div>
+        <div class="scenario-tabs" id="scenario-tabs" role="tablist"></div>
+        <div class="walkthrough">
+          <div class="walkthrough-copy">
+            <h3 id="walkthrough-title"></h3>
+            <p id="walkthrough-description"></p>
+            <small id="walkthrough-watch"></small>
+          </div>
+          <div class="steps" id="walkthrough-steps"></div>
+        </div>
+      </section>
+
+      <section class="status-strip" aria-live="polite">
+        <div class="carrier">
+          <small>当前主承载面</small>
+          <strong id="primary-surface"></strong>
+        </div>
+        <div class="last-change" id="last-change">
+          <strong id="last-title"></strong>
+          <span id="last-detail"></span>
+        </div>
+      </section>
+
+      <section aria-labelledby="facts-title">
+        <div class="section-heading">
+          <div>
+            <div class="section-kicker">权威状态</div>
+            <h2 id="facts-title">可在重启后重建的持久事实</h2>
+          </div>
+          <p>不保存密码值；进程、临时选择和配置草稿不在这里。</p>
+        </div>
+        <div class="facts-grid">
+          <article class="fact-panel" id="profile-facts"></article>
+          <article class="fact-panel" id="task-facts"></article>
+          <article class="fact-panel" id="erp-facts"></article>
+        </div>
+        <div class="guardrails">
+          <article class="guardrail">
+            <h3>现在可以继续</h3>
+            <ul id="allowed-list"></ul>
+          </article>
+          <article class="guardrail stop">
+            <h3>现在必须停止</h3>
+            <ul id="stopped-list"></ul>
+          </article>
+        </div>
+      </section>
+
+      <section aria-labelledby="surfaces-title">
+        <div class="section-heading">
+          <div>
+            <div class="section-kicker">用户所见</div>
+            <h2 id="surfaces-title">三个界面只展示自己负责的状态</h2>
+          </div>
+          <p>非主承载面可以镜像状态，但不能越权继续。</p>
+        </div>
+        <div class="surfaces-grid">
+          <article class="surface-panel terminal-panel">
+            <header>
+              <h3>CLI</h3>
+              <span class="chip" id="cli-status"></span>
+            </header>
+            <div class="surface-body">
+              <pre id="terminal-output"></pre>
+            </div>
+          </article>
+          <article class="surface-panel">
+            <header>
+              <h3>本地 Web</h3>
+              <span class="chip" id="web-status"></span>
+            </header>
+            <div class="surface-body web-screen" id="web-screen"></div>
+          </article>
+          <article class="surface-panel">
+            <header>
+              <h3>有头 ERP 浏览器</h3>
+              <span class="chip" id="browser-status"></span>
+            </header>
+            <div class="surface-body erp-screen" id="erp-screen"></div>
+          </article>
+        </div>
+
+        <div class="section-heading">
+          <div>
+            <div class="section-kicker">非持久</div>
+            <h2>当前进程与界面临时状态</h2>
+          </div>
+          <p>中断后允许丢失；恢复不得依赖这些值。</p>
+        </div>
+        <div class="ephemeral" id="ephemeral-state"></div>
+      </section>
+
+      <section class="free-play" aria-labelledby="free-play-title">
+        <div class="section-heading">
+          <div>
+            <div class="section-kicker">自由试验</div>
+            <h2 id="free-play-title">任意顺序推动状态</h2>
+          </div>
+          <p>非法动作不会改写权威事实，而会说明拒绝原因。</p>
+        </div>
+        <div class="action-groups" id="action-groups"></div>
+      </section>
+
+      <section aria-labelledby="matrix-title">
+        <div class="section-heading">
+          <div>
+            <div class="section-kicker">候选决议</div>
+            <h2 id="matrix-title">异常承载与恢复矩阵</h2>
+          </div>
+          <p>供本轮人工评审；确认后才写回决策票。</p>
+        </div>
+        <div class="decision-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>情况</th>
+                <th>主承载面</th>
+                <th>保留事实</th>
+                <th>可继续动作</th>
+                <th>禁止 / 转人工边界</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Codex 版本不兼容或登录失效</td>
+                <td>CLI</td>
+                <td>现有个人配置；尚不创建报销任务</td>
+                <td>外部升级或登录，再运行 <code>baox init</code></td>
+                <td>不得进入配置问答、盘点材料或留下半个任务</td>
+              </tr>
+              <tr>
+                <td>初始化中断</td>
+                <td>CLI</td>
+                <td>上一个完整配置版本与凭据引用</td>
+                <td>重进 <code>baox init</code>，保留或重新修改</td>
+                <td>丢弃未确认草稿；不重复询问已保存的完整项</td>
+              </tr>
+              <tr>
+                <td>ERP 凭据验证失败</td>
+                <td>CLI + ERP 人工登录</td>
+                <td>失败事实、锁定快照、原任务身份</td>
+                <td>释放控制，人工登录，确认身份，隐藏重输后明确继续</td>
+                <td>持久凭据只自动提交一次；身份不符则停止</td>
+              </tr>
+              <tr>
+                <td>个人配置变更</td>
+                <td>CLI</td>
+                <td>新配置版本；既有任务继续绑定旧版本</td>
+                <td>新任务采用新版本；旧任务按原事实恢复</td>
+                <td>不得用新配置静默重解释既有任务或快照</td>
+              </tr>
+              <tr>
+                <td>运行中断</td>
+                <td>CLI</td>
+                <td>任务 ID、阶段、已接纳事实与用户回答</td>
+                <td><code>baox resume TASK_ID</code> 启动新受控运行</td>
+                <td>不在后台继续；不重复已接纳问题或复制任务</td>
+              </tr>
+              <tr>
+                <td>Web 已打开但任务状态变化</td>
+                <td>Web</td>
+                <td>服务器任务版本与已提交选择</td>
+                <td>冻结旧页，载入当前版本；必要时返回 CLI</td>
+                <td>拒绝旧版本提交，清除未提交的界面选择</td>
+              </tr>
+              <tr>
+                <td>ERP 自动化暂停</td>
+                <td>CLI；Web 只读镜像</td>
+                <td>原快照、已验证动作、暂停原因</td>
+                <td>固定恢复命令；先只读对账再恢复控制</td>
+                <td>暂停时无后台动作；不能从上一个写动作直接续写</td>
+              </tr>
+              <tr>
+                <td>ERP 写入结果未知</td>
+                <td>聚焦 Web 恢复页；CLI 保持生命周期</td>
+                <td>追加式动作尝试、目标身份、预期后置条件</td>
+                <td>只读对账、保持暂停、绑定确切结果、确认不存在或转人工</td>
+                <td>禁止盲目重放；证据不唯一时不能继续写入</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const RecoveryModel = (() => {
+        const TASK_ID = "BX-PROTOTYPE-028";
+        const MIN_CODEX = "1.2.0（原型值）";
+        const CURRENT_CODEX = "1.4.0（原型值）";
+
+        const clone = (value) => structuredClone(value);
+
+        const makeTask = (stage = "材料理解中", revision = 1) => ({
+          id: TASK_ID,
+          stage,
+          revision,
+          generation: 2,
+          profileRevision: 3,
+          inventory: "已原子固定 · 18 份报销材料",
+          acceptedFacts: ["材料盘点 generation 2", "范围外文件已按用户先前回答排除"],
+          projectAssignments: "0 / 12 条候选明细",
+          erpEntered: stage === "ERP 自动化中" || stage === "ERP 对账中",
+        });
+
+        const base = () => ({
+          environment: {
+            codexVersion: CURRENT_CODEX,
+            compatible: true,
+            loggedIn: true,
+            probe: "通过",
+            observedAt: "本次 init 已验证",
+          },
+          profile: {
+            revision: 3,
+            city: "上海市",
+            erpUrl: "https://erp.example.test",
+            erpUsername: "li.ming",
+            credentialRevision: 3,
+            credentialStatus: "系统凭据库内存在；尚未用于本次登录",
+          },
+          configDraft: null,
+          task: null,
+          process: {
+            command: "无",
+            status: "空闲",
+            resumeCommand: "无",
+            backgroundWork: "无",
+            continuationAuthorized: false,
+          },
+          web: {
+            open: false,
+            loadedRevision: null,
+            mode: "关闭",
+            transientSelection: 0,
+          },
+          erp: {
+            browser: "关闭",
+            control: "无",
+            automation: "未开始",
+            snapshot: "无",
+            reconciliation: "无需",
+            attempts: [],
+          },
+          audit: [],
+          primary: "CLI",
+          terminal: ["$ baox", "个人初始化已完成。", "运行 baox run <报销材料目录> 开始。"],
+          webMessage: {
+            title: "尚未打开报销任务",
+            detail: "本地 Web 不是配置或通用恢复入口。",
+            tone: "normal",
+          },
+          browserMessage: {
+            title: "ERP 浏览器尚未启动",
+            detail: "只有 ERP 就绪且获得明确授权后才会打开。",
+            tone: "normal",
+          },
+          last: {
+            accepted: true,
+            tone: "normal",
+            title: "场景已载入",
+            detail: "点击下一步，观察持久事实与三个界面的职责变化。",
+          },
+        });
+
+        const activeErpState = () => {
+          const state = base();
+          state.task = makeTask("ERP 自动化中", 12);
+          state.task.projectAssignments = "12 / 12 条候选明细";
+          state.task.erpEntered = true;
+          state.process = {
+            command: `baox resume ${TASK_ID}`,
+            status: "运行中",
+            resumeCommand: `baox resume ${TASK_ID}`,
+            backgroundWork: "仅当前前台进程",
+            continuationAuthorized: true,
+          };
+          state.web = {
+            open: true,
+            loadedRevision: 12,
+            mode: "ERP 状态只读",
+            transientSelection: 0,
+          };
+          state.erp = {
+            browser: "已打开任务专属页面",
+            control: "baox",
+            automation: "正在填写草稿",
+            snapshot: "ERP-SNAPSHOT-02（不可变）",
+            reconciliation: "无需",
+            attempts: [
+              {
+                id: "ATTEMPT-001",
+                action: "创建空白草稿",
+                target: "当前快照",
+                status: "已生效",
+                evidence: "页面身份与空白表单已核对",
+              },
+            ],
+          };
+          state.primary = "CLI";
+          state.terminal = [
+            `$ baox resume ${TASK_ID}`,
+            "✓ ERP 就绪快照已锁定",
+            "✓ 空白草稿已创建并验证",
+            "→ 正在填写候选明细 5 / 12",
+          ];
+          state.webMessage = {
+            title: "ERP 自动化进行中",
+            detail: "本页只镜像任务状态；控制权由 baox 独占。",
+            tone: "normal",
+          };
+          state.browserMessage = {
+            title: "baox 正在操作此页面",
+            detail: "页面身份和关键字段会在每个写动作前后核对。",
+            tone: "normal",
+          };
+          return state;
+        };
+
+        const scenario = (id) => {
+          const state = base();
+
+          if (id === "codex-version") {
+            state.environment.codexVersion = "0.9.0（原型值）";
+            state.environment.compatible = false;
+            state.environment.observedAt = "尚未通过本次检查";
+            state.terminal = ["$ baox run ~/报销/九月", "→ 快速复核系统 Codex 与个人配置"];
+          }
+
+          if (id === "codex-login") {
+            state.environment.loggedIn = false;
+            state.environment.observedAt = "登录已失效";
+            state.terminal = ["$ baox run ~/报销/九月", "→ 快速复核系统 Codex 与个人配置"];
+          }
+
+          if (id === "init-interrupted") {
+            state.terminal = ["$ baox init", "✓ 找到完整个人配置 v3", "? 修改设置？"];
+          }
+
+          if (id === "credential-failure") return activeErpState();
+
+          if (id === "config-change") {
+            state.task = makeTask("待用户处理", 7);
+            state.task.projectAssignments = "5 / 12 条候选明细";
+            state.process.resumeCommand = `baox resume ${TASK_ID}`;
+            state.web = {
+              open: true,
+              loadedRevision: 7,
+              mode: "项目归属可操作",
+              transientSelection: 0,
+            };
+            state.webMessage = {
+              title: "当前任务使用个人配置 v3",
+              detail: "配置变化不得追溯改变这个任务。",
+              tone: "normal",
+            };
+          }
+
+          if (id === "run-interrupted") {
+            state.task = makeTask("材料理解中", 4);
+            state.task.acceptedFacts.push("已接纳字段候选 31 项", "已确认的待确认项答案 1 项");
+            state.process = {
+              command: "baox run ~/报销/九月",
+              status: "运行中",
+              resumeCommand: `baox resume ${TASK_ID}`,
+              backgroundWork: "仅当前前台进程",
+              continuationAuthorized: false,
+            };
+            state.terminal = [
+              "$ baox run ~/报销/九月",
+              `✓ 已创建报销任务 ${TASK_ID}`,
+              "✓ 已接纳字段候选 31 项",
+              "→ 正在重建确定性视图",
+            ];
+          }
+
+          if (id === "web-stale") {
+            state.task = makeTask("待用户处理", 8);
+            state.task.projectAssignments = "4 / 12 条候选明细";
+            state.web = {
+              open: true,
+              loadedRevision: 8,
+              mode: "项目归属可操作",
+              transientSelection: 3,
+            };
+            state.process.resumeCommand = `baox resume ${TASK_ID}`;
+            state.primary = "本地 Web";
+            state.webMessage = {
+              title: "为 3 条费用事件选择项目",
+              detail: "其中 4 条已持久化归属；当前勾选仍只在页面内存中。",
+              tone: "normal",
+            };
+          }
+
+          if (id === "erp-paused" || id === "write-unknown") return activeErpState();
+
+          return state;
+        };
+
+        const addTerminal = (state, ...lines) => {
+          state.terminal.push(...lines);
+          state.terminal = state.terminal.slice(-12);
+        };
+
+        const accepted = (state, title, detail, primary = state.primary, tone = "success") => {
+          state.primary = primary;
+          state.last = { accepted: true, tone, title, detail };
+          return state;
+        };
+
+        const rejected = (source, title, detail, primary = source.primary) => {
+          const state = clone(source);
+          state.primary = primary;
+          state.last = { accepted: false, tone: "error", title, detail };
+          return state;
+        };
+
+        const environmentProblem = (state) => {
+          if (!state.environment.compatible) {
+            return `Codex ${state.environment.codexVersion} 低于最低兼容版本 ${MIN_CODEX}`;
+          }
+          if (!state.environment.loggedIn) return "Codex 登录已失效";
+          if (state.environment.probe !== "通过") return "Codex 最小真实调用失败";
+          return null;
+        };
+
+        const latestAttempt = (state) => state.erp.attempts.at(-1) ?? null;
+
+        const transition = (source, event) => {
+          const state = clone(source);
+          const action = typeof event === "string" ? event : event.type;
+
+          switch (action) {
+            case "START_RUN": {
+              if (state.task) {
+                return rejected(source, "未创建第二个任务", `已有 ${state.task.id}；请恢复该任务或另选材料目录。`);
+              }
+              const problem = environmentProblem(state);
+              if (problem) {
+                state.process = {
+                  command: "无",
+                  status: "检查失败后退出",
+                  resumeCommand: "无（尚无报销任务）",
+                  backgroundWork: "无",
+                  continuationAuthorized: false,
+                };
+                addTerminal(
+                  state,
+                  `✗ ${problem}`,
+                  "材料目录尚未盘点。",
+                  "报销任务：未创建",
+                  "下一步：修复后运行 baox init",
+                );
+                return accepted(
+                  state,
+                  "运行前检查已安全停止",
+                  "个人配置原样保留；没有报销任务可恢复，也没有后台工作。",
+                  "CLI",
+                  "warning",
+                );
+              }
+              state.task = makeTask("材料理解中", 1);
+              state.process = {
+                command: "baox run ~/报销/九月",
+                status: "运行中",
+                resumeCommand: `baox resume ${TASK_ID}`,
+                backgroundWork: "仅当前前台进程",
+                continuationAuthorized: false,
+              };
+              state.terminal = [
+                "$ baox run ~/报销/九月",
+                "✓ 运行前检查通过",
+                "✓ 材料盘点已在临时区完成",
+                `✓ 原子创建报销任务 ${TASK_ID}`,
+                "→ 正在理解材料",
+              ];
+              return accepted(state, "报销任务已原子创建", "此后中断将恢复同一任务，不会重新盘点成第二个任务。", "CLI");
+            }
+
+            case "UPGRADE_CODEX": {
+              if (state.process.status === "运行中") {
+                return rejected(source, "不能在 baox 运行中替换 Codex", "先让当前命令结束，再在 baox 外部升级。", "CLI");
+              }
+              state.environment.codexVersion = CURRENT_CODEX;
+              state.environment.compatible = true;
+              state.environment.observedAt = "外部升级后，待 baox init 复核";
+              addTerminal(state, "$ <在 baox 外部升级 Codex CLI>", `Codex 已升级到 ${CURRENT_CODEX}`);
+              return accepted(state, "系统 Codex 已升级", "这只是外部环境变化；运行 baox init 后才记录新的检查事实。", "CLI");
+            }
+
+            case "LOGIN_CODEX": {
+              if (state.process.status === "运行中") {
+                return rejected(source, "先结束当前 baox 命令", "Codex 登录由外部 codex login 完成。", "CLI");
+              }
+              state.environment.loggedIn = true;
+              state.environment.observedAt = "外部登录后，待 baox init 复核";
+              addTerminal(state, "$ codex login", "✓ Codex 登录完成（baox 不读取或保存登录凭据）");
+              return accepted(state, "Codex 已重新登录", "运行 baox init 执行版本、登录和最小真实调用的完整复核。", "CLI");
+            }
+
+            case "RECHECK_INIT": {
+              const problem = environmentProblem(state);
+              if (problem) {
+                addTerminal(state, "$ baox init", `✗ ${problem}`, "个人配置未读取或修改。", "退出码：1");
+                return accepted(state, "初始化前置检查未通过", "先修复外部环境；不会进入配置问答。", "CLI", "warning");
+              }
+              state.environment.observedAt = "刚刚由 baox init 完整验证";
+              state.process = {
+                command: "无",
+                status: "检查完成后退出",
+                resumeCommand: state.task ? `baox resume ${TASK_ID}` : "无",
+                backgroundWork: "无",
+                continuationAuthorized: false,
+              };
+              state.configDraft = null;
+              state.terminal = [
+                "$ baox init",
+                `✓ Codex ${state.environment.codexVersion} 版本兼容`,
+                "✓ 登录有效；最小真实调用通过",
+                `✓ 个人配置 v${state.profile.revision} 完整`,
+                "✓ 保留全部已有设置；没有重复提问",
+                "报销任务：未创建",
+              ];
+              return accepted(state, "个人环境重新验证完成", "完整配置直接复用；init 没有创建报销任务。", "CLI");
+            }
+
+            case "BEGIN_INIT_EDIT": {
+              if (state.process.status === "运行中") {
+                return rejected(source, "已有前台命令运行", "先暂停或结束当前命令，再运行 baox init。", "CLI");
+              }
+              state.configDraft = {
+                basedOnRevision: state.profile.revision,
+                city: state.profile.city,
+                erpUrl: state.profile.erpUrl,
+                erpUsername: state.profile.erpUsername,
+                changes: [],
+              };
+              state.process.command = "baox init";
+              state.process.status = "等待用户确认";
+              state.process.backgroundWork = "无";
+              state.terminal = [
+                "$ baox init",
+                "✓ Codex 与个人配置检查通过",
+                `✓ 当前完整配置 v${state.profile.revision}`,
+                "? 修改设置？",
+              ];
+              return accepted(state, "进入配置修改", "旧配置仍是唯一持久事实；所有更改先留在本次草稿。", "CLI", "normal");
+            }
+
+            case "STAGE_CONFIG": {
+              if (!state.configDraft) {
+                return rejected(source, "没有配置草稿", "先运行 baox init 并明确进入修改。", "CLI");
+              }
+              state.configDraft.city = "杭州市";
+              state.configDraft.erpUrl = "https://erp-new.example.test";
+              state.configDraft.changes = ["常驻城市", "ERP 入口"];
+              addTerminal(
+                state,
+                "  常驻城市    上海市 → 杭州市（已暂存）",
+                "  ERP 入口    https://erp-new.example.test（已暂存）",
+                "? 保存以上 2 项更改？",
+              );
+              return accepted(state, "两项设置已暂存", "尚未写入；中断或取消会完整保留 v3。", "CLI", "normal");
+            }
+
+            case "SAVE_CONFIG": {
+              if (!state.configDraft || state.configDraft.changes.length === 0) {
+                return rejected(source, "没有可保存的配置变化", "先暂存一项或多项变更。", "CLI");
+              }
+              const oldRevision = state.profile.revision;
+              state.profile.revision += 1;
+              state.profile.city = state.configDraft.city;
+              state.profile.erpUrl = state.configDraft.erpUrl;
+              state.configDraft = null;
+              state.process.command = "无";
+              state.process.status = "保存完成后退出";
+              state.audit.push(`个人配置 v${oldRevision} → v${state.profile.revision}`);
+              addTerminal(
+                state,
+                `✓ 已原子保存个人配置 v${state.profile.revision}`,
+                state.task
+                  ? `既有任务 ${state.task.id} 仍绑定个人配置 v${state.task.profileRevision}`
+                  : "下一份新任务将采用这个版本",
+              );
+              if (state.task && state.web.open) {
+                state.webMessage = {
+                  title: `个人配置已更新到 v${state.profile.revision}`,
+                  detail: `当前任务仍绑定 v${state.task.profileRevision}；本页业务解释不变。`,
+                  tone: "normal",
+                };
+              }
+              return accepted(state, "配置新版本已保存", "新设置只适用于之后创建的任务；既有任务与 ERP 快照不追溯变化。", "CLI");
+            }
+
+            case "INTERRUPT_INIT": {
+              if (state.process.command !== "baox init") {
+                return rejected(source, "当前没有正在进行的 init", "此动作不会改变配置。", "CLI");
+              }
+              const hadDraft = Boolean(state.configDraft?.changes.length);
+              state.configDraft = null;
+              state.process = {
+                command: "无",
+                status: "已由 Ctrl+C 结束",
+                resumeCommand: "baox init",
+                backgroundWork: "无",
+                continuationAuthorized: false,
+              };
+              addTerminal(
+                state,
+                "^C",
+                hadDraft ? "已丢弃本次未保存更改。" : "本次没有未保存更改。",
+                `个人配置仍为完整 v${state.profile.revision}`,
+                "报销任务：未创建",
+              );
+              return accepted(state, "初始化已安全中断", "未确认草稿不会残留；再次 init 从完整旧配置开始。", "CLI", "warning");
+            }
+
+            case "KEEP_CONFIG": {
+              if (state.process.command !== "baox init" || !state.configDraft) {
+                return rejected(source, "当前不在配置确认", "先重新进入 baox init。", "CLI");
+              }
+              if (state.configDraft.changes.length) {
+                return rejected(source, "不能静默丢弃暂存更改", "请选择保存，或明确中断 / 取消本次 init。", "CLI");
+              }
+              state.configDraft = null;
+              state.process.command = "无";
+              state.process.status = "检查完成后退出";
+              addTerminal(state, "✓ 保留全部已有设置", `配置版本仍为 v${state.profile.revision}`);
+              return accepted(state, "已有配置已直接复用", "密码值没有被读取，也没有重复询问任何完整项。", "CLI");
+            }
+
+            case "TRY_STORED_CREDENTIAL": {
+              if (!state.task || state.task.stage !== "ERP 自动化中" || state.erp.control !== "baox") {
+                return rejected(source, "不能提交持久凭据", "只有已授权的 ERP 自动化登录步骤可以尝试一次。", "CLI");
+              }
+              state.profile.credentialStatus = "本次自动验证失败；旧秘密值仍只在凭据库中";
+              state.erp.control = "用户";
+              state.erp.automation = "暂停，等待人工登录";
+              state.erp.browser = "人工登录页已打开";
+              state.process.status = "暂停，等待人工登录";
+              state.process.backgroundWork = "无";
+              addTerminal(
+                state,
+                "✗ 已保存的 ERP 凭据验证失败（本次不再自动提交）",
+                "✓ baox 已释放浏览器控制权",
+                "请在 ERP 浏览器中人工登录；baox 不会在后台继续。",
+              );
+              state.webMessage = {
+                title: "ERP 自动化已暂停",
+                detail: "请按 CLI 指引完成一次人工登录；本页没有“再试一次密码”。",
+                tone: "warn",
+              };
+              state.browserMessage = {
+                title: "请人工登录 ERP",
+                detail: "baox 已释放控制权。登录完成后回到 CLI 确认登录身份。",
+                tone: "warn",
+              };
+              return accepted(state, "持久凭据只尝试一次后停止", "避免账号锁定；任务阶段与 ERP 就绪快照均未改变。", "CLI + ERP 人工登录", "warning");
+            }
+
+            case "MANUAL_LOGIN_MATCHED": {
+              if (state.erp.automation !== "暂停，等待人工登录") {
+                return rejected(source, "当前不等待人工登录", "只有凭据验证失败后才接受这项确认。", "CLI");
+              }
+              state.profile.credentialStatus = "人工登录通过；身份 li.ming 已匹配，待隐藏重输";
+              state.erp.browser = "已人工登录；控制权仍属于用户";
+              state.process.status = "等待更新凭据";
+              addTerminal(
+                state,
+                "✓ 当前 ERP 登录身份：li.ming（与任务预期一致）",
+                "? 隐藏输入新的 ERP 密码以更新系统凭据库",
+              );
+              state.browserMessage = {
+                title: "人工登录成功",
+                detail: "保持页面不动；完成凭据更新并明确继续前，baox 不会取得控制。",
+                tone: "normal",
+              };
+              return accepted(state, "登录身份已匹配", "只确认用户名事实；密码不会进入任务、日志或模型上下文。", "CLI");
+            }
+
+            case "UPDATE_CREDENTIAL": {
+              if (!state.profile.credentialStatus.includes("待隐藏重输")) {
+                return rejected(source, "还不能更新凭据", "先完成人工登录并确认登录身份匹配。", "CLI");
+              }
+              state.profile.credentialRevision += 1;
+              state.profile.credentialStatus = `系统凭据库引用 v${state.profile.credentialRevision}；人工登录已验证`;
+              state.audit.push("ERP 密码经隐藏输入更新；秘密值未记录");
+              state.process.status = "等待明确继续";
+              addTerminal(
+                state,
+                "ERP 密码：••••••••（隐藏输入）",
+                `✓ 已更新系统凭据库引用 v${state.profile.credentialRevision}`,
+                "? 使用原 ERP 就绪快照继续自动化？",
+              );
+              return accepted(state, "新凭据已安全保存", "任务的业务语义和锁定快照没有被配置更新替换。", "CLI");
+            }
+
+            case "CONTINUE_AFTER_LOGIN": {
+              if (state.process.status !== "等待明确继续") {
+                return rejected(source, "缺少继续授权", "人工登录或凭据更新本身不等于允许 baox 继续操作。", "CLI");
+              }
+              state.process.status = "运行中";
+              state.process.backgroundWork = "仅当前前台进程";
+              state.process.continuationAuthorized = true;
+              state.erp.control = "baox";
+              state.erp.automation = "核对页面后继续填写";
+              state.erp.browser = "任务专属页面，页面身份已复核";
+              addTerminal(state, "✓ 已明确继续", "✓ ERP 页面身份与原快照一致", "→ 从下一个未执行动作继续");
+              state.webMessage = {
+                title: "ERP 自动化已恢复",
+                detail: "已执行的动作不会重放；继续使用原锁定快照。",
+                tone: "normal",
+              };
+              state.browserMessage = {
+                title: "baox 已重新取得控制权",
+                detail: "从下一个尚未执行的高层动作继续。",
+                tone: "normal",
+              };
+              return accepted(state, "ERP 自动化已恢复", "恢复建立在身份确认、明确授权和页面复核上。", "CLI");
+            }
+
+            case "INTERRUPT_RUN": {
+              if (!state.task || state.task.stage !== "材料理解中" || state.process.status !== "运行中") {
+                return rejected(source, "当前没有可中断的材料理解进程", "ERP 阶段请使用“暂停 ERP 自动化”。", "CLI");
+              }
+              state.process.command = "无";
+              state.process.status = "已暂停";
+              state.process.backgroundWork = "无";
+              state.process.resumeCommand = `baox resume ${state.task.id}`;
+              addTerminal(
+                state,
+                "^C",
+                `已暂停报销任务 ${state.task.id}`,
+                "已接纳事实保持不变；没有后台工作。",
+                `恢复：baox resume ${state.task.id}`,
+              );
+              return accepted(state, "前台运行已停止", "报销任务阶段不因进程退出另造新状态；恢复命令指向同一任务。", "CLI", "warning");
+            }
+
+            case "RESUME_TASK": {
+              if (!state.task) return rejected(source, "没有可恢复的报销任务", "运行 baox run 创建新任务。", "CLI");
+              if (state.task.erpEntered) {
+                return rejected(source, "ERP 阶段不能直接恢复写入", "使用 ERP 恢复路径，第一步必须只读对账。", "CLI");
+              }
+              if (state.task.stage !== "材料理解中") {
+                state.process.command = `baox resume ${state.task.id}`;
+                state.process.status = "运行中";
+                state.process.resumeCommand = `baox resume ${state.task.id}`;
+                state.process.backgroundWork = "仅当前前台进程";
+                state.process.continuationAuthorized = true;
+                addTerminal(
+                  state,
+                  `$ baox resume ${state.task.id}`,
+                  `✓ 载入任务 revision ${state.task.revision} 与个人配置快照 v${state.task.profileRevision}`,
+                  "✓ 已接纳事实和用户回答不重复询问",
+                );
+                if (state.task.stage === "待用户处理") {
+                  state.web.open = true;
+                  state.web.loadedRevision = state.task.revision;
+                  state.web.mode = "项目归属可操作";
+                  state.webMessage = {
+                    title: "既有任务已重新打开",
+                    detail: `任务继续使用个人配置 v${state.task.profileRevision}；全局 v${state.profile.revision} 不追溯生效。`,
+                    tone: "normal",
+                  };
+                  return accepted(
+                    state,
+                    "既有任务已按原事实重新进入",
+                    "当前业务阶段不需要重做材料理解；已重新打开同一任务的 Web。",
+                    "本地 Web",
+                  );
+                }
+                return accepted(state, "既有任务已按原事实重新进入", "当前业务阶段不需要重做材料理解。", "CLI");
+              }
+              state.process.command = `baox resume ${state.task.id}`;
+              state.process.status = "运行中";
+              state.process.backgroundWork = "仅当前前台进程";
+              state.process.continuationAuthorized = true;
+              addTerminal(
+                state,
+                `$ baox resume ${state.task.id}`,
+                `✓ 从 task revision ${state.task.revision} 重建当前视图`,
+                `✓ 复用 ${state.task.acceptedFacts.length} 组已接纳事实；不重复提问`,
+                "→ 启动新的受控 Codex 运行",
+              );
+              return accepted(state, "同一任务已恢复", "进程内步骤已丢弃；确定性持久事实决定从哪里继续。", "CLI");
+            }
+
+            case "FINISH_ANALYSIS": {
+              if (!state.task || state.task.stage !== "材料理解中") {
+                return rejected(source, "当前不在材料理解阶段", "不能用完成信号跳过当前业务阶段。", "CLI");
+              }
+              if (state.process.status !== "运行中") {
+                return rejected(source, "没有受控运行可以提交结果", "先用固定恢复命令启动新运行。", "CLI");
+              }
+              state.task.stage = "待用户处理";
+              state.task.revision += 1;
+              state.task.acceptedFacts.push("确定性校验通过；没有阻塞性待确认项");
+              state.web = {
+                open: true,
+                loadedRevision: state.task.revision,
+                mode: "项目归属可操作",
+                transientSelection: 0,
+              };
+              state.primary = "本地 Web";
+              addTerminal(state, "✓ 自动整理与确定性校验完成", `→ 已打开本地 Web：任务 ${state.task.id}`);
+              state.webMessage = {
+                title: "请选择项目归属",
+                detail: "已接纳的问题答案不会再次出现；详细证据默认折叠。",
+                tone: "normal",
+              };
+              return accepted(state, "本地 Web 已打开当前任务", "Web 只承载没有阻塞性待确认项后的任务选择。", "本地 Web");
+            }
+
+            case "APPLY_PROJECT": {
+              if (!state.task || !state.web.open || state.web.loadedRevision !== state.task.revision) {
+                return rejected(source, "拒绝旧页面提交", "先载入当前任务版本。", "本地 Web");
+              }
+              if (state.task.stage !== "待用户处理" || state.web.mode !== "项目归属可操作") {
+                return rejected(source, "当前页面不可修改项目归属", "任务必须处于可操作的任务选择阶段。", "本地 Web");
+              }
+              state.task.projectAssignments = "12 / 12 条候选明细";
+              state.task.revision += 1;
+              state.web.loadedRevision = state.task.revision;
+              state.web.transientSelection = 0;
+              state.webMessage = {
+                title: "项目归属已保存",
+                detail: "12 条候选明细均已归属；可以查看摘要并授权 ERP。",
+                tone: "normal",
+              };
+              return accepted(state, "项目归属已持久化", "服务器返回新 revision；当前页面同步前不会再次提交。", "本地 Web");
+            }
+
+            case "AUTHORIZE_ERP": {
+              if (!state.task || state.task.stage !== "待用户处理") {
+                return rejected(source, "当前任务不能启动 ERP", "必须先消除阻塞并完成任务选择。", "本地 Web");
+              }
+              if (!state.task.projectAssignments.startsWith("12 / 12")) {
+                return rejected(source, "项目归属尚未完成", "全部候选明细就绪后才能锁定 ERP 就绪快照。", "本地 Web");
+              }
+              if (state.web.loadedRevision !== state.task.revision) {
+                return rejected(source, "页面版本已过期", "载入当前任务版本后重新查看摘要。", "本地 Web");
+              }
+              state.task.stage = "ERP 自动化中";
+              state.task.erpEntered = true;
+              state.task.revision += 1;
+              state.erp = {
+                browser: "已打开任务专属页面",
+                control: "baox",
+                automation: "正在登录与创建草稿",
+                snapshot: `ERP-SNAPSHOT-${state.task.revision}（不可变）`,
+                reconciliation: "无需",
+                attempts: [],
+              };
+              state.process.status = "运行中";
+              state.process.backgroundWork = "仅当前前台进程";
+              state.process.continuationAuthorized = true;
+              state.web.loadedRevision = state.task.revision;
+              state.web.mode = "ERP 状态只读";
+              state.audit.push(`用户授权 ERP 就绪快照 ${state.erp.snapshot}`);
+              state.webMessage = {
+                title: "ERP 自动化已启动",
+                detail: "本页改为只读状态；不能修改已锁定快照。",
+                tone: "normal",
+              };
+              state.browserMessage = {
+                title: "baox 正在操作此页面",
+                detail: "用户与 baox 不共享控制权。",
+                tone: "normal",
+              };
+              return accepted(state, "已锁定 ERP 就绪快照", "授权只适用于这一不可变快照。", "CLI");
+            }
+
+            case "TASK_CHANGED": {
+              if (!state.task || !state.web.open) {
+                return rejected(source, "没有已打开的任务页面", "先打开本地 Web。", "本地 Web");
+              }
+              state.task.stage = "材料理解中";
+              state.task.revision += 1;
+              state.task.generation += 1;
+              state.task.acceptedFacts.push("材料变化已形成新的 generation");
+              state.web.mode = "旧版本冻结";
+              state.web.transientSelection = 0;
+              state.process.status = "需要 CLI 恢复";
+              state.process.resumeCommand = `baox resume ${state.task.id}`;
+              state.webMessage = {
+                title: "任务状态已经变化",
+                detail: `页面载入 revision ${state.web.loadedRevision}，服务器当前为 ${state.task.revision}；未提交勾选已清除。`,
+                tone: "stop",
+              };
+              return accepted(state, "旧 Web 已转为只读", "已提交选择仍在任务事实中；旧版本请求会被服务器拒绝。", "本地 Web", "warning");
+            }
+
+            case "TRY_STALE_MUTATION": {
+              if (!state.task || state.web.loadedRevision === state.task.revision) {
+                return rejected(source, "当前页面并未过期", "先模拟任务状态变化。", "本地 Web");
+              }
+              return rejected(
+                source,
+                "旧版本提交已拒绝",
+                `任务仍是 revision ${source.task.revision}；没有项目归属、授权或其他业务事实被改写。`,
+                "本地 Web",
+              );
+            }
+
+            case "REFRESH_WEB": {
+              if (!state.task || !state.web.open) {
+                return rejected(source, "没有可刷新的任务页", "先从 CLI 打开当前任务。", "本地 Web");
+              }
+              state.web.loadedRevision = state.task.revision;
+              state.web.transientSelection = 0;
+              if (state.task.stage === "待用户处理") {
+                state.web.mode = "项目归属可操作";
+                state.webMessage = {
+                  title: "已载入当前任务版本",
+                  detail: "已提交选择已恢复；未提交的旧页面勾选不会恢复。",
+                  tone: "normal",
+                };
+              } else {
+                state.web.mode = "当前阶段只读";
+                state.webMessage = {
+                  title: `当前阶段：${state.task.stage}`,
+                  detail: `请回到 CLI 运行 ${state.process.resumeCommand}；本页不能跳过当前阶段。`,
+                  tone: "warn",
+                };
+              }
+              return accepted(state, "Web 已载入服务器当前版本", "界面能力由当前报销任务阶段重新计算。", "本地 Web");
+            }
+
+            case "RESOLVE_TASK_CHANGE": {
+              if (!state.task || state.task.stage !== "材料理解中") {
+                return rejected(source, "当前没有待重建的任务变化", "无需重新完成材料理解。", "CLI");
+              }
+              state.process.command = `baox resume ${state.task.id}`;
+              state.process.status = "运行中";
+              state.task.stage = "待用户处理";
+              state.task.revision += 1;
+              state.task.acceptedFacts.push("新 generation 已确定性校验通过");
+              state.web.loadedRevision = state.task.revision;
+              state.web.mode = "项目归属可操作";
+              state.webMessage = {
+                title: "当前任务已重新就绪",
+                detail: "同一 URL 已载入新 revision；已提交项目归属按新 generation 校验后保留。",
+                tone: "normal",
+              };
+              addTerminal(state, `$ baox resume ${state.task.id}`, "✓ 从持久事实重建完成", "→ 已重新打开同一任务的本地 Web");
+              return accepted(state, "同一任务已重新打开", "无需新任务，也不会重复询问仍然有效的已接纳答案。", "本地 Web");
+            }
+
+            case "PAUSE_ERP": {
+              if (!state.task || state.task.stage !== "ERP 自动化中" || state.erp.control !== "baox") {
+                return rejected(source, "当前没有由 baox 控制的 ERP 自动化", "此动作不会改变任务。", "CLI");
+              }
+              state.erp.control = "无";
+              state.erp.automation = "已暂停";
+              state.process.command = "无";
+              state.process.status = "已暂停";
+              state.process.backgroundWork = "无";
+              state.process.continuationAuthorized = false;
+              state.process.resumeCommand = `baox resume ${state.task.id}`;
+              addTerminal(
+                state,
+                "^C",
+                "✓ ERP 自动化已暂停；没有后台动作",
+                `恢复：baox resume ${state.task.id}`,
+                "恢复后先只读对账，不从上一个页面动作直接续写。",
+              );
+              state.webMessage = {
+                title: "ERP 自动化已暂停",
+                detail: "本页只读；固定恢复命令在 CLI 中可见。",
+                tone: "warn",
+              };
+              state.browserMessage = {
+                title: "自动化控制权已释放",
+                detail: "不要假设页面内存状态就是持久事实。",
+                tone: "warn",
+              };
+              return accepted(state, "ERP 自动化已安全暂停", "报销任务阶段仍是 ERP 自动化中；暂停只是执行状态。", "CLI", "warning");
+            }
+
+            case "RESUME_ERP": {
+              if (!state.task || !state.task.erpEntered) {
+                return rejected(source, "任务尚未进入 ERP", "普通材料阶段使用任务恢复路径。", "CLI");
+              }
+              if (state.process.status !== "已暂停") {
+                return rejected(source, "当前不是可恢复的暂停状态", "只有已退出的前台进程需要固定恢复命令。", "CLI");
+              }
+              state.process.command = `baox resume ${state.task.id}`;
+              state.process.status = "仅只读对账";
+              state.process.backgroundWork = "仅当前前台进程";
+              state.process.continuationAuthorized = true;
+              state.task.stage = "ERP 对账中";
+              state.task.revision += 1;
+              state.erp.control = "无";
+              state.erp.automation = "恢复前只读核对";
+              state.erp.reconciliation = "正在核对页面身份、草稿与已记录动作";
+              state.web.loadedRevision = state.task.revision;
+              state.web.mode = "ERP 对账只读";
+              addTerminal(
+                state,
+                `$ baox resume ${state.task.id}`,
+                "✓ 恢复命令构成继续授权",
+                "→ 先执行 ERP 只读对账",
+              );
+              return accepted(state, "恢复已进入只读对账", "即使没有已知的未知写入，也必须先确认 ERP 外部状态。", "CLI");
+            }
+
+            case "RECONCILE_CLEAN": {
+              if (!state.task || state.task.stage !== "ERP 对账中") {
+                return rejected(source, "当前不在 ERP 对账阶段", "暂停恢复后才能执行这项只读核对。", "CLI");
+              }
+              if (latestAttempt(state)?.status === "结果未知") {
+                return rejected(source, "未知动作尚未得到结论", "不能用一般页面核对绕过动作专属对账。", "CLI");
+              }
+              state.task.stage = "ERP 自动化中";
+              state.task.revision += 1;
+              state.erp.control = "baox";
+              state.erp.automation = "已恢复，从下一个未执行动作继续";
+              state.erp.reconciliation = "已匹配原快照与已验证动作";
+              state.process.status = "运行中";
+              state.web.loadedRevision = state.task.revision;
+              state.web.mode = "ERP 状态只读";
+              addTerminal(state, "✓ 页面身份、表单与已生效动作全部匹配", "→ 从下一个未执行动作继续");
+              return accepted(state, "ERP 自动化已从安全边界恢复", "固定恢复命令已授权继续，不需要逐字段再次确认。", "CLI");
+            }
+
+            case "DISPATCH_SAVE": {
+              if (!state.task || state.task.stage !== "ERP 自动化中" || state.erp.control !== "baox") {
+                return rejected(source, "不能派发 ERP 保存", "任务必须处于 ERP 自动化中且控制权属于 baox。", "CLI");
+              }
+              const existing = latestAttempt(state);
+              if (existing && ["已派发，待验证", "结果未知"].includes(existing.status)) {
+                return rejected(source, "已有未决动作尝试", "先验证或对账，不能创建第二次同目标保存。", "CLI");
+              }
+              state.erp.attempts.push({
+                id: `ATTEMPT-${String(state.erp.attempts.length + 1).padStart(3, "0")}`,
+                action: "保存 ERP 草稿",
+                target: "当前报销任务的唯一草稿",
+                status: "已派发，待验证",
+                evidence: "写前意图与预期：单据编号 + 修改态",
+              });
+              addTerminal(state, "✓ 已先持久化草稿保存意图", "→ 已派发保存，等待动作专属后置条件");
+              return accepted(state, "ERP 动作尝试已追加记录", "点击成功或 HTTP 成功都还不算“已生效”。", "CLI", "normal");
+            }
+
+            case "LOSE_WRITE_RESPONSE": {
+              const attempt = latestAttempt(state);
+              if (!attempt || attempt.status !== "已派发，待验证") {
+                return rejected(source, "没有等待结果的写动作", "先派发一次 ERP 草稿保存。", "CLI");
+              }
+              attempt.status = "结果未知";
+              attempt.evidence = "保存已派发，但响应丢失；尚无唯一后置条件证据";
+              state.task.stage = "ERP 对账中";
+              state.task.revision += 1;
+              state.erp.control = "无";
+              state.erp.automation = "停止写入";
+              state.erp.reconciliation = "必须执行动作专属只读对账";
+              state.process.status = "仅只读对账";
+              state.process.backgroundWork = "无写入；当前进程只允许读";
+              state.web.loadedRevision = state.task.revision;
+              state.web.mode = "聚焦恢复页";
+              state.webMessage = {
+                title: "ERP 草稿保存结果未知",
+                detail: "只展示本次动作、目标和对账选择；所有继续写入按钮已移除。",
+                tone: "stop",
+              };
+              state.browserMessage = {
+                title: "自动化已释放控制权",
+                detail: "ERP 页面仅作为只读对账或人工核查证据。",
+                tone: "stop",
+              };
+              addTerminal(
+                state,
+                "! 草稿保存结果未知",
+                "✓ 已停止所有 ERP 写入并释放控制权",
+                "→ 已打开聚焦 Web 恢复页",
+              );
+              return accepted(state, "写入结果未知已进入硬门槛", "只有动作专属对账或明确转人工能结束这个状态。", "聚焦 Web 恢复页", "warning");
+            }
+
+            case "TRY_BLIND_REPLAY": {
+              const unknown = latestAttempt(state)?.status === "结果未知";
+              if (!unknown && state.task?.stage !== "ERP 对账中") {
+                return rejected(source, "当前没有可演示的重放风险", "此安全探针只用于暂停或结果未知状态。", source.primary);
+              }
+              return rejected(
+                source,
+                "已拒绝盲目重放",
+                unknown
+                  ? "原动作可能已经生效；继续写入会产生重复草稿。"
+                  : "恢复后的第一步必须是只读对账，不能从上一个写动作直接续写。",
+                unknown ? "聚焦 Web 恢复页" : "CLI",
+              );
+            }
+
+            case "RECONCILE_INCONCLUSIVE": {
+              const attempt = latestAttempt(state);
+              if (!attempt || attempt.status !== "结果未知") {
+                return rejected(source, "没有结果未知的动作", "先产生并记录一次结果未知。", "聚焦 Web 恢复页");
+              }
+              state.erp.reconciliation = "自动对账证据不足，无法唯一判断";
+              attempt.evidence = "列表存在相似金额，但没有确切单据编号与修改态组合";
+              state.webMessage = {
+                title: "自动对账无法给出唯一结论",
+                detail: "可保持暂停、绑定确切草稿并标记已生效、人工确认不存在并允许重试，或转人工。",
+                tone: "stop",
+              };
+              return accepted(state, "对账仍无唯一结论", "状态继续保持 ERP 对账中；“看起来像”不能放行。", "聚焦 Web 恢复页", "warning");
+            }
+
+            case "MARK_EXACT_APPLIED": {
+              const attempt = latestAttempt(state);
+              if (!attempt || attempt.status !== "结果未知") {
+                return rejected(source, "没有可绑定的未知动作", "此动作只处理结果未知。", "聚焦 Web 恢复页");
+              }
+              attempt.status = "已生效";
+              attempt.evidence = "人工选定确切单据 BX-ERP-240903；单据编号 + 修改态已核对";
+              state.task.stage = "ERP 草稿已交接";
+              state.task.revision += 1;
+              state.erp.control = "用户";
+              state.erp.automation = "永久结束";
+              state.erp.reconciliation = "已以确切单据证明生效";
+              state.process.command = "无";
+              state.process.status = "任务终态";
+              state.process.backgroundWork = "无";
+              state.web.loadedRevision = state.task.revision;
+              state.web.mode = "结果只读";
+              state.audit.push("人工绑定确切 ERP 单据 BX-ERP-240903，验证草稿已生效");
+              state.webMessage = {
+                title: "ERP 草稿已交接",
+                detail: "确切单据 BX-ERP-240903 已验证；baox 永不重新取得该任务写权限。",
+                tone: "normal",
+              };
+              state.browserMessage = {
+                title: "浏览器已交接给用户",
+                detail: "用户检查草稿并自行决定后续；baox 不会提交。",
+                tone: "normal",
+              };
+              return accepted(state, "未知结果已由确切证据消除", "任务进入 ERP 草稿已交接终态。", "本地 Web");
+            }
+
+            case "CONFIRM_NOT_EXISTS": {
+              const attempt = latestAttempt(state);
+              if (!attempt || attempt.status !== "结果未知") {
+                return rejected(source, "没有可判定为未生效的未知动作", "此动作只处理结果未知。", "聚焦 Web 恢复页");
+              }
+              attempt.status = "未生效";
+              attempt.evidence = "用户完成人工核查，明确确认不存在并承担潜在重复风险";
+              state.task.stage = "ERP 自动化中";
+              state.task.revision += 1;
+              state.erp.control = "baox";
+              state.erp.automation = "允许创建新的动作尝试；尚未自动重放";
+              state.erp.reconciliation = "人工确认未生效（已审计）";
+              state.process.status = "运行中";
+              state.process.backgroundWork = "仅当前前台进程";
+              state.web.loadedRevision = state.task.revision;
+              state.web.mode = "ERP 状态只读";
+              state.audit.push("用户确认草稿不存在并允许新尝试；潜在重复风险已记录");
+              return accepted(state, "已允许新的保存尝试", "旧尝试先被明确结束为未生效；系统没有静默重放。", "CLI", "warning");
+            }
+
+            case "HOLD_PAUSED": {
+              if (state.task?.stage !== "ERP 对账中") {
+                return rejected(source, "当前不需要保持对账暂停", "没有未决 ERP 外部结果。", source.primary);
+              }
+              state.process.status = "暂停，保留恢复事实";
+              state.process.command = "无";
+              state.process.backgroundWork = "无";
+              state.erp.control = "无";
+              return accepted(state, "任务保持暂停", "所有恢复事实继续保留；不会在后台对账或写入。", "聚焦 Web 恢复页", "warning");
+            }
+
+            case "TRANSFER_MANUAL": {
+              if (!state.task || !["ERP 自动化中", "ERP 对账中"].includes(state.task.stage)) {
+                return rejected(source, "当前任务不在 ERP 处置范围", "转人工只结束尚未完成的 ERP 工作。", source.primary);
+              }
+              state.task.stage = "已转人工";
+              state.task.revision += 1;
+              state.erp.control = "用户";
+              state.erp.automation = "永久结束";
+              state.process.command = "无";
+              state.process.status = "任务终态";
+              state.process.backgroundWork = "无";
+              state.web.loadedRevision = state.task.revision;
+              state.web.mode = "结果只读";
+              state.audit.push("用户明确转人工；baox 永久放弃后续 ERP 写入");
+              state.webMessage = {
+                title: "任务已转人工",
+                detail: "baox 永久释放该任务的 ERP 写权限；恢复命令只展示结果。",
+                tone: "warn",
+              };
+              state.browserMessage = {
+                title: "ERP 工作由用户接管",
+                detail: "尚未确定的外部结果由人工判断和处理。",
+                tone: "warn",
+              };
+              return accepted(state, "后续 ERP 工作已转人工", "这不是暂停；baox 不会再次自动恢复这个任务。", "本地 Web", "warning");
+            }
+
+            default:
+              return rejected(source, "未知原型动作", action);
+          }
+        };
+
+        const guardrails = (state) => {
+          const allowed = [];
+          const stopped = [];
+          const problem = environmentProblem(state);
+          const unknown = latestAttempt(state)?.status === "结果未知";
+
+          if (problem && !state.task) {
+            allowed.push("在 baox 外修复 Codex，再运行 baox init 完整复核");
+            stopped.push("盘点材料、创建报销任务或自动进入配置问答");
+          } else if (state.configDraft) {
+            allowed.push("统一保存草稿，或明确取消并保留旧配置");
+            stopped.push("把未确认草稿当成个人配置或任务事实");
+          } else if (!state.task) {
+            allowed.push("运行 baox init 复核，或用 baox run 创建一份新任务");
+            stopped.push("把 init 当成报销任务，或读取 ERP 密码值");
+          }
+
+          if (state.task?.stage === "材料理解中") {
+            allowed.push(`从 ${state.task.id} 的已接纳事实启动新受控运行`);
+            stopped.push("复制任务、重复已接纳问题或用未接纳的模型文本推进阶段");
+          }
+
+          if (state.web.open && state.web.loadedRevision !== state.task?.revision) {
+            allowed.push("载入服务器当前 revision；必要时回 CLI 恢复");
+            stopped.push("提交旧页面选择、旧摘要或旧 ERP 授权");
+          }
+
+          if (state.erp.automation === "暂停，等待人工登录") {
+            allowed.push("用户人工登录 ERP，再回 CLI 确认身份并隐藏重输密码");
+            stopped.push("第二次自动提交旧凭据，或在用户控制浏览器时后台继续");
+          }
+
+          if (state.process.status === "等待明确继续") {
+            allowed.push("明确允许 baox 使用原锁定快照继续");
+            stopped.push("把登录成功或更新密码等同于继续授权");
+          }
+
+          if (state.task?.stage === "ERP 对账中") {
+            allowed.push(unknown ? "执行动作专属只读对账，或明确转人工" : "完成恢复前只读对账");
+            stopped.push("任何新的 ERP 写入或从上一个浏览器动作直接续写");
+          }
+
+          if (unknown) {
+            allowed.push("保持暂停、绑定确切结果、确认不存在并担责，或转人工");
+            stopped.push("盲目重放上传 / 导入 / 保存，或以相似金额猜测结果");
+          }
+
+          if (state.task?.stage === "ERP 自动化中" && state.erp.control === "baox") {
+            allowed.push("只执行快照允许的下一个高层动作，并验证动作专属后置条件");
+            stopped.push("用户与 baox 共享 ERP 浏览器控制权，或修改锁定快照");
+          }
+
+          if (["ERP 草稿已交接", "已转人工"].includes(state.task?.stage)) {
+            allowed.push("查看终态结果和脱敏审计清单");
+            stopped.push("重新取得该任务的 ERP 写权限");
+          }
+
+          return {
+            allowed: [...new Set(allowed)].slice(0, 3),
+            stopped: [...new Set(stopped)].slice(0, 3),
+          };
+        };
+
+        return { scenario, transition, guardrails, constants: { TASK_ID, MIN_CODEX, CURRENT_CODEX } };
+      })();
+
+      const scenarios = [
+        {
+          id: "baseline",
+          title: "正常基线",
+          description: "先建立无异常时的边界：run 原子创建任务，Web 只做任务选择，授权后才进入 ERP。",
+          watch: "观察报销任务、Web revision 和 ERP 就绪快照分别何时成为持久事实。",
+          steps: [
+            ["运行 baox run", "START_RUN"],
+            ["完成自动整理", "FINISH_ANALYSIS"],
+            ["保存项目归属", "APPLY_PROJECT"],
+            ["授权创建 ERP 草稿", "AUTHORIZE_ERP"],
+          ],
+        },
+        {
+          id: "codex-version",
+          title: "Codex 版本过旧",
+          description: "run 前置检查发现系统 Codex 低于最低兼容版本。",
+          watch: "修复发生在 baox 外；再次 init 复用完整配置，不盘点材料，也不留下半个任务。",
+          steps: [
+            ["尝试运行", "START_RUN"],
+            ["外部升级 Codex", "UPGRADE_CODEX"],
+            ["重新运行 init", "RECHECK_INIT"],
+            ["再次运行", "START_RUN"],
+          ],
+        },
+        {
+          id: "codex-login",
+          title: "Codex 登录失效",
+          description: "已有完整个人配置，但系统 Codex 登录在 run 前已经失效。",
+          watch: "baox 不接管登录凭据；修复后只复核，不重复询问常驻城市或 ERP 设置。",
+          steps: [
+            ["尝试运行", "START_RUN"],
+            ["外部重新登录", "LOGIN_CODEX"],
+            ["重新运行 init", "RECHECK_INIT"],
+            ["再次运行", "START_RUN"],
+          ],
+        },
+        {
+          id: "init-interrupted",
+          title: "初始化中断",
+          description: "用户修改两项个人设置，但在最终保存前按下 Ctrl+C。",
+          watch: "配置草稿是临时状态；重新进入时，v3 仍完整且无需重复输入密码。",
+          steps: [
+            ["进入修改", "BEGIN_INIT_EDIT"],
+            ["暂存两项变化", "STAGE_CONFIG"],
+            ["Ctrl+C 中断", "INTERRUPT_INIT"],
+            ["重新进入 init", "BEGIN_INIT_EDIT"],
+            ["保留原配置", "KEEP_CONFIG"],
+          ],
+        },
+        {
+          id: "credential-failure",
+          title: "ERP 凭据失败",
+          description: "已保存的 ERP 密码在自动登录时验证失败。",
+          watch: "旧凭据只自动提交一次；人工登录、身份确认、更新凭据和继续授权是四个不同事实。",
+          steps: [
+            ["提交一次持久凭据", "TRY_STORED_CREDENTIAL"],
+            ["人工登录且身份匹配", "MANUAL_LOGIN_MATCHED"],
+            ["隐藏重输并更新", "UPDATE_CREDENTIAL"],
+            ["明确继续", "CONTINUE_AFTER_LOGIN"],
+          ],
+        },
+        {
+          id: "config-change",
+          title: "个人配置变更",
+          description: "已有任务仍在等待项目归属，此时用户通过 init 修改常驻城市和 ERP 入口。",
+          watch: "新配置只影响之后创建的任务；当前任务继续绑定创建时的 v3。",
+          steps: [
+            ["进入配置修改", "BEGIN_INIT_EDIT"],
+            ["暂存两项变化", "STAGE_CONFIG"],
+            ["保存配置 v4", "SAVE_CONFIG"],
+            ["重新进入既有任务", "RESUME_TASK"],
+          ],
+        },
+        {
+          id: "run-interrupted",
+          title: "运行中断",
+          description: "材料理解中已有字段候选和一个用户答案被确定性工作流接纳，随后进程退出。",
+          watch: "任务阶段不等于进程状态；恢复同一任务并复用已接纳事实，不复读问题。",
+          steps: [
+            ["Ctrl+C 中断", "INTERRUPT_RUN"],
+            ["尝试直接完成", "FINISH_ANALYSIS", "rejected"],
+            ["恢复同一任务", "RESUME_TASK"],
+            ["完成自动整理", "FINISH_ANALYSIS"],
+          ],
+        },
+        {
+          id: "web-stale",
+          title: "Web 页面过期",
+          description: "本地 Web 已打开并有未提交勾选，但任务在另一路径形成了新 generation。",
+          watch: "旧页面立即冻结；已提交事实保留，未提交界面选择清除，旧 revision 请求被拒绝。",
+          steps: [
+            ["任务状态变化", "TASK_CHANGED"],
+            ["尝试提交旧选择", "TRY_STALE_MUTATION", "rejected"],
+            ["载入当前版本", "REFRESH_WEB"],
+            ["CLI 重建并重开 Web", "RESOLVE_TASK_CHANGE"],
+          ],
+        },
+        {
+          id: "erp-paused",
+          title: "ERP 自动化暂停",
+          description: "baox 正在填写草稿时被用户暂停，任务尚无结果未知的写动作。",
+          watch: "暂停不是新的业务阶段；恢复命令构成继续授权，但第一步仍必须只读对账。",
+          steps: [
+            ["暂停 ERP 自动化", "PAUSE_ERP"],
+            ["尝试从写动作续上", "TRY_BLIND_REPLAY", "rejected"],
+            ["运行固定恢复命令", "RESUME_ERP"],
+            ["只读对账一致", "RECONCILE_CLEAN"],
+          ],
+        },
+        {
+          id: "write-unknown",
+          title: "ERP 写入结果未知",
+          description: "草稿保存已经派发，但响应丢失，无法确认 ERP 是否已产生草稿。",
+          watch: "动作尝试先持久化；结果未知后所有写入停下，聚焦 Web 只给四种原子处置。",
+          steps: [
+            ["派发草稿保存", "DISPATCH_SAVE"],
+            ["模拟响应丢失", "LOSE_WRITE_RESPONSE"],
+            ["尝试盲目重放", "TRY_BLIND_REPLAY", "rejected"],
+            ["自动对账无结论", "RECONCILE_INCONCLUSIVE"],
+          ],
+        },
+      ];
+
+      const actionGroups = [
+        {
+          title: "环境与初始化",
+          actions: [
+            ["运行 baox run", "START_RUN"],
+            ["外部升级 Codex", "UPGRADE_CODEX"],
+            ["外部登录 Codex", "LOGIN_CODEX"],
+            ["运行 baox init 复核", "RECHECK_INIT"],
+            ["进入配置修改", "BEGIN_INIT_EDIT"],
+            ["暂存配置变化", "STAGE_CONFIG"],
+            ["保存配置新版本", "SAVE_CONFIG"],
+            ["Ctrl+C 中断 init", "INTERRUPT_INIT"],
+            ["保留现有配置", "KEEP_CONFIG"],
+          ],
+        },
+        {
+          title: "任务与 Web",
+          actions: [
+            ["中断材料理解", "INTERRUPT_RUN"],
+            ["恢复同一任务", "RESUME_TASK"],
+            ["完成自动整理", "FINISH_ANALYSIS"],
+            ["保存项目归属", "APPLY_PROJECT"],
+            ["任务状态在别处变化", "TASK_CHANGED"],
+            ["尝试旧页面提交", "TRY_STALE_MUTATION"],
+            ["载入 Web 当前版本", "REFRESH_WEB"],
+            ["CLI 重建并重开 Web", "RESOLVE_TASK_CHANGE"],
+            ["授权创建 ERP 草稿", "AUTHORIZE_ERP"],
+          ],
+        },
+        {
+          title: "登录与暂停",
+          actions: [
+            ["提交一次持久凭据", "TRY_STORED_CREDENTIAL"],
+            ["人工登录身份匹配", "MANUAL_LOGIN_MATCHED"],
+            ["隐藏重输并更新", "UPDATE_CREDENTIAL"],
+            ["明确继续自动化", "CONTINUE_AFTER_LOGIN"],
+            ["暂停 ERP 自动化", "PAUSE_ERP"],
+            ["运行 ERP 恢复命令", "RESUME_ERP"],
+            ["只读对账一致", "RECONCILE_CLEAN"],
+          ],
+        },
+        {
+          title: "未知结果处置",
+          actions: [
+            ["派发草稿保存", "DISPATCH_SAVE"],
+            ["模拟写入响应丢失", "LOSE_WRITE_RESPONSE"],
+            ["尝试盲目重放", "TRY_BLIND_REPLAY"],
+            ["自动对账无结论", "RECONCILE_INCONCLUSIVE"],
+            ["绑定确切草稿", "MARK_EXACT_APPLIED"],
+            ["确认不存在并允许新尝试", "CONFIRM_NOT_EXISTS"],
+            ["保持暂停", "HOLD_PAUSED"],
+            ["转人工", "TRANSFER_MANUAL"],
+          ],
+        },
+      ];
+
+      let currentScenarioId = scenarios[0].id;
+      let currentState = RecoveryModel.scenario(currentScenarioId);
+      let guidedStep = 0;
+
+      const escapeHtml = (value) =>
+        String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+
+      const chipClass = (value) => {
+        if (/未知|失败|过期|停止|拒绝/.test(value)) return "chip stop";
+        if (/暂停|待|只读|尚未|关闭|无/.test(value)) return "chip warn";
+        return "chip good";
+      };
+
+      const factRows = (rows) =>
+        `<dl>${rows
+          .map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`)
+          .join("")}</dl>`;
+
+      const renderFacts = () => {
+        const profile = currentState.profile;
+        const task = currentState.task;
+        const attempt = currentState.erp.attempts.at(-1);
+
+        document.querySelector("#profile-facts").innerHTML = `
+          <header>
+            <h3>个人环境与配置</h3>
+            <span class="${chipClass(profile.credentialStatus)}">配置 v${profile.revision}</span>
+          </header>
+          ${factRows([
+            ["Codex 观测", `${currentState.environment.codexVersion} · ${currentState.environment.compatible ? "版本兼容" : "版本不兼容"}`],
+            ["Codex 登录", currentState.environment.loggedIn ? "有效" : "失效"],
+            ["最近复核", currentState.environment.observedAt],
+            ["常驻城市", profile.city],
+            ["ERP 入口", profile.erpUrl],
+            ["ERP 用户名", profile.erpUsername],
+            ["凭据事实", profile.credentialStatus],
+          ])}
+          <ul class="fact-list">
+            <li>密码值始终不进入此状态。</li>
+            <li>配置草稿只存在于当前 init 进程。</li>
+          </ul>
+        `;
+
+        document.querySelector("#task-facts").innerHTML = task
+          ? `
+            <header>
+              <h3>报销任务</h3>
+              <span class="${chipClass(task.stage)}">${escapeHtml(task.stage)}</span>
+            </header>
+            ${factRows([
+              ["任务 ID", task.id],
+              ["任务 revision", String(task.revision)],
+              ["材料 generation", String(task.generation)],
+              ["绑定配置", `v${task.profileRevision}`],
+              ["材料盘点", task.inventory],
+              ["项目归属", task.projectAssignments],
+            ])}
+            <ul class="fact-list">
+              ${task.acceptedFacts.map((fact) => `<li>${escapeHtml(fact)}</li>`).join("")}
+            </ul>
+          `
+          : `
+            <header>
+              <h3>报销任务</h3>
+              <span class="chip warn">未创建</span>
+            </header>
+            <p>运行前检查与临时材料盘点都不能留下半个报销任务。</p>
+          `;
+
+        document.querySelector("#erp-facts").innerHTML = `
+          <header>
+            <h3>ERP 快照与动作尝试</h3>
+            <span class="${chipClass(attempt?.status ?? currentState.erp.automation)}">${escapeHtml(
+              attempt?.status ?? currentState.erp.automation,
+            )}</span>
+          </header>
+          ${factRows([
+            ["就绪快照", currentState.erp.snapshot],
+            ["自动化控制权", currentState.erp.control],
+            ["执行状态", currentState.erp.automation],
+            ["对账", currentState.erp.reconciliation],
+            ["最近尝试", attempt ? `${attempt.id} · ${attempt.action}` : "无"],
+            ["动作结果", attempt?.status ?? "无"],
+          ])}
+          <ul class="fact-list">
+            ${currentState.erp.attempts.length
+              ? currentState.erp.attempts
+                  .map(
+                    (item) =>
+                      `<li>${escapeHtml(item.id)}：${escapeHtml(item.status)} · ${escapeHtml(item.evidence)}</li>`,
+                  )
+                  .join("")
+              : "<li>每个外部写动作都先追加意图，再派发。</li>"}
+          </ul>
+        `;
+
+        const rules = RecoveryModel.guardrails(currentState);
+        document.querySelector("#allowed-list").innerHTML = rules.allowed
+          .map((item) => `<li>${escapeHtml(item)}</li>`)
+          .join("");
+        document.querySelector("#stopped-list").innerHTML = rules.stopped
+          .map((item) => `<li>${escapeHtml(item)}</li>`)
+          .join("");
+      };
+
+      const webScreenFacts = () => {
+        const currentRevision = currentState.task?.revision ?? "无";
+        return `
+          <div class="screen-facts">
+            <div class="screen-fact"><small>页面 revision</small><strong>${escapeHtml(
+              currentState.web.loadedRevision ?? "无",
+            )}</strong></div>
+            <div class="screen-fact"><small>服务器 revision</small><strong>${escapeHtml(currentRevision)}</strong></div>
+            <div class="screen-fact"><small>已提交项目归属</small><strong>${escapeHtml(
+              currentState.task?.projectAssignments ?? "无任务",
+            )}</strong></div>
+            <div class="screen-fact"><small>未提交勾选</small><strong>${currentState.web.transientSelection} 条</strong></div>
+          </div>
+        `;
+      };
+
+      const renderSurfaces = () => {
+        document.querySelector("#terminal-output").textContent = currentState.terminal.join("\n");
+        document.querySelector("#cli-status").textContent = currentState.process.status;
+        document.querySelector("#web-status").textContent = currentState.web.mode;
+        document.querySelector("#web-status").className = chipClass(currentState.web.mode);
+        document.querySelector("#browser-status").textContent = currentState.erp.browser;
+        document.querySelector("#browser-status").className = chipClass(currentState.erp.browser);
+
+        const webTone = currentState.webMessage.tone === "stop" ? "stop" : currentState.webMessage.tone === "warn" ? "warn" : "";
+        document.querySelector("#web-screen").innerHTML = `
+          <div class="screen-message ${webTone}">
+            <h3>${escapeHtml(currentState.webMessage.title)}</h3>
+            <p>${escapeHtml(currentState.webMessage.detail)}</p>
+          </div>
+          ${webScreenFacts()}
+        `;
+
+        const browserTone =
+          currentState.browserMessage.tone === "stop" ? "stop" : currentState.browserMessage.tone === "warn" ? "warn" : "";
+        document.querySelector("#erp-screen").innerHTML = `
+          <div class="screen-message ${browserTone}">
+            <h3>${escapeHtml(currentState.browserMessage.title)}</h3>
+            <p>${escapeHtml(currentState.browserMessage.detail)}</p>
+          </div>
+          <div class="screen-facts">
+            <div class="screen-fact"><small>浏览器状态</small><strong>${escapeHtml(currentState.erp.browser)}</strong></div>
+            <div class="screen-fact"><small>控制权</small><strong>${escapeHtml(currentState.erp.control)}</strong></div>
+            <div class="screen-fact"><small>快照</small><strong>${escapeHtml(currentState.erp.snapshot)}</strong></div>
+            <div class="screen-fact"><small>对账</small><strong>${escapeHtml(currentState.erp.reconciliation)}</strong></div>
+          </div>
+        `;
+
+        const draft = currentState.configDraft;
+        const ephemeral = [
+          ["当前命令", currentState.process.command],
+          ["进程状态", currentState.process.status],
+          ["后台工作", currentState.process.backgroundWork],
+          ["配置草稿", draft ? `${draft.changes.length} 项暂存，基于 v${draft.basedOnRevision}` : "无"],
+          ["Web 页面", currentState.web.open ? `已打开 · ${currentState.web.mode}` : "关闭"],
+          ["未提交勾选", `${currentState.web.transientSelection} 条`],
+          ["继续授权", currentState.process.continuationAuthorized ? "本次前台进程已获得" : "未获得"],
+          ["固定恢复入口", currentState.process.resumeCommand],
+        ];
+        document.querySelector("#ephemeral-state").innerHTML = ephemeral
+          .map(
+            ([label, value]) => `
+              <div class="ephemeral-item">
+                <small>${escapeHtml(label)}</small>
+                <strong>${escapeHtml(value)}</strong>
+              </div>`,
+          )
+          .join("");
+      };
+
+      const renderStatus = () => {
+        document.querySelector("#primary-surface").textContent = currentState.primary;
+        document.querySelector("#last-title").textContent = currentState.last.title;
+        document.querySelector("#last-detail").textContent = currentState.last.detail;
+        document.querySelector("#last-change").className = `last-change ${currentState.last.tone}`;
+      };
+
+      const currentScenario = () => scenarios.find((item) => item.id === currentScenarioId);
+
+      const renderWalkthrough = () => {
+        const selected = currentScenario();
+        document.querySelector("#scenario-tabs").innerHTML = scenarios
+          .map(
+            (item) => `
+              <button
+                class="scenario-tab"
+                type="button"
+                role="tab"
+                aria-selected="${item.id === currentScenarioId}"
+                data-scenario="${escapeHtml(item.id)}"
+              >${escapeHtml(item.title)}</button>`,
+          )
+          .join("");
+        document.querySelector("#walkthrough-title").textContent = selected.title;
+        document.querySelector("#walkthrough-description").textContent = selected.description;
+        document.querySelector("#walkthrough-watch").textContent = `观察重点：${selected.watch}`;
+        document.querySelector("#walkthrough-steps").innerHTML = selected.steps
+          .map(([label], index) => {
+            const status = index < guidedStep ? "complete" : index === guidedStep ? "current" : "";
+            return `
+              <button
+                class="step-button ${status}"
+                type="button"
+                data-guided-index="${index}"
+                data-step-number="${index + 1}"
+                ${index !== guidedStep ? "disabled" : ""}
+              >${escapeHtml(index < guidedStep ? `已完成：${label}` : label)}</button>`;
+          })
+          .join("");
+      };
+
+      const renderActions = () => {
+        document.querySelector("#action-groups").innerHTML = actionGroups
+          .map(
+            (group) => `
+              <section class="action-group">
+                <h3>${escapeHtml(group.title)}</h3>
+                <div class="action-buttons">
+                  ${group.actions
+                    .map(
+                      ([label, action]) => `
+                        <button class="action-button" type="button" data-free-action="${escapeHtml(action)}">
+                          ${escapeHtml(label)}
+                        </button>`,
+                    )
+                    .join("")}
+                </div>
+              </section>`,
+          )
+          .join("");
+      };
+
+      const render = () => {
+        renderWalkthrough();
+        renderStatus();
+        renderFacts();
+        renderSurfaces();
+      };
+
+      const dispatch = (action) => {
+        currentState = RecoveryModel.transition(currentState, action);
+        render();
+        return currentState.last.accepted;
+      };
+
+      const selectScenario = (id) => {
+        if (!scenarios.some((item) => item.id === id)) return false;
+        currentScenarioId = id;
+        currentState = RecoveryModel.scenario(id);
+        guidedStep = 0;
+        render();
+        return true;
+      };
+
+      const runGuidedStep = () => {
+        const step = currentScenario().steps[guidedStep];
+        if (!step) return false;
+        const [, action, expected = "accepted"] = step;
+        const accepted = dispatch(action);
+        if ((expected === "accepted" && accepted) || (expected === "rejected" && !accepted)) {
+          guidedStep += 1;
+          render();
+          return true;
+        }
+        return false;
+      };
+
+      document.addEventListener("click", (event) => {
+        const scenarioButton = event.target.closest("[data-scenario]");
+        if (scenarioButton) {
+          selectScenario(scenarioButton.dataset.scenario);
+          return;
+        }
+
+        const guidedButton = event.target.closest("[data-guided-index]");
+        if (guidedButton && Number(guidedButton.dataset.guidedIndex) === guidedStep) {
+          runGuidedStep();
+          return;
+        }
+
+        const actionButton = event.target.closest("[data-free-action]");
+        if (actionButton) dispatch(actionButton.dataset.freeAction);
+      });
+
+      renderActions();
+      render();
+
+      window.__recoveryPrototype = {
+        scenarios: scenarios.map(({ id, title, steps }) => ({ id, title, stepCount: steps.length })),
+        selectScenario,
+        runGuidedStep,
+        dispatch,
+        getState: () => structuredClone(currentState),
+        getGuidedStep: () => guidedStep,
+      };
+    </script>
+  </body>
+</html>
