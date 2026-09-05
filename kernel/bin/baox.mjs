@@ -6,6 +6,8 @@ import { paths, ensureDir } from '../src/paths.mjs';
 import * as chrome from '../src/chrome.mjs';
 import { probeIdentity, ERP_ORIGIN } from '../src/probe.mjs';
 import { serveSelection } from '../src/serve.mjs';
+import { takeInventory, intakeOpenItems } from '../src/inventory.mjs';
+import { findLiveTaskForSource, createTask, recordInventory, sourceKeyOf, taskDir } from '../src/workspace.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -62,6 +64,40 @@ try {
       out({ command: 'probe', ...r }, r.status === 'matched' ? OK : BLOCKED);
     }
 
+    case 'intake': {
+      const dir = arg('dir');
+      if (!dir) out({ command: 'intake', error: '缺少 --dir <材料目录>' }, ERR);
+
+      const inventory = await takeInventory(dir);
+      const key = sourceKeyOf(dir);
+      // 同一个目录再次运行时，恢复原任务而不是新建第二个（契约「重复运行与历史材料」）。
+      const existing = findLiveTaskForSource(key);
+      const task = existing ?? createTask(dir);
+      const rec = recordInventory(task, inventory);
+
+      const items = intakeOpenItems(inventory);
+      const blocking = items.filter((i) => i.blocking);
+      const byDisposition = {};
+      for (const m of inventory.materials) byDisposition[m.disposition] = (byDisposition[m.disposition] ?? 0) + 1;
+
+      out({
+        command: 'intake',
+        task: { taskId: rec.task.taskId, createdAt: rec.task.createdAt, status: rec.task.status,
+          sourceLabel: rec.task.sourceLabel, resumed: !!existing, workspace: taskDir(rec.task) },
+        inventory: { versionId: inventory.versionId, takenAt: inventory.takenAt,
+          isNewVersion: rec.isNewVersion, supersededVersionId: rec.supersededVersionId,
+          versionCount: rec.versionCount,
+          materialCount: inventory.materials.length, ignoredCount: inventory.ignored.length,
+          byDisposition },
+        materials: inventory.materials.map(({ materialId, relPath, format, size, disposition, reason, contentHash }) =>
+          ({ materialId, relPath, format, size, disposition, reason, contentHash: contentHash?.slice(0, 16) ?? null })),
+        ignored: inventory.ignored,
+        openItems: items,
+        // 待确认项一条未清就不能进入下一步；这是契约的放行条件，不是建议。
+        readyForNextStep: blocking.length === 0,
+      }, blocking.length === 0 ? OK : BLOCKED);
+    }
+
     case 'select': {
       const specPath = arg('spec');
       if (!specPath) out({ command: 'select', error: '缺少 --spec <file.json>' }, ERR);
@@ -74,7 +110,7 @@ try {
     }
 
     default:
-      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'chrome-up', 'probe', 'select'] }, ERR);
+      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'intake', 'select'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);
