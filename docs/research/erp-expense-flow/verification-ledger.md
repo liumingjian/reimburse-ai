@@ -50,7 +50,7 @@
 
 | V-25 | 内核运行时与离线安装 | 已验证 | macOS 26.6.2 + Node 26.4.0：内核零依赖，`doctor`/`install-runtime` 从 Skill 目录跑通，内核拷入 `~/Library/Application Support/baox/runtime/` 后可独立运行 | 在没有 Node、没有 Homebrew、没有管理员权限的公司电脑上验证引导安装路径 |
 | V-26 | 专用 profile 的调试 Chrome | 已验证 | 用户日常 Chrome 运行中，另起 `--user-data-dir` 独立实例成功；调试端口仅 LISTEN 在 `127.0.0.1:9333`；CDP `Runtime.evaluate` 对真实 ERP 页面只读求值成功 | 验证专用 profile 里完成 ERP 登录后登录态的持久性与失效表现 |
-| V-27 | ERP 登录身份只读探测 | 已验证 | 在真实 ERP 上跑通三条路径：`matched`（显示名「刘明建」或账号 `luo.liu` 任一命中，退出码 0）、`mismatched`（退出码 2 硬阻塞）、`not_logged_in`（退出码 2）。身份取自 `span.kd-mainconsole-usernametext` + localStorage `k3cloudloginInfo.user`；输出已去掉携带会话态的 URL query | 验证登录态失效（超时/被踢）时探针是否稳定落到非 `matched`；验证在单据页而非主控制台时的表现；用第二个员工账号验证 `mismatched` 的真实场景 |
+| V-27 | ERP 登录身份只读探测 | 已验证 | 在真实 ERP 上跑通三条路径：`matched`（显示名「刘明建」或账号 `luo.liu` 任一命中，退出码 0）、`mismatched`（退出码 2 硬阻塞）、`not_logged_in`（退出码 2）。身份取自 `span.kd-mainconsole-usernametext` + localStorage `k3cloudloginInfo.user`；输出已去掉携带会话态的 URL query | 验证在单据页而非主控制台时的表现（登录态失效一路已由 V-42 关闭）；用第二个员工账号验证 `mismatched` 的真实场景 |
 | V-28 | 本地选择界面生命周期 | 已验证 | 临时端口、前台阻塞、提交即返回并退出；提交后端口无残留监听、进程已退出；缺 nonce 的请求返回 404 | 用真实任务选择数据验证布局与可用性；验证超时重跑 |
 | V-29 | 个人 Skill 的 hooks 拦截 | 已验证 | 在真实交互式会话中验证：`~/.claude/skills/` 下的非插件个人 Skill，其 frontmatter 声明的 `PreToolUse` hook 确实注册并生效。对照组命令正常执行；命中拦截规则的命令被硬拒，命令未执行，模型侧只收到 `PreToolUse:Bash hook error` 且拿不到任何输出，没有"确认继续"的口子 | 确认 hook 的作用域随 Skill 加载而生效、会话内对所有 Bash 调用起作用；为 baox 编写实际的拦截规则并验证其不误伤正常命令 |
 
@@ -76,6 +76,8 @@
 | V-40 | 项目归属的任务选择 Web | 已验证 | 常驻城市、报销事由和每条明细的项目归属只能通过本地任务选择页的提交动作给出。实测：没有选择时整批明细的 `category`/`project` 全为 `null` 并阻塞在 `task_selection_required`；漏填一行项目的提交被内核打回（退出码 2），工作区不留记录；提交里出现不存在的明细同样打回；完整提交后 3 条明细补齐类别、编码、项目和事由，退出码 0。选择绑定候选明细自身的指纹而非盘点版本——移除一张票后明细从 3 行变 2 行，选择立即失效（`task_selection_stale`），项目回到 `null`。项目号如实记为 `user_input_unverified`。输出中不含完整发票号码和源目录绝对路径。回归测试 `kernel/test/selection.test.mjs` 9 项通过，全套 41 项通过 | 任务选择页在真实浏览器中的可用性（当前用 curl 驱动提交验证协议，未做人工点击）；ERP 项目目录的只读查询不存在，项目号无法校验是否真实存在；批量应用同一项目的可追溯留存格式尚未定稿 |
 
 | V-41 | 跨任务重复检查与任务作废 | 已验证 | 两个目录放同一张曹操发票：先整理的任务通过（退出码 0），后一个在 `classify`、`history`、`events` 上一律阻塞于 `duplicate_across_tasks`（退出码 2），命中项指出另一个任务的 taskId、材料目录名和文件名。发票身份摘要是**派生**的：把发票挪出前一个目录再分流，占用当即解除（回归测试覆盖）。另一个任务作废后（`abandon-task`，状态变更、工作区一份不动）重复消失并放行；把该任务伪造成动过 ERP（`erpWriteState: unknown`）后作废被拒，理由是占用只能靠 ERP 只读对账解除。输出恒带非阻塞的 `history_scope_local` 声明比对范围，且不含完整发票号码。回归测试 `kernel/test/history.test.mjs` 6 项通过，全套 47 项通过 | `abandon-task` 的误用防护（当前只靠 Skill 先问用户）；同一发票被三个以上任务持有时的呈现；ERP 外部既有记录查询仍未实现，因此“检查通过”不等于该发票未被报销过 |
+
+| V-42 | 登录态失效与登录页的区分 | 已验证 | 2026-09-05 会话自然过期后就地取证：ERP **登录页和主控制台是同一个 URL**（`html5/index.aspx`），且登录页上 `localStorage.k3cloudloginInfo.user` 仍留着上次登录的账号 `luo.liu`——这两点各自都足以让"按 URL 判断"和"按 localStorage 判断"给出错误的已登录结论。可用的区分信号是 DOM：登录页有 1 个**可见**的 `input[type=password]` 加一个可见的登录按钮，主控制台是 4 个**隐藏**的密码框（改密弹窗）且有 `span.kd-mainconsole-usernametext`。据此把探针从两档拆成三档：看得见登录表单 -> `not_logged_in`（去登录），两样都读不出 -> `unknown`（要人看）。真实登录页上实测退出码 2、`status: not_logged_in`，提示直接指向"请你本人在这个窗口里登录"。判定逻辑已抽成纯函数 `identityFromObservation` 并钉死在 `kernel/test/probe.test.mjs` 6 项，含"期望账号恰好等于 localStorage 残留账号时仍不放行"，全套 54 项通过 | 被管理员踢下线、以及登录态在一次运行**中途**失效（探测时 matched、写入时已掉线）的表现仍未验证；登录页 DOM 若改版，`unknown` 档是兜底，但没有版本绑定 |
 
 ## 合并规则
 
