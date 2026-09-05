@@ -99,9 +99,18 @@ export async function connect(wsUrl, { timeout = 10000 } = {}) {
   let seq = 0;
   let closed = null;
 
+  // method -> 一组回调。事件是没有 id 的那些包。
+  const listeners = new Map();
+
   ws.addEventListener('message', (ev) => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.id === undefined) {
+      for (const fn of listeners.get(msg.method) || []) {
+        try { fn(msg.params || {}, msg.sessionId || null); } catch {}
+      }
+      return;
+    }
     const p = pending.get(msg.id);
     if (!p) return;
     pending.delete(msg.id);
@@ -121,7 +130,9 @@ export async function connect(wsUrl, { timeout = 10000 } = {}) {
     setTimeout(() => rej(new Error('CDP WebSocket 连接超时')), timeout);
   });
 
-  const send = (method, params = {}, { timeout: t = timeout } = {}) => {
+  // sessionId 是给附加上去的子目标用的（跨域 iframe 是独立目标，只能这样说话）。
+  // 用 flatten 模式，回包还是走同一条连接、还是按 id 认领，所以这里只多带一个字段。
+  const send = (method, params = {}, { timeout: t = timeout, sessionId = null } = {}) => {
     if (closed) return Promise.reject(closed);
     const id = ++seq;
     const p = new Promise((resolve, reject) => {
@@ -130,11 +141,17 @@ export async function connect(wsUrl, { timeout = 10000 } = {}) {
         if (pending.delete(id)) reject(new Error(`CDP ${method} 超时`));
       }, t);
     });
-    ws.send(JSON.stringify({ id, method, params }));
+    ws.send(JSON.stringify(sessionId ? { id, method, params, sessionId } : { id, method, params }));
     return p;
   };
 
-  return { send, close: () => { try { ws.close(); } catch {} } };
+  const on = (method, fn) => {
+    if (!listeners.has(method)) listeners.set(method, new Set());
+    listeners.get(method).add(fn);
+    return () => listeners.get(method).delete(fn);
+  };
+
+  return { send, on, close: () => { try { ws.close(); } catch {} } };
 }
 
 const unwrap = (result) => {
@@ -148,6 +165,59 @@ const unwrap = (result) => {
 export async function evalIn(session, expression, { timeout = 10000 } = {}) {
   return unwrap(await session.send('Runtime.evaluate',
     { expression, returnByValue: true, awaitPromise: true }, { timeout }));
+}
+
+/**
+ * 页面里的全部框架。金蝶的对话框（发票无忧助手就是一例）整个活在 iframe 里：
+ * 主文档只看得见一个标题，正文一个字都读不到——不进框架就等于没打开。
+ */
+export async function frames(session) {
+  await session.send('Page.enable');
+  const { frameTree } = await session.send('Page.getFrameTree');
+  const out = [];
+  const walk = (node) => {
+    out.push({ id: node.frame.id, url: node.frame.url || '', name: node.frame.name || null });
+    for (const c of node.childFrames || []) walk(c);
+  };
+  walk(frameTree);
+  return out;
+}
+
+/**
+ * 在指定框架里求值。走隔离世界：读得到 DOM，碰不到页面自己的 JS 变量——
+ * 只读探测本来也只需要 DOM。
+ *
+ * 注意框架内的 getBoundingClientRect 是**框架自己的**视口坐标，
+ * 而 Input.* 事件走的是顶层视口坐标。要点击框架里的东西，
+ * 得把框架元素在顶层里的位置加回去（见 frameOffset）。
+ */
+export async function evalInFrame(session, frameId, expression, { timeout = 10000 } = {}) {
+  const { executionContextId } = await session.send('Page.createIsolatedWorld',
+    { frameId, grantUniveralAccess: true });
+  return unwrap(await session.send('Runtime.evaluate',
+    { expression, contextId: executionContextId, returnByValue: true, awaitPromise: true }, { timeout }));
+}
+
+/**
+ * 附到一个跨域 iframe 目标上，拿一个"看起来和普通会话一样"的子会话。
+ * 发票无忧助手（piaozone.com）就是这种目标：它不在主页面的框架树里，
+ * Page.getFrameTree 看不见它，只有 Target.getTargets 里才有。
+ */
+export async function attachTarget(session, targetId) {
+  const { sessionId } = await session.send('Target.attachToTarget', { targetId, flatten: true });
+  return {
+    sessionId,
+    send: (method, params = {}, opts = {}) => session.send(method, params, { ...opts, sessionId }),
+    // 只把属于这个子目标的事件转给调用方。
+    on: (method, fn) => session.on(method, (params, sid) => { if (sid === sessionId) fn(params, sid); }),
+    close: () => {},
+  };
+}
+
+/** 当前浏览器里的所有目标（含跨域 iframe）。 */
+export async function targetList(session) {
+  const { targetInfos } = await session.send('Target.getTargets');
+  return targetInfos;
 }
 
 /** 一次性求值：开一条连接、问一句、关掉。只读探测都走这个。 */
