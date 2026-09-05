@@ -19,7 +19,8 @@ import { findLiveTaskForSource, createTask, recordInventory, recordClassificatio
   sourceKeyOf, taskDir , recordCatalogVerification, loadCatalogVerification } from '../src/workspace.mjs';
 import { crossTaskDuplicates, historyOpenItems, holdsInvoices } from '../src/history.mjs';
 import { authorizedPage, verifyExpenseItems, verifyProject, PROJECT_FORM } from '../src/erpcatalog.mjs';
-import { openSession, formTabs, sectionAnchors, showSection, readGrid } from '../src/erpform.mjs';
+import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerField,
+  writeHeader, writeCell, selectOption, cellTarget, cellMatches, leaveEdit } from '../src/erpform.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -31,6 +32,8 @@ function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`);
   return i > -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : fallback;
 }
+
+const has = (name) => process.argv.includes(`--${name}`);
 
 const yuan = (c) => (c === null || c === undefined ? null : (c / 100).toFixed(2));
 const maskOf = (classification, materialId) =>
@@ -165,6 +168,139 @@ try {
           receipts,
           note: '只读回读，没有点击任何值控件、没有写入、没有保存',
         }, OK);
+      } finally {
+        session.close();
+      }
+    }
+
+    case 'erp-fill': {
+      // 写入通道的排练：按 save-contract 的稳定顺序往**新增**单上填字段，逐项回读，
+      // **不保存**（这个分支里一行保存代码都没有）。不消耗发票，可以反复跑。
+      //
+      // 值一律从命令行显式给出。内核不从任何地方推断金额或事由 ——
+      // 排练用的是什么值，必须是调用方写下来的。
+      if (!has('rehearse')) {
+        out({ command: 'erp-fill', wrote: false,
+          note: '这条命令会往 ERP 页面真实写入字段，必须显式带 --rehearse；它仍然不会保存' }, BLOCKED);
+      }
+      const gate = await authorizedPage({ expected: arg('expect') });
+      if (!gate.ok) {
+        out({ command: 'erp-fill', wrote: false, identity: gate.probe,
+          note: '身份没核对通过，不碰 ERP 页面' }, BLOCKED);
+      }
+      const session = await openSession(gate.wsUrl);
+      try {
+        const tabs = await formTabs(session);
+        if (tabs.length === 0) {
+          out({ command: 'erp-fill', wrote: false, formOpen: false,
+            note: '页面上没有打开的费用报销单，无处可填' }, BLOCKED);
+        }
+        // 只往"新增"单上写。页签是"修改"意味着这是一张**已经存在的**单据，
+        // 改它就越过了 v1 的权限上限（上限是保存草稿，不含修改既有单据）。
+        if (tabs[0].mode !== 'new') {
+          out({ command: 'erp-fill', wrote: false, formMode: tabs[0].mode, formTabs: tabs.map((t) => t.label),
+            note: '当前页签是"修改"，说明这是一张已存在的单据；排练只在"新增"单上做' }, BLOCKED);
+        }
+        const shown = await showSection(session, '明细信息');
+        if (!shown.ok) {
+          out({ command: 'erp-fill', wrote: false, note: shown.reason, anchors: shown.anchors }, BLOCKED);
+        }
+
+        const row = Number(arg('row', '0'));
+        // F7 列按编码写，回读出来是名称，所以预期回读成什么必须另外有出处：
+        // 费用项目的名称取自只读主数据核对（同一份 ERP 事实），项目取项目号后缀。
+        // 没有出处就不写 —— 写完只能"看着像对的"，那不算回读通过。
+        const expenseCode = arg('expense');
+        let catalog = null;
+        if (expenseCode) {
+          const verified = await verifyExpenseItems(gate.wsUrl);
+          catalog = new Map((verified.checked ?? []).map((c) => [c.code, c]));
+          const item = catalog.get(expenseCode);
+          if (!item || item.verdict !== 'confirmed') {
+            out({ command: 'erp-fill', wrote: false, expenseItem: item ?? null,
+              note: `费用项目 ${expenseCode} 没有通过 ERP 只读核对，不拿它去写单据` }, BLOCKED);
+          }
+        }
+        const expectOf = (col, value) => {
+          if (col === '项目') return { mode: 'endsWith', value: `-${value}` };
+          if (col === '费用项目') return { mode: 'equals', value: catalog.get(value).erpName };
+          return null;
+        };
+        // save-contract 的稳定顺序：事由 -> 项目 -> 费用项目 -> 发票类型 -> 先费用金额后税额。
+        // 发票类型必须排在金额之前：改发票类型会清空已填的税额。
+        const plan = [
+          ['header', 'FCAUSA', arg('cause')],
+          ['cell', '项目', arg('project')],
+          ['cell', '费用项目', arg('expense')],
+          ['option', '发票类型', arg('invoice-type')],
+          ['cell', '费用金额', arg('amount')],
+          ['cell', '税额', arg('tax')],
+        ].filter(([, , v]) => v !== null);
+        if (plan.length === 0) {
+          out({ command: 'erp-fill', wrote: false,
+            note: '没有给任何字段值；至少给一个 --cause/--project/--expense/--invoice-type/--amount/--tax' }, ERR);
+        }
+
+        const steps = [];
+        // 先把上一轮遗留的税额清零，再写费用金额。
+        // 实测：行里已有税额 58.05 时把费用金额改成 50.12，ERP 直接拒收 ——
+        // 输入框里明明是 50.12，回车后单元格弹回 644.95，不报任何错。
+        // save-contract 的"先费用金额后税额"说的是**干净的行**；
+        // 排练要在同一行上反复跑，就得自己把这个前提补齐。
+        if (arg('amount')) {
+          const tax = await cellTarget(session, { which: 0, row, column: '税额', scroll: false });
+          const current = tax.ok ? String(tax.text).replace(/[¥￥,\s]/g, '') : '';
+          if (current !== '' && Number(current) !== 0) {
+            const z = await writeCell(session, { which: 0, row, column: '税额', value: '0.00' });
+            steps.push({ kind: 'cell', target: '税额（清零）', ...z });
+          }
+        }
+        for (const [kind, target, value] of plan) {
+          const r = kind === 'header' ? await writeHeader(session, target, value)
+            : kind === 'option' ? await selectOption(session, { which: 0, row, column: target, option: value })
+            : await writeCell(session, { which: 0, row, column: target, value,
+                expect: expectOf(target, value) });
+          steps.push({ kind, target, ...r });
+          // 结构性失败就停：连编辑器都没拿到、格子滚不进视口、网格错位 ——
+          // 后面的顺序是按前面已经生效算的，接着填只会掩盖问题。
+          // 但"当场没回读到"不算结构性失败：最后写的那一格编辑器还开着，
+          // 文本本来就是空的，成败由最终整行回读来判。
+          if (r.after === null || r.after === undefined) break;
+        }
+
+        // 回读之前先让明细行离开编辑态：编辑态的单元格读出来是空的，
+        // 那会把写成功了的字段误报成没写进去。
+        const left = await leaveEdit(session);
+        const detail = await readGrid(session, 0);
+        const receipts = await readGrid(session, 1);
+
+        // 最终判据取自**离开编辑态之后**的整行回读，不取每一步当场的轮询。
+        // 当场轮询读的是还开着编辑器的单元格，最后写的那一格文本是空的 ——
+        // 值明明进去了却报成没写进去。逐步结果留作诊断，成败看这一行。
+        const finalRow = detail.ok ? detail.rows.find((r) => r.kind === 'data') : null;
+        const header = await headerField(session, 'FCAUSA');
+        const checks = plan.map(([kind, target, value]) => {
+          const got = kind === 'header'
+            ? (header.ok ? header.value : null)
+            : (finalRow ? (finalRow.values[target] ?? '') : null);
+          const expect = kind === 'cell' ? expectOf(target, value) : null;
+          return { target, want: value, got,
+            ok: got !== null && got !== '' && cellMatches(got, value, expect) };
+        });
+        const failed = checks.filter((c) => !c.ok);
+        out({
+          command: 'erp-fill',
+          wrote: true,
+          formMode: tabs[0].mode,
+          steps,
+          checks,
+          leftEditMode: left.ok ? !left.stillEditing : left.reason,
+          detail,
+          receipts,
+          note: failed.length === 0
+            ? '全部字段都写入并逐项回读通过；没有保存，这张单还是未保存的新增单'
+            : `这些字段最终回读没通过：${failed.map((f) => f.target).join('、')}；没有保存`,
+        }, failed.length === 0 ? OK : BLOCKED);
       } finally {
         session.close();
       }
@@ -628,7 +764,7 @@ try {
     default:
       out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'intake', 'classify',
         'ocr-request', 'ocr-submit', 'confirm-readings', 'history', 'events', 'allocate', 'select-task', 'lines',
-        'tasks', 'abandon-task', 'catalog', 'erp-read', 'select'] }, ERR);
+        'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-fill', 'select'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);

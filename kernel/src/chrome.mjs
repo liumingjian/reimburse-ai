@@ -179,19 +179,44 @@ export async function typeText(session, text) {
   }
 }
 
-/** 敲一个功能键（Enter、Tab、Escape 之类）。 */
-export async function pressKey(session, key) {
+/** 敲一个功能键（Enter、Tab、Escape 之类）。modifiers 按 CDP 的位：Alt1/Ctrl2/Meta4/Shift8。 */
+export async function pressKey(session, key, { modifiers = 0 } = {}) {
   const map = {
     Enter: { windowsVirtualKeyCode: 13, code: 'Enter', key: 'Enter', text: '\r' },
     Tab: { windowsVirtualKeyCode: 9, code: 'Tab', key: 'Tab' },
     Escape: { windowsVirtualKeyCode: 27, code: 'Escape', key: 'Escape' },
     Backspace: { windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' },
+    a: { windowsVirtualKeyCode: 65, code: 'KeyA', key: 'a' },
+    ArrowDown: { windowsVirtualKeyCode: 40, code: 'ArrowDown', key: 'ArrowDown' },
+    ArrowUp: { windowsVirtualKeyCode: 38, code: 'ArrowUp', key: 'ArrowUp' },
   };
   const k = map[key];
   if (!k) throw new Error(`不支持的按键 ${key}`);
-  await session.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...k });
-  if (k.text) await session.send('Input.dispatchKeyEvent', { type: 'char', ...k });
-  await session.send('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
+  // 带修饰键时不发 char：那会往控件里塞一个字面字符，把全选变成输入一个 a。
+  const withChar = k.text && modifiers === 0;
+  await session.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', modifiers, ...k });
+  if (withChar) await session.send('Input.dispatchKeyEvent', { type: 'char', modifiers, ...k });
+  await session.send('Input.dispatchKeyEvent', { type: 'keyUp', modifiers, ...k });
+}
+
+// mac 上是 Command，别处是 Ctrl。内核跟浏览器跑在同一台机器上，所以这里可以按平台判。
+const SELECT_ALL_MODIFIER = process.platform === 'darwin' ? 4 : 2;
+
+/**
+ * 全选当前控件里的内容，好让接下来的逐键输入把旧值**替换**掉。
+ *
+ * 不用退格逐个删：旧值有几位是读出来的，读错就会删过头或删不干净，
+ * 而"删不干净"会变成 0.0018.25 这种静默错值。
+ *
+ * 必须显式带上 `commands: ['selectAll']`：实测只发 Meta+A 的按键事件，
+ * 光标所在的控件**根本不会全选**（2026-09-05 现场：事由写成了"客户支持客户支持"，
+ * 费用金额因为拼成 0.0018.25 被控件整个丢弃）。Chrome 把编辑命令的分发放在
+ * commands 上，而不是让页面自己去解释修饰键。
+ */
+export async function selectAll(session) {
+  const key = { windowsVirtualKeyCode: 65, code: 'KeyA', key: 'a', modifiers: SELECT_ALL_MODIFIER };
+  await session.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...key, commands: ['selectAll'] });
+  await session.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
 }
 
 /** 开一个新标签页 / 关掉它。排练用的临时页面靠它，不去动用户已经开着的页面。 */
