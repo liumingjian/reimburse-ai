@@ -111,6 +111,18 @@ test('重新提交同一份字节的读数会保留原有确认', () => {
   assert.ok(loadReading(task, material.materialId).confirmedAt, '内容没变，确认不该被冲掉');
 });
 
+test('改了字段再提交，旧的确认不再算数 —— 用户没看过新的读数', () => {
+  submit(good());
+  assert.ok(loadReading(task, material.materialId).confirmedAt);
+
+  const changed = good();
+  changed.fields.sellerName = '某某科技有限公司';
+  submit(changed);
+  const after = loadReading(task, material.materialId);
+  assert.equal(after.confirmedAt, null, '字节没变但读数变了，确认必须失效');
+  assert.equal(projectReading(after), null);
+});
+
 test.after(() => {
   fs.rmSync(home, { recursive: true, force: true });
   fs.rmSync(src, { recursive: true, force: true });

@@ -131,6 +131,104 @@ export function serveConfirmation(spec, opts = {}) {
     (body) => ({ status: 'submitted', confirmed: body.selected ?? [], at: new Date().toISOString() }));
 }
 
+
+/**
+ * 合并交通发票的逐段分摊页。**这是逐段金额进入系统的唯一通道。**
+ *
+ * 行程单上的逐段金额只作为预填候选摆在这里，并且明确标注来源 ——
+ * 行程单是参考材料，它的金额不是票面法定金额，必须由用户看过、认过、提交，才算数。
+ * 页面自己不做四舍五入、不自动补差额；对不上就让用户看见差多少，由他去核对。
+ */
+export function renderAllocatePage(spec, nonce) {
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const cards = spec.items.map((it) => `
+    <section class="card" data-material="${esc(it.materialId)}" data-total="${esc(it.totalAmount)}">
+      <h2>${esc(it.fileName)}</h2>
+      <p class="detail">发票号码 ${esc(it.maskedNumber ?? '—')}　票面价税合计 <b>${esc(it.totalAmount)}</b> 元　共 ${it.segments.length} 段</p>
+      ${it.candidateFrom ? `<p class="detail hint">下面的金额来自${esc(it.candidateFrom)}，只是预填的<b>候选</b>，请对照原始材料逐段核对后再提交。</p>` : ''}
+      <table class="seg">
+        <tr><th>段</th><th>日期</th><th>城市</th><th>起讫</th><th>本段价税合计</th></tr>
+        ${it.segments.map((s, i) => `<tr>
+          <td>${i + 1}</td><td>${esc(s.date ?? '—')}</td><td>${esc(s.city ?? '—')}</td><td>${esc(s.route ?? '—')}</td>
+          <td><input inputmode="decimal" name="seg" value="${esc(s.amount ?? '')}" placeholder="0.00"></td>
+        </tr>`).join('')}
+      </table>
+      <p class="sum">合计 <span class="v">—</span></p>
+    </section>`).join('');
+
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>逐段金额分摊</title><style>
+:root{color-scheme:light dark}
+body{font:16px/1.6 -apple-system,"PingFang SC",sans-serif;margin:0;padding:32px 20px;
+  display:flex;justify-content:center;background:Canvas;color:CanvasText}
+main{width:100%;max-width:720px}
+h1{font-size:20px;margin:0 0 4px}
+h2{font-size:16px;margin:0 0 4px}
+p.prompt{margin:0 0 20px;opacity:.7}
+.card{padding:16px;margin-bottom:14px;border:1px solid color-mix(in srgb,CanvasText 20%,transparent);border-radius:10px}
+.detail{font-size:14px;opacity:.7;margin:0 0 8px}
+.hint{opacity:.85}
+table.seg{width:100%;border-collapse:collapse;font-size:14px}
+table.seg th{text-align:left;font-weight:400;opacity:.6;padding:4px 8px 4px 0}
+table.seg td{padding:4px 8px 4px 0;vertical-align:middle}
+input{width:110px;padding:6px 8px;font:inherit;font-variant-numeric:tabular-nums;
+  border:1px solid color-mix(in srgb,CanvasText 30%,transparent);border-radius:6px;background:Canvas;color:CanvasText}
+.sum{margin:10px 0 0;font-size:14px;font-variant-numeric:tabular-nums}
+.sum .v{font-weight:600}
+.sum.bad .v{color:#dc2626}
+.sum.good .v{color:#16a34a}
+button{width:100%;margin-top:20px;padding:14px;font-size:16px;font-weight:600;color:#fff;
+  background:#2563eb;border:0;border-radius:10px;cursor:pointer}
+#done{display:none;text-align:center;padding:48px 0;font-size:17px}
+</style></head><body><main>
+<form id="f">
+  <h1>逐段金额分摊</h1>
+  <p class="prompt">这几张发票票面只有一个合计金额，但对应多段行程。
+  <b>每段的价税合计必须由你给出</b> —— 系统不会平均、按比例、按距离或按时长分摊。
+  各段相加必须与票面价税合计<b>分毫不差</b>。</p>
+  ${cards}
+  <button type="submit">提交这些逐段金额</button>
+</form>
+<div id="done">已提交，可以关闭这个页面，回到 Claude Code 继续。</div>
+<script>
+const cents = (v) => Math.round(Number(v) * 100);
+function refresh() {
+  for (const card of document.querySelectorAll('.card')) {
+    const want = cents(card.dataset.total);
+    const vals = [...card.querySelectorAll('input[name=seg]')].map(i => i.value.trim());
+    const el = card.querySelector('.sum');
+    if (vals.some(v => !/^\\d+(\\.\\d{2})?$/.test(v))) { el.className = 'sum'; el.querySelector('.v').textContent = '—'; continue; }
+    const got = vals.reduce((a, v) => a + cents(v), 0);
+    el.className = 'sum ' + (got === want ? 'good' : 'bad');
+    el.querySelector('.v').textContent = (got / 100).toFixed(2) + ' / ' + card.dataset.total
+      + (got === want ? '　对上了' : '　差 ' + ((got - want) / 100).toFixed(2));
+  }
+}
+document.addEventListener('input', refresh); refresh();
+document.getElementById('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button'); btn.disabled = true;
+  const allocations = {};
+  for (const card of document.querySelectorAll('.card')) {
+    // 统一成两位小数再提交；内核只收两位小数，"26" 这种写法在这里规整掉。
+    allocations[card.dataset.material] = [...card.querySelectorAll('input[name=seg]')]
+      .map(i => { const c = cents(i.value.trim()); return Number.isFinite(c) ? (c / 100).toFixed(2) : i.value.trim(); });
+  }
+  await fetch('/submit?nonce=${nonce}', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ allocations })
+  });
+  document.getElementById('f').style.display = 'none';
+  document.getElementById('done').style.display = 'block';
+});
+</script></main></body></html>`;
+}
+
+export function serveAllocation(spec, opts = {}) {
+  return serveLocal((nonce) => renderAllocatePage(spec, nonce), opts,
+    (body) => ({ status: 'submitted', allocations: body.allocations ?? {}, at: new Date().toISOString() }));
+}
+
 function serveLocal(render, { timeoutMs = 8 * 60 * 1000, onReady } = {}, onSubmit) {
   const nonce = crypto.randomBytes(16).toString('hex');
   return new Promise((resolve, reject) => {

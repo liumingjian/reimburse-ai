@@ -68,13 +68,16 @@ const readingFile = (task, materialId) => path.join(readingsDir(task), `${materi
  * 生成读取工单：哪些材料需要看图，每份要回报什么。
  * `absPath` 只在这一次输出里出现（模型需要它才能打开文件），不写进任何产物。
  */
-export function buildWorkOrder(sourceDir, inventory, classification, task) {
+export function buildWorkOrder(sourceDir, inventory, classification, task, { force = false } = {}) {
   const root = path.resolve(sourceDir);
   const items = [];
   for (const r of classification.results) {
-    if (r.parseStatus !== 'needs_ocr') continue;
     const m = inventory.materials.find((x) => x.materialId === r.materialId);
     if (!m) continue;
+    // 已确认的读数会被投影成 parsed，正常就不再出现在工单里。
+    // `force` 是给"读过了但漏了后面才需要的字段"准备的重读入口。
+    const isImage = m.format === 'png' || m.format === 'jpg';
+    if (r.parseStatus !== 'needs_ocr' && !(force && isImage)) continue;
     const existing = loadReading(task, r.materialId);
     items.push({
       materialId: m.materialId,
@@ -172,13 +175,23 @@ export function loadReading(task, materialId) {
   catch { return null; }
 }
 
+/** 读数本身的指纹：用户确认的是这几个字段的这几个值，改一个字就不再是同一次确认。 */
+const digestOf = (r) => crypto.createHash('sha256')
+  .update(JSON.stringify([r.docType, Object.entries(r.fields ?? {}).sort(), [...(r.unreadable ?? [])].sort()]))
+  .digest('hex');
+
 function writeReading(task, reading) {
   const dir = readingsDir(task);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const p = readingFile(task, reading.materialId);
   const prev = loadReading(task, reading.materialId);
-  // 内容没变时保留原来的确认；变了就必须重新确认。
-  if (prev && prev.contentHash === reading.contentHash) reading.confirmedAt = prev.confirmedAt ?? null;
+  // 保留原来的确认，只在**字节和读数都没变**时。
+  // 只比内容哈希是不够的：同一张图重读一遍、改了几个字段，
+  // 那些新字段用户根本没看过，却会顶着旧的确认时间混过去。
+  if (prev && prev.contentHash === reading.contentHash && digestOf(prev) === digestOf(reading)) {
+    reading.confirmedAt = prev.confirmedAt ?? null;
+    reading.confirmedVia = prev.confirmedVia ?? null;
+  }
   fs.writeFileSync(`${p}.tmp`, JSON.stringify(reading, null, 2), { mode: 0o600 });
   fs.renameSync(`${p}.tmp`, p);
 }

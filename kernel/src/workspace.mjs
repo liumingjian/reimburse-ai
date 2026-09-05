@@ -95,3 +95,13 @@ export function recordClassification(task, classification) {
   writeJson(path.join(dir, `${classification.versionId}.json`), classification);
   return path.join(dir, `${classification.versionId}.json`);
 }
+
+/**
+ * 把一次费用事件构建记进任务。同样从属于某个盘点版本 ——
+ * 材料一变，事件、证据关联和逐段分摊都要重新建立。
+ */
+export function recordEvents(task, built) {
+  const dir = path.join(taskDir(task), 'events');
+  writeJson(path.join(dir, `${built.versionId}.json`), built);
+  return path.join(dir, `${built.versionId}.json`);
+}

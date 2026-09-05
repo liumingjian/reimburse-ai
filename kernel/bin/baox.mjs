@@ -5,13 +5,15 @@ import url from 'node:url';
 import { paths, ensureDir } from '../src/paths.mjs';
 import * as chrome from '../src/chrome.mjs';
 import { probeIdentity, ERP_ORIGIN } from '../src/probe.mjs';
-import { serveSelection, serveConfirmation } from '../src/serve.mjs';
+import { serveSelection, serveConfirmation, serveAllocation } from '../src/serve.mjs';
 import { buildWorkOrder, ingestReadings, confirmReadings, loadReading,
   READING_VERSION, DOC_TYPES } from '../src/vision.mjs';
 import { takeInventory, intakeOpenItems } from '../src/inventory.mjs';
 import { classifyInventory, classifyOpenItems, summarize } from '../src/classify.mjs';
+import { buildEvents, eventOpenItems, reconcile, submitAllocation } from '../src/events.mjs';
+import { maskNumber } from '../src/parse.mjs';
 import { findLiveTaskForSource, createTask, recordInventory, recordClassification,
-  sourceKeyOf, taskDir } from '../src/workspace.mjs';
+  recordEvents, sourceKeyOf, taskDir } from '../src/workspace.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -22,6 +24,37 @@ const out = (obj, code = OK) => { process.stdout.write(JSON.stringify(obj, null,
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`);
   return i > -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : fallback;
+}
+
+const yuan = (c) => (c === null || c === undefined ? null : (c / 100).toFixed(2));
+const maskOf = (classification, materialId) =>
+  maskNumber(classification.results.find((r) => r.materialId === materialId)?.fields?.invoiceNumber);
+
+/**
+ * 盘点 -> 分流。后面每一层都要站在一次确定的分流结果上，所以统一走这里。
+ * 任一层还有硬阻塞就把阻塞原样带回去，不往下算。
+ */
+async function upToClassification(dir) {
+  const inventory = await takeInventory(dir);
+  const existing = findLiveTaskForSource(sourceKeyOf(dir));
+  const task = existing ?? createTask(dir);
+  const rec = recordInventory(task, inventory);
+
+  const intakeItems = intakeOpenItems(inventory);
+  if (intakeItems.some((i) => i.blocking)) {
+    return { blocked: { stage: 'intake', openItems: intakeItems, readyForNextStep: false,
+      task: { taskId: rec.task.taskId, workspace: taskDir(rec.task) },
+      note: '材料盘点还有未清的待确认项，先处理它们' } };
+  }
+  const classification = classifyInventory(dir, inventory, rec.task);
+  recordClassification(rec.task, classification);
+  const classifyItems = classifyOpenItems(classification);
+  if (classifyItems.some((i) => i.blocking)) {
+    return { blocked: { stage: 'classify', openItems: classifyItems, readyForNextStep: false,
+      task: { taskId: rec.task.taskId, workspace: taskDir(rec.task) },
+      note: '材料分流与解析还有未清的待确认项，先处理它们再谈费用事件' } };
+  }
+  return { task: rec.task, inventory, classification, blocked: null };
 }
 
 const [, , cmd] = process.argv;
@@ -160,7 +193,8 @@ try {
       const task = existing ?? createTask(dir);
       const rec = recordInventory(task, inventory);
       const classification = classifyInventory(dir, inventory, rec.task);
-      const items = buildWorkOrder(dir, inventory, classification, rec.task);
+      const items = buildWorkOrder(dir, inventory, classification, rec.task,
+        { force: process.argv.includes('--force') });
       const todo = items.filter((i) => !i.alreadyRead);
 
       out({
@@ -241,6 +275,90 @@ try {
       }, skipped.length ? BLOCKED : OK);
     }
 
+
+    case 'events': {
+      // 费用事件与候选明细。永远建立在一次确定的分流结果之上，
+      // 所以这里把盘点和分流都重跑一遍（幂等），任一层还有硬阻塞就不往下走。
+      const dir = arg('dir');
+      if (!dir) out({ command: 'events', error: '缺少 --dir <材料目录>' }, ERR);
+      const { task, inventory, classification, blocked } = await upToClassification(dir);
+      if (blocked) out({ command: 'events', ...blocked }, BLOCKED);
+
+      const built = buildEvents(classification, task);
+      const file = recordEvents(task, built);
+      const items = eventOpenItems(built);
+      const blocking = items.filter((i) => i.blocking);
+
+      out({
+        command: 'events', stage: 'events',
+        task: { taskId: task.taskId, workspace: taskDir(task) },
+        inventory: { versionId: inventory.versionId },
+        eventCount: built.events.length,
+        events: built.events.map((e) => ({
+          eventId: e.eventId, voucherFileName: e.voucherFileName, kindLabel: e.kindLabel,
+          maskedNumber: e.maskedNumber, index: e.index, of: e.of,
+          date: e.date ?? null, city: e.city ?? null, route: e.route ?? null,
+          dateEvidence: e.dateEvidence ?? null,
+          splitBasis: e.splitBasis, splitNote: e.splitNote,
+          amountSource: e.amountSource,
+          netAmount: yuan(e.amounts.netCents), taxAmount: yuan(e.amounts.taxCents),
+          totalAmount: yuan(e.amounts.totalCents),
+          // 分位除不尽时余数落在哪一段，如实报出来，不藏。
+          residue: e.residueCents ? (e.residueCents / 100).toFixed(2) : null,
+          referenceCount: e.referenceMaterialIds.length,
+        })),
+        lineItems: built.lineItems,
+        reconciliation: reconcile(built, classification),
+        evidence: built.evidence,
+        openItems: items,
+        eventsFile: file,
+        readyForNextStep: blocking.length === 0,
+      }, blocking.length === 0 ? OK : BLOCKED);
+    }
+
+    case 'allocate': {
+      // 合并交通发票的逐段金额。**只有这个页面上的提交动作能把金额定下来**；
+      // 行程单金额只作预填候选，用户在对话里报的数字同样不算数。
+      const dir = arg('dir');
+      if (!dir) out({ command: 'allocate', error: '缺少 --dir <材料目录>' }, ERR);
+      const { task, classification, blocked } = await upToClassification(dir);
+      if (blocked) out({ command: 'allocate', ...blocked }, BLOCKED);
+
+      const built = buildEvents(classification, task);
+      const pending = built.notes.filter((n) => n.kind === 'allocation_required' || n.kind === 'allocation_stale');
+      if (!pending.length) out({ command: 'allocate', pending: 0, note: '没有需要逐段分摊的发票' }, OK);
+
+      const items = pending.map((n) => {
+        // 逐段行来自与这张发票关联上的行程单，由 buildEvents 一并带出来。
+        const rows = n.candidateSegments;
+        return {
+          materialId: n.materialId,
+          fileName: n.fileName,
+          maskedNumber: maskOf(classification, n.materialId),
+          totalAmount: n.totalAmount,
+          candidateFrom: rows ? '行程单逐段明细' : null,
+          segments: rows ?? Array.from({ length: n.segmentCount }, () => ({ date: null, city: null, route: null, amount: '' })),
+        };
+      });
+
+      const result = await serveAllocation({ items }, {
+        timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
+        onReady: (u) => process.stderr.write(`打开这个地址填写逐段金额：${u}\n`),
+      });
+      if (result.status !== 'submitted') out({ command: 'allocate', ...result }, ERR);
+
+      const verdicts = [];
+      for (const it of items) {
+        const v = classification.results.find((r) => r.materialId === it.materialId);
+        const r = submitAllocation(task, v, result.allocations[it.materialId], it.segments.length);
+        verdicts.push({ materialId: it.materialId, fileName: it.fileName, verdict: r.verdict, reasons: r.reasons });
+      }
+      const rejected = verdicts.filter((v) => v.verdict === 'rejected');
+      out({ command: 'allocate', verdicts, accepted: verdicts.length - rejected.length, rejected: rejected.length,
+        note: rejected.length ? '有分摊没有收下；重新跑 allocate' : '逐段金额已记下，可以重新跑 events' },
+        rejected.length ? BLOCKED : OK);
+    }
+
     case 'select': {
       const specPath = arg('spec');
       if (!specPath) out({ command: 'select', error: '缺少 --spec <file.json>' }, ERR);
@@ -254,7 +372,7 @@ try {
 
     default:
       out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'intake', 'classify',
-        'ocr-request', 'ocr-submit', 'confirm-readings', 'select'] }, ERR);
+        'ocr-request', 'ocr-submit', 'confirm-readings', 'events', 'allocate', 'select'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);

@@ -88,12 +88,19 @@ function extractInvoiceFields(kind, text, lines) {
     // 是 ERP 收票回读时才产生的外部事实，这里必须留空而不是自己算。
     const fare = c.match(/票价:?¥?(\d+\.\d{2})/);
     put('totalAmount', fare ? money(fare[1]) : null, fare?.[1]);
-    const trip = c.match(/(\S+?)站([A-Z]?\d+)(\S+?)站/);
-    if (trip) {
+    // 车次行必须按**原始行**匹配，不能在压平后的整页文本里找：
+    // 压平之后"开票日期:2026年09月02日合肥南站"里的"日"也是汉字，
+    // 起点站名会从这里开始往前吃（实测吃成了大半页票面）。
+    const tripLine = lines.map((l) => l.normalize('NFKC').trim())
+      .find((l) => /^\S+站\s+[A-Z]?\d{1,4}\s+\S+站$/.test(l));
+    if (tripLine) {
+      const trip = tripLine.match(/^(\S+?)站\s+([A-Z]?\d{1,4})\s+(\S+?)站$/);
       fields.railTrain = trip[2];
       fields.railFrom = trip[1];
       fields.railTo = trip[3];
-      evidence.railTrain = evidenceFor(lines, trip[2]);
+      evidence.railTrain = tripLine;
+      evidence.railFrom = tripLine;
+      evidence.railTo = tripLine;
     }
     const depart = c.match(/(\d{4})年(\d{1,2})月(\d{1,2})日(\d{1,2}):(\d{2})开/);
     if (depart) {
@@ -102,6 +109,30 @@ function extractInvoiceFields(kind, text, lines) {
   }
 
   return { fields, evidence };
+}
+
+/**
+ * 行程单的逐段明细。表格里起终点会换行，所以这里只认**同一行内**能取全的字段：
+ * 序号、上车日期时间、城市、金额。起终点合成一个 route 字符串照抄，不拆成两列 ——
+ * 列切分靠字宽估算，偶尔会挪一格（见 ADR-0003），拆开就会把地名切错。
+ */
+function itinerarySegments(lines) {
+  const rows = [];
+  for (const raw of lines) {
+    const l = raw.normalize('NFKC').trim();
+    const m = l.match(/^(\d+)\s+.*?(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s+(\S{2,6}市)\s*(.*?)([\d,]+\.\d{2})元$/);
+    if (!m) continue;
+    rows.push({
+      index: Number(m[1]),
+      date: m[2],
+      time: m[3],
+      city: m[4],
+      route: m[5].trim() || null,
+      amount: m[6].replace(/,/g, ''),
+    });
+  }
+  // 序号必须是从 1 开始的连续整数，否则这份逐段明细不完整。
+  return rows.every((r, i) => r.index === i + 1) ? rows : [];
 }
 
 function extractCandidates(kind, text, lines) {
@@ -122,6 +153,15 @@ function extractCandidates(kind, text, lines) {
     if (m) {
       add('segmentCount', Number(m[1]), '行程单声明的行程段数；费用事件拆分在下一层裁决');
       add('itineraryTotal', m[2], '行程单合计金额；只作证据，不替代票面价税合计');
+    }
+    const rows = itinerarySegments(lines);
+    // 只有逐行取到的段数和行程单自己声明的段数一致，这份逐段明细才可信。
+    // 对不上就说明有行没取全（表格换行是实测踩过的坑），宁可整块作废。
+    if (rows.length && m && rows.length === Number(m[1])) {
+      out.push({ field: 'segments', value: rows, evidence: null,
+        note: '行程单逐段明细；行程单是参考材料，这些金额不是票面法定金额，不能直接当分摊结果用' });
+    } else if (rows.length !== Number(m?.[1] ?? -1)) {
+      add('segmentRowsIncomplete', String(rows.length), '逐段明细取到的行数与行程单声明的段数对不上，整块作废');
     }
   }
   if (kind === 'hotel_folio') {
