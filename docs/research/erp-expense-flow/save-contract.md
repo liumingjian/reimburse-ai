@@ -241,7 +241,12 @@ From KDDynamicForm Control[FREIMBANDRECINVINFO] not found!
 setBarItemStates conn't find ...-FRECINVINFO_ENTRYBAR-tbReceiveInvoice control
 ```
 
-也就是这张单的**收票区控件整个丢了**。用工具条的「新增」换一张干净的新增单**也救不回来**
+~~也就是这张单的收票区控件整个丢了。~~ **这句是错的，2026-09-05 旁观时纠正**：这三行是
+KDDynamicForm 的**例行日志**，每次刷新收票网格都会打，而且同一行日志里就带着网格数据
+（`rowcount` 有 0 也有 2）。它既不表示控件丢了，也不表示出错——把它读成故障是我的过度解读。
+助手起不来的真实原因是另一回事（见下一节：`Target.attachedToTarget` 报的 url 还是 `about:blank`）。
+
+用工具条的「新增」换一张干净的新增单**也救不回来**
 （换单没有弹"是否保存"，页签仍是"费用报销单-新增"，但助手照样起不来），所以坏的是页面实例，
 不是单据实例。唯一已知的恢复手段是刷新页面——而刷新在这个 ERP 上等于掉登录，要用户重新登录。
 
