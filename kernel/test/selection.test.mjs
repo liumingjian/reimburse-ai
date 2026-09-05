@@ -172,3 +172,34 @@ test('明细变了，之前的项目归属就不再对应这几行', () => {
   assert.equal(stale.applied, false);
   assert.deepEqual(stale.notes.map((n) => n.kind), ['task_selection_stale']);
 });
+
+test('项目号只有在 ERP 只读核对确认之后才升级来源，且核对随明细一起失效', () => {
+  const task = createTask(path.join(home, 'src-catalog'));
+  const { c, built } = rideCase();
+  submitSelection(task, built, {
+    homeCity: '广州', purpose: '客户支持',
+    projects: Object.fromEntries(built.lineItems.map((l) => [l.lineId, '111454'])),
+  });
+  const selection = loadSelection(task);
+
+  // 没有核对记录：如实记成用户填的、没验过。
+  assert.equal(applySelection(built, c, selection).lines[0].projectSource,
+    'user_input_unverified');
+
+  const verified = {
+    linesDigest: linesDigest(built),
+    projects: { 111454: { verdict: 'confirmed', name: '某某项目' } },
+  };
+  assert.equal(applySelection(built, c, selection, verified).lines[0].projectSource,
+    'erp_catalog_confirmed');
+
+  // 核对说这个号有问题时，绝不能因为"有过一份核对记录"就升级。
+  const bad = { ...verified, projects: { 111454: { verdict: 'missing' } } };
+  assert.equal(applySelection(built, c, selection, bad).lines[0].projectSource,
+    'user_input_unverified');
+
+  // 明细指纹变了，旧的核对结论不再适用于现在这几行。
+  const stale = { ...verified, linesDigest: 'something-else' };
+  assert.equal(applySelection(built, c, selection, stale).lines[0].projectSource,
+    'user_input_unverified');
+});

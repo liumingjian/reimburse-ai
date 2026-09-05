@@ -153,3 +153,18 @@ export function recordInvoiceSightings(task, classification) {
 export function loadInvoiceSightings(task) {
   return readJson(path.join(taskDir(task), 'invoices.json'), null);
 }
+
+/**
+ * 记一次 ERP 主数据只读核对的结果。
+ *
+ * 它绑在候选明细的指纹上，和任务选择用的是同一个指纹：明细一变，
+ * 上次核对的那些项目号就未必还是这几行要用的，核对结果当即失效。
+ */
+export function recordCatalogVerification(task, record) {
+  writeJson(path.join(taskDir(task), 'catalog.json'), record);
+  return record;
+}
+
+export function loadCatalogVerification(task) {
+  return readJson(path.join(taskDir(task), 'catalog.json'), null);
+}

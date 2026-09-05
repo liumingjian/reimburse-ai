@@ -1,6 +1,6 @@
 ---
 name: baox
-description: 把一个装着发票和行程单的目录变成一次可追溯的报销任务。当前做到材料盘点、材料角色分流、跨任务重复发票检查、费用事件与候选明细、费用类别与任务选择。用户说"报销""整理发票""盘点材料"时使用。
+description: 把一个装着发票和行程单的目录变成一次可追溯的报销任务。当前做到材料盘点、材料角色分流、跨任务重复发票检查、费用事件与候选明细、费用类别与任务选择、ERP 主数据的只读核对。用户说"报销""整理发票""盘点材料"时使用。
 allowed-tools: Bash, Read
 ---
 
@@ -295,15 +295,61 @@ node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" lines --dir "
   还没在 ERP 上落过明细，所以这类明细带一条**非阻塞**的 `expense_item_unconfirmed`。
   它不拦路，但**第一次保存草稿之后要核对 ERP 回读的费用项目**；对不上就停下来问用户，
   不要改成别的编码继续试。任何情况下都不要自己猜一个编码，也不要拿一类的编码顶替另一类。
-- **项目号未经核验。** `projectSource: user_input_unverified` 是事实：内核没有 ERP 项目目录，
-  没法确认这个项目号存在。别说"项目已确认"。
+  （这四个编码都已经在 ERP 主数据目录里核对过存在——见第 10 节——但"目录里有这条主数据"
+  和"费用明细能按它保存成功"是两回事，前者不能替代后者。）
+- **项目号在核对之前未经核验。** `projectSource: user_input_unverified` 是事实，
+  别说"项目已确认"；跑完第 10 节的只读核对之后它才会变成 `erp_catalog_confirmed`。
 - **明细一变，选择就失效**（`task_selection_stale`）。重新分摊过合并交通票之后要重新选一次。
 
 详见 [ADR-0006](../../docs/adr/0006-category-derived-project-chosen.md)。
 
-## 10. 还没实现的部分
+## 10. ERP 主数据的只读核对
 
-ERP 外部既有记录查询、ERP 项目目录的只读查询、ERP 上传与保存草稿——**都还没有实现**。
+这一步要求 ERP 已经登录，所以先探身份：
+
+```bash
+node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" probe
+```
+
+只有 `status: matched` 才能往下走。`not_logged_in` 是最常见的一种——**请用户自己去
+那个 baox 专用 Chrome 窗口里登录**，你不代填账号密码，也不要因为输出里有个 `account`
+就以为已经登录了（登录页上也读得出上次登录的账号）。`mismatched` 是硬阻塞，没有
+"就用这个身份"的余地。
+
+身份通过之后核对主数据：
+
+```bash
+# 核对对照表里的四个费用项目编码，再核对这个任务选好的全部项目号
+node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" catalog --dir "<材料目录>"
+
+# 只想问一个项目号在不在
+node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" catalog --project 111454
+```
+
+它走的是金蝶自带的只读查询服务，**不打开任何单据、不点任何选择器、什么都不写**。
+退出码 0 表示全部通过；这时 `lines` 里那些明细的 `projectSource` 会升成
+`erp_catalog_confirmed`，输出里也会带上项目名称——**把项目名念给用户听**，
+让他确认选的确实是这个项目，光有一个号看不出对不对。
+
+退出码 2 的几种情况，处置都不一样，别混着说：
+
+| 情况 | 意思 | 怎么办 |
+| --- | --- | --- |
+| 项目号 `missing` | ERP 项目目录里没有这个号 | 让用户重新跑 `select-task` 填一个真实存在的项目序号 |
+| 项目号 `ambiguous` | 一个号对上了多条记录 | baox 不替用户挑，请他人工确认 |
+| `unusable` | 主数据被禁用或还没审核 | 停下来问用户，不要改用别的编码 |
+| 费用项目 `name_mismatch` | 编码对得上、名字对不上 | **停**。这说明仓库里的对照表和 ERP 已经错位，要人来查，不要把名字改成 ERP 那个就继续 |
+| `queryFailures` 非空 | 查询本身失败了 | 这是"没核对成"，不是"核对通过"。不要当成没问题 |
+
+**核对结果会跟着变。** 它按项目号索引并绑在候选明细的指纹上：用户改了项目号，
+或者材料变了导致明细重建，`projectSource` 会自己退回 `user_input_unverified`。
+看到它退回去就重新跑一次 `catalog`，不要拿上一次的结论继续讲。
+
+详见 [ADR-0008](../../docs/adr/0008-read-only-catalog-via-erp-query-service.md)。
+
+## 11. 还没实现的部分
+
+ERP 外部既有记录查询、ERP 上传与保存草稿——**都还没有实现**。
 
 用户问到这些时如实说还没做。
 

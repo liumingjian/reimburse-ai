@@ -109,6 +109,34 @@ v1 的保存前契约是：
 
 真实合并交通票、多段分摊和恢复行为必须纳入 [v1 的验收语料和发布门槛](https://github.com/liumingjian/reimburse-ai/issues/14)，不能仅凭本次住宿样本宣称已通过。
 
+## 2026-09-05 主数据的只读核对通道
+
+登录身份 `matched` 之后，可以用金蝶自带的查询服务在**不打开任何单据**的前提下核对主数据：
+
+```
+POST /k3cloud/Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.ExecuteBillQuery.common.kdsvc
+{ "parameters": ["{\"FormId\":...,\"FieldKeys\":\"FNumber,FName,FDocumentStatus,FForbidStatus\",\"FilterString\":...,\"StartRow\":0,\"Limit\":n}"] }
+```
+
+两个选择器背后的业务对象取自 `ER_ExpReimbursement` 的表单元数据
+（`DynamicFormService.QueryBusinessInfo` 的 `LookUpObjectFormId`），不是猜的：
+
+| 明细字段 | 业务对象 | 说明 |
+| --- | --- | --- |
+| 费用项目 `FEXPID` | `BD_Expense` | `FNumber` 即费用项目编码 |
+| 项目 `F_BJYC_PROJECTID` | `BJYC_ProJect` | 公司自定义对象，大小写照抄；`FNumber` 即用户填的项目序号 |
+
+报文形状：成功时外层数组**直接就是行集**，每行按 `FieldKeys` 顺序排列的标量数组，
+查不到就是空数组；失败时行内第一格是带 `ResponseStatus` 的对象。两种情况 HTTP 都是 200，
+所以只能按报文形状判成败，不能按状态码判。
+
+实测结果（2026-09-05）：`FY008001` 本地市内交通、`FY010001` 住宿、`FY010002` 外地市内交通、
+`FY010003` 长途交通四条全部存在，名称与本仓库对照表逐一相同，单据状态 `C`（已审核）、
+禁用状态 `A`（未禁用）。测试项目号 `111454` 唯一命中。不存在的项目号返回空行集。
+
+这条通道只证明主数据**存在且可引用**，不证明它在费用明细上保存得进去；
+后者仍以本文其余各节的保存后置条件为准。
+
 ## 恢复与残余风险
 
 - 新增单页面若未保留到下一轮，所有未保存字段和助手选择会丢失；上传文件也未必出现在可查询票池。跨轮人工接管前必须显式保留浏览器标签，并在恢复后从 ERP 状态重新核对。

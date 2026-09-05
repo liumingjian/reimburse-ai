@@ -135,7 +135,21 @@ export function submitSelection(task, built, payload) {
  * 把任务选择和推导出来的费用类别贴回候选明细。
  * 没有选择时不猜任何东西：整批明细停在"等任务选择"上。
  */
-export function applySelection(built, classification, selection) {
+/**
+ * 项目号的来源等级。默认永远是"用户填的、没核对过"；
+ * 只有当一份**对得上当前明细指纹**的 ERP 只读核对记录明确说这个号确认存在时，
+ * 才升到 erp_catalog_confirmed。核对记录过期、缺项或说有问题，一律退回未核对 ——
+ * 宁可说没验过，也不能把旧结论套在新明细上。
+ */
+const projectSourceOf = (number, catalog, built) => {
+  if (!number || !catalog) return 'user_input_unverified';
+  if (catalog.linesDigest !== linesDigest(built)) return 'user_input_unverified';
+  return catalog.projects?.[number]?.verdict === 'confirmed'
+    ? 'erp_catalog_confirmed'
+    : 'user_input_unverified';
+};
+
+export function applySelection(built, classification, selection, catalog = null) {
   const fresh = !!selection && selection.linesDigest === linesDigest(built);
   const notes = [];
 
@@ -194,7 +208,7 @@ export function applySelection(built, classification, selection) {
       expenseItemName: cat?.expenseItemName ?? null,
       expenseItemSource: cat?.source ?? null,
       project: selection.projects[l.lineId] ?? null,
-      projectSource: 'user_input_unverified',
+      projectSource: projectSourceOf(selection.projects[l.lineId] ?? null, catalog, built),
       purpose: selection.purpose,
     };
   });

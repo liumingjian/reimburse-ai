@@ -12,12 +12,13 @@ import { takeInventory, intakeOpenItems } from '../src/inventory.mjs';
 import { classifyInventory, classifyOpenItems, summarize } from '../src/classify.mjs';
 import { buildEvents, eventOpenItems, reconcile, submitAllocation } from '../src/events.mjs';
 import { maskNumber } from '../src/parse.mjs';
-import { loadSelection, submitSelection, applySelection } from '../src/selection.mjs';
+import { loadSelection, submitSelection, applySelection, linesDigest } from '../src/selection.mjs';
 import { CATEGORIES } from '../src/categories.mjs';
 import { findLiveTaskForSource, createTask, recordInventory, recordClassification,
   recordEvents, recordInvoiceSightings, abandonTask, loadIndex,
-  sourceKeyOf, taskDir } from '../src/workspace.mjs';
+  sourceKeyOf, taskDir , recordCatalogVerification, loadCatalogVerification } from '../src/workspace.mjs';
 import { crossTaskDuplicates, historyOpenItems, holdsInvoices } from '../src/history.mjs';
+import { authorizedPage, verifyExpenseItems, verifyProject, PROJECT_FORM } from '../src/erpcatalog.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -132,6 +133,79 @@ try {
     case 'probe': {
       const r = await probeIdentity({ expected: arg('expect') });
       out({ command: 'probe', ...r }, r.status === 'matched' ? OK : BLOCKED);
+    }
+
+    case 'catalog': {
+      // ERP 主数据的只读核对。身份不 matched 就一步都不往下走。
+      const gate = await authorizedPage({ expected: arg('expect') });
+      if (!gate.ok) {
+        out({ command: 'catalog', verified: false, identity: gate.probe,
+          note: '身份没核对通过，不做任何 ERP 查询' }, BLOCKED);
+      }
+
+      // 两种用法：--project 核对单个项目号；--dir 核对某个任务已经选好的全部项目。
+      const dir = arg('dir');
+      const single = arg('project');
+      const items = await verifyExpenseItems(gate.wsUrl);
+
+      let ctx = null;
+      let wanted = single ? [single] : [];
+      if (dir) {
+        const up = await upToEvents(dir);
+        if (up.blocked) out({ command: 'catalog', ...up.blocked }, BLOCKED);
+        const selection = loadSelection(up.task);
+        if (!selection) {
+          out({ command: 'catalog', verified: false,
+            task: { taskId: up.task.taskId, workspace: taskDir(up.task) },
+            note: '这个任务还没有做任务选择，没有项目号可核对；先跑 select-task' }, BLOCKED);
+        }
+        ctx = { task: up.task, built: up.built, selection };
+        wanted = [...new Set(Object.values(selection.projects))];
+      }
+
+      const results = [];
+      for (const n of wanted) results.push(await verifyProject(gate.wsUrl, n));
+      const proj = single && !dir ? results[0] : null;
+
+      // 查询本身失败不是"核对通过"，是"没核对成"，一律阻塞。
+      const failed = [items, ...results].filter((r) => r && r.ok === false);
+      const problems = [
+        ...(items.problems ?? []),
+        ...results.filter((r) => r.ok && r.verdict !== 'confirmed'),
+      ];
+
+      // 核对结果只在全部通过时才落盘，并绑上当前明细指纹。
+      // 一份"部分通过"的记录留在工作区，下一层就会拿它去给某几行升级来源，
+      // 那正是这一层要防的事。
+      if (ctx && failed.length === 0 && problems.length === 0) {
+        recordCatalogVerification(ctx.task, {
+          linesDigest: linesDigest(ctx.built),
+          versionId: ctx.built.versionId,
+          verifiedAt: new Date().toISOString(),
+          identity: gate.probe.identity,
+          projectFormId: PROJECT_FORM,
+          projects: Object.fromEntries(results.map((r) => [r.number,
+            { verdict: r.verdict, name: r.name ?? null }])),
+        });
+      }
+
+      out({
+        command: 'catalog',
+        identity: gate.probe.identity,
+        verified: failed.length === 0 && problems.length === 0,
+        expenseItems: items.ok
+          ? { formId: items.formId, checked: items.checked }
+          : { error: items.reason },
+        project: proj && (proj.ok ? proj : { error: proj.reason }),
+        task: ctx ? { taskId: ctx.task.taskId, workspace: taskDir(ctx.task) } : undefined,
+        projects: ctx ? results.map((r) => (r.ok
+          ? { number: r.number, verdict: r.verdict, name: r.name ?? null }
+          : { error: r.reason })) : undefined,
+        problems,
+        queryFailures: failed.map((f) => f.reason),
+        note: '只读核对：只证明主数据在 ERP 目录里存在且可引用，'
+          + '不证明它在费用明细上保存得进去 —— 那要靠保存后回读',
+      }, failed.length === 0 && problems.length === 0 ? OK : BLOCKED);
     }
 
     case 'intake': {
@@ -441,7 +515,7 @@ try {
       const { task, classification, built, blocked } = await upToEvents(dir);
       if (blocked) out({ command: 'lines', ...blocked }, BLOCKED);
 
-      const applied = applySelection(built, classification, loadSelection(task));
+      const applied = applySelection(built, classification, loadSelection(task), loadCatalogVerification(task));
       const blocking = applied.notes.filter((n) => n.blocking);
       out({
         command: 'lines', stage: 'task_selection',
@@ -519,7 +593,7 @@ try {
     default:
       out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'intake', 'classify',
         'ocr-request', 'ocr-submit', 'confirm-readings', 'history', 'events', 'allocate', 'select-task', 'lines',
-        'tasks', 'abandon-task', 'select'] }, ERR);
+        'tasks', 'abandon-task', 'catalog', 'select'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);
