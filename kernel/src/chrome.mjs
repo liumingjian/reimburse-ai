@@ -214,6 +214,53 @@ export async function attachTarget(session, targetId) {
   };
 }
 
+/**
+ * 盯住这个页面新生出来的子目标。
+ *
+ * `Target.getTargets` 里跨域 iframe 出现得**不稳定**：同一次点击，有时几秒后就查得到，
+ * 有时轮询半分钟也查不到，而窗口和 iframe 其实早就在了。所以不轮询，改成开自动附加、
+ * 等 `Target.attachedToTarget` 事件——目标一诞生就直接把 sessionId 送上门。
+ *
+ * 返回的 `waitFor` 拿到的是一个和普通会话同形的子会话，可以直接喂给 evalIn / clickAt。
+ */
+export async function autoAttach(session) {
+  const children = new Map();   // targetId -> { info, sessionId }
+  session.on('Target.attachedToTarget', (p) => {
+    children.set(p.targetInfo.targetId, { info: p.targetInfo, sessionId: p.sessionId });
+  });
+  session.on('Target.detachedFromTarget', (p) => {
+    for (const [id, c] of children) if (c.sessionId === p.sessionId) children.delete(id);
+  });
+  await session.send('Target.setAutoAttach',
+    { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
+
+  const sub = (sessionId) => ({
+    sessionId,
+    send: (method, params = {}, opts = {}) => session.send(method, params, { ...opts, sessionId }),
+    on: (method, fn) => session.on(method, (params, sid) => { if (sid === sessionId) fn(params, sid); }),
+    close: () => {},
+  });
+
+  return {
+    list: () => [...children.values()].map((c) => c.info),
+    /** 等一个 url 命中 `match` 的子目标，等不到就返回 null（不抛）。 */
+    waitFor: async (match, { timeout = 30000, interval = 500 } = {}) => {
+      const until = Date.now() + timeout;
+      while (Date.now() < until) {
+        for (const c of children.values()) {
+          if (!match(c.info.url || '')) continue;
+          const s2 = sub(c.sessionId);
+          // 附上了不代表已经能求值，探一句再交出去。
+          try { await s2.send('Runtime.evaluate', { expression: '1', returnByValue: true }); return s2; }
+          catch { children.delete(c.info.targetId); }
+        }
+        await new Promise((r) => setTimeout(r, interval));
+      }
+      return null;
+    },
+  };
+}
+
 /** 当前浏览器里的所有目标（含跨域 iframe）。 */
 export async function targetList(session) {
   const { targetInfos } = await session.send('Target.getTargets');
