@@ -105,3 +105,51 @@ export function recordEvents(task, built) {
   writeJson(path.join(dir, `${built.versionId}.json`), built);
   return path.join(dir, `${built.versionId}.json`);
 }
+
+/**
+ * 改任务状态。跨任务重复检查靠它区分"另一个任务还打算报这张票"和"那个任务已经作罢"。
+ *
+ * 只允许 `open` -> `abandoned`：一旦任务动过 ERP（包括写入结果未知），
+ * 它占着的那些发票就不能靠改状态解除占用 —— 那要靠只读对账，不是靠声明。
+ */
+export function abandonTask(taskId, reason) {
+  const idx = loadIndex();
+  const i = idx.tasks.findIndex((t) => t.taskId === taskId);
+  if (i < 0) return { verdict: 'rejected', reason: `没有这个任务 ${taskId}` };
+  const t = idx.tasks[i];
+  if (t.status === 'abandoned') return { verdict: 'noop', task: t };
+  if (t.status !== 'open') {
+    return { verdict: 'rejected', reason: `任务 ${taskId} 的状态是 ${t.status}，不是可以作废的进行中任务` };
+  }
+  if (t.erpWriteState) {
+    return { verdict: 'rejected',
+      reason: `任务 ${taskId} 已经动过 ERP（${t.erpWriteState}），它占用的发票要靠 ERP 只读对账解除，不能改状态` };
+  }
+  const updated = { ...t, status: 'abandoned', abandonedAt: new Date().toISOString(),
+    abandonReason: reason ?? null };
+  idx.tasks[i] = updated;
+  writeJson(indexPath(), idx);
+  writeJson(path.join(taskDir(updated), 'meta.json'), updated);
+  return { verdict: 'abandoned', task: updated };
+}
+
+/**
+ * 把这个任务当前持有的发票身份写成一份摘要，供跨任务重复检查读取。
+ *
+ * 它是**派生**的，每次分流都整份重写：用户把一张发票挪出目录，
+ * 这里就跟着少一条，不会留下一条永远解不掉的占用。
+ */
+export function recordInvoiceSightings(task, classification) {
+  const invoices = classification.results
+    .filter((r) => r.identity)
+    .map((r) => ({ identityKey: r.identity.key, number: r.identity.number,
+      materialId: r.materialId, fileName: r.fileName }));
+  const digest = { taskId: task.taskId, versionId: classification.versionId,
+    updatedAt: new Date().toISOString(), invoices };
+  writeJson(path.join(taskDir(task), 'invoices.json'), digest);
+  return digest;
+}
+
+export function loadInvoiceSightings(task) {
+  return readJson(path.join(taskDir(task), 'invoices.json'), null);
+}

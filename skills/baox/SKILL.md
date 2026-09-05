@@ -1,6 +1,6 @@
 ---
 name: baox
-description: 把一个装着发票和行程单的目录变成一次可追溯的报销任务。当前做到材料盘点与材料角色分流（票种识别、发票身份、票面金额、任务内重复发票检测）。用户说"报销""整理发票""盘点材料"时使用。
+description: 把一个装着发票和行程单的目录变成一次可追溯的报销任务。当前做到材料盘点、材料角色分流、跨任务重复发票检查、费用事件与候选明细、费用类别与任务选择。用户说"报销""整理发票""盘点材料"时使用。
 allowed-tools: Bash, Read
 ---
 
@@ -181,7 +181,41 @@ node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" confirm-readi
 
 确认完之后重新跑 `classify`，图片材料就会和 PDF 一样参与角色分流、发票身份和重复发票检测。
 
-## 6. 费用事件与候选明细
+## 6. 跨任务历史发票的重复检查
+
+材料整理清干净之后，内核会拿这批发票的身份去比对 **baox 在这台电脑上记过的其他任务**。
+
+```bash
+node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" history --dir "<材料目录>"
+```
+
+它也是 `events`、`select-task`、`lines` 的前置门禁，命中就整批停下。
+
+| 待确认项 | 含义 | 你该怎么讲 |
+| --- | --- | --- |
+| `duplicate_across_tasks` | 这张发票在另一个任务里也在，而那个任务还占着它 | 阻塞。**没有"确认继续"**：要么把这张票从本次材料里移除，要么确认那个任务确实不报了再作废它 |
+| `history_scope_local` | 这次比对的范围（非阻塞） | 每次都要跟着结果讲，见下 |
+
+**"占着"是有明确定义的**：任务状态还是进行中，或者它动过 ERP（包括写入结果未知）。
+后者不能靠作废解除——不知道有没有落进 ERP，就必须当成落进去了。
+
+确认另一个任务确实不报了，才作废它：
+
+```bash
+node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" tasks
+node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" abandon-task --task <taskId> --reason "<为什么不报了>"
+```
+
+作废是状态变更，**不是清理**：任务工作区一份不动。作废之前要先问清楚用户，
+不要因为它挡了路就顺手废掉——它可能是另一批正在整理的材料。
+
+**这一条必须一直讲清楚：查过不等于没报过。** 内核查得到的只有 baox 自己在本机的账。
+直接在 ERP 里录入的、同事报过的、换电脑之前报过的、或者删过 baox 数据目录之后的，
+这里一概查不到。`readyForNextStep: true` 只意味着 baox 的账上没见过第二回。
+
+详见 [ADR-0007](../../docs/adr/0007-cross-task-invoice-history.md)。
+
+## 7. 费用事件与候选明细
 
 ```bash
 node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" events --dir "<材料目录>"
@@ -208,7 +242,7 @@ node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" events --dir 
 `evidence.unlinked` 里的参考材料没有对上任何一张发票——**非阻塞**，但要提醒用户：
 它可能属于另一次报销，也可能说明对应的发票还没放进来。这是他的判断，不要替他下结论。
 
-## 7. 合并交通发票的逐段分摊
+## 8. 合并交通发票的逐段分摊
 
 一张交通发票对应多段行程、而票面只有一个合计金额时，内核给出 `allocation_required` 硬阻塞。
 
@@ -231,7 +265,7 @@ node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" allocate --di
 
 详见 [ADR-0005](../../docs/adr/0005-user-supplies-segment-amounts.md)。
 
-## 8. 费用类别与任务选择
+## 9. 费用类别与任务选择
 
 材料整理这一层全部清干净之后，候选明细还缺三样东西。**它们的来源完全不同，不能混。**
 
@@ -265,13 +299,13 @@ node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" lines --dir "
 
 详见 [ADR-0006](../../docs/adr/0006-category-derived-project-chosen.md)。
 
-## 9. 还没实现的部分
+## 10. 还没实现的部分
 
-跨任务历史发票的重复检查、ERP 外部既有记录查询、ERP 项目目录的只读查询、
+ERP 外部既有记录查询、ERP 项目目录的只读查询、
 外地市内交通的费用项目编码、ERP 上传与保存草稿——**都还没有实现**。
 
 用户问到这些时如实说还没做。
 
-尤其注意：当前的重复检查**只在本次任务内**。内核没有查过历史任务，也没有查过 ERP 里
-是否已经存在同一张发票。`readyForNextStep: true` 只意味着这一层的检查通过了，
-不意味着这些发票没有被报销过 —— 不要这样告诉用户。
+尤其注意：重复检查现在覆盖本次任务内和 baox 记过的其他任务（第 6 节），但**查不到 ERP**。
+一张去年报过的、或者同事报过的发票，内核不会有任何反应。
+`readyForNextStep: true` 不意味着这些发票没有被报销过 —— 不要这样告诉用户。

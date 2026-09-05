@@ -15,7 +15,9 @@ import { maskNumber } from '../src/parse.mjs';
 import { loadSelection, submitSelection, applySelection } from '../src/selection.mjs';
 import { CATEGORIES } from '../src/categories.mjs';
 import { findLiveTaskForSource, createTask, recordInventory, recordClassification,
-  recordEvents, sourceKeyOf, taskDir } from '../src/workspace.mjs';
+  recordEvents, recordInvoiceSightings, abandonTask, loadIndex,
+  sourceKeyOf, taskDir } from '../src/workspace.mjs';
+import { crossTaskDuplicates, historyOpenItems, holdsInvoices } from '../src/history.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -56,7 +58,18 @@ async function upToClassification(dir) {
       task: { taskId: rec.task.taskId, workspace: taskDir(rec.task) },
       note: '材料分流与解析还有未清的待确认项，先处理它们再谈费用事件' } };
   }
-  return { task: rec.task, inventory, classification, blocked: null };
+
+  // 发票身份齐了才谈得上跨任务比对，所以这一层排在分流之后。
+  recordInvoiceSightings(rec.task, classification);
+  const history = crossTaskDuplicates(rec.task, classification);
+  const historyItems = historyOpenItems(history);
+  if (historyItems.some((i) => i.blocking)) {
+    return { task: rec.task, inventory, classification, history, historyItems,
+      blocked: { stage: 'history', openItems: historyItems, readyForNextStep: false,
+        task: { taskId: rec.task.taskId, workspace: taskDir(rec.task) },
+        note: '有发票同时躺在另一个报销任务里；同一张发票不能报两次' } };
+  }
+  return { task: rec.task, inventory, classification, history, historyItems, blocked: null };
 }
 
 /**
@@ -179,7 +192,10 @@ try {
 
       const classification = classifyInventory(dir, inventory, rec.task);
       const file = recordClassification(rec.task, classification);
-      const items = classifyOpenItems(classification);
+      recordInvoiceSightings(rec.task, classification);
+      // 任务内重复和跨任务重复是两件事，但对用户是同一个问题，所以一次说完。
+      const history = crossTaskDuplicates(rec.task, classification);
+      const items = [...classifyOpenItems(classification), ...historyOpenItems(history)];
       const blocking = items.filter((i) => i.blocking);
       const byRole = {};
       for (const r of classification.results) {
@@ -197,6 +213,9 @@ try {
         // 重复分组的 identityKey 里也带着完整号码，这里一并去掉。
         materials: summarize(classification),
         duplicates: classification.duplicates.map(({ identityKey, ...d }) => d),
+        crossTaskDuplicates: history.hits,
+        historyScope: { scannedTasks: history.scannedTasks, checkedInvoices: history.checkedInvoices,
+          coversErpExternalRecords: false },
         openItems: items,
         factsFile: file,
         readyForNextStep: blocking.length === 0,
@@ -442,6 +461,49 @@ try {
       }, blocking.length === 0 ? OK : BLOCKED);
     }
 
+    case 'history': {
+      // 单独看一眼跨任务重复检查的结果，不往下走。
+      const dir = arg('dir');
+      if (!dir) out({ command: 'history', error: '缺少 --dir <材料目录>' }, ERR);
+      const up = await upToClassification(dir);
+      if (up.blocked && up.blocked.stage !== 'history') out({ command: 'history', ...up.blocked }, BLOCKED);
+
+      const blocking = up.historyItems.filter((i) => i.blocking);
+      out({
+        command: 'history', stage: 'history',
+        task: { taskId: up.task.taskId, workspace: taskDir(up.task) },
+        hits: up.history.hits,
+        scannedTasks: up.history.scannedTasks,
+        checkedInvoices: up.history.checkedInvoices,
+        openItems: up.historyItems,
+        readyForNextStep: blocking.length === 0,
+        // 这句话不能省：查过 ≠ 没报过。
+        note: 'baox 只查得到自己在本机记过的任务；ERP 里既有的报销记录还查不了',
+      }, blocking.length === 0 ? OK : BLOCKED);
+    }
+
+    case 'tasks': {
+      const tasks = loadIndex().tasks.map((t) => ({
+        taskId: t.taskId, status: t.status, createdAt: t.createdAt, sourceLabel: t.sourceLabel,
+        erpWriteState: t.erpWriteState ?? null, holdsInvoices: holdsInvoices(t),
+        abandonedAt: t.abandonedAt ?? null, workspace: taskDir(t),
+      }));
+      out({ command: 'tasks', taskCount: tasks.length, tasks });
+    }
+
+    case 'abandon-task': {
+      // 把一个不打算再报的任务作废，好让它占着的发票能在别的任务里用。
+      // 这是状态变更，不是删除：任务工作区一份不动。
+      const taskId = arg('task');
+      if (!taskId) out({ command: 'abandon-task', error: '缺少 --task <taskId>' }, ERR);
+      const r = abandonTask(taskId, arg('reason'));
+      if (r.verdict === 'rejected') out({ command: 'abandon-task', ...r }, BLOCKED);
+      out({ command: 'abandon-task', verdict: r.verdict,
+        task: { taskId: r.task.taskId, status: r.task.status, sourceLabel: r.task.sourceLabel,
+          abandonReason: r.task.abandonReason ?? null, workspace: taskDir(r.task) },
+        note: '任务已作废，工作区文件原样保留；它原先占用的发票现在可以在别的任务里使用' });
+    }
+
     case 'select': {
       const specPath = arg('spec');
       if (!specPath) out({ command: 'select', error: '缺少 --spec <file.json>' }, ERR);
@@ -455,7 +517,8 @@ try {
 
     default:
       out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'intake', 'classify',
-        'ocr-request', 'ocr-submit', 'confirm-readings', 'events', 'allocate', 'select-task', 'lines', 'select'] }, ERR);
+        'ocr-request', 'ocr-submit', 'confirm-readings', 'history', 'events', 'allocate', 'select-task', 'lines',
+        'tasks', 'abandon-task', 'select'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);
