@@ -19,6 +19,7 @@ import { findLiveTaskForSource, createTask, recordInventory, recordClassificatio
   sourceKeyOf, taskDir , recordCatalogVerification, loadCatalogVerification } from '../src/workspace.mjs';
 import { crossTaskDuplicates, historyOpenItems, holdsInvoices } from '../src/history.mjs';
 import { authorizedPage, verifyExpenseItems, verifyProject, PROJECT_FORM } from '../src/erpcatalog.mjs';
+import { openSession, formTabs, sectionAnchors, showSection, readGrid } from '../src/erpform.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -133,6 +134,40 @@ try {
     case 'probe': {
       const r = await probeIdentity({ expected: arg('expect') });
       out({ command: 'probe', ...r }, r.status === 'matched' ? OK : BLOCKED);
+    }
+
+    case 'erp-read': {
+      // 只读回读费用报销单页面：单据页签是新增还是修改、明细网格和收票网格各是什么。
+      // 保存后置条件要靠它，所以它自己必须一点副作用都没有。
+      const gate = await authorizedPage({ expected: arg('expect') });
+      if (!gate.ok) {
+        out({ command: 'erp-read', identity: gate.probe,
+          note: '身份没核对通过，不读 ERP 页面' }, BLOCKED);
+      }
+      const session = await openSession(gate.wsUrl);
+      try {
+        const tabs = await formTabs(session);
+        if (tabs.length === 0) {
+          out({ command: 'erp-read', formOpen: false, anchors: await sectionAnchors(session),
+            note: '页面上没有打开的费用报销单（既没有"新增"也没有"修改"页签）' }, BLOCKED);
+        }
+        // 明细是懒渲染的，不点出来网格根本不在 DOM 里。
+        const shown = await showSection(session, '明细信息');
+        const detail = await readGrid(session, 0);
+        const receipts = await readGrid(session, 1);
+        out({
+          command: 'erp-read',
+          formOpen: true,
+          formMode: tabs[0].mode,
+          formTabs: tabs.map((t) => t.label),
+          sectionShown: shown.ok ? shown.anchor.label : shown.reason,
+          detail,
+          receipts,
+          note: '只读回读，没有点击任何值控件、没有写入、没有保存',
+        }, OK);
+      } finally {
+        session.close();
+      }
     }
 
     case 'catalog': {
@@ -593,7 +628,7 @@ try {
     default:
       out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'intake', 'classify',
         'ocr-request', 'ocr-submit', 'confirm-readings', 'history', 'events', 'allocate', 'select-task', 'lines',
-        'tasks', 'abandon-task', 'catalog', 'select'] }, ERR);
+        'tasks', 'abandon-task', 'catalog', 'erp-read', 'select'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);
