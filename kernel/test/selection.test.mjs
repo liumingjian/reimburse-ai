@@ -87,7 +87,7 @@ test('取不到费用发生城市时不拿常驻城市顶替', () => {
   assert.equal(d.reason, 'category_city_missing');
 });
 
-test('外地市内交通没有验证过的 ERP 编码，所以硬阻塞 —— 不拿本地的编码顶替', () => {
+test('外地市内交通用公司对照表里的 FY010002，但在 ERP 上落过之前一直标着未确认', () => {
   const task = createTask(path.join(home, 'src-remote'));
   const { c, built } = rideCase();
   const r = submitSelection(task, built, {
@@ -98,11 +98,28 @@ test('外地市内交通没有验证过的 ERP 编码，所以硬阻塞 —— �
 
   const applied = applySelection(built, c, loadSelection(task));
   assert.equal(applied.lines[0].category, 'remote_city_transport');
-  assert.equal(applied.lines[0].expenseItemCode, null);
-  const blocking = applied.notes.filter((n) => n.blocking);
-  assert.equal(blocking.length, 1);
-  assert.equal(blocking[0].kind, 'expense_item_unverified');
-  assert.match(blocking[0].note, /没有在真实 ERP 上验证过/);
+  assert.equal(applied.lines[0].expenseItemCode, 'FY010002');
+  assert.equal(applied.lines[0].expenseItemSource, 'user_declared');
+
+  // 不拦，但必须出声 —— 而且说清楚第一次保存之后要核对什么。
+  assert.deepEqual(applied.notes.filter((n) => n.blocking), []);
+  const note = applied.notes.find((n) => n.kind === 'expense_item_unconfirmed');
+  assert.ok(note);
+  assert.match(note.note, /还没有在真实 ERP 上保存并回读确认过/);
+});
+
+test('对照表里每一条要么有编码和来源，要么留空并说明为什么阻塞', () => {
+  for (const [key, cat] of Object.entries(CATEGORIES)) {
+    if (cat.expenseItemCode) {
+      assert.ok(cat.source, `${key} 有编码就必须有来源`);
+      assert.ok(cat.verifiedBy, `${key} 有编码就必须说得出依据`);
+      if (cat.source !== 'erp_save_readback') {
+        assert.ok(cat.unconfirmedNote, `${key} 的编码还没在 ERP 上确认过，必须带提示`);
+      }
+    } else {
+      assert.ok(cat.blockedNote, `${key} 没有编码就必须说明为什么`);
+    }
+  }
 });
 
 test('没有任务选择就没有费用类别，也没有项目 —— 整批停在阻塞上', () => {

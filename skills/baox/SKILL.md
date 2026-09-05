@@ -289,10 +289,12 @@ node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" lines --dir "
 
 `lines` 给出候选明细的最终形态。讲给用户听的时候注意三件事：
 
-- **`expenseItemCode` 只有三类有。** 住宿 `FY010001`、本地市内交通 `FY008001`、
-  长途交通 `FY010003`，都是在真实 ERP 上保存过草稿并回读确认过的。**外地市内交通没有**——
-  它在 v1 范围内，但从没在 ERP 上落过明细，所以落到这一类就硬阻塞（`expense_item_unverified`）。
-  不要拿 `FY008001` 顶替，也不要猜一个编码。
+- **四类都有 `expenseItemCode`，但来源不同。** 住宿 `FY010001`、本地市内交通 `FY008001`、
+  长途交通 `FY010003` 已经在真实 ERP 上保存并回读确认过（`source: erp_save_readback`）；
+  外地市内交通 `FY010002` 来自用户给出的公司对照表（`source: user_declared`），
+  还没在 ERP 上落过明细，所以这类明细带一条**非阻塞**的 `expense_item_unconfirmed`。
+  它不拦路，但**第一次保存草稿之后要核对 ERP 回读的费用项目**；对不上就停下来问用户，
+  不要改成别的编码继续试。任何情况下都不要自己猜一个编码，也不要拿一类的编码顶替另一类。
 - **项目号未经核验。** `projectSource: user_input_unverified` 是事实：内核没有 ERP 项目目录，
   没法确认这个项目号存在。别说"项目已确认"。
 - **明细一变，选择就失效**（`task_selection_stale`）。重新分摊过合并交通票之后要重新选一次。
@@ -301,8 +303,7 @@ node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" lines --dir "
 
 ## 10. 还没实现的部分
 
-ERP 外部既有记录查询、ERP 项目目录的只读查询、
-外地市内交通的费用项目编码、ERP 上传与保存草稿——**都还没有实现**。
+ERP 外部既有记录查询、ERP 项目目录的只读查询、ERP 上传与保存草稿——**都还没有实现**。
 
 用户问到这些时如实说还没做。
 

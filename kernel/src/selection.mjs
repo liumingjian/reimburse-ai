@@ -174,6 +174,15 @@ export function applySelection(built, classification, selection) {
         fileName: event.voucherFileName, category: d.category, categoryLabel: cat.label,
         note: cat.blockedNote,
       });
+    } else if (cat.source !== 'erp_save_readback') {
+      // 编码有来源但还没在 ERP 上落过明细：不拦，但必须说出来，
+      // 而且要说清楚第一次保存之后该核对什么。
+      notes.push({
+        kind: 'expense_item_unconfirmed', blocking: false, lineId: l.lineId, eventId: l.eventId,
+        fileName: event.voucherFileName, category: d.category, categoryLabel: cat.label,
+        expenseItemCode: cat.expenseItemCode, source: cat.source,
+        note: cat.unconfirmedNote,
+      });
     }
     return {
       ...l,
@@ -183,6 +192,7 @@ export function applySelection(built, classification, selection) {
       categoryNote: d.note ?? null,
       expenseItemCode: cat?.expenseItemCode ?? null,
       expenseItemName: cat?.expenseItemName ?? null,
+      expenseItemSource: cat?.source ?? null,
       project: selection.projects[l.lineId] ?? null,
       projectSource: 'user_input_unverified',
       purpose: selection.purpose,

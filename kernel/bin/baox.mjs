@@ -452,7 +452,8 @@ try {
         lines: applied.lines,
         // 对照表里哪几类有经过验证的 ERP 编码，如实摆出来，别让人以为四类都能落地。
         expenseItemCatalog: Object.fromEntries(Object.entries(CATEGORIES).map(([k, v]) =>
-          [k, { label: v.label, expenseItemCode: v.expenseItemCode, verified: !!v.expenseItemCode }])),
+          [k, { label: v.label, expenseItemCode: v.expenseItemCode, source: v.source ?? null,
+            confirmedInErp: v.source === 'erp_save_readback' }])),
         openItems: applied.notes,
         readyForNextStep: blocking.length === 0,
         note: blocking.length === 0
