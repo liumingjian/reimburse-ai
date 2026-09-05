@@ -1485,7 +1485,7 @@
         <caption>本原型只检验交互节奏，不连接真实 Codex、凭据库或 ERP。</caption>
         <tbody>
           <tr><th>CLI 生命周期</th><td>安装在 baox 之外；<code>init</code> 检查环境并维护个人配置；<code>run</code> 与 <code>resume</code> 驱动同一个报销任务。</td></tr>
-          <tr><th>本地 Web</th><td>无阻塞性待确认项后才打开，只承载任务选择、ERP 授权、只读状态和聚焦恢复。</td></tr>
+          <tr><th>本地 Web</th><td>无阻塞性待确认项后才打开任务选择；存在整理问题时只打开整理纠正入口，不允许进入项目归属或 ERP。</td></tr>
           <tr><th>有头 ERP 浏览器</th><td>只创建并保存草稿；不提交、审核、付款或删除，且任一时刻只由 baox 或用户一方控制。</td></tr>
           <tr><th>恢复</th><td>从持久事实继续；ERP 阶段先只读对账，写入结果未知时禁止盲目重放。</td></tr>
         </tbody>
@@ -1513,12 +1513,13 @@
           { id: "E-06", region: "苏州", at: "08-22 09:15", title: "园区站 → 项目现场", type: "外地市内交通", amount: 62.5, invoice: "FP-005" },
         ];
 
+        const DEFAULT_ERP_URL = "http://erp.antute.com.cn/k3cloud/html5/index.aspx";
         const clone = (value) => structuredClone(value);
         const completeProfile = () => ({
           exists: true,
           revision: 3,
           city: "上海市",
-          erpUrl: "https://erp.example.test",
+          erpUrl: DEFAULT_ERP_URL,
           erpUsername: "li.ming",
           passwordStored: true,
         });
@@ -1526,7 +1527,7 @@
           exists: false,
           revision: 0,
           city: null,
-          erpUrl: null,
+          erpUrl: DEFAULT_ERP_URL,
           erpUsername: null,
           passwordStored: false,
         });
@@ -1551,6 +1552,7 @@
             selected: [],
             assignments: emptyAssignments(),
             assignmentsConfirmed: false,
+            materialsConfirmed: false,
             authorizationChecked: false,
             pendingOverwrite: null,
           },
@@ -1563,6 +1565,8 @@
             reconciliation: "无需",
             draftNumber: null,
           },
+          materialCheck: { fixture: null, status: "notStarted", issues: [], runCount: 0 },
+          audit: [],
           activeSurface: "cli",
           transcript: installed
             ? ["$ baox --version", "baox 0.1.0（原型值）", "", "下一步：baox init"]
@@ -1585,6 +1589,12 @@
           if (kind === "returning") return baseState();
 
           const state = baseState();
+          if (kind === "needsCorrection") {
+            state.materialCheck.fixture = "duplicateInvoice";
+            state.notice = { accepted: true, tone: "warning", title: "等待整理纠正", detail: "这个路径会演示重复发票在打开任务选择 Web 前被阻塞。", surface: "CLI" };
+            return state;
+          }
+
           state.task = taskState({ stage: "ERP 自动化中", revision: 8 });
           state.process = {
             command: "baox run ./华东差旅报销材料",
@@ -1600,6 +1610,7 @@
             selected: [],
             assignments: allAssigned(),
             assignmentsConfirmed: true,
+            materialsConfirmed: true,
             authorizationChecked: true,
             pendingOverwrite: null,
           };
@@ -1639,6 +1650,7 @@
             state.web.selected = ["E-04", "E-05"];
             state.web.assignments = { ...emptyAssignments(), "E-01": "P-26018", "E-02": "P-26018" };
             state.web.assignmentsConfirmed = false;
+            state.web.materialsConfirmed = true;
             state.web.authorizationChecked = false;
             state.erp = {
               open: false,
@@ -1668,7 +1680,7 @@
         };
 
         const profileComplete = (profile) =>
-          profile.exists && Boolean(profile.city && profile.erpUrl && profile.erpUsername && profile.passwordStored);
+          profile.exists && Boolean(profile.city && profile.erpUsername && profile.passwordStored);
         const assignedCount = (state) => Object.values(state.web.assignments).filter(Boolean).length;
         const latestAttempt = (state) => state.erp.attempts.at(-1);
 
@@ -1765,9 +1777,10 @@
                 return accept(state, "已有配置可复用", "重复 init 默认不产生写入。", "CLI");
               }
               state.process.status = "首次配置";
-              state.profileDraft = { city: null, erpUrl: null, erpUsername: null, passwordEntered: false };
-              state.transcript.push("", "○ 尚无个人配置", "? 常驻城市：上海市（原型输入）");
-              return accept(state, "进入首次配置", "四项设置只暂存在当前 init 进程。", "CLI", "info");
+              state.profileDraft = { city: null, erpUrl: DEFAULT_ERP_URL, erpUsername: null, passwordEntered: false };
+              state.transcript.push("", "○ 尚无个人配置", "  ERP 入口    内置固定地址");
+              state.transcript.push("? 常驻城市：上海市（原型输入）");
+              return accept(state, "进入首次配置", "ERP 入口由 baox 内置；其余个人设置只暂存在当前 init 进程。", "CLI", "info");
             }
 
             case "ENTER_PROFILE": {
@@ -1776,29 +1789,28 @@
               }
               state.profileDraft = {
                 city: "上海市",
-                erpUrl: "https://erp.example.test",
+                erpUrl: DEFAULT_ERP_URL,
                 erpUsername: "li.ming",
                 passwordEntered: true,
               };
               state.process.status = "等待配置确认";
               state.transcript.push(
                 "  常驻城市    上海市",
-                "? ERP 入口：https://erp.example.test",
-                "  ERP 入口    https://erp.example.test",
+                `  ERP 入口    ${DEFAULT_ERP_URL}（内置）`,
                 "? ERP 用户名：li.ming",
                 "  ERP 用户名  li.ming",
                 "? ERP 密码：••••••••（隐藏输入，不回显）",
                 "",
                 "待保存：",
-                "  常驻城市 / ERP 入口 / ERP 用户名 → 个人配置",
+                "  常驻城市 / ERP 用户名 → 个人配置",
                 "  ERP 密码 → 系统凭据库",
               );
-              return accept(state, "首次配置已暂存", "最终确认前没有持久事实变化。", "CLI", "info");
+              return accept(state, "首次配置已暂存", "ERP 入口固定内置；最终确认前没有个人持久事实变化。", "CLI", "info");
             }
 
             case "SAVE_PROFILE": {
               if (state.process.command !== "baox init" || state.process.status !== "等待配置确认" || !state.profileDraft?.passwordEntered) {
-                return reject(source, "没有可保存的完整配置", "先完成四项首次设置并查看摘要。", "CLI");
+                return reject(source, "没有可保存的完整配置", "先完成个人设置并查看摘要。", "CLI");
               }
               state.profile = { ...completeProfile(), revision: 1 };
               state.profileDraft = null;
@@ -1839,6 +1851,7 @@
                 selected: [],
                 assignments: emptyAssignments(),
                 assignmentsConfirmed: false,
+                materialsConfirmed: false,
                 authorizationChecked: false,
                 pendingOverwrite: null,
               };
@@ -1851,6 +1864,22 @@
                 reconciliation: "无需",
                 draftNumber: null,
               };
+              const issues = state.materialCheck.fixture === "duplicateInvoice"
+                ? [{
+                    id: "ISSUE-DUP-001",
+                    kind: "duplicateInvoice",
+                    status: "open",
+                    title: "主要报销凭证重复",
+                    materials: "材料 A / 材料 B",
+                    detail: "同一发票身份在当前报销任务中出现两次。",
+                    resolution: null,
+                  }]
+                : [];
+              state.materialCheck.status = issues.length ? "blocked" : "passed";
+              state.materialCheck.issues = issues;
+              state.materialCheck.runCount += 1;
+              state.task.blockingQuestions = issues.length;
+              state.task.stage = issues.length ? "待用户处理" : "等待材料整理确认";
               state.transcript = [
                 "$ baox run ./华东差旅报销材料",
                 "✓ Codex CLI / 版本 / 登录 / 最小调用",
@@ -1860,17 +1889,107 @@
                 `  ${TASK_ID}`,
                 "→ 自动分类、建立费用事件与材料证据关联",
                 "→ 解析字段、应用公司规则与确定性校验",
-                "✓ 6 个费用事件；0 个待确认项",
+                ...(issues.length
+                  ? ["→ 6 个费用事件候选已生成；正在汇总整理检查结果"]
+                  : ["✓ 6 个费用事件；0 个待确认项"]),
                 "✓ 纯发票上传目录已准备；原始材料未改动",
-                "→ 已用系统默认浏览器打开本地 Web",
+                ...(issues.length
+                  ? [
+                      `! 发现 ${issues.length} 个整理阻塞项：重复发票`,
+                      "! 尚未打开任务选择 Web；必须先完成整理纠正",
+                      "→ 请打开整理纠正 Web，纠正后重新运行全量检查",
+                    ]
+                  : ["→ 已打开本地 Web，等待用户确认材料整理结果"]),
                 "",
-                "等待 Web 提交...",
+                ...(issues.length ? ["等待用户处理..."] : ["等待 Web 提交..."]),
               ];
+              if (issues.length) {
+                state.web.open = false;
+                state.web.mode = "closed";
+                state.web.step = "correction";
+                state.web.loadedRevision = null;
+                state.process.status = "待用户处理";
+                state.activeSurface = "cli";
+                return accept(state, "自动整理发现阻塞项", "检测到重复发票；任务选择 Web、项目归属和 ERP 都被锁定。", "CLI", "warning");
+              }
+              state.process.status = "等待 Web 提交";
               state.activeSurface = "web";
-              return accept(state, "自动整理完成", "run 没有动作菜单；无阻塞问题后直接打开本地 Web。", "本地 Web");
+              state.web.mode = "materialConfirm";
+              state.web.step = "materialConfirm";
+              return accept(state, "自动整理完成", "材料整理已通过检查，等待用户明确确认后才开放项目归属。", "本地 Web", "info");
+            }
+
+            case "OPEN_CORRECTION_WEB": {
+              if (state.task?.stage !== "待用户处理" || !state.materialCheck.issues.some((issue) => issue.status === "open")) {
+                return reject(source, "当前没有待处理的整理问题", "只有自动整理发现阻塞项时才能打开纠正入口。", "CLI");
+              }
+              state.web.open = true;
+              state.web.mode = "correction";
+              state.web.step = "correction";
+              state.web.loadedRevision = state.task.revision;
+              state.process.status = "整理纠正中";
+              state.activeSurface = "web";
+              return accept(state, "已打开整理纠正 Web", "当前只允许处理整理问题；项目归属和固定 ERP 入口仍未开放。", "本地 Web", "warning");
+            }
+
+            case "RESOLVE_DUPLICATE": {
+              if (state.task?.stage !== "待用户处理" || state.web.mode !== "correction") {
+                return reject(source, "当前不能纠正重复发票", "先打开整理纠正 Web。", "本地 Web");
+              }
+              const issue = state.materialCheck.issues.find((item) => item.kind === "duplicateInvoice" && item.status === "open");
+              if (!issue) return reject(source, "没有待处理的重复发票", "请先重新运行整理检查。", "本地 Web");
+              issue.status = "resolved";
+              issue.resolution = "用户排除重复材料";
+              state.audit.push("用户排除重复材料；等待全量整理检查");
+              state.task.revision += 1;
+              state.web.loadedRevision = state.task.revision;
+              return accept(state, "重复发票纠正已记录", "纠正不会直接放行；必须重新运行全量整理检查。", "本地 Web", "warning");
+            }
+
+            case "RECHECK_MATERIALS": {
+              if (state.task?.stage !== "待用户处理" || state.web.mode !== "correction") {
+                return reject(source, "当前不能重新检查材料", "先打开整理纠正 Web。", "本地 Web");
+              }
+              const unresolved = state.materialCheck.issues.filter((issue) => issue.status !== "resolved");
+              if (unresolved.length) {
+                return reject(source, "仍有未解决的整理问题", `还有 ${unresolved.length} 个问题，不能进入任务选择。`, "本地 Web");
+              }
+              state.materialCheck.status = "passed";
+              state.materialCheck.issues = [];
+              state.materialCheck.runCount += 1;
+              state.task.blockingQuestions = 0;
+              state.task.stage = "等待材料整理确认";
+              state.task.revision += 1;
+              state.web.loadedRevision = state.task.revision;
+              state.web.materialsConfirmed = false;
+              state.web.mode = "materialConfirm";
+              state.web.step = "materialConfirm";
+              state.process.status = "等待材料整理确认";
+              state.activeSurface = "web";
+              state.transcript.push("✓ 用户纠正已记录", "✓ 全量整理检查已重新运行", "✓ 重复发票 0 个；待确认项 0 个", "→ 等待用户确认材料整理结果");
+              return accept(state, "整理检查通过", "所有重复、冲突和待确认项均已清零；确认整理结果后才能进入项目归属。", "本地 Web", "info");
+            }
+
+            case "CONFIRM_MATERIALS": {
+              if (state.task?.stage !== "等待材料整理确认" || state.web.mode !== "materialConfirm" || state.materialCheck.status !== "passed") {
+                return reject(source, "不能确认材料整理", "必须先完成全量整理检查，且当前页面处于材料整理确认状态。", "本地 Web");
+              }
+              state.web.materialsConfirmed = true;
+              state.web.mode = "overview";
+              state.web.step = "overview";
+              state.task.stage = "等待任务选择";
+              state.task.revision += 1;
+              state.web.loadedRevision = state.task.revision;
+              state.process.status = "等待 Web 提交";
+              state.audit.push("用户确认材料整理结果；允许进入任务选择");
+              state.transcript.push("✓ 用户确认材料整理结果", "→ 已开放本地任务选择 Web");
+              return accept(state, "材料整理已确认", "现在可以进入项目归属；ERP 仍未启动。", "本地 Web");
             }
 
             case "GO_ASSIGN": {
+              if (state.web.mode === "materialConfirm") {
+                return reject(source, "项目归属尚未开放", "请先确认材料整理结果；确认前不能选择项目或启动 ERP。", "本地 Web");
+              }
               if (!state.task || !state.web.open || !["overview", "assignment"].includes(state.web.mode)) {
                 return reject(source, "当前没有可操作的项目归属", "先让 run 完成自动整理并打开 Web。", "本地 Web");
               }
@@ -2224,7 +2343,7 @@
               },
               web: {
                 label: "本地 Web",
-                state: state.web.open ? ({ stale: "旧版本冻结", recovery: "聚焦恢复", readOnly: "只读状态", saveConfirm: "保存确认", handedOff: "结果只读" }[state.web.mode] || "可操作") : "未打开",
+                state: state.web.open ? ({ correction: "整理纠正", materialConfirm: "等待整理确认", stale: "旧版本冻结", recovery: "聚焦恢复", readOnly: "只读状态", saveConfirm: "保存确认", handedOff: "结果只读" }[state.web.mode] || "可操作") : "未打开",
                 live: state.activeSurface === "web",
               },
               erp: {
@@ -2257,9 +2376,11 @@
             ["在外部安装 baox", { type: "INSTALL_BAOX" }],
             ["运行 baox init", { type: "START_INIT" }],
             ["完成 Codex 四项检查", { type: "COMPLETE_CODEX_CHECKS" }],
-            ["输入四项个人设置", { type: "ENTER_PROFILE" }],
+            ["输入个人设置（ERP 入口内置）", { type: "ENTER_PROFILE" }],
             ["确认并保存个人配置", { type: "SAVE_PROFILE" }],
             ["运行材料目录到 Web", { type: "RUN_TO_WEB" }],
+            ["尝试直接进入项目归属（应拒绝）", { type: "GO_ASSIGN" }, "rejected"],
+            ["确认材料整理结果", { type: "CONFIRM_MATERIALS" }],
             ["进入项目归属", { type: "GO_ASSIGN" }],
             ["勾选全部未归属事件", { type: "SELECT_ALL_UNASSIGNED" }],
             ["批量归入华东渠道升级", { type: "REQUEST_ASSIGN_PROJECT", projectId: "P-26018" }],
@@ -2280,6 +2401,8 @@
           watch: "run 不重复 init 问答；本地 Web 不展示常驻城市、ERP 入口、用户名或密码。",
           steps: [
             ["运行材料目录到 Web", { type: "RUN_TO_WEB" }],
+            ["尝试直接进入项目归属（应拒绝）", { type: "GO_ASSIGN" }, "rejected"],
+            ["确认材料整理结果", { type: "CONFIRM_MATERIALS" }],
             ["进入项目归属", { type: "GO_ASSIGN" }],
             ["勾选全部未归属事件", { type: "SELECT_ALL_UNASSIGNED" }],
             ["批量归入客户交付支持", { type: "REQUEST_ASSIGN_PROJECT", projectId: "P-26027" }],
@@ -2290,6 +2413,22 @@
             ["自动填写并生成差异", { type: "ERP_FILLED" }],
             ["即时确认保存草稿", { type: "AUTHORIZE_SAVE" }],
             ["验证草稿并交接", { type: "VERIFY_SAVE" }],
+          ],
+        },
+        {
+          id: "duplicate-gate",
+          title: "重复发票纠正闸门",
+          seed: "needsCorrection",
+          description: "自动整理发现同一主要报销凭证重复，未清零前不进入任务选择和 ERP。",
+          watch: "纠正后必须全量复检；没有“忽略重复并继续”的路径。",
+          steps: [
+            ["运行材料目录（发现重复）", { type: "RUN_TO_WEB" }],
+            ["打开整理纠正 Web", { type: "OPEN_CORRECTION_WEB" }],
+            ["尝试进入项目归属（应拒绝）", { type: "GO_ASSIGN" }, "rejected"],
+            ["排除重复材料", { type: "RESOLVE_DUPLICATE" }],
+            ["重新运行全量整理检查", { type: "RECHECK_MATERIALS" }],
+            ["确认材料整理结果", { type: "CONFIRM_MATERIALS" }],
+            ["进入项目归属", { type: "GO_ASSIGN" }],
           ],
         },
         {
@@ -2350,6 +2489,10 @@
           title: "报销任务与 Web",
           actions: [
             ["run 自动整理到 Web", { type: "RUN_TO_WEB" }],
+            ["打开整理纠正 Web", { type: "OPEN_CORRECTION_WEB" }],
+            ["排除重复材料", { type: "RESOLVE_DUPLICATE" }],
+            ["重新检查材料", { type: "RECHECK_MATERIALS" }],
+            ["确认材料整理结果", { type: "CONFIRM_MATERIALS" }],
             ["进入项目归属", { type: "GO_ASSIGN" }],
             ["选择全部未归属", { type: "SELECT_ALL_UNASSIGNED" }],
             ["归入华东渠道升级", { type: "REQUEST_ASSIGN_PROJECT", projectId: "P-26018" }],
@@ -2448,25 +2591,74 @@
           .join("");
       };
 
-      const renderCli = () => `
-        <section aria-labelledby="cli-title">
-          <header class="surface-header"><div><p class="section-kicker">前台生命周期</p><h2 id="cli-title">终端</h2></div><span class="surface-status">${escapeHtml(currentState.process.status)}</span></header>
-          <div class="terminal-shell">
-            <pre>${escapeHtml(currentState.transcript.join("\n"))}</pre>
-            <div class="terminal-footer"><span>后台动作：${escapeHtml(currentState.process.background)}</span><span>恢复入口：${escapeHtml(currentState.process.resumeCommand)}</span></div>
-          </div>
-        </section>`;
+      const renderCli = () => {
+        const correctionAction = currentState.task?.stage === "待用户处理" && !currentState.web.open
+          ? `<div class="button-row"><button class="button-primary" type="button" data-action="OPEN_CORRECTION_WEB">打开整理纠正 Web</button></div>`
+          : "";
+        return `
+          <section aria-labelledby="cli-title">
+            <header class="surface-header"><div><p class="section-kicker">前台生命周期</p><h2 id="cli-title">终端</h2></div><span class="surface-status">${escapeHtml(currentState.process.status)}</span></header>
+            <div class="terminal-shell">
+              <pre>${escapeHtml(currentState.transcript.join("\n"))}</pre>
+              <div class="terminal-footer"><span>后台动作：${escapeHtml(currentState.process.background)}</span><span>恢复入口：${escapeHtml(currentState.process.resumeCommand)}</span></div>
+            </div>
+            ${correctionAction}
+          </section>`;
+      };
 
       const renderWebSteps = (active) => {
-        const labels = [["overview", "1 · 自动整理结果"], ["assignment", "2 · 项目归属"], ["authorization", "3 · ERP 授权"]];
+        const first = active === "correction"
+          ? ["correction", "1 · 整理纠正"]
+          : active === "materialConfirm"
+            ? ["materialConfirm", "1 · 材料整理确认"]
+            : ["overview", "1 · 整理检查"];
+        const labels = [first, ["assignment", "2 · 项目归属"], ["authorization", "3 · ERP 授权"]];
         return `<ol class="web-steps">${labels.map(([id, label]) => `<li class="${id === active ? "is-active" : ""}">${label}</li>`).join("")}</ol>`;
       };
+
+      const renderCorrections = () => {
+        const issues = currentState.materialCheck.issues;
+        const unresolved = issues.filter((issue) => issue.status !== "resolved");
+        const issueRows = issues
+          .map((issue) => `<tr><td><strong>${escapeHtml(issue.title)}</strong><small>${escapeHtml(issue.detail)}</small></td><td>${escapeHtml(issue.materials)}</td><td>${issue.status === "resolved" ? "已纠正，待复检" : "待处理"}</td></tr>`)
+          .join("");
+        const action = unresolved.length
+          ? `<button class="button-danger" type="button" data-action="RESOLVE_DUPLICATE">排除重复材料并记录纠正</button>`
+          : `<button class="button-primary" type="button" data-action="RECHECK_MATERIALS">重新运行全量整理检查</button>`;
+        const title = unresolved.length ? "自动整理被阻塞" : "纠正已记录，等待全量复检";
+        const detail = unresolved.length
+          ? `发现 ${unresolved.length} 个未解决问题。问题清零前，不开放项目归属和 ERP。`
+          : "纠正已经记录，但任务仍未放行；必须重新运行全量整理检查。";
+        return `
+          ${renderWebSteps("correction")}
+          <div class="web-body">
+            <div class="warning-band"><strong>${title}</strong><p>${detail}</p></div>
+            <div class="summary-band"><div><span>待确认项</span><strong>${unresolved.length}</strong></div><div><span>重复发票</span><strong>${issues.filter((issue) => issue.kind === "duplicateInvoice" && issue.status !== "resolved").length}</strong></div><div><span>全量复检</span><strong>必须执行</strong></div></div>
+            <table class="project-summary"><thead><tr><th>问题</th><th>涉及材料</th><th>状态</th></tr></thead><tbody>${issueRows}</tbody></table>
+            <p>纠正只记录用户的材料处置，不直接改变 ERP 就绪事实；每次纠正后必须重新检查全部材料、关联和确定性规则。</p>
+            <div class="button-row">${action}</div>
+          </div>`;
+      };
+
+      const renderMaterialConfirmation = () => `
+        ${renderWebSteps("materialConfirm")}
+        <div class="web-body">
+          <div class="summary-band"><div><span>总金额</span><strong>${money(eventTotal)}</strong></div><div><span>费用事件</span><strong>${FlowModel.events.length} 个</strong></div><div><span>待确认项</span><strong>0 个</strong></div></div>
+          <h3>自动整理已完成，等待确认</h3>
+          <ul class="plain-list">
+            <li><strong>9 份报销材料已固定</strong><span>原始文件未移动、未修改。</span></li>
+            <li><strong>6 个费用事件已通过确定性校验</strong><span>材料分类、证据关联和公司规则映射已完成。</span></li>
+            <li><strong>纯发票上传目录已准备</strong><span>参考材料只提供上下文，不上传 ERP。</span></li>
+          </ul>
+          <details><summary>查看整理明细</summary><p>内部保留材料编号、字段候选、解析记录、材料证据关联和候选明细，供确认与审计。</p></details>
+          <div class="button-row"><button class="button-primary" type="button" data-action="CONFIRM_MATERIALS">确认材料整理结果</button></div>
+        </div>`;
 
       const renderOverview = () => `
         ${renderWebSteps("overview")}
         <div class="web-body">
-          <div class="summary-band"><div><span>总金额</span><strong>${money(eventTotal)}</strong></div><div><span>费用事件</span><strong>${FlowModel.events.length} 个</strong></div><div><span>待确认项</span><strong>0 个</strong></div></div>
-          <h3>自动整理已完成</h3>
+          <div class="summary-band"><div><span>总金额</span><strong>${money(eventTotal)}</strong></div><div><span>费用事件</span><strong>${FlowModel.events.length} 个</strong></div><div><span>待确认项</span><strong>${currentState.task?.blockingQuestions || 0} 个</strong></div></div>
+          <h3>材料整理已确认</h3>
           <ul class="plain-list">
             <li><strong>9 份报销材料已固定</strong><span>原始文件未移动、未修改。</span></li>
             <li><strong>6 个费用事件已通过确定性校验</strong><span>材料分类、证据关联和公司规则映射在打开 Web 前完成。</span></li>
@@ -2581,10 +2773,14 @@
 
       const renderWeb = () => {
         if (!currentState.web.open) {
-          return `<section aria-labelledby="web-title"><header class="surface-header"><div><p class="section-kicker">任务选择</p><h2 id="web-title">本地 Web</h2></div><span class="surface-status">未打开</span></header><div class="empty-surface"><div><strong>尚未打开本地 Web</strong><span>只有 run 完成自动整理且没有阻塞性待确认项后才会打开。</span></div></div></section>`;
+          return `<section aria-labelledby="web-title"><header class="surface-header"><div><p class="section-kicker">任务选择</p><h2 id="web-title">本地 Web</h2></div><span class="surface-status">未打开</span></header><div class="empty-surface"><div><strong>尚未打开本地 Web</strong><span>run 完成整理检查后才会打开；有问题时进入整理纠正，问题清零后等待材料整理确认。</span></div></div></section>`;
         }
-        const body = currentState.web.mode === "overview"
-          ? renderOverview()
+        const body = currentState.web.mode === "correction"
+          ? renderCorrections()
+          : currentState.web.mode === "materialConfirm"
+            ? renderMaterialConfirmation()
+          : currentState.web.mode === "overview"
+            ? renderOverview()
           : currentState.web.mode === "assignment"
             ? renderAssignment()
             : currentState.web.mode === "review"
@@ -2612,7 +2808,7 @@
         const rows = currentState.erp.status === "handedOff"
           ? [["单据编号", currentState.erp.draftNumber], ["状态", "修改态 · 未提交"], ["当前控制权", "用户"], ["baox 后续写权限", "永久释放"]]
           : [["ERP 就绪快照", currentState.erp.snapshot || "未锁定"], ["表头", "客户现场支持 · 员工本人"], ["费用明细", `${FlowModel.events.length} 条 · ${money(eventTotal)}`], ["收票", "仅纯发票，不上传参考材料"], ["当前控制权", currentState.erp.control], ["对账", currentState.erp.reconciliation]];
-        return `<section aria-labelledby="erp-title"><header class="surface-header"><div><p class="section-kicker">有头浏览器 · 虚构页面</p><h2 id="erp-title">金蝶 ERP 费用报销</h2></div><span class="surface-status">${escapeHtml(FlowModel.status(currentState).surfaces.erp.state)}</span></header><div class="erp-body"><div class="erp-browser"><div class="erp-chrome"><span class="erp-dots"><span></span><span></span><span></span></span><span class="erp-address">https://erp.example.test/expense/draft/${escapeHtml(currentState.task.id)}</span></div><div class="web-body"><p class="section-kicker">${escapeHtml(statusCopy[0])}</p><h2>${escapeHtml(statusCopy[0])}</h2><p>${escapeHtml(statusCopy[1])}</p><div class="erp-form">${rows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div></div></div></div></section>`;
+        return `<section aria-labelledby="erp-title"><header class="surface-header"><div><p class="section-kicker">有头浏览器 · 虚构页面</p><h2 id="erp-title">金蝶 ERP 费用报销</h2></div><span class="surface-status">${escapeHtml(FlowModel.status(currentState).surfaces.erp.state)}</span></header><div class="erp-body"><div class="erp-browser"><div class="erp-chrome"><span class="erp-dots"><span></span><span></span><span></span></span><span class="erp-address">${escapeHtml(DEFAULT_ERP_URL)}</span></div><div class="web-body"><p class="section-kicker">${escapeHtml(statusCopy[0])}</p><h2>${escapeHtml(statusCopy[0])}</h2><p>${escapeHtml(statusCopy[1])}</p><div class="erp-form">${rows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div></div></div></div></section>`;
       };
 
       const renderSurface = () => {
@@ -2628,6 +2824,7 @@
           ["系统 Codex", `${currentState.system.codex.version} · 已登录`, "最小真实调用可用；baox 不保存 Codex 凭据"],
           ["个人初始化", currentState.profile.exists ? `配置 v${currentState.profile.revision} · 完整` : "尚未创建", currentState.profile.passwordStored ? "ERP 密码仅在系统凭据库" : "没有持久密码"],
           ["报销任务", currentState.task ? `${currentState.task.id} · ${currentState.task.stage}` : "未创建", currentState.task ? `generation ${currentState.task.generation} · revision ${currentState.task.revision}` : "init 不创建报销任务"],
+          ["整理检查", currentState.task ? `${currentState.materialCheck.issues.filter((issue) => issue.status !== "resolved").length} 个待处理问题` : "未开始", currentState.task ? `第 ${currentState.materialCheck.runCount} 次全量检查` : "run 后开始"],
           ["项目归属", currentState.task ? `${status.assigned} / ${status.total} 个费用事件` : "无", currentState.web.selected.length ? `${currentState.web.selected.length} 个页面内选择尚未提交` : "没有未提交页面选择"],
           ["ERP 就绪快照", currentState.erp.snapshot || "未锁定", currentState.erp.snapshot ? "不可变；任务事实变化时必须重建" : "启动 ERP 时才形成"],
           ["ERP 动作尝试", attempt ? `${attempt.id} · ${attempt.status}` : "无", attempt?.evidence || "尚无外部写入"],

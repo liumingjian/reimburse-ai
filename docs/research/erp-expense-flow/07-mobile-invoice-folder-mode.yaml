@@ -1,0 +1,68 @@
+- generic [ref=f11e49]:
+  - generic [ref=f11e50]:
+    - generic [ref=f11e51] [cursor=pointer]:
+      - generic:
+        - radio "上传发票影像"
+      - text: 上传发票影像
+    - generic [ref=f11e52] [cursor=pointer]:
+      - generic:
+        - radio "上传附件影像"
+      - text: 上传附件影像
+    - generic [ref=f11e53] [cursor=pointer]:
+      - generic:
+        - radio "企业收到的发票"
+      - text: 企业收到的发票
+    - generic [ref=f11e54] [cursor=pointer]:
+      - generic:
+        - radio "移动端票夹" [checked] [active]
+      - text: 移动端票夹
+  - generic [ref=f11e226]:
+    - generic [ref=f11e227]:
+      - generic [ref=f11e228]:
+        - text: 报销状态：
+        - combobox [ref=f11e230] [cursor=pointer]:
+          - generic "未用" [ref=f11e232]
+          - 'generic "图标: down" [ref=f11e234]'
+      - generic [ref=f11e237]:
+        - text: 开票日期：
+        - generic [ref=f11e239]:
+          - 'textbox "开票日期： ~ 图标: calendar" [ref=f11e240]':
+            - /placeholder: 开始日期
+          - generic: ~
+          - textbox "结束日期" [ref=f11e241]
+          - 'generic "图标: calendar" [ref=f11e242]'
+      - button "查 询" [ref=f11e245] [cursor=pointer]
+    - generic [ref=f11e251]:
+      - table [ref=f11e253]:
+        - rowgroup [ref=f11e262]:
+          - row "发票摘要 价税合计 税额 开票日期 发票信息 操作" [ref=f11e263]:
+            - columnheader [ref=f11e264]:
+              - checkbox [disabled] [ref=f11e271]
+            - columnheader "发票摘要" [ref=f11e273]
+            - columnheader "价税合计" [ref=f11e276]
+            - columnheader "税额" [ref=f11e279]
+            - columnheader "开票日期" [ref=f11e282]
+            - columnheader "发票信息" [ref=f11e285]
+            - columnheader "操作" [ref=f11e288]
+        - rowgroup
+      - paragraph [ref=f11e300]: 暂无数据
+    - list [ref=f11e301]:
+      - listitem "上一页" [ref=f11e302]:
+        - 'generic "图标: left" [ref=f11e304]'
+      - listitem "0" [ref=f11e307]
+      - listitem "下一页" [ref=f11e309]:
+        - 'generic "图标: right" [ref=f11e311]'
+      - listitem [ref=f11e314]:
+        - combobox [ref=f11e316] [cursor=pointer]:
+          - generic "10 条/页" [ref=f11e318]
+          - 'generic "图标: down" [ref=f11e320]'
+  - generic [ref=f11e323]:
+    - generic [ref=f11e324]:
+      - paragraph [ref=f11e325]:
+        - text: 已选取0张发票
+        - generic [ref=f11e327] [cursor=pointer]: 所有已选发票
+        - generic [ref=f11e328] [cursor=pointer]: 已选0份附件
+      - paragraph [ref=f11e329]: 价税合计0.00元 税额合计0.00元
+    - generic [ref=f11e331]:
+      - button "继续采集" [ref=f11e332] [cursor=pointer]
+      - button "发票导入单据" [ref=f11e333] [cursor=pointer]

@@ -1,0 +1,36 @@
+- generic [ref=f11e49]:
+  - generic [ref=f11e50]:
+    - generic [ref=f11e51] [cursor=pointer]:
+      - generic:
+        - radio "上传发票影像"
+      - text: 上传发票影像
+    - generic [ref=f11e52] [cursor=pointer]:
+      - generic:
+        - radio "上传附件影像" [checked] [active]
+      - text: 上传附件影像
+    - generic [ref=f11e53] [cursor=pointer]:
+      - generic:
+        - radio "企业收到的发票"
+      - text: 企业收到的发票
+    - generic [ref=f11e54] [cursor=pointer]:
+      - generic:
+        - radio "移动端票夹"
+      - text: 移动端票夹
+  - generic [ref=f11e91]:
+    - generic [ref=f11e92]:
+      - generic [ref=f11e93]:
+        - button [ref=f11e96]:
+          - button "Choose File"
+          - button "上传附件" [ref=f11e97] [cursor=pointer]
+        - button "开始扫描" [ref=f11e98] [cursor=pointer]
+      - generic [ref=f11e99]: 暂无数据
+    - generic [ref=f11e101]:
+      - generic [ref=f11e102]:
+        - paragraph [ref=f11e103]:
+          - text: 已选取0张发票
+          - generic [ref=f11e105] [cursor=pointer]: 所有已选发票
+          - generic [ref=f11e106] [cursor=pointer]: 已选0份附件
+        - paragraph [ref=f11e107]: 价税合计0.00元 税额合计0.00元
+      - generic [ref=f11e109]:
+        - button "继续采集" [ref=f11e110] [cursor=pointer]
+        - button "发票导入单据" [ref=f11e111] [cursor=pointer]

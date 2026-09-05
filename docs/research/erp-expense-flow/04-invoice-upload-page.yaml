@@ -1,0 +1,38 @@
+- generic [ref=f11e49]:
+  - generic [ref=f11e50]:
+    - generic [ref=f11e51] [cursor=pointer]:
+      - generic:
+        - radio "上传发票影像" [checked]
+      - text: 上传发票影像
+    - generic [ref=f11e52] [cursor=pointer]:
+      - generic:
+        - radio "上传附件影像"
+      - text: 上传附件影像
+    - generic [ref=f11e53] [cursor=pointer]:
+      - generic:
+        - radio "企业收到的发票"
+      - text: 企业收到的发票
+    - generic [ref=f11e54] [cursor=pointer]:
+      - generic:
+        - radio "移动端票夹"
+      - text: 移动端票夹
+  - generic [ref=f11e55]:
+    - generic [ref=f11e56]:
+      - generic [ref=f11e57]:
+        - button [ref=f11e60]:
+          - button "Choose File"
+          - button "上传发票" [ref=f11e61] [cursor=pointer]
+        - button "手工录入" [ref=f11e62] [cursor=pointer]
+        - link "下载EXCEL表格" [ref=f11e63] [cursor=pointer]:
+          - /url: https://img-sit.piaozone.com/static/pcmh/images/doc/invoice_check_tpl.xlsx
+      - generic [ref=f11e64]: 暂无数据
+    - generic [ref=f11e66]:
+      - generic [ref=f11e67]:
+        - paragraph [ref=f11e68]:
+          - text: 已选取0张发票
+          - generic [ref=f11e70] [cursor=pointer]: 所有已选发票
+          - generic [ref=f11e71] [cursor=pointer]: 已选0份附件
+        - paragraph [ref=f11e72]: 价税合计0.00元 税额合计0.00元
+      - generic [ref=f11e74]:
+        - button "继续采集" [ref=f11e75] [cursor=pointer]
+        - button "发票导入单据" [ref=f11e76] [cursor=pointer]

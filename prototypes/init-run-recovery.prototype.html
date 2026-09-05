@@ -934,6 +934,7 @@
         const TASK_ID = "BX-PROTOTYPE-028";
         const MIN_CODEX = "1.2.0（原型值）";
         const CURRENT_CODEX = "1.4.0（原型值）";
+        const DEFAULT_ERP_URL = "http://erp.antute.com.cn/k3cloud/html5/index.aspx";
 
         const clone = (value) => structuredClone(value);
 
@@ -960,7 +961,7 @@
           profile: {
             revision: 3,
             city: "上海市",
-            erpUrl: "https://erp.example.test",
+            erpUrl: DEFAULT_ERP_URL,
             erpUsername: "li.ming",
             credentialRevision: 3,
             credentialStatus: "系统凭据库内存在；尚未用于本次登录",
@@ -1277,7 +1278,7 @@
               state.configDraft = {
                 basedOnRevision: state.profile.revision,
                 city: state.profile.city,
-                erpUrl: state.profile.erpUrl,
+                erpUrl: DEFAULT_ERP_URL,
                 erpUsername: state.profile.erpUsername,
                 changes: [],
               };
@@ -1298,15 +1299,15 @@
                 return rejected(source, "没有配置草稿", "先运行 baox init 并明确进入修改。", "CLI");
               }
               state.configDraft.city = "杭州市";
-              state.configDraft.erpUrl = "https://erp-new.example.test";
-              state.configDraft.changes = ["常驻城市", "ERP 入口"];
+              state.configDraft.erpUrl = DEFAULT_ERP_URL;
+              state.configDraft.changes = ["常驻城市"];
               addTerminal(
                 state,
                 "  常驻城市    上海市 → 杭州市（已暂存）",
-                "  ERP 入口    https://erp-new.example.test（已暂存）",
-                "? 保存以上 2 项更改？",
+                `  ERP 入口    ${DEFAULT_ERP_URL}（固定内置）`,
+                "? 保存以上 1 项更改？",
               );
-              return accepted(state, "两项设置已暂存", "尚未写入；中断或取消会完整保留 v3。", "CLI", "normal");
+              return accepted(state, "一项设置已暂存", "ERP 入口不可修改；尚未写入， 中断或取消会完整保留 v3。", "CLI", "normal");
             }
 
             case "SAVE_CONFIG": {
@@ -2054,11 +2055,11 @@
         {
           id: "init-interrupted",
           title: "初始化中断",
-          description: "用户修改两项个人设置，但在最终保存前按下 Ctrl+C。",
+          description: "用户修改一项个人设置，但在最终保存前按下 Ctrl+C。",
           watch: "配置草稿是临时状态；重新进入时，v3 仍完整且无需重复输入密码。",
           steps: [
             ["进入修改", "BEGIN_INIT_EDIT"],
-            ["暂存两项变化", "STAGE_CONFIG"],
+            ["暂存一项变化", "STAGE_CONFIG"],
             ["Ctrl+C 中断", "INTERRUPT_INIT"],
             ["重新进入 init", "BEGIN_INIT_EDIT"],
             ["保留原配置", "KEEP_CONFIG"],
@@ -2079,11 +2080,11 @@
         {
           id: "config-change",
           title: "个人配置变更",
-          description: "已有任务仍在等待项目归属，此时用户通过 init 修改常驻城市和 ERP 入口。",
-          watch: "新配置只影响之后创建的任务；当前任务继续绑定创建时的 v3。",
+          description: "已有任务仍在等待项目归属，此时用户通过 init 修改常驻城市；ERP 入口保持内置固定值。",
+          watch: "新配置只影响之后创建的任务；当前任务继续绑定创建时的 v3，ERP 入口不可修改。",
           steps: [
             ["进入配置修改", "BEGIN_INIT_EDIT"],
-            ["暂存两项变化", "STAGE_CONFIG"],
+            ["暂存一项变化", "STAGE_CONFIG"],
             ["保存配置 v4", "SAVE_CONFIG"],
             ["重新进入既有任务", "RESUME_TASK"],
           ],
