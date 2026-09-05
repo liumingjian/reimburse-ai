@@ -228,6 +228,12 @@ export async function autoAttach(session) {
   session.on('Target.attachedToTarget', (p) => {
     children.set(p.targetInfo.targetId, { info: p.targetInfo, sessionId: p.sessionId });
   });
+  // 目标附上来的那一刻 url 往往还是 about:blank，真正的地址是**之后**才导航过去的。
+  // 只记附加时那一份，就会永远等不到自己要的那个框架。
+  session.on('Target.targetInfoChanged', (p) => {
+    const c = children.get(p.targetInfo.targetId);
+    if (c) c.info = p.targetInfo;
+  });
   session.on('Target.detachedFromTarget', (p) => {
     for (const [id, c] of children) if (c.sessionId === p.sessionId) children.delete(id);
   });
@@ -248,11 +254,16 @@ export async function autoAttach(session) {
       const until = Date.now() + timeout;
       while (Date.now() < until) {
         for (const c of children.values()) {
-          if (!match(c.info.url || '')) continue;
           const s2 = sub(c.sessionId);
-          // 附上了不代表已经能求值，探一句再交出去。
-          try { await s2.send('Runtime.evaluate', { expression: '1', returnByValue: true }); return s2; }
-          catch { children.delete(c.info.targetId); }
+          let url = c.info.url || '';
+          // targetInfoChanged 也可能还没来，所以再去框架自己那边问一句当前地址。
+          // 顺带确认它已经能求值了——附上了不等于能说话。
+          try {
+            const r = await s2.send('Runtime.evaluate',
+              { expression: 'location.href', returnByValue: true });
+            url = r.result?.value || url;
+          } catch { children.delete(c.info.targetId); continue; }
+          if (match(url)) return s2;
         }
         await new Promise((r) => setTimeout(r, interval));
       }
