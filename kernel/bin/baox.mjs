@@ -7,7 +7,9 @@ import * as chrome from '../src/chrome.mjs';
 import { probeIdentity, ERP_ORIGIN } from '../src/probe.mjs';
 import { serveSelection } from '../src/serve.mjs';
 import { takeInventory, intakeOpenItems } from '../src/inventory.mjs';
-import { findLiveTaskForSource, createTask, recordInventory, sourceKeyOf, taskDir } from '../src/workspace.mjs';
+import { classifyInventory, classifyOpenItems, summarize } from '../src/classify.mjs';
+import { findLiveTaskForSource, createTask, recordInventory, recordClassification,
+  sourceKeyOf, taskDir } from '../src/workspace.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -98,6 +100,54 @@ try {
       }, blocking.length === 0 ? OK : BLOCKED);
     }
 
+    case 'classify': {
+      const dir = arg('dir');
+      if (!dir) out({ command: 'classify', error: '缺少 --dir <材料目录>' }, ERR);
+
+      // 分流永远建立在一个确定的盘点版本之上，所以这里先重新盘一次（幂等）。
+      // 盘点层还有硬阻塞时不往下解析：范围外和读不出来的材料先解决，再谈票种。
+      const inventory = await takeInventory(dir);
+      const existing = findLiveTaskForSource(sourceKeyOf(dir));
+      const task = existing ?? createTask(dir);
+      const rec = recordInventory(task, inventory);
+
+      const intakeItems = intakeOpenItems(inventory);
+      const intakeBlocking = intakeItems.filter((i) => i.blocking);
+      if (intakeBlocking.length) {
+        out({ command: 'classify', stage: 'intake',
+          task: { taskId: rec.task.taskId, resumed: !!existing, workspace: taskDir(rec.task) },
+          inventory: { versionId: inventory.versionId, materialCount: inventory.materials.length },
+          openItems: intakeItems,
+          readyForNextStep: false,
+          note: '材料盘点还有未清的待确认项，先处理它们再做分流与解析' }, BLOCKED);
+      }
+
+      const classification = classifyInventory(dir, inventory);
+      const file = recordClassification(rec.task, classification);
+      const items = classifyOpenItems(classification);
+      const blocking = items.filter((i) => i.blocking);
+      const byRole = {};
+      for (const r of classification.results) {
+        if (r.parseStatus === 'skipped') continue;
+        byRole[r.role ?? 'unknown'] = (byRole[r.role ?? 'unknown'] ?? 0) + 1;
+      }
+
+      out({
+        command: 'classify', stage: 'classify',
+        task: { taskId: rec.task.taskId, resumed: !!existing, workspace: taskDir(rec.task) },
+        inventory: { versionId: inventory.versionId, isNewVersion: rec.isNewVersion,
+          supersededVersionId: rec.supersededVersionId, materialCount: inventory.materials.length },
+        byRole,
+        // 完整发票号码只留在任务工作区文件里，输出一律脱敏 ——
+        // 重复分组的 identityKey 里也带着完整号码，这里一并去掉。
+        materials: summarize(classification),
+        duplicates: classification.duplicates.map(({ identityKey, ...d }) => d),
+        openItems: items,
+        factsFile: file,
+        readyForNextStep: blocking.length === 0,
+      }, blocking.length === 0 ? OK : BLOCKED);
+    }
+
     case 'select': {
       const specPath = arg('spec');
       if (!specPath) out({ command: 'select', error: '缺少 --spec <file.json>' }, ERR);
@@ -110,7 +160,7 @@ try {
     }
 
     default:
-      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'intake', 'select'] }, ERR);
+      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'intake', 'classify', 'select'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);

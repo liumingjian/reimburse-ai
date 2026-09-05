@@ -85,3 +85,13 @@ export function recordInventory(task, inventory) {
     versionCount: known.length,
   };
 }
+
+/**
+ * 把一次材料分流与解析记进任务。它永远从属于某个盘点版本 ——
+ * 材料一变就是新版本，旧的解析结果作为历史事实留着，不再代表当前状态。
+ */
+export function recordClassification(task, classification) {
+  const dir = path.join(taskDir(task), 'classifications');
+  writeJson(path.join(dir, `${classification.versionId}.json`), classification);
+  return path.join(dir, `${classification.versionId}.json`);
+}
