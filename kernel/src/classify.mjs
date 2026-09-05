@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { parseMaterial, invoiceIdentity, checkAmounts, maskNumber } from './parse.mjs';
+import { loadReading, projectReading } from './vision.mjs';
 
 // 材料角色分流：把盘点出来的材料判成主要报销凭证还是参考材料，
 // 顺带把票面事实和发票身份提出来，并做**任务内**重复发票检测。
@@ -11,7 +12,7 @@ import { parseMaterial, invoiceIdentity, checkAmounts, maskNumber } from './pars
  * 对一次盘点版本里的材料逐份解析。
  * `sourceDir` 只在本次进程内用来读文件，不写进任何产物。
  */
-export function classifyInventory(sourceDir, inventory) {
+export function classifyInventory(sourceDir, inventory, task = null) {
   const results = [];
   for (const m of inventory.materials) {
     if (m.disposition !== 'pending_classification') {
@@ -20,7 +21,18 @@ export function classifyInventory(sourceDir, inventory) {
         parseStatus: 'skipped', role: null, kind: null, fields: {}, candidates: [], evidence: {} });
       continue;
     }
-    const parsed = parseMaterial(path.join(path.resolve(sourceDir), m.relPath), m.format);
+    let parsed = parseMaterial(path.join(path.resolve(sourceDir), m.relPath), m.format);
+
+    // 图片取不出文字，但可能已经有一次**已确认**的看图读取。
+    // 只有确认过的读数才顶替解析结果；读过没确认的仍然停在待确认项里。
+    if (parsed.parseStatus === 'needs_ocr' && task) {
+      const reading = loadReading(task, m.materialId);
+      const fresh = reading && reading.contentHash === m.contentHash;
+      const projected = fresh ? projectReading(reading) : null;
+      if (projected) parsed = projected;
+      else parsed = { ...parsed, readingState: !fresh && reading ? 'stale' : reading ? 'unconfirmed' : 'none' };
+    }
+
     const identity = invoiceIdentity(parsed);
     results.push({
       materialId: m.materialId,
@@ -65,9 +77,18 @@ export function classifyOpenItems(classification) {
     const at = { materialId: r.materialId, fileName: r.fileName };
 
     if (r.parseStatus === 'needs_ocr') {
-      add('image_needs_ocr', true, { ...at,
-        note: '图片材料取不出文字，内核不做 OCR，也不允许由对话补出票面事实。'
-          + '如果它是发票，请换成 PDF 原件；如果只是参考材料，可以从材料目录里拿走' });
+      const state = r.readingState ?? 'none';
+      if (state === 'unconfirmed') {
+        add('reading_awaiting_confirmation', true, { ...at,
+          note: '这张图已经读过，但读数还没有被确认。看图读出来的字段只是候选，'
+            + '必须由用户在本地确认页面上核对后提交才能算数' });
+      } else if (state === 'stale') {
+        add('reading_stale', true, { ...at,
+          note: '图片内容变了，之前那次读取已经作废，需要重新看图' });
+      } else {
+        add('image_awaiting_reading', true, { ...at,
+          note: '图片材料需要看图读取票面信息；跑 ocr-request 拿到读取工单' });
+      }
       continue;
     }
     if (r.parseStatus === 'no_text') {
@@ -78,6 +99,15 @@ export function classifyOpenItems(classification) {
     if (r.parseStatus === 'unrecognized') {
       add('kind_unrecognized', true, { ...at,
         note: '认得出是 PDF、取得到文字，但不是 v1 支持的票种；请确认它是否属于本次报销' });
+      continue;
+    }
+
+    if (r.kind === 'unreadable') {
+      add('image_unreadable', true, { ...at, note: '这张图看不清，读不出票面信息；请提供更清晰的原件' });
+      continue;
+    }
+    if (r.kind === 'other') {
+      add('kind_unrecognized', true, { ...at, note: '看图读取判定它不是发票，也不是已知的参考材料；请确认它是否属于本次报销' });
       continue;
     }
 

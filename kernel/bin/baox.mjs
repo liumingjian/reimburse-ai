@@ -5,7 +5,9 @@ import url from 'node:url';
 import { paths, ensureDir } from '../src/paths.mjs';
 import * as chrome from '../src/chrome.mjs';
 import { probeIdentity, ERP_ORIGIN } from '../src/probe.mjs';
-import { serveSelection } from '../src/serve.mjs';
+import { serveSelection, serveConfirmation } from '../src/serve.mjs';
+import { buildWorkOrder, ingestReadings, confirmReadings, loadReading,
+  READING_VERSION, DOC_TYPES } from '../src/vision.mjs';
 import { takeInventory, intakeOpenItems } from '../src/inventory.mjs';
 import { classifyInventory, classifyOpenItems, summarize } from '../src/classify.mjs';
 import { findLiveTaskForSource, createTask, recordInventory, recordClassification,
@@ -122,7 +124,7 @@ try {
           note: '材料盘点还有未清的待确认项，先处理它们再做分流与解析' }, BLOCKED);
       }
 
-      const classification = classifyInventory(dir, inventory);
+      const classification = classifyInventory(dir, inventory, rec.task);
       const file = recordClassification(rec.task, classification);
       const items = classifyOpenItems(classification);
       const blocking = items.filter((i) => i.blocking);
@@ -148,6 +150,97 @@ try {
       }, blocking.length === 0 ? OK : BLOCKED);
     }
 
+    case 'ocr-request': {
+      // 图片材料的读取工单。内核不做 OCR —— 装本地 OCR 等于要求每台电脑都有它，
+      // 而 Claude Code 自带视觉能力。所以这里只负责说清楚"读哪张、要什么、按什么格式回报"。
+      const dir = arg('dir');
+      if (!dir) out({ command: 'ocr-request', error: '缺少 --dir <材料目录>' }, ERR);
+      const inventory = await takeInventory(dir);
+      const existing = findLiveTaskForSource(sourceKeyOf(dir));
+      const task = existing ?? createTask(dir);
+      const rec = recordInventory(task, inventory);
+      const classification = classifyInventory(dir, inventory, rec.task);
+      const items = buildWorkOrder(dir, inventory, classification, rec.task);
+      const todo = items.filter((i) => !i.alreadyRead);
+
+      out({
+        command: 'ocr-request',
+        task: { taskId: rec.task.taskId, workspace: taskDir(rec.task) },
+        inventoryVersionId: inventory.versionId,
+        submissionFormat: {
+          version: READING_VERSION,
+          docTypes: Object.fromEntries(Object.entries(DOC_TYPES).map(([k, v]) => [k, v.label])),
+          note: '逐字抄写票面上看得见的字符。看不清的字段写进 unreadable，不要猜、不要算、不要补全。',
+        },
+        items,
+        pendingCount: todo.length,
+      }, todo.length ? BLOCKED : OK);
+    }
+
+    case 'ocr-submit': {
+      const dir = arg('dir');
+      const file = arg('file');
+      if (!dir || !file) out({ command: 'ocr-submit', error: '缺少 --dir <材料目录> 或 --file <读数 json>' }, ERR);
+      const inventory = await takeInventory(dir);
+      const task = findLiveTaskForSource(sourceKeyOf(dir));
+      if (!task) out({ command: 'ocr-submit', error: '这个目录还没有进行中的报销任务，先跑 intake' }, ERR);
+      recordInventory(task, inventory);
+
+      const submission = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const verdicts = ingestReadings(dir, inventory, task, submission);
+      const rejected = verdicts.filter((v) => v.verdict === 'rejected');
+
+      out({
+        command: 'ocr-submit',
+        task: { taskId: task.taskId, workspace: taskDir(task) },
+        verdicts,
+        accepted: verdicts.length - rejected.length,
+        rejected: rejected.length,
+        // 接收成功只是通过了结构校验，还不是已解析值 —— 必须再走一次用户确认。
+        note: '通过结构校验的读数已存为字段候选；跑 confirm-readings 让用户对着原图确认',
+      }, rejected.length ? BLOCKED : OK);
+    }
+
+    case 'confirm-readings': {
+      const dir = arg('dir');
+      if (!dir) out({ command: 'confirm-readings', error: '缺少 --dir <材料目录>' }, ERR);
+      const inventory = await takeInventory(dir);
+      const task = findLiveTaskForSource(sourceKeyOf(dir));
+      if (!task) out({ command: 'confirm-readings', error: '这个目录还没有进行中的报销任务，先跑 intake' }, ERR);
+
+      const pending = [];
+      for (const m of inventory.materials) {
+        const r = loadReading(task, m.materialId);
+        if (!r || r.contentHash !== m.contentHash || r.confirmedAt) continue;
+        pending.push({
+          materialId: m.materialId,
+          fileName: m.fileName,
+          docTypeLabel: DOC_TYPES[r.docType]?.label ?? r.docType,
+          fields: Object.entries(r.fields),
+          unreadable: r.unreadable ?? [],
+        });
+      }
+      if (!pending.length) out({ command: 'confirm-readings', pending: 0, note: '没有待确认的看图读数' }, OK);
+
+      const result = await serveConfirmation({ items: pending }, {
+        timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
+        onReady: (u) => process.stderr.write(`打开这个地址核对看图读数：${u}\n`),
+      });
+      if (result.status !== 'submitted') out({ command: 'confirm-readings', ...result }, ERR);
+
+      const done = confirmReadings(task, result.confirmed);
+      const skipped = pending.filter((p) => !done.materialIds.includes(p.materialId)).map((p) => p.fileName);
+      out({
+        command: 'confirm-readings',
+        confirmed: done.materialIds.length,
+        confirmedAt: done.confirmedAt,
+        skipped,
+        note: skipped.length
+          ? '没有勾选的材料仍停在待确认项里；用户不勾就是不认，不要替他确认'
+          : '全部读数已确认，可以重新跑 classify',
+      }, skipped.length ? BLOCKED : OK);
+    }
+
     case 'select': {
       const specPath = arg('spec');
       if (!specPath) out({ command: 'select', error: '缺少 --spec <file.json>' }, ERR);
@@ -160,7 +253,8 @@ try {
     }
 
     default:
-      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'intake', 'classify', 'select'] }, ERR);
+      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'intake', 'classify',
+        'ocr-request', 'ocr-submit', 'confirm-readings', 'select'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);
