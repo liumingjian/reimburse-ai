@@ -229,6 +229,123 @@ export function serveAllocation(spec, opts = {}) {
     (body) => ({ status: 'submitted', allocations: body.allocations ?? {}, at: new Date().toISOString() }));
 }
 
+/**
+ * 任务选择页。**这是项目归属、常驻城市和事由进入系统的唯一通道。**
+ *
+ * 页面刻意只问材料证明不了的三件事。费用类别不在这里 —— 它由内核按常驻城市和
+ * 票面事实推导，不是用户的选择题；把它做成下拉框等于请用户去改一个有确定答案的结论。
+ * 常驻城市写在最上面并说明它会决定市内交通算本地还是外地，让用户知道自己在定什么。
+ */
+export function renderTaskSelectPage(spec, nonce) {
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const rows = spec.lines.map((l) => `
+    <tr data-line="${esc(l.lineId)}">
+      <td><input type="checkbox" name="pick"></td>
+      <td>${esc(l.date ?? '—')}</td>
+      <td>${esc(l.city ?? '—')}</td>
+      <td class="rt">${esc(l.route ?? '—')}</td>
+      <td class="num">${esc(l.totalAmount ?? '—')}</td>
+      <td class="src">${esc(l.fileName)}<br><span class="detail">${esc(l.kindLabel ?? '')} ${esc(l.maskedNumber ?? '')}</span></td>
+      <td><input name="proj" value="${esc(l.project ?? '')}" placeholder="项目号"></td>
+    </tr>`).join('');
+
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>任务选择</title><style>
+:root{color-scheme:light dark}
+body{font:16px/1.6 -apple-system,"PingFang SC",sans-serif;margin:0;padding:32px 20px;
+  display:flex;justify-content:center;background:Canvas;color:CanvasText}
+main{width:100%;max-width:860px}
+h1{font-size:20px;margin:0 0 4px}
+h2{font-size:16px;margin:22px 0 6px}
+p.prompt{margin:0 0 18px;opacity:.7}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:14px;opacity:.7;margin-bottom:4px}
+input{padding:8px 10px;font:inherit;border-radius:6px;background:Canvas;color:CanvasText;
+  border:1px solid color-mix(in srgb,CanvasText 30%,transparent)}
+.field input{width:100%;max-width:320px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;font-weight:400;opacity:.6;padding:6px 8px 6px 0;border-bottom:1px solid color-mix(in srgb,CanvasText 20%,transparent)}
+td{padding:8px 8px 8px 0;vertical-align:top;border-bottom:1px solid color-mix(in srgb,CanvasText 10%,transparent)}
+td.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+td.rt,td.src{word-break:break-all}
+td input[name=proj]{width:120px}
+.detail{font-size:12px;opacity:.55}
+.batch{display:flex;gap:8px;align-items:center;margin:12px 0;font-size:14px;flex-wrap:wrap}
+.batch button{width:auto;margin:0;padding:8px 14px;font-size:14px}
+button{width:100%;margin-top:20px;padding:14px;font-size:16px;font-weight:600;color:#fff;
+  background:#2563eb;border:0;border-radius:10px;cursor:pointer}
+#done{display:none;text-align:center;padding:48px 0;font-size:17px}
+</style></head><body><main>
+<form id="f">
+  <h1>任务选择</h1>
+  <p class="prompt">下面这几件事材料上没有写，系统也不会替你推断：<b>常驻城市、报销事由、每条明细的项目</b>。
+  只有在这里提交，才算数。</p>
+
+  <div class="field">
+    <label>常驻城市（决定市内交通算<b>本地</b>还是<b>外地</b>，请如实填本次报销所属员工的常驻城市）</label>
+    <input id="city" value="${esc(spec.homeCity ?? '')}" placeholder="例如 广州市">
+  </div>
+  <div class="field">
+    <label>报销事由（写进 ERP 单据表头，必填）</label>
+    <input id="purpose" value="${esc(spec.purpose ?? '')}" placeholder="例如 客户支持">
+  </div>
+
+  <h2>候选明细的项目归属</h2>
+  <div class="batch">
+    <label><input type="checkbox" id="all"> 全选</label>
+    <input id="bulk" placeholder="项目号">
+    <button type="button" id="apply">填到勾选的行</button>
+  </div>
+  <table>
+    <tr><th></th><th>日期</th><th>城市</th><th>起讫</th><th>价税合计</th><th>来源凭证</th><th>项目</th></tr>
+    ${rows}
+  </table>
+  <button type="submit">提交任务选择</button>
+</form>
+<div id="done">已提交，可以关闭这个页面，回到 Claude Code 继续。</div>
+<script>
+document.getElementById('all').addEventListener('change', (e) => {
+  document.querySelectorAll('input[name=pick]').forEach(i => { i.checked = e.target.checked; });
+});
+document.getElementById('apply').addEventListener('click', () => {
+  const v = document.getElementById('bulk').value.trim();
+  if (!v) { alert('先填一个项目号'); return; }
+  let n = 0;
+  for (const tr of document.querySelectorAll('tr[data-line]')) {
+    if (tr.querySelector('input[name=pick]').checked) { tr.querySelector('input[name=proj]').value = v; n += 1; }
+  }
+  if (!n) alert('先勾选要应用的行');
+});
+document.getElementById('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const projects = {};
+  for (const tr of document.querySelectorAll('tr[data-line]')) {
+    projects[tr.dataset.line] = tr.querySelector('input[name=proj]').value.trim();
+  }
+  const missing = Object.values(projects).filter(v => !v).length;
+  const city = document.getElementById('city').value.trim();
+  const purpose = document.getElementById('purpose').value.trim();
+  if (!city || !purpose || missing) {
+    alert('常驻城市、事由和每一行的项目都要填' + (missing ? '，还有 ' + missing + ' 行没填项目' : ''));
+    return;
+  }
+  e.target.querySelector('button[type=submit]').disabled = true;
+  await fetch('/submit?nonce=${nonce}', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ homeCity: city, purpose, projects })
+  });
+  document.getElementById('f').style.display = 'none';
+  document.getElementById('done').style.display = 'block';
+});
+</script></main></body></html>`;
+}
+
+export function serveTaskSelection(spec, opts = {}) {
+  return serveLocal((nonce) => renderTaskSelectPage(spec, nonce), opts,
+    (body) => ({ status: 'submitted', homeCity: body.homeCity, purpose: body.purpose,
+      projects: body.projects ?? {}, at: new Date().toISOString() }));
+}
+
 function serveLocal(render, { timeoutMs = 8 * 60 * 1000, onReady } = {}, onSubmit) {
   const nonce = crypto.randomBytes(16).toString('hex');
   return new Promise((resolve, reject) => {

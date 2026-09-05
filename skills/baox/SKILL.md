@@ -231,13 +231,46 @@ node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" allocate --di
 
 详见 [ADR-0005](../../docs/adr/0005-user-supplies-segment-amounts.md)。
 
-## 8. 还没实现的部分
+## 8. 费用类别与任务选择
 
-跨任务历史发票的重复检查、ERP 外部既有记录查询、费用类别与 ERP 费用项目的映射、
-项目归属的任务选择 Web、ERP 上传与保存草稿——**都还没有实现**。
+材料整理这一层全部清干净之后，候选明细还缺三样东西。**它们的来源完全不同，不能混。**
 
-用户问到这些时如实说还没做，**不要**用你自己的判断代替内核去推断项目归属或费用类别。
-候选明细里的 `category` 现在一律是 `null`，那是刻意留空的，不是漏了。
+**费用类别由内核推导，不问用户。** 住宿看有没有关联上酒店结账单，铁路客票按票种直接归
+长途交通，市内交通按费用发生城市与常驻城市比对分出本地/外地。依据写在 `categoryBasis` 里，
+用户问起就照着念。推不出来就是阻塞（`category_undecidable` / `category_city_missing`），
+**不要替内核判**——尤其不要因为"看着像住宿"就说它是住宿。
+
+**常驻城市、报销事由、每条明细的项目，只能由用户在任务选择页上提交。**
+
+```bash
+node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" select-task --dir "<材料目录>"
+```
+
+页面上可以勾选多行、把同一个项目号批量填进去。用户在对话里说"项目都填 111454"**不算数**，
+你也不能替他填——这条和读数确认、逐段分摊是同一条规矩：提交动作才构成选择。
+
+```bash
+node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" lines --dir "<材料目录>"
+```
+
+`lines` 给出候选明细的最终形态。讲给用户听的时候注意三件事：
+
+- **`expenseItemCode` 只有三类有。** 住宿 `FY010001`、本地市内交通 `FY008001`、
+  长途交通 `FY010003`，都是在真实 ERP 上保存过草稿并回读确认过的。**外地市内交通没有**——
+  它在 v1 范围内，但从没在 ERP 上落过明细，所以落到这一类就硬阻塞（`expense_item_unverified`）。
+  不要拿 `FY008001` 顶替，也不要猜一个编码。
+- **项目号未经核验。** `projectSource: user_input_unverified` 是事实：内核没有 ERP 项目目录，
+  没法确认这个项目号存在。别说"项目已确认"。
+- **明细一变，选择就失效**（`task_selection_stale`）。重新分摊过合并交通票之后要重新选一次。
+
+详见 [ADR-0006](../../docs/adr/0006-category-derived-project-chosen.md)。
+
+## 9. 还没实现的部分
+
+跨任务历史发票的重复检查、ERP 外部既有记录查询、ERP 项目目录的只读查询、
+外地市内交通的费用项目编码、ERP 上传与保存草稿——**都还没有实现**。
+
+用户问到这些时如实说还没做。
 
 尤其注意：当前的重复检查**只在本次任务内**。内核没有查过历史任务，也没有查过 ERP 里
 是否已经存在同一张发票。`readyForNextStep: true` 只意味着这一层的检查通过了，

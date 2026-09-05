@@ -5,13 +5,15 @@ import url from 'node:url';
 import { paths, ensureDir } from '../src/paths.mjs';
 import * as chrome from '../src/chrome.mjs';
 import { probeIdentity, ERP_ORIGIN } from '../src/probe.mjs';
-import { serveSelection, serveConfirmation, serveAllocation } from '../src/serve.mjs';
+import { serveSelection, serveConfirmation, serveAllocation, serveTaskSelection } from '../src/serve.mjs';
 import { buildWorkOrder, ingestReadings, confirmReadings, loadReading,
   READING_VERSION, DOC_TYPES } from '../src/vision.mjs';
 import { takeInventory, intakeOpenItems } from '../src/inventory.mjs';
 import { classifyInventory, classifyOpenItems, summarize } from '../src/classify.mjs';
 import { buildEvents, eventOpenItems, reconcile, submitAllocation } from '../src/events.mjs';
 import { maskNumber } from '../src/parse.mjs';
+import { loadSelection, submitSelection, applySelection } from '../src/selection.mjs';
+import { CATEGORIES } from '../src/categories.mjs';
 import { findLiveTaskForSource, createTask, recordInventory, recordClassification,
   recordEvents, sourceKeyOf, taskDir } from '../src/workspace.mjs';
 
@@ -55,6 +57,24 @@ async function upToClassification(dir) {
       note: '材料分流与解析还有未清的待确认项，先处理它们再谈费用事件' } };
   }
   return { task: rec.task, inventory, classification, blocked: null };
+}
+
+/**
+ * 盘点 -> 分流 -> 费用事件。任务选择这一层必须站在一批**已经确认干净**的候选明细上：
+ * 材料整理还有硬阻塞就不能打开任务选择页（设计共识第四节）。
+ */
+async function upToEvents(dir) {
+  const up = await upToClassification(dir);
+  if (up.blocked) return up;
+  const built = buildEvents(up.classification, up.task);
+  recordEvents(up.task, built);
+  const items = eventOpenItems(built);
+  if (items.some((i) => i.blocking)) {
+    return { blocked: { stage: 'events', openItems: items.filter((i) => i.blocking), readyForNextStep: false,
+      task: { taskId: up.task.taskId, workspace: taskDir(up.task) },
+      note: '费用事件这一层还有硬阻塞，材料整理没确认完，不能进入任务选择' } };
+  }
+  return { ...up, built, blocked: null };
 }
 
 const [, , cmd] = process.argv;
@@ -359,6 +379,69 @@ try {
         rejected.length ? BLOCKED : OK);
     }
 
+    case 'select-task': {
+      // 项目归属、常驻城市和事由。**只有这个页面上的提交动作能把它们定下来**；
+      // 用户在对话里说"项目是 111454"不构成任务选择。
+      const dir = arg('dir');
+      if (!dir) out({ command: 'select-task', error: '缺少 --dir <材料目录>' }, ERR);
+      const { task, built, blocked } = await upToEvents(dir);
+      if (blocked) out({ command: 'select-task', ...blocked }, BLOCKED);
+
+      // 上一次的选择只作预填：明细变过了就不再有效，用户仍然要重新看一遍再提交。
+      const prev = loadSelection(task);
+      const lines = built.lineItems.map((l) => {
+        const ev = built.events.find((e) => e.eventId === l.eventId);
+        return { lineId: l.lineId, fileName: ev.voucherFileName, kindLabel: ev.kindLabel,
+          maskedNumber: l.maskedNumber, date: l.date, city: l.city, route: l.route,
+          totalAmount: l.totalAmount, project: prev?.projects?.[l.lineId] ?? '' };
+      });
+
+      const result = await serveTaskSelection(
+        { lines, homeCity: prev?.homeCity ?? '', purpose: prev?.purpose ?? '' },
+        { timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
+          onReady: (u) => process.stderr.write(`打开这个地址做任务选择：${u}\n`) });
+      if (result.status !== 'submitted') out({ command: 'select-task', ...result }, ERR);
+
+      const r = submitSelection(task, built, result);
+      if (r.verdict === 'rejected') {
+        out({ command: 'select-task', verdict: r.verdict, reasons: r.reasons,
+          note: '任务选择没有收下；重新跑 select-task' }, BLOCKED);
+      }
+      out({ command: 'select-task', verdict: r.verdict,
+        homeCity: r.record.homeCity, purpose: r.record.purpose,
+        lineCount: Object.keys(r.record.projects).length,
+        projectSource: r.record.projectSource,
+        note: '项目号来自用户，还没有和 ERP 项目目录核对过；跑 lines 看费用类别推导结果' }, OK);
+    }
+
+    case 'lines': {
+      // 候选明细的最终形态：费用事实来自材料，费用类别来自内核推导，
+      // 项目归属和事由来自任务选择页。三样来源在输出里各自标明，不混。
+      const dir = arg('dir');
+      if (!dir) out({ command: 'lines', error: '缺少 --dir <材料目录>' }, ERR);
+      const { task, classification, built, blocked } = await upToEvents(dir);
+      if (blocked) out({ command: 'lines', ...blocked }, BLOCKED);
+
+      const applied = applySelection(built, classification, loadSelection(task));
+      const blocking = applied.notes.filter((n) => n.blocking);
+      out({
+        command: 'lines', stage: 'task_selection',
+        task: { taskId: task.taskId, workspace: taskDir(task) },
+        selectionApplied: applied.applied,
+        homeCity: applied.homeCity,
+        lineCount: applied.lines.length,
+        lines: applied.lines,
+        // 对照表里哪几类有经过验证的 ERP 编码，如实摆出来，别让人以为四类都能落地。
+        expenseItemCatalog: Object.fromEntries(Object.entries(CATEGORIES).map(([k, v]) =>
+          [k, { label: v.label, expenseItemCode: v.expenseItemCode, verified: !!v.expenseItemCode }])),
+        openItems: applied.notes,
+        readyForNextStep: blocking.length === 0,
+        note: blocking.length === 0
+          ? '候选明细已补齐；ERP 上传与保存草稿还没有实现'
+          : '候选明细还不能进入 ERP，先处理上面的阻塞',
+      }, blocking.length === 0 ? OK : BLOCKED);
+    }
+
     case 'select': {
       const specPath = arg('spec');
       if (!specPath) out({ command: 'select', error: '缺少 --spec <file.json>' }, ERR);
@@ -372,7 +455,7 @@ try {
 
     default:
       out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'intake', 'classify',
-        'ocr-request', 'ocr-submit', 'confirm-readings', 'events', 'allocate', 'select'] }, ERR);
+        'ocr-request', 'ocr-submit', 'confirm-readings', 'events', 'allocate', 'select-task', 'lines', 'select'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);
