@@ -168,3 +168,22 @@ export function recordCatalogVerification(task, record) {
 export function loadCatalogVerification(task) {
   return readJson(path.join(taskDir(task), 'catalog.json'), null);
 }
+
+/**
+ * 追加一条 ERP 动作尝试记录（目前只有只读对账这一种）。
+ *
+ * **只追加，不改写、不清理**：一次对账的判断依据必须能在事后原样复原，
+ * 而"上一次读到什么"恰恰是判断这次读数可不可信的东西。
+ * 记的是脱敏的事实（分、行数、中断点、处置），不是页面副本。
+ */
+export function recordErpAttempt(task, attempt) {
+  const file = path.join(taskDir(task), 'erp-attempts.json');
+  const log = readJson(file, { attempts: [] });
+  log.attempts.push(attempt);
+  writeJson(file, log);
+  return { file, count: log.attempts.length };
+}
+
+export function loadErpAttempts(task) {
+  return readJson(path.join(taskDir(task), 'erp-attempts.json'), { attempts: [] });
+}

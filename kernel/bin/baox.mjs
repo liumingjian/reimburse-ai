@@ -16,11 +16,13 @@ import { loadSelection, submitSelection, applySelection, linesDigest } from '../
 import { CATEGORIES } from '../src/categories.mjs';
 import { findLiveTaskForSource, createTask, recordInventory, recordClassification,
   recordEvents, recordInvoiceSightings, abandonTask, loadIndex,
-  sourceKeyOf, taskDir , recordCatalogVerification, loadCatalogVerification } from '../src/workspace.mjs';
+  sourceKeyOf, taskDir , recordCatalogVerification, loadCatalogVerification,
+  recordErpAttempt } from '../src/workspace.mjs';
 import { crossTaskDuplicates, historyOpenItems, holdsInvoices } from '../src/history.mjs';
 import { authorizedPage, verifyExpenseItems, verifyProject, PROJECT_FORM } from '../src/erpcatalog.mjs';
 import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerField,
   writeHeader, writeCell, selectOption, cellTarget, cellMatches, leaveEdit } from '../src/erpform.mjs';
+import { readReconciliation, classifyReconciliation, attemptRecord } from '../src/erpreconcile.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -171,6 +173,52 @@ try {
       } finally {
         session.close();
       }
+    }
+
+    case 'erp-reconcile': {
+      // ERP 对账：四项只读读数 -> 一个对账中断点 -> 两种处置之一。
+      // 这里是一层薄壳，判定在 erpreconcile.mjs 里（那是纯函数，能不开浏览器测）。
+      //
+      // 退出码：`转人工` -> 2（硬阻塞，任何"确认继续"都不能绕过）；其余 -> 0。
+      // 这里的 0 **不表示"可以继续写 ERP"**，它只表示对账本身完成了。
+      const gate = await authorizedPage({ expected: arg('expect') });
+      if (!gate.ok) {
+        out({ command: 'erp-reconcile', identity: gate.probe,
+          note: '身份没核对通过，不读 ERP 页面' }, BLOCKED);
+      }
+      const session = await openSession(gate.wsUrl);
+      let readings;
+      try {
+        readings = await readReconciliation(session);
+      } finally {
+        session.close();
+      }
+      const verdict = classifyReconciliation(readings);
+
+      // 审计落在这个目录对应的进行中任务上。没给 --dir 或者找不到任务时照常给结论，
+      // 但要如实说这次对账没有落审计 —— 不能让"没记上"看起来像"记上了"。
+      let audit = { recorded: false, note: '没有给 --dir，这次对账没有落进任何任务的审计清单' };
+      const dir = arg('dir');
+      if (dir) {
+        const task = findLiveTaskForSource(sourceKeyOf(dir));
+        if (task) {
+          const rec = recordErpAttempt(task, attemptRecord({ ...verdict, readings }));
+          audit = { recorded: true, taskId: task.taskId, attemptCount: rec.count };
+        } else {
+          audit = { recorded: false, note: '这个目录没有进行中的任务，这次对账没有落审计' };
+        }
+      }
+
+      out({
+        command: 'erp-reconcile',
+        bucket: verdict.bucket,
+        action: verdict.action,
+        identity: verdict.identity,
+        reasons: verdict.reasons,
+        readings,
+        audit,
+        note: '只读对账：没有点击、没有滚动、没有导航、没有写入，也没有保存',
+      }, verdict.action === '转人工' ? BLOCKED : OK);
     }
 
     case 'erp-fill': {
@@ -764,7 +812,7 @@ try {
     default:
       out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'intake', 'classify',
         'ocr-request', 'ocr-submit', 'confirm-readings', 'history', 'events', 'allocate', 'select-task', 'lines',
-        'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-fill', 'select'] }, ERR);
+        'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill', 'select'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);

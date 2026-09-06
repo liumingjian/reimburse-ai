@@ -122,6 +122,28 @@ const GRID_JS = `
     }
     return { grid, heads, rows, gridCount: grids.length };
   };
+  // 按**表头标签语义**认网格，不按位置索引。位置索引是 fail-open 的：
+  // ERP 换个布局，读到的就是另一个网格，而且看上去一切正常。
+  // 认到零个或多个都不给结论 —— 对账不该比写入更松。
+  const pickBy = (label) => {
+    const grids = [...document.querySelectorAll('.kd-grid-panel')].filter(vis);
+    const hits = [];
+    grids.forEach((grid, i) => {
+      const headCells = [...grid.querySelectorAll('th,[class*=header-cell]')].filter(vis);
+      if (headCells.some((n) => norm(clean(n.innerText)) === label)) hits.push(i);
+    });
+    return hits;
+  };
+  const readPicked = (g) => {
+    const bad = g.rows.filter((r) => r.misaligned);
+    if (bad.length) return { ok: false, reason: '有 ' + bad.length + ' 行的单元格数量和表头列数对不上，不按错位的列读', columnCount: g.heads.length, bad };
+    return { ok: true,
+      columns: g.heads.map((h) => ({ label: h.label, required: h.required })),
+      rowCount: g.rows.filter((r) => r.kind === 'data').length,
+      // nodes 是 DOM 节点，序列化不了，也不该越过通道 —— 只回文本。
+      rows: g.rows.map((r) => ({ y: r.y, kind: r.kind, editing: r.editing,
+        values: r.values, editValues: r.editValues })) };
+  };
 `;
 
 /**
@@ -133,14 +155,25 @@ export async function readGrid(session, which = 0) {
     ${GRID_JS}
     const g = pick(${Number(which)});
     if (!g.grid) return { ok: false, reason: '页面上没有第 ${Number(which)} 个可见网格', gridCount: g.gridCount };
-    const bad = g.rows.filter((r) => r.misaligned);
-    if (bad.length) return { ok: false, reason: '有 ' + bad.length + ' 行的单元格数量和表头列数对不上，不按错位的列读', columnCount: g.heads.length, bad };
-    return { ok: true,
-      columns: g.heads.map((h) => ({ label: h.label, required: h.required })),
-      rowCount: g.rows.filter((r) => r.kind === 'data').length,
-      // nodes 是 DOM 节点，序列化不了，也不该越过通道 —— 只回文本。
-      rows: g.rows.map((r) => ({ y: r.y, kind: r.kind, editing: r.editing,
-        values: r.values, editValues: r.editValues })) };
+    return readPicked(g);
+  })()`);
+}
+
+/**
+ * 按**表头标签**读一个网格：收票认 `价税合计` 列、明细认 `申请报销金额` 列。
+ * 对账走这条路，不走位置索引 —— 索引取错网格时读数看上去照样正常。
+ * 认到零个或多于一个都不给结论。它只求值，不点击、不滚动。
+ */
+export async function readGridByColumn(session, column) {
+  return evalIn(session, `(() => {
+    ${GRID_JS}
+    const label = ${JSON.stringify(column)};
+    const hits = pickBy(label);
+    if (hits.length === 0) return { ok: false, matchedGrids: 0, reason: '页面上没有哪个可见网格的表头有「' + label + '」列' };
+    if (hits.length > 1) return { ok: false, matchedGrids: hits.length, reason: '有 ' + hits.length + ' 个可见网格的表头都有「' + label + '」列，认不出该读哪个' };
+    const g = pick(hits[0]);
+    if (!g.grid) return { ok: false, matchedGrids: 1, reason: '「' + label + '」所在的网格读不出来' };
+    return { ...readPicked(g), matchedGrids: 1 };
   })()`);
 }
 
@@ -383,8 +416,11 @@ export async function leaveEdit(session, { label = '明细信息', settleMs = 12
 /**
  * 表头字段。id 形如 `<表单实例UUID>-<字段key>[-EDITOR]`，
  * 所以按后缀找，不去猜那个 UUID。
+ *
+ * `scroll` 只在**写入前**要开。只读探针（对账）必须关掉它：
+ * 滚动是页面副作用，而对账的立场是一个字都不改。
  */
-export async function headerField(session, key) {
+export async function headerField(session, key, { scroll = true } = {}) {
   return evalIn(session, `(() => {
     const key = ${JSON.stringify(key)};
     const all = [...document.querySelectorAll('[id]')]
@@ -399,12 +435,22 @@ export async function headerField(session, key) {
       const st = getComputedStyle(x);
       return b.width > 0 && b.height > 0 && st.visibility !== 'hidden' && st.display !== 'none';
     };
+    // 恰好一个可见实例才认。零个时退回全集是 **fail-open 缺陷**：
+    // 隐藏那套的值是真的旧值，实测在隐藏字段上取到过 2025-12 的陈旧单号。
+    // 多于一个同样不认 —— 挑哪个都是猜。
     const visible = all.filter(showing);
-    const hit = visible.length > 0 ? visible : all;
+    if (visible.length === 0) {
+      return { ok: false, reason: '表头字段 ' + key + ' 没有可见实例', instances: all.length, visibleInstances: 0 };
+    }
+    if (visible.length > 1) {
+      return { ok: false, reason: '表头字段 ' + key + ' 有 ' + visible.length + ' 个可见实例，认不出是哪一张单的',
+        instances: all.length, visibleInstances: visible.length };
+    }
+    const hit = visible;
     // 带 -EDITOR 的才是真正的输入控件，外层那个只是容器。
     const n = hit.find((x) => x.id.endsWith('-EDITOR')) || hit[0];
     // 表头可能已经滚出视口（实测 rect.y 为负），写入前必须先滚回来。
-    n.scrollIntoView({ block: 'center', inline: 'nearest' });
+    if (${scroll ? 'true' : 'false'}) n.scrollIntoView({ block: 'center', inline: 'nearest' });
     const input = n.matches('input,textarea') ? n : n.querySelector('input,textarea');
     const t = input || n;
     const b = t.getBoundingClientRect();
