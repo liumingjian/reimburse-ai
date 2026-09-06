@@ -2,26 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { writeCell, writeHeader, selectOption } from '../src/erpform.mjs';
 import { pressKey, selectAll } from '../src/chrome.mjs';
-
-// 假会话：Runtime.evaluate 按顺序吐预先排好的返回值，其余命令只记账。
-// 要钉住的是"发了哪些输入事件、在什么坐标上发"，这跟浏览器无关。
-function fakeSession(evaluations) {
-  const sent = [];
-  const queue = [...evaluations];
-  return {
-    sent,
-    send(method, params) {
-      sent.push({ method, params });
-      if (method === 'Runtime.evaluate') {
-        if (queue.length === 0) throw new Error('求值次数超出预期');
-        return Promise.resolve({ result: { value: queue.shift() } });
-      }
-      return Promise.resolve({});
-    },
-    close() {},
-  };
-}
-const inputs = (s) => s.sent.filter((c) => c.method.startsWith('Input.'));
+import { fakeSession, inputs } from './fake-session.mjs';
 
 test('单元格滚不进视口就不写 —— 看不见的地方一次都不点', async () => {
   const s = fakeSession([{ ok: true, column: '费用金额', text: '0.00', x: 2614, y: 400, inView: false }]);
@@ -210,4 +191,71 @@ test('表头控件没拿到焦点也不打字', async () => {
   const r = await writeHeader(s, 'FCAUSA', '客户支持', { readyMs: 0, settleMs: 0 });
   assert.equal(r.ok, false);
   assert.ok(!s.sent.some((c) => c.method === 'Input.dispatchKeyEvent'));
+});
+
+// —— headerField 的 fail-closed 修正（issue #36 的实现 backlog）——
+//
+// 这三条判据活在**发进页面的那段 JS** 里，所以这里把它原样取出来，
+// 在一个假 DOM 上跑一遍。钉的是外部行为：给定页面上有哪些实例，回的是 ok 还是 not ok。
+import vm from 'node:vm';
+import { headerField } from '../src/erpform.mjs';
+import { expressions } from './fake-session.mjs';
+
+const fakeNode = (id, { visible = true, value = 'X', scrolled }) => ({
+  id,
+  innerText: value,
+  getBoundingClientRect: () => (visible
+    ? { width: 120, height: 22, x: 60, y: 30, left: 0, right: 120, top: 20, bottom: 42 }
+    : { width: 0, height: 0, x: 0, y: 0, left: 0, right: 0, top: 0, bottom: 0 }),
+  matches: () => false,
+  querySelector: () => null,
+  contains: () => false,
+  scrollIntoView: () => scrolled.push(id),
+});
+
+// 取出 headerField 真正发出去的那段 JS，在假 DOM 上求值。
+async function runHeaderField(nodes, { scroll = true } = {}) {
+  const probe = fakeSession([null]);
+  await headerField(probe, 'FBILLNO', { scroll });
+  const [expression] = expressions(probe);
+  const scrolled = [];
+  const built = nodes.map((n) => fakeNode(n.id, { ...n, scrolled }));
+  const ctx = {
+    document: { querySelectorAll: () => built, activeElement: null },
+    getComputedStyle: (n) => {
+      const hidden = nodes.find((x) => x.id === n.id)?.visible === false;
+      return { visibility: hidden ? 'hidden' : 'visible', display: hidden ? 'none' : 'block' };
+    },
+    innerWidth: 1440, innerHeight: 900,
+  };
+  return { result: vm.runInNewContext(expression, ctx), scrolled };
+}
+
+test('表头字段零可见实例 -> ok:false —— 不再静默退回陈旧实例', async () => {
+  const { result } = await runHeaderField([
+    { id: 'aaa-FBILLNO-EDITOR', visible: false, value: 'FYBX2025120001' },
+  ]);
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /没有可见实例/);
+  assert.equal(result.visibleInstances, 0);
+});
+
+test('表头字段多可见实例 -> ok:false —— 挑哪个都是猜', async () => {
+  const { result } = await runHeaderField([
+    { id: 'aaa-FBILLNO-EDITOR', value: 'FYBX2025120001' },
+    { id: 'bbb-FBILLNO-EDITOR', value: 'FYBX2026090007' },
+  ]);
+  assert.equal(result.ok, false);
+  assert.equal(result.visibleInstances, 2);
+});
+
+test('恰好一个可见实例才给值；只读探针不滚页面', async () => {
+  const nodes = [{ id: 'aaa-FBILLNO-EDITOR', value: 'FYBX2026090007' }];
+  const write = await runHeaderField(nodes);
+  assert.deepEqual([write.result.ok, write.result.value], [true, 'FYBX2026090007']);
+  assert.deepEqual(write.scrolled, ['aaa-FBILLNO-EDITOR'], '写入前要把字段滚回视口');
+
+  const read = await runHeaderField(nodes, { scroll: false });
+  assert.equal(read.result.value, 'FYBX2026090007');
+  assert.deepEqual(read.scrolled, [], '对账路径上一次滚动都不许发生');
 });
