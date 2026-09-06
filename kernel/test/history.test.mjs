@@ -1,0 +1,119 @@
+import test, { beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import url from 'node:url';
+
+// 每个用例一份独立的数据目录：跨任务重复检查读的就是全局任务账，
+// 用例之间共用一份账会互相干扰，测出来的也不再是这条规则本身。
+let home;
+const freshHome = () => {
+  home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-test-'));
+  process.env.BAOX_HOME = home;
+  return home;
+};
+freshHome();
+
+const { parseMaterial, invoiceIdentity } = await import('../src/parse.mjs');
+const { createTask, recordInvoiceSightings, abandonTask, loadIndex, taskDir }
+  = await import('../src/workspace.mjs');
+const { crossTaskDuplicates, historyOpenItems, holdsInvoices } = await import('../src/history.mjs');
+
+const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
+const RIDE = '交通/【曹操出行-51.63元-1个行程】高德打车电子发票.pdf';
+const HOTEL = '住宿/fp-jd.pdf';
+
+const material = (id, rel) => {
+  const parsed = parseMaterial(path.join(repo, 'resources', rel), 'pdf');
+  return { materialId: id, fileName: path.basename(rel), contentHash: `hash-${id}`,
+    ...parsed, identity: invoiceIdentity(parsed) };
+};
+const classificationOf = (pairs) => ({
+  versionId: 'v-test', results: pairs.map(([id, rel]) => material(id, rel)), duplicates: [],
+});
+
+const newTask = (label) => createTask(path.join(home, `src-${label}`));
+
+beforeEach(freshHome);
+const blockingOf = (r) => historyOpenItems(r).filter((i) => i.blocking);
+
+test('同一张发票躺在另一个进行中的任务里 —— 阻塞，并指得出是哪个任务', () => {
+  const a = newTask('a');
+  recordInvoiceSightings(a, classificationOf([['m1', RIDE]]));
+
+  const b = newTask('b');
+  const c = classificationOf([['m9', RIDE]]);
+  const r = crossTaskDuplicates(b, c);
+  assert.equal(r.hits.length, 1);
+  assert.equal(r.hits[0].otherTask.taskId, a.taskId);
+
+  const blocking = blockingOf(r);
+  assert.equal(blocking.length, 1);
+  assert.equal(blocking[0].kind, 'duplicate_across_tasks');
+  assert.match(blocking[0].note, /不能报两次/);
+
+  // 完整的 20 位发票号码不能出现在输出里，脱敏号码要认得出是同一张票。
+  const full = c.results[0].identity.number;
+  assert.equal(full.length, 20);
+  assert.ok(!JSON.stringify(r).includes(full), '跨任务重复的输出里不能出现完整发票号码');
+  assert.match(r.hits[0].maskedNumber, /^\d{4}\*+\d{4}$/);
+});
+
+test('任务不会和自己重复 —— 同一个任务反复跑，账上还是一张票', () => {
+  const a = newTask('self');
+  const c = classificationOf([['m1', RIDE]]);
+  recordInvoiceSightings(a, c);
+  recordInvoiceSightings(a, c);
+  assert.deepEqual(crossTaskDuplicates(a, c).hits, []);
+});
+
+test('把材料挪出目录，占用就跟着解除 —— 摘要是派生的，不是攒出来的', () => {
+  const a = newTask('shrink');
+  recordInvoiceSightings(a, classificationOf([['m1', RIDE], ['m2', HOTEL]]));
+  const b = newTask('other');
+  const mine = classificationOf([['m9', HOTEL]]);
+  assert.equal(crossTaskDuplicates(b, mine).hits.length, 1);
+
+  // 用户把住宿发票从 a 的目录里拿走，重跑一次分流。
+  recordInvoiceSightings(a, classificationOf([['m1', RIDE]]));
+  assert.deepEqual(crossTaskDuplicates(b, mine).hits, []);
+});
+
+test('另一个任务作废之后，它占的发票才放出来 —— 而且是状态变更，不是删除', () => {
+  const a = newTask('abandon');
+  recordInvoiceSightings(a, classificationOf([['m1', RIDE]]));
+  const b = newTask('taker');
+  const mine = classificationOf([['m9', RIDE]]);
+  assert.equal(crossTaskDuplicates(b, mine).hits.length, 1);
+
+  const r = abandonTask(a.taskId, '这批材料改走别的目录');
+  assert.equal(r.verdict, 'abandoned');
+  assert.deepEqual(crossTaskDuplicates(b, mine).hits, []);
+  assert.equal(holdsInvoices(loadIndex().tasks.find((t) => t.taskId === a.taskId)), false);
+  // 工作区一份不动：作废不是清理。
+  assert.ok(fs.existsSync(path.join(taskDir(a), 'invoices.json')));
+  assert.equal(r.task.abandonReason, '这批材料改走别的目录');
+});
+
+test('动过 ERP 的任务不能靠作废把发票放出来', () => {
+  const a = newTask('erp');
+  const idxPath = path.join(home, 'tasks', 'index.json');
+  const idx = JSON.parse(fs.readFileSync(idxPath, 'utf8'));
+  idx.tasks.find((t) => t.taskId === a.taskId).erpWriteState = 'unknown';
+  fs.writeFileSync(idxPath, JSON.stringify(idx));
+
+  const r = abandonTask(a.taskId, '想赶紧解锁');
+  assert.equal(r.verdict, 'rejected');
+  assert.match(r.reason, /只读对账/);
+  assert.equal(holdsInvoices(loadIndex().tasks.find((t) => t.taskId === a.taskId)), true);
+});
+
+test('查过不等于没报过 —— 范围声明始终跟着结果走，而且不阻塞', () => {
+  const b = newTask('scope');
+  const items = historyOpenItems(crossTaskDuplicates(b, classificationOf([['m9', RIDE]])));
+  const scope = items.find((i) => i.kind === 'history_scope_local');
+  assert.ok(scope);
+  assert.equal(scope.blocking, false);
+  assert.match(scope.note, /ERP 外部既有记录的只读查询还没有实现/);
+});
