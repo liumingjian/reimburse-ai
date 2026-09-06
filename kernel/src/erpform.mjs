@@ -387,9 +387,20 @@ export async function leaveEdit(session, { label = '明细信息', settleMs = 12
 export async function headerField(session, key) {
   return evalIn(session, `(() => {
     const key = ${JSON.stringify(key)};
-    const hit = [...document.querySelectorAll('[id]')]
+    const all = [...document.querySelectorAll('[id]')]
       .filter((n) => n.id.endsWith('-' + key) || n.id.endsWith('-' + key + '-EDITOR'));
-    if (hit.length === 0) return { ok: false, reason: '页面上找不到表头字段 ' + key };
+    if (all.length === 0) return { ok: false, reason: '页面上找不到表头字段 ' + key };
+    // 页面上可能同时挂着**多套 form 实例**（上一张单没卸干净），id 会重名。
+    // 隐藏那套的 rect 全是 0，照着点等于点页面左上角，焦点永远进不去，
+    // 回读还会读出别的单据的旧值 —— 实测 FCAUSA 就这样读出了另一张表单的「客户支持」。
+    // 所以先按可见性挑，一个可见的都没有才退回原来的集合。
+    const showing = (x) => {
+      const b = x.getBoundingClientRect();
+      const st = getComputedStyle(x);
+      return b.width > 0 && b.height > 0 && st.visibility !== 'hidden' && st.display !== 'none';
+    };
+    const visible = all.filter(showing);
+    const hit = visible.length > 0 ? visible : all;
     // 带 -EDITOR 的才是真正的输入控件，外层那个只是容器。
     const n = hit.find((x) => x.id.endsWith('-EDITOR')) || hit[0];
     // 表头可能已经滚出视口（实测 rect.y 为负），写入前必须先滚回来。
@@ -398,7 +409,7 @@ export async function headerField(session, key) {
     const t = input || n;
     const b = t.getBoundingClientRect();
     const a = document.activeElement;
-    return { ok: true, id: n.id, tag: t.tagName,
+    return { ok: true, id: n.id, tag: t.tagName, instances: all.length, visibleInstances: visible.length,
       // 跟明细格一样：点了不等于焦点进去了，焦点没进去就打字，字全落空。
       focused: a === t || (n.contains(a) && a !== n),
       value: (input ? input.value : n.innerText).replace(/\\s+/g, ' ').trim(),
