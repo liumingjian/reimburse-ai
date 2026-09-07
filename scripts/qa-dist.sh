@@ -33,7 +33,7 @@ run() { BAOX_HOME="$HOME_A" node dist/baox/kernel/bin/baox.mjs "$@" 2>&1; }
 out=$(run tasks); code=$?
 [ "$code" = 0 ] && ok "拿到包就能直接跑 tasks，中间没有安装动作" || bad "第一条命令就该能跑，实得 ${code}：$out"
 
-out=$(run doctor); code=$?
+out=$(run doctor)
 echo "$out" | grep -q '"version"' && ok "doctor 报出版本号：$(echo "$out" | grep '"version"' | head -1 | tr -d ' ')" \
   || bad "doctor 没有版本号"
 echo "$out" | grep -q "\"$HOME_A\"" && ok "BAOX_HOME 指到哪，数据目录就落在哪" || bad "doctor 的 dataDir 没跟着 BAOX_HOME 走"
