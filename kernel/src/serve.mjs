@@ -441,6 +441,111 @@ export function serveIdentityConfirmation(spec, opts = {}) {
       at: new Date().toISOString() }));
 }
 
+/** 读一次请求体里的 JSON；读不出来抛，由调用处决定怎么答。 */
+async function readJson(req) {
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
+/**
+ * 起一个只听回环地址的临时端口服务，把地址交给 onReady 并自己把页面打开。
+ * 两种形态（一次性、长驻）共用它，因此"临时端口 + 127.0.0.1 + 自动打开"这三条
+ * 只有一处写法，不会在新形态上走样。
+ */
+function listenLocal(server, nonce, onReady, onListening) {
+  server.listen(0, '127.0.0.1', () => {
+    const { port } = server.address();
+    const url = `http://127.0.0.1:${port}/?nonce=${nonce}`;
+    onReady?.(url);
+    openInBrowser(url);
+    onListening();
+  });
+}
+
+/**
+ * 长驻形态的本地页面。**它加在一次性形态旁边，不替代后者** ——
+ * 确认读数、逐段分摊、任务选择、确认身份这四个页面各自只收一次提交，
+ * "一次提交就 resolve 并关服务"对它们是对的语义，一个字都不用改。
+ *
+ * 个人项目簿的维护页不是这个形状：用户要在同一次打开里反复"核对并加入 / 删除 / 复检"，
+ * 最后才点「完成」。所以这里的服务在提交之后**不关**：每次提交交给内核处理，处理结果
+ * 原样回给页面（`{ok:true,result}`），页面据此就地刷新自己。
+ *
+ * 页面这一侧的约定（后续维护页照此写）：
+ * - `GET  /?nonce=…`        取页面本身，可以反复取
+ * - `POST /submit?nonce=…`  一次操作，答 `{ok:true,result}`；内核判定为拒绝时答 `{ok:false,error}`
+ * - `POST /done?nonce=…`    用户点「完成」，服务关闭，`onDone` 的返回值就是本次打开的最终结果
+ *
+ * 安全约定与一次性形态完全相同：临时端口、只绑 127.0.0.1、一个随机 nonce 守护**全部**端点，
+ * 不匹配一律 404。一次被拒的请求既不会进到内核，也不会替用户把页面关掉。
+ *
+ * `timeoutMs` 是**闲置**超时：用户在页面上每做一次操作就重新计时。长驻页一开就是一段活儿，
+ * 按绝对时长砍会在用户正干着的时候把页面收走。
+ */
+export function serveLocalSession(
+  render, { timeoutMs = 30 * 60 * 1000, onReady, onSubmit, onDone } = {}) {
+  const nonce = crypto.randomBytes(16).toString('hex');
+  return new Promise((resolve, reject) => {
+    let timer;
+    const sockets = new Set();
+    // close() 只等已有连接自己散场；页面那边是长连接，所以关的时候把它们一并断掉，
+    // 否则"点了完成"和"端口真的放开了"之间会隔着一段说不清的时间。
+    const shutdown = (settle) => {
+      clearTimeout(timer);
+      server.close(settle);
+      for (const s of sockets) s.destroy();
+    };
+    const server = http.createServer(async (req, res) => {
+      const url = new URL(req.url, 'http://127.0.0.1');
+      if (url.searchParams.get('nonce') !== nonce) { res.writeHead(404).end('not found'); return; }
+
+      if (req.method === 'GET' && url.pathname === '/') {
+        keepAlive();
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        return res.end(render(nonce));
+      }
+
+      if (req.method === 'POST' && url.pathname === '/submit') {
+        let body;
+        try { body = await readJson(req); }
+        catch { res.writeHead(400).end('bad json'); return; }
+        keepAlive();
+        // 内核可以拒绝这一次操作（查无此号、已禁用……）。那是页面要显示给用户的答案，
+        // 不是会话的终结 —— 用户改一个数再来一次就是了。
+        let payload;
+        try { payload = { ok: true, result: await onSubmit?.(body) }; }
+        catch (e) { payload = { ok: false, error: e?.message ?? String(e) }; }
+        res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(payload));
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/done') {
+        let body;
+        try { body = await readJson(req); }
+        catch { res.writeHead(400).end('bad json'); return; }
+        clearTimeout(timer);
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
+        // 点「完成」这个动作本身就是收工。用户在对话里说"弄好了"不算。
+        let final, failed;
+        try { final = (await onDone?.(body)) ?? { status: 'done', at: new Date().toISOString() }; }
+        catch (e) { failed = e; }
+        shutdown(() => (failed ? reject(failed) : resolve(final)));
+        return;
+      }
+
+      res.writeHead(404).end('not found');
+    });
+    server.on('connection', (s) => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
+    server.on('error', reject);
+    const keepAlive = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => shutdown(() => resolve({ status: 'timeout', timeoutMs })), timeoutMs);
+    };
+    listenLocal(server, nonce, onReady, keepAlive);
+  });
+}
+
 function serveLocal(render, { timeoutMs = 8 * 60 * 1000, onReady } = {}, onSubmit) {
   const nonce = crypto.randomBytes(16).toString('hex');
   return new Promise((resolve, reject) => {
@@ -452,10 +557,8 @@ function serveLocal(render, { timeoutMs = 8 * 60 * 1000, onReady } = {}, onSubmi
         return res.end(render(nonce));
       }
       if (req.method === 'POST' && url.pathname === '/submit' && url.searchParams.get('nonce') === nonce) {
-        const chunks = [];
-        for await (const c of req) chunks.push(c);
         let body;
-        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+        try { body = await readJson(req); }
         catch { res.writeHead(400).end('bad json'); return; }
         res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
         clearTimeout(timer);
@@ -466,11 +569,7 @@ function serveLocal(render, { timeoutMs = 8 * 60 * 1000, onReady } = {}, onSubmi
       res.writeHead(404).end('not found');
     });
     server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      const url = `http://127.0.0.1:${port}/?nonce=${nonce}`;
-      onReady?.(url);
-      openInBrowser(url);
+    listenLocal(server, nonce, onReady, () => {
       timer = setTimeout(() => {
         server.close(() => resolve({ status: 'timeout', timeoutMs }));
       }, timeoutMs);
