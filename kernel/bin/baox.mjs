@@ -25,6 +25,10 @@ import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerFie
   writeHeader, writeCell, selectOption, cellTarget, cellMatches, leaveEdit } from '../src/erpform.mjs';
 import { readReconciliation, classifyReconciliation, attemptRecord } from '../src/erpreconcile.mjs';
 import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
+import { observeEnvironment } from '../src/observe.mjs';
+import { nextResponse } from '../src/next.mjs';
+import { SCHEMA_VERSION as NEXT_SCHEMA_VERSION } from '../src/state.mjs';
+import { currentSourceKey } from '../src/steptoken.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -891,8 +895,33 @@ try {
       out({ command: 'select', ...r }, r.status === 'submitted' ? OK : ERR);
     }
 
+    case 'next': {
+      // 模型唯一会敲的命令。问：`next --dir <材料目录>`；答：`next --after <token> [--result <文件>]`。
+      // 这里是一层薄壳：采观测（observe）-> 判状态（state）-> 出 step（next），
+      // 判断本身一点浏览器和文件系统都不碰，所以能在没有 Chrome 的机器上测。
+      const dir = arg('dir');
+      if (dir && !(fs.existsSync(dir) && fs.statSync(dir).isDirectory())) {
+        out({ command: 'next', schemaVersion: NEXT_SCHEMA_VERSION, state: 'source_dir_missing',
+          speak: `我找不到这个材料目录：${dir}。请确认路径写对了，或者把材料放进去再叫我。`,
+          exit: BLOCKED }, BLOCKED);
+      }
+      const sourceKey = dir ? sourceKeyOf(dir) : currentSourceKey();
+      if (!sourceKey) {
+        out({ command: 'next', schemaVersion: NEXT_SCHEMA_VERSION, error: '第一次问要带 --dir <材料目录>',
+          speak: '我还不知道你要报销哪一批材料。请把材料目录告诉我。', exit: ERR }, ERR);
+      }
+      const after = arg('after');
+      const resultFile = arg('result');
+      // 「交了结果」指的是文件真的在、真的有内容。声称做完不算数 —— 状态只认事实。
+      const hasResult = !!resultFile && fs.existsSync(resultFile) && fs.statSync(resultFile).size > 0;
+
+      const observation = await observeEnvironment();
+      const response = nextResponse({ observation, sourceKey, after, hasResult });
+      out(response, response.exit);
+    }
+
     default:
-      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
+      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['next', 'doctor', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
         'ocr-request', 'ocr-submit', 'confirm-readings', 'history', 'events', 'allocate', 'select-task', 'lines',
         'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill', 'select'] }, ERR);
   }
