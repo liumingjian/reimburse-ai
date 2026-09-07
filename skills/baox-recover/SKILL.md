@@ -1,151 +1,88 @@
 ---
 name: baox-recover
-description: ERP write recovery. Use once a reimbursement task has dispatched any ERP write — a receipt import, a detail line, a save, or an erp-fill rehearsal that wrote fields without saving — including when baox hands the task over.
+description: ERP 写入善后的执行壳。Invoked by the model only, when `baox next` returns `step.kind: "handoff"` with `skill: "baox-recover"` — the task has dispatched an ERP write. Never surfaced to the user — they only know `baox`.
+user-invocable: false
+disable-model-invocation: false
 allowed-tools: Bash
 ---
 
-# baox recovery
+# baox-recover
 
-Everything the user sees is Chinese: the ERP, its field labels, the bucket names, and your own replies.
-English is for this file only.
+用户看到的一切都是中文。English is for this file only.
 
-## What is yours
+**用户不知道有这个 skill。** 他只知道 `baox`，是内核在 `handoff` 那一步把这件事交到这里来的。
+你说的每一句话都以 baox 的名义说，不要报这个名字。
 
-A reimbursement task belongs to you, not to `baox`, from the moment it has **dispatched an ERP write** —
-whether or not a receipt came back, whether or not the browser is still open, whether or not anyone saw the
-result. You do two things: run `erp-reconcile`, and tell the user in plain Chinese which interruption point
-it landed on and what the disposition is.
+## 你为什么在这里
 
-**Your entire knowledge of the ERP is the JSON that `erp-reconcile` returns.** ERP page pixels never enter
-your context: the kernel reads the DOM, and what it read is what you have. You never ask the user to paste
-a screenshot, and you never open one.
+这个任务已经往 ERP 发过写入。**发出去过就不是 `baox` 的了**——收没收到回执、浏览器还开不开着、
+有没有人看见结果，都不改变这一点。你做两件事：跑一次只读对账，把内核判出的中断点和处置
+用它自己的话念给用户。
 
-**consent**: consent comes only from a submit event the kernel observed. 「我看过了没存」「你接着弄吧」
-is not a fact and not permission to resume — the reconciliation reading is the only fact here.
-
-**Never replay an import.** The invoices may already have been consumed by the ERP, and a replay is a
-duplicate reimbursement. When it is unknown whether a write landed, it landed.
-
-**`baox` below stands for the kernel entry point**, which is not on `PATH`:
-`node "${CLAUDE_SKILL_DIR}/kernel/bin/baox.mjs"`.
-
-The kernel runs from the Skill directory as it sits — there is no install step and nothing to keep in sync.
-Its data lives in `~/.baox` (`BAOX_HOME` overrides it).
-
-## 1. Reconcile
+这条链子在这里断开：`baox next` 对这个任务只会一直返回同一个 `handoff`，
+它不会带你往下走。往下走的是下面这一条命令，而它是这个 skill 的全部。
 
 ```bash
-baox erp-reconcile --dir "<材料目录>"
+node "${CLAUDE_SKILL_DIR}/kernel/bin/baox.mjs" erp-reconcile --dir "<材料目录>"
 ```
 
-The identity gate is inside the command and needs nothing from you: it passes only when the ERP session is
-live **and** logged in as the identity this machine is bound to (个人绑定). On a half-finished bill that is
-exactly the question worth asking — "somebody is logged in" would not be. `identity_mismatched` is a hard
-block: say who is logged in versus who is bound, and stop. Never offer to rebind here — a bill that has
-already been written to is the last place to change whose reimbursement this is.
+对 ERP 严格只读：不点、不滚、不刷新、不跳转、不写。本地不是只读——它会把这一次记进
+`erp-attempts.json`，所以可以放心重跑取新读数。
 
-It takes four readings — the tab mode, the bill number, the 收票 `价税合计` total, and the 明细
-`申请报销金额` total — sorts the bill into one **interruption point**, and gives a disposition.
+## 怎么念内核的话
 
-Against the ERP it is strictly read-only: no clicks, no scrolling, no refresh, no navigation, no writes.
-Locally it is not. Rerun it freely to take fresh readings, and read `audit` before you speak:
+**判定是内核的，不是你的。** 念 `bucket`（中断点）和 `action`（处置），`reasons` 是为什么。
+不要自己重推一遍分类，也不要为它另编措辞。
 
-- `audit.recorded` true — this run was appended to that task's `erp-attempts.json`, and `attemptCount` says
-  how many reconciliations that bill has now had.
-- `audit.recorded` false — **nothing was written down.** Either `--dir` was omitted, or that directory has no
-  live task. Say so: an unrecorded reconciliation must never sound like a recorded one, because the audit
-  list is what a later reader uses to reconstruct what was done to this bill.
-- **No `audit` key at all** — the identity gate refused before the page was read, so this attempt is not in
-  the record either. Same rule: say that nothing was logged.
+- `exit` `0`：对账读完了，`action` 是 `原地等待`——baox 不再发起写入，等用户。
+  这不是可以往 ERP 写的绿灯，这个 skill 里没有任何一条路会写 ERP。
+- `exit` `2`：`action` 是 `转人工`，或者身份闸没过。念完**停下**。
+- `exit` `1`：内核抛了，念 `error` 后停。
+- `audit.recorded` 是 `false`，或者**整个没有 `audit` 键**：这一次**没有记下来**。明说。
+  一次没入账的对账听起来像入了账，是后来的人重建这张单经历时最容易踩空的地方。
 
-It passes an identity gate first. When `identity.status` is not `matched` it does not read the page at all
-(exit 2): ask the user to log in again **as themselves** in the dedicated baox Chrome window, then rerun.
-Account and password stay with the user.
+### 六个中断点
 
-**The verdict is the kernel's, not yours.** Read `bucket` and `action` out; `reasons` says why. Do not
-re-derive the classification and do not invent wording for it.
-
-## 2. Exit codes
-
-| Code | Means | Do |
+| `bucket` | 事实 | 怎么说 |
 |---|---|---|
-| 0 | The reconciliation completed; `action` is `原地等待` | Explain that bucket per step 4, then hand the floor back |
-| 2 | `action` is `转人工`, or the identity gate did not pass | Explain it and **stop** |
-| 1 | The kernel threw | Read `error` out and stop |
+| `未知` | 四项读数里至少一项拿不到 | 说**是哪一项**、`reason` 是什么。这是「对账读不到」，不是「出故障了」 |
+| `未保存·导入前` | 什么都没进 ERP，发票没被占用 | 这批可以整个重来：把**同一个任务**交回 `baox` 再走一遍。你自己什么都不重放 |
+| `未保存·已导入未写明细` | 发票已进 ERP 收票，明细还没写 | 见下 |
+| `未保存·就绪待保存` | 两边合计分毫不差，只差保存 | 单还没进库，保存这一下是用户的 |
+| `已保存` | 草稿在 ERP 里，单号在 `readings.billNo.value` | 念出单号，请用户去 ERP 查这张单，自己决定要不要提交 |
+| `不自洽` | 四项读数互相矛盾 | 把四项读数原样念出来，不解释、不猜原因 |
 
-`0` here means the reconciliation finished reading. It is not a green light to write to the ERP — no path
-in this Skill writes to the ERP at all, so the exit code is never a release signal.
-
-## 3. The two dispositions
-
-There are two. Read `action` and use its words.
-
-- **原地等待** — baox starts no further ERP write and waits for the user. It does not mean "it will carry
-  on by itself later".
-- **转人工** — the bill is the user's from here, **permanently**. baox does not wake up behind them and
-  touch it again.
-
-  Say what actually moves it forward: the user finishes or discards the bill **in the ERP, by hand**.
-  Starting a fresh task over the same materials is not the way out: these invoices may already sit in the
-  ERP's 收票 grid, so a fresh run would import them a second time. The kernel holds the line here too — a
-  task stamped as having touched the ERP keeps its invoices, and `abandon-task` refuses to release them —
-  but say the domain reason, not the mechanism: the invoices may already be spent.
-
-## 4. Telling the user which interruption point
-
-`bucket` is the point and `action` is the disposition. Read both from the JSON.
-
-| `bucket` | The fact | How to say it |
-|---|---|---|
-| `未知` | At least one of the four readings is unavailable | Name **which one** and why — step 5. This is "the reconciliation could not read", not "something broke" |
-| `未保存·导入前` | Nothing reached the ERP; the invoices are unconsumed | This batch can start over as a whole: ask the user to take **this same task** back to `baox` and dispatch it again. You replay nothing yourself |
-| `未保存·已导入未写明细` | The invoices are in the ERP 收票 grid; the expense detail is not written | See below |
-| `未保存·就绪待保存` | Both totals agree to the cent; only the save is left | The bill is not in the database yet, and the save is the user's to press |
-| `已保存` | The draft is in the ERP; the bill number is at `readings.billNo.value` | Read the number out and ask the user to look it up in the ERP and decide whether to submit |
-| `不自洽` | The readings contradict each other (`新增` with a bill number, `修改` without one, or the two totals differ) | Report the four readings verbatim, with no explanation and no guess at the cause |
-
-**`未保存·已导入未写明细` is a normal interruption point, not an ERP error.** It always goes to a human for
-one reason: the invoices have already been consumed by the ERP, so anyone — person or agent — importing
-again would hit 「重复报销，禁止导入」 or worse. Say it like this:
+`未保存·已导入未写明细` 是**正常的中断点，不是 ERP 报错**。它一定转人工，原因只有一个：
+发票已经被 ERP 占用了，谁再导一次都会撞上「重复报销，禁止导入」。就这么说：
 
 > 发票已经进了 ERP 的收票，明细还没写。这张半成品单交给你，baox 不会再动它。
 
-**`已保存` with `identity.equal` false** is also 转人工: the bill is in the database and the totals disagree.
-The numbers in a saved bill are the user's to change, in the ERP.
+`已保存` 而 `identity.equal` 是 `false` 也转人工：单进库了而两边合计对不上，
+里面的数字只能由用户在 ERP 里改。
 
-## 5. `未知`: name the reading that collapsed
+`转人工` 意味着这张单**从此永远是用户的**，baox 不会背着他再碰它。往前走的是用户在 ERP 里
+亲手把它做完或作废。**拿同一批材料重开一个任务不是出路**——那些发票可能已经躺在收票列表里了。
 
-Every reading in `readings` carries `readable` and `reason`. Read the failed one and its `reason` out — the
-user needs the next action, not "读不准":
+`未知` 时按 `readings` 里每一项的 `readable` 和 `reason` 说清楚：身份或会话没了就请用户
+重新登录；页面上没开着报销单就请他把那张单的页签打开；**同时挂着不止一个单据表单**就请他
+只留下要对的那一张（这种情况下读到的单号可能来自另一张单，所以内核故意不给结论）；
+收票或明细的金额列认不出来、或者 ERP 自己的合计行和逐行相加对不上，就停——页面结构变了，这是人的活。
 
-- Identity or session gone → ask the user to log in again themselves, then rerun.
-- No expense bill open on the page → ask the user to reopen that bill's tab.
-- **Not exactly one visible form instance** → another bill's form is mounted at the same time. Ask the user
-  to leave only the bill being reconciled. This cell withholds its verdict on purpose: in this situation the
-  reading has picked up a stale bill number from a different bill.
-- The grid's `价税合计` / `申请报销金额` column is unrecognisable, or the ERP's own total row disagrees with
-  the row-by-row sum → stop. The page structure has changed; this is a human's job.
+**空单元格算读不出，永远不算 0。** 这一条挡住的是「什么都没读到」冒充成「两边正好相等」。
 
-An empty cell counts as **unreadable**, never as 0. That is what keeps "nothing could be read" from
-masquerading as "the totals happen to match".
+用户要核数时：`identity` 里有两侧（`receiptsCents` / `detailCents` / `equal`），
+`readings.receipts.rows` / `readings.detail.rows` 是逐行。念行给他自己加。
+比较**按分精确，零容差**，差一分就是差。`申请付款金额` 只是旁证，不进判定，它对不上不是红旗。
 
-## 6. When the user wants to check the numbers
+## 不能做的事
 
-`identity` carries both sides of the identity (`receiptsCents` / `detailCents` / `equal`), and
-`readings.receipts.rows` / `readings.detail.rows` carry the rows. Read the rows out and let the user add
-them up. Comparison is **exact, in cents, zero tolerance** — one cent apart is apart.
-
-`申请付款金额` is corroborating evidence only. It does not enter the identity, and it disagreeing with
-`申请报销金额` is not a red flag. If the user asks, say plainly that it takes no part in the verdict.
-
-## Done when
-
-The user has heard the `bucket`, the `action` in the kernel's own words, and — for `未知` — every reading
-whose `readable` is false together with its `reason`. On `转人工` they have also heard that the bill is
-theirs permanently, and what they do next in the ERP.
-
-## Scope
-
-The whole of this Skill is one `erp-reconcile` run and the handover that follows it. Every ERP click —
-importing, saving, submitting, unbinding — is the user's. **Never replay an import**: that one is a hard
-guardrail, not a preference.
+- **绝不重放导入。** 发票可能已经被 ERP 吃掉了，重放一次就是重复报销。
+  落没落地不清楚的时候，当它落了。这是硬护栏，不是偏好。
+- **不为了「看看到底成没成」去重新保存、刷新页面或者重开单据。**
+- **不看截图，也不要用户发截图。** 你对 ERP 的全部认识就是 `erp-reconcile` 返回的那份 JSON，
+  页面像素不进你的上下文。
+- **不改绑身份。** `identity_mismatched` 是硬阻塞：说清楚登的是谁、绑的是谁，然后停。
+  一张已经被写过的单，是最不该换「这是谁的报销」的地方。
+- **不替用户点头。** 「我看过了没存」「你接着弄吧」不是事实、也不是许可，
+  唯一的事实是那次对账读数。
+- **不敲 ERP 里的任何一下。** 导入、保存、提交、解绑，每一下都是用户的。

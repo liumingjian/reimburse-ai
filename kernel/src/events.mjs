@@ -139,7 +139,7 @@ export const ALLOCATION_KINDS = new Set(['allocation_required', 'allocation_stal
  * 逐段价税合计之和与票面价税合计**按分精确相等**。差一分都不收 ——
  * 不给"接近就行"的余地，也不替用户把差额抹到某一段上。
  */
-export function submitAllocation(task, voucher, segmentTotals, expectedCount, { via = 'local-web' } = {}) {
+export function submitAllocation(task, voucher, segmentTotals, expectedCount, { via = 'terminal' } = {}) {
   const reasons = [];
   if (!Array.isArray(segmentTotals) || segmentTotals.length !== expectedCount) {
     reasons.push(`需要 ${expectedCount} 段金额，收到 ${Array.isArray(segmentTotals) ? segmentTotals.length : 0} 段`);
@@ -168,8 +168,8 @@ export function submitAllocation(task, voucher, segmentTotals, expectedCount, { 
     segmentCount: expectedCount,
     segmentTotalCents: cents,
     submittedAt: new Date().toISOString(),
-    // 这几个数是在哪儿给的：终端多选，还是本地分摊页。两条路都要求分毫不差，
-    // 但事后排障时「用户在哪儿说的这句话」是要能查出来的。
+    // 这几个数是在哪儿给的。1.0.0 起只剩终端多选一条路（本地分摊页已下线），
+    // 但事后排障时「用户在哪儿说的这句话」仍然要能查出来 —— 旧任务里存着 `local-web`。
     submittedVia: via,
   };
   fs.mkdirSync(allocDir(task), { recursive: true, mode: 0o700 });

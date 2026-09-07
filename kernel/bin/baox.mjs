@@ -5,16 +5,15 @@ import url from 'node:url';
 import { paths, ensureDir, migrateOnStartup } from '../src/paths.mjs';
 import * as chrome from '../src/chrome.mjs';
 import { probeIdentity, ERP_ORIGIN } from '../src/probe.mjs';
-// 看图读数的确认页没有了：那件事现在整个发生在终端上（`confirm_table`）。
-// 本地页面只在重新绑定身份和浏览完整项目目录两处保留。
-import { serveSelection, serveAllocation, serveTaskSelection,
-  serveIdentityConfirmation } from '../src/serve.mjs';
+// 本地页面只剩两处：重新绑定身份，和浏览完整项目目录。读数确认在终端上
+// （`confirm_table`），逐段分摊在终端上（`ask_user`），通用单选页整个下线了。
+import { serveTaskSelection, serveIdentityConfirmation } from '../src/serve.mjs';
 import { buildWorkOrder, ingestReadings, pendingConfirmations,
   READING_VERSION, DOC_TYPES } from '../src/vision.mjs';
 import { applyTerminalVerdict } from '../src/confirm.mjs';
 import { takeInventory, intakeOpenItems } from '../src/inventory.mjs';
 import { classifyInventory, classifyOpenItems, summarize } from '../src/classify.mjs';
-import { buildEvents, eventOpenItems, reconcile, submitAllocation } from '../src/events.mjs';
+import { buildEvents, eventOpenItems, reconcile } from '../src/events.mjs';
 import { maskNumber } from '../src/parse.mjs';
 import { loadSelection, submitSelection, applySelection, linesDigest } from '../src/selection.mjs';
 import { CATEGORIES } from '../src/categories.mjs';
@@ -770,49 +769,6 @@ try {
       }, blocking.length === 0 ? OK : BLOCKED);
     }
 
-    case 'allocate': {
-      // 合并交通发票的逐段金额。**只有这个页面上的提交动作能把金额定下来**；
-      // 行程单金额只作预填候选，用户在对话里报的数字同样不算数。
-      const dir = arg('dir');
-      if (!dir) out({ command: 'allocate', error: '缺少 --dir <材料目录>' }, ERR);
-      const { task, classification, blocked } = await upToClassification(dir);
-      if (blocked) out({ command: 'allocate', ...blocked }, BLOCKED);
-
-      const built = buildEvents(classification, task);
-      const pending = built.notes.filter((n) => n.kind === 'allocation_required' || n.kind === 'allocation_stale');
-      if (!pending.length) out({ command: 'allocate', pending: 0, note: '没有需要逐段分摊的发票' }, OK);
-
-      const items = pending.map((n) => {
-        // 逐段行来自与这张发票关联上的行程单，由 buildEvents 一并带出来。
-        const rows = n.candidateSegments;
-        return {
-          materialId: n.materialId,
-          fileName: n.fileName,
-          maskedNumber: maskOf(classification, n.materialId),
-          totalAmount: n.totalAmount,
-          candidateFrom: rows ? '行程单逐段明细' : null,
-          segments: rows ?? Array.from({ length: n.segmentCount }, () => ({ date: null, city: null, route: null, amount: '' })),
-        };
-      });
-
-      const result = await serveAllocation({ items }, {
-        timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
-        onReady: (u) => process.stderr.write(`已在浏览器里打开页面（填写逐段金额）；没弹出就手动打开：${u}\n`),
-      });
-      if (result.status !== 'submitted') out({ command: 'allocate', ...result }, ERR);
-
-      const verdicts = [];
-      for (const it of items) {
-        const v = classification.results.find((r) => r.materialId === it.materialId);
-        const r = submitAllocation(task, v, result.allocations[it.materialId], it.segments.length);
-        verdicts.push({ materialId: it.materialId, fileName: it.fileName, verdict: r.verdict, reasons: r.reasons });
-      }
-      const rejected = verdicts.filter((v) => v.verdict === 'rejected');
-      out({ command: 'allocate', verdicts, accepted: verdicts.length - rejected.length, rejected: rejected.length,
-        note: rejected.length ? '有分摊没有收下；重新跑 allocate' : '逐段金额已记下，可以重新跑 events' },
-        rejected.length ? BLOCKED : OK);
-    }
-
     case 'select-task': {
       // 项目归属、常驻城市和事由。**只有这个页面上的提交动作能把它们定下来**；
       // 用户在对话里说"项目是 111454"不构成任务选择。
@@ -920,17 +876,6 @@ try {
         note: '任务已作废，工作区文件原样保留；它原先占用的发票现在可以在别的任务里使用' });
     }
 
-    case 'select': {
-      const specPath = arg('spec');
-      if (!specPath) out({ command: 'select', error: '缺少 --spec <file.json>' }, ERR);
-      const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
-      const r = await serveSelection(spec, {
-        timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
-        onReady: (url) => process.stderr.write(`已在浏览器里打开页面（做选择）；没弹出就手动打开：${url}\n`),
-      });
-      out({ command: 'select', ...r }, r.status === 'submitted' ? OK : ERR);
-    }
-
     case 'next': {
       // 模型唯一会敲的命令。问：`next --dir <材料目录>`；答：`next --after <token> [--result <文件>]`。
       // 这里是一层薄壳：采观测（observe）-> 判状态（state）-> 出 step（next），
@@ -993,8 +938,8 @@ try {
     default:
       out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['next', 'doctor', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
         'ocr-request', 'ocr-submit', 'confirm-readings', 'reread-submit',
-        'history', 'events', 'allocate', 'select-task', 'lines',
-        'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill', 'select'] }, ERR);
+        'history', 'events', 'select-task', 'lines',
+        'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);
