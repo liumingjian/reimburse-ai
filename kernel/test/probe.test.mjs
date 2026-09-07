@@ -31,8 +31,8 @@ test('登录页要报未登录，而不是身份读不出', () => {
 });
 
 test('登录页上读得出的账号不能算成已登录的身份', () => {
-  const r = identityFromObservation(loginPage, 'luo.liu');
-  // 期望的账号恰好等于 localStorage 里留下的那个，也不许放行。
+  const r = identityFromObservation(loginPage);
+  // localStorage 里留着上次登录的账号，它标定得了身份，证明不了会话还活着。
   assert.equal(r.status, 'not_logged_in');
   assert.equal(r.identity, undefined);
 });
@@ -42,16 +42,17 @@ test('读不出用户名又看不见登录表单，是需要人来看的未知�
   assert.equal(r.status, 'unknown');
 });
 
-test('主控制台上按显示名或登录账号任一匹配都算一致', () => {
-  assert.equal(identityFromObservation(console_).status, 'matched');
-  assert.equal(identityFromObservation(console_, '刘明建').status, 'matched');
-  assert.equal(identityFromObservation(console_, 'luo.liu').status, 'matched');
+test('主控制台上读出的是会话事实：谁登录着，以及他的账号和账套', () => {
+  const r = identityFromObservation(console_);
+  assert.equal(r.status, 'matched');
+  assert.deepEqual(r.identity, { displayName: '刘明建', account: 'luo.liu', tenant: '5f1f13f6dde29e' });
 });
 
-test('登录的不是本人就是硬阻塞，且说清楚当前是谁', () => {
-  const r = identityFromObservation(console_, '张三');
-  assert.equal(r.status, 'mismatched');
-  assert.match(r.hint, /刘明建/);
+test('探针不判断这个人是不是该报销的那个人', () => {
+  // 这一层只认会话。是不是本人由个人绑定判（binding.test.mjs），
+  // 两件事分开是因为它们的失败处置完全不同：一个要用户去登录，一个要用户去换人。
+  assert.equal(identityFromObservation({ ...console_, displayName: '张三', account: 'zhang.san' }).status,
+    'matched');
 });
 
 test('页面没加载完不下结论', () => {

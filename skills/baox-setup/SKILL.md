@@ -90,29 +90,49 @@ Tell the user two things:
 Then ask the user to log in to the ERP **in that new window, as themselves**. Logging in is theirs alone;
 account and password stay with the user.
 
-## 4. Confirm the identity by read-only probe
+## 4. Confirm who this machine reimburses for
 
 Once the user says they are logged in:
 
 ```bash
-baox probe --expect "<员工姓名或登录账号>"
+baox confirm-identity --timeout-ms 480000
 ```
 
-Authorization is `status: "matched"` and nothing else — **consent**, applied to the ERP session.
+This **blocks in the foreground** until the user submits, so give the Bash call a 600000 ms timeout.
+It reads the logged-in identity out of the ERP page itself, serves one tiny local page showing what it read,
+and writes the **个人绑定** only when the user presses 「是我本人」. Give the user the address printed on
+stderr. From then on this machine's baox works for that identity and no other.
+
+**You never type the identity anywhere.** There is no name to pass and no name to ask for — every value on
+that page came from the kernel reading the ERP, and the click is the whole of the consent. (This replaced
+`--expect "<名字>"`, which asked you to relay a string the user might not even know: the display name is
+「刘明建」 while the login account is `luo.liu`.)
+
+Then check the gate itself:
+
+```bash
+baox probe
+```
+
+Authorization is `status: "matched"` and nothing else — **consent**, applied to the ERP session. `matched`
+means both halves hold: a live session, *and* the bound identity.
 
 | status | Means | Do |
 |---|---|---|
-| `matched` | The logged-in identity matches that employee | The one state that continues |
-| `mismatched` | Someone else is logged in | Hard block. Ask them to switch to their own account |
+| `matched` | Logged in, and it is the bound identity | The one state that continues |
+| `identity_unconfirmed` | This machine has no 个人绑定 yet | Run `confirm-identity` (above) |
+| `identity_mismatched` | Someone other than the bound identity is logged in | Hard block. Ask them to switch back to their own account. Rebinding is `confirm-identity`, and it is refused while any task is in progress |
+| `identity_incomplete` | The account or tenant is unreadable, so there is nothing comparable | Hard block. Ask them to log in again |
 | `not_logged_in` | Sitting on the login page | Ask them to finish logging in, probe again |
 | `loading` | The ERP first screen is still rendering (this ERP is slow) | Wait a few seconds, probe again |
 | `no_tab` | The dedicated Chrome has no ERP tab | Back to step 3 |
 | `unknown` | On the console, but the username element is unreadable | Hard block. This is not a pass |
 
-The probe stands on the username element on the console (a display name such as 「刘明建」). That one is
-required — without it the verdict is `not_logged_in` or `unknown`, never `matched`. The login account in
-`localStorage` (such as `luo.liu`) comes along when it is readable and can be `null`. `--expect` is matched
-against **either**, so pass whichever the user actually knows.
+The session half stands on the username element on the console (a display name such as 「刘明建」). That one
+is required — without it the verdict is `not_logged_in` or `unknown`, never `matched`. The binding half
+compares the login account **and** the tenant; the display name is shown to the user but never a criterion,
+because the ERP lets it be changed. An `account` in the output does not mean logged in on its own — the
+login page still shows the last account used.
 
 It evaluates read-only expressions only — no navigation, no clicks, no business calls.
 
@@ -132,9 +152,10 @@ Pressing submit is the **consent** event. `status: "timeout"` means they did not
 
 ## Done when
 
-All five hold: `doctor.ready` true, `install-runtime.entry` present, the dedicated Chrome reachable,
-`probe.status` `matched`, and `select.status` `submitted`. Short of all five the environment is not ready —
-name the missing one rather than reporting success.
+All six hold: `doctor.ready` true, `install-runtime.entry` present, the dedicated Chrome reachable,
+`confirm-identity.status` `confirmed` (or `already_confirmed`), `probe.status` `matched`, and
+`select.status` `submitted`. Short of all six the environment is not ready — name the missing one rather
+than reporting success.
 
 ## Scope
 
