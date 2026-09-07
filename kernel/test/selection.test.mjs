@@ -368,3 +368,20 @@ test('明细变了又赶上簿子空了：既要说重选，也要说没得选',
   const stale = applySelection(moved, c, loadSelection(task), null, []);
   assert.deepEqual(stale.notes.map((n) => n.kind), ['task_selection_stale', 'project_book_empty']);
 });
+
+test('簿子空了只说一遍：那是一句关于簿子的话，不是关于每一行的话', () => {
+  const task = createTask(path.join(home, 'src-empty-once'));
+  const { built } = rideCase();
+  const first = built.lineItems[0];
+  const many = { ...built, lineItems: [first, { ...first, lineId: 'line-2' }, { ...first, lineId: 'line-3' }] };
+
+  const r = submitSelection(task, many, {
+    homeCity: '广州市',
+    purpose: '客户支持',
+    projects: Object.fromEntries(many.lineItems.map((l) => [l.lineId, '111454'])),
+  }, []);
+  assert.equal(r.verdict, 'rejected');
+  assert.equal(r.state, 'project_book_empty');
+  assert.deepEqual(r.reasons.filter((x) => /项目簿是空的/.test(x)).length, 1,
+    '三行明细不该把同一句"簿子是空的"说三遍');
+});

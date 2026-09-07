@@ -99,13 +99,15 @@ export function selectableProjects() {
   return readBook().projects.filter(isSelectable);
 }
 
-/** 状态机里那两个说法完全不同的状态名：没得选 vs 该选了。 */
+/**
+ * 空簿在状态机里的状态名。**它和"有得选但还没选"（`project_unassigned`）是两回事**：
+ * 前者要用户去维护页录入，后者要用户去选——话术、actor、出口条件都不一样。
+ * 上层拿一个布尔量分不出这两个，所以内核直接给出状态名。
+ *
+ * 只给"空"这一个名字：非空不是一个状态，它只是接着往下走。
+ */
 export const PROJECT_BOOK_EMPTY = 'project_book_empty';
 
-/**
- * 簿子在选择环节还能不能用。**空簿和"有得选但还没选"是两回事**：
- * 前者要用户去维护页录入，后者要用户去选——话术、actor、出口条件都不一样，
- * 上层拿一个布尔量是分不出来的，所以这里直接给状态名。
- */
-export const projectBookState = () =>
-  (selectableProjects().length ? 'project_book_ready' : PROJECT_BOOK_EMPTY);
+/** 空簿时该说的那句话，只写一处：三个出口（内核阻塞、拒收理由、明细开放项）说法要一致。 */
+export const BOOK_EMPTY_HINT =
+  '打开项目簿维护页把项目逐条录进来（录入即核验），再回来做任务选择';

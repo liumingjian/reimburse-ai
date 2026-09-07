@@ -262,6 +262,18 @@ The page allows multi-select and filling one project number into many rows at on
 chat does not count and you cannot fill it in for them — same **consent** rule as reading confirmation and
 allocation.
 
+**The candidates come only from the personal project book** (`baox projects` shows it), and the kernel
+refuses any project number that is not in it. Two states to keep apart:
+
+- `project_book_empty` — the book has nothing selectable, so there is nothing to choose from.
+  `select-task` blocks before it opens the page. The user has to enter the projects on the project book
+  maintenance page first; you cannot type one in for them.
+- 「该选了」 — the book has candidates and the user simply has not selected yet. That is the normal path.
+
+Projects added to the book mid-flow are selectable the next time the selector opens; and a project the user
+later deletes from the book **does not** change a selection that is already recorded — that one is a fact of
+the task.
+
 ```bash
 baox lines --dir "<材料目录>"
 ```
@@ -276,8 +288,11 @@ baox lines --dir "<材料目录>"
   expense item the ERP reads back**; if it disagrees, stop and ask. Never guess a code, and never substitute
   one category's code for another's. (All four exist in the ERP master data — step 10 — but "the master data
   has this record" and "a detail line saves under it" are different claims.)
-- **A project number is unverified until it is checked.** `projectSource: user_input_unverified` is a fact;
-  it becomes `erp_catalog_confirmed` only after step 10.
+- **A project chosen from the personal project book is already verified.** The book only admits projects
+  that were checked against the ERP at entry time, so those lines carry `projectSource:
+  erp_catalog_confirmed` from the moment the selection is submitted, and step 10 does not have to raise
+  them. Only selections recorded before the book existed carry `user_input_unverified`, and those still
+  become `erp_catalog_confirmed` only after step 10.
 - **Change a line and the selection goes stale** (`task_selection_stale`). Reallocating a combined transport
   invoice means selecting again.
 

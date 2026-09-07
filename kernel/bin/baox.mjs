@@ -26,7 +26,7 @@ import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerFie
 import { readReconciliation, classifyReconciliation, attemptRecord } from '../src/erpreconcile.mjs';
 import { versionAt, compareVersions } from '../src/version.mjs';
 import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
-import { readBook, bookPath, selectableProjects, isSelectable, PROJECT_BOOK_EMPTY }
+import { readBook, bookPath, selectableProjects, isSelectable, PROJECT_BOOK_EMPTY, BOOK_EMPTY_HINT }
   from '../src/projects.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
@@ -817,8 +817,8 @@ try {
       if (!candidates.length) {
         out({ command: 'select-task', state: PROJECT_BOOK_EMPTY, actor: 'user',
           bookPath: bookPath(),
-          note: '个人项目簿里一条可选项目都没有，任务选择没有候选可用；'
-            + '打开项目簿维护页把项目逐条录进来（录入即核验），再重跑 select-task' }, BLOCKED);
+          note: `个人项目簿里一条可选项目都没有，任务选择没有候选可用；${BOOK_EMPTY_HINT}`,
+        }, BLOCKED);
       }
 
       // 上一次的选择只作预填：明细变过了就不再有效，用户仍然要重新看一遍再提交。
@@ -830,6 +830,9 @@ try {
           totalAmount: l.totalAmount, project: prev?.projects?.[l.lineId] ?? '' };
       });
 
+      // 候选集合由内核给出，不是用户凭记忆打出来的：开页面之前先把可选的项目摆出来。
+      process.stderr.write('本次可选的项目（来自个人项目簿）：'
+        + `${candidates.map((p) => `${p.number}${p.name ? ` ${p.name}` : ''}`).join('、')}\n`);
       const result = await serveTaskSelection(
         { lines, homeCity: prev?.homeCity ?? '', purpose: prev?.purpose ?? '' },
         { timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
@@ -839,6 +842,7 @@ try {
       const r = submitSelection(task, built, result);
       if (r.verdict === 'rejected') {
         out({ command: 'select-task', verdict: r.verdict, reasons: r.reasons,
+          state: r.state ?? null, candidates: candidates.map((p) => p.number),
           note: '任务选择没有收下；重新跑 select-task' }, BLOCKED);
       }
       out({ command: 'select-task', verdict: r.verdict,
@@ -918,7 +922,7 @@ try {
       out({
         command: 'projects', projectCount: book.projects.length, projects: book.projects,
         selectableCount: selectable.length, selectableNumbers: selectable.map((p) => p.number),
-        state: selectable.length ? 'project_book_ready' : PROJECT_BOOK_EMPTY,
+        ...(selectable.length ? {} : { state: PROJECT_BOOK_EMPTY }),
         bookPath: bookPath(),
         note: book.projects.length
           ? '这是本机项目簿的原样内容，没有为这次查询做过 ERP 核对；'

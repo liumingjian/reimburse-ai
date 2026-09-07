@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { taskDir } from './workspace.mjs';
 import { CATEGORIES, normalizeCity } from './categories.mjs';
-import { selectableProjects, PROJECT_BOOK_EMPTY } from './projects.mjs';
+import { selectableProjects, PROJECT_BOOK_EMPTY, BOOK_EMPTY_HINT } from './projects.mjs';
 
 // 任务选择：把候选明细补齐成 ERP 明细行还缺的那几件事。
 //
@@ -117,6 +117,7 @@ const textOk = (s, max) => typeof s === 'string'
 export function submitSelection(task, built, payload, candidates = selectableProjects()) {
   const reasons = [];
   const allowed = new Map(candidates.map((p) => [p.number, p]));
+  let emptyBook = false;
   const homeCity = String(payload?.homeCity ?? '').trim();
   const purpose = String(payload?.purpose ?? '').trim();
   if (!textOk(homeCity, 20)) reasons.push('常驻城市必须填写，且不超过 20 个字');
@@ -129,13 +130,13 @@ export function submitSelection(task, built, payload, candidates = selectablePro
     const v = given[lineId];
     if (!textOk(v ?? '', 40)) { reasons.push(`明细 ${lineId} 还没有选项目`); continue; }
     const number = String(v).trim();
+    // 不在簿子里的号一律不收。说清楚出路是"去维护页录入"而不是"再填一次"，
+    // 否则用户只会把同一个号再打一遍。簿子整个是空的时候只说一遍：那是一句
+    // 关于簿子的话，不是关于这一行的话，每行重复一遍只会淹掉真正的行内问题。
+    if (!allowed.size) { emptyBook = true; continue; }
     if (!allowed.has(number)) {
-      // 不在簿子里的号一律不收。说清楚出路是"去维护页录入"而不是"再填一次"，
-      // 否则用户只会把同一个号再打一遍。
-      reasons.push(allowed.size
-        ? `明细 ${lineId} 的项目 ${number} 不在项目簿里；`
-          + `可选的是：${[...allowed.keys()].join('、')}。要用别的项目，先去项目簿维护页录入`
-        : `项目簿是空的，选择环节没有候选可用；先去项目簿维护页把项目逐条录进来（明细 ${lineId}）`);
+      reasons.push(`明细 ${lineId} 的项目 ${number} 不在项目簿里；`
+        + `可选的是：${[...allowed.keys()].join('、')}。要用别的项目，先去项目簿维护页录入`);
       continue;
     }
     projects[lineId] = number;
@@ -144,8 +145,9 @@ export function submitSelection(task, built, payload, candidates = selectablePro
     if (!wanted.includes(k)) reasons.push(`提交里出现了不存在的明细 ${k}，这批明细可能已经变了`);
   }
   // 空簿要让上层区分得出来：它和"有得选但还没选"给用户的话术完全不同。
+  if (emptyBook) reasons.push(`项目簿是空的，选择环节没有候选可用；${BOOK_EMPTY_HINT}`);
   if (reasons.length) {
-    return { verdict: 'rejected', reasons, ...(allowed.size ? {} : { state: PROJECT_BOOK_EMPTY }) };
+    return { verdict: 'rejected', reasons, ...(emptyBook ? { state: PROJECT_BOOK_EMPTY } : {}) };
   }
 
   const record = {
@@ -208,19 +210,18 @@ export function applySelection(built, classification, selection, catalog = null,
   const bookEmpty = candidates.length === 0;
   const emptyNote = () => ({
     kind: PROJECT_BOOK_EMPTY, blocking: true, actor: 'user',
-    note: '个人项目簿里一条可选项目都没有，选择环节没有候选可用；'
-      + '打开项目簿维护页把项目逐条录进来（录入即核验），再回来做任务选择',
+    note: `个人项目簿里一条可选项目都没有，选择环节没有候选可用；${BOOK_EMPTY_HINT}`,
   });
 
   if (!selection) {
     notes.push(bookEmpty ? emptyNote() : {
-      kind: 'task_selection_required', blocking: true, actor: 'user',
+      kind: 'task_selection_required', blocking: true,
       note: '常驻城市、报销事由和每条明细的项目归属，材料上没有，也不能由系统推断；'
         + '跑 select-task 打开任务选择页，由用户提交',
     });
   } else if (!fresh) {
     notes.push({
-      kind: 'task_selection_stale', blocking: true, actor: 'user',
+      kind: 'task_selection_stale', blocking: true,
       note: '候选明细在上次任务选择之后变过了（材料或逐段分摊有改动），'
         + '之前的项目归属不再对应现在这几行，需要重新选择',
     });
