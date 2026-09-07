@@ -304,7 +304,9 @@ page does one thing: 录入. Exit 1 with `status: timeout` means only that they 
 **every project admitted before that is already on disk**; say so and run the command again rather than
 reporting a failure.
 
-Entering a project is an online action, and each attempt comes back as one of four `status` values:
+Entering a project is an online action, and each attempt lands as one of four `status` values. You are mute
+while the page is open, so these reach the **user**, not you — this table is for when they read one back to
+you afterwards, or ask why a number would not go in:
 
 | `status` | Means | Do |
 | --- | --- | --- |
