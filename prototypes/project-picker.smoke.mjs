@@ -40,7 +40,7 @@ const EXPORTS = [
   "state", "counters", "ACTIONS", "estimate", "SCENARIOS", "CLUSTERS", "ALL_LINES", "PROJECTS",
   "askableClusters", "exceptionClusters", "mainProjectOfScenario", "cMainCandidates", "truthFor",
   "candidatesFor", "aCandidates", "verifyProject", "clusterById", "usedCodes", "assignedCount",
-  "bPlan", "GROUPINGS", "groupsOf", "groupById", "truthOfLine", "impureGroups",
+  "bPlan", "GROUPINGS", "groupsOf", "groupById", "truthOfLine", "impureGroups", "cat1Of", "V1_GROUPS",
   "failuresOf", "setVariant", "toggleSelection", "bump", "projectName", "render",
 ];
 
@@ -150,7 +150,9 @@ const RUNNERS = { A: runA, B: runB, C: runC };
 const rows = [];
 const LEGS = [
   { key: "A", label: "A" },
-  { key: "B", label: "B·类别", grouping: "category" },
+  { key: "B", label: "B·V1四类", grouping: "catv1" },
+  { key: "B", label: "B·V1+其他", grouping: "catv1plus" },
+  { key: "B", label: "B·旧七类", grouping: "category" },
   { key: "B", label: "B·归属簇", grouping: "cluster" },
   { key: "C", label: "C" },
 ];
@@ -176,7 +178,7 @@ api.SCENARIOS.forEach((item) => {
     const excused = api.ALL_LINES.filter((line) => api.verifyProject(api.truthOfLine(line)).verdict !== "confirmed").length;
     const wrong = api.ALL_LINES.filter((line) => vs.assign[line.id]?.code !== api.truthOfLine(line)).length - excused;
     /* A/C 以行程簇为提问单位。真值按类别落时它们表达不了，会错——那是结论，不是 bug。 */
-    const expectExact = key === "B" || !api.SCENARIOS.find((x) => x.key === item.key).byCategory;
+    const expectExact = key === "B" || Boolean(api.SCENARIOS.find((x) => x.key === item.key).truth);
     if (expectExact) check(wrong === 0, `${item.key}/${label}：${wrong} 条没落在真值上`);
     rows.push({
       wrong,
@@ -199,6 +201,22 @@ const renderBranch = (label, prepare) => {
     failures.push(`渲染分支「${label}」抛异常：${error.message}`);
   }
 };
+
+/* 层级分组自检：父组的行必须恰好等于子组 + 自有行，且四类 + 其他覆盖全部明细，不重不漏。 */
+const walk = (group) => {
+  const covered = [...(group.children || []).flatMap((child) => child.lines), ...(group.ownLines || [])];
+  check(covered.length === group.lines.length, `分组「${group.title}」子组 + 自有行 ${covered.length} ≠ 本组 ${group.lines.length}`);
+  check(new Set(covered.map((line) => line.id)).size === covered.length, `分组「${group.title}」有重复明细`);
+  (group.children || []).forEach(walk);
+};
+api.V1_GROUPS.forEach(walk);
+const v1Ids = api.V1_GROUPS.flatMap((group) => group.lines.map((line) => line.id));
+check(new Set(v1Ids).size === api.ALL_LINES.length, `V1 分组覆盖 ${new Set(v1Ids).size} 条，应为 ${api.ALL_LINES.length} 条`);
+console.log(
+  "V1 一级分组：" +
+    api.V1_GROUPS.map((group) => `${group.title} ${group.lines.length} 条${group.children.length ? `（${group.children.map((child) => `${child.title}${child.lines.length}`).join("/")}）` : ""}`).join(" · "),
+);
+console.log("");
 
 ACTIONS["reset-all"]({});
 
@@ -269,11 +287,11 @@ renderBranch("C · 例外页 + 只看主项目筛选", () => {
   ACTIONS["reset-variant"]({});
 });
 
-console.log("场景        变体              实测  估算  开浏览器  用到项目数  错配");
+console.log("场景            变体              实测  估算  开浏览器  用到项目数  错配");
 rows.forEach((row) => {
   const flag = row.measured === row.estimated ? "" : "   <= 实测与估算不一致";
   console.log(
-    `${row.scenario.padEnd(10, "　")}  ${row.variant.padEnd(8, "　")}  ${String(row.measured).padStart(3)}  ${String(row.estimated).padStart(4)}  ${String(row.browser).padStart(6)}  ${String(row.codes).padStart(8)}  ${String(row.wrong).padStart(3)}${flag}`,
+    `${row.scenario.padEnd(12, "　")}  ${row.variant.padEnd(8, "　")}  ${String(row.measured).padStart(3)}  ${String(row.estimated).padStart(4)}  ${String(row.browser).padStart(6)}  ${String(row.codes).padStart(8)}  ${String(row.wrong).padStart(3)}${flag}`,
   );
 });
 

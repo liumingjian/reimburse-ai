@@ -196,6 +196,8 @@
       }
       .callout.bad { border-color: var(--coral); background: var(--coral-soft); color: var(--coral); }
       .callout.ok { border-color: var(--green); background: var(--green-soft); color: var(--green); }
+      .cluster.sub { margin: 6px 0 6px 22px; border-left: 3px solid var(--line-strong); }
+      .cluster-nobox { display: inline-block; width: 13px; text-align: center; color: var(--ink-soft); }
       .grouping-switch { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
       .button-secondary.on { border-color: var(--blue); color: var(--blue); background: var(--blue-soft, var(--panel)); font-weight: 600; }
       .plan-rows { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 6px; }
@@ -413,6 +415,11 @@
       const askableClusters = () => CLUSTERS.filter((cluster) => !cluster.inheritFrom);
       const ALL_LINES = CLUSTERS.flatMap((cluster) => cluster.lines.map((line) => ({ ...line, clusterId: cluster.id })));
       const clusterById = (id) => CLUSTERS.find((cluster) => cluster.id === id);
+      /* 归属簇没有层级，补齐字段好让渲染器只认一种 group 形状。 */
+      CLUSTERS.forEach((cluster) => {
+        cluster.children = [];
+        cluster.ownLines = cluster.lines;
+      });
       const projectByCode = (code) => PROJECTS.find((project) => project.code === code);
       const projectName = (code) => projectByCode(code)?.name || "（清单外）";
 
@@ -428,14 +435,75 @@
         title: name,
         basis: "同一费用类别",
         lines: ALL_LINES.filter((line) => line.category === name),
+        children: [],
+        ownLines: ALL_LINES.filter((line) => line.category === name),
       })).filter((group) => group.lines.length);
 
+      /*
+        V1 分组（用户拍板的口径）：一级只有四类——市内交通 / 市外交通 / 长途 / 住宿。
+        本市＝北京；在外地城市里跑的地面交通算「市外交通」，并按城市二级分。
+        余下的餐饮、会议、招待本版**不分组**，摊在最后逐条处理——这是「只做四类」的实际代价，
+        必须看得见，否则 V1 的账是假的。
+      */
+      const HOME_CITY = "北京";
+      const cat1Of = (line) => {
+        if (line.category === "长途交通") return "长途";
+        if (line.category === "住宿") return "住宿";
+        if (line.category === "市外交通") return "市外交通";
+        if (line.category === "市内交通") return line.city === HOME_CITY ? "市内交通" : "市外交通";
+        return "其他";
+      };
+      const V1_ORDER = ["市内交通", "市外交通", "长途", "住宿"];
+      /* 交通票的特殊处理：同一张合并凭证分摊出来的几段，绑成一个选择单元，勾一次就是一整张票。 */
+      const voucherOf = (line) => (clusterById(line.clusterId).kind === "凭证" ? clusterById(line.clusterId) : null);
+
+      const makeGroup = (id, kind, title, basis, lines, extra = {}) => ({
+        id, kind, title, basis, lines, children: [], ownLines: lines, ...extra,
+      });
+
+      const V1_GROUPS = (() => {
+        const out = V1_ORDER.map((name) => {
+          const lines = ALL_LINES.filter((line) => cat1Of(line) === name);
+          if (name !== "市外交通") return makeGroup(`v1-${name}`, "一级类别", name, "同一费用类别", lines);
+          const cities = [...new Set(lines.map((line) => line.city))];
+          const children = cities.map((city) => {
+            const cityLines = lines.filter((line) => line.city === city);
+            const vouchers = [...new Set(cityLines.map((line) => voucherOf(line)).filter(Boolean))];
+            const bundled = vouchers.map((voucher) =>
+              makeGroup(`v1-市外交通-${city}-${voucher.id}`, "交通凭证", voucher.title, "同一张合并交通票，分摊出的各段绑成一个选择单元", cityLines.filter((line) => voucherOf(line) === voucher)),
+            );
+            const loose = cityLines.filter((line) => !voucherOf(line));
+            return { ...makeGroup(`v1-市外交通-${city}`, "城市", city, "市外交通 · 按城市二级分类", cityLines), children: bundled, ownLines: loose };
+          });
+          return { ...makeGroup("v1-市外交通", "一级类别", "市外交通", "外地城市内的地面交通 · 按城市二级分类", lines), children, ownLines: [] };
+        });
+        const rest = ALL_LINES.filter((line) => cat1Of(line) === "其他");
+        /* 没有整组复选框：本版没给它分类，就不能白拿一次整组勾。 */
+        return [...out, makeGroup("v1-其他", "本版不分组", `其他（${rest.length} 条）`, "餐饮 / 会议 / 招待——V1 的四类之外，只能逐条勾", rest, { noGroupSelect: true })];
+      })();
+
+      /*
+        「其他」到底给不给整组勾，是 V1 唯一一处能自己决定的成本。单列一档出来量它，
+        免得「只做四类」的代价被算到分组维度头上。
+      */
+      const V1_GROUPS_PLUS = V1_GROUPS.map((group) =>
+        group.noGroupSelect
+          ? { ...group, id: "v1p-其他", noGroupSelect: false, kind: "兜底组", title: group.title.replace("其他", "其他"), basis: "四类之外的一律进这一组，但给它一个整组勾" }
+          : group,
+      );
+
       const GROUPINGS = [
-        { key: "category", name: "按费用类别", note: "类别与项目正交：一个类别里的钱常常分属好几个项目。" },
-        { key: "cluster", name: "按归属簇（行程/凭证）", note: "连续日期＋同城，或同一主要报销凭证；凭证簇继承分摊前那一行。" },
+        { key: "catv1", name: "按费用类别 V1（四类 + 市外按城市）", note: "一级四类：市内交通 / 市外交通 / 长途 / 住宿；市外交通按城市二级分；合并交通票绑成一个单元。四类之外的逐条处理。" },
+        { key: "catv1plus", name: "V1 + 其他也成组", note: "同 V1，只多一条：四类之外的那些进一个「其他」兜底组，也给整组勾。用来量「只做四类」花了多少钱。" },
+        { key: "category", name: "按费用类别（七类平铺）", note: "上一版的对照：不分级、不按城市，餐饮会议招待各自成组。" },
+        { key: "cluster", name: "按归属簇（行程/凭证）", note: "Q9 原口径：连续日期＋同城，或同一主要报销凭证；凭证簇继承分摊前那一行。" },
       ];
-      const groupsOf = (grouping) => (grouping === "cluster" ? CLUSTERS : CATEGORY_GROUPS);
-      const groupById = (id) => CLUSTERS.find((cluster) => cluster.id === id) || CATEGORY_GROUPS.find((group) => group.id === id);
+      const GROUP_SETS = { catv1: V1_GROUPS, catv1plus: V1_GROUPS_PLUS, category: CATEGORY_GROUPS, cluster: CLUSTERS };
+      const groupsOf = (grouping) => GROUP_SETS[grouping] || V1_GROUPS;
+      /* 层级分组要能按 id 找到任意一层，勾选框的 indeterminate 才对得上。 */
+      const flattenGroups = (groups) => groups.flatMap((group) => [group, ...flattenGroups(group.children || [])]);
+      const ALL_GROUPS = Object.values(GROUP_SETS).flatMap((set) => flattenGroups(set));
+      const groupById = (id) => ALL_GROUPS.find((group) => group.id === id);
       const groupingByKey = (key) => GROUPINGS.find((item) => item.key === key) || GROUPINGS[0];
 
       /*
@@ -451,8 +519,17 @@
           没有它，类别分组只会在按行程构造的数据上挨打——那就是一场作弊的对照。
         */
         {
-          key: "bycat", name: "按类别落", desc: "差旅费归项目，市内与餐饮归部门费用池",
+          key: "bycat", name: "按旧七类落", desc: "差旅费归项目，市内与餐饮归部门费用池（上一版口径）",
           byCategory: { 长途交通: "P-1042", 市外交通: "P-1042", 住宿: "P-1042", 市内交通: "P-2701", 餐饮: "P-2701", 会议: "P-2801", 招待: "P-2801" },
+        },
+        /*
+          按 V1 口径落：长途与住宿进集中差旅池，外地地面交通跟着所在城市的项目走，
+          本市交通与餐饮会议进部门费用池。这是「市外交通按城市二级分」唯一能挣到钱的世界。
+        */
+        {
+          key: "bycatv1", name: "按V1四类落", desc: "长途/住宿进差旅池，市外交通按城市跟项目，市内与其他进部门池",
+          byV1: { 长途: "P-1042", 住宿: "P-1042", 市内交通: "P-2701", 其他: "P-2701" },
+          byCity: { 广州: "P-1120", 深圳: "P-1204", 上海: "P-1042", 成都: "P-1305" },
         },
       ];
 
@@ -461,6 +538,10 @@
       /* 真值的最小单位是明细行；簇真值和类别真值都由它导出。 */
       const truthOfLine = (line) => {
         const current = scenario();
+        if (current.byV1) {
+          const cat1 = cat1Of(line);
+          return cat1 === "市外交通" ? current.byCity[line.city] : current.byV1[cat1];
+        }
         if (current.byCategory) return current.byCategory[line.category];
         const cluster = clusterById(line.clusterId || ALL_LINES.find((item) => item.id === line.id).clusterId);
         return current.truth[cluster.inheritFrom || cluster.id];
@@ -469,10 +550,10 @@
       const truthFor = (clusterId) => {
         const cluster = clusterById(clusterId);
         const current = scenario();
-        if (!current.byCategory) return current.truth[cluster.inheritFrom || clusterId];
+        if (current.truth) return current.truth[cluster.inheritFrom || clusterId];
         const weight = {};
         cluster.lines.forEach((line) => {
-          const code = current.byCategory[line.category];
+          const code = truthOfLine(line);
           weight[code] = (weight[code] || 0) + 1;
         });
         return Object.entries(weight).sort((a, b) => b[1] - a[1])[0][0];
@@ -505,7 +586,7 @@
         rounds: 0, verifyResults: [], hints: [], reaskNote: null,
       });
       const freshB = () => ({
-        opened: false, grouping: "category", collapsed: {}, selected: [], assign: {},
+        opened: false, grouping: "catv1", collapsed: {}, selected: [], assign: {},
         search: "", searchCounted: false, manualOpen: false, manualText: "", manualError: null,
         pendingOverwrite: null, verifyResults: [], submitted: false,
       });
@@ -542,7 +623,7 @@
         counters[key] = { actions: 0, browser: 0, log: [] };
         if (key === "A") state.a = freshA();
         /* 分组维度是看法不是数据，重置计数时留着，免得 QA 每换一次场景都要重新切。 */
-        if (key === "B") state.b = { ...freshB(), grouping: state.b?.grouping || "category" };
+        if (key === "B") state.b = { ...freshB(), grouping: state.b?.grouping || "catv1" };
         if (key === "C") state.c = freshC();
       };
 
@@ -628,12 +709,17 @@
           });
           const picked = new Set();
           const groupHits = [];
-          groups.forEach((group) => {
+          const cover = (group) => {
+            if (!group.lines.length) return;
             if (group.lines.every((line) => free.has(line.id))) return;
-            if (!group.lines.every((line) => wantIds.includes(line.id))) return;
-            groupHits.push(group.id);
-            group.lines.forEach((line) => picked.add(line.id));
-          });
+            if (!group.noGroupSelect && group.lines.every((line) => wantIds.includes(line.id))) {
+              groupHits.push(group.id);
+              group.lines.forEach((line) => picked.add(line.id));
+              return;
+            }
+            (group.children || []).forEach(cover);
+          };
+          groups.forEach(cover);
           const lineHits = wantIds.filter((id) => !picked.has(id) && !free.has(id));
           lineHits.forEach((id) => picked.add(id));
           selects += groupHits.length + lineHits.length;
@@ -832,7 +918,7 @@
         它们只能答出簇的多数派，也就是答错。这条必须画出来，不然「按类别分组」的代价会被藏在 B 里看不见。
       */
       const clusterAskWarning = (key) => {
-        if (!scenario().byCategory) return "";
+        if (scenario().truth) return "";
         const impure = CLUSTERS.filter((cluster) => !cluster.inheritFrom && !groupIsPure(cluster));
         if (!impure.length) return "";
         const wrong = ALL_LINES.filter((line) => truthOfLine(line) !== truthFor(line.clusterId)).length;
@@ -1032,42 +1118,52 @@ ${escapeHtml(state.a.manualError.detail)}${state.a.manualError.hint ? `
         `;
       };
 
-      const clusterCard = (cluster, vs, prefix, results) => {
+      const lineRow = (line, vs, prefix, results) => `
+        <div class="line-row">
+          <input id="${prefix}-line-${line.id}" data-focus-id="${prefix}-line-${line.id}" type="checkbox" data-control="${prefix}-line" data-line="${line.id}" ${vs.selected.includes(line.id) ? "checked" : ""} aria-label="选择明细 ${line.detail}" />
+          <div class="line-main">
+            <span class="line-detail">${escapeHtml(line.detail)}</span>
+            <span class="line-meta">${line.date} · ${line.city} · ${line.category}</span>
+          </div>
+          <span class="line-amount">${money(line.amount)}</span>
+          ${lineChip(line, vs.assign, results)}
+        </div>
+      `;
+
+      /*
+        一个分组卡片。层级是可选的：归属簇和七类平铺没有子组，V1 的「市外交通」有城市子组，
+        城市子组下面还可能挂一张合并交通票。渲染器只认 lines / children / ownLines 三个字段。
+        noGroupSelect 的组不给整组复选框——本版没给它分类，就不该白拿一次整组勾。
+      */
+      const clusterCard = (cluster, vs, prefix, results, depth = 0) => {
         const collapsed = vs.collapsed[cluster.id] !== false;
         const current = clusterAssignment(vs.assign, cluster);
         const selectedInCluster = cluster.lines.filter((line) => vs.selected.includes(line.id)).length;
         const complete = cluster.lines.every((line) => vs.assign[line.id]);
         const badVerdict = current.code && verdictOfCode(results, current.code) && verdictOfCode(results, current.code) !== "confirmed";
+        const children = cluster.children || [];
+        const ownLines = cluster.ownLines || cluster.lines;
         return `
-          <div class="cluster ${complete && !badVerdict ? "done" : ""}">
+          <div class="cluster ${complete && !badVerdict ? "done" : ""} ${depth ? "sub" : ""}">
             <div class="cluster-head">
-              <input id="${prefix}-cluster-${cluster.id}" data-focus-id="${prefix}-cluster-${cluster.id}" type="checkbox" data-control="${prefix}-cluster" data-cluster="${cluster.id}" ${selectedInCluster === cluster.lines.length ? "checked" : ""} aria-label="整簇选择 ${cluster.title}" />
-              <label for="${prefix}-cluster-${cluster.id}">
+              ${
+                cluster.noGroupSelect
+                  ? `<span class="cluster-nobox" title="本版不给这一组整组勾选">—</span>`
+                  : `<input id="${prefix}-cluster-${cluster.id}" data-focus-id="${prefix}-cluster-${cluster.id}" type="checkbox" data-control="${prefix}-cluster" data-cluster="${cluster.id}" ${selectedInCluster === cluster.lines.length ? "checked" : ""} aria-label="整组选择 ${cluster.title}" />`
+              }
+              <label ${cluster.noGroupSelect ? "" : `for="${prefix}-cluster-${cluster.id}"`}>
                 <span class="cluster-title">${cluster.kind} · ${cluster.title}</span>
                 <span class="cluster-meta">${cluster.lines.length} 条 · ${money(clusterAmount(cluster))} · ${cluster.basis}${cluster.inheritFrom ? ` · 继承自「${clusterById(cluster.inheritFrom).title}」` : ""}${selectedInCluster ? ` · 已选 ${selectedInCluster}` : ""}</span>
               </label>
               ${current.code ? lineChip(cluster.lines.find((line) => vs.assign[line.id]) || cluster.lines[0], vs.assign, results) : `<span class="chip none">未归属</span>`}
-              ${current.mixed ? `<span class="chip">簇内不一致</span>` : ""}
-              <button class="cluster-toggle" type="button" data-action="${prefix}-toggle-cluster" data-cluster="${cluster.id}">${collapsed ? "展开明细" : "收起"}</button>
+              ${current.mixed ? `<span class="chip">组内不一致</span>` : ""}
+              <button class="cluster-toggle" type="button" data-action="${prefix}-toggle-cluster" data-cluster="${cluster.id}">${collapsed ? (children.length ? "展开" : "展开明细") : "收起"}</button>
             </div>
             ${
               collapsed
                 ? ""
-                : cluster.lines
-                    .map(
-                      (line) => `
-                <div class="line-row">
-                  <input id="${prefix}-line-${line.id}" data-focus-id="${prefix}-line-${line.id}" type="checkbox" data-control="${prefix}-line" data-line="${line.id}" ${vs.selected.includes(line.id) ? "checked" : ""} aria-label="选择明细 ${line.detail}" />
-                  <div class="line-main">
-                    <span class="line-detail">${escapeHtml(line.detail)}</span>
-                    <span class="line-meta">${line.date} · ${line.city} · ${line.category}</span>
-                  </div>
-                  <span class="line-amount">${money(line.amount)}</span>
-                  ${lineChip(line, vs.assign, results)}
-                </div>
-              `,
-                    )
-                    .join("")
+                : children.map((child) => clusterCard(child, vs, prefix, results, depth + 1)).join("") +
+                  ownLines.map((line) => lineRow(line, vs, prefix, results)).join("")
             }
           </div>
         `;
@@ -1137,13 +1233,9 @@ ${escapeHtml(state.a.manualError.detail)}${state.a.manualError.hint ? `
                 .join("")}
             </div>
             <span class="line-meta">${
-              rows[0].plan.total === rows[1].plan.total
-                ? "两种分法打平。"
-                : `${best.item.name}省 ${Math.abs(rows[0].plan.total - rows[1].plan.total)} 次。${
-                    best.item.key === "category"
-                      ? "这批钱的项目归属跟费用类别对齐，类别就是好的选择粒度。"
-                      : "这批钱的项目归属跟行程对齐，类别切开的是同一趟差旅，整组勾就用不上了。"
-                  }`
+              rows.every((row) => row.plan.total === rows[0].plan.total)
+                ? "三种分法打平。"
+                : `最省的是「${best.item.name}」，比最贵的一种少 ${Math.max(...rows.map((row) => row.plan.total)) - best.plan.total} 次。`
             }</span>
             <div class="plan-steps">${current.plan.steps.map((step) => `<span>${escapeHtml(step)}</span>`).join("")}</div>
           </div>
