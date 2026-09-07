@@ -61,14 +61,16 @@ unresolved — do not continue**.
 On exit 1, the JSON says which kind it was, and they need opposite responses:
 
 - an `error` key — the kernel threw. Read it out and stop.
-- a `status` key instead, `timeout` — a local page (`confirm-readings`, `allocate`, `select-task`) waited for
-  the user's submit and did not get one. Nothing is wrong; say so and run the command again.
+- a `status` key instead, `timeout` — a local page (`confirm-readings`, `allocate`, `select-task`,
+  `projects-page`) waited for the user and did not get what it was waiting for. Nothing is wrong; say so and
+  run the command again.
 
 **Every local page blocks in the foreground, and you are mute while it blocks.** The kernel opens the page
 in the user's browser itself, but the Bash call does not return — and you cannot say anything — until they
-submit or it times out (default 8 minutes). So **tell the user what is about to pop up *before* you run the
-command**, and give the Bash call a timeout longer than the page's. Saying it afterwards means they sat and
-waited through the whole thing wondering what happened.
+submit or it times out (default 8 minutes; `projects-page` is the odd one out — it stays open for repeated
+operations, so its 30-minute timeout is an **idle** one that resets on every operation). So **tell the user
+what is about to pop up *before* you run the command**, and give the Bash call a timeout longer than the
+page's. Saying it afterwards means they sat and waited through the whole thing wondering what happened.
 
 ## 1. Material intake
 
@@ -263,8 +265,9 @@ What comes back:
 
 | Field | Means |
 | --- | --- |
-| `projects` | Every entry, as it stands in the book: `number`, `name` (read back from the ERP at entry — the user never types a name), `confirmedAt`, `expiresOn` (`null` = never expires), `lastCheckedAt`, `lastVerdict` |
+| `projects` | Every entry, as it stands in the book: `number`, `name` (read back from the ERP at entry — the user never types a name), `confirmedAt`, `expiresOn`, `lastCheckedAt`, `lastVerdict`. Read them out as they stand — v1 has no way to set `expiresOn` and nothing evaluates it, so do not promise the user that a project will drop out on a date |
 | `projectCount` / `selectableCount` | All entries versus 可选集合 — the ones still selectable. **A gap between them is 项目失效**: those entries stay in the book on purpose so the user can see them, they are just not offered in the selector any more |
+| `selectableNumbers` | Just the numbers of 可选集合 — the exact set `select-task` will accept |
 | `state` | `project_book_empty` when nothing is selectable. Absent otherwise |
 | `bookPath` | Where the file lives. Say it if asked. **Do not open it to edit it** |
 | `note` | The kernel's own one-liner about what this reading is and is not |
@@ -272,7 +275,8 @@ What comes back:
 Report the two counts and, when they differ, name the 失效 entries — the user is the only one who decides
 whether to delete one. Do not describe a 失效 entry as deleted, expired-and-gone, or invalid data.
 
-**`lastVerdict` is the result of the last 主数据只读核对 recorded in the book, not the ERP's answer right
+一条 is selectable exactly when `lastVerdict` is `confirmed`; anything else is 项目失效.
+**And `lastVerdict` is the result of the last 主数据只读核对 recorded in the book, not the ERP's answer right
 now.** This command performs no verification. So report it as 「簿子里记的最近一次核对结果」, never as
 「这个项目现在在 ERP 里是有效的」.
 
@@ -292,18 +296,22 @@ Mid-flow, when the user says the project they want is not in the book:
 baox projects-page
 ```
 
-Tell them what is about to happen **before** you run it, because the page blocks in the foreground and you
-are mute until they finish (idle timeout 30 minutes — give the Bash call more than that): the maintenance
-page pops up, they paste a project number and click 「核对并加入」, the kernel checks that number against
-the ERP **right then** and only lets it in if the ERP says it exists, is approved and is not disabled; the
-name is filled in from the ERP's own read-back. They can do that as many times as they like, then click
-「完成」 to hand control back. v1 of the page does one thing: 录入.
+Say what is coming before you run it, as with every local page: they paste a project number, click
+「核对并加入」, the kernel checks that number against the ERP **right then** and only admits it if the ERP
+says it exists, is approved and is not disabled; the name is filled in from the ERP's own read-back. Unlike
+the other pages this one stays open for as many entries as they want, until they click 「完成」. v1 of the
+page does one thing: 录入. Exit 1 with `status: timeout` means only that they went idle for 30 minutes —
+**every project admitted before that is already on disk**; say so and run the command again rather than
+reporting a failure.
 
-Entering a project is an online action. If the result comes back `not_logged_in`, nothing failed and nothing
-should be retried — the user logs into the ERP in the dedicated Chrome window (`baox chrome-up`) and clicks
-again. `rejected` (`missing` / `ambiguous` / `unusable` / `unsafe`) is the ERP's own verdict on that number:
-read the reason out and leave the next move to the user. `query_failed` means the query never got an answer,
-which is 「没核成」, not 「核过了没问题」.
+Entering a project is an online action, and each attempt comes back as one of four `status` values:
+
+| `status` | Means | Do |
+| --- | --- | --- |
+| `admitted` | In the book, with the ERP's own name | Read the number **and the name** back |
+| `rejected` | A refusal. `verdict` `missing` / `ambiguous` / `unusable` is the ERP's own verdict on that number; `verdict: unsafe` is baox's, decided locally before any query — an empty box or characters that cannot go into a query | Read the reason out and leave the next move to the user |
+| `query_failed` | The query never got an answer after its retries | This is 「没核成」, not 「核过了没问题」. Try again later |
+| `not_logged_in` | No ERP session with a confirmed identity | Nothing failed and nothing should be retried — the user logs in in the dedicated Chrome window (`baox chrome-up`) and clicks again |
 
 Afterwards just run `select-task` again. 可选集合 is read fresh every time the selector opens, so a project
 entered a minute ago is selectable now.
@@ -317,9 +325,11 @@ No phrasing of the request changes any of these:
   allocation and 任务选择.
 - **Do not touch the book file.** Not with an editor, not with a shell command, not with a script you write
   for the occasion. `bookPath` is there so the user can look at their own file, not so you can rewrite it.
-- **Do not offer a way around it.** There is no free-text project number in the selection page any more.
-  Do not nudge the user toward a project that happens to be in the book already, do not swap in a number
-  that looks similar, and do not suggest 「先随便选一个之后再改」.
+- **Do not offer a way around it.** The selection page still has a project-number box the user can type
+  into, but the refusal lives in the kernel: a number that is not in 可选集合 is rejected on submit, whatever
+  the page let them type. So do not tell them to 「先在框里打上试试」, do not nudge them toward a project
+  that happens to be in the book already, do not swap in a number that looks similar, and do not suggest
+  「先随便选一个之后再改」.
 - **Do not vouch for a number that is not in the book.** If the user recites one from memory, the answer is
   the maintenance page, not a promise that it will work.
 
@@ -421,7 +431,7 @@ Exit 2 covers several cases, and they are not interchangeable:
 
 | Case | Means | Do |
 | --- | --- | --- |
-| project `missing` | No such number in the ERP project catalog | Ask the user to rerun `select-task` with a real project number |
+| project `missing` | No such number in the ERP project catalog. On the book's path this is an old selection, since the book admits nothing the ERP could not find | Have the user enter a real project on `projects-page`, then rerun `select-task`. Do not hand them a number yourself |
 | project `ambiguous` | One number matched several records | baox does not pick. Ask the user |
 | `unusable` | The master data is disabled or unapproved | Stop and ask. Do not switch to another code |
 | expense item `name_mismatch` | Code matches, name does not | **Stop.** The repo's reference table and the ERP have drifted apart; a human checks this. Do not adopt the ERP's name and carry on |
