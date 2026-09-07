@@ -1,0 +1,8 @@
+{
+  "title": "环境自检",
+  "prompt": "这是 baox 的选择界面样例，点一下提交就算通过",
+  "multiple": false,
+  "options": [
+    { "id": "ok", "label": "界面能正常显示", "detail": "点提交完成自检" }
+  ]
+}

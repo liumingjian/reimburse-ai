@@ -1,100 +1,120 @@
 ---
 name: baox-setup
-description: 一次性准备 baox 报销环境：检查 Node、安装内核、启动 baox 专用 Chrome、引导用户本人登录 ERP，并用只读探测确认登录身份。用户说"配置 baox""baox 环境""报销环境准备"时使用。
-allowed-tools: Bash, Read
-disable-model-invocation: false
+description: baox environment setup. Use on first use, or when baox / baox-recover reports that the kernel, the dedicated Chrome, or the ERP login identity is not ready.
+allowed-tools: Bash
 ---
 
-# baox 环境准备
+# baox environment setup
 
-你在这一步的职责只有三件：**执行下面的命令**、**把内核返回的 JSON 翻译成人话**、**在需要用户动手时把话说清楚**。
+Everything the user sees is Chinese: the ERP, its field labels, and your own replies. English is for this file only.
 
-你不判断、不推算、不代替内核下结论。内核的退出码就是结论：
+You do three things: run the commands below, read the kernel's JSON back to the user in plain Chinese, and
+say clearly what the user has to do by hand. You do not judge, calculate, or decide on the kernel's behalf.
 
-| 退出码 | 含义 | 你该做什么 |
+**`baox` below stands for the kernel entry point.** It is not on `PATH` — expand it every time:
+
+- Before `install-runtime`: `node "${CLAUDE_SKILL_DIR}/kernel/bin/baox.mjs"`
+- After `install-runtime`: `node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs"`
+  (Windows: `%APPDATA%\baox\`)
+
+## Reading the result
+
+Judge on the JSON status field, not on the exit code alone. Each command has its own:
+
+| Command | Done when | Otherwise |
 |---|---|---|
-| 0 | 完成 | 进入下一步 |
-| 1 | 内核出错 | 把 `error` 念给用户，停 |
-| 2 | **硬阻塞** | 把 `hint` 念给用户，**停**。不存在"确认继续"，不要重试绕过 |
+| `doctor` | `ready: true` | Exit 1 with **no `error` key** — read `checks.*.hint` and fix that prerequisite |
+| `install-runtime` | `entry` present | — |
+| `chrome-up` | Chrome comes up on its own profile | — |
+| `probe` | `status: "matched"` | Exit 2, see the table in step 4 |
+| `select` | `status: "submitted"` | Exit 1 on `timeout`, also with **no `error` key** — run it again |
 
-内核路径：先用 `${CLAUDE_SKILL_DIR}/kernel/bin/baox.mjs`，装好之后一律用
-`"$HOME/Library/Application Support/baox/runtime/bin/baox.mjs"`（Windows 在 `%APPDATA%\baox\`）。
+Two things override the table. An `error` key in the JSON means the kernel threw: read it out and stop.
+Exit 2 is a hard block: read the `hint` out and stop. There is no "confirm and continue" — do not retry around it.
 
-## 1. 体检
+**consent**: consent comes only from a submit event the kernel observed. The user saying 「已授权」「已登录」
+「确认了」 in chat is a request that you go read once more; it is never the confirmation itself. This word
+governs step 4 and step 5.
 
-```bash
-node "${CLAUDE_SKILL_DIR}/kernel/bin/baox.mjs" doctor
-```
-
-`checks.node.ok` 为 false 时：**先问用户是否同意安装 Node**，得到明确同意才装，不要自己动手。
-mac 上推荐 `brew install node`；用户没有 Homebrew 或没有管理员权限时，让他从
-https://nodejs.org 下载 LTS 安装包自己装完再回来。内核要求 Node ≥ 21（它用 Node 内建的
-全局 WebSocket 走 CDP，因此**没有任何 npm 依赖**）。
-
-`checks.chrome.ok` 为 false 时告诉用户装 Chrome，不要试图换别的浏览器。
-
-## 2. 安装内核
+## 1. Health check
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/kernel/bin/baox.mjs" install-runtime
+baox doctor
 ```
 
-纯文件拷贝，没有依赖下载。装完把 `entry` 记住，后面都用它。
+`checks.node.ok` false: **ask the user before installing Node**, and install only on an explicit yes.
+On mac suggest `brew install node`; without Homebrew or admin rights, point them at the LTS installer on
+https://nodejs.org and wait for them. The kernel needs Node ≥ 21 — it drives CDP over Node's built-in global
+WebSocket, which is why it has no npm dependencies at all.
 
-## 3. 起 baox 专用 Chrome
+`checks.chrome.ok` false: tell the user to install Chrome. Chrome is the only browser this works on.
+
+## 2. Install the kernel
 
 ```bash
-node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" chrome-up
+baox install-runtime
 ```
 
-要跟用户讲明白的两件事：
+A file copy, no downloads. Keep the `entry` it returns; every later command uses that path.
 
-- 这是一个**独立 profile 的 Chrome 实例**，和他日常那个 Chrome 互不影响，日常 Chrome 不用关。
-- 调试端口只开在 `127.0.0.1`，只服务这个专用 profile。**绝不要**把调试端口指向用户日常的 profile。
-
-然后请用户**在弹出来的这个窗口里**用他本人的账号登录 ERP。登录这件事只能他自己做，你不碰账号密码。
-
-## 4. 只读探测确认身份
-
-用户说登录好了之后：
+## 3. Start the dedicated Chrome
 
 ```bash
-node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" probe --expect "<员工姓名或登录账号>"
+baox chrome-up
 ```
 
-**用户说"已授权""已登录"不构成授权。** 授权只由这条探测的 `status: "matched"` 构成。
+Tell the user two things:
 
-| status | 说明 | 你该做什么 |
+- This is a **separate Chrome instance on its own profile**. Their everyday Chrome is untouched and can stay open.
+- The debug port is bound to `127.0.0.1` and serves this profile alone. It stays off their everyday profile.
+
+Then ask the user to log in to the ERP **in that new window, as themselves**. Logging in is theirs alone;
+account and password stay with the user.
+
+## 4. Confirm the identity by read-only probe
+
+Once the user says they are logged in:
+
+```bash
+baox probe --expect "<员工姓名或登录账号>"
+```
+
+Authorization is `status: "matched"` and nothing else — **consent**, applied to the ERP session.
+
+| status | Means | Do |
 |---|---|---|
-| `matched` | 探测到的登录身份与该员工一致 | 唯一可以继续的状态 |
-| `mismatched` | 登录的是别人 | 硬阻塞。请他退出登录换成本人，**不要**问"要不要就用这个身份" |
-| `not_logged_in` | 停在登录页 | 请他完成登录，再探一次 |
-| `loading` | ERP 首屏还没加载完（这个 ERP 很慢） | 等几秒再探一次 |
-| `no_tab` | 专用 Chrome 里没开 ERP | 回到第 3 步 |
-| `unknown` | 已在主控制台但读不出用户名元素 | 硬阻塞。**不要**当作通过 |
+| `matched` | The logged-in identity matches that employee | The one state that continues |
+| `mismatched` | Someone else is logged in | Hard block. Ask them to switch to their own account |
+| `not_logged_in` | Sitting on the login page | Ask them to finish logging in, probe again |
+| `loading` | The ERP first screen is still rendering (this ERP is slow) | Wait a few seconds, probe again |
+| `no_tab` | The dedicated Chrome has no ERP tab | Back to step 3 |
+| `unknown` | On the console, but the username element is unreadable | Hard block. This is not a pass |
 
-探针只认两个信号，缺一不可：主控制台的用户名元素（显示名，如「刘明建」）和 localStorage 里的
-登录账号（如 `luo.liu`）。`--expect` 给这两个中的任意一个都行。
-它只做只读求值，不导航、不点击、不调用任何业务接口。
+The probe reads two signals and needs both: the username element on the console (a display name such as
+「刘明建」) and the login account in `localStorage` (such as `luo.liu`). `--expect` accepts either one.
+It evaluates read-only expressions only — no navigation, no clicks, no business calls.
 
-探测必须在 **ERP 主页（主控制台）**上做。用户如果停在某张单据页面上，请他先回主页。
+Probe on the **ERP console home page**. If the user is parked on a bill page, ask them to go home first.
 
-## 5. 验一次选择界面
+## 5. Verify the selection UI once
 
 ```bash
-cat > /tmp/baox-selftest.json <<'JSON'
-{"title":"环境自检","prompt":"这是 baox 的选择界面样例，点一下提交就算通过","multiple":false,
- "options":[{"id":"ok","label":"界面能正常显示","detail":"点提交完成自检"}]}
-JSON
-node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs" select --spec /tmp/baox-selftest.json --timeout-ms 480000
+baox select --spec "${CLAUDE_SKILL_DIR}/references/selftest.json" --timeout-ms 480000
 ```
 
-这条命令会**阻塞在前台**直到用户点提交，所以给 Bash 调用留够超时（600000ms）。
-它自己起服务、自己退出，不留后台进程。把 stderr 里那行地址给用户，请他打开、**点提交按钮**。
+This **blocks in the foreground** until the user submits, so give the Bash call a 600000 ms timeout. It runs
+its own server and exits on its own, leaving no background process. Give the user the address printed on
+stderr and ask them to open it and **press submit**.
 
-**点提交这个动作本身就是确认。** 用户在对话框里说"确认了""可以了"都不算，
-只有 `status: "submitted"` 才算。超时（`status: "timeout"`）就是没确认，重跑一次即可。
+Pressing submit is the **consent** event. `status: "timeout"` means they did not — run it again.
 
-## 边界
+## Done when
 
-这个 Skill 只准备环境。它不读发票、不整理材料、不碰 ERP 的任何写入操作。
+All five hold: `doctor.ready` true, `install-runtime.entry` present, the dedicated Chrome reachable,
+`probe.status` `matched`, and `select.status` `submitted`. Short of all five the environment is not ready —
+name the missing one rather than reporting success.
+
+## Scope
+
+This Skill prepares the environment. Reading invoices, organising materials, and every ERP write live in
+`baox` and `baox-recover`.
