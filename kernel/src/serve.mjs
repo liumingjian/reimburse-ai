@@ -465,29 +465,34 @@ function listenLocal(server, nonce, onReady, onListening) {
 
 /**
  * 长驻形态的本地页面。**它加在一次性形态旁边，不替代后者** ——
- * 确认读数、逐段分摊、任务选择、确认身份这四个页面各自只收一次提交，
+ * 确认读数、逐段分摊、任务选择、确认身份和通用选择页各自只收一次提交，
  * "一次提交就 resolve 并关服务"对它们是对的语义，一个字都不用改。
+ * （这条性质原本写在 ADR-0002 里，是无条件的；本形态把它收窄到一次性形态，
+ * 已在那份 ADR 的补记里说明。）
  *
- * 个人项目簿的维护页不是这个形状：用户要在同一次打开里反复"核对并加入 / 删除 / 复检"，
+ * 项目维护页不是这个形状：用户要在同一次打开里反复"核对并加入 / 删除 / 复检"，
  * 最后才点「完成」。所以这里的服务在提交之后**不关**：每次提交交给内核处理，处理结果
  * 原样回给页面（`{ok:true,result}`），页面据此就地刷新自己。
  *
  * 页面这一侧的约定（后续维护页照此写）：
  * - `GET  /?nonce=…`        取页面本身，可以反复取
- * - `POST /submit?nonce=…`  一次操作，答 `{ok:true,result}`；内核判定为拒绝时答 `{ok:false,error}`
- * - `POST /done?nonce=…`    用户点「完成」，服务关闭，`onDone` 的返回值就是本次打开的最终结果
+ * - `POST /submit?nonce=…`  一次操作，答 `{ok:true,result}`；内核判定为拒绝时答 `{ok:false,error}`，
+ *                           `error` 是 `onSubmit` 抛出的那句话，**会原样显示给用户**
+ * - `POST /done?nonce=…`    用户点「完成」，服务关闭，`onDone` 的返回值就是这一次打开的最终结果
  *
  * 安全约定与一次性形态完全相同：临时端口、只绑 127.0.0.1、一个随机 nonce 守护**全部**端点，
  * 不匹配一律 404。一次被拒的请求既不会进到内核，也不会替用户把页面关掉。
  *
- * `timeoutMs` 是**闲置**超时：用户在页面上每做一次操作就重新计时。长驻页一开就是一段活儿，
- * 按绝对时长砍会在用户正干着的时候把页面收走。
+ * `timeoutMs` 是**闲置**超时：用户在页面上每做一次操作就重新计时，并且一次正在处理中的提交
+ * 不会被它砍断。长驻页一开就是一段活儿——按绝对时长砍会在用户正干着的时候把页面收走，
+ * 而一次要往 ERP 跑几个来回的"复检全部"耗时超过闲置阈值是正常的，不是没人了。
  */
-export function serveLocalSession(
+export function serveResidentPage(
   render, { timeoutMs = 30 * 60 * 1000, onReady, onSubmit, onDone } = {}) {
   const nonce = crypto.randomBytes(16).toString('hex');
   return new Promise((resolve, reject) => {
     let timer;
+    let inFlight = 0;
     const sockets = new Set();
     // close() 只等已有连接自己散场；页面那边是长连接，所以关的时候把它们一并断掉，
     // 否则"点了完成"和"端口真的放开了"之间会隔着一段说不清的时间。
@@ -495,6 +500,15 @@ export function serveLocalSession(
       clearTimeout(timer);
       server.close(settle);
       for (const s of sockets) s.destroy();
+    };
+    // 闲置计时：每做一次操作就拨回去。**手上还有没答完的提交就不算闲置** ——
+    // 否则一次慢的核对会在自己写响应的当口被连socket一起拆掉。
+    const keepAlive = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (inFlight > 0) return keepAlive();
+        shutdown(() => resolve({ status: 'timeout', timeoutMs }));
+      }, timeoutMs);
     };
     const server = http.createServer(async (req, res) => {
       const url = new URL(req.url, 'http://127.0.0.1');
@@ -511,11 +525,14 @@ export function serveLocalSession(
         try { body = await readJson(req); }
         catch { res.writeHead(400).end('bad json'); return; }
         keepAlive();
+        inFlight += 1;
         // 内核可以拒绝这一次操作（查无此号、已禁用……）。那是页面要显示给用户的答案，
-        // 不是会话的终结 —— 用户改一个数再来一次就是了。
+        // 不是收工 —— 用户改一个数再来一次就是了。
         let payload;
         try { payload = { ok: true, result: await onSubmit?.(body) }; }
         catch (e) { payload = { ok: false, error: e?.message ?? String(e) }; }
+        finally { inFlight -= 1; }
+        keepAlive();
         res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(payload));
         return;
       }
@@ -525,12 +542,13 @@ export function serveLocalSession(
         try { body = await readJson(req); }
         catch { res.writeHead(400).end('bad json'); return; }
         clearTimeout(timer);
-        res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
         // 点「完成」这个动作本身就是收工。用户在对话里说"弄好了"不算。
         let final, failed;
         try { final = (await onDone?.(body)) ?? { status: 'done', at: new Date().toISOString() }; }
         catch (e) { failed = e; }
-        shutdown(() => (failed ? reject(failed) : resolve(final)));
+        // 响应真的写出去了才动服务器：body 还在缓冲里就 destroy socket，页面收到的是半截。
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{"ok":true}', () => shutdown(() => (failed ? reject(failed) : resolve(final))));
         return;
       }
 
@@ -538,10 +556,6 @@ export function serveLocalSession(
     });
     server.on('connection', (s) => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
     server.on('error', reject);
-    const keepAlive = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => shutdown(() => resolve({ status: 'timeout', timeoutMs })), timeoutMs);
-    };
     listenLocal(server, nonce, onReady, keepAlive);
   });
 }

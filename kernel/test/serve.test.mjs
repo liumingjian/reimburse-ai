@@ -1,19 +1,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { openInBrowser, serveLocalSession } from '../src/serve.mjs';
+import { openInBrowser, serveResidentPage } from '../src/serve.mjs';
 
-// 本地页面是前台阻塞的：命令返回之前 Agent 说不了话，所以"把地址给用户"这件事
-// 只能由内核自己做。这里盯住的是那个开关本身。
-test('BAOX_NO_AUTO_OPEN=1 时内核不去开浏览器', () => {
+/** 本地页面的测试一律不许真去弹浏览器。 */
+const noAutoOpen = (fn) => async (t) => {
   const before = process.env.BAOX_NO_AUTO_OPEN;
   process.env.BAOX_NO_AUTO_OPEN = '1';
-  try {
-    assert.equal(openInBrowser('http://127.0.0.1:1/?nonce=x'), false);
-  } finally {
+  try { await fn(t); }
+  finally {
     if (before === undefined) delete process.env.BAOX_NO_AUTO_OPEN;
     else process.env.BAOX_NO_AUTO_OPEN = before;
   }
-});
+};
+
+// 本地页面是前台阻塞的：命令返回之前 Agent 说不了话，所以"把地址给用户"这件事
+// 只能由内核自己做。这里盯住的是那个开关本身。
+test('BAOX_NO_AUTO_OPEN=1 时内核不去开浏览器', noAutoOpen(() => {
+  assert.equal(openInBrowser('http://127.0.0.1:1/?nonce=x'), false);
+}));
 
 test('打不开浏览器不算失败：命令不存在时也不抛', () => {
   const before = process.env.PATH;
@@ -25,22 +29,13 @@ test('打不开浏览器不算失败：命令不存在时也不抛', () => {
 
 // —— 长驻形态 ——
 // 长驻页与既有的一次性页并存：同一次打开里可以反复提交，服务不关；只有用户点「完成」
-// 或超时才关。下面盯住的正是这几条可观察行为，页面渲染本身照旧不在测试范围内。
-const noAutoOpen = (fn) => async (t) => {
-  const before = process.env.BAOX_NO_AUTO_OPEN;
-  process.env.BAOX_NO_AUTO_OPEN = '1';
-  try { await fn(t); }
-  finally {
-    if (before === undefined) delete process.env.BAOX_NO_AUTO_OPEN;
-    else process.env.BAOX_NO_AUTO_OPEN = before;
-  }
-};
+// 或闲置超时才关。下面盯住的正是这几条可观察行为，页面渲染本身照旧不在测试范围内。
 
 /** 起一个长驻页，把它的地址和最终结果的 Promise 一并交回来。 */
-function startSession(opts = {}) {
+function startResident(opts = {}) {
   let ready;
   const url = new Promise((r) => { ready = r; });
-  const done = serveLocalSession(() => '<!doctype html>ok', { onReady: ready, ...opts });
+  const done = serveResidentPage(() => '<!doctype html>ok', { onReady: ready, ...opts });
   return { url, done };
 }
 
@@ -49,9 +44,11 @@ const post = (base, path, body) => fetch(new URL(path + base.search, base), {
   body: JSON.stringify(body ?? {}),
 });
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 test('长驻页在同一次打开里收多次提交，每次都把内核的处理结果回给页面', noAutoOpen(async () => {
   const seen = [];
-  const s = startSession({ onSubmit: (body) => { seen.push(body.n); return { count: seen.length }; } });
+  const s = startResident({ onSubmit: (body) => { seen.push(body.n); return { count: seen.length }; } });
   const base = new URL(await s.url);
 
   for (const n of [1, 2, 3]) {
@@ -69,7 +66,7 @@ test('长驻页在同一次打开里收多次提交，每次都把内核的处�
 }));
 
 test('只有点「完成」才关闭，最终结果交回调用方', noAutoOpen(async () => {
-  const s = startSession({
+  const s = startResident({
     onSubmit: () => ({}),
     onDone: (body) => ({ status: 'done', kept: body.kept }),
   });
@@ -78,21 +75,53 @@ test('只有点「完成」才关闭，最终结果交回调用方', noAutoOpen(
   await post(base, '/submit', {});
   const res = await post(base, '/done', { kept: 2 });
   assert.equal(res.status, 200);
+  // 页面必须完整收到这个回答：关服务是在响应写出去之后才做的。
+  assert.deepEqual(await res.json(), { ok: true });
 
   assert.deepEqual(await s.done, { status: 'done', kept: 2 });
   await assert.rejects(fetch(base), '点完成之后服务应当已经关闭');
 }));
 
 test('超时也会关闭，并如实说明是超时', noAutoOpen(async () => {
-  const s = startSession({ timeoutMs: 30, onSubmit: () => ({}) });
+  const s = startResident({ timeoutMs: 30, onSubmit: () => ({}) });
   const base = new URL(await s.url);
   assert.deepEqual(await s.done, { status: 'timeout', timeoutMs: 30 });
   await assert.rejects(fetch(base), '超时之后服务应当已经关闭');
 }));
 
+test('超时按闲置算：做一次操作就把计时拨回去', noAutoOpen(async () => {
+  const s = startResident({ timeoutMs: 200, onSubmit: () => ({}), onDone: () => ({ status: 'done' }) });
+  const base = new URL(await s.url);
+
+  // 每 120ms 动一次，累计超过 200ms 也不该被收走 —— 用户还在干活。
+  for (let i = 0; i < 3; i++) {
+    await sleep(120);
+    assert.equal((await post(base, '/submit', {})).status, 200, '第 ' + (i + 1) + ' 次提交时页面不该已经没了');
+  }
+
+  await post(base, '/done');
+  assert.deepEqual(await s.done, { status: 'done' });
+}));
+
+test('一次慢的提交不会被闲置超时从中间砍断', noAutoOpen(async () => {
+  // "复检全部"要往 ERP 跑好几个来回，比闲置阈值久是正常的，不是没人了。
+  const s = startResident({
+    timeoutMs: 50,
+    onSubmit: async () => { await sleep(220); return { ok: 1 }; },
+    onDone: () => ({ status: 'done' }),
+  });
+  const base = new URL(await s.url);
+
+  const res = await post(base, '/submit', {});
+  assert.deepEqual(await res.json(), { ok: true, result: { ok: 1 } }, '慢提交要能把结果送到页面');
+
+  await post(base, '/done');
+  assert.deepEqual(await s.done, { status: 'done' });
+}));
+
 test('nonce 守护全部端点：不匹配一律拒绝，且不会把长驻页关掉', noAutoOpen(async () => {
   const seen = [];
-  const s = startSession({ onSubmit: (body) => { seen.push(body); return {}; }, onDone: () => ({ status: 'done' }) });
+  const s = startResident({ onSubmit: (body) => { seen.push(body); return {}; }, onDone: () => ({ status: 'done' }) });
   const base = new URL(await s.url);
   const bad = new URL(base); bad.search = '?nonce=deadbeef';
 
@@ -108,8 +137,8 @@ test('nonce 守护全部端点：不匹配一律拒绝，且不会把长驻页�
   assert.deepEqual(await s.done, { status: 'done' });
 }));
 
-test('一次提交出错不终止长驻会话：把原因回给页面，服务照旧', noAutoOpen(async () => {
-  const s = startSession({
+test('一次提交被拒不终止这次打开：把原因回给页面，服务照旧', noAutoOpen(async () => {
+  const s = startResident({
     onSubmit: (body) => { if (body.bad) throw new Error('查无此号'); return { ok: 1 }; },
     onDone: () => ({ status: 'done' }),
   });
