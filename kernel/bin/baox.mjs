@@ -2,48 +2,79 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
-import { paths, ensureDir } from '../src/paths.mjs';
+import { paths, ensureDir, migrateOnStartup, ensureSchemaVersionFile } from '../src/paths.mjs';
 import * as chrome from '../src/chrome.mjs';
 import { probeIdentity, ERP_ORIGIN } from '../src/probe.mjs';
-import { serveSelection, serveConfirmation, serveAllocation, serveTaskSelection,
-  serveIdentityConfirmation } from '../src/serve.mjs';
-import { buildWorkOrder, ingestReadings, confirmReadings, loadReading,
+// 本地页面只剩两处：重新绑定身份，和浏览完整项目目录。读数确认在终端上
+// （`confirm_table`），逐段分摊在终端上（`ask_user`），通用单选页整个下线了。
+import { serveTaskSelection, serveIdentityConfirmation } from '../src/serve.mjs';
+import { buildWorkOrder, ingestReadings, pendingConfirmations,
   READING_VERSION, DOC_TYPES } from '../src/vision.mjs';
+import { applyTerminalVerdict } from '../src/confirm.mjs';
 import { takeInventory, intakeOpenItems } from '../src/inventory.mjs';
 import { classifyInventory, classifyOpenItems, summarize } from '../src/classify.mjs';
-import { buildEvents, eventOpenItems, reconcile, submitAllocation } from '../src/events.mjs';
-import { maskNumber } from '../src/parse.mjs';
+import { buildEvents, eventOpenItems, reconcile } from '../src/events.mjs';
 import { loadSelection, submitSelection, applySelection, linesDigest } from '../src/selection.mjs';
 import { CATEGORIES } from '../src/categories.mjs';
 import { findLiveTaskForSource, createTask, recordInventory, recordClassification,
   recordEvents, recordInvoiceSightings, abandonTask, loadIndex,
   sourceKeyOf, taskDir , recordCatalogVerification, loadCatalogVerification,
-  recordErpAttempt, recordErpWrite, liveTasks } from '../src/workspace.mjs';
+  recordErpAttempt, recordErpWrite, liveTasks, archiveMigratedTasks } from '../src/workspace.mjs';
 import { crossTaskDuplicates, historyOpenItems, holdsInvoices } from '../src/history.mjs';
 import { authorizedPage, verifyExpenseItems, verifyProject, PROJECT_FORM } from '../src/erpcatalog.mjs';
 import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerField,
   writeHeader, writeCell, selectOption, cellTarget, cellMatches, leaveEdit } from '../src/erpform.mjs';
 import { readReconciliation, classifyReconciliation, attemptRecord } from '../src/erpreconcile.mjs';
-import { versionAt, compareVersions } from '../src/version.mjs';
 import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
+import { observeEnvironment, observeTask } from '../src/observe.mjs';
+import { nextResponse } from '../src/next.mjs';
+import { ingestReread, autoSettleAgreed } from '../src/dispute.mjs';
+import { SCHEMA_VERSION as NEXT_SCHEMA_VERSION } from '../src/state.mjs';
+import { currentSourceKey, currentSourceDir, currentIssuedArgv } from '../src/steptoken.mjs';
+import { guardVerdict, refusalPayload, recordRefusal } from '../src/guard.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
 const OK = 0, ERR = 1, BLOCKED = 2;
 
-const out = (obj, code = OK) => { process.stdout.write(JSON.stringify(obj, null, 2) + '\n'); process.exit(code); };
+// 数据目录搬家的结果。搬完要在这条命令的输出里说一句迁到哪了 —— 用户的报销记录
+// 换了地方而没人告诉他，比不搬还糟。
+let migrated = null;
 
-// 这份内核自己的根目录和版本号。install-runtime 拷的是它，doctor 报的是它 ——
+const out = (obj, code = OK) => {
+  process.stdout.write(JSON.stringify(migrated ? { ...obj, migrated } : obj, null, 2) + '\n');
+  process.exit(code);
+};
+
+// 搬家（0.9.x 的 ~/Library/Application Support/baox 之类 -> ~/.baox）在任何命令之前做掉，
+// 而且只做一次。这里在 out 之后、命令之前，因为它必须在下面那个 try 之外跑：数据目录
+// 都还没定下来的时候，任何命令都无从谈起。
+// 搬不动就硬停：继续跑等于在一个空的新目录里从头开始，而用户的任务还在旧目录里 ——
+// 那是一种看起来正常、实则丢了全部历史的失败，比直接停住坏得多。
+try {
+  migrated = migrateOnStartup();
+  if (migrated) {
+    // 搬完立刻把 0.9.x 的在途任务标记成存档，理由见 workspace.mjs 的 archiveMigratedTasks。
+    // 就在这一次说清楚：那些任务不会接着往下走，同一个目录下次是从头开始的新任务。
+    const archived = archiveMigratedTasks();
+    if (archived.length) {
+      migrated = { ...migrated, archivedTasks: archived.map((t) => t.taskId),
+        note: `${archived.length} 个 0.9.x 的在途任务已存档：它们的读数没有本版要求的看图凭据，`
+          + '不会被接着往下走；材料和记录一份没动，同一个材料目录下次会新建任务重走一遍。'
+          + '它们仍然占着自己那些发票（跨任务查重看得见），确认不再报销可以逐个作废。' };
+    }
+  }
+} catch (err) {
+  out({ command: process.argv[2] ?? null, status: 'migration_failed', error: err.message,
+    hint: `把旧数据目录整份拷到 ${paths.root} 之后重试；旧目录没有被动过。` }, BLOCKED);
+}
+
+// 这份内核自己的根目录和版本号。内核就地运行，所以这就是唯一的那一份；
 // 版本号要出现在每一次体检里，否则试用者报回来的问题钉不到具体哪一版。
 const SELF = path.dirname(path.dirname(url.fileURLToPath(import.meta.url)));
-const VERSION = versionAt(SELF);
-
-// 同一个目录的两种写法要认得出来。macOS 上 BAOX_HOME 可能是 /var/... 而
-// import.meta.url 给的是 realpath /private/var/...，光比 path.resolve 会当成两个目录。
-const sameDir = (a, b) => {
-  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
-  return real(a) === real(b);
-};
+const VERSION = (() => {
+  try { return fs.readFileSync(path.join(SELF, 'VERSION'), 'utf8').trim() || null; } catch { return null; }
+})();
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`);
@@ -53,8 +84,6 @@ function arg(name, fallback = null) {
 const has = (name) => process.argv.includes(`--${name}`);
 
 const yuan = (c) => (c === null || c === undefined ? null : (c / 100).toFixed(2));
-const maskOf = (classification, materialId) =>
-  maskNumber(classification.results.find((r) => r.materialId === materialId)?.fields?.invoiceNumber);
 
 /**
  * 盘点 -> 分流。后面每一层都要站在一次确定的分流结果上，所以统一走这里。
@@ -114,6 +143,28 @@ async function upToEvents(dir) {
 
 const [, , cmd] = process.argv;
 
+// —— 模型不拼命令 ——
+// 模型敲得动的只有两样：`next`，和内核**刚刚**放进 `step.argv` 的那一条命令行。
+// 其余子命令在检测到自己被 Agent 调起时当场拒绝；它们仍然留着给人手敲排障
+// （末尾加 --i-am-a-human），只是模型自己拼不出来。判据和措辞都在 guard.mjs 里。
+//
+// 这一段必须在 switch 之前、在任何**命令**副作用之前：拒绝一条命令的意义在于它
+// **没有跑过**，跑到一半再拒等于没拒。（数据目录迁移在它上面就做掉了，那一步与
+// 敲的是哪条命令无关。）
+{
+  const verdict = guardVerdict({ cmd, argv: process.argv.slice(2), env: process.env,
+    issuedArgv: currentIssuedArgv() });
+  if (!verdict.allowed) {
+    recordRefusal({ cmd, markers: verdict.markers, logsDir: paths.logs });
+    out(refusalPayload({ cmd, markers: verdict.markers, reason: verdict.reason }), BLOCKED);
+  }
+}
+
+// 数据格式版本落盘。没有这个文件的目录（0.9.x 迁过来的，或者刚建的）就是这一版写的，
+// 补一份 schema.json；已经有了就一个字都不动 —— 里面写着 2 的目录是未来某一版的，
+// 把它改回 1 等于让 schema_too_new 这道闸永远不触发。
+ensureSchemaVersionFile();
+
 try {
   switch (cmd) {
     case 'doctor': {
@@ -126,49 +177,8 @@ try {
         cdp: { value: chrome.CDP_PORT, ok: !!(await chrome.version()), hint: '专用 Chrome 未在运行；跑 baox chrome-up' },
       };
       ensureDir(paths.root);
-      // runtime 单独报，不进 checks：checks 里的每一项都决定 ready，而第一次体检时
-      // 内核本来就还没装，让它拉低 ready 会把正常的首次流程说成环境不合格。
-      const installed = versionAt(path.join(paths.root, 'runtime'));
       out({ command: 'doctor', version: VERSION, platform: process.platform, checks,
-        runtime: { installed, matchesSkill: installed !== null && installed === VERSION },
         ready: checks.node.ok && checks.chrome.ok }, checks.node.ok && checks.chrome.ok ? OK : ERR);
-    }
-
-    case 'install-runtime': {
-      // 内核零依赖，所以"安装"就是把这份源码整份拷进 baox 数据目录。
-      // 三个 Skill 都调用数据目录里的这一份，避免各自夹带一份导致版本漂移。
-      const dest = path.join(paths.root, 'runtime');
-      const previous = versionAt(dest);
-
-      // 降级要显式点头。真机上栽过一次：个人目录里残留的旧 Skill 静默遮蔽了项目目录里的
-      // 新 Skill（Personal > Project，被遮蔽的一侧无从察觉），它的 install-runtime 把旧内核
-      // 写回数据目录，旧 Skill 配旧内核完全自洽，version_drift 因此永远不会触发 —— 用户
-      // 看到的只是一个怎么都登不进去的探测结果。
-      // 不做成一刀切拒绝：install-runtime 是 version_drift 状态唯一的出路（见 launch.mjs），
-      // 拦死它就只剩手工删数据目录，而那个目录里还装着 chrome-profile/ 和 tasks/。
-      // 所以留一个必须手打的 flag：旧 Skill 不会带它，人可以带它。
-      if (compareVersions(previous, VERSION) > 0 && !has('allow-downgrade')) {
-        out({ command: 'install-runtime', status: 'downgrade_refused',
-          skillVersion: VERSION, installedVersion: previous, runtime: dest,
-          hint: `数据目录里装着的内核是 ${previous}，比这个 Skill 自带的 ${VERSION} 还新，`
-            + '这次安装会把它降回去。多半是同一台机器上装了两套 baox Skill（个人目录 '
-            + '~/.claude/skills/ 会静默遮蔽项目目录 .claude/skills/），跑的不是你以为的那一份。'
-            + '先用 /skill-doctor 看清三个 Skill 实际从哪里加载、把不要的那一套删掉；'
-            + '确实要降级再重跑 baox install-runtime --allow-downgrade' }, BLOCKED);
-      }
-
-      ensureDir(paths.root);
-      // 版本一致时 launch.mjs 转交的就是已安装的那一份，SELF 和 dest 是同一个目录 ——
-      // 照着往下走会先把自己删掉再从已经不存在的地方拷回来。这条路径是用户重跑
-      // 「重装一下内核」时的正常入口，不能让它炸。
-      if (!sameDir(SELF, dest)) {
-        fs.rmSync(dest, { recursive: true, force: true });
-        fs.cpSync(SELF, dest, { recursive: true });
-      }
-      out({ command: 'install-runtime', from: SELF, to: dest, version: VERSION, replaced: previous,
-        downgraded: compareVersions(previous, VERSION) > 0 || undefined,
-        alreadyInstalled: sameDir(SELF, dest) || undefined,
-        entry: path.join(dest, 'bin', 'baox.mjs') });
     }
 
     case 'chrome-up': {
@@ -500,10 +510,16 @@ try {
         ...results.filter((r) => r.ok && r.verdict !== 'confirmed'),
       ];
 
-      // 核对结果只在全部通过时才落盘，并绑上当前明细指纹。
-      // 一份"部分通过"的记录留在工作区，下一层就会拿它去给某几行升级来源，
-      // 那正是这一层要防的事。
-      if (ctx && failed.length === 0 && problems.length === 0) {
+      // 查询本身跑通了就落盘，**通过与否一并记下**。
+      //
+      // 只记通过的那一份会有两个后果，都不好：查无此项目时工作区里什么都没有，
+      // 于是"没核对过"和"核对过、不合格"再也分不开 —— 内核只好一遍遍重新核对
+      // 同一个不存在的项目号；而用户那一侧，一个硬停的理由会变得没有出处。
+      //
+      // 记下问题不等于放行：升级项目号来源的判据仍然是**这个号自己**
+      // 明确 confirmed（selection.mjs 的 projectSourceOf），一条 missing 记录
+      // 升不了任何一行的级。
+      if (ctx && failed.length === 0) {
         recordCatalogVerification(ctx.task, {
           linesDigest: linesDigest(ctx.built),
           versionId: ctx.built.versionId,
@@ -512,6 +528,7 @@ try {
           projectFormId: PROJECT_FORM,
           projects: Object.fromEntries(results.map((r) => [r.number,
             { verdict: r.verdict, name: r.name ?? null }])),
+          problems,
         });
       }
 
@@ -673,48 +690,73 @@ try {
         accepted: verdicts.length - rejected.length,
         rejected: rejected.length,
         // 接收成功只是通过了结构校验，还不是已解析值 —— 必须再走一次用户确认。
-        note: '通过结构校验的读数已存为字段候选；跑 confirm-readings 让用户对着原图确认',
+        note: '通过结构校验的读数已存为字段候选；再问一次 baox next，'
+          + '内核会渲染一张定宽表格请用户在终端上过目',
       }, rejected.length ? BLOCKED : OK);
     }
 
+    case 'reread-submit': {
+      // 争议里那次**独立重读**的收口。它和 ocr-submit 是两条不同的路：
+      // 那条收的是一整张票的读数，这条只收争议里的那一个字段，而且只在
+      // 一场还没收场的争议上收得下。
+      //
+      // 重读回来之后，内核当场判收敛，并且只在一种情形下自己拍板：重读和用户一致 ——
+      // 一次不知道用户说了什么的独立重读，读出了和用户一样的值，这是机器能给出的
+      // 最强的一种印证。即便如此，接受下来的读数仍然停在**未确认**：
+      // 用户还要在整张表上点最后那一下。
+      const dir = arg('dir');
+      const file = arg('file');
+      if (!dir || !file) out({ command: 'reread-submit', error: '缺少 --dir <材料目录> 或 --file <重读 json>' }, ERR);
+      const inventory = await takeInventory(dir);
+      const task = findLiveTaskForSource(sourceKeyOf(dir));
+      if (!task) out({ command: 'reread-submit', error: '这个目录还没有进行中的报销任务，先跑 intake' }, ERR);
+
+      const submission = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const result = ingestReread(dir, inventory, task, submission);
+      const settled = result.verdict === 'accepted'
+        ? autoSettleAgreed(task, result.materialId,
+          inventory.materials.find((m) => m.materialId === result.materialId).contentHash)
+        : null;
+
+      out({
+        command: 'reread-submit',
+        task: { taskId: task.taskId, workspace: taskDir(task) },
+        ...result,
+        settled,
+        note: result.verdict !== 'accepted'
+          ? '这次重读没收下，理由见 reasons'
+          : settled
+            ? '重读和用户一致，这个值已经收下（来源记作 user）；再问一次 baox next，'
+              + '内核会把整张读数再摆一次请用户过目'
+            : '重读收下了。收敛结果要用户对着原件拍板 —— 再问一次 baox next，'
+              + '内核会把两次机器读数和用户的值一起摆出来',
+      }, result.verdict === 'accepted' ? OK : BLOCKED);
+    }
+
     case 'confirm-readings': {
+      // **只读**。确认这件事从这里搬走了 —— 它现在发生在终端上：内核在
+      // `baox next` 里渲染一张定宽表格，用户当面表态，模型带着那一次性凭据回传。
+      //
+      // 这条命令剩下的用处只有一个：人手敲着看看现在有哪些读数等着确认。
+      // 它不写一个字，也不弹页面。留一条能写的旁路，就等于留了第二条确认通道，
+      // 而这一票的全部意义就是确认只有一条通道、且那条通道的另一头是人。
       const dir = arg('dir');
       if (!dir) out({ command: 'confirm-readings', error: '缺少 --dir <材料目录>' }, ERR);
       const inventory = await takeInventory(dir);
       const task = findLiveTaskForSource(sourceKeyOf(dir));
       if (!task) out({ command: 'confirm-readings', error: '这个目录还没有进行中的报销任务，先跑 intake' }, ERR);
 
-      const pending = [];
-      for (const m of inventory.materials) {
-        const r = loadReading(task, m.materialId);
-        if (!r || r.contentHash !== m.contentHash || r.confirmedAt) continue;
-        pending.push({
-          materialId: m.materialId,
-          fileName: m.fileName,
-          docTypeLabel: DOC_TYPES[r.docType]?.label ?? r.docType,
-          fields: Object.entries(r.fields),
-          unreadable: r.unreadable ?? [],
-        });
-      }
-      if (!pending.length) out({ command: 'confirm-readings', pending: 0, note: '没有待确认的看图读数' }, OK);
-
-      const result = await serveConfirmation({ items: pending }, {
-        timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
-        onReady: (u) => process.stderr.write(`已在浏览器里打开页面（核对看图读数）；没弹出就手动打开：${u}\n`),
-      });
-      if (result.status !== 'submitted') out({ command: 'confirm-readings', ...result }, ERR);
-
-      const done = confirmReadings(task, result.confirmed);
-      const skipped = pending.filter((p) => !done.materialIds.includes(p.materialId)).map((p) => p.fileName);
+      const pending = pendingConfirmations(task, inventory);
       out({
         command: 'confirm-readings',
-        confirmed: done.materialIds.length,
-        confirmedAt: done.confirmedAt,
-        skipped,
-        note: skipped.length
-          ? '没有勾选的材料仍停在待确认项里；用户不勾就是不认，不要替他确认'
-          : '全部读数已确认，可以重新跑 classify',
-      }, skipped.length ? BLOCKED : OK);
+        readOnly: true,
+        pending: pending.length,
+        items: pending,
+        note: pending.length
+          ? '这些读数等着用户过目。确认只在终端上发生：问一句 baox next，'
+            + '内核会把它们渲染成表格；这条命令不确认任何东西'
+          : '没有待确认的看图读数',
+      }, OK);
     }
 
 
@@ -756,49 +798,6 @@ try {
         eventsFile: file,
         readyForNextStep: blocking.length === 0,
       }, blocking.length === 0 ? OK : BLOCKED);
-    }
-
-    case 'allocate': {
-      // 合并交通发票的逐段金额。**只有这个页面上的提交动作能把金额定下来**；
-      // 行程单金额只作预填候选，用户在对话里报的数字同样不算数。
-      const dir = arg('dir');
-      if (!dir) out({ command: 'allocate', error: '缺少 --dir <材料目录>' }, ERR);
-      const { task, classification, blocked } = await upToClassification(dir);
-      if (blocked) out({ command: 'allocate', ...blocked }, BLOCKED);
-
-      const built = buildEvents(classification, task);
-      const pending = built.notes.filter((n) => n.kind === 'allocation_required' || n.kind === 'allocation_stale');
-      if (!pending.length) out({ command: 'allocate', pending: 0, note: '没有需要逐段分摊的发票' }, OK);
-
-      const items = pending.map((n) => {
-        // 逐段行来自与这张发票关联上的行程单，由 buildEvents 一并带出来。
-        const rows = n.candidateSegments;
-        return {
-          materialId: n.materialId,
-          fileName: n.fileName,
-          maskedNumber: maskOf(classification, n.materialId),
-          totalAmount: n.totalAmount,
-          candidateFrom: rows ? '行程单逐段明细' : null,
-          segments: rows ?? Array.from({ length: n.segmentCount }, () => ({ date: null, city: null, route: null, amount: '' })),
-        };
-      });
-
-      const result = await serveAllocation({ items }, {
-        timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
-        onReady: (u) => process.stderr.write(`已在浏览器里打开页面（填写逐段金额）；没弹出就手动打开：${u}\n`),
-      });
-      if (result.status !== 'submitted') out({ command: 'allocate', ...result }, ERR);
-
-      const verdicts = [];
-      for (const it of items) {
-        const v = classification.results.find((r) => r.materialId === it.materialId);
-        const r = submitAllocation(task, v, result.allocations[it.materialId], it.segments.length);
-        verdicts.push({ materialId: it.materialId, fileName: it.fileName, verdict: r.verdict, reasons: r.reasons });
-      }
-      const rejected = verdicts.filter((v) => v.verdict === 'rejected');
-      out({ command: 'allocate', verdicts, accepted: verdicts.length - rejected.length, rejected: rejected.length,
-        note: rejected.length ? '有分摊没有收下；重新跑 allocate' : '逐段金额已记下，可以重新跑 events' },
-        rejected.length ? BLOCKED : OK);
     }
 
     case 'select-task': {
@@ -908,21 +907,78 @@ try {
         note: '任务已作废，工作区文件原样保留；它原先占用的发票现在可以在别的任务里使用' });
     }
 
-    case 'select': {
-      const specPath = arg('spec');
-      if (!specPath) out({ command: 'select', error: '缺少 --spec <file.json>' }, ERR);
-      const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
-      const r = await serveSelection(spec, {
-        timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
-        onReady: (url) => process.stderr.write(`已在浏览器里打开页面（做选择）；没弹出就手动打开：${url}\n`),
-      });
-      out({ command: 'select', ...r }, r.status === 'submitted' ? OK : ERR);
+    case 'next': {
+      // 模型唯一会敲的命令。问：`next --dir <材料目录>`；答：`next --after <token> [--result <文件>]`。
+      // 这里是一层薄壳：采观测（observe）-> 判状态（state）-> 出 step（next），
+      // 判断本身一点浏览器和文件系统都不碰，所以能在没有 Chrome 的机器上测。
+      // 问得不对就答不了：这两种都不是状态机里的状态（那两张表里没有它们），
+      // 而是「这一问根本没法判」，所以走 error + 1，不冒充成一个 step。
+      const dir = arg('dir');
+      if (dir && !(fs.existsSync(dir) && fs.statSync(dir).isDirectory())) {
+        out({ command: 'next', schemaVersion: NEXT_SCHEMA_VERSION,
+          error: `材料目录不存在：${dir}`,
+          speak: `我找不到这个材料目录：${dir}。请确认路径写对了，或者把材料放进去再叫我。` }, ERR);
+      }
+      // 只带 --after 回来时，材料目录从当前步骤的登记簿里找回来：材料这一段每一步
+      // 都要重新盘那个目录，而 sourceKey 是单向哈希，还原不回路径。
+      const sourceDir = dir ?? currentSourceDir();
+      const sourceKey = sourceDir ? sourceKeyOf(sourceDir) : currentSourceKey();
+      if (!sourceKey) {
+        out({ command: 'next', schemaVersion: NEXT_SCHEMA_VERSION,
+          error: '第一次问要带 --dir <材料目录>',
+          speak: '我还不知道你要报销哪一批材料。请把材料目录告诉我。' }, ERR);
+      }
+      const after = arg('after');
+      // 「交了东西」指的是文件真的在、真的有内容。声称做完不算数 —— 状态只认事实。
+      const filed = (name) => {
+        const p = arg(name);
+        return !!p && fs.existsSync(p) && fs.statSync(p).size > 0;
+      };
+      // 两侧观测合成一份：环境（A 表）和材料（B 表）。判定要的全部事实都在这里采齐，
+      // 判定那一侧一个文件都不再读。目录不在了（被删、被改名）就只答环境那一半 ——
+      // 拿一个不存在的目录去盘点会抛错，而那不是一个状态。
+      const env = await observeEnvironment();
+      // 数据格式比内核新的时候，**连采集都不做**。判定的顺序把 schema_too_new 排在最前，
+      // 但采集跑在判定之前：拿这一版的眼睛去读下一版写的任务文件，可能当场抛异常，
+      // 于是「硬停（退出码 2）」就变成了「内核自己出错（退出码 1）」。硬停要真的最先。
+      const tooNew = env.schemaVersion > NEXT_SCHEMA_VERSION;
+      const materialsThere = !tooNew && !!sourceDir
+        && fs.existsSync(sourceDir) && fs.statSync(sourceDir).isDirectory();
+
+      // 用户在终端上的表态**先落盘，再采观测** —— 顺序反过来，内核会拿着确认前的
+      // 那份观测再问一次同一张表。判据和闸门都在 confirm.mjs 里。
+      // 认身份那一步在材料之前发生，所以这里的闸门是 `!tooNew` 而不是「材料在不在」：
+      // 后者会让"我在替谁报销"这次点头在材料目录还没给出来的时候悄悄丢掉。
+      // 材料那几步自己要的目录，由 applyTerminalVerdict 里那道 `!sourceDir` 挡着。
+      const applied = !tooNew
+        ? await applyTerminalVerdict({ sourceDir: materialsThere ? sourceDir : null, sourceKey, after,
+            correctionFile: filed('correction') ? arg('correction') : null,
+            // 对话提问的答案走 --result：那一步没有命令可跑，答案本身就是结果。
+            resultFile: filed('result') ? arg('result') : null })
+        : null;
+
+      const observation = {
+        ...env,
+        // 环境那份观测采在表态落盘**之前**（它要先算出 tooNew 才谈得上收表态），
+        // 所以刚认下的身份要补回来 —— 不补的话这一次应答仍然报 `env_identity_unbound`，
+        // 用户刚认完就又看见同一张表，而绑定其实已经写进去了。
+        // 材料那半份观测在下面重采，本来就带着最新的事实，不需要这样补。
+        ...(applied?.verdict === 'identity_bound' ? { binding: applied.binding } : {}),
+        ...(materialsThere ? await observeTask(sourceDir) : {}),
+      };
+      const response = nextResponse({ observation, sourceKey, after,
+        hasResult: filed('result'),
+        // 已经收下并处置过的纠正不再报「没处安放」—— 那句话是留给真的没处安放的。
+        hasCorrection: filed('correction') && !applied });
+      // 收下了什么，明说。用户点了头却看不出内核收没收到，是最难排的一种障。
+      out(applied ? { ...response, applied } : response, response.exit);
     }
 
     default:
-      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
-        'ocr-request', 'ocr-submit', 'confirm-readings', 'history', 'events', 'allocate', 'select-task', 'lines',
-        'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill', 'select'] }, ERR);
+      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['next', 'doctor', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
+        'ocr-request', 'ocr-submit', 'confirm-readings', 'reread-submit',
+        'history', 'events', 'select-task', 'lines',
+        'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);

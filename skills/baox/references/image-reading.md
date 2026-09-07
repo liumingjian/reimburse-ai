@@ -1,85 +1,85 @@
-# Reading image materials
+# 看图读数：抄写员守则
 
-Reached from `baox` step 5, when `classify` reports `image_awaiting_reading`, `reading_stale`, or
-`reading_awaiting_confirmation`.
+`baox next` 给出 `step.kind: "read_images"` 时读这一份。
 
-> `baox` here is the kernel entry point, as in `SKILL.md`:
-> `node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs"`.
+图片（PNG/JPG）里没有可提取的文字，内核不做 OCR ——**是你在读**。这是整个系统里唯一一处
+依赖你自己能力的地方，所以这里的规矩最严。
 
+内核已经把这一步要的东西全给齐了：`step.images[]` 是工单（每项带 `absPath`、`materialId`、
+`contentHash`，上一轮被打回的还带 `previousRejection`），`step.schemaPath` 是读数模板，
+`step.readingsPath` 是读数写到哪，`step.argv` 是交上去的那条命令。路径和命令都由内核定，
+你不选地方、不改参数。
 
-Images (PNG/JPG) carry no extractable text. The kernel does no OCR — **you read them**. This is the one
-place in the whole system that needs your own capability, which is why the rules here are the strictest.
+## 先打开，再说话
 
-```bash
-baox ocr-request --dir "<材料目录>"
-```
+**逐个用 `Read` 打开每一项的 `absPath`，一张图一次调用。** 工单不是工作，它只说要打开哪些文件。
+`Read` 会把 PNG 和 JPG 渲染成你真的看得见的图，所以这一步永远发生——不存在从工单直接跳到
+「你的图片有问题」的走法。
 
-`items` is the work order. Each entry gives `absPath`, `materialId`, and `contentHash`. Entries with
-`alreadyRead` true need no rereading.
+**「我看不到图片」不是一个答案。** 没对文件调过 `Read`，你就不知道它读不读得了。
+只有一次**报了错**的 `Read` 才让你有资格这么说，而那时你要原样引用那条错误、指名是哪个文件。
+绝不要求用户重新导出、重新检查、重新提供一张你没打开过的图，也绝不让「没看」变成 `unreadable`
+——`unreadable` 说的是**你正看着的那张图**上的某个字段，从来不是「我没看」。
 
-**Then open every pending item's `absPath` with the `Read` tool, one call per image.** The work order is not
-the work; it only says which files to open. `Read` renders PNG and JPG as pictures you can actually look at,
-so this step always happens — there is no version of this flow where you go from `ocr-request` straight to
-telling the user something is wrong with their images.
+## 不借外部工具的眼睛
 
-**「我看不到图片」 is not one of the answers.** If you have not called `Read` on the file, you do not know
-whether it can be read. Only a `Read` call that came back with an **error** licenses that report, and then
-you quote the error verbatim and name the file. Never ask the user to re-export, re-check, or re-supply an
-image you did not open, and never let a missing look turn into `unreadable` — `unreadable` is about fields
-on an image **you are looking at**, never about not having looked.
+**这一步只能用你自己的视觉。** `file`、`mdls`、`sips`、`identify`、`tesseract`、macOS Vision、
+`easyocr` / `paddleocr` / `cv2` 之类的东西一律不作数——不是"尽量别用"，是**它们读出来的东西
+内核不收**。原因不在工具好坏：这条链子上"图上印着什么"这件事的来源必须是一份可复核的材料
+加上一双看过它的眼睛，中间插进一个外部程序，用户就再也无法只凭原图核对你抄的东西。
 
-## You are a **copyist** here, not a judge
+**尺寸和格式不是"看过"。** 拿元数据答出 `sighted.shape` 而没真的看见图，是这一步能犯的最坏的错：
+它把一份根本不存在的读取伪装成一次成功的读取。
 
-Transcribe the characters you can see, and nothing else.
+**你这一侧显示不出图片时，照实说，别去凑。** `Read` 返回了图片而你看不到它的内容（比如当前
+跑这套流程的模型没有视觉能力），那就把这件事本身说出来，然后停下——**不要**改用外部工具，
+**不要**从文件名和尺寸推断 `docType`，**也不要**把整份读数填成 `unreadable` 交上去。
+一份一个字段都没有的读数内核会当场打回；连着两次，它就变成一条摆给用户的待办
+（换一个看得见图的模型，或者换一份 PDF 原件），那正是这种情况该有的结局。
 
-- **Unreadable is an answer** — for a field on an image you have opened and are looking at. Put the field
-  name in the `unreadable` array. It is completely legitimate and
-  nobody will push back on it. **Guessing a value is far worse than saying you cannot read it.**
-- **Transcribe, never compute.** If 不含税金额 is not printed, it is absent — never derive it from
-  价税合计 − 税额.
-- **Transcribe, never infer.** The filename, the directory name, the other materials beside it, what the
-  user said in chat, and your own knowledge of what such an invoice usually says are all off limits. What
-  is not on the image is not there.
-- **Transcribe, never reconcile.** The kernel checks 不含税 + 税额 = 价税合计 itself. **A failed check is a
-  normal outcome, not your failure** — it means read again, or this image genuinely cannot be read.
-  Adjusting a digit so the check passes is the worst thing that can happen in this design.
-- The 20-digit invoice number goes digit by digit, watching `0/O`, `1/l/I`, `5/S`, `8/B`, `2/Z`. One digit
-  in doubt sends the whole field to `unreadable`.
-- If the image is not an invoice (an itinerary, a hotel folio, a payment slip, something else), record what
-  it actually is in `docType`. Sitting in an invoice folder does not make it an invoice.
+## 这里你是抄写员，不是判官
 
-## Reporting
+看得见的字符照抄，别的什么都不做。
 
-Copy `references/reading-schema.json` and edit it: one entry per material read.
+- **读不出是个答案**——对一张你已经打开、正看着的图上的某个字段。把字段名写进 `unreadable` 数组。
+  这完全正当，没有人会因此为难你。**猜一个值比说读不出坏得多。**
+- **只抄，不算。** 不含税金额没印出来就是没有，绝不从 价税合计 − 税额 推出来。
+- **只抄，不推。** 文件名、目录名、旁边那几份材料、用户在对话里说过的话、你自己关于
+  「这种发票一般写什么」的知识，全部不作数。图上没有的东西就是没有。
+- **只抄，不凑。** 不含税 + 税额 = 价税合计 由内核自己校验。**校验不过是正常结果，不是你的失败**
+  ——它的意思是再读一遍，或者这张图确实读不了。为了让校验通过而改动一个数字，
+  是这套设计里可能发生的最坏的事。
+- 20 位发票号码一位一位地抄，盯住 `0/O`、`1/l/I`、`5/S`、`8/B`、`2/Z`。有一位拿不准，整个字段进 `unreadable`。
+- 图上不是发票（行程单、酒店水单、支付凭证、别的东西）就在 `docType` 里如实记它是什么。
+  躺在发票文件夹里不等于它是发票。
 
-- `docType` is one of `invoice | ride_itinerary | hotel_folio | payment_slip | other | unreadable`.
-- Beyond the fields in the template, `sellerName`, `buyerName`, `itemName`, `city`, `travelDate`, `origin`,
-  and `destination` are accepted **when you can actually see them on the image**.
-- **Include a field only when you read a value for it.** Omit the whole key otherwise — an empty string is
-  rejected by the kernel, and so is any key it does not recognise.
-- Amounts are strings with two decimals.
+## 怎么写读数
 
-```bash
-baox ocr-submit --dir "<材料目录>" --file /tmp/baox-readings.json
-```
+照抄 `step.schemaPath` 那份模板再改，一份材料一条。
 
-The kernel rehashes the file (a mismatch means the image changed and the reading is void), checks the field
-formats, and checks the amounts balance. On `verdict: "rejected"`, read the image again against `reasons`.
-The digits stay as you read them.
+- `sighted.shape` 是**你打开过这张图的凭据**：眼前这张图是 `tall | portrait | square | landscape | wide`
+  里的哪一种。内核从文件自己的字节里知道正确答案，答错的读数**整份**作废——每一个再仔细抄下来的
+  字段都跟着作废。`unreadable` 也一样：说读不出，同样得先证明你在看。取值从 `step.sightedShapes` 里选，
+  每一项都带一句大白话。
+- `docType` 取 `invoice | ride_itinerary | hotel_folio | payment_slip | other | unreadable` 之一。
+- 模板里那些字段之外，`sellerName`、`buyerName`、`itemName`、`city`、`travelDate`、`origin`、
+  `destination` 也收——**前提是你真的在图上看见了**。
+- **读到值才写这个字段**，否则整个键都不要出现。空字符串会被内核拒掉，它不认识的键也会。
+- **一份读数里一个字段都没有，内核不收**（`docType` 写成 `unreadable` 也一样）。图在内核那边
+  是完好的，整屏字一个都认不出，说的就不是"看不清"了。哪怕只抄下一个日期或者一个金额，
+  也比整份空着强。
+- 金额是字符串，两位小数。
 
-## A reading is not a fact — the confirmation is
+写完原样执行 `step.argv`。内核会重算一遍哈希（对不上说明图变了，这份读数作废）、
+查字段格式、查金额守恒。被打回时下一轮的 `step.images[].previousRejection` 会告诉你上次为什么没过：
+**照着它重读那张图，数字仍然是你读到的那个。**
 
-```bash
-baox confirm-readings --dir "<材料目录>"
-```
+## 读数不是事实，确认才是
 
-This opens a local page listing the fields for the user to check against the original, tick, and submit.
-**Submitting is the consent event** that turns candidates into parsed values. 「对的」「没问题」 in chat does
-not, and you cannot tick on the user's behalf. Whatever they leave unticked stays as an open item — that is
-their judgement, and it stands.
+确认整件事**发生在终端上**，没有页面，用户不用打开浏览器。内核会给你一个 `confirm_table` 步骤：
+把 `step.table` **原样**贴出来——它已经按定宽渲染好了，不要重排、不要概括、不要把数字重打一遍
+——请用户对着原件核。
 
-## Done when
-
-Every work-order item is either submitted and accepted, or listed in `unreadable` with a reason, **and** the
-user has submitted the confirmation page. Then rerun `classify`: image materials now take part in role
-triage, invoice identity, and duplicate detection exactly like PDFs.
+用户在对话里说「对的」「没问题」不是确认，也从来不是：内核看不见它，你也不能替用户点头。
+纠正**也不是一次编辑**：内核不会把用户的值写进读数，它会把那份读数作废，把两个值并排留着，
+再让你回去重新看那张图。这份读数原先有过的确认，也一并不算了。

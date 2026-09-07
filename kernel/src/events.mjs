@@ -13,9 +13,13 @@ import { maskNumber } from './parse.mjs';
 //
 //   1. **拆分必须有证据。** 三段合并交通发票之所以能拆成三个事件，是因为
 //      行程单上逐行写着三段行程。没有这个证据就不拆 —— 不按金额猜、不按文件名猜。
-//   2. **金额不能由系统分摊。** 票面上没有逐段金额时，每段的价税合计必须由用户
-//      直接给出（allocation_required 硬阻塞）。系统不平均、不按比例、不按距离、
-//      不按时长，也不拿行程单金额自动顶上 —— 行程单是参考材料，不是票面法定金额。
+//   2. **金额不能由系统分摊。** 系统不平均、不按比例、不按距离、不按时长 ——
+//      这几种都是在票面事实之外**造**一个数出来。差额落在哪一段只有用户知道。
+//
+//      唯一的例外不是分摊，是**核对**：行程单逐段金额之和与票面价税合计分毫不差时，
+//      这几个数已经被票面自己印证过了，内核直接定案，一个字都不问
+//      （state-machine.md 的 allocation_required 一行：「相等则内核自动定案，不进此态」）。
+//      差一分钱就整张退回用户逐段给 —— 那时候行程单只是候选，不是答案。
 
 /** 参考材料自己声明的合计金额，单位分。用来和主要凭证的价税合计对上。 */
 function referenceTotalCents(r) {
@@ -109,24 +113,41 @@ export function splitTax(segTotals, netTotal, taxTotal) {
   return { nets, taxes, residueCents: residue, residueOn };
 }
 
-const MONEY = /^\d{1,9}\.\d{2}$/;
+/**
+ * 一个金额写下来该长什么样：两位小数的正数。**一处定义** ——
+ * 对话提问和行程单核对两处收的是同一种东西，各写一份的话，
+ * 迟早有一处比别处松（比如把 0.00 收进来），而松的那一处不会有人发现。
+ */
+export const MONEY = /^\d{1,9}\.\d{2}$/;
+
+/** 一串钱转成分；不合格（格式不对、不大于 0）就是 null。 */
+export function moneyCents(text) {
+  const s = String(text ?? '').trim();
+  if (!MONEY.test(s)) return null;
+  const c = Math.round(Number(s) * 100);
+  return c > 0 ? c : null;
+}
+
+/**
+ * 逐段分摊那两种开放项。它们各有自己的状态，不混进材料待办 ——
+ * 一处定义，三处使用（观测里挑出来问、观测里排除出待办、收答案时认凭据）。
+ */
+export const ALLOCATION_KINDS = new Set(['allocation_required', 'allocation_stale']);
 
 /**
  * 收下一次用户提交的逐段金额。校验是**结构性**的：段数对得上、金额格式合法、
  * 逐段价税合计之和与票面价税合计**按分精确相等**。差一分都不收 ——
  * 不给"接近就行"的余地，也不替用户把差额抹到某一段上。
  */
-export function submitAllocation(task, voucher, segmentTotals, expectedCount) {
+export function submitAllocation(task, voucher, segmentTotals, expectedCount, { via = 'terminal' } = {}) {
   const reasons = [];
   if (!Array.isArray(segmentTotals) || segmentTotals.length !== expectedCount) {
     reasons.push(`需要 ${expectedCount} 段金额，收到 ${Array.isArray(segmentTotals) ? segmentTotals.length : 0} 段`);
   }
   const cents = [];
   for (const [i, v] of (segmentTotals ?? []).entries()) {
-    const s = String(v).trim();
-    if (!MONEY.test(s)) { reasons.push(`第 ${i + 1} 段的金额格式不对（要求两位小数的正数）`); continue; }
-    const c = Math.round(Number(s) * 100);
-    if (c <= 0) { reasons.push(`第 ${i + 1} 段的金额必须大于 0`); continue; }
+    const c = moneyCents(v);
+    if (c === null) { reasons.push(`第 ${i + 1} 段的金额格式不对（要两位小数、且大于 0）`); continue; }
     cents.push(c);
   }
   const totalCents = voucher.fields?.totalAmount?.cents ?? null;
@@ -147,7 +168,9 @@ export function submitAllocation(task, voucher, segmentTotals, expectedCount) {
     segmentCount: expectedCount,
     segmentTotalCents: cents,
     submittedAt: new Date().toISOString(),
-    submittedVia: 'local-web',
+    // 这几个数是在哪儿给的。1.0.0 起只剩对话提问一条路（本地分摊页已下线），
+    // 但事后排障时「用户在哪儿说的这句话」仍然要能查出来 —— 旧任务里存着 `local-web`。
+    submittedVia: via,
   };
   fs.mkdirSync(allocDir(task), { recursive: true, mode: 0o700 });
   const p = allocFile(task, voucher.materialId);
@@ -157,6 +180,24 @@ export function submitAllocation(task, voucher, segmentTotals, expectedCount) {
 }
 
 /* ------------------------------------------------------------ 事件与明细 */
+
+/**
+ * 行程单逐段金额与票面价税合计**分毫不差**时的那几个数，单位分；对不上就是 null。
+ *
+ * 判据只有一条：按分精确相等。不设容差 —— 一分钱的容差意味着这一分钱没有来源，
+ * 而它最后一定要落在某一段上，也就是由内核替用户决定它落在哪里。
+ */
+export function conservingSegments(segments, totalCents) {
+  if (!segments || totalCents === null || totalCents === undefined) return null;
+  const cents = [];
+  for (const seg of segments) {
+    const c = moneyCents(seg?.amount);
+    if (c === null) return null;
+    cents.push(c);
+  }
+  if (!cents.length) return null;
+  return cents.reduce((a, b) => a + b, 0) === totalCents ? cents : null;
+}
 
 /** 一张主要凭证要拆成几个事件，以及依据是什么。拆分永远要有证据。 */
 function planSegments(voucher, refs) {
@@ -228,12 +269,14 @@ export function buildEvents(classification, task = null) {
       continue;
     }
 
-    // 多段：金额必须来自用户提交的逐段分摊。
+    // 多段：金额要么来自用户提交的逐段分摊，要么来自与票面分毫不差的行程单。
     const alloc = loadAllocation(task, v.materialId);
     const fresh = alloc && alloc.contentHash === v.contentHash && alloc.segmentCount === plan.count;
     const net = v.fields?.netAmount?.cents ?? null;
     const tax = v.fields?.taxAmount?.cents ?? null;
     const total = v.fields?.totalAmount?.cents ?? null;
+    // 用户明确给过的分摊优先于行程单：他是对着原件报的数，行程单只是一份参考材料。
+    const conserved = fresh ? null : conservingSegments(plan.segments, total);
 
     if (net === null || tax === null || total === null) {
       notes.push({ kind: 'allocation_amounts_incomplete', blocking: true,
@@ -241,27 +284,34 @@ export function buildEvents(classification, task = null) {
         note: '这张票要拆成多段，但票面不含税金额、税额、价税合计没取全，无法做逐段守恒检查' });
       continue;
     }
-    if (!fresh) {
+    if (!fresh && !conserved) {
       notes.push({
         kind: alloc ? 'allocation_stale' : 'allocation_required',
         blocking: true,
         materialId: v.materialId,
         fileName: v.fileName,
+        // 分摊钉在这张票当前的字节上，问和收用的是同一个哈希 ——
+        // 问到一半用户把发票换了，收上来的那几个数就不该落在新发票上。
+        contentHash: v.contentHash,
         segmentCount: plan.count,
         totalAmount: (total / 100).toFixed(2),
+        netAmount: (net / 100).toFixed(2),
+        taxAmount: (tax / 100).toFixed(2),
         // 行程单的逐段行只作为**候选**摆出来给用户看，不自动采用：
         // 行程单是参考材料，它的金额不是票面法定金额。
         candidateSegments: plan.segments ?? null,
         candidateFromItinerary: plan.segments?.map((s) => s.amount) ?? null,
         note: alloc
           ? '发票材料变了，之前提交的逐段金额已经失效，需要重新分摊'
-          : `票面只有一个合计金额，但行程单显示有 ${plan.count} 段行程；`
-            + '每段的价税合计必须由你直接给出，系统不会平均、按比例或按距离分摊。跑 allocate 打开分摊页',
+          : `票面只有一个合计金额，但行程单显示有 ${plan.count} 段行程，`
+            + '而且逐段金额之和与票面价税合计对不上（对得上的话我自己就定了，不会来问你）；'
+            + '每段的价税合计要由你直接给出，系统不会平均、按比例或按距离分摊',
       });
       continue;
     }
 
-    const split = splitTax(alloc.segmentTotalCents, net, tax);
+    const segTotals = conserved ?? alloc.segmentTotalCents;
+    const split = splitTax(segTotals, net, tax);
     if (!split) {
       notes.push({ kind: 'allocation_amounts_incomplete', blocking: true,
         materialId: v.materialId, fileName: v.fileName,
@@ -275,9 +325,11 @@ export function buildEvents(classification, task = null) {
         city: seg?.city ?? null,
         route: seg?.route ?? null,
         dateEvidence: seg ? `行程单第 ${i + 1} 行` : null,
-        amounts: { netCents: split.nets[i], taxCents: split.taxes[i], totalCents: alloc.segmentTotalCents[i] },
-        amountSource: 'user_allocation',
-        allocatedAt: alloc.submittedAt,
+        amounts: { netCents: split.nets[i], taxCents: split.taxes[i], totalCents: segTotals[i] },
+        // 两种来源分得清清楚楚：用户逐段报的，和内核拿行程单与票面核对上的。
+        // 它们不是同一种事实，后面每一层都还看得见这个区别。
+        amountSource: conserved ? 'itinerary_conserved' : 'user_allocation',
+        allocatedAt: conserved ? null : alloc.submittedAt,
         residueCents: split.residueOn === i ? split.residueCents : 0,
       });
     }
@@ -371,6 +423,15 @@ export function eventOpenItems(built) {
         + '也可能说明对应的发票还没放进来 —— 请自己判断，系统不替你决定' });
   }
   for (const e of built.events) {
+    if (e.amounts.totalCents === null || e.amounts.totalCents === undefined) {
+      // 一条没有金额的明细不能往下走。它在写入前那张表上会显示成「—」，
+      // 而总数会**悄悄**当它是 0 —— 用户点头的那个合计里少了一笔，
+      // 这是最不该在不可撤销的那一格上发生的事。
+      items.push({ kind: 'event_amount_missing', blocking: true,
+        eventId: e.eventId, materialId: e.voucherMaterialId, fileName: e.voucherFileName,
+        note: '这次费用没有取到价税合计，不能形成一条能写进 ERP 的明细；'
+          + '请确认这张凭证上的金额读得出来' });
+    }
     if (!e.date) {
       items.push({ kind: 'event_date_missing', blocking: true,
         eventId: e.eventId, materialId: e.voucherMaterialId, fileName: e.voucherFileName,

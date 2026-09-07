@@ -20,19 +20,22 @@ bash scripts/release.sh
 安装说明本身在 [`docs/INSTALL.md`](docs/INSTALL.md)，它会跟着包一起发出去。
 
 `scripts/bundle.sh` 是 `release.sh` 的第一步，单独跑可以只产出 `dist/`。它带三道闸：
-Skill 目录不许指向目录之外、调试草稿不许混进分发包、每个包必须带着启动器。
+Skill 目录不许指向目录之外、调试草稿不许混进分发包、每个包必须带着内核入口。
 
-**三个目录必须一起更新。** 它们共用安装在数据目录里的同一份内核；版本一旦对不上，
-`kernel/bin/launch.mjs` 会在第一条命令上硬阻塞（`version_drift`），而不是带着错位的版本往下跑。
+**三个目录必须一起更新。** 每个 Skill 目录自带的那份内核就地运行，`baox` 就是那个目录下的
+`kernel/bin/baox.mjs`（绝对路径；`CLAUDE_SKILL_DIR` 这个变量并不存在，见
+[ADR-0010](docs/adr/0010-kernel-side-command-guard.md)）—— 没有安装这一步，
+也没有第二份内核可以对不上。
+数据在 `~/.baox`（`BAOX_HOME` 可覆盖）。
 
 ## 开发
 
 ```bash
 node --test kernel/test/*.test.mjs    # 内核测试，零依赖
-bash scripts/qa-dist.sh               # 分发链路验收：打包、启动器、版本闸、压缩包端到端
+bash scripts/qa-dist.sh               # 分发链路验收：打包、内核入口、数据目录迁移、压缩包端到端
 ```
 
-**改了内核就要抬 `kernel/VERSION`。** 版本闸比的就是这个数；不抬的话，试用者机器上装着的旧内核
-会被判成「一致」而继续跑——那正是这道闸要防的情况。
+**改了内核就要抬 `kernel/VERSION`。** 它只用于把试用者报回来的问题钉到具体某一版：
+`doctor` 每次都报它，一份没有版本号的问题报告基本查不动。
 
 Agent 相关的约定见 [AGENTS.md](AGENTS.md)，那是唯一的真源。

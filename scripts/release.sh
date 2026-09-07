@@ -24,7 +24,6 @@ name="baox-${version}-${sha}"
 
 # 语法自检。打包脚本查的是"该在的文件在不在"，这里查的是"它们能不能加载"——
 # 一个打不开的包发出去，同事第一条命令就撞墙。
-node --check dist/baox/kernel/bin/launch.mjs
 node --check dist/baox/kernel/bin/baox.mjs
 
 rm -rf release && mkdir -p release

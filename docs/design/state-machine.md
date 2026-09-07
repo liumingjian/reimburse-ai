@@ -35,12 +35,18 @@
 | `events_pending` | 无当前版本的事件划分 | kernel | `events` | 事件产出 |
 | `allocation_required` | 合并交通发票，且**各段之和 ≠ 价税合计**（相等则内核自动定案，不进此态） | user | 列出缺口请用户补 | 分毫不差 |
 | `allocation_stale` | 发票内容哈希变了 | user | 同上 | 同上 |
-| `project_unassigned` | 有事件没有项目号 | model | 按事件用终端多选问（候选≤3 + 其他） | 每个事件有项目号 |
+| `project_unassigned` | 有事件没有项目号 | model | 按事件在对话里问（内核渲染的问题，候选≤3 + 其他） | 每个事件有项目号 |
 | `catalog_unverified` | 项目/类别未经 ERP 只读核对 | kernel | `catalog` | 全部 `erp_catalog_confirmed` |
 | `catalog_mismatch` | ERP 里查无此项目 / 对不上 | user | 请用户改派 | 重新核对通过 |
 | `ready_for_erp_write` | 以上全绿 | user | 摊开待写内容，请用户点头 | 用户同意开始写 |
 | `handed_off_recover` | `erpWriteState` 非空 | — | `handoff: baox-recover`，并明说状态变化 | — |
-| `archived` | 旧格式任务，迁移时标记 | — | 只读可查 | — |
+
+> **`archived` 不在这张表里，它是任务状态，不是状态。** 0.9.x 的在途任务在迁移那一刻被标成
+> `archived`：本版的读数要带看图凭据和字段来源，而旧读数两样都没有，接着往下走等于让它们
+> 绕过这一版最硬的规矩被投影成事实。存档任务不再被认领（同一个材料目录下次是新建任务），
+> 因此它永远不产生动作 —— 一个答不出动作的东西留在状态表里只会骗人。它仍然占着自己那些
+> 发票（跨任务查重看得见），也仍然可以作废。动过 ERP 的任务**不标**：那条路要留给
+> `handed_off_recover`。
 
 ## C. 不变量
 

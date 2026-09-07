@@ -13,8 +13,12 @@ import { probeIdentity, ERP_ORIGIN } from './probe.mjs';
  *      "账号命中"能在会话已经失效时误判为通过；
  *   3. 那个字符串是模型转述的 —— 报销主体错了，发票就写进了别人的单子，不可撤销。
  *
- * 所以绑定只在**确认页**上产生：页面展示的是内核自己从 ERP 读到的值，用户点一次
- * 「是我本人」才落盘，全程没有字符串经过模型的手。
+ * 所以绑定只在**内核自己渲染的那份东西**上产生：上面的每个值都是内核刚从 ERP 读到的，
+ * 用户只能认或不认，全程没有字符串经过模型的手。
+ *
+ * 第一次认身份走**终端表格**（`next` 的 `confirm_table`，落盘在 confirm.mjs 的
+ * receiveIdentity 里）。本地确认页只留给**改绑** —— 那是一次推翻已有绑定的动作，
+ * 值得一次要人手敲 `confirm-identity` 的显式往返。
  *
  * 判据是 account + tenant，不含 displayName —— 显示名在 ERP 里可改，
  * 拿它当判据等于把门栓拴在一个别人能拧的东西上。它只留着给用户看，
@@ -85,8 +89,8 @@ export async function gateIdentity({ origin = ERP_ORIGIN, waitMs } = {}) {
   }
   if (verdict === 'unbound') {
     return { ...probe, status: 'identity_unconfirmed', binding: null,
-      hint: '这台机器还没确认过报销人是谁。跑 baox confirm-identity，'
-        + '在弹出的本地页面上核对内核读到的身份并点「是我本人」；只有那一次点击算数' };
+      hint: '这台机器还没确认过报销人是谁。跑 baox next，内核会在终端上摆一张表，'
+        + '上面是它自己从 ERP 读到的身份，你认下来它才落盘' };
   }
   return { ...probe, status: 'identity_mismatched', binding,
     hint: `这台机器绑定的是 ${binding.displayName ?? binding.account}（账号 ${binding.account}，`

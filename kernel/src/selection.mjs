@@ -88,7 +88,7 @@ export function linesDigest(built) {
  *
  * 缺 versionId 的旧记录一律算过期：宁可让用户重做一次，也不能把旧结论套在新材料上。
  */
-const sameBasis = (record, built) => !!record
+export const sameBasis = (record, built) => !!record
   && record.linesDigest === linesDigest(built)
   && record.versionId === built.versionId;
 

@@ -1,6 +1,9 @@
 import path from 'node:path';
 import { parseMaterial, invoiceIdentity, checkAmounts, maskNumber } from './parse.mjs';
-import { loadReading, projectReading } from './vision.mjs';
+import { loadReading, loadRejection, loadUnreadable, projectReading, MAX_SIGHT_FAILURES,
+  MAX_EMPTY_READINGS, FIELD_LABELS } from './vision.mjs';
+import { shapeOfFile } from './imageshape.mjs';
+import { READING_KINDS } from './state.mjs';
 
 // 材料角色分流：把盘点出来的材料判成主要报销凭证还是参考材料，
 // 顺带把票面事实和发票身份提出来，并做**任务内**重复发票检测。
@@ -25,12 +28,39 @@ export function classifyInventory(sourceDir, inventory, task = null) {
 
     // 图片取不出文字，但可能已经有一次**已确认**的看图读取。
     // 只有确认过的读数才顶替解析结果；读过没确认的仍然停在待确认项里。
-    if (parsed.parseStatus === 'needs_ocr' && task) {
+    if (parsed.parseStatus === 'needs_ocr') {
+      // 这个文件到底是不是一张显示得出来的图，由**内核**说了算，不由模型说了算。
+      // 解不开图像头的，模型压根不会被派去看它 —— 于是「图片显示不出来」这句话
+      // 只可能出自内核，出自模型时它必然是假的。
+      const shape = shapeOfFile(path.join(path.resolve(sourceDir), m.relPath));
+      parsed = { ...parsed, imageDecodable: !!shape, imageShape: shape?.shape ?? null };
+    }
+    if (parsed.parseStatus === 'needs_ocr' && parsed.imageDecodable && task) {
       const reading = loadReading(task, m.materialId);
       const fresh = reading && reading.contentHash === m.contentHash;
       const projected = fresh ? projectReading(reading) : null;
+      const rejection = loadRejection(task, m.materialId);
+      const freshRejection = rejection && rejection.contentHash === m.contentHash;
+      const parkedRec = loadUnreadable(task, m.materialId);
+      const parked = parkedRec && parkedRec.contentHash === m.contentHash ? parkedRec : null;
       if (projected) parsed = projected;
+      // 争议排在普通驳回前面：两者都是「读过了但没落库」，处置却完全不同 ——
+      // 驳回是重读整张票，争议是只重读争的那一个字段（干净上下文）。
+      // 塌成同一种的话，模型会带着刚吵完的上下文重抄一整张，第二次读数就不独立了。
+      else if (freshRejection && !fresh && (rejection.disputed?.length ?? 0) > 0) {
+        parsed = { ...parsed, readingState: 'disputed', rejection };
+      } else if (parked) parsed = { ...parsed, readingState: 'unreadable', parked };
+      // 驳回排在「没读过」前面：这张图确实还没有可用的读数，但**为什么**没有
+      // 是下一次读取唯一有用的输入，把它塌成「还没读」就等于把理由丢掉。
+      else if (freshRejection && !fresh) parsed = { ...parsed, readingState: 'rejected', rejection };
       else parsed = { ...parsed, readingState: !fresh && reading ? 'stale' : reading ? 'unconfirmed' : 'none' };
+    }
+
+    // 每个字段带来源。PDF 那条路上的字段是内核自己从文字层解出来的 —— 记 `kernel`；
+    // 看图那条路上的来源已经跟着读数投影过来了（vision / user），不覆盖它。
+    if (parsed.fields && !parsed.fieldSources) {
+      parsed = { ...parsed,
+        fieldSources: Object.fromEntries(Object.keys(parsed.fields).map((k) => [k, 'kernel'])) };
     }
 
     const identity = invoiceIdentity(parsed);
@@ -77,17 +107,64 @@ export function classifyOpenItems(classification) {
     const at = { materialId: r.materialId, fileName: r.fileName };
 
     if (r.parseStatus === 'needs_ocr') {
+      if (r.imageDecodable === false) {
+        // 内核自己解不开的图。它到不了模型手上 —— 只有人能换一份能看的原件。
+        add('image_file_broken', true, { ...at,
+          note: '这个文件的扩展名说它是图片，但内核解不开它的图像头，它不是一张完整的 png / jpg；'
+            + '请重新导出或重新拍一份' });
+        continue;
+      }
+      if ((r.rejection?.sightFailures ?? 0) >= MAX_SIGHT_FAILURES) {
+        // 接连答不出「看过的凭据」。再让模型读下去只是让它接着试，
+        // 而试出来的那一次和真看过的那一次，内核分辨不了。
+        add('sight_unproven', true, { ...at,
+          note: `我连着 ${r.rejection.sightFailures} 次答不出这张图长什么样，`
+            + '没法证明我真的打开过它。这张图的读数我不再往下交 ——'
+            + '请你看一眼这个文件，或者换一份能正常显示的原件' });
+        continue;
+      }
+      if ((r.rejection?.emptyReadings ?? 0) >= MAX_EMPTY_READINGS) {
+        // 接连交空读数。图是好的，字一个都没抄下来 —— 再派模型读一遍只是再空一次。
+        add('vision_unavailable', true, { ...at,
+          note: `我连着 ${r.rejection.emptyReadings} 次从这张图上一个字段都没读出来，`
+            + '而这张图在我这边是完好的。看图这一步靠的是我自己的视觉，'
+            + '不接外部识图工具（那种结果我不收）—— 所以多半是当前这个模型看不到图片。'
+            + '两条路：换一个能看图的模型来跑这一步，或者把这份材料换成 PDF 原件（PDF 我自己取字，不用看图）' });
+        continue;
+      }
       const state = r.readingState ?? 'none';
+      if (state === 'unreadable') {
+        // 争议收不了场，整条读数已经退回待办。它挡在「再读一遍」前面 ——
+        // 用户已经说过他对着原件也认不出，再派模型去读一遍是在原地转圈。
+        add('reading_unreadable', true, { ...at,
+          note: `${r.parked?.reason ?? '这条读数已经退回待办'}。`
+            + `读不出的是：${(r.parked?.fields ?? []).map((f) => FIELD_LABELS[f] ?? f).join('、') || '这份读数'}。`
+            + '请换一份看得清的原件（重新导出或重新拍一张），换了我就重新看图',
+          fields: r.parked?.fields ?? [] });
+        continue;
+      }
+      if (state === 'disputed') {
+        const d = r.rejection?.disputed ?? [];
+        add('reading_disputed', true, { ...at,
+          note: `用户对着原件说这几个字段和我读到的不一样：${d.map((x) => x.label).join('、')}。`
+            + '他给的值我没有直接落库 —— 两边都可能错，先摆证据、再独立重读、最后请他拍板',
+          fields: d.map((x) => x.field) });
+        continue;
+      }
       if (state === 'unconfirmed') {
         add('reading_awaiting_confirmation', true, { ...at,
           note: '这张图已经读过，但读数还没有被确认。看图读出来的字段只是候选，'
-            + '必须由用户在本地确认页面上核对后提交才能算数' });
+            + '必须由用户在终端上对着表格点头才算数' });
+      } else if (state === 'rejected') {
+        add('reading_rejected', true, { ...at,
+          note: `上一次读数没有过关：${(r.rejection?.reasons ?? []).join('；')}`,
+          reasons: r.rejection?.reasons ?? [] });
       } else if (state === 'stale') {
         add('reading_stale', true, { ...at,
           note: '图片内容变了，之前那次读取已经作废，需要重新看图' });
       } else {
         add('image_awaiting_reading', true, { ...at,
-          note: '图片材料需要看图读取票面信息；跑 ocr-request 拿到读取工单' });
+          note: '图片材料需要逐张打开看图，抄录票面信息' });
       }
       continue;
     }
@@ -146,8 +223,12 @@ export function classifyOpenItems(classification) {
     });
   }
 
+  // 「一张凭证都没有」只有在**该读的都读完之后**才说得出口。
+  // 图还没看就下这个结论是抢答：一目录的发票照片，读之前一张凭证也认不出来，
+  // 而这句话会把用户支去检查目录选对没有 —— 目录没选错，是我们还没看。
+  const awaitingReading = items.some((i) => READING_KINDS.has(i.kind));
   const primaries = classification.results.filter((r) => r.role === 'primary_voucher');
-  if (primaries.length === 0) {
+  if (primaries.length === 0 && !awaitingReading) {
     add('no_primary_voucher', true, { note: '没有识别到任何主要报销凭证，这个目录还不能构成一次报销' });
   }
   return items;

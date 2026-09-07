@@ -45,6 +45,8 @@ Skill 是壳，内核是唯一的业务事实来源，这一条在 1.0.0 里不�
 - 采集观测的那部分单独放 `kernel/src/observe.mjs`，它才碰文件系统和 CDP。
 - 分层是硬要求：状态机的测试要能在没有 Chrome、没有材料目录的机器上跑完。
 - 验收：`kernel/test/state.test.mjs` 覆盖全部 26 个状态各至少一例，外加**判定顺序**用例
+  （两张表 7 + 19 行，对应 25 条判定规则加上兜底的 `env_ready`。`archived` 曾经也列在表里，
+  已认定为任务状态而非状态，划掉了，见 state-machine.md）
   —— 同时满足多个判据时先报哪个（越靠前的表项优先，`schema_too_new` 永远最先）。
 
 ### 批次 3：`next` 与 `stepToken`
@@ -80,11 +82,13 @@ Skill 是壳，内核是唯一的业务事实来源，这一条在 1.0.0 里不�
 
 ### 批次 6：hooks 与发布
 
-- `skills/baox/SKILL.md` frontmatter 加 `hooks.PreToolUse`，`matcher: "Bash"`，
-  `command: ${CLAUDE_SKILL_DIR}/hooks/guard.mjs`。
-- `hooks/guard.mjs`：放行 `baox next ...`，其余 `baox` 子命令一律 `deny`（退出码 2 + stderr 说明），
-  非 baox 的命令不管。**deny 早于权限模式判定，`bypassPermissions` 也压不过它** —— 这是"模型不拼命令"
-  从劝告变成机制的那一步。
+- ~~`skills/baox/SKILL.md` frontmatter 加 `hooks.PreToolUse`~~ —— **实测不生效，见上面第 4 节。**
+  实际落地的是内核里的守卫 `kernel/src/guard.mjs`；`hooks/guard.mjs` 保留为可选外层，改挂
+  `.claude/settings.json`。
+- 放行的规矩是**两条**，不是一条：`baox next`（外加 `erp-reconcile` 这一个例外——`handoff` 那一步
+  不带 argv，拦掉它写入善后就此不通），以及内核**刚刚**放进 `step.argv` 的那一条完整命令行。
+  按字面只放行 `next` 会让 `kind: "run"` 那一步当场停摆。其余一律拒（退出码 2 + 结构化 JSON），
+  并记进 `logs/refused.jsonl`。
 - 版本提到 `1.0.0`，`schemaVersion` 定为 `1`，更新 `docs/adr/`（新增一条 ADR 记 `next` 状态机；
   在 ADR-0002 补记本地页面收窄到两处）。
 - 验收：见下面的"真机待验"。
@@ -116,17 +120,38 @@ Skill 是壳，内核是唯一的业务事实来源，这一条在 1.0.0 里不�
 
 ## 4. 真机待验（两项，只能在 mac 上确认）
 
-1. **Skill 声明的 hooks 在项目域是否真的硬拒。** `hooks` 没有出现在官方 frontmatter 字段表里，
-   目前的把握来自实现与文档的旁证。若实测不生效，退路是把守卫做进内核自身：`baox` 的非 `next` 子命令
-   在检测到 `CLAUDE_SKILL_DIR` 环境时拒绝执行，除非带 `--i-am-a-human` 显式标记。
-   **批次 6 合并前必须有结论。**
-2. **终端多选（`AskUserQuestion`）在非交互 / `--print` 模式下的行为。** 未见文档。
-   若在无头模式下不可用，`ask_user` 与 `confirm_table` 需要一条降级路径（多半是退回本地页面），
-   但这不阻塞批次 1–5。
+1. ~~**Skill 声明的 hooks 在项目域是否真的硬拒。**~~ **已实测，结论：不生效**（2026-09-07，
+   Claude Code 2.1.263）。frontmatter 里的 `hooks` 被静默忽略——守卫被调起 0 次，被拦的命令照跑不误；
+   同一个脚本挂到 `.claude/settings.json` 上则拦得住。于是走了这里预备的退路：守卫做进内核自身。
+   判据也跟着改了——`CLAUDE_SKILL_DIR` 根本不在 Bash 工具的环境里，单认它等于守卫永远不生效，
+   改取 `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` / `CLAUDE_SKILL_DIR` / `AI_AGENT` 的并集。
+   见 [ADR-0010](../adr/0010-kernel-side-command-guard.md) 与
+   [skill-declared-hooks.md](../research/skill-declared-hooks.md)。
+2. ~~**终端多选（`AskUserQuestion`）在非交互 / `--print` 模式下的行为。**~~ **已实测，结论：不挂载**
+   （2026-09-07，Claude Code 2.1.263）。`claude -p` 与 `-p --input-format stream-json` 两种无头形态的
+   `system/init` 工具清单里都没有 `AskUserQuestion`，所以 `ask_user`、`confirm_table` 和 `dispute`
+   的对话部分在无头会话里执行不了。**由此定下更干脆的一条：这个工具整个不用**——用户可以把它关掉
+   （本仓库的主人就关了），别的 Agent 也未必有它，而「在对话里问一句」是哪里都有的。`ask_user` 改成
+   由内核把问题渲染成一整块文本（`step.prompt`，`renderQuestions`），模型原样贴出、把用户的回答誊回来，
+   和 `confirm_table` 贴表格同一套搬运。**降级到本地页面不做**：无头会话多半根本没有人在，弹一个
+   没人点的页面只是把卡住换个地方发生。剩下"没人在场时不许代答"这一条只能靠说明书——同一轮量到
+   **没有任何环境变量能可靠区分有头和无头**（`CLAUDE_CODE_ENTRYPOINT` 在 `-p` 里干脆不出现，
+   而它出现的那一轮同样是无头的），内核判不了，文档里如实这么写。
+   见 [terminal-questions-headless.md](../research/terminal-questions-headless.md)。
 
 ## 5. 完成的判据
 
-- 全量测试绿（当前基线 122 例，新增的不少于 40 例）。
+- ~~全量测试绿（当前基线 122 例，新增的不少于 40 例）。~~ **达标**：321 例全绿（在 mac 上跑）。
 - 用真实的 `resources/` 材料从零走通一遍：环境准备 → 分类 → 看图读数 → 终端确认 → 事件 → 选项目 → 核对 → 写入。
+  **前两程已在真机上验过**（2026-09-07，见台账 V-47）：干净数据目录 + 真实 `resources/`，`next` 报
+  `env_chrome_down` 并给出完整 `step.argv`，连问三次状态与 `stepToken` 都不变（幂等）；原样执行那条
+  argv 起专用 Chrome 成功，状态跃迁到 `env_identity_unknown` 交给人。**从登录往后没验**——那一段
+  每一步都要人：登录、看图读数要模型在交互式会话里、终端确认要人过目、写入要人点头。
+  **这一条仍未关闭，1.0.0 不能凭它已发版就当作验收过了。**
 - 全程模型只出现过 `baox next` 这一条命令；hook 日志里没有被拒的调用。
-- 用户手动登录**一次**，此后不再需要打开任何浏览器页面（除非重绑身份或浏览项目目录）。
+  **前两程为真**：那次真机跑动里 `logs/refused.jsonl` 始终不存在（一次被拒调用都没有）。整程同样未验。
+- 用户手动登录**一次**，此后不再需要打开任何浏览器页面（除非重绑身份或浏览项目目录）。**未验**，
+  同样卡在登录之后那一段。
+
+> 后三条要的是一次有人在场的真机跑动，只能由用户本人在 mac 上做。能自动化的部分已经做完并记进
+> 台账（V-46、V-47）；剩下的清单见 [真机验收清单](../qa/1.0.0-acceptance.md)。

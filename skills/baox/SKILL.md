@@ -1,355 +1,106 @@
 ---
 name: baox
-description: Reimbursement main flow. Use when the user wants to start or continue a reimbursement from a folder of invoices and itineraries, or when baox-recover hands a 未保存·导入前 task back. Covers everything up to the first ERP write.
-allowed-tools: Bash, Read
+description: 报销。Use when the user wants to start, continue, or ask about a reimbursement from a folder of invoices and itineraries. This is the only baox entry point a user ever needs — environment setup and write recovery are dispatched from here.
+allowed-tools: Bash, Read, Task, Skill
 ---
 
-# baox — reimbursement main flow
+# baox
 
-Everything the user sees is Chinese: the ERP, its field labels, the open-item names, and your own replies.
-English is for this file only.
+用户看到的一切都是中文。English is for this file only.
 
-## Entry gate: has this task already dispatched an ERP write?
-
-Before running any command here, check whether this task has already dispatched an upload, a receipt import,
-a detail line, or a save. **If it has, the bill is not yours** — hand it to `baox-recover`, which reconciles
-it read-only and tells the user where it stopped. Whether a receipt came back, whether the browser is still
-open, and whether anyone saw the result make no difference to ownership.
-
-You do not replay the import, re-save, or refresh the page to "see whether it went through". When it is
-unknown whether a write landed, it landed — the same rule that decides 「占着」 in step 6.
-
-`probe` and `catalog` (step 10) are read-only and **do not** count as a write attempt. A task that has only
-run those is still yours.
-
-**One exception, and only this one.** When `baox-recover` has just reconciled the task and reported bucket
-`未保存·导入前`, that reading is the evidence that nothing reached the ERP: the invoices are unconsumed and
-the batch is yours again. Take it from step 1. Anything weaker — the user saying it did not go through, your
-own memory of the run, a browser window that looks empty — is not that evidence, and the task stays
-`baox-recover`'s. Nothing in the kernel records this handback, so it holds for the reconciliation you were
-just handed and not for a task you find in this state later; in that case reconcile again first.
-
-## What you do
-
-Three things: run the kernel commands, read the kernel's JSON back to the user in plain Chinese, and turn
-the user's corrections into structured kernel input.
-
-The kernel decides. You do not classify a material, and you do not derive, average, pro-rate, or invent any
-amount. **Nothing the user says in chat is ever a business fact** — facts come from what the kernel read and
-from what the local web pages received.
-
-**consent**: consent comes only from a submit event the kernel observed. 「没问题」「继续」「对的」 in chat
-never clears an open item, ticks a reading, allocates a segment, or picks a project. This word governs
-steps 5, 8 and 9.
-
-**`baox` below stands for the kernel entry point**, which is not on `PATH`:
-`node "${CLAUDE_SKILL_DIR}/kernel/bin/launch.mjs"`.
-
-That launcher hands the command to the kernel installed in the baox data directory, after checking the two
-are the same version. Two of its own exit-2 blocks can reach you, and neither is fixed here — hand the user
-to `baox-setup`:
-
-| `status` | Means |
-|---|---|
-| `runtime_not_installed` | The environment was never set up |
-| `version_drift` | This Skill and the installed kernel are different versions; `install-runtime` again |
-If it is not installed, send the user to `baox-setup` first.
-
-Exit codes: `0` continue / `1` **the command did not complete** / `2` **an open item or a hard block is
-unresolved — do not continue**.
-
-On exit 1, the JSON says which kind it was, and they need opposite responses:
-
-- an `error` key — the kernel threw. Read it out and stop.
-- a `status` key instead, `timeout` — a local page (`confirm-readings`, `allocate`, `select-task`) waited for
-  the user's submit and did not get one. Nothing is wrong; say so and run the command again.
-
-**Every local page blocks in the foreground, and you are mute while it blocks.** The kernel opens the page
-in the user's browser itself, but the Bash call does not return — and you cannot say anything — until they
-submit or it times out (default 8 minutes). So **tell the user what is about to pop up *before* you run the
-command**, and give the Bash call a timeout longer than the page's. Saying it afterwards means they sat and
-waited through the whole thing wondering what happened.
-
-## 1. Material intake
+**你只会敲一条命令。** 内核决定下一步做什么，你照做，把结果交回去：
 
 ```bash
-baox intake --dir "<材料目录>"
+node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材料目录>"
 ```
 
-The kernel only reads that directory: **no moves, no renames, no overwrites, no deletions**. Everything it
-produces goes to the task workspace.
-
-Three things in the result are worth telling the user:
-
-- `task.resumed` true means this directory already had an unfinished task and the kernel resumed it rather
-  than starting another. One directory, one task.
-- `inventory.isNewVersion` true with a non-empty `supersededVersionId` means the materials changed and a new
-  inventory version exists. Treat the old ERP readiness snapshot as void and redo the confirmations. Do not
-  wait to be told: the kernel's automatic fallback keys on the **shape** of the candidate lines (line id,
-  voucher material, date, city, total), not on the inventory version, so swapping in a different invoice
-  with the same date, city and total leaves the old confirmation standing. After any material change, rerun
-  step 10 rather than trusting `projectSource` to have fallen back on its own.
-- `inventory.ignoredCount` counts OS junk (`.DS_Store` and friends). They are not user materials, but they
-  were not silently dropped either — say so if the user asks.
-
-## 2. Explaining intake open items
-
-Every entry in `openItems` gets said, **split into two groups by `blocking`**.
-
-| kind | Means | What the user can do |
-| --- | --- | --- |
-| `unsupported_format` | Not PDF/PNG/JPG (v1 supports those three) | Re-export it, or take it out of the folder |
-| `empty_file` | 0 bytes | Export the material again |
-| `read_error` | Unreadable | Check permissions, check whether it is corrupt |
-| `symlink` | A symlink; the kernel does not follow it (it would leave the material root) | Copy the real file in |
-| `extension_mismatch` | Extension disagrees with the content (non-blocking) | Usually nothing. **Content wins** — tell the user which kind the kernel went with |
-| `duplicate_content` | Several paths hold a **byte-identical file** (non-blocking) | Just report it. This is not a duplicate invoice — invoice identity decides that, one layer up |
-
-When `readyForNextStep` is false, ask the user to add, remove, or replace files **in the original material
-directory**, then run intake again. The local web offers no upload, and you do not edit the task workspace.
-
-## 3. Role triage and invoice parsing
-
-```bash
-baox classify --dir "<材料目录>"
-```
-
-This reruns intake first (it is idempotent). If the intake layer still has a hard block it returns
-`stage: "intake"` and stops — clear step 2 first and come back.
-
-Each material then gets a `role`:
-
-| role | Means | Consequence |
-| --- | --- | --- |
-| `primary_voucher` | The reimbursement voucher itself (the invoice) | Carries invoice identity, issue date and three amounts; only these reach the ERP upload list |
-| `reference` | Supporting material (itinerary, hotel folio, …) | **Not an invoice**, never uploaded, evidence only |
-
-Three things to keep straight when reporting:
-
-- `invoiceNumber` is **masked**. The full number lives in the task workspace, and there is no reason to read
-  it out.
-- `amountCheck` `balanced` means the face satisfies 不含税 + 税额 = 价税合计; `partial` means the face never
-  carried those parts (a railway e-ticket is like this).
-- Everything in `candidates` is a **candidate**, not a parsed value. `buyerTaxId`, for one, is inferred from
-  its position on the face and does not mean the buyer has been verified.
-
-## 4. Explaining triage open items
-
-| kind | Means | What the user can do |
-| --- | --- | --- |
-| `image_awaiting_reading` | An image has not been read yet | Step 5 |
-| `reading_awaiting_confirmation` | Read, but not yet confirmed by the user | Run `confirm-readings` |
-| `reading_stale` | The image changed; the old reading is void | Read it again |
-| `image_unreadable` | Even looking at it, the face cannot be read | Ask for a clearer original |
-| `no_text_in_pdf` | A PDF with no text layer, usually a scan | Ask for the electronic original |
-| `kind_unrecognized` | A PDF with text, but not a kind v1 supports | Check whether it belongs in this reimbursement |
-| `identity_incomplete` | An invoice whose 20-digit number cannot be read | Ask for a complete original. **Invoice identity is never supplied by conversation** |
-| `issue_date_missing` | No issue date | As above |
-| `amount_mismatch` | The three amounts on the face do not balance | Check the original. Do not produce a number that "works" |
-| `amount_missing` | A required amount such as 价税合计 is missing | Ask for a complete original |
-| `amount_not_on_face` | The face never carried net and tax (non-blocking) | Nothing to do; confirmed later from the ERP receipt readback |
-| `duplicate_invoice` | Several materials point at **one legal invoice** | Remove or replace a material. There is no "confirm and continue" here |
-| `no_primary_voucher` | Not one primary voucher in the folder | This folder is not a reimbursement; check it is the right one |
-
-`duplicate_invoice` and intake's `duplicate_content` are different things: the first is **legal duplication**
-by invoice number and holds even when the bytes differ; the second is only "these files are identical".
-
-## 5. Reading image materials
-
-When step 4 shows `image_awaiting_reading`, `reading_stale`, or `reading_awaiting_confirmation`, read
-`references/image-reading.md` and follow it. Done when the work order is empty and the user has submitted the
-confirmation page; then rerun `classify`.
-
-## 6. Cross-task duplicate invoice check
-
-Once the materials are clean, the kernel compares these invoice identities against **the other tasks baox
-has recorded on this machine**.
-
-```bash
-baox history --dir "<材料目录>"
-```
-
-It also gates `events`, `select-task` and `lines`: a hit stops the whole batch.
-
-| Open item | Means | How to say it |
-| --- | --- | --- |
-| `duplicate_across_tasks` | This invoice is in another task, and that task still holds it | Blocking. **No "confirm and continue"**: either remove the invoice from this batch, or confirm that the other task is genuinely not being filed and abandon it |
-| `history_scope_local` | The scope of the comparison (non-blocking) | Say it every single time, see below |
-
-**「占着」 has an exact definition**: the task is still open, or it has touched the ERP (including with an
-unknown write result). The second kind **cannot be released by abandoning** — when it is unknown whether a
-write landed, it landed.
-
-Only once the user confirms the other task is not being filed:
-
-```bash
-baox tasks
-baox abandon-task --task <taskId> --reason "<为什么不报了>"
-```
-
-Abandoning is a status change, **not a cleanup**: the task workspace is left intact. Ask the user first.
-A task in the way may be another batch someone is still working on.
-
-`abandon-task` can come back `verdict: "rejected"` at exit 2, and the reason decides where you go:
-
-- **The other task has touched the ERP.** Its invoices are not yours to release, and no wording releases
-  them. That task belongs to `baox-recover` — say so, and stop. This batch cannot proceed over those
-  invoices until the other bill is settled in the ERP.
-- Any other reason (no such task, wrong status) is a hard block too: read it out and stop.
-
-**Say this every time: having checked is not the same as not having been filed.** The kernel only knows
-baox's own records on this machine. Anything keyed directly into the ERP, filed by a colleague, filed on a
-previous computer, or filed before the baox data directory was deleted is invisible here.
-`readyForNextStep: true` only means baox has not seen it twice.
-
-## 7. Expense events and candidate lines
-
-```bash
-baox events --dir "<材料目录>"
-```
-
-This turns materials into **expense events**: one thing that actually happened. Transport goes by
-identifiable leg, consecutive lodging by one continuous stay, a train ticket by the ticket. An event has
-exactly one primary voucher and zero or more reference materials, and projects into one **candidate line**.
-
-`events` reruns intake and triage first and stops at whichever layer still has a hard block.
-
-Report three things per event:
-
-- **When and where it happened, and from which material** (`date` / `city` / `route` / `dateEvidence`).
-  The issue date is **not** the date the expense happened — a railway ticket uses the travel date, a
-  ride-hail invoice the pickup date, lodging the check-in date. When it cannot be read the kernel blocks
-  with `event_date_missing`; the issue date does not stand in for it.
-- **Where the amount came from** (`amountSource`): `invoice_face` is printed on the face, `user_allocation`
-  came from the user segment by segment.
-- **Why it split into these segments** (`splitBasis` / `splitNote`). A split needs evidence: `itinerary_rows`
-  means the itinerary listed them; `no_itinerary` means there was no corroboration and it is one trip.
-
-`reconciliation` is each invoice's balance check: the segments must sum back to the face's net, tax, and
-total. A railway ticket's `not_on_face` is a fact about the face (it only carries a fare), not a failure.
-
-Reference materials under `evidence.unlinked` matched no invoice — **non-blocking**, but tell the user: it
-may belong to a different reimbursement, or the matching invoice may not be in the folder yet. That call is
-theirs.
-
-## 8. Allocating a combined transport invoice
-
-The kernel routes two hard blocks to the same page: `allocation_required`, when one transport invoice covers
-several segments, and `allocation_stale`, when the invoice file behind an existing allocation changed. Read
-`references/allocation.md` and follow it for either. Done when `events` reports `readyForNextStep: true` with
-no allocation item left.
-
-## 9. Category and project
-
-Once the material layer is clean, a candidate line is still missing three things, **from three different
-sources that never mix**.
-
-**The expense category is derived by the kernel, not asked of the user.** Lodging depends on whether a hotel
-folio is linked; railway tickets go to long-distance transport by ticket kind; city transport splits into
-local and non-local by comparing the city of the expense with the resident city. The basis is in
-`categoryBasis` — read it out if asked. When it cannot be derived the kernel blocks
-(`category_undecidable` / `category_city_missing`), and the call stays the kernel's. "It looks like lodging"
-is not a derivation.
-
-**The resident city, the reimbursement reason, and each line's project come only from the user's submission
-on the task selection page.**
-
-```bash
-baox select-task --dir "<材料目录>"
-```
-
-The page allows multi-select and filling one project number into many rows at once. 「项目都填 111454」 in
-chat does not count and you cannot fill it in for them — same **consent** rule as reading confirmation and
-allocation.
-
-```bash
-baox lines --dir "<材料目录>"
-```
-
-`lines` gives the final shape of the candidate lines. Three things to keep straight:
-
-- **All four categories carry an `expenseItemCode`, from different sources.** Lodging `FY010001`, local city
-  transport `FY008001`, and long-distance transport `FY010003` have been saved and read back on the real ERP
-  (`source: erp_save_readback`). Non-local city transport `FY010002` comes from the company's own reference
-  table (`source: user_declared`) and has never been saved as a detail line, so those lines carry a
-  **non-blocking** `expense_item_unconfirmed`. It does not block, but **after the first draft save, check the
-  expense item the ERP reads back**; if it disagrees, stop and ask. Never guess a code, and never substitute
-  one category's code for another's. (All four exist in the ERP master data — step 10 — but "the master data
-  has this record" and "a detail line saves under it" are different claims.)
-- **A project number is unverified until it is checked.** `projectSource: user_input_unverified` is a fact;
-  it becomes `erp_catalog_confirmed` only after step 10.
-- **Change a line and the selection goes stale** (`task_selection_stale`). Reallocating a combined transport
-  invoice means selecting again.
-
-## 10. Read-only master-data verification
-
-This needs the ERP logged in as **this** user, so probe first:
-
-```bash
-baox probe
-```
-
-There is no name to pass. `matched` means a live ERP session **and** that the logged-in identity is the one
-this machine is bound to (个人绑定, established once in `baox-setup` on a local confirmation page). Only
-`matched` continues.
-
-`not_logged_in` is the common one — **ask the user to log in themselves** in the dedicated baox Chrome
-window. Account and password stay with the user, and an `account` in the output does not mean logged in
-(the login page shows the last account too). `identity_mismatched` is a hard block: someone other than the
-bound identity is in this ERP session, and nothing in this flow may run under it — send the user to switch
-accounts, and do not offer to rebind mid-task (`confirm-identity` refuses while a task is in progress, and
-this task is one). `identity_unconfirmed` means the machine was never set up — send the user to `baox-setup`.
-
-Then verify:
-
-```bash
-# the four expense item codes in the reference table, plus every project number this task selected
-baox catalog --dir "<材料目录>"
-
-# asking whether one project number exists — note this still checks all four expense items first,
-# so unrelated expense-item drift can make even this call exit 2
-baox catalog --project 111454
-```
-
-It goes through Kingdee's own read-only query service: **no bill is opened, no picker is clicked, nothing is
-written.** Exit 0 means everything passed, and those lines' `projectSource` rises to `erp_catalog_confirmed`
-with the project names in the output — **read the project names to the user** so they can confirm it is the
-project they meant. A number alone shows nothing.
-
-Exit 2 covers several cases, and they are not interchangeable:
-
-| Case | Means | Do |
-| --- | --- | --- |
-| project `missing` | No such number in the ERP project catalog | Ask the user to rerun `select-task` with a real project number |
-| project `ambiguous` | One number matched several records | baox does not pick. Ask the user |
-| `unusable` | The master data is disabled or unapproved | Stop and ask. Do not switch to another code |
-| expense item `name_mismatch` | Code matches, name does not | **Stop.** The repo's reference table and the ERP have drifted apart; a human checks this. Do not adopt the ERP's name and carry on |
-| `queryFailures` non-empty | The query itself failed | This is "not verified", not "verified". It is not a pass |
-| A `note` with no `problems` and no `queryFailures` | This task has not run `select-task`, so there is no project number to check | Go back to step 9 |
-
-**Verification decays, but not on everything.** It is keyed by project number and bound to a fingerprint of
-the candidate lines — line id, voucher material, date, city, total. Change a project number or reallocate an
-invoice and `projectSource` falls back to `user_input_unverified` on its own. Replace an invoice file with
-one carrying the same date, city and total and the fingerprint does not move, so the old
-`erp_catalog_confirmed` survives a change it should not have survived. **Rerun `catalog` after any material
-change**, and quote only the result of that run.
-
-## Done before any ERP write
-
-All of these hold at once: the latest `lines` reports `readyForNextStep: true`; `catalog` passed with exit 0;
-and rereading `lines` shows every project's `projectSource` as `erp_catalog_confirmed`. Anything short of
-that is not ready — name what is missing instead of reporting the batch as done.
-
-## What this flow does not do yet
-
-Querying records that already exist in the ERP, uploading invoices, and saving a draft are **not wired into
-this flow**. Say so plainly when asked.
-
-The kernel does carry `erp-fill`, a rehearsal that writes fields on a bill page without saving. It is not
-part of the steps above. It requires `--dir`, and before its first field write it stamps the task as having
-touched the ERP — so from that moment the task is `baox-recover`'s by the entry gate at the top, and it stays
-that way across sessions and cannot be released by abandoning it.
-
-The duplicate check covers this task and the other tasks baox recorded on this machine (step 6) and
-**cannot see the ERP**. An invoice filed last year, or by a colleague, produces no reaction here.
-`readyForNextStep: true` does not mean these invoices have never been reimbursed.
+`CLAUDE_SKILL_DIR` 这个环境变量**不存在**，别往命令里写——路径要用真实的绝对路径，
+就是这份 SKILL.md 所在的那个目录。
+
+第一次问要带 `--dir`；此后回传用 `--after <stepToken>`，**内核会把完整命令行放在
+`step.argv` 里，你原样执行**。底层还有二十来条子命令，那些是给人手敲排障的，不是给你选的：
+**内核会当场拒掉**（退出码 2，`status: "refused"`），并把这次拒绝记进日志。
+撞上它不要换个写法再试，照实告诉用户你刚才想干什么。
+
+## 怎么念内核的话
+
+- **`speak` 原样念给用户**，一个字不改、不概括、不补充。措辞是内核写死的。
+- **先念 `speak`，再执行 `step.argv`。** 顺序反过来会真的伤到人：有的命令会弹出一个本地页面
+  并**前台阻塞**最长八分钟，那段时间你一个字都说不出来，等你说「刚才弹出来的那个页面」时，
+  用户已经干等完了。
+- `context` 只在用户追问「为什么」时才动用。不追问就不念。
+- 每轮开头带一句 `identity.displayName`（在替谁报销）和 `progress`（第几步 / 共几步）。
+- `blockedBy` 里的每一项都要说到，别只说「还有几个问题」。
+- 有 `ignored` 键说明你上一次回传没被收下，念出 `ignored.note`，别装作过去了。
+- `exit`：`0` 继续 / `2` 硬阻塞，念完停下，不要绕过去 / `1` 内核自己出错，念 `error` 后停。
+
+## 七种 `step.kind`（外加收工的 `done`）
+
+| kind | 你做的唯一一件事 | 回传 |
+|---|---|---|
+| `run` | 原样执行 `step.argv`，stdout 落盘成一个文件 | `next --after <token> --result <那个文件>` |
+| `read_images` | 逐个用 `Read` 打开 `step.images[].absPath`，按 `step.schemaPath` 那份模板把读数写进 `step.readingsPath`（形状从 `step.sightedShapes` 里选），再原样执行 `step.argv` | 同上 |
+| `ask_user` | **原样贴出 `step.prompt`**（内核渲染好的问题），等用户在对话里回答，把答案按 `step.answersFormat` 写进 `step.answersPath` | `next --after <token> --result <答案文件>` |
+| `confirm_table` | **原样贴出 `step.table`**，请用户对着原件过目 | 认可 → `next --after <token>`；指错且 `step.acceptsCorrection` 是 `true` → 把用户的值按 `step.correctionFormat` 写进 `step.correctionPath`，再 `next --after <token> --correction <那个文件>` |
+| `dispute` | 见下 | 见下 |
+| `tell_user` | 只念 `speak`，等用户自己动手（登录、去 ERP 保存）。做完再问一次 | 不带 result，直接 `next --after <token>` |
+| `handoff` | 告诉用户状态变了，转 `step.skill`（模型调用，用户不用知道有这个 skill） | 不回传 |
+| `done` | 念完 `speak` 收工 | — |
+
+`step.acceptsCorrection` 是 `false` 的那张表（写进 ERP 前的最后一格）**收不下纠正**：
+只有点头和不点头两种收场。用户说哪里不对，就照实转达然后停下，不要把他的值写成一份纠正交上去。
+
+`read_images` 的抄写纪律在 `references/image-reading.md`，看图之前先读它。两条底线在这里也说一遍：
+**识图只靠你自己看**（`tesseract`、`mdls`、`sips`、macOS Vision 之类的外部工具，读出来的东西内核不收），
+**看不到图就照实说**（不要按文件名和尺寸推断，也不要把整份读数填成 `unreadable` 交上去）。
+
+### `dispute` 的三段
+
+`step.phase` 说这一趟是哪一段，三段做的事不一样：
+
+- `reread` —— 摆出 `step.evidence`（材料路径、机器读到的原文、清晰度），并照 `step.subagent`
+  派一个**干净上下文的子 Agent** 只重读 `step.field` 这一个字段。重读结果按 `step.schemaPath`
+  写进 `step.rereadPath`，再原样执行 `step.argv`。
+- `ruling` —— 两次机器读数和用户的值一起摆出来，请用户对着原件拍板。终值按 `step.rulingFormat`
+  写进 `step.rulingPath`，回传 `next --after <token> --correction <那个文件>`。
+- `conservation_gap` —— 内核算出的守恒缺口摆给用户，补法同 `ruling`。补不齐就整条退回待办。
+
+子 Agent 那份干净上下文就是这一步的全部意义：带着「我们刚才争过什么」去重读，
+第二遍只是第一遍的回声，它印证不了任何东西。
+
+## 什么时候派子 Agent
+
+`step.outsourceable` 是 `true` 的连续几步（体检、起 Chrome、探测、盘点、分类、查重——
+也就是整个环境准备）可以整段派给子 Agent，让主会话不被那些 JSON 占满。
+**环境准备那一段派子 Agent 时让它用 `baox-setup` 这个 skill**，它是同一件事的执行壳，
+从子 Agent 那一侧写着同一套规矩。子 Agent 的任务就一句：**只跑 `baox next`，照 `step` 做，
+一直做到 `outsourceable` 变成 `false` 或者 `exit` 不是 0 为止，然后把最后那一份 JSON
+原样带回来。** 它被 `maxTurns` 截断就再派一个接着走，不需要交接说明——
+状态在内核里，不在子 Agent 的上下文里。
+
+`baox-setup` 和 `handoff` 指向的 `baox-recover` 都是模型调用的执行壳。
+**用户不知道它们存在**，你说的每一句话都以 baox 的名义说，不要报它们的名字。
+
+`outsourceable: false` 的步骤**不能外包**：那一头是人（对话提问、终端表格、要人亲手点一下的本地页面），
+子 Agent 那里没有用户。`dispute` 里的「独立重读那一个字段」是唯一的例外，而且**必须**外包——
+要的就是它那份不知道我们刚才争过什么的干净上下文。
+
+## 不能做的事
+
+- **不拼命令、不改参数。** `step.argv` 原样执行，多一个参数少一个参数都不行。
+  除 `next` 以外的 `baox` 子命令你一条都不敲。
+- **不替内核判断下一步。** 状态在内核里。你不因为「看起来该分类了」就去分类。
+- **不替用户点头。** 「没问题」「对的」「继续」在对话里说出来不是确认。确认只有一种：
+  内核观测到的那一次回传。这条管 `confirm_table`、`ask_user` 和所有 `tell_user`。
+- **问题不重写。** `step.prompt` 是内核渲染好的，原样贴出去 —— 选项少列一个、顺序换一换、
+  把「其他」那一行吞掉，用户都察觉不到。不要改用你自己的问法，也不要动任何提问工具。
+- **没人可问就停下。** 身边没有用户时（子 Agent 里、`claude -p` 这类无头会话里），
+  碰上 `ask_user` / `confirm_table` / `dispute` 就如实说「这一步要用户本人回答」然后停 ——
+  不猜、不代答、不回传结果。内核分辨不出一份答案是用户给的还是你给的，这道防线只有你自己。
+- **不算数、不凑数。** 不推导、不平均、不按比例、不把差额抹到某一段上。守恒式不平就是不平。
+- **不猜、不编。** 看图时你是抄写员：读不出就写进 `unreadable`，猜一个值比说读不出坏得多。
+- **不说「我看不到图片」**，除非 `Read` 真的报了错——那就原样引用那条错误并说是哪个文件。
+  没打开过就不知道打不打得开。
+- **不重放已经发出去的 ERP 写入。** 落没落地不清楚的时候，当它落了。
+- **不改用户的材料目录。** 内核只读它，你更不动它。
+- **不代填 ERP 账号密码。**

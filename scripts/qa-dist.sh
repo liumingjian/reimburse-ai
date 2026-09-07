@@ -16,42 +16,46 @@ echo "=== 2. bundle.sh 正向 ==="
 bash scripts/bundle.sh >/dev/null 2>&1 && ok "bundle 退 0" || bad "bundle 退非 0"
 [ -f dist/INSTALL.md ] && ok "INSTALL.md 跟包走" || bad "包里没有 INSTALL.md"
 for s in baox baox-recover baox-setup; do
-  [ -x "dist/$s/kernel/bin/launch.mjs" ] && ok "$s 带着启动器且可执行" || bad "$s 缺启动器或没有执行位"
+  [ -x "dist/$s/kernel/bin/baox.mjs" ] && ok "$s 带着内核入口且可执行" || bad "$s 缺内核入口或没有执行位"
 done
 n=$(find dist -name 'scratch-*' -o -name '*.test.mjs' | wc -l | tr -d ' ')
 [ "$n" = 0 ] && ok "分发包里没有草稿和测试文件" || bad "分发包里混进了 $n 个文件"
 
-echo "=== 3. 启动器闸负向 ==="
-mv kernel/bin/launch.mjs /tmp/launch.mjs.bak
-bash scripts/bundle.sh >/dev/null 2>&1 && bad "缺启动器时 bundle 竟然退 0" || ok "缺启动器时 bundle 退非 0"
-mv /tmp/launch.mjs.bak kernel/bin/launch.mjs
+echo "=== 3. 内核入口闸负向 ==="
+mv kernel/bin/baox.mjs /tmp/baox.mjs.bak
+bash scripts/bundle.sh >/dev/null 2>&1 && bad "缺内核入口时 bundle 竟然退 0" || ok "缺内核入口时 bundle 退非 0"
+mv /tmp/baox.mjs.bak kernel/bin/baox.mjs
 bash scripts/bundle.sh >/dev/null 2>&1 || bad "还原后 bundle 应该重新退 0"
 
-echo "=== 4. 打出来的包，端到端 ==="
+echo "=== 4. 打出来的包，端到端（没有安装这一步）==="
 HOME_A=$(mktemp -d)
-run() { BAOX_HOME="$HOME_A" node dist/baox/kernel/bin/launch.mjs "$@" 2>&1; }
+run() { BAOX_HOME="$HOME_A" node dist/baox/kernel/bin/baox.mjs "$@" 2>&1; }
 out=$(run tasks); code=$?
-[ "$code" = 2 ] && echo "$out" | grep -q runtime_not_installed \
-  && ok "没装内核时 tasks 退 2 runtime_not_installed" || bad "没装内核时应退 2，实得 ${code}"
+[ "$code" = 0 ] && ok "拿到包就能直接跑 tasks，中间没有安装动作" || bad "第一条命令就该能跑，实得 ${code}：$out"
 
-out=$(run doctor); code=$?
-[ "$code" != 2 ] && ok "doctor 在未安装时放行（退 ${code}）" || bad "doctor 不该被拦"
+out=$(run doctor)
 echo "$out" | grep -q '"version"' && ok "doctor 报出版本号：$(echo "$out" | grep '"version"' | head -1 | tr -d ' ')" \
   || bad "doctor 没有版本号"
+echo "$out" | grep -q "\"$HOME_A\"" && ok "BAOX_HOME 指到哪，数据目录就落在哪" || bad "doctor 的 dataDir 没跟着 BAOX_HOME 走"
 
-BAOX_HOME="$HOME_A" node dist/baox-setup/kernel/bin/launch.mjs install-runtime >/dev/null 2>&1 \
-  && ok "install-runtime 退 0" || bad "install-runtime 退非 0"
-run tasks >/dev/null 2>&1 && ok "装好之后 tasks 正常转交" || bad "装好之后 tasks 应退 0"
-
-echo "=== 5. 版本漂移（只更新 Skill、不重装内核）==="
-echo "9.9.9-drift" > dist/baox/kernel/VERSION
-out=$(run tasks); code=$?
-[ "$code" = 2 ] && echo "$out" | grep -q version_drift \
-  && ok "漂移时 tasks 退 2 version_drift" || bad "漂移时应退 2 version_drift，实得 ${code}"
-echo "$out" | grep -q '9.9.9-drift' && ok "提示里带着两边的版本号" || bad "提示里没说清版本"
-BAOX_HOME="$HOME_A" node dist/baox/kernel/bin/launch.mjs install-runtime >/dev/null 2>&1 \
-  && ok "漂移时 install-runtime 仍放行" || bad "漂移时 install-runtime 被误拦，用户没出路"
-run tasks >/dev/null 2>&1 && ok "重装之后恢复正常" || bad "重装之后仍被拦"
+echo "=== 5. 0.9.x 数据目录迁到 ~/.baox ==="
+# 用一个假 HOME 跑：os.homedir() 在 posix 上认 $HOME，所以这里验的是真实的默认路径行为。
+HOME_C=$(mktemp -d)
+case "$(uname -s)" in
+  Darwin) LEGACY="$HOME_C/Library/Application Support/baox" ;;
+  *)      LEGACY="$HOME_C/.local/share/baox" ;;
+esac
+mkdir -p "$LEGACY/tasks" "$LEGACY/chrome-profile" "$LEGACY/runtime/bin"
+echo '{"tasks":[]}' > "$LEGACY/tasks/index.json"
+out=$(env -u BAOX_HOME -u XDG_DATA_HOME HOME="$HOME_C" node dist/baox/kernel/bin/baox.mjs tasks 2>&1); code=$?
+[ "$code" = 0 ] && ok "带着旧数据目录时第一条命令照样退 0" || bad "迁移时 tasks 退了 ${code}：$out"
+echo "$out" | grep -q '"migrated"' && ok "输出里说清了迁到哪：$(echo "$out" | grep -A2 '"migrated"' | tr -d ' \n')" \
+  || bad "迁移了却没在输出里说一句"
+[ -f "$HOME_C/.baox/tasks/index.json" ] && ok "旧任务落到了 ~/.baox" || bad "~/.baox 里没有迁过来的任务"
+[ -f "$LEGACY/tasks/index.json" ] && ok "旧目录原样留着，能回滚 0.9.x" || bad "旧目录被动了 —— 必须是拷贝不是移动"
+[ ! -d "$HOME_C/.baox/runtime" ] && ok "旧的 runtime/ 没跟着搬" || bad "把已经不存在的概念搬过来了"
+out=$(env -u BAOX_HOME -u XDG_DATA_HOME HOME="$HOME_C" node dist/baox/kernel/bin/baox.mjs tasks 2>&1)
+echo "$out" | grep -q '"migrated"' && bad "迁移不该发生第二次" || ok "迁移只发生一次"
 
 echo "=== 6. release.sh ==="
 # mac 上的 .git 只是指回服务器的一个指针文件，release.sh 的版本追溯在这里无从谈起。
@@ -68,10 +72,8 @@ if [ -n "$zipf" ]; then
   UNZ=$(mktemp -d); unzip -q "$zipf" -d "$UNZ"
   echo "  包内顶层： $(ls "$UNZ" | tr '\n' ' ')"
   HOME_B=$(mktemp -d)
-  BAOX_HOME="$HOME_B" node "$UNZ/baox-setup/kernel/bin/launch.mjs" install-runtime >/dev/null 2>&1 \
-    && ok "从解压出来的包能装起来" || bad "解压出来的包装不起来"
-  BAOX_HOME="$HOME_B" node "$UNZ/baox/kernel/bin/launch.mjs" tasks >/dev/null 2>&1 \
-    && ok "从解压出来的包能跑命令" || bad "解压出来的包跑不了命令"
+  BAOX_HOME="$HOME_B" node "$UNZ/baox/kernel/bin/baox.mjs" tasks >/dev/null 2>&1 \
+    && ok "解压出来的包直接就能跑命令" || bad "解压出来的包跑不了命令"
 fi
 
 echo "=== 7. 工作区不干净时 release.sh 该拒绝 ==="
