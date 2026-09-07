@@ -21,7 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { taskDir } from './workspace.mjs';
-import { submitAllocation } from './events.mjs';
+import { submitAllocation, moneyCents } from './events.mjs';
 
 /** 一轮至多问几题。契约里的硬上限。 */
 export const MAX_QUESTIONS = 4;
@@ -66,8 +66,14 @@ const parseId = (id) => {
   return Number.isInteger(index) && index >= 0 ? { materialId, index } : null;
 };
 
-const MONEY = /^\d{1,9}\.\d{2}$/;
 const yuan = (c) => (c / 100).toFixed(2);
+
+/**
+ * 一轮问出去的那几题的指纹。**一处定义，两处使用**：发问的时候钉进凭据，
+ * 收答案的时候拿它比对。两边各写一份的话，加一个字段就会出现「发得出、收不下」，
+ * 而在这一层，那种错的样子是上一轮的答案落到这一轮的段上。
+ */
+export const roundFingerprint = (questions) => (questions ?? []).map((q) => q.id);
 
 /** 一段行程念给用户听的样子。取不到的就不说，不用"未知"占位。 */
 const segmentLabel = (seg, index) => {
@@ -97,21 +103,20 @@ export function allocationRound(task, pending) {
     // 那就整张重问，而不是拿着一份已知不平的草稿接着往下走。
     if (!missing.length) {
       clearDraft(task, note.materialId);
-      return round(note, [...Array(note.segmentCount).keys()], {},
+      return questionRound(note, [...Array(note.segmentCount).keys()], {},
         draft?.rejection ?? { reasons: ['上一次这几段金额加起来和票面价税合计对不上'] });
     }
-    return round(note, missing, answered, draft?.rejection ?? null);
+    return questionRound(note, missing, answered, draft?.rejection ?? null);
   }
   return null;
 }
 
-function round(note, missing, answered, rejection) {
+function questionRound(note, missing, answered, rejection) {
   const asking = missing.slice(0, MAX_QUESTIONS);
   const segs = note.candidateSegments ?? [];
   const questions = asking.map((i) => {
     const seg = segs[i] ?? null;
-    const candidate = typeof seg?.amount === 'string' && MONEY.test(seg.amount.trim())
-      ? seg.amount.trim() : null;
+    const candidate = moneyCents(seg?.amount) === null ? null : String(seg.amount).trim();
     const options = [];
     if (candidate) {
       options.push({ label: candidate,
@@ -167,8 +172,10 @@ export function receiveAllocationAnswers(task, roundSpec, voucher, doc) {
   const answers = Array.isArray(doc?.answers) ? doc.answers : [];
 
   // 用户在任何一题上说"认不出"，整张票就到此为止 —— 这张发票拆不出来，
-  // 不是某一段拆不出来。
-  if (answers.some((a) => a?.giveUp === true)) {
+  // 不是某一段拆不出来。写在哪一层都算数：写成一条答案，或者整份文件顶上一个
+  // giveUp。只认一种写法的话，另一种会被判成"这几段没答"，而用户的表态
+  // 被**悄悄丢掉**。
+  if (doc?.giveUp === true || answers.some((a) => a?.giveUp === true)) {
     writeJson(giveUpFile(task, roundSpec.materialId), {
       materialId: roundSpec.materialId,
       contentHash: roundSpec.contentHash,
@@ -180,6 +187,9 @@ export function receiveAllocationAnswers(task, roundSpec, voucher, doc) {
 
   const taken = {};
   const reasons = [];
+  // 哪几题已经报过错。按题记，不按文字找 —— 在一串自由文字里搜题号来判断
+  // "这题说过没有"，是那种在改一句措辞时就会坏掉、且坏了看不出来的写法。
+  const faulted = new Set();
   for (const a of answers) {
     if (!asked.has(a?.questionId)) {
       // 问的不是这几题。忽略，并说出来 —— 悄悄丢掉一个答案，
@@ -187,15 +197,15 @@ export function receiveAllocationAnswers(task, roundSpec, voucher, doc) {
       reasons.push(`答案里的 ${JSON.stringify(a?.questionId ?? null)} 不是这一轮问的题`);
       continue;
     }
-    const amount = String(a.amount ?? '').trim();
-    if (!MONEY.test(amount)) {
-      reasons.push(`${a.questionId} 给的金额「${amount}」格式不对（要两位小数的正数）`);
+    if (moneyCents(a.amount) === null) {
+      reasons.push(`${a.questionId} 给的金额「${String(a.amount ?? '').trim()}」不合规矩（要两位小数、且大于 0）`);
+      faulted.add(a.questionId);
       continue;
     }
-    taken[String(asked.get(a.questionId))] = amount;
+    taken[String(asked.get(a.questionId))] = String(a.amount).trim();
   }
   for (const q of roundSpec.questions) {
-    if (taken[String(asked.get(q.id))] === undefined && !reasons.some((r) => r.includes(q.id))) {
+    if (taken[String(asked.get(q.id))] === undefined && !faulted.has(q.id)) {
       reasons.push(`${q.header}没有答案`);
     }
   }
@@ -250,7 +260,9 @@ export function givenUpOpenItems(task, pending) {
       kind: 'allocation_given_up', blocking: true,
       materialId: n.materialId, fileName: n.fileName,
       note: `这张合并交通发票要拆成 ${n.segmentCount} 段，你说过逐段金额认不出来。`
-        + '它不能带着往下走：请补一份列了逐段金额的行程单，或者把这张票从本次材料里挪出去。'
-        + '（想重来的话，把这张票的材料换一份，或者删掉任务工作区 allocations 下这张票的 giveup 记录）',
+        + '它不能带着往下走。两条出路都在材料这一侧：补一份列了逐段金额的行程单，'
+        + '或者把这张票从本次材料里挪出去 —— 两种做法都会改动材料，'
+        + '这条"认不出"跟着当场作废，我会重新问一遍。'
+        + '（只是想改主意重答的话，删掉任务工作区 allocations 下这张票的 giveup 记录即可）',
     }));
 }

@@ -14,7 +14,7 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-alloc-'));
 process.env.BAOX_HOME = home;
 
 const { parseMaterial } = await import('../src/parse.mjs');
-const { buildEvents } = await import('../src/events.mjs');
+const { buildEvents, ALLOCATION_KINDS } = await import('../src/events.mjs');
 const { allocationRound, receiveAllocationAnswers, givenUpOpenItems, loadDraft, MAX_QUESTIONS }
   = await import('../src/allocate.mjs');
 const { createTask } = await import('../src/workspace.mjs');
@@ -38,8 +38,7 @@ function skewed(rows = null) {
 }
 
 const task = () => createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')));
-const notesOf = (built) => built.notes
-  .filter((n) => n.kind === 'allocation_required' || n.kind === 'allocation_stale');
+const notesOf = (built) => built.notes.filter((n) => ALLOCATION_KINDS.has(n.kind));
 const voucherOf = (c) => c.results.find((r) => r.materialId === 'm-inv');
 
 test('三段就问三题：每题带着行程单那一行的候选，末项恒为「其他」', () => {
@@ -105,7 +104,7 @@ test('金额格式不合法的那一题单独退回，别的答案留在草稿�
     { questionId: 'm-inv#3', amount: '21.65' },
   ] });
   assert.equal(got.verdict, 'rejected');
-  assert.match(got.reasons.join(), /格式不对/);
+  assert.match(got.reasons.join(), /不合规矩/);
   const draft = loadDraft(t, 'm-inv', voucherOf(c).contentHash);
   assert.equal(draft.amounts['1'], '20.85', '答得好好的那两段没必要让用户再说一遍');
 });
@@ -174,6 +173,30 @@ test('发票换了字节，草稿当场作废 —— 半份答案不会落到另
     answers: [{ questionId: 'm-inv#1', amount: '26.69' }] });
   assert.ok(loadDraft(t, 'm-inv', 'hash-m-inv'));
   assert.equal(loadDraft(t, 'm-inv', 'hash-changed'), null);
+});
+
+test('「我认不出」写成整份文件顶上一个 giveUp 也算数', () => {
+  // 内核给模型的 answersFormat 把它写在 answers 里，但模型换一种写法交上来时，
+  // 用户的表态不能被判成"这几段没答"然后**悄悄丢掉**。
+  const t = task();
+  const c = skewed();
+  const r = allocationRound(t, notesOf(buildEvents(c, t)));
+  const got = receiveAllocationAnswers(t, r, voucherOf(c), { giveUp: true, answers: [] });
+  assert.equal(got.verdict, 'gave_up');
+  assert.equal(allocationRound(t, notesOf(buildEvents(c, t))), null);
+});
+
+test('0.00 也不是一个合法的段金额 —— 问和收用的是同一条规矩', () => {
+  const t = task();
+  const c = skewed();
+  const r = allocationRound(t, notesOf(buildEvents(c, t)));
+  const got = receiveAllocationAnswers(t, r, voucherOf(c), { answers: [
+    { questionId: 'm-inv#1', amount: '0.00' },
+    { questionId: 'm-inv#2', amount: '47.54' },
+    { questionId: 'm-inv#3', amount: '21.65' },
+  ] });
+  assert.equal(got.verdict, 'rejected', '收下一个 0 元的行程段，等于把一段行程悄悄抹掉');
+  assert.match(got.reasons.join(), /不合规矩/);
 });
 
 test.after(() => { fs.rmSync(home, { recursive: true, force: true }); });

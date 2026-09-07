@@ -18,7 +18,7 @@ import { openDisputes } from './dispute.mjs';
 import { findLiveTaskForSource, sourceKeyOf, taskDir, classificationRecorded,
   loadEventsLedger, loadCatalogVerification } from './workspace.mjs';
 import { crossTaskDuplicates, historyOpenItems } from './history.mjs';
-import { buildEvents, eventOpenItems } from './events.mjs';
+import { buildEvents, eventOpenItems, ALLOCATION_KINDS } from './events.mjs';
 import { allocationRound, givenUpOpenItems } from './allocate.mjs';
 import { loadSelection, applySelection, linesDigest, sameBasis } from './selection.mjs';
 import { loadWriteApproval, approvalCovers } from './erpwrite.mjs';
@@ -144,8 +144,7 @@ function observeErpHalf(task, classification, materialItems) {
 
   // 待分摊的那几张票。用户明说"认不出"的不再问，改成一条待办 ——
   // 一直问下去只会让他随口报一个凑得平的数。
-  const allocationNotes = built.notes
-    .filter((n) => n.kind === 'allocation_required' || n.kind === 'allocation_stale');
+  const allocationNotes = built.notes.filter((n) => ALLOCATION_KINDS.has(n.kind));
   const givenUp = givenUpOpenItems(task, allocationNotes);
   const gaveUpIds = new Set(givenUp.map((g) => g.materialId));
   const stillAsking = allocationNotes.filter((n) => !gaveUpIds.has(n.materialId));
@@ -172,7 +171,7 @@ function observeErpHalf(task, classification, materialItems) {
     openItems: [
       // 材料那一段的待办原样留着（不拦路的那几条也在里面），后半段的接在后面。
       ...materialItems,
-      ...eventOpenItems(built).filter((i) => !OWN_ALLOCATION_KINDS.has(i.kind)),
+      ...eventOpenItems(built).filter((i) => !ALLOCATION_KINDS.has(i.kind)),
       ...givenUp,
       ...applied.notes.filter((n) => !OWN.has(n.kind)),
     ],
@@ -189,9 +188,6 @@ function observeErpHalf(task, classification, materialItems) {
     writeApproved: approvalCovers(loadWriteApproval(task), preview),
   };
 }
-
-/** 分摊那两种各有自己的状态，不混进待办。 */
-const OWN_ALLOCATION_KINDS = new Set(['allocation_required', 'allocation_stale']);
 
 /**
  * 收下用户在终端上说的话时，要重算的那一份后半段观测。

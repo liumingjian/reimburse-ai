@@ -113,7 +113,26 @@ export function splitTax(segTotals, netTotal, taxTotal) {
   return { nets, taxes, residueCents: residue, residueOn };
 }
 
-const MONEY = /^\d{1,9}\.\d{2}$/;
+/**
+ * 一个金额写下来该长什么样：两位小数的正数。**一处定义** ——
+ * 分摊页、终端多选、行程单核对三处收的是同一种东西，各写一份的话，
+ * 迟早有一处比别处松（比如把 0.00 收进来），而松的那一处不会有人发现。
+ */
+export const MONEY = /^\d{1,9}\.\d{2}$/;
+
+/** 一串钱转成分；不合格（格式不对、不大于 0）就是 null。 */
+export function moneyCents(text) {
+  const s = String(text ?? '').trim();
+  if (!MONEY.test(s)) return null;
+  const c = Math.round(Number(s) * 100);
+  return c > 0 ? c : null;
+}
+
+/**
+ * 逐段分摊那两种开放项。它们各有自己的状态，不混进材料待办 ——
+ * 一处定义，三处使用（观测里挑出来问、观测里排除出待办、收答案时认凭据）。
+ */
+export const ALLOCATION_KINDS = new Set(['allocation_required', 'allocation_stale']);
 
 /**
  * 收下一次用户提交的逐段金额。校验是**结构性**的：段数对得上、金额格式合法、
@@ -127,10 +146,8 @@ export function submitAllocation(task, voucher, segmentTotals, expectedCount, { 
   }
   const cents = [];
   for (const [i, v] of (segmentTotals ?? []).entries()) {
-    const s = String(v).trim();
-    if (!MONEY.test(s)) { reasons.push(`第 ${i + 1} 段的金额格式不对（要求两位小数的正数）`); continue; }
-    const c = Math.round(Number(s) * 100);
-    if (c <= 0) { reasons.push(`第 ${i + 1} 段的金额必须大于 0`); continue; }
+    const c = moneyCents(v);
+    if (c === null) { reasons.push(`第 ${i + 1} 段的金额格式不对（要两位小数、且大于 0）`); continue; }
     cents.push(c);
   }
   const totalCents = voucher.fields?.totalAmount?.cents ?? null;
@@ -174,11 +191,11 @@ export function conservingSegments(segments, totalCents) {
   if (!segments || totalCents === null || totalCents === undefined) return null;
   const cents = [];
   for (const seg of segments) {
-    const text = String(seg?.amount ?? '').trim();
-    if (!MONEY.test(text)) return null;
-    cents.push(Math.round(Number(text) * 100));
+    const c = moneyCents(seg?.amount);
+    if (c === null) return null;
+    cents.push(c);
   }
-  if (!cents.length || cents.some((c) => c <= 0)) return null;
+  if (!cents.length) return null;
   return cents.reduce((a, b) => a + b, 0) === totalCents ? cents : null;
 }
 
@@ -406,6 +423,15 @@ export function eventOpenItems(built) {
         + '也可能说明对应的发票还没放进来 —— 请自己判断，系统不替你决定' });
   }
   for (const e of built.events) {
+    if (e.amounts.totalCents === null || e.amounts.totalCents === undefined) {
+      // 一条没有金额的明细不能往下走。它在写入前那张表上会显示成「—」，
+      // 而总数会**悄悄**当它是 0 —— 用户点头的那个合计里少了一笔，
+      // 这是最不该在不可撤销的那一格上发生的事。
+      items.push({ kind: 'event_amount_missing', blocking: true,
+        eventId: e.eventId, materialId: e.voucherMaterialId, fileName: e.voucherFileName,
+        note: '这次费用没有取到价税合计，不能形成一条能写进 ERP 的明细；'
+          + '请确认这张凭证上的金额读得出来' });
+    }
     if (!e.date) {
       items.push({ kind: 'event_date_missing', blocking: true,
         eventId: e.eventId, materialId: e.voucherMaterialId, fileName: e.voucherFileName,

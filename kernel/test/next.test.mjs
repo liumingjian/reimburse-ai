@@ -489,7 +489,8 @@ test('后半段每个状态也各有一步可做，话仍然全部来自内核',
     ['events_pending', 'run', withErp({ eventsRecorded: false })],
     ['allocation_required', 'ask_user', withErp({ allocationRound: askRound() })],
     ['allocation_stale', 'ask_user', withErp({ allocationRound: askRound({ stale: true }) })],
-    ['project_unassigned', 'done', withErp({ lines: [{ lineId: 'ev-01', totalAmount: '26.69', project: null }] })],
+    ['project_unassigned', 'tell_user',
+      withErp({ lines: [{ lineId: 'ev-01', totalAmount: '26.69', project: null }] })],
     ['catalog_unverified', 'run', withErp({ catalogFresh: false })],
     ['ready_for_erp_write', 'confirm_table', withErp()],
     ['handed_off_recover', 'handoff', withErp({
@@ -522,7 +523,9 @@ test('终端多选的形状是硬的：至多四题，每题二到四个选项�
   }
   assert.equal(shaped.step.outsourceable, false, '终端多选在子 Agent 里做不了：那里没有用户');
   assert.ok(shaped.step.answersPath, '答案写到哪里由内核定，模型不选地方');
-  assert.ok(shaped.step.answersFormat.giveUp, '「我认不出」要有一条明确的回传形状');
+  assert.ok(shaped.step.answersFormat.answers.some((a) => a.giveUp === true),
+    '「我认不出」要有一条明确的回传形状，而且和别的答案写在同一处 —— '
+    + '另起一个顶层键，模型照着写就会被判成"这几段没答"');
   assert.match(shaped.speak, /69\.19/, '加起来该是多少，得摆在眼前');
   assert.match(shaped.speak, /不会平均|不会按比例/, '内核不替用户分摊这句话要说出口');
 });
@@ -550,7 +553,8 @@ test('项目未指定：如实报出来，并说清楚问法还没定 —— 不
     lines: [{ lineId: 'ev-01', totalAmount: '26.69', project: null },
       { lineId: 'ev-02', totalAmount: '20.85', project: null }],
   }));
-  assert.equal(shaped.step.kind, 'done', '这一版停在这里，而且明说了为什么');
+  assert.equal(shaped.step.kind, 'tell_user',
+    '不是 done —— 这一趟并没有走完，它停在这里等一个人');
   assert.match(shaped.speak, /项目号/);
   assert.equal(shaped.progress.label, '项目归属');
 });

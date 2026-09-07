@@ -126,7 +126,7 @@ test('项目未指定：这一版如实停在这里，并说清楚为什么', as
   const dir = materials([AA_INV, AA_ITI]);
   const { r } = await walk(dir);
   assert.equal(r.state, 'project_unassigned');
-  assert.equal(r.step.kind, 'done');
+  assert.equal(r.step.kind, 'tell_user', '这一趟没走完，只是停在这里等一个人');
   assert.equal(r.blockedBy.length, 1, '一条都还没有项目号时，报的是整批');
   assert.match(r.speak, /项目号/);
   assert.equal(r.progress.label, '项目归属');
@@ -249,6 +249,83 @@ test('点头只对他看过的那一份有效：内容一变，那次点头当�
   assert.match(again.speak, /改成了别的事由/);
 });
 
+// fengyun-1.png 的真实票面。它是一张要看图才读得出的客运发票，
+// 用它把"读数确认"和"划费用事件"这两段接起来。
+const IMAGE = '交通/fengyun-1.png';
+const FENGYUN = {
+  docType: 'invoice',
+  fields: {
+    invoiceNumber: '26427000000640558021',
+    issueDate: '2026-09-04',
+    netAmount: '18.25', taxAmount: '0.55', totalAmount: '18.80',
+  },
+  unreadable: [],
+};
+
+test('读数确认之后接着往下走：确认那一下之后，内核自己就去划费用事件', async () => {
+  solo();
+  const dir = materials([AA_INV, AA_ITI, IMAGE]);
+
+  // 材料那一段：盘点、分类之后停在"该看图了"。
+  let r = await ask(dir);
+  while (r.step.kind === 'run') { runStep(r); r = await ask(dir, { after: r.stepToken, hasResult: true }); }
+  assert.equal(r.state, 'image_awaiting_reading', `实际停在 ${r.state}：${r.speak}`);
+
+  // 模型逐张看图、写读数、原样执行 step.argv 交上来。
+  const doc = { version: 1, readings: r.step.images.map((img) => ({
+    materialId: img.materialId, contentHash: img.contentHash,
+    sighted: { shape: 'landscape' }, ...FENGYUN })) };
+  fs.mkdirSync(path.dirname(r.step.readingsPath), { recursive: true });
+  fs.writeFileSync(r.step.readingsPath, JSON.stringify(doc));
+  assert.equal(JSON.parse(runStep(r)).rejected, 0);
+
+  // 轮到用户过目那张定宽表格 —— 这一格就是本票说的"读数确认"。
+  r = await ask(dir, { after: r.stepToken, hasResult: true });
+  assert.equal(r.state, 'reading_awaiting_confirmation', `实际停在 ${r.state}：${r.speak}`);
+  const applied = await applyTerminalVerdict({ sourceDir: dir, sourceKey: sourceKeyOf(dir),
+    after: r.stepToken });
+  assert.equal(applied.verdict, 'confirmed');
+
+  // 点头之后**不需要模型再做任何判断**：内核自己就跨进了事件这一层，
+  // 并且如实报出它在那里发现的东西 —— 这张图上的费用没有费用发生日期
+  // （开票日期不是费用发生日期，不能拿来顶替）。
+  //
+  // 待办排在账本前面是照表：有拦路的东西时，先把它说清楚，
+  // 而不是先去记一版注定要重记的账。
+  const after = await ask(dir);
+  assert.equal(after.state, 'intake_open_items', `实际停在 ${after.state}：${after.speak}`);
+  const missing = after.blockedBy.find((b) => b.kind === 'event_date_missing');
+  assert.ok(missing, '事件层报上来的待办，和材料层走同一个出口');
+  assert.equal(missing.resolvableBy, 'user');
+  assert.match(after.speak, /fengyun-1\.png/, '是哪一份材料，得指名道姓');
+
+  // 用户把那张票拿出去了。剩下的材料一路走到项目未指定，全程只有 baox next。
+  fs.rmSync(path.join(dir, 'fengyun-1.png'));
+  const { r: end, seen } = await walk(dir);
+  assert.ok(seen.includes('events_pending'),
+    `材料清干净之后该自己去划事件，实际走了 ${seen.join(' -> ')}`);
+  assert.equal(end.state, 'project_unassigned', `实际停在 ${end.state}：${end.speak}`);
+});
+
+test('分摊那一轮：题换过一批之后，上一轮的答案不算数', async () => {
+  solo();
+  const dir = materials([AA_INV, AA_ITI]);
+  const { r } = await walk(dir);
+  assert.equal(r.state, 'project_unassigned', '这批材料分毫不差，压根不会问分摊');
+
+  // 拿一份分摊答案回来，而内核此刻挂着的根本不是分摊那一步 ——
+  // 什么都不该落盘。（问出去的题变过之后，同一道闸把旧答案挡在外面。）
+  const answers = path.join(os.tmpdir(), `answers-${Date.now()}.json`);
+  fs.writeFileSync(answers, JSON.stringify({ answers: [{ questionId: 'm-inv#1', amount: '26.69' }] }));
+  const got = await applyTerminalVerdict({ sourceDir: dir, sourceKey: sourceKeyOf(dir),
+    after: r.stepToken, resultFile: answers });
+  assert.equal(got, null, '凭据对得上、步骤对不上，同样是什么都不做');
+  assert.equal((await ask(dir)).state, 'project_unassigned');
+});
+
+// 放在最后：这个用例会给任务打上 erpWriteState，而动过 ERP 的任务**再也作废不了**
+// （它占用的发票只能靠只读对账解除）。放在中间的话，后面每个用到同一批发票的用例
+// 都会被跨任务查重拦下 —— 那是内核做对了，不是用例的意图。
 test('动过 ERP 的任务：不再问要不要写，直接交接给 baox-recover', async () => {
   solo();
   const dir = materials([AA_INV, AA_ITI]);

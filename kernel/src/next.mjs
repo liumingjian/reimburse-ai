@@ -17,6 +17,7 @@ import { readingInboxIn, correctionInboxIn, rereadInboxIn, answerInboxIn } from 
 import { CONVERGENCE, favorsUser, disputeStepKey, DISPUTE_PHASES } from './dispute.mjs';
 import { SHAPES, SHAPE_LABELS } from './imageshape.mjs';
 import { writePreviewDigest } from './erpwrite.mjs';
+import { roundFingerprint } from './allocate.mjs';
 import { renderTable } from './table.mjs';
 
 /** 内核自己的入口。argv 里给绝对路径：模型原样执行，不需要知道 baox 装在哪。 */
@@ -138,7 +139,7 @@ const askUser = ({ questions, answersPath, answersFormat, speak, context, progre
   speak, context, progress, exit: 0,
   // 凭据钉在**问出去的这几题**上。同一个状态里换了一批题（上一轮答完了、
   // 或者草稿作废重来），旧凭据当场失效 —— 否则上一轮的答案会落到这一轮的段上。
-  stepMeta: { questions: questions.map((q) => q.id) },
+  stepMeta: { questions: roundFingerprint(questions) },
 });
 
 /** 状态变了，这件事该换一个 skill 接手。不回传 —— 交接完这条链子就断在这里。 */
@@ -304,9 +305,17 @@ const AMOUNT_SOURCE_LABELS = {
   itinerary_conserved: '行程单，与票面分毫不差',
 };
 
-/** 一批明细的价税合计。用户点头之前，总数要摆在他眼前。 */
-const sumYuan = (lines) =>
-  (lines.reduce((a, l) => a + Math.round(Number(l.totalAmount ?? 0) * 100), 0) / 100).toFixed(2);
+/**
+ * 一批明细的价税合计。用户点头之前，总数要摆在他眼前。
+ *
+ * 取不到金额的明细在事件层就被拦成待办了（`event_amount_missing`），所以走到这里
+ * 每一行都该有金额。真要是漏了一行，这里**宁可说不出总数**也不把它当 0 ——
+ * 一个悄悄少了一笔的合计，正是用户会照着点头的那种数字。
+ */
+function sumYuan(lines) {
+  if (lines.some((l) => l.totalAmount === null || l.totalAmount === undefined)) return null;
+  return (lines.reduce((a, l) => a + Math.round(Number(l.totalAmount) * 100), 0) / 100).toFixed(2);
+}
 
 /** 三种来源念给用户听的样子。契约里的 `vision` / `user` / `kernel`。 */
 const SOURCE_LABELS = { vision: '我看图读的', user: '你给的', kernel: '内核解析的' };
@@ -444,10 +453,13 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       });
 
     case 'intake_open_items':
+      // 这里报的不只是盘点那一层的待办：分流、事件划分、费用类别推导报上来的
+      // 拦路项也走这个出口 —— 它们的收场都在用户那一侧，措辞因此不能写死成
+      // "我重新盘一遍材料"，那对一条"这张合并发票拆不出来"是答非所问。
       return tellUser({
         speak: `${label} 这批材料里有几件事得先说清楚，处理完我们再往下：\n`
           + `${itemLines(blockedBy.filter((b) => b.blocking))}\n`
-          + '处理好了跟我说一声，我重新盘一遍。',
+          + '每条后面都写了谁能解决它。处理好了跟我说一声，我从头重新核一遍。',
         context: '这些是盘点和解析报上来的开放项。我不会替你把它们当作不存在 ——'
           + '带着读不出、认不出的材料往下走，等于把问题推到 ERP 那一头去暴露。'
           + (blockedBy.some((b) => !b.blocking)
@@ -686,10 +698,13 @@ export function stepFor(state, observation = {}, blockedBy = []) {
         questions: a.questions,
         answersPath: answerInboxIn(o.task.workspace),
         answersFormat: {
-          answers: [{ questionId: '<step.questions[].id>', amount: '用户选定的那一段金额，两位小数' }],
-          giveUp: { questionId: '<step.questions[].id>', giveUp: true },
-          note: '问了几题就答几条，一题一条。金额原样抄用户选的那个数 —— 不要自己算、'
-            + '不要为了凑总额改任何一段。用户选「这张票我认不出」就交 giveUp: true。',
+          answers: [
+            { questionId: '<step.questions[].id>', amount: '用户选定的那一段金额，两位小数' },
+            { questionId: '<step.questions[].id>', giveUp: true },
+          ],
+          note: '问了几题就答几条，一题一条，都写在 answers 里。金额原样抄用户选的那个数'
+            + ' —— 不要自己算、不要为了凑总额改任何一段。用户选「这张票我认不出」时，'
+            + '那一条写成 { questionId, giveUp: true }，整张票就退回待办。',
         },
         speak: `${why}\n各段的价税合计要你来定：加起来必须正好是 ${a.totalAmount} 元，`
           + '我不会平均、不会按比例、也不会把差额随手加到某一段上 —— '
@@ -709,7 +724,9 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       // 这一版只做到如实报出来 —— 报出一个还没有的交互，比停在这里更糟。
       const lines = o.lines ?? [];
       const missing = lines.filter((l) => !l.project);
-      return done({
+      // `tell_user` 而不是 `done`：这一批材料并没有走完，它停在这里等一个人。
+      // 用 `done` 收工，等于对用户说"这就完了"，而 ERP 里什么都还没有。
+      return tellUser({
         speak: `${label} 已经切成 ${lines.length} 条费用明细，金额和日期都对上了。`
           + `再往下还差一样东西：${missing.length === lines.length ? '每一条' : `其中 ${missing.length} 条`}`
           + '都还没有项目号。项目归属材料上没有，我也不会替你猜 —— 怎么问你选项目，'
@@ -770,7 +787,8 @@ export function stepFor(state, observation = {}, blockedBy = []) {
           outsourceable: false,
         },
         speak: `下面是我准备写进 ERP 的全部内容，一共 ${lines.length} 条明细，`
-          + `合计 ${sumYuan(lines)} 元${o.purpose ? `，事由「${o.purpose}」` : ''}`
+          + `合计 ${sumYuan(lines) ?? '（有明细没取到金额，这个总数我算不出来）'} 元`
+          + `${o.purpose ? `，事由「${o.purpose}」` : ''}`
           + `${o.homeCity ? `，常驻城市 ${o.homeCity}` : ''}：\n`
           + '写进去之后我撤不回来 —— 要改就得你自己去 ERP 里改或者作废。'
           + '请你逐行看一遍，确认无误再告诉我可以写。有一处不对就直接说，我不会写。',

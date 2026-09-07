@@ -55,6 +55,7 @@ const PLAIN = {
   evidence_ambiguous: 'user',
   reference_unlinked: 'user',
   event_date_missing: 'user',
+  event_amount_missing: 'user',
   no_expense_event: 'user',
   allocation_amounts_incomplete: 'user',
   // 用户明说过这张合并发票的逐段金额他认不出。这是一个正当的结局，
@@ -298,8 +299,12 @@ const RULES = [
     // 有事件没有项目号。**按事件用终端多选问**是表里写的下一步，但那个问法
     // 还在原型上定（几十张发票配三五个项目，怎么问才不折磨人），所以这一版
     // 只做到「如实报出来，把状态摆在那里」—— 见本状态在 next.mjs 里的那一步。
+    //
+    // 因此 actor 是 `user` 而不是表里写的 `model`：表里那个 `model` 说的是
+    // "模型用终端多选去问"，而这一版根本没有那一问。报 `model` 等于说
+    // "模型该动手了"，却又不给它任何一件能做的事。问法落成的那一票把它改回 `model`。
     state: 'project_unassigned',
-    actor: 'model',
+    actor: 'user',
     when: (o) => erpSeen(o) && (!o.selectionApplied || (o.lines ?? []).some((l) => !l.project)),
     blocker: (o) => (o.selectionApplied
       ? (o.lines ?? []).filter((l) => !l.project).map((l) => ({

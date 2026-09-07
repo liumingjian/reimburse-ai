@@ -28,7 +28,8 @@ import { findLiveTaskForSource } from './workspace.mjs';
 import { pendingConfirmations, confirmReadings, disputeReading } from './vision.mjs';
 import { settleDispute, RULING_STEP_KEYS } from './dispute.mjs';
 import { erpSnapshot } from './observe.mjs';
-import { receiveAllocationAnswers } from './allocate.mjs';
+import { receiveAllocationAnswers, roundFingerprint } from './allocate.mjs';
+import { ALLOCATION_KINDS } from './events.mjs';
 import { recordWriteApproval, writePreviewDigest } from './erpwrite.mjs';
 
 /** 内核此刻挂着的那一步，且回传的凭据正是它。对不上就是 null。 */
@@ -54,62 +55,40 @@ const awaitingConfirmation = (sourceKey, after) =>
 const awaitingRuling = (sourceKey, after) =>
   RULING_STEP_KEYS.has(outstandingStep(sourceKey, after)?.state);
 
-/** 终端多选那两个状态（问的是同一件事：这张合并发票逐段多少钱）。 */
-const ALLOCATION_STEPS = new Set(['allocation_required', 'allocation_stale']);
+// 终端多选那两个状态（问的是同一件事：这张合并发票逐段多少钱）。状态名和
+// 事件层那两种开放项同名，取的就是 events.mjs 里那一份，不在这里再抄一遍。
 
 /**
- * 收下用户的表态。返回收下了什么（`{ verdict, materialIds }`），什么都没收下就是 `null`。
+ * 收下用户的表态。什么都没收下就是 `null`。
  *
- * `correctionFile` 在的时候是**指错**：用户给的值不直接落库，这几份读数整份作废，
- * 带着分歧回去重看那张图。不在的时候是**认可**：这张表上的读数全部确认。
+ * 收下了什么，四种步骤各答各的（`verdict` 认得出是哪一种）：
+ *  - 读数那张表：`confirmed`（认可，带 materialIds）/ `corrected`（指错，开一场争议）
+ *  - 争议里的拍板：`ruled`
+ *  - 终端多选：`drafted` / `allocated` / `rejected` / `gave_up`
+ *  - 写入前那次点头：`write_approved`（带条数和合计）
+ *
+ * 形状不统一是故意的：这四件事收下的东西本来就不是一种，硬拉成一个形状，
+ * 读它的人就得再去猜哪几个字段这次有效。
  */
 export async function applyTerminalVerdict({ sourceDir, sourceKey, after, correctionFile = null,
   resultFile = null }) {
   if (!sourceDir) return null;
   const outstanding = outstandingStep(sourceKey, after);
   const ruling = awaitingRuling(sourceKey, after);
-  const allocating = ALLOCATION_STEPS.has(outstanding?.state);
+  const allocating = ALLOCATION_KINDS.has(outstanding?.state);
   const approving = outstanding?.state === 'ready_for_erp_write';
   if (!ruling && !allocating && !approving && !awaitingConfirmation(sourceKey, after)) return null;
 
-  const inventory = await takeInventory(sourceDir);
   // 认凭据用的是哪个 sourceKey，找任务就用哪一个 —— 从 sourceDir 再算一遍，
   // 就多了一处两边可能对不上的地方，而对不上时的样子是「点了头却没生效」。
   const task = findLiveTaskForSource(sourceKey);
   if (!task) return null;
 
-  // 终端多选的答案：一轮逐段金额。收下的门槛和分摊页完全一样 ——
-  // 各段之和与票面价税合计按分精确相等，差一分整轮退回重问。
-  if (allocating) {
-    if (!resultFile) return null;
-    const snap = await erpSnapshot(sourceDir, task);
-    const round = snap.allocationRound;
-    // 问出去的那几题还是不是现在这几题。对不上就当没回传 —— 上一轮的答案
-    // 落到这一轮的段上，是这里唯一一种会算错钱的方式。
-    const asked = outstanding.meta?.questions ?? null;
-    if (!round || !asked
-      || JSON.stringify(asked) !== JSON.stringify(round.questions.map((q) => q.id))) return null;
-    const voucher = snap.classification.results.find((r) => r.materialId === round.materialId);
-    if (!voucher) return null;
-    const r = receiveAllocationAnswers(task, round, voucher, JSON.parse(fs.readFileSync(resultFile, 'utf8')));
-    return r ? { verdict: r.verdict, materialId: r.materialId, fileName: round.fileName,
-      reasons: r.reasons ?? [], amounts: r.amounts ?? null } : null;
-  }
+  // 后半段那两步各自重算自己要的那份观测，不用这里的盘点。
+  if (allocating) return receiveAllocation({ sourceDir, task, outstanding, resultFile });
+  if (approving) return receiveApproval({ sourceDir, task, outstanding, correctionFile });
 
-  // 写入前的那一次点头。这是唯一不可撤销的一步，所以它比别处多一道闸：
-  // 用户点头的那份内容，必须**逐字**还是现在这份。指纹对不上就当没点过 ——
-  // 那不是苛刻，那是"他点的头只对他看过的那一份有效"这句话的实现。
-  if (approving) {
-    // 指错不在这一步收：这张表上不改值。有一处不对，回去改那一层。
-    if (correctionFile) return null;
-    const snap = await erpSnapshot(sourceDir, task);
-    if (!snap.writePreview || outstanding.meta?.previewDigest !== writePreviewDigest(snap.writePreview)) {
-      return null;
-    }
-    const record = recordWriteApproval(task, snap.writePreview);
-    return { verdict: 'write_approved', lineCount: record.lineCount,
-      totalAmount: (record.totalCents / 100).toFixed(2), digest: record.digest };
-  }
+  const inventory = await takeInventory(sourceDir);
 
   // 争议里的拍板。用户给的终值仍然**不是直接落库** —— 它要过格式闸，
   // 还要过守恒式：式子不平就只记下缺口，一个字段都不写，更不反算另外两个值。
@@ -143,4 +122,43 @@ export async function applyTerminalVerdict({ sourceDir, sourceKey, after, correc
   }
 
   return { verdict: 'confirmed', ...confirmReadings(task, shown.map((p) => p.materialId)) };
+}
+
+/**
+ * 终端多选的答案：一轮逐段金额。收下的门槛和分摊页完全一样 ——
+ * 各段之和与票面价税合计按分精确相等，差一分整轮退回重问。
+ *
+ * 除了凭据，这里还要核一遍**问出去的那几题**：状态没变、题却换过一批
+ * （上一轮答完了，或者草稿作废重来），旧凭据当场失效。不核的话，
+ * 上一轮的答案会落到这一轮的段上 —— 这是这一层唯一一种会算错钱的方式。
+ */
+async function receiveAllocation({ sourceDir, task, outstanding, resultFile }) {
+  if (!resultFile) return null;
+  const snap = await erpSnapshot(sourceDir, task);
+  const round = snap.allocationRound;
+  const asked = outstanding.meta?.questions ?? null;
+  if (!round || !asked
+    || JSON.stringify(asked) !== JSON.stringify(roundFingerprint(round.questions))) return null;
+  const voucher = snap.classification.results.find((r) => r.materialId === round.materialId);
+  if (!voucher) return null;
+  const r = receiveAllocationAnswers(task, round, voucher, JSON.parse(fs.readFileSync(resultFile, 'utf8')));
+  return r ? { verdict: r.verdict, materialId: r.materialId, fileName: round.fileName,
+    reasons: r.reasons ?? [], amounts: r.amounts ?? null } : null;
+}
+
+/**
+ * 写入前的那一次点头。这是唯一不可撤销的一步，所以它比别处多一道闸：
+ * 用户点头的那份内容，必须**逐字**还是现在这份。指纹对不上就当没点过 ——
+ * 那不是苛刻，那是"他点的头只对他看过的那一份有效"这句话的实现。
+ */
+async function receiveApproval({ sourceDir, task, outstanding, correctionFile }) {
+  // 指错不在这一步收：这张表上不改值。有一处不对，回去改那一层。
+  if (correctionFile) return null;
+  const snap = await erpSnapshot(sourceDir, task);
+  if (!snap.writePreview || outstanding.meta?.previewDigest !== writePreviewDigest(snap.writePreview)) {
+    return null;
+  }
+  const record = recordWriteApproval(task, snap.writePreview);
+  return { verdict: 'write_approved', lineCount: record.lineCount,
+    totalAmount: (record.totalCents / 100).toFixed(2), digest: record.digest };
 }
