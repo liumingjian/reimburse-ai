@@ -26,6 +26,7 @@ import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerFie
 import { readReconciliation, classifyReconciliation, attemptRecord } from '../src/erpreconcile.mjs';
 import { versionAt, compareVersions } from '../src/version.mjs';
 import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
+import { readBook, bookPath } from '../src/projects.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -895,6 +896,20 @@ try {
       out({ command: 'tasks', taskCount: tasks.length, tasks });
     }
 
+    case 'projects': {
+      // 「我现在有哪些项目」的唯一答案来源。纯读本机簿子：不开浏览器、不碰 ERP、
+      // 不改任何东西——模型问一句就得联一次网的话，它就不会问了，转而去凭印象编。
+      const book = readBook();
+      out({
+        command: 'projects', projectCount: book.projects.length, projects: book.projects,
+        bookPath: bookPath(),
+        note: book.projects.length
+          ? '这是本机项目簿的原样内容，没有为这次查询做过 ERP 核对；'
+            + 'lastVerdict 是最近一次复检的结果，不是此刻的 ERP 状态'
+          : '项目簿是空的（没有这个文件、或者它读不出来）。项目要在维护页上逐条录入才进簿',
+      });
+    }
+
     case 'abandon-task': {
       // 把一个不打算再报的任务作废，好让它占着的发票能在别的任务里用。
       // 这是状态变更，不是删除：任务工作区一份不动。
@@ -922,7 +937,7 @@ try {
     default:
       out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
         'ocr-request', 'ocr-submit', 'confirm-readings', 'history', 'events', 'allocate', 'select-task', 'lines',
-        'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill', 'select'] }, ERR);
+        'tasks', 'abandon-task', 'projects', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill', 'select'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);
