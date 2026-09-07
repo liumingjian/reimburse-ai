@@ -43,7 +43,16 @@ never clears an open item, ticks a reading, allocates a segment, or picks a proj
 steps 5, 8 and 9.
 
 **`baox` below stands for the kernel entry point**, which is not on `PATH`:
-`node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs"` (Windows: `%APPDATA%\baox\`).
+`node "${CLAUDE_SKILL_DIR}/kernel/bin/launch.mjs"`.
+
+That launcher hands the command to the kernel installed in the baox data directory, after checking the two
+are the same version. Two of its own exit-2 blocks can reach you, and neither is fixed here — hand the user
+to `baox-setup`:
+
+| `status` | Means |
+|---|---|
+| `runtime_not_installed` | The environment was never set up |
+| `version_drift` | This Skill and the installed kernel are different versions; `install-runtime` again |
 If it is not installed, send the user to `baox-setup` first.
 
 Exit codes: `0` continue / `1` **the command did not complete** / `2` **an open item or a hard block is

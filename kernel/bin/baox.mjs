@@ -30,6 +30,14 @@ const OK = 0, ERR = 1, BLOCKED = 2;
 
 const out = (obj, code = OK) => { process.stdout.write(JSON.stringify(obj, null, 2) + '\n'); process.exit(code); };
 
+// 这份内核自己的根目录和版本号。install-runtime 拷的是它，doctor 报的是它 ——
+// 版本号要出现在每一次体检里，否则试用者报回来的问题钉不到具体哪一版。
+const SELF = path.dirname(path.dirname(url.fileURLToPath(import.meta.url)));
+const versionAt = (root) => {
+  try { return fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim() || null; } catch { return null; }
+};
+const VERSION = versionAt(SELF);
+
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`);
   return i > -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : fallback;
@@ -111,22 +119,23 @@ try {
         cdp: { value: chrome.CDP_PORT, ok: !!(await chrome.version()), hint: '专用 Chrome 未在运行；跑 baox chrome-up' },
       };
       ensureDir(paths.root);
-      out({ command: 'doctor', platform: process.platform, checks,
+      // runtime 单独报，不进 checks：checks 里的每一项都决定 ready，而第一次体检时
+      // 内核本来就还没装，让它拉低 ready 会把正常的首次流程说成环境不合格。
+      const installed = versionAt(path.join(paths.root, 'runtime'));
+      out({ command: 'doctor', version: VERSION, platform: process.platform, checks,
+        runtime: { installed, matchesSkill: installed !== null && installed === VERSION },
         ready: checks.node.ok && checks.chrome.ok }, checks.node.ok && checks.chrome.ok ? OK : ERR);
     }
 
     case 'install-runtime': {
       // 内核零依赖，所以"安装"就是把这份源码整份拷进 baox 数据目录。
       // 三个 Skill 都调用数据目录里的这一份，避免各自夹带一份导致版本漂移。
-      const self = path.dirname(path.dirname(url.fileURLToPath(import.meta.url)));
       const dest = path.join(paths.root, 'runtime');
-      const version = fs.readFileSync(path.join(self, 'VERSION'), 'utf8').trim();
-      const installed = fs.existsSync(path.join(dest, 'VERSION'))
-        ? fs.readFileSync(path.join(dest, 'VERSION'), 'utf8').trim() : null;
+      const previous = versionAt(dest);
       ensureDir(paths.root);
       fs.rmSync(dest, { recursive: true, force: true });
-      fs.cpSync(self, dest, { recursive: true });
-      out({ command: 'install-runtime', from: self, to: dest, version, replaced: installed,
+      fs.cpSync(SELF, dest, { recursive: true });
+      out({ command: 'install-runtime', from: SELF, to: dest, version: VERSION, replaced: previous,
         entry: path.join(dest, 'bin', 'baox.mjs') });
     }
 
