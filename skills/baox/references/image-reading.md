@@ -4,7 +4,7 @@ Reached from `baox` step 5, when `classify` reports `image_awaiting_reading`, `r
 `reading_awaiting_confirmation`.
 
 > `baox` here is the kernel entry point, as in `SKILL.md`:
-> `node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs"`.
+> `node "${CLAUDE_SKILL_DIR}/kernel/bin/baox.mjs"`.
 
 
 Images (PNG/JPG) carry no extractable text. The kernel does no OCR — **you read them**. This is the one

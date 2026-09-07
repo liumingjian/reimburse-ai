@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
-import { paths, ensureDir } from '../src/paths.mjs';
+import { paths, ensureDir, migrateOnStartup } from '../src/paths.mjs';
 import * as chrome from '../src/chrome.mjs';
 import { probeIdentity, ERP_ORIGIN } from '../src/probe.mjs';
 import { serveSelection, serveConfirmation, serveAllocation, serveTaskSelection,
@@ -24,26 +24,28 @@ import { authorizedPage, verifyExpenseItems, verifyProject, PROJECT_FORM } from 
 import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerField,
   writeHeader, writeCell, selectOption, cellTarget, cellMatches, leaveEdit } from '../src/erpform.mjs';
 import { readReconciliation, classifyReconciliation, attemptRecord } from '../src/erpreconcile.mjs';
-import { versionAt, compareVersions } from '../src/version.mjs';
 import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
 const OK = 0, ERR = 1, BLOCKED = 2;
 
-const out = (obj, code = OK) => { process.stdout.write(JSON.stringify(obj, null, 2) + '\n'); process.exit(code); };
+// 数据目录搬家（0.9.x 的 ~/Library/Application Support/baox 之类 -> ~/.baox）在任何命令
+// 之前做掉，而且只做一次。搬完要在这条命令的输出里说一句迁到哪了 —— 用户的报销记录换了
+// 地方而没人告诉他，比不搬还糟。
+const migrated = migrateOnStartup();
 
-// 这份内核自己的根目录和版本号。install-runtime 拷的是它，doctor 报的是它 ——
+const out = (obj, code = OK) => {
+  process.stdout.write(JSON.stringify(migrated ? { ...obj, migrated } : obj, null, 2) + '\n');
+  process.exit(code);
+};
+
+// 这份内核自己的根目录和版本号。内核就地运行，所以这就是唯一的那一份；
 // 版本号要出现在每一次体检里，否则试用者报回来的问题钉不到具体哪一版。
 const SELF = path.dirname(path.dirname(url.fileURLToPath(import.meta.url)));
-const VERSION = versionAt(SELF);
-
-// 同一个目录的两种写法要认得出来。macOS 上 BAOX_HOME 可能是 /var/... 而
-// import.meta.url 给的是 realpath /private/var/...，光比 path.resolve 会当成两个目录。
-const sameDir = (a, b) => {
-  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
-  return real(a) === real(b);
-};
+const VERSION = (() => {
+  try { return fs.readFileSync(path.join(SELF, 'VERSION'), 'utf8').trim() || null; } catch { return null; }
+})();
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`);
@@ -126,49 +128,8 @@ try {
         cdp: { value: chrome.CDP_PORT, ok: !!(await chrome.version()), hint: '专用 Chrome 未在运行；跑 baox chrome-up' },
       };
       ensureDir(paths.root);
-      // runtime 单独报，不进 checks：checks 里的每一项都决定 ready，而第一次体检时
-      // 内核本来就还没装，让它拉低 ready 会把正常的首次流程说成环境不合格。
-      const installed = versionAt(path.join(paths.root, 'runtime'));
       out({ command: 'doctor', version: VERSION, platform: process.platform, checks,
-        runtime: { installed, matchesSkill: installed !== null && installed === VERSION },
         ready: checks.node.ok && checks.chrome.ok }, checks.node.ok && checks.chrome.ok ? OK : ERR);
-    }
-
-    case 'install-runtime': {
-      // 内核零依赖，所以"安装"就是把这份源码整份拷进 baox 数据目录。
-      // 三个 Skill 都调用数据目录里的这一份，避免各自夹带一份导致版本漂移。
-      const dest = path.join(paths.root, 'runtime');
-      const previous = versionAt(dest);
-
-      // 降级要显式点头。真机上栽过一次：个人目录里残留的旧 Skill 静默遮蔽了项目目录里的
-      // 新 Skill（Personal > Project，被遮蔽的一侧无从察觉），它的 install-runtime 把旧内核
-      // 写回数据目录，旧 Skill 配旧内核完全自洽，version_drift 因此永远不会触发 —— 用户
-      // 看到的只是一个怎么都登不进去的探测结果。
-      // 不做成一刀切拒绝：install-runtime 是 version_drift 状态唯一的出路（见 launch.mjs），
-      // 拦死它就只剩手工删数据目录，而那个目录里还装着 chrome-profile/ 和 tasks/。
-      // 所以留一个必须手打的 flag：旧 Skill 不会带它，人可以带它。
-      if (compareVersions(previous, VERSION) > 0 && !has('allow-downgrade')) {
-        out({ command: 'install-runtime', status: 'downgrade_refused',
-          skillVersion: VERSION, installedVersion: previous, runtime: dest,
-          hint: `数据目录里装着的内核是 ${previous}，比这个 Skill 自带的 ${VERSION} 还新，`
-            + '这次安装会把它降回去。多半是同一台机器上装了两套 baox Skill（个人目录 '
-            + '~/.claude/skills/ 会静默遮蔽项目目录 .claude/skills/），跑的不是你以为的那一份。'
-            + '先用 /skill-doctor 看清三个 Skill 实际从哪里加载、把不要的那一套删掉；'
-            + '确实要降级再重跑 baox install-runtime --allow-downgrade' }, BLOCKED);
-      }
-
-      ensureDir(paths.root);
-      // 版本一致时 launch.mjs 转交的就是已安装的那一份，SELF 和 dest 是同一个目录 ——
-      // 照着往下走会先把自己删掉再从已经不存在的地方拷回来。这条路径是用户重跑
-      // 「重装一下内核」时的正常入口，不能让它炸。
-      if (!sameDir(SELF, dest)) {
-        fs.rmSync(dest, { recursive: true, force: true });
-        fs.cpSync(SELF, dest, { recursive: true });
-      }
-      out({ command: 'install-runtime', from: SELF, to: dest, version: VERSION, replaced: previous,
-        downgraded: compareVersions(previous, VERSION) > 0 || undefined,
-        alreadyInstalled: sameDir(SELF, dest) || undefined,
-        entry: path.join(dest, 'bin', 'baox.mjs') });
     }
 
     case 'chrome-up': {
@@ -920,7 +881,7 @@ try {
     }
 
     default:
-      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
+      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
         'ocr-request', 'ocr-submit', 'confirm-readings', 'history', 'events', 'allocate', 'select-task', 'lines',
         'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill', 'select'] }, ERR);
   }

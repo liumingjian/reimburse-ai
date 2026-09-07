@@ -8,7 +8,7 @@ Reached from `baox` step 8, on either of the two hard blocks the kernel routes h
 Both are answered the same way: the user fills the segments in again.
 
 > `baox` here is the kernel entry point, as in `SKILL.md`:
-> `node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs"`.
+> `node "${CLAUDE_SKILL_DIR}/kernel/bin/baox.mjs"`.
 
 
 **Every segment's 价税合计 comes from the user.** You do not compute it, average it, split it by ratio, by

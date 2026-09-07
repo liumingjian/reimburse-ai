@@ -41,9 +41,10 @@ done
 # 安装说明跟包走。拿到压缩包的人手上只有这个包，仓库的 README 他们看不到。
 cp docs/INSTALL.md dist/INSTALL.md
 
-# 每个包都必须带着启动器：Skill 里的 baox 全部展开成它，缺了就是每条命令都跑不起来。
+# 每个包都必须带着内核入口：Skill 里的 baox 全部展开成它，缺了就是每条命令都跑不起来。
+# 内核就地运行，所以包里的这一份就是真正跑的那一份，没有第二个地方可以兜底。
 for s in dist/*/; do
-  [ -f "$s/kernel/bin/launch.mjs" ] || { echo "启动器闸没过：$s 里没有 kernel/bin/launch.mjs" >&2; exit 1; }
+  [ -f "$s/kernel/bin/baox.mjs" ] || { echo "内核入口闸没过：$s 里没有 kernel/bin/baox.mjs" >&2; exit 1; }
 done
 
 stowaways=$(find dist -name 'scratch-*' -o -name '*.test.mjs' | sort)
