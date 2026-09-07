@@ -126,13 +126,28 @@ Skill 是壳，内核是唯一的业务事实来源，这一条在 1.0.0 里不�
    改取 `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` / `CLAUDE_SKILL_DIR` / `AI_AGENT` 的并集。
    见 [ADR-0010](../adr/0010-kernel-side-command-guard.md) 与
    [skill-declared-hooks.md](../research/skill-declared-hooks.md)。
-2. **终端多选（`AskUserQuestion`）在非交互 / `--print` 模式下的行为。** 未见文档。
-   若在无头模式下不可用，`ask_user` 与 `confirm_table` 需要一条降级路径（多半是退回本地页面），
-   但这不阻塞批次 1–5。
+2. ~~**终端多选（`AskUserQuestion`）在非交互 / `--print` 模式下的行为。**~~ **已实测，结论：不挂载**
+   （2026-09-07，Claude Code 2.1.263）。`claude -p` 与 `-p --input-format stream-json` 两种无头形态的
+   `system/init` 工具清单里都没有 `AskUserQuestion`，所以 `ask_user`、`confirm_table` 和 `dispute`
+   的对话部分在无头会话里执行不了。**降级路径不做**：无头会话多半根本没有人在，弹一个没人点的页面
+   只是把卡住换个地方发生。改为把"无头不是支持的形态"写死进契约，并在说明书里要求模型没有那个工具
+   时停下、不代答。同一轮还量到：**没有任何环境变量能可靠区分有头和无头**（`CLAUDE_CODE_ENTRYPOINT`
+   在 `-p` 里干脆不出现，而它出现的那一轮同样是无头的），所以这一条内核判不了，只能靠说明书。
+   见 [terminal-questions-headless.md](../research/terminal-questions-headless.md)。
 
 ## 5. 完成的判据
 
-- 全量测试绿（当前基线 122 例，新增的不少于 40 例）。
+- ~~全量测试绿（当前基线 122 例，新增的不少于 40 例）。~~ **达标**：321 例全绿（在 mac 上跑）。
 - 用真实的 `resources/` 材料从零走通一遍：环境准备 → 分类 → 看图读数 → 终端确认 → 事件 → 选项目 → 核对 → 写入。
+  **前两程已在真机上验过**（2026-09-07，见台账 V-47）：干净数据目录 + 真实 `resources/`，`next` 报
+  `env_chrome_down` 并给出完整 `step.argv`，连问三次状态与 `stepToken` 都不变（幂等）；原样执行那条
+  argv 起专用 Chrome 成功，状态跃迁到 `env_identity_unknown` 交给人。**从登录往后没验**——那一段
+  每一步都要人：登录、看图读数要模型在交互式会话里、终端确认要人过目、写入要人点头。
+  **这一条仍未关闭，1.0.0 不能凭它已发版就当作验收过了。**
 - 全程模型只出现过 `baox next` 这一条命令；hook 日志里没有被拒的调用。
-- 用户手动登录**一次**，此后不再需要打开任何浏览器页面（除非重绑身份或浏览项目目录）。
+  **前两程为真**：那次真机跑动里 `logs/refused.jsonl` 始终不存在（一次被拒调用都没有）。整程同样未验。
+- 用户手动登录**一次**，此后不再需要打开任何浏览器页面（除非重绑身份或浏览项目目录）。**未验**，
+  同样卡在登录之后那一段。
+
+> 后三条要的是一次有人在场的真机跑动，只能由用户本人在 mac 上做。能自动化的部分已经做完并记进
+> 台账（V-46、V-47）；剩下的清单见 [真机验收清单](../qa/1.0.0-acceptance.md)。

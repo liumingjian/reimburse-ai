@@ -62,6 +62,13 @@ baox next --after <stepToken> [--result <file>]  # 答：我做完了，这是�
 ## 子 Agent 的可用范围
 
 - 可以外包：`kind: "run"` 的连续段（体检、起 Chrome、探测、分类、查重）。
-- 不可外包：`ask_user`（终端多选在子 Agent 里不可用）、`confirm_table`、`tell_user`、`dispute` 的对话部分。
+- 不可外包：`ask_user`、`confirm_table`、`tell_user`、`dispute` 的对话部分。
+  范围比"子 Agent"更大：**终端多选（`AskUserQuestion`）在任何无头会话里都不挂载**
+  —— `claude -p` 和 `-p --input-format stream-json` 两种形态实测都没有它
+  （见 [terminal-questions-headless.md](../research/terminal-questions-headless.md)）。
+  所以**无头运行不是 baox 支持的形态**：这几步只能在有人坐在终端前的交互式会话里做。
+  手上没有那个工具时，唯一正确的动作是**停下并说明**，不是替用户答一个
+  —— 内核分辨不出一份答案出自用户之口还是模型之手，硬校验只挡得住不平的数，
+  挡不住一个"正好也平"的编造。
 - `dispute` 里的"独立重读单个字段"**必须**用子 Agent —— 要的就是它那份干净上下文。
 - 子 Agent 只跑 `baox next`，被 `maxTurns` 截断时换一个接着走，无需交接说明。
