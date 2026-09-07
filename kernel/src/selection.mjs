@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { taskDir } from './workspace.mjs';
 import { CATEGORIES, normalizeCity } from './categories.mjs';
-import { selectableProjects, PROJECT_BOOK_EMPTY, BOOK_EMPTY_HINT } from './projects.mjs';
+import { selectableProjects, PROJECT_BOOK_EMPTY, noCandidatesNote } from './projects.mjs';
 
 // 任务选择：把候选明细补齐成 ERP 明细行还缺的那几件事。
 //
@@ -144,8 +144,10 @@ export function submitSelection(task, built, payload, candidates = selectablePro
   for (const k of Object.keys(given)) {
     if (!wanted.includes(k)) reasons.push(`提交里出现了不存在的明细 ${k}，这批明细可能已经变了`);
   }
-  // 空簿要让上层区分得出来：它和"有得选但还没选"给用户的话术完全不同。
-  if (emptyBook) reasons.push(`项目簿是空的，选择环节没有候选可用；${BOOK_EMPTY_HINT}`);
+  // 没有候选要让上层区分得出来：它和"有得选但还没选"给用户的话术完全不同。
+  // 说的是**可选集合**空了，不是簿子空了——簿子里可能正躺着一堆过期的条目（#79），
+  // 而这一层只拿到注入的可选集合，故意不去读盘，所以把成因交给 noCandidatesNote 兜着说。
+  if (emptyBook) reasons.push(`可选集合是空的，选择环节没有候选可用；${noCandidatesNote()}`);
   if (reasons.length) {
     return { verdict: 'rejected', reasons, ...(emptyBook ? { state: PROJECT_BOOK_EMPTY } : {}) };
   }
@@ -210,7 +212,8 @@ export function applySelection(built, classification, selection, catalog = null,
   const bookEmpty = candidates.length === 0;
   const emptyNote = () => ({
     kind: PROJECT_BOOK_EMPTY, blocking: true, actor: 'user',
-    note: `个人项目簿里一条可选项目都没有，选择环节没有候选可用；${BOOK_EMPTY_HINT}`,
+    // 说的是可选集合空了，不是簿子空了：簿子里可能正躺着一堆过期的条目（#79）。
+    note: `个人项目簿里一条可选项目都没有，选择环节没有候选可用；${noCandidatesNote()}`,
   });
 
   if (!selection) {

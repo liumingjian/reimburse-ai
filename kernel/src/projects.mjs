@@ -23,6 +23,18 @@ const EMPTY = () => ({ projects: [] });
 const str = (v) => (typeof v === 'string' && v.trim() ? v : null);
 
 /**
+ * 规整一个读到的过期时间。空着（没这个键、null、空白串）＝永不过期，是 `null`；
+ * 字符串去掉两头空白（`" 2026-01-01 "` 是个能读懂的日子，不该因为一个空格就算过期）；
+ * **别的什么都原样留着**，交给失效判定去认——它读不出来，那条项目就落在失效那边。
+ */
+const expiryValue = (v) => {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== 'string') return v;
+  const t = v.trim();
+  return t === '' ? null : t;
+};
+
+/**
  * 把一条读到的记录规整成本票定死的形状。
  * 缺项目号的一条既选不了也显示不了——当它不存在，好过让下游到处判空。
  */
@@ -34,7 +46,12 @@ function normalize(raw) {
     number: number.trim(),
     name: str(raw.name),
     confirmedAt: str(raw.confirmedAt),
-    expiresOn: str(raw.expiresOn),          // null＝永不过期
+    // 只有真的没填才是 null（＝永不过期）。**填了但读不出来的一律原样留着**，
+    // 不许收敛成 null：`str()` 会把一个手改成 20261231 或 true 的值变成 null，
+    // 那等于把"读不懂这个日期"翻译成"永不过期"，正好是最坏的那一头——
+    // 一个来路不明的项目重新可选。留着原值，失效判定那边就会认出它不是一天。
+    // 这和上面 lastVerdict 认不出的值原样留着是同一条取舍。
+    expiresOn: expiryValue(raw.expiresOn),
     lastCheckedAt: str(raw.lastCheckedAt),
     // 缺省算 confirmed：写进来那一刻它就是核对过的，簿子里没有"未核验"这一档。
     // 认不出来的值**原样留着**，不往 confirmed 上靠——失效判定是
@@ -116,7 +133,7 @@ export function isValidDay(s) {
  * 递进来，于是"今天"变成 0，`'2026-01-01' < 0` 是 false，**所有过期项目又都可选了**——
  * 正好把这条规则整个废掉，而且一声不响。宁可回落到真的今天。
  */
-const dayOf = (today) => (isValidDay(today) ? today : localToday());
+const usableToday = (today) => (isValidDay(today) ? today : localToday());
 
 /**
  * 一条项目此刻的全部失效原因，按 `EXPIRED`、`UNCONFIRMED` 的顺序；空数组＝还能选。
@@ -127,7 +144,7 @@ const dayOf = (today) => (isValidDay(today) ? today : localToday());
  * 这和 `normalize()` 对认不出的 `lastVerdict` 原样留着是同一条取舍。
  */
 export function invalidReasons(p, today = localToday()) {
-  const day = dayOf(today);
+  const day = usableToday(today);
   const reasons = [];
   const e = p?.expiresOn ?? null;
   // null＝永不过期。不少项目根本没有明确结题日期，强制填只会逼人瞎填一个 2099。
@@ -153,7 +170,7 @@ export const isSelectable = (p, today = localToday()) => invalidReasons(p, today
  * 簿子后来增删、项目后来失效都不动它（见 selection.mjs 里的来源等级）。
  */
 export function selectableProjects(today = localToday()) {
-  const day = dayOf(today);
+  const day = usableToday(today);
   return readBook().projects.filter((p) => isSelectable(p, day));
 }
 
@@ -174,7 +191,7 @@ const VERDICT_NOTE = {
  * 标注是**加出来的**，原有字段一个不动——这份东西下面还接着落盘和 ERP 核对。
  */
 export function annotateProjects(projects, today = localToday()) {
-  const day = dayOf(today);
+  const day = usableToday(today);
   return (projects ?? []).map((p) => {
     const reasons = invalidReasons(p, day);
     const notes = reasons.map((r) => (r === EXPIRED
@@ -197,6 +214,29 @@ export function annotateProjects(projects, today = localToday()) {
 
 export const PROJECT_BOOK_EMPTY = 'project_book_empty';
 
-/** 空簿时该说的那句话，只写一处：三个出口（内核阻塞、拒收理由、明细开放项）说法要一致。 */
-export const BOOK_EMPTY_HINT =
-  '打开项目簿维护页把项目逐条录进来（录入即核验），再回来做任务选择';
+/**
+ * 可选集合为空时该说的那句话，只写一处：三个出口（内核阻塞、拒收理由、明细开放项）
+ * 说法要一致。
+ *
+ * **"没有候选"有两种成因，给用户的下一步完全不同**，所以这句话必须分开说：
+ * 簿子真的一条都没有，那是去**录入**；簿子里有条目、只是全都失效了（过期时间已过、
+ * 或者复检没过），那是去**改过期时间或者重新录入一遍**——对着满满一页项目
+ * 被告知"项目簿是空的，去录入吧"，用户只会以为 baox 把他的项目弄丢了。
+ *
+ * `projects` 传 `null` 表示调用方手上没有整本簿子（`submitSelection` 就是这样：
+ * 它只拿到注入的可选集合，故意不去读盘），这时给一句两种成因都成立的话。
+ */
+export function noCandidatesNote(projects = null, today = localToday()) {
+  const act = '再回来做任务选择';
+  if (projects === null) {
+    return '打开项目簿维护页看一眼：一条都没有就逐条录入（录入即核验）；'
+      + `有条目却标着已过期或复检未通过，就改掉过期时间或者重新录入一遍。${act}`;
+  }
+  if (!projects.length) {
+    return `打开项目簿维护页把项目逐条录进来（录入即核验），${act}`;
+  }
+  const dead = annotateProjects(projects, today).filter((p) => !p.selectable);
+  const kinds = [...new Set(dead.map((p) => p.statusLabel))].join('、');
+  return `簿子里有 ${projects.length} 条，但此刻一条都不可选（${kinds}）——它们一条都没被删掉。`
+    + `打开项目簿维护页，把过期时间改掉，或者把还要用的项目重新录入一遍（录入即核验），${act}`;
+}

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   localToday, isValidDay, invalidReasons, isSelectable, selectableProjects,
-  annotateProjects, writeBook, EXPIRED, UNCONFIRMED,
+  annotateProjects, noCandidatesNote, readBook, writeBook, EXPIRED, UNCONFIRMED,
 } from '../src/projects.mjs';
 
 // 每个用例自己一个数据根：可选集合是现读簿子算出来的，读的必须是临时目录里那一份。
@@ -159,4 +159,78 @@ test('标注给出可选与否和失效原因，措辞由内核给，页面不�
   // 标注是加出来的，原有字段一个不动——它下面还接着落盘和 ERP 核对。
   assert.equal(expired.number, '2');
   assert.equal(expired.expiresOn, '2026-01-01');
+});
+
+// ---- 手改坏的过期时间不许变成"永不过期" ------------------------------------
+
+test('手改成不是字符串的过期时间照样落在失效那边，不被规整成永不过期', () => {
+  // 读簿子时把一个读不懂的值收敛成 null，等于把"读不懂这个日期"翻译成"永不过期"——
+  // 一个来路不明的项目就这么重新可选了，正好是这条规则想挡的那一头。
+  freshHome();
+  const base = {
+    number: 'X', name: '手改过的项目', confirmedAt: '2026-09-07T02:00:00.000Z',
+    lastCheckedAt: '2026-09-07T02:00:00.000Z', lastVerdict: 'confirmed',
+  };
+  const home = process.env.BAOX_HOME;
+  for (const [i, bad] of [20261231, true, {}, ['2026-12-31']].entries()) {
+    fs.writeFileSync(path.join(home, 'projects.json'),
+      JSON.stringify({ projects: [{ ...base, number: `X${i}`, expiresOn: bad }] }));
+    const [p] = readBook().projects;
+    assert.notEqual(p.expiresOn, null, `${JSON.stringify(bad)} 不该被读成"没填"`);
+    assert.deepEqual(invalidReasons(p, '2026-06-30'), [EXPIRED],
+      `${JSON.stringify(bad)} 读不出来就该算已过期`);
+    assert.equal(selectableProjects('2026-06-30').length, 0);
+  }
+});
+
+test('两头带空白的过期时间是个能读懂的日子，不因为一个空格就算过期', () => {
+  freshHome();
+  fs.writeFileSync(path.join(process.env.BAOX_HOME, 'projects.json'), JSON.stringify({
+    projects: [{ number: 'X', name: '手改过的项目', confirmedAt: '2026-09-07T02:00:00.000Z',
+      expiresOn: '  2026-12-31  ', lastCheckedAt: '2026-09-07T02:00:00.000Z',
+      lastVerdict: 'confirmed' }],
+  }));
+  assert.equal(readBook().projects[0].expiresOn, '2026-12-31');
+  assert.equal(selectableProjects('2026-06-30').length, 1);
+});
+
+test('空白串和没这个键一样都是留空＝永不过期', () => {
+  freshHome();
+  fs.writeFileSync(path.join(process.env.BAOX_HOME, 'projects.json'), JSON.stringify({
+    projects: [
+      { number: 'A', name: 'a', confirmedAt: 'x', expiresOn: '   ', lastCheckedAt: 'x', lastVerdict: 'confirmed' },
+      { number: 'B', name: 'b', confirmedAt: 'x', lastCheckedAt: 'x', lastVerdict: 'confirmed' },
+    ],
+  }));
+  assert.deepEqual(readBook().projects.map((p) => p.expiresOn), [null, null]);
+  assert.equal(selectableProjects('2099-12-31').length, 2);
+});
+
+// ---- 没有候选：两种成因，两种下一步 ----------------------------------------
+
+test('簿子真的一条都没有，那句话说的是去录入', () => {
+  const note = noCandidatesNote([]);
+  assert.match(note, /录入/);
+  assert.doesNotMatch(note, /过期/, '一条都没有的时候扯过期时间只会让人摸不着头脑');
+});
+
+test('簿子非空、只是全失效了，那句话不许说"簿子是空的"，要指向改过期时间', () => {
+  // 对着满满一页项目被告知"项目簿是空的，去录入吧"，用户只会以为 baox 把他的项目弄丢了。
+  const note = noCandidatesNote([
+    p({ number: '1', expiresOn: '2026-01-01' }),
+    p({ number: '2', lastVerdict: 'unusable' }),
+  ], '2026-06-30');
+  assert.doesNotMatch(note, /簿子是空的|项目簿是空的/);
+  assert.match(note, /2 条/, '有几条要说出来，用户才对得上他看见的那一页');
+  assert.match(note, /已过期/);
+  assert.match(note, /复检未通过/);
+  assert.match(note, /把过期时间改掉/, '下一步是改过期时间，不是再录一遍');
+  assert.match(note, /一条都没被删掉/, '要先按住"我的项目是不是被删了"这个念头');
+});
+
+test('拿不到整本簿子时给一句两种成因都成立的话', () => {
+  // submitSelection 只拿到注入的可选集合，故意不去读盘。
+  const note = noCandidatesNote();
+  assert.match(note, /录入/);
+  assert.match(note, /已过期|过期时间/);
 });

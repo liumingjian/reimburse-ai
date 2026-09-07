@@ -283,7 +283,9 @@ test('失效的条目不在可选集合里，选它等于选一个簿子里没�
   const r = submitSelection(task, built,
     { homeCity: '广州市', purpose: '客户支持', projects: { [lineId]: '222333' } }, downgraded);
   assert.equal(r.verdict, 'rejected');
-  assert.match(r.reasons[0], /项目簿是空的/);
+  // 说的是**可选集合**空了，不是簿子空了：那条降级的项目还好好地躺在簿子里（#79）。
+  assert.match(r.reasons[0], /可选集合是空的/);
+  assert.doesNotMatch(r.reasons[0], /项目簿是空的/);
   assert.equal(r.state, 'project_book_empty');
 });
 
@@ -382,8 +384,8 @@ test('簿子空了只说一遍：那是一句关于簿子的话，不是关于�
   }, []);
   assert.equal(r.verdict, 'rejected');
   assert.equal(r.state, 'project_book_empty');
-  assert.deepEqual(r.reasons.filter((x) => /项目簿是空的/.test(x)).length, 1,
-    '三行明细不该把同一句"簿子是空的"说三遍');
+  assert.deepEqual(r.reasons.filter((x) => /可选集合是空的/.test(x)).length, 1,
+    '三行明细不该把同一句"没有候选"说三遍');
 });
 
 /* ------------------------------------------ 过期项目不在可选集合里（#79） */
@@ -437,7 +439,12 @@ test('过期时间当天还选得中，第二天就选不中了——每次都�
       { homeCity: '广州市', purpose: '客户支持', projects: { [lineId]: '111454' } },
       selectableProjects('2026-07-01'));
     assert.equal(late.verdict, 'rejected');
-    assert.equal(late.state, 'project_book_empty', '整本都过期了就是空簿那一档');
+    assert.equal(late.state, 'project_book_empty', '可选集合空了，走的是同一个状态');
+    // 但话不能说成"项目簿是空的"：簿子里那条还好好地躺着，只是过期了。
+    const said = late.reasons.join('\n');
+    assert.doesNotMatch(said, /项目簿是空的/);
+    assert.match(said, /可选集合是空的/);
+    assert.match(said, /过期时间/, '出路要包含"去改过期时间"，不能只有"去录入"');
   } finally {
     book('111454');
   }

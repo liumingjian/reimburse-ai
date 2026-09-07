@@ -649,10 +649,9 @@ $('finish').addEventListener('click', async () => {
  * "今天"，措辞也只该有内核一处出处。
  */
 export function serveProjectBookPage({ intake, book, today, ...opts } = {}) {
-  const annotated = () => {
-    const current = book();
-    return { ...current, projects: annotateProjects(current.projects ?? [], today) };
-  };
+  // 离开内核的簿子只经过这一道：出口有三个（开页的 HTML、每次提交的回包、收工的结果），
+  // 三个都得带着同一份失效判定，各写各的就会在同一条项目上给出两种说法。
+  const annotate = (b) => ({ ...b, projects: annotateProjects(b?.projects ?? [], today) });
   return serveResidentPage((nonce) => renderProjectBookPage({ ...book(), today }, nonce), {
     ...opts,
     onSubmit: async (body) => {
@@ -660,17 +659,15 @@ export function serveProjectBookPage({ intake, book, today, ...opts } = {}) {
       // 直接 POST），传 null 让闸门当成留空，而不是拿一个 undefined 去当日期比。
       const expiresOn = body?.expiresOn === undefined ? null : String(body.expiresOn);
       const r = await intake(String(body?.number ?? ''), expiresOn);
-      return r?.book
-        ? { ...r, book: { ...r.book, projects: annotateProjects(r.book.projects ?? [], today) } }
-        : r;
+      return r?.book ? { ...r, book: annotate(r.book) } : r;
     },
     onDone: () => {
-      const current = annotated();
+      const { projects } = annotate(book());
       return { status: 'done', at: new Date().toISOString(),
-        projectCount: current.projects.length,
+        projectCount: projects.length,
         // 全簿和可选各给一个数：差额就是用户该去清理的那些。
-        selectableCount: current.projects.filter((p) => p.selectable).length,
-        projects: current.projects };
+        selectableCount: projects.filter((p) => p.selectable).length,
+        projects };
     },
   });
 }

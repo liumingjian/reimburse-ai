@@ -26,7 +26,7 @@ import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerFie
 import { readReconciliation, classifyReconciliation, attemptRecord } from '../src/erpreconcile.mjs';
 import { versionAt, compareVersions } from '../src/version.mjs';
 import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
-import { readBook, bookPath, selectableProjects, annotateProjects, PROJECT_BOOK_EMPTY, BOOK_EMPTY_HINT }
+import { readBook, bookPath, selectableProjects, annotateProjects, PROJECT_BOOK_EMPTY, noCandidatesNote }
   from '../src/projects.mjs';
 import { intakeProject } from '../src/projectintake.mjs';
 
@@ -812,13 +812,15 @@ try {
       const { task, built, blocked } = await upToEvents(dir);
       if (blocked) out({ command: 'select-task', ...blocked }, BLOCKED);
 
-      // 候选只能来自项目簿，所以空簿在这里就得拦下：把用户领到一个一条候选都没有的
-      // 选择页，他能做的只有把页面关掉。这和"该选了"是两个状态，说法也不一样。
+      // 候选只能来自项目簿，所以可选集合为空在这里就得拦下：把用户领到一个一条候选
+      // 都没有的选择页，他能做的只有把页面关掉。这和"该选了"是两个状态，说法也不一样。
+      // 这里手上就有整本簿子，所以把成因说准：一条都没有是去录入，全失效了是去改过期时间。
+      const wholeBook = readBook().projects;
       const candidates = selectableProjects();
       if (!candidates.length) {
         out({ command: 'select-task', state: PROJECT_BOOK_EMPTY, actor: 'user',
-          bookPath: bookPath(),
-          note: `个人项目簿里一条可选项目都没有，任务选择没有候选可用；${BOOK_EMPTY_HINT}`,
+          bookPath: bookPath(), projectCount: wholeBook.length,
+          note: `个人项目簿里一条可选项目都没有，任务选择没有候选可用；${noCandidatesNote(wholeBook)}`,
         }, BLOCKED);
       }
 
@@ -926,7 +928,8 @@ try {
       out({
         command: 'projects', projectCount: projects.length, projects,
         selectableCount: selectable.length, selectableNumbers: selectable.map((p) => p.number),
-        ...(selectable.length ? {} : { state: PROJECT_BOOK_EMPTY }),
+        ...(selectable.length ? {} : { state: PROJECT_BOOK_EMPTY,
+          noCandidatesNote: noCandidatesNote(book.projects) }),
         bookPath: bookPath(),
         note: projects.length
           ? '这是本机项目簿的原样内容加上此刻的失效判定，没有为这次查询做过 ERP 核对；'

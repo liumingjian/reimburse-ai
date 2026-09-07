@@ -35,7 +35,7 @@
 | `events_pending` | 无当前版本的事件划分 | kernel | `events` | 事件产出 |
 | `allocation_required` | 合并交通发票，且**各段之和 ≠ 价税合计**（相等则内核自动定案，不进此态） | user | 列出缺口请用户补 | 分毫不差 |
 | `allocation_stale` | 发票内容哈希变了 | user | 同上 | 同上 |
-| `project_book_empty` | 个人项目簿的可选集合为空（没有条目，或条目全部失效） | user | 打开项目簿维护页逐条录入（录入即核验） | 可选集合里至少有一条 |
+| `project_book_empty` | 个人项目簿的可选集合为空（没有条目，或条目全部失效） | user | 打开项目簿维护页：一条都没有就逐条录入（录入即核验）；有条目却全失效了就改过期时间、或把还要用的重新录入一遍 | 可选集合里至少有一条 |
 | `project_unassigned` | 可选集合非空，但有事件没有项目号 | model | 按事件用终端多选问（候选来自可选集合，≤3 + 其他） | 每个事件有项目号 |
 | `catalog_unverified` | 项目/类别未经 ERP 只读核对 | kernel | `catalog` | 全部 `erp_catalog_confirmed` |
 | `catalog_mismatch` | ERP 里查无此项目 / 对不上 | user | 请用户改派 | 重新核对通过 |
