@@ -14,7 +14,7 @@ import url from 'node:url';
 import { determineState, SCHEMA_VERSION, MIN_NODE_MAJOR } from './state.mjs';
 import { currentStep, issueStep } from './steptoken.mjs';
 import { readingInboxIn, correctionInboxIn, rereadInboxIn } from './workspace.mjs';
-import { CONVERGENCE } from './dispute.mjs';
+import { CONVERGENCE, favorsUser, disputeStepKey, DISPUTE_PHASES } from './dispute.mjs';
 import { SHAPES, SHAPE_LABELS } from './imageshape.mjs';
 import { renderTable } from './table.mjs';
 
@@ -159,36 +159,43 @@ const disputeStep = ({ d, phase, extra, speak, context }) => ({
   // 凭据跟着**这一步**走，不跟着状态名走。一场争议里状态一直是 reading_disputed，
   // 但摆证据、请拍板、补缺口是三步不同的事：共用一个凭据的话，
   // 用户在"请拍板"那一步的回传会带着"摆证据"那一步发的凭据，两步之间就没有闸了。
-  stepKey: `reading_disputed:${phase}`,
+  stepKey: disputeStepKey(phase),
   exit: 0,
 });
 
 /** 一个还没读出来的值念给用户听的样子。空着不说，用户会以为是内核漏了。 */
-const shown = (v) => (v === null || v === undefined ? '读不出来' : `「${v}」`);
+const spoken = (v) => (v === null || v === undefined ? '读不出来' : `「${v}」`);
 
 /**
- * 三种收敛，三句确定的话。一个字段一句，**写死在这里**。
+ * 三种收敛，三句确定的话。一个字段一句，**写死在这里，一处定义**。
  *
  * 为什么不让模型组织：这三句话的区别不在语气，在**它们各自承认了什么**。
  * 第一句承认机器错了，第二句承认机器也可能一起错，第三句承认这个字段机器读不了。
  * 交给模型组织，最可能被抹平的恰恰是第三句 —— 说"读不可靠"比说一个数难得多。
+ *
+ * 两个地方念它：请用户拍板那一步（第二、三句），和收场之后那张确认表
+ * （第一句 —— 重读印证了用户时内核自己就收下了，用户看到的是那张表）。
+ * 两处各写一份的话，第一句会变成一句**没有人对着规格核过的话**。
  */
-function convergenceLine(f, materialPath) {
-  if (f.convergence === CONVERGENCE.agrees_with_user) {
-    return `${f.label}：重读也读出${shown(f.userValue)}，和你说的一致 —— 第二次也读出这个，`
-      + `是我第一次看错了。这个值我接受，来源记作你给的。`;
-  }
-  if (f.convergence === CONVERGENCE.agrees_with_machine) {
-    return `${f.label}：重读读出来的还是${shown(f.machineValue)}，和我第一次一样；你说是${shown(f.userValue)}。`
-      + '两次机器读数一致并不等于机器就对 —— 也可能这张图上这一处本来就容易被看成同一个错。'
-      + `请你打开原件（${materialPath}）看这一处，你说是多少就是多少。`;
-  }
-  return `${f.label}：三个说法互不相同 —— 我第一次读到${shown(f.machineValue)}，`
-    + `重读读到${shown(f.reread)}，你说是${shown(f.userValue)}。`
+const CONVERGENCE_LINE = {
+  [CONVERGENCE.agrees_with_user]: (f) =>
+    `${f.label}：我第一次读到${spoken(f.machineValue)}，重读读到${spoken(f.rereadValue)} ——`
+    + `第二次也读出你说的这个值，是我第一次看错了。这个值我接受，来源记作你给的。`,
+
+  [CONVERGENCE.agrees_with_machine]: (f, materialPath) =>
+    `${f.label}：重读读出来的还是${spoken(f.machineValue)}，和我第一次一样；你说是${spoken(f.userValue)}。`
+    + '两次机器读数一致并不等于机器就对 —— 也可能这张图上这一处本来就容易被看成同一个错。'
+    + `请你打开原件（${materialPath}）看这一处，你说是多少就是多少。`,
+
+  [CONVERGENCE.third_value]: (f, materialPath) =>
+    `${f.label}：三个说法互不相同 —— 我第一次读到${spoken(f.machineValue)}，`
+    + `重读读到${spoken(f.rereadValue)}，你说是${spoken(f.userValue)}。`
     + '这说明这个字段在这张图上我读不可靠，我这两次读数在这里都不作数，以原件为准。'
     + `请你对着原件（${materialPath}）告诉我它到底是多少；实在认不出就说一声，`
-    + '我把这条读数整条退回待办 —— 我不会替你填一个数。';
-}
+    + '我把这条读数整条退回待办 —— 我不会替你填一个数。',
+};
+
+const convergenceLine = (f, materialPath) => CONVERGENCE_LINE[f.convergence](f, materialPath);
 
 /**
  * 待确认读数 -> 一张定宽表格。
@@ -421,8 +428,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       // 不说的话，用户会在表上看见一个和他上次说的不一样（或者一样）的值，
       // 却不知道中间那次独立重读读出了什么 —— 而那正是他这次点头的依据。
       const settled = pending.flatMap((p) => (p.disputeResolution?.fields ?? []).map((f) =>
-        `· ${p.fileName} 的${f.label}：我第一次读到${shown(f.machineValue)}，`
-        + `重读读到${shown(f.rereadValue)}，你说是${shown(f.userValue)}，现在按${shown(f.finalValue)}记着。`));
+        `· ${p.fileName}：${convergenceLine(f, p.fileName)}`));
       const settledSpeak = settled.length
         ? `先说刚才那几处争议是怎么收的：\n${settled.join('\n')}\n`
         : '';
@@ -448,13 +454,13 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       const more = rest.length ? `（另外还有 ${rest.length} 份也指了错，一份一份来）` : '';
       const names = d.fields.map((f) => f.label).join('、');
 
-      if (d.phase === 'reread') {
+      if (d.phase === DISPUTE_PHASES.reread) {
         const evidence = d.fields.map((f, n) =>
-          `${n + 1}. ${f.label}：我读到的原文是${shown(f.machineValue)}，你说是${shown(f.userValue)}。`
+          `${n + 1}. ${f.label}：我读到的原文是${spoken(f.machineValue)}，你说是${spoken(f.userValue)}。`
           + `我当时对这一处的判断是「${f.clarity.label}」。`).join('\n');
         return disputeStep({
           d,
-          phase: 'reread',
+          phase: DISPUTE_PHASES.reread,
           extra: {
             // 重读**必须**在一个干净上下文的子 Agent 里做。这不是建议：
             // 它是这一步唯一的证据来源，而带着这段对话去读，读出来的只是回声。
@@ -486,11 +492,11 @@ export function stepFor(state, observation = {}, blockedBy = []) {
         });
       }
 
-      if (d.phase === 'conservation_gap') {
+      if (d.phase === DISPUTE_PHASES.gap) {
         const g = d.gap;
         return disputeStep({
           d,
-          phase: 'conservation_gap',
+          phase: DISPUTE_PHASES.gap,
           extra: {
             gap: g,
             rulingPath: correctionPath,
@@ -516,13 +522,14 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       }
 
       // phase === 'ruling'：重读回来了，三种收敛各说各的话，最后请用户拍板。
-      const lines = d.fields.map((f) => convergenceLine(f, d.materialPath)).join('\n');
+      const lines = d.fields
+        .map((f) => convergenceLine({ ...f, rereadValue: f.reread }, d.materialPath)).join('\n');
       const bad = d.rulingRejection
         ? `\n（上一次你给的值我没收下：${d.rulingRejection.reasons.join('；')}）`
         : '';
       return disputeStep({
         d,
-        phase: 'ruling',
+        phase: DISPUTE_PHASES.ruling,
         extra: {
           rulingPath: correctionPath,
           acceptsCorrection: true,
@@ -532,8 +539,8 @@ export function stepFor(state, observation = {}, blockedBy = []) {
             fields: d.fields.map((f) => ({
               field: f.field,
               label: f.label,
-              suggested: f.convergence === CONVERGENCE.agrees_with_user ? f.userValue : null,
-              why: f.convergence === CONVERGENCE.agrees_with_user
+              suggested: favorsUser(f.convergence) ? f.userValue : null,
+              why: favorsUser(f.convergence)
                 ? '重读印证了用户的值，除非用户当场改口，否则就填它'
                 : '还没定 —— 用户对着原件说是多少就填多少，认不出填 null',
             })),

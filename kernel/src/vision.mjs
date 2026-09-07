@@ -90,6 +90,24 @@ export const cents = (s) => Math.round(Number(s) * 100);
 export { FIELD_RULES };
 
 /**
+ * 这个值过不过得了这个字段的格式闸。过得了就是 `null`，过不了就是那句话。
+ *
+ * 三个地方要问同一个问题：模型抄的读数、争议里的独立重读、用户口述的终值。
+ * 抄三遍的话，哪天放宽某一条规则（比如金额允许三位小数），漏改的那一处
+ * 会变成一条**只对某一类来源成立**的规矩 —— 而那正是这一整套设计不允许的：
+ * 值的来源不同，闸必须一样。
+ *
+ * `byLabel` 只改称呼：对模型说键名（它填的是 JSON），对用户说中文名。
+ */
+export function fieldComplaint(key, value, { byLabel = false } = {}) {
+  const rule = FIELD_RULES[key];
+  const name = byLabel ? (FIELD_LABELS[key] ?? key) : key;
+  if (!rule) return `不认识的字段 ${name}`;
+  if (!rule.test(value)) return `${name} 的格式不对（要求：${rule.hint}）`;
+  return null;
+}
+
+/**
  * 清晰度。模型抄下一个字段时顺带说一句它当时看得清不清楚 ——
  * 争议那一步要把这句话摆给用户：「我读到 10，但我当时就觉得这一位发虚」
  * 和「我读到 10，看得清清楚楚」，是两种完全不同的证据。
@@ -214,9 +232,8 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
       clarity[k] = v;
     }
     for (const [k, v] of Object.entries(raw.fields ?? {})) {
-      const rule = FIELD_RULES[k];
-      if (!rule) { reasons.push(`不认识的字段 ${k}`); continue; }
-      if (!rule.test(v)) { reasons.push(`${k} 的格式不对（要求：${rule.hint}）`); continue; }
+      const complaint = fieldComplaint(k, v);
+      if (complaint) { reasons.push(complaint); continue; }
       fields[k] = v;
     }
 
@@ -302,11 +319,7 @@ export function loadUnreadable(task, materialId) {
 }
 
 export function writeUnreadable(task, record) {
-  const dir = readingsDir(task);
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const p = unreadableFile(task, record.materialId);
-  fs.writeFileSync(`${p}.tmp`, JSON.stringify(record, null, 2), { mode: 0o600 });
-  fs.renameSync(`${p}.tmp`, p);
+  writeRecord(task, unreadableFile(task, record.materialId), record);
 }
 
 /** 上一次被驳回的理由，没有就是 null。 */
@@ -315,12 +328,15 @@ export function loadRejection(task, materialId) {
   catch { return null; }
 }
 
+/** 读数目录里的一份记录。先写临时文件再改名 —— 中途中断不会留下半个 JSON。 */
+function writeRecord(task, file, record) {
+  fs.mkdirSync(readingsDir(task), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(`${file}.tmp`, JSON.stringify(record, null, 2), { mode: 0o600 });
+  fs.renameSync(`${file}.tmp`, file);
+}
+
 export function writeRejection(task, record) {
-  const dir = readingsDir(task);
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const p = rejectionFile(task, record.materialId);
-  fs.writeFileSync(`${p}.tmp`, JSON.stringify(record, null, 2), { mode: 0o600 });
-  fs.renameSync(`${p}.tmp`, p);
+  writeRecord(task, rejectionFile(task, record.materialId), record);
 }
 
 /** 这一张过了，上一次的理由就不再是待办 —— 留着它只会让状态永远停在"上次没过"。 */
@@ -334,9 +350,6 @@ const digestOf = (r) => crypto.createHash('sha256')
   .digest('hex');
 
 export function writeReading(task, reading) {
-  const dir = readingsDir(task);
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const p = readingFile(task, reading.materialId);
   const prev = loadReading(task, reading.materialId);
   // 保留原来的确认，只在**字节和读数都没变**时。
   // 只比内容哈希是不够的：同一张图重读一遍、改了几个字段，
@@ -345,8 +358,7 @@ export function writeReading(task, reading) {
     reading.confirmedAt = prev.confirmedAt ?? null;
     reading.confirmedVia = prev.confirmedVia ?? null;
   }
-  fs.writeFileSync(`${p}.tmp`, JSON.stringify(reading, null, 2), { mode: 0o600 });
-  fs.renameSync(`${p}.tmp`, p);
+  writeRecord(task, readingFile(task, reading.materialId), reading);
 }
 
 /**

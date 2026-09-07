@@ -30,7 +30,7 @@ import { readReconciliation, classifyReconciliation, attemptRecord } from '../sr
 import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
 import { observeEnvironment, observeTask } from '../src/observe.mjs';
 import { nextResponse } from '../src/next.mjs';
-import { ingestReread, autoSettleAgreed, openDisputes } from '../src/dispute.mjs';
+import { ingestReread, autoSettleAgreed } from '../src/dispute.mjs';
 import { SCHEMA_VERSION as NEXT_SCHEMA_VERSION } from '../src/state.mjs';
 import { currentSourceKey, currentSourceDir } from '../src/steptoken.mjs';
 
@@ -696,20 +696,6 @@ try {
       }, result.verdict === 'accepted' ? OK : BLOCKED);
     }
 
-    case 'disputes': {
-      // **只读**。人手敲着看看这个目录上有哪些争议、各走到哪一步了。
-      // 和 confirm-readings 一样，它一个字都不写：争议的收场只发生在 `baox next`
-      // 那条路上，因为那条路上才有一次性凭据，也才有用户。
-      const dir = arg('dir');
-      if (!dir) out({ command: 'disputes', error: '缺少 --dir <材料目录>' }, ERR);
-      const inventory = await takeInventory(dir);
-      const task = findLiveTaskForSource(sourceKeyOf(dir));
-      if (!task) out({ command: 'disputes', error: '这个目录还没有进行中的报销任务，先跑 intake' }, ERR);
-      const items = openDisputes(task, inventory, dir);
-      out({ command: 'disputes', readOnly: true, pending: items.length, items,
-        note: items.length ? '争议的收场只发生在 baox next 上，这条命令不收任何终值' : '没有待收场的争议' }, OK);
-    }
-
     case 'confirm-readings': {
       // **只读**。确认这件事从这里搬走了 —— 它现在发生在终端上：内核在
       // `baox next` 里渲染一张定宽表格，用户当面表态，模型带着那一次性凭据回传。
@@ -997,7 +983,7 @@ try {
 
     default:
       out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['next', 'doctor', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
-        'ocr-request', 'ocr-submit', 'confirm-readings', 'reread-submit', 'disputes',
+        'ocr-request', 'ocr-submit', 'confirm-readings', 'reread-submit',
         'history', 'events', 'allocate', 'select-task', 'lines',
         'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill', 'select'] }, ERR);
   }

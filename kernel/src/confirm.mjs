@@ -26,7 +26,7 @@ import { currentStep } from './steptoken.mjs';
 import { takeInventory } from './inventory.mjs';
 import { findLiveTaskForSource } from './workspace.mjs';
 import { pendingConfirmations, confirmReadings, disputeReading } from './vision.mjs';
-import { settleDispute } from './dispute.mjs';
+import { settleDispute, RULING_STEP_KEYS } from './dispute.mjs';
 
 /** 内核此刻挂着的那一步，且回传的凭据正是它。对不上就是 null。 */
 const outstandingStep = (sourceKey, after) => {
@@ -46,9 +46,10 @@ const awaitingConfirmation = (sourceKey, after) =>
 
 // 争议那一步的凭据带着 phase（reading_disputed:ruling），因为摆证据、请拍板、
 // 补缺口是三步不同的事。收终值的只有后两步 —— 证据还没摆出来的时候不存在拍板。
-const RULING_STEPS = new Set(['reading_disputed:ruling', 'reading_disputed:conservation_gap']);
+// 凭据名从 dispute.mjs 取，不在这里再写一份：两边各写一份字符串的话，
+// 加一个 phase 就会出现「发得出、收不下」的那种错，而它在代码里看不出来。
 const awaitingRuling = (sourceKey, after) =>
-  RULING_STEPS.has(outstandingStep(sourceKey, after)?.state);
+  RULING_STEP_KEYS.has(outstandingStep(sourceKey, after)?.state);
 
 /**
  * 收下用户的表态。返回收下了什么（`{ verdict, materialIds }`），什么都没收下就是 `null`。

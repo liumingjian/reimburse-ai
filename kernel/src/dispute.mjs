@@ -31,7 +31,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { shapeOfBuffer, shapeMatches } from './imageshape.mjs';
 import {
-  FIELD_RULES, FIELD_LABELS, CLARITY, CLARITY_UNSTATED, cents,
+  FIELD_LABELS, CLARITY, CLARITY_UNSTATED, cents, fieldComplaint,
   loadRejection, writeRejection, clearRejection, writeReading, writeUnreadable,
 } from './vision.mjs';
 
@@ -45,8 +45,26 @@ export const CONVERGENCE = {
   third_value: 'third_value',
 };
 
+/** 一次独立重读印证了用户的说法。这是机器在这里能给出的最强的一种印证。 */
+export const favorsUser = (c) => c === CONVERGENCE.agrees_with_user;
+
 /** 守恒式认得的那三个金额。改动落在它们身上才谈得上"式子平不平"。 */
 const CONSERVED = ['netAmount', 'taxAmount', 'totalAmount'];
+
+/**
+ * 争议的三步，和它们各自的凭据名。
+ *
+ * 凭据名带 phase，因为**状态名一样不等于是同一步**：一场争议里状态一直是
+ * `reading_disputed`，但摆证据、请拍板、补缺口是三件不同的事。
+ * 名字在这里生成、也只在这里生成 —— 收凭据的那一侧（confirm.mjs）从这里取，
+ * 各写一份字符串的话，加一个 phase 就会出现"发得出、收不下"的那种错。
+ */
+export const DISPUTE_PHASES = { reread: 'reread', ruling: 'ruling', gap: 'conservation_gap' };
+export const disputeStepKey = (phase) => `reading_disputed:${phase}`;
+
+/** 收得下用户终值的那两步。摆证据那一步不收 —— 那时候还不存在"拍板"。 */
+export const RULING_STEP_KEYS = new Set(
+  [DISPUTE_PHASES.ruling, DISPUTE_PHASES.gap].map(disputeStepKey));
 
 const yuan = (c) => (c / 100).toFixed(2);
 
@@ -73,9 +91,9 @@ export function activeDispute(task, materialId, contentHash) {
  *   `conservation_gap`   用户拍了板，但式子不平，缺口要人补。
  */
 export function disputePhase(rec) {
-  if (rec.gap) return 'conservation_gap';
-  if (!rec.reread) return 'reread';
-  return 'ruling';
+  if (rec.gap) return DISPUTE_PHASES.gap;
+  if (!rec.reread) return DISPUTE_PHASES.reread;
+  return DISPUTE_PHASES.ruling;
 }
 
 /** 内核替一个没说清晰度的读数说话时，说的是"没人说过"，不是替它猜一个。 */
@@ -171,8 +189,8 @@ export function ingestReread(sourceDir, inventory, task, submission) {
     if (!wanted.has(k)) { reasons.push(`${k} 不在争议里，这一趟只重读：${[...wanted].join('、')}`); continue; }
     // 明说读不出的，记成 null。这是一个正当的重读结果，不是没交。
     if (v === null) { fields[k] = null; continue; }
-    const rule = FIELD_RULES[k];
-    if (!rule.test(v)) { reasons.push(`${k} 的格式不对（要求：${rule.hint}）`); continue; }
+    const complaint = fieldComplaint(k, v);
+    if (complaint) { reasons.push(complaint); continue; }
     fields[k] = v;
   }
   for (const f of wanted) {
@@ -259,6 +277,13 @@ export function settleDispute(task, materialId, contentHash, { values = {}, give
       contentHash,
       at: new Date().toISOString(),
       fields: rec.disputed.map((d) => d.field),
+      // 这场争议的全部证据**原样留着**。它是这条待办的由来：三份说法各是什么、
+      // 差额差在哪里。清掉驳回记录的同时把它们一起丢了的话，事后再问
+      // "这条为什么读不出来"，答案就只剩一句结论 —— 而结论是最不该被单独留下的那一半。
+      disputed: rec.disputed,
+      machineReading: rec.machineReading ?? null,
+      reread: rec.reread ?? null,
+      gap: rec.gap ?? null,
       reason: rec.gap
         ? '用户改动打破了守恒式，缺口补不上；这条读数整条退回待办，内核不反算另外两个值'
         : '争议收不了场：用户对着原件也认不出这个字段。这条读数整条退回待办',
@@ -267,14 +292,29 @@ export function settleDispute(task, materialId, contentHash, { values = {}, give
     return { verdict: 'parked_unreadable', materialId, fields: rec.disputed.map((d) => d.field) };
   }
 
+  // 拍板只定**争的那几个字段**。这一条和格式闸一样硬：一份终值里夹带一个
+  // 没争过的字段，它就会绕过摆证据、绕过独立重读，直接以"用户给的"落进读数 ——
+  // 而"用户改的值不直接落库"这条规矩，正是在这里被绕开的。
+  //
+  // 补缺口那一步是唯一的例外，而且只放宽到守恒式的那三个金额：那一步问的本来
+  // 就是"另外两个数是多少"。放宽也仅此而已 —— 不是随便什么字段都能搭这趟车。
+  const allowed = new Set([
+    ...rec.disputed.map((d) => d.field),
+    ...(rec.gap ? CONSERVED : []),
+  ]);
+
   // 用户口述的值走和模型抄写**同一道格式闸**。人也会看错、也会漏一位小数。
   const bad = [];
   const clean = {};
   for (const [k, v] of Object.entries(values)) {
-    const rule = FIELD_RULES[k];
-    if (!rule) { bad.push(`不认识的字段 ${k}`); continue; }
+    if (!allowed.has(k)) {
+      bad.push(`${FIELD_LABELS[k] ?? k} 不在这场争议里，它没有走过摆证据和独立重读，`
+        + '我不能就这么把它记成你给的值');
+      continue;
+    }
     if (v === null) { clean[k] = null; continue; }
-    if (!rule.test(v)) { bad.push(`${FIELD_LABELS[k]} 的格式不对（要求：${rule.hint}）`); continue; }
+    const complaint = fieldComplaint(k, v, { byLabel: true });
+    if (complaint) { bad.push(complaint); continue; }
     clean[k] = v;
   }
   if (bad.length) {
@@ -336,14 +376,16 @@ export function settleDispute(task, materialId, contentHash, { values = {}, give
  * 接受之后读数仍然停在未确认，用户还要在整张表上点最后那一下 ——
  * "用户确认的那一下才是最终判定"这一条没有例外。
  *
- * 三个字段争两个、只有一个收敛在用户那边时，只接受收敛的那一个，另一个照样请用户拍板。
+ * **全部字段都收敛在用户那边才自己收下**，一份读数上争两个字段而只有一个收敛时，
+ * 一个都不收，整场争议照原样请用户拍板。理由是收场这件事在这里是整份的：
+ * 收下就要清掉驳回记录，而那条记录正是另一个字段的证据。只收一半，
+ * 剩下那半个争议就没有可摆的证据了。
  */
 export function autoSettleAgreed(task, materialId, contentHash) {
   const rec = activeDispute(task, materialId, contentHash);
   if (!rec || !rec.reread || rec.gap) return null;
-  const agreed = rec.disputed.filter((d) =>
-    rec.reread.convergence?.[d.field] === CONVERGENCE.agrees_with_user);
-  if (!agreed.length || agreed.length !== rec.disputed.length) return null;
+  const agreed = rec.disputed.filter((d) => favorsUser(rec.reread.convergence?.[d.field]));
+  if (agreed.length !== rec.disputed.length) return null;
   return settleDispute(task, materialId, contentHash,
     { values: Object.fromEntries(agreed.map((d) => [d.field, d.userValue])) });
 }

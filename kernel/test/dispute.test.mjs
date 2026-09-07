@@ -240,6 +240,8 @@ test('收敛一：重读和用户一致 —— 接受，并说明第二次也读
   assert.equal(r.state, 'reading_awaiting_confirmation', `实际停在 ${r.state}：${r.speak}`);
   assert.match(r.speak, /重读读到「2026-09-03」/, '第二次读出什么，明说');
   assert.match(r.speak, /我第一次读到「2026-09-04」/, '第一次读到什么，也明说');
+  assert.match(r.speak, /第二次也读出你说的这个值/, '收敛一那句话，一字不改地念出来');
+  assert.match(r.speak, /是我第一次看错了/);
 
   const stored = loadReading(taskOf(dir), table.step.materialIds[0]);
   assert.equal(stored.fields.issueDate, '2026-09-03');
@@ -367,6 +369,12 @@ test('缺口补不上：整条读数退回待办，而且不再派模型去重�
   const parked = loadUnreadable(taskOf(dir), r.step.materialId);
   assert.ok(parked, '退回待办这件事要落盘，不然下一轮就忘了');
   assert.match(parked.reason, /不反算/);
+  // 证据不能跟着结论一起被删掉：事后问"这条为什么读不出来"，
+  // 答案不能只剩一句结论。
+  assert.ok(parked.machineReading, '被推翻的那次机器读数留着');
+  assert.ok(parked.reread, '那次独立重读也留着');
+  assert.equal(parked.gap.delta, '1.00', '差额差在哪里，留着');
+  assert.equal(parked.disputed[0].userValue, '19.80', '用户当时说的值，留着');
 
   const back = await ask(dir);
   assert.equal(back.state, 'intake_open_items', `实际停在 ${back.state}：${back.speak}`);
@@ -412,6 +420,44 @@ test('用户口述的值走和模型抄写同一道格式闸 —— 人也会漏
   assert.match(JSON.stringify(applied.rulings[0].reasons), /两位小数/);
   assert.equal(loadReading(taskOf(dir), r.step.materialId), null);
   assert.match((await ask(dir)).speak, /上一次你给的值我没收下/);
+});
+
+test('拍板只定争的那几个字段 —— 夹带一个没争过的字段进不来', async () => {
+  const dir = materials();
+  const table = await upToConfirmation(dir);
+  let r = await correct(dir, table, { issueDate: '2026-09-03' });
+  submitReread(r, { issueDate: '2026-09-04' });          // 维持原读数，要用户拍板
+  r = await ask(dir, { after: r.stepToken, hasResult: true });
+  assert.equal(r.step.phase, 'ruling');
+
+  // 终值里夹带一个没争过的字段。它没走过摆证据、没走过独立重读 ——
+  // 收下它等于给"用户改的值不直接落库"开了一个后门。
+  const applied = await rule(dir, r, { fields: {
+    issueDate: '2026-09-03', sellerName: '我顺手改的销售方',
+  } });
+  assert.equal(applied.rulings[0].verdict, 'rejected');
+  assert.match(JSON.stringify(applied.rulings[0].reasons), /不在这场争议里/);
+  assert.equal(loadReading(taskOf(dir), r.step.materialId), null, '整份都没落库');
+});
+
+test('补缺口那一步只放宽到守恒式那三个金额，不是随便什么字段都能搭这趟车', async () => {
+  const dir = materials();
+  const table = await upToConfirmation(dir);
+  let r = await correct(dir, table, { totalAmount: '19.80' });
+  submitReread(r, { totalAmount: '19.80' });
+  r = await ask(dir, { after: r.stepToken, hasResult: true });
+  assert.equal(r.step.phase, 'conservation_gap');
+
+  // 三个金额可以一起给（这一步问的本来就是它们）。
+  let applied = await rule(dir, r, { fields: {
+    netAmount: '19.25', taxAmount: '0.55', totalAmount: '19.80', invoiceNumber: '26427000000640558099',
+  } });
+  assert.equal(applied.rulings[0].verdict, 'rejected', '发票号码没争过，搭不了这趟车');
+  assert.match(JSON.stringify(applied.rulings[0].reasons), /不在这场争议里/);
+
+  r = await ask(dir);
+  applied = await rule(dir, r, { fields: { netAmount: '19.25', taxAmount: '0.55', totalAmount: '19.80' } });
+  assert.equal(applied.rulings[0].verdict, 'settled');
 });
 
 // —— 五、来源 ——
