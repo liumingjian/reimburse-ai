@@ -29,6 +29,7 @@ import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/
 import { readBook, bookPath, selectableProjects, annotateProjects, PROJECT_BOOK_EMPTY, noCandidatesNote }
   from '../src/projects.mjs';
 import { intakeProject } from '../src/projectintake.mjs';
+import { removeProject, purgeInvalidProjects, recheckAll } from '../src/projectmaintain.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -941,13 +942,17 @@ try {
 
     case 'projects-page': {
       // 项目簿的增删只发生在这张页面的提交上。刻意只有这一条弹页命令，没有 `add-project`：
-      // 有后果的动作要一次可追溯的页面提交，不走对话（ADR-0009）。v1 只有录入。
+      // 有后果的动作要一次可追溯的页面提交，不走对话（ADR-0009）。
       // 页面前台阻塞，用户点「完成」这条命令才返回。
       const r = await serveProjectBookPage({
-        // 只把项目号和过期时间往下传。写成二元的箭头函数是**故意**的：intakeProject 的
-        // 第三个参数是依赖注入口（gate / run / now / today），直接把函数递过去，
-        // 页面那边哪天多传一个参数就等于让浏览器决定用哪个 gate。
+        // 每一个都写成定参的箭头函数是**故意**的：这些内核函数的末位参数是依赖注入口
+        //（gate / run / now / today），直接把函数递过去，页面那边哪天多传一个参数
+        // 就等于让浏览器决定用哪个 gate。
         intake: (number, expiresOn) => intakeProject(number, expiresOn),
+        remove: (number) => removeProject(number),
+        // 清理和复检都由内核自己算"此刻谁失效"，页面一个参数都递不进来。
+        purge: () => purgeInvalidProjects(),
+        recheck: () => recheckAll(),
         book: readBook,
         timeoutMs: Number(arg('timeout-ms', 30 * 60 * 1000)),
         onReady: (url) => process.stderr.write(`已在浏览器里打开页面（维护项目簿）；没弹出就手动打开：${url}\n`),

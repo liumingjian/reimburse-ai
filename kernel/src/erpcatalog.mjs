@@ -147,6 +147,61 @@ export async function verifyExpenseItems(wsUrl, { run = queryRows } = {}) {
 }
 
 /**
+ * **一次**核对一批项目号，用来复检整本个人项目簿。
+ *
+ * 和 `verifyProject` 判的是同一件事，差别只在往返次数：几十条项目各跑一趟 CDP，
+ * 用户要对着一个转圈的页面等上半分钟。`FNumber in (...)` 是费用项目那侧早就在用的写法，
+ * 这里照搬。
+ *
+ * 判定与单条核对一一对应：查不到 `missing`、对上多条 `ambiguous`、
+ * 已禁用或没审核 `unusable`、都过得去 `confirmed`。**结果按传进来的号一一对齐**，
+ * 缺席的那些照样有一条自己的判定——"ERP 没回它"正是复检要抓的那类项目。
+ *
+ * 任何一个号不能安全查询就整批拒绝（和 `verifyExpenseItems` 同一条规矩）：
+ * 过滤串是要拼进 ERP 查询的，调用方该在问之前就把它们挑出去。
+ */
+export async function verifyProjects(wsUrl, numbers, { run = queryRows } = {}) {
+  const wanted = [...new Set((numbers ?? []).map(String))];
+  const bad = wanted.filter((n) => !isSafeKey(n));
+  if (bad.length) return { ok: false, reason: unsafeKeyReason(bad[0]) };
+  if (!wanted.length) return { ok: true, formId: PROJECT_FORM, checked: [] };
+
+  const res = await run(wsUrl, {
+    formId: PROJECT_FORM,
+    fieldKeys: 'FNumber,FName,FDocumentStatus,FForbidStatus',
+    filter: `FNumber in (${wanted.map((n) => `'${n}'`).join(',')})`,
+    // 一个号可能对上多条（那正是 ambiguous），所以放宽到两倍再加一点余量：
+    // 卡在 wanted.length 上会把重复记录挤掉，那时 ambiguous 就永远查不出来了。
+    limit: wanted.length * 2 + 5,
+  });
+  if (!res.ok) return res;
+
+  const hits = new Map(wanted.map((n) => [n, []]));
+  for (const row of res.rows) hits.get(String(row[0]))?.push(statusOf(row));
+
+  const checked = wanted.map((number) => {
+    const found = hits.get(number);
+    if (!found.length) {
+      return { number, verdict: 'missing',
+        note: `项目号 ${number} 在 ERP 项目目录里已经查不到了` };
+    }
+    if (found.length > 1) {
+      return { number, verdict: 'ambiguous', count: found.length,
+        note: `项目号 ${number} 在 ERP 里对上了 ${found.length} 条记录，baox 不替你挑，请人工确认` };
+    }
+    const hit = found[0];
+    if (!hit.audited || hit.forbidden) {
+      return { number, verdict: 'unusable', name: hit.name,
+        documentStatus: hit.documentStatus, forbidStatus: hit.forbidStatus,
+        note: `项目 ${number}「${hit.name}」在 ERP 里${hit.forbidden ? '已被禁用' : '还没审核'}，不能引用` };
+    }
+    return { number, verdict: 'confirmed', name: hit.name };
+  });
+
+  return { ok: true, formId: PROJECT_FORM, checked };
+}
+
+/**
  * 核对一个项目号。用户在任务选择页上填的是项目序号，ERP 里就是 FNumber。
  * 只做核对，不做挑选 —— 挑哪个项目是用户的业务决定（ADR-0006）。
  */

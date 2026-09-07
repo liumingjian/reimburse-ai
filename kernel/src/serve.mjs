@@ -480,7 +480,7 @@ export function serveIdentityConfirmation(spec, opts = {}) {
  */
 function rowHtml(p, esc, day) {
   const why = p.statusNote
-    ? `\n    <tr class="why"><td colspan="5">${esc(p.statusNote)}</td></tr>`
+    ? `\n    <tr class="why"><td colspan="6">${esc(p.statusNote)}</td></tr>`
     : '';
   return `
     <tr class="${p.selectable ? '' : 'dead'}">
@@ -489,6 +489,7 @@ function rowHtml(p, esc, day) {
       <td class="exp">${p.expiresOn === null ? '永不过期' : esc(String(p.expiresOn))}</td>
       <td class="at">${day(p.confirmedAt)}</td>
       <td class="st">${esc(p.statusLabel)}</td>
+      <td class="act"><button class="del" data-number="${esc(p.number)}" title="从项目簿删除">删除</button></td>
     </tr>${why}`;
 }
 
@@ -521,6 +522,9 @@ button.plain{color:CanvasText;background:transparent;
 #msg.ok{display:block;background:color-mix(in srgb,#16a34a 14%,transparent)}
 #msg.bad{display:block;background:color-mix(in srgb,#dc2626 14%,transparent)}
 h2{font-size:14px;font-weight:400;opacity:.6;margin:28px 0 8px}
+.head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.tools{display:flex;gap:8px}
+.tools button{padding:7px 12px;font-size:13px;font-weight:400}
 table{width:100%;border-collapse:collapse;font-size:15px}
 th{text-align:left;font-weight:400;font-size:13px;opacity:.6;padding:0 12px 6px 0}
 td{padding:8px 12px 8px 0;border-top:1px solid color-mix(in srgb,CanvasText 14%,transparent);
@@ -531,6 +535,10 @@ td.st{font-size:13px;white-space:nowrap}
 tr.dead td{opacity:.45}
 tr.dead td.st{opacity:1;color:#b45309;font-weight:600}
 tr.why td{border-top:0;padding-top:0;font-size:13px;opacity:.75;color:#b45309}
+td.act{padding-right:0;text-align:right;width:1%;white-space:nowrap}
+td.act button{padding:4px 10px;font-size:13px;font-weight:400;color:#b91c1c;background:transparent;
+  border:1px solid color-mix(in srgb,#b91c1c 35%,transparent)}
+tr.dead td.act button{opacity:1}
 #empty{padding:18px 0;opacity:.6;font-size:14px}
 footer{margin-top:28px;display:flex;justify-content:flex-end}
 #done{display:none;text-align:center;padding:48px 0;font-size:17px}
@@ -549,10 +557,19 @@ footer{margin-top:28px;display:flex;justify-content:flex-end}
   就不再出现在报销时的选择器里，但仍然留在下面这张表上，删不删由你决定。</p>
   <p id="msg"></p>
 
-  <h2>当前项目（<span id="count">${projects.length}</span>）</h2>
+  <div class="head">
+    <h2>当前项目（<span id="count">${projects.length}</span>）</h2>
+    <div class="tools">
+      <button class="plain" id="recheck">复检全部</button>
+      <button class="plain" id="purge">清理全部失效</button>
+    </div>
+  </div>
+  <p class="hint">「复检全部」向 ERP 查一次，把录入之后才被禁用或删掉的项目标出来——
+  它<b>只做标记，不删任何东西</b>。要清掉标着失效的那些，点「清理全部失效」；
+  单独一条用它那一行的「删除」，都<b>不再问第二遍</b>。</p>
   <table id="list">
     <thead><tr><th>项目号</th><th>名称（ERP 回读）</th><th>过期时间</th><th>加入时间</th>
-      <th>状态</th></tr></thead>
+      <th>状态</th><th></th></tr></thead>
     <tbody id="rows">${rows}</tbody>
   </table>
   <div id="empty" ${projects.length ? 'hidden' : ''}>还没有项目。粘一个项目号加进来，报销时就能从这里选。</div>
@@ -573,8 +590,10 @@ function redraw(projects) {
     + '</td><td class="name">' + esc(p.name ?? '—')
     + '</td><td class="exp">' + (p.expiresOn === null ? '永不过期' : esc(String(p.expiresOn)))
     + '</td><td class="at">' + day(p.confirmedAt)
-    + '</td><td class="st">' + esc(p.statusLabel ?? '') + '</td></tr>'
-    + (p.statusNote ? '<tr class="why"><td colspan="5">' + esc(p.statusNote) + '</td></tr>' : ''),
+    + '</td><td class="st">' + esc(p.statusLabel ?? '')
+    + '</td><td class="act"><button class="del" data-number="' + esc(p.number)
+    + '" title="从项目簿删除">删除</button></td></tr>'
+    + (p.statusNote ? '<tr class="why"><td colspan="6">' + esc(p.statusNote) + '</td></tr>' : ''),
   ).join('');
   $('count').textContent = projects.length;
   $('empty').hidden = projects.length > 0;
@@ -585,37 +604,63 @@ function say(text, ok) {
   $('msg').className = ok ? 'ok' : 'bad';
 }
 
-$('f').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const number = $('number').value;
-  if (!number.trim()) return;
-  $('add').disabled = true;
-  say('正在向 ERP 核对……', true);
+/**
+ * 页面上的每一次动作都走这一条路：把动作交给内核，内核回什么就显示什么、
+ * 拿它回的簿子重画列表。判定、措辞、失效标注一概不在浏览器这边算——
+ * 页面自己动一下列表，就会和盘上的簿子出现两个版本。
+ */
+async function act(body, working) {
+  const buttons = [...document.querySelectorAll('#page button')];
+  buttons.forEach((b) => { b.disabled = true; });
+  say(working, true);
   try {
     const res = await fetch('/submit?nonce=${nonce}', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      // 过期时间空着就原样递一个空串：留空是用户的一个明确表示（永不过期），
-      // 页面不替他编一个日期，也不把这个键藏起来。
-      body: JSON.stringify({ number, expiresOn: $('expiresOn').value }),
+      body: JSON.stringify(body),
     });
     const payload = await res.json();
     if (!payload.ok) {
       // 内核这一次抛了——这不是"被拒"，是没跑通。列表保持原样，不去猜它现在是什么样。
-      say('这次录入没能跑完：' + payload.error, false);
-      return;
+      say('这一下没能跑完：' + payload.error, false);
+      return null;
     }
     // 内核的判定就是要显示给用户的那句话；页面不改写它，也不替它总结。
     const r = payload.result;
-    say(r.note ?? r.status, r.status === 'admitted');
+    say(r.note ?? r.status, r.status !== 'rejected' && r.status !== 'query_failed');
     if (r.book) redraw(r.book.projects);
-    if (r.status === 'admitted') { $('number').value = ''; $('expiresOn').value = ''; }
+    return r;
   } catch (err) {
-    say('没能把这个项目号交给 baox：' + err.message, false);
+    say('没能把这一下交给 baox：' + err.message, false);
+    return null;
   } finally {
-    $('add').disabled = false;
-    $('number').focus();
+    buttons.forEach((b) => { b.disabled = false; });
   }
+}
+
+$('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const number = $('number').value;
+  if (!number.trim()) return;
+  // 过期时间空着就原样递一个空串：留空是用户的一个明确表示（永不过期），
+  // 页面不替他编一个日期，也不把这个键藏起来。
+  const r = await act({ action: 'intake', number, expiresOn: $('expiresOn').value },
+    '正在向 ERP 核对……');
+  if (r && r.status === 'admitted') { $('number').value = ''; $('expiresOn').value = ''; }
+  $('number').focus();
 });
+
+// 删除是硬删，点下去就走，**这里刻意没有二次确认弹窗**：簿子不是账本，没有审计价值，
+// 误删的代价只是重新粘一次项目号；而一个弹窗会让"定期清理"烦到没人做。
+$('rows').addEventListener('click', (e) => {
+  const btn = e.target.closest('button.del');
+  if (btn) act({ action: 'remove', number: btn.dataset.number }, '正在删除……');
+});
+
+$('purge').addEventListener('click', () => act({ action: 'purge' }, '正在清理失效项……'));
+
+// 复检要往 ERP 跑一趟，比别的动作慢：先说一句，用户才知道页面没死。
+$('recheck').addEventListener('click', () =>
+  act({ action: 'recheck' }, '正在向 ERP 复检整本簿子（只做标记，不会删任何东西）……'));
 
 $('finish').addEventListener('click', async () => {
   $('finish').disabled = true;
@@ -648,17 +693,46 @@ $('finish').addEventListener('click', async () => {
  * 回给页面和收工时交出的簿子都**先标好失效**（`annotateProjects`）：浏览器那边算不了
  * "今天"，措辞也只该有内核一处出处。
  */
-export function serveProjectBookPage({ intake, book, today, ...opts } = {}) {
+export function serveProjectBookPage({ intake, remove, purge, recheck, book, today, ...opts } = {}) {
   // 离开内核的簿子只经过这一道：出口有三个（开页的 HTML、每次提交的回包、收工的结果），
   // 三个都得带着同一份失效判定，各写各的就会在同一条项目上给出两种说法。
   const annotate = (b) => ({ ...b, projects: annotateProjects(b?.projects ?? [], today) });
+
+  /**
+   * 页面上的四个动作各走各的内核入口，**按 `action` 分派，一律逐个具名取参数**。
+   * 没有 `action` 的提交按录入算：这一页的第一形态只有录入（#77），
+   * 缓存在浏览器里的旧页面不该因此变成一次乱来的调用。
+   *
+   * 认不出来的动作是一次**被拒**，不是一次录入——落到录入上就意味着拿一个空号
+   * 去问一次 ERP，还给用户一句他看不懂的"还没填项目号"。
+   */
+  // 没接上的动作是一次被拒，不是一次静悄悄的成功：页面拿 `{ok:true}` 却什么都没发生，
+  // 用户会以为删掉了，直到下一次开页才发现那条还在。
+  const need = (fn, label) => {
+    if (!fn) throw new Error(`这一页没有接上「${label}」，这一下什么都没做`);
+    return fn;
+  };
+  const actions = {
+    // 闸门只收项目号和过期时间。过期时间只在页面递了这个键的时候才往下传：没递＝
+    // 没有这个框（旧页面缓存、直接 POST），传 null 让闸门当成留空，而不是拿一个
+    // undefined 去当日期比。
+    intake: (body) => need(intake, '核对并加入')(String(body?.number ?? ''),
+      body?.expiresOn === undefined ? null : String(body.expiresOn)),
+    // 删除只按项目号删。名称是 ERP 回读值、判定是复检写的，浏览器递什么都不该作数。
+    remove: (body) => need(remove, '删除')(String(body?.number ?? '')),
+    // 清理和复检**一个参数都不收**：删哪些由内核按此刻的失效判定算，
+    // 让页面指定就等于让浏览器自己认定谁失效了。
+    purge: () => need(purge, '清理全部失效')(),
+    recheck: () => need(recheck, '复检全部')(),
+  };
+
   return serveResidentPage((nonce) => renderProjectBookPage({ ...book(), today }, nonce), {
     ...opts,
     onSubmit: async (body) => {
-      // 过期时间只在页面递了这个键的时候才往下传。没递＝没有这个框（旧页面缓存、
-      // 直接 POST），传 null 让闸门当成留空，而不是拿一个 undefined 去当日期比。
-      const expiresOn = body?.expiresOn === undefined ? null : String(body.expiresOn);
-      const r = await intake(String(body?.number ?? ''), expiresOn);
+      const name = body?.action === undefined ? 'intake' : String(body.action);
+      const run = Object.prototype.hasOwnProperty.call(actions, name) ? actions[name] : null;
+      if (!run) throw new Error(`认不出这个动作：${name}`);
+      const r = await run(body);
       return r?.book ? { ...r, book: annotate(r.book) } : r;
     },
     onDone: () => {

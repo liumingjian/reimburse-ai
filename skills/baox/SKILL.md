@@ -285,6 +285,10 @@ came back as something other than confirmed. The union of the two is what `baox 
   suggest a placeholder year so the field is "filled" — a blank is a real answer.
 - **The set is recomputed on every read, today included.** A project selectable yesterday can be gone today
   with the file untouched. Read it again rather than reusing an earlier answer.
+- **`lastVerdict` is the last recheck's answer, not the ERP's state right now.** A project disabled in the
+  ERP an hour ago still reads `confirmed` until someone rechecks. Only the user can: 「复检全部」 on the
+  maintenance page rechecks the whole book in one query and marks what changed. Say so and let them press
+  it — you cannot recheck, delete, or tidy the book for them, and neither does baox on its own.
 
 ```bash
 baox lines --dir "<材料目录>"

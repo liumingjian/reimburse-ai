@@ -366,3 +366,146 @@ test('收工时交回的还是全簿，失效项一条不少', noAutoOpen(async 
   assert.deepEqual(final.projects.map((p) => p.selectable), [true, false]);
   assert.equal(final.selectableCount, 1, '可选的有几条要单独说，两个数摆在一起差额自己会说话');
 }));
+
+// ---- 维护页上的三个整理动作（#80）------------------------------------------
+// 簿子要能被长期养着，不能只进不出。删一条、清掉全部失效、复检整簿——
+// 三个动作的判定全在内核，页面这一层要证的只有一件事：点下去的那一下，
+// 交给内核的是哪一个动作、带的是什么。
+
+/** 只取表体那一段：页面脚本里也有一份重画列表的模板，别把它数进去。 */
+const tbody = (html) => html.match(/<tbody id="rows">([\s\S]*?)<\/tbody>/)[1];
+
+test('每行都有删除', () => {
+  const html = renderProjectBookPage({ projects: [entry('111454', '某某项目'), entry('111455', '另一个')] }, 'n0');
+  const dels = tbody(html).match(/<button[^>]*class="del"[^>]*>/g) ?? [];
+  assert.equal(dels.length, 2, '两行就该有两个删除');
+  for (const n of ['111454', '111455']) {
+    assert.match(html, new RegExp(`data-number="${n}"`), '删除要带上它删的是哪个号');
+  }
+});
+
+test('删除不弹二次确认', () => {
+  // 簿子不是账本，没有审计价值；一个确认弹窗会让"定期清理"烦到没人做。
+  const html = renderProjectBookPage({ projects: [entry('111454', '某某项目')] }, 'n0');
+  assert.ok(!/\bconfirm\s*\(/.test(html), '页面上不该有任何二次确认');
+});
+
+test('页面上有「清理全部失效」和「复检全部」', () => {
+  const html = renderProjectBookPage({ projects: [entry('111454', '某某项目')] }, 'n0');
+  assert.match(html, /清理全部失效/);
+  assert.match(html, /复检全部/);
+});
+
+test('点删除把项目号交给内核的删除动作，别的什么都不带', noAutoOpen(async () => {
+  let got;
+  const s = startPage({
+    intake: async () => { throw new Error('删除不该走录入闸门'); },
+    remove: async (...args) => { got = args; return { status: 'removed', number: args[0], book: { projects: [] } }; },
+    book: () => ({ projects: [entry('111454', '某某项目')] }),
+  });
+  const base = new URL(await s.url);
+
+  const r = await (await post(base, '/submit',
+    { action: 'remove', number: '111454', name: '页面上伪造的名字' })).json();
+  assert.equal(r.ok, true);
+  assert.equal(r.result.status, 'removed');
+  assert.deepEqual(got, ['111454'], '删除只按项目号删，页面递来的别的字段一律不传');
+  assert.deepEqual(r.result.book.projects, [], '删完的簿子原样回给页面，页面据此重画');
+
+  await post(base, '/done');
+  await s.done;
+}));
+
+test('「清理全部失效」交给内核的是清理动作，不带任何项目号', noAutoOpen(async () => {
+  let called = 0;
+  let got;
+  const s = startPage({
+    intake: async () => { throw new Error('清理不该走录入闸门'); },
+    purge: async (...args) => {
+      called += 1; got = args;
+      return { status: 'purged', removedCount: 2, book: { projects: [entry('111454', '留下的')] } };
+    },
+    book: () => ({ projects: [] }),
+  });
+  const base = new URL(await s.url);
+
+  const r = await (await post(base, '/submit', { action: 'purge', number: '111454' })).json();
+  assert.equal(called, 1);
+  assert.deepEqual(got, [], '清理删的是"此刻全部失效项"，不该由页面指定删哪个');
+  assert.equal(r.result.removedCount, 2);
+  assert.deepEqual(r.result.book.projects.map((p) => p.number), ['111454']);
+
+  await post(base, '/done');
+  await s.done;
+}));
+
+test('「复检全部」交给内核的是复检动作，判定原样回给页面', noAutoOpen(async () => {
+  let called = 0;
+  const s = startPage({
+    intake: async () => { throw new Error('复检不该走录入闸门'); },
+    recheck: async () => {
+      called += 1;
+      return { status: 'done', queries: 1, checkedCount: 2, invalidCount: 1,
+        book: { projects: [entry('111454', '还在的'), unconfirmed('111455', '被禁用的')] },
+        note: '复检了 2 条' };
+    },
+    book: () => ({ projects: [] }),
+    today: '2026-06-30',
+  });
+  const base = new URL(await s.url);
+
+  const r = await (await post(base, '/submit', { action: 'recheck' })).json();
+  assert.equal(called, 1);
+  assert.equal(r.result.queries, 1);
+  // 复检之后回给页面的簿子同样已经标好失效：那一列的说法只该有内核一处出处。
+  const [ok, gone] = r.result.book.projects;
+  assert.equal(ok.selectable, true);
+  assert.equal(gone.selectable, false);
+  assert.match(gone.statusNote, /禁用|未审核/);
+
+  await post(base, '/done');
+  await s.done;
+}));
+
+test('复检之后失效的项目仍在页面的列表里，没有被自动删掉', noAutoOpen(async () => {
+  const after = { projects: [entry('111454', '还在的'), unconfirmed('111455', '被禁用的')] };
+  const s = startPage({
+    intake: async () => ({ status: 'admitted' }),
+    recheck: async () => ({ status: 'done', queries: 1, book: after }),
+    book: () => after,
+    today: '2026-06-30',
+  });
+  const base = new URL(await s.url);
+
+  const r = await (await post(base, '/submit', { action: 'recheck' })).json();
+  assert.deepEqual(r.result.book.projects.map((p) => p.number), ['111454', '111455'],
+    '标记归标记，删除归用户');
+
+  await post(base, '/done');
+  const final = await s.done;
+  assert.equal(final.projectCount, 2);
+  assert.equal(final.selectableCount, 1);
+}));
+
+test('认不出来的动作不落到录入上：宁可当场拒，也不拿一个空号去问 ERP', noAutoOpen(async () => {
+  const s = startPage({
+    intake: async () => { throw new Error('未知动作不该走录入闸门'); },
+    book: () => ({ projects: [] }),
+  });
+  const base = new URL(await s.url);
+
+  const r = await (await post(base, '/submit', { action: 'drop-everything' })).json();
+  assert.equal(r.ok, false, '认不出的动作是一次被拒，不是一次录入');
+
+  // 拒了之后服务照旧，用户接着干活。
+  await post(base, '/done');
+  await s.done;
+}));
+
+test('三个整理动作都在命令面之外：增删仍然只发生在页面提交上', () => {
+  // #80 加了删除和清理，这条规矩不能跟着松：有后果的动作要一次可追溯的页面提交。
+  const { json } = runBaox(['no-such-command'], freshHome());
+  const suspicious = json.commands.filter((c) =>
+    /^(add|remove|delete|rm|purge|recheck|clean)-/.test(c) || /-projects?$/.test(c));
+  assert.deepEqual(suspicious, [], `命令面上不该有整理项目的命令，发现：${suspicious.join('、')}`);
+});
