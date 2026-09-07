@@ -33,15 +33,25 @@ const argvFor = (...args) => [process.execPath, BIN, ...args];
 const READING_TEMPLATE = path.join(SRC, 'reading-template.json');
 const REREAD_TEMPLATE = path.join(SRC, 'reread-template.json');
 
-const READING_CONTRACT = {
-  docTypes: Object.keys(DOC_TYPES),
-  allowedFields: Object.keys(FIELD_RULES),
+const SIGHTED_SHAPES = Object.freeze(
+  SHAPES.map((shape) => Object.freeze({ shape, label: SHAPE_LABELS[shape] })));
+const ALLOWED_READING_FIELDS = Object.freeze(Object.keys(FIELD_RULES));
+const READING_CONTRACT = Object.freeze({
+  docTypes: Object.fromEntries(Object.keys(DOC_TYPES).map((docType) => [docType, Object.freeze({
+    allowedFields: ALLOWED_READING_FIELDS,
+    requiredFields: docType === 'invoice' ? Object.freeze(['invoiceNumber', 'totalAmount']) : Object.freeze([]),
+  })])),
   fieldFormats: Object.fromEntries(
     Object.entries(FIELD_RULES).map(([field, rule]) => [field, rule.hint])),
   additionalFields: false,
+  minimumFields: 1,
   omitMissingFields: true,
+  amountConservation: Object.freeze({
+    whenPresent: Object.freeze(['netAmount', 'taxAmount', 'totalAmount']),
+    rule: 'netAmount + taxAmount = totalAmount，按分精确相等；不相等就重读，禁止改数凑平。',
+  }),
   multipleTrips: '多段行程仍只填写票面可见的 city、travelDate、origin、destination；不要新增 segments 或 trips。',
-};
+});
 
 const ENV_PROGRESS = { phase: 1, of: 10, label: '环境准备' };
 const MATERIAL_PROGRESS = { phase: 2, of: 10, label: '材料盘点与分类' };
@@ -96,7 +106,7 @@ const readImages = ({ images, readingsPath, argv, speak, context }) => ({
     readingContract: READING_CONTRACT,
     readingsPath,
     // 「看过的凭据」的取值范围，跟着这一步一起给 —— 模型不需要去别处查它。
-    sightedShapes: SHAPES.map((shape) => ({ shape, label: SHAPE_LABELS[shape] })),
+    sightedShapes: SIGHTED_SHAPES,
     // 这两条写进内核的输出里，而不是只躺在参考文档里：模型看得见的才算数。
     // 真机 QA 里模型跑去敲 tesseract / mdls / swift Vision，正是因为"只能自己看"
     // 这句话当时只写在 references/ 那份文件里。
@@ -621,7 +631,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
           `${n + 1}. ${f.label}：我读到的原文是${spoken(f.machineValue)}，你说是${spoken(f.userValue)}。`
           + `我当时对这一处的判断是「${f.clarity.label}」。`).join('\n');
         const fields = d.fields.map((f) => f.field);
-        const sightedShapes = SHAPES.map((shape) => ({ shape, label: SHAPE_LABELS[shape] }));
+        const sightedShapes = SIGHTED_SHAPES;
         const rereadArgv = argvFor('reread-submit', '--dir', o.sourceDir, '--file', rereadPath);
         const submission = {
           materialId: d.materialId,

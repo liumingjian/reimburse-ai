@@ -198,6 +198,24 @@ async function upToReading(dir) {
   return r;
 }
 
+test('只依赖看图 step 与模板就能一次构造并提交合法读数', async () => {
+  const dir = materials([IMAGE]);
+  const r = await upToReading(dir);
+  const template = JSON.parse(fs.readFileSync(r.step.schemaPath, 'utf8'));
+  const contract = r.step.readingContract;
+  const invoice = contract.docTypes.invoice;
+  const seenFields = { invoiceNumber: '26427000000640558021', issueDate: '2026-09-04',
+    netAmount: '18.25', taxAmount: '0.55', totalAmount: '18.80' };
+
+  assert.ok(invoice.requiredFields.every((field) => field in seenFields));
+  assert.ok(Object.keys(seenFields).every((field) => invoice.allowedFields.includes(field)));
+  assert.equal(template.version, 1);
+  const verdicts = submitReadings(r, { fields: seenFields });
+  assert.equal(verdicts.rejected, 0, JSON.stringify(verdicts.verdicts));
+  assert.equal((await ask(dir, { after: r.stepToken, hasResult: true })).state,
+    'reading_awaiting_confirmation');
+});
+
 test('看图 → 内核校验 → 终端表格 → 用户点头，全程不弹浏览器', async () => {
   const dir = materials([IMAGE]);
   let r = await upToReading(dir);

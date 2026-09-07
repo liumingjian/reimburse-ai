@@ -228,9 +228,17 @@ test('看图 step 直接给出完整字段闭集，不用反查 vision.mjs', asy
   const expectedFields = ['invoiceNumber', 'issueDate', 'netAmount', 'taxAmount', 'totalAmount',
     'sellerName', 'buyerName', 'itemName', 'city', 'travelDate', 'origin', 'destination'];
 
-  assert.deepEqual(step.readingContract.docTypes,
+  assert.deepEqual(Object.keys(step.readingContract.docTypes),
     ['invoice', 'ride_itinerary', 'hotel_folio', 'payment_slip', 'other', 'unreadable']);
-  assert.deepEqual(step.readingContract.allowedFields, expectedFields);
+  for (const docType of Object.values(step.readingContract.docTypes)) {
+    assert.deepEqual(docType.allowedFields, expectedFields);
+  }
+  assert.deepEqual(step.readingContract.docTypes.invoice.requiredFields,
+    ['invoiceNumber', 'totalAmount']);
+  assert.equal(step.readingContract.minimumFields, 1, '完整图片不能交空读数');
+  assert.deepEqual(step.readingContract.amountConservation.whenPresent,
+    ['netAmount', 'taxAmount', 'totalAmount']);
+  assert.match(step.readingContract.amountConservation.rule, /禁止改数凑平/);
   assert.equal(step.readingContract.additionalFields, false, 'schema 外字段必须明确拒绝');
   assert.match(step.readingContract.multipleTrips, /不要新增.*segments|不要新增.*trips/,
     '多段行程不能诱使模型发明 schema 外结构');

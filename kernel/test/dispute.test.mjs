@@ -108,17 +108,24 @@ async function correct(dir, table, fields) {
   return ask(dir);
 }
 
-/** 子 Agent 重读回来了。按内核给的模板写文件，再原样执行 argv。 */
+/** 子 Agent 只消费派发契约，按模板写文件，再原样执行其中的 argv。 */
 function submitReread(r, fields, over = {}) {
-  writeJson(r.step.rereadPath, {
-    version: 1,
-    materialId: r.step.materialId,
-    contentHash: r.step.contentHash,          // 子 Agent 从 step 上原样抄
+  const submission = r.step.subagent.submission;
+  const template = JSON.parse(fs.readFileSync(submission.schemaPath, 'utf8'));
+  writeJson(submission.rereadPath, {
+    version: template.version,
+    materialId: submission.materialId,
+    contentHash: submission.contentHash,
     sighted: { shape: 'landscape' },          // 1816×1396，横着的
     fields,
     ...over,
   });
-  return JSON.parse(runStep(r));
+  try {
+    return JSON.parse(execFileSync(submission.argv[0], submission.argv.slice(1), { encoding: 'utf8' }));
+  } catch (err) {
+    if (err.status === 2) return JSON.parse(err.stdout);
+    throw err;
+  }
 }
 
 /** 用户拍板。终值仍然要过格式闸和守恒式。 */

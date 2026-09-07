@@ -7,11 +7,10 @@ ok()  { echo "PASS  $1"; }
 bad() { echo "FAIL  $1"; fail=1; }
 
 echo "=== 1. 内核测试 ==="
-TEST_LOG=$(mktemp)
-node --test kernel/test/*.test.mjs > "$TEST_LOG" 2>&1
+node --test kernel/test/*.test.mjs > /tmp/baox-tests.log 2>&1
 tcode=$?
-grep -E '^(ℹ (tests|pass|fail)|not ok)' "$TEST_LOG" || true
-[ "${tcode}" = 0 ] && ok "内核测试全过" || { bad "内核测试有失败"; grep -A12 '^not ok' "$TEST_LOG" | head -40; }
+grep -E '^(ℹ (tests|pass|fail)|not ok)' /tmp/baox-tests.log || true
+[ "${tcode}" = 0 ] && ok "内核测试全过" || { bad "内核测试有失败"; grep -A12 '^not ok' /tmp/baox-tests.log | head -40; }
 
 echo "=== 2. bundle.sh 正向 ==="
 bash scripts/bundle.sh >/dev/null 2>&1 && ok "bundle 退 0" || bad "bundle 退非 0"
