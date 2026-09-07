@@ -173,6 +173,17 @@ test('从没登录一路走到环境就绪，全程只有一条命令在动', as
   assert.equal(r.exit, 0);
 });
 
+test('环境这一段没有可纠正的读数，纠正不被悄悄收下', async () => {
+  freshHome();
+  const { nextResponse } = await import('../src/next.mjs');
+  const observation = healthy({ probe: { status: 'not_logged_in' }, binding: null });
+  const first = nextResponse({ observation, sourceKey: KEY });
+  const r = nextResponse({ observation, sourceKey: KEY, after: first.stepToken, hasCorrection: true });
+  assert.equal(r.ignored.reason, 'correction_not_applicable',
+    '收下一份没处安放的纠正而不吭声，会让用户以为自己的改动被采纳了');
+  assert.equal(r.state, 'env_not_logged_in');
+});
+
 test('每一条应答都自带身份和契约字段', async () => {
   freshHome();
   const { nextResponse } = await import('../src/next.mjs');

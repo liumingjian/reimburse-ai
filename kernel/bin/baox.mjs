@@ -899,24 +899,29 @@ try {
       // 模型唯一会敲的命令。问：`next --dir <材料目录>`；答：`next --after <token> [--result <文件>]`。
       // 这里是一层薄壳：采观测（observe）-> 判状态（state）-> 出 step（next），
       // 判断本身一点浏览器和文件系统都不碰，所以能在没有 Chrome 的机器上测。
+      // 问得不对就答不了：这两种都不是状态机里的状态（那两张表里没有它们），
+      // 而是「这一问根本没法判」，所以走 error + 1，不冒充成一个 step。
       const dir = arg('dir');
       if (dir && !(fs.existsSync(dir) && fs.statSync(dir).isDirectory())) {
-        out({ command: 'next', schemaVersion: NEXT_SCHEMA_VERSION, state: 'source_dir_missing',
-          speak: `我找不到这个材料目录：${dir}。请确认路径写对了，或者把材料放进去再叫我。`,
-          exit: BLOCKED }, BLOCKED);
+        out({ command: 'next', schemaVersion: NEXT_SCHEMA_VERSION,
+          error: `材料目录不存在：${dir}`,
+          speak: `我找不到这个材料目录：${dir}。请确认路径写对了，或者把材料放进去再叫我。` }, ERR);
       }
       const sourceKey = dir ? sourceKeyOf(dir) : currentSourceKey();
       if (!sourceKey) {
-        out({ command: 'next', schemaVersion: NEXT_SCHEMA_VERSION, error: '第一次问要带 --dir <材料目录>',
-          speak: '我还不知道你要报销哪一批材料。请把材料目录告诉我。', exit: ERR }, ERR);
+        out({ command: 'next', schemaVersion: NEXT_SCHEMA_VERSION,
+          error: '第一次问要带 --dir <材料目录>',
+          speak: '我还不知道你要报销哪一批材料。请把材料目录告诉我。' }, ERR);
       }
       const after = arg('after');
-      const resultFile = arg('result');
-      // 「交了结果」指的是文件真的在、真的有内容。声称做完不算数 —— 状态只认事实。
-      const hasResult = !!resultFile && fs.existsSync(resultFile) && fs.statSync(resultFile).size > 0;
-
+      // 「交了东西」指的是文件真的在、真的有内容。声称做完不算数 —— 状态只认事实。
+      const filed = (name) => {
+        const p = arg(name);
+        return !!p && fs.existsSync(p) && fs.statSync(p).size > 0;
+      };
       const observation = await observeEnvironment();
-      const response = nextResponse({ observation, sourceKey, after, hasResult });
+      const response = nextResponse({ observation, sourceKey, after,
+        hasResult: filed('result'), hasCorrection: filed('correction') });
       out(response, response.exit);
     }
 
