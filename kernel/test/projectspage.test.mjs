@@ -6,19 +6,9 @@ import path from 'node:path';
 import url from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { renderProjectBookPage, serveProjectBookPage } from '../src/serve.mjs';
+import { noAutoOpen } from './no-auto-open.mjs';
 
 const KERNEL = path.dirname(path.dirname(url.fileURLToPath(import.meta.url)));
-
-/** 本地页面的测试一律不许真去弹浏览器。 */
-const noAutoOpen = (fn) => async (t) => {
-  const before = process.env.BAOX_NO_AUTO_OPEN;
-  process.env.BAOX_NO_AUTO_OPEN = '1';
-  try { await fn(t); }
-  finally {
-    if (before === undefined) delete process.env.BAOX_NO_AUTO_OPEN;
-    else process.env.BAOX_NO_AUTO_OPEN = before;
-  }
-};
 
 const post = (base, path, body) => fetch(new URL(path + base.search, base), {
   method: 'POST', headers: { 'content-type': 'application/json' },

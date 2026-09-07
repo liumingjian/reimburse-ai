@@ -912,10 +912,13 @@ try {
     }
 
     case 'projects-page': {
-      // 项目簿的**唯一**增删入口。刻意只有这一条弹页命令，没有 `add-project`：
-      // 有后果的动作要一次可追溯的页面提交，不走对话（ADR-0009）。
+      // 项目簿的增删只发生在这张页面的提交上。刻意只有这一条弹页命令，没有 `add-project`：
+      // 有后果的动作要一次可追溯的页面提交，不走对话（ADR-0009）。v1 只有录入。
       // 页面前台阻塞，用户点「完成」这条命令才返回。
       const r = await serveProjectBookPage({
+        // 只把项目号往下传。写成一元的箭头函数是**故意**的：intakeProject 的第二个参数
+        // 是依赖注入口（gate / run / now），直接把函数递过去，页面那边哪天多传一个参数
+        // 就等于让浏览器决定用哪个 gate。
         intake: (number) => intakeProject(number),
         book: readBook,
         timeoutMs: Number(arg('timeout-ms', 30 * 60 * 1000)),
@@ -930,7 +933,9 @@ try {
           ? '维护结束。簿子里每一条都在录入那一刻向 ERP 核对过：存在、已审核、未禁用'
           : '页面没等到「完成」就收了（闲置超时）。这期间已经加入的项目都已落盘，'
             + '要接着录就再跑一次这条命令',
-      }, r.status === 'done' ? OK : BLOCKED);
+        // 超时不是硬阻塞（那一档留给"内核拒绝继续、确认也绕不过"），也不是内核出错，
+        // 但它确实没有正常收工。和别的本地页命令一样报 ERR：再跑一次就是了。
+      }, r.status === 'done' ? OK : ERR);
     }
 
     case 'abandon-task': {

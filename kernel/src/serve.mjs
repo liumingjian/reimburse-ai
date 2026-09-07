@@ -442,8 +442,11 @@ export function serveIdentityConfirmation(spec, opts = {}) {
 }
 
 /**
- * 个人项目簿的维护页。这是簿子的**唯一**增删入口——有后果的动作要一次可追溯的提交，
- * 不走对话，也不走 CLI（ADR-0009）。
+ * 个人项目簿的维护页。簿子的增删只发生在这张页面的提交上——有后果的动作要一次
+ * 可追溯的提交，不走对话，也不走 CLI（ADR-0009）。
+ *
+ * **v1 只有录入。** 删除、过期时间、复检全部都在 ADR-0009 的规划里，各有各的票，
+ * 这一版一个都没有；页面上现在没有删除按钮，不是漏了。
  *
  * 页面上只有两样东西：一条录入条和当前项目列表。录入条**只收项目号**，
  * 没有填名称的地方——名称永远是 ERP 回读值，页面上多一个名称框就是在邀请用户
@@ -451,6 +454,10 @@ export function serveIdentityConfirmation(spec, opts = {}) {
  *
  * 每次「核对并加入」都是一次真的 ERP 只读核对，所以它可能被拒。被拒不终结这次打开：
  * 判定显示在录入条下面，列表照旧，用户改一个号接着来。
+ *
+ * 列表的行有两处写法：服务端这一份和页面里 `redraw()` 那一份。是有意留的——
+ * 开页那一份不依赖 JS 跑没跑起来（`baox projects-page` 的用例就是直接读 HTML 断言的），
+ * 提交之后那一份要就地刷新。两处都只拼这三格，改的时候一起改。
  */
 export function renderProjectBookPage(spec, nonce) {
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -544,8 +551,13 @@ $('f').addEventListener('submit', async (e) => {
       body: JSON.stringify({ number }),
     });
     const payload = await res.json();
+    if (!payload.ok) {
+      // 内核这一次抛了——这不是"被拒"，是没跑通。列表保持原样，不去猜它现在是什么样。
+      say('这次录入没能跑完：' + payload.error, false);
+      return;
+    }
     // 内核的判定就是要显示给用户的那句话；页面不改写它，也不替它总结。
-    const r = payload.ok ? payload.result : { status: 'error', note: payload.error };
+    const r = payload.result;
     say(r.note ?? r.status, r.status === 'admitted');
     if (r.book) redraw(r.book.projects);
     if (r.status === 'admitted') $('number').value = '';
@@ -559,9 +571,16 @@ $('f').addEventListener('submit', async (e) => {
 
 $('finish').addEventListener('click', async () => {
   $('finish').disabled = true;
-  await fetch('/done?nonce=${nonce}', {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
-  });
+  try {
+    await fetch('/done?nonce=${nonce}', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    });
+  } catch (err) {
+    // 服务已经不在了（多半是闲置超时先收了工）。收工照样是收工——这一页上加过的项目
+    // 每一条在提交那一刻就落了盘。要是这里不接住，按钮会一直是灰的，页面永远停在原地。
+    $('done').textContent = '这一页已经收工了（baox 那边等超时先退出了）。'
+      + '加进去的项目都已经存好，可以关掉这个页面。';
+  }
   $('page').style.display = 'none';
   $('done').style.display = 'block';
 });

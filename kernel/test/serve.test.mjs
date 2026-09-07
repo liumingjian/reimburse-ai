@@ -1,17 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openInBrowser, serveResidentPage } from '../src/serve.mjs';
-
-/** 本地页面的测试一律不许真去弹浏览器。 */
-const noAutoOpen = (fn) => async (t) => {
-  const before = process.env.BAOX_NO_AUTO_OPEN;
-  process.env.BAOX_NO_AUTO_OPEN = '1';
-  try { await fn(t); }
-  finally {
-    if (before === undefined) delete process.env.BAOX_NO_AUTO_OPEN;
-    else process.env.BAOX_NO_AUTO_OPEN = before;
-  }
-};
+import { noAutoOpen } from './no-auto-open.mjs';
 
 // 本地页面是前台阻塞的：命令返回之前 Agent 说不了话，所以"把地址给用户"这件事
 // 只能由内核自己做。这里盯住的是那个开关本身。
