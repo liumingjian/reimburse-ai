@@ -1,0 +1,1996 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>baox · 项目归属填报方式原型</title>
+    <style>
+      :root {
+        --ink: #17211e;
+        --ink-soft: #35423d;
+        --muted: #6d7a74;
+        --canvas: #f4f6f3;
+        --panel: #ffffff;
+        --panel-soft: #f8faf8;
+        --line: #d8e0dc;
+        --line-strong: #bdcbc4;
+        --blue: #2862ad;
+        --blue-soft: #edf3fb;
+        --amber: #a66506;
+        --amber-soft: #fff5df;
+        --coral: #c3533f;
+        --coral-soft: #fdeeea;
+        --green: #2b765d;
+        --green-soft: #e9f5f0;
+        --terminal: #202624;
+        --terminal-soft: #2b332f;
+        --terminal-muted: #aeb9b5;
+        --shadow: 0 12px 28px rgb(27 47 40 / 10%);
+      }
+
+      * { box-sizing: border-box; }
+
+      html {
+        background: var(--canvas);
+        color: var(--ink);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        font-size: 14px;
+      }
+
+      body { min-width: 320px; margin: 0; padding-bottom: 132px; background: var(--canvas); }
+
+      button, input, select { font: inherit; }
+      button, input[type="checkbox"], input[type="radio"] { cursor: pointer; }
+      button:disabled { cursor: not-allowed; opacity: 0.5; }
+
+      .page { max-width: 1240px; margin: 0 auto; padding: 20px 20px 0; }
+
+      /* ---------- 顶栏与常驻计数器 ---------- */
+      .topbar {
+        display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+        padding: 14px 16px; margin-bottom: 14px;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+      }
+      .topbar h1 { margin: 0; font-size: 16px; }
+      .topbar-sub { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+      .topbar-right { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+      .counter-chip {
+        display: flex; flex-direction: column; gap: 1px; min-width: 92px;
+        padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-soft);
+      }
+      .counter-chip strong { font-size: 20px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+      .counter-chip span { color: var(--muted); font-size: 11px; }
+      .counter-chip.live { border-color: var(--blue); background: var(--blue-soft); }
+
+      .scenario-picker { display: flex; gap: 6px; align-items: center; }
+      .scenario-picker > label { color: var(--muted); font-size: 12px; }
+      .scenario-button {
+        padding: 5px 10px; border: 1px solid var(--line-strong); border-radius: 999px;
+        background: var(--panel); color: var(--ink-soft); font-size: 12px;
+      }
+      .scenario-button.active { border-color: var(--blue); background: var(--blue-soft); color: var(--blue); font-weight: 600; }
+
+      .section-kicker { color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+      .variant-badge {
+        padding: 4px 10px; border: 1px solid var(--line-strong); border-radius: 999px;
+        background: var(--panel-soft); color: var(--ink-soft); font-size: 12px; white-space: nowrap;
+      }
+      .design-heading {
+        display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; justify-content: space-between;
+        margin-bottom: 12px;
+      }
+      .design-heading h2 { margin: 4px 0 2px; font-size: 18px; }
+      .design-heading p { max-width: 68ch; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+      /* ---------- 终端 ---------- */
+      .terminal {
+        padding: 16px; border-radius: 12px; background: var(--terminal); color: #eef3f1;
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.65;
+      }
+      .term-line { white-space: pre-wrap; }
+      .term-line.dim { color: var(--terminal-muted); }
+      .term-line.warn { color: #f0c274; }
+      .term-line.bad { color: #f19b88; }
+      .term-line.ok { color: #8fd3b6; }
+      .term-rule { margin: 10px 0; border-top: 1px dashed #46524d; }
+
+      .q-block {
+        margin: 10px 0; padding: 10px 12px; border: 1px solid #46524d; border-left: 3px solid #7fb2f0;
+        border-radius: 8px; background: var(--terminal-soft);
+      }
+      .q-block.answered { border-left-color: #8fd3b6; }
+      .q-block.blocked { border-left-color: #f19b88; }
+      .q-head { margin-bottom: 8px; color: #d7e2de; }
+      .q-meta { color: var(--terminal-muted); font-size: 12px; }
+      .q-options { display: flex; flex-direction: column; gap: 5px; }
+      .q-option {
+        display: flex; gap: 8px; align-items: baseline; width: 100%; padding: 6px 9px;
+        border: 1px solid #4d5b56; border-radius: 6px; background: #232b28; color: #e6eeeb;
+        font: inherit; text-align: left;
+      }
+      .q-option:hover { border-color: #7fb2f0; }
+      .q-option.chosen { border-color: #8fd3b6; background: #26362f; }
+      .q-option .key { color: var(--terminal-muted); }
+      .q-option .name { color: var(--terminal-muted); }
+      .q-option.escape { border-style: dashed; }
+
+      .term-input-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+      .term-input {
+        flex: 1; padding: 6px 9px; border: 1px solid #4d5b56; border-radius: 6px;
+        background: #171d1b; color: #eef3f1; font-family: inherit;
+      }
+      .term-button {
+        padding: 6px 14px; border: 1px solid #7fb2f0; border-radius: 6px;
+        background: #24374d; color: #cfe2fa; font: inherit;
+      }
+      .term-button.primary { background: #2f4f6f; }
+      .term-button:disabled { opacity: 0.45; }
+      .term-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+      .constraint-note {
+        margin: 12px 0 0; padding: 8px 10px; border-left: 3px solid var(--amber);
+        border-radius: 0 6px 6px 0; background: #33301f; color: #f0c274; font-size: 12px; line-height: 1.6;
+      }
+
+      /* ---------- 网页工作台 ---------- */
+      .workbench { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; align-items: start; }
+      @media (max-width: 940px) { .workbench { grid-template-columns: minmax(0, 1fr); } }
+
+      .panel { padding: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+      .panel-title { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+      .panel-title h3 { margin: 0; font-size: 14px; }
+      .panel-note { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+      .cluster { margin-bottom: 10px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+      .cluster.done { border-color: var(--green); }
+      .cluster-head { display: flex; gap: 10px; align-items: center; padding: 9px 11px; background: var(--panel-soft); }
+      .cluster-head label { flex: 1; cursor: pointer; }
+      .cluster-title { font-weight: 600; }
+      .cluster-meta { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+      .cluster-toggle { border: 0; background: none; color: var(--muted); font-size: 12px; }
+
+      .line-row { display: flex; gap: 10px; align-items: center; padding: 7px 11px; border-top: 1px solid var(--line); }
+      .line-row:hover { background: var(--panel-soft); }
+      .line-main { flex: 1; min-width: 0; }
+      .line-detail { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .line-meta { color: var(--muted); font-size: 12px; }
+      .line-amount { font-variant-numeric: tabular-nums; }
+
+      .chip {
+        display: inline-flex; gap: 5px; align-items: center; padding: 2px 8px; border-radius: 999px;
+        border: 1px solid var(--line-strong); background: var(--panel-soft); color: var(--ink-soft); font-size: 12px; white-space: nowrap;
+      }
+      .chip.assigned { border-color: var(--green); background: var(--green-soft); color: var(--green); }
+      .chip.inherited { border-color: var(--blue); background: var(--blue-soft); color: var(--blue); }
+      .chip.bad { border-color: var(--coral); background: var(--coral-soft); color: var(--coral); font-weight: 600; }
+      .chip.none { color: var(--muted); }
+
+      .project-item {
+        display: flex; gap: 8px; align-items: baseline; width: 100%; margin-bottom: 5px; padding: 7px 9px;
+        border: 1px solid var(--line); border-radius: 8px; background: var(--panel); text-align: left;
+      }
+      .project-item:hover:not(:disabled) { border-color: var(--blue); background: var(--blue-soft); }
+      .project-item .code { font-variant-numeric: tabular-nums; font-weight: 600; }
+      .project-item .name { flex: 1; color: var(--ink-soft); font-size: 12px; }
+      .project-item .count { color: var(--green); font-size: 12px; }
+
+      .search-input, .manual-input {
+        width: 100%; padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel);
+      }
+      .panel-group { padding-top: 10px; margin-top: 10px; border-top: 1px solid var(--line); }
+      .panel-group-heading { display: flex; justify-content: space-between; margin-bottom: 6px; color: var(--muted); font-size: 12px; }
+      .project-scroll { max-height: 236px; overflow-y: auto; }
+
+      .button-primary, .button-secondary, .button-danger {
+        padding: 7px 14px; border-radius: 8px; border: 1px solid transparent; font-size: 13px;
+      }
+      .button-primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+      .button-secondary { background: var(--panel); border-color: var(--line-strong); color: var(--ink-soft); }
+      .button-danger { background: var(--coral); border-color: var(--coral); color: #fff; }
+
+      .callout {
+        margin: 10px 0; padding: 10px 12px; border-radius: 10px;
+        border: 1px solid var(--amber); background: var(--amber-soft); color: var(--amber); font-size: 12px; line-height: 1.6;
+      }
+      .callout.bad { border-color: var(--coral); background: var(--coral-soft); color: var(--coral); }
+      .callout.ok { border-color: var(--green); background: var(--green-soft); color: var(--green); }
+      .cluster.sub { margin: 6px 0 6px 22px; border-left: 3px solid var(--line-strong); }
+      .cluster-nobox { display: inline-block; width: 13px; text-align: center; color: var(--ink-soft); }
+      .grouping-switch { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+      .button-secondary.on { border-color: var(--blue); color: var(--blue); background: var(--blue-soft, var(--panel)); font-weight: 600; }
+      .plan-rows { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 6px; }
+      .plan-row { display: flex; align-items: baseline; gap: 10px; padding: 4px 8px; border-radius: 6px; }
+      .plan-row.on { background: rgba(0, 0, 0, 0.05); }
+      .plan-name { min-width: 12em; font-weight: 600; }
+      .plan-num { min-width: 4em; font-variant-numeric: tabular-nums; font-weight: 700; }
+      .plan-steps { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; font-size: 12px; color: var(--ink-soft); }
+      .callout-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+
+      /* ---------- 底部对比条 ---------- */
+      .compare-bar {
+        position: fixed; right: 0; bottom: 0; left: 0; z-index: 40;
+        padding: 8px 16px 10px; background: rgb(255 255 255 / 96%); border-top: 1px solid var(--line-strong);
+        box-shadow: 0 -8px 20px rgb(27 47 40 / 8%);
+      }
+      .compare-inner { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; max-width: 1240px; margin: 0 auto; }
+      .compare-title { min-width: 116px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+      .compare-card { flex: 1; min-width: 188px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-soft); }
+      .compare-card.live { border-color: var(--blue); background: var(--blue-soft); }
+      .compare-card b { font-size: 13px; }
+      .compare-nums { display: flex; gap: 12px; align-items: baseline; margin-top: 2px; }
+      .compare-nums .measured { font-size: 20px; font-variant-numeric: tabular-nums; }
+      .compare-nums .est { color: var(--muted); font-size: 12px; }
+      .compare-card small { display: block; color: var(--muted); font-size: 11px; line-height: 1.45; }
+
+      .log-toggle { border: 0; background: none; color: var(--blue); font-size: 12px; text-decoration: underline; }
+      .log-list { max-height: 150px; margin: 6px 0 0; padding: 0 0 0 18px; overflow-y: auto; color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+      .demo-note { margin: 16px 0 8px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+
+      .toast {
+        position: fixed; bottom: 148px; left: 50%; z-index: 60; transform: translateX(-50%);
+        max-width: 84vw; padding: 9px 16px; border-radius: 999px; background: var(--ink); color: #fff; font-size: 13px;
+        box-shadow: var(--shadow);
+      }
+
+      .prototype-switcher {
+        position: fixed; right: 16px; bottom: 148px; z-index: 50;
+        display: flex; gap: 6px; align-items: center; padding: 6px 8px;
+        border: 1px solid var(--ink); border-radius: 999px; background: var(--ink); color: #fff; box-shadow: var(--shadow);
+      }
+      .switcher-arrow { width: 28px; height: 28px; border: 0; border-radius: 999px; background: #2f3b37; color: #fff; }
+      .switcher-label { display: flex; flex-direction: column; padding: 0 6px; font-size: 12px; }
+      .switcher-label span { color: #a9b6b1; font-size: 10px; }
+    </style>
+  </head>
+  <body data-env="prototype">
+    <div id="app"></div>
+    <div id="compare" class="compare-bar" aria-label="三变体交互次数对比"></div>
+    <div id="prototype-switcher" class="prototype-switcher" aria-label="原型方案切换" hidden></div>
+
+    <script>
+      /*
+        三种「项目归属填报方式」并排比较，同一批虚构费用事件，?variant=A|B|C 切换。
+        原型要产出的是一个数字：每个变体走完全程需要几次用户交互。
+        记账口径：一次需要用户动手的动作 = 1 次交互（选项点击、勾选、点项目、打字回车、
+        提交、打开浏览器都算）。切换变体不清零，三份计数各自保留，见底部对比条。
+      */
+      const variants = [
+        { key: "A", name: "终端逐簇问" },
+        { key: "B", name: "网页工作台" },
+        { key: "C", name: "终端起手 + 页面收尾" },
+      ];
+
+      const task = { id: "BX-260907-032", title: "9 月差旅与本地费用 · 37 条", employee: "林默 · 研发交付组" };
+
+      /* 内置清单：发布时冻结的 ERP 派生快照（Q2 / Q11）。故意放了成串的相似名称。 */
+      const PROJECTS = [
+        { code: "P-1042", name: "招商银行—零售中台二期" },
+        { code: "P-1043", name: "招商银行—零售中台三期" },
+        { code: "P-1044", name: "招商银行—零售中台四期" },
+        { code: "P-1051", name: "招商银行—信用卡活动运营" },
+        { code: "P-1120", name: "平安产险—理赔中台一期" },
+        { code: "P-1121", name: "平安产险—理赔中台二期" },
+        { code: "P-1128", name: "平安产险—车险定损影像" },
+        { code: "P-1203", name: "广发证券—资管系统重构一期" },
+        { code: "P-1204", name: "广发证券—资管系统重构二期" },
+        { code: "P-1210", name: "广发证券—柜台迁移" },
+        { code: "P-1305", name: "南方电网—计量数据平台" },
+        { code: "P-1306", name: "南方电网—计量数据平台二期" },
+        { code: "P-1311", name: "南方电网—配网巡检小程序" },
+        { code: "P-1402", name: "顺丰—仓配调度优化" },
+        { code: "P-1403", name: "顺丰—仓配调度优化二期" },
+        { code: "P-1410", name: "顺丰—冷链温控看板" },
+        { code: "P-1501", name: "美的—工厂能耗看板" },
+        { code: "P-1502", name: "美的—工厂能耗看板二期" },
+        { code: "P-1508", name: "美的—供应商门户" },
+        { code: "P-1601", name: "长城汽车—整车质量追溯" },
+        { code: "P-1602", name: "长城汽车—整车质量追溯二期" },
+        { code: "P-1701", name: "中国石化—加油站会员中台" },
+        { code: "P-1702", name: "中国石化—加油站会员中台二期" },
+        { code: "P-1801", name: "京东健康—处方流转平台" },
+        { code: "P-1802", name: "京东健康—处方流转平台二期" },
+        { code: "P-1901", name: "三一重工—设备物联接入" },
+        { code: "P-1902", name: "三一重工—设备物联接入二期" },
+        { code: "P-2001", name: "中信保诚—代理人展业助手" },
+        { code: "P-2002", name: "中信保诚—代理人展业助手二期" },
+        { code: "P-2101", name: "海尔—用户旅程分析" },
+        { code: "P-2102", name: "海尔—用户旅程分析二期" },
+        { code: "P-2211", name: "中原银行—信贷中台一期" },
+        { code: "P-2212", name: "中原银行—信贷中台二期" },
+        { code: "P-2301", name: "泸州老窖—渠道费用管理" },
+        { code: "P-2401", name: "上汽通用—售后备件预测" },
+        { code: "P-2501", name: "蒙牛—经销商结算" },
+        { code: "P-2601", name: "携程—商旅结算对接" },
+        { code: "P-2701", name: "公司内部—财务系统升级" },
+        { code: "P-2801", name: "公司内部—员工培训" },
+        { code: "P-3050", name: "国信证券—数据治理平台" },
+      ];
+
+      /* ERP 只读核对的模拟（kernel/src/erpcatalog.mjs · verifyProject 的四种 verdict）。
+         快照与 ERP 之间故意留了三处错位，用来画 Q7 的核对失败与 Q15 的「这是清单的问题」。 */
+      const ERP_DRIFT = {
+        "P-2211": { verdict: "unusable", detail: "ERP 主数据：项目状态「已关闭」（2026-04-30 结项），不可作为报销归属", hint: "P-2212" },
+        "P-3050": { verdict: "ambiguous", detail: "ERP 主数据返回 2 条同号记录（数据治理平台 / 数据治理平台（迁移）），无法判定", hint: "" },
+        "P-2301": { verdict: "missing", detail: "内置清单里有，ERP 主数据里查不到——快照自 2026-06 冻结后该项目被撤销", hint: "" },
+      };
+
+      const verifyProject = (code) => {
+        const known = PROJECTS.find((project) => project.code === code);
+        if (ERP_DRIFT[code]) return { code, ...ERP_DRIFT[code] };
+        if (!known) return { code, verdict: "missing", detail: "内置清单和 ERP 主数据里都没有这个项目号", hint: "" };
+        return { code, verdict: "confirmed", detail: `ERP 主数据：${known.name} · 进行中`, hint: "" };
+      };
+
+      const VERDICT_LABEL = {
+        confirmed: "核对通过",
+        missing: "核对失败 · ERP 查无此项目",
+        ambiguous: "核对失败 · 清单与 ERP 错位",
+        unusable: "核对失败 · 项目不可用",
+      };
+
+      /* 费用事件与归属簇（Q9：连续日期 + 同城的行程，或同一主要报销凭证）。 */
+      const L = (id, date, city, category, detail, amount) => ({ id, date, city, category, detail, amount });
+
+      const CLUSTERS = [
+        {
+          id: "gz", kind: "行程", title: "广州 · 9/3–9/6", basis: "连续日期 + 同城",
+          pool: ["P-1120", "P-1121", "P-1128"],
+          lines: [
+            L("gz-1", "09-03", "广州", "长途交通", "北京—广州 机票", 1280),
+            L("gz-2", "09-03", "广州", "市外交通", "白云机场—酒店 打车", 96),
+            L("gz-3", "09-03", "广州", "住宿", "广州天河 酒店 3 晚", 1470),
+            L("gz-4", "09-04", "广州", "餐饮", "客户现场午餐", 88),
+            L("gz-5", "09-04", "广州", "市内交通", "酒店—客户现场", 42),
+            L("gz-6", "09-05", "广州", "餐饮", "项目组晚餐", 236),
+            L("gz-7", "09-06", "广州", "市外交通", "酒店—白云机场 打车", 104),
+            L("gz-8", "09-06", "广州", "长途交通", "广州—北京 机票", 1360),
+          ],
+        },
+        {
+          id: "sz", kind: "行程", title: "深圳 · 9/9–9/11", basis: "连续日期 + 同城",
+          pool: ["P-1203", "P-1204", "P-1210"],
+          lines: [
+            L("sz-1", "09-09", "深圳", "长途交通", "北京—深圳 机票", 1420),
+            L("sz-2", "09-09", "深圳", "市外交通", "宝安机场—酒店", 88),
+            L("sz-3", "09-09", "深圳", "住宿", "深圳福田 酒店 2 晚", 1160),
+            L("sz-4", "09-10", "深圳", "餐饮", "客户工作餐", 132),
+            L("sz-5", "09-10", "深圳", "会议", "客户现场会议室租赁", 600),
+            L("sz-6", "09-11", "深圳", "市外交通", "酒店—宝安机场", 92),
+            L("sz-7", "09-11", "深圳", "长途交通", "深圳—北京 机票", 1510),
+          ],
+        },
+        {
+          id: "sh", kind: "行程", title: "上海 · 9/15–9/18", basis: "连续日期 + 同城",
+          pool: ["P-1043", "P-1042", "P-1044"],
+          lines: [
+            L("sh-1", "09-15", "上海", "长途交通", "北京—上海 高铁", 553),
+            L("sh-2", "09-15", "上海", "市外交通", "虹桥—酒店", 76),
+            L("sh-3", "09-15", "上海", "住宿", "上海浦东 酒店 3 晚", 1890),
+            L("sh-4", "09-16", "上海", "餐饮", "客户工作餐", 168),
+            L("sh-5", "09-16", "上海", "市内交通", "地铁", 24),
+            L("sh-6", "09-17", "上海", "招待", "客户答谢晚宴", 880),
+            L("sh-7", "09-18", "上海", "市外交通", "酒店—虹桥", 82),
+            L("sh-8", "09-18", "上海", "长途交通", "上海—北京 高铁", 553),
+          ],
+        },
+        {
+          id: "cd", kind: "行程", title: "成都 · 9/22–9/24", basis: "连续日期 + 同城",
+          pool: ["P-1306", "P-1305", "P-1311"],
+          lines: [
+            L("cd-1", "09-22", "成都", "长途交通", "北京—成都 机票", 1180),
+            L("cd-2", "09-22", "成都", "住宿", "成都高新 酒店 2 晚", 980),
+            L("cd-3", "09-23", "成都", "餐饮", "项目组午餐", 96),
+            L("cd-4", "09-23", "成都", "市内交通", "打车", 58),
+            L("cd-5", "09-24", "成都", "市外交通", "酒店—双流机场", 110),
+            L("cd-6", "09-24", "成都", "长途交通", "成都—北京 机票", 1240),
+          ],
+        },
+        {
+          /* Q9 的凭证簇 + Q14 的继承：一张合并交通票分摊出的三段，跟随分摊前那一行（上海行程）。 */
+          id: "inv", kind: "凭证", title: "合并交通票 INV-TR-8842 · 分摊 3 段", basis: "同一主要报销凭证",
+          inheritFrom: "sh", pool: ["P-1042", "P-1204", "P-1120"],
+          lines: [
+            L("inv-1", "09-15", "上海", "市内交通", "市内接送（分摊 1/3）", 682),
+            L("inv-2", "09-16", "上海", "市内交通", "市内接送（分摊 2/3）", 682),
+            L("inv-3", "09-17", "上海", "市内交通", "市内接送（分摊 3/3）", 682),
+          ],
+        },
+        {
+          id: "bj", kind: "本地", title: "北京本地散条 · 9 月", basis: "同城，非连续日期",
+          pool: ["P-2701", "P-2801", "P-1051"],
+          lines: [
+            L("bj-1", "09-08", "北京", "市内交通", "客户拜访 打车", 68),
+            L("bj-2", "09-12", "北京", "餐饮", "团队午餐", 220),
+            L("bj-3", "09-19", "北京", "市内交通", "客户拜访 打车", 54),
+            L("bj-4", "09-26", "北京", "会议", "培训场地", 1200),
+            L("bj-5", "09-29", "北京", "餐饮", "客户咖啡", 96),
+          ],
+        },
+      ];
+
+      /* 需要用户决策的簇：继承簇不问（Q14）。这本身就是一个结论——凭证簇把 6 个簇降到 5 次决策。 */
+      const askableClusters = () => CLUSTERS.filter((cluster) => !cluster.inheritFrom);
+      const ALL_LINES = CLUSTERS.flatMap((cluster) => cluster.lines.map((line) => ({ ...line, clusterId: cluster.id })));
+      const clusterById = (id) => CLUSTERS.find((cluster) => cluster.id === id);
+      /* 归属簇没有层级，补齐字段好让渲染器只认一种 group 形状。 */
+      CLUSTERS.forEach((cluster) => {
+        cluster.children = [];
+        cluster.ownLines = cluster.lines;
+      });
+      const projectByCode = (code) => PROJECTS.find((project) => project.code === code);
+      const projectName = (code) => projectByCode(code)?.name || "（清单外）";
+
+      /*
+        分组维度。归属簇（行程／凭证）是 Q9 的原结论；费用类别是用户在看过原型后提出的替代。
+        两者用同一套 group 形状，左侧面板照单渲染，好让「哪种分法更省点击」变成一个能当场算出来的数，
+        而不是一句主张。类别分组没有凭证继承——那 3 段分摊会被打散进「市内交通」，这是它的代价之一。
+      */
+      const CATEGORY_ORDER = ["长途交通", "市外交通", "市内交通", "住宿", "餐饮", "会议", "招待"];
+      const CATEGORY_GROUPS = CATEGORY_ORDER.map((name) => ({
+        id: `cat-${name}`,
+        kind: "类别",
+        title: name,
+        basis: "同一费用类别",
+        lines: ALL_LINES.filter((line) => line.category === name),
+        children: [],
+        ownLines: ALL_LINES.filter((line) => line.category === name),
+      })).filter((group) => group.lines.length);
+
+      /*
+        V1 分组（用户拍板的口径）：一级只有四类——市内交通 / 市外交通 / 长途 / 住宿。
+        本市＝北京；在外地城市里跑的地面交通算「市外交通」，并按城市二级分。
+        余下的餐饮、会议、招待本版**不分组**，摊在最后逐条处理——这是「只做四类」的实际代价，
+        必须看得见，否则 V1 的账是假的。
+      */
+      const HOME_CITY = "北京";
+      const cat1Of = (line) => {
+        if (line.category === "长途交通") return "长途";
+        if (line.category === "住宿") return "住宿";
+        if (line.category === "市外交通") return "市外交通";
+        if (line.category === "市内交通") return line.city === HOME_CITY ? "市内交通" : "市外交通";
+        return "其他";
+      };
+      const V1_ORDER = ["市内交通", "市外交通", "长途", "住宿"];
+      /* 交通票的特殊处理：同一张合并凭证分摊出来的几段，绑成一个选择单元，勾一次就是一整张票。 */
+      const voucherOf = (line) => (clusterById(line.clusterId).kind === "凭证" ? clusterById(line.clusterId) : null);
+
+      const makeGroup = (id, kind, title, basis, lines, extra = {}) => ({
+        id, kind, title, basis, lines, children: [], ownLines: lines, ...extra,
+      });
+
+      const V1_GROUPS = (() => {
+        const out = V1_ORDER.map((name) => {
+          const lines = ALL_LINES.filter((line) => cat1Of(line) === name);
+          if (name !== "市外交通") return makeGroup(`v1-${name}`, "一级类别", name, "同一费用类别", lines);
+          const cities = [...new Set(lines.map((line) => line.city))];
+          const children = cities.map((city) => {
+            const cityLines = lines.filter((line) => line.city === city);
+            const vouchers = [...new Set(cityLines.map((line) => voucherOf(line)).filter(Boolean))];
+            const bundled = vouchers.map((voucher) =>
+              makeGroup(`v1-市外交通-${city}-${voucher.id}`, "交通凭证", voucher.title, "同一张合并交通票，分摊出的各段绑成一个选择单元", cityLines.filter((line) => voucherOf(line) === voucher)),
+            );
+            const loose = cityLines.filter((line) => !voucherOf(line));
+            return { ...makeGroup(`v1-市外交通-${city}`, "城市", city, "市外交通 · 按城市二级分类", cityLines), children: bundled, ownLines: loose };
+          });
+          return { ...makeGroup("v1-市外交通", "一级类别", "市外交通", "外地城市内的地面交通 · 按城市二级分类", lines), children, ownLines: [] };
+        });
+        const rest = ALL_LINES.filter((line) => cat1Of(line) === "其他");
+        /* 没有整组复选框：本版没给它分类，就不能白拿一次整组勾。 */
+        return [...out, makeGroup("v1-其他", "本版不分组", `其他（${rest.length} 条）`, "餐饮 / 会议 / 招待——V1 的四类之外，只能逐条勾", rest, { noGroupSelect: true })];
+      })();
+
+      /*
+        「其他」到底给不给整组勾，是 V1 唯一一处能自己决定的成本。单列一档出来量它，
+        免得「只做四类」的代价被算到分组维度头上。
+      */
+      const V1_GROUPS_PLUS = V1_GROUPS.map((group) =>
+        group.noGroupSelect
+          ? { ...group, id: "v1p-其他", noGroupSelect: false, kind: "兜底组", title: group.title.replace("其他", "其他"), basis: "四类之外的一律进这一组，但给它一个整组勾" }
+          : group,
+      );
+
+      const GROUPINGS = [
+        { key: "catv1", name: "按费用类别 V1（四类 + 市外按城市）", note: "一级四类：市内交通 / 市外交通 / 长途 / 住宿；市外交通按城市二级分；合并交通票绑成一个单元。四类之外的逐条处理。" },
+        { key: "catv1plus", name: "V1 + 其他也成组", note: "同 V1，只多一条：四类之外的那些进一个「其他」兜底组，也给整组勾。用来量「只做四类」花了多少钱。" },
+        { key: "category", name: "按费用类别（七类平铺）", note: "上一版的对照：不分级、不按城市，餐饮会议招待各自成组。" },
+        { key: "cluster", name: "按归属簇（行程/凭证）", note: "Q9 原口径：连续日期＋同城，或同一主要报销凭证；凭证簇继承分摊前那一行。" },
+      ];
+      const GROUP_SETS = { catv1: V1_GROUPS, catv1plus: V1_GROUPS_PLUS, category: CATEGORY_GROUPS, cluster: CLUSTERS };
+      const groupsOf = (grouping) => GROUP_SETS[grouping] || V1_GROUPS;
+      /* 层级分组要能按 id 找到任意一层，勾选框的 indeterminate 才对得上。 */
+      const flattenGroups = (groups) => groups.flatMap((group) => [group, ...flattenGroups(group.children || [])]);
+      const ALL_GROUPS = Object.values(GROUP_SETS).flatMap((set) => flattenGroups(set));
+      const groupById = (id) => ALL_GROUPS.find((group) => group.id === id);
+      const groupingByKey = (key) => GROUPINGS.find((item) => item.key === key) || GROUPINGS[0];
+
+      /*
+        场景 = 这批费用「真正」落在几个项目上。C 的价值完全取决于例外率，
+        所以例外率必须是可当场拨动的旋钮，而不是写死的乐观假设。
+      */
+      const SCENARIOS = [
+        { key: "focused", name: "集中", desc: "37 条全落在 1 个项目", truth: { gz: "P-1042", sz: "P-1042", sh: "P-1042", cd: "P-1042", bj: "P-1042" } },
+        { key: "mild", name: "轻度分散", desc: "2 个项目，主项目占 3/4", truth: { gz: "P-1120", sz: "P-1042", sh: "P-1042", cd: "P-1042", bj: "P-1042" } },
+        { key: "real", name: "真实", desc: "4 次出差 → 4 个项目，本地散条落在一个陈旧项目", truth: { gz: "P-1120", sz: "P-1204", sh: "P-1042", cd: "P-1305", bj: "P-2211" } },
+        /*
+          第四个场景是给「按类别分组」留的反例：真值按费用类别落，行程簇内部反而不一致。
+          没有它，类别分组只会在按行程构造的数据上挨打——那就是一场作弊的对照。
+        */
+        {
+          key: "bycat", name: "按旧七类落", desc: "差旅费归项目，市内与餐饮归部门费用池（上一版口径）",
+          byCategory: { 长途交通: "P-1042", 市外交通: "P-1042", 住宿: "P-1042", 市内交通: "P-2701", 餐饮: "P-2701", 会议: "P-2801", 招待: "P-2801" },
+        },
+        /*
+          按 V1 口径落：长途与住宿进集中差旅池，外地地面交通跟着所在城市的项目走，
+          本市交通与餐饮会议进部门费用池。这是「市外交通按城市二级分」唯一能挣到钱的世界。
+        */
+        {
+          key: "bycatv1", name: "按V1四类落", desc: "长途/住宿进差旅池，市外交通按城市跟项目，市内与其他进部门池",
+          byV1: { 长途: "P-1042", 住宿: "P-1042", 市内交通: "P-2701", 其他: "P-2701" },
+          byCity: { 广州: "P-1120", 深圳: "P-1204", 上海: "P-1042", 成都: "P-1305" },
+        },
+      ];
+
+      const scenario = () => SCENARIOS.find((item) => item.key === state.scenario) || SCENARIOS[2];
+
+      /* 真值的最小单位是明细行；簇真值和类别真值都由它导出。 */
+      const truthOfLine = (line) => {
+        const current = scenario();
+        if (current.byV1) {
+          const cat1 = cat1Of(line);
+          return cat1 === "市外交通" ? current.byCity[line.city] : current.byV1[cat1];
+        }
+        if (current.byCategory) return current.byCategory[line.category];
+        const cluster = clusterById(line.clusterId || ALL_LINES.find((item) => item.id === line.id).clusterId);
+        return current.truth[cluster.inheritFrom || cluster.id];
+      };
+      /* 簇真值 = 簇内多数派。byCat 场景下簇是不纯的，A/C 以簇为提问单位就答不准——页面会明说。 */
+      const truthFor = (clusterId) => {
+        const cluster = clusterById(clusterId);
+        const current = scenario();
+        if (current.truth) return current.truth[cluster.inheritFrom || clusterId];
+        const weight = {};
+        cluster.lines.forEach((line) => {
+          const code = truthOfLine(line);
+          weight[code] = (weight[code] || 0) + 1;
+        });
+        return Object.entries(weight).sort((a, b) => b[1] - a[1])[0][0];
+      };
+      const groupIsPure = (group) => new Set(group.lines.map((line) => truthOfLine(line))).size === 1;
+      const impureGroups = (grouping) => groupsOf(grouping).filter((group) => !groupIsPure(group));
+
+      /* C 的主项目 = 覆盖行数最多的真值；例外簇 = 真值与主项目不同的可问簇。 */
+      const mainProjectOfScenario = () => {
+        const weight = {};
+        CLUSTERS.forEach((cluster) => {
+          const code = truthFor(cluster.id);
+          weight[code] = (weight[code] || 0) + cluster.lines.length;
+        });
+        return Object.entries(weight).sort((a, b) => b[1] - a[1])[0][0];
+      };
+      const exceptionClusters = () => askableClusters().filter((cluster) => truthFor(cluster.id) !== mainProjectOfScenario());
+      const exceptionLineCount = () =>
+        CLUSTERS.filter((cluster) => truthFor(cluster.id) !== mainProjectOfScenario()).reduce((sum, cluster) => sum + cluster.lines.length, 0);
+
+      /* ---------------------------------------------------------------- 状态与记账 */
+
+      const getVariant = () => {
+        const requested = new URLSearchParams(window.location.search).get("variant");
+        return variants.some((variant) => variant.key === requested) ? requested : "A";
+      };
+
+      const freshA = () => ({
+        answers: {}, assign: {}, draft: {}, manualFor: "", manualText: "", manualError: null,
+        rounds: 0, verifyResults: [], hints: [], reaskNote: null,
+      });
+      const freshB = () => ({
+        opened: false, grouping: "catv1", collapsed: {}, selected: [], assign: {},
+        search: "", searchCounted: false, manualOpen: false, manualText: "", manualError: null,
+        pendingOverwrite: null, verifyResults: [], submitted: false,
+      });
+      const freshC = () => ({
+        step: "opener", draftMain: "", draftException: null, manualFor: "", manualText: "", mainProject: "",
+        opened: false, assign: {}, selected: [], onlyMain: true, collapsed: {},
+        search: "", searchCounted: false, manualOpen: false, manualError: null,
+        pendingOverwrite: null, verifyResults: [], submitted: false,
+      });
+
+      const counters = { A: { actions: 0, browser: 0, log: [] }, B: { actions: 0, browser: 0, log: [] }, C: { actions: 0, browser: 0, log: [] } };
+
+      const state = {
+        variant: getVariant(),
+        scenario: "real",
+        showLog: false,
+        toast: "",
+        pendingFocusId: "",
+        a: freshA(),
+        b: freshB(),
+        c: freshC(),
+      };
+
+      let toastTimer;
+
+      const bump = (label, { browser = false } = {}) => {
+        const counter = counters[state.variant];
+        counter.actions += 1;
+        if (browser) counter.browser += 1;
+        counter.log.push(`#${counter.actions}${browser ? " · 开浏览器" : ""} ${label}`);
+      };
+
+      const resetVariant = (key) => {
+        counters[key] = { actions: 0, browser: 0, log: [] };
+        if (key === "A") state.a = freshA();
+        /* 分组维度是看法不是数据，重置计数时留着，免得 QA 每换一次场景都要重新切。 */
+        if (key === "B") state.b = { ...freshB(), grouping: state.b?.grouping || "catv1" };
+        if (key === "C") state.c = freshC();
+      };
+
+      const resetAll = () => variants.forEach((variant) => resetVariant(variant.key));
+
+      const money = (value) => `¥${value.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const clusterAmount = (cluster) => cluster.lines.reduce((sum, line) => sum + line.amount, 0);
+
+      /* ---------------------------------------------------------------- 归属写入 */
+
+      /* Q4：候选只影响排序，绝不预填。本任务内已选优先，其次本人历史。终端最多放 3 个 + 「其他」。 */
+      const candidatesFor = (cluster, assign) => {
+        const counts = {};
+        Object.values(assign).forEach((entry) => {
+          if (entry && entry.via !== "继承") counts[entry.code] = (counts[entry.code] || 0) + 1;
+        });
+        const used = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+        const ordered = [];
+        [...used, ...cluster.pool].forEach((code) => {
+          if (!ordered.includes(code)) ordered.push(code);
+        });
+        return ordered.slice(0, 3);
+      };
+
+      /* Q14：分摊出的多段继承分摊前那一行的项目，不标待确认。Q16：簇内单独改过的行不被覆盖。 */
+      const assignCluster = (assign, clusterId, code, via) => {
+        clusterById(clusterId).lines.forEach((line) => {
+          assign[line.id] = { code, via };
+        });
+        CLUSTERS.filter((cluster) => cluster.inheritFrom === clusterId).forEach((cluster) => {
+          cluster.lines.forEach((line) => {
+            if (assign[line.id]?.via === "覆盖") return;
+            assign[line.id] = { code, via: "继承" };
+          });
+        });
+      };
+
+      const assignedCount = (assign) => ALL_LINES.filter((line) => assign[line.id]).length;
+      const usedCodes = (assign) => [...new Set(ALL_LINES.map((line) => assign[line.id]?.code).filter(Boolean))];
+      const codeLineCount = (assign, code) => ALL_LINES.filter((line) => assign[line.id]?.code === code).length;
+      const clusterAssignment = (assign, cluster) => {
+        const codes = [...new Set(cluster.lines.map((line) => assign[line.id]?.code).filter(Boolean))];
+        if (!codes.length) return { code: "", mixed: false };
+        if (codes.length > 1 || cluster.lines.some((line) => !assign[line.id])) return { code: codes[0], mixed: true };
+        return { code: codes[0], mixed: false };
+      };
+
+      /* Q11：写入前只对本次用到的三五个项目号做只读核对，不核对整本清单。 */
+      const runVerification = (assign) => usedCodes(assign).map((code) => verifyProject(code));
+      const failuresOf = (results) => results.filter((result) => result.verdict !== "confirmed");
+      const verdictOfCode = (results, code) => results.find((result) => result.code === code)?.verdict || "";
+
+      /*
+        B 的最省选择路径。给定分组维度，走一遍真值：能整组勾就整组勾，勾不动就逐条勾，
+        然后点一次项目把这一批扫进去。这是「按类别分组还是按归属簇分组」唯一诚实的裁判——
+        它对两种分法用的是同一把尺，谁在什么数据上省，直接看数。
+      */
+      const bPlan = (grouping) => {
+        const groups = groupsOf(grouping);
+        const assign = {};
+        const weight = {};
+        ALL_LINES.forEach((line) => {
+          const code = truthOfLine(line);
+          weight[code] = (weight[code] || 0) + 1;
+        });
+        const codes = Object.keys(weight).sort((a, b) => weight[b] - weight[a]);
+        const moves = [];
+        const steps = [];
+        let selects = 0;
+        let picks = 0;
+        codes.forEach((code) => {
+          const want = ALL_LINES.filter((line) => truthOfLine(line) === code && assign[line.id]?.code !== code);
+          if (!want.length) {
+            steps.push(`${code}：${weight[code]} 条已被凭证继承带到位，0 次点击`);
+            return;
+          }
+          const wantIds = want.map((line) => line.id);
+          /* Q14：父簇被整簇选中时，分摊出来的那几段是白送的，不该记成点击。 */
+          const free = new Set();
+          CLUSTERS.filter((cluster) => cluster.inheritFrom).forEach((child) => {
+            const parent = clusterById(child.inheritFrom);
+            if (parent.lines.every((line) => wantIds.includes(line.id))) child.lines.forEach((line) => free.add(line.id));
+          });
+          const picked = new Set();
+          const groupHits = [];
+          const cover = (group) => {
+            if (!group.lines.length) return;
+            if (group.lines.every((line) => free.has(line.id))) return;
+            if (!group.noGroupSelect && group.lines.every((line) => wantIds.includes(line.id))) {
+              groupHits.push(group.id);
+              group.lines.forEach((line) => picked.add(line.id));
+              return;
+            }
+            (group.children || []).forEach(cover);
+          };
+          groups.forEach(cover);
+          const lineHits = wantIds.filter((id) => !picked.has(id) && !free.has(id));
+          lineHits.forEach((id) => picked.add(id));
+          selects += groupHits.length + lineHits.length;
+          picks += 1;
+          moves.push({ code, groups: groupHits, lines: lineHits });
+          steps.push(`${code}（${wantIds.length} 条）：${groupHits.length} 次整组勾 + ${lineHits.length} 次逐条勾 + 1 次点项目`);
+          CLUSTERS.forEach((cluster) => {
+            const inCluster = cluster.lines.filter((line) => picked.has(line.id));
+            if (!inCluster.length) return;
+            if (inCluster.length === cluster.lines.length && !cluster.inheritFrom) {
+              assignCluster(assign, cluster.id, code, "选择");
+            } else {
+              inCluster.forEach((line) => {
+                assign[line.id] = { code, via: cluster.inheritFrom ? "覆盖" : "选择" };
+              });
+            }
+          });
+        });
+        const searches = picks;
+        return { selects, picks, searches, moves, steps, codes, total: 1 + selects + picks + searches + 1 };
+      };
+
+      /* ---------------------------------------------------------------- 估算模型 */
+      /*
+        与实测同口径的公式估算，写在对比条上供当场反驳。
+        用户可以说「你这条公式不对」——那正是原型该收到的反馈。
+      */
+      const estimate = (key) => {
+        const asks = askableClusters();
+        const rounds = Math.ceil(asks.length / 4);
+        const truthCodes = [...new Set(asks.map((cluster) => truthFor(cluster.id)))];
+        const failures = truthCodes.filter((code) => verifyProject(code).verdict !== "confirmed").length;
+
+        if (key === "A") {
+          /* 手打的编码当场核对，坏码只多花一次重打；从候选里选中的坏码要拖到最后核对才炸，代价大得多。 */
+          const assign = {};
+          let manual = 0;
+          let inlineRetry = 0;
+          let lateFailure = 0;
+          /* 关键：候选排序里的「本任务内已选」只在轮与轮之间刷新——同一轮的 4 道题是一起问的，
+             第 1 题选的项目帮不到第 2 题。A 的成本因此对「簇怎么分轮」很敏感。 */
+          for (let start = 0; start < asks.length; start += 4) {
+            const round = asks.slice(start, start + 4);
+            const snapshot = { ...assign };
+            const settlements = [];
+            round.forEach((cluster) => {
+              const truth = truthFor(cluster.id);
+              const inCandidates = candidatesFor(cluster, snapshot).includes(truth);
+              const bad = verifyProject(truth).verdict !== "confirmed";
+              if (!inCandidates) manual += 1;
+              if (bad && !inCandidates) inlineRetry += 1;
+              if (bad && inCandidates) lateFailure += 1;
+              settlements.push([cluster.id, bad ? verifyProject(truth).hint || truth : truth]);
+            });
+            settlements.forEach(([clusterId, code]) => assignCluster(assign, clusterId, code, "选择"));
+          }
+          return {
+            actions: asks.length + manual + inlineRetry + rounds + 1 + lateFailure * 3,
+            browser: 0,
+            formula: `${asks.length} 选项 + ${manual} 手打（候选装不下）${inlineRetry ? ` + ${inlineRetry} 手打被当场拦下重打` : ""} + ${rounds} 提交轮次 + 1 核对写入${lateFailure ? ` + ${lateFailure}×3 核对失败退回重答` : ""}`,
+          };
+        }
+        if (key === "B") {
+          const grouping = state.b.grouping;
+          const plan = bPlan(grouping);
+          const badCodes = plan.codes.filter((code) => verifyProject(code).verdict !== "confirmed").length;
+          const fix = badCodes * 2;
+          return {
+            actions: plan.total + fix,
+            browser: 1,
+            formula: `1 开浏览器 + ${plan.selects} 勾选（${groupingByKey(grouping).name}）+ ${plan.picks} 点项目 + ${plan.searches} 搜索 + 1 核对提交${badCodes ? ` + ${badCodes}×2 就地改派` : ""}`,
+          };
+        }
+        const exceptions = exceptionClusters();
+        /* 起手式的候选也是猜的：主项目不在前 3 猜测里，就得多打一次字。 */
+        const manualMain = cMainCandidates().includes(mainProjectOfScenario()) ? 0 : 1;
+        const opener = 2 + manualMain + 1;
+        if (!exceptions.length) {
+          return {
+            actions: opener + 1,
+            browser: 0,
+            formula: `2 选项（主项目 + 无例外）${manualMain ? "+ 1 手打主项目 " : ""}+ 1 提交 + 1 核对写入 · 全程不开浏览器`,
+          };
+        }
+        const fix = failures * 2;
+        return {
+          actions: opener + 1 + exceptions.length * 2 + 1 + fix,
+          browser: 1,
+          formula: `2 选项${manualMain ? " + 1 手打主项目" : ""} + 1 提交 + 1 开浏览器 + ${exceptions.length}×2 改派例外簇 + 1 核对提交${failures ? ` + ${failures}×2 就地改派` : ""}`,
+        };
+      };
+
+      /* ---------------------------------------------------------------- 通用片段 */
+
+      const escapeHtml = (value) =>
+        String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+
+      const currentAssign = () => (state.variant === "A" ? state.a.assign : state.variant === "B" ? state.b.assign : state.c.assign);
+
+      const renderTopbar = () => {
+        const counter = counters[state.variant];
+        const assign = currentAssign();
+        return `
+          <header class="topbar">
+            <div>
+              <h1>${task.title}</h1>
+              <p class="topbar-sub">${task.id} · ${task.employee} · 内置清单 ${PROJECTS.length} 个项目（发布时冻结的快照）</p>
+            </div>
+            <div class="topbar-right">
+              <div class="scenario-picker">
+                <label>场景</label>
+                ${SCENARIOS.map(
+                  (item) =>
+                    `<button class="scenario-button ${state.scenario === item.key ? "active" : ""}" type="button" data-action="set-scenario" data-scenario="${item.key}" title="${escapeHtml(item.desc)}">${item.name}</button>`,
+                ).join("")}
+              </div>
+              <div class="counter-chip live"><strong>${counter.actions}</strong><span>本变体交互次数</span></div>
+              <div class="counter-chip"><strong>${counter.browser}</strong><span>开浏览器次数</span></div>
+              <div class="counter-chip"><strong>${assignedCount(assign)}/${ALL_LINES.length}</strong><span>已归属明细</span></div>
+              <button class="button-secondary" type="button" data-action="reset-variant" title="只清空当前变体的计数">重置本变体</button>
+            </div>
+          </header>
+        `;
+      };
+
+      const renderCompareBar = () => {
+        const bar = document.getElementById("compare");
+        const exceptions = exceptionClusters();
+        bar.innerHTML = `
+          <div class="compare-inner">
+            <div class="compare-title">
+              <b>交互次数对比</b><br />场景「${scenario().name}」·<br />例外 ${exceptionLineCount()}/${ALL_LINES.length} 条（${exceptions.length} 个簇）
+            </div>
+            ${variants
+              .map((variant) => {
+                const counter = counters[variant.key];
+                const guess = estimate(variant.key);
+                return `
+                  <div class="compare-card ${state.variant === variant.key ? "live" : ""}">
+                    <b>${variant.key} · ${variant.name}</b>
+                    <div class="compare-nums">
+                      <span class="measured">${counter.actions}</span>
+                      <span class="est">实测 · 估算 ${guess.actions} 次 · 开浏览器 ${counter.browser}/${guess.browser}</span>
+                    </div>
+                    <small>${guess.formula}</small>
+                  </div>
+                `;
+              })
+              .join("")}
+            <div>
+              <button class="log-toggle" type="button" data-action="toggle-log">${state.showLog ? "收起流水" : "查看交互流水"}</button>
+              <button class="log-toggle" type="button" data-action="reset-all">全部重置</button>
+            </div>
+          </div>
+          ${state.showLog ? `<ol class="log-list">${counters[state.variant].log.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("") || "<li>还没有交互</li>"}</ol>` : ""}
+        `;
+      };
+
+      const lineChip = (line, assign, results) => {
+        const entry = assign[line.id];
+        if (!entry) return `<span class="chip none">未归属</span>`;
+        const verdict = verdictOfCode(results, entry.code);
+        if (verdict && verdict !== "confirmed") {
+          return `<span class="chip bad" title="${escapeHtml(VERDICT_LABEL[verdict])}">${entry.code} · 核对失败</span>`;
+        }
+        const klass = entry.via === "继承" ? "inherited" : "assigned";
+        const tag = entry.via === "继承" ? " · 继承" : entry.via === "手打" ? " · 手打" : entry.via === "覆盖" ? " · 单独改" : "";
+        return `<span class="chip ${klass}">${entry.code}${tag}</span>`;
+      };
+
+      /* 只读的归属总览，A 用它来展示终端问答之外发生了什么（尤其是凭证簇的继承）。 */
+      const renderClusterSummary = (assign, results) => `
+        <section class="panel" style="margin-top:14px;">
+          <div class="panel-title"><h3>归属总览</h3><span class="line-meta">${assignedCount(assign)}/${ALL_LINES.length} 条已归属</span></div>
+          ${CLUSTERS.map((cluster) => {
+            const current = clusterAssignment(assign, cluster);
+            const chip = current.code
+              ? lineChip(cluster.lines[0], assign, results)
+              : `<span class="chip none">未归属</span>`;
+            return `
+              <div class="line-row" style="border-top:1px solid var(--line);">
+                <div class="line-main">
+                  <span class="line-detail"><b>${cluster.kind} · ${cluster.title}</b></span>
+                  <span class="line-meta">${cluster.lines.length} 条 · ${money(clusterAmount(cluster))} · 成组依据：${cluster.basis}${cluster.inheritFrom ? ` · 继承自「${clusterById(cluster.inheritFrom).title}」` : ""}</span>
+                </div>
+                ${chip}
+              </div>
+            `;
+          }).join("")}
+          <p class="panel-note">凭证簇不单独发问：它跟随分摊前那一行（Q14）。6 个簇因此只产生 ${askableClusters().length} 次决策。</p>
+        </section>
+      `;
+
+      /*
+        A 和 C 的提问单位是行程簇。真值按费用类别落的时候，簇内部就不是一个项目了——
+        它们只能答出簇的多数派，也就是答错。这条必须画出来，不然「按类别分组」的代价会被藏在 B 里看不见。
+      */
+      const clusterAskWarning = (key) => {
+        if (scenario().truth) return "";
+        const impure = CLUSTERS.filter((cluster) => !cluster.inheritFrom && !groupIsPure(cluster));
+        if (!impure.length) return "";
+        const wrong = ALL_LINES.filter((line) => truthOfLine(line) !== truthFor(line.clusterId)).length;
+        return `
+          <div class="callout bad">
+            <b>本场景下 ${key} 的提问单位不成立</b><br />
+            这批钱按<b>费用类别</b>落项目，而 ${key} 是按<b>行程簇</b>发问的：${impure.length} 个簇内部跨了不止一个项目。
+            一簇一答只能给出簇内多数派，会有 <b>${wrong} 条</b>落错项目，而且核对拦不住——项目号本身是好的，只是归错了人。
+            下面的交互次数因此不能拿去和 B 比：它买到的不是同一个结果。切到 B 用「按费用类别」分组才能表达这批真值。
+          </div>
+        `;
+      };
+
+      /* ================================================================ 变体 A */
+      /* 终端逐簇问。不开浏览器，但要老实画出 AskUserQuestion 的硬约束：
+         每轮 ≤4 题、每题 2–4 选项，所以只在簇数 ≤4、候选 ≤3 时成立。 */
+
+      const aPending = () => askableClusters().filter((cluster) => !state.a.answers[cluster.id]);
+
+      const aCandidates = (cluster) => {
+        const hinted = state.a.hints || [];
+        const ordered = [];
+        [...hinted, ...candidatesFor(cluster, state.a.assign)].forEach((code) => {
+          if (!ordered.includes(code)) ordered.push(code);
+        });
+        return ordered.slice(0, 3);
+      };
+
+      const renderQuestionBlock = (cluster, index, total) => {
+        const draft = state.a.draft[cluster.id];
+        const candidates = aCandidates(cluster);
+        const isManual = state.a.manualFor === cluster.id;
+        const options = candidates
+          .map((code, position) => {
+            const used = codeLineCount(state.a.assign, code);
+            return `
+              <button class="q-option ${draft && draft.code === code ? "chosen" : ""}" type="button" data-action="a-pick" data-cluster="${cluster.id}" data-code="${code}">
+                <span class="key">[${position + 1}]</span>
+                <span>${code}</span>
+                <span class="name">${escapeHtml(projectName(code))}${used ? ` · 本次已用 ${used} 条` : ""}</span>
+              </button>
+            `;
+          })
+          .join("");
+        return `
+          <div class="q-block ${draft ? "answered" : ""}">
+            <div class="q-head">
+              问题 ${index + 1}/${total} · 归属簇「${cluster.kind} · ${cluster.title}」
+              <div class="q-meta">${cluster.lines.length} 条 · ${money(clusterAmount(cluster))} · 依据 ${cluster.basis} → 归入哪个项目？</div>
+            </div>
+            <div class="q-options">
+              ${options}
+              <button class="q-option escape ${isManual ? "chosen" : ""}" type="button" data-action="a-other" data-cluster="${cluster.id}">
+                <span class="key">[${candidates.length + 1}]</span><span>其他</span><span class="name">清单里没有 / 不在候选里 · 手动输入项目号</span>
+              </button>
+            </div>
+            ${
+              isManual
+                ? `
+              <div class="term-input-row">
+                <span class="q-meta">项目号 &gt;</span>
+                <input class="term-input" id="a-manual" data-focus-id="a-manual" data-control="a-manual" type="text" value="${escapeHtml(state.a.manualText)}" placeholder="例如 P-2211，回车提交" autocomplete="off" />
+                <button class="term-button" type="button" data-action="a-manual-submit" data-cluster="${cluster.id}">回车</button>
+              </div>
+              ${
+                state.a.manualError
+                  ? `<div class="term-line bad" style="margin-top:6px;">✗ ${state.a.manualError.code} · ${VERDICT_LABEL[state.a.manualError.verdict]}
+${escapeHtml(state.a.manualError.detail)}${state.a.manualError.hint ? `
+→ 这是内置清单与 ERP 错位，不是你填错。主数据里对应的在用项目是 ${state.a.manualError.hint}（${escapeHtml(projectName(state.a.manualError.hint))}）。` : `
+→ 这是内置清单与 ERP 错位，不是你填错。请联系发布方更新快照。`}</div>`
+                  : `<div class="term-line dim" style="margin-top:6px;">手打的编码立刻做一次只读核对（verifyProject），不通过就在这里硬阻塞。</div>`
+              }
+            `
+                : ""
+            }
+            ${draft ? `<div class="term-line ok" style="margin-top:6px;">✓ 本题已选 ${draft.code} · ${escapeHtml(projectName(draft.code))}${draft.via === "手打" ? "（手打）" : ""}</div>` : ""}
+          </div>
+        `;
+      };
+
+      const renderVariantA = () => {
+        const pending = aPending();
+        const round = pending.slice(0, 4);
+        const waiting = pending.length - round.length;
+        const results = state.a.verifyResults;
+        const failures = failuresOf(results);
+        const answered = round.every((cluster) => state.a.draft[cluster.id]);
+        const done = state.a.submitted;
+
+        let body = "";
+        if (pending.length) {
+          body = `
+            <div class="term-line dim">$ baox 继续任务 ${task.id}</div>
+            <div class="term-line">已解析 ${ALL_LINES.length} 条候选明细，按连续日期＋同城／同一凭证聚成 ${CLUSTERS.length} 个归属簇。</div>
+            <div class="term-line dim">凭证簇「${clusterById("inv").title}」继承分摊前那一行，不单独发问。需要你回答的是 ${askableClusters().length} 个簇。</div>
+            ${state.a.reaskNote ? `<div class="term-rule"></div><div class="term-line bad">✗ 写入前核对未通过，受影响的簇已退回重答（见下）。</div>` : ""}
+            <div class="term-rule"></div>
+            <div class="term-line warn">◆ AskUserQuestion · 第 ${state.a.rounds + 1} 轮 · 本轮 ${round.length} 题（每轮上限 4 题）${waiting ? ` · 还有 ${waiting} 个簇排在下一轮` : ""}</div>
+            ${round.map((cluster, index) => renderQuestionBlock(cluster, index, round.length)).join("")}
+            <div class="term-actions">
+              <button class="term-button primary" type="button" data-action="a-submit-round" ${answered ? "" : "disabled"}>提交本轮（${round.filter((cluster) => state.a.draft[cluster.id]).length}/${round.length} 已答）</button>
+            </div>
+            <p class="constraint-note">
+              硬约束照实画：AskUserQuestion 一次最多 4 题、每题 2–4 个选项。6 个簇 → ${askableClusters().length} 个待答簇 → ${Math.ceil(askableClusters().length / 4)} 轮。
+              簇再多一点（比如季度报销 12 个簇）就是 3 轮起，终端里翻不回去、也改不了上一轮的答案。
+            </p>
+          `;
+        } else if (!results.length) {
+          body = `
+            <div class="term-line ok">✓ ${askableClusters().length} 个簇全部答完，${assignedCount(state.a.assign)} 条明细已归属。</div>
+            <div class="term-line dim">本次用到 ${usedCodes(state.a.assign).length} 个项目号：${usedCodes(state.a.assign).join("、")}</div>
+            <div class="term-rule"></div>
+            <div class="term-line">写入 ERP 草稿前，只对这 ${usedCodes(state.a.assign).length} 个项目号做只读核对（不核对整本清单）。</div>
+            <div class="term-actions"><button class="term-button primary" type="button" data-action="a-verify">核对并写入</button></div>
+          `;
+        } else if (failures.length) {
+          body = `
+            <div class="term-line bad">✗ 核对未通过：${failures.map((failure) => `${failure.code} ${VERDICT_LABEL[failure.verdict]}`).join("；")}</div>
+            <div class="term-actions"><button class="term-button primary" type="button" data-action="a-reask">退回重答受影响的簇</button></div>
+          `;
+        } else {
+          body = `
+            <div class="term-line ok">✓ 核对通过：${results.map((result) => `${result.code} ${escapeHtml(projectName(result.code))}`).join("；")}</div>
+            <div class="term-line">${ALL_LINES.length} 条明细的项目归属已提交，可以进入 ERP 草稿授权。全程未打开浏览器。</div>
+            <div class="term-line dim">共 ${counters.A.actions} 次交互。</div>
+          `;
+        }
+
+        return `
+          <div class="page">
+            ${renderTopbar()}
+            ${clusterAskWarning("A")}
+            <div class="design-heading">
+              <div>
+                <div class="section-kicker">变体 A</div>
+                <h2>终端逐簇问</h2>
+                <p>不开浏览器。每个归属簇一道终端多选题，候选按「本任务内已选 &gt; 本人历史」排序，永不预填。代价是被 AskUserQuestion 的 4 题／4 选项卡死：簇一多就要多轮，候选装不下就得手打编码。</p>
+              </div>
+              <span class="variant-badge">A · 零浏览器，规模有上限</span>
+            </div>
+            <div class="terminal">${body}</div>
+            ${renderClusterSummary(state.a.assign, results)}
+            <p class="demo-note">虚构数据 · 一次性原型 · 无持久化。计数口径：一次需要用户动手的动作算 1 次。</p>
+          </div>
+        `;
+      };
+
+      /* ================================================================ 页面共用件（B 与 C 的收尾页） */
+
+      const projectPanel = (vs, prefix, { title, note } = {}) => {
+        const used = usedCodes(vs.assign)
+          .map((code) => ({ code, count: codeLineCount(vs.assign, code) }))
+          .sort((a, b) => b.count - a.count);
+        const usedSet = used.map((item) => item.code);
+        const keyword = vs.search.trim();
+        const rest = PROJECTS.filter((project) => !usedSet.includes(project.code)).filter(
+          (project) => !keyword || project.code.includes(keyword) || project.name.includes(keyword),
+        );
+        const enabled = vs.selected.length > 0;
+        const item = (code, count) => `
+          <button class="project-item" type="button" data-action="${prefix}-assign" data-code="${code}" ${enabled ? "" : "disabled"} title="${enabled ? `把选中的 ${vs.selected.length} 条归入 ${code}` : "先勾选费用事件"}">
+            <span class="code">${code}</span>
+            <span class="name">${escapeHtml(projectName(code))}</span>
+            ${count ? `<span class="count">${count} 条</span>` : ""}
+          </button>
+        `;
+        return `
+          <aside class="panel">
+            <div class="panel-title"><h3>${title || "项目"}</h3><span class="line-meta">${enabled ? `已选 ${vs.selected.length} 条` : "未选中"}</span></div>
+            <p class="panel-note">${note || "项目本身就是投放目标：勾选事件，然后点项目。没有「应用」按钮。"}</p>
+            ${
+              used.length
+                ? `<div class="panel-group"><div class="panel-group-heading"><span>本次已归入（置顶）</span><span>${used.length} 个</span></div>${used.map((entry) => item(entry.code, entry.count)).join("")}</div>`
+                : ""
+            }
+            <div class="panel-group">
+              <div class="panel-group-heading"><span>内置清单</span><span>${rest.length}/${PROJECTS.length} 个</span></div>
+              <input class="search-input" id="${prefix}-search" data-focus-id="${prefix}-search" data-control="${prefix}-search" type="search" value="${escapeHtml(vs.search)}" placeholder="搜项目号或名称，如「零售中台」" aria-label="搜索内置项目清单" />
+              <div class="project-scroll" style="margin-top:8px;">${rest.length ? rest.map((project) => item(project.code, codeLineCount(vs.assign, project.code))).join("") : `<p class="panel-note">没有匹配的项目。清单是发布时冻结的快照，找不到就用下面的手动输入。</p>`}</div>
+            </div>
+            <div class="panel-group">
+              <div class="panel-group-heading"><span>逃生口</span><span>清单里没有</span></div>
+              ${
+                vs.manualOpen
+                  ? `
+                    <input class="manual-input" id="${prefix}-panel-manual" data-focus-id="${prefix}-panel-manual" data-control="${prefix}-panel-manual" type="text" value="${escapeHtml(vs.manualText)}" placeholder="手动输入项目号，如 P-2211" autocomplete="off" />
+                    <div class="callout-actions">
+                      <button class="button-primary" type="button" data-action="${prefix}-panel-manual-submit" ${enabled ? "" : "disabled"}>核对并归入</button>
+                      <button class="button-secondary" type="button" data-action="${prefix}-panel-manual-cancel">取消</button>
+                    </div>
+                    ${vs.manualError ? `<div class="callout bad">${vs.manualError.code} · ${VERDICT_LABEL[vs.manualError.verdict]}<br />${escapeHtml(vs.manualError.detail)}<br />${vs.manualError.hint ? `这是内置清单与 ERP 错位，不是你填错。主数据里在用的是 ${vs.manualError.hint}（${escapeHtml(projectName(vs.manualError.hint))}）。` : "这是内置清单与 ERP 错位，不是你填错。请联系发布方更新快照。"}</div>` : ""}
+                  `
+                  : `<button class="button-secondary" type="button" data-action="${prefix}-panel-manual-open">手动输入项目号</button>`
+              }
+            </div>
+          </aside>
+        `;
+      };
+
+      const lineRow = (line, vs, prefix, results) => `
+        <div class="line-row">
+          <input id="${prefix}-line-${line.id}" data-focus-id="${prefix}-line-${line.id}" type="checkbox" data-control="${prefix}-line" data-line="${line.id}" ${vs.selected.includes(line.id) ? "checked" : ""} aria-label="选择明细 ${line.detail}" />
+          <div class="line-main">
+            <span class="line-detail">${escapeHtml(line.detail)}</span>
+            <span class="line-meta">${line.date} · ${line.city} · ${line.category}</span>
+          </div>
+          <span class="line-amount">${money(line.amount)}</span>
+          ${lineChip(line, vs.assign, results)}
+        </div>
+      `;
+
+      /*
+        一个分组卡片。层级是可选的：归属簇和七类平铺没有子组，V1 的「市外交通」有城市子组，
+        城市子组下面还可能挂一张合并交通票。渲染器只认 lines / children / ownLines 三个字段。
+        noGroupSelect 的组不给整组复选框——本版没给它分类，就不该白拿一次整组勾。
+      */
+      const clusterCard = (cluster, vs, prefix, results, depth = 0) => {
+        const collapsed = vs.collapsed[cluster.id] !== false;
+        const current = clusterAssignment(vs.assign, cluster);
+        const selectedInCluster = cluster.lines.filter((line) => vs.selected.includes(line.id)).length;
+        const complete = cluster.lines.every((line) => vs.assign[line.id]);
+        const badVerdict = current.code && verdictOfCode(results, current.code) && verdictOfCode(results, current.code) !== "confirmed";
+        const children = cluster.children || [];
+        const ownLines = cluster.ownLines || cluster.lines;
+        return `
+          <div class="cluster ${complete && !badVerdict ? "done" : ""} ${depth ? "sub" : ""}">
+            <div class="cluster-head">
+              ${
+                cluster.noGroupSelect
+                  ? `<span class="cluster-nobox" title="本版不给这一组整组勾选">—</span>`
+                  : `<input id="${prefix}-cluster-${cluster.id}" data-focus-id="${prefix}-cluster-${cluster.id}" type="checkbox" data-control="${prefix}-cluster" data-cluster="${cluster.id}" ${selectedInCluster === cluster.lines.length ? "checked" : ""} aria-label="整组选择 ${cluster.title}" />`
+              }
+              <label ${cluster.noGroupSelect ? "" : `for="${prefix}-cluster-${cluster.id}"`}>
+                <span class="cluster-title">${cluster.kind} · ${cluster.title}</span>
+                <span class="cluster-meta">${cluster.lines.length} 条 · ${money(clusterAmount(cluster))} · ${cluster.basis}${cluster.inheritFrom ? ` · 继承自「${clusterById(cluster.inheritFrom).title}」` : ""}${selectedInCluster ? ` · 已选 ${selectedInCluster}` : ""}</span>
+              </label>
+              ${current.code ? lineChip(cluster.lines.find((line) => vs.assign[line.id]) || cluster.lines[0], vs.assign, results) : `<span class="chip none">未归属</span>`}
+              ${current.mixed ? `<span class="chip">组内不一致</span>` : ""}
+              <button class="cluster-toggle" type="button" data-action="${prefix}-toggle-cluster" data-cluster="${cluster.id}">${collapsed ? (children.length ? "展开" : "展开明细") : "收起"}</button>
+            </div>
+            ${
+              collapsed
+                ? ""
+                : children.map((child) => clusterCard(child, vs, prefix, results, depth + 1)).join("") +
+                  ownLines.map((line) => lineRow(line, vs, prefix, results)).join("")
+            }
+          </div>
+        `;
+      };
+
+      const overwriteCallout = (vs, prefix) =>
+        vs.pendingOverwrite
+          ? `
+        <div class="callout">
+          选中的 ${vs.pendingOverwrite.changed.length} 条已经归到别的项目上了。改派到 ${vs.pendingOverwrite.code} · ${escapeHtml(projectName(vs.pendingOverwrite.code))}？
+          <div class="callout-actions">
+            <button class="button-secondary" type="button" data-action="${prefix}-overwrite" data-mode="unassigned">只处理未归属</button>
+            <button class="button-danger" type="button" data-action="${prefix}-overwrite" data-mode="all">确认覆盖</button>
+            <button class="button-secondary" type="button" data-action="${prefix}-overwrite" data-mode="cancel">取消</button>
+          </div>
+        </div>
+      `
+          : "";
+
+      const verifyCallout = (vs, prefix) => {
+        const results = vs.verifyResults;
+        if (!results.length) return "";
+        const failures = failuresOf(results);
+        if (!failures.length) {
+          return `<div class="callout ok">✓ 本次用到的 ${results.length} 个项目号全部核对通过，可以进入 ERP 草稿授权。共 ${counters[state.variant].actions} 次交互。</div>`;
+        }
+        return failures
+          .map((failure) => {
+            const lines = ALL_LINES.filter((line) => vs.assign[line.id]?.code === failure.code);
+            return `
+              <div class="callout bad">
+                <b>${failure.code} · ${VERDICT_LABEL[failure.verdict]}</b><br />
+                ${escapeHtml(failure.detail)}<br />
+                ${failure.hint ? `这是内置清单与 ERP 错位，不是你填错。主数据里在用的是 ${failure.hint}（${escapeHtml(projectName(failure.hint))}）。` : "这是内置清单与 ERP 错位，不是你填错。请联系发布方更新快照。"}
+                影响 ${lines.length} 条明细——就地改派，不用离开这一页。
+                <div class="callout-actions">
+                  <button class="button-secondary" type="button" data-action="${prefix}-select-failed" data-code="${failure.code}">选中受影响的 ${lines.length} 条</button>
+                </div>
+              </div>
+            `;
+          })
+          .join("");
+      };
+
+      /*
+        把「哪种分法更省」摊开给用户看。它读的是场景真值，是上帝视角的估算，不是用户已经点出来的东西——
+        标签上写清楚，免得被当成页面在预填。
+      */
+      const bPlanCallout = (vs) => {
+        const rows = GROUPINGS.map((item) => ({ item, plan: bPlan(item.key) }));
+        const best = rows.reduce((a, b) => (b.plan.total < a.plan.total ? b : a));
+        const current = rows.find((row) => row.item.key === vs.grouping);
+        return `
+          <div class="callout ${current === best ? "ok" : ""}">
+            <b>本场景「${scenario().name}」下的最省选择路径</b>（按真值算的上帝视角估算，页面不会替你点）
+            <div class="plan-rows">
+              ${rows
+                .map(
+                  (row) => `
+                <div class="plan-row ${row.item.key === vs.grouping ? "on" : ""}">
+                  <span class="plan-name">${row.item.name}</span>
+                  <span class="plan-num">${row.plan.total} 次</span>
+                  <span class="line-meta">${row.plan.selects} 勾选 + ${row.plan.picks} 点项目 + ${row.plan.searches} 搜索 + 开页 1 + 提交 1</span>
+                </div>
+              `,
+                )
+                .join("")}
+            </div>
+            <span class="line-meta">${
+              rows.every((row) => row.plan.total === rows[0].plan.total)
+                ? "三种分法打平。"
+                : `最省的是「${best.item.name}」，比最贵的一种少 ${Math.max(...rows.map((row) => row.plan.total)) - best.plan.total} 次。`
+            }</span>
+            <div class="plan-steps">${current.plan.steps.map((step) => `<span>${escapeHtml(step)}</span>`).join("")}</div>
+          </div>
+        `;
+      };
+
+      /* ================================================================ 变体 B */
+
+      const renderVariantB = () => {
+        const vs = state.b;
+        if (!vs.opened) {
+          return `
+            <div class="page">
+              ${renderTopbar()}
+              <div class="design-heading">
+                <div>
+                  <div class="section-kicker">变体 B</div>
+                  <h2>网页工作台</h2>
+                  <p>规模没有上限，代价是每次都得切一趟浏览器。左侧按费用类别折叠（可切回归属簇），组头一个复选框全选整组；右侧项目面板，项目本身就是投放目标。</p>
+                </div>
+                <span class="variant-badge">B · 无规模上限，必开浏览器</span>
+              </div>
+              <div class="terminal">
+                <div class="term-line dim">$ baox 继续任务 ${task.id}</div>
+                <div class="term-line">已解析 ${ALL_LINES.length} 条候选明细，聚成 ${CLUSTERS.length} 个归属簇。项目归属请在本地页面填报。</div>
+                <div class="term-line warn">→ http://127.0.0.1:8765/task/${task.id}/projects</div>
+                <div class="term-actions"><button class="term-button primary" type="button" data-action="b-open">打开浏览器页面</button></div>
+                <p class="constraint-note">这一步就是 B 的固定成本：无论 1 个簇还是 20 个簇，都要离开终端一次。</p>
+              </div>
+              <p class="demo-note">虚构数据 · 一次性原型 · 无持久化。</p>
+            </div>
+          `;
+        }
+        return `
+          <div class="page">
+            ${renderTopbar()}
+            <div class="design-heading">
+              <div>
+                <div class="section-kicker">变体 B</div>
+                <h2>网页工作台</h2>
+                <p>项目 → 事件：勾选一个组（或组内几条），点右侧项目，一次扫入一批。决策次数 = 项目数，不是事件数——前提是分组切在项目的边界上。</p>
+              </div>
+              <span class="variant-badge">B · 无规模上限，必开浏览器</span>
+            </div>
+            ${overwriteCallout(vs, "b")}
+            ${verifyCallout(vs, "b")}
+            <div class="workbench">
+              <section class="panel">
+                <div class="panel-title"><h3>候选明细 · ${groupingByKey(vs.grouping).name}</h3><span class="line-meta">${assignedCount(vs.assign)}/${ALL_LINES.length} 已归属</span></div>
+                <div class="grouping-switch">
+                  ${GROUPINGS.map(
+                    (item) => `
+                    <button class="button-secondary ${item.key === vs.grouping ? "on" : ""}" type="button" data-action="b-set-grouping" data-grouping="${item.key}">${item.name}（${groupsOf(item.key).length} 组）</button>
+                  `,
+                  ).join("")}
+                  <span class="line-meta">${groupingByKey(vs.grouping).note}</span>
+                </div>
+                ${bPlanCallout(vs)}
+                ${groupsOf(vs.grouping).map((group) => clusterCard(group, vs, "b", vs.verifyResults)).join("")}
+                <div class="callout-actions">
+                  <button class="button-primary" type="button" data-action="b-verify" ${assignedCount(vs.assign) === ALL_LINES.length ? "" : "disabled"}>核对并提交（${usedCodes(vs.assign).length} 个项目号）</button>
+                  <span class="line-meta">组不能拆并（Q16）；要动其中几条，展开明细单独勾。</span>
+                </div>
+              </section>
+              ${projectPanel(vs, "b", { title: "项目", note: "项目本身就是投放目标：勾选事件后点项目即归入，没有「应用」按钮。已归入的置顶。" })}
+            </div>
+            <p class="demo-note">虚构数据 · 一次性原型 · 无持久化。未点过的明细恒为未归属，页面不做任何预填。</p>
+          </div>
+        `;
+      };
+
+      /* ================================================================ 变体 C */
+      /* 终端只问一道起手式，例外才弹页面。它是否成立，完全取决于例外率。 */
+
+      const cMainCandidates = () => {
+        const weight = {};
+        askableClusters().forEach((cluster) => {
+          cluster.pool.forEach((code, position) => {
+            weight[code] = (weight[code] || 0) + cluster.lines.length * [1, 0.6, 0.3][position];
+          });
+        });
+        return Object.entries(weight)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map((entry) => entry[0]);
+      };
+
+      const renderVariantC = () => {
+        const vs = state.c;
+        const heading = `
+          <div class="design-heading">
+            <div>
+              <div class="section-kicker">变体 C</div>
+              <h2>终端起手 + 页面收尾</h2>
+              <p>终端只问一道「这批费用主要归哪个项目」，一键全归入；只有例外才弹页面。常见情形下满足「登录一次之后不再打开任何浏览器页面」，代价是例外一多就退化成 B 再加一次多余的提问。</p>
+            </div>
+            <span class="variant-badge">C · 赌例外率低</span>
+          </div>
+        `;
+
+        if (vs.step === "opener" || vs.step === "asked") {
+          const candidates = cMainCandidates();
+          const isManual = vs.manualFor === "main";
+          const q1 = `
+            <div class="q-block ${vs.draftMain ? "answered" : ""}">
+              <div class="q-head">问题 1/2 · 起手式
+                <div class="q-meta">${ALL_LINES.length} 条明细、${money(ALL_LINES.reduce((sum, line) => sum + line.amount, 0))}。这批费用<b>主要</b>归哪个项目？选中后全部归入，这是你的一次动作，不是预填。</div>
+              </div>
+              <div class="q-options">
+                ${candidates
+                  .map(
+                    (code, position) => `
+                  <button class="q-option ${vs.draftMain === code ? "chosen" : ""}" type="button" data-action="c-pick-main" data-code="${code}">
+                    <span class="key">[${position + 1}]</span><span>${code}</span><span class="name">${escapeHtml(projectName(code))} · 按本人历史推测</span>
+                  </button>
+                `,
+                  )
+                  .join("")}
+                <button class="q-option escape ${isManual ? "chosen" : ""}" type="button" data-action="c-other-main">
+                  <span class="key">[4]</span><span>其他</span><span class="name">都不是 · 手动输入项目号</span>
+                </button>
+              </div>
+              ${
+                isManual
+                  ? `
+                <div class="term-input-row">
+                  <span class="q-meta">项目号 &gt;</span>
+                  <input class="term-input" id="c-manual" data-focus-id="c-manual" data-control="c-manual" type="text" value="${escapeHtml(vs.manualText)}" placeholder="例如 P-1042，回车提交" autocomplete="off" />
+                  <button class="term-button" type="button" data-action="c-manual-submit">回车</button>
+                </div>
+                ${vs.manualError ? `<div class="term-line bad" style="margin-top:6px;">✗ ${vs.manualError.code} · ${VERDICT_LABEL[vs.manualError.verdict]}
+${escapeHtml(vs.manualError.detail)}</div>` : ""}
+              `
+                  : ""
+              }
+            </div>
+          `;
+          const q2 = `
+            <div class="q-block ${vs.draftException !== null ? "answered" : ""}">
+              <div class="q-head">问题 2/2 · 例外
+                <div class="q-meta">除了主项目，还有别的项目要挑出来吗？</div>
+              </div>
+              <div class="q-options">
+                <button class="q-option ${vs.draftException === false ? "chosen" : ""}" type="button" data-action="c-exception" data-value="no">
+                  <span class="key">[1]</span><span>没有例外</span><span class="name">全部归入主项目，直接提交，不开浏览器</span>
+                </button>
+                <button class="q-option ${vs.draftException === true ? "chosen" : ""}" type="button" data-action="c-exception" data-value="yes">
+                  <span class="key">[2]</span><span>有例外</span><span class="name">打开页面把例外挑出来</span>
+                </button>
+              </div>
+            </div>
+          `;
+          const ready = vs.draftMain && vs.draftException !== null;
+          return `
+            <div class="page">
+              ${renderTopbar()}
+              ${clusterAskWarning("C")}
+              ${heading}
+              <div class="terminal">
+                <div class="term-line dim">$ baox 继续任务 ${task.id}</div>
+                <div class="term-line">已解析 ${ALL_LINES.length} 条候选明细，聚成 ${CLUSTERS.length} 个归属簇。</div>
+                <div class="term-rule"></div>
+                <div class="term-line warn">◆ AskUserQuestion · 第 1 轮 · 2 题</div>
+                ${q1}
+                ${q2}
+                <div class="term-actions"><button class="term-button primary" type="button" data-action="c-submit-opener" ${ready ? "" : "disabled"}>提交本轮</button></div>
+                <p class="constraint-note">
+                  本场景真正的例外：${exceptionClusters().length} 个簇 / ${exceptionLineCount()} 条（${Math.round((exceptionLineCount() / ALL_LINES.length) * 100)}%）。
+                  例外率越高，C 越接近「B 加两次多余的提问」。用顶栏的场景开关当场验它。
+                </p>
+              </div>
+              <p class="demo-note">虚构数据 · 一次性原型 · 无持久化。</p>
+            </div>
+          `;
+        }
+
+        if (vs.step === "done-terminal") {
+          const results = vs.verifyResults;
+          const failures = failuresOf(results);
+          return `
+            <div class="page">
+              ${renderTopbar()}
+              ${clusterAskWarning("C")}
+              ${heading}
+              <div class="terminal">
+                <div class="term-line ok">✓ ${ALL_LINES.length} 条明细全部归入 ${vs.mainProject} · ${escapeHtml(projectName(vs.mainProject))}（起手式，用户的一次动作）。</div>
+                ${
+                  !results.length
+                    ? `<div class="term-line">写入前只核对这 1 个项目号。</div>
+                       <div class="term-actions"><button class="term-button primary" type="button" data-action="c-verify-terminal">核对并写入</button></div>`
+                    : failures.length
+                      ? `<div class="term-line bad">✗ ${failures.map((failure) => `${failure.code} ${VERDICT_LABEL[failure.verdict]}`).join("；")}
+${escapeHtml(failures[0].detail)}
+→ 这是内置清单与 ERP 错位，不是你填错。${failures[0].hint ? `主数据里在用的是 ${failures[0].hint}。` : ""}</div>
+                         <div class="term-actions"><button class="term-button primary" type="button" data-action="c-reopen">回到起手式重选</button></div>`
+                      : `<div class="term-line ok">✓ 核对通过。项目归属已提交，可以进入 ERP 草稿授权。</div>
+                         <div class="term-line">全程未打开浏览器，共 ${counters.C.actions} 次交互。</div>`
+                }
+              </div>
+              ${renderClusterSummary(vs.assign, results)}
+              <p class="demo-note">虚构数据 · 一次性原型 · 无持久化。</p>
+            </div>
+          `;
+        }
+
+        if (!vs.opened) {
+          return `
+            <div class="page">
+              ${renderTopbar()}
+              ${clusterAskWarning("C")}
+              ${heading}
+              <div class="terminal">
+                <div class="term-line ok">✓ ${ALL_LINES.length} 条明细已全部归入 ${vs.mainProject} · ${escapeHtml(projectName(vs.mainProject))}。</div>
+                <div class="term-line">你说有例外——把例外挑出来需要一个页面。</div>
+                <div class="term-line warn">→ http://127.0.0.1:8765/task/${task.id}/projects?only=exceptions</div>
+                <div class="term-actions"><button class="term-button primary" type="button" data-action="c-open">打开浏览器页面</button></div>
+                <p class="constraint-note">C 的判据在这里破功：只要存在例外，那条「此后不再需要打开任何浏览器页面」就不成立了。</p>
+              </div>
+              <p class="demo-note">虚构数据 · 一次性原型 · 无持久化。</p>
+            </div>
+          `;
+        }
+
+        const shown = CLUSTERS.filter((cluster) => !vs.onlyMain || clusterAssignment(vs.assign, cluster).code === vs.mainProject);
+        return `
+          <div class="page">
+            ${renderTopbar()}
+            ${clusterAskWarning("C")}
+            ${heading}
+            <div class="callout">
+              起手式已把 ${ALL_LINES.length} 条全归入 <b>${vs.mainProject} · ${escapeHtml(projectName(vs.mainProject))}</b>。这一页只做一件事：把不属于它的挑出来改派。
+              <div class="callout-actions">
+                <button class="button-secondary" type="button" data-action="c-toggle-filter">${vs.onlyMain ? `只看仍归在主项目的簇（${shown.length}）· 点击显示全部` : "显示全部簇 · 点击只看主项目"}</button>
+                <span class="line-meta">内核并不知道哪些是例外，所以这一页还是得把它们全列出来——这正是 C 与 B 的差距在高例外率下消失的原因。</span>
+              </div>
+            </div>
+            ${overwriteCallout(vs, "c")}
+            ${verifyCallout(vs, "c")}
+            <div class="workbench">
+              <section class="panel">
+                <div class="panel-title"><h3>例外挑拣 · 按归属簇</h3><span class="line-meta">${shown.length}/${CLUSTERS.length} 个簇</span></div>
+                ${shown.map((cluster) => clusterCard(cluster, vs, "c", vs.verifyResults)).join("")}
+                <div class="callout-actions">
+                  <button class="button-primary" type="button" data-action="c-verify">核对并提交（${usedCodes(vs.assign).length} 个项目号）</button>
+                </div>
+              </section>
+              ${projectPanel(vs, "c", { title: "改派到", note: "勾选要挑出来的簇，然后点项目。主项目置顶在「本次已归入」里。" })}
+            </div>
+            <p class="demo-note">虚构数据 · 一次性原型 · 无持久化。</p>
+          </div>
+        `;
+      };
+
+      /* ================================================================ 交互 */
+
+      const showToast = (message, focusId = "") => {
+        window.clearTimeout(toastTimer);
+        state.toast = message;
+        state.pendingFocusId = focusId;
+        render();
+        toastTimer = window.setTimeout(() => {
+          state.toast = "";
+          const toast = document.querySelector("[data-toast]");
+          if (toast) toast.remove();
+        }, 2600);
+      };
+
+      const stateFor = (prefix) => (prefix === "b" ? state.b : state.c);
+
+      /* 归属写入：整簇被选中就走 assignCluster（带凭证簇继承），否则逐条写并标「单独改」。 */
+      const applyAssignment = (prefix, code, mode) => {
+        const vs = stateFor(prefix);
+        if (!vs.selected.length) {
+          showToast("先勾选费用事件，再点项目。");
+          return;
+        }
+        /*
+          覆盖保护只拦「用户在这一页真的做过别的决定」的行：
+          起手式一键铺上去的、以及核对已经判定为坏码的，改派本来就是这一页存在的理由，不该再问一遍。
+        */
+        const badCodes = failuresOf(vs.verifyResults).map((failure) => failure.code);
+        const changed = vs.selected.filter((id) => {
+          const entry = vs.assign[id];
+          if (!entry || entry.code === code) return false;
+          if (entry.via === "起手式") return false;
+          if (badCodes.includes(entry.code)) return false;
+          return true;
+        });
+        if (changed.length && !mode) {
+          vs.pendingOverwrite = { code, changed };
+          render();
+          return;
+        }
+        const targets = mode === "unassigned" ? vs.selected.filter((id) => !vs.assign[id]) : vs.selected;
+        CLUSTERS.forEach((cluster) => {
+          const inCluster = cluster.lines.filter((line) => targets.includes(line.id));
+          if (!inCluster.length) return;
+          if (inCluster.length === cluster.lines.length && !cluster.inheritFrom) {
+            assignCluster(vs.assign, cluster.id, code, "选择");
+          } else {
+            inCluster.forEach((line) => {
+              vs.assign[line.id] = { code, via: cluster.inheritFrom ? "覆盖" : "选择" };
+            });
+          }
+        });
+        vs.selected = [];
+        vs.pendingOverwrite = null;
+        /* 核对是内核的事，不再向用户收一次点击。 */
+        if (vs.verifyResults.length) vs.verifyResults = runVerification(vs.assign);
+        showToast(`已把 ${targets.length} 条归入 ${code} · ${projectName(code)}。`);
+      };
+
+      const toggleSelection = (vs, ids, label) => {
+        const allSelected = ids.every((id) => vs.selected.includes(id));
+        vs.selected = allSelected ? vs.selected.filter((id) => !ids.includes(id)) : [...new Set([...vs.selected, ...ids])];
+        bump(`${allSelected ? "取消勾选" : "勾选"}${label}`);
+      };
+
+      const handleManualSubmit = (prefix) => {
+        const vs = stateFor(prefix);
+        const code = vs.manualText.trim().toUpperCase();
+        if (!code) return;
+        bump(`手打项目号 ${code}`);
+        const result = verifyProject(code);
+        if (result.verdict !== "confirmed") {
+          vs.manualError = result;
+          render();
+          return;
+        }
+        vs.manualError = null;
+        vs.manualOpen = false;
+        vs.manualText = "";
+        applyAssignment(prefix, code, "all");
+      };
+
+      const ACTIONS = {
+        "set-scenario": (dataset) => {
+          if (state.scenario === dataset.scenario) return;
+          state.scenario = dataset.scenario;
+          resetAll();
+          showToast(`场景切到「${scenario().name}」：${scenario().desc}。三份计数已清零。`);
+        },
+        "reset-variant": () => {
+          resetVariant(state.variant);
+          showToast(`变体 ${state.variant} 已重置。`);
+        },
+        "reset-all": () => {
+          resetAll();
+          showToast("三个变体的计数与状态都已重置。");
+        },
+        "toggle-log": () => {
+          state.showLog = !state.showLog;
+          render();
+        },
+
+        /* ---- A ---- */
+        "a-pick": (dataset) => {
+          bump(`A 选项：${clusterById(dataset.cluster).title} → ${dataset.code}`);
+          state.a.draft[dataset.cluster] = { code: dataset.code, via: "选择" };
+          state.a.manualFor = "";
+          state.a.manualError = null;
+          render();
+        },
+        "a-other": (dataset) => {
+          bump(`A 选「其他」：${clusterById(dataset.cluster).title}`);
+          state.a.manualFor = dataset.cluster;
+          state.a.manualText = "";
+          state.a.manualError = null;
+          state.pendingFocusId = "a-manual";
+          render();
+        },
+        "a-manual-submit": (dataset) => {
+          const code = state.a.manualText.trim().toUpperCase();
+          if (!code) return;
+          bump(`A 手打项目号 ${code}`);
+          const result = verifyProject(code);
+          if (result.verdict !== "confirmed") {
+            state.a.manualError = result;
+            render();
+            return;
+          }
+          state.a.draft[dataset.cluster] = { code, via: "手打" };
+          state.a.manualFor = "";
+          state.a.manualError = null;
+          render();
+        },
+        "a-submit-round": () => {
+          bump("A 提交本轮");
+          Object.entries(state.a.draft).forEach(([clusterId, draft]) => {
+            state.a.answers[clusterId] = draft;
+            assignCluster(state.a.assign, clusterId, draft.code, draft.via);
+          });
+          state.a.draft = {};
+          state.a.manualFor = "";
+          state.a.rounds += 1;
+          state.a.reaskNote = null;
+          state.a.verifyResults = [];
+          render();
+        },
+        "a-verify": () => {
+          bump("A 核对并写入");
+          const results = runVerification(state.a.assign);
+          state.a.verifyResults = results;
+          const failures = failuresOf(results);
+          if (failures.length) {
+            /* 硬阻塞：受影响的簇自动退回重答，并把 ERP 指出的在用项目补进候选。 */
+            const badCodes = failures.map((failure) => failure.code);
+            state.a.hints = failures.map((failure) => failure.hint).filter(Boolean);
+            askableClusters().forEach((cluster) => {
+              const current = clusterAssignment(state.a.assign, cluster).code;
+              if (!badCodes.includes(current)) return;
+              delete state.a.answers[cluster.id];
+              cluster.lines.forEach((line) => delete state.a.assign[line.id]);
+              CLUSTERS.filter((child) => child.inheritFrom === cluster.id).forEach((child) => {
+                child.lines.forEach((line) => delete state.a.assign[line.id]);
+              });
+            });
+            state.a.reaskNote = failures;
+          }
+          render();
+        },
+        "a-reask": () => {
+          state.a.verifyResults = [];
+          render();
+        },
+
+        /* ---- B ---- */
+        "b-open": () => {
+          bump("B 打开浏览器页面", { browser: true });
+          state.b.opened = true;
+          render();
+        },
+        /* 切分组维度只换看法，不改归属，因此和展开/收起同类：不记一次交互。 */
+        "b-set-grouping": (dataset) => {
+          state.b.grouping = dataset.grouping;
+          state.b.collapsed = {};
+          state.b.selected = [];
+          render();
+        },
+        "b-toggle-cluster": (dataset) => {
+          state.b.collapsed[dataset.cluster] = !(state.b.collapsed[dataset.cluster] !== false);
+          render();
+        },
+        "b-assign": (dataset) => {
+          bump(`B 点项目 ${dataset.code}`);
+          applyAssignment("b", dataset.code, null);
+        },
+        "b-overwrite": (dataset) => {
+          const pending = state.b.pendingOverwrite;
+          if (!pending) return;
+          if (dataset.mode === "cancel") {
+            bump("B 取消覆盖");
+            state.b.pendingOverwrite = null;
+            render();
+            return;
+          }
+          bump(dataset.mode === "all" ? "B 确认覆盖" : "B 只处理未归属");
+          applyAssignment("b", pending.code, dataset.mode);
+        },
+        "b-panel-manual-open": () => {
+          state.b.manualOpen = true;
+          state.b.manualError = null;
+          state.pendingFocusId = "b-panel-manual";
+          render();
+        },
+        "b-panel-manual-cancel": () => {
+          state.b.manualOpen = false;
+          state.b.manualError = null;
+          render();
+        },
+        "b-panel-manual-submit": () => handleManualSubmit("b"),
+        "b-verify": () => {
+          bump("B 核对并提交");
+          state.b.verifyResults = runVerification(state.b.assign);
+          render();
+        },
+        "b-select-failed": (dataset) => {
+          const ids = ALL_LINES.filter((line) => state.b.assign[line.id]?.code === dataset.code).map((line) => line.id);
+          state.b.selected = ids;
+          bump(`B 就地改派：选中 ${dataset.code} 的 ${ids.length} 条`);
+          render();
+        },
+
+        /* ---- C ---- */
+        "c-pick-main": (dataset) => {
+          bump(`C 起手式主项目 → ${dataset.code}`);
+          state.c.draftMain = dataset.code;
+          state.c.manualFor = "";
+          state.c.manualError = null;
+          render();
+        },
+        "c-other-main": () => {
+          bump("C 起手式选「其他」");
+          state.c.manualFor = "main";
+          state.c.manualText = "";
+          state.c.manualError = null;
+          state.pendingFocusId = "c-manual";
+          render();
+        },
+        "c-manual-submit": () => {
+          const code = state.c.manualText.trim().toUpperCase();
+          if (!code) return;
+          bump(`C 手打主项目 ${code}`);
+          const result = verifyProject(code);
+          if (result.verdict !== "confirmed") {
+            state.c.manualError = result;
+            render();
+            return;
+          }
+          state.c.draftMain = code;
+          state.c.manualFor = "";
+          state.c.manualError = null;
+          render();
+        },
+        "c-exception": (dataset) => {
+          bump(`C 例外？→ ${dataset.value === "yes" ? "有" : "没有"}`);
+          state.c.draftException = dataset.value === "yes";
+          render();
+        },
+        "c-submit-opener": () => {
+          bump("C 提交本轮");
+          const vs = state.c;
+          vs.mainProject = vs.draftMain;
+          askableClusters().forEach((cluster) => assignCluster(vs.assign, cluster.id, vs.mainProject, "起手式"));
+          vs.step = vs.draftException ? "page" : "done-terminal";
+          render();
+        },
+        "c-verify-terminal": () => {
+          bump("C 核对并写入");
+          state.c.verifyResults = runVerification(state.c.assign);
+          render();
+        },
+        "c-reopen": () => {
+          const vs = state.c;
+          vs.step = "opener";
+          vs.assign = {};
+          vs.verifyResults = [];
+          vs.draftMain = "";
+          vs.draftException = null;
+          render();
+        },
+        "c-open": () => {
+          bump("C 打开浏览器页面", { browser: true });
+          state.c.opened = true;
+          render();
+        },
+        "c-toggle-filter": () => {
+          state.c.onlyMain = !state.c.onlyMain;
+          render();
+        },
+        "c-toggle-cluster": (dataset) => {
+          state.c.collapsed[dataset.cluster] = !(state.c.collapsed[dataset.cluster] !== false);
+          render();
+        },
+        "c-assign": (dataset) => {
+          bump(`C 点项目 ${dataset.code}`);
+          applyAssignment("c", dataset.code, null);
+        },
+        "c-overwrite": (dataset) => {
+          const pending = state.c.pendingOverwrite;
+          if (!pending) return;
+          if (dataset.mode === "cancel") {
+            bump("C 取消覆盖");
+            state.c.pendingOverwrite = null;
+            render();
+            return;
+          }
+          bump(dataset.mode === "all" ? "C 确认覆盖" : "C 只处理未归属");
+          applyAssignment("c", pending.code, dataset.mode);
+        },
+        "c-panel-manual-open": () => {
+          state.c.manualOpen = true;
+          state.c.manualError = null;
+          state.pendingFocusId = "c-panel-manual";
+          render();
+        },
+        "c-panel-manual-cancel": () => {
+          state.c.manualOpen = false;
+          state.c.manualError = null;
+          render();
+        },
+        "c-panel-manual-submit": () => handleManualSubmit("c"),
+        "c-verify": () => {
+          bump("C 核对并提交");
+          state.c.verifyResults = runVerification(state.c.assign);
+          render();
+        },
+        "c-select-failed": (dataset) => {
+          const ids = ALL_LINES.filter((line) => state.c.assign[line.id]?.code === dataset.code).map((line) => line.id);
+          state.c.selected = ids;
+          bump(`C 就地改派：选中 ${dataset.code} 的 ${ids.length} 条`);
+          render();
+        },
+      };
+
+      document.addEventListener("click", (event) => {
+        const switchButton = event.target.closest("[data-switch]");
+        if (switchButton) {
+          cycleVariant(switchButton.dataset.switch === "previous" ? -1 : 1);
+          return;
+        }
+        const trigger = event.target.closest("[data-action]");
+        if (!trigger) return;
+        const handler = ACTIONS[trigger.dataset.action];
+        if (handler) handler(trigger.dataset);
+      });
+
+      document.addEventListener("change", (event) => {
+        const control = event.target.dataset.control;
+        if (!control) return;
+        if (control === "b-cluster" || control === "c-cluster") {
+          const prefix = control[0];
+          const vs = stateFor(prefix);
+          const cluster = clusterById(event.target.dataset.cluster);
+          toggleSelection(vs, cluster.lines.map((line) => line.id), `整簇「${cluster.title}」${cluster.lines.length} 条`);
+          render();
+          return;
+        }
+        if (control === "b-line" || control === "c-line") {
+          const prefix = control[0];
+          const vs = stateFor(prefix);
+          toggleSelection(vs, [event.target.dataset.line], "单条明细");
+          render();
+        }
+      });
+
+      document.addEventListener("input", (event) => {
+        const control = event.target.dataset.control;
+        if (!control) return;
+        if (control === "a-manual") {
+          state.a.manualText = event.target.value;
+          return;
+        }
+        if (control === "c-manual") {
+          state.c.manualText = event.target.value;
+          return;
+        }
+        if (control === "b-panel-manual" || control === "c-panel-manual") {
+          stateFor(control[0]).manualText = event.target.value;
+          return;
+        }
+        if (control === "b-search" || control === "c-search") {
+          const prefix = control[0];
+          const vs = stateFor(prefix);
+          const had = vs.search.trim().length > 0;
+          vs.search = event.target.value;
+          const has = vs.search.trim().length > 0;
+          /* 一次检索算一次交互：从空变成非空时记一次，清空后可以再记。 */
+          if (!had && has) bump(`${prefix.toUpperCase()} 搜索项目清单`);
+          state.pendingFocusId = `${prefix}-search`;
+          render();
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        const control = event.target.dataset.control;
+        if (control === "a-manual") {
+          event.preventDefault();
+          ACTIONS["a-manual-submit"]({ cluster: state.a.manualFor });
+        } else if (control === "c-manual") {
+          event.preventDefault();
+          ACTIONS["c-manual-submit"]({});
+        } else if (control === "b-panel-manual" || control === "c-panel-manual") {
+          event.preventDefault();
+          handleManualSubmit(control[0]);
+        }
+      });
+
+      window.addEventListener("keydown", (event) => {
+        const target = event.target;
+        const tagName = target?.tagName?.toLowerCase();
+        if (["input", "textarea", "select"].includes(tagName) || target?.isContentEditable) return;
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          cycleVariant(-1);
+        } else if (event.key === "ArrowRight") {
+          event.preventDefault();
+          cycleVariant(1);
+        }
+      });
+
+      /* ---------------------------------------------------------------- 渲染 */
+
+      const setVariant = (key) => {
+        state.variant = key;
+        /* 直接双击打开时是 file:// ，部分浏览器不许改这种 URL 的 history。切换不能因此瘫掉。 */
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.set("variant", key);
+          window.history.replaceState({}, "", url.href);
+        } catch (error) {
+          /* 原型不管：URL 不同步而已，切换照常 */
+        }
+        render({ preserve: false });
+      };
+
+      const cycleVariant = (offset) => {
+        const index = variants.findIndex((variant) => variant.key === state.variant);
+        setVariant(variants[(index + offset + variants.length) % variants.length].key);
+      };
+
+      const renderSwitcher = () => {
+        const switcher = document.getElementById("prototype-switcher");
+        const current = variants.find((variant) => variant.key === state.variant) || variants[0];
+        switcher.hidden = false;
+        switcher.innerHTML = `
+          <button class="switcher-arrow" type="button" data-switch="previous" aria-label="上一个方案" title="上一个方案（←）">←</button>
+          <span class="switcher-label">${current.key} · ${current.name}<span>方案 ${variants.findIndex((variant) => variant.key === current.key) + 1}/3 · ←/→ 切换</span></span>
+          <button class="switcher-arrow" type="button" data-switch="next" aria-label="下一个方案" title="下一个方案（→）">→</button>
+        `;
+      };
+
+      const syncClusterIndicators = () => {
+        document.querySelectorAll('[data-control="b-cluster"], [data-control="c-cluster"]').forEach((control) => {
+          const vs = stateFor(control.dataset.control[0]);
+          const lines = groupById(control.dataset.cluster).lines;
+          const selected = lines.filter((line) => vs.selected.includes(line.id)).length;
+          control.checked = selected === lines.length;
+          control.indeterminate = selected > 0 && selected < lines.length;
+        });
+      };
+
+      const captureView = () => ({ scrollX: window.scrollX, scrollY: window.scrollY, focusId: document.activeElement?.id || "" });
+
+      function render({ preserve = true } = {}) {
+        const previous = preserve ? captureView() : null;
+        const html = state.variant === "A" ? renderVariantA() : state.variant === "B" ? renderVariantB() : renderVariantC();
+        document.getElementById("app").innerHTML = html + (state.toast ? `<div class="toast" data-toast role="status">${escapeHtml(state.toast)}</div>` : "");
+        renderCompareBar();
+        renderSwitcher();
+        window.requestAnimationFrame(() => {
+          const focusId = state.pendingFocusId || previous?.focusId;
+          if (state.pendingFocusId) state.pendingFocusId = "";
+          if (focusId) {
+            const element = document.getElementById(focusId);
+            if (element) {
+              element.focus({ preventScroll: true });
+              if (element.setSelectionRange && element.type === "text") {
+                const end = element.value.length;
+                try { element.setSelectionRange(end, end); } catch (error) { /* 原型不管 */ }
+              }
+            }
+          }
+          if (previous) window.scrollTo(previous.scrollX, previous.scrollY);
+          syncClusterIndicators();
+        });
+      }
+
+      window.addEventListener("popstate", () => {
+        state.variant = getVariant();
+        render({ preserve: false });
+      });
+
+      render({ preserve: false });
+    </script>
+  </body>
+</html>
