@@ -26,7 +26,8 @@ import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerFie
 import { readReconciliation, classifyReconciliation, attemptRecord } from '../src/erpreconcile.mjs';
 import { versionAt, compareVersions } from '../src/version.mjs';
 import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
-import { readBook, bookPath } from '../src/projects.mjs';
+import { readBook, bookPath, selectableProjects, isSelectable, PROJECT_BOOK_EMPTY }
+  from '../src/projects.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -810,6 +811,16 @@ try {
       const { task, built, blocked } = await upToEvents(dir);
       if (blocked) out({ command: 'select-task', ...blocked }, BLOCKED);
 
+      // 候选只能来自项目簿，所以空簿在这里就得拦下：把用户领到一个一条候选都没有的
+      // 选择页，他能做的只有把页面关掉。这和"该选了"是两个状态，说法也不一样。
+      const candidates = selectableProjects();
+      if (!candidates.length) {
+        out({ command: 'select-task', state: PROJECT_BOOK_EMPTY, actor: 'user',
+          bookPath: bookPath(),
+          note: '个人项目簿里一条可选项目都没有，任务选择没有候选可用；'
+            + '打开项目簿维护页把项目逐条录进来（录入即核验），再重跑 select-task' }, BLOCKED);
+      }
+
       // 上一次的选择只作预填：明细变过了就不再有效，用户仍然要重新看一遍再提交。
       const prev = loadSelection(task);
       const lines = built.lineItems.map((l) => {
@@ -833,8 +844,9 @@ try {
       out({ command: 'select-task', verdict: r.verdict,
         homeCity: r.record.homeCity, purpose: r.record.purpose,
         lineCount: Object.keys(r.record.projects).length,
-        projectSource: r.record.projectSource,
-        note: '项目号来自用户，还没有和 ERP 项目目录核对过；跑 lines 看费用类别推导结果' }, OK);
+        projectSource: r.record.projectSource, projectsFrom: r.record.projectsFrom,
+        note: '项目号是从个人项目簿里选的，录入时已核验过，来源等级 erp_catalog_confirmed；'
+          + '跑 lines 看费用类别推导结果' }, OK);
     }
 
     case 'lines': {
@@ -900,8 +912,13 @@ try {
       // 「我现在有哪些项目」的唯一答案来源。纯读本机簿子：不开浏览器、不碰 ERP、
       // 不改任何东西——模型问一句就得联一次网的话，它就不会问了，转而去凭印象编。
       const book = readBook();
+      // 可选集合单独给一份：簿子里可能躺着已经降级、还没被用户删掉的条目，
+      // 而选择环节能用的只有可选的那些——两个数摆在一起，差额自己会说话。
+      const selectable = book.projects.filter(isSelectable);
       out({
         command: 'projects', projectCount: book.projects.length, projects: book.projects,
+        selectableCount: selectable.length, selectableNumbers: selectable.map((p) => p.number),
+        state: selectable.length ? 'project_book_ready' : PROJECT_BOOK_EMPTY,
         bookPath: bookPath(),
         note: book.projects.length
           ? '这是本机项目簿的原样内容，没有为这次查询做过 ERP 核对；'

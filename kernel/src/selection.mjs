@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { taskDir } from './workspace.mjs';
 import { CATEGORIES, normalizeCity } from './categories.mjs';
+import { selectableProjects, PROJECT_BOOK_EMPTY } from './projects.mjs';
 
 // 任务选择：把候选明细补齐成 ERP 明细行还缺的那几件事。
 //
@@ -103,11 +104,19 @@ const textOk = (s, max) => typeof s === 'string'
 
 /**
  * 收下一次任务选择。校验是结构性的：字段齐、长度合法、每一条候选明细都有项目、
- * 没有多出来的行。**内核不校验项目号在 ERP 里是否存在** —— 那要等 ERP 只读查询，
- * 所以这里如实记下它未经核验，由后面的 ERP 层去对账。
+ * 没有多出来的行。
+ *
+ * **项目号只能来自个人项目簿的可选集合，选择环节不接受自由输入的项目号。**
+ * 这条定在内核里，而不是定在页面上：页面能绕过（改 DOM、直接 POST），
+ * 而一个绕过它写进来的项目号会一路带着"已核验"的身份走到 ERP 上。
+ * 界面怎么呈现候选是另一条线的事，内核这一层只认可选集合。
+ *
+ * 候选集合默认**提交那一刻现读**，不是打开页面那一刻的快照——用户在填页面的
+ * 中途去维护页补录了一个项目，回来提交不该被自己刚加的项目号绊住。
  */
-export function submitSelection(task, built, payload) {
+export function submitSelection(task, built, payload, candidates = selectableProjects()) {
   const reasons = [];
+  const allowed = new Map(candidates.map((p) => [p.number, p]));
   const homeCity = String(payload?.homeCity ?? '').trim();
   const purpose = String(payload?.purpose ?? '').trim();
   if (!textOk(homeCity, 20)) reasons.push('常驻城市必须填写，且不超过 20 个字');
@@ -119,12 +128,25 @@ export function submitSelection(task, built, payload) {
   for (const lineId of wanted) {
     const v = given[lineId];
     if (!textOk(v ?? '', 40)) { reasons.push(`明细 ${lineId} 还没有选项目`); continue; }
-    projects[lineId] = String(v).trim();
+    const number = String(v).trim();
+    if (!allowed.has(number)) {
+      // 不在簿子里的号一律不收。说清楚出路是"去维护页录入"而不是"再填一次"，
+      // 否则用户只会把同一个号再打一遍。
+      reasons.push(allowed.size
+        ? `明细 ${lineId} 的项目 ${number} 不在项目簿里；`
+          + `可选的是：${[...allowed.keys()].join('、')}。要用别的项目，先去项目簿维护页录入`
+        : `项目簿是空的，选择环节没有候选可用；先去项目簿维护页把项目逐条录进来（明细 ${lineId}）`);
+      continue;
+    }
+    projects[lineId] = number;
   }
   for (const k of Object.keys(given)) {
     if (!wanted.includes(k)) reasons.push(`提交里出现了不存在的明细 ${k}，这批明细可能已经变了`);
   }
-  if (reasons.length) return { verdict: 'rejected', reasons };
+  // 空簿要让上层区分得出来：它和"有得选但还没选"给用户的话术完全不同。
+  if (reasons.length) {
+    return { verdict: 'rejected', reasons, ...(allowed.size ? {} : { state: PROJECT_BOOK_EMPTY }) };
+  }
 
   const record = {
     linesDigest: linesDigest(built),
@@ -132,9 +154,11 @@ export function submitSelection(task, built, payload) {
     homeCity,
     purpose,
     projects,
-    // 项目号来自用户，还没有和 ERP 项目目录核对过。这件事必须写在记录里，
-    // 免得后面的层把它当成已经验证过的主数据。
-    projectSource: 'user_input_unverified',
+    // 项目号是从个人项目簿里选出来的，而簿子在录入那一刻就把未核验的挡在了外面，
+    // 所以这条路径上的来源等级**恒为** erp_catalog_confirmed，不再经过未核验档。
+    // 写进记录之后它就是这个任务的事实：簿子后来增删改，都不追溯这一次选择。
+    projectSource: 'erp_catalog_confirmed',
+    projectsFrom: 'project_book',
     submittedAt: new Date().toISOString(),
     submittedVia: 'local-web',
   };
@@ -152,35 +176,56 @@ export function submitSelection(task, built, payload) {
  * 没有选择时不猜任何东西：整批明细停在"等任务选择"上。
  */
 /**
- * 项目号的来源等级。默认永远是"用户填的、没核对过"；
- * 只有当一份**对得上当前明细指纹**的 ERP 只读核对记录明确说这个号确认存在时，
- * 才升到 erp_catalog_confirmed。核对记录过期、缺项或说有问题，一律退回未核对 ——
- * 宁可说没验过，也不能把旧结论套在新明细上。
+ * 项目号的来源等级。
+ *
+ * 从项目簿里选出来的（记录上写着 `erp_catalog_confirmed`）**恒为已核验**：
+ * 录入闸门在写进簿子那一刻就核过了，这条路径上不存在未核验的项目号。
+ * 这个结论只看那一次选择记录，不看此刻的簿子——用户后来从簿子里删掉一条，
+ * 不会把一个已经做出的任务选择变成没验过的。
+ *
+ * 剩下的是没有簿子来源的旧记录（本票之前提交的那些）。它们仍走原路：默认
+ * "用户填的、没核对过"，只有当一份**对得上当前明细指纹**的 ERP 只读核对记录
+ * 明确说这个号确认存在时才升级；核对记录过期、缺项或说有问题，一律退回未核对。
  */
-const projectSourceOf = (number, catalog, built) => {
-  if (!number || !catalog) return 'user_input_unverified';
+const projectSourceOf = (number, selection, catalog, built) => {
+  if (!number) return 'user_input_unverified';
+  if (selection?.projectSource === 'erp_catalog_confirmed') return 'erp_catalog_confirmed';
+  if (!catalog) return 'user_input_unverified';
   if (!sameBasis(catalog, built)) return 'user_input_unverified';
   return catalog.projects?.[number]?.verdict === 'confirmed'
     ? 'erp_catalog_confirmed'
     : 'user_input_unverified';
 };
 
-export function applySelection(built, classification, selection, catalog = null) {
+export function applySelection(built, classification, selection, catalog = null,
+  candidates = selectableProjects()) {
   const fresh = sameBasis(selection, built);
   const notes = [];
 
+  // 「没得选」和「该选了」是两个状态，给用户的话术完全不同：前者要他去维护页录入，
+  // 后者要他去做选择。合成一条 task_selection_required 的话，用户会被叫去一个
+  // 一条候选都没有的选择页。
+  const bookEmpty = candidates.length === 0;
+  const emptyNote = () => ({
+    kind: PROJECT_BOOK_EMPTY, blocking: true, actor: 'user',
+    note: '个人项目簿里一条可选项目都没有，选择环节没有候选可用；'
+      + '打开项目簿维护页把项目逐条录进来（录入即核验），再回来做任务选择',
+  });
+
   if (!selection) {
-    notes.push({
-      kind: 'task_selection_required', blocking: true,
+    notes.push(bookEmpty ? emptyNote() : {
+      kind: 'task_selection_required', blocking: true, actor: 'user',
       note: '常驻城市、报销事由和每条明细的项目归属，材料上没有，也不能由系统推断；'
         + '跑 select-task 打开任务选择页，由用户提交',
     });
   } else if (!fresh) {
     notes.push({
-      kind: 'task_selection_stale', blocking: true,
+      kind: 'task_selection_stale', blocking: true, actor: 'user',
       note: '候选明细在上次任务选择之后变过了（材料或逐段分摊有改动），'
         + '之前的项目归属不再对应现在这几行，需要重新选择',
     });
+    // 要重选，但簿子空了——不说出来的话，用户会打开一个选不出东西的页面。
+    if (bookEmpty) notes.push(emptyNote());
   }
 
   const lines = built.lineItems.map((l) => {
@@ -224,7 +269,7 @@ export function applySelection(built, classification, selection, catalog = null)
       expenseItemName: cat?.expenseItemName ?? null,
       expenseItemSource: cat?.source ?? null,
       project: selection.projects[l.lineId] ?? null,
-      projectSource: projectSourceOf(selection.projects[l.lineId] ?? null, catalog, built),
+      projectSource: projectSourceOf(selection.projects[l.lineId] ?? null, selection, catalog, built),
       purpose: selection.purpose,
     };
   });
