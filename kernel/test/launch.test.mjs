@@ -88,3 +88,44 @@ test('漂移状态下 install-runtime 仍然放行，否则用户没有出路', 
   assert.equal(fix.json.version, '9.9.10-test');
   assert.equal(launch(skill, ['tasks']).code, 0, '重装之后闸应该放行');
 });
+
+test('内核会被降级时 install-runtime 拒绝，并点名 --allow-downgrade', () => {
+  const skill = fakeSkill('9.9.10-test');
+  assert.equal(launch(skill, ['install-runtime']).code, 0);
+  // 模拟真机上那次：另一套更旧的 Skill 抢先胜出，拿它的 install-runtime 往回写。
+  fs.writeFileSync(path.join(skill.kernel, 'VERSION'), '9.9.9-test\n');
+
+  const r = launch(skill, ['install-runtime']);
+  assert.equal(r.code, 2, r.stdout + r.stderr);
+  assert.equal(r.json.status, 'downgrade_refused');
+  assert.equal(r.json.skillVersion, '9.9.9-test');
+  assert.equal(r.json.installedVersion, '9.9.10-test');
+  assert.match(r.json.hint, /--allow-downgrade/, '不说出出路的阻塞等于死路');
+
+  // doctor 这时自己也会被 version_drift 挡住，所以直接看数据目录里躺着的是哪一版。
+  assert.equal(fs.readFileSync(path.join(skill.home, 'runtime', 'VERSION'), 'utf8').trim(),
+    '9.9.10-test', '被拒绝的安装不能已经写下去了');
+});
+
+test('显式 --allow-downgrade 才真的降级', () => {
+  const skill = fakeSkill('9.9.10-test');
+  assert.equal(launch(skill, ['install-runtime']).code, 0);
+  fs.writeFileSync(path.join(skill.kernel, 'VERSION'), '9.9.9-test\n');
+
+  const r = launch(skill, ['install-runtime', '--allow-downgrade']);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(r.json.replaced, '9.9.10-test');
+  assert.equal(r.json.version, '9.9.9-test');
+  assert.equal(launch(skill, ['tasks']).code, 0, '降级之后闸应该放行');
+});
+
+test('同版本重装不算降级', () => {
+  const skill = fakeSkill('9.9.9-test');
+  assert.equal(launch(skill, ['install-runtime']).code, 0);
+  const again = launch(skill, ['install-runtime']);
+  assert.equal(again.code, 0, again.stdout + again.stderr);
+  assert.equal(again.json.replaced, '9.9.9-test');
+  // 版本一致时跑的已经是装好的那一份，它不能把自己删了再从空处拷回来。
+  assert.equal(again.json.alreadyInstalled, true);
+  assert.equal(launch(skill, ['tasks']).code, 0, '重装之后内核还得在');
+});

@@ -13,8 +13,9 @@ bash scripts/release.sh
 ```
 
 产出 `release/baox-<版本>-<commit>.zip`，约 1MB，内含三个 Skill 目录和 `INSTALL.md`。
-同事解压后把 `baox`、`baox-recover`、`baox-setup` **三个一起**拷进 `~/.claude/skills/` 即可，
-不需要联网、不需要装任何依赖。
+同事解压后把 `baox`、`baox-recover`、`baox-setup` **三个一起**拷进 `<项目>/.claude/skills/` 即可，
+不需要联网、不需要装任何依赖。个人目录 `~/.claude/skills/` 同样可用，但两处都放会出事：
+个人目录静默遮蔽项目目录，两边都不报错。试用期统一装项目目录。
 
 安装说明本身在 [`docs/INSTALL.md`](docs/INSTALL.md)，它会跟着包一起发出去。
 
