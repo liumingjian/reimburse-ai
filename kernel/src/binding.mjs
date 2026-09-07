@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, ensureDir } from './paths.mjs';
+import { paths, writeJsonAtomic } from './paths.mjs';
 import { probeIdentity, ERP_ORIGIN } from './probe.mjs';
 
 /**
@@ -37,11 +37,7 @@ export function writeBinding(identity) {
     displayName: identity.displayName ?? null,          // 只展示，不作判据
     confirmedAt: new Date().toISOString(),
   };
-  ensureDir(paths.root);
-  const tmp = `${bindingPath()}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(record, null, 2) + '\n', { mode: 0o600 });
-  fs.renameSync(tmp, bindingPath());
-  return record;
+  return writeJsonAtomic(bindingPath(), record);
 }
 
 /**
