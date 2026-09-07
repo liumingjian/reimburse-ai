@@ -18,12 +18,13 @@ The launcher hands each command to the kernel installed in the baox data directo
 are the same version. `doctor` and `install-runtime` also run before anything is installed, which is what
 makes this one path work from a bare machine onward.
 
-Two of its exit-2 blocks land in this Skill, and this Skill is where both are fixed:
+Three of its exit-2 blocks land in this Skill, and this Skill is where they are fixed:
 
 | `status` | Do |
 |---|---|
 | `runtime_not_installed` | Step 2 — the environment was never set up |
-| `version_drift` | The three Skill directories and the installed kernel disagree. Have the user confirm `baox`, `baox-recover` and `baox-setup` in `~/.claude/skills/` all came from one build — they update together — then run step 2 again |
+| `version_drift` | The Skill directories and the installed kernel disagree. Have the user confirm `baox`, `baox-recover` and `baox-setup` all sit in **one** location and came from **one** build — they update together — then run step 2 again |
+| `downgrade_refused` | The installed kernel is **newer** than this Skill, so step 2 would roll it back. Almost always two baox installs on one machine: a personal `~/.claude/skills/` copy silently shadows the project `.claude/skills/` one, with no error on either side. Read the hint out, have the user run `/skill-doctor` (or `ls -d ~/.claude/skills/baox*`) and remove the copy they don't want. Only if they say they really do want the older kernel, re-run step 2 with `--allow-downgrade` |
 
 ## Reading the result
 

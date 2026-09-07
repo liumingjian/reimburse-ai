@@ -15,21 +15,17 @@
  * 三个 Skill 共用数据目录里的同一份内核，不是各自夹带一份：那一份是三者的会合点，
  * 版本一旦对不上就必然在这里露出来。只拷了三个目录里的一个，也在这里露出来。
  */
-import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { paths } from '../src/paths.mjs';
+import { versionAt } from '../src/version.mjs';
 
 const BLOCKED = 2;
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
 const skillKernel = path.dirname(here);              // <skill>/kernel
 const runtime = path.join(paths.root, 'runtime');
-
-const versionAt = (root) => {
-  try { return fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim() || null; } catch { return null; }
-};
 
 const out = (obj, code) => {
   process.stdout.write(JSON.stringify(obj, null, 2) + '\n');

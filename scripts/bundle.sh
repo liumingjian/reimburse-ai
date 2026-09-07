@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # 把内核打进每个 Skill 目录，产出可以直接拷给同事的离线 Skill。
-# 安装 = 把 dist/<skill> 整个目录拷到 ~/.claude/skills/ 下。零依赖，不需要联网。
+# 安装 = 把 dist/<skill> 整个目录拷到 <项目>/.claude/skills/ 下（个人目录也行，但三个必须同处一地）。零依赖，不需要联网。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # —— 自包含闸 ——
-# Skill 目录就是分发单位：装到 ~/.claude/skills/ 之后，目录之外的路径一律不存在。
+# Skill 目录就是分发单位：装好之后，目录之外的路径一律不存在。
 # 指向仓库里 docs/ 或 ../../ 的指针在安装后会静默失效 —— agent 不会报错，它会照着猜往下走。
 # 所以这里先拦，拦不住就别打包。
 # 扫的是 Skill 目录下**每一个**文本文件，不只是 SKILL.md 和 references/*.md ——
@@ -52,5 +52,5 @@ if [ -n "$stowaways" ]; then
   echo "$stowaways" >&2
   exit 1
 fi
-echo "打包完成（把下面每个目录整份拷到 ~/.claude/skills/ 即可）："
+echo "打包完成（把下面每个目录整份拷到 <项目>/.claude/skills/ 即可，三个一起）："
 find dist -maxdepth 1 -mindepth 1 -type d | sort
