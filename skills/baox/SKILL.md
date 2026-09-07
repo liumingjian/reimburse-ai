@@ -64,6 +64,12 @@ On exit 1, the JSON says which kind it was, and they need opposite responses:
 - a `status` key instead, `timeout` — a local page (`confirm-readings`, `allocate`, `select-task`) waited for
   the user's submit and did not get one. Nothing is wrong; say so and run the command again.
 
+**Every local page blocks in the foreground, and you are mute while it blocks.** The kernel opens the page
+in the user's browser itself, but the Bash call does not return — and you cannot say anything — until they
+submit or it times out (default 8 minutes). So **tell the user what is about to pop up *before* you run the
+command**, and give the Bash call a timeout longer than the page's. Saying it afterwards means they sat and
+waited through the whole thing wondering what happened.
+
 ## 1. Material intake
 
 ```bash

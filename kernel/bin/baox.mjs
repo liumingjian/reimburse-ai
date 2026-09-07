@@ -219,7 +219,7 @@ try {
       const r = await serveIdentityConfirmation(
         { identity: probe.identity, previous: verdict === 'mismatched' ? previous : null },
         { timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
-          onReady: (u) => process.stderr.write(`打开这个地址确认报销人身份：${u}\n`) });
+          onReady: (u) => process.stderr.write(`已在浏览器里打开页面（确认报销人身份）；没弹出就手动打开：${u}\n`) });
       if (r.status !== 'submitted') {
         out({ command: 'confirm-identity', ...r,
           note: '没有收到确认，身份没有绑定；重跑一次这条命令' }, ERR);
@@ -645,6 +645,9 @@ try {
           docTypes: Object.fromEntries(Object.entries(DOC_TYPES).map(([k, v]) => [k, v.label])),
           note: '逐字抄写票面上看得见的字符。看不清的字段写进 unreadable，不要猜、不要算、不要补全。',
         },
+        // 真机试用里模型拿到工单就直接回报"图片显示不出来"——它一次都没打开过。
+        next: '用 Read 工具逐个打开下面 items[].absPath 看图；没有打开过就不能说图片读不了，'
+          + 'unreadable 说的是"看着的图上认不出这个字段"，不是"没看"。',
         items,
         pendingCount: todo.length,
       }, todo.length ? BLOCKED : OK);
@@ -697,7 +700,7 @@ try {
 
       const result = await serveConfirmation({ items: pending }, {
         timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
-        onReady: (u) => process.stderr.write(`打开这个地址核对看图读数：${u}\n`),
+        onReady: (u) => process.stderr.write(`已在浏览器里打开页面（核对看图读数）；没弹出就手动打开：${u}\n`),
       });
       if (result.status !== 'submitted') out({ command: 'confirm-readings', ...result }, ERR);
 
@@ -782,7 +785,7 @@ try {
 
       const result = await serveAllocation({ items }, {
         timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
-        onReady: (u) => process.stderr.write(`打开这个地址填写逐段金额：${u}\n`),
+        onReady: (u) => process.stderr.write(`已在浏览器里打开页面（填写逐段金额）；没弹出就手动打开：${u}\n`),
       });
       if (result.status !== 'submitted') out({ command: 'allocate', ...result }, ERR);
 
@@ -818,7 +821,7 @@ try {
       const result = await serveTaskSelection(
         { lines, homeCity: prev?.homeCity ?? '', purpose: prev?.purpose ?? '' },
         { timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
-          onReady: (u) => process.stderr.write(`打开这个地址做任务选择：${u}\n`) });
+          onReady: (u) => process.stderr.write(`已在浏览器里打开页面（做任务选择）；没弹出就手动打开：${u}\n`) });
       if (result.status !== 'submitted') out({ command: 'select-task', ...result }, ERR);
 
       const r = submitSelection(task, built, result);
@@ -911,7 +914,7 @@ try {
       const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
       const r = await serveSelection(spec, {
         timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
-        onReady: (url) => process.stderr.write(`打开这个地址做选择：${url}\n`),
+        onReady: (url) => process.stderr.write(`已在浏览器里打开页面（做选择）；没弹出就手动打开：${url}\n`),
       });
       out({ command: 'select', ...r }, r.status === 'submitted' ? OK : ERR);
     }
