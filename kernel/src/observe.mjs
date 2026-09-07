@@ -11,6 +11,10 @@ import { SCHEMA_VERSION } from './state.mjs';
 import * as chrome from './chrome.mjs';
 import { probeIdentity } from './probe.mjs';
 import { readBinding } from './binding.mjs';
+import { takeInventory, intakeOpenItems } from './inventory.mjs';
+import { classifyInventory, classifyOpenItems } from './classify.mjs';
+import { buildWorkOrder } from './vision.mjs';
+import { findLiveTaskForSource, sourceKeyOf, taskDir, classificationRecorded } from './workspace.mjs';
 
 /**
  * 数据目录的格式版本。没有这个文件就是这个内核自己写的那一版。
@@ -42,5 +46,53 @@ export async function observeEnvironment() {
     cdpUp,
     probe: cdpUp ? await probeIdentity() : null,
     binding: readBinding(),
+  };
+}
+
+/**
+ * 采一次任务观测（state-machine.md B 表这一段要的事实）。
+ *
+ * 三件事在这里定下来，判定那一侧一件都不重做：
+ *
+ *  1. **盘点是现盘的**。每次都重新走一遍材料目录、重新算内容哈希 ——
+ *     材料版本因此永远是「此刻目录里是什么」。用户加一个文件、换一个文件，
+ *     下一次 `next` 内核自己就发现盘点过期了；不靠模型记得说一声，也不留缓存，
+ *     缓存正是「没发现材料变了」的来源。
+ *  2. **分类是现算的**。落盘的那份是账本，但拿账本判开放项会漏掉刚交上来的读数
+ *     —— 账本记的是上一次 `classify` 时的世界。所以开放项现算，
+ *     `classify_pending` 只看账本在不在。
+ *  3. **这里不写盘**。观测改变被观测的东西，幂等就无从谈起：写盘的是 `step.argv`
+ *     里那条命令，不是问一句「现在该做什么」。
+ */
+export async function observeTask(sourceDir) {
+  const dir = path.resolve(sourceDir);
+  const inventory = await takeInventory(dir);
+  const task = findLiveTaskForSource(sourceKeyOf(dir));
+
+  // 没有任务时 currentVersionId 无从比起 —— 那是 task_none，不是盘点过期。
+  const inventoryStale = !!task && task.currentVersionId !== inventory.versionId;
+  const classification = classifyInventory(dir, inventory, task);
+
+  return {
+    taskObserved: true,
+    sourceDir: dir,
+    task: task ? {
+      taskId: task.taskId,
+      sourceLabel: task.sourceLabel,
+      workspace: taskDir(task),
+      currentVersionId: task.currentVersionId,
+      erpWriteState: task.erpWriteState ?? null,
+    } : null,
+    inventoryVersionId: inventory.versionId,
+    materialCount: inventory.materials.length,
+    inventoryStale,
+    classificationRecorded: task && !inventoryStale
+      ? classificationRecorded(task, inventory.versionId)
+      : false,
+    openItems: [...intakeOpenItems(inventory), ...classifyOpenItems(classification)],
+    // 还没读、或者读过但字节已经变了的图。已确认的读数会被投影成解析结果，不在这里出现。
+    pendingImages: task
+      ? buildWorkOrder(dir, inventory, classification, task).filter((i) => !i.alreadyRead)
+      : [],
   };
 }

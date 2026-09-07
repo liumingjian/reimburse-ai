@@ -128,3 +128,135 @@ test('环境七态一个不少，且都在判定表里', () => {
   for (const s of env) assert.ok(STATE_ORDER.includes(s), `${s} 不在判定表里`);
   assert.equal(env.length, 7);
 });
+
+// —— B 表：任务主干（材料这一段）——
+
+/** 环境全绿、材料也观测过、材料一切正常的那份观测。每个用例只拨坏自己关心的那一项。 */
+const withMaterials = (over = {}) => healthy({
+  taskObserved: true,
+  sourceDir: '/tmp/材料',
+  task: { taskId: '75dc9cbb4d', sourceLabel: '材料', workspace: '/tmp/ws',
+    currentVersionId: 'v-abc', erpWriteState: null },
+  inventoryVersionId: 'v-abc',
+  materialCount: 2,
+  inventoryStale: false,
+  classificationRecorded: true,
+  openItems: [],
+  pendingImages: [],
+  ...over,
+});
+
+const item = (kind, over = {}) => ({ kind, materialId: 'm-1', fileName: '发票.pdf',
+  note: '说明', blocking: true, ...over });
+
+test('材料那一侧没观测过，就只答环境那半张表', () => {
+  const r = determineState(healthy());
+  assert.equal(r.state, 'env_ready', '没看过材料就说材料怎么样，那是编的');
+});
+
+test('这个目录还没有进行中的任务 —— 内核自己去盘点', () => {
+  const r = determineState(withMaterials({ task: null, classificationRecorded: false }));
+  assert.equal(r.state, 'task_none');
+  assert.equal(r.actor, 'kernel');
+});
+
+test('材料目录变过了 —— 内核自己发现盘点过期，不靠谁记得说一声', () => {
+  // 版本对不对得上是采集那一侧比出来的（observe），这里判的是比完的结论。
+  const r = determineState(withMaterials({ inventoryVersionId: 'v-新的', inventoryStale: true }));
+  assert.equal(r.state, 'inventory_stale', '任务上记的版本和此刻目录里的对不上');
+  assert.equal(r.actor, 'kernel');
+});
+
+test('有待办就停在待办上，并逐条说清楚谁能解决它', () => {
+  const r = determineState(withMaterials({
+    openItems: [
+      item('read_error', { fileName: '坏了.pdf' }),
+      item('no_text_in_pdf', { fileName: '扫描件.pdf' }),
+      item('extension_mismatch', { fileName: '其实是png.pdf', blocking: false }),
+    ],
+  }));
+  assert.equal(r.state, 'intake_open_items');
+  assert.equal(r.actor, 'user');
+  assert.equal(r.blockedBy.length, 3, '不拦路的那条也要有人知道');
+  for (const b of r.blockedBy) {
+    assert.ok(['user', 'model', 'kernel'].includes(b.resolvableBy), `${b.kind} 没说谁能解决它`);
+    assert.ok(b.hint, `${b.kind} 得有一句说明`);
+  }
+  const by = Object.fromEntries(r.blockedBy.map((b) => [b.kind, b]));
+  assert.equal(by.read_error.resolvableBy, 'user', '文件读不出来，只有人能换一份');
+  assert.equal(by.extension_mismatch.resolvableBy, 'kernel', '内核已经按内容判了，报出来只为留痕');
+  assert.equal(by.extension_mismatch.blocking, false);
+});
+
+test('不拦路的开放项不构成待办状态', () => {
+  const r = determineState(withMaterials({
+    openItems: [item('extension_mismatch', { blocking: false }), item('duplicate_content', { blocking: false })],
+  }));
+  assert.notEqual(r.state, 'intake_open_items');
+  assert.equal(r.blockedBy.length, 2, '照样带着，只是不拦路');
+});
+
+test('这一版盘点还没分过类 —— 内核自己去分', () => {
+  const r = determineState(withMaterials({ classificationRecorded: false }));
+  assert.equal(r.state, 'classify_pending');
+  assert.equal(r.actor, 'kernel');
+});
+
+test('该看图了：有图没读，就是模型自己动手的那一步', () => {
+  const r = determineState(withMaterials({
+    openItems: [item('image_awaiting_reading', { fileName: '发票.png' })],
+    pendingImages: [{ materialId: 'm-1', fileName: '发票.png', absPath: '/tmp/材料/发票.png' }],
+  }));
+  assert.equal(r.state, 'image_awaiting_reading');
+  assert.equal(r.actor, 'model');
+  assert.equal(r.blockedBy[0].resolvableBy, 'model', '这一条不用麻烦用户，我自己看');
+});
+
+test('图换过了要重读，读完的读数要人确认', () => {
+  const stale = determineState(withMaterials({ openItems: [item('reading_stale', { fileName: '发票.png' })] }));
+  assert.equal(stale.state, 'reading_stale');
+  assert.equal(stale.actor, 'model');
+
+  const confirm = determineState(withMaterials({
+    openItems: [item('reading_awaiting_confirmation', { fileName: '发票.png' })] }));
+  assert.equal(confirm.state, 'reading_awaiting_confirmation');
+  assert.equal(confirm.actor, 'user', '读数只是候选，认不认只有人说了算');
+});
+
+test('材料这一段全清了，才轮到费用事件', () => {
+  assert.equal(determineState(withMaterials()).state, 'events_pending');
+});
+
+test('B 表的判定顺序：过期压过待办，待办压过看图', () => {
+  const all = {
+    inventoryStale: true,
+    classificationRecorded: false,
+    openItems: [item('read_error'), item('image_awaiting_reading', { fileName: '发票.png' })],
+  };
+  assert.equal(determineState(withMaterials(all)).state, 'inventory_stale',
+    '盘点都过期了，基于它算出来的待办是上一轮的旧话');
+
+  assert.equal(determineState(withMaterials({ ...all, inventoryStale: false })).state, 'intake_open_items',
+    '有读不出的材料时，先说清楚它，而不是先去看图');
+
+  assert.equal(determineState(withMaterials({ ...all, inventoryStale: false, task: null })).state,
+    'task_none', '任务都还没建，谈不上盘点过期');
+
+  assert.equal(determineState(withMaterials({
+    ...all, inventoryStale: false, openItems: [item('image_awaiting_reading', { fileName: '发票.png' })],
+  })).state, 'classify_pending', '这一版还没落盘的分类，先补上账本');
+});
+
+test('格式比内核新时，材料那一段一个字都不判', () => {
+  const r = determineState(withMaterials({
+    schemaVersion: SCHEMA_VERSION + 1, task: null, inventoryStale: true, openItems: [item('read_error')],
+  }));
+  assert.equal(r.state, 'schema_too_new', '硬停优先于其余一切判定');
+  assert.equal(r.blockedBy.length, 1);
+});
+
+test('材料这一段的状态一个不少，且都在判定表里', () => {
+  const b = ['task_none', 'inventory_stale', 'intake_open_items', 'classify_pending',
+    'image_awaiting_reading', 'reading_stale', 'reading_awaiting_confirmation', 'events_pending'];
+  for (const s of b) assert.ok(STATE_ORDER.includes(s), `${s} 不在判定表里`);
+});

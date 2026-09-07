@@ -50,7 +50,7 @@ Transcribe the characters you can see, and nothing else.
 
 ## Reporting
 
-Copy `references/reading-schema.json` and edit it: one entry per material read.
+Copy the template the kernel hands you at `step.schemaPath` and edit it: one entry per material read.
 
 - `docType` is one of `invoice | ride_itinerary | hotel_folio | payment_slip | other | unreadable`.
 - Beyond the fields in the template, `sellerName`, `buyerName`, `itemName`, `city`, `travelDate`, `origin`,

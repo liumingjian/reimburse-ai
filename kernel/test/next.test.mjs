@@ -64,7 +64,114 @@ test('硬阻塞才给 2：等人登录不是硬阻塞', async () => {
 test('落成的状态都要有 step，漏一个就当场报出来', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
-  assert.throws(() => stepFor('task_none', healthy()), /task_none/);
+  assert.throws(() => stepFor('duplicate_blocked', healthy()), /duplicate_blocked/);
+});
+
+/** 环境全绿、材料也观测过的那份观测。 */
+const withMaterials = (over = {}) => healthy({
+  taskObserved: true,
+  sourceDir: '/tmp/材料',
+  task: { taskId: '75dc9cbb4d', sourceLabel: '材料', workspace: '/tmp/ws',
+    currentVersionId: 'v-abc', erpWriteState: null },
+  inventoryVersionId: 'v-abc',
+  inventoryStale: false,
+  classificationRecorded: true,
+  openItems: [],
+  pendingImages: [],
+  ...over,
+});
+
+test('材料这一段每个状态都有一步可做，说给用户听的话全部来自内核', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const images = [{ materialId: 'm-1', fileName: '发票.png', absPath: '/tmp/材料/发票.png',
+    format: 'png', contentHash: 'abc123' }];
+  const cases = [
+    ['task_none', 'run', withMaterials({ task: null })],
+    ['inventory_stale', 'run', withMaterials({ inventoryStale: true })],
+    ['classify_pending', 'run', withMaterials({ classificationRecorded: false })],
+    ['image_awaiting_reading', 'read_images', withMaterials({ pendingImages: images })],
+    ['reading_stale', 'read_images', withMaterials({ pendingImages: images })],
+    ['reading_awaiting_confirmation', 'run', withMaterials()],
+    ['events_pending', 'done', withMaterials()],
+  ];
+  for (const [state, kind, observation] of cases) {
+    const shaped = stepFor(state, observation);
+    assert.equal(shaped.step.kind, kind, `${state} 的 step.kind`);
+    assert.ok(shaped.speak && shaped.speak.length > 10, `${state} 得有一句能原样念的话`);
+    assert.ok(shaped.context, `${state} 得有一句备着的解释`);
+    assert.equal(shaped.exit, 0, `${state} 不是硬阻塞`);
+    if (kind === 'run') {
+      assert.ok(shaped.step.argv.includes('--dir') && shaped.step.argv.includes('/tmp/材料'),
+        `${state} 的 argv 要指着这批材料，模型不用自己拼`);
+    }
+  }
+});
+
+test('待办这一步逐条说清楚谁能解决它，一条都不含糊', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const blockedBy = [
+    { kind: 'read_error', fileName: '坏了.pdf', hint: '文件打不开', resolvableBy: 'user', blocking: true },
+    { kind: 'no_text_in_pdf', fileName: '扫描件.pdf', hint: '取不到文字', resolvableBy: 'user', blocking: true },
+    { kind: 'extension_mismatch', fileName: '其实是png.pdf', hint: '扩展名对不上',
+      resolvableBy: 'kernel', blocking: false },
+  ];
+  const shaped = stepFor('intake_open_items', withMaterials(), blockedBy);
+  assert.equal(shaped.step.kind, 'tell_user');
+  assert.match(shaped.speak, /坏了\.pdf/);
+  assert.match(shaped.speak, /扫描件\.pdf/);
+  assert.match(shaped.speak, /要你处理/, '每条都得说清楚谁能解决它');
+  assert.doesNotMatch(shaped.speak, /其实是png\.pdf/, '不拦路的那条不念给用户听，留在 blockedBy 里');
+  assert.equal(shaped.exit, 0, '待办是在等人处理，不是被内核拦住');
+});
+
+test('看图这一步：图、模板、写到哪、怎么交，四样一次给全', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const images = [
+    { materialId: 'm-1', fileName: '发票.png', absPath: '/tmp/材料/发票.png', format: 'png', contentHash: 'aa' },
+    { materialId: 'm-2', fileName: '行程单.png', absPath: '/tmp/材料/行程单.png', format: 'png', contentHash: 'bb' },
+  ];
+  const { step, speak } = stepFor('image_awaiting_reading', withMaterials({ pendingImages: images }));
+  assert.equal(step.images.length, 2);
+  assert.equal(step.images[0].absPath, '/tmp/材料/发票.png', '模型要拿绝对路径才打得开图');
+  assert.ok(step.images[0].contentHash, '读数钉在这张图当前的字节上');
+  assert.ok(fs.existsSync(step.schemaPath), '模板得是一份真存在的文件，不是一句说明');
+  assert.equal(step.readingsPath, path.join('/tmp/ws', 'reading-submission.json'));
+  assert.ok(step.argv.includes(step.readingsPath), '写到哪、交哪个文件，是同一个路径');
+  assert.ok(step.argv.includes('ocr-submit'));
+  assert.match(speak, /发票\.png/, '要看哪几张图，念出来');
+});
+
+test('图没读完不算读完：交不出结果，状态一步不动', async () => {
+  freshHome();
+  const { nextResponse } = await import('../src/next.mjs');
+  const images = [{ materialId: 'm-1', fileName: '发票.png', absPath: '/tmp/材料/发票.png',
+    format: 'png', contentHash: 'aa' }];
+  const observation = withMaterials({
+    openItems: [{ kind: 'image_awaiting_reading', materialId: 'm-1', fileName: '发票.png', blocking: true }],
+    pendingImages: images,
+  });
+  const first = nextResponse({ observation, sourceKey: KEY });
+  assert.equal(first.state, 'image_awaiting_reading');
+  assert.equal(first.actor, 'model');
+
+  const claimed = nextResponse({ observation, sourceKey: KEY, after: first.stepToken, hasResult: false });
+  assert.equal(claimed.ignored.reason, 'no_result', '说看过了不算看过了');
+  assert.equal(claimed.state, 'image_awaiting_reading');
+  assert.deepEqual(claimed.step, first.step);
+});
+
+test('每条应答都带着任务，没有任务就是 null', async () => {
+  freshHome();
+  const { nextResponse } = await import('../src/next.mjs');
+  const r = nextResponse({ observation: withMaterials(), sourceKey: KEY });
+  assert.deepEqual(r.task, { taskId: '75dc9cbb4d', sourceLabel: '材料', sourceDir: '/tmp/材料' });
+  assert.equal(r.progress.of, 10);
+
+  const none = nextResponse({ observation: withMaterials({ task: null }), sourceKey: KEY });
+  assert.equal(none.task, null, '不给一个看起来像任务的空壳');
 });
 
 test('幂等：连着问三次，同一个状态、同一个凭据', async () => {

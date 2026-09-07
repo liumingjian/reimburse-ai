@@ -42,16 +42,30 @@ export function currentSourceKey() {
 }
 
 /**
+ * 上次问的那个材料目录的绝对路径。
+ *
+ * 材料这一段的每一步都要重新盘那个目录，而 sourceKey 是单向哈希，还原不回路径，
+ * 所以这里必须记着它本身。它记在**当前步骤**的登记簿里，不是任务档案里：
+ * 任务档案是长期事实，那里至今不落原目录绝对路径，这一条没有变。
+ */
+export function currentSourceDir() {
+  const store = read();
+  return store.steps[store.current]?.sourceDir ?? null;
+}
+
+/**
  * 发一个凭据。状态和上次一样就把上次那个原样发回去（幂等）；
  * 状态变了就换一个新的，旧的当场作废。
  */
-export function issueStep(sourceKey, state) {
+export function issueStep(sourceKey, state, sourceDir = null) {
   const store = read();
   const prev = store.steps[sourceKey];
   const record = prev && prev.state === state
     ? prev
     : { token: newToken(), state, issuedAt: new Date().toISOString() };
-  store.steps[sourceKey] = record;
+  // 目录跟着这一次的问话更新，凭据本身不动 —— 同一个目录换了个写法（软链、末尾斜杠）
+  // 不该让当前这一步作废。
+  store.steps[sourceKey] = { ...record, sourceDir: sourceDir ?? prev?.sourceDir ?? null };
   store.current = sourceKey;
   write(store);
   return record;

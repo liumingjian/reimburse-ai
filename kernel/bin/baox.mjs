@@ -25,10 +25,10 @@ import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerFie
   writeHeader, writeCell, selectOption, cellTarget, cellMatches, leaveEdit } from '../src/erpform.mjs';
 import { readReconciliation, classifyReconciliation, attemptRecord } from '../src/erpreconcile.mjs';
 import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
-import { observeEnvironment } from '../src/observe.mjs';
+import { observeEnvironment, observeTask } from '../src/observe.mjs';
 import { nextResponse } from '../src/next.mjs';
 import { SCHEMA_VERSION as NEXT_SCHEMA_VERSION } from '../src/state.mjs';
-import { currentSourceKey } from '../src/steptoken.mjs';
+import { currentSourceKey, currentSourceDir } from '../src/steptoken.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -907,7 +907,10 @@ try {
           error: `材料目录不存在：${dir}`,
           speak: `我找不到这个材料目录：${dir}。请确认路径写对了，或者把材料放进去再叫我。` }, ERR);
       }
-      const sourceKey = dir ? sourceKeyOf(dir) : currentSourceKey();
+      // 只带 --after 回来时，材料目录从当前步骤的登记簿里找回来：材料这一段每一步
+      // 都要重新盘那个目录，而 sourceKey 是单向哈希，还原不回路径。
+      const sourceDir = dir ?? currentSourceDir();
+      const sourceKey = sourceDir ? sourceKeyOf(sourceDir) : currentSourceKey();
       if (!sourceKey) {
         out({ command: 'next', schemaVersion: NEXT_SCHEMA_VERSION,
           error: '第一次问要带 --dir <材料目录>',
@@ -919,7 +922,14 @@ try {
         const p = arg(name);
         return !!p && fs.existsSync(p) && fs.statSync(p).size > 0;
       };
-      const observation = await observeEnvironment();
+      // 两侧观测合成一份：环境（A 表）和材料（B 表）。判定要的全部事实都在这里采齐，
+      // 判定那一侧一个文件都不再读。目录不在了（被删、被改名）就只答环境那一半 ——
+      // 拿一个不存在的目录去盘点会抛错，而那不是一个状态。
+      const materialsThere = !!sourceDir && fs.existsSync(sourceDir) && fs.statSync(sourceDir).isDirectory();
+      const observation = {
+        ...(await observeEnvironment()),
+        ...(materialsThere ? await observeTask(sourceDir) : {}),
+      };
       const response = nextResponse({ observation, sourceKey, after,
         hasResult: filed('result'), hasCorrection: filed('correction') });
       out(response, response.exit);

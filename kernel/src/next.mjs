@@ -5,8 +5,9 @@
  * 它不选命令、不拼命令、不组织措辞：`step.argv` 是内核给的完整命令行，
  * `speak` 是内核写死的原话。措辞是模型差异最大的地方，所以不交给模型。
  *
- * 这一批只落成环境七态和 `run` / `tell_user` / `done` 三种 step；
- * 其余四种（read_images / ask_user / confirm_table / dispute）随各自的状态一起来。
+ * 落成的是环境七态和材料这一段（盘点、分流、看图读数），用到
+ * `run` / `tell_user` / `read_images` / `done` 四种 step；
+ * 其余三种（ask_user / confirm_table / dispute）随各自的状态一起来。
  */
 import path from 'node:path';
 import url from 'node:url';
@@ -14,10 +15,19 @@ import { determineState, SCHEMA_VERSION, MIN_NODE_MAJOR } from './state.mjs';
 import { currentStep, issueStep } from './steptoken.mjs';
 
 /** 内核自己的入口。argv 里给绝对路径：模型原样执行，不需要知道 baox 装在哪。 */
-const BIN = path.join(path.dirname(path.dirname(url.fileURLToPath(import.meta.url))), 'bin', 'baox.mjs');
+const SRC = path.dirname(url.fileURLToPath(import.meta.url));
+const BIN = path.join(path.dirname(SRC), 'bin', 'baox.mjs');
 const argvFor = (...args) => [process.execPath, BIN, ...args];
 
+/**
+ * 读数模板。它跟着内核走（src/ 整份进分发包），所以装到哪里都指得到 ——
+ * 指向 Skill 里某个 references/ 文件的话，换一种安装位置就断了。
+ */
+const READING_TEMPLATE = path.join(SRC, 'reading-template.json');
+
 const ENV_PROGRESS = { phase: 1, of: 10, label: '环境准备' };
+const MATERIAL_PROGRESS = { phase: 2, of: 10, label: '材料盘点与分类' };
+const READING_PROGRESS = { phase: 3, of: 10, label: '看图读数' };
 
 // 退出码：0 继续 / 2 有硬阻塞，未解决不得继续。硬阻塞是那些「等下去也不会好」的：
 // Node 太老、数据格式太新、登错了人。停在登录页不是硬阻塞 —— 那是在等人，不是被拦住。
@@ -35,16 +45,50 @@ const tellUser = ({ speak, context, progress = ENV_PROGRESS, exit = 0 }) =>
 const done = ({ speak, context, progress = ENV_PROGRESS }) =>
   ({ step: { kind: 'done' }, speak, context, progress, exit: 0 });
 
+/**
+ * 看图读数。模型逐个用 Read 打开 `images[].absPath`，按 `schemaPath` 那份模板
+ * 把读数写进 `readingsPath`，再原样执行 `argv` 交上来。
+ *
+ * `readingsPath` 就是 `argv` 里 `--file` 指的那个文件，写两遍是给模型看的，
+ * 不是多一个自由度：路径由内核定，模型不选地方。
+ */
+const readImages = ({ images, readingsPath, argv, speak, context }) => ({
+  step: {
+    kind: 'read_images',
+    images: images.map(({ materialId, fileName, absPath, format, contentHash }) =>
+      ({ materialId, fileName, absPath, format, contentHash })),
+    schemaPath: READING_TEMPLATE,
+    readingsPath,
+    argv,
+  },
+  speak, context, progress: READING_PROGRESS, exit: 0,
+});
+
+/** 待办清单念给用户听的样子。谁能解决它，是每条最要紧的那半句。 */
+const WHO = { user: '要你处理', model: '我来处理', kernel: '内核已经自己处置了，说一声而已' };
+const itemLines = (items) => items
+  .map((b, n) => `${n + 1}. ${b.fileName ?? b.materialIds?.join('、') ?? '这批材料'}`
+    + `——${b.hint ?? b.kind}（${WHO[b.resolvableBy] ?? WHO.user}）`)
+  .join('\n');
+
 /** 收得下 `--correction` 的 step。现在一种都没有 —— 它们随批次 4 的读数确认一起来。 */
 const CORRECTABLE = new Set(['confirm_table']);
 
+/** 交得出结果的 step。这两种都以"跑完一条命令"收尾，没有输出就是没跑过。 */
+const NEEDS_RESULT = new Set(['run', 'read_images']);
+
 /**
  * 状态 -> step + 原话。纯函数：同一个状态加同一份观测，永远得到同一句话。
+ *
+ * `blockedBy` 是判定那一侧算好的开放项，材料这一段要按它逐条说话。
  */
-export function stepFor(state, observation = {}) {
+export function stepFor(state, observation = {}, blockedBy = []) {
   const o = observation;
   const who = o.probe?.identity?.displayName ?? o.probe?.identity?.account ?? null;
   const bound = o.binding?.displayName ?? o.binding?.account ?? null;
+  const label = o.task?.sourceLabel ?? '这批材料';
+  const readingsPath = o.task ? path.join(o.task.workspace, 'reading-submission.json') : null;
+  const submitArgv = () => argvFor('ocr-submit', '--dir', o.sourceDir, '--file', readingsPath);
 
   switch (state) {
     case 'schema_too_new':
@@ -116,6 +160,94 @@ export function stepFor(state, observation = {}) {
         exit: BLOCKED,
       });
 
+    // —— 材料这一段 ——
+
+    case 'task_none':
+      return run(argvFor('intake', '--dir', o.sourceDir), {
+        speak: '我先把这个目录里的材料整个盘一遍：有几份、每份是什么格式、哪些读不出来。'
+          + '盘点只读你的目录，不改名、不移动、不删东西。',
+        context: '盘点会给这批材料建一个报销任务，并按"每份材料的路径 + 内容哈希 + 大小"'
+          + '算出一个版本号。后面每一步都挂在这个版本上，材料一动版本就变。',
+        progress: MATERIAL_PROGRESS,
+      });
+
+    case 'inventory_stale':
+      return run(argvFor('intake', '--dir', o.sourceDir), {
+        speak: `${label} 这个目录和我上次盘的对不上了 —— 多了、少了或者换过文件。`
+          + '我重新盘一遍再往下走，免得后面按着一份过期的清单做事。',
+        context: '这是内核自己比出来的：每次问"下一步做什么"都重新走一遍目录、重算内容哈希，'
+          + '和任务上记的版本号一比就知道。不靠谁记得说一声。',
+        progress: MATERIAL_PROGRESS,
+      });
+
+    case 'intake_open_items':
+      return tellUser({
+        speak: `${label} 这批材料里有几件事得先说清楚，处理完我们再往下：\n`
+          + `${itemLines(blockedBy.filter((b) => b.blocking))}\n`
+          + '处理好了跟我说一声，我重新盘一遍。',
+        context: '这些是盘点和解析报上来的开放项。我不会替你把它们当作不存在 ——'
+          + '带着读不出、认不出的材料往下走，等于把问题推到 ERP 那一头去暴露。'
+          + (blockedBy.some((b) => !b.blocking)
+            ? '另外还有几条不拦路的，一并记在 blockedBy 里。'
+            : ''),
+        progress: MATERIAL_PROGRESS,
+      });
+
+    case 'classify_pending':
+      return run(argvFor('classify', '--dir', o.sourceDir), {
+        speak: '材料盘清楚了，接下来我把每一份分个类：哪些是报销凭证、哪些是参考材料，'
+          + '能从 PDF 里直接取到的票面信息我一并取出来。',
+        context: '分类结果挂在当前这个盘点版本上，落进任务工作区。材料一变，'
+          + '这一版分类就不再代表现在的材料，得重来。',
+        progress: MATERIAL_PROGRESS,
+      });
+
+    case 'image_awaiting_reading':
+      return readImages({
+        images: o.pendingImages ?? [],
+        readingsPath,
+        argv: submitArgv(),
+        speak: `${label} 里有 ${(o.pendingImages ?? []).length} 张图要我亲眼看一遍才读得出票面信息：`
+          + `${(o.pendingImages ?? []).map((i) => i.fileName).join('、')}。`
+          + '我逐张打开抄写，看不清的字段我会说看不清，不猜也不算。',
+        context: '内核没有 OCR，图片由我来读；但读不等于算数：读数要过内核的结构校验'
+          + '（位数、日期、金额守恒），过了也只是候选，还得你对着原图确认。'
+          + '每份读数都钉在这张图当前的字节上，图一换读数自动作废。',
+      });
+
+    case 'reading_stale':
+      return readImages({
+        images: o.pendingImages ?? [],
+        readingsPath,
+        argv: submitArgv(),
+        speak: `${(o.pendingImages ?? []).map((i) => i.fileName).join('、')} 换过了，`
+          + '之前那次读数是对着旧图读的，已经作废。我重新看一遍这几张图。',
+        context: '读数钉在内容哈希上。文件一改，旧读数当场失效 ——'
+          + '沿用它等于拿上一张图的数字去报这一张图。',
+      });
+
+    case 'reading_awaiting_confirmation':
+      // 规格那一格写的是 confirm_table（终端表格）。那种 step 属于后面的批次，
+      // 这一批先接上已有的本地确认页 —— 它是 run，但**这一步要人对着原图点确认，
+      // 不能外包给子 Agent**。换成 confirm_table 是批次 5 的活。
+      return run(argvFor('confirm-readings', '--dir', o.sourceDir), {
+        speak: '图我读完了。读数还只是候选，得你对着原件过一眼才算数 ——'
+          + '我这就打开一个本地页面把读到的字段摆出来，对得上就勾选提交，'
+          + '对不上的别勾，我重读。',
+        context: '确认由提交这个动作构成，对话里说一句"确认了"不算数。'
+          + '没勾的材料仍然停在待确认项里，我不会替你确认。',
+        progress: READING_PROGRESS,
+      });
+
+    case 'events_pending':
+      return done({
+        speak: `${label} 的材料这一段清完了：盘点、分类、看图读数、确认都过了。`
+          + '再往下的费用事件、选项目、和 ERP 核对还没接进这条命令，这一版到这里为止。',
+        context: '照状态表，下一步是划费用事件（`events`）。它连同它自己的观测一起接进来，'
+          + '否则这个状态永远成立，那条命令会被反复重跑。',
+        progress: MATERIAL_PROGRESS,
+      });
+
     case 'env_ready':
       return done({
         speak: `环境准备好了：专用 Chrome 开着，ERP 登录着${who ? `，当前替 ${who} 报销` : ''}。`
@@ -139,7 +271,7 @@ export function stepFor(state, observation = {}) {
 export function nextResponse({ observation, sourceKey, after = null, hasResult = false,
   hasCorrection = false }) {
   const verdict = determineState(observation);
-  const shaped = stepFor(verdict.state, observation);
+  const shaped = stepFor(verdict.state, observation, verdict.blockedBy);
 
   // 凭据核对。几种「不算数」的回传，处置完全一样：忽略回传，重发当前步骤。
   // 这里记一句 `ignored` 是为了留痕，不是训模型：一次看不出自己被忽略过的回传，
@@ -150,7 +282,7 @@ export function nextResponse({ observation, sourceKey, after = null, hasResult =
     if (!outstanding || outstanding.token !== after) {
       ignored = { reason: 'stale_token',
         note: '这个凭据不是我现在挂着的那一个（多半是上一步的），我按当前状态重发一次' };
-    } else if (outstanding.state === verdict.state && shaped.step.kind === 'run' && !hasResult) {
+    } else if (outstanding.state === verdict.state && NEEDS_RESULT.has(shaped.step.kind) && !hasResult) {
       // 状态和上一步一样，却没交结果。状态不动 —— 说做完了不算做完了。
       ignored = { reason: 'no_result',
         note: '这一步要的是命令的实际输出，没有输出就没有事实，状态不动' };
@@ -164,7 +296,7 @@ export function nextResponse({ observation, sourceKey, after = null, hasResult =
       note: `现在这一步（${shaped.step.kind}）没有可纠正的读数，这份纠正我没有采纳` };
   }
 
-  const record = issueStep(sourceKey, verdict.state);
+  const record = issueStep(sourceKey, verdict.state, observation.sourceDir ?? null);
   const identity = observation.probe?.status === 'matched'
     ? { displayName: observation.probe.identity.displayName ?? null,
         account: observation.probe.identity.account ?? null }
@@ -176,7 +308,11 @@ export function nextResponse({ observation, sourceKey, after = null, hasResult =
     command: 'next',
     schemaVersion: SCHEMA_VERSION,
     identity,
-    task: null,                       // 任务主干（B 表）还没落成，环境这一段还谈不上任务
+    // 任务还没建立（或者只采了环境观测）时就是 null —— 不给一个看起来像任务的空壳。
+    task: observation.task
+      ? { taskId: observation.task.taskId, sourceLabel: observation.task.sourceLabel,
+          sourceDir: observation.sourceDir ?? null }
+      : null,
     state: verdict.state,
     progress: shaped.progress,
     actor: verdict.actor,

@@ -5,11 +5,68 @@
  * 分层是硬要求，不是风格：状态判定的测试要能在一台没有 Chrome、
  * 没有材料目录、没登录过 ERP 的机器上跑完。判断被钉住了，取数才谈得上可换。
  *
- * 判据一字不改地照 docs/design/state-machine.md 的两张表。这一批只落成
- * A 表（环境七态）和永远排在最前的 schema_too_new；B 表的任务主干状态
- * 按同样的方式往 RULES 后面接。
+ * 判据一字不改地照 docs/design/state-machine.md 的两张表。现在落成的是
+ * A 表（环境七态）、永远排在最前的 schema_too_new，以及 B 表从任务建立
+ * 到看图读数这一段；B 表后面的状态按同样的方式往 RULES 后面接。
  */
 import { bindingVerdict } from './binding.mjs';
+
+/**
+ * 每一类开放项由谁解决。这不是分类学，是**每条待办都要说清楚谁能动手** ——
+ * 一条谁也不认领的待办，用户只能干等，模型只能瞎猜。
+ *
+ * `user`：只有人能做（换一份能读的文件、把重复的票拿走、对着原件确认）。
+ * `model`：模型自己动手（看图读数）。
+ * `kernel`：内核已经自己处置了，报出来只为留痕，不拦路。
+ */
+const RESOLVER = {
+  // 盘点层
+  read_error: 'user',
+  empty_file: 'user',
+  unsupported_format: 'user',
+  symlink: 'user',
+  not_a_regular_file: 'user',
+  extension_mismatch: 'kernel',
+  duplicate_content: 'user',
+  // 分流解析层
+  no_text_in_pdf: 'user',
+  kind_unrecognized: 'user',
+  image_unreadable: 'user',
+  identity_incomplete: 'user',
+  issue_date_missing: 'user',
+  amount_mismatch: 'user',
+  amount_missing: 'user',
+  amount_not_on_face: 'kernel',
+  duplicate_invoice: 'user',
+  no_primary_voucher: 'user',
+  // 看图读数这一段
+  image_awaiting_reading: 'model',
+  reading_stale: 'model',
+  reading_awaiting_confirmation: 'user',
+};
+
+/**
+ * 开放项 -> 契约里的 blockedBy 一项。认不出的种类归给 `user`：
+ * 兜底兜到人这一侧是安全的一侧 —— 最坏是多问一句，而不是内核替人默认了什么。
+ */
+const asBlocker = (i) => ({
+  kind: i.kind,
+  materialId: i.materialId ?? null,
+  ...(i.materialIds ? { materialIds: i.materialIds } : {}),
+  fileName: i.fileName ?? null,
+  hint: i.note ?? null,
+  resolvableBy: RESOLVER[i.kind] ?? 'user',
+  blocking: !!i.blocking,
+});
+
+/** 任务这一侧观测过没有。没观测过就只答得了环境那半张表。 */
+const taskSeen = (o) => o.taskObserved === true;
+
+/** 看图读数这一段自己有状态，不混进"盘点待办"里 —— 它们的解决人不是同一个。 */
+const READING_KINDS = new Set(['image_awaiting_reading', 'reading_stale', 'reading_awaiting_confirmation']);
+
+const itemsOf = (o) => o.openItems ?? [];
+const hasBlockingItem = (o, pred) => itemsOf(o).some((i) => i.blocking && pred(i));
 
 /** 数据目录的格式版本。它才是版本闸的判据 —— 该判的是数据格式，不是代码版本。 */
 export const SCHEMA_VERSION = 1;
@@ -76,27 +133,89 @@ const RULES = [
         + `ERP 当前登录的是 ${o.probe.identity.displayName ?? o.probe.identity.account}；`
         + 'baox 只替绑定的那个人报销' }),
   },
+
+  // —— B 表：任务主干 ——
+  // 这半张表要任务观测才判得动（observeTask）。只采了环境观测时它们整段跳过，
+  // 答案停在 env_ready —— 没看过材料就说材料怎么样，那是编的。
+  {
+    state: 'task_none',
+    actor: 'kernel',
+    when: (o) => taskSeen(o) && !o.task,
+  },
+  {
+    // 材料目录里加了文件、换了文件、删了文件，内容哈希就对不上上一次盘点。
+    // 这个判据是内核自己算出来的，不问模型 —— 模型记不记得说一声都一样。
+    state: 'inventory_stale',
+    actor: 'kernel',
+    when: (o) => taskSeen(o) && o.inventoryStale,
+  },
+  {
+    // 盘点和分流报出来的待办，除了看图读数那三种（它们各有各的状态）。
+    // 排在 classify_pending 前面是照表：有读不出、认不出的材料时，
+    // 先把这些说清楚，而不是先去解析一堆注定解析不了的东西。
+    state: 'intake_open_items',
+    actor: 'user',
+    when: (o) => taskSeen(o) && hasBlockingItem(o, (i) => !READING_KINDS.has(i.kind)),
+  },
+  {
+    state: 'classify_pending',
+    actor: 'kernel',
+    when: (o) => taskSeen(o) && !o.classificationRecorded,
+  },
+  {
+    state: 'image_awaiting_reading',
+    actor: 'model',
+    when: (o) => taskSeen(o) && hasBlockingItem(o, (i) => i.kind === 'image_awaiting_reading'),
+  },
+  {
+    state: 'reading_stale',
+    actor: 'model',
+    when: (o) => taskSeen(o) && hasBlockingItem(o, (i) => i.kind === 'reading_stale'),
+  },
+  {
+    state: 'reading_awaiting_confirmation',
+    actor: 'user',
+    when: (o) => taskSeen(o) && hasBlockingItem(o, (i) => i.kind === 'reading_awaiting_confirmation'),
+  },
+  {
+    // 材料这一段全清了。照表，下一件事是划费用事件；那一层还没接进 next，
+    // 所以这里给的是一个 done —— 状态名是表里的真状态，只是内核暂时带不动它。
+    // 接上 `run events` 是下一批的事，接的时候连观测一起加（没有事件观测就接，
+    // 这个状态永远成立，`events` 会被无限重跑）。
+    state: 'events_pending',
+    actor: null,
+    when: (o) => taskSeen(o),
+  },
 ];
 
 /**
  * 观测 -> { state, actor, blockedBy }。
+ *
  * `blockedBy` 是结构化开放项，每项含 kind / materialId / hint / resolvableBy。
+ * 材料这一段的状态一律把**此刻这批材料的全部开放项**原样带上，`blocking`
+ * 标出哪些是拦路的：只报拦路的那几条，用户处理完一轮才发现还有下一轮，
+ * 而那些不拦路的（扩展名对不上、铁路票面本来就没有税额）也该有人知道。
  */
 export function determineState(observation) {
   const o = observation ?? {};
   for (const rule of RULES) {
     if (!rule.when(o)) continue;
     const blocker = rule.blocker?.(o);
+    if (blocker) return { state: rule.state, actor: rule.actor, blockedBy: [{ materialId: null, ...blocker }] };
     return {
       state: rule.state,
       actor: rule.actor,
-      blockedBy: blocker ? [{ materialId: null, ...blocker }] : [],
+      blockedBy: MATERIAL_STATES.has(rule.state) ? itemsOf(o).map(asBlocker) : [],
     };
   }
-  // A 表全过。任务主干（B 表）还没落成，到这里就是环境就绪。
-  // actor 是 null 而不是三种角色之一 —— 照表：env_ready 没有人要动手。
+  // A 表全过，任务那一侧没观测过。actor 是 null 而不是三种角色之一
+  // —— 照表：env_ready 没有人要动手。
   return { state: 'env_ready', actor: null, blockedBy: [] };
 }
+
+/** 会把材料开放项原样带上的那些状态。前面那几个状态内核下一步就自己重算，报早了是噪音。 */
+const MATERIAL_STATES = new Set(['intake_open_items', 'image_awaiting_reading', 'reading_stale',
+  'reading_awaiting_confirmation', 'events_pending']);
 
 /** 判定顺序本身是可测的事实，测试直接读它，不靠复述。 */
 export const STATE_ORDER = RULES.map((r) => r.state).concat('env_ready');

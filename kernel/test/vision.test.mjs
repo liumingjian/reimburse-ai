@@ -133,9 +133,9 @@ test.after(() => {
 // 旧的 SKILL.md 在示例里写了 "sellerName": ""，而 isText 拒收空字符串：
 // 照着示例抄的正确读数会被 ocr-submit 打回。示例比散文更容易被仿写，所以
 // 模板现在是一个真文件，并且由这条测试钉住它一直是可提交的。
-test('skills/baox/references/reading-schema.json 是一份能被收下的读数', () => {
+test('内核自带的读数模板 src/reading-template.json 是一份能被收下的读数', () => {
   const tpl = JSON.parse(fs.readFileSync(
-    path.join(repo, 'skills', 'baox', 'references', 'reading-schema.json'), 'utf8'));
+    path.join(repo, 'kernel', 'src', 'reading-template.json'), 'utf8'));
 
   assert.equal(tpl.version, 1, '模板的 version 必须和内核的 READING_VERSION 一致');
 

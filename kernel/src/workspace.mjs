@@ -217,3 +217,13 @@ export function recordErpAttempt(task, attempt) {
 export function loadErpAttempts(task) {
   return readJson(path.join(taskDir(task), 'erp-attempts.json'), { attempts: [] });
 }
+
+/**
+ * 某个盘点版本的分类结果**落盘的那一份**在不在。
+ *
+ * 判 `classify_pending` 用的是它，不是现算的分类：现算永远算得出来，
+ * 那样这个状态就永远不成立，`classify` 也就永远没人跑，账本上永远缺这一版。
+ */
+export function classificationRecorded(task, versionId) {
+  return fs.existsSync(path.join(taskDir(task), 'classifications', `${versionId}.json`));
+}

@@ -69,6 +69,15 @@ test('只带 --after 也答得上来：内核自己记得上次问的是哪个�
   assert.equal(back.json.ignored.reason, 'no_result', '这一步是 run，没交输出就不算做过');
 });
 
+test('只带 --after 时，内核记得的是那个目录本身，不只是它的指纹', () => {
+  const dir = materials();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-cli-'));
+  baox(['next', '--dir', dir], { BAOX_HOME: home });
+  const store = JSON.parse(fs.readFileSync(path.join(home, 'steps.json'), 'utf8'));
+  assert.equal(store.steps[store.current].sourceDir, dir,
+    '材料这一段每一步都要重新盘那个目录，而 sourceKey 是单向哈希，还原不回路径');
+});
+
 test('过期凭据被忽略，当前步骤原样重发，不报错', () => {
   const dir = materials();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-cli-'));
