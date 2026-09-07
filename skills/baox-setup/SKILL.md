@@ -100,8 +100,13 @@ baox confirm-identity --timeout-ms 480000
 
 This **blocks in the foreground** until the user submits, so give the Bash call a 600000 ms timeout.
 It reads the logged-in identity out of the ERP page itself, serves one tiny local page showing what it read,
-and writes the **个人绑定** only when the user presses 「是我本人」. Give the user the address printed on
-stderr. From then on this machine's baox works for that identity and no other.
+and writes the **个人绑定** only when the user presses 「是我本人」. From then on this machine's baox works
+for that identity and no other.
+
+The kernel opens that page in their browser itself. **Tell them it is coming before you run the command** —
+once it is running you cannot say anything for up to 8 minutes, so a heads-up afterwards is a heads-up they
+get after the waiting is over. If the page did not pop up, the address is on stderr when the command
+returns.
 
 **You never type the identity anywhere.** There is no name to pass and no name to ask for — every value on
 that page came from the kernel reading the ERP, and the click is the whole of the consent. (This replaced
@@ -145,8 +150,9 @@ baox select --spec "${CLAUDE_SKILL_DIR}/references/selftest.json" --timeout-ms 4
 ```
 
 This **blocks in the foreground** until the user submits, so give the Bash call a 600000 ms timeout. It runs
-its own server and exits on its own, leaving no background process. Give the user the address printed on
-stderr and ask them to open it and **press submit**.
+its own server and exits on its own, leaving no background process. The kernel opens the page for them;
+**say so before you run the command** (same reason as step 4), and ask them to **press submit**. If it did
+not pop up, the address is on stderr when the command returns.
 
 Pressing submit is the **consent** event. `status: "timeout"` means they did not — run it again.
 

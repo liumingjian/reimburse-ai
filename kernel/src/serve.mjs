@@ -1,5 +1,23 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
+
+// 地址只写进 stderr 是不够的：这些命令**前台阻塞**，Agent 在它返回之前既看不到 stderr
+// 也说不出话，于是"把地址给用户"这一步永远发生在用户已经干等完之后。所以内核自己把页面打开。
+// 打不开也不算错 —— stderr 上的地址仍然是兜底。
+const AUTO_OPEN_OFF = 'BAOX_NO_AUTO_OPEN';
+export function openInBrowser(url) {
+  if (process.env[AUTO_OPEN_OFF] === '1') return false;
+  const [cmd, args] = process.platform === 'darwin' ? ['open', [url]]
+    : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]]
+    : ['xdg-open', [url]];
+  try {
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    child.on('error', () => {});
+    child.unref();
+    return true;
+  } catch { return false; }
+}
 
 // 本地选择界面。刻意设计成**前台阻塞**：内核起服务、等用户点提交、拿到结果就自己退出。
 // 这样就不存在"会话结束后怎么收"的问题 —— 进程的生命周期就是这一次选择的生命周期。
@@ -452,6 +470,7 @@ function serveLocal(render, { timeoutMs = 8 * 60 * 1000, onReady } = {}, onSubmi
       const { port } = server.address();
       const url = `http://127.0.0.1:${port}/?nonce=${nonce}`;
       onReady?.(url);
+      openInBrowser(url);
       timer = setTimeout(() => {
         server.close(() => resolve({ status: 'timeout', timeoutMs }));
       }, timeoutMs);

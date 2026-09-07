@@ -14,14 +14,26 @@ place in the whole system that needs your own capability, which is why the rules
 baox ocr-request --dir "<材料目录>"
 ```
 
-`items` is the work order. Each entry gives `absPath` (open it with `Read`), `materialId`, and
-`contentHash`. Entries with `alreadyRead` true need no rereading.
+`items` is the work order. Each entry gives `absPath`, `materialId`, and `contentHash`. Entries with
+`alreadyRead` true need no rereading.
+
+**Then open every pending item's `absPath` with the `Read` tool, one call per image.** The work order is not
+the work; it only says which files to open. `Read` renders PNG and JPG as pictures you can actually look at,
+so this step always happens — there is no version of this flow where you go from `ocr-request` straight to
+telling the user something is wrong with their images.
+
+**「我看不到图片」 is not one of the answers.** If you have not called `Read` on the file, you do not know
+whether it can be read. Only a `Read` call that came back with an **error** licenses that report, and then
+you quote the error verbatim and name the file. Never ask the user to re-export, re-check, or re-supply an
+image you did not open, and never let a missing look turn into `unreadable` — `unreadable` is about fields
+on an image **you are looking at**, never about not having looked.
 
 ## You are a **copyist** here, not a judge
 
 Transcribe the characters you can see, and nothing else.
 
-- **Unreadable is an answer.** Put the field name in the `unreadable` array. It is completely legitimate and
+- **Unreadable is an answer** — for a field on an image you have opened and are looking at. Put the field
+  name in the `unreadable` array. It is completely legitimate and
   nobody will push back on it. **Guessing a value is far worse than saying you cannot read it.**
 - **Transcribe, never compute.** If 不含税金额 is not printed, it is absent — never derive it from
   价税合计 − 税额.
