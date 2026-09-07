@@ -23,7 +23,7 @@ allowed-tools: Bash
 它不会带你往下走。往下走的是下面这一条命令，而它是这个 skill 的全部。
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/kernel/bin/baox.mjs" erp-reconcile --dir "<材料目录>"
+node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" erp-reconcile --dir "<材料目录>"
 ```
 
 对 ERP 严格只读：不点、不滚、不刷新、不跳转、不写。本地不是只读——它会把这一次记进

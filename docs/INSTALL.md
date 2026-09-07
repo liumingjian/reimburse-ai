@@ -53,6 +53,32 @@ ls -d ~/.claude/skills/baox*        # 有东西就说明存在遮蔽风险
 等整套框架稳定之后，我们会改成推荐装在个人目录（一次安装，所有项目可用）。现在还在试用期，
 装项目目录更容易看清楚跑的到底是哪一份。
 
+### 可选：再加一道守卫
+
+baox 的内核自己会拒掉模型拼出来的命令——**这一层不用装，拷进去就生效**。
+下面这段是可选的外层，好处是那条命令连进程都不会起。
+
+在 `<项目>/.claude/settings.json` 里加上（文件不存在就新建）：
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command",
+            "command": "node <项目绝对路径>/.claude/skills/baox/hooks/guard.mjs" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+路径要写成绝对路径。加完重开一个 Claude Code 会话。
+已经有 `hooks` 配置的话，把这一项并进现有的 `PreToolUse` 数组里，别整段覆盖。
+
 ## 第一次使用
 
 在 Claude Code 里说一句：

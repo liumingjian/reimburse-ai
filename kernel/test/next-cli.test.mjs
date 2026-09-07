@@ -11,6 +11,11 @@ import { execFileSync } from 'node:child_process';
 //
 // 不用真 Chrome：把 CDP 端口指到一个没人监听的口子上，环境判定就停在
 // env_chrome_down，一路都是确定的。这也是这套分层的意义 —— 没有 Chrome 也测得动。
+// CDP 端口指到 1：普通进程绑不上这个特权端口，所以它**永远**没人监听，
+// 环境判定稳稳停在 env_chrome_down。原来用的 9457 只是"大概没人用"，
+// 而真机上跑着 baox 自己那个 Chrome 时它就是被占的，整组用例跟着塌。
+const CLOSED_PORT = '1';
+
 const BIN = path.join(path.dirname(path.dirname(url.fileURLToPath(import.meta.url))), 'bin', 'baox.mjs');
 
 function baox(args, env = {}) {
@@ -18,7 +23,7 @@ function baox(args, env = {}) {
   try {
     const stdout = execFileSync(process.execPath, [BIN, ...args], {
       encoding: 'utf8',
-      env: { ...process.env, BAOX_HOME: home, BAOX_CDP_PORT: '9457' },
+      env: { ...process.env, BAOX_HOME: home, BAOX_CDP_PORT: CLOSED_PORT },
     });
     return { code: 0, json: JSON.parse(stdout), home };
   } catch (err) {

@@ -865,7 +865,7 @@ export function nextResponse({ observation, sourceKey, after = null, hasResult =
   }
 
   const record = issueStep(sourceKey, shaped.stepKey ?? verdict.state,
-    observation.sourceDir ?? null, shaped.stepMeta ?? null);
+    observation.sourceDir ?? null, shaped.stepMeta ?? null, shaped.step?.argv ?? null);
   const identity = observation.probe?.status === 'matched'
     ? { displayName: observation.probe.identity.displayName ?? null,
         account: observation.probe.identity.account ?? null }

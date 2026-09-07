@@ -23,17 +23,41 @@ import { allocationRound, givenUpOpenItems } from './allocate.mjs';
 import { loadSelection, applySelection, linesDigest, sameBasis } from './selection.mjs';
 import { loadWriteApproval, approvalCovers } from './erpwrite.mjs';
 
+/** 格式版本落在数据目录根下的这个文件里。 */
+export const SCHEMA_FILE = 'schema.json';
+
 /**
- * 数据目录的格式版本。没有这个文件就是这个内核自己写的那一版。
- * 现在还没有谁写它 —— 把 `schemaVersion` 正式定为 1 并落盘是批次 6 的事，
- * 在那之前 `schema_too_new` 只会在未来某一版写了这个文件之后才可能出现。
+ * 数据目录的格式版本。没有这个文件就是这个内核自己写的那一版 ——
+ * 1.0.0 之前的数据目录里没有它，而那些目录装的就是第 1 版的格式。
  */
 export function readSchemaVersion() {
   try {
-    const v = JSON.parse(fs.readFileSync(path.join(paths.root, 'schema.json'), 'utf8'));
+    const v = JSON.parse(fs.readFileSync(path.join(paths.root, SCHEMA_FILE), 'utf8'));
     return Number(v.schemaVersion) || SCHEMA_VERSION;
   } catch {
     return SCHEMA_VERSION;
+  }
+}
+
+/**
+ * 把格式版本写进数据目录 —— **只在文件不存在时写**。
+ *
+ * 版本闸的判据从代码版本改成了数据格式版本（见 ADR-0002 的补记），所以这个文件
+ * 就是闸门本身。已经有的那份一个字都不动：里面写着比本内核更大的数字，说明这个目录
+ * 被将来某一版动过，把它改回 1 等于亲手拆掉 `schema_too_new`，让新格式的任务文件
+ * 被旧内核当成自己的来读。
+ *
+ * 写不进去不硬停：读侧读不到就退回「本内核这一版」，与写之前的行为一致。
+ */
+export function ensureSchemaVersionFile() {
+  const file = path.join(paths.root, SCHEMA_FILE);
+  try {
+    if (fs.existsSync(file)) return null;
+    fs.mkdirSync(paths.root, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(file, JSON.stringify({ schemaVersion: SCHEMA_VERSION }, null, 2) + '\n');
+    return { schemaVersion: SCHEMA_VERSION, file };
+  } catch {
+    return null;
   }
 }
 

@@ -67,3 +67,21 @@ function* walk(dir) {
     else if (/\.(md|json|sh|txt)$/.test(e.name)) yield p;
   }
 }
+
+// 真机实测：SKILL.md frontmatter 里的 hooks 一次都不触发（见 docs/research/skill-declared-hooks.md）。
+// 它被静默忽略——没有警告、没有报错，所以写在那里的守卫看起来配好了，实际一次都没跑。
+// 把这条钉住：谁再把它加回 frontmatter，这里当场红。
+test('三份说明书的 frontmatter 里都没有 hooks —— 那个键是不生效的', () => {
+  for (const s of ALL) {
+    assert.doesNotMatch(frontmatter(read(s, 'SKILL.md')), /^\s*hooks:/m,
+      `${s}/SKILL.md 的 frontmatter 里又出现了 hooks，而它不触发`);
+  }
+});
+
+// 可选的那道外层守卫要跟着包一起发出去，否则 INSTALL.md 让用户配的那条路径是空的。
+test('baox 带着钩子脚本，它是挂到 settings.json 上的那一份', () => {
+  const p = path.join(SKILLS, 'baox', 'hooks', 'guard.mjs');
+  assert.ok(fs.existsSync(p), 'skills/baox/hooks/guard.mjs 不在');
+  assert.match(fs.readFileSync(p, 'utf8'), /settings\.json/,
+    '钩子脚本得说清自己该挂在哪里——挂错地方它不生效且不报错');
+});

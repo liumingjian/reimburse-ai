@@ -62,7 +62,7 @@ export function currentSourceDir() {
  * 少了这一条，用户会为他看过的那一份内容点头，而内核收下的是另一份 ——
  * 这在可撤销的步骤上只是重问一次，在写入前那一格上是不可挽回的。
  */
-export function issueStep(sourceKey, state, sourceDir = null, meta = null) {
+export function issueStep(sourceKey, state, sourceDir = null, meta = null, argv = null) {
   const store = read();
   const prev = store.steps[sourceKey];
   const same = prev && prev.state === state
@@ -72,9 +72,22 @@ export function issueStep(sourceKey, state, sourceDir = null, meta = null) {
     : { token: newToken(), state, meta, issuedAt: new Date().toISOString() };
   // 目录跟着这一次的问话更新，凭据本身不动 —— 同一个目录换了个写法（软链、末尾斜杠）
   // 不该让当前这一步作废。
-  const stored = { ...record, sourceDir: sourceDir ?? prev?.sourceDir ?? null };
+  //
+  // `argv` 是这一步摆出去的那条命令行，同样跟着每一次问话更新（哪怕凭据因为幂等没换）。
+  // 守卫拿它当白名单：模型敲得动的低层命令，只有内核**刚刚**亲手发出的那一条（见 guard.mjs）。
+  const stored = { ...record, sourceDir: sourceDir ?? prev?.sourceDir ?? null, argv: argv ?? null };
   store.steps[sourceKey] = stored;
   store.current = sourceKey;
   write(store);
   return stored;
+}
+
+/**
+ * 当前这一步内核发出去的那条命令行。没有（比如这一步不跑命令）就是 null。
+ *
+ * 守卫要的白名单就是它：模型手上唯一一条低层命令，是内核刚刚放到 `step.argv` 里的那条。
+ */
+export function currentIssuedArgv() {
+  const store = read();
+  return store.steps[store.current]?.argv ?? null;
 }

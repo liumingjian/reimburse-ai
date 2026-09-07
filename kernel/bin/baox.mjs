@@ -26,11 +26,12 @@ import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerFie
   writeHeader, writeCell, selectOption, cellTarget, cellMatches, leaveEdit } from '../src/erpform.mjs';
 import { readReconciliation, classifyReconciliation, attemptRecord } from '../src/erpreconcile.mjs';
 import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
-import { observeEnvironment, observeTask } from '../src/observe.mjs';
+import { observeEnvironment, observeTask, ensureSchemaVersionFile } from '../src/observe.mjs';
 import { nextResponse } from '../src/next.mjs';
 import { ingestReread, autoSettleAgreed } from '../src/dispute.mjs';
 import { SCHEMA_VERSION as NEXT_SCHEMA_VERSION } from '../src/state.mjs';
-import { currentSourceKey, currentSourceDir } from '../src/steptoken.mjs';
+import { currentSourceKey, currentSourceDir, currentIssuedArgv } from '../src/steptoken.mjs';
+import { guardVerdict, refusalPayload, recordRefusal } from '../src/guard.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -130,6 +131,27 @@ async function upToEvents(dir) {
 }
 
 const [, , cmd] = process.argv;
+
+// —— 模型不拼命令 ——
+// 模型敲得动的只有两样：`next`，和内核**刚刚**放进 `step.argv` 的那一条命令行。
+// 其余子命令在检测到自己被 Agent 调起时当场拒绝；它们仍然留着给人手敲排障
+// （末尾加 --i-am-a-human），只是模型自己拼不出来。判据和措辞都在 guard.mjs 里。
+//
+// 这一段必须在 switch 之前、也在任何副作用之前：拒绝一条命令的意义在于它**没有跑过**，
+// 跑到一半再拒等于没拒。
+{
+  const verdict = guardVerdict({ cmd, argv: process.argv.slice(2), env: process.env,
+    issuedArgv: currentIssuedArgv() });
+  if (!verdict.allowed) {
+    recordRefusal({ cmd, markers: verdict.markers, logsDir: paths.logs });
+    out(refusalPayload({ cmd, markers: verdict.markers }), BLOCKED);
+  }
+}
+
+// 数据格式版本落盘。没有这个文件的目录（0.9.x 迁过来的，或者刚建的）就是这一版写的，
+// 补一份 schema.json；已经有了就一个字都不动 —— 里面写着 2 的目录是未来某一版的，
+// 把它改回 1 等于让 schema_too_new 这道闸永远不触发。
+ensureSchemaVersionFile();
 
 try {
   switch (cmd) {

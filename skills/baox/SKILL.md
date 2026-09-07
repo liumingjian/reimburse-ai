@@ -11,11 +11,16 @@ allowed-tools: Bash, Read, Task, Skill
 **你只会敲一条命令。** 内核决定下一步做什么，你照做，把结果交回去：
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/kernel/bin/baox.mjs" next --dir "<材料目录>"
+node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材料目录>"
 ```
 
+`CLAUDE_SKILL_DIR` 这个环境变量**不存在**，别往命令里写——路径要用真实的绝对路径，
+就是这份 SKILL.md 所在的那个目录。
+
 第一次问要带 `--dir`；此后回传用 `--after <stepToken>`，**内核会把完整命令行放在
-`step.argv` 里，你原样执行**。底层还有二十来条子命令，那些是给人手敲排障的，不是给你选的。
+`step.argv` 里，你原样执行**。底层还有二十来条子命令，那些是给人手敲排障的，不是给你选的：
+**内核会当场拒掉**（退出码 2，`status: "refused"`），并把这次拒绝记进日志。
+撞上它不要换个写法再试，照实告诉用户你刚才想干什么。
 
 ## 怎么念内核的话
 

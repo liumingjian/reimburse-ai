@@ -16,11 +16,13 @@ allowed-tools: Bash
 ## 你只会敲一条命令
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/kernel/bin/baox.mjs" next --dir "<材料目录>"
+node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材料目录>"
 ```
 
+`CLAUDE_SKILL_DIR` 这个环境变量**不存在**，路径用真实的绝对路径。
+
 回传用 `next --after <stepToken> [--result <文件>]`。要跑什么由内核放在 `step.argv` 里，
-你原样执行。Node 装没装、Chrome 起没起、有没有登录、这台机器绑的是谁——判断全在内核，
+你原样执行——自己拼的低层命令内核会当场拒掉。Node 装没装、Chrome 起没起、有没有登录、这台机器绑的是谁——判断全在内核，
 你一个都不做。
 
 ## 怎么念内核的话
