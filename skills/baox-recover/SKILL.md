@@ -1,6 +1,6 @@
 ---
 name: baox-recover
-description: ERP write recovery. Use once a reimbursement task has dispatched any ERP write — an upload, a receipt import, a detail line, a save — including when baox hands the task over. Reconciles the expense bill read-only and reports the kernel's interruption point and disposition.
+description: ERP write recovery. Use once a reimbursement task has dispatched any ERP write — a receipt import, a detail line, a save, or an erp-fill rehearsal that wrote fields without saving — including when baox hands the task over.
 allowed-tools: Bash
 ---
 
@@ -33,15 +33,26 @@ If it is not installed, send the user to `baox-setup` first.
 ## 1. Reconcile
 
 ```bash
-baox erp-reconcile --dir "<材料目录>"
+baox erp-reconcile --dir "<材料目录>" --expect "<员工姓名或登录账号>"
 ```
+
+**Always pass `--expect`.** Without it the gate returns `matched` for whoever happens to be logged in, which
+on a half-finished bill is the wrong question entirely. If you do not know the name, ask the user for it
+before you reconcile — one question is cheaper than reading another person's bill.
 
 It takes four readings — the tab mode, the bill number, the 收票 `价税合计` total, and the 明细
 `申请报销金额` total — sorts the bill into one **interruption point**, and gives a disposition.
 
 Against the ERP it is strictly read-only: no clicks, no scrolling, no refresh, no navigation, no writes.
-Locally it is not: with `--dir`, each run appends one audit record to the task's `erp-attempts.json`.
-Rerun it freely to take fresh readings; say so plainly if the user asks what it leaves behind.
+Locally it is not. Rerun it freely to take fresh readings, and read `audit` before you speak:
+
+- `audit.recorded` true — this run was appended to that task's `erp-attempts.json`, and `attemptCount` says
+  how many reconciliations that bill has now had.
+- `audit.recorded` false — **nothing was written down.** Either `--dir` was omitted, or that directory has no
+  live task. Say so: an unrecorded reconciliation must never sound like a recorded one, because the audit
+  list is what a later reader uses to reconstruct what was done to this bill.
+- **No `audit` key at all** — the identity gate refused before the page was read, so this attempt is not in
+  the record either. Same rule: say that nothing was logged.
 
 It passes an identity gate first. When `identity.status` is not `matched` it does not read the page at all
 (exit 2): ask the user to log in again **as themselves** in the dedicated baox Chrome window, then rerun.
@@ -71,9 +82,9 @@ There are two. Read `action` and use its words.
   touch it again.
 
   Say what actually moves it forward: the user finishes or discards the bill **in the ERP, by hand**.
-  Starting a fresh task over the same materials is not the way out — a task that has touched the ERP holds
-  its invoices for good (the kernel treats an unknown write as a write), so a new task would hard-block on
-  duplicate invoices.
+  Starting a fresh task over the same materials is not the way out: these invoices may already sit in the
+  ERP's 收票 grid, so a fresh run would import them a second time. Whatever the new task's duplicate check
+  says, it only knows baox's own records — it cannot see what this bill already consumed.
 
 ## 4. Telling the user which interruption point
 
@@ -85,7 +96,7 @@ There are two. Read `action` and use its words.
 | `未保存·导入前` | Nothing reached the ERP; the invoices are unconsumed | This batch can start over as a whole: ask the user to take **this same task** back to `baox` and dispatch it again. You replay nothing yourself |
 | `未保存·已导入未写明细` | The invoices are in the ERP 收票 grid; the expense detail is not written | See below |
 | `未保存·就绪待保存` | Both totals agree to the cent; only the save is left | The bill is not in the database yet, and the save is the user's to press |
-| `已保存` | The draft is in the ERP; the bill number is in `billNo` | Read the number out and ask the user to look it up in the ERP and decide whether to submit |
+| `已保存` | The draft is in the ERP; the bill number is at `readings.billNo.value` | Read the number out and ask the user to look it up in the ERP and decide whether to submit |
 | `不自洽` | The readings contradict each other (`新增` with a bill number, `修改` without one, or the two totals differ) | Report the four readings verbatim, with no explanation and no guess at the cause |
 
 **`未保存·已导入未写明细` is a normal interruption point, not an ERP error.** It always goes to a human for

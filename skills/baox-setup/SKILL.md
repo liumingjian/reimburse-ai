@@ -47,7 +47,9 @@ On mac suggest `brew install node`; without Homebrew or admin rights, point them
 https://nodejs.org and wait for them. The kernel needs Node ≥ 21 — it drives CDP over Node's built-in global
 WebSocket, which is why it has no npm dependencies at all.
 
-`checks.chrome.ok` false: tell the user to install Chrome. Chrome is the only browser this works on.
+`checks.chrome.ok` false: tell the user to install Google Chrome. `doctor` looks for Chrome, then Chromium,
+then Microsoft Edge, and passes on the first it finds — so `ready: true` does not by itself mean Chrome. This
+has only been verified against Chrome; if `doctor` passed on one of the others, say which one it picked.
 
 ## 2. Install the kernel
 
@@ -90,8 +92,11 @@ Authorization is `status: "matched"` and nothing else — **consent**, applied t
 | `no_tab` | The dedicated Chrome has no ERP tab | Back to step 3 |
 | `unknown` | On the console, but the username element is unreadable | Hard block. This is not a pass |
 
-The probe reads two signals and needs both: the username element on the console (a display name such as
-「刘明建」) and the login account in `localStorage` (such as `luo.liu`). `--expect` accepts either one.
+The probe stands on the username element on the console (a display name such as 「刘明建」). That one is
+required — without it the verdict is `not_logged_in` or `unknown`, never `matched`. The login account in
+`localStorage` (such as `luo.liu`) comes along when it is readable and can be `null`. `--expect` is matched
+against **either**, so pass whichever the user actually knows.
+
 It evaluates read-only expressions only — no navigation, no clicks, no business calls.
 
 Probe on the **ERP console home page**. If the user is parked on a bill page, ask them to go home first.

@@ -22,6 +22,13 @@ unknown whether a write landed, it landed — the same rule that decides 「占�
 `probe` and `catalog` (step 10) are read-only and **do not** count as a write attempt. A task that has only
 run those is still yours.
 
+**One exception, and only this one.** When `baox-recover` has just reconciled the task and reported bucket
+`未保存·导入前`, that reading is the evidence that nothing reached the ERP: the invoices are unconsumed and
+the batch is yours again. Take it from step 1. Anything weaker — the user saying it did not go through, your
+own memory of the run, a browser window that looks empty — is not that evidence, and the task stays
+`baox-recover`'s. Nothing in the kernel records this handback, so it holds for the reconciliation you were
+just handed and not for a task you find in this state later; in that case reconcile again first.
+
 ## What you do
 
 Three things: run the kernel commands, read the kernel's JSON back to the user in plain Chinese, and turn
@@ -39,8 +46,14 @@ steps 5, 8 and 9.
 `node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs"` (Windows: `%APPDATA%\baox\`).
 If it is not installed, send the user to `baox-setup` first.
 
-Exit codes: `0` continue / `1` the kernel threw, read `error` out and stop / `2` **an open item or a hard
-block is unresolved — do not continue**.
+Exit codes: `0` continue / `1` **the command did not complete** / `2` **an open item or a hard block is
+unresolved — do not continue**.
+
+On exit 1, the JSON says which kind it was, and they need opposite responses:
+
+- an `error` key — the kernel threw. Read it out and stop.
+- a `status` key instead, `timeout` — a local page (`confirm-readings`, `allocate`, `select-task`) waited for
+  the user's submit and did not get one. Nothing is wrong; say so and run the command again.
 
 ## 1. Material intake
 
@@ -56,8 +69,11 @@ Three things in the result are worth telling the user:
 - `task.resumed` true means this directory already had an unfinished task and the kernel resumed it rather
   than starting another. One directory, one task.
 - `inventory.isNewVersion` true with a non-empty `supersededVersionId` means the materials changed and a new
-  inventory version exists. **The old ERP readiness snapshot is void**, and confirmations have to be redone
-  against the new version.
+  inventory version exists. Treat the old ERP readiness snapshot as void and redo the confirmations. Do not
+  wait to be told: the kernel's automatic fallback keys on the **shape** of the candidate lines (line id,
+  voucher material, date, city, total), not on the inventory version, so swapping in a different invoice
+  with the same date, city and total leaves the old confirmation standing. After any material change, rerun
+  step 10 rather than trusting `projectSource` to have fallen back on its own.
 - `inventory.ignoredCount` counts OS junk (`.DS_Store` and friends). They are not user materials, but they
   were not silently dropped either — say so if the user asks.
 
@@ -159,6 +175,13 @@ baox abandon-task --task <taskId> --reason "<为什么不报了>"
 Abandoning is a status change, **not a cleanup**: the task workspace is left intact. Ask the user first.
 A task in the way may be another batch someone is still working on.
 
+`abandon-task` can come back `verdict: "rejected"` at exit 2, and the reason decides where you go:
+
+- **The other task has touched the ERP.** Its invoices are not yours to release, and no wording releases
+  them. That task belongs to `baox-recover` — say so, and stop. This batch cannot proceed over those
+  invoices until the other bill is settled in the ERP.
+- Any other reason (no such task, wrong status) is a hard block too: read it out and stop.
+
 **Say this every time: having checked is not the same as not having been filed.** The kernel only knows
 baox's own records on this machine. Anything keyed directly into the ERP, filed by a colleague, filed on a
 previous computer, or filed before the baox data directory was deleted is invisible here.
@@ -196,8 +219,10 @@ theirs.
 
 ## 8. Allocating a combined transport invoice
 
-When one transport invoice covers several segments the kernel returns the `allocation_required` hard block.
-Read `references/allocation.md` and follow it. Done when `events` runs without `allocation_required`.
+The kernel routes two hard blocks to the same page: `allocation_required`, when one transport invoice covers
+several segments, and `allocation_stale`, when the invoice file behind an existing allocation changed. Read
+`references/allocation.md` and follow it for either. Done when `events` reports `readyForNextStep: true` with
+no allocation item left.
 
 ## 9. Category and project
 
@@ -243,23 +268,28 @@ baox lines --dir "<材料目录>"
 
 ## 10. Read-only master-data verification
 
-This needs the ERP logged in, so probe first:
+This needs the ERP logged in as **this** user, so probe first. Always pass `--expect`:
 
 ```bash
-baox probe
+baox probe --expect "<员工姓名或登录账号>"
 ```
+
+Without `--expect` the probe only reports that *somebody* is logged in — it returns `matched` for any
+identity, and `mismatched` can never come back. That is not the check you want here.
 
 Only `status: matched` continues. `not_logged_in` is the common one — **ask the user to log in themselves**
 in the dedicated baox Chrome window. Account and password stay with the user, and an `account` in the output
-does not mean logged in (the login page shows the last account too). `mismatched` is a hard block.
+does not mean logged in (the login page shows the last account too). `mismatched` is a hard block: someone
+else is in this ERP session, and nothing in this flow may run under their identity.
 
 Then verify:
 
 ```bash
 # the four expense item codes in the reference table, plus every project number this task selected
-baox catalog --dir "<材料目录>"
+baox catalog --dir "<材料目录>" --expect "<员工姓名或登录账号>"
 
-# just asking whether one project number exists
+# asking whether one project number exists — note this still checks all four expense items first,
+# so unrelated expense-item drift can make even this call exit 2
 baox catalog --project 111454
 ```
 
@@ -277,10 +307,14 @@ Exit 2 covers several cases, and they are not interchangeable:
 | `unusable` | The master data is disabled or unapproved | Stop and ask. Do not switch to another code |
 | expense item `name_mismatch` | Code matches, name does not | **Stop.** The repo's reference table and the ERP have drifted apart; a human checks this. Do not adopt the ERP's name and carry on |
 | `queryFailures` non-empty | The query itself failed | This is "not verified", not "verified". It is not a pass |
+| A `note` with no `problems` and no `queryFailures` | This task has not run `select-task`, so there is no project number to check | Go back to step 9 |
 
-**Verification decays.** It is keyed by project number and bound to the candidate line's fingerprint: change
-a project number, or change materials so the lines rebuild, and `projectSource` falls back to
-`user_input_unverified` on its own. When it falls back, run `catalog` again rather than quoting the old result.
+**Verification decays, but not on everything.** It is keyed by project number and bound to a fingerprint of
+the candidate lines — line id, voucher material, date, city, total. Change a project number or reallocate an
+invoice and `projectSource` falls back to `user_input_unverified` on its own. Replace an invoice file with
+one carrying the same date, city and total and the fingerprint does not move, so the old
+`erp_catalog_confirmed` survives a change it should not have survived. **Rerun `catalog` after any material
+change**, and quote only the result of that run.
 
 ## Done before any ERP write
 

@@ -1,7 +1,11 @@
 # Allocating a combined transport invoice across segments
 
-Reached from `baox` step 8, when the kernel returns the `allocation_required` hard block: one transport
-invoice covers several segments, and its face carries a single total.
+Reached from `baox` step 8, on either of the two hard blocks the kernel routes here:
+
+- `allocation_required` — one transport invoice covers several segments and its face carries a single total.
+- `allocation_stale` — an allocation existed, but the invoice file behind it changed, so it is void.
+
+Both are answered the same way: the user fills the segments in again.
 
 > `baox` here is the kernel entry point, as in `SKILL.md`:
 > `node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs"`.
@@ -33,5 +37,5 @@ An allocation is bound to the invoice's content hash. Replace the invoice file a
 
 ## Done when
 
-`events` runs without `allocation_required`, and each segment's amount traces back to a user submission
-rather than to any calculation of yours.
+`events` reports `readyForNextStep: true` with neither `allocation_required` nor `allocation_stale` left,
+and each segment's amount traces back to a user submission rather than to any calculation of yours.
