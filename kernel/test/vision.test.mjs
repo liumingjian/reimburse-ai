@@ -176,6 +176,48 @@ test('被驳回的理由要活到下一次读取 —— 那是重读唯一有用
 
 // —— 终端确认与纠正 ——
 
+test('驳回不回报正解 —— 那是一道凭据，不是一道有反馈的题', () => {
+  const v = submit({ ...good(), sighted: { shape: 'portrait' } });
+  const why = v.reasons.join();
+  assert.doesNotMatch(why, /landscape/, '说出正解，五选一就变成了送分题');
+  assert.doesNotMatch(why, /portrait \/ square/, '把五个选项列在驳回里，等于教它怎么试');
+});
+
+test('连着答不出凭据就不再让模型重试 —— 五选一是试得出来的', async () => {
+  const { MAX_SIGHT_FAILURES } = await import('../src/vision.mjs');
+  const { classifyInventory, classifyOpenItems } = await import('../src/classify.mjs');
+
+  // 先把先前那份已被收下的读数推翻，回到「这张图还没有可用读数」的处境 ——
+  // 已经有一份收下的读数时，后来交的废话本来就动不了它。
+  disputeReading(task, material.materialId, { totalAmount: '99.99' });
+
+  for (let i = 0; i < MAX_SIGHT_FAILURES; i += 1) {
+    submit({ ...good(), sighted: { shape: 'tall' } });
+  }
+  // 计数跨提交累加：每次重来都清零的话，这道闸拦不住任何东西。
+  assert.ok(loadRejection(task, material.materialId).sightFailures >= MAX_SIGHT_FAILURES);
+
+  const items = classifyOpenItems(classifyInventory(src, inventory, task));
+  const escalated = items.find((it) => it.kind === 'sight_unproven');
+  assert.ok(escalated, '到了上限就该变成一条摆给用户看的开放项');
+  assert.ok(escalated.blocking);
+
+  // 从此这张图不再出现在工单里：再派一次只是再试一次。
+  const { buildWorkOrder } = await import('../src/vision.mjs');
+  const order = buildWorkOrder(src, inventory, classifyInventory(src, inventory, task), task);
+  assert.equal(order.length, 0);
+
+  // 用户换了一份文件，计数跟着字节走，从头开始。
+  fs.copyFileSync(path.join(repo, 'resources', '交通', '行程单.png'), path.join(src, 'invoice.png'));
+  const fresh = await takeInventory(src);
+  const freshItems = classifyOpenItems(classifyInventory(src, fresh, task));
+  assert.ok(!freshItems.some((it) => it.kind === 'sight_unproven'), '换了文件就不该还挂着上一份的账');
+
+  // 把材料换回去，后面的测试仍然对着同一张图。
+  fs.copyFileSync(path.join(repo, 'resources', '交通', 'fengyun-1.png'), path.join(src, 'invoice.png'));
+  submit(good());
+});
+
 test('确认记的是终端，不是网页 —— 这条路上再没有页面了', () => {
   submit(good());
   confirmReadings(task, [material.materialId]);
@@ -210,6 +252,9 @@ test('用户改了字段：他给的值不落库，先前的确认当场作废',
   const rejection = loadRejection(task, material.materialId);
   assert.match(rejection.reasons.join(), /重新打开这张图/);
   assert.match(rejection.reasons.join(), /26427000000640558099/);
+  // 被推翻的那次机器读数整份留着：它不再是候选，但它是证据。
+  assert.equal(rejection.machineReading.fields.invoiceNumber, '26427000000640558021');
+  assert.equal(rejection.machineReading.amountCheck, 'balanced');
 });
 
 test.after(() => {

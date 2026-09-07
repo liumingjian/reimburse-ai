@@ -36,11 +36,13 @@ export const SHAPE_LABELS = Object.fromEntries(BANDS.map((b) => [b.shape, b.labe
 /** 边界宽容度：真实比例离档位边界不到这个比例时，相邻的那一档也算答对。 */
 const EDGE_TOLERANCE = 0.08;
 
-const bandIndex = (ratio) => BANDS.findIndex((b) => ratio <= b.max);
+/** 比例落在哪一档。算不出比例（宽高有一个不是正数）时是 -1。 */
+const bandIndex = (ratio) => (ratio > 0 ? BANDS.findIndex((b) => ratio <= b.max) : -1);
 
-/** 宽高 -> 形状档。 */
+/** 宽高 -> 形状档。量不出形状的就是 `null`，不是某一档。 */
 export function shapeOf(width, height) {
-  return BANDS[bandIndex(width / height)].shape;
+  const i = bandIndex(width / height);
+  return i < 0 ? null : BANDS[i].shape;
 }
 
 /**
@@ -54,7 +56,7 @@ export function shapeMatches(width, height, reported) {
   const ratio = width / height;
   const truth = bandIndex(ratio);
   const said = SHAPES.indexOf(reported);
-  if (said < 0) return false;
+  if (said < 0 || truth < 0) return false;
   if (said === truth) return true;
   if (Math.abs(said - truth) !== 1) return false;
   // 相邻档：只有真实比例离两档之间那条边界足够近才放行。

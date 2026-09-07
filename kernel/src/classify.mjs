@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { parseMaterial, invoiceIdentity, checkAmounts, maskNumber } from './parse.mjs';
-import { loadReading, loadRejection, projectReading } from './vision.mjs';
+import { loadReading, loadRejection, projectReading, MAX_SIGHT_FAILURES } from './vision.mjs';
 import { shapeOfFile } from './imageshape.mjs';
 import { READING_KINDS } from './state.mjs';
 
@@ -93,9 +93,18 @@ export function classifyOpenItems(classification) {
     if (r.parseStatus === 'needs_ocr') {
       if (r.imageDecodable === false) {
         // 内核自己解不开的图。它到不了模型手上 —— 只有人能换一份能看的原件。
-        add('image_undecodable', true, { ...at,
+        add('image_file_broken', true, { ...at,
           note: '这个文件的扩展名说它是图片，但内核解不开它的图像头，它不是一张完整的 png / jpg；'
             + '请重新导出或重新拍一份' });
+        continue;
+      }
+      if ((r.rejection?.sightFailures ?? 0) >= MAX_SIGHT_FAILURES) {
+        // 接连答不出「看过的凭据」。再让模型读下去只是让它接着试，
+        // 而试出来的那一次和真看过的那一次，内核分辨不了。
+        add('sight_unproven', true, { ...at,
+          note: `我连着 ${r.rejection.sightFailures} 次答不出这张图长什么样，`
+            + '没法证明我真的打开过它。这张图的读数我不再往下交 ——'
+            + '请你看一眼这个文件，或者换一份能正常显示的原件' });
         continue;
       }
       const state = r.readingState ?? 'none';

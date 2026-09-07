@@ -19,7 +19,7 @@ import { bindingVerdict } from './binding.mjs';
  * `model`：模型自己动手（看图读数）。
  * `kernel`：内核已经自己处置了，报出来只为留痕，不拦路。
  */
-const RESOLVER = {
+const PLAIN = {
   // 盘点层
   read_error: 'user',
   empty_file: 'user',
@@ -34,7 +34,9 @@ const RESOLVER = {
   image_unreadable: 'user',
   // 内核自己解不开图像头。这是材料的问题，只有人换得了一份能看的原件 ——
   // 也正因为它由内核判定，「图片显示不出来」这句话就再也轮不到模型来说。
-  image_undecodable: 'user',
+  image_file_broken: 'user',
+  // 模型连着答不出「看过的凭据」。到这一步它已经不是模型再读一遍的事了。
+  sight_unproven: 'user',
   identity_incomplete: 'user',
   issue_date_missing: 'user',
   amount_mismatch: 'user',
@@ -45,12 +47,24 @@ const RESOLVER = {
   // 跨任务查重
   duplicate_across_tasks: 'user',
   history_scope_local: 'kernel',
-  // 看图读数这一段
+};
+
+/**
+ * 看图读数这一段的开放项。它们**各有各的状态**（不混进盘点待办），
+ * 所以除了「谁解决」还要记一句「归哪个状态」。
+ *
+ * 一处定义，三处使用：解决人、`OWN_STATE_KINDS`、`READING_KINDS`。
+ * 分成三张表抄三遍的话，加一种就得记得改三个地方 —— 而漏改的那一处，
+ * 表现是某个状态永远轮不上，且在代码里看不出来。
+ */
+const READING_ITEMS = {
   image_awaiting_reading: 'model',
   reading_rejected: 'model',
   reading_stale: 'model',
   reading_awaiting_confirmation: 'user',
 };
+
+const RESOLVER = { ...PLAIN, ...READING_ITEMS };
 
 /**
  * 开放项 -> 契约里的 blockedBy 一项。认不出的种类归给 `user`：
@@ -76,12 +90,10 @@ const taskSeen = (o) => o.taskObserved === true;
  * 一处定义，两处使用（这里和 classify.mjs 的"图还没看就别说没有凭证"）：
  * 抄一份的话，将来加 `reading_rejected` 就得记得改两个地方。
  */
-export const OWN_STATE_KINDS = new Set(['image_awaiting_reading', 'reading_rejected', 'reading_stale',
-  'reading_awaiting_confirmation', 'duplicate_across_tasks']);
+export const OWN_STATE_KINDS = new Set([...Object.keys(READING_ITEMS), 'duplicate_across_tasks']);
 
 /** 其中属于"图还没读完"的那几种。 */
-export const READING_KINDS = new Set(['image_awaiting_reading', 'reading_rejected', 'reading_stale',
-  'reading_awaiting_confirmation']);
+export const READING_KINDS = new Set(Object.keys(READING_ITEMS));
 
 const itemsOf = (o) => o.openItems ?? [];
 const hasBlockingItem = (o, pred) => itemsOf(o).some((i) => i.blocking && pred(i));

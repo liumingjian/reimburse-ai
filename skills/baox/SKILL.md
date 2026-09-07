@@ -135,7 +135,8 @@ Three things to keep straight when reporting:
 | `reading_awaiting_confirmation` | Read, but not yet confirmed by the user | Show them the table in the terminal, step 5 |
 | `reading_stale` | The image changed; the old reading is void | Read it again |
 | `image_unreadable` | Even looking at it, the face cannot be read | Ask for a clearer original |
-| `image_undecodable` | **The kernel itself** cannot decode the file's image header | Ask for a re-export. This is the only origin of "that image will not display" — it is never your report |
+| `image_file_broken` | **The kernel itself** cannot decode the file's image header | Ask for a re-export. This is the only origin of "that image will not display" — it is never your report |
+| `sight_unproven` | You failed the "did you open it" check too many times running | Blocking, and it is on you. Stop resubmitting; tell the user plainly that you could not prove you opened that file |
 | `no_text_in_pdf` | A PDF with no text layer, usually a scan | Ask for the electronic original |
 | `kind_unrecognized` | A PDF with text, but not a kind v1 supports | Check whether it belongs in this reimbursement |
 | `identity_incomplete` | An invoice whose 20-digit number cannot be read | Ask for a complete original. **Invoice identity is never supplied by conversation** |

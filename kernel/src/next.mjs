@@ -116,11 +116,16 @@ const confirmTable = ({ table, materialIds, correctionPath, speak, context }) =>
 function readingTable(pending) {
   const rows = [];
   for (const p of pending) {
-    let first = true;
-    const nameCell = () => (first ? (first = false, `${p.fileName}（${p.docTypeLabel}）`) : '');
-    for (const f of p.fields) rows.push({ material: nameCell(), field: f.label, value: f.value });
-    for (const u of p.unreadable) rows.push({ material: nameCell(), field: u, value: '看不清（我没有猜）' });
-    if (first) rows.push({ material: nameCell(), field: '（没有读出任何字段）', value: '' });
+    // 一份材料的名字只写在它那几行的头一行上，下面留白 —— 重复的文件名会盖住
+    // 用户真正要比对的那一列数字。
+    const lines = [
+      ...p.fields.map((f) => ({ field: f.label, value: f.value })),
+      ...p.unreadable.map((u) => ({ field: u, value: '看不清（我没有猜）' })),
+    ];
+    if (!lines.length) lines.push({ field: '（没有读出任何字段）', value: '' });
+    for (const [n, line] of lines.entries()) {
+      rows.push({ material: n === 0 ? `${p.fileName}（${p.docTypeLabel}）` : '', ...line });
+    }
   }
   return renderTable([
     { key: 'material', label: '材料', max: 46 },

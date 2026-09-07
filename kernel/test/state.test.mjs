@@ -234,8 +234,15 @@ test('上次读数没过关：还是模型自己动手，不是拿去麻烦用�
 
 test('内核自己解不开的图，是材料的问题，只有人换得了', () => {
   const r = determineState(withMaterials({
-    openItems: [item('image_undecodable', { fileName: '发票.png' })] }));
+    openItems: [item('image_file_broken', { fileName: '发票.png' })] }));
   assert.equal(r.state, 'intake_open_items', '它不归看图那几个状态，模型看多少遍都一样');
+  assert.equal(r.blockedBy[0].resolvableBy, 'user');
+});
+
+test('证明不了自己看过图，就不再是模型的事了', () => {
+  const r = determineState(withMaterials({
+    openItems: [item('sight_unproven', { fileName: '发票.png' })] }));
+  assert.equal(r.state, 'intake_open_items', '再让模型读下去只是让它接着试');
   assert.equal(r.blockedBy[0].resolvableBy, 'user');
 });
 

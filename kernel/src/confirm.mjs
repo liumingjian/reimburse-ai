@@ -24,7 +24,7 @@
 import fs from 'node:fs';
 import { currentStep } from './steptoken.mjs';
 import { takeInventory } from './inventory.mjs';
-import { findLiveTaskForSource, sourceKeyOf } from './workspace.mjs';
+import { findLiveTaskForSource } from './workspace.mjs';
 import { pendingConfirmations, confirmReadings, disputeReading } from './vision.mjs';
 
 /** 这一步正等着用户对读数表态吗。 */
@@ -44,7 +44,9 @@ export async function applyTerminalVerdict({ sourceDir, sourceKey, after, correc
   if (!sourceDir || !awaitingConfirmation(sourceKey, after)) return null;
 
   const inventory = await takeInventory(sourceDir);
-  const task = findLiveTaskForSource(sourceKeyOf(sourceDir));
+  // 认凭据用的是哪个 sourceKey，找任务就用哪一个 —— 从 sourceDir 再算一遍，
+  // 就多了一处两边可能对不上的地方，而对不上时的样子是「点了头却没生效」。
+  const task = findLiveTaskForSource(sourceKey);
   if (!task) return null;
   const shown = pendingConfirmations(task, inventory);
   if (!shown.length) return null;

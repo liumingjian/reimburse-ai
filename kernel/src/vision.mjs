@@ -30,6 +30,15 @@ import { shapeOfBuffer, shapeMatches, SHAPES, SHAPE_LABELS } from './imageshape.
 
 export const READING_VERSION = 1;
 
+/**
+ * 连着答错几次「看过的凭据」就不再让模型重试。
+ *
+ * 一次答错是看走眼，接连答错是在试 —— 五个档位轮着交，早晚会撞对一次，
+ * 而撞对的那一次和真看过的那一次在内核眼里一模一样。所以次数本身要成为证据：
+ * 到了上限，这张图就从「模型再读一遍」变成一条摆给用户的开放项。
+ */
+export const MAX_SIGHT_FAILURES = 3;
+
 /** 图片可能是什么。闭集：模型不能自己发明一个类型。 */
 export const DOC_TYPES = {
   invoice: { role: 'primary_voucher', label: '发票', needsIdentity: true },
@@ -101,6 +110,9 @@ export function buildWorkOrder(sourceDir, inventory, classification, task, { for
     if (r.imageDecodable === false) continue;
     const existing = loadReading(task, r.materialId);
     const rejection = loadRejection(task, r.materialId);
+    // 连着答不出「看过的凭据」的那几张也不再派出去：再读一遍只是再试一次。
+    if (rejection && rejection.contentHash === m.contentHash
+      && (rejection.sightFailures ?? 0) >= MAX_SIGHT_FAILURES) continue;
     items.push({
       materialId: m.materialId,
       fileName: m.fileName,
@@ -148,16 +160,19 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
     // 看过的凭据。这一条排在所有字段校验前面，因为它决定的是**这次读取算不算数**：
     // 一份没看过图的读数，里面的字段对不对都没有意义。
     const shape = shapeOfBuffer(bytes);
+    let sightFailed = false;
     if (!shape) {
       // 内核自己都解不开这张图 —— 那是材料的问题，不是模型的说法，也不该让模型去看。
       // 正常情况下分类那一层已经把它拦成开放项了，走到这里说明材料刚刚被换掉。
       reasons.push('内核解不开这个文件的图像头，它不是一张完整的 png / jpg；'
         + '这不是"看不清"，是这份材料本身要换');
     } else if (!shapeMatches(shape.width, shape.height, raw.sighted?.shape)) {
-      reasons.push(`sighted.shape 报的是 ${raw.sighted?.shape ?? '（没报）'}，和这张图对不上；`
-        + `它必须是 ${SHAPES.join(' / ')} 之一，`
-        + '是"你正看着的这张图长什么样"。答不上就说明这张图没有真的打开过 —— '
-        + '请用 Read 工具打开它再读一遍。');
+      sightFailed = true;
+      // 故意不回报正解，也不说错在哪一边：这是一道凭据，不是一道有反馈的题。
+      // 把差在哪里说清楚，等于把五选一变成三选一，几个回合就蒙对了。
+      reasons.push('sighted.shape 和这张图对不上 —— 它是"你正看着的这张图长什么样"，'
+        + '不是从文件名或者上下文推得出来的东西。答不上就说明这张图没有真的打开过：'
+        + '请用 Read 工具打开它，看着它再读一遍。');
     }
 
     const type = DOC_TYPES[raw.docType];
@@ -190,8 +205,15 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
 
     const verdict = reasons.length ? 'rejected' : 'accepted';
     if (verdict === 'rejected') {
+      // 答错凭据的次数要累计。五个档位、每次可以重交，光靠一次驳回是拦不住
+      // 「不看图，挨个试」的 —— 几个回合就蒙对了。累计到上限就不再是模型的事，
+      // 而是一条摆给用户看的开放项：我没能证明我打开过这张图。
+      const prev = loadRejection(task, m.materialId);
+      const carried = prev && prev.contentHash === actual ? prev.sightFailures ?? 0 : 0;
       writeRejection(task, { materialId: m.materialId, fileName: m.fileName, contentHash: actual,
-        reasons, rejectedAt: new Date().toISOString() });
+        reasons, rejectedAt: new Date().toISOString(),
+        sightFailures: carried + (sightFailed ? 1 : 0),
+        ...(prev && prev.contentHash === actual && prev.disputed ? { disputed: prev.disputed } : {}) });
     }
     if (verdict === 'accepted') {
       clearRejection(task, m.materialId);
@@ -348,6 +370,10 @@ export function disputeReading(task, materialId, corrections = {}) {
     contentHash: r.contentHash,
     rejectedAt: new Date().toISOString(),
     disputed,
+    // 被推翻的那一次机器读数**整份留着**。它不再是候选，但它是证据：
+    // `reading_disputed` 的收场要把两次机器读数和用户的值一起摆给用户拍板（#63），
+    // 删掉它，第二次重读就没有可对照的第一次了。
+    machineReading: r,
     reasons: disputed.length
       ? disputed.map((d) => `${d.label}：我读到的是「${d.machineValue ?? '（没读出来）'}」，`
         + `用户对着原件说是「${d.userValue}」。这两个值我不替谁做主，请重新打开这张图逐字核对该字段。`)

@@ -10,8 +10,8 @@
   },
   "readings": [
     {
-      "materialId": "m-0001",
-      "contentHash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "materialId": "换成 step.images 里那一项的 materialId",
+      "contentHash": "换成 step.images 里那一项的 contentHash",
       "sighted": { "shape": "landscape" },
       "docType": "invoice",
       "fields": {
