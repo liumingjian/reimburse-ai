@@ -441,6 +441,153 @@ export function serveIdentityConfirmation(spec, opts = {}) {
       at: new Date().toISOString() }));
 }
 
+/**
+ * 个人项目簿的维护页。这是簿子的**唯一**增删入口——有后果的动作要一次可追溯的提交，
+ * 不走对话，也不走 CLI（ADR-0009）。
+ *
+ * 页面上只有两样东西：一条录入条和当前项目列表。录入条**只收项目号**，
+ * 没有填名称的地方——名称永远是 ERP 回读值，页面上多一个名称框就是在邀请用户
+ * 写一个没有权威性、还会和 ERP 错位的名字。
+ *
+ * 每次「核对并加入」都是一次真的 ERP 只读核对，所以它可能被拒。被拒不终结这次打开：
+ * 判定显示在录入条下面，列表照旧，用户改一个号接着来。
+ */
+export function renderProjectBookPage(spec, nonce) {
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const projects = spec.projects ?? [];
+  const day = (s) => (s ? esc(String(s).slice(0, 10)) : '—');
+  const rows = projects.map((p) => `
+    <tr>
+      <td class="num">${esc(p.number)}</td>
+      <td class="name">${esc(p.name ?? '—')}</td>
+      <td class="at">${day(p.confirmedAt)}</td>
+    </tr>`).join('');
+
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>维护项目簿</title><style>
+:root{color-scheme:light dark}
+body{font:16px/1.6 -apple-system,"PingFang SC",sans-serif;margin:0;padding:32px 20px;
+  display:flex;justify-content:center;background:Canvas;color:CanvasText}
+main{width:100%;max-width:620px}
+h1{font-size:20px;margin:0 0 4px}
+p.prompt{margin:0 0 20px;opacity:.7}
+form.bar{display:flex;gap:10px}
+input{flex:1;min-width:0;padding:12px 14px;font:inherit;border-radius:10px;
+  border:1px solid color-mix(in srgb,CanvasText 30%,transparent);background:Canvas;color:CanvasText}
+button{padding:12px 18px;font-size:15px;font-weight:600;color:#fff;background:#2563eb;
+  border:0;border-radius:10px;cursor:pointer;white-space:nowrap}
+button:disabled{opacity:.5;cursor:default}
+button.plain{color:CanvasText;background:transparent;
+  border:1px solid color-mix(in srgb,CanvasText 30%,transparent)}
+#msg{margin:14px 0 0;padding:12px 14px;font-size:14px;line-height:1.5;border-radius:10px;display:none}
+#msg.ok{display:block;background:color-mix(in srgb,#16a34a 14%,transparent)}
+#msg.bad{display:block;background:color-mix(in srgb,#dc2626 14%,transparent)}
+h2{font-size:14px;font-weight:400;opacity:.6;margin:28px 0 8px}
+table{width:100%;border-collapse:collapse;font-size:15px}
+th{text-align:left;font-weight:400;font-size:13px;opacity:.6;padding:0 12px 6px 0}
+td{padding:8px 12px 8px 0;border-top:1px solid color-mix(in srgb,CanvasText 14%,transparent);
+  word-break:break-all}
+td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+td.at{opacity:.6;font-size:13px;white-space:nowrap}
+#empty{padding:18px 0;opacity:.6;font-size:14px}
+footer{margin-top:28px;display:flex;justify-content:flex-end}
+#done{display:none;text-align:center;padding:48px 0;font-size:17px}
+</style></head><body><main>
+<div id="page">
+  <h1>维护项目簿</h1>
+  <p class="prompt">从 ERP 里复制一个项目号粘到下面。baox 会<b>当场向 ERP 核对</b>一次：
+  存在、已审核、未禁用才加入；项目名称由 ERP 回读写入，不用你填。</p>
+
+  <form class="bar" id="f">
+    <input id="number" name="number" placeholder="粘一个项目号" autocomplete="off" autofocus>
+    <button type="submit" id="add">核对并加入</button>
+  </form>
+  <p id="msg"></p>
+
+  <h2>当前项目（<span id="count">${projects.length}</span>）</h2>
+  <table id="list">
+    <thead><tr><th>项目号</th><th>名称（ERP 回读）</th><th>加入时间</th></tr></thead>
+    <tbody id="rows">${rows}</tbody>
+  </table>
+  <div id="empty" ${projects.length ? 'hidden' : ''}>还没有项目。粘一个项目号加进来，报销时就能从这里选。</div>
+
+  <footer><button class="plain" id="finish">完成</button></footer>
+</div>
+<div id="done">已收工，可以关闭这个页面，回到 Claude Code 继续。</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const day = (s) => (s ? esc(String(s).slice(0, 10)) : '—');
+
+function redraw(projects) {
+  $('rows').innerHTML = projects.map((p) =>
+    '<tr><td class="num">' + esc(p.number) + '</td><td class="name">' + esc(p.name ?? '—')
+    + '</td><td class="at">' + day(p.confirmedAt) + '</td></tr>').join('');
+  $('count').textContent = projects.length;
+  $('empty').hidden = projects.length > 0;
+}
+
+function say(text, ok) {
+  $('msg').textContent = text;
+  $('msg').className = ok ? 'ok' : 'bad';
+}
+
+$('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const number = $('number').value;
+  if (!number.trim()) return;
+  $('add').disabled = true;
+  say('正在向 ERP 核对……', true);
+  try {
+    const res = await fetch('/submit?nonce=${nonce}', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ number }),
+    });
+    const payload = await res.json();
+    // 内核的判定就是要显示给用户的那句话；页面不改写它，也不替它总结。
+    const r = payload.ok ? payload.result : { status: 'error', note: payload.error };
+    say(r.note ?? r.status, r.status === 'admitted');
+    if (r.book) redraw(r.book.projects);
+    if (r.status === 'admitted') $('number').value = '';
+  } catch (err) {
+    say('没能把这个项目号交给 baox：' + err.message, false);
+  } finally {
+    $('add').disabled = false;
+    $('number').focus();
+  }
+});
+
+$('finish').addEventListener('click', async () => {
+  $('finish').disabled = true;
+  await fetch('/done?nonce=${nonce}', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+  });
+  $('page').style.display = 'none';
+  $('done').style.display = 'block';
+});
+</script></main></body></html>`;
+}
+
+/**
+ * 把维护页架在长驻形态上。页面每提交一个项目号就走一次录入闸门，判定原样回给页面，
+ * 服务不关；点「完成」才收工，交回收工那一刻簿子的样子。
+ *
+ * `intake` 和 `book` 都可注入，测试因此能整条跑通而不碰 ERP、不碰真实数据根。
+ * **闸门只收项目号**：页面递来的别的字段一律不往下传——名称是 ERP 回读值，
+ * 别的字段各有各的票，页面这一侧递什么都不该能写进簿子。
+ */
+export function serveProjectBookPage({ intake, book, ...opts } = {}) {
+  return serveResidentPage((nonce) => renderProjectBookPage(book(), nonce), {
+    ...opts,
+    onSubmit: (body) => intake(String(body?.number ?? '')),
+    onDone: () => {
+      const current = book();
+      return { status: 'done', at: new Date().toISOString(),
+        projectCount: current.projects.length, projects: current.projects };
+    },
+  });
+}
+
 /** 读一次请求体里的 JSON；读不出来抛，由调用处决定怎么答。 */
 async function readJson(req) {
   const chunks = [];
