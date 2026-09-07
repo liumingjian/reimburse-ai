@@ -5,9 +5,10 @@
  * 分层是硬要求，不是风格：状态判定的测试要能在一台没有 Chrome、
  * 没有材料目录、没登录过 ERP 的机器上跑完。判断被钉住了，取数才谈得上可换。
  *
- * 判据一字不改地照 docs/design/state-machine.md 的两张表。现在落成的是
- * A 表（环境七态）、永远排在最前的 schema_too_new，以及 B 表从任务建立
- * 到看图读数这一段；B 表后面的状态按同样的方式往 RULES 后面接。
+ * 判据一字不改地照 docs/design/state-machine.md 的两张表：A 表（环境七态）、
+ * 永远排在最前的 schema_too_new，以及 B 表从任务建立一路到写入前确认。
+ * 只差一个 `archived` —— 那是旧格式任务迁移时打的标记，还没有谁会打它，
+ * 落成一个永远判不出来的状态等于落成一句空话。
  */
 import { bindingVerdict } from './binding.mjs';
 
@@ -50,6 +51,21 @@ const PLAIN = {
   // 跨任务查重
   duplicate_across_tasks: 'user',
   history_scope_local: 'kernel',
+  // 事件层：证据不够，或者拆不出来。
+  evidence_ambiguous: 'user',
+  reference_unlinked: 'user',
+  event_date_missing: 'user',
+  no_expense_event: 'user',
+  allocation_amounts_incomplete: 'user',
+  // 用户明说过这张合并发票的逐段金额他认不出。这是一个正当的结局，
+  // 但它拦路：解法在材料那一侧（补一份逐段行程单，或者把票挪走）。
+  allocation_given_up: 'user',
+  // 选择层：费用类别推不出来。它不是选择题 —— 同一张票同一个常驻城市，
+  // 结论必须每次都一样，所以它只会被材料解开，不会被"再选一次"解开。
+  category_undecidable: 'user',
+  category_city_missing: 'user',
+  expense_item_unverified: 'user',
+  expense_item_unconfirmed: 'kernel',
 };
 
 /**
@@ -109,6 +125,9 @@ const hasBlockingItem = (o, pred) => itemsOf(o).some((i) => i.blocking && pred(i
 const MATERIAL_STATES = new Set(['intake_open_items', 'image_awaiting_reading', 'reading_rejected',
   'reading_stale', 'reading_awaiting_confirmation', 'reading_disputed', 'duplicate_blocked',
   'events_pending']);
+
+/** ERP 这半段观测采过没有。没采过就只答得了材料那一段（见 observe.mjs 的 settled）。 */
+const erpSeen = (o) => taskSeen(o) && !!o.events;
 
 /** 数据目录的格式版本。它才是版本闸的判据 —— 该判的是数据格式，不是代码版本。 */
 export const SCHEMA_VERSION = 1;
@@ -244,15 +263,82 @@ const RULES = [
     when: (o) => taskSeen(o) && hasBlockingItem(o, (i) => i.kind === 'duplicate_across_tasks'),
   },
   {
-    // 材料这一段全清了。照表，下一件事是划费用事件（判据「无当前版本的事件划分」）；
-    // 那一层还没接进 next，所以这里给的是一个 done —— 状态名是表里的真状态，
-    // 只是内核暂时带不动它，接上 `run events` 是下一批的事。
+    // 材料这一段全清了，该划费用事件。判据是表里那句「无当前版本的事件划分」——
+    // 看的是**落盘的账本**，不是现算的结果：现算永远算得出来，拿现算的判，
+    // 这个状态就永远不成立，账本上永远缺这一版。
     //
-    // **它必须一直是最后一条**：新落成的状态一律插在它前面，照表里的先后。
-    // 插到它后面就永远轮不上 —— 而轮不上的方式在代码里看不出来。
+    // 账本还要对得上现在这批明细：用户补了一次分摊，明细从一行变成三行，
+    // 盘点版本一动不动，而账本记的还是那一行。
     state: 'events_pending',
+    actor: 'kernel',
+    when: (o) => taskSeen(o) && !o.eventsRecorded,
+  },
+  {
+    // 合并交通发票，且各段之和 ≠ 价税合计。**相等时内核自动定案，根本不进这个状态**
+    // —— 那不是分摊，是核对，判据在 events.mjs 的 conservingSegments 里。
+    state: 'allocation_required',
+    actor: 'user',
+    when: (o) => erpSeen(o) && !!o.allocationRound && !o.allocationRound.stale,
+    blocker: (o) => ({ kind: 'allocation_required', resolvableBy: 'user',
+      materialId: o.allocationRound.materialId, fileName: o.allocationRound.fileName,
+      hint: `${o.allocationRound.fileName} 要拆成 ${o.allocationRound.segmentCount} 段，`
+        + `票面价税合计 ${o.allocationRound.totalAmount} 元，逐段金额要你给` }),
+  },
+  {
+    // 发票或盘点变过，之前那次分摊作废重来。和上一条是同一个问法，
+    // 但状态名不同 —— 用户有权知道这次问他不是因为他没答过，是因为材料动了。
+    state: 'allocation_stale',
+    actor: 'user',
+    when: (o) => erpSeen(o) && !!o.allocationRound && o.allocationRound.stale,
+    blocker: (o) => ({ kind: 'allocation_stale', resolvableBy: 'user',
+      materialId: o.allocationRound.materialId, fileName: o.allocationRound.fileName,
+      hint: `${o.allocationRound.fileName} 变过了，上次的逐段金额已经作废，要重新给` }),
+  },
+  {
+    // 有事件没有项目号。**按事件用终端多选问**是表里写的下一步，但那个问法
+    // 还在原型上定（几十张发票配三五个项目，怎么问才不折磨人），所以这一版
+    // 只做到「如实报出来，把状态摆在那里」—— 见本状态在 next.mjs 里的那一步。
+    state: 'project_unassigned',
+    actor: 'model',
+    when: (o) => erpSeen(o) && (!o.selectionApplied || (o.lines ?? []).some((l) => !l.project)),
+    blocker: (o) => (o.selectionApplied
+      ? (o.lines ?? []).filter((l) => !l.project).map((l) => ({
+          kind: 'project_unassigned', resolvableBy: 'user', lineId: l.lineId,
+          materialId: l.voucherMaterialId,
+          hint: `明细 ${l.lineId}（${l.date ?? '日期未取到'} ${l.totalAmount} 元）还没有项目号` }))
+      : [{ kind: 'project_unassigned', resolvableBy: 'user',
+          hint: `这批材料划出 ${(o.lines ?? []).length} 条明细，一条都还没有项目号；`
+            + '项目归属材料上没有，也不能由系统推断' }]),
+  },
+  {
+    // 项目和费用项目还没在 ERP 里只读核对过。核对记录钉在这批明细上，
+    // 过期的记录等于没核对过 —— 不是"上次是好的"。
+    state: 'catalog_unverified',
+    actor: 'kernel',
+    when: (o) => erpSeen(o) && !o.catalogFresh,
+  },
+  {
+    // ERP 里查无此项目 / 对不上。硬停：拿一个 ERP 里不存在的项目号往下走，
+    // 错误只会在保存那一刻暴露，而那时候单据已经建出来了。
+    state: 'catalog_mismatch',
+    actor: 'user',
+    when: (o) => erpSeen(o) && o.catalogFresh && (o.catalogProblems ?? []).length > 0,
+    blocker: (o) => o.catalogProblems.map((p) => ({ kind: 'catalog_mismatch', resolvableBy: 'user',
+      number: p.number ?? p.code ?? null, verdict: p.verdict ?? null, hint: p.note ?? null })),
+  },
+  {
+    // 动过 ERP 的任务不在这里收场。表里它排在 ready_for_erp_write 后面，
+    // 但判定要在**前面**分岔：一份已经发出去的写入不能再要一次点头 ——
+    // 那次点头会看起来像是"同意再写一遍"。所以 ready_for_erp_write 自己
+    // 把「还没动过 ERP」写进判据，两条互斥，表里的先后就不重要了。
+    state: 'ready_for_erp_write',
+    actor: 'user',
+    when: (o) => erpSeen(o) && !o.task?.erpWriteState,
+  },
+  {
+    state: 'handed_off_recover',
     actor: null,
-    when: (o) => taskSeen(o),
+    when: (o) => erpSeen(o) && !!o.task?.erpWriteState,
   },
 ];
 
@@ -269,7 +355,13 @@ export function determineState(observation) {
   for (const rule of RULES) {
     if (!rule.when(o)) continue;
     const blocker = rule.blocker?.(o);
-    if (blocker) return { state: rule.state, actor: rule.actor, blockedBy: [{ materialId: null, ...blocker }] };
+    if (blocker) {
+      // 一条规则可以报好几件事（比如三行明细各缺一个项目号）。摊成数组，
+      // 而不是把它们挤进一句话里 —— blockedBy 是结构化的，读它的不只有人。
+      const many = Array.isArray(blocker) ? blocker : [blocker];
+      return { state: rule.state, actor: rule.actor,
+        blockedBy: many.map((b) => ({ materialId: null, ...b })) };
+    }
     return {
       state: rule.state,
       actor: rule.actor,

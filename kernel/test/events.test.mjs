@@ -10,8 +10,8 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-test-'));
 process.env.BAOX_HOME = home;
 
 const { parseMaterial } = await import('../src/parse.mjs');
-const { buildEvents, eventOpenItems, reconcile, splitTax, submitAllocation, linkEvidence }
-  = await import('../src/events.mjs');
+const { buildEvents, eventOpenItems, reconcile, splitTax, submitAllocation, linkEvidence,
+  conservingSegments } = await import('../src/events.mjs');
 const { createTask } = await import('../src/workspace.mjs');
 
 const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
@@ -41,8 +41,8 @@ test('行程单逐段明细取得出来，段数与它自己声明的一致', ()
   assert.deepEqual(segs.map((s) => s.amount), ['26.69', '20.85', '21.65']);
   assert.deepEqual(segs.map((s) => s.date), ['2026-07-09', '2026-07-09', '2026-07-10']);
   assert.equal(segs[0].city, '北京市');
-  // 逐段金额之和等于行程单自己的合计，也等于发票价税合计 —— 但这只是巧合的佐证，
-  // 不构成"可以自动拿来当分摊结果"的授权。
+  // 逐段金额之和等于行程单自己的合计，也等于发票价税合计。**这才是自动定案的授权**：
+  // 分毫不差意味着这几个数已经被票面自己印证过了，不是系统分摊出来的。
   assert.equal(segs.reduce((a, s) => a + Math.round(Number(s.amount) * 100), 0), 6919);
 });
 
@@ -101,21 +101,50 @@ test('住宿：入住日期来自结账单，没有结账单就没有费用发�
   assert.ok(item && item.blocking);
 });
 
-test('合并交通票：拆成三段，但金额必须由用户给，缺就硬阻塞', () => {
+/** 把行程单某一段的金额改掉，让逐段之和不再等于票面价税合计。 */
+function skewItinerary(c, delta = '0.01') {
+  const segs = c.results.find((r) => r.materialId === 'm-iti')
+    .candidates.find((x) => x.field === 'segments').value;
+  segs[0] = { ...segs[0], amount: (Number(segs[0].amount) + Number(delta)).toFixed(2) };
+  return c;
+}
+
+test('合并交通票：各段之和与价税合计分毫不差时，内核直接定案，一个字都不问', () => {
   const c = classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]);
+  const built = buildEvents(c, null);          // 注意：没有 task，也就没有任何用户分摊
+  assert.equal(built.events.length, 3, '26.69 + 20.85 + 21.65 = 69.19，正好是票面价税合计');
+  assert.deepEqual(built.events.map((e) => e.amounts.totalCents), [2669, 2085, 2165]);
+  assert.deepEqual(built.events.map((e) => e.amountSource), Array(3).fill('itinerary_conserved'),
+    '来源要认得出是"和票面核对上的行程单"，不是"用户报的"');
+  // 三项分别守恒，而且没有任何一条待办 —— 这一整张票没有惊动用户。
+  const rec = reconcile(built, c)[0];
+  assert.deepEqual([rec.net, rec.tax, rec.total], ['ok', 'ok', 'ok']);
+  assert.deepEqual(eventOpenItems(built).filter((i) => i.blocking), []);
+});
+
+test('合并交通票：差一分钱就得问用户，行程单金额只作候选', () => {
+  const c = skewItinerary(classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]));
   const built = buildEvents(c, null);
-  // 没有分摊时不产生任何事件 —— 不能先按票面总额建一个事件再"回头修"。
+  // 对不上时不产生任何事件 —— 不能先按票面总额建一个事件再"回头修"。
   assert.equal(built.events.length, 0);
   const item = eventOpenItems(built).find((i) => i.kind === 'allocation_required');
   assert.ok(item);
   assert.equal(item.blocking, true);
   assert.equal(item.segmentCount, 3);
-  // 行程单金额只作候选摆出来，没有被自动采用。
-  assert.deepEqual(item.candidateFromItinerary, ['26.69', '20.85', '21.65']);
+  assert.equal(item.totalAmount, '69.19');
+  // 行程单金额只作候选摆出来，没有被自动采用 —— 它自己就不平。
+  assert.deepEqual(item.candidateFromItinerary, ['26.70', '20.85', '21.65']);
+});
+
+test('分毫不差的判据不给一分钱的容差，也不认缺金额的行程单', () => {
+  assert.deepEqual(conservingSegments([{ amount: '26.69' }, { amount: '42.50' }], 6919), [2669, 4250]);
+  assert.equal(conservingSegments([{ amount: '26.69' }, { amount: '42.51' }], 6919), null, '差一分就不算');
+  assert.equal(conservingSegments([{ amount: '26.69' }, { amount: null }], 6919), null, '缺一段就不算');
+  assert.equal(conservingSegments(null, 6919), null);
 });
 
 test('用户提交逐段金额之后才拆出三条候选明细，且三项金额分别守恒', () => {
-  const c = classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]);
+  const c = skewItinerary(classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]));
   const task = createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')));
   const voucher = c.results.find((r) => r.materialId === 'm-inv');
 
@@ -138,7 +167,7 @@ test('用户提交逐段金额之后才拆出三条候选明细，且三项金�
 });
 
 test('逐段金额之和差一分也不收', () => {
-  const c = classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]);
+  const c = skewItinerary(classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]));
   const task = createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')));
   const voucher = c.results.find((r) => r.materialId === 'm-inv');
   const r = submitAllocation(task, voucher, ['26.70', '20.85', '21.65'], 3);
@@ -156,7 +185,8 @@ test('段数对不上、金额格式不对、负数金额都不收', () => {
 });
 
 test('发票材料换了以后，之前提交的分摊立即失效', () => {
-  const c = classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]);
+  // 行程单自己不平，所以这张票只能靠用户的分摊 —— 分摊一失效就没有别的来源顶上。
+  const c = skewItinerary(classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]));
   const task = createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')));
   submitAllocation(task, c.results.find((r) => r.materialId === 'm-inv'), ['26.69', '20.85', '21.65'], 3);
   assert.equal(buildEvents(c, task).events.length, 3);
@@ -165,6 +195,15 @@ test('发票材料换了以后，之前提交的分摊立即失效', () => {
   const built = buildEvents(c, task);
   assert.equal(built.events.length, 0);
   assert.ok(eventOpenItems(built).find((i) => i.kind === 'allocation_stale' && i.blocking));
+});
+
+test('用户给过的分摊压过行程单：他是对着原件报的数', () => {
+  const c = classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]);   // 行程单本来分毫不差
+  const task = createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')));
+  submitAllocation(task, c.results.find((r) => r.materialId === 'm-inv'), ['30.00', '20.00', '19.19'], 3);
+  const built = buildEvents(c, task);
+  assert.deepEqual(built.events.map((e) => e.amounts.totalCents), [3000, 2000, 1919]);
+  assert.deepEqual(built.events.map((e) => e.amountSource), Array(3).fill('user_allocation'));
 });
 
 test('拆税额只按票面比例把已定的价税合计切成两截，余数落在最大的一段并如实报出', () => {

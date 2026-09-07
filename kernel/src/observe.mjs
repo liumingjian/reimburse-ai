@@ -15,8 +15,13 @@ import { takeInventory, intakeOpenItems } from './inventory.mjs';
 import { classifyInventory, classifyOpenItems } from './classify.mjs';
 import { buildWorkOrder, pendingConfirmations } from './vision.mjs';
 import { openDisputes } from './dispute.mjs';
-import { findLiveTaskForSource, sourceKeyOf, taskDir, classificationRecorded } from './workspace.mjs';
+import { findLiveTaskForSource, sourceKeyOf, taskDir, classificationRecorded,
+  loadEventsLedger, loadCatalogVerification } from './workspace.mjs';
 import { crossTaskDuplicates, historyOpenItems } from './history.mjs';
+import { buildEvents, eventOpenItems } from './events.mjs';
+import { allocationRound, givenUpOpenItems } from './allocate.mjs';
+import { loadSelection, applySelection, linesDigest, sameBasis } from './selection.mjs';
+import { loadWriteApproval, approvalCovers } from './erpwrite.mjs';
 
 /**
  * 数据目录的格式版本。没有这个文件就是这个内核自己写的那一版。
@@ -78,7 +83,7 @@ export async function observeTask(sourceDir) {
   // 一个字都不往回写。没有任务时无从比起（本任务自己都还没有身份摘要）。
   const history = task ? crossTaskDuplicates(task, classification) : null;
 
-  return {
+  const obs = {
     taskObserved: true,
     sourceDir: dir,
     task: task ? {
@@ -110,4 +115,94 @@ export async function observeTask(sourceDir) {
     // 摆给用户看的每一句话都从这里取，模型不补一个字。
     pendingDisputes: task ? openDisputes(task, inventory, dir) : [],
   };
+
+  // ERP 这半段（划事件、分摊、项目、核对、写入前确认）只在材料那一段全清之后才采。
+  //
+  // 不是省事，是**不抢答**：还有图没读、有读数没过目时，此刻的分流结果里
+  // 那几张票根本还没有金额，硬去划事件只会得出"一个费用事件都构不成"，
+  // 而那句话会盖在"该看图了"前面 —— 用户看到的是一个假的死路。
+  const settled = !!task && !inventoryStale && obs.classificationRecorded
+    && !obs.openItems.some((i) => i.blocking)
+    && !obs.pendingImages.length && !obs.pendingReadings.length && !obs.pendingDisputes.length;
+  if (!settled) return obs;
+
+  return { ...obs, ...observeErpHalf(task, classification, obs.openItems) };
+}
+
+/**
+ * 主干后半段的观测：事件划分、逐段分摊、项目归属、ERP 只读核对、写入前的点头。
+ *
+ * 每一样都是**现算的**（`buildEvents` / `applySelection` 都是纯函数），
+ * 落盘的那几份只用来回答两个问题：这一版的账本记过没有（`events_pending`），
+ * 以及用户是不是对**现在这一份内容**点过头。现算的东西不拿来判"记过没有"，
+ * 落盘的东西不拿来当"现在是什么样" —— 两边搞反，账本就永远缺一版，
+ * 或者旧结论会套在新材料上。
+ */
+function observeErpHalf(task, classification, materialItems) {
+  const built = buildEvents(classification, task);
+  const ledger = loadEventsLedger(task, built.versionId);
+
+  // 待分摊的那几张票。用户明说"认不出"的不再问，改成一条待办 ——
+  // 一直问下去只会让他随口报一个凑得平的数。
+  const allocationNotes = built.notes
+    .filter((n) => n.kind === 'allocation_required' || n.kind === 'allocation_stale');
+  const givenUp = givenUpOpenItems(task, allocationNotes);
+  const gaveUpIds = new Set(givenUp.map((g) => g.materialId));
+  const stillAsking = allocationNotes.filter((n) => !gaveUpIds.has(n.materialId));
+
+  const selection = loadSelection(task);
+  const catalog = loadCatalogVerification(task);
+  const applied = applySelection(built, classification, selection, catalog);
+  // 「还没做选择」和「选择过期了」不是待办，它们就是 project_unassigned 本身；
+  // 费用类别推不出来那几条才是要人处置的待办。
+  const OWN = new Set(['task_selection_required', 'task_selection_stale']);
+
+  const preview = { lines: applied.lines, homeCity: applied.homeCity,
+    purpose: selection?.purpose ?? null, versionId: built.versionId };
+
+  return {
+    events: built,
+    eventCount: built.events.length,
+    // 账本要既在这一版上，又对得上现在这批明细：用户补了一次分摊，明细从一行变成三行，
+    // 版本号一动不动，而账本记的还是那一行。
+    eventsRecorded: !!ledger && ledger.versionId === built.versionId
+      && linesDigest(ledger) === linesDigest(built),
+    // 事件层的待办（证据归属不唯一、没有费用发生日期、一个事件都构不成）
+    // 和选择层推不出费用类别的那几条，一起并进材料待办 —— 它们的收场都在用户那一侧。
+    openItems: [
+      // 材料那一段的待办原样留着（不拦路的那几条也在里面），后半段的接在后面。
+      ...materialItems,
+      ...eventOpenItems(built).filter((i) => !OWN_ALLOCATION_KINDS.has(i.kind)),
+      ...givenUp,
+      ...applied.notes.filter((n) => !OWN.has(n.kind)),
+    ],
+    allocationRound: allocationRound(task, stillAsking),
+    selectionApplied: applied.applied,
+    lines: applied.lines,
+    homeCity: applied.homeCity,
+    purpose: selection?.purpose ?? null,
+    // 核对记录也钉在这批明细上。过期的记录等于没核对过 —— 不是"上次是好的"。
+    catalogFresh: sameBasis(catalog, built),
+    catalogProblems: sameBasis(catalog, built) ? (catalog.problems ?? []) : [],
+    catalogCheckedAt: sameBasis(catalog, built) ? (catalog.verifiedAt ?? null) : null,
+    writePreview: preview,
+    writeApproved: approvalCovers(loadWriteApproval(task), preview),
+  };
+}
+
+/** 分摊那两种各有自己的状态，不混进待办。 */
+const OWN_ALLOCATION_KINDS = new Set(['allocation_required', 'allocation_stale']);
+
+/**
+ * 收下用户在终端上说的话时，要重算的那一份后半段观测。
+ *
+ * 和 `observeTask` 用的是**同一个** `observeErpHalf`，不是另抄一份：
+ * 问出去的那份内容和收回来时核对的那份内容，必须由同一段代码算出来 ——
+ * 各算各的，两边迟早会错开，而错开的样子是"用户点的头落在另一份内容上"。
+ */
+export async function erpSnapshot(sourceDir, task) {
+  const dir = path.resolve(sourceDir);
+  const inventory = await takeInventory(dir);
+  const classification = classifyInventory(dir, inventory, task);
+  return { inventory, classification, ...observeErpHalf(task, classification, []) };
 }

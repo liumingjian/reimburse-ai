@@ -113,6 +113,15 @@ export function recordEvents(task, built) {
 }
 
 /**
+ * 某个盘点版本落盘的那份事件划分。判 `events_pending` 用的是它 ——
+ * 和 `classificationRecorded` 同一个道理：现算的永远算得出来，
+ * 拿现算的去判，这个状态就永远不成立，账本上永远缺这一版。
+ */
+export function loadEventsLedger(task, versionId) {
+  return readJson(path.join(taskDir(task), 'events', `${versionId}.json`), null);
+}
+
+/**
  * 改任务状态。跨任务重复检查靠它区分"另一个任务还打算报这张票"和"那个任务已经作罢"。
  *
  * 只允许 `open` -> `abandoned`：一旦任务动过 ERP（包括写入结果未知），
@@ -258,4 +267,15 @@ export function correctionInboxIn(workspace) {
  */
 export function rereadInboxIn(workspace) {
   return path.join(workspace, 'dispute-reread.json');
+}
+
+/**
+ * 终端多选的答案写到哪里。第四个位置，理由同上。
+ *
+ * 它单独放，因为它是**用户在终端上说的话**，不是任何一次机器读数：
+ * 逐段金额和读数混在一个文件里，事后就分不出哪几个数字是从票面抄的、
+ * 哪几个是用户报的 —— 而这两种东西在这套设计里从来不等价。
+ */
+export function answerInboxIn(workspace) {
+  return path.join(workspace, 'answers.json');
 }

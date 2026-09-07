@@ -56,13 +56,20 @@ export function currentSourceDir() {
 /**
  * 发一个凭据。状态和上次一样就把上次那个原样发回去（幂等）；
  * 状态变了就换一个新的，旧的当场作废。
+ *
+ * `meta` 是**这一步摆出去的那份内容**的指纹（目前只有写入前那张表和一轮分摊的题号）。
+ * 它和状态一起构成凭据的身份：状态没变、但摆给用户看的东西变了，凭据照样作废。
+ * 少了这一条，用户会为他看过的那一份内容点头，而内核收下的是另一份 ——
+ * 这在可撤销的步骤上只是重问一次，在写入前那一格上是不可挽回的。
  */
-export function issueStep(sourceKey, state, sourceDir = null) {
+export function issueStep(sourceKey, state, sourceDir = null, meta = null) {
   const store = read();
   const prev = store.steps[sourceKey];
-  const record = prev && prev.state === state
+  const same = prev && prev.state === state
+    && JSON.stringify(prev.meta ?? null) === JSON.stringify(meta ?? null);
+  const record = same
     ? prev
-    : { token: newToken(), state, issuedAt: new Date().toISOString() };
+    : { token: newToken(), state, meta, issuedAt: new Date().toISOString() };
   // 目录跟着这一次的问话更新，凭据本身不动 —— 同一个目录换了个写法（软链、末尾斜杠）
   // 不该让当前这一步作废。
   const stored = { ...record, sourceDir: sourceDir ?? prev?.sourceDir ?? null };

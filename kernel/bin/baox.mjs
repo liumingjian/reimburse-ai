@@ -480,10 +480,16 @@ try {
         ...results.filter((r) => r.ok && r.verdict !== 'confirmed'),
       ];
 
-      // 核对结果只在全部通过时才落盘，并绑上当前明细指纹。
-      // 一份"部分通过"的记录留在工作区，下一层就会拿它去给某几行升级来源，
-      // 那正是这一层要防的事。
-      if (ctx && failed.length === 0 && problems.length === 0) {
+      // 查询本身跑通了就落盘，**通过与否一并记下**。
+      //
+      // 只记通过的那一份会有两个后果，都不好：查无此项目时工作区里什么都没有，
+      // 于是"没核对过"和"核对过、不合格"再也分不开 —— 内核只好一遍遍重新核对
+      // 同一个不存在的项目号；而用户那一侧，一个硬停的理由会变得没有出处。
+      //
+      // 记下问题不等于放行：升级项目号来源的判据仍然是**这个号自己**
+      // 明确 confirmed（selection.mjs 的 projectSourceOf），一条 missing 记录
+      // 升不了任何一行的级。
+      if (ctx && failed.length === 0) {
         recordCatalogVerification(ctx.task, {
           linesDigest: linesDigest(ctx.built),
           versionId: ctx.built.versionId,
@@ -492,6 +498,7 @@ try {
           projectFormId: PROJECT_FORM,
           projects: Object.fromEntries(results.map((r) => [r.number,
             { verdict: r.verdict, name: r.name ?? null }])),
+          problems,
         });
       }
 
@@ -966,7 +973,9 @@ try {
       // 那份观测再问一次同一张表。判据和闸门都在 confirm.mjs 里。
       const applied = materialsThere
         ? await applyTerminalVerdict({ sourceDir, sourceKey, after,
-            correctionFile: filed('correction') ? arg('correction') : null })
+            correctionFile: filed('correction') ? arg('correction') : null,
+            // 终端多选的答案走 --result：那一步没有命令可跑，答案本身就是结果。
+            resultFile: filed('result') ? arg('result') : null })
         : null;
 
       const observation = {

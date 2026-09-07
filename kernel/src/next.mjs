@@ -5,17 +5,18 @@
  * 它不选命令、不拼命令、不组织措辞：`step.argv` 是内核给的完整命令行，
  * `speak` 是内核写死的原话。措辞是模型差异最大的地方，所以不交给模型。
  *
- * 落成的是环境七态和材料这一段（盘点、分流、看图读数、终端确认、纠正与争议），
- * 用到 `run` / `tell_user` / `read_images` / `confirm_table` / `dispute` / `done` 六种 step；
- * 剩下的 `ask_user` 随它自己的状态一起来。
+ * 落成的是两张表的全部状态（`archived` 除外，还没有谁会打那个标记），
+ * 七种 `step.kind` 全部用上了 —— `ask_user` 的第一次真实使用是逐段分摊，
+ * `handoff` 是把动过 ERP 的任务交给 baox-recover。
  */
 import path from 'node:path';
 import url from 'node:url';
 import { determineState, SCHEMA_VERSION, MIN_NODE_MAJOR } from './state.mjs';
 import { currentStep, issueStep } from './steptoken.mjs';
-import { readingInboxIn, correctionInboxIn, rereadInboxIn } from './workspace.mjs';
+import { readingInboxIn, correctionInboxIn, rereadInboxIn, answerInboxIn } from './workspace.mjs';
 import { CONVERGENCE, favorsUser, disputeStepKey, DISPUTE_PHASES } from './dispute.mjs';
 import { SHAPES, SHAPE_LABELS } from './imageshape.mjs';
+import { writePreviewDigest } from './erpwrite.mjs';
 import { renderTable } from './table.mjs';
 
 /** 内核自己的入口。argv 里给绝对路径：模型原样执行，不需要知道 baox 装在哪。 */
@@ -33,6 +34,10 @@ const REREAD_TEMPLATE = path.join(SRC, 'reread-template.json');
 const ENV_PROGRESS = { phase: 1, of: 10, label: '环境准备' };
 const MATERIAL_PROGRESS = { phase: 2, of: 10, label: '材料盘点与分类' };
 const READING_PROGRESS = { phase: 3, of: 10, label: '看图读数' };
+const EVENT_PROGRESS = { phase: 4, of: 10, label: '划分费用事件' };
+const PROJECT_PROGRESS = { phase: 5, of: 10, label: '项目归属' };
+const CATALOG_PROGRESS = { phase: 6, of: 10, label: '与 ERP 核对' };
+const WRITE_PROGRESS = { phase: 7, of: 10, label: '写入前确认' };
 
 // 退出码：0 继续 / 2 有硬阻塞，未解决不得继续。硬阻塞是那些「等下去也不会好」的：
 // Node 太老、数据格式太新、登错了人。停在登录页不是硬阻塞 —— 那是在等人，不是被拦住。
@@ -107,6 +112,39 @@ const confirmTable = ({ table, materialIds, correctionPath, speak, context }) =>
     outsourceable: false,
   },
   speak, context, progress: READING_PROGRESS, exit: 0,
+});
+
+/**
+ * 终端多选。契约给的形状是硬的：至多四题，每题二到四个选项，**末项恒为「其他」
+ * 可自由输入**。这三条不是排版建议 ——
+ *
+ *  - 四题是一屏能让人**核对**（不是照着点）的上限；
+ *  - 两个选项是"这确实是个选择"的下限；
+ *  - 末项永远留一个自由输入口，是因为内核列得出来的选项，永远只是它知道的那些。
+ *    没有这个口子，用户唯一能做的就是从几个都不对的答案里挑一个。
+ *
+ * 答案回传的是文件（`--after <token> --result <答案json>`），不是一条命令的输出
+ * —— 这一步的另一头是人，没有 stdout 可交。`outsourceable: false`：
+ * 终端多选在子 Agent 里做不了，那里没有用户。
+ */
+const askUser = ({ questions, answersPath, answersFormat, speak, context, progress }) => ({
+  step: {
+    kind: 'ask_user',
+    questions,
+    answersPath,
+    answersFormat,
+    outsourceable: false,
+  },
+  speak, context, progress, exit: 0,
+  // 凭据钉在**问出去的这几题**上。同一个状态里换了一批题（上一轮答完了、
+  // 或者草稿作废重来），旧凭据当场失效 —— 否则上一轮的答案会落到这一轮的段上。
+  stepMeta: { questions: questions.map((q) => q.id) },
+});
+
+/** 状态变了，这件事该换一个 skill 接手。不回传 —— 交接完这条链子就断在这里。 */
+const handoff = ({ skill, speak, context, progress }) => ({
+  step: { kind: 'handoff', skill, outsourceable: false },
+  speak, context, progress, exit: 0,
 });
 
 /**
@@ -228,6 +266,48 @@ function readingTable(pending) {
   ], rows);
 }
 
+/**
+ * 待写内容 -> 一张定宽表格。写入前请用户过目的就是它。
+ *
+ * 一行一条明细，每一列都是**这条明细写进 ERP 之后会长什么样**：
+ * 用户在这里核对的不是我读得对不对（那一关在看图读数那张表上过了），
+ * 而是这一批东西该不该以这个样子进 ERP。所以金额来源单独占一列 ——
+ * 「我按行程单核对上的」和「你自己报的」，用户要撤回的理由完全不同。
+ */
+function writeTable(lines) {
+  const rows = lines.map((l) => ({
+    line: l.lineId,
+    voucher: `${l.maskedNumber ?? '（无票号）'}`,
+    date: l.date ?? '—',
+    where: l.route ?? l.city ?? '—',
+    category: l.categoryLabel ?? '—',
+    project: l.project ?? '—',
+    total: l.totalAmount ?? '—',
+    source: AMOUNT_SOURCE_LABELS[l.amountSource] ?? l.amountSource,
+  }));
+  return renderTable([
+    { key: 'line', label: '明细', max: 8 },
+    { key: 'voucher', label: '发票号', max: 22 },
+    { key: 'date', label: '费用日期', max: 12 },
+    { key: 'where', label: '城市/行程', max: 20 },
+    { key: 'category', label: '费用类别', max: 14 },
+    { key: 'project', label: '项目', max: 16 },
+    { key: 'total', label: '价税合计', max: 12 },
+    { key: 'source', label: '金额哪来的', max: 16 },
+  ], rows);
+}
+
+/** 三种金额来源念给用户听的样子。它们不是同一种事实，所以不能只写一个「已确定」。 */
+const AMOUNT_SOURCE_LABELS = {
+  invoice_face: '票面',
+  user_allocation: '你逐段报的',
+  itinerary_conserved: '行程单，与票面分毫不差',
+};
+
+/** 一批明细的价税合计。用户点头之前，总数要摆在他眼前。 */
+const sumYuan = (lines) =>
+  (lines.reduce((a, l) => a + Math.round(Number(l.totalAmount ?? 0) * 100), 0) / 100).toFixed(2);
+
 /** 三种来源念给用户听的样子。契约里的 `vision` / `user` / `kernel`。 */
 const SOURCE_LABELS = { vision: '我看图读的', user: '你给的', kernel: '内核解析的' };
 
@@ -248,8 +328,11 @@ const itemLines = (items) => items
  */
 const acceptsCorrection = (step) => step.acceptsCorrection === true;
 
-/** 交得出结果的 step。这两种都以"跑完一条命令"收尾，没有输出就是没跑过。 */
-const NEEDS_RESULT = new Set(['run', 'read_images']);
+/**
+ * 交得出结果的 step。前两种以"跑完一条命令"收尾，没有输出就是没跑过；
+ * `ask_user` 交的是答案文件 —— 空手回来说"问过了"，同样不推进状态。
+ */
+const NEEDS_RESULT = new Set(['run', 'read_images', 'ask_user']);
 
 /**
  * 状态 -> step + 原话。纯函数：同一个状态加同一份观测，永远得到同一句话。
@@ -573,12 +656,144 @@ export function stepFor(state, observation = {}, blockedBy = []) {
     }
 
     case 'events_pending':
-      return done({
+      return run(argvFor('events', '--dir', o.sourceDir), {
         speak: `${label} 的材料这一段清完了：盘点、分类、看图读数、确认都过了。`
-          + '再往下的费用事件、选项目、和 ERP 核对还没接进这条命令，这一版到这里为止。',
-        context: '照状态表，下一步是划费用事件（`events`）。它连同它自己的观测一起接进来，'
-          + '否则这个状态永远成立，那条命令会被反复重跑。',
-        progress: MATERIAL_PROGRESS,
+          + '接下来我把这些材料切成一次次具体的费用 —— 一段行程、一次住宿、一张车票各算一次，'
+          + '合并的交通发票按行程单上写着的段数拆开。拆分要有证据，我不按金额猜、也不按文件名猜。',
+        context: '事件划分挂在当前盘点版本和当前这批明细上。用户补一次逐段分摊，'
+          + '明细会从一行变成三行，这一版账本就得重记 —— 所以这个状态会再来一次，不是重复劳动。',
+        progress: EVENT_PROGRESS,
+      });
+
+    case 'allocation_required':
+    case 'allocation_stale': {
+      const a = o.allocationRound;
+      const asked = a.questions.length;
+      const why = a.stale
+        ? `${a.fileName} 变过了，之前那次逐段金额已经作废，我们重来一遍。`
+        : `${a.fileName} 是一张合并的交通发票：票面只有一个合计 ${a.totalAmount} 元，`
+          + `但行程单上是 ${a.segmentCount} 段行程，而逐段金额加起来和票面对不上。`;
+      const bad = a.rejection
+        ? `\n（上一轮没收下：${a.rejection.reasons.join('；')}）`
+        : '';
+      const sofar = a.answered.length
+        ? `\n已经定下来的：${a.answered.map((x) => `第 ${x.index} 段 ${x.amount} 元`).join('、')}。`
+        : '';
+      const more = a.remaining > asked
+        ? `\n这一轮先问 ${asked} 段，剩下 ${a.remaining - asked} 段接着问。`
+        : '';
+      return askUser({
+        questions: a.questions,
+        answersPath: answerInboxIn(o.task.workspace),
+        answersFormat: {
+          answers: [{ questionId: '<step.questions[].id>', amount: '用户选定的那一段金额，两位小数' }],
+          giveUp: { questionId: '<step.questions[].id>', giveUp: true },
+          note: '问了几题就答几条，一题一条。金额原样抄用户选的那个数 —— 不要自己算、'
+            + '不要为了凑总额改任何一段。用户选「这张票我认不出」就交 giveUp: true。',
+        },
+        speak: `${why}\n各段的价税合计要你来定：加起来必须正好是 ${a.totalAmount} 元，`
+          + '我不会平均、不会按比例、也不会把差额随手加到某一段上 —— '
+          + '差额落在哪一段，只有你知道。'
+          + `${sofar}${more}${bad}`,
+        context: '逐段金额之和与票面价税合计分毫不差时，我自己就定了，根本不会问你这一句。'
+          + '现在问，就是因为对不上。每一段的选项里都有行程单上写的那个数（如果它写了），'
+          + '也可以直接告诉我别的数。实在认不出就说一声，这张票整张退回待办 —— '
+          + '那比报一个凑得平的数字好。',
+        progress: EVENT_PROGRESS,
+      });
+    }
+
+    case 'project_unassigned': {
+      // 表里这一格写的是「按事件用终端多选问（候选≤3 + 其他）」。**那个问法还没落成**：
+      // 几十张发票配三五个项目，怎么问才不折磨人，用户已经把它单独拿去做原型了。
+      // 这一版只做到如实报出来 —— 报出一个还没有的交互，比停在这里更糟。
+      const lines = o.lines ?? [];
+      const missing = lines.filter((l) => !l.project);
+      return done({
+        speak: `${label} 已经切成 ${lines.length} 条费用明细，金额和日期都对上了。`
+          + `再往下还差一样东西：${missing.length === lines.length ? '每一条' : `其中 ${missing.length} 条`}`
+          + '都还没有项目号。项目归属材料上没有，我也不会替你猜 —— 怎么问你选项目，'
+          + '这个问法还在单独定，定下来之前我停在这里。',
+        context: '项目归属是业务事实，不是材料事实：同一张发票记在哪个项目上，只有你知道。'
+          + '终端多选的问法（几十张发票配三五个项目怎么选才快）正在单独做原型，'
+          + '结论出来之后这一步会补上。在那之前也可以用 select-task 打开任务选择页自己填。',
+        progress: PROJECT_PROGRESS,
+      });
+    }
+
+    case 'catalog_unverified':
+      return run(argvFor('catalog', '--dir', o.sourceDir), {
+        speak: '项目号和费用项目我拿到 ERP 里只读查一遍，确认它们真的存在、已审核、没被禁用。'
+          + '这一步只查不写，用的是你自己已经登录的那个会话。',
+        context: '走的是金蝶自带的查询服务，只查这一个地址。查得通只证明主数据在目录里可以引用，'
+          + '不证明它在费用明细上保存得进去 —— 后者只有真保存并回读才算数。',
+        progress: CATALOG_PROGRESS,
+      });
+
+    case 'catalog_mismatch':
+      return tellUser({
+        speak: '停一下 —— 到 ERP 里核对的时候有对不上的：\n'
+          + `${itemLines(blockedBy)}\n`
+          + '这些不能将就着往下走：拿一个 ERP 里不存在的项目号建单，错误只会在保存那一刻暴露，'
+          + '而那时候单据已经建出来了。请你确认正确的项目号，改完我们再核对一遍。',
+        context: '核对判的是四件事：编码在不在、名称对不对得上、单据状态已审核、没有被禁用。'
+          + '编码对得上而名称对不上时我也停 —— 那说明对照表和 ERP 已经错位，'
+          + '改个名字将就过去只会把错误带进单据。',
+        progress: CATALOG_PROGRESS,
+        exit: BLOCKED,
+      });
+
+    case 'ready_for_erp_write': {
+      const lines = o.lines ?? [];
+      if (o.writeApproved) {
+        // 点过头了。真正往 ERP 写还没接进这条命令 —— 这一版到此为止，
+        // 而且要说清楚"还没写"，否则用户会以为已经写完了。
+        return done({
+          speak: '好，你点头了，这份内容我记下来了。往 ERP 里建单这一步还没接进来，'
+            + '所以现在还没有任何东西写进 ERP —— 我在这里停住，不会自己越过去。',
+          context: '这次点头钉在你刚才看过的那一份内容上：明细、金额、项目号任何一处再变，'
+            + '这次点头当场作废，会重新摆一遍请你再看。',
+          progress: WRITE_PROGRESS,
+        });
+      }
+      return {
+        step: {
+          kind: 'confirm_table',
+          table: writeTable(lines),
+          lineCount: lines.length,
+          totalAmount: sumYuan(lines),
+          homeCity: o.homeCity ?? null,
+          purpose: o.purpose ?? null,
+          // **收不下纠正**。这一步只有两种收场：点头，或者不点头。
+          // 在写入前的最后一格上改一个值，等于绕开前面每一道校验直接改写待写内容。
+          acceptsCorrection: false,
+          outsourceable: false,
+        },
+        speak: `下面是我准备写进 ERP 的全部内容，一共 ${lines.length} 条明细，`
+          + `合计 ${sumYuan(lines)} 元${o.purpose ? `，事由「${o.purpose}」` : ''}`
+          + `${o.homeCity ? `，常驻城市 ${o.homeCity}` : ''}：\n`
+          + '写进去之后我撤不回来 —— 要改就得你自己去 ERP 里改或者作废。'
+          + '请你逐行看一遍，确认无误再告诉我可以写。有一处不对就直接说，我不会写。',
+        context: '这是整条链子上唯一不可撤销的一步，所以它只认你在这里的明确表态：'
+          + '前面每一步的"好""可以"都不算数。哪一行不对，回去改那一层（材料、分摊、项目），'
+          + '改完这张表会重新摆一遍 —— 我不在这张表上直接改值，那等于绕开前面所有校验。',
+        progress: WRITE_PROGRESS,
+        exit: 0,
+        // 凭据钉在**这一份待写内容**上。任何一处再变，这个凭据当场作废，
+        // 用户会重新看到一张新表 —— 他点的头永远只对他看过的那一份有效。
+        stepMeta: { previewDigest: writePreviewDigest(o.writePreview) },
+      };
+    }
+
+    case 'handed_off_recover':
+      return handoff({
+        skill: 'baox-recover',
+        speak: `${label} 这个任务已经往 ERP 发过写入（当前记的状态是 ${o.task?.erpWriteState}），`
+          + '所以它不再走这条路了：接下来要做的是到 ERP 里只读对账，看那张单到底落成了什么样，'
+          + '再决定接着填、还是作废重来。这件事交给 baox-recover。',
+        context: '一旦碰过 ERP，任务持有的那几张发票就不能靠改状态解除占用 —— 只能靠只读对账。'
+          + '所以这里不再问你要不要写：该问的是那一张已经存在的单现在是什么样。',
+        progress: WRITE_PROGRESS,
       });
 
     case 'env_ready':
@@ -631,7 +846,8 @@ export function nextResponse({ observation, sourceKey, after = null, hasResult =
         + '收不下终值，这份纠正我没有采纳' };
   }
 
-  const record = issueStep(sourceKey, shaped.stepKey ?? verdict.state, observation.sourceDir ?? null);
+  const record = issueStep(sourceKey, shaped.stepKey ?? verdict.state,
+    observation.sourceDir ?? null, shaped.stepMeta ?? null);
   const identity = observation.probe?.status === 'matched'
     ? { displayName: observation.probe.identity.displayName ?? null,
         account: observation.probe.identity.account ?? null }

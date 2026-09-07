@@ -64,7 +64,10 @@ test('硬阻塞才给 2：等人登录不是硬阻塞', async () => {
 test('落成的状态都要有 step，漏一个就当场报出来', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
-  assert.throws(() => stepFor('allocation_required', healthy()), /allocation_required/);
+  // `archived` 是表里唯一还没有人会打的标记（旧格式任务迁移时才打）。
+  // 判定表里没有它，这里也就没有它的一步 —— 而缺一步是内核自己的 bug，
+  // 不是"暂时没顾上"，所以它当场抛，不悄悄给一个 done。
+  assert.throws(() => stepFor('archived', healthy()), /archived/);
 });
 
 /** 环境全绿、材料也观测过的那份观测。 */
@@ -113,7 +116,7 @@ test('材料这一段每个状态都有一步可做，说给用户听的话全�
     ['reading_awaiting_confirmation', 'confirm_table',
       withMaterials({ pendingReadings: [PENDING_READING] })],
     ['duplicate_blocked', 'tell_user', withMaterials()],
-    ['events_pending', 'done', withMaterials()],
+    ['events_pending', 'run', withMaterials()],
   ];
   for (const [state, kind, observation] of cases) {
     const shaped = stepFor(state, observation);
@@ -443,4 +446,160 @@ test('两个材料目录各记各的凭据，互不串台', async () => {
   assert.notEqual(a.stepToken, b.stepToken);
   const backToA = nextResponse({ observation: healthy({ binding: null }), sourceKey: 'aaaa1111bbbb2222' });
   assert.equal(backToA.stepToken, a.stepToken);
+});
+
+// —— 主干后半段：事件、分摊、项目、核对、写入前确认 ——
+
+/** 后半段观测。它比材料那一段多出事件、明细、核对和待写内容。 */
+const withErp = (over = {}) => withMaterials({
+  eventsRecorded: true,
+  events: { versionId: 'v-abc', events: [], lineItems: [], notes: [] },
+  allocationRound: null,
+  selectionApplied: true,
+  lines: [{ lineId: 'ev-01', voucherMaterialId: 'm-1', maskedNumber: '2642****8021',
+    date: '2026-07-09', city: '北京市', route: '北京南站 → 望京', netAmount: '25.91',
+    taxAmount: '0.78', totalAmount: '26.69', amountSource: 'itinerary_conserved',
+    categoryLabel: '本地市内交通', project: '111454' }],
+  homeCity: '北京市',
+  purpose: '七月出差交通费',
+  catalogFresh: true,
+  catalogProblems: [],
+  writePreview: { lines: [], homeCity: '北京市', purpose: '七月出差交通费', versionId: 'v-abc' },
+  writeApproved: false,
+  ...over,
+});
+
+const askRound = (over = {}) => ({
+  materialId: 'm-inv', fileName: '合并发票.pdf', contentHash: 'h1',
+  segmentCount: 3, totalAmount: '69.19', netAmount: '67.18', taxAmount: '2.01',
+  stale: false, answered: [], remaining: 3, rejection: null,
+  questions: [
+    { id: 'm-inv#1', header: '第 1 段', question: '第 1 段（2026-07-09 北京市）的价税合计是多少？',
+      options: [{ label: '26.69' }, { label: '这张票我认不出' }, { label: '其他' }], multiSelect: false },
+    { id: 'm-inv#2', header: '第 2 段', question: '第 2 段的价税合计是多少？',
+      options: [{ label: '20.85' }, { label: '这张票我认不出' }, { label: '其他' }], multiSelect: false },
+  ],
+  ...over,
+});
+
+test('后半段每个状态也各有一步可做，话仍然全部来自内核', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const cases = [
+    ['events_pending', 'run', withErp({ eventsRecorded: false })],
+    ['allocation_required', 'ask_user', withErp({ allocationRound: askRound() })],
+    ['allocation_stale', 'ask_user', withErp({ allocationRound: askRound({ stale: true }) })],
+    ['project_unassigned', 'done', withErp({ lines: [{ lineId: 'ev-01', totalAmount: '26.69', project: null }] })],
+    ['catalog_unverified', 'run', withErp({ catalogFresh: false })],
+    ['ready_for_erp_write', 'confirm_table', withErp()],
+    ['handed_off_recover', 'handoff', withErp({
+      task: { taskId: 't', sourceLabel: '材料', workspace: '/tmp/ws', currentVersionId: 'v-abc',
+        erpWriteState: 'dispatched' } })],
+  ];
+  for (const [state, kind, observation] of cases) {
+    const shaped = stepFor(state, observation);
+    assert.equal(shaped.step.kind, kind, `${state} 的 step.kind`);
+    assert.ok(shaped.speak && shaped.speak.length > 10, `${state} 得有一句能原样念的话`);
+    assert.ok(shaped.context, `${state} 得有一句备着的解释`);
+    assert.equal(shaped.exit, 0, `${state} 不是硬阻塞`);
+    if (kind === 'run') {
+      assert.ok(shaped.step.argv.includes('--dir') && shaped.step.argv.includes('/tmp/材料'),
+        `${state} 的 argv 要指着这批材料，模型不用自己拼`);
+    }
+  }
+});
+
+test('终端多选的形状是硬的：至多四题，每题二到四个选项，末项恒为「其他」', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const shaped = stepFor('allocation_required', withErp({ allocationRound: askRound() }));
+  const qs = shaped.step.questions;
+  assert.ok(qs.length >= 1 && qs.length <= 4, '一轮至多四题');
+  for (const q of qs) {
+    assert.ok(q.id && q.question, '每题要有 id 和问法');
+    assert.ok(q.options.length >= 2 && q.options.length <= 4, `${q.id} 的选项要在 2–4 之间`);
+    assert.equal(q.options.at(-1).label, '其他', '末项恒为「其他」，永远留一个自由输入口');
+  }
+  assert.equal(shaped.step.outsourceable, false, '终端多选在子 Agent 里做不了：那里没有用户');
+  assert.ok(shaped.step.answersPath, '答案写到哪里由内核定，模型不选地方');
+  assert.ok(shaped.step.answersFormat.giveUp, '「我认不出」要有一条明确的回传形状');
+  assert.match(shaped.speak, /69\.19/, '加起来该是多少，得摆在眼前');
+  assert.match(shaped.speak, /不会平均|不会按比例/, '内核不替用户分摊这句话要说出口');
+});
+
+test('分摊问到一半：已经定下来的那几段摆出来，还剩几段也说清楚', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const shaped = stepFor('allocation_required', withErp({
+    allocationRound: askRound({ answered: [{ index: 1, amount: '26.69' }], remaining: 2,
+      questions: [askRound().questions[1]] }),
+  }));
+  assert.match(shaped.speak, /第 1 段 26\.69 元/, '他上一轮说过什么，要看得见');
+
+  // 上一轮没收下时，理由原样念出来 —— 不说的话用户不知道自己在重答什么。
+  const again = stepFor('allocation_required', withErp({
+    allocationRound: askRound({ rejection: { reasons: ['逐段价税合计相加 69.20，与票面价税合计 69.19 差 0.01'] } }),
+  }));
+  assert.match(again.speak, /差 0\.01/);
+});
+
+test('项目未指定：如实报出来，并说清楚问法还没定 —— 不假装问了一个不存在的问题', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const shaped = stepFor('project_unassigned', withErp({
+    lines: [{ lineId: 'ev-01', totalAmount: '26.69', project: null },
+      { lineId: 'ev-02', totalAmount: '20.85', project: null }],
+  }));
+  assert.equal(shaped.step.kind, 'done', '这一版停在这里，而且明说了为什么');
+  assert.match(shaped.speak, /项目号/);
+  assert.equal(shaped.progress.label, '项目归属');
+});
+
+test('ERP 里查无此项目 —— 硬停，退出码 2，并说清是哪个号', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const blockedBy = [{ kind: 'catalog_mismatch', number: '999999', verdict: 'missing',
+    hint: '项目号 999999 在 ERP 项目目录里查不到', resolvableBy: 'user', blocking: true }];
+  const shaped = stepFor('catalog_mismatch', withErp(), blockedBy);
+  assert.equal(shaped.step.kind, 'tell_user');
+  assert.equal(shaped.exit, 2, '拿一个不存在的项目号建单，错误只会在保存那一刻暴露');
+  assert.match(shaped.speak, /999999/);
+});
+
+test('写入前那张表：摆全、报总数、且收不下任何改值', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const shaped = stepFor('ready_for_erp_write', withErp());
+  assert.equal(shaped.step.kind, 'confirm_table');
+  assert.equal(shaped.step.acceptsCorrection, false,
+    '在写入前的最后一格上改一个值，等于绕开前面每一道校验');
+  assert.equal(shaped.step.outsourceable, false);
+  assert.equal(shaped.step.totalAmount, '26.69');
+  assert.match(shaped.step.table, /111454/, '项目号要摆在表里 —— 它就是用户要核对的东西之一');
+  assert.match(shaped.step.table, /26\.69/);
+  assert.match(shaped.speak, /撤不回来/, '不可撤销这件事要说在点头之前');
+  assert.ok(shaped.stepMeta.previewDigest, '凭据钉在这一份待写内容上');
+
+  // 内容变一个字，凭据的身份就变了 —— 他点的头只对他看过的那一份有效。
+  const other = stepFor('ready_for_erp_write', withErp({
+    writePreview: { lines: [], homeCity: '北京市', purpose: '改了事由', versionId: 'v-abc' } }));
+  assert.notEqual(other.stepMeta.previewDigest, shaped.stepMeta.previewDigest);
+});
+
+test('点过头之后不再重复问，而且明说"还没写进 ERP"', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const shaped = stepFor('ready_for_erp_write', withErp({ writeApproved: true }));
+  assert.equal(shaped.step.kind, 'done');
+  assert.match(shaped.speak, /还没有任何东西写进 ERP/);
+});
+
+test('动过 ERP 的任务：交接给 baox-recover，并说清状态变化', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const shaped = stepFor('handed_off_recover', withErp({
+    task: { taskId: 't', sourceLabel: '材料', workspace: '/tmp/ws', currentVersionId: 'v-abc',
+      erpWriteState: 'dispatched' } }));
+  assert.equal(shaped.step.skill, 'baox-recover');
+  assert.match(shaped.speak, /dispatched/, '当前记的是什么状态，要说出来');
 });

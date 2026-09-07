@@ -13,9 +13,13 @@ import { maskNumber } from './parse.mjs';
 //
 //   1. **拆分必须有证据。** 三段合并交通发票之所以能拆成三个事件，是因为
 //      行程单上逐行写着三段行程。没有这个证据就不拆 —— 不按金额猜、不按文件名猜。
-//   2. **金额不能由系统分摊。** 票面上没有逐段金额时，每段的价税合计必须由用户
-//      直接给出（allocation_required 硬阻塞）。系统不平均、不按比例、不按距离、
-//      不按时长，也不拿行程单金额自动顶上 —— 行程单是参考材料，不是票面法定金额。
+//   2. **金额不能由系统分摊。** 系统不平均、不按比例、不按距离、不按时长 ——
+//      这几种都是在票面事实之外**造**一个数出来。差额落在哪一段只有用户知道。
+//
+//      唯一的例外不是分摊，是**核对**：行程单逐段金额之和与票面价税合计分毫不差时，
+//      这几个数已经被票面自己印证过了，内核直接定案，一个字都不问
+//      （state-machine.md 的 allocation_required 一行：「相等则内核自动定案，不进此态」）。
+//      差一分钱就整张退回用户逐段给 —— 那时候行程单只是候选，不是答案。
 
 /** 参考材料自己声明的合计金额，单位分。用来和主要凭证的价税合计对上。 */
 function referenceTotalCents(r) {
@@ -116,7 +120,7 @@ const MONEY = /^\d{1,9}\.\d{2}$/;
  * 逐段价税合计之和与票面价税合计**按分精确相等**。差一分都不收 ——
  * 不给"接近就行"的余地，也不替用户把差额抹到某一段上。
  */
-export function submitAllocation(task, voucher, segmentTotals, expectedCount) {
+export function submitAllocation(task, voucher, segmentTotals, expectedCount, { via = 'local-web' } = {}) {
   const reasons = [];
   if (!Array.isArray(segmentTotals) || segmentTotals.length !== expectedCount) {
     reasons.push(`需要 ${expectedCount} 段金额，收到 ${Array.isArray(segmentTotals) ? segmentTotals.length : 0} 段`);
@@ -147,7 +151,9 @@ export function submitAllocation(task, voucher, segmentTotals, expectedCount) {
     segmentCount: expectedCount,
     segmentTotalCents: cents,
     submittedAt: new Date().toISOString(),
-    submittedVia: 'local-web',
+    // 这几个数是在哪儿给的：终端多选，还是本地分摊页。两条路都要求分毫不差，
+    // 但事后排障时「用户在哪儿说的这句话」是要能查出来的。
+    submittedVia: via,
   };
   fs.mkdirSync(allocDir(task), { recursive: true, mode: 0o700 });
   const p = allocFile(task, voucher.materialId);
@@ -157,6 +163,24 @@ export function submitAllocation(task, voucher, segmentTotals, expectedCount) {
 }
 
 /* ------------------------------------------------------------ 事件与明细 */
+
+/**
+ * 行程单逐段金额与票面价税合计**分毫不差**时的那几个数，单位分；对不上就是 null。
+ *
+ * 判据只有一条：按分精确相等。不设容差 —— 一分钱的容差意味着这一分钱没有来源，
+ * 而它最后一定要落在某一段上，也就是由内核替用户决定它落在哪里。
+ */
+export function conservingSegments(segments, totalCents) {
+  if (!segments || totalCents === null || totalCents === undefined) return null;
+  const cents = [];
+  for (const seg of segments) {
+    const text = String(seg?.amount ?? '').trim();
+    if (!MONEY.test(text)) return null;
+    cents.push(Math.round(Number(text) * 100));
+  }
+  if (!cents.length || cents.some((c) => c <= 0)) return null;
+  return cents.reduce((a, b) => a + b, 0) === totalCents ? cents : null;
+}
 
 /** 一张主要凭证要拆成几个事件，以及依据是什么。拆分永远要有证据。 */
 function planSegments(voucher, refs) {
@@ -228,12 +252,14 @@ export function buildEvents(classification, task = null) {
       continue;
     }
 
-    // 多段：金额必须来自用户提交的逐段分摊。
+    // 多段：金额要么来自用户提交的逐段分摊，要么来自与票面分毫不差的行程单。
     const alloc = loadAllocation(task, v.materialId);
     const fresh = alloc && alloc.contentHash === v.contentHash && alloc.segmentCount === plan.count;
     const net = v.fields?.netAmount?.cents ?? null;
     const tax = v.fields?.taxAmount?.cents ?? null;
     const total = v.fields?.totalAmount?.cents ?? null;
+    // 用户明确给过的分摊优先于行程单：他是对着原件报的数，行程单只是一份参考材料。
+    const conserved = fresh ? null : conservingSegments(plan.segments, total);
 
     if (net === null || tax === null || total === null) {
       notes.push({ kind: 'allocation_amounts_incomplete', blocking: true,
@@ -241,27 +267,34 @@ export function buildEvents(classification, task = null) {
         note: '这张票要拆成多段，但票面不含税金额、税额、价税合计没取全，无法做逐段守恒检查' });
       continue;
     }
-    if (!fresh) {
+    if (!fresh && !conserved) {
       notes.push({
         kind: alloc ? 'allocation_stale' : 'allocation_required',
         blocking: true,
         materialId: v.materialId,
         fileName: v.fileName,
+        // 分摊钉在这张票当前的字节上，问和收用的是同一个哈希 ——
+        // 问到一半用户把发票换了，收上来的那几个数就不该落在新发票上。
+        contentHash: v.contentHash,
         segmentCount: plan.count,
         totalAmount: (total / 100).toFixed(2),
+        netAmount: (net / 100).toFixed(2),
+        taxAmount: (tax / 100).toFixed(2),
         // 行程单的逐段行只作为**候选**摆出来给用户看，不自动采用：
         // 行程单是参考材料，它的金额不是票面法定金额。
         candidateSegments: plan.segments ?? null,
         candidateFromItinerary: plan.segments?.map((s) => s.amount) ?? null,
         note: alloc
           ? '发票材料变了，之前提交的逐段金额已经失效，需要重新分摊'
-          : `票面只有一个合计金额，但行程单显示有 ${plan.count} 段行程；`
-            + '每段的价税合计必须由你直接给出，系统不会平均、按比例或按距离分摊。跑 allocate 打开分摊页',
+          : `票面只有一个合计金额，但行程单显示有 ${plan.count} 段行程，`
+            + '而且逐段金额之和与票面价税合计对不上（对得上的话我自己就定了，不会来问你）；'
+            + '每段的价税合计要由你直接给出，系统不会平均、按比例或按距离分摊',
       });
       continue;
     }
 
-    const split = splitTax(alloc.segmentTotalCents, net, tax);
+    const segTotals = conserved ?? alloc.segmentTotalCents;
+    const split = splitTax(segTotals, net, tax);
     if (!split) {
       notes.push({ kind: 'allocation_amounts_incomplete', blocking: true,
         materialId: v.materialId, fileName: v.fileName,
@@ -275,9 +308,11 @@ export function buildEvents(classification, task = null) {
         city: seg?.city ?? null,
         route: seg?.route ?? null,
         dateEvidence: seg ? `行程单第 ${i + 1} 行` : null,
-        amounts: { netCents: split.nets[i], taxCents: split.taxes[i], totalCents: alloc.segmentTotalCents[i] },
-        amountSource: 'user_allocation',
-        allocatedAt: alloc.submittedAt,
+        amounts: { netCents: split.nets[i], taxCents: split.taxes[i], totalCents: segTotals[i] },
+        // 两种来源分得清清楚楚：用户逐段报的，和内核拿行程单与票面核对上的。
+        // 它们不是同一种事实，后面每一层都还看得见这个区别。
+        amountSource: conserved ? 'itinerary_conserved' : 'user_allocation',
+        allocatedAt: conserved ? null : alloc.submittedAt,
         residueCents: split.residueOn === i ? split.residueCents : 0,
       });
     }

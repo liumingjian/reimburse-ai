@@ -271,10 +271,15 @@ test('材料这一段全清了，才轮到费用事件', () => {
   assert.equal(determineState(withMaterials()).state, 'events_pending');
 });
 
-test('费用事件永远是判定表的最后一条 —— 新状态插在它前面才轮得上', () => {
-  assert.equal(STATE_ORDER.at(-2), 'events_pending',
-    '它后面只剩 env_ready 这个兜底；插到它后面的状态永远轮不上');
-  assert.ok(STATE_ORDER.indexOf('duplicate_blocked') < STATE_ORDER.indexOf('events_pending'));
+test('判定表的先后就是状态表的先后 —— 插错位置的状态永远轮不上', () => {
+  assert.equal(STATE_ORDER.at(-1), 'env_ready', '兜底永远在最后');
+  const order = ['duplicate_blocked', 'events_pending', 'allocation_required', 'allocation_stale',
+    'project_unassigned', 'catalog_unverified', 'catalog_mismatch', 'ready_for_erp_write',
+    'handed_off_recover'];
+  for (let i = 1; i < order.length; i += 1) {
+    assert.ok(STATE_ORDER.indexOf(order[i - 1]) < STATE_ORDER.indexOf(order[i]),
+      `${order[i - 1]} 要排在 ${order[i]} 前面`);
+  }
 });
 
 test('B 表的判定顺序：过期压过待办，待办压过看图', () => {
@@ -310,4 +315,143 @@ test('材料这一段的状态一个不少，且都在判定表里', () => {
     'image_awaiting_reading', 'reading_stale', 'reading_awaiting_confirmation',
     'duplicate_blocked', 'events_pending'];
   for (const s of b) assert.ok(STATE_ORDER.includes(s), `${s} 不在判定表里`);
+});
+
+// —— B 表后半段：事件、分摊、项目、核对、写入前确认 ——
+//
+// 这一段的判定全部建立在「ERP 这半段观测采过没有」之上（observe.mjs 里的 settled）。
+// 没采过时它们整段跳过 —— 材料还没清完就说"该写进 ERP 了"，那是编的。
+
+/** 后半段全绿的那份观测。每个用例只把自己关心的那一项拨坏。 */
+const withErp = (over = {}) => withMaterials({
+  eventsRecorded: true,
+  events: { versionId: 'v-abc', events: [{ eventId: 'ev-01' }], lineItems: [], notes: [] },
+  allocationRound: null,
+  selectionApplied: true,
+  lines: [{ lineId: 'ev-01', voucherMaterialId: 'm-1', date: '2026-07-09', city: '北京市',
+    totalAmount: '69.19', project: '111454', category: 'local_city_transport' }],
+  homeCity: '北京市',
+  purpose: '出差',
+  catalogFresh: true,
+  catalogProblems: [],
+  writePreview: { lines: [], homeCity: '北京市', purpose: '出差', versionId: 'v-abc' },
+  writeApproved: false,
+  ...over,
+});
+
+/** 一轮待问的逐段分摊。 */
+const round = (over = {}) => ({
+  materialId: 'm-inv', fileName: '合并发票.pdf', contentHash: 'h1',
+  segmentCount: 3, totalAmount: '69.19', stale: false,
+  answered: [], remaining: 3, rejection: null,
+  questions: [{ id: 'm-inv#1', header: '第 1 段', question: '多少钱？', options: [] }],
+  ...over,
+});
+
+test('材料清完了但这一版还没记过事件划分 —— 内核自己去划', () => {
+  const r = determineState(withMaterials({ eventsRecorded: false }));
+  assert.equal(r.state, 'events_pending');
+  assert.equal(r.actor, 'kernel');
+});
+
+test('后半段那半份观测没采过时，一条也不判', () => {
+  // 只有 eventsRecorded 为真、events 却没有：这是不可能从 observe 出来的形状，
+  // 但判定必须自己站得住 —— 后面每一条都要 erpSeen 才敢开口。
+  const r = determineState(withMaterials({ eventsRecorded: true }));
+  assert.equal(r.state, 'env_ready', '缺 events 时不冒充成分摊、核对或"可以写了"');
+});
+
+test('各段之和对不上才有 allocation_required，而且要说清是哪一张票', () => {
+  const r = determineState(withErp({ allocationRound: round() }));
+  assert.equal(r.state, 'allocation_required');
+  assert.equal(r.actor, 'user');
+  assert.equal(r.blockedBy[0].kind, 'allocation_required');
+  assert.equal(r.blockedBy[0].materialId, 'm-inv');
+  assert.match(r.blockedBy[0].hint, /69\.19/);
+});
+
+test('分毫不差时根本不进分摊那两个状态 —— 内核已经定案了', () => {
+  // 对得上的那张票在 events.mjs 里就自动定案了，压根不会产生 allocationRound。
+  const r = determineState(withErp({ allocationRound: null }));
+  assert.notEqual(r.state, 'allocation_required');
+  assert.notEqual(r.state, 'allocation_stale');
+});
+
+test('发票或盘点变过 —— 是 allocation_stale，不是又问一遍', () => {
+  const r = determineState(withErp({ allocationRound: round({ stale: true }) }));
+  assert.equal(r.state, 'allocation_stale');
+  assert.match(r.blockedBy[0].hint, /变过了/, '用户有权知道这次问他不是因为他没答过');
+});
+
+test('还没有项目号 —— 逐条报出来，一条明细一条待办', () => {
+  const two = [
+    { lineId: 'ev-01', voucherMaterialId: 'm-1', date: '2026-07-09', totalAmount: '26.69', project: null },
+    { lineId: 'ev-02', voucherMaterialId: 'm-1', date: '2026-07-10', totalAmount: '20.85', project: '111454' },
+  ];
+  const r = determineState(withErp({ lines: two }));
+  assert.equal(r.state, 'project_unassigned');
+  assert.equal(r.blockedBy.length, 1, '只报缺的那一条');
+  assert.equal(r.blockedBy[0].lineId, 'ev-01');
+  assert.equal(r.blockedBy[0].resolvableBy, 'user');
+
+  // 一次任务选择都还没做过时，整批都缺。
+  const none = determineState(withErp({ selectionApplied: false }));
+  assert.equal(none.state, 'project_unassigned');
+  assert.equal(none.blockedBy.length, 1);
+});
+
+test('项目还没在 ERP 里核对过 —— 内核自己去查，不劳驾用户', () => {
+  const r = determineState(withErp({ catalogFresh: false }));
+  assert.equal(r.state, 'catalog_unverified');
+  assert.equal(r.actor, 'kernel');
+});
+
+test('ERP 里查无此项目 —— 硬停，且不会再去重复核对', () => {
+  const r = determineState(withErp({
+    catalogProblems: [{ number: '999999', verdict: 'missing', note: '项目号 999999 在 ERP 项目目录里查不到' }],
+  }));
+  assert.equal(r.state, 'catalog_mismatch');
+  assert.equal(r.actor, 'user');
+  assert.equal(r.blockedBy[0].verdict, 'missing');
+  assert.match(r.blockedBy[0].hint, /999999/);
+  // 「没核对过」和「核对过、不合格」是两回事：后者不能再退回去反复核对。
+  assert.notEqual(r.state, 'catalog_unverified');
+});
+
+test('以上全绿才轮到写入前确认，而且 actor 是人', () => {
+  const r = determineState(withErp());
+  assert.equal(r.state, 'ready_for_erp_write');
+  assert.equal(r.actor, 'user');
+  assert.deepEqual(r.blockedBy, []);
+});
+
+test('动过 ERP 的任务不再要一次点头，改为交接给 baox-recover', () => {
+  const r = determineState(withErp({
+    task: { taskId: '75dc9cbb4d', sourceLabel: '材料', workspace: '/tmp/ws',
+      currentVersionId: 'v-abc', erpWriteState: 'dispatched' },
+  }));
+  assert.equal(r.state, 'handed_off_recover',
+    '一份已经发出去的写入不能再要一次点头 —— 那次点头看起来像是"同意再写一遍"');
+});
+
+test('后半段的判定顺序：事件压过分摊，分摊压过项目，项目压过核对', () => {
+  const all = { eventsRecorded: false, allocationRound: round(), selectionApplied: false,
+    catalogFresh: false };
+  assert.equal(determineState(withErp(all)).state, 'events_pending');
+  assert.equal(determineState(withErp({ ...all, eventsRecorded: true })).state, 'allocation_required');
+  assert.equal(determineState(withErp({ ...all, eventsRecorded: true, allocationRound: null })).state,
+    'project_unassigned');
+  assert.equal(determineState(withErp({ ...all, eventsRecorded: true, allocationRound: null,
+    selectionApplied: true })).state, 'catalog_unverified');
+});
+
+test('事件层和选择层的待办也拦得住路，和材料待办同一个出口', () => {
+  const r = determineState(withErp({
+    openItems: [item('event_date_missing', { note: '这次费用没有可追溯到材料的发生日期' })],
+  }));
+  assert.equal(r.state, 'intake_open_items');
+  assert.equal(r.blockedBy[0].resolvableBy, 'user');
+  const gaveUp = determineState(withErp({ openItems: [item('allocation_given_up')] }));
+  assert.equal(gaveUp.state, 'intake_open_items');
+  assert.equal(gaveUp.blockedBy[0].resolvableBy, 'user');
 });
