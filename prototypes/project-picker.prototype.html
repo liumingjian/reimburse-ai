@@ -1644,9 +1644,14 @@ ${escapeHtml(failures[0].detail)}
 
       const setVariant = (key) => {
         state.variant = key;
-        const url = new URL(window.location.href);
-        url.searchParams.set("variant", key);
-        window.history.replaceState({}, "", url.href);
+        /* 直接双击打开时是 file:// ，部分浏览器不许改这种 URL 的 history。切换不能因此瘫掉。 */
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.set("variant", key);
+          window.history.replaceState({}, "", url.href);
+        } catch (error) {
+          /* 原型不管：URL 不同步而已，切换照常 */
+        }
         render({ preserve: false });
       };
 
