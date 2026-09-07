@@ -30,15 +30,26 @@ import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
 const OK = 0, ERR = 1, BLOCKED = 2;
 
-// 数据目录搬家（0.9.x 的 ~/Library/Application Support/baox 之类 -> ~/.baox）在任何命令
-// 之前做掉，而且只做一次。搬完要在这条命令的输出里说一句迁到哪了 —— 用户的报销记录换了
-// 地方而没人告诉他，比不搬还糟。
-const migrated = migrateOnStartup();
+// 数据目录搬家的结果。搬完要在这条命令的输出里说一句迁到哪了 —— 用户的报销记录
+// 换了地方而没人告诉他，比不搬还糟。
+let migrated = null;
 
 const out = (obj, code = OK) => {
   process.stdout.write(JSON.stringify(migrated ? { ...obj, migrated } : obj, null, 2) + '\n');
   process.exit(code);
 };
+
+// 搬家（0.9.x 的 ~/Library/Application Support/baox 之类 -> ~/.baox）在任何命令之前做掉，
+// 而且只做一次。这里在 out 之后、命令之前，因为它必须在下面那个 try 之外跑：数据目录
+// 都还没定下来的时候，任何命令都无从谈起。
+// 搬不动就硬停：继续跑等于在一个空的新目录里从头开始，而用户的任务还在旧目录里 ——
+// 那是一种看起来正常、实则丢了全部历史的失败，比直接停住坏得多。
+try {
+  migrated = migrateOnStartup();
+} catch (err) {
+  out({ command: process.argv[2] ?? null, status: 'migration_failed', error: err.message,
+    hint: `把旧数据目录整份拷到 ${paths.root} 之后重试；旧目录没有被动过。` }, BLOCKED);
+}
 
 // 这份内核自己的根目录和版本号。内核就地运行，所以这就是唯一的那一份；
 // 版本号要出现在每一次体检里，否则试用者报回来的问题钉不到具体哪一版。

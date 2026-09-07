@@ -104,6 +104,17 @@ test('半途中断留下的搬运暂存目录会被丢掉重来，不会被当�
   assert.ok(fs.existsSync(path.join(target, 'tasks', 'index.json')));
 });
 
+test('搬不动就抛出去，不假装搬完了 —— 调用方要能把它变成一次硬停', () => {
+  const legacy = legacyHome();
+  const blocked = path.join(tmp('target'), 'not-a-dir');
+  fs.writeFileSync(blocked, 'x');                       // 新目录的父路径是个文件，拷不进去
+  const target = path.join(blocked, '.baox');
+
+  assert.throws(() => migrateLegacyHome(target, legacy));
+  assert.equal(fs.existsSync(target), false, '失败之后不能留下一个会被当成迁完了的新目录');
+  assert.ok(fs.existsSync(path.join(legacy, 'tasks', 'index.json')), '失败也不许动旧目录');
+});
+
 test('旧目录的位置按平台算，且绝不等于新的 ~/.baox', () => {
   assert.notEqual(legacyDataDir(), path.join(os.homedir(), '.baox'));
   if (process.platform === 'darwin') {
