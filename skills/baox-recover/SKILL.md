@@ -38,12 +38,14 @@ If it is not installed, send the user to `baox-setup` first.
 ## 1. Reconcile
 
 ```bash
-baox erp-reconcile --dir "<材料目录>" --expect "<员工姓名或登录账号>"
+baox erp-reconcile --dir "<材料目录>"
 ```
 
-**Always pass `--expect`.** Without it the gate returns `matched` for whoever happens to be logged in, which
-on a half-finished bill is the wrong question entirely. If you do not know the name, ask the user for it
-before you reconcile — one question is cheaper than reading another person's bill.
+The identity gate is inside the command and needs nothing from you: it passes only when the ERP session is
+live **and** logged in as the identity this machine is bound to (个人绑定). On a half-finished bill that is
+exactly the question worth asking — "somebody is logged in" would not be. `identity_mismatched` is a hard
+block: say who is logged in versus who is bound, and stop. Never offer to rebind here — a bill that has
+already been written to is the last place to change whose reimbursement this is.
 
 It takes four readings — the tab mode, the bill number, the 收票 `价税合计` total, and the 明细
 `申请报销金额` total — sorts the bill into one **interruption point**, and gives a disposition.

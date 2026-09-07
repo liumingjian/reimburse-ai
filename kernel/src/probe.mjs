@@ -45,26 +45,21 @@ const READ_ONLY_SNIPPET = `(() => {
   };
 })()`;
 
-const norm = (s) => (s == null ? null : String(s).trim().toLowerCase());
-
 /**
  * 从一次页面观测里判定身份。纯函数，把判断和取数分开：
  * 取数要浏览器，判断不要 —— 而需要被钉住的是判断。
  *
  * 返回 null 表示"这一页说明不了什么"，交给调用方看别的页面或继续等。
  */
-export function identityFromObservation(info, expected = null) {
+export function identityFromObservation(info) {
   if (!info || info.ready !== 'complete') return null;
 
+  // 这里只回答"这一页上是谁在登录着"。它是不是**该报销的那个人**，
+  // 由个人绑定去判（binding.mjs）—— 会话信号和身份判据是两件事，
+  // 混在一起判过一次，代价是一个永远说不清自己错在哪的探测结果。
   if (info.displayName) {
-    const identity = { displayName: info.displayName, account: info.account, tenant: info.tenant };
-    if (!expected) return { status: 'matched', identity };
-    const want = norm(expected);
-    const hit = want === norm(info.displayName) || want === norm(info.account);
-    return hit
-      ? { status: 'matched', expected, identity }
-      : { status: 'mismatched', expected, identity,
-          hint: `ERP 当前登录的是 ${info.displayName}（账号 ${info.account}），不是 ${expected}；请退出登录换成本人再探测` };
+    return { status: 'matched',
+      identity: { displayName: info.displayName, account: info.account, tenant: info.tenant } };
   }
 
   // 读不出用户名。分两档，因为处置完全不同：
@@ -81,13 +76,13 @@ export function identityFromObservation(info, expected = null) {
 }
 
 /**
- * 探测 ERP 登录身份。只有 matched 允许继续；其余一律硬阻塞。
- *   matched | mismatched | not_logged_in | loading | no_tab | unknown
+ * 探测 ERP 的**会话**：专用 Chrome 里现在登录着的是谁。
+ *   matched | not_logged_in | loading | no_tab | unknown
  *
- * expected 可以给显示名（刘明建）或登录账号（luo.liu）中的任意一个，
- * 两者任一匹配即算一致；给了 expected 却两个都对不上就是 mismatched。
+ * matched 只说明"有人登录着并且读得出他是谁"，不说明这个人就是该报销的人。
+ * 业务侧一律走 binding.mjs 的 gateIdentity()，它在这之上再过一道个人绑定。
  */
-export async function probeIdentity({ expected = null, origin = ERP_ORIGIN, waitMs = 30000 } = {}) {
+export async function probeIdentity({ origin = ERP_ORIGIN, waitMs = 30000 } = {}) {
   const deadline = Date.now() + waitMs;
   let last = null;
 
@@ -111,9 +106,9 @@ export async function probeIdentity({ expected = null, origin = ERP_ORIGIN, wait
       // ERP 首屏很慢，没加载完不算未登录，等就是了。
       if (info.ready !== 'complete') { sawLoading = true; continue; }
 
-      const verdict = identityFromObservation(info, expected);
+      const verdict = identityFromObservation(info);
       // 认得出身份的页面说了算；只有所有页面都说不出身份时，才轮到登录页/异常这两档。
-      if (verdict.status === 'matched' || verdict.status === 'mismatched') {
+      if (verdict.status === 'matched') {
         return { ...verdict, ...last, targetId: page.id };
       }
       // 多个标签页时，"停在登录页"比"什么都读不出"更有指导性，优先留它。

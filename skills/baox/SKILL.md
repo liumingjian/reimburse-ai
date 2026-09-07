@@ -277,25 +277,28 @@ baox lines --dir "<材料目录>"
 
 ## 10. Read-only master-data verification
 
-This needs the ERP logged in as **this** user, so probe first. Always pass `--expect`:
+This needs the ERP logged in as **this** user, so probe first:
 
 ```bash
-baox probe --expect "<员工姓名或登录账号>"
+baox probe
 ```
 
-Without `--expect` the probe only reports that *somebody* is logged in — it returns `matched` for any
-identity, and `mismatched` can never come back. That is not the check you want here.
+There is no name to pass. `matched` means a live ERP session **and** that the logged-in identity is the one
+this machine is bound to (个人绑定, established once in `baox-setup` on a local confirmation page). Only
+`matched` continues.
 
-Only `status: matched` continues. `not_logged_in` is the common one — **ask the user to log in themselves**
-in the dedicated baox Chrome window. Account and password stay with the user, and an `account` in the output
-does not mean logged in (the login page shows the last account too). `mismatched` is a hard block: someone
-else is in this ERP session, and nothing in this flow may run under their identity.
+`not_logged_in` is the common one — **ask the user to log in themselves** in the dedicated baox Chrome
+window. Account and password stay with the user, and an `account` in the output does not mean logged in
+(the login page shows the last account too). `identity_mismatched` is a hard block: someone other than the
+bound identity is in this ERP session, and nothing in this flow may run under it — send the user to switch
+accounts, and do not offer to rebind mid-task (`confirm-identity` refuses while a task is in progress, and
+this task is one). `identity_unconfirmed` means the machine was never set up — send the user to `baox-setup`.
 
 Then verify:
 
 ```bash
 # the four expense item codes in the reference table, plus every project number this task selected
-baox catalog --dir "<材料目录>" --expect "<员工姓名或登录账号>"
+baox catalog --dir "<材料目录>"
 
 # asking whether one project number exists — note this still checks all four expense items first,
 # so unrelated expense-item drift can make even this call exit 2

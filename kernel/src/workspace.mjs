@@ -36,6 +36,12 @@ export function taskDir(task) {
   return path.join(tasksRoot(), `${task.createdAt.slice(0, 10)}-${task.taskId}`);
 }
 
+/** 还在进行中的任务。改绑身份要看它 —— 手上有活的时候换人，等于把上半程的
+ *  材料记在一个人头上、下半程记在另一个人头上。 */
+export function liveTasks() {
+  return loadIndex().tasks.filter((t) => LIVE.has(t.status));
+}
+
 export function findLiveTaskForSource(sourceKey) {
   return loadIndex().tasks.find((t) => t.sourceKey === sourceKey && LIVE.has(t.status)) ?? null;
 }

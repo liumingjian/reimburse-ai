@@ -5,7 +5,8 @@ import url from 'node:url';
 import { paths, ensureDir } from '../src/paths.mjs';
 import * as chrome from '../src/chrome.mjs';
 import { probeIdentity, ERP_ORIGIN } from '../src/probe.mjs';
-import { serveSelection, serveConfirmation, serveAllocation, serveTaskSelection } from '../src/serve.mjs';
+import { serveSelection, serveConfirmation, serveAllocation, serveTaskSelection,
+  serveIdentityConfirmation } from '../src/serve.mjs';
 import { buildWorkOrder, ingestReadings, confirmReadings, loadReading,
   READING_VERSION, DOC_TYPES } from '../src/vision.mjs';
 import { takeInventory, intakeOpenItems } from '../src/inventory.mjs';
@@ -17,13 +18,14 @@ import { CATEGORIES } from '../src/categories.mjs';
 import { findLiveTaskForSource, createTask, recordInventory, recordClassification,
   recordEvents, recordInvoiceSightings, abandonTask, loadIndex,
   sourceKeyOf, taskDir , recordCatalogVerification, loadCatalogVerification,
-  recordErpAttempt, recordErpWrite } from '../src/workspace.mjs';
+  recordErpAttempt, recordErpWrite, liveTasks } from '../src/workspace.mjs';
 import { crossTaskDuplicates, historyOpenItems, holdsInvoices } from '../src/history.mjs';
 import { authorizedPage, verifyExpenseItems, verifyProject, PROJECT_FORM } from '../src/erpcatalog.mjs';
 import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerField,
   writeHeader, writeCell, selectOption, cellTarget, cellMatches, leaveEdit } from '../src/erpform.mjs';
 import { readReconciliation, classifyReconciliation, attemptRecord } from '../src/erpreconcile.mjs';
 import { versionAt, compareVersions } from '../src/version.mjs';
+import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -176,14 +178,61 @@ try {
     }
 
     case 'probe': {
-      const r = await probeIdentity({ expected: arg('expect') });
+      // 会话 + 个人绑定，一次判完。只有 matched 放行 —— 「有人登录着」从来不是
+      // 「该报销的那个人登录着」。
+      const r = await gateIdentity();
       out({ command: 'probe', ...r }, r.status === 'matched' ? OK : BLOCKED);
+    }
+
+    case 'confirm-identity': {
+      // 个人绑定进入系统的唯一通道。页面上的每个值都是内核刚从 ERP 读到的，
+      // 用户只能认或不认；对话里说「是我」不算数。
+      const probe = await probeIdentity();
+      if (probe.status !== 'matched') {
+        out({ command: 'confirm-identity', ...probe,
+          note: '读不出当前登录身份，没有可确认的东西；先在专用 Chrome 里登录 ERP' }, BLOCKED);
+      }
+      const previous = readBinding();
+      const verdict = bindingVerdict(previous, probe.identity);
+      if (verdict === 'incomplete') {
+        out({ command: 'confirm-identity', status: 'identity_incomplete', identity: probe.identity,
+          hint: 'ERP 页面上读不出登录账号或账套，绑不出一个可比的身份；请重新登录一次再试' }, BLOCKED);
+      }
+      if (verdict === 'matched') {
+        out({ command: 'confirm-identity', status: 'already_confirmed', binding: previous,
+          note: '这台机器已经绑定在当前登录的这个身份上，不需要再确认' });
+      }
+      if (verdict === 'mismatched') {
+        // 改绑只在手上没活的时候允许。进行中的任务里，上半程的材料是按原来那个人
+        // 记的，中途换人等于把一份报销记在两个人头上。
+        const live = liveTasks();
+        if (live.length > 0) {
+          out({ command: 'confirm-identity', status: 'rebind_blocked', binding: previous,
+            identity: probe.identity,
+            liveTasks: live.map((t) => ({ taskId: t.taskId, sourceLabel: t.sourceLabel,
+              erpWriteState: t.erpWriteState ?? null })),
+            hint: `这台机器绑定的是 ${previous.displayName ?? previous.account}，当前登录的是 `
+              + `${probe.identity.displayName}，而且还有 ${live.length} 个进行中的任务。`
+              + '进行中的任务不能中途换人：先把它们走完或作废（baox abandon-task），再来改绑' }, BLOCKED);
+        }
+      }
+      const r = await serveIdentityConfirmation(
+        { identity: probe.identity, previous: verdict === 'mismatched' ? previous : null },
+        { timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
+          onReady: (u) => process.stderr.write(`打开这个地址确认报销人身份：${u}\n`) });
+      if (r.status !== 'submitted') {
+        out({ command: 'confirm-identity', ...r,
+          note: '没有收到确认，身份没有绑定；重跑一次这条命令' }, ERR);
+      }
+      const binding = writeBinding(probe.identity);
+      out({ command: 'confirm-identity', status: 'confirmed', binding, replaced: previous,
+        note: '这台机器上的 baox 从现在起只替这个身份报销' });
     }
 
     case 'erp-read': {
       // 只读回读费用报销单页面：单据页签是新增还是修改、明细网格和收票网格各是什么。
       // 保存后置条件要靠它，所以它自己必须一点副作用都没有。
-      const gate = await authorizedPage({ expected: arg('expect') });
+      const gate = await authorizedPage();
       if (!gate.ok) {
         out({ command: 'erp-read', identity: gate.probe,
           note: '身份没核对通过，不读 ERP 页面' }, BLOCKED);
@@ -220,7 +269,7 @@ try {
       //
       // 退出码：`转人工` -> 2（硬阻塞，任何"确认继续"都不能绕过）；其余 -> 0。
       // 这里的 0 **不表示"可以继续写 ERP"**，它只表示对账本身完成了。
-      const gate = await authorizedPage({ expected: arg('expect') });
+      const gate = await authorizedPage();
       if (!gate.ok) {
         out({ command: 'erp-reconcile', identity: gate.probe,
           note: '身份没核对通过，不读 ERP 页面' }, BLOCKED);
@@ -282,7 +331,7 @@ try {
         out({ command: 'erp-fill', wrote: false,
           error: '这个目录没有进行中的报销任务，先跑 intake' }, ERR);
       }
-      const gate = await authorizedPage({ expected: arg('expect') });
+      const gate = await authorizedPage();
       if (!gate.ok) {
         out({ command: 'erp-fill', wrote: false, identity: gate.probe,
           note: '身份没核对通过，不碰 ERP 页面' }, BLOCKED);
@@ -414,7 +463,7 @@ try {
 
     case 'catalog': {
       // ERP 主数据的只读核对。身份不 matched 就一步都不往下走。
-      const gate = await authorizedPage({ expected: arg('expect') });
+      const gate = await authorizedPage();
       if (!gate.ok) {
         out({ command: 'catalog', verified: false, identity: gate.probe,
           note: '身份没核对通过，不做任何 ERP 查询' }, BLOCKED);
@@ -868,7 +917,7 @@ try {
     }
 
     default:
-      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'intake', 'classify',
+      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
         'ocr-request', 'ocr-submit', 'confirm-readings', 'history', 'events', 'allocate', 'select-task', 'lines',
         'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill', 'select'] }, ERR);
   }

@@ -1,5 +1,6 @@
 import { targets, evaluate } from './chrome.mjs';
-import { probeIdentity, ERP_ORIGIN } from './probe.mjs';
+import { ERP_ORIGIN } from './probe.mjs';
+import { gateIdentity } from './binding.mjs';
 import { CATEGORIES } from './categories.mjs';
 
 // ERP 主数据的**只读**核对。
@@ -76,8 +77,8 @@ const errorMessage = (node) =>
   ?? 'ERP 查询返回了无法解析的结果';
 
 /** 找到一个身份已经核对过的 ERP 页面。身份不 matched 就不查 —— 和写入侧同一条规矩。 */
-export async function authorizedPage({ expected = null, origin = ERP_ORIGIN } = {}) {
-  const probe = await probeIdentity({ expected, origin });
+export async function authorizedPage({ origin = ERP_ORIGIN } = {}) {
+  const probe = await gateIdentity({ origin });
   if (probe.status !== 'matched') return { ok: false, probe };
   const page = (await targets()).find((t) => t.id === probe.targetId);
   if (!page) return { ok: false, probe: { ...probe, status: 'no_tab' } };

@@ -346,6 +346,83 @@ export function serveTaskSelection(spec, opts = {}) {
       projects: body.projects ?? {}, at: new Date().toISOString() }));
 }
 
+/**
+ * 身份确认页。**这是个人绑定进入系统的唯一通道。**
+ *
+ * 页面上的每一个值都是内核自己刚从 ERP 页面读出来的，不接受任何输入 ——
+ * 用户能做的只有"认"或"不认"。这正是它取代 `--expect <名字>` 的理由：
+ * 那条路要用户（经模型转述）打一个字符串出来，而报销主体一旦写错，
+ * 发票就进了别人的单子，不可撤销。
+ */
+export function renderIdentityPage(spec, nonce) {
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const id = spec.identity;
+  const prev = spec.previous;
+  const rebind = !!prev;
+
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>确认报销人身份</title><style>
+:root{color-scheme:light dark}
+body{font:16px/1.6 -apple-system,"PingFang SC",sans-serif;margin:0;padding:32px 20px;
+  display:flex;justify-content:center;background:Canvas;color:CanvasText}
+main{width:100%;max-width:560px}
+h1{font-size:20px;margin:0 0 4px}
+p.prompt{margin:0 0 20px;opacity:.7}
+.card{padding:18px 20px;border:1px solid color-mix(in srgb,CanvasText 20%,transparent);border-radius:10px}
+.card.now{border-color:#2563eb;background:color-mix(in srgb,#2563eb 8%,transparent)}
+.card h2{font-size:14px;font-weight:400;opacity:.6;margin:0 0 8px}
+table{border-collapse:collapse;font-size:15px}
+th{text-align:left;font-weight:400;opacity:.6;padding:3px 18px 3px 0;white-space:nowrap;vertical-align:top}
+td{padding:3px 0;word-break:break-all}
+td.big{font-size:18px;font-weight:600}
+.warn{margin:16px 0 0;padding:14px 16px;font-size:14px;line-height:1.5;border-radius:10px;
+  background:color-mix(in srgb,#dc2626 12%,transparent)}
+button{width:100%;margin-top:20px;padding:14px;font-size:16px;font-weight:600;color:#fff;
+  background:#2563eb;border:0;border-radius:10px;cursor:pointer}
+#done{display:none;text-align:center;padding:48px 0;font-size:17px}
+</style></head><body><main>
+<form id="f">
+  <h1>确认报销人身份</h1>
+  <p class="prompt">下面是 baox 从专用 Chrome 里的 ERP 页面<b>直接读到</b>的当前登录身份。
+  确认之后，这台机器上的 baox 只替这个身份报销；换了人登录会被拦住。</p>
+
+  <div class="card now">
+    <h2>ERP 当前登录</h2>
+    <table>
+      <tr><th>姓名</th><td class="big">${esc(id.displayName ?? '—')}</td></tr>
+      <tr><th>登录账号</th><td>${esc(id.account ?? '—')}</td></tr>
+      <tr><th>账套</th><td>${esc(id.tenant ?? '—')}</td></tr>
+    </table>
+  </div>
+  ${rebind ? `<div class="warn">
+    这台机器原先绑定的是 <b>${esc(prev.displayName ?? prev.account)}</b>
+    （账号 ${esc(prev.account)}，账套 ${esc(prev.tenant)}）。
+    继续就会<b>改绑到上面这个身份</b>。如果上面显示的不是你本人，请直接关掉这个页面，
+    回到专用 Chrome 里换回本人登录。
+  </div>` : ''}
+  <button type="submit">${rebind ? '是我本人，改绑到这个身份' : '是我本人，就用这个身份'}</button>
+</form>
+<div id="done">已确认，可以关闭这个页面，回到 Claude Code 继续。</div>
+<script>
+document.getElementById('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  e.target.querySelector('button').disabled = true;
+  await fetch('/submit?nonce=${nonce}', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ confirmed: true })
+  });
+  document.getElementById('f').style.display = 'none';
+  document.getElementById('done').style.display = 'block';
+});
+</script></main></body></html>`;
+}
+
+export function serveIdentityConfirmation(spec, opts = {}) {
+  return serveLocal((nonce) => renderIdentityPage(spec, nonce), opts,
+    (body) => ({ status: body.confirmed === true ? 'submitted' : 'declined',
+      at: new Date().toISOString() }));
+}
+
 function serveLocal(render, { timeoutMs = 8 * 60 * 1000, onReady } = {}, onSubmit) {
   const nonce = crypto.randomBytes(16).toString('hex');
   return new Promise((resolve, reject) => {
