@@ -239,6 +239,94 @@ several segments, and `allocation_stale`, when the invoice file behind an existi
 `references/allocation.md` and follow it for either. Done when `events` reports `readyForNextStep: true` with
 no allocation item left.
 
+## The personal project book
+
+Every project the user can pick comes from **their own 个人项目簿 on this machine** — the projects they
+copied out of the ERP themselves and keep for the long run. baox ships no project list, caches nothing, and
+freezes no snapshot of the ERP: the book is one person's small subset, and switching who this machine
+reimburses for switches the book with them.
+
+You can read it. You cannot change it.
+
+### 「我现在有哪些项目」
+
+```bash
+baox projects
+```
+
+**Read-only and local**: it reads the book file on this machine and returns. It opens no browser, sends
+nothing to the ERP, and writes nothing. It is cheap, so run it — never answer this question from what you
+remember, from an earlier task in this session, or from a number you saw in some other folder. None of those
+are the book.
+
+What comes back:
+
+| Field | Means |
+| --- | --- |
+| `projects` | Every entry, as it stands in the book: `number`, `name` (read back from the ERP at entry — the user never types a name), `confirmedAt`, `expiresOn` (`null` = never expires), `lastCheckedAt`, `lastVerdict` |
+| `projectCount` / `selectableCount` | All entries versus 可选集合 — the ones still selectable. **A gap between them is 项目失效**: those entries stay in the book on purpose so the user can see them, they are just not offered in the selector any more |
+| `state` | `project_book_empty` when nothing is selectable. Absent otherwise |
+| `bookPath` | Where the file lives. Say it if asked. **Do not open it to edit it** |
+| `note` | The kernel's own one-liner about what this reading is and is not |
+
+Report the two counts and, when they differ, name the 失效 entries — the user is the only one who decides
+whether to delete one. Do not describe a 失效 entry as deleted, expired-and-gone, or invalid data.
+
+**`lastVerdict` is the result of the last 主数据只读核对 recorded in the book, not the ERP's answer right
+now.** This command performs no verification. So report it as 「簿子里记的最近一次核对结果」, never as
+「这个项目现在在 ERP 里是有效的」.
+
+### When the project the user wants is not in the book
+
+Send them to the maintenance page. **Do not do it for them.** Two situations, and they do not get the same
+words:
+
+| State | What is true | What you say |
+| --- | --- | --- |
+| `project_book_empty` | 可选集合 is empty — no entries at all, or every entry is 失效. `select-task` blocks *before* opening the page, because a selection page with no candidate leaves the user nothing to do but close it | 「项目簿里还没有可选的项目，先打开维护页把项目逐条录进来（录入即核验），再回来做任务选择」 |
+| `project_unassigned` | The book has candidates and some line simply has no project yet | The normal path — 「该选了」. Run `select-task` and let them select |
+
+Mid-flow, when the user says the project they want is not in the book:
+
+```bash
+baox projects-page
+```
+
+Tell them what is about to happen **before** you run it, because the page blocks in the foreground and you
+are mute until they finish (idle timeout 30 minutes — give the Bash call more than that): the maintenance
+page pops up, they paste a project number and click 「核对并加入」, the kernel checks that number against
+the ERP **right then** and only lets it in if the ERP says it exists, is approved and is not disabled; the
+name is filled in from the ERP's own read-back. They can do that as many times as they like, then click
+「完成」 to hand control back. v1 of the page does one thing: 录入.
+
+Entering a project is an online action. If the result comes back `not_logged_in`, nothing failed and nothing
+should be retried — the user logs into the ERP in the dedicated Chrome window (`baox chrome-up`) and clicks
+again. `rejected` (`missing` / `ambiguous` / `unusable` / `unsafe`) is the ERP's own verdict on that number:
+read the reason out and leave the next move to the user. `query_failed` means the query never got an answer,
+which is 「没核成」, not 「核过了没问题」.
+
+Afterwards just run `select-task` again. 可选集合 is read fresh every time the selector opens, so a project
+entered a minute ago is selectable now.
+
+### What you must never do with the book
+
+No phrasing of the request changes any of these:
+
+- **Do not add, change, or delete an entry for the user.** 增删只发生在维护页上的一次提交；「帮我把
+  111454 加进去」 in chat is not consent and not a submission, exactly as with reading confirmation,
+  allocation and 任务选择.
+- **Do not touch the book file.** Not with an editor, not with a shell command, not with a script you write
+  for the occasion. `bookPath` is there so the user can look at their own file, not so you can rewrite it.
+- **Do not offer a way around it.** There is no free-text project number in the selection page any more.
+  Do not nudge the user toward a project that happens to be in the book already, do not swap in a number
+  that looks similar, and do not suggest 「先随便选一个之后再改」.
+- **Do not vouch for a number that is not in the book.** If the user recites one from memory, the answer is
+  the maintenance page, not a promise that it will work.
+
+选择与维护职责分离 is a decision, not friction to be smoothed over. The book's whole value is the invariant
+that every entry in it was checked against the ERP at the moment it went in; a project that arrives any
+other way breaks that, and the cost lands much later — at ERP write time, with the invoices already consumed.
+
 ## 9. Category and project
 
 Once the material layer is clean, a candidate line is still missing three things, **from three different
@@ -262,13 +350,11 @@ The page allows multi-select and filling one project number into many rows at on
 chat does not count and you cannot fill it in for them — same **consent** rule as reading confirmation and
 allocation.
 
-**The candidates come only from the personal project book** (`baox projects` shows it), and the kernel
-refuses any project number that is not in it. Two states to keep apart:
-
-- `project_book_empty` — the book has nothing selectable, so there is nothing to choose from.
-  `select-task` blocks before it opens the page. The user has to enter the projects on the project book
-  maintenance page first; you cannot type one in for them.
-- 「该选了」 — the book has candidates and the user simply has not selected yet. That is the normal path.
+**The candidates come only from the personal project book**, and the kernel refuses any project number that
+is not in it. If the book has nothing selectable, `select-task` blocks with `project_book_empty` instead of
+opening the page — that is a different state from `project_unassigned` (「该选了」) and gets different words.
+See **The personal project book** above for both, and for what you may and may not do about a missing
+project.
 
 Projects added to the book mid-flow are selectable the next time the selector opens; and a project the user
 later deletes from the book **does not** change a selection that is already recorded — that one is a fact of
