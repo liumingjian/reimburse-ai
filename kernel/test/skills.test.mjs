@@ -85,3 +85,21 @@ test('baox 带着钩子脚本，它是挂到 settings.json 上的那一份', () 
   assert.match(fs.readFileSync(p, 'utf8'), /settings\.json/,
     '钩子脚本得说清自己该挂在哪里——挂错地方它不生效且不报错');
 });
+
+// 钩子从一条 shell 命令行里挑出「敲给 baox 的那一段」的那点解析。
+// 它宁可认不出来也不能认错：认不出就放行，而兜底的守卫在内核里，照样拦得住。
+test('钩子认得出命令行里的 baox 那一段', async () => {
+  const { baoxArgvIn } = await import(
+    url.pathToFileURL(path.join(SKILLS, 'baox', 'hooks', 'guard.mjs')).href);
+
+  assert.deepEqual(baoxArgvIn('node /a/b/kernel/bin/baox.mjs doctor'), ['doctor']);
+  assert.deepEqual(baoxArgvIn('node "/a b/baox.mjs" next --dir "/m"'), ['next', '--dir', '/m']);
+  // 后面还串着别的命令时，只取属于 baox 的那一段
+  assert.deepEqual(baoxArgvIn('node /a/baox.mjs intake --dir /m && rm -rf /tmp/x'),
+    ['intake', '--dir', '/m']);
+  assert.deepEqual(baoxArgvIn('node /a/baox.mjs classify | tee /tmp/o'), ['classify']);
+  // 与 baox 无关的命令一律不管
+  assert.equal(baoxArgvIn('ls -la'), null);
+  assert.equal(baoxArgvIn(''), null);
+  assert.equal(baoxArgvIn(undefined), null);
+});

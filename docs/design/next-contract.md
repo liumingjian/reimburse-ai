@@ -46,7 +46,7 @@ baox next --after <stepToken> [--result <file>]  # 答：我做完了，这是�
 
 ## 关键字段
 
-- **`step.argv`** 是完整命令行数组，模型**原样执行**。禁止拼接、改参、加参。hook 会拦下不在 argv 里的越权命令。
+- **`step.argv`** 是完整命令行数组，模型**原样执行**。禁止拼接、改参、加参。**内核自己会拦下不在 argv 里的越权命令**（退出码 2，并记进 `logs/refused.jsonl`）——守卫在内核里，不在 Skill 声明的 hook 里，理由见 [ADR-0010](../adr/0010-kernel-side-command-guard.md)。
 - **`stepToken`** 一次性。内核只接受它刚发出的那一个；不匹配就忽略回传、重发当前步骤。这是"不可跳步"的物理实现。
 - **`speak` / `context`** 分离：`speak` 原样念（措辞是模型差异最大的地方，不交给模型组织）；`context` 只在用户追问时动用。
 - **`identity`** 每次都带，用于在每条输出开头呈现"当前替谁报销"。

@@ -22,8 +22,10 @@ bash scripts/release.sh
 `scripts/bundle.sh` 是 `release.sh` 的第一步，单独跑可以只产出 `dist/`。它带三道闸：
 Skill 目录不许指向目录之外、调试草稿不许混进分发包、每个包必须带着内核入口。
 
-**三个目录必须一起更新。** 每个 Skill 目录自带的那份内核就地运行，`baox` 展开成
-`${CLAUDE_SKILL_DIR}/kernel/bin/baox.mjs` —— 没有安装这一步，也没有第二份内核可以对不上。
+**三个目录必须一起更新。** 每个 Skill 目录自带的那份内核就地运行，`baox` 就是那个目录下的
+`kernel/bin/baox.mjs`（绝对路径；`CLAUDE_SKILL_DIR` 这个变量并不存在，见
+[ADR-0010](docs/adr/0010-kernel-side-command-guard.md)）—— 没有安装这一步，
+也没有第二份内核可以对不上。
 数据在 `~/.baox`（`BAOX_HOME` 可覆盖）。
 
 ## 开发

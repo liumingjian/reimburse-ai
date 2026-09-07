@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
-import { paths, ensureDir, migrateOnStartup } from '../src/paths.mjs';
+import { paths, ensureDir, migrateOnStartup, ensureSchemaVersionFile } from '../src/paths.mjs';
 import * as chrome from '../src/chrome.mjs';
 import { probeIdentity, ERP_ORIGIN } from '../src/probe.mjs';
 // 本地页面只剩两处：重新绑定身份，和浏览完整项目目录。读数确认在终端上
@@ -26,7 +26,7 @@ import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerFie
   writeHeader, writeCell, selectOption, cellTarget, cellMatches, leaveEdit } from '../src/erpform.mjs';
 import { readReconciliation, classifyReconciliation, attemptRecord } from '../src/erpreconcile.mjs';
 import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
-import { observeEnvironment, observeTask, ensureSchemaVersionFile } from '../src/observe.mjs';
+import { observeEnvironment, observeTask } from '../src/observe.mjs';
 import { nextResponse } from '../src/next.mjs';
 import { ingestReread, autoSettleAgreed } from '../src/dispute.mjs';
 import { SCHEMA_VERSION as NEXT_SCHEMA_VERSION } from '../src/state.mjs';
@@ -137,14 +137,15 @@ const [, , cmd] = process.argv;
 // 其余子命令在检测到自己被 Agent 调起时当场拒绝；它们仍然留着给人手敲排障
 // （末尾加 --i-am-a-human），只是模型自己拼不出来。判据和措辞都在 guard.mjs 里。
 //
-// 这一段必须在 switch 之前、也在任何副作用之前：拒绝一条命令的意义在于它**没有跑过**，
-// 跑到一半再拒等于没拒。
+// 这一段必须在 switch 之前、在任何**命令**副作用之前：拒绝一条命令的意义在于它
+// **没有跑过**，跑到一半再拒等于没拒。（数据目录迁移在它上面就做掉了，那一步与
+// 敲的是哪条命令无关。）
 {
   const verdict = guardVerdict({ cmd, argv: process.argv.slice(2), env: process.env,
     issuedArgv: currentIssuedArgv() });
   if (!verdict.allowed) {
     recordRefusal({ cmd, markers: verdict.markers, logsDir: paths.logs });
-    out(refusalPayload({ cmd, markers: verdict.markers }), BLOCKED);
+    out(refusalPayload({ cmd, markers: verdict.markers, reason: verdict.reason }), BLOCKED);
   }
 }
 

@@ -29,14 +29,21 @@ import path from 'node:path';
 export const AGENT_MARKERS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_SKILL_DIR', 'AI_AGENT'];
 
 /**
- * 模型自己敲得动的子命令。只有这一条 —— 「问下一步」和「交结果」都是它。
+ * 模型自己敲得动的子命令。
  *
- * 低层命令并非模型全都碰不到：`step.kind: "run"` 那一步，内核会亲手把一条完整命令行
- * 放进 `step.argv` 让模型原样执行。那条命令走的是下面的 `issuedArgv` 白名单，
- * 不走这个集合 —— 契约里的说法是「拦下**不在 argv 里**的越权命令」，
+ * `next` 是那唯一的入口 —— 「问下一步」和「交结果」都是它。
+ *
+ * `erp-reconcile` 是**唯一的例外**，而且只有这一条：任务一旦动过 ERP，`next` 对它
+ * 永远只返回同一个 `handoff`，状态机在那里就断了（见 baox-recover 的说明书）。
+ * 往下走的是只读对账，而它**不在任何 `step.argv` 里** —— `handoff` 那一步根本不带 argv。
+ * 不放行它，写入善后这条路就此不通，而那正是出事时唯一还能走的一条。
+ *
+ * 除这两条之外，低层命令模型也不是全都碰不到：`step.kind: "run"` 那一步，内核会亲手
+ * 把一条完整命令行放进 `step.argv` 让模型原样执行。那条走的是下面的 `issuedArgv`
+ * 白名单，不走这个集合 —— 契约里的说法是「拦下**不在 argv 里**的越权命令」，
  * 而不是「拦下所有低层命令」。两者的差别就是这套设计能不能跑起来。
  */
-export const MODEL_ALLOWED = new Set(['next']);
+export const MODEL_ALLOWED = new Set(['next', 'erp-reconcile']);
 
 /**
  * 人手敲的显式标记。它不是密码，也不打算是 —— 模型当然"能"加上它。
@@ -101,21 +108,26 @@ export function guardVerdict({ cmd, argv = [], env = process.env, issuedArgv = n
   return { allowed: false, reason: 'model_may_only_run_next', markers };
 }
 
-/** 拒绝时给出去的那份 JSON。措辞写死在这里，不留给模型组织。 */
-export function refusalPayload({ cmd, markers }) {
+/**
+ * 拒绝时给出去的那份 JSON。措辞写死在这里，不留给模型组织。
+ *
+ * `reason` 来自裁决本身，不在这里抄第二遍 —— 抄一遍就有了两个说法，
+ * 而它们会各自演化。
+ */
+export function refusalPayload({ cmd, markers, reason = 'model_may_only_run_next' }) {
   return {
     command: cmd ?? null,
     status: 'refused',
     refused: {
       command: cmd ?? null,
-      reason: 'model_may_only_run_next',
+      reason,
       markers,
       allowed: [...MODEL_ALLOWED],
     },
     // 念给用户听的那一句：拒绝本身不是故障，说成故障会让人去"修"它。
     speak: '我只能通过 baox 的一条入口往下走，刚才那条命令不在我的权限里，我不会绕过去。',
-    error: `模型只能敲 baox next，外加内核放进 step.argv 的那一条；`
-      + `${cmd ?? '(空)'} 两样都不是，它是给人手敲排障用的。`,
+    error: `模型只能敲 ${[...MODEL_ALLOWED].join(' / ')}，外加内核放进 step.argv 的那一条；`
+      + `${cmd ?? '(空)'} 都不是，它是给人手敲排障用的。`,
     hint: `人要手敲这条命令，在末尾加 ${HUMAN_FLAG}。`,
   };
 }

@@ -94,10 +94,11 @@ test('登记簿里没有命令行（这一步不跑命令）时，什么都放�
 // —— 拒绝的样子 ——
 
 test('拒绝的那份 JSON 带着能原样念的一句话和给人的出路', () => {
-  const p = refusalPayload({ cmd: 'erp-fill', markers: ['CLAUDECODE'] });
+  const p = refusalPayload({ cmd: 'erp-fill', markers: ['CLAUDECODE'],
+    reason: 'model_may_only_run_next' });
   assert.equal(p.status, 'refused');
   assert.equal(p.refused.command, 'erp-fill');
-  assert.deepEqual(p.refused.allowed, ['next']);
+  assert.deepEqual(p.refused.allowed, ['next', 'erp-reconcile']);
   assert.ok(p.speak, '得有一句能原样念给用户的话');
   assert.ok(p.hint.includes(HUMAN_FLAG), '得告诉人怎么手敲');
 });
@@ -179,4 +180,29 @@ test('内核发的那条 step.argv，模型原样执行得通；改一个字就�
   const tampered = baox([...argv.slice(2), '--force'], { CLAUDECODE: '1' }, home);
   assert.equal(tampered.code, 2, '加一个参数就是另一条命令');
   assert.equal(tampered.json.status, 'refused');
+});
+
+// —— 唯一的例外 ——
+// 任务动过 ERP 之后，next 对它永远只返回同一个 handoff，状态机在那里就断了。
+// 往下走的只读对账不在任何 step.argv 里（handoff 那一步不带 argv），
+// 拦掉它等于把出事之后唯一还能走的那条路一起拦了。
+test('erp-reconcile 放行 —— 写入善后那条路不在 step.argv 里', () => {
+  const v = guardVerdict({ cmd: 'erp-reconcile',
+    argv: ['erp-reconcile', '--dir', '/materials'], env: AGENT });
+  assert.equal(v.allowed, true);
+  assert.equal(v.reason, 'model_allowed');
+});
+
+test('例外只有这一条，别的 erp-* 照拒', () => {
+  for (const cmd of ['erp-fill', 'erp-read']) {
+    assert.equal(guardVerdict({ cmd, argv: [cmd, '--dir', '/x'], env: AGENT }).allowed, false,
+      `${cmd} 不该跟着 erp-reconcile 一起放行`);
+  }
+});
+
+test('baox-recover 说明书里那条命令，被模型敲得动', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-guard-rec-'));
+  fs.writeFileSync(path.join(dir, 'fp.pdf'), '%PDF-1.4\n');
+  const { code } = baox(['erp-reconcile', '--dir', dir], { CLAUDECODE: '1' });
+  assert.notEqual(code, 2, 'erp-reconcile 撞上守卫的话，写入善后就此不通');
 });

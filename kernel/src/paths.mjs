@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
+import { SCHEMA_VERSION } from './state.mjs';
 
 // baox 的数据目录。Chrome 专用 profile、工作区状态、日志都在这里，
 // 不碰用户自己的 Chrome 目录，也不碰材料源目录。
@@ -78,3 +79,29 @@ export function migrateOnStartup() {
   if (process.env.BAOX_HOME) return null;
   return migrateLegacyHome(dataDir(), legacyDataDir());
 }
+
+/** 格式版本落在数据目录根下的这个文件里。 */
+export const SCHEMA_FILE = 'schema.json';
+
+/**
+ * 把格式版本写进数据目录 —— **只在文件不存在时写**。
+ *
+ * 版本闸的判据从代码版本改成了数据格式版本（见 ADR-0002 的补记），所以这个文件
+ * 就是闸门本身。已经有的那份一个字都不动：里面写着比本内核更大的数字，说明这个目录
+ * 被将来某一版动过，把它改回 1 等于亲手拆掉 `schema_too_new`，让新格式的任务文件
+ * 被旧内核当成自己的来读。
+ *
+ * 写不进去不硬停：读侧读不到就退回「本内核这一版」，与写之前的行为一致。
+ */
+export function ensureSchemaVersionFile() {
+  const file = path.join(dataDir(), SCHEMA_FILE);
+  try {
+    if (fs.existsSync(file)) return null;
+    ensureDir(dataDir());
+    fs.writeFileSync(file, JSON.stringify({ schemaVersion: SCHEMA_VERSION }, null, 2) + '\n');
+    return { schemaVersion: SCHEMA_VERSION, file };
+  } catch {
+    return null;
+  }
+}
+

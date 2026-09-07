@@ -28,14 +28,15 @@ const HERE = path.dirname(url.fileURLToPath(import.meta.url));
 
 // 装好之后内核就在 Skill 目录里（bundle.sh 拷进去的）；在仓库里开发时它在仓库根下。
 // 两种布局都要能跑 —— 只认一种，另一种就会在最需要它的时候悄悄失效。
-const CANDIDATES = [
-  path.join(HERE, '..', 'kernel', 'src', 'guard.mjs'),
-  path.join(HERE, '..', '..', '..', 'kernel', 'src', 'guard.mjs'),
+const KERNEL_SRC_DIRS = [
+  path.join(HERE, '..', 'kernel', 'src'),
+  path.join(HERE, '..', '..', '..', 'kernel', 'src'),
 ];
 
-async function loadGuard() {
-  for (const p of CANDIDATES) {
-    try { return await import(url.pathToFileURL(p).href); } catch { /* 换下一个 */ }
+/** 按上面两种布局挨个试，加载内核里的一个模块。都试不出来就是 null。 */
+async function loadKernelModule(name) {
+  for (const dir of KERNEL_SRC_DIRS) {
+    try { return await import(url.pathToFileURL(path.join(dir, name)).href); } catch { /* 换下一个 */ }
   }
   return null;
 }
@@ -70,15 +71,13 @@ async function main() {
   const argv = baoxArgvIn(command);
   if (!argv) process.exit(0);
 
-  const guard = await loadGuard();
+  const guard = await loadKernelModule('guard.mjs');
   // 找不到内核就放行：这一层本来就是可选的外层，让它在装歪了的时候变成硬阻塞，
   // 只会把一个安装问题伪装成一次拒绝。内核那一层照样拦得住。
   if (!guard) process.exit(0);
 
-  let issuedArgv = null;
-  for (const p of CANDIDATES.map((c) => c.replace('guard.mjs', 'steptoken.mjs'))) {
-    try { issuedArgv = (await import(url.pathToFileURL(p).href)).currentIssuedArgv(); break; } catch { /* 换下一个 */ }
-  }
+  const steptoken = await loadKernelModule('steptoken.mjs');
+  const issuedArgv = steptoken ? steptoken.currentIssuedArgv() : null;
 
   const verdict = guard.guardVerdict({ cmd: argv[0], argv, env: process.env, issuedArgv });
   if (verdict.allowed) process.exit(0);
@@ -90,4 +89,8 @@ async function main() {
   process.exit(2);
 }
 
-main();
+// 只有被直接执行时才跑。这个模块导出了 `baoxArgvIn` 供测试用，
+// 而顶层就 `main()` 的话，import 它会当场卡在读 stdin 上。
+if (process.argv[1] && url.pathToFileURL(process.argv[1]).href === import.meta.url) {
+  main();
+}

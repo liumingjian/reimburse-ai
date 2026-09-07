@@ -80,11 +80,13 @@ Skill 是壳，内核是唯一的业务事实来源，这一条在 1.0.0 里不�
 
 ### 批次 6：hooks 与发布
 
-- `skills/baox/SKILL.md` frontmatter 加 `hooks.PreToolUse`，`matcher: "Bash"`，
-  `command: ${CLAUDE_SKILL_DIR}/hooks/guard.mjs`。
-- `hooks/guard.mjs`：放行 `baox next ...`，其余 `baox` 子命令一律 `deny`（退出码 2 + stderr 说明），
-  非 baox 的命令不管。**deny 早于权限模式判定，`bypassPermissions` 也压不过它** —— 这是"模型不拼命令"
-  从劝告变成机制的那一步。
+- ~~`skills/baox/SKILL.md` frontmatter 加 `hooks.PreToolUse`~~ —— **实测不生效，见上面第 4 节。**
+  实际落地的是内核里的守卫 `kernel/src/guard.mjs`；`hooks/guard.mjs` 保留为可选外层，改挂
+  `.claude/settings.json`。
+- 放行的规矩是**两条**，不是一条：`baox next`（外加 `erp-reconcile` 这一个例外——`handoff` 那一步
+  不带 argv，拦掉它写入善后就此不通），以及内核**刚刚**放进 `step.argv` 的那一条完整命令行。
+  按字面只放行 `next` 会让 `kind: "run"` 那一步当场停摆。其余一律拒（退出码 2 + 结构化 JSON），
+  并记进 `logs/refused.jsonl`。
 - 版本提到 `1.0.0`，`schemaVersion` 定为 `1`，更新 `docs/adr/`（新增一条 ADR 记 `next` 状态机；
   在 ADR-0002 补记本地页面收窄到两处）。
 - 验收：见下面的"真机待验"。
@@ -116,10 +118,13 @@ Skill 是壳，内核是唯一的业务事实来源，这一条在 1.0.0 里不�
 
 ## 4. 真机待验（两项，只能在 mac 上确认）
 
-1. **Skill 声明的 hooks 在项目域是否真的硬拒。** `hooks` 没有出现在官方 frontmatter 字段表里，
-   目前的把握来自实现与文档的旁证。若实测不生效，退路是把守卫做进内核自身：`baox` 的非 `next` 子命令
-   在检测到 `CLAUDE_SKILL_DIR` 环境时拒绝执行，除非带 `--i-am-a-human` 显式标记。
-   **批次 6 合并前必须有结论。**
+1. ~~**Skill 声明的 hooks 在项目域是否真的硬拒。**~~ **已实测，结论：不生效**（2026-09-07，
+   Claude Code 2.1.263）。frontmatter 里的 `hooks` 被静默忽略——守卫被调起 0 次，被拦的命令照跑不误；
+   同一个脚本挂到 `.claude/settings.json` 上则拦得住。于是走了这里预备的退路：守卫做进内核自身。
+   判据也跟着改了——`CLAUDE_SKILL_DIR` 根本不在 Bash 工具的环境里，单认它等于守卫永远不生效，
+   改取 `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` / `CLAUDE_SKILL_DIR` / `AI_AGENT` 的并集。
+   见 [ADR-0010](../adr/0010-kernel-side-command-guard.md) 与
+   [skill-declared-hooks.md](../research/skill-declared-hooks.md)。
 2. **终端多选（`AskUserQuestion`）在非交互 / `--print` 模式下的行为。** 未见文档。
    若在无头模式下不可用，`ask_user` 与 `confirm_table` 需要一条降级路径（多半是退回本地页面），
    但这不阻塞批次 1–5。
