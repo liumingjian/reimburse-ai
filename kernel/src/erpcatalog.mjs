@@ -147,6 +147,31 @@ export async function verifyExpenseItems(wsUrl, { run = queryRows } = {}) {
 }
 
 /**
+ * 一个项目号查回来的行，判成一条判定。**单条核对和批量复检共用这一处**：
+ * 两边各写一遍的话，同一个已禁用的项目会在录入页和维护页上读到两种说法，
+ * 而其中一句迟早跟着规则改动走样。
+ *
+ * "查不到"是唯一分开写的一档，所以由调用方给（`missing`）：录入那边是
+ * "你刚才填的这个号不存在"，复检这边是"它自打录进来之后消失了"——
+ * 同一个判定，用户要做的下一件事不同。
+ */
+function judgeProjectRows(number, rows, missing) {
+  if (!rows.length) return missing();
+  if (rows.length > 1) {
+    // 一个号对上多条时 baox 不替用户挑（ADR-0006）。
+    return { number, verdict: 'ambiguous', count: rows.length,
+      note: `项目号 ${number} 在 ERP 里对上了 ${rows.length} 条记录，baox 不替你挑，请人工确认` };
+  }
+  const hit = rows[0];
+  if (!hit.audited || hit.forbidden) {
+    return { number, verdict: 'unusable', name: hit.name,
+      documentStatus: hit.documentStatus, forbidStatus: hit.forbidStatus,
+      note: `项目 ${number}「${hit.name}」在 ERP 里${hit.forbidden ? '已被禁用' : '还没审核'}，不能引用` };
+  }
+  return { number, verdict: 'confirmed', name: hit.name };
+}
+
+/**
  * **一次**核对一批项目号，用来复检整本个人项目簿。
  *
  * 和 `verifyProject` 判的是同一件事，差别只在往返次数：几十条项目各跑一趟 CDP，
@@ -166,37 +191,32 @@ export async function verifyProjects(wsUrl, numbers, { run = queryRows } = {}) {
   if (bad.length) return { ok: false, reason: unsafeKeyReason(bad[0]) };
   if (!wanted.length) return { ok: true, formId: PROJECT_FORM, checked: [] };
 
+  // 一个号可能对上多条（那正是 ambiguous），所以放宽到两倍再加一点余量：
+  // 卡在 wanted.length 上会把重复记录挤掉，那时 ambiguous 就永远查不出来了。
+  const limit = wanted.length * 2 + 5;
   const res = await run(wsUrl, {
     formId: PROJECT_FORM,
     fieldKeys: 'FNumber,FName,FDocumentStatus,FForbidStatus',
     filter: `FNumber in (${wanted.map((n) => `'${n}'`).join(',')})`,
-    // 一个号可能对上多条（那正是 ambiguous），所以放宽到两倍再加一点余量：
-    // 卡在 wanted.length 上会把重复记录挤掉，那时 ambiguous 就永远查不出来了。
-    limit: wanted.length * 2 + 5,
+    limit,
   });
   if (!res.ok) return res;
+
+  // 装满了就说明可能被截断了，而**被截掉的行和"这个项目没了"长得一模一样**：
+  // 一条好端端的项目会被写成 missing，从可选集合里悄悄消失。这不是一个可以将就的
+  // 近似——没看全就是没看全，当作一次没跑通的查询报回去，比编一个答案强。
+  if (res.rows.length >= limit) {
+    return { ok: false,
+      reason: `这一次批量核对取回了 ${res.rows.length} 行，已经到上限，可能没取全；`
+        + '没取全就分不出"这个项目没了"和"这一行被截掉了"，因此这次不作数' };
+  }
 
   const hits = new Map(wanted.map((n) => [n, []]));
   for (const row of res.rows) hits.get(String(row[0]))?.push(statusOf(row));
 
-  const checked = wanted.map((number) => {
-    const found = hits.get(number);
-    if (!found.length) {
-      return { number, verdict: 'missing',
-        note: `项目号 ${number} 在 ERP 项目目录里已经查不到了` };
-    }
-    if (found.length > 1) {
-      return { number, verdict: 'ambiguous', count: found.length,
-        note: `项目号 ${number} 在 ERP 里对上了 ${found.length} 条记录，baox 不替你挑，请人工确认` };
-    }
-    const hit = found[0];
-    if (!hit.audited || hit.forbidden) {
-      return { number, verdict: 'unusable', name: hit.name,
-        documentStatus: hit.documentStatus, forbidStatus: hit.forbidStatus,
-        note: `项目 ${number}「${hit.name}」在 ERP 里${hit.forbidden ? '已被禁用' : '还没审核'}，不能引用` };
-    }
-    return { number, verdict: 'confirmed', name: hit.name };
-  });
+  const checked = wanted.map((number) => judgeProjectRows(number, hits.get(number),
+    () => ({ number, verdict: 'missing',
+      note: `项目号 ${number} 在 ERP 项目目录里已经查不到了` })));
 
   return { ok: true, formId: PROJECT_FORM, checked };
 }
@@ -217,20 +237,7 @@ export async function verifyProject(wsUrl, number, { run = queryRows } = {}) {
   });
   if (!res.ok) return res;
 
-  if (res.rows.length === 0) {
-    return { ok: true, number, verdict: 'missing',
-      note: `项目号 ${number} 在 ERP 项目目录里查不到；请在任务选择页上改成真实存在的项目序号` };
-  }
-  if (res.rows.length > 1) {
-    // 目录里一个序号对上多条，baox 不替用户挑。
-    return { ok: true, number, verdict: 'ambiguous', count: res.rows.length,
-      note: `项目号 ${number} 在 ERP 里对上了 ${res.rows.length} 条记录，baox 不替你挑，请人工确认` };
-  }
-  const hit = statusOf(res.rows[0]);
-  if (!hit.audited || hit.forbidden) {
-    return { ok: true, number, verdict: 'unusable', name: hit.name,
-      documentStatus: hit.documentStatus, forbidStatus: hit.forbidStatus,
-      note: `项目 ${number}「${hit.name}」在 ERP 里${hit.forbidden ? '已被禁用' : '还没审核'}，不能引用` };
-  }
-  return { ok: true, number, verdict: 'confirmed', name: hit.name };
+  return { ok: true, ...judgeProjectRows(number, res.rows.map(statusOf),
+    () => ({ number, verdict: 'missing',
+      note: `项目号 ${number} 在 ERP 项目目录里查不到；请在任务选择页上改成真实存在的项目序号` })) };
 }

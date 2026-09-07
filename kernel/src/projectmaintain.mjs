@@ -58,10 +58,11 @@ export function purgeInvalidProjects(today = localToday()) {
       note: '当前没有失效项目，一条都没删' };
   }
   const kept = book.projects.filter((p) => isSelectable(p, today));
+  book.projects = kept;
   // 删掉的那些也要能被说出来：用户点的是"清理全部失效"，他有权知道刚才走的是哪几条。
   const removed = annotateProjects(dead, today);
   return { status: 'purged', removedCount: removed.length, removed,
-    book: writeBook({ projects: kept }),
+    book: writeBook(book),
     note: `已删掉 ${removed.length} 条失效项目（${removed.map((p) => p.number).join('、')}），`
       + `簿子里还剩 ${kept.length} 条；还要用的项目重新粘一次项目号就能回来（录入即核验）`,
   };
@@ -128,25 +129,32 @@ export async function recheckAll({
   }
 
   const verdicts = new Map(checked.map((c) => [c.number, c.verdict]));
-  const projects = book.projects.map((p) => ({
-    ...p,
-    // 拼不进查询串的号没被问过，但它此刻的答案是明确的：不能安全查询就不能引用。
-    lastVerdict: verdicts.get(p.number) ?? (isSafeKey(p.number) ? p.lastVerdict : 'unsafe'),
-    lastCheckedAt: at,
-  }));
+  // **判定落在此刻盘上的那本簿子上，不是查询之前那一份。** 查询要跑一趟网络，
+  // 这中间用户完全可能在另一个页面上删掉一条：把开查那一刻的快照整本写回去，
+  // 那条刚被删掉的项目就会自己回来——「点了立刻消失」当场被推翻。
+  // 只把判定按项目号贴到还在的条目上，中途没了的就让它没了。
+  const projects = readBook().projects.map((p) => {
+    // 拼不进查询串的号根本没被问过。它此刻的答案是明确的（不能安全查询就不能引用），
+    // 但**不改检查时间**——写上一个时间就等于说"这条我们刚核对过"，而它没有。
+    if (!isSafeKey(p.number)) return { ...p, lastVerdict: 'unsafe' };
+    const verdict = verdicts.get(p.number);
+    return verdict === undefined ? p : { ...p, lastVerdict: verdict, lastCheckedAt: at };
+  });
   const written = writeBook({ projects });
   const annotated = annotateProjects(written.projects, today);
   const invalid = annotated.filter((p) => !p.selectable);
 
   return {
     status: 'done', queries,
-    checkedCount: projects.length,
+    // 数的是**真的问过 ERP 的那些**：不安全的号一次都没被问过，把它算进"复检了几条"
+    // 就是虚报一次核对。
+    checkedCount: projects.filter((p) => verdicts.has(p.number)).length,
     confirmedCount: projects.filter((p) => p.lastVerdict === 'confirmed').length,
     // 失效数按**两个来源的并集**算，和维护页上标出来的失效项是同一批：
     // 用户看的是那张表，回执说的数就得对得上那张表，不能只数复检没过的。
     invalidCount: invalid.length,
     book: written,
-    note: `复检了 ${projects.length} 条，其中 ${invalid.length} 条此刻失效`
+    note: `复检了 ${verdicts.size} 条，其中 ${invalid.length} 条此刻失效`
       + `${invalid.length ? `（${invalid.map((p) => p.number).join('、')}）` : ''}；`
       + '复检只更新判定和检查时间，没有删除任何东西，也没有动过期时间——'
       + '要清掉失效项，点「清理全部失效」',

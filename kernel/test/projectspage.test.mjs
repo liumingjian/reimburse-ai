@@ -502,6 +502,28 @@ test('认不出来的动作不落到录入上：宁可当场拒，也不拿一�
   await s.done;
 }));
 
+test('办没办成由内核说了算：「请先去登录」不许被页面涂成一句好消息', noAutoOpen(async () => {
+  // 页面自己按状态名猜好坏，就会在下一个状态出现的那天默默把它当成成功。
+  // 最会误导人的正是这几个：没登录的复检、簿子里本来就没有的那个号。
+  const s = startPage({
+    intake: async () => ({ status: 'not_logged_in', note: '请先登录 ERP', book: { projects: [] } }),
+    remove: async () => ({ status: 'not_found', note: '簿子里没有这个号', book: { projects: [] } }),
+    recheck: async () => ({ status: 'query_failed', note: '没检成', book: { projects: [] } }),
+    purge: async () => ({ status: 'purged', removedCount: 1, book: { projects: [] } }),
+    book: () => ({ projects: [] }),
+  });
+  const base = new URL(await s.url);
+
+  const statusOf = async (body) => (await (await post(base, '/submit', body)).json()).result;
+  assert.equal((await statusOf({ number: '111454' })).succeeded, false, '没登录不是好消息');
+  assert.equal((await statusOf({ action: 'remove', number: '9' })).succeeded, false, '什么都没删掉');
+  assert.equal((await statusOf({ action: 'recheck' })).succeeded, false, '没检成');
+  assert.equal((await statusOf({ action: 'purge' })).succeeded, true, '真删掉了才是好消息');
+
+  await post(base, '/done');
+  await s.done;
+}));
+
 test('三个整理动作都在命令面之外：增删仍然只发生在页面提交上', () => {
   // #80 加了删除和清理，这条规矩不能跟着松：有后果的动作要一次可追溯的页面提交。
   const { json } = runBaox(['no-such-command'], freshHome());

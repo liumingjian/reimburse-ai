@@ -302,6 +302,57 @@ test('全是不安全项目号的簿子：一次查询都不发，也不报成�
   assert.equal(readBook().projects[0].lastVerdict, 'unsafe');
 });
 
+test('查询取回的行数顶到上限时不作数：宁可说没检成，也不把被截掉的行当成"项目没了"', async () => {
+  // 被截断的行和"这个项目在 ERP 里没了"长得一模一样。分不出来的时候编一个答案，
+  // 就是让一条好端端的项目从可选集合里悄悄消失——正是这一票明令不许的那种误判。
+  seed(p('111454'), p('111455'));
+  // limit = 2*2+5 = 9；喂满 9 行（同一个号重复也算行）。
+  const query = rowsOf(Array.from({ length: 9 }, () => erpRow('111454', '项目一')));
+
+  const r = await recheck(query);
+
+  assert.equal(r.status, 'query_failed');
+  assert.match(r.reason, /上限|没取全/);
+  assert.deepEqual(readBook().projects.map((x) => x.lastVerdict), ['confirmed', 'confirmed'],
+    '没看全就一条都不写');
+});
+
+test('复检不改检查时间的那一条：没被问过的号不许挂上一个"刚核对过"', async () => {
+  seed(p("111454' or 1=1"), p('111455'));
+
+  await recheck(rowsOf([erpRow('111455', '正常项目')]));
+
+  const byNumber = Object.fromEntries(readBook().projects.map((x) => [x.number, x]));
+  assert.equal(byNumber["111454' or 1=1"].lastCheckedAt, '2026-09-01T02:00:00.000Z',
+    '一次都没问过它，检查时间就不该动');
+  assert.equal(byNumber['111455'].lastCheckedAt, '2026-09-07T03:00:00.000Z');
+});
+
+test('复检期间被删掉的项目不会因为写回而复活', async () => {
+  // 复检要跑一趟网络。把开查那一刻的快照整本写回去，这中间用户在另一个页面上删掉的
+  // 那条就会自己回来——「点了立刻从簿子和列表消失」当场被推翻。
+  seed(p('111454'), p('111455'));
+  const query = counting(async () => {
+    removeProject('111455');           // 查询在跑，用户在另一处删掉了一条
+    return { ok: true, rows: [erpRow('111454', '项目一'), erpRow('111455', '项目二')] };
+  });
+
+  const r = await recheck(query);
+
+  assert.deepEqual(numbers(readBook()), ['111454'], '删掉的那条不许被复检写回来');
+  assert.deepEqual(numbers(r.book), ['111454']);
+});
+
+test('传输层抛出来（CDP 断开）同样不动簿子', async () => {
+  // 查询函数返回 { ok:false } 是一种没问出答案，直接抛也是——两条路都不该让簿子失效。
+  seed(p('111454'));
+  const query = counting(async () => { throw new Error('CDP 断了'); });
+
+  await assert.rejects(() => recheck(query), /CDP 断了/);
+  assert.deepEqual(readBook().projects.map((x) => x.lastVerdict), ['confirmed']);
+  assert.deepEqual(selectableProjects('2026-09-07').map((x) => x.number), ['111454']);
+});
+
 test('复检回执把这一趟的结果分门别类地说出来', async () => {
   seed(p('111454'), p('111455'), p('111456'));
 

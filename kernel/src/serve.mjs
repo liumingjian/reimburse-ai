@@ -624,9 +624,10 @@ async function act(body, working) {
       say('这一下没能跑完：' + payload.error, false);
       return null;
     }
-    // 内核的判定就是要显示给用户的那句话；页面不改写它，也不替它总结。
+    // 内核的判定就是要显示给用户的那句话；页面不改写它，也不替它总结，
+    // 连"这算不算好消息"都是内核给的（succeeded）——「请先去登录」不该是绿的。
     const r = payload.result;
-    say(r.note ?? r.status, r.status !== 'rejected' && r.status !== 'query_failed');
+    say(r.note ?? r.status, r.succeeded === true);
     if (r.book) redraw(r.book.projects);
     return r;
   } catch (err) {
@@ -693,6 +694,16 @@ $('finish').addEventListener('click', async () => {
  * 回给页面和收工时交出的簿子都**先标好失效**（`annotateProjects`）：浏览器那边算不了
  * "今天"，措辞也只该有内核一处出处。
  */
+/**
+ * 哪些结果算"这一下办成了"。**由内核说了算，页面只照着上色**——它连"今天"都算不了，
+ * 更不该自己判断一句话是好消息还是坏消息。
+ *
+ * 写成**白名单**是故意的：黑名单（"不是 rejected 就算好"）会在下一个状态出现的那天
+ * 默默把它涂成绿色，而最会误导人的恰恰是这几个——「请先去登录」和「簿子里本来就没有这个号」
+ * 涂成绿色，用户会以为复检做完了、以为删掉了。
+ */
+const PAGE_SUCCEEDED = new Set(['admitted', 'removed', 'purged', 'none', 'empty', 'done']);
+
 export function serveProjectBookPage({ intake, remove, purge, recheck, book, today, ...opts } = {}) {
   // 离开内核的簿子只经过这一道：出口有三个（开页的 HTML、每次提交的回包、收工的结果），
   // 三个都得带着同一份失效判定，各写各的就会在同一条项目上给出两种说法。
@@ -733,7 +744,9 @@ export function serveProjectBookPage({ intake, remove, purge, recheck, book, tod
       const run = Object.prototype.hasOwnProperty.call(actions, name) ? actions[name] : null;
       if (!run) throw new Error(`认不出这个动作：${name}`);
       const r = await run(body);
-      return r?.book ? { ...r, book: annotate(r.book) } : r;
+      // 办没办成由内核判，页面照着上色就行（见 PAGE_SUCCEEDED）。
+      const judged = { ...r, succeeded: PAGE_SUCCEEDED.has(r?.status) };
+      return r?.book ? { ...judged, book: annotate(r.book) } : judged;
     },
     onDone: () => {
       const { projects } = annotate(book());
