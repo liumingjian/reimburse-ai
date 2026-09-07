@@ -5,15 +5,16 @@
  * 它不选命令、不拼命令、不组织措辞：`step.argv` 是内核给的完整命令行，
  * `speak` 是内核写死的原话。措辞是模型差异最大的地方，所以不交给模型。
  *
- * 落成的是环境七态和材料这一段（盘点、分流、看图读数），用到
- * `run` / `tell_user` / `read_images` / `done` 四种 step；
- * 其余三种（ask_user / confirm_table / dispute）随各自的状态一起来。
+ * 落成的是环境七态和材料这一段（盘点、分流、看图读数、终端确认、纠正与争议），
+ * 用到 `run` / `tell_user` / `read_images` / `confirm_table` / `dispute` / `done` 六种 step；
+ * 剩下的 `ask_user` 随它自己的状态一起来。
  */
 import path from 'node:path';
 import url from 'node:url';
 import { determineState, SCHEMA_VERSION, MIN_NODE_MAJOR } from './state.mjs';
 import { currentStep, issueStep } from './steptoken.mjs';
-import { readingInboxIn, correctionInboxIn } from './workspace.mjs';
+import { readingInboxIn, correctionInboxIn, rereadInboxIn } from './workspace.mjs';
+import { CONVERGENCE } from './dispute.mjs';
 import { SHAPES, SHAPE_LABELS } from './imageshape.mjs';
 import { renderTable } from './table.mjs';
 
@@ -27,6 +28,7 @@ const argvFor = (...args) => [process.execPath, BIN, ...args];
  * 指向 Skill 里某个 references/ 文件的话，换一种安装位置就断了。
  */
 const READING_TEMPLATE = path.join(SRC, 'reading-template.json');
+const REREAD_TEMPLATE = path.join(SRC, 'reread-template.json');
 
 const ENV_PROGRESS = { phase: 1, of: 10, label: '环境准备' };
 const MATERIAL_PROGRESS = { phase: 2, of: 10, label: '材料盘点与分类' };
@@ -95,6 +97,7 @@ const confirmTable = ({ table, materialIds, correctionPath, speak, context }) =>
     table,
     materialIds,
     correctionPath,
+    acceptsCorrection: true,
     correctionFormat: {
       corrections: [{ materialId: '表里那一行的 materialId', fields: { invoiceNumber: '用户说的值' } }],
       note: '只写用户当面改的那几个字段，其余不要抄。用户的值不会被直接落库 —— '
@@ -105,6 +108,87 @@ const confirmTable = ({ table, materialIds, correctionPath, speak, context }) =>
   },
   speak, context, progress: READING_PROGRESS, exit: 0,
 });
+
+/**
+ * 争议。用户给的值和机器读数对不上，两边都可能错，所以内核**一个值都不选**。
+ *
+ * 这一步的 `speak` 分三段落成，全部写死在下面：摆证据（phase `reread`）、
+ * 摆收敛结果请用户拍板（phase `ruling`）、摆守恒缺口（phase `conservation_gap`）。
+ * 措辞不交给模型 —— 在一场"谁读错了"的对话里，措辞就是判断本身。
+ *
+ * `outsourceable: false`：和用户对话的这一半在子 Agent 里做不了，那里没有用户。
+ * 但 `step.subagent` 说的是**另一件事**：重读那一个字段**必须**外包给一个
+ * 干净上下文的子 Agent。要的就是它不知道我们刚才争过什么 —— 带着这段上下文重读，
+ * 第二次读数只是第一次的回声，它印证不了任何东西。
+ */
+const disputeStep = ({ d, phase, extra, speak, context }) => ({
+  step: {
+    kind: 'dispute',
+    phase,
+    materialId: d.materialId,
+    fileName: d.fileName,
+    // 重读要原样抄它。哈希是这次重读和那串字节之间的绑定 —— 内核收的时候会自己重算一遍。
+    contentHash: d.contentHash,
+    // 契约里的 `step.field`：这一趟只重读这一个字段。一份读数上争多个字段时
+    // `fields` 给全，但每一个都是"只读这一处"，不是"顺手重抄一整张"。
+    field: d.fields[0].field,
+    fields: d.fields.map((f) => f.field),
+    evidence: {
+      // **只给路径。** 内核不替用户打开原件，也不把图塞进对话冒充成"我们一起看过了"。
+      // 定夺这件事的前提是他自己看过那张纸。
+      materialPath: d.materialPath,
+      readAt: d.readAt,
+      notes: d.notes,
+      fields: d.fields.map((f) => ({
+        field: f.field,
+        label: f.label,
+        machineValue: f.machineValue,
+        machineClarity: f.clarity,
+        userValue: f.userValue,
+        rereadValue: f.reread ?? null,
+        convergence: f.convergence,
+      })),
+      otherFields: d.otherFields,
+    },
+    ...extra,
+    outsourceable: false,
+  },
+  speak,
+  context,
+  progress: READING_PROGRESS,
+  // 凭据跟着**这一步**走，不跟着状态名走。一场争议里状态一直是 reading_disputed，
+  // 但摆证据、请拍板、补缺口是三步不同的事：共用一个凭据的话，
+  // 用户在"请拍板"那一步的回传会带着"摆证据"那一步发的凭据，两步之间就没有闸了。
+  stepKey: `reading_disputed:${phase}`,
+  exit: 0,
+});
+
+/** 一个还没读出来的值念给用户听的样子。空着不说，用户会以为是内核漏了。 */
+const shown = (v) => (v === null || v === undefined ? '读不出来' : `「${v}」`);
+
+/**
+ * 三种收敛，三句确定的话。一个字段一句，**写死在这里**。
+ *
+ * 为什么不让模型组织：这三句话的区别不在语气，在**它们各自承认了什么**。
+ * 第一句承认机器错了，第二句承认机器也可能一起错，第三句承认这个字段机器读不了。
+ * 交给模型组织，最可能被抹平的恰恰是第三句 —— 说"读不可靠"比说一个数难得多。
+ */
+function convergenceLine(f, materialPath) {
+  if (f.convergence === CONVERGENCE.agrees_with_user) {
+    return `${f.label}：重读也读出${shown(f.userValue)}，和你说的一致 —— 第二次也读出这个，`
+      + `是我第一次看错了。这个值我接受，来源记作你给的。`;
+  }
+  if (f.convergence === CONVERGENCE.agrees_with_machine) {
+    return `${f.label}：重读读出来的还是${shown(f.machineValue)}，和我第一次一样；你说是${shown(f.userValue)}。`
+      + '两次机器读数一致并不等于机器就对 —— 也可能这张图上这一处本来就容易被看成同一个错。'
+      + `请你打开原件（${materialPath}）看这一处，你说是多少就是多少。`;
+  }
+  return `${f.label}：三个说法互不相同 —— 我第一次读到${shown(f.machineValue)}，`
+    + `重读读到${shown(f.reread)}，你说是${shown(f.userValue)}。`
+    + '这说明这个字段在这张图上我读不可靠，我这两次读数在这里都不作数，以原件为准。'
+    + `请你对着原件（${materialPath}）告诉我它到底是多少；实在认不出就说一声，`
+    + '我把这条读数整条退回待办 —— 我不会替你填一个数。';
+}
 
 /**
  * 待确认读数 -> 一张定宽表格。
@@ -119,8 +203,8 @@ function readingTable(pending) {
     // 一份材料的名字只写在它那几行的头一行上，下面留白 —— 重复的文件名会盖住
     // 用户真正要比对的那一列数字。
     const lines = [
-      ...p.fields.map((f) => ({ field: f.label, value: f.value })),
-      ...p.unreadable.map((u) => ({ field: u, value: '看不清（我没有猜）' })),
+      ...p.fields.map((f) => ({ field: f.label, value: f.value, source: SOURCE_LABELS[f.source] ?? f.source })),
+      ...p.unreadable.map((u) => ({ field: u, value: '看不清（我没有猜）', source: '—' })),
     ];
     if (!lines.length) lines.push({ field: '（没有读出任何字段）', value: '' });
     for (const [n, line] of lines.entries()) {
@@ -130,9 +214,15 @@ function readingTable(pending) {
   return renderTable([
     { key: 'material', label: '材料', max: 46 },
     { key: 'field', label: '字段', max: 16 },
-    { key: 'value', label: '我读到的', max: 32 },
+    { key: 'value', label: '值', max: 32 },
+    // 来源单独占一列。一张表上同时摆着"我看图读的"和"你上次给的"时，
+    // 用户要复核的重点完全不同，而把这件事藏在脚注里等于没说。
+    { key: 'source', label: '这个值哪来的', max: 14 },
   ], rows);
 }
+
+/** 三种来源念给用户听的样子。契约里的 `vision` / `user` / `kernel`。 */
+const SOURCE_LABELS = { vision: '我看图读的', user: '你给的', kernel: '内核解析的' };
 
 /** 待办清单念给用户听的样子。谁能解决它，是每条最要紧的那半句。 */
 const WHO = { user: '要你处理', model: '我来处理', kernel: '内核已经自己处置了，说一声而已' };
@@ -141,8 +231,15 @@ const itemLines = (items) => items
     + `——${b.hint ?? b.kind}（${WHO[b.resolvableBy] ?? WHO.user}）`)
   .join('\n');
 
-/** 收得下 `--correction` 的 step。现在一种都没有 —— 它们随批次 4 的读数确认一起来。 */
-const CORRECTABLE = new Set(['confirm_table']);
+/**
+ * 收得下 `--correction` 的是**具体那一步**，不是那一类 step。
+ *
+ * 按 `step.kind` 判会漏掉一整类错：争议有三步，只有请用户拍板的那两步收终值，
+ * 摆证据那一步不收 —— 那时候证据还没摆完，不存在"拍板"。按 kind 一刀切的话，
+ * 用户在摆证据那一步交上来的值会被**静悄悄丢掉**，而他会以为自己已经定了。
+ * 所以由每一步自己声明，声明写在 step 上，模型也看得见。
+ */
+const acceptsCorrection = (step) => step.acceptsCorrection === true;
 
 /** 交得出结果的 step。这两种都以"跑完一条命令"收尾，没有输出就是没跑过。 */
 const NEEDS_RESULT = new Set(['run', 'read_images']);
@@ -159,6 +256,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
   const label = o.task?.sourceLabel ?? '这批材料';
   const readingsPath = o.task ? readingInboxIn(o.task.workspace) : null;
   const correctionPath = o.task ? correctionInboxIn(o.task.workspace) : null;
+  const rereadPath = o.task ? rereadInboxIn(o.task.workspace) : null;
   const submitArgv = () => argvFor('ocr-submit', '--dir', o.sourceDir, '--file', readingsPath);
   // 要看的那几张图，和念给用户听的那串文件名。两个 case 用的是同一份。
   const images = o.pendingImages ?? [];
@@ -319,17 +417,137 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'reading_awaiting_confirmation': {
       const pending = o.pendingReadings ?? [];
+      // 刚从争议里收场回来的那几份，收场的说法跟着这张表一起摆出来。
+      // 不说的话，用户会在表上看见一个和他上次说的不一样（或者一样）的值，
+      // 却不知道中间那次独立重读读出了什么 —— 而那正是他这次点头的依据。
+      const settled = pending.flatMap((p) => (p.disputeResolution?.fields ?? []).map((f) =>
+        `· ${p.fileName} 的${f.label}：我第一次读到${shown(f.machineValue)}，`
+        + `重读读到${shown(f.rereadValue)}，你说是${shown(f.userValue)}，现在按${shown(f.finalValue)}记着。`));
+      const settledSpeak = settled.length
+        ? `先说刚才那几处争议是怎么收的：\n${settled.join('\n')}\n`
+        : '';
       return confirmTable({
         table: readingTable(pending),
         materialIds: pending.map((p) => p.materialId),
         correctionPath,
-        speak: `图我读完了。下面是我从${pending.length > 1 ? `这 ${pending.length} 张` : '这张'}图上逐字抄下来的，`
+        speak: settledSpeak
+          + `图我读完了。下面是我从${pending.length > 1 ? `这 ${pending.length} 张` : '这张'}图上逐字抄下来的，`
           + '读数还只是候选，得你对着原件过一眼才算数。'
           + '哪一项对不上就直接说是哪一项、正确的值是什么，我不会拿你说的值直接落库，'
           + '而是带着这个分歧重新看一遍那张图。',
         context: '确认只来自你在这里的表态。你在别处说过的"对的""没问题"我一概不当作确认 ——'
           + '那些话我传得进来，但内核看不见它们，也就没法把它们变成事实。'
           + '全程不需要你打开任何网页。',
+      });
+    }
+
+    case 'reading_disputed': {
+      // 一次只收拾一场争议。摆证据是一件要用户集中注意力的事 ——
+      // 两张票的证据链摞在一起摆，用户两张都看不清。
+      const [d, ...rest] = o.pendingDisputes ?? [];
+      const more = rest.length ? `（另外还有 ${rest.length} 份也指了错，一份一份来）` : '';
+      const names = d.fields.map((f) => f.label).join('、');
+
+      if (d.phase === 'reread') {
+        const evidence = d.fields.map((f, n) =>
+          `${n + 1}. ${f.label}：我读到的原文是${shown(f.machineValue)}，你说是${shown(f.userValue)}。`
+          + `我当时对这一处的判断是「${f.clarity.label}」。`).join('\n');
+        return disputeStep({
+          d,
+          phase: 'reread',
+          extra: {
+            // 重读**必须**在一个干净上下文的子 Agent 里做。这不是建议：
+            // 它是这一步唯一的证据来源，而带着这段对话去读，读出来的只是回声。
+            subagent: {
+              required: true,
+              context: 'clean',
+              instruction: `新开一个不带本次会话上下文的子 Agent，让它用 Read 打开 ${d.materialPath}，`
+                + `**只**读这几个字段：${d.fields.map((f) => f.field).join('、')}。`
+                + '不要把用户说的值、我读到的值、或者我们刚才这段对话告诉它 ——'
+                + '它要的就是不知道这些。它读出什么就填什么，认不出就填 null。',
+              forbidden: ['把用户给的值告诉子 Agent', '把上一次机器读数告诉子 Agent',
+                '自己重读一遍充当子 Agent 的结果', '一并重抄这张票上别的字段'],
+            },
+            schemaPath: REREAD_TEMPLATE,
+            rereadPath,
+            argv: argvFor('reread-submit', '--dir', o.sourceDir, '--file', rereadPath),
+          },
+          speak: `${d.fileName} 上的${names}，你说的和我读到的不一样。这个我不能照你说的直接改 ——`
+            + '两边都可能错：可能是我看模糊了证据认错了，也可能是你看错了。先把证据摆出来：\n'
+            + `${evidence}\n`
+            + `这个数我是从这份材料上读的：${d.materialPath}\n`
+            + '这份原件请你自己打开看 —— 我不替你打开，也不替你确认。'
+            + '同时我另外派一个完全不知道我们刚才说过什么的助手，只重读这一个字段。'
+            + `两边都出来之后请你对着原件定夺，你确认的那一下才算数。${more}`,
+          context: '为什么不直接改：直接采纳等于承认"人说的不用查"，直接驳回等于承认"机器读的不会错"，'
+            + '这两条都不成立。所以内核在这里一个值都不选，只把三份说法摆齐 ——'
+            + '我第一次读到的、一次独立重读读到的、你对着原件说的。'
+            + '重读要用干净上下文的子 Agent，是因为知道了答案再去读，读出来的只是那个答案。',
+        });
+      }
+
+      if (d.phase === 'conservation_gap') {
+        const g = d.gap;
+        return disputeStep({
+          d,
+          phase: 'conservation_gap',
+          extra: {
+            gap: g,
+            rulingPath: correctionPath,
+            acceptsCorrection: true,
+            rulingFormat: {
+              corrections: [{ materialId: d.materialId,
+                fields: { netAmount: '不含税金额', taxAmount: '税额', totalAmount: '价税合计' } }],
+              giveUp: { materialId: d.materialId, unreadable: true },
+              note: '三个金额要一起给，而且要分毫不差。对不出来就交 unreadable: true，'
+                + '这条读数整条退回待办 —— 别去凑一个数。',
+            },
+          },
+          speak: `按你说的改完之后，这张票上的式子不平了：不含税金额 ${g.netAmount} + 税额 ${g.taxAmount} `
+            + `= ${g.sum}，而价税合计是 ${g.totalAmount}，差 ${g.delta} 元。\n`
+            + '这个差额我不会去反算 —— 反算出来的那个数看着最像对的，'
+            + '实际上会是这条链子上唯一一个没有人读过的值。\n'
+            + `请你对着原件（${d.materialPath}）把这三个数一起念给我，或者告诉我你也认不出：`
+            + '认不出的话我把这条读数整条退回待办，等你换一份看得清的原件。',
+          context: '守恒式不让路：不含税金额 + 税额必须分毫不差地等于价税合计。'
+            + '不平的读数不进事实链，只会落回开放项 —— 带着一个不平的数往 ERP 写，'
+            + '错误会在最不该暴露的地方暴露。',
+        });
+      }
+
+      // phase === 'ruling'：重读回来了，三种收敛各说各的话，最后请用户拍板。
+      const lines = d.fields.map((f) => convergenceLine(f, d.materialPath)).join('\n');
+      const bad = d.rulingRejection
+        ? `\n（上一次你给的值我没收下：${d.rulingRejection.reasons.join('；')}）`
+        : '';
+      return disputeStep({
+        d,
+        phase: 'ruling',
+        extra: {
+          rulingPath: correctionPath,
+          acceptsCorrection: true,
+          ruling: {
+            // 争议里的每个字段都要有终值，包括重读已经印证了的那些 ——
+            // 只回传"还没定的那一个"的话，另一个会悄悄退回机器读数。
+            fields: d.fields.map((f) => ({
+              field: f.field,
+              label: f.label,
+              suggested: f.convergence === CONVERGENCE.agrees_with_user ? f.userValue : null,
+              why: f.convergence === CONVERGENCE.agrees_with_user
+                ? '重读印证了用户的值，除非用户当场改口，否则就填它'
+                : '还没定 —— 用户对着原件说是多少就填多少，认不出填 null',
+            })),
+          },
+          rulingFormat: {
+            corrections: [{ materialId: d.materialId, fields: { '<字段名>': '用户对着原件给的终值' } }],
+            giveUp: { materialId: d.materialId, unreadable: true },
+            note: '用户对着原件也认不出时交 giveUp，别替他填 —— 这条读数整条退回待办是一个正当的结局。',
+          },
+        },
+        speak: `${d.fileName}：重读的结果出来了。\n${lines}${bad}`,
+        context: '重读是在一个完全不知道我们刚才争过什么的子 Agent 里做的，只读了这一个字段。'
+          + '三次读数里没有哪一次天然更可信 —— 定夺的是你对着原件看到的那个值。'
+          + '你定完之后这份读数还会整张再摆一次请你过目，改过的字段会标明来源是你。',
       });
     }
 
@@ -390,21 +608,23 @@ export function nextResponse({ observation, sourceKey, after = null, hasResult =
     if (!outstanding || outstanding.token !== after) {
       ignored = { reason: 'stale_token',
         note: '这个凭据不是我现在挂着的那一个（多半是上一步的），我按当前状态重发一次' };
-    } else if (outstanding.state === verdict.state && NEEDS_RESULT.has(shaped.step.kind) && !hasResult) {
+    } else if (outstanding.state === (shaped.stepKey ?? verdict.state)
+      && NEEDS_RESULT.has(shaped.step.kind) && !hasResult) {
       // 状态和上一步一样，却没交结果。状态不动 —— 说做完了不算做完了。
       ignored = { reason: 'no_result',
         note: '这一步要的是命令的实际输出，没有输出就没有事实，状态不动' };
     }
     // 状态已经往前走的情况不记：那个凭据自然作废，不是错，就是这一步过去了。
   }
-  if (hasCorrection && !CORRECTABLE.has(shaped.step.kind)) {
+  if (hasCorrection && !acceptsCorrection(shaped.step)) {
     // 纠正只在请用户过目的那种步骤上说得通。收下一份没处安放的纠正而不吭声，
     // 会让用户以为自己的改动被采纳了。
     ignored = { reason: 'correction_not_applicable',
-      note: `现在这一步（${shaped.step.kind}）没有可纠正的读数，这份纠正我没有采纳` };
+      note: `现在这一步（${shaped.step.kind}${shaped.step.phase ? `/${shaped.step.phase}` : ''}）`
+        + '收不下终值，这份纠正我没有采纳' };
   }
 
-  const record = issueStep(sourceKey, verdict.state, observation.sourceDir ?? null);
+  const record = issueStep(sourceKey, shaped.stepKey ?? verdict.state, observation.sourceDir ?? null);
   const identity = observation.probe?.status === 'matched'
     ? { displayName: observation.probe.identity.displayName ?? null,
         account: observation.probe.identity.account ?? null }

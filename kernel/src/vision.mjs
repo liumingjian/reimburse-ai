@@ -80,7 +80,25 @@ function isDate(v) {
   return d.getTime() < now + 36 * 3600 * 1000 && d.getTime() > now - 10 * 365 * 24 * 3600 * 1000;
 }
 
-const cents = (s) => Math.round(Number(s) * 100);
+export const cents = (s) => Math.round(Number(s) * 100);
+
+/**
+ * 字段的规则表对外开放（争议那一层要拿它校验用户口述的值）。
+ * 用户给的值和模型抄的值走**同一道格式闸** —— 换一道宽一点的闸给人用，
+ * 等于承认「人说的不用查」，而这一整票的前提正是两边都可能错。
+ */
+export { FIELD_RULES };
+
+/**
+ * 清晰度。模型抄下一个字段时顺带说一句它当时看得清不清楚 ——
+ * 争议那一步要把这句话摆给用户：「我读到 10，但我当时就觉得这一位发虚」
+ * 和「我读到 10，看得清清楚楚」，是两种完全不同的证据。
+ *
+ * 闭集，且**可选**：#62 之前交上来的读数没有这一栏，那时候没人问过。
+ * 缺席时争议那一层会明说是内核替它推的，不冒充成模型当时的判断。
+ */
+export const CLARITY = { clear: '清楚', blurry: '发虚，但认得出' };
+export const CLARITY_UNSTATED = '模型当时没说清不清楚（内核不替它补一个判断）';
 const readingsDir = (task) => path.join(taskDir(task), 'readings');
 const readingFile = (task, materialId) => path.join(readingsDir(task), `${materialId}.json`);
 /**
@@ -110,9 +128,16 @@ export function buildWorkOrder(sourceDir, inventory, classification, task, { for
     if (r.imageDecodable === false) continue;
     const existing = loadReading(task, r.materialId);
     const rejection = loadRejection(task, r.materialId);
+    const freshRejection = rejection && rejection.contentHash === m.contentHash;
     // 连着答不出「看过的凭据」的那几张也不再派出去：再读一遍只是再试一次。
-    if (rejection && rejection.contentHash === m.contentHash
-      && (rejection.sightFailures ?? 0) >= MAX_SIGHT_FAILURES) continue;
+    if (freshRejection && (rejection.sightFailures ?? 0) >= MAX_SIGHT_FAILURES) continue;
+    // 争议中的那几张不进普通工单。它们不是「还没读」—— 读过了，两边对不上，
+    // 处置是**只重读那一个字段**（干净上下文，见 dispute.mjs），不是从头再抄一遍整张票。
+    // 混进工单的话，模型会带着刚吵完的那段上下文重读一整张，第二次读数也就不独立了。
+    if (freshRejection && (rejection.disputed?.length ?? 0) > 0) continue;
+    // 争议收不了场、用户也认不出的那几张：整条读数已经退回待办，等的是人换一份原件。
+    const parked = loadUnreadable(task, r.materialId);
+    if (parked && parked.contentHash === m.contentHash) continue;
     items.push({
       materialId: m.materialId,
       fileName: m.fileName,
@@ -180,6 +205,14 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
 
     const fields = {};
     const unreadable = Array.isArray(raw.unreadable) ? raw.unreadable.filter((k) => typeof k === 'string') : [];
+    // 清晰度：模型抄这个字段时看得清不清楚。可选，但给了就得是闭集里的档位 ——
+    // 自由发挥的形容词（"还行"、"一般"）在争议那一步摆给用户看时说明不了任何事。
+    const clarity = {};
+    for (const [k, v] of Object.entries(raw.clarity ?? {})) {
+      if (!(k in FIELD_RULES)) { reasons.push(`clarity 里有不认识的字段 ${k}`); continue; }
+      if (!(v in CLARITY)) { reasons.push(`clarity.${k} 只能是：${Object.keys(CLARITY).join(' / ')}`); continue; }
+      clarity[k] = v;
+    }
     for (const [k, v] of Object.entries(raw.fields ?? {})) {
       const rule = FIELD_RULES[k];
       if (!rule) { reasons.push(`不认识的字段 ${k}`); continue; }
@@ -229,6 +262,11 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
         notes: typeof raw.notes === 'string' ? raw.notes.slice(0, 400) : null,
         amountCheck,
         source: 'vision',
+        // 每个字段各自记来源。整份读数一个 source 是不够的：争议收场之后，
+        // 同一份读数里会同时有模型抄的和用户给的，而"这个数是谁说的"
+        // 恰恰是后面每一次复核唯一要问的问题。
+        fieldSources: Object.fromEntries(Object.keys(fields).map((k) => [k, 'vision'])),
+        clarity,
         sighted: { shape: raw.sighted.shape, width: shape.width, height: shape.height },
         readAt: new Date().toISOString(),
         confirmedAt: null,
@@ -245,13 +283,39 @@ export function loadReading(task, materialId) {
   catch { return null; }
 }
 
+/**
+ * 「这条读数整条退回待办」的标记。
+ *
+ * 争议收不了场（用户对着原件也认不出、或者守恒式的缺口补不上）时写下它。
+ * 它必须**钉在字节上并且拦住重派**：不然读数文件一没，下一次 `next` 看到的
+ * 又是「这张图还没读」，于是内核会把同一张图再派给模型，模型再读出同一个读不准的值，
+ * 用户再被问一遍同一个他已经说过认不出的字段 —— 一个转不出去的圈。
+ *
+ * 解法只有一个，而且只有人做得到：换一份看得清的原件。文件一换，
+ * 内容哈希就变了，这个标记自动不再新鲜，这张图重新回到正常的看图流程。
+ */
+const unreadableFile = (task, materialId) => path.join(readingsDir(task), `${materialId}.unreadable.json`);
+
+export function loadUnreadable(task, materialId) {
+  try { return JSON.parse(fs.readFileSync(unreadableFile(task, materialId), 'utf8')); }
+  catch { return null; }
+}
+
+export function writeUnreadable(task, record) {
+  const dir = readingsDir(task);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const p = unreadableFile(task, record.materialId);
+  fs.writeFileSync(`${p}.tmp`, JSON.stringify(record, null, 2), { mode: 0o600 });
+  fs.renameSync(`${p}.tmp`, p);
+}
+
 /** 上一次被驳回的理由，没有就是 null。 */
 export function loadRejection(task, materialId) {
   try { return JSON.parse(fs.readFileSync(rejectionFile(task, materialId), 'utf8')); }
   catch { return null; }
 }
 
-function writeRejection(task, record) {
+export function writeRejection(task, record) {
   const dir = readingsDir(task);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const p = rejectionFile(task, record.materialId);
@@ -260,7 +324,7 @@ function writeRejection(task, record) {
 }
 
 /** 这一张过了，上一次的理由就不再是待办 —— 留着它只会让状态永远停在"上次没过"。 */
-function clearRejection(task, materialId) {
+export function clearRejection(task, materialId) {
   try { fs.unlinkSync(rejectionFile(task, materialId)); } catch { /* 本来就没有 */ }
 }
 
@@ -269,7 +333,7 @@ const digestOf = (r) => crypto.createHash('sha256')
   .update(JSON.stringify([r.docType, Object.entries(r.fields ?? {}).sort(), [...(r.unreadable ?? [])].sort()]))
   .digest('hex');
 
-function writeReading(task, reading) {
+export function writeReading(task, reading) {
   const dir = readingsDir(task);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const p = readingFile(task, reading.materialId);
@@ -302,10 +366,15 @@ export function pendingConfirmations(task, inventory) {
       docType: r.docType,
       docTypeLabel: DOC_TYPES[r.docType]?.label ?? r.docType,
       fields: Object.entries(r.fields ?? {}).map(([key, value]) =>
-        ({ key, label: FIELD_LABELS[key] ?? key, value })),
+        // 来源跟着值一起摆给用户看。一张表上同时有"我看图读的"和"你给的"时，
+        // 用户要复核的重点完全不同 —— 前者要对着原件比，后者他自己就是来源。
+        ({ key, label: FIELD_LABELS[key] ?? key, value, source: r.fieldSources?.[key] ?? r.source ?? 'vision' })),
       unreadable: (r.unreadable ?? []).map((k) => FIELD_LABELS[k] ?? k),
       amountCheck: r.amountCheck ?? null,
       notes: r.notes ?? null,
+      // 这份读数是刚从一场争议里收场回来的话，收场的说法跟着它一起摆出来 ——
+      // 用户在这张表上看到的那个改过的值，得知道它是怎么来的。
+      disputeResolution: r.disputeResolution ?? null,
     });
   }
   return rows;
@@ -344,9 +413,9 @@ export function confirmReadings(task, materialIds) {
  *  2. **把分歧留成下一次读取的输入。** 机器读到什么、用户说是什么，一起记在
  *     驳回记录里，下一次看图时原样摆给模型（也摆给用户）。
  *
- * 收敛靠重读，不靠内核在两个值之间选一个。带着分歧派一次**干净上下文**的重读、
- * 把两次机器读数和用户的值一起摆给用户拍板，是 `reading_disputed` 那一步的事（#63）；
- * 这一票先把"用户改了字段，先前的确认就不再算数"钉死。
+ * 收敛靠重读，不靠内核在两个值之间选一个：带着分歧派一次**干净上下文**的重读、
+ * 把两次机器读数和用户的值一起摆给用户拍板，在 dispute.mjs 里。
+ * 这里只负责把分歧**记成一条待收场的争议**，一个值都不落。
  */
 export function disputeReading(task, materialId, corrections = {}) {
   const r = loadReading(task, materialId);
@@ -358,6 +427,9 @@ export function disputeReading(task, materialId, corrections = {}) {
       label: FIELD_LABELS[key] ?? key,
       machineValue: r.fields?.[key] ?? null,
       userValue: typeof userValue === 'string' ? userValue : String(userValue ?? ''),
+      // 机器抄这个字段时说自己看得清不清楚。它是证据的一部分，跟着分歧一起留住 ——
+      // 到了摆证据那一步再回头去翻，读数文件已经被作废删掉了。
+      machineClarity: r.clarity?.[key] ?? null,
       // 来源分开记：机器抄的是 vision，人说的是 user。合成一个值之前，
       // 两边各是谁说的必须一直看得见。
       source: 'user',
@@ -412,6 +484,10 @@ export function projectReading(reading) {
     candidates: Object.entries(f)
       .filter(([k]) => !(k in fields))
       .map(([field, value]) => ({ field, value, note: '看图读取的辅助字段', evidence: null })),
+    // 每个字段的来源跟着投影一起往下走。到了 ERP 那一头再问"这个数谁说的"，
+    // 答案得还在，不能在投影这一步被抹平成"看图读取"。
+    fieldSources: Object.fromEntries(Object.keys(fields).map((k) =>
+      [k, reading.fieldSources?.[k] ?? reading.source ?? 'vision'])),
     visionSource: { readAt: reading.readAt, confirmedAt: reading.confirmedAt, unreadable: reading.unreadable },
   };
 }

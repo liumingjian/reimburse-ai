@@ -26,13 +26,29 @@ import { currentStep } from './steptoken.mjs';
 import { takeInventory } from './inventory.mjs';
 import { findLiveTaskForSource } from './workspace.mjs';
 import { pendingConfirmations, confirmReadings, disputeReading } from './vision.mjs';
+import { settleDispute } from './dispute.mjs';
 
-/** 这一步正等着用户对读数表态吗。 */
-const awaitingConfirmation = (sourceKey, after) => {
+/** 内核此刻挂着的那一步，且回传的凭据正是它。对不上就是 null。 */
+const outstandingStep = (sourceKey, after) => {
   const outstanding = after ? currentStep(sourceKey) : null;
-  return !!outstanding && outstanding.token === after
-    && outstanding.state === 'reading_awaiting_confirmation';
+  return outstanding && outstanding.token === after ? outstanding : null;
 };
+
+/**
+ * 用户在终端上表态的两种步骤，各自认自己的凭据。
+ *
+ * 分得这么细，是因为它们收下的东西完全不同：一张表上的指错**开一场争议**，
+ * 争议里的拍板**收一场争议**。凭据串了台，用户在证据都还没摆出来的时候
+ * 就"拍了板"，而那正是这一整票要挡住的事。
+ */
+const awaitingConfirmation = (sourceKey, after) =>
+  outstandingStep(sourceKey, after)?.state === 'reading_awaiting_confirmation';
+
+// 争议那一步的凭据带着 phase（reading_disputed:ruling），因为摆证据、请拍板、
+// 补缺口是三步不同的事。收终值的只有后两步 —— 证据还没摆出来的时候不存在拍板。
+const RULING_STEPS = new Set(['reading_disputed:ruling', 'reading_disputed:conservation_gap']);
+const awaitingRuling = (sourceKey, after) =>
+  RULING_STEPS.has(outstandingStep(sourceKey, after)?.state);
 
 /**
  * 收下用户的表态。返回收下了什么（`{ verdict, materialIds }`），什么都没收下就是 `null`。
@@ -41,13 +57,30 @@ const awaitingConfirmation = (sourceKey, after) => {
  * 带着分歧回去重看那张图。不在的时候是**认可**：这张表上的读数全部确认。
  */
 export async function applyTerminalVerdict({ sourceDir, sourceKey, after, correctionFile = null }) {
-  if (!sourceDir || !awaitingConfirmation(sourceKey, after)) return null;
+  if (!sourceDir) return null;
+  const ruling = awaitingRuling(sourceKey, after);
+  if (!ruling && !awaitingConfirmation(sourceKey, after)) return null;
 
   const inventory = await takeInventory(sourceDir);
   // 认凭据用的是哪个 sourceKey，找任务就用哪一个 —— 从 sourceDir 再算一遍，
   // 就多了一处两边可能对不上的地方，而对不上时的样子是「点了头却没生效」。
   const task = findLiveTaskForSource(sourceKey);
   if (!task) return null;
+
+  // 争议里的拍板。用户给的终值仍然**不是直接落库** —— 它要过格式闸，
+  // 还要过守恒式：式子不平就只记下缺口，一个字段都不写，更不反算另外两个值。
+  if (ruling) {
+    if (!correctionFile) return null;
+    const doc = JSON.parse(fs.readFileSync(correctionFile, 'utf8'));
+    const byId = new Map(inventory.materials.map((m) => [m.materialId, m]));
+    const settled = (doc.corrections ?? [])
+      .filter((c) => byId.has(c.materialId))
+      .map((c) => settleDispute(task, c.materialId, byId.get(c.materialId).contentHash,
+        { values: c.fields ?? {}, giveUp: c.unreadable === true }))
+      .filter(Boolean);
+    return settled.length ? { verdict: 'ruled', rulings: settled } : null;
+  }
+
   const shown = pendingConfirmations(task, inventory);
   if (!shown.length) return null;
 

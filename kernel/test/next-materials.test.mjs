@@ -301,10 +301,11 @@ test('用户在表上指错：他给的值不落库，带着分歧回去重看�
     after: table.stepToken, correctionFile });
   assert.equal(applied.verdict, 'corrected');
 
-  // 用户的值没有被写进读数，这一份读数整份作废，回去重读。
+  // 用户的值没有被写进读数，这一份读数整份作废，转成一场待收场的争议。
+  // （争议本身怎么收场在 dispute.test.mjs 里，这里只钉"值没落库、状态转过去了"。）
   const back = await ask(dir);
-  assert.equal(back.state, 'reading_rejected', `实际停在 ${back.state}：${back.speak}`);
-  const why = back.step.images[0].previousRejection.join();
+  assert.equal(back.state, 'reading_disputed', `实际停在 ${back.state}：${back.speak}`);
+  const why = JSON.stringify(back.step.evidence);
   assert.match(why, /19\.80/, '用户说的值要摆出来');
   assert.match(why, /18\.80/, '机器读到的值也要摆出来，两个一起给人看');
   assert.doesNotMatch(JSON.stringify(back.blockedBy), /reading_awaiting_confirmation/,

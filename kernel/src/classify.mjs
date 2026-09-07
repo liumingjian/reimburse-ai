@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { parseMaterial, invoiceIdentity, checkAmounts, maskNumber } from './parse.mjs';
-import { loadReading, loadRejection, projectReading, MAX_SIGHT_FAILURES } from './vision.mjs';
+import { loadReading, loadRejection, loadUnreadable, projectReading, MAX_SIGHT_FAILURES,
+  FIELD_LABELS } from './vision.mjs';
 import { shapeOfFile } from './imageshape.mjs';
 import { READING_KINDS } from './state.mjs';
 
@@ -40,11 +41,26 @@ export function classifyInventory(sourceDir, inventory, task = null) {
       const projected = fresh ? projectReading(reading) : null;
       const rejection = loadRejection(task, m.materialId);
       const freshRejection = rejection && rejection.contentHash === m.contentHash;
+      const parkedRec = loadUnreadable(task, m.materialId);
+      const parked = parkedRec && parkedRec.contentHash === m.contentHash ? parkedRec : null;
       if (projected) parsed = projected;
+      // 争议排在普通驳回前面：两者都是「读过了但没落库」，处置却完全不同 ——
+      // 驳回是重读整张票，争议是只重读争的那一个字段（干净上下文）。
+      // 塌成同一种的话，模型会带着刚吵完的上下文重抄一整张，第二次读数就不独立了。
+      else if (freshRejection && !fresh && (rejection.disputed?.length ?? 0) > 0) {
+        parsed = { ...parsed, readingState: 'disputed', rejection };
+      } else if (parked) parsed = { ...parsed, readingState: 'unreadable', parked };
       // 驳回排在「没读过」前面：这张图确实还没有可用的读数，但**为什么**没有
       // 是下一次读取唯一有用的输入，把它塌成「还没读」就等于把理由丢掉。
       else if (freshRejection && !fresh) parsed = { ...parsed, readingState: 'rejected', rejection };
       else parsed = { ...parsed, readingState: !fresh && reading ? 'stale' : reading ? 'unconfirmed' : 'none' };
+    }
+
+    // 每个字段带来源。PDF 那条路上的字段是内核自己从文字层解出来的 —— 记 `kernel`；
+    // 看图那条路上的来源已经跟着读数投影过来了（vision / user），不覆盖它。
+    if (parsed.fields && !parsed.fieldSources) {
+      parsed = { ...parsed,
+        fieldSources: Object.fromEntries(Object.keys(parsed.fields).map((k) => [k, 'kernel'])) };
     }
 
     const identity = invoiceIdentity(parsed);
@@ -108,6 +124,24 @@ export function classifyOpenItems(classification) {
         continue;
       }
       const state = r.readingState ?? 'none';
+      if (state === 'unreadable') {
+        // 争议收不了场，整条读数已经退回待办。它挡在「再读一遍」前面 ——
+        // 用户已经说过他对着原件也认不出，再派模型去读一遍是在原地转圈。
+        add('reading_unreadable', true, { ...at,
+          note: `${r.parked?.reason ?? '这条读数已经退回待办'}。`
+            + `读不出的是：${(r.parked?.fields ?? []).map((f) => FIELD_LABELS[f] ?? f).join('、') || '这份读数'}。`
+            + '请换一份看得清的原件（重新导出或重新拍一张），换了我就重新看图',
+          fields: r.parked?.fields ?? [] });
+        continue;
+      }
+      if (state === 'disputed') {
+        const d = r.rejection?.disputed ?? [];
+        add('reading_disputed', true, { ...at,
+          note: `用户对着原件说这几个字段和我读到的不一样：${d.map((x) => x.label).join('、')}。`
+            + '他给的值我没有直接落库 —— 两边都可能错，先摆证据、再独立重读、最后请他拍板',
+          fields: d.map((x) => x.field) });
+        continue;
+      }
       if (state === 'unconfirmed') {
         add('reading_awaiting_confirmation', true, { ...at,
           note: '这张图已经读过，但读数还没有被确认。看图读出来的字段只是候选，'

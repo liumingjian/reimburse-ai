@@ -247,3 +247,15 @@ export function readingInboxIn(workspace) {
 export function correctionInboxIn(workspace) {
   return path.join(workspace, 'reading-correction.json');
 }
+
+/**
+ * 争议里那次独立重读写到哪里。第三个位置，还是由内核定。
+ *
+ * 它和读数、纠正各自分开，理由和上面那条一样，而且更硬：这三份东西分别出自
+ * **三个不同的读者**（第一次看图的模型、对着原件的用户、一个不知道前情的子 Agent）。
+ * 争议要收场，靠的正是这三份说法能被分开摆出来 —— 混进一个文件里，
+ * 收场的依据当场就没了。
+ */
+export function rereadInboxIn(workspace) {
+  return path.join(workspace, 'dispute-reread.json');
+}

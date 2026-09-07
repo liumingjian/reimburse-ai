@@ -44,6 +44,9 @@ const PLAIN = {
   amount_not_on_face: 'kernel',
   duplicate_invoice: 'user',
   no_primary_voucher: 'user',
+  // 争议收不了场：用户对着原件也认不出，或者守恒式的缺口补不上。
+  // 整条读数已经退回待办，解法只有一个，而且只有人做得到 —— 换一份看得清的原件。
+  reading_unreadable: 'user',
   // 跨任务查重
   duplicate_across_tasks: 'user',
   history_scope_local: 'kernel',
@@ -62,6 +65,10 @@ const READING_ITEMS = {
   reading_rejected: 'model',
   reading_stale: 'model',
   reading_awaiting_confirmation: 'user',
+  // 用户给的值和机器读数对不上。actor 是模型：它要摆证据链，
+  // 并派一个干净上下文的子 Agent 只重读那一个字段。**判定权仍然在用户手上** ——
+  // 模型在这一步做的全部是把三方的说法摆齐，一个值都不由它定。
+  reading_disputed: 'model',
 };
 
 const RESOLVER = { ...PLAIN, ...READING_ITEMS };
@@ -100,7 +107,8 @@ const hasBlockingItem = (o, pred) => itemsOf(o).some((i) => i.blocking && pred(i
 
 /** 会把材料开放项原样带上的那些状态。前面那几个状态内核下一步就自己重算，报早了是噪音。 */
 const MATERIAL_STATES = new Set(['intake_open_items', 'image_awaiting_reading', 'reading_rejected',
-  'reading_stale', 'reading_awaiting_confirmation', 'duplicate_blocked', 'events_pending']);
+  'reading_stale', 'reading_awaiting_confirmation', 'reading_disputed', 'duplicate_blocked',
+  'events_pending']);
 
 /** 数据目录的格式版本。它才是版本闸的判据 —— 该判的是数据格式，不是代码版本。 */
 export const SCHEMA_VERSION = 1;
@@ -217,6 +225,16 @@ const RULES = [
     state: 'reading_awaiting_confirmation',
     actor: 'user',
     when: (o) => taskSeen(o) && hasBlockingItem(o, (i) => i.kind === 'reading_awaiting_confirmation'),
+  },
+  {
+    // 用户的纠正和机器读数不同。它排在「等你过目」后面：手上还有别的读数没过目时，
+    // 先把那张表问完 —— 一次只让用户面对一件事。
+    //
+    // 它**不是** reading_rejected 的一种：驳回的处置是重读整张票，
+    // 争议的处置是只重读争的那一个字段，而且必须在干净上下文里读。
+    state: 'reading_disputed',
+    actor: 'model',
+    when: (o) => taskSeen(o) && hasBlockingItem(o, (i) => i.kind === 'reading_disputed'),
   },
   {
     // 跨任务查重命中：这张发票在另一个还占着它的任务里也在。

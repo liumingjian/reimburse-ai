@@ -14,6 +14,7 @@ import { readBinding } from './binding.mjs';
 import { takeInventory, intakeOpenItems } from './inventory.mjs';
 import { classifyInventory, classifyOpenItems } from './classify.mjs';
 import { buildWorkOrder, pendingConfirmations } from './vision.mjs';
+import { openDisputes } from './dispute.mjs';
 import { findLiveTaskForSource, sourceKeyOf, taskDir, classificationRecorded } from './workspace.mjs';
 import { crossTaskDuplicates, historyOpenItems } from './history.mjs';
 
@@ -105,5 +106,8 @@ export async function observeTask(sourceDir) {
       : [],
     // 读过、还没被用户过目的读数。它是终端那张定宽表格的全部内容。
     pendingReadings: task ? pendingConfirmations(task, inventory) : [],
+    // 用户指了错、还没收场的那几份。证据链、重读结果、守恒缺口都在里面 ——
+    // 摆给用户看的每一句话都从这里取，模型不补一个字。
+    pendingDisputes: task ? openDisputes(task, inventory, dir) : [],
   };
 }

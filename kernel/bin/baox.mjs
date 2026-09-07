@@ -30,6 +30,7 @@ import { readReconciliation, classifyReconciliation, attemptRecord } from '../sr
 import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
 import { observeEnvironment, observeTask } from '../src/observe.mjs';
 import { nextResponse } from '../src/next.mjs';
+import { ingestReread, autoSettleAgreed, openDisputes } from '../src/dispute.mjs';
 import { SCHEMA_VERSION as NEXT_SCHEMA_VERSION } from '../src/state.mjs';
 import { currentSourceKey, currentSourceDir } from '../src/steptoken.mjs';
 
@@ -657,6 +658,58 @@ try {
       }, rejected.length ? BLOCKED : OK);
     }
 
+    case 'reread-submit': {
+      // 争议里那次**独立重读**的收口。它和 ocr-submit 是两条不同的路：
+      // 那条收的是一整张票的读数，这条只收争议里的那一个字段，而且只在
+      // 一场还没收场的争议上收得下。
+      //
+      // 重读回来之后，内核当场判收敛，并且只在一种情形下自己拍板：重读和用户一致 ——
+      // 一次不知道用户说了什么的独立重读，读出了和用户一样的值，这是机器能给出的
+      // 最强的一种印证。即便如此，接受下来的读数仍然停在**未确认**：
+      // 用户还要在整张表上点最后那一下。
+      const dir = arg('dir');
+      const file = arg('file');
+      if (!dir || !file) out({ command: 'reread-submit', error: '缺少 --dir <材料目录> 或 --file <重读 json>' }, ERR);
+      const inventory = await takeInventory(dir);
+      const task = findLiveTaskForSource(sourceKeyOf(dir));
+      if (!task) out({ command: 'reread-submit', error: '这个目录还没有进行中的报销任务，先跑 intake' }, ERR);
+
+      const submission = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const result = ingestReread(dir, inventory, task, submission);
+      const settled = result.verdict === 'accepted'
+        ? autoSettleAgreed(task, result.materialId,
+          inventory.materials.find((m) => m.materialId === result.materialId).contentHash)
+        : null;
+
+      out({
+        command: 'reread-submit',
+        task: { taskId: task.taskId, workspace: taskDir(task) },
+        ...result,
+        settled,
+        note: result.verdict !== 'accepted'
+          ? '这次重读没收下，理由见 reasons'
+          : settled
+            ? '重读和用户一致，这个值已经收下（来源记作 user）；再问一次 baox next，'
+              + '内核会把整张读数再摆一次请用户过目'
+            : '重读收下了。收敛结果要用户对着原件拍板 —— 再问一次 baox next，'
+              + '内核会把两次机器读数和用户的值一起摆出来',
+      }, result.verdict === 'accepted' ? OK : BLOCKED);
+    }
+
+    case 'disputes': {
+      // **只读**。人手敲着看看这个目录上有哪些争议、各走到哪一步了。
+      // 和 confirm-readings 一样，它一个字都不写：争议的收场只发生在 `baox next`
+      // 那条路上，因为那条路上才有一次性凭据，也才有用户。
+      const dir = arg('dir');
+      if (!dir) out({ command: 'disputes', error: '缺少 --dir <材料目录>' }, ERR);
+      const inventory = await takeInventory(dir);
+      const task = findLiveTaskForSource(sourceKeyOf(dir));
+      if (!task) out({ command: 'disputes', error: '这个目录还没有进行中的报销任务，先跑 intake' }, ERR);
+      const items = openDisputes(task, inventory, dir);
+      out({ command: 'disputes', readOnly: true, pending: items.length, items,
+        note: items.length ? '争议的收场只发生在 baox next 上，这条命令不收任何终值' : '没有待收场的争议' }, OK);
+    }
+
     case 'confirm-readings': {
       // **只读**。确认这件事从这里搬走了 —— 它现在发生在终端上：内核在
       // `baox next` 里渲染一张定宽表格，用户当面表态，模型带着那一次性凭据回传。
@@ -937,14 +990,15 @@ try {
       const response = nextResponse({ observation, sourceKey, after,
         hasResult: filed('result'),
         // 已经收下并处置过的纠正不再报「没处安放」—— 那句话是留给真的没处安放的。
-        hasCorrection: filed('correction') && applied?.verdict !== 'corrected' });
+        hasCorrection: filed('correction') && !applied });
       // 收下了什么，明说。用户点了头却看不出内核收没收到，是最难排的一种障。
       out(applied ? { ...response, applied } : response, response.exit);
     }
 
     default:
       out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['next', 'doctor', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
-        'ocr-request', 'ocr-submit', 'confirm-readings', 'history', 'events', 'allocate', 'select-task', 'lines',
+        'ocr-request', 'ocr-submit', 'confirm-readings', 'reread-submit', 'disputes',
+        'history', 'events', 'allocate', 'select-task', 'lines',
         'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill', 'select'] }, ERR);
   }
 } catch (err) {

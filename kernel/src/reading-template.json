@@ -6,6 +6,7 @@
     "sighted.shape": "你正看着的这张图是什么形状，从 step.sightedShapes 里挑一个（tall / portrait / square / landscape / wide）。这一栏答不对，整份读数不算数——它是「这张图真的打开过」的凭据，说「看不清」也要先答对它",
     "fields": "票面上看得见的字符，逐字抄。不要计算、不要推断、不要补全；金额守恒式不平就重看一遍，绝不调整某一位数字去凑平",
     "unreadable": "看着这张图但认不出的字段名。它说的是「认不出」，不是「没看」",
+    "clarity": "可选，但请填。每个字段你看得清不清楚：clear（清楚）/ blurry（发虚，但认得出）。用户以后说某个数不对时，内核要把你当时这句判断摆给他看——「我读到 10，但那一位当时就发虚」和「我读到 10，清清楚楚」是两种完全不同的证据",
     "notes": "可选。想说明的话，比如哪一处被反光盖住了"
   },
   "readings": [
@@ -21,7 +22,8 @@
         "taxAmount": "0.55",
         "totalAmount": "18.80"
       },
-      "unreadable": []
+      "unreadable": [],
+      "clarity": { "totalAmount": "clear", "netAmount": "blurry" }
     }
   ]
 }
