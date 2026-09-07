@@ -127,3 +127,25 @@ test.after(() => {
   fs.rmSync(home, { recursive: true, force: true });
   fs.rmSync(src, { recursive: true, force: true });
 });
+
+// —— 随包发出的读数模板必须能过内核校验（skills QA）——
+//
+// 旧的 SKILL.md 在示例里写了 "sellerName": ""，而 isText 拒收空字符串：
+// 照着示例抄的正确读数会被 ocr-submit 打回。示例比散文更容易被仿写，所以
+// 模板现在是一个真文件，并且由这条测试钉住它一直是可提交的。
+test('skills/baox/references/reading-schema.json 是一份能被收下的读数', () => {
+  const tpl = JSON.parse(fs.readFileSync(
+    path.join(repo, 'skills', 'baox', 'references', 'reading-schema.json'), 'utf8'));
+
+  assert.equal(tpl.version, 1, '模板的 version 必须和内核的 READING_VERSION 一致');
+
+  const [reading] = tpl.readings;
+  for (const [k, v] of Object.entries(reading.fields)) {
+    assert.notEqual(v, '', `模板里的 ${k} 是空字符串，照抄会被内核拒收`);
+  }
+
+  // 模板里的 materialId / contentHash 是占位说明，换成这次夹具的真值再提交。
+  const v = submit({ ...reading, materialId: material.materialId, contentHash: material.contentHash });
+  assert.equal(v.verdict, 'accepted', `模板被拒了：${JSON.stringify(v.reasons)}`);
+  assert.equal(v.amountCheck, 'balanced');
+});

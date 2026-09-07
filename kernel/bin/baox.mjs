@@ -17,7 +17,7 @@ import { CATEGORIES } from '../src/categories.mjs';
 import { findLiveTaskForSource, createTask, recordInventory, recordClassification,
   recordEvents, recordInvoiceSightings, abandonTask, loadIndex,
   sourceKeyOf, taskDir , recordCatalogVerification, loadCatalogVerification,
-  recordErpAttempt } from '../src/workspace.mjs';
+  recordErpAttempt, recordErpWrite } from '../src/workspace.mjs';
 import { crossTaskDuplicates, historyOpenItems, holdsInvoices } from '../src/history.mjs';
 import { authorizedPage, verifyExpenseItems, verifyProject, PROJECT_FORM } from '../src/erpcatalog.mjs';
 import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerField,
@@ -231,6 +231,18 @@ try {
         out({ command: 'erp-fill', wrote: false,
           note: '这条命令会往 ERP 页面真实写入字段，必须显式带 --rehearse；它仍然不会保存' }, BLOCKED);
       }
+      // 会写 ERP 的命令一律必须绑定到一个任务。没有任务就没有地方记下"这批发票动过 ERP"，
+      // 而记不下就等于这批发票可以在另一个任务里再报一次 —— 那是这套设计要防的头号错误。
+      const fillDir = arg('dir');
+      if (!fillDir) {
+        out({ command: 'erp-fill', wrote: false,
+          error: '缺少 --dir <材料目录>：会写 ERP 的命令必须绑定到一个任务，否则这次写入没有地方记' }, ERR);
+      }
+      const fillTask = findLiveTaskForSource(sourceKeyOf(fillDir));
+      if (!fillTask) {
+        out({ command: 'erp-fill', wrote: false,
+          error: '这个目录没有进行中的报销任务，先跑 intake' }, ERR);
+      }
       const gate = await authorizedPage({ expected: arg('expect') });
       if (!gate.ok) {
         out({ command: 'erp-fill', wrote: false, identity: gate.probe,
@@ -289,6 +301,11 @@ try {
             note: '没有给任何字段值；至少给一个 --cause/--project/--expense/--invoice-type/--amount/--tax' }, ERR);
         }
 
+        // —— 从这里往下开始有副作用，所以标记落在这一行之前 ——
+        // 上面每一道闸（身份、页签、明细区、费用项目核对）都是只读的，走到这里才第一次写字段。
+        // 记早了会把一次什么都没写成的排练变成永久占用；记晚了会留出"写进去了但没记下"的窗口。
+        // 两者不对称：前者的代价是用户多跑一次只读对账，后者的代价是同一批发票被报两次。
+        const marked = recordErpWrite(fillTask, 'erp-fill');
         const steps = [];
         // 先把上一轮遗留的税额清零，再写费用金额。
         // 实测：行里已有税额 58.05 时把费用金额改成 50.12，ERP 直接拒收 ——
@@ -339,6 +356,8 @@ try {
         out({
           command: 'erp-fill',
           wrote: true,
+          task: { taskId: marked.taskId, erpWriteState: marked.erpWriteState,
+            erpWriteAt: marked.erpWriteAt, workspace: taskDir(marked) },
           formMode: tabs[0].mode,
           steps,
           checks,

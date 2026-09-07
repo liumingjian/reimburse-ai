@@ -188,6 +188,7 @@ test('项目号只有在 ERP 只读核对确认之后才升级来源，且核对
 
   const verified = {
     linesDigest: linesDigest(built),
+    versionId: built.versionId,
     projects: { 111454: { verdict: 'confirmed', name: '某某项目' } },
   };
   assert.equal(applySelection(built, c, selection, verified).lines[0].projectSource,
@@ -202,4 +203,39 @@ test('项目号只有在 ERP 只读核对确认之后才升级来源，且核对
   const stale = { ...verified, linesDigest: 'something-else' };
   assert.equal(applySelection(built, c, selection, stale).lines[0].projectSource,
     'user_input_unverified');
+});
+
+test('换一张明细形状相同的发票，旧的任务选择和 ERP 核对都不能被继承', () => {
+  const task = createTask(path.join(home, 'src-version'));
+  const { c, built } = rideCase();
+  submitSelection(task, built, {
+    homeCity: '广州', purpose: '客户支持',
+    projects: Object.fromEntries(built.lineItems.map((l) => [l.lineId, '111454'])),
+  });
+  const selection = loadSelection(task);
+  const verified = {
+    linesDigest: linesDigest(built),
+    versionId: built.versionId,
+    projects: { 111454: { verdict: 'confirmed', name: '某某项目' } },
+  };
+  assert.equal(applySelection(built, c, selection, verified).lines[0].projectSource,
+    'erp_catalog_confirmed');
+
+  // 用户换掉了发票文件，于是有了新的盘点版本 —— 但新发票的日期、城市、价税合计
+  // 和旧的一模一样，所以明细指纹一动不动。指纹自己拦不住这一种，版本才拦得住。
+  const rebuilt = { ...built, versionId: 'v-test-2' };
+  assert.equal(linesDigest(rebuilt), linesDigest(built),
+    '这个用例的前提就是指纹相同；指纹一旦也变了，它测的就不是版本这条线了');
+
+  const after = applySelection(rebuilt, c, selection, verified);
+  assert.equal(after.applied, false, '换了材料之后旧的任务选择不能继续生效');
+  assert.deepEqual(after.notes.map((n) => n.kind), ['task_selection_stale']);
+
+  // 重新提交选择之后，那份旧的核对记录仍然不算数 —— 它核对的是另一批材料。
+  submitSelection(task, rebuilt, {
+    homeCity: '广州', purpose: '客户支持',
+    projects: Object.fromEntries(rebuilt.lineItems.map((l) => [l.lineId, '111454'])),
+  });
+  assert.equal(applySelection(rebuilt, c, loadSelection(task), verified).lines[0].projectSource,
+    'user_input_unverified', '旧核对记录绑的是旧版本，不能升级新材料上的项目号');
 });

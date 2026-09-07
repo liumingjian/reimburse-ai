@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "readings": [
+    {
+      "materialId": "工单里的 materialId，原样抄",
+      "contentHash": "工单里的 contentHash，原样抄",
+      "docType": "invoice",
+      "fields": {
+        "invoiceNumber": "25317000000123456789",
+        "issueDate": "2026-09-04",
+        "netAmount": "18.25",
+        "taxAmount": "0.55",
+        "totalAmount": "18.80"
+      },
+      "unreadable": []
+    }
+  ]
+}

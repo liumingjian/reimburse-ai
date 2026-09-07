@@ -170,6 +170,30 @@ export function loadCatalogVerification(task) {
 }
 
 /**
+ * 记下"这个任务已经往 ERP 发过写入"。
+ *
+ * 这是 erpWriteState 的**唯一**写入方。它必须在第一次副作用**之前**调用 ——
+ * 顺序反过来就会出现"写进去了但没记下"的窗口，而那正是这套设计最怕的状态：
+ * 发票可能已经被 ERP 消耗，任务却看起来干干净净，于是同一批材料可以再报一次。
+ * 反过来"记下了但没写成"是安全的一侧：代价只是这批发票要靠只读对账来解锁。
+ *
+ * 时间戳只取第一次：后面的命令可以细化状态（dispatched -> saved），
+ * 但"什么时候第一次碰的 ERP"是不会变的事实。
+ */
+export function recordErpWrite(task, state) {
+  const idx = loadIndex();
+  const i = idx.tasks.findIndex((t) => t.taskId === task.taskId);
+  if (i < 0) throw new Error(`没有这个任务 ${task.taskId}`);
+  const prev = idx.tasks[i];
+  const updated = { ...prev, erpWriteState: state,
+    erpWriteAt: prev.erpWriteAt ?? new Date().toISOString() };
+  idx.tasks[i] = updated;
+  writeJson(indexPath(), idx);
+  writeJson(path.join(taskDir(updated), 'meta.json'), updated);
+  return updated;
+}
+
+/**
  * 追加一条 ERP 动作尝试记录（目前只有只读对账这一种）。
  *
  * **只追加，不改写、不清理**：一次对账的判断依据必须能在事后原样复原，
