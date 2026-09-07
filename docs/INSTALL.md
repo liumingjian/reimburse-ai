@@ -79,6 +79,45 @@ baox 的内核自己会拒掉模型拼出来的命令——**这一层不用装�
 路径要写成绝对路径。加完重开一个 Claude Code 会话。
 已经有 `hooks` 配置的话，把这一项并进现有的 `PreToolUse` 数组里，别整段覆盖。
 
+### 必做：把权限一次配好
+
+Claude Code 的 **auto mode**（不逐条问你、可以放着自己跑的那个模式）会把每个动作交给一个
+分类器审。分类器不认识 baox，它看到的是「一目录发票」加「一条要读它们的命令」，判不出目的地
+是本机还是外网，于是按**数据外泄**拦掉。真机第一次跑就卡在这里：
+
+```
+Denied by auto mode classifier. [Data Exfiltration] `ocr-submit` would send sensitive
+reimbursement materials from .../resources to an unconfirmed destination
+```
+
+拦下来之后 **auto mode 不会弹权限提示**（它的整个卖点就是不问你），所以现场没有任何办法放行，
+只能退出去改配置重来。装好之后先跑一次这个，就不会遇到：
+
+```bash
+cd <你报销用的那个目录>
+node <解压出来的目录>/install-permissions.mjs
+```
+
+它做两件事，都会先备份、只加不删：
+
+1. 往 `<项目>/.claude/settings.json` 写一批**窄规则**——精确到「哪个解释器 + 哪个脚本 +
+   哪个子命令」。必须这么窄：官方文档说 auto mode 只保留窄规则并在分类器之前解析掉，而
+   `Bash(node *)` 这类**通配解释器**的宽规则会被**挂起**，写了也白写。
+2. 往 `~/.claude/settings.json` 合并一段 `autoMode`，用大白话告诉分类器：这些发票只在你本机的
+   材料目录、`~/.baox` 和公司 ERP 之间流转，`ocr-submit` 这种名字里带「submit」的子命令
+   只是往本机任务工作区里写。这一段**只能放在用户级设置里**——分类器不读项目里的
+   `autoMode`（怕仓库里的文件自己给自己发通行证）。
+
+跑完还有两步收尾，脚本会再提醒你一次：
+
+- **信任这个工作区**：在该目录里交互式开一次 `claude`、接受信任对话框。不然项目里的规则会被
+  整段忽略，Claude Code 只会安静地打印一行 `Ignoring N permissions.allow entry … this
+  workspace has not been trusted`。
+- **验一眼**：`claude auto-mode config`，看 `environment` 和 `allow` 里有没有那几条。
+
+> 不想用 auto mode 也行：用会逐条问你的模式（Shift+Tab 切换），那些命令会正常弹提示，你点允许
+> 即可。但那样就没法放着不管了。
+
 ## 第一次使用
 
 在 Claude Code 里说一句：
