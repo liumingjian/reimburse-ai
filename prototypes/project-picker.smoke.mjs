@@ -40,6 +40,7 @@ const EXPORTS = [
   "state", "counters", "ACTIONS", "estimate", "SCENARIOS", "CLUSTERS", "ALL_LINES", "PROJECTS",
   "askableClusters", "exceptionClusters", "mainProjectOfScenario", "cMainCandidates", "truthFor",
   "candidatesFor", "aCandidates", "verifyProject", "clusterById", "usedCodes", "assignedCount",
+  "bPlan", "GROUPINGS", "groupsOf", "groupById", "truthOfLine", "impureGroups",
   "failuresOf", "setVariant", "toggleSelection", "bump", "projectName", "render",
 ];
 
@@ -90,15 +91,20 @@ const runA = () => {
   failures.push("A：30 步内没走完");
 };
 
+/* B 照 bPlan 算出来的最省路径走一遍：整组能勾就勾，勾不动就逐条。实测必须落回估算上。 */
 const runB = () => {
   api.setVariant("B");
+  const grouping = state.b.grouping;
   ACTIONS["b-open"]();
-  api.askableClusters().forEach((cluster) => {
-    const truth = api.truthFor(cluster.id);
-    if (!api.candidatesFor(cluster, state.b.assign).includes(truth)) api.bump("B 搜索项目清单");
-    api.toggleSelection(state.b, cluster.lines.map((line) => line.id), `整簇「${cluster.title}」`);
-    ACTIONS["b-assign"]({ code: truth });
-    check(!state.b.pendingOverwrite, `B：${cluster.id} 不该弹覆盖确认`);
+  api.bPlan(grouping).moves.forEach((move) => {
+    move.groups.forEach((groupId) => {
+      const group = api.groupById(groupId);
+      api.toggleSelection(state.b, group.lines.map((line) => line.id), `整组「${group.title}」`);
+    });
+    move.lines.forEach((lineId) => api.toggleSelection(state.b, [lineId], `单条 ${lineId}`));
+    api.bump("B 搜索项目清单");
+    ACTIONS["b-assign"]({ code: move.code });
+    check(!state.b.pendingOverwrite, `B/${grouping}：${move.code} 不该弹覆盖确认`);
   });
   ACTIONS["b-verify"]();
   api.failuresOf(state.b.verifyResults).forEach((failure) => {
@@ -142,23 +148,40 @@ const runC = () => {
 const RUNNERS = { A: runA, B: runB, C: runC };
 
 const rows = [];
+const LEGS = [
+  { key: "A", label: "A" },
+  { key: "B", label: "B·类别", grouping: "category" },
+  { key: "B", label: "B·归属簇", grouping: "cluster" },
+  { key: "C", label: "C" },
+];
 api.SCENARIOS.forEach((item) => {
   ACTIONS["set-scenario"]({ scenario: item.key });
-  ["A", "B", "C"].forEach((key) => {
+  LEGS.forEach(({ key, label, grouping }) => {
+    if (grouping) {
+      state.b.grouping = grouping;
+      ACTIONS["reset-variant"]({});
+    }
     try {
       RUNNERS[key]();
     } catch (error) {
-      failures.push(`${item.key}/${key} 抛异常：${error.message}`);
+      failures.push(`${item.key}/${label} 抛异常：${error.message}`);
       return;
     }
     const vs = key === "A" ? state.a : key === "B" ? state.b : state.c;
     const results = vs.verifyResults;
-    check(api.assignedCount(vs.assign) === api.ALL_LINES.length, `${item.key}/${key}：只归属了 ${api.assignedCount(vs.assign)}/${api.ALL_LINES.length} 条`);
-    check(results.length > 0, `${item.key}/${key}：没跑核对`);
-    check(api.failuresOf(results).length === 0, `${item.key}/${key}：核对仍未通过`);
+    check(api.assignedCount(vs.assign) === api.ALL_LINES.length, `${item.key}/${label}：只归属了 ${api.assignedCount(vs.assign)}/${api.ALL_LINES.length} 条`);
+    check(results.length > 0, `${item.key}/${label}：没跑核对`);
+    check(api.failuresOf(results).length === 0, `${item.key}/${label}：核对仍未通过`);
+    /* 只数「本该对却没对」的行：真值本身是坏码的那些，改派后必然偏离真值，不算错。 */
+    const excused = api.ALL_LINES.filter((line) => api.verifyProject(api.truthOfLine(line)).verdict !== "confirmed").length;
+    const wrong = api.ALL_LINES.filter((line) => vs.assign[line.id]?.code !== api.truthOfLine(line)).length - excused;
+    /* A/C 以行程簇为提问单位。真值按类别落时它们表达不了，会错——那是结论，不是 bug。 */
+    const expectExact = key === "B" || !api.SCENARIOS.find((x) => x.key === item.key).byCategory;
+    if (expectExact) check(wrong === 0, `${item.key}/${label}：${wrong} 条没落在真值上`);
     rows.push({
+      wrong,
       scenario: item.name,
-      variant: key,
+      variant: label,
       measured: counters[key].actions,
       estimated: api.estimate(key).actions,
       browser: counters[key].browser,
@@ -246,11 +269,11 @@ renderBranch("C · 例外页 + 只看主项目筛选", () => {
   ACTIONS["reset-variant"]({});
 });
 
-console.log("场景        变体  实测  估算  开浏览器  用到项目数");
+console.log("场景        变体              实测  估算  开浏览器  用到项目数  错配");
 rows.forEach((row) => {
   const flag = row.measured === row.estimated ? "" : "   <= 实测与估算不一致";
   console.log(
-    `${row.scenario.padEnd(10, "　")}  ${row.variant}    ${String(row.measured).padStart(3)}  ${String(row.estimated).padStart(4)}  ${String(row.browser).padStart(6)}  ${String(row.codes).padStart(8)}${flag}`,
+    `${row.scenario.padEnd(10, "　")}  ${row.variant.padEnd(8, "　")}  ${String(row.measured).padStart(3)}  ${String(row.estimated).padStart(4)}  ${String(row.browser).padStart(6)}  ${String(row.codes).padStart(8)}  ${String(row.wrong).padStart(3)}${flag}`,
   );
 });
 
@@ -263,4 +286,7 @@ if (failures.length) {
   failures.forEach((message) => console.log(`  - ${message}`));
   process.exit(1);
 }
-console.log(`PASS 3 场景 × 3 变体全部走通，${api.ALL_LINES.length} 条明细全部归属且核对通过。`);
+console.log(
+  `PASS ${api.SCENARIOS.length} 场景 × ${LEGS.length} 条路线全部走通，${api.ALL_LINES.length} 条明细全部归属且核对通过。` +
+    "「错配」非零的格子只出现在 A/C × 按类别落——那是提问单位与真值单位不一致的代价，不是失败。",
+);

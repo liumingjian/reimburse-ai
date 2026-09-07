@@ -196,6 +196,14 @@
       }
       .callout.bad { border-color: var(--coral); background: var(--coral-soft); color: var(--coral); }
       .callout.ok { border-color: var(--green); background: var(--green-soft); color: var(--green); }
+      .grouping-switch { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+      .button-secondary.on { border-color: var(--blue); color: var(--blue); background: var(--blue-soft, var(--panel)); font-weight: 600; }
+      .plan-rows { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 6px; }
+      .plan-row { display: flex; align-items: baseline; gap: 10px; padding: 4px 8px; border-radius: 6px; }
+      .plan-row.on { background: rgba(0, 0, 0, 0.05); }
+      .plan-name { min-width: 12em; font-weight: 600; }
+      .plan-num { min-width: 4em; font-variant-numeric: tabular-nums; font-weight: 700; }
+      .plan-steps { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; font-size: 12px; color: var(--ink-soft); }
       .callout-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 
       /* ---------- 底部对比条 ---------- */
@@ -329,53 +337,53 @@
           id: "gz", kind: "行程", title: "广州 · 9/3–9/6", basis: "连续日期 + 同城",
           pool: ["P-1120", "P-1121", "P-1128"],
           lines: [
-            L("gz-1", "09-03", "广州", "交通", "北京—广州 机票", 1280),
-            L("gz-2", "09-03", "广州", "市内交通", "白云机场—酒店 打车", 96),
+            L("gz-1", "09-03", "广州", "长途交通", "北京—广州 机票", 1280),
+            L("gz-2", "09-03", "广州", "市外交通", "白云机场—酒店 打车", 96),
             L("gz-3", "09-03", "广州", "住宿", "广州天河 酒店 3 晚", 1470),
             L("gz-4", "09-04", "广州", "餐饮", "客户现场午餐", 88),
             L("gz-5", "09-04", "广州", "市内交通", "酒店—客户现场", 42),
             L("gz-6", "09-05", "广州", "餐饮", "项目组晚餐", 236),
-            L("gz-7", "09-06", "广州", "市内交通", "酒店—白云机场 打车", 104),
-            L("gz-8", "09-06", "广州", "交通", "广州—北京 机票", 1360),
+            L("gz-7", "09-06", "广州", "市外交通", "酒店—白云机场 打车", 104),
+            L("gz-8", "09-06", "广州", "长途交通", "广州—北京 机票", 1360),
           ],
         },
         {
           id: "sz", kind: "行程", title: "深圳 · 9/9–9/11", basis: "连续日期 + 同城",
           pool: ["P-1203", "P-1204", "P-1210"],
           lines: [
-            L("sz-1", "09-09", "深圳", "交通", "北京—深圳 机票", 1420),
-            L("sz-2", "09-09", "深圳", "市内交通", "宝安机场—酒店", 88),
+            L("sz-1", "09-09", "深圳", "长途交通", "北京—深圳 机票", 1420),
+            L("sz-2", "09-09", "深圳", "市外交通", "宝安机场—酒店", 88),
             L("sz-3", "09-09", "深圳", "住宿", "深圳福田 酒店 2 晚", 1160),
             L("sz-4", "09-10", "深圳", "餐饮", "客户工作餐", 132),
             L("sz-5", "09-10", "深圳", "会议", "客户现场会议室租赁", 600),
-            L("sz-6", "09-11", "深圳", "市内交通", "酒店—宝安机场", 92),
-            L("sz-7", "09-11", "深圳", "交通", "深圳—北京 机票", 1510),
+            L("sz-6", "09-11", "深圳", "市外交通", "酒店—宝安机场", 92),
+            L("sz-7", "09-11", "深圳", "长途交通", "深圳—北京 机票", 1510),
           ],
         },
         {
           id: "sh", kind: "行程", title: "上海 · 9/15–9/18", basis: "连续日期 + 同城",
           pool: ["P-1043", "P-1042", "P-1044"],
           lines: [
-            L("sh-1", "09-15", "上海", "交通", "北京—上海 高铁", 553),
-            L("sh-2", "09-15", "上海", "市内交通", "虹桥—酒店", 76),
+            L("sh-1", "09-15", "上海", "长途交通", "北京—上海 高铁", 553),
+            L("sh-2", "09-15", "上海", "市外交通", "虹桥—酒店", 76),
             L("sh-3", "09-15", "上海", "住宿", "上海浦东 酒店 3 晚", 1890),
             L("sh-4", "09-16", "上海", "餐饮", "客户工作餐", 168),
             L("sh-5", "09-16", "上海", "市内交通", "地铁", 24),
             L("sh-6", "09-17", "上海", "招待", "客户答谢晚宴", 880),
-            L("sh-7", "09-18", "上海", "市内交通", "酒店—虹桥", 82),
-            L("sh-8", "09-18", "上海", "交通", "上海—北京 高铁", 553),
+            L("sh-7", "09-18", "上海", "市外交通", "酒店—虹桥", 82),
+            L("sh-8", "09-18", "上海", "长途交通", "上海—北京 高铁", 553),
           ],
         },
         {
           id: "cd", kind: "行程", title: "成都 · 9/22–9/24", basis: "连续日期 + 同城",
           pool: ["P-1306", "P-1305", "P-1311"],
           lines: [
-            L("cd-1", "09-22", "成都", "交通", "北京—成都 机票", 1180),
+            L("cd-1", "09-22", "成都", "长途交通", "北京—成都 机票", 1180),
             L("cd-2", "09-22", "成都", "住宿", "成都高新 酒店 2 晚", 980),
             L("cd-3", "09-23", "成都", "餐饮", "项目组午餐", 96),
             L("cd-4", "09-23", "成都", "市内交通", "打车", 58),
-            L("cd-5", "09-24", "成都", "市内交通", "酒店—双流机场", 110),
-            L("cd-6", "09-24", "成都", "交通", "成都—北京 机票", 1240),
+            L("cd-5", "09-24", "成都", "市外交通", "酒店—双流机场", 110),
+            L("cd-6", "09-24", "成都", "长途交通", "成都—北京 机票", 1240),
           ],
         },
         {
@@ -383,9 +391,9 @@
           id: "inv", kind: "凭证", title: "合并交通票 INV-TR-8842 · 分摊 3 段", basis: "同一主要报销凭证",
           inheritFrom: "sh", pool: ["P-1042", "P-1204", "P-1120"],
           lines: [
-            L("inv-1", "09-15", "上海", "交通", "市内接送（分摊 1/3）", 682),
-            L("inv-2", "09-16", "上海", "交通", "市内接送（分摊 2/3）", 682),
-            L("inv-3", "09-17", "上海", "交通", "市内接送（分摊 3/3）", 682),
+            L("inv-1", "09-15", "上海", "市内交通", "市内接送（分摊 1/3）", 682),
+            L("inv-2", "09-16", "上海", "市内交通", "市内接送（分摊 2/3）", 682),
+            L("inv-3", "09-17", "上海", "市内交通", "市内接送（分摊 3/3）", 682),
           ],
         },
         {
@@ -409,6 +417,28 @@
       const projectName = (code) => projectByCode(code)?.name || "（清单外）";
 
       /*
+        分组维度。归属簇（行程／凭证）是 Q9 的原结论；费用类别是用户在看过原型后提出的替代。
+        两者用同一套 group 形状，左侧面板照单渲染，好让「哪种分法更省点击」变成一个能当场算出来的数，
+        而不是一句主张。类别分组没有凭证继承——那 3 段分摊会被打散进「市内交通」，这是它的代价之一。
+      */
+      const CATEGORY_ORDER = ["长途交通", "市外交通", "市内交通", "住宿", "餐饮", "会议", "招待"];
+      const CATEGORY_GROUPS = CATEGORY_ORDER.map((name) => ({
+        id: `cat-${name}`,
+        kind: "类别",
+        title: name,
+        basis: "同一费用类别",
+        lines: ALL_LINES.filter((line) => line.category === name),
+      })).filter((group) => group.lines.length);
+
+      const GROUPINGS = [
+        { key: "category", name: "按费用类别", note: "类别与项目正交：一个类别里的钱常常分属好几个项目。" },
+        { key: "cluster", name: "按归属簇（行程/凭证）", note: "连续日期＋同城，或同一主要报销凭证；凭证簇继承分摊前那一行。" },
+      ];
+      const groupsOf = (grouping) => (grouping === "cluster" ? CLUSTERS : CATEGORY_GROUPS);
+      const groupById = (id) => CLUSTERS.find((cluster) => cluster.id === id) || CATEGORY_GROUPS.find((group) => group.id === id);
+      const groupingByKey = (key) => GROUPINGS.find((item) => item.key === key) || GROUPINGS[0];
+
+      /*
         场景 = 这批费用「真正」落在几个项目上。C 的价值完全取决于例外率，
         所以例外率必须是可当场拨动的旋钮，而不是写死的乐观假设。
       */
@@ -416,13 +446,39 @@
         { key: "focused", name: "集中", desc: "37 条全落在 1 个项目", truth: { gz: "P-1042", sz: "P-1042", sh: "P-1042", cd: "P-1042", bj: "P-1042" } },
         { key: "mild", name: "轻度分散", desc: "2 个项目，主项目占 3/4", truth: { gz: "P-1120", sz: "P-1042", sh: "P-1042", cd: "P-1042", bj: "P-1042" } },
         { key: "real", name: "真实", desc: "4 次出差 → 4 个项目，本地散条落在一个陈旧项目", truth: { gz: "P-1120", sz: "P-1204", sh: "P-1042", cd: "P-1305", bj: "P-2211" } },
+        /*
+          第四个场景是给「按类别分组」留的反例：真值按费用类别落，行程簇内部反而不一致。
+          没有它，类别分组只会在按行程构造的数据上挨打——那就是一场作弊的对照。
+        */
+        {
+          key: "bycat", name: "按类别落", desc: "差旅费归项目，市内与餐饮归部门费用池",
+          byCategory: { 长途交通: "P-1042", 市外交通: "P-1042", 住宿: "P-1042", 市内交通: "P-2701", 餐饮: "P-2701", 会议: "P-2801", 招待: "P-2801" },
+        },
       ];
 
       const scenario = () => SCENARIOS.find((item) => item.key === state.scenario) || SCENARIOS[2];
+
+      /* 真值的最小单位是明细行；簇真值和类别真值都由它导出。 */
+      const truthOfLine = (line) => {
+        const current = scenario();
+        if (current.byCategory) return current.byCategory[line.category];
+        const cluster = clusterById(line.clusterId || ALL_LINES.find((item) => item.id === line.id).clusterId);
+        return current.truth[cluster.inheritFrom || cluster.id];
+      };
+      /* 簇真值 = 簇内多数派。byCat 场景下簇是不纯的，A/C 以簇为提问单位就答不准——页面会明说。 */
       const truthFor = (clusterId) => {
         const cluster = clusterById(clusterId);
-        return scenario().truth[cluster.inheritFrom || clusterId];
+        const current = scenario();
+        if (!current.byCategory) return current.truth[cluster.inheritFrom || clusterId];
+        const weight = {};
+        cluster.lines.forEach((line) => {
+          const code = current.byCategory[line.category];
+          weight[code] = (weight[code] || 0) + 1;
+        });
+        return Object.entries(weight).sort((a, b) => b[1] - a[1])[0][0];
       };
+      const groupIsPure = (group) => new Set(group.lines.map((line) => truthOfLine(line))).size === 1;
+      const impureGroups = (grouping) => groupsOf(grouping).filter((group) => !groupIsPure(group));
 
       /* C 的主项目 = 覆盖行数最多的真值；例外簇 = 真值与主项目不同的可问簇。 */
       const mainProjectOfScenario = () => {
@@ -449,7 +505,7 @@
         rounds: 0, verifyResults: [], hints: [], reaskNote: null,
       });
       const freshB = () => ({
-        opened: false, collapsed: {}, selected: [], assign: {},
+        opened: false, grouping: "category", collapsed: {}, selected: [], assign: {},
         search: "", searchCounted: false, manualOpen: false, manualText: "", manualError: null,
         pendingOverwrite: null, verifyResults: [], submitted: false,
       });
@@ -485,7 +541,8 @@
       const resetVariant = (key) => {
         counters[key] = { actions: 0, browser: 0, log: [] };
         if (key === "A") state.a = freshA();
-        if (key === "B") state.b = freshB();
+        /* 分组维度是看法不是数据，重置计数时留着，免得 QA 每换一次场景都要重新切。 */
+        if (key === "B") state.b = { ...freshB(), grouping: state.b?.grouping || "category" };
         if (key === "C") state.c = freshC();
       };
 
@@ -538,6 +595,67 @@
       const failuresOf = (results) => results.filter((result) => result.verdict !== "confirmed");
       const verdictOfCode = (results, code) => results.find((result) => result.code === code)?.verdict || "";
 
+      /*
+        B 的最省选择路径。给定分组维度，走一遍真值：能整组勾就整组勾，勾不动就逐条勾，
+        然后点一次项目把这一批扫进去。这是「按类别分组还是按归属簇分组」唯一诚实的裁判——
+        它对两种分法用的是同一把尺，谁在什么数据上省，直接看数。
+      */
+      const bPlan = (grouping) => {
+        const groups = groupsOf(grouping);
+        const assign = {};
+        const weight = {};
+        ALL_LINES.forEach((line) => {
+          const code = truthOfLine(line);
+          weight[code] = (weight[code] || 0) + 1;
+        });
+        const codes = Object.keys(weight).sort((a, b) => weight[b] - weight[a]);
+        const moves = [];
+        const steps = [];
+        let selects = 0;
+        let picks = 0;
+        codes.forEach((code) => {
+          const want = ALL_LINES.filter((line) => truthOfLine(line) === code && assign[line.id]?.code !== code);
+          if (!want.length) {
+            steps.push(`${code}：${weight[code]} 条已被凭证继承带到位，0 次点击`);
+            return;
+          }
+          const wantIds = want.map((line) => line.id);
+          /* Q14：父簇被整簇选中时，分摊出来的那几段是白送的，不该记成点击。 */
+          const free = new Set();
+          CLUSTERS.filter((cluster) => cluster.inheritFrom).forEach((child) => {
+            const parent = clusterById(child.inheritFrom);
+            if (parent.lines.every((line) => wantIds.includes(line.id))) child.lines.forEach((line) => free.add(line.id));
+          });
+          const picked = new Set();
+          const groupHits = [];
+          groups.forEach((group) => {
+            if (group.lines.every((line) => free.has(line.id))) return;
+            if (!group.lines.every((line) => wantIds.includes(line.id))) return;
+            groupHits.push(group.id);
+            group.lines.forEach((line) => picked.add(line.id));
+          });
+          const lineHits = wantIds.filter((id) => !picked.has(id) && !free.has(id));
+          lineHits.forEach((id) => picked.add(id));
+          selects += groupHits.length + lineHits.length;
+          picks += 1;
+          moves.push({ code, groups: groupHits, lines: lineHits });
+          steps.push(`${code}（${wantIds.length} 条）：${groupHits.length} 次整组勾 + ${lineHits.length} 次逐条勾 + 1 次点项目`);
+          CLUSTERS.forEach((cluster) => {
+            const inCluster = cluster.lines.filter((line) => picked.has(line.id));
+            if (!inCluster.length) return;
+            if (inCluster.length === cluster.lines.length && !cluster.inheritFrom) {
+              assignCluster(assign, cluster.id, code, "选择");
+            } else {
+              inCluster.forEach((line) => {
+                assign[line.id] = { code, via: cluster.inheritFrom ? "覆盖" : "选择" };
+              });
+            }
+          });
+        });
+        const searches = picks;
+        return { selects, picks, searches, moves, steps, codes, total: 1 + selects + picks + searches + 1 };
+      };
+
       /* ---------------------------------------------------------------- 估算模型 */
       /*
         与实测同口径的公式估算，写在对比条上供当场反驳。
@@ -548,18 +666,6 @@
         const rounds = Math.ceil(asks.length / 4);
         const truthCodes = [...new Set(asks.map((cluster) => truthFor(cluster.id)))];
         const failures = truthCodes.filter((code) => verifyProject(code).verdict !== "confirmed").length;
-
-        /* 走一遍真值，看有几个簇的真值掉在前 3 候选之外——那就是要手打／要搜索的次数。 */
-        const offList = (clusters) => {
-          const assign = {};
-          let miss = 0;
-          clusters.forEach((cluster) => {
-            const truth = truthFor(cluster.id);
-            if (!candidatesFor(cluster, assign).includes(truth)) miss += 1;
-            assignCluster(assign, cluster.id, truth, "选择");
-          });
-          return miss;
-        };
 
         if (key === "A") {
           /* 手打的编码当场核对，坏码只多花一次重打；从候选里选中的坏码要拖到最后核对才炸，代价大得多。 */
@@ -591,12 +697,14 @@
           };
         }
         if (key === "B") {
-          const searches = offList(asks);
-          const fix = failures * 2;
+          const grouping = state.b.grouping;
+          const plan = bPlan(grouping);
+          const badCodes = plan.codes.filter((code) => verifyProject(code).verdict !== "confirmed").length;
+          const fix = badCodes * 2;
           return {
-            actions: 1 + asks.length * 2 + searches + 1 + fix,
+            actions: plan.total + fix,
             browser: 1,
-            formula: `1 开浏览器 + ${asks.length}×2（勾簇头 + 点项目）+ ${searches} 搜索 + 1 核对提交${failures ? ` + ${failures}×2 就地改派` : ""}`,
+            formula: `1 开浏览器 + ${plan.selects} 勾选（${groupingByKey(grouping).name}）+ ${plan.picks} 点项目 + ${plan.searches} 搜索 + 1 核对提交${badCodes ? ` + ${badCodes}×2 就地改派` : ""}`,
           };
         }
         const exceptions = exceptionClusters();
@@ -719,6 +827,25 @@
         </section>
       `;
 
+      /*
+        A 和 C 的提问单位是行程簇。真值按费用类别落的时候，簇内部就不是一个项目了——
+        它们只能答出簇的多数派，也就是答错。这条必须画出来，不然「按类别分组」的代价会被藏在 B 里看不见。
+      */
+      const clusterAskWarning = (key) => {
+        if (!scenario().byCategory) return "";
+        const impure = CLUSTERS.filter((cluster) => !cluster.inheritFrom && !groupIsPure(cluster));
+        if (!impure.length) return "";
+        const wrong = ALL_LINES.filter((line) => truthOfLine(line) !== truthFor(line.clusterId)).length;
+        return `
+          <div class="callout bad">
+            <b>本场景下 ${key} 的提问单位不成立</b><br />
+            这批钱按<b>费用类别</b>落项目，而 ${key} 是按<b>行程簇</b>发问的：${impure.length} 个簇内部跨了不止一个项目。
+            一簇一答只能给出簇内多数派，会有 <b>${wrong} 条</b>落错项目，而且核对拦不住——项目号本身是好的，只是归错了人。
+            下面的交互次数因此不能拿去和 B 比：它买到的不是同一个结果。切到 B 用「按费用类别」分组才能表达这批真值。
+          </div>
+        `;
+      };
+
       /* ================================================================ 变体 A */
       /* 终端逐簇问。不开浏览器，但要老实画出 AskUserQuestion 的硬约束：
          每轮 ≤4 题、每题 2–4 选项，所以只在簇数 ≤4、候选 ≤3 时成立。 */
@@ -837,6 +964,7 @@ ${escapeHtml(state.a.manualError.detail)}${state.a.manualError.hint ? `
         return `
           <div class="page">
             ${renderTopbar()}
+            ${clusterAskWarning("A")}
             <div class="design-heading">
               <div>
                 <div class="section-kicker">变体 A</div>
@@ -984,6 +1112,44 @@ ${escapeHtml(state.a.manualError.detail)}${state.a.manualError.hint ? `
           .join("");
       };
 
+      /*
+        把「哪种分法更省」摊开给用户看。它读的是场景真值，是上帝视角的估算，不是用户已经点出来的东西——
+        标签上写清楚，免得被当成页面在预填。
+      */
+      const bPlanCallout = (vs) => {
+        const rows = GROUPINGS.map((item) => ({ item, plan: bPlan(item.key) }));
+        const best = rows.reduce((a, b) => (b.plan.total < a.plan.total ? b : a));
+        const current = rows.find((row) => row.item.key === vs.grouping);
+        return `
+          <div class="callout ${current === best ? "ok" : ""}">
+            <b>本场景「${scenario().name}」下的最省选择路径</b>（按真值算的上帝视角估算，页面不会替你点）
+            <div class="plan-rows">
+              ${rows
+                .map(
+                  (row) => `
+                <div class="plan-row ${row.item.key === vs.grouping ? "on" : ""}">
+                  <span class="plan-name">${row.item.name}</span>
+                  <span class="plan-num">${row.plan.total} 次</span>
+                  <span class="line-meta">${row.plan.selects} 勾选 + ${row.plan.picks} 点项目 + ${row.plan.searches} 搜索 + 开页 1 + 提交 1</span>
+                </div>
+              `,
+                )
+                .join("")}
+            </div>
+            <span class="line-meta">${
+              rows[0].plan.total === rows[1].plan.total
+                ? "两种分法打平。"
+                : `${best.item.name}省 ${Math.abs(rows[0].plan.total - rows[1].plan.total)} 次。${
+                    best.item.key === "category"
+                      ? "这批钱的项目归属跟费用类别对齐，类别就是好的选择粒度。"
+                      : "这批钱的项目归属跟行程对齐，类别切开的是同一趟差旅，整组勾就用不上了。"
+                  }`
+            }</span>
+            <div class="plan-steps">${current.plan.steps.map((step) => `<span>${escapeHtml(step)}</span>`).join("")}</div>
+          </div>
+        `;
+      };
+
       /* ================================================================ 变体 B */
 
       const renderVariantB = () => {
@@ -996,7 +1162,7 @@ ${escapeHtml(state.a.manualError.detail)}${state.a.manualError.hint ? `
                 <div>
                   <div class="section-kicker">变体 B</div>
                   <h2>网页工作台</h2>
-                  <p>规模没有上限，代价是每次都得切一趟浏览器。左侧按归属簇折叠，簇头一个复选框全选整簇；右侧项目面板，项目本身就是投放目标。</p>
+                  <p>规模没有上限，代价是每次都得切一趟浏览器。左侧按费用类别折叠（可切回归属簇），组头一个复选框全选整组；右侧项目面板，项目本身就是投放目标。</p>
                 </div>
                 <span class="variant-badge">B · 无规模上限，必开浏览器</span>
               </div>
@@ -1018,7 +1184,7 @@ ${escapeHtml(state.a.manualError.detail)}${state.a.manualError.hint ? `
               <div>
                 <div class="section-kicker">变体 B</div>
                 <h2>网页工作台</h2>
-                <p>项目 → 事件：勾选一个簇（或簇内几条），点右侧项目，一次扫入一批。决策次数 = 项目数，不是事件数。</p>
+                <p>项目 → 事件：勾选一个组（或组内几条），点右侧项目，一次扫入一批。决策次数 = 项目数，不是事件数——前提是分组切在项目的边界上。</p>
               </div>
               <span class="variant-badge">B · 无规模上限，必开浏览器</span>
             </div>
@@ -1026,11 +1192,20 @@ ${escapeHtml(state.a.manualError.detail)}${state.a.manualError.hint ? `
             ${verifyCallout(vs, "b")}
             <div class="workbench">
               <section class="panel">
-                <div class="panel-title"><h3>候选明细 · 按归属簇</h3><span class="line-meta">${assignedCount(vs.assign)}/${ALL_LINES.length} 已归属</span></div>
-                ${CLUSTERS.map((cluster) => clusterCard(cluster, vs, "b", vs.verifyResults)).join("")}
+                <div class="panel-title"><h3>候选明细 · ${groupingByKey(vs.grouping).name}</h3><span class="line-meta">${assignedCount(vs.assign)}/${ALL_LINES.length} 已归属</span></div>
+                <div class="grouping-switch">
+                  ${GROUPINGS.map(
+                    (item) => `
+                    <button class="button-secondary ${item.key === vs.grouping ? "on" : ""}" type="button" data-action="b-set-grouping" data-grouping="${item.key}">${item.name}（${groupsOf(item.key).length} 组）</button>
+                  `,
+                  ).join("")}
+                  <span class="line-meta">${groupingByKey(vs.grouping).note}</span>
+                </div>
+                ${bPlanCallout(vs)}
+                ${groupsOf(vs.grouping).map((group) => clusterCard(group, vs, "b", vs.verifyResults)).join("")}
                 <div class="callout-actions">
                   <button class="button-primary" type="button" data-action="b-verify" ${assignedCount(vs.assign) === ALL_LINES.length ? "" : "disabled"}>核对并提交（${usedCodes(vs.assign).length} 个项目号）</button>
-                  <span class="line-meta">簇不能拆并；要动其中几条，展开明细单独勾。</span>
+                  <span class="line-meta">组不能拆并（Q16）；要动其中几条，展开明细单独勾。</span>
                 </div>
               </section>
               ${projectPanel(vs, "b", { title: "项目", note: "项目本身就是投放目标：勾选事件后点项目即归入，没有「应用」按钮。已归入的置顶。" })}
@@ -1125,6 +1300,7 @@ ${escapeHtml(vs.manualError.detail)}</div>` : ""}
           return `
             <div class="page">
               ${renderTopbar()}
+              ${clusterAskWarning("C")}
               ${heading}
               <div class="terminal">
                 <div class="term-line dim">$ baox 继续任务 ${task.id}</div>
@@ -1150,6 +1326,7 @@ ${escapeHtml(vs.manualError.detail)}</div>` : ""}
           return `
             <div class="page">
               ${renderTopbar()}
+              ${clusterAskWarning("C")}
               ${heading}
               <div class="terminal">
                 <div class="term-line ok">✓ ${ALL_LINES.length} 条明细全部归入 ${vs.mainProject} · ${escapeHtml(projectName(vs.mainProject))}（起手式，用户的一次动作）。</div>
@@ -1176,6 +1353,7 @@ ${escapeHtml(failures[0].detail)}
           return `
             <div class="page">
               ${renderTopbar()}
+              ${clusterAskWarning("C")}
               ${heading}
               <div class="terminal">
                 <div class="term-line ok">✓ ${ALL_LINES.length} 条明细已全部归入 ${vs.mainProject} · ${escapeHtml(projectName(vs.mainProject))}。</div>
@@ -1193,6 +1371,7 @@ ${escapeHtml(failures[0].detail)}
         return `
           <div class="page">
             ${renderTopbar()}
+            ${clusterAskWarning("C")}
             ${heading}
             <div class="callout">
               起手式已把 ${ALL_LINES.length} 条全归入 <b>${vs.mainProject} · ${escapeHtml(projectName(vs.mainProject))}</b>。这一页只做一件事：把不属于它的挑出来改派。
@@ -1395,6 +1574,13 @@ ${escapeHtml(failures[0].detail)}
         "b-open": () => {
           bump("B 打开浏览器页面", { browser: true });
           state.b.opened = true;
+          render();
+        },
+        /* 切分组维度只换看法，不改归属，因此和展开/收起同类：不记一次交互。 */
+        "b-set-grouping": (dataset) => {
+          state.b.grouping = dataset.grouping;
+          state.b.collapsed = {};
+          state.b.selected = [];
           render();
         },
         "b-toggle-cluster": (dataset) => {
@@ -1674,7 +1860,7 @@ ${escapeHtml(failures[0].detail)}
       const syncClusterIndicators = () => {
         document.querySelectorAll('[data-control="b-cluster"], [data-control="c-cluster"]').forEach((control) => {
           const vs = stateFor(control.dataset.control[0]);
-          const lines = clusterById(control.dataset.cluster).lines;
+          const lines = groupById(control.dataset.cluster).lines;
           const selected = lines.filter((line) => vs.selected.includes(line.id)).length;
           control.checked = selected === lines.length;
           control.indeterminate = selected > 0 && selected < lines.length;
