@@ -441,6 +441,291 @@ export function serveIdentityConfirmation(spec, opts = {}) {
       at: new Date().toISOString() }));
 }
 
+/**
+ * 个人项目簿的维护页。簿子的增删只发生在这张页面的提交上——有后果的动作要一次
+ * 可追溯的提交，不走对话，也不走 CLI（ADR-0009）。
+ *
+ * **v1 只有录入。** 删除、过期时间、复检全部都在 ADR-0009 的规划里，各有各的票，
+ * 这一版一个都没有；页面上现在没有删除按钮，不是漏了。
+ *
+ * 页面上只有两样东西：一条录入条和当前项目列表。录入条**只收项目号**，
+ * 没有填名称的地方——名称永远是 ERP 回读值，页面上多一个名称框就是在邀请用户
+ * 写一个没有权威性、还会和 ERP 错位的名字。
+ *
+ * 每次「核对并加入」都是一次真的 ERP 只读核对，所以它可能被拒。被拒不终结这次打开：
+ * 判定显示在录入条下面，列表照旧，用户改一个号接着来。
+ *
+ * 列表的行有两处写法：服务端这一份和页面里 `redraw()` 那一份。是有意留的——
+ * 开页那一份不依赖 JS 跑没跑起来（`baox projects-page` 的用例就是直接读 HTML 断言的），
+ * 提交之后那一份要就地刷新。两处都只拼这三格，改的时候一起改。
+ */
+export function renderProjectBookPage(spec, nonce) {
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const projects = spec.projects ?? [];
+  const day = (s) => (s ? esc(String(s).slice(0, 10)) : '—');
+  const rows = projects.map((p) => `
+    <tr>
+      <td class="num">${esc(p.number)}</td>
+      <td class="name">${esc(p.name ?? '—')}</td>
+      <td class="at">${day(p.confirmedAt)}</td>
+    </tr>`).join('');
+
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>维护项目簿</title><style>
+:root{color-scheme:light dark}
+body{font:16px/1.6 -apple-system,"PingFang SC",sans-serif;margin:0;padding:32px 20px;
+  display:flex;justify-content:center;background:Canvas;color:CanvasText}
+main{width:100%;max-width:620px}
+h1{font-size:20px;margin:0 0 4px}
+p.prompt{margin:0 0 20px;opacity:.7}
+form.bar{display:flex;gap:10px}
+input{flex:1;min-width:0;padding:12px 14px;font:inherit;border-radius:10px;
+  border:1px solid color-mix(in srgb,CanvasText 30%,transparent);background:Canvas;color:CanvasText}
+button{padding:12px 18px;font-size:15px;font-weight:600;color:#fff;background:#2563eb;
+  border:0;border-radius:10px;cursor:pointer;white-space:nowrap}
+button:disabled{opacity:.5;cursor:default}
+button.plain{color:CanvasText;background:transparent;
+  border:1px solid color-mix(in srgb,CanvasText 30%,transparent)}
+#msg{margin:14px 0 0;padding:12px 14px;font-size:14px;line-height:1.5;border-radius:10px;display:none}
+#msg.ok{display:block;background:color-mix(in srgb,#16a34a 14%,transparent)}
+#msg.bad{display:block;background:color-mix(in srgb,#dc2626 14%,transparent)}
+h2{font-size:14px;font-weight:400;opacity:.6;margin:28px 0 8px}
+table{width:100%;border-collapse:collapse;font-size:15px}
+th{text-align:left;font-weight:400;font-size:13px;opacity:.6;padding:0 12px 6px 0}
+td{padding:8px 12px 8px 0;border-top:1px solid color-mix(in srgb,CanvasText 14%,transparent);
+  word-break:break-all}
+td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+td.at{opacity:.6;font-size:13px;white-space:nowrap}
+#empty{padding:18px 0;opacity:.6;font-size:14px}
+footer{margin-top:28px;display:flex;justify-content:flex-end}
+#done{display:none;text-align:center;padding:48px 0;font-size:17px}
+</style></head><body><main>
+<div id="page">
+  <h1>维护项目簿</h1>
+  <p class="prompt">从 ERP 里复制一个项目号粘到下面。baox 会<b>当场向 ERP 核对</b>一次：
+  存在、已审核、未禁用才加入；项目名称由 ERP 回读写入，不用你填。</p>
+
+  <form class="bar" id="f">
+    <input id="number" name="number" placeholder="粘一个项目号" autocomplete="off" autofocus>
+    <button type="submit" id="add">核对并加入</button>
+  </form>
+  <p id="msg"></p>
+
+  <h2>当前项目（<span id="count">${projects.length}</span>）</h2>
+  <table id="list">
+    <thead><tr><th>项目号</th><th>名称（ERP 回读）</th><th>加入时间</th></tr></thead>
+    <tbody id="rows">${rows}</tbody>
+  </table>
+  <div id="empty" ${projects.length ? 'hidden' : ''}>还没有项目。粘一个项目号加进来，报销时就能从这里选。</div>
+
+  <footer><button class="plain" id="finish">完成</button></footer>
+</div>
+<div id="done">已收工，可以关闭这个页面，回到 Claude Code 继续。</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const day = (s) => (s ? esc(String(s).slice(0, 10)) : '—');
+
+function redraw(projects) {
+  $('rows').innerHTML = projects.map((p) =>
+    '<tr><td class="num">' + esc(p.number) + '</td><td class="name">' + esc(p.name ?? '—')
+    + '</td><td class="at">' + day(p.confirmedAt) + '</td></tr>').join('');
+  $('count').textContent = projects.length;
+  $('empty').hidden = projects.length > 0;
+}
+
+function say(text, ok) {
+  $('msg').textContent = text;
+  $('msg').className = ok ? 'ok' : 'bad';
+}
+
+$('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const number = $('number').value;
+  if (!number.trim()) return;
+  $('add').disabled = true;
+  say('正在向 ERP 核对……', true);
+  try {
+    const res = await fetch('/submit?nonce=${nonce}', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ number }),
+    });
+    const payload = await res.json();
+    if (!payload.ok) {
+      // 内核这一次抛了——这不是"被拒"，是没跑通。列表保持原样，不去猜它现在是什么样。
+      say('这次录入没能跑完：' + payload.error, false);
+      return;
+    }
+    // 内核的判定就是要显示给用户的那句话；页面不改写它，也不替它总结。
+    const r = payload.result;
+    say(r.note ?? r.status, r.status === 'admitted');
+    if (r.book) redraw(r.book.projects);
+    if (r.status === 'admitted') $('number').value = '';
+  } catch (err) {
+    say('没能把这个项目号交给 baox：' + err.message, false);
+  } finally {
+    $('add').disabled = false;
+    $('number').focus();
+  }
+});
+
+$('finish').addEventListener('click', async () => {
+  $('finish').disabled = true;
+  try {
+    await fetch('/done?nonce=${nonce}', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    });
+  } catch (err) {
+    // 服务已经不在了（多半是闲置超时先收了工）。收工照样是收工——这一页上加过的项目
+    // 每一条在提交那一刻就落了盘。要是这里不接住，按钮会一直是灰的，页面永远停在原地。
+    $('done').textContent = '这一页已经收工了（baox 那边等超时先退出了）。'
+      + '加进去的项目都已经存好，可以关掉这个页面。';
+  }
+  $('page').style.display = 'none';
+  $('done').style.display = 'block';
+});
+</script></main></body></html>`;
+}
+
+/**
+ * 把维护页架在长驻形态上。页面每提交一个项目号就走一次录入闸门，判定原样回给页面，
+ * 服务不关；点「完成」才收工，交回收工那一刻簿子的样子。
+ *
+ * `intake` 和 `book` 都可注入，测试因此能整条跑通而不碰 ERP、不碰真实数据根。
+ * **闸门只收项目号**：页面递来的别的字段一律不往下传——名称是 ERP 回读值，
+ * 别的字段各有各的票，页面这一侧递什么都不该能写进簿子。
+ */
+export function serveProjectBookPage({ intake, book, ...opts } = {}) {
+  return serveResidentPage((nonce) => renderProjectBookPage(book(), nonce), {
+    ...opts,
+    onSubmit: (body) => intake(String(body?.number ?? '')),
+    onDone: () => {
+      const current = book();
+      return { status: 'done', at: new Date().toISOString(),
+        projectCount: current.projects.length, projects: current.projects };
+    },
+  });
+}
+
+/** 读一次请求体里的 JSON；读不出来抛，由调用处决定怎么答。 */
+async function readJson(req) {
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
+/**
+ * 起一个只听回环地址的临时端口服务，把地址交给 onReady 并自己把页面打开。
+ * 两种形态（一次性、长驻）共用它，因此"临时端口 + 127.0.0.1 + 自动打开"这三条
+ * 只有一处写法，不会在新形态上走样。
+ */
+function listenLocal(server, nonce, onReady, onListening) {
+  server.listen(0, '127.0.0.1', () => {
+    const { port } = server.address();
+    const url = `http://127.0.0.1:${port}/?nonce=${nonce}`;
+    onReady?.(url);
+    openInBrowser(url);
+    onListening();
+  });
+}
+
+/**
+ * 长驻形态的本地页面。**它加在一次性形态旁边，不替代后者** ——
+ * 确认读数、逐段分摊、任务选择、确认身份和通用选择页各自只收一次提交，
+ * "一次提交就 resolve 并关服务"对它们是对的语义，一个字都不用改。
+ * （这条性质原本写在 ADR-0002 里，是无条件的；本形态把它收窄到一次性形态，
+ * 已在那份 ADR 的补记里说明。）
+ *
+ * 项目维护页不是这个形状：用户要在同一次打开里反复"核对并加入 / 删除 / 复检"，
+ * 最后才点「完成」。所以这里的服务在提交之后**不关**：每次提交交给内核处理，处理结果
+ * 原样回给页面（`{ok:true,result}`），页面据此就地刷新自己。
+ *
+ * 页面这一侧的约定（后续维护页照此写）：
+ * - `GET  /?nonce=…`        取页面本身，可以反复取
+ * - `POST /submit?nonce=…`  一次操作，答 `{ok:true,result}`；内核判定为拒绝时答 `{ok:false,error}`，
+ *                           `error` 是 `onSubmit` 抛出的那句话，**会原样显示给用户**
+ * - `POST /done?nonce=…`    用户点「完成」，服务关闭，`onDone` 的返回值就是这一次打开的最终结果
+ *
+ * 安全约定与一次性形态完全相同：临时端口、只绑 127.0.0.1、一个随机 nonce 守护**全部**端点，
+ * 不匹配一律 404。一次被拒的请求既不会进到内核，也不会替用户把页面关掉。
+ *
+ * `timeoutMs` 是**闲置**超时：用户在页面上每做一次操作就重新计时，并且一次正在处理中的提交
+ * 不会被它砍断。长驻页一开就是一段活儿——按绝对时长砍会在用户正干着的时候把页面收走，
+ * 而一次要往 ERP 跑几个来回的"复检全部"耗时超过闲置阈值是正常的，不是没人了。
+ */
+export function serveResidentPage(
+  render, { timeoutMs = 30 * 60 * 1000, onReady, onSubmit, onDone } = {}) {
+  const nonce = crypto.randomBytes(16).toString('hex');
+  return new Promise((resolve, reject) => {
+    let timer;
+    let inFlight = 0;
+    const sockets = new Set();
+    // close() 只等已有连接自己散场；页面那边是长连接，所以关的时候把它们一并断掉，
+    // 否则"点了完成"和"端口真的放开了"之间会隔着一段说不清的时间。
+    const shutdown = (settle) => {
+      clearTimeout(timer);
+      server.close(settle);
+      for (const s of sockets) s.destroy();
+    };
+    // 闲置计时：每做一次操作就拨回去。**手上还有没答完的提交就不算闲置** ——
+    // 否则一次慢的核对会在自己写响应的当口被连socket一起拆掉。
+    const keepAlive = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (inFlight > 0) return keepAlive();
+        shutdown(() => resolve({ status: 'timeout', timeoutMs }));
+      }, timeoutMs);
+    };
+    const server = http.createServer(async (req, res) => {
+      const url = new URL(req.url, 'http://127.0.0.1');
+      if (url.searchParams.get('nonce') !== nonce) { res.writeHead(404).end('not found'); return; }
+
+      if (req.method === 'GET' && url.pathname === '/') {
+        keepAlive();
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        return res.end(render(nonce));
+      }
+
+      if (req.method === 'POST' && url.pathname === '/submit') {
+        let body;
+        try { body = await readJson(req); }
+        catch { res.writeHead(400).end('bad json'); return; }
+        keepAlive();
+        inFlight += 1;
+        // 内核可以拒绝这一次操作（查无此号、已禁用……）。那是页面要显示给用户的答案，
+        // 不是收工 —— 用户改一个数再来一次就是了。
+        let payload;
+        try { payload = { ok: true, result: await onSubmit?.(body) }; }
+        catch (e) { payload = { ok: false, error: e?.message ?? String(e) }; }
+        finally { inFlight -= 1; }
+        keepAlive();
+        res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(payload));
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/done') {
+        let body;
+        try { body = await readJson(req); }
+        catch { res.writeHead(400).end('bad json'); return; }
+        clearTimeout(timer);
+        // 点「完成」这个动作本身就是收工。用户在对话里说"弄好了"不算。
+        let final, failed;
+        try { final = (await onDone?.(body)) ?? { status: 'done', at: new Date().toISOString() }; }
+        catch (e) { failed = e; }
+        // 响应真的写出去了才动服务器：body 还在缓冲里就 destroy socket，页面收到的是半截。
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{"ok":true}', () => shutdown(() => (failed ? reject(failed) : resolve(final))));
+        return;
+      }
+
+      res.writeHead(404).end('not found');
+    });
+    server.on('connection', (s) => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
+    server.on('error', reject);
+    listenLocal(server, nonce, onReady, keepAlive);
+  });
+}
+
 function serveLocal(render, { timeoutMs = 8 * 60 * 1000, onReady } = {}, onSubmit) {
   const nonce = crypto.randomBytes(16).toString('hex');
   return new Promise((resolve, reject) => {
@@ -452,10 +737,8 @@ function serveLocal(render, { timeoutMs = 8 * 60 * 1000, onReady } = {}, onSubmi
         return res.end(render(nonce));
       }
       if (req.method === 'POST' && url.pathname === '/submit' && url.searchParams.get('nonce') === nonce) {
-        const chunks = [];
-        for await (const c of req) chunks.push(c);
         let body;
-        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+        try { body = await readJson(req); }
         catch { res.writeHead(400).end('bad json'); return; }
         res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
         clearTimeout(timer);
@@ -466,11 +749,7 @@ function serveLocal(render, { timeoutMs = 8 * 60 * 1000, onReady } = {}, onSubmi
       res.writeHead(404).end('not found');
     });
     server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      const url = `http://127.0.0.1:${port}/?nonce=${nonce}`;
-      onReady?.(url);
-      openInBrowser(url);
+    listenLocal(server, nonce, onReady, () => {
       timer = setTimeout(() => {
         server.close(() => resolve({ status: 'timeout', timeoutMs }));
       }, timeoutMs);

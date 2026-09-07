@@ -6,7 +6,7 @@ import { paths, ensureDir } from '../src/paths.mjs';
 import * as chrome from '../src/chrome.mjs';
 import { probeIdentity, ERP_ORIGIN } from '../src/probe.mjs';
 import { serveSelection, serveConfirmation, serveAllocation, serveTaskSelection,
-  serveIdentityConfirmation } from '../src/serve.mjs';
+  serveIdentityConfirmation, serveProjectBookPage } from '../src/serve.mjs';
 import { buildWorkOrder, ingestReadings, confirmReadings, loadReading,
   READING_VERSION, DOC_TYPES } from '../src/vision.mjs';
 import { takeInventory, intakeOpenItems } from '../src/inventory.mjs';
@@ -28,6 +28,7 @@ import { versionAt, compareVersions } from '../src/version.mjs';
 import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
 import { readBook, bookPath, selectableProjects, isSelectable, PROJECT_BOOK_EMPTY, BOOK_EMPTY_HINT }
   from '../src/projects.mjs';
+import { intakeProject } from '../src/projectintake.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -931,6 +932,33 @@ try {
       });
     }
 
+    case 'projects-page': {
+      // 项目簿的增删只发生在这张页面的提交上。刻意只有这一条弹页命令，没有 `add-project`：
+      // 有后果的动作要一次可追溯的页面提交，不走对话（ADR-0009）。v1 只有录入。
+      // 页面前台阻塞，用户点「完成」这条命令才返回。
+      const r = await serveProjectBookPage({
+        // 只把项目号往下传。写成一元的箭头函数是**故意**的：intakeProject 的第二个参数
+        // 是依赖注入口（gate / run / now），直接把函数递过去，页面那边哪天多传一个参数
+        // 就等于让浏览器决定用哪个 gate。
+        intake: (number) => intakeProject(number),
+        book: readBook,
+        timeoutMs: Number(arg('timeout-ms', 30 * 60 * 1000)),
+        onReady: (url) => process.stderr.write(`已在浏览器里打开页面（维护项目簿）；没弹出就手动打开：${url}\n`),
+      });
+      const book = readBook();
+      out({
+        command: 'projects-page', status: r.status,
+        projectCount: book.projects.length, projects: book.projects, bookPath: bookPath(),
+        // 超时不等于什么都没发生：每一次「核对并加入」当场就落了盘。
+        note: r.status === 'done'
+          ? '维护结束。簿子里每一条都在录入那一刻向 ERP 核对过：存在、已审核、未禁用'
+          : '页面没等到「完成」就收了（闲置超时）。这期间已经加入的项目都已落盘，'
+            + '要接着录就再跑一次这条命令',
+        // 超时不是硬阻塞（那一档留给"内核拒绝继续、确认也绕不过"），也不是内核出错，
+        // 但它确实没有正常收工。和别的本地页命令一样报 ERR：再跑一次就是了。
+      }, r.status === 'done' ? OK : ERR);
+    }
+
     case 'abandon-task': {
       // 把一个不打算再报的任务作废，好让它占着的发票能在别的任务里用。
       // 这是状态变更，不是删除：任务工作区一份不动。
@@ -958,7 +986,7 @@ try {
     default:
       out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['doctor', 'install-runtime', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
         'ocr-request', 'ocr-submit', 'confirm-readings', 'history', 'events', 'allocate', 'select-task', 'lines',
-        'tasks', 'abandon-task', 'projects', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill', 'select'] }, ERR);
+        'tasks', 'abandon-task', 'projects', 'projects-page', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill', 'select'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);

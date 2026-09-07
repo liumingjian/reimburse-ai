@@ -28,6 +28,10 @@ const NOT_FORBIDDEN = 'A';
 const SAFE = /^[A-Za-z0-9_-]{1,64}$/;
 export const isSafeKey = (s) => typeof s === 'string' && SAFE.test(s);
 
+// 拒绝语只有一句，核对路径和录入闸门共用。两处各写一句的话，用户会在同一条规则上
+// 读到两种说法，而其中一句迟早跟着规则改动走样。
+export const unsafeKeyReason = (s) => `项目号 ${JSON.stringify(s)} 含有不能安全查询的字符`;
+
 const buildSnippet = (payload) => `(async () => {
   const r = await fetch(${JSON.stringify('/k3cloud/' + QUERY_SERVICE)}, {
     method: 'POST',
@@ -148,7 +152,7 @@ export async function verifyExpenseItems(wsUrl, { run = queryRows } = {}) {
  */
 export async function verifyProject(wsUrl, number, { run = queryRows } = {}) {
   if (!isSafeKey(number)) {
-    return { ok: false, reason: `项目号 ${JSON.stringify(number)} 含有不能安全查询的字符` };
+    return { ok: false, reason: unsafeKeyReason(number) };
   }
   const res = await run(wsUrl, {
     formId: PROJECT_FORM,
