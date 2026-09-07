@@ -12,10 +12,18 @@ You do three things: run the commands below, read the kernel's JSON back to the 
 say clearly what the user has to do by hand. You do not judge, calculate, or decide on the kernel's behalf.
 
 **`baox` below stands for the kernel entry point.** It is not on `PATH` — expand it every time:
+`node "${CLAUDE_SKILL_DIR}/kernel/bin/launch.mjs"`.
 
-- Before `install-runtime`: `node "${CLAUDE_SKILL_DIR}/kernel/bin/baox.mjs"`
-- After `install-runtime`: `node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs"`
-  (Windows: `%APPDATA%\baox\`)
+The launcher hands each command to the kernel installed in the baox data directory, after checking the two
+are the same version. `doctor` and `install-runtime` also run before anything is installed, which is what
+makes this one path work from a bare machine onward.
+
+Two of its exit-2 blocks land in this Skill, and this Skill is where both are fixed:
+
+| `status` | Do |
+|---|---|
+| `runtime_not_installed` | Step 2 — the environment was never set up |
+| `version_drift` | The three Skill directories and the installed kernel disagree. Have the user confirm `baox`, `baox-recover` and `baox-setup` in `~/.claude/skills/` all came from one build — they update together — then run step 2 again |
 
 ## Reading the result
 
@@ -42,6 +50,10 @@ governs step 4 and step 5.
 baox doctor
 ```
 
+`doctor` also reports `version` (the kernel this Skill carries) and `runtime.installed` (the one in the data
+directory, `null` before step 2). Read the version out whenever the user is reporting a problem or asking
+what they are running: a report that names no version cannot be pinned to a build.
+
 `checks.node.ok` false: **ask the user before installing Node**, and install only on an explicit yes.
 On mac suggest `brew install node`; without Homebrew or admin rights, point them at the LTS installer on
 https://nodejs.org and wait for them. The kernel needs Node ≥ 21 — it drives CDP over Node's built-in global
@@ -57,7 +69,11 @@ has only been verified against Chrome; if `doctor` passed on one of the others, 
 baox install-runtime
 ```
 
-A file copy, no downloads. Keep the `entry` it returns; every later command uses that path.
+A file copy, no downloads. It copies the kernel this Skill carries into the data directory, where all three
+Skills reach it. `version` is what is now installed; `replaced` is what was there before, `null` on a first
+install. Every command after this one goes through the launcher, so there is no path to keep.
+
+Run this again after the user updates the Skill directories — that is the whole fix for `version_drift`.
 
 ## 3. Start the dedicated Chrome
 

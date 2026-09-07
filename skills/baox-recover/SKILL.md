@@ -27,7 +27,12 @@ is not a fact and not permission to resume — the reconciliation reading is the
 duplicate reimbursement. When it is unknown whether a write landed, it landed.
 
 **`baox` below stands for the kernel entry point**, which is not on `PATH`:
-`node "$HOME/Library/Application Support/baox/runtime/bin/baox.mjs"` (Windows: `%APPDATA%\baox\`).
+`node "${CLAUDE_SKILL_DIR}/kernel/bin/launch.mjs"`.
+
+That launcher hands the command to the kernel installed in the baox data directory, after checking the two
+are the same version. It exits 2 with `status: "version_drift"` or `status: "runtime_not_installed"` when
+they disagree or the environment was never set up. Both are hard blocks fixed in `baox-setup` — say so and
+stop; a task mid-ERP-write is the last place to guess around a version mismatch.
 If it is not installed, send the user to `baox-setup` first.
 
 ## 1. Reconcile

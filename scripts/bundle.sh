@@ -38,6 +38,14 @@ for s in skills/*/; do
   cp -R kernel/src "dist/$name/kernel/src"
 done
 
+# 安装说明跟包走。拿到压缩包的人手上只有这个包，仓库的 README 他们看不到。
+cp docs/INSTALL.md dist/INSTALL.md
+
+# 每个包都必须带着启动器：Skill 里的 baox 全部展开成它，缺了就是每条命令都跑不起来。
+for s in dist/*/; do
+  [ -f "$s/kernel/bin/launch.mjs" ] || { echo "启动器闸没过：$s 里没有 kernel/bin/launch.mjs" >&2; exit 1; }
+done
+
 stowaways=$(find dist -name 'scratch-*' -o -name '*.test.mjs' | sort)
 if [ -n "$stowaways" ]; then
   echo "分发面闸没过：这些文件不该出现在分发包里" >&2

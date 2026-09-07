@@ -12,3 +12,5 @@
 !.env.example
 dist/
 .claude/worktrees/
+release/
+.codex-out/
