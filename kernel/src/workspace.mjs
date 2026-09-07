@@ -28,6 +28,12 @@ const writeJson = (p, v) => {
 /** 任务还没结束、可以继续往下走的状态。 */
 const LIVE = new Set(['open']);
 
+/**
+ * 0.9.x 留下的在途任务，迁移时打上的标记。它**不是**状态机里的状态 ——
+ * 状态机回答"现在该做什么"，而一个存档任务永远不产生动作，它只是躺在账上可查。
+ */
+export const ARCHIVED = 'archived';
+
 export function loadIndex() {
   return readJson(indexPath(), { tasks: [] });
 }
@@ -124,8 +130,11 @@ export function loadEventsLedger(task, versionId) {
 /**
  * 改任务状态。跨任务重复检查靠它区分"另一个任务还打算报这张票"和"那个任务已经作罢"。
  *
- * 只允许 `open` -> `abandoned`：一旦任务动过 ERP（包括写入结果未知），
+ * 只允许 `open` / `archived` -> `abandoned`：一旦任务动过 ERP（包括写入结果未知），
  * 它占着的那些发票就不能靠改状态解除占用 —— 那要靠只读对账，不是靠声明。
+ *
+ * 存档任务也得能作废，而且这条路必须留着：它照样占着发票（见 history.mjs 的
+ * `holdsInvoices`），不给作废等于让 0.9.x 留下的票永远解不开占用。
  */
 export function abandonTask(taskId, reason) {
   const idx = loadIndex();
@@ -133,7 +142,7 @@ export function abandonTask(taskId, reason) {
   if (i < 0) return { verdict: 'rejected', reason: `没有这个任务 ${taskId}` };
   const t = idx.tasks[i];
   if (t.status === 'abandoned') return { verdict: 'noop', task: t };
-  if (t.status !== 'open') {
+  if (t.status !== 'open' && t.status !== ARCHIVED) {
     return { verdict: 'rejected', reason: `任务 ${taskId} 的状态是 ${t.status}，不是可以作废的进行中任务` };
   }
   if (t.erpWriteState) {
@@ -146,6 +155,35 @@ export function abandonTask(taskId, reason) {
   writeJson(indexPath(), idx);
   writeJson(path.join(taskDir(updated), 'meta.json'), updated);
   return { verdict: 'abandoned', task: updated };
+}
+
+/**
+ * 迁移之后，把 0.9.x 留下的**在途**任务标记成存档。只在搬完家那一次调用。
+ *
+ * 为什么非标不可：1.0.0 的读数要带「看过的凭据」（`imageshape.mjs` 的形状档）和
+ * 字段来源，可 `projectReading` 只看 `confirmedAt` —— 0.9.x 确认过的读数两样都没有，
+ * 迁过来照样会被投影成事实。那等于给这一版最硬的那条规矩开了一道后门，还是悄悄开的。
+ * 存档任务不再被 `findLiveTaskForSource` 认领，同一个材料目录下次会新建任务重走一遍。
+ *
+ * 动过 ERP 的任务**不标**：它们要留在 `open` 上才走得到 `handed_off_recover`，
+ * 标了等于把写入善后那条路堵死 —— 那恰恰是最不能丢的一条路。
+ *
+ * 材料、读数、分摊一份不动，只改状态：存档是"不再往下走"，不是"删掉"。
+ */
+export function archiveMigratedTasks() {
+  const idx = loadIndex();
+  const archivedAt = new Date().toISOString();
+  const archived = [];
+  idx.tasks = idx.tasks.map((t) => {
+    if (t.status !== 'open' || t.erpWriteState) return t;
+    const updated = { ...t, status: ARCHIVED, archivedAt, archivedReason: 'migrated_from_0.9.x' };
+    archived.push(updated);
+    return updated;
+  });
+  if (!archived.length) return [];
+  writeJson(indexPath(), idx);
+  for (const t of archived) writeJson(path.join(taskDir(t), 'meta.json'), t);
+  return archived;
 }
 
 /**

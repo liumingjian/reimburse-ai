@@ -7,8 +7,10 @@
  *
  * 判据一字不改地照 docs/design/state-machine.md 的两张表：A 表（环境七态）、
  * 永远排在最前的 schema_too_new，以及 B 表从任务建立一路到写入前确认。
- * 只差一个 `archived` —— 那是旧格式任务迁移时打的标记，还没有谁会打它，
- * 落成一个永远判不出来的状态等于落成一句空话。
+ *
+ * `archived` 不在这里，因为它根本不是状态：它是 0.9.x 在途任务迁移时打的**任务状态**
+ * （见 workspace.mjs 的 archiveMigratedTasks），存档任务不被认领，也就永远不产生动作。
+ * 状态机回答的是"现在该做什么"，一个永远答不出动作的东西留在表里只会骗人。
  */
 import { bindingVerdict } from './binding.mjs';
 

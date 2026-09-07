@@ -1,4 +1,4 @@
-import { loadIndex, loadInvoiceSightings, taskDir } from './workspace.mjs';
+import { loadIndex, loadInvoiceSightings, taskDir, ARCHIVED } from './workspace.mjs';
 import { maskNumber } from './parse.mjs';
 
 // 跨任务历史发票的重复检查。
@@ -21,12 +21,18 @@ export function holdsInvoices(task) {
   // 动过 ERP 的任务一律算占用 —— 包括写入结果未知：不知道有没有落进去，
   // 就必须当成落进去了，这是契约里对"ERP 写入结果未知"的一贯处理。
   if (task.erpWriteState) return true;
-  return task.status === 'open';
+  // 存档任务照样占用。它是 0.9.x 迁过来的在途任务，只是不再往下走 ——
+  // 「不再往下走」和「那些票没人报」是两回事，把它当成后者就会放过一张真重复的票。
+  return task.status === 'open' || task.status === ARCHIVED;
 }
 
-const statusNote = (task) => (task.erpWriteState
-  ? `另一个任务动过 ERP（${task.erpWriteState}）`
-  : '另一个任务还在进行中');
+const statusNote = (task) => {
+  if (task.erpWriteState) return `另一个任务动过 ERP（${task.erpWriteState}）`;
+  if (task.status === ARCHIVED) {
+    return '另一个任务是 0.9.x 留下的，已存档只读，但它占着这张票；确认不再报销就把它作废';
+  }
+  return '另一个任务还在进行中';
+};
 
 /**
  * 拿当前分流结果去比对其他任务持有的发票身份。

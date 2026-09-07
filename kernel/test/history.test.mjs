@@ -146,3 +146,88 @@ test('查过不等于没报过 —— 范围声明始终跟着结果走，而且
   assert.equal(scope.blocking, false);
   assert.match(scope.note, /ERP 外部既有记录的只读查询还没有实现/);
 });
+
+// —— 0.9.x 在途任务的存档 ——
+// 存档要挡的是一件很具体的事：旧读数没有本版要求的看图凭据，接着往下走就会
+// 绕过"没看图就不算读数"被投影成事实。所以这几条测的都是"标了之后还剩什么"。
+
+test('迁移把 0.9.x 的在途任务标成存档，材料和记录一份不动', async () => {
+  const { archiveMigratedTasks } = await import('../src/workspace.mjs');
+  const a = newTask('legacy');
+  recordInvoiceSightings(a, classificationOf([['m1', RIDE]]));
+
+  const archived = archiveMigratedTasks();
+  assert.equal(archived.length, 1);
+  assert.equal(archived[0].taskId, a.taskId);
+  assert.equal(archived[0].archivedReason, 'migrated_from_0.9.x');
+  assert.ok(archived[0].archivedAt);
+
+  const onDisk = loadIndex().tasks.find((t) => t.taskId === a.taskId);
+  assert.equal(onDisk.status, 'archived');
+  const meta = JSON.parse(fs.readFileSync(path.join(taskDir(a), 'meta.json'), 'utf8'));
+  assert.equal(meta.status, 'archived', '任务目录里的 meta.json 也要跟着改');
+  assert.ok(fs.existsSync(path.join(taskDir(a), 'invoices.json')), '发票摘要不许被动');
+});
+
+test('存档任务不再被认领：同一个材料目录下次是新建任务，从头走一遍', async () => {
+  const { archiveMigratedTasks, findLiveTaskForSource, sourceKeyOf } =
+    await import('../src/workspace.mjs');
+  const dir = path.join(home, 'src-claim');
+  const a = createTask(dir);
+  archiveMigratedTasks();
+
+  assert.equal(findLiveTaskForSource(sourceKeyOf(dir)), null,
+    '认领得到就等于接着往下走，那正是存档要挡的');
+  const b = createTask(dir);
+  assert.notEqual(b.taskId, a.taskId);
+});
+
+test('存档任务照样占着发票 —— 不再往下走，不等于那些票没人报', async () => {
+  const { archiveMigratedTasks } = await import('../src/workspace.mjs');
+  const a = newTask('holder');
+  recordInvoiceSightings(a, classificationOf([['m1', RIDE]]));
+  archiveMigratedTasks();
+
+  const b = newTask('newcomer');
+  const r = crossTaskDuplicates(b, classificationOf([['m2', RIDE]]));
+  assert.equal(r.hits.length, 1, '同一张票在存档任务里躺着，照样要拦');
+  assert.equal(r.hits[0].otherTask.status, 'archived');
+  assert.match(r.hits[0].why, /0\.9\.x 留下的/);
+  assert.match(r.hits[0].why, /作废/, '得告诉用户怎么解开，不能只说被占了');
+  assert.equal(blockingOf(r).length, 1, '存档任务上的重复照样是硬阻塞');
+});
+
+test('存档任务可以作废 —— 否则 0.9.x 留下的票永远解不开占用', async () => {
+  const { archiveMigratedTasks } = await import('../src/workspace.mjs');
+  const a = newTask('release');
+  recordInvoiceSightings(a, classificationOf([['m1', RIDE]]));
+  archiveMigratedTasks();
+
+  const r = abandonTask(a.taskId, '这批票不报了');
+  assert.equal(r.verdict, 'abandoned');
+
+  const b = newTask('after');
+  assert.equal(blockingOf(crossTaskDuplicates(b, classificationOf([['m2', RIDE]]))).length, 0,
+    '作废之后占用要真的解开');
+});
+
+test('动过 ERP 的任务不存档 —— 那条路要留给写入善后', async () => {
+  const { archiveMigratedTasks } = await import('../src/workspace.mjs');
+  const a = newTask('erp');
+  recordErpWrite(a, 'erp-fill');
+
+  assert.equal(archiveMigratedTasks().length, 0);
+  assert.equal(loadIndex().tasks.find((t) => t.taskId === a.taskId).status, 'open',
+    '标了它就走不到 handed_off_recover，等于把善后堵死');
+});
+
+test('作废过的任务不受存档影响，存档也不重复打标', async () => {
+  const { archiveMigratedTasks } = await import('../src/workspace.mjs');
+  const a = newTask('gone');
+  abandonTask(a.taskId, '早就不报了');
+  const b = newTask('live');
+
+  assert.deepEqual(archiveMigratedTasks().map((t) => t.taskId), [b.taskId]);
+  assert.equal(loadIndex().tasks.find((t) => t.taskId === a.taskId).status, 'abandoned');
+  assert.equal(archiveMigratedTasks().length, 0, '再调一次没有可标的了');
+});

@@ -44,7 +44,8 @@ Skill 是壳，内核是唯一的业务事实来源，这一条在 1.0.0 里不�
   状态名与判据一字不改地照 [state-machine.md](./state-machine.md) 的两张表实现。
 - 采集观测的那部分单独放 `kernel/src/observe.mjs`，它才碰文件系统和 CDP。
 - 分层是硬要求：状态机的测试要能在没有 Chrome、没有材料目录的机器上跑完。
-- 验收：`kernel/test/state.test.mjs` 覆盖全部 26 个状态各至少一例，外加**判定顺序**用例
+- 验收：`kernel/test/state.test.mjs` 覆盖全部 25 个状态各至少一例，外加**判定顺序**用例
+  （原本写的是 26 个，其中 `archived` 已认定为任务状态而非状态，从表里划掉，见 state-machine.md）
   —— 同时满足多个判据时先报哪个（越靠前的表项优先，`schema_too_new` 永远最先）。
 
 ### 批次 3：`next` 与 `stepToken`

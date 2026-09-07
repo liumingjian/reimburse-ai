@@ -19,7 +19,7 @@ import { CATEGORIES } from '../src/categories.mjs';
 import { findLiveTaskForSource, createTask, recordInventory, recordClassification,
   recordEvents, recordInvoiceSightings, abandonTask, loadIndex,
   sourceKeyOf, taskDir , recordCatalogVerification, loadCatalogVerification,
-  recordErpAttempt, recordErpWrite, liveTasks } from '../src/workspace.mjs';
+  recordErpAttempt, recordErpWrite, liveTasks, archiveMigratedTasks } from '../src/workspace.mjs';
 import { crossTaskDuplicates, historyOpenItems, holdsInvoices } from '../src/history.mjs';
 import { authorizedPage, verifyExpenseItems, verifyProject, PROJECT_FORM } from '../src/erpcatalog.mjs';
 import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerField,
@@ -53,6 +53,17 @@ const out = (obj, code = OK) => {
 // 那是一种看起来正常、实则丢了全部历史的失败，比直接停住坏得多。
 try {
   migrated = migrateOnStartup();
+  if (migrated) {
+    // 搬完立刻把 0.9.x 的在途任务标记成存档，理由见 workspace.mjs 的 archiveMigratedTasks。
+    // 就在这一次说清楚：那些任务不会接着往下走，同一个目录下次是从头开始的新任务。
+    const archived = archiveMigratedTasks();
+    if (archived.length) {
+      migrated = { ...migrated, archivedTasks: archived.map((t) => t.taskId),
+        note: `${archived.length} 个 0.9.x 的在途任务已存档：它们的读数没有本版要求的看图凭据，`
+          + '不会被接着往下走；材料和记录一份没动，同一个材料目录下次会新建任务重走一遍。'
+          + '它们仍然占着自己那些发票（跨任务查重看得见），确认不再报销可以逐个作废。' };
+    }
+  }
 } catch (err) {
   out({ command: process.argv[2] ?? null, status: 'migration_failed', error: err.message,
     hint: `把旧数据目录整份拷到 ${paths.root} 之后重试；旧目录没有被动过。` }, BLOCKED);
