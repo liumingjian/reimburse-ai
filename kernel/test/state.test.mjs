@@ -223,8 +223,28 @@ test('图换过了要重读，读完的读数要人确认', () => {
   assert.equal(confirm.actor, 'user', '读数只是候选，认不认只有人说了算');
 });
 
+test('这张票在别的任务里也在 —— 停整批，请用户裁决', () => {
+  const r = determineState(withMaterials({
+    openItems: [
+      item('duplicate_across_tasks', { fileName: '发票.pdf' }),
+      item('history_scope_local', { blocking: false, materialId: null, fileName: null }),
+    ],
+  }));
+  assert.equal(r.state, 'duplicate_blocked', '跨任务重复不混进盘点待办：解决它要在两个任务之间裁决');
+  assert.equal(r.actor, 'user');
+  const by = Object.fromEntries(r.blockedBy.map((b) => [b.kind, b]));
+  assert.equal(by.duplicate_across_tasks.resolvableBy, 'user');
+  assert.equal(by.history_scope_local.resolvableBy, 'kernel', '查得到多少是内核的范围声明，不用人处理');
+});
+
 test('材料这一段全清了，才轮到费用事件', () => {
   assert.equal(determineState(withMaterials()).state, 'events_pending');
+});
+
+test('费用事件永远是判定表的最后一条 —— 新状态插在它前面才轮得上', () => {
+  assert.equal(STATE_ORDER.at(-2), 'events_pending',
+    '它后面只剩 env_ready 这个兜底；插到它后面的状态永远轮不上');
+  assert.ok(STATE_ORDER.indexOf('duplicate_blocked') < STATE_ORDER.indexOf('events_pending'));
 });
 
 test('B 表的判定顺序：过期压过待办，待办压过看图', () => {
@@ -257,6 +277,7 @@ test('格式比内核新时，材料那一段一个字都不判', () => {
 
 test('材料这一段的状态一个不少，且都在判定表里', () => {
   const b = ['task_none', 'inventory_stale', 'intake_open_items', 'classify_pending',
-    'image_awaiting_reading', 'reading_stale', 'reading_awaiting_confirmation', 'events_pending'];
+    'image_awaiting_reading', 'reading_stale', 'reading_awaiting_confirmation',
+    'duplicate_blocked', 'events_pending'];
   for (const s of b) assert.ok(STATE_ORDER.includes(s), `${s} 不在判定表里`);
 });

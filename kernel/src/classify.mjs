@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { parseMaterial, invoiceIdentity, checkAmounts, maskNumber } from './parse.mjs';
 import { loadReading, projectReading } from './vision.mjs';
+import { READING_KINDS } from './state.mjs';
 
 // 材料角色分流：把盘点出来的材料判成主要报销凭证还是参考材料，
 // 顺带把票面事实和发票身份提出来，并做**任务内**重复发票检测。
@@ -149,8 +150,7 @@ export function classifyOpenItems(classification) {
   // 「一张凭证都没有」只有在**该读的都读完之后**才说得出口。
   // 图还没看就下这个结论是抢答：一目录的发票照片，读之前一张凭证也认不出来，
   // 而这句话会把用户支去检查目录选对没有 —— 目录没选错，是我们还没看。
-  const awaitingReading = items.some((i) =>
-    ['image_awaiting_reading', 'reading_stale', 'reading_awaiting_confirmation'].includes(i.kind));
+  const awaitingReading = items.some((i) => READING_KINDS.has(i.kind));
   const primaries = classification.results.filter((r) => r.role === 'primary_voucher');
   if (primaries.length === 0 && !awaitingReading) {
     add('no_primary_voucher', true, { note: '没有识别到任何主要报销凭证，这个目录还不能构成一次报销' });

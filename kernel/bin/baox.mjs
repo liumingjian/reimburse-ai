@@ -925,9 +925,15 @@ try {
       // 两侧观测合成一份：环境（A 表）和材料（B 表）。判定要的全部事实都在这里采齐，
       // 判定那一侧一个文件都不再读。目录不在了（被删、被改名）就只答环境那一半 ——
       // 拿一个不存在的目录去盘点会抛错，而那不是一个状态。
-      const materialsThere = !!sourceDir && fs.existsSync(sourceDir) && fs.statSync(sourceDir).isDirectory();
+      const env = await observeEnvironment();
+      // 数据格式比内核新的时候，**连采集都不做**。判定的顺序把 schema_too_new 排在最前，
+      // 但采集跑在判定之前：拿这一版的眼睛去读下一版写的任务文件，可能当场抛异常，
+      // 于是「硬停（退出码 2）」就变成了「内核自己出错（退出码 1）」。硬停要真的最先。
+      const tooNew = env.schemaVersion > NEXT_SCHEMA_VERSION;
+      const materialsThere = !tooNew && !!sourceDir
+        && fs.existsSync(sourceDir) && fs.statSync(sourceDir).isDirectory();
       const observation = {
-        ...(await observeEnvironment()),
+        ...env,
         ...(materialsThere ? await observeTask(sourceDir) : {}),
       };
       const response = nextResponse({ observation, sourceKey, after,

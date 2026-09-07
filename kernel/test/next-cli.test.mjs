@@ -109,6 +109,20 @@ test('这一步没有可纠正的读数时，纠正不会被悄悄收下', () =>
   assert.equal(r.json.ignored.reason, 'correction_not_applicable');
 });
 
+test('数据格式比内核新时，第一时间硬停 —— 连材料都不去盘', () => {
+  const dir = materials();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-cli-'));
+  // 下一版 baox 写的数据目录：格式版本比这个内核认得的高。
+  fs.writeFileSync(path.join(home, 'schema.json'), JSON.stringify({ schemaVersion: 99 }));
+
+  const r = baox(['next', '--dir', dir], { BAOX_HOME: home });
+  assert.equal(r.code, 2, '硬停是退出码 2；采集时抛异常会变成 1，那就不是硬停了');
+  assert.equal(r.json.state, 'schema_too_new');
+  assert.equal(r.json.step.kind, 'tell_user');
+  assert.equal(r.json.task, null, '没去盘材料 —— 拿这一版的眼睛读下一版的文件本来就不作数');
+  assert.equal(r.json.blockedBy[0].kind, 'schema_too_new');
+});
+
 test('问得不对就答不了：错的材料目录、以及第一次问不带 --dir', () => {
   const bad = baox(['next', '--dir', '/nope/nope/nope']);
   assert.equal(bad.code, 1, '这不是状态机里的状态，是这一问根本没法判');

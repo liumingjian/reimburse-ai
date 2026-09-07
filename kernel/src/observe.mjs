@@ -15,6 +15,7 @@ import { takeInventory, intakeOpenItems } from './inventory.mjs';
 import { classifyInventory, classifyOpenItems } from './classify.mjs';
 import { buildWorkOrder } from './vision.mjs';
 import { findLiveTaskForSource, sourceKeyOf, taskDir, classificationRecorded } from './workspace.mjs';
+import { crossTaskDuplicates, historyOpenItems } from './history.mjs';
 
 /**
  * 数据目录的格式版本。没有这个文件就是这个内核自己写的那一版。
@@ -72,6 +73,9 @@ export async function observeTask(sourceDir) {
   // 没有任务时 currentVersionId 无从比起 —— 那是 task_none，不是盘点过期。
   const inventoryStale = !!task && task.currentVersionId !== inventory.versionId;
   const classification = classifyInventory(dir, inventory, task);
+  // 跨任务查重：拿发票身份去比对本机上别的任务还占着的票。只读别的任务落盘的摘要，
+  // 一个字都不往回写。没有任务时无从比起（本任务自己都还没有身份摘要）。
+  const history = task ? crossTaskDuplicates(task, classification) : null;
 
   return {
     taskObserved: true,
@@ -89,7 +93,11 @@ export async function observeTask(sourceDir) {
     classificationRecorded: task && !inventoryStale
       ? classificationRecorded(task, inventory.versionId)
       : false,
-    openItems: [...intakeOpenItems(inventory), ...classifyOpenItems(classification)],
+    openItems: [
+      ...intakeOpenItems(inventory),
+      ...classifyOpenItems(classification),
+      ...(history ? historyOpenItems(history) : []),
+    ],
     // 还没读、或者读过但字节已经变了的图。已确认的读数会被投影成解析结果，不在这里出现。
     pendingImages: task
       ? buildWorkOrder(dir, inventory, classification, task).filter((i) => !i.alreadyRead)

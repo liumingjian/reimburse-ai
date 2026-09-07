@@ -64,7 +64,7 @@ test('硬阻塞才给 2：等人登录不是硬阻塞', async () => {
 test('落成的状态都要有 step，漏一个就当场报出来', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
-  assert.throws(() => stepFor('duplicate_blocked', healthy()), /duplicate_blocked/);
+  assert.throws(() => stepFor('allocation_required', healthy()), /allocation_required/);
 });
 
 /** 环境全绿、材料也观测过的那份观测。 */
@@ -93,6 +93,7 @@ test('材料这一段每个状态都有一步可做，说给用户听的话全�
     ['image_awaiting_reading', 'read_images', withMaterials({ pendingImages: images })],
     ['reading_stale', 'read_images', withMaterials({ pendingImages: images })],
     ['reading_awaiting_confirmation', 'run', withMaterials()],
+    ['duplicate_blocked', 'tell_user', withMaterials()],
     ['events_pending', 'done', withMaterials()],
   ];
   for (const [state, kind, observation] of cases) {
@@ -106,6 +107,35 @@ test('材料这一段每个状态都有一步可做，说给用户听的话全�
         `${state} 的 argv 要指着这批材料，模型不用自己拼`);
     }
   }
+});
+
+test('要人亲手点一下的那两步，明说不能外包给子 Agent', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  // 契约说 kind: "run" 的连续段可以外包。这两步会弹一个要人点的本地页面，
+  // 外包出去只会挂在那里等一个不会发生的点击 —— 所以写进 JSON，不是只写在注释里。
+  assert.equal(stepFor('env_identity_unbound', healthy({ binding: null })).step.outsourceable, false);
+  assert.equal(stepFor('reading_awaiting_confirmation', withMaterials()).step.outsourceable, false);
+  // 纯跑命令的那些照旧可以外包。
+  assert.equal(stepFor('env_chrome_down', healthy({ cdpUp: false, probe: null })).step.outsourceable, true);
+  assert.equal(stepFor('classify_pending', withMaterials({ classificationRecorded: false })).step.outsourceable,
+    true);
+});
+
+test('跨任务重复：停整批，两边的任务都摆出来', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const blockedBy = [
+    { kind: 'duplicate_across_tasks', fileName: '发票.pdf', hint: '这张发票在任务 abc123 里也在',
+      resolvableBy: 'user', blocking: true },
+    { kind: 'history_scope_local', fileName: null, hint: '只比对了本机记过的任务',
+      resolvableBy: 'kernel', blocking: false },
+  ];
+  const shaped = stepFor('duplicate_blocked', withMaterials(), blockedBy);
+  assert.equal(shaped.step.kind, 'tell_user');
+  assert.match(shaped.speak, /发票\.pdf/);
+  assert.match(shaped.speak, /abc123/, '另一个任务是哪个，得说出来，不然用户没法裁决');
+  assert.doesNotMatch(shaped.speak, /只比对了本机记过的任务/, '范围声明留在 context 和 blockedBy 里');
 });
 
 test('待办这一步逐条说清楚谁能解决它，一条都不含糊', async () => {

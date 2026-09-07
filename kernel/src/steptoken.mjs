@@ -65,8 +65,9 @@ export function issueStep(sourceKey, state, sourceDir = null) {
     : { token: newToken(), state, issuedAt: new Date().toISOString() };
   // 目录跟着这一次的问话更新，凭据本身不动 —— 同一个目录换了个写法（软链、末尾斜杠）
   // 不该让当前这一步作废。
-  store.steps[sourceKey] = { ...record, sourceDir: sourceDir ?? prev?.sourceDir ?? null };
+  const stored = { ...record, sourceDir: sourceDir ?? prev?.sourceDir ?? null };
+  store.steps[sourceKey] = stored;
   store.current = sourceKey;
   write(store);
-  return record;
+  return stored;
 }

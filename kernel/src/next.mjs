@@ -13,6 +13,7 @@ import path from 'node:path';
 import url from 'node:url';
 import { determineState, SCHEMA_VERSION, MIN_NODE_MAJOR } from './state.mjs';
 import { currentStep, issueStep } from './steptoken.mjs';
+import { readingInboxIn } from './workspace.mjs';
 
 /** 内核自己的入口。argv 里给绝对路径：模型原样执行，不需要知道 baox 装在哪。 */
 const SRC = path.dirname(url.fileURLToPath(import.meta.url));
@@ -36,8 +37,16 @@ const BLOCKED = 2;
 // 每种 step.kind 一个构造函数。它们存在的意义是把「这一步长什么样」收在一处：
 // 剩下四种（read_images / ask_user / confirm_table / dispute）随各自的状态一起加进来，
 // 加的时候只动这里，不动 stepFor 里那张状态表。
-const run = (argv, { speak, context, progress = ENV_PROGRESS }) =>
-  ({ step: { kind: 'run', argv }, speak, context, progress, exit: 0 });
+/**
+ * 跑一条内核给的命令。
+ *
+ * `outsourceable` 是给子 Agent 那条规矩用的：契约说 `kind: "run"` 的连续段可以外包，
+ * 但有两步的命令会弹出一个要人**亲手点一下**的本地页面（认身份、认读数）——
+ * 外包给一个没有终端的子 Agent，它只会挂在那里等一个永远不会发生的点击。
+ * 所以这一条写进 JSON 里，而不是只写在注释里：模型看得见的才算数。
+ */
+const run = (argv, { speak, context, progress = ENV_PROGRESS, outsourceable = true }) =>
+  ({ step: { kind: 'run', argv, outsourceable }, speak, context, progress, exit: 0 });
 
 const tellUser = ({ speak, context, progress = ENV_PROGRESS, exit = 0 }) =>
   ({ step: { kind: 'tell_user' }, speak, context, progress, exit });
@@ -87,8 +96,11 @@ export function stepFor(state, observation = {}, blockedBy = []) {
   const who = o.probe?.identity?.displayName ?? o.probe?.identity?.account ?? null;
   const bound = o.binding?.displayName ?? o.binding?.account ?? null;
   const label = o.task?.sourceLabel ?? '这批材料';
-  const readingsPath = o.task ? path.join(o.task.workspace, 'reading-submission.json') : null;
+  const readingsPath = o.task ? readingInboxIn(o.task.workspace) : null;
   const submitArgv = () => argvFor('ocr-submit', '--dir', o.sourceDir, '--file', readingsPath);
+  // 要看的那几张图，和念给用户听的那串文件名。两个 case 用的是同一份。
+  const images = o.pendingImages ?? [];
+  const imageNames = images.map((i) => i.fileName).join('、');
 
   switch (state) {
     case 'schema_too_new':
@@ -143,6 +155,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       // 它是 run，但**这一步要人点一下，不能外包给子 Agent**。换成 confirm_table
       // 是批次 5 的活。
       return run(argvFor('confirm-identity'), {
+        outsourceable: false,
         speak: '这台机器还没记下我在替谁报销。我这就打开一个本地确认页，'
           + `上面是我刚从 ERP 读到的身份${who ? `（${who}）` : ''}，`
           + '你核对一下，是本人就点「是我本人」。只有那一次点击算数。',
@@ -204,11 +217,10 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'image_awaiting_reading':
       return readImages({
-        images: o.pendingImages ?? [],
+        images,
         readingsPath,
         argv: submitArgv(),
-        speak: `${label} 里有 ${(o.pendingImages ?? []).length} 张图要我亲眼看一遍才读得出票面信息：`
-          + `${(o.pendingImages ?? []).map((i) => i.fileName).join('、')}。`
+        speak: `${label} 里有 ${images.length} 张图要我亲眼看一遍才读得出票面信息：${imageNames}。`
           + '我逐张打开抄写，看不清的字段我会说看不清，不猜也不算。',
         context: '内核没有 OCR，图片由我来读；但读不等于算数：读数要过内核的结构校验'
           + '（位数、日期、金额守恒），过了也只是候选，还得你对着原图确认。'
@@ -217,10 +229,10 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'reading_stale':
       return readImages({
-        images: o.pendingImages ?? [],
+        images,
         readingsPath,
         argv: submitArgv(),
-        speak: `${(o.pendingImages ?? []).map((i) => i.fileName).join('、')} 换过了，`
+        speak: `${imageNames} 换过了，`
           + '之前那次读数是对着旧图读的，已经作废。我重新看一遍这几张图。',
         context: '读数钉在内容哈希上。文件一改，旧读数当场失效 ——'
           + '沿用它等于拿上一张图的数字去报这一张图。',
@@ -231,6 +243,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       // 这一批先接上已有的本地确认页 —— 它是 run，但**这一步要人对着原图点确认，
       // 不能外包给子 Agent**。换成 confirm_table 是批次 5 的活。
       return run(argvFor('confirm-readings', '--dir', o.sourceDir), {
+        outsourceable: false,
         speak: '图我读完了。读数还只是候选，得你对着原件过一眼才算数 ——'
           + '我这就打开一个本地页面把读到的字段摆出来，对得上就勾选提交，'
           + '对不上的别勾，我重读。',
@@ -238,6 +251,20 @@ export function stepFor(state, observation = {}, blockedBy = []) {
           + '没勾的材料仍然停在待确认项里，我不会替你确认。',
         progress: READING_PROGRESS,
       });
+
+    case 'duplicate_blocked': {
+      const hits = blockedBy.filter((b) => b.kind === 'duplicate_across_tasks');
+      return tellUser({
+        speak: `停一下 —— ${label} 里有发票在另一个报销任务里也在，同一张发票不能报两次：\n`
+          + `${itemLines(hits)}\n`
+          + '要么把这几份从本次材料里移出去，要么确认那个任务确实不报了。你定了告诉我。',
+        context: '这是拿发票身份（不是文件内容）跨任务比出来的：两个字节不同的 PDF '
+          + '只要是同一张法定发票，照样算重复。命中就停整批 —— 一批材料里混着一张报过的票，'
+          + '整批都得重看，而不是把那一张挑出去了事。'
+          + '另外这只比对得了 baox 在本机记过的任务，直接在 ERP 里录过的查不到。',
+        progress: MATERIAL_PROGRESS,
+      });
+    }
 
     case 'events_pending':
       return done({

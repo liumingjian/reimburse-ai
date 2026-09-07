@@ -227,3 +227,13 @@ export function loadErpAttempts(task) {
 export function classificationRecorded(task, versionId) {
   return fs.existsSync(path.join(taskDir(task), 'classifications', `${versionId}.json`));
 }
+
+/**
+ * 模型把看图读数写到哪里。位置由内核定，模型不选地方 ——
+ * 工作区里有什么、叫什么名字，这件事从头到尾只有这个模块说了算。
+ *
+ * 收的是工作区路径而不是 task：判 step 的那一层是纯函数，手上只有观测里那个字符串。
+ */
+export function readingInboxIn(workspace) {
+  return path.join(workspace, 'reading-submission.json');
+}

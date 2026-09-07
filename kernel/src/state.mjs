@@ -39,6 +39,9 @@ const RESOLVER = {
   amount_not_on_face: 'kernel',
   duplicate_invoice: 'user',
   no_primary_voucher: 'user',
+  // 跨任务查重
+  duplicate_across_tasks: 'user',
+  history_scope_local: 'kernel',
   // 看图读数这一段
   image_awaiting_reading: 'model',
   reading_stale: 'model',
@@ -62,11 +65,26 @@ const asBlocker = (i) => ({
 /** 任务这一侧观测过没有。没观测过就只答得了环境那半张表。 */
 const taskSeen = (o) => o.taskObserved === true;
 
-/** 看图读数这一段自己有状态，不混进"盘点待办"里 —— 它们的解决人不是同一个。 */
-const READING_KINDS = new Set(['image_awaiting_reading', 'reading_stale', 'reading_awaiting_confirmation']);
+/**
+ * 自己有状态的那些开放项，不混进"盘点待办"里 —— 它们的解决人不是同一个：
+ * 看图读数归模型，跨任务重复要用户在两个任务之间裁决。
+ *
+ * 一处定义，两处使用（这里和 classify.mjs 的"图还没看就别说没有凭证"）：
+ * 抄一份的话，将来加 `reading_rejected` 就得记得改两个地方。
+ */
+export const OWN_STATE_KINDS = new Set(['image_awaiting_reading', 'reading_stale',
+  'reading_awaiting_confirmation', 'duplicate_across_tasks']);
+
+/** 其中属于"图还没读完"的那几种。 */
+export const READING_KINDS = new Set(['image_awaiting_reading', 'reading_stale',
+  'reading_awaiting_confirmation']);
 
 const itemsOf = (o) => o.openItems ?? [];
 const hasBlockingItem = (o, pred) => itemsOf(o).some((i) => i.blocking && pred(i));
+
+/** 会把材料开放项原样带上的那些状态。前面那几个状态内核下一步就自己重算，报早了是噪音。 */
+const MATERIAL_STATES = new Set(['intake_open_items', 'image_awaiting_reading', 'reading_stale',
+  'reading_awaiting_confirmation', 'duplicate_blocked', 'events_pending']);
 
 /** 数据目录的格式版本。它才是版本闸的判据 —— 该判的是数据格式，不是代码版本。 */
 export const SCHEMA_VERSION = 1;
@@ -155,7 +173,7 @@ const RULES = [
     // 先把这些说清楚，而不是先去解析一堆注定解析不了的东西。
     state: 'intake_open_items',
     actor: 'user',
-    when: (o) => taskSeen(o) && hasBlockingItem(o, (i) => !READING_KINDS.has(i.kind)),
+    when: (o) => taskSeen(o) && hasBlockingItem(o, (i) => !OWN_STATE_KINDS.has(i.kind)),
   },
   {
     state: 'classify_pending',
@@ -178,10 +196,19 @@ const RULES = [
     when: (o) => taskSeen(o) && hasBlockingItem(o, (i) => i.kind === 'reading_awaiting_confirmation'),
   },
   {
-    // 材料这一段全清了。照表，下一件事是划费用事件；那一层还没接进 next，
-    // 所以这里给的是一个 done —— 状态名是表里的真状态，只是内核暂时带不动它。
-    // 接上 `run events` 是下一批的事，接的时候连观测一起加（没有事件观测就接，
-    // 这个状态永远成立，`events` 会被无限重跑）。
+    // 跨任务查重命中：这张发票在另一个还占着它的任务里也在。
+    // 停整批，不是停这一张 —— 一批材料里混着一张已经报过的票，整批都要重看。
+    state: 'duplicate_blocked',
+    actor: 'user',
+    when: (o) => taskSeen(o) && hasBlockingItem(o, (i) => i.kind === 'duplicate_across_tasks'),
+  },
+  {
+    // 材料这一段全清了。照表，下一件事是划费用事件（判据「无当前版本的事件划分」）；
+    // 那一层还没接进 next，所以这里给的是一个 done —— 状态名是表里的真状态，
+    // 只是内核暂时带不动它，接上 `run events` 是下一批的事。
+    //
+    // **它必须一直是最后一条**：新落成的状态一律插在它前面，照表里的先后。
+    // 插到它后面就永远轮不上 —— 而轮不上的方式在代码里看不出来。
     state: 'events_pending',
     actor: null,
     when: (o) => taskSeen(o),
@@ -213,9 +240,6 @@ export function determineState(observation) {
   return { state: 'env_ready', actor: null, blockedBy: [] };
 }
 
-/** 会把材料开放项原样带上的那些状态。前面那几个状态内核下一步就自己重算，报早了是噪音。 */
-const MATERIAL_STATES = new Set(['intake_open_items', 'image_awaiting_reading', 'reading_stale',
-  'reading_awaiting_confirmation', 'events_pending']);
 
 /** 判定顺序本身是可测的事实，测试直接读它，不靠复述。 */
 export const STATE_ORDER = RULES.map((r) => r.state).concat('env_ready');
