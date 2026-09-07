@@ -54,7 +54,7 @@ unresolved — do not continue**.
 On exit 1, the JSON says which kind it was, and they need opposite responses:
 
 - an `error` key — the kernel threw. Read it out and stop.
-- a `status` key instead, `timeout` — a local page (`confirm-readings`, `allocate`, `select-task`) waited for
+- a `status` key instead, `timeout` — a local page (`allocate`, `select-task`) waited for
   the user's submit and did not get one. Nothing is wrong; say so and run the command again.
 
 **Every local page blocks in the foreground, and you are mute while it blocks.** The kernel opens the page
@@ -131,9 +131,11 @@ Three things to keep straight when reporting:
 | kind | Means | What the user can do |
 | --- | --- | --- |
 | `image_awaiting_reading` | An image has not been read yet | Step 5 |
-| `reading_awaiting_confirmation` | Read, but not yet confirmed by the user | Run `confirm-readings` |
+| `reading_rejected` | The last reading failed the kernel's checks | Read that image again against the reasons. **Never adjust a digit to make the amounts balance** |
+| `reading_awaiting_confirmation` | Read, but not yet confirmed by the user | Show them the table in the terminal, step 5 |
 | `reading_stale` | The image changed; the old reading is void | Read it again |
 | `image_unreadable` | Even looking at it, the face cannot be read | Ask for a clearer original |
+| `image_undecodable` | **The kernel itself** cannot decode the file's image header | Ask for a re-export. This is the only origin of "that image will not display" — it is never your report |
 | `no_text_in_pdf` | A PDF with no text layer, usually a scan | Ask for the electronic original |
 | `kind_unrecognized` | A PDF with text, but not a kind v1 supports | Check whether it belongs in this reimbursement |
 | `identity_incomplete` | An invoice whose 20-digit number cannot be read | Ask for a complete original. **Invoice identity is never supplied by conversation** |
@@ -149,9 +151,10 @@ by invoice number and holds even when the bytes differ; the second is only "thes
 
 ## 5. Reading image materials
 
-When step 4 shows `image_awaiting_reading`, `reading_stale`, or `reading_awaiting_confirmation`, read
-`references/image-reading.md` and follow it. Done when the work order is empty and the user has submitted the
-confirmation page; then rerun `classify`.
+When step 4 shows `image_awaiting_reading`, `reading_rejected`, `reading_stale`, or
+`reading_awaiting_confirmation`, read `references/image-reading.md` and follow it. Done when the work order is
+empty and the user has confirmed the table **in the terminal**; then rerun `classify`. This whole step needs
+no browser.
 
 ## 6. Cross-task duplicate invoice check
 

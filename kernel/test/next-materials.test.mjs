@@ -21,6 +21,7 @@ const { observeTask } = await import('../src/observe.mjs');
 const { nextResponse } = await import('../src/next.mjs');
 const { sourceKeyOf } = await import('../src/workspace.mjs');
 const { SCHEMA_VERSION } = await import('../src/state.mjs');
+const { applyTerminalVerdict } = await import('../src/confirm.mjs');
 
 const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const me = { displayName: '刘明建', account: 'luo.liu', tenant: '5f1f13f6dde29e' };
@@ -151,6 +152,163 @@ test('目录里只有图时，不会抢着说「一张凭证都没有」', async
   assert.equal(r.state, 'image_awaiting_reading',
     '图还没看就说没有凭证，是抢答 —— 一目录的发票照片，读之前一张也认不出来');
   assert.ok(!r.blockedBy.some((b) => b.kind === 'no_primary_voucher'));
+});
+
+// —— 看图读数与终端确认：从「该看图了」一路走到「读数已确认」——
+//
+// 这一段是 0.9.2 那次事故的正面：模型逐张打开图抄录，内核校守恒式和格式，
+// 过了之后内核渲染一张定宽表格，用户在终端点头。全程不弹浏览器。
+
+/** fengyun-1.png 的真实票面。抄错一位就过不了守恒式，这正是这条链子要的。 */
+const FENGYUN = {
+  docType: 'invoice',
+  fields: {
+    invoiceNumber: '26427000000640558021',
+    issueDate: '2026-09-04',
+    netAmount: '18.25', taxAmount: '0.55', totalAmount: '18.80',
+  },
+  unreadable: [],
+};
+
+/** 按内核给的那一步写读数文件，再原样执行 step.argv 交上去。 */
+function submitReadings(r, over = {}) {
+  const doc = { version: 1, readings: r.step.images.map((img) => ({
+    materialId: img.materialId,
+    contentHash: img.contentHash,
+    sighted: { shape: 'landscape' },              // 1816×1396，横着的
+    ...FENGYUN,
+    ...over,
+  })) };
+  fs.mkdirSync(path.dirname(r.step.readingsPath), { recursive: true });
+  fs.writeFileSync(r.step.readingsPath, JSON.stringify(doc));
+  return JSON.parse(runStep(r));
+}
+
+/** 走到「该看图了」为止。前面几步都是内核自己跑命令。 */
+async function upToReading(dir) {
+  runStep(await ask(dir));                       // 建任务 + 盘点
+  runStep(await ask(dir));                       // 分类
+  const r = await ask(dir);
+  assert.equal(r.state, 'image_awaiting_reading', `实际停在 ${r.state}：${r.speak}`);
+  return r;
+}
+
+test('看图 → 内核校验 → 终端表格 → 用户点头，全程不弹浏览器', async () => {
+  const dir = materials([IMAGE]);
+  let r = await upToReading(dir);
+
+  const verdicts = submitReadings(r);
+  assert.equal(verdicts.rejected, 0, JSON.stringify(verdicts.verdicts));
+
+  // 读完了，轮到用户过目。这一步是一张内核渲染好的表格，不是一个网址。
+  r = await ask(dir, { after: r.stepToken, hasResult: true });
+  assert.equal(r.state, 'reading_awaiting_confirmation', `实际停在 ${r.state}：${r.speak}`);
+  assert.equal(r.actor, 'user');
+  assert.equal(r.step.kind, 'confirm_table');
+  assert.ok(r.step.table.includes('26427000000640558021'), '要比对的值完整摆在表里');
+  assert.equal(r.step.argv, undefined, '没有命令要跑 —— 这一步的另一头是人');
+  assert.equal(r.step.outsourceable, false);
+  assert.doesNotMatch(JSON.stringify(r), /http:\/\/127|localhost/, '全程不弹浏览器');
+
+  // 用户在终端上点了头。凭据一次性，回传就是那个动作。
+  const applied = await applyTerminalVerdict({ sourceDir: dir, sourceKey: sourceKeyOf(dir), after: r.stepToken });
+  assert.equal(applied.verdict, 'confirmed');
+  assert.deepEqual(applied.materialIds.length, 1);
+
+  const moved = await ask(dir, { after: r.stepToken });
+  assert.notEqual(moved.state, 'reading_awaiting_confirmation', '点过头就不该再问同一张表');
+});
+
+test('聊天里的「对的」不构成确认：没有凭据，什么都不会落盘', async () => {
+  const dir = materials([IMAGE]);
+  const r = await upToReading(dir);
+  submitReadings(r);
+  const table = await ask(dir, { after: r.stepToken, hasResult: true });
+  assert.equal(table.state, 'reading_awaiting_confirmation');
+
+  // 拿一个不是内核此刻挂着的凭据回来 —— 那正是「模型替用户点头」的样子。
+  const forged = await applyTerminalVerdict({ sourceDir: dir, sourceKey: sourceKeyOf(dir), after: 'f'.repeat(32) });
+  assert.equal(forged, null, '凭据不对就什么都不做');
+  assert.equal((await ask(dir)).state, 'reading_awaiting_confirmation', '还是停在等你过目');
+});
+
+test('没真的打开过图，提交走不通 —— 字段全抄对了也一样', async () => {
+  const dir = materials([IMAGE]);
+  let r = await upToReading(dir);
+
+  // 票面字段一个不差，只是形状答错了：这张图没有被真的打开过。
+  const verdicts = submitReadings(r, { sighted: { shape: 'portrait' } });
+  assert.equal(verdicts.rejected, 1);
+  assert.match(JSON.stringify(verdicts.verdicts), /没有真的打开过/);
+
+  // 状态不往前走，而且下一步会把上次没过的理由原样带上。
+  r = await ask(dir, { after: r.stepToken, hasResult: true });
+  assert.equal(r.state, 'reading_rejected', `实际停在 ${r.state}：${r.speak}`);
+  assert.equal(r.actor, 'model');
+  assert.equal(r.step.kind, 'read_images');
+  assert.match(r.step.images[0].previousRejection.join(), /sighted\.shape/);
+
+  // 真打开看了再交，就过了。
+  assert.equal(submitReadings(r).rejected, 0);
+  assert.equal((await ask(dir, { after: r.stepToken, hasResult: true })).state,
+    'reading_awaiting_confirmation');
+});
+
+test('守恒式不平是重读，不是把某一位数字改到平', async () => {
+  const dir = materials([IMAGE]);
+  let r = await upToReading(dir);
+
+  submitReadings(r, { fields: { ...FENGYUN.fields, netAmount: '18.30' } });
+  r = await ask(dir, { after: r.stepToken, hasResult: true });
+  assert.equal(r.state, 'reading_rejected');
+  assert.match(r.speak, /不含税金额 \+ 税额/, '为什么不平，念给用户听');
+  assert.match(r.context, /凑平/, '内核不反算，也不许模型凑平');
+});
+
+test('图在读数之后被换掉，旧读数当场作废', async () => {
+  const dir = materials([IMAGE]);
+  const r = await upToReading(dir);
+  submitReadings(r);
+  assert.equal((await ask(dir, { after: r.stepToken, hasResult: true })).state,
+    'reading_awaiting_confirmation');
+
+  // 用户把那张图换成了另一张。读数钉在字节上，跟着一起作废。
+  fs.copyFileSync(path.join(repo, 'resources', '交通', '行程单.png'), path.join(dir, 'fengyun-1.png'));
+  const after = await ask(dir);
+  assert.equal(after.state, 'inventory_stale', '文件换了，先重新盘点');
+  runStep(after);
+  const next = await ask(dir);
+  assert.ok(['classify_pending', 'image_awaiting_reading', 'reading_stale'].includes(next.state),
+    `换图之后不该还停在待确认，实际是 ${next.state}`);
+  assert.notEqual(next.state, 'reading_awaiting_confirmation');
+});
+
+test('用户在表上指错：他给的值不落库，带着分歧回去重看那张图', async () => {
+  const dir = materials([IMAGE]);
+  const r = await upToReading(dir);
+  submitReadings(r);
+  const table = await ask(dir, { after: r.stepToken, hasResult: true });
+  assert.equal(table.state, 'reading_awaiting_confirmation');
+
+  // 用户对着原件说：价税合计不是 18.80。
+  const correctionFile = path.join(table.step.correctionPath);
+  fs.mkdirSync(path.dirname(correctionFile), { recursive: true });
+  fs.writeFileSync(correctionFile, JSON.stringify({ corrections: [
+    { materialId: table.step.materialIds[0], fields: { totalAmount: '19.80' } },
+  ] }));
+
+  const applied = await applyTerminalVerdict({ sourceDir: dir, sourceKey: sourceKeyOf(dir),
+    after: table.stepToken, correctionFile });
+  assert.equal(applied.verdict, 'corrected');
+
+  // 用户的值没有被写进读数，这一份读数整份作废，回去重读。
+  const back = await ask(dir);
+  assert.equal(back.state, 'reading_rejected', `实际停在 ${back.state}：${back.speak}`);
+  const why = back.step.images[0].previousRejection.join();
+  assert.match(why, /19\.80/, '用户说的值要摆出来');
+  assert.match(why, /18\.80/, '机器读到的值也要摆出来，两个一起给人看');
+  assert.doesNotMatch(JSON.stringify(back.blockedBy), /reading_awaiting_confirmation/,
+    '被推翻的读数不再顶着「等你确认」往下走');
 });
 
 test('材料目录没了就只答环境那一半，不冒充成一个材料状态', async () => {

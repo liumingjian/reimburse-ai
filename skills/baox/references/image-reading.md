@@ -52,6 +52,11 @@ Transcribe the characters you can see, and nothing else.
 
 Copy the template the kernel hands you at `step.schemaPath` and edit it: one entry per material read.
 
+- `sighted.shape` is **the proof that you opened the image**: which of `tall | portrait | square |
+  landscape | wide` the picture in front of you is. The kernel knows the true answer from the file's own
+  bytes, so a reading that gets it wrong is rejected whole — every field, however carefully transcribed,
+  goes with it. This applies to `unreadable` too: saying you cannot make out a field still requires
+  proving you are looking. Pick from `step.sightedShapes`; each entry carries a plain-language label.
 - `docType` is one of `invoice | ride_itinerary | hotel_folio | payment_slip | other | unreadable`.
 - Beyond the fields in the template, `sellerName`, `buyerName`, `itemName`, `city`, `travelDate`, `origin`,
   and `destination` are accepted **when you can actually see them on the image**.
@@ -69,17 +74,22 @@ The digits stay as you read them.
 
 ## A reading is not a fact — the confirmation is
 
-```bash
-baox confirm-readings --dir "<材料目录>"
-```
+This happens **in the terminal**. There is no page, and the user should not have to open a browser for it.
+The kernel hands you a `confirm_table` step: paste `step.table` out verbatim — it is already rendered to a
+fixed width, so do not reflow it, summarise it, or retype the numbers — and ask the user to check it against
+their originals.
 
-This opens a local page listing the fields for the user to check against the original, tick, and submit.
-**Submitting is the consent event** that turns candidates into parsed values. 「对的」「没问题」 in chat does
-not, and you cannot tick on the user's behalf. Whatever they leave unticked stays as an open item — that is
-their judgement, and it stands.
+- They agree → return with `--after <stepToken>` and nothing else. That round trip **is** the consent event.
+- They point at something → write their values to `step.correctionPath` in the shape given by
+  `step.correctionFormat`, and return with `--after <stepToken> --correction <that file>`.
+
+「对的」「没问题」 said in chat is not a confirmation and never was: the kernel cannot see it, and you cannot
+nod on the user's behalf. A correction is **not** an edit either — the kernel will not write the user's value
+into the reading. It voids that reading, keeps both values side by side, and sends you back to reopen the
+image. Any confirmation the reading already had stops counting.
 
 ## Done when
 
 Every work-order item is either submitted and accepted, or listed in `unreadable` with a reason, **and** the
-user has submitted the confirmation page. Then rerun `classify`: image materials now take part in role
+user has confirmed the table in the terminal. Then rerun `classify`: image materials now take part in role
 triage, invoice identity, and duplicate detection exactly like PDFs.

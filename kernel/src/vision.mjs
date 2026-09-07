@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { taskDir } from './workspace.mjs';
+import { shapeOfBuffer, shapeMatches, SHAPES, SHAPE_LABELS } from './imageshape.mjs';
 
 // 图片材料的读取协议。
 //
@@ -13,11 +14,17 @@ import { taskDir } from './workspace.mjs';
 //   1. 读取对象是**在册材料**：有材料标识、有内容哈希、属于某个盘点版本。
 //      读数必须带上内容哈希，内核会重新算一遍；对不上就作废。
 //      这让一次读取永远指向一个确定的字节序列，文件一改读数自动失效。
-//   2. 读数只能是**逐字抄写**。模型不得计算、推断、补全，看不清必须说看不清。
-//   3. 内核**结构校验**：位数、日期、金额守恒。这些是模型控制不了的算术，
-//      编出来的号码和金额过不了。
-//   4. 校验通过也只是**字段候选**，不是已解析值。必须由用户在本地 Web 上确认。
-//      确认由提交动作构成 —— 这和契约里其他确认走的是同一条权威通道。
+//   2. 读数要带**看过的凭据**：这张图的形状档（见 imageshape.mjs）。内核从字节里
+//      算得出准确答案，看着图的人一眼就知道，没打开过的猜不中。0.9.2 那次
+//      "一张没看就说图片显示不出来"，在这里变成机制上过不去 —— 说"看不清"
+//      也要先答对形状，因为看不清说的是"看着的图上认不出这个字段"。
+//   3. 读数只能是**逐字抄写**。模型不得计算、推断、补全，看不清必须说看不清。
+//   4. 内核**结构校验**：位数、日期、金额守恒。这些是模型控制不了的算术，
+//      编出来的号码和金额过不了。守恒不平是一个**正常结果** —— 处置是重读，
+//      或者判定这个字段读不出，绝不是把某一位数字改到平。
+//   5. 校验通过也只是**字段候选**，不是已解析值。必须由用户在终端上对着定宽表格确认。
+//      确认由"用户就着那张表点头、模型带着一次性凭据回传"构成 ——
+//      聊天里的"对的""没问题"不构成确认。
 //
 // 换句话说：材料仍然是证据，模型只是读它的人，内核和用户是两道闸。
 
@@ -35,19 +42,23 @@ export const DOC_TYPES = {
 
 /** 允许回报的字段。不在这张表里的键一律拒收 —— 不给自由发挥留缝。 */
 const FIELD_RULES = {
-  invoiceNumber: { test: (v) => /^\d{20}$/.test(v), hint: '20 位数字' },
-  issueDate: { test: isDate, hint: 'YYYY-MM-DD' },
-  netAmount: { test: isMoney, hint: '金额，两位小数' },
-  taxAmount: { test: isMoney, hint: '金额，两位小数' },
-  totalAmount: { test: isMoney, hint: '金额，两位小数' },
-  sellerName: { test: isText, hint: '票面上的销售方名称' },
-  buyerName: { test: isText, hint: '票面上的购买方名称' },
-  itemName: { test: isText, hint: '票面上的项目名称' },
-  city: { test: isText, hint: '票面或单据上写明的城市' },
-  travelDate: { test: isDate, hint: 'YYYY-MM-DD' },
-  origin: { test: isText, hint: '起点' },
-  destination: { test: isText, hint: '终点' },
+  invoiceNumber: { label: '发票号码', test: (v) => /^\d{20}$/.test(v), hint: '20 位数字' },
+  issueDate: { label: '开票日期', test: isDate, hint: 'YYYY-MM-DD' },
+  netAmount: { label: '不含税金额', test: isMoney, hint: '金额，两位小数' },
+  taxAmount: { label: '税额', test: isMoney, hint: '金额，两位小数' },
+  totalAmount: { label: '价税合计', test: isMoney, hint: '金额，两位小数' },
+  sellerName: { label: '销售方', test: isText, hint: '票面上的销售方名称' },
+  buyerName: { label: '购买方', test: isText, hint: '票面上的购买方名称' },
+  itemName: { label: '项目名称', test: isText, hint: '票面上的项目名称' },
+  city: { label: '城市', test: isText, hint: '票面或单据上写明的城市' },
+  travelDate: { label: '行程日期', test: isDate, hint: 'YYYY-MM-DD' },
+  origin: { label: '起点', test: isText, hint: '起点' },
+  destination: { label: '终点', test: isText, hint: '终点' },
 };
+
+/** 字段的中文名。表格给用户看，键名不给用户看。 */
+export const FIELD_LABELS = Object.fromEntries(
+  Object.entries(FIELD_RULES).map(([k, v]) => [k, v.label]));
 
 function isMoney(v) { return typeof v === 'string' && /^-?\d{1,9}\.\d{2}$/.test(v); }
 function isText(v) { return typeof v === 'string' && v.trim().length > 0 && v.length <= 120; }
@@ -63,6 +74,14 @@ function isDate(v) {
 const cents = (s) => Math.round(Number(s) * 100);
 const readingsDir = (task) => path.join(taskDir(task), 'readings');
 const readingFile = (task, materialId) => path.join(readingsDir(task), `${materialId}.json`);
+/**
+ * 被驳回的那一次读取也要落盘。
+ *
+ * 不落盘的话，下一次 `next` 看到的只是"这张图还没读"，于是内核会再发一遍
+ * 一模一样的指令，一个字都不提上次为什么没过 —— 模型只好照原样再读一遍，
+ * 再被驳回一次。**驳回的理由是下一次读取唯一有用的输入**，它得活到下一次。
+ */
+const rejectionFile = (task, materialId) => path.join(readingsDir(task), `${materialId}.rejected.json`);
 
 /**
  * 生成读取工单：哪些材料需要看图，每份要回报什么。
@@ -78,7 +97,10 @@ export function buildWorkOrder(sourceDir, inventory, classification, task, { for
     // `force` 是给"读过了但漏了后面才需要的字段"准备的重读入口。
     const isImage = m.format === 'png' || m.format === 'jpg';
     if (r.parseStatus !== 'needs_ocr' && !(force && isImage)) continue;
+    // 内核自己都解不开的图不派给模型看：那是材料的问题，模型看多少遍都一样。
+    if (r.imageDecodable === false) continue;
     const existing = loadReading(task, r.materialId);
+    const rejection = loadRejection(task, r.materialId);
     items.push({
       materialId: m.materialId,
       fileName: m.fileName,
@@ -88,6 +110,10 @@ export function buildWorkOrder(sourceDir, inventory, classification, task, { for
       // 同一份字节已经读过就不用再读；文件改过则旧读数已失效，要重读。
       alreadyRead: !!existing && existing.contentHash === m.contentHash,
       confirmed: !!existing && existing.contentHash === m.contentHash && !!existing.confirmedAt,
+      // 上一次为什么没过。跟着字节走：图换过了，上次的理由也就无从谈起。
+      rejection: rejection && rejection.contentHash === m.contentHash
+        ? { reasons: rejection.reasons, rejectedAt: rejection.rejectedAt }
+        : null,
     });
   }
   return items;
@@ -113,9 +139,25 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
     const reasons = [];
 
     // 内容哈希是这次读取和那串字节之间的绑定。重新算一遍，不信提交上来的值。
-    const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(root, m.relPath))).digest('hex');
+    const bytes = fs.readFileSync(path.join(root, m.relPath));
+    const actual = crypto.createHash('sha256').update(bytes).digest('hex');
     if (raw.contentHash !== actual) {
       reasons.push('读数携带的内容哈希与材料当前内容不一致，这次读取已作废，请重新看图');
+    }
+
+    // 看过的凭据。这一条排在所有字段校验前面，因为它决定的是**这次读取算不算数**：
+    // 一份没看过图的读数，里面的字段对不对都没有意义。
+    const shape = shapeOfBuffer(bytes);
+    if (!shape) {
+      // 内核自己都解不开这张图 —— 那是材料的问题，不是模型的说法，也不该让模型去看。
+      // 正常情况下分类那一层已经把它拦成开放项了，走到这里说明材料刚刚被换掉。
+      reasons.push('内核解不开这个文件的图像头，它不是一张完整的 png / jpg；'
+        + '这不是"看不清"，是这份材料本身要换');
+    } else if (!shapeMatches(shape.width, shape.height, raw.sighted?.shape)) {
+      reasons.push(`sighted.shape 报的是 ${raw.sighted?.shape ?? '（没报）'}，和这张图对不上；`
+        + `它必须是 ${SHAPES.join(' / ')} 之一，`
+        + '是"你正看着的这张图长什么样"。答不上就说明这张图没有真的打开过 —— '
+        + '请用 Read 工具打开它再读一遍。');
     }
 
     const type = DOC_TYPES[raw.docType];
@@ -147,7 +189,12 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
     }
 
     const verdict = reasons.length ? 'rejected' : 'accepted';
+    if (verdict === 'rejected') {
+      writeRejection(task, { materialId: m.materialId, fileName: m.fileName, contentHash: actual,
+        reasons, rejectedAt: new Date().toISOString() });
+    }
     if (verdict === 'accepted') {
+      clearRejection(task, m.materialId);
       writeReading(task, {
         materialId: m.materialId,
         fileName: m.fileName,
@@ -160,6 +207,7 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
         notes: typeof raw.notes === 'string' ? raw.notes.slice(0, 400) : null,
         amountCheck,
         source: 'vision',
+        sighted: { shape: raw.sighted.shape, width: shape.width, height: shape.height },
         readAt: new Date().toISOString(),
         confirmedAt: null,
       });
@@ -173,6 +221,25 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
 export function loadReading(task, materialId) {
   try { return JSON.parse(fs.readFileSync(readingFile(task, materialId), 'utf8')); }
   catch { return null; }
+}
+
+/** 上一次被驳回的理由，没有就是 null。 */
+export function loadRejection(task, materialId) {
+  try { return JSON.parse(fs.readFileSync(rejectionFile(task, materialId), 'utf8')); }
+  catch { return null; }
+}
+
+function writeRejection(task, record) {
+  const dir = readingsDir(task);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const p = rejectionFile(task, record.materialId);
+  fs.writeFileSync(`${p}.tmp`, JSON.stringify(record, null, 2), { mode: 0o600 });
+  fs.renameSync(`${p}.tmp`, p);
+}
+
+/** 这一张过了，上一次的理由就不再是待办 —— 留着它只会让状态永远停在"上次没过"。 */
+function clearRejection(task, materialId) {
+  try { fs.unlinkSync(rejectionFile(task, materialId)); } catch { /* 本来就没有 */ }
 }
 
 /** 读数本身的指纹：用户确认的是这几个字段的这几个值，改一个字就不再是同一次确认。 */
@@ -196,7 +263,39 @@ function writeReading(task, reading) {
   fs.renameSync(`${p}.tmp`, p);
 }
 
-/** 记下用户在本地 Web 上的确认。确认由提交动作构成，对话里说"确认了"不算。 */
+/**
+ * 待用户过目的读数，按材料一行行摆出来。渲染成表格是上一层的事，
+ * 这里只负责说清楚"这一批要确认的是哪几份、每份读到了什么"。
+ *
+ * 只收**这一版字节**上还没确认的读数：图换过了的、已经确认过的都不在里面。
+ */
+export function pendingConfirmations(task, inventory) {
+  const rows = [];
+  for (const m of inventory.materials) {
+    const r = loadReading(task, m.materialId);
+    if (!r || r.contentHash !== m.contentHash || r.confirmedAt) continue;
+    rows.push({
+      materialId: m.materialId,
+      fileName: m.fileName,
+      docType: r.docType,
+      docTypeLabel: DOC_TYPES[r.docType]?.label ?? r.docType,
+      fields: Object.entries(r.fields ?? {}).map(([key, value]) =>
+        ({ key, label: FIELD_LABELS[key] ?? key, value })),
+      unreadable: (r.unreadable ?? []).map((k) => FIELD_LABELS[k] ?? k),
+      amountCheck: r.amountCheck ?? null,
+      notes: r.notes ?? null,
+    });
+  }
+  return rows;
+}
+
+/**
+ * 记下用户在**终端**上的确认。
+ *
+ * 确认由"用户就着内核渲染的那张表点头、模型带着当次一次性凭据回传"这一次往返构成。
+ * 聊天里的"对的""没问题"不构成确认 —— 那句话没有凭据，内核看不见它，
+ * 也就无从落成事实。凭据不对时上一层根本不会走到这里。
+ */
 export function confirmReadings(task, materialIds) {
   const at = new Date().toISOString();
   const done = [];
@@ -204,11 +303,59 @@ export function confirmReadings(task, materialIds) {
     const r = loadReading(task, id);
     if (!r) continue;
     r.confirmedAt = at;
-    r.confirmedVia = 'local-web';
+    r.confirmedVia = 'terminal';
     fs.writeFileSync(readingFile(task, id), JSON.stringify(r, null, 2), { mode: 0o600 });
     done.push(id);
   }
   return { confirmedAt: at, materialIds: done };
+}
+
+/**
+ * 用户指错了：他给的值和机器读到的不一样。
+ *
+ * **用户的值不直接落库。** 一个人对着表格口述的数字和一次逐字抄写，都可能错，
+ * 内核没有理由偏信哪一个；直接采纳等于把"确认"这道闸变成"改写"这道门。
+ * 所以这里做两件事，一件都不多做：
+ *
+ *  1. **把这一次读数作废。** 用户不认它了，它就不再是候选，先前那次确认
+ *     （如果有）也跟着作废 —— 字段改过之后，之前认的已经不是同一份东西。
+ *  2. **把分歧留成下一次读取的输入。** 机器读到什么、用户说是什么，一起记在
+ *     驳回记录里，下一次看图时原样摆给模型（也摆给用户）。
+ *
+ * 收敛靠重读，不靠内核在两个值之间选一个。带着分歧派一次**干净上下文**的重读、
+ * 把两次机器读数和用户的值一起摆给用户拍板，是 `reading_disputed` 那一步的事（#63）；
+ * 这一票先把"用户改了字段，先前的确认就不再算数"钉死。
+ */
+export function disputeReading(task, materialId, corrections = {}) {
+  const r = loadReading(task, materialId);
+  if (!r) return null;
+  const disputed = Object.entries(corrections)
+    .filter(([key]) => key in FIELD_RULES)
+    .map(([key, userValue]) => ({
+      field: key,
+      label: FIELD_LABELS[key] ?? key,
+      machineValue: r.fields?.[key] ?? null,
+      userValue: typeof userValue === 'string' ? userValue : String(userValue ?? ''),
+      // 来源分开记：机器抄的是 vision，人说的是 user。合成一个值之前，
+      // 两边各是谁说的必须一直看得见。
+      source: 'user',
+    }))
+    .filter((d) => d.userValue !== d.machineValue);
+
+  writeRejection(task, {
+    materialId,
+    fileName: r.fileName,
+    contentHash: r.contentHash,
+    rejectedAt: new Date().toISOString(),
+    disputed,
+    reasons: disputed.length
+      ? disputed.map((d) => `${d.label}：我读到的是「${d.machineValue ?? '（没读出来）'}」，`
+        + `用户对着原件说是「${d.userValue}」。这两个值我不替谁做主，请重新打开这张图逐字核对该字段。`)
+      : ['用户看过这张表之后没有认可这份读数，请重新打开这张图逐字读一遍。'],
+  });
+  // 读数本身作废。留着它会让状态停在「待确认」，而那张表用户已经否掉了。
+  try { fs.unlinkSync(readingFile(task, materialId)); } catch { /* 已经没了 */ }
+  return { materialId, disputed };
 }
 
 /**

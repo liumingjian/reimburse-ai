@@ -13,7 +13,9 @@ import path from 'node:path';
 import url from 'node:url';
 import { determineState, SCHEMA_VERSION, MIN_NODE_MAJOR } from './state.mjs';
 import { currentStep, issueStep } from './steptoken.mjs';
-import { readingInboxIn } from './workspace.mjs';
+import { readingInboxIn, correctionInboxIn } from './workspace.mjs';
+import { SHAPES, SHAPE_LABELS } from './imageshape.mjs';
+import { renderTable } from './table.mjs';
 
 /** 内核自己的入口。argv 里给绝对路径：模型原样执行，不需要知道 baox 装在哪。 */
 const SRC = path.dirname(url.fileURLToPath(import.meta.url));
@@ -64,14 +66,68 @@ const done = ({ speak, context, progress = ENV_PROGRESS }) =>
 const readImages = ({ images, readingsPath, argv, speak, context }) => ({
   step: {
     kind: 'read_images',
-    images: images.map(({ materialId, fileName, absPath, format, contentHash }) =>
-      ({ materialId, fileName, absPath, format, contentHash })),
+    images: images.map(({ materialId, fileName, absPath, format, contentHash, rejection }) =>
+      ({ materialId, fileName, absPath, format, contentHash,
+        // 上一次为什么没过。带着它重读，才不是把同一遍再走一次。
+        ...(rejection ? { previousRejection: rejection.reasons } : {}) })),
     schemaPath: READING_TEMPLATE,
     readingsPath,
+    // 「看过的凭据」的取值范围，跟着这一步一起给 —— 模型不需要去别处查它。
+    sightedShapes: SHAPES.map((shape) => ({ shape, label: SHAPE_LABELS[shape] })),
     argv,
   },
   speak, context, progress: READING_PROGRESS, exit: 0,
 });
+
+/**
+ * 请用户过目一张内核渲染好的定宽表格。
+ *
+ * `table` 是**一整块渲染好的文本**，模型原样贴出来，一个字都不重排 ——
+ * 表格是用户做判断用的界面，不是让模型转述的素材。
+ *
+ * 认可走 `--after <token>`（不带别的）；指错把改动写进 `correctionPath`
+ * 再带 `--correction <文件>` 回来。用户不表态就一直停在这里：这一步的 actor 是人，
+ * 模型替他点头是这条链子上最容易破的地方，所以凭据只有一次、且只对这一张表有效。
+ */
+const confirmTable = ({ table, materialIds, correctionPath, speak, context }) => ({
+  step: {
+    kind: 'confirm_table',
+    table,
+    materialIds,
+    correctionPath,
+    correctionFormat: {
+      corrections: [{ materialId: '表里那一行的 materialId', fields: { invoiceNumber: '用户说的值' } }],
+      note: '只写用户当面改的那几个字段，其余不要抄。用户的值不会被直接落库 —— '
+        + '内核会把这张读数作废，带着分歧重新看图。',
+    },
+    // 终端表态和终端多选一样，在子 Agent 里做不了：那里没有用户。
+    outsourceable: false,
+  },
+  speak, context, progress: READING_PROGRESS, exit: 0,
+});
+
+/**
+ * 待确认读数 -> 一张定宽表格。
+ *
+ * 一行一个字段，不是一行一份材料：用户要做的事是**在一串数字里挑出不对的那一个**，
+ * 而挤在一格里的五个字段没法一眼比对。看不清的字段也单独占一行 ——
+ * 它是一个需要用户知道的结果，不是一处留白。
+ */
+function readingTable(pending) {
+  const rows = [];
+  for (const p of pending) {
+    let first = true;
+    const nameCell = () => (first ? (first = false, `${p.fileName}（${p.docTypeLabel}）`) : '');
+    for (const f of p.fields) rows.push({ material: nameCell(), field: f.label, value: f.value });
+    for (const u of p.unreadable) rows.push({ material: nameCell(), field: u, value: '看不清（我没有猜）' });
+    if (first) rows.push({ material: nameCell(), field: '（没有读出任何字段）', value: '' });
+  }
+  return renderTable([
+    { key: 'material', label: '材料', max: 46 },
+    { key: 'field', label: '字段', max: 16 },
+    { key: 'value', label: '我读到的', max: 32 },
+  ], rows);
+}
 
 /** 待办清单念给用户听的样子。谁能解决它，是每条最要紧的那半句。 */
 const WHO = { user: '要你处理', model: '我来处理', kernel: '内核已经自己处置了，说一声而已' };
@@ -97,6 +153,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
   const bound = o.binding?.displayName ?? o.binding?.account ?? null;
   const label = o.task?.sourceLabel ?? '这批材料';
   const readingsPath = o.task ? readingInboxIn(o.task.workspace) : null;
+  const correctionPath = o.task ? correctionInboxIn(o.task.workspace) : null;
   const submitArgv = () => argvFor('ocr-submit', '--dir', o.sourceDir, '--file', readingsPath);
   // 要看的那几张图，和念给用户听的那串文件名。两个 case 用的是同一份。
   const images = o.pendingImages ?? [];
@@ -224,8 +281,25 @@ export function stepFor(state, observation = {}, blockedBy = []) {
           + '我逐张打开抄写，看不清的字段我会说看不清，不猜也不算。',
         context: '内核没有 OCR，图片由我来读；但读不等于算数：读数要过内核的结构校验'
           + '（位数、日期、金额守恒），过了也只是候选，还得你对着原图确认。'
+          + '每份读数还要带一句只有真打开过才答得上的话（这张图是什么形状），'
+          + '答不上整份读数就不算数 —— 没看图就说图片读不了，这条路是走不通的。'
           + '每份读数都钉在这张图当前的字节上，图一换读数自动作废。',
       });
+
+    case 'reading_rejected': {
+      // 驳回的处置永远是**重读**，不是把数字改到过关。守恒式不平是一个正常结果：
+      // 要么再看一遍看清楚，要么老实说这个字段读不出来 —— 内核不接受第三种收场。
+      const why = images.flatMap((i) => (i.rejection?.reasons ?? []).map((r) => `${i.fileName}：${r}`));
+      return readImages({
+        images,
+        readingsPath,
+        argv: submitArgv(),
+        speak: '上一次读数没过内核这一关，我重新看一遍这几张图：\n'
+          + `${why.map((w, n) => `${n + 1}. ${w}`).join('\n')}`,
+        context: '过不了就重读，或者老实说这个字段读不出来 —— 我不会去调整某一位数字把式子凑平。'
+          + '凑平的那个数字看起来最像对的，实际上是这条链子上唯一一个没有来源的值。',
+      });
+    }
 
     case 'reading_stale':
       return readImages({
@@ -238,19 +312,21 @@ export function stepFor(state, observation = {}, blockedBy = []) {
           + '沿用它等于拿上一张图的数字去报这一张图。',
       });
 
-    case 'reading_awaiting_confirmation':
-      // 规格那一格写的是 confirm_table（终端表格）。那种 step 属于后面的批次，
-      // 这一批先接上已有的本地确认页 —— 它是 run，但**这一步要人对着原图点确认，
-      // 不能外包给子 Agent**。换成 confirm_table 是批次 5 的活。
-      return run(argvFor('confirm-readings', '--dir', o.sourceDir), {
-        outsourceable: false,
-        speak: '图我读完了。读数还只是候选，得你对着原件过一眼才算数 ——'
-          + '我这就打开一个本地页面把读到的字段摆出来，对得上就勾选提交，'
-          + '对不上的别勾，我重读。',
-        context: '确认由提交这个动作构成，对话里说一句"确认了"不算数。'
-          + '没勾的材料仍然停在待确认项里，我不会替你确认。',
-        progress: READING_PROGRESS,
+    case 'reading_awaiting_confirmation': {
+      const pending = o.pendingReadings ?? [];
+      return confirmTable({
+        table: readingTable(pending),
+        materialIds: pending.map((p) => p.materialId),
+        correctionPath,
+        speak: `图我读完了。下面是我从${pending.length > 1 ? `这 ${pending.length} 张` : '这张'}图上逐字抄下来的，`
+          + '读数还只是候选，得你对着原件过一眼才算数。'
+          + '哪一项对不上就直接说是哪一项、正确的值是什么，我不会拿你说的值直接落库，'
+          + '而是带着这个分歧重新看一遍那张图。',
+        context: '确认只来自你在这里的表态。你在别处说过的"对的""没问题"我一概不当作确认 ——'
+          + '那些话我传得进来，但内核看不见它们，也就没法把它们变成事实。'
+          + '全程不需要你打开任何网页。',
       });
+    }
 
     case 'duplicate_blocked': {
       const hits = blockedBy.filter((b) => b.kind === 'duplicate_across_tasks');

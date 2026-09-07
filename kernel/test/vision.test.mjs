@@ -11,7 +11,8 @@ process.env.BAOX_HOME = home;
 
 const { takeInventory } = await import('../src/inventory.mjs');
 const { createTask } = await import('../src/workspace.mjs');
-const { ingestReadings, confirmReadings, loadReading, projectReading } = await import('../src/vision.mjs');
+const { ingestReadings, confirmReadings, disputeReading, loadReading, loadRejection,
+  pendingConfirmations, projectReading } = await import('../src/vision.mjs');
 const { invoiceIdentity } = await import('../src/parse.mjs');
 
 const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
@@ -27,9 +28,12 @@ const task = createTask(src);
 const submit = (reading) =>
   ingestReadings(src, inventory, task, { version: 1, readings: [reading] })[0];
 
+// fengyun-1.png 是 1816×1396，宽高比 1.30 —— 横着的。
+// 这个值是**看着图才答得上**的，所以它在每一份合法读数里都必须在。
 const good = () => ({
   materialId: material.materialId,
   contentHash: material.contentHash,
+  sighted: { shape: 'landscape' },
   docType: 'invoice',
   fields: {
     invoiceNumber: '26427000000640558021',
@@ -121,6 +125,91 @@ test('改了字段再提交，旧的确认不再算数 —— 用户没看过新
   const after = loadReading(task, material.materialId);
   assert.equal(after.confirmedAt, null, '字节没变但读数变了，确认必须失效');
   assert.equal(projectReading(after), null);
+});
+
+// —— 看过的凭据：没打开过图就交不上读数 ——
+//
+// 0.9.2 真机上模型一张图没看就说「图片显示不出来」，让用户回去重新导出材料。
+// 下面这几条钉的就是那件事在机制上过不去。
+
+test('没报形状的读数一律不算数 —— 没看过图，字段对不对都无从谈起', () => {
+  const r = good();
+  delete r.sighted;
+  const v = submit(r);
+  assert.equal(v.verdict, 'rejected');
+  assert.match(v.reasons.join(), /没有真的打开过/);
+});
+
+test('形状报错了就是没看过：字段全对也照样打回', () => {
+  const v = submit({ ...good(), sighted: { shape: 'portrait' } });
+  assert.equal(v.verdict, 'rejected');
+  assert.match(v.reasons.join(), /sighted\.shape/);
+});
+
+test('说「看不清」也要先证明在看：形状照样得答对', () => {
+  const v = submit({ materialId: material.materialId, contentHash: material.contentHash,
+    sighted: { shape: 'tall' }, docType: 'unreadable', fields: {},
+    unreadable: ['invoiceNumber', 'totalAmount'] });
+  assert.equal(v.verdict, 'rejected');
+  assert.match(v.reasons.join(), /没有真的打开过/);
+});
+
+test('看着图说这几个字段认不出来，是合法答案', () => {
+  const v = submit({ materialId: material.materialId, contentHash: material.contentHash,
+    sighted: { shape: 'landscape' }, docType: 'unreadable', fields: {},
+    unreadable: ['invoiceNumber', 'totalAmount'] });
+  assert.equal(v.verdict, 'accepted', JSON.stringify(v.reasons));
+});
+
+test('被驳回的理由要活到下一次读取 —— 那是重读唯一有用的输入', () => {
+  const r = good();
+  r.fields.netAmount = '18.30';                     // 守恒式不平
+  submit(r);
+  const rejection = loadRejection(task, material.materialId);
+  assert.equal(rejection.contentHash, material.contentHash);
+  assert.match(rejection.reasons.join(), /不含税金额 \+ 税额/);
+
+  // 重读过了，上一次的理由就不再是待办。
+  submit(good());
+  assert.equal(loadRejection(task, material.materialId), null);
+});
+
+// —— 终端确认与纠正 ——
+
+test('确认记的是终端，不是网页 —— 这条路上再没有页面了', () => {
+  submit(good());
+  confirmReadings(task, [material.materialId]);
+  assert.equal(loadReading(task, material.materialId).confirmedVia, 'terminal');
+});
+
+test('待确认表里只有这一版字节上还没确认的读数', () => {
+  // 上一条测试已经确认过了，先把它推翻，才回得到「读过、还没确认」那个状态。
+  disputeReading(task, material.materialId, { totalAmount: '19.80' });
+  submit(good());
+  const rows = pendingConfirmations(task, inventory);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].fileName, 'invoice.png');
+  // 字段带中文名：表格给用户看，键名不给用户看。
+  assert.ok(rows[0].fields.some((f) => f.label === '价税合计' && f.value === '18.80'));
+
+  confirmReadings(task, [material.materialId]);
+  assert.equal(pendingConfirmations(task, inventory).length, 0, '确认过的不再摆给用户');
+});
+
+test('用户改了字段：他给的值不落库，先前的确认当场作废', () => {
+  submit(good());
+  confirmReadings(task, [material.materialId]);
+  assert.ok(loadReading(task, material.materialId).confirmedAt);
+
+  const d = disputeReading(task, material.materialId, { invoiceNumber: '26427000000640558099' });
+  assert.equal(d.disputed[0].machineValue, '26427000000640558021');
+  assert.equal(d.disputed[0].userValue, '26427000000640558099');
+  assert.equal(d.disputed[0].source, 'user');
+  // 读数作废：既没有被用户的值改写，也不再顶着那次确认往下走。
+  assert.equal(loadReading(task, material.materialId), null, '用户的值不直接落库，读数整份作废');
+  const rejection = loadRejection(task, material.materialId);
+  assert.match(rejection.reasons.join(), /重新打开这张图/);
+  assert.match(rejection.reasons.join(), /26427000000640558099/);
 });
 
 test.after(() => {

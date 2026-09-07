@@ -237,3 +237,13 @@ export function classificationRecorded(task, versionId) {
 export function readingInboxIn(workspace) {
   return path.join(workspace, 'reading-submission.json');
 }
+
+/**
+ * 用户在终端上指错时，那份纠正写到哪里。同样由内核定位置。
+ *
+ * 和读数分开放：一个是模型抄的，一个是用户口述的，两份东西的来源不同，
+ * 混在一个文件里迟早会有人分不清哪一行是谁写的。
+ */
+export function correctionInboxIn(workspace) {
+  return path.join(workspace, 'reading-correction.json');
+}

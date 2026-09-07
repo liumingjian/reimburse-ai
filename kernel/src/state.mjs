@@ -32,6 +32,9 @@ const RESOLVER = {
   no_text_in_pdf: 'user',
   kind_unrecognized: 'user',
   image_unreadable: 'user',
+  // 内核自己解不开图像头。这是材料的问题，只有人换得了一份能看的原件 ——
+  // 也正因为它由内核判定，「图片显示不出来」这句话就再也轮不到模型来说。
+  image_undecodable: 'user',
   identity_incomplete: 'user',
   issue_date_missing: 'user',
   amount_mismatch: 'user',
@@ -44,6 +47,7 @@ const RESOLVER = {
   history_scope_local: 'kernel',
   // 看图读数这一段
   image_awaiting_reading: 'model',
+  reading_rejected: 'model',
   reading_stale: 'model',
   reading_awaiting_confirmation: 'user',
 };
@@ -72,19 +76,19 @@ const taskSeen = (o) => o.taskObserved === true;
  * 一处定义，两处使用（这里和 classify.mjs 的"图还没看就别说没有凭证"）：
  * 抄一份的话，将来加 `reading_rejected` 就得记得改两个地方。
  */
-export const OWN_STATE_KINDS = new Set(['image_awaiting_reading', 'reading_stale',
+export const OWN_STATE_KINDS = new Set(['image_awaiting_reading', 'reading_rejected', 'reading_stale',
   'reading_awaiting_confirmation', 'duplicate_across_tasks']);
 
 /** 其中属于"图还没读完"的那几种。 */
-export const READING_KINDS = new Set(['image_awaiting_reading', 'reading_stale',
+export const READING_KINDS = new Set(['image_awaiting_reading', 'reading_rejected', 'reading_stale',
   'reading_awaiting_confirmation']);
 
 const itemsOf = (o) => o.openItems ?? [];
 const hasBlockingItem = (o, pred) => itemsOf(o).some((i) => i.blocking && pred(i));
 
 /** 会把材料开放项原样带上的那些状态。前面那几个状态内核下一步就自己重算，报早了是噪音。 */
-const MATERIAL_STATES = new Set(['intake_open_items', 'image_awaiting_reading', 'reading_stale',
-  'reading_awaiting_confirmation', 'duplicate_blocked', 'events_pending']);
+const MATERIAL_STATES = new Set(['intake_open_items', 'image_awaiting_reading', 'reading_rejected',
+  'reading_stale', 'reading_awaiting_confirmation', 'duplicate_blocked', 'events_pending']);
 
 /** 数据目录的格式版本。它才是版本闸的判据 —— 该判的是数据格式，不是代码版本。 */
 export const SCHEMA_VERSION = 1;
@@ -184,6 +188,13 @@ const RULES = [
     state: 'image_awaiting_reading',
     actor: 'model',
     when: (o) => taskSeen(o) && hasBlockingItem(o, (i) => i.kind === 'image_awaiting_reading'),
+  },
+  {
+    // 上一次读数没过内核的校验（格式、守恒式、或者根本没答对"看过的凭据"）。
+    // 它排在 image_awaiting_reading 后面、reading_stale 前面，照表。
+    state: 'reading_rejected',
+    actor: 'model',
+    when: (o) => taskSeen(o) && hasBlockingItem(o, (i) => i.kind === 'reading_rejected'),
   },
   {
     state: 'reading_stale',

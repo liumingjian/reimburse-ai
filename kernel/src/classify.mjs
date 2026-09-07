@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { parseMaterial, invoiceIdentity, checkAmounts, maskNumber } from './parse.mjs';
-import { loadReading, projectReading } from './vision.mjs';
+import { loadReading, loadRejection, projectReading } from './vision.mjs';
+import { shapeOfFile } from './imageshape.mjs';
 import { READING_KINDS } from './state.mjs';
 
 // 材料角色分流：把盘点出来的材料判成主要报销凭证还是参考材料，
@@ -26,11 +27,23 @@ export function classifyInventory(sourceDir, inventory, task = null) {
 
     // 图片取不出文字，但可能已经有一次**已确认**的看图读取。
     // 只有确认过的读数才顶替解析结果；读过没确认的仍然停在待确认项里。
-    if (parsed.parseStatus === 'needs_ocr' && task) {
+    if (parsed.parseStatus === 'needs_ocr') {
+      // 这个文件到底是不是一张显示得出来的图，由**内核**说了算，不由模型说了算。
+      // 解不开图像头的，模型压根不会被派去看它 —— 于是「图片显示不出来」这句话
+      // 只可能出自内核，出自模型时它必然是假的。
+      const shape = shapeOfFile(path.join(path.resolve(sourceDir), m.relPath));
+      parsed = { ...parsed, imageDecodable: !!shape, imageShape: shape?.shape ?? null };
+    }
+    if (parsed.parseStatus === 'needs_ocr' && parsed.imageDecodable && task) {
       const reading = loadReading(task, m.materialId);
       const fresh = reading && reading.contentHash === m.contentHash;
       const projected = fresh ? projectReading(reading) : null;
+      const rejection = loadRejection(task, m.materialId);
+      const freshRejection = rejection && rejection.contentHash === m.contentHash;
       if (projected) parsed = projected;
+      // 驳回排在「没读过」前面：这张图确实还没有可用的读数，但**为什么**没有
+      // 是下一次读取唯一有用的输入，把它塌成「还没读」就等于把理由丢掉。
+      else if (freshRejection && !fresh) parsed = { ...parsed, readingState: 'rejected', rejection };
       else parsed = { ...parsed, readingState: !fresh && reading ? 'stale' : reading ? 'unconfirmed' : 'none' };
     }
 
@@ -78,17 +91,28 @@ export function classifyOpenItems(classification) {
     const at = { materialId: r.materialId, fileName: r.fileName };
 
     if (r.parseStatus === 'needs_ocr') {
+      if (r.imageDecodable === false) {
+        // 内核自己解不开的图。它到不了模型手上 —— 只有人能换一份能看的原件。
+        add('image_undecodable', true, { ...at,
+          note: '这个文件的扩展名说它是图片，但内核解不开它的图像头，它不是一张完整的 png / jpg；'
+            + '请重新导出或重新拍一份' });
+        continue;
+      }
       const state = r.readingState ?? 'none';
       if (state === 'unconfirmed') {
         add('reading_awaiting_confirmation', true, { ...at,
           note: '这张图已经读过，但读数还没有被确认。看图读出来的字段只是候选，'
-            + '必须由用户在本地确认页面上核对后提交才能算数' });
+            + '必须由用户在终端上对着表格点头才算数' });
+      } else if (state === 'rejected') {
+        add('reading_rejected', true, { ...at,
+          note: `上一次读数没有过关：${(r.rejection?.reasons ?? []).join('；')}`,
+          reasons: r.rejection?.reasons ?? [] });
       } else if (state === 'stale') {
         add('reading_stale', true, { ...at,
           note: '图片内容变了，之前那次读取已经作废，需要重新看图' });
       } else {
         add('image_awaiting_reading', true, { ...at,
-          note: '图片材料需要看图读取票面信息；跑 ocr-request 拿到读取工单' });
+          note: '图片材料需要逐张打开看图，抄录票面信息' });
       }
       continue;
     }

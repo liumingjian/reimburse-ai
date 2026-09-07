@@ -223,6 +223,29 @@ test('图换过了要重读，读完的读数要人确认', () => {
   assert.equal(confirm.actor, 'user', '读数只是候选，认不认只有人说了算');
 });
 
+test('上次读数没过关：还是模型自己动手，不是拿去麻烦用户', () => {
+  const r = determineState(withMaterials({
+    openItems: [item('reading_rejected', { fileName: '发票.png' })] }));
+  assert.equal(r.state, 'reading_rejected');
+  assert.equal(r.actor, 'model');
+  assert.equal(r.blockedBy[0].resolvableBy, 'model',
+    '守恒式不平的处置是重读，不是让用户去改一个数字');
+});
+
+test('内核自己解不开的图，是材料的问题，只有人换得了', () => {
+  const r = determineState(withMaterials({
+    openItems: [item('image_undecodable', { fileName: '发票.png' })] }));
+  assert.equal(r.state, 'intake_open_items', '它不归看图那几个状态，模型看多少遍都一样');
+  assert.equal(r.blockedBy[0].resolvableBy, 'user');
+});
+
+test('看图这几个状态的先后照着规格：先读、再重读、再等确认', () => {
+  const i = (s) => STATE_ORDER.indexOf(s);
+  assert.ok(i('image_awaiting_reading') < i('reading_rejected'));
+  assert.ok(i('reading_rejected') < i('reading_stale'));
+  assert.ok(i('reading_stale') < i('reading_awaiting_confirmation'));
+});
+
 test('这张票在别的任务里也在 —— 停整批，请用户裁决', () => {
   const r = determineState(withMaterials({
     openItems: [

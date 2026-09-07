@@ -5,10 +5,13 @@ import url from 'node:url';
 import { paths, ensureDir, migrateOnStartup } from '../src/paths.mjs';
 import * as chrome from '../src/chrome.mjs';
 import { probeIdentity, ERP_ORIGIN } from '../src/probe.mjs';
-import { serveSelection, serveConfirmation, serveAllocation, serveTaskSelection,
+// 看图读数的确认页没有了：那件事现在整个发生在终端上（`confirm_table`）。
+// 本地页面只在重新绑定身份和浏览完整项目目录两处保留。
+import { serveSelection, serveAllocation, serveTaskSelection,
   serveIdentityConfirmation } from '../src/serve.mjs';
-import { buildWorkOrder, ingestReadings, confirmReadings, loadReading,
+import { buildWorkOrder, ingestReadings, pendingConfirmations,
   READING_VERSION, DOC_TYPES } from '../src/vision.mjs';
+import { applyTerminalVerdict } from '../src/confirm.mjs';
 import { takeInventory, intakeOpenItems } from '../src/inventory.mjs';
 import { classifyInventory, classifyOpenItems, summarize } from '../src/classify.mjs';
 import { buildEvents, eventOpenItems, reconcile, submitAllocation } from '../src/events.mjs';
@@ -649,48 +652,35 @@ try {
         accepted: verdicts.length - rejected.length,
         rejected: rejected.length,
         // 接收成功只是通过了结构校验，还不是已解析值 —— 必须再走一次用户确认。
-        note: '通过结构校验的读数已存为字段候选；跑 confirm-readings 让用户对着原图确认',
+        note: '通过结构校验的读数已存为字段候选；再问一次 baox next，'
+          + '内核会渲染一张定宽表格请用户在终端上过目',
       }, rejected.length ? BLOCKED : OK);
     }
 
     case 'confirm-readings': {
+      // **只读**。确认这件事从这里搬走了 —— 它现在发生在终端上：内核在
+      // `baox next` 里渲染一张定宽表格，用户当面表态，模型带着那一次性凭据回传。
+      //
+      // 这条命令剩下的用处只有一个：人手敲着看看现在有哪些读数等着确认。
+      // 它不写一个字，也不弹页面。留一条能写的旁路，就等于留了第二条确认通道，
+      // 而这一票的全部意义就是确认只有一条通道、且那条通道的另一头是人。
       const dir = arg('dir');
       if (!dir) out({ command: 'confirm-readings', error: '缺少 --dir <材料目录>' }, ERR);
       const inventory = await takeInventory(dir);
       const task = findLiveTaskForSource(sourceKeyOf(dir));
       if (!task) out({ command: 'confirm-readings', error: '这个目录还没有进行中的报销任务，先跑 intake' }, ERR);
 
-      const pending = [];
-      for (const m of inventory.materials) {
-        const r = loadReading(task, m.materialId);
-        if (!r || r.contentHash !== m.contentHash || r.confirmedAt) continue;
-        pending.push({
-          materialId: m.materialId,
-          fileName: m.fileName,
-          docTypeLabel: DOC_TYPES[r.docType]?.label ?? r.docType,
-          fields: Object.entries(r.fields),
-          unreadable: r.unreadable ?? [],
-        });
-      }
-      if (!pending.length) out({ command: 'confirm-readings', pending: 0, note: '没有待确认的看图读数' }, OK);
-
-      const result = await serveConfirmation({ items: pending }, {
-        timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
-        onReady: (u) => process.stderr.write(`已在浏览器里打开页面（核对看图读数）；没弹出就手动打开：${u}\n`),
-      });
-      if (result.status !== 'submitted') out({ command: 'confirm-readings', ...result }, ERR);
-
-      const done = confirmReadings(task, result.confirmed);
-      const skipped = pending.filter((p) => !done.materialIds.includes(p.materialId)).map((p) => p.fileName);
+      const pending = pendingConfirmations(task, inventory);
       out({
         command: 'confirm-readings',
-        confirmed: done.materialIds.length,
-        confirmedAt: done.confirmedAt,
-        skipped,
-        note: skipped.length
-          ? '没有勾选的材料仍停在待确认项里；用户不勾就是不认，不要替他确认'
-          : '全部读数已确认，可以重新跑 classify',
-      }, skipped.length ? BLOCKED : OK);
+        readOnly: true,
+        pending: pending.length,
+        items: pending,
+        note: pending.length
+          ? '这些读数等着用户过目。确认只在终端上发生：问一句 baox next，'
+            + '内核会把它们渲染成表格；这条命令不确认任何东西'
+          : '没有待确认的看图读数',
+      }, OK);
     }
 
 
@@ -932,13 +922,24 @@ try {
       const tooNew = env.schemaVersion > NEXT_SCHEMA_VERSION;
       const materialsThere = !tooNew && !!sourceDir
         && fs.existsSync(sourceDir) && fs.statSync(sourceDir).isDirectory();
+
+      // 用户在终端上的表态**先落盘，再采观测** —— 顺序反过来，内核会拿着确认前的
+      // 那份观测再问一次同一张表。判据和闸门都在 confirm.mjs 里。
+      const applied = materialsThere
+        ? await applyTerminalVerdict({ sourceDir, sourceKey, after,
+            correctionFile: filed('correction') ? arg('correction') : null })
+        : null;
+
       const observation = {
         ...env,
         ...(materialsThere ? await observeTask(sourceDir) : {}),
       };
       const response = nextResponse({ observation, sourceKey, after,
-        hasResult: filed('result'), hasCorrection: filed('correction') });
-      out(response, response.exit);
+        hasResult: filed('result'),
+        // 已经收下并处置过的纠正不再报「没处安放」—— 那句话是留给真的没处安放的。
+        hasCorrection: filed('correction') && applied?.verdict !== 'corrected' });
+      // 收下了什么，明说。用户点了头却看不出内核收没收到，是最难排的一种障。
+      out(applied ? { ...response, applied } : response, response.exit);
     }
 
     default:

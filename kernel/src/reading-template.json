@@ -1,9 +1,18 @@
 {
   "version": 1,
+  "怎么填": {
+    "materialId": "step.images 里那一项的 materialId，原样抄",
+    "contentHash": "step.images 里那一项的 contentHash，原样抄",
+    "sighted.shape": "你正看着的这张图是什么形状，从 step.sightedShapes 里挑一个（tall / portrait / square / landscape / wide）。这一栏答不对，整份读数不算数——它是「这张图真的打开过」的凭据，说「看不清」也要先答对它",
+    "fields": "票面上看得见的字符，逐字抄。不要计算、不要推断、不要补全；金额守恒式不平就重看一遍，绝不调整某一位数字去凑平",
+    "unreadable": "看着这张图但认不出的字段名。它说的是「认不出」，不是「没看」",
+    "notes": "可选。想说明的话，比如哪一处被反光盖住了"
+  },
   "readings": [
     {
-      "materialId": "工单里的 materialId，原样抄",
-      "contentHash": "工单里的 contentHash，原样抄",
+      "materialId": "m-0001",
+      "contentHash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sighted": { "shape": "landscape" },
       "docType": "invoice",
       "fields": {
         "invoiceNumber": "25317000000123456789",

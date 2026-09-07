@@ -13,7 +13,7 @@ import { probeIdentity } from './probe.mjs';
 import { readBinding } from './binding.mjs';
 import { takeInventory, intakeOpenItems } from './inventory.mjs';
 import { classifyInventory, classifyOpenItems } from './classify.mjs';
-import { buildWorkOrder } from './vision.mjs';
+import { buildWorkOrder, pendingConfirmations } from './vision.mjs';
 import { findLiveTaskForSource, sourceKeyOf, taskDir, classificationRecorded } from './workspace.mjs';
 import { crossTaskDuplicates, historyOpenItems } from './history.mjs';
 
@@ -99,8 +99,11 @@ export async function observeTask(sourceDir) {
       ...(history ? historyOpenItems(history) : []),
     ],
     // 还没读、或者读过但字节已经变了的图。已确认的读数会被投影成解析结果，不在这里出现。
+    // 被驳回过的那几张也在里面，各自带着上次没过的理由 —— 那是重读唯一有用的输入。
     pendingImages: task
       ? buildWorkOrder(dir, inventory, classification, task).filter((i) => !i.alreadyRead)
       : [],
+    // 读过、还没被用户过目的读数。它是终端那张定宽表格的全部内容。
+    pendingReadings: task ? pendingConfirmations(task, inventory) : [],
   };
 }

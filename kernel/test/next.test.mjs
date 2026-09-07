@@ -78,8 +78,24 @@ const withMaterials = (over = {}) => healthy({
   classificationRecorded: true,
   openItems: [],
   pendingImages: [],
+  pendingReadings: [],
   ...over,
 });
+
+/** 一份读过、等着用户过目的读数。它是终端那张表格的全部内容。 */
+const PENDING_READING = {
+  materialId: 'm-1',
+  fileName: '发票.png',
+  docType: 'invoice',
+  docTypeLabel: '发票',
+  fields: [
+    { key: 'invoiceNumber', label: '发票号码', value: '26427000000640558021' },
+    { key: 'totalAmount', label: '价税合计', value: '18.80' },
+  ],
+  unreadable: ['税额'],
+  amountCheck: 'partial',
+  notes: null,
+};
 
 test('材料这一段每个状态都有一步可做，说给用户听的话全部来自内核', async () => {
   freshHome();
@@ -91,8 +107,11 @@ test('材料这一段每个状态都有一步可做，说给用户听的话全�
     ['inventory_stale', 'run', withMaterials({ inventoryStale: true })],
     ['classify_pending', 'run', withMaterials({ classificationRecorded: false })],
     ['image_awaiting_reading', 'read_images', withMaterials({ pendingImages: images })],
+    ['reading_rejected', 'read_images', withMaterials({
+      pendingImages: [{ ...images[0], rejection: { reasons: ['不含税金额 + 税额 ≠ 价税合计'] } }] })],
     ['reading_stale', 'read_images', withMaterials({ pendingImages: images })],
-    ['reading_awaiting_confirmation', 'run', withMaterials()],
+    ['reading_awaiting_confirmation', 'confirm_table',
+      withMaterials({ pendingReadings: [PENDING_READING] })],
     ['duplicate_blocked', 'tell_user', withMaterials()],
     ['events_pending', 'done', withMaterials()],
   ];
@@ -109,13 +128,15 @@ test('材料这一段每个状态都有一步可做，说给用户听的话全�
   }
 });
 
-test('要人亲手点一下的那两步，明说不能外包给子 Agent', async () => {
+test('要人亲手表态的那两步，明说不能外包给子 Agent', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
-  // 契约说 kind: "run" 的连续段可以外包。这两步会弹一个要人点的本地页面，
-  // 外包出去只会挂在那里等一个不会发生的点击 —— 所以写进 JSON，不是只写在注释里。
+  // 契约说 kind: "run" 的连续段可以外包。这两步的另一头是人：一个要人点确认页，
+  // 一个要人对着终端表格表态。外包给一个没有用户的子 Agent，它只会挂在那里等 ——
+  // 所以写进 JSON，不是只写在注释里。
   assert.equal(stepFor('env_identity_unbound', healthy({ binding: null })).step.outsourceable, false);
-  assert.equal(stepFor('reading_awaiting_confirmation', withMaterials()).step.outsourceable, false);
+  assert.equal(stepFor('reading_awaiting_confirmation',
+    withMaterials({ pendingReadings: [PENDING_READING] })).step.outsourceable, false);
   // 纯跑命令的那些照旧可以外包。
   assert.equal(stepFor('env_chrome_down', healthy({ cdpUp: false, probe: null })).step.outsourceable, true);
   assert.equal(stepFor('classify_pending', withMaterials({ classificationRecorded: false })).step.outsourceable,
@@ -172,6 +193,73 @@ test('看图这一步：图、模板、写到哪、怎么交，四样一次给�
   assert.ok(step.argv.includes(step.readingsPath), '写到哪、交哪个文件，是同一个路径');
   assert.ok(step.argv.includes('ocr-submit'));
   assert.match(speak, /发票\.png/, '要看哪几张图，念出来');
+});
+
+test('看过的凭据跟着这一步一起给，模型不用去别处查它', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const images = [{ materialId: 'm-1', fileName: '发票.png', absPath: '/tmp/材料/发票.png',
+    format: 'png', contentHash: 'aa' }];
+  const { step, context } = stepFor('image_awaiting_reading', withMaterials({ pendingImages: images }));
+  assert.deepEqual(step.sightedShapes.map((s) => s.shape),
+    ['tall', 'portrait', 'square', 'landscape', 'wide']);
+  assert.ok(step.sightedShapes.every((s) => s.label), '每一档都得有一句人话，光给英文词没用');
+  assert.match(context, /没看图就说图片读不了/);
+});
+
+test('被驳回的读数：重读时把上次没过的理由原样带上', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const images = [{ materialId: 'm-1', fileName: '发票.png', absPath: '/tmp/材料/发票.png',
+    format: 'png', contentHash: 'aa',
+    rejection: { reasons: ['不含税金额 + 税额 ≠ 价税合计；请重新逐字核对票面'] } }];
+  const { step, speak, context } = stepFor('reading_rejected', withMaterials({ pendingImages: images }));
+  assert.equal(step.kind, 'read_images');
+  assert.deepEqual(step.images[0].previousRejection, images[0].rejection.reasons);
+  assert.match(speak, /发票\.png/);
+  assert.match(speak, /价税合计/, '为什么没过，要念给用户听');
+  // 守恒式不平的处置是重读或判定读不出，绝不是把某一位数字改到平。
+  assert.match(context, /凑平/);
+});
+
+test('确认这一步：内核渲染好一整块表格，模型只负责搬运', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const { displayWidth } = await import('../src/table.mjs');
+  const { step, speak, context } = stepFor('reading_awaiting_confirmation',
+    withMaterials({ pendingReadings: [PENDING_READING] }));
+
+  assert.equal(step.kind, 'confirm_table');
+  assert.ok(step.table.includes('26427000000640558021'), '要比对的值必须完整出现在表里');
+  assert.ok(step.table.includes('发票号码'), '给用户看中文名，不给键名');
+  assert.ok(step.table.includes('看不清'), '认不出的字段也要让用户知道，不是留白');
+  const widths = new Set(step.table.split('\n').map(displayWidth));
+  assert.equal(widths.size, 1, '定宽表格：每一行显示宽度一致');
+
+  assert.deepEqual(step.materialIds, ['m-1'], '这一次点头覆盖哪几份材料，说死');
+  assert.ok(step.correctionPath.endsWith('reading-correction.json'));
+  assert.ok(step.correctionPath !== step.readingsPath);
+  // 全程不弹浏览器：这一步里不该有任何一条要跑的命令，也不该有地址要念。
+  assert.equal(step.argv, undefined);
+  assert.doesNotMatch(speak + context, /打开一个本地|http:\/\/|127\.0\.0\.1|localhost/);
+  assert.match(context, /确认只来自你在这里的表态/);
+  assert.match(context, /不需要你打开任何网页/, '这件事要明说，不是让用户自己发现');
+});
+
+test('确认这一步收得下纠正 —— 用户指错不该被悄悄丢掉', async () => {
+  freshHome();
+  const { nextResponse } = await import('../src/next.mjs');
+  const observation = withMaterials({
+    openItems: [{ kind: 'reading_awaiting_confirmation', materialId: 'm-1',
+      fileName: '发票.png', blocking: true }],
+    pendingReadings: [PENDING_READING],
+  });
+  const first = nextResponse({ observation, sourceKey: KEY });
+  assert.equal(first.state, 'reading_awaiting_confirmation');
+  assert.equal(first.actor, 'user');
+
+  const back = nextResponse({ observation, sourceKey: KEY, after: first.stepToken, hasCorrection: true });
+  assert.equal(back.ignored, undefined, 'confirm_table 上的纠正是有处安放的');
 });
 
 test('图没读完不算读完：交不出结果，状态一步不动', async () => {
