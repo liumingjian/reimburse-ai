@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
 import { parseMaterial, invoiceIdentity, checkAmounts, maskNumber } from '../src/parse.mjs';
+import { writeTextPdf, TEST_INVOICE_TEXT } from './fixture-pdf.mjs';
 
 // 用 resources/ 里的真实样本做回归。断言一律用**脱敏后的**发票号码，
 // 完整号码不写进仓库里的任何文本（原始 PDF 本身另说）。
@@ -18,12 +21,6 @@ const CASES = [
     kind: 'vat_special', role: 'primary_voucher',
     masked: '2634************3906', issueDate: '2026-08-22',
     net: 343396, tax: 20604, total: 364000, amountCheck: 'balanced',
-  },
-  {
-    file: '交通/【AA出行-69.19元-3个行程】高德打车电子发票.pdf',
-    kind: 'passenger_transport', role: 'primary_voucher',
-    masked: '2611************4821', issueDate: '2026-08-07',
-    net: 6717, tax: 202, total: 6919, amountCheck: 'balanced',
   },
   {
     // 这张票有负数调整行，合计仍以票面"合计"和"价税合计"为准，不逐行相加。
@@ -58,8 +55,21 @@ for (const c of CASES) {
   });
 }
 
+test('自包含普通发票 fixture：文字层字段、金额守恒和身份都解析出来', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-parse-pdf-'));
+  const file = path.join(dir, 'test-invoice.pdf');
+  writeTextPdf(file, TEST_INVOICE_TEXT);
+  const r = parseMaterial(file, 'pdf');
+  assert.equal(r.parseStatus, 'parsed');
+  assert.equal(r.kind, 'vat_common');
+  assert.equal(maskNumber(r.fields.invoiceNumber), '1234************7890');
+  assert.equal(r.fields.issueDate, '2026-09-01');
+  assert.equal(checkAmounts(r.fields).status, 'balanced');
+  assert.equal(invoiceIdentity(r).scheme, 'einvoice-20');
+  assert.ok(r.evidence.invoiceNumber);
+});
+
 const REFERENCES = [
-  { file: '交通/【AA出行-69.19元-3个行程】高德打车电子行程单.pdf', kind: 'ride_itinerary', segments: 3 },
   { file: '交通/【曹操出行-51.63元-1个行程】高德打车电子行程单.pdf', kind: 'ride_itinerary', segments: 1 },
   { file: '住宿/zd-jd.pdf', kind: 'hotel_folio', segments: null },
 ];

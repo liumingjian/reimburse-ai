@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
+import { writeTextPdf, TEST_TRANSPORT_INVOICE_TEXT, TEST_ITINERARY_TEXT } from './fixture-pdf.mjs';
 
 // 数据目录必须在导入内核模块之前改掉，否则会写进用户真实的工作区。
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-test-'));
@@ -15,13 +16,27 @@ const { buildEvents, eventOpenItems, reconcile, splitTax, submitAllocation, link
 const { createTask } = await import('../src/workspace.mjs');
 
 const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
-const load = (id, rel) => ({
-  materialId: id, fileName: path.basename(rel), contentHash: `hash-${id}`,
-  ...parseMaterial(path.join(repo, 'resources', rel), 'pdf'),
-});
+const TEST_INV = 'test-transport-invoice.pdf';
+const TEST_ITI = 'test-three-trip-itinerary.pdf';
+const TEST_PDFS = new Map([
+  [TEST_INV, TEST_TRANSPORT_INVOICE_TEXT],
+  [TEST_ITI, TEST_ITINERARY_TEXT],
+]);
+const load = (id, rel) => {
+  let absPath = path.join(repo, 'resources', rel);
+  if (TEST_PDFS.has(rel)) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-events-pdf-'));
+    absPath = path.join(dir, rel);
+    writeTextPdf(absPath, TEST_PDFS.get(rel));
+  }
+  return {
+    materialId: id, fileName: path.basename(rel), contentHash: `hash-${id}`,
+    ...parseMaterial(absPath, 'pdf'),
+  };
+};
 
-const AA_INV = '交通/【AA出行-69.19元-3个行程】高德打车电子发票.pdf';
-const AA_ITI = '交通/【AA出行-69.19元-3个行程】高德打车电子行程单.pdf';
+const AA_INV = TEST_INV;
+const AA_ITI = TEST_ITI;
 const CC_INV = '交通/【曹操出行-51.63元-1个行程】高德打车电子发票.pdf';
 const CC_ITI = '交通/【曹操出行-51.63元-1个行程】高德打车电子行程单.pdf';
 const HOTEL_INV = '住宿/fp-jd.pdf';

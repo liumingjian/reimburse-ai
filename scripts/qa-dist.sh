@@ -7,10 +7,11 @@ ok()  { echo "PASS  $1"; }
 bad() { echo "FAIL  $1"; fail=1; }
 
 echo "=== 1. 内核测试 ==="
-node --test kernel/test/*.test.mjs > /tmp/baox-tests.log 2>&1
+TEST_LOG=$(mktemp)
+node --test kernel/test/*.test.mjs > "$TEST_LOG" 2>&1
 tcode=$?
-grep -E '^(ℹ (tests|pass|fail)|not ok)' /tmp/baox-tests.log || true
-[ "${tcode}" = 0 ] && ok "内核测试全过" || { bad "内核测试有失败"; grep -A12 '^not ok' /tmp/baox-tests.log | head -40; }
+grep -E '^(ℹ (tests|pass|fail)|not ok)' "$TEST_LOG" || true
+[ "${tcode}" = 0 ] && ok "内核测试全过" || { bad "内核测试有失败"; grep -A12 '^not ok' "$TEST_LOG" | head -40; }
 
 echo "=== 2. bundle.sh 正向 ==="
 bash scripts/bundle.sh >/dev/null 2>&1 && ok "bundle 退 0" || bad "bundle 退非 0"
@@ -30,10 +31,10 @@ bash scripts/bundle.sh >/dev/null 2>&1 || bad "还原后 bundle 应该重新退 
 echo "=== 4. 打出来的包，端到端（没有安装这一步）==="
 HOME_A=$(mktemp -d)
 run() { BAOX_HOME="$HOME_A" node dist/baox/kernel/bin/baox.mjs "$@" 2>&1; }
-out=$(run tasks); code=$?
+out=$(run tasks --i-am-a-human); code=$?
 [ "$code" = 0 ] && ok "拿到包就能直接跑 tasks，中间没有安装动作" || bad "第一条命令就该能跑，实得 ${code}：$out"
 
-out=$(run doctor)
+out=$(run doctor --i-am-a-human)
 echo "$out" | grep -q '"version"' && ok "doctor 报出版本号：$(echo "$out" | grep '"version"' | head -1 | tr -d ' ')" \
   || bad "doctor 没有版本号"
 echo "$out" | grep -q "\"$HOME_A\"" && ok "BAOX_HOME 指到哪，数据目录就落在哪" || bad "doctor 的 dataDir 没跟着 BAOX_HOME 走"
@@ -47,14 +48,14 @@ case "$(uname -s)" in
 esac
 mkdir -p "$LEGACY/tasks" "$LEGACY/chrome-profile" "$LEGACY/runtime/bin"
 echo '{"tasks":[]}' > "$LEGACY/tasks/index.json"
-out=$(env -u BAOX_HOME -u XDG_DATA_HOME HOME="$HOME_C" node dist/baox/kernel/bin/baox.mjs tasks 2>&1); code=$?
+out=$(env -u BAOX_HOME -u XDG_DATA_HOME HOME="$HOME_C" node dist/baox/kernel/bin/baox.mjs tasks --i-am-a-human 2>&1); code=$?
 [ "$code" = 0 ] && ok "带着旧数据目录时第一条命令照样退 0" || bad "迁移时 tasks 退了 ${code}：$out"
 echo "$out" | grep -q '"migrated"' && ok "输出里说清了迁到哪：$(echo "$out" | grep -A2 '"migrated"' | tr -d ' \n')" \
   || bad "迁移了却没在输出里说一句"
 [ -f "$HOME_C/.baox/tasks/index.json" ] && ok "旧任务落到了 ~/.baox" || bad "~/.baox 里没有迁过来的任务"
 [ -f "$LEGACY/tasks/index.json" ] && ok "旧目录原样留着，能回滚 0.9.x" || bad "旧目录被动了 —— 必须是拷贝不是移动"
 [ ! -d "$HOME_C/.baox/runtime" ] && ok "旧的 runtime/ 没跟着搬" || bad "把已经不存在的概念搬过来了"
-out=$(env -u BAOX_HOME -u XDG_DATA_HOME HOME="$HOME_C" node dist/baox/kernel/bin/baox.mjs tasks 2>&1)
+out=$(env -u BAOX_HOME -u XDG_DATA_HOME HOME="$HOME_C" node dist/baox/kernel/bin/baox.mjs tasks --i-am-a-human 2>&1)
 echo "$out" | grep -q '"migrated"' && bad "迁移不该发生第二次" || ok "迁移只发生一次"
 
 echo "=== 6. release.sh ==="
@@ -72,7 +73,7 @@ if [ -n "$zipf" ]; then
   UNZ=$(mktemp -d); unzip -q "$zipf" -d "$UNZ"
   echo "  包内顶层： $(ls "$UNZ" | tr '\n' ' ')"
   HOME_B=$(mktemp -d)
-  BAOX_HOME="$HOME_B" node "$UNZ/baox/kernel/bin/baox.mjs" tasks >/dev/null 2>&1 \
+  BAOX_HOME="$HOME_B" node "$UNZ/baox/kernel/bin/baox.mjs" tasks --i-am-a-human >/dev/null 2>&1 \
     && ok "解压出来的包直接就能跑命令" || bad "解压出来的包跑不了命令"
 fi
 
