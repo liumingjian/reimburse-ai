@@ -511,7 +511,7 @@ test('后半段每个状态也各有一步可做，话仍然全部来自内核',
   }
 });
 
-test('终端多选的形状是硬的：至多四题，每题二到四个选项，末项恒为「其他」', async () => {
+test('对话提问的形状是硬的：至多四题，每题二到四个选项，末项恒为「其他」', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
   const shaped = stepFor('allocation_required', withErp({ allocationRound: askRound() }));
@@ -522,7 +522,15 @@ test('终端多选的形状是硬的：至多四题，每题二到四个选项�
     assert.ok(q.options.length >= 2 && q.options.length <= 4, `${q.id} 的选项要在 2–4 之间`);
     assert.equal(q.options.at(-1).label, '其他', '末项恒为「其他」，永远留一个自由输入口');
   }
-  assert.equal(shaped.step.outsourceable, false, '终端多选在子 Agent 里做不了：那里没有用户');
+  assert.equal(shaped.step.outsourceable, false, '在对话里问这一步子 Agent 做不了：那里没有用户');
+  // 问题整块由内核渲染，模型原样贴出去 —— 不走任何提问工具，也不让模型自己组织问法。
+  assert.ok(shaped.step.prompt, '问题得渲染成一整块文本放在 step.prompt 里');
+  for (const q of qs) {
+    assert.ok(shaped.step.prompt.includes(q.question), `${q.id} 的问法要在贴出去的那块里`);
+    for (const o of q.options) {
+      assert.ok(shaped.step.prompt.includes(o.label), `${q.id} 的选项「${o.label}」不能被吞掉`);
+    }
+  }
   assert.ok(shaped.step.answersPath, '答案写到哪里由内核定，模型不选地方');
   assert.ok(shaped.step.answersFormat.answers.some((a) => a.giveUp === true),
     '「我认不出」要有一条明确的回传形状，而且和别的答案写在同一处 —— '

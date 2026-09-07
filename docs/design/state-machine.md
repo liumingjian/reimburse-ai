@@ -35,7 +35,7 @@
 | `events_pending` | 无当前版本的事件划分 | kernel | `events` | 事件产出 |
 | `allocation_required` | 合并交通发票，且**各段之和 ≠ 价税合计**（相等则内核自动定案，不进此态） | user | 列出缺口请用户补 | 分毫不差 |
 | `allocation_stale` | 发票内容哈希变了 | user | 同上 | 同上 |
-| `project_unassigned` | 有事件没有项目号 | model | 按事件用终端多选问（候选≤3 + 其他） | 每个事件有项目号 |
+| `project_unassigned` | 有事件没有项目号 | model | 按事件在对话里问（内核渲染的问题，候选≤3 + 其他） | 每个事件有项目号 |
 | `catalog_unverified` | 项目/类别未经 ERP 只读核对 | kernel | `catalog` | 全部 `erp_catalog_confirmed` |
 | `catalog_mismatch` | ERP 里查无此项目 / 对不上 | user | 请用户改派 | 重新核对通过 |
 | `ready_for_erp_write` | 以上全绿 | user | 摊开待写内容，请用户点头 | 用户同意开始写 |

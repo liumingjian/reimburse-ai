@@ -55,7 +55,7 @@ const awaitingConfirmation = (sourceKey, after) =>
 const awaitingRuling = (sourceKey, after) =>
   RULING_STEP_KEYS.has(outstandingStep(sourceKey, after)?.state);
 
-// 终端多选那两个状态（问的是同一件事：这张合并发票逐段多少钱）。状态名和
+// 对话提问那两个状态（问的是同一件事：这张合并发票逐段多少钱）。状态名和
 // 事件层那两种开放项同名，取的就是 events.mjs 里那一份，不在这里再抄一遍。
 
 /**
@@ -64,7 +64,7 @@ const awaitingRuling = (sourceKey, after) =>
  * 收下了什么，四种步骤各答各的（`verdict` 认得出是哪一种）：
  *  - 读数那张表：`confirmed`（认可，带 materialIds）/ `corrected`（指错，开一场争议）
  *  - 争议里的拍板：`ruled`
- *  - 终端多选：`drafted` / `allocated` / `rejected` / `gave_up`
+ *  - 对话提问：`drafted` / `allocated` / `rejected` / `gave_up`
  *  - 写入前那次点头：`write_approved`（带条数和合计）
  *
  * 形状不统一是故意的：这四件事收下的东西本来就不是一种，硬拉成一个形状，
@@ -125,7 +125,7 @@ export async function applyTerminalVerdict({ sourceDir, sourceKey, after, correc
 }
 
 /**
- * 终端多选的答案：一轮逐段金额。收下的门槛一分不让 ——
+ * 对话提问的答案：一轮逐段金额。收下的门槛一分不让 ——
  * 各段之和与票面价税合计按分精确相等，差一分整轮退回重问。
  *
  * 除了凭据，这里还要核一遍**问出去的那几题**：状态没变、题却换过一批

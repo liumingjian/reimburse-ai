@@ -40,7 +40,7 @@ node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材
 |---|---|---|
 | `run` | 原样执行 `step.argv`，stdout 落盘成一个文件 | `next --after <token> --result <那个文件>` |
 | `read_images` | 逐个用 `Read` 打开 `step.images[].absPath`，按 `step.schemaPath` 那份模板把读数写进 `step.readingsPath`（形状从 `step.sightedShapes` 里选），再原样执行 `step.argv` | 同上 |
-| `ask_user` | 用终端多选问 `step.questions[]`，答案按 `step.answersFormat` 写进 `step.answersPath` | `next --after <token> --result <答案文件>` |
+| `ask_user` | **原样贴出 `step.prompt`**（内核渲染好的问题），等用户在对话里回答，把答案按 `step.answersFormat` 写进 `step.answersPath` | `next --after <token> --result <答案文件>` |
 | `confirm_table` | **原样贴出 `step.table`**，请用户对着原件过目 | 认可 → `next --after <token>`；指错且 `step.acceptsCorrection` 是 `true` → 把用户的值按 `step.correctionFormat` 写进 `step.correctionPath`，再 `next --after <token> --correction <那个文件>` |
 | `dispute` | 见下 | 见下 |
 | `tell_user` | 只念 `speak`，等用户自己动手（登录、去 ERP 保存）。做完再问一次 | 不带 result，直接 `next --after <token>` |
@@ -79,7 +79,7 @@ node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材
 `baox-setup` 和 `handoff` 指向的 `baox-recover` 都是模型调用的执行壳。
 **用户不知道它们存在**，你说的每一句话都以 baox 的名义说，不要报它们的名字。
 
-`outsourceable: false` 的步骤**不能外包**：那一头是人（终端多选、终端表格、要人亲手点一下的本地页面），
+`outsourceable: false` 的步骤**不能外包**：那一头是人（对话提问、终端表格、要人亲手点一下的本地页面），
 子 Agent 那里没有用户。`dispute` 里的「独立重读那一个字段」是唯一的例外，而且**必须**外包——
 要的就是它那份不知道我们刚才争过什么的干净上下文。
 
@@ -90,10 +90,11 @@ node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材
 - **不替内核判断下一步。** 状态在内核里。你不因为「看起来该分类了」就去分类。
 - **不替用户点头。** 「没问题」「对的」「继续」在对话里说出来不是确认。确认只有一种：
   内核观测到的那一次回传。这条管 `confirm_table`、`ask_user` 和所有 `tell_user`。
-- **手上没有终端多选，就停下。** 无头会话（`claude -p`、子 Agent）里 `AskUserQuestion`
-  根本不挂载。碰上 `ask_user` / `confirm_table` / `dispute` 而你没有这个工具时，如实说
-  「这一步要人回答，请在交互式会话里继续」然后停 —— 不猜、不代答、不回传结果。
-  内核分辨不出一份答案是用户给的还是你给的，这道防线只有你自己。
+- **问题不重写。** `step.prompt` 是内核渲染好的，原样贴出去 —— 选项少列一个、顺序换一换、
+  把「其他」那一行吞掉，用户都察觉不到。不要改用你自己的问法，也不要动任何提问工具。
+- **没人可问就停下。** 身边没有用户时（子 Agent 里、`claude -p` 这类无头会话里），
+  碰上 `ask_user` / `confirm_table` / `dispute` 就如实说「这一步要用户本人回答」然后停 ——
+  不猜、不代答、不回传结果。内核分辨不出一份答案是用户给的还是你给的，这道防线只有你自己。
 - **不算数、不凑数。** 不推导、不平均、不按比例、不把差额抹到某一段上。守恒式不平就是不平。
 - **不猜、不编。** 看图时你是抄写员：读不出就写进 `unreadable`，猜一个值比说读不出坏得多。
 - **不说「我看不到图片」**，除非 `Read` 真的报了错——那就原样引用那条错误并说是哪个文件。

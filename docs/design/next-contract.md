@@ -37,7 +37,7 @@ baox next --after <stepToken> [--result <file>]  # 答：我做完了，这是�
 |---|---|---|---|
 | `run` | kernel | 原样执行 `step.argv`，不改一个字 | `--after <token> --result <stdout落盘的文件>` |
 | `read_images` | model | 对 `step.images[].absPath` 逐个用 `Read` 看图，按 `step.schemaPath` 写读数文件，再执行 `step.argv` 提交 | 同上 |
-| `ask_user` | model | 用终端多选提出 `step.questions[]`（≤4 题，每题 2–4 选项，可 `multiSelect`，末项恒为「其他」可自由输入） | `--after <token> --result <答案json>` |
+| `ask_user` | model | **原样贴出 `step.prompt`**（内核把 `step.questions[]` 渲染好的一整块文本：≤4 题，每题 2–4 选项，可 `multiSelect`，末项恒为「其他」可自由输入），等用户在对话里回答，把答案誊进 `step.answersPath` | `--after <token> --result <答案json>` |
 | `confirm_table` | user | 原样贴出 `step.table`（内核渲染好的定宽文本），请用户过目 | 认可 → `--after <token>`；指错 → 附 `--correction <file>` |
 | `dispute` | model | 摆出 `step.evidence`（材料路径、机器读到的原文、清晰度），并派**干净上下文子 Agent** 只重读 `step.field`；把两次机器读数和用户的值一起摆给用户 | 用户拍板后回传终值 |
 | `tell_user` | user | 只说 `speak`，等用户做完（登录、去 ERP 保存）后再调 `next` | 无 result，直接再问一次 |
@@ -63,12 +63,20 @@ baox next --after <stepToken> [--result <file>]  # 答：我做完了，这是�
 
 - 可以外包：`kind: "run"` 的连续段（体检、起 Chrome、探测、分类、查重）。
 - 不可外包：`ask_user`、`confirm_table`、`tell_user`、`dispute` 的对话部分。
-  范围比"子 Agent"更大：**终端多选（`AskUserQuestion`）在任何无头会话里都不挂载**
-  —— `claude -p` 和 `-p --input-format stream-json` 两种形态实测都没有它
-  （见 [terminal-questions-headless.md](../research/terminal-questions-headless.md)）。
-  所以**无头运行不是 baox 支持的形态**：这几步只能在有人坐在终端前的交互式会话里做。
-  手上没有那个工具时，唯一正确的动作是**停下并说明**，不是替用户答一个
-  —— 内核分辨不出一份答案出自用户之口还是模型之手，硬校验只挡得住不平的数，
-  挡不住一个"正好也平"的编造。
+  理由只有一个而且够硬：**那一头是人**，子 Agent 那里没有用户，无头会话（`claude -p`）
+  那里也没有。所以**无头运行不是 baox 支持的形态**，这几步只能在有人在场的会话里做。
+  身边没有用户时，唯一正确的动作是**停下并说明**，不是替他答一个 —— 内核分辨不出
+  一份答案出自用户之口还是模型之手，硬校验只挡得住不平的数，挡不住一个"正好也平"的编造。
+
+## 问用户，就在对话里问
+
+`ask_user` **不用任何提问工具**（Claude Code 的 `AskUserQuestion` 之类）：用户可以把它关掉，
+别的 Agent 也未必有它，而「在对话里问一句」是哪里都有的。
+实测记录见 [terminal-questions-headless.md](../research/terminal-questions-headless.md)。
+
+问题由**内核渲染**成一整块文本放在 `step.prompt` 里，模型原样贴出去，和 `confirm_table`
+贴表格是同一套搬运：措辞、选项、编号、末项那个「其他」，都不交给模型组织
+—— 选项少一个、顺序换一换，用户是察觉不到的。
+`step.questions[]` 仍然带着，模型誊答案时要用里面的 `id`。
 - `dispute` 里的"独立重读单个字段"**必须**用子 Agent —— 要的就是它那份干净上下文。
 - 子 Agent 只跑 `baox next`，被 `maxTurns` 截断时换一个接着走，无需交接说明。

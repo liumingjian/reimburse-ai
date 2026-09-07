@@ -115,7 +115,7 @@ export function splitTax(segTotals, netTotal, taxTotal) {
 
 /**
  * 一个金额写下来该长什么样：两位小数的正数。**一处定义** ——
- * 终端多选和行程单核对两处收的是同一种东西，各写一份的话，
+ * 对话提问和行程单核对两处收的是同一种东西，各写一份的话，
  * 迟早有一处比别处松（比如把 0.00 收进来），而松的那一处不会有人发现。
  */
 export const MONEY = /^\d{1,9}\.\d{2}$/;
@@ -168,7 +168,7 @@ export function submitAllocation(task, voucher, segmentTotals, expectedCount, { 
     segmentCount: expectedCount,
     segmentTotalCents: cents,
     submittedAt: new Date().toISOString(),
-    // 这几个数是在哪儿给的。1.0.0 起只剩终端多选一条路（本地分摊页已下线），
+    // 这几个数是在哪儿给的。1.0.0 起只剩对话提问一条路（本地分摊页已下线），
     // 但事后排障时「用户在哪儿说的这句话」仍然要能查出来 —— 旧任务里存着 `local-web`。
     submittedVia: via,
   };

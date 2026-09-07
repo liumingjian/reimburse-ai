@@ -18,7 +18,7 @@ import { CONVERGENCE, favorsUser, disputeStepKey, DISPUTE_PHASES } from './dispu
 import { SHAPES, SHAPE_LABELS } from './imageshape.mjs';
 import { writePreviewDigest } from './erpwrite.mjs';
 import { roundFingerprint } from './allocate.mjs';
-import { renderTable } from './table.mjs';
+import { renderTable, renderQuestions } from './table.mjs';
 
 /** 内核自己的入口。argv 里给绝对路径：模型原样执行，不需要知道 baox 装在哪。 */
 const SRC = path.dirname(url.fileURLToPath(import.meta.url));
@@ -109,14 +109,14 @@ const confirmTable = ({ table, materialIds, correctionPath, speak, context }) =>
       note: '只写用户当面改的那几个字段，其余不要抄。用户的值不会被直接落库 —— '
         + '内核会把这张读数作废，带着分歧重新看图。',
     },
-    // 终端表态和终端多选一样，在子 Agent 里做不了：那里没有用户。
+    // 终端表态和对话提问一样，在子 Agent 里做不了：那里没有用户。
     outsourceable: false,
   },
   speak, context, progress: READING_PROGRESS, exit: 0,
 });
 
 /**
- * 终端多选。契约给的形状是硬的：至多四题，每题二到四个选项，**末项恒为「其他」
+ * 在对话里问用户。契约给的形状是硬的：至多四题，每题二到四个选项，**末项恒为「其他」
  * 可自由输入**。这三条不是排版建议 ——
  *
  *  - 四题是一屏能让人**核对**（不是照着点）的上限；
@@ -124,14 +124,20 @@ const confirmTable = ({ table, materialIds, correctionPath, speak, context }) =>
  *  - 末项永远留一个自由输入口，是因为内核列得出来的选项，永远只是它知道的那些。
  *    没有这个口子，用户唯一能做的就是从几个都不对的答案里挑一个。
  *
+ * 问题**由内核渲染成一整块文本**（`step.prompt`），模型原样贴出去，就跟 `confirm_table`
+ * 贴表格一样。不走任何提问工具：用户可以把那种工具关掉，别的 Agent 也未必有，
+ * 而「在对话里问一句」是哪里都有的。`questions` 仍然带着，模型誊答案时要用里面的 `id`。
+ *
  * 答案回传的是文件（`--after <token> --result <答案json>`），不是一条命令的输出
  * —— 这一步的另一头是人，没有 stdout 可交。`outsourceable: false`：
- * 终端多选在子 Agent 里做不了，那里没有用户。
+ * 子 Agent 那里没有用户，问了也没人答。
  */
 const askUser = ({ questions, answersPath, answersFormat, speak, context, progress }) => ({
   step: {
     kind: 'ask_user',
     questions,
+    // 内核渲染好的那一块，原样贴进对话。措辞和选项不交给模型组织。
+    prompt: renderQuestions(questions),
     answersPath,
     answersFormat,
     outsourceable: false,
@@ -719,7 +725,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
     }
 
     case 'project_unassigned': {
-      // 表里这一格写的是「按事件用终端多选问（候选≤3 + 其他）」。**那个问法还没落成**：
+      // 表里这一格写的是「按事件用对话提问问（候选≤3 + 其他）」。**那个问法还没落成**：
       // 几十张发票配三五个项目，怎么问才不折磨人，用户已经把它单独拿去做原型了。
       // 这一版只做到如实报出来 —— 报出一个还没有的交互，比停在这里更糟。
       const lines = o.lines ?? [];
@@ -732,7 +738,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
           + '都还没有项目号。项目归属材料上没有，我也不会替你猜 —— 怎么问你选项目，'
           + '这个问法还在单独定，定下来之前我停在这里。',
         context: '项目归属是业务事实，不是材料事实：同一张发票记在哪个项目上，只有你知道。'
-          + '终端多选的问法（几十张发票配三五个项目怎么选才快）正在单独做原型，'
+          + '对话提问的问法（几十张发票配三五个项目怎么选才快）正在单独做原型，'
           + '结论出来之后这一步会补上。在那之前也可以用 select-task 打开任务选择页自己填。',
         progress: PROJECT_PROGRESS,
       });

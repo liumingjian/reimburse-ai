@@ -81,3 +81,35 @@ export function renderTable(columns, rows) {
     line('└', '┴', '┘'),
   ].join('\n');
 }
+
+/**
+ * 把一轮问题渲染成一整块文本，模型**原样贴进对话**。
+ *
+ * 为什么渲染在内核，和表格是同一个理由：这是给用户做判断的界面。
+ * 选项少列一个、顺序换一换、把「其他」那一行吞掉，用户都察觉不到，
+ * 而这几件事恰恰是模型之间差异最大的地方。
+ *
+ * **不依赖任何提问工具。** 1.0.0 一度打算走 Claude Code 的终端多选控件，
+ * 后来定死不用：用户可以把它关掉，别的 Agent 也未必有它，而「在对话里问一句」
+ * 是哪里都有的。问题的措辞、选项和编号都在这里定死，模型只负责搬运和誊回答案。
+ *
+ * `questions`：`{ id, header, question, options: [{ label, description? }], multiSelect? }[]`。
+ */
+export function renderQuestions(questions) {
+  const blocks = (questions ?? []).map((q) => {
+    // 表头单独一行，不和问句挤在一起 —— 发票文件名本身就常带括号，
+    // 「【第 1 段】【曹操出行…】.pdf」这种撞在一起的开头，人是要读第二遍的。
+    const head = q.header ? `${q.header}\n${q.question}` : q.question;
+    const opts = (q.options ?? []).map((o, i) => {
+      const line = `  ${i + 1}) ${o.label}`;
+      return o.description ? `${line}\n     ${o.description}` : line;
+    });
+    const multi = q.multiSelect ? '  （这一题可以选多个）' : null;
+    return [head, ...opts, multi].filter(Boolean).join('\n');
+  });
+  const one = (questions ?? []).length === 1;
+  const how = one
+    ? '答的时候说编号就行（比如「1」），也可以直接把你的答案告诉我。'
+    : '答的时候一题一句，说编号就行（比如「第 1 段选 1」），也可以直接把答案告诉我。';
+  return [...blocks, how].join('\n\n');
+}

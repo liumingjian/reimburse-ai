@@ -950,7 +950,7 @@ try {
       const applied = materialsThere
         ? await applyTerminalVerdict({ sourceDir, sourceKey, after,
             correctionFile: filed('correction') ? arg('correction') : null,
-            // 终端多选的答案走 --result：那一步没有命令可跑，答案本身就是结果。
+            // 对话提问的答案走 --result：那一步没有命令可跑，答案本身就是结果。
             resultFile: filed('result') ? arg('result') : null })
         : null;
 
