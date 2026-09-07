@@ -26,7 +26,7 @@ import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerFie
 import { readReconciliation, classifyReconciliation, attemptRecord } from '../src/erpreconcile.mjs';
 import { versionAt, compareVersions } from '../src/version.mjs';
 import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
-import { readBook, bookPath, selectableProjects, isSelectable, PROJECT_BOOK_EMPTY, BOOK_EMPTY_HINT }
+import { readBook, bookPath, selectableProjects, annotateProjects, PROJECT_BOOK_EMPTY, BOOK_EMPTY_HINT }
   from '../src/projects.mjs';
 import { intakeProject } from '../src/projectintake.mjs';
 
@@ -917,17 +917,21 @@ try {
       // 「我现在有哪些项目」的唯一答案来源。纯读本机簿子：不开浏览器、不碰 ERP、
       // 不改任何东西——模型问一句就得联一次网的话，它就不会问了，转而去凭印象编。
       const book = readBook();
-      // 可选集合单独给一份：簿子里可能躺着已经降级、还没被用户删掉的条目，
-      // 而选择环节能用的只有可选的那些——两个数摆在一起，差额自己会说话。
-      const selectable = book.projects.filter(isSelectable);
+      // 每条都标上能不能选、为什么不能：模型据此如实回答"我现在有哪些项目"，
+      // 而不用自己去算日期——它算一遍、内核算一遍，迟早对同一条项目给出两种说法。
+      const projects = annotateProjects(book.projects);
+      // 可选集合单独给一份：簿子里躺着过期的、复检没过的条目，而选择环节能用的
+      // 只有可选的那些——两个数摆在一起，差额自己会说话。
+      const selectable = projects.filter((p) => p.selectable);
       out({
-        command: 'projects', projectCount: book.projects.length, projects: book.projects,
+        command: 'projects', projectCount: projects.length, projects,
         selectableCount: selectable.length, selectableNumbers: selectable.map((p) => p.number),
         ...(selectable.length ? {} : { state: PROJECT_BOOK_EMPTY }),
         bookPath: bookPath(),
-        note: book.projects.length
-          ? '这是本机项目簿的原样内容，没有为这次查询做过 ERP 核对；'
-            + 'lastVerdict 是最近一次复检的结果，不是此刻的 ERP 状态'
+        note: projects.length
+          ? '这是本机项目簿的原样内容加上此刻的失效判定，没有为这次查询做过 ERP 核对；'
+            + 'lastVerdict 是最近一次复检的结果，不是此刻的 ERP 状态。'
+            + '失效的条目留在簿子里不自动删除，删不删由用户在维护页上决定'
           : '项目簿是空的（没有这个文件、或者它读不出来）。项目要在维护页上逐条录入才进簿',
       });
     }
@@ -937,18 +941,20 @@ try {
       // 有后果的动作要一次可追溯的页面提交，不走对话（ADR-0009）。v1 只有录入。
       // 页面前台阻塞，用户点「完成」这条命令才返回。
       const r = await serveProjectBookPage({
-        // 只把项目号往下传。写成一元的箭头函数是**故意**的：intakeProject 的第二个参数
-        // 是依赖注入口（gate / run / now），直接把函数递过去，页面那边哪天多传一个参数
-        // 就等于让浏览器决定用哪个 gate。
-        intake: (number) => intakeProject(number),
+        // 只把项目号和过期时间往下传。写成二元的箭头函数是**故意**的：intakeProject 的
+        // 第三个参数是依赖注入口（gate / run / now / today），直接把函数递过去，
+        // 页面那边哪天多传一个参数就等于让浏览器决定用哪个 gate。
+        intake: (number, expiresOn) => intakeProject(number, expiresOn),
         book: readBook,
         timeoutMs: Number(arg('timeout-ms', 30 * 60 * 1000)),
         onReady: (url) => process.stderr.write(`已在浏览器里打开页面（维护项目簿）；没弹出就手动打开：${url}\n`),
       });
-      const book = readBook();
+      const projects = annotateProjects(readBook().projects);
       out({
         command: 'projects-page', status: r.status,
-        projectCount: book.projects.length, projects: book.projects, bookPath: bookPath(),
+        projectCount: projects.length,
+        selectableCount: projects.filter((p) => p.selectable).length,
+        projects, bookPath: bookPath(),
         // 超时不等于什么都没发生：每一次「核对并加入」当场就落了盘。
         note: r.status === 'done'
           ? '维护结束。簿子里每一条都在录入那一刻向 ERP 核对过：存在、已审核、未禁用'

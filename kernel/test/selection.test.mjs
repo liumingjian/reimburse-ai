@@ -14,7 +14,7 @@ const { deriveCategory, applySelection, submitSelection, loadSelection, linesDig
   = await import('../src/selection.mjs');
 const { normalizeCity, CATEGORIES } = await import('../src/categories.mjs');
 const { createTask } = await import('../src/workspace.mjs');
-const { writeBook, selectableProjects, isSelectable } = await import('../src/projects.mjs');
+const { writeBook, readBook, selectableProjects, isSelectable } = await import('../src/projects.mjs');
 
 // 选择环节的候选只能来自个人项目簿，所以每个提交用例都得先有一本簿子。
 // 这不是测试脚手架，是被测契约本身：空簿是另一个状态（project_book_empty）。
@@ -384,4 +384,80 @@ test('簿子空了只说一遍：那是一句关于簿子的话，不是关于�
   assert.equal(r.state, 'project_book_empty');
   assert.deepEqual(r.reasons.filter((x) => /项目簿是空的/.test(x)).length, 1,
     '三行明细不该把同一句"簿子是空的"说三遍');
+});
+
+/* ------------------------------------------ 过期项目不在可选集合里（#79） */
+
+/** 一本带过期时间的簿子。`expiresOn` 为 null 就是永不过期。 */
+const bookWithExpiry = (entries) => writeBook({
+  projects: entries.map(([number, expiresOn]) => ({
+    number, name: `项目 ${number}`, confirmedAt: '2026-09-07T02:00:00.000Z',
+    expiresOn, lastCheckedAt: '2026-09-07T02:00:00.000Z', lastVerdict: 'confirmed',
+  })),
+});
+
+test('已过期的项目不出现在可选集合里，选它就跟选一个簿子里没有的号一样被挡下', () => {
+  const task = createTask(path.join(home, 'src-expired'));
+  const { built } = rideCase();
+  const lineId = built.lineItems[0].lineId;
+
+  bookWithExpiry([['111454', null], ['777888', '2020-01-01']]);
+  try {
+    assert.deepEqual(selectableProjects().map((p) => p.number), ['111454'],
+      '过期的那条不进可选集合');
+
+    const r = submitSelection(task, built, {
+      homeCity: '广州市', purpose: '客户支持', projects: { [lineId]: '777888' },
+    });
+    assert.equal(r.verdict, 'rejected');
+    assert.match(r.reasons[0], /不在项目簿里/);
+    assert.equal(loadSelection(task), null);
+
+    // 但它一条都没被删掉——删除永远是用户的动作。
+    assert.deepEqual(readBook().projects.map((p) => p.number), ['111454', '777888']);
+  } finally {
+    book('111454');
+  }
+});
+
+test('过期时间当天还选得中，第二天就选不中了——每次都现算，没有任务级快照', () => {
+  const { built } = rideCase();
+  const lineId = built.lineItems[0].lineId;
+
+  bookWithExpiry([['111454', '2026-06-30']]);
+  try {
+    // 同一本簿子，只是日子过去了。不重启、不刷新，下一次提交就已经不收。
+    const ok = submitSelection(createTask(path.join(home, 'src-exp-day')), built,
+      { homeCity: '广州市', purpose: '客户支持', projects: { [lineId]: '111454' } },
+      selectableProjects('2026-06-30'));
+    assert.equal(ok.verdict, 'accepted');
+    assert.equal(ok.record.projectSource, 'erp_catalog_confirmed');
+
+    const late = submitSelection(createTask(path.join(home, 'src-exp-next')), built,
+      { homeCity: '广州市', purpose: '客户支持', projects: { [lineId]: '111454' } },
+      selectableProjects('2026-07-01'));
+    assert.equal(late.verdict, 'rejected');
+    assert.equal(late.state, 'project_book_empty', '整本都过期了就是空簿那一档');
+  } finally {
+    book('111454');
+  }
+});
+
+test('两个失效来源取并集：过期的和复检没过的都不在可选集合里', () => {
+  writeBook({ projects: [
+    { number: '111454', name: '在用的', confirmedAt: '2026-09-07T02:00:00.000Z',
+      expiresOn: null, lastCheckedAt: '2026-09-07T02:00:00.000Z', lastVerdict: 'confirmed' },
+    { number: '222333', name: '过期的', confirmedAt: '2026-09-07T02:00:00.000Z',
+      expiresOn: '2020-01-01', lastCheckedAt: '2026-09-07T02:00:00.000Z', lastVerdict: 'confirmed' },
+    { number: '333444', name: '复检没过的', confirmedAt: '2026-09-07T02:00:00.000Z',
+      expiresOn: null, lastCheckedAt: '2026-09-07T02:00:00.000Z', lastVerdict: 'unusable' },
+    { number: '444555', name: '两样都占的', confirmedAt: '2026-09-07T02:00:00.000Z',
+      expiresOn: '2020-01-01', lastCheckedAt: '2026-09-07T02:00:00.000Z', lastVerdict: 'missing' },
+  ] });
+  try {
+    assert.deepEqual(selectableProjects().map((p) => p.number), ['111454']);
+    assert.equal(readBook().projects.length, 4, '失效不触发任何自动删除');
+  } finally {
+    book('111454');
+  }
 });

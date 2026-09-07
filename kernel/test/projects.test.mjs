@@ -142,17 +142,51 @@ const runProjects = (home) => {
   return { code: r.status, json: JSON.parse(r.stdout) };
 };
 
-test('projects 如实输出簿子里的全部条目', () => {
+test('projects 如实输出簿子里的全部条目，簿子上的字段一个不改', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-projects-cli-'));
-  const rows = [entry, { ...entry, number: '111455', name: '另一个项目', expiresOn: null }];
+  const rows = [{ ...entry, expiresOn: '2099-12-31' },
+    { ...entry, number: '111455', name: '另一个项目', expiresOn: null }];
   fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: rows }));
 
   const { code, json } = runProjects(home);
   assert.equal(code, 0);
   assert.equal(json.command, 'projects');
   assert.equal(json.projectCount, 2);
-  assert.deepEqual(json.projects, rows, '一条不少、一个字段不改');
+  // 输出在簿子那几个字段之上**加**了此刻的失效判定（selectable / statusLabel /
+  // statusNote / invalidReasons），但一个原有字段都没动过——底下还接着落盘和 ERP 核对。
+  const stored = json.projects.map((p) => ({
+    number: p.number, name: p.name, confirmedAt: p.confirmedAt,
+    expiresOn: p.expiresOn, lastCheckedAt: p.lastCheckedAt, lastVerdict: p.lastVerdict,
+  }));
+  assert.deepEqual(stored, rows, '一条不少、一个字段不改');
+  assert.deepEqual(json.projects.map((p) => p.selectable), [true, true]);
+  assert.equal(json.selectableCount, 2);
   assert.equal(json.bookPath, path.join(home, 'projects.json'));
+});
+
+test('projects 把失效的条目照样列出来，并说清它为什么不可选', () => {
+  // 「我现在有哪些项目」的答案里，一条过期的项目不该凭空消失——它还在簿子里，
+  // 只是选不中了。消失会让用户以为 baox 替他删了东西。
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-projects-cli-'));
+  const rows = [
+    { ...entry, number: '111454', expiresOn: '2099-12-31' },
+    { ...entry, number: '111455', name: '过期的项目', expiresOn: '2020-01-01' },
+    { ...entry, number: '111456', name: '复检没过的项目', expiresOn: null, lastVerdict: 'unusable' },
+  ];
+  fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: rows }));
+
+  const { code, json } = runProjects(home);
+  assert.equal(code, 0);
+  assert.equal(json.projectCount, 3, '失效不触发任何自动删除');
+  assert.deepEqual(json.projects.map((p) => p.selectable), [true, false, false]);
+  assert.deepEqual(json.selectableNumbers, ['111454'], '可选集合是两个失效来源的并集之外那些');
+  assert.equal(json.selectableCount, 1);
+  assert.equal(json.projects[1].statusLabel, '已过期');
+  assert.match(json.projects[1].statusNote, /2020-01-01/);
+  assert.equal(json.projects[2].statusLabel, '复检未通过');
+  assert.match(json.projects[2].statusNote, /禁用|未审核/);
+  // 盘上那份一个字节没动：这条命令是只读的。
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, 'projects.json'), 'utf8')).projects, rows);
 });
 
 test('簿子不存在时 projects 是成功的空答案，不是错误', () => {
@@ -161,6 +195,7 @@ test('簿子不存在时 projects 是成功的空答案，不是错误', () => {
   assert.equal(code, 0, '没有项目不是故障');
   assert.equal(json.projectCount, 0);
   assert.deepEqual(json.projects, []);
+  assert.equal(json.selectableCount, 0);
   assert.ok(json.note.includes('空'), '空簿要给一句指引，不是一个空列表了事');
 });
 

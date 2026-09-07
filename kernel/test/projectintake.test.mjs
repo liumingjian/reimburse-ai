@@ -45,7 +45,8 @@ const loggedIn = async () => ({ ok: true, wsUrl: 'ws://fake', probe: { status: '
 const loggedOut = async () => ({ ok: false, probe: { status: 'no_session' } });
 
 const run = (number, query, opts = {}) =>
-  intakeProject(number, { gate: loggedIn, run: query, now: () => '2026-09-07T03:00:00.000Z', ...opts });
+  intakeProject(number, opts.expiresOn ?? null,
+    { gate: loggedIn, run: query, now: () => '2026-09-07T03:00:00.000Z', ...opts });
 
 // ---- confirmed：进簿，名称取 ERP 回读值 ------------------------------------
 
@@ -226,7 +227,7 @@ test('重复录入同一项目号刷新既有条目，簿子长度不变', async
       expiresOn: null, lastCheckedAt: '2026-01-01T00:00:00.000Z', lastVerdict: 'confirmed' },
   ] });
 
-  const r = await run('111454', confirmed('ERP 里的新名字'));
+  const r = await run('111454', confirmed('ERP 里的新名字'), { expiresOn: '2027-06-30' });
   const book = readBook();
 
   assert.equal(r.status, 'admitted');
@@ -236,7 +237,8 @@ test('重复录入同一项目号刷新既有条目，簿子长度不变', async
   assert.equal(hit.confirmedAt, '2026-09-07T03:00:00.000Z', '时间刷新');
   assert.equal(hit.lastCheckedAt, '2026-09-07T03:00:00.000Z');
   assert.equal(hit.lastVerdict, 'confirmed', '刚核对过，重新算数');
-  assert.equal(hit.expiresOn, '2026-12-31', '用户自己填的过期时间不该被一次重录抹掉');
+  // 重录就是又填了一遍表，过期时间那一格也在表上：本次提交的值覆盖旧值（#79）。
+  assert.equal(hit.expiresOn, '2027-06-30', '本次提交的过期时间覆盖旧值');
   // 位置也不变：列表不该因为重录一条就重排。
   assert.deepEqual(book.projects.map((p) => p.number), ['111454', '111455']);
 });
@@ -265,4 +267,81 @@ test('无论录成没录成都带回当前簿子，页面据此就地刷新', as
   }
   const gated = await run('111456', counting(async () => ({})), { gate: loggedOut });
   assert.deepEqual(gated.book, readBook(), '没登录也要看得见现在有哪些项目');
+});
+
+// ---- 过期时间：录入时可填，也可留空 ----------------------------------------
+
+test('录入时填的过期时间原样落进簿子', async () => {
+  freshHome();
+  const r = await run('111454', confirmed('某某项目'), { expiresOn: '2026-12-31' });
+  assert.equal(r.status, 'admitted');
+  assert.equal(r.entry.expiresOn, '2026-12-31');
+  assert.equal(readBook().projects[0].expiresOn, '2026-12-31');
+});
+
+test('留空即永不过期，空白和没填一个样', async () => {
+  // 不少项目根本没有明确结题日期。强制填只会逼人瞎填一个 2099，那这个字段就废了。
+  for (const blank of [null, undefined, '', '   ']) {
+    freshHome();
+    const r = await run('111454', confirmed('某某项目'), { expiresOn: blank });
+    assert.equal(r.status, 'admitted', `${JSON.stringify(blank)} 该被当成留空`);
+    assert.equal(r.entry.expiresOn, null);
+    assert.match(r.note, /永不过期/);
+  }
+});
+
+test('填了过期时间就在录入回执里说一声，用户当场看得见自己填了什么', async () => {
+  freshHome();
+  const r = await run('111454', confirmed('某某项目'), { expiresOn: '2026-12-31' });
+  assert.match(r.note, /2026-12-31/);
+});
+
+test('填了一个已经过去的日子照样收，但当场说清它已经不可选', async () => {
+  // 不拦：用户有权把一个已结题的项目留在簿子里。但要是不吭声，他会以为
+  // 加进去了就能选，回到选择器发现没有——那才是真的坑。
+  freshHome();
+  const r = await run('111454', confirmed('某某项目'),
+    { expiresOn: '2020-01-01', today: '2026-09-07' });
+  assert.equal(r.status, 'admitted');
+  assert.equal(readBook().projects[0].expiresOn, '2020-01-01');
+  assert.match(r.note, /已过期|不会出现在可选/);
+});
+
+test('不成日子的过期时间当场拒，而且在任何查询发生之前', async () => {
+  freshHome();
+  const query = confirmed('不该走到这里');
+  for (const bad of ['2026-13-01', '2026-02-30', '2026/12/31', '下个月', '2026-12-31T00:00:00Z']) {
+    const r = await run('111454', query, { expiresOn: bad });
+    assert.equal(r.status, 'rejected', `${bad} 该被拒`);
+    assert.equal(r.verdict, 'bad_expires_on');
+    assert.match(r.note, /年-月-日|YYYY-MM-DD/);
+  }
+  assert.equal(query.calls, 0, '一个读不出来的日期不值得去问一次 ERP');
+  assert.deepEqual(readBook().projects, [], '被拒的录入一个字节都不落盘');
+});
+
+test('过期时间读不出来时不去问会话，也不重试', async () => {
+  freshHome();
+  const query = confirmed('不该走到这里');
+  const r = await run('111454', query, { expiresOn: '乱填的', gate: loggedOut });
+  assert.equal(r.verdict, 'bad_expires_on', '日期填坏了，登不登录都一样是拒');
+  assert.equal(query.calls, 0);
+});
+
+test('录入闸门只收项目号和过期时间，别的字段递进来也写不进簿子', async () => {
+  freshHome();
+  // 页面那一侧递什么都不该能改写簿子：名称永远是 ERP 回读值。
+  const r = await intakeProject('111454', null, {
+    gate: loggedIn, run: confirmed('ERP 回读的真名'), now: () => '2026-09-07T03:00:00.000Z',
+    name: '我自己编的名字', lastVerdict: 'confirmed',
+  });
+  assert.equal(r.entry.name, 'ERP 回读的真名');
+});
+
+test('把依赖注入口误当成过期时间传进来，当场炸，不静悄悄地跑', async () => {
+  // intakeProject(number, opts) 这个旧写法一旦残留，opts 会被当成过期时间，
+  // 而 gate / run 全都落空——那是一次会去碰真 ERP 的调用。宁可响。
+  freshHome();
+  await assert.rejects(() => intakeProject('111454', { gate: loggedIn }),
+    /过期时间/, '第二个参数是过期时间，不是依赖注入口');
 });

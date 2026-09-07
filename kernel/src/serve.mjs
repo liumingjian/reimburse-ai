@@ -1,6 +1,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { annotateProjects } from './projects.mjs';
 
 // 地址只写进 stderr 是不够的：这些命令**前台阻塞**，Agent 在它返回之前既看不到 stderr
 // 也说不出话，于是"把地址给用户"这一步永远发生在用户已经干等完之后。所以内核自己把页面打开。
@@ -42,6 +43,7 @@ body{font:16px/1.6 -apple-system,"PingFang SC",sans-serif;margin:0;padding:32px 
 main{width:100%;max-width:620px}
 h1{font-size:20px;margin:0 0 4px}
 p.prompt{margin:0 0 20px;opacity:.7}
+p.hint{margin:10px 0 0;font-size:13px;opacity:.65}
 .row{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;margin-bottom:10px;
   border:1px solid color-mix(in srgb,CanvasText 20%,transparent);border-radius:10px;cursor:pointer}
 .row:hover{background:color-mix(in srgb,CanvasText 6%,transparent)}
@@ -107,6 +109,7 @@ body{font:16px/1.6 -apple-system,"PingFang SC",sans-serif;margin:0;padding:32px 
 main{width:100%;max-width:620px}
 h1{font-size:20px;margin:0 0 4px}
 p.prompt{margin:0 0 20px;opacity:.7}
+p.hint{margin:10px 0 0;font-size:13px;opacity:.65}
 .row{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;margin-bottom:10px;
   border:1px solid color-mix(in srgb,CanvasText 20%,transparent);border-radius:10px;cursor:pointer}
 .row:has(:checked){border-color:#2563eb;background:color-mix(in srgb,#2563eb 10%,transparent)}
@@ -183,6 +186,7 @@ main{width:100%;max-width:720px}
 h1{font-size:20px;margin:0 0 4px}
 h2{font-size:16px;margin:0 0 4px}
 p.prompt{margin:0 0 20px;opacity:.7}
+p.hint{margin:10px 0 0;font-size:13px;opacity:.65}
 .card{padding:16px;margin-bottom:14px;border:1px solid color-mix(in srgb,CanvasText 20%,transparent);border-radius:10px}
 .detail{font-size:14px;opacity:.7;margin:0 0 8px}
 .hint{opacity:.85}
@@ -386,6 +390,7 @@ body{font:16px/1.6 -apple-system,"PingFang SC",sans-serif;margin:0;padding:32px 
 main{width:100%;max-width:560px}
 h1{font-size:20px;margin:0 0 4px}
 p.prompt{margin:0 0 20px;opacity:.7}
+p.hint{margin:10px 0 0;font-size:13px;opacity:.65}
 .card{padding:18px 20px;border:1px solid color-mix(in srgb,CanvasText 20%,transparent);border-radius:10px}
 .card.now{border-color:#2563eb;background:color-mix(in srgb,#2563eb 8%,transparent)}
 .card h2{font-size:14px;font-weight:400;opacity:.6;margin:0 0 8px}
@@ -445,12 +450,18 @@ export function serveIdentityConfirmation(spec, opts = {}) {
  * 个人项目簿的维护页。簿子的增删只发生在这张页面的提交上——有后果的动作要一次
  * 可追溯的提交，不走对话，也不走 CLI（ADR-0009）。
  *
- * **v1 只有录入。** 删除、过期时间、复检全部都在 ADR-0009 的规划里，各有各的票，
- * 这一版一个都没有；页面上现在没有删除按钮，不是漏了。
+ * **删除和「复检全部」还不在这一版**，各有各的票；页面上现在没有删除按钮，不是漏了。
  *
- * 页面上只有两样东西：一条录入条和当前项目列表。录入条**只收项目号**，
+ * 页面上只有两样东西：一条录入条和当前项目列表。录入条收**项目号和过期时间**，
  * 没有填名称的地方——名称永远是 ERP 回读值，页面上多一个名称框就是在邀请用户
- * 写一个没有权威性、还会和 ERP 错位的名字。
+ * 写一个没有权威性、还会和 ERP 错位的名字。过期时间反过来只能由用户给：
+ * "这个项目我还报不报"是他的判断，ERP 那边没有这个事实。**它可以留空**（＝永不过期），
+ * 页面上就得把这句话说出来——不少项目根本没有明确结题日期，一个看着必填的框
+ * 只会逼人瞎填一个 2099。
+ *
+ * **这一页显示的是全簿，不是可选集合。** 失效的项目（过期的、复检没过的）在选择器里
+ * 消失，但在这里必须看得见、必须标着原因——看不见就没法清理。失效**不删除任何东西**，
+ * 删除永远是用户的动作。
  *
  * 每次「核对并加入」都是一次真的 ERP 只读核对，所以它可能被拒。被拒不终结这次打开：
  * 判定显示在录入条下面，列表照旧，用户改一个号接着来。
@@ -459,16 +470,35 @@ export function serveIdentityConfirmation(spec, opts = {}) {
  * 开页那一份不依赖 JS 跑没跑起来（`baox projects-page` 的用例就是直接读 HTML 断言的），
  * 提交之后那一份要就地刷新。两处都只拼这三格，改的时候一起改。
  */
-export function renderProjectBookPage(spec, nonce) {
-  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const projects = spec.projects ?? [];
-  const day = (s) => (s ? esc(String(s).slice(0, 10)) : '—');
-  const rows = projects.map((p) => `
-    <tr>
+/**
+ * 列表里的一行。失效的那一行**照样在列表里**，只是压暗、挂上短标，
+ * 并另起一行说清是哪一类问题——用户要照着这句话决定改过期时间还是删掉它。
+ *
+ * 这一份和页面里 `redraw()` 那一份是有意留的两处写法：开页那一份不依赖 JS 跑没跑起来
+ * （`baox projects-page` 的用例就是直接读 HTML 断言的），提交之后那一份要就地刷新。
+ * 两处摆的格子必须一样，改的时候一起改。
+ */
+function rowHtml(p, esc, day) {
+  const why = p.statusNote
+    ? `\n    <tr class="why"><td colspan="5">${esc(p.statusNote)}</td></tr>`
+    : '';
+  return `
+    <tr class="${p.selectable ? '' : 'dead'}">
       <td class="num">${esc(p.number)}</td>
       <td class="name">${esc(p.name ?? '—')}</td>
+      <td class="exp">${p.expiresOn === null ? '永不过期' : esc(String(p.expiresOn))}</td>
       <td class="at">${day(p.confirmedAt)}</td>
-    </tr>`).join('');
+      <td class="st">${esc(p.statusLabel)}</td>
+    </tr>${why}`;
+}
+
+export function renderProjectBookPage(spec, nonce) {
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  // 失效判定和它的措辞都在内核（projects.mjs），页面只负责摆出来。`spec.today` 让用例
+  // 定住"今天"；真跑的时候不给，现算。
+  const projects = annotateProjects(spec.projects ?? [], spec.today);
+  const day = (s) => (s ? esc(String(s).slice(0, 10)) : '—');
+  const rows = projects.map((p) => rowHtml(p, esc, day)).join('');
 
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <title>维护项目簿</title><style>
@@ -478,6 +508,7 @@ body{font:16px/1.6 -apple-system,"PingFang SC",sans-serif;margin:0;padding:32px 
 main{width:100%;max-width:620px}
 h1{font-size:20px;margin:0 0 4px}
 p.prompt{margin:0 0 20px;opacity:.7}
+p.hint{margin:10px 0 0;font-size:13px;opacity:.65}
 form.bar{display:flex;gap:10px}
 input{flex:1;min-width:0;padding:12px 14px;font:inherit;border-radius:10px;
   border:1px solid color-mix(in srgb,CanvasText 30%,transparent);background:Canvas;color:CanvasText}
@@ -495,7 +526,11 @@ th{text-align:left;font-weight:400;font-size:13px;opacity:.6;padding:0 12px 6px 
 td{padding:8px 12px 8px 0;border-top:1px solid color-mix(in srgb,CanvasText 14%,transparent);
   word-break:break-all}
 td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
-td.at{opacity:.6;font-size:13px;white-space:nowrap}
+td.at,td.exp{opacity:.6;font-size:13px;white-space:nowrap}
+td.st{font-size:13px;white-space:nowrap}
+tr.dead td{opacity:.45}
+tr.dead td.st{opacity:1;color:#b45309;font-weight:600}
+tr.why td{border-top:0;padding-top:0;font-size:13px;opacity:.75;color:#b45309}
 #empty{padding:18px 0;opacity:.6;font-size:14px}
 footer{margin-top:28px;display:flex;justify-content:flex-end}
 #done{display:none;text-align:center;padding:48px 0;font-size:17px}
@@ -507,13 +542,17 @@ footer{margin-top:28px;display:flex;justify-content:flex-end}
 
   <form class="bar" id="f">
     <input id="number" name="number" placeholder="粘一个项目号" autocomplete="off" autofocus>
+    <input id="expiresOn" name="expiresOn" type="date" aria-label="过期时间（可留空）">
     <button type="submit" id="add">核对并加入</button>
   </form>
+  <p class="hint">过期时间<b>可以留空</b>——留空＝永不过期。填了的话，过了那天这个项目
+  就不再出现在报销时的选择器里，但仍然留在下面这张表上，删不删由你决定。</p>
   <p id="msg"></p>
 
   <h2>当前项目（<span id="count">${projects.length}</span>）</h2>
   <table id="list">
-    <thead><tr><th>项目号</th><th>名称（ERP 回读）</th><th>加入时间</th></tr></thead>
+    <thead><tr><th>项目号</th><th>名称（ERP 回读）</th><th>过期时间</th><th>加入时间</th>
+      <th>状态</th></tr></thead>
     <tbody id="rows">${rows}</tbody>
   </table>
   <div id="empty" ${projects.length ? 'hidden' : ''}>还没有项目。粘一个项目号加进来，报销时就能从这里选。</div>
@@ -526,10 +565,17 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const day = (s) => (s ? esc(String(s).slice(0, 10)) : '—');
 
+// 内核回给页面的簿子已经标好了 selectable / statusLabel / statusNote：
+// 浏览器这边算不了"今天"，更不该自己编一套失效的说法。
 function redraw(projects) {
   $('rows').innerHTML = projects.map((p) =>
-    '<tr><td class="num">' + esc(p.number) + '</td><td class="name">' + esc(p.name ?? '—')
-    + '</td><td class="at">' + day(p.confirmedAt) + '</td></tr>').join('');
+    '<tr class="' + (p.selectable ? '' : 'dead') + '"><td class="num">' + esc(p.number)
+    + '</td><td class="name">' + esc(p.name ?? '—')
+    + '</td><td class="exp">' + (p.expiresOn === null ? '永不过期' : esc(String(p.expiresOn)))
+    + '</td><td class="at">' + day(p.confirmedAt)
+    + '</td><td class="st">' + esc(p.statusLabel ?? '') + '</td></tr>'
+    + (p.statusNote ? '<tr class="why"><td colspan="5">' + esc(p.statusNote) + '</td></tr>' : ''),
+  ).join('');
   $('count').textContent = projects.length;
   $('empty').hidden = projects.length > 0;
 }
@@ -548,7 +594,9 @@ $('f').addEventListener('submit', async (e) => {
   try {
     const res = await fetch('/submit?nonce=${nonce}', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ number }),
+      // 过期时间空着就原样递一个空串：留空是用户的一个明确表示（永不过期），
+      // 页面不替他编一个日期，也不把这个键藏起来。
+      body: JSON.stringify({ number, expiresOn: $('expiresOn').value }),
     });
     const payload = await res.json();
     if (!payload.ok) {
@@ -560,7 +608,7 @@ $('f').addEventListener('submit', async (e) => {
     const r = payload.result;
     say(r.note ?? r.status, r.status === 'admitted');
     if (r.book) redraw(r.book.projects);
-    if (r.status === 'admitted') $('number').value = '';
+    if (r.status === 'admitted') { $('number').value = ''; $('expiresOn').value = ''; }
   } catch (err) {
     say('没能把这个项目号交给 baox：' + err.message, false);
   } finally {
@@ -588,21 +636,41 @@ $('finish').addEventListener('click', async () => {
 }
 
 /**
- * 把维护页架在长驻形态上。页面每提交一个项目号就走一次录入闸门，判定原样回给页面，
+ * 把维护页架在长驻形态上。页面每提交一次就走一次录入闸门，判定原样回给页面，
  * 服务不关；点「完成」才收工，交回收工那一刻簿子的样子。
  *
- * `intake` 和 `book` 都可注入，测试因此能整条跑通而不碰 ERP、不碰真实数据根。
- * **闸门只收项目号**：页面递来的别的字段一律不往下传——名称是 ERP 回读值，
- * 别的字段各有各的票，页面这一侧递什么都不该能写进簿子。
+ * `intake`、`book` 和 `today` 都可注入，测试因此能整条跑通而不碰 ERP、不碰真实数据根，
+ * 还能把"今天"定死。
+ *
+ * **闸门只收项目号和过期时间**，而且是**逐个具名取出来**再往下传的：页面递来的别的字段
+ * 一律不传——名称是 ERP 回读值，`lastVerdict` 是复检写的，浏览器递什么都不该能写进簿子。
+ *
+ * 回给页面和收工时交出的簿子都**先标好失效**（`annotateProjects`）：浏览器那边算不了
+ * "今天"，措辞也只该有内核一处出处。
  */
-export function serveProjectBookPage({ intake, book, ...opts } = {}) {
-  return serveResidentPage((nonce) => renderProjectBookPage(book(), nonce), {
+export function serveProjectBookPage({ intake, book, today, ...opts } = {}) {
+  const annotated = () => {
+    const current = book();
+    return { ...current, projects: annotateProjects(current.projects ?? [], today) };
+  };
+  return serveResidentPage((nonce) => renderProjectBookPage({ ...book(), today }, nonce), {
     ...opts,
-    onSubmit: (body) => intake(String(body?.number ?? '')),
+    onSubmit: async (body) => {
+      // 过期时间只在页面递了这个键的时候才往下传。没递＝没有这个框（旧页面缓存、
+      // 直接 POST），传 null 让闸门当成留空，而不是拿一个 undefined 去当日期比。
+      const expiresOn = body?.expiresOn === undefined ? null : String(body.expiresOn);
+      const r = await intake(String(body?.number ?? ''), expiresOn);
+      return r?.book
+        ? { ...r, book: { ...r.book, projects: annotateProjects(r.book.projects ?? [], today) } }
+        : r;
+    },
     onDone: () => {
-      const current = book();
+      const current = annotated();
       return { status: 'done', at: new Date().toISOString(),
-        projectCount: current.projects.length, projects: current.projects };
+        projectCount: current.projects.length,
+        // 全簿和可选各给一个数：差额就是用户该去清理的那些。
+        selectableCount: current.projects.filter((p) => p.selectable).length,
+        projects: current.projects };
     },
   });
 }

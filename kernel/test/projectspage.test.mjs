@@ -37,11 +37,12 @@ test('维护页上有当前项目列表，项目号和 ERP 名称都看得见', 
   }
 });
 
-test('用户只填项目号：页面上没有让他填名称的地方', () => {
+test('用户只填项目号和过期时间：页面上没有让他填名称的地方', () => {
   // 名称永远是 ERP 回读值。页面上多一个名称框，就等于邀请用户去写一个没有权威性的名字。
   const html = renderProjectBookPage({ projects: [] }, 'n0');
   const inputs = html.match(/<input[^>]*>/g) ?? [];
-  assert.equal(inputs.length, 1, `录入条只该有项目号一个输入框，实际有 ${inputs.length} 个`);
+  assert.equal(inputs.length, 2, `录入条只该有项目号和过期时间两个框，实际有 ${inputs.length} 个`);
+  assert.deepEqual(inputs.map((i) => i.match(/id="([^"]+)"/)[1]).sort(), ['expiresOn', 'number']);
 });
 
 test('空簿有一句指引，不是一张空表了事', () => {
@@ -157,17 +158,18 @@ test('页面一开就照着当前簿子渲染，不用先提交一次才看得�
   await s.done;
 }));
 
-test('提交里除了项目号什么都不作数：名称由 ERP 回读，页面递什么都不进簿', noAutoOpen(async () => {
+test('提交里除了项目号和过期时间什么都不作数：名称由 ERP 回读，页面递什么都不进簿', noAutoOpen(async () => {
   let got;
   const s = startPage({
-    intake: async (number, extra) => { got = { number, extra }; return { status: 'admitted', number, book: { projects: [] } }; },
+    intake: async (...args) => { got = args; return { status: 'admitted', number: args[0], book: { projects: [] } }; },
     book: () => ({ projects: [] }),
   });
   const base = new URL(await s.url);
 
-  await post(base, '/submit', { number: '111454', name: '页面上伪造的名字', lastVerdict: 'confirmed' });
-  assert.equal(got.number, '111454');
-  assert.equal(got.extra, undefined, '闸门只收项目号，页面递来的别的字段一律不传下去');
+  await post(base, '/submit', { number: '111454', expiresOn: '2026-12-31',
+    name: '页面上伪造的名字', lastVerdict: 'confirmed' });
+  assert.deepEqual(got, ['111454', '2026-12-31'],
+    '闸门只收项目号和过期时间，页面递来的别的字段一律不传下去');
 
   await post(base, '/done');
   await s.done;
@@ -244,4 +246,123 @@ test('弹页命令真的把维护页架起来并阻塞，点「完成」才返�
   assert.equal(json.status, 'done');
   assert.equal(json.projectCount, 1);
   assert.equal(json.bookPath, path.join(home, 'projects.json'));
+}));
+
+// ---- 过期时间与项目失效（#79）----------------------------------------------
+
+const expired = (number, name, expiresOn = '2020-01-01') => ({ ...entry(number, name), expiresOn });
+const unconfirmed = (number, name, verdict = 'unusable') => ({ ...entry(number, name), lastVerdict: verdict });
+
+test('录入条上有过期时间，而且明说可以留空', () => {
+  const html = renderProjectBookPage({ projects: [] }, 'n0');
+  assert.match(html, /<input[^>]+id="expiresOn"/);
+  assert.match(html, /type="date"/, '只到日期粒度，用日期控件而不是自由文本');
+  assert.match(html, /留空/, '留空是一等公民，页面上要说出来');
+  assert.match(html, /永不过期/);
+});
+
+test('已过期的项目仍出现在维护页的全簿列表里，并标注"已过期"', () => {
+  const html = renderProjectBookPage(
+    { projects: [expired('111455', '去年结题的项目', '2026-01-01')], today: '2026-06-30' }, 'n0');
+  assert.ok(html.includes('111455'), '失效项在维护页上必须看得见——看不见就没法清理');
+  assert.ok(html.includes('去年结题的项目'));
+  assert.ok(html.includes('已过期'));
+  assert.ok(html.includes('2026-01-01'), '说清过期在哪一天');
+});
+
+test('最近一次判定不是 confirmed 的项目同样可见，并标出原因', () => {
+  const html = renderProjectBookPage(
+    { projects: [unconfirmed('111456', '被禁用的项目')], today: '2026-06-30' }, 'n0');
+  assert.ok(html.includes('111456'));
+  assert.ok(html.includes('复检未通过'));
+  assert.match(html, /禁用|未审核/, '要说清是哪一类问题');
+});
+
+test('两个来源都命中就两条原因都摆出来', () => {
+  const html = renderProjectBookPage({ projects: [
+    { ...entry('111457', '又过期又查不到'), expiresOn: '2026-01-01', lastVerdict: 'missing' },
+  ], today: '2026-06-30' }, 'n0');
+  assert.ok(html.includes('已过期'));
+  assert.ok(html.includes('查不到'));
+});
+
+test('还能选的项目不挂失效标注', () => {
+  const html = renderProjectBookPage(
+    { projects: [{ ...entry('111454', '还在做的项目'), expiresOn: '2099-12-31' }], today: '2026-06-30' }, 'n0');
+  assert.ok(!html.includes('已过期'));
+  assert.ok(!html.includes('复检未通过'));
+});
+
+test('维护页显示的是全簿，可选和失效摆在一起，计数说的是全簿', () => {
+  // 失效**不触发任何自动删除**：这一页就是用户去看、去决定删不删的地方。
+  const html = renderProjectBookPage({ projects: [
+    entry('111454', '在用的'), expired('111455', '过期的', '2026-01-01'), unconfirmed('111456', '禁用的'),
+  ], today: '2026-06-30' }, 'n0');
+  for (const n of ['111454', '111455', '111456']) assert.ok(html.includes(n), `${n} 该看得见`);
+  assert.match(html, /当前项目（<span id="count">3<\/span>）/, '计数是全簿条数，不是可选条数');
+});
+
+test('过期时间列把用户填的那个日子照原样摆出来，留空显示得出来是留空', () => {
+  const html = renderProjectBookPage({ projects: [
+    { ...entry('111454', '没有结题日的项目'), expiresOn: null },
+    { ...entry('111455', '有结题日的项目'), expiresOn: '2099-12-31' },
+  ], today: '2026-06-30' }, 'n0');
+  assert.ok(html.includes('2099-12-31'));
+  assert.match(html, /永不过期/);
+});
+
+test('页面把过期时间连同项目号一起交给录入闸门', noAutoOpen(async () => {
+  const seen = [];
+  const s = startPage({
+    intake: async (number, expiresOn) => {
+      seen.push([number, expiresOn]);
+      return { status: 'admitted', number, entry: entry(number, 'ERP 回读的名字'),
+        book: { projects: [entry(number, 'ERP 回读的名字')] }, note: '已加入' };
+    },
+    book: () => ({ projects: [] }),
+  });
+  const base = new URL(await s.url);
+
+  await post(base, '/submit', { number: '111454', expiresOn: '2026-12-31' });
+  await post(base, '/submit', { number: '111455', expiresOn: '' });
+  await post(base, '/submit', { number: '111456' });
+  assert.deepEqual(seen, [['111454', '2026-12-31'], ['111455', ''], ['111456', null]],
+    '填了就往下传，留空就是留空——页面不替用户编一个日期');
+
+  await post(base, '/done');
+  await s.done;
+}));
+
+test('提交之后回给页面的簿子已经带上失效标注，页面刷新就能标出原因', noAutoOpen(async () => {
+  // 浏览器那边算不了"今天"和失效原因——措辞和判定都在内核，回给页面的必须是已经标好的。
+  const s = startPage({
+    today: '2026-06-30',
+    intake: async (number) => ({ status: 'admitted', number,
+      book: { projects: [entry('111454', '在用的'), expired('111455', '过期的', '2026-01-01')] } }),
+    book: () => ({ projects: [] }),
+  });
+  const base = new URL(await s.url);
+
+  const r = await (await post(base, '/submit', { number: '111454' })).json();
+  const [ok, gone] = r.result.book.projects;
+  assert.equal(ok.selectable, true);
+  assert.equal(gone.selectable, false);
+  assert.equal(gone.statusLabel, '已过期');
+  assert.match(gone.statusNote, /2026-01-01/);
+
+  await post(base, '/done');
+  await s.done;
+}));
+
+test('收工时交回的还是全簿，失效项一条不少', noAutoOpen(async () => {
+  const book = { projects: [entry('111454', '在用的'), expired('111455', '过期的')] };
+  const s = startPage({ intake: async () => ({ status: 'admitted' }), book: () => book, today: '2026-06-30' });
+  const base = new URL(await s.url);
+
+  await post(base, '/done');
+  const final = await s.done;
+  assert.equal(final.projectCount, 2, '失效不删除任何东西');
+  assert.deepEqual(final.projects.map((p) => p.number), ['111454', '111455']);
+  assert.deepEqual(final.projects.map((p) => p.selectable), [true, false]);
+  assert.equal(final.selectableCount, 1, '可选的有几条要单独说，两个数摆在一起差额自己会说话');
 }));

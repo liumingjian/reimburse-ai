@@ -274,6 +274,18 @@ Projects added to the book mid-flow are selectable the next time the selector op
 later deletes from the book **does not** change a selection that is already recorded — that one is a fact of
 the task.
 
+**A project in the book is not necessarily selectable.** An entry drops out of the candidate set when
+either of two things is true — the expiry date the user gave it has passed, or its last master-data check
+came back as something other than confirmed. The union of the two is what `baox projects` reports as
+`selectable: false`, with `statusLabel` and `statusNote` saying which. Three things follow:
+
+- **Nothing is ever deleted for going invalid.** The entry stays in the book, stays visible on the
+  maintenance page, and only the user removes it. Do not tell the user baox dropped their project.
+- **The expiry date is optional and blank means never expires.** Never fill one in for the user, and never
+  suggest a placeholder year so the field is "filled" — a blank is a real answer.
+- **The set is recomputed on every read, today included.** A project selectable yesterday can be gone today
+  with the file untouched. Read it again rather than reusing an earlier answer.
+
 ```bash
 baox lines --dir "<材料目录>"
 ```
