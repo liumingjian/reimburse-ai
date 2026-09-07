@@ -947,8 +947,11 @@ try {
 
       // 用户在终端上的表态**先落盘，再采观测** —— 顺序反过来，内核会拿着确认前的
       // 那份观测再问一次同一张表。判据和闸门都在 confirm.mjs 里。
-      const applied = materialsThere
-        ? await applyTerminalVerdict({ sourceDir, sourceKey, after,
+      // 认身份那一步在材料之前发生，所以这里的闸门是 `!tooNew` 而不是「材料在不在」：
+      // 后者会让"我在替谁报销"这次点头在材料目录还没给出来的时候悄悄丢掉。
+      // 材料那几步自己要的目录，由 applyTerminalVerdict 里那道 `!sourceDir` 挡着。
+      const applied = !tooNew
+        ? await applyTerminalVerdict({ sourceDir: materialsThere ? sourceDir : null, sourceKey, after,
             correctionFile: filed('correction') ? arg('correction') : null,
             // 对话提问的答案走 --result：那一步没有命令可跑，答案本身就是结果。
             resultFile: filed('result') ? arg('result') : null })
@@ -956,6 +959,11 @@ try {
 
       const observation = {
         ...env,
+        // 环境那份观测采在表态落盘**之前**（它要先算出 tooNew 才谈得上收表态），
+        // 所以刚认下的身份要补回来 —— 不补的话这一次应答仍然报 `env_identity_unbound`，
+        // 用户刚认完就又看见同一张表，而绑定其实已经写进去了。
+        // 材料那半份观测在下面重采，本来就带着最新的事实，不需要这样补。
+        ...(applied?.verdict === 'identity_bound' ? { binding: applied.binding } : {}),
         ...(materialsThere ? await observeTask(sourceDir) : {}),
       };
       const response = nextResponse({ observation, sourceKey, after,

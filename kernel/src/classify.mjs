@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { parseMaterial, invoiceIdentity, checkAmounts, maskNumber } from './parse.mjs';
 import { loadReading, loadRejection, loadUnreadable, projectReading, MAX_SIGHT_FAILURES,
-  FIELD_LABELS } from './vision.mjs';
+  MAX_EMPTY_READINGS, FIELD_LABELS } from './vision.mjs';
 import { shapeOfFile } from './imageshape.mjs';
 import { READING_KINDS } from './state.mjs';
 
@@ -121,6 +121,15 @@ export function classifyOpenItems(classification) {
           note: `我连着 ${r.rejection.sightFailures} 次答不出这张图长什么样，`
             + '没法证明我真的打开过它。这张图的读数我不再往下交 ——'
             + '请你看一眼这个文件，或者换一份能正常显示的原件' });
+        continue;
+      }
+      if ((r.rejection?.emptyReadings ?? 0) >= MAX_EMPTY_READINGS) {
+        // 接连交空读数。图是好的，字一个都没抄下来 —— 再派模型读一遍只是再空一次。
+        add('vision_unavailable', true, { ...at,
+          note: `我连着 ${r.rejection.emptyReadings} 次从这张图上一个字段都没读出来，`
+            + '而这张图在我这边是完好的。看图这一步靠的是我自己的视觉，'
+            + '不接外部识图工具（那种结果我不收）—— 所以多半是当前这个模型看不到图片。'
+            + '两条路：换一个能看图的模型来跑这一步，或者把这份材料换成 PDF 原件（PDF 我自己取字，不用看图）' });
         continue;
       }
       const state = r.readingState ?? 'none';

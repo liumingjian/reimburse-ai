@@ -50,7 +50,9 @@ node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材
 `step.acceptsCorrection` 是 `false` 的那张表（写进 ERP 前的最后一格）**收不下纠正**：
 只有点头和不点头两种收场。用户说哪里不对，就照实转达然后停下，不要把他的值写成一份纠正交上去。
 
-`read_images` 的抄写纪律在 `references/image-reading.md`，看图之前先读它。
+`read_images` 的抄写纪律在 `references/image-reading.md`，看图之前先读它。两条底线在这里也说一遍：
+**识图只靠你自己看**（`tesseract`、`mdls`、`sips`、macOS Vision 之类的外部工具，读出来的东西内核不收），
+**看不到图就照实说**（不要按文件名和尺寸推断，也不要把整份读数填成 `unreadable` 交上去）。
 
 ### `dispute` 的三段
 

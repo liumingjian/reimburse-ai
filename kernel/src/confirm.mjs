@@ -31,6 +31,8 @@ import { erpSnapshot } from './observe.mjs';
 import { receiveAllocationAnswers, roundFingerprint } from './allocate.mjs';
 import { ALLOCATION_KINDS } from './events.mjs';
 import { recordWriteApproval, writePreviewDigest } from './erpwrite.mjs';
+import { readBinding, writeBinding, bindingVerdict } from './binding.mjs';
+import { probeIdentity } from './probe.mjs';
 
 /** 内核此刻挂着的那一步，且回传的凭据正是它。对不上就是 null。 */
 const outstandingStep = (sourceKey, after) => {
@@ -72,6 +74,12 @@ const awaitingRuling = (sourceKey, after) =>
  */
 export async function applyTerminalVerdict({ sourceDir, sourceKey, after, correctionFile = null,
   resultFile = null }) {
+  // 认身份排在最前，而且**不要求有材料目录、不要求有任务**：它发生在这条链子的
+  // 最开头，那会儿两样都还不存在。放在下面那道 `!sourceDir` 后面的话，
+  // 用户在终端上认了人，内核什么都不会记下 —— 表现是同一张表一遍遍地问。
+  if (outstandingStep(sourceKey, after)?.state === 'env_identity_unbound') {
+    return receiveIdentity(outstandingStep(sourceKey, after));
+  }
   if (!sourceDir) return null;
   const outstanding = outstandingStep(sourceKey, after);
   const ruling = awaitingRuling(sourceKey, after);
@@ -151,6 +159,32 @@ async function receiveAllocation({ sourceDir, task, outstanding, resultFile }) {
  * 用户点头的那份内容，必须**逐字**还是现在这份。指纹对不上就当没点过 ——
  * 那不是苛刻，那是"他点的头只对他看过的那一份有效"这句话的实现。
  */
+/**
+ * 用户在终端上认下了「我在替谁报销」。
+ *
+ * 落盘的身份**不来自回传，也不来自登记簿**：内核在这一刻重新读一次 ERP，
+ * 拿读到的那一个去落盘，并且要求它和用户刚才看过的那一份（凭据里记着的
+ * account + tenant）一模一样。两次之间人换了、会话掉了，这次点头就当场作废 ——
+ * 用户认下的永远只是他看过的那一个身份，而不是"现在恰好登录着的那个"。
+ *
+ * 这样一来，从 ERP 页面到 identity.json，全程没有一个字符串经过模型的手 ——
+ * 这正是原来那张本地确认页在守的东西，换成终端表格之后它一点没少。
+ */
+export async function receiveIdentity(outstanding, { probe: readIdentity = probeIdentity } = {}) {
+  const probe = await readIdentity();
+  if (probe.status !== 'matched') return null;
+  const want = outstanding.meta ?? {};
+  if (!want.account || !want.tenant) return null;
+  if (probe.identity.account !== want.account || probe.identity.tenant !== want.tenant) return null;
+  // 已经绑在同一个身份上就不重写：确认时间是「哪一次点头」的记录，不该被一次
+  // 重发的凭据刷新。
+  const previous = readBinding();
+  if (bindingVerdict(previous, probe.identity) === 'matched') {
+    return { verdict: 'identity_bound', binding: previous, replaced: null };
+  }
+  return { verdict: 'identity_bound', binding: writeBinding(probe.identity), replaced: previous };
+}
+
 async function receiveApproval({ sourceDir, task, outstanding, correctionFile }) {
   // 指错不在这一步收：这张表上不改值。有一处不对，回去改那一层。
   if (correctionFile) return null;

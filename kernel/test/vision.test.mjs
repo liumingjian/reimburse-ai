@@ -12,7 +12,7 @@ process.env.BAOX_HOME = home;
 const { takeInventory } = await import('../src/inventory.mjs');
 const { createTask } = await import('../src/workspace.mjs');
 const { ingestReadings, confirmReadings, disputeReading, loadReading, loadRejection,
-  pendingConfirmations, projectReading } = await import('../src/vision.mjs');
+  pendingConfirmations, projectReading, MAX_EMPTY_READINGS } = await import('../src/vision.mjs');
 const { invoiceIdentity } = await import('../src/parse.mjs');
 
 const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
@@ -155,10 +155,31 @@ test('说「看不清」也要先证明在看：形状照样得答对', () => {
 });
 
 test('看着图说这几个字段认不出来，是合法答案', () => {
+  // 抄下来了一部分，另外几个字段认不出 —— 这才是「看不清」本来的样子：
+  // 它是**这张图上的某个字段**认不出，而不是这张图没被看见。
   const v = submit({ materialId: material.materialId, contentHash: material.contentHash,
-    sighted: { shape: 'landscape' }, docType: 'unreadable', fields: {},
-    unreadable: ['invoiceNumber', 'totalAmount'] });
+    sighted: { shape: 'landscape' }, docType: 'ride_itinerary',
+    fields: { city: '深圳', travelDate: '2026-09-04' },
+    unreadable: ['origin', 'destination'] });
   assert.equal(v.verdict, 'accepted', JSON.stringify(v.reasons));
+});
+
+test('整张图一个字段都没抄下来，不算「看不清」，算没看见', () => {
+  // 真机 QA 里的那一份读数：形状答对了（外部工具就答得出），字段全空。
+  // 它被收下之后，用户在确认表上看到的是一张什么都没有的表。
+  const empty = { materialId: material.materialId, contentHash: material.contentHash,
+    sighted: { shape: 'landscape' }, docType: 'unreadable', fields: {},
+    unreadable: ['invoiceNumber', 'totalAmount'] };
+  const first = submit(empty);
+  assert.equal(first.verdict, 'rejected');
+  assert.match(first.reasons.join(), /一个字段都没有/);
+  // 驳回里要点名外部识图工具不算数 —— QA 现场模型正是转头去找它们的。
+  assert.match(first.reasons.join(), /tesseract|OCR/);
+  assert.equal(loadRejection(task, material.materialId).emptyReadings, 1);
+
+  // 再空一次就不再是模型的事：到上限之后这张图不再派工单，变成摆给用户的开放项。
+  submit(empty);
+  assert.equal(loadRejection(task, material.materialId).emptyReadings, MAX_EMPTY_READINGS);
 });
 
 test('被驳回的理由要活到下一次读取 —— 那是重读唯一有用的输入', () => {

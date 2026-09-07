@@ -39,6 +39,23 @@ export const READING_VERSION = 1;
  */
 export const MAX_SIGHT_FAILURES = 3;
 
+/**
+ * 连着交几份「一个字段都没有」的读数，就不再让模型重试。
+ *
+ * 空读数不是一个正当的答案，哪怕它把每个字段都老老实实写进了 `unreadable`：
+ * 内核这一侧已经确认这张图是完好的（解得开图像头、量得出尺寸），一张完好的票
+ * 上整整一屏字**一个都认不出**，几乎只有一种解释 —— 这次读取根本没有看到图。
+ *
+ * 真机 QA（2026-09-07）里就是这样：跑这套流程的模型看不见 `Read` 交回来的图片，
+ * 于是转头去敲 `file`、`mdls`、`tesseract`、`swift` 找外部识图工具，
+ * 拿元数据凑出"看过的凭据"，字段全填 `unreadable` 交上来 —— 而内核收下了它，
+ * 用户于是在确认表上看到一张什么都没有的表。
+ *
+ * 一次驳回是"再看一遍"；接连两次就不再是模型的事了，它变成一条摆给用户的开放项：
+ * 这个模型读不了图，换一个有视觉能力的模型，或者补一份 PDF 原件。
+ */
+export const MAX_EMPTY_READINGS = 2;
+
 /** 图片可能是什么。闭集：模型不能自己发明一个类型。 */
 export const DOC_TYPES = {
   invoice: { role: 'primary_voucher', label: '发票', needsIdentity: true },
@@ -149,6 +166,9 @@ export function buildWorkOrder(sourceDir, inventory, classification, task, { for
     const freshRejection = rejection && rejection.contentHash === m.contentHash;
     // 连着答不出「看过的凭据」的那几张也不再派出去：再读一遍只是再试一次。
     if (freshRejection && (rejection.sightFailures ?? 0) >= MAX_SIGHT_FAILURES) continue;
+    // 连着交空读数的那几张同样不再派出去。到这一步它已经不是"再读一遍"能解的事：
+    // 多半是这一侧根本看不见图，而那要换模型或者换材料，只有人做得到。
+    if (freshRejection && (rejection.emptyReadings ?? 0) >= MAX_EMPTY_READINGS) continue;
     // 争议中的那几张不进普通工单。它们不是「还没读」—— 读过了，两边对不上，
     // 处置是**只重读那一个字段**（干净上下文，见 dispute.mjs），不是从头再抄一遍整张票。
     // 混进工单的话，模型会带着刚吵完的那段上下文重读一整张，第二次读数也就不独立了。
@@ -237,6 +257,27 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
       fields[k] = v;
     }
 
+    // 一个字段都没有的读数不是读数。
+    //
+    // 这一条和「看不清是正当答案」不冲突，两者说的是不同的东西：`unreadable` 是
+    // **这张图上的某个字段**认不出来，而整张图上一个字段都认不出，说的是这张图
+    // 没有真的被看见。内核这边刚量出它的尺寸，图是好的。
+    //
+    // 它比「看过的凭据」更难绕：凭据是五选一，外部工具答得出来；而一张票上的字
+    // 只有看见了才抄得出来，抄不出来就是没看见。
+    let emptyReading = false;
+    if (shape && Object.keys(fields).length === 0) {
+      emptyReading = true;
+      reasons.push(`这份读数一个字段都没有。这张图在我这边是完好的（${shape.width}×${shape.height}），`
+        + '一张完好的票上整屏的字一个都认不出，通常不是"看不清"，是这次读取没有真的看到图。'
+        + '请用 Read 工具重新打开它，看着它抄 —— 哪怕只抄下一个金额或者一个日期，'
+        + '也比整份空着强。'
+        + '另外：识别这一步只能靠你自己看，file / mdls / sips / tesseract / OCR 之类的'
+        + '外部工具在这里一律不算数，用它们凑出来的东西我不会收。'
+        + '如果你这一侧根本显示不出图片（比如当前模型没有视觉能力），就照实说出来，'
+        + '别拿工具去补 —— 那件事我会转给用户处理。');
+    }
+
     // 发票必须有能构成发票身份的号码，否则没法做重复检查。
     if (raw.docType === 'invoice') {
       if (!fields.invoiceNumber) reasons.push('识别为发票但没有回报 20 位发票号码，无法做重复检查');
@@ -259,10 +300,14 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
       // 「不看图，挨个试」的 —— 几个回合就蒙对了。累计到上限就不再是模型的事，
       // 而是一条摆给用户看的开放项：我没能证明我打开过这张图。
       const prev = loadRejection(task, m.materialId);
-      const carried = prev && prev.contentHash === actual ? prev.sightFailures ?? 0 : 0;
+      const fresh = prev && prev.contentHash === actual;
+      const carried = fresh ? prev.sightFailures ?? 0 : 0;
+      const carriedEmpty = fresh ? prev.emptyReadings ?? 0 : 0;
       writeRejection(task, { materialId: m.materialId, fileName: m.fileName, contentHash: actual,
         reasons, rejectedAt: new Date().toISOString(),
         sightFailures: carried + (sightFailed ? 1 : 0),
+        // 空读数也要累计，理由和凭据那一条一样：接连交空的，就不再是"再读一遍"能解的事。
+        emptyReadings: carriedEmpty + (emptyReading ? 1 : 0),
         ...(prev && prev.contentHash === actual && prev.disputed ? { disputed: prev.disputed } : {}) });
     }
     if (verdict === 'accepted') {

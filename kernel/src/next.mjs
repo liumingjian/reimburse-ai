@@ -51,7 +51,7 @@ const BLOCKED = 2;
  * 跑一条内核给的命令。
  *
  * `outsourceable` 是给子 Agent 那条规矩用的：契约说 `kind: "run"` 的连续段可以外包，
- * 但有两步的命令会弹出一个要人**亲手点一下**的本地页面（认身份、认读数）——
+ * 但有的命令会弹出一个要人**亲手点一下**的本地页面（改绑身份、浏览项目目录）——
  * 外包给一个没有终端的子 Agent，它只会挂在那里等一个永远不会发生的点击。
  * 所以这一条写进 JSON 里，而不是只写在注释里：模型看得见的才算数。
  */
@@ -82,6 +82,16 @@ const readImages = ({ images, readingsPath, argv, speak, context }) => ({
     readingsPath,
     // 「看过的凭据」的取值范围，跟着这一步一起给 —— 模型不需要去别处查它。
     sightedShapes: SHAPES.map((shape) => ({ shape, label: SHAPE_LABELS[shape] })),
+    // 这两条写进内核的输出里，而不是只躺在参考文档里：模型看得见的才算数。
+    // 真机 QA 里模型跑去敲 tesseract / mdls / swift Vision，正是因为"只能自己看"
+    // 这句话当时只写在 references/ 那份文件里。
+    onlyYourOwnEyes: '识图只能用 Read 打开图片、你自己看。file / mdls / sips / identify / '
+      + 'tesseract / macOS Vision / easyocr / paddleocr 这类外部工具读出来的东西内核不收，'
+      + '拿它们凑 sighted.shape 更是这一步最坏的做法。',
+    ifYouCannotSeeImages: '如果 Read 交回了图片而你看不到它的内容（比如你没有视觉能力），'
+      + '就把这件事照实说出来然后停下 —— 不要改用外部工具，不要按文件名和尺寸推断，'
+      + '也不要把整份读数填成 unreadable 交上来：一个字段都没有的读数我会当场打回，'
+      + '连着两次就转成一条给用户的待办（换个看得见图的模型，或者换成 PDF 原件）。',
     argv,
   },
   speak, context, progress: READING_PROGRESS, exit: 0,
@@ -274,6 +284,24 @@ function readingTable(pending) {
 }
 
 /**
+ * 当前登录身份 -> 一张定宽表格。第一次认「我在替谁报销」看的就是它。
+ *
+ * 三行都是内核自己从 ERP 页面上读到的原值。判据那两行（账号、账套）单独标出来：
+ * 用户认得出的是显示名，而门栓拴的是另外两个 —— 不说清楚，他核对的就是错的那一格。
+ */
+function identityTable(identity) {
+  return renderTable([
+    { key: 'field', label: '项', max: 12 },
+    { key: 'value', label: '我从 ERP 读到的', max: 32 },
+    { key: 'note', label: '说明', max: 24 },
+  ], [
+    { field: '姓名', value: identity.displayName ?? '（读不出）', note: '只给你认人，不作判据' },
+    { field: '登录账号', value: identity.account ?? '（读不出）', note: '判据' },
+    { field: '账套', value: identity.tenant ?? '（读不出）', note: '判据，换账套等于换人' },
+  ]);
+}
+
+/**
  * 待写内容 -> 一张定宽表格。写入前请用户过目的就是它。
  *
  * 一行一条明细，每一列都是**这条明细写进 ERP 之后会长什么样**：
@@ -411,22 +439,38 @@ export function stepFor(state, observation = {}, blockedBy = []) {
           + '或者读不出用户名又看不见登录表单、或者读出了人却缺账号或账套凑不成可比的身份。',
       });
 
-    case 'env_identity_unbound':
-      // 绑定只在确认页上产生：页面展示的是内核自己从 ERP 读到的值，
-      // 用户点一次「是我本人」才落盘 —— 全程没有字符串经过模型的手。
+    case 'env_identity_unbound': {
+      // 绑定要保住的性质是「**没有一个字符串经过模型的手**」：表里每个值都是内核
+      // 自己刚从 ERP 读到的，用户只能认或不认。本地页面能做到这一点，终端表格
+      // 同样做得到 —— 页面多出来的那部分不是安全性，是一次上下文切换。
       //
-      // 规格那一格写的是「会话内列表格请用户认」，也就是 confirm_table。
-      // 那种 step 连同终端表格属于后面的批次，这一批先接上已有的本地确认页；
-      // 它是 run，但**这一步要人点一下，不能外包给子 Agent**。换成 confirm_table
-      // 是批次 5 的活。
-      return run(argvFor('confirm-identity'), {
-        outsourceable: false,
-        speak: '这台机器还没记下我在替谁报销。我这就打开一个本地确认页，'
-          + `上面是我刚从 ERP 读到的身份${who ? `（${who}）` : ''}，`
-          + '你核对一下，是本人就点「是我本人」。只有那一次点击算数。',
+      // 规格那一格写的就是「会话内列表格请用户认」。0.9.x 留下的本地确认页在这里
+      // 下线，只留给**改绑**（`confirm-identity`，人手敲，见 binding.mjs）。
+      const id = o.probe?.identity ?? {};
+      return {
+        step: {
+          kind: 'confirm_table',
+          table: identityTable(id),
+          // 这一步没有材料，materialIds 空着：凭据认的是「这一步」，不是某几行。
+          materialIds: [],
+          // **收不下纠正**。身份没有"改一个字"这种收场：是本人，或者不是本人 ——
+          // 不是本人的解法在 ERP 那边（换个账号登录），不在这张表上。
+          acceptsCorrection: false,
+          outsourceable: false,
+        },
+        speak: `这台机器还没记下我在替谁报销。下面是我刚从 ERP 里读到的登录身份，`
+          + `你对一眼：确实是你本人，就回我一句「是我本人」，我把它记下来；`
+          + `不是的话先在专用 Chrome 里换成你自己的账号登录。\n${identityTable(id)}`,
         context: '绑定判据是登录账号加账套，不含显示名 —— 显示名在 ERP 里改得动，'
-          + '拿它当门栓等于把门栓拴在别人能拧的东西上。',
-      });
+          + '拿它当门栓等于把门栓拴在别人能拧的东西上。表里的每个值都是我自己从 ERP '
+          + '读出来的，我不接受口述的账号；记下之后这台机器就只替这个身份报销。',
+        progress: ENV_PROGRESS,
+        exit: 0,
+        // 凭据钉在**这一份身份**上。回传时内核会重新读一次 ERP，读出来的人
+        // 和你刚才看过的这一个对不上，这次点头当场作废 —— 你认的永远只是你看过的那一个。
+        stepMeta: { account: id.account ?? null, tenant: id.tenant ?? null },
+      };
+    }
 
     case 'env_identity_mismatched':
       return tellUser({

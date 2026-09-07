@@ -33,7 +33,8 @@ test('七个环境状态各有一步可做，说给用户听的话全部来自�
     ['env_chrome_down', 'run', healthy({ cdpUp: false, probe: null })],
     ['env_not_logged_in', 'tell_user', healthy({ probe: { status: 'not_logged_in' }, binding: null })],
     ['env_identity_unknown', 'tell_user', healthy({ probe: { status: 'unknown' }, binding: null })],
-    ['env_identity_unbound', 'run', healthy({ binding: null })],
+    // 第一次认身份走终端表格（confirm_table），不再弹本地页面。
+    ['env_identity_unbound', 'confirm_table', healthy({ binding: null })],
     ['env_identity_mismatched', 'tell_user', healthy({ probe: { status: 'matched', identity: other } })],
     ['env_ready', 'done', healthy()],
   ];
@@ -390,10 +391,10 @@ test('从没登录一路走到环境就绪，全程只有一条命令在动', as
   assert.equal(r.state, 'env_not_logged_in');
   assert.equal(r.step.kind, 'tell_user');
 
-  // 人登进去了，但这台机器还没绑过身份 —— 带用户去绑。
+  // 人登进去了，但这台机器还没绑过身份 —— 在终端上摆一张表请他认。
   r = nextResponse({ observation: healthy({ binding: null }), sourceKey: KEY, after: r.stepToken });
   assert.equal(r.state, 'env_identity_unbound');
-  assert.equal(r.step.kind, 'run');
+  assert.equal(r.step.kind, 'confirm_table');
 
   // 绑完，环境就绪。
   r = nextResponse({ observation: healthy(), sourceKey: KEY, after: r.stepToken, hasResult: true });

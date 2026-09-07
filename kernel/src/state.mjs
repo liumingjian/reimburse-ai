@@ -40,6 +40,9 @@ const PLAIN = {
   image_file_broken: 'user',
   // 模型连着答不出「看过的凭据」。到这一步它已经不是模型再读一遍的事了。
   sight_unproven: 'user',
+  // 模型连着交回一个字段都没有的读数。图是好的，多半是它这一侧看不见图片 ——
+  // 换一个看得见的模型，或者换一份 PDF 原件，两条路都只有人走得了。
+  vision_unavailable: 'user',
   identity_incomplete: 'user',
   issue_date_missing: 'user',
   amount_mismatch: 'user',
