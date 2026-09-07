@@ -83,8 +83,9 @@ There are two. Read `action` and use its words.
 
   Say what actually moves it forward: the user finishes or discards the bill **in the ERP, by hand**.
   Starting a fresh task over the same materials is not the way out: these invoices may already sit in the
-  ERP's 收票 grid, so a fresh run would import them a second time. Whatever the new task's duplicate check
-  says, it only knows baox's own records — it cannot see what this bill already consumed.
+  ERP's 收票 grid, so a fresh run would import them a second time. The kernel holds the line here too — a
+  task stamped as having touched the ERP keeps its invoices, and `abandon-task` refuses to release them —
+  but say the domain reason, not the mechanism: the invoices may already be spent.
 
 ## 4. Telling the user which interruption point
 

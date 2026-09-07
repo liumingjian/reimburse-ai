@@ -76,6 +76,22 @@ export function linesDigest(built) {
   return crypto.createHash('sha256').update(JSON.stringify(shape)).digest('hex').slice(0, 32);
 }
 
+/**
+ * 一份旧记录（任务选择 / 只读核对）是不是还站在当前这批明细上。
+ *
+ * 指纹和盘点版本**两个都要对上**，因为它们各自漏掉对方管的那一半：
+ *
+ *   - 指纹管版本内的变化：材料没变，但用户重新分摊了一张合并交通票，明细从一行变成三行。
+ *   - 版本管指纹看不见的变化：指纹只取 [lineId, 凭证材料, 日期, 城市, 价税合计]，
+ *     换一张日期城市金额都相同、但发票号码和税额不同的发票，指纹一动不动 ——
+ *     旧的 erp_catalog_confirmed 会被一张从没核对过的发票继承走。
+ *
+ * 缺 versionId 的旧记录一律算过期：宁可让用户重做一次，也不能把旧结论套在新材料上。
+ */
+const sameBasis = (record, built) => !!record
+  && record.linesDigest === linesDigest(built)
+  && record.versionId === built.versionId;
+
 export function loadSelection(task) {
   if (!task?.createdAt) return null;
   try { return JSON.parse(fs.readFileSync(selectionFile(task), 'utf8')); } catch { return null; }
@@ -143,14 +159,14 @@ export function submitSelection(task, built, payload) {
  */
 const projectSourceOf = (number, catalog, built) => {
   if (!number || !catalog) return 'user_input_unverified';
-  if (catalog.linesDigest !== linesDigest(built)) return 'user_input_unverified';
+  if (!sameBasis(catalog, built)) return 'user_input_unverified';
   return catalog.projects?.[number]?.verdict === 'confirmed'
     ? 'erp_catalog_confirmed'
     : 'user_input_unverified';
 };
 
 export function applySelection(built, classification, selection, catalog = null) {
-  const fresh = !!selection && selection.linesDigest === linesDigest(built);
+  const fresh = sameBasis(selection, built);
   const notes = [];
 
   if (!selection) {

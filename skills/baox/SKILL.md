@@ -328,7 +328,9 @@ Querying records that already exist in the ERP, uploading invoices, and saving a
 this flow**. Say so plainly when asked.
 
 The kernel does carry `erp-fill`, a rehearsal that writes fields on a bill page without saving. It is not
-part of the steps above, and running it makes the task `baox-recover`'s by the entry gate at the top.
+part of the steps above. It requires `--dir`, and before its first field write it stamps the task as having
+touched the ERP — so from that moment the task is `baox-recover`'s by the entry gate at the top, and it stays
+that way across sessions and cannot be released by abandoning it.
 
 The duplicate check covers this task and the other tasks baox recorded on this machine (step 6) and
 **cannot see the ERP**. An invoice filed last year, or by a colleague, produces no reaction here.

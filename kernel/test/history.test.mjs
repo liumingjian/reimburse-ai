@@ -16,7 +16,7 @@ const freshHome = () => {
 freshHome();
 
 const { parseMaterial, invoiceIdentity } = await import('../src/parse.mjs');
-const { createTask, recordInvoiceSightings, abandonTask, loadIndex, taskDir }
+const { createTask, recordInvoiceSightings, abandonTask, loadIndex, taskDir, recordErpWrite }
   = await import('../src/workspace.mjs');
 const { crossTaskDuplicates, historyOpenItems, holdsInvoices } = await import('../src/history.mjs');
 
@@ -98,15 +98,44 @@ test('另一个任务作废之后，它占的发票才放出来 —— 而且是
 
 test('动过 ERP 的任务不能靠作废把发票放出来', () => {
   const a = newTask('erp');
-  const idxPath = path.join(home, 'tasks', 'index.json');
-  const idx = JSON.parse(fs.readFileSync(idxPath, 'utf8'));
-  idx.tasks.find((t) => t.taskId === a.taskId).erpWriteState = 'unknown';
-  fs.writeFileSync(idxPath, JSON.stringify(idx));
+  // 这里必须走真正的写入方。以前这个用例是手改 index.json 造出 erpWriteState 的，
+  // 于是它钉住了"给定这个字段时守卫怎么做"，却没人发现根本没有代码会产生这个字段 ——
+  // 绿灯给在了错误的地方。
+  recordErpWrite(a, 'erp-fill');
 
   const r = abandonTask(a.taskId, '想赶紧解锁');
   assert.equal(r.verdict, 'rejected');
   assert.match(r.reason, /只读对账/);
   assert.equal(holdsInvoices(loadIndex().tasks.find((t) => t.taskId === a.taskId)), true);
+});
+
+test('recordErpWrite 落盘到任务账和任务目录，首次时间戳不被后来的状态改写', () => {
+  const a = newTask('mark');
+  assert.equal(holdsInvoices(loadIndex().tasks.find((t) => t.taskId === a.taskId)), true,
+    '进行中的任务本来就占着发票；这一条是为了让下面的断言测的是 erpWriteState 而不是 status');
+
+  const first = recordErpWrite(a, 'erp-fill');
+  assert.equal(first.erpWriteState, 'erp-fill');
+  assert.ok(first.erpWriteAt, '第一次碰 ERP 的时间必须落下来');
+
+  const meta = JSON.parse(fs.readFileSync(path.join(taskDir(first), 'meta.json'), 'utf8'));
+  assert.equal(meta.erpWriteState, 'erp-fill', '任务目录里的 meta.json 也要跟着更新');
+  assert.equal(loadIndex().tasks.find((t) => t.taskId === a.taskId).erpWriteState, 'erp-fill');
+
+  const second = recordErpWrite(a, 'saved');
+  assert.equal(second.erpWriteState, 'saved', '后来的命令可以细化状态');
+  assert.equal(second.erpWriteAt, first.erpWriteAt, '但第一次碰 ERP 的时间是不变的事实');
+});
+
+test('作废之后仍然动不了：标记过 ERP 的任务连状态都改不动', () => {
+  const a = newTask('mark2');
+  recordErpWrite(a, 'erp-fill');
+  const r1 = abandonTask(a.taskId, '第一次');
+  const r2 = abandonTask(a.taskId, '再试一次');
+  assert.equal(r1.verdict, 'rejected');
+  assert.equal(r2.verdict, 'rejected', '重试不是绕过的办法');
+  assert.equal(loadIndex().tasks.find((t) => t.taskId === a.taskId).status, 'open',
+    '被拒的作废不能留下任何痕迹');
 });
 
 test('查过不等于没报过 —— 范围声明始终跟着结果走，而且不阻塞', () => {
