@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, ensureDir } from './paths.mjs';
+import { paths, writeJsonAtomic } from './paths.mjs';
 
 /**
  * 个人项目簿：这台机器上的报销人自己誊录、长期留用的那一小份项目。
@@ -36,6 +36,10 @@ function normalize(raw) {
     confirmedAt: str(raw.confirmedAt),
     expiresOn: str(raw.expiresOn),          // null＝永不过期
     lastCheckedAt: str(raw.lastCheckedAt),
+    // 缺省算 confirmed：写进来那一刻它就是核对过的，簿子里没有"未核验"这一档。
+    // 认不出来的值**原样留着**，不往 confirmed 上靠——失效判定是
+    // 「lastVerdict !== 'confirmed'」，所以一个手改坏的值天然落在失效那边，
+    // 而把它规整成 confirmed 会让一个来路不明的项目重新可选。
     lastVerdict: str(raw.lastVerdict) ?? 'confirmed',
   };
 }
@@ -57,17 +61,12 @@ export function readBook() {
 }
 
 /**
- * 整本写回。原子写：先写临时文件再 rename，所以读者在任何一刻看到的
- * 要么是上一版、要么是这一版，没有半份文件这种中间态。
+ * 整本写回，走和 identity.json 同一套落盘规格（writeJsonAtomic）。
  *
  * 只写 projects 一个字段。ERP 会话、凭据、项目目录的全量缓存都不进这个文件——
  * 簿子是用户誊录的那几条，不是 ERP 的镜像，多存一个字段就是多一处要过期的东西。
  */
 export function writeBook(book) {
   const record = { projects: (book?.projects ?? []).map(normalize).filter(Boolean) };
-  ensureDir(paths.root);
-  const tmp = `${bookPath()}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(record, null, 2) + '\n', { mode: 0o600 });
-  fs.renameSync(tmp, bookPath());
-  return record;
+  return writeJsonAtomic(bookPath(), record);
 }

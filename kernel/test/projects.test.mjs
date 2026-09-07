@@ -74,6 +74,16 @@ test('缺省字段补齐成 null，lastVerdict 缺省算 confirmed', () => {
   });
 });
 
+test('认不出来的 lastVerdict 原样留着，不往 confirmed 上靠', () => {
+  // 失效判定是「lastVerdict !== 'confirmed'」，所以一个手改坏的值天然落在失效那边。
+  // 规整成 confirmed 会让一个来路不明的项目重新可选——那是把坏数据洗成好数据。
+  const home = freshHome();
+  fs.writeFileSync(bookFile(home), JSON.stringify({
+    projects: [{ number: '111454', lastVerdict: 'banana' }],
+  }));
+  assert.equal(readBook().projects[0].lastVerdict, 'banana');
+});
+
 test('写入是原子的，且写完读得回来', () => {
   const home = freshHome();
   const written = writeBook({ projects: [entry] });
