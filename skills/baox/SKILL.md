@@ -1,7 +1,7 @@
 ---
 name: baox
 description: 报销。Use when the user wants to start, continue, or ask about a reimbursement from a folder of invoices and itineraries. This is the only baox entry point a user ever needs — environment setup and write recovery are dispatched from here.
-allowed-tools: Bash, Read, Task
+allowed-tools: Bash, Read, Task, Skill
 ---
 
 # baox
@@ -20,34 +20,59 @@ node "${CLAUDE_SKILL_DIR}/kernel/bin/baox.mjs" next --dir "<材料目录>"
 ## 怎么念内核的话
 
 - **`speak` 原样念给用户**，一个字不改、不概括、不补充。措辞是内核写死的。
+- **先念 `speak`，再执行 `step.argv`。** 顺序反过来会真的伤到人：有的命令会弹出一个本地页面
+  并**前台阻塞**最长八分钟，那段时间你一个字都说不出来，等你说「刚才弹出来的那个页面」时，
+  用户已经干等完了。
 - `context` 只在用户追问「为什么」时才动用。不追问就不念。
 - 每轮开头带一句 `identity.displayName`（在替谁报销）和 `progress`（第几步 / 共几步）。
 - `blockedBy` 里的每一项都要说到，别只说「还有几个问题」。
 - 有 `ignored` 键说明你上一次回传没被收下，念出 `ignored.note`，别装作过去了。
 - `exit`：`0` 继续 / `2` 硬阻塞，念完停下，不要绕过去 / `1` 内核自己出错，念 `error` 后停。
 
-## 七种 `step.kind`
+## 七种 `step.kind`（外加收工的 `done`）
 
 | kind | 你做的唯一一件事 | 回传 |
 |---|---|---|
 | `run` | 原样执行 `step.argv`，stdout 落盘成一个文件 | `next --after <token> --result <那个文件>` |
-| `read_images` | 逐个用 `Read` 打开 `step.images[].absPath`，按 `step.schemaPath` 那份模板把读数写进 `step.readingsPath`，再原样执行 `step.argv` | 同上 |
+| `read_images` | 逐个用 `Read` 打开 `step.images[].absPath`，按 `step.schemaPath` 那份模板把读数写进 `step.readingsPath`（形状从 `step.sightedShapes` 里选），再原样执行 `step.argv` | 同上 |
 | `ask_user` | 用终端多选问 `step.questions[]`，答案按 `step.answersFormat` 写进 `step.answersPath` | `next --after <token> --result <答案文件>` |
-| `confirm_table` | **原样贴出 `step.table`**，请用户对着原件过目 | 认可 → `next --after <token>`；指错 → 把用户的值按 `step.correctionFormat` 写进 `step.correctionPath`，再 `next --after <token> --correction <那个文件>` |
-| `dispute` | 摆出 `step.evidence`，并派一个**干净上下文的子 Agent** 只重读 `step.field`，两次机器读数和用户的值一起摆给用户 | 用户拍板后按 `speak` 里说的回传 |
+| `confirm_table` | **原样贴出 `step.table`**，请用户对着原件过目 | 认可 → `next --after <token>`；指错且 `step.acceptsCorrection` 是 `true` → 把用户的值按 `step.correctionFormat` 写进 `step.correctionPath`，再 `next --after <token> --correction <那个文件>` |
+| `dispute` | 见下 | 见下 |
 | `tell_user` | 只念 `speak`，等用户自己动手（登录、去 ERP 保存）。做完再问一次 | 不带 result，直接 `next --after <token>` |
 | `handoff` | 告诉用户状态变了，转 `step.skill`（模型调用，用户不用知道有这个 skill） | 不回传 |
 | `done` | 念完 `speak` 收工 | — |
 
+`step.acceptsCorrection` 是 `false` 的那张表（写进 ERP 前的最后一格）**收不下纠正**：
+只有点头和不点头两种收场。用户说哪里不对，就照实转达然后停下，不要把他的值写成一份纠正交上去。
+
 `read_images` 的抄写纪律在 `references/image-reading.md`，看图之前先读它。
+
+### `dispute` 的三段
+
+`step.phase` 说这一趟是哪一段，三段做的事不一样：
+
+- `reread` —— 摆出 `step.evidence`（材料路径、机器读到的原文、清晰度），并照 `step.subagent`
+  派一个**干净上下文的子 Agent** 只重读 `step.field` 这一个字段。重读结果按 `step.schemaPath`
+  写进 `step.rereadPath`，再原样执行 `step.argv`。
+- `ruling` —— 两次机器读数和用户的值一起摆出来，请用户对着原件拍板。终值按 `step.rulingFormat`
+  写进 `step.rulingPath`，回传 `next --after <token> --correction <那个文件>`。
+- `conservation_gap` —— 内核算出的守恒缺口摆给用户，补法同 `ruling`。补不齐就整条退回待办。
+
+子 Agent 那份干净上下文就是这一步的全部意义：带着「我们刚才争过什么」去重读，
+第二遍只是第一遍的回声，它印证不了任何东西。
 
 ## 什么时候派子 Agent
 
 `step.outsourceable` 是 `true` 的连续几步（体检、起 Chrome、探测、盘点、分类、查重——
-也就是整个环境准备）可以整段派给子 Agent，让主会话不被那些 JSON 占满。子 Agent 的任务就一句：
-**只跑 `baox next`，照 `step` 做，一直做到 `outsourceable` 变成 `false` 或者 `exit` 不是 0 为止，
-然后把最后那一份 JSON 原样带回来。** 它被 `maxTurns` 截断就再派一个接着走，不需要交接说明——
+也就是整个环境准备）可以整段派给子 Agent，让主会话不被那些 JSON 占满。
+**环境准备那一段派子 Agent 时让它用 `baox-setup` 这个 skill**，它是同一件事的执行壳，
+从子 Agent 那一侧写着同一套规矩。子 Agent 的任务就一句：**只跑 `baox next`，照 `step` 做，
+一直做到 `outsourceable` 变成 `false` 或者 `exit` 不是 0 为止，然后把最后那一份 JSON
+原样带回来。** 它被 `maxTurns` 截断就再派一个接着走，不需要交接说明——
 状态在内核里，不在子 Agent 的上下文里。
+
+`baox-setup` 和 `handoff` 指向的 `baox-recover` 都是模型调用的执行壳。
+**用户不知道它们存在**，你说的每一句话都以 baox 的名义说，不要报它们的名字。
 
 `outsourceable: false` 的步骤**不能外包**：那一头是人（终端多选、终端表格、要人亲手点一下的本地页面），
 子 Agent 那里没有用户。`dispute` 里的「独立重读那一个字段」是唯一的例外，而且**必须**外包——

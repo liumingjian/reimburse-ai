@@ -14,7 +14,6 @@ import { applyTerminalVerdict } from '../src/confirm.mjs';
 import { takeInventory, intakeOpenItems } from '../src/inventory.mjs';
 import { classifyInventory, classifyOpenItems, summarize } from '../src/classify.mjs';
 import { buildEvents, eventOpenItems, reconcile } from '../src/events.mjs';
-import { maskNumber } from '../src/parse.mjs';
 import { loadSelection, submitSelection, applySelection, linesDigest } from '../src/selection.mjs';
 import { CATEGORIES } from '../src/categories.mjs';
 import { findLiveTaskForSource, createTask, recordInventory, recordClassification,
@@ -73,8 +72,6 @@ function arg(name, fallback = null) {
 const has = (name) => process.argv.includes(`--${name}`);
 
 const yuan = (c) => (c === null || c === undefined ? null : (c / 100).toFixed(2));
-const maskOf = (classification, materialId) =>
-  maskNumber(classification.results.find((r) => r.materialId === materialId)?.fields?.invoiceNumber);
 
 /**
  * 盘点 -> 分流。后面每一层都要站在一次确定的分流结果上，所以统一走这里。

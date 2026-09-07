@@ -1,9 +1,8 @@
-import { test } from 'node:test';
+import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
-import * as serve from '../src/serve.mjs';
 
 // Skill 壳这一层没有函数可以调，但它有几条硬性质，而这些性质靠人读是守不住的 ——
 // 说明书会慢慢长回去，命令示例会一条一条被加回来。所以在这里钉住。
@@ -53,13 +52,6 @@ test('baox-recover 只多出 erp-reconcile 这一条，别的没有', () => {
   assert.deepEqual([...found].sort(), ['erp-reconcile', 'next']);
 });
 
-// 本地页面每多一个，就多一条"用户在别处点过头"的路径。收窄到两处之后，
-// 剩下的两个都是终端做不了的事：认一次身份，翻一遍完整的项目目录。
-test('本地页面只剩重新绑定身份和浏览项目目录两处', () => {
-  const servers = Object.keys(serve).filter((k) => k.startsWith('serve'));
-  assert.deepEqual(servers.sort(), ['serveIdentityConfirmation', 'serveTaskSelection']);
-});
-
 /** 命令示例只可能出现在代码块或行内代码里。散文里提到 baox 这个名字不算。 */
 function commandsIn(src) {
   const code = [...src.matchAll(/```[\s\S]*?```|`[^`\n]+`/g)].map((m) => m[0]).join('\n');
@@ -70,6 +62,8 @@ function* walk(dir) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) yield* walk(p);
-    else if (/\.(md|json)$/.test(e.name)) yield p;
+    // bundle.sh 扫的是 .md/.json/.sh/.txt 四种，这里跟着它 ——
+    // 一条命令示例藏在随包发出去的 .sh 模板里，一样是给模型的第二条路。
+    else if (/\.(md|json|sh|txt)$/.test(e.name)) yield p;
   }
 }

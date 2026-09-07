@@ -125,7 +125,7 @@ export async function applyTerminalVerdict({ sourceDir, sourceKey, after, correc
 }
 
 /**
- * 终端多选的答案：一轮逐段金额。收下的门槛和分摊页完全一样 ——
+ * 终端多选的答案：一轮逐段金额。收下的门槛一分不让 ——
  * 各段之和与票面价税合计按分精确相等，差一分整轮退回重问。
  *
  * 除了凭据，这里还要核一遍**问出去的那几题**：状态没变、题却换过一批
