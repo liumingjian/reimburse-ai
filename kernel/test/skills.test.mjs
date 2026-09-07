@@ -7,8 +7,9 @@ import * as serve from '../src/serve.mjs';
 
 // Skill 壳这一层没有函数可以调，但它有几条硬性质，而这些性质靠人读是守不住的 ——
 // 说明书会慢慢长回去，命令示例会一条一条被加回来。所以在这里钉住。
-const ROOT = path.join(path.dirname(path.dirname(url.fileURLToPath(import.meta.url))));
-const SKILLS = path.join(path.dirname(ROOT), 'skills');
+// test/ -> kernel/ -> 仓库根 -> skills/
+const KERNEL = path.dirname(path.dirname(url.fileURLToPath(import.meta.url)));
+const SKILLS = path.join(path.dirname(KERNEL), 'skills');
 const read = (...p) => fs.readFileSync(path.join(SKILLS, ...p), 'utf8');
 const frontmatter = (src) => src.split('---')[1] ?? '';
 
