@@ -16,6 +16,7 @@ import { currentStep, issueStep } from './steptoken.mjs';
 import { readingInboxIn, correctionInboxIn, rereadInboxIn, answerInboxIn } from './workspace.mjs';
 import { CONVERGENCE, favorsUser, disputeStepKey, DISPUTE_PHASES } from './dispute.mjs';
 import { SHAPES, SHAPE_LABELS } from './imageshape.mjs';
+import { DOC_TYPES, FIELD_RULES, SEGMENT_RULES } from './vision.mjs';
 import { writePreviewDigest } from './erpwrite.mjs';
 import { roundFingerprint } from './allocate.mjs';
 import { renderTable, renderQuestions } from './table.mjs';
@@ -31,6 +32,35 @@ const argvFor = (...args) => [process.execPath, BIN, ...args];
  */
 const READING_TEMPLATE = path.join(SRC, 'reading-template.json');
 const REREAD_TEMPLATE = path.join(SRC, 'reread-template.json');
+
+const SIGHTED_SHAPES = Object.freeze(
+  SHAPES.map((shape) => Object.freeze({ shape, label: SHAPE_LABELS[shape] })));
+const ALLOWED_READING_FIELDS = Object.freeze(Object.keys(FIELD_RULES));
+const READING_CONTRACT = Object.freeze({
+  docTypes: Object.fromEntries(Object.keys(DOC_TYPES).map((docType) => [docType, Object.freeze({
+    allowedFields: ALLOWED_READING_FIELDS,
+    requiredFields: docType === 'invoice' ? Object.freeze(['invoiceNumber', 'totalAmount']) : Object.freeze([]),
+    ...(docType === 'ride_itinerary' ? { segments: Object.freeze({
+      type: 'array',
+      minItems: 1,
+      additionalFields: false,
+      fields: Object.fromEntries(Object.entries(SEGMENT_RULES).map(([field, rule]) => [field, Object.freeze({
+        required: rule.required,
+        format: rule.hint,
+      })])),
+    }) } : {}),
+  })])),
+  fieldFormats: Object.fromEntries(
+    Object.entries(FIELD_RULES).map(([field, rule]) => [field, rule.hint])),
+  additionalFields: false,
+  minimumFields: 1,
+  omitMissingFields: true,
+  amountConservation: Object.freeze({
+    whenPresent: Object.freeze(['netAmount', 'taxAmount', 'totalAmount']),
+    rule: 'netAmount + taxAmount = totalAmount，按分精确相等；不相等就重读，禁止改数凑平。',
+  }),
+  multipleTrips: '多段行程按 ride_itinerary.segments 逐段填写；只抄票面可见值，不推断、不合并。',
+});
 
 const ENV_PROGRESS = { phase: 1, of: 10, label: '环境准备' };
 const MATERIAL_PROGRESS = { phase: 2, of: 10, label: '材料盘点与分类' };
@@ -74,14 +104,18 @@ const done = ({ speak, context, progress = ENV_PROGRESS }) =>
 const readImages = ({ images, readingsPath, argv, speak, context }) => ({
   step: {
     kind: 'read_images',
+    // 环境准备子 Agent 到这里必须停：视觉材料由主会话亲眼读取。
+    outsourceable: false,
     images: images.map(({ materialId, fileName, absPath, format, contentHash, rejection }) =>
       ({ materialId, fileName, absPath, format, contentHash,
         // 上一次为什么没过。带着它重读，才不是把同一遍再走一次。
         ...(rejection ? { previousRejection: rejection.reasons } : {}) })),
     schemaPath: READING_TEMPLATE,
+    // 与实际校验共用 vision.mjs 的闭集；提交前就能检查，不需要反查内核源码。
+    readingContract: READING_CONTRACT,
     readingsPath,
     // 「看过的凭据」的取值范围，跟着这一步一起给 —— 模型不需要去别处查它。
-    sightedShapes: SHAPES.map((shape) => ({ shape, label: SHAPE_LABELS[shape] })),
+    sightedShapes: SIGHTED_SHAPES,
     // 这两条写进内核的输出里，而不是只躺在参考文档里：模型看得见的才算数。
     // 真机 QA 里模型跑去敲 tesseract / mdls / swift Vision，正是因为"只能自己看"
     // 这句话当时只写在 references/ 那份文件里。
@@ -189,6 +223,8 @@ const disputeStep = ({ d, phase, extra, speak, context }) => ({
     field: d.fields[0].field,
     fields: d.fields.map((f) => f.field),
     evidence: {
+      // 重读模板从 evidence 取哈希；这里和顶层保持同一份值，免得子 Agent 反查任务。
+      contentHash: d.contentHash,
       // **只给路径。** 内核不替用户打开原件，也不把图塞进对话冒充成"我们一起看过了"。
       // 定夺这件事的前提是他自己看过那张纸。
       materialPath: d.materialPath,
@@ -266,6 +302,11 @@ function readingTable(pending) {
     // 用户真正要比对的那一列数字。
     const lines = [
       ...p.fields.map((f) => ({ field: f.label, value: f.value, source: SOURCE_LABELS[f.source] ?? f.source })),
+      ...(p.segments ?? []).flatMap((segment) => segment.values.map((value) => ({
+        field: `第 ${segment.index} 段${value.label}`,
+        value: value.value,
+        source: '看图读取',
+      }))),
       ...p.unreadable.map((u) => ({ field: u, value: '看不清（我没有猜）', source: '—' })),
     ];
     if (!lines.length) lines.push({ field: '（没有读出任何字段）', value: '' });
@@ -603,6 +644,18 @@ export function stepFor(state, observation = {}, blockedBy = []) {
         const evidence = d.fields.map((f, n) =>
           `${n + 1}. ${f.label}：我读到的原文是${spoken(f.machineValue)}，你说是${spoken(f.userValue)}。`
           + `我当时对这一处的判断是「${f.clarity.label}」。`).join('\n');
+        const fields = d.fields.map((f) => f.field);
+        const sightedShapes = SIGHTED_SHAPES;
+        const rereadArgv = argvFor('reread-submit', '--dir', o.sourceDir, '--file', rereadPath);
+        const submission = {
+          materialId: d.materialId,
+          contentHash: d.contentHash,
+          fields,
+          sightedShapes,
+          schemaPath: REREAD_TEMPLATE,
+          rereadPath,
+          argv: rereadArgv,
+        };
         return disputeStep({
           d,
           phase: DISPUTE_PHASES.reread,
@@ -613,15 +666,18 @@ export function stepFor(state, observation = {}, blockedBy = []) {
               required: true,
               context: 'clean',
               instruction: `新开一个不带本次会话上下文的子 Agent，让它用 Read 打开 ${d.materialPath}，`
-                + `**只**读这几个字段：${d.fields.map((f) => f.field).join('、')}。`
-                + '不要把用户说的值、我读到的值、或者我们刚才这段对话告诉它 ——'
+                + `**只**读这几个字段：${fields.join('、')}。提交时原样使用 materialId ${d.materialId}、`
+                + `contentHash ${d.contentHash}，形状从 sightedShapes 里选，按 schemaPath 写到 rereadPath，`
+                + '再原样执行 argv。不要把用户说的值、我读到的值、或者我们刚才这段对话告诉它 ——'
                 + '它要的就是不知道这些。它读出什么就填什么，认不出就填 null。',
+              submission,
               forbidden: ['把用户给的值告诉子 Agent', '把上一次机器读数告诉子 Agent',
                 '自己重读一遍充当子 Agent 的结果', '一并重抄这张票上别的字段'],
             },
+            sightedShapes,
             schemaPath: REREAD_TEMPLATE,
             rereadPath,
-            argv: argvFor('reread-submit', '--dir', o.sourceDir, '--file', rereadPath),
+            argv: rereadArgv,
           },
           speak: `${d.fileName} 上的${names}，你说的和我读到的不一样。这个我不能照你说的直接改 ——`
             + '两边都可能错：可能是我看模糊了证据认错了，也可能是你看错了。先把证据摆出来：\n'

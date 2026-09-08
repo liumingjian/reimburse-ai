@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { writeTextPdf, TEST_TRANSPORT_INVOICE_TEXT, TEST_ITINERARY_TEXT } from './fixture-pdf.mjs';
 
 // 主干后半段的走查：**真目录、真发票、真的把 step.argv 执行掉**。
 //
@@ -37,8 +38,12 @@ const READY = {
 
 // 三段合并的打车发票 + 它的行程单：逐段 26.69 + 20.85 + 21.65 = 69.19，
 // 正好是票面价税合计。这一票的核心断言就长在这组材料上。
-const AA_INV = '交通/【AA出行-69.19元-3个行程】高德打车电子发票.pdf';
-const AA_ITI = '交通/【AA出行-69.19元-3个行程】高德打车电子行程单.pdf';
+const AA_INV = 'test-transport-invoice.pdf';
+const AA_ITI = 'test-three-trip-itinerary.pdf';
+const TEST_PDFS = new Map([
+  [AA_INV, TEST_TRANSPORT_INVOICE_TEXT],
+  [AA_ITI, TEST_ITINERARY_TEXT],
+]);
 
 /**
  * 把之前那些用例留下的任务作废掉。
@@ -53,7 +58,11 @@ function solo() {
 
 function materials(rels) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-erp-'));
-  for (const rel of rels) fs.copyFileSync(path.join(repo, 'resources', rel), path.join(dir, path.basename(rel)));
+  for (const rel of rels) {
+    const dest = path.join(dir, path.basename(rel));
+    if (TEST_PDFS.has(rel)) writeTextPdf(dest, TEST_PDFS.get(rel));
+    else fs.copyFileSync(path.join(repo, 'resources', rel), dest);
+  }
   return dir;
 }
 

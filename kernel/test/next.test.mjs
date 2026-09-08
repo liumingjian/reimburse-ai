@@ -133,15 +133,22 @@ test('材料这一段每个状态都有一步可做，说给用户听的话全�
   }
 });
 
-test('要人亲手表态的那两步，明说不能外包给子 Agent', async () => {
+test('要人亲手表态和模型亲眼读图的步骤，明说不能外包给环境子 Agent', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
-  // 契约说 kind: "run" 的连续段可以外包。这两步的另一头是人：一个要人点确认页，
-  // 一个要人对着终端表格表态。外包给一个没有用户的子 Agent，它只会挂在那里等 ——
-  // 所以写进 JSON，不是只写在注释里。
+  // 契约说 kind: "run" 的连续段可以外包。要人亲手表态的步骤和已经进入材料阶段的
+  // 看图步骤都必须回到主会话，所以写进 JSON，不是只写在 Skill 的说明里。
   assert.equal(stepFor('env_identity_unbound', healthy({ binding: null })).step.outsourceable, false);
   assert.equal(stepFor('reading_awaiting_confirmation',
     withMaterials({ pendingReadings: [PENDING_READING] })).step.outsourceable, false);
+  const images = [{ materialId: 'm-1', fileName: '发票.png', absPath: '/tmp/材料/发票.png',
+    format: 'png', contentHash: 'abc123' }];
+  for (const state of ['image_awaiting_reading', 'reading_rejected', 'reading_stale']) {
+    const observation = withMaterials({ pendingImages: state === 'reading_rejected'
+      ? [{ ...images[0], rejection: { reasons: ['读数未通过'] } }]
+      : images });
+    assert.equal(stepFor(state, observation).step.outsourceable, false, `${state} 不能由环境子 Agent 继续做`);
+  }
   // 纯跑命令的那些照旧可以外包。
   assert.equal(stepFor('env_chrome_down', healthy({ cdpUp: false, probe: null })).step.outsourceable, true);
   assert.equal(stepFor('classify_pending', withMaterials({ classificationRecorded: false })).step.outsourceable,
@@ -210,6 +217,40 @@ test('看过的凭据跟着这一步一起给，模型不用去别处查它', as
     ['tall', 'portrait', 'square', 'landscape', 'wide']);
   assert.ok(step.sightedShapes.every((s) => s.label), '每一档都得有一句人话，光给英文词没用');
   assert.match(context, /没看图就说图片读不了/);
+});
+
+test('看图 step 直接给出完整字段闭集，不用反查 vision.mjs', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const images = [{ materialId: 'm-1', fileName: '行程单.png', absPath: '/tmp/材料/行程单.png',
+    format: 'png', contentHash: 'aa' }];
+  const { step } = stepFor('image_awaiting_reading', withMaterials({ pendingImages: images }));
+  const expectedFields = ['invoiceNumber', 'issueDate', 'netAmount', 'taxAmount', 'totalAmount',
+    'sellerName', 'buyerName', 'itemName', 'city', 'travelDate', 'origin', 'destination'];
+
+  assert.deepEqual(Object.keys(step.readingContract.docTypes),
+    ['invoice', 'ride_itinerary', 'hotel_folio', 'payment_slip', 'other', 'unreadable']);
+  for (const docType of Object.values(step.readingContract.docTypes)) {
+    assert.deepEqual(docType.allowedFields, expectedFields);
+  }
+  assert.deepEqual(step.readingContract.docTypes.invoice.requiredFields,
+    ['invoiceNumber', 'totalAmount']);
+  assert.equal(step.readingContract.minimumFields, 1, '完整图片不能交空读数');
+  assert.deepEqual(step.readingContract.amountConservation.whenPresent,
+    ['netAmount', 'taxAmount', 'totalAmount']);
+  assert.match(step.readingContract.amountConservation.rule, /禁止改数凑平/);
+  assert.equal(step.readingContract.additionalFields, false, 'schema 外字段必须明确拒绝');
+  const segments = step.readingContract.docTypes.ride_itinerary.segments;
+  assert.equal(segments.type, 'array');
+  assert.equal(segments.minItems, 1);
+  assert.equal(segments.additionalFields, false);
+  assert.deepEqual(Object.keys(segments.fields),
+    ['travelDate', 'city', 'origin', 'destination', 'amount']);
+  assert.deepEqual(Object.entries(segments.fields)
+    .filter(([, rule]) => rule.required).map(([field]) => field),
+  ['travelDate', 'origin', 'destination']);
+  assert.match(step.readingContract.multipleTrips, /segments.*逐段/,
+    '多段行程按契约逐段抄写，不能压成一个单段字段');
 });
 
 test('被驳回的读数：重读时把上次没过的理由原样带上', async () => {

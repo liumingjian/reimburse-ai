@@ -82,11 +82,21 @@ const FIELD_RULES = {
   destination: { label: '终点', test: isText, hint: '终点' },
 };
 
+/** 行程单逐段读数。和普通字段分开闭集，避免其他材料借 `segments` 塞任意结构。 */
+export const SEGMENT_RULES = {
+  travelDate: { label: '行程日期', test: isDate, hint: 'YYYY-MM-DD', required: true },
+  city: { label: '城市', test: isText, hint: '票面写明的城市', required: false },
+  origin: { label: '起点', test: isText, hint: '票面写明的起点', required: true },
+  destination: { label: '终点', test: isText, hint: '票面写明的终点', required: true },
+  amount: { label: '金额', test: isPositiveMoney, hint: '正数金额，两位小数', required: false },
+};
+
 /** 字段的中文名。表格给用户看，键名不给用户看。 */
 export const FIELD_LABELS = Object.fromEntries(
   Object.entries(FIELD_RULES).map(([k, v]) => [k, v.label]));
 
 function isMoney(v) { return typeof v === 'string' && /^-?\d{1,9}\.\d{2}$/.test(v); }
+function isPositiveMoney(v) { return typeof v === 'string' && /^\d{1,9}\.\d{2}$/.test(v) && Number(v) > 0; }
 function isText(v) { return typeof v === 'string' && v.trim().length > 0 && v.length <= 120; }
 function isDate(v) {
   if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
@@ -257,6 +267,37 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
       fields[k] = v;
     }
 
+    const segments = [];
+    if (raw.segments !== undefined) {
+      if (raw.docType !== 'ride_itinerary') {
+        reasons.push('只有 ride_itinerary 可以提交 segments');
+      } else if (!Array.isArray(raw.segments) || raw.segments.length === 0) {
+        reasons.push('segments 必须是非空数组');
+      } else {
+        for (const [i, segment] of raw.segments.entries()) {
+          if (!segment || typeof segment !== 'object' || Array.isArray(segment)) {
+            reasons.push(`segments[${i}] 必须是对象`);
+            continue;
+          }
+          const before = reasons.length;
+          const normalized = {};
+          for (const [key, value] of Object.entries(segment)) {
+            const rule = SEGMENT_RULES[key];
+            if (!rule) { reasons.push(`segments[${i}] 有不认识的字段 ${key}`); continue; }
+            if (!rule.test(value)) {
+              reasons.push(`segments[${i}].${key} 的格式不对（要求：${rule.hint}）`);
+              continue;
+            }
+            normalized[key] = value;
+          }
+          for (const [key, rule] of Object.entries(SEGMENT_RULES)) {
+            if (rule.required && !(key in normalized)) reasons.push(`segments[${i}] 缺少 ${key}`);
+          }
+          if (reasons.length === before) segments.push(normalized);
+        }
+      }
+    }
+
     // 一个字段都没有的读数不是读数。
     //
     // 这一条和「看不清是正当答案」不冲突，两者说的是不同的东西：`unreadable` 是
@@ -266,7 +307,7 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
     // 它比「看过的凭据」更难绕：凭据是五选一，外部工具答得出来；而一张票上的字
     // 只有看见了才抄得出来，抄不出来就是没看见。
     let emptyReading = false;
-    if (shape && Object.keys(fields).length === 0) {
+    if (shape && Object.keys(fields).length === 0 && segments.length === 0) {
       emptyReading = true;
       reasons.push(`这份读数一个字段都没有。这张图在我这边是完好的（${shape.width}×${shape.height}），`
         + '一张完好的票上整屏的字一个都认不出，通常不是"看不清"，是这次读取没有真的看到图。'
@@ -320,6 +361,7 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
         docType: raw.docType,
         role: DOC_TYPES[raw.docType].role,
         fields,
+        ...(segments.length ? { segments } : {}),
         unreadable,
         notes: typeof raw.notes === 'string' ? raw.notes.slice(0, 400) : null,
         amountCheck,
@@ -391,7 +433,7 @@ export function clearRejection(task, materialId) {
 
 /** 读数本身的指纹：用户确认的是这几个字段的这几个值，改一个字就不再是同一次确认。 */
 const digestOf = (r) => crypto.createHash('sha256')
-  .update(JSON.stringify([r.docType, Object.entries(r.fields ?? {}).sort(), [...(r.unreadable ?? [])].sort()]))
+  .update(JSON.stringify([r.docType, Object.entries(r.fields ?? {}).sort(), r.segments ?? [], [...(r.unreadable ?? [])].sort()]))
   .digest('hex');
 
 export function writeReading(task, reading) {
@@ -427,6 +469,12 @@ export function pendingConfirmations(task, inventory) {
         // 用户要复核的重点完全不同 —— 前者要对着原件比，后者他自己就是来源。
         ({ key, label: FIELD_LABELS[key] ?? key, value, source: r.fieldSources?.[key] ?? r.source ?? 'vision' })),
       unreadable: (r.unreadable ?? []).map((k) => FIELD_LABELS[k] ?? k),
+      segments: (r.segments ?? []).map((segment, i) => ({
+        index: i + 1,
+        values: Object.entries(segment).map(([key, value]) => ({
+          key, label: SEGMENT_RULES[key]?.label ?? key, value,
+        })),
+      })),
       amountCheck: r.amountCheck ?? null,
       notes: r.notes ?? null,
       // 这份读数是刚从一场争议里收场回来的话，收场的说法跟着它一起摆出来 ——
@@ -538,9 +586,23 @@ export function projectReading(reading) {
     // 证据不是某一行文字，而是"哪份材料的哪串字节被谁在什么时候读的、什么时候确认的"。
     evidence: Object.fromEntries(Object.keys(fields).map((k) =>
       [k, `看图读取，${reading.contentHash.slice(0, 12)}…，确认于 ${reading.confirmedAt}`])),
-    candidates: Object.entries(f)
-      .filter(([k]) => !(k in fields))
-      .map(([field, value]) => ({ field, value, note: '看图读取的辅助字段', evidence: null })),
+    candidates: [
+      ...Object.entries(f)
+        .filter(([k]) => !(k in fields))
+        .map(([field, value]) => ({ field, value, note: '看图读取的辅助字段', evidence: null })),
+      ...(reading.segments?.length ? [{
+        field: 'segments',
+        value: reading.segments.map((segment, i) => ({
+          index: i + 1,
+          date: segment.travelDate,
+          city: segment.city ?? null,
+          route: `${segment.origin} → ${segment.destination}`,
+          amount: segment.amount ?? null,
+        })),
+        note: '看图读取并由用户确认的行程单逐段明细',
+        evidence: null,
+      }] : []),
+    ],
     // 每个字段的来源跟着投影一起往下走。到了 ERP 那一头再问"这个数谁说的"，
     // 答案得还在，不能在投影这一步被抹平成"看图读取"。
     fieldSources: Object.fromEntries(Object.keys(fields).map((k) =>

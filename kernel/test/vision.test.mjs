@@ -164,6 +164,65 @@ test('看着图说这几个字段认不出来，是合法答案', () => {
   assert.equal(v.verdict, 'accepted', JSON.stringify(v.reasons));
 });
 
+test('逐段结构只属于行程单，且段内字段是闭集', () => {
+  const segment = { travelDate: '2026-09-04', city: '深圳市', origin: '南山区', destination: '福田区' };
+  const nonItinerary = submit({ ...good(), segments: [segment] });
+  assert.equal(nonItinerary.verdict, 'rejected');
+  assert.match(nonItinerary.reasons.join(), /只有 ride_itinerary/);
+
+  const extra = submit({ ...good(), docType: 'ride_itinerary',
+    fields: { totalAmount: '18.80' }, segments: [{ ...segment, vehicle: '网约车' }] });
+  assert.equal(extra.verdict, 'rejected');
+  assert.match(extra.reasons.join(), /不认识的字段 vehicle/);
+});
+
+test('逐段日期和起终点必填，金额给出时必须是正数两位小数', () => {
+  const base = { ...good(), docType: 'ride_itinerary', fields: { totalAmount: '18.80' } };
+  const missing = submit({ ...base, segments: [{ travelDate: '2026-09-04', origin: '南山区' }] });
+  assert.equal(missing.verdict, 'rejected');
+  assert.match(missing.reasons.join(), /缺少 destination/);
+
+  const badAmount = submit({ ...base, segments: [{ travelDate: '2026-09-04',
+    origin: '南山区', destination: '福田区', amount: '-18.80' }] });
+  assert.equal(badAmount.verdict, 'rejected');
+  assert.match(badAmount.reasons.join(), /segments\[0\]\.amount 的格式不对/);
+});
+
+test('待确认数据逐段摆出行程，用户确认的不是被压平的一段', () => {
+  const r = { ...good(), docType: 'ride_itinerary', fields: { totalAmount: '18.80' }, segments: [
+    { travelDate: '2026-09-04', origin: '南山区', destination: '福田区', amount: '10.00' },
+    { travelDate: '2026-09-05', origin: '福田区', destination: '罗湖区', amount: '8.80' },
+  ] };
+  assert.equal(submit(r).verdict, 'accepted');
+  const pending = pendingConfirmations(task, inventory)[0];
+  assert.equal(pending.segments.length, 2);
+  assert.deepEqual(pending.segments[1].values.map(({ label, value }) => [label, value]), [
+    ['行程日期', '2026-09-05'], ['起点', '福田区'], ['终点', '罗湖区'], ['金额', '8.80'],
+  ]);
+});
+
+test('逐段内容变化时旧确认失效', () => {
+  const base = { ...good(), docType: 'ride_itinerary', fields: { totalAmount: '18.80' }, segments: [
+    { travelDate: '2026-09-04', origin: '南山区', destination: '福田区', amount: '18.80' },
+  ] };
+  assert.equal(submit(base).verdict, 'accepted');
+  confirmReadings(task, [material.materialId]);
+  assert.ok(loadReading(task, material.materialId).confirmedAt);
+
+  const changed = { ...base, segments: [
+    { ...base.segments[0], destination: '罗湖区' },
+  ] };
+  assert.equal(submit(changed).verdict, 'accepted');
+  assert.equal(loadReading(task, material.materialId).confirmedAt, null,
+    '用户确认过的是旧的逐段行程，改段之后必须重新确认');
+});
+
+test('单段图片行程单继续兼容平铺字段', () => {
+  const v = submit({ ...good(), docType: 'ride_itinerary',
+    fields: { travelDate: '2026-09-04', city: '深圳市', origin: '南山区', destination: '福田区' } });
+  assert.equal(v.verdict, 'accepted', JSON.stringify(v.reasons));
+});
+
 test('整张图一个字段都没抄下来，不算「看不清」，算没看见', () => {
   // 真机 QA 里的那一份读数：形状答对了（外部工具就答得出），字段全空。
   // 它被收下之后，用户在确认表上看到的是一张什么都没有的表。

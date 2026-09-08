@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { writeTextPdf, TEST_INVOICE_TEXT } from './fixture-pdf.mjs';
 
 // 纠正与争议：**用户改的值不直接落库**。
 //
@@ -107,17 +108,24 @@ async function correct(dir, table, fields) {
   return ask(dir);
 }
 
-/** 子 Agent 重读回来了。按内核给的模板写文件，再原样执行 argv。 */
+/** 子 Agent 只消费派发契约，按模板写文件，再原样执行其中的 argv。 */
 function submitReread(r, fields, over = {}) {
-  writeJson(r.step.rereadPath, {
-    version: 1,
-    materialId: r.step.materialId,
-    contentHash: r.step.contentHash,          // 子 Agent 从 step 上原样抄
+  const submission = r.step.subagent.submission;
+  const template = JSON.parse(fs.readFileSync(submission.schemaPath, 'utf8'));
+  writeJson(submission.rereadPath, {
+    version: template.version,
+    materialId: submission.materialId,
+    contentHash: submission.contentHash,
     sighted: { shape: 'landscape' },          // 1816×1396，横着的
     fields,
     ...over,
   });
-  return JSON.parse(runStep(r));
+  try {
+    return JSON.parse(execFileSync(submission.argv[0], submission.argv.slice(1), { encoding: 'utf8' }));
+  } catch (err) {
+    if (err.status === 2) return JSON.parse(err.stdout);
+    throw err;
+  }
 }
 
 /** 用户拍板。终值仍然要过格式闸和守恒式。 */
@@ -202,6 +210,27 @@ test('重读必须外包给干净上下文的子 Agent，而且只读那一个�
     '模型自己读一遍冒充子 Agent，正是这一步要挡的');
   assert.ok(fs.existsSync(r.step.schemaPath), '重读的模板跟着内核走');
   assert.ok(r.step.argv.includes('reread-submit'));
+});
+
+test('独立重读的派发契约一次给齐提交所需数据，不用反查任务或源码', async () => {
+  const dir = materials();
+  const table = await upToConfirmation(dir);
+  const r = await correct(dir, table, { issueDate: '2026-09-03' });
+  const { step } = r;
+
+  assert.equal(step.evidence.contentHash, step.contentHash, '模板写的取值路径必须真有数据');
+  assert.deepEqual(step.subagent.submission, {
+    materialId: step.materialId,
+    contentHash: step.contentHash,
+    fields: step.fields,
+    sightedShapes: step.sightedShapes,
+    schemaPath: step.schemaPath,
+    rereadPath: step.rereadPath,
+    argv: step.argv,
+  });
+  assert.ok(step.subagent.submission.sightedShapes.length > 0, '形状凭据的允许值不能让子 Agent 自己查');
+  assert.match(step.subagent.instruction, new RegExp(step.materialId));
+  assert.match(step.subagent.instruction, new RegExp(step.contentHash));
 });
 
 test('重读顺手多抄了别的字段，整次不收 —— 它就该只看那一处', async () => {
@@ -485,8 +514,7 @@ test('每个字段带来源：机器看的、用户给的、还是内核算的',
 
 test('PDF 那条路上的字段来源记内核 —— 那是内核自己从文字层解出来的', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-dispute-pdf-'));
-  const rel = '交通/【AA出行-69.19元-3个行程】高德打车电子发票.pdf';
-  fs.copyFileSync(path.join(repo, 'resources', rel), path.join(dir, path.basename(rel)));
+  writeTextPdf(path.join(dir, 'test-invoice.pdf'), TEST_INVOICE_TEXT);
   runStep(await ask(dir));
   runStep(await ask(dir));
   const { classifyInventory } = await import('../src/classify.mjs');
