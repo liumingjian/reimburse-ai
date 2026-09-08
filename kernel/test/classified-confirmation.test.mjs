@@ -24,10 +24,10 @@ const fixture = () => {
     { materialId: 'm-reference', relPath: 'reference.pdf', fileName: 'reference.pdf', contentHash: referenceHash },
   ] };
   const classification = { versionId: 'v-fixture', results: [
-    { materialId: 'm-voucher', role: 'primary_voucher', maskedNumber: '***1234' },
+    { materialId: 'm-voucher', role: 'primary_voucher' },
     { materialId: 'm-reference', role: 'reference' },
   ] };
-  const events = { events: [{ eventId: 'ev-01', voucherMaterialId: 'm-voucher',
+  const events = { events: [{ eventId: 'ev-01', voucherMaterialId: 'm-voucher', maskedNumber: '***1234',
     referenceMaterialIds: ['m-reference'] }] };
   const lines = [{ lineId: 'ev-01', eventId: 'ev-01', voucherMaterialId: 'm-voucher',
     date: '2026-09-08', totalAmount: '18.80', amountSource: 'voucher_face', city: '广州',
@@ -119,9 +119,10 @@ test('暂存根符号链接和已有不可复核摘要目录都拒绝覆盖', ()
   assert.equal(fs.readFileSync(path.join(uploadRoot, digest, 'foreign'), 'utf8'), 'keep');
 });
 
-test('清单篡改使暂存失效，不把确认误报为可写入', () => {
+test('清单篡改使暂存失效，重试只重建本任务明确归属的摘要目录', () => {
   const f = fixture();
-  confirmAndStage({ ...f, digest: classifiedDetailDigest(f.aggregate) });
+  const digest = classifiedDetailDigest(f.aggregate);
+  confirmAndStage({ ...f, digest });
   const status = confirmationStatus(f.task, f.aggregate);
   const manifestFile = path.join(taskDir(f.task), status.record.stagingDirectory, 'manifest.json');
   const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
@@ -130,6 +131,8 @@ test('清单篡改使暂存失效，不把确认误报为可写入', () => {
   const tampered = confirmationStatus(f.task, f.aggregate);
   assert.equal(tampered.confirmed, true);
   assert.equal(tampered.staged, false);
+  confirmAndStage({ ...f, digest });
+  assert.equal(confirmationStatus(f.task, f.aggregate).staged, true);
 });
 
 test('暂存有任务归属标记并保留，只有显式受支持清理会删除归属匹配目录', () => {

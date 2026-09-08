@@ -44,7 +44,7 @@ export function classifiedDetailAggregate({ inventory, classification, events, l
     return {
       lineRef: line.lineId,
       materialRef: line.voucherMaterialId,
-      voucher: voucher.maskedNumber ?? '（无票号）',
+      voucher: event.maskedNumber ?? voucher.maskedNumber ?? '（无票号）',
       date: line.date ?? null,
       amount: line.totalAmount ?? null,
       amountSource: line.amountSource ?? null,
@@ -127,7 +127,13 @@ export function confirmAndStage({ sourceDir, task, inventory, classification, ag
   const finalDir = path.join(uploadRoot, digest);
   const existing = confirmationStatus(task, aggregate);
   if (existing.confirmed && existing.staged) return existing.record;
-  if (fs.existsSync(finalDir)) throw new Error('已有不可复核的暂存目录，拒绝覆盖');
+  if (fs.existsSync(finalDir)) {
+    const owner = readJson(path.join(finalDir, OWNER_FILE));
+    if (owner?.version !== RECORD_VERSION || owner?.taskId !== task.taskId || owner?.digest !== digest) {
+      throw new Error('已有不可复核且归属不明的暂存目录，拒绝覆盖');
+    }
+    fs.rmSync(finalDir, { recursive: true, force: true });
+  }
   const tempDir = path.join(uploadRoot, `.${digest}.${crypto.randomBytes(8).toString('hex')}.tmp`);
   fs.mkdirSync(tempDir, { mode: 0o700 });
   try {
