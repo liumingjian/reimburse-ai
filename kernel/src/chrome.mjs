@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { paths, ensureDir } from './paths.mjs';
@@ -152,6 +152,46 @@ export async function connect(wsUrl, { timeout = 10000 } = {}) {
   };
 
   return { send, on, close: () => { try { ws.close(); } catch {} } };
+}
+
+function commandForPid(pid) {
+  try {
+    process.kill(pid, 0);
+    if (process.platform === 'win32') return null;
+    return execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).trim();
+  } catch {
+    return '';
+  }
+}
+
+export async function close({ port = CDP_PORT, pidFile = path.join(paths.run, 'chrome.pid'),
+  profile = paths.chromeProfile, versionFn = version, connectFn = connect,
+  processCommand = commandForPid } = {}) {
+  const pid = Number.parseInt(fs.existsSync(pidFile) ? fs.readFileSync(pidFile, 'utf8') : '', 10);
+  const command = Number.isInteger(pid) ? processCommand(pid) : '';
+  const current = await versionFn(port);
+  if (!current) {
+    return command ? { ok: false, reason: 'cdp_unavailable' } : { ok: true, alreadyClosed: true };
+  }
+  if (!command || !command.includes(`--remote-debugging-port=${port}`)
+      || !command.includes(`--user-data-dir=${profile}`)) {
+    return { ok: false, reason: 'browser_not_owned' };
+  }
+  if (!current.webSocketDebuggerUrl) return { ok: false, reason: 'cdp_unavailable' };
+
+  try {
+    const session = await connectFn(current.webSocketDebuggerUrl, { timeout: 3000 });
+    try { await session.send('Browser.close'); } finally { session.close(); }
+  } catch {
+    return { ok: false, reason: 'close_failed' };
+  }
+
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (!await versionFn(port)) return { ok: true };
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return { ok: false, reason: 'still_running' };
 }
 
 const unwrap = (result) => {

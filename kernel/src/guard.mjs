@@ -44,6 +44,7 @@ export const AGENT_MARKERS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_SK
  * 而不是「拦下所有低层命令」。两者的差别就是这套设计能不能跑起来。
  */
 export const MODEL_ALLOWED = new Set(['next', 'erp-reconcile']);
+export const MODEL_EXACT = [['reset']];
 
 /**
  * 人手敲的显式标记。它不是密码，也不打算是 —— 模型当然"能"加上它。
@@ -89,6 +90,13 @@ function matchesIssued(argv, issuedArgv) {
 export function guardVerdict({ cmd, argv = [], env = process.env, issuedArgv = null } = {}) {
   const markers = agentMarkers(env);
 
+  if (MODEL_EXACT.some((allowed) => allowed.length === argv.length
+      && allowed.every((part, i) => part === argv[i]))) {
+    return { allowed: true, reason: 'model_allowed', markers };
+  }
+  if (cmd === 'reset' && markers.length > 0) {
+    return { allowed: false, reason: 'model_may_only_run_next', markers };
+  }
   if (MODEL_ALLOWED.has(cmd)) {
     return { allowed: true, reason: 'model_allowed', markers };
   }
@@ -122,7 +130,7 @@ export function refusalPayload({ cmd, markers, reason = 'model_may_only_run_next
       command: cmd ?? null,
       reason,
       markers,
-      allowed: [...MODEL_ALLOWED],
+      allowed: ['next', 'reset', 'erp-reconcile'],
     },
     // 念给用户听的那一句：拒绝本身不是故障，说成故障会让人去"修"它。
     speak: '我只能通过 baox 的一条入口往下走，刚才那条命令不在我的权限里，我不会绕过去。',

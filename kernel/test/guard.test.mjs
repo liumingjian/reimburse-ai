@@ -20,6 +20,15 @@ test('模型敲 next：放行，这是它唯一的入口', () => {
   assert.equal(v.reason, 'model_allowed');
 });
 
+test('模型只能启动裸 reset，命令行参数不能替用户确认', () => {
+  const start = guardVerdict({ cmd: 'reset', argv: ['reset'], env: AGENT });
+  assert.equal(start.allowed, true);
+  assert.equal(start.reason, 'model_allowed');
+  for (const argv of [['reset', '--i-am-a-human'], ['reset', '--yes']]) {
+    assert.equal(guardVerdict({ cmd: 'reset', argv, env: AGENT }).allowed, false);
+  }
+});
+
 test('模型敲低层命令：拒', () => {
   for (const cmd of ['intake', 'classify', 'erp-fill', 'confirm-identity', 'abandon-task']) {
     const v = guardVerdict({ cmd, argv: [cmd, '--dir', '/x'], env: AGENT });
@@ -98,7 +107,7 @@ test('拒绝的那份 JSON 带着能原样念的一句话和给人的出路', ()
     reason: 'model_may_only_run_next' });
   assert.equal(p.status, 'refused');
   assert.equal(p.refused.command, 'erp-fill');
-  assert.deepEqual(p.refused.allowed, ['next', 'erp-reconcile']);
+  assert.deepEqual(p.refused.allowed, ['next', 'reset', 'erp-reconcile']);
   assert.ok(p.speak, '得有一句能原样念给用户的话');
   assert.ok(p.hint.includes(HUMAN_FLAG), '得告诉人怎么手敲');
 });
