@@ -81,8 +81,8 @@ baox next --after <stepToken> [--result <file>]  # 答：我做完了，这是�
 
 ## 常驻城市访谈与任务快照
 
-- ERP 身份首次绑定后，如果该 `account + tenant` 没有常驻城市，`next` 返回 `state: "env_home_city_unbound"`、`kind: "ask_user"`。问题不提供任何城市默认值；用户必须自由填写，或选择暂不确认并停下。
-- 模型把用户回答誊入 `step.answersPath`：`{ "answers": { "homeCity": "广州市" } }`，再原样执行 `baox next --after <stepToken> --result <答案文件>`。内核会重新探测 ERP，并只在 token 中的 `account + tenant` 仍与当前身份一致时写入个人绑定。
+- ERP 身份首次绑定后，如果该 `account + tenant` 没有合法常驻城市，`next` 返回 `state: "env_home_city_unbound"`，并发出唯一的 `confirm-home-city` 命令。该命令打开内核本地页面，不提供城市默认值；只有页面提交构成确认，聊天文本不构成业务事实。
+- 用户也可以在需要时显式运行 `baox confirm-home-city` 改绑个人常驻城市；该入口不会在已有合法绑定时随每次 `next` 重复出现，且只影响此后新建任务。旧任务缺城市时，同一页面只补该任务快照。
 - 新任务创建时复制个人绑定中的城市，形成任务快照。以后修改个人城市只影响新任务；任务选择页只收事由和逐行项目，不能覆盖城市。
 - 升级前任务若自身旧 `selection.json` 曾明确记录城市，启动迁移会保留该值；否则返回 `task_home_city_unbound`，用绑定当前 `taskId + account + tenant` 的一次性 token 单独询问。该答案只补任务快照，不修改个人绑定。
 

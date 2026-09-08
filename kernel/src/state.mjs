@@ -12,7 +12,7 @@
  * （见 workspace.mjs 的 archiveMigratedTasks），存档任务不被认领，也就永远不产生动作。
  * 状态机回答的是"现在该做什么"，一个永远答不出动作的东西留在表里只会骗人。
  */
-import { bindingVerdict } from './binding.mjs';
+import { bindingVerdict, validHomeCity } from './binding.mjs';
 
 /**
  * 每一类开放项由谁解决。这不是分类学，是**每条待办都要说清楚谁能动手** ——
@@ -205,7 +205,7 @@ const RULES = [
     actor: 'user',
     when: (o) => o.probe?.status === 'matched'
       && bindingVerdict(o.binding, o.probe.identity) === 'matched'
-      && !o.binding?.homeCity,
+      && !validHomeCity(o.binding?.homeCity),
   },
 
   // —— B 表：任务主干 ——
@@ -219,7 +219,7 @@ const RULES = [
   {
     state: 'task_home_city_unbound',
     actor: 'user',
-    when: (o) => taskSeen(o) && !!o.task && !o.task.homeCity,
+    when: (o) => taskSeen(o) && !!o.task && !validHomeCity(o.task.homeCity),
   },
   {
     // 材料目录里加了文件、换了文件、删了文件，内容哈希就对不上上一次盘点。

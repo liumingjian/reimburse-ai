@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { paths, ensureDir } from './paths.mjs';
+import { validHomeCity } from './binding.mjs';
 
 // 任务工作区。它是跨报销任务长期存在的事实存储 —— 历史发票身份要靠它做重复检测，
 // `ERP 写入结果未知` 的任务也不能被清理，所以这里不做任何自动清理。
@@ -175,20 +176,17 @@ export function abandonTask(taskId, reason) {
  *
  * 材料、读数、分摊一份不动，只改状态：存档是"不再往下走"，不是"删掉"。
  */
-const validHomeCity = (value) => typeof value === 'string'
-  && value.trim().length > 0 && value.trim().length <= 20
-  && !/[\u0000-\u001f\u007f]/.test(value);
-
 /**
  * 早期 1.0.0 任务把常驻城市记在 selection.json，而不是任务元数据。
  * 只迁移用户当时明确提交过的值；没有就保持缺失，交给状态机显式询问。
  */
-export function setTaskHomeCity(taskId, homeCity) {
-  if (!validHomeCity(homeCity)) return null;
+export function setTaskHomeCity(taskId, homeCity, identity) {
+  if (!validHomeCity(homeCity) || !identity?.account || !identity?.tenant) return null;
   const idx = loadIndex();
   const i = idx.tasks.findIndex((task) => task.taskId === taskId);
   if (i < 0 || validHomeCity(idx.tasks[i].homeCity)) return null;
-  const updated = { ...idx.tasks[i], homeCity: homeCity.trim() };
+  const updated = { ...idx.tasks[i], homeCity: homeCity.trim(),
+    identity: { account: identity.account, tenant: identity.tenant } };
   idx.tasks[i] = updated;
   writeJson(indexPath(), idx);
   writeJson(path.join(taskDir(updated), 'meta.json'), updated);
@@ -201,8 +199,9 @@ export function migrateTaskHomeCities() {
   idx.tasks = idx.tasks.map((task) => {
     if (validHomeCity(task.homeCity)) return task;
     const selection = readJson(path.join(taskDir(task), 'selection.json'), null);
-    if (!validHomeCity(selection?.homeCity)) return task;
-    const updated = { ...task, homeCity: selection.homeCity.trim() };
+    if (!validHomeCity(selection?.homeCity) || !task.identity?.account || !task.identity?.tenant) return task;
+    const updated = { ...task, homeCity: selection.homeCity.trim(),
+      identity: { account: task.identity.account, tenant: task.identity.tenant } };
     migrated.push(updated);
     writeJson(path.join(taskDir(updated), 'meta.json'), updated);
     return updated;

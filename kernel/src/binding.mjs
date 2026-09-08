@@ -51,12 +51,18 @@ export function writeBinding(identity) {
   });
 }
 
+export const validHomeCity = (value) => typeof value === 'string'
+  && value.trim().length > 0 && value.trim().length <= 20
+  && value.trim() !== '暂不确认'
+  && !/[\u0000-\u001f\u007f]/.test(value);
+
 export function writeHomeCity(identity, homeCity) {
+  if (!validHomeCity(homeCity)) return null;
   const binding = readBinding();
   if (bindingVerdict(binding, identity) !== 'matched') return null;
   return persistBinding({
     ...binding,
-    homeCity,
+    homeCity: homeCity.trim(),
     homeCityConfirmedAt: new Date().toISOString(),
   });
 }

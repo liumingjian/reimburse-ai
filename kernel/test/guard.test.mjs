@@ -148,6 +148,21 @@ test('baox intake 被模型敲：退出码 2，命令没跑，拒绝记了一行
   assert.equal(fs.readFileSync(log, 'utf8').trim().split('\n').length, 1);
 });
 
+test('被拒命令在权限检查前不运行任何业务迁移', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-guard-migration-'));
+  const tasks = path.join(home, 'tasks');
+  fs.mkdirSync(tasks, { recursive: true });
+  fs.writeFileSync(path.join(tasks, 'index.json'), JSON.stringify({ tasks: [{
+    taskId: 'legacy-task', createdAt: '2026-01-01T00:00:00.000Z', status: 'open',
+    sourceKey: 'legacy', sourceLabel: '虚构材料', currentVersionId: null,
+  }] }));
+  const { code } = baox(['tasks'], { CLAUDECODE: '1' }, home);
+  assert.equal(code, 2);
+  const index = JSON.parse(fs.readFileSync(path.join(tasks, 'index.json'), 'utf8'));
+  assert.equal(index.tasks[0].status, 'open', '拒绝命令不能把旧任务存档');
+  assert.equal(fs.existsSync(path.join(home, 'schema.json')), false, '拒绝命令不能写 schema');
+});
+
 test('同一条命令，人手敲（无痕迹）就照跑，拒绝日志一行都不写', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-guard-src-'));
   fs.writeFileSync(path.join(dir, 'fp.pdf'), '%PDF-1.4\n');

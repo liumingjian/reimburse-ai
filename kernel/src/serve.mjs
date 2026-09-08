@@ -137,6 +137,25 @@ export function serveTaskSelection(spec, opts = {}) {
       projects: body.projects ?? {}, at: new Date().toISOString() }));
 }
 
+export function renderHomeCityPage(spec, nonce) {
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>确认常驻城市</title><style>
+:root{color-scheme:light dark}body{font:16px/1.6 -apple-system,"PingFang SC",sans-serif;margin:0;padding:32px 20px;display:flex;justify-content:center;background:Canvas;color:CanvasText}
+main{width:100%;max-width:560px}h1{font-size:20px}label{display:block;margin:20px 0 6px}input{box-sizing:border-box;width:100%;padding:10px;font:inherit}button{width:100%;margin-top:20px;padding:14px;font-size:16px;font-weight:600;color:#fff;background:#2563eb;border:0;border-radius:10px}#done{display:none;text-align:center;padding:48px 0}</style></head><body><main>
+<form id="f"><h1>${spec.taskOnly ? '确认旧任务的常驻城市' : spec.current ? '改绑常驻城市' : '首次确认常驻城市'}</h1>
+<p>${spec.taskOnly ? '这个值只补全该任务的固定快照，不修改个人绑定。' : '常驻城市用于区分本地与外地市内交通；只影响此后新建的任务。'}</p>
+${spec.current ? `<p>当前常驻城市：<b>${esc(spec.current)}</b></p>` : ''}
+<label for="homeCity">常驻城市</label><input id="homeCity" maxlength="20" required autocomplete="address-level2" placeholder="请填写城市全称">
+<button type="submit">提交常驻城市</button></form><div id="done">已提交，可以关闭这个页面。</div>
+<script>document.getElementById('f').addEventListener('submit', async (e) => { e.preventDefault(); const homeCity = document.getElementById('homeCity').value.trim(); if (!homeCity) return; e.target.querySelector('button').disabled = true; await fetch('/submit?nonce=${nonce}', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ homeCity }) }); e.target.style.display = 'none'; document.getElementById('done').style.display = 'block'; });</script></main></body></html>`;
+}
+
+export function serveHomeCityConfirmation(spec, opts = {}) {
+  return serveLocal((nonce) => renderHomeCityPage(spec, nonce), opts,
+    (body) => ({ status: 'submitted', homeCity: body.homeCity, at: new Date().toISOString() }));
+}
+
 /**
  * 身份确认页。**这是个人绑定进入系统的唯一通道。**
  *

@@ -51,41 +51,25 @@ test('八个环境状态各有一步可做，说给用户听的话全部来自�
   }
 });
 
-test('常驻城市首次访谈由内核渲染，只允许用户明确填写而不提供城市默认值', async () => {
+test('首次常驻城市由内核受控页面收取，不接受聊天答案', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
-  const observation = healthy({
-    binding: { ...me, homeCity: '广州市', confirmedAt: '2026-09-06T00:00:00.000Z' },
-  });
-  const shaped = stepFor('env_home_city_unbound', observation);
-
-  assert.equal(shaped.step.kind, 'ask_user');
-  assert.equal(shaped.step.outsourceable, false);
-  assert.equal(shaped.step.questions.length, 1);
-  assert.equal(shaped.step.questions[0].id, 'homeCity');
-  assert.deepEqual(shaped.step.questions[0].options.map((x) => x.label), ['暂不确认', '其他']);
-  assert.match(shaped.step.prompt, /常驻城市/);
-  assert.doesNotMatch(shaped.step.prompt, /广州市|北京市|上海市/, '不能拿候选城市诱导用户确认默认值');
-  assert.ok(shaped.step.answersPath.endsWith('home-city-answer.json'));
-  assert.equal(shaped.step.answersFormat.answers.homeCity, '用户明确填写的城市');
+  const shaped = stepFor('env_home_city_unbound', healthy());
+  assert.equal(shaped.step.kind, 'run');
+  assert.equal(shaped.step.argv[2], 'confirm-home-city');
+  assert.doesNotMatch(JSON.stringify(shaped.step), /answersPath|answersFormat|questions/);
+  assert.match(shaped.speak, /本地页面/);
 });
 
-test('旧任务缺城市时询问该任务快照，不拿当前个人城市代填', async () => {
+test('旧任务缺城市时由受控页面补任务快照，不拿当前个人城市代填', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
-  const observation = withMaterials({
-    task: { ...withMaterials().task, homeCity: null },
-  });
+  const observation = withMaterials({ task: { ...withMaterials().task, homeCity: null } });
   const shaped = stepFor('task_home_city_unbound', observation);
-
-  assert.equal(shaped.step.kind, 'ask_user');
-  assert.equal(shaped.step.questions[0].id, 'homeCity');
-  assert.match(shaped.step.prompt, /常驻城市/);
-  assert.doesNotMatch(shaped.step.prompt, /广州市|北京市|上海市/);
-  assert.ok(shaped.step.answersPath.endsWith('home-city-answer.json'));
-  assert.equal(shaped.stepMeta.taskId, observation.task.taskId);
-  assert.equal(shaped.stepMeta.account, me.account);
-  assert.equal(shaped.stepMeta.tenant, me.tenant);
+  assert.equal(shaped.step.kind, 'run');
+  assert.equal(shaped.step.argv[2], 'confirm-home-city');
+  assert.deepEqual(shaped.step.argv.slice(3), ['--dir', observation.sourceDir]);
+  assert.match(shaped.speak, /本地页面/);
 });
 
 test('硬阻塞才给 2：等人登录不是硬阻塞', async () => {
@@ -438,7 +422,8 @@ test('从没登录一路走到环境就绪，全程只有一条命令在动', as
     binding: { ...me, confirmedAt: '2026-09-06T00:00:00.000Z' },
   }), sourceKey: KEY, after: r.stepToken });
   assert.equal(r.state, 'env_home_city_unbound');
-  assert.equal(r.step.kind, 'ask_user');
+  assert.equal(r.step.kind, 'run');
+  assert.equal(r.step.argv[2], 'confirm-home-city');
 
   // 城市确认后，环境才就绪。
   r = nextResponse({ observation: healthy(), sourceKey: KEY, after: r.stepToken, hasResult: true });

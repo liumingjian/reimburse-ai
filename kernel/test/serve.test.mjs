@@ -40,7 +40,15 @@ test('任务选择页只询问事由和逐行项目，不重复填写常驻城�
 // 本地页面每多一个，就多一条"用户在别处点过头"的路径。1.0.0 收窄到两处之后，
 // 剩下的两个都是终端做不了的事：认一次身份，翻一遍完整的项目目录。
 // 通用单选页和逐段分摊页连同命令一起下线了 —— 分摊改走对话提问，读数确认改走终端表格。
-test('本地页面只剩重新绑定身份和浏览项目目录两处', () => {
+test('常驻城市只能由内核本地页面提交，且不提供默认候选', () => {
+  const html = serve.renderHomeCityPage({ current: null, taskOnly: false }, 'test-nonce');
+  assert.match(html, /id="homeCity"/);
+  assert.match(html, /提交常驻城市/);
+  assert.doesNotMatch(html, /value="(?:广州|北京|上海)/);
+  assert.match(html, /body: JSON\.stringify\(\{ homeCity \}\)/);
+});
+
+test('本地页面包含常驻城市、重新绑定身份和任务选择三处', () => {
   const servers = Object.keys(serve).filter((k) => k.startsWith('serve'));
-  assert.deepEqual(servers.sort(), ['serveIdentityConfirmation', 'serveTaskSelection']);
+  assert.deepEqual(servers.sort(), ['serveHomeCityConfirmation', 'serveIdentityConfirmation', 'serveTaskSelection']);
 });

@@ -10,79 +10,8 @@ const freshHome = () => {
 
 const me = { displayName: '测试员工', account: 'employee.test', tenant: 'tenant-a' };
 const other = { displayName: '另一员工', account: 'employee.other', tenant: 'tenant-a' };
-const outstanding = { meta: { account: me.account, tenant: me.tenant } };
-const probeAs = (identity) => async () => ({ status: 'matched', identity });
-const answerFile = (answer) => {
-  const p = path.join(process.env.BAOX_HOME, 'answer.json');
-  fs.writeFileSync(p, JSON.stringify({ answers: { homeCity: answer } }));
-  return p;
-};
 
-test('首次城市输入经内核校验后持久化，并归属于当前 ERP 身份', async () => {
-  freshHome();
-  const { writeBinding, readBinding } = await import('../src/binding.mjs');
-  const { receiveHomeCity } = await import('../src/confirm.mjs');
-  writeBinding(me);
-
-  const result = await receiveHomeCity(outstanding, answerFile('  广州市  '), { probe: probeAs(me) });
-
-  assert.equal(result.verdict, 'home_city_bound');
-  assert.equal(result.binding.homeCity, '广州市');
-  assert.equal(readBinding().homeCity, '广州市');
-  assert.equal(readBinding().account, me.account);
-  assert.equal(readBinding().tenant, me.tenant);
-  assert.ok(readBinding().homeCityConfirmedAt);
-});
-
-test('城市不是用户给出的合法自由文本时，一个字都不写', async () => {
-  for (const answer of ['', '暂不确认', '超过二十个字的城市名称超过二十个字的城市名称', '广州\n市']) {
-    freshHome();
-    const { writeBinding, readBinding } = await import('../src/binding.mjs');
-    const { receiveHomeCity } = await import('../src/confirm.mjs');
-    writeBinding(me);
-    assert.equal(await receiveHomeCity(outstanding, answerFile(answer), { probe: probeAs(me) }), null);
-    assert.equal(readBinding().homeCity, undefined, `不应收下：${JSON.stringify(answer)}`);
-  }
-});
-
-test('问答期间换了员工或账套，城市不能串绑', async () => {
-  freshHome();
-  const { writeBinding, readBinding } = await import('../src/binding.mjs');
-  const { receiveHomeCity } = await import('../src/confirm.mjs');
-  writeBinding(me);
-
-  assert.equal(await receiveHomeCity(outstanding, answerFile('广州市'), { probe: probeAs(other) }), null);
-  assert.equal(readBinding().homeCity, undefined);
-  assert.equal(await receiveHomeCity(outstanding, answerFile('广州市'), {
-    probe: probeAs({ ...me, tenant: 'tenant-b' }),
-  }), null);
-  assert.equal(readBinding().homeCity, undefined);
-});
-
-test('城市答案只由当前挂起的首次访谈 token 收下', async () => {
-  freshHome();
-  const { writeBinding, readBinding } = await import('../src/binding.mjs');
-  const { issueStep } = await import('../src/steptoken.mjs');
-  const { applyTerminalVerdict } = await import('../src/confirm.mjs');
-  writeBinding(me);
-  const sourceKey = 'home-city-source';
-  const step = issueStep(sourceKey, 'env_home_city_unbound', null,
-    { account: me.account, tenant: me.tenant });
-
-  const ignored = await applyTerminalVerdict({
-    sourceKey, after: 'expired-token', resultFile: answerFile('广州市'), probe: probeAs(me),
-  });
-  assert.equal(ignored, null);
-  assert.equal(readBinding().homeCity, undefined);
-
-  const accepted = await applyTerminalVerdict({
-    sourceKey, after: step.token, resultFile: answerFile('广州市'), probe: probeAs(me),
-  });
-  assert.equal(accepted.verdict, 'home_city_bound');
-  assert.equal(readBinding().homeCity, '广州市');
-});
-
-test('迁移保留旧任务明确记录的城市，缺失时不从个人绑定猜测', async () => {
+test('迁移只保留有任务身份归属的旧城市，缺失归属和值都进入确认流程', async () => {
   freshHome();
   const { createTask, taskDir, migrateTaskHomeCities, loadIndex } = await import('../src/workspace.mjs');
   const binding = { ...me, homeCity: '当前个人城市' };
@@ -107,8 +36,8 @@ test('迁移保留旧任务明确记录的城市，缺失时不从个人绑定�
 
   const migrated = migrateTaskHomeCities();
   const byId = Object.fromEntries(loadIndex().tasks.map((task) => [task.taskId, task]));
-  assert.deepEqual(migrated.map((task) => task.taskId), [explicit.taskId]);
-  assert.equal(byId[explicit.taskId].homeCity, '旧任务明确城市');
+  assert.deepEqual(migrated, []);
+  assert.equal(byId[explicit.taskId].homeCity, undefined, '没有 account+tenant 归属的城市不能迁成快照');
   assert.equal(byId[missing.taskId].homeCity, undefined,
     '旧任务没写过城市时不能套用当前个人绑定');
   assert.deepEqual(migrateTaskHomeCities(), [], '重复迁移不改写已经固定的快照');
@@ -129,37 +58,8 @@ test('缺城市的旧任务经受控问答固定快照，不改当前个人城�
   const { homeCity, ...legacyMeta } = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
   fs.writeFileSync(metaPath, JSON.stringify(legacyMeta));
 
-  const updated = setTaskHomeCity(task.taskId, '旧任务确认城市');
+  const updated = setTaskHomeCity(task.taskId, '旧任务确认城市', me);
   assert.equal(updated.homeCity, '旧任务确认城市');
-  assert.equal(loadIndex().tasks.find((x) => x.taskId === task.taskId).homeCity, '旧任务确认城市');
-  assert.equal(readBinding().homeCity, '当前个人城市');
-});
-
-test('旧任务城市答案只由当前任务和身份对应的 token 收下', async () => {
-  freshHome();
-  const { writeBinding, writeHomeCity, readBinding } = await import('../src/binding.mjs');
-  const { createTask, taskDir, loadIndex } = await import('../src/workspace.mjs');
-  const { issueStep } = await import('../src/steptoken.mjs');
-  const { applyTerminalVerdict } = await import('../src/confirm.mjs');
-  writeBinding(me);
-  writeHomeCity(me, '当前个人城市');
-  const task = createTask(path.join(process.env.BAOX_HOME, 'legacy-token-source'), readBinding());
-  const indexPath = path.join(process.env.BAOX_HOME, 'tasks', 'index.json');
-  const index = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
-  index.tasks = index.tasks.map(({ homeCity, ...item }) => item);
-  fs.writeFileSync(indexPath, JSON.stringify(index));
-  const metaPath = path.join(taskDir(task), 'meta.json');
-  const { homeCity, ...legacyMeta } = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-  fs.writeFileSync(metaPath, JSON.stringify(legacyMeta));
-
-  const step = issueStep(task.sourceKey, 'task_home_city_unbound', path.join(process.env.BAOX_HOME, 'legacy-token-source'), {
-    taskId: task.taskId, account: me.account, tenant: me.tenant, questions: [],
-  });
-  const accepted = await applyTerminalVerdict({
-    sourceKey: task.sourceKey, after: step.token, resultFile: answerFile('旧任务确认城市'), probe: probeAs(me),
-  });
-
-  assert.equal(accepted.verdict, 'task_home_city_bound');
   assert.equal(loadIndex().tasks.find((x) => x.taskId === task.taskId).homeCity, '旧任务确认城市');
   assert.equal(readBinding().homeCity, '当前个人城市');
 });
@@ -193,6 +93,53 @@ test('缺少明确城市绑定时不能创建任务，也不能猜默认城市',
     () => createTask(path.join(process.env.BAOX_HOME, 'bad-city-source'), { ...me, homeCity: '广州\n市' }),
     /常驻城市/,
   );
+});
+
+test('城市 validator 在绑定、任务创建和状态机中统一拒绝损坏值', async () => {
+  freshHome();
+  const { validHomeCity, writeBinding, writeHomeCity, readBinding } = await import('../src/binding.mjs');
+  const { createTask } = await import('../src/workspace.mjs');
+  const { determineState } = await import('../src/state.mjs');
+  writeBinding(me);
+  for (const value of [null, '', '暂不确认', '广州\n市', '超过二十个字的城市名称超过二十个字的城市名称']) {
+    assert.equal(validHomeCity(value), false);
+    assert.equal(writeHomeCity(me, value), null);
+    assert.throws(() => createTask(path.join(process.env.BAOX_HOME, `bad-${String(value)}`), { ...me, homeCity: value }));
+    const state = determineState({ schemaVersion: 1, nodeMajor: 22, cdpUp: true,
+      probe: { status: 'matched', identity: me }, binding: { ...me, homeCity: value } });
+    assert.equal(state.state, 'env_home_city_unbound');
+  }
+  assert.equal(readBinding().homeCity, undefined);
+});
+
+test('旧任务补城市时持久化 account+tenant 归属', async () => {
+  freshHome();
+  const { createTask, taskDir, setTaskHomeCity, loadIndex } = await import('../src/workspace.mjs');
+  const task = createTask(path.join(process.env.BAOX_HOME, 'owned-legacy'), { ...me, homeCity: '原城市' });
+  const indexPath = path.join(process.env.BAOX_HOME, 'tasks', 'index.json');
+  const index = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+  index.tasks = index.tasks.map(({ homeCity, identity, ...item }) => item);
+  fs.writeFileSync(indexPath, JSON.stringify(index));
+  const metaPath = path.join(taskDir(task), 'meta.json');
+  const { homeCity, identity, ...legacyMeta } = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+  fs.writeFileSync(metaPath, JSON.stringify(legacyMeta));
+
+  const updated = setTaskHomeCity(task.taskId, '旧任务城市', me);
+  assert.deepEqual(updated.identity, { account: me.account, tenant: me.tenant });
+  assert.deepEqual(loadIndex().tasks.find((x) => x.taskId === task.taskId).identity,
+    { account: me.account, tenant: me.tenant });
+});
+
+test('用户可显式改绑常驻城市，旧任务快照保持不变', async () => {
+  freshHome();
+  const { writeBinding, writeHomeCity, readBinding } = await import('../src/binding.mjs');
+  const { createTask, loadIndex } = await import('../src/workspace.mjs');
+  writeBinding(me);
+  writeHomeCity(me, '广州市');
+  const oldTask = createTask(path.join(process.env.BAOX_HOME, 'old-city-task'), readBinding());
+  writeHomeCity(me, '北京市');
+  assert.equal(readBinding().homeCity, '北京市');
+  assert.equal(loadIndex().tasks.find((x) => x.taskId === oldTask.taskId).homeCity, '广州市');
 });
 
 test('改绑到另一个员工或租户时不继承原常驻城市', async () => {

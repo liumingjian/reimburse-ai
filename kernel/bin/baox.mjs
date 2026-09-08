@@ -7,7 +7,7 @@ import * as chrome from '../src/chrome.mjs';
 import { probeIdentity, ERP_ORIGIN } from '../src/probe.mjs';
 // 本地页面只剩两处：重新绑定身份，和浏览完整项目目录。读数确认在终端上
 // （`confirm_table`），逐段分摊在终端上（`ask_user`），通用单选页整个下线了。
-import { serveTaskSelection, serveIdentityConfirmation } from '../src/serve.mjs';
+import { serveTaskSelection, serveIdentityConfirmation, serveHomeCityConfirmation } from '../src/serve.mjs';
 import { buildWorkOrder, ingestReadings, pendingConfirmations,
   READING_VERSION, DOC_TYPES } from '../src/vision.mjs';
 import { applyTerminalVerdict } from '../src/confirm.mjs';
@@ -25,7 +25,8 @@ import { authorizedPage, verifyExpenseItems, verifyProject, PROJECT_FORM } from 
 import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerField,
   writeHeader, writeCell, selectOption, cellTarget, cellMatches, leaveEdit } from '../src/erpform.mjs';
 import { readReconciliation, classifyReconciliation, attemptRecord } from '../src/erpreconcile.mjs';
-import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
+import { gateIdentity, readBinding, writeBinding, writeHomeCity, bindingVerdict,
+  validHomeCity } from '../src/binding.mjs';
 import { observeEnvironment, observeTask } from '../src/observe.mjs';
 import { nextResponse } from '../src/next.mjs';
 import { ingestReread, autoSettleAgreed } from '../src/dispute.mjs';
@@ -45,30 +46,6 @@ const out = (obj, code = OK) => {
   process.stdout.write(JSON.stringify(migrated ? { ...obj, migrated } : obj, null, 2) + '\n');
   process.exit(code);
 };
-
-// 搬家（0.9.x 的 ~/Library/Application Support/baox 之类 -> ~/.baox）在任何命令之前做掉，
-// 而且只做一次。这里在 out 之后、命令之前，因为它必须在下面那个 try 之外跑：数据目录
-// 都还没定下来的时候，任何命令都无从谈起。
-// 搬不动就硬停：继续跑等于在一个空的新目录里从头开始，而用户的任务还在旧目录里 ——
-// 那是一种看起来正常、实则丢了全部历史的失败，比直接停住坏得多。
-try {
-  migrated = migrateOnStartup();
-  if (migrated) {
-    // 搬完立刻把 0.9.x 的在途任务标记成存档，理由见 workspace.mjs 的 archiveMigratedTasks。
-    // 就在这一次说清楚：那些任务不会接着往下走，同一个目录下次是从头开始的新任务。
-    const archived = archiveMigratedTasks();
-    if (archived.length) {
-      migrated = { ...migrated, archivedTasks: archived.map((t) => t.taskId),
-        note: `${archived.length} 个 0.9.x 的在途任务已存档：它们的读数没有本版要求的看图凭据，`
-          + '不会被接着往下走；材料和记录一份没动，同一个材料目录下次会新建任务重走一遍。'
-          + '它们仍然占着自己那些发票（跨任务查重看得见），确认不再报销可以逐个作废。' };
-    }
-  }
-  migrateTaskHomeCities();
-} catch (err) {
-  out({ command: process.argv[2] ?? null, status: 'migration_failed', error: err.message,
-    hint: `把旧数据目录整份拷到 ${paths.root} 之后重试；旧目录没有被动过。` }, BLOCKED);
-}
 
 // 这份内核自己的根目录和版本号。内核就地运行，所以这就是唯一的那一份；
 // 版本号要出现在每一次体检里，否则试用者报回来的问题钉不到具体哪一版。
@@ -150,8 +127,7 @@ const [, , cmd] = process.argv;
 // （末尾加 --i-am-a-human），只是模型自己拼不出来。判据和措辞都在 guard.mjs 里。
 //
 // 这一段必须在 switch 之前、在任何**命令**副作用之前：拒绝一条命令的意义在于它
-// **没有跑过**，跑到一半再拒等于没拒。（数据目录迁移在它上面就做掉了，那一步与
-// 敲的是哪条命令无关。）
+// **没有跑过**，跑到一半再拒等于没拒。包括数据目录迁移在内，任何业务写入都必须排在它后面。）
 {
   const verdict = guardVerdict({ cmd, argv: process.argv.slice(2), env: process.env,
     issuedArgv: currentIssuedArgv() });
@@ -159,6 +135,30 @@ const [, , cmd] = process.argv;
     recordRefusal({ cmd, markers: verdict.markers, logsDir: paths.logs });
     out(refusalPayload({ cmd, markers: verdict.markers, reason: verdict.reason }), BLOCKED);
   }
+}
+
+// 搬家（0.9.x 的 ~/Library/Application Support/baox 之类 -> ~/.baox）在任何命令之前做掉，
+// 而且只做一次。这里在 out 之后、命令之前，因为它必须在下面那个 try 之外跑：数据目录
+// 都还没定下来的时候，任何命令都无从谈起。
+// 搬不动就硬停：继续跑等于在一个空的新目录里从头开始，而用户的任务还在旧目录里 ——
+// 那是一种看起来正常、实则丢了全部历史的失败，比直接停住坏得多。
+try {
+  migrated = migrateOnStartup();
+  if (migrated) {
+    // 搬完立刻把 0.9.x 的在途任务标记成存档，理由见 workspace.mjs 的 archiveMigratedTasks。
+    // 就在这一次说清楚：那些任务不会接着往下走，同一个目录下次是从头开始的新任务。
+    const archived = archiveMigratedTasks();
+    if (archived.length) {
+      migrated = { ...migrated, archivedTasks: archived.map((t) => t.taskId),
+        note: `${archived.length} 个 0.9.x 的在途任务已存档：它们的读数没有本版要求的看图凭据，`
+          + '不会被接着往下走；材料和记录一份没动，同一个材料目录下次会新建任务重走一遍。'
+          + '它们仍然占着自己那些发票（跨任务查重看得见），确认不再报销可以逐个作废。' };
+    }
+  }
+  migrateTaskHomeCities();
+} catch (err) {
+  out({ command: process.argv[2] ?? null, status: 'migration_failed', error: err.message,
+    hint: `把旧数据目录整份拷到 ${paths.root} 之后重试；旧目录没有被动过。` }, BLOCKED);
 }
 
 // 数据格式版本落盘。没有这个文件的目录（0.9.x 迁过来的，或者刚建的）就是这一版写的，
@@ -238,6 +238,37 @@ try {
       const binding = writeBinding(probe.identity);
       out({ command: 'confirm-identity', status: 'confirmed', binding, replaced: previous,
         note: '这台机器上的 baox 从现在起只替这个身份报销' });
+    }
+
+    case 'confirm-home-city': {
+      const probe = await probeIdentity();
+      if (probe.status !== 'matched') {
+        out({ command: 'confirm-home-city', ...probe,
+          note: '读不出当前登录身份，不打开常驻城市页面' }, BLOCKED);
+      }
+      const binding = readBinding();
+      if (bindingVerdict(binding, probe.identity) !== 'matched') {
+        out({ command: 'confirm-home-city', status: 'identity_not_matched', binding,
+          identity: probe.identity, note: '当前 ERP 身份与个人绑定不一致，不修改常驻城市' }, BLOCKED);
+      }
+      const dir = arg('dir');
+      const task = dir ? findLiveTaskForSource(sourceKeyOf(dir)) : null;
+      if (dir && !task) out({ command: 'confirm-home-city', error: '这个目录没有进行中的报销任务' }, ERR);
+      const result = await serveHomeCityConfirmation(
+        { current: task ? null : (validHomeCity(binding.homeCity) ? binding.homeCity : null), taskOnly: !!task },
+        { timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
+          onReady: (u) => process.stderr.write(`已在浏览器里打开页面（确认常驻城市）；没弹出就手动打开：${u}\n`) });
+      if (result.status !== 'submitted' || !validHomeCity(result.homeCity)) {
+        out({ command: 'confirm-home-city', status: 'not_confirmed', note: '没有收到合法城市，未写入任何值' }, BLOCKED);
+      }
+      const updated = task
+        ? setTaskHomeCity(task.taskId, result.homeCity, probe.identity)
+        : writeHomeCity(probe.identity, result.homeCity);
+      if (!updated) out({ command: 'confirm-home-city', status: 'not_changed' }, BLOCKED);
+      out({ command: 'confirm-home-city', status: 'confirmed', homeCity: updated.homeCity,
+        taskId: task?.taskId ?? null,
+        note: task ? '旧任务城市快照已补全；个人常驻城市没有修改'
+          : '个人常驻城市已更新；已有任务继续使用各自创建时的快照' });
     }
 
     case 'erp-read': {
@@ -978,7 +1009,7 @@ try {
     }
 
     default:
-      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['next', 'doctor', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
+      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['next', 'doctor', 'chrome-up', 'probe', 'confirm-identity', 'confirm-home-city', 'intake', 'classify',
         'ocr-request', 'ocr-submit', 'confirm-readings', 'reread-submit',
         'history', 'events', 'select-task', 'lines',
         'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill'] }, ERR);

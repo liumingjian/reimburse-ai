@@ -474,25 +474,10 @@ export function stepFor(state, observation = {}, blockedBy = []) {
     }
 
     case 'env_home_city_unbound':
-      return askUser({
-        questions: [{
-          id: 'homeCity',
-          header: '首次确认常驻城市',
-          question: '你的常驻城市是哪座城市？常驻城市会作为新建报销任务的固定快照，用来区分本地与外地市内交通。',
-          options: [
-            { label: '暂不确认', description: '先停在这里，不创建报销任务，也不填写默认城市' },
-            { label: '其他', description: '请直接填写你的常驻城市，例如城市全称' },
-          ],
-        }],
-        answersPath: path.join(paths.root, 'home-city-answer.json'),
-        answersFormat: { answers: { homeCity: '用户明确填写的城市' } },
-        speak: '开始处理第一份报销任务前，要先请你确认常驻城市。这个值不能从材料、定位或登录身份推断；确认后只影响此后新建的任务。',
-        context: '常驻城市是当前 ERP 身份的个人绑定。以后重新确认时，已有任务仍使用创建时的城市快照。',
+      return run(argvFor('confirm-home-city'), {
+        speak: '开始处理第一份报销任务前，要先请你在 baox 打开的本地页面提交常驻城市。这个值不能从材料、定位、登录身份或聊天文本推断；提交后只影响此后新建的任务。',
+        context: '常驻城市是当前 ERP 身份的个人绑定。以后显式运行同一命令重新绑定时，已有任务仍使用创建时的城市快照。',
         progress: ENV_PROGRESS,
-        stepMeta: {
-          account: o.probe?.identity?.account ?? null,
-          tenant: o.probe?.identity?.tenant ?? null,
-        },
       });
 
     case 'env_identity_mismatched':
@@ -517,26 +502,10 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       });
 
     case 'task_home_city_unbound':
-      return askUser({
-        questions: [{
-          id: 'homeCity',
-          header: '确认旧任务的常驻城市',
-          question: '创建这项旧任务时使用的常驻城市是哪座城市？这个答案只固定到该任务，不修改你当前的个人常驻城市。',
-          options: [
-            { label: '暂不确认', description: '先停在这里，不给旧任务填写默认城市' },
-            { label: '其他', description: '请直接填写创建这项任务时适用的常驻城市' },
-          ],
-        }],
-        answersPath: path.join(o.task.workspace, 'home-city-answer.json'),
-        answersFormat: { answers: { homeCity: '用户明确填写的城市' } },
-        speak: `${label} 是升级前创建的任务，但没有留下可证明的常驻城市。请你明确确认创建这项任务时适用的城市；我不会拿当前个人绑定代填。`,
-        context: '这次确认只补全该旧任务的固定快照，不修改个人绑定，也不影响其他新旧任务。',
+      return run(argvFor('confirm-home-city', '--dir', o.sourceDir), {
+        speak: `${label} 是升级前创建的任务，但没有留下可证明的常驻城市。请在 baox 打开的本地页面提交创建该任务时适用的城市；我不会拿当前个人绑定代填。`,
+        context: '这次提交只补全该旧任务的固定快照和 account + tenant 归属，不修改个人绑定，也不影响其他新旧任务。',
         progress: MATERIAL_PROGRESS,
-        stepMeta: {
-          taskId: o.task.taskId,
-          account: o.probe?.identity?.account ?? null,
-          tenant: o.probe?.identity?.tenant ?? null,
-        },
       });
 
     case 'inventory_stale':
