@@ -1,6 +1,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { CDP_PORT, newTab, closeTab } from './chrome.mjs';
 
 // 地址只写进 stderr 是不够的：这些命令**前台阻塞**，Agent 在它返回之前既看不到 stderr
 // 也说不出话，于是"把地址给用户"这一步永远发生在用户已经干等完之后。所以内核自己把页面打开。
@@ -222,10 +223,25 @@ export function serveIdentityConfirmation(spec, opts = {}) {
       at: new Date().toISOString() }));
 }
 
-function serveLocal(render, { timeoutMs = 8 * 60 * 1000, onReady } = {}, onSubmit) {
+function serveLocal(render, { timeoutMs = 8 * 60 * 1000, onReady, cdpPort = CDP_PORT } = {}, onSubmit) {
   const nonce = crypto.randomBytes(16).toString('hex');
   return new Promise((resolve, reject) => {
     let timer;
+    let localTabId = null;
+    let localTabOpening = Promise.resolve();
+    const closeLocalTab = async () => {
+      await localTabOpening;
+      if (!localTabId) return;
+      const id = localTabId;
+      localTabId = null;
+      try { await closeTab(id, cdpPort); } catch {}
+    };
+    const finish = (result) => {
+      server.close(async () => {
+        await closeLocalTab();
+        resolve(result);
+      });
+    };
     const server = http.createServer(async (req, res) => {
       const url = new URL(req.url, 'http://127.0.0.1');
       if (req.method === 'GET' && url.pathname === '/' && url.searchParams.get('nonce') === nonce) {
@@ -241,20 +257,29 @@ function serveLocal(render, { timeoutMs = 8 * 60 * 1000, onReady } = {}, onSubmi
         res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
         clearTimeout(timer);
         // 提交这个动作本身就是确认。用户在对话里说"确认了"不算。
-        server.close(() => resolve(onSubmit(body)));
+        finish(onSubmit(body));
         return;
       }
       res.writeHead(404).end('not found');
     });
     server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(0, '127.0.0.1', async () => {
       const { port } = server.address();
       const url = `http://127.0.0.1:${port}/?nonce=${nonce}`;
       onReady?.(url);
-      openInBrowser(url);
-      timer = setTimeout(() => {
-        server.close(() => resolve({ status: 'timeout', timeoutMs }));
-      }, timeoutMs);
+      // 本地交互页不是 ERP 页面：优先借用 baox 已控制的 Chrome 新开一个临时标签，
+      // 结束时只按返回的 target id 关掉它。CDP 不可用时才退回系统默认浏览器。
+      if (process.env[AUTO_OPEN_OFF] !== '1') {
+        localTabOpening = (async () => {
+          try {
+            const tab = await newTab(url, cdpPort);
+            localTabId = tab.id;
+          } catch {
+            openInBrowser(url);
+          }
+        })();
+      }
+      timer = setTimeout(() => finish({ status: 'timeout', timeoutMs }), timeoutMs);
     });
   });
 }
