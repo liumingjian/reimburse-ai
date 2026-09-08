@@ -20,6 +20,10 @@ const { ingestReadings, confirmReadings, loadReading, projectReading } = await i
 const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const TEST_INV = 'test-transport-invoice.pdf';
 const TEST_ITI = 'test-three-trip-itinerary.pdf';
+const BLANK_LANDSCAPE_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAADklEQVR4nGP4DwMMcBYAs2AR7za3GVIAAAAASUVORK5CYII=',
+  'base64',
+);
 const TEST_PDFS = new Map([
   [TEST_INV, TEST_TRANSPORT_INVOICE_TEXT],
   [TEST_ITI, TEST_ITINERARY_TEXT],
@@ -66,7 +70,7 @@ test('行程单逐段明细取得出来，段数与它自己声明的一致', ()
 test('多段图片行程单确认后按逐段读数产生多条费用事件', async () => {
   const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-visual-itinerary-'));
   const imagePath = path.join(sourceDir, '三段行程单.png');
-  fs.copyFileSync(path.join(repo, 'resources', '交通', 'fengyun-1.png'), imagePath);
+  fs.writeFileSync(imagePath, BLANK_LANDSCAPE_PNG);
   const inventory = await takeInventory(sourceDir);
   const itineraryMaterial = inventory.materials[0];
   const task = createTask(sourceDir);
