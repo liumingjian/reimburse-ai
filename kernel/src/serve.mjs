@@ -23,10 +23,10 @@ export function openInBrowser(url) {
 // 这样就不存在"会话结束后怎么收"的问题 —— 进程的生命周期就是这一次选择的生命周期。
 // 端口用 0（临时端口），因此永远不会和别的东西冲突。
 //
-// 1.0.0 起，本地页面只剩两处：**重新绑定身份**和**浏览完整项目目录**。
-// 通用单选页（`select`）和逐段分摊页（`allocate`）都已经下线 —— 分摊改走对话提问
-// （`ask_user`），读数确认改走终端表格（`confirm_table`）。少一个页面就少一条
-// "用户在别处点过头"的路径，而这一版的全部意义就是只剩一条路径。
+// 1.0.0 起，业务本地页面只剩两处：**重新绑定身份**和**浏览完整项目目录**。
+// Reset 另用一页只收破坏性操作确认，不接收任何业务事实。通用单选页（`select`）和逐段分摊页
+// （`allocate`）都已经下线 —— 分摊改走对话提问（`ask_user`），读数确认改走终端表格
+// （`confirm_table`）。
 
 /**
  * 任务选择页。**这是项目归属、常驻城市和事由进入系统的唯一通道。**
@@ -143,6 +143,33 @@ export function serveTaskSelection(spec, opts = {}) {
   return serveLocal((nonce) => renderTaskSelectPage(spec, nonce), opts,
     (body) => ({ status: 'submitted', homeCity: body.homeCity, purpose: body.purpose,
       projects: body.projects ?? {}, at: new Date().toISOString() }));
+}
+
+export function renderResetPage(spec, nonce) {
+  const home = String(spec.home).replace(/[&<>"]/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>完全重置 baox</title><style>
+body{font:16px/1.6 -apple-system,"PingFang SC",sans-serif;margin:0;padding:32px 20px;
+  display:flex;justify-content:center}main{width:100%;max-width:560px}
+code{word-break:break-all}button{width:100%;padding:14px;font-size:16px;font-weight:600;color:#fff;
+  background:#dc2626;border:0;border-radius:10px;cursor:pointer}.warn{padding:14px 16px;background:#fee2e2;color:#7f1d1d;border-radius:10px}
+#done{display:none;text-align:center;padding:48px 0}</style></head><body><main>
+<form id="f"><h1>完全重置 baox</h1>
+<p>将清空 <code>${home}</code> 中的全部本地内容，包括任务、身份、流程进度、日志、浏览器登录状态，并关闭 baox 专用浏览器。</p>
+<p class="warn">此操作不可恢复。不会删除原始报销材料，也不会修改 ERP 或卸载 baox。</p>
+<button type="submit">完全重置</button></form>
+<div id="done">正在重置，请回到 Claude Code 查看结果。</div>
+<script>document.getElementById('f').addEventListener('submit',async(e)=>{e.preventDefault();
+e.target.querySelector('button').disabled=true;await fetch('/submit?nonce=${nonce}',{method:'POST',
+headers:{'content-type':'application/json'},body:JSON.stringify({confirmed:true})});
+document.getElementById('f').style.display='none';document.getElementById('done').style.display='block';});</script>
+</main></body></html>`;
+}
+
+export function serveResetConfirmation(spec, opts = {}) {
+  return serveLocal((nonce) => renderResetPage(spec, nonce), opts,
+    (body) => ({ status: body.confirmed === true ? 'submitted' : 'declined' }));
 }
 
 /**

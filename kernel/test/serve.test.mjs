@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as serve from '../src/serve.mjs';
-import { openInBrowser } from '../src/serve.mjs';
+import { openInBrowser, renderResetPage } from '../src/serve.mjs';
 
 // 本地页面是前台阻塞的：命令返回之前 Agent 说不了话，所以"把地址给用户"这件事
 // 只能由内核自己做。这里盯住的是那个开关本身。
@@ -24,10 +24,18 @@ test('打不开浏览器不算失败：命令不存在时也不抛', () => {
   } finally { process.env.PATH = before; }
 });
 
-// 本地页面每多一个，就多一条"用户在别处点过头"的路径。1.0.0 收窄到两处之后，
-// 剩下的两个都是终端做不了的事：认一次身份，翻一遍完整的项目目录。
-// 通用单选页和逐段分摊页连同命令一起下线了 —— 分摊改走对话提问，读数确认改走终端表格。
-test('本地页面只剩重新绑定身份和浏览项目目录两处', () => {
+// Reset 是第三处：它只收一次破坏性操作确认，不承载业务字段。
+test('本地页面只有身份、任务选择和 Full Reset 三处', () => {
   const servers = Object.keys(serve).filter((k) => k.startsWith('serve'));
-  assert.deepEqual(servers.sort(), ['serveIdentityConfirmation', 'serveTaskSelection']);
+  assert.deepEqual(servers.sort(), ['serveIdentityConfirmation', 'serveResetConfirmation', 'serveTaskSelection']);
+});
+
+
+test('Reset 页把清空范围和外部边界说清楚，只提供一次确认', () => {
+  const html = renderResetPage({ home: '/tmp/baox-test' }, 'nonce-value');
+  assert.match(html, /\/tmp\/baox-test/);
+  assert.match(html, /任务、身份、流程进度、日志、浏览器登录状态/);
+  assert.match(html, /不会删除原始报销材料，也不会修改 ERP/);
+  assert.match(html, /完全重置/);
+  assert.match(html, /nonce-value/);
 });
