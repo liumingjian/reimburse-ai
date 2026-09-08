@@ -227,35 +227,55 @@ function serveLocal(render, {
   timeoutMs = 8 * 60 * 1000, onReady, cdpPort = CDP_PORT, openBrowser = openInBrowser,
 } = {}, onSubmit) {
   const nonce = crypto.randomBytes(16).toString('hex');
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   return new Promise((resolve, reject) => {
     let timer;
     let finishing = false;
     let localUrl = null;
     let localTabId = null;
     let localTabMayExist = false;
+    let localTabOpenError = null;
     let localTabOpening = Promise.resolve();
+    const requests = new Set();
+    const sockets = new Set();
+    const matchingNewTarget = async (beforeIds, attempts = 1) => {
+      let lastError;
+      for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+          const matches = (await targets(cdpPort)).filter((tab) => tab.type === 'page'
+            && tab.url === localUrl && tab.id && !beforeIds.has(tab.id));
+          if (matches.length === 1) return matches[0];
+          if (matches.length > 1) throw new Error('本次新增的本地交互页 target 不唯一');
+        } catch (error) { lastError = error; }
+        if (attempt < attempts) await pause(20);
+      }
+      if (lastError) throw lastError;
+      return null;
+    };
     const closeLocalTab = async () => {
       await localTabOpening;
-      if (!localTabId && localTabMayExist && localUrl) {
-        try {
-          const match = (await targets(cdpPort)).find((tab) => tab.url === localUrl);
-          localTabId = match?.id ?? null;
-        } catch (error) {
-          throw new Error('本地交互页标签清理状态未知', { cause: error });
-        }
+      if (!localTabId && localTabMayExist) {
+        throw new Error('本地交互页标签清理状态未知',
+          localTabOpenError ? { cause: localTabOpenError } : undefined);
       }
       if (!localTabId) return;
       const id = localTabId;
       let lastError = null;
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         try {
-          if (await closeTab(id, cdpPort)) {
-            localTabId = null;
-            return;
+          const accepted = await closeTab(id, cdpPort);
+          if (accepted) {
+            let stillPresent = true;
+            for (let check = 0; check < 3; check += 1) {
+              stillPresent = (await targets(cdpPort)).some((tab) => tab.id === id);
+              if (!stillPresent) {
+                localTabId = null;
+                return;
+              }
+              if (check < 2) await pause(20);
+            }
           }
-        } catch (error) {
-          lastError = error;
-        }
+        } catch (error) { lastError = error; }
       }
       throw new Error(`本地交互页标签关闭失败: ${id}`, lastError ? { cause: lastError } : undefined);
     };
@@ -264,17 +284,24 @@ function serveLocal(render, {
       finishing = true;
       clearTimeout(timer);
       server.close(async (closeError) => {
-        try {
-          await closeLocalTab();
-          if (error) reject(error);
-          else if (closeError) reject(closeError);
-          else resolve(result);
-        } catch (cleanupError) {
-          reject(cleanupError);
-        }
+        let cleanupError = null;
+        try { await closeLocalTab(); } catch (caught) { cleanupError = caught; }
+        const originalError = error ?? closeError;
+        if (originalError && cleanupError) {
+          reject(new AggregateError([originalError, cleanupError],
+            `${originalError.message}; cleanup: ${cleanupError.message}`));
+        } else if (originalError) reject(originalError);
+        else if (cleanupError) reject(cleanupError);
+        else resolve(result);
       });
+      for (const req of requests) req.destroy();
+      for (const socket of sockets) socket.destroy();
     };
     const server = http.createServer(async (req, res) => {
+      requests.add(req);
+      const release = () => requests.delete(req);
+      req.once('close', release);
+      req.once('error', release);
       const url = new URL(req.url, 'http://127.0.0.1');
       if (req.method === 'GET' && url.pathname === '/' && url.searchParams.get('nonce') === nonce) {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -282,7 +309,13 @@ function serveLocal(render, {
       }
       if (req.method === 'POST' && url.pathname === '/submit' && url.searchParams.get('nonce') === nonce) {
         const chunks = [];
-        for await (const c of req) chunks.push(c);
+        try {
+          for await (const c of req) chunks.push(c);
+        } catch (error) {
+          if (!finishing && !res.destroyed) res.writeHead(400).end('request aborted');
+          return;
+        }
+        if (finishing || req.aborted) return;
         let body;
         try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
         catch { res.writeHead(400).end('bad json'); return; }
@@ -294,31 +327,45 @@ function serveLocal(render, {
       }
       res.writeHead(404).end('not found');
     });
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.once('close', () => sockets.delete(socket));
+      socket.on('error', () => {});
+    });
     server.on('error', (error) => finish(null, error));
     server.listen(0, '127.0.0.1', async () => {
       const { port } = server.address();
       const url = `http://127.0.0.1:${port}/?nonce=${nonce}`;
       localUrl = url;
       onReady?.(url, server);
-      // 本地交互页不是 ERP 页面：优先借用 baox 已控制的 Chrome 新开一个临时标签，
-      // 结束时只按返回的 target id 关掉它。CDP 不可用时才退回系统默认浏览器。
+      // 本地交互页不是 ERP 页面：优先借用 baox 已控制的 Chrome 新开一个临时标签。
+      // 只有 CDP 本身不可达才回退系统浏览器；创建结果不确定时绝不双开。
       if (process.env[AUTO_OPEN_OFF] !== '1') {
         localTabOpening = (async () => {
           if (!await version(cdpPort)) {
             openBrowser(url);
             return;
           }
-          localTabMayExist = true;
-          try {
-            const tab = await newTab(url, cdpPort);
-            if (tab?.type !== 'page' || tab?.url !== url || !tab?.id) {
-              throw new Error('CDP /json/new 返回的 target 与本地交互页不一致');
-            }
-            localTabId = tab.id;
-          } catch {
-            // /json/new may have created the target before its response failed. Cleanup
-            // identifies it later by this invocation's complete nonce-bearing URL.
+          let before;
+          try { before = new Set((await targets(cdpPort)).map((tab) => tab.id)); }
+          catch (error) {
+            localTabOpenError = new Error('本地交互页创建前 target 状态未知', { cause: error });
+            return;
           }
+          localTabMayExist = true;
+          let createError = null;
+          try { await newTab(url, cdpPort); } catch (error) { createError = error; }
+          let match;
+          try { match = await matchingNewTarget(before, createError ? 5 : 1); }
+          catch (error) { localTabOpenError = error; return; }
+          if (match) {
+            localTabId = match.id;
+            localTabMayExist = false;
+            return;
+          }
+          localTabOpenError = createError
+            ? new Error('本地交互页标签清理状态未知', { cause: createError })
+            : new Error('CDP 创建后未发现本次新增的本地交互页 target');
         })();
       }
       timer = setTimeout(() => finish({ status: 'timeout', timeoutMs }), timeoutMs);

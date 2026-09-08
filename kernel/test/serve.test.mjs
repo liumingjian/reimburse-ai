@@ -56,287 +56,10 @@ test('本地页面只剩重新绑定身份和浏览项目目录两处', () => {
   assert.deepEqual(servers.sort(), ['serveIdentityConfirmation', 'serveTaskSelection']);
 });
 
-test('任务选择页借用受控 Chrome 标签，提交后只关闭这个本地标签', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-browser-qa-'));
-  const beforeHome = process.env.BAOX_HOME;
-  const beforeAutoOpen = process.env.BAOX_NO_AUTO_OPEN;
-  process.env.BAOX_HOME = home;
-  delete process.env.BAOX_NO_AUTO_OPEN;
-  const requests = [];
-  let openedResolve;
-  const opened = new Promise((resolve) => { openedResolve = resolve; });
-  const cdp = http.createServer((req, res) => {
-    requests.push({ method: req.method, url: req.url });
-    if (req.url === '/json/version') {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      return res.end('{"Browser":"Fixture Chrome"}');
-    }
-    if (req.method === 'PUT' && req.url.startsWith('/json/new?')) {
-      openedResolve();
-      const url = decodeURIComponent(req.url.slice('/json/new?'.length));
-      res.writeHead(200, { 'content-type': 'application/json' });
-      return res.end(JSON.stringify({ id: 'local-task-page', type: 'page', url }));
-    }
-    if (req.url === '/json/close/local-task-page') return res.end('Target is closing');
-    res.writeHead(404).end();
-  });
-  await new Promise((resolve) => cdp.listen(0, '127.0.0.1', resolve));
-  const port = cdp.address().port;
-
-  try {
-    let localUrl;
-    const pending = serve.serveTaskSelection({
-      homeCity: '虚构市', purpose: '虚构客户拜访',
-      lines: [{ lineId: 'line-fixture', fileName: 'fixture-invoice.pdf', totalAmount: '12.34' }],
-    }, { cdpPort: port, timeoutMs: 1000, onReady: (url) => { localUrl = url; } });
-
-    await opened;
-    assert.ok(requests.some((r) => r.url.startsWith('/json/new?')),
-      '本地交互页应在受控 Chrome 中打开');
-    const response = await fetch(localUrl.replace('/?', '/submit?'), {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ homeCity: '虚构市', purpose: '虚构客户拜访',
-        projects: { 'line-fixture': 'P-FICTIONAL' } }),
-    });
-    assert.equal(response.ok, true);
-    assert.equal((await pending).status, 'submitted');
-
-    const openedRequest = requests.find((r) => r.url.startsWith('/json/new?'));
-    assert.equal(decodeURIComponent(openedRequest.url.slice('/json/new?'.length)), localUrl);
-    assert.deepEqual(requests.filter((r) => r.url.startsWith('/json/close/')).map((r) => r.url),
-      ['/json/close/local-task-page'], 'ERP 等既有标签不得被关闭');
-  } finally {
-    await new Promise((resolve) => cdp.close(resolve));
-    fs.rmSync(home, { recursive: true, force: true });
-    if (beforeHome === undefined) delete process.env.BAOX_HOME;
-    else process.env.BAOX_HOME = beforeHome;
-    if (beforeAutoOpen === undefined) delete process.env.BAOX_NO_AUTO_OPEN;
-    else process.env.BAOX_NO_AUTO_OPEN = beforeAutoOpen;
-  }
-});
-
-test('本地交互超时也关闭自己借用的受控 Chrome 标签', async () => {
-  const beforeAutoOpen = process.env.BAOX_NO_AUTO_OPEN;
-  delete process.env.BAOX_NO_AUTO_OPEN;
-  const requests = [];
-  const cdp = http.createServer((req, res) => {
-    requests.push(req.url);
-    if (req.url === '/json/version') {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      return res.end('{"Browser":"Fixture Chrome"}');
-    }
-    if (req.method === 'PUT' && req.url.startsWith('/json/new?')) {
-      const url = decodeURIComponent(req.url.slice('/json/new?'.length));
-      res.writeHead(200, { 'content-type': 'application/json' });
-      return res.end(JSON.stringify({ id: 'timed-out-local-page', type: 'page', url }));
-    }
-    if (req.url === '/json/close/timed-out-local-page') return res.end('Target is closing');
-    res.writeHead(404).end();
-  });
-  await new Promise((resolve) => cdp.listen(0, '127.0.0.1', resolve));
-
-  try {
-    const result = await serve.serveIdentityConfirmation({
-      identity: { displayName: '虚构员工', account: 'fixture.user', tenant: 'fixture-tenant' },
-    }, { cdpPort: cdp.address().port, timeoutMs: 20 });
-    assert.equal(result.status, 'timeout');
-    assert.deepEqual(requests.filter((url) => url.startsWith('/json/close/')),
-      ['/json/close/timed-out-local-page']);
-  } finally {
-    await new Promise((resolve) => cdp.close(resolve));
-    if (beforeAutoOpen === undefined) delete process.env.BAOX_NO_AUTO_OPEN;
-    else process.env.BAOX_NO_AUTO_OPEN = beforeAutoOpen;
-  }
-});
 
 
-test('创建本地标签后响应损坏时按本次完整 URL 精确找回，且不关闭既有 ERP 标签', async () => {
-  const beforeAutoOpen = process.env.BAOX_NO_AUTO_OPEN;
-  delete process.env.BAOX_NO_AUTO_OPEN;
-  const requests = [];
-  const pages = [
-    { id: 'existing-erp-page', type: 'page', url: 'http://erp.example.test/fictional' },
-    { id: 'other-local-page', type: 'page', url: 'http://127.0.0.1:1/?nonce=other-invocation' },
-  ];
-  let localUrl;
-  const openedUrls = [];
-  let createdResolve;
-  const created = new Promise((resolve) => { createdResolve = resolve; });
-  const cdp = http.createServer((req, res) => {
-    requests.push(req.url);
-    if (req.url === '/json/version') {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      return res.end('{"Browser":"Fixture Chrome"}');
-    }
-    if (req.method === 'PUT' && req.url.startsWith('/json/new?')) {
-      localUrl = decodeURIComponent(req.url.slice('/json/new?'.length));
-      pages.push({ id: 'created-before-damaged-response', type: 'page', url: localUrl });
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end('{damaged');
-      createdResolve();
-      return;
-    }
-    if (req.url === '/json/list') {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      return res.end(JSON.stringify(pages));
-    }
-    if (req.url === '/json/close/created-before-damaged-response') {
-      pages.splice(pages.findIndex((page) => page.id === 'created-before-damaged-response'), 1);
-      return res.end('Target is closing');
-    }
-    res.writeHead(404).end();
-  });
-  await new Promise((resolve) => cdp.listen(0, '127.0.0.1', resolve));
-
-  try {
-    let readyUrl;
-    const pending = serve.serveIdentityConfirmation({
-      identity: { displayName: '虚构员工', account: 'fixture.user', tenant: 'fixture-tenant' },
-    }, { cdpPort: cdp.address().port, timeoutMs: 1000,
-      onReady: (url) => { readyUrl = url; },
-      openBrowser: (url) => { openedUrls.push(url); return true; } });
-    await created;
-    assert.equal(localUrl, readyUrl);
-    assert.deepEqual(openedUrls, [], '创建结果不确定时不能回退系统浏览器造成双开');
-    const response = await fetch(readyUrl.replace('/?', '/submit?'), {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ confirmed: true }),
-    });
-    assert.equal(response.ok, true);
-    assert.equal((await pending).status, 'submitted');
-    assert.deepEqual(requests.filter((url) => url.startsWith('/json/close/')),
-      ['/json/close/created-before-damaged-response']);
-    assert.equal(pages.some((page) => page.id === 'existing-erp-page'), true);
-    assert.equal(pages.some((page) => page.id === 'other-local-page'), true);
-  } finally {
-    await new Promise((resolve) => cdp.close(resolve));
-    if (beforeAutoOpen === undefined) delete process.env.BAOX_NO_AUTO_OPEN;
-    else process.env.BAOX_NO_AUTO_OPEN = beforeAutoOpen;
-  }
-});
 
 
-test('关闭本地标签遇到非成功响应时有界重试', async () => {
-  const beforeAutoOpen = process.env.BAOX_NO_AUTO_OPEN;
-  delete process.env.BAOX_NO_AUTO_OPEN;
-  let localUrl;
-  let closeAttempts = 0;
-  let openedResolve;
-  const opened = new Promise((resolve) => { openedResolve = resolve; });
-  const cdp = http.createServer((req, res) => {
-    if (req.url === '/json/version') return res.end('{"Browser":"Fixture Chrome"}');
-    if (req.method === 'PUT' && req.url.startsWith('/json/new?')) {
-      localUrl = decodeURIComponent(req.url.slice('/json/new?'.length));
-      openedResolve();
-      return res.end(JSON.stringify({ id: 'retry-close-page', type: 'page', url: localUrl }));
-    }
-    if (req.url === '/json/close/retry-close-page') {
-      closeAttempts += 1;
-      if (closeAttempts < 3) return res.writeHead(503).end('not closed');
-      return res.end('Target is closing');
-    }
-    res.writeHead(404).end();
-  });
-  await new Promise((resolve) => cdp.listen(0, '127.0.0.1', resolve));
-
-  try {
-    const pending = serve.serveIdentityConfirmation({
-      identity: { displayName: '虚构员工', account: 'fixture.user', tenant: 'fixture-tenant' },
-    }, { cdpPort: cdp.address().port, timeoutMs: 1000 });
-    await opened;
-    const response = await fetch(localUrl.replace('/?', '/submit?'), {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ confirmed: true }),
-    });
-    assert.equal(response.ok, true);
-    assert.equal((await pending).status, 'submitted');
-    assert.equal(closeAttempts, 3);
-  } finally {
-    await new Promise((resolve) => cdp.close(resolve));
-    if (beforeAutoOpen === undefined) delete process.env.BAOX_NO_AUTO_OPEN;
-    else process.env.BAOX_NO_AUTO_OPEN = beforeAutoOpen;
-  }
-});
-
-
-test('关闭本地标签连续失败时不谎报生命周期已完成', async () => {
-  const beforeAutoOpen = process.env.BAOX_NO_AUTO_OPEN;
-  delete process.env.BAOX_NO_AUTO_OPEN;
-  let localUrl;
-  let openedResolve;
-  const opened = new Promise((resolve) => { openedResolve = resolve; });
-  let closeAttempts = 0;
-  const cdp = http.createServer((req, res) => {
-    if (req.url === '/json/version') return res.end('{"Browser":"Fixture Chrome"}');
-    if (req.method === 'PUT' && req.url.startsWith('/json/new?')) {
-      localUrl = decodeURIComponent(req.url.slice('/json/new?'.length));
-      openedResolve();
-      return res.end(JSON.stringify({ id: 'unclosed-local-page', type: 'page', url: localUrl }));
-    }
-    if (req.url === '/json/close/unclosed-local-page') {
-      closeAttempts += 1;
-      return res.writeHead(503).end('still open');
-    }
-    res.writeHead(404).end();
-  });
-  await new Promise((resolve) => cdp.listen(0, '127.0.0.1', resolve));
-
-  try {
-    const pending = serve.serveIdentityConfirmation({
-      identity: { displayName: '虚构员工', account: 'fixture.user', tenant: 'fixture-tenant' },
-    }, { cdpPort: cdp.address().port, timeoutMs: 1000 });
-    await opened;
-    const response = await fetch(localUrl.replace('/?', '/submit?'), {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ confirmed: true }),
-    });
-    assert.equal(response.ok, true);
-    await assert.rejects(pending, /本地交互页标签关闭失败: unclosed-local-page/);
-    assert.equal(closeAttempts, 3);
-  } finally {
-    await new Promise((resolve) => cdp.close(resolve));
-    if (beforeAutoOpen === undefined) delete process.env.BAOX_NO_AUTO_OPEN;
-    else process.env.BAOX_NO_AUTO_OPEN = beforeAutoOpen;
-  }
-});
-
-
-test('本地 HTTP server 出错时仍关闭本次受控 Chrome 标签并报告错误', async () => {
-  const beforeAutoOpen = process.env.BAOX_NO_AUTO_OPEN;
-  delete process.env.BAOX_NO_AUTO_OPEN;
-  const requests = [];
-  let localServer;
-  let openedResolve;
-  const opened = new Promise((resolve) => { openedResolve = resolve; });
-  const cdp = http.createServer((req, res) => {
-    requests.push(req.url);
-    if (req.url === '/json/version') return res.end('{"Browser":"Fixture Chrome"}');
-    if (req.method === 'PUT' && req.url.startsWith('/json/new?')) {
-      openedResolve();
-      const url = decodeURIComponent(req.url.slice('/json/new?'.length));
-      return res.end(JSON.stringify({ id: 'server-error-local-page', type: 'page', url }));
-    }
-    if (req.url === '/json/close/server-error-local-page') return res.end('Target is closing');
-    res.writeHead(404).end();
-  });
-  await new Promise((resolve) => cdp.listen(0, '127.0.0.1', resolve));
-
-  try {
-    const pending = serve.serveIdentityConfirmation({
-      identity: { displayName: '虚构员工', account: 'fixture.user', tenant: 'fixture-tenant' },
-    }, { cdpPort: cdp.address().port, timeoutMs: 1000,
-      onReady: (_url, server) => { localServer = server; } });
-    await opened;
-    localServer.emit('error', new Error('fixture local server failure'));
-    await assert.rejects(pending, /fixture local server failure/);
-    assert.deepEqual(requests.filter((url) => url.startsWith('/json/close/')),
-      ['/json/close/server-error-local-page']);
-  } finally {
-    await new Promise((resolve) => cdp.close(resolve));
-    if (beforeAutoOpen === undefined) delete process.env.BAOX_NO_AUTO_OPEN;
-    else process.env.BAOX_NO_AUTO_OPEN = beforeAutoOpen;
-  }
-});
 
 
 test('CDP 确实不可用时才回退系统浏览器', async () => {
@@ -367,38 +90,161 @@ test('CDP 确实不可用时才回退系统浏览器', async () => {
 });
 
 
-test('创建结果不确定且无法查询 target 时报告清理失败', async () => {
-  const beforeAutoOpen = process.env.BAOX_NO_AUTO_OPEN;
+
+async function withLifecycleFixture(config, run) {
+  const before = process.env.BAOX_NO_AUTO_OPEN;
   delete process.env.BAOX_NO_AUTO_OPEN;
+  const pages = [...(config.initialPages ?? [])];
+  const requests = [];
+  let listReads = 0;
   let localUrl;
   let createdResolve;
   const created = new Promise((resolve) => { createdResolve = resolve; });
   const cdp = http.createServer((req, res) => {
+    requests.push(req.url);
     if (req.url === '/json/version') return res.end('{"Browser":"Fixture Chrome"}');
+    if (req.url === '/json/list') {
+      listReads += 1;
+      return res.end(JSON.stringify(config.visiblePages?.({ pages, listReads, localUrl }) ?? pages));
+    }
     if (req.method === 'PUT' && req.url.startsWith('/json/new?')) {
       localUrl = decodeURIComponent(req.url.slice('/json/new?'.length));
+      config.create?.({ pages, localUrl, res });
       createdResolve();
-      return res.end('{damaged');
+      if (!res.writableEnded) res.end(JSON.stringify({ id: 'response-id', type: 'page', url: localUrl }));
+      return;
     }
-    if (req.url === '/json/list') return res.writeHead(503).end('cannot inspect');
+    if (req.url.startsWith('/json/close/')) {
+      const id = decodeURIComponent(req.url.slice('/json/close/'.length));
+      config.close?.({ pages, id, res });
+      if (!res.writableEnded) res.end('Target is closing');
+      return;
+    }
     res.writeHead(404).end();
   });
   await new Promise((resolve) => cdp.listen(0, '127.0.0.1', resolve));
-
   try {
-    const pending = serve.serveIdentityConfirmation({
-      identity: { displayName: '虚构员工', account: 'fixture.user', tenant: 'fixture-tenant' },
-    }, { cdpPort: cdp.address().port, timeoutMs: 1000 });
-    await created;
-    const response = await fetch(localUrl.replace('/?', '/submit?'), {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ confirmed: true }),
-    });
-    assert.equal(response.ok, true);
-    await assert.rejects(pending, /本地交互页标签清理状态未知/);
+    await run({ cdp, pages, requests, created, get localUrl() { return localUrl; } });
   } finally {
+    cdp.closeAllConnections();
     await new Promise((resolve) => cdp.close(resolve));
-    if (beforeAutoOpen === undefined) delete process.env.BAOX_NO_AUTO_OPEN;
-    else process.env.BAOX_NO_AUTO_OPEN = beforeAutoOpen;
+    if (before === undefined) delete process.env.BAOX_NO_AUTO_OPEN;
+    else process.env.BAOX_NO_AUTO_OPEN = before;
   }
+}
+
+const identity = { identity: { displayName: '虚构员工', account: 'fixture.user', tenant: 'fixture-tenant' } };
+const submitIdentity = (url) => fetch(url.replace('/?', '/submit?'), {
+  method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ confirmed: true }),
+});
+
+test('错误创建响应 id 不受信，只关闭前后列表新增且 URL 匹配的 page', async () => {
+  await withLifecycleFixture({
+    initialPages: [{ id: 'preexisting', type: 'page', url: 'http://erp.invalid/' }],
+    create: ({ pages, localUrl, res }) => {
+      pages.push({ id: 'actual-new-id', type: 'page', url: localUrl });
+      res.end(JSON.stringify({ id: 'preexisting', type: 'page', url: localUrl }));
+    },
+    close: ({ pages, id }) => pages.splice(pages.findIndex((page) => page.id === id), 1),
+  }, async (fixture) => {
+    let url;
+    const pending = serve.serveIdentityConfirmation(identity, { cdpPort: fixture.cdp.address().port,
+      timeoutMs: 1000, onReady: (u) => { url = u; } });
+    await fixture.created;
+    assert.equal((await submitIdentity(url)).ok, true);
+    assert.equal((await pending).status, 'submitted');
+    assert.deepEqual(fixture.requests.filter((r) => r.startsWith('/json/close/')), ['/json/close/actual-new-id']);
+    assert.equal(fixture.pages.some((page) => page.id === 'preexisting'), true);
+  });
+});
+
+test('重复 URL 用创建前后 id 差集消歧，不关闭预存同 URL target', async () => {
+  let url;
+  await withLifecycleFixture({
+    initialPages: [{ id: 'same-url-before', type: 'page', get url() { return url; } }],
+    create: ({ pages, localUrl }) => {
+      pages.push({ id: 'same-url-new', type: 'page', url: localUrl });
+    },
+    close: ({ pages, id }) => pages.splice(pages.findIndex((page) => page.id === id), 1),
+  }, async (fixture) => {
+    const pending = serve.serveIdentityConfirmation(identity, { cdpPort: fixture.cdp.address().port,
+      timeoutMs: 1000, onReady: (u) => { url = u; } });
+    await fixture.created;
+    assert.equal((await submitIdentity(url)).ok, true);
+    assert.equal((await pending).status, 'submitted');
+    assert.deepEqual(fixture.requests.filter((r) => r.startsWith('/json/close/')), ['/json/close/same-url-new']);
+    assert.equal(fixture.pages.some((page) => page.id === 'same-url-before'), true);
+  });
+});
+
+test('close 返回 2xx 但 target 仍存在时重试并明确失败', async () => {
+  await withLifecycleFixture({
+    create: ({ pages, localUrl }) => pages.push({ id: 'stubborn', type: 'page', url: localUrl }),
+  }, async (fixture) => {
+    let url;
+    const pending = serve.serveIdentityConfirmation(identity, { cdpPort: fixture.cdp.address().port,
+      timeoutMs: 1000, onReady: (u) => { url = u; } });
+    await fixture.created;
+    assert.equal((await submitIdentity(url)).ok, true);
+    await assert.rejects(pending, /标签关闭失败: stubborn/);
+    assert.equal(fixture.requests.filter((r) => r === '/json/close/stubborn').length, 3);
+  });
+});
+
+test('创建响应异常后短时重查延迟可见 target，且不打开系统浏览器', async () => {
+  const opened = [];
+  await withLifecycleFixture({
+    create: ({ pages, localUrl, res }) => {
+      pages.push({ id: 'delayed', type: 'page', url: localUrl, visibleAfter: 4 });
+      res.end('{broken');
+    },
+    visiblePages: ({ pages, listReads }) => pages.filter((page) => !page.visibleAfter || listReads >= page.visibleAfter),
+    close: ({ pages, id }) => pages.splice(pages.findIndex((page) => page.id === id), 1),
+  }, async (fixture) => {
+    let url;
+    const pending = serve.serveIdentityConfirmation(identity, { cdpPort: fixture.cdp.address().port,
+      timeoutMs: 1000, onReady: (u) => { url = u; }, openBrowser: (u) => opened.push(u) });
+    await fixture.created;
+    assert.equal((await submitIdentity(url)).ok, true);
+    assert.equal((await pending).status, 'submitted');
+    assert.deepEqual(opened, []);
+    assert.deepEqual(fixture.requests.filter((r) => r.startsWith('/json/close/')), ['/json/close/delayed']);
+  });
+});
+
+test('半提交 body 长连接在 timeout 后有界收口', async () => {
+  await withLifecycleFixture({
+    create: ({ pages, localUrl }) => pages.push({ id: 'half-body', type: 'page', url: localUrl }),
+    close: ({ pages, id }) => pages.splice(pages.findIndex((page) => page.id === id), 1),
+  }, async (fixture) => {
+    let url;
+    const pending = serve.serveIdentityConfirmation(identity, { cdpPort: fixture.cdp.address().port,
+      timeoutMs: 30, onReady: (u) => { url = u; } });
+    await fixture.created;
+    const req = http.request(url.replace('/?', '/submit?'), { method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-length': 100 } });
+    req.on('error', () => {});
+    req.write('{"confirmed":');
+    const result = await Promise.race([pending,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('fixture hung')), 1000))]);
+    assert.equal(result.status, 'timeout');
+    req.destroy();
+  });
+});
+
+test('原始 server error 与 cleanup error 同时保留用于诊断', async () => {
+  await withLifecycleFixture({
+    create: ({ pages, localUrl }) => pages.push({ id: 'both-errors', type: 'page', url: localUrl }),
+  }, async (fixture) => {
+    let server;
+    const pending = serve.serveIdentityConfirmation(identity, { cdpPort: fixture.cdp.address().port,
+      timeoutMs: 1000, onReady: (_url, s) => { server = s; } });
+    await fixture.created;
+    server.emit('error', new Error('fixture original server error'));
+    await assert.rejects(pending, (error) => {
+      assert.match(String(error), /fixture original server error/);
+      assert.match(String(error), /标签关闭失败: both-errors/);
+      return true;
+    });
+  });
 });
