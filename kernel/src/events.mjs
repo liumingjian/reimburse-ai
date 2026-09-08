@@ -70,7 +70,15 @@ export function linkEvidence(vouchers, references) {
     }
     for (const [k, n] of kinds) {
       if (n > 1) {
-        ambiguous.push({ materialId: voucherId, sameKind: k, count: n });
+        ambiguous.push({
+          materialId: voucherId,
+          sameKind: k,
+          count: n,
+          references: refIds
+            .map((id) => references.find((r) => r.materialId === id))
+            .filter((r) => r.kind === k)
+            .map((r) => ({ materialId: r.materialId, fileName: r.fileName })),
+        });
         links.set(voucherId, links.get(voucherId)
           .filter((id) => references.find((r) => r.materialId === id).kind !== k));
       }

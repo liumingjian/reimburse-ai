@@ -130,7 +130,12 @@ test('同一发票对上两份同额行程单时阻塞，且不采用任一行�
   const ambiguous = eventOpenItems(built).find((item) => item.kind === 'evidence_ambiguous');
   assert.ok(ambiguous);
   assert.equal(ambiguous.blocking, true);
+  assert.equal(ambiguous.materialId, 'm-invoice');
   assert.equal(ambiguous.sameKind, 'ride_itinerary');
+  assert.deepEqual(ambiguous.references, [
+    { materialId: 'm-itinerary-a', fileName: 'itinerary-a.png' },
+    { materialId: 'm-itinerary-b', fileName: 'itinerary-b.png' },
+  ]);
   assert.deepEqual(built.events[0].referenceMaterialIds, []);
   assert.equal(built.events[0].date, null, '歧义未处置前不能按输入顺序挑一份行程单');
 });
