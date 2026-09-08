@@ -103,6 +103,7 @@ const asBlocker = (i) => ({
   kind: i.kind,
   materialId: i.materialId ?? null,
   ...(i.materialIds ? { materialIds: i.materialIds } : {}),
+  ...(i.references ? { references: i.references } : {}),
   fileName: i.fileName ?? null,
   hint: i.note ?? null,
   resolvableBy: RESOLVER[i.kind] ?? 'user',

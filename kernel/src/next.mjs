@@ -400,8 +400,15 @@ const SOURCE_LABELS = { vision: '我看图读的', user: '你给的', kernel: '�
 
 /** 待办清单念给用户听的样子。谁能解决它，是每条最要紧的那半句。 */
 const WHO = { user: '要你处理', model: '我来处理', kernel: '内核已经自己处置了，说一声而已' };
+const itemIdentity = (b) => {
+  if (b.kind === 'evidence_ambiguous' && b.references?.length) {
+    return `${b.materialId}；候选参考材料：${b.references
+      .map((r) => `${r.materialId}（${r.fileName}）`).join('、')}`;
+  }
+  return b.fileName ?? b.materialIds?.join('、') ?? '这批材料';
+};
 const itemLines = (items) => items
-  .map((b, n) => `${n + 1}. ${b.fileName ?? b.materialIds?.join('、') ?? '这批材料'}`
+  .map((b, n) => `${n + 1}. ${itemIdentity(b)}`
     + `——${b.hint ?? b.kind}（${WHO[b.resolvableBy] ?? WHO.user}）`)
   .join('\n');
 

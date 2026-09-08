@@ -11,6 +11,8 @@ const { takeInventory } = await import('../src/inventory.mjs');
 const { createTask } = await import('../src/workspace.mjs');
 const { ingestReadings, confirmReadings, loadReading, projectReading } = await import('../src/vision.mjs');
 const { buildEvents, eventOpenItems } = await import('../src/events.mjs');
+const { determineState, SCHEMA_VERSION } = await import('../src/state.mjs');
+const { stepFor } = await import('../src/next.mjs');
 
 const BLANK_LANDSCAPE_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAADklEQVR4nGP4DwMMcBYAs2AR7za3GVIAAAAASUVORK5CYII=',
@@ -138,6 +140,33 @@ test('同一发票对上两份同额行程单时阻塞，且不采用任一行�
   ]);
   assert.deepEqual(built.events[0].referenceMaterialIds, []);
   assert.equal(built.events[0].date, null, '歧义未处置前不能按输入顺序挑一份行程单');
+
+  const observation = {
+    schemaVersion: SCHEMA_VERSION,
+    nodeMajor: 22,
+    nodeVersion: '22.0.0',
+    cdpUp: true,
+    probe: { status: 'matched', identity: { account: 'synthetic', tenant: 'synthetic' } },
+    binding: { account: 'synthetic', tenant: 'synthetic' },
+    taskObserved: true,
+    sourceDir: '/tmp/synthetic-materials',
+    task: { sourceLabel: '测试材料', workspace: '/tmp/synthetic-workspace' },
+    inventoryVersionId: 'synthetic',
+    materialCount: 3,
+    inventoryStale: false,
+    classificationRecorded: true,
+    openItems: eventOpenItems(built),
+    pendingImages: [],
+  };
+  const state = determineState(observation);
+  const blocker = state.blockedBy.find((item) => item.kind === 'evidence_ambiguous');
+  assert.equal(state.state, 'intake_open_items');
+  assert.equal(blocker.materialId, 'm-invoice');
+  assert.deepEqual(blocker.references, ambiguous.references);
+
+  const output = stepFor(state.state, observation, state.blockedBy).speak;
+  for (const identity of ['m-invoice', 'm-itinerary-a', 'itinerary-a.png',
+    'm-itinerary-b', 'itinerary-b.png']) assert.match(output, new RegExp(identity));
 });
 
 test.after(() => {
