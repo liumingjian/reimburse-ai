@@ -1,7 +1,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { CDP_PORT, newTab, closeTab } from './chrome.mjs';
+import { CDP_PORT, version, targets, newTab, closeTab } from './chrome.mjs';
 
 // 地址只写进 stderr 是不够的：这些命令**前台阻塞**，Agent 在它返回之前既看不到 stderr
 // 也说不出话，于是"把地址给用户"这一步永远发生在用户已经干等完之后。所以内核自己把页面打开。
@@ -223,23 +223,55 @@ export function serveIdentityConfirmation(spec, opts = {}) {
       at: new Date().toISOString() }));
 }
 
-function serveLocal(render, { timeoutMs = 8 * 60 * 1000, onReady, cdpPort = CDP_PORT } = {}, onSubmit) {
+function serveLocal(render, {
+  timeoutMs = 8 * 60 * 1000, onReady, cdpPort = CDP_PORT, openBrowser = openInBrowser,
+} = {}, onSubmit) {
   const nonce = crypto.randomBytes(16).toString('hex');
   return new Promise((resolve, reject) => {
     let timer;
+    let finishing = false;
+    let localUrl = null;
     let localTabId = null;
+    let localTabMayExist = false;
     let localTabOpening = Promise.resolve();
     const closeLocalTab = async () => {
       await localTabOpening;
+      if (!localTabId && localTabMayExist && localUrl) {
+        try {
+          const match = (await targets(cdpPort)).find((tab) => tab.url === localUrl);
+          localTabId = match?.id ?? null;
+        } catch (error) {
+          throw new Error('本地交互页标签清理状态未知', { cause: error });
+        }
+      }
       if (!localTabId) return;
       const id = localTabId;
-      localTabId = null;
-      try { await closeTab(id, cdpPort); } catch {}
+      let lastError = null;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          if (await closeTab(id, cdpPort)) {
+            localTabId = null;
+            return;
+          }
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw new Error(`本地交互页标签关闭失败: ${id}`, lastError ? { cause: lastError } : undefined);
     };
-    const finish = (result) => {
-      server.close(async () => {
-        await closeLocalTab();
-        resolve(result);
+    const finish = (result, error = null) => {
+      if (finishing) return;
+      finishing = true;
+      clearTimeout(timer);
+      server.close(async (closeError) => {
+        try {
+          await closeLocalTab();
+          if (error) reject(error);
+          else if (closeError) reject(closeError);
+          else resolve(result);
+        } catch (cleanupError) {
+          reject(cleanupError);
+        }
       });
     };
     const server = http.createServer(async (req, res) => {
@@ -262,20 +294,30 @@ function serveLocal(render, { timeoutMs = 8 * 60 * 1000, onReady, cdpPort = CDP_
       }
       res.writeHead(404).end('not found');
     });
-    server.on('error', reject);
+    server.on('error', (error) => finish(null, error));
     server.listen(0, '127.0.0.1', async () => {
       const { port } = server.address();
       const url = `http://127.0.0.1:${port}/?nonce=${nonce}`;
-      onReady?.(url);
+      localUrl = url;
+      onReady?.(url, server);
       // 本地交互页不是 ERP 页面：优先借用 baox 已控制的 Chrome 新开一个临时标签，
       // 结束时只按返回的 target id 关掉它。CDP 不可用时才退回系统默认浏览器。
       if (process.env[AUTO_OPEN_OFF] !== '1') {
         localTabOpening = (async () => {
+          if (!await version(cdpPort)) {
+            openBrowser(url);
+            return;
+          }
+          localTabMayExist = true;
           try {
             const tab = await newTab(url, cdpPort);
+            if (tab?.type !== 'page' || tab?.url !== url || !tab?.id) {
+              throw new Error('CDP /json/new 返回的 target 与本地交互页不一致');
+            }
             localTabId = tab.id;
           } catch {
-            openInBrowser(url);
+            // /json/new may have created the target before its response failed. Cleanup
+            // identifies it later by this invocation's complete nonce-bearing URL.
           }
         })();
       }
