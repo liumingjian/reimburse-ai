@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { writeTextPdf, TEST_INVOICE_TEXT } from './fixture-pdf.mjs';
 
 // 材料这一段的走查：**真目录、真文件、真的把 step.argv 执行掉**。
 //
@@ -36,13 +37,17 @@ const READY = {
   binding: { ...me, confirmedAt: '2026-09-06T00:00:00.000Z' },
 };
 
-const AA_INV = '交通/【AA出行-69.19元-3个行程】高德打车电子发票.pdf';
+const TEST_INVOICE = 'test-invoice.pdf';
 const IMAGE = '交通/fengyun-1.png';
 
-/** 一个真的材料目录，里面是仓库里那些真发票。 */
+/** 一个真的材料目录：PDF fixture 自包含，图片 fixture 专供视觉链路测试。 */
 function materials(rels) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-mat-'));
-  for (const rel of rels) fs.copyFileSync(path.join(repo, 'resources', rel), path.join(dir, path.basename(rel)));
+  for (const rel of rels) {
+    const dest = path.join(dir, path.basename(rel));
+    if (rel === TEST_INVOICE) writeTextPdf(dest, TEST_INVOICE_TEXT);
+    else fs.copyFileSync(path.join(repo, 'resources', rel), dest);
+  }
   return dir;
 }
 
@@ -66,7 +71,7 @@ function runStep(r) {
 }
 
 test('从环境就绪一路问到「该看图了」，全程只有 baox next 这一条命令', async () => {
-  const dir = materials([AA_INV, IMAGE]);
+  const dir = materials([TEST_INVOICE, IMAGE]);
 
   // 1. 这个目录还没有任务 —— 内核自己去盘点。
   let r = await ask(dir);
@@ -100,7 +105,7 @@ test('从环境就绪一路问到「该看图了」，全程只有 baox next 这
 });
 
 test('材料目录里加一个文件，内核自己发现盘点过期并重新盘', async () => {
-  const dir = materials([AA_INV]);
+  const dir = materials([TEST_INVOICE]);
   let r = await ask(dir);
   assert.equal(r.state, 'task_none');
   runStep(r);
@@ -119,7 +124,7 @@ test('材料目录里加一个文件，内核自己发现盘点过期并重新�
 });
 
 test('有读不出的材料就停在待办上，且说清楚这条谁能解决', async () => {
-  const dir = materials([AA_INV]);
+  const dir = materials([TEST_INVOICE]);
   fs.writeFileSync(path.join(dir, '不知道是什么.pdf'), 'not a pdf at all');
   runStep(await ask(dir));                       // 建任务 + 盘点
 
@@ -192,6 +197,24 @@ async function upToReading(dir) {
   assert.equal(r.state, 'image_awaiting_reading', `实际停在 ${r.state}：${r.speak}`);
   return r;
 }
+
+test('只依赖看图 step 与模板就能一次构造并提交合法读数', async () => {
+  const dir = materials([IMAGE]);
+  const r = await upToReading(dir);
+  const template = JSON.parse(fs.readFileSync(r.step.schemaPath, 'utf8'));
+  const contract = r.step.readingContract;
+  const invoice = contract.docTypes.invoice;
+  const seenFields = { invoiceNumber: '26427000000640558021', issueDate: '2026-09-04',
+    netAmount: '18.25', taxAmount: '0.55', totalAmount: '18.80' };
+
+  assert.ok(invoice.requiredFields.every((field) => field in seenFields));
+  assert.ok(Object.keys(seenFields).every((field) => invoice.allowedFields.includes(field)));
+  assert.equal(template.version, 1);
+  const verdicts = submitReadings(r, { fields: seenFields });
+  assert.equal(verdicts.rejected, 0, JSON.stringify(verdicts.verdicts));
+  assert.equal((await ask(dir, { after: r.stepToken, hasResult: true })).state,
+    'reading_awaiting_confirmation');
+});
 
 test('看图 → 内核校验 → 终端表格 → 用户点头，全程不弹浏览器', async () => {
   const dir = materials([IMAGE]);
@@ -313,7 +336,7 @@ test('用户在表上指错：他给的值不落库，带着分歧回去重看�
 });
 
 test('材料目录没了就只答环境那一半，不冒充成一个材料状态', async () => {
-  const dir = materials([AA_INV]);
+  const dir = materials([TEST_INVOICE]);
   runStep(await ask(dir));
   fs.rmSync(dir, { recursive: true, force: true });
   const r = nextResponse({ observation: { ...READY }, sourceKey: sourceKeyOf(dir) });

@@ -34,21 +34,26 @@ node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材
 - 有 `ignored` 键就念 `ignored.note`：你上一次回传没被收下。
 - 跑完这一段把最后一份 `next` 的 JSON **原样**带回给派你来的会话，不要改写、不要总结成结论。
 
-## 三种 `step.kind` 会落到你身上
+## 只有 `run` 会落到你身上
 
 | kind | 你做的唯一一件事 | 回传 |
 |---|---|---|
-| `run` | 原样执行 `step.argv`，stdout 落盘 | `next --after <token> --result <那个文件>` |
-| `tell_user` | 念 `speak`，等用户自己动手（多半是登录）。**这一步做不了**——你这里没有用户 | 停下，把 JSON 带回主会话 |
-| `confirm_table` / `ask_user` / `dispute` | 同上，都要人。`step.outsourceable` 是 `false` | 停下，带回主会话 |
+| `run` | 仅当 `progress.phase === 1` 且 `step.outsourceable === true` 时，原样执行 `step.argv`，stdout 落盘 | `next --after <token> --result <那个文件>` |
+| 任何其他 kind | **不执行。** 不看图、不问人、不处理材料 | 停下，把 JSON 原样带回主会话 |
 
-**`step.outsourceable` 变成 `false` 的那一刻就是你这一趟的终点。** 那一步的另一头是人，
-而你这里没有人。硬撑着往下走只会挂在一个永远不会发生的点击上。
+以下任一条件出现，就是你这一趟的终点：
+
+- `step.kind !== "run"`；
+- `step.outsourceable !== true`；
+- `progress.phase !== 1`（已经离开「环境准备」）。
+
+不要因为某个非 `run` 步骤看起来做得到就继续。尤其是 `read_images`：它属于材料阶段，必须由主会话亲眼读图。
 
 ## 环境准备走到哪算完
 
-内核说了算：`next` 报出的 `progress.phase` 离开「环境准备」，或者 `state` 变成材料那一段的状态。
-你不自己判断「应该差不多好了」——`doctor.ready`、`probe.status` 这些字段是内核的判据，不是你的。
+内核说了算：`next` 报出的 `progress.phase` 离开「环境准备」，或者 `state` 变成材料那一段的状态，
+立即停下并原样返回这份 JSON。你不自己判断「应该差不多好了」——`doctor.ready`、`probe.status`
+这些字段是内核的判据，不是你的。
 
 ## 不能做的事
 
