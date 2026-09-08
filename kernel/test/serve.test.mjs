@@ -212,6 +212,24 @@ test('创建响应异常后短时重查延迟可见 target，且不打开系统�
   });
 });
 
+test('创建成功后短时重查延迟可见 target 并关闭', async () => {
+  await withLifecycleFixture({
+    create: ({ pages, localUrl }) => {
+      pages.push({ id: 'delayed-success', type: 'page', url: localUrl, visibleAfter: 4 });
+    },
+    visiblePages: ({ pages, listReads }) => pages.filter((page) => !page.visibleAfter || listReads >= page.visibleAfter),
+    close: ({ pages, id }) => pages.splice(pages.findIndex((page) => page.id === id), 1),
+  }, async (fixture) => {
+    let url;
+    const pending = serve.serveIdentityConfirmation(identity, { cdpPort: fixture.cdp.address().port,
+      timeoutMs: 1000, onReady: (u) => { url = u; } });
+    await fixture.created;
+    assert.equal((await submitIdentity(url)).ok, true);
+    assert.equal((await pending).status, 'submitted');
+    assert.deepEqual(fixture.requests.filter((r) => r.startsWith('/json/close/')), ['/json/close/delayed-success']);
+  });
+});
+
 test('半提交 body 长连接在 timeout 后有界收口', async () => {
   await withLifecycleFixture({
     create: ({ pages, localUrl }) => pages.push({ id: 'half-body', type: 'page', url: localUrl }),

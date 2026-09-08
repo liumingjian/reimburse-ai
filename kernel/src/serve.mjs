@@ -356,7 +356,7 @@ function serveLocal(render, {
           let createError = null;
           try { await newTab(url, cdpPort); } catch (error) { createError = error; }
           let match;
-          try { match = await matchingNewTarget(before, createError ? 5 : 1); }
+          try { match = await matchingNewTarget(before, 5); }
           catch (error) { localTabOpenError = error; return; }
           if (match) {
             localTabId = match.id;
