@@ -16,7 +16,7 @@ import { currentStep, issueStep } from './steptoken.mjs';
 import { readingInboxIn, correctionInboxIn, rereadInboxIn, answerInboxIn } from './workspace.mjs';
 import { CONVERGENCE, favorsUser, disputeStepKey, DISPUTE_PHASES } from './dispute.mjs';
 import { SHAPES, SHAPE_LABELS } from './imageshape.mjs';
-import { DOC_TYPES, FIELD_RULES } from './vision.mjs';
+import { DOC_TYPES, FIELD_RULES, SEGMENT_RULES } from './vision.mjs';
 import { writePreviewDigest } from './erpwrite.mjs';
 import { roundFingerprint } from './allocate.mjs';
 import { renderTable, renderQuestions } from './table.mjs';
@@ -40,6 +40,15 @@ const READING_CONTRACT = Object.freeze({
   docTypes: Object.fromEntries(Object.keys(DOC_TYPES).map((docType) => [docType, Object.freeze({
     allowedFields: ALLOWED_READING_FIELDS,
     requiredFields: docType === 'invoice' ? Object.freeze(['invoiceNumber', 'totalAmount']) : Object.freeze([]),
+    ...(docType === 'ride_itinerary' ? { segments: Object.freeze({
+      type: 'array',
+      minItems: 1,
+      additionalFields: false,
+      fields: Object.fromEntries(Object.entries(SEGMENT_RULES).map(([field, rule]) => [field, Object.freeze({
+        required: rule.required,
+        format: rule.hint,
+      })])),
+    }) } : {}),
   })])),
   fieldFormats: Object.fromEntries(
     Object.entries(FIELD_RULES).map(([field, rule]) => [field, rule.hint])),
@@ -50,7 +59,7 @@ const READING_CONTRACT = Object.freeze({
     whenPresent: Object.freeze(['netAmount', 'taxAmount', 'totalAmount']),
     rule: 'netAmount + taxAmount = totalAmount，按分精确相等；不相等就重读，禁止改数凑平。',
   }),
-  multipleTrips: '多段行程仍只填写票面可见的 city、travelDate、origin、destination；不要新增 segments 或 trips。',
+  multipleTrips: '多段行程按 ride_itinerary.segments 逐段填写；只抄票面可见值，不推断、不合并。',
 });
 
 const ENV_PROGRESS = { phase: 1, of: 10, label: '环境准备' };
@@ -293,6 +302,11 @@ function readingTable(pending) {
     // 用户真正要比对的那一列数字。
     const lines = [
       ...p.fields.map((f) => ({ field: f.label, value: f.value, source: SOURCE_LABELS[f.source] ?? f.source })),
+      ...(p.segments ?? []).flatMap((segment) => segment.values.map((value) => ({
+        field: `第 ${segment.index} 段${value.label}`,
+        value: value.value,
+        source: '看图读取',
+      }))),
       ...p.unreadable.map((u) => ({ field: u, value: '看不清（我没有猜）', source: '—' })),
     ];
     if (!lines.length) lines.push({ field: '（没有读出任何字段）', value: '' });

@@ -14,6 +14,8 @@ const { parseMaterial } = await import('../src/parse.mjs');
 const { buildEvents, eventOpenItems, reconcile, splitTax, submitAllocation, linkEvidence,
   conservingSegments } = await import('../src/events.mjs');
 const { createTask } = await import('../src/workspace.mjs');
+const { takeInventory } = await import('../src/inventory.mjs');
+const { ingestReadings, confirmReadings, loadReading, projectReading } = await import('../src/vision.mjs');
 
 const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const TEST_INV = 'test-transport-invoice.pdf';
@@ -59,6 +61,49 @@ test('行程单逐段明细取得出来，段数与它自己声明的一致', ()
   // 逐段金额之和等于行程单自己的合计，也等于发票价税合计。**这才是自动定案的授权**：
   // 分毫不差意味着这几个数已经被票面自己印证过了，不是系统分摊出来的。
   assert.equal(segs.reduce((a, s) => a + Math.round(Number(s.amount) * 100), 0), 6919);
+});
+
+test('多段图片行程单确认后按逐段读数产生多条费用事件', async () => {
+  const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-visual-itinerary-'));
+  const imagePath = path.join(sourceDir, '三段行程单.png');
+  fs.copyFileSync(path.join(repo, 'resources', '交通', 'fengyun-1.png'), imagePath);
+  const inventory = await takeInventory(sourceDir);
+  const itineraryMaterial = inventory.materials[0];
+  const task = createTask(sourceDir);
+
+  const verdict = ingestReadings(sourceDir, inventory, task, { version: 1, readings: [{
+    materialId: itineraryMaterial.materialId,
+    contentHash: itineraryMaterial.contentHash,
+    sighted: { shape: 'landscape' },
+    docType: 'ride_itinerary',
+    fields: { totalAmount: '69.19' },
+    segments: [
+      { travelDate: '2026-07-09', city: '北京市', origin: '海淀区', destination: '朝阳区', amount: '26.69' },
+      { travelDate: '2026-07-09', city: '北京市', origin: '朝阳区', destination: '东城区', amount: '20.85' },
+      { travelDate: '2026-07-10', city: '北京市', origin: '东城区', destination: '丰台区', amount: '21.65' },
+    ],
+    unreadable: [],
+  }] })[0];
+  assert.equal(verdict.verdict, 'accepted', JSON.stringify(verdict.reasons));
+  assert.equal(projectReading(loadReading(task, itineraryMaterial.materialId)), null,
+    '逐段读数也必须先经用户确认，不能直接投影成事件证据');
+  confirmReadings(task, [itineraryMaterial.materialId]);
+
+  const itinerary = {
+    materialId: itineraryMaterial.materialId,
+    fileName: itineraryMaterial.fileName,
+    contentHash: itineraryMaterial.contentHash,
+    ...projectReading(loadReading(task, itineraryMaterial.materialId)),
+  };
+  const voucher = load('m-inv', AA_INV);
+  const built = buildEvents({ versionId: 'visual-itinerary', results: [voucher, itinerary], duplicates: [] }, task);
+
+  assert.equal(built.events.length, 3);
+  assert.deepEqual(built.events.map((event) => event.date),
+    ['2026-07-09', '2026-07-09', '2026-07-10']);
+  assert.deepEqual(built.events.map((event) => event.route),
+    ['海淀区 → 朝阳区', '朝阳区 → 东城区', '东城区 → 丰台区']);
+  assert.deepEqual(built.events.map((event) => event.amounts.totalCents), [2669, 2085, 2165]);
 });
 
 test('证据关联按合计金额相等连线，且要求唯一', () => {

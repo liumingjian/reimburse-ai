@@ -240,8 +240,17 @@ test('看图 step 直接给出完整字段闭集，不用反查 vision.mjs', asy
     ['netAmount', 'taxAmount', 'totalAmount']);
   assert.match(step.readingContract.amountConservation.rule, /禁止改数凑平/);
   assert.equal(step.readingContract.additionalFields, false, 'schema 外字段必须明确拒绝');
-  assert.match(step.readingContract.multipleTrips, /不要新增.*segments|不要新增.*trips/,
-    '多段行程不能诱使模型发明 schema 外结构');
+  const segments = step.readingContract.docTypes.ride_itinerary.segments;
+  assert.equal(segments.type, 'array');
+  assert.equal(segments.minItems, 1);
+  assert.equal(segments.additionalFields, false);
+  assert.deepEqual(Object.keys(segments.fields),
+    ['travelDate', 'city', 'origin', 'destination', 'amount']);
+  assert.deepEqual(Object.entries(segments.fields)
+    .filter(([, rule]) => rule.required).map(([field]) => field),
+  ['travelDate', 'origin', 'destination']);
+  assert.match(step.readingContract.multipleTrips, /segments.*逐段/,
+    '多段行程按契约逐段抄写，不能压成一个单段字段');
 });
 
 test('被驳回的读数：重读时把上次没过的理由原样带上', async () => {
