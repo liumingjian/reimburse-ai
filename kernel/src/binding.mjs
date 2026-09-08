@@ -35,17 +35,30 @@ export function readBinding() {
   try { return JSON.parse(fs.readFileSync(bindingPath(), 'utf8')); } catch { return null; }
 }
 
-export function writeBinding(identity) {
-  const record = {
-    account: identity.account, tenant: identity.tenant,
-    displayName: identity.displayName ?? null,          // 只展示，不作判据
-    confirmedAt: new Date().toISOString(),
-  };
+const persistBinding = (record) => {
   ensureDir(paths.root);
   const tmp = `${bindingPath()}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(record, null, 2) + '\n', { mode: 0o600 });
   fs.renameSync(tmp, bindingPath());
   return record;
+};
+
+export function writeBinding(identity) {
+  return persistBinding({
+    account: identity.account, tenant: identity.tenant,
+    displayName: identity.displayName ?? null,          // 只展示，不作判据
+    confirmedAt: new Date().toISOString(),
+  });
+}
+
+export function writeHomeCity(identity, homeCity) {
+  const binding = readBinding();
+  if (bindingVerdict(binding, identity) !== 'matched') return null;
+  return persistBinding({
+    ...binding,
+    homeCity,
+    homeCityConfirmedAt: new Date().toISOString(),
+  });
 }
 
 /**

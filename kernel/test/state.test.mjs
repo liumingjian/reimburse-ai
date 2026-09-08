@@ -13,7 +13,7 @@ const healthy = (over = {}) => ({
   nodeMajor: 22,
   cdpUp: true,
   probe: { status: 'matched', identity: me },
-  binding: { ...me, confirmedAt: '2026-09-06T00:00:00.000Z' },
+  binding: { ...me, homeCity: '广州市', confirmedAt: '2026-09-06T00:00:00.000Z' },
   ...over,
 });
 
@@ -64,6 +64,15 @@ test('探针认得出人，但这台机器没绑过 —— 带用户去绑', () 
   assert.equal(r.state, 'env_identity_unbound');
   assert.equal(r.actor, 'user');
   assert.deepEqual(r.blockedBy, [], '没绑不是阻塞，是下一步就能做完的事');
+});
+
+test('身份已绑定但常驻城市缺失 —— 先完成首次访谈，不进入任务主干', () => {
+  const r = determineState(healthy({
+    binding: { ...me, confirmedAt: '2026-09-06T00:00:00.000Z' },
+  }));
+  assert.equal(r.state, 'env_home_city_unbound');
+  assert.equal(r.actor, 'user');
+  assert.deepEqual(r.blockedBy, [], '缺城市不是硬阻塞，是下一步就能完成的首次访谈');
 });
 
 test('绑的人和登录的人对不上 —— 硬阻塞', () => {
@@ -122,11 +131,11 @@ test('缺省观测不崩：什么都没采到时给最保守的结论', () => {
   assert.equal(determineState(undefined).state, 'env_chrome_down');
 });
 
-test('环境七态一个不少，且都在判定表里', () => {
+test('环境状态一个不少，且都在判定表里', () => {
   const env = ['env_node_unsupported', 'env_chrome_down', 'env_not_logged_in', 'env_identity_unknown',
-    'env_identity_unbound', 'env_identity_mismatched', 'env_ready'];
+    'env_identity_unbound', 'env_identity_mismatched', 'env_home_city_unbound', 'env_ready'];
   for (const s of env) assert.ok(STATE_ORDER.includes(s), `${s} 不在判定表里`);
-  assert.equal(env.length, 7);
+  assert.equal(env.length, 8);
 });
 
 // —— B 表：任务主干（材料这一段）——
@@ -136,7 +145,7 @@ const withMaterials = (over = {}) => healthy({
   taskObserved: true,
   sourceDir: '/tmp/材料',
   task: { taskId: '75dc9cbb4d', sourceLabel: '材料', workspace: '/tmp/ws',
-    currentVersionId: 'v-abc', erpWriteState: null },
+    currentVersionId: 'v-abc', erpWriteState: null, homeCity: '广州市' },
   inventoryVersionId: 'v-abc',
   materialCount: 2,
   inventoryStale: false,
@@ -158,6 +167,16 @@ test('这个目录还没有进行中的任务 —— 内核自己去盘点', () 
   const r = determineState(withMaterials({ task: null, classificationRecorded: false }));
   assert.equal(r.state, 'task_none');
   assert.equal(r.actor, 'kernel');
+});
+
+test('旧任务没有明确城市快照时必须单独询问，不能套用当前个人绑定', () => {
+  const r = determineState(withMaterials({
+    task: { taskId: '75dc9cbb4d', sourceLabel: '材料', workspace: '/tmp/ws',
+      currentVersionId: 'v-abc', erpWriteState: null, homeCity: null },
+  }));
+  assert.equal(r.state, 'task_home_city_unbound');
+  assert.equal(r.actor, 'user');
+  assert.deepEqual(r.blockedBy, [], '这是可完成的安全迁移步骤，不是硬阻塞');
 });
 
 test('材料目录变过了 —— 内核自己发现盘点过期，不靠谁记得说一声', () => {
@@ -428,7 +447,7 @@ test('以上全绿才轮到写入前确认，而且 actor 是人', () => {
 test('动过 ERP 的任务不再要一次点头，改为交接给 baox-recover', () => {
   const r = determineState(withErp({
     task: { taskId: '75dc9cbb4d', sourceLabel: '材料', workspace: '/tmp/ws',
-      currentVersionId: 'v-abc', erpWriteState: 'dispatched' },
+      currentVersionId: 'v-abc', erpWriteState: 'dispatched', homeCity: '广州市' },
   }));
   assert.equal(r.state, 'handed_off_recover',
     '一份已经发出去的写入不能再要一次点头 —— 那次点头看起来像是"同意再写一遍"');

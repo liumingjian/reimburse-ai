@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
 
+const TEST_BINDING = { account: 'employee.test', tenant: 'tenant-a', homeCity: '广州市' };
+
 // 每个用例一份独立的数据目录：跨任务重复检查读的就是全局任务账，
 // 用例之间共用一份账会互相干扰，测出来的也不再是这条规则本身。
 let home;
@@ -33,7 +35,7 @@ const classificationOf = (pairs) => ({
   versionId: 'v-test', results: pairs.map(([id, rel]) => material(id, rel)), duplicates: [],
 });
 
-const newTask = (label) => createTask(path.join(home, `src-${label}`));
+const newTask = (label) => createTask(path.join(home, `src-${label}`), TEST_BINDING);
 
 beforeEach(freshHome);
 const blockingOf = (r) => historyOpenItems(r).filter((i) => i.blocking);
@@ -173,12 +175,12 @@ test('存档任务不再被认领：同一个材料目录下次是新建任务�
   const { archiveMigratedTasks, findLiveTaskForSource, sourceKeyOf } =
     await import('../src/workspace.mjs');
   const dir = path.join(home, 'src-claim');
-  const a = createTask(dir);
+  const a = createTask(dir, TEST_BINDING);
   archiveMigratedTasks();
 
   assert.equal(findLiveTaskForSource(sourceKeyOf(dir)), null,
     '认领得到就等于接着往下走，那正是存档要挡的');
-  const b = createTask(dir);
+  const b = createTask(dir, TEST_BINDING);
   assert.notEqual(b.taskId, a.taskId);
 });
 

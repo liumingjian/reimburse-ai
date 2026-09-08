@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
 
+const TEST_BINDING = { account: 'employee.test', tenant: 'tenant-a', homeCity: '广州市' };
+
 // 数据目录必须在导入内核模块之前改掉，否则会写进用户真实的工作区。
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-test-'));
 process.env.BAOX_HOME = home;
@@ -145,7 +147,7 @@ test('分毫不差的判据不给一分钱的容差，也不认缺金额的行�
 
 test('用户提交逐段金额之后才拆出三条候选明细，且三项金额分别守恒', () => {
   const c = skewItinerary(classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]));
-  const task = createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')));
+  const task = createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')), TEST_BINDING);
   const voucher = c.results.find((r) => r.materialId === 'm-inv');
 
   const r = submitAllocation(task, voucher, ['26.69', '20.85', '21.65'], 3);
@@ -168,7 +170,7 @@ test('用户提交逐段金额之后才拆出三条候选明细，且三项金�
 
 test('逐段金额之和差一分也不收', () => {
   const c = skewItinerary(classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]));
-  const task = createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')));
+  const task = createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')), TEST_BINDING);
   const voucher = c.results.find((r) => r.materialId === 'm-inv');
   const r = submitAllocation(task, voucher, ['26.70', '20.85', '21.65'], 3);
   assert.equal(r.verdict, 'rejected');
@@ -177,7 +179,7 @@ test('逐段金额之和差一分也不收', () => {
 
 test('段数对不上、金额格式不对、负数金额都不收', () => {
   const c = classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]);
-  const task = createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')));
+  const task = createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')), TEST_BINDING);
   const v = c.results.find((r) => r.materialId === 'm-inv');
   assert.equal(submitAllocation(task, v, ['69.19'], 3).verdict, 'rejected');
   assert.equal(submitAllocation(task, v, ['26.69', '20.85', '21.6'], 3).verdict, 'rejected');
@@ -187,7 +189,7 @@ test('段数对不上、金额格式不对、负数金额都不收', () => {
 test('发票材料换了以后，之前提交的分摊立即失效', () => {
   // 行程单自己不平，所以这张票只能靠用户的分摊 —— 分摊一失效就没有别的来源顶上。
   const c = skewItinerary(classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]));
-  const task = createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')));
+  const task = createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')), TEST_BINDING);
   submitAllocation(task, c.results.find((r) => r.materialId === 'm-inv'), ['26.69', '20.85', '21.65'], 3);
   assert.equal(buildEvents(c, task).events.length, 3);
 
@@ -199,7 +201,7 @@ test('发票材料换了以后，之前提交的分摊立即失效', () => {
 
 test('用户给过的分摊压过行程单：他是对着原件报的数', () => {
   const c = classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]);   // 行程单本来分毫不差
-  const task = createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')));
+  const task = createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')), TEST_BINDING);
   submitAllocation(task, c.results.find((r) => r.materialId === 'm-inv'), ['30.00', '20.00', '19.19'], 3);
   const built = buildEvents(c, task);
   assert.deepEqual(built.events.map((e) => e.amounts.totalCents), [3000, 2000, 1919]);

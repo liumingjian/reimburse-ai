@@ -52,13 +52,18 @@ export function findLiveTaskForSource(sourceKey) {
   return loadIndex().tasks.find((t) => t.sourceKey === sourceKey && LIVE.has(t.status)) ?? null;
 }
 
-export function createTask(absDir) {
+export function createTask(absDir, binding) {
+  if (!binding?.account || !binding?.tenant || !validHomeCity(binding?.homeCity)) {
+    throw new Error('创建报销任务前必须先为当前 ERP 身份确认常驻城市');
+  }
   const task = {
     taskId: crypto.randomBytes(5).toString('hex'),
     createdAt: new Date().toISOString(),
     status: 'open',
     sourceKey: sourceKeyOf(absDir),
     sourceLabel: path.basename(path.resolve(absDir)),
+    homeCity: binding.homeCity.trim(),
+    identity: { account: binding.account, tenant: binding.tenant },
     currentVersionId: null,
   };
   const idx = loadIndex();
@@ -170,6 +175,42 @@ export function abandonTask(taskId, reason) {
  *
  * 材料、读数、分摊一份不动，只改状态：存档是"不再往下走"，不是"删掉"。
  */
+const validHomeCity = (value) => typeof value === 'string'
+  && value.trim().length > 0 && value.trim().length <= 20
+  && !/[\u0000-\u001f\u007f]/.test(value);
+
+/**
+ * 早期 1.0.0 任务把常驻城市记在 selection.json，而不是任务元数据。
+ * 只迁移用户当时明确提交过的值；没有就保持缺失，交给状态机显式询问。
+ */
+export function setTaskHomeCity(taskId, homeCity) {
+  if (!validHomeCity(homeCity)) return null;
+  const idx = loadIndex();
+  const i = idx.tasks.findIndex((task) => task.taskId === taskId);
+  if (i < 0 || validHomeCity(idx.tasks[i].homeCity)) return null;
+  const updated = { ...idx.tasks[i], homeCity: homeCity.trim() };
+  idx.tasks[i] = updated;
+  writeJson(indexPath(), idx);
+  writeJson(path.join(taskDir(updated), 'meta.json'), updated);
+  return updated;
+}
+
+export function migrateTaskHomeCities() {
+  const idx = loadIndex();
+  const migrated = [];
+  idx.tasks = idx.tasks.map((task) => {
+    if (validHomeCity(task.homeCity)) return task;
+    const selection = readJson(path.join(taskDir(task), 'selection.json'), null);
+    if (!validHomeCity(selection?.homeCity)) return task;
+    const updated = { ...task, homeCity: selection.homeCity.trim() };
+    migrated.push(updated);
+    writeJson(path.join(taskDir(updated), 'meta.json'), updated);
+    return updated;
+  });
+  if (migrated.length) writeJson(indexPath(), idx);
+  return migrated;
+}
+
 export function archiveMigratedTasks() {
   const idx = loadIndex();
   const archivedAt = new Date().toISOString();

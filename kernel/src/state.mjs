@@ -200,6 +200,13 @@ const RULES = [
         + `ERP 当前登录的是 ${o.probe.identity.displayName ?? o.probe.identity.account}；`
         + 'baox 只替绑定的那个人报销' }),
   },
+  {
+    state: 'env_home_city_unbound',
+    actor: 'user',
+    when: (o) => o.probe?.status === 'matched'
+      && bindingVerdict(o.binding, o.probe.identity) === 'matched'
+      && !o.binding?.homeCity,
+  },
 
   // —— B 表：任务主干 ——
   // 这半张表要任务观测才判得动（observeTask）。只采了环境观测时它们整段跳过，
@@ -208,6 +215,11 @@ const RULES = [
     state: 'task_none',
     actor: 'kernel',
     when: (o) => taskSeen(o) && !o.task,
+  },
+  {
+    state: 'task_home_city_unbound',
+    actor: 'user',
+    when: (o) => taskSeen(o) && !!o.task && !o.task.homeCity,
   },
   {
     // 材料目录里加了文件、换了文件、删了文件，内容哈希就对不上上一次盘点。

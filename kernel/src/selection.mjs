@@ -108,9 +108,7 @@ const textOk = (s, max) => typeof s === 'string'
  */
 export function submitSelection(task, built, payload) {
   const reasons = [];
-  const homeCity = String(payload?.homeCity ?? '').trim();
   const purpose = String(payload?.purpose ?? '').trim();
-  if (!textOk(homeCity, 20)) reasons.push('常驻城市必须填写，且不超过 20 个字');
   if (!textOk(purpose, 100)) reasons.push('报销事由必须填写，且不超过 100 个字');
 
   const wanted = built.lineItems.map((l) => l.lineId);
@@ -129,7 +127,6 @@ export function submitSelection(task, built, payload) {
   const record = {
     linesDigest: linesDigest(built),
     versionId: built.versionId,
-    homeCity,
     purpose,
     projects,
     // 项目号来自用户，还没有和 ERP 项目目录核对过。这件事必须写在记录里，
@@ -165,14 +162,14 @@ const projectSourceOf = (number, catalog, built) => {
     : 'user_input_unverified';
 };
 
-export function applySelection(built, classification, selection, catalog = null) {
+export function applySelection(built, classification, selection, catalog = null, homeCity = null) {
   const fresh = sameBasis(selection, built);
   const notes = [];
 
   if (!selection) {
     notes.push({
       kind: 'task_selection_required', blocking: true,
-      note: '常驻城市、报销事由和每条明细的项目归属，材料上没有，也不能由系统推断；'
+      note: '报销事由和每条明细的项目归属，材料上没有，也不能由系统推断；'
         + '跑 select-task 打开任务选择页，由用户提交',
     });
   } else if (!fresh) {
@@ -183,15 +180,20 @@ export function applySelection(built, classification, selection, catalog = null)
     });
   }
 
+  if (!homeCity) {
+    notes.push({ kind: 'task_home_city_required', blocking: true,
+      note: '这个任务没有固定的常驻城市，必须先由用户明确确认，不能从当前个人绑定或材料推断' });
+  }
+
   const lines = built.lineItems.map((l) => {
     const event = built.events.find((e) => e.eventId === l.eventId);
-    if (!fresh) {
+    if (!fresh || !homeCity) {
       return {
         ...l, category: null, categoryLabel: null, categoryBasis: null,
         expenseItemCode: null, expenseItemName: null, project: null, purpose: null,
       };
     }
-    const d = deriveCategory(event, classification, selection.homeCity);
+    const d = deriveCategory(event, classification, homeCity);
     const cat = d.category ? CATEGORIES[d.category] : null;
     if (!d.category) {
       notes.push({
@@ -229,5 +231,5 @@ export function applySelection(built, classification, selection, catalog = null)
     };
   });
 
-  return { lines, notes, homeCity: fresh ? selection.homeCity : null, applied: fresh };
+  return { lines, notes, homeCity: fresh && homeCity ? homeCity : null, applied: fresh && !!homeCity };
 }

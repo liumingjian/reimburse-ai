@@ -29,13 +29,16 @@ const { takeInventory } = await import('../src/inventory.mjs');
 
 const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const me = { displayName: '刘明建', account: 'luo.liu', tenant: '5f1f13f6dde29e' };
+const { writeBinding, writeHomeCity } = await import('../src/binding.mjs');
+writeBinding(me);
+writeHomeCity(me, '广州市');
 const READY = {
   schemaVersion: SCHEMA_VERSION,
   nodeVersion: process.versions.node,
   nodeMajor: Number(process.versions.node.split('.')[0]),
   cdpUp: true,
   probe: { status: 'matched', identity: me },
-  binding: { ...me, confirmedAt: '2026-09-06T00:00:00.000Z' },
+  binding: { ...me, homeCity: '广州市', confirmedAt: '2026-09-06T00:00:00.000Z' },
 };
 
 const IMAGE = '交通/fengyun-1.png';
@@ -555,7 +558,7 @@ test('reading_disputed 在判定表里，位置照规格：等你过目之后、
 
 test('争议的 actor 是模型，但它一个值都定不了', () => {
   const o = {
-    ...READY, taskObserved: true, task: { taskId: 't', sourceLabel: 'x', workspace: '/tmp/x' },
+    ...READY, taskObserved: true, task: { taskId: 't', sourceLabel: 'x', workspace: '/tmp/x', homeCity: '广州市' },
     classificationRecorded: true, inventoryStale: false,
     openItems: [{ kind: 'reading_disputed', blocking: true, materialId: 'm1', fileName: '发票.png' }],
   };

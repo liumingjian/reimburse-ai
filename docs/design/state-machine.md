@@ -15,6 +15,7 @@
 | `env_identity_unknown` | 页面加载中 / 读不出且无登录表单 | user | 请人看一眼窗口 | 探针给出确定结论 |
 | `env_identity_unbound` | 探针 matched，但无 `identity.json` | user | 会话内列表格请用户认 | 写入绑定 |
 | `env_identity_mismatched` | 绑定的 account+tenant ≠ 当前登录 | user | 硬阻塞，请换回本人账号 | 换回 / 改绑（走页面） |
+| `env_home_city_unbound` | 身份匹配，但该 account+tenant 尚无常驻城市 | user | 对话内明确询问城市，不给默认候选 | 当前 token 回传合法城市，且 ERP 身份未变 |
 | `env_ready` | 以上全过 | — | 进入任务状态 | — |
 
 ## B. 任务主干
@@ -22,7 +23,8 @@
 | 状态 | 内核凭什么判定 | actor | 下一步 | 离开条件 |
 |---|---|---|---|---|
 | `schema_too_new` | 数据目录 `schemaVersion` > 内核支持 | user | 硬停，提示升级 baox | — |
-| `task_none` | 该 sourceKey 无 open 任务 | kernel | `intake` | 任务建立 |
+| `task_none` | 该 sourceKey 无 open 任务 | kernel | `intake`（用当前个人城市创建固定快照） | 任务建立 |
+| `task_home_city_unbound` | 升级前任务既无城市快照，也无可迁移的旧选择城市 | user | 对话内询问创建该任务时适用的城市 | 当前任务+身份 token 回传合法城市 |
 | `inventory_stale` | 材料目录哈希 ≠ 最近一次盘点 | kernel | 重跑 `intake` | 盘点版本刷新 |
 | `intake_open_items` | 盘点有 `read_error`/`kind_unrecognized`/`no_text_in_pdf` | user | 逐条说明并请示 | 用户处置或明确忽略 |
 | `classify_pending` | 无当前盘点版本的分类结果 | kernel | `classify` | 分类产出 |
@@ -55,3 +57,4 @@
 3. **只认事实**：模型说"做完了"不推进状态；推进的依据是文件哈希、落盘的读数、真实的工具结果。
 4. **可撤销/不可撤销分级**：`ready_for_erp_write` 之前的确认走会话；越过它的写入和改绑要内核观测得到的事件。
 5. **守恒式不让路**：任何算术不平的读数都不进事实链，只会落回开放项。
+6. **城市不猜测**：常驻城市只来自用户明确回答；个人绑定按 account+tenant 隔离，新任务复制为不可随个人改绑变化的快照。旧任务只迁移自身曾明确记录的城市，缺失时必须单独询问。

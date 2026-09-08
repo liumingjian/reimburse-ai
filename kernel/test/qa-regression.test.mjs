@@ -13,6 +13,8 @@ import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
 
+const TEST_BINDING = { account: 'employee.test', tenant: 'tenant-a', homeCity: '广州市' };
+
 process.env.BAOX_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-qa-'));
 
 const { stepFor } = await import('../src/next.mjs');
@@ -67,7 +69,7 @@ const src = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-qa-src-'));
 fs.copyFileSync(path.join(repo, 'resources', '交通', 'fengyun-1.png'), path.join(src, 'invoice.png'));
 const inventory = await takeInventory(src);
 const material = inventory.materials[0];
-const task = createTask(src);
+const task = createTask(src, TEST_BINDING);
 
 // QA 现场那一份读数：形状答对了（`mdls` 就答得出来），字段一个没有，全进 unreadable。
 const emptyReading = (docType) => ({
@@ -96,7 +98,7 @@ test('连着交空读数，就不再让模型重试，转成摆给用户的待�
   const { classifyInventory, classifyOpenItems } = await import('../src/classify.mjs');
   const { buildWorkOrder, MAX_EMPTY_READINGS } = await import('../src/vision.mjs');
   // 单独一个任务，免得和上面几条用例共用同一份驳回记录。
-  const solo = createTask(src);
+  const solo = createTask(src, TEST_BINDING);
   for (let i = 0; i < MAX_EMPTY_READINGS; i += 1) {
     ingestReadings(src, inventory, solo, { version: 1, readings: [emptyReading('unreadable')] });
   }

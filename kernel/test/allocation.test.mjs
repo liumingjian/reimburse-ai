@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
 
+const TEST_BINDING = { account: 'employee.test', tenant: 'tenant-a', homeCity: '广州市' };
+
 // 逐段分摊问到终端上：一轮至多四题，答案先落草稿，齐了才提交，
 // 而且提交的门槛和分摊页完全一样 —— 各段之和与票面价税合计按分精确相等。
 //
@@ -37,7 +39,7 @@ function skewed(rows = null) {
   return c;
 }
 
-const task = () => createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')));
+const task = () => createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')), TEST_BINDING);
 const notesOf = (built) => built.notes.filter((n) => ALLOCATION_KINDS.has(n.kind));
 const voucherOf = (c) => c.results.find((r) => r.materialId === 'm-inv');
 

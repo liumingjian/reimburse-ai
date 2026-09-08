@@ -14,6 +14,8 @@ const { deriveCategory, applySelection, submitSelection, loadSelection, linesDig
   = await import('../src/selection.mjs');
 const { normalizeCity, CATEGORIES } = await import('../src/categories.mjs');
 const { createTask } = await import('../src/workspace.mjs');
+const binding = { account: 'employee.test', tenant: 'tenant-a', homeCity: '广州市' };
+const createBoundTask = (dir) => createTask(dir, binding);
 
 const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const load = (id, rel) => ({
@@ -88,7 +90,9 @@ test('取不到费用发生城市时不拿常驻城市顶替', () => {
 });
 
 test('外地市内交通用公司对照表里的 FY010002，但在 ERP 上落过之前一直标着未确认', () => {
-  const task = createTask(path.join(home, 'src-remote'));
+  const task = createTask(path.join(home, 'src-remote'), {
+    ...binding, homeCity: '与它不同的另一个城市',
+  });
   const { c, built } = rideCase();
   const r = submitSelection(task, built, {
     homeCity: '与它不同的另一个城市', purpose: '客户支持',
@@ -96,7 +100,7 @@ test('外地市内交通用公司对照表里的 FY010002，但在 ERP 上落过
   });
   assert.equal(r.verdict, 'accepted');
 
-  const applied = applySelection(built, c, loadSelection(task));
+  const applied = applySelection(built, c, loadSelection(task), null, task.homeCity);
   assert.equal(applied.lines[0].category, 'remote_city_transport');
   assert.equal(applied.lines[0].expenseItemCode, 'FY010002');
   assert.equal(applied.lines[0].expenseItemSource, 'user_declared');
@@ -124,21 +128,21 @@ test('对照表里每一条要么有编码和来源，要么留空并说明为�
 
 test('没有任务选择就没有费用类别，也没有项目 —— 整批停在阻塞上', () => {
   const { c, built } = rideCase();
-  const applied = applySelection(built, c, null);
+  const applied = applySelection(built, c, null, null, '广州市');
   assert.equal(applied.applied, false);
   assert.equal(applied.lines[0].category, null);
   assert.equal(applied.lines[0].project, null);
   assert.deepEqual(applied.notes.map((n) => n.kind), ['task_selection_required']);
 });
 
-test('提交必须齐全：常驻城市、事由、每一行的项目', () => {
-  const task = createTask(path.join(home, 'src-bad'));
+test('提交只要求任务级事实：事由和每一行的项目', () => {
+  const task = createBoundTask(path.join(home, 'src-bad'));
   const { built } = rideCase();
   const lineId = built.lineItems[0].lineId;
 
   assert.deepEqual(
-    submitSelection(task, built, { homeCity: '', purpose: '', projects: {} }).reasons,
-    ['常驻城市必须填写，且不超过 20 个字', '报销事由必须填写，且不超过 100 个字', `明细 ${lineId} 还没有选项目`]);
+    submitSelection(task, built, { purpose: '', projects: {} }).reasons,
+    ['报销事由必须填写，且不超过 100 个字', `明细 ${lineId} 还没有选项目`]);
 
   const extra = submitSelection(task, built, {
     homeCity: '广州市', purpose: '客户支持', projects: { [lineId]: '111454', 'ev-99': '111454' },
@@ -151,13 +155,13 @@ test('提交必须齐全：常驻城市、事由、每一行的项目', () => {
 });
 
 test('明细变了，之前的项目归属就不再对应这几行', () => {
-  const task = createTask(path.join(home, 'src-stale'));
+  const task = createBoundTask(path.join(home, 'src-stale'));
   const { c, built } = rideCase();
   submitSelection(task, built, {
     homeCity: built.events[0].city, purpose: '客户支持',
     projects: Object.fromEntries(built.lineItems.map((l) => [l.lineId, '111454'])),
   });
-  const ok = applySelection(built, c, loadSelection(task));
+  const ok = applySelection(built, c, loadSelection(task), null, task.homeCity);
   assert.equal(ok.applied, true);
   assert.equal(ok.lines[0].expenseItemCode, 'FY008001');
   assert.equal(ok.lines[0].project, '111454');
@@ -168,13 +172,13 @@ test('明细变了，之前的项目归属就不再对应这几行', () => {
   // 金额变一分就是另一批明细了（现实里对应重新分摊过的合并交通票）。
   const moved = { ...built, lineItems: [{ ...built.lineItems[0], totalAmount: '51.62' }] };
   assert.notEqual(linesDigest(moved), linesDigest(built));
-  const stale = applySelection(moved, c, loadSelection(task));
+  const stale = applySelection(moved, c, loadSelection(task), null, task.homeCity);
   assert.equal(stale.applied, false);
   assert.deepEqual(stale.notes.map((n) => n.kind), ['task_selection_stale']);
 });
 
 test('项目号只有在 ERP 只读核对确认之后才升级来源，且核对随明细一起失效', () => {
-  const task = createTask(path.join(home, 'src-catalog'));
+  const task = createBoundTask(path.join(home, 'src-catalog'));
   const { c, built } = rideCase();
   submitSelection(task, built, {
     homeCity: '广州', purpose: '客户支持',
@@ -183,7 +187,7 @@ test('项目号只有在 ERP 只读核对确认之后才升级来源，且核对
   const selection = loadSelection(task);
 
   // 没有核对记录：如实记成用户填的、没验过。
-  assert.equal(applySelection(built, c, selection).lines[0].projectSource,
+  assert.equal(applySelection(built, c, selection, null, task.homeCity).lines[0].projectSource,
     'user_input_unverified');
 
   const verified = {
@@ -191,22 +195,22 @@ test('项目号只有在 ERP 只读核对确认之后才升级来源，且核对
     versionId: built.versionId,
     projects: { 111454: { verdict: 'confirmed', name: '某某项目' } },
   };
-  assert.equal(applySelection(built, c, selection, verified).lines[0].projectSource,
+  assert.equal(applySelection(built, c, selection, verified, task.homeCity).lines[0].projectSource,
     'erp_catalog_confirmed');
 
   // 核对说这个号有问题时，绝不能因为"有过一份核对记录"就升级。
   const bad = { ...verified, projects: { 111454: { verdict: 'missing' } } };
-  assert.equal(applySelection(built, c, selection, bad).lines[0].projectSource,
+  assert.equal(applySelection(built, c, selection, bad, task.homeCity).lines[0].projectSource,
     'user_input_unverified');
 
   // 明细指纹变了，旧的核对结论不再适用于现在这几行。
   const stale = { ...verified, linesDigest: 'something-else' };
-  assert.equal(applySelection(built, c, selection, stale).lines[0].projectSource,
+  assert.equal(applySelection(built, c, selection, stale, task.homeCity).lines[0].projectSource,
     'user_input_unverified');
 });
 
 test('换一张明细形状相同的发票，旧的任务选择和 ERP 核对都不能被继承', () => {
-  const task = createTask(path.join(home, 'src-version'));
+  const task = createBoundTask(path.join(home, 'src-version'));
   const { c, built } = rideCase();
   submitSelection(task, built, {
     homeCity: '广州', purpose: '客户支持',
@@ -218,7 +222,7 @@ test('换一张明细形状相同的发票，旧的任务选择和 ERP 核对都
     versionId: built.versionId,
     projects: { 111454: { verdict: 'confirmed', name: '某某项目' } },
   };
-  assert.equal(applySelection(built, c, selection, verified).lines[0].projectSource,
+  assert.equal(applySelection(built, c, selection, verified, task.homeCity).lines[0].projectSource,
     'erp_catalog_confirmed');
 
   // 用户换掉了发票文件，于是有了新的盘点版本 —— 但新发票的日期、城市、价税合计
@@ -227,7 +231,7 @@ test('换一张明细形状相同的发票，旧的任务选择和 ERP 核对都
   assert.equal(linesDigest(rebuilt), linesDigest(built),
     '这个用例的前提就是指纹相同；指纹一旦也变了，它测的就不是版本这条线了');
 
-  const after = applySelection(rebuilt, c, selection, verified);
+  const after = applySelection(rebuilt, c, selection, verified, task.homeCity);
   assert.equal(after.applied, false, '换了材料之后旧的任务选择不能继续生效');
   assert.deepEqual(after.notes.map((n) => n.kind), ['task_selection_stale']);
 
@@ -236,6 +240,6 @@ test('换一张明细形状相同的发票，旧的任务选择和 ERP 核对都
     homeCity: '广州', purpose: '客户支持',
     projects: Object.fromEntries(rebuilt.lineItems.map((l) => [l.lineId, '111454'])),
   });
-  assert.equal(applySelection(rebuilt, c, loadSelection(task), verified).lines[0].projectSource,
+  assert.equal(applySelection(rebuilt, c, loadSelection(task), verified, task.homeCity).lines[0].projectSource,
     'user_input_unverified', '旧核对记录绑的是旧版本，不能升级新材料上的项目号');
 });

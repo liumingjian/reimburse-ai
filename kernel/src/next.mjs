@@ -19,6 +19,7 @@ import { SHAPES, SHAPE_LABELS } from './imageshape.mjs';
 import { writePreviewDigest } from './erpwrite.mjs';
 import { roundFingerprint } from './allocate.mjs';
 import { renderTable, renderQuestions } from './table.mjs';
+import { paths } from './paths.mjs';
 
 /** 内核自己的入口。argv 里给绝对路径：模型原样执行，不需要知道 baox 装在哪。 */
 const SRC = path.dirname(url.fileURLToPath(import.meta.url));
@@ -142,7 +143,7 @@ const confirmTable = ({ table, materialIds, correctionPath, speak, context }) =>
  * —— 这一步的另一头是人，没有 stdout 可交。`outsourceable: false`：
  * 子 Agent 那里没有用户，问了也没人答。
  */
-const askUser = ({ questions, answersPath, answersFormat, speak, context, progress }) => ({
+const askUser = ({ questions, answersPath, answersFormat, speak, context, progress, stepMeta = {} }) => ({
   step: {
     kind: 'ask_user',
     questions,
@@ -155,7 +156,7 @@ const askUser = ({ questions, answersPath, answersFormat, speak, context, progre
   speak, context, progress, exit: 0,
   // 凭据钉在**问出去的这几题**上。同一个状态里换了一批题（上一轮答完了、
   // 或者草稿作废重来），旧凭据当场失效 —— 否则上一轮的答案会落到这一轮的段上。
-  stepMeta: { questions: roundFingerprint(questions) },
+  stepMeta: { ...stepMeta, questions: roundFingerprint(questions) },
 });
 
 /** 状态变了，这件事该换一个 skill 接手。不回传 —— 交接完这条链子就断在这里。 */
@@ -472,6 +473,28 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       };
     }
 
+    case 'env_home_city_unbound':
+      return askUser({
+        questions: [{
+          id: 'homeCity',
+          header: '首次确认常驻城市',
+          question: '你的常驻城市是哪座城市？常驻城市会作为新建报销任务的固定快照，用来区分本地与外地市内交通。',
+          options: [
+            { label: '暂不确认', description: '先停在这里，不创建报销任务，也不填写默认城市' },
+            { label: '其他', description: '请直接填写你的常驻城市，例如城市全称' },
+          ],
+        }],
+        answersPath: path.join(paths.root, 'home-city-answer.json'),
+        answersFormat: { answers: { homeCity: '用户明确填写的城市' } },
+        speak: '开始处理第一份报销任务前，要先请你确认常驻城市。这个值不能从材料、定位或登录身份推断；确认后只影响此后新建的任务。',
+        context: '常驻城市是当前 ERP 身份的个人绑定。以后重新确认时，已有任务仍使用创建时的城市快照。',
+        progress: ENV_PROGRESS,
+        stepMeta: {
+          account: o.probe?.identity?.account ?? null,
+          tenant: o.probe?.identity?.tenant ?? null,
+        },
+      });
+
     case 'env_identity_mismatched':
       return tellUser({
         speak: `这台机器绑定的是 ${bound}，但 ERP 现在登录的是 ${who}。`
@@ -491,6 +514,29 @@ export function stepFor(state, observation = {}, blockedBy = []) {
         context: '盘点会给这批材料建一个报销任务，并按"每份材料的路径 + 内容哈希 + 大小"'
           + '算出一个版本号。后面每一步都挂在这个版本上，材料一动版本就变。',
         progress: MATERIAL_PROGRESS,
+      });
+
+    case 'task_home_city_unbound':
+      return askUser({
+        questions: [{
+          id: 'homeCity',
+          header: '确认旧任务的常驻城市',
+          question: '创建这项旧任务时使用的常驻城市是哪座城市？这个答案只固定到该任务，不修改你当前的个人常驻城市。',
+          options: [
+            { label: '暂不确认', description: '先停在这里，不给旧任务填写默认城市' },
+            { label: '其他', description: '请直接填写创建这项任务时适用的常驻城市' },
+          ],
+        }],
+        answersPath: path.join(o.task.workspace, 'home-city-answer.json'),
+        answersFormat: { answers: { homeCity: '用户明确填写的城市' } },
+        speak: `${label} 是升级前创建的任务，但没有留下可证明的常驻城市。请你明确确认创建这项任务时适用的城市；我不会拿当前个人绑定代填。`,
+        context: '这次确认只补全该旧任务的固定快照，不修改个人绑定，也不影响其他新旧任务。',
+        progress: MATERIAL_PROGRESS,
+        stepMeta: {
+          taskId: o.task.taskId,
+          account: o.probe?.identity?.account ?? null,
+          tenant: o.probe?.identity?.tenant ?? null,
+        },
       });
 
     case 'inventory_stale':

@@ -91,6 +91,7 @@ export async function observeTask(sourceDir) {
       workspace: taskDir(task),
       currentVersionId: task.currentVersionId,
       erpWriteState: task.erpWriteState ?? null,
+      homeCity: task.homeCity ?? null,
     } : null,
     inventoryVersionId: inventory.versionId,
     materialCount: inventory.materials.length,
@@ -150,7 +151,7 @@ function observeErpHalf(task, classification, materialItems) {
 
   const selection = loadSelection(task);
   const catalog = loadCatalogVerification(task);
-  const applied = applySelection(built, classification, selection, catalog);
+  const applied = applySelection(built, classification, selection, catalog, task.homeCity);
   // 「还没做选择」和「选择过期了」不是待办，它们就是 project_unassigned 本身；
   // 费用类别推不出来那几条才是要人处置的待办。
   const OWN = new Set(['task_selection_required', 'task_selection_stale']);

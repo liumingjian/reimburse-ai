@@ -29,11 +29,8 @@ export function openInBrowser(url) {
 // "用户在别处点过头"的路径，而这一版的全部意义就是只剩一条路径。
 
 /**
- * 任务选择页。**这是项目归属、常驻城市和事由进入系统的唯一通道。**
- *
- * 页面刻意只问材料证明不了的三件事。费用类别不在这里 —— 它由内核按常驻城市和
- * 票面事实推导，不是用户的选择题；把它做成下拉框等于请用户去改一个有确定答案的结论。
- * 常驻城市写在最上面并说明它会决定市内交通算本地还是外地，让用户知道自己在定什么。
+ * 任务选择页。这里只收当前任务的报销事由和项目归属。
+ * 常驻城市已经在创建任务时固定，不在这里重复填写或修改。
  */
 export function renderTaskSelectPage(spec, nonce) {
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -77,13 +74,9 @@ button{width:100%;margin-top:20px;padding:14px;font-size:16px;font-weight:600;co
 </style></head><body><main>
 <form id="f">
   <h1>任务选择</h1>
-  <p class="prompt">下面这几件事材料上没有写，系统也不会替你推断：<b>常驻城市、报销事由、每条明细的项目</b>。
+  <p class="prompt">下面这两件事材料上没有写，系统也不会替你推断：<b>报销事由、每条明细的项目</b>。
   只有在这里提交，才算数。</p>
 
-  <div class="field">
-    <label>常驻城市（决定市内交通算<b>本地</b>还是<b>外地</b>，请如实填本次报销所属员工的常驻城市）</label>
-    <input id="city" value="${esc(spec.homeCity ?? '')}" placeholder="例如 广州市">
-  </div>
   <div class="field">
     <label>报销事由（写进 ERP 单据表头，必填）</label>
     <input id="purpose" value="${esc(spec.purpose ?? '')}" placeholder="例如 客户支持">
@@ -122,16 +115,15 @@ document.getElementById('f').addEventListener('submit', async (e) => {
     projects[tr.dataset.line] = tr.querySelector('input[name=proj]').value.trim();
   }
   const missing = Object.values(projects).filter(v => !v).length;
-  const city = document.getElementById('city').value.trim();
   const purpose = document.getElementById('purpose').value.trim();
-  if (!city || !purpose || missing) {
-    alert('常驻城市、事由和每一行的项目都要填' + (missing ? '，还有 ' + missing + ' 行没填项目' : ''));
+  if (!purpose || missing) {
+    alert('事由和每一行的项目都要填' + (missing ? '，还有 ' + missing + ' 行没填项目' : ''));
     return;
   }
   e.target.querySelector('button[type=submit]').disabled = true;
   await fetch('/submit?nonce=${nonce}', {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ homeCity: city, purpose, projects })
+    body: JSON.stringify({ purpose, projects })
   });
   document.getElementById('f').style.display = 'none';
   document.getElementById('done').style.display = 'block';
@@ -141,7 +133,7 @@ document.getElementById('f').addEventListener('submit', async (e) => {
 
 export function serveTaskSelection(spec, opts = {}) {
   return serveLocal((nonce) => renderTaskSelectPage(spec, nonce), opts,
-    (body) => ({ status: 'submitted', homeCity: body.homeCity, purpose: body.purpose,
+    (body) => ({ status: 'submitted', purpose: body.purpose,
       projects: body.projects ?? {}, at: new Date().toISOString() }));
 }
 

@@ -25,6 +25,9 @@ const { submitSelection, linesDigest } = await import('../src/selection.mjs');
 
 const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const me = { displayName: '刘明建', account: 'luo.liu', tenant: '5f1f13f6dde29e' };
+const { writeBinding, writeHomeCity } = await import('../src/binding.mjs');
+writeBinding(me);
+writeHomeCity(me, '广州市');
 
 const READY = {
   schemaVersion: SCHEMA_VERSION,
@@ -32,7 +35,7 @@ const READY = {
   nodeMajor: Number(process.versions.node.split('.')[0]),
   cdpUp: true,
   probe: { status: 'matched', identity: me },
-  binding: { ...me, confirmedAt: '2026-09-06T00:00:00.000Z' },
+  binding: { ...me, homeCity: '广州市', confirmedAt: '2026-09-06T00:00:00.000Z' },
 };
 
 // 三段合并的打车发票 + 它的行程单：逐段 26.69 + 20.85 + 21.65 = 69.19，

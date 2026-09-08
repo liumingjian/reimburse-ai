@@ -19,13 +19,13 @@ const healthy = (over = {}) => ({
   nodeVersion: '22.14.0', nodeMajor: 22,
   cdpUp: true,
   probe: { status: 'matched', identity: me },
-  binding: { ...me, confirmedAt: '2026-09-06T00:00:00.000Z' },
+  binding: { ...me, homeCity: '广州市', confirmedAt: '2026-09-06T00:00:00.000Z' },
   ...over,
 });
 
 const KEY = 'a1b2c3d4e5f60718';
 
-test('七个环境状态各有一步可做，说给用户听的话全部来自内核', async () => {
+test('八个环境状态各有一步可做，说给用户听的话全部来自内核', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
   const cases = [
@@ -49,6 +49,43 @@ test('七个环境状态各有一步可做，说给用户听的话全部来自�
       assert.ok(shaped.step.argv[1].endsWith(path.join('bin', 'baox.mjs')));
     }
   }
+});
+
+test('常驻城市首次访谈由内核渲染，只允许用户明确填写而不提供城市默认值', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const observation = healthy({
+    binding: { ...me, homeCity: '广州市', confirmedAt: '2026-09-06T00:00:00.000Z' },
+  });
+  const shaped = stepFor('env_home_city_unbound', observation);
+
+  assert.equal(shaped.step.kind, 'ask_user');
+  assert.equal(shaped.step.outsourceable, false);
+  assert.equal(shaped.step.questions.length, 1);
+  assert.equal(shaped.step.questions[0].id, 'homeCity');
+  assert.deepEqual(shaped.step.questions[0].options.map((x) => x.label), ['暂不确认', '其他']);
+  assert.match(shaped.step.prompt, /常驻城市/);
+  assert.doesNotMatch(shaped.step.prompt, /广州市|北京市|上海市/, '不能拿候选城市诱导用户确认默认值');
+  assert.ok(shaped.step.answersPath.endsWith('home-city-answer.json'));
+  assert.equal(shaped.step.answersFormat.answers.homeCity, '用户明确填写的城市');
+});
+
+test('旧任务缺城市时询问该任务快照，不拿当前个人城市代填', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const observation = withMaterials({
+    task: { ...withMaterials().task, homeCity: null },
+  });
+  const shaped = stepFor('task_home_city_unbound', observation);
+
+  assert.equal(shaped.step.kind, 'ask_user');
+  assert.equal(shaped.step.questions[0].id, 'homeCity');
+  assert.match(shaped.step.prompt, /常驻城市/);
+  assert.doesNotMatch(shaped.step.prompt, /广州市|北京市|上海市/);
+  assert.ok(shaped.step.answersPath.endsWith('home-city-answer.json'));
+  assert.equal(shaped.stepMeta.taskId, observation.task.taskId);
+  assert.equal(shaped.stepMeta.account, me.account);
+  assert.equal(shaped.stepMeta.tenant, me.tenant);
 });
 
 test('硬阻塞才给 2：等人登录不是硬阻塞', async () => {
@@ -77,7 +114,7 @@ const withMaterials = (over = {}) => healthy({
   taskObserved: true,
   sourceDir: '/tmp/材料',
   task: { taskId: '75dc9cbb4d', sourceLabel: '材料', workspace: '/tmp/ws',
-    currentVersionId: 'v-abc', erpWriteState: null },
+    currentVersionId: 'v-abc', erpWriteState: null, homeCity: '广州市' },
   inventoryVersionId: 'v-abc',
   inventoryStale: false,
   classificationRecorded: true,
@@ -396,7 +433,14 @@ test('从没登录一路走到环境就绪，全程只有一条命令在动', as
   assert.equal(r.state, 'env_identity_unbound');
   assert.equal(r.step.kind, 'confirm_table');
 
-  // 绑完，环境就绪。
+  // 身份绑完还不能进入任务：先明确询问常驻城市。
+  r = nextResponse({ observation: healthy({
+    binding: { ...me, confirmedAt: '2026-09-06T00:00:00.000Z' },
+  }), sourceKey: KEY, after: r.stepToken });
+  assert.equal(r.state, 'env_home_city_unbound');
+  assert.equal(r.step.kind, 'ask_user');
+
+  // 城市确认后，环境才就绪。
   r = nextResponse({ observation: healthy(), sourceKey: KEY, after: r.stepToken, hasResult: true });
   assert.equal(r.state, 'env_ready');
   assert.equal(r.step.kind, 'done');

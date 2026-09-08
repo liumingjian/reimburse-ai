@@ -25,6 +25,9 @@ const { applyTerminalVerdict } = await import('../src/confirm.mjs');
 
 const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const me = { displayName: '刘明建', account: 'luo.liu', tenant: '5f1f13f6dde29e' };
+const { writeBinding, writeHomeCity } = await import('../src/binding.mjs');
+writeBinding(me);
+writeHomeCity(me, '广州市');
 
 /** 环境已经就绪的那一半观测。它是喂进来的，不是采出来的。 */
 const READY = {
@@ -33,7 +36,7 @@ const READY = {
   nodeMajor: Number(process.versions.node.split('.')[0]),
   cdpUp: true,
   probe: { status: 'matched', identity: me },
-  binding: { ...me, confirmedAt: '2026-09-06T00:00:00.000Z' },
+  binding: { ...me, homeCity: '广州市', confirmedAt: '2026-09-06T00:00:00.000Z' },
 };
 
 const AA_INV = '交通/【AA出行-69.19元-3个行程】高德打车电子发票.pdf';

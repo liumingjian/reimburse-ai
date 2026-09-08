@@ -24,14 +24,14 @@
 import fs from 'node:fs';
 import { currentStep } from './steptoken.mjs';
 import { takeInventory } from './inventory.mjs';
-import { findLiveTaskForSource } from './workspace.mjs';
+import { findLiveTaskForSource, setTaskHomeCity } from './workspace.mjs';
 import { pendingConfirmations, confirmReadings, disputeReading } from './vision.mjs';
 import { settleDispute, RULING_STEP_KEYS } from './dispute.mjs';
 import { erpSnapshot } from './observe.mjs';
 import { receiveAllocationAnswers, roundFingerprint } from './allocate.mjs';
 import { ALLOCATION_KINDS } from './events.mjs';
 import { recordWriteApproval, writePreviewDigest } from './erpwrite.mjs';
-import { readBinding, writeBinding, bindingVerdict } from './binding.mjs';
+import { readBinding, writeBinding, writeHomeCity, bindingVerdict } from './binding.mjs';
 import { probeIdentity } from './probe.mjs';
 
 /** 内核此刻挂着的那一步，且回传的凭据正是它。对不上就是 null。 */
@@ -73,12 +73,18 @@ const awaitingRuling = (sourceKey, after) =>
  * 读它的人就得再去猜哪几个字段这次有效。
  */
 export async function applyTerminalVerdict({ sourceDir, sourceKey, after, correctionFile = null,
-  resultFile = null }) {
+  resultFile = null, probe = probeIdentity }) {
   // 认身份排在最前，而且**不要求有材料目录、不要求有任务**：它发生在这条链子的
   // 最开头，那会儿两样都还不存在。放在下面那道 `!sourceDir` 后面的话，
   // 用户在终端上认了人，内核什么都不会记下 —— 表现是同一张表一遍遍地问。
   if (outstandingStep(sourceKey, after)?.state === 'env_identity_unbound') {
-    return receiveIdentity(outstandingStep(sourceKey, after));
+    return receiveIdentity(outstandingStep(sourceKey, after), { probe });
+  }
+  if (outstandingStep(sourceKey, after)?.state === 'env_home_city_unbound') {
+    return receiveHomeCity(outstandingStep(sourceKey, after), resultFile, { probe });
+  }
+  if (outstandingStep(sourceKey, after)?.state === 'task_home_city_unbound') {
+    return receiveTaskHomeCity(sourceKey, outstandingStep(sourceKey, after), resultFile, { probe });
   }
   if (!sourceDir) return null;
   const outstanding = outstandingStep(sourceKey, after);
@@ -170,6 +176,42 @@ async function receiveAllocation({ sourceDir, task, outstanding, resultFile }) {
  * 这样一来，从 ERP 页面到 identity.json，全程没有一个字符串经过模型的手 ——
  * 这正是原来那张本地确认页在守的东西，换成终端表格之后它一点没少。
  */
+const CITY_CONTROL = /[\u0000-\u001f\u007f]/;
+
+export async function receiveHomeCity(outstanding, resultFile, { probe: readIdentity = probeIdentity } = {}) {
+  if (!resultFile) return null;
+  const probe = await readIdentity();
+  if (probe.status !== 'matched') return null;
+  const want = outstanding.meta ?? {};
+  if (!want.account || !want.tenant
+    || probe.identity.account !== want.account || probe.identity.tenant !== want.tenant) return null;
+
+  let doc;
+  try { doc = JSON.parse(fs.readFileSync(resultFile, 'utf8')); } catch { return null; }
+  const homeCity = typeof doc?.answers?.homeCity === 'string' ? doc.answers.homeCity.trim() : '';
+  if (!homeCity || homeCity === '暂不确认' || homeCity.length > 20 || CITY_CONTROL.test(homeCity)) return null;
+  const binding = writeHomeCity(probe.identity, homeCity);
+  return binding ? { verdict: 'home_city_bound', binding } : null;
+}
+
+export async function receiveTaskHomeCity(sourceKey, outstanding, resultFile,
+  { probe: readIdentity = probeIdentity } = {}) {
+  if (!resultFile) return null;
+  const probe = await readIdentity();
+  if (probe.status !== 'matched') return null;
+  const want = outstanding.meta ?? {};
+  if (!want.account || !want.tenant
+    || probe.identity.account !== want.account || probe.identity.tenant !== want.tenant) return null;
+  const task = findLiveTaskForSource(sourceKey);
+  if (!task || task.taskId !== want.taskId) return null;
+  let doc;
+  try { doc = JSON.parse(fs.readFileSync(resultFile, 'utf8')); } catch { return null; }
+  const homeCity = typeof doc?.answers?.homeCity === 'string' ? doc.answers.homeCity.trim() : '';
+  if (!homeCity || homeCity === '暂不确认' || homeCity.length > 20 || CITY_CONTROL.test(homeCity)) return null;
+  const updated = setTaskHomeCity(task.taskId, homeCity);
+  return updated ? { verdict: 'task_home_city_bound', task: updated } : null;
+}
+
 export async function receiveIdentity(outstanding, { probe: readIdentity = probeIdentity } = {}) {
   const probe = await readIdentity();
   if (probe.status !== 'matched') return null;

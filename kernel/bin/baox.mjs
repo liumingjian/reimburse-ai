@@ -19,7 +19,7 @@ import { CATEGORIES } from '../src/categories.mjs';
 import { findLiveTaskForSource, createTask, recordInventory, recordClassification,
   recordEvents, recordInvoiceSightings, abandonTask, loadIndex,
   sourceKeyOf, taskDir , recordCatalogVerification, loadCatalogVerification,
-  recordErpAttempt, recordErpWrite, liveTasks, archiveMigratedTasks } from '../src/workspace.mjs';
+  recordErpAttempt, recordErpWrite, liveTasks, archiveMigratedTasks, migrateTaskHomeCities } from '../src/workspace.mjs';
 import { crossTaskDuplicates, historyOpenItems, holdsInvoices } from '../src/history.mjs';
 import { authorizedPage, verifyExpenseItems, verifyProject, PROJECT_FORM } from '../src/erpcatalog.mjs';
 import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerField,
@@ -64,6 +64,7 @@ try {
           + '它们仍然占着自己那些发票（跨任务查重看得见），确认不再报销可以逐个作废。' };
     }
   }
+  migrateTaskHomeCities();
 } catch (err) {
   out({ command: process.argv[2] ?? null, status: 'migration_failed', error: err.message,
     hint: `把旧数据目录整份拷到 ${paths.root} 之后重试；旧目录没有被动过。` }, BLOCKED);
@@ -92,7 +93,7 @@ const yuan = (c) => (c === null || c === undefined ? null : (c / 100).toFixed(2)
 async function upToClassification(dir) {
   const inventory = await takeInventory(dir);
   const existing = findLiveTaskForSource(sourceKeyOf(dir));
-  const task = existing ?? createTask(dir);
+  const task = existing ?? createTask(dir, readBinding());
   const rec = recordInventory(task, inventory);
 
   const intakeItems = intakeOpenItems(inventory);
@@ -559,7 +560,7 @@ try {
       const key = sourceKeyOf(dir);
       // 同一个目录再次运行时，恢复原任务而不是新建第二个（契约「重复运行与历史材料」）。
       const existing = findLiveTaskForSource(key);
-      const task = existing ?? createTask(dir);
+      const task = existing ?? createTask(dir, readBinding());
       const rec = recordInventory(task, inventory);
 
       const items = intakeOpenItems(inventory);
@@ -593,7 +594,7 @@ try {
       // 盘点层还有硬阻塞时不往下解析：范围外和读不出来的材料先解决，再谈票种。
       const inventory = await takeInventory(dir);
       const existing = findLiveTaskForSource(sourceKeyOf(dir));
-      const task = existing ?? createTask(dir);
+      const task = existing ?? createTask(dir, readBinding());
       const rec = recordInventory(task, inventory);
 
       const intakeItems = intakeOpenItems(inventory);
@@ -646,7 +647,7 @@ try {
       if (!dir) out({ command: 'ocr-request', error: '缺少 --dir <材料目录>' }, ERR);
       const inventory = await takeInventory(dir);
       const existing = findLiveTaskForSource(sourceKeyOf(dir));
-      const task = existing ?? createTask(dir);
+      const task = existing ?? createTask(dir, readBinding());
       const rec = recordInventory(task, inventory);
       const classification = classifyInventory(dir, inventory, rec.task);
       const items = buildWorkOrder(dir, inventory, classification, rec.task,
@@ -801,7 +802,7 @@ try {
     }
 
     case 'select-task': {
-      // 项目归属、常驻城市和事由。**只有这个页面上的提交动作能把它们定下来**；
+      // 项目归属和事由。**只有这个页面上的提交动作能把它们定下来**；
       // 用户在对话里说"项目是 111454"不构成任务选择。
       const dir = arg('dir');
       if (!dir) out({ command: 'select-task', error: '缺少 --dir <材料目录>' }, ERR);
@@ -818,7 +819,7 @@ try {
       });
 
       const result = await serveTaskSelection(
-        { lines, homeCity: prev?.homeCity ?? '', purpose: prev?.purpose ?? '' },
+        { lines, purpose: prev?.purpose ?? '' },
         { timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
           onReady: (u) => process.stderr.write(`已在浏览器里打开页面（做任务选择）；没弹出就手动打开：${u}\n`) });
       if (result.status !== 'submitted') out({ command: 'select-task', ...result }, ERR);
@@ -829,7 +830,7 @@ try {
           note: '任务选择没有收下；重新跑 select-task' }, BLOCKED);
       }
       out({ command: 'select-task', verdict: r.verdict,
-        homeCity: r.record.homeCity, purpose: r.record.purpose,
+        homeCity: task.homeCity, purpose: r.record.purpose,
         lineCount: Object.keys(r.record.projects).length,
         projectSource: r.record.projectSource,
         note: '项目号来自用户，还没有和 ERP 项目目录核对过；跑 lines 看费用类别推导结果' }, OK);
@@ -843,7 +844,7 @@ try {
       const { task, classification, built, blocked } = await upToEvents(dir);
       if (blocked) out({ command: 'lines', ...blocked }, BLOCKED);
 
-      const applied = applySelection(built, classification, loadSelection(task), loadCatalogVerification(task));
+      const applied = applySelection(built, classification, loadSelection(task), loadCatalogVerification(task), task.homeCity);
       const blocking = applied.notes.filter((n) => n.blocking);
       out({
         command: 'lines', stage: 'task_selection',
@@ -963,7 +964,9 @@ try {
         // 所以刚认下的身份要补回来 —— 不补的话这一次应答仍然报 `env_identity_unbound`，
         // 用户刚认完就又看见同一张表，而绑定其实已经写进去了。
         // 材料那半份观测在下面重采，本来就带着最新的事实，不需要这样补。
-        ...(applied?.verdict === 'identity_bound' ? { binding: applied.binding } : {}),
+        ...(['identity_bound', 'home_city_bound'].includes(applied?.verdict)
+          ? { binding: applied.binding }
+          : {}),
         ...(materialsThere ? await observeTask(sourceDir) : {}),
       };
       const response = nextResponse({ observation, sourceKey, after,

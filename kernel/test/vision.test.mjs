@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
 
+const TEST_BINDING = { account: 'employee.test', tenant: 'tenant-a', homeCity: '广州市' };
+
 // 必须在导入内核模块之前改掉数据目录，否则会写进用户真实的工作区。
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-test-'));
 process.env.BAOX_HOME = home;
@@ -23,7 +25,7 @@ fs.copyFileSync(path.join(repo, 'resources', '交通', 'fengyun-1.png'), path.jo
 
 const inventory = await takeInventory(src);
 const material = inventory.materials[0];
-const task = createTask(src);
+const task = createTask(src, TEST_BINDING);
 
 const submit = (reading) =>
   ingestReadings(src, inventory, task, { version: 1, readings: [reading] })[0];
