@@ -18,7 +18,7 @@ process.env.BAOX_HOME = home;
 
 const { observeTask, erpSnapshot } = await import('../src/observe.mjs');
 const { nextResponse } = await import('../src/next.mjs');
-const { sourceKeyOf, findLiveTaskForSource, recordCatalogVerification, liveTasks, abandonTask }
+const { sourceKeyOf, findLiveTaskForSource, recordCatalogVerification, liveTasks, abandonTask, taskDir }
   = await import('../src/workspace.mjs');
 const { SCHEMA_VERSION } = await import('../src/state.mjs');
 const { applyTerminalVerdict } = await import('../src/confirm.mjs');
@@ -83,13 +83,24 @@ function runStep(r) {
 }
 
 /** 一路问到"该做什么"不再是内核自己跑命令为止，把走过的状态记下来。 */
-async function walk(dir, { max = 12 } = {}) {
+async function walk(dir, { max = 12, confirmDetails = true } = {}) {
   const seen = [];
   let r = await ask(dir);
-  for (let i = 0; i < max && r.step.kind === 'run'; i += 1) {
-    seen.push(r.state);
-    runStep(r);
-    r = await ask(dir, { after: r.stepToken, hasResult: true });
+  for (let i = 0; i < max; i += 1) {
+    if (r.step.kind === 'run') {
+      seen.push(r.state);
+      runStep(r);
+      r = await ask(dir, { after: r.stepToken, hasResult: true });
+      continue;
+    }
+    if (confirmDetails && r.state === 'classified_detail_confirmation_required') {
+      const applied = await applyTerminalVerdict({ sourceDir: dir, sourceKey: sourceKeyOf(dir),
+        after: r.stepToken });
+      assert.equal(applied?.verdict, 'classified_detail_confirmed');
+      r = await ask(dir, { after: r.stepToken });
+      continue;
+    }
+    break;
   }
   return { r, seen };
 }
@@ -119,7 +130,7 @@ test('分毫不差的合并发票：全程没问过用户一句，内核自己�
 
   assert.deepEqual(seen, ['task_none', 'classify_pending', 'events_pending'],
     '盘点、分类、划事件三条命令，全是内核自己跑的');
-  assert.equal(r.state, 'project_unassigned',
+  assert.equal(r.state, 'classified_detail_incomplete',
     `分摊那一步压根没出现过，实际停在 ${r.state}：${r.speak}`);
 
   // 三段确实拆出来了，金额来源是"行程单，与票面核对上了"，不是用户报的。
@@ -134,28 +145,33 @@ test('项目未指定：这一版如实停在这里，并说清楚为什么', as
   solo();
   const dir = materials([AA_INV, AA_ITI]);
   const { r } = await walk(dir);
-  assert.equal(r.state, 'project_unassigned');
+  assert.equal(r.state, 'classified_detail_incomplete');
   assert.equal(r.step.kind, 'tell_user', '这一趟没走完，只是停在这里等一个人');
-  assert.equal(r.blockedBy.length, 1, '一条都还没有项目号时，报的是整批');
-  assert.match(r.speak, /项目号/);
-  assert.equal(r.progress.label, '项目归属');
+  assert.equal(r.blockedBy.length, 1);
+  assert.match(r.speak, /费用类别/);
+  assert.equal(r.progress.label, '划分费用事件');
 
   // 幂等：再问一次还是这一步，状态不会自己往前跑。
-  assert.equal((await ask(dir)).state, 'project_unassigned');
+  assert.equal((await ask(dir)).state, 'classified_detail_incomplete');
 });
 
 /** 走到"项目也有了、ERP 也核对过了"那一格。ERP 那次查询在这里是喂进去的。 */
 async function upToWrite(dir, { projects = ['111454'], problems = [] } = {}) {
-  await walk(dir);
+  await walk(dir, { confirmDetails: false });
   const task = findLiveTaskForSource(sourceKeyOf(dir));
   const snap = await erpSnapshot(dir, task);
   const built = snap.events;
 
-  // 项目选择：本票不做它的交互，但它落盘之后的样子是确定的（select-task 写的就是它）。
+  // 当前 main 把常驻城市和项目放在同一份已支持的 selection 记录里；本票不实现它的交互。
   const chosen = Object.fromEntries(built.lineItems.map((l, i) =>
     [l.lineId, projects[i % projects.length]]));
   const s = submitSelection(task, built, { homeCity: '北京市', purpose: '七月出差交通费', projects: chosen });
   assert.equal(s.verdict, 'accepted', s.reasons?.join());
+  const complete = await ask(dir);
+  assert.equal(complete.state, 'classified_detail_confirmation_required');
+  const applied = await applyTerminalVerdict({ sourceDir: dir, sourceKey: sourceKeyOf(dir),
+    after: complete.stepToken });
+  assert.equal(applied?.verdict, 'classified_detail_confirmed');
 
   return { task, built };
 }
@@ -313,14 +329,14 @@ test('读数确认之后接着往下走：确认那一下之后，内核自己�
   const { r: end, seen } = await walk(dir);
   assert.ok(seen.includes('events_pending'),
     `材料清干净之后该自己去划事件，实际走了 ${seen.join(' -> ')}`);
-  assert.equal(end.state, 'project_unassigned', `实际停在 ${end.state}：${end.speak}`);
+  assert.equal(end.state, 'classified_detail_incomplete', `实际停在 ${end.state}：${end.speak}`);
 });
 
 test('分摊那一轮：题换过一批之后，上一轮的答案不算数', async () => {
   solo();
   const dir = materials([AA_INV, AA_ITI]);
   const { r } = await walk(dir);
-  assert.equal(r.state, 'project_unassigned', '这批材料分毫不差，压根不会问分摊');
+  assert.equal(r.state, 'classified_detail_incomplete', '这批材料分毫不差，压根不会问分摊');
 
   // 拿一份分摊答案回来，而内核此刻挂着的根本不是分摊那一步 ——
   // 什么都不该落盘。（问出去的题变过之后，同一道闸把旧答案挡在外面。）
@@ -329,7 +345,7 @@ test('分摊那一轮：题换过一批之后，上一轮的答案不算数', as
   const got = await applyTerminalVerdict({ sourceDir: dir, sourceKey: sourceKeyOf(dir),
     after: r.stepToken, resultFile: answers });
   assert.equal(got, null, '凭据对得上、步骤对不上，同样是什么都不做');
-  assert.equal((await ask(dir)).state, 'project_unassigned');
+  assert.equal((await ask(dir)).state, 'classified_detail_incomplete');
 });
 
 // 放在最后：这个用例会给任务打上 erpWriteState，而动过 ERP 的任务**再也作废不了**
@@ -349,5 +365,29 @@ test('动过 ERP 的任务：不再问要不要写，直接交接给 baox-recove
   assert.equal(r.step.skill, 'baox-recover');
   assert.match(r.speak, /dispatched/);
 });
+
+test('完整明细旧凭据在材料变化后拒绝，且不会留下确认或暂存', async () => {
+  solo();
+  const dir = materials([AA_INV, AA_ITI]);
+  writeTextPdf(path.join(dir, AA_INV), TEST_TRANSPORT_INVOICE_TEXT.replace(
+    '12345678901234567891', '92345678901234567891'));
+  await walk(dir, { confirmDetails: false });
+  const task = findLiveTaskForSource(sourceKeyOf(dir));
+  const snap = await erpSnapshot(dir, task);
+  submitSelection(task, snap.events, { homeCity: '北京市', purpose: '测试旧凭据',
+    projects: Object.fromEntries(snap.events.lineItems.map((line) => [line.lineId, '111454'])) });
+  const r = await ask(dir);
+  assert.equal(r.state, 'classified_detail_confirmation_required');
+  const oldToken = r.stepToken;
+  fs.appendFileSync(path.join(dir, AA_ITI), '\nchanged');
+  const applied = await applyTerminalVerdict({ sourceDir: dir, sourceKey: sourceKeyOf(dir), after: oldToken });
+  assert.equal(applied, null, '旧表的凭据不能确认变化后的材料');
+  assert.ok(!fs.existsSync(path.join(taskDir(task), 'erp-upload')),
+    '旧凭据被拒后不能留下确认或任何暂存目录');
+  const current = await ask(dir, { after: oldToken });
+  assert.equal(current.state, 'inventory_stale');
+  assert.notEqual(current.stepToken, oldToken);
+});
+
 
 test.after(() => { fs.rmSync(home, { recursive: true, force: true }); });

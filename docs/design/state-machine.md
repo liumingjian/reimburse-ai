@@ -35,6 +35,8 @@
 | `events_pending` | 无当前版本的事件划分 | kernel | `events` | 事件产出 |
 | `allocation_required` | 合并交通发票，且**各段之和 ≠ 价税合计**（相等则内核自动定案，不进此态） | user | 列出缺口请用户补 | 分毫不差 |
 | `allocation_stale` | 发票内容哈希变了 | user | 同上 | 同上 |
+| `classified_detail_incomplete` | 分类明细仍缺日期、金额、地理或费用类别 | user | 列出缺项并停住，不展示不完整确认表 | 缺项全部补齐 |
+| `classified_detail_confirmation_required` | 材料/证据/分摊待办已清，但完整分类明细未确认或主要凭证未成功暂存 | user | 终端展示脱敏完整明细；明确确认后，仅把主要报销凭证复制到任务私有暂存目录 | 当前摘要已确认且暂存可复核 |
 | `project_unassigned` | 有事件没有项目号 | model | 按事件在对话里问（内核渲染的问题，候选≤3 + 其他） | 每个事件有项目号 |
 | `catalog_unverified` | 项目/类别未经 ERP 只读核对 | kernel | `catalog` | 全部 `erp_catalog_confirmed` |
 | `catalog_mismatch` | ERP 里查无此项目 / 对不上 | user | 请用户改派 | 重新核对通过 |

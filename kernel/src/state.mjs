@@ -301,6 +301,21 @@ const RULES = [
       hint: `${o.allocationRound.fileName} 变过了，上次的逐段金额已经作废，要重新给` }),
   },
   {
+    state: 'classified_detail_incomplete',
+    actor: 'user',
+    when: (o) => erpSeen(o) && !o.task?.erpWriteState && !o.classifiedDetailComplete,
+    blocker: () => ({ kind: 'classified_detail_incomplete', resolvableBy: 'user',
+      hint: '完整明细仍缺日期、金额、城市/行程或费用类别；这些事实补齐前不能确认，也不能分配项目' }),
+  },
+  {
+    // 所有材料事实、证据关联、分摊和费用类别都清楚之后，整批明细还要由用户完整过目。
+    // 确认与本地暂存是一个原子动作；两者缺一，项目归属就不可达。
+    state: 'classified_detail_confirmation_required',
+    actor: 'user',
+    when: (o) => erpSeen(o) && !o.task?.erpWriteState && o.classifiedDetailComplete
+      && (!o.classifiedDetailConfirmed || !o.primaryVouchersStaged),
+  },
+  {
     // 有事件没有项目号。**按事件用对话提问问**是表里写的下一步，但那个问法
     // 还在原型上定（几十张发票配三五个项目，怎么问才不折磨人），所以这一版
     // 只做到「如实报出来，把状态摆在那里」—— 见本状态在 next.mjs 里的那一步。

@@ -33,6 +33,7 @@ import { ALLOCATION_KINDS } from './events.mjs';
 import { recordWriteApproval, writePreviewDigest } from './erpwrite.mjs';
 import { readBinding, writeBinding, bindingVerdict } from './binding.mjs';
 import { probeIdentity } from './probe.mjs';
+import { confirmAndStage } from './classified-confirmation.mjs';
 
 /** 内核此刻挂着的那一步，且回传的凭据正是它。对不上就是 null。 */
 const outstandingStep = (sourceKey, after) => {
@@ -85,7 +86,9 @@ export async function applyTerminalVerdict({ sourceDir, sourceKey, after, correc
   const ruling = awaitingRuling(sourceKey, after);
   const allocating = ALLOCATION_KINDS.has(outstanding?.state);
   const approving = outstanding?.state === 'ready_for_erp_write';
-  if (!ruling && !allocating && !approving && !awaitingConfirmation(sourceKey, after)) return null;
+  const confirmingDetails = outstanding?.state === 'classified_detail_confirmation_required';
+  if (!ruling && !allocating && !approving && !confirmingDetails
+    && !awaitingConfirmation(sourceKey, after)) return null;
 
   // 认凭据用的是哪个 sourceKey，找任务就用哪一个 —— 从 sourceDir 再算一遍，
   // 就多了一处两边可能对不上的地方，而对不上时的样子是「点了头却没生效」。
@@ -95,6 +98,8 @@ export async function applyTerminalVerdict({ sourceDir, sourceKey, after, correc
   // 后半段那两步各自重算自己要的那份观测，不用这里的盘点。
   if (allocating) return receiveAllocation({ sourceDir, task, outstanding, resultFile });
   if (approving) return receiveApproval({ sourceDir, task, outstanding, correctionFile });
+  if (confirmingDetails) return receiveClassifiedDetailConfirmation({ sourceDir, task, outstanding,
+    correctionFile });
 
   const inventory = await takeInventory(sourceDir);
 
@@ -195,4 +200,16 @@ async function receiveApproval({ sourceDir, task, outstanding, correctionFile })
   const record = recordWriteApproval(task, snap.writePreview);
   return { verdict: 'write_approved', lineCount: record.lineCount,
     totalAmount: (record.totalCents / 100).toFixed(2), digest: record.digest };
+}
+
+
+async function receiveClassifiedDetailConfirmation({ sourceDir, task, outstanding, correctionFile }) {
+  if (correctionFile) return null;
+  const snap = await erpSnapshot(sourceDir, task);
+  const digest = snap.classifiedDetailDigest;
+  if (!digest || outstanding.meta?.classifiedDetailDigest !== digest) return null;
+  const record = confirmAndStage({ sourceDir, task, inventory: snap.inventory,
+    classification: snap.classification, aggregate: snap.classifiedDetail, digest });
+  return record ? { verdict: 'classified_detail_confirmed', digest,
+    lineCount: snap.classifiedDetail.rows.length } : null;
 }

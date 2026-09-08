@@ -824,6 +824,50 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       });
     }
 
+    case 'classified_detail_incomplete':
+      return tellUser({
+        speak: '完整报销明细还缺日期、金额、城市或行程、费用类别中的至少一项。'
+          + '这些材料事实没有补齐之前，我不会请你确认，也不会进入项目分配。',
+        context: '当前 main 的任务选择把常驻城市和项目一起提交；本批次不新增项目选择器，'
+          + '因此需要常驻城市才能分类的明细会保守停在这里，不会用空类别冒充完整明细。',
+        progress: EVENT_PROGRESS,
+      });
+
+    case 'classified_detail_confirmation_required': {
+      const detail = o.classifiedDetail;
+      const rows = detail?.rows ?? [];
+      const table = renderTable([
+        { key: 'line', label: '明细引用', max: 10 },
+        { key: 'material', label: '材料引用', max: 16 },
+        { key: 'voucher', label: '发票号', max: 22 },
+        { key: 'date', label: '日期', max: 12 },
+        { key: 'amount', label: '金额/来源', max: 24 },
+        { key: 'where', label: '城市/行程', max: 20 },
+        { key: 'category', label: '费用类别', max: 14 },
+        { key: 'association', label: '证据关联', max: 30 },
+      ], rows.map((r) => ({
+        line: r.lineRef, material: r.materialRef, voucher: r.voucher,
+        date: r.date ?? '—', amount: `${r.amount ?? '—'} / ${AMOUNT_SOURCE_LABELS[r.amountSource] ?? r.amountSource ?? '—'}`,
+        where: r.route ?? r.city ?? '—', category: r.categoryLabel ?? r.category ?? '—',
+        association: r.association.references.length
+          ? `${r.association.primary} ← ${r.association.references.join(', ')}`
+          : `${r.association.primary}（无参考材料）`,
+      })));
+      return {
+        step: { kind: 'confirm_table', table, materialIds: [...new Set(rows.map((r) => r.materialRef))],
+          lineCount: rows.length, acceptsCorrection: false, outsourceable: false },
+        speak: `材料、证据关联和分摊已经全部复核完。下面是完整的 ${rows.length} 条报销明细，`
+          + '每条只出现一次。请逐行核对日期、金额及来源、城市或行程、费用类别和证据关联；'
+          + '明确确认后，我只会把其中的主要报销凭证复制到任务私有的 ERP 上传暂存目录。'
+          + '这只是本地准备，不会上传、写入或触碰 ERP。',
+        context: '确认钉在这张完整表的摘要上；材料、读数、关联、分摊、金额、地理、类别或明细任何变化，'
+          + '旧确认立即失效。参考材料不会进入上传暂存目录，源文件不会移动。',
+        progress: EVENT_PROGRESS,
+        exit: 0,
+        stepMeta: { classifiedDetailDigest: o.classifiedDetailDigest },
+      };
+    }
+
     case 'project_unassigned': {
       // 表里这一格写的是「按事件用对话提问问（候选≤3 + 其他）」。**那个问法还没落成**：
       // 几十张发票配三五个项目，怎么问才不折磨人，用户已经把它单独拿去做原型了。

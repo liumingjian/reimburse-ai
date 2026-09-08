@@ -20,8 +20,10 @@ import { findLiveTaskForSource, sourceKeyOf, taskDir, classificationRecorded,
 import { crossTaskDuplicates, historyOpenItems } from './history.mjs';
 import { buildEvents, eventOpenItems, ALLOCATION_KINDS } from './events.mjs';
 import { allocationRound, givenUpOpenItems } from './allocate.mjs';
-import { loadSelection, applySelection, linesDigest, sameBasis } from './selection.mjs';
+import { loadSelection, applySelection, deriveCategory, linesDigest, sameBasis } from './selection.mjs';
+import { categoryLabel } from './categories.mjs';
 import { loadWriteApproval, approvalCovers } from './erpwrite.mjs';
+import { classifiedDetailAggregate, confirmationStatus } from './classified-confirmation.mjs';
 
 /**
  * 数据目录的格式版本。没有这个文件就是这个内核自己写的那一版 ——
@@ -125,7 +127,7 @@ export async function observeTask(sourceDir) {
     && !obs.pendingImages.length && !obs.pendingReadings.length && !obs.pendingDisputes.length;
   if (!settled) return obs;
 
-  return { ...obs, ...observeErpHalf(task, classification, obs.openItems) };
+  return { ...obs, ...observeErpHalf(task, inventory, classification, obs.openItems) };
 }
 
 /**
@@ -137,7 +139,7 @@ export async function observeTask(sourceDir) {
  * 落盘的东西不拿来当"现在是什么样" —— 两边搞反，账本就永远缺一版，
  * 或者旧结论会套在新材料上。
  */
-function observeErpHalf(task, classification, materialItems) {
+function observeErpHalf(task, inventory, classification, materialItems) {
   const built = buildEvents(classification, task);
   const ledger = loadEventsLedger(task, built.versionId);
 
@@ -157,6 +159,19 @@ function observeErpHalf(task, classification, materialItems) {
 
   const preview = { lines: applied.lines, homeCity: applied.homeCity,
     purpose: selection?.purpose ?? null, versionId: built.versionId };
+  const classifiedLines = applied.lines.map((line) => {
+    if (line.category) return line;
+    const event = built.events.find((e) => e.eventId === line.eventId);
+    const derived = deriveCategory(event, classification, null);
+    const intrinsic = ['long_distance', 'accommodation'].includes(derived.category);
+    return intrinsic ? { ...line, category: derived.category,
+      categoryLabel: categoryLabel(derived.category) } : line;
+  });
+  const classifiedDetailComplete = classifiedLines.every((line) => line.date && line.totalAmount
+    && (line.city || line.route) && line.category);
+  const classifiedDetail = classifiedDetailAggregate({ inventory, classification, events: built,
+    lines: classifiedLines });
+  const classifiedConfirmation = confirmationStatus(task, classifiedDetail);
 
   return {
     events: built,
@@ -175,6 +190,11 @@ function observeErpHalf(task, classification, materialItems) {
       ...applied.notes.filter((n) => !OWN.has(n.kind)),
     ],
     allocationRound: allocationRound(task, stillAsking),
+    classifiedDetail,
+    classifiedDetailComplete,
+    classifiedDetailDigest: classifiedConfirmation.digest,
+    classifiedDetailConfirmed: classifiedConfirmation.confirmed,
+    primaryVouchersStaged: classifiedConfirmation.staged,
     selectionApplied: applied.applied,
     lines: applied.lines,
     homeCity: applied.homeCity,
@@ -199,5 +219,5 @@ export async function erpSnapshot(sourceDir, task) {
   const dir = path.resolve(sourceDir);
   const inventory = await takeInventory(dir);
   const classification = classifyInventory(dir, inventory, task);
-  return { inventory, classification, ...observeErpHalf(task, classification, []) };
+  return { inventory, classification, ...observeErpHalf(task, inventory, classification, []) };
 }

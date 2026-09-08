@@ -274,7 +274,7 @@ test('材料这一段全清了，才轮到费用事件', () => {
 test('判定表的先后就是状态表的先后 —— 插错位置的状态永远轮不上', () => {
   assert.equal(STATE_ORDER.at(-1), 'env_ready', '兜底永远在最后');
   const order = ['duplicate_blocked', 'events_pending', 'allocation_required', 'allocation_stale',
-    'project_unassigned', 'catalog_unverified', 'catalog_mismatch', 'ready_for_erp_write',
+    'classified_detail_incomplete', 'classified_detail_confirmation_required', 'project_unassigned', 'catalog_unverified', 'catalog_mismatch', 'ready_for_erp_write',
     'handed_off_recover'];
   for (let i = 1; i < order.length; i += 1) {
     assert.ok(STATE_ORDER.indexOf(order[i - 1]) < STATE_ORDER.indexOf(order[i]),
@@ -327,6 +327,9 @@ const withErp = (over = {}) => withMaterials({
   eventsRecorded: true,
   events: { versionId: 'v-abc', events: [{ eventId: 'ev-01' }], lineItems: [], notes: [] },
   allocationRound: null,
+  classifiedDetailComplete: true,
+  classifiedDetailConfirmed: true,
+  primaryVouchersStaged: true,
   selectionApplied: true,
   lines: [{ lineId: 'ev-01', voucherMaterialId: 'm-1', date: '2026-07-09', city: '北京市',
     totalAmount: '69.19', project: '111454', category: 'local_city_transport' }],
@@ -383,6 +386,18 @@ test('发票或盘点变过 —— 是 allocation_stale，不是又问一遍', (
   assert.match(r.blockedBy[0].hint, /变过了/, '用户有权知道这次问他不是因为他没答过');
 });
 
+test('材料明细不完整、未确认或未暂存时，项目分配都不可达', () => {
+  assert.equal(determineState(withErp({ classifiedDetailComplete: false,
+    selectionApplied: false })).state, 'classified_detail_incomplete');
+  const pending = determineState(withErp({ classifiedDetailConfirmed: false,
+    primaryVouchersStaged: false, selectionApplied: false }));
+  assert.equal(pending.state, 'classified_detail_confirmation_required');
+  assert.equal(pending.actor, 'user');
+  const notStaged = determineState(withErp({ classifiedDetailConfirmed: true,
+    primaryVouchersStaged: false, selectionApplied: false }));
+  assert.equal(notStaged.state, 'classified_detail_confirmation_required');
+});
+
 test('还没有项目号 —— 逐条报出来，一条明细一条待办', () => {
   const two = [
     { lineId: 'ev-01', voucherMaterialId: 'm-1', date: '2026-07-09', totalAmount: '26.69', project: null },
@@ -435,14 +450,19 @@ test('动过 ERP 的任务不再要一次点头，改为交接给 baox-recover',
 });
 
 test('后半段的判定顺序：事件压过分摊，分摊压过项目，项目压过核对', () => {
-  const all = { eventsRecorded: false, allocationRound: round(), selectionApplied: false,
+  const all = { eventsRecorded: false, allocationRound: round(), classifiedDetailComplete: true,
+    classifiedDetailConfirmed: false,
+    primaryVouchersStaged: false, selectionApplied: false,
     catalogFresh: false };
   assert.equal(determineState(withErp(all)).state, 'events_pending');
   assert.equal(determineState(withErp({ ...all, eventsRecorded: true })).state, 'allocation_required');
   assert.equal(determineState(withErp({ ...all, eventsRecorded: true, allocationRound: null })).state,
-    'project_unassigned');
+    'classified_detail_confirmation_required');
   assert.equal(determineState(withErp({ ...all, eventsRecorded: true, allocationRound: null,
-    selectionApplied: true })).state, 'catalog_unverified');
+    classifiedDetailConfirmed: true, primaryVouchersStaged: true })).state, 'project_unassigned');
+  assert.equal(determineState(withErp({ ...all, eventsRecorded: true, allocationRound: null,
+    selectionApplied: true, classifiedDetailConfirmed: true, primaryVouchersStaged: true })).state,
+    'catalog_unverified');
 });
 
 test('事件层和选择层的待办也拦得住路，和材料待办同一个出口', () => {
