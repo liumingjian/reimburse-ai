@@ -7,7 +7,7 @@ import * as chrome from '../src/chrome.mjs';
 import { probeIdentity, ERP_ORIGIN } from '../src/probe.mjs';
 // 本地页面只剩两处：重新绑定身份，和浏览完整项目目录。读数确认在终端上
 // （`confirm_table`），逐段分摊在终端上（`ask_user`），通用单选页整个下线了。
-import { serveTaskSelection, serveIdentityConfirmation } from '../src/serve.mjs';
+import { serveTaskSelection, serveIdentityConfirmation, serveResetConfirmation } from '../src/serve.mjs';
 import { buildWorkOrder, ingestReadings, pendingConfirmations,
   READING_VERSION, DOC_TYPES } from '../src/vision.mjs';
 import { applyTerminalVerdict } from '../src/confirm.mjs';
@@ -32,6 +32,7 @@ import { ingestReread, autoSettleAgreed } from '../src/dispute.mjs';
 import { SCHEMA_VERSION as NEXT_SCHEMA_VERSION } from '../src/state.mjs';
 import { currentSourceKey, currentSourceDir, currentIssuedArgv } from '../src/steptoken.mjs';
 import { guardVerdict, refusalPayload, recordRefusal } from '../src/guard.mjs';
+import { resetHome, validateResetHome } from '../src/reset.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -41,10 +42,22 @@ const OK = 0, ERR = 1, BLOCKED = 2;
 // 换了地方而没人告诉他，比不搬还糟。
 let migrated = null;
 
+const [, , cmd] = process.argv;
+
 const out = (obj, code = OK) => {
   process.stdout.write(JSON.stringify(migrated ? { ...obj, migrated } : obj, null, 2) + '\n');
   process.exit(code);
 };
+
+// Reset 必须先看当前目录，不能为了清空而先迁入旧数据或创建 schema。
+if (cmd === 'reset') {
+  const valid = validateResetHome(paths.root);
+  if (!valid.ok) out({ command: 'reset', ...valid }, BLOCKED);
+  if (valid.empty) {
+    out({ command: 'reset', status: 'already_reset',
+      speak: 'baox 已经是全新状态，不需要再次重置。' });
+  }
+}
 
 // 搬家（0.9.x 的 ~/Library/Application Support/baox 之类 -> ~/.baox）在任何命令之前做掉，
 // 而且只做一次。这里在 out 之后、命令之前，因为它必须在下面那个 try 之外跑：数据目录
@@ -52,7 +65,7 @@ const out = (obj, code = OK) => {
 // 搬不动就硬停：继续跑等于在一个空的新目录里从头开始，而用户的任务还在旧目录里 ——
 // 那是一种看起来正常、实则丢了全部历史的失败，比直接停住坏得多。
 try {
-  migrated = migrateOnStartup();
+  migrated = cmd === 'reset' ? null : migrateOnStartup();
   if (migrated) {
     // 搬完立刻把 0.9.x 的在途任务标记成存档，理由见 workspace.mjs 的 archiveMigratedTasks。
     // 就在这一次说清楚：那些任务不会接着往下走，同一个目录下次是从头开始的新任务。
@@ -141,8 +154,6 @@ async function upToEvents(dir) {
   return { ...up, built, blocked: null };
 }
 
-const [, , cmd] = process.argv;
-
 // —— 模型不拼命令 ——
 // 模型敲得动的只有两样：`next`，和内核**刚刚**放进 `step.argv` 的那一条命令行。
 // 其余子命令在检测到自己被 Agent 调起时当场拒绝；它们仍然留着给人手敲排障
@@ -163,10 +174,22 @@ const [, , cmd] = process.argv;
 // 数据格式版本落盘。没有这个文件的目录（0.9.x 迁过来的，或者刚建的）就是这一版写的，
 // 补一份 schema.json；已经有了就一个字都不动 —— 里面写着 2 的目录是未来某一版的，
 // 把它改回 1 等于让 schema_too_new 这道闸永远不触发。
-ensureSchemaVersionFile();
+if (cmd !== 'reset') ensureSchemaVersionFile();
 
 try {
   switch (cmd) {
+    case 'reset': {
+      const confirmation = await serveResetConfirmation({ home: path.resolve(paths.root) }, {
+        timeoutMs: 5 * 60 * 1000,
+        onReady: (u) => process.stderr.write(`已在浏览器里打开 baox Reset 页面；没弹出就手动打开：${u}\n`),
+      });
+      if (confirmation.status !== 'submitted') {
+        out({ command: 'reset', status: 'cancelled', speak: '已取消 Reset，本地内容没有清除。' });
+      }
+      const result = await resetHome(paths.root, { closeBrowser: () => chrome.close() });
+      out({ command: 'reset', ...result }, result.status === 'reset' ? OK : BLOCKED);
+    }
+
     case 'doctor': {
       const [major] = process.versions.node.split('.').map(Number);
       const checks = {
@@ -978,7 +1001,7 @@ try {
       out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['next', 'doctor', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
         'ocr-request', 'ocr-submit', 'confirm-readings', 'reread-submit',
         'history', 'events', 'select-task', 'lines',
-        'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill'] }, ERR);
+        'tasks', 'abandon-task', 'reset', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);

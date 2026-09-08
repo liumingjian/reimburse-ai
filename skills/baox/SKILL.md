@@ -8,6 +8,19 @@ allowed-tools: Bash, Read, Task, Skill
 
 用户看到的一切都是中文。English is for this file only.
 
+## Full Reset
+
+只有用户明确要求 Reset、重置或清空 baox 时，运行：
+
+```bash
+node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" reset
+```
+
+内核打开本地页；只有用户点击「完全重置」才会清空。不要代点或加参数绕过。
+返回后原样念 `speak` 并停止；退出码 2 时请用户按提示处理后重试。
+
+## 报销流程
+
 **你只会敲一条命令。** 内核决定下一步做什么，你照做，把结果交回去：
 
 ```bash
@@ -87,8 +100,8 @@ node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材
 
 ## 不能做的事
 
-- **不拼命令、不改参数。** `step.argv` 原样执行，多一个参数少一个参数都不行。
-  除 `next` 以外的 `baox` 子命令你一条都不敲。
+- **不拼命令、不改参数。** 报销流程中的 `step.argv` 原样执行，多一个参数少一个参数都不行。
+  除 `next` 和用户明确要求时的 `reset` 以外，`baox` 子命令一条都不敲。
 - **不替内核判断下一步。** 状态在内核里。你不因为「看起来该分类了」就去分类。
 - **不替用户点头。** 「没问题」「对的」「继续」在对话里说出来不是确认。确认只有一种：
   内核观测到的那一次回传。这条管 `confirm_table`、`ask_user` 和所有 `tell_user`。

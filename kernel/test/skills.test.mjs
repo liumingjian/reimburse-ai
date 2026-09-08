@@ -34,14 +34,15 @@ test('三份说明书都不超过 120 行', () => {
   }
 });
 
-// 模型只会 `baox next`。说明书里出现第二条命令，等于告诉它还有第二条路。
-// 只看代码块和行内代码 —— 散文里的 "the only baox entry point" 不是命令示例。
-test('baox 与 baox-setup 的说明书里只出现 next 一条命令', () => {
-  for (const s of ['baox', 'baox-setup']) {
-    for (const f of walk(path.join(SKILLS, s))) {
-      const found = commandsIn(fs.readFileSync(f, 'utf8')).filter((c) => c !== 'next');
-      assert.deepEqual(found, [], `${path.relative(SKILLS, f)} 里出现了 next 以外的命令：${found}`);
+// 模型只会走内核给定的入口：报销流程是 `next`，用户明确要求 Full Reset 时才有 `reset`。
+// baox-setup 仍然只跑 `next`；其它低层命令不能从说明书里长回来。
+test('baox 只多出用户明确触发的 reset，baox-setup 仍只有 next', () => {
+  for (const [skill, allowed] of [['baox', ['next', 'reset']], ['baox-setup', ['next']]]) {
+    const found = new Set();
+    for (const f of walk(path.join(SKILLS, skill))) {
+      for (const command of commandsIn(fs.readFileSync(f, 'utf8'))) found.add(command);
     }
+    assert.deepEqual([...found].sort(), allowed, `${skill} 的命令入口不对`);
   }
 });
 
