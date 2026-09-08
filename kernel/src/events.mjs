@@ -69,7 +69,11 @@ export function linkEvidence(vouchers, references) {
       kinds.set(k, (kinds.get(k) ?? 0) + 1);
     }
     for (const [k, n] of kinds) {
-      if (n > 1) ambiguous.push({ materialId: voucherId, sameKind: k, count: n });
+      if (n > 1) {
+        ambiguous.push({ materialId: voucherId, sameKind: k, count: n });
+        links.set(voucherId, links.get(voucherId)
+          .filter((id) => references.find((r) => r.materialId === id).kind !== k));
+      }
     }
   }
   const unlinked = references.filter((r) => (usedBy.get(r.materialId) ?? []).length === 0);
@@ -418,7 +422,7 @@ export function eventOpenItems(built) {
         : '这份参考材料的合计金额同时对上了多张发票，证据归属不唯一；请确认它属于哪一次费用' });
   }
   for (const u of built.evidence.unlinked) {
-    items.push({ kind: 'reference_unlinked', blocking: false, ...u,
+    items.push({ ...u, kind: 'reference_unlinked', blocking: false,
       note: '这份参考材料的合计金额没有对上任何一张发票。它可能属于另一次报销，'
         + '也可能说明对应的发票还没放进来 —— 请自己判断，系统不替你决定' });
   }

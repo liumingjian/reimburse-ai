@@ -324,6 +324,12 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
       if (!fields.invoiceNumber) reasons.push('识别为发票但没有回报 20 位发票号码，无法做重复检查');
       if (!fields.totalAmount) reasons.push('识别为发票但没有回报价税合计');
     }
+    // 行程单靠自己声明的合计金额与发票确定性关联。看得见就逐字抄，认不出就明确处置；
+    // 什么都不写会让一份无法关联的参考材料悄悄通过。
+    if (raw.docType === 'ride_itinerary'
+      && !fields.totalAmount && !unreadable.includes('totalAmount')) {
+      reasons.push('识别为行程单时，请把票面合计抄进 fields.totalAmount；看不清则把 totalAmount 写进 unreadable');
+    }
 
     // 金额守恒。模型没法把编出来的数字凑平，所以这一条是最硬的一道结构闸。
     let amountCheck = null;

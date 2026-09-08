@@ -40,15 +40,18 @@ const READING_CONTRACT = Object.freeze({
   docTypes: Object.fromEntries(Object.keys(DOC_TYPES).map((docType) => [docType, Object.freeze({
     allowedFields: ALLOWED_READING_FIELDS,
     requiredFields: docType === 'invoice' ? Object.freeze(['invoiceNumber', 'totalAmount']) : Object.freeze([]),
-    ...(docType === 'ride_itinerary' ? { segments: Object.freeze({
-      type: 'array',
-      minItems: 1,
-      additionalFields: false,
-      fields: Object.fromEntries(Object.entries(SEGMENT_RULES).map(([field, rule]) => [field, Object.freeze({
-        required: rule.required,
-        format: rule.hint,
-      })])),
-    }) } : {}),
+    ...(docType === 'ride_itinerary' ? {
+      requiredOrUnreadable: Object.freeze(['totalAmount']),
+      segments: Object.freeze({
+        type: 'array',
+        minItems: 1,
+        additionalFields: false,
+        fields: Object.fromEntries(Object.entries(SEGMENT_RULES).map(([field, rule]) => [field, Object.freeze({
+          required: rule.required,
+          format: rule.hint,
+        })])),
+      }),
+    } : {}),
   })])),
   fieldFormats: Object.fromEntries(
     Object.entries(FIELD_RULES).map(([field, rule]) => [field, rule.hint])),

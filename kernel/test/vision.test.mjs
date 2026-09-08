@@ -160,7 +160,7 @@ test('看着图说这几个字段认不出来，是合法答案', () => {
   const v = submit({ materialId: material.materialId, contentHash: material.contentHash,
     sighted: { shape: 'landscape' }, docType: 'ride_itinerary',
     fields: { city: '深圳', travelDate: '2026-09-04' },
-    unreadable: ['origin', 'destination'] });
+    unreadable: ['origin', 'destination', 'totalAmount'] });
   assert.equal(v.verdict, 'accepted', JSON.stringify(v.reasons));
 });
 
@@ -219,7 +219,8 @@ test('逐段内容变化时旧确认失效', () => {
 
 test('单段图片行程单继续兼容平铺字段', () => {
   const v = submit({ ...good(), docType: 'ride_itinerary',
-    fields: { travelDate: '2026-09-04', city: '深圳市', origin: '南山区', destination: '福田区' } });
+    fields: { travelDate: '2026-09-04', city: '深圳市', origin: '南山区', destination: '福田区' },
+    unreadable: ['totalAmount'] });
   assert.equal(v.verdict, 'accepted', JSON.stringify(v.reasons));
 });
 

@@ -235,6 +235,8 @@ test('看图 step 直接给出完整字段闭集，不用反查 vision.mjs', asy
   }
   assert.deepEqual(step.readingContract.docTypes.invoice.requiredFields,
     ['invoiceNumber', 'totalAmount']);
+  assert.deepEqual(step.readingContract.docTypes.ride_itinerary.requiredOrUnreadable,
+    ['totalAmount'], '行程单整体合计必须逐字抄出，或明确处置为看不清');
   assert.equal(step.readingContract.minimumFields, 1, '完整图片不能交空读数');
   assert.deepEqual(step.readingContract.amountConservation.whenPresent,
     ['netAmount', 'taxAmount', 'totalAmount']);
