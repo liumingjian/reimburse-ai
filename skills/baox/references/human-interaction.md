@@ -11,3 +11,7 @@
 | `dispute` | 按 `step.phase` 处理：`reread` 只交给干净上下文子 Agent 读取 `step.field`；`ruling`/`conservation_gap` 等用户对原件给终值 | 重读按 `step.rereadPath` 写入并原样执行 `step.argv`，再交 `--result`；用户终值按对应格式写入后交 `--correction` |
 
 提问和确认都在当前对话中完成，不调用 `AskUserQuestion` 等提问工具。没有用户在场时不代答、不确认、不写纠正文件。所有内核给出的 `step.argv` 原样执行；模型不自行选择低层命令。
+
+固定确认词只有「确认」。`home_city_required` 有城市参考时，回复「确认」接受参考；不正确就直接填写城市。`profile_confirmation` 会在新任务创建前展示报销人和常驻城市，回复「确认」继续，直接填写城市则覆盖默认值；不提供通用“修改”“取消”指令。
+
+`speak` 和 `step.prompt` 原样传递；不要向用户展示模板元数据、路径、命令、内部状态或组件名。异常只按当前话术要求员工补充、等待系统恢复或联系报销管理员。

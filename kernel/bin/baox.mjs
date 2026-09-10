@@ -66,7 +66,7 @@ async function authorizedReadPage(command) {
   } catch (error) {
     if (error?.code === 'EGO_TASK_SPACE_REQUIRED') {
       out({ command, status: 'blocked', code: error.code, error: error.message,
-        note: '先在 ego-browser 中创建或确认持久 task space，记录数字 id，再以 BAOX_EGO_TASK_SPACE=<id> 重试' }, BLOCKED);
+        note: '请先完成报销系统的浏览器环境准备，之后再继续。' }, BLOCKED);
     }
     throw error;
   }
@@ -380,7 +380,7 @@ try {
           if (error?.code === 'EGO_TASK_SPACE_REQUIRED') {
             out({ command: 'browser-open', browserMode: mode, status: 'blocked',
               code: error.code, error: error.message,
-              note: 'QA 模式需要 BAOX_EGO_TASK_SPACE；正式模式请清除 BAOX_BROWSER=ego' }, BLOCKED);
+              note: '请先完成报销系统的浏览器环境准备，之后再继续。' }, BLOCKED);
           }
           throw error;
         }
@@ -1634,6 +1634,7 @@ try {
       // 问得不对就答不了：这两种都不是状态机里的状态（那两张表里没有它们），
       // 而是「这一问根本没法判」，所以走 error + 1，不冒充成一个 step。
       const dir = arg('dir');
+      const homeCitySuggestion = arg('home-city-suggestion');
       if (dir && !(fs.existsSync(dir) && fs.statSync(dir).isDirectory())) {
         out({ command: 'next', schemaVersion: NEXT_SCHEMA_VERSION,
           error: `材料目录不存在：${dir}`,
@@ -1686,7 +1687,7 @@ try {
       // gate before observeTask so a missing managed runtime cannot trigger a
       // partial inventory/classification pass before its install step.
       const taskObservation = materialsThere && env.runtimeDependencies?.ready === true
-        ? await observeTask(sourceDir) : {};
+        ? await observeTask(sourceDir, { homeCitySuggestion }) : {};
       let recovery = null;
       if (materialsThere && hasRecoveryMarker(taskObservation.task)) {
         const checked = env.probe?.status === 'matched'
@@ -1714,6 +1715,8 @@ try {
         // 材料那半份观测在下面重采，本来就带着最新的事实，不需要这样补。
         ...(applied?.verdict === 'identity_bound' ? { binding: applied.binding } : {}),
         ...taskObservation,
+        ...(applied?.verdict === 'profile_confirmed'
+          ? { profileConfirmationRequired: false } : {}),
         ...(recovery ? { recovery } : {}),
       };
       const response = nextResponse({ observation, sourceKey, after,

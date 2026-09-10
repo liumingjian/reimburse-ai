@@ -322,6 +322,15 @@ const RULES = [
       hint: '还没有确认当前员工的常驻城市；先由本人确认，后续新任务会沿用' }),
   },
   {
+    // 已有员工记忆时，新报销先把报销人和常驻城市铺开。放在创建任务前，
+    // 这样用户直接输入新城市会覆盖默认值，而新任务会拿到最新快照。
+    state: 'profile_confirmation',
+    actor: 'user',
+    when: (o) => taskSeen(o) && !o.task && o.profileConfirmationRequired === true,
+    blocker: () => ({ kind: 'profile_confirmation_required', resolvableBy: 'user',
+      hint: '请确认报销人和常驻城市；城市不正确时直接填写新的城市名称' }),
+  },
+  {
     state: 'task_none',
     actor: 'kernel',
     when: (o) => taskSeen(o) && !o.task,

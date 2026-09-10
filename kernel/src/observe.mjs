@@ -12,13 +12,13 @@ import { probeIdentity } from './probe.mjs';
 import { isEgoControlError } from './ego.mjs';
 import { browserMode, EGO_BROWSER, SYSTEM_BROWSER } from './browser-open.mjs';
 import { readBinding } from './binding.mjs';
-import { readHomeCity } from './home-city.mjs';
+import { readHomeCity, validHomeCity } from './home-city.mjs';
 import { takeInventoryForTask, intakeOpenItems } from './inventory.mjs';
 import { classifyInventory, classifyOpenItems } from './classify.mjs';
 import { buildWorkOrder, pendingConfirmations } from './vision.mjs';
 import { openDisputes } from './dispute.mjs';
 import { findLiveTaskForSource, sourceKeyOf, taskDir, classificationRecorded,
-  loadEventsLedger, loadCatalogVerification, hasErpWriteState } from './workspace.mjs';
+  loadEventsLedger, loadCatalogVerification, hasErpWriteState, loadIndex } from './workspace.mjs';
 import { crossTaskDuplicates, historyOpenItems } from './history.mjs';
 import { buildEvents, eventOpenItems, ALLOCATION_KINDS } from './events.mjs';
 import { allocationRound, givenUpOpenItems } from './allocate.mjs';
@@ -279,7 +279,9 @@ export async function observeEnvironment() {
  *  3. **这里不写盘**。观测改变被观测的东西，幂等就无从谈起：写盘的是 `step.argv`
  *     里那条命令，不是问一句「现在该做什么」。
  */
-export async function observeTask(sourceDir, { mode = 'markdown', receiptFacts = null } = {}) {
+export async function observeTask(sourceDir, {
+  mode = 'markdown', receiptFacts = null, homeCitySuggestion = null,
+} = {}) {
   const dir = path.resolve(sourceDir);
   const task = findLiveTaskForSource(sourceKeyOf(dir));
   const inventory = await takeInventoryForTask(dir, task);
@@ -288,6 +290,8 @@ export async function observeTask(sourceDir, { mode = 'markdown', receiptFacts =
   const inventoryStale = !!task && task.currentVersionId !== inventory.versionId;
   const classification = classifyInventory(dir, inventory, task, { mode });
   const employeeHomeCity = readHomeCity(readBinding())?.homeCity ?? null;
+  const trustedHomeCitySuggestion = validHomeCity(homeCitySuggestion)
+    ? homeCitySuggestion.trim() : null;
   // 跨任务查重：拿发票身份去比对本机上别的任务还占着的票。只读别的任务落盘的摘要，
   // 一个字都不往回写。没有任务时无从比起（本任务自己都还没有身份摘要）。
   const history = task ? crossTaskDuplicates(task, classification) : null;
@@ -300,6 +304,9 @@ export async function observeTask(sourceDir, { mode = 'markdown', receiptFacts =
     // fact visible here so recovery does not silently skip a missing snapshot.
     homeCityRequired: task ? !task.homeCity : !employeeHomeCity,
     homeCityAnswerPath: path.join(paths.root, 'home-city-answer.json'),
+    employeeHomeCity,
+    ...(trustedHomeCitySuggestion ? { homeCitySuggestion: trustedHomeCitySuggestion } : {}),
+    profileConfirmationRequired: !task && !!employeeHomeCity && loadIndex().tasks.length > 0,
     homeCity: task?.homeCity ?? employeeHomeCity,
     task: task ? {
       taskId: task.taskId,

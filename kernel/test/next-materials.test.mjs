@@ -56,7 +56,9 @@ function materials(rels) {
 
 /** 问一句"现在该做什么"。环境那一半喂现成的，材料那一半是真采的。 */
 const ask = async (dir, over = {}) => nextResponse({
-  observation: { ...READY, ...await observeTask(dir, { mode: 'legacy' }) },
+  // Existing material-flow cases begin after the new-task profile card.
+  observation: { ...READY, ...await observeTask(dir, { mode: 'legacy' }),
+    profileConfirmationRequired: false },
   sourceKey: sourceKeyOf(dir),
   ...over,
 });
@@ -108,7 +110,7 @@ test('从环境就绪一路问到「该看图了」，全程只有 baox next 这
   assert.deepEqual(r.step.images.map((i) => i.fileName), ['fengyun-1.png']);
   assert.ok(fs.existsSync(r.step.images[0].absPath), '给的绝对路径得真打得开');
   assert.ok(fs.existsSync(r.step.schemaPath));
-  assert.equal(r.progress.label, '看图读数');
+  assert.equal(r.progress.label, '材料整理');
 
   // 幂等：再问一次，还是这一步，还是这个凭据。
   const again = await ask(dir);

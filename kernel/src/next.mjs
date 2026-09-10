@@ -24,6 +24,8 @@ import { PDF_MARKDOWN_SCHEMA_PATH, PDF_MARKDOWN_TEMPLATE_PATH, MARKITDOWN_VERSIO
 import { ERP_ENTRY } from './probe.mjs';
 import { SYSTEM_BROWSER } from './browser-open.mjs';
 import { runtimeDependencyStep } from './runtime-dependencies.mjs';
+import { PROGRESS, decorateStep, sanitizeUserText } from './interaction.mjs';
+import { validHomeCity } from './home-city.mjs';
 
 /** 内核自己的入口。argv 里给绝对路径：模型原样执行，不需要知道 baox 装在哪。 */
 const SRC = path.dirname(url.fileURLToPath(import.meta.url));
@@ -71,14 +73,15 @@ const READING_CONTRACT = Object.freeze({
   multipleTrips: '多段行程按 ride_itinerary.segments 逐段填写；只抄票面可见值，不推断、不合并。',
 });
 
-const ENV_PROGRESS = { phase: 1, of: 10, label: '环境准备' };
-const MATERIAL_PROGRESS = { phase: 2, of: 10, label: '材料盘点与分类' };
-const READING_PROGRESS = { phase: 3, of: 10, label: '看图读数' };
-const EVENT_PROGRESS = { phase: 4, of: 10, label: '划分费用事件' };
-const PROJECT_PROGRESS = { phase: 5, of: 10, label: '项目归属' };
-const CATALOG_PROGRESS = { phase: 6, of: 10, label: '与 ERP 核对' };
-const WRITE_PROGRESS = { phase: 7, of: 10, label: '写入后恢复' };
-const PREPARATION_PROGRESS = { phase: 7, of: 10, label: 'ERP 填报前准备' };
+const ENV_PROGRESS = PROGRESS.environment;
+const IDENTITY_PROGRESS = PROGRESS.identity;
+const MATERIAL_PROGRESS = PROGRESS.intake;
+const READING_PROGRESS = PROGRESS.materials;
+const EVENT_PROGRESS = PROGRESS.events;
+const PROJECT_PROGRESS = PROGRESS.projects;
+const CATALOG_PROGRESS = PROGRESS.catalog;
+const WRITE_PROGRESS = PROGRESS.save;
+const PREPARATION_PROGRESS = PROGRESS.preparation;
 
 // 退出码：0 继续 / 2 有硬阻塞，未解决不得继续。硬阻塞是那些「等下去也不会好」的：
 // Node 太老、数据格式太新、登错了人。停在登录页不是硬阻塞 —— 那是在等人，不是被拦住。
@@ -328,23 +331,20 @@ const spoken = (v) => (v === null || v === undefined ? '读不出来' : `「${v}
  */
 const CONVERGENCE_LINE = {
   [CONVERGENCE.agrees_with_user]: (f) =>
-    `${f.label}：我第一次读到${spoken(f.machineValue)}，重读读到${spoken(f.rereadValue)} ——`
-    + `第二次也读出你说的这个值，是我第一次看错了。这个值我接受，来源记作你给的。`,
+    `${f.label}：前后两次读取结果分别是${spoken(f.machineValue)}和${spoken(f.rereadValue)}。`
+    + `第二次结果与你提供的值一致，本次采用这个值。`,
 
-  [CONVERGENCE.agrees_with_machine]: (f, materialPath) =>
-    `${f.label}：重读读出来的还是${spoken(f.machineValue)}，和我第一次一样；你说是${spoken(f.userValue)}。`
-    + '两次机器读数一致并不等于机器就对 —— 也可能这张图上这一处本来就容易被看成同一个错。'
-    + `请你打开原件（${materialPath}）看这一处，你说是多少就是多少。`,
+  [CONVERGENCE.agrees_with_machine]: (f) =>
+    `${f.label}：前后两次读取结果都是${spoken(f.machineValue)}，与你提供的${spoken(f.userValue)}不一致。`
+    + '请对照原件，直接告诉我正确值。',
 
-  [CONVERGENCE.third_value]: (f, materialPath) =>
-    `${f.label}：三个说法互不相同 —— 我第一次读到${spoken(f.machineValue)}，`
+  [CONVERGENCE.third_value]: (f) =>
+    `${f.label}：前后两次读取结果和你提供的值不一致 —— 第一次是${spoken(f.machineValue)}，`
     + `重读读到${spoken(f.rereadValue)}，你说是${spoken(f.userValue)}。`
-    + '这说明这个字段在这张图上我读不可靠，我这两次读数在这里都不作数，以原件为准。'
-    + `请你对着原件（${materialPath}）告诉我它到底是多少；实在认不出就说一声，`
-    + '我把这条读数整条退回待办 —— 我不会替你填一个数。',
+    + '请以原件为准，直接告诉我正确值；看不清就回复看不清，我会把这项列入待处理事项。',
 };
 
-const convergenceLine = (f, materialPath) => CONVERGENCE_LINE[f.convergence](f, materialPath);
+const convergenceLine = (f) => CONVERGENCE_LINE[f.convergence](f);
 
 /**
  * 待确认读数 -> 一张 Markdown 表格。
@@ -432,7 +432,7 @@ function invoiceSummaryTable(preview = {}) {
     });
   return renderTable([
     { key: 'voucher', label: '发票', max: 22 },
-    { key: 'kind', label: '原生票种', max: 24 },
+    { key: 'kind', label: '票据类型', max: 24 },
     { key: 'net', label: '不含税金额', max: 18 },
     { key: 'tax', label: '税额', max: 18 },
     { key: 'total', label: '价税合计', max: 18 },
@@ -472,7 +472,7 @@ function classifiedDetailTable(preview = {}) {
 function identityTable(identity) {
   return renderTable([
     { key: 'field', label: '项', max: 12 },
-    { key: 'value', label: '我从 ERP 读到的', max: 32 },
+    { key: 'value', label: '当前登录信息', max: 32 },
     { key: 'note', label: '说明', max: 24 },
   ], [
     { field: '姓名', value: identity.displayName ?? '（读不出）', note: '只给你认人，不作判据' },
@@ -481,8 +481,18 @@ function identityTable(identity) {
   ]);
 }
 
+function profileTable(identity, homeCity) {
+  return renderTable([
+    { key: 'field', label: '项目', max: 12 },
+    { key: 'value', label: '当前信息', max: 32 },
+  ], [
+    { field: '报销人', value: identity?.displayName ?? identity?.account ?? '（未确认）' },
+    { field: '常驻城市', value: homeCity ?? '（未设置）' },
+  ]);
+}
+
 /** 三种来源念给用户听的样子。契约里的 `vision` / `user` / `kernel`。 */
-const SOURCE_LABELS = { vision: '我看图读的', ocr: '本机 OCR 读的', user: '你给的', kernel: '内核解析的' };
+const SOURCE_LABELS = { vision: '材料核对结果', ocr: '材料读取结果', user: '你确认的', kernel: '系统整理结果' };
 
 /** 待办清单念给用户听的样子。谁能解决它，是每条最要紧的那半句。 */
 const WHO = { user: '要你处理', model: '我来处理', kernel: '系统' };
@@ -492,7 +502,7 @@ const evidenceLabel = (b) => {
     const id = reference?.materialId ?? '（无 materialId）';
     return reference?.fileName ? `${id}/${reference.fileName}` : id;
   }).join('、');
-  return `凭证 ${b.materialId ?? '（无 materialId）'}；候选参考材料 ${candidates || '（无）'}`;
+  return `凭证 ${b.materialId ?? '（无 materialId）'}；参考材料 ${candidates || '（无）'}`;
 };
 
 const blockerSubject = (item) => evidenceLabel(item)
@@ -503,14 +513,15 @@ const blockerSubject = (item) => evidenceLabel(item)
   ?? item.materialId
   ?? '这批材料';
 
-const blockerReason = (item) => String(item.hint ?? item.note ?? item.message ?? item.reason ?? item.kind
-  ?? '准备材料存在未决项').replace(/用 abandon-task --task \S+ 把它作废/g, '请通过维护流程作废该任务');
+const blockerReason = (item) => sanitizeUserText(
+  String(item.hint ?? item.note ?? item.message ?? item.reason ?? '这项材料暂时无法处理')
+    .replace(/用 abandon-task --task \S+ 把它作废/g, '请联系报销管理员处理该任务'));
 
 /** 用户要处理的开放项也由内核渲染，避免模型把长句重排成错位清单。 */
 const itemTable = (items) => renderTable([
   { key: 'number', label: '序号', max: 6 },
   { key: 'subject', label: '材料/明细', max: 24 },
-  { key: 'reference', label: '候选参考', max: 32 },
+  { key: 'reference', label: '参考材料', max: 32 },
   { key: 'reason', label: '待处理问题', max: 400 },
   { key: 'resolver', label: '处理人', max: 10 },
 ], (items ?? []).flatMap((item, index) => {
@@ -547,17 +558,12 @@ const preparationProblemTable = (items) => renderTable([
 
 const preparationPackageText = (o) => {
   const packageInfo = o.preparationPackage ?? o.preparation?.package ?? null;
-  if (!packageInfo) return '交接包路径将在生成后显示。';
-  const details = [];
-  if (typeof packageInfo.directory === 'string') details.push(`目录: ${packageInfo.directory}`);
+  if (!packageInfo) return '核对材料正在生成。';
   const files = packageInfo.files;
-  if (files && typeof files === 'object') {
-    for (const [key, value] of Object.entries(files)) {
-      if (typeof value === 'string') details.push(`${key}: ${value}`);
-      else if (Array.isArray(value) && value.length) details.push(`${key}: ${value.join('、')}`);
-    }
-  }
-  return details.join('；') || '交接包已生成。';
+  const fileCount = files && typeof files === 'object'
+    ? Object.values(files).reduce((count, value) => count + (Array.isArray(value) ? value.length : 1), 0)
+    : 0;
+  return fileCount ? `核对材料已生成，共 ${fileCount} 份文件。` : '核对材料已生成。';
 };
 
 const preparationMoney = (line) => {
@@ -582,12 +588,11 @@ const preparationConfirmationTable = (preparation = {}) => {
     { key: 'field', label: '项目', max: 18 },
     { key: 'value', label: '当前准备结果', max: 58 },
   ], [
-    { field: '阶段', value: document.phase === 'pre-erp' ? 'ERP 前准备' : document.phase ?? 'ERP 前准备' },
+    { field: '阶段', value: document.phase === 'pre-erp' ? '报销材料准备' : document.phase ?? '报销材料准备' },
     { field: '状态', value: document.status === 'ready_for_preparation' ? '材料已备齐'
       : document.status ? '草稿（材料不足）' : '—' },
     { field: '报销事由', value: document.purpose ?? '—' },
     { field: '常驻城市', value: document.homeCity ?? '—' },
-    { field: '材料版本', value: document.task?.versionId ?? '—' },
     { field: '发票/明细数', value: `${(document.invoices ?? []).length} / ${lines.length}` },
     { field: '明细总额', value: lines.every((line) => Number.isInteger(line.totalCents))
       ? `${(lines.reduce((sum, line) => sum + line.totalCents, 0) / 100).toFixed(2)} 元` : '缺失' },
@@ -641,12 +646,11 @@ const NEEDS_RESULT = new Set(['run', 'read_images', 'extract_images', 'read_mark
  *
  * `blockedBy` 是判定那一侧算好的开放项，材料这一段要按它逐条说话。
  */
-export function stepFor(state, observation = {}, blockedBy = []) {
+function rawStepFor(state, observation = {}, blockedBy = []) {
   const o = observation;
   const systemBrowser = o.browserMode === SYSTEM_BROWSER
     || ['system', 'default'].includes(o.probe?.transport);
   const who = o.probe?.identity?.displayName ?? o.probe?.identity?.account ?? null;
-  const bound = o.binding?.displayName ?? o.binding?.account ?? null;
   const label = o.task?.sourceLabel ?? '这批材料';
   const readingsPath = o.task ? readingInboxIn(o.task.workspace) : null;
   const correctionPath = o.task ? correctionInboxIn(o.task.workspace) : null;
@@ -659,8 +663,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
   switch (state) {
     case 'schema_too_new':
       return tellUser({
-        speak: '这台机器上的报销数据是更新版本的 baox 写的，我这一版读不了，'
-          + '硬来只会把数据弄坏。请先把 baox 升到新版，我们再继续。',
+        speak: '这批报销材料需要更新版本的报销工具才能继续。请先完成更新，之后我会从当前进度继续。',
         context: `数据目录里记的格式版本是 ${o.schemaVersion}，这个内核只认到 ${SCHEMA_VERSION}。`
           + '版本闸看的是数据格式，不是代码版本号。',
         progress: null,
@@ -669,8 +672,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'env_node_unsupported':
       return tellUser({
-        speak: `你这台机器上的 Node 是 ${o.nodeVersion ?? o.nodeMajor}，baox 需要 ${MIN_NODE_MAJOR} 或更高。`
-          + '装好新版 Node 之后跟我说一声，我接着往下走。',
+        speak: '当前运行环境版本过低，暂时不能继续。请先完成环境更新，之后我会从当前进度继续。',
         context: systemBrowser
           ? 'baox 的内核运行需要 Node 21 或更高版本。'
           : 'ego-browser 的内核运行需要 Node 21 或更高版本。',
@@ -679,12 +681,11 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'env_runtime_missing': {
       const install = o.runtimeDependencies?.install ?? runtimeDependencyStep();
-      const names = (o.runtimeDependencies?.missing ?? install.runtimes ?? []).join('、');
       return run(install.argv, {
         out: install.out,
         env: install.env,
         runtimes: install.runtimes,
-        speak: `环境准备还缺少受管运行时${names ? `：${names}` : ''}。先执行下面这条安装步骤；安装失败会原样停在这里，不会开始处理材料。`,
+        speak: '报销工具还缺少处理材料所需的组件。请先完成环境准备；准备失败时我会停在这里，不会开始处理材料。',
         context: 'MarkItDown 和 extract-reimbursement-images OCR 必须在材料解析前准备好。'
           + '安装只写入 BAOX_HOME 下的固定目录，解析阶段不会临时同步或下载，也不使用全局 Python。',
       });
@@ -694,16 +695,14 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       if (systemBrowser) {
         const reason = o.browserReadError?.message ?? o.probe?.hint;
         return tellUser({
-          speak: '系统默认浏览器的 ERP 只读能力当前不可用，身份没有被确认。'
-            + '请按下面的具体权限或浏览器能力提示处理后再试；我不会用旧登录记录代替当前探测。',
+          speak: '当前浏览器暂时无法读取报销系统页面，身份尚未确认。请按提示恢复浏览器权限后再试。',
           context: reason
             ?? 'system browser transport 不依赖专用 Chrome 或 CDP，但仍需要当前浏览器的只读能力。',
           exit: BLOCKED,
         });
       }
       return tellUser({
-        speak: 'ego-browser task space 还没有配置或当前不可用。请先创建或确认一个持久 task space，'
-          + '记下数字 id，然后以 BAOX_EGO_TASK_SPACE=<id> 运行 baox；旧版浏览器启动命令已停用。',
+        speak: '报销专用浏览器空间还没有准备好。请先按环境准备提示完成设置，之后我会继续。',
         context: o.egoError?.message
           ?? '所有 ERP、本地页面和项目簿操作都必须复用同一个 ego task space。',
         exit: BLOCKED,
@@ -711,8 +710,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'env_not_logged_in':
       return tellUser({
-        speak: `请你在${systemBrowser ? '系统默认浏览器里的 ERP 页面' : 'ego task space 里的 ERP 页面'}，用你本人的账号登录 ERP。`
-          + '我不会替你填账号密码。登进主界面之后告诉我一声，我接着往下走。',
+        speak: '请在报销系统中使用本人账号登录。登录完成后告诉我，我会继续。',
         context: 'ERP 的登录页和主控制台是同一个网址，所以我按页面上有没有登录表单来判断。'
           + '另外登录页上也读得出你上次登录的账号，那不算已登录。',
       });
@@ -720,8 +718,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
     case 'env_identity_unknown':
       if (systemBrowser && o.probe?.status === 'no_tab') {
         return run(argvFor('browser-open', '--url', ERP_ENTRY), {
-          speak: `我还没有在系统默认浏览器里找到 ERP 页面。先打开 ${ERP_ENTRY}，`
-            + '然后请你用本人的账号登录；我会再用当前页面的实际只读结果核对身份。',
+          speak: '我还没有找到报销系统页面。请先打开报销系统并使用本人账号登录，完成后告诉我。',
           context: 'browser-open 只调用操作系统默认 URL 打开方式，不启动专用 Chrome、CDP 或其他测试浏览器。'
             + '打开页面和读出当前登录身份是两件事，读不出来时我会明确报告能力或权限问题。',
         });
@@ -730,17 +727,13 @@ export function stepFor(state, observation = {}, blockedBy = []) {
         || ['browser_read_unavailable', 'read_unavailable'].includes(o.probe?.status))) {
         const reason = o.browserReadError?.message ?? o.probe?.hint;
         return tellUser({
-          speak: '我没有读到当前 ERP 登录身份，系统默认浏览器只读能力不可用。'
-            + (reason ? `具体原因：${reason}。` : '')
-            + '请按这个原因处理后再试；我不会假装已登录。',
+          speak: '暂时无法确认报销系统当前登录身份。请按提示恢复浏览器权限后再试。',
           context: reason
             ?? '当前浏览器拒绝了只读 AppleEvents 能力，或系统不支持所需的浏览器读取接口。',
         });
       }
       return tellUser({
-        speak: `我读不出${systemBrowser ? '系统默认浏览器里的 ERP 页面' : 'ego task space 里的 ERP 页面'}现在是谁登录着。麻烦你看一眼这个页面：`
-          + '停在登录页就登录一下，页面卡着就刷新一下，弄好了告诉我。'
-          + '身份读不确定我就不往下走 —— 报销主体错了是不可撤销的。',
+        speak: '暂时无法确认报销系统当前登录的是谁。请检查登录页面，完成后告诉我。身份未确认前不会继续。',
         context: '探针只读页面上已有的信息，不导航、不点击。现在的情况是页面加载没完成、'
           + '或者读不出用户名又看不见登录表单、或者读出了人却缺账号或账套凑不成可比的身份。',
       });
@@ -764,12 +757,11 @@ export function stepFor(state, observation = {}, blockedBy = []) {
           acceptsCorrection: false,
           outsourceable: false,
         },
-        speak: `当前 ERP 登录身份还没有绑定。请核对身份表；确认是你本人后回复「是我本人」，`
-          + '我会保存绑定。不是的话请先在 ERP 页面切换到你自己的账号。',
+        speak: '当前登录身份还没有登记。请核对身份表；确认是本人后在当前会话中回复「确认」。如果不是，请先在报销系统切换到本人账号。',
         context: '绑定判据是登录账号加账套，不含显示名 —— 显示名在 ERP 里改得动，'
           + '拿它当门栓等于把门栓拴在别人能拧的东西上。表里的每个值都是我自己从 ERP '
           + '读出来的，我不接受口述的账号；记下之后这台机器就只替这个身份报销。',
-        progress: ENV_PROGRESS,
+        progress: IDENTITY_PROGRESS,
         exit: 0,
         // 凭据钉在**这一份身份**上。回传时内核会重新读一次 ERP，读出来的人
         // 和你刚才看过的这一个对不上，这次点头当场作废 —— 你认的永远只是你看过的那一个。
@@ -779,9 +771,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'env_identity_mismatched':
       return tellUser({
-        speak: `这台机器绑定的是 ${bound}，但 ERP 现在登录的是 ${who}。`
-          + `baox 只替绑定的那个人报销，请在${systemBrowser ? '系统默认浏览器里的 ERP 页面' : 'ego task space 里的 ERP 页面'}换回本人的账号登录。`
-          + '确实要把这台机器改绑到当前这个身份，得先把手上的任务走完或作废。',
+        speak: '当前登录身份与已登记的报销人不一致。请在报销系统切换回本人账号；已有报销不能中途更换报销人。',
         context: '判据是登录账号加账套。换账套等于换一整套主数据，也算换了人。'
           + '中途换人会把一份报销记在两个人头上，所以这里是硬阻塞。',
         exit: BLOCKED,
@@ -790,23 +780,53 @@ export function stepFor(state, observation = {}, blockedBy = []) {
     case 'home_city_required': {
       const id = o.probe?.identity ?? {};
       const taskId = o.task?.taskId ?? null;
+      const suggestedHomeCity = validHomeCity(o.homeCitySuggestion)
+        ? o.homeCitySuggestion.trim() : null;
+      const prompt = suggestedHomeCity
+        ? `我检测到你当前所在城市可能是${suggestedHomeCity}。若它是你的常驻城市，请在当前会话中回复「确认」；`
+          + '如果不是，请直接输入你的常驻城市名称。输入后会直接继续。'
+        : '请直接填写你的常驻城市名称（例如：广州市）。输入后会直接继续。';
       return {
         step: {
           kind: 'ask_user',
-          prompt: '请直接填写你日常办公所在的常驻城市（例如：广州市）。这个城市会记在当前员工身份下，'
-            + '之后新建任务会沿用；已经开始的任务仍使用它创建时的快照。',
+          prompt,
           questions: [{ id: 'homeCity', question: '你的常驻城市是哪里？请直接填写城市名称。' }],
           answersPath: o.homeCityAnswerPath ?? homeCityAnswerIn(),
-          answersFormat: { homeCity: '用户本人填写的城市名称' },
+          answersFormat: { homeCity: suggestedHomeCity
+            ? '用户回复「确认」时填写 suggestedHomeCity；否则填写用户直接提供的城市名称'
+            : '用户本人直接填写的城市名称' },
+          ...(suggestedHomeCity ? { suggestedHomeCity } : {}),
           outsourceable: false,
         },
-        speak: '在开始处理材料前，我需要你本人确认常驻城市。之后新建任务会沿用这个员工记忆，'
-          + '已经开始的任务不会被后来修改的记忆改变。',
+        speak: suggestedHomeCity
+          ? `开始前请确认常驻城市：如果是${suggestedHomeCity}，请在当前会话中回复「确认」；如果不是，请直接输入你的常驻城市。`
+          : '开始前请直接输入你的常驻城市。之后新建报销会沿用这个设置，已经开始的报销不会被后来修改的设置改变。',
         context: '常驻城市只用于按材料上的费用发生城市推导本地或外地市内交通，不能从发票或行程单猜。'
           + `当前确认身份是 ${id.account ?? '（账号未知）'} / ${id.tenant ?? '（账套未知）'}。`,
-        progress: MATERIAL_PROGRESS,
+        progress: IDENTITY_PROGRESS,
         exit: 0,
-        stepMeta: { account: id.account ?? null, tenant: id.tenant ?? null, taskId },
+        stepMeta: { account: id.account ?? null, tenant: id.tenant ?? null, taskId,
+          suggestedHomeCity },
+      };
+    }
+
+    case 'profile_confirmation': {
+      const id = o.probe?.identity ?? o.binding ?? {};
+      const homeCity = o.employeeHomeCity ?? o.homeCity ?? null;
+      return {
+        step: {
+          kind: 'ask_user',
+          prompt: `${profileTable(id, homeCity)}\n请核对以上信息。无误请在当前会话中回复「确认」；常驻城市不正确时，直接输入新的城市名称。`,
+          questions: [{ id: 'homeCity', question: '回复「确认」或直接填写新的常驻城市。' }],
+          answersPath: o.homeCityAnswerPath ?? homeCityAnswerIn(),
+          answersFormat: { homeCity: '用户回复「确认」或直接填写新的常驻城市名称' },
+          outsourceable: false,
+        },
+        speak: `请确认本次报销信息：报销人是${id.displayName ?? id.account ?? '当前登录用户'}，常驻城市是${homeCity ?? '（未设置）'}。无误请在当前会话中回复「确认」；城市不正确时请直接输入新的城市名称。`,
+        context: '这一步发生在创建新任务之前。回复新的城市会覆盖员工默认值，当前新任务会使用最新城市；已经开始的任务仍保留创建时的城市快照。',
+        progress: IDENTITY_PROGRESS,
+        exit: 0,
+        stepMeta: { account: id.account ?? null, tenant: id.tenant ?? null, homeCity },
       };
     }
 
@@ -814,8 +834,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'task_none':
       return run(argvFor('intake', '--dir', o.sourceDir), {
-        speak: '我先把这个目录里的材料整个盘一遍：有几份、每份是什么格式、哪些读不出来。'
-          + '盘点只读你的目录，不改名、不移动、不删东西。',
+        speak: '我正在整理这批报销材料：确认材料数量、格式和是否可读取。整理过程中不会移动或删除原文件。',
         context: '盘点会给这批材料建一个报销任务，并按"每份材料的路径 + 内容哈希 + 大小"'
           + '算出一个版本号。后面每一步都挂在这个版本上，材料一动版本就变。',
         progress: MATERIAL_PROGRESS,
@@ -823,8 +842,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'inventory_stale':
       return run(argvFor('intake', '--dir', o.sourceDir), {
-        speak: `${label} 这个目录和我上次盘的对不上了 —— 多了、少了或者换过文件。`
-          + '我重新盘一遍再往下走，免得后面按着一份过期的清单做事。',
+        speak: `${label} 的材料有变化。我会重新整理后继续，避免沿用旧内容。`,
         context: '这是内核自己比出来的：每次问"下一步做什么"都重新走一遍目录、重算内容哈希，'
           + '和任务上记的版本号一比就知道。不靠谁记得说一声。',
         progress: MATERIAL_PROGRESS,
@@ -832,8 +850,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'pdf_markdown_conversion_required': {
       const response = run(argvFor('markdown-convert', '--dir', o.sourceDir), {
-        speak: 'PDF 还没有经过固定版本的 MarkItDown 转换。我先把每份 PDF 生成原始 Markdown 和带行号副本，'
-          + '不读取文件名猜票面事实，也不让候选直接进入分类。',
+        speak: '我正在整理 PDF 材料，确认每份材料的内容后再继续。',
         context: `转换器固定为 MarkItDown ${MARKITDOWN_VERSION}，运行时必须用锁定依赖；缺运行时、空结果或转换失败都会停住。`
           + '原 PDF 不改，artifact 会按当前材料 hash 绑定。',
         progress: MATERIAL_PROGRESS,
@@ -851,15 +868,14 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'pdf_markdown_conversion_empty':
       return tellUser({
-        speak: 'MarkItDown 已运行，但这份 PDF 没有产出可读文字。请提供电子发票原件或可提取文字的 PDF；'
-          + '我不会把扫描件当成已解析，也不会擅自改走图片 OCR。',
+        speak: '这份 PDF 没有可读取的内容。请提供电子发票原件或能正常读取文字的 PDF。',
         context: '空 Markdown 没有票种、金额或日期证据。替换原件后材料 hash 会变化，内核会重新生成工单。',
         progress: MATERIAL_PROGRESS,
       });
 
     case 'pdf_markdown_conversion_failed': {
       const response = run(argvFor('markdown-convert', '--dir', o.sourceDir), {
-        speak: '固定版本 MarkItDown 转换失败。请先按错误信息修复锁定运行时或输入文件，再原样重试转换。',
+        speak: '这份 PDF 暂时无法读取。请更换文件或修复后重试；在读取成功前不会继续。',
         context: '转换失败不会被当成空文本或已解析；当前错误来自锁定的 MarkItDown '
           + MARKITDOWN_VERSION + ' 运行时。',
         progress: MATERIAL_PROGRESS,
@@ -882,8 +898,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
           candidatePath: item.candidatePath ?? null, candidateRecordPath: item.candidateRecordPath ?? null,
           markdownHash: item.markdownHash ?? null, issue: item.hint ?? null })),
         argv: argvFor('markdown-ingest', '--dir', o.sourceDir),
-        speak: 'Markdown 已准备好。请逐份打开内核生成的带行号 Markdown，按封闭 schema 填候选 JSON，'
-          + '再交给我做 hash、字段格式和逐字段原文证据校验。候选没有通过校验前不会生成费用事件。',
+        speak: '我正在逐份核对 PDF 内容；核对完成前不会生成费用明细。',
         context: 'candidatePath 只能由带编号 Markdown 和 templatePath 产生；source、materialId、PDF hash、'
           + 'Markdown hash 都由内核校验，候选不能伪装成 kernel 或视觉事实。',
       });
@@ -896,9 +911,9 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       const openItems = blockedBy.filter((b) => b.blocking);
       const table = itemTable(openItems);
       return tellUser({
-        speak: `${label} 目前有 ${openItems.length} 项材料待处理：\n`
+        speak: `${label} 还有 ${openItems.length} 项需要处理：\n`
           + `${table}\n`
-          + '处理这些项目后告诉我，我会重新核对。',
+          + '处理完成后告诉我，我会重新核对。',
         table,
         context: '这些是盘点和解析报上来的开放项。我不会替你把它们当作不存在 ——'
           + '带着读不出、认不出的材料往下走，等于把问题推到 ERP 那一头去暴露。'
@@ -911,8 +926,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'classify_pending':
       return run(argvFor('classify', '--dir', o.sourceDir), {
-        speak: '材料盘清楚了，接下来我把每一份分个类：哪些是报销凭证、哪些是参考材料，'
-          + '能从 PDF 里直接取到的票面信息我一并取出来。',
+        speak: '材料已经盘点完成，我正在按报销用途整理每份材料。',
         context: '分类结果挂在当前这个盘点版本上，落进任务工作区。材料一变，'
           + '这一版分类就不再代表现在的材料，得重来。',
         progress: MATERIAL_PROGRESS,
@@ -924,7 +938,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
         workspace: o.task.workspace,
         readingsPath,
         argv: submitArgv(),
-        speak: `${label} 里有 ${images.length} 张图片材料需要读取：${imageNames}。我先在本机批量提取字段。`,
+        speak: `${label} 中有 ${images.length} 张图片需要读取：${imageNames}。我正在处理。`,
         context: '受管 OCR 只产生文字观测和字段候选；证据不足的单张图片才由模型视觉复核。'
           + '两条路径都要经过内容哈希、字段格式和金额守恒校验，最后仍由用户对照原图确认。',
       });
@@ -937,8 +951,8 @@ export function stepFor(state, observation = {}, blockedBy = []) {
         images,
         readingsPath,
         argv: submitArgv(),
-        speak: '上一次读数没过内核这一关，我重新看一遍这几张图：\n'
-          + `${why.map((w, n) => `${n + 1}. ${w}`).join('\n')}`,
+        speak: '上次读取的结果需要重新核对，我会重新检查这些图片：\n'
+          + `${why.map((w, n) => `${n + 1}. ${sanitizeUserText(w)}`).join('\n')}`,
         context: '过不了就重读，或者老实说这个字段读不出来 —— 我不会去调整某一位数字把式子凑平。'
           + '凑平的那个数字看起来最像对的，实际上是这条链子上唯一一个没有来源的值。',
       });
@@ -950,8 +964,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
         workspace: o.task.workspace,
         readingsPath,
         argv: submitArgv(),
-        speak: `${imageNames} 换过了，`
-          + '之前那次读数是对着旧图读的，已经作废。我重新看一遍这几张图。',
+        speak: `${imageNames} 已经发生变化，之前的读取结果不能继续使用。我会重新检查。`,
         context: '读数钉在内容哈希上。文件一改，旧读数当场失效 ——'
           + '沿用它等于拿上一张图的数字去报这一张图。',
       });
@@ -962,7 +975,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       // 不说的话，用户会在表上看见一个和他上次说的不一样（或者一样）的值，
       // 却不知道中间那次独立重读读出了什么 —— 而那正是他这次点头的依据。
       const settled = pending.flatMap((p) => (p.disputeResolution?.fields ?? []).map((f) =>
-        `· ${p.fileName}：${convergenceLine(f, p.fileName)}`));
+        `· ${p.fileName}：${convergenceLine(f)}`));
       const settledSpeak = settled.length
         ? `先说刚才那几处争议是怎么收的：\n${settled.join('\n')}\n`
         : '';
@@ -1025,13 +1038,10 @@ export function stepFor(state, observation = {}, blockedBy = []) {
             rereadPath,
             argv: rereadArgv,
           },
-          speak: `${d.fileName} 上的${names}，你说的和我读到的不一样。这个我不能照你说的直接改 ——`
-            + '两边都可能错：可能是我看模糊了证据认错了，也可能是你看错了。先把证据摆出来：\n'
+          speak: `${d.fileName} 上的${names}存在分歧，我会重新核对这一处。\n`
             + `${evidence}\n`
-            + `这个数我是从这份材料上读的：${d.materialPath}\n`
-            + '这份原件请你自己打开看 —— 我不替你打开，也不替你确认。'
-            + '同时我另外派一个完全不知道我们刚才说过什么的助手，只重读这一个字段。'
-            + `两边都出来之后请你对着原件定夺，你确认的那一下才算数。${more}`,
+            + '请你对照原件；重新核对完成后，我会请你确认最终结果。'
+            + `请先处理这一处，${more}`,
           context: '为什么不直接改：直接采纳等于承认"人说的不用查"，直接驳回等于承认"机器读的不会错"，'
             + '这两条都不成立。所以内核在这里一个值都不选，只把三份说法摆齐 ——'
             + '我第一次读到的、一次独立重读读到的、你对着原件说的。'
@@ -1056,11 +1066,10 @@ export function stepFor(state, observation = {}, blockedBy = []) {
                 + '这条读数整条退回待办 —— 别去凑一个数。',
             },
           },
-          speak: `按你说的改完之后，这张票上的式子不平了：不含税金额 ${g.netAmount} + 税额 ${g.taxAmount} `
+          speak: `按你说的改完之后，这张发票上的金额不一致：不含税金额 ${g.netAmount} + 税额 ${g.taxAmount} `
             + `= ${g.sum}，而价税合计是 ${g.totalAmount}，差 ${g.delta} 元。\n`
-            + '这个差额我不会去反算 —— 反算出来的那个数看着最像对的，'
-            + '实际上会是这条链子上唯一一个没有人读过的值。\n'
-            + `请你对着原件（${d.materialPath}）把这三个数一起念给我，或者告诉我你也认不出：`
+            + '我不会替你推算缺少的金额。\n'
+            + '请你对照原件把这三个数一起告诉我，或者回复看不清；'
             + '认不出的话我把这条读数整条退回待办，等你换一份看得清的原件。',
           context: '守恒式不让路：不含税金额 + 税额必须分毫不差地等于价税合计。'
             + '不平的读数不进事实链，只会落回开放项 —— 带着一个不平的数往 ERP 写，'
@@ -1070,7 +1079,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
       // phase === 'ruling'：重读回来了，三种收敛各说各的话，最后请用户拍板。
       const lines = d.fields
-        .map((f) => convergenceLine({ ...f, rereadValue: f.reread }, d.materialPath)).join('\n');
+        .map((f) => convergenceLine({ ...f, rereadValue: f.reread })).join('\n');
       const bad = d.rulingRejection
         ? `\n（上一次你给的值我没收下：${d.rulingRejection.reasons.join('；')}）`
         : '';
@@ -1098,7 +1107,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
             note: '用户对着原件也认不出时交 giveUp，别替他填 —— 这条读数整条退回待办是一个正当的结局。',
           },
         },
-        speak: `${d.fileName}：重读的结果出来了。\n${lines}${bad}`,
+        speak: `${d.fileName}：重新核对的结果出来了。\n${lines}${bad}`,
         context: '重读是在一个完全不知道我们刚才争过什么的子 Agent 里做的，只读了这一个字段。'
           + '三次读数里没有哪一次天然更可信 —— 定夺的是你对着原件看到的那个值。'
           + '你定完之后这份读数还会整张再摆一次请你过目，改过的字段会标明来源是你。',
@@ -1111,7 +1120,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       return tellUser({
         speak: `${label} 暂停：发现 ${hits.length} 张重复发票，同一张发票不能报两次。\n`
           + `${table}\n`
-          + '请移出本次材料，或确认旧任务不再报销；处理后告诉我。',
+          + '请移出本次材料，或处理之前的报销记录；完成后告诉我。',
         table,
         context: '这是拿发票身份（不是文件内容）跨任务比出来的：两个字节不同的 PDF '
           + '只要是同一张法定发票，照样算重复。命中就停整批 —— 一批材料里混着一张报过的票，'
@@ -1123,9 +1132,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'events_pending':
       return run(argvFor('events', '--dir', o.sourceDir), {
-        speak: `${label} 的材料这一段清完了：盘点、分类、看图读数、确认都过了。`
-          + '接下来我把这些材料切成一次次具体的费用 —— 一段行程、一次住宿、一张车票各算一次，'
-          + '合并的交通发票按行程单上写着的段数拆开。拆分要有证据，我不按金额猜、也不按文件名猜。',
+        speak: `${label} 的材料已经整理完成。接下来我会把它们对应到具体费用：行程、住宿和车票分别处理。`,
         context: '事件划分挂在当前盘点版本和当前这批明细上。用户补一次逐段分摊，'
           + '明细会从一行变成三行，这一版账本就得重记 —— 所以这个状态会再来一次，不是重复劳动。',
         progress: EVENT_PROGRESS,
@@ -1160,7 +1167,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
             + ' —— 不要自己算、不要为了凑总额改任何一段。用户选「这张票我认不出」时，'
             + '那一条写成 { questionId, giveUp: true }，整张票就退回待办。',
         },
-        speak: `${why}\n各段的价税合计要你来定：加起来必须正好是 ${a.totalAmount} 元，`
+        speak: `${why}\n各段的价税合计需要你确认：加起来必须正好是 ${a.totalAmount} 元，`
           + '我不会平均、不会按比例、也不会把差额随手加到某一段上 —— '
           + '差额落在哪一段，只有你知道。'
           + `${sofar}${more}${bad}`,
@@ -1212,13 +1219,13 @@ export function stepFor(state, observation = {}, blockedBy = []) {
           } } : {}),
           outsourceable: false,
         },
-        speak: `材料已经整理成 ${preview.lines?.length ?? 0} 条分类明细，常驻城市是 ${preview.homeCity ?? '（未取到）'}。`
-          + '请你逐张核对原生票种、不含税金额、税额和价税合计，再逐条确认材料关联、费用日期、金额分摊、费用类别和费用项目；确认后才进入个人项目簿选择。'
+        speak: `材料已经整理成 ${preview.lines?.length ?? 0} 条费用明细，常驻城市是 ${preview.homeCity ?? '（未取到）'}。`
+          + '请你逐张核对发票类型、不含税金额、税额和价税合计，再逐条确认材料关联、费用日期、金额分摊、费用类别和费用项目；确认后进入项目选择。'
           + ((preview.evidence ?? []).some((item) => item.role === 'primary_voucher'
             && item.kind === 'rail_eticket')
-            ? '铁路电子客票只核对票面总额；费用税额按业务规则默认为 0.00，不读取 ERP 净税额。'
+            ? '铁路电子客票只核对票面总额；费用税额按业务规则默认为 0.00。'
             : '')
-          + (derivedFacts.length ? '表中有依据原文推导的字段，请一并核对。' : '')
+          + (derivedFacts.length ? '表中有根据材料整理出的信息，请一并核对。' : '')
           + (acceptsCorrection
             ? '如果材料上的字段不对，请指出对应材料和字段，我会重新核对。'
             : '如果材料上的字段不对，目前没有可重读或可重新抽取的证据；请替换原材料后重新解析，再确认。'),
@@ -1242,8 +1249,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       return run(argvFor('select-task', '--dir', o.sourceDir), {
         speak: `${label} 已经切成 ${lines.length} 条费用明细，金额和日期都对上了。`
           + `再往下还差一样东西：${missing.length === lines.length ? '每一条' : `其中 ${missing.length} 条`}`
-          + '都还没有项目号。分类明细已经确认，项目归属材料上没有，我也不会替你猜 —— 现在打开个人项目簿选择页，'
-          + '提交前还会重新核验身份和可选集合。',
+          + '都还没有项目。请在个人项目选择页完成选择并提交，之后我会继续核对。',
         context: '项目归属是业务事实：项目号只能从当前本人项目簿里选；需要增加项目时先打开项目簿维护页。',
         progress: PROJECT_PROGRESS,
         outsourceable: false,
@@ -1252,8 +1258,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'project_book_empty':
       return run(argvFor('projects-page'), {
-        speak: '当前本人项目簿没有可选项目。先打开维护页，逐条录入需要使用的项目；录入时会向 ERP 核验，'
-          + '完成后再回来做任务选择。',
+        speak: '当前没有可用的项目。请先打开项目维护页完成设置，之后回来继续。',
         context: '项目簿按 tenant/account 隔离，维护页只允许当前身份写入；项目簿里的失效条目不会自动删除。',
         progress: PROJECT_PROGRESS,
         outsourceable: false,
@@ -1261,8 +1266,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'catalog_unverified':
       return run(argvFor('catalog', '--dir', o.sourceDir), {
-        speak: '项目号和费用项目我拿到 ERP 里只读查一遍，确认它们真的存在、已审核、没被禁用。'
-          + '这一步只查不写，用的是你自己已经登录的那个会话。',
+        speak: '我正在核对报销系统中的项目和费用项目，确认它们可以用于本次报销。',
         context: '走的是金蝶自带的查询服务，只查这一个地址。查得通只证明主数据在目录里可以引用，'
           + '不证明它在费用明细上保存得进去 —— 后者只有真保存并回读才算数。',
         progress: CATALOG_PROGRESS,
@@ -1271,9 +1275,9 @@ export function stepFor(state, observation = {}, blockedBy = []) {
     case 'catalog_mismatch': {
       const table = itemTable(blockedBy);
       return tellUser({
-        speak: `ERP 目录核对发现 ${blockedBy.length} 项不匹配：\n`
+        speak: `报销信息核对发现 ${blockedBy.length} 项不匹配：\n`
           + `${table}\n`
-          + '请确认正确的项目号，处理后我会重新核对。',
+          + '请修正后告诉我，我会重新核对。',
         table,
         context: '核对判的是四件事：编码在不在、名称对不对得上、单据状态已审核、没有被禁用。'
           + '编码对得上而名称对不上时我也停 —— 那说明对照表和 ERP 已经错位，'
@@ -1285,8 +1289,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'preparation_package_pending':
       return run(argvFor('prepare', '--dir', o.sourceDir), {
-        speak: `${label} 的材料已经整理好了。先生成只包含本次发票的目录和填写明细；`
-          + '即使还有缺项也会把缺项列出来，随后请你核对。',
+        speak: `${label} 的材料已经整理完成，我正在生成本次报销的核对材料。`,
         context: 'observe 只读检查现有材料；这一步只在本地生成审阅文件，不会打开 ERP、导入发票、创建单据或保存。',
         progress: PREPARATION_PROGRESS,
       });
@@ -1295,9 +1298,9 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       const problems = blockedBy.length ? blockedBy : (o.preparation?.problems ?? []);
       const table = preparationProblemTable(problems);
       return tellUser({
-        speak: `${label} 的发票目录和填写明细已经生成，但还有 ${problems.length} 项缺项：\n`
+        speak: `${label} 的核对材料已经生成，但还有 ${problems.length} 项需要补充或调整：\n`
           + `${table}\n`
-          + `处理这些项目，随后我再请你核对。当前文件：${preparationPackageText(o)}`,
+          + `处理完成后告诉我，我会重新核对。${preparationPackageText(o)}`,
         table,
         context: '这一步只生成本地审阅材料，不会导入发票、填写或保存 ERP 单据。缺失铁路票面净额/税额时保留为缺失，不反算、不补零。',
         progress: PREPARATION_PROGRESS,
@@ -1318,9 +1321,9 @@ export function stepFor(state, observation = {}, blockedBy = []) {
           acceptsCorrection: false,
           outsourceable: false,
         },
-        speak: '发票目录和填写明细已经完整。请逐项核对发票、金额、日期、项目和字段来源；'
-          + '确认后我会把这份本地材料交给下一阶段，当前会话仍停在手动 QA。\n'
-          + `交接包：${preparationPackageText(o)}`,
+        speak: '本次报销的核对材料已准备好。请逐项核对发票、金额、日期、项目和常驻城市；'
+          + '确认后进入下一阶段。\n'
+          + preparationPackageText(o),
         context: '准备确认绑定当前材料、字段、项目候选、只读目录证据和任务版本。任一变化都会重新检查；此确认不能生成 ERP 写入授权。',
         progress: PREPARATION_PROGRESS,
         exit: 0,
@@ -1337,9 +1340,8 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'preparation_complete':
       return done({
-        speak: '发票目录和填写明细已经确认并交接完成，接下来停在手动 QA；'
-          + '本次未导入发票、填写或保存 ERP 单据。\n'
-          + `交接包：${preparationPackageText(o)}`,
+        speak: '本次报销的核对材料已确认并交接。当前阶段已完成，后续处理会从这里继续。\n'
+          + preparationPackageText(o),
         context: '这次确认只记录本地准备材料，不是 ERP 写入批准。材料任何变化都会使确认失效并重新检查。',
         progress: PREPARATION_PROGRESS,
       });
@@ -1350,16 +1352,13 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       if (o.task?.erpWriteState !== 'upload_dispatched') {
         return handoff({
           skill: 'baox-recover',
-          speak: `${label} 这个任务已经往 ERP 发过写入（当前记的状态是 ${o.task?.erpWriteState}），`
-            + '当前版本没有对应的只读恢复协议，不能回到普通报销流程；请由维护流程处理。',
+          speak: '当前报销已暂停，材料和状态已保留。请在报销系统中核对；如无法判断，请联系报销管理员。',
           context: '未知 ERP 写入标记必须保守交接，不能猜测其含义，也不能再次上传、保存或重置任务。',
           progress: WRITE_PROGRESS,
         });
       }
       return run(argvFor('resume-local-preparation', '--dir', o.sourceDir), {
-        speak: `${label} 这个任务已经往 ERP 发过写入（当前记的状态是 ${o.task?.erpWriteState}），`
-          + '不能回到普通报销流程。先做一次逐票 ERP 只读回读，建立只允许本地准备的恢复凭据；'
-          + '这不会清掉写入状态，也不会再次上传或保存。',
+        speak: '当前报销需要先完成一次人工核对。材料和状态已保留，核对完成后我会从当前进度继续。',
         context: '恢复凭据会核对当前身份、任务材料版本、每张票的完整发票号、收票单号、金额，'
           + '以及唯一的空白新增单。它只允许常驻城市、分类、项目和写入预览准备，ERP 写入闸仍然关闭。',
         progress: WRITE_PROGRESS,
@@ -1369,9 +1368,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'recovery_write_blocked':
       return tellUser({
-        speak: `${label} 的身份、材料和逐票 ERP 只读回读已经核对通过，本地准备可以保留；`
-          + '这个恢复凭据不会授权 ERP 上传、保存或再次写入。当前任务仍停在原写入状态，'
-          + '请走独立的 ERP 写入批准流程。',
+        speak: '当前报销已暂停，材料和状态已保留。请在报销系统中核对；如无法判断，请联系报销管理员。',
         context: '恢复凭据的能力闭集只有常驻城市、事件、分类、个人项目选择和写入预览准备；'
           + '它不能把旧任务变成新的可写任务。',
         progress: WRITE_PROGRESS,
@@ -1380,8 +1377,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
 
     case 'env_ready':
       return done({
-        speak: `环境准备好了：${systemBrowser ? '系统默认浏览器可读，' : 'ego task space 可用，'}ERP 登录着${who ? `，当前替 ${who} 报销` : ''}。`
-          + '接下来就可以开始处理报销材料了。',
+        speak: `环境准备完成${who ? `，当前报销人是 ${who}` : ''}。接下来可以开始整理报销材料。`,
         context: '这一步之后不需要你再打开任何浏览器页面，除非要改绑身份或者浏览项目目录。',
       });
 
@@ -1389,6 +1385,11 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       // 状态落成了却没给它写 step，是内核自己的 bug，不能装作没看见。
       throw new Error(`状态 ${state} 还没有对应的 step`);
   }
+}
+
+/** Add the stable employee interaction metadata after the state-specific step is shaped. */
+export function stepFor(state, observation = {}, blockedBy = []) {
+  return decorateStep(state, rawStepFor(state, observation, blockedBy));
 }
 
 /**
@@ -1454,11 +1455,12 @@ export function nextResponse({ observation, sourceKey, after = null, hasResult =
       : null,
     state: verdict.state,
     progress: shaped.progress,
+    interaction: shaped.interaction,
     actor: verdict.actor,
     stepToken: record.token,
     step: shaped.step,
     speak: shaped.speak,
-    context: shaped.context,
+    context: sanitizeUserText(shaped.context),
     blockedBy: verdict.blockedBy,
     ...(observation.recovery ? { recovery: observation.recovery } : {}),
     ...(observation.preparation ? {

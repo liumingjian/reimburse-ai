@@ -48,7 +48,7 @@ test('baox next --dir：缺 task space 时返回可执行的用户处理步骤',
   assert.equal(json.step.kind, 'tell_user');
   assert.equal(json.actor, 'user');
   assert.equal(json.blockedBy[0].kind, 'ego_task_space_unavailable');
-  assert.match(json.speak, /BAOX_EGO_TASK_SPACE/);
+  assert.match(json.speak, /报销专用浏览器空间/);
   assert.ok(json.speak, '得有一句能原样念的话');
   assert.equal(json.stepToken.length, 32);
   assert.equal(json.step.argv, undefined, 'task space 未配置时不得发出浏览器启动命令');

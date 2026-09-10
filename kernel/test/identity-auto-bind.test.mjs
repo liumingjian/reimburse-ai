@@ -61,10 +61,11 @@ function runBaox(args, env) {
 
 test('首次已登录身份自动绑定并继续材料阶段', () => {
   const { env, home, materials } = fixture();
-  const first = runBaox(['next', '--dir', materials], env);
+  const first = runBaox(['next', '--dir', materials, '--home-city-suggestion', '北京市'], env);
 
   assert.equal(first.json.state, 'home_city_required');
   assert.equal(first.json.step.kind, 'ask_user');
+  assert.match(first.json.speak, /北京市/);
   assert.notEqual(first.json.step.kind, 'confirm_table');
   const adopted = JSON.parse(fs.readFileSync(path.join(home, 'identity.json')));
   assert.equal(adopted.account, currentIdentity.account);
@@ -72,7 +73,7 @@ test('首次已登录身份自动绑定并继续材料阶段', () => {
   assert.equal(adopted.displayName, currentIdentity.displayName);
   assert.ok(adopted.confirmedAt);
 
-  fs.writeFileSync(first.json.step.answersPath, JSON.stringify({ homeCity: '北京市' }));
+  fs.writeFileSync(first.json.step.answersPath, JSON.stringify({ homeCity: '确认' }));
   const materialsStep = runBaox(['next', '--after', first.json.stepToken,
     '--result', first.json.step.answersPath], env);
   assert.equal(materialsStep.json.state, 'task_none');
@@ -91,4 +92,44 @@ test('已有 binding 与当前登录身份不一致时仍硬阻断且不改 bind
   assert.equal(result.json.state, 'env_identity_mismatched');
   assert.equal(result.json.step.kind, 'tell_user');
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, 'identity.json'))), previous);
+});
+
+test('再次报销先确认报销人和常驻城市，直接输入城市会覆盖默认值', () => {
+  const { env, home, materials } = fixture({ binding: currentIdentity });
+  const key = JSON.stringify([currentIdentity.tenant, currentIdentity.account]);
+  fs.writeFileSync(path.join(home, 'home-cities.json'), JSON.stringify({
+    [key]: { homeCity: '北京市', confirmedAt: '2026-09-10T00:00:00.000Z' },
+  }));
+
+  const first = runBaox(['next', '--dir', materials], env);
+  assert.equal(first.json.state, 'task_none');
+  const intakeOutput = (() => {
+    try {
+      return execFileSync(first.json.step.argv[0], first.json.step.argv.slice(1), {
+        encoding: 'utf8', env,
+      });
+    } catch (error) {
+      if (error.status === 2) return error.stdout;
+      throw error;
+    }
+  })();
+  const intakeResult = path.join(home, 'intake-result.json');
+  fs.writeFileSync(intakeResult, intakeOutput);
+  const afterIntake = runBaox(['next', '--after', first.json.stepToken,
+    '--result', intakeResult], env);
+  assert.notEqual(afterIntake.json.state, 'task_none');
+
+  const secondMaterials = tempDir();
+  fs.writeFileSync(path.join(secondMaterials, 'placeholder.txt'), 'second fixture\n');
+  const profile = runBaox(['next', '--dir', secondMaterials], env);
+  assert.equal(profile.json.state, 'profile_confirmation');
+  assert.match(profile.json.step.prompt, /报销人/);
+  assert.match(profile.json.step.prompt, /北京市/);
+
+  fs.writeFileSync(profile.json.step.answersPath, JSON.stringify({ homeCity: '广州市' }));
+  const next = runBaox(['next', '--after', profile.json.stepToken,
+    '--result', profile.json.step.answersPath], env);
+  assert.equal(next.json.state, 'task_none');
+  const remembered = JSON.parse(fs.readFileSync(path.join(home, 'home-cities.json')))[key];
+  assert.equal(remembered.homeCity, '广州市');
 });
