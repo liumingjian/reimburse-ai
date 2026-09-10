@@ -21,4 +21,3 @@ export function writeTextPdf(filePath, text) {
   ].join('\n');
   fs.writeFileSync(filePath, pdf);
 }
-
