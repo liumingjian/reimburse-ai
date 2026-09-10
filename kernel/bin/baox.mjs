@@ -32,6 +32,7 @@ import { ingestReread, autoSettleAgreed } from '../src/dispute.mjs';
 import { SCHEMA_VERSION as NEXT_SCHEMA_VERSION } from '../src/state.mjs';
 import { currentSourceKey, currentSourceDir, currentIssuedArgv } from '../src/steptoken.mjs';
 import { guardVerdict, refusalPayload, recordRefusal } from '../src/guard.mjs';
+import { resetHome } from '../src/reset.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
@@ -52,7 +53,7 @@ const out = (obj, code = OK) => {
 // 搬不动就硬停：继续跑等于在一个空的新目录里从头开始，而用户的任务还在旧目录里 ——
 // 那是一种看起来正常、实则丢了全部历史的失败，比直接停住坏得多。
 try {
-  migrated = migrateOnStartup();
+  migrated = process.argv[2] === 'reset' ? null : migrateOnStartup();
   if (migrated) {
     // 搬完立刻把 0.9.x 的在途任务标记成存档，理由见 workspace.mjs 的 archiveMigratedTasks。
     // 就在这一次说清楚：那些任务不会接着往下走，同一个目录下次是从头开始的新任务。
@@ -163,10 +164,15 @@ const [, , cmd] = process.argv;
 // 数据格式版本落盘。没有这个文件的目录（0.9.x 迁过来的，或者刚建的）就是这一版写的，
 // 补一份 schema.json；已经有了就一个字都不动 —— 里面写着 2 的目录是未来某一版的，
 // 把它改回 1 等于让 schema_too_new 这道闸永远不触发。
-ensureSchemaVersionFile();
+if (cmd !== 'reset') ensureSchemaVersionFile();
 
 try {
   switch (cmd) {
+    case 'reset': {
+      const result = await resetHome(paths.root);
+      out({ command: 'reset', ...result }, result.status === 'reset' ? OK : BLOCKED);
+    }
+
     case 'doctor': {
       const [major] = process.versions.node.split('.').map(Number);
       const checks = {
@@ -970,12 +976,18 @@ try {
         hasResult: filed('result'),
         // 已经收下并处置过的纠正不再报「没处安放」—— 那句话是留给真的没处安放的。
         hasCorrection: filed('correction') && !applied });
+      if (response.step?.kind === 'extract_images') {
+        ensureDir(path.dirname(response.step.requestPath));
+        const temporary = `${response.step.requestPath}.tmp`;
+        fs.writeFileSync(temporary, JSON.stringify(response.step.request, null, 2), { mode: 0o600 });
+        fs.renameSync(temporary, response.step.requestPath);
+      }
       // 收下了什么，明说。用户点了头却看不出内核收没收到，是最难排的一种障。
       out(applied ? { ...response, applied } : response, response.exit);
     }
 
     default:
-      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['next', 'doctor', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
+      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['next', 'reset', 'doctor', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
         'ocr-request', 'ocr-submit', 'confirm-readings', 'reread-submit',
         'history', 'events', 'select-task', 'lines',
         'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill'] }, ERR);

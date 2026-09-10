@@ -49,6 +49,20 @@ test('逐字抄对了就收下，并且金额守恒', () => {
   assert.equal(v.amountCheck, 'balanced');
 });
 
+test('本机 OCR 来源不冒充模型看图凭据，但仍要过哈希和金额守恒', () => {
+  const reading = good();
+  delete reading.sighted;
+  reading.source = 'ocr';
+  const accepted = submit(reading);
+  assert.equal(accepted.verdict, 'accepted');
+  assert.equal(loadReading(task, material.materialId).source, 'ocr');
+
+  const wrong = { ...reading, fields: { ...reading.fields, netAmount: '18.30' } };
+  const rejected = submit(wrong);
+  assert.equal(rejected.verdict, 'rejected');
+  assert.match(rejected.reasons.join(), /不含税金额 \+ 税额/);
+});
+
 test('内容哈希对不上就作废 —— 读数必须绑定在确定的字节上', () => {
   const v = submit({ ...good(), contentHash: '0'.repeat(64) });
   assert.equal(v.verdict, 'rejected');

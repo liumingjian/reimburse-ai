@@ -59,6 +59,8 @@ export const MAX_EMPTY_READINGS = 2;
 /** 图片可能是什么。闭集：模型不能自己发明一个类型。 */
 export const DOC_TYPES = {
   invoice: { role: 'primary_voucher', label: '发票', needsIdentity: true },
+  rail_ticket: { role: 'primary_voucher', label: '铁路客票', needsIdentity: true },
+  road_passenger_ticket: { role: 'primary_voucher', label: '道路客票', needsIdentity: true },
   ride_itinerary: { role: 'reference', label: '网约车行程单', needsIdentity: false },
   hotel_folio: { role: 'reference', label: '酒店结账单', needsIdentity: false },
   payment_slip: { role: 'reference', label: '支付水单/付款凭证', needsIdentity: false },
@@ -78,8 +80,23 @@ const FIELD_RULES = {
   itemName: { label: '项目名称', test: isText, hint: '票面上的项目名称' },
   city: { label: '城市', test: isText, hint: '票面或单据上写明的城市' },
   travelDate: { label: '行程日期', test: isDate, hint: 'YYYY-MM-DD' },
+  travelTime: { label: '行程时间', test: (v) => typeof v === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(v), hint: 'HH:MM' },
+  traveler: { label: '出行人', test: isText, hint: '票面上的出行人' },
   origin: { label: '起点', test: isText, hint: '起点' },
   destination: { label: '终点', test: isText, hint: '终点' },
+  trainNumber: { label: '车次', test: isText, hint: '车次' },
+  seat: { label: '席别', test: isText, hint: '席别或座位' },
+  segmentAmount: { label: '行程金额', test: isMoney, hint: '金额，两位小数' },
+  hotelName: { label: '酒店', test: isText, hint: '酒店名称' },
+  guestName: { label: '入住人', test: isText, hint: '入住人' },
+  checkInDate: { label: '入住日期', test: isDate, hint: 'YYYY-MM-DD' },
+  checkOutDate: { label: '离店日期', test: isDate, hint: 'YYYY-MM-DD' },
+  payer: { label: '付款方', test: isText, hint: '付款方' },
+  payee: { label: '收款方', test: isText, hint: '收款方' },
+  paidAt: { label: '支付时间', test: isText, hint: '票面支付时间' },
+  transactionNumber: { label: '交易号', test: isText, hint: '票面交易号' },
+  title: { label: '标题', test: isText, hint: '凭证标题' },
+  merchant: { label: '商户', test: isText, hint: '商户名称' },
 };
 
 /** 字段的中文名。表格给用户看，键名不给用户看。 */
@@ -222,6 +239,7 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
 
     // 看过的凭据。这一条排在所有字段校验前面，因为它决定的是**这次读取算不算数**：
     // 一份没看过图的读数，里面的字段对不对都没有意义。
+    const ocrSource = raw.source === 'ocr';
     const shape = shapeOfBuffer(bytes);
     let sightFailed = false;
     if (!shape) {
@@ -229,7 +247,7 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
       // 正常情况下分类那一层已经把它拦成开放项了，走到这里说明材料刚刚被换掉。
       reasons.push('内核解不开这个文件的图像头，它不是一张完整的 png / jpg；'
         + '这不是"看不清"，是这份材料本身要换');
-    } else if (!shapeMatches(shape.width, shape.height, raw.sighted?.shape)) {
+    } else if (!ocrSource && !shapeMatches(shape.width, shape.height, raw.sighted?.shape)) {
       sightFailed = true;
       // 故意不回报正解，也不说错在哪一边：这是一道凭据，不是一道有反馈的题。
       // 把差在哪里说清楚，等于把五选一变成三选一，几个回合就蒙对了。
@@ -323,13 +341,15 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
         unreadable,
         notes: typeof raw.notes === 'string' ? raw.notes.slice(0, 400) : null,
         amountCheck,
-        source: 'vision',
+        source: ocrSource ? 'ocr' : 'vision',
         // 每个字段各自记来源。整份读数一个 source 是不够的：争议收场之后，
         // 同一份读数里会同时有模型抄的和用户给的，而"这个数是谁说的"
         // 恰恰是后面每一次复核唯一要问的问题。
-        fieldSources: Object.fromEntries(Object.keys(fields).map((k) => [k, 'vision'])),
+        fieldSources: Object.fromEntries(Object.keys(fields).map((k) => [k, ocrSource ? 'ocr' : 'vision'])),
         clarity,
-        sighted: { shape: raw.sighted.shape, width: shape.width, height: shape.height },
+        sighted: ocrSource
+          ? { shape: null, width: shape.width, height: shape.height }
+          : { shape: raw.sighted.shape, width: shape.width, height: shape.height },
         readAt: new Date().toISOString(),
         confirmedAt: null,
       });

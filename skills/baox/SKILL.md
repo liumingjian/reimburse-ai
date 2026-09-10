@@ -8,7 +8,16 @@ allowed-tools: Bash, Read, Task, Skill
 
 用户看到的一切都是中文。English is for this file only.
 
-**你只会敲一条命令。** 内核决定下一步做什么，你照做，把结果交回去：
+## 完全重置
+
+用户明确要求重置或清空 baox 时，直接运行 `node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" reset`，不再要求确认。
+若已分配 baox 专属 ego 空间，沿用它的 `BAOX_EGO_TASK_SPACE`；重置时不新建空间。
+重置清除全部本地业务信息和历史迁移副本，关闭专属浏览器空间；保留程序、运行依赖、原始材料、共享登录态和 ERP 远端单据。
+返回后原样念 `speak` 并停止；失败时按内核返回的原因处理。
+
+## 报销流程
+
+内核决定下一步做什么，你照做，把结果交回去：
 
 ```bash
 node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材料目录>"
@@ -34,12 +43,13 @@ node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材
 - 有 `ignored` 键说明你上一次回传没被收下，念出 `ignored.note`，别装作过去了。
 - `exit`：`0` 继续 / `2` 硬阻塞，念完停下，不要绕过去 / `1` 内核自己出错，念 `error` 后停。
 
-## 七种 `step.kind`（外加收工的 `done`）
+## 八种 `step.kind`（外加收工的 `done`）
 
 | kind | 你做的唯一一件事 | 回传 |
 |---|---|---|
 | `run` | 原样执行 `step.argv`，stdout 落盘成一个文件 | `next --after <token> --result <那个文件>` |
 | `read_images` | 逐个用 `Read` 打开 `step.images[].absPath`，按 `step.schemaPath` 那份模板把读数写进 `step.readingsPath`（形状从 `step.sightedShapes` 里选），再原样执行 `step.argv` | 同上 |
+| `extract_images` | 把完整 `step` 原样交给 `step.skill`；内部 Skill 批量 OCR，只对明确回退项看图，并执行 `step.argv` | 把内部 Skill 写到 `step.resultPath` 的结果交回 `next --after <token> --result <那个文件>` |
 | `ask_user` | **原样贴出 `step.prompt`**（内核渲染好的问题），等用户在对话里回答，把答案按 `step.answersFormat` 写进 `step.answersPath` | `next --after <token> --result <答案文件>` |
 | `confirm_table` | **原样贴出 `step.table`**，请用户对着原件过目 | 认可 → `next --after <token>`；指错且 `step.acceptsCorrection` 是 `true` → 把用户的值按 `step.correctionFormat` 写进 `step.correctionPath`，再 `next --after <token> --correction <那个文件>` |
 | `dispute` | 见下 | 见下 |
@@ -88,7 +98,7 @@ node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材
 ## 不能做的事
 
 - **不拼命令、不改参数。** `step.argv` 原样执行，多一个参数少一个参数都不行。
-  除 `next` 以外的 `baox` 子命令你一条都不敲。
+  除 `next` 和用户明确要求时的 `reset` 以外，`baox` 子命令一条都不敲。
 - **不替内核判断下一步。** 状态在内核里。你不因为「看起来该分类了」就去分类。
 - **不替用户点头。** 「没问题」「对的」「继续」在对话里说出来不是确认。确认只有一种：
   内核观测到的那一次回传。这条管 `confirm_table`、`ask_user` 和所有 `tell_user`。

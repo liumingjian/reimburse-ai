@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# 把内核打进每个 Skill 目录，产出可以直接拷给同事的离线 Skill。
-# 安装 = 把 dist/<skill> 整个目录拷到 <项目>/.claude/skills/ 下（个人目录也行，但三个必须同处一地）。零依赖，不需要联网。
+# 把内核和图片提取运行时代码打进各自 Skill，产出可直接安装的目录。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -32,11 +31,19 @@ rm -rf dist && mkdir -p dist
 for s in skills/*/; do
   name=$(basename "$s")
   cp -R "$s" "dist/$name"
+done
+for name in baox baox-recover baox-setup; do
   mkdir -p "dist/$name/kernel"
   cp kernel/VERSION "dist/$name/kernel/"
   cp -R kernel/bin "dist/$name/kernel/bin"
   cp -R kernel/src "dist/$name/kernel/src"
 done
+
+pnpm --filter @baox/image-field-extraction build
+mkdir -p dist/extract-reimbursement-images/runtime
+cp -R packages/image-field-extraction/dist dist/extract-reimbursement-images/runtime/dist
+cp -R packages/image-field-extraction/python dist/extract-reimbursement-images/runtime/python
+cp packages/image-field-extraction/scripts/install-runtime.mjs dist/extract-reimbursement-images/runtime/install-runtime.mjs
 
 # 安装说明跟包走。拿到压缩包的人手上只有这个包，仓库的 README 他们看不到。
 cp docs/INSTALL.md dist/INSTALL.md
@@ -46,7 +53,7 @@ cp scripts/install-permissions.mjs dist/install-permissions.mjs
 
 # 每个包都必须带着内核入口：Skill 里的 baox 全部展开成它，缺了就是每条命令都跑不起来。
 # 内核就地运行，所以包里的这一份就是真正跑的那一份，没有第二个地方可以兜底。
-for s in dist/*/; do
+for s in dist/baox/ dist/baox-recover/ dist/baox-setup/; do
   [ -f "$s/kernel/bin/baox.mjs" ] || { echo "内核入口闸没过：$s 里没有 kernel/bin/baox.mjs" >&2; exit 1; }
 done
 
@@ -56,5 +63,7 @@ if [ -n "$stowaways" ]; then
   echo "$stowaways" >&2
   exit 1
 fi
-echo "打包完成（把下面每个目录整份拷到 <项目>/.claude/skills/ 即可，三个一起）："
+test -f dist/extract-reimbursement-images/runtime/dist/cli.js \
+  || { echo "图片提取运行时闸没过：缺少编译后的 CLI" >&2; exit 1; }
+echo "打包完成（把下面每个目录整份拷到 <项目>/.claude/skills/ 即可，四个一起）："
 find dist -maxdepth 1 -mindepth 1 -type d | sort

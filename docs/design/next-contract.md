@@ -31,12 +31,13 @@ baox next --after <stepToken> [--result <file>]  # 答：我做完了，这是�
 
 `exit`：`0` 继续 / `2` 有硬阻塞，未解决不得继续。没有 `1` —— 内核自身异常才用 `1`，且带 `error`。
 
-## `step.kind` 七种
+## `step.kind` 八种
 
 | kind | actor | 模型要做的唯一一件事 | 回传 |
 |---|---|---|---|
 | `run` | kernel | 原样执行 `step.argv`，不改一个字 | `--after <token> --result <stdout落盘的文件>` |
 | `read_images` | model | 对 `step.images[].absPath` 逐个用 `Read` 看图，按 `step.schemaPath` 写读数文件，再执行 `step.argv` 提交 | 同上 |
+| `extract_images` | model | 把内核生成的完整工单交给 `step.skill`；本地批量 OCR，只对 `needs_model_vision` 项看图，再执行 `step.argv` | `next --after <stepToken> --result <step.resultPath>` |
 | `ask_user` | model | **原样贴出 `step.prompt`**（内核把 `step.questions[]` 渲染好的一整块文本：≤4 题，每题 2–4 选项，可 `multiSelect`，末项恒为「其他」可自由输入），等用户在对话里回答，把答案誊进 `step.answersPath` | `--after <token> --result <答案json>` |
 | `confirm_table` | user | 原样贴出 `step.table`（内核渲染好的定宽文本），请用户过目 | 认可 → `--after <token>`；指错 → 附 `--correction <file>` |
 | `dispute` | model | 摆出 `step.evidence`（材料路径、机器读到的原文、清晰度），并派**干净上下文子 Agent** 只重读 `step.field`；把两次机器读数和用户的值一起摆给用户 | 用户拍板后回传终值 |

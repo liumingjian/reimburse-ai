@@ -87,7 +87,7 @@ test('从环境就绪一路问到「该看图了」，全程只有 baox next 这
   r = await ask(dir, { after: r.stepToken, hasResult: true });
   assert.equal(r.state, 'image_awaiting_reading', `实际停在 ${r.state}：${r.speak}`);
   assert.equal(r.actor, 'model');
-  assert.equal(r.step.kind, 'read_images');
+  assert.equal(r.step.kind, 'extract_images');
   assert.deepEqual(r.step.images.map((i) => i.fileName), ['fengyun-1.png']);
   assert.ok(fs.existsSync(r.step.images[0].absPath), '给的绝对路径得真打得开');
   assert.ok(fs.existsSync(r.step.schemaPath));

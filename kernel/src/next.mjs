@@ -6,7 +6,7 @@
  * `speak` 是内核写死的原话。措辞是模型差异最大的地方，所以不交给模型。
  *
  * 落成的是两张表的全部状态（`archived` 是任务状态不是状态，见 state.mjs 的开头），
- * 七种 `step.kind` 全部用上了 —— `ask_user` 的第一次真实使用是逐段分摊，
+ * 八种 `step.kind` 全部用上了 —— `ask_user` 的第一次真实使用是逐段分摊，
  * `handoff` 是把动过 ERP 的任务交给 baox-recover。
  */
 import path from 'node:path';
@@ -93,6 +93,30 @@ const readImages = ({ images, readingsPath, argv, speak, context }) => ({
       + '也不要把整份读数填成 unreadable 交上来：一个字段都没有的读数我会当场打回，'
       + '连着两次就转成一条给用户的待办（换个看得见图的模型，或者换成 PDF 原件）。',
     argv,
+  },
+  speak, context, progress: READING_PROGRESS, exit: 0,
+});
+
+/** 本地 OCR 批处理工单。只有协调器明确要求回退的项，内部 Skill 才会用模型视觉读取。 */
+const extractImages = ({ images, workspace, readingsPath, argv, speak, context }) => ({
+  step: {
+    kind: 'extract_images',
+    skill: 'extract-reimbursement-images',
+    contractVersion: 1,
+    images: images.map(({ materialId, fileName, absPath, format, contentHash }) =>
+      ({ materialId, fileName, absPath, format, contentHash })),
+    request: {
+      contractVersion: 1,
+      images: images.map(({ materialId, contentHash, absPath }) => ({ materialId, contentHash, absPath })),
+    },
+    requestPath: path.join(workspace, 'image-extraction-request.json'),
+    extractionPath: path.join(workspace, 'image-extraction-result.json'),
+    resultPath: path.join(workspace, 'image-extraction-submit.json'),
+    schemaPath: READING_TEMPLATE,
+    readingsPath,
+    sightedShapes: SHAPES.map((shape) => ({ shape, label: SHAPE_LABELS[shape] })),
+    argv,
+    outsourceable: false,
   },
   speak, context, progress: READING_PROGRESS, exit: 0,
 });
@@ -351,8 +375,8 @@ function sumYuan(lines) {
   return (lines.reduce((a, l) => a + Math.round(Number(l.totalAmount) * 100), 0) / 100).toFixed(2);
 }
 
-/** 三种来源念给用户听的样子。契约里的 `vision` / `user` / `kernel`。 */
-const SOURCE_LABELS = { vision: '我看图读的', user: '你给的', kernel: '内核解析的' };
+/** 字段来源念给用户听的样子。OCR 与模型视觉都只是候选来源，不改变确认规则。 */
+const SOURCE_LABELS = { vision: '我看图读的', ocr: '本机 OCR 读的', user: '你给的', kernel: '内核解析的' };
 
 /** 待办清单念给用户听的样子。谁能解决它，是每条最要紧的那半句。 */
 const WHO = { user: '要你处理', model: '我来处理', kernel: '内核已经自己处置了，说一声而已' };
@@ -375,7 +399,7 @@ const acceptsCorrection = (step) => step.acceptsCorrection === true;
  * 交得出结果的 step。前两种以"跑完一条命令"收尾，没有输出就是没跑过；
  * `ask_user` 交的是答案文件 —— 空手回来说"问过了"，同样不推进状态。
  */
-const NEEDS_RESULT = new Set(['run', 'read_images', 'ask_user']);
+const NEEDS_RESULT = new Set(['run', 'read_images', 'extract_images', 'ask_user']);
 
 /**
  * 状态 -> step + 原话。纯函数：同一个状态加同一份观测，永远得到同一句话。
@@ -528,17 +552,16 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       });
 
     case 'image_awaiting_reading':
-      return readImages({
+      return extractImages({
         images,
+        workspace: o.task.workspace,
         readingsPath,
         argv: submitArgv(),
-        speak: `${label} 里有 ${images.length} 张图要我亲眼看一遍才读得出票面信息：${imageNames}。`
-          + '我逐张打开抄写，看不清的字段我会说看不清，不猜也不算。',
-        context: '内核没有 OCR，图片由我来读；但读不等于算数：读数要过内核的结构校验'
-          + '（位数、日期、金额守恒），过了也只是候选，还得你对着原图确认。'
-          + '每份读数还要带一句只有真打开过才答得上的话（这张图是什么形状），'
-          + '答不上整份读数就不算数 —— 没看图就说图片读不了，这条路是走不通的。'
-          + '每份读数都钉在这张图当前的字节上，图一换读数自动作废。',
+        speak: `${label} 里有 ${images.length} 张图片材料要提取票面字段：${imageNames}。`
+          + '我先在本机批量读取；只有本地结果证据不足的图片才改用模型视觉，不会凭空补值。',
+        context: '图片字段提取是独立的内部模块：PaddleOCR 只产文字观测，TypeScript 负责字段规则、'
+          + '格式和金额守恒。OCR 分数不能把候选升级成事实；模型视觉回退也走同一套结构闸，'
+          + '最后仍要你对着原图确认。每份结果都钉在当前内容哈希上，图片一换立即作废。',
       });
 
     case 'reading_rejected': {
@@ -557,8 +580,9 @@ export function stepFor(state, observation = {}, blockedBy = []) {
     }
 
     case 'reading_stale':
-      return readImages({
+      return extractImages({
         images,
+        workspace: o.task.workspace,
         readingsPath,
         argv: submitArgv(),
         speak: `${imageNames} 换过了，`

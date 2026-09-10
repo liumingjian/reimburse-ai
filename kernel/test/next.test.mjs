@@ -111,10 +111,10 @@ test('材料这一段每个状态都有一步可做，说给用户听的话全�
     ['task_none', 'run', withMaterials({ task: null })],
     ['inventory_stale', 'run', withMaterials({ inventoryStale: true })],
     ['classify_pending', 'run', withMaterials({ classificationRecorded: false })],
-    ['image_awaiting_reading', 'read_images', withMaterials({ pendingImages: images })],
+    ['image_awaiting_reading', 'extract_images', withMaterials({ pendingImages: images })],
     ['reading_rejected', 'read_images', withMaterials({
       pendingImages: [{ ...images[0], rejection: { reasons: ['不含税金额 + 税额 ≠ 价税合计'] } }] })],
-    ['reading_stale', 'read_images', withMaterials({ pendingImages: images })],
+    ['reading_stale', 'extract_images', withMaterials({ pendingImages: images })],
     ['reading_awaiting_confirmation', 'confirm_table',
       withMaterials({ pendingReadings: [PENDING_READING] })],
     ['duplicate_blocked', 'tell_user', withMaterials()],
@@ -182,7 +182,7 @@ test('待办这一步逐条说清楚谁能解决它，一条都不含糊', async
   assert.equal(shaped.exit, 0, '待办是在等人处理，不是被内核拦住');
 });
 
-test('看图这一步：图、模板、写到哪、怎么交，四样一次给全', async () => {
+test('图片提取这一步：内核把版本化工单、内部 Skill、输出和提交命令一次给全', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
   const images = [
@@ -190,17 +190,24 @@ test('看图这一步：图、模板、写到哪、怎么交，四样一次给�
     { materialId: 'm-2', fileName: '行程单.png', absPath: '/tmp/材料/行程单.png', format: 'png', contentHash: 'bb' },
   ];
   const { step, speak } = stepFor('image_awaiting_reading', withMaterials({ pendingImages: images }));
+  assert.equal(step.kind, 'extract_images');
+  assert.equal(step.skill, 'extract-reimbursement-images');
+  assert.equal(step.contractVersion, 1);
   assert.equal(step.images.length, 2);
   assert.equal(step.images[0].absPath, '/tmp/材料/发票.png', '模型要拿绝对路径才打得开图');
   assert.ok(step.images[0].contentHash, '读数钉在这张图当前的字节上');
   assert.ok(fs.existsSync(step.schemaPath), '模板得是一份真存在的文件，不是一句说明');
   assert.equal(step.readingsPath, path.join('/tmp/ws', 'reading-submission.json'));
+  assert.equal(step.request.contractVersion, 1);
+  assert.deepEqual(step.request.images.map((image) => image.materialId), ['m-1', 'm-2']);
+  assert.match(step.requestPath, /image-extraction-request\.json$/);
+  assert.match(step.extractionPath, /image-extraction-result\.json$/);
   assert.ok(step.argv.includes(step.readingsPath), '写到哪、交哪个文件，是同一个路径');
   assert.ok(step.argv.includes('ocr-submit'));
   assert.match(speak, /发票\.png/, '要看哪几张图，念出来');
 });
 
-test('看过的凭据跟着这一步一起给，模型不用去别处查它', async () => {
+test('模型视觉回退所需的凭据跟着提取工单一起给', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
   const images = [{ materialId: 'm-1', fileName: '发票.png', absPath: '/tmp/材料/发票.png',
@@ -209,7 +216,7 @@ test('看过的凭据跟着这一步一起给，模型不用去别处查它', as
   assert.deepEqual(step.sightedShapes.map((s) => s.shape),
     ['tall', 'portrait', 'square', 'landscape', 'wide']);
   assert.ok(step.sightedShapes.every((s) => s.label), '每一档都得有一句人话，光给英文词没用');
-  assert.match(context, /没看图就说图片读不了/);
+  assert.match(context, /模型视觉/);
 });
 
 test('被驳回的读数：重读时把上次没过的理由原样带上', async () => {

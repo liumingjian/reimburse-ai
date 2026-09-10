@@ -10,7 +10,14 @@
 .env
 .env.*
 !.env.example
+node_modules/
+__pycache__/
 dist/
 .claude/worktrees/
 release/
 .codex-out/
+.playwright-cli
+.agents
+
+# Private OCR benchmark materials
+resources/test-images/

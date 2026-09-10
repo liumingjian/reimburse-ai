@@ -26,7 +26,7 @@
 | `inventory_stale` | 材料目录哈希 ≠ 最近一次盘点 | kernel | 重跑 `intake` | 盘点版本刷新 |
 | `intake_open_items` | 盘点有 `read_error`/`kind_unrecognized`/`no_text_in_pdf` | user | 逐条说明并请示 | 用户处置或明确忽略 |
 | `classify_pending` | 无当前盘点版本的分类结果 | kernel | `classify` | 分类产出 |
-| `image_awaiting_reading` | 存在 `image_awaiting_reading` 项 | model | 逐张 `Read` → 提交读数 | 读数被内核收下 |
+| `image_awaiting_reading` | 存在 `image_awaiting_reading` 项 | model | 调用内部图片提取 Skill 批量 OCR；仅明确回退项逐张 `Read` → 提交读数 | 读数被内核收下 |
 | `reading_rejected` | `ocr-submit` 判定 `rejected`（守恒/格式不过） | model | 按 `reasons` 重读同一张 | 通过 |
 | `reading_stale` | 图片内容哈希变了 | model | 重读该图 | 通过 |
 | `reading_awaiting_confirmation` | 有读数未确认 | user | **终端表格**请用户过目 | 用户认可 |

@@ -89,6 +89,13 @@ function matchesIssued(argv, issuedArgv) {
 export function guardVerdict({ cmd, argv = [], env = process.env, issuedArgv = null } = {}) {
   const markers = agentMarkers(env);
 
+  // Reset is a user-requested operation; it needs no step token or confirmation.
+  if (cmd === 'reset' && argv.length === 1 && argv[0] === 'reset') {
+    return { allowed: true, reason: 'model_allowed', markers };
+  }
+  if (cmd === 'reset' && markers.length > 0) {
+    return { allowed: false, reason: 'model_may_only_run_next', markers };
+  }
   if (MODEL_ALLOWED.has(cmd)) {
     return { allowed: true, reason: 'model_allowed', markers };
   }
@@ -122,11 +129,11 @@ export function refusalPayload({ cmd, markers, reason = 'model_may_only_run_next
       command: cmd ?? null,
       reason,
       markers,
-      allowed: [...MODEL_ALLOWED],
+      allowed: [...MODEL_ALLOWED, 'reset'],
     },
     // 念给用户听的那一句：拒绝本身不是故障，说成故障会让人去"修"它。
     speak: '我只能通过 baox 的一条入口往下走，刚才那条命令不在我的权限里，我不会绕过去。',
-    error: `模型只能敲 ${[...MODEL_ALLOWED].join(' / ')}，外加内核放进 step.argv 的那一条；`
+    error: `模型只能敲 ${[...MODEL_ALLOWED, 'reset'].join(' / ')}，外加内核放进 step.argv 的那一条；`
       + `${cmd ?? '(空)'} 都不是，它是给人手敲排障用的。`,
     hint: `人要手敲这条命令，在末尾加 ${HUMAN_FLAG}。`,
   };

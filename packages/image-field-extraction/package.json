@@ -1,0 +1,21 @@
+{
+  "name": "@baox/image-field-extraction",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./dist/index.js",
+  "bin": {
+    "extract-image-fields": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "benchmark": "node scripts/benchmark.mjs",
+    "test": "tsx --test test/**/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}

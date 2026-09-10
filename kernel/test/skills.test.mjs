@@ -12,13 +12,13 @@ const SKILLS = path.join(path.dirname(KERNEL), 'skills');
 const read = (...p) => fs.readFileSync(path.join(SKILLS, ...p), 'utf8');
 const frontmatter = (src) => src.split('---')[1] ?? '';
 
-const ALL = ['baox', 'baox-setup', 'baox-recover'];
+const ALL = ['baox', 'baox-setup', 'baox-recover', 'extract-reimbursement-images'];
 
 // 用户入口只有一个。另外两份是模型调用的执行壳 —— 用户不必知道它们存在，
 // 更不必自己去挑该用哪一个。这一条是这一批改动的全部目的。
 test('用户能唤起的 Skill 只有 baox 一个', () => {
   assert.doesNotMatch(frontmatter(read('baox', 'SKILL.md')), /user-invocable:\s*false/);
-  for (const s of ['baox-setup', 'baox-recover']) {
+  for (const s of ['baox-setup', 'baox-recover', 'extract-reimbursement-images']) {
     const fm = frontmatter(read(s, 'SKILL.md'));
     assert.match(fm, /user-invocable:\s*false/, `${s} 还能被用户直接唤起`);
     assert.match(fm, /disable-model-invocation:\s*false/, `${s} 模型也调不动，那它就没人调得动了`);
@@ -27,20 +27,21 @@ test('用户能唤起的 Skill 只有 baox 一个', () => {
 
 // 判断散文一旦长回来，模型就又开始自己选下一步做什么 —— 而那是 1.0.0 要关掉的那个入口。
 // 行数不是审美偏好，是那类散文放不进 120 行这件事本身。
-test('三份说明书都不超过 120 行', () => {
+test('四份说明书都不超过 120 行', () => {
   for (const s of ALL) {
     const n = read(s, 'SKILL.md').split('\n').length;
     assert.ok(n <= 120, `${s}/SKILL.md 有 ${n} 行，超过 120`);
   }
 });
 
-// 模型只会 `baox next`。说明书里出现第二条命令，等于告诉它还有第二条路。
+// 报销只走 next；用户明确要求的 reset 是独立运维入口。
 // 只看代码块和行内代码 —— 散文里的 "the only baox entry point" 不是命令示例。
-test('baox 与 baox-setup 的说明书里只出现 next 一条命令', () => {
+test('baox 只允许 next 和 reset，baox-setup 只允许 next', () => {
   for (const s of ['baox', 'baox-setup']) {
     for (const f of walk(path.join(SKILLS, s))) {
-      const found = commandsIn(fs.readFileSync(f, 'utf8')).filter((c) => c !== 'next');
-      assert.deepEqual(found, [], `${path.relative(SKILLS, f)} 里出现了 next 以外的命令：${found}`);
+      const allowed = s === 'baox' ? ['next', 'reset'] : ['next'];
+      const found = commandsIn(fs.readFileSync(f, 'utf8')).filter((c) => !allowed.includes(c));
+      assert.deepEqual(found, [], `${path.relative(SKILLS, f)} 里出现了额外命令：${found}`);
     }
   }
 });
@@ -71,7 +72,7 @@ function* walk(dir) {
 // 真机实测：SKILL.md frontmatter 里的 hooks 一次都不触发（见 docs/research/skill-declared-hooks.md）。
 // 它被静默忽略——没有警告、没有报错，所以写在那里的守卫看起来配好了，实际一次都没跑。
 // 把这条钉住：谁再把它加回 frontmatter，这里当场红。
-test('三份说明书的 frontmatter 里都没有 hooks —— 那个键是不生效的', () => {
+test('四份说明书的 frontmatter 里都没有 hooks —— 那个键是不生效的', () => {
   for (const s of ALL) {
     assert.doesNotMatch(frontmatter(read(s, 'SKILL.md')), /^\s*hooks:/m,
       `${s}/SKILL.md 的 frontmatter 里又出现了 hooks，而它不触发`);

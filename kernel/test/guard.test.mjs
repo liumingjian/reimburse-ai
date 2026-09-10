@@ -98,7 +98,7 @@ test('拒绝的那份 JSON 带着能原样念的一句话和给人的出路', ()
     reason: 'model_may_only_run_next' });
   assert.equal(p.status, 'refused');
   assert.equal(p.refused.command, 'erp-fill');
-  assert.deepEqual(p.refused.allowed, ['next', 'erp-reconcile']);
+  assert.deepEqual(p.refused.allowed, ['next', 'erp-reconcile', 'reset']);
   assert.ok(p.speak, '得有一句能原样念给用户的话');
   assert.ok(p.hint.includes(HUMAN_FLAG), '得告诉人怎么手敲');
 });

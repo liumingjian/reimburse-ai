@@ -3,7 +3,8 @@
 baox 是一套跑在 Claude Code 里的报销助手：你把发票丢给它，它整理材料、核对、填进 ERP 的费用报销单。
 **它不替你提交，也不替你确认**——每一个有后果的动作都要你亲手点。
 
-这份文档是给试用的同事看的。整套东西零依赖、不联网、不上传任何材料。
+这份文档是给试用的同事看的。材料处理始终在本机完成、不上传图片；可选的本地 OCR 加速
+会在首次启用时联网安装 Python 依赖和模型，未安装或安装失败时自动回退到模型视觉。
 
 ## 你需要先有
 
@@ -11,28 +12,29 @@ baox 是一套跑在 Claude Code 里的报销助手：你把发票丢给它，�
 |---|---|
 | macOS | 目前只在 macOS 上验证过 |
 | Node.js **21 或更高** | `node -v` 看一下。没有就 `brew install node`，或去 https://nodejs.org 下 LTS 安装包 |
+| Python **3.11**（OCR 加速可选） | 没有时先安装；不启用本地 OCR 仍可走模型视觉 |
 | Google Chrome | 会另开一个**专用实例**，和你日常那个 Chrome 互不干扰 |
 | ERP 账号 | 用你本人的账号，登录这件事自始至终在你手里 |
 | Claude Code | 已登录可用 |
 
 ## 安装
 
-解压拿到的压缩包，里面有三个目录。Claude Code 认两个位置，**试用期请装进项目目录**：
+解压拿到的压缩包，里面有四个目录。Claude Code 认两个位置，**试用期请装进项目目录**：
 
 ```bash
 cd <你打算用来报销的目录>          # 例如 ~/projects/baoxiao
 mkdir -p .claude/skills
-cp -R baox baox-recover baox-setup .claude/skills/
+cp -R baox baox-recover baox-setup extract-reimbursement-images .claude/skills/
 ```
 
 拷完重开一个 Claude Code 会话（在同一个目录里启动）。
 
 ### 三条规矩
 
-**一、三个必须一起拷。** 每个目录自带一份内核，就地运行；只拷其中一个，另外两件事
-（环境准备、写坏之后的收尾）就没有说明书可依。
+**一、四个必须一起拷。** 三个流程 Skill 带着同一版内核；第四个是图片提取深模块。
+少一个就可能在环境准备、图片提取或写入善后时失去对应说明书。
 
-**二、三个必须在同一个位置，而且来自同一次打包。** 个人目录 `~/.claude/skills/` 和项目目录
+**二、四个必须在同一个位置，而且来自同一次打包。** 个人目录 `~/.claude/skills/` 和项目目录
 `<项目>/.claude/skills/` 都是合法安装位置，但**不要各放一部分**。
 
 **三、个人目录会静默遮蔽项目目录。** Claude Code 的优先级是「个人 > 项目」，同名 Skill 只有
@@ -120,6 +122,21 @@ node <解压出来的目录>/install-permissions.mjs
 
 ## 第一次使用
 
+### 可选：启用本地 OCR 加速
+
+在 Apple Silicon Mac 上，先运行不带 `--yes` 的命令查看版本、来源、预计下载量和缓存位置；
+确认后再加 `--yes`。安装进入 `~/.baox/ocr-runtime/v1/`，不修改全局 Python：
+
+```bash
+node .claude/skills/extract-reimbursement-images/runtime/install-runtime.mjs
+node .claude/skills/extract-reimbursement-images/runtime/install-runtime.mjs --yes
+```
+
+当前试点默认锁定 RapidOCR 3.9.2、PP-OCRv6 small 和 ONNX Runtime 1.23.2；PaddleOCR 与
+PP-OCRv6 medium 只保留作基准对照。
+首批分发仍只承诺 Apple Silicon macOS。
+首次安装与模型下载需要联网；正式识别使用本地缓存。未安装时图片流程自动改用模型视觉。
+
 在 Claude Code 里说一句：
 
 > 帮我把 baox 环境装一下
@@ -140,9 +157,8 @@ node <解压出来的目录>/install-permissions.mjs
 它会盘点材料、认发票、问你拿不准的地方，一路走到把单子填进 ERP。
 **最后的保存和提交仍然是你自己按。**
 
-**你只需要认识 `baox` 一个。** 装的是三个目录，但另外两个（`baox-setup` 环境准备、
-`baox-recover` 写入善后）由 baox 自己在需要的时候调起来，不用你去挑该用哪一个，
-也不用你知道它们存在。少的那两个目录不能省——baox 调不到就走不下去。
+**你只需要认识 `baox` 一个。** 另外三个（`baox-setup`、`baox-recover` 和图片字段提取）
+都由 baox 在需要时调用，不需要你选择。
 
 ## 你的数据在哪
 
@@ -161,7 +177,7 @@ node <解压出来的目录>/install-permissions.mjs
 
 ## 更新到新版本
 
-把新的三个目录整份覆盖进**原来那个位置**（三个一起），然后重开一个 Claude Code 会话。就这些——
+把新的四个目录整份覆盖进**原来那个位置**（四个一起），然后重开一个 Claude Code 会话。就这些——
 没有第二步，覆盖完跑的就是新的那一份。
 
 你的数据不在 Skill 目录里，覆盖不会动到任何任务、发票或登录状态。
@@ -178,5 +194,6 @@ node <解压出来的目录>/install-permissions.mjs
 ## 目前的边界
 
 - 只在 macOS + Google Chrome 上验证过（Windows 有代码路径，没实测）
+- 本地 OCR 试点只支持 Apple Silicon macOS；其他平台回退模型视觉
 - 只对着一套 ERP 验证过
 - 提交和最终保存永远是人来做，这是设计，不是待办
