@@ -18,7 +18,8 @@ baox next --after <stepToken> [--result <file>]  # 答：我做完了，这是�
   "identity": { "displayName": "刘明建", "account": "luo.liu" },  // 每次都带，绑错了会在下一句话暴露
   "task": { "taskId": "75dc9cbb4d", "sourceLabel": "resources", "sourceDir": "/abs/path" },
   "state": "image_awaiting_reading",
-  "progress": { "phase": 3, "of": 10, "label": "看图读数" },
+  "progress": { "phase": 4, "of": 10, "label": "材料整理" },
+  "interaction": { "templateId": "materials.processing", "version": 1, "status": "processing" },
   "actor": "model",
   "stepToken": "9f3c1a…",       // 一次性，回传时必须带
   "step": { "kind": "…", /* 见下 */ },
@@ -28,6 +29,8 @@ baox next --after <stepToken> [--result <file>]  # 答：我做完了，这是�
   "exit": 0
 }
 ```
+
+员工交互的完整约束见 [user-interaction-contract.md](./user-interaction-contract.md)。`interaction` 是内部追踪元数据，不展示给员工；`speak`、`step.prompt` 和内核渲染的表格才是员工可见内容。
 
 `exit`：`0` 继续 / `2` 有硬阻塞，未解决不得继续。没有 `1` —— 内核自身异常才用 `1`，且带 `error`。
 
@@ -50,17 +53,19 @@ baox next --after <stepToken> [--result <file>]  # 答：我做完了，这是�
 
 - **`step.argv`** 是完整命令行数组，模型**原样执行**。禁止拼接、改参、加参。**内核自己会拦下不在 argv 里的越权命令**（退出码 2，并记进 `logs/refused.jsonl`）——守卫在内核里，不在 Skill 声明的 hook 里，理由见 [ADR-0010](../adr/0010-kernel-side-command-guard.md)。
 - **`stepToken`** 一次性。内核只接受它刚发出的那一个；不匹配就忽略回传、重发当前步骤。这是"不可跳步"的物理实现。
-- **`speak` / `context`** 分离：`speak` 原样念（措辞是模型差异最大的地方，不交给模型组织）；`context` 只在用户追问时动用。
+- **`speak` / `context`** 分离：`speak` 原样念（措辞是模型差异最大的地方，不交给模型组织）；`context` 只在用户追问时动用，并且只解释业务原因，不向员工暴露路径、命令、组件、内部状态或错误代码。
 - **`identity`** 每次都带，用于在每条输出开头呈现"当前替谁报销"。
 - **`blockedBy`** 是结构化的开放项数组，每项含 `kind` / `materialId` / `hint` / `resolvableBy`（`user` | `model` | `kernel`）。
   `evidence_ambiguous` 还保留 `references`，其中每个候选带 `materialId` / `fileName`，供待办表同时显示凭证与候选参考材料。
 
 - `home_city_required` 的 `ask_user` 只写入当前 `tenant + account` 的员工记忆；已经开始的任务还会把确认值冻结到任务快照。
+- `profile_confirmation` 在新任务创建前展示报销人和常驻城市；员工回复「确认」继续，直接输入城市则覆盖默认值，再创建使用新城市快照的任务。首次没有城市时只走 `home_city_required`，不重复确认。
   `classified_detail_confirmation` 的 `confirm_table` 绑定材料、日期、金额分摊、常驻城市和费用类别摘要，项目和事由不进入摘要；单纯换项目不会触发重新确认。
 
 - `project_unassigned` 的 `step.argv` 只能是内核发出的 `select-task` 个人项目簿入口。页面提交时重新读取当前身份和可选集合；没有个人项目簿来源证据的全局旧选择不能自动合法化。
 
 - 准备材料包的生成、字段充分、用户准备确认分别判断。准备确认绑定当前材料包摘要，不能产生或继承 ERP 写入授权；正常流程交接材料后停止，等待用户手动 QA。
+- 后续接入草稿写入时，`select-task` 页面提交是保存草稿的授权边界，不追加保存确认；保存结果未知不得自动重试。
 
 ## 纠正与来源
 

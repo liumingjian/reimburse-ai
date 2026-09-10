@@ -94,7 +94,10 @@ function materials(rels) {
 }
 
 const ask = async (dir, over = {}) => nextResponse({
-  observation: { ...READY, ...await observeTask(dir, { mode: 'legacy' }) },
+  // Existing integration scenarios start after the new-task profile card has
+  // already been accepted; the profile contract has dedicated coverage.
+  observation: { ...READY, ...await observeTask(dir, { mode: 'legacy' }),
+    profileConfirmationRequired: false },
   sourceKey: sourceKeyOf(dir),
   ...over,
 });
@@ -184,7 +187,7 @@ test('项目未指定：这一版如实停在这里，并说清楚为什么', as
   assert.equal(r.step.kind, 'run', '这一趟停在用户项目选择页，不在对话里代填');
   assert.ok(r.step.argv.includes('select-task'));
   assert.equal(r.blockedBy.length, 1, '一条都还没有项目号时，报的是整批');
-  assert.match(r.speak, /项目号/);
+  assert.match(r.speak, /项目选择页/);
   assert.equal(r.progress.label, '项目归属');
 
   // 幂等：再问一次还是这一步，状态不会自己往前跑。
@@ -216,7 +219,7 @@ test('项目有了但还没核对过 —— 内核自己去 ERP 只读查一遍'
   assert.equal(r.state, 'catalog_unverified', `实际停在 ${r.state}：${r.speak}`);
   assert.equal(r.actor, 'kernel');
   assert.ok(r.step.argv.includes('catalog'));
-  assert.match(r.speak, /只查不写/, '这一步碰 ERP，所以要先说清楚它只读');
+  assert.match(r.speak, /核对报销系统/);
 });
 
 /** 把一次 ERP 只读核对的结果喂进工作区。真的查一次只有在装了 ERP 的机器上做得到。 */
@@ -286,7 +289,7 @@ test('准备交接包完整后停在手动确认：内核绝不自己越过去',
   assert.ok(r.step.digest, '确认表和当前准备摘要绑定');
   assert.match(r.step.table, /111454/, '项目号摆在表里 —— 它正是用户要核对的东西之一');
   assert.equal(r.step.acceptsCorrection, false);
-  assert.match(r.speak, /手动 QA/);
+  assert.match(r.speak, /逐项核对发票/);
 
   // 没有点头之前，问多少次都停在这里 —— 状态不会自己往前走。
   assert.equal((await ask(dir, { after: r.stepToken, hasResult: true })).state, 'preparation_confirmation');
@@ -309,7 +312,7 @@ test('准备交接包完整后停在手动确认：内核绝不自己越过去',
   const after = await ask(dir, { after: r.stepToken });
   assert.equal(after.state, 'preparation_complete');
   assert.equal(after.step.kind, 'done', '确认后停在手动 QA，不再进入 ERP 写入');
-  assert.match(after.speak, /未导入发票、填写或保存 ERP 单据/);
+  assert.match(after.speak, /后续处理会从这里继续/);
 });
 
 test('准备确认只对他看过的那一份有效：内容一变，当场作废', async () => {
@@ -418,7 +421,7 @@ test('已定义的 upload_dispatched：先建立本地恢复凭据，不再次�
   assert.equal(r.state, 'handed_off_recover', `实际停在 ${r.state}：${r.speak}`);
   assert.equal(r.step.kind, 'run');
   assert.ok(r.step.argv.includes('resume-local-preparation'));
-  assert.match(r.speak, /upload_dispatched/);
+  assert.match(r.speak, /人工核对/);
 });
 
 test.after(() => { fs.rmSync(home, { recursive: true, force: true }); });

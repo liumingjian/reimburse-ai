@@ -175,7 +175,7 @@ test('baox next 被模型敲：放行入口，但缺 task space 时由用户处�
   assert.equal(json.actor, 'user');
   assert.equal(json.step.kind, 'tell_user');
   assert.equal(json.blockedBy[0].kind, 'ego_task_space_unavailable');
-  assert.match(json.speak, /BAOX_EGO_TASK_SPACE/);
+  assert.match(json.speak, /报销专用浏览器空间/);
 });
 
 test('环境未准备时 next 凭据仍可幂等重发，且不发出浏览器命令', () => {
@@ -220,5 +220,5 @@ test('erp-reconcile 缺 task space 时给出配置阻塞且不碰 ERP', () => {
   assert.equal(json.status, 'blocked');
   assert.equal(json.code, 'EGO_TASK_SPACE_REQUIRED');
   assert.equal(json.command, 'erp-reconcile');
-  assert.match(json.note, /BAOX_EGO_TASK_SPACE/);
+  assert.match(json.note, /报销系统的浏览器环境准备/);
 });

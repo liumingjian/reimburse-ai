@@ -95,7 +95,7 @@ test('准备包即使有缺项也先停在可审阅的 blocked 状态', () => {
   }), result.blockedBy);
   assert.equal(step.step.kind, 'tell_user');
   assert.equal(step.exit, 2);
-  assert.match(step.speak, /发票目录和填写明细已经生成/);
+  assert.match(step.speak, /核对材料已经生成/);
 });
 
 test('完整准备只进入独立确认，旧 writeApproved 不会代替它', () => {
@@ -108,7 +108,7 @@ test('完整准备只进入独立确认，旧 writeApproved 不会代替它', ()
   assert.ok(step.stepMeta.preparationDigest);
   assert.equal(step.stepMeta.packageManifestHash, 'manifest-hash-1');
   assert.equal(step.stepMeta.packageBundleHash, 'bundle-hash-1');
-  assert.match(step.speak, /发票目录和填写明细已经完整/);
+  assert.match(step.speak, /核对材料已准备好/);
 });
 
 test('准备确认后的终点明确停在手动 QA', () => {
@@ -117,5 +117,5 @@ test('准备确认后的终点明确停在手动 QA', () => {
   assert.equal(result.state, 'preparation_complete');
   const step = stepFor(result.state, input, result.blockedBy);
   assert.equal(step.step.kind, 'done');
-  assert.match(step.speak, /未导入发票、填写或保存 ERP 单据/);
+  assert.match(step.speak, /后续处理会从这里继续/);
 });

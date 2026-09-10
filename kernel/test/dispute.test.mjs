@@ -73,7 +73,12 @@ function materials() {
 }
 
 const ask = async (dir, over = {}) => nextResponse({
-  observation: { ...READY, ...await observeTask(dir) },
+  observation: {
+    ...READY,
+    ...await observeTask(dir),
+    // 这些用例聚焦材料争议；资料卡确认由流程入口测试覆盖。
+    profileConfirmationRequired: false,
+  },
   sourceKey: sourceKeyOf(dir),
   ...over,
 });
@@ -185,12 +190,13 @@ test('证据摆得出来：材料路径、机器读到的原文、当时清不�
   const r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
   const e = r.step.evidence;
 
-  // 路径。而且**只给路径** —— 内核不替用户打开原件。
+  // Employees see the material name and check the original; absolute paths stay internal.
   assert.ok(path.isAbsolute(e.materialPath), '要给绝对路径，用户拿它自己打开');
   assert.ok(fs.existsSync(e.materialPath), '给的路径得真打得开');
-  assert.match(r.speak, new RegExp(e.materialPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
-    '路径要念给用户听，不然他不知道去哪儿看');
-  assert.match(r.speak, /你自己打开|请你自己/, '内核不代替用户开原件');
+  assert.match(r.speak, /fengyun-1\.png/, '要说清需要核对哪份材料');
+  assert.doesNotMatch(r.speak, new RegExp(e.materialPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    '员工话术不暴露材料绝对路径');
+  assert.match(r.speak, /请你对照原件/, '要明确下一步是核对原件');
 
   const f = e.fields[0];
   assert.equal(f.field, 'invoiceNumber');
@@ -310,10 +316,9 @@ test('收敛二：重读和原读数一致 —— 两次机器读数和用户的
   r = await ask(dir, { after: r.stepToken, hasResult: true });
   assert.equal(r.state, 'reading_disputed');
   assert.equal(r.step.phase, 'ruling');
-  assert.match(r.speak, /还是「26427000000640558021」/);
-  assert.match(r.speak, /你说是「26427000000640558022」/);
-  assert.match(r.speak, /并不等于机器就对/, '两次一致也可能是同一个错，这一句不能省');
-  assert.match(r.speak, /你说是多少就是多少/);
+  assert.match(r.speak, /前后两次读取结果都是「26427000000640558021」/);
+  assert.match(r.speak, /与你提供的「26427000000640558022」不一致/);
+  assert.match(r.speak, /请对照原件，直接告诉我正确值/);
   assert.equal(r.step.ruling.fields[0].suggested, null, '还没定 —— 内核不预填一个值');
 
   // 用户对着原件拍板：还是他说的那个。
@@ -335,10 +340,11 @@ test('收敛三：重读给出第三个值 —— 直说这个字段读不可靠
 
   r = await ask(dir, { after: r.stepToken, hasResult: true });
   assert.equal(r.step.phase, 'ruling');
-  assert.match(r.speak, /三个说法互不相同/);
-  assert.match(r.speak, /读不可靠/, '读不准这件事要直说，不能含混过去');
-  assert.match(r.speak, /以原件为准/);
-  assert.match(r.speak, /不会替你填一个数/);
+  assert.match(r.speak, /前后两次读取结果和你提供的值不一致/);
+  assert.match(r.speak, /第一次是「26427000000640558021」/);
+  assert.match(r.speak, /重读读到「26427000000640558023」/);
+  assert.match(r.speak, /你说是「26427000000640558022」/);
+  assert.match(r.speak, /请以原件为准/);
 });
 
 test('重读干脆读不出来，也是第三种收敛 —— null 是正当结果，不是没交', async () => {
@@ -369,7 +375,7 @@ test('纠正打破守恒式：报出差额、说清还差什么，绝不反算�
   assert.equal(r.step.gap.sum, '18.80');
   assert.match(r.speak, /差 1\.00 元/);
   assert.match(r.speak, /18\.25 \+ 税额 0\.55/, '不平在哪里要摆出来，不能只说"不平"');
-  assert.match(r.speak, /不会去反算/);
+  assert.match(r.speak, /不会替你推算/);
 
   // 关键：一个字段都没落库，另外两个值一个都没被改动。
   const stored = loadReading(taskOf(dir), r.step.materialId);
@@ -515,7 +521,7 @@ test('每个字段带来源：机器看的、用户给的、还是内核算的',
   const dir = materials();
   const table = await upToConfirmation(dir);
 
-  // 看图读的那一份，每个字段都记着来源；最终表格同时覆盖所有 ERP 字段。
+  // 最终整单表同时覆盖所有需要填入报销明细的信息。
   assert.ok(table.step.table.includes('不含税金额'));
   assert.ok(table.step.table.includes('参考材料'));
   const before = loadReading(taskOf(dir), table.step.materialIds[0]);

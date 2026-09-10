@@ -100,6 +100,9 @@ export async function applyTerminalVerdict({ sourceDir, sourceKey, after, correc
   if (pendingStep?.state === 'home_city_required') {
     return receiveHomeCity({ sourceDir, sourceKey, outstanding: pendingStep, resultFile, correctionFile });
   }
+  if (pendingStep?.state === 'profile_confirmation') {
+    return receiveProfileConfirmation({ sourceKey, outstanding: pendingStep, resultFile, correctionFile });
+  }
   if (!sourceDir) return null;
   const outstanding = outstandingStep(sourceKey, after);
   if (outstanding?.state === 'classified_detail_confirmation') {
@@ -198,16 +201,39 @@ async function receiveHomeCity({ sourceDir, sourceKey, outstanding, resultFile, 
       || !sameIdentity(task.identity, probe.identity)))) return null;
 
   const answer = jsonFile(resultFile);
-  if (!validHomeCity(answer?.homeCity)) {
+  const homeCity = answer?.homeCity === '确认' ? meta.suggestedHomeCity : answer?.homeCity;
+  if (!validHomeCity(homeCity)) {
     return { verdict: 'rejected', reasons: ['常驻城市必须填写，且不超过 20 个字'] };
   }
-  const record = writeHomeCity(probe.identity, answer.homeCity);
+  const record = writeHomeCity(probe.identity, homeCity);
   if (!record) return { verdict: 'rejected', reasons: ['常驻城市记忆文件不可安全更新，已停止写入'] };
   const updated = task ? recordTaskHomeCity(task, probe.identity, record.homeCity,
     { allowRecovery: recovery?.ok === true }) : null;
   if (task && !updated) return null;
   return { verdict: 'home_city_confirmed', ...record,
     task: updated ? { taskId: updated.taskId, homeCity: updated.homeCity } : null };
+}
+
+async function receiveProfileConfirmation({ sourceKey, outstanding, resultFile, correctionFile }) {
+  if (!resultFile || correctionFile
+    || path.resolve(resultFile) !== path.resolve(homeCityAnswerIn())) return null;
+
+  const probe = await probeIdentity();
+  const binding = readBinding();
+  const meta = outstanding.meta ?? {};
+  if (probe.status !== 'matched' || bindingVerdict(binding, probe.identity) !== 'matched'
+    || !sameIdentity(binding, { account: meta.account, tenant: meta.tenant })) return null;
+
+  const answer = jsonFile(resultFile);
+  if (answer?.homeCity !== '确认' && !validHomeCity(answer?.homeCity)) {
+    return { verdict: 'rejected', reasons: ['请回复「确认」，或直接填写新的常驻城市'] };
+  }
+  if (answer.homeCity === '确认') {
+    return { verdict: 'profile_confirmed', homeCity: meta.homeCity ?? null };
+  }
+  const record = writeHomeCity(probe.identity, answer.homeCity);
+  if (!record) return { verdict: 'rejected', reasons: ['常驻城市记忆文件不可安全更新，已停止写入'] };
+  return { verdict: 'profile_confirmed', homeCity: record.homeCity, replaced: true };
 }
 
 async function receiveClassifiedDetail({ sourceDir, sourceKey, outstanding, correctionFile, resultFile }) {

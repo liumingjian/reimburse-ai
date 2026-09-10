@@ -74,7 +74,7 @@ test('system 只读能力失败时如实提示，不假装未登录或已登录'
   });
   assert.equal(shaped.step.kind, 'tell_user');
   assert.match(shaped.context, /AppleEvents/);
-  assert.match(shaped.speak, /AppleEvents/);
+  assert.match(shaped.speak, /浏览器权限/);
   assert.doesNotMatch(shaped.speak, /未登录/);
   assert.doesNotMatch(shaped.speak, /BAOX_EGO_TASK_SPACE/);
 });
@@ -186,7 +186,7 @@ test('PDF 候选读取严格使用 Markdown，不携带或要求打开页图', a
   assert.equal('sourcePages' in step.materials[0], false);
   assert.doesNotMatch(step.instructions, /sourcePages|页图|打开.*PDF|回看.*PDF/);
   assert.match(step.instructions, /numberedMarkdownPath/);
-  assert.match(speak, /带行号 Markdown/);
+  assert.match(speak, /核对 PDF/);
 });
 
 test('PDF 转换空结果给用户处置，运行时失败允许明确重试', async () => {
@@ -202,7 +202,7 @@ test('PDF 转换空结果给用户处置，运行时失败允许明确重试', a
   ]);
   assert.equal(failed.step.kind, 'run');
   assert.ok(failed.step.argv.includes('markdown-convert'));
-  assert.match(failed.speak, /修复锁定运行时/);
+  assert.match(failed.speak, /更换文件/);
 });
 
 test('要人亲手表态和模型亲眼读图的步骤，明说不能外包给环境子 Agent', async () => {
@@ -377,7 +377,7 @@ test('分类明细确认表完整展示住宿入住和离店日期', async () =>
   assert.match(shaped.step.table, /2026-08-22/);
 });
 
-test('分类明细确认表展示每张发票的原生票种和三项票面金额', async () => {
+test('分类明细确认表展示每张发票的票据类型和三项票面金额', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
   const shaped = stepFor('classified_detail_confirmation', withMaterials({
@@ -393,7 +393,7 @@ test('分类明细确认表展示每张发票的原生票种和三项票面金�
         referenceMaterialIds: [] }],
     },
   }));
-  assert.match(shaped.step.table, /原生票种/);
+  assert.match(shaped.step.table, /票据类型/);
   assert.match(shaped.step.table, /铁路电子客票/);
   assert.match(shaped.step.table, /不含税金额/);
   assert.match(shaped.step.table, /税额/);
@@ -401,7 +401,7 @@ test('分类明细确认表展示每张发票的原生票种和三项票面金�
   assert.match(shaped.step.table, /无需读取/);
   assert.match(shaped.step.table, /0\.00（业务默认）/);
   assert.match(shaped.step.table, /703\.00/);
-  assert.match(shaped.speak, /票种、不含税金额、税额、价税合计/);
+  assert.match(shaped.speak, /发票类型、不含税金额、税额和价税合计/);
   assert.match(shaped.speak, /只核对票面总额/);
   assert.doesNotMatch(shaped.speak, /待ERP|需在 ERP/);
 });
@@ -617,6 +617,9 @@ test('每一条应答都自带身份和契约字段', async () => {
   assert.deepEqual(r.blockedBy, []);
   assert.ok('task' in r);
   assert.ok('progress' in r);
+  assert.deepEqual(r.interaction, {
+    templateId: 'workflow.ready', version: 1, status: 'completed',
+  });
 });
 
 test('还没登录时，身份退回这台机器绑过的那一个，读不出就是 null', async () => {
@@ -811,7 +814,7 @@ test('项目未指定：如实报出来，并说清楚问法还没定 —— 不
   assert.equal(shaped.step.kind, 'run',
     '由内核发出任务选择页，不能靠对话里的项目号绕过提交门禁');
   assert.ok(shaped.step.argv.includes('select-task'));
-  assert.match(shaped.speak, /项目号/);
+  assert.match(shaped.speak, /项目选择页/);
   assert.equal(shaped.progress.label, '项目归属');
 });
 
@@ -837,7 +840,7 @@ test('准备确认表：摆全、绑定交接包、且收不下任何改值', as
   assert.equal(shaped.step.outsourceable, false);
   assert.match(shaped.step.table, /111454/, '项目号要摆在表里 —— 它就是用户要核对的东西之一');
   assert.match(shaped.step.table, /26\.69/);
-  assert.match(shaped.speak, /手动 QA/, '确认后停在手动 QA，不进入 ERP 写入');
+  assert.match(shaped.speak, /逐项核对发票/);
   assert.ok(shaped.stepMeta.preparationDigest, '凭据钉在这一份准备材料上');
   assert.equal(shaped.stepMeta.packageManifestHash, 'manifest-hash-1');
   assert.equal(shaped.stepMeta.packageBundleHash, 'bundle-hash-1');
@@ -872,7 +875,7 @@ test('确认表和准备缺项都输出标准 Markdown 表格，用户话术只�
   assert.match(blocked.speak, /^\| .* \|/m);
   assert.match(blocked.speak, /^\| --- /m);
   assert.doesNotMatch(blocked.speak, /^1\. /m);
-  assert.match(blocked.speak, /处理这些项目，随后我再请你核对/);
+  assert.match(blocked.speak, /处理完成后告诉我，我会重新核对/);
 });
 
 test('确认和待办的 speak 不暴露内部处理原理', async () => {
@@ -916,7 +919,7 @@ test('准备确认之后不再重复问，而且明说"还没写进 ERP"', async
   const { stepFor } = await import('../src/next.mjs');
   const shaped = stepFor('preparation_complete', withPreparation({ preparationConfirmed: true }));
   assert.equal(shaped.step.kind, 'done');
-  assert.match(shaped.speak, /未导入发票、填写或保存 ERP 单据/);
+  assert.match(shaped.speak, /后续处理会从这里继续/);
 });
 
 test('动过 ERP 的任务：先建立本地准备恢复凭据，并说清状态变化', async () => {
@@ -926,7 +929,7 @@ test('动过 ERP 的任务：先建立本地准备恢复凭据，并说清状态
     task: { taskId: 't', sourceLabel: '材料', workspace: '/tmp/ws', currentVersionId: 'v-abc',
       erpWriteState: 'upload_dispatched' } }));
   assert.ok(shaped.step.argv.includes('resume-local-preparation'));
-  assert.match(shaped.speak, /upload_dispatched/, '当前记的是什么状态，要说出来');
+  assert.match(shaped.speak, /人工核对/);
 });
 
 test('未知 ERP marker 只交接，不冒充已定义的本地恢复协议', async () => {
@@ -937,7 +940,7 @@ test('未知 ERP marker 只交接，不冒充已定义的本地恢复协议', as
       erpWriteState: 'future_marker' } }));
   assert.equal(shaped.step.kind, 'handoff');
   assert.equal(shaped.step.skill, 'baox-recover');
-  assert.match(shaped.speak, /future_marker/);
+  assert.match(shaped.speak, /当前报销已暂停/);
 });
 
 test('恢复凭据无效时仍停在恢复态，不能落到写入前确认', async () => {
