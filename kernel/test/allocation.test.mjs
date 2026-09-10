@@ -1,9 +1,9 @@
+import { fixtureMaterial } from './fixture-materials.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import url from 'node:url';
 
 // 逐段分摊问到终端上：一轮至多四题，答案先落草稿，齐了才提交，
 // 而且提交的门槛和分摊页完全一样 —— 各段之和与票面价税合计按分精确相等。
@@ -19,13 +19,12 @@ const { allocationRound, receiveAllocationAnswers, givenUpOpenItems, loadDraft, 
   = await import('../src/allocate.mjs');
 const { createTask } = await import('../src/workspace.mjs');
 
-const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const AA_INV = '交通/【AA出行-69.19元-3个行程】高德打车电子发票.pdf';
 const AA_ITI = '交通/【AA出行-69.19元-3个行程】高德打车电子行程单.pdf';
 
 const load = (id, rel) => ({
   materialId: id, fileName: path.basename(rel), contentHash: `hash-${id}`,
-  ...parseMaterial(path.join(repo, 'resources', rel), 'pdf'),
+  ...parseMaterial(fixtureMaterial(rel), 'pdf'),
 });
 
 /** 行程单逐段之和与票面对不上的那张合并发票 —— 只有这种才会问用户。 */

@@ -1,42 +1,39 @@
+import { fixtureMaterial } from './fixture-materials.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import path from 'node:path';
-import url from 'node:url';
 import { parseMaterial, invoiceIdentity, checkAmounts, maskNumber } from '../src/parse.mjs';
 
-// 用 resources/ 里的真实样本做回归。断言一律用**脱敏后的**发票号码，
-// 完整号码不写进仓库里的任何文本（原始 PDF 本身另说）。
+// 使用测试生成的虚构材料验证解析字段和原文证据。
 // 跑：node --test kernel/test/
 
-const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
-const sample = (rel) => path.join(repo, 'resources', rel);
+const sample = (rel) => fixtureMaterial(rel);
 const parse = (rel, fmt = 'pdf') => parseMaterial(sample(rel), fmt);
 
 const CASES = [
   {
     file: '住宿/fp-jd.pdf',
     kind: 'vat_special', role: 'primary_voucher',
-    masked: '2634************3906', issueDate: '2026-08-22',
+    masked: '1000************0001', issueDate: '2026-08-22',
     net: 343396, tax: 20604, total: 364000, amountCheck: 'balanced',
   },
   {
     file: '交通/【AA出行-69.19元-3个行程】高德打车电子发票.pdf',
     kind: 'passenger_transport', role: 'primary_voucher',
-    masked: '2611************4821', issueDate: '2026-08-07',
+    masked: '1000************0002', issueDate: '2026-08-07',
     net: 6717, tax: 202, total: 6919, amountCheck: 'balanced',
   },
   {
     // 这张票有负数调整行，合计仍以票面"合计"和"价税合计"为准，不逐行相加。
     file: '交通/【曹操出行-51.63元-1个行程】高德打车电子发票.pdf',
     kind: 'passenger_transport', role: 'primary_voucher',
-    masked: '2632************4156', issueDate: '2026-09-02',
+    masked: '1000************0003', issueDate: '2026-09-02',
     net: 5012, tax: 151, total: 5163, amountCheck: 'balanced',
   },
   {
     // 铁路电子客票票面只有票价：不含税金额和税额缺席是票面事实，不是解析失败。
     file: '长途/26349119423005877606.pdf',
     kind: 'rail_eticket', role: 'primary_voucher',
-    masked: '2634************7606', issueDate: '2026-09-02',
+    masked: '1000************0004', issueDate: '2026-09-02',
     net: null, tax: null, total: 70300, amountCheck: 'partial',
   },
 ];

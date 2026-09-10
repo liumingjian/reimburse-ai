@@ -1,9 +1,9 @@
+import { fixtureMaterial } from './fixture-materials.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import url from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 // 纠正与争议：**用户改的值不直接落库**。
@@ -27,7 +27,6 @@ const { CONVERGENCE, openDisputes } = await import('../src/dispute.mjs');
 const { loadReading, loadUnreadable } = await import('../src/vision.mjs');
 const { takeInventory } = await import('../src/inventory.mjs');
 
-const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const me = { displayName: '刘明建', account: 'luo.liu', tenant: '5f1f13f6dde29e' };
 const READY = {
   schemaVersion: SCHEMA_VERSION,
@@ -54,7 +53,7 @@ const FENGYUN = {
 
 function materials() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-dispute-'));
-  fs.copyFileSync(path.join(repo, 'resources', IMAGE), path.join(dir, 'fengyun-1.png'));
+  fs.copyFileSync(fixtureMaterial(IMAGE), path.join(dir, 'fengyun-1.png'));
   return dir;
 }
 
@@ -388,7 +387,7 @@ test('缺口补不上：整条读数退回待办，而且不再派模型去重�
   assert.notEqual(back.state, 'reading_disputed');
 
   // 用户换了一份原件，字节一变，这张图重新回到正常流程。
-  fs.copyFileSync(path.join(repo, 'resources', '交通', '行程单.png'), path.join(dir, 'fengyun-1.png'));
+  fs.copyFileSync(fixtureMaterial('交通', '行程单.png'), path.join(dir, 'fengyun-1.png'));
   const moved = await ask(dir);
   assert.equal(moved.state, 'inventory_stale');
   runStep(moved);
@@ -486,7 +485,7 @@ test('每个字段带来源：机器看的、用户给的、还是内核算的',
 test('PDF 那条路上的字段来源记内核 —— 那是内核自己从文字层解出来的', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-dispute-pdf-'));
   const rel = '交通/【AA出行-69.19元-3个行程】高德打车电子发票.pdf';
-  fs.copyFileSync(path.join(repo, 'resources', rel), path.join(dir, path.basename(rel)));
+  fs.copyFileSync(fixtureMaterial(rel), path.join(dir, path.basename(rel)));
   runStep(await ask(dir));
   runStep(await ask(dir));
   const { classifyInventory } = await import('../src/classify.mjs');

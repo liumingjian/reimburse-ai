@@ -13,11 +13,11 @@
 node_modules/
 __pycache__/
 dist/
-.claude/worktrees/
+/.claude/
 release/
 .codex-out/
 .playwright-cli
-.agents
+/.agents/
 
-# Private OCR benchmark materials
-resources/test-images/
+# Local reimbursement materials
+/resources/

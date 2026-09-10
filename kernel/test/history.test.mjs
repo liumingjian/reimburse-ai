@@ -1,9 +1,9 @@
+import { fixtureMaterial } from './fixture-materials.mjs';
 import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import url from 'node:url';
 
 // 每个用例一份独立的数据目录：跨任务重复检查读的就是全局任务账，
 // 用例之间共用一份账会互相干扰，测出来的也不再是这条规则本身。
@@ -20,12 +20,11 @@ const { createTask, recordInvoiceSightings, abandonTask, loadIndex, taskDir, rec
   = await import('../src/workspace.mjs');
 const { crossTaskDuplicates, historyOpenItems, holdsInvoices } = await import('../src/history.mjs');
 
-const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const RIDE = '交通/【曹操出行-51.63元-1个行程】高德打车电子发票.pdf';
 const HOTEL = '住宿/fp-jd.pdf';
 
 const material = (id, rel) => {
-  const parsed = parseMaterial(path.join(repo, 'resources', rel), 'pdf');
+  const parsed = parseMaterial(fixtureMaterial(rel), 'pdf');
   return { materialId: id, fileName: path.basename(rel), contentHash: `hash-${id}`,
     ...parsed, identity: invoiceIdentity(parsed) };
 };

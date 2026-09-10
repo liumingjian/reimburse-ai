@@ -1,3 +1,4 @@
+import { fixtureMaterial } from './fixture-materials.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,9 +18,9 @@ const { invoiceIdentity } = await import('../src/parse.mjs');
 
 const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 
-// 一个只有一张图片的材料目录。图片内容用真实样本，保证格式识别走的是正常路径。
+// 一个只有一张图片的材料目录。图片由测试生成，保证格式识别走的是正常路径。
 const src = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-'));
-fs.copyFileSync(path.join(repo, 'resources', '交通', 'fengyun-1.png'), path.join(src, 'invoice.png'));
+fs.copyFileSync(fixtureMaterial('交通', 'fengyun-1.png'), path.join(src, 'invoice.png'));
 
 const inventory = await takeInventory(src);
 const material = inventory.materials[0];
@@ -243,13 +244,13 @@ test('连着答不出凭据就不再让模型重试 —— 五选一是试得出
   assert.equal(order.length, 0);
 
   // 用户换了一份文件，计数跟着字节走，从头开始。
-  fs.copyFileSync(path.join(repo, 'resources', '交通', '行程单.png'), path.join(src, 'invoice.png'));
+  fs.copyFileSync(fixtureMaterial('交通', '行程单.png'), path.join(src, 'invoice.png'));
   const fresh = await takeInventory(src);
   const freshItems = classifyOpenItems(classifyInventory(src, fresh, task));
   assert.ok(!freshItems.some((it) => it.kind === 'sight_unproven'), '换了文件就不该还挂着上一份的账');
 
   // 把材料换回去，后面的测试仍然对着同一张图。
-  fs.copyFileSync(path.join(repo, 'resources', '交通', 'fengyun-1.png'), path.join(src, 'invoice.png'));
+  fs.copyFileSync(fixtureMaterial('交通', 'fengyun-1.png'), path.join(src, 'invoice.png'));
   submit(good());
 });
 

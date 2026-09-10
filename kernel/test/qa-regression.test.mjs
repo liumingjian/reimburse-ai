@@ -1,3 +1,4 @@
+import { fixtureMaterial } from './fixture-materials.mjs';
 /**
  * 手动 QA（2026-09-07，`.claude/skills` 项目域安装）报回来的两件事，各钉一条用例。
  *
@@ -11,7 +12,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import url from 'node:url';
 
 process.env.BAOX_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-qa-'));
 
@@ -62,9 +62,8 @@ test('在终端上认下的那一个人，真的落进 identity.json', async () 
   assert.equal(readBinding().tenant, me.tenant);
 });
 
-const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const src = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-qa-src-'));
-fs.copyFileSync(path.join(repo, 'resources', '交通', 'fengyun-1.png'), path.join(src, 'invoice.png'));
+fs.copyFileSync(fixtureMaterial('交通', 'fengyun-1.png'), path.join(src, 'invoice.png'));
 const inventory = await takeInventory(src);
 const material = inventory.materials[0];
 const task = createTask(src);

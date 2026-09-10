@@ -1,3 +1,4 @@
+import { fixtureMaterial } from '../kernel/test/fixture-materials.mjs';
 import fs from 'node:fs';
 const d = '/tmp/baox-parse-edge';
 fs.rmSync(d, { recursive: true, force: true });
@@ -5,7 +6,7 @@ fs.mkdirSync(d + '/dup', { recursive: true });
 fs.mkdirSync(d + '/refonly', { recursive: true });
 fs.mkdirSync(d + '/broken', { recursive: true });
 
-const cc = 'resources/交通/【曹操出行-51.63元-1个行程】高德打车电子发票.pdf';
+const cc = fixtureMaterial('single-invoice.pdf');
 const buf = fs.readFileSync(cc);
 // 同一张发票，字节完全相同的两个副本
 fs.writeFileSync(d + '/dup/a.pdf', buf);
@@ -14,7 +15,7 @@ fs.writeFileSync(d + '/dup/b.pdf', buf);
 fs.writeFileSync(d + '/dup/c.pdf', Buffer.concat([buf, Buffer.from('\n% baox-edge\n')]));
 
 // 只有参考材料
-fs.copyFileSync('resources/住宿/zd-jd.pdf', d + '/refonly/folio.pdf');
+fs.copyFileSync(fixtureMaterial('hotel-folio.pdf'), d + '/refonly/folio.pdf');
 
 // 有文字但不是支持票种
 const mk = (body) => {

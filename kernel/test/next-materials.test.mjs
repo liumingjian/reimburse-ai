@@ -1,9 +1,9 @@
+import { fixtureMaterial } from './fixture-materials.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import url from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 // 材料这一段的走查：**真目录、真文件、真的把 step.argv 执行掉**。
@@ -23,7 +23,6 @@ const { sourceKeyOf } = await import('../src/workspace.mjs');
 const { SCHEMA_VERSION } = await import('../src/state.mjs');
 const { applyTerminalVerdict } = await import('../src/confirm.mjs');
 
-const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const me = { displayName: '刘明建', account: 'luo.liu', tenant: '5f1f13f6dde29e' };
 
 /** 环境已经就绪的那一半观测。它是喂进来的，不是采出来的。 */
@@ -42,7 +41,7 @@ const IMAGE = '交通/fengyun-1.png';
 /** 一个真的材料目录，里面是仓库里那些真发票。 */
 function materials(rels) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-mat-'));
-  for (const rel of rels) fs.copyFileSync(path.join(repo, 'resources', rel), path.join(dir, path.basename(rel)));
+  for (const rel of rels) fs.copyFileSync(fixtureMaterial(rel), path.join(dir, path.basename(rel)));
   return dir;
 }
 
@@ -106,7 +105,7 @@ test('材料目录里加一个文件，内核自己发现盘点过期并重新�
   runStep(r);
 
   // 盘完之后，用户往目录里又丢了一张票 —— 没有人告诉内核这件事。
-  fs.copyFileSync(path.join(repo, 'resources', IMAGE), path.join(dir, 'fengyun-1.png'));
+  fs.copyFileSync(fixtureMaterial(IMAGE), path.join(dir, 'fengyun-1.png'));
 
   r = await ask(dir);
   assert.equal(r.state, 'inventory_stale', '内核自己比出来的：此刻目录里的东西和上次盘的对不上');
@@ -273,7 +272,7 @@ test('图在读数之后被换掉，旧读数当场作废', async () => {
     'reading_awaiting_confirmation');
 
   // 用户把那张图换成了另一张。读数钉在字节上，跟着一起作废。
-  fs.copyFileSync(path.join(repo, 'resources', '交通', '行程单.png'), path.join(dir, 'fengyun-1.png'));
+  fs.copyFileSync(fixtureMaterial('交通', '行程单.png'), path.join(dir, 'fengyun-1.png'));
   const after = await ask(dir);
   assert.equal(after.state, 'inventory_stale', '文件换了，先重新盘点');
   runStep(after);

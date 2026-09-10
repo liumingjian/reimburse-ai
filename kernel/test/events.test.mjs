@@ -1,9 +1,9 @@
+import { fixtureMaterial } from './fixture-materials.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import url from 'node:url';
 
 // 数据目录必须在导入内核模块之前改掉，否则会写进用户真实的工作区。
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-test-'));
@@ -14,10 +14,9 @@ const { buildEvents, eventOpenItems, reconcile, splitTax, submitAllocation, link
   conservingSegments } = await import('../src/events.mjs');
 const { createTask } = await import('../src/workspace.mjs');
 
-const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const load = (id, rel) => ({
   materialId: id, fileName: path.basename(rel), contentHash: `hash-${id}`,
-  ...parseMaterial(path.join(repo, 'resources', rel), 'pdf'),
+  ...parseMaterial(fixtureMaterial(rel), 'pdf'),
 });
 
 const AA_INV = '交通/【AA出行-69.19元-3个行程】高德打车电子发票.pdf';

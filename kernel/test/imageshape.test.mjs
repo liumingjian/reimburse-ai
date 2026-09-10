@@ -1,18 +1,16 @@
+import { fixtureMaterial } from './fixture-materials.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import path from 'node:path';
-import url from 'node:url';
 
 import { shapeOf, shapeMatches, shapeOfBuffer, shapeOfFile, SHAPES } from '../src/imageshape.mjs';
 
-const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
-const res = (rel) => path.join(repo, 'resources', rel);
+const res = (rel) => fixtureMaterial(rel);
 
 // 这一层是「模型有没有真的打开过这张图」那道闸的地基。它有两个职责，
 // 一个比一个要紧：**内核自己解得开的才算图**，以及**形状是从字节里算出来的**。
 
-test('真材料：PNG 的宽高从 IHDR 里精确读出来', () => {
+test('生成的 PNG：宽高从 IHDR 里精确读出来', () => {
   const a = shapeOfFile(res('交通/fengyun-1.png'));
   assert.deepEqual(a, { width: 1816, height: 1396, shape: 'landscape' });
 

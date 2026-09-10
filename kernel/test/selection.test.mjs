@@ -1,9 +1,9 @@
+import { fixtureMaterial } from './fixture-materials.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import url from 'node:url';
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-test-'));
 process.env.BAOX_HOME = home;
@@ -15,10 +15,9 @@ const { deriveCategory, applySelection, submitSelection, loadSelection, linesDig
 const { normalizeCity, CATEGORIES } = await import('../src/categories.mjs');
 const { createTask } = await import('../src/workspace.mjs');
 
-const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const load = (id, rel) => ({
   materialId: id, fileName: path.basename(rel), contentHash: `hash-${id}`,
-  ...parseMaterial(path.join(repo, 'resources', rel), 'pdf'),
+  ...parseMaterial(fixtureMaterial(rel), 'pdf'),
 });
 
 const CC_INV = '交通/【曹操出行-51.63元-1个行程】高德打车电子发票.pdf';

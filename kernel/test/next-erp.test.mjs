@@ -1,9 +1,9 @@
+import { fixtureMaterial } from './fixture-materials.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import url from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 // 主干后半段的走查：**真目录、真发票、真的把 step.argv 执行掉**。
@@ -23,7 +23,6 @@ const { SCHEMA_VERSION } = await import('../src/state.mjs');
 const { applyTerminalVerdict } = await import('../src/confirm.mjs');
 const { submitSelection, linesDigest } = await import('../src/selection.mjs');
 
-const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const me = { displayName: '刘明建', account: 'luo.liu', tenant: '5f1f13f6dde29e' };
 
 const READY = {
@@ -53,7 +52,7 @@ function solo() {
 
 function materials(rels) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-erp-'));
-  for (const rel of rels) fs.copyFileSync(path.join(repo, 'resources', rel), path.join(dir, path.basename(rel)));
+  for (const rel of rels) fs.copyFileSync(fixtureMaterial(rel), path.join(dir, path.basename(rel)));
   return dir;
 }
 
