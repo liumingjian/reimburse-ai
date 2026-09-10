@@ -132,6 +132,33 @@ test('同一份行程单对上两张同金额的发票 —— 证据归属不唯
   assert.equal(bad.blocking, true);
 });
 
+test('同一张发票对上两份同额行程单 —— 关联对象不唯一就阻塞且不采用任一份', () => {
+  const c = classificationOf([
+    ['m-inv', CC_INV], ['m-iti-a', CC_ITI], ['m-iti-b', CC_ITI],
+  ]);
+  const { links, ambiguous } = linkEvidence(
+    c.results.filter((r) => r.role === 'primary_voucher'),
+    c.results.filter((r) => r.role === 'reference'),
+  );
+  assert.deepEqual(links.get('m-inv'), []);
+  assert.deepEqual(ambiguous, [{
+    materialId: 'm-inv',
+    sameKind: 'ride_itinerary',
+    count: 2,
+    references: [
+      { materialId: 'm-iti-a', fileName: '【曹操出行-51.63元-1个行程】高德打车电子行程单.pdf' },
+      { materialId: 'm-iti-b', fileName: '【曹操出行-51.63元-1个行程】高德打车电子行程单.pdf' },
+    ],
+  }]);
+
+  const built = buildEvents(c, null);
+  assert.equal(built.events[0].referenceMaterialIds.length, 0);
+  assert.equal(built.events[0].date, null);
+  const item = eventOpenItems(built).find((entry) => entry.kind === 'evidence_ambiguous');
+  assert.equal(item.blocking, true);
+  assert.deepEqual(item.references, ambiguous[0].references);
+});
+
 test('单段交通票：一张票一个事件，日期和城市来自行程单那一行', () => {
   const built = buildEvents(classificationOf([['m-inv', CC_INV], ['m-iti', CC_ITI]]), null);
   assert.equal(built.events.length, 1);
@@ -149,7 +176,10 @@ test('铁路电子客票：一张票一个事件，乘车日期来自票面', ()
   // 乘车日期 2026-08-22，不是开票日期 2026-09-02 —— 费用发生日期永远取乘车日。
   assert.equal(built.events[0].date, '2026-08-22');
   assert.match(built.events[0].route, /合肥南/);
-  // 票面没有不含税和税额，对账里如实标成 not_on_face，不假装守恒。
+  assert.deepEqual(built.events[0].amounts,
+    { netCents: 70300, taxCents: 0, totalCents: 70300 });
+  assert.equal(built.events[0].amountSource, 'rail_total_tax_zero_rule');
+  // 票面层仍如实标记没有净额；业务默认只落在费用事件，不伪装成 OCR 结果。
   assert.equal(reconcile(built, classificationOf([['m-rail', RAIL]]))[0].net, 'not_on_face');
 });
 
@@ -157,6 +187,8 @@ test('住宿：入住日期来自结账单，没有结账单就没有费用发�
   const withFolio = buildEvents(classificationOf([['m-hi', HOTEL_INV], ['m-hf', HOTEL_FOLIO]]), null);
   assert.equal(withFolio.events[0].date, '2026-08-09');
   assert.equal(withFolio.events[0].checkOut, '2026-08-22');
+  assert.equal(withFolio.lineItems[0].checkOut, '2026-08-22');
+  assert.equal(withFolio.lineItems[0].endDate, '2026-08-22');
 
   const alone = buildEvents(classificationOf([['m-hi', HOTEL_INV]]), null);
   assert.equal(alone.events[0].date, null);
@@ -186,6 +218,17 @@ test('合并交通票：各段之和与价税合计分毫不差时，内核直�
   assert.deepEqual(eventOpenItems(built).filter((i) => i.blocking), []);
 });
 
+test('普通发票只要关联完整行程单，也按逐段证据拆分而不是误作住宿', () => {
+  const c = classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]);
+  const voucher = c.results.find((r) => r.materialId === 'm-inv');
+  voucher.kind = 'vat_common';
+  const built = buildEvents(c, null);
+  assert.equal(built.events.length, 3);
+  assert.deepEqual(built.events.map((event) => event.amounts.totalCents), [2669, 2085, 2165]);
+  assert.deepEqual(built.events.map((event) => event.amountSource), Array(3).fill('itinerary_conserved'));
+  assert.deepEqual(eventOpenItems(built).filter((i) => i.blocking), []);
+});
+
 test('合并交通票：差一分钱就得问用户，行程单金额只作候选', () => {
   const c = skewItinerary(classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]));
   const built = buildEvents(c, null);
@@ -198,6 +241,18 @@ test('合并交通票：差一分钱就得问用户，行程单金额只作候�
   assert.equal(item.totalAmount, '69.19');
   // 行程单金额只作候选摆出来，没有被自动采用 —— 它自己就不平。
   assert.deepEqual(item.candidateFromItinerary, ['26.70', '20.85', '21.65']);
+});
+
+test('起终点坐标归并失败时形成 route_incomplete 阻塞，不保留半截路线', () => {
+  const c = classificationOf([['m-inv', AA_INV], ['m-iti', AA_ITI]]);
+  const itinerary = c.results.find((r) => r.materialId === 'm-iti');
+  const segments = itinerary.candidates.find((x) => x.field === 'segments').value;
+  segments[0] = { ...segments[0], origin: null, destination: null, route: null, routeComplete: false };
+  const built = buildEvents(c, null);
+  const item = eventOpenItems(built).find((x) => x.kind === 'route_incomplete');
+  assert.ok(item);
+  assert.equal(item.blocking, true);
+  assert.equal(built.events.find((x) => x.index === 1).route, null);
 });
 
 test('分毫不差的判据不给一分钱的容差，也不认缺金额的行程单', () => {

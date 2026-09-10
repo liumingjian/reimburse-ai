@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyExpenseItems, verifyProject, isSafeKey } from '../src/erpcatalog.mjs';
+import { queryRows, verifyExpenseItems, verifyProject, isSafeKey } from '../src/erpcatalog.mjs';
 import { CATEGORIES } from '../src/categories.mjs';
 
 // ERP 只读查询的报文形状取自 2026-09-05 实测：
@@ -74,4 +74,31 @@ test('项目号里的引号在到达 ERP 之前就被挡掉', async () => {
   assert.equal(called, false, '不安全的项目号不应该发出任何查询');
   assert.equal(isSafeKey("111454' or '1'='1"), false);
   assert.equal(isSafeKey('111454'), true);
+});
+
+test('正式默认浏览器 page 可承载只读目录查询，旧 wsUrl 仍阻塞', async () => {
+  const page = {
+    transport: 'default', browserBundleId: 'com.google.Chrome', browserFamily: 'chromium',
+    windowId: '7', tabId: '11', index: 0, url: 'http://erp.antute.com.cn/k3cloud/html5/index.aspx',
+    origin: 'http://erp.antute.com.cn',
+  };
+  const calls = [];
+  const result = await queryRows(page, {
+    formId: 'BD_Expense', fieldKeys: 'FNumber,FName', filter: '', limit: 5,
+  }, {
+    evaluate: async (receivedPage, expression, options) => {
+      calls.push({ receivedPage, expression, options });
+      return { parsed: [['FY008001', '本地市内交通']] };
+    },
+  });
+  assert.deepEqual(result, { ok: true, rows: [['FY008001', '本地市内交通']] });
+  assert.equal(calls[0].receivedPage, page);
+  assert.equal(calls[0].options.timeoutMs, 30000);
+  assert.equal(calls[0].options.origin, 'http://erp.antute.com.cn');
+  assert.match(calls[0].expression, /ExecuteBillQuery/);
+
+  const blocked = await queryRows({ transport: 'chrome', wsUrl: 'ws://legacy' }, {
+    formId: 'BD_Expense', fieldKeys: 'FNumber', limit: 1,
+  });
+  assert.equal(blocked.code, 'EGO_REQUIRED');
 });

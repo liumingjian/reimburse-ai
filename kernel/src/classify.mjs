@@ -1,9 +1,14 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { parseMaterial, invoiceIdentity, checkAmounts, maskNumber } from './parse.mjs';
 import { loadReading, loadRejection, loadUnreadable, projectReading, MAX_SIGHT_FAILURES,
-  MAX_EMPTY_READINGS, FIELD_LABELS } from './vision.mjs';
+  MAX_EMPTY_READINGS, FIELD_LABELS, SEGMENT_RULES } from './vision.mjs';
 import { shapeOfFile } from './imageshape.mjs';
 import { READING_KINDS } from './state.mjs';
+import { taskDir } from './workspace.mjs';
+import { load as loadMarkdownArtifact, loadCandidate, project as projectMarkdownCandidate,
+  pendingWorkOrder } from './pdf-markdown.mjs';
 
 // 材料角色分流：把盘点出来的材料判成主要报销凭证还是参考材料，
 // 顺带把票面事实和发票身份提出来，并做**任务内**重复发票检测。
@@ -15,7 +20,131 @@ import { READING_KINDS } from './state.mjs';
  * 对一次盘点版本里的材料逐份解析。
  * `sourceDir` 只在本次进程内用来读文件，不写进任何产物。
  */
-export function classifyInventory(sourceDir, inventory, task = null) {
+export function markdownMaterialPaths(task, versionId, materialId) {
+  if (!task?.taskId || !versionId || !materialId) return null;
+  const root = path.join(taskDir(task), 'pdf-markdown', versionId);
+  const stem = String(materialId);
+  return {
+    root,
+    artifactPath: path.join(root, `${stem}.artifact.json`),
+    markdownPath: path.join(root, `${stem}.md`),
+    numberedMarkdownPath: path.join(root, `${stem}.numbered.md`),
+    pagesDir: path.join(root, `${stem}.pages`),
+    templatePath: path.join(root, `${stem}.candidate.template.json`),
+    candidatePath: path.join(root, `${stem}.candidate.json`),
+    candidateRecordPath: path.join(root, `${stem}.candidate.record.json`),
+    reextractPath: path.join(root, `${stem}.reextract.json`),
+  };
+}
+
+const digest = (value) => crypto.createHash('sha256').update(JSON.stringify(value), 'utf8').digest('hex');
+
+export function validateMarkdownSidecars(artifact, paths) {
+  if (!artifact || !paths?.markdownPath || !paths?.numberedMarkdownPath) {
+    return { ok: false, reason: 'Markdown sidecar 路径缺失' };
+  }
+  try {
+    const markdown = fs.readFileSync(paths.markdownPath, 'utf8');
+    const numberedMarkdown = fs.readFileSync(paths.numberedMarkdownPath, 'utf8');
+    if (markdown !== artifact.markdown) return { ok: false, reason: 'Markdown sidecar 与 artifact 内嵌文字不一致' };
+    if (numberedMarkdown !== artifact.numberedMarkdown) {
+      return { ok: false, reason: '带编号 Markdown sidecar 与 artifact 内嵌文字不一致' };
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: `Markdown sidecar 不可读：${error.message}` };
+  }
+}
+
+function markdownResult(sourceDir, inventory, task, material) {
+  const sourcePath = path.join(path.resolve(sourceDir), material.relPath);
+  const paths = markdownMaterialPaths(task, inventory.versionId, material.materialId);
+  const base = { materialId: material.materialId, fileName: material.fileName, relPath: material.relPath,
+    format: material.format,
+    contentHash: material.contentHash, role: null, kind: null, fields: {}, candidates: [], evidence: {},
+    fieldSources: {}, candidateSources: null, source: null, markdownHash: null, sourcePages: [] };
+  if (!paths) {
+    return { ...base, parseStatus: 'markdown_conversion_required',
+      note: 'PDF 必须先经过固定版本 MarkItDown 转换；当前分类没有任务工作区，不能读取候选' };
+  }
+
+  let artifact;
+  try {
+    artifact = loadMarkdownArtifact(paths.artifactPath, { sourcePath, materialId: material.materialId });
+  } catch (error) {
+    return { ...base, parseStatus: 'markdown_conversion_required', paths,
+      note: `没有找到与当前 PDF hash 匹配的 MarkItDown artifact：${error.message}` };
+  }
+  if (artifact.status !== 'converted') {
+    const pending = pendingWorkOrder(artifact);
+    const kind = artifact.status === 'empty' ? 'markdown_conversion_empty' : 'markdown_conversion_failed';
+    return { ...base, parseStatus: kind, paths, artifactStatus: artifact.status,
+      artifactError: artifact.error ?? null,
+      note: pending.reason?.message ?? artifact.error?.message ?? 'MarkItDown 转换没有产出可用 Markdown' };
+  }
+  const sidecars = validateMarkdownSidecars(artifact, paths);
+  if (!sidecars.ok) {
+    return { ...base, parseStatus: 'markdown_conversion_required', paths,
+      markdownHash: artifact.source.markdownHash, sourcePages: artifact.pages ?? [],
+      note: `${sidecars.reason}；请重新运行 markdown-convert 恢复受 hash 绑定的副本` };
+  }
+  if (!fs.existsSync(paths.candidateRecordPath)) {
+    return { ...base, parseStatus: 'markdown_candidate_required', paths,
+      markdownHash: artifact.source.markdownHash,
+      sourcePages: artifact.pages ?? [],
+      note: 'Markdown 已转换；请仅依据带编号 Markdown 和封闭 schema 提取候选，再运行 markdown-ingest' };
+  }
+
+  let reextract = null;
+  try { reextract = JSON.parse(fs.readFileSync(paths.reextractPath, 'utf8')); } catch { /* no request */ }
+  if (reextract?.taskId === task.taskId && reextract.materialId === material.materialId
+    && reextract.contentHash === material.contentHash
+    && reextract.markdownHash === artifact.source.markdownHash) {
+    return { ...base, parseStatus: 'markdown_candidate_required', paths,
+      markdownHash: artifact.source.markdownHash,
+      sourcePages: artifact.pages ?? [],
+      note: '已按用户纠正要求使当前候选失效；请重新依据同 hash 的带编号 Markdown 提取候选，再运行 markdown-ingest' };
+  }
+
+  let record;
+  try {
+    record = loadCandidate(paths.candidateRecordPath, { artifactPath: paths.artifactPath });
+  } catch (error) {
+    return { ...base, parseStatus: 'markdown_candidate_invalid', paths,
+      markdownHash: artifact.source.markdownHash,
+      sourcePages: artifact.pages ?? [],
+      note: `候选未通过内核校验：${error.message}` };
+  }
+  const projected = projectMarkdownCandidate(record);
+  const candidateSources = {
+    ...(projected.candidateSources ?? {}),
+    // project() 把逐段值投影成 candidates；分类摘要还要保留每个 segment 的原始 evidence。
+    segments: (record.segments ?? []).map((segment) => ({
+      index: segment.index,
+      fieldEvidence: segment.fieldEvidence ?? {},
+      fieldStatus: segment.fieldStatus ?? {},
+      fieldBasis: segment.fieldBasis ?? {},
+      unreadable: segment.unreadable ?? [],
+    })),
+  };
+  return {
+    ...base,
+    ...projected,
+    parseStatus: 'parsed',
+    contentHash: material.contentHash,
+    paths,
+    markdownHash: candidateSources.markdownHash,
+    sourcePages: artifact.pages ?? [],
+    fieldEvidence: candidateSources.fieldEvidence,
+    fieldStatus: candidateSources.fieldStatus,
+    segments: record.segments ?? [],
+    unreadable: projected.unreadable ?? [],
+    issues: projected.issues ?? [],
+    candidateSources,
+  };
+}
+
+export function classifyInventory(sourceDir, inventory, task = null, { mode = 'markdown' } = {}) {
   const results = [];
   for (const m of inventory.materials) {
     if (m.disposition !== 'pending_classification') {
@@ -24,7 +153,9 @@ export function classifyInventory(sourceDir, inventory, task = null) {
         parseStatus: 'skipped', role: null, kind: null, fields: {}, candidates: [], evidence: {} });
       continue;
     }
-    let parsed = parseMaterial(path.join(path.resolve(sourceDir), m.relPath), m.format);
+    let parsed = m.format === 'pdf' && mode !== 'legacy'
+      ? markdownResult(sourceDir, inventory, task, m)
+      : parseMaterial(path.join(path.resolve(sourceDir), m.relPath), m.format);
 
     // 图片取不出文字，但可能已经有一次**已确认**的看图读取。
     // 只有确认过的读数才顶替解析结果；读过没确认的仍然停在待确认项里。
@@ -60,7 +191,8 @@ export function classifyInventory(sourceDir, inventory, task = null) {
     // 看图那条路上的来源已经跟着读数投影过来了（vision / user），不覆盖它。
     if (parsed.fields && !parsed.fieldSources) {
       parsed = { ...parsed,
-        fieldSources: Object.fromEntries(Object.keys(parsed.fields).map((k) => [k, 'kernel'])) };
+        fieldSources: Object.fromEntries(Object.keys(parsed.fields).map((k) => [k,
+          parsed.source === 'agent_from_markdown' ? 'agent_from_markdown' : 'kernel'])) };
     }
 
     const identity = invoiceIdentity(parsed);
@@ -94,7 +226,17 @@ export function classifyInventory(sourceDir, inventory, task = null) {
       sameBytes: new Set(rs.map((r) => r.contentHash)).size === 1,
     }));
 
-  return { versionId: inventory.versionId, classifiedAt: new Date().toISOString(), results, duplicates };
+  const candidateDigest = digest(results.filter((r) => r.format === 'pdf').map((r) => ({
+    materialId: r.materialId,
+    contentHash: r.contentHash,
+    parseStatus: r.parseStatus,
+    markdownHash: r.markdownHash ?? null,
+    candidateSources: r.candidateSources ?? null,
+    fields: r.fields,
+    candidates: r.candidates,
+  })));
+  return { versionId: inventory.versionId, classifiedAt: new Date().toISOString(), candidateDigest,
+    results, duplicates };
 }
 
 /** 分流与解析这一层能产生的待确认项。 */
@@ -104,7 +246,7 @@ export function classifyOpenItems(classification) {
 
   for (const r of classification.results) {
     if (r.parseStatus === 'skipped') continue;
-    const at = { materialId: r.materialId, fileName: r.fileName };
+    const at = { materialId: r.materialId, fileName: r.fileName, relPath: r.relPath ?? null };
 
     if (r.parseStatus === 'needs_ocr') {
       if (r.imageDecodable === false) {
@@ -172,6 +314,20 @@ export function classifyOpenItems(classification) {
       add('no_text_in_pdf', true, { ...at, note: 'PDF 里没有可提取的文字，通常是扫描件；请提供电子发票原件' });
       continue;
     }
+    if (r.parseStatus === 'markdown_conversion_required' || r.parseStatus === 'markdown_conversion_failed'
+      || r.parseStatus === 'markdown_conversion_empty') {
+      add(r.parseStatus, true, { ...at, ...(r.paths ?? {}), markdownHash: r.markdownHash ?? null,
+        sourcePages: r.sourcePages ?? [],
+        error: r.artifactError ?? null,
+        note: r.note ?? 'PDF 还没有可用的 MarkItDown Markdown artifact' });
+      continue;
+    }
+    if (r.parseStatus === 'markdown_candidate_required' || r.parseStatus === 'markdown_candidate_invalid') {
+      add(r.parseStatus, true, { ...at, ...(r.paths ?? {}), markdownHash: r.markdownHash ?? null,
+        sourcePages: r.sourcePages ?? [],
+        note: r.note ?? '需要依据带编号 Markdown 提交候选，并由内核校验' });
+      continue;
+    }
     if (r.parseStatus === 'read_error') { add('read_error', true, { ...at, note: r.note ?? null }); continue; }
     if (r.parseStatus === 'unrecognized') {
       add('kind_unrecognized', true, { ...at,
@@ -188,10 +344,43 @@ export function classifyOpenItems(classification) {
       continue;
     }
 
+    if (r.source === 'agent_from_markdown') {
+      const statuses = r.candidateSources?.fieldStatus ?? r.fieldStatus ?? {};
+      for (const field of ['invoiceNumber', 'issueDate', 'totalAmount']) {
+        if (['ambiguous', 'unreadable'].includes(statuses[field])) {
+          add('markdown_field_unresolved', true, { ...at, field,
+            note: `Markdown 候选的 ${FIELD_LABELS[field] ?? field} 被标成 ${statuses[field]}，不能进入费用事件；请重新抽取并提供明确原文证据` });
+        }
+      }
+      for (const [field, status] of Object.entries(statuses)) {
+        if (status === 'derived') {
+          add('markdown_derived_field', false, { ...at, field,
+            note: `${FIELD_LABELS[field] ?? field} 是基于候选证据推导的值；确认表会保留其 fieldBasis 和 quote` });
+        }
+      }
+      for (const segment of r.candidateSources?.segments ?? []) {
+        const unresolved = Object.entries(segment.fieldStatus ?? {})
+          .filter(([field, status]) => ['ambiguous', 'unreadable'].includes(status)
+            || (status === 'missing' && SEGMENT_RULES[field]?.required))
+          .map(([field]) => field);
+        if (unresolved.length) {
+          add('markdown_segment_unresolved', true, { ...at, index: segment.index,
+            fields: unresolved,
+            note: `Markdown 行程第 ${segment.index} 段存在未解决字段：${unresolved.join('、')}；不能用半截路线或金额推断` });
+        }
+      }
+      for (const issue of r.issues ?? []) {
+        if (!issue || ['amount_not_on_face', 'field_missing', 'field_ambiguous', 'field_unreadable'].includes(issue.code)) continue;
+        add('markdown_candidate_issue', true, { ...at, code: issue.code, field: issue.field ?? null,
+          index: issue.index ?? null,
+          note: `Markdown 候选声明了未解决问题 ${issue.code}${issue.field ? `（${issue.field}）` : ''}；请重新抽取或回看原件` });
+      }
+    }
+
     if (r.role === 'primary_voucher') {
       if (!r.identity) {
         add('identity_incomplete', true, { ...at,
-          note: '识别为发票但取不到 20 位发票号码，无法做重复检查；发票身份不能由对话补录' });
+          note: '识别为发票但取不到该票种完整的原生发票身份，无法做重复检查；发票身份不能由对话补录' });
       }
       if (!r.fields.issueDate) add('issue_date_missing', true, { ...at, note: '取不到开票日期' });
 
@@ -202,12 +391,12 @@ export function classifyOpenItems(classification) {
       } else if (a?.status === 'missing') {
         add('amount_missing', true, { ...at, note: '取不到价税合计' });
       } else if (a?.status === 'partial') {
-        // 铁路电子客票票面本来就只有票价，不含税金额和税额要等 ERP 收票回读，
-        // 这是票面事实而不是解析失败，所以不阻塞。
+        // 铁路电子客票票面本来就只有票价。费用明细按业务规则使用票价总额，
+        // 税额固定为零；票面没有净额字段仍如实保留，不把业务默认写成票面事实。
         const onFace = r.kind === 'rail_eticket';
         add(onFace ? 'amount_not_on_face' : 'amount_missing', !onFace, { ...at,
           note: onFace
-            ? '铁路电子客票票面只有票价，不含税金额和税额需在 ERP 收票回读后确认'
+            ? '铁路电子客票按票面票价作为费用总额，税额按业务规则默认为 0.00，无需等待 ERP 回读净税额'
             : `取不到 ${a.missing.join('、')}` });
       }
     }
@@ -227,8 +416,9 @@ export function classifyOpenItems(classification) {
   // 图还没看就下这个结论是抢答：一目录的发票照片，读之前一张凭证也认不出来，
   // 而这句话会把用户支去检查目录选对没有 —— 目录没选错，是我们还没看。
   const awaitingReading = items.some((i) => READING_KINDS.has(i.kind));
+  const awaitingMarkdown = items.some((i) => i.kind.startsWith('markdown_'));
   const primaries = classification.results.filter((r) => r.role === 'primary_voucher');
-  if (primaries.length === 0 && !awaitingReading) {
+  if (primaries.length === 0 && !awaitingReading && !awaitingMarkdown) {
     add('no_primary_voucher', true, { note: '没有识别到任何主要报销凭证，这个目录还不能构成一次报销' });
   }
   return items;

@@ -4,53 +4,22 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 
 const BIN = path.join(path.dirname(path.dirname(url.fileURLToPath(import.meta.url))), 'bin', 'baox.mjs');
 
 function baoxReset(home, extraEnv = {}) {
+  const env = { ...process.env, BAOX_HOME: home, CLAUDECODE: '1', ...extraEnv };
+  delete env.BAOX_EGO_TASK_SPACE;
+  delete env.BAOX_EGO_BROWSER;
   const r = spawnSync(process.execPath, [BIN, 'reset'], {
     encoding: 'utf8',
-    env: { ...process.env, BAOX_HOME: home, CLAUDECODE: '1', ...extraEnv },
+    env,
   });
   return { code: r.status, json: JSON.parse(r.stdout), stderr: r.stderr };
 }
 
-async function confirmReset(home, confirmed) {
-  const child = spawn(process.execPath, [BIN, 'reset'], {
-    env: { ...process.env, BAOX_HOME: home, BAOX_CDP_PORT: '1',
-      BAOX_NO_AUTO_OPEN: '1', CLAUDECODE: '1' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let stderr = '';
-  const ready = new Promise((resolve, reject) => {
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk;
-      const pageUrl = stderr.match(/http:\/\/127\.0\.0\.1:\d+\/\?nonce=[a-f0-9]+/)?.[0];
-      if (pageUrl) resolve(pageUrl);
-    });
-    child.once('error', reject);
-    child.once('close', (code) => reject(new Error(`reset exited ${code} before opening page: ${stderr}`)));
-  });
-
-  const pageUrl = await ready;
-  const submit = new URL('/submit', pageUrl);
-  submit.search = new URL(pageUrl).search;
-  const response = await fetch(submit, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ confirmed }),
-  });
-  assert.equal(response.status, 200);
-
-  let stdout = '';
-  child.stdout.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => { stdout += chunk; });
-  const code = await new Promise((resolve) => child.once('close', resolve));
-  return { code, json: JSON.parse(stdout) };
-}
-
-test('BAOX_HOME 根是符号链接时在打开确认页前拒绝', () => {
+test('reset 在任何目录校验前明确阻断旧浏览器关闭路径', () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-reset-cli-link-'));
   const target = path.join(parent, 'target');
   const home = path.join(parent, 'home');
@@ -60,11 +29,12 @@ test('BAOX_HOME 根是符号链接时在打开确认页前拒绝', () => {
   const { code, json } = baoxReset(home, { BAOX_NO_AUTO_OPEN: '1' });
 
   assert.equal(code, 2);
-  assert.equal(json.status, 'invalid_home');
+  assert.equal(json.status, 'blocked');
+  assert.equal(json.code, 'EGO_REQUIRED');
   assert.deepEqual(fs.readdirSync(target), []);
 });
 
-test('空的 BAOX_HOME 已经是初始状态，reset 不创建任何文件', () => {
+test('空的 BAOX_HOME 在 reset 中幂等返回且不创建任何文件', () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-reset-empty-'));
   const homes = [path.join(parent, 'missing'), path.join(parent, 'empty')];
   fs.mkdirSync(homes[1]);
@@ -80,28 +50,30 @@ test('空的 BAOX_HOME 已经是初始状态，reset 不创建任何文件', () 
   }
 });
 
-test('用户在本地页面确认后，baox reset 清空整个 BAOX_HOME', async () => {
+test('reset 阻断时即使目录有内容也不清理', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-reset-cli-confirm-'));
   fs.mkdirSync(path.join(home, 'tasks'));
   fs.writeFileSync(path.join(home, 'identity.json'), '{"account":"tester"}');
   fs.writeFileSync(path.join(home, 'tasks', 'state.json'), '{}');
 
-  const { code, json } = await confirmReset(home, true);
+  const { code, json } = baoxReset(home);
 
-  assert.equal(code, 0);
-  assert.equal(json.status, 'reset');
-  assert.deepEqual(fs.readdirSync(home), []);
-  assert.match(json.speak, /ERP.*自行删除/);
+  assert.equal(code, 2);
+  assert.equal(json.status, 'blocked');
+  assert.equal(json.code, 'EGO_REQUIRED');
+  assert.equal(fs.readFileSync(path.join(home, 'identity.json'), 'utf8'), '{"account":"tester"}');
+  assert.equal(fs.readFileSync(path.join(home, 'tasks', 'state.json'), 'utf8'), '{}');
 });
 
-test('用户取消 Reset 时本地内容保持不变', async () => {
+test('reset 阻断时没有取消页，本地内容保持不变', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-reset-cli-cancel-'));
   const state = path.join(home, 'identity.json');
   fs.writeFileSync(state, 'keep exactly');
 
-  const { code, json } = await confirmReset(home, false);
+  const { code, json } = baoxReset(home);
 
-  assert.equal(code, 0);
-  assert.equal(json.status, 'cancelled');
+  assert.equal(code, 2);
+  assert.equal(json.status, 'blocked');
+  assert.equal(json.code, 'EGO_REQUIRED');
   assert.equal(fs.readFileSync(state, 'utf8'), 'keep exactly');
 });

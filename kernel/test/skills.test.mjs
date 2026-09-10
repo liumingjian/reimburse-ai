@@ -12,13 +12,27 @@ const SKILLS = path.join(path.dirname(KERNEL), 'skills');
 const read = (...p) => fs.readFileSync(path.join(SKILLS, ...p), 'utf8');
 const frontmatter = (src) => src.split('---')[1] ?? '';
 
-const ALL = ['baox', 'baox-setup', 'baox-recover'];
+const ALL = ['baox', 'baox-setup', 'baox-recover', 'extract-reimbursement-images'];
 
-// 用户入口只有一个。另外两份是模型调用的执行壳 —— 用户不必知道它们存在，
+test('四份 Skill 都带 Codex agents/openai.yaml 元数据', () => {
+  for (const skill of ALL) {
+    const metadata = read(skill, 'agents', 'openai.yaml');
+    assert.match(metadata, /^interface:\n/m, `${skill} 缺少 interface`);
+    assert.match(metadata, /^  display_name: "[^"]+"$/m, `${skill} 缺少 display_name`);
+    assert.match(metadata, /^  short_description: "[^"]{25,64}"$/m,
+      `${skill} 的 short_description 应为 25-64 个字符`);
+    assert.doesNotMatch(metadata, /allow_implicit_invocation:\s*false/,
+      `${skill} 被禁止隐式调用，baox 状态机将无法调度内部执行壳`);
+  }
+  assert.match(read('baox', 'agents', 'openai.yaml'),
+    /^  default_prompt: ".*\$baox.*"$/m, 'baox 默认提示必须显式提到 $baox');
+});
+
+// 用户入口只有一个。另外三份是模型调用的执行壳 —— 用户不必知道它们存在，
 // 更不必自己去挑该用哪一个。这一条是这一批改动的全部目的。
 test('用户能唤起的 Skill 只有 baox 一个', () => {
   assert.doesNotMatch(frontmatter(read('baox', 'SKILL.md')), /user-invocable:\s*false/);
-  for (const s of ['baox-setup', 'baox-recover']) {
+  for (const s of ['baox-setup', 'baox-recover', 'extract-reimbursement-images']) {
     const fm = frontmatter(read(s, 'SKILL.md'));
     assert.match(fm, /user-invocable:\s*false/, `${s} 还能被用户直接唤起`);
     assert.match(fm, /disable-model-invocation:\s*false/, `${s} 模型也调不动，那它就没人调得动了`);
@@ -27,7 +41,7 @@ test('用户能唤起的 Skill 只有 baox 一个', () => {
 
 // 判断散文一旦长回来，模型就又开始自己选下一步做什么 —— 而那是 1.0.0 要关掉的那个入口。
 // 行数不是审美偏好，是那类散文放不进 120 行这件事本身。
-test('三份说明书都不超过 120 行', () => {
+test('四份说明书都不超过 120 行', () => {
   for (const s of ALL) {
     const n = read(s, 'SKILL.md').split('\n').length;
     assert.ok(n <= 120, `${s}/SKILL.md 有 ${n} 行，超过 120`);
@@ -72,11 +86,20 @@ function* walk(dir) {
 // 真机实测：SKILL.md frontmatter 里的 hooks 一次都不触发（见 docs/research/skill-declared-hooks.md）。
 // 它被静默忽略——没有警告、没有报错，所以写在那里的守卫看起来配好了，实际一次都没跑。
 // 把这条钉住：谁再把它加回 frontmatter，这里当场红。
-test('三份说明书的 frontmatter 里都没有 hooks —— 那个键是不生效的', () => {
+test('四份说明书的 frontmatter 里都没有 hooks —— 那个键是不生效的', () => {
   for (const s of ALL) {
     assert.doesNotMatch(frontmatter(read(s, 'SKILL.md')), /^\s*hooks:/m,
       `${s}/SKILL.md 的 frontmatter 里又出现了 hooks，而它不触发`);
   }
+});
+
+test('人机交互 reference 对齐当前 next 响应契约', () => {
+  const reference = read('baox', 'references', 'human-interaction.md');
+  assert.match(reference, /响应顶层的 `stepToken`/);
+  assert.match(reference, /`step\.table`/);
+  assert.match(reference, /`step\.argv`/);
+  assert.match(reference, /当前响应没有 `step\.return` 或 `step\.completion`/);
+  assert.doesNotMatch(reference, /correctionArgv/);
 });
 
 // 可选的那道外层守卫要跟着包一起发出去，否则 INSTALL.md 让用户配的那条路径是空的。

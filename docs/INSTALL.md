@@ -1,9 +1,9 @@
 # baox 安装与试用
 
-baox 是一套跑在 Claude Code 里的报销助手：你把发票丢给它，它整理材料、核对、填进 ERP 的费用报销单。
-**它不替你提交，也不替你确认**——每一个有后果的动作都要你亲手点。
+baox 是一套适配 Codex 和 Claude Code 的报销助手：整理发票、核对明细和项目，交接发票目录及明细文档。
+当前开发候选在准备材料交接后停止，等待用户手动 QA。ERP 自动填报、保存和提交属于后续阶段。
 
-这份文档是给试用的同事看的。整套东西零依赖、不联网、不上传任何材料。
+这份文档是给试用的同事看的。Node 内核没有 npm 依赖；环境准备会检查并安装随包锁定的 MarkItDown 与受管本地 OCR 运行时。文本转换和图片 OCR 在本机执行，不把材料发送给转换器或云端 OCR；当前阶段只允许必要的 ERP 只读核验。
 
 ## 你需要先有
 
@@ -11,29 +11,50 @@ baox 是一套跑在 Claude Code 里的报销助手：你把发票丢给它，�
 |---|---|
 | macOS | 目前只在 macOS 上验证过 |
 | Node.js **21 或更高** | `node -v` 看一下。没有就 `brew install node`，或去 https://nodejs.org 下 LTS 安装包 |
-| Google Chrome | 会另开一个**专用实例**，和你日常那个 Chrome 互不干扰 |
+| 文本 PDF 与图片 OCR 运行时 | 环境准备按随包 lockfile 和固定版本安装到 `~/.baox` 下的受管目录；不能使用全局 Python 或评估机临时虚拟环境 |
+| 系统默认浏览器 | 页面按系统默认设置打开；ERP 只读自动化还需浏览器提供相应能力与权限，不要求普通用户安装 ego |
 | ERP 账号 | 用你本人的账号，登录这件事自始至终在你手里 |
-| Claude Code | 已登录可用 |
+| Codex 或 Claude Code | 已登录可用 |
 
 ## 安装
 
-解压拿到的压缩包，里面有三个目录。Claude Code 认两个位置，**试用期请装进项目目录**：
+解压拿到的压缩包，里面有四个目录。**试用期请装进项目目录**。
+
+Codex：
+
+```bash
+cd <你打算用来报销的目录>
+mkdir -p .agents/skills
+cp -R baox baox-recover baox-setup extract-reimbursement-images .agents/skills/
+```
+
+Claude Code：
 
 ```bash
 cd <你打算用来报销的目录>          # 例如 ~/projects/baoxiao
 mkdir -p .claude/skills
-cp -R baox baox-recover baox-setup .claude/skills/
+cp -R baox baox-recover baox-setup extract-reimbursement-images .claude/skills/
 ```
 
-拷完重开一个 Claude Code 会话（在同一个目录里启动）。
+两者都要使用时，只保留一份实体目录。例如先按 Claude Code 路径安装，再为 Codex 建立链接：
+
+```bash
+mkdir -p .agents/skills
+for skill in baox baox-recover baox-setup extract-reimbursement-images; do
+  ln -s "../../.claude/skills/$skill" ".agents/skills/$skill"
+done
+```
+
+拷完后在同一个项目目录里重开 Codex 或 Claude Code 会话。
 
 ### 三条规矩
 
-**一、三个必须一起拷。** 每个目录自带一份内核，就地运行；只拷其中一个，另外两件事
-（环境准备、写坏之后的收尾）就没有说明书可依。
+**一、四个必须一起拷。** 三个入口 Skill 自带同一份内核，图片字段提取 Skill 自带 OCR 执行代码；缺少任一个都会让对应流程中断。
 
-**二、三个必须在同一个位置，而且来自同一次打包。** 个人目录 `~/.claude/skills/` 和项目目录
-`<项目>/.claude/skills/` 都是合法安装位置，但**不要各放一部分**。
+Node 内核随 Skill 文件运行，不需要 npm 安装。环境准备先用可用的 uv 按随包的 `kernel/src/pdf-markdown-runtime/pyproject.toml` 和 `uv.lock` 把 MarkItDown 安装到 `~/.baox/runtimes/markitdown/v1`，再把固定版本的 `extract-reimbursement-images` OCR 安装到 `~/.baox/ocr-runtime/v1`。解析阶段只使用这些受管目录，不会首次下载；uv 不可用、同步失败、安装器失败或锁文件不匹配时，流程停止并报告原因。PNG/JPG 先走受管本地 OCR，只有证据不足、识别失败或候选校验失败的项目才进入视觉复核；没有可靠文字的 PDF 保留待办。
+
+**二、四个必须在同一个位置，而且来自同一次打包。** Codex 使用 `.agents/skills/`，Claude Code 使用
+`.claude/skills/`；两者同时使用时让其中一处链接到另一处，**不要维护两份独立副本**。
 
 **三、个人目录会静默遮蔽项目目录。** Claude Code 的优先级是「个人 > 项目」，同名 Skill 只有
 优先级高的那一个会被加载，**另一个既不会报错也不会出现在 `/skills` 里**，Skill 自己也无从察觉
@@ -53,7 +74,7 @@ ls -d ~/.claude/skills/baox*        # 有东西就说明存在遮蔽风险
 等整套框架稳定之后，我们会改成推荐装在个人目录（一次安装，所有项目可用）。现在还在试用期，
 装项目目录更容易看清楚跑的到底是哪一份。
 
-### 可选：再加一道守卫
+### Claude Code 可选：再加一道守卫
 
 baox 的内核自己会拒掉模型拼出来的命令——**这一层不用装，拷进去就生效**。
 下面这段是可选的外层，好处是那条命令连进程都不会起。
@@ -79,7 +100,7 @@ baox 的内核自己会拒掉模型拼出来的命令——**这一层不用装�
 路径要写成绝对路径。加完重开一个 Claude Code 会话。
 已经有 `hooks` 配置的话，把这一项并进现有的 `PreToolUse` 数组里，别整段覆盖。
 
-### 必做：把权限一次配好
+### Claude Code auto mode：把权限一次配好
 
 Claude Code 的 **auto mode**（不逐条问你、可以放着自己跑的那个模式）会把每个动作交给一个
 分类器审。分类器不认识 baox，它看到的是「一目录发票」加「一条要读它们的命令」，判不出目的地
@@ -120,37 +141,41 @@ node <解压出来的目录>/install-permissions.mjs
 
 ## 第一次使用
 
-在 Claude Code 里说一句：
+在 Codex 或 Claude Code 里说一句：
 
 > 帮我把 baox 环境装一下
 
-它会走完体检 → 起专用 Chrome → 确认身份 → 试一次选择界面。**没有"安装内核"这一步**——
+它会走完体检 → 准备已声明的 PDF/OCR 运行时 → 在默认浏览器打开页面 → 读取已登录身份 → 试一次选择界面。**没有"安装 Node 内核"这一步**——
 拷进去的目录就是跑起来的那一份。中间有三步要你动手：
-**在新开的那个 Chrome 窗口里登录 ERP**、**在身份确认页上点「是我本人」**，以及**在自检页上点一次提交**。
-三步都完成了才算装好。
+需要你本人在默认浏览器里登录 ERP，并在出现本地选择页时完成提交。登录身份可完整读取时会自动绑定，不重复询问是否本人。
 
 身份确认页上的姓名、登录账号和账套，都是 baox 自己从 ERP 页面读出来的，你只能认或不认，
 不用打字。确认之后，这台机器上的 baox 只替这个身份报销；换别人登录会被直接拦住。
 真要换人用（比如工作交接），手上没有进行中的任务时，说一句「重新确认 baox 的报销人身份」即可。
 
+页面打开跟随系统默认设置。当前 ERP 自动读取适配范围为 macOS 的 Chrome 和 Safari；其他默认浏览器仍可打开页面，但自动读取会报告能力不支持。
+
+在 macOS 上，自动读取 ERP 还需默认浏览器允许通过 Apple Events 执行 JavaScript；本阶段内核仅使用它做只读查询。例如 Chrome 若提示该能力已关闭，可在“显示（View）→ 开发者（Developer）→ 允许 Apple 事件中的 JavaScript”中自行开启。内核会区分读取权限、浏览器能力和登录问题；打开页面成功不代表这些检查已经通过。浏览器设置由你决定，安装脚本不会替你修改。
+
 ## 日常使用
 
 > 帮我报销 ~/Downloads/8月出差
 
-它会盘点材料、认发票、问你拿不准的地方，一路走到把单子填进 ERP。
-**最后的保存和提交仍然是你自己按。**
+它会盘点材料、识别发票、请你确认分类明细，再从本人维护的项目中选择，最后生成发票专属目录、明细 Markdown、同源 JSON 和校验清单。
+缺少字段或证据时会明确列出。材料充分并由你确认后，流程交接文件并停止，等待手动 QA；准备确认不授权 ERP 写入。
 
-**你只需要认识 `baox` 一个。** 装的是三个目录，但另外两个（`baox-setup` 环境准备、
-`baox-recover` 写入善后）由 baox 自己在需要的时候调起来，不用你去挑该用哪一个，
+**你只需要认识 `baox` 一个。** 装的是四个目录，另外三个（`baox-setup` 环境准备、
+`extract-reimbursement-images` 图片字段提取、`baox-recover` 写入善后）由 baox 自己在需要的时候调起来，不用你去挑该用哪一个，
 也不用你知道它们存在。少的那两个目录不能省——baox 调不到就走不下去。
 
 ## 你的数据在哪
 
 全部在你自己的机器上，`~/.baox/`（`BAOX_HOME` 指到别处的话就在别处）：
 
-- `chrome-profile/` —— 专用 Chrome 的独立 profile（调试端口只绑 `127.0.0.1`，不碰你日常的 profile）
-- `tasks/` —— 任务工作区，**发票副本和识别结果**
+- `tasks/` —— 任务工作区，**发票副本、识别结果及准备材料包**
 - `logs/` —— 日志
+- `runtimes/markitdown/v1/` —— 锁定的 MarkItDown 运行时
+- `ocr-runtime/v1/` —— 锁定的本地图片 OCR 运行时
 
 也就是说这里面是真的发票。要清理直接删这个目录；删掉之后重跑一次环境准备即可。
 账号密码只经过你自己的手，任何时候都不写进这些文件。
@@ -161,7 +186,7 @@ node <解压出来的目录>/install-permissions.mjs
 
 ## 更新到新版本
 
-把新的三个目录整份覆盖进**原来那个位置**（三个一起），然后重开一个 Claude Code 会话。就这些——
+把新的四个目录整份覆盖进**原来那个位置**（四个一起），然后重开一个 Claude Code 会话。就这些——
 没有第二步，覆盖完跑的就是新的那一份。
 
 你的数据不在 Skill 目录里，覆盖不会动到任何任务、发票或登录状态。
@@ -177,6 +202,7 @@ node <解压出来的目录>/install-permissions.mjs
 
 ## 目前的边界
 
-- 只在 macOS + Google Chrome 上验证过（Windows 有代码路径，没实测）
+- 页面使用系统默认浏览器；ERP 读取能力或权限不足时明确阻塞，不能仅凭打开页面就认为已登录
+- ego-browser 是显式自动化 QA 适配，不是正式使用的前提；完整准备流程的用户手动 QA 尚待完成
 - 只对着一套 ERP 验证过
-- 提交和最终保存永远是人来做，这是设计，不是待办
+- 当前终点是准备材料交接；ERP 填报与保存尚未纳入本阶段验收

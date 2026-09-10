@@ -411,7 +411,10 @@ function extractItems(pdf, content, fonts) {
   };
   const show = (bytes) => {
     const text = decode(bytes);
-    if (text) items.push({ ...at(), text });
+    if (text) {
+      const pos = at();
+      items.push({ ...pos, width: advance(text, pos.size), text });
+    }
   };
   const nextLine = (tx, ty) => { lm = mul([1, 0, 0, 1, tx, ty], lm); tm = lm; };
 
@@ -452,7 +455,10 @@ function extractItems(pdf, content, fonts) {
             // 负的字距调整够大就是一个视觉空格；这一步影响后面的字段切分。
             else if (typeof el === 'number' && el <= -200) out += ' ';
           }
-          if (out) items.push({ ...at(), text: out });
+          if (out) {
+            const pos = at();
+            items.push({ ...pos, width: advance(out, pos.size), text: out });
+          }
         }
         break;
       }
@@ -476,7 +482,7 @@ const advance = (text, size) => {
  * 两块文字之间**按估算的水平间隙**决定要不要补空格 ——
  * 有的发票逐字发字（曹操样本就是），无脑用空格拼会把发票号码打散成一串单数字。
  */
-function layout(items) {
+function layoutLines(items) {
   const lines = [];
   for (const it of items) {
     const line = lines.find((l) => Math.abs(l.y - it.y) < 3);
@@ -491,38 +497,44 @@ function layout(items) {
     for (const it of sorted) {
       if (cursor !== null && it.x - cursor > it.size * 0.28) out += ' ';
       out += it.text;
-      cursor = it.x + advance(it.text, it.size);
+      cursor = it.x + (it.width ?? advance(it.text, it.size));
     }
-    return out.replace(/[ \t]+/g, ' ').trim();
-  }).filter((t) => t.length).join('\n');
+    return { y: l.y, items: sorted, text: out.replace(/[ \t]+/g, ' ').trim() };
+  }).filter((line) => line.text.length);
+}
+
+function layout(items) {
+  return layoutLines(items).map((line) => line.text).join('\n');
 }
 
 /**
  * 从 PDF 字节里取出文本。
- * 返回 `{ text, pageCount, hasText }`；取不出字时 `hasText` 为 false，
+ * 返回 `{ text, pageCount, hasText, pages }`；取不出字时 `hasText` 为 false，
  * **这是一个事实，不是可以绕过的失败** —— 上层据此形成解析失败的待确认项。
  */
 export function extractPdfText(buf) {
   let pdf;
   try { pdf = new Pdf(buf); } catch (err) { return { text: '', pageCount: 0, hasText: false, error: err.message }; }
   const pages = pdf.pages();
-  const out = [];
+  const pageLayouts = [];
   for (const page of pages) {
     let contents = pdf.get(page.Contents);
-    if (!contents) continue;
+    if (!contents) { pageLayouts.push({ text: '', lines: [] }); continue; }
     if (!Array.isArray(contents)) contents = [contents];
     let content = '';
     for (const c of contents) {
       const data = pdf.stream(pdf.get(c));
       if (data) content += data.toString('latin1') + '\n';
     }
-    if (!content) continue;
+    if (!content) { pageLayouts.push({ text: '', lines: [] }); continue; }
+    let lines = [];
     try {
-      out.push(layout(extractItems(pdf, content, loadFonts(pdf, page))));
+      lines = layoutLines(extractItems(pdf, content, loadFonts(pdf, page)));
     } catch (err) {
-      out.push('');
+      lines = [];
     }
+    pageLayouts.push({ text: lines.map((line) => line.text).join('\n'), lines });
   }
-  const text = out.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
-  return { text, pageCount: pages.length, hasText: text.length > 0 };
+  const text = pageLayouts.map((page) => page.text).join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
+  return { text, pageCount: pages.length, hasText: text.length > 0, pages: pageLayouts };
 }

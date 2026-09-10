@@ -31,16 +31,18 @@ baox next --after <stepToken> [--result <file>]  # 答：我做完了，这是�
 
 `exit`：`0` 继续 / `2` 有硬阻塞，未解决不得继续。没有 `1` —— 内核自身异常才用 `1`，且带 `error`。
 
-## `step.kind` 七种
+## `step.kind`
 
 | kind | actor | 模型要做的唯一一件事 | 回传 |
 |---|---|---|---|
 | `run` | kernel | 原样执行 `step.argv`，不改一个字 | `--after <token> --result <stdout落盘的文件>` |
 | `read_images` | model | 对 `step.images[].absPath` 逐个用 `Read` 看图，按 `step.schemaPath` 写读数文件，再执行 `step.argv` 提交 | 同上 |
+| `extract_images` | model | 把内核已落盘的版本化请求交给 `extract-reimbursement-images`；只对明确回退项看图，再执行 `step.argv` | 同上 |
+| `read_markdown` | model | 读取带行号 Markdown，按工单模板提取；核对主发票标题及金额标签，跨行/串列回看原件页，再执行 `step.argv` | 同上 |
 | `ask_user` | model | **原样贴出 `step.prompt`**（内核把 `step.questions[]` 渲染好的一整块文本：≤4 题，每题 2–4 选项，可 `multiSelect`，末项恒为「其他」可自由输入），等用户在对话里回答，把答案誊进 `step.answersPath` | `--after <token> --result <答案json>` |
 | `confirm_table` | user | 原样贴出 `step.table`（内核渲染好的定宽文本），请用户过目 | 认可 → `--after <token>`；指错 → 附 `--correction <file>` |
 | `dispute` | model | 摆出 `step.evidence`（材料路径、机器读到的原文、清晰度），并派**干净上下文子 Agent** 只重读 `step.field`；把两次机器读数和用户的值一起摆给用户 | 用户拍板后回传终值 |
-| `tell_user` | user | 只说 `speak`，等用户做完（登录、去 ERP 保存）后再调 `next` | 无 result，直接再问一次 |
+| `tell_user` | user | 只说 `speak`，等用户完成登录或材料缺项处置后再调 `next` | 无 result，直接再问一次 |
 | `handoff` | — | 告诉用户状态变化，转 `step.skill` | 不回传 |
 | `done` | — | 念完 `speak` 收工 | — |
 
@@ -51,6 +53,14 @@ baox next --after <stepToken> [--result <file>]  # 答：我做完了，这是�
 - **`speak` / `context`** 分离：`speak` 原样念（措辞是模型差异最大的地方，不交给模型组织）；`context` 只在用户追问时动用。
 - **`identity`** 每次都带，用于在每条输出开头呈现"当前替谁报销"。
 - **`blockedBy`** 是结构化的开放项数组，每项含 `kind` / `materialId` / `hint` / `resolvableBy`（`user` | `model` | `kernel`）。
+  `evidence_ambiguous` 还保留 `references`，其中每个候选带 `materialId` / `fileName`，供待办表同时显示凭证与候选参考材料。
+
+- `home_city_required` 的 `ask_user` 只写入当前 `tenant + account` 的员工记忆；已经开始的任务还会把确认值冻结到任务快照。
+  `classified_detail_confirmation` 的 `confirm_table` 绑定材料、日期、金额分摊、常驻城市和费用类别摘要，项目和事由不进入摘要；单纯换项目不会触发重新确认。
+
+- `project_unassigned` 的 `step.argv` 只能是内核发出的 `select-task` 个人项目簿入口。页面提交时重新读取当前身份和可选集合；没有个人项目簿来源证据的全局旧选择不能自动合法化。
+
+- 准备材料包的生成、字段充分、用户准备确认分别判断。准备确认绑定当前材料包摘要，不能产生或继承 ERP 写入授权；正常流程交接材料后停止，等待用户手动 QA。
 
 ## 纠正与来源
 
@@ -61,7 +71,7 @@ baox next --after <stepToken> [--result <file>]  # 答：我做完了，这是�
 
 ## 子 Agent 的可用范围
 
-- 可以外包：`kind: "run"` 的连续段（体检、起 Chrome、探测、分类、查重）。
+- 可以外包：`kind: "run"` 且 `outsourceable: true` 的连续段（体检、浏览器探测、分类、查重）。
 - 不可外包：`ask_user`、`confirm_table`、`tell_user`、`dispute` 的对话部分。
   理由只有一个而且够硬：**那一头是人**，子 Agent 那里没有用户，无头会话（`claude -p`）
   那里也没有。所以**无头运行不是 baox 支持的形态**，这几步只能在有人在场的会话里做。

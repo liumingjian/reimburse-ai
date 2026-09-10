@@ -2,6 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { paths, ensureDir } from './paths.mjs';
+import { readBinding } from './binding.mjs';
+import { readHomeCity, validHomeCity } from './home-city.mjs';
+import { normalizeMaterialScope } from './material-scope.mjs';
 
 // 任务工作区。它是跨报销任务长期存在的事实存储 —— 历史发票身份要靠它做重复检测，
 // `ERP 写入结果未知` 的任务也不能被清理，所以这里不做任何自动清理。
@@ -27,6 +30,9 @@ const writeJson = (p, v) => {
 
 /** 任务还没结束、可以继续往下走的状态。 */
 const LIVE = new Set(['open']);
+export const hasErpWriteState = (task) => task?.erpWriteState !== null
+  && task?.erpWriteState !== undefined
+  && String(task.erpWriteState).trim() !== '';
 
 /**
  * 0.9.x 留下的在途任务，迁移时打上的标记。它**不是**状态机里的状态 ——
@@ -42,6 +48,21 @@ export function taskDir(task) {
   return path.join(tasksRoot(), `${task.createdAt.slice(0, 10)}-${task.taskId}`);
 }
 
+export function recoveryCredentialPath(task) {
+  return path.join(taskDir(task), 'local-preparation-recovery.json');
+}
+
+/** Immutable recovery records use their credential id in the file name. */
+export function recoveryCredentialRecordPath(task, credentialId) {
+  if (typeof credentialId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(credentialId)) return null;
+  return path.join(taskDir(task), `local-preparation-recovery-${credentialId}.json`);
+}
+
+/** The pointer is replaceable metadata; the credential records it names are not. */
+export function recoveryCredentialLatestPath(task) {
+  return path.join(taskDir(task), 'local-preparation-recovery.latest.json');
+}
+
 /** 还在进行中的任务。改绑身份要看它 —— 手上有活的时候换人，等于把上半程的
  *  材料记在一个人头上、下半程记在另一个人头上。 */
 export function liveTasks() {
@@ -53,6 +74,7 @@ export function findLiveTaskForSource(sourceKey) {
 }
 
 export function createTask(absDir) {
+  const identity = readBinding();
   const task = {
     taskId: crypto.randomBytes(5).toString('hex'),
     createdAt: new Date().toISOString(),
@@ -60,6 +82,9 @@ export function createTask(absDir) {
     sourceKey: sourceKeyOf(absDir),
     sourceLabel: path.basename(path.resolve(absDir)),
     currentVersionId: null,
+    identity: identity?.account && identity?.tenant
+      ? { account: identity.account, tenant: identity.tenant } : null,
+    homeCity: readHomeCity(identity)?.homeCity ?? null,
   };
   const idx = loadIndex();
   idx.tasks.push(task);
@@ -67,6 +92,52 @@ export function createTask(absDir) {
   ensureDir(path.join(taskDir(task), 'inventories'));
   writeJson(path.join(taskDir(task), 'meta.json'), task);
   return task;
+}
+
+export function materialScopePath(task, scopeId = task?.materialScope?.scopeId) {
+  if (!task || typeof scopeId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(scopeId)) return null;
+  return path.join(taskDir(task), 'material-scopes', `${scopeId}.json`);
+}
+
+/** Record an explicit scope revision without changing currentVersionId or ERP markers. */
+export function recordMaterialScope(task, scope) {
+  if (!task?.taskId) throw new TypeError('缺少任务，不能记录材料 scope');
+  const normalized = normalizeMaterialScope(scope);
+  const scopeId = crypto.randomBytes(8).toString('hex');
+  const record = { ...normalized, scopeId, taskId: task.taskId, sourceKey: task.sourceKey,
+    recordedAt: new Date().toISOString() };
+  const filePath = materialScopePath(task, scopeId);
+  writeJson(filePath, record);
+
+  const idx = loadIndex();
+  const i = idx.tasks.findIndex((item) => item.taskId === task.taskId);
+  if (i < 0) throw new Error(`没有这个任务 ${task.taskId}`);
+  const updated = { ...idx.tasks[i], materialScope: record, updatedAt: new Date().toISOString() };
+  idx.tasks[i] = updated;
+  writeJson(indexPath(), idx);
+  writeJson(path.join(taskDir(updated), 'meta.json'), updated);
+  return { task: updated, scope: record, filePath };
+}
+
+/**
+ * 给没有常驻城市快照的旧任务补一次事实。身份、任务状态和 ERP marker 都在当前账本
+ * 上重新核对；不能把一个无 owner 的旧任务静默认领到当前登录身份。
+ */
+export function recordTaskHomeCity(task, identity, homeCity, { allowRecovery = false } = {}) {
+  if (!task?.taskId || !identity?.account || !identity?.tenant || !validHomeCity(homeCity)) return null;
+  const idx = loadIndex();
+  const i = idx.tasks.findIndex((item) => item.taskId === task.taskId);
+  if (i < 0) return null;
+  const previous = idx.tasks[i];
+  if (previous.status !== 'open' || previous.homeCity
+    || (hasErpWriteState(previous) && !allowRecovery)) return null;
+  if (!previous.identity || previous.identity.account !== identity.account
+    || previous.identity.tenant !== identity.tenant) return null;
+  const updated = { ...previous, homeCity: homeCity.trim(), updatedAt: new Date().toISOString() };
+  idx.tasks[i] = updated;
+  writeJson(indexPath(), idx);
+  writeJson(path.join(taskDir(updated), 'meta.json'), updated);
+  return updated;
 }
 
 /**
@@ -145,7 +216,7 @@ export function abandonTask(taskId, reason) {
   if (t.status !== 'open' && t.status !== ARCHIVED) {
     return { verdict: 'rejected', reason: `任务 ${taskId} 的状态是 ${t.status}，不是可以作废的进行中任务` };
   }
-  if (t.erpWriteState) {
+  if (hasErpWriteState(t)) {
     return { verdict: 'rejected',
       reason: `任务 ${taskId} 已经动过 ERP（${t.erpWriteState}），它占用的发票要靠 ERP 只读对账解除，不能改状态` };
   }
@@ -175,7 +246,7 @@ export function archiveMigratedTasks() {
   const archivedAt = new Date().toISOString();
   const archived = [];
   idx.tasks = idx.tasks.map((t) => {
-    if (t.status !== 'open' || t.erpWriteState) return t;
+    if (t.status !== 'open' || hasErpWriteState(t)) return t;
     const updated = { ...t, status: ARCHIVED, archivedAt, archivedReason: 'migrated_from_0.9.x' };
     archived.push(updated);
     return updated;
@@ -271,8 +342,12 @@ export function loadErpAttempts(task) {
  * 判 `classify_pending` 用的是它，不是现算的分类：现算永远算得出来，
  * 那样这个状态就永远不成立，`classify` 也就永远没人跑，账本上永远缺这一版。
  */
-export function classificationRecorded(task, versionId) {
-  return fs.existsSync(path.join(taskDir(task), 'classifications', `${versionId}.json`));
+export function classificationRecorded(task, versionId, candidateDigest = null) {
+  const file = path.join(taskDir(task), 'classifications', `${versionId}.json`);
+  if (!fs.existsSync(file)) return false;
+  if (candidateDigest === null || candidateDigest === undefined) return true;
+  const classification = readJson(file, null);
+  return classification?.candidateDigest === candidateDigest;
 }
 
 /**
@@ -316,4 +391,9 @@ export function rereadInboxIn(workspace) {
  */
 export function answerInboxIn(workspace) {
   return path.join(workspace, 'answers.json');
+}
+
+/** 常驻城市首次确认是员工记忆，不属于某个任务工作区。 */
+export function homeCityAnswerIn() {
+  return path.join(paths.root, 'home-city-answer.json');
 }

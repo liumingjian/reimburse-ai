@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
 import { parseMaterial, invoiceIdentity, checkAmounts, maskNumber } from '../src/parse.mjs';
-import { writeTextPdf, TEST_INVOICE_TEXT } from './fixture-pdf.mjs';
+import { writeTextPdf, TEST_INVOICE_TEXT, TEST_LEGACY_INVOICE_TEXT } from './fixture-pdf.mjs';
 
 // 用 resources/ 里的真实样本做回归。断言一律用**脱敏后的**发票号码，
 // 完整号码不写进仓库里的任何文本（原始 PDF 本身另说）。
@@ -67,6 +67,44 @@ test('自包含普通发票 fixture：文字层字段、金额守恒和身份都
   assert.equal(checkAmounts(r.fields).status, 'balanced');
   assert.equal(invoiceIdentity(r).scheme, 'einvoice-20');
   assert.ok(r.evidence.invoiceNumber);
+});
+
+test('传统增值税电子普通发票交通票：代码与 8 位号码组成独立身份', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-parse-legacy-pdf-'));
+  const file = path.join(dir, 'legacy-invoice.pdf');
+  writeTextPdf(file, TEST_LEGACY_INVOICE_TEXT);
+  const r = parseMaterial(file, 'pdf');
+  assert.equal(r.parseStatus, 'parsed');
+  assert.equal(r.kind, 'passenger_transport');
+  assert.equal(r.role, 'primary_voucher');
+  assert.equal(r.fields.invoiceCode, '011002301811');
+  assert.equal(r.fields.invoiceNumber, '25627655');
+  assert.equal(r.fields.issueDate, '2024-07-04');
+  assert.equal(r.fields.netAmount?.cents, 10974);
+  assert.equal(r.fields.taxAmount?.cents, 658);
+  assert.equal(r.fields.totalAmount?.cents, 11632);
+  assert.equal(checkAmounts(r.fields).status, 'balanced');
+  assert.equal(maskNumber(r.fields.invoiceNumber), '25****55');
+  assert.deepEqual(invoiceIdentity(r), {
+    scheme: 'vat-legacy',
+    key: 'vat-legacy:011002301811:25627655',
+    code: '011002301811',
+    number: '25627655',
+  });
+  assert.ok(r.evidence.invoiceCode);
+  assert.ok(r.evidence.invoiceNumber);
+});
+
+test('传统票身份也接受 10 位代码，但没有代码不能把 8 位号码伪装成全电身份', () => {
+  assert.deepEqual(invoiceIdentity({ role: 'primary_voucher', fields: {
+    invoiceCode: '1234567890', invoiceNumber: '12345678',
+  } }), {
+    scheme: 'vat-legacy', key: 'vat-legacy:1234567890:12345678',
+    code: '1234567890', number: '12345678',
+  });
+  assert.equal(invoiceIdentity({ role: 'primary_voucher', fields: {
+    invoiceNumber: '12345678',
+  } }), null);
 });
 
 const REFERENCES = [

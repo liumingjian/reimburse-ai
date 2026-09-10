@@ -18,6 +18,15 @@ bash scripts/bundle.sh >/dev/null 2>&1 && ok "bundle 退 0" || bad "bundle 退�
 for s in baox baox-recover baox-setup; do
   [ -x "dist/$s/kernel/bin/baox.mjs" ] && ok "$s 带着内核入口且可执行" || bad "$s 缺内核入口或没有执行位"
 done
+codex_metadata=1
+for s in baox baox-recover baox-setup extract-reimbursement-images; do
+  [ -f "dist/$s/agents/openai.yaml" ] || codex_metadata=0
+done
+[ "$codex_metadata" = 1 ] && ok "四份 Skill 都带 Codex agents/openai.yaml" || bad "分发包缺少 Codex Skill 元数据"
+[ -f dist/extract-reimbursement-images/runtime/dist/cli.js ] \
+  && [ -f dist/extract-reimbursement-images/runtime/python/requirements-rapid.txt ] \
+  && grep -q '"type": "module"' dist/extract-reimbursement-images/runtime/package.json \
+  && ok "图片字段提取 Skill 带着 CLI 与锁定依赖" || bad "图片字段提取 Skill 不完整"
 n=$(find dist -name 'scratch-*' -o -name '*.test.mjs' | wc -l | tr -d ' ')
 [ "$n" = 0 ] && ok "分发包里没有草稿和测试文件" || bad "分发包里混进了 $n 个文件"
 
@@ -27,12 +36,12 @@ bash scripts/bundle.sh >/dev/null 2>&1 && bad "缺内核入口时 bundle 竟然�
 mv /tmp/baox.mjs.bak kernel/bin/baox.mjs
 bash scripts/bundle.sh >/dev/null 2>&1 || bad "还原后 bundle 应该重新退 0"
 
-echo "=== 4. 打出来的包，端到端（没有安装这一步）==="
+echo "=== 4. 打出来的包，基础命令可启动 ==="
 HOME_A=$(mktemp -d)
 run() { env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_SKILL_DIR -u AI_AGENT \
   BAOX_HOME="$HOME_A" node dist/baox/kernel/bin/baox.mjs "$@" 2>&1; }
 out=$(run tasks); code=$?
-[ "$code" = 0 ] && ok "拿到包就能直接跑 tasks，中间没有安装动作" || bad "第一条命令就该能跑，实得 ${code}：$out"
+[ "$code" = 0 ] && ok "拿到包就能直接跑 tasks" || bad "第一条命令就该能跑，实得 ${code}：$out"
 
 HOME_RESET=$(mktemp -d)
 out=$(BAOX_HOME="$HOME_RESET" node dist/baox/kernel/bin/baox.mjs reset 2>&1); code=$?

@@ -20,11 +20,14 @@ const KINDS = [
   },
   {
     kind: 'passenger_transport', role: 'primary_voucher', label: '旅客运输服务电子普通发票',
-    test: (t) => t.includes('电子发票(普通发票)') && t.includes('旅客运输服务'),
+    test: (t) => (t.includes('电子发票(普通发票)') || t.includes('增值税电子普通发票'))
+      && (t.includes('旅客运输服务')
+        || (t.includes('旅游服务') && t.includes('代订车服务费'))),
   },
   {
     kind: 'vat_common', role: 'primary_voucher', label: '电子普通发票',
-    test: (t) => t.includes('电子发票(普通发票)'),
+    test: (t) => t.includes('电子发票(普通发票)')
+      || (t.includes('增值税电子普通发票') && t.includes('发票代码') && t.includes('发票号码')),
   },
   {
     kind: 'ride_itinerary', role: 'reference', label: '网约车行程单',
@@ -65,8 +68,13 @@ function extractInvoiceFields(kind, text, lines) {
     evidence[key] = evidenceFor(lines, needle ?? value);
   };
 
-  // 全电发票（含铁路电子客票）用 20 位发票号码作身份，不再有"发票代码 + 号码"的组合。
-  const no = c.match(/发票号码:?(\d{20})/);
+  // 全电发票（含铁路电子客票）用 20 位发票号码作身份；传统票保留发票代码和 8 位号码，
+  // 后面的 invoiceIdentity 按票面格式生成不同的身份方案，不能把旧号码补成 20 位。
+  const code = c.match(/发票代码:?(\d{12}|\d{10})(?!\d)/);
+  put('invoiceCode', code?.[1] ?? null, code?.[1]);
+  const modernNo = c.match(/发票号码:?(\d{20})(?!\d)/);
+  const legacyNo = c.match(/发票号码:?(\d{8})(?!\d)/);
+  const no = modernNo ?? legacyNo;
   put('invoiceNumber', no?.[1] ?? null, no?.[1]);
 
   const d = c.match(/开票日期:?(\d{4})年(\d{1,2})月(\d{1,2})日/);
@@ -111,12 +119,79 @@ function extractInvoiceFields(kind, text, lines) {
   return { fields, evidence };
 }
 
+/** 表头列中心和每个序号行的 y 区间，供跨行起终点重建使用。 */
+function itineraryRouteLayout(pages, count) {
+  const lines = (pages ?? []).flatMap((page) => page.lines ?? []);
+  const header = lines.find((line) => {
+    const text = line.items?.map((item) => compact(item.text)).join('') ?? '';
+    return text.includes('起点') && text.includes('终点') && text.includes('金额');
+  });
+  if (!header) return null;
+
+  const itemWith = (needle) => header.items.find((item) => compact(item.text).includes(needle));
+  const city = itemWith('城市');
+  const origin = itemWith('起点');
+  const destination = itemWith('终点');
+  const amount = itemWith('金额');
+  if (!city || !origin || !destination || !amount) return null;
+
+  const center = (item) => item.x + (item.width ?? 0) / 2;
+  const cityCenter = center(city);
+  const originCenter = center(origin);
+  const destinationCenter = center(destination);
+  const amountCenter = center(amount);
+  const originLeft = (cityCenter + originCenter) / 2;
+  const destinationLeft = (originCenter + destinationCenter) / 2;
+  const destinationRight = (destinationCenter + amountCenter) / 2;
+
+  const rowY = new Map();
+  for (const line of lines) {
+    for (const item of line.items ?? []) {
+      const value = compact(item.text);
+      const index = /^\d+$/.test(value) ? Number(value) : null;
+      if (index && index <= count && center(item) < originLeft) rowY.set(index, line.y);
+    }
+  }
+  const ys = Array.from({ length: count }, (_, i) => rowY.get(i + 1) ?? null);
+  if (ys.some((y) => y === null)) {
+    return new Map(Array.from({ length: count }, (_, i) => [i + 1,
+      { origin: null, destination: null, route: null, complete: false }]));
+  }
+  const byIndex = new Map();
+  for (let i = 0; i < count; i += 1) {
+    const index = i + 1;
+    const y = ys[i];
+    if (y === null) {
+      byIndex.set(index, { origin: null, destination: null, route: null, complete: false });
+      continue;
+    }
+    const top = i === 0 ? (header.y + y) / 2 : (ys[i - 1] + y) / 2;
+    const bottom = i === count - 1 ? -Infinity : (y + ys[i + 1]) / 2;
+    const rowLines = lines.filter((line) => line.y <= top && line.y > bottom);
+    const inColumn = (left, right) => rowLines.flatMap((line) => line.items ?? [])
+      .filter((item) => {
+        const x = center(item);
+        return x >= left && x < right;
+      })
+      .sort((a, b) => b.y - a.y || a.x - b.x);
+    const textOf = (items) => items.map((item) => item.text).join('').replace(/\s+/g, '') || null;
+    const from = textOf(inColumn(originLeft, destinationLeft));
+    const to = textOf(inColumn(destinationLeft, destinationRight));
+    byIndex.set(index, {
+      origin: from,
+      destination: to,
+      route: from && to ? `${from} → ${to}` : null,
+      complete: !!(from && to),
+    });
+  }
+  return byIndex;
+}
+
 /**
- * 行程单的逐段明细。表格里起终点会换行，所以这里只认**同一行内**能取全的字段：
- * 序号、上车日期时间、城市、金额。起终点合成一个 route 字符串照抄，不拆成两列 ——
- * 列切分靠字宽估算，偶尔会挪一格（见 ADR-0003），拆开就会把地名切错。
+ * 行程单的逐段明细。日期、城市、金额仍从文字行读取；起终点使用 PDF 文字块坐标，
+ * 按表头列和序号行的 y 区间归并，避免把跨行地址按空格硬切。
  */
-function itinerarySegments(lines) {
+function itinerarySegments(lines, pages) {
   const rows = [];
   for (const raw of lines) {
     const l = raw.normalize('NFKC').trim();
@@ -132,10 +207,22 @@ function itinerarySegments(lines) {
     });
   }
   // 序号必须是从 1 开始的连续整数，否则这份逐段明细不完整。
-  return rows.every((r, i) => r.index === i + 1) ? rows : [];
+  if (!rows.every((r, i) => r.index === i + 1)) return [];
+  const routeLayout = itineraryRouteLayout(pages, rows.length);
+  if (!routeLayout) return rows;
+  return rows.map((row) => {
+    const route = routeLayout.get(row.index);
+    return {
+      ...row,
+      origin: route?.origin ?? null,
+      destination: route?.destination ?? null,
+      route: route?.route ?? null,
+      routeComplete: route?.complete === true,
+    };
+  });
 }
 
-function extractCandidates(kind, text, lines) {
+function extractCandidates(kind, text, lines, pages) {
   const c = compact(text);
   const out = [];
   const add = (field, value, note) => out.push({ field, value, note, evidence: evidenceFor(lines, value) });
@@ -154,7 +241,7 @@ function extractCandidates(kind, text, lines) {
       add('segmentCount', Number(m[1]), '行程单声明的行程段数；费用事件拆分在下一层裁决');
       add('itineraryTotal', m[2], '行程单合计金额；只作证据，不替代票面价税合计');
     }
-    const rows = itinerarySegments(lines);
+    const rows = itinerarySegments(lines, pages);
     // 只有逐行取到的段数和行程单自己声明的段数一致，这份逐段明细才可信。
     // 对不上就说明有行没取全（表格换行是实测踩过的坑），宁可整块作废。
     if (rows.length && m && rows.length === Number(m[1])) {
@@ -219,23 +306,30 @@ export function parseMaterial(absPath, format) {
     role: hit.role,
     fields,
     evidence,
-    candidates: extractCandidates(hit.kind, text, lines),
+    candidates: extractCandidates(hit.kind, text, lines, extracted.pages),
   };
 }
 
-/** 发票身份：判断是否同一张法定发票的键。参考材料没有发票身份。 */
+/** 发票身份：按票面格式生成规范键。参考材料没有发票身份。 */
 export function invoiceIdentity(parsed) {
   if (parsed.role !== 'primary_voucher') return null;
-  const n = parsed.fields.invoiceNumber;
-  if (!n) return null;
-  // 全电发票用 20 位发票号码替代旧的"发票代码 + 发票号码"，
-  // 所以身份键要带上方案名 —— 将来出现别的票种时不会和它撞在一起。
-  return { scheme: 'einvoice-20', key: `einvoice-20:${n}`, number: n };
+  const n = parsed.fields?.invoiceNumber;
+  const code = parsed.fields?.invoiceCode;
+  if (/^(?:\d{10}|\d{12})$/.test(code ?? '') && /^\d{8}$/.test(n ?? '')) {
+    return { scheme: 'vat-legacy', key: `vat-legacy:${code}:${n}`, code, number: n };
+  }
+  if (/^\d{20}$/.test(n ?? '')) {
+    return { scheme: 'einvoice-20', key: `einvoice-20:${n}`, number: n };
+  }
+  return null;
 }
 
 /** 发票号码属于敏感事实：报告和终端输出一律脱敏，完整值只留在任务工作区。 */
-export const maskNumber = (n) => (typeof n === 'string' && n.length > 8
-  ? `${n.slice(0, 4)}${'*'.repeat(n.length - 8)}${n.slice(-4)}` : n ?? null);
+export const maskNumber = (n) => {
+  if (typeof n !== 'string') return n ?? null;
+  if (n.length > 8) return `${n.slice(0, 4)}${'*'.repeat(n.length - 8)}${n.slice(-4)}`;
+  return n.length > 4 ? `${n.slice(0, 2)}${'*'.repeat(n.length - 4)}${n.slice(-2)}` : n;
+};
 
 /** 金额守恒：不含税 + 税额 = 价税合计。三项不全时不判定，只如实说明缺哪一项。 */
 export function checkAmounts(fields) {

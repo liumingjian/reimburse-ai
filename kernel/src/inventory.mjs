@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { normalizeMaterialScope } from './material-scope.mjs';
 
 // v1 只接受 PDF、PNG、JPG，且按文件内容识别，扩展名只作提示（契约「原文件格式」）。
 const MAGIC = [
@@ -55,7 +56,7 @@ async function* walk(root, rel = '') {
 /**
  * 固定一次材料盘点。只读源目录：不移动、不改名、不覆盖、不删除。
  */
-export async function takeInventory(sourceDir) {
+export async function takeInventory(sourceDir, { scope = null } = {}) {
   const root = path.resolve(sourceDir);
   const st = await fsp.stat(root).catch(() => null);
   if (!st?.isDirectory()) {
@@ -66,6 +67,29 @@ export async function takeInventory(sourceDir) {
 
   const materials = [];
   const ignored = [];
+  const excluded = [];
+  const scopeMismatches = [];
+  const normalizedScope = normalizeMaterialScope(scope);
+  const scopeByPath = new Map(normalizedScope?.exclusions.map((item) => [item.relPath, item]) ?? []);
+  const scopeObserved = new Set();
+  const addMaterial = (material) => {
+    const expected = scopeByPath.get(material.relPath);
+    if (!expected) {
+      materials.push(material);
+      return;
+    }
+    scopeObserved.add(material.relPath);
+    if (material.readStatus === 'ok' && material.contentHash === expected.contentHash
+      && material.size === expected.size) {
+      excluded.push({ ...material, disposition: 'excluded', reason: 'explicit_scope',
+        scopeReason: expected.reason });
+      return;
+    }
+    scopeMismatches.push({ relPath: material.relPath, status: 'changed', expected,
+      actual: { contentHash: material.contentHash ?? null, size: material.size ?? null,
+        readStatus: material.readStatus ?? null } });
+    materials.push(material);
+  };
 
   for await (const { rel, dirent } of walk(root)) {
     const base = path.basename(rel);
@@ -82,12 +106,12 @@ export async function takeInventory(sourceDir) {
 
     // 符号链接不跟随：跟随会越出材料根目录，契约要求不越界。
     if (dirent.isSymbolicLink()) {
-      materials.push({ ...rec, readStatus: 'skipped', disposition: 'out_of_scope',
+      addMaterial({ ...rec, readStatus: 'skipped', disposition: 'out_of_scope',
         reason: 'symlink', note: '符号链接不跟随，避免越出材料根目录' });
       continue;
     }
     if (!dirent.isFile()) {
-      materials.push({ ...rec, readStatus: 'skipped', disposition: 'out_of_scope',
+      addMaterial({ ...rec, readStatus: 'skipped', disposition: 'out_of_scope',
         reason: 'not_a_regular_file', note: '不是普通文件' });
       continue;
     }
@@ -106,13 +130,13 @@ export async function takeInventory(sourceDir) {
       }
       contentHash = await hashFile(abs);
     } catch (err) {
-      materials.push({ ...rec, readStatus: 'unreadable', disposition: 'pending',
+      addMaterial({ ...rec, readStatus: 'unreadable', disposition: 'pending',
         reason: 'read_error', note: err.message });
       continue;
     }
 
     if (size === 0) {
-      materials.push({ ...rec, size, contentHash, readStatus: 'ok', format: 'empty',
+      addMaterial({ ...rec, size, contentHash, readStatus: 'ok', format: 'empty',
         disposition: 'pending', reason: 'empty_file', note: '空文件，不能静默跳过' });
       continue;
     }
@@ -120,7 +144,7 @@ export async function takeInventory(sourceDir) {
     const det = detectFormat(head);
     const normExt = rec.extHint ? rec.extHint.slice(1).replace('jpeg', 'jpg') : null;
     const extMismatch = det.supported && normExt !== null && normExt !== det.format;
-    materials.push({
+    addMaterial({
       ...rec, size, contentHash, readStatus: 'ok', format: det.format,
       // 本切片只做到"格式已识别、等待解析"；
       // 主要报销凭证 / 参考材料的角色判定属于下一片。
@@ -128,9 +152,15 @@ export async function takeInventory(sourceDir) {
       reason: det.supported ? null : 'unsupported_format',
       note: det.note ?? null,
       ...(extMismatch
-        ? { extMismatch: true, extNote: `扩展名 ${rec.extHint} 与实际内容 ${det.format} 不符，以内容为准` }
+      ? { extMismatch: true, extNote: `扩展名 ${rec.extHint} 与实际内容 ${det.format} 不符，以内容为准` }
         : {}),
     });
+  }
+
+  for (const expected of normalizedScope?.exclusions ?? []) {
+    if (!scopeObserved.has(expected.relPath)) {
+      scopeMismatches.push({ relPath: expected.relPath, status: 'missing', expected, actual: null });
+    }
   }
 
   // 同一份内容出现在多个路径上 —— 这是"文件完全相同"的强证据，
@@ -147,11 +177,21 @@ export async function takeInventory(sourceDir) {
 
   // 盘点版本由"每份材料的路径 + 内容哈希 + 大小"决定：
   // 新增、删除或内容变化都会产生新版本，旧的 ERP 就绪快照随之失效。
+  const versionParts = [
+    ...materials.map((m) => `${m.relPath} ${m.contentHash ?? m.readStatus} ${m.size ?? ''}`),
+    ...scopeMismatches.map((m) => `scope:${m.relPath} ${JSON.stringify(m.expected)} ${JSON.stringify(m.actual)}`),
+  ];
   const versionId = 'v-' + crypto.createHash('sha256')
-    .update(materials.map((m) => `${m.relPath} ${m.contentHash ?? m.readStatus} ${m.size ?? ''}`).join('\n'))
+    .update(versionParts.join('\n'))
     .digest('hex').slice(0, 12);
 
-  return { versionId, takenAt: new Date().toISOString(), materials, ignored, duplicateContent };
+  return { versionId, takenAt: new Date().toISOString(), materials, ignored, excluded,
+    scope: normalizedScope, scopeMismatches, duplicateContent };
+}
+
+/** All task-aware readers use the task's explicit scope; a plain inventory remains unscoped. */
+export async function takeInventoryForTask(sourceDir, task) {
+  return takeInventory(sourceDir, { scope: task?.materialScope ?? null });
 }
 
 /** 本切片能产生的待确认项：只有盘点层面的，解析层面的属于下一片。 */
@@ -168,6 +208,11 @@ export function intakeOpenItems(inventory) {
   for (const d of inventory.duplicateContent) {
     items.push({ kind: 'duplicate_content', materialIds: d.materialIds, blocking: false,
       note: '多个路径上是完全相同的文件；是否构成重复发票由发票身份判定，本层不下结论' });
+  }
+  for (const mismatch of inventory.scopeMismatches ?? []) {
+    items.push({ kind: 'material_scope_mismatch', materialId: null,
+      fileName: mismatch.relPath, blocking: true,
+      note: `显式排除材料 ${mismatch.relPath} 的内容或大小已变化；需重新明确记录后才能继续` });
   }
   return items;
 }

@@ -1,27 +1,193 @@
 /**
- * 采集观测。这里是**唯一**碰文件系统、CDP 和时钟的地方，判定在 state.mjs 里。
+ * 采集观测。这里是**唯一**碰文件系统、ego task space 和时钟的地方，判定在 state.mjs 里。
  *
- * 这样分开，是为了让状态判定的测试能在一台没有 Chrome 的机器上跑完 ——
+ * 这样分开，是为了让状态判定的测试能在一台没有 ego-browser 的机器上跑完 ——
  * 采集这一侧本来就只能在真机上验，把判断混进来就等于把判断也搬上真机。
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { paths, SCHEMA_FILE } from './paths.mjs';
 import { SCHEMA_VERSION } from './state.mjs';
-import * as chrome from './chrome.mjs';
 import { probeIdentity } from './probe.mjs';
+import { isEgoControlError } from './ego.mjs';
+import { browserMode, EGO_BROWSER, SYSTEM_BROWSER } from './browser-open.mjs';
 import { readBinding } from './binding.mjs';
-import { takeInventory, intakeOpenItems } from './inventory.mjs';
+import { readHomeCity } from './home-city.mjs';
+import { takeInventoryForTask, intakeOpenItems } from './inventory.mjs';
 import { classifyInventory, classifyOpenItems } from './classify.mjs';
 import { buildWorkOrder, pendingConfirmations } from './vision.mjs';
 import { openDisputes } from './dispute.mjs';
 import { findLiveTaskForSource, sourceKeyOf, taskDir, classificationRecorded,
-  loadEventsLedger, loadCatalogVerification } from './workspace.mjs';
+  loadEventsLedger, loadCatalogVerification, hasErpWriteState } from './workspace.mjs';
 import { crossTaskDuplicates, historyOpenItems } from './history.mjs';
 import { buildEvents, eventOpenItems, ALLOCATION_KINDS } from './events.mjs';
 import { allocationRound, givenUpOpenItems } from './allocate.mjs';
-import { loadSelection, applySelection, linesDigest, sameBasis } from './selection.mjs';
+import { loadSelection, applySelection, linesDigest, sameBasis, isBookSelection } from './selection.mjs';
 import { loadWriteApproval, approvalCovers } from './erpwrite.mjs';
+import { readBook, selectableProjects, sameIdentity } from './projects.mjs';
+import { classifiedDetailComplete, classifiedDetailConfirmed, classifiedCorrectionOptions } from './classified-detail.mjs';
+import { buildPreparation, inspectPreparation } from './preparation.mjs';
+import { inspectRuntimeDependencies } from './runtime-dependencies.mjs';
+
+// Catalog records written before the preparation handoff did not retain the
+// expense-item read-only projection.  They remain useful history, but cannot
+// prove that the current preparation has a canonical ERP expense-item name.
+const CATALOG_SCHEMA_VERSION = 2;
+const COMPLETE_PROJECT_VERDICTS = new Set([
+  'confirmed', 'missing', 'not_found', 'ambiguous', 'unusable', 'name_mismatch',
+]);
+
+const catalogExpenseItems = (catalog) => Array.isArray(catalog?.expenseItems)
+  ? catalog.expenseItems
+  : (Array.isArray(catalog?.expenseItems?.checked)
+    ? catalog.expenseItems.checked
+    : (Array.isArray(catalog?.expenseItemCatalog) ? catalog.expenseItemCatalog : null));
+
+const catalogExpenseProblems = (catalog) => [
+  ...(Array.isArray(catalog?.problems) ? catalog.problems : []),
+  ...(Array.isArray(catalogExpenseItems(catalog))
+    ? catalogExpenseItems(catalog).filter((item) => item?.verdict !== 'confirmed')
+    : []),
+];
+
+const catalogHasExpenseProjection = (catalog, lines) => {
+  if (catalog?.catalogSchemaVersion !== CATALOG_SCHEMA_VERSION) return false;
+  const checked = catalogExpenseItems(catalog);
+  if (!Array.isArray(checked)) return false;
+  const byCode = new Map(checked.map((item) => [item?.code, item]));
+  return (lines ?? []).filter((line) => line?.expenseItemCode).every((line) => {
+    const item = byCode.get(line.expenseItemCode);
+    // Keep a complete read (including a negative verdict) fresh enough for
+    // catalog_mismatch to show the recorded reason.  The expected canonical
+    // name is the static expense-item mapping; a name_mismatch record carries
+    // the ERP name separately as erpName and remains a visible problem.
+    return !!item && (item.name ?? null) === (line.expenseItemName ?? null);
+  });
+};
+
+const catalogProjectRecords = (catalog) => {
+  if (Array.isArray(catalog?.projects)) {
+    return new Map(catalog.projects
+      .map((record) => [record?.number, record])
+      .filter(([number]) => typeof number === 'string' && number.length > 0));
+  }
+  if (catalog?.projects && typeof catalog.projects === 'object') {
+    return new Map(Object.entries(catalog.projects));
+  }
+  return new Map();
+};
+
+const selectionSnapshotOf = (selection, candidates) => {
+  const projects = selection?.projects && typeof selection.projects === 'object'
+    ? Object.fromEntries(Object.entries(selection.projects).sort(([a], [b]) => a.localeCompare(b)))
+    : null;
+  if (!projects) return null;
+  const selected = [...new Set(Object.values(projects))]
+    .filter((number) => typeof number === 'string' && number.trim())
+    .sort();
+  const byNumber = new Map((candidates ?? [])
+    .map((candidate) => [candidate?.number, candidate])
+    .filter(([number]) => typeof number === 'string' && number.length > 0));
+  return {
+    projects,
+    projectBook: selected.map((number) => ({
+      number,
+      name: typeof byNumber.get(number)?.name === 'string' ? byNumber.get(number).name : null,
+    })),
+  };
+};
+
+const catalogSelectionFresh = (catalog, selection, candidates) => {
+  const expected = selectionSnapshotOf(selection, candidates);
+  const actual = catalog?.selectionSnapshot;
+  if (!expected || !actual || typeof actual !== 'object'
+    || JSON.stringify(actual.projects) !== JSON.stringify(expected.projects)) return false;
+  const actualBook = Array.isArray(actual.projectBook) ? actual.projectBook : null;
+  if (!actualBook || actualBook.length !== expected.projectBook.length) return false;
+  const actualByNumber = new Map(actualBook.map((record) => [record?.number, record]));
+  return expected.projectBook.every((record) => {
+    const checked = actualByNumber.get(record.number);
+    return !!checked && checked.name === record.name;
+  });
+};
+
+/**
+ * A catalog read is scoped to the owner and the exact selected project facts.
+ * The line/version basis alone is insufficient: a copied catalog from another
+ * account, or one whose project-book selection changed after the query, must
+ * trigger a fresh read-only query.
+ */
+export function catalogFreshFor({ catalog, built, selection, candidates, identity, lines } = {}) {
+  if (!sameBasis(catalog, built) || catalog?.catalogSchemaVersion !== CATALOG_SCHEMA_VERSION
+    || !sameIdentity(catalog?.identity, identity) || !isBookSelection(selection)
+    || !catalogHasExpenseProjection(catalog, lines)
+    || !catalogSelectionFresh(catalog, selection, candidates)) return false;
+
+  const selected = new Set(Object.values(selection.projects ?? {})
+    .filter((number) => typeof number === 'string' && number.trim()));
+  const lineProjects = new Set((lines ?? [])
+    .map((line) => line?.project)
+    .filter((number) => typeof number === 'string' && number.trim()));
+  if (selected.size === 0 || selected.size !== lineProjects.size
+    || [...selected].some((number) => !lineProjects.has(number))) return false;
+
+  const catalogProjects = catalogProjectRecords(catalog);
+  return [...selected].every((number) => {
+    const checked = catalogProjects.get(number);
+    if (!checked || !COMPLETE_PROJECT_VERDICTS.has(checked.verdict)) return false;
+    // Negative ERP results are still fresh observations; catalogProblems will
+    // keep them in catalog_mismatch.  The project-book name is checked against
+    // the query-time snapshot above, never against the ERP name: an ERP rename
+    // is a business mismatch, while a later book edit is a stale query.
+    // A verdict such as `not_found` is a business result, not evidence that
+    // the query is stale; catalogProblems keeps it visible to the user.
+    return true;
+  });
+}
+
+const preparationConfirmationPath = (task) =>
+  path.join(taskDir(task), 'preparation-confirmation.json');
+
+const preparationPackageInfo = (inspection) => {
+  if (!inspection?.directory) return null;
+  const directory = inspection.directory;
+  const files = inspection.manifest?.files ?? {};
+  const pathsFor = (records) => (records ?? [])
+    .map((record) => typeof record?.targetPath === 'string'
+      ? path.join(directory, record.targetPath) : null)
+    .filter(Boolean);
+  return {
+    status: inspection.status ?? (inspection.ok ? 'valid' : 'invalid'),
+    current: inspection.ok === true,
+    directory,
+    digest: inspection.digest ?? inspection.manifest?.digest ?? null,
+    manifestHash: inspection.manifest?.manifestHash ?? null,
+    bundleHash: inspection.manifest?.bundleHash ?? null,
+    files: {
+      detailJson: path.join(directory, 'detail.json'),
+      detailMarkdown: path.join(directory, 'detail.md'),
+      manifest: path.join(directory, 'manifest.json'),
+      invoices: pathsFor(files.invoices),
+      evidence: pathsFor(files.evidence),
+    },
+  };
+};
+
+const preparationConfirmed = (task, digest, inspection) => {
+  if (!task?.taskId || !digest || !inspection?.ok) return false;
+  try {
+    const record = JSON.parse(fs.readFileSync(preparationConfirmationPath(task), 'utf8'));
+    return record.taskId === task.taskId
+      && record.digest === digest
+      && record.versionId === task.currentVersionId
+      && record.manifestHash === inspection.manifest?.manifestHash
+      && record.bundleHash === inspection.manifest?.bundleHash
+      && (!task.identity || (record.identity?.account === task.identity.account
+        && record.identity?.tenant === task.identity.tenant));
+  } catch {
+    return false;
+  }
+};
 
 /**
  * 数据目录的格式版本。没有这个文件就是这个内核自己写的那一版 ——
@@ -39,19 +205,62 @@ export function readSchemaVersion() {
 /**
  * 采一次环境观测（state-machine.md A 表要的全部事实）。
  *
- * Chrome 没起来就不探针：探针要等页面加载，最长 30 秒，而这时候答案已经定了
- * —— 先把 Chrome 起来。这不是优化，是不让用户为一个已知的结论等半分钟。
+ * 只读探测由当前浏览器适配负责。正式模式使用系统默认浏览器；只有显式
+ * `BAOX_BROWSER=ego` 才允许 ego task space 作为 QA transport。system transport
+ * 的权限或能力失败必须原样留在观测里，不能把它伪造成「已登录」或旧的 Chrome down。
  */
 export async function observeEnvironment() {
   const [nodeMajor] = process.versions.node.split('.').map(Number);
-  const cdpUp = !!(await chrome.version());
+  const mode = browserMode();
+  // Every browser transport uses the same managed runtime gate. The browser
+  // mode only selects the page transport; it cannot make parsing dependencies
+  // appear ready.
+  const runtimeDependencies = inspectRuntimeDependencies();
+  let probe = null;
+  let browserReadError = null;
+  try {
+    probe = await probeIdentity();
+  } catch (error) {
+    // An explicit ego QA transport keeps its existing hard failure semantics.
+    // In system mode a missing AppleEvents/browser capability is a user-visible
+    // read problem, never a reason to claim an identity or silently skip gating.
+    if (mode === EGO_BROWSER && isEgoControlError(error)) throw error;
+    // A default browser that is not running is an empty-page condition.  Keep
+    // it distinct from a denied read capability so `next` can issue the one
+    // executable browser-open step instead of stopping on a permission error.
+    if (mode === SYSTEM_BROWSER && error.code === 'DEFAULT_BROWSER_NOT_RUNNING') {
+      probe = {
+        status: 'no_tab',
+        transport: 'default',
+        code: error.code,
+        hint: '系统默认浏览器当前没有运行；下一步会用系统默认 URL 打开 ERP',
+      };
+      browserReadError = null;
+    } else {
+      const message = mode === SYSTEM_BROWSER && error.code === 'EGO_TASK_SPACE_REQUIRED'
+        ? '系统默认浏览器只读适配当前不可用；请确认浏览器自动化权限或能力支持后重试'
+        : error.message;
+      browserReadError = { code: error.code ?? 'BROWSER_READ_UNAVAILABLE', message };
+      probe = { status: 'browser_read_unavailable', ...browserReadError,
+        hint: message };
+    }
+  }
+  const egoUp = mode === EGO_BROWSER && !browserReadError;
+  const cdpUp = mode === SYSTEM_BROWSER ? true : egoUp;
   return {
     schemaVersion: readSchemaVersion(),
     nodeVersion: process.versions.node,
     nodeMajor,
+    browserMode: mode,
+    // cdpUp is retained for state-machine input compatibility. It only gates
+    // the explicit ego QA transport; system browser reads do not use CDP.
     cdpUp,
-    probe: cdpUp ? await probeIdentity() : null,
+    egoUp,
+    egoError: mode === EGO_BROWSER ? browserReadError : null,
+    browserReadError,
+    probe,
     binding: readBinding(),
+    runtimeDependencies,
   };
 }
 
@@ -70,14 +279,15 @@ export async function observeEnvironment() {
  *  3. **这里不写盘**。观测改变被观测的东西，幂等就无从谈起：写盘的是 `step.argv`
  *     里那条命令，不是问一句「现在该做什么」。
  */
-export async function observeTask(sourceDir) {
+export async function observeTask(sourceDir, { mode = 'markdown', receiptFacts = null } = {}) {
   const dir = path.resolve(sourceDir);
-  const inventory = await takeInventory(dir);
   const task = findLiveTaskForSource(sourceKeyOf(dir));
+  const inventory = await takeInventoryForTask(dir, task);
 
   // 没有任务时 currentVersionId 无从比起 —— 那是 task_none，不是盘点过期。
   const inventoryStale = !!task && task.currentVersionId !== inventory.versionId;
-  const classification = classifyInventory(dir, inventory, task);
+  const classification = classifyInventory(dir, inventory, task, { mode });
+  const employeeHomeCity = readHomeCity(readBinding())?.homeCity ?? null;
   // 跨任务查重：拿发票身份去比对本机上别的任务还占着的票。只读别的任务落盘的摘要，
   // 一个字都不往回写。没有任务时无从比起（本任务自己都还没有身份摘要）。
   const history = task ? crossTaskDuplicates(task, classification) : null;
@@ -85,18 +295,28 @@ export async function observeTask(sourceDir) {
   const obs = {
     taskObserved: true,
     sourceDir: dir,
+    // A marker still blocks the ordinary path in state.mjs, but a separately
+    // validated local-preparation recovery may resolve this gate. Keep the
+    // fact visible here so recovery does not silently skip a missing snapshot.
+    homeCityRequired: task ? !task.homeCity : !employeeHomeCity,
+    homeCityAnswerPath: path.join(paths.root, 'home-city-answer.json'),
+    homeCity: task?.homeCity ?? employeeHomeCity,
     task: task ? {
       taskId: task.taskId,
       sourceLabel: task.sourceLabel,
+      identity: task.identity ?? null,
       workspace: taskDir(task),
       currentVersionId: task.currentVersionId,
       erpWriteState: task.erpWriteState ?? null,
+      homeCity: task.homeCity ?? null,
     } : null,
     inventoryVersionId: inventory.versionId,
     materialCount: inventory.materials.length,
+    excludedMaterials: inventory.excluded,
+    scopeMismatches: inventory.scopeMismatches,
     inventoryStale,
     classificationRecorded: task && !inventoryStale
-      ? classificationRecorded(task, inventory.versionId)
+      ? classificationRecorded(task, inventory.versionId, classification.candidateDigest)
       : false,
     openItems: [
       ...intakeOpenItems(inventory),
@@ -125,7 +345,7 @@ export async function observeTask(sourceDir) {
     && !obs.pendingImages.length && !obs.pendingReadings.length && !obs.pendingDisputes.length;
   if (!settled) return obs;
 
-  return { ...obs, ...observeErpHalf(task, classification, obs.openItems) };
+  return { ...obs, ...observeErpHalf(task, classification, obs.openItems, inventory, receiptFacts) };
 }
 
 /**
@@ -137,7 +357,7 @@ export async function observeTask(sourceDir) {
  * 落盘的东西不拿来当"现在是什么样" —— 两边搞反，账本就永远缺一版，
  * 或者旧结论会套在新材料上。
  */
-function observeErpHalf(task, classification, materialItems) {
+function observeErpHalf(task, classification, materialItems, inventory, receiptFacts = null) {
   const built = buildEvents(classification, task);
   const ledger = loadEventsLedger(task, built.versionId);
 
@@ -150,15 +370,83 @@ function observeErpHalf(task, classification, materialItems) {
 
   const selection = loadSelection(task);
   const catalog = loadCatalogVerification(task);
-  const applied = applySelection(built, classification, selection, catalog);
+  const candidates = selectableProjects(task.identity);
+  const applied = applySelection(built, classification, selection, catalog, candidates, task.identity,
+    task.homeCity);
+  const expenseItems = catalogExpenseItems(catalog) ?? [];
+  const expenseByCode = new Map(expenseItems.map((item) => [item?.code, item]));
+  // Keep the line projection tied to the canonical read-only catalog record.
+  // The static category table supplies a candidate code; only the catalog can
+  // supply the ERP name that the preparation document may cite as verified.
+  const lines = applied.lines.map((line) => {
+    const item = expenseByCode.get(line.expenseItemCode);
+    return item?.verdict === 'confirmed'
+      ? { ...line, expenseItemName: item.erpName ?? item.name ?? line.expenseItemName,
+          expenseItemSource: 'erp_catalog_confirmed' }
+      : line;
+  });
   // 「还没做选择」和「选择过期了」不是待办，它们就是 project_unassigned 本身；
   // 费用类别推不出来那几条才是要人处置的待办。
-  const OWN = new Set(['task_selection_required', 'task_selection_stale']);
+  const OWN = new Set(['task_selection_required', 'task_selection_stale',
+    'project_selection_reconfirmation_required', 'project_selection_identity_mismatch',
+    'project_book_empty']);
 
-  const preview = { lines: applied.lines, homeCity: applied.homeCity,
+  const preview = { lines, homeCity: applied.homeCity,
     purpose: selection?.purpose ?? null, versionId: built.versionId };
+  const classifiedPreview = {
+    ...preview,
+    evidence: classification.results.map((result) => ({
+      materialId: result.materialId,
+      contentHash: result.contentHash,
+      role: result.role,
+      kind: result.kind,
+      parseStatus: result.parseStatus ?? null,
+      documentType: result.documentType ?? null,
+      source: result.source ?? null,
+      markdownHash: result.markdownHash ?? result.source?.markdownHash ?? null,
+      paths: result.paths ?? null,
+      sourcePages: result.sourcePages ?? [],
+      fields: result.fields,
+      evidence: result.evidence ?? null,
+      candidates: result.candidates,
+      segments: result.segments,
+      fieldEvidence: result.fieldEvidence ?? null,
+      fieldStatus: result.fieldStatus ?? null,
+      candidateSources: result.candidateSources ?? null,
+      unreadable: result.unreadable ?? [],
+      issues: result.issues ?? [],
+    })),
+  };
+
+  const preparation = buildPreparation({
+    task,
+    inventory,
+    classification,
+    built,
+    lines,
+    selection,
+    catalog,
+    classifiedConfirmed: classifiedDetailConfirmed(task, classifiedPreview),
+    projectCandidates: candidates,
+    receiptFacts,
+  });
+  // Inspection is deliberately read-only.  The package is created only by the
+  // explicit `prepare` run step; this tells the state machine whether that
+  // step has produced a current, byte-verified bundle for this digest.
+  const preparationInspection = inspectPreparation({ task, preparation });
+  const preparationPackage = preparationPackageInfo(preparationInspection);
+  const preparationPackageCurrent = preparationInspection.ok === true
+    && preparationInspection.digest === preparation.digest
+    && preparationInspection.ready === preparation.ready;
 
   return {
+    // Internal read-only inputs used by the CLI to materialize the already-built
+    // preparation result after observation.  nextResponse does not serialize
+    // these implementation objects.
+    taskRecord: task,
+    inventory,
+    classification,
+    built,
     events: built,
     eventCount: built.events.length,
     // 账本要既在这一版上，又对得上现在这批明细：用户补了一次分摊，明细从一行变成三行，
@@ -176,15 +464,33 @@ function observeErpHalf(task, classification, materialItems) {
     ],
     allocationRound: allocationRound(task, stillAsking),
     selectionApplied: applied.applied,
-    lines: applied.lines,
+    lines,
+    classifiedPreview,
+    classifiedCorrectionOptions: classifiedCorrectionOptions(task, classifiedPreview),
+    classifiedDetailComplete: classifiedDetailComplete(classifiedPreview),
+    classifiedDetailConfirmed: classifiedDetailConfirmed(task, classifiedPreview),
     homeCity: applied.homeCity,
     purpose: selection?.purpose ?? null,
+    projectBook: {
+      projectCount: readBook(task.identity).projects.length,
+      selectableCount: candidates.length,
+      empty: candidates.length === 0,
+    },
     // 核对记录也钉在这批明细上。过期的记录等于没核对过 —— 不是"上次是好的"。
-    catalogFresh: sameBasis(catalog, built),
-    catalogProblems: sameBasis(catalog, built) ? (catalog.problems ?? []) : [],
+    catalogFresh: catalogFreshFor({ catalog, built, selection, candidates,
+      identity: task.identity, lines }),
+    catalogProblems: sameBasis(catalog, built) ? catalogExpenseProblems(catalog) : [],
     catalogCheckedAt: sameBasis(catalog, built) ? (catalog.verifiedAt ?? null) : null,
     writePreview: preview,
     writeApproved: approvalCovers(loadWriteApproval(task), preview),
+    // Preparation is a review artifact, not an ERP write preview.  It is
+    // intentionally built even when it reports problems so the user can inspect
+    // the exact missing evidence and fields before making corrections.
+    preparation,
+    preparationInspection,
+    preparationPackage,
+    preparationPackageCurrent,
+    preparationConfirmed: preparationConfirmed(task, preparation.digest, preparationInspection),
   };
 }
 
@@ -195,9 +501,9 @@ function observeErpHalf(task, classification, materialItems) {
  * 问出去的那份内容和收回来时核对的那份内容，必须由同一段代码算出来 ——
  * 各算各的，两边迟早会错开，而错开的样子是"用户点的头落在另一份内容上"。
  */
-export async function erpSnapshot(sourceDir, task) {
+export async function erpSnapshot(sourceDir, task, { mode = 'markdown', receiptFacts = null } = {}) {
   const dir = path.resolve(sourceDir);
-  const inventory = await takeInventory(dir);
-  const classification = classifyInventory(dir, inventory, task);
-  return { inventory, classification, ...observeErpHalf(task, classification, []) };
+  const inventory = await takeInventoryForTask(dir, task);
+  const classification = classifyInventory(dir, inventory, task, { mode });
+  return { inventory, classification, ...observeErpHalf(task, classification, [], inventory, receiptFacts) };
 }

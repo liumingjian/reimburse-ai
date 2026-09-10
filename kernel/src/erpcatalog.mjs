@@ -1,4 +1,5 @@
-import { targets, evaluate } from './chrome.mjs';
+import { isEgoControlError, isEgoPage } from './ego.mjs';
+import { evaluateBrowserPage, isDefaultBrowserPage } from './browser-read.mjs';
 import { ERP_ORIGIN } from './probe.mjs';
 import { gateIdentity } from './binding.mjs';
 import { CATEGORIES } from './categories.mjs';
@@ -42,7 +43,8 @@ const buildSnippet = (payload) => `(async () => {
 })()`;
 
 /**
- * 跑一次只读查询。返回 { ok, rows } 或 { ok: false, reason }。
+ * 跑一次只读查询。`page` 必须是已通过身份闸的 ego 或系统默认浏览器 page context。
+ * 返回 { ok, rows } 或 { ok: false, reason }。
  *
  * ERP 对"查不到"和"问错了"都回 HTTP 200，区别只在报文形状：
  *   成功  [["FY008001","本地市内交通","C","A"], ...]  —— 外层数组直接就是行集，
@@ -50,10 +52,32 @@ const buildSnippet = (payload) => `(async () => {
  *   失败  [[{"Result":{"ResponseStatus":{...Errors...}}}]] —— 行里第一格是个对象。
  * 所以按形状判，不按状态码判：状态码在这个接口上说明不了成败。
  */
-export async function queryRows(wsUrl, { formId, fieldKeys, filter = '', limit = 50 }) {
+export async function queryRows(page, { formId, fieldKeys, filter = '', limit = 50 }, {
+  evaluate = evaluateBrowserPage,
+} = {}) {
+  if (evaluate === evaluateBrowserPage) {
+    const valid = page?.transport === 'ego' ? isEgoPage(page) : isDefaultBrowserPage(page);
+    if (!valid) {
+      const defaultPage = page?.transport === 'default';
+      return { ok: false, code: defaultPage ? 'DEFAULT_BROWSER_PAGE_REQUIRED' : 'EGO_REQUIRED',
+        reason: defaultPage
+          ? 'ERP 只读查询需要有效的系统默认浏览器页面句柄'
+          : 'ERP 只读查询需要 ego-browser page context；旧 Chrome/CDP 页面句柄已阻塞' };
+    }
+  }
   const payload = { FormId: formId, FieldKeys: fieldKeys, FilterString: filter,
     StartRow: 0, Limit: limit };
-  const out = await evaluate(wsUrl, buildSnippet(payload), { timeout: 30000 });
+  let out;
+  try {
+    out = await evaluate(page, buildSnippet(payload), {
+      timeoutMs: 30000, ...(page?.transport === 'default' ? { origin: page.origin } : {}),
+    });
+  } catch (error) {
+    // These errors mean the task space is under user control or unusable.
+    // Let the caller stop; retry loops must not take over or switch pages.
+    if (isEgoControlError(error) || error.code === 'EGO_TASK_SPACE_REQUIRED') throw error;
+    return { ok: false, code: error.code ?? 'EGO_QUERY_FAILED', reason: error.message };
+  }
   const body = out?.parsed;
 
   if (!Array.isArray(body)) {
@@ -76,13 +100,13 @@ const errorMessage = (node) =>
   ?? node?.ResponseStatus?.Errors?.[0]?.Message
   ?? 'ERP 查询返回了无法解析的结果';
 
-/** 找到一个身份已经核对过的 ERP 页面。身份不 matched 就不查 —— 和写入侧同一条规矩。 */
+/** 找到一个身份已经核对过的 ERP 页面。身份不 matched 就不查。 */
 export async function authorizedPage({ origin = ERP_ORIGIN } = {}) {
   const probe = await gateIdentity({ origin });
   if (probe.status !== 'matched') return { ok: false, probe };
-  const page = (await targets()).find((t) => t.id === probe.targetId);
+  const page = probe.page ?? null;
   if (!page) return { ok: false, probe: { ...probe, status: 'no_tab' } };
-  return { ok: true, probe, wsUrl: page.webSocketDebuggerUrl };
+  return { ok: true, probe, page };
 }
 
 const statusOf = (row) => ({
@@ -98,7 +122,7 @@ const statusOf = (row) => ({
  * 注意这条只证明**主数据存在且可引用**，不证明它在费用明细上保存得进去。
  * 后者只有真的保存并回读才算数，两件事不要混。
  */
-export async function verifyExpenseItems(wsUrl, { run = queryRows } = {}) {
+export async function verifyExpenseItems(page, { run = queryRows } = {}) {
   const wanted = Object.entries(CATEGORIES)
     .filter(([, c]) => c.expenseItemCode)
     .map(([key, c]) => ({ key, code: c.expenseItemCode, name: c.expenseItemName, source: c.source }));
@@ -109,7 +133,7 @@ export async function verifyExpenseItems(wsUrl, { run = queryRows } = {}) {
   }
 
   const list = wanted.map((w) => `'${w.code}'`).join(',');
-  const res = await run(wsUrl, {
+  const res = await run(page, {
     formId: EXPENSE_ITEM_FORM,
     fieldKeys: 'FNumber,FName,FDocumentStatus,FForbidStatus',
     filter: `FNumber in (${list})`,
@@ -146,11 +170,11 @@ export async function verifyExpenseItems(wsUrl, { run = queryRows } = {}) {
  * 核对一个项目号。用户在任务选择页上填的是项目序号，ERP 里就是 FNumber。
  * 只做核对，不做挑选 —— 挑哪个项目是用户的业务决定（ADR-0006）。
  */
-export async function verifyProject(wsUrl, number, { run = queryRows } = {}) {
+export async function verifyProject(page, number, { run = queryRows } = {}) {
   if (!isSafeKey(number)) {
     return { ok: false, reason: `项目号 ${JSON.stringify(number)} 含有不能安全查询的字符` };
   }
-  const res = await run(wsUrl, {
+  const res = await run(page, {
     formId: PROJECT_FORM,
     fieldKeys: 'FNumber,FName,FDocumentStatus,FForbidStatus',
     filter: `FNumber = '${number}'`,

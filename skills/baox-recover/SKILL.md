@@ -1,6 +1,6 @@
 ---
 name: baox-recover
-description: ERP 写入善后的执行壳。Invoked by the model only, when `baox next` returns `step.kind: "handoff"` with `skill: "baox-recover"` — the task has dispatched an ERP write. Never surfaced to the user — they only know `baox`.
+description: 'ERP 写入善后的执行壳。Invoked by the model only, when `baox next` returns `step.kind: "handoff"` with `skill: "baox-recover"` — the task has dispatched an ERP write. Never surfaced to the user — they only know `baox`.'
 user-invocable: false
 disable-model-invocation: false
 allowed-tools: Bash

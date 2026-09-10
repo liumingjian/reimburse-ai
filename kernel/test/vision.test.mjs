@@ -49,6 +49,33 @@ test('逐字抄对了就收下，并且金额守恒', () => {
   assert.equal(v.amountCheck, 'balanced');
 });
 
+test('本机 OCR 不需要模型看图凭据，但仍经过哈希与金额守恒校验', () => {
+  const reading = good();
+  delete reading.sighted;
+  reading.source = 'ocr';
+  assert.equal(submit(reading).verdict, 'accepted');
+  assert.equal(loadReading(task, material.materialId).source, 'ocr');
+
+  const wrong = { ...reading, fields: { ...reading.fields, netAmount: '18.30' } };
+  const rejected = submit(wrong);
+  assert.equal(rejected.verdict, 'rejected');
+  assert.match(rejected.reasons.join(), /不含税金额 \+ 税额/);
+});
+
+test('本机 OCR 发票只提交价税合计也能进入确认表', () => {
+  const reading = good();
+  reading.source = 'ocr';
+  reading.fields = { totalAmount: '18.80' };
+  const v = submit(reading);
+  assert.equal(v.verdict, 'accepted', JSON.stringify(v.reasons));
+
+  const pending = pendingConfirmations(task, inventory)[0];
+  assert.deepEqual(pending.fields, [{
+    key: 'totalAmount', label: '价税合计', value: '18.80', source: 'ocr',
+  }]);
+  assert.deepEqual(pending.unreadable, []);
+});
+
 test('内容哈希对不上就作废 —— 读数必须绑定在确定的字节上', () => {
   const v = submit({ ...good(), contentHash: '0'.repeat(64) });
   assert.equal(v.verdict, 'rejected');
@@ -160,8 +187,35 @@ test('看着图说这几个字段认不出来，是合法答案', () => {
   const v = submit({ materialId: material.materialId, contentHash: material.contentHash,
     sighted: { shape: 'landscape' }, docType: 'ride_itinerary',
     fields: { city: '深圳', travelDate: '2026-09-04' },
-    unreadable: ['origin', 'destination'] });
+    unreadable: ['origin', 'destination', 'totalAmount'] });
   assert.equal(v.verdict, 'accepted', JSON.stringify(v.reasons));
+});
+
+test('行程单缺少顶层合计时拒绝，明确写入 unreadable 才能继续', () => {
+  const fields = { city: '深圳', travelDate: '2026-09-04' };
+  const omitted = submit({ ...good(), docType: 'ride_itinerary', fields, unreadable: [] });
+  assert.equal(omitted.verdict, 'rejected');
+  assert.match(omitted.reasons.join(), /fields\.totalAmount|合计/);
+
+  const dispositioned = submit({ ...good(), docType: 'ride_itinerary', fields,
+    unreadable: ['totalAmount'] });
+  assert.equal(dispositioned.verdict, 'accepted', JSON.stringify(dispositioned.reasons));
+});
+
+test('平铺行程日期看不清时可落读数，但必须明确列入 unreadable', () => {
+  const v = submit({ ...good(), docType: 'ride_itinerary',
+    fields: { city: '深圳', totalAmount: '18.80' }, unreadable: ['travelDate'] });
+  assert.equal(v.verdict, 'accepted', JSON.stringify(v.reasons));
+  const stored = loadReading(task, material.materialId);
+  assert.equal(stored.fields.travelDate, undefined);
+  assert.deepEqual(stored.unreadable, ['travelDate']);
+});
+
+test('平铺行程日期完全省略时仍拒绝，不能靠开票日期补齐', () => {
+  const v = submit({ ...good(), docType: 'ride_itinerary',
+    fields: { city: '深圳', totalAmount: '18.80', issueDate: '2026-09-02' }, unreadable: [] });
+  assert.equal(v.verdict, 'rejected');
+  assert.match(v.reasons.join(), /fields\.travelDate|行程日期/);
 });
 
 test('逐段结构只属于行程单，且段内字段是闭集', () => {
@@ -219,7 +273,8 @@ test('逐段内容变化时旧确认失效', () => {
 
 test('单段图片行程单继续兼容平铺字段', () => {
   const v = submit({ ...good(), docType: 'ride_itinerary',
-    fields: { travelDate: '2026-09-04', city: '深圳市', origin: '南山区', destination: '福田区' } });
+    fields: { travelDate: '2026-09-04', city: '深圳市', origin: '南山区', destination: '福田区' },
+    unreadable: ['totalAmount'] });
   assert.equal(v.verdict, 'accepted', JSON.stringify(v.reasons));
 });
 
@@ -277,20 +332,20 @@ test('连着答不出凭据就不再让模型重试 —— 五选一是试得出
   // 计数跨提交累加：每次重来都清零的话，这道闸拦不住任何东西。
   assert.ok(loadRejection(task, material.materialId).sightFailures >= MAX_SIGHT_FAILURES);
 
-  const items = classifyOpenItems(classifyInventory(src, inventory, task));
+  const items = classifyOpenItems(classifyInventory(src, inventory, task, { mode: 'legacy' }));
   const escalated = items.find((it) => it.kind === 'sight_unproven');
   assert.ok(escalated, '到了上限就该变成一条摆给用户看的开放项');
   assert.ok(escalated.blocking);
 
   // 从此这张图不再出现在工单里：再派一次只是再试一次。
   const { buildWorkOrder } = await import('../src/vision.mjs');
-  const order = buildWorkOrder(src, inventory, classifyInventory(src, inventory, task), task);
+  const order = buildWorkOrder(src, inventory, classifyInventory(src, inventory, task, { mode: 'legacy' }), task);
   assert.equal(order.length, 0);
 
   // 用户换了一份文件，计数跟着字节走，从头开始。
   fs.copyFileSync(path.join(repo, 'resources', '交通', '行程单.png'), path.join(src, 'invoice.png'));
   const fresh = await takeInventory(src);
-  const freshItems = classifyOpenItems(classifyInventory(src, fresh, task));
+  const freshItems = classifyOpenItems(classifyInventory(src, fresh, task, { mode: 'legacy' }));
   assert.ok(!freshItems.some((it) => it.kind === 'sight_unproven'), '换了文件就不该还挂着上一份的账');
 
   // 把材料换回去，后面的测试仍然对着同一张图。

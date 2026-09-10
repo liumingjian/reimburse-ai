@@ -1,7 +1,18 @@
-import { targets, evaluate } from './chrome.mjs';
+import { isEgoControlError } from './ego.mjs';
+import {
+  browserTransport,
+  evaluateBrowserPage,
+  listBrowserTabs,
+  safeUrl,
+} from './browser-read.mjs';
 
 export const ERP_ORIGIN = process.env.BAOX_ERP_ORIGIN || 'http://erp.antute.com.cn';
 export const ERP_ENTRY = `${ERP_ORIGIN}/k3cloud/html5/index.aspx`;
+
+/** Compare origins structurally; a same-prefix hostname is a different site. */
+export const sameOrigin = (value, expected) => {
+  try { return new URL(value).origin === new URL(expected).origin; } catch { return false; }
+};
 
 // 只读探测：只读取页面上已经存在的信息，不导航、不点击、不调用任何业务接口、不写入任何字段。
 //
@@ -14,9 +25,9 @@ export const ERP_ENTRY = `${ERP_ORIGIN}/k3cloud/html5/index.aspx`;
 //   4. localStorage 的 k3cloudloginInfo 在**登出之后依然留着**账号 ——
 //      2026-09-05 在登录页上仍读出 account，这是它不能单独算数的直接证据。
 //
-// 因此身份只认两个信号，缺一不可：
+// 因此身份只认三个信号，缺一不可：
 //   会话信号 —— 主控制台的用户名元素 span.kd-mainconsole-usernametext 有非空文本；
-//   账号信号 —— localStorage 的 k3cloudloginInfo.user（登录账号，比显示名稳定）。
+//   账号和账套信号 —— localStorage 的 k3cloudloginInfo.user / .acc（比显示名稳定）。
 const USER_SELECTOR = 'span.kd-mainconsole-usernametext';
 
 const READ_ONLY_SNIPPET = `(() => {
@@ -51,15 +62,28 @@ const READ_ONLY_SNIPPET = `(() => {
  *
  * 返回 null 表示"这一页说明不了什么"，交给调用方看别的页面或继续等。
  */
-export function identityFromObservation(info) {
+export function identityFromObservation(info, { transport = 'default' } = {}) {
   if (!info || info.ready !== 'complete') return null;
+  const location = transport === 'ego' ? 'ego task space' : '系统默认浏览器';
+  const hasText = (value) => typeof value === 'string' ? value.trim().length > 0
+    : value !== null && value !== undefined;
 
   // 这里只回答"这一页上是谁在登录着"。它是不是**该报销的那个人**，
   // 由个人绑定去判（binding.mjs）—— 会话信号和身份判据是两件事，
   // 混在一起判过一次，代价是一个永远说不清自己错在哪的探测结果。
-  if (info.displayName) {
+  if (hasText(info.displayName) && hasText(info.account) && hasText(info.tenant)) {
     return { status: 'matched',
       identity: { displayName: info.displayName, account: info.account, tenant: info.tenant } };
+  }
+
+  if (hasText(info.displayName)) {
+    const missing = [
+      !hasText(info.account) ? '登录账号' : null,
+      !hasText(info.tenant) ? '账套' : null,
+    ].filter(Boolean);
+    return { status: 'unknown',
+      hint: `页面读到了显示名，但缺少${missing.join('和')}；`
+        + `身份不能确定读出就不接管，请人工看一眼这个${location}页面` };
   }
 
   // 读不出用户名。分两档，因为处置完全不同：
@@ -67,29 +91,40 @@ export function identityFromObservation(info) {
   // 两样都读不出 —— 页面变了或出了别的问题，那要人来看，不是重试能解决的。
   return info.loginFormVisible
     ? { status: 'not_logged_in',
-        hint: `专用 Chrome 里的 ERP 停在登录页（${ERP_ENTRY}）。`
-          + '请你本人在这个窗口里登录，回到主控制台之后再探测；baox 不代填账号密码。'
+        hint: `${location}里的 ERP 停在登录页（${ERP_ENTRY}）。`
+          + '请你本人在这个页面里登录，回到主控制台之后再探测；baox 不代填账号密码。'
           + '注意登录页上也读得出上次登录的账号，那不算已登录。' }
     : { status: 'unknown',
         hint: `页面已加载完成，既读不出 ${USER_SELECTOR}，也看不见登录表单；`
-          + '身份不能确定读出就不接管，请人工看一眼这个 Chrome 窗口' };
+          + `身份不能确定读出就不接管，请人工看一眼这个${location}页面` };
 }
 
 /**
- * 探测 ERP 的**会话**：专用 Chrome 里现在登录着的是谁。
+ * 探测 ERP 的**会话**：当前选定浏览器传输里现在登录着的是谁。
  *   matched | not_logged_in | loading | no_tab | unknown
  *
  * matched 只说明"有人登录着并且读得出他是谁"，不说明这个人就是该报销的人。
  * 业务侧一律走 binding.mjs 的 gateIdentity()，它在这之上再过一道个人绑定。
  */
-export async function probeIdentity({ origin = ERP_ORIGIN, waitMs = 30000 } = {}) {
+export async function probeIdentity({ origin = ERP_ORIGIN, waitMs = 30000,
+  transport = browserTransport(), listTabs = listBrowserTabs,
+  evaluate = evaluateBrowserPage, platform = process.platform, run } = {}) {
   const deadline = Date.now() + waitMs;
   let last = null;
 
   do {
-    const pages = (await targets()).filter((t) => (t.url || '').startsWith(origin));
+    const browserOptions = { origin, transport, platform };
+    if (run) browserOptions.run = run;
+    const pages = (await listTabs(browserOptions)).filter((t) => sameOrigin(t.url, origin));
     if (pages.length === 0) {
-      return { status: 'no_tab', origin, hint: `请在 baox 专用 Chrome 中打开 ${ERP_ENTRY} 并登录` };
+      const where = transport.transport === 'ego' ? 'ego task space' : '系统默认浏览器';
+      return { status: 'no_tab', origin, transport: transport.transport,
+        hint: `请在${where}中打开 ${ERP_ENTRY} 并登录` };
+    }
+    if (transport.transport === 'default' && pages.length > 1) {
+      return { status: 'unknown', origin, transport: transport.transport, pageCount: pages.length,
+        hint: `系统默认浏览器里发现 ${pages.length} 个 ERP 页面；请保留唯一的目标 ERP 页面后再试，`
+          + '我不会替你选择其中一个' };
     }
     const errors = [];
     let sawLoading = false;
@@ -97,19 +132,27 @@ export async function probeIdentity({ origin = ERP_ORIGIN, waitMs = 30000 } = {}
     for (const page of pages) {
       let info;
       try {
-        info = await evaluate(page.webSocketDebuggerUrl, READ_ONLY_SNIPPET, { timeout: 10000 });
+        const evaluateOptions = { origin, timeoutMs: 10000, platform };
+        if (run) evaluateOptions.run = run;
+        info = await evaluate(page, READ_ONLY_SNIPPET, evaluateOptions);
       } catch (err) {
-        errors.push(`${page.url}: ${err.message}`);
+        if (isEgoControlError(err) || /^DEFAULT_BROWSER_(?:UNSUPPORTED|NOT_RUNNING|AUTOMATION_PERMISSION_REQUIRED|JAVASCRIPT_PERMISSION_REQUIRED|ORIGIN_REQUIRED|PAGE_REQUIRED)/.test(err?.code ?? '')) {
+          throw err;
+        }
+        errors.push(`${safeUrl(page.url)}: ${err.message}`);
         continue;
       }
       last = { observed: info, errors };
       // ERP 首屏很慢，没加载完不算未登录，等就是了。
       if (info.ready !== 'complete') { sawLoading = true; continue; }
 
-      const verdict = identityFromObservation(info);
+      const verdict = identityFromObservation(info, { transport: page.transport });
       // 认得出身份的页面说了算；只有所有页面都说不出身份时，才轮到登录页/异常这两档。
       if (verdict.status === 'matched') {
-        return { ...verdict, ...last, targetId: page.id };
+        const targetId = page.tabId ?? page.pageId ?? `${page.windowId}:${page.index}`;
+        return { ...verdict, ...last, transport: page.transport, origin,
+          ...(page.taskSpace === undefined ? {} : { taskSpace: page.taskSpace }),
+          targetId, tabId: page.tabId ?? null, page };
       }
       // 多个标签页时，"停在登录页"比"什么都读不出"更有指导性，优先留它。
       if (!fallback || verdict.status === 'not_logged_in') fallback = { ...verdict, origin, ...last };
@@ -118,8 +161,9 @@ export async function probeIdentity({ origin = ERP_ORIGIN, waitMs = 30000 } = {}
     if (!sawLoading) {
       if (fallback) return fallback;
       // 每个页面都求值失败。读不出来就是读不出来，不靠重试把它拖成"加载中"。
+      const where = transport.transport === 'ego' ? 'ego task space' : '系统默认浏览器';
       return { status: 'unknown', origin, observed: null, errors,
-        hint: '专用 Chrome 里的 ERP 页面全都读不出来（CDP 求值失败）；请人工看一眼这个窗口' };
+        hint: `${where}里的 ERP 页面全都读不出来；请人工看一眼这个窗口` };
     }
     await new Promise((r) => setTimeout(r, 1000));
   } while (Date.now() < deadline);

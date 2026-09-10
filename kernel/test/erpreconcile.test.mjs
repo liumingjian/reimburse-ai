@@ -2,11 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyReconciliation, readReconciliation, sumColumn, toCents,
   BUCKETS, ACTIONS } from '../src/erpreconcile.mjs';
-import { fakeSession, inputs, expressions } from './fake-session.mjs';
 
 // 钉的是外部行为：给定四项读数得到哪一格、哪一种处置；
-// 给定一串 Runtime.evaluate 返回，发出了哪些（有没有发出）浏览器动作。
-// 不断言内部怎么拆，也不断言 DOM 查询串长什么样 —— 那是 #24 管的漂移。
+// 给定只读 reader 返回，发出了哪些（有没有发出）读取动作。
+// 不断言 DOM 查询串长什么样 —— 那是 erpread 的适配层职责。
 
 // 一张对得上的单：收票 703.00，明细申请报销金额 703.00。
 const R = (o = {}) => ({
@@ -160,68 +159,92 @@ const detailGrid = (rows) => ({ ok: true, matchedGrids: 1,
     { label: '申请报销金额' }, { label: '申请付款金额' }],
   rowCount: rows.length, rows });
 
-test('readReconciliation 采四项读数，且一次 Input.* 都不发', async () => {
-  const s = fakeSession([
-    [{ label: '费用报销单-新增', mode: 'new', x: 100, y: 40 }],
-    { ok: true, id: 'aaa-FBILLNO-EDITOR', value: '', instances: 1, visibleInstances: 1 },
-    { ok: true, matchedGrids: 1, columns: [{ label: '序号' }, { label: '价税合计' }],
+const readFixture = ({ tabs, bill, receipts, detail }) => {
+  const page = { transport: 'ego', taskSpace: 1, tabId: 'fixture-tab' };
+  const calls = [];
+  return { page, calls, receipts, detail, options: {
+    readTabs: async (p) => { calls.push(['tabs', p]); return tabs; },
+    readHeader: async (p, key) => { calls.push(['header', p, key]); return bill; },
+    readGrid: async (p, column) => {
+      calls.push(['grid', p, column]);
+      return column === '价税合计' ? receipts : detail;
+    },
+  } };
+};
+
+test('readReconciliation 采四项读数，且只调用只读 reader', async () => {
+  const fixture = readFixture({
+    tabs: [{ label: '费用报销单-新增', mode: 'new', x: 100, y: 40 }],
+    bill: { ok: true, id: 'aaa-FBILLNO-EDITOR', value: '', instances: 1, visibleInstances: 1 },
+    receipts: { ok: true, matchedGrids: 1, columns: [{ label: '序号' }, { label: '价税合计' }],
       rowCount: 1, rows: [{ kind: 'data', values: { '序号': '1', '价税合计': '¥703.00' } }] },
-    detailGrid([{ kind: 'data', values: { '序号': '1', '费用金额': '¥644.95', '税额': '¥58.05',
+    detail: detailGrid([{ kind: 'data', values: { '序号': '1', '费用金额': '¥644.95', '税额': '¥58.05',
       '申请报销金额': '¥703.00', '申请付款金额': '¥703.00' } }]),
-  ]);
-  const readings = await readReconciliation(s);
+  });
+  const readings = await readReconciliation(fixture.page, fixture.options);
 
   assert.deepEqual(readings.formMode, { readable: true, value: 'new' });
   assert.deepEqual(readings.billNo, { readable: true, value: null });
   assert.deepEqual([readings.receipts.readable, readings.receipts.totalCents, readings.receipts.rowCount], [true, 70300, 1]);
   assert.deepEqual([readings.detail.readable, readings.detail.totalCents], [true, 70300]);
   assert.deepEqual(readings.payable, { readable: true, totalCents: 70300 });
+  assert.equal(readings.receiptsGrid, fixture.receipts);
+  assert.equal(readings.detailGrid, fixture.detail);
 
-  assert.equal(inputs(s).length, 0, '只读对账不该发出任何输入事件');
-  assert.ok(!expressions(s).some((e) => /if \(true\) n\.scrollIntoView/.test(e)), '对账路径上不许触发 scrollIntoView');
+  assert.deepEqual(fixture.calls.map(([kind, , value]) => [kind, value]), [
+    ['tabs', undefined], ['header', 'FBILLNO'], ['grid', '价税合计'], ['grid', '申请报销金额'],
+  ]);
 
   const v = classifyReconciliation(readings);
   assert.deepEqual([v.bucket, v.action], ['未保存·就绪待保存', '原地等待']);
 });
 
 test('页面上同时开着两个单据页签 -> 页签模式不可读，回未知', async () => {
-  const s = fakeSession([
-    [{ label: '费用报销单-新增', mode: 'new' }, { label: '费用报销单-修改', mode: 'modify' }],
-    { ok: true, value: 'FYBX2026090007' },
-    { ok: true, matchedGrids: 1, columns: [{ label: '价税合计' }], rowCount: 0, rows: [] },
-    detailGrid([]),
-  ]);
-  const readings = await readReconciliation(s);
+  const fixture = readFixture({
+    tabs: [{ label: '费用报销单-新增', mode: 'new' }, { label: '费用报销单-修改', mode: 'modify' }],
+    bill: { ok: true, value: 'FYBX2026090007' },
+    receipts: { ok: true, matchedGrids: 1, columns: [{ label: '价税合计' }], rowCount: 0, rows: [] },
+    detail: detailGrid([]),
+  });
+  const readings = await readReconciliation(fixture.page, fixture.options);
   assert.equal(readings.formMode.readable, false);
   assert.match(readings.formMode.reason, /同时开着 2 个/);
   assert.equal(classifyReconciliation(readings).bucket, '未知');
-  assert.equal(inputs(s).length, 0);
+  assert.equal(fixture.calls.filter(([kind]) => kind === 'input').length, 0);
 });
 
 test('表头字段没有恰好一个可见实例 -> 单据编号不可读', async () => {
-  const s = fakeSession([
-    [{ label: '费用报销单-修改', mode: 'modify' }],
-    { ok: false, reason: '表头字段 FBILLNO 有 2 个可见实例，认不出是哪一张单的', visibleInstances: 2 },
-    { ok: true, matchedGrids: 1, columns: [{ label: '价税合计' }], rowCount: 0, rows: [] },
-    detailGrid([]),
-  ]);
-  const readings = await readReconciliation(s);
+  const fixture = readFixture({
+    tabs: [{ label: '费用报销单-修改', mode: 'modify' }],
+    bill: { ok: false, reason: '表头字段 FBILLNO 有 2 个可见实例，认不出是哪一张单的', visibleInstances: 2 },
+    receipts: { ok: true, matchedGrids: 1, columns: [{ label: '价税合计' }], rowCount: 0, rows: [] },
+    detail: detailGrid([]),
+  });
+  const readings = await readReconciliation(fixture.page, fixture.options);
   assert.equal(readings.billNo.readable, false);
   assert.match(readings.billNo.reason, /2 个可见实例/);
   assert.equal(classifyReconciliation(readings).bucket, '未知');
 });
 
 test('明细网格还没渲染出来 -> 明细不可读，对账不去点开它', async () => {
-  const s = fakeSession([
-    [{ label: '费用报销单-新增', mode: 'new' }],
-    { ok: true, value: '' },
-    { ok: true, matchedGrids: 1, columns: [{ label: '价税合计' }], rowCount: 1,
+  const fixture = readFixture({
+    tabs: [{ label: '费用报销单-新增', mode: 'new' }],
+    bill: { ok: true, value: '' },
+    receipts: { ok: true, matchedGrids: 1, columns: [{ label: '价税合计' }], rowCount: 1,
       rows: [{ kind: 'data', values: { '价税合计': '¥703.00' } }] },
-    { ok: false, matchedGrids: 0, reason: '页面上没有哪个可见网格的表头有「申请报销金额」列' },
-  ]);
-  const readings = await readReconciliation(s);
+    detail: { ok: false, matchedGrids: 0, reason: '页面上没有哪个可见网格的表头有「申请报销金额」列' },
+  });
+  const readings = await readReconciliation(fixture.page, fixture.options);
   assert.equal(readings.detail.readable, false);
-  assert.equal(inputs(s).length, 0, '懒渲染的明细也不点开 —— 点开是页面副作用');
+  assert.equal(fixture.calls.filter(([kind]) => kind === 'input').length, 0,
+    '懒渲染的明细也不点开 —— 点开是页面副作用');
   const v = classifyReconciliation(readings);
   assert.deepEqual([v.bucket, v.action], ['未保存·已导入未写明细', '转人工']);
+});
+
+test('旧 Chrome session 不能进入 erp-reconcile 只读路径', async () => {
+  await assert.rejects(
+    () => readReconciliation({ transport: 'chrome', wsUrl: 'ws://legacy' }),
+    (error) => error.code === 'EGO_PAGE_REQUIRED',
+  );
 });

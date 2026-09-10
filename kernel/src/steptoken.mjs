@@ -62,7 +62,7 @@ export function currentSourceDir() {
  * 少了这一条，用户会为他看过的那一份内容点头，而内核收下的是另一份 ——
  * 这在可撤销的步骤上只是重问一次，在写入前那一格上是不可挽回的。
  */
-export function issueStep(sourceKey, state, sourceDir = null, meta = null, argv = null) {
+export function issueStep(sourceKey, state, sourceDir = null, meta = null, argv = null, out = null) {
   const store = read();
   const prev = store.steps[sourceKey];
   const same = prev && prev.state === state
@@ -75,7 +75,8 @@ export function issueStep(sourceKey, state, sourceDir = null, meta = null, argv 
   //
   // `argv` 是这一步摆出去的那条命令行，同样跟着每一次问话更新（哪怕凭据因为幂等没换）。
   // 守卫拿它当白名单：模型敲得动的低层命令，只有内核**刚刚**亲手发出的那一条（见 guard.mjs）。
-  const stored = { ...record, sourceDir: sourceDir ?? prev?.sourceDir ?? null, argv: argv ?? null };
+  const stored = { ...record, sourceDir: sourceDir ?? prev?.sourceDir ?? null,
+    argv: argv ?? null, out: out ?? null };
   store.steps[sourceKey] = stored;
   store.current = sourceKey;
   write(store);
@@ -90,4 +91,9 @@ export function issueStep(sourceKey, state, sourceDir = null, meta = null, argv 
 export function currentIssuedArgv() {
   const store = read();
   return store.steps[store.current]?.argv ?? null;
+}
+
+export function currentIssuedOut() {
+  const store = read();
+  return store.steps[store.current]?.out ?? null;
 }
