@@ -34,11 +34,12 @@ test('Node 太老 —— 只有人能装，内核装不了', () => {
   assert.ok(r.blockedBy[0].hint.includes(String(MIN_NODE_MAJOR)));
 });
 
-test('CDP 连不上 —— 内核自己去起 Chrome，不劳驾用户', () => {
+test('ego task space 不可用 —— 由用户恢复环境', () => {
   const r = determineState(healthy({ cdpUp: false, probe: null }));
   assert.equal(r.state, 'env_chrome_down');
-  assert.equal(r.actor, 'kernel');
-  assert.deepEqual(r.blockedBy, [], '这不是阻塞，是内核下一步就去做的事');
+  assert.equal(r.actor, 'user');
+  assert.equal(r.blockedBy[0].kind, 'ego_task_space_unavailable');
+  assert.equal(r.blockedBy[0].resolvableBy, 'user');
 });
 
 test('停在登录页 —— 只有本人能登', () => {
@@ -57,6 +58,24 @@ test('页面加载中 / 读不出又没有登录表单 / 根本没开 ERP ——
   // 读出了人，却凑不出可比的身份（account 或 tenant 缺一），同样是「说不清」。
   const incomplete = determineState(healthy({ probe: { status: 'matched', identity: { ...me, tenant: null } } }));
   assert.equal(incomplete.state, 'env_identity_unknown');
+});
+
+test('system 浏览器只读能力不可用时给出能力问题，不落到 ego 配置阻塞', () => {
+  const r = determineState(healthy({ browserMode: 'system', cdpUp: true,
+    browserReadError: { code: 'BROWSER_AUTOMATION_PERMISSION', message: 'AppleEvents 被拒绝' },
+    probe: { status: 'browser_read_unavailable', transport: 'system' } }));
+  assert.equal(r.state, 'env_identity_unknown');
+  assert.equal(r.blockedBy[0].kind, 'browser_read_unavailable');
+  assert.equal(r.blockedBy[0].code, 'BROWSER_AUTOMATION_PERMISSION');
+  assert.match(r.blockedBy[0].hint, /AppleEvents/);
+});
+
+test('system 默认路径保留默认浏览器探针的真实文案', () => {
+  const r = determineState(healthy({ browserMode: 'system', cdpUp: true,
+    probe: { status: 'no_tab', transport: 'default',
+      hint: '请在系统默认浏览器里打开 ERP 并登录' } }));
+  assert.equal(r.state, 'env_identity_unknown');
+  assert.match(r.blockedBy[0].hint, /系统默认浏览器/);
 });
 
 test('探针认得出人，但这台机器没绑过 —— 带用户去绑', () => {
@@ -158,6 +177,20 @@ test('这个目录还没有进行中的任务 —— 内核自己去盘点', () 
   const r = determineState(withMaterials({ task: null, classificationRecorded: false }));
   assert.equal(r.state, 'task_none');
   assert.equal(r.actor, 'kernel');
+});
+
+test('常驻城市没有快照时先由本人确认，ERP 写入恢复优先', () => {
+  const r = determineState(withMaterials({ homeCityRequired: true }));
+  assert.equal(r.state, 'home_city_required');
+  assert.equal(r.actor, 'user');
+  assert.equal(r.blockedBy[0].kind, 'home_city_required');
+
+  const recover = determineState(withMaterials({
+    homeCityRequired: true,
+    task: { taskId: '75dc9cbb4d', sourceLabel: '材料', workspace: '/tmp/ws',
+      currentVersionId: 'v-abc', erpWriteState: 'upload_dispatched' },
+  }));
+  assert.equal(recover.state, 'handed_off_recover', '已有 ERP marker 不能回到常驻城市或项目选择');
 });
 
 test('材料目录变过了 —— 内核自己发现盘点过期，不靠谁记得说一声', () => {
@@ -274,12 +307,15 @@ test('材料这一段全清了，才轮到费用事件', () => {
 test('判定表的先后就是状态表的先后 —— 插错位置的状态永远轮不上', () => {
   assert.equal(STATE_ORDER.at(-1), 'env_ready', '兜底永远在最后');
   const order = ['duplicate_blocked', 'events_pending', 'allocation_required', 'allocation_stale',
-    'project_unassigned', 'catalog_unverified', 'catalog_mismatch', 'ready_for_erp_write',
-    'handed_off_recover'];
+    'project_book_empty', 'project_unassigned', 'catalog_unverified', 'catalog_mismatch',
+    'preparation_package_pending', 'preparation_blocked', 'preparation_confirmation',
+    'preparation_complete'];
   for (let i = 1; i < order.length; i += 1) {
     assert.ok(STATE_ORDER.indexOf(order[i - 1]) < STATE_ORDER.indexOf(order[i]),
       `${order[i - 1]} 要排在 ${order[i]} 前面`);
   }
+  assert.ok(STATE_ORDER.indexOf('handed_off_recover') < STATE_ORDER.indexOf('inventory_stale'),
+    'ERP 写入标记必须在任何材料或项目动作之前交接恢复');
 });
 
 test('B 表的判定顺序：过期压过待办，待办压过看图', () => {
@@ -315,6 +351,29 @@ test('材料这一段的状态一个不少，且都在判定表里', () => {
     'image_awaiting_reading', 'reading_stale', 'reading_awaiting_confirmation',
     'duplicate_blocked', 'events_pending'];
   for (const s of b) assert.ok(STATE_ORDER.includes(s), `${s} 不在判定表里`);
+});
+
+test('MarkItDown 的缺失、空结果、失败和候选审核各走自己的状态', () => {
+  const cases = [
+    ['markdown_conversion_required', 'pdf_markdown_conversion_required', 'model'],
+    ['markdown_conversion_empty', 'pdf_markdown_conversion_empty', 'user'],
+    ['markdown_conversion_failed', 'pdf_markdown_conversion_failed', 'model'],
+    ['markdown_candidate_required', 'pdf_markdown_candidate_required', 'model'],
+    ['markdown_candidate_invalid', 'pdf_markdown_candidate_required', 'model'],
+    ['markdown_field_unresolved', 'pdf_markdown_candidate_review', 'model'],
+    ['markdown_segment_unresolved', 'pdf_markdown_candidate_review', 'model'],
+  ];
+  for (const [kind, expected, actor] of cases) {
+    const r = determineState(withMaterials({ openItems: [item(kind)] }));
+    assert.equal(r.state, expected, `${kind} 不应被前面的 MarkItDown 状态吞掉`);
+    assert.equal(r.actor, actor, `${kind} 的解决者`);
+    assert.equal(r.blockedBy[0].kind, kind);
+  }
+
+  const both = determineState(withMaterials({ openItems: [
+    item('markdown_conversion_required'), item('markdown_conversion_empty'),
+  ] }));
+  assert.equal(both.state, 'pdf_markdown_conversion_required', '仍缺 artifact 时先生成 artifact');
 });
 
 // —— B 表后半段：事件、分摊、项目、核对、写入前确认 ——
@@ -383,6 +442,29 @@ test('发票或盘点变过 —— 是 allocation_stale，不是又问一遍', (
   assert.match(r.blockedBy[0].hint, /变过了/, '用户有权知道这次问他不是因为他没答过');
 });
 
+test('分类明细完整但还没确认时，项目选择必须停住', () => {
+  const r = determineState(withErp({
+    selectionApplied: false,
+    classifiedDetailComplete: true,
+    classifiedDetailConfirmed: false,
+    classifiedPreview: { lines: [{ lineId: 'ev-01' }] },
+  }));
+  assert.equal(r.state, 'classified_detail_confirmation');
+  assert.equal(r.actor, 'user');
+  assert.equal(r.blockedBy[0].kind, 'classified_detail_confirmation_required');
+});
+
+test('证据歧义开放项保留候选 references，供后续表格展示', () => {
+  const references = [
+    { materialId: 'm-ref-1', fileName: '行程单一.pdf' },
+    { materialId: 'm-ref-2', fileName: '行程单二.pdf' },
+  ];
+  const r = determineState(withMaterials({
+    openItems: [item('evidence_ambiguous', { references })],
+  }));
+  assert.deepEqual(r.blockedBy[0].references, references);
+});
+
 test('还没有项目号 —— 逐条报出来，一条明细一条待办', () => {
   const two = [
     { lineId: 'ev-01', voucherMaterialId: 'm-1', date: '2026-07-09', totalAmount: '26.69', project: null },
@@ -398,6 +480,13 @@ test('还没有项目号 —— 逐条报出来，一条明细一条待办', () 
   const none = determineState(withErp({ selectionApplied: false }));
   assert.equal(none.state, 'project_unassigned');
   assert.equal(none.blockedBy.length, 1);
+});
+
+test('个人项目簿为空时先维护项目簿，不打开空的任务选择', () => {
+  const empty = determineState(withErp({ selectionApplied: false, projectBook: { empty: true } }));
+  assert.equal(empty.state, 'project_book_empty');
+  assert.equal(empty.blockedBy[0].kind, 'project_book_empty');
+  assert.match(empty.blockedBy[0].hint, /维护/);
 });
 
 test('项目还没在 ERP 里核对过 —— 内核自己去查，不劳驾用户', () => {
@@ -418,11 +507,21 @@ test('ERP 里查无此项目 —— 硬停，且不会再去重复核对', () =>
   assert.notEqual(r.state, 'catalog_unverified');
 });
 
-test('以上全绿才轮到写入前确认，而且 actor 是人', () => {
-  const r = determineState(withErp());
-  assert.equal(r.state, 'ready_for_erp_write');
+test('以上全绿才轮到准备确认，确认后停在手动 QA', () => {
+  const preparation = { digest: 'preparation-digest-1', ready: true, problems: [] };
+  const r = determineState(withErp({
+    preparation, preparationPackageCurrent: true, preparationConfirmed: false,
+  }));
+  assert.equal(r.state, 'preparation_confirmation');
   assert.equal(r.actor, 'user');
-  assert.deepEqual(r.blockedBy, []);
+  assert.equal(r.blockedBy[0].kind, 'preparation_confirmation_required');
+
+  const done = determineState(withErp({
+    preparation, preparationPackageCurrent: true, preparationConfirmed: true,
+  }));
+  assert.equal(done.state, 'preparation_complete');
+  assert.equal(done.actor, null);
+  assert.deepEqual(done.blockedBy, []);
 });
 
 test('动过 ERP 的任务不再要一次点头，改为交接给 baox-recover', () => {
@@ -432,6 +531,26 @@ test('动过 ERP 的任务不再要一次点头，改为交接给 baox-recover',
   }));
   assert.equal(r.state, 'handed_off_recover',
     '一份已经发出去的写入不能再要一次点头 —— 那次点头看起来像是"同意再写一遍"');
+});
+
+test('未知的 ERP 写入标记也必须保守交接恢复', () => {
+  const r = determineState(withErp({
+    task: { taskId: '75dc9cbb4d', sourceLabel: '材料', workspace: '/tmp/ws',
+      currentVersionId: 'v-abc', erpWriteState: 'upload_dispatched' },
+  }));
+  assert.equal(r.state, 'handed_off_recover');
+});
+
+test('恢复凭据通过也不能把旧任务变成可写 ERP 任务', () => {
+  const r = determineState(withMaterials({
+    task: { taskId: '75dc9cbb4d', sourceLabel: '材料', workspace: '/tmp/ws',
+      currentVersionId: 'v-abc', erpWriteState: 'upload_dispatched' },
+    homeCityRequired: false,
+    events: { versionId: 'v-abc' }, eventsRecorded: true,
+    selectionApplied: true, projectBook: { empty: false }, catalogFresh: true,
+    catalogProblems: [], recovery: { valid: true, status: 'accepted' },
+  }));
+  assert.equal(r.state, 'recovery_write_blocked');
 });
 
 test('后半段的判定顺序：事件压过分摊，分摊压过项目，项目压过核对', () => {

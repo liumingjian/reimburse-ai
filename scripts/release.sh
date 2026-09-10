@@ -33,5 +33,5 @@ echo "打好了：release/${name}.zip"
 ls -lh "release/${name}.zip" | awk '{print "  大小 " $5}'
 shasum -a 256 "release/${name}.zip" 2>/dev/null || sha256sum "release/${name}.zip"
 echo
-echo "发给同事时带上一句：解压后把四个 Skill 目录一起拷进 <项目>/.claude/skills/，"
+echo "发给同事时带上一句：解压后把四个 Skill 目录一起安装；Codex 用 <项目>/.agents/skills/，Claude Code 用 <项目>/.claude/skills/，"
 echo "其余照 INSTALL.md 走。"

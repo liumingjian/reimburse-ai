@@ -13,26 +13,18 @@
  *     事后要答得出"他当时点头的是哪一版"，答不出就等于没有点过头。
  */
 import fs from 'node:fs';
-import crypto from 'node:crypto';
 import path from 'node:path';
 import { taskDir } from './workspace.mjs';
+import { erpWritePreviewDigest } from './erp-write-preview.mjs';
 
 const approvalFile = (task) => path.join(taskDir(task), 'write-approval.json');
 
 /**
- * 待写内容的指纹。覆盖用户在那张表上看得见的每一样东西 ——
- * 看得见却没进指纹的字段，等于用户没为它点过头。
+ * Canonical fingerprint for the exact preview shown before the irreversible
+ * write. The builder owns the field shape so approval and readback cannot
+ * silently drift apart.
  */
-export function writePreviewDigest({ lines, homeCity, purpose, versionId }) {
-  const shape = {
-    versionId: versionId ?? null,
-    homeCity: homeCity ?? null,
-    purpose: purpose ?? null,
-    lines: (lines ?? []).map((l) => [l.lineId, l.voucherMaterialId, l.maskedNumber, l.date, l.city,
-      l.netAmount, l.taxAmount, l.totalAmount, l.category, l.expenseItemCode, l.project]),
-  };
-  return crypto.createHash('sha256').update(JSON.stringify(shape)).digest('hex').slice(0, 32);
-}
+export const writePreviewDigest = erpWritePreviewDigest;
 
 export function recordWriteApproval(task, preview) {
   const record = {
@@ -40,6 +32,10 @@ export function recordWriteApproval(task, preview) {
     versionId: preview.versionId ?? null,
     lineCount: preview.lines?.length ?? 0,
     totalCents: (preview.lines ?? []).reduce((a, l) => a + Math.round(Number(l.totalAmount ?? 0) * 100), 0),
+    // The digest identifies the approval, while this immutable copy records what
+    // the user actually approved. A digest without its covered content is not a
+    // sufficient confirmation record.
+    preview: JSON.parse(JSON.stringify(preview)),
     approvedAt: new Date().toISOString(),
     approvedVia: 'terminal',
   };
@@ -57,4 +53,6 @@ export function loadWriteApproval(task) {
 
 /** 这份点头是不是正对着现在要写的这份内容。差一个字段就不是。 */
 export const approvalCovers = (approval, preview) =>
-  !!approval && approval.digest === writePreviewDigest(preview);
+  !!approval && !!approval.preview
+  && approval.digest === writePreviewDigest(preview)
+  && approval.digest === writePreviewDigest(approval.preview);

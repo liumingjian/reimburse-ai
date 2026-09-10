@@ -1,4 +1,3 @@
-import { fixtureMaterial } from './fixture-materials.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,27 +12,43 @@ import path from 'node:path';
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-alloc-'));
 process.env.BAOX_HOME = home;
 
-const { parseMaterial } = await import('../src/parse.mjs');
 const { buildEvents, ALLOCATION_KINDS } = await import('../src/events.mjs');
 const { allocationRound, receiveAllocationAnswers, givenUpOpenItems, loadDraft, MAX_QUESTIONS }
   = await import('../src/allocate.mjs');
 const { createTask } = await import('../src/workspace.mjs');
 
-const AA_INV = '交通/【AA出行-69.19元-3个行程】高德打车电子发票.pdf';
-const AA_ITI = '交通/【AA出行-69.19元-3个行程】高德打车电子行程单.pdf';
+const SEGMENTS = [
+  { date: '2026-07-09', city: '北京市', route: '第一程', amount: '26.69' },
+  { date: '2026-07-10', city: '北京市', route: '第二程', amount: '20.85' },
+  { date: '2026-07-11', city: '北京市', route: '第三程', amount: '21.65' },
+];
 
-const load = (id, rel) => ({
-  materialId: id, fileName: path.basename(rel), contentHash: `hash-${id}`,
-  ...parseMaterial(fixtureMaterial(rel), 'pdf'),
+const voucher = () => ({
+  materialId: 'm-inv', fileName: '合并交通发票.pdf', contentHash: 'hash-m-inv',
+  parseStatus: 'parsed', kind: 'passenger_transport', kindLabel: '旅客运输服务电子普通发票',
+  role: 'primary_voucher',
+  fields: {
+    invoiceNumber: '12345678901234567890',
+    netAmount: { text: '67.17', cents: 6717 },
+    taxAmount: { text: '2.02', cents: 202 },
+    totalAmount: { text: '69.19', cents: 6919 },
+  },
+  candidates: [], evidence: {},
 });
 
-/** 行程单逐段之和与票面对不上的那张合并发票 —— 只有这种才会问用户。 */
+const itinerary = (rows) => ({
+  materialId: 'm-iti', fileName: '三段行程单.pdf', contentHash: 'hash-m-iti',
+  parseStatus: 'parsed', kind: 'ride_itinerary', kindLabel: '网约车行程单', role: 'reference',
+  fields: {}, evidence: {}, candidates: [
+    { field: 'itineraryTotal', value: '69.19', evidence: null },
+    { field: 'segments', value: rows, evidence: null },
+  ],
+});
+
+/** 行程单逐段之和与票面对不上的合并发票 —— 只有这种才会问用户。 */
 function skewed(rows = null) {
-  const c = { versionId: 'v-test', duplicates: [],
-    results: [load('m-inv', AA_INV), load('m-iti', AA_ITI)] };
-  const segs = c.results[1].candidates.find((x) => x.field === 'segments');
-  segs.value = rows ?? segs.value.map((s, i) => (i === 0 ? { ...s, amount: '26.70' } : s));
-  return c;
+  const segments = rows ?? SEGMENTS.map((s, i) => (i === 0 ? { ...s, amount: '26.70' } : s));
+  return { versionId: 'v-test', duplicates: [], results: [voucher(), itinerary(segments)] };
 }
 
 const task = () => createTask(fs.mkdtempSync(path.join(os.tmpdir(), 'baox-src-')));

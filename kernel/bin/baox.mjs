@@ -2,45 +2,91 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
-import { paths, ensureDir, migrateOnStartup, ensureSchemaVersionFile } from '../src/paths.mjs';
-import * as chrome from '../src/chrome.mjs';
-import { probeIdentity, ERP_ORIGIN } from '../src/probe.mjs';
+import { paths, migrateOnStartup, ensureSchemaVersionFile } from '../src/paths.mjs';
+import { probeIdentity, ERP_ENTRY } from '../src/probe.mjs';
+import { egoRequiredError, openEgoTab } from '../src/ego.mjs';
+import { browserMode, EGO_BROWSER, SYSTEM_BROWSER, openDefaultBrowser } from '../src/browser-open.mjs';
 // 本地页面只剩两处：重新绑定身份，和浏览完整项目目录。读数确认在终端上
 // （`confirm_table`），逐段分摊在终端上（`ask_user`），通用单选页整个下线了。
-import { serveTaskSelection, serveIdentityConfirmation } from '../src/serve.mjs';
+import { serveTaskSelection, serveProjectBookPage, serveIdentityConfirmation } from '../src/serve.mjs';
 import { buildWorkOrder, ingestReadings, pendingConfirmations,
   READING_VERSION, DOC_TYPES } from '../src/vision.mjs';
 import { applyTerminalVerdict } from '../src/confirm.mjs';
-import { takeInventory, intakeOpenItems } from '../src/inventory.mjs';
-import { classifyInventory, classifyOpenItems, summarize } from '../src/classify.mjs';
+import { takeInventory, takeInventoryForTask, intakeOpenItems } from '../src/inventory.mjs';
+import { normalizeMaterialScope } from '../src/material-scope.mjs';
+import { classifyInventory, classifyOpenItems, summarize, markdownMaterialPaths,
+  validateMarkdownSidecars } from '../src/classify.mjs';
+import { prepare as prepareMarkdown, load as loadMarkdownArtifact, pendingWorkOrder,
+  ingest as ingestMarkdown, PDF_MARKDOWN_SCHEMA_PATH } from '../src/pdf-markdown.mjs';
 import { buildEvents, eventOpenItems, reconcile } from '../src/events.mjs';
-import { loadSelection, submitSelection, applySelection, linesDigest } from '../src/selection.mjs';
+import { loadSelection, submitSelection, applySelection, linesDigest, sameBasis, isBookSelection } from '../src/selection.mjs';
 import { CATEGORIES } from '../src/categories.mjs';
 import { findLiveTaskForSource, createTask, recordInventory, recordClassification,
   recordEvents, recordInvoiceSightings, abandonTask, loadIndex,
   sourceKeyOf, taskDir , recordCatalogVerification, loadCatalogVerification,
-  recordErpAttempt, recordErpWrite, liveTasks, archiveMigratedTasks } from '../src/workspace.mjs';
+  recordErpAttempt, recordErpWrite, liveTasks, archiveMigratedTasks,
+  recoveryCredentialPath, recordMaterialScope } from '../src/workspace.mjs';
 import { crossTaskDuplicates, historyOpenItems, holdsInvoices } from '../src/history.mjs';
 import { authorizedPage, verifyExpenseItems, verifyProject, PROJECT_FORM } from '../src/erpcatalog.mjs';
 import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerField,
   writeHeader, writeCell, selectOption, cellTarget, cellMatches, leaveEdit } from '../src/erpform.mjs';
+import { readErpForm } from '../src/erpread.mjs';
 import { readReconciliation, classifyReconciliation, attemptRecord } from '../src/erpreconcile.mjs';
-import { gateIdentity, readBinding, writeBinding, bindingVerdict } from '../src/binding.mjs';
+import { gateIdentity, readBinding, writeBinding, bindingVerdict, autoBindIdentity } from '../src/binding.mjs';
 import { observeEnvironment, observeTask } from '../src/observe.mjs';
 import { nextResponse } from '../src/next.mjs';
 import { ingestReread, autoSettleAgreed } from '../src/dispute.mjs';
-import { SCHEMA_VERSION as NEXT_SCHEMA_VERSION } from '../src/state.mjs';
+import { determineState, SCHEMA_VERSION as NEXT_SCHEMA_VERSION } from '../src/state.mjs';
 import { currentSourceKey, currentSourceDir, currentIssuedArgv } from '../src/steptoken.mjs';
 import { guardVerdict, refusalPayload, recordRefusal } from '../src/guard.mjs';
 import { resetHome } from '../src/reset.mjs';
+import { readBook, bookPath, selectableProjects, annotateProjects, noCandidatesNote, sameIdentity,
+  PROJECT_BOOK_EMPTY, localToday } from '../src/projects.mjs';
+import { classifiedDetailDigest } from '../src/classified-detail.mjs';
+import { generatePreparation } from '../src/preparation.mjs';
+import { intakeProject } from '../src/projectintake.mjs';
+import { removeProject, purgeInvalidProjects, recheckAll } from '../src/projectmaintain.mjs';
+import { hasRecoveryMarker, createLocalPreparationRecovery,
+  validateLocalPreparationRecovery } from '../src/recovery-flow.mjs';
+import { materializeStepArtifacts } from '../src/step-artifacts.mjs';
+import { installRuntimeDependencies, inspectRuntimeDependencies } from '../src/runtime-dependencies.mjs';
 
 // 退出码是给 Skill 用的确定性信号：
 //   0 完成   1 内核出错   2 硬阻塞（内核拒绝继续，任何"确认继续"都不能绕过）
 const OK = 0, ERR = 1, BLOCKED = 2;
 
+function egoBlocked(command, note) {
+  const error = egoRequiredError(command);
+  out({ command, status: 'blocked', code: error.code, error: error.message, note }, BLOCKED);
+}
+
+async function authorizedReadPage(command) {
+  try {
+    return await authorizedPage();
+  } catch (error) {
+    if (error?.code === 'EGO_TASK_SPACE_REQUIRED') {
+      out({ command, status: 'blocked', code: error.code, error: error.message,
+        note: '先在 ego-browser 中创建或确认持久 task space，记录数字 id，再以 BAOX_EGO_TASK_SPACE=<id> 重试' }, BLOCKED);
+    }
+    throw error;
+  }
+}
+
+const recoveryBlocked = (task, result, command = null) => ({
+  ...(command ? { command } : {}),
+  ...recoveryBlock(task, command),
+  recovery: {
+    status: result?.status ?? 'credential_invalid',
+    reasons: result?.reasons ?? ['本地恢复 fresh 只读核对没有通过'],
+    credentialPath: result?.credentialPath ?? recoveryCredentialPath(task),
+  },
+});
+
 // 数据目录搬家的结果。搬完要在这条命令的输出里说一句迁到哪了 —— 用户的报销记录
 // 换了地方而没人告诉他，比不搬还糟。
 let migrated = null;
+
+const [, , cmd] = process.argv;
 
 const out = (obj, code = OK) => {
   process.stdout.write(JSON.stringify(migrated ? { ...obj, migrated } : obj, null, 2) + '\n');
@@ -53,7 +99,7 @@ const out = (obj, code = OK) => {
 // 搬不动就硬停：继续跑等于在一个空的新目录里从头开始，而用户的任务还在旧目录里 ——
 // 那是一种看起来正常、实则丢了全部历史的失败，比直接停住坏得多。
 try {
-  migrated = process.argv[2] === 'reset' ? null : migrateOnStartup();
+  migrated = cmd === 'reset' || cmd === 'doctor' ? null : migrateOnStartup();
   if (migrated) {
     // 搬完立刻把 0.9.x 的在途任务标记成存档，理由见 workspace.mjs 的 archiveMigratedTasks。
     // 就在这一次说清楚：那些任务不会接着往下走，同一个目录下次是从头开始的新任务。
@@ -85,14 +131,106 @@ function arg(name, fallback = null) {
 const has = (name) => process.argv.includes(`--${name}`);
 
 const yuan = (c) => (c === null || c === undefined ? null : (c / 100).toFixed(2));
+const hasErpWriteState = (task) => task?.erpWriteState !== null
+  && task?.erpWriteState !== undefined
+  && String(task.erpWriteState).trim() !== '';
+
+const recoveryBlock = (task, command = null) => ({ ...(command ? { command } : {}),
+  status: 'erp_write_in_progress',
+  task: { taskId: task.taskId, erpWriteState: task.erpWriteState, workspace: taskDir(task) },
+  note: '这个任务已经动过 ERP，不能回到项目选择或重建账本；按当前恢复步骤继续处理' });
+
+const writeDerived = (file, value) => {
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const temporary = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(temporary, value, { mode: 0o600 });
+  fs.renameSync(temporary, file);
+};
+
+async function markdownTask(dir, command) {
+  const existing = findLiveTaskForSource(sourceKeyOf(dir));
+  if (hasErpWriteState(existing)) {
+    const recovery = await validateLocalPreparationRecovery(dir);
+    if (!recovery.ok) out({ command, ...recoveryBlocked(existing, recovery),
+      note: '本地恢复 fresh 只读核对没有通过，不能更新候选材料' }, BLOCKED);
+  }
+  const inventory = await takeInventoryForTask(dir, existing);
+  const task = existing ?? createTask(dir);
+  const rec = recordInventory(task, inventory);
+  const intakeItems = intakeOpenItems(inventory);
+  if (intakeItems.some((item) => item.blocking)) {
+    out({ command, stage: 'intake', task: { taskId: rec.task.taskId, workspace: taskDir(rec.task) },
+      openItems: intakeItems, readyForNextStep: false }, BLOCKED);
+  }
+  return { task: rec.task, inventory };
+}
+
+async function convertMarkdownMaterials(dir, task, inventory) {
+  const materials = [];
+  for (const material of inventory.materials.filter((item) => item.format === 'pdf'
+    && item.disposition === 'pending_classification')) {
+    const paths = markdownMaterialPaths(task, inventory.versionId, material.materialId);
+    const sourcePath = path.join(path.resolve(dir), material.relPath);
+    let artifact;
+    let sidecarsNeedRefresh = false;
+    try {
+      artifact = loadMarkdownArtifact(paths.artifactPath, { sourcePath, materialId: material.materialId });
+      sidecarsNeedRefresh = artifact.status === 'converted'
+        && !validateMarkdownSidecars(artifact, paths).ok;
+    } catch {
+      const prepared = await prepareMarkdown({ sourcePath, materialId: material.materialId,
+        outputPath: paths.artifactPath, overwrite: true });
+      artifact = prepared.artifact;
+    }
+    if (artifact.status !== 'converted' || sidecarsNeedRefresh) {
+      if (sidecarsNeedRefresh) {
+        fs.rmSync(paths.candidatePath, { force: true });
+        fs.rmSync(paths.candidateRecordPath, { force: true });
+        fs.rmSync(paths.reextractPath, { force: true });
+      }
+      const prepared = await prepareMarkdown({ sourcePath, materialId: material.materialId,
+        outputPath: paths.artifactPath, overwrite: true });
+      artifact = prepared.artifact;
+    }
+    if (artifact.status === 'converted') {
+      writeDerived(paths.markdownPath, artifact.markdown);
+      writeDerived(paths.numberedMarkdownPath, artifact.numberedMarkdown);
+      const work = pendingWorkOrder(artifact);
+      if (work.status === 'ready') writeDerived(paths.templatePath, `${JSON.stringify(work.candidateTemplate, null, 2)}\n`);
+    }
+    materials.push({
+      materialId: material.materialId,
+      fileName: material.fileName,
+      contentHash: material.contentHash,
+      status: artifact.status,
+      error: artifact.error ?? null,
+      paths,
+      markdownHash: artifact.source?.markdownHash ?? null,
+      numberedMarkdownHash: artifact.source?.numberedMarkdownHash ?? null,
+    });
+  }
+  return materials;
+}
 
 /**
  * 盘点 -> 分流。后面每一层都要站在一次确定的分流结果上，所以统一走这里。
  * 任一层还有硬阻塞就把阻塞原样带回去，不往下算。
  */
-async function upToClassification(dir) {
-  const inventory = await takeInventory(dir);
+async function upToClassification(dir, { allowRecovery = false, mode = 'markdown' } = {}) {
   const existing = findLiveTaskForSource(sourceKeyOf(dir));
+  let recovery = null;
+  if (hasErpWriteState(existing)) {
+    if (!allowRecovery) {
+      return { task: existing, blocked: { stage: 'erp_recovery', ...recoveryBlock(existing),
+        readyForNextStep: false } };
+    }
+    recovery = await validateLocalPreparationRecovery(dir);
+    if (!recovery.ok) {
+      return { task: existing, blocked: { stage: 'erp_recovery',
+        ...recoveryBlocked(existing, recovery), readyForNextStep: false } };
+    }
+  }
+  const inventory = await takeInventoryForTask(dir, existing);
   const task = existing ?? createTask(dir);
   const rec = recordInventory(task, inventory);
 
@@ -102,7 +240,7 @@ async function upToClassification(dir) {
       task: { taskId: rec.task.taskId, workspace: taskDir(rec.task) },
       note: '材料盘点还有未清的待确认项，先处理它们' } };
   }
-  const classification = classifyInventory(dir, inventory, rec.task);
+  const classification = classifyInventory(dir, inventory, rec.task, { mode });
   recordClassification(rec.task, classification);
   const classifyItems = classifyOpenItems(classification);
   if (classifyItems.some((i) => i.blocking)) {
@@ -128,8 +266,8 @@ async function upToClassification(dir) {
  * 盘点 -> 分流 -> 费用事件。任务选择这一层必须站在一批**已经确认干净**的候选明细上：
  * 材料整理还有硬阻塞就不能打开任务选择页（设计共识第四节）。
  */
-async function upToEvents(dir) {
-  const up = await upToClassification(dir);
+async function upToEvents(dir, options = {}) {
+  const up = await upToClassification(dir, options);
   if (up.blocked) return up;
   const built = buildEvents(up.classification, up.task);
   recordEvents(up.task, built);
@@ -139,10 +277,8 @@ async function upToEvents(dir) {
       task: { taskId: up.task.taskId, workspace: taskDir(up.task) },
       note: '费用事件这一层还有硬阻塞，材料整理没确认完，不能进入任务选择' } };
   }
-  return { ...up, built, blocked: null };
+  return { ...up, built, recovery: up.recovery ?? null, blocked: null };
 }
-
-const [, , cmd] = process.argv;
 
 // —— 模型不拼命令 ——
 // 模型敲得动的只有两样：`next`，和内核**刚刚**放进 `step.argv` 的那一条命令行。
@@ -164,7 +300,7 @@ const [, , cmd] = process.argv;
 // 数据格式版本落盘。没有这个文件的目录（0.9.x 迁过来的，或者刚建的）就是这一版写的，
 // 补一份 schema.json；已经有了就一个字都不动 —— 里面写着 2 的目录是未来某一版的，
 // 把它改回 1 等于让 schema_too_new 这道闸永远不触发。
-if (cmd !== 'reset') ensureSchemaVersionFile();
+if (cmd !== 'reset' && cmd !== 'doctor') ensureSchemaVersionFile();
 
 try {
   switch (cmd) {
@@ -174,23 +310,88 @@ try {
     }
 
     case 'doctor': {
+      // 体检只读取当前环境，不启动浏览器、不连接 CDP，也不创建数据文件。
+      const mode = browserMode();
+      let environment;
+      try {
+        environment = await observeEnvironment();
+      } catch (error) {
+        environment = {
+          browserMode: mode,
+          browserReadError: { code: error.code ?? 'BROWSER_READ_UNAVAILABLE', message: error.message },
+          probe: { status: 'browser_read_unavailable', code: error.code ?? null, hint: error.message },
+        };
+      }
       const [major] = process.versions.node.split('.').map(Number);
+      const readUnavailable = !!environment.browserReadError
+        || environment.probe?.status === 'browser_read_unavailable';
       const checks = {
         node: { value: process.versions.node, ok: major >= 21,
-          hint: major >= 21 ? null : '内核用 Node 内建的全局 WebSocket 走 CDP，需要 Node 21 及以上' },
-        chrome: { value: chrome.findChrome(), ok: !!chrome.findChrome(), hint: chrome.findChrome() ? null : '未找到 Chrome' },
-        dataDir: { value: paths.root, ok: true },
-        cdp: { value: chrome.CDP_PORT, ok: !!(await chrome.version()), hint: '专用 Chrome 未在运行；跑 baox chrome-up' },
+          hint: major >= 21 ? null : '内核需要 Node 21 及以上' },
+        browser: { value: mode, ok: true,
+          hint: mode === EGO_BROWSER
+            ? '仅显式 BAOX_BROWSER=ego 时使用 ego QA transport'
+            : '使用操作系统默认浏览器，不启动专用 Chrome' },
+        browserRead: { value: environment.probe?.status ?? null, ok: !readUnavailable,
+          code: environment.browserReadError?.code ?? environment.probe?.code ?? null,
+          hint: environment.browserReadError?.message ?? environment.probe?.hint ?? null },
+        dataDir: { value: paths.root, ok: fs.existsSync(paths.root) },
       };
-      ensureDir(paths.root);
-      out({ command: 'doctor', version: VERSION, platform: process.platform, checks,
-        ready: checks.node.ok && checks.chrome.ok }, checks.node.ok && checks.chrome.ok ? OK : ERR);
+      const ready = checks.node.ok && checks.browser.ok && checks.browserRead.ok;
+      out({ command: 'doctor', version: VERSION, platform: process.platform, browserMode: mode, checks,
+        probe: environment.probe ?? null, ready }, ready ? OK : ERR);
+    }
+
+    case 'runtime-setup': {
+      if (!has('yes')) {
+        out({ command: 'runtime-setup', status: 'confirmation_required',
+          speak: '运行时安装必须由 baox next 发出 --yes 的受管步骤触发。' }, BLOCKED);
+      }
+      const options = {
+        home: process.env.BAOX_HOME ?? paths.root,
+        pdfRuntimeDir: arg('pdf-runtime'),
+        markitdownInstallDir: arg('markitdown-install'),
+        ocrRuntimeDir: arg('ocr-runtime'),
+        ocrInstallerPath: arg('ocr-installer'),
+        ocrRequirementsPath: arg('ocr-requirements'),
+      };
+      try {
+        const installed = installRuntimeDependencies(options);
+        out({ command: 'runtime-setup', status: 'installed', ready: installed.ready,
+          runtimes: installed.runtimes, missing: installed.missing }, OK);
+      } catch (error) {
+        let checked = null;
+        try { checked = inspectRuntimeDependencies(options); } catch { /* keep install error */ }
+        out({ command: 'runtime-setup', status: 'blocked', ready: false,
+          code: error.code ?? 'RUNTIME_SETUP_FAILED', error: error.message,
+          runtimes: checked?.runtimes ?? null, missing: checked?.missing ?? null }, BLOCKED);
+      }
+    }
+
+    case 'browser-open': {
+      const url = arg('url', ERP_ENTRY);
+      const mode = browserMode();
+      if (mode === EGO_BROWSER) {
+        try {
+          const page = await openEgoTab(url);
+          out({ command: 'browser-open', browserMode: mode, transport: 'ego', url,
+            status: 'opened', page }, OK);
+        } catch (error) {
+          if (error?.code === 'EGO_TASK_SPACE_REQUIRED') {
+            out({ command: 'browser-open', browserMode: mode, status: 'blocked',
+              code: error.code, error: error.message,
+              note: 'QA 模式需要 BAOX_EGO_TASK_SPACE；正式模式请清除 BAOX_BROWSER=ego' }, BLOCKED);
+          }
+          throw error;
+        }
+      }
+      const opened = await openDefaultBrowser(url);
+      out({ command: 'browser-open', browserMode: SYSTEM_BROWSER, transport: 'system', url,
+        status: opened === false ? 'skipped' : 'opened', opened }, OK);
     }
 
     case 'chrome-up': {
-      const info = await chrome.launch({ openUrl: arg('url', `${ERP_ORIGIN}/k3cloud/html5/index.aspx`) });
-      out({ command: 'chrome-up', ...info, profile: paths.chromeProfile,
-        note: '这是 baox 专用的 Chrome 实例和独立 profile，和你日常那个 Chrome 互不影响；请在这个窗口里用你本人的账号登录 ERP' });
+      egoBlocked('chrome-up', 'chrome-up 已停用；请配置 BAOX_EGO_TASK_SPACE，并在 ego-browser task space 中打开 ERP。');
     }
 
     case 'probe': {
@@ -200,13 +401,174 @@ try {
       out({ command: 'probe', ...r }, r.status === 'matched' ? OK : BLOCKED);
     }
 
+    case 'projects': {
+      // 只读诊断：个人项目簿按当前 tenant/account 隔离，不从任何全局旧文件迁入。
+      const gate = await gateIdentity();
+      if (gate.status !== 'matched') {
+        out({ command: 'projects', ...gate,
+          note: '身份没核对通过，不读取或修改个人项目簿' }, BLOCKED);
+      }
+      const identity = gate.identity;
+      const book = readBook(identity);
+      const projects = annotateProjects(book.projects);
+      out({ command: 'projects', status: 'ready', identity,
+        bookPath: bookPath(identity), projectCount: projects.length,
+        selectableCount: projects.filter((p) => p.selectable).length, projects });
+    }
+
+    case 'projects-page': {
+      // 这是 next 发出的用户维护页。页面常驻期间每一个动作都重新查身份，
+      // 登录换人时拒绝写入原身份的项目簿。
+      const initial = await gateIdentity();
+      if (initial.status !== 'matched') {
+        out({ command: 'projects-page', ...initial,
+          note: '身份没核对通过，不打开个人项目簿维护页' }, BLOCKED);
+      }
+      const identity = initial.identity;
+      const currentSession = async () => {
+        const current = await gateIdentity();
+        if (current.status !== 'matched') return { ok: false, current };
+        if (!sameIdentity(identity, current.identity)) {
+          return { ok: false, current: { ...current, status: 'identity_mismatch',
+            note: '维护页打开后 ERP 登录身份发生变化，个人项目簿没有改动' } };
+        }
+        return { ok: true, current };
+      };
+      const sessionForCatalog = async () => {
+        const checked = await currentSession();
+        if (!checked.ok) return { ok: false, ...checked.current };
+        return { ok: true, probe: checked.current, page: checked.current.page };
+      };
+      const result = await serveProjectBookPage({
+        book: () => readBook(identity),
+        today: localToday(),
+      }, {
+        timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
+        onReady: (u) => process.stderr.write(`已在浏览器里打开页面（维护个人项目簿）；没弹出就手动打开：${u}\n`),
+        onIntake: async (number, expiresOn) => {
+          const checked = await currentSession();
+          if (!checked.ok) return checked.current;
+          return intakeProject(number, expiresOn ?? null, {
+            identity,
+            gate: sessionForCatalog,
+          });
+        },
+        onRemove: async (number) => {
+          const checked = await currentSession();
+          if (!checked.ok) return checked.current;
+          return removeProject(number, identity);
+        },
+        onPurge: async () => {
+          const checked = await currentSession();
+          if (!checked.ok) return checked.current;
+          return purgeInvalidProjects(identity);
+        },
+        onRecheck: async () => {
+          const checked = await currentSession();
+          if (!checked.ok) return checked.current;
+          return recheckAll({ identity, gate: sessionForCatalog });
+        },
+        onDone: async () => {
+          const checked = await currentSession();
+          return checked.ok ? { status: 'done', book: readBook(identity) } : checked.current;
+        },
+      });
+      out({ command: 'projects-page', ...result, identity,
+        bookPath: bookPath(identity), book: readBook(identity) },
+      result.status === 'done' ? OK : ERR);
+    }
+
+    case 'scope-materials': {
+      // 用户明确授权后才登记材料范围；这里不建任务、不盘点落账、不改 marker 或 version。
+      const dir = arg('dir');
+      const file = arg('file');
+      if (!dir || !file) out({ command: 'scope-materials',
+        error: '缺少 --dir <材料目录> 或 --file <scope json>' }, ERR);
+      const task = findLiveTaskForSource(sourceKeyOf(dir));
+      if (!task) out({ command: 'scope-materials', status: 'task_missing',
+        note: '材料目录没有进行中的任务；scope 入口不会创建新任务' }, BLOCKED);
+
+      let scope;
+      try {
+        scope = JSON.parse(fs.readFileSync(file, 'utf8'));
+      } catch (error) {
+        out({ command: 'scope-materials', status: 'scope_file_invalid',
+          reasons: [`scope 文件不可读或不是 JSON：${error.message}`] }, BLOCKED);
+      }
+
+      // 先用普通 inventory 验证用户明确点名的每个文件仍是当前字节；
+      // 未列入清单的新增文件照常进入 version，绝不因为目录名而隐藏。
+      const fullInventory = await takeInventory(dir);
+      const byPath = new Map(fullInventory.materials.map((material) => [material.relPath, material]));
+      let normalized;
+      try {
+        normalized = normalizeMaterialScope(scope);
+        const mismatches = normalized.exclusions.map((expected) => {
+          const actual = byPath.get(expected.relPath);
+          return actual && actual.contentHash === expected.contentHash && actual.size === expected.size
+            ? null : { relPath: expected.relPath, expected,
+              actual: actual ? { contentHash: actual.contentHash, size: actual.size } : null };
+        }).filter(Boolean);
+        if (mismatches.length) out({ command: 'scope-materials', status: 'scope_files_changed',
+          mismatches, note: 'scope 文件必须重新按当前字节明确记录，未写入任何 scope' }, BLOCKED);
+      } catch (error) {
+        out({ command: 'scope-materials', status: 'scope_file_invalid', reasons: [error.message] }, BLOCKED);
+      }
+
+      const recorded = recordMaterialScope(task, normalized);
+      const scopedInventory = await takeInventoryForTask(dir, recorded.task);
+      const versionMatches = task.currentVersionId === scopedInventory.versionId;
+      out({ command: 'scope-materials', status: versionMatches ? 'recorded' : 'recorded_but_stale',
+        task: { taskId: recorded.task.taskId, erpWriteState: recorded.task.erpWriteState ?? null,
+          currentVersionId: task.currentVersionId, workspace: taskDir(recorded.task) },
+        scope: { scopeId: recorded.scope.scopeId, filePath: recorded.filePath,
+          exclusions: recorded.scope.exclusions },
+        inventory: { ordinaryVersionId: fullInventory.versionId,
+          scopedVersionId: scopedInventory.versionId, versionMatches,
+          materialCount: scopedInventory.materials.length,
+          excludedCount: scopedInventory.excluded.length,
+          scopeMismatches: scopedInventory.scopeMismatches },
+        note: versionMatches
+          ? '已记录显式材料排除；原任务 version 与 scoped inventory 一致，未修改 marker 或 version'
+          : '已记录显式材料排除，但当前任务 version 仍与 scoped inventory 不一致；必须按 stale 流程处理，不能用 scope 绕过',
+      }, versionMatches ? OK : BLOCKED);
+    }
+
+    case 'resume-local-preparation': {
+      const dir = arg('dir');
+      if (!dir) out({ command: 'resume-local-preparation', error: '缺少 --dir <材料目录>' }, ERR);
+      const task = findLiveTaskForSource(sourceKeyOf(dir));
+      if (!task) out({ command: 'resume-local-preparation', status: 'task_missing',
+        note: '这个材料目录没有进行中的任务；恢复入口不创建新任务' }, BLOCKED);
+      if (!hasRecoveryMarker(task)) {
+        out({ command: 'resume-local-preparation', ...recoveryBlock(task),
+          note: '当前任务没有 upload_dispatched marker，不能创建恢复凭据' }, BLOCKED);
+      }
+      const result = await createLocalPreparationRecovery(dir);
+      if (!result.ok) {
+        out({ command: 'resume-local-preparation', ...result,
+          task: { taskId: task.taskId, workspace: taskDir(task) } }, BLOCKED);
+      }
+      out({ command: 'resume-local-preparation', status: result.status,
+        task: { taskId: result.task.taskId, erpWriteState: result.task.erpWriteState,
+          workspace: taskDir(result.task) },
+        identity: result.identity,
+        credentialPath: result.credentialPath,
+        credentialId: result.credential.credentialId,
+        receiptCount: result.credential.receiptBindings.length,
+        capabilities: result.capabilities,
+        note: '已完成逐票 ERP 只读回读；凭据只允许本地准备，不解除 ERP 写入闸，也没有修改任务 marker' });
+    }
+
     case 'confirm-identity': {
       // 个人绑定进入系统的唯一通道。页面上的每个值都是内核刚从 ERP 读到的，
       // 用户只能认或不认；对话里说「是我」不算数。
       const probe = await probeIdentity();
       if (probe.status !== 'matched') {
         out({ command: 'confirm-identity', ...probe,
-          note: '读不出当前登录身份，没有可确认的东西；先在专用 Chrome 里登录 ERP' }, BLOCKED);
+          note: browserMode() === EGO_BROWSER
+            ? '读不出当前登录身份，没有可确认的东西；请先配置 BAOX_EGO_TASK_SPACE，并在 ego-browser task space 里登录 ERP'
+            : '读不出当前登录身份，没有可确认的东西；请先在系统默认浏览器里打开并登录 ERP，完成只读权限后再试' }, BLOCKED);
       }
       const previous = readBinding();
       const verdict = bindingVerdict(previous, probe.identity);
@@ -246,37 +608,28 @@ try {
     }
 
     case 'erp-read': {
-      // 只读回读费用报销单页面：单据页签是新增还是修改、明细网格和收票网格各是什么。
-      // 保存后置条件要靠它，所以它自己必须一点副作用都没有。
-      const gate = await authorizedPage();
+      // 只读回读当前 ego 页面：页签、表头和两个按标题识别的网格。
+      // 适配层不点击懒渲染区域，也不滚动字段；缺失内容会如实回报为不可读。
+      const gate = await authorizedReadPage('erp-read');
       if (!gate.ok) {
         out({ command: 'erp-read', identity: gate.probe,
           note: '身份没核对通过，不读 ERP 页面' }, BLOCKED);
       }
-      const session = await openSession(gate.wsUrl);
-      try {
-        const tabs = await formTabs(session);
-        if (tabs.length === 0) {
-          out({ command: 'erp-read', formOpen: false, anchors: await sectionAnchors(session),
-            note: '页面上没有打开的费用报销单（既没有"新增"也没有"修改"页签）' }, BLOCKED);
-        }
-        // 明细是懒渲染的，不点出来网格根本不在 DOM 里。
-        const shown = await showSection(session, '明细信息');
-        const detail = await readGrid(session, 0);
-        const receipts = await readGrid(session, 1);
-        out({
-          command: 'erp-read',
-          formOpen: true,
-          formMode: tabs[0].mode,
-          formTabs: tabs.map((t) => t.label),
-          sectionShown: shown.ok ? shown.anchor.label : shown.reason,
-          detail,
-          receipts,
-          note: '只读回读，没有点击任何值控件、没有写入、没有保存',
-        }, OK);
-      } finally {
-        session.close();
+      const snapshot = await readErpForm(gate.page);
+      const tabs = snapshot.formTabs;
+      if (tabs.length !== 1) {
+        out({ command: 'erp-read', formOpen: false,
+          formTabs: tabs.map((t) => t.label), anchors: snapshot.anchors,
+          billNo: snapshot.billNo,
+          detail: snapshot.detail, receipts: snapshot.receipts,
+          note: tabs.length === 0
+            ? '页面上没有打开的费用报销单（既没有"新增"也没有"修改"页签）'
+            : `页面上同时开着 ${tabs.length} 个费用报销单页签，认不出该读哪一张` }, BLOCKED);
       }
+      out({ command: 'erp-read', formOpen: true, formMode: tabs[0].mode,
+        formTabs: tabs.map((t) => t.label), anchors: snapshot.anchors,
+        billNo: snapshot.billNo, detail: snapshot.detail, receipts: snapshot.receipts,
+        note: '只读回读，没有点击、滚动、导航、写入或保存' }, OK);
     }
 
     case 'erp-reconcile': {
@@ -285,18 +638,12 @@ try {
       //
       // 退出码：`转人工` -> 2（硬阻塞，任何"确认继续"都不能绕过）；其余 -> 0。
       // 这里的 0 **不表示"可以继续写 ERP"**，它只表示对账本身完成了。
-      const gate = await authorizedPage();
+      const gate = await authorizedReadPage('erp-reconcile');
       if (!gate.ok) {
         out({ command: 'erp-reconcile', identity: gate.probe,
           note: '身份没核对通过，不读 ERP 页面' }, BLOCKED);
       }
-      const session = await openSession(gate.wsUrl);
-      let readings;
-      try {
-        readings = await readReconciliation(session);
-      } finally {
-        session.close();
-      }
+      const readings = await readReconciliation(gate.page);
       const verdict = classifyReconciliation(readings);
 
       // 审计落在这个目录对应的进行中任务上。没给 --dir 或者找不到任务时照常给结论，
@@ -321,11 +668,12 @@ try {
         reasons: verdict.reasons,
         readings,
         audit,
-        note: '只读对账：没有点击、没有滚动、没有导航、没有写入，也没有保存',
+        note: '只读分类，不表示保存验收；没有点击、没有滚动、没有导航、没有写入，也没有保存',
       }, verdict.action === '转人工' ? BLOCKED : OK);
     }
 
     case 'erp-fill': {
+      egoBlocked('erp-fill', 'erp-fill 尚未迁移到 ego-browser；没有写入 ERP。');
       // 写入通道的排练：按 save-contract 的稳定顺序往**新增**单上填字段，逐项回读，
       // **不保存**（这个分支里一行保存代码都没有）。不消耗发票，可以反复跑。
       //
@@ -377,7 +725,7 @@ try {
         const expenseCode = arg('expense');
         let catalog = null;
         if (expenseCode) {
-          const verified = await verifyExpenseItems(gate.wsUrl);
+          const verified = await verifyExpenseItems(gate.page);
           catalog = new Map((verified.checked ?? []).map((c) => [c.code, c]));
           const item = catalog.get(expenseCode);
           if (!item || item.verdict !== 'confirmed') {
@@ -488,12 +836,13 @@ try {
       // 两种用法：--project 核对单个项目号；--dir 核对某个任务已经选好的全部项目。
       const dir = arg('dir');
       const single = arg('project');
-      const items = await verifyExpenseItems(gate.wsUrl);
+      const items = await verifyExpenseItems(gate.page);
 
       let ctx = null;
       let wanted = single ? [single] : [];
       if (dir) {
-        const up = await upToEvents(dir);
+        const up = await upToEvents(dir, { allowRecovery: true,
+          mode: has('legacy-comparison') ? 'legacy' : 'markdown' });
         if (up.blocked) out({ command: 'catalog', ...up.blocked }, BLOCKED);
         const selection = loadSelection(up.task);
         if (!selection) {
@@ -505,15 +854,29 @@ try {
         wanted = [...new Set(Object.values(selection.projects))];
       }
 
+      const projectBook = ctx ? selectableProjects(gate.probe.identity) : [];
+      const bookByNumber = new Map(projectBook.map((project) => [project.number, project]));
       const results = [];
-      for (const n of wanted) results.push(await verifyProject(gate.wsUrl, n));
-      const proj = single && !dir ? results[0] : null;
+      for (const n of wanted) results.push(await verifyProject(gate.page, n));
+      const checkedProjects = results.map((result) => {
+        if (!ctx || !result?.ok || result.verdict !== 'confirmed') return result;
+        const book = bookByNumber.get(result.number);
+        if (!book || book.name === result.name) return result;
+        return {
+          ...result,
+          verdict: 'name_mismatch',
+          bookName: book.name ?? null,
+          note: `项目号 ${result.number} 在 ERP 里叫「${result.name ?? '（无名称）'}」，`
+            + `个人项目簿记的是「${book.name ?? '（无名称）'}」；请先核对项目簿和 ERP 主数据`,
+        };
+      });
+      const proj = single && !dir ? checkedProjects[0] : null;
 
       // 查询本身失败不是"核对通过"，是"没核对成"，一律阻塞。
       const failed = [items, ...results].filter((r) => r && r.ok === false);
       const problems = [
         ...(items.problems ?? []),
-        ...results.filter((r) => r.ok && r.verdict !== 'confirmed'),
+        ...checkedProjects.filter((r) => r.ok && r.verdict !== 'confirmed'),
       ];
 
       // 查询本身跑通了就落盘，**通过与否一并记下**。
@@ -527,13 +890,31 @@ try {
       // 升不了任何一行的级。
       if (ctx && failed.length === 0) {
         recordCatalogVerification(ctx.task, {
+          // Version 2 records the expense-item read-only projection as well as
+          // projects.  Older records intentionally become stale: the preparation
+          // bundle must be able to cite the canonical ERP name for every code.
+          catalogSchemaVersion: 2,
           linesDigest: linesDigest(ctx.built),
           versionId: ctx.built.versionId,
           verifiedAt: new Date().toISOString(),
           identity: gate.probe.identity,
           projectFormId: PROJECT_FORM,
-          projects: Object.fromEntries(results.map((r) => [r.number,
+          projects: Object.fromEntries(checkedProjects.map((r) => [r.number,
             { verdict: r.verdict, name: r.name ?? null }])),
+          selectionSnapshot: {
+            projects: Object.fromEntries(Object.entries(ctx.selection.projects).sort(([a], [b]) =>
+              a.localeCompare(b))),
+            projectBook: [...new Set(Object.values(ctx.selection.projects))]
+              .sort()
+              .map((number) => {
+                const project = bookByNumber.get(number);
+                return { number, name: project?.name ?? null };
+              }),
+          },
+          // Keep the canonical records directly addressable by code.  The
+          // preparation builder accepts this array as its expense-item catalog.
+          expenseItems: items.ok ? items.checked : null,
+          expenseItemFormId: items.ok ? items.formId : null,
           problems,
         });
       }
@@ -547,7 +928,7 @@ try {
           : { error: items.reason },
         project: proj && (proj.ok ? proj : { error: proj.reason }),
         task: ctx ? { taskId: ctx.task.taskId, workspace: taskDir(ctx.task) } : undefined,
-        projects: ctx ? results.map((r) => (r.ok
+        projects: ctx ? checkedProjects.map((r) => (r.ok
           ? { number: r.number, verdict: r.verdict, name: r.name ?? null }
           : { error: r.reason })) : undefined,
         problems,
@@ -561,10 +942,13 @@ try {
       const dir = arg('dir');
       if (!dir) out({ command: 'intake', error: '缺少 --dir <材料目录>' }, ERR);
 
-      const inventory = await takeInventory(dir);
+      const existing = findLiveTaskForSource(sourceKeyOf(dir));
+      if (hasErpWriteState(existing)) out({ command: 'intake', ...recoveryBlock(existing),
+        note: '动过 ERP 的任务不能通过 intake 重建或改写；先走本地恢复入口' }, BLOCKED);
+
+      const inventory = await takeInventoryForTask(dir, existing);
       const key = sourceKeyOf(dir);
       // 同一个目录再次运行时，恢复原任务而不是新建第二个（契约「重复运行与历史材料」）。
-      const existing = findLiveTaskForSource(key);
       const task = existing ?? createTask(dir);
       const rec = recordInventory(task, inventory);
 
@@ -581,24 +965,126 @@ try {
           isNewVersion: rec.isNewVersion, supersededVersionId: rec.supersededVersionId,
           versionCount: rec.versionCount,
           materialCount: inventory.materials.length, ignoredCount: inventory.ignored.length,
+          excludedCount: inventory.excluded.length,
           byDisposition },
         materials: inventory.materials.map(({ materialId, relPath, format, size, disposition, reason, contentHash }) =>
           ({ materialId, relPath, format, size, disposition, reason, contentHash: contentHash?.slice(0, 16) ?? null })),
         ignored: inventory.ignored,
+        excluded: inventory.excluded.map(({ materialId, relPath, size, contentHash, scopeReason }) =>
+          ({ materialId, relPath, size, contentHash, reason: scopeReason })),
+        scopeMismatches: inventory.scopeMismatches,
         openItems: items,
         // 待确认项一条未清就不能进入下一步；这是契约的放行条件，不是建议。
         readyForNextStep: blocking.length === 0,
       }, blocking.length === 0 ? OK : BLOCKED);
     }
 
+    case 'markdown-convert': {
+      const dir = arg('dir');
+      if (!dir) out({ command: 'markdown-convert', error: '缺少 --dir <材料目录>' }, ERR);
+      const prepared = await markdownTask(dir, 'markdown-convert');
+      const materials = await convertMarkdownMaterials(dir, prepared.task, prepared.inventory);
+      const blocking = materials.filter((item) => item.status !== 'converted');
+      out({
+        command: 'markdown-convert',
+        task: { taskId: prepared.task.taskId, workspace: taskDir(prepared.task) },
+        inventoryVersionId: prepared.inventory.versionId,
+        schemaPath: PDF_MARKDOWN_SCHEMA_PATH,
+        materials,
+        readyForNextStep: blocking.length === 0,
+        next: blocking.length
+          ? '先处理 MarkItDown 转换失败的材料；转换成功后，读取每份 numberedMarkdownPath 并按 templatePath 填写 candidatePath'
+          : '逐份读取 numberedMarkdownPath，按 templatePath 填写 candidatePath，再运行 markdown-ingest',
+      }, blocking.length === 0 ? OK : BLOCKED);
+    }
+
+    case 'markdown-ingest': {
+      const dir = arg('dir');
+      if (!dir) out({ command: 'markdown-ingest', error: '缺少 --dir <材料目录>' }, ERR);
+      const prepared = await markdownTask(dir, 'markdown-ingest');
+      const records = [];
+      for (const material of prepared.inventory.materials.filter((item) => item.format === 'pdf'
+        && item.disposition === 'pending_classification')) {
+        const paths = markdownMaterialPaths(prepared.task, prepared.inventory.versionId, material.materialId);
+        const sourcePath = path.join(path.resolve(dir), material.relPath);
+        let artifact;
+        try {
+          artifact = loadMarkdownArtifact(paths.artifactPath, { sourcePath, materialId: material.materialId });
+        } catch (error) {
+          records.push({ materialId: material.materialId, fileName: material.fileName,
+            status: 'conversion_required', error: error.message, paths });
+          continue;
+        }
+        if (artifact.status !== 'converted') {
+          records.push({ materialId: material.materialId, fileName: material.fileName,
+            status: 'conversion_required', error: artifact.error, paths });
+          continue;
+        }
+        const sidecars = validateMarkdownSidecars(artifact, paths);
+        if (!sidecars.ok) {
+          records.push({ materialId: material.materialId, fileName: material.fileName,
+            status: 'sidecar_invalid', error: sidecars.reason, paths });
+          continue;
+        }
+        if (!fs.existsSync(paths.candidatePath)) {
+          records.push({ materialId: material.materialId, fileName: material.fileName,
+            status: 'candidate_required', paths, markdownHash: artifact.source.markdownHash });
+          continue;
+        }
+        try {
+          const result = await ingestMarkdown({ artifact, submission: paths.candidatePath,
+            outputPath: paths.candidateRecordPath, overwrite: true });
+          if (result.verdict === 'accepted') {
+            fs.rmSync(paths.reextractPath, { force: true });
+            records.push({ materialId: material.materialId, fileName: material.fileName,
+              status: 'accepted', candidateRecordPath: paths.candidateRecordPath,
+              markdownHash: artifact.source.markdownHash });
+          } else {
+            writeDerived(paths.reextractPath, `${JSON.stringify({ schemaVersion: 1,
+              taskId: prepared.task.taskId, versionId: prepared.inventory.versionId,
+              materialId: material.materialId, contentHash: material.contentHash,
+              markdownHash: artifact.source.markdownHash, reason: 'candidate_rejected',
+              errors: result.errors ?? [], requestedAt: new Date().toISOString() }, null, 2)}\n`);
+            records.push({ materialId: material.materialId, fileName: material.fileName,
+              status: 'rejected', errors: result.errors, paths });
+          }
+        } catch (error) {
+          writeDerived(paths.reextractPath, `${JSON.stringify({ schemaVersion: 1,
+            taskId: prepared.task.taskId, versionId: prepared.inventory.versionId,
+            materialId: material.materialId, contentHash: material.contentHash,
+            markdownHash: artifact.source.markdownHash, reason: 'candidate_rejected',
+            errors: [error.message], requestedAt: new Date().toISOString() }, null, 2)}\n`);
+          records.push({ materialId: material.materialId, fileName: material.fileName,
+            status: 'rejected', errors: [error.message], paths });
+        }
+      }
+      const blocking = records.filter((item) => item.status !== 'accepted');
+      out({
+        command: 'markdown-ingest',
+        task: { taskId: prepared.task.taskId, workspace: taskDir(prepared.task) },
+        inventoryVersionId: prepared.inventory.versionId,
+        records,
+        readyForNextStep: blocking.length === 0,
+        next: blocking.length ? '候选未全部通过内核校验，修正 candidatePath 后重新运行'
+          : '候选已落盘；下一步运行 classify 生成当前分类账本',
+      }, records.some((item) => !['accepted', 'candidate_required', 'rejected'].includes(item.status))
+        ? BLOCKED : OK);
+    }
+
     case 'classify': {
       const dir = arg('dir');
       if (!dir) out({ command: 'classify', error: '缺少 --dir <材料目录>' }, ERR);
 
+      const existing = findLiveTaskForSource(sourceKeyOf(dir));
+      if (hasErpWriteState(existing)) {
+        const recovery = await validateLocalPreparationRecovery(dir);
+        if (!recovery.ok) out({ command: 'classify', ...recoveryBlocked(existing, recovery),
+          note: '本地恢复 fresh 只读核对没有通过，不能在动过 ERP 的任务上做分类' }, BLOCKED);
+      }
+
       // 分流永远建立在一个确定的盘点版本之上，所以这里先重新盘一次（幂等）。
       // 盘点层还有硬阻塞时不往下解析：范围外和读不出来的材料先解决，再谈票种。
-      const inventory = await takeInventory(dir);
-      const existing = findLiveTaskForSource(sourceKeyOf(dir));
+      const inventory = await takeInventoryForTask(dir, existing);
       const task = existing ?? createTask(dir);
       const rec = recordInventory(task, inventory);
 
@@ -613,7 +1099,8 @@ try {
           note: '材料盘点还有未清的待确认项，先处理它们再做分流与解析' }, BLOCKED);
       }
 
-      const classification = classifyInventory(dir, inventory, rec.task);
+      const classification = classifyInventory(dir, inventory, rec.task,
+        { mode: has('legacy-comparison') ? 'legacy' : 'markdown' });
       const file = recordClassification(rec.task, classification);
       recordInvoiceSightings(rec.task, classification);
       // 任务内重复和跨任务重复是两件事，但对用户是同一个问题，所以一次说完。
@@ -630,7 +1117,8 @@ try {
         command: 'classify', stage: 'classify',
         task: { taskId: rec.task.taskId, resumed: !!existing, workspace: taskDir(rec.task) },
         inventory: { versionId: inventory.versionId, isNewVersion: rec.isNewVersion,
-          supersededVersionId: rec.supersededVersionId, materialCount: inventory.materials.length },
+          supersededVersionId: rec.supersededVersionId, materialCount: inventory.materials.length,
+          excludedCount: inventory.excluded.length, scopeMismatches: inventory.scopeMismatches },
         byRole,
         // 完整发票号码只留在任务工作区文件里，输出一律脱敏 ——
         // 重复分组的 identityKey 里也带着完整号码，这里一并去掉。
@@ -650,11 +1138,14 @@ try {
       // 而 Claude Code 自带视觉能力。所以这里只负责说清楚"读哪张、要什么、按什么格式回报"。
       const dir = arg('dir');
       if (!dir) out({ command: 'ocr-request', error: '缺少 --dir <材料目录>' }, ERR);
-      const inventory = await takeInventory(dir);
       const existing = findLiveTaskForSource(sourceKeyOf(dir));
+      if (hasErpWriteState(existing)) out({ command: 'ocr-request', ...recoveryBlock(existing),
+        note: '动过 ERP 的任务不能重新开始看图读取' }, BLOCKED);
+      const inventory = await takeInventoryForTask(dir, existing);
       const task = existing ?? createTask(dir);
       const rec = recordInventory(task, inventory);
-      const classification = classifyInventory(dir, inventory, rec.task);
+      const classification = classifyInventory(dir, inventory, rec.task,
+        { mode: has('legacy-comparison') ? 'legacy' : 'markdown' });
       const items = buildWorkOrder(dir, inventory, classification, rec.task,
         { force: process.argv.includes('--force') });
       const todo = items.filter((i) => !i.alreadyRead);
@@ -680,8 +1171,11 @@ try {
       const dir = arg('dir');
       const file = arg('file');
       if (!dir || !file) out({ command: 'ocr-submit', error: '缺少 --dir <材料目录> 或 --file <读数 json>' }, ERR);
-      const inventory = await takeInventory(dir);
-      const task = findLiveTaskForSource(sourceKeyOf(dir));
+      const existing = findLiveTaskForSource(sourceKeyOf(dir));
+      if (hasErpWriteState(existing)) out({ command: 'ocr-submit', ...recoveryBlock(existing),
+        note: '动过 ERP 的任务不能重新提交看图读数' }, BLOCKED);
+      const inventory = await takeInventoryForTask(dir, existing);
+      const task = existing;
       if (!task) out({ command: 'ocr-submit', error: '这个目录还没有进行中的报销任务，先跑 intake' }, ERR);
       recordInventory(task, inventory);
 
@@ -713,8 +1207,11 @@ try {
       const dir = arg('dir');
       const file = arg('file');
       if (!dir || !file) out({ command: 'reread-submit', error: '缺少 --dir <材料目录> 或 --file <重读 json>' }, ERR);
-      const inventory = await takeInventory(dir);
-      const task = findLiveTaskForSource(sourceKeyOf(dir));
+      const existing = findLiveTaskForSource(sourceKeyOf(dir));
+      if (hasErpWriteState(existing)) out({ command: 'reread-submit', ...recoveryBlock(existing),
+        note: '动过 ERP 的任务不能重新提交看图争议读数' }, BLOCKED);
+      const inventory = await takeInventoryForTask(dir, existing);
+      const task = existing;
       if (!task) out({ command: 'reread-submit', error: '这个目录还没有进行中的报销任务，先跑 intake' }, ERR);
 
       const submission = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -748,8 +1245,11 @@ try {
       // 而这一票的全部意义就是确认只有一条通道、且那条通道的另一头是人。
       const dir = arg('dir');
       if (!dir) out({ command: 'confirm-readings', error: '缺少 --dir <材料目录>' }, ERR);
-      const inventory = await takeInventory(dir);
-      const task = findLiveTaskForSource(sourceKeyOf(dir));
+      const existing = findLiveTaskForSource(sourceKeyOf(dir));
+      if (hasErpWriteState(existing)) out({ command: 'confirm-readings', ...recoveryBlock(existing),
+        note: '动过 ERP 的任务不能重新确认看图读数' }, BLOCKED);
+      const inventory = await takeInventoryForTask(dir, existing);
+      const task = existing;
       if (!task) out({ command: 'confirm-readings', error: '这个目录还没有进行中的报销任务，先跑 intake' }, ERR);
 
       const pending = pendingConfirmations(task, inventory);
@@ -771,7 +1271,8 @@ try {
       // 所以这里把盘点和分流都重跑一遍（幂等），任一层还有硬阻塞就不往下走。
       const dir = arg('dir');
       if (!dir) out({ command: 'events', error: '缺少 --dir <材料目录>' }, ERR);
-      const { task, inventory, classification, blocked } = await upToClassification(dir);
+      const { task, inventory, classification, blocked } = await upToClassification(dir,
+        { allowRecovery: true, mode: has('legacy-comparison') ? 'legacy' : 'markdown' });
       if (blocked) out({ command: 'events', ...blocked }, BLOCKED);
 
       const built = buildEvents(classification, task);
@@ -811,25 +1312,146 @@ try {
       // 用户在对话里说"项目是 111454"不构成任务选择。
       const dir = arg('dir');
       if (!dir) out({ command: 'select-task', error: '缺少 --dir <材料目录>' }, ERR);
-      const { task, built, blocked } = await upToEvents(dir);
+      const existing = findLiveTaskForSource(sourceKeyOf(dir));
+      let recovery = null;
+      if (hasErpWriteState(existing)) {
+        recovery = await validateLocalPreparationRecovery(dir);
+        if (!recovery.ok) out({ command: 'select-task', ...recoveryBlocked(existing, recovery),
+          readyForNextStep: false }, BLOCKED);
+      }
+      const { task, built, blocked } = await upToEvents(dir,
+        { allowRecovery: hasErpWriteState(existing),
+          mode: has('legacy-comparison') ? 'legacy' : 'markdown' });
       if (blocked) out({ command: 'select-task', ...blocked }, BLOCKED);
 
-      // 上一次的选择只作预填：明细变过了就不再有效，用户仍然要重新看一遍再提交。
-      const prev = loadSelection(task);
-      const lines = built.lineItems.map((l) => {
+      if (hasErpWriteState(task) && !recovery?.ok) {
+        out(recoveryBlock(task, 'select-task'), BLOCKED);
+      }
+      const session = await gateIdentity();
+      if (session.status !== 'matched') {
+        out({ command: 'select-task', ...session,
+          note: '身份没核对通过，不打开项目选择页' }, BLOCKED);
+      }
+      const identity = session.identity;
+      if (!sameIdentity(task.identity, identity)) {
+        out({ command: 'select-task', status: 'identity_mismatch',
+          task: { taskId: task.taskId, identity: task.identity ?? null, workspace: taskDir(task) },
+          identity,
+          note: '任务所属 tenant/account 与当前登录身份不一致；不把旧任务改绑到另一身份' }, BLOCKED);
+      }
+      const classified = await observeTask(dir,
+        { mode: has('legacy-comparison') ? 'legacy' : 'markdown' });
+      if (classified.homeCityRequired || !classified.task?.homeCity) {
+        out({ command: 'select-task', status: 'blocked', state: 'home_city_required',
+          task: { taskId: task.taskId, workspace: taskDir(task) },
+          note: '任务还没有当前身份的常驻城市快照，先完成常驻城市确认' }, BLOCKED);
+      }
+      if ((classified.openItems ?? []).some((item) => item.blocking)) {
+        out({ command: 'select-task', status: 'blocked', state: 'classified_detail_confirmation',
+          task: { taskId: task.taskId, workspace: taskDir(task) },
+          openItems: classified.openItems.filter((item) => item.blocking),
+          note: '分类明细还有未清的硬阻塞，不能进入项目选择' }, BLOCKED);
+      }
+      if (!classified.classifiedDetailComplete || !classified.classifiedDetailConfirmed) {
+        out({ command: 'select-task', status: 'blocked', state: 'classified_detail_confirmation',
+          task: { taskId: task.taskId, workspace: taskDir(task) },
+          classifiedDetailComplete: classified.classifiedDetailComplete,
+          classifiedDetailConfirmed: classified.classifiedDetailConfirmed,
+          note: '先由用户确认当前分类明细，项目归属随后单独选择' }, BLOCKED);
+      }
+      const candidates = selectableProjects(identity);
+      const book = readBook(identity);
+      if (candidates.length === 0) {
+        out({ command: 'select-task', status: PROJECT_BOOK_EMPTY,
+          identity, task: { taskId: task.taskId, workspace: taskDir(task) },
+          bookPath: bookPath(identity), projectCount: book.projects.length,
+          selectableCount: 0, note: noCandidatesNote(book.projects) }, BLOCKED);
+      }
+
+      // 只有同一批明细、同一身份且确实来自个人项目簿的选择才作预填。
+      // 全局旧选择保留为事实，但没有个人项目簿来源证据时不自动合法化。
+      const previous = loadSelection(task);
+      const prev = sameBasis(previous, built) && isBookSelection(previous)
+        && sameIdentity(previous.identity, identity) ? previous : null;
+      const previousSelectionWarning = previous && !prev
+        ? '上一次记录没有当前本人项目簿来源证据，或已经过期；它不会自动沿用，请重新从本人项目簿确认。'
+        : null;
+      const classifiedDigest = classifiedDetailDigest(classified.classifiedPreview);
+      const previewLines = classified.classifiedPreview?.lines ?? classified.lines ?? built.lineItems;
+      const lines = previewLines.map((l) => {
         const ev = built.events.find((e) => e.eventId === l.eventId);
         return { lineId: l.lineId, fileName: ev.voucherFileName, kindLabel: ev.kindLabel,
           maskedNumber: l.maskedNumber, date: l.date, city: l.city, route: l.route,
-          totalAmount: l.totalAmount, project: prev?.projects?.[l.lineId] ?? '' };
+          totalAmount: l.totalAmount, categoryLabel: l.categoryLabel ?? null,
+          expenseItemCode: l.expenseItemCode ?? null, project: prev?.projects?.[l.lineId] ?? '' };
       });
 
       const result = await serveTaskSelection(
-        { lines, homeCity: prev?.homeCity ?? '', purpose: prev?.purpose ?? '' },
+        { lines, projects: candidates, previousSelectionWarning,
+          homeCity: task.homeCity, purpose: prev?.purpose ?? '' },
         { timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
-          onReady: (u) => process.stderr.write(`已在浏览器里打开页面（做任务选择）；没弹出就手动打开：${u}\n`) });
-      if (result.status !== 'submitted') out({ command: 'select-task', ...result }, ERR);
+          onReady: (u) => process.stderr.write(`已在浏览器里打开页面（做任务选择）；没弹出就手动打开：${u}\n`),
+          onSubmit: async (body) => {
+            const current = await gateIdentity();
+            if (current.status !== 'matched') {
+              return { verdict: 'rejected', reasons: ['提交时身份没有通过核对，任务选择没有收下'], status: current.status };
+            }
+            if (!sameIdentity(task.identity, current.identity)) {
+              return { verdict: 'rejected', reasons: ['提交时 tenant/account 已变化，任务选择没有收下'],
+                status: 'identity_mismatch' };
+            }
+            const existingNow = findLiveTaskForSource(sourceKeyOf(dir));
+            let currentRecovery = null;
+            if (hasErpWriteState(existingNow)) {
+              currentRecovery = await validateLocalPreparationRecovery(dir);
+              if (!currentRecovery.ok) return {
+                ...recoveryBlocked(existingNow, currentRecovery, 'select-task'), verdict: 'rejected',
+                reasons: currentRecovery.reasons ?? ['提交时本地恢复 fresh 只读核对没有通过'],
+              };
+            }
+            const latest = await upToEvents(dir,
+              { allowRecovery: hasErpWriteState(existingNow),
+                mode: has('legacy-comparison') ? 'legacy' : 'markdown' });
+            if (latest.blocked || !latest.task || latest.task.taskId !== task.taskId) {
+              return { verdict: 'rejected', reasons: [latest.blocked?.note ?? '提交时任务事实已变化，任务选择没有收下'],
+                status: latest.blocked ? 'task_changed' : 'task_missing' };
+            }
+            if (hasErpWriteState(latest.task) && !currentRecovery?.ok) {
+              return { verdict: 'rejected', reasons: ['提交时任务已经动过 ERP，不能收下新的项目选择'],
+                status: 'erp_write_in_progress' };
+            }
+            const currentSnapshot = await observeTask(dir,
+              { mode: has('legacy-comparison') ? 'legacy' : 'markdown' });
+            if (currentSnapshot.homeCityRequired || currentSnapshot.task?.homeCity !== task.homeCity
+              || !currentSnapshot.classifiedDetailComplete
+              || !currentSnapshot.classifiedDetailConfirmed) {
+              return { verdict: 'rejected', reasons: ['提交时常驻城市或分类明细确认已变化，请重新打开任务选择页'],
+                status: 'classified_detail_changed' };
+            }
+            if (classifiedDetailDigest(currentSnapshot.classifiedPreview) !== classifiedDigest) {
+              return { verdict: 'rejected', reasons: ['提交时材料分类明细已变化，请重新确认后再选择项目'],
+                status: 'classified_detail_changed' };
+            }
+            if ((currentSnapshot.openItems ?? []).some((item) => item.blocking)) {
+              return { verdict: 'rejected', reasons: ['提交时分类明细出现新的硬阻塞，请先处理后再选择项目'],
+                status: 'classified_detail_blocked' };
+            }
+            const freshCandidates = selectableProjects(current.identity);
+            const previousNow = loadSelection(latest.task);
+            return submitSelection(latest.task, latest.built, body, freshCandidates,
+              current.identity, previousNow);
+          } });
+      if (result?.status === 'timeout') {
+        out({ command: 'select-task', ...result,
+          note: '任务选择页超时，没有收下任何新的项目归属' }, ERR);
+      }
+      if (result?.verdict !== 'accepted') {
+        out({ command: 'select-task', ...result,
+          note: '任务选择没有收到一份已核验的提交结果' }, ERR);
+      }
 
-      const r = submitSelection(task, built, result);
+      const r = result.verdict ? result : submitSelection(task, built, result,
+        candidates, identity, prev);
       if (r.verdict === 'rejected') {
         out({ command: 'select-task', verdict: r.verdict, reasons: r.reasons,
           note: '任务选择没有收下；重新跑 select-task' }, BLOCKED);
@@ -838,7 +1460,8 @@ try {
         homeCity: r.record.homeCity, purpose: r.record.purpose,
         lineCount: Object.keys(r.record.projects).length,
         projectSource: r.record.projectSource,
-        note: '项目号来自用户，还没有和 ERP 项目目录核对过；跑 lines 看费用类别推导结果' }, OK);
+        projectsFrom: r.record.projectsFrom,
+        note: '项目号来自当前本人项目簿；录入项目时已从 ERP 回读名称，任务提交时又核验了当前可选集合' }, OK);
     }
 
     case 'lines': {
@@ -846,10 +1469,17 @@ try {
       // 项目归属和事由来自任务选择页。三样来源在输出里各自标明，不混。
       const dir = arg('dir');
       if (!dir) out({ command: 'lines', error: '缺少 --dir <材料目录>' }, ERR);
-      const { task, classification, built, blocked } = await upToEvents(dir);
+      const { task, classification, built, blocked } = await upToEvents(dir,
+        { allowRecovery: true, mode: has('legacy-comparison') ? 'legacy' : 'markdown' });
       if (blocked) out({ command: 'lines', ...blocked }, BLOCKED);
 
-      const applied = applySelection(built, classification, loadSelection(task), loadCatalogVerification(task));
+      const current = await gateIdentity();
+      if (current.status !== 'matched') {
+        out({ command: 'lines', ...current,
+          note: '身份没核对通过，不沿用项目选择计算明细' }, BLOCKED);
+      }
+      const applied = applySelection(built, classification, loadSelection(task),
+        loadCatalogVerification(task), selectableProjects(current.identity), current.identity, task.homeCity);
       const blocking = applied.notes.filter((n) => n.blocking);
       out({
         command: 'lines', stage: 'task_selection',
@@ -874,7 +1504,8 @@ try {
       // 单独看一眼跨任务重复检查的结果，不往下走。
       const dir = arg('dir');
       if (!dir) out({ command: 'history', error: '缺少 --dir <材料目录>' }, ERR);
-      const up = await upToClassification(dir);
+      const up = await upToClassification(dir, { allowRecovery: true,
+        mode: has('legacy-comparison') ? 'legacy' : 'markdown' });
       if (up.blocked && up.blocked.stage !== 'history') out({ command: 'history', ...up.blocked }, BLOCKED);
 
       const blocking = up.historyItems.filter((i) => i.blocking);
@@ -913,6 +1544,89 @@ try {
         note: '任务已作废，工作区文件原样保留；它原先占用的发票现在可以在别的任务里使用' });
     }
 
+    case 'prepare': {
+      const dir = arg('dir');
+      if (!dir) out({ command: 'prepare', error: '缺少 --dir <材料目录>' }, ERR);
+      if (!(fs.existsSync(dir) && fs.statSync(dir).isDirectory())) {
+        out({ command: 'prepare', status: 'blocked',
+          error: `材料目录不存在：${dir}`,
+          speak: `我找不到这个材料目录：${dir}。准备包没有生成。` }, BLOCKED);
+      }
+
+      // Keep the direct CLI entry behind the same environment and task gates
+      // as `next`; otherwise a hand-written `prepare` invocation could skip
+      // identity, classification confirmation, or project/catalog checks.
+      const environment = await observeEnvironment();
+      const environmentState = determineState(environment);
+      if (environmentState.state !== 'env_ready') {
+        out({ command: 'prepare', status: 'blocked', state: environmentState.state,
+          blockedBy: environmentState.blockedBy,
+          note: '当前身份或 ERP 会话尚未通过环境核对，准备包没有生成。' }, BLOCKED);
+      }
+
+      // This command is the sole preparation materialization step.  It uses
+      // the same read-only observation as `next`, then writes one immutable
+      // digest directory outside the source tree.  A draft is still a
+      // successful run because its explicit problems are useful for review.
+      const observed = await observeTask(dir);
+      const taskIdentity = observed.task?.identity;
+      const currentIdentity = environment.probe?.identity;
+      if (taskIdentity && currentIdentity
+        && (taskIdentity.account !== currentIdentity.account || taskIdentity.tenant !== currentIdentity.tenant)) {
+        out({ command: 'prepare', status: 'blocked', state: 'task_identity_mismatch',
+          task: observed.task,
+          note: '当前登录身份与任务绑定身份不一致，准备包没有生成。' }, BLOCKED);
+      }
+      const combinedState = determineState({ ...environment, ...observed });
+      const allowed = new Set(['preparation_package_pending', 'preparation_blocked',
+        'preparation_confirmation', 'preparation_complete']);
+      if (!allowed.has(combinedState.state)) {
+        out({ command: 'prepare', status: 'blocked', state: combinedState.state,
+          blockedBy: combinedState.blockedBy,
+          task: observed.task ?? null,
+          note: '前置步骤尚未完成，先按 next 给出的步骤处理；这里只生成最后一段准备材料。' }, BLOCKED);
+      }
+      if (!observed.preparation || !observed.taskRecord || !observed.inventory) {
+        out({ command: 'prepare', status: 'blocked',
+          stage: 'preparation', task: observed.task ?? null,
+          problems: observed.openItems ?? [],
+          note: '前置材料、分类、事件或项目选择尚未完成；先按 next 给出的步骤处理，当前还不能生成准备包' }, BLOCKED);
+      }
+      let generated;
+      try {
+        generated = await generatePreparation({
+          task: observed.taskRecord,
+          sourceDir: dir,
+          inventory: observed.inventory,
+          preparation: observed.preparation,
+        });
+      } catch (error) {
+        out({ command: 'prepare', status: 'blocked',
+          task: { taskId: observed.taskRecord.taskId, workspace: taskDir(observed.taskRecord) },
+          digest: observed.preparation.digest,
+          code: error.code ?? 'PREPARATION_GENERATION_FAILED',
+          error: error.message,
+          note: '准备包没有生成；原材料目录保持不变。' }, BLOCKED);
+      }
+      out({
+        command: 'prepare',
+        status: generated.ready ? 'ready_for_preparation' : 'draft',
+        ready: generated.ready === true,
+        task: { taskId: generated.document.task.taskId, workspace: taskDir(observed.taskRecord) },
+        digest: generated.digest,
+        problems: generated.problems ?? [],
+        directory: generated.directory,
+        files: generated.files ?? observed.preparationPackage?.files ?? null,
+        manifest: generated.manifest
+          ? { manifestHash: generated.manifest.manifestHash, bundleHash: generated.manifest.bundleHash,
+              ready: generated.manifest.ready === true, status: generated.manifest.status }
+          : null,
+        note: generated.ready
+          ? '准备包已生成并通过物化；接下来由 next 展示准备确认，确认后停止在手动 QA，不会写入 ERP。'
+          : '准备包已生成为 draft；请先处理 detail.md/detail.json 和 manifest 中列出的缺项，再重新观察。',
+      });
+    }
+
     case 'next': {
       // 模型唯一会敲的命令。问：`next --dir <材料目录>`；答：`next --after <token> [--result <文件>]`。
       // 这里是一层薄壳：采观测（observe）-> 判状态（state）-> 出 step（next），
@@ -943,11 +1657,14 @@ try {
       // 两侧观测合成一份：环境（A 表）和材料（B 表）。判定要的全部事实都在这里采齐，
       // 判定那一侧一个文件都不再读。目录不在了（被删、被改名）就只答环境那一半 ——
       // 拿一个不存在的目录去盘点会抛错，而那不是一个状态。
-      const env = await observeEnvironment();
+      let env = await observeEnvironment();
       // 数据格式比内核新的时候，**连采集都不做**。判定的顺序把 schema_too_new 排在最前，
       // 但采集跑在判定之前：拿这一版的眼睛去读下一版写的任务文件，可能当场抛异常，
       // 于是「硬停（退出码 2）」就变成了「内核自己出错（退出码 1）」。硬停要真的最先。
       const tooNew = env.schemaVersion > NEXT_SCHEMA_VERSION;
+      if (!tooNew && env.probe?.status === 'matched' && !env.binding) {
+        env = { ...env, binding: autoBindIdentity(env.probe.identity, env.binding) };
+      }
       const materialsThere = !tooNew && !!sourceDir
         && fs.existsSync(sourceDir) && fs.statSync(sourceDir).isDirectory();
 
@@ -963,34 +1680,59 @@ try {
             resultFile: filed('result') ? arg('result') : null })
         : null;
 
+      // 先做普通的只读材料观测。恢复 fresh 回读是显式例外：只对已经存在的
+      // upload_dispatched 任务调用，普通 `observeTask` 仍然不碰浏览器。
+      // Runtime setup is a prerequisite for every material parser. Keep this
+      // gate before observeTask so a missing managed runtime cannot trigger a
+      // partial inventory/classification pass before its install step.
+      const taskObservation = materialsThere && env.runtimeDependencies?.ready === true
+        ? await observeTask(sourceDir) : {};
+      let recovery = null;
+      if (materialsThere && hasRecoveryMarker(taskObservation.task)) {
+        const checked = env.probe?.status === 'matched'
+          ? await validateLocalPreparationRecovery(sourceDir)
+          : { ok: false, status: 'environment_not_ready',
+            reasons: ['当前 ERP 身份没有通过环境核对，暂不能 fresh 回读恢复凭据'] };
+        recovery = {
+          valid: checked.ok === true,
+          status: checked.status ?? 'rejected',
+          ...(checked.credentialPath ? { credentialPath: checked.credentialPath } : {}),
+          ...(checked.credential?.credentialId
+            ? { credentialId: checked.credential.credentialId } : {}),
+          ...(checked.reasons?.length ? { reasons: checked.reasons } : {}),
+        };
+      }
       const observation = {
         ...env,
+        // Runtime and browser setup may intentionally skip observeTask, but
+        // the caller's directory still belongs to this step token. Preserve
+        // it so a later `next --after` can resume material observation.
+        ...(sourceDir ? { sourceDir } : {}),
         // 环境那份观测采在表态落盘**之前**（它要先算出 tooNew 才谈得上收表态），
         // 所以刚认下的身份要补回来 —— 不补的话这一次应答仍然报 `env_identity_unbound`，
         // 用户刚认完就又看见同一张表，而绑定其实已经写进去了。
         // 材料那半份观测在下面重采，本来就带着最新的事实，不需要这样补。
         ...(applied?.verdict === 'identity_bound' ? { binding: applied.binding } : {}),
-        ...(materialsThere ? await observeTask(sourceDir) : {}),
+        ...taskObservation,
+        ...(recovery ? { recovery } : {}),
       };
       const response = nextResponse({ observation, sourceKey, after,
         hasResult: filed('result'),
+        resultPath: filed('result') ? arg('result') : null,
         // 已经收下并处置过的纠正不再报「没处安放」—— 那句话是留给真的没处安放的。
         hasCorrection: filed('correction') && !applied });
-      if (response.step?.kind === 'extract_images') {
-        ensureDir(path.dirname(response.step.requestPath));
-        const temporary = `${response.step.requestPath}.tmp`;
-        fs.writeFileSync(temporary, JSON.stringify(response.step.request, null, 2), { mode: 0o600 });
-        fs.renameSync(temporary, response.step.requestPath);
-      }
+      materializeStepArtifacts(response);
       // 收下了什么，明说。用户点了头却看不出内核收没收到，是最难排的一种障。
       out(applied ? { ...response, applied } : response, response.exit);
     }
 
     default:
-      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['next', 'reset', 'doctor', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
-        'ocr-request', 'ocr-submit', 'confirm-readings', 'reread-submit',
-        'history', 'events', 'select-task', 'lines',
-        'tasks', 'abandon-task', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill'] }, ERR);
+      out({ error: `未知命令 ${cmd ?? '(空)'}`, commands: ['next', 'runtime-setup', 'doctor', 'browser-open', 'chrome-up', 'probe', 'confirm-identity', 'intake', 'classify',
+        'ocr-request', 'ocr-submit', 'confirm-readings', 'reread-submit', 'markdown-convert', 'markdown-ingest',
+        'history', 'events', 'select-task', 'lines', 'projects', 'projects-page', 'scope-materials',
+        'resume-local-preparation',
+        'prepare',
+        'tasks', 'abandon-task', 'reset', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);

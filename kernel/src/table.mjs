@@ -1,11 +1,11 @@
 /**
- * 定宽文本表格。内核渲染好，模型**原样贴进对话**。
+ * Markdown 表格。内核渲染好，模型**原样贴进对话**。
  *
  * 为什么渲染在内核：表格是给用户做判断用的界面，而界面的措辞、列的取舍、
  * 哪一栏留白，都是模型之间差异最大的地方。内核渲染好一整块文本，
  * 模型只负责搬运，用户看到的东西就和模型是谁无关。
  *
- * 中日韩字符在等宽终端里占两格。按码点数对齐会让中文那几列整体歪掉，
+ * 中日韩字符在等宽终端里占两格。按码点数截断会让中文值超出列宽，
  * 所以这里按**显示宽度**算，不按字符数。
  */
 
@@ -53,32 +53,25 @@ export function truncate(s, max) {
   return `${out}…`;
 }
 
-const pad = (s, width) => s + ' '.repeat(Math.max(0, width - displayWidth(s)));
-
 /**
  * 渲染一张表。
  *
  * `columns`：`{ key, label, max? }[]`，`max` 是这一列的显示宽度上限。
  * `rows`：对象数组，取 `columns[].key`。缺的值渲染成空白，不渲染成 `undefined`。
  *
- * 列宽取「表头和所有单元格里最宽的那个」，再受 `max` 约束 —— 表格因此**只跟内容有关**，
+ * 每个单元格都受 `max` 约束，长值不会把 Markdown 列撑开 —— 表格因此**只跟内容有关**，
  * 同一批读数渲染两次一定一模一样。
  */
 export function renderTable(columns, rows) {
-  const cells = rows.map((r) => columns.map((c) => truncate(r[c.key] ?? '', c.max ?? 40)));
-  const widths = columns.map((c, i) => Math.max(
-    displayWidth(c.label),
-    ...cells.map((row) => displayWidth(row[i])),
-    1,
-  ));
-  const line = (l, m, r) => l + widths.map((w) => '─'.repeat(w + 2)).join(m) + r;
-  const row = (vals) => `│ ${vals.map((v, i) => pad(v, widths[i])).join(' │ ')} │`;
+  const clean = (value) => String(value ?? '').replace(/[\r\n]+/g, ' ');
+  const cell = (value, max) => truncate(clean(value), max).replaceAll('|', '\\|');
+  const headers = columns.map((c) => cell(c.label, c.max ?? 40));
+  const cells = rows.map((r) => columns.map((c) => cell(r[c.key], c.max ?? 40)));
+  const row = (vals) => `| ${vals.join(' | ')} |`;
   return [
-    line('┌', '┬', '┐'),
-    row(columns.map((c) => c.label)),
-    line('├', '┼', '┤'),
+    row(headers),
+    row(columns.map(() => '---')),
     ...cells.map(row),
-    line('└', '┴', '┘'),
   ].join('\n');
 }
 

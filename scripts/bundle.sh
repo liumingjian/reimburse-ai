@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 把内核和图片提取运行时代码打进各自 Skill，产出可直接安装的目录。
+# 把内核和图片字段提取运行时代码打进各自 Skill，产出可以直接安装的目录。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -37,6 +37,10 @@ for name in baox baox-recover baox-setup; do
   cp kernel/VERSION "dist/$name/kernel/"
   cp -R kernel/bin "dist/$name/kernel/bin"
   cp -R kernel/src "dist/$name/kernel/src"
+  # The pinned Python project is shipped as source plus uv.lock. A local uv
+  # environment or interpreter cache must never become part of a release.
+  rm -rf "dist/$name/kernel/src/pdf-markdown-runtime/.venv"
+  find "dist/$name/kernel/src" -type d -name '__pycache__' -prune -exec rm -rf {} +
 done
 
 pnpm --filter @baox/image-field-extraction build
@@ -44,6 +48,7 @@ mkdir -p dist/extract-reimbursement-images/runtime
 cp -R packages/image-field-extraction/dist dist/extract-reimbursement-images/runtime/dist
 cp -R packages/image-field-extraction/python dist/extract-reimbursement-images/runtime/python
 cp packages/image-field-extraction/scripts/install-runtime.mjs dist/extract-reimbursement-images/runtime/install-runtime.mjs
+cp packages/image-field-extraction/runtime-package.json dist/extract-reimbursement-images/runtime/package.json
 
 # 安装说明跟包走。拿到压缩包的人手上只有这个包，仓库的 README 他们看不到。
 cp docs/INSTALL.md dist/INSTALL.md
@@ -56,6 +61,17 @@ cp scripts/install-permissions.mjs dist/install-permissions.mjs
 for s in dist/baox/ dist/baox-recover/ dist/baox-setup/; do
   [ -f "$s/kernel/bin/baox.mjs" ] || { echo "内核入口闸没过：$s 里没有 kernel/bin/baox.mjs" >&2; exit 1; }
 done
+for name in baox baox-recover baox-setup extract-reimbursement-images; do
+  test -f "dist/$name/agents/openai.yaml" \
+    || { echo "Codex 元数据闸没过：$name 缺少 agents/openai.yaml" >&2; exit 1; }
+done
+
+test -f dist/extract-reimbursement-images/runtime/dist/cli.js \
+  || { echo "图片字段提取运行时闸没过：缺少编译后的 CLI" >&2; exit 1; }
+test -f dist/extract-reimbursement-images/runtime/python/requirements-rapid.txt \
+  || { echo "图片字段提取运行时闸没过：缺少锁定依赖" >&2; exit 1; }
+grep -q '"type": "module"' dist/extract-reimbursement-images/runtime/package.json \
+  || { echo "图片字段提取运行时闸没过：缺少 ESM 声明" >&2; exit 1; }
 
 stowaways=$(find dist -name 'scratch-*' -o -name '*.test.mjs' | sort)
 if [ -n "$stowaways" ]; then
@@ -63,7 +79,5 @@ if [ -n "$stowaways" ]; then
   echo "$stowaways" >&2
   exit 1
 fi
-test -f dist/extract-reimbursement-images/runtime/dist/cli.js \
-  || { echo "图片提取运行时闸没过：缺少编译后的 CLI" >&2; exit 1; }
-echo "打包完成（把下面每个目录整份拷到 <项目>/.claude/skills/ 即可，四个一起）："
+echo "打包完成（四个目录一起安装：Codex 用 <项目>/.agents/skills/，Claude Code 用 <项目>/.claude/skills/）："
 find dist -maxdepth 1 -mindepth 1 -type d | sort

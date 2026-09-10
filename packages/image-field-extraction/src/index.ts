@@ -39,27 +39,13 @@ export async function extractImageFields(
   }
 
   let worker: Awaited<ReturnType<typeof runWorker>> | null = null;
-  let workerUnavailable = false;
   if (verified.length > 0) {
-    try {
-      worker = await runWorker(verified);
-    } catch {
-      workerUnavailable = true;
-    }
+    worker = await runWorker(verified);
   }
 
   const items = request.images.map((image) => {
     const failed = failures.get(image.materialId);
     if (failed) return failed;
-    if (workerUnavailable) {
-      return {
-        status: "needs_model_vision" as const,
-        materialId: image.materialId,
-        contentHash: image.contentHash,
-        reason: "runtime_unavailable" as const,
-        evidence: [],
-      };
-    }
     const reading = worker?.results.get(image.materialId);
     if (!reading || !worker) return failure(image, "worker_protocol_error", "图片读取运行时未返回结果", true);
     const provenance = {
@@ -93,7 +79,16 @@ export async function extractImageFields(
       };
     }
     const validationError = validateDocument(parsed.document);
-    if (validationError) return failure(image, "candidate_validation_failed", validationError, false);
+    if (validationError) {
+      return {
+        status: "needs_model_vision" as const,
+        materialId: image.materialId,
+        contentHash: image.contentHash,
+        reason: "candidate_validation_failed" as const,
+        evidence: reading.observations,
+        provenance,
+      };
+    }
     return {
       status: "extracted" as const,
       materialId: image.materialId,

@@ -12,15 +12,16 @@ const COLS = [
   { key: 'value', label: '我读到的', max: 24 },
 ];
 
-test('中文按两格算宽，整张表每一行等宽', () => {
+test('中文按两格算宽，长值按列上限截断且每行列数一致', () => {
   const out = renderTable(COLS, [
     { material: 'invoice.png（发票）', field: '发票号码', value: '26427000000640558021' },
     { material: '', field: '价税合计', value: '18.80' },
     { material: '打车.png（发票）', field: '开票日期', value: '2026-09-04' },
   ]);
   const lines = out.split('\n');
-  const widths = new Set(lines.map(displayWidth));
-  assert.equal(widths.size, 1, `每一行的显示宽度应当一致，实际有 ${[...widths].join('/')}`);
+  assert.equal(lines.length, 5);
+  assert.ok(lines.every((line) => line.split('|').length === COLS.length + 2));
+  assert.ok(displayWidth(lines[0]) > 0);
   assert.ok(out.includes('26427000000640558021'), '发票号码不能被截断 —— 用户要比对的就是它');
 });
 
@@ -44,10 +45,21 @@ test('缺的值渲染成空白，不渲染成 undefined', () => {
   assert.ok(!out.includes('undefined'));
 });
 
+test('表格使用带对齐行的标准 Markdown，并保护单元格中的分隔符', () => {
+  const out = renderTable(COLS, [{
+    material: '长文件名|原件.pdf', field: '字段\n换行', value: '值',
+  }]);
+  const lines = out.split('\n');
+  assert.match(lines[0], /^\| .* \| .* \| .* \|$/);
+  assert.match(lines[1], /^\| --- \| --- \| --- \|$/);
+  assert.match(out, /长文件名\\\|原件\.pdf/);
+  assert.doesNotMatch(out, /[┌┬┐├┼┤└┴┘│─]/);
+});
+
 test('没有一行时也渲染得出表头 —— 空表也是一个要说清楚的结果', () => {
   const out = renderTable(COLS, []);
   assert.ok(out.includes('我读到的'));
-  assert.equal(out.split('\n').length, 4);
+  assert.equal(out.split('\n').length, 2);
 });
 
 // —— 问题块 ——

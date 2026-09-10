@@ -14,7 +14,21 @@ const frontmatter = (src) => src.split('---')[1] ?? '';
 
 const ALL = ['baox', 'baox-setup', 'baox-recover', 'extract-reimbursement-images'];
 
-// 用户入口只有一个。另外两份是模型调用的执行壳 —— 用户不必知道它们存在，
+test('四份 Skill 都带 Codex agents/openai.yaml 元数据', () => {
+  for (const skill of ALL) {
+    const metadata = read(skill, 'agents', 'openai.yaml');
+    assert.match(metadata, /^interface:\n/m, `${skill} 缺少 interface`);
+    assert.match(metadata, /^  display_name: "[^"]+"$/m, `${skill} 缺少 display_name`);
+    assert.match(metadata, /^  short_description: "[^"]{25,64}"$/m,
+      `${skill} 的 short_description 应为 25-64 个字符`);
+    assert.doesNotMatch(metadata, /allow_implicit_invocation:\s*false/,
+      `${skill} 被禁止隐式调用，baox 状态机将无法调度内部执行壳`);
+  }
+  assert.match(read('baox', 'agents', 'openai.yaml'),
+    /^  default_prompt: ".*\$baox.*"$/m, 'baox 默认提示必须显式提到 $baox');
+});
+
+// 用户入口只有一个。另外三份是模型调用的执行壳 —— 用户不必知道它们存在，
 // 更不必自己去挑该用哪一个。这一条是这一批改动的全部目的。
 test('用户能唤起的 Skill 只有 baox 一个', () => {
   assert.doesNotMatch(frontmatter(read('baox', 'SKILL.md')), /user-invocable:\s*false/);
@@ -34,15 +48,15 @@ test('四份说明书都不超过 120 行', () => {
   }
 });
 
-// 报销只走 next；用户明确要求的 reset 是独立运维入口。
-// 只看代码块和行内代码 —— 散文里的 "the only baox entry point" 不是命令示例。
-test('baox 只允许 next 和 reset，baox-setup 只允许 next', () => {
-  for (const s of ['baox', 'baox-setup']) {
-    for (const f of walk(path.join(SKILLS, s))) {
-      const allowed = s === 'baox' ? ['next', 'reset'] : ['next'];
-      const found = commandsIn(fs.readFileSync(f, 'utf8')).filter((c) => !allowed.includes(c));
-      assert.deepEqual(found, [], `${path.relative(SKILLS, f)} 里出现了额外命令：${found}`);
+// 模型只会走内核给定的入口：报销流程是 `next`，用户明确要求 Full Reset 时才有 `reset`。
+// baox-setup 仍然只跑 `next`；其它低层命令不能从说明书里长回来。
+test('baox 只多出用户明确触发的 reset，baox-setup 仍只有 next', () => {
+  for (const [skill, allowed] of [['baox', ['next', 'reset']], ['baox-setup', ['next']]]) {
+    const found = new Set();
+    for (const f of walk(path.join(SKILLS, skill))) {
+      for (const command of commandsIn(fs.readFileSync(f, 'utf8'))) found.add(command);
     }
+    assert.deepEqual([...found].sort(), allowed, `${skill} 的命令入口不对`);
   }
 });
 
@@ -77,6 +91,15 @@ test('四份说明书的 frontmatter 里都没有 hooks —— 那个键是不�
     assert.doesNotMatch(frontmatter(read(s, 'SKILL.md')), /^\s*hooks:/m,
       `${s}/SKILL.md 的 frontmatter 里又出现了 hooks，而它不触发`);
   }
+});
+
+test('人机交互 reference 对齐当前 next 响应契约', () => {
+  const reference = read('baox', 'references', 'human-interaction.md');
+  assert.match(reference, /响应顶层的 `stepToken`/);
+  assert.match(reference, /`step\.table`/);
+  assert.match(reference, /`step\.argv`/);
+  assert.match(reference, /当前响应没有 `step\.return` 或 `step\.completion`/);
+  assert.doesNotMatch(reference, /correctionArgv/);
 });
 
 // 可选的那道外层守卫要跟着包一起发出去，否则 INSTALL.md 让用户配的那条路径是空的。

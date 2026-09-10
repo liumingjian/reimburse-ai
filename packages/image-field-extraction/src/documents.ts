@@ -14,12 +14,24 @@ export type DocumentParseResult =
 
 const missing = <T>(): FieldCandidate<T> => ({ evidenceState: "missing", sourceRefs: [] });
 
+const MONEY_PATTERN = /[-+]?[¥￥]?\s*\d[\d,]*(?:\.\d{1,2})?/;
+const DATE_PATTERN = /(20\d{2})\s*[年/.\-]\s*(\d{1,2})\s*[月/.\-]\s*(\d{1,2})日?/;
+const TIME_PATTERN = /(?:[01]?\d|2[0-3])\s*:\s*[0-5]\d/;
+
+type RideColumn = "travelTime" | "city" | "origin" | "destination" | "amount";
+
+interface RideTableHeader {
+  key: RideColumn;
+  line: TextObservation;
+  point: { x: number; y: number };
+}
+
 export function extractDocument(observations: readonly TextObservation[]): DocumentParseResult {
   const text = observations.map((line) => clean(line.text)).join("\n");
   if (!text.trim()) return { kind: "insufficient_evidence" };
   if ((text.match(/增值税[^\n]{0,12}发票/g) ?? []).length > 1) return { kind: "multiple_documents" };
 
-  if (/增值税[^\n]{0,12}发票/.test(text)) return usable(vatInvoice(observations));
+  if (looksLikeVatInvoice(text)) return usable(vatInvoice(observations));
   if (/铁路电子客票|中国铁路|12306|(?:\b[GDCKTZ]\d{1,4}次?\b).*(?:车站|检票|车厢|乘车)/is.test(text)) {
     return usable(railTicket(observations));
   }
@@ -48,7 +60,7 @@ function usable(document: ExtractedDocument): DocumentParseResult {
   let enough = false;
   switch (document.type) {
     case "vat_invoice":
-      enough = present(document.fields.invoiceNumber) && present(document.fields.totalAmount);
+      enough = present(document.fields.totalAmount);
       break;
     case "rail_ticket":
     case "road_passenger_ticket":
@@ -56,9 +68,9 @@ function usable(document: ExtractedDocument): DocumentParseResult {
         && present(document.fields.origin) && present(document.fields.destination) && present(document.fields.amount);
       break;
     case "ride_itinerary": {
-      const segment = document.fields.segments[0];
-      enough = present(document.fields.totalAmount) && !!segment && present(segment.travelDate)
-        && present(segment.origin) && present(segment.destination);
+      enough = present(document.fields.totalAmount) && document.fields.segments.length > 0
+        && document.fields.segments.every((segment) => present(segment.travelDate)
+          && present(segment.origin) && present(segment.destination));
       break;
     }
     case "hotel_folio":
@@ -75,20 +87,36 @@ function usable(document: ExtractedDocument): DocumentParseResult {
   return enough ? { kind: "document", document } : { kind: "insufficient_evidence" };
 }
 
+function looksLikeVatInvoice(text: string): boolean {
+  if (/增值税[^\n]{0,12}发票/.test(text)) return true;
+  return /发票(?:号码|号)/.test(text)
+    && /开票(?:日期|时间)/.test(text)
+    && /(?:价税合计|小写|税额)/.test(text);
+}
+
 function vatInvoice(lines: readonly TextObservation[]): ExtractedDocument {
   return {
     type: "vat_invoice",
     fields: {
-      invoiceNumber: stringField(lines, ["发票号码", "发票号"], /[A-Z0-9]{8,20}/i),
-      issueDate: dateField(lines, ["开票日期", "开票时间"]),
-      netAmount: moneyField(lines, ["不含税金额", "金额"]),
-      taxAmount: moneyField(lines, ["税额"]),
-      totalAmount: moneyField(lines, ["价税合计", "小写"]),
-      sellerName: stringField(lines, ["销售方名称", "销方名称", "销售方"], /[^\s:：]{2,60}/),
-      buyerName: stringField(lines, ["购买方名称", "购方名称", "购买方"], /[^\s:：]{2,60}/),
-      itemName: stringField(lines, ["项目名称", "货物或应税劳务名称"], /[^\s:：]{2,60}/),
+      invoiceNumber: missing(),
+      issueDate: missing(),
+      netAmount: missing(),
+      taxAmount: missing(),
+      totalAmount: vatTotalField(lines),
+      sellerName: missing(),
+      buyerName: missing(),
+      itemName: missing(),
     },
   };
+}
+
+function vatTotalField(lines: readonly TextObservation[]): FieldCandidate<Money> {
+  // The lower-case total is the unambiguous numeric total on a VAT invoice.
+  const lowercase = labeledMatch(lines, ["小写"], MONEY_PATTERN);
+  if (lowercase) return moneyCandidate(lowercase.line, lowercase.match[0]);
+  const total = labeledMatch(lines, ["价税合计"], MONEY_PATTERN);
+  if (total) return moneyCandidate(total.line, total.match[0]);
+  return missing();
 }
 
 function railTicket(lines: readonly TextObservation[]): ExtractedDocument {
@@ -131,10 +159,11 @@ function roadTicket(lines: readonly TextObservation[]): ExtractedDocument {
 }
 
 function rideItinerary(lines: readonly TextObservation[]): ExtractedDocument {
+  const tableSegments = rideTableSegments(lines);
   const [origin, destination] = routeFields(lines);
   const segment: RideSegment = {
-    travelDate: dateField(lines, ["出发时间", "用车时间", "日期"]),
-    travelTime: timeField(lines, ["出发时间", "用车时间", "时间"]),
+    travelDate: prefer(dateField(lines, ["出发时间", "用车时间", "行程时间", "日期"]), anyDate(lines)),
+    travelTime: prefer(timeField(lines, ["出发时间", "用车时间", "行程时间", "时间"]), anyTime(lines)),
     city: stringField(lines, ["城市", "用车城市"], /[\p{Script=Han}A-Za-z]{2,30}/u),
     origin,
     destination,
@@ -145,9 +174,117 @@ function rideItinerary(lines: readonly TextObservation[]): ExtractedDocument {
     fields: {
       traveler: stringField(lines, ["乘车人", "用车人", "姓名"], /[\p{Script=Han}A-Za-z·]{2,30}/u),
       totalAmount: moneyField(lines, ["合计金额", "总金额", "实付金额", "合计"]),
-      segments: hasSegmentValue(segment) ? [segment] : [],
+      segments: tableSegments.length > 0 ? tableSegments : (hasSegmentValue(segment) ? [segment] : []),
     },
   };
+}
+
+function rideTableSegments(lines: readonly TextObservation[]): RideSegment[] {
+  const labels: readonly [RideColumn, string][] = [
+    ["travelTime", "上车时间"],
+    ["city", "城市"],
+    ["origin", "起点"],
+    ["destination", "终点"],
+    ["amount", "金额"],
+  ];
+  const headers = labels.flatMap(([key, label]) => {
+    const line = lines.find((candidate) => clean(candidate.text) === label);
+    const point = line ? center(line) : undefined;
+    return line && point ? [{ key, line, point }] : [];
+  });
+  if (headers.length !== labels.length) return [];
+
+  const headerY = Math.max(...headers.map((header) => header.point.y));
+  const rows = groupRows(lines, headerY + 24);
+  return rows.flatMap((row) => {
+    const values = new Map<RideColumn, TextObservation>();
+    for (const line of row) {
+      const point = center(line);
+      if (!point) continue;
+      const column = columnFor(point.x, headers);
+      if (!column) continue;
+      const previous = values.get(column.key);
+      if (!previous || clean(line.text).length > clean(previous.text).length) values.set(column.key, line);
+    }
+    const travelTime = values.get("travelTime");
+    const city = values.get("city");
+    const origin = values.get("origin");
+    const destination = values.get("destination");
+    const amount = values.get("amount");
+    if (!travelTime && !city && !origin && !destination && !amount) return [];
+    return [{
+      travelDate: travelTime ? dateFromText(travelTime) : missing(),
+      travelTime: travelTime ? timeFromText(travelTime) : missing(),
+      city: city ? textFromObservation(city) : missing(),
+      origin: origin ? textFromObservation(origin) : missing(),
+      destination: destination ? textFromObservation(destination) : missing(),
+      amount: amount ? moneyFromText(amount) : missing(),
+    } satisfies RideSegment];
+  });
+}
+
+function groupRows(lines: readonly TextObservation[], startY: number): TextObservation[][] {
+  const positioned = lines.flatMap((line) => {
+    const point = center(line);
+    return point && point.y >= startY ? [{ line, point }] : [];
+  }).sort((left, right) => left.point.y - right.point.y || left.point.x - right.point.x);
+  const rows: { y: number; lines: TextObservation[] }[] = [];
+  for (const { line, point } of positioned) {
+    const row = rows.at(-1);
+    if (!row || Math.abs(point.y - row.y) > 28) {
+      rows.push({ y: point.y, lines: [line] });
+      continue;
+    }
+    row.lines.push(line);
+    row.y = row.lines.reduce((sum, item) => sum + (center(item)?.y ?? row.y), 0) / row.lines.length;
+  }
+  return rows.map((row) => row.lines);
+}
+
+function columnFor(
+  x: number,
+  headers: readonly RideTableHeader[],
+): RideTableHeader | undefined {
+  const ordered = [...headers].sort((left, right) => left.point.x - right.point.x);
+  for (let index = 0; index < ordered.length; index += 1) {
+    const current = ordered[index];
+    if (!current) continue;
+    const previous = ordered[index - 1];
+    const next = ordered[index + 1];
+    const lower = previous ? (previous.point.x + current.point.x) / 2 : -Infinity;
+    const upper = next ? (current.point.x + next.point.x) / 2 : Infinity;
+    if (x >= lower && x < upper) return current;
+  }
+  return undefined;
+}
+
+function dateFromText(line: TextObservation): FieldCandidate<string> {
+  const match = clean(line.text).match(DATE_PATTERN);
+  if (!match?.[1] || !match[2] || !match[3] || !validDate(+match[1], +match[2], +match[3])) return missing();
+  return explicit(line, match[0], `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`);
+}
+
+function timeFromText(line: TextObservation): FieldCandidate<string> {
+  const match = clean(line.text).match(TIME_PATTERN);
+  if (!match) return missing();
+  const [hour, minute] = match[0].split(":");
+  return explicit(line, match[0], `${hour?.padStart(2, "0")}:${minute}`);
+}
+
+function textFromObservation(line: TextObservation): FieldCandidate<string> {
+  const value = clean(line.text);
+  return value ? explicit(line, value, value) : missing();
+}
+
+function moneyFromText(line: TextObservation): FieldCandidate<Money> {
+  const match = clean(line.text).match(MONEY_PATTERN);
+  return match ? moneyCandidate(line, match[0]) : missing();
+}
+
+function moneyCandidate(line: TextObservation, raw: string): FieldCandidate<Money> {
+  const number = Number(raw.replace(/[¥￥元,\s]/g, ""));
+  if (!Number.isFinite(number)) return missing();
+  return explicit(line, raw.trim(), { currency: "CNY", cents: Math.round(number * 100) });
 }
 
 function hotelFolio(lines: readonly TextObservation[]): ExtractedDocument {

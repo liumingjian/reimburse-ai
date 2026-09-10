@@ -30,7 +30,7 @@ test('七个环境状态各有一步可做，说给用户听的话全部来自�
   const { stepFor } = await import('../src/next.mjs');
   const cases = [
     ['env_node_unsupported', 'tell_user', healthy({ nodeMajor: 20, nodeVersion: '20.11.0' })],
-    ['env_chrome_down', 'run', healthy({ cdpUp: false, probe: null })],
+    ['env_chrome_down', 'tell_user', healthy({ cdpUp: false, probe: null })],
     ['env_not_logged_in', 'tell_user', healthy({ probe: { status: 'not_logged_in' }, binding: null })],
     ['env_identity_unknown', 'tell_user', healthy({ probe: { status: 'unknown' }, binding: null })],
     // 第一次认身份走终端表格（confirm_table），不再弹本地页面。
@@ -49,6 +49,34 @@ test('七个环境状态各有一步可做，说给用户听的话全部来自�
       assert.ok(shaped.step.argv[1].endsWith(path.join('bin', 'baox.mjs')));
     }
   }
+});
+
+test('system 默认模式没有 ERP 标签时发 browser-open，而不是要求 ego', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const shaped = stepFor('env_identity_unknown', {
+    browserMode: 'system',
+    probe: { status: 'no_tab', transport: 'system' },
+  });
+  assert.equal(shaped.step.kind, 'run');
+  assert.equal(shaped.step.argv[2], 'browser-open');
+  assert.ok(shaped.step.argv.includes('--url'));
+  assert.doesNotMatch(shaped.speak, /BAOX_EGO_TASK_SPACE|ego task space/);
+});
+
+test('system 只读能力失败时如实提示，不假装未登录或已登录', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const shaped = stepFor('env_identity_unknown', {
+    browserMode: 'system',
+    browserReadError: { code: 'BROWSER_AUTOMATION_PERMISSION', message: 'AppleEvents 被拒绝' },
+    probe: { status: 'browser_read_unavailable', transport: 'system' },
+  });
+  assert.equal(shaped.step.kind, 'tell_user');
+  assert.match(shaped.context, /AppleEvents/);
+  assert.match(shaped.speak, /AppleEvents/);
+  assert.doesNotMatch(shaped.speak, /未登录/);
+  assert.doesNotMatch(shaped.speak, /BAOX_EGO_TASK_SPACE/);
 });
 
 test('硬阻塞才给 2：等人登录不是硬阻塞', async () => {
@@ -133,17 +161,69 @@ test('材料这一段每个状态都有一步可做，说给用户听的话全�
   }
 });
 
-test('要人亲手表态的那两步，明说不能外包给子 Agent', async () => {
+test('PDF 候选读取严格使用 Markdown，不携带或要求打开页图', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
-  // 契约说 kind: "run" 的连续段可以外包。这两步的另一头是人：一个要人点确认页，
-  // 一个要人对着终端表格表态。外包给一个没有用户的子 Agent，它只会挂在那里等 ——
-  // 所以写进 JSON，不是只写在注释里。
+  const blockedBy = [{
+    kind: 'markdown_candidate_required', blocking: true, materialId: 'm-pdf', fileName: '发票.pdf',
+    relPath: '发票.pdf', sourcePath: '/tmp/材料/发票.pdf',
+    artifactPath: '/tmp/ws/pdf-markdown/v-abc/m-pdf.artifact.json',
+    markdownPath: '/tmp/ws/pdf-markdown/v-abc/m-pdf.md',
+    numberedMarkdownPath: '/tmp/ws/pdf-markdown/v-abc/m-pdf.numbered.md',
+    templatePath: '/tmp/ws/pdf-markdown/v-abc/m-pdf.candidate.template.json',
+    candidatePath: '/tmp/ws/pdf-markdown/v-abc/m-pdf.candidate.json',
+    candidateRecordPath: '/tmp/ws/pdf-markdown/v-abc/m-pdf.candidate.record.json',
+    markdownHash: 'a'.repeat(64), hint: '请提交候选',
+  }];
+  const { step, speak } = stepFor('pdf_markdown_candidate_required', withMaterials(), blockedBy);
+  assert.equal(step.kind, 'read_markdown');
+  assert.equal(step.outsourceable, true);
+  assert.ok(step.argv.includes('markdown-ingest'));
+  assert.ok(step.argv.includes('/tmp/材料'));
+  assert.ok(fs.existsSync(step.schemaPath));
+  assert.ok(fs.existsSync(step.templateSchemaPath));
+  assert.equal('sourcePath' in step.materials[0], false);
+  assert.equal(step.materials[0].numberedMarkdownPath, blockedBy[0].numberedMarkdownPath);
+  assert.equal('sourcePages' in step.materials[0], false);
+  assert.doesNotMatch(step.instructions, /sourcePages|页图|打开.*PDF|回看.*PDF/);
+  assert.match(step.instructions, /numberedMarkdownPath/);
+  assert.match(speak, /带行号 Markdown/);
+});
+
+test('PDF 转换空结果给用户处置，运行时失败允许明确重试', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const item = { kind: 'markdown_conversion_empty', blocking: true, materialId: 'm-pdf',
+    fileName: '扫描件.pdf', relPath: '扫描件.pdf', sourcePath: '/tmp/材料/扫描件.pdf' };
+  const empty = stepFor('pdf_markdown_conversion_empty', withMaterials(), [item]);
+  assert.equal(empty.step.kind, 'tell_user');
+  assert.match(empty.speak, /电子发票原件/);
+  const failed = stepFor('pdf_markdown_conversion_failed', withMaterials(), [
+    { ...item, kind: 'markdown_conversion_failed', error: { code: 'RUNTIME', message: 'locked runtime' } },
+  ]);
+  assert.equal(failed.step.kind, 'run');
+  assert.ok(failed.step.argv.includes('markdown-convert'));
+  assert.match(failed.speak, /修复锁定运行时/);
+});
+
+test('要人亲手表态和模型亲眼读图的步骤，明说不能外包给环境子 Agent', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  // 契约说 kind: "run" 的连续段可以外包。要人亲手表态的步骤和已经进入材料阶段的
+  // 看图步骤都必须回到主会话，所以写进 JSON，不是只写在 Skill 的说明里。
   assert.equal(stepFor('env_identity_unbound', healthy({ binding: null })).step.outsourceable, false);
   assert.equal(stepFor('reading_awaiting_confirmation',
     withMaterials({ pendingReadings: [PENDING_READING] })).step.outsourceable, false);
-  // 纯跑命令的那些照旧可以外包。
-  assert.equal(stepFor('env_chrome_down', healthy({ cdpUp: false, probe: null })).step.outsourceable, true);
+  const images = [{ materialId: 'm-1', fileName: '发票.png', absPath: '/tmp/材料/发票.png',
+    format: 'png', contentHash: 'abc123' }];
+  for (const state of ['image_awaiting_reading', 'reading_rejected', 'reading_stale']) {
+    const observation = withMaterials({ pendingImages: state === 'reading_rejected'
+      ? [{ ...images[0], rejection: { reasons: ['读数未通过'] } }]
+      : images });
+    assert.equal(stepFor(state, observation).step.outsourceable, false, `${state} 不能由环境子 Agent 继续做`);
+  }
+  // ego task space 不可用时需要用户恢复环境，不能由环境子 Agent 代办。
+  assert.equal(stepFor('env_chrome_down', healthy({ cdpUp: false, probe: null })).step.kind, 'tell_user');
   assert.equal(stepFor('classify_pending', withMaterials({ classificationRecorded: false })).step.outsourceable,
     true);
 });
@@ -182,7 +262,7 @@ test('待办这一步逐条说清楚谁能解决它，一条都不含糊', async
   assert.equal(shaped.exit, 0, '待办是在等人处理，不是被内核拦住');
 });
 
-test('图片提取这一步：内核把版本化工单、内部 Skill、输出和提交命令一次给全', async () => {
+test('图片提取工单把输入、输出、模板和提交命令一次给全', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
   const images = [
@@ -192,22 +272,21 @@ test('图片提取这一步：内核把版本化工单、内部 Skill、输出�
   const { step, speak } = stepFor('image_awaiting_reading', withMaterials({ pendingImages: images }));
   assert.equal(step.kind, 'extract_images');
   assert.equal(step.skill, 'extract-reimbursement-images');
-  assert.equal(step.contractVersion, 1);
   assert.equal(step.images.length, 2);
   assert.equal(step.images[0].absPath, '/tmp/材料/发票.png', '模型要拿绝对路径才打得开图');
   assert.ok(step.images[0].contentHash, '读数钉在这张图当前的字节上');
   assert.ok(fs.existsSync(step.schemaPath), '模板得是一份真存在的文件，不是一句说明');
   assert.equal(step.readingsPath, path.join('/tmp/ws', 'reading-submission.json'));
-  assert.equal(step.request.contractVersion, 1);
+  assert.equal(step.requestPath, path.join('/tmp/ws', 'image-extraction-request.json'));
   assert.deepEqual(step.request.images.map((image) => image.materialId), ['m-1', 'm-2']);
-  assert.match(step.requestPath, /image-extraction-request\.json$/);
   assert.match(step.extractionPath, /image-extraction-result\.json$/);
+  assert.match(step.resultPath, /image-extraction-submit\.json$/);
   assert.ok(step.argv.includes(step.readingsPath), '写到哪、交哪个文件，是同一个路径');
   assert.ok(step.argv.includes('ocr-submit'));
   assert.match(speak, /发票\.png/, '要看哪几张图，念出来');
 });
 
-test('模型视觉回退所需的凭据跟着提取工单一起给', async () => {
+test('模型视觉回退的凭据闭集跟着图片提取工单一起给', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
   const images = [{ materialId: 'm-1', fileName: '发票.png', absPath: '/tmp/材料/发票.png',
@@ -217,6 +296,107 @@ test('模型视觉回退所需的凭据跟着提取工单一起给', async () =>
     ['tall', 'portrait', 'square', 'landscape', 'wide']);
   assert.ok(step.sightedShapes.every((s) => s.label), '每一档都得有一句人话，光给英文词没用');
   assert.match(context, /模型视觉/);
+});
+
+test('看图 step 直接给出完整字段闭集，不用反查 vision.mjs', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const images = [{ materialId: 'm-1', fileName: '行程单.png', absPath: '/tmp/材料/行程单.png',
+    format: 'png', contentHash: 'aa' }];
+  const { step } = stepFor('image_awaiting_reading', withMaterials({ pendingImages: images }));
+  const expectedFields = ['invoiceNumber', 'issueDate', 'netAmount', 'taxAmount', 'totalAmount',
+    'sellerName', 'buyerName', 'itemName', 'city', 'travelDate', 'origin', 'destination',
+    'travelTime', 'traveler', 'trainNumber', 'seat', 'hotelName', 'guestName',
+    'checkIn', 'checkOut', 'folioTotal', 'payer', 'payee', 'paidAt',
+    'transactionNumber', 'title', 'merchant'];
+
+  assert.deepEqual(Object.keys(step.readingContract.docTypes),
+    ['invoice', 'rail_ticket', 'road_passenger_ticket', 'ride_itinerary', 'hotel_folio', 'payment_slip', 'other', 'unreadable']);
+  for (const docType of Object.values(step.readingContract.docTypes)) {
+    assert.deepEqual(docType.allowedFields, expectedFields);
+  }
+  assert.deepEqual(step.readingContract.docTypes.invoice.requiredFields,
+    ['invoiceNumber', 'totalAmount']);
+  assert.equal(step.readingContract.minimumFields, 1, '完整图片不能交空读数');
+  assert.deepEqual(step.readingContract.amountConservation.whenPresent,
+    ['netAmount', 'taxAmount', 'totalAmount']);
+  assert.match(step.readingContract.amountConservation.rule, /禁止改数凑平/);
+  assert.equal(step.readingContract.additionalFields, false, 'schema 外字段必须明确拒绝');
+  const segments = step.readingContract.docTypes.ride_itinerary.segments;
+  assert.deepEqual(step.readingContract.docTypes.ride_itinerary.requiredOrUnreadable, ['totalAmount']);
+  assert.deepEqual(step.readingContract.docTypes.ride_itinerary.flatItinerary.requiredOrUnreadable,
+    ['travelDate']);
+  assert.match(step.readingContract.docTypes.ride_itinerary.flatItinerary.note, /不能用 issueDate 代替/);
+  assert.equal(segments.type, 'array');
+  assert.equal(segments.minItems, 1);
+  assert.equal(segments.additionalFields, false);
+  assert.deepEqual(Object.keys(segments.fields),
+    ['travelDate', 'city', 'origin', 'destination', 'amount']);
+  assert.deepEqual(Object.entries(segments.fields)
+    .filter(([, rule]) => rule.required).map(([field]) => field),
+  ['travelDate', 'origin', 'destination']);
+  assert.match(step.readingContract.multipleTrips, /segments.*逐段/,
+    '多段行程按契约逐段抄写，不能压成一个单段字段');
+});
+
+test('证据歧义待办显示凭证与候选参考材料的 materialId 和文件名', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const shaped = stepFor('intake_open_items', withMaterials(), [{
+    kind: 'evidence_ambiguous', blocking: true, resolvableBy: 'user',
+    materialId: 'm-voucher', references: [
+      { materialId: 'm-ref-a', fileName: '行程单一.pdf' },
+      { materialId: 'm-ref-b', fileName: '行程单二.pdf' },
+    ], hint: '证据归属不唯一',
+  }]);
+  assert.match(shaped.speak, /m-voucher/);
+  assert.match(shaped.speak, /m-ref-a\/行程单一\.pdf/);
+  assert.match(shaped.speak, /m-ref-b\/行程单二\.pdf/);
+});
+
+test('分类明细确认表完整展示住宿入住和离店日期', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const shaped = stepFor('classified_detail_confirmation', withMaterials({
+    task: { taskId: 'task-hotel', identity: me, workspace: '/tmp/ws' },
+    classifiedPreview: {
+      versionId: 'v-hotel', homeCity: '广州', evidence: [],
+      lines: [{ lineId: 'ev-01', maskedNumber: '****1234', kind: 'vat_common',
+        date: '2026-08-09', checkOut: '2026-08-22', endDate: '2026-08-22',
+        route: '酒店', totalAmount: '3640.00', categoryLabel: '住宿',
+        expenseItemCode: 'FY010001', referenceMaterialIds: ['m-folio'] }],
+    },
+  }));
+  assert.match(shaped.step.table, /2026-08-09 至 2026-08-22/);
+});
+
+test('分类明细确认表展示每张发票的原生票种和三项票面金额', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const shaped = stepFor('classified_detail_confirmation', withMaterials({
+    task: { taskId: 'task-rail', identity: me, workspace: '/tmp/ws' },
+    classifiedPreview: {
+      versionId: 'v-rail', homeCity: '广州',
+      evidence: [{ materialId: 'm-rail', role: 'primary_voucher', kind: 'rail_eticket',
+        fields: { invoiceNumber: '26349119423005877606',
+          netAmount: null, taxAmount: null, totalAmount: { text: '703.00', cents: 70300 } } }],
+      lines: [{ lineId: 'ev-01', voucherMaterialId: 'm-rail', maskedNumber: '********7606',
+        kind: 'rail_eticket', date: '2026-09-02',
+        totalAmount: '703.00', categoryLabel: '城际交通', expenseItemCode: 'FY010001',
+        referenceMaterialIds: [] }],
+    },
+  }));
+  assert.match(shaped.step.table, /原生票种/);
+  assert.match(shaped.step.table, /铁路电子客票/);
+  assert.match(shaped.step.table, /不含税金额/);
+  assert.match(shaped.step.table, /税额/);
+  assert.match(shaped.step.table, /价税合计/);
+  assert.match(shaped.step.table, /无需读取/);
+  assert.match(shaped.step.table, /0\.00（业务默认）/);
+  assert.match(shaped.step.table, /703\.00/);
+  assert.match(shaped.speak, /原生票种、不含税金额、税额和价税合计/);
+  assert.match(shaped.speak, /只核对票面总额/);
+  assert.doesNotMatch(shaped.speak, /待ERP|需在 ERP/);
 });
 
 test('被驳回的读数：重读时把上次没过的理由原样带上', async () => {
@@ -237,7 +417,6 @@ test('被驳回的读数：重读时把上次没过的理由原样带上', async
 test('确认这一步：内核渲染好一整块表格，模型只负责搬运', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
-  const { displayWidth } = await import('../src/table.mjs');
   const { step, speak, context } = stepFor('reading_awaiting_confirmation',
     withMaterials({ pendingReadings: [PENDING_READING] }));
 
@@ -245,8 +424,9 @@ test('确认这一步：内核渲染好一整块表格，模型只负责搬运',
   assert.ok(step.table.includes('26427000000640558021'), '要比对的值必须完整出现在表里');
   assert.ok(step.table.includes('发票号码'), '给用户看中文名，不给键名');
   assert.ok(step.table.includes('看不清'), '认不出的字段也要让用户知道，不是留白');
-  const widths = new Set(step.table.split('\n').map(displayWidth));
-  assert.equal(widths.size, 1, '定宽表格：每一行显示宽度一致');
+  assert.match(step.table, /^\| .* \|$/m);
+  assert.match(step.table, /^\| --- /m, '必须有 Markdown 对齐行');
+  assert.doesNotMatch(step.table, /[┌┬┐├┼┤└┴┘│─]/);
 
   assert.deepEqual(step.materialIds, ['m-1'], '这一次点头覆盖哪几份材料，说死');
   assert.ok(step.correctionPath.endsWith('reading-correction.json'));
@@ -352,13 +532,13 @@ test('过期凭据被忽略后，状态一步没动', async () => {
 test('模型声称做完但没交结果时，状态不前进', async () => {
   freshHome();
   const { nextResponse } = await import('../src/next.mjs');
-  const observation = healthy({ cdpUp: false, probe: null });    // 该跑 chrome-up 的那一步
+  const observation = withMaterials({ classificationRecorded: false }); // 该跑 classify 的那一步
   const first = nextResponse({ observation, sourceKey: KEY });
   assert.equal(first.step.kind, 'run');
 
   const claimed = nextResponse({ observation, sourceKey: KEY, after: first.stepToken, hasResult: false });
   assert.equal(claimed.ignored.reason, 'no_result');
-  assert.equal(claimed.state, 'env_chrome_down', '嘴上说跑完了，Chrome 还是没起来');
+  assert.equal(claimed.state, 'classify_pending', '嘴上说跑完了，分类仍没有落盘');
   assert.equal(claimed.stepToken, first.stepToken);
   assert.deepEqual(claimed.step, first.step);
 });
@@ -385,16 +565,12 @@ test('tell_user 不需要结果，直接再问一次就行', async () => {
   assert.equal(again.state, 'env_not_logged_in');
 });
 
-test('从没登录一路走到环境就绪，全程只有一条命令在动', async () => {
+test('从登录页一路走到环境就绪，ego task space 只等待用户动作', async () => {
   freshHome();
   const { nextResponse } = await import('../src/next.mjs');
-  // 一台没准备过的机器：Chrome 没起。
-  let r = nextResponse({ observation: healthy({ cdpUp: false, probe: null }), sourceKey: KEY });
-  assert.equal(r.step.kind, 'run');
-
-  // 内核起完 Chrome，页面停在登录页 —— 停下等人。
-  r = nextResponse({ observation: healthy({ probe: { status: 'not_logged_in' }, binding: null }),
-    sourceKey: KEY, after: r.stepToken, hasResult: true });
+  // ego task space 已可用，页面停在登录页 —— 停下等人。
+  let r = nextResponse({ observation: healthy({ probe: { status: 'not_logged_in' }, binding: null }),
+    sourceKey: KEY });
   assert.equal(r.state, 'env_not_logged_in');
   assert.equal(r.step.kind, 'tell_user');
 
@@ -478,6 +654,47 @@ const withErp = (over = {}) => withMaterials({
   ...over,
 });
 
+const preparationFixture = ({ digest = 'preparation-digest-1', ready = true,
+  purpose = '七月出差交通费', problems = [] } = {}) => ({
+  digest,
+  ready,
+  problems,
+  document: {
+    phase: 'pre-erp',
+    status: ready ? 'ready_for_preparation' : 'draft',
+    task: { taskId: '75dc9cbb4d', versionId: 'v-abc' },
+    identity: me,
+    purpose,
+    homeCity: '北京市',
+    lines: [{
+      lineId: 'ev-01', eventId: 'event-1', voucherMaterialId: 'm-1',
+      kind: 'passenger_transport', kindLabel: '客运交通', date: '2026-07-09',
+      city: '北京市', route: '北京南站 → 望京', projectCode: '111454', projectName: '测试项目',
+      projectSource: 'erp_catalog_confirmed', projectsFrom: 'project_book',
+      expenseItemCode: 'FY008001', expenseItemName: '本地市内交通',
+      expenseItemSource: 'erp_catalog_confirmed', invoiceType: '增值税发票',
+      invoiceTypeSource: 'save-contract', netCents: 2591, taxCents: 78, totalCents: 2669,
+      amountSource: 'itinerary_conserved', sourceRefs: [],
+    }],
+    invoices: [{ materialId: 'm-1', fileName: '发票.pdf', targetPath: 'invoices/m-1.pdf',
+      identity: { number: '26427000000640558021' }, contentHash: 'h1' }],
+    evidence: [], excluded: [], problems, digest,
+  },
+});
+
+const withPreparation = (over = {}) => withErp({
+  preparation: preparationFixture(),
+  preparationPackageCurrent: true,
+  preparationPackage: {
+    directory: '/tmp/ws/preparation/preparation-digest-1',
+    files: { detailJson: '/tmp/detail.json', detailMarkdown: '/tmp/detail.md',
+      manifest: '/tmp/manifest.json' },
+    manifestHash: 'manifest-hash-1', bundleHash: 'bundle-hash-1',
+  },
+  preparationConfirmed: false,
+  ...over,
+});
+
 const askRound = (over = {}) => ({
   materialId: 'm-inv', fileName: '合并发票.pdf', contentHash: 'h1',
   segmentCount: 3, totalAmount: '69.19', netAmount: '67.18', taxAmount: '2.01',
@@ -498,23 +715,37 @@ test('后半段每个状态也各有一步可做，话仍然全部来自内核',
     ['events_pending', 'run', withErp({ eventsRecorded: false })],
     ['allocation_required', 'ask_user', withErp({ allocationRound: askRound() })],
     ['allocation_stale', 'ask_user', withErp({ allocationRound: askRound({ stale: true }) })],
-    ['project_unassigned', 'tell_user',
+    ['project_unassigned', 'run',
       withErp({ lines: [{ lineId: 'ev-01', totalAmount: '26.69', project: null }] })],
+    ['project_book_empty', 'run', withErp({ selectionApplied: false,
+      projectBook: { empty: true } })],
     ['catalog_unverified', 'run', withErp({ catalogFresh: false })],
-    ['ready_for_erp_write', 'confirm_table', withErp()],
-    ['handed_off_recover', 'handoff', withErp({
+    ['preparation_package_pending', 'run', withPreparation({ preparationPackageCurrent: false })],
+    ['preparation_blocked', 'tell_user', withPreparation({
+      preparation: preparationFixture({ ready: false,
+        problems: [{ code: 'rail_net_tax_missing', message: '铁路票面未提供净额和税额' }] }),
+    }), 2],
+    ['preparation_confirmation', 'confirm_table', withPreparation()],
+    ['preparation_complete', 'done', withPreparation({ preparationConfirmed: true })],
+    ['handed_off_recover', 'run', withErp({
       task: { taskId: 't', sourceLabel: '材料', workspace: '/tmp/ws', currentVersionId: 'v-abc',
-        erpWriteState: 'dispatched' } })],
+        erpWriteState: 'upload_dispatched' } })],
   ];
-  for (const [state, kind, observation] of cases) {
+  for (const [state, kind, observation, expectedExit = 0] of cases) {
     const shaped = stepFor(state, observation);
     assert.equal(shaped.step.kind, kind, `${state} 的 step.kind`);
     assert.ok(shaped.speak && shaped.speak.length > 10, `${state} 得有一句能原样念的话`);
     assert.ok(shaped.context, `${state} 得有一句备着的解释`);
-    assert.equal(shaped.exit, 0, `${state} 不是硬阻塞`);
+    assert.equal(shaped.exit, expectedExit, `${state} 的退出码`);
     if (kind === 'run') {
-      assert.ok(shaped.step.argv.includes('--dir') && shaped.step.argv.includes('/tmp/材料'),
-        `${state} 的 argv 要指着这批材料，模型不用自己拼`);
+      if (state === 'project_book_empty') {
+        assert.ok(shaped.step.argv.includes('projects-page'), '空册要打开本人项目簿维护页');
+      } else if (state === 'project_unassigned') {
+        assert.ok(shaped.step.argv.includes('select-task'), '项目未指定要打开任务选择页');
+      } else {
+        assert.ok(shaped.step.argv.includes('--dir') && shaped.step.argv.includes('/tmp/材料'),
+          `${state} 的 argv 要指着这批材料，模型不用自己拼`);
+      }
     }
   }
 });
@@ -570,8 +801,9 @@ test('项目未指定：如实报出来，并说清楚问法还没定 —— 不
     lines: [{ lineId: 'ev-01', totalAmount: '26.69', project: null },
       { lineId: 'ev-02', totalAmount: '20.85', project: null }],
   }));
-  assert.equal(shaped.step.kind, 'tell_user',
-    '不是 done —— 这一趟并没有走完，它停在这里等一个人');
+  assert.equal(shaped.step.kind, 'run',
+    '由内核发出任务选择页，不能靠对话里的项目号绕过提交门禁');
+  assert.ok(shaped.step.argv.includes('select-task'));
   assert.match(shaped.speak, /项目号/);
   assert.equal(shaped.progress.label, '项目归属');
 });
@@ -583,44 +815,137 @@ test('ERP 里查无此项目 —— 硬停，退出码 2，并说清是哪个号
     hint: '项目号 999999 在 ERP 项目目录里查不到', resolvableBy: 'user', blocking: true }];
   const shaped = stepFor('catalog_mismatch', withErp(), blockedBy);
   assert.equal(shaped.step.kind, 'tell_user');
+  assert.match(shaped.step.table, /999999/, 'tell_user 的表格必须出现在 step.table');
   assert.equal(shaped.exit, 2, '拿一个不存在的项目号建单，错误只会在保存那一刻暴露');
   assert.match(shaped.speak, /999999/);
 });
 
-test('写入前那张表：摆全、报总数、且收不下任何改值', async () => {
+test('准备确认表：摆全、绑定交接包、且收不下任何改值', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
-  const shaped = stepFor('ready_for_erp_write', withErp());
+  const shaped = stepFor('preparation_confirmation', withPreparation());
   assert.equal(shaped.step.kind, 'confirm_table');
   assert.equal(shaped.step.acceptsCorrection, false,
-    '在写入前的最后一格上改一个值，等于绕开前面每一道校验');
+    '准备确认不接受对话内改值，改动后必须重新生成并核验交接包');
   assert.equal(shaped.step.outsourceable, false);
-  assert.equal(shaped.step.totalAmount, '26.69');
   assert.match(shaped.step.table, /111454/, '项目号要摆在表里 —— 它就是用户要核对的东西之一');
   assert.match(shaped.step.table, /26\.69/);
-  assert.match(shaped.speak, /撤不回来/, '不可撤销这件事要说在点头之前');
-  assert.ok(shaped.stepMeta.previewDigest, '凭据钉在这一份待写内容上');
+  assert.match(shaped.speak, /手动 QA/, '确认后停在手动 QA，不进入 ERP 写入');
+  assert.ok(shaped.stepMeta.preparationDigest, '凭据钉在这一份准备材料上');
+  assert.equal(shaped.stepMeta.packageManifestHash, 'manifest-hash-1');
+  assert.equal(shaped.stepMeta.packageBundleHash, 'bundle-hash-1');
 
   // 内容变一个字，凭据的身份就变了 —— 他点的头只对他看过的那一份有效。
-  const other = stepFor('ready_for_erp_write', withErp({
-    writePreview: { lines: [], homeCity: '北京市', purpose: '改了事由', versionId: 'v-abc' } }));
-  assert.notEqual(other.stepMeta.previewDigest, shaped.stepMeta.previewDigest);
+  const other = stepFor('preparation_confirmation', withPreparation({
+    preparation: preparationFixture({ digest: 'preparation-digest-2', purpose: '改了事由' }) }));
+  assert.notEqual(other.stepMeta.preparationDigest, shaped.stepMeta.preparationDigest);
 });
 
-test('点过头之后不再重复问，而且明说"还没写进 ERP"', async () => {
+test('确认表和准备缺项都输出标准 Markdown 表格，用户话术只保留状态和下一步', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
-  const shaped = stepFor('ready_for_erp_write', withErp({ writeApproved: true }));
-  assert.equal(shaped.step.kind, 'done');
-  assert.match(shaped.speak, /还没有任何东西写进 ERP/);
+  const markdownTable = (value) => {
+    const lines = value.split('\n');
+    assert.match(lines[0], /^\| .* \|/);
+    assert.match(lines[1], /^\| --- /);
+    assert.doesNotMatch(value, /[┌┬┐├┼┤└┴┘│─]/);
+  };
+
+  markdownTable(stepFor('env_identity_unbound', healthy({ binding: null })).step.table);
+  markdownTable(stepFor('reading_awaiting_confirmation', withMaterials({
+    pendingReadings: [PENDING_READING],
+  })).step.table);
+  markdownTable(stepFor('classified_detail_confirmation', withMaterials()).step.table);
+  markdownTable(stepFor('preparation_confirmation', withPreparation()).step.table);
+
+  const blocked = stepFor('preparation_blocked', withPreparation({
+    preparation: preparationFixture({ ready: false,
+      problems: [{ code: 'rail_net_tax_missing', message: '铁路票面未提供净额和税额' }] }),
+  }), [{ code: 'rail_net_tax_missing', message: '铁路票面未提供净额和税额' }]);
+  assert.match(blocked.speak, /^\| .* \|/m);
+  assert.match(blocked.speak, /^\| --- /m);
+  assert.doesNotMatch(blocked.speak, /^1\. /m);
+  assert.match(blocked.speak, /处理这些项目，随后我再请你核对/);
 });
 
-test('动过 ERP 的任务：交接给 baox-recover，并说清状态变化', async () => {
+test('确认和待办的 speak 不暴露内部处理原理', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const reading = stepFor('reading_awaiting_confirmation', withMaterials({
+    pendingReadings: [PENDING_READING],
+  }));
+  assert.match(reading.speak, /对照原件/);
+  assert.doesNotMatch(reading.speak, /落库|分歧重新看一遍/);
+
+  const classified = stepFor('classified_detail_confirmation', withMaterials({
+    classifiedPreview: { lines: [], evidence: [], homeCity: '广州市' },
+  }));
+  assert.doesNotMatch(classified.speak, /reextract|同 hash|候选/);
+
+  const openItems = stepFor('intake_open_items', withMaterials(), [{
+    kind: 'read_error', fileName: '坏了.pdf', hint: '文件打不开',
+    resolvableBy: 'user', blocking: true,
+  }]);
+  assert.doesNotMatch(openItems.speak, /blockedBy|resolvableBy|abandon-task|step\.argv/);
+
+  const identity = stepFor('env_identity_unbound', healthy({ binding: null }));
+  assert.match(identity.speak, /核对身份表/);
+  assert.doesNotMatch(identity.speak, /step\.argv|task space|stepToken/);
+
+  const preparationBlocked = stepFor('preparation_blocked', withPreparation({
+    preparation: preparationFixture({ ready: false,
+      problems: [{ code: 'rail_net_tax_missing', message: '铁路票面未提供净额和税额' }] }),
+  }), [{ code: 'rail_net_tax_missing', message: '铁路票面未提供净额和税额', resolvableBy: 'user' }]);
+  assert.match(preparationBlocked.speak, /缺项|处理这些项目/);
+  assert.doesNotMatch(preparationBlocked.speak, /argv|resolvableBy|stepToken/);
+
+  const preparationConfirmation = stepFor('preparation_confirmation', withPreparation());
+  assert.match(preparationConfirmation.speak, /逐项核对/);
+  assert.doesNotMatch(preparationConfirmation.speak, /manifestHash|bundleHash|stepToken/);
+});
+
+test('准备确认之后不再重复问，而且明说"还没写进 ERP"', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const shaped = stepFor('preparation_complete', withPreparation({ preparationConfirmed: true }));
+  assert.equal(shaped.step.kind, 'done');
+  assert.match(shaped.speak, /未导入发票、填写或保存 ERP 单据/);
+});
+
+test('动过 ERP 的任务：先建立本地准备恢复凭据，并说清状态变化', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
   const shaped = stepFor('handed_off_recover', withErp({
     task: { taskId: 't', sourceLabel: '材料', workspace: '/tmp/ws', currentVersionId: 'v-abc',
-      erpWriteState: 'dispatched' } }));
+      erpWriteState: 'upload_dispatched' } }));
+  assert.ok(shaped.step.argv.includes('resume-local-preparation'));
+  assert.match(shaped.speak, /upload_dispatched/, '当前记的是什么状态，要说出来');
+});
+
+test('未知 ERP marker 只交接，不冒充已定义的本地恢复协议', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const shaped = stepFor('handed_off_recover', withErp({
+    task: { taskId: 't', sourceLabel: '材料', workspace: '/tmp/ws', currentVersionId: 'v-abc',
+      erpWriteState: 'future_marker' } }));
+  assert.equal(shaped.step.kind, 'handoff');
   assert.equal(shaped.step.skill, 'baox-recover');
-  assert.match(shaped.speak, /dispatched/, '当前记的是什么状态，要说出来');
+  assert.match(shaped.speak, /future_marker/);
+});
+
+test('恢复凭据无效时仍停在恢复态，不能落到写入前确认', async () => {
+  freshHome();
+  const { nextResponse } = await import('../src/next.mjs');
+  const response = nextResponse({
+    observation: withErp({
+      task: { taskId: 't', sourceLabel: '材料', workspace: '/tmp/ws', currentVersionId: 'v-abc',
+        erpWriteState: 'upload_dispatched' },
+      recovery: { valid: false, status: 'credential_invalid', reasons: ['凭据已过期'] },
+      selectionApplied: true, projectBook: { empty: false }, catalogFresh: true,
+    }),
+    sourceKey: 'source-key',
+  });
+  assert.equal(response.state, 'handed_off_recover');
+  assert.notEqual(response.state, 'ready_for_erp_write');
+  assert.equal(response.recovery.valid, false);
 });

@@ -1,8 +1,8 @@
 // 假会话：Runtime.evaluate 按顺序吐预先排好的返回值，其余命令只记账。
 // 要钉住的是"发了哪些输入事件、在什么坐标上发"，这跟浏览器无关。
 //
-// 只此一份：写入路径（erpform）和只读对账路径（erpreconcile）用的是同一条缝，
-// 不各自发明一种假会话 —— 两条路径对"什么算副作用"的判据必须完全一致。
+// 只此一份：写入路径（erpform）的假会话集中在这里；只读对账走 erpread 的
+// ego evaluator 注入，不再伪造 Chrome session。
 export function fakeSession(evaluations) {
   const sent = [];
   const queue = [...evaluations];

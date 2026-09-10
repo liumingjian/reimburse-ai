@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { extractImageFields } from "../src/index.js";
@@ -15,9 +15,17 @@ const fixtureWorker = fileURLToPath(
 const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0, 4, 0, 0, 0xff, 0xd9]);
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0]);
 
+// The fake worker replays OCR observations; its transport input needs no real pixels.
+const fixtureDir = await mkdtemp(path.join(os.tmpdir(), "ocr-observation-input-"));
+const fengyunFixture = path.join(fixtureDir, "invoice.png");
+const itineraryFixture = path.join(fixtureDir, "itinerary.png");
+await Promise.all([writeFile(fengyunFixture, png), writeFile(itineraryFixture, png)]);
+const fixtureHash = createHash("sha256").update(png).digest("hex");
+after(() => rm(fixtureDir, { recursive: true, force: true }));
+
 process.env.BAOX_IMAGE_WORKER = fixtureWorker;
 
-test("批量图片按输入顺序产生经校验的增值税发票字段候选", async () => {
+test("批量图片按输入顺序产生只含价税合计的发票字段候选", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "image-fields-"));
   const first = path.join(dir, "first.jpg");
   const second = path.join(dir, "second.jpg");
@@ -37,17 +45,120 @@ test("批量图片按输入顺序产生经校验的增值税发票字段候选",
   assert.equal(extracted?.status, "extracted");
   if (extracted?.status !== "extracted") return;
   assert.equal(extracted.document.type, "vat_invoice");
-  assert.deepEqual(extracted.document.fields.invoiceNumber, {
-    evidenceState: "explicit",
-    raw: "25317000000123456789",
-    normalized: "25317000000123456789",
-    sourceRefs: ["o2"],
-    recognitionScore: 0.99,
-  });
-  assert.equal(extracted.document.fields.issueDate.normalized, "2026-09-04");
+  assert.equal(extracted.document.fields.invoiceNumber.evidenceState, "missing");
+  assert.equal(extracted.document.fields.issueDate.evidenceState, "missing");
+  assert.equal(extracted.document.fields.netAmount.evidenceState, "missing");
+  assert.equal(extracted.document.fields.taxAmount.evidenceState, "missing");
   assert.equal(extracted.document.fields.totalAmount.normalized?.cents, 1880);
   assert.equal(extracted.provenance.model, "fixture-v1");
   assert.equal(result.metrics.peakRssBytes, 123456);
+});
+
+test("真实电子发票布局只提取价税合计且优先读取小写合计", async () => {
+  const result = await extractImageFields({
+    contractVersion: 1,
+    images: [{
+      materialId: "fengyun-real",
+      contentHash: fixtureHash,
+      absPath: fengyunFixture,
+    }],
+  });
+  const item = result.items[0];
+  assert.equal(item?.status, "extracted");
+  if (item?.status !== "extracted") return;
+  assert.equal(item.document.type, "vat_invoice");
+  assert.equal(item.document.fields.totalAmount.normalized.cents, 1880);
+  assert.equal(item.document.fields.invoiceNumber.evidenceState, "missing");
+  assert.equal(item.document.fields.netAmount.evidenceState, "missing");
+  assert.equal(item.document.fields.taxAmount.evidenceState, "missing");
+  assert.deepEqual(item.document.fields.totalAmount.sourceRefs, ["o8"]);
+});
+
+test("完整 RapidOCR 观测快照仍能提取真实发票和行程单", async () => {
+  const result = await extractImageFields({
+    contractVersion: 1,
+    images: [
+      {
+        materialId: "fengyun-captured",
+        contentHash: fixtureHash,
+        absPath: fengyunFixture,
+      },
+      {
+        materialId: "ride-captured",
+        contentHash: fixtureHash,
+        absPath: itineraryFixture,
+      },
+    ],
+  });
+
+  const invoice = result.items[0];
+  assert.equal(invoice?.status, "extracted");
+  if (invoice?.status !== "extracted") return;
+  assert.equal(invoice.document.type, "vat_invoice");
+  assert.equal(invoice.document.fields.totalAmount.normalized.cents, 1880);
+  assert.deepEqual(invoice.document.fields.totalAmount.sourceRefs, ["o39"]);
+
+  const itinerary = result.items[1];
+  assert.equal(itinerary?.status, "extracted");
+  if (itinerary?.status !== "extracted") return;
+  assert.equal(itinerary.document.type, "ride_itinerary");
+  assert.equal(itinerary.document.fields.segments.length, 1);
+  assert.deepEqual(itinerary.document.fields.segments[0], {
+    travelDate: { evidenceState: "explicit", raw: "2026-08-22", normalized: "2026-08-22", sourceRefs: ["o19"], recognitionScore: 0.96694 },
+    travelTime: { evidenceState: "explicit", raw: "17:28", normalized: "17:28", sourceRefs: ["o19"], recognitionScore: 0.96694 },
+    city: { evidenceState: "explicit", raw: "广州市", normalized: "广州市", sourceRefs: ["o20"], recognitionScore: 0.99998 },
+    origin: { evidenceState: "explicit", raw: "番禺广场地铁站D口", normalized: "番禺广场地铁站D口", sourceRefs: ["o21"], recognitionScore: 0.99985 },
+    destination: { evidenceState: "explicit", raw: "傍西酒堂", normalized: "傍西酒堂", sourceRefs: ["o22"], recognitionScore: 0.99899 },
+    amount: { evidenceState: "explicit", raw: "18.80", normalized: { currency: "CNY", cents: 1880 }, sourceRefs: ["o23"], recognitionScore: 0.99999 },
+  });
+});
+
+test("真实网约车行程单按表头坐标提取行程日期、城市、起终点和金额", async () => {
+  const result = await extractImageFields({
+    contractVersion: 1,
+    images: [{
+      materialId: "ride-real",
+      contentHash: fixtureHash,
+      absPath: itineraryFixture,
+    }],
+  });
+  const item = result.items[0];
+  assert.equal(item?.status, "extracted");
+  if (item?.status !== "extracted") return;
+  assert.equal(item.document.type, "ride_itinerary");
+  assert.equal(item.document.fields.totalAmount.normalized.cents, 1880);
+  assert.equal(item.document.fields.segments.length, 1);
+  const segment = item.document.fields.segments[0];
+  assert.ok(segment);
+  assert.equal(segment.travelDate.normalized, "2026-08-22");
+  assert.equal(segment.travelTime.normalized, "17:28");
+  assert.equal(segment.city.normalized, "广州市");
+  assert.equal(segment.origin.normalized, "番禺广场地铁站D口");
+  assert.equal(segment.destination.normalized, "傍西酒堂");
+  assert.equal(segment.amount.normalized.cents, 1880);
+});
+
+test("网约车行程单保留表格中的全部行程段", async () => {
+  const result = await extractImageFields({
+    contractVersion: 1,
+    images: [{
+      materialId: "ride-multiple",
+      contentHash: fixtureHash,
+      absPath: itineraryFixture,
+    }],
+  });
+  const item = result.items[0];
+  assert.equal(item?.status, "extracted");
+  if (item?.status !== "extracted" || item.document.type !== "ride_itinerary") return;
+  assert.deepEqual(item.document.fields.segments.map((segment) => ({
+    date: segment.travelDate.normalized,
+    origin: segment.origin.normalized,
+    destination: segment.destination.normalized,
+    cents: segment.amount.normalized.cents,
+  })), [
+    { date: "2026-08-22", origin: "番禺广场地铁站D口", destination: "傍西酒堂", cents: 1880 },
+    { date: "2026-08-23", origin: "广州南站", destination: "白云机场", cents: 2220 },
+  ]);
 });
 
 test("逐图隔离内容变化并按文件魔数接受扩展名错误的 PNG", async () => {
@@ -82,7 +193,7 @@ test("请求级违约在启动 worker 前失败", async () => {
   );
 });
 
-test("发票金额不守恒是材料失败，不产生错误候选", async () => {
+test("发票只提取价税合计，不因其他金额字段不一致而误取金额", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "image-fields-"));
   const image = path.join(dir, "invoice.jpg");
   await writeFile(image, jpeg);
@@ -91,8 +202,12 @@ test("发票金额不守恒是材料失败，不产生错误候选", async () =>
     images: [{ materialId: "unbalanced-invoice", contentHash: sha256(jpeg), absPath: image }],
   });
   const item = result.items[0];
-  assert.equal(item?.status, "failed");
-  if (item?.status === "failed") assert.equal(item.error.code, "candidate_validation_failed");
+  assert.equal(item?.status, "extracted");
+  if (item?.status !== "extracted") return;
+  assert.equal(item.document.type, "vat_invoice");
+  assert.equal(item.document.fields.totalAmount.normalized.cents, 1980);
+  assert.equal(item.document.fields.netAmount.evidenceState, "missing");
+  assert.equal(item.document.fields.taxAmount.evidenceState, "missing");
 });
 
 test("火车票字段使用同一个封闭文档 schema", async () => {
@@ -122,6 +237,30 @@ test("证据不足时明确请求模型视觉回退", async () => {
     images: [{ materialId: "unknown-1", contentHash: sha256(jpeg), absPath: image }],
   });
   assert.equal(result.items[0]?.status, "needs_model_vision");
+});
+
+test("受管运行时缺失是环境错误，不伪装成模型视觉回退", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "image-fields-"));
+  const image = path.join(dir, "invoice.jpg");
+  await writeFile(image, jpeg);
+  const worker = process.env.BAOX_IMAGE_WORKER;
+  const home = process.env.BAOX_HOME;
+  delete process.env.BAOX_IMAGE_WORKER;
+  process.env.BAOX_HOME = dir;
+  try {
+    await assert.rejects(
+      extractImageFields({
+        contractVersion: 1,
+        images: [{ materialId: "missing-runtime", contentHash: sha256(jpeg), absPath: image }],
+      }),
+      /managed OCR runtime is not installed/,
+    );
+  } finally {
+    if (worker === undefined) delete process.env.BAOX_IMAGE_WORKER;
+    else process.env.BAOX_IMAGE_WORKER = worker;
+    if (home === undefined) delete process.env.BAOX_HOME;
+    else process.env.BAOX_HOME = home;
+  }
 });
 
 function sha256(bytes: Buffer): string {

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { paths, ensureDir } from './paths.mjs';
 import { probeIdentity, ERP_ORIGIN } from './probe.mjs';
+import { browserMode, SYSTEM_BROWSER } from './browser-open.mjs';
 
 /**
  * 个人绑定：这台机器上的 baox 认哪一个 ERP 身份。
@@ -62,6 +63,15 @@ export function bindingVerdict(binding, identity) {
 }
 
 /**
+ * Establish the first local binding from a live, complete ERP identity.
+ * Existing bindings are never replaced here; rebind remains an explicit path.
+ */
+export function autoBindIdentity(identity, binding = readBinding()) {
+  if (binding || bindingVerdict(binding, identity) !== 'unbound') return binding;
+  return writeBinding(identity);
+}
+
+/**
  * 身份闸。会话信号先过（probeIdentity），再过个人绑定。
  *
  * 返回的 status 是**合并后的最终结论** —— matched 意味着"会话有效**且**是绑定的那个人"。
@@ -85,7 +95,8 @@ export async function gateIdentity({ origin = ERP_ORIGIN, waitMs } = {}) {
   if (verdict === 'incomplete') {
     return { ...probe, status: 'identity_incomplete', binding,
       hint: 'ERP 页面上读不出登录账号或账套（localStorage 的 k3cloudloginInfo 不完整），'
-        + '身份凑不成一个可比的东西。请在专用 Chrome 里重新登录一次再试' };
+      + `身份凑不成一个可比的东西。请在${browserMode() === SYSTEM_BROWSER
+          ? '系统默认浏览器里的 ERP 页面' : 'ego task space 里的 ERP 页面'}重新登录一次再试` };
   }
   if (verdict === 'unbound') {
     return { ...probe, status: 'identity_unconfirmed', binding: null,
@@ -96,6 +107,7 @@ export async function gateIdentity({ origin = ERP_ORIGIN, waitMs } = {}) {
     hint: `这台机器绑定的是 ${binding.displayName ?? binding.account}（账号 ${binding.account}，`
       + `账套 ${binding.tenant}），ERP 当前登录的是 ${probe.identity.displayName}`
       + `（账号 ${probe.identity.account}，账套 ${probe.identity.tenant}）。`
-      + 'baox 只替绑定的那个人报销：请在专用 Chrome 里换回本人登录。'
+      + `baox 只替绑定的那个人报销：请在${browserMode() === SYSTEM_BROWSER
+        ? '系统默认浏览器里的 ERP 页面' : 'ego task space 里'}换回本人登录。`
       + '确实要把这台机器改绑到当前这个身份，跑 baox confirm-identity（没有进行中的任务时才允许改）' };
 }

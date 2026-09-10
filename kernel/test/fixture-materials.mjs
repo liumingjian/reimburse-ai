@@ -55,10 +55,36 @@ export function fixtureMaterial(...parts) {
   const key = aliases[name] ?? name;
   const file = path.join(root, key);
   if (!fs.existsSync(file)) {
-    if (texts[key]) writeTextPdf(file, texts[key]);
+    if (key === 'single-itinerary.pdf') {
+      const row = (y, cells) => cells.map(([x, text]) => ({ x, y, text }));
+      writeTextPdf(file, [
+        ...row(750, [[10, '高德地图 AMAPITINERARY 行程单']]),
+        ...row(720, [[10, '共计1单行程，合计51.63元']]),
+        ...row(680, [[10, '序号'], [50, '日期'], [150, '时间'], [210, '城市'], [310, '起点'], [410, '终点'], [510, '金额']]),
+        ...row(650, [[10, '1'], [50, '2026-08-27'], [150, '08:30'], [210, '广州市'], [310, '测试起点'], [410, '测试终点'], [510, '51.63元']]),
+      ]);
+    } else if (texts[key]) writeTextPdf(file, texts[key]);
     else if (key === 'landscape.png') fs.writeFileSync(file, png(1816, 1396));
     else if (key === 'wide.png') fs.writeFileSync(file, png(1598, 606));
     else throw new Error(`Unknown synthetic material: ${name}`);
   }
   return file;
+}
+
+export function fixtureDirectory() {
+  const dir = path.join(root, 'materials');
+  for (const [rel, name] of Object.entries({
+    '住宿/fp-jd.pdf': 'hotel-invoice.pdf',
+    '住宿/zd-jd.pdf': 'hotel-folio.pdf',
+    '交通/invoice.pdf': 'single-invoice.pdf',
+    '交通/itinerary.pdf': 'single-itinerary.pdf',
+    '交通/invoice.png': 'landscape.png',
+    '交通/itinerary.png': 'wide.png',
+    '长途/26349119423005877606.pdf': 'rail.pdf',
+  })) {
+    const target = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(fixtureMaterial(name), target);
+  }
+  return dir;
 }

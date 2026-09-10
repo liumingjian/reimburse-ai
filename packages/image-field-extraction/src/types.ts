@@ -160,7 +160,7 @@ export interface NeedsModelVision {
   status: "needs_model_vision";
   materialId: string;
   contentHash: string;
-  reason: "runtime_unavailable" | "unsupported_document" | "insufficient_evidence" | "ocr_failed";
+  reason: "unsupported_document" | "insufficient_evidence" | "ocr_failed" | "candidate_validation_failed";
   evidence: readonly TextObservation[];
   provenance?: ExtractionProvenance;
 }
@@ -170,7 +170,6 @@ export type ImageExtractionFailureCode =
   | "unsupported_format"
   | "image_unavailable"
   | "multiple_documents"
-  | "candidate_validation_failed"
   | "worker_protocol_error";
 
 export interface ImageExtractionFailure {

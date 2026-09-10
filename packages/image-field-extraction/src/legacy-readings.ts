@@ -15,15 +15,21 @@ export function toLegacyReadings(batch: ImageFieldExtractionBatch): LegacyReadin
     version: 1,
     readings: batch.items
       .filter((item) => item.status === "extracted")
-      .map((item) => ({
-        materialId: item.materialId,
-        contentHash: item.contentHash,
-        source: "ocr",
-        docType: legacyType(item.document),
-        fields: legacyFields(item.document),
-        unreadable: missingFields(item.document),
-        clarity: {},
-      })),
+      .map((item) => legacyReading(item.materialId, item.contentHash, item.document)),
+  };
+}
+
+function legacyReading(materialId: string, contentHash: string, document: ExtractedDocument): Record<string, unknown> {
+  return {
+    materialId,
+    contentHash,
+    source: "ocr",
+    docType: legacyType(document),
+    fields: legacyFields(document),
+    ...(document.type === "ride_itinerary" ? { segments: document.fields.segments.map((segment) =>
+      values(segment)) } : {}),
+    unreadable: missingFields(document),
+    clarity: {},
   };
 }
 
@@ -46,14 +52,14 @@ function legacyFields(document: ExtractedDocument): Record<string, string> {
     case "road_passenger_ticket":
       return values(document.fields, { ticketNumber: "invoiceNumber", amount: "totalAmount" });
     case "ride_itinerary": {
-      const segment = document.fields.segments[0];
-      return {
-        ...values({ traveler: document.fields.traveler, totalAmount: document.fields.totalAmount }),
-        ...(segment ? values(segment, { amount: "segmentAmount" }) : {}),
-      };
+      return values({ traveler: document.fields.traveler, totalAmount: document.fields.totalAmount });
     }
     case "hotel_folio":
-      return values(document.fields);
+      return values(document.fields, {
+        checkInDate: "checkIn",
+        checkOutDate: "checkOut",
+        totalAmount: "folioTotal",
+      });
     case "payment_slip":
       return values(document.fields, { amount: "totalAmount" });
     case "other_voucher":
@@ -83,12 +89,27 @@ function isMoney(value: unknown): value is Money {
 }
 
 function missingFields(document: ExtractedDocument): string[] {
+  if (document.type === "vat_invoice") {
+    return isMissing(document.fields.totalAmount) ? ["totalAmount"] : [];
+  }
   if (document.type === "ride_itinerary") {
     return Object.entries(document.fields)
       .filter(([key, value]) => key !== "segments" && isMissing(value))
       .map(([key]) => key);
   }
-  return Object.entries(document.fields).filter(([, value]) => isMissing(value)).map(([key]) => key);
+  const rename = document.type === "hotel_folio"
+    ? { checkInDate: "checkIn", checkOutDate: "checkOut", totalAmount: "folioTotal" }
+    : document.type === "rail_ticket"
+      ? { amount: "totalAmount" }
+      : document.type === "road_passenger_ticket"
+        ? { ticketNumber: "invoiceNumber", amount: "totalAmount" }
+        : document.type === "payment_slip"
+          ? { amount: "totalAmount" }
+          : document.type === "other_voucher"
+            ? { date: "issueDate", amount: "totalAmount" }
+            : {};
+  return Object.entries(document.fields).filter(([, value]) => isMissing(value))
+    .map(([key]) => rename[key as keyof typeof rename] ?? key);
 }
 
 function isMissing(value: unknown): boolean {

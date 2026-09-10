@@ -8,7 +8,9 @@ const utf16beHex = (text) => {
 
 /** 写一份只有文字层的最小 PDF，供材料流程测试使用。 */
 export function writeTextPdf(filePath, text) {
-  const content = `BT /F1 12 Tf 50 750 Td <${utf16beHex(text)}> Tj ET`;
+  const content = Array.isArray(text)
+    ? text.map(({ x, y, text: value }) => `BT /F1 12 Tf ${x} ${y} Td <${utf16beHex(value)}> Tj ET`).join("\n")
+    : `BT /F1 12 Tf 50 750 Td <${utf16beHex(text)}> Tj ET`;
   const pdf = [
     '%PDF-1.4',
     '1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj',
@@ -21,3 +23,38 @@ export function writeTextPdf(filePath, text) {
   ].join('\n');
   fs.writeFileSync(filePath, pdf);
 }
+
+export const TEST_INVOICE_TEXT = [
+  '电子发票(普通发票)',
+  '发票号码:12345678901234567890',
+  '开票日期:2026年09月01日',
+  '合计¥18.25¥0.55',
+  '价税合计(大写)壹拾捌元捌角(小写)¥18.80',
+].join('\n');
+
+export const TEST_LEGACY_INVOICE_TEXT = [
+  '北京增值税电子普通发票',
+  '发票代码:011002301811',
+  '发票号码:25627655',
+  '开票日期:2024年07月04日',
+  '*旅游服务*代订车服务费',
+  '合计 ￥109.74 ￥6.58',
+  '价税合计（大写）壹佰壹拾陆元叁角贰分（小写）￥116.32',
+].join('\n');
+
+export const TEST_TRANSPORT_INVOICE_TEXT = [
+  '电子发票(普通发票)',
+  '旅客运输服务',
+  '发票号码:12345678901234567891',
+  '开票日期:2026年09月01日',
+  '合计¥67.17¥2.02',
+  '价税合计(大写)陆拾玖元壹角玖分(小写)¥69.19',
+].join('\n');
+
+export const TEST_ITINERARY_TEXT = [
+  '高德地图 AMAPITINERARY 行程单',
+  '共计3单行程，合计69.19元',
+  '1 2026-07-09 08:30 北京市 第一程 26.69元',
+  '2 2026-07-09 12:30 北京市 第二程 20.85元',
+  '3 2026-07-10 09:00 北京市 第三程 21.65元',
+].join('\n');

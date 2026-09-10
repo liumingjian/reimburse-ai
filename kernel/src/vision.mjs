@@ -6,8 +6,7 @@ import { shapeOfBuffer, shapeMatches, SHAPES, SHAPE_LABELS } from './imageshape.
 
 // 图片材料的读取协议。
 //
-// 内核没有 OCR，也不该有 —— 装一个本地 OCR 就等于要求每个同事的电脑上都有它，
-// 而 Claude Code 本身就有视觉能力，零安装、跨平台。所以图片由**模型来读**。
+// 图片先由受管的本地 OCR 产生文字观测和字段候选；证据不足时才由模型视觉重读。
 //
 // 但读不等于判。这里的整个设计就是为了让"模型读了一眼"不至于变成"模型说了算"：
 //
@@ -80,17 +79,17 @@ const FIELD_RULES = {
   itemName: { label: '项目名称', test: isText, hint: '票面上的项目名称' },
   city: { label: '城市', test: isText, hint: '票面或单据上写明的城市' },
   travelDate: { label: '行程日期', test: isDate, hint: 'YYYY-MM-DD' },
-  travelTime: { label: '行程时间', test: (v) => typeof v === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(v), hint: 'HH:MM' },
-  traveler: { label: '出行人', test: isText, hint: '票面上的出行人' },
   origin: { label: '起点', test: isText, hint: '起点' },
   destination: { label: '终点', test: isText, hint: '终点' },
+  travelTime: { label: '行程时间', test: (v) => typeof v === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(v), hint: 'HH:MM' },
+  traveler: { label: '出行人', test: isText, hint: '票面上的出行人' },
   trainNumber: { label: '车次', test: isText, hint: '车次' },
   seat: { label: '席别', test: isText, hint: '席别或座位' },
-  segmentAmount: { label: '行程金额', test: isMoney, hint: '金额，两位小数' },
   hotelName: { label: '酒店', test: isText, hint: '酒店名称' },
   guestName: { label: '入住人', test: isText, hint: '入住人' },
-  checkInDate: { label: '入住日期', test: isDate, hint: 'YYYY-MM-DD' },
-  checkOutDate: { label: '离店日期', test: isDate, hint: 'YYYY-MM-DD' },
+  checkIn: { label: '入住日期', test: isDate, hint: 'YYYY-MM-DD' },
+  checkOut: { label: '离店日期', test: isDate, hint: 'YYYY-MM-DD' },
+  folioTotal: { label: '结账合计', test: isMoney, hint: '金额，两位小数' },
   payer: { label: '付款方', test: isText, hint: '付款方' },
   payee: { label: '收款方', test: isText, hint: '收款方' },
   paidAt: { label: '支付时间', test: isText, hint: '票面支付时间' },
@@ -99,11 +98,21 @@ const FIELD_RULES = {
   merchant: { label: '商户', test: isText, hint: '商户名称' },
 };
 
+/** 行程单逐段读数。和普通字段分开闭集，避免其他材料借 `segments` 塞任意结构。 */
+export const SEGMENT_RULES = {
+  travelDate: { label: '行程日期', test: isDate, hint: 'YYYY-MM-DD', required: true },
+  city: { label: '城市', test: isText, hint: '票面写明的城市', required: false },
+  origin: { label: '起点', test: isText, hint: '票面写明的起点', required: true },
+  destination: { label: '终点', test: isText, hint: '票面写明的终点', required: true },
+  amount: { label: '金额', test: isPositiveMoney, hint: '正数金额，两位小数', required: false },
+};
+
 /** 字段的中文名。表格给用户看，键名不给用户看。 */
 export const FIELD_LABELS = Object.fromEntries(
   Object.entries(FIELD_RULES).map(([k, v]) => [k, v.label]));
 
 function isMoney(v) { return typeof v === 'string' && /^-?\d{1,9}\.\d{2}$/.test(v); }
+function isPositiveMoney(v) { return typeof v === 'string' && /^\d{1,9}\.\d{2}$/.test(v) && Number(v) > 0; }
 function isText(v) { return typeof v === 'string' && v.trim().length > 0 && v.length <= 120; }
 function isDate(v) {
   if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
@@ -275,6 +284,44 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
       fields[k] = v;
     }
 
+    const segments = [];
+    if (raw.segments !== undefined) {
+      if (raw.docType !== 'ride_itinerary') {
+        reasons.push('只有 ride_itinerary 可以提交 segments');
+      } else if (!Array.isArray(raw.segments) || raw.segments.length === 0) {
+        reasons.push('segments 必须是非空数组');
+      } else {
+        for (const [i, segment] of raw.segments.entries()) {
+          if (!segment || typeof segment !== 'object' || Array.isArray(segment)) {
+            reasons.push(`segments[${i}] 必须是对象`);
+            continue;
+          }
+          const before = reasons.length;
+          const normalized = {};
+          for (const [key, value] of Object.entries(segment)) {
+            const rule = SEGMENT_RULES[key];
+            if (!rule) { reasons.push(`segments[${i}] 有不认识的字段 ${key}`); continue; }
+            if (!rule.test(value)) {
+              reasons.push(`segments[${i}].${key} 的格式不对（要求：${rule.hint}）`);
+              continue;
+            }
+            normalized[key] = value;
+          }
+          for (const [key, rule] of Object.entries(SEGMENT_RULES)) {
+            if (rule.required && !(key in normalized)) reasons.push(`segments[${i}] 缺少 ${key}`);
+          }
+          if (reasons.length === before) segments.push(normalized);
+        }
+      }
+    }
+
+    // 平铺行程单只有一个整体日期，必须抄进顶层 fields 或明确列入 unreadable；
+    // 多段行程的日期由每个 segments[i].travelDate 承担，不能用开票日期代替。
+    if (raw.docType === 'ride_itinerary' && raw.segments === undefined
+      && !fields.travelDate && !unreadable.includes('travelDate')) {
+      reasons.push('平铺行程单必须回报 fields.travelDate，不能用开票日期代替行程日期');
+    }
+
     // 一个字段都没有的读数不是读数。
     //
     // 这一条和「看不清是正当答案」不冲突，两者说的是不同的东西：`unreadable` 是
@@ -284,7 +331,7 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
     // 它比「看过的凭据」更难绕：凭据是五选一，外部工具答得出来；而一张票上的字
     // 只有看见了才抄得出来，抄不出来就是没看见。
     let emptyReading = false;
-    if (shape && Object.keys(fields).length === 0) {
+    if (shape && Object.keys(fields).length === 0 && segments.length === 0) {
       emptyReading = true;
       reasons.push(`这份读数一个字段都没有。这张图在我这边是完好的（${shape.width}×${shape.height}），`
         + '一张完好的票上整屏的字一个都认不出，通常不是"看不清"，是这次读取没有真的看到图。'
@@ -296,10 +343,18 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
         + '别拿工具去补 —— 那件事我会转给用户处理。');
     }
 
-    // 发票必须有能构成发票身份的号码，否则没法做重复检查。
+    // OCR 发票这一阶段只负责把价税合计交给确认表；发票号码等身份字段仍由
+    // 后续流程处理。模型视觉回退没有这层机器候选，继续要求号码以便做重复检查。
     if (raw.docType === 'invoice') {
-      if (!fields.invoiceNumber) reasons.push('识别为发票但没有回报 20 位发票号码，无法做重复检查');
+      if (!ocrSource && !fields.invoiceNumber) reasons.push('识别为发票但没有回报 20 位发票号码，无法做重复检查');
       if (!fields.totalAmount) reasons.push('识别为发票但没有回报价税合计');
+    }
+
+    // 行程单靠自己的票面合计金额和发票做确定性关联。看得见就逐字抄，
+    // 认不出就明确列入 unreadable，不能让它缺席后悄悄变成未关联材料。
+    if (raw.docType === 'ride_itinerary'
+      && !fields.totalAmount && !unreadable.includes('totalAmount')) {
+      reasons.push('识别为行程单时，请把票面合计抄进 fields.totalAmount；看不清则把 totalAmount 写进 unreadable');
     }
 
     // 金额守恒。模型没法把编出来的数字凑平，所以这一条是最硬的一道结构闸。
@@ -338,6 +393,7 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
         docType: raw.docType,
         role: DOC_TYPES[raw.docType].role,
         fields,
+        ...(segments.length ? { segments } : {}),
         unreadable,
         notes: typeof raw.notes === 'string' ? raw.notes.slice(0, 400) : null,
         amountCheck,
@@ -411,7 +467,7 @@ export function clearRejection(task, materialId) {
 
 /** 读数本身的指纹：用户确认的是这几个字段的这几个值，改一个字就不再是同一次确认。 */
 const digestOf = (r) => crypto.createHash('sha256')
-  .update(JSON.stringify([r.docType, Object.entries(r.fields ?? {}).sort(), [...(r.unreadable ?? [])].sort()]))
+  .update(JSON.stringify([r.docType, Object.entries(r.fields ?? {}).sort(), r.segments ?? [], [...(r.unreadable ?? [])].sort()]))
   .digest('hex');
 
 export function writeReading(task, reading) {
@@ -447,6 +503,12 @@ export function pendingConfirmations(task, inventory) {
         // 用户要复核的重点完全不同 —— 前者要对着原件比，后者他自己就是来源。
         ({ key, label: FIELD_LABELS[key] ?? key, value, source: r.fieldSources?.[key] ?? r.source ?? 'vision' })),
       unreadable: (r.unreadable ?? []).map((k) => FIELD_LABELS[k] ?? k),
+      segments: (r.segments ?? []).map((segment, i) => ({
+        index: i + 1,
+        values: Object.entries(segment).map(([key, value]) => ({
+          key, label: SEGMENT_RULES[key]?.label ?? key, value,
+        })),
+      })),
       amountCheck: r.amountCheck ?? null,
       notes: r.notes ?? null,
       // 这份读数是刚从一场争议里收场回来的话，收场的说法跟着它一起摆出来 ——
@@ -549,18 +611,38 @@ export function projectReading(reading) {
   if (money(f.netAmount)) fields.netAmount = money(f.netAmount);
   if (money(f.taxAmount)) fields.taxAmount = money(f.taxAmount);
   if (money(f.totalAmount)) fields.totalAmount = money(f.totalAmount);
+  if (reading.docType === 'rail_ticket') {
+    if (f.travelDate) fields.travelDate = f.travelDate;
+    if (f.origin) fields.railFrom = f.origin;
+    if (f.destination) fields.railTo = f.destination;
+  }
   return {
     parseStatus: 'parsed',
-    kind: reading.docType === 'invoice' ? 'image_invoice' : reading.docType,
+    kind: reading.docType === 'invoice' ? 'image_invoice'
+      : reading.docType === 'rail_ticket' ? 'rail_eticket' : reading.docType,
     kindLabel: `${type.label}（看图读取，已确认）`,
     role: type.role,
     fields,
     // 证据不是某一行文字，而是"哪份材料的哪串字节被谁在什么时候读的、什么时候确认的"。
     evidence: Object.fromEntries(Object.keys(fields).map((k) =>
       [k, `看图读取，${reading.contentHash.slice(0, 12)}…，确认于 ${reading.confirmedAt}`])),
-    candidates: Object.entries(f)
-      .filter(([k]) => !(k in fields))
-      .map(([field, value]) => ({ field, value, note: '看图读取的辅助字段', evidence: null })),
+    candidates: [
+      ...Object.entries(f)
+        .filter(([k]) => !(k in fields))
+        .map(([field, value]) => ({ field, value, note: '看图读取的辅助字段', evidence: null })),
+      ...(reading.segments?.length ? [{
+        field: 'segments',
+        value: reading.segments.map((segment, i) => ({
+          index: i + 1,
+          date: segment.travelDate,
+          city: segment.city ?? null,
+          route: `${segment.origin} → ${segment.destination}`,
+          amount: segment.amount ?? null,
+        })),
+        note: '看图读取并由用户确认的行程单逐段明细',
+        evidence: null,
+      }] : []),
+    ],
     // 每个字段的来源跟着投影一起往下走。到了 ERP 那一头再问"这个数谁说的"，
     // 答案得还在，不能在投影这一步被抹平成"看图读取"。
     fieldSources: Object.fromEntries(Object.keys(fields).map((k) =>

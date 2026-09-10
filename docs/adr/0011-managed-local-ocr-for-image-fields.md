@@ -13,5 +13,5 @@
 - TypeScript 拥有外部 Interface、图片材料类型、字段规则、规范化和校验；Python Worker 只拥有图片预处理与 OCR。
 - 首批支持 Apple Silicon macOS，使用 Skill 自己的 Python 3.11 虚拟环境；不修改用户全局 Python。
 - PaddleOCR 与 RapidOCR 在私有材料上对照验证。首轮性能结果选择 RapidOCR PP-OCRv6 small 为默认候选；PP-OCRv6 medium 满足 2 GB 内存约束但不满足延迟门槛，只作为金标准确率挑战项。某种图片材料类型仍须达到已确认的准确率门槛后才正式放行。
-- OCR 缺失、失败或证据不足时整份材料回退模型视觉；两条路径冲突形成 `ambiguous`，不按识别分数自动选边。
+- OCR 证据不足或单图识别失败时，该图片回退模型视觉；受管运行时缺失或损坏由 Setup 明确阻塞，不能静默降级。两条路径都只产生候选，最终仍由用户对照原件确认。
 - 安装阶段可以联网并显式展示来源、版本和缓存位置；处理报销材料时不得外连。

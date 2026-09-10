@@ -2,7 +2,7 @@
  * 状态判定：**纯函数**。入参是一个已经采集好的观测对象，
  * 不读文件、不发请求、不碰浏览器（采集在 observe.mjs 里）。
  *
- * 分层是硬要求，不是风格：状态判定的测试要能在一台没有 Chrome、
+ * 分层是硬要求，不是风格：状态判定的测试要能在一台没有 ego-browser、
  * 没有材料目录、没登录过 ERP 的机器上跑完。判断被钉住了，取数才谈得上可换。
  *
  * 判据一字不改地照 docs/design/state-machine.md 的两张表：A 表（环境七态）、
@@ -13,6 +13,30 @@
  * 状态机回答的是"现在该做什么"，一个永远答不出动作的东西留在表里只会骗人。
  */
 import { bindingVerdict } from './binding.mjs';
+import { SYSTEM_BROWSER } from './browser-open.mjs';
+
+const SYSTEM_TRANSPORTS = new Set([SYSTEM_BROWSER, 'default']);
+const usesSystemBrowser = (o) => o?.browserMode === SYSTEM_BROWSER
+  || SYSTEM_TRANSPORTS.has(o?.probe?.transport);
+
+const runtimeBlockers = (o) => {
+  const runtimes = o.runtimeDependencies?.runtimes ?? {};
+  const ids = o.runtimeDependencies?.missing?.length
+    ? o.runtimeDependencies.missing
+    : Object.keys(runtimes).filter((id) => runtimes[id]?.ready !== true);
+  return ids.map((id) => {
+    const runtime = runtimes[id] ?? {};
+    const reasons = Array.isArray(runtime.reasons) ? runtime.reasons : [];
+    return {
+      kind: 'runtime_missing',
+      runtime: id,
+      code: runtime.code ?? null,
+      resolvableBy: 'kernel',
+      blocking: true,
+      hint: reasons.join('; ') || `受管运行时 ${id} 尚未准备好`,
+    };
+  });
+};
 
 /**
  * 每一类开放项由谁解决。这不是分类学，是**每条待办都要说清楚谁能动手** ——
@@ -50,6 +74,16 @@ const PLAIN = {
   amount_not_on_face: 'kernel',
   duplicate_invoice: 'user',
   no_primary_voucher: 'user',
+  markdown_conversion_required: 'model',
+  markdown_conversion_failed: 'model',
+  markdown_conversion_empty: 'user',
+  markdown_candidate_required: 'model',
+  markdown_candidate_invalid: 'model',
+  markdown_field_unresolved: 'model',
+  markdown_segment_unresolved: 'model',
+  markdown_candidate_issue: 'model',
+  markdown_derived_field: 'kernel',
+  runtime_missing: 'kernel',
   // 争议收不了场：用户对着原件也认不出，或者守恒式的缺口补不上。
   // 整条读数已经退回待办，解法只有一个，而且只有人做得到 —— 换一份看得清的原件。
   reading_unreadable: 'user',
@@ -72,6 +106,11 @@ const PLAIN = {
   category_city_missing: 'user',
   expense_item_unverified: 'user',
   expense_item_unconfirmed: 'kernel',
+  preparation_problem: 'user',
+  preparation_missing_field: 'user',
+  preparation_missing_evidence: 'user',
+  preparation_catalog_unverified: 'user',
+  preparation_invoice_type_unmapped: 'user',
 };
 
 /**
@@ -103,7 +142,21 @@ const asBlocker = (i) => ({
   kind: i.kind,
   materialId: i.materialId ?? null,
   ...(i.materialIds ? { materialIds: i.materialIds } : {}),
+  ...(i.references !== undefined ? { references: i.references } : {}),
+  ...(i.paths ? { paths: i.paths } : {}),
+  ...(i.artifactPath ? { artifactPath: i.artifactPath } : {}),
+  ...(i.markdownPath ? { markdownPath: i.markdownPath } : {}),
+  ...(i.numberedMarkdownPath ? { numberedMarkdownPath: i.numberedMarkdownPath } : {}),
+  ...(i.templatePath ? { templatePath: i.templatePath } : {}),
+  ...(i.candidatePath ? { candidatePath: i.candidatePath } : {}),
+  ...(i.candidateRecordPath ? { candidateRecordPath: i.candidateRecordPath } : {}),
+  ...(i.pagesDir ? { pagesDir: i.pagesDir } : {}),
+  ...(i.sourcePages ? { sourcePages: i.sourcePages } : {}),
+  ...(i.contentHash ? { contentHash: i.contentHash } : {}),
+  ...(i.error ? { error: i.error } : {}),
+  ...(i.markdownHash ? { markdownHash: i.markdownHash } : {}),
   fileName: i.fileName ?? null,
+  ...(i.relPath ? { relPath: i.relPath } : {}),
   hint: i.note ?? null,
   resolvableBy: RESOLVER[i.kind] ?? 'user',
   blocking: !!i.blocking,
@@ -134,11 +187,28 @@ const MATERIAL_STATES = new Set(['intake_open_items', 'image_awaiting_reading', 
 
 /** ERP 这半段观测采过没有。没采过就只答得了材料那一段（见 observe.mjs 的 settled）。 */
 const erpSeen = (o) => taskSeen(o) && !!o.events;
+const hasErpWriteState = (task) => task?.erpWriteState !== null
+  && task?.erpWriteState !== undefined
+  && String(task.erpWriteState).trim() !== '';
+
+const preparationItems = (o) => Array.isArray(o.preparation?.problems)
+  ? o.preparation.problems : [];
+
+const preparationBlockers = (o) => preparationItems(o).map((problem) => ({
+  kind: problem.kind ?? problem.code ?? 'preparation_problem',
+  code: problem.code ?? null,
+  field: problem.field ?? null,
+  materialId: problem.materialId ?? null,
+  lineId: problem.lineId ?? null,
+  blocking: problem.blocking !== false,
+  hint: problem.hint ?? problem.note ?? problem.message ?? problem.reason ?? String(problem.code ?? '准备材料存在未决项'),
+  resolvableBy: problem.resolvableBy ?? RESOLVER[problem.kind] ?? RESOLVER[problem.code] ?? 'user',
+}));
 
 /** 数据目录的格式版本。它才是版本闸的判据 —— 该判的是数据格式，不是代码版本。 */
 export const SCHEMA_VERSION = 1;
 
-/** 内核用 Node 内建的全局 WebSocket 走 CDP，21 以下没有。 */
+/** ego-browser 运行时要求 Node 21 及以上。 */
 export const MIN_NODE_MAJOR = 21;
 
 /**
@@ -162,29 +232,58 @@ const RULES = [
       hint: `当前 Node 是 ${o.nodeVersion ?? o.nodeMajor}，内核要 ${MIN_NODE_MAJOR} 及以上` }),
   },
   {
-    state: 'env_chrome_down',
+    state: 'env_runtime_missing',
     actor: 'kernel',
-    when: (o) => !o.cdpUp,
+    // Existing pure state callers without the new observation fact retain the
+    // old contract; observeEnvironment always supplies it in formal mode.
+    when: (o) => !!o.runtimeDependencies && o.runtimeDependencies.ready !== true,
+    blocker: (o) => runtimeBlockers(o),
+  },
+  {
+    state: 'env_chrome_down',
+    actor: 'user',
+    // The legacy state remains for explicit ego QA and for old pure-function
+    // callers that do not carry browserMode.  System mode never reaches this
+    // branch: it has no CDP dependency.
+    when: (o) => o.browserMode !== SYSTEM_BROWSER
+      && !SYSTEM_TRANSPORTS.has(o.probe?.transport) && !o.cdpUp,
+    blocker: (o) => ({ kind: 'ego_task_space_unavailable', resolvableBy: 'user',
+      hint: o.egoError?.message
+        ?? '请配置 BAOX_EGO_TASK_SPACE，并在 ego-browser 中确认持久 task space 可用' }),
   },
   {
     state: 'env_not_logged_in',
     actor: 'user',
     when: (o) => o.probe?.status === 'not_logged_in',
-    blocker: () => ({ kind: 'not_logged_in', resolvableBy: 'user',
-      hint: '专用 Chrome 里的 ERP 停在登录页；只有你本人能登，baox 不代填账号密码' }),
+    blocker: (o) => ({ kind: 'not_logged_in', resolvableBy: 'user',
+      hint: `${usesSystemBrowser(o) ? '系统默认浏览器里的 ERP 页面' : 'ego task space 里的 ERP 页面'}停在登录页；`
+        + '只有你本人能登，baox 不代填账号密码' }),
   },
   {
-    // 页面加载中、读不出且没有登录表单、专用 Chrome 里根本没开着 ERP，
+    // 页面加载中、读不出且没有登录表单、ego task space 里根本没开着 ERP，
     // 以及读出了人但凑不出可比身份（account/tenant 缺一）：
     // 都是「探针给不出确定结论」，都要人看一眼那个窗口，重试解决不了。
     state: 'env_identity_unknown',
     actor: 'user',
-    when: (o) => ['loading', 'unknown', 'no_tab'].includes(o.probe?.status)
+    when: (o) => ['loading', 'unknown', 'no_tab', 'browser_read_unavailable', 'read_unavailable']
+      .includes(o.probe?.status)
       || (o.probe?.status === 'matched' && bindingVerdict(o.binding, o.probe.identity) === 'incomplete'),
-    blocker: (o) => ({ kind: 'identity_unknown', resolvableBy: 'user',
-      hint: o.probe?.status === 'no_tab'
-        ? '专用 Chrome 里没有开着 ERP 的页面；请在那个窗口里打开 ERP'
-        : '读不出当前登录的是谁，也看不见登录表单；请人工看一眼那个 Chrome 窗口' }),
+    blocker: (o) => {
+      const fallback = o.probe?.status === 'no_tab'
+        ? (usesSystemBrowser(o)
+          ? '系统默认浏览器里没有开着 ERP 的页面；下一步会用系统默认 URL 打开方式启动它'
+          : 'ego task space 里没有开着 ERP 的页面；请在那个 task space 里打开 ERP')
+        : (usesSystemBrowser(o)
+          ? '读不出当前登录的是谁，也看不见登录表单；请检查系统默认浏览器页面和只读权限'
+          : '读不出当前登录的是谁，也看不见登录表单；请人工看一眼那个 ego 页面');
+      return {
+        kind: ['browser_read_unavailable', 'read_unavailable'].includes(o.probe?.status) || o.browserReadError
+          ? 'browser_read_unavailable' : 'identity_unknown',
+        code: o.browserReadError?.code ?? o.probe?.code ?? null,
+        resolvableBy: 'user',
+        hint: o.browserReadError?.message ?? o.probe?.hint ?? fallback,
+      };
+    },
   },
   {
     state: 'env_identity_unbound',
@@ -205,6 +304,24 @@ const RULES = [
   // 这半张表要任务观测才判得动（observeTask）。只采了环境观测时它们整段跳过，
   // 答案停在 env_ready —— 没看过材料就说材料怎么样，那是编的。
   {
+    // 任何非空写入标记都表示任务可能已经触碰 ERP。未知值也必须保守交接，
+    // 不能因为这一版还不认识它就回到项目选择或再次写入。唯一例外是
+    // `recovery.valid`：它只是本次 fresh 只读回读给本地准备开的一扇临时门，
+    // 不会清除 marker，也不会授权 ERP 写入。
+    state: 'handed_off_recover',
+    actor: null,
+    when: (o) => taskSeen(o) && hasErpWriteState(o.task) && o.recovery?.valid !== true,
+  },
+  {
+    // 常驻城市是员工记忆；没有记忆时先问本人，不能在任务选择页顺手写入。
+    // 这条排在 task_none 前面，是为了让第一次启动先完成员工事实确认。
+    state: 'home_city_required',
+    actor: 'user',
+    when: (o) => taskSeen(o) && o.homeCityRequired === true,
+    blocker: () => ({ kind: 'home_city_required', resolvableBy: 'user',
+      hint: '还没有确认当前员工的常驻城市；先由本人确认，后续新任务会沿用' }),
+  },
+  {
     state: 'task_none',
     actor: 'kernel',
     when: (o) => taskSeen(o) && !o.task,
@@ -215,6 +332,43 @@ const RULES = [
     state: 'inventory_stale',
     actor: 'kernel',
     when: (o) => taskSeen(o) && o.inventoryStale,
+  },
+  {
+    state: 'pdf_markdown_conversion_required',
+    actor: 'model',
+    when: (o) => taskSeen(o) && hasBlockingItem(o, (i) => i.kind === 'markdown_conversion_required'),
+    blocker: (o) => itemsOf(o).filter((i) => i.blocking && i.kind === 'markdown_conversion_required')
+      .map(asBlocker),
+  },
+  {
+    state: 'pdf_markdown_conversion_empty',
+    actor: 'user',
+    when: (o) => taskSeen(o) && hasBlockingItem(o, (i) => i.kind === 'markdown_conversion_empty'),
+    blocker: (o) => itemsOf(o).filter((i) => i.blocking && i.kind === 'markdown_conversion_empty').map(asBlocker),
+  },
+  {
+    state: 'pdf_markdown_conversion_failed',
+    actor: 'model',
+    when: (o) => taskSeen(o) && hasBlockingItem(o, (i) => i.kind === 'markdown_conversion_failed'),
+    blocker: (o) => itemsOf(o).filter((i) => i.blocking && i.kind === 'markdown_conversion_failed').map(asBlocker),
+  },
+  {
+    state: 'pdf_markdown_candidate_required',
+    actor: 'model',
+    when: (o) => taskSeen(o) && hasBlockingItem(o, (i) =>
+      ['markdown_candidate_required', 'markdown_candidate_invalid'].includes(i.kind)),
+    blocker: (o) => itemsOf(o).filter((i) => i.blocking
+      && ['markdown_candidate_required', 'markdown_candidate_invalid'].includes(i.kind))
+      .map(asBlocker),
+  },
+  {
+    state: 'pdf_markdown_candidate_review',
+    actor: 'model',
+    when: (o) => taskSeen(o) && hasBlockingItem(o, (i) =>
+      ['markdown_field_unresolved', 'markdown_segment_unresolved', 'markdown_candidate_issue'].includes(i.kind)),
+    blocker: (o) => itemsOf(o).filter((i) => i.blocking
+      && ['markdown_field_unresolved', 'markdown_segment_unresolved', 'markdown_candidate_issue'].includes(i.kind))
+      .map(asBlocker),
   },
   {
     // 盘点和分流报出来的待办，除了看图读数那三种（它们各有各的状态）。
@@ -301,13 +455,27 @@ const RULES = [
       hint: `${o.allocationRound.fileName} 变过了，上次的逐段金额已经作废，要重新给` }),
   },
   {
-    // 有事件没有项目号。**按事件用对话提问问**是表里写的下一步，但那个问法
-    // 还在原型上定（几十张发票配三五个项目，怎么问才不折磨人），所以这一版
-    // 只做到「如实报出来，把状态摆在那里」—— 见本状态在 next.mjs 里的那一步。
-    //
-    // 因此 actor 是 `user` 而不是表里写的 `model`：表里那个 `model` 说的是
-    // "模型用对话提问去问"，而这一版根本没有那一问。报 `model` 等于说
-    // "模型该动手了"，却又不给它任何一件能做的事。问法落成的那一票把它改回 `model`。
+    // 项目归属不属于分类事实。先让用户确认材料、日期、金额分摊、常驻城市和费用类别，
+    // 再打开个人项目簿；单纯换项目不会改变这一份确认摘要。
+    state: 'classified_detail_confirmation',
+    actor: 'user',
+    when: (o) => erpSeen(o) && o.classifiedDetailComplete === true
+      && o.classifiedDetailConfirmed !== true,
+    blocker: (o) => ({ kind: 'classified_detail_confirmation_required', resolvableBy: 'user',
+      lineCount: o.classifiedPreview?.lines?.length ?? o.lines?.length ?? 0,
+      hint: '请先确认分类明细中的材料关联、日期、金额分摊、常驻城市和费用项目；项目归属随后单独选择' }),
+  },
+  {
+    // 没有当前可选项目时，先让用户维护个人项目簿；打开一个空选择页只会制造假动作。
+    state: 'project_book_empty',
+    actor: 'user',
+    when: (o) => erpSeen(o) && !o.selectionApplied && o.projectBook?.empty === true,
+    blocker: () => ({ kind: 'project_book_empty', resolvableBy: 'user',
+      hint: '当前个人项目簿没有可选项目；先维护本人项目簿，再回来做任务选择' }),
+  },
+  {
+    // 有事件没有项目号。项目归属没有材料证据，必须由用户在个人项目簿页面选择；
+    // 选择页提交前还会重新核验当前身份和本人新鲜可选集合。
     state: 'project_unassigned',
     actor: 'user',
     when: (o) => erpSeen(o) && (!o.selectionApplied || (o.lines ?? []).some((l) => !l.project)),
@@ -337,18 +505,53 @@ const RULES = [
       number: p.number ?? p.code ?? null, verdict: p.verdict ?? null, hint: p.note ?? null })),
   },
   {
-    // 动过 ERP 的任务不在这里收场。表里它排在 ready_for_erp_write 后面，
-    // 但判定要在**前面**分岔：一份已经发出去的写入不能再要一次点头 ——
-    // 那次点头会看起来像是"同意再写一遍"。所以 ready_for_erp_write 自己
-    // 把「还没动过 ERP」写进判据，两条互斥，表里的先后就不重要了。
-    state: 'ready_for_erp_write',
+    // 恢复凭据只打开本地准备。项目和 ERP 目录都核对完之后，仍必须停在写入闸前，
+    // 不能把「fresh 只读回读通过」误当成新的写入批准。
+    state: 'recovery_write_blocked',
     actor: 'user',
-    when: (o) => erpSeen(o) && !o.task?.erpWriteState,
+    when: (o) => erpSeen(o) && hasErpWriteState(o.task) && o.recovery?.valid === true,
+    blocker: () => ({ kind: 'recovery_write_blocked', resolvableBy: 'user',
+      hint: '本地恢复只允许准备报销内容；ERP 写入仍需独立批准流程，当前任务 marker 不变' }),
   },
   {
-    state: 'handed_off_recover',
+    // Preparation is a two-step boundary: observation only verifies an
+    // existing immutable bundle.  Materializing it is an explicit kernel run
+    // so even a blocked draft gets a concrete directory for review.
+    state: 'preparation_package_pending',
+    actor: 'kernel',
+    when: (o) => erpSeen(o) && o.preparation
+      && o.preparationPackageCurrent !== true,
+    blocker: (o) => [{ kind: 'preparation_package_required', resolvableBy: 'kernel', blocking: true,
+      hint: o.preparationPackage?.status === 'invalid'
+        ? '现有准备包校验失败，需按当前 digest 重新生成不可变交接包'
+        : '还没有当前 digest 的准备包，先生成发票目录、明细文档和 manifest' }],
+  },
+  {
+    // 第一阶段的材料包即使不充分也要物化，供用户审阅缺什么；只有全部
+    // 问题清零才进入准备确认。这个状态不授予 ERP 写入权限。
+    state: 'preparation_blocked',
+    actor: 'user',
+    when: (o) => erpSeen(o) && (!o.preparation || o.preparation.ready !== true),
+    blocker: (o) => preparationBlockers(o).length
+      ? preparationBlockers(o)
+      : [{ kind: 'preparation_problem', resolvableBy: 'user', blocking: true,
+          hint: '准备材料包尚未完成充分性判定，先生成并检查发票目录、明细文档和 manifest' }],
+  },
+  {
+    // 这是准备阶段自己的人工确认。它绑定完整 preparation digest，不能
+    // 复用旧的 write-approval，也不能因为旧 marker 或旧点头而放行。
+    state: 'preparation_confirmation',
+    actor: 'user',
+    when: (o) => erpSeen(o) && o.preparation?.ready === true
+      && o.preparationConfirmed !== true,
+    blocker: () => [{ kind: 'preparation_confirmation_required', resolvableBy: 'user', blocking: true,
+      hint: '请确认准备交接包中的发票目录、明细字段、证据来源和版本摘要；确认后停在手动 QA，不会写入 ERP' }],
+  },
+  {
+    state: 'preparation_complete',
     actor: null,
-    when: (o) => erpSeen(o) && !!o.task?.erpWriteState,
+    when: (o) => erpSeen(o) && o.preparation?.ready === true
+      && o.preparationConfirmed === true,
   },
 ];
 

@@ -18,6 +18,15 @@ bash scripts/bundle.sh >/dev/null 2>&1 && ok "bundle 退 0" || bad "bundle 退�
 for s in baox baox-recover baox-setup; do
   [ -x "dist/$s/kernel/bin/baox.mjs" ] && ok "$s 带着内核入口且可执行" || bad "$s 缺内核入口或没有执行位"
 done
+codex_metadata=1
+for s in baox baox-recover baox-setup extract-reimbursement-images; do
+  [ -f "dist/$s/agents/openai.yaml" ] || codex_metadata=0
+done
+[ "$codex_metadata" = 1 ] && ok "四份 Skill 都带 Codex agents/openai.yaml" || bad "分发包缺少 Codex Skill 元数据"
+[ -f dist/extract-reimbursement-images/runtime/dist/cli.js ] \
+  && [ -f dist/extract-reimbursement-images/runtime/python/requirements-rapid.txt ] \
+  && grep -q '"type": "module"' dist/extract-reimbursement-images/runtime/package.json \
+  && ok "图片字段提取 Skill 带着 CLI 与锁定依赖" || bad "图片字段提取 Skill 不完整"
 n=$(find dist -name 'scratch-*' -o -name '*.test.mjs' | wc -l | tr -d ' ')
 [ "$n" = 0 ] && ok "分发包里没有草稿和测试文件" || bad "分发包里混进了 $n 个文件"
 
@@ -27,11 +36,19 @@ bash scripts/bundle.sh >/dev/null 2>&1 && bad "缺内核入口时 bundle 竟然�
 mv /tmp/baox.mjs.bak kernel/bin/baox.mjs
 bash scripts/bundle.sh >/dev/null 2>&1 || bad "还原后 bundle 应该重新退 0"
 
-echo "=== 4. 打出来的包，端到端（没有安装这一步）==="
+echo "=== 4. 打出来的包，基础命令可启动 ==="
 HOME_A=$(mktemp -d)
-run() { BAOX_HOME="$HOME_A" node dist/baox/kernel/bin/baox.mjs "$@" 2>&1; }
+run() { env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_SKILL_DIR -u AI_AGENT \
+  BAOX_HOME="$HOME_A" node dist/baox/kernel/bin/baox.mjs "$@" 2>&1; }
 out=$(run tasks); code=$?
-[ "$code" = 0 ] && ok "拿到包就能直接跑 tasks，中间没有安装动作" || bad "第一条命令就该能跑，实得 ${code}：$out"
+[ "$code" = 0 ] && ok "拿到包就能直接跑 tasks" || bad "第一条命令就该能跑，实得 ${code}：$out"
+
+HOME_RESET=$(mktemp -d)
+out=$(BAOX_HOME="$HOME_RESET" node dist/baox/kernel/bin/baox.mjs reset 2>&1); code=$?
+[ "$code" = 0 ] && echo "$out" | grep -q '"status": "reset"' \
+  && [ -z "$(find "$HOME_RESET" -mindepth 1 -print -quit)" ] \
+  && ok "分发包的 reset 对空环境幂等且不创建状态" \
+  || bad "分发包的 reset 空环境契约失败：${out}"
 
 out=$(run doctor)
 echo "$out" | grep -q '"version"' && ok "doctor 报出版本号：$(echo "$out" | grep '"version"' | head -1 | tr -d ' ')" \
@@ -47,14 +64,16 @@ case "$(uname -s)" in
 esac
 mkdir -p "$LEGACY/tasks" "$LEGACY/chrome-profile" "$LEGACY/runtime/bin"
 echo '{"tasks":[]}' > "$LEGACY/tasks/index.json"
-out=$(env -u BAOX_HOME -u XDG_DATA_HOME HOME="$HOME_C" node dist/baox/kernel/bin/baox.mjs tasks 2>&1); code=$?
+out=$(env -u BAOX_HOME -u XDG_DATA_HOME -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT \
+  -u CLAUDE_SKILL_DIR -u AI_AGENT HOME="$HOME_C" node dist/baox/kernel/bin/baox.mjs tasks 2>&1); code=$?
 [ "$code" = 0 ] && ok "带着旧数据目录时第一条命令照样退 0" || bad "迁移时 tasks 退了 ${code}：$out"
 echo "$out" | grep -q '"migrated"' && ok "输出里说清了迁到哪：$(echo "$out" | grep -A2 '"migrated"' | tr -d ' \n')" \
   || bad "迁移了却没在输出里说一句"
 [ -f "$HOME_C/.baox/tasks/index.json" ] && ok "旧任务落到了 ~/.baox" || bad "~/.baox 里没有迁过来的任务"
 [ -f "$LEGACY/tasks/index.json" ] && ok "旧目录原样留着，能回滚 0.9.x" || bad "旧目录被动了 —— 必须是拷贝不是移动"
 [ ! -d "$HOME_C/.baox/runtime" ] && ok "旧的 runtime/ 没跟着搬" || bad "把已经不存在的概念搬过来了"
-out=$(env -u BAOX_HOME -u XDG_DATA_HOME HOME="$HOME_C" node dist/baox/kernel/bin/baox.mjs tasks 2>&1)
+out=$(env -u BAOX_HOME -u XDG_DATA_HOME -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT \
+  -u CLAUDE_SKILL_DIR -u AI_AGENT HOME="$HOME_C" node dist/baox/kernel/bin/baox.mjs tasks 2>&1)
 echo "$out" | grep -q '"migrated"' && bad "迁移不该发生第二次" || ok "迁移只发生一次"
 
 echo "=== 6. release.sh ==="
@@ -72,7 +91,8 @@ if [ -n "$zipf" ]; then
   UNZ=$(mktemp -d); unzip -q "$zipf" -d "$UNZ"
   echo "  包内顶层： $(ls "$UNZ" | tr '\n' ' ')"
   HOME_B=$(mktemp -d)
-  BAOX_HOME="$HOME_B" node "$UNZ/baox/kernel/bin/baox.mjs" tasks >/dev/null 2>&1 \
+  env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_SKILL_DIR -u AI_AGENT \
+    BAOX_HOME="$HOME_B" node "$UNZ/baox/kernel/bin/baox.mjs" tasks >/dev/null 2>&1 \
     && ok "解压出来的包直接就能跑命令" || bad "解压出来的包跑不了命令"
 fi
 

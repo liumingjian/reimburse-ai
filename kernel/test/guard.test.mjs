@@ -7,6 +7,7 @@ import url from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { guardVerdict, agentMarkers, refusalPayload, recordRefusal,
   AGENT_MARKERS, HUMAN_FLAG, REFUSAL_LOG } from '../src/guard.mjs';
+import { seedReadyRuntimes } from './runtime-fixture.mjs';
 
 // 这一层测的是「模型不拼命令」那个机制本身。判定是纯函数，所以下半场那些
 // 用例连数据目录都不需要；下半场测的是那条命令**真的没跑起来**。
@@ -18,6 +19,15 @@ test('模型敲 next：放行，这是它唯一的入口', () => {
   const v = guardVerdict({ cmd: 'next', argv: ['next', '--dir', '/x'], env: AGENT });
   assert.equal(v.allowed, true);
   assert.equal(v.reason, 'model_allowed');
+});
+
+test('模型只能启动裸 reset，命令行参数不能替用户确认', () => {
+  const start = guardVerdict({ cmd: 'reset', argv: ['reset'], env: AGENT });
+  assert.equal(start.allowed, true);
+  assert.equal(start.reason, 'model_allowed');
+  for (const argv of [['reset', '--i-am-a-human'], ['reset', '--yes']]) {
+    assert.equal(guardVerdict({ cmd: 'reset', argv, env: AGENT }).allowed, false);
+  }
 });
 
 test('模型敲低层命令：拒', () => {
@@ -98,7 +108,7 @@ test('拒绝的那份 JSON 带着能原样念的一句话和给人的出路', ()
     reason: 'model_may_only_run_next' });
   assert.equal(p.status, 'refused');
   assert.equal(p.refused.command, 'erp-fill');
-  assert.deepEqual(p.refused.allowed, ['next', 'erp-reconcile', 'reset']);
+  assert.deepEqual(p.refused.allowed, ['next', 'reset', 'erp-reconcile']);
   assert.ok(p.speak, '得有一句能原样念给用户的话');
   assert.ok(p.hint.includes(HUMAN_FLAG), '得告诉人怎么手敲');
 });
@@ -117,18 +127,16 @@ test('拒绝写进 refused.jsonl，一次一行；验收就是看它空不空', 
 // —— 命令这一层 ——
 // 拒绝的意义在于那条命令**没有跑过**，所以这里验的是退出码和副作用，不是措辞。
 
-// CDP 端口指到 1：普通进程绑不上这个特权端口，所以它**永远**没人监听，
-// 环境判定稳稳停在 env_chrome_down。原来用的 9457 只是"大概没人用"，
-// 而真机上跑着 baox 自己那个 Chrome 时它就是被占的，整组用例跟着塌。
-const CLOSED_PORT = '1';
-
 const BIN = path.join(path.dirname(path.dirname(url.fileURLToPath(import.meta.url))), 'bin', 'baox.mjs');
 
 function baox(args, extraEnv = {}, home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-guard-cli-'))) {
   // 基线环境先把痕迹清干净：测试自己就可能跑在 Claude Code 里，
   // 那样「人在真终端」这一支永远测不到。
-  const env = { ...process.env, BAOX_HOME: home, BAOX_CDP_PORT: CLOSED_PORT };
+  const env = { ...process.env, BAOX_HOME: home, ...seedReadyRuntimes(home) };
   for (const k of AGENT_MARKERS) delete env[k];
+  // CLI tests must never inherit the real QA task space or invoke ego-browser.
+  delete env.BAOX_EGO_TASK_SPACE;
+  delete env.BAOX_EGO_BROWSER;
   try {
     const stdout = execFileSync(process.execPath, [BIN, ...args],
       { encoding: 'utf8', env: { ...env, ...extraEnv } });
@@ -157,35 +165,39 @@ test('同一条命令，人手敲（无痕迹）就照跑，拒绝日志一行�
     '放行不记日志，否则"日志为空"就不再是个信号');
 });
 
-test('baox next 被模型敲：照常放行', () => {
+test('baox next 被模型敲：放行入口，但缺 task space 时由用户处理', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-guard-src2-'));
   fs.writeFileSync(path.join(dir, 'fp.pdf'), '%PDF-1.4\n');
-  const { code, json } = baox(['next', '--dir', dir], { CLAUDECODE: '1' });
-  assert.equal(code, 0);
+  const { code, json } = baox(['next', '--dir', dir], { CLAUDECODE: '1', BAOX_BROWSER: 'ego' });
+  assert.equal(code, 2);
   assert.equal(json.command, 'next');
+  assert.equal(json.state, 'env_chrome_down');
+  assert.equal(json.actor, 'user');
+  assert.equal(json.step.kind, 'tell_user');
+  assert.equal(json.blockedBy[0].kind, 'ego_task_space_unavailable');
+  assert.match(json.speak, /BAOX_EGO_TASK_SPACE/);
 });
 
-test('内核发的那条 step.argv，模型原样执行得通；改一个字就被拒', () => {
+test('环境未准备时 next 凭据仍可幂等重发，且不发出浏览器命令', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-guard-src3-'));
   fs.writeFileSync(path.join(dir, 'fp.pdf'), '%PDF-1.4\n');
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-guard-cli2-'));
 
-  const first = baox(['next', '--dir', dir], { CLAUDECODE: '1' }, home);
-  assert.equal(first.json.step.kind, 'run');
-  const argv = first.json.step.argv;
+  const first = baox(['next', '--dir', dir], { CLAUDECODE: '1', BAOX_BROWSER: 'ego' }, home);
+  assert.equal(first.code, 2);
+  assert.equal(first.json.step.kind, 'tell_user');
+  assert.equal(first.json.step.argv, undefined);
 
-  const asIssued = baox(argv.slice(2), { CLAUDECODE: '1' }, home);
-  assert.notEqual(asIssued.code, 2, '内核自己发的那条必须跑得动');
-
-  const tampered = baox([...argv.slice(2), '--force'], { CLAUDECODE: '1' }, home);
-  assert.equal(tampered.code, 2, '加一个参数就是另一条命令');
-  assert.equal(tampered.json.status, 'refused');
+  const again = baox(['next', '--after', first.json.stepToken], { CLAUDECODE: '1', BAOX_BROWSER: 'ego' }, home);
+  assert.equal(again.code, 2);
+  assert.equal(again.json.state, 'env_chrome_down');
+  assert.equal(again.json.stepToken, first.json.stepToken);
+  assert.equal(again.json.ignored, undefined, 'tell_user 不需要伪造命令结果');
 });
 
-// —— 唯一的例外 ——
-// 任务动过 ERP 之后，next 对它永远只返回同一个 handoff，状态机在那里就断了。
-// 往下走的只读对账不在任何 step.argv 里（handoff 那一步不带 argv），
-// 拦掉它等于把出事之后唯一还能走的那条路一起拦了。
+// —— 守卫例外与迁移阻断 ——
+// guard 仍允许 recover 入口被模型调用；CLI 只读路径要求显式 ego task space，
+// 因此没有配置时也不会启动或接管任何浏览器。
 test('erp-reconcile 放行 —— 写入善后那条路不在 step.argv 里', () => {
   const v = guardVerdict({ cmd: 'erp-reconcile',
     argv: ['erp-reconcile', '--dir', '/materials'], env: AGENT });
@@ -200,9 +212,13 @@ test('例外只有这一条，别的 erp-* 照拒', () => {
   }
 });
 
-test('baox-recover 说明书里那条命令，被模型敲得动', () => {
+test('erp-reconcile 缺 task space 时给出配置阻塞且不碰 ERP', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-guard-rec-'));
   fs.writeFileSync(path.join(dir, 'fp.pdf'), '%PDF-1.4\n');
-  const { code } = baox(['erp-reconcile', '--dir', dir], { CLAUDECODE: '1' });
-  assert.notEqual(code, 2, 'erp-reconcile 撞上守卫的话，写入善后就此不通');
+  const { code, json } = baox(['erp-reconcile', '--dir', dir], { CLAUDECODE: '1', BAOX_BROWSER: 'ego' });
+  assert.equal(code, 2);
+  assert.equal(json.status, 'blocked');
+  assert.equal(json.code, 'EGO_TASK_SPACE_REQUIRED');
+  assert.equal(json.command, 'erp-reconcile');
+  assert.match(json.note, /BAOX_EGO_TASK_SPACE/);
 });

@@ -71,17 +71,17 @@ internal Skill
 
 TypeScript 源码位于 `packages/image-field-extraction/`；Python 只实现 OCR Worker。内部 Skill 位于 `skills/extract-reimbursement-images/`，正常业务由 `baox` 给它版本化工单；Agent 不选择适配器或拼装低层命令。
 
-模型视觉是宿主能力，不能由本地 TypeScript 直接调用。OCR 返回 `needs_model_vision` 时，内部 Skill 才逐张读取对应图片并把结果交回同一套校验；OCR 与模型视觉的规范化值冲突时输出 `ambiguous`。
+模型视觉是宿主能力，不能由本地 TypeScript 直接调用。OCR 返回 `needs_model_vision` 时，内部 Skill 才逐张读取对应图片并把结果交回同一套校验；同一张图片一次只采用一条候选路径，最终仍由用户对照原件确认。
 
 ## Runtime and distribution
 
 - 首批平台：Apple Silicon macOS；RapidOCR PP-OCRv6 small 是性能验证后的默认候选，PP-OCRv6 medium
   只作为金标准确率挑战项，PaddleOCR 保留为对照；
 - Python 基线：3.11，Skill 自建版本化虚拟环境；
-- 安装入口：`baox-setup` 显示版本、来源、预计体积和缓存位置，经用户同意后安装；
+- 安装入口：`baox-setup` 在材料解析前检查并安装固定版本，同时记录来源、体积和缓存位置；
 - TypeScript 在发布前编译，用户不需要 TypeScript 工具链；
 - 正式处理图片时只使用本地运行时和模型，不允许网络请求；
-- 安装缺失或失败不阻塞整个报销能力，回退模型视觉。
+- 安装缺失或失败在 Setup 阶段明确阻塞；不能把环境问题伪装成图片证据不足。
 
 ## Validation
 

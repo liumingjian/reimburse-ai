@@ -1,6 +1,6 @@
 ---
 name: extract-reimbursement-images
-description: baox 图片字段提取的内部执行壳。Invoked only when baox returns an extract_images step; runs the managed local OCR batch and uses model vision solely for items the coordinator explicitly returns as needs_model_vision.
+description: "baox 图片字段提取的内部执行壳。Invoked only when baox returns an extract_images step; runs the managed local OCR batch and uses model vision solely for items the coordinator explicitly returns as needs_model_vision."
 user-invocable: false
 disable-model-invocation: false
 allowed-tools: Bash, Read, Write
@@ -24,6 +24,14 @@ node "<这个 skill 目录的绝对路径>/runtime/dist/cli.js" --request "<step
 CLI 只做三件事：复核文件哈希和格式；让一个 Python Worker 批量读取；用 TypeScript 规则输出
 封闭 schema。不要绕过 CLI 直接调用 Python，也不要自行安装依赖。
 
+## 结果纪律
+
+- 本地 `extracted` 结果按原样交回；增值税发票的 OCR 候选只包含 `fields.totalAmount`，不要从
+  文字观测补写发票号码、不含税金额、税额或其他字段。
+- `ride_itinerary` 的 `segments[]` 按票面顺序完整保留；每个可见表格行都是独立行程段，不合并、丢弃、
+  重排，也不用顶层合计替代逐段金额。
+- OCR 候选只是字段候选，仍交给内核和用户确认；不要在 Skill 内自行确认或改写字段。
+
 ## 明确回退
 
 读取 `step.extractionPath`：
@@ -42,5 +50,6 @@ CLI 只做三件事：复核文件哈希和格式；让一个 Python Worker 批�
 完成后原样执行 `step.argv`，把 stdout 落到 `step.resultPath`。回到 `baox` 主会话时只交回该
 结果路径和原始工单；不把 OCR 原文或图片内容贴进对话，不把这个内部 Skill 报给用户。
 
-若本地运行时不存在，CLI 会把每项标成 `needs_model_vision`；这是正常降级。若 CLI 协议失败、
-工单哈希变化或一张图含多份单据，则停止并原样带回错误，不把结构性失败降级成猜测。
+若本地运行时不存在，停止并把环境错误交回主流程；Setup 本应在材料解析前完成安装，不能把
+缺少工具伪装成图片证据不足。若 CLI 协议失败、工单哈希变化或一张图含多份单据，同样停止并
+原样带回错误，不把结构性失败降级成猜测。

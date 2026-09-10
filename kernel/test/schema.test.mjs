@@ -7,6 +7,7 @@ import url from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { SCHEMA_VERSION } from '../src/state.mjs';
 import { AGENT_MARKERS } from '../src/guard.mjs';
+import { seedReadyRuntimes } from './runtime-fixture.mjs';
 
 // 版本闸的判据从代码版本改成了数据格式版本，所以 schema.json 就是闸门本身。
 // 这一层测的是它落盘的规矩：没有就补，有了就一个字都不动。
@@ -20,7 +21,7 @@ const BIN = path.join(path.dirname(path.dirname(url.fileURLToPath(import.meta.ur
 const SCHEMA_FILE = 'schema.json';
 
 function baox(args, home) {
-  const env = { ...process.env, BAOX_HOME: home, BAOX_CDP_PORT: CLOSED_PORT };
+  const env = { ...process.env, BAOX_HOME: home, ...seedReadyRuntimes(home), BAOX_CDP_PORT: CLOSED_PORT };
   for (const k of AGENT_MARKERS) delete env[k];
   try {
     return { code: 0, json: JSON.parse(execFileSync(process.execPath, [BIN, ...args],

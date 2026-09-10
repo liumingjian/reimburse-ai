@@ -10,9 +10,9 @@
 | 状态 | 内核凭什么判定 | actor | 下一步 | 离开条件 |
 |---|---|---|---|---|
 | `env_node_unsupported` | `process.versions.node` < 21 | user | 告知去装 Node | 重跑判定通过 |
-| `env_chrome_down` | CDP `/json/version` 连不上 | kernel | 起专用 Chrome | 端口应答 |
+| `env_chrome_down` | 显式 ego QA 模式下 task space 不可用（保留旧状态名） | user | 配置或恢复 QA task space | task space 可读 |
 | `env_not_logged_in` | 探针：登录页可见，读不出 `usernametext` | user | 告知在该窗口登录 | 探针读出显示名 |
-| `env_identity_unknown` | 页面加载中 / 读不出且无登录表单 | user | 请人看一眼窗口 | 探针给出确定结论 |
+| `env_identity_unknown` | 没有 ERP 页面 / 页面加载中 / 浏览器读取能力或权限不足 | kernel / user | 无页面时用系统默认浏览器打开 ERP；读取失败时告知实际原因 | 探针给出确定结论 |
 | `env_identity_unbound` | 探针 matched，但无 `identity.json` | user | 会话内列表格请用户认 | 写入绑定 |
 | `env_identity_mismatched` | 绑定的 account+tenant ≠ 当前登录 | user | 硬阻塞，请换回本人账号 | 换回 / 改绑（走页面） |
 | `env_ready` | 以上全过 | — | 进入任务状态 | — |
@@ -22,6 +22,7 @@
 | 状态 | 内核凭什么判定 | actor | 下一步 | 离开条件 |
 |---|---|---|---|---|
 | `schema_too_new` | 数据目录 `schemaVersion` > 内核支持 | user | 硬停，提示升级 baox | — |
+| `home_city_required` | 当前员工没有常驻城市记忆，或任务没有城市快照 | user | 终端填写常驻城市 | 城市按 tenant+account 记忆；任务冻结快照 |
 | `task_none` | 该 sourceKey 无 open 任务 | kernel | `intake` | 任务建立 |
 | `inventory_stale` | 材料目录哈希 ≠ 最近一次盘点 | kernel | 重跑 `intake` | 盘点版本刷新 |
 | `intake_open_items` | 盘点有 `read_error`/`kind_unrecognized`/`no_text_in_pdf` | user | 逐条说明并请示 | 用户处置或明确忽略 |
@@ -35,10 +36,15 @@
 | `events_pending` | 无当前版本的事件划分 | kernel | `events` | 事件产出 |
 | `allocation_required` | 合并交通发票，且**各段之和 ≠ 价税合计**（相等则内核自动定案，不进此态） | user | 列出缺口请用户补 | 分毫不差 |
 | `allocation_stale` | 发票内容哈希变了 | user | 同上 | 同上 |
-| `project_unassigned` | 有事件没有项目号 | model | 按事件在对话里问（内核渲染的问题，候选≤3 + 其他） | 每个事件有项目号 |
+| `classified_detail_confirmation` | 当前材料事实、日期、金额分摊、常驻城市和费用项目已完整，但摘要未获用户确认 | user | 终端确认分类明细表，可指出材料字段重读 | 当前摘要确认且材料事实未变 |
+| `project_book_empty` | 当前身份没有可选的已核验个人项目 | user | `projects-page` 维护个人项目簿 | 至少有一个当前可选项目 |
+| `project_unassigned` | 有事件没有项目号，且分类明细已经确认 | user | 内核发出 `select-task` 个人项目簿页面 | 每个事件有项目号，提交时本人 fresh allowlist 仍通过 |
 | `catalog_unverified` | 项目/类别未经 ERP 只读核对 | kernel | `catalog` | 全部 `erp_catalog_confirmed` |
 | `catalog_mismatch` | ERP 里查无此项目 / 对不上 | user | 请用户改派 | 重新核对通过 |
-| `ready_for_erp_write` | 以上全绿 | user | 摊开待写内容，请用户点头 | 用户同意开始写 |
+| `preparation_package_pending` | 当前材料和选择没有通过校验的交接包 | kernel | `prepare` 生成发票目录、明细和清单 | 当前材料包生成并通过文件校验 |
+| `preparation_blocked` | 材料包已生成，但必需字段或证据不充分 | user | 展示文件与逐项缺口 | 缺项解决并重新生成 |
+| `preparation_confirmation` | 当前材料包字段充分，尚无匹配的准备确认 | user | 核对明细文档和发票目录 | 当前包获得用户准备确认 |
+| `preparation_complete` | 当前材料包有效且准备确认匹配 | — | 交接文件，停止并等待手动 QA | 本阶段终点，不进入 ERP 填报 |
 | `handed_off_recover` | `erpWriteState` 非空 | — | `handoff: baox-recover`，并明说状态变化 | — |
 
 > **`archived` 不在这张表里，它是任务状态，不是状态。** 0.9.x 的在途任务在迁移那一刻被标成
@@ -53,5 +59,6 @@
 1. **幂等**：连续调用 `next` 不改变状态，永远返回"当前该做的那一件事"。
 2. **不可跳步**：`stepToken` 不匹配时内核忽略回传、重发当前步骤。
 3. **只认事实**：模型说"做完了"不推进状态；推进的依据是文件哈希、落盘的读数、真实的工具结果。
-4. **可撤销/不可撤销分级**：`ready_for_erp_write` 之前的确认走会话；越过它的写入和改绑要内核观测得到的事件。
+4. **阶段隔离**：准备确认只记录材料包版本，不能创建或继承 ERP 写入授权；正常流程交接本地材料后停止，ERP 填报属于后续阶段。
 5. **守恒式不让路**：任何算术不平的读数都不进事实链，只会落回开放项。
+6. **身份与来源冻结**：员工常驻城市按 `tenant + account` 记忆，任务保存创建时快照；项目选择只接受提交瞬间当前身份的个人项目簿候选。已确认的历史归属可保留展示，但删除后的项目不能用于新的明细归属。

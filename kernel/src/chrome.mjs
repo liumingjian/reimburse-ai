@@ -1,9 +1,15 @@
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { paths, ensureDir } from './paths.mjs';
 
 export const CDP_PORT = Number(process.env.BAOX_CDP_PORT || 9333);
+
+const LAUNCH_TIMEOUT = 20000;
+const LOCK_WAIT_TIMEOUT = LAUNCH_TIMEOUT + 5000;
+const LOCK_STALE_AFTER = LOCK_WAIT_TIMEOUT + 5000;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const CANDIDATES = {
   darwin: [
@@ -49,43 +55,144 @@ export async function targets(port = CDP_PORT) {
   return list.filter((t) => t.type === 'page');
 }
 
-export async function launch({ port = CDP_PORT, openUrl } = {}) {
-  const existing = await version(port);
+async function existingVersion(port) {
+  // 一次 1.5 秒超时只能说明这一刻没答，不能证明 Chrome 不存在。启动新实例前
+  // 再问一次，避免主线程短暂繁忙时把一个健康的专用 Chrome 判成 down。
+  return await version(port) || await version(port);
+}
+
+function readLaunchLock(lockDir) {
+  let stat;
+  try { stat = fs.statSync(lockDir); } catch { return null; }
+  try {
+    const owner = JSON.parse(fs.readFileSync(path.join(lockDir, 'owner.json'), 'utf8'));
+    return { owner, age: Date.now() - stat.mtimeMs };
+  } catch {
+    // mkdir 和 owner.json 写入之间崩溃也会留下锁。年龄仍从目录读取，过了 stale
+    // 门槛即可回收；刚 mkdir 尚未来得及写 owner 的正常持有者不会被碰。
+    return { owner: null, age: Date.now() - stat.mtimeMs };
+  }
+}
+
+async function acquireLaunchLock(port, timeout) {
+  ensureDir(paths.run);
+  const lockDir = path.join(paths.run, 'chrome-launch.lock');
+  const token = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const deadline = Date.now() + timeout;
+
+  while (Date.now() < deadline) {
+    try {
+      fs.mkdirSync(lockDir, { mode: 0o700 });
+      fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({
+        pid: process.pid, token, port, acquiredAt: new Date().toISOString(),
+      }));
+      const heartbeat = setInterval(() => {
+        try {
+          const current = readLaunchLock(lockDir);
+          if (current?.owner?.token === token) fs.utimesSync(lockDir, new Date(), new Date());
+        } catch {}
+      }, 1000);
+      heartbeat.unref();
+      return {
+        acquired: true,
+        release() {
+          clearInterval(heartbeat);
+          // 只删自己仍持有的锁；绝不根据 chrome.pid 杀进程，也不探测或碰未知进程。
+          try {
+            const current = readLaunchLock(lockDir);
+            if (current?.owner?.token === token) fs.rmSync(lockDir, { recursive: true });
+          } catch {}
+        },
+      };
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+    }
+
+    const existing = await version(port);
+    if (existing) return { acquired: false, existing, release() {} };
+
+    const current = readLaunchLock(lockDir);
+    // 持有者每秒刷新目录时间；只有心跳超龄才按崩溃遗留锁回收。这里不探测、
+    // 不关闭任何进程；年龄门槛也避免撞上 owner.json 尚未写完的极短窗口。
+    if (current && current.age >= LOCK_STALE_AFTER) {
+      try {
+        const again = readLaunchLock(lockDir);
+        if (again?.owner?.token === current.owner?.token) fs.rmSync(lockDir, { recursive: true });
+      } catch {}
+      continue;
+    }
+    await sleep(100);
+  }
+
+  const e = new Error(`等待另一个 Chrome 启动请求超过 ${Math.ceil(timeout / 1000)}s`);
+  e.code = 'CHROME_LAUNCH_LOCK_TIMEOUT';
+  throw e;
+}
+
+export async function launch({ port = CDP_PORT, openUrl, readinessTimeout = LAUNCH_TIMEOUT,
+  lockWaitTimeout = LOCK_WAIT_TIMEOUT } = {}) {
+  const existing = await existingVersion(port);
   if (existing) return { started: false, ...existing };
 
-  const bin = findChrome();
-  if (!bin) {
-    const e = new Error('未找到 Chrome 可执行文件');
-    e.code = 'CHROME_NOT_FOUND';
+  const lock = await acquireLaunchLock(port, lockWaitTimeout);
+  if (!lock.acquired) return { started: false, ...lock.existing };
+
+  try {
+    // 等锁期间另一个持有者可能刚完成启动；拿到锁后必须在 spawn 前重新确认。
+    const ready = await existingVersion(port);
+    if (ready) return { started: false, ...ready };
+
+    const bin = findChrome();
+    if (!bin) {
+      const e = new Error('未找到 Chrome 可执行文件');
+      e.code = 'CHROME_NOT_FOUND';
+      throw e;
+    }
+    const profile = ensureDir(paths.chromeProfile);
+    ensureDir(paths.logs);
+    const log = fs.openSync(path.join(paths.logs, 'chrome.log'), 'a');
+
+    const args = [
+      `--remote-debugging-port=${port}`,
+      `--user-data-dir=${profile}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-features=Translate',
+    ];
+    if (openUrl) args.push(openUrl);
+
+    let child;
+    try {
+      child = spawn(bin, args, { detached: true, stdio: ['ignore', log, log] });
+    } finally {
+      fs.closeSync(log);
+    }
+    child.unref();
+
+    let launchFailure = null;
+    child.once('error', (err) => { launchFailure = err; });
+    child.once('exit', (code, signal) => {
+      launchFailure ??= new Error(`Chrome 在 CDP ready 前退出（code=${code}, signal=${signal}）`);
+    });
+    if (child.pid) fs.writeFileSync(path.join(paths.run, 'chrome.pid'), String(child.pid));
+
+    const deadline = Date.now() + readinessTimeout;
+    while (Date.now() < deadline) {
+      const v = await version(port);
+      if (v) return { started: true, pid: child.pid, ...v };
+      if (launchFailure) {
+        const e = new Error(`Chrome 启动失败：${launchFailure.message}`);
+        e.code = 'CHROME_LAUNCH_FAILED';
+        throw e;
+      }
+      await sleep(300);
+    }
+    const e = new Error(`Chrome 已启动但 ${port} 端口在 ${Math.ceil(readinessTimeout / 1000)}s 内没有响应`);
+    e.code = 'CDP_TIMEOUT';
     throw e;
+  } finally {
+    lock.release();
   }
-  const profile = ensureDir(paths.chromeProfile);
-  ensureDir(paths.run);
-  ensureDir(paths.logs);
-  const log = fs.openSync(path.join(paths.logs, 'chrome.log'), 'a');
-
-  const args = [
-    `--remote-debugging-port=${port}`,
-    `--user-data-dir=${profile}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-features=Translate',
-  ];
-  if (openUrl) args.push(openUrl);
-
-  const child = spawn(bin, args, { detached: true, stdio: ['ignore', log, log] });
-  child.unref();
-  fs.writeFileSync(path.join(paths.run, 'chrome.pid'), String(child.pid));
-
-  const deadline = Date.now() + 20000;
-  while (Date.now() < deadline) {
-    const v = await version(port);
-    if (v) return { started: true, pid: child.pid, ...v };
-    await new Promise((r) => setTimeout(r, 300));
-  }
-  const e = new Error(`Chrome 已启动但 ${port} 端口在 20s 内没有响应`);
-  e.code = 'CDP_TIMEOUT';
-  throw e;
 }
 
 // 极简 CDP 客户端。Node 21+ 自带全局 WebSocket，所以内核零依赖。
@@ -152,6 +259,46 @@ export async function connect(wsUrl, { timeout = 10000 } = {}) {
   };
 
   return { send, on, close: () => { try { ws.close(); } catch {} } };
+}
+
+function commandForPid(pid) {
+  try {
+    process.kill(pid, 0);
+    if (process.platform === 'win32') return null;
+    return execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).trim();
+  } catch {
+    return '';
+  }
+}
+
+export async function close({ port = CDP_PORT, pidFile = path.join(paths.run, 'chrome.pid'),
+  profile = paths.chromeProfile, versionFn = version, connectFn = connect,
+  processCommand = commandForPid } = {}) {
+  const pid = Number.parseInt(fs.existsSync(pidFile) ? fs.readFileSync(pidFile, 'utf8') : '', 10);
+  const command = Number.isInteger(pid) ? processCommand(pid) : '';
+  const current = await versionFn(port);
+  if (!current) {
+    return command ? { ok: false, reason: 'cdp_unavailable' } : { ok: true, alreadyClosed: true };
+  }
+  if (!command || !command.includes(`--remote-debugging-port=${port}`)
+      || !command.includes(`--user-data-dir=${profile}`)) {
+    return { ok: false, reason: 'browser_not_owned' };
+  }
+  if (!current.webSocketDebuggerUrl) return { ok: false, reason: 'cdp_unavailable' };
+
+  try {
+    const session = await connectFn(current.webSocketDebuggerUrl, { timeout: 3000 });
+    try { await session.send('Browser.close'); } finally { session.close(); }
+  } catch {
+    return { ok: false, reason: 'close_failed' };
+  }
+
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (!await versionFn(port)) return { ok: true };
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return { ok: false, reason: 'still_running' };
 }
 
 const unwrap = (result) => {

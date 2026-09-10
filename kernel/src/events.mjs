@@ -69,7 +69,19 @@ export function linkEvidence(vouchers, references) {
       kinds.set(k, (kinds.get(k) ?? 0) + 1);
     }
     for (const [k, n] of kinds) {
-      if (n > 1) ambiguous.push({ materialId: voucherId, sameKind: k, count: n });
+      if (n > 1) {
+        ambiguous.push({
+          materialId: voucherId,
+          sameKind: k,
+          count: n,
+          references: refIds
+            .map((id) => references.find((r) => r.materialId === id))
+            .filter((r) => r.kind === k)
+            .map((r) => ({ materialId: r.materialId, fileName: r.fileName })),
+        });
+        links.set(voucherId, links.get(voucherId)
+          .filter((id) => references.find((r) => r.materialId === id).kind !== k));
+      }
     }
   }
   const unlinked = references.filter((r) => (usedBy.get(r.materialId) ?? []).length === 0);
@@ -205,10 +217,6 @@ function planSegments(voucher, refs) {
     return { count: 1, basis: 'rail_ticket', segments: null,
       note: '一张铁路电子客票就是一次费用' };
   }
-  if (voucher.kind === 'vat_special' || voucher.kind === 'vat_common') {
-    return { count: 1, basis: 'single_stay', segments: null,
-      note: '按一次连续入住作一个费用事件' };
-  }
   const itinerary = refs.find((r) => r.kind === 'ride_itinerary');
   const rows = segmentsOf(itinerary);
   if (rows && rows.length > 1) {
@@ -222,6 +230,11 @@ function planSegments(voucher, refs) {
     return { count: 1, basis: 'itinerary_without_rows', segments: null,
       note: '有行程单，但没取到逐段明细，按一次行程处理；'
         + '如果这张行程单其实列了多段行程，请重新读取或改用可提取文字的原件' };
+  }
+  if ((voucher.kind === 'vat_special' || voucher.kind === 'vat_common')
+      && refs.some((r) => r.kind === 'hotel_folio')) {
+    return { count: 1, basis: 'single_stay', segments: null,
+      note: '有酒店结账单佐证，按一次连续入住作一个费用事件' };
   }
   return { count: 1, basis: 'no_itinerary', segments: null,
     note: '没有行程单佐证，按一次行程处理；如果这张票其实包含多段行程，请补充行程单' };
@@ -256,14 +269,16 @@ export function buildEvents(classification, task = null) {
     };
 
     if (plan.count === 1) {
+      const totalCents = v.fields?.totalAmount?.cents ?? null;
+      const railTotalOnly = v.kind === 'rail_eticket' && totalCents !== null;
       events.push({ ...base, index: 1, of: 1,
         ...singleEventFacts(v, refs, plan),
         amounts: {
-          netCents: v.fields?.netAmount?.cents ?? null,
-          taxCents: v.fields?.taxAmount?.cents ?? null,
-          totalCents: v.fields?.totalAmount?.cents ?? null,
+          netCents: railTotalOnly ? totalCents : (v.fields?.netAmount?.cents ?? null),
+          taxCents: railTotalOnly ? 0 : (v.fields?.taxAmount?.cents ?? null),
+          totalCents,
         },
-        amountSource: 'invoice_face',
+        amountSource: railTotalOnly ? 'rail_total_tax_zero_rule' : 'invoice_face',
         residueCents: 0,
       });
       continue;
@@ -323,7 +338,10 @@ export function buildEvents(classification, task = null) {
       events.push({ ...base, index: i + 1, of: plan.count,
         date: seg?.date ?? null,
         city: seg?.city ?? null,
+        origin: seg?.origin ?? null,
+        destination: seg?.destination ?? null,
         route: seg?.route ?? null,
+        routeComplete: seg?.routeComplete ?? null,
         dateEvidence: seg ? `行程单第 ${i + 1} 行` : null,
         amounts: { netCents: split.nets[i], taxCents: split.taxes[i], totalCents: segTotals[i] },
         // 两种来源分得清清楚楚：用户逐段报的，和内核拿行程单与票面核对上的。
@@ -360,8 +378,8 @@ function singleEventFacts(v, refs, plan) {
       route: v.fields?.railFrom && v.fields?.railTo ? `${v.fields.railFrom} → ${v.fields.railTo}` : null,
       dateEvidence: v.fields?.travelDate ? '票面乘车日期' : null };
   }
-  if (v.kind === 'vat_special' || v.kind === 'vat_common') {
-    const folio = refs.find((r) => r.kind === 'hotel_folio');
+  const folio = refs.find((r) => r.kind === 'hotel_folio');
+  if ((v.kind === 'vat_special' || v.kind === 'vat_common') && folio) {
     const c = (f) => folio?.candidates?.find((x) => x.field === f)?.value ?? null;
     const inn = c('checkIn');
     const outd = c('checkOut');
@@ -370,18 +388,26 @@ function singleEventFacts(v, refs, plan) {
   }
   const seg = plan.segments?.[0] ?? null;
   if (seg) {
-    return { date: seg.date, city: seg.city, route: seg.route, dateEvidence: '行程单第 1 行' };
+    return { date: seg.date, city: seg.city, origin: seg.origin ?? null,
+      destination: seg.destination ?? null, route: seg.route,
+      routeComplete: seg.routeComplete ?? null, dateEvidence: '行程单第 1 行' };
   }
   // 看图读取的行程单没有逐行明细，但读数里通常有日期、城市和起终点。
   const ref = refs.find((r) => r.kind === 'ride_itinerary');
-  const date = factOf(ref, 'travelDate');
+  const itineraryDate = factOf(ref, 'travelDate');
+  const voucherDate = factOf(v, 'travelDate');
+  const date = itineraryDate ?? voucherDate;
   const from = factOf(ref, 'origin');
   const to = factOf(ref, 'destination');
   return {
     date,
     city: factOf(ref, 'city'),
+    origin: from,
+    destination: to,
     route: from && to ? `${from} → ${to}` : null,
-    dateEvidence: date ? '看图读取的行程单，已确认' : null,
+    routeComplete: from && to ? true : null,
+    dateEvidence: itineraryDate ? '看图读取的行程单，已确认'
+      : voucherDate ? '凭证票面行程日期' : null,
   };
 }
 
@@ -394,9 +420,17 @@ function projectLineItem(e) {
     voucherMaterialId: e.voucherMaterialId,
     maskedNumber: e.maskedNumber,
     kind: e.kind,
+    kindLabel: e.kindLabel ?? null,
     date: e.date ?? null,
+    // 住宿的结束日期是费用事实的一部分。保留两个常用字段名，供确认表和
+    // ERP 写入/回读适配层共享同一份预览，不让确认只覆盖入住日。
+    checkOut: e.checkOut ?? null,
+    endDate: e.checkOut ?? null,
     city: e.city ?? null,
+    origin: e.origin ?? null,
+    destination: e.destination ?? null,
     route: e.route ?? null,
+    routeComplete: e.routeComplete ?? null,
     netAmount: yuan(e.amounts.netCents),
     taxAmount: yuan(e.amounts.taxCents),
     totalAmount: yuan(e.amounts.totalCents),
@@ -436,6 +470,11 @@ export function eventOpenItems(built) {
       items.push({ kind: 'event_date_missing', blocking: true,
         eventId: e.eventId, materialId: e.voucherMaterialId, fileName: e.voucherFileName,
         note: '这次费用没有可追溯到材料的发生日期；开票日期不等于费用发生日期，不能拿来顶替' });
+    }
+    if (e.routeComplete === false) {
+      items.push({ kind: 'route_incomplete', blocking: true,
+        eventId: e.eventId, materialId: e.voucherMaterialId, fileName: e.voucherFileName,
+        note: '行程单的起点或终点跨行后没有完整取到，不能用半截路线或金额推断；请补充可读原件或重新读取' });
     }
   }
   if (!built.events.length && !built.notes.some((n) => n.blocking)) {
