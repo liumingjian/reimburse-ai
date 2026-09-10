@@ -25,7 +25,7 @@ extractImageFields(request: ImageFieldExtractionRequest): Promise<ImageFieldExtr
 
 - 文件头识别、图片解码和内容哈希复核；
 - Python Worker 生命周期和 JSONL 协议；
-- OCR 文字观测、图片材料类型、字段规则和确定性规范化；
+- OCR 或模型视觉文字观测、图片材料类型、字段规则和确定性规范化；
 - 封闭 schema、日期/号码/金额格式和金额守恒校验；
 - OCR 与模型视觉的回退、冲突归并、来源和性能记录；
 - 当前报销任务内按内容与实现版本绑定的文字观测缓存。
@@ -38,8 +38,8 @@ v1 使用封闭 tagged union：
 
 | 图片材料类型 | 字段候选 |
 |---|---|
-| `vat_invoice` | 发票号码、开票日期、不含税金额、税额、价税合计、销售方、购买方、项目名称 |
-| `rail_ticket` | 发票号码、出行日期、出行时间、出行人、起点、终点、车次、席别、金额 |
+| `vat_invoice` | 隐藏技术身份发票号码、不含税金额、税额、价税合计 |
+| `rail_ticket` | 隐藏技术身份、出行日期、出行时间、出行人、起点、终点、车次、席别、金额 |
 | `road_passenger_ticket` | 票号、出行日期、出行时间、出行人、起点、终点、金额 |
 | `ride_itinerary` | 出行人、合计金额、多段行程的日期、时间、城市、起点、终点、金额 |
 | `hotel_folio` | 酒店、入住人、城市、入住日期、离店日期、合计金额 |
@@ -60,9 +60,9 @@ v1 使用封闭 tagged union：
 internal Skill
   -> TypeScript coordinator
        -> verify request and image bytes
-       -> one Python JSONL Worker per batch
+       -> vision-direct (default) or one Python JSONL OCR Worker per batch
             -> RapidOCR or benchmark-only PaddleOCR
-            -> text + polygon + score
+            -> text + polygon + score when OCR is selected
        -> typed field rules and deterministic validation
        -> task-local observation cache
        -> extracted | needs_model_vision | failed
@@ -71,7 +71,7 @@ internal Skill
 
 TypeScript 源码位于 `packages/image-field-extraction/`；Python 只实现 OCR Worker。内部 Skill 位于 `skills/extract-reimbursement-images/`，正常业务由 `baox` 给它版本化工单；Agent 不选择适配器或拼装低层命令。
 
-模型视觉是宿主能力，不能由本地 TypeScript 直接调用。OCR 返回 `needs_model_vision` 时，内部 Skill 才逐张读取对应图片并把结果交回同一套校验；同一张图片一次只采用一条候选路径，最终仍由用户对照原件确认。
+模型视觉是宿主能力，不能由本地 TypeScript 直接调用。默认适配器直接由主会话逐张读取图片；选择 `ocr-assisted` 时，OCR 先产出候选，返回 `needs_model_vision` 或候选校验失败的图片再由内部 Skill 交给模型视觉，并把结果交回同一套校验。同一张图片一次只采用一条最终候选路径，识别完成后继续材料关联和 ERP 明细构造，用户在最终整单清单中统一确认。
 
 ## Runtime and distribution
 

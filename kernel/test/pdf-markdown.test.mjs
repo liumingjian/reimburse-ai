@@ -58,7 +58,6 @@ function invoiceCandidate(artifact, overrides = {}) {
     kindEvidence: overrides.kindEvidence ?? evidence(1, '电子发票(普通发票)'),
     fields: {
       invoiceNumber: '12345678901234567890',
-      issueDate: '2026-09-01',
       netAmount: '18.25',
       taxAmount: '0.55',
       totalAmount: '18.80',
@@ -67,7 +66,6 @@ function invoiceCandidate(artifact, overrides = {}) {
     segments: [],
     fieldEvidence: {
       invoiceNumber: evidence(2, '发票号码:12345678901234567890'),
-      issueDate: evidence(3, '开票日期:2026年09月01日'),
       netAmount: evidence(6, '¥18.25'),
       taxAmount: evidence(6, '¥0.55'),
       totalAmount: evidence(7, '¥18.80'),
@@ -75,7 +73,6 @@ function invoiceCandidate(artifact, overrides = {}) {
     },
     fieldStatus: {
       invoiceNumber: 'explicit',
-      issueDate: 'explicit',
       netAmount: 'explicit',
       taxAmount: 'explicit',
       totalAmount: 'explicit',
@@ -146,7 +143,7 @@ test('pending work order uses an empty closed fields object and per-kind field c
   assert.match(order.numberedMarkdown, /^1 \| /);
 });
 
-test('candidate evidence must support the normalized date, money, and number values', async () => {
+test('candidate evidence must support the normalized money and number values', async () => {
   const artifact = await artifactFor(INVOICE_MARKDOWN);
   const valid = validateCandidate(artifact, invoiceCandidate(artifact));
   assert.equal(valid.verdict, 'accepted');
@@ -154,8 +151,12 @@ test('candidate evidence must support the normalized date, money, and number val
 
   const badMoney = invoiceCandidate(artifact, { fields: { netAmount: '99.99' } });
   assert.equal(validateCandidate(artifact, badMoney).verdict, 'rejected');
-  const badDate = invoiceCandidate(artifact, { fields: { issueDate: '2026-09-02' } });
-  assert.equal(validateCandidate(artifact, badDate).verdict, 'rejected');
+  const extraBusinessField = invoiceCandidate(artifact, {
+    fields: { issueDate: '2026-09-02' },
+    fieldEvidence: { issueDate: evidence(3, '开票日期:2026年09月02日') },
+    fieldStatus: { issueDate: 'explicit' },
+  });
+  assert.equal(validateCandidate(artifact, extraBusinessField).verdict, 'rejected');
   const badNumber = invoiceCandidate(artifact, { fields: { invoiceNumber: '02345678901234567890' } });
   assert.equal(validateCandidate(artifact, badNumber).verdict, 'rejected');
   const badLine = invoiceCandidate(artifact, { fieldEvidence: { totalAmount: evidence(6, '¥18.25') } });
@@ -221,10 +222,10 @@ test('candidate envelope requires every closed shape and rejects invalid enum va
   }
 
   const badStatus = structuredClone(candidate);
-  badStatus.fieldStatus.issueDate = 'accepted';
+  badStatus.fieldStatus.netAmount = 'accepted';
   assert.equal(validateCandidate(artifact, badStatus).verdict, 'rejected');
   const duplicateUnreadable = structuredClone(candidate);
-  duplicateUnreadable.unreadable = ['issueDate', 'issueDate'];
+  duplicateUnreadable.unreadable = ['netAmount', 'netAmount'];
   assert.equal(validateCandidate(artifact, duplicateUnreadable).verdict, 'rejected');
   const emptyIssueNote = structuredClone(candidate);
   emptyIssueNote.issues = [{ code: 'review', note: '' }];
@@ -242,14 +243,13 @@ test('rail candidates keep missing net/tax as a blocking issue without inventing
   const candidate = {
     ...metadata(artifact, 'rail_eticket', 'invoice'),
     kindEvidence: evidence(1, '电子发票(铁路电子客票)'),
-    fields: { invoiceNumber: '26349119423005877606', issueDate: '2026-09-02', totalAmount: '703.00' },
+    fields: { invoiceNumber: '26349119423005877606', totalAmount: '703.00' },
     segments: [],
     fieldEvidence: {
       invoiceNumber: evidence(2, '发票号码:26349119423005877606'),
-      issueDate: evidence(3, '开票日期:2026年09月02日'),
       totalAmount: evidence(4, '票价:¥703.00'),
     },
-    fieldStatus: { invoiceNumber: 'explicit', issueDate: 'explicit', totalAmount: 'explicit' },
+    fieldStatus: { invoiceNumber: 'explicit', totalAmount: 'explicit' },
     fieldBasis: {},
     unreadable: [],
     issues: [],

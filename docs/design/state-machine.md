@@ -27,10 +27,10 @@
 | `inventory_stale` | 材料目录哈希 ≠ 最近一次盘点 | kernel | 重跑 `intake` | 盘点版本刷新 |
 | `intake_open_items` | 盘点有 `read_error`/`kind_unrecognized`/`no_text_in_pdf` | user | 逐条说明并请示 | 用户处置或明确忽略 |
 | `classify_pending` | 无当前盘点版本的分类结果 | kernel | `classify` | 分类产出 |
-| `image_awaiting_reading` | 存在 `image_awaiting_reading` 项 | model | 调用内部图片提取 Skill 批量 OCR；仅明确回退项逐张 `Read` → 提交读数 | 读数被内核收下 |
+| `image_awaiting_reading` | 存在 `image_awaiting_reading` 项 | model | 默认逐张 `Read` 使用模型视觉；明确选择 `ocr-assisted` 时交给内部图片提取 Skill，OCR 缺口再逐张视觉兜底 → 提交读数 | 读数被内核收下 |
 | `reading_rejected` | `ocr-submit` 判定 `rejected`（守恒/格式不过） | model | 按 `reasons` 重读同一张 | 通过 |
 | `reading_stale` | 图片内容哈希变了 | model | 重读该图 | 通过 |
-| `reading_awaiting_confirmation` | 有读数未确认 | user | **终端表格**请用户过目 | 用户认可 |
+| `reading_awaiting_confirmation` | 有读数未确认，但没有硬阻塞 | kernel | 候选继续进入分类、关联和费用事件，最终放进整单明细确认表 | 整单明细确认时统一确认 |
 | `reading_disputed` | 用户给的值 ≠ 机器读数 | model | 摆证据链 + 派干净子 Agent 只重读该字段 | 用户对照原件拍板 |
 | `duplicate_blocked` | 跨任务查重命中 | user | 停整批，列出命中 | 用户裁决 |
 | `events_pending` | 无当前版本的事件划分 | kernel | `events` | 事件产出 |

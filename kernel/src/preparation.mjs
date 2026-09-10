@@ -813,9 +813,7 @@ export function buildPreparation({
       'invoice_hash_mismatch', `主要凭证 ${result.materialId} 的分类哈希与盘点不一致`, { materialId: result.materialId });
     if (material?.readStatus && material.readStatus !== 'ok') issue(problems,
       'invoice_material_unreadable', `主要凭证 ${result.materialId} 当前文件不可读`, { materialId: result.materialId });
-    if (!dateValue(result.fields?.issueDate)) issue(problems, 'invoice_issue_date_missing',
-      `主要凭证 ${result.materialId} 缺少真实开票日期`, { materialId: result.materialId });
-    for (const field of ['invoiceNumber', 'issueDate']) {
+    for (const field of ['invoiceNumber']) {
       if (!hasExplicitSource(fieldSourceOf(result, field))) issue(problems, 'invoice_field_source_missing',
         `主要凭证 ${result.materialId} 缺少 ${field} 的明确来源`, { materialId: result.materialId, field });
     }

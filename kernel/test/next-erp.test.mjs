@@ -347,13 +347,12 @@ const FENGYUN = {
   docType: 'invoice',
   fields: {
     invoiceNumber: '26427000000640558021',
-    issueDate: '2026-09-04',
     netAmount: '18.25', taxAmount: '0.55', totalAmount: '18.80',
   },
   unreadable: [],
 };
 
-test('读数确认之后接着往下走：确认那一下之后，内核自己就去划费用事件', async () => {
+test('图片读数之后继续核对费用事件，不在单张材料后确认', async () => {
   solo();
   const dir = materials([AA_INV, AA_ITI, IMAGE]);
 
@@ -370,25 +369,15 @@ test('读数确认之后接着往下走：确认那一下之后，内核自己�
   fs.writeFileSync(r.step.readingsPath, JSON.stringify(doc));
   assert.equal(JSON.parse(runStep(r)).rejected, 0);
 
-  // 轮到用户过目那张定宽表格 —— 这一格就是本票说的"读数确认"。
+  // 读数只是候选，内核继续进入事件核对；这张票没有费用发生日期，也没有参考材料，
+  // 因此这里会把硬缺口一次性列出，整张 ERP 明细表仍是最终确认入口。
   r = await ask(dir, { after: r.stepToken, hasResult: true });
-  assert.equal(r.state, 'reading_awaiting_confirmation', `实际停在 ${r.state}：${r.speak}`);
-  const applied = await applyTerminalVerdict({ sourceDir: dir, sourceKey: sourceKeyOf(dir),
-    after: r.stepToken });
-  assert.equal(applied.verdict, 'confirmed');
+  assert.equal(r.state, 'intake_open_items', `实际停在 ${r.state}：${r.speak}`);
 
-  // 点头之后**不需要模型再做任何判断**：内核自己就跨进了事件这一层，
-  // 并且如实报出它在那里发现的东西 —— 这张图上的费用没有费用发生日期
-  // （开票日期不是费用发生日期，不能拿来顶替）。
-  //
-  // 待办排在账本前面是照表：有拦路的东西时，先把它说清楚，
-  // 而不是先去记一版注定要重记的账。
-  const after = await ask(dir);
-  assert.equal(after.state, 'intake_open_items', `实际停在 ${after.state}：${after.speak}`);
-  const missing = after.blockedBy.find((b) => b.kind === 'event_date_missing');
+  const missing = r.blockedBy.find((b) => b.kind === 'event_date_missing');
   assert.ok(missing, '事件层报上来的待办，和材料层走同一个出口');
   assert.equal(missing.resolvableBy, 'user');
-  assert.match(after.speak, /fengyun-1\.png/, '是哪一份材料，得指名道姓');
+  assert.match(r.speak, /fengyun-1\.png/, '是哪一份材料，得指名道姓');
 
   // 用户把那张票拿出去了。剩下的材料一路走到项目未指定，全程只有 baox next。
   fs.rmSync(path.join(dir, 'fengyun-1.png'));

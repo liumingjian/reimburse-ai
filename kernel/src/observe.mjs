@@ -328,7 +328,7 @@ export async function observeTask(sourceDir, { mode = 'markdown', receiptFacts =
     pendingImages: task
       ? buildWorkOrder(dir, inventory, classification, task).filter((i) => !i.alreadyRead)
       : [],
-    // 读过、还没被用户过目的读数。它是终端那张定宽表格的全部内容。
+    // 读过、还没被用户在整单明细表确认的读数。它是最终表格的候选来源之一。
     pendingReadings: task ? pendingConfirmations(task, inventory) : [],
     // 用户指了错、还没收场的那几份。证据链、重读结果、守恒缺口都在里面 ——
     // 摆给用户看的每一句话都从这里取，模型不补一个字。
@@ -337,12 +337,12 @@ export async function observeTask(sourceDir, { mode = 'markdown', receiptFacts =
 
   // ERP 这半段（划事件、分摊、项目、核对、写入前确认）只在材料那一段全清之后才采。
   //
-  // 不是省事，是**不抢答**：还有图没读、有读数没过目时，此刻的分流结果里
-  // 那几张票根本还没有金额，硬去划事件只会得出"一个费用事件都构不成"，
-  // 而那句话会盖在"该看图了"前面 —— 用户看到的是一个假的死路。
+  // 不是省事，是**不抢答**：还有图没读或争议没收场时，此刻的分流结果里
+  // 那几张票根本还没有稳定候选，硬去划事件只会得出假的死路。
+  // 未确认读数不在这里拦路：它已经有结构化候选，用户会在最终整单明细表中确认。
   const settled = !!task && !inventoryStale && obs.classificationRecorded
     && !obs.openItems.some((i) => i.blocking)
-    && !obs.pendingImages.length && !obs.pendingReadings.length && !obs.pendingDisputes.length;
+    && !obs.pendingImages.length && !obs.pendingDisputes.length;
   if (!settled) return obs;
 
   return { ...obs, ...observeErpHalf(task, classification, obs.openItems, inventory, receiptFacts) };
@@ -397,13 +397,16 @@ function observeErpHalf(task, classification, materialItems, inventory, receiptF
     ...preview,
     evidence: classification.results.map((result) => ({
       materialId: result.materialId,
+      fileName: result.fileName,
       contentHash: result.contentHash,
       role: result.role,
       kind: result.kind,
+      kindLabel: result.kindLabel ?? null,
       parseStatus: result.parseStatus ?? null,
       documentType: result.documentType ?? null,
       source: result.source ?? null,
       markdownHash: result.markdownHash ?? result.source?.markdownHash ?? null,
+      pageCount: result.pageCount ?? null,
       paths: result.paths ?? null,
       sourcePages: result.sourcePages ?? [],
       fields: result.fields,

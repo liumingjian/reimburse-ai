@@ -60,13 +60,9 @@
       "properties": {
         "invoiceCode": { "type": ["string", "null"] },
         "invoiceNumber": { "type": ["string", "null"] },
-        "issueDate": { "type": ["string", "null"] },
         "netAmount": { "type": ["string", "null"] },
         "taxAmount": { "type": ["string", "null"] },
         "totalAmount": { "type": ["string", "null"] },
-        "sellerName": { "type": ["string", "null"] },
-        "buyerName": { "type": ["string", "null"] },
-        "itemName": { "type": ["string", "null"] },
         "travelDate": { "type": ["string", "null"] },
         "city": { "type": ["string", "null"] },
         "origin": { "type": ["string", "null"] },
@@ -87,8 +83,8 @@
     "fieldEvidence": {
       "type": "object",
       "propertyNames": { "enum": [
-        "invoiceCode", "invoiceNumber", "issueDate", "netAmount", "taxAmount", "totalAmount",
-        "sellerName", "buyerName", "itemName", "travelDate", "city", "origin", "destination",
+        "invoiceCode", "invoiceNumber", "netAmount", "taxAmount", "totalAmount",
+        "travelDate", "city", "origin", "destination",
         "railTrain", "railFrom", "railTo", "checkIn", "checkOut", "folioTotal", "segmentCount"
       ] },
       "additionalProperties": {
@@ -100,8 +96,8 @@
     "fieldStatus": {
       "type": "object",
       "propertyNames": { "enum": [
-        "invoiceCode", "invoiceNumber", "issueDate", "netAmount", "taxAmount", "totalAmount",
-        "sellerName", "buyerName", "itemName", "travelDate", "city", "origin", "destination",
+        "invoiceCode", "invoiceNumber", "netAmount", "taxAmount", "totalAmount",
+        "travelDate", "city", "origin", "destination",
         "railTrain", "railFrom", "railTo", "checkIn", "checkOut", "folioTotal", "segmentCount"
       ] },
       "additionalProperties": {
@@ -111,8 +107,8 @@
     "fieldBasis": {
       "type": "object",
       "propertyNames": { "enum": [
-        "invoiceCode", "invoiceNumber", "issueDate", "netAmount", "taxAmount", "totalAmount",
-        "sellerName", "buyerName", "itemName", "travelDate", "city", "origin", "destination",
+        "invoiceCode", "invoiceNumber", "netAmount", "taxAmount", "totalAmount",
+        "travelDate", "city", "origin", "destination",
         "railTrain", "railFrom", "railTo", "checkIn", "checkOut", "folioTotal", "segmentCount"
       ] },
       "additionalProperties": { "type": "string", "minLength": 1 }
@@ -187,14 +183,14 @@
   "$defs": {
     "invoiceFieldName": {
       "enum": [
-        "invoiceCode", "invoiceNumber", "issueDate", "netAmount", "taxAmount", "totalAmount",
-        "sellerName", "buyerName", "itemName", "travelDate", "city", "origin", "destination"
+        "invoiceCode", "invoiceNumber", "netAmount", "taxAmount", "totalAmount",
+        "travelDate", "city", "origin", "destination"
       ]
     },
     "railFieldName": {
       "enum": [
-        "invoiceCode", "invoiceNumber", "issueDate", "netAmount", "taxAmount", "totalAmount",
-        "sellerName", "buyerName", "itemName", "travelDate", "city", "railTrain", "railFrom", "railTo"
+        "invoiceCode", "invoiceNumber", "netAmount", "taxAmount", "totalAmount",
+        "travelDate", "railTrain", "railFrom", "railTo"
       ]
     },
     "rideFieldName": {

@@ -21,11 +21,11 @@ process.env.BAOX_HOME = home;
 
 const { observeTask } = await import('../src/observe.mjs');
 const { nextResponse } = await import('../src/next.mjs');
-const { sourceKeyOf, findLiveTaskForSource } = await import('../src/workspace.mjs');
+const { sourceKeyOf, findLiveTaskForSource, liveTasks, abandonTask } = await import('../src/workspace.mjs');
 const { SCHEMA_VERSION, STATE_ORDER, determineState } = await import('../src/state.mjs');
 const { applyTerminalVerdict } = await import('../src/confirm.mjs');
 const { CONVERGENCE, openDisputes } = await import('../src/dispute.mjs');
-const { loadReading, loadUnreadable } = await import('../src/vision.mjs');
+const { disputeReading, loadReading, loadUnreadable } = await import('../src/vision.mjs');
 const { takeInventory } = await import('../src/inventory.mjs');
 const { writeHomeCity } = await import('../src/home-city.mjs');
 const { writeBinding } = await import('../src/binding.mjs');
@@ -49,16 +49,26 @@ const FENGYUN = {
   docType: 'invoice',
   fields: {
     invoiceNumber: '26427000000640558021',
-    issueDate: '2026-09-04',
     netAmount: '18.25', taxAmount: '0.55', totalAmount: '18.80',
   },
   unreadable: [],
-  clarity: { issueDate: 'blurry', totalAmount: 'clear' },
+  clarity: { invoiceNumber: 'blurry', totalAmount: 'clear' },
+};
+
+const ITINERARY = {
+  docType: 'ride_itinerary',
+  fields: {
+    travelDate: '2026-09-04', city: '北京市', origin: '测试起点', destination: '测试终点',
+    totalAmount: '18.80',
+  },
+  unreadable: [],
 };
 
 function materials() {
+  for (const task of liveTasks()) abandonTask(task.taskId, '争议用例之间清场');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-dispute-'));
   fs.copyFileSync(fixtureMaterial(IMAGE), path.join(dir, 'fengyun-1.png'));
+  fs.copyFileSync(fixtureMaterial('交通/行程单.png'), path.join(dir, '行程单.png'));
   return dir;
 }
 
@@ -84,20 +94,29 @@ function writeJson(p, v) {
   fs.writeFileSync(p, JSON.stringify(v));
 }
 
-/** 走到「读数等你过目」为止：盘点 -> 分类 -> 看图 -> 提交。 */
+/** 走到最终整单明细表为止：盘点 -> 分类 -> 看图 -> 提交。 */
 async function upToConfirmation(dir, over = {}) {
   runStep(await ask(dir));
   runStep(await ask(dir));
   let r = await ask(dir);
   assert.equal(r.state, 'image_awaiting_reading', `实际停在 ${r.state}：${r.speak}`);
-  writeJson(r.step.readingsPath, { version: 1, readings: r.step.images.map((img) => ({
-    materialId: img.materialId, contentHash: img.contentHash,
-    sighted: { shape: 'landscape' }, ...FENGYUN, ...over,
-  })) });
+  writeJson(r.step.readingsPath, { version: 1, readings: r.step.images.map((img) => {
+    const isInvoice = img.fileName === 'fengyun-1.png';
+    return {
+      materialId: img.materialId,
+      contentHash: img.contentHash,
+      sighted: { shape: isInvoice ? 'landscape' : 'wide' },
+      ...(isInvoice ? { ...FENGYUN, ...over } : ITINERARY),
+    };
+  }) });
   const verdicts = JSON.parse(runStep(r));
   assert.equal(verdicts.rejected, 0, JSON.stringify(verdicts.verdicts));
   r = await ask(dir, { after: r.stepToken, hasResult: true });
-  assert.equal(r.state, 'reading_awaiting_confirmation', `实际停在 ${r.state}：${r.speak}`);
+  if (r.state === 'events_pending') {
+    runStep(r);
+    r = await ask(dir, { after: r.stepToken, hasResult: true });
+  }
+  assert.equal(r.state, 'classified_detail_confirmation', `实际停在 ${r.state}：${r.speak}`);
   return r;
 }
 
@@ -105,9 +124,8 @@ async function upToConfirmation(dir, over = {}) {
 async function correct(dir, table, fields) {
   writeJson(table.step.correctionPath,
     { corrections: [{ materialId: table.step.materialIds[0], fields }] });
-  const applied = await applyTerminalVerdict({ sourceDir: dir, sourceKey: sourceKeyOf(dir),
-    after: table.stepToken, correctionFile: table.step.correctionPath });
-  assert.equal(applied.verdict, 'corrected');
+  const applied = disputeReading(taskOf(dir), table.step.materialIds[0], fields);
+  assert.ok(applied?.disputed?.length, '最终整单表的纠正必须转成材料争议，不直接落库');
   return ask(dir);
 }
 
@@ -146,7 +164,7 @@ const taskOf = (dir) => findLiveTaskForSource(sourceKeyOf(dir));
 test('用户的纠正和机器读数不同时，值不落库，先进争议 —— 不是普通的「重读一遍」', async () => {
   const dir = materials();
   const table = await upToConfirmation(dir);
-  const r = await correct(dir, table, { issueDate: '2026-09-03' });
+  const r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
 
   assert.equal(r.state, 'reading_disputed', `实际停在 ${r.state}：${r.speak}`);
   assert.notEqual(r.state, 'reading_rejected',
@@ -164,7 +182,7 @@ test('用户的纠正和机器读数不同时，值不落库，先进争议 —�
 test('证据摆得出来：材料路径、机器读到的原文、当时清不清楚', async () => {
   const dir = materials();
   const table = await upToConfirmation(dir);
-  const r = await correct(dir, table, { issueDate: '2026-09-03' });
+  const r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
   const e = r.step.evidence;
 
   // 路径。而且**只给路径** —— 内核不替用户打开原件。
@@ -175,9 +193,9 @@ test('证据摆得出来：材料路径、机器读到的原文、当时清不�
   assert.match(r.speak, /你自己打开|请你自己/, '内核不代替用户开原件');
 
   const f = e.fields[0];
-  assert.equal(f.field, 'issueDate');
-  assert.equal(f.machineValue, '2026-09-04', '机器读到的原文');
-  assert.equal(f.userValue, '2026-09-03', '用户说的值');
+  assert.equal(f.field, 'invoiceNumber');
+  assert.equal(f.machineValue, '26427000000640558021', '机器读到的原文');
+  assert.equal(f.userValue, '26427000000640558022', '用户说的值');
   assert.equal(f.machineClarity.verdict, 'blurry', '模型当时对这一处的清晰度判断');
   assert.equal(f.machineClarity.statedBy, 'model');
   assert.match(r.speak, /发虚/, '清晰度也要念出来 —— 它是用户判断该信谁的依据之一');
@@ -189,7 +207,7 @@ test('证据摆得出来：材料路径、机器读到的原文、当时清不�
 test('清晰度模型没说时，内核明说是没人说过，不替它补一个判断', async () => {
   const dir = materials();
   const table = await upToConfirmation(dir, { clarity: {} });
-  const r = await correct(dir, table, { issueDate: '2026-09-03' });
+  const r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
   const c = r.step.evidence.fields[0].machineClarity;
   assert.equal(c.verdict, null);
   assert.equal(c.statedBy, null);
@@ -201,13 +219,13 @@ test('清晰度模型没说时，内核明说是没人说过，不替它补一�
 test('重读必须外包给干净上下文的子 Agent，而且只读那一个字段', async () => {
   const dir = materials();
   const table = await upToConfirmation(dir);
-  const r = await correct(dir, table, { issueDate: '2026-09-03' });
+  const r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
 
   assert.equal(r.step.outsourceable, false, '和用户对话的这一半在子 Agent 里做不了');
   assert.equal(r.step.subagent.required, true, '但重读那一下**必须**外包');
   assert.equal(r.step.subagent.context, 'clean');
-  assert.equal(r.step.field, 'issueDate', '契约里的 step.field：这一趟只重读它');
-  assert.deepEqual(r.step.fields, ['issueDate']);
+  assert.equal(r.step.field, 'invoiceNumber', '契约里的 step.field：这一趟只重读它');
+  assert.deepEqual(r.step.fields, ['invoiceNumber']);
   assert.match(r.step.subagent.instruction, /不要把用户说的值/);
   assert.ok(r.step.subagent.forbidden.some((x) => /自己重读一遍/.test(x)),
     '模型自己读一遍冒充子 Agent，正是这一步要挡的');
@@ -218,7 +236,7 @@ test('重读必须外包给干净上下文的子 Agent，而且只读那一个�
 test('独立重读的派发契约一次给齐提交所需数据，不用反查任务或源码', async () => {
   const dir = materials();
   const table = await upToConfirmation(dir);
-  const r = await correct(dir, table, { issueDate: '2026-09-03' });
+  const r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
   const { step } = r;
 
   assert.equal(step.evidence.contentHash, step.contentHash, '模板写的取值路径必须真有数据');
@@ -239,8 +257,8 @@ test('独立重读的派发契约一次给齐提交所需数据，不用反查�
 test('重读顺手多抄了别的字段，整次不收 —— 它就该只看那一处', async () => {
   const dir = materials();
   const table = await upToConfirmation(dir);
-  const r = await correct(dir, table, { issueDate: '2026-09-03' });
-  const out = submitReread(r, { issueDate: '2026-09-03', totalAmount: '18.80' });
+  const r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
+  const out = submitReread(r, { invoiceNumber: '26427000000640558022', totalAmount: '18.80' });
   assert.equal(out.verdict, 'rejected');
   assert.match(JSON.stringify(out.reasons), /只重读/);
 });
@@ -248,8 +266,8 @@ test('重读顺手多抄了别的字段，整次不收 —— 它就该只看那
 test('重读也要先证明图真的被打开过', async () => {
   const dir = materials();
   const table = await upToConfirmation(dir);
-  const r = await correct(dir, table, { issueDate: '2026-09-03' });
-  const out = submitReread(r, { issueDate: '2026-09-03' }, { sighted: { shape: 'portrait' } });
+  const r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
+  const out = submitReread(r, { invoiceNumber: '26427000000640558022' }, { sighted: { shape: 'portrait' } });
   assert.equal(out.verdict, 'rejected');
   assert.match(JSON.stringify(out.reasons), /sighted\.shape/);
   assert.equal((await ask(dir)).step.phase, 'reread', '没收下就还停在「该重读了」');
@@ -260,61 +278,60 @@ test('重读也要先证明图真的被打开过', async () => {
 test('收敛一：重读和用户一致 —— 接受，并说明第二次也读出这个', async () => {
   const dir = materials();
   const table = await upToConfirmation(dir);
-  let r = await correct(dir, table, { issueDate: '2026-09-03' });
+  let r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
 
-  const out = submitReread(r, { issueDate: '2026-09-03' });
+  const out = submitReread(r, { invoiceNumber: '26427000000640558022' });
   assert.equal(out.verdict, 'accepted');
-  assert.equal(out.convergence.issueDate, CONVERGENCE.agrees_with_user);
+  assert.equal(out.convergence.invoiceNumber, CONVERGENCE.agrees_with_user);
   assert.equal(out.settled.verdict, 'settled', '重读印证了用户，内核自己就收下了');
 
   // 收下之后仍然是**未确认**：用户还要在整张表上点最后那一下。
   r = await ask(dir, { after: r.stepToken, hasResult: true });
-  assert.equal(r.state, 'reading_awaiting_confirmation', `实际停在 ${r.state}：${r.speak}`);
-  assert.match(r.speak, /重读读到「2026-09-03」/, '第二次读出什么，明说');
-  assert.match(r.speak, /我第一次读到「2026-09-04」/, '第一次读到什么，也明说');
-  assert.match(r.speak, /第二次也读出你说的这个值/, '收敛一那句话，一字不改地念出来');
-  assert.match(r.speak, /是我第一次看错了/);
+  assert.equal(r.state, 'classified_detail_confirmation', `实际停在 ${r.state}：${r.speak}`);
+  assert.match(r.speak, /整单明细清单/, '收敛后继续进入整单确认，不回到逐张材料确认');
+  assert.match(r.step.table, /不含税金额/);
+  assert.match(r.step.table, /费用类别/);
 
   const stored = loadReading(taskOf(dir), table.step.materialIds[0]);
-  assert.equal(stored.fields.issueDate, '2026-09-03');
-  assert.equal(stored.fieldSources.issueDate, 'user', '这个值是用户给的，来源就记用户');
+  assert.equal(stored.fields.invoiceNumber, '26427000000640558022');
+  assert.equal(stored.fieldSources.invoiceNumber, 'user', '这个值是用户给的，来源就记用户');
   assert.equal(stored.confirmedAt, null, '争议收场不等于确认 —— 最终判定还是用户那一下');
 });
 
 test('收敛二：重读和原读数一致 —— 两次机器读数和用户的值一并摆出，请用户拍板', async () => {
   const dir = materials();
   const table = await upToConfirmation(dir);
-  let r = await correct(dir, table, { issueDate: '2026-09-03' });
+  let r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
 
-  const out = submitReread(r, { issueDate: '2026-09-04' });
-  assert.equal(out.convergence.issueDate, CONVERGENCE.agrees_with_machine);
+  const out = submitReread(r, { invoiceNumber: '26427000000640558021' });
+  assert.equal(out.convergence.invoiceNumber, CONVERGENCE.agrees_with_machine);
   assert.equal(out.settled, null, '两次机器读数一致也不能自己拍板');
 
   r = await ask(dir, { after: r.stepToken, hasResult: true });
   assert.equal(r.state, 'reading_disputed');
   assert.equal(r.step.phase, 'ruling');
-  assert.match(r.speak, /还是「2026-09-04」/);
-  assert.match(r.speak, /你说是「2026-09-03」/);
+  assert.match(r.speak, /还是「26427000000640558021」/);
+  assert.match(r.speak, /你说是「26427000000640558022」/);
   assert.match(r.speak, /并不等于机器就对/, '两次一致也可能是同一个错，这一句不能省');
   assert.match(r.speak, /你说是多少就是多少/);
   assert.equal(r.step.ruling.fields[0].suggested, null, '还没定 —— 内核不预填一个值');
 
   // 用户对着原件拍板：还是他说的那个。
-  const applied = await rule(dir, r, { fields: { issueDate: '2026-09-03' } });
+  const applied = await rule(dir, r, { fields: { invoiceNumber: '26427000000640558022' } });
   assert.equal(applied.verdict, 'ruled');
   const stored = loadReading(taskOf(dir), r.step.materialId);
-  assert.equal(stored.fields.issueDate, '2026-09-03');
-  assert.equal(stored.fieldSources.issueDate, 'user');
-  assert.equal((await ask(dir)).state, 'reading_awaiting_confirmation');
+  assert.equal(stored.fields.invoiceNumber, '26427000000640558022');
+  assert.equal(stored.fieldSources.invoiceNumber, 'user');
+  assert.equal((await ask(dir)).state, 'classified_detail_confirmation');
 });
 
 test('收敛三：重读给出第三个值 —— 直说这个字段读不可靠，以原件为准', async () => {
   const dir = materials();
   const table = await upToConfirmation(dir);
-  let r = await correct(dir, table, { issueDate: '2026-09-03' });
+  let r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
 
-  const out = submitReread(r, { issueDate: '2026-09-02' });
-  assert.equal(out.convergence.issueDate, CONVERGENCE.third_value);
+  const out = submitReread(r, { invoiceNumber: '26427000000640558023' });
+  assert.equal(out.convergence.invoiceNumber, CONVERGENCE.third_value);
 
   r = await ask(dir, { after: r.stepToken, hasResult: true });
   assert.equal(r.step.phase, 'ruling');
@@ -327,11 +344,11 @@ test('收敛三：重读给出第三个值 —— 直说这个字段读不可靠
 test('重读干脆读不出来，也是第三种收敛 —— null 是正当结果，不是没交', async () => {
   const dir = materials();
   const table = await upToConfirmation(dir);
-  let r = await correct(dir, table, { issueDate: '2026-09-03' });
+  let r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
 
-  const out = submitReread(r, { issueDate: null });
+  const out = submitReread(r, { invoiceNumber: null });
   assert.equal(out.verdict, 'accepted');
-  assert.equal(out.convergence.issueDate, CONVERGENCE.third_value);
+  assert.equal(out.convergence.invoiceNumber, CONVERGENCE.third_value);
   r = await ask(dir, { after: r.stepToken, hasResult: true });
   assert.match(r.speak, /重读读到读不出来/);
 });
@@ -430,8 +447,8 @@ test('缺口补不上：整条读数退回待办，而且不再派模型去重�
 test('用户对着原件也认不出：这条读数整条退回待办是一个正当的结局', async () => {
   const dir = materials();
   const table = await upToConfirmation(dir);
-  let r = await correct(dir, table, { issueDate: '2026-09-03' });
-  submitReread(r, { issueDate: '2026-09-02' });
+  let r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
+  submitReread(r, { invoiceNumber: '26427000000640558023' });
   r = await ask(dir, { after: r.stepToken, hasResult: true });
 
   const applied = await rule(dir, r, { unreadable: true });
@@ -457,15 +474,15 @@ test('用户口述的值走和模型抄写同一道格式闸 —— 人也会漏
 test('拍板只定争的那几个字段 —— 夹带一个没争过的字段进不来', async () => {
   const dir = materials();
   const table = await upToConfirmation(dir);
-  let r = await correct(dir, table, { issueDate: '2026-09-03' });
-  submitReread(r, { issueDate: '2026-09-04' });          // 维持原读数，要用户拍板
+  let r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
+  submitReread(r, { invoiceNumber: '26427000000640558021' });          // 维持原读数，要用户拍板
   r = await ask(dir, { after: r.stepToken, hasResult: true });
   assert.equal(r.step.phase, 'ruling');
 
   // 终值里夹带一个没争过的字段。它没走过摆证据、没走过独立重读 ——
   // 收下它等于给"用户改的值不直接落库"开了一个后门。
   const applied = await rule(dir, r, { fields: {
-    issueDate: '2026-09-03', sellerName: '我顺手改的销售方',
+    invoiceNumber: '26427000000640558022', sellerName: '我顺手改的销售方',
   } });
   assert.equal(applied.rulings[0].verdict, 'rejected');
   assert.match(JSON.stringify(applied.rulings[0].reasons), /不在这场争议里/);
@@ -498,21 +515,21 @@ test('每个字段带来源：机器看的、用户给的、还是内核算的',
   const dir = materials();
   const table = await upToConfirmation(dir);
 
-  // 看图读的那一份，每个字段都是 vision，而且表上就写着。
-  assert.ok(table.step.table.includes('这个值哪来的'), '来源单独占一列，不藏在脚注里');
-  assert.ok(table.step.table.includes('我看图读的'));
+  // 看图读的那一份，每个字段都记着来源；最终表格同时覆盖所有 ERP 字段。
+  assert.ok(table.step.table.includes('不含税金额'));
+  assert.ok(table.step.table.includes('参考材料'));
   const before = loadReading(taskOf(dir), table.step.materialIds[0]);
   assert.deepEqual(new Set(Object.values(before.fieldSources)), new Set(['vision']));
 
   // 争议收场之后，改过的那个字段来源变成 user，别的不变。
-  let r = await correct(dir, table, { issueDate: '2026-09-03' });
-  submitReread(r, { issueDate: '2026-09-03' });
+  let r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
+  submitReread(r, { invoiceNumber: '26427000000640558022' });
   r = await ask(dir, { after: r.stepToken, hasResult: true });
-  assert.ok(r.step.table.includes('你给的'), '用户给的那个值，表上标明是他给的');
+  assert.equal(r.state, 'classified_detail_confirmation');
 
   const after = loadReading(taskOf(dir), table.step.materialIds[0]);
-  assert.equal(after.fieldSources.issueDate, 'user');
-  assert.equal(after.fieldSources.invoiceNumber, 'vision');
+  assert.equal(after.fieldSources.invoiceNumber, 'user');
+  assert.equal(after.fieldSources.taxAmount, 'vision');
 });
 
 test('PDF 那条路上的字段来源记内核 —— 那是内核自己从文字层解出来的', async () => {
@@ -533,12 +550,12 @@ test('PDF 那条路上的字段来源记内核 —— 那是内核自己从文�
 test('摆证据那一步的凭据，拿不来拍板 —— 证据还没摆出来时不存在"拍板"', async () => {
   const dir = materials();
   const table = await upToConfirmation(dir);
-  const r = await correct(dir, table, { issueDate: '2026-09-03' });
+  const r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
   assert.equal(r.step.phase, 'reread');
 
   // 用摆证据那一步的凭据交一份终值。这一步压根收不下终值。
   writeJson(table.step.correctionPath, { corrections: [{ materialId: r.step.materialId,
-    fields: { issueDate: '2026-09-03' } }] });
+    fields: { invoiceNumber: '26427000000640558022' } }] });
   const forged = await applyTerminalVerdict({ sourceDir: dir, sourceKey: sourceKeyOf(dir),
     after: r.stepToken, correctionFile: table.step.correctionPath });
   assert.equal(forged, null);
@@ -555,11 +572,11 @@ test('摆证据那一步的凭据，拿不来拍板 —— 证据还没摆出来
 test('争议的三步各发各的凭据 —— 状态名一样不等于是同一步', async () => {
   const dir = materials();
   const table = await upToConfirmation(dir);
-  const r = await correct(dir, table, { issueDate: '2026-09-03' });
+  const r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
   const idempotent = await ask(dir);
   assert.equal(idempotent.stepToken, r.stepToken, '同一步连问两次，凭据不变');
 
-  submitReread(r, { issueDate: '2026-09-04' });
+  submitReread(r, { invoiceNumber: '26427000000640558021' });
   const ruling = await ask(dir, { after: r.stepToken, hasResult: true });
   assert.equal(ruling.state, r.state, '状态名还是 reading_disputed');
   assert.notEqual(ruling.stepToken, r.stepToken, '但这是另一步，凭据必须换掉');
@@ -568,9 +585,9 @@ test('争议的三步各发各的凭据 —— 状态名一样不等于是同一
 test('一场争议只重读一次 —— 收场靠用户拍板，不靠再读第三遍', async () => {
   const dir = materials();
   const table = await upToConfirmation(dir);
-  const r = await correct(dir, table, { issueDate: '2026-09-03' });
-  submitReread(r, { issueDate: '2026-09-04' });
-  const again = submitReread(r, { issueDate: '2026-09-02' });
+  const r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
+  submitReread(r, { invoiceNumber: '26427000000640558021' });
+  const again = submitReread(r, { invoiceNumber: '26427000000640558023' });
   assert.equal(again.verdict, 'rejected');
   assert.match(JSON.stringify(again.reasons), /已经重读过一次/);
 });

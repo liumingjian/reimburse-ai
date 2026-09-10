@@ -1,6 +1,6 @@
 ---
 name: extract-reimbursement-images
-description: "baox 图片字段提取的内部执行壳。Invoked only when baox returns an extract_images step; runs the managed local OCR batch and uses model vision solely for items the coordinator explicitly returns as needs_model_vision."
+description: "baox 图片字段提取的内部执行壳。Invoked only when baox returns an extract_images step; runs the managed local OCR adapter first and uses model vision for items whose OCR candidate is insufficient."
 user-invocable: false
 disable-model-invocation: false
 allowed-tools: Bash, Read, Write
@@ -26,11 +26,13 @@ CLI 只做三件事：复核文件哈希和格式；让一个 Python Worker 批�
 
 ## 结果纪律
 
-- 本地 `extracted` 结果按原样交回；增值税发票的 OCR 候选只包含 `fields.totalAmount`，不要从
-  文字观测补写发票号码、不含税金额、税额或其他字段。
+- 本地 `extracted` 结果按原样交回；增值税发票只有在取得隐藏技术身份
+  `fields.invoiceNumber` 和业务需要的 `fields.netAmount`、`fields.taxAmount`、`fields.totalAmount`
+  后才算候选。开票日期、开票方、购买方和项目名称不是本流程需要的业务字段，不要从文字观测补写。
 - `ride_itinerary` 的 `segments[]` 按票面顺序完整保留；每个可见表格行都是独立行程段，不合并、丢弃、
   重排，也不用顶层合计替代逐段金额。
-- OCR 候选只是字段候选，仍交给内核和用户确认；不要在 Skill 内自行确认或改写字段。
+- OCR 候选只是字段候选，仍交给内核；不要在 Skill 内自行确认或改写字段。用户在最后的整单 ERP
+  明细清单中一次性核对，不在每张图片完成后单独确认。
 
 ## 明确回退
 
@@ -38,7 +40,8 @@ CLI 只做三件事：复核文件哈希和格式；让一个 Python Worker 批�
 
 - `extracted` 已写入 `step.readingsPath`，不要再看原图或改写候选；
 - `failed` 是确定性失败，照实留给主流程处理，不要补值；
-- 只有 `needs_model_vision` 才允许用 `Read` 打开该项对应的 `absPath`。
+- 只有 `needs_model_vision` 才允许用 `Read` 打开该项对应的 `absPath`。发票视觉回退仍须回报隐藏技术身份
+  和三项金额；不要为了补齐开票日期或开票方去扩展读取范围。
 
 模型视觉回退时，按 `step.schemaPath` 逐字抄写并把该材料追加到 `step.readingsPath`。保留 CLI
 已有的 `readings`；不得覆盖、重排或“纠正”本地 OCR 结果。票面看不清就写入 `unreadable`，

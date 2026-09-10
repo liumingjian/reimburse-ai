@@ -60,7 +60,10 @@ function usable(document: ExtractedDocument): DocumentParseResult {
   let enough = false;
   switch (document.type) {
     case "vat_invoice":
-      enough = present(document.fields.totalAmount);
+      enough = present(document.fields.invoiceNumber)
+        && present(document.fields.netAmount)
+        && present(document.fields.taxAmount)
+        && present(document.fields.totalAmount);
       break;
     case "rail_ticket":
     case "road_passenger_ticket":
@@ -98,14 +101,10 @@ function vatInvoice(lines: readonly TextObservation[]): ExtractedDocument {
   return {
     type: "vat_invoice",
     fields: {
-      invoiceNumber: missing(),
-      issueDate: missing(),
-      netAmount: missing(),
-      taxAmount: missing(),
+      invoiceNumber: stringField(lines, ["发票号码", "发票号"], /\d{20}/),
+      netAmount: moneyField(lines, ["金额", "不含税金额", "不含税"]),
+      taxAmount: moneyField(lines, ["税额"]),
       totalAmount: vatTotalField(lines),
-      sellerName: missing(),
-      buyerName: missing(),
-      itemName: missing(),
     },
   };
 }

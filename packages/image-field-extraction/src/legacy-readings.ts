@@ -46,7 +46,12 @@ function legacyType(document: ExtractedDocument): string {
 function legacyFields(document: ExtractedDocument): Record<string, string> {
   switch (document.type) {
     case "vat_invoice":
-      return values(document.fields);
+      return values({
+        invoiceNumber: document.fields.invoiceNumber,
+        netAmount: document.fields.netAmount,
+        taxAmount: document.fields.taxAmount,
+        totalAmount: document.fields.totalAmount,
+      });
     case "rail_ticket":
       return values(document.fields, { amount: "totalAmount" });
     case "road_passenger_ticket":
@@ -90,7 +95,12 @@ function isMoney(value: unknown): value is Money {
 
 function missingFields(document: ExtractedDocument): string[] {
   if (document.type === "vat_invoice") {
-    return isMissing(document.fields.totalAmount) ? ["totalAmount"] : [];
+    return Object.entries({
+      invoiceNumber: document.fields.invoiceNumber,
+      netAmount: document.fields.netAmount,
+      taxAmount: document.fields.taxAmount,
+      totalAmount: document.fields.totalAmount,
+    }).filter(([, value]) => isMissing(value)).map(([field]) => field);
   }
   if (document.type === "ride_itinerary") {
     return Object.entries(document.fields)

@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseMaterial, invoiceIdentity, checkAmounts, maskNumber } from './parse.mjs';
 import { loadReading, loadRejection, loadUnreadable, projectReading, MAX_SIGHT_FAILURES,
-  MAX_EMPTY_READINGS, FIELD_LABELS, SEGMENT_RULES } from './vision.mjs';
+  MAX_EMPTY_READINGS, FIELD_LABELS, INVOICE_BUSINESS_FIELDS, SEGMENT_RULES } from './vision.mjs';
 import { shapeOfFile } from './imageshape.mjs';
+import { extractPdfText } from './pdftext.mjs';
 import { READING_KINDS } from './state.mjs';
 import { taskDir } from './workspace.mjs';
 import { load as loadMarkdownArtifact, loadCandidate, project as projectMarkdownCandidate,
@@ -39,6 +40,15 @@ export function markdownMaterialPaths(task, versionId, materialId) {
 
 const digest = (value) => crypto.createHash('sha256').update(JSON.stringify(value), 'utf8').digest('hex');
 
+function pdfPageCount(sourcePath) {
+  try {
+    const count = extractPdfText(fs.readFileSync(sourcePath)).pageCount;
+    return Number.isInteger(count) && count > 0 ? count : null;
+  } catch {
+    return null;
+  }
+}
+
 export function validateMarkdownSidecars(artifact, paths) {
   if (!artifact || !paths?.markdownPath || !paths?.numberedMarkdownPath) {
     return { ok: false, reason: 'Markdown sidecar 路径缺失' };
@@ -62,7 +72,8 @@ function markdownResult(sourceDir, inventory, task, material) {
   const base = { materialId: material.materialId, fileName: material.fileName, relPath: material.relPath,
     format: material.format,
     contentHash: material.contentHash, role: null, kind: null, fields: {}, candidates: [], evidence: {},
-    fieldSources: {}, candidateSources: null, source: null, markdownHash: null, sourcePages: [] };
+    fieldSources: {}, candidateSources: null, source: null, markdownHash: null, sourcePages: [],
+    pageCount: pdfPageCount(sourcePath) };
   if (!paths) {
     return { ...base, parseStatus: 'markdown_conversion_required',
       note: 'PDF 必须先经过固定版本 MarkItDown 转换；当前分类没有任务工作区，不能读取候选' };
@@ -127,9 +138,29 @@ function markdownResult(sourceDir, inventory, task, material) {
       unreadable: segment.unreadable ?? [],
     })),
   };
+  if ((base.pageCount ?? 0) > 1 && projected.role === 'primary_voucher') {
+    return {
+      ...base,
+      ...projected,
+      pageCount: base.pageCount,
+      parseStatus: 'multi_page_invoice',
+      contentHash: material.contentHash,
+      paths,
+      markdownHash: candidateSources.markdownHash,
+      sourcePages: artifact.pages ?? [],
+      fieldEvidence: candidateSources.fieldEvidence,
+      fieldStatus: candidateSources.fieldStatus,
+      segments: record.segments ?? [],
+      unreadable: projected.unreadable ?? [],
+      issues: projected.issues ?? [],
+      candidateSources,
+      note: 'V1 只支持单页发票；请将这份多页发票排除或替换为单页发票',
+    };
+  }
   return {
     ...base,
     ...projected,
+    pageCount: base.pageCount,
     parseStatus: 'parsed',
     contentHash: material.contentHash,
     paths,
@@ -157,8 +188,8 @@ export function classifyInventory(sourceDir, inventory, task = null, { mode = 'm
       ? markdownResult(sourceDir, inventory, task, m)
       : parseMaterial(path.join(path.resolve(sourceDir), m.relPath), m.format);
 
-    // 图片取不出文字，但可能已经有一次**已确认**的看图读取。
-    // 只有确认过的读数才顶替解析结果；读过没确认的仍然停在待确认项里。
+    // 图片取不出文字，但可能已经有一次绑定当前字节的看图读取。
+    // 候选先进入分类明细；只有整单确认后，读数才成为最终事实。
     if (parsed.parseStatus === 'needs_ocr') {
       // 这个文件到底是不是一张显示得出来的图，由**内核**说了算，不由模型说了算。
       // 解不开图像头的，模型压根不会被派去看它 —— 于是「图片显示不出来」这句话
@@ -169,7 +200,7 @@ export function classifyInventory(sourceDir, inventory, task = null, { mode = 'm
     if (parsed.parseStatus === 'needs_ocr' && parsed.imageDecodable && task) {
       const reading = loadReading(task, m.materialId);
       const fresh = reading && reading.contentHash === m.contentHash;
-      const projected = fresh ? projectReading(reading) : null;
+      const projected = fresh ? projectReading(reading, { provisional: true }) : null;
       const rejection = loadRejection(task, m.materialId);
       const freshRejection = rejection && rejection.contentHash === m.contentHash;
       const parkedRec = loadUnreadable(task, m.materialId);
@@ -294,9 +325,8 @@ export function classifyOpenItems(classification) {
         continue;
       }
       if (state === 'unconfirmed') {
-        add('reading_awaiting_confirmation', true, { ...at,
-          note: '这张图已经读过，但读数还没有被确认。看图读出来的字段只是候选，'
-            + '必须由用户在终端上对着表格点头才算数' });
+        add('reading_awaiting_confirmation', false, { ...at,
+          note: '这张图的候选会带入整单分类明细，用户在最终 ERP 明细清单中统一核对' });
       } else if (state === 'rejected') {
         add('reading_rejected', true, { ...at,
           note: `上一次读数没有过关：${(r.rejection?.reasons ?? []).join('；')}`,
@@ -312,6 +342,11 @@ export function classifyOpenItems(classification) {
     }
     if (r.parseStatus === 'no_text') {
       add('no_text_in_pdf', true, { ...at, note: 'PDF 里没有可提取的文字，通常是扫描件；请提供电子发票原件' });
+      continue;
+    }
+    if (r.parseStatus === 'multi_page_invoice') {
+      add('multi_page_invoice', true, { ...at, pageCount: r.pageCount ?? null, sourcePages: r.sourcePages ?? [],
+        note: r.note ?? 'V1 只支持单页发票；请将这份多页发票排除或替换为单页发票' });
       continue;
     }
     if (r.parseStatus === 'markdown_conversion_required' || r.parseStatus === 'markdown_conversion_failed'
@@ -346,7 +381,7 @@ export function classifyOpenItems(classification) {
 
     if (r.source === 'agent_from_markdown') {
       const statuses = r.candidateSources?.fieldStatus ?? r.fieldStatus ?? {};
-      for (const field of ['invoiceNumber', 'issueDate', 'totalAmount']) {
+      for (const field of ['invoiceNumber', ...INVOICE_BUSINESS_FIELDS]) {
         if (['ambiguous', 'unreadable'].includes(statuses[field])) {
           add('markdown_field_unresolved', true, { ...at, field,
             note: `Markdown 候选的 ${FIELD_LABELS[field] ?? field} 被标成 ${statuses[field]}，不能进入费用事件；请重新抽取并提供明确原文证据` });
@@ -382,8 +417,6 @@ export function classifyOpenItems(classification) {
         add('identity_incomplete', true, { ...at,
           note: '识别为发票但取不到该票种完整的原生发票身份，无法做重复检查；发票身份不能由对话补录' });
       }
-      if (!r.fields.issueDate) add('issue_date_missing', true, { ...at, note: '取不到开票日期' });
-
       const a = r.amounts;
       if (a?.status === 'mismatch') {
         add('amount_mismatch', true, { ...at,
@@ -424,7 +457,7 @@ export function classifyOpenItems(classification) {
   return items;
 }
 
-/** 给用户看的摘要：发票号码脱敏，金额按分还原成元。 */
+/** 给用户看的摘要：只保留最终业务需要核对的材料和金额字段。 */
 export function summarize(classification) {
   const yuan = (m) => (m ? (m.cents / 100).toFixed(2) : null);
   return classification.results
@@ -436,8 +469,6 @@ export function summarize(classification) {
       kind: r.kind,
       kindLabel: r.kindLabel ?? null,
       parseStatus: r.parseStatus,
-      invoiceNumber: maskNumber(r.fields?.invoiceNumber),
-      issueDate: r.fields?.issueDate ?? null,
       netAmount: yuan(r.fields?.netAmount),
       taxAmount: yuan(r.fields?.taxAmount),
       totalAmount: yuan(r.fields?.totalAmount),

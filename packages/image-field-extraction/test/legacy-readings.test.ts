@@ -39,28 +39,30 @@ test("看不清的酒店字段也使用内核规范名", () => {
   assert.deepEqual(readings[0]?.unreadable, ["checkIn", "checkOut", "folioTotal"]);
 });
 
-test("发票 legacy 读数只保留价税合计字段", () => {
+test("发票 legacy 读数只保留隐藏身份和三项金额字段", () => {
   const readings = toLegacyReadings(batch({
     type: "vat_invoice",
     fields: {
-      invoiceNumber: missing(), issueDate: missing(), netAmount: missing(), taxAmount: missing(),
-      totalAmount: money(1880), sellerName: missing(), buyerName: missing(), itemName: missing(),
+      invoiceNumber: text("25317000000123456789"),
+      netAmount: money(1825), taxAmount: money(55),
+      totalAmount: money(1880),
     },
   })).readings;
-  assert.deepEqual(readings[0]?.fields, { totalAmount: "18.80" });
+  assert.deepEqual(readings[0]?.fields, {
+    invoiceNumber: "25317000000123456789", netAmount: "18.25", taxAmount: "0.55", totalAmount: "18.80",
+  });
   assert.deepEqual(readings[0]?.unreadable, []);
 });
 
-test("看不清的发票只报告价税合计缺失", () => {
+test("看不清的发票报告三项金额和隐藏身份缺失", () => {
   const readings = toLegacyReadings(batch({
     type: "vat_invoice",
     fields: {
-      invoiceNumber: missing(), issueDate: missing(), netAmount: missing(), taxAmount: missing(),
-      totalAmount: missing(), sellerName: missing(), buyerName: missing(), itemName: missing(),
+      invoiceNumber: missing(), netAmount: missing(), taxAmount: missing(), totalAmount: missing(),
     },
   })).readings;
   assert.deepEqual(readings[0]?.fields, {});
-  assert.deepEqual(readings[0]?.unreadable, ["totalAmount"]);
+  assert.deepEqual(readings[0]?.unreadable, ["invoiceNumber", "netAmount", "taxAmount", "totalAmount"]);
 });
 
 test("网约车行程单保留全部逐段事实", () => {

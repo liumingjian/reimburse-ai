@@ -16,7 +16,8 @@ import { currentStep, issueStep } from './steptoken.mjs';
 import { readingInboxIn, correctionInboxIn, rereadInboxIn, answerInboxIn, homeCityAnswerIn } from './workspace.mjs';
 import { CONVERGENCE, favorsUser, disputeStepKey, DISPUTE_PHASES } from './dispute.mjs';
 import { SHAPES, SHAPE_LABELS } from './imageshape.mjs';
-import { DOC_TYPES, FIELD_RULES, SEGMENT_RULES } from './vision.mjs';
+import { DEFAULT_IMAGE_RECOGNITION_ADAPTER, DOC_TYPES, FIELD_RULES, INVOICE_READING_FIELDS, SEGMENT_RULES,
+  IMAGE_RECOGNITION_ADAPTERS } from './vision.mjs';
 import { roundFingerprint } from './allocate.mjs';
 import { renderTable, renderQuestions } from './table.mjs';
 import { classifiedDetailDigest } from './classified-detail.mjs';
@@ -42,8 +43,9 @@ const SIGHTED_SHAPES = Object.freeze(
 const ALLOWED_READING_FIELDS = Object.freeze(Object.keys(FIELD_RULES));
 const READING_CONTRACT = Object.freeze({
   docTypes: Object.fromEntries(Object.keys(DOC_TYPES).map((docType) => [docType, Object.freeze({
-    allowedFields: ALLOWED_READING_FIELDS,
-    requiredFields: docType === 'invoice' ? Object.freeze(['invoiceNumber', 'totalAmount']) : Object.freeze([]),
+    allowedFields: docType === 'invoice' ? INVOICE_READING_FIELDS : ALLOWED_READING_FIELDS,
+    requiredFields: docType === 'invoice'
+      ? Object.freeze(['invoiceNumber', 'netAmount', 'taxAmount', 'totalAmount']) : Object.freeze([]),
     requiredOrUnreadable: docType === 'ride_itinerary' ? Object.freeze(['totalAmount']) : Object.freeze([]),
     ...(docType === 'ride_itinerary' ? { flatItinerary: Object.freeze({
       requiredOrUnreadable: Object.freeze(['travelDate']),
@@ -79,6 +81,12 @@ const PROJECT_PROGRESS = { phase: 5, of: 10, label: '项目归属' };
 const CATALOG_PROGRESS = { phase: 6, of: 10, label: '与 ERP 核对' };
 const WRITE_PROGRESS = { phase: 7, of: 10, label: '写入后恢复' };
 const PREPARATION_PROGRESS = { phase: 7, of: 10, label: 'ERP 填报前准备' };
+
+const imageAdapterOf = (observation) => {
+  const requested = observation.imageRecognitionAdapter ?? observation.task?.imageRecognitionAdapter;
+  return requested === IMAGE_RECOGNITION_ADAPTERS.OCR_ASSISTED
+    ? IMAGE_RECOGNITION_ADAPTERS.OCR_ASSISTED : DEFAULT_IMAGE_RECOGNITION_ADAPTER;
+};
 
 // 退出码：0 继续 / 2 有硬阻塞，未解决不得继续。硬阻塞是那些「等下去也不会好」的：
 // Node 太老、数据格式太新、登错了人。停在登录页不是硬阻塞 —— 那是在等人，不是被拦住。
@@ -144,11 +152,12 @@ const readImages = ({ images, readingsPath, argv, speak, context }) => ({
   speak, context, progress: READING_PROGRESS, exit: 0,
 });
 
-/** 受管本地 OCR 工单。只有明确回退的单张图片才交给模型视觉。 */
+/** 受管本地 OCR 工单。OCR 结果不足时，工单内再交给模型视觉兜底。 */
 const extractImages = ({ images, workspace, readingsPath, argv, speak, context }) => ({
   step: {
     kind: 'extract_images',
     skill: 'extract-reimbursement-images',
+    adapter: IMAGE_RECOGNITION_ADAPTERS.OCR_ASSISTED,
     contractVersion: 1,
     outsourceable: false,
     images: images.map(({ materialId, fileName, absPath, format, contentHash }) =>
@@ -207,8 +216,10 @@ const confirmTable = ({ table, materialIds, correctionPath, speak, context }) =>
     correctionPath,
     acceptsCorrection: true,
     correctionFormat: {
-      corrections: [{ materialId: '表里那一行的 materialId', fields: { invoiceNumber: '用户说的值' } }],
-      note: '只写用户当面改的那几个字段，其余不要抄。用户的值不会被直接落库 —— '
+      corrections: [{ materialId: '表里那一行的 materialId', fields: {
+        netAmount: '不含税金额', taxAmount: '税额', totalAmount: '价税合计',
+      } }],
+      note: '只写用户当面改的金额字段，其余不要抄。用户的值不会被直接落库 —— '
         + '内核会把这张读数作废，带着分歧重新看图。',
     },
     // 终端表态和对话提问一样，在子 Agent 里做不了：那里没有用户。
@@ -423,7 +434,7 @@ function invoiceSummaryTable(preview = {}) {
       const line = linesByMaterial.get(item.materialId) ?? {};
       const kind = item.kind ?? line.kind ?? null;
       return {
-        voucher: line.maskedNumber ?? '（已脱敏）',
+        voucher: line.voucherFileName ?? item.fileName ?? '（主要凭证）',
         kind: item.kindLabel ?? line.kindLabel ?? KIND_LABELS[kind] ?? kind ?? '—',
         net: faceAmountText(kind, item.fields?.netAmount, 'net'),
         tax: faceAmountText(kind, item.fields?.taxAmount, 'tax'),
@@ -442,21 +453,32 @@ function invoiceSummaryTable(preview = {}) {
 function classifiedDetailTable(preview = {}) {
   const rows = (preview.lines ?? []).map((line) => ({
     line: line.lineId,
-    voucher: line.maskedNumber ?? '（无票号）',
-    date: (line.endDate ?? line.checkOut) && (line.endDate ?? line.checkOut) !== line.date
-      ? `${line.date ?? '—'} 至 ${line.endDate ?? line.checkOut}` : (line.date ?? '—'),
-    where: line.route ?? line.city ?? '—',
-    amount: line.totalAmount ?? '—',
+    voucher: line.voucherFileName ?? '（主要凭证）',
+    kind: line.kindLabel ?? KIND_LABELS[line.kind] ?? line.kind ?? '—',
+    startDate: line.date ?? '—',
+    endDate: line.endDate ?? line.checkOut ?? line.date ?? '—',
+    city: line.city ?? '—',
+    origin: line.origin ?? '—',
+    destination: line.destination ?? '—',
+    net: line.netAmount ?? '—',
+    tax: line.taxAmount ?? '—',
+    total: line.totalAmount ?? '—',
     category: line.categoryLabel ?? '—',
-    expense: line.expenseItemCode ?? '—',
+    expense: line.expenseItemName ?? line.expenseItemCode ?? '—',
     evidence: (line.referenceMaterialIds ?? []).join('、') || '—',
   }));
   return renderTable([
     { key: 'line', label: '明细', max: 8 },
-    { key: 'voucher', label: '发票号', max: 22 },
-    { key: 'date', label: '费用日期', max: 24 },
-    { key: 'where', label: '城市/行程', max: 20 },
-    { key: 'amount', label: '价税合计', max: 12 },
+    { key: 'voucher', label: '发票/材料', max: 24 },
+    { key: 'kind', label: '票种', max: 20 },
+    { key: 'startDate', label: '起始日期', max: 14 },
+    { key: 'endDate', label: '结束日期', max: 14 },
+    { key: 'city', label: '城市', max: 14 },
+    { key: 'origin', label: '出发点', max: 20 },
+    { key: 'destination', label: '目的地', max: 20 },
+    { key: 'net', label: '不含税金额', max: 14 },
+    { key: 'tax', label: '税额', max: 12 },
+    { key: 'total', label: '价税合计', max: 14 },
     { key: 'category', label: '费用类别', max: 16 },
     { key: 'expense', label: '费用项目', max: 14 },
     { key: 'evidence', label: '参考材料', max: 18 },
@@ -898,6 +920,9 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       return tellUser({
         speak: `${label} 目前有 ${openItems.length} 项材料待处理：\n`
           + `${table}\n`
+          + (openItems.some((item) => item.kind === 'multi_page_invoice')
+            ? '多页发票不在 V1 支持范围内，请把它从本次报销中排除，或替换为单页发票。\n'
+            : '')
           + '处理这些项目后告诉我，我会重新核对。',
         table,
         context: '这些是盘点和解析报上来的开放项。我不会替你把它们当作不存在 ——'
@@ -918,16 +943,27 @@ export function stepFor(state, observation = {}, blockedBy = []) {
         progress: MATERIAL_PROGRESS,
       });
 
-    case 'image_awaiting_reading':
-      return extractImages({
+    case 'image_awaiting_reading': {
+      if (imageAdapterOf(o) === IMAGE_RECOGNITION_ADAPTERS.OCR_ASSISTED) {
+        return extractImages({
+          images,
+          workspace: o.task.workspace,
+          readingsPath,
+          argv: submitArgv(),
+          speak: `${label} 里有 ${images.length} 张图片材料需要读取：${imageNames}。我先用 OCR 批量提取，缺字段再交给模型视觉。`,
+          context: '当前图片 Adapter 是 ocr-assisted：OCR 只产生候选，缺字段或校验失败的材料自动交给模型视觉。'
+            + '两条路径都先进入候选，最后在整张 ERP 明细清单中统一核对。',
+        });
+      }
+      return readImages({
         images,
-        workspace: o.task.workspace,
         readingsPath,
         argv: submitArgv(),
-        speak: `${label} 里有 ${images.length} 张图片材料需要读取：${imageNames}。我先在本机批量提取字段。`,
-        context: '受管 OCR 只产生文字观测和字段候选；证据不足的单张图片才由模型视觉复核。'
-          + '两条路径都要经过内容哈希、字段格式和金额守恒校验，最后仍由用户对照原图确认。',
+        speak: `${label} 里有 ${images.length} 张图片材料需要读取：${imageNames}。当前 Adapter 直接使用模型视觉能力。`,
+        context: '当前图片 Adapter 是 vision-direct：模型直接读取原图并产生候选。候选先进入分类，'
+          + '不在单张材料完成后打断用户；最终 ERP 明细清单会统一核对。',
       });
+    }
 
     case 'reading_rejected': {
       // 驳回的处置永远是**重读**，不是把数字改到过关。守恒式不平是一个正常结果：
@@ -944,17 +980,22 @@ export function stepFor(state, observation = {}, blockedBy = []) {
       });
     }
 
-    case 'reading_stale':
-      return extractImages({
-        images,
-        workspace: o.task.workspace,
-        readingsPath,
-        argv: submitArgv(),
-        speak: `${imageNames} 换过了，`
-          + '之前那次读数是对着旧图读的，已经作废。我重新看一遍这几张图。',
-        context: '读数钉在内容哈希上。文件一改，旧读数当场失效 ——'
-          + '沿用它等于拿上一张图的数字去报这一张图。',
-      });
+    case 'reading_stale': {
+      const speak = `${imageNames} 换过了，之前那次读数是对着旧图读的，已经作废。`
+        + (imageAdapterOf(o) === IMAGE_RECOGNITION_ADAPTERS.OCR_ASSISTED
+          ? '我重新用 OCR 批量读取，缺字段再交给模型视觉。'
+          : '我重新用模型视觉读取这几张图。');
+      const context = '读数钉在内容哈希上。文件一改，旧读数当场失效 ——'
+        + '沿用它等于拿上一张图的数字去报这一张图。'
+        + (imageAdapterOf(o) === IMAGE_RECOGNITION_ADAPTERS.OCR_ASSISTED
+          ? '当前 Adapter 是 ocr-assisted，OCR 仍只产生候选，缺字段自动交给模型视觉。'
+          : '当前 Adapter 是 vision-direct，候选会进入分类，最后在整单 ERP 明细清单中统一核对。');
+      if (imageAdapterOf(o) === IMAGE_RECOGNITION_ADAPTERS.OCR_ASSISTED) {
+        return extractImages({ images, workspace: o.task.workspace, readingsPath,
+          argv: submitArgv(), speak, context });
+      }
+      return readImages({ images, readingsPath, argv: submitArgv(), speak, context });
+    }
 
     case 'reading_awaiting_confirmation': {
       const pending = o.pendingReadings ?? [];
@@ -1213,7 +1254,7 @@ export function stepFor(state, observation = {}, blockedBy = []) {
           outsourceable: false,
         },
         speak: `材料已经整理成 ${preview.lines?.length ?? 0} 条分类明细，常驻城市是 ${preview.homeCity ?? '（未取到）'}。`
-          + '请你逐张核对原生票种、不含税金额、税额和价税合计，再逐条确认材料关联、费用日期、金额分摊、费用类别和费用项目；确认后才进入个人项目簿选择。'
+          + '请在这张整单明细清单中一次性核对所有将填入 ERP 的信息：发票/材料、票种、不含税金额、税额、价税合计、起始日期、结束日期、城市、出发点、目的地、材料关联、费用类别和费用项目；确认后才进入个人项目簿选择。'
           + ((preview.evidence ?? []).some((item) => item.role === 'primary_voucher'
             && item.kind === 'rail_eticket')
             ? '铁路电子客票只核对票面总额；费用税额按业务规则默认为 0.00，不读取 ERP 净税额。'

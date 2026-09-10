@@ -25,7 +25,7 @@ after(() => rm(fixtureDir, { recursive: true, force: true }));
 
 process.env.BAOX_IMAGE_WORKER = fixtureWorker;
 
-test("批量图片按输入顺序产生只含价税合计的发票字段候选", async () => {
+test("批量图片按输入顺序产生发票身份和三项金额字段候选", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "image-fields-"));
   const first = path.join(dir, "first.jpg");
   const second = path.join(dir, "second.jpg");
@@ -45,16 +45,15 @@ test("批量图片按输入顺序产生只含价税合计的发票字段候选",
   assert.equal(extracted?.status, "extracted");
   if (extracted?.status !== "extracted") return;
   assert.equal(extracted.document.type, "vat_invoice");
-  assert.equal(extracted.document.fields.invoiceNumber.evidenceState, "missing");
-  assert.equal(extracted.document.fields.issueDate.evidenceState, "missing");
-  assert.equal(extracted.document.fields.netAmount.evidenceState, "missing");
-  assert.equal(extracted.document.fields.taxAmount.evidenceState, "missing");
+  assert.equal(extracted.document.fields.invoiceNumber.normalized, "25317000000123456789");
+  assert.equal(extracted.document.fields.netAmount.normalized?.cents, 1825);
+  assert.equal(extracted.document.fields.taxAmount.normalized?.cents, 55);
   assert.equal(extracted.document.fields.totalAmount.normalized?.cents, 1880);
   assert.equal(extracted.provenance.model, "fixture-v1");
   assert.equal(result.metrics.peakRssBytes, 123456);
 });
 
-test("真实电子发票布局只提取价税合计且优先读取小写合计", async () => {
+test("真实电子发票布局提取隐藏身份和三项金额", async () => {
   const result = await extractImageFields({
     contractVersion: 1,
     images: [{
@@ -68,13 +67,13 @@ test("真实电子发票布局只提取价税合计且优先读取小写合计",
   if (item?.status !== "extracted") return;
   assert.equal(item.document.type, "vat_invoice");
   assert.equal(item.document.fields.totalAmount.normalized.cents, 1880);
-  assert.equal(item.document.fields.invoiceNumber.evidenceState, "missing");
-  assert.equal(item.document.fields.netAmount.evidenceState, "missing");
-  assert.equal(item.document.fields.taxAmount.evidenceState, "missing");
+  assert.equal(item.document.fields.invoiceNumber.normalized, "26427000000640558021");
+  assert.equal(item.document.fields.netAmount.normalized.cents, 1825);
+  assert.equal(item.document.fields.taxAmount.normalized.cents, 55);
   assert.deepEqual(item.document.fields.totalAmount.sourceRefs, ["o8"]);
 });
 
-test("完整 RapidOCR 观测快照仍能提取真实发票和行程单", async () => {
+test("完整 RapidOCR 观测快照仍能提取发票金额和行程单", async () => {
   const result = await extractImageFields({
     contractVersion: 1,
     images: [
@@ -95,6 +94,9 @@ test("完整 RapidOCR 观测快照仍能提取真实发票和行程单", async (
   assert.equal(invoice?.status, "extracted");
   if (invoice?.status !== "extracted") return;
   assert.equal(invoice.document.type, "vat_invoice");
+  assert.equal(invoice.document.fields.invoiceNumber.normalized, "26427000000640558021");
+  assert.equal(invoice.document.fields.netAmount.normalized.cents, 1825);
+  assert.equal(invoice.document.fields.taxAmount.normalized.cents, 55);
   assert.equal(invoice.document.fields.totalAmount.normalized.cents, 1880);
   assert.deepEqual(invoice.document.fields.totalAmount.sourceRefs, ["o39"]);
 
@@ -193,7 +195,7 @@ test("请求级违约在启动 worker 前失败", async () => {
   );
 });
 
-test("发票只提取价税合计，不因其他金额字段不一致而误取金额", async () => {
+test("发票金额不守恒时转模型视觉回退", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "image-fields-"));
   const image = path.join(dir, "invoice.jpg");
   await writeFile(image, jpeg);
@@ -202,12 +204,9 @@ test("发票只提取价税合计，不因其他金额字段不一致而误取�
     images: [{ materialId: "unbalanced-invoice", contentHash: sha256(jpeg), absPath: image }],
   });
   const item = result.items[0];
-  assert.equal(item?.status, "extracted");
-  if (item?.status !== "extracted") return;
-  assert.equal(item.document.type, "vat_invoice");
-  assert.equal(item.document.fields.totalAmount.normalized.cents, 1980);
-  assert.equal(item.document.fields.netAmount.evidenceState, "missing");
-  assert.equal(item.document.fields.taxAmount.evidenceState, "missing");
+  assert.equal(item?.status, "needs_model_vision");
+  if (item?.status !== "needs_model_vision") return;
+  assert.equal(item.reason, "candidate_validation_failed");
 });
 
 test("火车票字段使用同一个封闭文档 schema", async () => {

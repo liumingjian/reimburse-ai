@@ -36,8 +36,8 @@ baox next --after <stepToken> [--result <file>]  # 答：我做完了，这是�
 | kind | actor | 模型要做的唯一一件事 | 回传 |
 |---|---|---|---|
 | `run` | kernel | 原样执行 `step.argv`，不改一个字 | `--after <token> --result <stdout落盘的文件>` |
-| `read_images` | model | 对 `step.images[].absPath` 逐个用 `Read` 看图，按 `step.schemaPath` 写读数文件，再执行 `step.argv` 提交 | 同上 |
-| `extract_images` | model | 把内核已落盘的版本化请求交给 `extract-reimbursement-images`；只对明确回退项看图，再执行 `step.argv` | 同上 |
+| `read_images` | model | 默认对 `step.images[].absPath` 逐个用模型视觉看图，按 `step.schemaPath` 写读数文件，再执行 `step.argv` 提交 | 同上 |
+| `extract_images` | model | 把内核已落盘的版本化请求交给 `extract-reimbursement-images`；先跑受管 OCR，缺字段或候选校验失败时再用模型视觉，再执行 `step.argv` | 同上 |
 | `read_markdown` | model | 读取带行号 Markdown，按工单模板提取；核对主发票标题及金额标签，跨行/串列回看原件页，再执行 `step.argv` | 同上 |
 | `ask_user` | model | **原样贴出 `step.prompt`**（内核把 `step.questions[]` 渲染好的一整块文本：≤4 题，每题 2–4 选项，可 `multiSelect`，末项恒为「其他」可自由输入），等用户在对话里回答，把答案誊进 `step.answersPath` | `--after <token> --result <答案json>` |
 | `confirm_table` | user | 原样贴出 `step.table`（内核渲染好的定宽文本），请用户过目 | 认可 → `--after <token>`；指错 → 附 `--correction <file>` |

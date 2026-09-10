@@ -151,6 +151,7 @@ const asBlocker = (i) => ({
   ...(i.candidatePath ? { candidatePath: i.candidatePath } : {}),
   ...(i.candidateRecordPath ? { candidateRecordPath: i.candidateRecordPath } : {}),
   ...(i.pagesDir ? { pagesDir: i.pagesDir } : {}),
+  ...(i.pageCount ? { pageCount: i.pageCount } : {}),
   ...(i.sourcePages ? { sourcePages: i.sourcePages } : {}),
   ...(i.contentHash ? { contentHash: i.contentHash } : {}),
   ...(i.error ? { error: i.error } : {}),

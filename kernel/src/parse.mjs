@@ -268,8 +268,8 @@ function extractCandidates(kind, text, lines, pages) {
  */
 export function parseMaterial(absPath, format) {
   if (format === 'png' || format === 'jpg') {
-    // 内核零依赖，没有 OCR。图片发票取不出票面文字，这里如实说明，
-    // 不允许由模型"看图"补出发票号码和金额 —— 那不是材料证据。
+    // 内核零依赖，不直接做 OCR。图片候选由当前图片 Adapter 读取：
+    // 默认走模型视觉，显式选择 ocr-assisted 时先走受管 OCR，再对缺口视觉复核。
     return { parseStatus: 'needs_ocr', kind: null, role: null, fields: {}, candidates: [], evidence: {} };
   }
   if (format !== 'pdf') {

@@ -116,7 +116,7 @@ test('分类纠正只暴露同 hash 看图读数，PDF 没有 override', () => {
   const task = createTask(source);
   writeReading(task, {
     materialId: 'm-image', contentHash: 'hash-image', docType: 'invoice',
-    fields: { issueDate: '2026-09-01', totalAmount: '10.60' },
+    fields: { invoiceNumber: '12345678901234567890', issueDate: '2026-09-01', totalAmount: '10.60' },
   });
   const options = classifiedCorrectionOptions(task, {
     evidence: [
@@ -125,7 +125,7 @@ test('分类纠正只暴露同 hash 看图读数，PDF 没有 override', () => {
     ],
   });
 
-  assert.deepEqual(options[0].fields, ['issueDate', 'totalAmount']);
+  assert.deepEqual(options[0].fields, ['totalAmount'], '发票号码和开票日期不进入用户纠正字段');
   assert.deepEqual(options[1].fields, []);
   assert.match(options[1].reason, /替换原材料后重新解析/);
 });

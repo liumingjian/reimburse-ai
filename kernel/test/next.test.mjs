@@ -122,7 +122,6 @@ const PENDING_READING = {
   docType: 'invoice',
   docTypeLabel: '发票',
   fields: [
-    { key: 'invoiceNumber', label: '发票号码', value: '26427000000640558021' },
     { key: 'totalAmount', label: '价税合计', value: '18.80' },
   ],
   unreadable: ['税额'],
@@ -139,10 +138,10 @@ test('材料这一段每个状态都有一步可做，说给用户听的话全�
     ['task_none', 'run', withMaterials({ task: null })],
     ['inventory_stale', 'run', withMaterials({ inventoryStale: true })],
     ['classify_pending', 'run', withMaterials({ classificationRecorded: false })],
-    ['image_awaiting_reading', 'extract_images', withMaterials({ pendingImages: images })],
+    ['image_awaiting_reading', 'read_images', withMaterials({ pendingImages: images })],
     ['reading_rejected', 'read_images', withMaterials({
       pendingImages: [{ ...images[0], rejection: { reasons: ['不含税金额 + 税额 ≠ 价税合计'] } }] })],
-    ['reading_stale', 'extract_images', withMaterials({ pendingImages: images })],
+    ['reading_stale', 'read_images', withMaterials({ pendingImages: images })],
     ['reading_awaiting_confirmation', 'confirm_table',
       withMaterials({ pendingReadings: [PENDING_READING] })],
     ['duplicate_blocked', 'tell_user', withMaterials()],
@@ -269,8 +268,11 @@ test('图片提取工单把输入、输出、模板和提交命令一次给全',
     { materialId: 'm-1', fileName: '发票.png', absPath: '/tmp/材料/发票.png', format: 'png', contentHash: 'aa' },
     { materialId: 'm-2', fileName: '行程单.png', absPath: '/tmp/材料/行程单.png', format: 'png', contentHash: 'bb' },
   ];
-  const { step, speak } = stepFor('image_awaiting_reading', withMaterials({ pendingImages: images }));
+  const { step, speak } = stepFor('image_awaiting_reading', withMaterials({
+    pendingImages: images, imageRecognitionAdapter: 'ocr-assisted',
+  }));
   assert.equal(step.kind, 'extract_images');
+  assert.equal(step.adapter, 'ocr-assisted');
   assert.equal(step.skill, 'extract-reimbursement-images');
   assert.equal(step.images.length, 2);
   assert.equal(step.images[0].absPath, '/tmp/材料/发票.png', '模型要拿绝对路径才打得开图');
@@ -291,7 +293,9 @@ test('模型视觉回退的凭据闭集跟着图片提取工单一起给', async
   const { stepFor } = await import('../src/next.mjs');
   const images = [{ materialId: 'm-1', fileName: '发票.png', absPath: '/tmp/材料/发票.png',
     format: 'png', contentHash: 'aa' }];
-  const { step, context } = stepFor('image_awaiting_reading', withMaterials({ pendingImages: images }));
+  const { step, context } = stepFor('image_awaiting_reading', withMaterials({
+    pendingImages: images, imageRecognitionAdapter: 'ocr-assisted',
+  }));
   assert.deepEqual(step.sightedShapes.map((s) => s.shape),
     ['tall', 'portrait', 'square', 'landscape', 'wide']);
   assert.ok(step.sightedShapes.every((s) => s.label), '每一档都得有一句人话，光给英文词没用');
@@ -312,11 +316,13 @@ test('看图 step 直接给出完整字段闭集，不用反查 vision.mjs', asy
 
   assert.deepEqual(Object.keys(step.readingContract.docTypes),
     ['invoice', 'rail_ticket', 'road_passenger_ticket', 'ride_itinerary', 'hotel_folio', 'payment_slip', 'other', 'unreadable']);
-  for (const docType of Object.values(step.readingContract.docTypes)) {
-    assert.deepEqual(docType.allowedFields, expectedFields);
+  assert.deepEqual(step.readingContract.docTypes.invoice.allowedFields,
+    ['invoiceNumber', 'netAmount', 'taxAmount', 'totalAmount']);
+  for (const [name, docType] of Object.entries(step.readingContract.docTypes)) {
+    if (name !== 'invoice') assert.deepEqual(docType.allowedFields, expectedFields);
   }
   assert.deepEqual(step.readingContract.docTypes.invoice.requiredFields,
-    ['invoiceNumber', 'totalAmount']);
+    ['invoiceNumber', 'netAmount', 'taxAmount', 'totalAmount']);
   assert.equal(step.readingContract.minimumFields, 1, '完整图片不能交空读数');
   assert.deepEqual(step.readingContract.amountConservation.whenPresent,
     ['netAmount', 'taxAmount', 'totalAmount']);
@@ -367,7 +373,8 @@ test('分类明细确认表完整展示住宿入住和离店日期', async () =>
         expenseItemCode: 'FY010001', referenceMaterialIds: ['m-folio'] }],
     },
   }));
-  assert.match(shaped.step.table, /2026-08-09 至 2026-08-22/);
+  assert.match(shaped.step.table, /2026-08-09/);
+  assert.match(shaped.step.table, /2026-08-22/);
 });
 
 test('分类明细确认表展示每张发票的原生票种和三项票面金额', async () => {
@@ -394,7 +401,7 @@ test('分类明细确认表展示每张发票的原生票种和三项票面金�
   assert.match(shaped.step.table, /无需读取/);
   assert.match(shaped.step.table, /0\.00（业务默认）/);
   assert.match(shaped.step.table, /703\.00/);
-  assert.match(shaped.speak, /原生票种、不含税金额、税额和价税合计/);
+  assert.match(shaped.speak, /票种、不含税金额、税额、价税合计/);
   assert.match(shaped.speak, /只核对票面总额/);
   assert.doesNotMatch(shaped.speak, /待ERP|需在 ERP/);
 });
@@ -421,8 +428,8 @@ test('确认这一步：内核渲染好一整块表格，模型只负责搬运',
     withMaterials({ pendingReadings: [PENDING_READING] }));
 
   assert.equal(step.kind, 'confirm_table');
-  assert.ok(step.table.includes('26427000000640558021'), '要比对的值必须完整出现在表里');
-  assert.ok(step.table.includes('发票号码'), '给用户看中文名，不给键名');
+  assert.ok(step.table.includes('18.80'), '要比对的金额必须完整出现在表里');
+  assert.doesNotMatch(step.table, /发票号码/, '隐藏技术身份不进入用户表格');
   assert.ok(step.table.includes('看不清'), '认不出的字段也要让用户知道，不是留白');
   assert.match(step.table, /^\| .* \|$/m);
   assert.match(step.table, /^\| --- /m, '必须有 Markdown 对齐行');

@@ -54,13 +54,9 @@ const SEGMENT_KEYS = new Set([
 const FIELD_SPECS = Object.freeze({
   invoiceCode: { type: 'invoiceCode' },
   invoiceNumber: { type: 'invoiceNumber' },
-  issueDate: { type: 'date' },
   netAmount: { type: 'money' },
   taxAmount: { type: 'money' },
   totalAmount: { type: 'money' },
-  sellerName: { type: 'text' },
-  buyerName: { type: 'text' },
-  itemName: { type: 'text' },
   travelDate: { type: 'date' },
   city: { type: 'text' },
   origin: { type: 'text' },
@@ -93,14 +89,11 @@ const KIND_META = Object.freeze({
 });
 
 const FIELDS_BY_KIND = Object.freeze({
-  vat_common: new Set(['invoiceCode', 'invoiceNumber', 'issueDate', 'netAmount', 'taxAmount', 'totalAmount',
-    'sellerName', 'buyerName', 'itemName', 'travelDate', 'city', 'origin', 'destination']),
-  vat_special: new Set(['invoiceCode', 'invoiceNumber', 'issueDate', 'netAmount', 'taxAmount', 'totalAmount',
-    'sellerName', 'buyerName', 'itemName', 'travelDate', 'city', 'origin', 'destination']),
-  passenger_transport: new Set(['invoiceCode', 'invoiceNumber', 'issueDate', 'netAmount', 'taxAmount', 'totalAmount',
-    'sellerName', 'buyerName', 'itemName', 'travelDate', 'city', 'origin', 'destination']),
-  rail_eticket: new Set(['invoiceCode', 'invoiceNumber', 'issueDate', 'netAmount', 'taxAmount', 'totalAmount',
-    'sellerName', 'buyerName', 'itemName', 'travelDate', 'city', 'railTrain', 'railFrom', 'railTo']),
+  vat_common: new Set(['invoiceCode', 'invoiceNumber', 'netAmount', 'taxAmount', 'totalAmount']),
+  vat_special: new Set(['invoiceCode', 'invoiceNumber', 'netAmount', 'taxAmount', 'totalAmount']),
+  passenger_transport: new Set(['invoiceCode', 'invoiceNumber', 'netAmount', 'taxAmount', 'totalAmount']),
+  rail_eticket: new Set(['invoiceCode', 'invoiceNumber', 'netAmount', 'taxAmount', 'totalAmount',
+    'travelDate', 'railTrain', 'railFrom', 'railTo']),
   ride_itinerary: new Set(['travelDate', 'city', 'origin', 'destination', 'totalAmount', 'segmentCount']),
   hotel_folio: new Set(['checkIn', 'checkOut', 'folioTotal', 'city']),
 });

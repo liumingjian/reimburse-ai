@@ -51,7 +51,7 @@ done
 
 **一、四个必须一起拷。** 三个入口 Skill 自带同一份内核，图片字段提取 Skill 自带 OCR 执行代码；缺少任一个都会让对应流程中断。
 
-Node 内核随 Skill 文件运行，不需要 npm 安装。环境准备先用可用的 uv 按随包的 `kernel/src/pdf-markdown-runtime/pyproject.toml` 和 `uv.lock` 把 MarkItDown 安装到 `~/.baox/runtimes/markitdown/v1`，再把固定版本的 `extract-reimbursement-images` OCR 安装到 `~/.baox/ocr-runtime/v1`。解析阶段只使用这些受管目录，不会首次下载；uv 不可用、同步失败、安装器失败或锁文件不匹配时，流程停止并报告原因。PNG/JPG 先走受管本地 OCR，只有证据不足、识别失败或候选校验失败的项目才进入视觉复核；没有可靠文字的 PDF 保留待办。
+Node 内核随 Skill 文件运行，不需要 npm 安装。环境准备先用可用的 uv 按随包的 `kernel/src/pdf-markdown-runtime/pyproject.toml` 和 `uv.lock` 把 MarkItDown 安装到 `~/.baox/runtimes/markitdown/v1`，再把固定版本的 `extract-reimbursement-images` OCR 安装到 `~/.baox/ocr-runtime/v1`。解析阶段只使用这些受管目录，不会首次下载；uv 不可用、同步失败、安装器失败或锁文件不匹配时，流程停止并报告原因。PNG/JPG 默认直接走模型视觉；明确选择 `ocr-assisted` 时才先走受管本地 OCR，缺字段或候选校验失败的项目再进入视觉复核。无论 PDF 还是图片，识别候选都在最终整单明细清单中统一确认；没有可靠文字的 PDF 保留待办。
 
 **二、四个必须在同一个位置，而且来自同一次打包。** Codex 使用 `.agents/skills/`，Claude Code 使用
 `.claude/skills/`；两者同时使用时让其中一处链接到另一处，**不要维护两份独立副本**。

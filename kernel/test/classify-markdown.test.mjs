@@ -7,6 +7,7 @@ import path from 'node:path';
 import { takeInventory } from '../src/inventory.mjs';
 import { classifyInventory, classifyOpenItems, markdownMaterialPaths } from '../src/classify.mjs';
 import { ingest, prepare } from '../src/pdf-markdown.mjs';
+import { writeMultiPageTextPdf } from './fixture-pdf.mjs';
 
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'baox-classify-markdown-'));
 
@@ -39,7 +40,6 @@ function candidateFor(artifact, overrides = {}) {
     kindEvidence: evidence(1, '电子发票(普通发票)'),
     fields: {
       invoiceNumber: '12345678901234567890',
-      issueDate: '2026-09-01',
       netAmount: '18.25',
       taxAmount: '0.55',
       totalAmount: '18.80',
@@ -48,14 +48,13 @@ function candidateFor(artifact, overrides = {}) {
     segments: [],
     fieldEvidence: {
       invoiceNumber: evidence(2, '发票号码:12345678901234567890'),
-      issueDate: evidence(3, '开票日期:2026年09月01日'),
       netAmount: evidence(6, '¥18.25'),
       taxAmount: evidence(6, '¥0.55'),
       totalAmount: evidence(7, '¥18.80'),
       ...(overrides.fieldEvidence ?? {}),
     },
     fieldStatus: {
-      invoiceNumber: 'explicit', issueDate: 'explicit', netAmount: 'explicit',
+      invoiceNumber: 'explicit', netAmount: 'explicit',
       taxAmount: 'explicit', totalAmount: 'explicit', ...(overrides.fieldStatus ?? {}),
     },
     fieldBasis: overrides.fieldBasis ?? {},
@@ -121,4 +120,30 @@ test('默认 PDF 分类必须先有 MarkItDown artifact，不能静默回退旧 
   const invalidated = classifyInventory(sourceDir, inventory, currentTask);
   assert.equal(invalidated.results[0].parseStatus, 'markdown_candidate_required',
     '同 hash 重新抽取请求必须使旧 accepted record 失效');
+});
+
+test('V1 多页发票在候选通过后明确阻塞，要求排除或替换', async () => {
+  process.env.BAOX_HOME = tempDir();
+  const sourceDir = tempDir();
+  writeMultiPageTextPdf(path.join(sourceDir, 'invoice.pdf'), [MARKDOWN, MARKDOWN]);
+  const inventory = await takeInventory(sourceDir);
+  const currentTask = task();
+  const material = inventory.materials[0];
+  const paths = markdownMaterialPaths(currentTask, inventory.versionId, material.materialId);
+  const prepared = await prepare({ sourcePath: path.join(sourceDir, material.relPath),
+    materialId: material.materialId, outputPath: paths.artifactPath,
+    converter: async () => ({ status: 'converted', markdown: MARKDOWN }) });
+  fs.writeFileSync(paths.markdownPath, prepared.artifact.markdown);
+  fs.writeFileSync(paths.numberedMarkdownPath, prepared.artifact.numberedMarkdown);
+  fs.writeFileSync(paths.candidatePath, JSON.stringify(candidateFor(prepared.artifact), null, 2));
+  const accepted = await ingest({ artifact: prepared.artifact, submission: paths.candidatePath,
+    outputPath: paths.candidateRecordPath, overwrite: true });
+  assert.equal(accepted.verdict, 'accepted');
+
+  const classified = classifyInventory(sourceDir, inventory, currentTask);
+  assert.equal(classified.results[0].pageCount, 2);
+  assert.equal(classified.results[0].parseStatus, 'multi_page_invoice');
+  const item = classifyOpenItems(classified).find((open) => open.kind === 'multi_page_invoice');
+  assert.equal(item.pageCount, 2);
+  assert.match(item.note, /排除或替换/);
 });

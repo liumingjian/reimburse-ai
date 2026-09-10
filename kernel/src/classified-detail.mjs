@@ -4,7 +4,9 @@ import path from 'node:path';
 import { taskDir } from './workspace.mjs';
 import { writeJsonAtomic } from './paths.mjs';
 import { validHomeCity } from './home-city.mjs';
-import { FIELD_LABELS, FIELD_RULES, loadReading } from './vision.mjs';
+import {
+  confirmReadings, FIELD_LABELS, FIELD_RULES, INVOICE_BUSINESS_FIELDS, loadReading,
+} from './vision.mjs';
 
 const confirmationFile = (task) => path.join(taskDir(task), 'classified-detail-confirmation.json');
 
@@ -41,12 +43,16 @@ const lineFacts = (line) => ({
   lineId: line.lineId ?? null,
   eventId: line.eventId ?? null,
   voucherMaterialId: line.voucherMaterialId ?? null,
+  voucherFileName: line.voucherFileName ?? null,
   maskedNumber: line.maskedNumber ?? null,
   kind: line.kind ?? null,
+  kindLabel: line.kindLabel ?? null,
   date: line.date ?? null,
   checkOut: line.checkOut ?? line.endDate ?? null,
   endDate: line.endDate ?? line.checkOut ?? null,
   city: line.city ?? null,
+  origin: line.origin ?? null,
+  destination: line.destination ?? null,
   route: line.route ?? null,
   netAmount: line.netAmount ?? null,
   taxAmount: line.taxAmount ?? null,
@@ -62,9 +68,11 @@ const lineFacts = (line) => ({
 
 const evidenceFacts = (evidence) => (evidence ?? []).map((item) => ({
   materialId: item.materialId ?? null,
+  fileName: item.fileName ?? null,
   contentHash: item.contentHash ?? null,
   role: item.role ?? null,
   kind: item.kind ?? null,
+  kindLabel: item.kindLabel ?? null,
   parseStatus: item.parseStatus ?? null,
   documentType: item.documentType ?? null,
   source: item.source ?? null,
@@ -127,6 +135,10 @@ export function confirmClassifiedDetail(task, preview, identity = task?.identity
     confirmedAt: new Date().toISOString(),
   };
   writeJsonAtomic(confirmationFile(task), record);
+  confirmReadings(task, (preview.evidence ?? [])
+    .filter((item) => item.role === 'primary_voucher' || item.role === 'reference')
+    .map((item) => item.materialId)
+    .filter(Boolean));
   return record;
 }
 
@@ -139,8 +151,12 @@ export function classifiedCorrectionOptions(task, preview = {}) {
   return (preview.evidence ?? []).map((item) => {
     if (item.source === 'agent_from_markdown'
       || item.candidateSources?.source === 'agent_from_markdown') {
+      const isRailTicket = item.kind === 'rail_eticket';
       const fields = Object.entries(item.candidateSources?.fieldStatus ?? {})
         .filter(([, status]) => ['explicit', 'derived', 'ambiguous'].includes(status))
+        .filter(([field]) => isRailTicket
+          ? !['invoiceCode', 'invoiceNumber'].includes(field)
+          : INVOICE_BUSINESS_FIELDS.includes(field))
         .map(([field]) => field);
       return {
         materialId: item.materialId,
@@ -157,7 +173,9 @@ export function classifiedCorrectionOptions(task, preview = {}) {
       return { materialId: item.materialId, fields: [], labels: [],
         reason: `材料 ${item.materialId} 当前没有与本版 hash 匹配的看图读数；请替换原材料后重新解析` };
     }
-    const fields = Object.keys(reading.fields ?? {}).filter((key) => key in FIELD_RULES);
+    const allowedFields = reading.docType === 'invoice' ? INVOICE_BUSINESS_FIELDS : null;
+    const fields = Object.keys(reading.fields ?? {}).filter((key) => key in FIELD_RULES
+      && (!allowedFields || allowedFields.includes(key)));
     if (!fields.length) {
       return { materialId: item.materialId, fields: [], labels: [],
         reason: `材料 ${item.materialId} 的看图读数没有可纠正字段；请替换原材料后重新解析` };

@@ -6,7 +6,8 @@ import { shapeOfBuffer, shapeMatches, SHAPES, SHAPE_LABELS } from './imageshape.
 
 // 图片材料的读取协议。
 //
-// 图片先由受管的本地 OCR 产生文字观测和字段候选；证据不足时才由模型视觉重读。
+// 图片默认由模型视觉直接读取；明确选择 ocr-assisted 时，先由受管本地 OCR
+// 产生文字观测和字段候选，证据不足时再由模型视觉重读。
 //
 // 但读不等于判。这里的整个设计就是为了让"模型读了一眼"不至于变成"模型说了算"：
 //
@@ -21,13 +22,20 @@ import { shapeOfBuffer, shapeMatches, SHAPES, SHAPE_LABELS } from './imageshape.
 //   4. 内核**结构校验**：位数、日期、金额守恒。这些是模型控制不了的算术，
 //      编出来的号码和金额过不了。守恒不平是一个**正常结果** —— 处置是重读，
 //      或者判定这个字段读不出，绝不是把某一位数字改到平。
-//   5. 校验通过也只是**字段候选**，不是已解析值。必须由用户在终端上对着定宽表格确认。
+//   5. 校验通过也只是**字段候选**，不是已解析值。必须由用户在最终整单明细表上确认。
 //      确认由"用户就着那张表点头、模型带着一次性凭据回传"构成 ——
 //      聊天里的"对的""没问题"不构成确认。
 //
 // 换句话说：材料仍然是证据，模型只是读它的人，内核和用户是两道闸。
 
 export const READING_VERSION = 1;
+
+export const IMAGE_RECOGNITION_ADAPTERS = Object.freeze({
+  VISION_DIRECT: 'vision-direct',
+  OCR_ASSISTED: 'ocr-assisted',
+});
+
+export const DEFAULT_IMAGE_RECOGNITION_ADAPTER = IMAGE_RECOGNITION_ADAPTERS.VISION_DIRECT;
 
 /**
  * 连着答错几次「看过的凭据」就不再让模型重试。
@@ -97,6 +105,14 @@ const FIELD_RULES = {
   title: { label: '标题', test: isText, hint: '凭证标题' },
   merchant: { label: '商户', test: isText, hint: '商户名称' },
 };
+
+export const INVOICE_BUSINESS_FIELDS = Object.freeze([
+  'netAmount', 'taxAmount', 'totalAmount',
+]);
+
+export const INVOICE_READING_FIELDS = Object.freeze([
+  'invoiceNumber', ...INVOICE_BUSINESS_FIELDS,
+]);
 
 /** 行程单逐段读数。和普通字段分开闭集，避免其他材料借 `segments` 塞任意结构。 */
 export const SEGMENT_RULES = {
@@ -269,16 +285,30 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
     if (!type) reasons.push(`docType 必须是这几个之一：${Object.keys(DOC_TYPES).join('、')}`);
 
     const fields = {};
+    const invoiceFields = raw.docType === 'invoice' ? new Set(INVOICE_READING_FIELDS) : null;
     const unreadable = Array.isArray(raw.unreadable) ? raw.unreadable.filter((k) => typeof k === 'string') : [];
+    for (const field of unreadable) {
+      if (invoiceFields && !invoiceFields.has(field)) {
+        reasons.push(`发票读数只允许隐藏身份和三项金额，不能回报 ${field}`);
+      }
+    }
     // 清晰度：模型抄这个字段时看得清不清楚。可选，但给了就得是闭集里的档位 ——
     // 自由发挥的形容词（"还行"、"一般"）在争议那一步摆给用户看时说明不了任何事。
     const clarity = {};
     for (const [k, v] of Object.entries(raw.clarity ?? {})) {
       if (!(k in FIELD_RULES)) { reasons.push(`clarity 里有不认识的字段 ${k}`); continue; }
+      if (invoiceFields && !invoiceFields.has(k)) {
+        reasons.push(`发票读数只允许隐藏身份和三项金额，不能回报 clarity.${k}`);
+        continue;
+      }
       if (!(v in CLARITY)) { reasons.push(`clarity.${k} 只能是：${Object.keys(CLARITY).join(' / ')}`); continue; }
       clarity[k] = v;
     }
     for (const [k, v] of Object.entries(raw.fields ?? {})) {
+      if (invoiceFields && !invoiceFields.has(k)) {
+        reasons.push(`发票读数只允许隐藏身份和三项金额，不能回报 fields.${k}`);
+        continue;
+      }
       const complaint = fieldComplaint(k, v);
       if (complaint) { reasons.push(complaint); continue; }
       fields[k] = v;
@@ -343,11 +373,13 @@ export function ingestReadings(sourceDir, inventory, task, submission) {
         + '别拿工具去补 —— 那件事我会转给用户处理。');
     }
 
-    // OCR 发票这一阶段只负责把价税合计交给确认表；发票号码等身份字段仍由
-    // 后续流程处理。模型视觉回退没有这层机器候选，继续要求号码以便做重复检查。
+    // 发票候选必须同时具备隐藏身份和三项金额。开票日期不是报销业务字段，
+    // 即使没有它也不阻断；但身份用于重复检查，三项金额用于 ERP 明细和守恒校验。
     if (raw.docType === 'invoice') {
-      if (!ocrSource && !fields.invoiceNumber) reasons.push('识别为发票但没有回报 20 位发票号码，无法做重复检查');
-      if (!fields.totalAmount) reasons.push('识别为发票但没有回报价税合计');
+      if (!fields.invoiceNumber) reasons.push('识别为发票但没有回报 20 位发票号码，无法做重复检查');
+      for (const field of INVOICE_BUSINESS_FIELDS) {
+        if (!fields[field]) reasons.push(`识别为发票但没有回报 ${FIELD_LABELS[field]}`);
+      }
     }
 
     // 行程单靠自己的票面合计金额和发票做确定性关联。看得见就逐字抄，
@@ -483,8 +515,8 @@ export function writeReading(task, reading) {
 }
 
 /**
- * 待用户过目的读数，按材料一行行摆出来。渲染成表格是上一层的事，
- * 这里只负责说清楚"这一批要确认的是哪几份、每份读到了什么"。
+ * 待最终整单明细确认的读数，按材料一行行摆出来。渲染成表格是上一层的事，
+ * 这里只负责说清楚"这一批有哪些候选、每份读到了什么"。
  *
  * 只收**这一版字节**上还没确认的读数：图换过了的、已经确认过的都不在里面。
  */
@@ -493,16 +525,21 @@ export function pendingConfirmations(task, inventory) {
   for (const m of inventory.materials) {
     const r = loadReading(task, m.materialId);
     if (!r || r.contentHash !== m.contentHash || r.confirmedAt) continue;
+    const visibleFields = r.docType === 'invoice' ? INVOICE_BUSINESS_FIELDS : null;
     rows.push({
       materialId: m.materialId,
       fileName: m.fileName,
       docType: r.docType,
       docTypeLabel: DOC_TYPES[r.docType]?.label ?? r.docType,
-      fields: Object.entries(r.fields ?? {}).map(([key, value]) =>
+      fields: Object.entries(r.fields ?? {})
+        .filter(([key]) => !visibleFields || visibleFields.includes(key))
+        .map(([key, value]) =>
         // 来源跟着值一起摆给用户看。一张表上同时有"我看图读的"和"你给的"时，
         // 用户要复核的重点完全不同 —— 前者要对着原件比，后者他自己就是来源。
         ({ key, label: FIELD_LABELS[key] ?? key, value, source: r.fieldSources?.[key] ?? r.source ?? 'vision' })),
-      unreadable: (r.unreadable ?? []).map((k) => FIELD_LABELS[k] ?? k),
+      unreadable: (r.unreadable ?? [])
+        .filter((key) => !visibleFields || visibleFields.includes(key))
+        .map((k) => FIELD_LABELS[k] ?? k),
       segments: (r.segments ?? []).map((segment, i) => ({
         index: i + 1,
         values: Object.entries(segment).map(([key, value]) => ({
@@ -520,9 +557,9 @@ export function pendingConfirmations(task, inventory) {
 }
 
 /**
- * 记下用户在**终端**上的确认。
+ * 记下用户在最终整单明细表上的确认。
  *
- * 确认由"用户就着内核渲染的那张表点头、模型带着当次一次性凭据回传"这一次往返构成。
+ * 确认由"用户就着内核渲染的整单明细表点头、模型带着当次一次性凭据回传"这一次往返构成。
  * 聊天里的"对的""没问题"不构成确认 —— 那句话没有凭据，内核看不见它，
  * 也就无从落成事实。凭据不对时上一层根本不会走到这里。
  */
@@ -596,18 +633,19 @@ export function disputeReading(task, materialId, corrections = {}) {
 }
 
 /**
- * 把已确认的读数投影成和 PDF 解析同构的结果，好让后面的重复检查、
- * 金额守恒、上传清单一视同仁地处理它们。**未确认的读数不投影** ——
- * 它们停在候选状态，构成阻塞。
+ * 把读数投影成和 PDF 解析同构的结果，好让后面的重复检查、金额守恒、上传清单
+ * 一视同仁地处理它们。未确认的读数只有在最终整单明细确认后才会被标记为确认，
+ * 但在此之前可以用 provisional 形态进入分类和最终清单。
  */
-export function projectReading(reading) {
-  if (!reading || !reading.confirmedAt) return null;
+export function projectReading(reading, { provisional = false } = {}) {
+  if (!reading || (!reading.confirmedAt && !provisional)) return null;
   const type = DOC_TYPES[reading.docType];
+  if (!type) return null;
   const f = reading.fields;
   const money = (v) => (v ? { text: v, cents: cents(v) } : undefined);
   const fields = {};
   if (f.invoiceNumber) fields.invoiceNumber = f.invoiceNumber;
-  if (f.issueDate) fields.issueDate = f.issueDate;
+  if (f.issueDate && reading.docType !== 'invoice') fields.issueDate = f.issueDate;
   if (money(f.netAmount)) fields.netAmount = money(f.netAmount);
   if (money(f.taxAmount)) fields.taxAmount = money(f.taxAmount);
   if (money(f.totalAmount)) fields.totalAmount = money(f.totalAmount);
@@ -620,15 +658,17 @@ export function projectReading(reading) {
     parseStatus: 'parsed',
     kind: reading.docType === 'invoice' ? 'image_invoice'
       : reading.docType === 'rail_ticket' ? 'rail_eticket' : reading.docType,
-    kindLabel: `${type.label}（看图读取，已确认）`,
+    kindLabel: `${type.label}（看图读取${reading.confirmedAt ? '，已确认' : '，待整单确认'}）`,
     role: type.role,
     fields,
     // 证据不是某一行文字，而是"哪份材料的哪串字节被谁在什么时候读的、什么时候确认的"。
     evidence: Object.fromEntries(Object.keys(fields).map((k) =>
-      [k, `看图读取，${reading.contentHash.slice(0, 12)}…，确认于 ${reading.confirmedAt}`])),
+      [k, `看图读取，${reading.contentHash.slice(0, 12)}…，${reading.confirmedAt
+        ? `确认于 ${reading.confirmedAt}` : '等待整单明细确认'}`])),
     candidates: [
       ...Object.entries(f)
-        .filter(([k]) => !(k in fields))
+        .filter(([k]) => !(k in fields)
+          && !(reading.docType === 'invoice' && !INVOICE_READING_FIELDS.includes(k)))
         .map(([field, value]) => ({ field, value, note: '看图读取的辅助字段', evidence: null })),
       ...(reading.segments?.length ? [{
         field: 'segments',
@@ -647,6 +687,7 @@ export function projectReading(reading) {
     // 答案得还在，不能在投影这一步被抹平成"看图读取"。
     fieldSources: Object.fromEntries(Object.keys(fields).map((k) =>
       [k, reading.fieldSources?.[k] ?? reading.source ?? 'vision'])),
-    visionSource: { readAt: reading.readAt, confirmedAt: reading.confirmedAt, unreadable: reading.unreadable },
+    visionSource: { readAt: reading.readAt, confirmedAt: reading.confirmedAt ?? null,
+      provisional: !reading.confirmedAt, unreadable: reading.unreadable },
   };
 }

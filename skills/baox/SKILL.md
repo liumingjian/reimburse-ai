@@ -44,8 +44,8 @@ node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材
 | kind | 你做的唯一一件事 | 回传 |
 |---|---|---|
 | `run` | 原样执行 `step.argv`，stdout 落盘成一个文件 | `next --after <token> --result <那个文件>` |
-| `read_images` | 逐个用 `Read` 打开 `step.images[].absPath`，按 `step.schemaPath` 那份模板把读数写进 `step.readingsPath`（形状从 `step.sightedShapes` 里选），再原样执行 `step.argv` | 同上 |
-| `extract_images` | 把完整 `step` 交给 `step.skill`；内部 Skill 批量 OCR，只对明确回退项看图，并执行 `step.argv` | 把 `step.resultPath` 交回 `next --after <token> --result <那个文件>` |
+| `read_images` | 默认图片 Adapter。逐个用 `Read` 打开 `step.images[].absPath`，按 `step.schemaPath` 那份模板把读数写进 `step.readingsPath`（形状从 `step.sightedShapes` 里选），再原样执行 `step.argv` | 同上 |
+| `extract_images` | 把完整 `step` 交给 `step.skill`；内部 Skill 先批量 OCR，候选不足的材料再用模型视觉兜底，并执行 `step.argv` | 把 `step.resultPath` 交回 `next --after <token> --result <那个文件>` |
 | `read_markdown` | 先读 `references/pdf-markitdown.md`，只读取 `step.materials` 的编号 Markdown并按工单模板填写候选；无法从 Markdown 确定就保留缺失或歧义，完成后执行 `step.argv` | 同上 |
 | `ask_user` | **原样贴出 `step.prompt`**（内核渲染好的问题），等用户在对话里回答，把答案按 `step.answersFormat` 写进 `step.answersPath` | `next --after <token> --result <答案文件>` |
 | `confirm_table` | **原样贴出 `step.table`**，请用户对着原件过目 | 认可 → `next --after <token>`；指错且 `step.acceptsCorrection` 是 `true` → 把用户的值按 `step.correctionFormat` 写进 `step.correctionPath`，再 `next --after <token> --correction <那个文件>` |
@@ -60,9 +60,12 @@ node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材
 `home_city_required` 把首次确认的城市记在当前 `tenant + account` 下；既有任务保留自己的城市快照。
 材料整理、金额分摊和费用类别完成后，用户须先确认 `classified_detail_confirmation` 才能进入 `select-task`；项目选择仅限本人项目簿，提交时重核身份和候选集合。
 
-`extract_images` 只交给工单指定的内部 Skill；`read_images` 仅用于它明确要求的视觉复核或读数驳回后的重读，看图前先读 `references/image-reading.md`。文本 PDF、MarkItDown 候选或空文本分支先读 `references/pdf-markitdown.md`，不打开 PDF 页图。两条底线在这里也说一遍：
-**识图只靠你自己看**（`tesseract`、`mdls`、`sips`、macOS Vision 之类的外部工具，读出来的东西内核不收），
-**看不到图就照实说**（不要按文件名和尺寸推断，也不要把整份读数填成 `unreadable` 交上去）。
+图片识别默认使用 `vision-direct`：模型视觉读取后，候选直接进入分类和费用事件；也可以由协调器明确选择
+`ocr-assisted`，先运行受管 OCR，缺字段或候选校验失败的图片再交给模型视觉。两条路径都不在单张材料完成后
+打断用户。发票业务上只保留不含税金额、税额和价税合计；发票号码仅作为隐藏技术身份用于去重，开票日期和开票方不进入最终明细表。
+`extract_images` 只交给工单指定的内部 Skill；`read_images` 用于默认视觉读取、视觉兜底或读数驳回后的重读，看图前先读 `references/image-reading.md`。文本 PDF、MarkItDown 候选或空文本分支先读 `references/pdf-markitdown.md`，不打开 PDF 页图。两条底线在这里也说一遍：
+`read_images` 只靠你自己看图（`tesseract`、`mdls`、`sips`、macOS Vision 之类的外部工具，读出来的东西内核不收）；
+`extract_images` 的 OCR 只能使用其受管运行时，缺口再由模型视觉补读。无论哪条路径，**看不到图就照实说**（不要按文件名和尺寸推断，也不要把整份读数填成 `unreadable` 交上去）。
 
 ### `dispute` 的三段
 

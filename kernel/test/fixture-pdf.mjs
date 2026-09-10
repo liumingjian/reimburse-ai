@@ -24,6 +24,30 @@ export function writeTextPdf(filePath, text) {
   fs.writeFileSync(filePath, pdf);
 }
 
+/** 写一份有文字层的多页 PDF，供 V1 多页发票边界测试使用。 */
+export function writeMultiPageTextPdf(filePath, pages) {
+  const pageObjects = pages.flatMap((text, index) => {
+    const pageId = 3 + index * 2;
+    const contentId = pageId + 1;
+    const content = `BT /F1 12 Tf 50 750 Td <${utf16beHex(text)}> Tj ET`;
+    return [
+      `${pageId} 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] `
+        + `/Resources << /Font << /F1 ${3 + pages.length * 2} 0 R >> >> /Contents ${contentId} 0 R >> endobj`,
+      `${contentId} 0 obj << /Length ${Buffer.byteLength(content)} >> stream\n${content}\nendstream endobj`,
+    ];
+  });
+  const fontId = 3 + pages.length * 2;
+  const pdf = [
+    '%PDF-1.4',
+    `1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj`,
+    `2 0 obj << /Type /Pages /Kids [${pages.map((_, index) => `${3 + index * 2} 0 R`).join(' ')}] /Count ${pages.length} >> endobj`,
+    ...pageObjects,
+    `${fontId} 0 obj << /Type /Font /Subtype /Type0 /BaseFont /Test /Encoding /Identity-H >> endobj`,
+    '%%EOF',
+  ].join('\n');
+  fs.writeFileSync(filePath, pdf);
+}
+
 export const TEST_INVOICE_TEXT = [
   '电子发票(普通发票)',
   '发票号码:12345678901234567890',

@@ -418,6 +418,7 @@ function projectLineItem(e) {
     lineId: e.eventId,
     eventId: e.eventId,
     voucherMaterialId: e.voucherMaterialId,
+    voucherFileName: e.voucherFileName ?? null,
     maskedNumber: e.maskedNumber,
     kind: e.kind,
     kindLabel: e.kindLabel ?? null,

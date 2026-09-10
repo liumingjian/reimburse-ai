@@ -33,13 +33,9 @@ export interface VatInvoiceDocument {
   type: "vat_invoice";
   fields: {
     invoiceNumber: FieldCandidate<string>;
-    issueDate: FieldCandidate<string>;
     netAmount: FieldCandidate<Money>;
     taxAmount: FieldCandidate<Money>;
     totalAmount: FieldCandidate<Money>;
-    sellerName: FieldCandidate<string>;
-    buyerName: FieldCandidate<string>;
-    itemName: FieldCandidate<string>;
   };
 }
 

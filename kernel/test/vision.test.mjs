@@ -38,7 +38,6 @@ const good = () => ({
   docType: 'invoice',
   fields: {
     invoiceNumber: '26427000000640558021',
-    issueDate: '2026-09-04',
     netAmount: '18.25', taxAmount: '0.55', totalAmount: '18.80',
   },
   unreadable: [],
@@ -63,18 +62,15 @@ test('本机 OCR 不需要模型看图凭据，但仍经过哈希与金额守恒
   assert.match(rejected.reasons.join(), /不含税金额 \+ 税额/);
 });
 
-test('本机 OCR 发票只提交价税合计也能进入确认表', () => {
+test('本机 OCR 发票缺少隐藏身份或任一金额时不能进入候选', () => {
   const reading = good();
   reading.source = 'ocr';
   reading.fields = { totalAmount: '18.80' };
   const v = submit(reading);
-  assert.equal(v.verdict, 'accepted', JSON.stringify(v.reasons));
-
-  const pending = pendingConfirmations(task, inventory)[0];
-  assert.deepEqual(pending.fields, [{
-    key: 'totalAmount', label: '价税合计', value: '18.80', source: 'ocr',
-  }]);
-  assert.deepEqual(pending.unreadable, []);
+  assert.equal(v.verdict, 'rejected');
+  assert.match(v.reasons.join(), /发票号码/);
+  assert.match(v.reasons.join(), /不含税金额/);
+  assert.match(v.reasons.join(), /税额/);
 });
 
 test('内容哈希对不上就作废 —— 读数必须绑定在确定的字节上', () => {
@@ -97,10 +93,12 @@ test('发票号码不是 20 位就打回', () => {
   assert.equal(submit(r).verdict, 'rejected');
 });
 
-test('未来的开票日期一定是读错了', () => {
+test('发票读数拒收开票日期等非业务字段', () => {
   const r = good();
   r.fields.issueDate = '2031-01-01';
-  assert.equal(submit(r).verdict, 'rejected');
+  const v = submit(r);
+  assert.equal(v.verdict, 'rejected');
+  assert.match(v.reasons.join(), /只允许隐藏身份和三项金额/);
 });
 
 test('表外的字段一律拒收，不给自由发挥留缝', () => {
@@ -108,7 +106,7 @@ test('表外的字段一律拒收，不给自由发挥留缝', () => {
   r.fields.projectCode = '111454';
   const v = submit(r);
   assert.equal(v.verdict, 'rejected');
-  assert.match(v.reasons.join(), /不认识的字段/);
+  assert.match(v.reasons.join(), /不认识的字段|只允许隐藏身份和三项金额/);
 });
 
 test('说是发票却给不出发票号码，无法做重复检查', () => {
@@ -148,7 +146,8 @@ test('改了字段再提交，旧的确认不再算数 —— 用户没看过新
   assert.ok(loadReading(task, material.materialId).confirmedAt);
 
   const changed = good();
-  changed.fields.sellerName = '某某科技有限公司';
+  changed.fields.netAmount = '18.26';
+  changed.fields.totalAmount = '18.81';
   submit(changed);
   const after = loadReading(task, material.materialId);
   assert.equal(after.confirmedAt, null, '字节没变但读数变了，确认必须失效');
