@@ -30,6 +30,16 @@ export const TEST_INVOICE_TEXT = [
   '价税合计(大写)壹拾捌元捌角(小写)¥18.80',
 ].join('\n');
 
+export const TEST_LEGACY_INVOICE_TEXT = [
+  '北京增值税电子普通发票',
+  '发票代码:011002301811',
+  '发票号码:25627655',
+  '开票日期:2024年07月04日',
+  '*旅游服务*代订车服务费',
+  '合计 ￥109.74 ￥6.58',
+  '价税合计（大写）壹佰壹拾陆元叁角贰分（小写）￥116.32',
+].join('\n');
+
 export const TEST_TRANSPORT_INVOICE_TEXT = [
   '电子发票(普通发票)',
   '旅客运输服务',

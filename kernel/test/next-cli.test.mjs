@@ -5,25 +5,26 @@ import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { seedReadyRuntimes } from './runtime-fixture.mjs';
 
 // 模型敲的是命令，不是模块。上面那一层测的是判定，这一层测的是**那条命令本身** ——
 // 参数怎么解析、退出码是几、输出是不是一份契约里那样的 JSON。
 //
-// 不用真 Chrome：把 CDP 端口指到一个没人监听的口子上，环境判定就停在
-// env_chrome_down，一路都是确定的。这也是这套分层的意义 —— 没有 Chrome 也测得动。
-// CDP 端口指到 1：普通进程绑不上这个特权端口，所以它**永远**没人监听，
-// 环境判定稳稳停在 env_chrome_down。原来用的 9457 只是"大概没人用"，
-// 而真机上跑着 baox 自己那个 Chrome 时它就是被占的，整组用例跟着塌。
-const CLOSED_PORT = '1';
+// 不用真实浏览器：测试明确不给 task space，环境判定停在用户可处理的
+// env_chrome_down。这验证的是 CLI 的阻断契约，不会启动 ego-browser。
 
 const BIN = path.join(path.dirname(path.dirname(url.fileURLToPath(import.meta.url))), 'bin', 'baox.mjs');
 
 function baox(args, env = {}) {
   const home = env.BAOX_HOME ?? fs.mkdtempSync(path.join(os.tmpdir(), 'baox-cli-'));
+  const childEnv = { ...process.env, BAOX_HOME: home, ...seedReadyRuntimes(home), ...env };
+  delete childEnv.BAOX_EGO_TASK_SPACE;
+  delete childEnv.BAOX_EGO_BROWSER;
+  delete childEnv.BAOX_CDP_PORT;
   try {
     const stdout = execFileSync(process.execPath, [BIN, ...args], {
       encoding: 'utf8',
-      env: { ...process.env, BAOX_HOME: home, BAOX_CDP_PORT: CLOSED_PORT },
+      env: childEnv,
     });
     return { code: 0, json: JSON.parse(stdout), home };
   } catch (err) {
@@ -37,27 +38,42 @@ const materials = () => {
   return dir;
 };
 
-test('baox next --dir：一条命令拿回一个可执行的 step', () => {
+test('baox next --dir：缺 task space 时返回可执行的用户处理步骤', () => {
   const dir = materials();
-  const { code, json } = baox(['next', '--dir', dir]);
-  assert.equal(code, 0);
+  const { code, json } = baox(['next', '--dir', dir], { BAOX_BROWSER: 'ego' });
+  assert.equal(code, 2);
   assert.equal(json.command, 'next');
   assert.equal(json.schemaVersion, 1);
   assert.equal(json.state, 'env_chrome_down');
-  assert.equal(json.step.kind, 'run');
-  assert.equal(json.actor, 'kernel');
+  assert.equal(json.step.kind, 'tell_user');
+  assert.equal(json.actor, 'user');
+  assert.equal(json.blockedBy[0].kind, 'ego_task_space_unavailable');
+  assert.match(json.speak, /BAOX_EGO_TASK_SPACE/);
   assert.ok(json.speak, '得有一句能原样念的话');
   assert.equal(json.stepToken.length, 32);
-  assert.ok(json.step.argv.at(-1) === 'chrome-up' && json.step.argv[1].endsWith('baox.mjs'),
-    'argv 是一条完整命令行，模型原样执行');
+  assert.equal(json.step.argv, undefined, 'task space 未配置时不得发出浏览器启动命令');
+});
+
+test('browser-open 默认走系统 URL 打开接口并返回 transport 结果', () => {
+  const url = 'http://erp.antute.com.cn/k3cloud/html5/index.aspx';
+  const { code, json } = baox(['browser-open', '--url', url], {
+    BAOX_NO_AUTO_OPEN: '1',
+  });
+  assert.equal(code, 0);
+  assert.equal(json.command, 'browser-open');
+  assert.equal(json.browserMode, 'system');
+  assert.equal(json.transport, 'system');
+  assert.equal(json.url, url);
+  assert.equal(json.status, 'skipped');
 });
 
 test('连着问三次，同一个状态、同一个凭据', () => {
   const dir = materials();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-cli-'));
-  const a = baox(['next', '--dir', dir], { BAOX_HOME: home });
-  const b = baox(['next', '--dir', dir], { BAOX_HOME: home });
-  const c = baox(['next', '--dir', dir], { BAOX_HOME: home });
+  const env = { BAOX_HOME: home, BAOX_BROWSER: 'ego' };
+  const a = baox(['next', '--dir', dir], env);
+  const b = baox(['next', '--dir', dir], env);
+  const c = baox(['next', '--dir', dir], env);
   assert.equal(b.json.state, a.json.state);
   assert.equal(c.json.state, a.json.state);
   assert.equal(b.json.stepToken, a.json.stepToken);
@@ -67,11 +83,12 @@ test('连着问三次，同一个状态、同一个凭据', () => {
 test('只带 --after 也答得上来：内核自己记得上次问的是哪个目录', () => {
   const dir = materials();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-cli-'));
-  const first = baox(['next', '--dir', dir], { BAOX_HOME: home });
-  const back = baox(['next', '--after', first.json.stepToken], { BAOX_HOME: home });
-  assert.equal(back.code, 0);
+  const env = { BAOX_HOME: home, BAOX_BROWSER: 'ego' };
+  const first = baox(['next', '--dir', dir], env);
+  const back = baox(['next', '--after', first.json.stepToken], env);
+  assert.equal(back.code, 2);
   assert.equal(back.json.state, first.json.state);
-  assert.equal(back.json.ignored.reason, 'no_result', '这一步是 run，没交输出就不算做过');
+  assert.equal(back.json.ignored, undefined, 'tell_user 不需要伪造命令结果');
 });
 
 test('只带 --after 时，内核记得的是那个目录本身，不只是它的指纹', () => {
@@ -86,31 +103,37 @@ test('只带 --after 时，内核记得的是那个目录本身，不只是它�
 test('过期凭据被忽略，当前步骤原样重发，不报错', () => {
   const dir = materials();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-cli-'));
-  const first = baox(['next', '--dir', dir], { BAOX_HOME: home });
-  const stale = baox(['next', '--after', 'f'.repeat(32), '--dir', dir], { BAOX_HOME: home });
-  assert.equal(stale.code, 0, '不可跳步是机制，不是错误');
+  const env = { BAOX_HOME: home, BAOX_BROWSER: 'ego' };
+  const first = baox(['next', '--dir', dir], env);
+  const stale = baox(['next', '--after', 'f'.repeat(32), '--dir', dir], env);
+  assert.equal(stale.code, 2, '环境硬阻塞仍然是退出码 2');
   assert.equal(stale.json.ignored.reason, 'stale_token');
   assert.equal(stale.json.stepToken, first.json.stepToken);
 });
 
-test('--result 指着一个空文件，等于没交结果', () => {
+test('--result 指着一个空文件，也不能解除 task space 阻塞', () => {
   const dir = materials();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-cli-'));
-  const first = baox(['next', '--dir', dir], { BAOX_HOME: home });
+  const env = { BAOX_HOME: home, BAOX_BROWSER: 'ego' };
+  const first = baox(['next', '--dir', dir], env);
   const empty = path.join(home, 'empty.json');
   fs.writeFileSync(empty, '');
-  const claimed = baox(['next', '--after', first.json.stepToken, '--result', empty], { BAOX_HOME: home });
-  assert.equal(claimed.json.ignored.reason, 'no_result');
+  const claimed = baox(['next', '--after', first.json.stepToken, '--result', empty], env);
+  assert.equal(claimed.code, 2);
+  assert.equal(claimed.json.ignored, undefined, 'tell_user 不接收命令结果');
   assert.equal(claimed.json.state, 'env_chrome_down');
+  assert.equal(claimed.json.step.kind, 'tell_user');
 });
 
 test('这一步没有可纠正的读数时，纠正不会被悄悄收下', () => {
   const dir = materials();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-cli-'));
-  const first = baox(['next', '--dir', dir], { BAOX_HOME: home });
+  const first = baox(['next', '--dir', dir], { BAOX_HOME: home, BAOX_BROWSER: 'ego' });
   const corr = path.join(home, 'c.json');
   fs.writeFileSync(corr, '{"totalAmount":"51.63"}');
-  const r = baox(['next', '--after', first.json.stepToken, '--correction', corr], { BAOX_HOME: home });
+  const r = baox(['next', '--after', first.json.stepToken, '--correction', corr], {
+    BAOX_HOME: home, BAOX_BROWSER: 'ego',
+  });
   assert.equal(r.json.ignored.reason, 'correction_not_applicable');
 });
 

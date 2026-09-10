@@ -41,8 +41,8 @@ test('第一次认身份走终端表格，不弹本地页面', () => {
   assert.equal(shaped.step.outsourceable, false, '要人表态的一步不能外包给子 Agent');
   assert.ok(!JSON.stringify(shaped.step).includes('confirm-identity'),
     '这一步不再让模型去跑那条会开页面的命令');
-  assert.ok(!/页面|浏览器/.test(shaped.speak),
-    `念给用户听的话里不该再提页面：${shaped.speak}`);
+  assert.ok(!/弹出.*页面|本地页面|浏览器里打开/.test(shaped.speak),
+    `身份确认不能要求打开本地页面：${shaped.speak}`);
 });
 
 test('在终端上认下的那一个人，真的落进 identity.json', async () => {
@@ -100,7 +100,7 @@ test('连着交空读数，就不再让模型重试，转成摆给用户的待�
   for (let i = 0; i < MAX_EMPTY_READINGS; i += 1) {
     ingestReadings(src, inventory, solo, { version: 1, readings: [emptyReading('unreadable')] });
   }
-  const classification = classifyInventory(src, inventory, solo);
+  const classification = classifyInventory(src, inventory, solo, { mode: 'legacy' });
   const items = classifyOpenItems(classification);
   const blind = items.find((x) => x.kind === 'vision_unavailable');
   assert.ok(blind, `到了上限要有一条 vision_unavailable：${items.map((x) => x.kind).join(',')}`);

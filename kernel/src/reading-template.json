@@ -4,8 +4,8 @@
     "materialId": "step.images 里那一项的 materialId，原样抄",
     "contentHash": "step.images 里那一项的 contentHash，原样抄",
     "sighted.shape": "你正看着的这张图是什么形状，从 step.sightedShapes 里挑一个（tall / portrait / square / landscape / wide）。这一栏答不对，整份读数不算数——它是「这张图真的打开过」的凭据，说「看不清」也要先答对它",
-    "fields": "票面上看得见的字符，逐字抄。不要计算、不要推断、不要补全；金额守恒式不平就重看一遍，绝不调整某一位数字去凑平",
-    "segments": "仅 ride_itinerary 的多段行程填写。逐段按 step.readingContract.docTypes.ride_itinerary.segments 的闭集填写；数组顺序必须与票面顺序一致。单段行程继续填写 fields 里的 travelDate / city / origin / destination 即可",
+    "fields": "票面上看得见的字符，逐字抄。不要计算、不要推断、不要补全；金额守恒式不平就重看一遍，绝不调整某一位数字去凑平。ride_itinerary 票面可见的整体合计/共计必须抄进顶层 fields.totalAmount，它用于和发票关联，不要用 segments[].amount 求和代替",
+    "segments": "仅 ride_itinerary 的多段行程填写。逐段按 step.readingContract.docTypes.ride_itinerary.segments 的闭集填写；数组顺序必须与票面顺序一致。填写 segments[] 后，每段必须带 travelDate，顶层 fields.travelDate 不再强制；没有 segments[] 的平铺行程单必须填写 fields.travelDate，看不清时把 travelDate 明确列入 unreadable，不能用 issueDate 代替。单段行程继续填写 fields 里的 city / origin / destination；逐段金额写 segments[].amount，不能代替顶层 fields.totalAmount",
     "unreadable": "看着这张图但认不出的字段名。它说的是「认不出」，不是「没看」",
     "clarity": "可选，但请填。每个字段你看得清不清楚：clear（清楚）/ blurry（发虚，但认得出）。用户以后说某个数不对时，内核要把你当时这句判断摆给他看——「我读到 10，但那一位当时就发虚」和「我读到 10，清清楚楚」是两种完全不同的证据",
     "notes": "可选。想说明的话，比如哪一处被反光盖住了"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 打一个可以直接发给试用同事的压缩包：三个 Skill 目录 + 安装说明，零依赖、不联网。
+# 打一个可以直接发给试用同事的压缩包：四个 Skill 目录 + 安装说明。
 # 用法：bash scripts/release.sh [--allow-dirty]
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -27,11 +27,11 @@ name="baox-${version}-${sha}"
 node --check dist/baox/kernel/bin/baox.mjs
 
 rm -rf release && mkdir -p release
-(cd dist && zip -rq "../release/${name}.zip" baox baox-recover baox-setup INSTALL.md)
+(cd dist && zip -rq "../release/${name}.zip" baox baox-recover baox-setup extract-reimbursement-images INSTALL.md)
 
 echo "打好了：release/${name}.zip"
 ls -lh "release/${name}.zip" | awk '{print "  大小 " $5}'
 shasum -a 256 "release/${name}.zip" 2>/dev/null || sha256sum "release/${name}.zip"
 echo
-echo "发给同事时带上一句：解压后把 baox / baox-recover / baox-setup 三个目录一起拷进 <项目>/.claude/skills/，"
+echo "发给同事时带上一句：解压后把四个 Skill 目录一起安装；Codex 用 <项目>/.agents/skills/，Claude Code 用 <项目>/.claude/skills/，"
 echo "其余照 INSTALL.md 走。"

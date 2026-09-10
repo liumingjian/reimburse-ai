@@ -23,9 +23,13 @@ const { nextResponse } = await import('../src/next.mjs');
 const { sourceKeyOf } = await import('../src/workspace.mjs');
 const { SCHEMA_VERSION } = await import('../src/state.mjs');
 const { applyTerminalVerdict } = await import('../src/confirm.mjs');
+const { writeHomeCity } = await import('../src/home-city.mjs');
+const { writeBinding } = await import('../src/binding.mjs');
 
 const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const me = { displayName: '刘明建', account: 'luo.liu', tenant: '5f1f13f6dde29e' };
+writeBinding(me);
+writeHomeCity(me, '北京市');
 
 /** 环境已经就绪的那一半观测。它是喂进来的，不是采出来的。 */
 const READY = {
@@ -53,16 +57,23 @@ function materials(rels) {
 
 /** 问一句"现在该做什么"。环境那一半喂现成的，材料那一半是真采的。 */
 const ask = async (dir, over = {}) => nextResponse({
-  observation: { ...READY, ...await observeTask(dir) },
+  observation: { ...READY, ...await observeTask(dir, { mode: 'legacy' }) },
   sourceKey: sourceKeyOf(dir),
   ...over,
 });
 
 /** 把内核给的那条命令原样执行 —— 一个字都不改，模型也是这么做的。 */
+const LEGACY_COMPARISON_COMMANDS = new Set([
+  'classify', 'ocr-request', 'ocr-submit', 'reread-submit', 'events', 'select-task',
+  'lines', 'history', 'catalog',
+]);
 function runStep(r) {
   assert.ok(Array.isArray(r.step.argv), `${r.state} 这一步没有可执行的 argv`);
+  const command = r.step.argv[2];
+  const argv = LEGACY_COMPARISON_COMMANDS.has(command)
+    ? [...r.step.argv, '--legacy-comparison'] : r.step.argv;
   try {
-    return execFileSync(r.step.argv[0], r.step.argv.slice(1), { encoding: 'utf8' });
+    return execFileSync(argv[0], argv.slice(1), { encoding: 'utf8' });
   } catch (err) {
     // 退出码 2 是"还有硬阻塞"，命令本身跑成了 —— 盘点、分类都会这样收场。
     if (err.status === 2) return err.stdout;
@@ -92,7 +103,9 @@ test('从环境就绪一路问到「该看图了」，全程只有 baox next 这
   r = await ask(dir, { after: r.stepToken, hasResult: true });
   assert.equal(r.state, 'image_awaiting_reading', `实际停在 ${r.state}：${r.speak}`);
   assert.equal(r.actor, 'model');
-  assert.equal(r.step.kind, 'read_images');
+  assert.equal(r.step.kind, 'extract_images');
+  assert.equal(r.step.skill, 'extract-reimbursement-images');
+  assert.equal(r.step.request.contractVersion, 1);
   assert.deepEqual(r.step.images.map((i) => i.fileName), ['fengyun-1.png']);
   assert.ok(fs.existsSync(r.step.images[0].absPath), '给的绝对路径得真打得开');
   assert.ok(fs.existsSync(r.step.schemaPath));

@@ -1,12 +1,14 @@
 # 自己解 PDF 取字，不引入解析库，也不做 OCR
 
+> **状态：已被 [ADR-0011](0011-markitdown-agent-pdf-candidates.md) 取代（文本 PDF 主路径）。** 本文记录自研 PDF 取字器的历史决定和迁移期对照边界；当前文本 PDF 使用 MarkItDown 生成 Markdown 候选，再由内核做哈希、证据、金额和日期校验。本文仍保留“Node 内核不内置 OCR；空文本 PDF 必须阻塞”的范围。
+
 发票事实提取的第一步是从 PDF 里取出票面文字。内核自带一个约 500 行的 PDF 取字实现（`kernel/src/pdftext.mjs`）：全文扫描间接对象、展开对象流、用 Node 内建 `zlib` 解 `FlateDecode`、解析 `/ToUnicode` CMap、跟踪文本矩阵与图形矩阵，最后按坐标拼回行。
 
 **内核自己不做 OCR。** PNG/JPG 以及取不出文字的扫描 PDF 一律落到 `needs_ocr` / `no_text`。
 
 > **修订（2026-09-05）**：下面「图片发票一律阻塞、v1 不做 OCR」的结论已被 [ADR-0004](0004-vision-reads-images.md) 取代 ——
 > 图片改由 Claude Code 自身的视觉能力读取，读数经内核结构校验和用户确认后成为事实。
-> 本文关于 PDF 取字和内核零依赖的结论不变：内核仍然不内置、也不调用任何 OCR。
+> 本文关于空文本 PDF 不自动转视觉和 Node 内核不调用 OCR 的结论仍有效；文本 PDF 转换器与候选字段来源以 [ADR-0011](0011-markitdown-agent-pdf-candidates.md) 为准。
 
 ## Considered Options
 

@@ -1,0 +1,280 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "baox://pdf-markdown-candidate/v1",
+  "title": "baox PDF Markdown candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "materialId",
+    "contentHash",
+    "source",
+    "documentType",
+    "kind",
+    "kindEvidence",
+    "fields",
+    "segments",
+    "fieldEvidence",
+    "fieldStatus",
+    "fieldBasis",
+    "unreadable",
+    "issues"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "materialId": { "type": ["string", "null"] },
+    "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "converter", "converterVersion", "runtimeLockHash", "markdownHash"],
+      "properties": {
+        "kind": { "const": "agent_from_markdown" },
+        "converter": { "const": "markitdown" },
+        "converterVersion": { "const": "0.1.7" },
+        "runtimeLockHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "markdownHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "documentType": {
+      "enum": ["invoice", "ride_itinerary", "hotel_folio"]
+    },
+    "kind": {
+      "enum": [
+        "vat_common",
+        "vat_special",
+        "passenger_transport",
+        "rail_eticket",
+        "ride_itinerary",
+        "hotel_folio"
+      ]
+    },
+    "kindEvidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/evidence" }
+    },
+    "fields": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invoiceCode": { "type": ["string", "null"] },
+        "invoiceNumber": { "type": ["string", "null"] },
+        "issueDate": { "type": ["string", "null"] },
+        "netAmount": { "type": ["string", "null"] },
+        "taxAmount": { "type": ["string", "null"] },
+        "totalAmount": { "type": ["string", "null"] },
+        "sellerName": { "type": ["string", "null"] },
+        "buyerName": { "type": ["string", "null"] },
+        "itemName": { "type": ["string", "null"] },
+        "travelDate": { "type": ["string", "null"] },
+        "city": { "type": ["string", "null"] },
+        "origin": { "type": ["string", "null"] },
+        "destination": { "type": ["string", "null"] },
+        "railTrain": { "type": ["string", "null"] },
+        "railFrom": { "type": ["string", "null"] },
+        "railTo": { "type": ["string", "null"] },
+        "checkIn": { "type": ["string", "null"] },
+        "checkOut": { "type": ["string", "null"] },
+        "folioTotal": { "type": ["string", "null"] },
+        "segmentCount": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "segments": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/segment" }
+    },
+    "fieldEvidence": {
+      "type": "object",
+      "propertyNames": { "enum": [
+        "invoiceCode", "invoiceNumber", "issueDate", "netAmount", "taxAmount", "totalAmount",
+        "sellerName", "buyerName", "itemName", "travelDate", "city", "origin", "destination",
+        "railTrain", "railFrom", "railTo", "checkIn", "checkOut", "folioTotal", "segmentCount"
+      ] },
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "items": { "$ref": "#/$defs/evidence" }
+      }
+    },
+    "fieldStatus": {
+      "type": "object",
+      "propertyNames": { "enum": [
+        "invoiceCode", "invoiceNumber", "issueDate", "netAmount", "taxAmount", "totalAmount",
+        "sellerName", "buyerName", "itemName", "travelDate", "city", "origin", "destination",
+        "railTrain", "railFrom", "railTo", "checkIn", "checkOut", "folioTotal", "segmentCount"
+      ] },
+      "additionalProperties": {
+        "enum": ["explicit", "derived", "ambiguous", "missing", "unreadable"]
+      }
+    },
+    "fieldBasis": {
+      "type": "object",
+      "propertyNames": { "enum": [
+        "invoiceCode", "invoiceNumber", "issueDate", "netAmount", "taxAmount", "totalAmount",
+        "sellerName", "buyerName", "itemName", "travelDate", "city", "origin", "destination",
+        "railTrain", "railFrom", "railTo", "checkIn", "checkOut", "folioTotal", "segmentCount"
+      ] },
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "unreadable": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string" }
+    },
+    "issues": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/issue" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "enum": ["vat_common", "vat_special", "passenger_transport"] } } },
+      "then": {
+        "properties": {
+          "documentType": { "const": "invoice" },
+          "fields": { "propertyNames": { "$ref": "#/$defs/invoiceFieldName" } },
+          "fieldEvidence": { "propertyNames": { "$ref": "#/$defs/invoiceFieldName" } },
+          "fieldStatus": { "propertyNames": { "$ref": "#/$defs/invoiceFieldName" } },
+          "fieldBasis": { "propertyNames": { "$ref": "#/$defs/invoiceFieldName" } },
+          "unreadable": { "items": { "$ref": "#/$defs/invoiceFieldName" } },
+          "segments": { "maxItems": 0 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "rail_eticket" } } },
+      "then": {
+        "properties": {
+          "documentType": { "const": "invoice" },
+          "fields": { "propertyNames": { "$ref": "#/$defs/railFieldName" } },
+          "fieldEvidence": { "propertyNames": { "$ref": "#/$defs/railFieldName" } },
+          "fieldStatus": { "propertyNames": { "$ref": "#/$defs/railFieldName" } },
+          "fieldBasis": { "propertyNames": { "$ref": "#/$defs/railFieldName" } },
+          "unreadable": { "items": { "$ref": "#/$defs/railFieldName" } },
+          "segments": { "maxItems": 0 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "ride_itinerary" } } },
+      "then": {
+        "properties": {
+          "documentType": { "const": "ride_itinerary" },
+          "fields": { "propertyNames": { "$ref": "#/$defs/rideFieldName" } },
+          "fieldEvidence": { "propertyNames": { "$ref": "#/$defs/rideFieldName" } },
+          "fieldStatus": { "propertyNames": { "$ref": "#/$defs/rideFieldName" } },
+          "fieldBasis": { "propertyNames": { "$ref": "#/$defs/rideFieldName" } },
+          "unreadable": { "items": { "$ref": "#/$defs/rideFieldName" } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "hotel_folio" } } },
+      "then": {
+        "properties": {
+          "documentType": { "const": "hotel_folio" },
+          "fields": { "propertyNames": { "$ref": "#/$defs/hotelFieldName" } },
+          "fieldEvidence": { "propertyNames": { "$ref": "#/$defs/hotelFieldName" } },
+          "fieldStatus": { "propertyNames": { "$ref": "#/$defs/hotelFieldName" } },
+          "fieldBasis": { "propertyNames": { "$ref": "#/$defs/hotelFieldName" } },
+          "unreadable": { "items": { "$ref": "#/$defs/hotelFieldName" } },
+          "segments": { "maxItems": 0 }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "invoiceFieldName": {
+      "enum": [
+        "invoiceCode", "invoiceNumber", "issueDate", "netAmount", "taxAmount", "totalAmount",
+        "sellerName", "buyerName", "itemName", "travelDate", "city", "origin", "destination"
+      ]
+    },
+    "railFieldName": {
+      "enum": [
+        "invoiceCode", "invoiceNumber", "issueDate", "netAmount", "taxAmount", "totalAmount",
+        "sellerName", "buyerName", "itemName", "travelDate", "city", "railTrain", "railFrom", "railTo"
+      ]
+    },
+    "rideFieldName": {
+      "enum": ["travelDate", "city", "origin", "destination", "totalAmount", "segmentCount"]
+    },
+    "hotelFieldName": {
+      "enum": ["checkIn", "checkOut", "folioTotal", "city"]
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lineStart", "lineEnd", "quote"],
+      "properties": {
+        "lineStart": { "type": "integer", "minimum": 1 },
+        "lineEnd": { "type": "integer", "minimum": 1 },
+        "page": { "type": "integer", "minimum": 1 },
+        "quote": { "type": "string", "minLength": 1 }
+      }
+    },
+    "segment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "travelDate",
+        "time",
+        "city",
+        "origin",
+        "destination",
+        "amount",
+        "fieldEvidence",
+        "fieldStatus",
+        "unreadable"
+      ],
+      "properties": {
+        "index": { "type": "integer", "minimum": 1 },
+        "travelDate": { "type": ["string", "null"] },
+        "time": { "type": ["string", "null"] },
+        "city": { "type": ["string", "null"] },
+        "origin": { "type": ["string", "null"] },
+        "destination": { "type": ["string", "null"] },
+        "amount": { "type": ["string", "null"] },
+        "fieldEvidence": {
+          "type": "object",
+          "propertyNames": { "enum": ["travelDate", "time", "city", "origin", "destination", "amount"] },
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/evidence" }
+          }
+        },
+        "fieldStatus": {
+          "type": "object",
+          "propertyNames": { "enum": ["travelDate", "time", "city", "origin", "destination", "amount"] },
+          "additionalProperties": {
+            "enum": ["explicit", "derived", "ambiguous", "missing", "unreadable"]
+          }
+        },
+        "fieldBasis": {
+          "type": "object",
+          "propertyNames": { "enum": ["travelDate", "time", "city", "origin", "destination", "amount"] },
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "unreadable": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1, "pattern": ".*\\S.*" },
+        "field": { "type": "string", "minLength": 1, "pattern": ".*\\S.*" },
+        "index": { "type": "integer", "minimum": 1 },
+        "note": { "type": "string", "minLength": 1, "pattern": ".*\\S.*" }
+      }
+    }
+  }
+}

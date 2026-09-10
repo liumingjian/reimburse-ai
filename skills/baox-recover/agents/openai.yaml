@@ -1,0 +1,3 @@
+interface:
+  display_name: "Baox ERP Recovery"
+  short_description: "Internal ERP recovery runner for baox tasks"

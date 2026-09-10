@@ -27,9 +27,13 @@ const { applyTerminalVerdict } = await import('../src/confirm.mjs');
 const { CONVERGENCE, openDisputes } = await import('../src/dispute.mjs');
 const { loadReading, loadUnreadable } = await import('../src/vision.mjs');
 const { takeInventory } = await import('../src/inventory.mjs');
+const { writeHomeCity } = await import('../src/home-city.mjs');
+const { writeBinding } = await import('../src/binding.mjs');
 
 const repo = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const me = { displayName: '刘明建', account: 'luo.liu', tenant: '5f1f13f6dde29e' };
+writeBinding(me);
+writeHomeCity(me, '北京市');
 const READY = {
   schemaVersion: SCHEMA_VERSION,
   nodeVersion: process.versions.node,
@@ -519,7 +523,7 @@ test('PDF 那条路上的字段来源记内核 —— 那是内核自己从文�
   runStep(await ask(dir));
   const { classifyInventory } = await import('../src/classify.mjs');
   const inv = await takeInventory(dir);
-  const c = classifyInventory(dir, inv, taskOf(dir));
+  const c = classifyInventory(dir, inv, taskOf(dir), { mode: 'legacy' });
   const parsed = c.results.find((r) => r.parseStatus === 'parsed');
   assert.ok(parsed, '这份 PDF 该解析得出来');
   assert.deepEqual(new Set(Object.values(parsed.fieldSources)), new Set(['kernel']));

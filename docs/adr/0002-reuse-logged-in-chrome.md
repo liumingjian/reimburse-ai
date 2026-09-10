@@ -1,5 +1,9 @@
 # 复用用户已登录的 Chrome，由用户自行完成 ERP 登录
 
+> 2026-09-09 浏览器决定已调整：正式页面使用系统默认浏览器，ego 仅供显式自动化 QA。当前阶段只做材料准备和 ERP 只读核验，不执行填报。以下 Chrome/CDP 独占控制方案保留为历史记录；当前行为与验证范围见 [默认浏览器 QA](../qa/default-browser-2026-09-09.md)。
+
+> 当前范围：本文的“零依赖”只适用于 Node 内核和 ERP 浏览器外壳，即不带 npm 依赖；文本 PDF 的 MarkItDown 路径另需锁定的 Python/uv 运行时，见 [ADR-0011](0011-markitdown-agent-pdf-candidates.md)。本文早期关于所有运行时均可纯文件拷贝的表述只保留为历史记录。
+
 ERP 自动化不自带浏览器，而是接管用户自己的 Chrome：Skill 引导用户以远程调试方式启动浏览器，**用户自己登录 ERP**，随后内核通过调试协议独占控制该浏览器完成上传、导入和保存草稿。
 
 这样选有三个理由：不需要下载几百 MB 的浏览器运行时（而 Claude Code 插件与 Skill 都没有任何 postinstall 机制，实测确认插件安装只是文件拷贝，连声明的 npm 依赖都不会装）；ERP 凭据从头到尾留在用户手里，baox 不接触账号密码；以及它天然契合共识里「用户只需完成一次会话授权、使用已登录的 ERP 浏览器会话」。
@@ -19,7 +23,7 @@ ERP 自动化不自带浏览器，而是接管用户自己的 Chrome：Skill 引
 
 ## 补记（2026-09-05，实测后修订）
 
-- **内核零依赖。** Node 21+ 自带全局 `WebSocket`，CDP 不再需要 `ws` 之类的包，HTTP 服务器也是内建的。因此「安装内核依赖」这一步整个消失，安装退化成纯文件拷贝，不需要联网、不需要 npm、不需要管理员权限。代价是内核要求 Node ≥ 21，`doctor` 对此硬检查。
+- **Node 内核零 npm 依赖。** Node 21+ 自带全局 `WebSocket`，CDP 不再需要 `ws` 之类的包，HTTP 服务器也是内建的。因此 Node 内核不需要 npm 安装或管理员权限，内核可随 Skill 文件拷贝运行。文本 PDF 的 MarkItDown 依赖不属于这条承诺，必须按 [ADR-0011](0011-markitdown-agent-pdf-candidates.md) 预置并锁定 Python/uv 运行时；内核要求 Node ≥ 21，`doctor` 对此硬检查。
 - **独立 profile 与用户日常 Chrome 可以共存。** 在 mac 上实测：用户 Chrome 的 32 个进程照常运行，`--user-data-dir` + `--remote-debugging-port=9333` 另起一个实例，调试端口只 LISTEN 在 `127.0.0.1`。这也意味着用户需要在这个专用 profile 里登录一次 ERP（登录态随 profile 持久化，不是每次都登）。
 - **登录态识别不能靠通用启发式，只能用 ERP 自己的结构信号。** 实测 K3Cloud 8.2.0：登录页 URL 里没有 `login`；**已登录的主控制台里有 4 个隐藏的 `input[type=password]`**（改密弹窗），所以密码框永远不能当未登录信号；`Getk3cloudloginInfo()` 在命名用户登录下返回 `null`，没有现成的身份全局变量；首屏加载慢，`document.readyState` 会长时间停在 `loading`。
   最终采用的两个信号缺一不可：主控制台的 `span.kd-mainconsole-usernametext`（显示名，会话信号）与 localStorage 的 `k3cloudloginInfo.user`（登录账号，身份信号）。**localStorage 单独不算数** —— 它记的是"最近一次登录用的账号"，退出登录后依然留着，只能用来标定身份，不能用来证明会话仍然有效。读不出用户名元素一律归为硬阻塞。

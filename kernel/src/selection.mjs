@@ -3,6 +3,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { taskDir } from './workspace.mjs';
 import { CATEGORIES, normalizeCity } from './categories.mjs';
+import {
+  PROJECT_BOOK_EMPTY, noCandidatesNote, sameIdentity, isSafeProjectNumber,
+} from './projects.mjs';
 
 // 任务选择：把候选明细补齐成 ERP 明细行还缺的那几件事。
 //
@@ -72,7 +75,7 @@ const selectionFile = (task) => path.join(taskDir(task), 'selection.json');
  */
 export function linesDigest(built) {
   const shape = built.lineItems.map((l) =>
-    [l.lineId, l.voucherMaterialId, l.date, l.city, l.totalAmount].join('|'));
+    [l.lineId, l.voucherMaterialId, l.date, l.endDate ?? l.checkOut, l.city, l.totalAmount].join('|'));
   return crypto.createHash('sha256').update(JSON.stringify(shape)).digest('hex').slice(0, 32);
 }
 
@@ -102,29 +105,61 @@ const textOk = (s, max) => typeof s === 'string'
   && s.trim().length > 0 && s.trim().length <= max && !CONTROL.test(s);
 
 /**
- * 收下一次任务选择。校验是结构性的：字段齐、长度合法、每一条候选明细都有项目、
- * 没有多出来的行。**内核不校验项目号在 ERP 里是否存在** —— 那要等 ERP 只读查询，
- * 所以这里如实记下它未经核验，由后面的 ERP 层去对账。
+ * 收下一次任务选择。项目号必须来自提交瞬间的本人项目簿可选集合；页面展示的集合
+ * 只是一份提示，真正的门禁在这里重新读取候选。合法历史选择可以继续保留，即使它
+ * 后来从项目簿删除，但一次新的项目归属不能使用已经不在当前集合里的项目号。
  */
-export function submitSelection(task, built, payload) {
+export function isBookSelection(selection) {
+  return selection?.projectsFrom === 'project_book'
+    && selection.projectSource === 'erp_catalog_confirmed';
+}
+
+export function submitSelection(task, built, payload, candidates = null, identity = null,
+  previous = null) {
   const reasons = [];
-  const homeCity = String(payload?.homeCity ?? '').trim();
+  const homeCity = String(task?.homeCity ?? '').trim();
   const purpose = String(payload?.purpose ?? '').trim();
   if (!textOk(homeCity, 20)) reasons.push('常驻城市必须填写，且不超过 20 个字');
+  if (payload?.homeCity !== undefined && String(payload.homeCity).trim() !== homeCity) {
+    reasons.push('任务选择不能修改已固定的常驻城市；请先完成常驻城市确认');
+  }
   if (!textOk(purpose, 100)) reasons.push('报销事由必须填写，且不超过 100 个字');
 
+  const strictBook = Array.isArray(candidates);
+  const allowed = new Map((strictBook ? candidates : [])
+    .filter((project) => isSafeProjectNumber(project?.number))
+    .map((project) => [project.number, project]));
+  if (!strictBook) reasons.push('提交缺少当前本人项目簿可选集合，不能收下项目归属');
+  if (strictBook && !sameIdentity(task?.identity, identity)) {
+    reasons.push('任务身份与当前登录身份不一致，不能提交项目归属');
+  }
+  const canKeepPrevious = strictBook && sameBasis(previous, built) && isBookSelection(previous)
+    && sameIdentity(previous.identity, identity);
+  let emptyBook = strictBook && allowed.size === 0;
   const wanted = built.lineItems.map((l) => l.lineId);
   const given = payload?.projects && typeof payload.projects === 'object' ? payload.projects : {};
   const projects = {};
   for (const lineId of wanted) {
     const v = given[lineId];
     if (!textOk(v ?? '', 40)) { reasons.push(`明细 ${lineId} 还没有选项目`); continue; }
-    projects[lineId] = String(v).trim();
+    const number = String(v).trim();
+    if (!strictBook) continue;
+    if (!allowed.has(number)
+      && !(canKeepPrevious && isSafeProjectNumber(number)
+        && previous.projects?.[lineId] === number)) {
+      reasons.push(`明细 ${lineId} 的项目 ${number} 不在当前本人项目簿可选集合中；要用它请先在维护页重新核验`);
+      continue;
+    }
+    projects[lineId] = number;
   }
   for (const k of Object.keys(given)) {
     if (!wanted.includes(k)) reasons.push(`提交里出现了不存在的明细 ${k}，这批明细可能已经变了`);
   }
-  if (reasons.length) return { verdict: 'rejected', reasons };
+  if (strictBook && emptyBook && !canKeepPrevious) {
+    reasons.push(`当前本人项目簿没有可选项目；${noCandidatesNote()}`);
+  }
+  if (reasons.length) return { verdict: 'rejected', reasons,
+    ...(strictBook && emptyBook ? { state: PROJECT_BOOK_EMPTY } : {}) };
 
   const record = {
     linesDigest: linesDigest(built),
@@ -132,9 +167,9 @@ export function submitSelection(task, built, payload) {
     homeCity,
     purpose,
     projects,
-    // 项目号来自用户，还没有和 ERP 项目目录核对过。这件事必须写在记录里，
-    // 免得后面的层把它当成已经验证过的主数据。
-    projectSource: 'user_input_unverified',
+    projectSource: 'erp_catalog_confirmed',
+    projectsFrom: 'project_book',
+    identity: { account: identity.account, tenant: identity.tenant },
     submittedAt: new Date().toISOString(),
     submittedVia: 'local-web',
   };
@@ -148,65 +183,76 @@ export function submitSelection(task, built, payload) {
 /* ---------------------------------------------------------- 明细补齐与门禁 */
 
 /**
- * 把任务选择和推导出来的费用类别贴回候选明细。
- * 没有选择时不猜任何东西：整批明细停在"等任务选择"上。
+ * 把任务选择和推导出来的费用类别贴回候选明细。没有项目选择时，仍按任务快照
+ * 推导分类；项目归属本身保持未确认，等个人项目簿提交。
  */
 /**
- * 项目号的来源等级。默认永远是"用户填的、没核对过"；
- * 只有当一份**对得上当前明细指纹**的 ERP 只读核对记录明确说这个号确认存在时，
- * 才升到 erp_catalog_confirmed。核对记录过期、缺项或说有问题，一律退回未核对 ——
- * 宁可说没验过，也不能把旧结论套在新明细上。
+ * 项目号的来源等级。只有维护页录入时已经通过 ERP 核验、并由当前本人在任务选择
+ * 页面提交的记录才是 confirmed。旧任务里的全局 ERP 选择不因旧值或 catalog 记录
+ * 自动合法化。
  */
-const projectSourceOf = (number, catalog, built) => {
-  if (!number || !catalog) return 'user_input_unverified';
-  if (!sameBasis(catalog, built)) return 'user_input_unverified';
-  return catalog.projects?.[number]?.verdict === 'confirmed'
-    ? 'erp_catalog_confirmed'
-    : 'user_input_unverified';
+const projectSourceOf = (number, selection, fresh) => {
+  return number && fresh && isBookSelection(selection)
+    ? 'erp_catalog_confirmed' : 'user_input_unverified';
 };
 
-export function applySelection(built, classification, selection, catalog = null) {
-  const fresh = sameBasis(selection, built);
+export function applySelection(built, classification, selection, catalog = null,
+  candidates = null, identity = null, taskHomeCity = null) {
+  // `catalog` remains in this positional slot for callers from older task records;
+  // project source is now established only by the identity-scoped project book.
+  const basisFresh = sameBasis(selection, built);
+  const bookFresh = isBookSelection(selection);
+  const identityFresh = sameIdentity(selection?.identity, identity);
+  const fresh = basisFresh && bookFresh && identityFresh;
+  const bookEmpty = Array.isArray(candidates) && candidates.length === 0;
+  const categoryHomeCity = String(taskHomeCity ?? '').trim()
+    || (fresh ? String(selection.homeCity ?? '').trim() : '');
   const notes = [];
 
   if (!selection) {
-    notes.push({
+    notes.push(bookEmpty ? {
+      kind: PROJECT_BOOK_EMPTY, blocking: true,
+      note: `个人项目簿里没有当前可选项目；${noCandidatesNote()}`,
+    } : {
       kind: 'task_selection_required', blocking: true,
       note: '常驻城市、报销事由和每条明细的项目归属，材料上没有，也不能由系统推断；'
         + '跑 select-task 打开任务选择页，由用户提交',
     });
-  } else if (!fresh) {
+  } else if (!basisFresh) {
     notes.push({
       kind: 'task_selection_stale', blocking: true,
       note: '候选明细在上次任务选择之后变过了（材料或逐段分摊有改动），'
         + '之前的项目归属不再对应现在这几行，需要重新选择',
     });
+    if (bookEmpty) notes.push({ kind: PROJECT_BOOK_EMPTY, blocking: true,
+      note: `个人项目簿里没有当前可选项目；${noCandidatesNote()}` });
+  } else if (!bookFresh) {
+    notes.push({ kind: 'project_selection_reconfirmation_required', blocking: true,
+      note: '这份任务选择没有个人项目簿来源证据；原记录保留不动，请从本人项目簿重新确认' });
+    if (bookEmpty) notes.push({ kind: PROJECT_BOOK_EMPTY, blocking: true,
+      note: `个人项目簿里没有当前可选项目；${noCandidatesNote()}` });
+  } else if (!identityFresh) {
+    notes.push({ kind: 'project_selection_identity_mismatch', blocking: true,
+      note: '任务选择记录属于另一 tenant/account 身份，不能沿用；请回到任务所属身份重新确认' });
   }
 
   const lines = built.lineItems.map((l) => {
     const event = built.events.find((e) => e.eventId === l.eventId);
-    if (!fresh) {
-      return {
-        ...l, category: null, categoryLabel: null, categoryBasis: null,
-        expenseItemCode: null, expenseItemName: null, project: null, purpose: null,
-      };
-    }
-    const d = deriveCategory(event, classification, selection.homeCity);
-    const cat = d.category ? CATEGORIES[d.category] : null;
-    if (!d.category) {
+    const d = categoryHomeCity ? deriveCategory(event, classification, categoryHomeCity) : null;
+    const cat = d?.category ? CATEGORIES[d.category] : null;
+    if (d && !d.category) {
       notes.push({
         kind: d.reason, blocking: true, lineId: l.lineId, eventId: l.eventId,
         fileName: event.voucherFileName, note: d.note,
       });
-    } else if (!cat.expenseItemCode) {
+    } else if (cat && !cat.expenseItemCode) {
       notes.push({
         kind: 'expense_item_unverified', blocking: true, lineId: l.lineId, eventId: l.eventId,
         fileName: event.voucherFileName, category: d.category, categoryLabel: cat.label,
         note: cat.blockedNote,
       });
-    } else if (cat.source !== 'erp_save_readback') {
-      // 编码有来源但还没在 ERP 上落过明细：不拦，但必须说出来，
-      // 而且要说清楚第一次保存之后该核对什么。
+    } else if (cat && cat.source !== 'erp_save_readback') {
+      // 编码有来源但还没在 ERP 上落过明细：不拦，但必须说出来。
       notes.push({
         kind: 'expense_item_unconfirmed', blocking: false, lineId: l.lineId, eventId: l.eventId,
         fileName: event.voucherFileName, category: d.category, categoryLabel: cat.label,
@@ -214,20 +260,34 @@ export function applySelection(built, classification, selection, catalog = null)
         note: cat.unconfirmedNote,
       });
     }
+
+    if (!fresh) {
+      return {
+        ...l,
+        category: d?.category ?? null,
+        categoryLabel: cat?.label ?? null,
+        categoryBasis: d?.basis ?? null,
+        categoryNote: d?.note ?? null,
+        expenseItemCode: cat?.expenseItemCode ?? null,
+        expenseItemName: cat?.expenseItemName ?? null,
+        expenseItemSource: cat?.source ?? null,
+        project: null, projectSource: 'user_input_unverified', purpose: null,
+      };
+    }
     return {
       ...l,
-      category: d.category,
+      category: d?.category ?? null,
       categoryLabel: cat?.label ?? null,
-      categoryBasis: d.basis ?? null,
-      categoryNote: d.note ?? null,
+      categoryBasis: d?.basis ?? null,
+      categoryNote: d?.note ?? null,
       expenseItemCode: cat?.expenseItemCode ?? null,
       expenseItemName: cat?.expenseItemName ?? null,
       expenseItemSource: cat?.source ?? null,
       project: selection.projects[l.lineId] ?? null,
-      projectSource: projectSourceOf(selection.projects[l.lineId] ?? null, catalog, built),
+      projectSource: projectSourceOf(selection.projects[l.lineId] ?? null, selection, fresh),
       purpose: selection.purpose,
     };
   });
 
-  return { lines, notes, homeCity: fresh ? selection.homeCity : null, applied: fresh };
+  return { lines, notes, homeCity: categoryHomeCity || null, applied: fresh };
 }

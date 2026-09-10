@@ -39,6 +39,14 @@ export function ensureDir(p) {
   return p;
 }
 
+export function writeJsonAtomic(file, value) {
+  ensureDir(path.dirname(file));
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 });
+  fs.renameSync(tmp, file);
+  return value;
+}
+
 /** 迁移完在新目录留下的字条。它在不在无关紧要，判据是新目录在不在。 */
 export const MIGRATION_MARKER = 'migrated-from.txt';
 
@@ -104,4 +112,3 @@ export function ensureSchemaVersionFile() {
     return null;
   }
 }
-
