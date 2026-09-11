@@ -1,0 +1,65 @@
+import { expect, test } from '@playwright/test';
+
+// 直接用 file:// 打开 mock 构建产物（先运行 pnpm build:mock）。
+const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
+
+const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
+
+test('任务列表显示三个任务及其阶段徽标', async ({ page }, testInfo) => {
+  await page.goto(open('', '#/tasks'));
+  await expect(page.getByRole('heading', { name: '报销任务' })).toBeVisible();
+
+  const t1 = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ });
+  await expect(t1.getByText('上传材料')).toBeVisible();
+  await expect(t1.getByText('未确认')).toBeVisible();
+
+  const t2 = page.getByRole('row', { name: /2026-07 深圳客户拜访/ });
+  await expect(t2.getByText('对账中')).toBeVisible();
+  await expect(t2.getByText('BX20260718-0142')).toBeVisible();
+
+  const t3 = page.getByRole('row', { name: /2026-06 北京培训/ });
+  await expect(t3.getByText('已完成')).toBeVisible();
+  await expect(t3.getByText('2318.50')).toBeVisible();
+
+  await expect(page.getByText('林颂宜 · 产品研发部')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('tasks.png'), fullPage: true });
+});
+
+test('?seed=done 让 T1 显示为已完成并带草稿号', async ({ page }) => {
+  await page.goto(open('?seed=done', '#/tasks'));
+  const t1 = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ });
+  await expect(t1.getByText('已完成')).toBeVisible();
+  await expect(t1.getByText('3972.59')).toBeVisible();
+  await expect(t1.getByText('BX20260911-0173')).toBeVisible();
+});
+
+test('点「继续」进入任务页面骨架，侧栏列出流程阶段', async ({ page }) => {
+  await page.goto(open('', '#/tasks'));
+  await page.getByRole('link', { name: '继续 →' }).click();
+  await expect(page).toHaveURL(/#\/task\/T1\/upload$/);
+  await expect(page.getByRole('heading', { name: '上传材料' })).toBeVisible();
+  await expect(page.getByRole('list', { name: '流程阶段' }).getByRole('listitem')).toHaveCount(6);
+});
+
+test('未知路径回到任务列表', async ({ page }) => {
+  await page.goto(open('', '#/nowhere'));
+  await expect(page).toHaveURL(/#\/tasks$/);
+  await expect(page.getByRole('heading', { name: '报销任务' })).toBeVisible();
+});
+
+test('?fault=service-disconnected 显示本地服务未运行横幅', async ({ page }) => {
+  await page.goto(open('?fault=service-disconnected', '#/task/T1/upload'));
+  await expect(page.getByRole('alert')).toHaveText('本地服务未运行，请在终端重新执行 baox');
+});
+
+test('页面里没有 undefined、NaN 或长破折号', async ({ page }) => {
+  for (const hash of ['#/tasks', '#/tasks/new', '#/task/T1/upload', '#/task/T2/reconcile', '#/task/T3/done']) {
+    await page.goto(open('', hash));
+    await expect(page.getByRole('heading').first()).toBeVisible();
+    const text = await page.locator('body').innerText();
+    // 最后两个是 em-dash U+2014 与 en-dash U+2013。
+    for (const forbidden of ['undefined', 'NaN', '[object', String.fromCharCode(0x2014), String.fromCharCode(0x2013)]) {
+      expect(text, `${hash} 含 ${forbidden}`).not.toContain(forbidden);
+    }
+  }
+});
