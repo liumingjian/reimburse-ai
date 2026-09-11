@@ -1,0 +1,155 @@
+import { expect, test, type Page } from '@playwright/test';
+
+// 新建报销任务与上传批次（#101）。直接用 file:// 打开 mock 构建产物（pnpm build:mock）。
+const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
+const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
+
+const MAX_BYTES = 20 * 1024 * 1024;
+
+type Upload = { name: string; mimeType: string; buffer: Buffer };
+
+const pdf = (name: string, body = `%PDF-1.4 ${name}`): Upload => ({ name, mimeType: 'application/pdf', buffer: Buffer.from(body) });
+const png = (name: string, body = `png ${name}`): Upload => ({ name, mimeType: 'image/png', buffer: Buffer.from(body) });
+
+async function choose(page: Page, files: Upload[]) {
+  await page.locator('input[type=file]').setInputFiles(files);
+}
+
+const batch = (page: Page, no: number) => page.locator('section', { has: page.getByRole('heading', { name: new RegExp(`^上传批次 #${no} `) }) });
+// 文件行：按文件名整串匹配（拒绝原因里也会出现别的文件名，所以不能用子串）。
+const row = (page: Page, panel: ReturnType<typeof batch>, fileName: string) => panel.locator('li', { has: page.getByText(fileName, { exact: true }) });
+
+// 同一文档内只改 hash（不重新加载页面），mock 的内存状态（如新建的 T4）得以保留。
+async function jump(page: Page, hash: string) {
+  await page.evaluate((next) => {
+    window.location.hash = next;
+  }, hash);
+}
+
+async function createTask(page: Page, name: string) {
+  await page.goto(open('', '#/tasks/new'));
+  await page.getByLabel('任务名称').fill(name);
+  await page.getByLabel('开始日期').fill('2026-09-03');
+  await page.getByLabel('结束日期').fill('2026-09-05');
+  await page.getByRole('button', { name: '创建并上传材料' }).click();
+  await expect(page).toHaveURL(/#\/task\/T4\/upload$/);
+}
+
+test('新建报销任务：校验名称与日期范围，创建后进入上传页', async ({ page }) => {
+  await page.goto(open('', '#/tasks/new'));
+  await page.getByRole('button', { name: '创建并上传材料' }).click();
+  await expect(page.getByRole('alert')).toHaveText('任务名称必填。');
+  await expect(page).toHaveURL(/#\/tasks\/new$/);
+
+  await page.getByLabel('任务名称').fill('2026-09 杭州出差（客户验收）');
+  await page.getByLabel('开始日期').fill('2026-09-05');
+  await page.getByLabel('结束日期').fill('2026-09-03');
+  await page.getByRole('button', { name: '创建并上传材料' }).click();
+  await expect(page.getByRole('alert')).toHaveText('结束日期不能早于开始日期。');
+
+  await page.getByLabel('结束日期').fill('2026-09-07');
+  await page.getByRole('button', { name: '创建并上传材料' }).click();
+  await expect(page).toHaveURL(/#\/task\/T4\/upload$/);
+  await expect(page.getByRole('heading', { name: '上传材料' })).toBeVisible();
+  await expect(page.getByText('2026-09 杭州出差（客户验收）')).toBeVisible();
+  await expect(page.getByText('拖入文件，或点击选择')).toBeVisible();
+});
+
+test('正常上传：pdf/jpg/png 逐文件已接收，按批次列出并出现开始材料盘点', async ({ page }, testInfo) => {
+  await page.goto(open('', '#/task/T1/upload'));
+  await choose(page, [pdf('全季酒店_发票.pdf'), { name: 'IMG_4871.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('jpeg bytes') }, png('IMG_4906.png')]);
+  const first = batch(page, 1);
+  await expect(first.getByRole('heading')).toHaveText('上传批次 #1 · 3 份材料');
+  await expect(first.getByText('已复制入任务目录')).toBeVisible();
+  await expect(first.getByText('已接收')).toHaveCount(3);
+  await expect(first.getByText(/^sha256:[0-9a-f]{8}$/)).toHaveCount(3);
+  await expect(row(page, first, '全季酒店_发票.pdf').getByText('已接收')).toBeVisible();
+  await expect(page.getByRole('button', { name: '开始材料盘点' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '追加下一批' })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('upload-accepted.png'), fullPage: true });
+});
+
+test('拖入文件也能上传', async ({ page }) => {
+  await page.goto(open('', '#/task/T1/upload'));
+  const dropzone = page.getByTestId('dropzone');
+  await expect(dropzone).toBeVisible();
+  const dataTransfer = await page.evaluateHandle(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(['%PDF-1.4 dropped'], '曹操出行_发票.pdf', { type: 'application/pdf' }));
+    return dt;
+  });
+  await dropzone.dispatchEvent('drop', { dataTransfer });
+  const first = batch(page, 1);
+  await expect(first.getByRole('heading')).toHaveText('上传批次 #1 · 1 份材料');
+  await expect(row(page, first, '曹操出行_发票.pdf').getByText('已接收')).toBeVisible();
+});
+
+test('各类拒绝：类型不支持、超过 20MB、HEIC、内容重复，逐文件给出原因', async ({ page }, testInfo) => {
+  await page.goto(open('', '#/task/T1/upload'));
+  await choose(page, [
+    pdf('全季酒店_发票.pdf', 'same bytes'),
+    { name: '备注.txt', mimeType: 'text/plain', buffer: Buffer.from('not a receipt') },
+    { name: '扫描件.pdf', mimeType: 'application/pdf', buffer: Buffer.alloc(MAX_BYTES + 1) },
+    { name: 'IMG_4871.HEIC', mimeType: 'image/heic', buffer: Buffer.from('heic bytes') },
+    pdf('全季酒店_发票（副本）.pdf', 'same bytes'),
+  ]);
+  const first = batch(page, 1);
+  await expect(first.getByRole('heading')).toHaveText('上传批次 #1 · 1 份材料');
+  await expect(first.getByText('拒绝 4 份')).toBeVisible();
+  await expect(row(page, first, '备注.txt').getByText('类型不支持，只接受 PDF、JPG、PNG')).toBeVisible();
+  await expect(row(page, first, '扫描件.pdf').getByText('超过 20MB')).toBeVisible();
+  await expect(row(page, first, 'IMG_4871.HEIC').getByText('HEIC 不支持，请在 iPhone 相册导出为 JPG')).toBeVisible();
+  await expect(row(page, first, '全季酒店_发票（副本）.pdf').getByText('内容重复，与已接收的「全季酒店_发票.pdf」内容相同')).toBeVisible();
+  await expect(row(page, first, '全季酒店_发票.pdf').getByText('已接收')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('upload-rejected.png'), fullPage: true });
+});
+
+test('追加下一批形成上传批次 #2；开始材料盘点进入盘点页', async ({ page }) => {
+  await page.goto(open('', '#/task/T1/upload'));
+  await choose(page, [pdf('高德打车_发票.pdf')]);
+  await expect(batch(page, 1).getByRole('heading')).toHaveText('上传批次 #1 · 1 份材料');
+
+  await page.getByRole('button', { name: '追加下一批' }).click();
+  await expect(page.getByText('拖入文件，或点击选择')).toBeVisible();
+  await choose(page, [pdf('高德打车_行程单.pdf'), png('IMG_4906.png')]);
+  await expect(batch(page, 2).getByRole('heading')).toHaveText('上传批次 #2 · 2 份材料');
+  await expect(batch(page, 1)).toBeVisible();
+  await expect(page.getByText('拖入文件，或点击选择')).toBeHidden();
+
+  await page.getByRole('button', { name: '开始材料盘点' }).click();
+  await expect(page).toHaveURL(/#\/task\/T1\/inventory$/);
+  await expect(page.getByRole('heading', { name: '材料盘点' })).toBeVisible();
+});
+
+test('?fault=duplicate-upload 让追加批次里出现内容重复', async ({ page }) => {
+  await page.goto(open('?fault=duplicate-upload', '#/task/T1/upload'));
+  await choose(page, [pdf('铁路电子客票_0809.pdf')]);
+  await expect(batch(page, 1).getByRole('heading')).toHaveText('上传批次 #1 · 1 份材料');
+  await page.getByRole('button', { name: '追加下一批' }).click();
+  await choose(page, [pdf('铁路电子客票_0822.pdf'), pdf('餐饮_发票.pdf')]);
+  const second = batch(page, 2);
+  await expect(second.getByRole('heading')).toHaveText('上传批次 #2 · 1 份材料');
+  await expect(row(page, second, '铁路电子客票_0822.pdf').getByText(/^内容重复/)).toBeVisible();
+  await expect(row(page, second, '餐饮_发票.pdf').getByText('已接收')).toBeVisible();
+});
+
+test('守卫：没有材料时后续页面显示还没有上传材料；有材料但未盘点则阶段不可跳过', async ({ page }) => {
+  await createTask(page, '2026-09 杭州出差');
+  await jump(page, '#/task/T4/inventory');
+  await expect(page.getByRole('heading', { name: '还没有上传材料' })).toBeVisible();
+  await page.getByRole('link', { name: '去上传' }).click();
+  await expect(page).toHaveURL(/#\/task\/T4\/upload$/);
+
+  await choose(page, [pdf('餐饮_发票.pdf')]);
+  await expect(batch(page, 1).getByRole('heading')).toHaveText('上传批次 #1 · 1 份材料');
+  await jump(page, '#/task/T4/review');
+  await expect(page.getByRole('heading', { name: '还不能进入这一步' })).toBeVisible();
+});
+
+test('?seed=inventory 的 T1 上传页列出批次 #1 的 11 份材料', async ({ page }) => {
+  await page.goto(open('?seed=inventory', '#/task/T1/upload'));
+  const first = batch(page, 1);
+  await expect(first.getByRole('heading')).toHaveText('上传批次 #1 · 11 份材料');
+  await expect(first.getByText('已接收')).toHaveCount(11);
+  await expect(page.getByRole('button', { name: '开始材料盘点' })).toBeVisible();
+});

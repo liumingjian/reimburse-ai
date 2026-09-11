@@ -8,12 +8,33 @@ import { TaskPeriodSchema } from './task-list';
 
 // ---- 上传批次与材料 ----
 
+// 上传约束（spec #99）：接受 pdf/jpg/jpeg/png；HEIC 拒绝并提示；单文件 20MB；内容哈希重复由服务端拒绝。
+// 这些常量供服务端与 mock 共用；页面不据此判断，只显示服务端逐文件给出的结果。
+export const UPLOAD_ACCEPTED_EXTENSIONS = ['pdf', 'jpg', 'jpeg', 'png'] as const;
+export const UPLOAD_MAX_FILE_BYTES = 20 * 1024 * 1024;
+export const UPLOAD_ACCEPT_ATTRIBUTE = '.pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png';
+
+export const UPLOAD_REJECT_CODES = ['unsupported_type', 'too_large', 'heic', 'duplicate_content'] as const;
+export const UploadRejectCodeSchema = z.enum(UPLOAD_REJECT_CODES);
+export type UploadRejectCode = z.infer<typeof UploadRejectCodeSchema>;
+
+// 拒绝原因的固定开头；服务端可在其后补充细节（如与哪份材料重复）。
+export const UPLOAD_REJECT_MESSAGES: Readonly<Record<UploadRejectCode, string>> = {
+  unsupported_type: '类型不支持，只接受 PDF、JPG、PNG',
+  too_large: '超过 20MB',
+  heic: 'HEIC 不支持，请在 iPhone 相册导出为 JPG',
+  duplicate_content: '内容重复',
+};
+
 export const UploadFileResultSchema = z.object({
   fileId: IdSchema,
   fileName: z.string().min(1),
   size: z.number().int().nonnegative(),
   status: z.enum(['accepted', 'rejected']),
-  // 拒绝原因由服务端给出成句（类型不支持、超过 20MB、内容重复、HEIC 请在 iPhone 相册导出为 JPG 等）。
+  // 已接收的文件有内容哈希（sha256 十六进制），页面显示前 8 位作为身份；被拒绝的为 null。
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  // 拒绝原因由服务端给出成句（以 UPLOAD_REJECT_MESSAGES 开头，可补充细节）；已接收的为 null。
+  reasonCode: UploadRejectCodeSchema.nullable(),
   reason: z.string().nullable(),
   materialId: IdSchema.nullable(),
 });
@@ -43,11 +64,13 @@ export const FieldCandidateSchema = z.object({
 });
 export type FieldCandidate = z.infer<typeof FieldCandidateSchema>;
 
-export const MATERIAL_ROLES = ['primary_voucher', 'reference', 'pending', 'excluded'] as const;
+// uploaded：已接收但还没有盘点，角色未定。
+export const MATERIAL_ROLES = ['uploaded', 'primary_voucher', 'reference', 'pending', 'excluded'] as const;
 export const MaterialRoleSchema = z.enum(MATERIAL_ROLES);
 export type MaterialRole = z.infer<typeof MaterialRoleSchema>;
 
 export const MATERIAL_ROLE_LABELS: Readonly<Record<MaterialRole, string>> = {
+  uploaded: '待盘点',
   primary_voucher: '主要报销凭证',
   reference: '参考材料',
   pending: '待确认',
@@ -64,7 +87,7 @@ export const MaterialSchema = z.object({
   categoryLabel: z.string().nullable(),
   role: MaterialRoleSchema,
   shape: z.enum(['portrait', 'landscape', 'photo']),
-  status: z.enum(['ok', 'pending', 'excluded']),
+  status: z.enum(['uploaded', 'ok', 'pending', 'excluded']),
   // 「校验」列文本，由服务端成句（配对、金额守恒、二维码核对结果）。
   checkText: z.string(),
   // 材料证据关联：与本材料共同证明同一费用事件的其他材料。

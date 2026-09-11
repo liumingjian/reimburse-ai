@@ -1,5 +1,5 @@
 import { stageReached, type TaskStage } from '../../contract/stage';
-import type { TaskSnapshot, UploadBatch } from '../../contract/snapshot';
+import type { Material, TaskSnapshot, UploadBatch, UploadFileResult } from '../../contract/snapshot';
 import type { Employee, TaskListItem } from '../../contract/task-list';
 
 // 夹具：三个虚构的报销任务。人物与数字沿用原型（林颂宜、上海出差、9 条明细合计 3972.59）。
@@ -31,14 +31,66 @@ const T1_FILES: ReadonlyArray<readonly [string, string, number]> = [
   ['m11', '餐饮_发票.pdf', 145408],
 ];
 
-function t1Batch(): UploadBatch {
+// 夹具用的确定性伪哈希：64 位十六进制，形状与 sha256 一致，页面只显示前 8 位。
+export function fixtureHash(seed: string): string {
+  let out = '';
+  for (let round = 0; out.length < 64; round += 1) {
+    let h = 0x811c9dc5 ^ round;
+    for (const ch of `${seed}\u0000baox`) {
+      h ^= ch.codePointAt(0) ?? 0;
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    out += h.toString(16).padStart(8, '0');
+  }
+  return out.slice(0, 64);
+}
+
+export function shapeOf(fileName: string): Material['shape'] {
+  return /\.(jpe?g|png)$/i.test(fileName) ? 'photo' : 'portrait';
+}
+
+// 刚接收、还没盘点的材料：角色与类别未定，盘点票（#102）再填字段与校验。
+export function uploadedMaterial(input: { materialId: string; batchId: string; fileName: string; size: number; contentHash: string }): Material {
   return {
-    batchId: 'b1',
-    no: 1,
-    uploadedAt: '2026-09-11T14:12:00',
-    versionId: 'v1',
-    files: T1_FILES.map(([id, fileName, size]) => ({ fileId: `f-${id}`, fileName, size, status: 'accepted', reason: null, materialId: id })),
+    materialId: input.materialId,
+    batchId: input.batchId,
+    fileName: input.fileName,
+    contentHash: input.contentHash,
+    size: input.size,
+    kindLabel: '待盘点',
+    categoryLabel: null,
+    role: 'uploaded',
+    shape: shapeOf(input.fileName),
+    status: 'uploaded',
+    checkText: '',
+    linkedMaterialIds: [],
+    pendingItemIds: [],
+    originalUrl: null,
+    previewUrl: null,
+    fields: [],
   };
+}
+
+function t1Batch(): UploadBatch {
+  const files: UploadFileResult[] = T1_FILES.map(([id, fileName, size]) => ({
+    fileId: `f-${id}`,
+    fileName,
+    size,
+    status: 'accepted',
+    contentHash: fixtureHash(id),
+    reasonCode: null,
+    reason: null,
+    materialId: id,
+  }));
+  return { batchId: 'b1', no: 1, uploadedAt: '2026-09-11T14:12:00', versionId: 'v1', files };
+}
+
+function t1Materials(batch: UploadBatch): Material[] {
+  return batch.files.flatMap((file) =>
+    file.materialId && file.contentHash
+      ? [uploadedMaterial({ materialId: file.materialId, batchId: batch.batchId, fileName: file.fileName, size: file.size, contentHash: file.contentHash })]
+      : [],
+  );
 }
 
 const STEP_BY_STAGE: Readonly<Record<TaskStage, TaskSnapshot['step']['kind']>> = {
@@ -85,7 +137,11 @@ export function t1Snapshot(stage: TaskStage = 'upload'): TaskSnapshot {
     },
     stage,
   );
-  if (stageReached(stage, 'inventory')) snapshot.batches = [t1Batch()];
+  if (stageReached(stage, 'inventory')) {
+    const batch = t1Batch();
+    snapshot.batches = [batch];
+    snapshot.materials = t1Materials(batch);
+  }
   if (stageReached(stage, 'actions')) {
     snapshot.confirmation = {
       status: 'confirmed',

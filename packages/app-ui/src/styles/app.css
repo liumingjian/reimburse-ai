@@ -503,6 +503,81 @@ table.data tr.clickable:hover td {
   font-weight: var(--text-button-weight);
 }
 
+/* 上传 */
+.dropzone {
+  display: grid;
+  place-items: center;
+  gap: var(--space-xs);
+  min-height: var(--layout-dropzone-min-height);
+  padding: var(--space-lg);
+  border: var(--layout-hairline-width) dashed var(--color-hairline-strong);
+  border-radius: var(--panel-rounded);
+  background: var(--color-surface-2);
+  text-align: center;
+  cursor: pointer;
+}
+
+.dropzone.dragover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.dropzone strong {
+  font-weight: var(--text-headline-weight);
+}
+
+.dropzone input[type='file'] {
+  display: none;
+}
+
+.upload-error {
+  margin: var(--space-sm) 0 0;
+}
+
+.file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.file-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) 0;
+  border-bottom: var(--layout-hairline-width) solid var(--color-hairline);
+}
+
+.file-list li:last-child {
+  border-bottom: 0;
+}
+
+.file-list .name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.file-list li.rejected .name {
+  color: var(--color-ink-muted);
+}
+
+.file-list .reason {
+  font-size: var(--text-caption-size);
+  color: var(--color-danger);
+}
+
+.file-list .size {
+  flex: none;
+  width: var(--layout-file-size-width);
+  text-align: right;
+}
+
+.btn-row .error {
+  font-size: var(--text-caption-size);
+  color: var(--color-danger);
+}
+
 /* 表单 */
 .field {
   display: grid;
