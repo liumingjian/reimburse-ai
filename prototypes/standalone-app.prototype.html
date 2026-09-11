@@ -1,0 +1,1115 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="baox 本地报销应用全流程原型，仅使用虚构数据。" />
+    <link rel="icon" href="data:," />
+    <title>baox · 本地报销应用全流程原型</title>
+    <style>
+      /* 视觉 token 见 prototypes/DESIGN.md（Linear 骨架反转为浅色，表格细节取 Airtable） */
+      :root {
+        color-scheme: light;
+        --primary: #5e6ad2;
+        --primary-hover: #4f5bc4;
+        --primary-pressed: #4551b3;
+        --primary-soft: #eef0fb;
+        --on-primary: #ffffff;
+        --focus-ring: rgb(94 106 210 / 40%);
+        --canvas: #f6f7f7;
+        --surface-1: #ffffff;
+        --surface-2: #f5f6f6;
+        --surface-3: #eeeff1;
+        --hairline: #e3e5e8;
+        --hairline-strong: #cfd2d7;
+        --ink: #17181c;
+        --ink-muted: #4b4f57;
+        --ink-subtle: #8a8f98;
+        --ink-tertiary: #b1b5bd;
+        --success: #1f8a3a;
+        --success-soft: #e6f5ea;
+        --warning: #9a5b00;
+        --warning-soft: #fff3dc;
+        --danger: #b3392f;
+        --danger-soft: #fbe9e7;
+        --overlay: rgb(23 24 28 / 40%);
+        --font-text: -apple-system, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+        --font-mono: "SF Mono", Menlo, "JetBrains Mono", ui-monospace, monospace;
+      }
+
+      * { box-sizing: border-box; }
+
+      html { background: var(--canvas); }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background: var(--canvas);
+        color: var(--ink);
+        font: 400 14px/1.5 var(--font-text);
+      }
+
+      button, input, select, textarea { font: inherit; color: inherit; }
+      button { cursor: pointer; }
+      button:disabled { cursor: not-allowed; opacity: 0.55; }
+      a { color: var(--primary); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+
+      button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+        outline: 2px solid var(--focus-ring);
+        outline-offset: 2px;
+      }
+
+      h1, h2, h3, p, ul, ol, dl { margin-top: 0; }
+      h1 { margin-bottom: 4px; font-size: 22px; font-weight: 600; line-height: 1.25; letter-spacing: -0.4px; }
+      h2 { margin-bottom: 12px; font-size: 17px; font-weight: 600; line-height: 1.3; letter-spacing: -0.2px; }
+      h3 { margin-bottom: 6px; font-size: 14px; font-weight: 600; line-height: 1.3; }
+      p { margin-bottom: 12px; }
+      .lead { margin-bottom: 0; color: var(--ink-muted); }
+      .muted { color: var(--ink-subtle); }
+      .mono { font-family: var(--font-mono); font-size: 13px; }
+      .num { font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; }
+      .caption { font-size: 12px; color: var(--ink-subtle); }
+      .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+      /* 外壳 */
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        height: 52px;
+        padding: 0 20px;
+        background: var(--surface-1);
+        border-bottom: 1px solid var(--hairline);
+      }
+      .brand { font-weight: 600; letter-spacing: -0.2px; }
+      .brand span { color: var(--ink-subtle); font-weight: 400; margin-left: 8px; }
+      .topbar nav { display: flex; gap: 4px; margin-left: 8px; }
+      .topbar nav a {
+        padding: 6px 10px;
+        border-radius: 8px;
+        color: var(--ink-muted);
+      }
+      .topbar nav a:hover { background: var(--surface-2); text-decoration: none; }
+      .topbar nav a[aria-current="page"] { color: var(--ink); background: var(--surface-3); }
+      .topbar .spacer { flex: 1; }
+      .proto-tag {
+        padding: 2px 8px;
+        border-radius: 9999px;
+        background: var(--warning-soft);
+        color: var(--warning);
+        font-size: 12px;
+      }
+
+      .layout { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: calc(100vh - 52px); }
+      .sidebar { padding: 20px 12px; border-right: 1px solid var(--hairline); }
+      .sidebar h3 { padding: 0 10px; margin-bottom: 8px; font-size: 12px; font-weight: 500; color: var(--ink-subtle); }
+      .sidebar .task-name { padding: 0 10px 14px; font-weight: 600; letter-spacing: -0.2px; }
+      .stage-list { list-style: none; margin: 0; padding: 0; }
+      .stage-list li { margin-bottom: 2px; }
+      .stage-list a, .stage-list span {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 10px;
+        border-radius: 8px;
+        color: var(--ink-muted);
+      }
+      .stage-list a:hover { background: var(--surface-2); text-decoration: none; }
+      .stage-list .current { background: var(--primary-soft); color: var(--primary); font-weight: 500; }
+      .stage-list .locked { color: var(--ink-tertiary); }
+      .stage-list .idx {
+        width: 20px; height: 20px;
+        border: 1px solid var(--hairline-strong);
+        border-radius: 9999px;
+        font-size: 11px;
+        line-height: 18px;
+        text-align: center;
+        font-family: var(--font-mono);
+        flex: none;
+      }
+      .stage-list .done .idx { background: var(--success); border-color: var(--success); color: #fff; }
+      .stage-list .current .idx { border-color: var(--primary); color: var(--primary); }
+      .stage-list .count { margin-left: auto; font-size: 12px; color: var(--warning); }
+
+      .main { padding: 28px 32px 96px; max-width: 1200px; width: 100%; }
+      .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
+      .page-head .actions { display: flex; gap: 8px; flex: none; }
+
+      /* 面板与按钮 */
+      .panel { background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 12px; padding: 20px; }
+      .panel + .panel { margin-top: 16px; }
+      .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+      .panel-head h2 { margin-bottom: 0; }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        min-height: 36px;
+        padding: 8px 14px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        background: var(--surface-1);
+        font-weight: 500;
+        line-height: 1.2;
+        white-space: nowrap;
+        transition: background 0.15s, transform 0.08s;
+      }
+      .btn:active { transform: translateY(1px); }
+      .btn-primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+      .btn-primary:hover { background: var(--primary-hover); }
+      .btn-primary:active { background: var(--primary-pressed); }
+      .btn-secondary { border-color: var(--hairline-strong); color: var(--ink); }
+      .btn-secondary:hover { background: var(--surface-2); }
+      .btn-tertiary { background: transparent; color: var(--ink-muted); padding: 8px 10px; }
+      .btn-tertiary:hover { background: var(--surface-2); color: var(--ink); }
+      .btn-sm { min-height: 28px; padding: 4px 10px; font-size: 13px; }
+      .btn-lg { min-height: 44px; padding: 10px 22px; font-size: 15px; }
+      .btn-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+      .badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 9999px;
+        background: var(--surface-3);
+        color: var(--ink-muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .badge-ok { background: var(--success-soft); color: var(--success); }
+      .badge-warn { background: var(--warning-soft); color: var(--warning); }
+      .badge-err { background: var(--danger-soft); color: var(--danger); }
+      .badge-primary { background: var(--primary-soft); color: var(--primary); }
+
+      .notice { padding: 12px 14px; border-radius: 8px; margin-bottom: 16px; }
+      .notice-warn { background: var(--warning-soft); color: var(--warning); }
+      .notice-ok { background: var(--success-soft); color: var(--success); }
+      .notice-err { background: var(--danger-soft); color: var(--danger); }
+      .notice-info { background: var(--primary-soft); color: var(--primary); }
+      .notice .btn-row { margin-top: 8px; }
+
+      /* 表格 */
+      table.data { width: 100%; border-collapse: collapse; }
+      table.data th {
+        padding: 6px 12px;
+        text-align: left;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--ink-subtle);
+        border-bottom: 1px solid var(--hairline);
+      }
+      table.data td { padding: 10px 12px; vertical-align: top; border-bottom: 1px solid var(--hairline); }
+      table.data tr:last-child td { border-bottom: 0; }
+      table.data th.num, table.data td.num { text-align: right; }
+      table.data tr.group-start td { border-top: 1px solid var(--hairline-strong); }
+      table.data td.group-bar { width: 4px; padding: 0; }
+      table.data tr[data-group] td.group-bar { background: var(--surface-3); }
+      table.data tr.row-warn td:not(.group-bar) { background: #fffaf0; }
+      table.data tfoot td { font-weight: 600; border-top: 1px solid var(--hairline-strong); border-bottom: 0; }
+      table.data tr.clickable { cursor: pointer; }
+      table.data tr.clickable:hover td { background: var(--surface-2); }
+
+      /* 表单 */
+      .field { display: grid; gap: 6px; margin-bottom: 14px; }
+      .field label { font-weight: 500; }
+      .field .hint { font-size: 12px; color: var(--ink-subtle); }
+      .field .error { font-size: 12px; color: var(--danger); }
+      .input, select.input {
+        height: 36px;
+        padding: 8px 12px;
+        border: 1px solid var(--hairline-strong);
+        border-radius: 8px;
+        background: var(--surface-1);
+        width: 100%;
+      }
+      .input[aria-invalid="true"] { border-color: var(--danger); }
+      .input::placeholder { color: var(--ink-subtle); }
+      .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 20px; }
+      .check { display: flex; align-items: center; gap: 8px; }
+      .check input { width: 16px; height: 16px; accent-color: var(--primary); }
+
+      /* 上传 */
+      .dropzone {
+        display: grid;
+        place-items: center;
+        gap: 6px;
+        min-height: 200px;
+        border: 1px dashed var(--hairline-strong);
+        border-radius: 12px;
+        background: var(--surface-2);
+        text-align: center;
+        padding: 24px;
+      }
+      .dropzone strong { font-weight: 600; }
+      .file-list { list-style: none; margin: 0; padding: 0; }
+      .file-list li { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--hairline); }
+      .file-list li:last-child { border-bottom: 0; }
+      .file-list .name { flex: 1; }
+      .file-list .size { width: 72px; text-align: right; }
+
+      /* 材料预览占位（原型无真实原件） */
+      .doc {
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--hairline-strong);
+        border-radius: 4px;
+        background: repeating-linear-gradient(0deg, #fff 0 10px, #fafafa 10px 11px);
+        color: var(--ink-subtle);
+        font-size: 12px;
+        text-align: center;
+        padding: 8px;
+        overflow: hidden;
+      }
+      .doc.portrait { aspect-ratio: 210 / 297; }
+      .doc.landscape { aspect-ratio: 297 / 210; }
+      .doc.photo { aspect-ratio: 3 / 4; background: #ece9e3; }
+      .doc.strip { aspect-ratio: 1 / 2.4; }
+      .doc.phone { aspect-ratio: 9 / 19.5; background: #e9edf3; }
+
+      /* 待确认项 */
+      .split { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
+      .item-list { list-style: none; margin: 0; padding: 0; }
+      .item-list li { border-bottom: 1px solid var(--hairline); }
+      .item-list li:last-child { border-bottom: 0; }
+      .item-list button {
+        display: block;
+        width: 100%;
+        padding: 10px 12px;
+        text-align: left;
+        border: 0;
+        background: transparent;
+        border-radius: 8px;
+      }
+      .item-list button:hover { background: var(--surface-2); }
+      .item-list .selected button { background: var(--primary-soft); }
+      .item-list .title { font-weight: 500; }
+      .item-list .sub { font-size: 12px; color: var(--ink-subtle); }
+      .detail-grid { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 24px; }
+      .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+      .kv dt { color: var(--ink-subtle); }
+      .kv dd { margin: 0; }
+      .empty {
+        display: grid;
+        place-items: center;
+        gap: 8px;
+        padding: 48px 24px;
+        text-align: center;
+        color: var(--ink-muted);
+      }
+      .empty h2 { margin-bottom: 0; }
+
+      /* 两个按钮 */
+      .two-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+        margin-top: 16px;
+      }
+      .action-card { display: grid; gap: 10px; padding: 20px; border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface-1); }
+      .action-card p { margin-bottom: 0; color: var(--ink-muted); }
+      .action-card .btn { justify-self: start; }
+
+      /* 打印稿预览 */
+      .pages { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+      .page-card { display: grid; gap: 10px; }
+      .a4 {
+        position: relative;
+        aspect-ratio: 210 / 297;
+        border: 1px solid var(--hairline-strong);
+        background: #fff;
+        padding: 6% 6% 5%;
+        display: grid;
+        grid-template-rows: auto 1fr 1fr;
+        gap: 0;
+      }
+      .a4 .hdr { font-family: var(--font-mono); font-size: 9px; color: var(--ink-subtle); padding-bottom: 4px; white-space: nowrap; overflow: hidden; }
+      .a4 .half { display: grid; place-items: center; padding: 4%; min-height: 0; }
+      .a4 .half.top { border-bottom: 1px dashed var(--hairline-strong); }
+      .a4 .half.split { grid-template-columns: 2fr 1fr; gap: 4%; }
+      .a4 .doc { width: 100%; height: 100%; max-height: 100%; font-size: 10px; }
+      /* 旋转 90°：先按竖向比例、以半页高度为高，转过来后就横向铺满半页 */
+      .a4 .doc.rot { height: 86%; width: auto; aspect-ratio: 210 / 297; transform: rotate(90deg); }
+      .a4 .half.split .doc.rot { height: 70%; }
+      .a4 .blank { color: var(--ink-tertiary); font-size: 11px; }
+      .page-card .meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--ink-muted); }
+
+      /* ERP 步进 */
+      .steps { list-style: none; margin: 0; padding: 0; }
+      .steps li { display: grid; grid-template-columns: 24px 1fr auto; gap: 12px; align-items: start; padding: 12px 0; border-bottom: 1px solid var(--hairline); }
+      .steps li:last-child { border-bottom: 0; }
+      .steps .dot {
+        width: 20px; height: 20px; margin-top: 1px;
+        border-radius: 9999px;
+        border: 1px solid var(--hairline-strong);
+        font-family: var(--font-mono);
+        font-size: 11px;
+        line-height: 18px;
+        text-align: center;
+      }
+      .steps .done .dot { background: var(--success); border-color: var(--success); color: #fff; }
+      .steps .running .dot { border-color: var(--primary); color: var(--primary); }
+      .steps .waiting .dot { border-color: var(--warning); color: var(--warning); }
+      .steps .desc { font-size: 12px; color: var(--ink-subtle); }
+      .steps .status { font-size: 12px; color: var(--ink-subtle); white-space: nowrap; }
+      .steps .running .status { color: var(--primary); }
+
+      /* 流程总览 */
+      .flow { display: grid; gap: 16px; }
+      .flow-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; align-items: stretch; }
+      .flow-card {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 6px;
+        padding: 14px;
+        border: 1px solid var(--hairline);
+        border-radius: 12px;
+        background: var(--surface-1);
+        position: relative;
+      }
+      .flow-card h3 { margin-bottom: 0; }
+      .flow-card .who { font-size: 12px; color: var(--ink-subtle); }
+      .flow-card p { margin-bottom: 0; font-size: 13px; color: var(--ink-muted); }
+      .flow-card.branch { border-color: var(--hairline-strong); background: var(--surface-2); }
+      .flow-card.stop { border-color: #f0c9c4; }
+      .flow-arrow { display: grid; place-items: center; color: var(--ink-tertiary); font-size: 18px; }
+      .flow-legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--ink-subtle); }
+      .flow-legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; border: 1px solid var(--hairline-strong); background: var(--surface-1); }
+      .flow-legend .l-branch::before { background: var(--surface-2); }
+      .flow-legend .l-stop::before { border-color: #f0c9c4; }
+
+      /* 任务列表 */
+      .task-row td:first-child { font-weight: 500; }
+
+      /* 说明抽屉与提示 */
+      .notes-toggle {
+        position: fixed;
+        right: 20px;
+        bottom: 20px;
+        z-index: 20;
+      }
+      .notes {
+        position: fixed;
+        right: 20px;
+        bottom: 68px;
+        z-index: 20;
+        width: 340px;
+        max-height: 60vh;
+        overflow: auto;
+        padding: 16px;
+        border: 1px solid var(--hairline);
+        border-radius: 12px;
+        background: var(--surface-1);
+        box-shadow: 0 8px 24px rgb(23 24 28 / 8%);
+      }
+      .notes h3 { margin-bottom: 8px; }
+      .notes ol { margin: 0; padding-left: 18px; font-size: 13px; color: var(--ink-muted); }
+      .notes li { margin-bottom: 6px; }
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: 24px;
+        transform: translateX(-50%);
+        z-index: 30;
+        padding: 10px 16px;
+        border-radius: 8px;
+        background: var(--ink);
+        color: #fff;
+        font-size: 13px;
+      }
+      .modal-scrim { position: fixed; inset: 0; z-index: 25; background: var(--overlay); display: grid; place-items: center; }
+      .modal { width: 440px; max-width: calc(100vw - 32px); padding: 20px; border-radius: 12px; background: var(--surface-1); }
+      .modal h2 { margin-bottom: 8px; }
+      .modal .btn-row { justify-content: flex-end; margin-top: 16px; }
+
+      @media (max-width: 900px) {
+        .layout { grid-template-columns: 1fr; }
+        .sidebar { border-right: 0; border-bottom: 1px solid var(--hairline); }
+        .main { padding: 20px 16px 96px; }
+        .split, .detail-grid, .form-grid, .two-actions { grid-template-columns: 1fr; }
+        .topbar nav { display: none; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .btn { transition: none; }
+      }
+    </style>
+  </head>
+  <body data-env="prototype">
+    <div id="app"></div>
+    <script>
+      /* ------------------------------------------------------------------
+         baox 本地报销应用 · 全流程原型
+         单文件、hash 路由、内存状态。所有数据均为虚构，仅用于演示页面跳转与交互。
+         业务规则来源：docs/design/standalone-app.md
+      ------------------------------------------------------------------ */
+
+      const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      const money = (n) => Number(n).toFixed(2);
+
+      /* ---------- Mock 数据 ---------- */
+      const EMPLOYEE = { name: "林颂宜", dept: "产品研发部" };
+
+      const TASKS = {
+        T1: { id: "T1", name: "2026-08 上海出差（产品评审）", period: "08-09 至 08-22", updated: "今天 14:20" },
+        T2: { id: "T2", name: "2026-07 深圳客户拜访", period: "07-14 至 07-16", updated: "3 天前", draft: "BX20260718-0142" },
+        T3: { id: "T3", name: "2026-06 北京培训", period: "06-02 至 06-05", updated: "2026-07-02", draft: "BX20260702-0088", amount: 2318.5 },
+      };
+
+      const FILES = [
+        { id: "m01", file: "全季酒店_发票.pdf", size: "186 KB" },
+        { id: "m02", file: "全季酒店_结账单.pdf", size: "92 KB" },
+        { id: "m03", file: "高德打车_发票.pdf", size: "131 KB" },
+        { id: "m04", file: "高德打车_行程单.pdf", size: "77 KB" },
+        { id: "m05", file: "曹操出行_发票.pdf", size: "128 KB" },
+        { id: "m06", file: "曹操出行_行程单.pdf", size: "64 KB" },
+        { id: "m07", file: "铁路电子客票_0809.pdf", size: "58 KB" },
+        { id: "m08", file: "铁路电子客票_0822.pdf", size: "58 KB" },
+        { id: "m09", file: "IMG_4871.jpg", size: "3.1 MB" },
+        { id: "m10", file: "IMG_4906.jpg", size: "2.9 MB" },
+        { id: "m11", file: "餐饮_发票.pdf", size: "142 KB" },
+      ];
+
+      const MATERIALS = {
+        m01: { kind: "全电专票", category: "住宿", role: "主要报销凭证", shape: "portrait", pair: "m02", check: "二维码核对一致：号码、日期、价税合计、专票", status: "ok",
+          fields: { 发票号码: "26312000000098127734", 开票日期: "2026-08-22", 价税合计: "3640.00", 不含税金额: "3433.96", 税额: "206.04", 销售方: "上海某某酒店管理有限公司" } },
+        m02: { kind: "结账单（全季版式）", category: "住宿", role: "参考材料", shape: "portrait", pair: "m01", check: "消费合计 = 发票价税合计；13 天 = 08-09 入住至 08-22 离店", status: "ok",
+          fields: { 入住日期: "2026-08-09", 离店日期: "2026-08-22", 天数: "13", 消费合计: "3640.00" } },
+        m03: { kind: "旅客运输电子发票（普票）", category: "网约车", role: "主要报销凭证", shape: "portrait", pair: "m04", check: "二维码核对一致；与行程单价税合计一一对应", status: "ok",
+          fields: { 发票号码: "26312000000101557402", 开票日期: "2026-08-13", 价税合计: "69.19", 不含税金额: "67.18", 税额: "2.01" } },
+        m04: { kind: "高德行程单", category: "网约车", role: "参考材料", shape: "portrait", pair: "m03", check: "26.69 + 20.85 + 21.65 = 69.19，按分守恒", status: "ok",
+          fields: { 行程数: "3", 金额合计: "69.19", 行程人手机: "138****4021" } },
+        m05: { kind: "旅客运输电子发票（普票）", category: "网约车", role: "主要报销凭证", shape: "portrait", pair: "m06", check: "二维码核对一致；金额按「价税合计（小写）」标签取值，跳过折扣行", status: "ok",
+          fields: { 发票号码: "26312000000099830115", 开票日期: "2026-08-11", 价税合计: "38.40", 不含税金额: "37.28", 税额: "1.12" } },
+        m06: { kind: "曹操行程单", category: "网约车", role: "参考材料", shape: "portrait", pair: "m05", check: "1 段行程，金额 38.40 与发票一致", status: "ok",
+          fields: { 行程数: "1", 金额合计: "38.40", 行程人手机: "138****4021" } },
+        m07: { kind: "铁路电子客票", category: "高铁", role: "主要报销凭证", shape: "landscape", pair: null, check: "全角字符已规范化；无需参考材料", status: "ok",
+          fields: { 乘车日期: "2026-08-09", 车次: "G7522", 区间: "杭州东 → 上海虹桥", 票价: "73.00", 税额: "0.00" } },
+        m08: { kind: "铁路电子客票", category: "高铁", role: "主要报销凭证", shape: "landscape", pair: null, check: "全角字符已规范化；无需参考材料", status: "ok",
+          fields: { 乘车日期: "2026-08-22", 车次: "G7539", 区间: "上海虹桥 → 杭州东", 票价: "73.00", 税额: "0.00" } },
+        m09: { kind: "出租车车费发票（照片）", category: "出租车", role: "主要报销凭证", shape: "photo", pair: null, check: "已裁边并透视矫正；OCR 置信度 0.98；城市由发票代码 131 推断为上海", status: "pending", pending: ["p1"],
+          fields: { 发票代码: "131002325021", 发票号码: "04213377", 日期: "2026-08-15", 上车时间: "09:06", 下车时间: "09:31", 里程: "8.6 km", 金额: "32.00", 城市: "上海" } },
+        m10: { kind: "出租车车费发票（照片）", category: "出租车", role: "主要报销凭证", shape: "photo", pair: null, check: "票面年份「26」已补全为 2026；下车时间读数不合法", status: "pending", pending: ["p2"],
+          fields: { 发票代码: "131002325021", 发票号码: "04219052", 日期: "2026-08-19", 上车时间: "18:42", 下车时间: "90:60（不合法）", 里程: "12.3 km", 金额: "47.00", 城市: "上海" } },
+        m11: { kind: "未识别版式", category: "不在范围", role: "待确认", shape: "portrait", pair: null, check: "不属于住宿、网约车、高铁、出租车四类", status: "pending", pending: ["p3"], fields: {} },
+      };
+
+      const PENDING = [
+        { id: "p1", material: "m09", title: "补填起点与终点", why: "客运费明细要求结构化的起点和终点，纸质车票上没有这两项，需要你对照行程回忆填写。",
+          fields: [{ key: "起点", placeholder: "如：张江高科", required: true }, { key: "终点", placeholder: "如：漕河泾开发区", required: true }] },
+        { id: "p2", material: "m10", title: "下车时间不合法，并补填起点与终点", why: "OCR 把下车时间读成了 90:60，不是合法时间。日期年份已按票面后两位补全为 2026-08-19，无需处理。",
+          fields: [{ key: "下车时间", placeholder: "对照原件填写，如 19:06", required: true }, { key: "起点", placeholder: "如：静安寺", required: true }, { key: "终点", placeholder: "如：虹桥枢纽", required: true }] },
+        { id: "p3", material: "m11", title: "不支持的材料类型", why: "第一版只处理住宿、网约车、高铁、出租车四类材料。这份发票不会被猜费用类别，请选择排除，或自行手工处理后再回来。",
+          choices: ["排除此材料", "自行手工处理"] },
+      ];
+
+      // 统一业务序号：按主要报销凭证分组、组间按最早费用日期、组内按行程先后。
+      const LINES = [
+        { no: 1, group: "g1", invoice: "m07", date: "08-09", cat: "城市间交通", desc: "G7522 杭州东 → 上海虹桥", amount: 73.0, type: "普通发票" },
+        { no: 2, group: "g2", invoice: "m01", date: "08-09 至 08-22", cat: "住宿", desc: "全季酒店 13 晚", amount: 3640.0, type: "增值税发票", evidence: ["m02"] },
+        { no: 3, group: "g3", invoice: "m03", date: "08-10", cat: "市内交通", desc: "高德 · 虹桥枢纽 → 漕河泾", amount: 26.69, type: "普通发票", evidence: ["m04"] },
+        { no: 4, group: "g3", invoice: "m03", date: "08-10", cat: "市内交通", desc: "高德 · 漕河泾 → 静安寺", amount: 20.85, type: "普通发票" },
+        { no: 5, group: "g3", invoice: "m03", date: "08-12", cat: "市内交通", desc: "高德 · 静安寺 → 张江", amount: 21.65, type: "普通发票" },
+        { no: 6, group: "g4", invoice: "m05", date: "08-11", cat: "市内交通", desc: "曹操 · 浦东机场 → 张江", amount: 38.4, type: "普通发票", evidence: ["m06"] },
+        { no: 7, group: "g5", invoice: "m09", date: "08-15", cat: "市内交通", desc: "出租车（上海）", amount: 32.0, type: "普通发票", fromPending: "p1" },
+        { no: 8, group: "g6", invoice: "m10", date: "08-19", cat: "市内交通", desc: "出租车（上海）", amount: 47.0, type: "普通发票", fromPending: "p2" },
+        { no: 9, group: "g7", invoice: "m08", date: "08-22", cat: "城市间交通", desc: "G7539 上海虹桥 → 杭州东", amount: 73.0, type: "普通发票" },
+      ];
+
+      const PAGES = [
+        { id: "pg1", nos: "No.1", date: "08-09", cat: "城市间交通", amount: 73.0, top: "m07", bottom: null },
+        { id: "pg2", nos: "No.2", date: "08-09", cat: "住宿", amount: 3640.0, top: "m01", bottom: "m02", hotel: true, defaultRotate: true },
+        { id: "pg3", nos: "No.3-5", date: "08-10", cat: "市内交通", amount: 69.19, top: "m03", bottom: "m04" },
+        { id: "pg4", nos: "No.6", date: "08-11", cat: "市内交通", amount: 38.4, top: "m05", bottom: "m06" },
+        { id: "pg5", nos: "No.7", date: "08-15", cat: "市内交通", amount: 32.0, top: "m09", bottom: null, photo: true, defaultRotate: true },
+        { id: "pg6", nos: "No.8", date: "08-19", cat: "市内交通", amount: 47.0, top: "m10", bottom: null, photo: true, defaultRotate: true },
+        { id: "pg7", nos: "No.9", date: "08-22", cat: "城市间交通", amount: 73.0, top: "m08", bottom: null },
+      ];
+
+      const ERP_STEPS = [
+        { key: "chromium", title: "打开专用 Chromium", desc: "CDP 驱动，独立用户数据目录，不碰你日常的浏览器。" },
+        { key: "login", title: "等待你在该窗口登录 ERP", desc: "登录完成后回到这里点「继续」。应用不会替你输入账号密码。" },
+        { key: "import", title: "导入发票（7 张）", desc: "PDF 与出租车原图都走 ERP 发票识别导入。" },
+        { key: "lines", title: "写入明细（9 行）", desc: "按统一业务序号写入，每行写入前先做写入预览校验。" },
+        { key: "save", title: "保存草稿", desc: "只保存草稿，不提交审批。" },
+        { key: "readback", title: "严格回读", desc: "逐行回读 ERP 草稿并与本地确认数据比对，任何不一致即停。" },
+      ];
+
+      const STAGES = [
+        { key: "upload", label: "上传材料" },
+        { key: "inventory", label: "材料盘点" },
+        { key: "pending", label: "待确认项" },
+        { key: "review", label: "整单明细确认" },
+        { key: "actions", label: "去打印 / 去报销" },
+        { key: "done", label: "完成" },
+      ];
+      const STAGE_INDEX = Object.fromEntries(STAGES.map((s, i) => [s.key, i]));
+
+      /* ---------- 状态 ---------- */
+      const initialState = () => ({
+        stage: "upload",
+        uploaded: false,
+        pendingSel: "p1",
+        answers: {},
+        resolved: {},
+        reviewed: false,
+        confirmed: false,
+        invalidated: false,
+        screenshot: null,
+        print: {},
+        printGenerated: false,
+        erp: { step: -1, status: "idle", draft: null },
+        modal: null,
+        notes: false,
+        toast: null,
+      });
+
+      let state = initialState();
+      let timers = [];
+      const clearTimers = () => { timers.forEach(clearTimeout); timers = []; };
+      const later = (fn, ms) => { timers.push(setTimeout(fn, ms)); };
+
+      const stageReached = (key) => STAGE_INDEX[state.stage] >= STAGE_INDEX[key];
+      const pendingOpen = () => PENDING.filter((p) => !state.resolved[p.id]);
+      const advanceTo = (key) => { if (!stageReached(key)) state.stage = key; };
+
+      // 流程总览里的「直接查看」：把状态推进到能看到该页面的最小快照。
+      function seed(target) {
+        const s = initialState();
+        const fill = () => {
+          s.uploaded = true;
+          s.answers = { p1: { 起点: "张江高科", 终点: "漕河泾开发区" }, p2: { 下车时间: "19:06", 起点: "静安寺", 终点: "虹桥枢纽" }, p3: { choice: "排除此材料" } };
+          s.resolved = { p1: true, p2: true, p3: true };
+        };
+        switch (target) {
+          case "upload": break;
+          case "inventory": s.uploaded = true; s.stage = "inventory"; break;
+          case "pending": s.uploaded = true; s.stage = "pending"; break;
+          case "review": fill(); s.stage = "review"; break;
+          case "actions": case "print": case "erp": fill(); s.reviewed = true; s.confirmed = true; s.stage = "actions"; break;
+          case "done": fill(); s.reviewed = true; s.confirmed = true; s.stage = "done"; s.erp = { step: 6, status: "done", draft: "BX20260911-0173" }; s.printGenerated = true; s.screenshot = "IMG_5011.png"; break;
+        }
+        state = s;
+      }
+
+      /* ---------- 路由 ---------- */
+      function route() {
+        const hash = location.hash.replace(/^#/, "") || "/";
+        const parts = hash.split("/").filter(Boolean);
+        if (parts.length === 0) return { screen: "map" };
+        if (parts[0] === "tasks" && parts[1] === "new") return { screen: "new" };
+        if (parts[0] === "tasks") return { screen: "tasks" };
+        if (parts[0] === "task" && parts[1]) return { screen: parts[2] || "upload", taskId: parts[1] };
+        if (parts[0] === "design") return { screen: "design" };
+        return { screen: "map" };
+      }
+      const go = (hash) => { location.hash = hash; };
+
+      /* ---------- 渲染 ---------- */
+      const SCREENS = {};
+
+      const NOTES = {
+        map: [
+          "这是整个系统的全貌：一条主线，确认后分成两条互不依赖的支路。",
+          "「直接查看」会把原型状态推进到该页面所需的最小快照，方便单独看某一页。",
+          "所有页面只与本机服务通信，不经过 Agent，也不调用大模型。",
+        ],
+        tasks: ["任务列表按更新时间倒序。", "「对账中」是 ERP 写入结果不确定后的停顿状态，不是失败。"],
+        new: ["新建只要一个名称，时间范围可留空，后续由材料日期推出。"],
+        upload: ["上传批次取代原来的材料目录边界；追加或删除材料会生成新的盘点版本。", "原件复制进任务目录后不可变，页面显示哈希前缀作为身份。", "支付截图不在这里上传，它在整单确认页按发票补充。"],
+        inventory: ["每份材料只被一个解析器认领；不认识的版式直接形成待确认项，不猜。", "配对、金额守恒、二维码交叉核对都在这一步完成，结果作为「校验」列展示。", "出租车城市由发票代码地区码推断，标注为推断值。"],
+        pending: ["左侧是待确认项清单，右侧对照原件补填。所有手工值来源记为 user，同样过内核校验。", "不支持的材料只能排除或自行处理，应用不会替它猜费用类别。", "全部处理完后出现空状态，并给出进入整单确认的入口。"],
+        review: ["表格按统一业务序号排列：同一张发票的行保持连续，组间按最早费用日期。", "注意 No.6 曹操（08-11）排在高德第三段（08-12）之后：分组优先于逐行按日期。", "确认后才出现「去打印」「去报销」两个按钮；两者基于同一份数据，先后随意。", "「追加材料」演示确认失效：旧确认作废、已生成的打印稿作废。"],
+        print: ["每张主要报销凭证一页 A4，发票在上、证明材料在下，中间虚线。", "结账单和出租车长条票默认旋转 90°，因为这样缩放更大；可手动改回。", "住宿页下半页分栏：结账单占左 2/3，支付截图竖放占右 1/3。", "旋转与裁剪只是打印设置，不改原件，也不使整单确认失效。"],
+        erp: ["页面接管了原来 tell_user 的登录提示：打开 Chromium 后等你登录，点「继续」再往下走。", "每一步都可回读，结果不确定即停并进入对账，不会重放写入。", "原型用定时器模拟每一步的耗时。"],
+        done: ["回读表把 ERP 草稿逐行与本地确认数据比对，全部一致才算完成。", "打印稿与 ERP 明细共用同一业务序号，方便对着打印稿核对。"],
+        reconcile: ["这是「去报销」的另一条出口：写入结果不确定时停下来对账。", "对账后只有两种处置：原地等待（你在 ERP 修正后重新对账）或转人工。不会自动重试写入。"],
+        design: ["视觉 token 来自 prototypes/DESIGN.md。"],
+      };
+
+      function topbar(current) {
+        const link = (href, label, key) => `<a href="${href}" ${current === key ? 'aria-current="page"' : ""}>${label}</a>`;
+        return `
+          <header class="topbar">
+            <div class="brand">baox<span>本地报销</span></div>
+            <nav aria-label="全局">
+              ${link("#/", "流程总览", "map")}
+              ${link("#/tasks", "报销任务", "tasks")}
+            </nav>
+            <div class="spacer"></div>
+            <span class="proto-tag">原型 · 虚构数据</span>
+            <span class="muted">${esc(EMPLOYEE.name)} · ${esc(EMPLOYEE.dept)}</span>
+            <button class="btn btn-tertiary btn-sm" data-action="reset">重置原型</button>
+          </header>`;
+      }
+
+      function sidebar(taskId, screen) {
+        const task = TASKS[taskId];
+        if (taskId !== "T1") {
+          return `
+            <aside class="sidebar">
+              <h3>当前报销任务</h3>
+              <div class="task-name">${esc(task ? task.name : "")}</div>
+              <h3>状态</h3>
+              <p style="padding:0 10px"><span class="badge badge-warn">对账中</span></p>
+              <p class="caption" style="padding:0 10px">写入结果不确定后停在这里。处置只有原地等待或转人工。</p>
+            </aside>`;
+        }
+        const map = { upload: "upload", inventory: "inventory", pending: "pending", review: "review", print: "actions", erp: "actions", done: "done", reconcile: "done" };
+        const activeKey = map[screen] || "upload";
+        const items = STAGES.map((s, i) => {
+          const reached = stageReached(s.key);
+          const isActive = s.key === activeKey;
+          const isDone = STAGE_INDEX[state.stage] > i || (state.stage === "done" && s.key === "done");
+          const cls = [isActive ? "current" : "", !reached ? "locked" : "", isDone && !isActive ? "done" : ""].join(" ");
+          const count = s.key === "pending" && stageReached("inventory") ? pendingOpen().length : 0;
+          const href = s.key === "actions" ? `#/task/${taskId}/review` : `#/task/${taskId}/${s.key}`;
+          const inner = `<span class="idx">${isDone && !isActive ? "✓" : i + 1}</span>${s.label}${count ? `<span class="count">${count}</span>` : ""}`;
+          return `<li>${reached ? `<a class="${cls}" href="${href}">${inner}</a>` : `<span class="${cls}">${inner}</span>`}</li>`;
+        }).join("");
+        return `
+          <aside class="sidebar">
+            <h3>当前报销任务</h3>
+            <div class="task-name">${esc(task ? task.name : "")}</div>
+            <h3>流程阶段</h3>
+            <ul class="stage-list">${items}</ul>
+            <h3 style="margin-top:20px">规则</h3>
+            <p class="caption" style="padding:0 10px">阶段不可跳过。材料变更会使已有盘点与确认失效。</p>
+          </aside>`;
+      }
+
+      function shell(r, body) {
+        const withSidebar = r.taskId && SCREENS[r.screen];
+        const notes = NOTES[r.screen] || [];
+        return `
+          ${topbar(r.screen === "map" ? "map" : "tasks")}
+          ${withSidebar ? `<div class="layout">${sidebar(r.taskId, r.screen)}<main class="main">${body}</main></div>` : `<main class="main" style="margin:0 auto">${body}</main>`}
+          ${notes.length ? `<button class="btn btn-secondary notes-toggle" data-action="toggle-notes" aria-expanded="${state.notes}">原型说明</button>` : ""}
+          ${state.notes && notes.length ? `<section class="notes" aria-label="原型说明"><h3>这一页在演示什么</h3><ol>${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ol></section>` : ""}
+          ${state.toast ? `<div class="toast" role="status">${esc(state.toast)}</div>` : ""}
+          ${state.modal ? modal(state.modal) : ""}`;
+      }
+
+      function modal(m) {
+        return `<div class="modal-scrim" data-action="close-modal"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" onclick="event.stopPropagation()">
+          <h2 id="modal-title">${esc(m.title)}</h2><p class="lead">${esc(m.body)}</p>
+          <div class="btn-row">${m.actions.map((a) => `<button class="btn ${a.primary ? "btn-primary" : "btn-secondary"}" data-action="${a.action}" ${a.arg ? `data-arg="${esc(a.arg)}"` : ""}>${esc(a.label)}</button>`).join("")}</div>
+        </div></div>`;
+      }
+
+      const badge = (status) => ({ ok: '<span class="badge badge-ok">通过</span>', pending: '<span class="badge badge-warn">待确认</span>' }[status] || `<span class="badge">${esc(status)}</span>`);
+
+      function docBox(id, label) {
+        const m = MATERIALS[id];
+        const f = FILES.find((x) => x.id === id);
+        return `<div class="doc ${m ? m.shape : "portrait"}"><div><div>${esc(f ? f.file : id)}</div><div>${esc(label || "原件预览（原型占位）")}</div></div></div>`;
+      }
+
+      /* ---------- 页面：流程总览 ---------- */
+      SCREENS.map = () => `
+        <div class="page-head">
+          <div><h1>本地报销应用 · 全流程</h1><p class="lead">员工在浏览器页面里上传材料、核对整单明细，然后选择去打印或去报销。全程由页面和确定性代码完成。</p></div>
+          <div class="actions"><a class="btn btn-primary" href="#/tasks">进入报销任务</a></div>
+        </div>
+        <div class="flow">
+          <div class="flow-row">
+            ${flowCard("新建报销任务", "页面", "一个名称即可。任务目录随之创建。", "new", "#/tasks/new")}
+            ${flowCard("上传材料", "页面 → 服务端", "拖入 PDF 与照片，原件复制进任务目录，形成上传批次。", "upload")}
+            ${flowCard("材料盘点", "规则提取器", "PDF 文本层、二维码、OCR 各司其职；配对与金额守恒在此完成。", "inventory")}
+            ${flowCard("待确认项补填", "页面", "对照原件补填出租车起终点、修正不合法读数、排除不支持材料。", "pending")}
+            ${flowCard("整单明细确认", "页面 · 内核", "统一业务序号的明细表。确认后出现两个按钮。", "review")}
+          </div>
+          <div class="flow-arrow">↓ 确认后，两条支路互不依赖，先后随意</div>
+          <div class="flow-row">
+            ${flowCard("去打印 → 打印稿预览", "打印稿生成器", "每票一页 A4，发票在上、证明在下。可旋转、可补支付截图，下载合并 PDF。", "print", null, "branch")}
+            ${flowCard("去报销 → ERP 填报", "CDP 驱动 · 内核", "页面接管登录提示；导入发票、写明细、保存草稿、严格回读。", "erp", null, "branch")}
+            ${flowCard("完成", "内核回读", "回读逐行一致，草稿号回填任务。打印稿与 ERP 明细共用序号。", "done")}
+            ${flowCard("对账（结果不确定即停）", "内核对账", "写入不重放。处置只有原地等待或转人工。", "reconcile", "#/task/T2/reconcile", "stop")}
+          </div>
+          <div class="flow-legend"><span>主线页面</span><span class="l-branch">确认后的两条支路</span><span class="l-stop">停下来等人的状态</span></div>
+        </div>
+        <section class="panel" style="margin-top:24px">
+          <h2>范围</h2>
+          <table class="data">
+            <thead><tr><th>费用</th><th>主要报销凭证</th><th>参考材料</th><th>打印：上半页 / 下半页</th></tr></thead>
+            <tbody>
+              <tr><td>住宿</td><td>住宿发票（全电专票/普票）</td><td>结账单</td><td>发票 / 结账单 + 支付截图（可选）</td></tr>
+              <tr><td>网约车</td><td>旅客运输电子发票</td><td>行程单（至多一份，可含多段）</td><td>发票 / 行程单</td></tr>
+              <tr><td>高铁</td><td>铁路电子客票</td><td>无</td><td>客票 / 空</td></tr>
+              <tr><td>出租车</td><td>纸质车费发票照片</td><td>无</td><td>车票 / 空</td></tr>
+            </tbody>
+          </table>
+        </section>`;
+
+      function flowCard(title, who, text, target, href, cls = "") {
+        const link = href ? `<a class="btn btn-secondary btn-sm" href="${href}">查看此页</a>` : `<button class="btn btn-secondary btn-sm" data-action="jump" data-arg="${target}">直接查看</button>`;
+        return `<div class="flow-card ${cls}"><div><h3>${esc(title)}</h3><div class="who">${esc(who)}</div></div><p>${esc(text)}</p>${link}</div>`;
+      }
+
+      /* ---------- 页面：任务列表 / 新建 ---------- */
+      SCREENS.tasks = () => {
+        const t1Status = state.stage === "done" ? '<span class="badge badge-ok">已完成</span>' : `<span class="badge badge-primary">${STAGES[STAGE_INDEX[state.stage]].label}</span>`;
+        const t1Href = `#/task/T1/${state.stage === "actions" ? "review" : state.stage}`;
+        return `
+          <div class="page-head">
+            <div><h1>报销任务</h1><p class="lead">每次出差一个任务。任务目录里保存原件、盘点结果、确认数据与打印设置。</p></div>
+            <div class="actions"><a class="btn btn-primary" href="#/tasks/new">新建报销任务</a></div>
+          </div>
+          <section class="panel">
+            <table class="data">
+              <thead><tr><th>任务</th><th>费用期间</th><th>状态</th><th class="num">价税合计</th><th>ERP 草稿</th><th>更新</th><th></th></tr></thead>
+              <tbody>
+                <tr class="task-row clickable" data-href="${t1Href}"><td>${esc(TASKS.T1.name)}</td><td class="mono">${TASKS.T1.period}</td><td>${t1Status}</td><td class="num">${state.confirmed ? money(3972.59) : '<span class="muted">未确认</span>'}</td><td class="mono">${state.erp.draft ? esc(state.erp.draft) : '<span class="muted">尚无</span>'}</td><td class="muted">${TASKS.T1.updated}</td><td><a href="${t1Href}">继续 →</a></td></tr>
+                <tr class="task-row clickable" data-href="#/task/T2/reconcile"><td>${esc(TASKS.T2.name)}</td><td class="mono">${TASKS.T2.period}</td><td><span class="badge badge-warn">对账中</span></td><td class="num">1 264.00</td><td class="mono">${TASKS.T2.draft}</td><td class="muted">${TASKS.T2.updated}</td><td><a href="#/task/T2/reconcile">查看对账 →</a></td></tr>
+                <tr class="task-row"><td>${esc(TASKS.T3.name)}</td><td class="mono">${TASKS.T3.period}</td><td><span class="badge badge-ok">已完成</span></td><td class="num">${money(TASKS.T3.amount)}</td><td class="mono">${TASKS.T3.draft}</td><td class="muted">${TASKS.T3.updated}</td><td></td></tr>
+              </tbody>
+            </table>
+          </section>`;
+      };
+
+      SCREENS.new = () => `
+        <div class="page-head"><div><h1>新建报销任务</h1><p class="lead">只需要一个名称。费用期间可以留空，盘点后由材料日期推出。</p></div></div>
+        <section class="panel" style="max-width:640px">
+          <form data-form="new-task">
+            <div class="field"><label for="task-name">任务名称</label><input class="input" id="task-name" name="name" value="2026-09 杭州出差（客户验收）" required /><div class="hint">建议写年月加事由，方便在列表里辨认。</div></div>
+            <div class="form-grid">
+              <div class="field"><label for="task-from">开始日期</label><input class="input" id="task-from" type="date" value="2026-09-03" /></div>
+              <div class="field"><label for="task-to">结束日期</label><input class="input" id="task-to" type="date" value="2026-09-05" /></div>
+            </div>
+            <div class="btn-row"><button class="btn btn-primary" type="submit">创建并上传材料</button><a class="btn btn-tertiary" href="#/tasks">取消</a></div>
+          </form>
+        </section>`;
+
+      /* ---------- 页面：上传 ---------- */
+      SCREENS.upload = (r) => `
+        <div class="page-head">
+          <div><h1>上传材料</h1><p class="lead">把这次出差的发票、行程单、结账单、车票照片一起拖进来。支付截图不在这里上传。</p></div>
+        </div>
+        ${state.uploaded ? "" : `
+          <section class="panel">
+            <div class="dropzone">
+              <strong>拖入文件，或点击选择</strong>
+              <span class="muted">支持 PDF、JPG、PNG。原件会被复制进任务目录，不会被修改。</span>
+              <button class="btn btn-secondary" data-action="mock-upload" style="margin-top:8px">选择文件（原型：载入 11 份示例）</button>
+            </div>
+          </section>`}
+        ${state.uploaded ? `
+          <section class="panel">
+            <div class="panel-head"><h2>上传批次 #1 · 11 份材料</h2><span class="badge badge-ok">已复制入任务目录</span></div>
+            <ul class="file-list">
+              ${FILES.map((f, i) => `<li><span class="mono muted">${String(i + 1).padStart(2, "0")}</span><span class="name">${esc(f.file)}</span><span class="mono muted">${hashOf(f.id)}</span><span class="size mono muted">${f.size}</span></li>`).join("")}
+            </ul>
+          </section>
+          <section class="panel">
+            <div class="btn-row">
+              <button class="btn btn-primary" data-action="start-inventory">开始材料盘点</button>
+              <button class="btn btn-tertiary" data-action="mock-more">追加材料</button>
+              <span class="caption">开始盘点后，追加或删除材料会形成新的盘点版本。</span>
+            </div>
+          </section>` : ""}`;
+
+      const hashOf = (id) => "sha256:" + Array.from(id + "baox").reduce((h, c) => ((h * 31 + c.charCodeAt(0)) >>> 0), 7).toString(16).padStart(8, "0").slice(0, 8);
+
+      /* ---------- 页面：材料盘点 ---------- */
+      SCREENS.inventory = (r) => {
+        const open = pendingOpen();
+        const rows = FILES.map((f) => {
+          const m = MATERIALS[f.id];
+          const resolvedHere = (m.pending || []).every((p) => state.resolved[p]);
+          const status = m.status === "pending" && resolvedHere ? (state.answers.p3 && f.id === "m11" ? "excluded" : "ok") : m.status;
+          const statusHtml = status === "excluded" ? '<span class="badge">已排除</span>' : badge(status);
+          const fields = Object.entries(m.fields).slice(0, 4).map(([k, v]) => `<span class="muted">${esc(k)}</span> <span class="mono">${esc(v)}</span>`).join("<br>");
+          const pair = m.pair ? `${esc(FILES.find((x) => x.id === m.pair).file)}` : (m.role === "主要报销凭证" ? '<span class="muted">无需</span>' : "");
+          return `<tr class="${status === "pending" ? "row-warn" : ""}"><td class="mono">${esc(f.file)}</td><td>${esc(m.kind)}<div class="caption">${esc(m.category)} · ${esc(m.role)}</div></td><td>${fields}</td><td>${pair}</td><td>${esc(m.check)}</td><td>${statusHtml}</td></tr>`;
+        }).join("");
+        return `
+          <div class="page-head">
+            <div><h1>材料盘点</h1><p class="lead">上传批次 #1 的 11 份材料已分别由对应解析器认领。二维码核对、配对和金额守恒的结果在「校验」列。</p></div>
+            <div class="actions">
+              ${open.length ? `<a class="btn btn-primary" href="#/task/${r.taskId}/pending">处理 ${open.length} 个待确认项</a>` : `<a class="btn btn-primary" href="#/task/${r.taskId}/review">进入整单明细确认</a>`}
+            </div>
+          </div>
+          <div class="btn-row" style="margin-bottom:16px">
+            <span class="badge badge-ok">通过 ${FILES.length - open.length}</span>
+            ${open.length ? `<span class="badge badge-warn">待确认 ${open.length}</span>` : ""}
+            <span class="badge">主要报销凭证 7</span>
+            <span class="badge">参考材料 3</span>
+            <span class="caption">盘点版本 v1 · 2026-09-11 14:20</span>
+          </div>
+          <section class="panel" style="padding:0 0 4px">
+            <table class="data">
+              <thead><tr><th>文件</th><th>识别为</th><th>关键字段</th><th>配对</th><th>校验</th><th>状态</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </section>`;
+      };
+
+      /* ---------- 页面：待确认项 ---------- */
+      SCREENS.pending = (r) => {
+        const open = pendingOpen();
+        if (!open.length) {
+          return `
+            <div class="page-head"><div><h1>待确认项</h1><p class="lead">本次盘点的 3 个待确认项都已处理。</p></div></div>
+            <section class="panel"><div class="empty"><h2>没有待确认项了</h2><p>出租车起终点已补填，不合法的读数已修正，不支持的材料已${state.answers.p3?.choice === "排除此材料" ? "排除" : "标记为自行处理"}。</p><a class="btn btn-primary btn-lg" href="#/task/${r.taskId}/review">进入整单明细确认</a></div></section>`;
+        }
+        if (!open.find((p) => p.id === state.pendingSel)) state.pendingSel = open[0].id;
+        const sel = PENDING.find((p) => p.id === state.pendingSel);
+        const m = MATERIALS[sel.material];
+        const ans = state.answers[sel.id] || {};
+        const errs = state.errors?.[sel.id] || {};
+        const list = PENDING.map((p) => `<li class="${p.id === state.pendingSel ? "selected" : ""}"><button data-action="select-pending" data-arg="${p.id}">
+            <div class="title">${esc(p.title)}</div><div class="sub">${esc(FILES.find((f) => f.id === p.material).file)} ${state.resolved[p.id] ? "· 已处理" : ""}</div></button></li>`).join("");
+        const form = sel.fields ? `
+            <form data-form="pending" data-arg="${sel.id}">
+              ${sel.fields.map((f) => `<div class="field"><label for="pf-${f.key}">${esc(f.key)}${f.required ? " *" : ""}</label><input class="input" id="pf-${f.key}" name="${esc(f.key)}" value="${esc(ans[f.key] || "")}" placeholder="${esc(f.placeholder || "")}" ${errs[f.key] ? 'aria-invalid="true"' : ""} />${errs[f.key] ? `<div class="error">${esc(errs[f.key])}</div>` : ""}</div>`).join("")}
+              <div class="btn-row"><button class="btn btn-primary" type="submit">保存并标记已处理</button><span class="caption">来源记为 user，同样经过内核确定性校验。</span></div>
+            </form>` : `
+            <div class="btn-row">${sel.choices.map((c) => `<button class="btn btn-secondary" data-action="resolve-choice" data-arg="${sel.id}|${esc(c)}">${esc(c)}</button>`).join("")}</div>
+            <p class="caption" style="margin-top:12px">排除后该材料不进入明细，也不上传 ERP；自行手工处理表示你会在 ERP 里另行补录，应用同样不碰它。</p>`;
+        return `
+          <div class="page-head"><div><h1>待确认项</h1><p class="lead">对照原件补填或作出选择。还剩 ${open.length} 个。</p></div></div>
+          <div class="split">
+            <section class="panel" style="padding:8px"><ul class="item-list">${list}</ul></section>
+            <section class="panel">
+              <h2>${esc(sel.title)}</h2>
+              <p class="lead" style="margin-bottom:16px">${esc(sel.why)}</p>
+              <div class="detail-grid">
+                <div>${docBox(sel.material)}<dl class="kv" style="margin-top:12px">${Object.entries(m.fields).map(([k, v]) => `<dt>${esc(k)}</dt><dd class="mono">${esc(v)}</dd>`).join("")}</dl></div>
+                <div>${form}</div>
+              </div>
+            </section>
+          </div>`;
+      };
+
+      /* ---------- 页面：整单明细确认 ---------- */
+      SCREENS.review = (r) => {
+        const total = LINES.reduce((s, l) => s + l.amount, 0);
+        const rows = LINES.map((l, i) => {
+          const first = i === 0 || LINES[i - 1].group !== l.group;
+          let desc = l.desc;
+          if (l.fromPending) { const a = state.answers[l.fromPending] || {}; desc = `出租车 · ${a.起点 || "?"} → ${a.终点 || "?"}`; }
+          const evid = (l.evidence || []).map((e) => esc(FILES.find((f) => f.id === e).file)).join("、");
+          const hotel = l.group === "g2" ? `<div class="caption" style="margin-top:4px">${state.screenshot ? `支付截图：${esc(state.screenshot)} <button class="btn btn-tertiary btn-sm" data-action="remove-shot">移除</button>` : `<button class="btn btn-secondary btn-sm" data-action="add-shot">补充支付截图</button> <span class="muted">仅用于打印稿</span>`}</div>` : "";
+          return `<tr data-group="${l.group}" class="${first ? "group-start" : ""}"><td class="group-bar"></td><td class="mono">${l.no}</td><td class="mono">${esc(l.date)}</td><td>${esc(l.cat)}</td><td>${esc(desc)}${hotel}</td><td class="mono">${first ? esc(FILES.find((f) => f.id === l.invoice).file) : '<span class="muted">同上</span>'}</td><td>${esc(l.type)}</td><td class="muted">${evid}</td><td class="num">${money(l.amount)}</td></tr>`;
+        }).join("");
+        const excluded = state.answers.p3?.choice ? `<p class="caption">已${state.answers.p3.choice === "排除此材料" ? "排除" : "标记为自行处理"}：餐饮_发票.pdf，不进入明细。</p>` : "";
+        const confirmBox = state.confirmed ? `
+            <div class="notice notice-ok">整单明细已确认（2026-09-11 14:32）。下面两个按钮基于同一份确认数据，先后随意、可重复。</div>
+            <div class="two-actions">
+              <div class="action-card"><h3>去打印</h3><p>生成合并 PDF：每张发票一页 A4，发票在上、证明材料在下。${state.screenshot ? "" : "住宿发票还没有支付截图，打印时会提醒。"}</p><a class="btn btn-primary btn-lg" href="#/task/${r.taskId}/print">去打印</a></div>
+              <div class="action-card"><h3>去报销</h3><p>在专用浏览器里导入发票、写入 9 行明细、保存草稿并严格回读。${state.erp.status === "done" ? `已完成，草稿 ${esc(state.erp.draft)}。` : ""}</p><a class="btn btn-primary btn-lg" href="#/task/${r.taskId}/erp">${state.erp.status === "done" ? "查看结果" : "去报销"}</a></div>
+            </div>
+            <div class="btn-row" style="margin-top:16px"><button class="btn btn-tertiary" data-action="mock-more">追加材料（演示确认失效）</button></div>` : `
+            ${state.invalidated ? '<div class="notice notice-warn">材料已变更，之前的整单确认与已生成的打印稿作废。请重新核对后再确认。</div>' : ""}
+            <label class="check" style="margin-bottom:12px"><input type="checkbox" data-action="toggle-reviewed" ${state.reviewed ? "checked" : ""} /> 我已逐行核对以上 9 行明细，与原件一致</label>
+            <div class="btn-row"><button class="btn btn-primary btn-lg" data-action="confirm" ${state.reviewed ? "" : "disabled"}>确认整单明细</button><span class="caption">确认后出现「去打印」与「去报销」。</span></div>`;
+        return `
+          <div class="page-head"><div><h1>整单明细确认</h1><p class="lead">9 行候选明细，按统一业务序号排列。打印稿页序与 ERP 明细行共用这个序号。</p></div></div>
+          <section class="panel" style="padding:0 0 4px">
+            <table class="data">
+              <thead><tr><th></th><th>No.</th><th>日期</th><th>费用类别</th><th>说明</th><th>发票</th><th>票种</th><th>参考材料</th><th class="num">价税合计</th></tr></thead>
+              <tbody>${rows}</tbody>
+              <tfoot><tr><td></td><td colspan="7">合计 · 7 张发票 · 9 行</td><td class="num">${money(total)}</td></tr></tfoot>
+            </table>
+          </section>
+          ${excluded}
+          <section class="panel">${confirmBox}</section>`;
+      };
+
+      /* ---------- 页面：打印稿预览 ---------- */
+      SCREENS.print = (r) => {
+        if (!state.confirmed) return guard(r, "打印稿需要先完成整单明细确认。");
+        const cards = PAGES.map((p) => {
+          const ps = state.print[p.id] || {};
+          const rotate = ps.rotate ?? p.defaultRotate ?? false;
+          const topId = p.top, botId = p.bottom;
+          const topDoc = p.photo ? `<div class="doc photo ${rotate ? "rot" : ""}">${esc(FILES.find((f) => f.id === topId).file)}<br>已透视矫正${ps.adjusted ? "，已手动微调" : ""}</div>` : `<div class="doc ${MATERIALS[topId].shape}">${esc(FILES.find((f) => f.id === topId).file)}</div>`;
+          let bottom;
+          if (!botId) bottom = `<div class="half"><span class="blank">留白</span></div>`;
+          else if (p.hotel && state.screenshot) bottom = `<div class="half split"><div class="doc ${rotate ? "rot" : "portrait"}">${esc(FILES.find((f) => f.id === botId).file)}${rotate ? "<br>旋转 90°" : ""}</div><div class="doc phone">${esc(state.screenshot)}</div></div>`;
+          else bottom = `<div class="half"><div class="doc ${rotate ? "rot" : MATERIALS[botId].shape}">${esc(FILES.find((f) => f.id === botId).file)}${rotate ? "<br>旋转 90°" : ""}</div></div>`;
+          return `<div class="page-card">
+            <div class="a4"><div class="hdr">${p.nos} · ${p.date} · ${esc(p.cat)} · ${money(p.amount)}</div><div class="half top">${topDoc}</div>${bottom}</div>
+            <div class="meta"><span>第 ${PAGES.indexOf(p) + 1} 页 · ${p.nos}</span><span class="btn-row">
+              ${botId || p.photo ? `<button class="btn btn-tertiary btn-sm" data-action="rotate" data-arg="${p.id}">${rotate ? "改为竖放" : "旋转 90°"}</button>` : ""}
+              ${p.photo ? `<button class="btn btn-tertiary btn-sm" data-action="adjust" data-arg="${p.id}">${ps.adjusted ? "取消微调" : "调整四角"}</button>` : ""}
+            </span></div>
+          </div>`;
+        }).join("");
+        return `
+          <div class="page-head">
+            <div><h1>打印稿预览</h1><p class="lead">7 页 A4 纵向，每张主要报销凭证一页。页眉是业务序号、日期、费用类别与价税合计。</p></div>
+            <div class="actions"><a class="btn btn-tertiary" href="#/task/${r.taskId}/review">返回确认页</a><button class="btn btn-primary" data-action="generate-pdf">下载打印稿 PDF</button></div>
+          </div>
+          ${state.screenshot ? "" : `<div class="notice notice-warn">No.2 住宿发票还没有支付截图。可以照常打印，该页下半页只放结账单。<div class="btn-row"><button class="btn btn-secondary btn-sm" data-action="add-shot">补充支付截图</button></div></div>`}
+          ${state.printGenerated ? `<div class="notice notice-ok">已生成 打印稿_2026-08上海出差.pdf（7 页，原型不产生真实文件）。旋转与裁剪已保存为打印设置。</div>` : ""}
+          <div class="pages">${cards}</div>`;
+      };
+
+      function guard(r, msg) {
+        return `<div class="page-head"><div><h1>还不能进入这一步</h1><p class="lead">${esc(msg)}</p></div></div><a class="btn btn-primary" href="#/task/${r.taskId}/review">去整单明细确认</a>`;
+      }
+
+      /* ---------- 页面：ERP 填报 ---------- */
+      SCREENS.erp = (r) => {
+        if (!state.confirmed) return guard(r, "ERP 填报需要先完成整单明细确认。");
+        const e = state.erp;
+        const items = ERP_STEPS.map((s, i) => {
+          let cls = "", status = "";
+          if (i < e.step || e.status === "done") { cls = "done"; status = "完成"; }
+          else if (i === e.step && e.status === "waiting") { cls = "waiting"; status = "等待你操作"; }
+          else if (i === e.step && e.status === "running") { cls = "running"; status = "进行中"; }
+          const extra = i === 1 && e.step === 1 && e.status === "waiting" ? `<div class="btn-row" style="margin-top:8px"><button class="btn btn-primary" data-action="erp-continue">我已登录，继续</button><span class="caption">应用检测到会话后才会往下走。</span></div>` : "";
+          return `<li class="${cls}"><span class="dot">${cls === "done" ? "✓" : i + 1}</span><div><div>${esc(s.title)}</div><div class="desc">${esc(s.desc)}</div>${extra}</div><span class="status">${status}</span></li>`;
+        }).join("");
+        const foot = e.status === "idle" ? `<div class="btn-row"><button class="btn btn-primary btn-lg" data-action="erp-start">开始填报</button><span class="caption">只保存草稿，不提交审批。中途任何不一致都会停下来对账。</span></div>`
+          : e.status === "done" ? `<div class="notice notice-ok" style="margin:0">草稿 ${esc(e.draft)} 已保存，回读 9 行全部一致。</div><div class="btn-row" style="margin-top:12px"><a class="btn btn-primary" href="#/task/${r.taskId}/done">查看完成结果</a></div>`
+          : `<span class="caption">进行中，请不要关闭专用浏览器窗口。</span>`;
+        return `
+          <div class="page-head"><div><h1>ERP 填报</h1><p class="lead">复用确定性写入链路：导入发票、写入明细、保存草稿、严格回读。</p></div><div class="actions"><a class="btn btn-tertiary" href="#/task/${r.taskId}/review">返回确认页</a></div></div>
+          <section class="panel"><ul class="steps">${items}</ul></section>
+          <section class="panel">${foot}</section>`;
+      };
+
+      /* ---------- 页面：完成 ---------- */
+      SCREENS.done = (r) => {
+        if (state.erp.status !== "done") return guard(r, "ERP 填报还没有完成。");
+        const rows = LINES.map((l) => { let desc = l.desc; if (l.fromPending) { const a = state.answers[l.fromPending] || {}; desc = `出租车 · ${a.起点} → ${a.终点}`; }
+          return `<tr><td class="mono">${l.no}</td><td>${esc(desc)}</td><td class="num">${money(l.amount)}</td><td class="num">${money(l.amount)}</td><td><span class="badge badge-ok">一致</span></td></tr>`; }).join("");
+        return `
+          <div class="page-head"><div><h1>完成</h1><p class="lead">草稿 <span class="mono">${esc(state.erp.draft)}</span> 已保存并回读一致。接下来去 ERP 提交审批，把打印稿交给财务。</p></div>
+            <div class="actions"><a class="btn btn-secondary" href="#/task/${r.taskId}/print">打印稿</a><a class="btn btn-primary" href="#/tasks">返回任务列表</a></div></div>
+          <div class="btn-row" style="margin-bottom:16px"><span class="badge badge-ok">发票导入 7/7</span><span class="badge badge-ok">明细 9/9 一致</span><span class="badge ${state.printGenerated ? "badge-ok" : ""}">打印稿 ${state.printGenerated ? "已生成" : "未生成"}</span></div>
+          <section class="panel" style="padding:0 0 4px">
+            <table class="data"><thead><tr><th>No.</th><th>说明</th><th class="num">本地确认</th><th class="num">ERP 回读</th><th>比对</th></tr></thead><tbody>${rows}</tbody>
+            <tfoot><tr><td colspan="2">合计</td><td class="num">${money(3972.59)}</td><td class="num">${money(3972.59)}</td><td></td></tr></tfoot></table>
+          </section>`;
+      };
+
+      /* ---------- 页面：对账（任务 T2） ---------- */
+      SCREENS.reconcile = (r) => `
+        <div class="page-head"><div><h1>对账</h1><p class="lead">保存草稿后回读超时，写入结果不确定。应用已停止写入并与 ERP 对账，不会重放。</p></div>
+          <div class="actions"><a class="btn btn-tertiary" href="#/tasks">返回任务列表</a></div></div>
+        <div class="notice notice-warn">ERP 中存在草稿 <span class="mono">${TASKS.T2.draft}</span>，5 行明细中 4 行一致，1 行金额不一致。</div>
+        <section class="panel" style="padding:0 0 4px">
+          <table class="data"><thead><tr><th>No.</th><th>说明</th><th class="num">本地确认</th><th class="num">ERP 回读</th><th>比对</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">1</td><td>G6512 上海虹桥 → 深圳北</td><td class="num">553.00</td><td class="num">553.00</td><td><span class="badge badge-ok">一致</span></td></tr>
+              <tr><td class="mono">2</td><td>亚朵酒店 2 晚</td><td class="num">396.00</td><td class="num">396.00</td><td><span class="badge badge-ok">一致</span></td></tr>
+              <tr class="row-warn"><td class="mono">3</td><td>滴滴 · 深圳北 → 科技园</td><td class="num">182.00</td><td class="num">128.00</td><td><span class="badge badge-err">金额不一致</span></td></tr>
+              <tr><td class="mono">4</td><td>出租车 · 科技园 → 宝安机场</td><td class="num">63.00</td><td class="num">63.00</td><td><span class="badge badge-ok">一致</span></td></tr>
+              <tr><td class="mono">5</td><td>G6513 深圳北 → 上海虹桥</td><td class="num">70.00</td><td class="num">70.00</td><td><span class="badge badge-ok">一致</span></td></tr>
+            </tbody></table>
+        </section>
+        <section class="panel">
+          <h2>处置</h2>
+          <p class="lead" style="margin-bottom:12px">只有两种：原地等待，或转人工。应用不会自动改写 ERP 里的行。</p>
+          <div class="two-actions" style="margin-top:0">
+            <div class="action-card"><h3>原地等待</h3><p>你在 ERP 中把第 3 行改回 182.00 后，点重新对账。</p><button class="btn btn-secondary" data-action="toast" data-arg="已重新对账：仍有 1 行不一致（原型固定结果）">重新对账</button></div>
+            <div class="action-card"><h3>转人工</h3><p>任务标记为人工处理，保留对账记录，之后不再自动写入。</p><button class="btn btn-secondary" data-action="toast" data-arg="已转人工处理（原型）">转人工处理</button></div>
+          </div>
+        </section>`;
+
+      /* ---------- 渲染主循环 ---------- */
+      function render() {
+        const r = route();
+        const app = document.getElementById("app");
+        let body;
+        if (r.taskId && r.taskId !== "T1" && r.screen !== "reconcile") body = `<div class="page-head"><div><h1>原型只演示任务 T1 的完整流程</h1></div></div><a class="btn btn-primary" href="#/task/T1/upload">前往 T1</a>`;
+        else if (r.taskId && r.screen !== "reconcile" && r.screen !== "upload" && !state.uploaded) body = `<div class="page-head"><div><h1>还没有上传材料</h1><p class="lead">先上传材料，再进入后续阶段。</p></div></div><a class="btn btn-primary" href="#/task/T1/upload">去上传</a>`;
+        else if (r.taskId && r.screen !== "reconcile" && !stageReached({ inventory: "inventory", pending: "inventory", review: "review", print: "actions", erp: "actions", done: "done" }[r.screen] || "upload") && r.screen !== "upload") body = guard(r, "阶段不可跳过，请按顺序完成前面的步骤。");
+        else body = (SCREENS[r.screen] || SCREENS.map)(r);
+        app.innerHTML = shell(r, body);
+        document.title = "baox · " + ({ map: "流程总览", tasks: "报销任务", new: "新建任务", upload: "上传材料", inventory: "材料盘点", pending: "待确认项", review: "整单明细确认", print: "打印稿预览", erp: "ERP 填报", done: "完成", reconcile: "对账" }[r.screen] || "原型");
+        window.scrollTo(0, 0);
+      }
+
+      function toast(msg) { state.toast = msg; render(); later(() => { state.toast = null; render(); }, 2200); }
+
+      /* ---------- 事件 ---------- */
+      const actions = {
+        reset() { clearTimers(); state = initialState(); go("#/"); render(); },
+        "toggle-notes"() { state.notes = !state.notes; render(); },
+        "close-modal"() { state.modal = null; render(); },
+        jump(arg) { clearTimers(); seed(arg); const to = { new: "#/tasks/new", upload: "#/task/T1/upload", inventory: "#/task/T1/inventory", pending: "#/task/T1/pending", review: "#/task/T1/review", actions: "#/task/T1/review", print: "#/task/T1/print", erp: "#/task/T1/erp", done: "#/task/T1/done" }[arg]; if (location.hash === to) render(); else go(to); },
+        "mock-upload"() { state.uploaded = true; render(); },
+        "mock-more"() {
+          state.modal = { title: "追加材料会形成新的盘点版本", body: "已有的盘点结果、待确认项答复和整单确认都会失效，已生成的打印稿作废。原型里点「继续追加」只演示失效，不真的增加文件。",
+            actions: [{ label: "取消", action: "close-modal" }, { label: "继续追加", action: "invalidate", primary: true }] };
+          render();
+        },
+        invalidate() { state.modal = null; state.confirmed = false; state.reviewed = false; state.invalidated = true; state.printGenerated = false; state.erp = { step: -1, status: "idle", draft: null }; if (STAGE_INDEX[state.stage] > STAGE_INDEX.review) state.stage = "review"; toast("材料已变更：盘点 v2，旧确认失效"); },
+        "start-inventory"() { advanceTo("inventory"); go("#/task/T1/inventory"); },
+        "select-pending"(arg) { state.pendingSel = arg; render(); },
+        "resolve-choice"(arg) { const [id, choice] = arg.split("|"); state.answers[id] = { choice }; state.resolved[id] = true; afterResolve(); },
+        "toggle-reviewed"() { state.reviewed = !state.reviewed; render(); },
+        confirm() { state.confirmed = true; state.invalidated = false; advanceTo("actions"); render(); },
+        "add-shot"() { state.screenshot = "IMG_5011.png"; toast("已补充支付截图 IMG_5011.png（仅用于打印稿）"); },
+        "remove-shot"() { state.screenshot = null; render(); },
+        rotate(arg) { const p = PAGES.find((x) => x.id === arg); const ps = state.print[arg] || {}; const cur = ps.rotate ?? p.defaultRotate ?? false; state.print[arg] = { ...ps, rotate: !cur }; state.printGenerated = false; render(); },
+        adjust(arg) { const ps = state.print[arg] || {}; state.print[arg] = { ...ps, adjusted: !ps.adjusted }; state.printGenerated = false; render(); },
+        "generate-pdf"() { state.printGenerated = true; toast("已生成 打印稿_2026-08上海出差.pdf（原型不产生真实文件）"); },
+        "erp-start"() {
+          state.erp = { step: 0, status: "running", draft: null }; render();
+          later(() => { state.erp.step = 1; state.erp.status = "waiting"; render(); }, 900);
+        },
+        "erp-continue"() {
+          state.erp.step = 2; state.erp.status = "running"; render();
+          const tick = (i) => later(() => { if (i >= ERP_STEPS.length) { state.erp = { step: ERP_STEPS.length, status: "done", draft: "BX20260911-0173" }; advanceTo("done"); render(); return; } state.erp.step = i; render(); tick(i + 1); }, 1000);
+          tick(3);
+        },
+        toast(arg) { toast(arg); },
+      };
+
+      function afterResolve() {
+        const open = pendingOpen();
+        if (!open.length) { toast("待确认项已全部处理"); state.stage = stageReached("review") ? state.stage : "review"; }
+        else { state.pendingSel = open[0].id; render(); }
+      }
+
+      document.addEventListener("click", (e) => {
+        const el = e.target.closest("[data-action]");
+        if (el) {
+          const fn = actions[el.dataset.action];
+          if (fn) { e.preventDefault(); fn(el.dataset.arg); }
+          return;
+        }
+        const row = e.target.closest("tr[data-href]");
+        if (row && !e.target.closest("a")) go(row.dataset.href);
+      });
+
+      document.addEventListener("submit", (e) => {
+        const form = e.target.closest("form[data-form]");
+        if (!form) return;
+        e.preventDefault();
+        if (form.dataset.form === "new-task") { go("#/task/T1/upload"); return; }
+        if (form.dataset.form === "pending") {
+          const id = form.dataset.arg;
+          const spec = PENDING.find((p) => p.id === id);
+          const data = Object.fromEntries(new FormData(form).entries());
+          const errors = {};
+          spec.fields.forEach((f) => {
+            const v = (data[f.key] || "").trim();
+            if (f.required && !v) errors[f.key] = "必填，对照原件填写。";
+            else if (f.key === "下车时间" && !/^([01]\d|2[0-3]):[0-5]\d$/.test(v)) errors[f.key] = "格式应为 HH:MM，且小时 00-23、分钟 00-59。";
+          });
+          state.errors = { ...(state.errors || {}), [id]: errors };
+          state.answers[id] = data;
+          if (Object.keys(errors).length) { render(); return; }
+          state.resolved[id] = true;
+          afterResolve();
+        }
+      });
+
+      window.addEventListener("hashchange", () => { state.modal = null; render(); });
+      // ?seed=review 之类的查询参数：直接打开某个阶段，供冒烟测试与截图使用。
+      const seedParam = new URLSearchParams(location.search).get("seed");
+      if (seedParam) seed(seedParam);
+      render();
+    </script>
+  </body>
+</html>
