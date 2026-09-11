@@ -25,12 +25,14 @@ const healthy = (over = {}) => ({
 
 const KEY = 'a1b2c3d4e5f60718';
 
-test('七个环境状态各有一步可做，说给用户听的话全部来自内核', async () => {
+test('八个环境状态各有一步可做，说给用户听的话全部来自内核', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
   const cases = [
     ['env_node_unsupported', 'tell_user', healthy({ nodeMajor: 20, nodeVersion: '20.11.0' })],
     ['env_chrome_down', 'tell_user', healthy({ cdpUp: false, probe: null })],
+    ['env_chromium_required', 'run', healthy({ browserMode: 'system',
+      chromiumAutomation: { required: true, ready: false, port: 9333 } })],
     ['env_not_logged_in', 'tell_user', healthy({ probe: { status: 'not_logged_in' }, binding: null })],
     ['env_identity_unknown', 'tell_user', healthy({ probe: { status: 'unknown' }, binding: null })],
     // 第一次认身份走终端表格（confirm_table），不再弹本地页面。
@@ -62,6 +64,22 @@ test('system 默认模式没有 ERP 标签时发 browser-open，而不是要求 
   assert.equal(shaped.step.argv[2], 'browser-open');
   assert.ok(shaped.step.argv.includes('--url'));
   assert.doesNotMatch(shaped.speak, /BAOX_EGO_TASK_SPACE|ego task space/);
+});
+
+test('ERP 需要写入时先发 chrome-up，且环境步骤不能外包', async () => {
+  freshHome();
+  const { stepFor } = await import('../src/next.mjs');
+  const shaped = stepFor('env_chromium_required', {
+    browserMode: 'system',
+    chromiumAutomation: { required: true, ready: false, port: 9333 },
+    probe: { status: 'matched', identity: { displayName: '刘明建', account: 'luo.liu' } },
+  });
+  assert.equal(shaped.step.kind, 'run');
+  assert.equal(shaped.step.argv[2], 'chrome-up');
+  assert.equal(shaped.step.outsourceable, false);
+  assert.doesNotMatch(shaped.speak, /Chrome|CDP|ERP|内核/);
+  assert.match(shaped.context, /独立.*报销窗口/);
+  assert.doesNotMatch(shaped.context, /Chrome|CDP|ERP|内核|chrome-up/);
 });
 
 test('system 只读能力失败时如实提示，不假装未登录或已登录', async () => {
@@ -360,50 +378,36 @@ test('证据歧义待办显示凭证与候选参考材料的 materialId 和文�
   assert.match(shaped.speak, /m-ref-b\/行程单二\.pdf/);
 });
 
-test('分类明细确认表完整展示住宿入住和离店日期', async () => {
+test('最终整单确认表完整展示住宿入住和离店日期', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
-  const shaped = stepFor('classified_detail_confirmation', withMaterials({
-    task: { taskId: 'task-hotel', identity: me, workspace: '/tmp/ws' },
-    classifiedPreview: {
-      versionId: 'v-hotel', homeCity: '广州', evidence: [],
-      lines: [{ lineId: 'ev-01', maskedNumber: '****1234', kind: 'vat_common',
-        date: '2026-08-09', checkOut: '2026-08-22', endDate: '2026-08-22',
-        route: '酒店', totalAmount: '3640.00', categoryLabel: '住宿',
-        expenseItemCode: 'FY010001', referenceMaterialIds: ['m-folio'] }],
-    },
-  }));
+  const preparation = preparationFixture();
+  preparation.document.lines = [{ ...preparation.document.lines[0],
+    category: 'accommodation', categoryLabel: '住宿', date: '2026-08-09',
+    checkOut: '2026-08-22', endDate: '2026-08-22', city: '广州',
+    expenseItemCode: 'FY010001', expenseItemName: '住宿' }];
+  const shaped = stepFor('preparation_confirmation', withPreparation({ preparation }));
   assert.match(shaped.step.table, /2026-08-09/);
   assert.match(shaped.step.table, /2026-08-22/);
+  assert.match(shaped.step.table, /广州/);
 });
 
-test('分类明细确认表展示每张发票的票据类型和三项票面金额', async () => {
+test('最终整单确认表展示短发票标签、票种和三项金额', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
-  const shaped = stepFor('classified_detail_confirmation', withMaterials({
-    task: { taskId: 'task-rail', identity: me, workspace: '/tmp/ws' },
-    classifiedPreview: {
-      versionId: 'v-rail', homeCity: '广州',
-      evidence: [{ materialId: 'm-rail', role: 'primary_voucher', kind: 'rail_eticket',
-        fields: { invoiceNumber: '26349119423005877606',
-          netAmount: null, taxAmount: null, totalAmount: { text: '703.00', cents: 70300 } } }],
-      lines: [{ lineId: 'ev-01', voucherMaterialId: 'm-rail', maskedNumber: '********7606',
-        kind: 'rail_eticket', date: '2026-09-02',
-        totalAmount: '703.00', categoryLabel: '城际交通', expenseItemCode: 'FY010001',
-        referenceMaterialIds: [] }],
-    },
-  }));
-  assert.match(shaped.step.table, /票据类型/);
-  assert.match(shaped.step.table, /铁路电子客票/);
-  assert.match(shaped.step.table, /不含税金额/);
+  const preparation = preparationFixture();
+  preparation.document.lines = [{ ...preparation.document.lines[0],
+    invoiceType: '普通发票', netCents: 2591, taxCents: 78, totalCents: 2669 }];
+  preparation.document.invoices = [{ materialId: 'm-1', fileName: '一张很长的原始发票文件名.pdf' }];
+  const shaped = stepFor('preparation_confirmation', withPreparation({ preparation }));
+  assert.match(shaped.step.table, /发票1/);
+  assert.match(shaped.step.table, /普通发票/);
+  assert.match(shaped.step.table, /费用金额/);
   assert.match(shaped.step.table, /税额/);
-  assert.match(shaped.step.table, /价税合计/);
-  assert.match(shaped.step.table, /无需读取/);
-  assert.match(shaped.step.table, /0\.00（业务默认）/);
-  assert.match(shaped.step.table, /703\.00/);
-  assert.match(shaped.speak, /发票类型、不含税金额、税额和价税合计/);
-  assert.match(shaped.speak, /只核对票面总额/);
-  assert.doesNotMatch(shaped.speak, /待ERP|需在 ERP/);
+  assert.match(shaped.step.table, /25\.91/);
+  assert.match(shaped.step.table, /0\.78/);
+  assert.match(shaped.step.table, /26\.69/);
+  assert.doesNotMatch(shaped.step.table, /一张很长的原始发票文件名/);
 });
 
 test('被驳回的读数：重读时把上次没过的理由原样带上', async () => {
@@ -736,7 +740,11 @@ test('后半段每个状态也各有一步可做，话仍然全部来自内核',
         problems: [{ code: 'rail_net_tax_missing', message: '铁路票面未提供净额和税额' }] }),
     }), 2],
     ['preparation_confirmation', 'confirm_table', withPreparation()],
-    ['preparation_complete', 'done', withPreparation({ preparationConfirmed: true })],
+    ['erp_write_pending', 'run', withPreparation({ preparationConfirmed: true })],
+    ['erp_write_complete', 'done', withErp({
+      task: { taskId: 't', sourceLabel: '材料', workspace: '/tmp/ws', currentVersionId: 'v-abc',
+        erpWriteState: 'saved' },
+    })],
     ['handed_off_recover', 'run', withErp({
       task: { taskId: 't', sourceLabel: '材料', workspace: '/tmp/ws', currentVersionId: 'v-abc',
         erpWriteState: 'upload_dispatched' } })],
@@ -865,7 +873,6 @@ test('确认表和准备缺项都输出标准 Markdown 表格，用户话术只�
   markdownTable(stepFor('reading_awaiting_confirmation', withMaterials({
     pendingReadings: [PENDING_READING],
   })).step.table);
-  markdownTable(stepFor('classified_detail_confirmation', withMaterials()).step.table);
   markdownTable(stepFor('preparation_confirmation', withPreparation()).step.table);
 
   const blocked = stepFor('preparation_blocked', withPreparation({
@@ -886,11 +893,6 @@ test('确认和待办的 speak 不暴露内部处理原理', async () => {
   }));
   assert.match(reading.speak, /对照原件/);
   assert.doesNotMatch(reading.speak, /落库|分歧重新看一遍/);
-
-  const classified = stepFor('classified_detail_confirmation', withMaterials({
-    classifiedPreview: { lines: [], evidence: [], homeCity: '广州市' },
-  }));
-  assert.doesNotMatch(classified.speak, /reextract|同 hash|候选/);
 
   const openItems = stepFor('intake_open_items', withMaterials(), [{
     kind: 'read_error', fileName: '坏了.pdf', hint: '文件打不开',
@@ -914,12 +916,12 @@ test('确认和待办的 speak 不暴露内部处理原理', async () => {
   assert.doesNotMatch(preparationConfirmation.speak, /manifestHash|bundleHash|stepToken/);
 });
 
-test('准备确认之后不再重复问，而且明说"还没写进 ERP"', async () => {
+test('准备确认之后自动进入 ERP 写入步骤', async () => {
   freshHome();
   const { stepFor } = await import('../src/next.mjs');
-  const shaped = stepFor('preparation_complete', withPreparation({ preparationConfirmed: true }));
-  assert.equal(shaped.step.kind, 'done');
-  assert.match(shaped.speak, /后续处理会从这里继续/);
+  const shaped = stepFor('erp_write_pending', withPreparation({ preparationConfirmed: true }));
+  assert.equal(shaped.step.kind, 'run');
+  assert.ok(shaped.step.argv.includes('erp-write'));
 });
 
 test('动过 ERP 的任务：先建立本地准备恢复凭据，并说清状态变化', async () => {

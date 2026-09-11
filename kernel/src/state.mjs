@@ -5,7 +5,7 @@
  * 分层是硬要求，不是风格：状态判定的测试要能在一台没有 ego-browser、
  * 没有材料目录、没登录过 ERP 的机器上跑完。判断被钉住了，取数才谈得上可换。
  *
- * 判据一字不改地照 docs/design/state-machine.md 的两张表：A 表（环境七态）、
+ * 判据一字不改地照 docs/design/state-machine.md 的两张表：A 表（环境八态）、
  * 永远排在最前的 schema_too_new，以及 B 表从任务建立一路到写入前确认。
  *
  * `archived` 不在这里，因为它根本不是状态：它是 0.9.x 在途任务迁移时打的**任务状态**
@@ -15,7 +15,7 @@
 import { bindingVerdict } from './binding.mjs';
 import { SYSTEM_BROWSER } from './browser-open.mjs';
 
-const SYSTEM_TRANSPORTS = new Set([SYSTEM_BROWSER, 'default']);
+const SYSTEM_TRANSPORTS = new Set([SYSTEM_BROWSER, 'default', 'chromium-cdp']);
 const usesSystemBrowser = (o) => o?.browserMode === SYSTEM_BROWSER
   || SYSTEM_TRANSPORTS.has(o?.probe?.transport);
 
@@ -192,6 +192,17 @@ const hasErpWriteState = (task) => task?.erpWriteState !== null
   && task?.erpWriteState !== undefined
   && String(task.erpWriteState).trim() !== '';
 
+// ERP writes and recovery reads must use the same Chromium page that the
+// write adapter can attach to. Ordinary preparation can still use the default
+// browser's read-only transport, so this gate only opens for those two paths.
+const needsChromiumAutomation = (o) => {
+  if (!taskSeen(o) || !usesSystemBrowser(o) || o.chromiumAutomation?.required !== true
+    || o.chromiumAutomation.ready === true) return false;
+  if (o.task?.erpWriteState === 'upload_dispatched') return true;
+  return !hasErpWriteState(o.task)
+    && o.preparation?.ready === true && o.preparationConfirmed === true;
+};
+
 const preparationItems = (o) => Array.isArray(o.preparation?.problems)
   ? o.preparation.problems : [];
 
@@ -245,7 +256,8 @@ const RULES = [
     actor: 'user',
     // The legacy state remains for explicit ego QA and for old pure-function
     // callers that do not carry browserMode.  System mode never reaches this
-    // branch: it has no CDP dependency.
+    // legacy branch; its ERP writer capability has the separate
+    // env_chromium_required state below.
     when: (o) => o.browserMode !== SYSTEM_BROWSER
       && !SYSTEM_TRANSPORTS.has(o.probe?.transport) && !o.cdpUp,
     blocker: (o) => ({ kind: 'ego_task_space_unavailable', resolvableBy: 'user',
@@ -298,17 +310,37 @@ const RULES = [
     blocker: (o) => ({ kind: 'identity_mismatched', resolvableBy: 'user',
       hint: `这台机器绑定的是 ${o.binding.displayName ?? o.binding.account}，`
         + `ERP 当前登录的是 ${o.probe.identity.displayName ?? o.probe.identity.account}；`
-        + 'baox 只替绑定的那个人报销' }),
+      + 'baox 只替绑定的那个人报销' }),
+  },
+
+  {
+    // The system-browser reader and the ERP writer are different capabilities.
+    // Surface the missing writer connection as a real environment step instead
+    // of letting recovery throw from inside its first read.
+    state: 'env_chromium_required',
+    actor: 'kernel',
+    when: needsChromiumAutomation,
+    blocker: (o) => ({ kind: 'chromium_automation_required',
+      code: 'CHROMIUM_CDP_UNAVAILABLE', resolvableBy: 'kernel', blocking: true,
+      port: o.chromiumAutomation?.port ?? null,
+      hint: '当前报销需要一个可接管的 Chromium 页面；先启动报销专用浏览器并在其中登录' }),
   },
 
   // —— B 表：任务主干 ——
   // 这半张表要任务观测才判得动（observeTask）。只采了环境观测时它们整段跳过，
   // 答案停在 env_ready —— 没看过材料就说材料怎么样，那是编的。
+  // 已经通过严格保存后回读的任务是终态；不能再被一般的 marker 恢复态遮住。
+  // 保存成功后仍保留 marker，供审计和幂等判断。
   {
-    // 任何非空写入标记都表示任务可能已经触碰 ERP。未知值也必须保守交接，
-    // 不能因为这一版还不认识它就回到项目选择或再次写入。唯一例外是
-    // `recovery.valid`：它只是本次 fresh 只读回读给本地准备开的一扇临时门，
-    // 不会清除 marker，也不会授权 ERP 写入。
+    state: 'erp_write_complete',
+    actor: null,
+    when: (o) => taskSeen(o) && o.task?.erpWriteState === 'saved',
+  },
+  // 任何其它非空写入标记都表示任务可能已经触碰 ERP。未知值也必须保守交接，
+  // 不能因为这一版还不认识它就回到项目选择或再次写入。唯一例外是
+  // `recovery.valid`：它只是本次 fresh 只读回读给本地准备开的一扇临时门，
+  // 不会清除 marker，也不能授权再次 ERP 写入。
+  {
     state: 'handed_off_recover',
     actor: null,
     when: (o) => taskSeen(o) && hasErpWriteState(o.task) && o.recovery?.valid !== true,
@@ -465,17 +497,6 @@ const RULES = [
       hint: `${o.allocationRound.fileName} 变过了，上次的逐段金额已经作废，要重新给` }),
   },
   {
-    // 项目归属不属于分类事实。先让用户确认材料、日期、金额分摊、常驻城市和费用类别，
-    // 再打开个人项目簿；单纯换项目不会改变这一份确认摘要。
-    state: 'classified_detail_confirmation',
-    actor: 'user',
-    when: (o) => erpSeen(o) && o.classifiedDetailComplete === true
-      && o.classifiedDetailConfirmed !== true,
-    blocker: (o) => ({ kind: 'classified_detail_confirmation_required', resolvableBy: 'user',
-      lineCount: o.classifiedPreview?.lines?.length ?? o.lines?.length ?? 0,
-      hint: '请先确认分类明细中的材料关联、日期、金额分摊、常驻城市和费用项目；项目归属随后单独选择' }),
-  },
-  {
     // 没有当前可选项目时，先让用户维护个人项目簿；打开一个空选择页只会制造假动作。
     state: 'project_book_empty',
     actor: 'user',
@@ -515,13 +536,13 @@ const RULES = [
       number: p.number ?? p.code ?? null, verdict: p.verdict ?? null, hint: p.note ?? null })),
   },
   {
-    // 恢复凭据只打开本地准备。项目和 ERP 目录都核对完之后，仍必须停在写入闸前，
-    // 不能把「fresh 只读回读通过」误当成新的写入批准。
+    // 恢复凭据只打开本地准备。项目和报销系统目录都核对完之后，仍不能把
+    // 「fresh 只读回读通过」误当成新的导入或保存机会；原 marker 保持不变。
     state: 'recovery_write_blocked',
     actor: 'user',
     when: (o) => erpSeen(o) && hasErpWriteState(o.task) && o.recovery?.valid === true,
     blocker: () => ({ kind: 'recovery_write_blocked', resolvableBy: 'user',
-      hint: '本地恢复只允许准备报销内容；ERP 写入仍需独立批准流程，当前任务 marker 不变' }),
+      hint: '本地恢复只允许准备报销内容；当前任务仍不能再次导入或保存，marker 保持不变' }),
   },
   {
     // Preparation is a two-step boundary: observation only verifies an
@@ -548,20 +569,20 @@ const RULES = [
           hint: '准备材料包尚未完成充分性判定，先生成并检查发票目录、明细文档和 manifest' }],
   },
   {
-    // 这是准备阶段自己的人工确认。它绑定完整 preparation digest，不能
-    // 复用旧的 write-approval，也不能因为旧 marker 或旧点头而放行。
+    // 这是准备阶段自己的人工确认。它绑定完整 preparation digest；确认后
+    // 下一步由内核自动进入 ERP 写入，不能复用旧的 write-approval。
     state: 'preparation_confirmation',
     actor: 'user',
     when: (o) => erpSeen(o) && o.preparation?.ready === true
       && o.preparationConfirmed !== true,
     blocker: () => [{ kind: 'preparation_confirmation_required', resolvableBy: 'user', blocking: true,
-      hint: '请确认准备交接包中的发票目录、明细字段、证据来源和版本摘要；确认后停在手动 QA，不会写入 ERP' }],
+      hint: '请确认准备交接包中的发票目录、明细字段、证据来源和版本摘要；确认后内核会按这份确认自动写入 ERP' }],
   },
   {
-    state: 'preparation_complete',
-    actor: null,
+    state: 'erp_write_pending',
+    actor: 'kernel',
     when: (o) => erpSeen(o) && o.preparation?.ready === true
-      && o.preparationConfirmed === true,
+      && o.preparationConfirmed === true && !hasErpWriteState(o.task),
   },
 ];
 

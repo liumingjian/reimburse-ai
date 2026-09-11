@@ -29,6 +29,7 @@ const { disputeReading, loadReading, loadUnreadable } = await import('../src/vis
 const { takeInventory } = await import('../src/inventory.mjs');
 const { writeHomeCity } = await import('../src/home-city.mjs');
 const { writeBinding } = await import('../src/binding.mjs');
+const { writeBook } = await import('../src/projects.mjs');
 
 const me = { displayName: '刘明建', account: 'luo.liu', tenant: '5f1f13f6dde29e' };
 writeBinding(me);
@@ -66,22 +67,33 @@ const ITINERARY = {
 
 function materials() {
   for (const task of liveTasks()) abandonTask(task.taskId, '争议用例之间清场');
+  writeBook(me, { projects: [{ number: 'P-1', name: '争议测试项目', lastVerdict: 'confirmed' }] });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baox-dispute-'));
   fs.copyFileSync(fixtureMaterial(IMAGE), path.join(dir, 'fengyun-1.png'));
   fs.copyFileSync(fixtureMaterial('交通/行程单.png'), path.join(dir, '行程单.png'));
   return dir;
 }
 
-const ask = async (dir, over = {}) => nextResponse({
-  observation: {
+const ask = async (dir, over = {}) => {
+  const { forceReadingConfirmation = false, ...responseOver } = over;
+  const observed = await observeTask(dir);
+  const observation = {
     ...READY,
-    ...await observeTask(dir),
+    ...observed,
     // 这些用例聚焦材料争议；资料卡确认由流程入口测试覆盖。
     profileConfirmationRequired: false,
-  },
-  sourceKey: sourceKeyOf(dir),
-  ...over,
-});
+  };
+  if (forceReadingConfirmation) {
+    observation.openItems = [
+      ...(observation.openItems ?? []).filter((item) => item.kind !== 'reading_awaiting_confirmation'),
+      ...(observation.pendingReadings ?? []).map((reading) => ({
+        kind: 'reading_awaiting_confirmation', blocking: true,
+        materialId: reading.materialId, fileName: reading.fileName,
+      })),
+    ];
+  }
+  return nextResponse({ observation, sourceKey: sourceKeyOf(dir), ...responseOver });
+};
 
 /** 把内核给的那条命令原样执行 —— 一个字都不改。 */
 function runStep(r) {
@@ -116,12 +128,12 @@ async function upToConfirmation(dir, over = {}) {
   }) });
   const verdicts = JSON.parse(runStep(r));
   assert.equal(verdicts.rejected, 0, JSON.stringify(verdicts.verdicts));
-  r = await ask(dir, { after: r.stepToken, hasResult: true });
+  r = await ask(dir, { after: r.stepToken, hasResult: true, forceReadingConfirmation: true });
   if (r.state === 'events_pending') {
     runStep(r);
-    r = await ask(dir, { after: r.stepToken, hasResult: true });
+    r = await ask(dir, { after: r.stepToken, hasResult: true, forceReadingConfirmation: true });
   }
-  assert.equal(r.state, 'classified_detail_confirmation', `实际停在 ${r.state}：${r.speak}`);
+  assert.equal(r.state, 'reading_awaiting_confirmation', `实际停在 ${r.state}：${r.speak}`);
   return r;
 }
 
@@ -291,12 +303,10 @@ test('收敛一：重读和用户一致 —— 接受，并说明第二次也读
   assert.equal(out.convergence.invoiceNumber, CONVERGENCE.agrees_with_user);
   assert.equal(out.settled.verdict, 'settled', '重读印证了用户，内核自己就收下了');
 
-  // 收下之后仍然是**未确认**：用户还要在整张表上点最后那一下。
+  // 收下之后回到事件重建；生产流程不会再插入分类确认状态。
   r = await ask(dir, { after: r.stepToken, hasResult: true });
-  assert.equal(r.state, 'classified_detail_confirmation', `实际停在 ${r.state}：${r.speak}`);
-  assert.match(r.speak, /整单明细清单/, '收敛后继续进入整单确认，不回到逐张材料确认');
-  assert.match(r.step.table, /不含税金额/);
-  assert.match(r.step.table, /费用类别/);
+  assert.equal(r.state, 'events_pending', `实际停在 ${r.state}：${r.speak}`);
+  assert.notEqual(r.state, 'classified_detail_confirmation');
 
   const stored = loadReading(taskOf(dir), table.step.materialIds[0]);
   assert.equal(stored.fields.invoiceNumber, '26427000000640558022');
@@ -327,7 +337,7 @@ test('收敛二：重读和原读数一致 —— 两次机器读数和用户的
   const stored = loadReading(taskOf(dir), r.step.materialId);
   assert.equal(stored.fields.invoiceNumber, '26427000000640558022');
   assert.equal(stored.fieldSources.invoiceNumber, 'user');
-  assert.equal((await ask(dir)).state, 'classified_detail_confirmation');
+  assert.equal((await ask(dir)).state, 'events_pending');
 });
 
 test('收敛三：重读给出第三个值 —— 直说这个字段读不可靠，以原件为准', async () => {
@@ -523,7 +533,7 @@ test('每个字段带来源：机器看的、用户给的、还是内核算的',
 
   // 最终整单表同时覆盖所有需要填入报销明细的信息。
   assert.ok(table.step.table.includes('不含税金额'));
-  assert.ok(table.step.table.includes('参考材料'));
+  assert.ok(table.step.table.includes('材料'));
   const before = loadReading(taskOf(dir), table.step.materialIds[0]);
   assert.deepEqual(new Set(Object.values(before.fieldSources)), new Set(['vision']));
 
@@ -531,7 +541,7 @@ test('每个字段带来源：机器看的、用户给的、还是内核算的',
   let r = await correct(dir, table, { invoiceNumber: '26427000000640558022' });
   submitReread(r, { invoiceNumber: '26427000000640558022' });
   r = await ask(dir, { after: r.stepToken, hasResult: true });
-  assert.equal(r.state, 'classified_detail_confirmation');
+  assert.equal(r.state, 'events_pending');
 
   const after = loadReading(taskOf(dir), table.step.materialIds[0]);
   assert.equal(after.fieldSources.invoiceNumber, 'user');

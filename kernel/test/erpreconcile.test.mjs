@@ -242,9 +242,9 @@ test('明细网格还没渲染出来 -> 明细不可读，对账不去点开它'
   assert.deepEqual([v.bucket, v.action], ['未保存·已导入未写明细', '转人工']);
 });
 
-test('旧 Chrome session 不能进入 erp-reconcile 只读路径', async () => {
+test('旧浏览器 session 不能进入 erp-reconcile 只读路径', async () => {
   await assert.rejects(
     () => readReconciliation({ transport: 'chrome', wsUrl: 'ws://legacy' }),
-    (error) => error.code === 'EGO_PAGE_REQUIRED',
+    (error) => error.code === 'BROWSER_PAGE_REQUIRED',
   );
 });

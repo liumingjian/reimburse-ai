@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { queryRows, verifyExpenseItems, verifyProject, isSafeKey } from '../src/erpcatalog.mjs';
+import { authorizedPage, queryRows, verifyExpenseItems, verifyProject, isSafeKey } from '../src/erpcatalog.mjs';
 import { CATEGORIES } from '../src/categories.mjs';
 
 // ERP 只读查询的报文形状取自 2026-09-05 实测：
@@ -101,4 +101,21 @@ test('正式默认浏览器 page 可承载只读目录查询，旧 wsUrl 仍阻�
     formId: 'BD_Expense', fieldKeys: 'FNumber', limit: 1,
   });
   assert.equal(blocked.code, 'EGO_REQUIRED');
+});
+
+test('授权闸会把 ERP 写入要求的 ego task-space transport 原样传下去', async () => {
+  const transport = { transport: 'ego', kind: 'ego', platform: 'darwin' };
+  let received;
+  const page = { transport: 'ego', taskSpace: 7, tabId: 'erp-tab' };
+  const result = await authorizedPage({
+    origin: 'http://erp.antute.com.cn',
+    transport,
+    gate: async (options) => {
+      received = options;
+      return { status: 'matched', identity: { account: 'a', tenant: 't' }, page };
+    },
+  });
+  assert.deepEqual(received, { origin: 'http://erp.antute.com.cn', transport });
+  assert.equal(result.ok, true);
+  assert.equal(result.page, page);
 });

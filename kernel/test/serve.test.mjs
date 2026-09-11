@@ -3,13 +3,21 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import http from 'node:http';
 import * as serve from '../src/serve.mjs';
-import { openInBrowser, renderResetPage } from '../src/serve.mjs';
+import { openInBrowser, renderIdentityPage, renderResetPage } from '../src/serve.mjs';
 import { browserMode, openDefaultBrowser, systemBrowserCommand } from '../src/browser-open.mjs';
 import { renderProjectBookPage } from '../src/project-book-page.mjs';
 
 const identity = { identity: { displayName: '虚构员工', account: 'fixture.user', tenant: 'fixture-tenant' } };
 const submitIdentity = (url) => fetch(url.replace('/?', '/submit?'), {
   method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ confirmed: true }),
+});
+
+test('身份确认页使用实际的 Chromium/ego 来源文案', () => {
+  const chromium = renderIdentityPage(identity, 'nonce');
+  assert.match(chromium, /系统默认 Chromium 浏览器里的 ERP 页面/);
+  assert.doesNotMatch(chromium, /ego task space 里的 ERP 页面/);
+  const ego = renderIdentityPage({ ...identity, browserLabel: 'ego task space' }, 'nonce');
+  assert.match(ego, /ego task space 里的 ERP 页面/);
 });
 
 /**
@@ -221,12 +229,14 @@ test('Reset 页把清空范围和外部边界说清楚，只提供一次确认',
   assert.match(html, /nonce-value/);
 });
 
-test('个人项目簿页显示 ERP 名称、过期日期和失效维护动作', () => {
+test('个人项目簿页只录入项目号，并保留已有项目状态', () => {
   const html = renderProjectBookPage({
     today: '2026-09-09',
     book: { projects: [{ number: 'P-1', name: '很长的 ERP 项目名称', expiresOn: '2026-12-31', lastVerdict: 'confirmed' }] },
   }, 'book-nonce');
-  assert.match(html, /过期时间（可留空）/);
+  assert.match(html, /id="number"/);
+  assert.doesNotMatch(html, /id="expires"/);
+  assert.doesNotMatch(html, /expiresOn/);
   assert.match(html, /很长的 ERP 项目名称/);
   assert.match(html, /data-remove=/);
   assert.match(html, /overflow-wrap:anywhere/);
@@ -236,6 +246,28 @@ test('个人项目簿页显示 ERP 名称、过期日期和失效维护动作', 
   assert.ok(html.includes('页面没有正常结束，请检查网络后重试'));
   assert.ok(html.includes('if(!reloadPending){inFlight=false;setBusy(false)}'));
   assert.ok(html.includes('if(!closed){inFlight=false;setBusy(false)}'));
+});
+
+test('项目维护核验成功后提交即结束服务，不需要再点击完成', async () => {
+  let readyUrl;
+  const pending = serve.serveProjectBookPage({ book: { projects: [] } }, {
+    timeoutMs: 1000,
+    env: {},
+    openBrowser: () => true,
+    onReady: (url) => { readyUrl = url; },
+    onIntake: async (number) => ({ status: 'admitted', number, entry: { number, name: 'ERP 项目' } }),
+    onDone: async () => ({ status: 'done' }),
+  });
+  const url = await new Promise((resolve) => {
+    const check = () => readyUrl ? resolve(readyUrl) : setImmediate(check);
+    check();
+  });
+  const response = await fetch(url.replace('/?', '/submit?'), {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'intake', number: 'P-1' }),
+  });
+  assert.equal(response.ok, true);
+  assert.equal((await pending).status, 'admitted');
 });
 
 test('任务选择页提交失败可重试且不会并发提交', () => {

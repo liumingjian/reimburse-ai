@@ -1,14 +1,14 @@
 import { evaluateEgoPage, isEgoPage, runEgoScript } from './ego.mjs';
 import { readFormTabs, readSectionAnchors } from './erpread.mjs';
 
-// ERP 草稿字段的 ego-only 写入适配。这个文件不导入 chrome.mjs 或 erpform.mjs，
+// ERP 草稿字段的 ego Page API 写入适配。这个文件不导入 chrome.mjs 或 erpform.mjs，
 // 也不包含保存、导入、删除或其它单据副作用。每个字段都按“定位 -> 滚入视口 ->
 // 真点击 -> 等真实编辑控件 -> 全选逐键输入 -> 提交 -> 非编辑态回读”执行。
 
 const VIS = `(n) => { const b = n.getBoundingClientRect(); return b.width > 0 && b.height > 0; }`;
 
 const egoPageRequired = () => {
-  const error = new Error('ERP 写入字段需要 ego task-space page context；旧 Chrome/CDP 页面句柄已阻塞');
+  const error = new Error('ERP 写入字段需要 ego task-space page context');
   error.code = 'EGO_PAGE_REQUIRED';
   return error;
 };

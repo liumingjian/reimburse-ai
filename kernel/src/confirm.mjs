@@ -419,10 +419,11 @@ export async function receiveIdentity(outstanding, { probe: readIdentity = probe
 }
 
 /**
- * Record the first-stage handoff confirmation.  This is deliberately a
- * separate record from write-approval: it is only allowed after a fresh
- * observation has re-built the same digest and byte-verified its immutable
- * package, and it never calls `recordWriteApproval`.
+ * Record the preparation confirmation. This is deliberately a separate
+ * record from write-approval: it is only allowed after a fresh observation
+ * has re-built the same digest and byte-verified its immutable package. The
+ * later ERP writer consumes this exact record and creates the final approval
+ * only after importing and re-reading the ERP receipt rows.
  */
 async function receivePreparationConfirmation({ sourceDir, task, outstanding, mode = 'markdown' }) {
   const meta = outstanding.meta ?? {};

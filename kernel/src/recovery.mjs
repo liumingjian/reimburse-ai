@@ -136,6 +136,27 @@ const normalizeEgo = (value, label, reasons) => {
   return space !== null && tabId ? { taskSpace: space, tabId } : null;
 };
 
+/** Persist the automation connection without making ego the recovery contract. */
+const normalizeBrowser = (value, label, reasons) => {
+  if (!isObject(value)) {
+    reasons.push(`${label} 缺少 Chromium/ego 页面身份`);
+    return null;
+  }
+  const transport = text(value.transport, `${label}.transport`, reasons);
+  const tabId = text(value.tabId ?? value.cdpTargetId, `${label}.tabId`, reasons);
+  if (transport === 'ego') {
+    const space = taskSpace(value.taskSpace, `${label}.taskSpace`, reasons);
+    return space !== null && tabId ? { transport, taskSpace: space, tabId } : null;
+  }
+  if (transport === 'chromium-cdp') {
+    if (value.browserFamily !== 'chromium') reasons.push(`${label}.browserFamily 必须是 chromium`);
+    return value.browserFamily === 'chromium' && tabId
+      ? { transport, browserFamily: 'chromium', tabId } : null;
+  }
+  reasons.push(`${label}.transport 必须是 ego 或 chromium-cdp`);
+  return null;
+};
+
 const normalizeForm = (value, label, reasons) => {
   if (!isObject(value)) {
     reasons.push(`${label} 缺少唯一表单实例信息`);
@@ -356,7 +377,11 @@ const validateInput = (input, nowMs, maxReadbackAgeMs) => {
   for (const item of receiptBindings) {
     if (!materialIds.has(item.materialId)) reasons.push(`receipt ${item.materialId} 不在材料哈希集合中`);
   }
-  const ego = normalizeEgo(input.ego, 'ego', reasons);
+  const browser = input.browser
+    ? normalizeBrowser(input.browser, 'browser', reasons)
+    : null;
+  const ego = input.browser ? null : normalizeEgo(input.ego, 'ego', reasons);
+  if (!browser && !ego) reasons.push('恢复凭据缺少 browser 或 ego 页面身份');
   const form = normalizeForm(input.form, 'form', reasons);
   const readback = normalizeReadback(input.readback, 'readback', reasons);
   if (readback) {
@@ -378,7 +403,7 @@ const validateInput = (input, nowMs, maxReadbackAgeMs) => {
   if (reasons.length) return { reasons };
   return {
     reasons, value: { taskId, erpWriteState: REQUIRED_ERP_WRITE_STATE, identity, inventoryVersionId,
-      materials, receiptBindings, ego, form, readback, issuedAt, expiresAt, credentialId },
+      materials, receiptBindings, browser, ego, form, readback, issuedAt, expiresAt, credentialId },
   };
 };
 
@@ -498,7 +523,11 @@ export function validateRecoveryCredential(credential, current, {
   const materials = normalizeMaterials(credential.materials, 'credential.materials', reasons);
   const receiptBindings = normalizeReceiptBindings(credential.receiptBindings,
     'credential.receiptBindings', reasons);
-  const ego = normalizeEgo(credential.ego, 'credential.ego', reasons);
+  const browser = credential.browser
+    ? normalizeBrowser(credential.browser, 'credential.browser', reasons)
+    : null;
+  const ego = credential.browser ? null : normalizeEgo(credential.ego, 'credential.ego', reasons);
+  if (!browser && !ego) reasons.push('credential 缺少 browser 或 ego 页面身份');
   const form = normalizeForm(credential.form, 'credential.form', reasons);
   const issuedAt = timestamp(credential.issuedAt, 'credential.issuedAt', reasons);
   const expiresAt = timestamp(credential.expiresAt, 'credential.expiresAt', reasons);
@@ -543,7 +572,13 @@ export function validateRecoveryCredential(credential, current, {
     && recoveryMaterialDigestSafe(materials) !== recoveryMaterialDigestSafe(currentMaterials)) {
     reasons.push('当前材料哈希与恢复凭据不一致');
   }
-  const currentEgo = normalizeEgo(current.ego, 'current.ego', reasons);
+  const currentBrowser = browser
+    ? normalizeBrowser(current.browser, 'current.browser', reasons)
+    : null;
+  const currentEgo = ego ? normalizeEgo(current.ego, 'current.ego', reasons) : null;
+  if (browser && currentBrowser && JSON.stringify(browser) !== JSON.stringify(currentBrowser)) {
+    reasons.push('当前 Chromium 页面与恢复凭据不一致');
+  }
   if (ego && currentEgo && JSON.stringify(ego) !== JSON.stringify(currentEgo)) {
     reasons.push('当前 ego taskSpace/tabId 与恢复凭据不一致');
   }

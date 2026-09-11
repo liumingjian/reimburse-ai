@@ -22,7 +22,7 @@ body{font:16px/1.6 -apple-system,"PingFang SC",sans-serif;margin:0;padding:28px 
   display:flex;justify-content:center;background:Canvas;color:CanvasText}
 main{width:100%;max-width:900px}h1{font-size:22px;margin:0 0 4px}
 p.lead{margin:0 0 20px;opacity:.7}.panel{padding:16px 0;border-top:1px solid color-mix(in srgb,CanvasText 20%,transparent)}
-.form{display:grid;grid-template-columns:minmax(150px,1fr) minmax(170px,1fr) auto;gap:10px;align-items:end}
+.form{display:grid;grid-template-columns:minmax(150px,1fr) auto;gap:10px;align-items:end}
 label{display:block;font-size:14px;opacity:.75}input{box-sizing:border-box;width:100%;margin-top:4px;padding:9px 10px;
   font:inherit;border:1px solid color-mix(in srgb,CanvasText 30%,transparent);border-radius:6px;background:Canvas;color:CanvasText}
 button{padding:9px 14px;font:inherit;border:0;border-radius:6px;cursor:pointer;background:#2563eb;color:#fff}
@@ -42,7 +42,6 @@ td.number{white-space:nowrap;font-variant-numeric:tabular-nums}td.name{overflow-
 <p class="lead">项目号从 ERP 核验后加入当前登录身份的项目簿。失效项目仍会保留，直到你删除它。</p>
 <section class="panel"><form id="intake" class="form">
   <div><label for="number">项目号</label><input id="number" name="number" autocomplete="off" required></div>
-  <div><label for="expires">过期时间（可留空）</label><input id="expires" name="expires" type="date"></div>
   <button type="submit">核验并加入</button>
 </form><div id="message" class="message" role="status"></div></section>
 <section class="panel"><table><thead><tr><th>项目号</th><th>名称</th><th>过期时间</th><th>状态</th><th></th></tr></thead>
@@ -64,6 +63,11 @@ async function action(action, extra={}){
     const response=await fetch('/submit?nonce='+encodeURIComponent(nonce),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,...extra})});
     let body={};try{body=await response.json()}catch{}
     if(!response.ok){message.textContent=body.result?.note||body.result?.reasons?.join('；')||body.error||'操作没有完成';return false}
+    if(body.result?.status==='admitted'){
+      reloadPending=true;
+      document.body.innerHTML='<main><h1>项目已加入</h1><p>ERP 核验成功，项目名称已保存。系统将自动继续报销流程。</p></main>';
+      return true;
+    }
     message.textContent=body.result?.note||'已完成';
     reloadPending=true;
     setTimeout(()=>location.reload(),350);return true;
@@ -74,8 +78,8 @@ async function action(action, extra={}){
   }
 }
 document.getElementById('intake').addEventListener('submit',async(e)=>{e.preventDefault();
-  const number=document.getElementById('number').value.trim();const expires=document.getElementById('expires').value;
-  await action('intake',{number,expiresOn:expires||null});
+  const number=document.getElementById('number').value.trim();
+  await action('intake',{number});
 });
 document.getElementById('recheck').addEventListener('click',()=>action('recheck'));
 document.getElementById('purge').addEventListener('click',()=>action('purge'));

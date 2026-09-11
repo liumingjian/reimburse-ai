@@ -64,7 +64,9 @@ const READ_ONLY_SNIPPET = `(() => {
  */
 export function identityFromObservation(info, { transport = 'default' } = {}) {
   if (!info || info.ready !== 'complete') return null;
-  const location = transport === 'ego' ? 'ego task space' : '系统默认浏览器';
+  const cdp = transport === 'chromium-cdp' || transport?.kind === 'chromium-cdp';
+  const location = transport === 'ego'
+    ? 'ego task space' : cdp ? '报销专用 Chromium 浏览器' : '系统默认浏览器';
   const hasText = (value) => typeof value === 'string' ? value.trim().length > 0
     : value !== null && value !== undefined;
 
@@ -111,18 +113,23 @@ export async function probeIdentity({ origin = ERP_ORIGIN, waitMs = 30000,
   evaluate = evaluateBrowserPage, platform = process.platform, run } = {}) {
   const deadline = Date.now() + waitMs;
   let last = null;
+  const transportKind = typeof transport === 'string'
+    ? transport : transport?.kind ?? transport?.transport;
+  const cdp = transportKind === 'chromium-cdp';
+  const reportedTransport = cdp ? 'chromium-cdp' : transportKind;
 
   do {
     const browserOptions = { origin, transport, platform };
     if (run) browserOptions.run = run;
     const pages = (await listTabs(browserOptions)).filter((t) => sameOrigin(t.url, origin));
     if (pages.length === 0) {
-      const where = transport.transport === 'ego' ? 'ego task space' : '系统默认浏览器';
-      return { status: 'no_tab', origin, transport: transport.transport,
+      const where = transportKind === 'ego'
+        ? 'ego task space' : cdp ? '报销专用 Chromium 浏览器' : '系统默认浏览器';
+      return { status: 'no_tab', origin, transport: reportedTransport,
         hint: `请在${where}中打开 ${ERP_ENTRY} 并登录` };
     }
-    if (transport.transport === 'default' && pages.length > 1) {
-      return { status: 'unknown', origin, transport: transport.transport, pageCount: pages.length,
+    if (!cdp && transportKind === 'default' && pages.length > 1) {
+      return { status: 'unknown', origin, transport: reportedTransport, pageCount: pages.length,
         hint: `系统默认浏览器里发现 ${pages.length} 个 ERP 页面；请保留唯一的目标 ERP 页面后再试，`
           + '我不会替你选择其中一个' };
     }
@@ -146,11 +153,11 @@ export async function probeIdentity({ origin = ERP_ORIGIN, waitMs = 30000,
       // ERP 首屏很慢，没加载完不算未登录，等就是了。
       if (info.ready !== 'complete') { sawLoading = true; continue; }
 
-      const verdict = identityFromObservation(info, { transport: page.transport });
+      const verdict = identityFromObservation(info, { transport: cdp ? 'chromium-cdp' : page.transport });
       // 认得出身份的页面说了算；只有所有页面都说不出身份时，才轮到登录页/异常这两档。
       if (verdict.status === 'matched') {
         const targetId = page.tabId ?? page.pageId ?? `${page.windowId}:${page.index}`;
-        return { ...verdict, ...last, transport: page.transport, origin,
+        return { ...verdict, ...last, transport: reportedTransport, origin,
           ...(page.taskSpace === undefined ? {} : { taskSpace: page.taskSpace }),
           targetId, tabId: page.tabId ?? null, page };
       }
@@ -161,7 +168,8 @@ export async function probeIdentity({ origin = ERP_ORIGIN, waitMs = 30000,
     if (!sawLoading) {
       if (fallback) return fallback;
       // 每个页面都求值失败。读不出来就是读不出来，不靠重试把它拖成"加载中"。
-      const where = transport.transport === 'ego' ? 'ego task space' : '系统默认浏览器';
+      const where = transportKind === 'ego'
+        ? 'ego task space' : cdp ? '报销专用 Chromium 浏览器' : '系统默认浏览器';
       return { status: 'unknown', origin, observed: null, errors,
         hint: `${where}里的 ERP 页面全都读不出来；请人工看一眼这个窗口` };
     }

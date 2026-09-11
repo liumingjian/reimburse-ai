@@ -141,11 +141,11 @@ test('缺省观测不崩：什么都没采到时给最保守的结论', () => {
   assert.equal(determineState(undefined).state, 'env_chrome_down');
 });
 
-test('环境七态一个不少，且都在判定表里', () => {
+test('环境八态一个不少，且都在判定表里', () => {
   const env = ['env_node_unsupported', 'env_chrome_down', 'env_not_logged_in', 'env_identity_unknown',
-    'env_identity_unbound', 'env_identity_mismatched', 'env_ready'];
+    'env_identity_unbound', 'env_identity_mismatched', 'env_chromium_required', 'env_ready'];
   for (const s of env) assert.ok(STATE_ORDER.includes(s), `${s} 不在判定表里`);
-  assert.equal(env.length, 7);
+  assert.equal(env.length, 8);
 });
 
 // —— B 表：任务主干（材料这一段）——
@@ -309,7 +309,7 @@ test('判定表的先后就是状态表的先后 —— 插错位置的状态永
   const order = ['duplicate_blocked', 'events_pending', 'allocation_required', 'allocation_stale',
     'project_book_empty', 'project_unassigned', 'catalog_unverified', 'catalog_mismatch',
     'preparation_package_pending', 'preparation_blocked', 'preparation_confirmation',
-    'preparation_complete'];
+    'erp_write_pending'];
   for (let i = 1; i < order.length; i += 1) {
     assert.ok(STATE_ORDER.indexOf(order[i - 1]) < STATE_ORDER.indexOf(order[i]),
       `${order[i - 1]} 要排在 ${order[i]} 前面`);
@@ -442,16 +442,16 @@ test('发票或盘点变过 —— 是 allocation_stale，不是又问一遍', (
   assert.match(r.blockedBy[0].hint, /变过了/, '用户有权知道这次问他不是因为他没答过');
 });
 
-test('分类明细完整但还没确认时，项目选择必须停住', () => {
+test('分类明细完整后直接进入项目选择，整单确认留到准备阶段', () => {
   const r = determineState(withErp({
     selectionApplied: false,
     classifiedDetailComplete: true,
     classifiedDetailConfirmed: false,
     classifiedPreview: { lines: [{ lineId: 'ev-01' }] },
   }));
-  assert.equal(r.state, 'classified_detail_confirmation');
+  assert.equal(r.state, 'project_unassigned');
   assert.equal(r.actor, 'user');
-  assert.equal(r.blockedBy[0].kind, 'classified_detail_confirmation_required');
+  assert.equal(r.blockedBy[0].kind, 'project_unassigned');
 });
 
 test('证据歧义开放项保留候选 references，供后续表格展示', () => {
@@ -507,7 +507,7 @@ test('ERP 里查无此项目 —— 硬停，且不会再去重复核对', () =>
   assert.notEqual(r.state, 'catalog_unverified');
 });
 
-test('以上全绿才轮到准备确认，确认后停在手动 QA', () => {
+test('以上全绿才轮到准备确认，确认后进入 ERP 写入', () => {
   const preparation = { digest: 'preparation-digest-1', ready: true, problems: [] };
   const r = determineState(withErp({
     preparation, preparationPackageCurrent: true, preparationConfirmed: false,
@@ -519,9 +519,51 @@ test('以上全绿才轮到准备确认，确认后停在手动 QA', () => {
   const done = determineState(withErp({
     preparation, preparationPackageCurrent: true, preparationConfirmed: true,
   }));
-  assert.equal(done.state, 'preparation_complete');
-  assert.equal(done.actor, null);
+  assert.equal(done.state, 'erp_write_pending');
+  assert.equal(done.actor, 'kernel');
   assert.deepEqual(done.blockedBy, []);
+});
+
+test('需要 ERP 写入但 Chromium 自动化未准备好时先发环境步骤，不进入恢复代码', () => {
+  const missing = { browserMode: 'system', chromiumAutomation: {
+    required: true, ready: false, port: 9333,
+  } };
+  const recovery = determineState(withErp({
+    ...missing,
+    task: { taskId: '75dc9cbb4d', sourceLabel: '材料', workspace: '/tmp/ws',
+      currentVersionId: 'v-abc', erpWriteState: 'upload_dispatched' },
+  }));
+  assert.equal(recovery.state, 'env_chromium_required');
+  assert.equal(recovery.actor, 'kernel');
+  assert.equal(recovery.blockedBy[0].kind, 'chromium_automation_required');
+  assert.equal(recovery.blockedBy[0].resolvableBy, 'kernel');
+
+  const write = determineState(withErp({
+    ...missing,
+    preparation: { ready: true, problems: [] },
+    preparationConfirmed: true,
+  }));
+  assert.equal(write.state, 'env_chromium_required');
+
+  const saved = determineState(withErp({
+    ...missing,
+    task: { taskId: '75dc9cbb4d', sourceLabel: '材料', workspace: '/tmp/ws',
+      currentVersionId: 'v-abc', erpWriteState: 'saved' },
+  }));
+  assert.equal(saved.state, 'erp_write_complete', '已保存任务不因浏览器暂时关闭而倒退');
+});
+
+test('完整准备确认即使缺少事件观测也先准备 Chromium 自动化', () => {
+  const r = determineState({
+    ...healthy({ browserMode: 'system', chromiumAutomation: {
+      required: true, ready: false, port: 9333,
+    } }),
+    taskObserved: true,
+    task: { taskId: '75dc9cbb4d', erpWriteState: null },
+    preparation: { ready: true, problems: [] },
+    preparationConfirmed: true,
+  });
+  assert.equal(r.state, 'env_chromium_required');
 });
 
 test('动过 ERP 的任务不再要一次点头，改为交接给 baox-recover', () => {

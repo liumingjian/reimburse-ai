@@ -3,9 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
 import { paths, migrateOnStartup, ensureSchemaVersionFile } from '../src/paths.mjs';
-import { probeIdentity, ERP_ENTRY } from '../src/probe.mjs';
+import { probeIdentity, ERP_ENTRY, ERP_ORIGIN } from '../src/probe.mjs';
 import { egoRequiredError, openEgoTab } from '../src/ego.mjs';
 import { browserMode, EGO_BROWSER, SYSTEM_BROWSER, openDefaultBrowser } from '../src/browser-open.mjs';
+import { defaultBrowserInfo } from '../src/browser-read.mjs';
+import { CDP_PORT, launch as launchChromium } from '../src/chrome.mjs';
 // 本地页面只剩两处：重新绑定身份，和浏览完整项目目录。读数确认在终端上
 // （`confirm_table`），逐段分摊在终端上（`ask_user`），通用单选页整个下线了。
 import { serveTaskSelection, serveProjectBookPage, serveIdentityConfirmation } from '../src/serve.mjs';
@@ -32,8 +34,16 @@ import { openSession, formTabs, sectionAnchors, showSection, readGrid, headerFie
   writeHeader, writeCell, selectOption, cellTarget, cellMatches, leaveEdit } from '../src/erpform.mjs';
 import { readErpForm } from '../src/erpread.mjs';
 import { readReconciliation, classifyReconciliation, attemptRecord } from '../src/erpreconcile.mjs';
+import { buildErpDraftPreview, fillApprovedPreview, saveApprovedPreview } from '../src/erp-draft-flow.mjs';
+import { recordWriteApproval } from '../src/erpwrite.mjs';
+import { invoiceUploadGroups } from '../src/invoice-upload.mjs';
+import { erpWriteAdapterFor, erpFormAdapterFor } from '../src/erp-browser-adapters.mjs';
+import { cdpReadOptions } from '../src/erp-cdp-read.mjs';
+import { buildReceiptReadback } from '../src/erp-write-readback.mjs';
+import { authorizeErpWritePage, prepareErpWrite } from '../src/erp-write-context.mjs';
 import { gateIdentity, readBinding, writeBinding, bindingVerdict, autoBindIdentity } from '../src/binding.mjs';
 import { observeEnvironment, observeTask } from '../src/observe.mjs';
+import { lookupNetworkLocation } from '../src/location.mjs';
 import { nextResponse } from '../src/next.mjs';
 import { ingestReread, autoSettleAgreed } from '../src/dispute.mjs';
 import { determineState, SCHEMA_VERSION as NEXT_SCHEMA_VERSION } from '../src/state.mjs';
@@ -60,9 +70,9 @@ function egoBlocked(command, note) {
   out({ command, status: 'blocked', code: error.code, error: error.message, note }, BLOCKED);
 }
 
-async function authorizedReadPage(command) {
+async function authorizedReadPage(command, options = {}) {
   try {
-    return await authorizedPage();
+    return await authorizedPage(options);
   } catch (error) {
     if (error?.code === 'EGO_TASK_SPACE_REQUIRED') {
       out({ command, status: 'blocked', code: error.code, error: error.message,
@@ -71,6 +81,10 @@ async function authorizedReadPage(command) {
     throw error;
   }
 }
+
+const readReconciliationFor = (page, options = {}) => page?.automation === 'cdp'
+  ? readReconciliation(page, { ...cdpReadOptions, ...options })
+  : readReconciliation(page, options);
 
 const recoveryBlocked = (task, result, command = null) => ({
   ...(command ? { command } : {}),
@@ -391,7 +405,25 @@ try {
     }
 
     case 'chrome-up': {
-      egoBlocked('chrome-up', 'chrome-up 已停用；请配置 BAOX_EGO_TASK_SPACE，并在 ego-browser task space 中打开 ERP。');
+      if (browserMode() === EGO_BROWSER) {
+        egoBlocked('chrome-up', 'chrome-up 是正式 Chromium 环境步骤；显式 QA 仍使用已确认的 ego task space。');
+      }
+      let defaultBrowser = null;
+      try { defaultBrowser = await defaultBrowserInfo({ origin: ERP_ORIGIN }); } catch {}
+      try {
+        const launched = await launchChromium({
+          port: CDP_PORT,
+          openUrl: ERP_ENTRY,
+          browserBundleId: defaultBrowser?.bundleId ?? null,
+        });
+        out({ command: 'chrome-up', status: 'ready', started: launched.started === true,
+          port: CDP_PORT, browser: launched.Browser ?? null, profile: paths.chromeProfile,
+          note: 'Chromium 自动化连接已准备好；请在新窗口登录后重新执行当前 next 步骤' }, OK);
+      } catch (error) {
+        out({ command: 'chrome-up', status: 'blocked', code: error.code ?? 'CHROMIUM_LAUNCH_FAILED',
+          error: error.message,
+          note: '没有启动成功 Chromium 自动化连接；没有打开、导入或保存 ERP' }, BLOCKED);
+      }
     }
 
     case 'probe': {
@@ -445,10 +477,10 @@ try {
       }, {
         timeoutMs: Number(arg('timeout-ms', 8 * 60 * 1000)),
         onReady: (u) => process.stderr.write(`已在浏览器里打开页面（维护个人项目簿）；没弹出就手动打开：${u}\n`),
-        onIntake: async (number, expiresOn) => {
+        onIntake: async (number) => {
           const checked = await currentSession();
           if (!checked.ok) return checked.current;
-          return intakeProject(number, expiresOn ?? null, {
+          return intakeProject(number, null, {
             identity,
             gate: sessionForCatalog,
           });
@@ -643,7 +675,7 @@ try {
         out({ command: 'erp-reconcile', identity: gate.probe,
           note: '身份没核对通过，不读 ERP 页面' }, BLOCKED);
       }
-      const readings = await readReconciliation(gate.page);
+      const readings = await readReconciliationFor(gate.page);
       const verdict = classifyReconciliation(readings);
 
       // 审计落在这个目录对应的进行中任务上。没给 --dir 或者找不到任务时照常给结论，
@@ -670,6 +702,216 @@ try {
         audit,
         note: '只读分类，不表示保存验收；没有点击、没有滚动、没有导航、没有写入，也没有保存',
       }, verdict.action === '转人工' ? BLOCKED : OK);
+    }
+
+    case 'erp-write': {
+      const writeDir = arg('dir');
+      if (!writeDir) out({ command: 'erp-write', status: 'blocked',
+        error: '缺少 --dir <材料目录>' }, BLOCKED);
+      const writeTask = findLiveTaskForSource(sourceKeyOf(writeDir));
+      if (!writeTask) out({ command: 'erp-write', status: 'blocked',
+        error: '这个目录没有进行中的报销任务，不能把发票写进 ERP' }, BLOCKED);
+      if (hasErpWriteState(writeTask)) {
+        out({ command: 'erp-write', ...recoveryBlock(writeTask),
+          note: '当前任务已经触碰 ERP，不能再次导入或保存；请按恢复步骤核对当前单据' }, BLOCKED);
+      }
+
+      let gate;
+      try {
+        gate = await authorizeErpWritePage({
+          authorize: (options) => authorizedReadPage('erp-write', options),
+        });
+      } catch (error) {
+        out({ command: 'erp-write', status: 'blocked', code: error.code ?? 'chromium_automation_unavailable',
+          error: error.message,
+          note: '当前 Chrome/Edge 没有可接管的 Chromium 自动化连接；不会切换到 ego，也没有写入 ERP' }, BLOCKED);
+      }
+      if (!gate.ok) out({ command: 'erp-write', status: 'blocked', identity: gate.probe,
+        note: '身份没核对通过，不打开报销单或导入发票' }, BLOCKED);
+
+      let writeAdapter;
+      let formAdapter;
+      try {
+        writeAdapter = erpWriteAdapterFor(gate.page);
+        formAdapter = erpFormAdapterFor(gate.page);
+      } catch (error) {
+        out({ command: 'erp-write', status: 'blocked', code: error.code ?? 'chromium_automation_required',
+          error: error.message, note: '当前页面没有受支持的 Chromium 写入连接；没有打开、导入或保存 ERP' }, BLOCKED);
+      }
+
+      const observed = await observeTask(writeDir);
+      const preparation = observed.preparation;
+      const packageInfo = observed.preparationPackage;
+      const invoicePaths = packageInfo?.files?.invoices;
+      if (observed.preparationConfirmed !== true || preparation?.ready !== true
+        || observed.preparationPackageCurrent !== true || !observed.built || !observed.lines?.length
+        || !Array.isArray(invoicePaths) || invoicePaths.length === 0) {
+        out({ command: 'erp-write', status: 'blocked',
+          task: { taskId: writeTask.taskId, workspace: taskDir(writeTask) },
+          preparationConfirmed: observed.preparationConfirmed === true,
+          preparationReady: preparation?.ready === true,
+          packageCurrent: observed.preparationPackageCurrent === true,
+          note: '当前任务没有通过最新准备包确认，ERP 没有打开、没有导入、没有保存' }, BLOCKED);
+      }
+      if (!observed.selectionApplied || observed.catalogFresh !== true) {
+        out({ command: 'erp-write', status: 'blocked',
+          note: '项目选择或 ERP 主数据核验已经过期，ERP 没有打开、没有导入、没有保存' }, BLOCKED);
+      }
+
+      // A pre-existing form may be reused only when it is the one empty new
+      // form belonging to this task. Any existing data or modify form stops
+      // before the write marker is recorded.
+      let tabsBefore;
+      try { tabsBefore = await formAdapter.formTabs(gate.page); } catch (error) {
+        out({ command: 'erp-write', status: 'blocked', code: error.code ?? 'erp_read_failed',
+          error: error.message, note: '无法确认当前 ERP 是否有唯一空白新增单，未写入' }, BLOCKED);
+      }
+      if (tabsBefore.length > 1 || tabsBefore.some((tab) => tab.mode !== 'new')) {
+        out({ command: 'erp-write', status: 'blocked', formTabs: tabsBefore,
+          note: 'ERP 当前不是唯一的费用报销单-新增空白单，未导入发票' }, BLOCKED);
+      }
+      if (tabsBefore.length === 1) {
+        let before;
+        try { before = await readReconciliationFor(gate.page); } catch (error) {
+          out({ command: 'erp-write', status: 'blocked', code: error.code ?? 'erp_read_failed',
+            error: error.message, note: '无法回读现有新增单的空白状态，未写入' }, BLOCKED);
+        }
+        const receiptRows = before.receiptsGrid?.rows?.filter((row) => row.kind === 'data') ?? [];
+        if (before.formMode?.value !== 'new' || before.billNo?.value !== null || receiptRows.length !== 0) {
+          out({ command: 'erp-write', status: 'blocked',
+            note: '现有新增单不是可安全复用的空白单，未导入发票' }, BLOCKED);
+        }
+      }
+
+      const versionId = observed.built.versionId;
+      const freshGate = {
+        status: 'matched',
+        fresh: true,
+        taskId: writeTask.taskId,
+        versionId,
+        identity: gate.probe.identity,
+        scope: { taskId: writeTask.taskId, versionId, identity: gate.probe.identity },
+      };
+      const failBeforeMarker = (phase, error, extra = {}) => out({
+        command: 'erp-write', status: 'blocked', phase,
+        code: error?.code ?? null, error: error?.message ?? String(error),
+        task: { taskId: writeTask.taskId, workspace: taskDir(writeTask) },
+        ...extra,
+        note: 'ERP 尚未导入或保存；未记录 upload_dispatched，可以修复页面上下文后重试',
+      }, BLOCKED);
+
+      try { invoiceUploadGroups(invoicePaths); } catch (error) {
+        failBeforeMarker('invoice_validation', error);
+      }
+
+      let preparedWrite;
+      try {
+        preparedWrite = await prepareErpWrite({
+          page: gate.page,
+          navigate: (page) => writeAdapter.openNewReimbursement(page, { timeoutMs: 45_000 }),
+          read: (page) => readReconciliationFor(page),
+          openAssistant: (page) => writeAdapter.openInvoiceAssistant(page, { timeoutMs: 90_000 }),
+          mark: () => recordErpWrite(writeTask, 'upload_dispatched'),
+        });
+      } catch (error) {
+        failBeforeMarker(error?.phase ?? 'preflight', error, error?.details ?? {});
+      }
+
+      // From this point every ERP action is covered by the marker. If any
+      // later action is uncertain, the task must enter recovery and never
+      // retry the upload or save from this command.
+      const { markedTask } = preparedWrite;
+      const failAfterMarker = (phase, error, extra = {}) => out({
+        command: 'erp-write', status: 'blocked', phase,
+        code: error?.code ?? null, error: error?.message ?? String(error),
+        task: { taskId: markedTask.taskId, erpWriteState: 'upload_dispatched', workspace: taskDir(markedTask) },
+        ...extra,
+        note: 'ERP 已进入不可重放的恢复态；不会自动重试导入或保存，请先按恢复步骤只读核对',
+      }, BLOCKED);
+
+      try {
+        await writeAdapter.uploadAndImportInvoices(gate.page, invoicePaths, { timeoutMs: 210_000 });
+      } catch (error) { failAfterMarker('invoice_import', error); }
+
+      let imported;
+      try { imported = await readReconciliationFor(gate.page); } catch (error) {
+        failAfterMarker('receipt_readback', error);
+      }
+      const receiptFacts = buildReceiptReadback({
+        grid: imported.receiptsGrid,
+        invoices: preparation.document?.invoices ?? [],
+        taskId: writeTask.taskId,
+        versionId,
+        identity: gate.probe.identity,
+      });
+      if (!receiptFacts.ok) {
+        failAfterMarker('receipt_readback', new Error('导入后的 ERP 收票不能唯一对应当前准备包'), {
+          problems: receiptFacts.problems,
+        });
+      }
+
+      const selection = loadSelection(writeTask);
+      const catalog = loadCatalogVerification(writeTask);
+      const expenseItems = Array.isArray(catalog?.expenseItems) ? catalog.expenseItems : [];
+      const draft = buildErpDraftPreview({
+        task: writeTask,
+        built: observed.built,
+        lines: observed.lines,
+        selection,
+        catalog,
+        expenseItems,
+        receiptCheck: receiptFacts.receiptCheck,
+        receiptReadback: receiptFacts.receiptReadback,
+        freshGate,
+      });
+      if (!draft.ready) {
+        failAfterMarker('preview', new Error('导入后的收票不能生成完整 ERP 明细预览'), {
+          problems: draft.problems,
+        });
+      }
+      const approval = recordWriteApproval(markedTask, draft.expectedPreview,
+        { approvedVia: 'preparation_confirmation' });
+      const readCurrent = (expectedPreview = null) =>
+        readReconciliationFor(gate.page, { expectedPreview });
+      let filled;
+      try {
+        filled = await fillApprovedPreview(gate.page, {
+          approvedPreview: draft.expectedPreview,
+          approval,
+          freshGate,
+          readCurrent,
+          addRow: writeAdapter.addDetailRow,
+          ops: {
+            writeHeader: formAdapter.writeHeader,
+            writeCell: formAdapter.writeCell,
+            selectOption: formAdapter.selectOption,
+            leaveEdit: formAdapter.leaveEdit,
+          },
+        });
+      } catch (error) { failAfterMarker('fill', error); }
+      if (!filled?.ok) {
+        failAfterMarker('fill', new Error('ERP 明细填充或严格回读没有通过'), { result: filled });
+      }
+
+      let saved;
+      try {
+        saved = await saveApprovedPreview(gate.page, {
+          approvedPreview: draft.expectedPreview,
+          approval,
+          freshGate,
+          fillResult: filled,
+          readCurrent,
+          save: writeAdapter.saveReimbursement,
+        });
+      } catch (error) { failAfterMarker('save', error); }
+      if (!saved?.ok || saved.status !== 'saved' || saved.saveAttempts !== 1) {
+        failAfterMarker('save', new Error('保存后没有通过唯一单号、修改页签和严格回读验收'), { result: saved });
+      }
+      const savedTask = recordErpWrite(markedTask, 'saved');
+      out({ command: 'erp-write', status: 'saved', saveAttempts: saved.saveAttempts,
+        billNo: saved.billNo, task: { taskId: savedTask.taskId, erpWriteState: savedTask.erpWriteState,
+          workspace: taskDir(savedTask) }, previewDigest: draft.expectedPreview.previewDigest,
+        note: '发票已导入，已选择不生成费用明细，ERP 明细已逐项回读并保存为草稿' }, OK);
     }
 
     case 'erp-fill': {
@@ -1347,17 +1589,16 @@ try {
           note: '任务还没有当前身份的常驻城市快照，先完成常驻城市确认' }, BLOCKED);
       }
       if ((classified.openItems ?? []).some((item) => item.blocking)) {
-        out({ command: 'select-task', status: 'blocked', state: 'classified_detail_confirmation',
+        out({ command: 'select-task', status: 'blocked', state: 'intake_open_items',
           task: { taskId: task.taskId, workspace: taskDir(task) },
           openItems: classified.openItems.filter((item) => item.blocking),
           note: '分类明细还有未清的硬阻塞，不能进入项目选择' }, BLOCKED);
       }
-      if (!classified.classifiedDetailComplete || !classified.classifiedDetailConfirmed) {
-        out({ command: 'select-task', status: 'blocked', state: 'classified_detail_confirmation',
+      if (!classified.classifiedDetailComplete) {
+        out({ command: 'select-task', status: 'blocked', state: 'classify_pending',
           task: { taskId: task.taskId, workspace: taskDir(task) },
           classifiedDetailComplete: classified.classifiedDetailComplete,
-          classifiedDetailConfirmed: classified.classifiedDetailConfirmed,
-          note: '先由用户确认当前分类明细，项目归属随后单独选择' }, BLOCKED);
+          note: '分类明细尚未整理完整，不能进入项目选择' }, BLOCKED);
       }
       const candidates = selectableProjects(identity);
       const book = readBook(identity);
@@ -1423,9 +1664,8 @@ try {
             const currentSnapshot = await observeTask(dir,
               { mode: has('legacy-comparison') ? 'legacy' : 'markdown' });
             if (currentSnapshot.homeCityRequired || currentSnapshot.task?.homeCity !== task.homeCity
-              || !currentSnapshot.classifiedDetailComplete
-              || !currentSnapshot.classifiedDetailConfirmed) {
-              return { verdict: 'rejected', reasons: ['提交时常驻城市或分类明细确认已变化，请重新打开任务选择页'],
+              || !currentSnapshot.classifiedDetailComplete) {
+              return { verdict: 'rejected', reasons: ['提交时常驻城市或分类明细已变化，请重新打开任务选择页'],
                 status: 'classified_detail_changed' };
             }
             if (classifiedDetailDigest(currentSnapshot.classifiedPreview) !== classifiedDigest) {
@@ -1579,7 +1819,7 @@ try {
       }
       const combinedState = determineState({ ...environment, ...observed });
       const allowed = new Set(['preparation_package_pending', 'preparation_blocked',
-        'preparation_confirmation', 'preparation_complete']);
+        'preparation_confirmation', 'erp_write_pending', 'erp_write_complete']);
       if (!allowed.has(combinedState.state)) {
         out({ command: 'prepare', status: 'blocked', state: combinedState.state,
           blockedBy: combinedState.blockedBy,
@@ -1686,10 +1926,19 @@ try {
       // Runtime setup is a prerequisite for every material parser. Keep this
       // gate before observeTask so a missing managed runtime cannot trigger a
       // partial inventory/classification pass before its install step.
+      const locationProvider = env.probe?.status === 'matched'
+        && bindingVerdict(env.binding, env.probe.identity) === 'matched'
+        && process.env.BAOX_LOCATION_MODE !== 'off'
+        ? lookupNetworkLocation : null;
       const taskObservation = materialsThere && env.runtimeDependencies?.ready === true
-        ? await observeTask(sourceDir, { homeCitySuggestion }) : {};
+        ? await observeTask(sourceDir, { homeCitySuggestion, locationProvider }) : {};
       let recovery = null;
-      if (materialsThere && hasRecoveryMarker(taskObservation.task)) {
+      // A recovery read needs the same Chromium page as ERP writes. Let the
+      // state machine issue `chrome-up` first; never enter recovery code with
+      // a missing CDP connection and leak its low-level exception.
+      const chromiumAutomationReady = env.chromiumAutomation?.required !== true
+        || env.chromiumAutomation.ready === true;
+      if (materialsThere && hasRecoveryMarker(taskObservation.task) && chromiumAutomationReady) {
         const checked = env.probe?.status === 'matched'
           ? await validateLocalPreparationRecovery(sourceDir)
           : { ok: false, status: 'environment_not_ready',
@@ -1735,7 +1984,7 @@ try {
         'history', 'events', 'select-task', 'lines', 'projects', 'projects-page', 'scope-materials',
         'resume-local-preparation',
         'prepare',
-        'tasks', 'abandon-task', 'reset', 'catalog', 'erp-read', 'erp-reconcile', 'erp-fill'] }, ERR);
+        'tasks', 'abandon-task', 'reset', 'catalog', 'erp-read', 'erp-reconcile', 'erp-write', 'erp-fill'] }, ERR);
   }
 } catch (err) {
   out({ command: cmd, error: err.message, code: err.code ?? null }, ERR);

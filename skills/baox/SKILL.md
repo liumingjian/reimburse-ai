@@ -6,8 +6,8 @@ allowed-tools: Bash, Read, Task, Skill
 
 # baox
 
-用户看到的一切都是中文。浏览器初始化、登录、读取失败或自动化 QA 时先读 `references/browser.md`；正式页面使用系统默认浏览器。
-当前流程以准备材料包交接为终点，随后等待用户手动 QA。涉及材料包生成、充分性检查、准备确认或准备完成时，先读 `references/preparation.md`。
+用户看到的一切都是中文。浏览器初始化、登录、读取失败或自动化 QA 时先读 `references/browser.md`；V1 只支持 Chromium 浏览器，普通交互和前置只读沿用用户的系统默认 Chrome/Edge 页面；确认后的 ERP 草稿写入与写入恢复由内核在需要时准备可接管的 Chromium 页面，Chrome 与 Edge 共用同一 CDP 适配器；ego 只用于显式自动化 QA。
+当前流程以 ERP 草稿保存和严格回读为终点；准备确认后由内核自动完成导入、明细填写和保存。涉及材料包生成、充分性检查、准备确认或准备完成时，先读 `references/preparation.md`。
 遇到 `ask_user`、`confirm_table`、`tell_user` 或 `dispute` 时，先读 `references/human-interaction.md`，按当前 step 的人机回传契约处理。
 ## 完全重置
 
@@ -24,7 +24,7 @@ allowed-tools: Bash, Read, Task, Skill
 node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材料目录>"
 ```
 
-如果执行环境提供可信的当前城市参考，首次命令可加 `--home-city-suggestion "<城市>"`；没有就省略，系统不会自行猜测。`CLAUDE_SKILL_DIR` 环境变量**不存在**；路径使用这份 SKILL.md 所在目录的真实绝对路径。
+首次没有常驻城市时，内核会先通过位置 Adapter 获取一个城市级网络位置候选；获取成功后展示候选并请用户确认，获取失败才回退到直接填写。若执行环境已经提供了更可信的城市参考，首次命令可加 `--home-city-suggestion "<城市>"` 覆盖网络候选。`CLAUDE_SKILL_DIR` 环境变量**不存在**；路径使用这份 SKILL.md 所在目录的真实绝对路径。
 第一次问要带 `--dir`；此后回传用 `--after <stepToken>`，**内核会把完整命令行放在
 `step.argv` 里，你原样执行**。底层还有二十来条子命令，那些是给人手敲排障的，不是给你选的：
 **内核会当场拒掉**（退出码 2，`status: "refused"`），并把这次拒绝记进日志。
@@ -43,7 +43,7 @@ node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材
 ## `step.kind`
 | kind | 你做的唯一一件事 | 回传 |
 |---|---|---|
-| `run` | 原样执行 `step.argv`，stdout 落盘成一个文件 | `next --after <token> --result <那个文件>` |
+| `run` | 原样执行 `step.argv`，stdout 落盘成一个文件；若打开报销专用浏览器，执行后等待用户在该窗口登录 | `next --after <token> --result <那个文件>` |
 | `read_images` | 默认图片 Adapter。逐个用 `Read` 打开 `step.images[].absPath`，按 `step.schemaPath` 那份模板把读数写进 `step.readingsPath`（形状从 `step.sightedShapes` 里选），再原样执行 `step.argv` | 同上 |
 | `extract_images` | 把完整 `step` 交给 `step.skill`；内部 Skill 先批量 OCR，候选不足的材料再用模型视觉兜底，并执行 `step.argv` | 把 `step.resultPath` 交回 `next --after <token> --result <那个文件>` |
 | `read_markdown` | 先读 `references/pdf-markitdown.md`，只读取 `step.materials` 的编号 Markdown并按工单模板填写候选；无法从 Markdown 确定就保留缺失或歧义，完成后执行 `step.argv` | 同上 |
@@ -54,11 +54,11 @@ node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材
 | `handoff` | 未知 ERP 写入标记时，告诉用户状态需要专门维护流程处理 | 不回传 |
 | `done` | 念完 `speak` 收工 | — |
 
-`project_book_empty` 的 `step.argv` 会原样给出 `projects-page`；用户明确要求单独维护项目册时也只执行内核给出的这条入口。`step.acceptsCorrection` 是 `false` 的准备确认表**收不下纠正**：
+`project_book_empty` 的 `step.argv` 会原样给出 `projects-page`；用户明确要求单独维护项目册时也只执行内核给出的这条入口。项目维护页只录入项目号，ERP 核验成功后名称由系统回填；用户提交后命令会直接返回，不需要再在对话中回复“完成”。`step.acceptsCorrection` 是 `false` 的准备确认表**收不下纠正**：
 只有点头和不点头两种收场。用户说哪里不对，就照实转达然后停下，不要把他的值写成一份纠正交上去。
 
-首次使用遇到 `home_city_required` 时直接填写常驻城市；有系统提供的城市参考时，正确就回复「确认」，不正确就直接填写自己的城市，不再二次确认。已有记忆的新报销先展示「报销人、常驻城市」；回复「确认」继续，直接输入城市就覆盖默认值。既有任务保留自己的城市快照。
-材料整理、金额分摊和费用类别完成后，用户须先确认 `classified_detail_confirmation` 才能进入 `select-task`；项目选择仅限本人项目簿，提交时重核身份和候选集合。
+首次使用遇到 `home_city_required` 时，若系统给出网络位置候选，正确就回复「确认」，不正确就直接填写自己的城市，不再二次确认；没有候选时才直接填写常驻城市。已有记忆的新报销先展示「报销人、常驻城市」；回复「确认」继续，直接输入城市就覆盖默认值。既有任务保留自己的城市快照。
+材料整理、金额分摊和费用类别完成后直接进入项目选择；项目选择仅限本人项目簿，提交时重核身份和候选集合。材料识别不会在中途要求用户确认，只有报销材料准备完成后展示一次覆盖所有 ERP 明细必填字段的最终表格。
 
 图片识别默认使用 `vision-direct`：模型视觉读取后，候选直接进入分类和费用事件；也可以由协调器明确选择
 `ocr-assisted`，先运行受管 OCR，缺字段或候选校验失败的图片再交给模型视觉。两条路径都不在单张材料完成后
@@ -114,5 +114,5 @@ node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" next --dir "<材
 - **不猜、不编。** 看图时你是抄写员：读不出就写进 `unreadable`，猜一个值比说读不出坏得多。
 - **不说「我看不到图片」**，除非 `Read` 真的报了错——那就原样引用那条错误并说是哪个文件。
   没打开过就不知道打不打得开。
-- **不重放 ERP 写入、不改用户材料目录、不代填 ERP 账号密码。** 落没落地不清楚时，当它落了；材料只读。
+- **不重放 ERP 写入、不改用户材料目录、不代填 ERP 账号密码。** 确认后的草稿写入由内核自动执行；落没落地不清楚时，当它落了，交给恢复流程只读核对。
 - **不自造话术；确认只有「确认」；自动保存只保存报销草稿。** 普通员工只看到固定模板；保存不确定时先到报销系统核对，不重复操作。

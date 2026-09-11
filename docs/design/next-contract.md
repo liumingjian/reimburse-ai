@@ -38,7 +38,7 @@ baox next --after <stepToken> [--result <file>]  # 答：我做完了，这是�
 
 | kind | actor | 模型要做的唯一一件事 | 回传 |
 |---|---|---|---|
-| `run` | kernel | 原样执行 `step.argv`，不改一个字 | `--after <token> --result <stdout落盘的文件>` |
+| `run` | kernel | 原样执行 `step.argv`，不改一个字；若步骤启动报销专用 Chromium，执行后等待用户在新窗口登录 | `--after <token> --result <stdout落盘的文件>` |
 | `read_images` | model | 默认对 `step.images[].absPath` 逐个用模型视觉看图，按 `step.schemaPath` 写读数文件，再执行 `step.argv` 提交 | 同上 |
 | `extract_images` | model | 把内核已落盘的版本化请求交给 `extract-reimbursement-images`；先跑受管 OCR，缺字段或候选校验失败时再用模型视觉，再执行 `step.argv` | 同上 |
 | `read_markdown` | model | 读取带行号 Markdown，按工单模板提取；核对主发票标题及金额标签，跨行/串列回看原件页，再执行 `step.argv` | 同上 |
@@ -58,14 +58,15 @@ baox next --after <stepToken> [--result <file>]  # 答：我做完了，这是�
 - **`blockedBy`** 是结构化的开放项数组，每项含 `kind` / `materialId` / `hint` / `resolvableBy`（`user` | `model` | `kernel`）。
   `evidence_ambiguous` 还保留 `references`，其中每个候选带 `materialId` / `fileName`，供待办表同时显示凭证与候选参考材料。
 
-- `home_city_required` 的 `ask_user` 只写入当前 `tenant + account` 的员工记忆；已经开始的任务还会把确认值冻结到任务快照。
+- `home_city_required` 首次先尝试通过位置 Adapter 获取城市级网络位置；成功时把它作为待确认参考，失败时直接请求员工填写。`ask_user` 只写入当前 `tenant + account` 的员工记忆；已经开始的任务还会把确认值冻结到任务快照。
 - `profile_confirmation` 在新任务创建前展示报销人和常驻城市；员工回复「确认」继续，直接输入城市则覆盖默认值，再创建使用新城市快照的任务。首次没有城市时只走 `home_city_required`，不重复确认。
-  `classified_detail_confirmation` 的 `confirm_table` 绑定材料、日期、金额分摊、常驻城市和费用类别摘要，项目和事由不进入摘要；单纯换项目不会触发重新确认。
+  材料、日期、金额分摊、常驻城市、项目、费用类别和费用项目在准备阶段汇总为唯一的最终 `preparation_confirmation` 表；项目选择提交后不再追加一次分类确认。
 
 - `project_unassigned` 的 `step.argv` 只能是内核发出的 `select-task` 个人项目簿入口。页面提交时重新读取当前身份和可选集合；没有个人项目簿来源证据的全局旧选择不能自动合法化。
 
-- 准备材料包的生成、字段充分、用户准备确认分别判断。准备确认绑定当前材料包摘要，不能产生或继承 ERP 写入授权；正常流程交接材料后停止，等待用户手动 QA。
-- 后续接入草稿写入时，`select-task` 页面提交是保存草稿的授权边界，不追加保存确认；保存结果未知不得自动重试。
+- 准备材料包的生成、字段充分、用户准备确认分别判断。准备确认绑定当前材料包摘要；确认后由内核自动进入报销系统，按 PDF/图片分组导入发票、固定选择“不生成费用明细”、填写完整明细并保存草稿。导入后的收票身份和三项金额必须逐票回读，任一步结果不确定就进入恢复态且不重试。
+- 正式写入或恢复需要可接管的 Chromium 页面。普通默认浏览器没有 CDP 时，状态机会先发出启动专用 Chromium 的 `run` 步骤；Chrome 与 Edge 共用同一个 CDP 适配器，用户登录一次后身份探测、写入和回读复用该页面，不切换到 ego，也不为浏览器品牌分叉业务流程。
+- `select-task` 页面提交是保存草稿的授权边界，不追加保存确认；保存结果未知不得自动重试。
 
 ## 纠正与来源
 

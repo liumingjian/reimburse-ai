@@ -37,7 +37,7 @@ test('只读适配层通过 ego evaluator 读取快照，不发点击或滚动�
   assert.ok(calls.every(({ expression }) => !/scrollIntoView|click\s*\(|Input\./.test(expression)));
 });
 
-test('只读适配层按唯一表头列定位网格，不接受旧 Chrome 页面句柄', async () => {
+test('只读适配层按唯一表头列定位网格，不接受旧浏览器页面句柄', async () => {
   const expressions = [];
   const evaluate = async (_page, expression) => {
     expressions.push(expression);
@@ -53,14 +53,14 @@ test('只读适配层按唯一表头列定位网格，不接受旧 Chrome 页面
 
   await assert.rejects(
     () => readFormTabs({ transport: 'chrome', wsUrl: 'ws://legacy' }),
-    (error) => error.code === 'EGO_PAGE_REQUIRED',
+    (error) => error.code === 'BROWSER_PAGE_REQUIRED',
   );
 });
 
 test('默认 evaluator 没有 ego page 时直接拒绝，不尝试旧 session', async () => {
   await assert.rejects(
     () => readGridByColumn({ transport: 'chrome', wsUrl: 'ws://legacy' }, '价税合计'),
-    (error) => error.code === 'EGO_PAGE_REQUIRED',
+    (error) => error.code === 'BROWSER_PAGE_REQUIRED',
   );
 });
 

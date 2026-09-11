@@ -78,8 +78,11 @@ export function autoBindIdentity(identity, binding = readBinding()) {
  * 调用方一律只认 matched，别的一概硬阻塞：多一档"看情况"就是多一条把发票写进
  * 别人单子里的路。
  */
-export async function gateIdentity({ origin = ERP_ORIGIN, waitMs } = {}) {
-  const probe = await probeIdentity(waitMs === undefined ? { origin } : { origin, waitMs });
+export async function gateIdentity({ origin = ERP_ORIGIN, waitMs, transport } = {}) {
+  const options = { origin };
+  if (waitMs !== undefined) options.waitMs = waitMs;
+  if (transport !== undefined) options.transport = transport;
+  const probe = await probeIdentity(options);
   if (probe.status !== 'matched') return probe;
 
   const binding = readBinding();
@@ -93,10 +96,11 @@ export async function gateIdentity({ origin = ERP_ORIGIN, waitMs } = {}) {
   }
 
   if (verdict === 'incomplete') {
+    const where = transport?.transport === 'ego' || browserMode() !== SYSTEM_BROWSER
+      ? 'ego task space' : '系统默认浏览器';
     return { ...probe, status: 'identity_incomplete', binding,
       hint: 'ERP 页面上读不出登录账号或账套（localStorage 的 k3cloudloginInfo 不完整），'
-      + `身份凑不成一个可比的东西。请在${browserMode() === SYSTEM_BROWSER
-          ? '系统默认浏览器里的 ERP 页面' : 'ego task space 里的 ERP 页面'}重新登录一次再试` };
+      + `身份凑不成一个可比的东西。请在${where}里的 ERP 页面重新登录一次再试` };
   }
   if (verdict === 'unbound') {
     return { ...probe, status: 'identity_unconfirmed', binding: null,
@@ -107,7 +111,7 @@ export async function gateIdentity({ origin = ERP_ORIGIN, waitMs } = {}) {
     hint: `这台机器绑定的是 ${binding.displayName ?? binding.account}（账号 ${binding.account}，`
       + `账套 ${binding.tenant}），ERP 当前登录的是 ${probe.identity.displayName}`
       + `（账号 ${probe.identity.account}，账套 ${probe.identity.tenant}）。`
-      + `baox 只替绑定的那个人报销：请在${browserMode() === SYSTEM_BROWSER
-        ? '系统默认浏览器里的 ERP 页面' : 'ego task space 里'}换回本人登录。`
+      + `baox 只替绑定的那个人报销：请在${transport?.transport === 'ego' || browserMode() !== SYSTEM_BROWSER
+        ? 'ego task space 里' : '系统默认浏览器里的 ERP 页面'}换回本人登录。`
       + '确实要把这台机器改绑到当前这个身份，跑 baox confirm-identity（没有进行中的任务时才允许改）' };
 }

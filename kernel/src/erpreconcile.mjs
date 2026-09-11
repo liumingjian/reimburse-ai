@@ -290,7 +290,7 @@ const projectSourceConfirmed = (line, expected) => textOf(expected?.projectSourc
   && textOf(line?.projectsFrom) === 'project_book';
 
 const accommodationLine = (line) => textOf(line?.category) === 'accommodation';
-const ERP_INVOICE_TYPES = new Set(['普通发票', '增值税发票', '机票', '火车票', '其他运输票', '其他']);
+const ERP_INVOICE_TYPES = new Set(['普通发票', '增值税发票']);
 const validInvoiceTypeSource = (value) => {
   const source = textOf(value);
   return !!source && !/(?:unknown|guess|guessed|inferred|default|fallback|猜|推断|默认)/i.test(source);

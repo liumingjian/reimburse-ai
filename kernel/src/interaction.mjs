@@ -26,6 +26,7 @@ const TEMPLATE_BY_STATE = Object.freeze({
   env_node_unsupported: 'system.temporarily_unavailable',
   env_runtime_missing: 'system.processing',
   env_chrome_down: 'system.temporarily_unavailable',
+  env_chromium_required: 'system.temporarily_unavailable',
   env_not_logged_in: 'account.login',
   env_identity_unknown: 'account.login',
   env_identity_unbound: 'account.identity_confirmation',
@@ -51,7 +52,6 @@ const TEMPLATE_BY_STATE = Object.freeze({
   events_pending: 'events.processing',
   allocation_required: 'events.user_input',
   allocation_stale: 'events.user_input',
-  classified_detail_confirmation: 'materials.confirmation',
   project_book_empty: 'project.user_adjustment',
   project_unassigned: 'project.user_input',
   catalog_unverified: 'catalog.processing',
@@ -60,8 +60,13 @@ const TEMPLATE_BY_STATE = Object.freeze({
   preparation_package_pending: 'preparation.processing',
   preparation_blocked: 'preparation.user_adjustment',
   preparation_confirmation: 'preparation.confirmation',
-  preparation_complete: 'preparation.completed',
+  erp_write_pending: 'save.processing',
+  erp_write_complete: 'save.completed',
   env_ready: 'workflow.ready',
+});
+
+const LEGACY_TEMPLATE_BY_STATE = Object.freeze({
+  preparation_complete: 'preparation.completed',
 });
 
 const STATUS_BY_TEMPLATE = Object.freeze({
@@ -85,6 +90,8 @@ const STATUS_BY_TEMPLATE = Object.freeze({
   'preparation.processing': 'processing',
   'preparation.user_adjustment': 'needs_adjustment',
   'preparation.confirmation': 'needs_confirmation',
+  'save.processing': 'processing',
+  'save.completed': 'completed',
   'preparation.completed': 'completed',
   'workflow.ready': 'completed',
 });
@@ -174,7 +181,7 @@ export function sanitizeUserText(value) {
 }
 
 export function templateIdForState(state) {
-  const templateId = TEMPLATE_BY_STATE[state];
+  const templateId = TEMPLATE_BY_STATE[state] ?? LEGACY_TEMPLATE_BY_STATE[state];
   if (!templateId) throw new Error(`状态 ${state} 没有用户话术模板`);
   return templateId;
 }

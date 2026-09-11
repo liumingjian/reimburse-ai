@@ -11,6 +11,8 @@ import { SCHEMA_VERSION } from './state.mjs';
 import { probeIdentity } from './probe.mjs';
 import { isEgoControlError } from './ego.mjs';
 import { browserMode, EGO_BROWSER, SYSTEM_BROWSER } from './browser-open.mjs';
+import { chromiumCdpTransport } from './browser-read.mjs';
+import { CDP_PORT, version as chromiumVersion } from './chrome.mjs';
 import { readBinding } from './binding.mjs';
 import { readHomeCity, validHomeCity } from './home-city.mjs';
 import { takeInventoryForTask, intakeOpenItems } from './inventory.mjs';
@@ -209,17 +211,26 @@ export function readSchemaVersion() {
  * `BAOX_BROWSER=ego` 才允许 ego task space 作为 QA transport。system transport
  * 的权限或能力失败必须原样留在观测里，不能把它伪造成「已登录」或旧的 Chrome down。
  */
-export async function observeEnvironment() {
+export async function observeEnvironment({ versionFn = chromiumVersion } = {}) {
   const [nodeMajor] = process.versions.node.split('.').map(Number);
   const mode = browserMode();
   // Every browser transport uses the same managed runtime gate. The browser
   // mode only selects the page transport; it cannot make parsing dependencies
   // appear ready.
   const runtimeDependencies = inspectRuntimeDependencies();
+  let cdpVersion = null;
+  if (mode === SYSTEM_BROWSER) {
+    try { cdpVersion = await versionFn(CDP_PORT); } catch { cdpVersion = null; }
+  }
+  const chromiumAutomation = mode === SYSTEM_BROWSER
+    ? { required: true, ready: !!cdpVersion, port: CDP_PORT,
+        browser: cdpVersion?.Browser ?? null }
+    : { required: false, ready: true, port: null, browser: null };
   let probe = null;
   let browserReadError = null;
   try {
-    probe = await probeIdentity();
+    probe = await probeIdentity(chromiumAutomation.ready && mode === SYSTEM_BROWSER
+      ? { transport: chromiumCdpTransport() } : {});
   } catch (error) {
     // An explicit ego QA transport keeps its existing hard failure semantics.
     // In system mode a missing AppleEvents/browser capability is a user-visible
@@ -258,6 +269,7 @@ export async function observeEnvironment() {
     egoUp,
     egoError: mode === EGO_BROWSER ? browserReadError : null,
     browserReadError,
+    chromiumAutomation,
     probe,
     binding: readBinding(),
     runtimeDependencies,
@@ -280,18 +292,28 @@ export async function observeEnvironment() {
  *     里那条命令，不是问一句「现在该做什么」。
  */
 export async function observeTask(sourceDir, {
-  mode = 'markdown', receiptFacts = null, homeCitySuggestion = null,
+  mode = 'markdown', receiptFacts = null, homeCitySuggestion = null, locationProvider = null,
 } = {}) {
   const dir = path.resolve(sourceDir);
   const task = findLiveTaskForSource(sourceKeyOf(dir));
+  const employeeHomeCity = readHomeCity(readBinding())?.homeCity ?? null;
+  const explicitHomeCitySuggestion = validHomeCity(homeCitySuggestion)
+    ? homeCitySuggestion.trim() : null;
+  let detectedLocation = null;
+  if (!explicitHomeCitySuggestion && !task && !employeeHomeCity
+    && typeof locationProvider === 'function') {
+    try { detectedLocation = await locationProvider(); } catch { detectedLocation = null; }
+  }
+  const detectedHomeCitySuggestion = validHomeCity(detectedLocation?.city)
+    ? detectedLocation.city.trim() : null;
+  const trustedHomeCitySuggestion = explicitHomeCitySuggestion ?? detectedHomeCitySuggestion;
+  const homeCitySuggestionSource = explicitHomeCitySuggestion
+    ? 'provided' : detectedHomeCitySuggestion ? (detectedLocation.source ?? 'location') : null;
   const inventory = await takeInventoryForTask(dir, task);
 
   // 没有任务时 currentVersionId 无从比起 —— 那是 task_none，不是盘点过期。
   const inventoryStale = !!task && task.currentVersionId !== inventory.versionId;
   const classification = classifyInventory(dir, inventory, task, { mode });
-  const employeeHomeCity = readHomeCity(readBinding())?.homeCity ?? null;
-  const trustedHomeCitySuggestion = validHomeCity(homeCitySuggestion)
-    ? homeCitySuggestion.trim() : null;
   // 跨任务查重：拿发票身份去比对本机上别的任务还占着的票。只读别的任务落盘的摘要，
   // 一个字都不往回写。没有任务时无从比起（本任务自己都还没有身份摘要）。
   const history = task ? crossTaskDuplicates(task, classification) : null;
@@ -306,6 +328,7 @@ export async function observeTask(sourceDir, {
     homeCityAnswerPath: path.join(paths.root, 'home-city-answer.json'),
     employeeHomeCity,
     ...(trustedHomeCitySuggestion ? { homeCitySuggestion: trustedHomeCitySuggestion } : {}),
+    ...(homeCitySuggestionSource ? { homeCitySuggestionSource } : {}),
     profileConfirmationRequired: !task && !!employeeHomeCity && loadIndex().tasks.length > 0,
     homeCity: task?.homeCity ?? employeeHomeCity,
     task: task ? {
@@ -436,7 +459,9 @@ function observeErpHalf(task, classification, materialItems, inventory, receiptF
     lines,
     selection,
     catalog,
-    classifiedConfirmed: classifiedDetailConfirmed(task, classifiedPreview),
+    // 分类结果进入后续项目和目录核验时只要求事实完整；用户的唯一整单
+    // 确认发生在准备包完成之后，避免在中间阶段重复打断。
+    classifiedConfirmed: classifiedDetailComplete(classifiedPreview),
     projectCandidates: candidates,
     receiptFacts,
   });

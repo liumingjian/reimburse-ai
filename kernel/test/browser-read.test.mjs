@@ -7,6 +7,7 @@ import {
   browserPage,
   browserTransport,
   buildPageBridgeScripts,
+  chromiumCdpTransport,
   DEFAULT_BROWSER_AUTOMATION_PERMISSION_REQUIRED,
   DEFAULT_BROWSER_JAVASCRIPT_PERMISSION_REQUIRED,
   DEFAULT_BROWSER_ORIGIN_REQUIRED,
@@ -25,15 +26,36 @@ test('只有显式 BAOX_BROWSER=ego 才选择 ego，task space 变量本身不�
   assert.equal(browserTransport({ env: { BAOX_BROWSER: 'ego', BAOX_EGO_TASK_SPACE: '17' } }).transport, 'ego');
 });
 
-test('默认浏览器只承认已知 Safari/Chromium scripting dictionary', () => {
+test('默认浏览器只承认受支持的 Chromium scripting dictionary', () => {
   assert.deepEqual(browserInfoForBundleId('com.google.Chrome'), {
     bundleId: 'com.google.Chrome', name: 'Google Chrome', family: 'chromium',
   });
-  assert.deepEqual(browserInfoForBundleId('com.apple.Safari'), {
-    bundleId: 'com.apple.Safari', name: 'Safari', family: 'safari',
+  assert.deepEqual(browserInfoForBundleId('com.microsoft.edgemac'), {
+    bundleId: 'com.microsoft.edgemac', name: 'Microsoft Edge', family: 'chromium',
   });
+  assert.throws(() => browserInfoForBundleId('com.apple.Safari'),
+    (error) => error.code === DEFAULT_BROWSER_UNSUPPORTED);
   assert.throws(() => browserInfoForBundleId('com.example.Unknown'),
     (error) => error.code === DEFAULT_BROWSER_UNSUPPORTED);
+});
+
+test('CDP 传输从同一个 Chromium 目标列表读取 ERP 页面', async () => {
+  const pages = await listBrowserTabs({
+    origin: 'https://erp.example',
+    transport: chromiumCdpTransport({ env: { BAOX_CHROMIUM_CDP_PORT: '9444' } }),
+    targetsFn: async (port) => {
+      assert.equal(port, 9444);
+      return [
+        { type: 'page', id: 'erp-1', url: 'https://erp.example/k3/index.aspx',
+          webSocketDebuggerUrl: 'ws://erp-1' },
+        { type: 'page', id: 'other', url: 'https://mail.example/', webSocketDebuggerUrl: 'ws://other' },
+      ];
+    },
+  });
+  assert.equal(pages.length, 1);
+  assert.equal(pages[0].automation, 'cdp');
+  assert.equal(pages[0].browserFamily, 'chromium');
+  assert.equal(pages[0].tabId, 'erp-1');
 });
 
 test('默认页列表只返回 origin 范围内的稳定标签身份', async () => {
@@ -107,8 +129,8 @@ test('native 使用的 page bridge 在真实页面 JS 上覆盖 Promise 成功�
   assert.deepEqual(JSON.parse(runPageScript(late.poll, context)), { state: 'missing' });
 });
 
-test('Safari bridge uses the sdef direct JavaScript parameter and exact target tab', () => {
-  assert.match(DEFAULT_BROWSER_JXA, /app\(\)\.doJavaScript\(source, \{ in: tab \}\)/);
+test('Chromium bridge uses the direct JavaScript parameter and exact target tab', () => {
+  assert.match(DEFAULT_BROWSER_JXA, /tab\.execute\(\{ javascript: source \}\)/);
   assert.match(DEFAULT_BROWSER_JXA, /findTab\(findWindow\(input\.page\), input\.page\)/);
 });
 

@@ -33,7 +33,7 @@ test('业务进度固定为十个阶段，且没有重复阶段', () => {
 });
 
 test('每个状态都有版本化模板和状态类别', () => {
-  assert.equal(TEMPLATE_STATES.length, 40);
+  assert.equal(TEMPLATE_STATES.length, 41);
   for (const state of TEMPLATE_STATES) {
     assert.match(templateIdForState(state), /^[a-z]+\.[a-z_]+$/);
     assert.ok(interactionStatus(state));
@@ -79,6 +79,8 @@ test('代表性员工话术不暴露内部处理名词', () => {
     ['env_node_unsupported', { nodeMajor: 20 }],
     ['env_runtime_missing', { runtimeDependencies: { ready: false, missing: ['runtime'] } }],
     ['env_chrome_down', { browserMode: 'ego', cdpUp: false }],
+    ['env_chromium_required', { browserMode: 'system',
+      chromiumAutomation: { required: true, ready: false, port: 9333 } }],
     ['env_not_logged_in', { probe: { status: 'not_logged_in' } }],
     ['env_identity_unknown', { probe: { status: 'unknown' } }],
     ['env_identity_unbound', { binding: null }],
@@ -99,7 +101,6 @@ test('代表性员工话术不暴露内部处理名词', () => {
     ['reading_awaiting_confirmation', { pendingReadings: [] }],
     ['duplicate_blocked', {}],
     ['events_pending', {}],
-    ['classified_detail_confirmation', { classifiedPreview: { lines: [], evidence: [], homeCity: '广州市' } }],
     ['project_unassigned', { lines: [] }],
     ['project_book_empty', { projectBook: { empty: true } }],
     ['catalog_unverified', {}],
@@ -107,7 +108,8 @@ test('代表性员工话术不暴露内部处理名词', () => {
     ['preparation_package_pending', {}],
     ['preparation_blocked', { preparation: { ready: false, problems: [] } }],
     ['preparation_confirmation', {}],
-    ['preparation_complete', { preparationConfirmed: true }],
+    ['erp_write_pending', { preparationConfirmed: true }],
+    ['erp_write_complete', { task: { ...base.task, erpWriteState: 'saved' } }],
     ['handed_off_recover', { task: { ...base.task, erpWriteState: 'unknown' } }],
     ['recovery_write_blocked', { task: { ...base.task, erpWriteState: 'known' } }],
     ['env_ready', {}],

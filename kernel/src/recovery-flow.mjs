@@ -6,6 +6,9 @@ import { classifyInventory, classifyOpenItems } from './classify.mjs';
 import { gateIdentity, readBinding, bindingVerdict } from './binding.mjs';
 import { authorizedPage, queryRows } from './erpcatalog.mjs';
 import { readErpForm } from './erpread.mjs';
+import { authorizeErpWritePage, chromiumErpWriteTransport } from './erp-write-context.mjs';
+import { evalIn } from './chrome.mjs';
+import { readCdpErpForm } from './erp-cdp-read.mjs';
 import { findLiveTaskForSource, recoveryCredentialPath, recoveryCredentialRecordPath,
   recoveryCredentialLatestPath, sourceKeyOf } from './workspace.mjs';
 import {
@@ -254,8 +257,10 @@ export const hasRecoveryMarker = (task) => task?.erpWriteState === REQUIRED_ERP_
  * observeTask: ordinary observation remains pure with respect to ERP/browser.
  */
 export async function collectRecoverySnapshot(sourceDir, {
-  gate = gateIdentity,
-  authorize = authorizedPage,
+  gate = () => gateIdentity({ transport: chromiumErpWriteTransport() }),
+  authorize = () => authorizeErpWritePage({
+    authorize: (options) => authorizedPage(options),
+  }),
   readForm = readErpForm,
   run = queryRows,
 } = {}) {
@@ -282,16 +287,19 @@ export async function collectRecoverySnapshot(sourceDir, {
     return fail('identity_mismatch', ['ERP 身份在恢复准备期间变化，不能继续'],
       { task, inventory, classification, identity: authorized?.probe?.identity ?? null });
   }
-  if (authorized.page?.transport === 'default') {
-    return fail('default_browser_recovery_unsupported',
-      ['系统默认浏览器传输只支持正式只读观察；旧 ERP 恢复回读必须显式使用 ego QA transport'],
-      { task, inventory, classification, identity: authorized.probe.identity });
-  }
-  const query = await queryExpectedReceiptBindings(classification, authorized.page, { run });
+  const cdp = authorized.page?.automation === 'cdp';
+  const cdpRun = cdp
+    ? (page, payload) => queryRows(page, payload, {
+      evaluate: (_page, expression, options) => evalIn(page.session, expression, {
+        timeout: options.timeoutMs ?? 30_000,
+      }),
+    })
+    : run;
+  const query = await queryExpectedReceiptBindings(classification, authorized.page, { run: cdpRun });
   if (!query.ok) return fail('receipt_check_failed', query.reasons,
     { task, inventory, classification, identity: authorized.probe.identity });
 
-  const snapshot = await readForm(authorized.page);
+  const snapshot = cdp ? await readCdpErpForm(authorized.page) : await readForm(authorized.page);
   const tabs = snapshot?.formTabs ?? [];
   if (tabs.length !== 1 || tabs[0]?.mode !== 'new') {
     return fail('form_not_new', ['ERP 页面必须只有一个费用报销单-新增页签'],
@@ -353,7 +361,10 @@ export async function collectRecoverySnapshot(sourceDir, {
       inventoryVersionId: inventory.versionId,
       materials,
       receiptBindings: query.bindings,
-      ego: { taskSpace: authorized.page.taskSpace, tabId: authorized.page.tabId },
+      ...(cdp
+        ? { browser: { transport: 'chromium-cdp', browserFamily: 'chromium',
+          tabId: authorized.page.cdpTargetId ?? authorized.page.tabId } }
+        : { ego: { taskSpace: authorized.page.taskSpace, tabId: authorized.page.tabId } }),
       form,
       readback,
     },

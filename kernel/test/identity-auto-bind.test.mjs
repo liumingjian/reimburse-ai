@@ -33,7 +33,15 @@ process.stdin.on('end', () => {
   return command;
 }
 
-function fixture({ binding = null } = {}) {
+function fakeLocationCurl(home, payload) {
+  const command = path.join(home, 'fake-location-curl.mjs');
+  fs.writeFileSync(command, `#!/usr/bin/env node
+process.stdout.write(${JSON.stringify(JSON.stringify(payload))});
+`, { mode: 0o700 });
+  return command;
+}
+
+function fixture({ binding = null, location = null } = {}) {
   const home = tempDir();
   const materials = tempDir();
   fs.writeFileSync(path.join(materials, 'placeholder.txt'), 'fixture material\n');
@@ -44,7 +52,9 @@ function fixture({ binding = null } = {}) {
     BAOX_EGO_TASK_SPACE: '1',
     BAOX_EGO_BROWSER: fakeEgoBrowser(home),
     BAOX_NO_AUTO_OPEN: '1',
+    BAOX_LOCATION_MODE: location ? 'auto' : 'off',
   };
+  if (location) env.BAOX_LOCATION_CURL = fakeLocationCurl(home, location);
   if (binding) fs.writeFileSync(path.join(home, 'identity.json'), JSON.stringify(binding));
   return { env, home, materials };
 }
@@ -78,6 +88,38 @@ test('首次已登录身份自动绑定并继续材料阶段', () => {
     '--result', first.json.step.answersPath], env);
   assert.equal(materialsStep.json.state, 'task_none');
   assert.equal(materialsStep.json.step.argv[2], 'intake');
+});
+
+test('首次没有城市时先获取网络位置，再展示城市确认', () => {
+  const { env, home, materials } = fixture({
+    location: { city: '北京市', latitude: 39.9042, longitude: 116.4074 },
+  });
+  const first = runBaox(['next', '--dir', materials], env);
+
+  assert.equal(first.json.state, 'home_city_required');
+  assert.equal(first.json.step.suggestedHomeCity, '北京市');
+  assert.equal(first.json.step.suggestedHomeCitySource, 'ip');
+  assert.match(first.json.speak, /网络位置推测/);
+  assert.match(first.json.step.prompt, /北京市/);
+
+  fs.writeFileSync(first.json.step.answersPath, JSON.stringify({ homeCity: '确认' }));
+  const next = runBaox(['next', '--after', first.json.stepToken,
+    '--result', first.json.step.answersPath], env);
+  assert.equal(next.json.state, 'task_none');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'home-cities.json')))[
+    JSON.stringify([currentIdentity.tenant, currentIdentity.account])].homeCity, '北京市');
+});
+
+test('网络位置不可用时回退为手动填写城市', () => {
+  const { env, materials } = fixture({
+    location: { city: 'unknown', latitude: 0, longitude: 0 },
+  });
+  const first = runBaox(['next', '--dir', materials], env);
+
+  assert.equal(first.json.state, 'home_city_required');
+  assert.equal(first.json.step.suggestedHomeCity, undefined);
+  assert.match(first.json.speak, /直接输入你的常驻城市/);
+  assert.doesNotMatch(first.json.speak, /网络位置推测/);
 });
 
 test('已有 binding 与当前登录身份不一致时仍硬阻断且不改 binding', () => {

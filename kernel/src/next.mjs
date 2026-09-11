@@ -7,7 +7,8 @@
  *
  * 落成的是两张表的全部状态（`archived` 是任务状态不是状态，见 state.mjs 的开头），
  * 所有 `step.kind` 都有明确回传契约；`ask_user` 的第一次真实使用是逐段分摊，
- * `run` 的本地恢复入口只建立 fresh 只读凭据；ERP 写入闸仍由 state/erp-fill 保持。
+ * `run` 的本地恢复入口只建立 fresh 只读凭据；ERP 写入由确认后的受管 `erp-write`
+ * 步骤执行，保存仍要经过严格回读。
  */
 import path from 'node:path';
 import url from 'node:url';
@@ -20,7 +21,6 @@ import { DEFAULT_IMAGE_RECOGNITION_ADAPTER, DOC_TYPES, FIELD_RULES, INVOICE_READ
   IMAGE_RECOGNITION_ADAPTERS } from './vision.mjs';
 import { roundFingerprint } from './allocate.mjs';
 import { renderTable, renderQuestions } from './table.mjs';
-import { classifiedDetailDigest } from './classified-detail.mjs';
 import { PDF_MARKDOWN_SCHEMA_PATH, PDF_MARKDOWN_TEMPLATE_PATH, MARKITDOWN_VERSION } from './pdf-markdown.mjs';
 import { ERP_ENTRY } from './probe.mjs';
 import { SYSTEM_BROWSER } from './browser-open.mjs';
@@ -394,98 +394,6 @@ function readingTable(pending) {
 }
 
 /**
- * 分类明细确认表。这里列的是材料事实和内核推导的费用类别，项目归属刻意不出现：
- * 项目是下一步的个人项目簿选择，不能让用户误以为它属于这次分类确认。
- */
-const amountText = (value) => {
-  if (value === null || value === undefined) return null;
-  if (typeof value === 'object') return value.text ?? (value.cents === null || value.cents === undefined
-    ? null : (value.cents / 100).toFixed(2));
-  return String(value);
-};
-
-const faceAmountText = (kind, value, field) => amountText(value)
-  ?? (kind === 'rail_eticket'
-    ? (field === 'tax' ? '0.00（业务默认）' : field === 'net' ? '无需读取' : '—')
-    : '—');
-
-// Markdown 候选和旧看图结果都可能只带闭集 kind；确认表不能把内部枚举直接念给用户。
-const KIND_LABELS = Object.freeze({
-  vat_common: '电子普通发票',
-  vat_special: '增值税专用发票',
-  passenger_transport: '旅客运输服务电子普通发票',
-  rail_eticket: '铁路电子客票',
-  ride_itinerary: '网约车行程单',
-  hotel_folio: '酒店结账单',
-});
-
-/**
- * 票面事实汇总。事件明细的金额可能已经按行程段拆分，不能拿它代替原票上的
- * 不含税、税额和价税合计；这里直接从主要发票候选证据取值，单独给用户核对。
- */
-function invoiceSummaryTable(preview = {}) {
-  const linesByMaterial = new Map();
-  for (const line of preview.lines ?? []) {
-    if (!linesByMaterial.has(line.voucherMaterialId)) linesByMaterial.set(line.voucherMaterialId, line);
-  }
-  const rows = (preview.evidence ?? [])
-    .filter((item) => item.role === 'primary_voucher')
-    .map((item) => {
-      const line = linesByMaterial.get(item.materialId) ?? {};
-      const kind = item.kind ?? line.kind ?? null;
-      return {
-        voucher: line.voucherFileName ?? item.fileName ?? '（主要凭证）',
-        kind: item.kindLabel ?? line.kindLabel ?? KIND_LABELS[kind] ?? kind ?? '—',
-        net: faceAmountText(kind, item.fields?.netAmount, 'net'),
-        tax: faceAmountText(kind, item.fields?.taxAmount, 'tax'),
-        total: faceAmountText(kind, item.fields?.totalAmount, 'total'),
-      };
-    });
-  return renderTable([
-    { key: 'voucher', label: '发票', max: 22 },
-    { key: 'kind', label: '票据类型', max: 24 },
-    { key: 'net', label: '不含税金额', max: 18 },
-    { key: 'tax', label: '税额', max: 18 },
-    { key: 'total', label: '价税合计', max: 18 },
-  ], rows);
-}
-
-function classifiedDetailTable(preview = {}) {
-  const rows = (preview.lines ?? []).map((line) => ({
-    line: line.lineId,
-    voucher: line.voucherFileName ?? '（主要凭证）',
-    kind: line.kindLabel ?? KIND_LABELS[line.kind] ?? line.kind ?? '—',
-    startDate: line.date ?? '—',
-    endDate: line.endDate ?? line.checkOut ?? line.date ?? '—',
-    city: line.city ?? '—',
-    origin: line.origin ?? '—',
-    destination: line.destination ?? '—',
-    net: line.netAmount ?? '—',
-    tax: line.taxAmount ?? '—',
-    total: line.totalAmount ?? '—',
-    category: line.categoryLabel ?? '—',
-    expense: line.expenseItemName ?? line.expenseItemCode ?? '—',
-    evidence: (line.referenceMaterialIds ?? []).join('、') || '—',
-  }));
-  return renderTable([
-    { key: 'line', label: '明细', max: 8 },
-    { key: 'voucher', label: '发票/材料', max: 24 },
-    { key: 'kind', label: '票种', max: 20 },
-    { key: 'startDate', label: '起始日期', max: 14 },
-    { key: 'endDate', label: '结束日期', max: 14 },
-    { key: 'city', label: '城市', max: 14 },
-    { key: 'origin', label: '出发点', max: 20 },
-    { key: 'destination', label: '目的地', max: 20 },
-    { key: 'net', label: '不含税金额', max: 14 },
-    { key: 'tax', label: '税额', max: 12 },
-    { key: 'total', label: '价税合计', max: 14 },
-    { key: 'category', label: '费用类别', max: 16 },
-    { key: 'expense', label: '费用项目', max: 14 },
-    { key: 'evidence', label: '参考材料', max: 18 },
-  ], rows);
-}
-
-/**
  * 当前登录身份 -> 一张 Markdown 表格。第一次认「我在替谁报销」看的就是它。
  *
  * 三行都是内核自己从 ERP 页面上读到的原值。判据那两行（账号、账套）单独标出来：
@@ -593,58 +501,61 @@ const preparationMoney = (line) => {
   return line?.totalAmount ?? '缺失';
 };
 
-const PREPARATION_SOURCE_LABELS = {
-  invoice_face: '票面',
-  user_allocation: '你确认的分摊',
-  itinerary_conserved: '行程单与票面核对一致',
+const preparationAmount = (line, textKey, centsKey) => {
+  const value = line?.[textKey];
+  if (value !== null && value !== undefined && value !== '') {
+    if (typeof value === 'object') return value.text ?? '—';
+    return String(value);
+  }
+  return Number.isInteger(line?.[centsKey]) ? (line[centsKey] / 100).toFixed(2) : '—';
 };
 
-/** 准备确认只展示用户需要核对的摘要和每条明细，所有长文本受列宽控制。 */
+/** 最终确认只展示 ERP 明细必填字段；发票用短标签，不把材料关联带进用户表格。 */
 const preparationConfirmationTable = (preparation = {}) => {
   const document = preparation.document && typeof preparation.document === 'object'
     ? preparation.document : {};
   const lines = document.lines ?? [];
-  const invoices = new Map((document.invoices ?? [])
-    .map((invoice) => [invoice.materialId, invoice]));
-  const summary = renderTable([
-    { key: 'field', label: '项目', max: 18 },
-    { key: 'value', label: '当前准备结果', max: 58 },
-  ], [
-    { field: '阶段', value: document.phase === 'pre-erp' ? '报销材料准备' : document.phase ?? '报销材料准备' },
-    { field: '状态', value: document.status === 'ready_for_preparation' ? '材料已备齐'
-      : document.status ? '草稿（材料不足）' : '—' },
-    { field: '报销事由', value: document.purpose ?? '—' },
-    { field: '常驻城市', value: document.homeCity ?? '—' },
-    { field: '发票/明细数', value: `${(document.invoices ?? []).length} / ${lines.length}` },
-    { field: '明细总额', value: lines.every((line) => Number.isInteger(line.totalCents))
-      ? `${(lines.reduce((sum, line) => sum + line.totalCents, 0) / 100).toFixed(2)} 元` : '缺失' },
-  ]);
+  const invoiceLabels = new Map((document.invoices ?? []).map((invoice, index) =>
+    [invoice.materialId, `发票${index + 1}`]));
+  const categoryOrder = new Map(['local_city_transport', 'remote_city_transport',
+    'long_distance', 'accommodation'].map((category, index) => [category, index]));
   const detail = renderTable([
-    { key: 'line', label: '明细', max: 10 },
-    { key: 'invoice', label: '发票号', max: 22 },
-    { key: 'date', label: '日期', max: 24 },
-    { key: 'where', label: '城市/行程', max: 24 },
-    { key: 'total', label: '价税合计', max: 14 },
-    { key: 'project', label: '项目', max: 22 },
+    { key: 'invoice', label: '发票', max: 10 },
+    { key: 'project', label: '项目号', max: 18 },
+    { key: 'startDate', label: '起始日期', max: 14 },
+    { key: 'endDate', label: '结束日期', max: 14 },
+    { key: 'city', label: '住宿地/城市', max: 16 },
+    { key: 'origin', label: '出发点', max: 18 },
+    { key: 'destination', label: '目的地', max: 18 },
+    { key: 'category', label: '费用分类', max: 16 },
     { key: 'expense', label: '费用项目', max: 20 },
-    { key: 'source', label: '金额来源', max: 22 },
-  ], lines.map((line, index) => {
-    const invoice = invoices.get(line.voucherMaterialId);
+    { key: 'invoiceType', label: '发票类型', max: 14 },
+    { key: 'net', label: '费用金额', max: 14 },
+    { key: 'tax', label: '税额', max: 12 },
+    { key: 'total', label: '总额', max: 14 },
+  ], [...lines].sort((left, right) =>
+    (categoryOrder.get(left.category) ?? 99) - (categoryOrder.get(right.category) ?? 99))
+    .map((line) => {
     const project = [line.projectCode, line.projectName].filter(Boolean).join(' / ') || '—';
     const expense = [line.expenseItemCode, line.expenseItemName].filter(Boolean).join(' / ') || '—';
+    const total = preparationAmount(line, 'totalAmount', 'totalCents');
     return {
-      line: line.lineId ?? index + 1,
-      invoice: invoice?.identity?.number ?? invoice?.fields?.invoiceNumber ?? '—',
-      date: line.checkOut && line.checkOut !== line.date
-        ? `${line.date ?? '—'} 至 ${line.checkOut}` : line.date ?? '—',
-      where: line.route ?? line.city ?? '—',
-      total: preparationMoney(line),
+      invoice: invoiceLabels.get(line.voucherMaterialId) ?? '发票—',
       project,
+      startDate: line.date ?? '—',
+      endDate: line.checkOut ?? line.endDate ?? line.date ?? '—',
+      city: line.city ?? '—',
+      origin: line.origin ?? '—',
+      destination: line.destination ?? '—',
+      category: line.categoryLabel ?? line.category ?? '—',
       expense,
-      source: PREPARATION_SOURCE_LABELS[line.amountSource] ?? line.amountSource ?? '—',
+      invoiceType: line.invoiceType ?? '—',
+      net: preparationAmount(line, 'netAmount', 'netCents'),
+      tax: preparationAmount(line, 'taxAmount', 'taxCents'),
+      total: total === '—' ? preparationMoney(line) : total,
     };
   }));
-  return `${summary}\n\n${detail}`;
+  return detail;
 };
 
 /**
@@ -672,6 +583,7 @@ function rawStepFor(state, observation = {}, blockedBy = []) {
   const o = observation;
   const systemBrowser = o.browserMode === SYSTEM_BROWSER
     || ['system', 'default'].includes(o.probe?.transport);
+  const chromiumBrowserReady = o.chromiumAutomation?.ready === true;
   const who = o.probe?.identity?.displayName ?? o.probe?.identity?.account ?? null;
   const label = o.task?.sourceLabel ?? '这批材料';
   const readingsPath = o.task ? readingInboxIn(o.task.workspace) : null;
@@ -730,6 +642,15 @@ function rawStepFor(state, observation = {}, blockedBy = []) {
         exit: BLOCKED,
       });
 
+    case 'env_chromium_required':
+      return run(argvFor('chrome-up'), {
+        speak: '报销系统的自动填报窗口还没有准备好。我会先启动一个专用浏览器窗口；窗口打开后，请在其中登录本人账号，完成后告诉我，我会继续当前报销。',
+        context: '当前默认浏览器可以完成读取和核对，但自动填报需要一个独立、可接管的报销窗口。'
+          + '系统会自动打开该窗口；登录后，后续身份核验、恢复核对和填报都会沿用同一个窗口，不会切换到其他窗口。',
+        progress: ENV_PROGRESS,
+        outsourceable: false,
+      });
+
     case 'env_not_logged_in':
       return tellUser({
         speak: '请在报销系统中使用本人账号登录。登录完成后告诉我，我会继续。',
@@ -739,6 +660,12 @@ function rawStepFor(state, observation = {}, blockedBy = []) {
 
     case 'env_identity_unknown':
       if (systemBrowser && o.probe?.status === 'no_tab') {
+        if (chromiumBrowserReady) {
+          return tellUser({
+            speak: '专用报销浏览器里还没有找到报销系统页面。请打开报销系统并使用本人账号登录，完成后告诉我，我会继续。',
+            context: '当前自动化连接已经准备好，但其中没有目标 ERP 页面；写入和恢复必须在同一 Chromium 页面完成。',
+          });
+        }
         return run(argvFor('browser-open', '--url', ERP_ENTRY), {
           speak: '我还没有找到报销系统页面。请先打开报销系统并使用本人账号登录，完成后告诉我。',
           context: 'browser-open 只调用操作系统默认 URL 打开方式，不启动专用 Chrome、CDP 或其他测试浏览器。'
@@ -804,8 +731,12 @@ function rawStepFor(state, observation = {}, blockedBy = []) {
       const taskId = o.task?.taskId ?? null;
       const suggestedHomeCity = validHomeCity(o.homeCitySuggestion)
         ? o.homeCitySuggestion.trim() : null;
+      const suggestionSource = o.homeCitySuggestionSource ?? null;
+      const suggestionIntro = suggestionSource === 'ip'
+        ? '我根据当前网络位置推测你所在城市可能是'
+        : '我检测到你当前所在城市可能是';
       const prompt = suggestedHomeCity
-        ? `我检测到你当前所在城市可能是${suggestedHomeCity}。若它是你的常驻城市，请在当前会话中回复「确认」；`
+        ? `${suggestionIntro}${suggestedHomeCity}。若它是你的常驻城市，请在当前会话中回复「确认」；`
           + '如果不是，请直接输入你的常驻城市名称。输入后会直接继续。'
         : '请直接填写你的常驻城市名称（例如：广州市）。输入后会直接继续。';
       return {
@@ -818,17 +749,18 @@ function rawStepFor(state, observation = {}, blockedBy = []) {
             ? '用户回复「确认」时填写 suggestedHomeCity；否则填写用户直接提供的城市名称'
             : '用户本人直接填写的城市名称' },
           ...(suggestedHomeCity ? { suggestedHomeCity } : {}),
+          ...(suggestionSource ? { suggestedHomeCitySource: suggestionSource } : {}),
           outsourceable: false,
         },
         speak: suggestedHomeCity
-          ? `开始前请确认常驻城市：如果是${suggestedHomeCity}，请在当前会话中回复「确认」；如果不是，请直接输入你的常驻城市。`
+          ? `开始前请确认常驻城市：${suggestionSource === 'ip' ? '系统根据当前网络位置推测为' : '系统检测为'}${suggestedHomeCity}；如果正确，请在当前会话中回复「确认」；如果不是，请直接输入你的常驻城市。`
           : '开始前请直接输入你的常驻城市。之后新建报销会沿用这个设置，已经开始的报销不会被后来修改的设置改变。',
         context: '常驻城市只用于按材料上的费用发生城市推导本地或外地市内交通，不能从发票或行程单猜。'
           + `当前确认身份是 ${id.account ?? '（账号未知）'} / ${id.tenant ?? '（账套未知）'}。`,
         progress: IDENTITY_PROGRESS,
         exit: 0,
         stepMeta: { account: id.account ?? null, tenant: id.tenant ?? null, taskId,
-          suggestedHomeCity },
+          suggestedHomeCity, suggestedHomeCitySource: suggestionSource },
       };
     }
 
@@ -1218,69 +1150,6 @@ function rawStepFor(state, observation = {}, blockedBy = []) {
       });
     }
 
-    case 'classified_detail_confirmation': {
-      const preview = o.classifiedPreview ?? { lines: o.lines ?? [], homeCity: o.homeCity ?? null };
-      const materialIds = (preview.evidence ?? []).map((item) => item.materialId).filter(Boolean);
-      const digest = classifiedDetailDigest(preview);
-      const correctionOptions = o.classifiedCorrectionOptions ?? [];
-      const correctable = correctionOptions.filter((item) => item.fields.length > 0
-        || item.action === 'reextract_same_hash');
-      const acceptsCorrection = correctable.length > 0;
-      const derivedFacts = (preview.evidence ?? []).flatMap((item) => Object.entries(
-        item.candidateSources?.fieldStatus ?? {}).filter(([, status]) => status === 'derived')
-        .map(([field]) => `${item.materialId}:${field}`));
-      return {
-        step: {
-          kind: 'confirm_table',
-          table: [invoiceSummaryTable(preview), classifiedDetailTable(preview)].join('\n\n'),
-          materialIds,
-          homeCity: preview.homeCity ?? null,
-          lineCount: preview.lines?.length ?? 0,
-          candidateEvidence: (preview.evidence ?? []).filter((item) => item.source === 'agent_from_markdown'
-            || item.candidateSources?.source === 'agent_from_markdown').map((item) => ({
-              materialId: item.materialId,
-              markdownHash: item.markdownHash ?? item.candidateSources?.markdownHash ?? null,
-              fieldEvidence: item.candidateSources?.fieldEvidence ?? item.fieldEvidence ?? {},
-              fieldStatus: item.candidateSources?.fieldStatus ?? item.fieldStatus ?? {},
-              fieldBasis: item.candidateSources?.fieldBasis ?? {},
-              segments: item.candidateSources?.segments ?? [],
-            })),
-          correctionPath,
-          acceptsCorrection,
-          ...(acceptsCorrection ? { correctionFormat: {
-            corrections: correctable.map((item) => item.action === 'reextract_same_hash'
-              ? { materialId: item.materialId, reextract: true }
-              : { materialId: item.materialId,
-                fields: Object.fromEntries(item.fields.map((field) =>
-                  [field, '用户对着原件确认的值'])) }),
-            note: '看图读数只写声明的字段；PDF 候选只写 reextract: true。内核会使当前候选失效，'
-              + '重新校验同 hash Markdown 候选，不会直接采纳口述值。',
-          } } : {}),
-          outsourceable: false,
-        },
-        speak: `材料已经整理成 ${preview.lines?.length ?? 0} 条费用明细，常驻城市是 ${preview.homeCity ?? '（未取到）'}。`
-          + '请在这张整单明细清单中一次性核对所有将填入报销系统的信息：发票/材料、发票类型、不含税金额、税额和价税合计，以及起始日期、结束日期、城市、出发点、目的地、材料关联、费用类别和费用项目；确认后进入项目选择。'
-          + ((preview.evidence ?? []).some((item) => item.role === 'primary_voucher'
-            && item.kind === 'rail_eticket')
-            ? '铁路电子客票只核对票面总额；费用税额按业务规则默认为 0.00。'
-            : '')
-          + (derivedFacts.length ? '表中有根据材料整理出的信息，请一并核对。' : '')
-          + (acceptsCorrection
-            ? '如果材料上的字段不对，请指出对应材料和字段，我会重新核对。'
-            : '如果材料上的字段不对，目前没有可重读或可重新抽取的证据；请替换原材料后重新解析，再确认。'),
-        context: '这张确认表绑定材料证据、日期、金额分摊、常驻城市和费用类别；项目归属和报销事由属于下一步。'
-          + '只更换项目不会让这次分类确认失效；材料、日期、分摊或费用类别变化会让确认摘要失效并重新确认。',
-        progress: EVENT_PROGRESS,
-        exit: 0,
-        stepMeta: {
-          digest,
-          taskId: o.task?.taskId ?? null,
-          account: o.task?.identity?.account ?? null,
-          tenant: o.task?.identity?.tenant ?? null,
-        },
-      };
-    }
-
     case 'project_unassigned': {
       // 项目归属仍必须由用户在本地页面提交；对话里的项目号不会直接落盘。
       const lines = o.lines ?? [];
@@ -1288,7 +1157,7 @@ function rawStepFor(state, observation = {}, blockedBy = []) {
       return run(argvFor('select-task', '--dir', o.sourceDir), {
         speak: `${label} 已经切成 ${lines.length} 条费用明细，金额和日期都对上了。`
           + `再往下还差一样东西：${missing.length === lines.length ? '每一条' : `其中 ${missing.length} 条`}`
-          + '都还没有项目。请在个人项目选择页完成选择并提交，之后我会继续核对。',
+          + '都还没有项目。请在个人项目选择页完成选择并提交；提交成功后系统会自动继续，不需要在对话中回复完成。',
         context: '项目归属是业务事实：项目号只能从当前本人项目簿里选；需要增加项目时先打开项目簿维护页。',
         progress: PROJECT_PROGRESS,
         outsourceable: false,
@@ -1297,7 +1166,7 @@ function rawStepFor(state, observation = {}, blockedBy = []) {
 
     case 'project_book_empty':
       return run(argvFor('projects-page'), {
-        speak: '当前没有可用的项目。请先打开项目维护页完成设置，之后回来继续。',
+        speak: '当前没有可用的项目。请先打开项目维护页完成设置并提交；提交成功后系统会自动继续，不需要在对话中回复完成。',
         context: '项目簿按 tenant/account 隔离，维护页只允许当前身份写入；项目簿里的失效条目不会自动删除。',
         progress: PROJECT_PROGRESS,
         outsourceable: false,
@@ -1360,10 +1229,10 @@ function rawStepFor(state, observation = {}, blockedBy = []) {
           acceptsCorrection: false,
           outsourceable: false,
         },
-        speak: '本次报销的核对材料已准备好。请逐项核对发票、金额、日期、项目和常驻城市；'
-          + '确认后进入下一阶段。\n'
+        speak: '本次报销的最终明细核对表已准备好。这是本次报销唯一一次整单确认，请逐项核对发票、金额、日期、项目、费用分类和常驻城市；'
+          + '确认后我会自动进入报销系统，上传发票、填写明细并保存草稿。\n'
           + preparationPackageText(o),
-        context: '准备确认绑定当前材料、字段、项目候选、只读目录证据和任务版本。任一变化都会重新检查；此确认不能生成 ERP 写入授权。',
+        context: '准备确认绑定当前材料、字段、项目候选、只读目录证据和任务版本。任一变化都会重新检查；确认后内核只按这份确认自动导入发票、填写明细并保存草稿。',
         progress: PREPARATION_PROGRESS,
         exit: 0,
         stepMeta: {
@@ -1377,11 +1246,27 @@ function rawStepFor(state, observation = {}, blockedBy = []) {
       };
     }
 
+    case 'erp_write_pending':
+      return run(argvFor('erp-write', '--dir', o.sourceDir), {
+        speak: '核对材料已确认。我会自动进入报销系统，导入发票、选择不生成费用明细、填写完整明细并保存草稿。',
+        context: '写入内容只来自刚确认的准备包和导入后 ERP 收票逐票回读。导入、填写、保存任一步结果不确定，都会停在恢复态，不会自动重试。',
+        progress: WRITE_PROGRESS,
+        outsourceable: false,
+      });
+
+    case 'erp_write_complete':
+      return done({
+        speak: '发票已导入，明细已填写并保存为报销草稿。\n'
+          + preparationPackageText(o),
+        context: '保存后的修改页签、单据编号、收票行和费用明细已经通过严格回读；不会自动提交、审批或付款。',
+        progress: WRITE_PROGRESS,
+      });
+
     case 'preparation_complete':
       return done({
-        speak: '本次报销的核对材料已确认并交接。当前阶段已完成，后续处理会从这里继续。\n'
+        speak: '本次报销的核对材料已确认并交接。后续处理会从这里继续。\n'
           + preparationPackageText(o),
-        context: '这次确认只记录本地准备材料，不是 ERP 写入批准。材料任何变化都会使确认失效并重新检查。',
+        context: '兼容旧版调用者的准备阶段别名；新的流程会在确认后自动进入报销系统草稿写入。',
         progress: PREPARATION_PROGRESS,
       });
 

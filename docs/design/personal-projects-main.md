@@ -5,7 +5,7 @@
 - 本轮以 `origin/main` 的 `9a6f0a72738a2d8dfa1ee84ba4a8e4c30168bed6` 为唯一重做基线；历史项目簿分支和旧 `flow-completion` 候选只作事实参考，不作为直接移植基线。
 - 当前工作树为 `/Users/lmj/repos/reimburse-ai-personal-projects`，分支 `codex/personal-projects-main`。主窗口保持 Orchestrator 角色，开发委派统一使用 `gpt-5.6-luna`、`max`。
 - 业务约束已再次确认：员工自己维护项目，报销时只能选择本人项目簿中的项目。全局 ERP 项目目录不能直接成为报销选择集。
-- 浏览器统一使用用户指定的 `ego-browser` 技能：`/Applications/ego lite.app/Contents/Frameworks/ego Framework.framework/Versions/0.4.7.4/Resources/ego-skills/ego-browser/SKILL.md`。禁止回到 Chrome、CDP 9333 或 Playwright 作为本线浏览器路径。
+- 正式流程使用用户的系统默认 Chromium 浏览器（Chrome/Edge），ERP 自动写入通过同一页面的 CDP 连接完成；`ego-browser` 只保留为显式 Agent QA 适配，Playwright 不作为本线浏览器路径。
 - ego task space `id=1` 已创建并成功 `handOff(done:true)`；用户随后明确交回控制权，主窗口已完成 `takeOver(1)`。代码仍不得在用户控制、未分配或 inactive 错误时自动接管或重试。
 - 旧任务的 `erpWriteState=upload_dispatched` 与旧候选工作树保留原状；没有重放导入，也不把旧任务读数写成新主线验收结果。
 

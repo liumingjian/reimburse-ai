@@ -15,20 +15,15 @@ const SUPPORTED_FORMATS = new Set(['pdf', 'png', 'jpg']);
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const HASH_RE = /^[a-f0-9]{64}$/;
 const CONTROL_RE = /[\u0000-\u001f\u007f]/;
-const ERP_INVOICE_TYPES = new Set([
-  '普通发票', '增值税发票', '机票', '火车票', '其他运输票', '其他',
-]);
+const ERP_INVOICE_TYPES = new Set(['普通发票', '增值税发票']);
+const ORDINARY_INVOICE_TYPE_SOURCE = 'save-contract:invoice-type-ordinary';
 const TRUSTED_INVOICE_TYPE_SOURCES = new Set([
-  'save-contract:rail_eticket',
   'save-contract:vat_special',
-  'save-contract:passenger_transport',
-  'save-contract:vat_common_modern',
+  ORDINARY_INVOICE_TYPE_SOURCE,
 ]);
 const TRUSTED_INVOICE_TYPE_BY_KIND = new Map([
-  ['save-contract:rail_eticket', { kind: 'rail_eticket', value: '火车票' }],
   ['save-contract:vat_special', { kind: 'vat_special', value: '增值税发票' }],
-  ['save-contract:passenger_transport', { kind: 'passenger_transport', value: '其他运输票' }],
-  ['save-contract:vat_common_modern', { kind: 'vat_common', value: '普通发票' }],
+  [ORDINARY_INVOICE_TYPE_SOURCE, { kind: null, value: '普通发票' }],
 ]);
 
 const text = (value) => typeof value === 'string' && value.trim() && !CONTROL_RE.test(value)
@@ -281,6 +276,10 @@ function referenceProjection(references, event) {
   const projected = {};
   for (const reference of references) {
     const isRide = reference?.kind === 'ride_itinerary';
+    const segmentCandidate = (reference?.candidates ?? [])
+      .find((item) => item?.field === 'segments');
+    const hasRideSegments = isRide && (Array.isArray(reference?.segments)
+      || Array.isArray(segmentCandidate?.value));
     const fields = isRide
       ? { date: 'date', city: 'city', origin: 'origin', destination: 'destination', route: 'route' }
       : reference?.kind === 'hotel_folio'
@@ -288,14 +287,15 @@ function referenceProjection(references, event) {
         : {};
     for (const [target, sourceField] of Object.entries(fields)) {
       if (projected[target]?.value !== undefined && projected[target]?.value !== null) continue;
-      const value = isRide
+      const flatField = sourceField === 'date' ? 'travelDate' : sourceField;
+      const value = hasRideSegments
         ? candidateSegmentValueOf(reference, sourceField, index)
-        : candidateFieldValue(reference, sourceField);
+        : candidateFieldValue(reference, isRide ? flatField : sourceField);
       const normalized = target === 'date' || target === 'endDate' ? dateValue(value) : text(value);
       if (normalized === null || normalized === undefined) continue;
-      const source = isRide
+      const source = hasRideSegments
         ? candidateSourceOf(reference, sourceField, index)
-        : candidateSourceOf(reference, sourceField);
+        : candidateSourceOf(reference, isRide ? flatField : sourceField);
       projected[target] = { value: normalized, source };
     }
   }
@@ -359,7 +359,8 @@ function invoiceTypeFor(result, line, event, problems, at) {
   const trustedMapping = TRUSTED_INVOICE_TYPE_BY_KIND.get(providedSource);
   if (provided && ERP_INVOICE_TYPES.has(provided)
     && TRUSTED_INVOICE_TYPE_SOURCES.has(providedSource)
-    && trustedMapping?.kind === result?.kind && trustedMapping.value === provided) {
+    && trustedMapping?.value === provided
+    && (!trustedMapping.kind || trustedMapping.kind === result?.kind)) {
     return { value: provided, source: providedSource, basis: 'provided_confirmed_mapping' };
   }
   if (provided || providedSource) {
@@ -367,21 +368,17 @@ function invoiceTypeFor(result, line, event, problems, at) {
       `凭证 ${at.materialId} 的 ERP 发票类型出处不在可信映射白名单中`, at);
   }
 
-  // These are the only generic mappings supported by the repository's saved
-  // ERP evidence.  Legacy ordinary VAT has no generic mapping: its historical
-  // ordinary/transport choices are contradictory and cannot be promoted here.
+  // Expense categories (local/remote transport, long-distance transport, and
+  // accommodation) are not ERP invoice types.  Only a positively identified
+  // VAT invoice gets the VAT type; all other recognized documents use the
+  // ordinary invoice type.
   if (result?.kind === 'rail_eticket') {
-    return { value: '火车票', source: 'save-contract:rail_eticket', basis: 'repository_verified_mapping' };
+    return { value: '普通发票', source: ORDINARY_INVOICE_TYPE_SOURCE, basis: 'contract_default' };
   }
   if (result?.kind === 'vat_special') {
-    return { value: '增值税发票', source: 'save-contract:vat_special', basis: 'repository_verified_mapping' };
+    return { value: '增值税发票', source: 'save-contract:vat_special', basis: 'recognized_vat' };
   }
-  if (result?.kind === 'passenger_transport') {
-    return { value: '其他运输票', source: 'save-contract:passenger_transport', basis: 'repository_verified_mapping' };
-  }
-  issue(problems, 'invoice_type_mapping_missing',
-    `凭证 ${at.materialId} 的原生票种没有可信 ERP 发票类型映射，不能自行推断`, at);
-  return { value: provided, source: providedSource, basis: provided ? 'unverified' : null };
+  return { value: '普通发票', source: ORDINARY_INVOICE_TYPE_SOURCE, basis: 'contract_default' };
 }
 
 function normalizeReceiptFacts(receiptFacts) {

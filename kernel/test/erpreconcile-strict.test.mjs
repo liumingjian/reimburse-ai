@@ -23,7 +23,7 @@ const lines = identity.map(([materialId, invoiceNumber, receiptNumber, total, ne
   expenseItemName: index === 0 ? '长途交通' : index === 3 ? '住宿' : '本地市内交通',
   date: ['2026-08-22', '2026-08-27', '2026-08-22', '2026-08-09'][index],
   endDate: ['2026-08-22', '2026-08-27', '2026-08-22', '2026-08-22'][index],
-  invoiceType: ['火车票', '其他运输票', '普通发票', '增值税发票'][index],
+  invoiceType: ['普通发票', '普通发票', '普通发票', '增值税发票'][index],
   invoiceTypeSource: 'fixture_confirmed',
   netAmount: index === 0 ? null : net,
   taxAmount: index === 0 ? null : tax,

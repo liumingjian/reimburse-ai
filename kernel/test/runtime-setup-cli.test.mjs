@@ -46,6 +46,7 @@ function fixtureEnvironment() {
     BAOX_HOME: home,
     BAOX_BROWSER: 'system',
     BAOX_NO_AUTO_OPEN: '1',
+    BAOX_LOCATION_MODE: 'off',
     BAOX_UV: uv,
     BAOX_OCR_INSTALLER: installer,
     BAOX_OCR_REQUIREMENTS: requirements,
@@ -71,6 +72,15 @@ process.stdin.on('end', () => {
   process.stdout.write('__BAOX_EGO_RESULT__' + JSON.stringify({ ok: true, value }) + '\\n');
 });
 `, { mode: 0o700 });
+  return command;
+}
+
+function fakeLocationCurl(home) {
+  const command = path.join(home, 'fake-location-curl');
+  fs.writeFileSync(command, [
+    '#!/bin/sh',
+    'printf \'{"success":true,"city":"广州市","latitude":23.1291,"longitude":113.2644}\\n\'',
+  ].join('\n'), { mode: 0o700 });
   return command;
 }
 
@@ -140,4 +150,39 @@ test('automatic identity binding after setup resumes the material stage', () => 
     '--result', identity.json.step.answersPath], qaEnv);
   assert.equal(materialsStep.json.state, 'task_none');
   assert.equal(materialsStep.json.step.argv[2], 'intake');
+});
+
+test('first home-city step refreshes an old manual fallback when location becomes available', () => {
+  const { env, home, materials } = fixtureEnvironment();
+  const ego = fakeEgoBrowser(home);
+  const locationCurl = fakeLocationCurl(home);
+  const qaEnv = {
+    ...env,
+    BAOX_BROWSER: 'ego',
+    BAOX_EGO_TASK_SPACE: '1',
+    BAOX_EGO_BROWSER: ego,
+    BAOX_LOCATION_CURL: locationCurl,
+  };
+
+  const first = runBaox(['next', '--dir', materials], qaEnv);
+  assert.equal(first.json.state, 'env_runtime_missing');
+  const stdout = execFileSync(first.json.step.argv[0], first.json.step.argv.slice(1), {
+    encoding: 'utf8', env: { ...qaEnv, ...first.json.step.env },
+  });
+  fs.writeFileSync(first.json.step.out, stdout);
+
+  const manualStep = runBaox(['next', '--after', first.json.stepToken,
+    '--result', first.json.step.out], qaEnv);
+  assert.equal(manualStep.json.state, 'home_city_required');
+  assert.equal(manualStep.json.step.kind, 'ask_user');
+  assert.equal(manualStep.json.step.suggestedHomeCity, undefined);
+
+  delete qaEnv.BAOX_LOCATION_MODE;
+  const cityStep = runBaox(['next', '--dir', materials], qaEnv);
+  assert.equal(cityStep.json.state, 'home_city_required');
+  assert.equal(cityStep.json.step.kind, 'ask_user');
+  assert.equal(cityStep.json.step.suggestedHomeCity, '广州市');
+  assert.equal(cityStep.json.step.suggestedHomeCitySource, 'ip');
+  assert.match(cityStep.json.step.prompt, /网络位置/);
+  assert.notEqual(cityStep.json.stepToken, manualStep.json.stepToken);
 });

@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { paths, ensureDir } from './paths.mjs';
 
-export const CDP_PORT = Number(process.env.BAOX_CDP_PORT || 9333);
+export const CDP_PORT = Number(
+  process.env.BAOX_CHROMIUM_CDP_PORT || process.env.BAOX_CDP_PORT || 9333,
+);
 
 const LAUNCH_TIMEOUT = 20000;
 const LOCK_WAIT_TIMEOUT = LAUNCH_TIMEOUT + 5000;
@@ -24,9 +26,18 @@ const CANDIDATES = {
   linux: ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'],
 };
 
-export function findChrome() {
+const CANDIDATE_BY_BUNDLE = {
+  darwin: {
+    'com.google.Chrome': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    'com.microsoft.edgemac': '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+  },
+};
+
+export function findChrome({ browserBundleId = null } = {}) {
   if (process.env.BAOX_CHROME) return process.env.BAOX_CHROME;
-  for (const p of CANDIDATES[process.platform] || []) {
+  const preferred = CANDIDATE_BY_BUNDLE[process.platform]?.[browserBundleId];
+  const candidates = [...(preferred ? [preferred] : []), ...(CANDIDATES[process.platform] || [])];
+  for (const p of [...new Set(candidates)]) {
     if (fs.existsSync(p)) return p;
   }
   return null;
@@ -129,8 +140,8 @@ async function acquireLaunchLock(port, timeout) {
   throw e;
 }
 
-export async function launch({ port = CDP_PORT, openUrl, readinessTimeout = LAUNCH_TIMEOUT,
-  lockWaitTimeout = LOCK_WAIT_TIMEOUT } = {}) {
+export async function launch({ port = CDP_PORT, openUrl, browserBundleId = null, chromePath = null,
+  readinessTimeout = LAUNCH_TIMEOUT, lockWaitTimeout = LOCK_WAIT_TIMEOUT } = {}) {
   const existing = await existingVersion(port);
   if (existing) return { started: false, ...existing };
 
@@ -142,7 +153,7 @@ export async function launch({ port = CDP_PORT, openUrl, readinessTimeout = LAUN
     const ready = await existingVersion(port);
     if (ready) return { started: false, ...ready };
 
-    const bin = findChrome();
+    const bin = chromePath ?? findChrome({ browserBundleId });
     if (!bin) {
       const e = new Error('未找到 Chrome 可执行文件');
       e.code = 'CHROME_NOT_FOUND';

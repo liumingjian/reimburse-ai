@@ -69,6 +69,7 @@ export function serveProjectBookPage(spec, {
   };
   return serveLocal((nonce) => renderProjectBookPage({ ...spec, book: currentBook() ?? { projects: [] } }, nonce),
     { ...opts, resident: true, onDone,
+      finishOnSubmit: (result) => result?.status === 'admitted',
       acceptResult: (result) => ['admitted', 'removed', 'purged', 'none', 'done', 'empty']
         .includes(result?.status) }, submit);
 }
@@ -113,6 +114,9 @@ export function renderIdentityPage(spec, nonce) {
   const id = spec.identity;
   const prev = spec.previous;
   const rebind = !!prev;
+  const browserLabel = spec.browserLabel ?? '系统默认 Chromium 浏览器';
+  const browserSource = browserLabel === 'ego task space'
+    ? `${browserLabel} 里的` : `${browserLabel}里的`;
 
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <title>确认报销人身份</title><style>
@@ -137,7 +141,7 @@ button{width:100%;margin-top:20px;padding:14px;font-size:16px;font-weight:600;co
 </style></head><body><main>
 <form id="f">
   <h1>确认报销人身份</h1>
-  <p class="prompt">下面是 baox 从 ego task space 里的 ERP 页面<b>直接读到</b>的当前登录身份。
+  <p class="prompt">下面是 baox 从${esc(browserSource)} ERP 页面<b>直接读到</b>的当前登录身份。
   确认之后，这台机器上的 baox 只替这个身份报销；换了人登录会被拦住。</p>
 
   <div class="card now">
@@ -152,7 +156,7 @@ button{width:100%;margin-top:20px;padding:14px;font-size:16px;font-weight:600;co
     这台机器原先绑定的是 <b>${esc(prev.displayName ?? prev.account)}</b>
     （账号 ${esc(prev.account)}，账套 ${esc(prev.tenant)}）。
     继续就会<b>改绑到上面这个身份</b>。如果上面显示的不是你本人，请直接关掉这个页面，
-    回到 ego task space 里的 ERP 页面换回本人登录。
+    回到${esc(browserSource)} ERP 页面换回本人登录。
   </div>` : ''}
   <button type="submit">${rebind ? '是我本人，改绑到这个身份' : '是我本人，就用这个身份'}</button>
 </form>
@@ -172,7 +176,9 @@ document.getElementById('f').addEventListener('submit', async (e) => {
 }
 
 export function serveIdentityConfirmation(spec, opts = {}) {
-  return serveLocal((nonce) => renderIdentityPage(spec, nonce), opts,
+  const browserLabel = browserMode(opts.env ?? process.env) === EGO_BROWSER
+    ? 'ego task space' : '系统默认 Chromium 浏览器';
+  return serveLocal((nonce) => renderIdentityPage({ ...spec, browserLabel }, nonce), opts,
     (body) => ({ status: body.confirmed === true ? 'submitted' : 'declined',
       at: new Date().toISOString() }));
 }
@@ -182,6 +188,7 @@ function serveLocal(render, {
   env = process.env, openTab, closeTab, openBrowser = openDefaultBrowser,
   searchProjects: findProjects = null,
   resident = false, onDone, acceptResult = () => true,
+  finishOnSubmit = () => false,
 } = {}, onSubmit, submitAccepted = acceptResult) {
   const useEgo = browserMode(env) === EGO_BROWSER;
   const egoOpenTab = openTab ?? openEgoTab;
@@ -290,8 +297,10 @@ function serveLocal(render, {
           if (finishing || req.aborted) return;
           const accepted = submitAccepted(result);
           res.writeHead(accepted ? 200 : 400, { 'content-type': 'application/json' })
-            .end(JSON.stringify({ ok: accepted, result: result ?? null }));
-          armTimer();
+            .end(JSON.stringify({ ok: accepted, result: result ?? null }), () => {
+              if (accepted && finishOnSubmit(result)) finish(result);
+              else armTimer();
+            });
           return;
         }
         let result;

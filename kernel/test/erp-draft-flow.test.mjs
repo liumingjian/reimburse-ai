@@ -22,7 +22,7 @@ const facts = [
   ['m-ride-b', '26342000002661673906', 'SPD-ride-b', '18.80', '18.25', '0.55'],
   ['m-hotel', '26349119423005877606', 'SPD-hotel', '3640.00', '3433.96', '206.04'],
 ];
-const invoiceTypes = ['火车票', '其他运输票', '普通发票', '增值税发票'];
+const invoiceTypes = ['普通发票', '普通发票', '普通发票', '增值税发票'];
 const events = facts.map(([materialId], index) => ({
   eventId: `ev-${index + 1}`, voucherMaterialId: materialId,
   kind: ['rail_eticket', 'passenger_transport', 'passenger_transport', 'vat_common'][index],
@@ -96,7 +96,7 @@ const detailGrid = (rowCount = 1, railTax = '0.00') => ({ ok: true, columns: col
   '出发地', '目的地', '费用金额', '税额', '申请报销金额',
 ), rows: Array.from({ length: rowCount }, (_, index) => data(index === 0 ? {
   收票单号: 'SPD-rail', 费用金额: '703.00', 税额: railTax, 申请报销金额: '703.00',
-  发票类型: '火车票', 开始日期: '2026/9/9', 结束日期: '2026/9/9',
+  发票类型: '普通发票', 开始日期: '2026/9/9', 结束日期: '2026/9/9',
 } : {})) });
 const readings = (detail, mode = 'new', billNo = null, taskMatch = null) => ({
   formMode: { readable: true, value: mode }, billNo: { readable: true, value: billNo },

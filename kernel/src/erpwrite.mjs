@@ -26,7 +26,7 @@ const approvalFile = (task) => path.join(taskDir(task), 'write-approval.json');
  */
 export const writePreviewDigest = erpWritePreviewDigest;
 
-export function recordWriteApproval(task, preview) {
+export function recordWriteApproval(task, preview, { approvedVia = 'terminal' } = {}) {
   const record = {
     digest: writePreviewDigest(preview),
     versionId: preview.versionId ?? null,
@@ -37,7 +37,7 @@ export function recordWriteApproval(task, preview) {
     // sufficient confirmation record.
     preview: JSON.parse(JSON.stringify(preview)),
     approvedAt: new Date().toISOString(),
-    approvedVia: 'terminal',
+    approvedVia,
   };
   const p = approvalFile(task);
   fs.mkdirSync(path.dirname(p), { recursive: true, mode: 0o700 });

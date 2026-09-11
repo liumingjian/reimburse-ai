@@ -23,7 +23,7 @@
 - 真实系统打开验证：临时 loopback 页面通过 `open URL` 派发，没有指定浏览器；随后只读枚举找到唯一精确目标标签。临时服务器已关闭，用户标签未被关闭。
 - 真实 `next --dir resources/real-env` 验证：使用隔离 `BAOX_HOME` 并清除浏览器 QA 环境变量，返回 `browser-open --url http://erp.antute.com.cn/k3cloud/html5/index.aspx`，不再返回 ego 配置要求；没有创建真实任务或执行 ERP 写入。
 - 全套回归 536 项通过，包含默认浏览器多 ERP 标签歧义和缺失账号字段的保护。多页时要求保留唯一目标 ERP 页，不读取并选择第一个标签。
-- 当前自动读取适配范围为 macOS Chrome/Safari；本机实际验证的是 Chrome，Safari 不记为真机 QA 通过。
+- 当前自动读取适配范围为 macOS Chrome/Edge Chromium；本机实际验证的是 Chrome，Edge 不记为真机 QA 通过，Safari 不属于 V1 支持范围。
 
 真实系统检查：默认 HTTPS 浏览器为 `com.google.Chrome`，浏览器正在运行，窗口枚举可用。执行仅返回 `1 + 1` 的能力探针时，Chrome 返回错误 12：`Executing JavaScript through AppleScript is turned off`，并指明 `View > Developer > Allow JavaScript from Apple Events`。已向用户说明并等待其自行开启；没有修改浏览器设置。这是读取权限缺失，不是 ERP 登录状态证据。
 

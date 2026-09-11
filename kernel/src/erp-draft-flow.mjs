@@ -14,7 +14,7 @@ const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const MONEY = /^\d+(?:\.\d{1,2})?$/;
 const RECEIPT = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const INVOICE = /^einvoice-20:(\d{20})$/;
-const ERP_INVOICE_TYPES = new Set(['普通发票', '增值税发票', '机票', '火车票', '其他运输票', '其他']);
+const ERP_INVOICE_TYPES = new Set(['普通发票', '增值税发票']);
 
 const text = (value) => typeof value === 'string' && value.trim() ? value.trim() : null;
 const amountText = (value) => {

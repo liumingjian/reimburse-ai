@@ -108,14 +108,14 @@ test('完整准备只进入独立确认，旧 writeApproved 不会代替它', ()
   assert.ok(step.stepMeta.preparationDigest);
   assert.equal(step.stepMeta.packageManifestHash, 'manifest-hash-1');
   assert.equal(step.stepMeta.packageBundleHash, 'bundle-hash-1');
-  assert.match(step.speak, /核对材料已准备好/);
+  assert.match(step.speak, /最终明细核对表已准备好/);
 });
 
-test('准备确认后的终点明确停在手动 QA', () => {
+test('准备确认后自动进入 ERP 草稿写入', () => {
   const input = observation({ preparationConfirmed: true });
   const result = determineState(input);
-  assert.equal(result.state, 'preparation_complete');
+  assert.equal(result.state, 'erp_write_pending');
   const step = stepFor(result.state, input, result.blockedBy);
-  assert.equal(step.step.kind, 'done');
-  assert.match(step.speak, /后续处理会从这里继续/);
+  assert.equal(step.step.kind, 'run');
+  assert.ok(step.step.argv.includes('erp-write'));
 });

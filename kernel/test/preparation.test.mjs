@@ -68,9 +68,9 @@ async function fixtureCase() {
       expenseItemCode: accommodation ? 'E1' : rail ? 'E3' : 'E2',
       expenseItemName: accommodation ? '住宿' : rail ? '长途交通' : '本地市内交通',
       expenseItemSource: 'erp_catalog_confirmed',
-      invoiceType: rail ? '火车票' : accommodation ? '增值税发票' : '其他运输票',
-      invoiceTypeSource: rail ? 'save-contract:rail_eticket'
-        : accommodation ? 'save-contract:vat_special' : 'save-contract:passenger_transport',
+      invoiceType: accommodation ? '增值税发票' : '普通发票',
+      invoiceTypeSource: accommodation ? 'save-contract:vat_special'
+        : 'save-contract:invoice-type-ordinary',
       fieldSources: {
         date: event.dateEvidence ?? 'fixture-date',
         endDate: accommodation ? 'hotel-folio:checkOut' : 'same-day-expense-date',
@@ -172,6 +172,49 @@ test('synthetic PDF bytes with simulated business context build a ready portable
   assert.match(detail, /\]\(invoices\/m-.*\.pdf\)/);
 });
 
+test('flat single-segment itinerary candidates retain route sources', async () => {
+  const input = await fixtureCase();
+  const reference = input.classification.results.find((result) => result.kind === 'ride_itinerary');
+  const flatReference = {
+    ...reference,
+    candidates: [
+      { field: 'travelDate', value: '2026-08-27' },
+      { field: 'origin', value: '测试起点' },
+      { field: 'destination', value: '测试终点' },
+    ],
+    fields: {},
+    fieldSources: {
+      travelDate: 'vision',
+      origin: 'vision',
+      destination: 'vision',
+    },
+  };
+  const classification = {
+    ...input.classification,
+    results: input.classification.results.map((result) => result.materialId === reference.materialId
+      ? flatReference : result),
+  };
+  const lines = input.lines.map((line) => line.kind === 'passenger_transport'
+    ? { ...line, fieldSources: { ...line.fieldSources, origin: null, destination: null, route: null } }
+    : line);
+  const selection = {
+    ...input.selection,
+    linesDigest: linesDigest({ lineItems: lines }),
+  };
+  const catalog = { ...input.catalog, linesDigest: selection.linesDigest };
+  const preparation = buildPreparation({ ...input, classification, lines, selection, catalog,
+    classifiedConfirmed: true, projectCandidates: [{ number: 'P1', name: '测试项目' }] });
+
+  assert.equal(preparation.ready, true, preparation.problems.map((problem) => problem.code).join(', '));
+  const line = preparation.document.lines.find((item) => item.kind === 'passenger_transport');
+  assert.equal(line.origin, '测试起点');
+  assert.equal(line.destination, '测试终点');
+  assert.equal(line.route, '测试起点 → 测试终点');
+  assert.match(line.fieldSources.origin, /candidates\.origin/);
+  assert.match(line.fieldSources.destination, /candidates\.destination/);
+  assert.match(line.fieldSources.route, /candidates\.origin.*candidates\.destination/);
+});
+
 test('rail amount rule does not depend on stale or legacy receipt facts', async () => {
   const input = await fixtureCase();
   const stale = buildPreparation({ ...input, classifiedConfirmed: true,
@@ -243,7 +286,7 @@ test('an in-scope material without a classified voucher role cannot be silently 
   assert.equal(preparation.document.excluded.some((item) => item.materialId === unknown.materialId), true);
 });
 
-test('rail total-plus-zero-tax is ready without receipt facts while unknown VAT mapping still blocks', async () => {
+test('rail total-plus-zero-tax is ready without receipt facts and non-VAT invoices default to ordinary', async () => {
   const input = await fixtureCase();
   const preparation = buildPreparation({ ...input, classifiedConfirmed: true,
     projectCandidates: [{ number: 'P1', name: '测试项目' }], receiptFacts: null,
@@ -255,6 +298,11 @@ test('rail total-plus-zero-tax is ready without receipt facts while unknown VAT 
 
   const noRail = {
     ...input,
+    inventory: {
+      ...input.inventory,
+      materials: input.inventory.materials.filter((material) => material.materialId
+        !== input.lines.find((line) => line.kind === 'rail_eticket')?.voucherMaterialId),
+    },
     classification: {
       ...input.classification,
       results: input.classification.results.filter((result) => result.kind !== 'rail_eticket'),
@@ -272,26 +320,16 @@ test('rail total-plus-zero-tax is ready without receipt facts while unknown VAT 
     projects: Object.fromEntries(noRail.lines.map((line) => [line.lineId, 'P1'])),
   };
   noRail.catalog = { ...input.catalog, linesDigest: noRail.selection.linesDigest };
-  const passenger = noRail.classification.results.find((result) => result.kind === 'passenger_transport');
-  const ordinary = { ...passenger, kind: 'vat_common' };
-  noRail.classification = {
-    ...noRail.classification,
-    results: noRail.classification.results.map((result) => result.materialId === passenger.materialId
-      ? ordinary : result),
-  };
-  noRail.lines = noRail.lines.map((line, index) => index === 0
-    ? { ...line, kind: 'vat_common', invoiceType: null, invoiceTypeSource: null,
-      fieldSources: { ...line.fieldSources, invoiceType: null } } : line);
-  noRail.built = { ...noRail.built, lineItems: noRail.lines };
-  noRail.selection = { ...noRail.selection, linesDigest: linesDigest({ lineItems: noRail.lines }) };
-  noRail.catalog = { ...noRail.catalog, linesDigest: noRail.selection.linesDigest };
-  const unmapped = buildPreparation({ ...noRail, classifiedConfirmed: true,
+  const preparationWithOrdinary = buildPreparation({ ...noRail, classifiedConfirmed: true,
     projectCandidates: [{ number: 'P1', name: '测试项目' }] });
-  assert.equal(unmapped.ready, false);
-  assert.ok(unmapped.problems.some((problem) => problem.code === 'invoice_type_mapping_missing'));
-  const draft = await generatePreparation({ ...noRail, preparation: unmapped });
+  assert.equal(preparationWithOrdinary.ready, true,
+    preparationWithOrdinary.problems.map((problem) => problem.code).join(', '));
+  assert.equal(preparationWithOrdinary.document.lines
+    .filter((line) => line.kind !== 'vat_special')
+    .every((line) => line.invoiceType === '普通发票'), true);
+  const draft = await generatePreparation({ ...noRail, preparation: preparationWithOrdinary });
   assert.equal(inspectPreparation({ task: noRail.task, preparation: draft }).status, 'valid');
-  assert.equal(draft.ready, false);
+  assert.equal(draft.ready, true);
 });
 
 test('source changes, symlink escapes, and missing confirmation cannot silently reuse preparation facts', async () => {

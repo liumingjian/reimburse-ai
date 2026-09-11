@@ -56,13 +56,15 @@ export async function queryRows(page, { formId, fieldKeys, filter = '', limit = 
   evaluate = evaluateBrowserPage,
 } = {}) {
   if (evaluate === evaluateBrowserPage) {
-    const valid = page?.transport === 'ego' ? isEgoPage(page) : isDefaultBrowserPage(page);
+    const valid = page?.transport === 'ego'
+      ? isEgoPage(page)
+      : isDefaultBrowserPage(page) || isChromiumCdpPage(page);
     if (!valid) {
       const defaultPage = page?.transport === 'default';
       return { ok: false, code: defaultPage ? 'DEFAULT_BROWSER_PAGE_REQUIRED' : 'EGO_REQUIRED',
         reason: defaultPage
           ? 'ERP 只读查询需要有效的系统默认浏览器页面句柄'
-          : 'ERP 只读查询需要 ego-browser page context；旧 Chrome/CDP 页面句柄已阻塞' };
+          : 'ERP 只读查询需要 ego 或受支持的 Chromium page context' };
     }
   }
   const payload = { FormId: formId, FieldKeys: fieldKeys, FilterString: filter,
@@ -100,9 +102,15 @@ const errorMessage = (node) =>
   ?? node?.ResponseStatus?.Errors?.[0]?.Message
   ?? 'ERP 查询返回了无法解析的结果';
 
+const isChromiumCdpPage = (page) => page?.transport === 'default'
+  && page?.automation === 'cdp'
+  && page?.browserFamily === 'chromium';
+
 /** 找到一个身份已经核对过的 ERP 页面。身份不 matched 就不查。 */
-export async function authorizedPage({ origin = ERP_ORIGIN } = {}) {
-  const probe = await gateIdentity({ origin });
+export async function authorizedPage({ origin = ERP_ORIGIN, transport, gate = gateIdentity } = {}) {
+  const options = { origin };
+  if (transport !== undefined) options.transport = transport;
+  const probe = await gate(options);
   if (probe.status !== 'matched') return { ok: false, probe };
   const page = probe.page ?? null;
   if (!page) return { ok: false, probe: { ...probe, status: 'no_tab' } };

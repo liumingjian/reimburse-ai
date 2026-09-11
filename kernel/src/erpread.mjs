@@ -1,18 +1,22 @@
 import { isEgoPage } from './ego.mjs';
 import { evaluateBrowserPage, isDefaultBrowserPage } from './browser-read.mjs';
 
-// 费用报销单的只读回读。这个模块故意不依赖 erpform.mjs：后者还承载
-// 旧写入路径的 Chrome/CDP 操作，erp-read 和 erp-reconcile 不能经由它回退。
+// 费用报销单的只读回读。这个模块故意不依赖写入适配器：读取可以使用
+// 系统默认 Chromium 页面、CDP 页面或 ego 页面，但不会因为读取而产生副作用。
 
 export const READ_TIMEOUT_MS = 15_000;
 const SECTIONS = ['基本信息', '付款信息', '明细信息', '收票信息'];
 const VIS = `(n) => { const b = n.getBoundingClientRect(); return b.width > 0 && b.height > 0; }`;
 
 const egoPageRequired = () => {
-  const error = new Error('ERP 只读回读需要 ego task-space page context；旧 Chrome/CDP 页面句柄已阻塞');
+  const error = new Error('ERP 只读回读需要有效的 ego 或 Chromium 页面');
   error.code = 'EGO_PAGE_REQUIRED';
   return error;
 };
+
+const isChromiumCdpPage = (page) => page?.transport === 'default'
+  && page?.automation === 'cdp'
+  && page?.browserFamily === 'chromium';
 
 const evaluatorOf = (options = {}) => options.evaluate ?? evaluateBrowserPage;
 
@@ -22,13 +26,15 @@ const assertReadPageShape = (page, evaluate) => {
     if (page?.taskSpace === null || page?.taskSpace === undefined || !page?.tabId) throw egoPageRequired();
     return;
   }
-  if (page?.transport === 'default' && isDefaultBrowserPage(page)) return;
+  if (page?.transport === 'default' && (isDefaultBrowserPage(page) || isChromiumCdpPage(page))) return;
   if (page?.transport === 'default') {
     const error = new Error('ERP 只读回读需要有效的系统默认浏览器页面句柄');
     error.code = 'DEFAULT_BROWSER_PAGE_REQUIRED';
     throw error;
   }
-  throw egoPageRequired();
+  const error = new Error('ERP 只读回读需要有效的 ego 或 Chromium 页面');
+  error.code = 'BROWSER_PAGE_REQUIRED';
+  throw error;
 };
 
 const evaluateRead = (page, expression, options = {}) => {

@@ -57,11 +57,11 @@ export function autoModeEntriesFor({ kernelPath, erpOrigin }) {
   const host = new URL(erpOrigin).host;
   return {
     environment: [
-      'Primary use of Claude Code: 个人报销自动化（baox）。会话读取本机的发票与行程单，把读数写进本机的 ~/.baox，再由本机的专用 Chrome 填进公司 ERP 的费用报销单。',
+      'Primary use of Claude Code: 个人报销自动化（baox）。会话读取本机的发票与行程单，把读数写进本机的 ~/.baox，再通过当前系统默认的 Chrome/Edge Chromium 页面填进公司 ERP 的费用报销单。',
       `Key internal services: 公司 ERP（金蝶 K3Cloud）在 ${erpOrigin}，这是报销单唯一的写入目标，也是整个流程里唯一的网络目的地。`,
       `Trusted internal domains: ${host}`,
       'Sensitive data locations & audiences: 发票、行程单、酒店结账单在用户指定的材料目录和 ~/.baox/tasks/ 下。受众只有报销人本人和公司 ERP；这些材料不发往任何第三方。',
-      `Additional context: baox 的内核命令一律是 \`node ${kernelPath} <子命令>\`，全部在本机进程内读写材料目录和 ~/.baox，网络只连 ${erpOrigin} 和本机的 Chrome 调试端口（127.0.0.1）。像 ocr-submit、intake、classify 这类子命令名字里有「submit」「上传」的意味，但它们只是把读数写进本机的任务工作区，不是把材料发出去。`,
+      `Additional context: baox 的内核命令一律是 \`node ${kernelPath} <子命令>\`，全部在本机进程内读写材料目录和 ~/.baox，网络只连 ${erpOrigin} 和本机回环地址上的 Chromium CDP 连接。像 ocr-submit、intake、classify 这类子命令名字里有「submit」「上传」的意味，但它们只是把读数写进本机的任务工作区，不是把材料发出去。`,
     ],
     allow: [
       `baox 内核命令（\`node ${kernelPath} <子命令>\`，含 intake / classify / ocr-request / ocr-submit / reread-submit / confirm-readings / erp-read / erp-fill / erp-reconcile / next 等）允许：它们只在本机读写材料目录与 ~/.baox，唯一的网络目的地是公司 ERP ${erpOrigin}，不构成数据外发。`,

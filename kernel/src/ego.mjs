@@ -62,14 +62,31 @@ ${body}
 }
 `;
 
+const pageScriptFor = (page, body) => `
+try {
+  const __task = await taskSpace(${JSON.stringify(EGO_TASK_SPACE)});
+  const __tabs = await __task.tabs();
+  const __target = __tabs.find((candidate) => candidate.targetId === ${JSON.stringify(page.tabId)});
+  if (!__target) throw new Error('ego task space 中找不到目标页面');
+  const __page = __target.label ? __task.page(__target.label) : await __task.adopt(__target.page);
+  const __value = await (async () => {
+${body}
+  })();
+  console.log(${JSON.stringify(EGO_RESULT_PREFIX)} + JSON.stringify({ ok: true, value: __value }));
+} catch (__error) {
+  console.log(${JSON.stringify(EGO_RESULT_PREFIX)} + JSON.stringify({ ok: false, error: {
+    name: __error?.name ?? 'Error', message: __error?.message ?? String(__error),
+    code: __error?.code ?? null,
+  } }));
+}
+`;
+
 /**
  * Run one ego-browser Node script through stdin. This is deliberately a
  * process boundary: no page operation is available to the kernel process
  * itself, and no Chrome/CDP endpoint can be passed around as a page handle.
  */
-export function runEgoScript(body, { timeoutMs = DEFAULT_TIMEOUT_MS, command = EGO_COMMAND } = {}) {
-  if (typeof body !== 'string' || !body.trim()) throw new TypeError('ego script must be non-empty');
-  requireTaskSpace();
+const runEgoSource = (source, { timeoutMs = DEFAULT_TIMEOUT_MS, command = EGO_COMMAND } = {}) => {
   return new Promise((resolve, reject) => {
     const child = spawn(command, ['nodejs'], { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
@@ -125,8 +142,26 @@ export function runEgoScript(body, { timeoutMs = DEFAULT_TIMEOUT_MS, command = E
       }
       finish(resolve, result.value);
     });
-    child.stdin.end(scriptFor(body));
+    child.stdin.end(source);
   });
+};
+
+export function runEgoScript(body, options = {}) {
+  if (typeof body !== 'string' || !body.trim()) throw new TypeError('ego script must be non-empty');
+  requireTaskSpace();
+  return runEgoSource(scriptFor(body), options);
+}
+
+/** Run a v2 Page API action against the exact ego tab selected by the caller. */
+export function runEgoPageScript(page, body, options = {}) {
+  if (typeof body !== 'string' || !body.trim()) throw new TypeError('ego page script must be non-empty');
+  if (!page?.tabId || page?.transport !== 'ego') {
+    const error = new Error('ERP 页面句柄不是 ego task-space page context');
+    error.code = 'EGO_PAGE_REQUIRED';
+    throw error;
+  }
+  requireTaskSpace();
+  return runEgoSource(pageScriptFor(page, body), options);
 }
 
 export const isEgoPage = (page) => page?.transport === 'ego'
@@ -180,7 +215,7 @@ return !(await listTabs()).some((tab) => (tab.targetId ?? tab.id) === ${JSON.str
 }
 
 export const egoRequiredError = (operation) => {
-  const error = new Error(`${operation} 尚未迁移到 ego-browser；旧 Chrome/CDP 路径已阻塞`);
+  const error = new Error(`${operation} 需要已连接的 Chromium 或 ego 页面`);
   error.code = 'EGO_REQUIRED';
   return error;
 };

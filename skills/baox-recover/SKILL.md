@@ -22,6 +22,8 @@ allowed-tools: Bash
 这条链子在这里断开：`baox next` 对这个任务只会一直返回同一个 `handoff`，
 它不会带你往下走。往下走的是下面这一条命令，而它是这个 skill 的全部。
 
+在进入恢复前，`baox next` 会先准备正式写入所需的 Chromium 自动化页面。若当前没有 CDP 连接，先按 `baox next` 给出的环境步骤启动并登录专用 Chromium；不要直接重试本命令，也不要重新导入或保存。恢复本身仍严格只读，使用与写入阶段相同的 Chrome/Edge CDP 连接。
+
 ```bash
 node "<这个 skill 目录的绝对路径>/kernel/bin/baox.mjs" erp-reconcile --dir "<材料目录>"
 ```

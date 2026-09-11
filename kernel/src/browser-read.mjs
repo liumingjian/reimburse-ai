@@ -9,6 +9,12 @@ import {
   listEgoTabs,
   safeUrl as egoSafeUrl,
 } from './ego.mjs';
+import {
+  CHROMIUM_CDP_TRANSPORT,
+  chromiumCdpTransport as buildChromiumCdpTransport,
+  evaluateChromiumPage,
+  listChromiumPages,
+} from './chromium-cdp.mjs';
 
 export const DEFAULT_BROWSER_UNSUPPORTED = 'DEFAULT_BROWSER_UNSUPPORTED';
 export const DEFAULT_BROWSER_AUTOMATION_PERMISSION_REQUIRED =
@@ -59,8 +65,8 @@ const sameOrigin = (left, right) => {
 };
 
 const knownBrowsers = Object.freeze([
-  { bundleId: 'com.apple.Safari', name: 'Safari', family: 'safari' },
   { bundleId: 'com.google.Chrome', name: 'Google Chrome', family: 'chromium' },
+  { bundleId: 'com.microsoft.edgemac', name: 'Microsoft Edge', family: 'chromium' },
 ]);
 
 const browserById = new Map(knownBrowsers.map((browser) => [browser.bundleId, browser]));
@@ -72,7 +78,7 @@ export function browserInfoForBundleId(bundleId) {
   if (exact) return { ...exact };
 
   throw errorWithCode(DEFAULT_BROWSER_UNSUPPORTED,
-    `系统默认浏览器 ${id || '（未知）'} 没有受支持的只读脚本接口`);
+    `系统默认浏览器 ${id || '（未知）'} 不是当前支持的 Chromium 浏览器`);
 }
 
 export function browserTransport({ env = process.env, platform = process.platform } = {}) {
@@ -86,9 +92,10 @@ export function browserTransport({ env = process.env, platform = process.platfor
 }
 
 export const getBrowserTransport = browserTransport;
+export const chromiumCdpTransport = buildChromiumCdpTransport;
 
 /**
- * Build the small page-context bridge used by both Safari and Chromium.
+ * Build the small page-context bridge used by the supported Chromium browsers.
  * Apple Events does not consistently await a Promise returned by execute or
  * do JavaScript, so the bridge returns a JSON marker synchronously and polls
  * a request-scoped slot until the Promise settles.  The strings are passed as
@@ -194,22 +201,13 @@ const browserWindows = () => {
 };
 
 const listTabs = () => {
-  const family = browser.family;
   const out = [];
   for (const [windowIndex, window] of browserWindows().entries()) {
     const windowId = textOf(() => window.id()) ?? String(windowIndex);
     const tabs = window.tabs();
-    const currentIndex = family === 'safari'
-      ? valueOf(() => Number(window.currentTab().index()))
-      : null;
-    const activeId = family === 'chromium'
-      ? textOf(() => window.activeTab().id())
-      : null;
+    const activeId = textOf(() => window.activeTab().id());
     for (const [tabIndex, tab] of tabs.entries()) {
-      const tabId = family === 'safari' ? null : textOf(() => tab.id());
-      const index = family === 'safari'
-        ? Number(valueOf(() => tab.index()) ?? tabIndex + 1)
-        : tabIndex;
+      const tabId = textOf(() => tab.id());
       const url = textOf(() => tab.url()) ?? '';
       const inScope = !input.origin || sameOrigin(url, input.origin);
       if (input.origin && !inScope) continue;
@@ -217,10 +215,10 @@ const listTabs = () => {
       // supplied an ERP origin.  URL metadata is only used for this local
       // origin gate.
       const title = inScope
-        ? (family === 'safari' ? textOf(() => tab.name()) : textOf(() => tab.title()))
+        ? textOf(() => tab.title())
         : null;
-      out.push({ windowId, tabId, index, url: safeUrl(url), title,
-        active: family === 'safari' ? index === currentIndex : tabId !== null && tabId === activeId });
+      out.push({ windowId, tabId, index: tabIndex, url: safeUrl(url), title,
+        active: tabId !== null && tabId === activeId });
     }
   }
   return out;
@@ -238,15 +236,7 @@ const findWindow = (expected) => {
 
 const findTab = (window, expected) => {
   const tabs = window.tabs();
-  let tab;
-  if (browser.family === 'safari') {
-    tab = tabs.find((candidate, index) => {
-      const indexValue = Number(valueOf(() => candidate.index()) ?? index + 1);
-      return indexValue === Number(expected.index);
-    });
-  } else {
-    tab = tabs.find((candidate) => textOf(() => candidate.id()) === String(expected.tabId));
-  }
+  const tab = tabs.find((candidate) => textOf(() => candidate.id()) === String(expected.tabId));
   if (!tab) fail('DEFAULT_BROWSER_PAGE_NOT_FOUND', '系统默认浏览器中找不到目标标签页');
 
   const currentUrl = textOf(() => tab.url()) ?? '';
@@ -259,9 +249,7 @@ const findTab = (window, expected) => {
   return tab;
 };
 
-const invokePageJavaScript = (tab, source) => browser.family === 'safari'
-  ? app().doJavaScript(source, { in: tab })
-  : tab.execute({ javascript: source });
+const invokePageJavaScript = (tab, source) => tab.execute({ javascript: source });
 
 const evaluate = () => {
   if (typeof input.expression !== 'string' || !input.expression.trim()) {
@@ -482,8 +470,7 @@ export function isDefaultBrowserPage(page) {
   if (typeof page.browserBundleId !== 'string' || !browserById.has(page.browserBundleId)) return false;
   if (page.windowId === null || page.windowId === undefined) return false;
   const hasChromiumTabId = page.browserFamily === 'chromium' && page.tabId;
-  const hasSafariIndex = page.browserFamily === 'safari' && Number.isInteger(page.index);
-  return !!(hasChromiumTabId || hasSafariIndex);
+  return !!hasChromiumTabId;
 }
 
 export const isBrowserPage = (page) => page?.transport === 'ego'
@@ -495,8 +482,9 @@ export async function listBrowserTabs({
   platform = process.platform,
   run = runNativeBrowserScript,
   browser = null,
+  targetsFn,
 } = {}) {
-  const kind = typeof transport === 'string' ? transport : transport?.transport ?? transport?.kind;
+  const kind = typeof transport === 'string' ? transport : transport?.kind ?? transport?.transport;
   const expectedOrigin = normalizeOrigin(origin);
   if (kind === 'ego') {
     const tabs = await listEgoTabs();
@@ -504,6 +492,10 @@ export async function listBrowserTabs({
       .filter((tab) => !expectedOrigin || sameOrigin(tab.url, expectedOrigin))
       .map((tab) => ({ ...egoPage({ tabId: tab.id, url: tab.url, title: tab.title }),
         title: tab.title ?? null, origin: normalizeOrigin(tab.url) }));
+  }
+  if (kind === CHROMIUM_CDP_TRANSPORT) {
+    return (await listChromiumPages({ origin: expectedOrigin, port: transport?.cdpPort, targetsFn }))
+      .filter((page) => !expectedOrigin || sameOrigin(page.url, expectedOrigin));
   }
   if (kind !== 'default') {
     throw errorWithCode(BROWSER_TRANSPORT_UNSUPPORTED, `未知浏览器传输 ${String(kind)}`);
@@ -531,6 +523,9 @@ export async function evaluateBrowserPage(page, expression, {
   if (typeof expression !== 'string' || !expression.trim()) {
     throw new TypeError('page expression must be non-empty');
   }
+  if (page?.automation === 'cdp') {
+    return evaluateChromiumPage(page, expression, { timeoutMs });
+  }
   if (page?.transport === 'ego') {
     // Keep the existing ego ownership/assignment error unchanged.  In
     // particular, do not fall back to the system browser after it is raised.
@@ -549,7 +544,7 @@ export async function evaluateBrowserPage(page, expression, {
   }
   if (!isDefaultBrowserPage(page)) {
     throw pageError('DEFAULT_BROWSER_PAGE_REQUIRED',
-      '系统默认浏览器只读需要带有 bundle、window、tab 或 Safari index 的页面句柄');
+      '系统默认 Chromium 浏览器只读需要带有 bundle、window 和 tab 的页面句柄');
   }
   const expectedOrigin = normalizeOrigin(origin ?? page.origin);
   if (!expectedOrigin) throw pageError(DEFAULT_BROWSER_ORIGIN_REQUIRED,
@@ -572,7 +567,7 @@ export async function evaluateBrowserPage(page, expression, {
 
 export const defaultBrowserWriteUnsupported = () => {
   throw errorWithCode(DEFAULT_BROWSER_WRITE_UNSUPPORTED,
-    '系统默认浏览器传输只支持只读页面观察；ERP 写入和旧恢复路径仍不支持');
+    'ERP 写入需要当前系统默认 Chromium 页面具备 CDP 自动化连接');
 };
 
 export const isEgoBrowserControlError = isEgoControlError;

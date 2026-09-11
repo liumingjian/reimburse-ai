@@ -39,7 +39,6 @@ const { sourceKeyOf, findLiveTaskForSource, recordCatalogVerification, liveTasks
   taskDir } = await import('../src/workspace.mjs');
 const { SCHEMA_VERSION } = await import('../src/state.mjs');
 const { applyTerminalVerdict } = await import('../src/confirm.mjs');
-const { confirmClassifiedDetail } = await import('../src/classified-detail.mjs');
 const { loadSelection, submitSelection, linesDigest } = await import('../src/selection.mjs');
 const { writeBinding } = await import('../src/binding.mjs');
 const { writeHomeCity } = await import('../src/home-city.mjs');
@@ -124,14 +123,6 @@ async function walk(dir, { max = 16 } = {}) {
   let r = await ask(dir);
   for (let i = 0; i < max; i += 1) {
     seen.push(r.state);
-    if (r.state === 'classified_detail_confirmation') {
-      const task = findLiveTaskForSource(sourceKeyOf(dir));
-      const snapshot = await observeTask(dir, { mode: 'legacy' });
-      assert.ok(confirmClassifiedDetail(task, snapshot.classifiedPreview, me),
-        '测试在这里显式注入分类明细确认，生产流程仍由用户通过 next --after 完成');
-      r = await ask(dir);
-      continue;
-    }
     if (r.step.kind !== 'run') break;
     // 任务选择页需要真实用户；纯集成走查只验证内核发出的 argv，随后由用例
     // 直接注入新契约的提交结果，不伪造浏览器或 ERP 交互。
@@ -165,9 +156,8 @@ test('分毫不差的合并发票：全程没问过用户一句，内核自己�
   const dir = materials([AA_INV, AA_ITI]);
   const { r, seen } = await walk(dir);
 
-  assert.deepEqual(seen, ['task_none', 'classify_pending', 'events_pending',
-    'classified_detail_confirmation', 'project_unassigned'],
-    '盘点、分类、划事件和分类明细确认后才进入项目选择');
+  assert.deepEqual(seen, ['task_none', 'classify_pending', 'events_pending', 'project_unassigned'],
+    '盘点、分类和划事件后直接进入项目选择，整单确认留到准备阶段');
   assert.equal(r.state, 'project_unassigned',
     `分摊那一步压根没出现过，实际停在 ${r.state}：${r.speak}`);
 
@@ -301,7 +291,7 @@ test('准备交接包完整后停在手动确认：内核绝不自己越过去',
   assert.equal((await ask(dir)).state, 'preparation_confirmation');
 
   // 用户确认的是第一阶段准备包。真实确认接线会重新探测模拟的当前身份，
-  // 重建摘要并校验 manifest/bundle；它不能创建旧的 ERP 写入授权。
+  // 重建摘要并校验 manifest/bundle；下一步由内核自动发出 ERP 写入命令。
   const applied = await applyTerminalVerdict({ sourceDir: dir, sourceKey: sourceKeyOf(dir),
     after: r.stepToken, mode: 'legacy' });
   assert.equal(applied.verdict, 'preparation_confirmed');
@@ -310,9 +300,9 @@ test('准备交接包完整后停在手动确认：内核绝不自己越过去',
   assert.equal(fs.existsSync(path.join(taskDir(task), 'write-approval.json')), false);
 
   const after = await ask(dir, { after: r.stepToken });
-  assert.equal(after.state, 'preparation_complete');
-  assert.equal(after.step.kind, 'done', '确认后停在手动 QA，不再进入 ERP 写入');
-  assert.match(after.speak, /后续处理会从这里继续/);
+  assert.equal(after.state, 'erp_write_pending');
+  assert.equal(after.step.kind, 'run', '确认后自动进入 ERP 写入');
+  assert.ok(after.step.argv.includes('erp-write'));
 });
 
 test('准备确认只对他看过的那一份有效：内容一变，当场作废', async () => {
