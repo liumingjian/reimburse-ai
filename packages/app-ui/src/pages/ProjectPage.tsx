@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { PROJECT_ASSIGNMENT_ERRORS, PROJECT_CONFLICT_COPY, PURPOSE_MAX_LENGTH } from '../contract/actions';
 import { PROJECT_BOOK_COPY } from '../contract/project-book';
-import type { Line, ProjectOption, StepKind, TaskSnapshot } from '../contract/snapshot';
+import type { Line, ProjectLineAssignment, StepKind, TaskSnapshot } from '../contract/snapshot';
 import { pageAllowed } from '../contract/stage';
 import { PROJECTS_HASH, navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
@@ -10,31 +10,42 @@ import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 import { ProjectBookPanel } from './ProjectBookPanel';
 
-// 当前 step 是这些时服务端接受提交项目归属：进入项目归属时（含报销信息核对不匹配后的改派），材料包缺项时，
-// 以及整单确认前后、ERP 写入开始之前的改派。页面只据此决定提交按钮是否可用；提交是否成立由服务端判定。
+// 当前 step 是这些时服务端接受「归入」与提交项目归属：进入项目归属时（含报销信息核对不匹配后的改派），材料包缺项时，
+// 以及整单确认前后、ERP 写入开始之前的改派。页面只据此决定按钮是否可用；动作是否成立由服务端判定。
 const SUBMIT_STEP_KINDS: ReadonlySet<StepKind> = new Set<StepKind>(['assign_projects', 'resolve_preparation', 'confirm_review', 'choose_action']);
 
 // 项目归属页：待确认项处理完之后、整单确认之前（Skill 的 project_unassigned → select-task），两条路径都要经过。
 // 提交后服务端自动做报销信息核对与材料准备，再进入整单确认；确认绑定项目归属，确认后在这里改派会使确认失效。
-// ERP 写入开始后只读。规则照内核现有项目归属页面（project-workbench.mjs Variant B）。
-// 左边是候选明细，勾选一条或多条后在右边的个人项目簿里「归入」某个项目；批量归入碰到已有其他项目的明细时，
-// 弹出「只处理未归属 / 确认覆盖 / 取消」。页头填报销事由。提交前的逐条选择只是表单输入；
-// 项目是否可用、归属是否成立由服务端判定（允许列表里的 selectable 与提交结果）。
+// ERP 写入开始后只读。形状照内核项目归属页面（project-workbench.mjs Variant B）：
+// - 左边明细按费用类别分组（服务端给出的 lines 顺序即内核分类排序），组标题带复选框和条数，可按类别全选；
+//   明细卡片展示日期范围、城市、路线和脱敏票号。
+// - 右边「本次已归入」区列出本次归属用到的项目，带条数与金额（服务端给出，页面不计算）；其下是个人项目簿中的可选项目
+//   （快照只给可选项目），已归入的项目不重复列出。不可选的项目不出现在这里，需要时从「去维护项目簿」进入项目簿查看。
+// 勾选明细后点项目的「归入」，由服务端改本次正在编辑的归属（working）；批量归入碰到已有其他项目的明细时，
+// 先弹出「只处理未归属 / 确认覆盖 / 取消」。页头填报销事由；常驻城市只读。
 
-// 本页正在编辑、尚未提交的逐条归属：lineId → 项目号。以快照里服务端已记下的归属为初值。
-type PendingAssignments = Readonly<Record<string, string>>;
-// 批量归入的方式：只给还没有项目的明细归入，或把已勾选的明细全部改为这个项目。
-type AssignMode = 'fill-empty' | 'overwrite';
-type Conflict = { project: ProjectOption; count: number };
+type Target = { number: string; name: string };
+type Conflict = { project: Target; count: number };
 
-function savedAssignments(snapshot: TaskSnapshot): PendingAssignments {
-  return Object.fromEntries(snapshot.projectAssignment.assignments.map((item) => [item.lineId, item.projectNumber]));
+function byLine(items: readonly ProjectLineAssignment[]): Readonly<Record<string, ProjectLineAssignment>> {
+  return Object.fromEntries(items.map((item) => [item.lineId, item]));
 }
 
-function matches(project: ProjectOption, query: string): boolean {
+function matches(project: Target, query: string): boolean {
   const needle = query.trim().toLowerCase();
   if (!needle) return true;
   return project.number.toLowerCase().includes(needle) || project.name.toLowerCase().includes(needle);
+}
+
+// 按费用类别分组，组的先后跟随明细顺序（内核 project-workbench.mjs 以 categoryLabel 分组）。
+function groupByCategory(lines: readonly Line[]): { label: string; lines: Line[] }[] {
+  const groups: { label: string; lines: Line[] }[] = [];
+  for (const line of lines) {
+    const group = groups.find((candidate) => candidate.label === line.category.label);
+    if (group) group.lines.push(line);
+    else groups.push({ label: line.category.label, lines: [line] });
+  }
+  return groups;
 }
 
 // 流程门（内核 project_book_empty）：服务端的当前 step 是 maintain_project_book 时，项目归属页换成个人项目簿维护入口。
@@ -65,14 +76,13 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   const submitted = assignment.status === 'submitted';
   // ERP 写入开始后项目归属不能再改；此前随时可以改派（改派使整单确认失效）。
   const locked = snapshot.erp.status !== 'idle';
-  const canSubmit = SUBMIT_STEP_KINDS.has(snapshot.step.kind);
+  const canAct = SUBMIT_STEP_KINDS.has(snapshot.step.kind) && !locked;
   // 报销信息核对不匹配时，处置就是在本页改派后重新提交；材料包缺项在整单明细确认页处理。
   const catalogMismatch = snapshot.catalog.status === 'mismatch';
   const preparationBlocked = snapshot.preparation.status === 'blocked';
   const autoRunning = (snapshot.stage === 'catalog' || snapshot.stage === 'preparation') && !catalogMismatch && !preparationBlocked;
   const { lines } = snapshot;
 
-  const [pendingAssignments, setPendingAssignments] = useState<PendingAssignments>(() => savedAssignments(snapshot));
   const [purpose, setPurpose] = useState(assignment.purpose ?? '');
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
@@ -80,36 +90,24 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const { busy, error, run, clearError } = useAction(taskId);
 
-  // 只读（ERP 已开始）就只显示服务端记下的归属；否则显示本页正在编辑的选择（初值是服务端记下的归属）。
-  const current: PendingAssignments = locked ? savedAssignments(snapshot) : pendingAssignments;
-  const nameOf = (number: string) =>
-    assignment.projects.find((project) => project.number === number)?.name ??
-    assignment.assignments.find((item) => item.projectNumber === number)?.projectName ??
-    number;
-
+  // 显示服务端记下的本次归属：只读（ERP 已开始）时是已提交的那一份，否则是正在编辑的 working。
+  const current = byLine(locked ? assignment.assignments : assignment.working);
   const visible = onlyUnassigned ? lines.filter((line) => !current[line.lineId]) : lines;
+  const groups = groupByCategory(visible);
   const allVisibleSelected = visible.length > 0 && visible.every((line) => selected.has(line.lineId));
-  const shownProjects = assignment.projects.filter((project) => matches(project, query));
+  const used = new Set(assignment.usage.map((entry) => entry.number));
+  const shownProjects = assignment.projects.filter((project) => !used.has(project.number) && matches(project, query));
   const assignedCount = lines.filter((line) => current[line.lineId]).length;
-  // 提交按钮只看本页尚未提交的表单（每条明细都已归属、事由非空）：这是 #105 要求的输入校验
-  // （「提交按钮在任一明细未归属或事由为空时不可用」），不是业务判定；项目能否用、归属是否成立仍由服务端在提交时判定。
+  // 提交按钮只看表单是否填完（每条明细都已归属、事由非空）：这是 #105 要求的输入校验，不是业务判定；
+  // 项目能否用、归属是否成立仍由服务端在提交时判定。
   const complete = assignedCount === lines.length && lines.length > 0 && purpose.trim().length > 0;
 
-  const toggleLine = (lineId: string) => {
+  const toggle = (lineIds: readonly string[], on: boolean) => {
     setSelected((previous) => {
       const next = new Set(previous);
-      if (next.has(lineId)) next.delete(lineId);
-      else next.add(lineId);
-      return next;
-    });
-  };
-
-  const toggleAll = () => {
-    setSelected((previous) => {
-      const next = new Set(previous);
-      for (const line of visible) {
-        if (allVisibleSelected) next.delete(line.lineId);
-        else next.add(line.lineId);
+      for (const lineId of lineIds) {
+        if (on) next.add(lineId);
+        else next.delete(lineId);
       }
       return next;
     });
@@ -120,38 +118,44 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
     setSelected(new Set());
   };
 
-  const assignSelected = (number: string, mode: AssignMode) => {
-    setPendingAssignments((previous) => {
-      const next: Record<string, string> = { ...previous };
-      for (const lineId of selected) if (mode === 'overwrite' || !next[lineId]) next[lineId] = number;
-      return next;
-    });
-    setSelected(new Set());
+  const assignSelected = async (number: string, onlyEmpty: boolean) => {
     setConflict(null);
     clearError();
+    const lineIds = lines.map((line) => line.lineId).filter((lineId) => selected.has(lineId));
+    const outcome = await run((adapter) => adapter.assignProjectLines(taskId, { lineIds, projectNumber: number, onlyUnassigned: onlyEmpty }, snapshot.step.stepToken));
+    if (outcome.ok) setSelected(new Set());
   };
 
-  // 冲突检测拿已勾选明细在表单里的现有归属（初值即快照里已记下的归属）与目标项目比较，只用来决定是否弹出三选一提示。
-  const assign = (project: ProjectOption) => {
+  // 冲突检测拿已勾选明细在服务端记下的本次归属与目标项目比较，只用来决定是否先弹出三选一提示。
+  const assign = (project: Target) => {
     const conflicts = [...selected].filter((lineId) => {
-      const existing = pendingAssignments[lineId];
-      return existing !== undefined && existing !== project.number;
+      const existing = current[lineId];
+      return existing !== undefined && existing.projectNumber !== project.number;
     });
     if (conflicts.length > 0) setConflict({ project, count: conflicts.length });
-    else assignSelected(project.number, 'overwrite');
+    else void assignSelected(project.number, false);
   };
 
   const cancelConflict = useCallback(() => setConflict(null), []);
 
   const submit = async () => {
     const projects: Record<string, string> = {};
-    for (const line of lines) {
-      const number = pendingAssignments[line.lineId];
-      if (number) projects[line.lineId] = number;
-    }
+    for (const item of assignment.working) projects[item.lineId] = item.projectNumber;
     const outcome = await run((adapter) => adapter.submitProjectAssignment(taskId, { purpose: purpose.trim(), projects }, snapshot.step.stepToken));
     if (outcome.ok) navigate(taskHash(taskId, 'review'));
   };
+
+  const assignButton = (project: Target) => (
+    <button
+      className="btn btn-secondary btn-sm"
+      type="button"
+      aria-label={`归入 ${project.number} ${project.name}`}
+      disabled={!canAct || busy || selected.size === 0}
+      onClick={() => assign(project)}
+    >
+      归入
+    </button>
+  );
 
   return (
     <>
@@ -204,10 +208,15 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
       ) : null}
 
       <div className="project-split">
-        <section className="panel table" aria-label="费用明细">
+        <section className="panel" aria-label="费用明细">
           <div className="assign-toolbar">
             <label className="check">
-              <input type="checkbox" checked={allVisibleSelected} disabled={locked || visible.length === 0} onChange={toggleAll} />
+              <input
+                type="checkbox"
+                checked={allVisibleSelected}
+                disabled={locked || visible.length === 0}
+                onChange={() => toggle(visible.map((line) => line.lineId), !allVisibleSelected)}
+              />
               全选当前明细
             </label>
             <label className="check">
@@ -218,39 +227,72 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
               已选 {selected.size} 条
             </span>
           </div>
-          {visible.length > 0 ? (
-            <table className="data" aria-label="项目归属明细">
-              <thead>
-                <tr>
-                  <th className="pick" aria-label="选择" />
-                  <th>No.</th>
-                  <th>日期</th>
-                  <th>费用类别</th>
-                  <th>说明</th>
-                  <th className="num">价税合计</th>
-                  <th>项目</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((line) => (
-                  <LineRow
-                    key={line.lineId}
-                    line={line}
-                    project={current[line.lineId] ?? null}
-                    nameOf={nameOf}
-                    checked={selected.has(line.lineId)}
-                    disabled={locked}
-                    onToggle={() => toggleLine(line.lineId)}
-                  />
-                ))}
-              </tbody>
-            </table>
+          {groups.length > 0 ? (
+            groups.map((group) => {
+              const ids = group.lines.map((line) => line.lineId);
+              const all = ids.every((lineId) => selected.has(lineId));
+              const some = !all && ids.some((lineId) => selected.has(lineId));
+              return (
+                <section key={group.label} className="assign-group" aria-label={group.label}>
+                  <h2 className="assign-group-head">
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        aria-label={`选择${group.label}`}
+                        checked={all}
+                        ref={(box) => {
+                          if (box) box.indeterminate = some;
+                        }}
+                        disabled={locked}
+                        onChange={() => toggle(ids, !all)}
+                      />
+                      {group.label}
+                    </label>
+                    <span className="caption">{group.lines.length} 条</span>
+                  </h2>
+                  <ul className="expense-cards">
+                    {group.lines.map((line) => (
+                      <LineCard
+                        key={line.lineId}
+                        line={line}
+                        project={current[line.lineId] ?? null}
+                        checked={selected.has(line.lineId)}
+                        disabled={locked}
+                        onToggle={() => toggle([line.lineId], !selected.has(line.lineId))}
+                      />
+                    ))}
+                  </ul>
+                </section>
+              );
+            })
           ) : (
             <p className="empty caption">所有明细都已归属。</p>
           )}
         </section>
 
         <aside className="panel project-aside" role="complementary" aria-label="项目工作台">
+          <h2>本次已归入</h2>
+          {assignment.usage.length > 0 ? (
+            <ul className="project-options" aria-label="本次已归入">
+              {assignment.usage.map((entry) => (
+                <li key={entry.number} className={entry.selectable ? undefined : 'locked'}>
+                  <div>
+                    <div className="name">{entry.name}</div>
+                    <div className="caption">
+                      <span className="mono">{entry.number}</span> ·{' '}
+                      <span data-testid={`usage-${entry.number}`}>
+                        {entry.lineCount} 条 · {entry.grossTotal} 元
+                      </span>
+                    </div>
+                  </div>
+                  {entry.selectable ? assignButton(entry) : <span className="badge badge-warn">已锁定</span>}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="caption project-empty">暂无</p>
+          )}
+
           <h2>个人项目簿中的可选项目</h2>
           <input
             className="input"
@@ -269,29 +311,17 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
           ) : (
             <ul className="project-options" aria-label="项目列表">
               {shownProjects.map((project) => (
-                <li key={project.number} className={project.selectable ? undefined : 'locked'}>
+                <li key={project.number}>
                   <div>
                     <div className="name">{project.name}</div>
                     <div className="mono caption">{project.number}</div>
                   </div>
-                  {project.selectable ? (
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      type="button"
-                      aria-label={`归入 ${project.number} ${project.name}`}
-                      disabled={locked || selected.size === 0}
-                      onClick={() => assign(project)}
-                    >
-                      归入
-                    </button>
-                  ) : (
-                    <span className="badge badge-warn">{project.statusLabel}</span>
-                  )}
+                  {assignButton(project)}
                 </li>
               ))}
             </ul>
           )}
-          <p className="caption">先在左边勾选明细，再点项目的「归入」。</p>
+          <p className="caption">先在左边勾选明细，再点项目的「归入」。不可选的项目不在这里列出，可以去项目簿查看。</p>
           {/* 对 Skill 的小增强：项目归属页直接进入个人项目簿维护（README 注明）。 */}
           <a className="btn btn-tertiary btn-sm book-link" href={PROJECTS_HASH}>
             {PROJECT_BOOK_COPY.maintainLink}
@@ -307,12 +337,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
         <div className="btn-row">
           {!locked && !complete ? <span className="caption">{PROJECT_ASSIGNMENT_ERRORS.incomplete}</span> : null}
           <ActionError message={error} />
-          <button
-            className="btn btn-primary"
-            type="button"
-            disabled={locked || busy || !complete || conflict !== null || !canSubmit}
-            onClick={() => void submit()}
-          >
+          <button className="btn btn-primary" type="button" disabled={!canAct || busy || !complete || conflict !== null} onClick={() => void submit()}>
             确认项目归属
           </button>
         </div>
@@ -324,8 +349,8 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
           confirmLabel={PROJECT_CONFLICT_COPY.overwrite}
           cancelLabel={PROJECT_CONFLICT_COPY.cancel}
           extraLabel={PROJECT_CONFLICT_COPY.onlyEmpty}
-          onExtra={() => assignSelected(conflict.project.number, 'fill-empty')}
-          onConfirm={() => assignSelected(conflict.project.number, 'overwrite')}
+          onExtra={() => void assignSelected(conflict.project.number, true)}
+          onConfirm={() => void assignSelected(conflict.project.number, false)}
           onCancel={cancelConflict}
         >
           <p className="lead">
@@ -337,43 +362,42 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   );
 }
 
-function LineRow({
+// 明细卡片（内核 project-workbench.mjs）：日期范围 · 城市，路线，脱敏票号，当前归属，价税合计。
+// 没有城市的（如长途交通）显示费用类别；没有路线的（如住宿）显示说明。
+function LineCard({
   line,
   project,
-  nameOf,
   checked,
   disabled,
   onToggle,
 }: {
   line: Line;
-  project: string | null;
-  nameOf: (number: string) => string;
+  project: ProjectLineAssignment | null;
   checked: boolean;
   disabled: boolean;
   onToggle: () => void;
 }) {
+  const dates = line.endDate && line.endDate !== line.date ? `${line.date} 至 ${line.endDate}` : line.date;
   return (
-    <tr>
-      <td className="pick">
-        <input type="checkbox" aria-label={`选择明细 No.${line.no}`} checked={checked} disabled={disabled} onChange={onToggle} />
-      </td>
-      <td className="mono">{line.no}</td>
-      <td className="mono">
-        {line.date}
-        {line.endDate ? <div className="caption">至 {line.endDate}</div> : null}
-      </td>
-      <td>{line.category.label}</td>
-      <td>{line.description}</td>
-      <td className="num">{line.grossAmount}</td>
-      <td data-testid={`project-of-${line.no}`}>
-        {project ? (
-          <>
-            <span className="mono">{project}</span> · {nameOf(project)}
-          </>
-        ) : (
-          <span className="badge">未归属</span>
-        )}
-      </td>
-    </tr>
+    <li className="expense-card" data-testid={`line-card-${line.no}`}>
+      <input type="checkbox" aria-label={`选择明细 No.${line.no}`} checked={checked} disabled={disabled} onChange={onToggle} />
+      <div className="expense-body">
+        <strong>
+          <span className="mono">No.{line.no}</span> · <span className="mono">{dates}</span> · {line.city ?? line.category.label}
+        </strong>
+        <p>{line.route ?? line.description}</p>
+        {line.maskedNumber ? <p className="caption mono">{line.maskedNumber}</p> : null}
+        <p className="expense-project" data-testid={`project-of-${line.no}`}>
+          {project ? (
+            <>
+              <span className="mono">{project.projectNumber}</span> · {project.projectName}
+            </>
+          ) : (
+            <span className="badge">未归属</span>
+          )}
+        </p>
+      </div>
+      <strong className="num">{line.grossAmount} 元</strong>
+    </li>
   );
 }

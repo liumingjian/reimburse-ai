@@ -1151,6 +1151,55 @@ table.data td.pick input {
   accent-color: var(--color-primary);
 }
 
+/* 项目归属：按费用类别分组的明细卡片（内核 Variant B） */
+.assign-group {
+  padding: 0 var(--space-md);
+}
+
+.assign-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: var(--space-md) 0 0;
+  padding-bottom: var(--space-xs);
+  border-bottom: var(--panel-border);
+  border-bottom-style: solid;
+}
+
+.assign-group-head input,
+.expense-card input {
+  width: var(--layout-checkbox-size);
+  height: var(--layout-checkbox-size);
+  margin: 0;
+  accent-color: var(--color-primary);
+}
+
+.expense-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.expense-card {
+  display: grid;
+  grid-template-columns: var(--layout-checkbox-size) minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-sm);
+  padding: var(--space-sm) 0;
+  border-bottom: var(--panel-border);
+  border-bottom-style: solid;
+}
+
+.expense-body p {
+  margin: var(--space-xxs) 0 0;
+  overflow-wrap: anywhere;
+}
+
+.expense-card .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .project-aside h2 {
   margin-bottom: var(--space-xs);
 }

@@ -126,6 +126,7 @@ describe('整单明细确认', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: '选择明细 No.9' }));
     fireEvent.click(within(screen.getByRole('complementary', { name: '项目工作台' })).getByRole('button', { name: '归入 P-1180 内部培训' }));
     fireEvent.click(within(screen.getByRole('dialog', { name: '1 条明细已有其他项目归属，请确认是否覆盖' })).getByRole('button', { name: '确认覆盖' }));
+    await waitFor(() => expect(screen.getByTestId('project-of-9').textContent).toBe('P-1180 · 内部培训'));
     fireEvent.click(screen.getByRole('button', { name: '确认项目归属' }));
 
     expect(await screen.findByRole('heading', { name: '整单明细确认' })).toBeTruthy();
@@ -185,6 +186,7 @@ describe('整单明细确认', () => {
     for (const no of [7, 8, 9]) fireEvent.click(screen.getByRole('checkbox', { name: `选择明细 No.${no}` }));
     fireEvent.click(within(screen.getByRole('complementary', { name: '项目工作台' })).getByRole('button', { name: '归入 P-1180 内部培训' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确认覆盖' }));
+    await waitFor(() => expect(screen.getByTestId('project-of-7').textContent).toBe('P-1180 · 内部培训'));
     fireEvent.click(screen.getByRole('button', { name: '确认项目归属' }));
 
     expect(await screen.findByRole('heading', { name: '整单明细确认' })).toBeTruthy();

@@ -167,7 +167,19 @@ export const PROJECT_ASSIGNMENT_ERRORS = {
   unknownLine: (lineId: string) => `提交里出现了不存在的明细 ${lineId}，这批明细可能已经变了`,
   notReady: '现在不能提交项目归属：请先处理完待确认项；已开始 ERP 填报的任务不能再改派。',
   bookEmpty: '当前个人项目簿没有可选项目；先维护本人项目簿，再回来做任务选择',
+  // 「归入」动作：新的归属只能用当前可选项目（已删除或失效的项目，已归入的明细可以沿用，但不能再归入新的明细）。
+  projectNotSelectable: (number: string) => `项目 ${number} 不在当前本人项目簿可选集合中，不能归入新的明细；要用它请先在维护页重新核验`,
+  noLinesSelected: '请先勾选要归入的明细',
 } as const;
+
+// 「归入」：把勾选的明细归入某个可选项目，只改本次正在编辑的归属（working），不是提交。
+// onlyUnassigned 为真时只给还没有项目的明细归入（冲突提示里的「只处理未归属」），否则覆盖。
+export const AssignProjectLinesInputSchema = z.object({
+  lineIds: z.array(IdSchema).min(1, PROJECT_ASSIGNMENT_ERRORS.noLinesSelected),
+  projectNumber: z.string().min(1),
+  onlyUnassigned: z.boolean(),
+});
+export type AssignProjectLinesInput = z.infer<typeof AssignProjectLinesInputSchema>;
 
 // 批量归入碰到已有其他项目归属的明细时的三个选项（内核 Variant B）。
 export const PROJECT_CONFLICT_COPY = {
@@ -220,6 +232,7 @@ export const ACTION_NAMES = [
   'generate-print-sheet',
   'rotate-placement',
   'crop-placement',
+  'assign-project-lines',
   'submit-project-assignment',
   'exclude-material',
   'start-erp-write',

@@ -45,6 +45,10 @@ export function settlePending(snapshot: TaskSnapshot, allowList: readonly Projec
     const lineIds = new Set(lines.map((line) => line.lineId));
     snapshot.projectAssignment = { ...assignment, status: 'pending', assignments: assignment.assignments.filter((item) => lineIds.has(item.lineId)), submittedAt: null };
   }
+  // 本次正在编辑的归属回到服务端记下的那一份（只保留仍存在的明细）。
+  const lineIds = new Set(lines.map((line) => line.lineId));
+  snapshot.projectAssignment.assignments = snapshot.projectAssignment.assignments.filter((item) => lineIds.has(item.lineId));
+  snapshot.projectAssignment.working = snapshot.projectAssignment.assignments.map((item) => ({ ...item }));
   snapshot.projectAssignment.projects = allowList.map((project) => ({ ...project }));
   snapshot.stage = 'project';
   // 项目簿没有可选项目、也还没有归属：先维护项目簿（内核 project_book_empty），否则进入项目归属。

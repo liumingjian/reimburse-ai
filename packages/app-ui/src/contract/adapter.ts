@@ -1,4 +1,4 @@
-import type { ActionError, ConfirmIdentityInput, CreateTaskInput, PlacementSlot, ProjectAssignmentInput } from './actions';
+import type { ActionError, AssignProjectLinesInput, ConfirmIdentityInput, CreateTaskInput, PlacementSlot, ProjectAssignmentInput } from './actions';
 import type { ProjectBook, ProjectBookResult } from './project-book';
 import type { Corners, PendingAnswer, TaskSnapshot } from './snapshot';
 import type { TaskList } from './task-list';
@@ -72,6 +72,8 @@ export interface AppAdapter {
   generatePrintSheet(taskId: string): Promise<ActionOutcome>;
   rotatePlacement(taskId: string, pageId: string, slot: PlacementSlot, rotate: boolean): Promise<ActionOutcome>;
   cropPlacement(taskId: string, pageId: string, slot: PlacementSlot, corners: Corners): Promise<ActionOutcome>;
+  // 「归入」：只改本次正在编辑的归属（projectAssignment.working），服务端随之给出「本次已归入」的条数与金额；不是提交。
+  assignProjectLines(taskId: string, input: AssignProjectLinesInput, stepToken: string): Promise<ActionOutcome>;
   submitProjectAssignment(taskId: string, input: ProjectAssignmentInput, stepToken: string): Promise<ActionOutcome>;
   // 材料包有缺项（step resolve_preparation）时排除相关材料；服务端随后重新准备材料包。
   excludeMaterial(taskId: string, materialId: string, stepToken: string): Promise<ActionOutcome>;

@@ -1,10 +1,10 @@
-import { EXCLUDE_MATERIAL_ERRORS, PROJECT_ASSIGNMENT_ERRORS, ProjectAssignmentInputSchema } from '../../contract/actions';
+import { AssignProjectLinesInputSchema, EXCLUDE_MATERIAL_ERRORS, PROJECT_ASSIGNMENT_ERRORS, ProjectAssignmentInputSchema } from '../../contract/actions';
 import type { AppAdapter } from '../../contract/adapter';
 import { PROJECT_CHANGED_NOTICE, type StepKind, type TaskSnapshot } from '../../contract/snapshot';
 import type { MockBus } from '../bus';
 import { excludeReferenceMaterial } from '../fixtures/inventory';
 import { catalogMatched, catalogProblems, catalogRunning, packageFilesOf, preparationPending, preparationProblems } from '../fixtures/preparation';
-import { confirmationDigest, projectAssignmentSubmitted, withLineProjects } from '../fixtures/projects';
+import { assignWorking, confirmationDigest, projectAssignmentSubmitted, withLineProjects } from '../fixtures/projects';
 
 // 项目归属提交，以及其后服务端自动执行的报销信息核对（catalog）与报销材料准备（preparation）（mock 服务端的角色）。
 // 顺序照 Skill：project_unassigned → catalog_unverified / catalog_mismatch → preparation_package_pending / preparation_blocked
@@ -19,7 +19,7 @@ const DEFAULT_AUTO_STEP_MS = 600;
 // 接受提交项目归属的当前 step：进入项目归属时（含核对不匹配后的改派）；材料包缺项时；以及整单确认前后、ERP 写入开始之前的改派。
 const SUBMIT_STEP_KINDS: ReadonlySet<StepKind> = new Set<StepKind>(['assign_projects', 'resolve_preparation', 'confirm_review', 'choose_action']);
 
-export type ProjectFlow = Pick<AppAdapter, 'submitProjectAssignment' | 'excludeMaterial'> & {
+export type ProjectFlow = Pick<AppAdapter, 'assignProjectLines' | 'submitProjectAssignment' | 'excludeMaterial'> & {
   // `?seed=catalog` / `?seed=preparation` 打开时让自动步骤接着走完。
   resumeAutoSteps(taskId: string): void;
 };
@@ -92,7 +92,28 @@ export function createProjectFlow(bus: MockBus): ProjectFlow {
   };
 
   return {
-    // 提交项目归属：事由 1-100 字；每条明细都要有项目；项目必须在允许列表里且可选；不认识的明细拒绝。
+    // 「归入」：只改本次正在编辑的归属（working），「本次已归入」的条数与金额由 bus 的投影随之重算；stepToken 不变。
+    // 新的归属只能用当前可选项目（允许列表）；不认识的明细拒绝。
+    assignProjectLines: async (taskId, input, stepToken) =>
+      bus.withStep(taskId, stepToken, (snapshot) => {
+        if (!SUBMIT_STEP_KINDS.has(snapshot.step.kind) || snapshot.erp.status !== 'idle') {
+          return { error: { code: 'not_ready', message: PROJECT_ASSIGNMENT_ERRORS.notReady } };
+        }
+        const parsed = AssignProjectLinesInputSchema.safeParse(input);
+        if (!parsed.success) return { error: { code: 'no_lines', message: PROJECT_ASSIGNMENT_ERRORS.noLinesSelected } };
+        const { lineIds, projectNumber, onlyUnassigned } = parsed.data;
+        const known = new Set(snapshot.lines.map((line) => line.lineId));
+        const unknown = lineIds.find((lineId) => !known.has(lineId));
+        if (unknown) return { error: { code: 'unknown_line', message: PROJECT_ASSIGNMENT_ERRORS.unknownLine(unknown) } };
+        if (!snapshot.projectAssignment.projects.some((project) => project.number === projectNumber)) {
+          return { error: { code: 'project_not_allowed', message: PROJECT_ASSIGNMENT_ERRORS.projectNotSelectable(projectNumber) } };
+        }
+        snapshot.projectAssignment.working = assignWorking(snapshot.projectAssignment, lineIds, projectNumber, onlyUnassigned);
+        return snapshot;
+      }),
+    // 提交项目归属：事由 1-100 字；每条明细都要有项目；不认识的明细拒绝。
+    // 项目用当前可选集合重新校验（内核 submitSelection）：新的归属必须是可选项目；已删除或失效的项目不能用于新归属，
+    // 但这条明细上次记下的就是它（已合法的旧选择）时可以沿用。
     // 通过后记下归属与事由，阶段推到报销信息核对，随后自动准备材料并进入整单确认。
     // 确认之后再提交：归属与事由都没变，确认仍然有效；变了，确认失效（摘要绑定项目归属），须重新确认。
     submitProjectAssignment: async (taskId, input, stepToken) =>
@@ -106,12 +127,14 @@ export function createProjectFlow(bus: MockBus): ProjectFlow {
         const lineIds = new Set(snapshot.lines.map((line) => line.lineId));
         const unknown = Object.keys(projects).find((lineId) => !lineIds.has(lineId));
         if (unknown) return { error: { code: 'unknown_line', message: PROJECT_ASSIGNMENT_ERRORS.unknownLine(unknown) } };
-        const allowed = new Set(snapshot.projectAssignment.projects.filter((project) => project.selectable).map((project) => project.number));
-        if (allowed.size === 0) return { error: { code: 'project_book_empty', message: PROJECT_ASSIGNMENT_ERRORS.bookEmpty } };
+        const allowed = new Set(snapshot.projectAssignment.projects.map((project) => project.number));
+        const previous = new Map(snapshot.projectAssignment.assignments.map((item) => [item.lineId, item.projectNumber]));
         for (const line of snapshot.lines) {
           const number = projects[line.lineId];
           if (!number) return { error: { code: 'line_unassigned', message: PROJECT_ASSIGNMENT_ERRORS.lineUnassigned(line.no) } };
-          if (!allowed.has(number)) return { error: { code: 'project_not_allowed', message: PROJECT_ASSIGNMENT_ERRORS.projectNotAllowed(line.no, number) } };
+          if (allowed.has(number) || previous.get(line.lineId) === number) continue;
+          if (allowed.size === 0) return { error: { code: 'project_book_empty', message: PROJECT_ASSIGNMENT_ERRORS.bookEmpty } };
+          return { error: { code: 'project_not_allowed', message: PROJECT_ASSIGNMENT_ERRORS.projectNotAllowed(line.no, number) } };
         }
         const at = bus.now();
         snapshot.projectAssignment = projectAssignmentSubmitted({
@@ -120,6 +143,7 @@ export function createProjectFlow(bus: MockBus): ProjectFlow {
           projects,
           submittedAt: at,
           allowList: snapshot.projectAssignment.projects,
+          previous: snapshot.projectAssignment.assignments,
         });
         snapshot.lines = withLineProjects(snapshot.lines, snapshot.projectAssignment);
         snapshot.task.updatedAt = at;

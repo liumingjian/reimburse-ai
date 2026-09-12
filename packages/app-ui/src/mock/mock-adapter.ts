@@ -119,6 +119,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     ...createInventoryFlow(bus),
     answerPendingItem: pending.answerPendingItem,
     confirmReview: pending.confirmReview,
+    assignProjectLines: project.assignProjectLines,
     submitProjectAssignment: project.submitProjectAssignment,
     excludeMaterial: project.excludeMaterial,
     ...createPrintFlow(bus),

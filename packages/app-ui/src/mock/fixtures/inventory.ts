@@ -723,6 +723,8 @@ export function buildLines(result: InventoryResult): Line[] {
     }
     const pendingItem = result.pendingItems.find((item) => item.materialId === event.voucherMaterialId && item.kind === 'form');
     const expense = EXPENSE_ITEMS[event.category.code] ?? null;
+    const voucher = result.materials.find((material) => material.materialId === event.voucherMaterialId);
+    const invoiceNumber = PROFILES[FILE_TO_FIXTURE.get(voucher?.fileName ?? '') ?? '']?.fields.find((field) => field.key === 'invoiceNumber')?.value ?? null;
     return {
       lineId: `l${event.no}`,
       no: event.no,
@@ -737,6 +739,9 @@ export function buildLines(result: InventoryResult): Line[] {
       city: event.city,
       origin: event.origin,
       destination: event.destination,
+      // 内核 events.mjs：起点与终点都有才有路线；票号照内核 maskNumber 脱敏（铁路电子客票夹具没有发票号码，为 null）。
+      route: event.origin && event.destination ? `${event.origin} → ${event.destination}` : null,
+      maskedNumber: invoiceNumber === null ? null : maskNumber(invoiceNumber),
       projectCode: null,
       projectName: null,
       expenseItemCode: expense?.code ?? null,
@@ -749,6 +754,12 @@ export function buildLines(result: InventoryResult): Line[] {
       fromPendingItemId: pendingItem?.itemId ?? null,
     };
   });
+}
+
+// 内核 parse.mjs maskNumber：长于 8 位留首尾各 4 位，5-8 位留首尾各 2 位，其余中间打星号。
+export function maskNumber(value: string): string {
+  if (value.length > 8) return `${value.slice(0, 4)}${'*'.repeat(value.length - 8)}${value.slice(-4)}`;
+  return value.length > 4 ? `${value.slice(0, 2)}${'*'.repeat(value.length - 4)}${value.slice(-2)}` : value;
 }
 
 // 逐段金额被用户改过的凭证（逐段分摊）：照内核 splitTax 的做法重拆税额（按比例取整，余数归最大段），不含税金额 = 价税合计 - 税额。

@@ -70,7 +70,7 @@ export function createProjectBook(options: MockOptions, bus: MockBus, startup: M
       const snapshot = bus.draft(taskId);
       // `?book=empty`：预置归属引用的项目不在项目簿里，去掉，让项目归属先走维护门。
       if (options.bookEmpty && snapshot.stage === 'project' && snapshot.projectAssignment.status !== 'submitted') {
-        snapshot.projectAssignment = { ...snapshot.projectAssignment, status: 'not_started', assignments: [] };
+        snapshot.projectAssignment = { ...snapshot.projectAssignment, status: 'not_started', assignments: [], working: [], usage: [] };
         bus.put(snapshot);
       }
       const next = applyBook(taskId, allowList());

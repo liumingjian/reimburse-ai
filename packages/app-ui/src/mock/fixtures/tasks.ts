@@ -1,7 +1,7 @@
 import { stageReached, type TaskStage } from '../../contract/stage';
 import type { Inventory, Material, TaskSnapshot, UploadBatch, UploadFileResult } from '../../contract/snapshot';
 import type { Employee, TaskListItem } from '../../contract/task-list';
-import { HOME_CITY, SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, confirmationDigest, projectAssignmentOpen, projectAssignmentSubmitted, withLineProjects } from './projects';
+import { HOME_CITY, SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, confirmationDigest, projectAssignmentOpen, projectAssignmentSubmitted, withLineProjects, withProjectUsage } from './projects';
 import { T2_ROWS, applyAbortAtSave, applyErpDone, emptyReadback, erpWaitingLogin, mismatchReason, readbackOf } from './erp';
 import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult, openPendingItemCount, withInventoryProjection } from './inventory';
 import { catalogMatched, catalogPending, catalogRunning, packageFilesOf, preparationPending } from './preparation';
@@ -142,7 +142,7 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     confirmation: { status: 'unconfirmed', confirmedAt: null, digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null, notice: null },
     paymentScreenshots: [],
     printSheet: { status: 'not_generated', fileName: null, url: null, pages: [], notices: [] },
-    projectAssignment: { status: 'not_started', purpose: null, homeCity: task.homeCity, assignments: [], projects: [], submittedAt: null },
+    projectAssignment: { status: 'not_started', purpose: null, homeCity: task.homeCity, assignments: [], working: [], usage: [], projects: [], submittedAt: null },
     catalog: catalogPending(),
     preparation: preparationPending(),
     erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null },
@@ -207,7 +207,7 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
   if (stage === 'erp') snapshot.erp = erpWaitingLogin();
   if (stage === 'done') applyErpDone(snapshot, T1_DRAFT_NO);
   if (stage === 'reconcile') applyAbortAtSave(snapshot);
-  return withInventoryProjection(snapshot);
+  return withProjectUsage(withInventoryProjection(snapshot));
 }
 
 // T2：对账中（ERP 写入结果不确定后的停顿状态，不是失败）。
@@ -247,7 +247,7 @@ export function t2Snapshot(): TaskSnapshot {
     rows: [...T2_ROWS],
     reasons: [mismatchReason(3)],
   };
-  return withInventoryProjection(snapshot);
+  return withProjectUsage(withInventoryProjection(snapshot));
 }
 
 // T3：已完成。
@@ -277,7 +277,7 @@ export function t3Snapshot(): TaskSnapshot {
   snapshot.preparation = { status: 'ready', problems: [], packageFiles: [] };
   snapshot.erp = { status: 'done', steps: [], draftNo: T3_DRAFT_NO, abortReason: null, loginNotice: null };
   snapshot.readback = { status: 'matched', rows: [], summary: '明细 4/4 一致', localTotal: '2318.50', erpTotal: '2318.50' };
-  return withInventoryProjection(snapshot);
+  return withProjectUsage(withInventoryProjection(snapshot));
 }
 
 // 任务列表层面的 ERP 结局：已转人工优先；其次是停在完成页的严格回读不一致。

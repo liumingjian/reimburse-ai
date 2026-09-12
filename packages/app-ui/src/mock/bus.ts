@@ -2,11 +2,12 @@ import { STALE_STEP_CODE, STALE_STEP_NOTICE, type ActionError } from '../contrac
 import type { ActionOutcome, AdapterEvent, Unsubscribe } from '../contract/adapter';
 import { TaskSnapshotSchema, type ProjectOption, type TaskSnapshot } from '../contract/snapshot';
 import { withInventoryProjection } from './fixtures/inventory';
-import { PROJECT_BOOK } from './fixtures/projects';
+import { PROJECT_BOOK, withProjectUsage } from './fixtures/projects';
 import type { MockOptions } from './options';
 
 // mock 服务端的公共底座：内存里的快照仓库、事件总线、服务断连模拟、stepToken 核对与 mock 时钟。
-// 各业务流程（./flows/*）只经过这里读写快照：每份存进去的快照都带上服务端投影（盘点计数），并过 schema 校验（失败即抛出）。
+// 各业务流程（./flows/*）只经过这里读写快照：每份存进去的快照都带上服务端投影（盘点计数、「本次已归入」的条数与金额），
+// 并过 schema 校验（失败即抛出）。
 
 const EMIT_DELAY_MS = 20;
 // `?fault=service-disconnected`：服务停一次。第一次读任务列表时立即断开（任务列表的头几次加载失败），
@@ -70,7 +71,7 @@ export function createBus(options: MockOptions): MockBus {
   };
 
   const put = (snapshot: TaskSnapshot) => {
-    snapshots.set(snapshot.task.taskId, TaskSnapshotSchema.parse(withInventoryProjection(snapshot)));
+    snapshots.set(snapshot.task.taskId, TaskSnapshotSchema.parse(withProjectUsage(withInventoryProjection(snapshot))));
   };
 
   // 断开期间事件流不送达（恢复后页面会重新拉取快照）。

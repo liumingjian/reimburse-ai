@@ -237,6 +237,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     generatePrintSheet: (taskId) => action(taskId, E.generatePrintSheet, {}),
     rotatePlacement: (taskId, pageId, slot, rotate) => action(taskId, E.rotatePlacement, { pageId, slot, rotate }),
     cropPlacement: (taskId, pageId, slot, corners) => action(taskId, E.cropPlacement, { pageId, slot, corners }),
+    assignProjectLines: (taskId, input, stepToken) => action(taskId, E.assignProjectLines, { ...input, stepToken }),
     submitProjectAssignment: (taskId, input, stepToken) => action(taskId, E.submitProjectAssignment, { ...input, stepToken }),
     excludeMaterial: (taskId, materialId, stepToken) => action(taskId, E.excludeMaterial, { materialId, stepToken }),
     startErpWrite: (taskId, stepToken) => action(taskId, E.startErpWrite, { stepToken }),

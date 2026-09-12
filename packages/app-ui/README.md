@@ -86,7 +86,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 | `upload`（默认） | 还没有材料，显示拖拽区 |
 | `inventory` | 11 份材料已盘点，结果按费用事件归组 |
 | `pending` | 3 个待确认项未处理 |
-| `project` / `assign` | 待确认项已处理，项目归属进行中，No.1、No.2 已归入 P-2307；整单确认页还不能进 |
+| `project` / `assign` | 待确认项已处理，项目归属进行中，No.1、No.2 已归入 P-2307（「本次已归入」显示 2 条 · 47.54 元）；整单确认页还不能进 |
 | `catalog` | 项目归属已提交，正在核对报销信息（约 0.6 s 后通过，进入材料准备；加 `&catalog=mismatch` 则停在不匹配表） |
 | `preparation` | 报销信息核对已通过，正在生成材料包（约 0.6 s 后就绪，进入整单确认；加 `&preparation=blocked` 则停在缺项表） |
 | `review` | 9 行整单明细（项目归属已提交）待「确认」 |
@@ -152,6 +152,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 - 个人项目簿（`contract/project-book.ts`）：`GET /api/project-book` 返回 `ProjectBook { projects: [{ number, name, expiresOn, lastCheckedAt, selectable, statusLabel, statusNote }] }`（身份没核对通过时为空）；
   `POST /api/project-book/intake`（`number`）、`/remove`（`number`）、`/purge`、`/recheck`。服务端处理了请求就 200 返回 `{ status, verdict, note, book }`（`status` 照内核：admitted / rejected / not_logged_in / identity_mismatch / query_failed / removed / not_found / purged / none / done / empty，文案见 `PROJECT_BOOK_NOTES`），请求本身失败 `{ error, book? }`。
   项目簿一变，还没开始写入报销系统的任务经事件流拿到新的允许列表。流程门：进入项目归属时没有可选项目、也没有归属，step 为 `maintain_project_book`（页面换成维护入口），第一次录入成功后回到 `assign_projects`。
+- 项目归属（`snapshot.ts` `ProjectAssignment`，照内核 Variant B）：`projects` 只含可选项目（不可选的不随快照给出）；`assignments` 是服务端记下的归属（整单确认绑定它），`working` 是本次正在编辑的归属，`usage` 是「本次已归入」区（`{ number, name, lineCount, grossTotal, selectable }`，条数与金额由服务端算好）。「归入」是动作 `assign-project-lines`（`lineIds`、`projectNumber`、`onlyUnassigned`、`stepToken`），只改 `working`，新的归属只能用可选项目；提交 `submit-project-assignment` 用当前可选集合重新校验，已删除或失效的项目不能用于新归属，但某条明细上次记下的就是它时可以沿用（`usage` 里 `selectable: false`，页面显示「已锁定」）。`Line` 另有 `route` 与 `maskedNumber`（内核 maskNumber），供明细卡片展示。
 - 流程与阶段：`TASK_STAGES` 的顺序即流程（`stage.ts`）；`project` 之后服务端自动经过 `catalog`、`preparation` 进入 `review`。整单确认的 `digest` 绑定项目归属与事由，改派后确认记为 `invalidated`（`PROJECT_CHANGED_NOTICE`）。
 - 报销信息核对与材料准备（`snapshot.ts`）：快照带 `catalog { status: pending | running | matched | mismatch, problems[] }` 与
   `preparation { status: pending | blocked | ready, problems[], packageFiles[] }`。不匹配时阶段停在 `catalog`、step 为 `assign_projects`（改派后重新提交即重新核对）；

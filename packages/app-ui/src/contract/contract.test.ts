@@ -111,6 +111,37 @@ describe('契约 schema', () => {
     expect(review.lines[8]).toMatchObject({ city: '上海', date: '2026-08-09', endDate: '2026-08-22', projectName: '华东客户交付', expenseItemCode: 'FY020102', expenseItemName: '住宿费' });
     expect(review.lines[4]).toMatchObject({ origin: '张江高科', destination: '漕河泾开发区', endDate: null });
     expect(review.lines[6]).toMatchObject({ city: null, origin: '杭州东', destination: '上海虹桥', expenseItemCode: 'FY020101' });
+    // 项目归属页的卡片字段：路线（起点与终点都有才有）与脱敏票号（内核 maskNumber；铁路夹具没有发票号码）。
+    expect(review.lines.map((line) => line.maskedNumber)).toEqual([
+      '2631************7402',
+      '2631************7402',
+      '2631************7402',
+      '2631************0115',
+      '04****77',
+      '04****52',
+      null,
+      null,
+      '2631************7734',
+    ]);
+    expect(review.lines.map((line) => line.route)).toEqual([
+      '虹桥枢纽 → 漕河泾',
+      '漕河泾 → 静安寺',
+      '静安寺 → 张江',
+      '浦东机场 → 张江',
+      '张江高科 → 漕河泾开发区',
+      '静安寺 → 虹桥枢纽',
+      '杭州东 → 上海虹桥',
+      '上海虹桥 → 杭州东',
+      null,
+    ]);
+    // 允许列表只含可选项目；「本次已归入」的条数与金额由服务端投影给出。
+    expect(review.projectAssignment.projects.map((project) => project.number)).toEqual(['P-2307', 'P-2311', 'P-3312', 'P-1180']);
+    expect(review.projectAssignment.working).toEqual(review.projectAssignment.assignments);
+    expect(review.projectAssignment.usage).toEqual([
+      { number: 'P-3312', name: '产品调研', lineCount: 6, grossTotal: '186.59', selectable: true },
+      { number: 'P-2307', name: '华东客户交付', lineCount: 3, grossTotal: '3786.00', selectable: true },
+    ]);
+    expect(t1Snapshot('project').projectAssignment.usage).toEqual([{ number: 'P-2307', name: '华东客户交付', lineCount: 2, grossTotal: '47.54', selectable: true }]);
     expect(t1Snapshot('project').lines.every((line) => line.projectCode === null && line.projectName === null)).toBe(true);
     expect(t1Snapshot('project').preparation).toEqual({ status: 'pending', problems: [], packageFiles: [] });
     expect(t1Snapshot('project').catalog.status).toBe('pending');

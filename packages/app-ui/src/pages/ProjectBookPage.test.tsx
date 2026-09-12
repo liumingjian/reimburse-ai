@@ -110,7 +110,7 @@ describe('项目归属的项目簿门', () => {
     const workbench = screen.getByRole('complementary', { name: '项目工作台' });
     fireEvent.click(screen.getByRole('checkbox', { name: '选择明细 No.1' }));
     fireEvent.click(within(workbench).getByRole('button', { name: '归入 P-5108 苏州门店巡检' }));
-    expect(screen.getByTestId('project-of-1').textContent).toBe('P-5108 · 苏州门店巡检');
+    expect(await screen.findByText((_, node) => node?.getAttribute('data-testid') === 'project-of-1' && node.textContent === 'P-5108 · 苏州门店巡检')).toBeTruthy();
   });
 
   test('项目归属页有「去维护项目簿」链接，任务侧栏有常驻入口', async () => {

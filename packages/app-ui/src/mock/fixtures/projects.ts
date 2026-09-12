@@ -98,9 +98,9 @@ export function annotateProject(project: StoredProject, today: string): ProjectB
   };
 }
 
-// 项目归属页的允许列表（随任务快照给出）：整份项目簿，selectable 与 statusLabel 照搬项目簿的判定。
+// 项目归属页的允许列表（随任务快照给出）：只含可选项目（内核 selectableProjects），不可选的不出现在选择区。
 export function allowListOf(entries: readonly ProjectBookEntry[]): ProjectOption[] {
-  return entries.map((entry) => ({ number: entry.number, name: entry.name ?? entry.number, selectable: entry.selectable, statusLabel: entry.statusLabel }));
+  return entries.filter((entry) => entry.selectable).map((entry) => ({ number: entry.number, name: entry.name ?? entry.number }));
 }
 
 // 默认项目簿对应的允许列表（夹具快照构建时用；mock 服务端运行时按当前项目簿重新给出）。
@@ -119,6 +119,46 @@ function toAssignments(projects: Readonly<Record<string, string>>, allowList: re
   return Object.entries(projects).map(([lineId, projectNumber]) => ({ lineId, projectNumber, projectName: projectName(projectNumber, allowList) }));
 }
 
+// 服务端投影「本次已归入」：working 按明细顺序排好，逐个项目数条数、按分加总价税合计；
+// 不在允许列表里的项目（已删除或失效）标为不可选，已归入的明细可以沿用，但不能再归入新的明细。每份存进去的快照都经过这里。
+export function withProjectUsage(snapshot: TaskSnapshot): TaskSnapshot {
+  const assignment = snapshot.projectAssignment;
+  const order = new Map(snapshot.lines.map((line, index) => [line.lineId, index]));
+  const working = [...assignment.working].sort((a, b) => (order.get(a.lineId) ?? Infinity) - (order.get(b.lineId) ?? Infinity));
+  const allowed = new Set(assignment.projects.map((project) => project.number));
+  const usage = new Map<string, { number: string; name: string; lineCount: number; cents: number }>();
+  for (const item of working) {
+    const line = snapshot.lines.find((candidate) => candidate.lineId === item.lineId);
+    if (!line) continue;
+    const entry = usage.get(item.projectNumber) ?? { number: item.projectNumber, name: item.projectName, lineCount: 0, cents: 0 };
+    entry.lineCount += 1;
+    entry.cents += Math.round(Number(line.grossAmount) * 100);
+    usage.set(item.projectNumber, entry);
+  }
+  snapshot.projectAssignment = {
+    ...assignment,
+    working,
+    usage: [...usage.values()].map((entry) => ({
+      number: entry.number,
+      name: entry.name,
+      lineCount: entry.lineCount,
+      grossTotal: (entry.cents / 100).toFixed(2),
+      selectable: allowed.has(entry.number),
+    })),
+  };
+  return snapshot;
+}
+
+// 「归入」：把勾选的明细归入 number（只改 working）；onlyUnassigned 时跳过已有项目的明细。名称取允许列表里的。
+export function assignWorking(assignment: ProjectAssignment, lineIds: readonly string[], number: string, onlyUnassigned: boolean): ProjectAssignment['working'] {
+  const next = new Map(assignment.working.map((item) => [item.lineId, item]));
+  for (const lineId of lineIds) {
+    if (onlyUnassigned && next.has(lineId)) continue;
+    next.set(lineId, { lineId, projectNumber: number, projectName: projectName(number, assignment.projects) });
+  }
+  return [...next.values()];
+}
+
 // mock 的整单确认摘要：绑定盘点版本、报销事由与逐条项目归属（内核 preparationDigest 含 selection；材料包部分待服务端 spec 确认）。
 // 归属或事由一变，摘要就变，旧确认随之失效。
 export function confirmationDigest(taskId: string, versionId: string | null, assignment: ProjectAssignment): string {
@@ -134,11 +174,14 @@ export function confirmationDigest(taskId: string, versionId: string | null, ass
 // 待确认项处理完、进入项目归属时，服务端随快照给出整份允许列表；还没提交时可能有预置归属。
 // homeCity 是任务自己的常驻城市快照（task.homeCity）。
 export function projectAssignmentOpen(homeCity: string, assignments: Readonly<Record<string, string>> = {}, allowList: readonly ProjectOption[] = PROJECT_BOOK): ProjectAssignment {
+  const recorded = toAssignments(assignments, allowList);
   return {
     status: Object.keys(assignments).length > 0 ? 'pending' : 'not_started',
     purpose: null,
     homeCity,
-    assignments: toAssignments(assignments, allowList),
+    assignments: recorded,
+    working: recorded.map((item) => ({ ...item })),
+    usage: [],
     projects: allowList.map((project) => ({ ...project })),
     submittedAt: null,
   };
@@ -150,13 +193,19 @@ export function projectAssignmentSubmitted(input: {
   projects: Readonly<Record<string, string>>;
   submittedAt: string;
   allowList?: readonly ProjectOption[];
+  previous?: ProjectAssignment['assignments'];
 }): ProjectAssignment {
   const allowList = input.allowList ?? PROJECT_BOOK;
+  // 沿用的旧归属（项目已不在允许列表里）名称取上次记下的。
+  const known = [...allowList, ...(input.previous ?? []).map((item) => ({ number: item.projectNumber, name: item.projectName }))];
+  const recorded = toAssignments(input.projects, known);
   return {
     status: 'submitted',
     purpose: input.purpose,
     homeCity: input.homeCity,
-    assignments: toAssignments(input.projects, allowList),
+    assignments: recorded,
+    working: recorded.map((item) => ({ ...item })),
+    usage: [],
     projects: allowList.map((project) => ({ ...project })),
     submittedAt: input.submittedAt,
   };
@@ -177,7 +226,7 @@ export function projectEntryStep(snapshot: TaskSnapshot): Step {
   const taskId = snapshot.task.taskId;
   const version = snapshot.inventory.versionId ?? 'v0';
   const assignment = snapshot.projectAssignment;
-  const bookEmpty = !assignment.projects.some((project) => project.selectable) && assignment.assignments.length === 0;
+  const bookEmpty = assignment.projects.length === 0 && assignment.assignments.length === 0 && assignment.working.length === 0;
   return bookEmpty ? { kind: 'maintain_project_book', stepToken: `tok-${taskId}-book-${version}` } : { kind: 'assign_projects', stepToken: `tok-${taskId}-project-${version}` };
 }
 

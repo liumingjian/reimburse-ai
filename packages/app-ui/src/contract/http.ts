@@ -49,6 +49,7 @@ export const HTTP_ENDPOINTS = {
   generatePrintSheet: action('generate-print-sheet'),
   rotatePlacement: action('rotate-placement', 'pageId', 'slot', 'rotate'),
   cropPlacement: action('crop-placement', 'pageId', 'slot', 'corners'),
+  assignProjectLines: action('assign-project-lines', 'lineIds', 'projectNumber', 'onlyUnassigned', 'stepToken'),
   submitProjectAssignment: action('submit-project-assignment', 'purpose', 'projects', 'stepToken'),
   excludeMaterial: action('exclude-material', 'materialId', 'stepToken'),
   startErpWrite: action('start-erp-write', 'stepToken'),

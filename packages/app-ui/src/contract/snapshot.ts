@@ -308,6 +308,10 @@ export const LineSchema = z.object({
   city: z.string().nullable(),
   origin: z.string().nullable(),
   destination: z.string().nullable(),
+  // 路线（内核 line.route，如「杭州东 → 上海虹桥」）与脱敏票号（内核 maskNumber，如「2631************7734」）；
+  // 项目归属页的明细卡片照内核 project-workbench.mjs 展示。没有的为 null。
+  route: z.string().nullable(),
+  maskedNumber: z.string().nullable(),
   // 项目归属提交后由服务端写入（内核 buildPreparation 投影 selection，preparation.mjs:568-571）；之前为 null。
   projectCode: z.string().nullable(),
   projectName: z.string().nullable(),
@@ -452,15 +456,26 @@ export type PrintSheet = z.infer<typeof PrintSheetSchema>;
 
 // ---- 项目归属 ----
 
-// 规则照内核现有项目归属页面（project-workbench.mjs）：项目只能从个人项目簿的允许列表里选；
-// 允许列表整份随快照给出，selectable 与 statusLabel 由服务端判定（可选 / 已过期 / 复检未通过 / 项目号不安全），页面只据此显示。
+// 规则照内核现有项目归属页面（project-workbench.mjs Variant B）：项目只能从个人项目簿的允许列表里选。
+// 允许列表只含可选项目（内核 selectableProjects，baox.mjs:1603）：不可选的（已过期 / 复检未通过 / 项目号不安全）不随快照给出，
+// 需要时去个人项目簿查看。可选判定在服务端。
 export const ProjectOptionSchema = z.object({
   number: z.string().min(1),
   name: z.string().min(1),
-  selectable: z.boolean(),
-  statusLabel: z.string(),
 });
 export type ProjectOption = z.infer<typeof ProjectOptionSchema>;
+
+// 「本次已归入」区的一项（内核 project-workbench.mjs 的 used 区）：本次正在编辑的归属里用到的项目，
+// 条数与金额（价税合计之和）由服务端算好给出，页面不计算。selectable 为 false 的是已经不在允许列表里的项目
+// （如已从项目簿删除）：已归入的明细可以沿用，但不能再归入新的明细（页面显示「已锁定」）。
+export const ProjectUsageSchema = z.object({
+  number: z.string().min(1),
+  name: z.string().min(1),
+  lineCount: z.number().int().positive(),
+  grossTotal: AmountSchema,
+  selectable: z.boolean(),
+});
+export type ProjectUsage = z.infer<typeof ProjectUsageSchema>;
 
 // 项目归属在待确认项处理完之后、整单确认之前（Skill 的 project_unassigned → select-task）。
 // not_started：还没进入项目归属；pending：进入了、尚未提交（可能已有上次留下的归属）；
@@ -480,9 +495,14 @@ export const ProjectAssignmentSchema = z.object({
   purpose: z.string().nullable(),
   // 任务的常驻城市快照（与 task.homeCity 相同，创建任务时确认），这里只读显示。
   homeCity: z.string().nullable(),
-  // 服务端已记下的逐条归属（上次提交或预置的）；页面以它为初值。
+  // 服务端已记下的逐条归属（上次提交或预置的）。整单确认的摘要绑定的是这一份。
   assignments: z.array(ProjectLineAssignmentSchema),
-  // 个人项目簿允许列表，打开页面时整份给出；搜索只缩小显示，不缩小允许列表。
+  // 本次正在编辑、尚未提交的逐条归属（按明细顺序）。「归入」动作（assign-project-lines）由服务端改它；
+  // 进入项目归属与每次提交后，它等于 assignments。页面显示它，提交时把它连同事由一起送出。
+  working: z.array(ProjectLineAssignmentSchema),
+  // 「本次已归入」区：working 里用到的项目，按首次出现的明细顺序，带条数与金额（服务端给出）。
+  usage: z.array(ProjectUsageSchema),
+  // 个人项目簿允许列表（只含可选项目），打开页面时整份给出；搜索只缩小显示，不缩小允许列表。
   projects: z.array(ProjectOptionSchema),
   submittedAt: DateTimeSchema.nullable(),
 });
