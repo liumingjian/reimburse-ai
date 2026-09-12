@@ -35,7 +35,8 @@ describe('任务列表', () => {
     expect(within(t3).getByText('已完成')).toBeTruthy();
     expect(within(t3).getByText('BX20260702-0088')).toBeTruthy();
 
-    expect(screen.getByRole('link', { name: '新建报销任务' }).getAttribute('href')).toBe('#/tasks/new');
+    expect(screen.getByRole('button', { name: '新建报销任务' })).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByText('林颂宜 · 产品研发部')).toBeTruthy();
   });
 

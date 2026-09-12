@@ -18,6 +18,7 @@ const FORBIDDEN = [
   /digest-t1/,
   /print-sheet\.pdf/,
   /fixtures\//,
+  /sample-materials/,
   /mock-adapter/,
   /readMockOptions/,
   /createMockAdapter/,
@@ -41,7 +42,9 @@ if (!existsSync(join(dist, 'index.html'))) {
 }
 
 const problems = [];
-if (existsSync(join(dist, 'fixtures'))) problems.push(`${relative(packageRoot, dist)}/fixtures/ 不应存在`);
+for (const dir of ['fixtures', 'sample-materials']) {
+  if (existsSync(join(dist, dir))) problems.push(`${relative(packageRoot, dist)}/${dir}/ 不应存在`);
+}
 const all = files(dist);
 for (const file of all) {
   const text = readFileSync(file, 'utf8');
@@ -52,4 +55,4 @@ if (problems.length > 0) {
   console.error(problems.join('\n'));
   process.exit(1);
 }
-console.log(`${relative(packageRoot, dist)}/ 通过检查：${all.length} 个文件，${FORBIDDEN.length} 个模式均无命中，没有夹具目录。`);
+console.log(`${relative(packageRoot, dist)}/ 通过检查：${all.length} 个文件，${FORBIDDEN.length} 个模式均无命中，没有夹具与示例材料目录。`);

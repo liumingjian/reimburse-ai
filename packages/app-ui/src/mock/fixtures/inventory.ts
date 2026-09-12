@@ -372,7 +372,9 @@ export type InventoryResult = {
   pendingItems: PendingItem[];
 };
 
-const FILE_TO_FIXTURE = new Map(Object.entries(PROFILES).map(([id, profile]) => [profile.fileName, id]));
+// 上传的文件名对到识别档案：业务文件名（全季酒店_发票.pdf）与示例原件文件名（m01-hotel-invoice.pdf，即 dist-mock/fixtures/ 里的名字）都认。
+// dist-mock/sample-materials/ 里的示例材料就是原件按业务文件名复制的一份（对照表见 fixtures/sample-materials.json）。
+const FILE_TO_FIXTURE = new Map(Object.entries(PROFILES).flatMap(([id, profile]) => [[profile.fileName, id] as const, [profile.file, id] as const]));
 
 // 把一批已接收的材料按文件名对到识别档案，生成盘点结果。unsupportedFault 让曹操行程单（m06）变成不支持的版式。
 export function inventoryResult(uploaded: readonly Material[], unsupportedFault: boolean): InventoryResult {

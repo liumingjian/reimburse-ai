@@ -101,7 +101,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
           if (!allowed.has(number)) return { error: { code: 'project_not_allowed', message: PROJECT_ASSIGNMENT_ERRORS.projectNotAllowed(line.no, number) } };
         }
         const at = bus.now();
-        snapshot.projectAssignment = projectAssignmentSubmitted({ purpose, projects, submittedAt: at });
+        snapshot.projectAssignment = projectAssignmentSubmitted({ purpose, homeCity: snapshot.task.homeCity, projects, submittedAt: at });
         snapshot.task.updatedAt = at;
         snapshot.stage = 'erp';
         snapshot.erp = erpIdle();

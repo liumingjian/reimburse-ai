@@ -1,7 +1,7 @@
 import { stageReached, type TaskStage } from '../../contract/stage';
 import type { Inventory, Material, TaskSnapshot, UploadBatch, UploadFileResult } from '../../contract/snapshot';
 import type { Employee, TaskListItem } from '../../contract/task-list';
-import { SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, projectAssignmentOpen, projectAssignmentSubmitted } from './projects';
+import { HOME_CITY, SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, projectAssignmentOpen, projectAssignmentSubmitted } from './projects';
 import { T2_ROWS, applyAbortAtSave, applyErpDone, emptyReadback, erpIdle, mismatchReason, readbackOf } from './erp';
 import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult, openPendingItemCount, withInventoryProjection } from './inventory';
 
@@ -136,7 +136,7 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     confirmation: { status: 'unconfirmed', confirmedAt: null, digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null, notice: null },
     paymentScreenshots: [],
     printSheet: { status: 'not_generated', fileName: null, url: null, pages: [], notices: [] },
-    projectAssignment: { status: 'not_started', purpose: null, homeCity: null, assignments: [], projects: [], submittedAt: null },
+    projectAssignment: { status: 'not_started', purpose: null, homeCity: task.homeCity, assignments: [], projects: [], submittedAt: null },
     erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null },
     readback: emptyReadback(),
     reconcile: { status: 'none', bucket: null, action: null, actionCode: null, banner: null, draftNo: null, rows: [], reasons: [] },
@@ -151,6 +151,7 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
       taskId: T1_ID,
       name: '2026-08 上海出差（产品评审）',
       period: { start: '2026-08-09', end: '2026-08-22' },
+      homeCity: HOME_CITY,
       createdAt: '2026-09-11T14:05:00',
       updatedAt: '2026-09-11T14:20:00',
     },
@@ -189,10 +190,10 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
     };
   }
   // 确认之后服务端给出个人项目簿允许列表；project 阶段预置两条归属，erp 之后项目归属已提交。
-  if (stage === 'actions') snapshot.projectAssignment = projectAssignmentOpen();
-  if (stage === 'project') snapshot.projectAssignment = projectAssignmentOpen(SEED_ASSIGNMENTS);
+  if (stage === 'actions') snapshot.projectAssignment = projectAssignmentOpen(HOME_CITY);
+  if (stage === 'project') snapshot.projectAssignment = projectAssignmentOpen(HOME_CITY, SEED_ASSIGNMENTS);
   if (stageReached(stage, 'erp')) {
-    snapshot.projectAssignment = projectAssignmentSubmitted({ purpose: T1_PURPOSE, projects: T1_DONE_ASSIGNMENTS, submittedAt: '2026-09-11T14:40:00' });
+    snapshot.projectAssignment = projectAssignmentSubmitted({ purpose: T1_PURPOSE, homeCity: HOME_CITY, projects: T1_DONE_ASSIGNMENTS, submittedAt: '2026-09-11T14:40:00' });
   }
   // erp：等待「开始填报」，六个步骤都待开始。done：草稿已保存、回读 9/9 一致。reconcile：保存步中止后的对账（同 ?fault=erp-write-aborted 的结果）。
   if (stage === 'erp') snapshot.erp = erpIdle();
@@ -208,6 +209,7 @@ export function t2Snapshot(): TaskSnapshot {
       taskId: T2_ID,
       name: '2026-07 深圳客户拜访',
       period: { start: '2026-07-14', end: '2026-07-16' },
+      homeCity: HOME_CITY,
       createdAt: '2026-07-18T09:40:00',
       updatedAt: '2026-09-08T10:05:00',
     },
@@ -245,6 +247,7 @@ export function t3Snapshot(): TaskSnapshot {
       taskId: T3_ID,
       name: '2026-06 北京培训',
       period: { start: '2026-06-02', end: '2026-06-05' },
+      homeCity: HOME_CITY,
       createdAt: '2026-06-30T15:10:00',
       updatedAt: '2026-07-02T16:40:00',
     },

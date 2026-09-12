@@ -29,11 +29,11 @@ describe('端点表', () => {
 });
 
 describe('任务列表 GET /api/tasks', () => {
-  const list = { employee: EMPLOYEE, tasks: [t1Snapshot('done'), t2Snapshot(), t3Snapshot()].map(toListItem) };
+  const list = { employee: EMPLOYEE, homeCity: { value: '杭州', source: 'remembered' }, tasks: [t1Snapshot('done'), t2Snapshot(), t3Snapshot()].map(toListItem) };
 
   test('接受契约形状的列表', () => {
     expect(parseTaskListResponse(200, wire(list)).tasks).toHaveLength(3);
-    expect(parseTaskListResponse(200, wire({ employee: null, tasks: [] })).tasks).toEqual([]);
+    expect(parseTaskListResponse(200, wire({ employee: null, homeCity: null, tasks: [] })).tasks).toEqual([]);
   });
 
   test('拒绝金额格式不对、缺字段或非 2xx', () => {

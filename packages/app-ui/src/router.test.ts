@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { parseHash, taskHash } from './router';
 
 describe('hash 路由', () => {
-  test('#/tasks 是任务列表，#/tasks/new 是新建任务', () => {
+  test('#/tasks 是任务列表，#/tasks/new 是任务列表上打开的新建任务弹层', () => {
     expect(parseHash('#/tasks')).toEqual({ kind: 'tasks' });
     expect(parseHash('#/tasks/new')).toEqual({ kind: 'new' });
   });

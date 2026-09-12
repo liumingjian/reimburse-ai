@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// 新建报销任务与上传批次（#101）。直接用 file:// 打开 mock 构建产物（pnpm build:mock）。
+// 上传批次（#101）；新建任务弹层见 new-task.spec.ts。直接用 file:// 打开 mock 构建产物（pnpm build:mock）。
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 
@@ -26,34 +26,13 @@ async function jump(page: Page, hash: string) {
   }, hash);
 }
 
-async function createTask(page: Page, name: string) {
+// 经新建任务弹层创建 T4（常驻城市用预填的网络位置候选）。
+async function createTask(page: Page) {
   await page.goto(open('', '#/tasks/new'));
-  await page.getByLabel('任务名称').fill(name);
-  await page.getByLabel('开始日期').fill('2026-09-03');
-  await page.getByLabel('结束日期').fill('2026-09-05');
+  await expect(page.getByRole('dialog', { name: '新建报销任务' }).getByLabel('常驻城市')).toHaveValue('杭州');
   await page.getByRole('button', { name: '创建并上传材料' }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/upload$/);
 }
-
-test('新建报销任务：校验名称与日期范围，创建后进入上传页', async ({ page }) => {
-  await page.goto(open('', '#/tasks/new'));
-  await page.getByRole('button', { name: '创建并上传材料' }).click();
-  await expect(page.getByRole('alert')).toHaveText('任务名称必填。');
-  await expect(page).toHaveURL(/#\/tasks\/new$/);
-
-  await page.getByLabel('任务名称').fill('2026-09 杭州出差（客户验收）');
-  await page.getByLabel('开始日期').fill('2026-09-05');
-  await page.getByLabel('结束日期').fill('2026-09-03');
-  await page.getByRole('button', { name: '创建并上传材料' }).click();
-  await expect(page.getByRole('alert')).toHaveText('结束日期不能早于开始日期。');
-
-  await page.getByLabel('结束日期').fill('2026-09-07');
-  await page.getByRole('button', { name: '创建并上传材料' }).click();
-  await expect(page).toHaveURL(/#\/task\/T4\/upload$/);
-  await expect(page.getByRole('heading', { name: '上传材料' })).toBeVisible();
-  await expect(page.getByText('2026-09 杭州出差（客户验收）')).toBeVisible();
-  await expect(page.getByText('拖入文件，或点击选择')).toBeVisible();
-});
 
 test('正常上传：pdf/jpg/png 逐文件已接收，按批次列出并出现开始材料盘点', async ({ page }, testInfo) => {
   await page.goto(open('', '#/task/T1/upload'));
@@ -134,7 +113,7 @@ test('?fault=duplicate-upload 让追加批次里出现内容重复', async ({ pa
 });
 
 test('守卫：没有材料时后续页面显示还没有上传材料；有材料但未盘点则阶段不可跳过', async ({ page }) => {
-  await createTask(page, '2026-09 杭州出差');
+  await createTask(page);
   await jump(page, '#/task/T4/inventory');
   await expect(page.getByRole('heading', { name: '还没有上传材料' })).toBeVisible();
   await page.getByRole('link', { name: '去上传' }).click();

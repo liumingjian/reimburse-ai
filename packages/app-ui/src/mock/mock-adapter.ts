@@ -1,7 +1,9 @@
 import { ServiceUnavailableError, type ActionOutcome, type AppAdapter } from '../contract/adapter';
-import { TaskListSchema } from '../contract/task-list';
+import { CREATE_TASK_ERRORS, CreateTaskInputSchema } from '../contract/actions';
+import { TaskListSchema, type TaskList } from '../contract/task-list';
 import { SERVICE_UNAVAILABLE_CODE, SERVICE_UNAVAILABLE_MESSAGE, createBus } from './bus';
 import { buildPrintSheet } from './fixtures/print';
+import { HOME_CITY } from './fixtures/projects';
 import { EMPLOYEE, T1_ID, emptySnapshot, t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from './fixtures/tasks';
 import { createErpFlow } from './flows/erp';
 import { createInventoryFlow } from './flows/inventory';
@@ -48,6 +50,15 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
 
   const pending = createPendingFlow(bus);
 
+  // 常驻城市默认值：员工确认过就用记住的城市；否则用 mock 位置 Adapter 的城市级网络位置（夹具员工在杭州）；
+  // `?location=unavailable` 下位置获取失败，又没有记忆，默认值为 null。
+  let rememberedCity: string | null = null;
+  const homeCityDefault = (): TaskList['homeCity'] => {
+    if (rememberedCity) return { value: rememberedCity, source: 'remembered' };
+    if (options.locationUnavailable) return null;
+    return { value: HOME_CITY, source: 'network' };
+  };
+
   const adapter: AppAdapter = {
     async listTasks() {
       if (!bus.listReachable()) throw new ServiceUnavailableError(SERVICE_UNAVAILABLE_MESSAGE);
@@ -55,16 +66,22 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
         .all()
         .map(toListItem)
         .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
-      return TaskListSchema.parse({ employee: EMPLOYEE, tasks });
+      return TaskListSchema.parse({ employee: EMPLOYEE, homeCity: homeCityDefault(), tasks });
     },
     getSnapshot: async (taskId) => bus.draft(taskId),
     subscribe: (taskId, onEvent) => bus.subscribe(taskId, onEvent),
+    // 新建任务：服务端校验常驻城市，生成占位名称（`<创建日期> 新建报销`，费用期间为空），盘点结束后再按材料改名（见 flows/inventory.ts）。
+    // 这次确认的常驻城市成为任务的城市快照，并记为员工的常驻城市（本次会话里之后的默认值 source = remembered）。
     async createTask(input) {
+      const parsed = CreateTaskInputSchema.safeParse(input);
+      if (!parsed.success) return bus.fail('invalid_home_city', CREATE_TASK_ERRORS.homeCityRequired);
+      const homeCity = parsed.data.homeCity;
       const taskId = `T${nextTaskNo}`;
       nextTaskNo += 1;
-      const period = input.periodStart && input.periodEnd ? { start: input.periodStart, end: input.periodEnd } : null;
       const at = bus.now();
-      return bus.commit(emptySnapshot({ taskId, name: input.name.trim(), period, createdAt: at, updatedAt: at }, 'upload'));
+      rememberedCity = homeCity;
+      bus.autoNamed.add(taskId);
+      return bus.commit(emptySnapshot({ taskId, name: `${at.slice(0, 10)} 新建报销`, period: null, homeCity, createdAt: at, updatedAt: at }, 'upload'));
     },
     ...createInventoryFlow(bus),
     answerPendingItem: pending.answerPendingItem,

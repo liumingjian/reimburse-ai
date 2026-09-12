@@ -1,10 +1,11 @@
-import { useEffect, type MouseEvent } from 'react';
+import { useCallback, useEffect, type MouseEvent } from 'react';
 import { useAppStore, useTaskList } from '../adapter/context';
 import { STAGE_DEFAULT_PAGE, TASK_STAGE_LABELS } from '../contract/stage';
 import { TASK_ERP_OUTCOME_LABELS, type TaskListItem } from '../contract/task-list';
 import { formatDateTime, formatPeriod } from '../format';
-import { NEW_TASK_HASH, navigate, taskHash } from '../router';
+import { NEW_TASK_HASH, TASKS_HASH, navigate, taskHash } from '../router';
 import { AppShell } from '../shell/AppShell';
+import { NewTaskDialog } from './NewTaskDialog';
 
 // 徽标：服务端给出的 ERP 结局（已转人工 / 回读不一致）优先于阶段名。
 function Badge({ task }: { task: TaskListItem }) {
@@ -43,9 +44,11 @@ function TaskRow({ task }: { task: TaskListItem }) {
   );
 }
 
-export function TaskListPage() {
+// newTask：路由是 `#/tasks/new` 时在列表上打开新建任务弹层；关闭或取消回到 `#/tasks`。
+export function TaskListPage({ newTask }: { newTask: boolean }) {
   const store = useAppStore();
   const taskList = useTaskList();
+  const closeNewTask = useCallback(() => navigate(TASKS_HASH), []);
   // 每次回到任务列表都向服务端重新要一次：任务可能在任务页里推进过（如转人工），列表行要跟上服务端。
   useEffect(() => {
     void store.loadTaskList();
@@ -58,9 +61,9 @@ export function TaskListPage() {
           <p className="lead">每次出差一个任务。任务目录里保存原件、盘点结果、确认数据与打印设置。</p>
         </div>
         <div className="actions">
-          <a className="btn btn-primary" href={NEW_TASK_HASH}>
+          <button className="btn btn-primary" type="button" onClick={() => navigate(NEW_TASK_HASH)}>
             新建报销任务
-          </a>
+          </button>
         </div>
       </div>
       <section className="panel table">
@@ -102,6 +105,7 @@ export function TaskListPage() {
           <p className="caption loading">{taskList.offline ? '正在等待本地服务恢复，恢复后自动加载…' : '正在加载任务列表…'}</p>
         )}
       </section>
+      {newTask ? <NewTaskDialog taskList={taskList.data} onClose={closeNewTask} /> : null}
     </AppShell>
   );
 }

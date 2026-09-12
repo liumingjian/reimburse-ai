@@ -41,7 +41,7 @@ function applyConfirm(snapshot: TaskSnapshot, at: string): void {
   snapshot.confirmation = { ...snapshot.confirmation, status: 'confirmed', confirmedAt: at, notice: null };
   snapshot.task.updatedAt = at;
   snapshot.stage = 'actions';
-  if (snapshot.projectAssignment.projects.length === 0) snapshot.projectAssignment = projectAssignmentOpen();
+  if (snapshot.projectAssignment.projects.length === 0) snapshot.projectAssignment = projectAssignmentOpen(snapshot.task.homeCity);
   snapshot.step = { kind: 'choose_action', stepToken: `tok-${taskId}-actions-${snapshot.inventory.versionId ?? 'v0'}` };
 }
 

@@ -1094,6 +1094,14 @@ table.lines tfoot td {
   margin-bottom: 0;
 }
 
+.new-task-form .lead {
+  margin-bottom: var(--space-md);
+}
+
+.new-task-form .caption {
+  margin: 0;
+}
+
 .modal .btn-row {
   justify-content: flex-end;
   margin-top: var(--space-md);

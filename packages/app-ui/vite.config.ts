@@ -1,5 +1,5 @@
 /// <reference types="vitest/config" />
-import { createReadStream, cpSync, existsSync, statSync } from 'node:fs';
+import { copyFileSync, createReadStream, cpSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
@@ -9,6 +9,12 @@ import { viteSingleFile } from 'vite-plugin-singlefile';
 const packageRoot = fileURLToPath(new URL('.', import.meta.url));
 const FIXTURES_SOURCE = resolve(packageRoot, 'fixtures/generated');
 const FIXTURES_PUBLIC_PATH = '/fixtures/';
+// 示例原件文件名 → 业务文件名的对照表（唯一来源；mock 的 PROFILES 与它一致，见 src/mock/fixtures/inventory.test.ts）。
+const SAMPLE_MATERIALS_FILE = resolve(packageRoot, 'fixtures/sample-materials.json');
+
+function readSampleMaterials(): Array<{ file: string; fileName: string }> {
+  return JSON.parse(readFileSync(SAMPLE_MATERIALS_FILE, 'utf8')) as Array<{ file: string; fileName: string }>;
+}
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
   pdf: 'application/pdf',
@@ -46,6 +52,10 @@ function mockFixtures(): Plugin {
         return;
       }
       cpSync(FIXTURES_SOURCE, resolve(packageRoot, outDir, 'fixtures'), { recursive: true });
+      // 手工 QA 用的示例材料：11 份原件按业务文件名复制到 dist-mock/sample-materials/，整个文件夹可直接拖进上传区。
+      const samplesDir = resolve(packageRoot, outDir, 'sample-materials');
+      mkdirSync(samplesDir, { recursive: true });
+      for (const sample of readSampleMaterials()) copyFileSync(join(FIXTURES_SOURCE, sample.file), join(samplesDir, sample.fileName));
     },
   };
 }

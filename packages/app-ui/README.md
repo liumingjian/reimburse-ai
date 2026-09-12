@@ -15,10 +15,20 @@ Vite 7 + React 19 + TypeScript，只支持 Chrome，只做 zh-CN。视觉唯一�
 
 ## mock 构建
 
-`build:mock` 产出 `dist-mock/`：`index.html` 是单文件（脚本内联），示例原件在 `dist-mock/fixtures/`。
+`build:mock` 产出 `dist-mock/`：`index.html` 是单文件（脚本内联），示例原件在 `dist-mock/fixtures/`，
+另有一份可直接拖进上传区的 `dist-mock/sample-materials/`（同样 11 份原件，按业务文件名命名，如 `全季酒店_发票.pdf`；对照表是 `fixtures/sample-materials.json`）。
 双击 `dist-mock/index.html`（`file://`）就能在 Chrome 里跑完整个模块，顶栏显示「模拟数据」。
 
-正式构建 `build` 产出 `dist/`，由本地应用服务托管，不含 mock 代码、测试钩子与夹具（见 `check:dist`）。
+正式构建 `build` 产出 `dist/`，由本地应用服务托管，不含 mock 代码、测试钩子、夹具与示例材料（见 `check:dist`）。
+
+## QA：新建任务与全流程
+
+- 任务列表的「新建报销任务」在列表上打开弹层（`#/tasks/new` 是它的深链，取消回到 `#/tasks`）。弹层只有报销人（只读）与常驻城市：
+  没有名称和日期，任务名称由服务端生成，创建时是占位名 `<日期> 新建报销`，盘点结束后按材料日期与城市改名（示例材料得到 `2026-08 上海出差`）并给出费用期间。
+- 常驻城市的默认值由服务端给出：第一次是网络位置候选「杭州」（说明「根据网络位置推测…」）；创建过任务后是上次确认的城市（本次页面会话内）。
+  `?location=unavailable` 模拟位置获取失败：第一次打开时常驻城市留空，提示直接填写。它不是故障场景，可与 seed/fault 同用。
+- 全流程：新建任务后把 `dist-mock/sample-materials/` 里的 11 份文件一起拖进上传区，开始材料盘点，得到 3 个待确认项（两张出租车票、一张餐饮发票），之后按页面继续。
+  mock 按业务文件名或示例原件文件名（`m01-hotel-invoice.pdf` 等）识别材料；其他文件成为「不支持的材料类型」待确认项。
 
 ## QA：`?seed=` 与 `?fault=`
 
@@ -47,7 +57,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 | `readback-mismatch` | 严格回读 No.8 读到 74.00（本地 47.00）：写入停下，自动进入完成页，差异行高亮、不显示完成态，只能「转人工」；转人工后完成页与任务列表都显示「已转人工」 |
 | `service-disconnected` | 本地服务停一次：打开任务列表时立即（或打开任务页 0.3 s 后）出现全页横幅「本地服务未运行，请在终端重新执行 baox」；任务列表按退避自动重试，任务页期间动作在按钮旁失败；3 s 后恢复，横幅消失，列表出现、快照重新拉取 |
 
-未知的 seed / fault 在控制台警告后忽略。mock 构建还在 `window.__baoxMock` 上挂了一个 e2e 用的钩子：
+未知的 seed / fault / location 在控制台警告后忽略。mock 构建还在 `window.__baoxMock` 上挂了一个 e2e 用的钩子：
 `advanceElsewhere(taskId)` 模拟「另一个窗口推进了任务、这边还没收到推送」，下一次带旧 `stepToken` 的动作会得到 409，
 页面换上最新快照并提示「任务已在别处推进」。
 
@@ -57,7 +67,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 | --- | --- |
 | `test` | Vitest + Testing Library（jsdom）：契约与夹具、HTTP 响应形状、仓库、各页面交互 |
 | `test:e2e` | 先 `build:mock`，再用 Playwright（`channel: 'chrome'`，需本机 Google Chrome）经 `file://` 打开 `dist-mock/index.html`；含 seed × 页面、fault 全矩阵。截图是产物，在 `test-results/`（已 gitignore），不是像素基线 |
-| `check:dist` | 正式构建后检查 `dist/`：不许出现夹具人名、草稿号、`print-sheet.pdf`、`fixtures/`、mock 模块名与测试钩子 |
+| `check:dist` | 正式构建后检查 `dist/`：不许出现夹具人名、草稿号、`print-sheet.pdf`、`fixtures/`、`sample-materials`、mock 模块名与测试钩子，也不许有 `fixtures/`、`sample-materials/` 目录 |
 
 ## 夹具与 token
 

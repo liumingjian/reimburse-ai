@@ -13,6 +13,27 @@ const DEFAULT_PHASE_MS = 450;
 
 export type InventoryFlow = Pick<AppAdapter, 'uploadBatch' | 'startInventory' | 'reopenUpload'>;
 
+// 服务端给任务命名（盘点结束时，每轮盘点都重算）。规则：
+// - 费用期间 = 所有费用事件的最早日期至最晚日期（有 endDate 的取 endDate，如住宿离店日）；没有费用事件就不动名称与期间。
+// - 名称只改服务端生成的占位名称（rename = true，经 createTask 新建的任务）：
+//   `<期间开始的年月 YYYY-MM> <城市>出差`，城市取费用事件里出现次数最多的城市（相同次数取先出现的）；
+//   没有任何事件带城市时为 `<YYYY-MM> 报销`。T1 的示例材料得到 `2026-08 上海出差`、期间 2026-08-09 至 2026-08-22。
+export function nameFromEvents(snapshot: TaskSnapshot, rename: boolean): void {
+  const events = snapshot.events;
+  if (events.length === 0) return;
+  const starts = events.map((event) => event.date).sort();
+  const ends = events.map((event) => event.endDate ?? event.date).sort();
+  const start = starts[0] ?? '';
+  const end = ends[ends.length - 1] ?? start;
+  snapshot.task.period = { start, end };
+  if (!rename) return;
+  const counts = new Map<string, number>();
+  for (const event of events) if (event.city) counts.set(event.city, (counts.get(event.city) ?? 0) + 1);
+  let city: string | null = null;
+  for (const [candidate, count] of counts) if (city === null || count > (counts.get(city) ?? 0)) city = candidate;
+  snapshot.task.name = city ? `${start.slice(0, 7)} ${city}出差` : `${start.slice(0, 7)} 报销`;
+}
+
 export function createInventoryFlow(bus: MockBus): InventoryFlow {
   const { options } = bus;
   const phaseMs = options.inventoryPhaseMs ?? DEFAULT_PHASE_MS;
@@ -28,6 +49,7 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
     snapshot.inventory.status = 'done';
     snapshot.inventory.finishedAt = bus.now();
     snapshot.task.updatedAt = snapshot.inventory.finishedAt;
+    nameFromEvents(snapshot, bus.autoNamed.has(snapshot.task.taskId));
     settlePending(snapshot);
   };
 

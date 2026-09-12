@@ -1,6 +1,7 @@
 import { TASK_STAGES, type TaskStage } from '../contract/stage';
 
-// mock 模式的查询参数：`?seed=<阶段>` 直接打开某阶段的快照，`?fault=<场景>` 注入一种故障。
+// mock 模式的查询参数：`?seed=<阶段>` 直接打开某阶段的快照，`?fault=<场景>` 注入一种故障，
+// `?location=unavailable` 让位置 Adapter 取不到网络位置。
 
 export const FAULTS = [
   'duplicate-upload',
@@ -19,6 +20,8 @@ const SEED_ALIASES: Readonly<Record<string, TaskStage>> = { assign: 'project', p
 export type MockOptions = {
   seed: TaskStage | null;
   fault: Fault | null;
+  // `?location=unavailable`：mock 位置 Adapter 取不到网络位置，第一次新建任务时常驻城市没有默认值。不是故障场景。
+  locationUnavailable?: boolean;
   // `?seed=print`：T1 的打印稿在打开时已经生成。
   printSheet?: boolean;
   // 盘点每个阶段的推进间隔（毫秒）；测试可以调小。
@@ -45,6 +48,11 @@ export function readMockOptions(search: string): MockOptions {
   if (fault !== null) {
     if (isFault(fault)) options.fault = fault;
     else console.warn(`未知的 fault「${fault}」，可用值：${FAULTS.join(', ')}`);
+  }
+  const location = params.get('location');
+  if (location !== null) {
+    if (location === 'unavailable') options.locationUnavailable = true;
+    else console.warn(`未知的 location「${location}」，可用值：unavailable`);
   }
   return options;
 }

@@ -39,9 +39,19 @@ export const TaskListItemSchema = z.object({
 });
 export type TaskListItem = z.infer<typeof TaskListItemSchema>;
 
+// 新建任务时常驻城市的服务端默认值（前端从不自己定位）。remembered：员工此前确认过的常驻城市；
+// network：内核位置 Adapter 给出的城市级网络位置候选（员工还没有确认过）。整体为 null：没有记忆且位置获取失败，由员工直接填写。
+export const HOME_CITY_SOURCES = ['remembered', 'network'] as const;
+export const HomeCityDefaultSchema = z.object({
+  value: z.string().min(1),
+  source: z.enum(HOME_CITY_SOURCES),
+});
+export type HomeCityDefault = z.infer<typeof HomeCityDefaultSchema>;
+
 // 接口一：任务列表。服务端已按更新时间倒序排好；页面不再排序。
 export const TaskListSchema = z.object({
   employee: EmployeeSchema.nullable(),
+  homeCity: HomeCityDefaultSchema.nullable(),
   tasks: z.array(TaskListItemSchema),
 });
 export type TaskList = z.infer<typeof TaskListSchema>;

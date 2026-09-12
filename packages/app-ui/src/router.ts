@@ -1,7 +1,7 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import { isTaskPage, type TaskPage } from './contract/stage';
 
-// hash 路由：`#/tasks`、`#/tasks/new`、`#/task/:id/<page>`；未知路径回到任务列表。
+// hash 路由：`#/tasks`、`#/tasks/new`（任务列表上打开新建任务弹层）、`#/task/:id/<page>`；未知路径回到任务列表。
 // 用 hash 是为了 file:// 与本地服务两种托管方式都不需要服务端改写。
 
 export type Route =

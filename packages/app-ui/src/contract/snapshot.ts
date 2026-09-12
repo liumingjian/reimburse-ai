@@ -341,7 +341,7 @@ export const ProjectAssignmentSchema = z.object({
   status: z.enum(PROJECT_ASSIGNMENT_STATUSES),
   // 报销事由，至多 100 个字；未填为 null。
   purpose: z.string().nullable(),
-  // 常驻城市由身份确认固定，这里只读显示。
+  // 任务的常驻城市快照（与 task.homeCity 相同，创建任务时确认），这里只读显示。
   homeCity: z.string().nullable(),
   // 服务端已记下的逐条归属（上次提交或预置的）；页面以它为初值。
   assignments: z.array(ProjectLineAssignmentSchema),
@@ -447,10 +447,13 @@ export type Step = z.infer<typeof StepSchema>;
 
 // ---- 快照 ----
 
+// 名称与费用期间由服务端生成：创建时是占位名称、期间为 null，盘点结束后按材料日期与城市改名并给出期间。
+// homeCity 是任务自己的常驻城市快照（创建时确认），之后重新确认常驻城市不影响既有任务。
 export const TaskInfoSchema = z.object({
   taskId: IdSchema,
   name: z.string().min(1),
   period: TaskPeriodSchema.nullable(),
+  homeCity: z.string().min(1),
   createdAt: DateTimeSchema,
   updatedAt: DateTimeSchema,
 });

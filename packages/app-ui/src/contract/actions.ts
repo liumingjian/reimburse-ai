@@ -21,10 +21,7 @@ export type ActionFailure = z.infer<typeof ActionFailureSchema>;
 
 // 新建任务的校验文案，页面与服务端共用。
 export const CREATE_TASK_ERRORS = {
-  nameRequired: '任务名称必填。',
-  dateInvalid: '日期格式应为 YYYY-MM-DD，且是真实存在的日期。',
-  periodIncomplete: '开始日期与结束日期要一起填写，或都留空。',
-  periodReversed: '结束日期不能早于开始日期。',
+  homeCityRequired: '请填写常驻城市。',
 } as const;
 
 // 真实日期：格式对，且月日在日历上存在（2026-02-30 不算）。
@@ -35,26 +32,11 @@ export function isRealDate(value: string): boolean {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
-const RealDateSchema = DateSchema.refine(isRealDate, CREATE_TASK_ERRORS.dateInvalid);
-
-// 新建任务：名称必填；出差日期范围可整个留空，填了就要起止都有、都合法，且结束不早于开始。
-export const CreateTaskInputSchema = z
-  .object({
-    name: z.string().trim().min(1, CREATE_TASK_ERRORS.nameRequired),
-    periodStart: RealDateSchema.nullable(),
-    periodEnd: RealDateSchema.nullable(),
-  })
-  .superRefine((input, ctx) => {
-    const hasStart = input.periodStart !== null;
-    const hasEnd = input.periodEnd !== null;
-    if (hasStart !== hasEnd) {
-      ctx.addIssue({ code: 'custom', message: CREATE_TASK_ERRORS.periodIncomplete, path: [hasStart ? 'periodEnd' : 'periodStart'] });
-      return;
-    }
-    if (input.periodStart !== null && input.periodEnd !== null && input.periodEnd < input.periodStart) {
-      ctx.addIssue({ code: 'custom', message: CREATE_TASK_ERRORS.periodReversed, path: ['periodEnd'] });
-    }
-  });
+// 新建任务：只提交这次任务的常驻城市（去掉首尾空白后非空）。任务名称与费用期间由服务端生成：
+// 创建时是占位名称，盘点结束后按材料日期与城市改名并给出费用期间。常驻城市成为任务自己的城市快照。
+export const CreateTaskInputSchema = z.object({
+  homeCity: z.string().trim().min(1, CREATE_TASK_ERRORS.homeCityRequired),
+});
 export type CreateTaskInput = z.infer<typeof CreateTaskInputSchema>;
 
 export const PendingAnswerSchema = z.record(z.string(), z.string());

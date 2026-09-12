@@ -16,7 +16,7 @@ describe('契约 schema', () => {
   });
 
   test('由快照投影出的任务列表通过任务列表 schema', () => {
-    const list = { employee: { name: '林颂宜', department: '产品研发部' }, tasks: [t1Snapshot('done'), t2Snapshot(), t3Snapshot()].map(toListItem) };
+    const list = { employee: { name: '林颂宜', department: '产品研发部' }, homeCity: { value: '杭州', source: 'network' }, tasks: [t1Snapshot('done'), t2Snapshot(), t3Snapshot()].map(toListItem) };
     const parsed = TaskListSchema.parse(list);
     expect(parsed.tasks.map((task) => task.stage)).toEqual(['done', 'reconcile', 'done']);
     expect(parsed.tasks[0]?.grossTotal).toBe('3972.59');
@@ -40,18 +40,15 @@ describe('契约 schema', () => {
     expect(UploadBatchSchema.safeParse(badHash).success).toBe(false);
   });
 
-  test('新建任务输入：名称必填，日期范围起止合法且结束不早于开始', () => {
+  test('新建任务输入：只有常驻城市，去掉空白后必填', () => {
     const messages = (input: unknown) => {
       const result = CreateTaskInputSchema.safeParse(input);
       return result.success ? [] : result.error.issues.map((issue) => issue.message);
     };
-    expect(messages({ name: '  ', periodStart: null, periodEnd: null })).toEqual([CREATE_TASK_ERRORS.nameRequired]);
-    expect(messages({ name: 'x', periodStart: null, periodEnd: null })).toEqual([]);
-    expect(messages({ name: 'x', periodStart: '2026-09-03', periodEnd: '2026-09-05' })).toEqual([]);
-    expect(messages({ name: 'x', periodStart: '2026-09-03', periodEnd: '2026-09-03' })).toEqual([]);
-    expect(messages({ name: 'x', periodStart: '2026-09-05', periodEnd: '2026-09-03' })).toEqual([CREATE_TASK_ERRORS.periodReversed]);
-    expect(messages({ name: 'x', periodStart: '2026-09-03', periodEnd: null })).toEqual([CREATE_TASK_ERRORS.periodIncomplete]);
-    expect(messages({ name: 'x', periodStart: '2026-02-30', periodEnd: '2026-03-01' })).toEqual([CREATE_TASK_ERRORS.dateInvalid]);
+    expect(messages({ homeCity: '  ' })).toEqual([CREATE_TASK_ERRORS.homeCityRequired]);
+    expect(messages({ homeCity: '' })).toEqual([CREATE_TASK_ERRORS.homeCityRequired]);
+    expect(messages({ homeCity: '杭州' })).toEqual([]);
+    expect(CreateTaskInputSchema.parse({ homeCity: ' 上海 ' })).toEqual({ homeCity: '上海' });
     expect(isRealDate('2024-02-29')).toBe(true);
     expect(isRealDate('2026-02-29')).toBe(false);
     expect(isRealDate('2026/09/03')).toBe(false);
@@ -116,6 +113,8 @@ describe('报销任务阶段', () => {
     expect(TaskStageSchema.safeParse('print').success).toBe(false);
     expect(readMockOptions('?seed=review&fault=readback-mismatch')).toEqual({ seed: 'review', fault: 'readback-mismatch' });
     expect(readMockOptions('?seed=nope&fault=nope')).toEqual({ seed: null, fault: null });
+    // ?location=unavailable 不是故障，与 seed/fault 并列。
+    expect(readMockOptions('?seed=review&location=unavailable')).toEqual({ seed: 'review', fault: null, locationUnavailable: true });
     // 票面写的 ?seed=assign 是 project 的别名。
     expect(readMockOptions('?seed=assign')).toEqual({ seed: 'project', fault: null });
     expect(readMockOptions('?seed=project')).toEqual({ seed: 'project', fault: null });

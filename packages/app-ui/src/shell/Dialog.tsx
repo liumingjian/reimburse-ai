@@ -13,7 +13,9 @@ export function ConfirmDialog({
   onExtra,
   onConfirm,
   onCancel,
+  focusCancel = true,
 }: {
+  focusCancel?: boolean;
   title: string;
   children: ReactNode;
   confirmLabel: string;
@@ -29,8 +31,12 @@ export function ConfirmDialog({
   const titleId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
 
+  // 只在打开时落一次焦点（onCancel 变化不再抢焦点）；表单弹层传 focusCancel={false}，由输入框自己 autoFocus。
   useEffect(() => {
-    cancelRef.current?.focus();
+    if (focusCancel) cancelRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onCancel();
     };

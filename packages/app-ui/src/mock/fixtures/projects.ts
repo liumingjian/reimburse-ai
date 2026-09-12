@@ -3,6 +3,8 @@ import type { ProjectAssignment, ProjectOption } from '../../contract/snapshot';
 // 个人项目簿夹具：虚构的项目号与名称（沿用 prototypes/project-assignment-patterns 的写法）。
 // selectable 与 statusLabel 是 mock 服务端的判定结果，照内核 annotateProjects 的文案：可选 / 已过期 / 复检未通过。
 
+// 夹具员工的常驻城市，也是 mock 位置 Adapter 第一次给出的城市级网络位置候选（见 mock-adapter 的 homeCityDefault）。
+// 夹具任务 T1/T2/T3 都以它为城市快照；T1 的上海市内交通因此是外地市内交通。
 export const HOME_CITY = '杭州';
 
 export const PROJECT_BOOK: readonly ProjectOption[] = [
@@ -28,22 +30,23 @@ function toAssignments(projects: Readonly<Record<string, string>>): ProjectAssig
 }
 
 // 整单明细确认之后，服务端随快照给出整份允许列表；还没进入项目归属时没有归属。
-export function projectAssignmentOpen(assignments: Readonly<Record<string, string>> = {}): ProjectAssignment {
+// homeCity 是任务自己的常驻城市快照（task.homeCity）。
+export function projectAssignmentOpen(homeCity: string, assignments: Readonly<Record<string, string>> = {}): ProjectAssignment {
   return {
     status: Object.keys(assignments).length > 0 ? 'pending' : 'not_started',
     purpose: null,
-    homeCity: HOME_CITY,
+    homeCity,
     assignments: toAssignments(assignments),
     projects: PROJECT_BOOK.map((project) => ({ ...project })),
     submittedAt: null,
   };
 }
 
-export function projectAssignmentSubmitted(input: { purpose: string; projects: Readonly<Record<string, string>>; submittedAt: string }): ProjectAssignment {
+export function projectAssignmentSubmitted(input: { purpose: string; homeCity: string; projects: Readonly<Record<string, string>>; submittedAt: string }): ProjectAssignment {
   return {
     status: 'submitted',
     purpose: input.purpose,
-    homeCity: HOME_CITY,
+    homeCity: input.homeCity,
     assignments: toAssignments(input.projects),
     projects: PROJECT_BOOK.map((project) => ({ ...project })),
     submittedAt: input.submittedAt,
