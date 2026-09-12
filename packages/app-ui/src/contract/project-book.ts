@@ -62,10 +62,6 @@ export const ProjectBookResultSchema = z.object({
 });
 export type ProjectBookResult = z.infer<typeof ProjectBookResultSchema>;
 
-// 录入与删除只带项目号（原样提交，去空白与安全字符校验由服务端做）。
-export const ProjectNumberInputSchema = z.object({ number: z.string() });
-export type ProjectNumberInput = z.infer<typeof ProjectNumberInputSchema>;
-
 // 维护动作的 HTTP 响应：服务端处理了请求就是 200 + ProjectBookResult（含 rejected 等没做成的状态）；
 // 请求本身失败时是 { error, book? }。
 export const ProjectBookFailureSchema = z.object({

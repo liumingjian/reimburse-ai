@@ -36,7 +36,8 @@ export function packageFilesOf(lines: readonly Line[], materials: readonly Mater
   const references = sorted(lines.flatMap((line) => line.referenceMaterialIds));
   return [
     ...invoices.map((id) => ({ path: `invoices/${nameOf.get(id) ?? id}`, kindLabel: '发票' })),
-    ...references.map((id) => ({ path: `evidence/${nameOf.get(id) ?? id}`, kindLabel: '参考材料' })),
+    // 类别名不写「参考材料」（确认页不出现这四个字）；行程单、结账单在材料包里是证明材料。
+    ...references.map((id) => ({ path: `evidence/${nameOf.get(id) ?? id}`, kindLabel: '证明材料' })),
     { path: 'detail.json', kindLabel: '明细数据' },
     { path: 'detail.md', kindLabel: '明细文档' },
     { path: 'manifest.json', kindLabel: '材料清单' },
@@ -54,7 +55,7 @@ export function preparationProblems(lines: readonly Line[], materials: readonly 
   return [
     {
       problemId: `prep-${itinerary.materialId}`,
-      missing: `明细 No.${line.no} 的出发点与参考材料不一致：行程单记的是「浦东国际机场 T2」，明细是「${line.origin ?? '未填写'}」`,
+      missing: `明细 No.${line.no} 的出发点与行程单不一致：行程单记的是「浦东国际机场 T2」，明细是「${line.origin ?? '未填写'}」`,
       subject: itinerary.fileName,
       resolver: '要你处理',
       excludableMaterialId: itinerary.materialId,

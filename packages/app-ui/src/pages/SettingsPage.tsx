@@ -21,7 +21,7 @@ export function SettingsPage() {
   const reset = async () => {
     setBusy(true);
     setError(null);
-    const outcome = await store.startup((adapter) => adapter.resetAll());
+    const outcome = await store.resetAll();
     setBusy(false);
     if (!outcome.ok) {
       setError(outcome.error.message);

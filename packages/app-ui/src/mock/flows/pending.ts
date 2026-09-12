@@ -1,8 +1,8 @@
-import { ALLOCATION_ERRORS, CONFIRM_REVIEW_ERRORS, PENDING_ANSWER_ERRORS, normalizePendingAnswer, validatePendingAnswer } from '../../contract/actions';
+import { ALLOCATION_ERRORS, CONFIRM_REVIEW_ERRORS, EXCLUDE_MATERIAL_ERRORS, PENDING_ANSWER_ERRORS, normalizePendingAnswer, validatePendingAnswer } from '../../contract/actions';
 import type { AppAdapter } from '../../contract/adapter';
 import { isAllocationAnswer, type ProjectOption, type TaskSnapshot } from '../../contract/snapshot';
 import type { MockBus } from '../bus';
-import { applyPendingAnswer, buildLines, openPendingItemCount } from '../fixtures/inventory';
+import { applyPendingAnswer, buildLines, excludeGivenUpVoucher, openPendingItemCount } from '../fixtures/inventory';
 import { catalogPending, preparationPending } from '../fixtures/preparation';
 import { projectAssignmentOpen, projectEntryStep } from '../fixtures/projects';
 
@@ -66,6 +66,7 @@ function applyConfirm(snapshot: TaskSnapshot, at: string): void {
 
 export type PendingFlow = Pick<AppAdapter, 'answerPendingItem' | 'confirmReview'> & {
   advanceElsewhere(taskId: string): void;
+  excludeGivenUp: AppAdapter['excludeMaterial'];
 };
 
 export function createPendingFlow(bus: MockBus): PendingFlow {
@@ -77,6 +78,8 @@ export function createPendingFlow(bus: MockBus): PendingFlow {
         const item = snapshot.pendingItems.find((candidate) => candidate.itemId === itemId);
         if (!item) return { error: { code: 'item_not_found', message: `待确认项 ${itemId} 不存在。` } };
         if (item.status !== 'open') return { error: { code: 'item_not_open', message: PENDING_ANSWER_ERRORS.notOpen } };
+        // 「认不出」留下的阻塞项不接受答复（内核 allocation_given_up：解法在材料一侧）。
+        if (item.kind === 'given_up') return { error: { code: 'item_not_answerable', message: PENDING_ANSWER_ERRORS.notAnswerable } };
         const normalized = normalizePendingAnswer(item, answer);
         const errors = validatePendingAnswer(item, normalized);
         const firstError = Object.values(errors)[0];
@@ -89,6 +92,18 @@ export function createPendingFlow(bus: MockBus): PendingFlow {
           }
         }
         applyPendingAnswer({ materials: snapshot.materials, events: snapshot.events, pendingItems: snapshot.pendingItems }, item, normalized);
+        snapshot.task.updatedAt = bus.now();
+        settlePending(snapshot, bus.projectAllowList());
+        return snapshot;
+      }),
+    // 处理 given_up 待确认项：排除这张发票连同它的行程单（之后重新盘点也不再算它们），这一项记为已处理；
+    // 都处理完就照常形成明细、进入项目归属。
+    excludeGivenUp: async (taskId, materialId, stepToken) =>
+      bus.withStep(taskId, stepToken, (snapshot) => {
+        const item = snapshot.pendingItems.find((candidate) => candidate.kind === 'given_up' && candidate.status === 'open' && candidate.materialId === materialId);
+        if (snapshot.step.kind !== 'answer_pending' || !item) return { error: { code: 'not_ready', message: EXCLUDE_MATERIAL_ERRORS.notReady } };
+        const removed = excludeGivenUpVoucher({ materials: snapshot.materials, events: snapshot.events, pendingItems: snapshot.pendingItems }, item);
+        for (const id of removed) bus.removedMaterials(taskId).add(id);
         snapshot.task.updatedAt = bus.now();
         settlePending(snapshot, bus.projectAllowList());
         return snapshot;

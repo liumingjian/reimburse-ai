@@ -92,7 +92,7 @@ export function createProjectFlow(bus: MockBus): ProjectFlow {
   };
 
   return {
-    // 「归入」：只改本次正在编辑的归属（working），「本次已归入」的条数与金额由 bus 的投影随之重算；stepToken 不变。
+    // 「归入」：只改本次正在编辑的归属（working），「本次已归入」的条数与金额由 bus 的投影随之重算；状态变了，换发 stepToken。
     // 新的归属只能用当前可选项目（允许列表）；不认识的明细拒绝。
     assignProjectLines: async (taskId, input, stepToken) =>
       bus.withStep(taskId, stepToken, (snapshot) => {
@@ -109,6 +109,7 @@ export function createProjectFlow(bus: MockBus): ProjectFlow {
           return { error: { code: 'project_not_allowed', message: PROJECT_ASSIGNMENT_ERRORS.projectNotSelectable(projectNumber) } };
         }
         snapshot.projectAssignment.working = assignWorking(snapshot.projectAssignment, lineIds, projectNumber, onlyUnassigned);
+        snapshot.step = { ...snapshot.step, stepToken: bus.rotateToken(snapshot.step.stepToken) };
         return snapshot;
       }),
     // 提交项目归属：事由 1-100 字；每条明细都要有项目；不认识的明细拒绝。

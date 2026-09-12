@@ -66,7 +66,7 @@ function MaterialFields({ material }: { material: Material | undefined }) {
 }
 
 type SubmitState = { busy: boolean; error: string | null };
-type FormProps = { item: PendingItem; onSubmit: (answer: PendingAnswer) => Promise<void>; state: SubmitState };
+type FormProps = { item: PendingItem; onSubmit: (answer: PendingAnswer) => Promise<void>; onExclude: () => Promise<void>; state: SubmitState };
 
 function ServerError({ state }: { state: SubmitState }) {
   return state.error ? (
@@ -246,10 +246,38 @@ function AllocationForm({ item, onSubmit, state }: FormProps) {
   );
 }
 
+// 「认不出」留下的阻塞项（内核 allocation_given_up）：不能答复，说明（why）由服务端给出。
+// 应用内的出路是排除这张发票（exclude-material，服务端连同它的行程单一起排除）；另一条出路是在上传页追加逐段行程单后重新盘点。
+function GivenUpForm({ item, onExclude, state }: FormProps) {
+  const resolved = item.status === 'resolved';
+  return (
+    <div>
+      <div className="btn-row">
+        {resolved ? (
+          <span className="badge badge-ok">已处理</span>
+        ) : (
+          <button className="btn btn-secondary" type="button" disabled={state.busy} onClick={() => void onExclude()}>
+            排除这张发票及其行程单
+          </button>
+        )}
+        <ServerError state={state} />
+      </div>
+      <p className="caption choice-note">排除后这张发票和它的行程单都不形成明细，也不进材料包。</p>
+    </div>
+  );
+}
+
 function ItemForm(props: FormProps) {
-  if (props.item.kind === 'choice') return <ChoiceForm {...props} />;
-  if (props.item.kind === 'allocation') return <AllocationForm {...props} />;
-  return <AnswerForm {...props} />;
+  switch (props.item.kind) {
+    case 'choice':
+      return <ChoiceForm {...props} />;
+    case 'allocation':
+      return <AllocationForm {...props} />;
+    case 'given_up':
+      return <GivenUpForm {...props} />;
+    case 'form':
+      return <AnswerForm {...props} />;
+  }
 }
 
 const gaveUpNote = (item: PendingItem): string | null =>
@@ -270,12 +298,17 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   const materialOf = (item: PendingItem | undefined) => (item ? snapshot.materials.find((material) => material.materialId === item.materialId) : undefined);
 
+  // 采用后跳到下一个未处理项（「认不出」之后新出现的阻塞项也在其中）。
+  const settle = (outcome: Awaited<ReturnType<typeof run>>) => {
+    if (!outcome.ok) return;
+    const next = outcome.snapshot.pendingItems.find((candidate) => candidate.status === 'open');
+    setSelectedId(next?.itemId ?? null);
+  };
   const submit = async (item: PendingItem, answer: PendingAnswer) => {
-    const outcome = await run((adapter) => adapter.answerPendingItem(taskId, item.itemId, answer, snapshot.step.stepToken));
-    if (outcome.ok) {
-      const next = outcome.snapshot.pendingItems.find((candidate) => candidate.status === 'open');
-      setSelectedId(next?.itemId ?? null);
-    }
+    settle(await run((adapter) => adapter.answerPendingItem(taskId, item.itemId, answer, snapshot.step.stepToken)));
+  };
+  const exclude = async (item: PendingItem) => {
+    settle(await run((adapter) => adapter.excludeMaterial(taskId, item.materialId, snapshot.step.stepToken)));
   };
 
   // 跨任务重复发票命中：整批停，没有待确认项，也不能进入项目归属。
@@ -372,7 +405,7 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
                 <MaterialFields material={material} />
               </div>
               <div>
-                <ItemForm key={selected.itemId} item={selected} state={state} onSubmit={(answer) => submit(selected, answer)} />
+                <ItemForm key={selected.itemId} item={selected} state={state} onSubmit={(answer) => submit(selected, answer)} onExclude={() => exclude(selected)} />
               </div>
             </div>
           </section>

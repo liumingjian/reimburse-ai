@@ -95,7 +95,7 @@ export function TaskListPage({ newTask }: { newTask: boolean }) {
   const abandon = async (task: TaskListItem) => {
     setAbandonBusy(true);
     setAbandonError(null);
-    const outcome = await store.startup((adapter) => adapter.abandonTask(task.taskId));
+    const outcome = await store.abandonTask(task.taskId);
     setAbandonBusy(false);
     if (outcome.ok) setAbandoning(null);
     else setAbandonError(outcome.error.message);

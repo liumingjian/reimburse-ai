@@ -220,13 +220,14 @@ export function withLineProjects(lines: readonly Line[], assignment: ProjectAssi
   });
 }
 
-// 进入项目归属时的 step（内核 project_book_empty 在 select-task 之前）：项目簿没有可选项目、也还没有任何归属时先维护项目簿；
-// 否则就是项目归属。第一次录入成功后服务端据此回到 assign_projects。
+// 进入项目归属时的 step（内核 project_book_empty 在 select-task 之前，state.mjs:501-506）：
+// 条件照内核 `!selectionApplied && projectBook.empty`，即还没提交过任务选择、当前项目簿又没有可选项目时先维护项目簿
+// （上次留下的归属不算：它们用的项目已经不在可选集合里）；否则就是项目归属。第一次录入成功后服务端据此回到 assign_projects。
 export function projectEntryStep(snapshot: TaskSnapshot): Step {
   const taskId = snapshot.task.taskId;
   const version = snapshot.inventory.versionId ?? 'v0';
   const assignment = snapshot.projectAssignment;
-  const bookEmpty = assignment.projects.length === 0 && assignment.assignments.length === 0 && assignment.working.length === 0;
+  const bookEmpty = assignment.status !== 'submitted' && assignment.projects.length === 0;
   return bookEmpty ? { kind: 'maintain_project_book', stepToken: `tok-${taskId}-book-${version}` } : { kind: 'assign_projects', stepToken: `tok-${taskId}-project-${version}` };
 }
 

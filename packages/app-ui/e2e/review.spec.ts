@@ -19,7 +19,7 @@ async function jump(page: Page, hash: string) {
   }, hash);
 }
 
-test('确认：?seed=review 是 No. 加内核 13 列，按费用分类排序，没有文件名与参考材料；点「确认」后才出现并列的去打印与去报销', async ({ page }, testInfo) => {
+test('确认：?seed=review 是 No. 加内核 13 列，按费用分类排序；整页没有「参考材料」，文件名只在材料包清单一节；点「确认」后才出现并列的去打印与去报销', async ({ page }, testInfo) => {
   await page.goto(open('?seed=review', '#/task/T1/review'));
   await expect(page.getByRole('heading', { name: '整单明细确认' })).toBeVisible();
   await expect(table(page).locator('thead th')).toHaveText(['No.', '发票', '项目号', '起始日期', '结束日期', '住宿地/城市', '出发点', '目的地', '费用分类', '费用项目', '发票类型', '费用金额', '税额', '总额']);
@@ -40,9 +40,14 @@ test('确认：?seed=review 是 No. 加内核 13 列，按费用分类排序，�
     await expect(cells.nth(4)).toHaveText((await cells.nth(3).textContent()) ?? '');
   }
   await expect(page.getByTestId('confirm-row-5').locator('td').nth(6)).toHaveText('张江高科');
-  // 确认表里没有任何文件名或参考材料文字，也没有合计行；材料包文件清单在表下单独一节。
+  // 13 列表格里没有文件名、参考材料文字与合计行。
   const text = await table(page).innerText();
   expect(text).not.toMatch(/\.pdf|\.jpg|\.png|参考材料|合计 ·/);
+  // 整页（主区）没有「参考材料」；文件名只在「材料包」一节（#114 的材料包文件清单），别的区域一个都没有。
+  const main = page.locator('main');
+  expect(await main.innerText()).not.toContain('参考材料');
+  const packageText = await page.getByRole('region', { name: '材料包' }).innerText();
+  expect((await main.innerText()).replace(packageText, '')).not.toMatch(/\.pdf|\.jpg|\.png/);
   await expect(page.getByTestId('package-files')).toHaveText('核对材料已生成，共 13 份文件。');
   await expect(page.getByRole('list', { name: '材料包文件' }).getByRole('listitem')).toHaveCount(13);
   await expect(page.getByTestId('review-purpose')).toContainText('上海产品评审出差');

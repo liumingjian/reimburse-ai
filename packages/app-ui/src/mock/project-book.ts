@@ -55,7 +55,10 @@ export function createProjectBook(options: MockOptions, bus: MockBus, startup: M
     if (snapshot.stage === 'project' && (snapshot.step.kind === 'assign_projects' || snapshot.step.kind === 'maintain_project_book')) {
       snapshot.step = projectEntryStep(snapshot);
     }
-    return JSON.stringify([snapshot.projectAssignment.projects, snapshot.step]) === before ? null : snapshot;
+    if (JSON.stringify([snapshot.projectAssignment.projects, snapshot.step]) === before) return null;
+    // 允许列表变了就是状态变了：换发 stepToken（step 种类可能不变）。
+    snapshot.step = { ...snapshot.step, stepToken: bus.rotateToken(snapshot.step.stepToken) };
+    return snapshot;
   };
 
   const syncTasks = () => {
@@ -72,12 +75,6 @@ export function createProjectBook(options: MockOptions, bus: MockBus, startup: M
       projects = [];
     },
     prepareSeed(taskId) {
-      const snapshot = bus.draft(taskId);
-      // `?book=empty`：预置归属引用的项目不在项目簿里，去掉，让项目归属先走维护门。
-      if (options.bookEmpty && snapshot.stage === 'project' && snapshot.projectAssignment.status !== 'submitted') {
-        snapshot.projectAssignment = { ...snapshot.projectAssignment, status: 'not_started', assignments: [], working: [], usage: [] };
-        bus.put(snapshot);
-      }
       const next = applyBook(taskId, allowList());
       if (next) bus.put(next);
     },

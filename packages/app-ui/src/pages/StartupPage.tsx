@@ -10,7 +10,7 @@ import { AppShell } from '../shell/AppShell';
 // 「我已登录」只请服务端再探测，「确认」只登记服务端读到的身份，页面不断言、不改值。
 export const STARTUP_COPY = {
   loginTitle: '登录报销系统',
-  loginLead: '请在报销系统中使用本人账号登录。登录完成后点「我已登录」，我会继续。',
+  loginLead: '请在报销系统中使用本人账号登录。登录完成后点「我已登录」继续。',
   loginCaption: '登录页上显示的上次登录账号不算已登录；检测到登录表单消失、读到当前身份后才会继续。',
   unknownLead: '暂时无法确认报销系统当前登录的是谁。请检查登录页面，完成后点「我已登录」。身份未确认前不会继续。',
   loggedIn: '我已登录',

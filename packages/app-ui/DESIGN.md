@@ -99,7 +99,6 @@ layout:
   content-max-width: 1200px
   hairline-width: 1px
   focus-ring-width: 2px
-  group-bar-width: 3px
   control-height-sm: 28px
   control-height-lg: 44px
   stage-index-size: 20px

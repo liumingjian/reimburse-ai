@@ -441,9 +441,17 @@ const ALLOCATION_CHECK = {
   event: `逐段金额待确认：行程单 ${AMAP_SUGGESTED.join(' + ')} = ${AMAP_SUGGESTED_SUM}，票面价税合计 ${AMAP_TOTAL}`,
 } as const;
 
-// 选「这张票我认不出」的后果（服务端成句，照内核 givenUpOpenItems 的出路）：这张发票连同它的行程单移出本次报销。
+// 选「这张票我认不出」之前就给出的后果（服务端成句，照内核 givenUpOpenItems）：它不会被悄悄移走，而是留下一条拦路的事项。
 export const ALLOCATION_GIVE_UP_NOTE =
-  '选「这张票我认不出」后，这张发票连同它的行程单移出本次报销：不形成明细，也不进材料包。要报这张票，请补一份列了逐段金额的行程单，追加材料后重新盘点。';
+  '选「这张票我认不出」后，这张票不能带着往下走：会留下一条要你处理的事项，拦住后面的步骤，直到你排除这张发票（连同它的行程单），或者补一份列了逐段金额的行程单、追加材料后重新盘点。';
+
+// given_up 待确认项的说明（照内核 givenUpOpenItems 的 note：去掉第一人称与工作区路径，破折号改成句号）。
+export const givenUpNote = (segmentCount: number): string =>
+  `这张合并交通发票要拆成 ${segmentCount} 段，你说过逐段金额认不出来。它不能带着往下走。两条出路都在材料这一侧：` +
+  '补一份列了逐段金额的行程单（在上传页追加后重新盘点），或者把这张票连同它的行程单从本次材料里排除。' +
+  '两种做法都会改动材料，这条「认不出」随之作废；补了行程单会重新问一遍逐段金额。';
+
+export const GIVEN_UP_TITLE = '逐段金额认不出';
 
 function allocationTemplate(fileName: string): PendingTemplate {
   const segments = EVENTS.filter((event) => event.voucher === AMAP_VOUCHER).map((event, index) => ({
@@ -620,7 +628,8 @@ export function applyPendingAnswer(result: InventoryResult, item: PendingItem, a
 }
 
 // 逐段分摊的答复（服务端已判定按分守恒）：各段价税合计换成用户给的金额；
-// 「认不出」：这张发票连同它的行程单移出本次报销，费用事件去掉后重新编号（仍按分类排序）。
+// 「认不出」（内核 allocation_given_up）：什么都不移走，这张发票留在待处理，另起一条阻塞的 given_up 待确认项；
+// 用户用 exclude-material 排除它（excludeGivenUpVoucher），或追加行程单后重新盘点。
 function applyAllocation(result: InventoryResult, item: PendingItem, voucher: Material, answer: PendingAnswer): void {
   const own = result.events.filter((event) => event.voucherMaterialId === voucher.materialId);
   const referenceIds = new Set(own.flatMap((event) => event.referenceMaterialIds));
@@ -637,7 +646,31 @@ function applyAllocation(result: InventoryResult, item: PendingItem, voucher: Ma
     for (const material of result.materials) if (referenceIds.has(material.materialId)) material.checkText = `${expression}，按分守恒（逐段金额由你确认）`;
     return;
   }
-  const removed = new Set([voucher.materialId, ...referenceIds]);
+  const itemId = `p${result.pendingItems.length + 1}`;
+  result.pendingItems.push({
+    itemId,
+    materialId: voucher.materialId,
+    title: GIVEN_UP_TITLE,
+    why: givenUpNote(own.length),
+    kind: 'given_up',
+    resolver: '要你处理',
+    fields: [],
+    choices: [],
+    allocation: null,
+    status: 'open',
+    answer: null,
+  });
+  voucher.pendingItemIds = [...voucher.pendingItemIds, itemId];
+  voucher.status = 'pending';
+  voucher.checkText = '逐段金额认不出：这张票不能带着往下走，等你排除它或补一份逐段行程单';
+}
+
+// 处理 given_up 待确认项（exclude-material）：这张发票连同它的行程单排除，费用事件去掉后重新编号（仍按分类排序），
+// 这一项记为已处理。其余待确认项不受影响。返回被排除的材料 ID（发票与它的行程单）。
+export function excludeGivenUpVoucher(result: InventoryResult, item: PendingItem): string[] {
+  const voucherId = item.materialId;
+  const own = result.events.filter((event) => event.voucherMaterialId === voucherId);
+  const removed = new Set([voucherId, ...own.flatMap((event) => event.referenceMaterialIds)]);
   for (const material of result.materials) {
     if (!removed.has(material.materialId)) {
       material.linkedMaterialIds = material.linkedMaterialIds.filter((id) => !removed.has(id));
@@ -646,14 +679,16 @@ function applyAllocation(result: InventoryResult, item: PendingItem, voucher: Ma
     material.role = 'excluded';
     material.status = 'excluded';
     material.linkedMaterialIds = [];
-    material.checkText = material.materialId === voucher.materialId ? '逐段金额认不出：这张发票移出本次报销，不形成明细' : '随发票一起移出本次报销：不关联明细，也不进入材料包';
+    material.checkText = material.materialId === voucherId ? '已排除：逐段金额认不出，这张发票不形成明细' : '随发票一起排除：不关联明细，也不进入材料包';
   }
   for (let index = result.events.length - 1; index >= 0; index -= 1) {
-    if (result.events[index]?.voucherMaterialId === voucher.materialId) result.events.splice(index, 1);
+    if (result.events[index]?.voucherMaterialId === voucherId) result.events.splice(index, 1);
   }
   result.events.forEach((event, index) => {
     event.no = index + 1;
   });
+  item.status = 'resolved';
+  return [...removed];
 }
 
 // `?duplicate=1`：跨任务查重（按发票身份）命中。铁路电子客票_0809.pdf 这张发票在已完成的任务里也在，整批停。
@@ -705,10 +740,9 @@ export function excludeReferenceMaterial(snapshot: TaskSnapshot, materialId: str
   snapshot.lines = snapshot.lines.map((line) => ({ ...line, referenceMaterialIds: line.referenceMaterialIds.filter((id) => id !== materialId) }));
 }
 
-// 全部待确认项处理完后形成候选明细：一个费用事件一行，No. 沿用事件的统一业务序号（内核分类排序）；同一张发票的行共享 groupId。
+// 全部待确认项处理完后形成候选明细：一个费用事件一行，No. 沿用事件的统一业务序号（内核分类排序）。
 // 发票短标签照内核：按主要发票的 materialId 顺序编号（与行序无关）。项目号在项目归属提交后才写入。
 export function buildLines(result: InventoryResult): Line[] {
-  const groupOf = new Map<string, string>();
   const vouchers = [...new Set(result.events.map((event) => event.voucherMaterialId))].sort((a, b) => a.localeCompare(b));
   const invoiceLabel = new Map(vouchers.map((materialId, index) => [materialId, `发票${index + 1}`]));
   const splits = splitOverrides(result.events);
@@ -716,19 +750,12 @@ export function buildLines(result: InventoryResult): Line[] {
     const factsIndex = Number(event.eventId.slice(3)) - 1;
     const template = LINE_FACTS.get(factsIndex) ?? { net: event.grossAmount, tax: '0.00', invoiceType: '普通发票' };
     const facts = { ...template, ...splits.get(event.eventId) };
-    let groupId = groupOf.get(event.voucherMaterialId);
-    if (!groupId) {
-      groupId = `g${groupOf.size + 1}`;
-      groupOf.set(event.voucherMaterialId, groupId);
-    }
-    const pendingItem = result.pendingItems.find((item) => item.materialId === event.voucherMaterialId && item.kind === 'form');
     const expense = EXPENSE_ITEMS[event.category.code] ?? null;
     const voucher = result.materials.find((material) => material.materialId === event.voucherMaterialId);
     const invoiceNumber = PROFILES[FILE_TO_FIXTURE.get(voucher?.fileName ?? '') ?? '']?.fields.find((field) => field.key === 'invoiceNumber')?.value ?? null;
     return {
       lineId: `l${event.no}`,
       no: event.no,
-      groupId,
       voucherMaterialId: event.voucherMaterialId,
       invoiceLabel: invoiceLabel.get(event.voucherMaterialId) ?? '发票',
       eventId: event.eventId,
@@ -751,7 +778,6 @@ export function buildLines(result: InventoryResult): Line[] {
       grossAmount: event.grossAmount,
       netAmount: facts.net,
       taxAmount: facts.tax,
-      fromPendingItemId: pendingItem?.itemId ?? null,
     };
   });
 }

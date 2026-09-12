@@ -108,9 +108,10 @@ describe('项目归属的项目簿门', () => {
     intake('P-5108');
     expect(await screen.findByRole('heading', { name: '项目归属' })).toBeTruthy();
     const workbench = screen.getByRole('complementary', { name: '项目工作台' });
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择明细 No.1' }));
+    // 夹具预置的 No.1-2 归属（P-2307）照内核保留，项目簿门只看「没提交过、项目簿没有可选项目」；这里挑一条未归属的。
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择明细 No.3' }));
     fireEvent.click(within(workbench).getByRole('button', { name: '归入 P-5108 苏州门店巡检' }));
-    expect(await screen.findByText((_, node) => node?.getAttribute('data-testid') === 'project-of-1' && node.textContent === 'P-5108 · 苏州门店巡检')).toBeTruthy();
+    expect(await screen.findByText((_, node) => node?.getAttribute('data-testid') === 'project-of-3' && node.textContent === 'P-5108 · 苏州门店巡检')).toBeTruthy();
   });
 
   test('项目归属页有「去维护项目簿」链接，任务侧栏有常驻入口', async () => {

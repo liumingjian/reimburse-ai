@@ -96,7 +96,7 @@ describe('契约 schema', () => {
     ]);
     expect(review.lines.map((line) => line.grossAmount)).toEqual(['26.69', '20.85', '21.65', '38.40', '32.00', '47.00', '73.00', '73.00', '3640.00']);
     expect(review.lines[4]?.description).toBe('出租车 · 张江高科 → 漕河泾开发区');
-    expect(review.lines.filter((line) => line.groupId === 'g1')).toHaveLength(3);
+    expect(review.lines.filter((line) => line.voucherMaterialId === 'm03')).toHaveLength(3);
     // 费用事件与候选明细共用同一个序号。
     expect(review.events.map((event) => [event.no, event.grossAmount])).toEqual(review.lines.map((line) => [line.no, line.grossAmount]));
     expect(review.confirmation).toMatchObject({ status: 'unconfirmed', lineCount: 9, invoiceCount: 7, grossTotal: '3972.59' });
@@ -233,6 +233,8 @@ describe('契约 schema', () => {
     expect(validatePendingAnswer(target, { amounts: ['26.69', '0.00', '2'] })).toEqual({ 'segment-2': ALLOCATION_ERRORS.amount, 'segment-3': ALLOCATION_ERRORS.amount });
     expect(validatePendingAnswer(target, { amounts: ['26.69'] })).toEqual({ allocation: ALLOCATION_ERRORS.missing });
     expect(validatePendingAnswer(target, { choice: 'exclude' })).toEqual({ allocation: ALLOCATION_ERRORS.missing });
+    // 「认不出」留下的 given_up 项不接受任何答复（出路是排除材料或追加行程单）。
+    expect(validatePendingAnswer({ kind: 'given_up', fields: [], choices: [] }, { choice: 'exclude' })).toEqual({ item: PENDING_ANSWER_ERRORS.notAnswerable });
     expect(PendingAnswerSchema.safeParse({ amounts: ['1.00'] }).success).toBe(true);
     expect(PendingAnswerSchema.safeParse({ giveUp: true }).success).toBe(true);
     expect(PendingAnswerSchema.safeParse({ giveUp: false }).success).toBe(false);

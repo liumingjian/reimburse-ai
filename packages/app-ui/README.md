@@ -69,12 +69,12 @@ mock 的项目簿只在内存里（刷新后回到夹具）。默认 6 条：P-2
   `?location=unavailable` 模拟位置获取失败：第一次打开时常驻城市留空，提示直接填写。它不是故障场景，可与 seed/fault 同用。
 - 全流程：新建任务后把 `dist-mock/sample-materials/` 里的 11 份文件一起拖进上传区，开始材料盘点，得到 3 个待确认项（两张出租车票、一张餐饮发票）。
   处理完进入项目归属（为每条明细选项目并填写报销事由）；提交后服务端自动核对报销信息、准备报销材料（mock 各约 0.6 s，进度文案照内核话术），
-  再进入唯一一次整单明细确认；确认页表下是材料包文件清单（示例材料共 13 份：7 张发票、3 份参考材料、detail.json、detail.md、manifest.json）。确认后「去打印」进入打印稿预览；「去报销」直接启动浏览器，登录后自动写入，没有「开始填报」。
+  再进入唯一一次整单明细确认；确认页表下是材料包文件清单（示例材料共 13 份：7 张发票、3 份证明材料、detail.json、detail.md、manifest.json）。确认后「去打印」进入打印稿预览；「去报销」直接启动浏览器，登录后自动写入，没有「开始填报」。
   mock 按业务文件名或示例原件文件名（`m01-hotel-invoice.pdf` 等）识别材料；其他文件成为「不支持的材料类型」待确认项。
 - 统一业务序号（整单确认表 No.、打印稿页序、报销系统明细行与回读表）由服务端给出，跟随内核确认表的分类排序：本地市内交通 → 外地市内交通 → 长途交通 → 住宿，
   同一分类内按事件顺序。示例材料得到 No.1-3 高德、No.4 曹操、No.5-6 出租车、No.7-8 铁路、No.9 住宿，合计 3972.59。
 - 整单确认表照内核 `preparationConfirmationTable`：No. 加 13 列（发票 | 项目号 | 起始日期 | 结束日期 | 住宿地/城市 | 出发点 | 目的地 | 费用分类 | 费用项目 | 发票类型 | 费用金额 | 税额 | 总额，
-  列名常量 `CONFIRMATION_TABLE_COLUMNS`），无组标题、无合计行，不展示文件名与参考材料，表下注明材料包文件数。只能「确认」，有不对的地方回到对应步骤修改。
+  列名常量 `CONFIRMATION_TABLE_COLUMNS`），无组标题、无合计行，表内不展示文件名；表下「材料包」一节写文件数并列出材料包文件（#114 要求），文件名只出现在这一节，整页没有「参考材料」字样（行程单、结账单在材料包里的类别名是「证明材料」）。只能「确认」，有不对的地方回到对应步骤修改。
 - 整单确认绑定项目归属：确认后在项目归属页改派项目或改事由，确认失效并提示重新确认。支付截图只在打印稿页的住宿页补充。
 
 ## QA：`?seed=` 与 `?fault=`
@@ -139,8 +139,8 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 
 | 选项 | 表现 |
 | --- | --- |
-| `?allocation=1` | 高德合并发票的行程单三段合计 69.10，和票面价税合计 69.19 对不上：盘点多出第一个待确认项「合并交通发票逐段金额」，三段输入框预填行程单读数 26.69 / 20.85 / 21.56。直接提交得到服务端错误「各段加起来是 69.10 元，和票面价税合计 69.19 元对不上…」；第 3 段改成 21.65 后通过，明细与默认相同（9 行，3972.59）。也可以选「这张票我认不出」：这张发票连同行程单移出本次报销，后果说明在该项下（处理前后都显示），其余待确认项处理完照常进入项目归属，明细剩 6 行，合计 3903.40。例如 `dist-mock/index.html?seed=pending&allocation=1#/task/T1/pending`；与 `?seed=project` 及之后的 seed 同用时，逐段金额已按原件答复 |
-| `?duplicate=1` | 跨任务查重（按发票身份）命中：上传示例材料（含 `铁路电子客票_0809.pdf`）并开始盘点后整批停。盘点页与待确认项页显示「重复发票」表（序号 \| 材料/明细 \| 参考材料 \| 待处理问题 \| 处理人）、命中的任务「2026-06 北京培训」（已完成的 T3）与处置说明；不划分费用事件、不形成待确认项，也进不了项目归属。页面没有移出单份材料的入口，这个场景就停在这里。例如 `dist-mock/index.html?duplicate=1#/task/T1/upload` |
+| `?allocation=1` | 高德合并发票的行程单三段合计 69.10，和票面价税合计 69.19 对不上：盘点多出第一个待确认项「合并交通发票逐段金额」，三段输入框预填行程单读数 26.69 / 20.85 / 21.56。直接提交得到服务端错误「各段加起来是 69.10 元，和票面价税合计 69.19 元对不上…」；第 3 段改成 21.65 后通过，明细与默认相同（9 行，3972.59）。也可以选「这张票我认不出」（照内核 `allocation_given_up`）：什么都不会被悄悄移走，逐段分摊项记为已处理，同时多出一条要你处理的阻塞项「逐段金额认不出」（说明照内核话术），它不能答复，其余三项处理完仍停在待确认项（还剩 1 个）。在这一项上点「排除这张发票及其行程单」后才进入项目归属，明细剩 6 行，合计 3903.40；另一条出路是在上传页追加列了逐段金额的行程单后重新盘点。例如 `dist-mock/index.html?seed=pending&allocation=1#/task/T1/pending`；与 `?seed=project` 及之后的 seed 同用时，逐段金额已按原件答复 |
+| `?duplicate=1` | 跨任务查重（按发票身份）命中：上传示例材料（含 `铁路电子客票_0809.pdf`）并开始盘点后整批停。盘点页与待确认项页显示「重复发票」表（序号 \| 材料/明细 \| 参考材料 \| 待处理问题 \| 处理人）、命中的任务「2026-06 北京培训」（已完成的 T3）与处置说明；不划分费用事件、不形成待确认项，也进不了项目归属。出路照内核「把文件移出」：点「移出 铁路电子客票_0809.pdf」后阻塞解除（之后重新盘点也不再算它），接着形成 3 个待确认项，处理完明细是 8 行。例如 `dist-mock/index.html?duplicate=1#/task/T1/upload` |
 
 未知的 seed / fault / location / erp / identity / book / catalog / preparation / allocation / duplicate 在控制台警告后忽略。mock 构建还在 `window.__baoxMock` 上挂了一个 e2e 用的钩子：
 `advanceElsewhere(taskId)` 模拟「另一个窗口推进了任务、这边还没收到推送」，下一次带旧 `stepToken` 的动作会得到 409，
@@ -151,7 +151,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 | 脚本 | 作用 |
 | --- | --- |
 | `test` | Vitest + Testing Library（jsdom）：契约与夹具、HTTP 响应形状、仓库、各页面交互；`src/copy.test.ts` 扫描文案常量、mock 给出的文字与源码中文文案里的内核禁用词 |
-| `test:e2e` | 先 `build:mock`，再用 Playwright（`channel: 'chrome'`，需本机 Google Chrome）经 `file://` 打开 `dist-mock/index.html`；含全流程（`e2e/flow.spec.ts`）、seed × 页面、fault 全矩阵。截图是产物，在 `test-results/`（已 gitignore），不是像素基线 |
+| `test:e2e` | 先 `build:mock`，再用 Playwright（`channel: 'chrome'`，需本机 Google Chrome）经 `file://` 打开 `dist-mock/index.html`；含从启动登录到完成的全流程（`e2e/journey.spec.ts`，上传 `sample-materials/`）、从待确认项起的流程顺序（`e2e/flow.spec.ts`）、seed × 页面、fault 全矩阵。截图是产物，在 `test-results/`（已 gitignore），不是像素基线 |
 | `check:dist` | 正式构建后检查 `dist/`：不许出现夹具人名、草稿号、`print-sheet.pdf`、`fixtures/`、`sample-materials`、mock 模块名与测试钩子，也不许有 `fixtures/`、`sample-materials/` 目录 |
 
 ## 夹具与 token
@@ -166,24 +166,26 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 - 启动：`TaskListSchema` 的 `erpSession` 与 `employee.binding` 决定启动页（`startupComplete`）。启动动作不属于任务：`POST /api/startup/recheck-erp-session`（「我已登录」，只再探测）与 `POST /api/startup/confirm-identity`（`account`、`tenant`，回传页面上看到的身份，服务端重读后对不上即拒绝）；成功返回整份任务列表，失败 `{ error, taskList? }`。未完成启动时服务端拒绝新建任务。常驻城市按身份（tenant + account）持久记忆。
 - 个人项目簿（`contract/project-book.ts`）：`GET /api/project-book` 返回 `ProjectBook { projects: [{ number, name, expiresOn, lastCheckedAt, selectable, statusLabel, statusNote }] }`（身份没核对通过时为空）；
   `POST /api/project-book/intake`（`number`）、`/remove`（`number`）、`/purge`、`/recheck`。服务端处理了请求就 200 返回 `{ status, verdict, note, book }`（`status` 照内核：admitted / rejected / not_logged_in / identity_mismatch / query_failed / removed / not_found / purged / none / done / empty，文案见 `PROJECT_BOOK_NOTES`），请求本身失败 `{ error, book? }`。
-  项目簿一变，还没开始写入报销系统的任务经事件流拿到新的允许列表。流程门：进入项目归属时没有可选项目、也没有归属，step 为 `maintain_project_book`（页面换成维护入口），第一次录入成功后回到 `assign_projects`。
-- 项目归属（`snapshot.ts` `ProjectAssignment`，照内核 Variant B）：`projects` 只含可选项目（不可选的不随快照给出）；`assignments` 是服务端记下的归属（整单确认绑定它），`working` 是本次正在编辑的归属，`usage` 是「本次已归入」区（`{ number, name, lineCount, grossTotal, selectable }`，条数与金额由服务端算好）。「归入」是动作 `assign-project-lines`（`lineIds`、`projectNumber`、`onlyUnassigned`、`stepToken`），只改 `working`，新的归属只能用可选项目；提交 `submit-project-assignment` 用当前可选集合重新校验，已删除或失效的项目不能用于新归属，但某条明细上次记下的就是它时可以沿用（`usage` 里 `selectable: false`，页面显示「已锁定」）。`Line` 另有 `route` 与 `maskedNumber`（内核 maskNumber），供明细卡片展示。
+  项目簿一变，还没开始写入报销系统的任务经事件流拿到新的允许列表。流程门照内核 `!selectionApplied && projectBook.empty`：还没提交过项目归属、项目簿又没有可选项目时，step 为 `maintain_project_book`（页面换成维护入口；上次留下的归属不影响这个判断），第一次录入成功后回到 `assign_projects`。允许列表因项目簿变动而变时换发 `stepToken`。
+- 项目归属（`snapshot.ts` `ProjectAssignment`，照内核 Variant B）：`projects` 只含可选项目（不可选的不随快照给出）；`assignments` 是服务端记下的归属（整单确认绑定它），`working` 是本次正在编辑的归属，`usage` 是「本次已归入」区（`{ number, name, lineCount, grossTotal, selectable }`，条数与金额由服务端算好）。「归入」是动作 `assign-project-lines`（`lineIds`、`projectNumber`、`onlyUnassigned`、`stepToken`），只改 `working`（草稿也是服务端状态，每次都换发 `stepToken`），新的归属只能用可选项目；提交 `submit-project-assignment` 用当前可选集合重新校验，已删除或失效的项目不能用于新归属，但某条明细上次记下的就是它时可以沿用（`usage` 里 `selectable: false`，页面显示「已锁定」）。`Line` 另有 `route` 与 `maskedNumber`（内核 maskNumber），供明细卡片展示。
 - 流程与阶段：`TASK_STAGES` 的顺序即流程（`stage.ts`）；`project` 之后服务端自动经过 `catalog`、`preparation` 进入 `review`。整单确认的 `digest` 绑定项目归属与事由，改派后确认记为 `invalidated`（`PROJECT_CHANGED_NOTICE`）。
 - 报销信息核对与材料准备（`snapshot.ts`）：快照带 `catalog { status: pending | running | matched | mismatch, problems[] }` 与
   `preparation { status: pending | blocked | ready, problems[], packageFiles[] }`。不匹配时阶段停在 `catalog`、step 为 `assign_projects`（改派后重新提交即重新核对）；
   有缺项时阶段停在 `preparation`、step 为 `resolve_preparation`，缺项上 `excludableMaterialId` 不为空的，可用 `exclude-material`（`materialId`、`stepToken`）排除该材料，服务端随后重新准备。
+  `exclude-material` 另外接受两种情形（见 `EXCLUDE_MATERIAL_ERRORS` 注释）：`given_up` 待确认项的发票（连同它的行程单排除），与重复发票阻塞项上的材料（移出本次材料后接着盘点）。
   材料包文件数只看 `packageFiles`（确认上不再另记）。表格列名常量：`CATALOG_MISMATCH_COLUMNS`、`PREPARATION_PROBLEM_COLUMNS`；进度与阻塞文案：`CATALOG_PREPARATION_COPY`。
 - 严格回读（`snapshot.ts`）：`ReadbackRow { no, description, matched, fields: [{ label, local, erp, matched }], reasons[] }`，`fields` 覆盖 `READBACK_FIELD_LABELS` 的 9 个字段，
   一致与否、原因句都由服务端给出（description 与行级 matched 待服务端 spec 确认）。完成页的固定句是 `SAVE_COMPLETED_NOTICE`。
 - 对账（`snapshot.ts` `Reconcile`）：`bucket` 是 `RECONCILE_BUCKETS` 六类之一，`action` / `actionCode` 是内核判定，`allowedActions` 是允许的处置（页面只渲染这些，服务端也只接受这些，
   否则 `action_not_allowed`），`humanReview` 为真时显示 `HUMAN_REVIEW_NOTICE` 且没有重新对账。`reasons` 只放不属于某一行的原因。
 - 阶段名：`stage.ts` 的 `KERNEL_PHASES`、`TASK_STAGE_PHASES`、`TASK_STAGE_LABELS`（「N/10 阶段名」）与 `RECONCILE_STATUS_LABEL`。
+  这是按任务阶段的粗粒度对应：待确认项阶段统一记 4/10 材料整理，不显示 5/10 划分费用事件（内核在同一阶段里两种都会发）；要精确显示需要服务端在快照里直接给阶段名，待服务端 spec 确认。
 - 作废与重置（任务之外，返回整份任务列表，失败 `{ error, taskList? }`）：`POST /api/tasks/:id/abandon`、`POST /api/reset`。
   任务列表行带 `abandonable` 与 `abandonBlockedReason`（已开始写入报销系统的不能作废），文案见 `ABANDON_TASK_COPY`、`RESET_COPY`。
-- 待确认项（`snapshot.ts`）：`PendingItem` 带 `resolver`（`RESOLVER_LABELS`：要你处理 / 我来处理 / 系统）；`kind` 为 `form` / `choice` / `allocation`。
+- 待确认项（`snapshot.ts`）：`PendingItem` 带 `resolver`（`RESOLVER_LABELS`：要你处理 / 我来处理 / 系统）；`kind` 为 `form` / `choice` / `allocation` / `given_up`。
   逐段分摊（内核 `allocation_required`）的 `allocation = { segments: [{ index, date, route, suggested }], total, giveUpNote }`，`answer-pending` 的 `answer` 为 `{ amounts: [...] }`（按段顺序，两位小数）或 `{ giveUp: true }`；
-  是否按分守恒由服务端判定，不守恒返回 `{ error }`（文案 `ALLOCATION_ERRORS.notConserved`），页面只显示。「认不出」的后果由服务端写在 `giveUpNote`。
-- 跨任务重复发票（内核 `duplicate_blocked`）：快照 `blockers: [{ kind: 'duplicate_across_tasks', materialId, fileName, reason, resolver, tasks: [{ taskId, name }] }]`。有阻塞项时整批停：盘点结束但 `events`、`pendingItems` 为空，阶段停在 `inventory`，step 为 `none`。表格列 `BLOCKER_TABLE_COLUMNS`，说明文案 `DUPLICATE_BLOCKER_COPY`。
+  是否按分守恒由服务端判定，不守恒返回 `{ error }`（文案 `ALLOCATION_ERRORS.notConserved`），页面只显示。「认不出」的后果由服务端写在 `giveUpNote`；照内核，放弃之后出现一条阻塞的 `given_up` 项（`why` 是后果说明），它不接受 `answer-pending`（`PENDING_ANSWER_ERRORS.notAnswerable`），只能用 `exclude-material` 排除这张发票，或追加材料后重新盘点。
+- 跨任务重复发票（内核 `duplicate_blocked`）：快照 `blockers: [{ kind: 'duplicate_across_tasks', materialId, fileName, reason, resolver, tasks: [{ taskId, name }] }]`。有阻塞项时整批停：盘点结束但 `events`、`pendingItems` 为空，阶段停在 `inventory`，step 为 `none`。处置是 `exclude-material`（阻塞项的 `materialId`）：服务端把这份移出本次材料，阻塞解除后接着划分费用事件。表格列 `BLOCKER_TABLE_COLUMNS`，说明文案 `DUPLICATE_BLOCKER_COPY`。
 - 响应约定：成功 200 返回整份新快照；失败 `{ error: { code, message } }`（`message` 直接显示在按钮旁）；`stepToken` 过期返回 409 与 `{ error, snapshot }`（最新快照）。事件流为 SSE，`event: snapshot`，`data` 为整份快照；客户端断开后按 0.5 s 起翻倍、封顶 10 s 重连，恢复后重新拉取快照。
 - 值：金额两位小数字符串，日期 `YYYY-MM-DD`，时间 `HH:MM`，ID 不透明。上传为 multipart（`files`；支付截图为 `voucherMaterialId` + `file`，只在打印稿生成后接受）。
 - 验收样本：`src/mock/fixtures/`（各阶段快照）与 `fixtures/generated/`（原件、页图、PDF）。

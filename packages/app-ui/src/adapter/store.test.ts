@@ -35,6 +35,40 @@ async function opened(sequence: TaskSnapshot[]) {
   return { store, ...fake };
 }
 
+describe('AppStore：作废、重置与启动类动作', () => {
+  const emptyList = { erpSession: 'logged_in', employee: null, homeCity: null, tasks: [] };
+
+  test('作废成功后丢掉这个任务缓存的快照；完全重置成功后清掉所有任务快照，项目簿回到未加载', async () => {
+    const { store, adapter } = await opened([t1Snapshot('review')]);
+    const fake = adapter as unknown as Record<string, unknown>;
+    fake.abandonTask = async () => ({ ok: true, taskList: emptyList });
+    fake.resetAll = async () => ({ ok: true, taskList: emptyList });
+    expect(store.entry('T1').snapshot?.stage).toBe('review');
+    expect((await store.abandonTask('T1')).ok).toBe(true);
+    expect(store.entry('T1').snapshot).toBeNull();
+
+    await store.refreshTask('T1');
+    expect(store.entry('T1').snapshot?.stage).toBe('review');
+    expect((await store.resetAll()).ok).toBe(true);
+    expect(store.getState().tasks).toEqual({});
+    expect(store.getState().projectBook.status).toBe('idle');
+    expect(store.getState().taskList.data?.tasks).toEqual([]);
+  });
+
+  test('作废失败时快照留着', async () => {
+    const { store, adapter } = await opened([t1Snapshot('review')]);
+    (adapter as unknown as Record<string, unknown>).abandonTask = async () => ({ ok: false, error: { code: 'not_abandonable', message: '不能作废' }, taskList: emptyList });
+    expect((await store.abandonTask('T1')).ok).toBe(false);
+    expect(store.entry('T1').snapshot?.stage).toBe('review');
+  });
+
+  test('启动类动作带回的任务列表形状不对：按失败返回而不是抛出（调用方的「处理中」能复位）', async () => {
+    const store = new AppStore(fakeAdapter([t1Snapshot('review')]).adapter, { validate: true });
+    const outcome = await store.startup(async () => ({ ok: true, taskList: { tasks: 'bad' } as never }));
+    expect(outcome).toMatchObject({ ok: false, error: { code: 'adapter_error' } });
+  });
+});
+
 describe('AppStore', () => {
   test('任务列表连接类失败：标记 offline（全页横幅）并按退避自动重试，恢复后列表就绪、offline 清除', async () => {
     let calls = 0;

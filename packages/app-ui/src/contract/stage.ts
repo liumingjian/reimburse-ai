@@ -37,6 +37,9 @@ export const KERNEL_PHASES = [
 ] as const;
 export type KernelPhase = (typeof KERNEL_PHASES)[number];
 
+// 这是按任务阶段的粗粒度对应，有意不显示 5/10 划分费用事件：内核在待确认项阶段里同时发 4/10 的材料整理项
+// （补填字段、排除材料）和 5/10 的 allocation_required / events_pending；pending 一个阶段装两种，这里统一记 4/10。
+// 要精确到 5/10，需要服务端在快照里直接给阶段名（待服务端 spec 确认），页面不自己看待确认项种类去猜。
 // 任务阶段落在内核哪一阶段：上传与盘点是材料盘点，待确认项是材料整理，整单确认与去打印 / 去报销属于报销材料准备
 // （内核 preparation_confirmation 用 PREPARATION_PROGRESS），写入与对账是保存报销草稿，完成是草稿交接。
 export const TASK_STAGE_PHASES: Readonly<Record<TaskStage, KernelPhase>> = {

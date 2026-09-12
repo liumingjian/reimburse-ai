@@ -122,7 +122,8 @@ describe('员工可见文案不含内核禁用词', () => {
         ...code.matchAll(/'(?:[^'\\\n]|\\.)*'/g),
         ...code.matchAll(/"(?:[^"\\\n]|\\.)*"/g),
         ...code.matchAll(/`(?:[^`\\]|\\.)*`/g),
-        ...code.matchAll(/>([^<>{}]+)</g),
+        // JSX 文本：夹在 > 或 } 与 < 或 { 之间的一段（紧挨着 {表达式} 的文字也算），例如「报销事由：{purpose}。项目归属…」。
+        ...code.matchAll(/[>}]([^<>{}]+)[<{]/g),
       ].map((match) => match[0]);
       for (const piece of pieces) {
         if (!cjk.test(piece)) continue;

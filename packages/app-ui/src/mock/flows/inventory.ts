@@ -1,6 +1,6 @@
-import { REOPEN_UPLOAD_ERRORS } from '../../contract/actions';
+import { EXCLUDE_MATERIAL_ERRORS, REOPEN_UPLOAD_ERRORS } from '../../contract/actions';
 import type { AppAdapter } from '../../contract/adapter';
-import { REVIEW_INVALIDATED_NOTICE, type TaskSnapshot } from '../../contract/snapshot';
+import { REVIEW_INVALIDATED_NOTICE, type Material, type TaskSnapshot } from '../../contract/snapshot';
 import type { MockBus } from '../bus';
 import { duplicateBlockers, inventoryResult } from '../fixtures/inventory';
 import { catalogPending, preparationPending } from '../fixtures/preparation';
@@ -12,7 +12,22 @@ import { settlePending } from './pending';
 
 const DEFAULT_PHASE_MS = 450;
 
-export type InventoryFlow = Pick<AppAdapter, 'uploadBatch' | 'startInventory' | 'reopenUpload'>;
+export type InventoryFlow = Pick<AppAdapter, 'uploadBatch' | 'startInventory' | 'reopenUpload'> & {
+  // 跨任务重复发票的处置（exclude-material）：把命中的那份移出本次材料，接着划分费用事件。
+  excludeDuplicate: AppAdapter['excludeMaterial'];
+};
+
+// 移出本次材料的材料：不参与盘点、不关联明细，也不进入材料包。
+function removedMaterial(material: Material): Material {
+  return {
+    ...material,
+    role: 'excluded',
+    status: 'excluded',
+    checkText: '已移出本次材料：不参与盘点，也不进入材料包',
+    linkedMaterialIds: [],
+    pendingItemIds: [],
+  };
+}
 
 // 服务端给任务命名（盘点结束时，每轮盘点都重算）。规则：
 // - 费用期间 = 所有费用事件的最早日期至最晚日期（有 endDate 的取 endDate，如住宿离店日）；没有费用事件就不动名称与期间。
@@ -41,16 +56,20 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
   let nextFileNo = 1;
   let reopenCount = 0;
 
-  // 盘点结束：材料分类、费用事件与待确认项落进快照；有待确认项则进入 pending 阶段，否则直接形成候选明细进入 review。
+  // 盘点结果落进快照：材料分类、费用事件与待确认项；有待确认项则进入 pending 阶段，否则直接形成候选明细。
+  // 用户移出过的材料（bus.removedMaterials）不参与盘点，保持「已移出」。
   // `?duplicate=1`：跨任务查重命中已完成的 T3，整批停（内核 duplicate_blocked）：不划分费用事件、不形成待确认项，阶段停在 inventory。
-  const finishInventory = (snapshot: TaskSnapshot) => {
-    const result = inventoryResult(snapshot.materials, options.fault === 'unsupported-material', options.allocationRequired === true);
-    snapshot.materials = result.materials;
-    snapshot.inventory.status = 'done';
-    snapshot.inventory.finishedAt = bus.now();
-    snapshot.task.updatedAt = snapshot.inventory.finishedAt;
+  const settleInventory = (snapshot: TaskSnapshot) => {
+    const removed = bus.removedMaterials(snapshot.task.taskId);
+    const result = inventoryResult(
+      snapshot.materials.filter((material) => !removed.has(material.materialId)),
+      options.fault === 'unsupported-material',
+      options.allocationRequired === true,
+    );
+    const fresh = new Map(result.materials.map((material) => [material.materialId, material]));
+    snapshot.materials = snapshot.materials.map((material) => fresh.get(material.materialId) ?? removedMaterial(material));
     const hit = options.duplicateHit ? bus.draft(T3_ID).task : null;
-    snapshot.blockers = hit ? duplicateBlockers(snapshot.materials, { taskId: hit.taskId, name: hit.name }) : [];
+    snapshot.blockers = hit ? duplicateBlockers(result.materials, { taskId: hit.taskId, name: hit.name }) : [];
     if (snapshot.blockers.length > 0) {
       snapshot.events = [];
       snapshot.pendingItems = [];
@@ -63,6 +82,13 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
     snapshot.pendingItems = result.pendingItems;
     nameFromEvents(snapshot, bus.autoNamed.has(snapshot.task.taskId));
     settlePending(snapshot, bus.projectAllowList());
+  };
+
+  const finishInventory = (snapshot: TaskSnapshot) => {
+    snapshot.inventory.status = 'done';
+    snapshot.inventory.finishedAt = bus.now();
+    snapshot.task.updatedAt = snapshot.inventory.finishedAt;
+    settleInventory(snapshot);
   };
 
   // 材料变更（追加批次）：整单明细确认失效、打印稿作废，任务回到上传阶段等待新批次与新一轮盘点。
@@ -156,6 +182,17 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
         if (snapshot.erp.status !== 'idle') return { error: { code: 'erp_started', message: REOPEN_UPLOAD_ERRORS.erpStarted } };
         invalidateForMaterialChange(snapshot);
         snapshot.task.updatedAt = bus.now();
+        return snapshot;
+      }),
+    // 重复发票：只接受阻塞项上的那份材料。移出后重新结算这一版盘点（没有别的重复就进入待确认项或项目归属）。
+    excludeDuplicate: async (taskId, materialId, stepToken) =>
+      bus.withStep(taskId, stepToken, (snapshot) => {
+        if (snapshot.stage !== 'inventory' || !snapshot.blockers.some((blocker) => blocker.materialId === materialId)) {
+          return { error: { code: 'not_ready', message: EXCLUDE_MATERIAL_ERRORS.notReady } };
+        }
+        bus.removedMaterials(taskId).add(materialId);
+        snapshot.task.updatedAt = bus.now();
+        settleInventory(snapshot);
         return snapshot;
       }),
   };

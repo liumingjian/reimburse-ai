@@ -71,6 +71,8 @@ export const PENDING_ANSWER_ERRORS = {
   date: '格式应为 YYYY-MM-DD，且是真实存在的日期。',
   choice: '请选择一种处理方式。',
   notOpen: '这个待确认项已经处理过了。',
+  // given_up 项不接受答复：出路在材料一侧（排除这张发票，或追加逐段行程单后重新盘点）。
+  notAnswerable: '这一项不能直接答复：请排除这张发票，或在上传页追加列了逐段金额的行程单后重新盘点。',
 } as const;
 
 // 逐段分摊的文案。页面只拦格式（两位小数、大于 0、每段都填）；加起来对不对由服务端判定，不守恒时服务端用 notConserved 成句。
@@ -92,6 +94,10 @@ type AnswerTarget = Pick<PendingItem, 'kind' | 'fields' | 'choices'> & { allocat
 // 返回按字段 key 归档的错误；空对象表示合法。值先 trim 再判定。
 export function validatePendingAnswer(item: AnswerTarget, answer: PendingAnswer): Record<string, string> {
   const errors: Record<string, string> = {};
+  if (item.kind === 'given_up') {
+    errors.item = PENDING_ANSWER_ERRORS.notAnswerable;
+    return errors;
+  }
   if (item.kind === 'allocation') {
     if (isAllocationAnswer(answer) && 'giveUp' in answer) return errors;
     const amounts = isAllocationAnswer(answer) && 'amounts' in answer ? answer.amounts : null;
@@ -239,9 +245,12 @@ export const PRINT_ACTION_ERRORS = {
   invalidCorners: '四个角点须在原图范围内，且按左上、右上、右下、左下的顺序围成一个区域。',
 } as const;
 
-// 处理材料包缺项（resolve_preparation 下）：排除服务端在缺项上标明可排除的那份材料，服务端随后重新准备材料包。
+// 排除材料（exclude-material，带 stepToken），服务端只在三种情形下接受：
+// - 材料包缺项（resolve_preparation 下）：排除缺项上标明可排除的那份材料，服务端随后重新准备材料包；
+// - 「这张票我认不出」留下的 given_up 待确认项（answer_pending 下）：排除这张发票连同它的行程单，其余待确认项照常；
+// - 跨任务重复发票（盘点停在 inventory、有阻塞项）：把重复的那份移出本次材料，服务端接着划分费用事件。
 export const EXCLUDE_MATERIAL_ERRORS = {
-  notReady: '现在没有需要处理的材料包缺项。',
+  notReady: '现在没有需要通过排除材料来处理的事项。',
   notExcludable: '这份材料不能通过排除来处理，请按缺项说明处理。',
 } as const;
 

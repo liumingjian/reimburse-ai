@@ -6,6 +6,7 @@ const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 
 const ALLOCATION = '合并交通发票逐段金额';
+const GIVEN_UP = '逐段金额认不出';
 const FORBIDDEN = /rule:|user|候选/;
 
 const list = (page: Page) => page.getByLabel('待确认项清单');
@@ -72,26 +73,31 @@ test('?allocation=1：出现逐段分摊待确认项；不守恒显示服务端�
   await expect(page.getByRole('checkbox', { name: /^选择明细 No\.\d+$/ })).toHaveCount(9);
 });
 
-test('?allocation=1：选「这张票我认不出」也能继续，并显示后果说明', async ({ page }, testInfo) => {
+test('?allocation=1：选「这张票我认不出」照内核留下阻塞项；排除这张发票连同行程单之后才能进入项目归属', async ({ page }, testInfo) => {
   await page.goto(open('?seed=pending&allocation=1', '#/task/T1/pending'));
-  await expect(detail(page).getByTestId('give-up-note')).toContainText('移出本次报销');
+  await expect(detail(page).getByTestId('give-up-note')).toContainText('不能带着往下走');
   await detail(page).getByRole('button', { name: '这张票我认不出' }).click();
   await expect(detail(page).getByRole('heading', { name: '补填起点与终点' })).toBeVisible();
+  await expect(item(page, GIVEN_UP)).toContainText('要你处理');
   await item(page, ALLOCATION).click();
-  const note = detail(page).getByTestId('give-up-note');
-  await expect(note).toContainText('你选了「这张票我认不出」。');
-  await expect(note).toContainText('这张发票连同它的行程单移出本次报销');
+  await expect(detail(page).getByTestId('give-up-note')).toContainText('你选了「这张票我认不出」。');
+
+  // 其余三项处理完仍然拦着：还剩 1 个，没有「进入项目归属」。
+  await answerTaxis(page);
+  await expect(page.getByText('还剩 1 个')).toBeVisible();
+  await expect(page.getByRole('link', { name: '进入项目归属' })).toHaveCount(0);
+  await item(page, GIVEN_UP).click();
+  await expect(detail(page).getByText(/要拆成 3 段，你说过逐段金额认不出来。它不能带着往下走。/)).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('allocation-given-up.png'), fullPage: true });
 
-  await answerTaxis(page);
+  await detail(page).getByRole('button', { name: '排除这张发票及其行程单' }).click();
   await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
-  await expect(page.getByText('这张发票连同它的行程单移出本次报销', { exact: false })).toBeVisible();
   await page.getByRole('link', { name: '进入项目归属' }).click();
   // 高德三段不再形成明细：剩 6 行。
   await expect(page.getByRole('checkbox', { name: /^选择明细 No\.\d+$/ })).toHaveCount(6);
 });
 
-test('?duplicate=1：上传后整批停，显示重复发票表与命中的任务名', async ({ page }, testInfo) => {
+test('?duplicate=1：上传后整批停，显示重复发票表与命中的任务名；「移出」重复的那份后接着形成待确认项，明细少一行', async ({ page }, testInfo) => {
   await page.goto(open('?duplicate=1', '#/task/T1/upload'));
   await page.locator('input[type=file]').setInputFiles(
     FIXTURE_FILES.map((name) => ({ name, mimeType: name.endsWith('.jpg') ? 'image/jpeg' : 'application/pdf', buffer: Buffer.from(`fixture ${name}`) })),
@@ -116,6 +122,15 @@ test('?duplicate=1：上传后整批停，显示重复发票表与命中的任�
   });
   await expect(page.getByText('这批材料整批暂停，没有形成待确认项。')).toBeVisible();
   await expect(page.getByRole('list', { name: '命中的任务' })).toHaveText('2026-06 北京培训');
+
+  // 出路照内核「把文件移出」：移出后阻塞解除，接着划分费用事件与待确认项。
+  await page.getByRole('button', { name: '移出 铁路电子客票_0809.pdf' }).click();
+  await expect(page.getByRole('table', { name: '重复发票' })).toHaveCount(0);
+  await expect(page.getByText('还剩 3 个')).toBeVisible();
+  await answerTaxis(page);
+  await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
+  await page.getByRole('link', { name: '进入项目归属' }).click();
+  await expect(page.getByRole('checkbox', { name: /^选择明细 No\.\d+$/ })).toHaveCount(8);
 });
 
 test('盘点页与待确认项页没有 rule:、user、「候选」文字', async ({ page }) => {

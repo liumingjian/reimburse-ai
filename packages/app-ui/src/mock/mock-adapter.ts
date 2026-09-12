@@ -61,6 +61,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   bus.useProjectAllowList(book.allowList);
   book.prepareSeed(T1_ID);
 
+  const inventory = createInventoryFlow(bus);
   const pending = createPendingFlow(bus);
   const project = createProjectFlow(bus);
   // `?seed=catalog` / `?seed=preparation`：自动步骤接着走完，进入整单确认。
@@ -118,7 +119,11 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     removeProject: book.removeProject,
     purgeInvalidProjects: book.purgeInvalidProjects,
     recheckProjects: book.recheckProjects,
-    getSnapshot: async (taskId) => bus.draft(taskId),
+    // 作废或重置掉的任务不再能打开（深链接也一样）：和不存在的任务同样报错。
+    async getSnapshot(taskId) {
+      if (hidden.has(taskId)) throw new Error(`任务 ${taskId} 不存在`);
+      return bus.draft(taskId);
+    },
     subscribe: (taskId, onEvent) => bus.subscribe(taskId, onEvent),
     // 新建任务：服务端校验常驻城市，生成占位名称（`<创建日期> 新建报销`，费用期间为空），盘点结束后再按材料改名（见 flows/inventory.ts）。
     // 这次确认的常驻城市成为任务的城市快照，并按身份记为员工的常驻城市（之后的默认值 source = remembered，刷新后仍在）。
@@ -135,12 +140,22 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
       bus.autoNamed.add(taskId);
       return bus.commit(emptySnapshot({ taskId, name: `${at.slice(0, 10)} 新建报销`, period: null, homeCity, createdAt: at, updatedAt: at }, 'upload'));
     },
-    ...createInventoryFlow(bus),
+    uploadBatch: inventory.uploadBatch,
+    startInventory: inventory.startInventory,
+    reopenUpload: inventory.reopenUpload,
     answerPendingItem: pending.answerPendingItem,
     confirmReview: pending.confirmReview,
     assignProjectLines: project.assignProjectLines,
     submitProjectAssignment: project.submitProjectAssignment,
-    excludeMaterial: project.excludeMaterial,
+    // 排除材料按当前处境分派（见 EXCLUDE_MATERIAL_ERRORS 的三种情形）：重复发票、认不出的合并发票、材料包缺项。
+    async excludeMaterial(taskId, materialId, stepToken) {
+      const current = bus.draft(taskId);
+      if (current.blockers.some((blocker) => blocker.materialId === materialId)) return inventory.excludeDuplicate(taskId, materialId, stepToken);
+      if (current.pendingItems.some((item) => item.kind === 'given_up' && item.status === 'open' && item.materialId === materialId)) {
+        return pending.excludeGivenUp(taskId, materialId, stepToken);
+      }
+      return project.excludeMaterial(taskId, materialId, stepToken);
+    },
     ...createPrintFlow(bus),
     ...createErpFlow(bus),
   };

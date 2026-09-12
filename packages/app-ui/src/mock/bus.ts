@@ -42,6 +42,10 @@ export type MockBus = {
   // 当前个人项目簿的允许列表（进入项目归属时随快照给出）；由 mock 项目簿接上（useProjectAllowList），接上之前是默认夹具。
   projectAllowList(): ProjectOption[];
   useProjectAllowList(source: () => ProjectOption[]): void;
+  // 用户经 exclude-material 移出本次材料的材料（重复发票、认不出的合并发票及其行程单）：之后重新盘点也不再算它们。
+  removedMaterials(taskId: string): Set<string>;
+  // 状态变了但 step 种类没变时换发的新凭据（项目归属草稿、项目簿同步）：在原凭据后加一个全局递增的序号。
+  rotateToken(stepToken: string): string;
 };
 
 const clone = (snapshot: TaskSnapshot): TaskSnapshot => structuredClone(snapshot);
@@ -63,6 +67,8 @@ export function createBus(options: MockOptions): MockBus {
   let connected = true;
   let outageScheduled = false;
   let allowListSource = (): ProjectOption[] => PROJECT_BOOK.map((project) => ({ ...project }));
+  const removed = new Map<string, Set<string>>();
+  let rotation = 0;
 
   const snapshotOf = (taskId: string): TaskSnapshot => {
     const snapshot = snapshots.get(taskId);
@@ -149,6 +155,15 @@ export function createBus(options: MockOptions): MockBus {
     projectAllowList: () => allowListSource(),
     useProjectAllowList(source) {
       allowListSource = source;
+    },
+    removedMaterials(taskId) {
+      const set = removed.get(taskId) ?? new Set<string>();
+      removed.set(taskId, set);
+      return set;
+    },
+    rotateToken(stepToken) {
+      rotation += 1;
+      return `${stepToken.replace(/~\d+$/, '')}~${rotation}`;
     },
   };
 }

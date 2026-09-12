@@ -62,7 +62,7 @@ test('?preparation=blocked：显示缺项表，确认按钮不可用；排除相
   await expect(problems).toBeVisible();
   await expect(problems.locator('thead th')).toHaveText(['序号', '准备缺项', '关联材料/明细', '处理人']);
   const cells = problems.locator('tbody tr td');
-  await expect(cells.nth(1)).toContainText('明细 No.4 的出发点与参考材料不一致');
+  await expect(cells.nth(1)).toContainText('明细 No.4 的出发点与行程单不一致');
   await expect(cells.nth(2)).toHaveText('曹操出行_行程单.pdf');
   await expect(cells.nth(3)).toHaveText('要你处理');
   await expect(confirmButton(page)).toBeDisabled();

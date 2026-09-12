@@ -212,6 +212,8 @@ export function fieldAnswer(answer: PendingAnswer | null): FieldAnswer {
 // 逐段分摊（内核 allocation_required，next.mjs:1112-1151，ADR-0005）：一张合并的交通发票票面只有一个价税合计、行程单上有多段，
 // 且逐段金额加起来和票面对不上时才出现。每段金额由用户给，是否按分守恒由服务端判定（不守恒返回错误，页面只显示）；
 // 服务端不平均、不按比例，也不把差额加到任何一段上。用户也可以选「这张票我认不出」放弃，后果说明由服务端给出（giveUpNote）。
+// 放弃照内核（allocate.mjs givenUpOpenItems，state.mjs allocation_given_up）：逐段分摊项记为已处理，同时出现一条阻塞的
+// given_up 待确认项。它不能答复，出路在材料一侧：用 exclude-material 把这张发票连同它的行程单排除，或追加逐段行程单后重新盘点。
 export const AllocationSegmentSchema = z.object({
   // 第几段（从 1 起）。
   index: z.number().int().positive(),
@@ -231,7 +233,9 @@ export const PendingAllocationSchema = z.object({
 });
 export type PendingAllocation = z.infer<typeof PendingAllocationSchema>;
 
-export const PENDING_ITEM_KINDS = ['form', 'choice', 'allocation'] as const;
+// given_up：内核 allocation_given_up，阻塞，不接受 answer-pending；why 是服务端给的后果说明，
+// 唯一的应用内处置是 exclude-material（materialId 就是这张发票，服务端连同它的行程单一起排除）。
+export const PENDING_ITEM_KINDS = ['form', 'choice', 'allocation', 'given_up'] as const;
 
 // 空文本 PDF、多页发票（内核 pdf_markdown_conversion_empty / multi_page_invoice）是「要你处理」的 choice 类，
 // 只给「排除」一个选择；换原件走追加材料、重新盘点。
@@ -254,7 +258,9 @@ export type PendingItem = z.infer<typeof PendingItemSchema>;
 // ---- 整批停的阻塞项 ----
 
 // 跨任务重复发票（内核 duplicate_blocked，next.mjs:1088-1102；按发票身份判定，不是文件内容）：命中就停整批。
-// 盘点结束，但不划分费用事件、不形成待确认项；阶段停在 inventory，step 为 none。
+// 盘点结束，但不划分费用事件、不形成待确认项；阶段停在 inventory，step 为 none（带凭据）。
+// 处置照内核「把文件移出」：exclude-material 带阻塞项的 materialId，服务端把它移出本次材料（之后重新盘点也不再算它），
+// 阻塞随之解除，接着划分费用事件与待确认项。
 // 行文字由服务端成句；表格列照内核 itemTable（next.mjs:452-458），「参考材料」列内核写破折号，页面留空。
 export const BLOCKER_KINDS = ['duplicate_across_tasks'] as const;
 export const BLOCKER_TABLE_COLUMNS = ['序号', '材料/明细', '参考材料', '待处理问题', '处理人'] as const;
@@ -280,7 +286,7 @@ export type Blocker = z.infer<typeof BlockerSchema>;
 // 重复发票的阻塞与处置说明，照内核话术（去掉「告诉我」，报销系统不写作 ERP）。服务端与 mock 共用。
 export const DUPLICATE_BLOCKER_COPY = {
   blocked: '发现重复发票：同一张发票不能报两次，这批材料整批暂停，不会划分费用事件。',
-  disposal: '请把重复的发票移出本次材料，或处理之前的报销记录；处理完成后重新盘点。',
+  disposal: '请点「移出」把重复的发票移出本次材料，移出后接着划分费用事件。',
   scope: '这里只比对了本机记过、仍占用发票的报销任务；直接在报销系统里录入的、同事报过的、或者换电脑之前报过的，这里查不到。',
 } as const;
 
@@ -292,8 +298,6 @@ export const DUPLICATE_BLOCKER_COPY = {
 export const LineSchema = z.object({
   lineId: IdSchema,
   no: z.number().int().positive(),
-  // 同一主要报销凭证的行共享 groupId（项目归属等页面用；整单确认表不归组）。
-  groupId: IdSchema,
   voucherMaterialId: IdSchema,
   // 发票短标签「发票N」，编号规则照内核（next.mjs:518-519）：按材料包里主要发票的 materialId 顺序编号，
   // 所以不跟随表格行序。整单确认表只展示它，不展示完整发票号或文件名。
@@ -323,7 +327,6 @@ export const LineSchema = z.object({
   grossAmount: AmountSchema,
   netAmount: AmountSchema,
   taxAmount: AmountSchema,
-  fromPendingItemId: IdSchema.nullable(),
 });
 export type Line = z.infer<typeof LineSchema>;
 
@@ -499,6 +502,7 @@ export const ProjectAssignmentSchema = z.object({
   assignments: z.array(ProjectLineAssignmentSchema),
   // 本次正在编辑、尚未提交的逐条归属（按明细顺序）。「归入」动作（assign-project-lines）由服务端改它；
   // 进入项目归属与每次提交后，它等于 assignments。页面显示它，提交时把它连同事由一起送出。
+  // working、usage 与 projects（项目簿变动）都是服务端状态：每次改动都换发 stepToken，另一个窗口带旧凭据提交会得到 409。
   working: z.array(ProjectLineAssignmentSchema),
   // 「本次已归入」区：working 里用到的项目，按首次出现的明细顺序，带条数与金额（服务端给出）。
   usage: z.array(ProjectUsageSchema),
@@ -602,6 +606,9 @@ export const ReconcileSchema = z.object({
   draftNo: z.string().nullable(),
   rows: z.array(ReadbackRowSchema),
   reasons: z.array(z.string()),
+}).refine((reconcile) => !(reconcile.humanReview && reconcile.allowedActions.includes('wait')), {
+  message: 'humanReview 为真时 allowedActions 不能含 wait（转人工之后不再重新对账）',
+  path: ['allowedActions'],
 });
 export type Reconcile = z.infer<typeof ReconcileSchema>;
 
@@ -711,6 +718,7 @@ export const StepKindSchema = z.enum(STEP_KINDS);
 export type StepKind = z.infer<typeof StepKindSchema>;
 
 // stepToken 语义与内核 issueStep 一致：状态没变就是同一个凭据，状态一变旧凭据作废；过期回传得到 409 与最新快照。
+// 没有例外：项目归属的草稿（working）、项目簿同步来的允许列表、排除材料，改了都换凭据。
 export const StepSchema = z.object({
   kind: StepKindSchema,
   stepToken: StepTokenSchema,

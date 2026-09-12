@@ -26,7 +26,7 @@ const REMOTE = '外地市内交通';
 const HEADERS = ['No.', '发票', '项目号', '起始日期', '结束日期', '住宿地/城市', '出发点', '目的地', '费用分类', '费用项目', '发票类型', '费用金额', '税额', '总额'];
 
 describe('整单明细确认', () => {
-  test('?seed=review：No. 加 13 列，按费用分类排序（外地市内交通、长途交通、住宿排最后），无组、无合计行、没有文件名与参考材料；只能「确认」', async () => {
+  test('?seed=review：No. 加 13 列，按费用分类排序（外地市内交通、长途交通、住宿排最后），无组、无合计行；整页没有「参考材料」，文件名只出现在材料包清单一节；只能「确认」', async () => {
     renderReview();
     expect(await screen.findByRole('heading', { name: '整单明细确认' })).toBeTruthy();
     expect(within(table()).getAllByRole('columnheader').map((th) => th.textContent)).toEqual(HEADERS);
@@ -41,14 +41,19 @@ describe('整单明细确认', () => {
     expect(cells(rows[0])).toEqual(['1', '发票2', 'P-3312 / 产品调研', '2026-08-10', '2026-08-10', '上海', '虹桥枢纽', '漕河泾', REMOTE, 'FY020103 / 外地市内交通费', '普通发票', '25.92', '0.77', '26.69']);
     expect(cells(rows[4]).slice(1, 8)).toEqual(['发票6', 'P-3312 / 产品调研', '2026-08-15', '2026-08-15', '上海', '张江高科', '漕河泾开发区']);
     expect(cells(rows[6]).slice(3, 8)).toEqual(['2026-08-09', '2026-08-09', '', '杭州东', '上海虹桥']);
-    // 表内不展示文件名、参考材料与合计行；表下单独一节是材料包文件清单。
+    // 13 列表格里没有文件名、参考材料与合计行。
     expect(table().textContent ?? '').not.toMatch(/\.pdf|\.jpg|\.png|参考材料|同上|合计 ·/);
     expect(screen.queryByTestId('gross-total')).toBeNull();
+    // 整页没有「参考材料」四个字；文件名只在「材料包」一节（#114 要求的材料包文件清单）里出现，别处没有。
+    expect(document.body.textContent ?? '').not.toContain('参考材料');
+    const packageSection = screen.getByRole('region', { name: '材料包' });
+    const outside = (document.body.textContent ?? '').replace(packageSection.textContent ?? '', '');
+    expect(outside).not.toMatch(/\.pdf|\.jpg|\.png/);
     expect(screen.getByTestId('package-files').textContent).toBe('核对材料已生成，共 13 份文件。');
     const files = within(screen.getByRole('list', { name: '材料包文件' })).getAllByRole('listitem');
     expect(files).toHaveLength(13);
     expect(files[0]?.textContent).toBe('发票 invoices/全季酒店_发票.pdf');
-    expect(files.map((item) => item.textContent)).toContain('参考材料 evidence/曹操出行_行程单.pdf');
+    expect(files.map((item) => item.textContent)).toContain('证明材料 evidence/曹操出行_行程单.pdf');
     expect(screen.queryByRole('table', { name: '不匹配项' })).toBeNull();
     expect(screen.queryByRole('table', { name: '准备缺项' })).toBeNull();
     // 项目归属在确认之前已完成，随确认一起生效；支付截图不在这里补充。
@@ -205,7 +210,7 @@ describe('整单明细确认', () => {
     expect(within(problems).getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['序号', '准备缺项', '关联材料/明细', '处理人']);
     const row = within(problems).getAllByRole('row').find((candidate) => candidate.closest('tbody'));
     expect(cells(row)[0]).toBe('1');
-    expect(cells(row)[1]).toContain('明细 No.4 的出发点与参考材料不一致');
+    expect(cells(row)[1]).toContain('明细 No.4 的出发点与行程单不一致');
     expect(cells(row).slice(2)).toEqual(['曹操出行_行程单.pdf', '要你处理']);
     expect(screen.getByText(CATALOG_PREPARATION_COPY.preparationBlocked)).toBeTruthy();
     expect((checkbox() as HTMLButtonElement).disabled).toBe(true);

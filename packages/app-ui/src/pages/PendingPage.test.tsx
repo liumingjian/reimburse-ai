@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { describe, expect, test } from 'vitest';
 import { App } from '../App';
 import { ALLOCATION_ERRORS, PENDING_ANSWER_ERRORS, STALE_STEP_NOTICE } from '../contract/actions';
-import { ALLOCATION_GIVE_UP_NOTE } from '../mock/fixtures/inventory';
+import { ALLOCATION_GIVE_UP_NOTE, GIVEN_UP_TITLE, givenUpNote } from '../mock/fixtures/inventory';
 import { createMockAdapter } from '../mock/mock-adapter';
 import type { Fault, MockOptions } from '../mock/options';
 import type { TaskStage } from '../contract/stage';
@@ -222,7 +222,7 @@ describe('逐段分摊与处理人', () => {
     expect((await adapter.getSnapshot('T1')).pendingItems[0]?.status).toBe('open');
   });
 
-  test('「这张票我认不出」也能继续：处理前后都显示后果说明，这张发票连同行程单移出本次报销', async () => {
+  test('「这张票我认不出」照内核留下阻塞项：什么都不悄悄移走；这一项不能答复，排除这张发票连同行程单后才继续', async () => {
     const adapter = renderPending('pending', null, { allocationRequired: true });
     await screen.findByText('对照原件补填或作出选择。还剩 4 个。');
     expect(within(detail()).getByTestId('give-up-note').textContent).toBe(ALLOCATION_GIVE_UP_NOTE);
@@ -230,22 +230,43 @@ describe('逐段分摊与处理人', () => {
     expect(await within(detail()).findByRole('heading', { name: '补填起点与终点' })).toBeTruthy();
     fireEvent.click(itemButton(ALLOCATION_TITLE));
     expect(within(detail()).getByTestId('give-up-note').textContent).toBe(`你选了「这张票我认不出」。${ALLOCATION_GIVE_UP_NOTE}`);
+    expect(itemButton(GIVEN_UP_TITLE).textContent).toContain('要你处理');
 
     let snapshot = await adapter.getSnapshot('T1');
-    expect(snapshot.materials.filter((material) => material.status === 'excluded').map((material) => material.materialId)).toEqual(['m03', 'm04']);
-    expect(snapshot.events.map((event) => event.no)).toEqual([1, 2, 3, 4, 5, 6]);
-    // 其余三项照常处理，流程继续：明细剩 6 行。
+    // 没有材料被排除，费用事件也还在；多出一条阻塞的 given_up 项。
+    expect(snapshot.materials.filter((material) => material.status === 'excluded')).toEqual([]);
+    expect(snapshot.events).toHaveLength(9);
+    expect(snapshot.pendingItems.map((item) => [item.itemId, item.kind, item.status])).toEqual([
+      ['p1', 'allocation', 'resolved'],
+      ['p2', 'form', 'open'],
+      ['p3', 'form', 'open'],
+      ['p4', 'choice', 'open'],
+      ['p5', 'given_up', 'open'],
+    ]);
+    // 服务端不接受直接答复这一项。
+    const refused = await adapter.answerPendingItem('T1', 'p5', { choice: 'exclude' }, snapshot.step.stepToken);
+    expect(refused).toMatchObject({ ok: false, error: { message: PENDING_ANSWER_ERRORS.notAnswerable } });
+
+    // 其余三项处理完，仍停在待确认项：还剩 1 个，进不了项目归属。
     const answers = [{ origin: '张江高科', destination: '漕河泾开发区' }, { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' }, { choice: 'exclude' }];
     for (const [index, answer] of answers.entries()) {
       snapshot = await adapter.getSnapshot('T1');
       const outcome = await adapter.answerPendingItem('T1', `p${index + 2}`, answer, snapshot.step.stepToken);
       expect(outcome.ok).toBe(true);
     }
+    expect((await adapter.getSnapshot('T1')).stage).toBe('pending');
+    expect(await screen.findByText('对照原件补填或作出选择。还剩 1 个。')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: '进入项目归属' })).toBeNull();
+
+    fireEvent.click(itemButton(GIVEN_UP_TITLE));
+    expect(within(detail()).getByText(givenUpNote(3))).toBeTruthy();
+    fireEvent.click(within(detail()).getByRole('button', { name: '排除这张发票及其行程单' }));
+    expect(await screen.findByRole('heading', { name: '没有待确认项了' })).toBeTruthy();
     snapshot = await adapter.getSnapshot('T1');
+    expect(snapshot.materials.filter((material) => material.status === 'excluded').map((material) => material.materialId)).toEqual(['m03', 'm04', 'm11']);
     expect(snapshot.stage).toBe('project');
     expect(snapshot.lines).toHaveLength(6);
     expect(snapshot.confirmation.grossTotal).toBe('3903.40');
-    expect(await screen.findByRole('heading', { name: '没有待确认项了' })).toBeTruthy();
     expect(screen.getByText(ALLOCATION_GIVE_UP_NOTE)).toBeTruthy();
   });
 

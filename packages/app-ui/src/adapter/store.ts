@@ -116,18 +116,35 @@ export class AppStore {
   // 适配器抛错也按失败返回，原因交给页面就地显示。
   async startup(run: (adapter: AppAdapter) => Promise<StartupOutcome>): Promise<StartupOutcome> {
     let outcome: StartupOutcome;
+    let data: TaskList | null;
+    // 校验也放在 try 里：列表形状不对时按失败返回，调用方的 busy 照常复位，不会卡在「处理中」。
     try {
       outcome = await run(this.adapter);
+      const raw = outcome.taskList;
+      data = raw && this.options.validate ? TaskListSchema.parse(raw) : raw;
     } catch (error) {
       return { ok: false, error: { code: 'adapter_error', message: describe(error) }, taskList: null };
     }
-    const raw = outcome.taskList;
-    if (raw) {
-      const data = this.options.validate ? TaskListSchema.parse(raw) : raw;
-      this.setState({ taskList: { status: 'ready', data, error: null, offline: false } });
-    }
+    if (data) this.setState({ taskList: { status: 'ready', data, error: null, offline: false } });
     // 项目簿按登录身份分簿：登录或登记身份之后，已经读过的项目簿要按新身份重读。
     if (outcome.ok && this.state.projectBook.status !== 'idle') void this.loadProjectBook();
+    return outcome;
+  }
+
+  // 作废一个任务：成功后除了换上新列表，还丢掉这个任务缓存的快照（深链接再打开会重新向服务端要，而不是显示旧数据）。
+  async abandonTask(taskId: string): Promise<StartupOutcome> {
+    const outcome = await this.startup((adapter) => adapter.abandonTask(taskId));
+    if (outcome.ok) {
+      const { [taskId]: _dropped, ...rest } = this.state.tasks;
+      this.setState({ tasks: rest });
+    }
+    return outcome;
+  }
+
+  // 完全重置：成功后清掉所有缓存的任务快照与项目簿（项目簿回到未加载，下次打开时重读）。
+  async resetAll(): Promise<StartupOutcome> {
+    const outcome = await this.startup((adapter) => adapter.resetAll());
+    if (outcome.ok) this.setState({ tasks: {}, projectBook: { status: 'idle', data: null, error: null } });
     return outcome;
   }
 
@@ -146,16 +163,15 @@ export class AppStore {
   // 项目簿维护动作：结果里的项目簿（或失败时附带的项目簿）直接替换当前项目簿。适配器抛错也按失败返回。
   async projectBookAction(run: (adapter: AppAdapter) => Promise<ProjectBookOutcome>): Promise<ProjectBookOutcome> {
     let outcome: ProjectBookOutcome;
+    let data: ProjectBook | null | undefined;
     try {
       outcome = await run(this.adapter);
+      const raw = outcome.ok ? outcome.result.book : outcome.book;
+      data = raw && this.options.validate ? ProjectBookSchema.parse(raw) : raw;
     } catch (error) {
       return { ok: false, error: { code: 'adapter_error', message: describe(error) }, book: null };
     }
-    const raw = outcome.ok ? outcome.result.book : outcome.book;
-    if (raw) {
-      const data = this.options.validate ? ProjectBookSchema.parse(raw) : raw;
-      this.setState({ projectBook: { status: 'ready', data, error: null } });
-    }
+    if (data) this.setState({ projectBook: { status: 'ready', data, error: null } });
     return outcome;
   }
 
