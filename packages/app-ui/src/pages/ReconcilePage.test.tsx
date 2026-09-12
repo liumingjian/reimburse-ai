@@ -21,6 +21,11 @@ describe('ERP 对账', () => {
     expect(screen.getByText('ERP 中存在草稿 BX20260718-0142，5 行明细中 4 行一致，1 行金额不一致。')).toBeTruthy();
     expect(screen.getByRole('button', { name: '重新对账' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '转人工' })).toBeTruthy();
+    // 服务端建议的处置（转人工）用选中样式标出，不是主按钮；整页至多一个主按钮。
+    expect(screen.getByRole('button', { name: '转人工' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: '重新对账' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', { name: '转人工' }).className).not.toContain('btn-primary');
+    expect(document.querySelectorAll('.btn-primary').length).toBeLessThanOrEqual(1);
 
     fireEvent.click(screen.getByRole('button', { name: '重新对账' }));
     expect(await screen.findByText(/已重新对账（第 1 次）/)).toBeTruthy();
@@ -42,6 +47,9 @@ describe('ERP 对账', () => {
     const state = screen.getByRole('region', { name: '当前对账状态' });
     expect(within(state).getByText('未知')).toBeTruthy();
     expect(within(state).getByText('尚未读到草稿')).toBeTruthy();
+    // 保存步中止建议原地等待：重新对账是选中样式。
+    expect(screen.getByRole('button', { name: '重新对账' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: '转人工' }).getAttribute('aria-pressed')).toBe('false');
 
     fireEvent.click(screen.getByRole('button', { name: '重新对账' }));
     expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();

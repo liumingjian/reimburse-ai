@@ -21,6 +21,7 @@ describe('契约 schema', () => {
     expect(parsed.tasks.map((task) => task.stage)).toEqual(['done', 'reconcile', 'done']);
     expect(parsed.tasks[0]?.grossTotal).toBe('3972.59');
     expect(parsed.tasks[0]?.erpDraftNo).toBe('BX20260911-0173');
+    expect(parsed.tasks.map((task) => task.erpOutcome)).toEqual(['none', 'none', 'none']);
   });
 
   test('上传批次里的材料与逐文件结果通过 schema；已接收的文件带 64 位内容哈希', () => {

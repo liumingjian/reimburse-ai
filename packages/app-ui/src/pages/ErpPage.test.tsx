@@ -74,33 +74,51 @@ describe('ERP 填报', () => {
     expect(await screen.findByRole('link', { name: '查看完成结果' })).toBeTruthy();
   });
 
-  test('erp-write-aborted：保存步中止，提示已停止并给出对账入口', async () => {
+  test('erp-write-aborted：保存步中止后自动进入对账页（替换历史记录），显示中止原因与对账入口', async () => {
     renderErp('erp-write-aborted');
     fireEvent.click(await startAndReachLogin());
-    expect(await screen.findByRole('link', { name: '进入对账' })).toBeTruthy();
-    expect(stepItem('保存').textContent).toContain('已中止');
-    expect(stepItem('严格回读').textContent).not.toContain('完成');
-    expect(screen.getByRole('alert').textContent).toContain('ERP 填报已停止');
+    expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
+    expect(window.location.hash).toBe('#/task/T1/reconcile');
+    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/保存草稿时 ERP 没有在限定时间内返回结果/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: '重新对账' })).toBeTruthy();
   });
 
-  test('readback-mismatch：不一致的行高亮（danger）并出现「转人工」，转人工后显示已转人工', async () => {
-    renderErp('readback-mismatch');
-    fireEvent.click(await startAndReachLogin());
-    expect(await screen.findByRole('link', { name: '进入对账' })).toBeTruthy();
-    expect(stepItem('严格回读').textContent).toContain('已中止');
+  test('直接打开已中止任务的 ERP 填报页不跳转，保留「进入对账」入口', async () => {
+    window.location.hash = '#/task/T1/erp';
+    render(<App adapter={createMockAdapter({ seed: 'reconcile', fault: null })} />);
+    expect(await screen.findByRole('heading', { name: 'ERP 填报' })).toBeTruthy();
+    expect(stepItem('保存').textContent).toContain('已中止');
+    expect(screen.getByRole('alert').textContent).toContain('ERP 填报已停止');
+    expect(screen.getByRole('link', { name: '进入对账' }).getAttribute('href')).toBe('#/task/T1/reconcile');
+  });
 
-    window.location.hash = '#/task/T1/reconcile';
-    expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
+  test('readback-mismatch：写入停下后进入完成页，差异行高亮（danger）、没有完成态；转人工（带 stepToken）后显示已转人工，任务列表也是', async () => {
+    const adapter = renderErp('readback-mismatch');
+    const handOff = vi.spyOn(adapter, 'handOff');
+    fireEvent.click(await startAndReachLogin());
+    expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();
+    expect(window.location.hash).toBe('#/task/T1/done');
+    expect(screen.getByTestId('draft-no').textContent).toBe('BX20260911-0173');
     const bad = screen.getByTestId('readback-8');
     expect(bad.className).toContain('row-err');
     expect(within(bad).getByText('不一致')).toBeTruthy();
     expect(within(bad).getByText('74.00')).toBeTruthy();
     expect(screen.getByTestId('readback-7').className).not.toContain('row-err');
+    expect(screen.queryByText('明细 9/9 一致')).toBeNull();
+    expect(screen.getByText('明细 8/9 一致，1 行不一致')).toBeTruthy();
+    expect(screen.queryByText(/^已完成：草稿/)).toBeNull();
+    expect(screen.getByRole('alert').textContent).toContain('这份草稿不算完成');
     expect(screen.getByText('ERP 中存在草稿 BX20260911-0173，9 行明细中 8 行一致，1 行金额不一致。')).toBeTruthy();
 
+    const { stepToken } = (await adapter.getSnapshot('T1')).step;
     fireEvent.click(screen.getByRole('button', { name: '转人工' }));
     expect(await screen.findByText(/已转人工处理：应用不再写入 ERP/)).toBeTruthy();
-    expect(screen.queryByRole('region', { name: '处置' })).toBeNull();
-    expect(screen.getByTestId('reconcile-status').textContent).toBe('已转人工');
+    expect(handOff).toHaveBeenCalledWith('T1', stepToken);
+    expect(screen.queryByRole('button', { name: '转人工' })).toBeNull();
+    expect(screen.getByText('已转人工')).toBeTruthy();
+
+    window.location.hash = '#/tasks';
+    const row = await screen.findByRole('row', { name: /2026-08 上海出差（产品评审）/ });
+    expect(await within(row).findByText('已转人工')).toBeTruthy();
   });
 });

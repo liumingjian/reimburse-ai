@@ -1,4 +1,4 @@
-import { PENDING_CHOICE_KEY, type ExpenseCategory, type ExpenseEvent, type FieldCandidate, type Line, type Material, type PendingItem } from '../../contract/snapshot';
+import { PENDING_CHOICE_KEY, type ExpenseCategory, type ExpenseEvent, type FieldCandidate, type Line, type Material, type PendingItem, type TaskSnapshot } from '../../contract/snapshot';
 import type { PendingAnswer } from '../../contract/actions';
 
 // 盘点结果夹具：11 份材料的识别结果、9 个费用事件、3 个待确认项，以及答复后的候选明细。
@@ -516,4 +516,32 @@ export function buildLines(result: InventoryResult): Line[] {
       acceptsPaymentScreenshot: event.category.code === 'accommodation',
     };
   });
+}
+
+// 还没处理的待确认项个数：只有 mock 服务端数，页面读快照里的 inventory.summary.openPendingItemCount。
+export function openPendingItemCount(items: readonly PendingItem[]): number {
+  return items.filter((item) => item.status === 'open').length;
+}
+
+// 服务端投影：盘点结束后，按当前材料、费用事件与待确认项写出盘点计数与「未归入费用事件」的材料；未结束时清空。
+// mock 每次存快照前都调用一次，保证投影与材料状态同步（答复待确认项会改变材料状态）。
+export function withInventoryProjection(snapshot: TaskSnapshot): TaskSnapshot {
+  const { inventory, materials, events, pendingItems } = snapshot;
+  if (inventory.status !== 'done') {
+    inventory.summary = null;
+    inventory.ungroupedMaterialIds = [];
+    return snapshot;
+  }
+  const grouped = new Set(events.flatMap((event) => [event.voucherMaterialId, ...event.referenceMaterialIds]));
+  const count = (test: (material: Material) => boolean) => materials.filter(test).length;
+  inventory.summary = {
+    materialCount: materials.length,
+    okCount: count((material) => material.status === 'ok'),
+    pendingMaterialCount: count((material) => material.status === 'pending'),
+    voucherCount: count((material) => material.role === 'primary_voucher'),
+    referenceCount: count((material) => material.role === 'reference'),
+    openPendingItemCount: openPendingItemCount(pendingItems),
+  };
+  inventory.ungroupedMaterialIds = materials.filter((material) => !grouped.has(material.materialId)).map((material) => material.materialId);
+  return snapshot;
 }

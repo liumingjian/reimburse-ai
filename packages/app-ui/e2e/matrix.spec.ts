@@ -80,14 +80,15 @@ const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = 
   },
   'erp-write-aborted': async (page) => {
     await startErp(page, 'erp-write-aborted');
-    await expect(page.getByText(/ERP 填报已停止/)).toBeVisible();
-    await expect(page.getByRole('link', { name: '进入对账' })).toBeVisible();
+    await expect(page).toHaveURL(/#\/task\/T1\/reconcile$/);
+    await expect(page.getByRole('region', { name: '中止原因' })).toContainText('保存草稿时 ERP 没有在限定时间内返回结果');
   },
   'readback-mismatch': async (page) => {
     await startErp(page, 'readback-mismatch');
-    await page.getByRole('link', { name: '进入对账' }).click();
+    await expect(page).toHaveURL(/#\/task\/T1\/done$/);
     await expect(page.getByTestId('readback-8')).toHaveClass(/row-err/);
     await expect(page.getByTestId('readback-8')).toContainText('74.00');
+    await expect(page.getByRole('button', { name: '转人工' })).toBeVisible();
   },
   'service-disconnected': async (page) => {
     await page.goto(open('?fault=service-disconnected', '#/task/T1/upload'));

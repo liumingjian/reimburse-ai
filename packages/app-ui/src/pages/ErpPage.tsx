@@ -1,9 +1,9 @@
-import { useState } from 'react';
-import { useAppStore } from '../adapter/context';
-import { ActionError, failureMessage } from '../shell/ActionError';
-import type { ActionOutcome, AppAdapter } from '../contract/adapter';
+import { useEffect, useRef } from 'react';
 import type { ErpStep, TaskSnapshot } from '../contract/snapshot';
-import { taskHash } from '../router';
+import { STAGE_DEFAULT_PAGE } from '../contract/stage';
+import { navigate, taskHash } from '../router';
+import { ActionError } from '../shell/ActionError';
+import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 
 // ERP 填报页：按服务端给出的步骤顺序显示进度。页面只做两件事：「开始填报」与「我已登录，继续」，都回传当前 stepToken。
@@ -18,20 +18,19 @@ const STATUS_LABEL: Readonly<Record<ErpStep['status'], string>> = {
 };
 
 export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
-  const store = useAppStore();
   const taskId = snapshot.task.taskId;
   const copy = PAGE_COPY.erp;
-  const { erp, step } = snapshot;
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { erp, step, stage } = snapshot;
+  const { busy, error, run } = useAction(taskId);
 
-  const run = async (action: (adapter: AppAdapter) => Promise<ActionOutcome>) => {
-    setBusy(true);
-    setError(null);
-    const outcome = await store.act(taskId, action);
-    setBusy(false);
-    setError(failureMessage(outcome));
-  };
+  // 写入在本页停下时跟随服务端给出的阶段换页（替换历史记录）：保存步中止 → 对账页，严格回读不一致 → 完成页。
+  // 这只是按服务端阶段跟随路由，不是页面自己判定；直接打开一个已经停下的任务的本页不跳转，底部链接作为后备入口保留。
+  const previousStatus = useRef(erp.status);
+  useEffect(() => {
+    const was = previousStatus.current;
+    previousStatus.current = erp.status;
+    if (was !== 'aborted' && erp.status === 'aborted' && stage !== 'erp') navigate(taskHash(taskId, STAGE_DEFAULT_PAGE[stage]), true);
+  }, [erp.status, stage, taskId]);
 
   const start = () => run((adapter) => adapter.startErpWrite(taskId, step.stepToken));
   const confirmLogin = () => run((adapter) => adapter.confirmLogin(taskId, step.stepToken));
@@ -110,9 +109,13 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
             <div className="notice notice-err" role="alert">
               ERP 填报已停止：{erp.abortReason}
             </div>
-            {snapshot.stage === 'reconcile' ? (
+            {stage === 'reconcile' ? (
               <a className="btn btn-primary" href={taskHash(taskId, 'reconcile')}>
                 进入对账
+              </a>
+            ) : stage === 'done' ? (
+              <a className="btn btn-primary" href={taskHash(taskId, 'done')}>
+                查看回读结果
               </a>
             ) : null}
           </>

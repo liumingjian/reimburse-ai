@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from 'react';
-import { useAppStore } from '../adapter/context';
-import { STALE_STEP_CODE, validatePendingAnswer, type PendingAnswer } from '../contract/actions';
+import { validatePendingAnswer, type PendingAnswer } from '../contract/actions';
 import { PENDING_CHOICE_KEY, type Material, type PendingItem, type TaskSnapshot } from '../contract/snapshot';
 import { taskHash } from '../router';
+import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 
 // 待确认项页：左侧清单、右侧详情（原件预览 + 材料字段 + 补填表单或选择）。
 // 所有答复经 answerPendingItem 携带 stepToken 提交；页面只做格式校验，采用与否由服务端决定。
+// 选择类待确认项的已选项用选中样式（aria-pressed），不用主按钮。
 
 function Preview({ material }: { material: Material | undefined }) {
   if (!material || !material.previewUrl) {
@@ -130,7 +131,8 @@ function ChoiceForm({ item, onSubmit, state }: { item: PendingItem; onSubmit: (a
         {item.choices.map((choice) => (
           <button
             key={choice.key}
-            className={chosen === choice.key ? 'btn btn-primary' : 'btn btn-secondary'}
+            className="btn btn-secondary btn-toggle"
+            aria-pressed={chosen === choice.key}
             type="button"
             disabled={resolved || state.busy}
             onClick={() => void onSubmit({ [PENDING_CHOICE_KEY]: choice.key })}
@@ -151,34 +153,29 @@ function ChoiceForm({ item, onSubmit, state }: { item: PendingItem; onSubmit: (a
 }
 
 export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
-  const store = useAppStore();
   const taskId = snapshot.task.taskId;
   const copy = PAGE_COPY.pending;
   const items = snapshot.pendingItems;
-  const open = items.filter((item) => item.status === 'open');
+  // 还剩几个由服务端给出（inventory.summary），页面不自己数。
+  const remaining = snapshot.inventory.summary?.openPendingItemCount ?? 0;
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [state, setState] = useState<SubmitState>({ busy: false, error: null });
+  const { busy, error, run } = useAction(taskId);
+  const state: SubmitState = { busy, error };
 
   // 默认选中第一个未处理项；答复被采用后跳到下一个未处理项（见 submit）。
-  const selected = items.find((item) => item.itemId === selectedId) ?? open[0] ?? items[0];
+  const selected = items.find((item) => item.itemId === selectedId) ?? items.find((item) => item.status === 'open') ?? items[0];
 
   const materialOf = (item: PendingItem | undefined) => (item ? snapshot.materials.find((material) => material.materialId === item.materialId) : undefined);
 
   const submit = async (item: PendingItem, answer: PendingAnswer) => {
-    setState({ busy: true, error: null });
-    const outcome = await store.act(taskId, (adapter) => adapter.answerPendingItem(taskId, item.itemId, answer, snapshot.step.stepToken));
+    const outcome = await run((adapter) => adapter.answerPendingItem(taskId, item.itemId, answer, snapshot.step.stepToken));
     if (outcome.ok) {
       const next = outcome.snapshot.pendingItems.find((candidate) => candidate.status === 'open');
       setSelectedId(next?.itemId ?? null);
-      setState({ busy: false, error: null });
-    } else if (outcome.error.code === STALE_STEP_CODE) {
-      setState({ busy: false, error: null });
-    } else {
-      setState({ busy: false, error: outcome.error.message });
     }
   };
 
-  if (items.length === 0 || open.length === 0) {
+  if (items.length === 0 || remaining === 0) {
     return (
       <>
         <div className="page-head">
@@ -216,7 +213,7 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
         <div>
           <h1>{copy.title}</h1>
           <p className="lead">
-            {copy.lead}还剩 {open.length} 个。
+            {copy.lead}还剩 {remaining} 个。
           </p>
         </div>
       </div>

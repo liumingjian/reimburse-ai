@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { useAppStore } from '../adapter/context';
 import type { PlacementSlot } from '../contract/actions';
-import type { ActionOutcome } from '../contract/adapter';
-import { ActionError, failureMessage } from '../shell/ActionError';
+import { ActionError } from '../shell/ActionError';
+import { useAction } from '../shell/useAction';
 import type { Corners, Placement, PrintPage as PrintSheetPage, TaskSnapshot } from '../contract/snapshot';
 import { taskHash } from '../router';
 import { CropEditor, formatCorners } from './CropEditor';
@@ -18,20 +17,13 @@ const SLOTS: readonly PlacementSlot[] = ['top', 'bottom'];
 type Editing = { pageId: string; slot: PlacementSlot };
 
 export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
-  const store = useAppStore();
   const taskId = snapshot.task.taskId;
   const copy = PAGE_COPY.print;
   const sheet = snapshot.printSheet;
   const confirmed = snapshot.confirmation.status === 'confirmed';
   const generated = sheet.status === 'generated';
-  const [busy, setBusy] = useState(false);
   // 失败原因显示在触发它的按钮旁：generate（页头下载按钮旁）、<pageId>-<slot>（该放置的按钮旁）、crop（裁剪编辑器旁）。
-  const [failure, setFailure] = useState<{ key: string; message: string } | null>(null);
-  const fail = (key: string, outcome: ActionOutcome) => {
-    const message = failureMessage(outcome);
-    setFailure(message ? { key, message } : null);
-  };
-  const errorAt = (key: string) => (failure?.key === key ? failure.message : null);
+  const { busy, run, errorAt } = useAction(taskId);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [receipt, setReceipt] = useState<string | null>(null);
   const requested = useRef(false);
@@ -47,11 +39,10 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
   useEffect(() => {
     if (!confirmed || generated || requested.current) return;
     requested.current = true;
-    void store.act(taskId, (adapter) => adapter.generatePrintSheet(taskId)).then((outcome) => {
+    void run((adapter) => adapter.generatePrintSheet(taskId), 'generate').then(() => {
       requested.current = false;
-      fail('generate', outcome);
     });
-  }, [store, taskId, confirmed, generated]);
+  }, [run, taskId, confirmed, generated]);
 
   if (!confirmed) {
     return (
@@ -69,23 +60,12 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
     );
   }
 
-  const rotate = async (page: PrintSheetPage, slot: PlacementSlot, placement: Placement) => {
-    setBusy(true);
-    setFailure(null);
-    const outcome = await store.act(taskId, (adapter) => adapter.rotatePlacement(taskId, page.pageId, slot, !placement.rotate));
-    setBusy(false);
-    fail(`${page.pageId}-${slot}`, outcome);
-  };
+  const rotate = (page: PrintSheetPage, slot: PlacementSlot, placement: Placement) =>
+    run((adapter) => adapter.rotatePlacement(taskId, page.pageId, slot, !placement.rotate), `${page.pageId}-${slot}`);
 
   const submitCrop = async (target: Editing, corners: Corners) => {
-    setBusy(true);
-    setFailure(null);
-    const outcome = await store.act(taskId, (adapter) => adapter.cropPlacement(taskId, target.pageId, target.slot, corners));
-    setBusy(false);
-    if (!outcome.ok) {
-      fail('crop', outcome);
-      return;
-    }
+    const outcome = await run((adapter) => adapter.cropPlacement(taskId, target.pageId, target.slot, corners), 'crop');
+    if (!outcome.ok) return;
     // 回执显示服务端记下的坐标（回显），而不是本地草稿。
     const echoed = outcome.snapshot.printSheet.pages.find((page) => page.pageId === target.pageId)?.[target.slot]?.corners;
     setReceipt(echoed ? `已提交裁剪：${formatCorners(echoed)}` : '已提交裁剪。');

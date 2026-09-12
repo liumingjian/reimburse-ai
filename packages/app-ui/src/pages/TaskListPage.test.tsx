@@ -1,7 +1,8 @@
 import { render, screen, within } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { App } from '../App';
 import { createMockAdapter } from '../mock/mock-adapter';
+import { SERVICE_DOWN_NOTICE } from '../shell/AppShell';
 
 function renderApp(hash: string, seed: Parameters<typeof createMockAdapter>[0]['seed'] = null) {
   window.location.hash = hash;
@@ -44,6 +45,39 @@ describe('任务列表', () => {
     expect(within(t1).getByText('已完成')).toBeTruthy();
     expect(within(t1).getByText('3972.59')).toBeTruthy();
     expect(within(t1).getByText('BX20260911-0173')).toBeTruthy();
+  });
+
+  test('转人工的任务：徽标显示已转人工（服务端给出的列表字段），而不是对账中', async () => {
+    const adapter = createMockAdapter({ seed: null, fault: null });
+    const t2 = await adapter.getSnapshot('T2');
+    expect((await adapter.handOff('T2', t2.step.stepToken)).ok).toBe(true);
+    window.location.hash = '#/tasks';
+    render(<App adapter={adapter} />);
+    const row = await rowOf('2026-07 深圳客户拜访');
+    expect(within(row).getByText('已转人工').className).toContain('badge-warn');
+    expect(within(row).queryByText('对账中')).toBeNull();
+  });
+
+  test('严格回读不一致停在完成页的任务：徽标显示回读不一致，并给出查看结果入口', async () => {
+    const adapter = createMockAdapter({ seed: 'erp', fault: 'readback-mismatch', erpStepMs: 1, erpLoginAutoMs: 1 });
+    const t1 = await adapter.getSnapshot('T1');
+    expect((await adapter.startErpWrite('T1', t1.step.stepToken)).ok).toBe(true);
+    await vi.waitFor(async () => expect((await adapter.getSnapshot('T1')).stage).toBe('done'));
+    window.location.hash = '#/tasks';
+    render(<App adapter={adapter} />);
+    const row = await rowOf('2026-08 上海出差（产品评审）');
+    expect(within(row).getByText('回读不一致').className).toContain('badge-err');
+    expect(within(row).queryByText('已完成')).toBeNull();
+    expect(within(row).getByRole('link', { name: '查看结果 →' }).getAttribute('href')).toBe('#/task/T1/done');
+  });
+
+  test('service-disconnected：任务列表读不到时显示全页横幅并自动重试，恢复后横幅消失、列表出现', async () => {
+    window.location.hash = '#/tasks';
+    render(<App adapter={createMockAdapter({ seed: null, fault: 'service-disconnected', reconnectAfterMs: 300 })} />);
+    expect((await screen.findByRole('alert')).textContent).toBe(SERVICE_DOWN_NOTICE);
+    expect(screen.queryByText('2026-08 上海出差（产品评审）')).toBeNull();
+    expect(await screen.findByText('2026-08 上海出差（产品评审）', {}, { timeout: 4000 })).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   test('未知路径回到任务列表', async () => {

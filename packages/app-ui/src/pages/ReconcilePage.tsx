@@ -1,14 +1,14 @@
-import { useState } from 'react';
-import { useAppStore } from '../adapter/context';
-import { ActionError, failureMessage } from '../shell/ActionError';
 import type { ActionOutcome, AppAdapter } from '../contract/adapter';
 import type { Reconcile, TaskSnapshot } from '../contract/snapshot';
 import { TASKS_HASH, navigate, taskHash } from '../router';
+import { ActionError } from '../shell/ActionError';
+import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 import { ReadbackTable } from './ReadbackTable';
 
-// ERP 对账页：写入中止或严格回读不一致后停在这里。显示中止原因、当前对账状态（对账中断点、建议处置、草稿号）与逐行比对，
+// ERP 对账页：写入中止后停在这里。显示中止原因、当前对账状态（对账中断点、建议处置、草稿号）与逐行比对，
 // 处置只有两种：重新对账（只读 ERP 再判定一次）或转人工。结论全部来自服务端；页面不重试写入、不改 ERP。
+// 服务端建议的处置（actionCode）用选中样式标出，不用主按钮。
 
 const STATUS_LABEL: Readonly<Record<Reconcile['status'], string>> = {
   none: '无',
@@ -18,22 +18,16 @@ const STATUS_LABEL: Readonly<Record<Reconcile['status'], string>> = {
 };
 
 export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
-  const store = useAppStore();
   const taskId = snapshot.task.taskId;
   const copy = PAGE_COPY.reconcile;
   const { erp, reconcile, step } = snapshot;
   const handedOff = reconcile.status === 'handed_off';
   const canAct = step.kind === 'reconcile';
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, run } = useAction(taskId);
 
-  const run = async (action: (adapter: AppAdapter) => Promise<ActionOutcome>) => {
-    setBusy(true);
-    setError(null);
-    const outcome = await store.act(taskId, action);
-    setBusy(false);
+  const act = async (action: (adapter: AppAdapter) => Promise<ActionOutcome>) => {
+    const outcome = await run(action);
     if (outcome.ok && outcome.snapshot.stage === 'done') navigate(taskHash(taskId, 'done'));
-    else setError(failureMessage(outcome));
   };
 
   return (
@@ -108,10 +102,11 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
               <h3>原地等待</h3>
               <p>你在 ERP 中查看或修正后，点重新对账。应用只读 ERP，不写入。</p>
               <button
-                className={reconcile.action === '原地等待' ? 'btn btn-primary' : 'btn btn-secondary'}
+                className="btn btn-secondary btn-toggle"
                 type="button"
+                aria-pressed={reconcile.actionCode === 'wait'}
                 disabled={busy || !canAct}
-                onClick={() => void run((adapter) => adapter.reconcile(taskId, step.stepToken))}
+                onClick={() => void act((adapter) => adapter.reconcile(taskId, step.stepToken))}
               >
                 重新对账
               </button>
@@ -120,10 +115,11 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
               <h3>转人工</h3>
               <p>任务标记为人工处理，保留对账记录，之后不再自动写入 ERP。</p>
               <button
-                className={reconcile.action === '转人工' ? 'btn btn-primary' : 'btn btn-secondary'}
+                className="btn btn-secondary btn-toggle"
                 type="button"
+                aria-pressed={reconcile.actionCode === 'hand_off'}
                 disabled={busy || !canAct}
-                onClick={() => void run((adapter) => adapter.handOff(taskId, step.stepToken))}
+                onClick={() => void act((adapter) => adapter.handOff(taskId, step.stepToken))}
               >
                 转人工
               </button>

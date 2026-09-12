@@ -58,3 +58,24 @@ test('页面里没有 undefined、NaN 或长破折号', async ({ page }) => {
     }
   }
 });
+
+test('service-disconnected：任务列表页显示全页横幅并自动重试，恢复后横幅消失、列表出现', async ({ page }, testInfo) => {
+  await page.goto(open('?fault=service-disconnected', '#/tasks'));
+  const banner = page.getByRole('alert').filter({ hasText: '本地服务未运行，请在终端重新执行 baox' });
+  const t1 = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ });
+  await expect(banner).toBeVisible();
+  await expect(t1).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('tasks-disconnected.png'), fullPage: true });
+  await expect(t1).toBeVisible({ timeout: 10_000 });
+  await expect(banner).toHaveCount(0);
+});
+
+test('转人工后回到任务列表，该任务的徽标显示已转人工', async ({ page }) => {
+  await page.goto(open('', '#/task/T2/reconcile'));
+  await page.getByRole('button', { name: '转人工' }).click();
+  await expect(page.getByTestId('reconcile-status')).toHaveText('已转人工');
+  await page.getByRole('link', { name: '返回任务列表' }).click();
+  const t2 = page.getByRole('row', { name: /2026-07 深圳客户拜访/ });
+  await expect(t2.getByText('已转人工')).toBeVisible();
+  await expect(t2.getByText('对账中')).toHaveCount(0);
+});

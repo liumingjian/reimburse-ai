@@ -124,6 +124,12 @@ describe('待确认项', () => {
     fireEvent.click(within(detail()).getByRole('button', { name: '自行手工处理' }));
     await screen.findByText('对照原件补填或作出选择。还剩 2 个。');
     expect(itemButton('不支持的材料类型').textContent).toContain('已处理');
+    // 回看已处理的选择：已选项是选中样式（aria-pressed），不是主按钮。
+    fireEvent.click(itemButton('不支持的材料类型'));
+    const manual = within(detail()).getByRole('button', { name: '自行手工处理' });
+    expect(manual.getAttribute('aria-pressed')).toBe('true');
+    expect(manual.className).not.toContain('btn-primary');
+    expect(within(detail()).getByRole('button', { name: '排除此材料' }).getAttribute('aria-pressed')).toBe('false');
   });
 
   test('stepToken 过期：答复被拒，页面换成最新快照并提示任务已在别处推进', async () => {

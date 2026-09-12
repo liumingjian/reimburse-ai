@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 import { STALE_STEP_CODE, STALE_STEP_NOTICE } from '../contract/actions';
-import type { AdapterEvent, AppAdapter } from '../contract/adapter';
+import { ServiceUnavailableError, type AdapterEvent, type AppAdapter } from '../contract/adapter';
 import type { TaskSnapshot } from '../contract/snapshot';
 import { t1Snapshot } from '../mock/fixtures/tasks';
 import { AppStore } from './store';
@@ -36,6 +36,39 @@ async function opened(sequence: TaskSnapshot[]) {
 }
 
 describe('AppStore', () => {
+  test('任务列表连接类失败：标记 offline（全页横幅）并按退避自动重试，恢复后列表就绪、offline 清除', async () => {
+    let calls = 0;
+    const adapter = {
+      listTasks: async () => {
+        calls += 1;
+        if (calls < 3) throw new ServiceUnavailableError();
+        return { employee: null, tasks: [] };
+      },
+    } as unknown as AppAdapter;
+    const store = new AppStore(adapter, { validate: true, listRetryDelay: () => 5 });
+    await store.loadTaskList();
+    expect(store.getState().taskList.offline).toBe(true);
+    expect(store.getState().taskList.error).toBeNull();
+    await vi.waitFor(() => expect(store.getState().taskList.status).toBe('ready'));
+    expect(store.getState().taskList.offline).toBe(false);
+    expect(calls).toBe(3);
+  });
+
+  test('任务列表其他失败：显示加载失败，不标记 offline、不自动重试', async () => {
+    let calls = 0;
+    const adapter = {
+      listTasks: async () => {
+        calls += 1;
+        throw new Error('任务列表的格式与契约不符');
+      },
+    } as unknown as AppAdapter;
+    const store = new AppStore(adapter, { validate: true, listRetryDelay: () => 1 });
+    await store.loadTaskList();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(store.getState().taskList).toMatchObject({ status: 'error', offline: false, error: '任务列表的格式与契约不符' });
+    expect(calls).toBe(1);
+  });
+
   test('stepToken 过期（409）带最新快照：换上最新快照并留下提示', async () => {
     const { store } = await opened([t1Snapshot('review')]);
     const outcome = await store.act('T1', async () => ({ ok: false, error: { code: STALE_STEP_CODE, message: STALE_STEP_NOTICE }, snapshot: t1Snapshot('actions') }));

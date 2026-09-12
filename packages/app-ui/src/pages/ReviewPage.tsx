@@ -1,11 +1,10 @@
-import { useCallback, useRef, useState, type ChangeEvent } from 'react';
-import { useAppStore } from '../adapter/context';
-import { STALE_STEP_CODE } from '../contract/actions';
+import { useRef, type ChangeEvent } from 'react';
 import { PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE, type Line, type Material, type PaymentScreenshot, type TaskSnapshot } from '../contract/snapshot';
 import { formatDateTime } from '../format';
 import { navigate, taskHash } from '../router';
-import { ActionError, failureMessage } from '../shell/ActionError';
-import { ConfirmDialog, REOPEN_DIALOG } from '../shell/Dialog';
+import { ActionError } from '../shell/ActionError';
+import { useAction } from '../shell/useAction';
+import { useReopenUpload } from '../shell/useReopenUpload';
 import { PAGE_COPY } from './page-copy';
 
 // 整单明细确认页：候选明细按统一业务序号列出，同一发票的多段以左侧色条归组；合计来自快照。
@@ -133,7 +132,6 @@ function LineRow({
 }
 
 export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
-  const store = useAppStore();
   const taskId = snapshot.task.taskId;
   const copy = PAGE_COPY.review;
   const { confirmation } = snapshot;
@@ -141,57 +139,15 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const groups = groupLines(snapshot);
   const excluded = snapshot.materials.filter((material) => material.status === 'excluded');
 
-  const [confirming, setConfirming] = useState(false);
-  const [confirmError, setConfirmError] = useState<string | null>(null);
-  const [screenshotBusy, setScreenshotBusy] = useState(false);
-  const [screenshotError, setScreenshotError] = useState<string | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [reopening, setReopening] = useState(false);
-  const [reopenError, setReopenError] = useState<string | null>(null);
+  const confirmAction = useAction(taskId);
+  const screenshotAction = useAction(taskId);
+  const reopen = useReopenUpload(snapshot, () => navigate(taskHash(taskId, 'upload')));
+  const confirming = confirmAction.busy;
+  const screenshotBusy = screenshotAction.busy;
 
-  const confirm = async () => {
-    setConfirmError(null);
-    setConfirming(true);
-    const outcome = await store.act(taskId, (adapter) => adapter.confirmReview(taskId, confirmation.digest ?? '', snapshot.step.stepToken));
-    setConfirming(false);
-    setConfirmError(failureMessage(outcome));
-  };
-
-  const addScreenshot = async (line: Line, file: File) => {
-    setScreenshotError(null);
-    setScreenshotBusy(true);
-    const outcome = await store.act(taskId, (adapter) => adapter.addPaymentScreenshot(taskId, line.voucherMaterialId, file));
-    setScreenshotBusy(false);
-    setScreenshotError(failureMessage(outcome));
-  };
-
-  const removeScreenshot = async (screenshot: PaymentScreenshot) => {
-    setScreenshotError(null);
-    setScreenshotBusy(true);
-    const outcome = await store.act(taskId, (adapter) => adapter.removePaymentScreenshot(taskId, screenshot.screenshotId));
-    setScreenshotBusy(false);
-    setScreenshotError(failureMessage(outcome));
-  };
-
-  const closeDialog = useCallback(() => {
-    setDialogOpen(false);
-    setReopenError(null);
-  }, []);
-
-  const reopen = async () => {
-    setReopenError(null);
-    setReopening(true);
-    const outcome = await store.act(taskId, (adapter) => adapter.reopenUpload(taskId, snapshot.step.stepToken));
-    setReopening(false);
-    if (outcome.ok) {
-      setDialogOpen(false);
-      navigate(taskHash(taskId, 'upload'));
-    } else if (outcome.error.code === STALE_STEP_CODE) {
-      setDialogOpen(false);
-    } else {
-      setReopenError(outcome.error.message);
-    }
-  };
+  const confirm = () => confirmAction.run((adapter) => adapter.confirmReview(taskId, confirmation.digest ?? '', snapshot.step.stepToken));
+  const addScreenshot = (line: Line, file: File) => screenshotAction.run((adapter) => adapter.addPaymentScreenshot(taskId, line.voucherMaterialId, file));
+  const removeScreenshot = (screenshot: PaymentScreenshot) => screenshotAction.run((adapter) => adapter.removePaymentScreenshot(taskId, screenshot.screenshotId));
 
   const erpDone = snapshot.erp.status === 'done';
 
@@ -253,9 +209,9 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
             </tr>
           </tfoot>
         </table>
-        {screenshotError ? (
+        {screenshotAction.error ? (
           <p className="error table-error" role="alert">
-            {screenshotError}
+            {screenshotAction.error}
           </p>
         ) : null}
       </section>
@@ -292,7 +248,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
               </div>
             </div>
             <div className="btn-row after-actions">
-              <button className="btn btn-tertiary" type="button" disabled={erpDone} onClick={() => setDialogOpen(true)}>
+              <button className="btn btn-tertiary" type="button" disabled={erpDone} onClick={reopen.open}>
                 追加材料
               </button>
               <span className="caption">追加材料会形成新的盘点版本，并使这次确认失效。</span>
@@ -305,16 +261,12 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
               我已核对整单明细
             </label>
             <p className="caption check-caption">勾选即确认：以上 {confirmation.lineCount} 行与原件一致。确认后出现「去打印」与「去报销」。</p>
-            <ActionError message={confirmError} />
+            <ActionError message={confirmAction.error} />
           </>
         )}
       </section>
 
-      {dialogOpen ? (
-        <ConfirmDialog title={REOPEN_DIALOG.title} confirmLabel={REOPEN_DIALOG.confirm} busy={reopening} error={reopenError} onConfirm={() => void reopen()} onCancel={closeDialog}>
-          <p className="lead">{REOPEN_DIALOG.body}</p>
-        </ConfirmDialog>
-      ) : null}
+      {reopen.dialog}
     </>
   );
 }

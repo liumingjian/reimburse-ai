@@ -8,7 +8,6 @@ import { Sidebar } from '../shell/Sidebar';
 import { DonePage } from './DonePage';
 import { ErpPage } from './ErpPage';
 import { InventoryPage } from './InventoryPage';
-import { PAGE_COPY } from './page-copy';
 import { PendingPage } from './PendingPage';
 import { PrintPage } from './PrintPage';
 import { ProjectPage } from './ProjectPage';
@@ -18,37 +17,28 @@ import { UploadPage } from './UploadPage';
 
 export { PAGE_COPY } from './page-copy';
 
-// 已实现的页面在这里分发；其余页面先放骨架，由后续票填充。
+// 任务页面分发：每个页面都有实现（switch 穷尽 TaskPage）。
 function PageBody({ page, snapshot }: { page: TaskPage; snapshot: TaskSnapshot }) {
-  if (page === 'upload') return <UploadPage snapshot={snapshot} />;
-  if (page === 'inventory') return <InventoryPage snapshot={snapshot} />;
-  if (page === 'pending') return <PendingPage snapshot={snapshot} />;
-  if (page === 'review') return <ReviewPage snapshot={snapshot} />;
-  if (page === 'print') return <PrintPage snapshot={snapshot} />;
-  if (page === 'project') return <ProjectPage snapshot={snapshot} />;
-  if (page === 'erp') return <ErpPage snapshot={snapshot} />;
-  if (page === 'done') return <DonePage snapshot={snapshot} />;
-  if (page === 'reconcile') return <ReconcilePage snapshot={snapshot} />;
-  return <PageSkeleton page={page} snapshot={snapshot} />;
-}
-
-function PageSkeleton({ page, snapshot }: { page: TaskPage; snapshot: TaskSnapshot }) {
-  const copy = PAGE_COPY[page];
-  return (
-    <>
-      <div className="page-head">
-        <div>
-          <h1>{copy.title}</h1>
-          <p className="lead">{copy.lead}</p>
-        </div>
-      </div>
-      <section className="panel">
-        <p className="caption">
-          {snapshot.task.name} · 页面内容待实现。
-        </p>
-      </section>
-    </>
-  );
+  switch (page) {
+    case 'upload':
+      return <UploadPage snapshot={snapshot} />;
+    case 'inventory':
+      return <InventoryPage snapshot={snapshot} />;
+    case 'pending':
+      return <PendingPage snapshot={snapshot} />;
+    case 'review':
+      return <ReviewPage snapshot={snapshot} />;
+    case 'print':
+      return <PrintPage snapshot={snapshot} />;
+    case 'project':
+      return <ProjectPage snapshot={snapshot} />;
+    case 'erp':
+      return <ErpPage snapshot={snapshot} />;
+    case 'done':
+      return <DonePage snapshot={snapshot} />;
+    case 'reconcile':
+      return <ReconcilePage snapshot={snapshot} />;
+  }
 }
 
 function GuardPage({ snapshot }: { snapshot: TaskSnapshot }) {

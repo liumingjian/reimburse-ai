@@ -18,6 +18,19 @@ export type AdapterEvent =
 
 export type Unsubscribe = () => void;
 
+// 连接类失败：本地服务没有响应（请求根本没送达）。适配器读任务列表遇到它时抛出这个错误，
+// 仓库据此显示与事件流断开相同的全页横幅，并按退避自动重试；其余错误照常显示为加载失败。
+export class ServiceUnavailableError extends Error {
+  constructor(message = '本地服务没有响应') {
+    super(message);
+    this.name = 'ServiceUnavailableError';
+  }
+}
+
+export function isServiceUnavailable(error: unknown): boolean {
+  return error instanceof Error && error.name === 'ServiceUnavailableError';
+}
+
 export interface AppAdapter {
   listTasks(): Promise<TaskList>;
   getSnapshot(taskId: string): Promise<TaskSnapshot>;

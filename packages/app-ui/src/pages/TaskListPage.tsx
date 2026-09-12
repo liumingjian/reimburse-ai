@@ -1,26 +1,28 @@
-import type { MouseEvent } from 'react';
+import { useEffect, type MouseEvent } from 'react';
 import { useAppStore, useTaskList } from '../adapter/context';
-import { STAGE_DEFAULT_PAGE, TASK_STAGE_LABELS, type TaskStage } from '../contract/stage';
-import type { TaskListItem } from '../contract/task-list';
+import { STAGE_DEFAULT_PAGE, TASK_STAGE_LABELS } from '../contract/stage';
+import { TASK_ERP_OUTCOME_LABELS, type TaskListItem } from '../contract/task-list';
 import { formatDateTime, formatPeriod } from '../format';
 import { NEW_TASK_HASH, navigate, taskHash } from '../router';
 import { AppShell } from '../shell/AppShell';
 
-function badgeClass(stage: TaskStage): string {
-  if (stage === 'done') return 'badge badge-ok';
-  if (stage === 'reconcile') return 'badge badge-warn';
-  return 'badge badge-primary';
+// 徽标：服务端给出的 ERP 结局（已转人工 / 回读不一致）优先于阶段名。
+function Badge({ task }: { task: TaskListItem }) {
+  if (task.erpOutcome === 'handed_off') return <span className="badge badge-warn">{TASK_ERP_OUTCOME_LABELS.handed_off}</span>;
+  if (task.erpOutcome === 'readback_mismatch') return <span className="badge badge-err">{TASK_ERP_OUTCOME_LABELS.readback_mismatch}</span>;
+  const className = task.stage === 'done' ? 'badge badge-ok' : task.stage === 'reconcile' ? 'badge badge-warn' : 'badge badge-primary';
+  return <span className={className}>{TASK_STAGE_LABELS[task.stage]}</span>;
 }
 
-function continueLabel(stage: TaskStage): string | null {
-  if (stage === 'done') return null;
-  if (stage === 'reconcile') return '查看对账 →';
+function continueLabel(task: TaskListItem): string | null {
+  if (task.stage === 'reconcile') return '查看对账 →';
+  if (task.stage === 'done') return task.erpOutcome === 'none' ? null : '查看结果 →';
   return '继续 →';
 }
 
 function TaskRow({ task }: { task: TaskListItem }) {
   const href = taskHash(task.taskId, STAGE_DEFAULT_PAGE[task.stage]);
-  const label = continueLabel(task.stage);
+  const label = continueLabel(task);
   const onRowClick = (event: MouseEvent<HTMLTableRowElement>) => {
     if (!label) return;
     if ((event.target as HTMLElement).closest('a')) return;
@@ -31,7 +33,7 @@ function TaskRow({ task }: { task: TaskListItem }) {
       <td>{task.name}</td>
       <td className="mono">{formatPeriod(task.period)}</td>
       <td>
-        <span className={badgeClass(task.stage)}>{TASK_STAGE_LABELS[task.stage]}</span>
+        <Badge task={task} />
       </td>
       <td className="num">{task.grossTotal ?? <span className="muted">未确认</span>}</td>
       <td className="mono">{task.erpDraftNo ?? <span className="muted">尚无</span>}</td>
@@ -44,6 +46,10 @@ function TaskRow({ task }: { task: TaskListItem }) {
 export function TaskListPage() {
   const store = useAppStore();
   const taskList = useTaskList();
+  // 每次回到任务列表都向服务端重新要一次：任务可能在任务页里推进过（如转人工），列表行要跟上服务端。
+  useEffect(() => {
+    void store.loadTaskList();
+  }, [store]);
   return (
     <AppShell nav="tasks">
       <div className="page-head">
@@ -93,7 +99,7 @@ export function TaskListPage() {
             </table>
           )
         ) : (
-          <p className="caption loading">正在加载任务列表…</p>
+          <p className="caption loading">{taskList.offline ? '正在等待本地服务恢复，恢复后自动加载…' : '正在加载任务列表…'}</p>
         )}
       </section>
     </AppShell>

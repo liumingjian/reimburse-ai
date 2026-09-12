@@ -1,11 +1,10 @@
-import { useCallback, useRef, useState, type DragEvent, type MouseEvent } from 'react';
-import { useAppStore } from '../adapter/context';
-import { STALE_STEP_CODE } from '../contract/actions';
+import { useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import { UPLOAD_ACCEPT_ATTRIBUTE, type TaskSnapshot, type UploadBatch } from '../contract/snapshot';
 import { formatBytes, hashPrefix } from '../format';
 import { navigate, taskHash } from '../router';
-import { ActionError, failureMessage } from '../shell/ActionError';
-import { ConfirmDialog, REOPEN_DIALOG } from '../shell/Dialog';
+import { ActionError } from '../shell/ActionError';
+import { useAction } from '../shell/useAction';
+import { useReopenUpload } from '../shell/useReopenUpload';
 import { PAGE_COPY } from './page-copy';
 
 // 上传材料页：拖入或选择文件 → 适配器逐文件给出接收/拒绝 → 按上传批次列出；可追加下一批；有材料后出现「开始材料盘点」。
@@ -106,65 +105,35 @@ function BatchPanel({ batch }: { batch: UploadBatch }) {
 }
 
 export function UploadPage({ snapshot }: { snapshot: TaskSnapshot }) {
-  const store = useAppStore();
   const taskId = snapshot.task.taskId;
   const invalidated = snapshot.confirmation.status === 'invalidated';
   // 因追加材料回到上传阶段的任务，一进来就打开追加区。
   const [appending, setAppending] = useState(invalidated && snapshot.stage === 'upload');
   const [busyCount, setBusyCount] = useState(0);
-  const [starting, setStarting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [reopening, setReopening] = useState(false);
-  const [reopenError, setReopenError] = useState<string | null>(null);
+  const { busy: acting, error, run } = useAction(taskId);
+  const reopen = useReopenUpload(snapshot, () => setAppending(true));
   const copy = PAGE_COPY.upload;
   const hasBatches = snapshot.batches.length > 0;
   const hasMaterials = snapshot.materials.length > 0;
-  const busy = busyCount > 0 || starting;
+  const busy = busyCount > 0 || acting;
   const confirmed = snapshot.confirmation.status === 'confirmed';
-
-  const closeDialog = useCallback(() => {
-    setDialogOpen(false);
-    setReopenError(null);
-  }, []);
 
   // 已确认的任务追加下一批：先二次确认，服务端使确认失效后再打开追加区。
   const append = () => {
-    if (confirmed) setDialogOpen(true);
+    if (confirmed) reopen.open();
     else setAppending(true);
   };
 
-  const reopen = async () => {
-    setReopenError(null);
-    setReopening(true);
-    const outcome = await store.act(taskId, (adapter) => adapter.reopenUpload(taskId, snapshot.step.stepToken));
-    setReopening(false);
-    if (outcome.ok) {
-      setDialogOpen(false);
-      setAppending(true);
-    } else if (outcome.error.code === STALE_STEP_CODE) {
-      setDialogOpen(false);
-    } else {
-      setReopenError(outcome.error.message);
-    }
-  };
-
   const upload = async (files: File[]) => {
-    setError(null);
     setBusyCount(files.length);
-    const outcome = await store.act(taskId, (adapter) => adapter.uploadBatch(taskId, files));
+    const outcome = await run((adapter) => adapter.uploadBatch(taskId, files));
     setBusyCount(0);
     if (outcome.ok) setAppending(false);
-    else setError(outcome.error.message);
   };
 
   const startInventory = async () => {
-    setError(null);
-    setStarting(true);
-    const outcome = await store.act(taskId, (adapter) => adapter.startInventory(taskId, snapshot.step.stepToken));
-    setStarting(false);
+    const outcome = await run((adapter) => adapter.startInventory(taskId, snapshot.step.stepToken));
     if (outcome.ok) navigate(taskHash(taskId, 'inventory'));
-    else setError(failureMessage(outcome));
   };
 
   return (
@@ -214,11 +183,7 @@ export function UploadPage({ snapshot }: { snapshot: TaskSnapshot }) {
           </div>
         </section>
       )}
-      {dialogOpen ? (
-        <ConfirmDialog title={REOPEN_DIALOG.title} confirmLabel={REOPEN_DIALOG.confirm} busy={reopening} error={reopenError} onConfirm={() => void reopen()} onCancel={closeDialog}>
-          <p className="lead">{REOPEN_DIALOG.body}</p>
-        </ConfirmDialog>
-      ) : null}
+      {reopen.dialog}
     </>
   );
 }

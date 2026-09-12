@@ -3,7 +3,7 @@ import type { Inventory, Material, TaskSnapshot, UploadBatch, UploadFileResult }
 import type { Employee, TaskListItem } from '../../contract/task-list';
 import { SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, projectAssignmentOpen, projectAssignmentSubmitted } from './projects';
 import { T2_ROWS, applyAbortAtSave, applyErpDone, emptyReadback, erpIdle, mismatchReason, readbackOf } from './erp';
-import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult } from './inventory';
+import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult, openPendingItemCount, withInventoryProjection } from './inventory';
 
 // 夹具：三个虚构的报销任务。人物与数字沿用原型（林颂宜、上海出差、9 条明细合计 3972.59）。
 // 材料盘点结果、费用事件、待确认项与候选明细见 ./inventory.ts；本文件按阶段把它们装进快照。
@@ -116,11 +116,11 @@ const STEP_BY_STAGE: Readonly<Record<TaskStage, TaskSnapshot['step']['kind']>> =
 export const T1_INVENTORY_FINISHED_AT = '2026-09-11T14:20:00';
 
 export function inventoryNotStarted(): Inventory {
-  return { status: 'not_started', versionId: null, phases: INVENTORY_PHASES.map((phase) => ({ ...phase, status: 'todo' })), finishedAt: null };
+  return { status: 'not_started', versionId: null, phases: INVENTORY_PHASES.map((phase) => ({ ...phase, status: 'todo' })), finishedAt: null, summary: null, ungroupedMaterialIds: [] };
 }
 
 export function inventoryDone(versionId: string, finishedAt: string): Inventory {
-  return { status: 'done', versionId, phases: INVENTORY_PHASES.map((phase) => ({ ...phase, status: 'done' })), finishedAt };
+  return { status: 'done', versionId, phases: INVENTORY_PHASES.map((phase) => ({ ...phase, status: 'done' })), finishedAt, summary: null, ungroupedMaterialIds: [] };
 }
 
 export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): TaskSnapshot {
@@ -139,7 +139,7 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     projectAssignment: { status: 'not_started', purpose: null, homeCity: null, assignments: [], projects: [], submittedAt: null },
     erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null },
     readback: emptyReadback(),
-    reconcile: { status: 'none', bucket: null, action: null, banner: null, draftNo: null, rows: [], reasons: [] },
+    reconcile: { status: 'none', bucket: null, action: null, actionCode: null, banner: null, draftNo: null, rows: [], reasons: [] },
     step: { kind: STEP_BY_STAGE[stage], stepToken: `tok-${task.taskId}-${stage}` },
   };
 }
@@ -198,7 +198,7 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
   if (stage === 'erp') snapshot.erp = erpIdle();
   if (stage === 'done') applyErpDone(snapshot, T1_DRAFT_NO);
   if (stage === 'reconcile') applyAbortAtSave(snapshot);
-  return snapshot;
+  return withInventoryProjection(snapshot);
 }
 
 // T2：对账中（ERP 写入结果不确定后的停顿状态，不是失败）。
@@ -229,12 +229,13 @@ export function t2Snapshot(): TaskSnapshot {
     status: 'pending',
     bucket: '已保存',
     action: '转人工',
+    actionCode: 'hand_off',
     banner: `ERP 中存在草稿 ${T2_DRAFT_NO}，5 行明细中 4 行一致，1 行金额不一致。`,
     draftNo: T2_DRAFT_NO,
     rows: [...T2_ROWS],
     reasons: [mismatchReason(3)],
   };
-  return snapshot;
+  return withInventoryProjection(snapshot);
 }
 
 // T3：已完成。
@@ -261,7 +262,14 @@ export function t3Snapshot(): TaskSnapshot {
   };
   snapshot.erp = { status: 'done', steps: [], draftNo: T3_DRAFT_NO, abortReason: null, loginNotice: null };
   snapshot.readback = { status: 'matched', rows: [], summary: '明细 4/4 一致', localTotal: '2318.50', erpTotal: '2318.50' };
-  return snapshot;
+  return withInventoryProjection(snapshot);
+}
+
+// 任务列表层面的 ERP 结局：已转人工优先；其次是停在完成页的严格回读不一致。
+function erpOutcomeOf(snapshot: TaskSnapshot): TaskListItem['erpOutcome'] {
+  if (snapshot.reconcile.status === 'handed_off') return 'handed_off';
+  if (snapshot.stage === 'done' && snapshot.readback.status === 'mismatched') return 'readback_mismatch';
+  return 'none';
 }
 
 // 任务列表的一行由快照投影而来：mock 服务端负责，页面不做这件事。
@@ -274,7 +282,8 @@ export function toListItem(snapshot: TaskSnapshot): TaskListItem {
     period: snapshot.task.period,
     grossTotal: snapshot.confirmation.status === 'confirmed' ? snapshot.confirmation.grossTotal : null,
     erpDraftNo: draftNo,
-    pendingCount: snapshot.pendingItems.filter((item) => item.status === 'open').length,
+    pendingCount: openPendingItemCount(snapshot.pendingItems),
+    erpOutcome: erpOutcomeOf(snapshot),
     updatedAt: snapshot.task.updatedAt,
   };
 }

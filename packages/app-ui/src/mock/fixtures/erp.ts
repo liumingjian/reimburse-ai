@@ -82,7 +82,8 @@ export function applyErpDone(snapshot: TaskSnapshot, draftNo: string): void {
   snapshot.step = { kind: 'none', stepToken: `tok-${snapshot.task.taskId}-done` };
 }
 
-// 严格回读不一致：草稿已落库但与本地确认不一致，停在对账（已保存 + 逐行不一致 ⇒ 建议转人工）。
+// 严格回读不一致：草稿已落库但与本地确认不一致，写入就此停下（已保存 + 逐行不一致 ⇒ 建议转人工）。
+// 任务停在完成页（done 阶段）但不算完成：完成页显示差异行，当前待答 step 是 hand_off，只接受「转人工」。
 export function applyReadbackMismatch(snapshot: TaskSnapshot, draftNo: string): void {
   const readback = readbackOf(readbackRows(snapshot.lines, MISMATCH));
   const bad = readback.rows.filter((row) => !row.matched);
@@ -92,13 +93,14 @@ export function applyReadbackMismatch(snapshot: TaskSnapshot, draftNo: string): 
     status: 'pending',
     bucket: '已保存',
     action: '转人工',
+    actionCode: 'hand_off',
     banner: `ERP 中存在草稿 ${draftNo}，${readback.rows.length} 行明细中 ${readback.rows.length - bad.length} 行一致，${bad.length} 行金额不一致。`,
     draftNo,
     rows: readback.rows,
     reasons: bad.map((row) => mismatchReason(row.no)),
   };
-  snapshot.stage = 'reconcile';
-  snapshot.step = { kind: 'reconcile', stepToken: `tok-${snapshot.task.taskId}-reconcile-mismatch` };
+  snapshot.stage = 'done';
+  snapshot.step = { kind: 'hand_off', stepToken: `tok-${snapshot.task.taskId}-hand-off` };
 }
 
 // 保存步中止：还没读到草稿，保存是否生效不确定（对账中断点「未知」⇒ 原地等待）。
@@ -115,6 +117,7 @@ function abortedReconcile(): Reconcile {
     status: 'pending',
     bucket: '未知',
     action: '原地等待',
+    actionCode: 'wait',
     banner: '保存步中止后还没有读到 ERP 草稿，保存是否生效尚不确定。可以先在 ERP 里查看，再点「重新对账」；也可以转人工。',
     draftNo: null,
     rows: [],

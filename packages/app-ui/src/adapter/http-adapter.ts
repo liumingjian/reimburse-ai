@@ -1,5 +1,5 @@
 import { ActionFailureSchema, STALE_STEP_CODE, STALE_STEP_NOTICE } from '../contract/actions';
-import type { ActionOutcome, AdapterEvent, AppAdapter, Unsubscribe } from '../contract/adapter';
+import { ServiceUnavailableError, type ActionOutcome, type AdapterEvent, type AppAdapter, type Unsubscribe } from '../contract/adapter';
 import { HTTP_ENDPOINTS, SNAPSHOT_EVENT, STALE_STEP_HTTP_STATUS } from '../contract/http';
 import { TaskSnapshotSchema, type TaskSnapshot } from '../contract/snapshot';
 import { TaskListSchema, type TaskList } from '../contract/task-list';
@@ -97,7 +97,13 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
 
   return {
     async listTasks() {
-      const response = await fetch(url(E.listTasks.path));
+      let response: Response;
+      try {
+        response = await fetch(url(E.listTasks.path));
+      } catch {
+        // 请求没送达：连接类失败，仓库据此显示全页横幅并自动重试。
+        throw new ServiceUnavailableError(NETWORK_ERROR_MESSAGE);
+      }
       return parseTaskListResponse(response.status, await readJson(response));
     },
     async getSnapshot(taskId) {

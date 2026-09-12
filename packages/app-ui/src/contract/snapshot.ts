@@ -139,11 +139,27 @@ export const InventoryPhaseSchema = z.object({
 });
 export type InventoryPhase = z.infer<typeof InventoryPhaseSchema>;
 
+// 盘点结果的计数，由服务端给出（页面不按状态或角色自己数）。openPendingItemCount 是还没处理的待确认项个数，
+// 盘点页入口、待确认项页「还剩 n 个」与侧栏角标都读它。
+export const InventorySummarySchema = z.object({
+  materialCount: z.number().int().nonnegative(),
+  okCount: z.number().int().nonnegative(),
+  pendingMaterialCount: z.number().int().nonnegative(),
+  voucherCount: z.number().int().nonnegative(),
+  referenceCount: z.number().int().nonnegative(),
+  openPendingItemCount: z.number().int().nonnegative(),
+});
+export type InventorySummary = z.infer<typeof InventorySummarySchema>;
+
 export const InventorySchema = z.object({
   status: z.enum(['not_started', 'running', 'done']),
   versionId: z.string().nullable(),
   phases: z.array(InventoryPhaseSchema),
   finishedAt: DateTimeSchema.nullable(),
+  // 盘点结束后才有值。
+  summary: InventorySummarySchema.nullable(),
+  // 没有归入任何费用事件的材料（待确认或已排除），按服务端给出的顺序显示在「未归入费用事件」组。
+  ungroupedMaterialIds: z.array(IdSchema),
 });
 export type Inventory = z.infer<typeof InventorySchema>;
 
@@ -378,14 +394,23 @@ export const ReadbackSchema = z.object({
 export type Readback = z.infer<typeof ReadbackSchema>;
 
 export const RECONCILE_ACTIONS = ['原地等待', '转人工'] as const;
+// 建议处置的代码：页面按代码分支，按 action（文案）显示。
+export const RECONCILE_ACTION_CODES = ['wait', 'hand_off'] as const;
+export type ReconcileActionCode = (typeof RECONCILE_ACTION_CODES)[number];
+export const RECONCILE_ACTION_LABELS: Readonly<Record<ReconcileActionCode, (typeof RECONCILE_ACTIONS)[number]>> = {
+  wait: '原地等待',
+  hand_off: '转人工',
+};
 
-// ERP 对账：写入中止或严格回读不一致后停在 reconcile 阶段。bucket 是对账中断点（内核六类之一），action 是建议处置。
+// ERP 对账：写入中止后停在 reconcile 阶段；严格回读不一致时停在 done 阶段（完成页显示差异行与转人工）。
+// bucket 是对账中断点（内核六类之一），action / actionCode 是建议处置的文案与代码。
 // status：pending 等待用户选择处置；waiting 已重新对账、原地等待；handed_off 已转人工（终止后续 ERP 写入，终态）。
 // 严格回读不一致时 rows 带逐行比对（与 readback.rows 相同），中止在保存步时 rows 可能为空。
 export const ReconcileSchema = z.object({
   status: z.enum(['none', 'pending', 'waiting', 'handed_off']),
   bucket: z.string().nullable(),
   action: z.enum(RECONCILE_ACTIONS).nullable(),
+  actionCode: z.enum(RECONCILE_ACTION_CODES).nullable(),
   banner: z.string().nullable(),
   draftNo: z.string().nullable(),
   rows: z.array(ReadbackRowSchema),
@@ -407,6 +432,8 @@ export const STEP_KINDS = [
   'start_erp_write',
   'erp_login',
   'reconcile',
+  // 严格回读不一致、停在完成页：只接受「转人工」。
+  'hand_off',
 ] as const;
 export const StepKindSchema = z.enum(STEP_KINDS);
 export type StepKind = z.infer<typeof StepKindSchema>;

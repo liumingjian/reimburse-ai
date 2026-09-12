@@ -1,17 +1,20 @@
 import { STALE_STEP_CODE, STALE_STEP_NOTICE } from '../contract/actions';
-import type { ActionOutcome, AppAdapter, ConnectionState, Unsubscribe } from '../contract/adapter';
+import { isServiceUnavailable, type ActionOutcome, type AppAdapter, type ConnectionState, type Unsubscribe } from '../contract/adapter';
 import { TaskSnapshotSchema, type TaskSnapshot } from '../contract/snapshot';
 import { TaskListSchema, type TaskList } from '../contract/task-list';
+import { reconnectDelay } from './http-adapter';
 
 // 快照仓库：唯一的前端状态容器，只保存服务端给的快照与加载/连接状态，供 useSyncExternalStore 订阅。
 // 不派生业务事实；页面需要的每个数字与判断都来自快照本身。
 
-export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
+export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error' | 'offline';
 
 export type TaskListState = {
   readonly status: LoadStatus;
   readonly data: TaskList | null;
   readonly error: string | null;
+  // 最近一次加载遇到连接类失败（本地服务没有响应）：显示全页横幅，并按退避自动重试直到加载成功。
+  readonly offline: boolean;
 };
 
 export type TaskEntry = {
@@ -31,7 +34,7 @@ export type AppState = {
 const EMPTY_ENTRY: TaskEntry = { status: 'idle', snapshot: null, error: null, notice: null };
 
 const INITIAL_STATE: AppState = {
-  taskList: { status: 'idle', data: null, error: null },
+  taskList: { status: 'idle', data: null, error: null, offline: false },
   tasks: {},
   connection: 'connected',
 };
@@ -39,12 +42,16 @@ const INITIAL_STATE: AppState = {
 export type StoreOptions = {
   // 开发与 mock 模式下每份快照都过 schema 校验，失败即抛出。
   validate: boolean;
+  // 任务列表连接类失败后第 n 次重试前的等待（毫秒）；默认与事件流重连同一退避（0.5 s 起翻倍，封顶 10 s）。
+  listRetryDelay?: (attempt: number) => number;
 };
 
 export class AppStore {
   private state: AppState = INITIAL_STATE;
   private readonly listeners = new Set<() => void>();
   private readonly subscriptions = new Map<string, { count: number; unsubscribe: Unsubscribe }>();
+  private listRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private listRetryAttempt = 0;
 
   constructor(
     readonly adapter: AppAdapter,
@@ -64,15 +71,34 @@ export class AppStore {
     return this.state.tasks[taskId] ?? EMPTY_ENTRY;
   }
 
+  // 任务列表是请求/响应（没有事件流）。连接类失败时保留 offline 标记（全页横幅）并按退避自动重试；恢复后横幅消失、列表出现。
   async loadTaskList(): Promise<void> {
-    if (this.state.taskList.status === 'loading') return;
-    this.setState({ taskList: { status: 'loading', data: this.state.taskList.data, error: null } });
+    const previous = this.state.taskList;
+    if (previous.status === 'loading') return;
+    if (this.listRetryTimer !== null) {
+      clearTimeout(this.listRetryTimer);
+      this.listRetryTimer = null;
+    }
+    this.setState({ taskList: { status: 'loading', data: previous.data, error: null, offline: previous.offline } });
     try {
       const raw = await this.adapter.listTasks();
       const data = this.options.validate ? TaskListSchema.parse(raw) : raw;
-      this.setState({ taskList: { status: 'ready', data, error: null } });
+      this.listRetryAttempt = 0;
+      this.setState({ taskList: { status: 'ready', data, error: null, offline: false } });
     } catch (error) {
-      this.setState({ taskList: { status: 'error', data: this.state.taskList.data, error: describe(error) } });
+      const data = this.state.taskList.data;
+      if (!isServiceUnavailable(error)) {
+        this.setState({ taskList: { status: 'error', data, error: describe(error), offline: false } });
+        return;
+      }
+      // 状态记为 offline 而不是 loading：重试定时器到点前，loadTaskList 不会被 loading 挡住。
+      this.setState({ taskList: { status: 'offline', data, error: null, offline: true } });
+      const delay = (this.options.listRetryDelay ?? reconnectDelay)(this.listRetryAttempt);
+      this.listRetryAttempt += 1;
+      this.listRetryTimer = setTimeout(() => {
+        this.listRetryTimer = null;
+        void this.loadTaskList();
+      }, delay);
     }
   }
 

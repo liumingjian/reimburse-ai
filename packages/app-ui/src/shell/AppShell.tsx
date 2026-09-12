@@ -35,7 +35,7 @@ export function AppShell({ nav, sidebar, children }: Props) {
           </span>
         ) : null}
       </header>
-      {state.connection === 'disconnected' ? (
+      {state.connection === 'disconnected' || state.taskList.offline ? (
         <div className="banner" role="alert">
           {SERVICE_DOWN_NOTICE}
         </div>

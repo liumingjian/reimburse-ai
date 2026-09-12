@@ -46,7 +46,7 @@ export function Sidebar({ snapshot, page }: { snapshot: TaskSnapshot; page: Task
     );
   }
   const activeStage = ACTIVE_ENTRY[page];
-  const openCount = snapshot.pendingItems.filter((item) => item.status === 'open').length;
+  const openCount = snapshot.inventory.summary?.openPendingItemCount ?? 0;
   return (
     <aside className="sidebar">
       <h3>当前报销任务</h3>

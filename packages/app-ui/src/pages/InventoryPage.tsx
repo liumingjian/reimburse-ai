@@ -64,31 +64,23 @@ function MaterialRow({ material, roleLabel }: { material: Material; roleLabel: s
 
 type Group = { voucher: Material; events: ExpenseEvent[]; references: Material[] };
 
-// 同一主要报销凭证的事件相邻（服务端已按统一业务序号排好），这里只是把它们收拢成组来显示。
-function groupEvents(snapshot: TaskSnapshot): { groups: Group[]; ungrouped: Material[] } {
-  const byId = new Map(snapshot.materials.map((material) => [material.materialId, material]));
+// 服务端已按统一业务序号排好，同一主要报销凭证的事件相邻；这里只把相邻、同一凭证的事件收拢成一组显示（与整单明细确认页的行分组同理），
+// 组内的参考材料照各事件列出的 id 显示。没有归入任何事件的材料由服务端在 inventory.ungroupedMaterialIds 里给出。
+function groupEvents(snapshot: TaskSnapshot, byId: ReadonlyMap<string, Material>): Group[] {
   const groups: Group[] = [];
-  const grouped = new Set<string>();
   for (const event of snapshot.events) {
     const voucher = byId.get(event.voucherMaterialId);
     if (!voucher) continue;
-    let group = groups.find((candidate) => candidate.voucher.materialId === voucher.materialId);
-    if (!group) {
-      group = { voucher, events: [], references: [] };
-      groups.push(group);
-      grouped.add(voucher.materialId);
-    }
+    const last = groups[groups.length - 1];
+    const group = last && last.voucher.materialId === voucher.materialId ? last : { voucher, events: [], references: [] };
+    if (group !== last) groups.push(group);
     group.events.push(event);
     for (const referenceId of event.referenceMaterialIds) {
       const reference = byId.get(referenceId);
-      if (reference && !group.references.some((existing) => existing.materialId === referenceId)) {
-        group.references.push(reference);
-        grouped.add(referenceId);
-      }
+      if (reference && !group.references.includes(reference)) group.references.push(reference);
     }
   }
-  const ungrouped = snapshot.materials.filter((material) => !grouped.has(material.materialId));
-  return { groups, ungrouped };
+  return groups;
 }
 
 function eventTitle(group: Group): string {
@@ -153,28 +145,24 @@ function Progress({ snapshot }: { snapshot: TaskSnapshot }) {
 export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const copy = PAGE_COPY.inventory;
   const taskId = snapshot.task.taskId;
-  const done = snapshot.inventory.status === 'done';
-  const openCount = snapshot.pendingItems.filter((item) => item.status === 'open').length;
-  const counts = {
-    ok: snapshot.materials.filter((material) => material.status === 'ok').length,
-    pending: snapshot.materials.filter((material) => material.status === 'pending').length,
-    vouchers: snapshot.materials.filter((material) => material.role === 'primary_voucher').length,
-    references: snapshot.materials.filter((material) => material.role === 'reference').length,
-  };
-  const { groups, ungrouped } = groupEvents(snapshot);
+  // 盘点结果的计数来自服务端（inventory.summary），页面不自己数。
+  const summary = snapshot.inventory.status === 'done' ? snapshot.inventory.summary : null;
+  const byId = new Map(snapshot.materials.map((material) => [material.materialId, material]));
+  const groups = groupEvents(snapshot, byId);
+  const ungrouped = snapshot.inventory.ungroupedMaterialIds.flatMap((id) => byId.get(id) ?? []);
 
   return (
     <>
       <div className="page-head">
         <div>
           <h1>{copy.title}</h1>
-          <p className="lead">{done ? `上传批次的 ${snapshot.materials.length} 份材料已分别由对应规则认领。${copy.lead}` : copy.lead}</p>
+          <p className="lead">{summary ? `上传批次的 ${summary.materialCount} 份材料已分别由对应规则认领。${copy.lead}` : copy.lead}</p>
         </div>
-        {done ? (
+        {summary ? (
           <div className="actions">
-            {openCount > 0 ? (
+            {summary.openPendingItemCount > 0 ? (
               <a className="btn btn-primary" href={taskHash(taskId, 'pending')}>
-                处理 {openCount} 个待确认项
+                处理 {summary.openPendingItemCount} 个待确认项
               </a>
             ) : (
               <a className="btn btn-primary" href={taskHash(taskId, 'review')}>
@@ -185,15 +173,15 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
         ) : null}
       </div>
 
-      {!done ? (
+      {!summary ? (
         <Progress snapshot={snapshot} />
       ) : (
         <>
           <div className="badge-row">
-            <span className="badge badge-ok">通过 {counts.ok}</span>
-            <span className={counts.pending > 0 ? 'badge badge-warn' : 'badge'}>待确认 {counts.pending}</span>
-            <span className="badge">{MATERIAL_ROLE_LABELS.primary_voucher} {counts.vouchers}</span>
-            <span className="badge">{MATERIAL_ROLE_LABELS.reference} {counts.references}</span>
+            <span className="badge badge-ok">通过 {summary.okCount}</span>
+            <span className={summary.pendingMaterialCount > 0 ? 'badge badge-warn' : 'badge'}>待确认 {summary.pendingMaterialCount}</span>
+            <span className="badge">{MATERIAL_ROLE_LABELS.primary_voucher} {summary.voucherCount}</span>
+            <span className="badge">{MATERIAL_ROLE_LABELS.reference} {summary.referenceCount}</span>
             <span className="caption">
               盘点版本 {snapshot.inventory.versionId ?? '?'}
               {snapshot.inventory.finishedAt ? ` · ${formatDateTime(snapshot.inventory.finishedAt)}` : ''}

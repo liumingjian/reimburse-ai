@@ -1,10 +1,10 @@
 import { useCallback, useState } from 'react';
-import { useAppStore } from '../adapter/context';
 import { PROJECT_ASSIGNMENT_ERRORS, PROJECT_CONFLICT_COPY, PURPOSE_MAX_LENGTH } from '../contract/actions';
 import type { Line, ProjectOption, TaskSnapshot } from '../contract/snapshot';
 import { navigate, taskHash } from '../router';
-import { ActionError, failureMessage } from '../shell/ActionError';
+import { ActionError } from '../shell/ActionError';
 import { ConfirmDialog } from '../shell/Dialog';
+import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 
 // 项目归属页（只在「去报销」路径上）：规则照内核现有项目归属页面（project-workbench.mjs Variant B）。
@@ -12,10 +12,13 @@ import { PAGE_COPY } from './page-copy';
 // 弹出「只处理未归属 / 确认覆盖 / 取消」。页头填报销事由。提交前的逐条选择只是表单输入；
 // 项目是否可用、归属是否成立由服务端判定（允许列表里的 selectable 与提交结果）。
 
-type Draft = Readonly<Record<string, string>>;
+// 本页正在编辑、尚未提交的逐条归属：lineId → 项目号。以快照里服务端已记下的归属为初值。
+type PendingAssignments = Readonly<Record<string, string>>;
+// 批量归入的方式：只给还没有项目的明细归入，或把已勾选的明细全部改为这个项目。
+type AssignMode = 'fill-empty' | 'overwrite';
 type Conflict = { project: ProjectOption; count: number };
 
-function draftOf(snapshot: TaskSnapshot): Draft {
+function savedAssignments(snapshot: TaskSnapshot): PendingAssignments {
   return Object.fromEntries(snapshot.projectAssignment.assignments.map((item) => [item.lineId, item.projectNumber]));
 }
 
@@ -26,24 +29,22 @@ function matches(project: ProjectOption, query: string): boolean {
 }
 
 export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
-  const store = useAppStore();
   const taskId = snapshot.task.taskId;
   const copy = PAGE_COPY.project;
   const assignment = snapshot.projectAssignment;
   const submitted = assignment.status === 'submitted';
   const { lines } = snapshot;
 
-  const [draft, setDraft] = useState<Draft>(() => draftOf(snapshot));
+  const [pendingAssignments, setPendingAssignments] = useState<PendingAssignments>(() => savedAssignments(snapshot));
   const [purpose, setPurpose] = useState(assignment.purpose ?? '');
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
   const [query, setQuery] = useState('');
   const [conflict, setConflict] = useState<Conflict | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, run, clearError } = useAction(taskId);
 
   // 已提交就只显示服务端记下的归属；否则显示本页正在编辑的选择。
-  const current: Draft = submitted ? draftOf(snapshot) : draft;
+  const current: PendingAssignments = submitted ? savedAssignments(snapshot) : pendingAssignments;
   const nameOf = (number: string) =>
     assignment.projects.find((project) => project.number === number)?.name ??
     assignment.assignments.find((item) => item.projectNumber === number)?.projectName ??
@@ -53,6 +54,8 @@ export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const allVisibleSelected = visible.length > 0 && visible.every((line) => selected.has(line.lineId));
   const shownProjects = assignment.projects.filter((project) => matches(project, query));
   const assignedCount = lines.filter((line) => current[line.lineId]).length;
+  // 提交按钮只看本页尚未提交的表单（每条明细都已归属、事由非空）：这是 #105 要求的输入校验
+  // （「提交按钮在任一明细未归属或事由为空时不可用」），不是业务判定；项目能否用、归属是否成立仍由服务端在提交时判定。
   const complete = assignedCount === lines.length && lines.length > 0 && purpose.trim().length > 0;
 
   const toggleLine = (lineId: string) => {
@@ -80,40 +83,37 @@ export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
     setSelected(new Set());
   };
 
-  const apply = (number: string, onlyEmpty: boolean) => {
-    setDraft((previous) => {
+  const assignSelected = (number: string, mode: AssignMode) => {
+    setPendingAssignments((previous) => {
       const next: Record<string, string> = { ...previous };
-      for (const lineId of selected) if (!onlyEmpty || !next[lineId]) next[lineId] = number;
+      for (const lineId of selected) if (mode === 'overwrite' || !next[lineId]) next[lineId] = number;
       return next;
     });
     setSelected(new Set());
     setConflict(null);
-    setError(null);
+    clearError();
   };
 
+  // 冲突检测拿已勾选明细在表单里的现有归属（初值即快照里已记下的归属）与目标项目比较，只用来决定是否弹出三选一提示。
   const assign = (project: ProjectOption) => {
     const conflicts = [...selected].filter((lineId) => {
-      const existing = draft[lineId];
+      const existing = pendingAssignments[lineId];
       return existing !== undefined && existing !== project.number;
     });
     if (conflicts.length > 0) setConflict({ project, count: conflicts.length });
-    else apply(project.number, false);
+    else assignSelected(project.number, 'overwrite');
   };
 
   const cancelConflict = useCallback(() => setConflict(null), []);
 
   const submit = async () => {
-    setError(null);
-    setBusy(true);
     const projects: Record<string, string> = {};
     for (const line of lines) {
-      const number = draft[line.lineId];
+      const number = pendingAssignments[line.lineId];
       if (number) projects[line.lineId] = number;
     }
-    const outcome = await store.act(taskId, (adapter) => adapter.submitProjectAssignment(taskId, { purpose: purpose.trim(), projects }, snapshot.step.stepToken));
-    setBusy(false);
+    const outcome = await run((adapter) => adapter.submitProjectAssignment(taskId, { purpose: purpose.trim(), projects }, snapshot.step.stepToken));
     if (outcome.ok) navigate(taskHash(taskId, 'erp'));
-    else setError(failureMessage(outcome));
   };
 
   return (
@@ -264,8 +264,8 @@ export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
           confirmLabel={PROJECT_CONFLICT_COPY.overwrite}
           cancelLabel={PROJECT_CONFLICT_COPY.cancel}
           extraLabel={PROJECT_CONFLICT_COPY.onlyEmpty}
-          onExtra={() => apply(conflict.project.number, true)}
-          onConfirm={() => apply(conflict.project.number, false)}
+          onExtra={() => assignSelected(conflict.project.number, 'fill-empty')}
+          onConfirm={() => assignSelected(conflict.project.number, 'overwrite')}
           onCancel={cancelConflict}
         >
           <p className="lead">
