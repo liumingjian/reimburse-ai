@@ -2,9 +2,9 @@ import { REOPEN_UPLOAD_ERRORS } from '../../contract/actions';
 import type { AppAdapter } from '../../contract/adapter';
 import { REVIEW_INVALIDATED_NOTICE, type TaskSnapshot } from '../../contract/snapshot';
 import type { MockBus } from '../bus';
-import { inventoryResult } from '../fixtures/inventory';
+import { duplicateBlockers, inventoryResult } from '../fixtures/inventory';
 import { catalogPending, preparationPending } from '../fixtures/preparation';
-import { inventoryNotStarted, uploadedMaterial } from '../fixtures/tasks';
+import { T3_ID, inventoryNotStarted, uploadedMaterial } from '../fixtures/tasks';
 import { duplicateReason, judgeFile } from '../upload';
 import { settlePending } from './pending';
 
@@ -42,14 +42,25 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
   let reopenCount = 0;
 
   // 盘点结束：材料分类、费用事件与待确认项落进快照；有待确认项则进入 pending 阶段，否则直接形成候选明细进入 review。
+  // `?duplicate=1`：跨任务查重命中已完成的 T3，整批停（内核 duplicate_blocked）：不划分费用事件、不形成待确认项，阶段停在 inventory。
   const finishInventory = (snapshot: TaskSnapshot) => {
-    const result = inventoryResult(snapshot.materials, options.fault === 'unsupported-material');
+    const result = inventoryResult(snapshot.materials, options.fault === 'unsupported-material', options.allocationRequired === true);
     snapshot.materials = result.materials;
-    snapshot.events = result.events;
-    snapshot.pendingItems = result.pendingItems;
     snapshot.inventory.status = 'done';
     snapshot.inventory.finishedAt = bus.now();
     snapshot.task.updatedAt = snapshot.inventory.finishedAt;
+    const hit = options.duplicateHit ? bus.draft(T3_ID).task : null;
+    snapshot.blockers = hit ? duplicateBlockers(snapshot.materials, { taskId: hit.taskId, name: hit.name }) : [];
+    if (snapshot.blockers.length > 0) {
+      snapshot.events = [];
+      snapshot.pendingItems = [];
+      snapshot.lines = [];
+      for (const material of snapshot.materials) material.pendingItemIds = [];
+      snapshot.step = { kind: 'none', stepToken: `tok-${snapshot.task.taskId}-duplicate-${snapshot.inventory.versionId ?? 'v0'}` };
+      return;
+    }
+    snapshot.events = result.events;
+    snapshot.pendingItems = result.pendingItems;
     nameFromEvents(snapshot, bus.autoNamed.has(snapshot.task.taskId));
     settlePending(snapshot, bus.projectAllowList());
   };
@@ -63,6 +74,7 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
     // 旧材料包作废；报销信息核对与材料准备在重新盘点、再次提交项目归属后重来。
     snapshot.catalog = catalogPending();
     snapshot.preparation = preparationPending();
+    snapshot.blockers = [];
     snapshot.stage = 'upload';
     reopenCount += 1;
     snapshot.step = { kind: 'start_inventory', stepToken: `tok-${snapshot.task.taskId}-upload-reopen-${reopenCount}` };
@@ -131,6 +143,7 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
         snapshot.stage = 'inventory';
         snapshot.task.updatedAt = bus.now();
         snapshot.inventory = { ...inventoryNotStarted(), status: 'running', versionId };
+        snapshot.blockers = [];
         const first = snapshot.inventory.phases[0];
         if (first) first.status = 'running';
         snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-inventory-${versionId}` };

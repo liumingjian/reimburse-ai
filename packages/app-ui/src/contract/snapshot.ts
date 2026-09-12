@@ -165,6 +165,12 @@ export type Inventory = z.infer<typeof InventorySchema>;
 
 // ---- 待确认项 ----
 
+// 处理人：内核 WHO（next.mjs:428）。待确认项照内核开放项表（next.mjs:451-475）逐条标明；报销信息核对的不匹配表、
+// 材料包缺项表与重复发票表也用它。
+export const RESOLVER_LABELS = ['要你处理', '我来处理', '系统'] as const;
+export const ResolverLabelSchema = z.enum(RESOLVER_LABELS);
+export type ResolverLabel = z.infer<typeof ResolverLabelSchema>;
+
 export const PendingFieldSchema = z.object({
   key: z.string().min(1),
   label: z.string().min(1),
@@ -180,21 +186,103 @@ export const PendingChoiceSchema = z.object({
 });
 export type PendingChoice = z.infer<typeof PendingChoiceSchema>;
 
-// 答复形状：form 类按 fields[].key 逐个给值；choice 类给 { [PENDING_CHOICE_KEY]: choices[].key }。
+// 答复形状：
+// - form 类按 fields[].key 逐个给值；
+// - choice 类给 { [PENDING_CHOICE_KEY]: choices[].key }；
+// - allocation 类给 { amounts: [...] }（按 segments 顺序，每段的价税合计，两位小数）或 { giveUp: true }（「这张票我认不出」）。
 export const PENDING_CHOICE_KEY = 'choice';
 
+export const FieldAnswerSchema = z.record(z.string(), z.string());
+export type FieldAnswer = z.infer<typeof FieldAnswerSchema>;
+export const AllocationAnswerSchema = z.union([z.strictObject({ amounts: z.array(z.string()) }), z.strictObject({ giveUp: z.literal(true) })]);
+export type AllocationAnswer = z.infer<typeof AllocationAnswerSchema>;
+export const PendingAnswerSchema = z.union([AllocationAnswerSchema, FieldAnswerSchema]);
+export type PendingAnswer = z.infer<typeof PendingAnswerSchema>;
+
+export function isAllocationAnswer(answer: PendingAnswer): answer is AllocationAnswer {
+  const value = answer as Record<string, unknown>;
+  return Array.isArray(value.amounts) || value.giveUp === true;
+}
+
+// form / choice 类答复的键值；逐段分摊的答复或没有答复时为空对象。
+export function fieldAnswer(answer: PendingAnswer | null): FieldAnswer {
+  return answer && !isAllocationAnswer(answer) ? answer : {};
+}
+
+// 逐段分摊（内核 allocation_required，next.mjs:1112-1151，ADR-0005）：一张合并的交通发票票面只有一个价税合计、行程单上有多段，
+// 且逐段金额加起来和票面对不上时才出现。每段金额由用户给，是否按分守恒由服务端判定（不守恒返回错误，页面只显示）；
+// 服务端不平均、不按比例，也不把差额加到任何一段上。用户也可以选「这张票我认不出」放弃，后果说明由服务端给出（giveUpNote）。
+export const AllocationSegmentSchema = z.object({
+  // 第几段（从 1 起）。
+  index: z.number().int().positive(),
+  date: DateSchema,
+  // 如「虹桥枢纽 → 漕河泾」。
+  route: z.string().min(1),
+  // 行程单上写的这一段金额；没写为 null。页面拿它预填，不据此计算。
+  suggested: AmountSchema.nullable(),
+});
+export type AllocationSegment = z.infer<typeof AllocationSegmentSchema>;
+
+export const PendingAllocationSchema = z.object({
+  segments: z.array(AllocationSegmentSchema).min(1),
+  // 票面价税合计。
+  total: AmountSchema,
+  giveUpNote: z.string().min(1),
+});
+export type PendingAllocation = z.infer<typeof PendingAllocationSchema>;
+
+export const PENDING_ITEM_KINDS = ['form', 'choice', 'allocation'] as const;
+
+// 空文本 PDF、多页发票（内核 pdf_markdown_conversion_empty / multi_page_invoice）是「要你处理」的 choice 类，
+// 只给「排除」一个选择；换原件走追加材料、重新盘点。
 export const PendingItemSchema = z.object({
   itemId: IdSchema,
   materialId: IdSchema,
   title: z.string().min(1),
   why: z.string(),
-  kind: z.enum(['form', 'choice']),
+  kind: z.enum(PENDING_ITEM_KINDS),
+  resolver: ResolverLabelSchema,
   fields: z.array(PendingFieldSchema),
   choices: z.array(PendingChoiceSchema),
+  // allocation 类的逐段内容；其他类为 null。
+  allocation: PendingAllocationSchema.nullable(),
   status: z.enum(['open', 'resolved']),
-  answer: z.record(z.string(), z.string()).nullable(),
+  answer: PendingAnswerSchema.nullable(),
 });
 export type PendingItem = z.infer<typeof PendingItemSchema>;
+
+// ---- 整批停的阻塞项 ----
+
+// 跨任务重复发票（内核 duplicate_blocked，next.mjs:1088-1102；按发票身份判定，不是文件内容）：命中就停整批。
+// 盘点结束，但不划分费用事件、不形成待确认项；阶段停在 inventory，step 为 none。
+// 行文字由服务端成句；表格列照内核 itemTable（next.mjs:452-458），「参考材料」列内核写破折号，页面留空。
+export const BLOCKER_KINDS = ['duplicate_across_tasks'] as const;
+export const BLOCKER_TABLE_COLUMNS = ['序号', '材料/明细', '参考材料', '待处理问题', '处理人'] as const;
+
+export const BlockerTaskSchema = z.object({
+  taskId: IdSchema,
+  name: z.string().min(1),
+});
+export type BlockerTask = z.infer<typeof BlockerTaskSchema>;
+
+export const BlockerSchema = z.object({
+  kind: z.enum(BLOCKER_KINDS),
+  materialId: IdSchema,
+  fileName: z.string().min(1),
+  // 「待处理问题」列，如「这张发票在报销任务「2026-06 北京培训」里也在……」。
+  reason: z.string().min(1),
+  resolver: ResolverLabelSchema,
+  // 命中的任务：仍占用这张发票的其他报销任务。
+  tasks: z.array(BlockerTaskSchema).min(1),
+});
+export type Blocker = z.infer<typeof BlockerSchema>;
+
+// 重复发票的阻塞与处置说明，照内核话术（去掉「告诉我」，报销系统不写作 ERP）。服务端与 mock 共用。
+export const DUPLICATE_BLOCKER_COPY = {
+  blocked: '发现重复发票：同一张发票不能报两次，这批材料整批暂停，不会划分费用事件。',
+  disposal: '请把重复的发票移出本次材料，或处理之前的报销记录；处理完成后重新盘点。',
+  scope: '这里只比对了本机记过、仍占用发票的报销任务；直接在报销系统里录入的、同事报过的、或者换电脑之前报过的，这里查不到。',
+} as const;
 
 // ---- 候选明细（统一业务序号） ----
 
@@ -472,9 +560,7 @@ export type Reconcile = z.infer<typeof ReconcileSchema>;
 // 两步都由服务端在提交项目归属后自动执行（内核 catalog_unverified → catalog_mismatch → preparation_package_pending
 // → preparation_blocked，next.mjs:1175-1217）。行里的文字由服务端成句（照内核话术，遵守禁用词），页面只照列渲染。
 
-// 处理人：内核 WHO（next.mjs:428）。
-export const RESOLVER_LABELS = ['要你处理', '我来处理', '系统'] as const;
-export const ResolverLabelSchema = z.enum(RESOLVER_LABELS);
+// 处理人（RESOLVER_LABELS）见「待确认项」一节。
 
 // 报销信息核对：只读核对项目与费用项目（编码在不在、名称对不对得上、已审核、未禁用）。
 // pending 还没开始（项目归属提交前）；running 核对中；matched 通过；mismatch 有不匹配，整单确认被阻塞，
@@ -600,6 +686,8 @@ export const TaskSnapshotSchema = z.object({
   inventory: InventorySchema,
   events: z.array(ExpenseEventSchema),
   pendingItems: z.array(PendingItemSchema),
+  // 整批停的阻塞项（跨任务重复发票）；没有为空数组。
+  blockers: z.array(BlockerSchema),
   lines: z.array(LineSchema),
   confirmation: ConfirmationSchema,
   paymentScreenshots: z.array(PaymentScreenshotSchema),

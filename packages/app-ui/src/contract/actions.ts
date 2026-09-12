@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { DateSchema, IdSchema } from './primitives';
-import { CornersSchema, PENDING_CHOICE_KEY, TaskSnapshotSchema, type PendingItem } from './snapshot';
+import { CornersSchema, PENDING_CHOICE_KEY, TaskSnapshotSchema, fieldAnswer, isAllocationAnswer, type PendingAnswer, type PendingItem } from './snapshot';
 import { TaskListSchema } from './task-list';
 
 // 接口三：动作端点。成功返回新快照；失败返回 { error }；stepToken 过期返回 HTTP 409 与 { error, snapshot }。
@@ -62,8 +62,7 @@ export const CreateTaskInputSchema = z.object({
 });
 export type CreateTaskInput = z.infer<typeof CreateTaskInputSchema>;
 
-export const PendingAnswerSchema = z.record(z.string(), z.string());
-export type PendingAnswer = z.infer<typeof PendingAnswerSchema>;
+// 待确认项答复的形状（PendingAnswerSchema）在 snapshot.ts，快照里已处理项的 answer 与它相同。
 
 // 待确认项答复的格式校验文案，页面与服务端共用；页面据此在提交前拦住非法值，服务端再校验一次。
 export const PENDING_ANSWER_ERRORS = {
@@ -74,18 +73,48 @@ export const PENDING_ANSWER_ERRORS = {
   notOpen: '这个待确认项已经处理过了。',
 } as const;
 
+// 逐段分摊的文案。页面只拦格式（两位小数、大于 0、每段都填）；加起来对不对由服务端判定，不守恒时服务端用 notConserved 成句。
+export const ALLOCATION_ERRORS = {
+  amount: '金额要写两位小数，且大于 0，例如 26.69。',
+  missing: '请逐段填写价税合计，或选「这张票我认不出」。',
+  notConserved: (sum: string, total: string) =>
+    `各段加起来是 ${sum} 元，和票面价税合计 ${total} 元对不上。请对照行程单重新填写，不会平均、不会按比例，也不会把差额加到任何一段上。`,
+} as const;
+
+// 逐段分摊的错误按段归档的键。
+export const segmentKey = (index: number): string => `segment-${index}`;
+
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const AMOUNT_PATTERN = /^(?:0|[1-9]\d*)\.\d{2}$/;
+
+type AnswerTarget = Pick<PendingItem, 'kind' | 'fields' | 'choices'> & { allocation?: PendingItem['allocation'] };
 
 // 返回按字段 key 归档的错误；空对象表示合法。值先 trim 再判定。
-export function validatePendingAnswer(item: Pick<PendingItem, 'kind' | 'fields' | 'choices'>, answer: PendingAnswer): Record<string, string> {
+export function validatePendingAnswer(item: AnswerTarget, answer: PendingAnswer): Record<string, string> {
   const errors: Record<string, string> = {};
+  if (item.kind === 'allocation') {
+    if (isAllocationAnswer(answer) && 'giveUp' in answer) return errors;
+    const amounts = isAllocationAnswer(answer) && 'amounts' in answer ? answer.amounts : null;
+    const segments = item.allocation?.segments ?? [];
+    if (!amounts || amounts.length !== segments.length) {
+      errors.allocation = ALLOCATION_ERRORS.missing;
+      return errors;
+    }
+    segments.forEach((segment, index) => {
+      const value = (amounts[index] ?? '').trim();
+      if (!value) errors[segmentKey(segment.index)] = PENDING_ANSWER_ERRORS.required;
+      else if (!AMOUNT_PATTERN.test(value) || value === '0.00') errors[segmentKey(segment.index)] = ALLOCATION_ERRORS.amount;
+    });
+    return errors;
+  }
+  const values = fieldAnswer(answer);
   if (item.kind === 'choice') {
-    const chosen = (answer[PENDING_CHOICE_KEY] ?? '').trim();
+    const chosen = (values[PENDING_CHOICE_KEY] ?? '').trim();
     if (!item.choices.some((choice) => choice.key === chosen)) errors[PENDING_CHOICE_KEY] = PENDING_ANSWER_ERRORS.choice;
     return errors;
   }
   for (const field of item.fields) {
-    const value = (answer[field.key] ?? '').trim();
+    const value = (values[field.key] ?? '').trim();
     if (!value) {
       if (field.required) errors[field.key] = PENDING_ANSWER_ERRORS.required;
       continue;
@@ -96,11 +125,16 @@ export function validatePendingAnswer(item: Pick<PendingItem, 'kind' | 'fields' 
   return errors;
 }
 
-// 去掉首尾空白后的答复；只保留该项定义的键。
+// 去掉首尾空白后的答复；只保留该项定义的键（逐段分摊只保留 amounts 或 giveUp）。
 export function normalizePendingAnswer(item: Pick<PendingItem, 'kind' | 'fields'>, answer: PendingAnswer): PendingAnswer {
+  if (item.kind === 'allocation') {
+    if (!isAllocationAnswer(answer)) return { amounts: [] };
+    return 'giveUp' in answer ? { giveUp: true } : { amounts: answer.amounts.map((amount) => amount.trim()) };
+  }
+  const values = fieldAnswer(answer);
   const keys = item.kind === 'choice' ? [PENDING_CHOICE_KEY] : item.fields.map((field) => field.key);
-  const out: PendingAnswer = {};
-  for (const key of keys) out[key] = (answer[key] ?? '').trim();
+  const out: Record<string, string> = {};
+  for (const key of keys) out[key] = (values[key] ?? '').trim();
   return out;
 }
 

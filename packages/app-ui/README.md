@@ -116,7 +116,18 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 
 例如 `dist-mock/index.html?seed=catalog&catalog=mismatch#/task/T1/review`、`dist-mock/index.html?seed=preparation&preparation=blocked#/task/T1/review`。
 
-未知的 seed / fault / location / erp / identity / book / catalog / preparation 在控制台警告后忽略。mock 构建还在 `window.__baoxMock` 上挂了一个 e2e 用的钩子：
+## QA：逐段分摊、处理人与跨任务重复发票
+
+- 待确认项逐条标明处理人（要你处理 / 我来处理 / 系统，照内核开放项表，由服务端给出）：清单每条写在文件名后，详情写「处理人：…」。示例材料的待确认项都是「要你处理」。
+- 空文本 PDF 与多页发票也是「要你处理」，只能「排除此材料」，或在上传页追加原件后重新盘点。mock 把 0 字节或文件名含「空白」的 PDF 当作空文本 PDF，文件名含「多页」的 PDF 当作多页发票。
+- 盘点页只保留进度与材料清单（文件 | 识别为 | 校验 | 状态），不显示读出的字段；待确认项页显示读出的字段，但不显示来源（规则名、`user`），两页都没有「候选」字样。
+
+| 选项 | 表现 |
+| --- | --- |
+| `?allocation=1` | 高德合并发票的行程单三段合计 69.10，和票面价税合计 69.19 对不上：盘点多出第一个待确认项「合并交通发票逐段金额」，三段输入框预填行程单读数 26.69 / 20.85 / 21.56。直接提交得到服务端错误「各段加起来是 69.10 元，和票面价税合计 69.19 元对不上…」；第 3 段改成 21.65 后通过，明细与默认相同（9 行，3972.59）。也可以选「这张票我认不出」：这张发票连同行程单移出本次报销，后果说明在该项下（处理前后都显示），其余待确认项处理完照常进入项目归属，明细剩 6 行，合计 3903.40。例如 `dist-mock/index.html?seed=pending&allocation=1#/task/T1/pending`；与 `?seed=project` 及之后的 seed 同用时，逐段金额已按原件答复 |
+| `?duplicate=1` | 跨任务查重（按发票身份）命中：上传示例材料（含 `铁路电子客票_0809.pdf`）并开始盘点后整批停。盘点页与待确认项页显示「重复发票」表（序号 \| 材料/明细 \| 参考材料 \| 待处理问题 \| 处理人）、命中的任务「2026-06 北京培训」（已完成的 T3）与处置说明；不划分费用事件、不形成待确认项，也进不了项目归属。页面没有移出单份材料的入口，这个场景就停在这里。例如 `dist-mock/index.html?duplicate=1#/task/T1/upload` |
+
+未知的 seed / fault / location / erp / identity / book / catalog / preparation / allocation / duplicate 在控制台警告后忽略。mock 构建还在 `window.__baoxMock` 上挂了一个 e2e 用的钩子：
 `advanceElsewhere(taskId)` 模拟「另一个窗口推进了任务、这边还没收到推送」，下一次带旧 `stepToken` 的动作会得到 409，
 页面换上最新快照并提示「任务已在别处推进」。
 
@@ -146,6 +157,10 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
   `preparation { status: pending | blocked | ready, problems[], packageFiles[] }`。不匹配时阶段停在 `catalog`、step 为 `assign_projects`（改派后重新提交即重新核对）；
   有缺项时阶段停在 `preparation`、step 为 `resolve_preparation`，缺项上 `excludableMaterialId` 不为空的，可用 `exclude-material`（`materialId`、`stepToken`）排除该材料，服务端随后重新准备。
   材料包文件数只看 `packageFiles`（确认上不再另记）。表格列名常量：`CATALOG_MISMATCH_COLUMNS`、`PREPARATION_PROBLEM_COLUMNS`；进度与阻塞文案：`CATALOG_PREPARATION_COPY`。
+- 待确认项（`snapshot.ts`）：`PendingItem` 带 `resolver`（`RESOLVER_LABELS`：要你处理 / 我来处理 / 系统）；`kind` 为 `form` / `choice` / `allocation`。
+  逐段分摊（内核 `allocation_required`）的 `allocation = { segments: [{ index, date, route, suggested }], total, giveUpNote }`，`answer-pending` 的 `answer` 为 `{ amounts: [...] }`（按段顺序，两位小数）或 `{ giveUp: true }`；
+  是否按分守恒由服务端判定，不守恒返回 `{ error }`（文案 `ALLOCATION_ERRORS.notConserved`），页面只显示。「认不出」的后果由服务端写在 `giveUpNote`。
+- 跨任务重复发票（内核 `duplicate_blocked`）：快照 `blockers: [{ kind: 'duplicate_across_tasks', materialId, fileName, reason, resolver, tasks: [{ taskId, name }] }]`。有阻塞项时整批停：盘点结束但 `events`、`pendingItems` 为空，阶段停在 `inventory`，step 为 `none`。表格列 `BLOCKER_TABLE_COLUMNS`，说明文案 `DUPLICATE_BLOCKER_COPY`。
 - 响应约定：成功 200 返回整份新快照；失败 `{ error: { code, message } }`（`message` 直接显示在按钮旁）；`stepToken` 过期返回 409 与 `{ error, snapshot }`（最新快照）。事件流为 SSE，`event: snapshot`，`data` 为整份快照；客户端断开后按 0.5 s 起翻倍、封顶 10 s 重连，恢复后重新拉取快照。
 - 值：金额两位小数字符串，日期 `YYYY-MM-DD`，时间 `HH:MM`，ID 不透明。上传为 multipart（`files`；支付截图为 `voucherMaterialId` + `file`，只在打印稿生成后接受）。
 - 验收样本：`src/mock/fixtures/`（各阶段快照）与 `fixtures/generated/`（原件、页图、PDF）。

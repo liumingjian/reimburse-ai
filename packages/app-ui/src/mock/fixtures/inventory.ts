@@ -1,5 +1,18 @@
-import { PENDING_CHOICE_KEY, type ExpenseCategory, type ExpenseEvent, type FieldCandidate, type Line, type Material, type PendingItem, type TaskSnapshot } from '../../contract/snapshot';
-import type { PendingAnswer } from '../../contract/actions';
+import {
+  PENDING_CHOICE_KEY,
+  fieldAnswer,
+  isAllocationAnswer,
+  type Blocker,
+  type BlockerTask,
+  type ExpenseCategory,
+  type ExpenseEvent,
+  type FieldCandidate,
+  type Line,
+  type Material,
+  type PendingAnswer,
+  type PendingItem,
+  type TaskSnapshot,
+} from '../../contract/snapshot';
 
 // 盘点结果夹具：11 份材料的识别结果、9 个费用事件、3 个待确认项，以及答复后的候选明细。
 // 数字与人物沿用原型；文件对应 fixtures/generated/ 里由脚本生成的示例原件（fixtures/scripts/data.mjs 是同一份数据）。
@@ -334,45 +347,133 @@ export const UNSUPPORTED_CHOICES: PendingItem['choices'] = [
   { key: 'manual', label: '自行手工处理' },
 ];
 
+// 示例材料的待确认项都由用户处理（内核 WHO：要你处理）。
 const PENDING_TEMPLATES: Readonly<Record<string, PendingTemplate>> = {
   m09: {
     title: '补填起点与终点',
     why: '客运费明细要求结构化的起点和终点，纸质车票上没有这两项，需要你对照行程回忆填写。',
     kind: 'form',
+    resolver: '要你处理',
     fields: TAXI_ROUTE_FIELDS('张江高科', '漕河泾开发区'),
     choices: [],
+    allocation: null,
   },
   m10: {
     title: '下车时间不合法，并补填起点与终点',
     why: '票面上的下车时间读成了 90:60，不是合法时间。日期年份已按票面后两位补全为 2026-08-19，无需处理。',
     kind: 'form',
+    resolver: '要你处理',
     fields: [{ key: 'alightTime', label: '下车时间', placeholder: '对照原件填写，如 19:06', required: true, format: 'time' }, ...TAXI_ROUTE_FIELDS('静安寺', '虹桥枢纽')],
     choices: [],
+    allocation: null,
   },
   m11: {
     title: '不支持的材料类型',
     why: '第一版只处理住宿、网约车、高铁、出租车四类材料。这份发票不会被猜费用类别，请选择排除，或自行手工处理后再回来。',
     kind: 'choice',
+    resolver: '要你处理',
     fields: [],
     choices: UNSUPPORTED_CHOICES,
+    allocation: null,
   },
 };
 
-const UNSUPPORTED_TEMPLATE: PendingTemplate = {
-  title: '不支持的材料类型',
-  why: '这份文件的版式没有被任何规则认领，不能作为发票或参考材料使用。请选择排除，或自行手工处理后再回来。',
-  kind: 'choice',
-  fields: [],
-  choices: UNSUPPORTED_CHOICES,
+// 盘点里不认识的文件（不是任何示例原件）按形态分成三种，都「要你处理」：
+// 空文本 PDF（0 字节或文件名含「空白」）与多页发票（文件名含「多页」）只能排除，或换原件（追加材料后重新盘点）；其余是不支持的材料类型。
+type UnknownKind = 'empty_text' | 'multi_page' | 'unsupported';
+
+function unknownKind(material: Material): UnknownKind {
+  if (material.mediaType !== 'pdf') return 'unsupported';
+  if (material.size === 0 || material.fileName.includes('空白')) return 'empty_text';
+  if (material.fileName.includes('多页')) return 'multi_page';
+  return 'unsupported';
+}
+
+const EXCLUDE_ONLY: PendingItem['choices'] = [{ key: 'exclude', label: '排除此材料' }];
+
+const UNKNOWN_TEMPLATES: Readonly<Record<UnknownKind, PendingTemplate>> = {
+  // 内核 pdf_markdown_conversion_empty（next.mjs:826-831）。
+  empty_text: {
+    title: '这份 PDF 没有可读取的内容',
+    why: '这份 PDF 没有可读取的内容，没有票种、金额或日期可以核对。请提供电子发票原件或能正常读取文字的 PDF：在上传页追加原件后重新盘点；或者把它从本次报销中排除。',
+    kind: 'choice',
+    resolver: '要你处理',
+    fields: [],
+    choices: EXCLUDE_ONLY,
+    allocation: null,
+  },
+  // 内核 multi_page_invoice（next.mjs:870-872）。
+  multi_page: {
+    title: '多页发票',
+    why: '多页发票不在第一版支持范围内。请把它从本次报销中排除，或在上传页追加单页发票后重新盘点。',
+    kind: 'choice',
+    resolver: '要你处理',
+    fields: [],
+    choices: EXCLUDE_ONLY,
+    allocation: null,
+  },
+  unsupported: {
+    title: '不支持的材料类型',
+    why: '这份文件的版式没有被任何规则认领，不能作为发票或参考材料使用。请选择排除，或自行手工处理后再回来。',
+    kind: 'choice',
+    resolver: '要你处理',
+    fields: [],
+    choices: UNSUPPORTED_CHOICES,
+    allocation: null,
+  },
 };
 
-// 原型里各待确认项的既定答复（`?seed=review` 及之后的阶段使用）。
+const UNKNOWN_CHECK_TEXT: Readonly<Record<UnknownKind, string>> = {
+  empty_text: 'PDF 没有可读取的文字内容',
+  multi_page: '多页发票，第一版不支持',
+  unsupported: UNSUPPORTED_PROFILE.checkText,
+};
+
+// `?allocation=1`：高德合并发票的行程单第 3 段读成 21.56（原件是 21.65），三段合计 69.10，和票面价税合计 69.19 对不上，
+// 于是出现逐段分摊待确认项（内核 allocation_required）。行程单读数只用来预填，每段金额由用户给，mock 服务端按分判定守恒。
+const AMAP_VOUCHER = 'm03';
+const AMAP_TOTAL = '69.19';
+const AMAP_SUGGESTED: readonly string[] = ['26.69', '20.85', '21.56'];
+const AMAP_SUGGESTED_SUM = '69.10';
+const ALLOCATION_CHECK = {
+  voucher: `二维码核对一致；行程单 3 段合计 ${AMAP_SUGGESTED_SUM}，和价税合计 ${AMAP_TOTAL} 对不上，逐段金额待你确认`,
+  itinerary: `${AMAP_SUGGESTED.join(' + ')} = ${AMAP_SUGGESTED_SUM}，和发票价税合计 ${AMAP_TOTAL} 对不上`,
+  event: `逐段金额待确认：行程单 ${AMAP_SUGGESTED.join(' + ')} = ${AMAP_SUGGESTED_SUM}，票面价税合计 ${AMAP_TOTAL}`,
+} as const;
+
+// 选「这张票我认不出」的后果（服务端成句，照内核 givenUpOpenItems 的出路）：这张发票连同它的行程单移出本次报销。
+export const ALLOCATION_GIVE_UP_NOTE =
+  '选「这张票我认不出」后，这张发票连同它的行程单移出本次报销：不形成明细，也不进材料包。要报这张票，请补一份列了逐段金额的行程单，追加材料后重新盘点。';
+
+function allocationTemplate(fileName: string): PendingTemplate {
+  const segments = EVENTS.filter((event) => event.voucher === AMAP_VOUCHER).map((event, index) => ({
+    index: index + 1,
+    date: event.date,
+    route: `${event.origin ?? ''} → ${event.destination ?? ''}`,
+    suggested: AMAP_SUGGESTED[index] ?? null,
+  }));
+  return {
+    title: '合并交通发票逐段金额',
+    why:
+      `${fileName} 是一张合并的交通发票：票面只有一个合计 ${AMAP_TOTAL} 元，但行程单上是 ${segments.length} 段行程，而逐段金额加起来和票面对不上。` +
+      `各段的价税合计需要你确认：加起来必须正好是 ${AMAP_TOTAL} 元，不会平均、不会按比例，也不会把差额随手加到某一段上。差额落在哪一段，只有你知道。`,
+    kind: 'allocation',
+    resolver: '要你处理',
+    fields: [],
+    choices: [],
+    allocation: { segments, total: AMAP_TOTAL, giveUpNote: ALLOCATION_GIVE_UP_NOTE },
+  };
+}
+
+// 原型里各待确认项的既定答复（`?seed=project` 及之后的阶段使用）。
 export const SEED_ANSWERS: Readonly<Record<string, PendingAnswer>> = {
   m09: { origin: '张江高科', destination: '漕河泾开发区' },
   m10: { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' },
   m11: { [PENDING_CHOICE_KEY]: 'exclude' },
   // 仅在 `?fault=unsupported-material` 下存在的待确认项。
   m06: { [PENDING_CHOICE_KEY]: 'exclude' },
+  // 仅在 `?allocation=1` 下存在的逐段分摊：按原件给出，明细与默认相同。
+  m03: { amounts: ['26.69', '20.85', '21.65'] },
 };
 
 export type InventoryResult = {
@@ -385,8 +486,9 @@ export type InventoryResult = {
 // dist-mock/sample-materials/ 里的示例材料就是原件按业务文件名复制的一份（对照表见 fixtures/sample-materials.json）。
 const FILE_TO_FIXTURE = new Map(Object.entries(PROFILES).flatMap(([id, profile]) => [[profile.fileName, id] as const, [profile.file, id] as const]));
 
-// 把一批已接收的材料按文件名对到识别档案，生成盘点结果。unsupportedFault 让曹操行程单（m06）变成不支持的版式。
-export function inventoryResult(uploaded: readonly Material[], unsupportedFault: boolean): InventoryResult {
+// 把一批已接收的材料按文件名对到识别档案，生成盘点结果。unsupportedFault 让曹操行程单（m06）变成不支持的版式；
+// allocationRequired（`?allocation=1`）让高德合并发票需要逐段分摊。
+export function inventoryResult(uploaded: readonly Material[], unsupportedFault: boolean, allocationRequired = false): InventoryResult {
   const fixtureOf = new Map<string, string>();
   const actualOf = new Map<string, string>();
   for (const material of uploaded) {
@@ -405,7 +507,9 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
     // 原件本身还在：即使版式没被认领（故障注入的 m06），预览仍指向它的示例文件。
     const known = PROFILES[FILE_TO_FIXTURE.get(material.fileName) ?? ''];
     const source = profile ?? known;
-    const template = fixtureId ? PENDING_TEMPLATES[fixtureId] : UNSUPPORTED_TEMPLATE;
+    const unknown = fixtureId ? null : unknownKind(material);
+    const splitting = allocationRequired && fixtureId === AMAP_VOUCHER;
+    const template = splitting ? allocationTemplate(material.fileName) : fixtureId ? PENDING_TEMPLATES[fixtureId] : UNKNOWN_TEMPLATES[unknown ?? 'unsupported'];
     const pendingItemIds: string[] = [];
     if (template) {
       const itemId = `p${pendingItems.length + 1}`;
@@ -414,8 +518,10 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
       pendingIdOf.set(material.materialId, itemId);
     }
     const linked = p.linked.map((id) => actualOf.get(id)).filter((id): id is string => Boolean(id));
-    let checkText = p.checkText;
+    let checkText = unknown ? UNKNOWN_CHECK_TEXT[unknown] : p.checkText;
     if (fixtureId === 'm05' && unsupportedFault) checkText = '二维码核对一致；没有找到可配对的行程单，按发票 1 段';
+    if (splitting) checkText = ALLOCATION_CHECK.voucher;
+    if (allocationRequired && fixtureId === 'm04') checkText = ALLOCATION_CHECK.itinerary;
     return {
       ...material,
       kindLabel: p.kindLabel,
@@ -423,7 +529,7 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
       role: p.role,
       shape: source ? source.shape : material.shape,
       mediaType: source ? source.mediaType : material.mediaType,
-      status: p.status,
+      status: splitting ? 'pending' : p.status,
       checkText,
       linkedMaterialIds: linked,
       pendingItemIds,
@@ -433,12 +539,20 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
     };
   });
   const events: ExpenseEvent[] = [];
+  let amapSegment = 0;
   EVENTS.forEach((template, index) => {
     const voucherMaterialId = actualOf.get(template.voucher);
     if (!voucherMaterialId) return;
     const refs = template.refs.map((id) => actualOf.get(id)).filter((id): id is string => Boolean(id));
     let evidenceNote = template.evidenceNote;
     if (template.voucher === 'm05' && refs.length === 0) evidenceNote = '没有找到可配对的行程单，按发票 1 段计一次费用';
+    // 逐段分摊之前，高德各段先按行程单读数记（第 3 段读错）；答复后换成用户给的金额。
+    let grossAmount = template.gross;
+    if (allocationRequired && template.voucher === AMAP_VOUCHER) {
+      grossAmount = AMAP_SUGGESTED[amapSegment] ?? template.gross;
+      amapSegment += 1;
+      if (evidenceNote) evidenceNote = ALLOCATION_CHECK.event;
+    }
     events.push({
       eventId: `ev-${String(index + 1).padStart(2, '0')}`,
       no: events.length + 1,
@@ -452,7 +566,7 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
       city: template.city,
       origin: template.origin,
       destination: template.destination,
-      grossAmount: template.gross,
+      grossAmount,
     });
   });
   // 统一业务序号（mock 服务端给出，页面不排序）：本地市内交通 → 外地市内交通 → 长途交通 → 住宿，同一分类内保持事件顺序。
@@ -463,21 +577,26 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
   return { materials, events, pendingItems };
 }
 
-// 采用一条答复：材料字段来源改为 user，费用事件补上起终点，待确认项标记已处理。返回是否还有未处理项。
+// 采用一条答复：材料字段来源改为 user（服务端记录，页面不显示来源），费用事件补上起终点或逐段金额，待确认项标记已处理。
 export function applyPendingAnswer(result: InventoryResult, item: PendingItem, answer: PendingAnswer): void {
   const material = result.materials.find((m) => m.materialId === item.materialId);
   if (!material) throw new Error(`待确认项 ${item.itemId} 指向不存在的材料 ${item.materialId}`);
   item.status = 'resolved';
-  item.answer = { ...answer };
+  item.answer = structuredClone(answer);
+  if (item.kind === 'allocation') {
+    applyAllocation(result, item, material, answer);
+    return;
+  }
+  const values = fieldAnswer(answer);
   if (item.kind === 'choice') {
-    const choice = answer[PENDING_CHOICE_KEY];
+    const choice = values[PENDING_CHOICE_KEY];
     material.role = 'excluded';
     material.status = 'excluded';
     material.checkText = choice === 'manual' ? '已标记为自行手工处理：你会在 ERP 里另行补录，应用不碰它' : '已排除：不进入明细，也不上传 ERP';
     return;
   }
   for (const f of item.fields) {
-    const value = answer[f.key] ?? '';
+    const value = values[f.key] ?? '';
     const existing = material.fields.find((candidate) => candidate.key === f.key);
     if (existing) {
       existing.value = value;
@@ -491,13 +610,70 @@ export function applyPendingAnswer(result: InventoryResult, item: PendingItem, a
   material.checkText = `${material.checkText}；${item.fields.map((f) => f.label).join('、')}由你补填`;
   for (const event of result.events) {
     if (event.voucherMaterialId !== item.materialId) continue;
-    if (answer.origin !== undefined) event.origin = answer.origin;
-    if (answer.destination !== undefined) event.destination = answer.destination;
+    if (values.origin !== undefined) event.origin = values.origin;
+    if (values.destination !== undefined) event.destination = values.destination;
     if (event.origin && event.destination) {
       event.summary = `出租车 · ${event.origin} → ${event.destination}`;
       event.evidenceNote = event.evidenceNote ? '纸质车票无参考材料；起点与终点由你补填' : null;
     }
   }
+}
+
+// 逐段分摊的答复（服务端已判定按分守恒）：各段价税合计换成用户给的金额；
+// 「认不出」：这张发票连同它的行程单移出本次报销，费用事件去掉后重新编号（仍按分类排序）。
+function applyAllocation(result: InventoryResult, item: PendingItem, voucher: Material, answer: PendingAnswer): void {
+  const own = result.events.filter((event) => event.voucherMaterialId === voucher.materialId);
+  const referenceIds = new Set(own.flatMap((event) => event.referenceMaterialIds));
+  if (isAllocationAnswer(answer) && 'amounts' in answer) {
+    own.forEach((event, index) => {
+      const amount = answer.amounts[index];
+      if (amount) event.grossAmount = amount;
+    });
+    const expression = `${answer.amounts.join(' + ')} = ${item.allocation?.total ?? ''}`;
+    voucher.status = 'ok';
+    voucher.checkText = `二维码核对一致；逐段金额由你确认：${expression}，按分守恒`;
+    const first = own[0];
+    if (first) first.evidenceNote = `打车发票与行程单配对：逐段金额由你确认，${expression}，按分守恒`;
+    for (const material of result.materials) if (referenceIds.has(material.materialId)) material.checkText = `${expression}，按分守恒（逐段金额由你确认）`;
+    return;
+  }
+  const removed = new Set([voucher.materialId, ...referenceIds]);
+  for (const material of result.materials) {
+    if (!removed.has(material.materialId)) {
+      material.linkedMaterialIds = material.linkedMaterialIds.filter((id) => !removed.has(id));
+      continue;
+    }
+    material.role = 'excluded';
+    material.status = 'excluded';
+    material.linkedMaterialIds = [];
+    material.checkText = material.materialId === voucher.materialId ? '逐段金额认不出：这张发票移出本次报销，不形成明细' : '随发票一起移出本次报销：不关联明细，也不进入材料包';
+  }
+  for (let index = result.events.length - 1; index >= 0; index -= 1) {
+    if (result.events[index]?.voucherMaterialId === voucher.materialId) result.events.splice(index, 1);
+  }
+  result.events.forEach((event, index) => {
+    event.no = index + 1;
+  });
+}
+
+// `?duplicate=1`：跨任务查重（按发票身份）命中。铁路电子客票_0809.pdf 这张发票在已完成的任务里也在，整批停。
+export const DUPLICATE_FIXTURE_ID = 'm07';
+
+export function duplicateBlockers(materials: Material[], hit: BlockerTask): Blocker[] {
+  const material = materials.find((candidate) => FILE_TO_FIXTURE.get(candidate.fileName) === DUPLICATE_FIXTURE_ID);
+  if (!material) return [];
+  material.status = 'pending';
+  material.checkText = `与报销任务「${hit.name}」里的发票重复`;
+  return [
+    {
+      kind: 'duplicate_across_tasks',
+      materialId: material.materialId,
+      fileName: material.fileName,
+      reason: `这张发票在报销任务「${hit.name}」里也在，那个任务已经写入报销系统，它还占着这张发票。同一张发票不能报两次：请把它从本次材料里移出。`,
+      resolver: '要你处理',
+      tasks: [{ ...hit }],
+    },
+  ];
 }
 
 // 虚构的费用项目编码与名称（内核 FY0xxxxx / 名称的写法），按费用分类给出。
@@ -535,9 +711,11 @@ export function buildLines(result: InventoryResult): Line[] {
   const groupOf = new Map<string, string>();
   const vouchers = [...new Set(result.events.map((event) => event.voucherMaterialId))].sort((a, b) => a.localeCompare(b));
   const invoiceLabel = new Map(vouchers.map((materialId, index) => [materialId, `发票${index + 1}`]));
+  const splits = splitOverrides(result.events);
   return result.events.map((event) => {
     const factsIndex = Number(event.eventId.slice(3)) - 1;
-    const facts = LINE_FACTS.get(factsIndex) ?? { net: event.grossAmount, tax: '0.00', invoiceType: '普通发票' };
+    const template = LINE_FACTS.get(factsIndex) ?? { net: event.grossAmount, tax: '0.00', invoiceType: '普通发票' };
+    const facts = { ...template, ...splits.get(event.eventId) };
     let groupId = groupOf.get(event.voucherMaterialId);
     if (!groupId) {
       groupId = `g${groupOf.size + 1}`;
@@ -571,6 +749,30 @@ export function buildLines(result: InventoryResult): Line[] {
       fromPendingItemId: pendingItem?.itemId ?? null,
     };
   });
+}
+
+// 逐段金额被用户改过的凭证（逐段分摊）：照内核 splitTax 的做法重拆税额（按比例取整，余数归最大段），不含税金额 = 价税合计 - 税额。
+// 各段与夹具相同的凭证不重拆。
+function splitOverrides(events: readonly ExpenseEvent[]): Map<string, { net: string; tax: string }> {
+  const cents = (value: string) => Math.round(Number(value) * 100);
+  const yuan = (value: number) => (value / 100).toFixed(2);
+  const out = new Map<string, { net: string; tax: string }>();
+  for (const voucher of new Set(events.map((event) => event.voucherMaterialId))) {
+    const group = events.filter((event) => event.voucherMaterialId === voucher);
+    const templates = group.map((event) => EVENTS[Number(event.eventId.slice(3)) - 1]);
+    if (group.every((event, index) => templates[index]?.gross === event.grossAmount)) continue;
+    const taxTotal = templates.reduce((sum, template) => sum + cents(template?.tax ?? '0.00'), 0);
+    const gross = group.map((event) => cents(event.grossAmount));
+    const grossTotal = gross.reduce((sum, value) => sum + value, 0);
+    const taxes = gross.map((value) => (grossTotal > 0 ? Math.floor((taxTotal * value) / grossTotal) : 0));
+    const largest = gross.indexOf(Math.max(...gross));
+    taxes[largest] = (taxes[largest] ?? 0) + taxTotal - taxes.reduce((sum, value) => sum + value, 0);
+    group.forEach((event, index) => {
+      const tax = taxes[index] ?? 0;
+      out.set(event.eventId, { net: yuan((gross[index] ?? 0) - tax), tax: yuan(tax) });
+    });
+  }
+  return out;
 }
 
 // 还没处理的待确认项个数：只有 mock 服务端数，页面读快照里的 inventory.summary.openPendingItemCount。

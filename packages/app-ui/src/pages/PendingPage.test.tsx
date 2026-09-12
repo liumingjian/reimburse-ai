@@ -1,17 +1,21 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { App } from '../App';
-import { PENDING_ANSWER_ERRORS, STALE_STEP_NOTICE } from '../contract/actions';
+import { ALLOCATION_ERRORS, PENDING_ANSWER_ERRORS, STALE_STEP_NOTICE } from '../contract/actions';
+import { ALLOCATION_GIVE_UP_NOTE } from '../mock/fixtures/inventory';
 import { createMockAdapter } from '../mock/mock-adapter';
-import type { Fault } from '../mock/options';
+import type { Fault, MockOptions } from '../mock/options';
 import type { TaskStage } from '../contract/stage';
 
-function renderPending(seed: TaskStage = 'pending', fault: Fault | null = null) {
+function renderPending(seed: TaskStage = 'pending', fault: Fault | null = null, extra: Partial<MockOptions> = {}) {
   window.location.hash = '#/task/T1/pending';
-  const adapter = createMockAdapter({ seed, fault, inventoryPhaseMs: 5 });
+  const adapter = createMockAdapter({ ...extra, seed, fault, inventoryPhaseMs: 5 });
   render(<App adapter={adapter} />);
   return adapter;
 }
+
+// 盘点页与待确认项页不许出现规则名、字段来源 user 与「候选」。
+const FORBIDDEN_TEXT = /rule:|user|候选/;
 
 const list = () => screen.getByLabelText('待确认项清单');
 const itemButton = (title: string) => within(screen.getByLabelText('待确认项清单')).getByRole('button', { name: new RegExp(`^${title}`) });
@@ -29,14 +33,20 @@ describe('待确认项', () => {
     expect(screen.getByText('对照原件补填或作出选择。还剩 3 个。')).toBeTruthy();
     expect(list()).toBeTruthy();
     const buttons = within(screen.getByLabelText('待确认项清单')).getAllByRole('button');
-    expect(buttons.map((button) => button.textContent)).toEqual(['补填起点与终点IMG_4871.jpg', '下车时间不合法，并补填起点与终点IMG_4906.jpg', '不支持的材料类型餐饮_发票.pdf']);
+    // 每条都标明处理人（照内核开放项表）。
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      '补填起点与终点IMG_4871.jpg · 要你处理',
+      '下车时间不合法，并补填起点与终点IMG_4906.jpg · 要你处理',
+      '不支持的材料类型餐饮_发票.pdf · 要你处理',
+    ]);
 
-    // 默认选中第一个：出租车照片用 img 预览，字段带来源。
+    // 默认选中第一个：出租车照片用 img 预览，显示读出的字段，但不显示字段来源。
     expect(within(detail()).getByRole('heading', { name: '补填起点与终点' })).toBeTruthy();
+    expect(within(detail()).getByTestId('resolver').textContent).toBe('处理人：要你处理');
     const photo = within(detail()).getByRole('img', { name: 'IMG_4871.jpg 原件' });
     expect(photo.getAttribute('src')).toBe('fixtures/m09-taxi-photo.jpg');
     expect(within(detail()).getByText('04213377')).toBeTruthy();
-    expect(within(detail()).getAllByText('rule:taxi_receipt').length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toMatch(FORBIDDEN_TEXT);
 
     // 切到不支持的材料：PDF 用 iframe 预览，出现两种选择。
     fireEvent.click(itemButton('不支持的材料类型'));
@@ -69,7 +79,7 @@ describe('待确认项', () => {
     expect(snapshot.pendingItems.every((item) => item.status === 'open')).toBe(true);
   });
 
-  test('逐项答复：补填后跳到下一项，来源记为 user；排除不支持的材料后显示没有待确认项了', async () => {
+  test('逐项答复：补填后跳到下一项，页面不显示字段来源；排除不支持的材料后显示没有待确认项了', async () => {
     const adapter = renderPending();
     await screen.findByRole('heading', { name: '待确认项' });
     fill('起点 *', '张江高科');
@@ -79,11 +89,11 @@ describe('待确认项', () => {
     expect(screen.getByText('对照原件补填或作出选择。还剩 2 个。')).toBeTruthy();
     expect(itemButton('补填起点与终点').textContent).toContain('已处理');
 
-    // 已处理的项可以回看：显示答复与来源 user。
+    // 已处理的项可以回看：显示答复；补填的字段服务端记为用户来源，但页面不显示来源。
     fireEvent.click(itemButton('补填起点与终点'));
     expect((within(detail()).getByLabelText('起点 *') as HTMLInputElement).value).toBe('张江高科');
     expect(within(detail()).getByLabelText('起点 *').hasAttribute('disabled')).toBe(true);
-    expect(within(detail()).getAllByText('user').length).toBe(2);
+    expect(document.body.textContent).not.toMatch(FORBIDDEN_TEXT);
 
     fireEvent.click(itemButton('下车时间不合法'));
     fill('下车时间 *', '19:06');
@@ -164,9 +174,96 @@ describe('待确认项', () => {
     await screen.findByRole('heading', { name: '待确认项' });
     expect(screen.getByText('对照原件补填或作出选择。还剩 4 个。')).toBeTruthy();
     const buttons = within(screen.getByLabelText('待确认项清单')).getAllByRole('button');
-    expect(buttons.some((button) => button.textContent === '不支持的材料类型曹操出行_行程单.pdf')).toBe(true);
+    expect(buttons.some((button) => button.textContent === '不支持的材料类型曹操出行_行程单.pdf · 要你处理')).toBe(true);
     fireEvent.click(itemByFile('曹操出行_行程单'));
     fireEvent.click(within(detail()).getByRole('button', { name: '排除此材料' }));
     await screen.findByText('对照原件补填或作出选择。还剩 3 个。');
+  });
+});
+
+describe('逐段分摊与处理人', () => {
+  const ALLOCATION_TITLE = '合并交通发票逐段金额';
+  const segmentInput = (index: number) => within(detail()).getByLabelText(new RegExp(`^第 ${index} 段`)) as HTMLInputElement;
+  const submitAmounts = () => fireEvent.click(within(detail()).getByRole('button', { name: '提交逐段金额' }));
+
+  test('?allocation=1：每条都标明处理人；不守恒时显示服务端给的错误，守恒后通过', async () => {
+    const adapter = renderPending('pending', null, { allocationRequired: true });
+    await screen.findByText('对照原件补填或作出选择。还剩 4 个。');
+    const buttons = within(list()).getAllByRole('button');
+    expect(buttons).toHaveLength(4);
+    for (const button of buttons) expect(button.textContent).toContain('要你处理');
+
+    expect(within(detail()).getByRole('heading', { name: ALLOCATION_TITLE })).toBeTruthy();
+    expect(within(detail()).getByTestId('resolver').textContent).toBe('处理人：要你处理');
+    // 预填行程单上的读数（第 3 段读成 21.56），合计由服务端核对。
+    expect([1, 2, 3].map((index) => segmentInput(index).value)).toEqual(['26.69', '20.85', '21.56']);
+    submitAmounts();
+    expect(await within(detail()).findByText(ALLOCATION_ERRORS.notConserved('69.10', '69.19'))).toBeTruthy();
+    expect((await adapter.getSnapshot('T1')).pendingItems[0]?.status).toBe('open');
+
+    fireEvent.change(segmentInput(3), { target: { value: '21.65' } });
+    submitAmounts();
+    expect(await within(detail()).findByRole('heading', { name: '补填起点与终点' })).toBeTruthy();
+    expect(itemButton(ALLOCATION_TITLE).textContent).toContain('已处理');
+    const snapshot = await adapter.getSnapshot('T1');
+    expect(snapshot.pendingItems[0]).toMatchObject({ kind: 'allocation', status: 'resolved', answer: { amounts: ['26.69', '20.85', '21.65'] } });
+    expect(snapshot.events.slice(0, 3).map((event) => event.grossAmount)).toEqual(['26.69', '20.85', '21.65']);
+    expect(document.body.textContent).not.toMatch(FORBIDDEN_TEXT);
+  });
+
+  test('逐段金额格式不对或没填时就地报错，不提交到服务端', async () => {
+    const adapter = renderPending('pending', null, { allocationRequired: true });
+    await screen.findByText('对照原件补填或作出选择。还剩 4 个。');
+    fireEvent.change(segmentInput(2), { target: { value: '20.8' } });
+    fireEvent.change(segmentInput(3), { target: { value: '' } });
+    submitAmounts();
+    expect(within(detail()).getAllByRole('alert').map((node) => node.textContent)).toEqual([ALLOCATION_ERRORS.amount, PENDING_ANSWER_ERRORS.required]);
+    expect(segmentInput(2).getAttribute('aria-invalid')).toBe('true');
+    expect((await adapter.getSnapshot('T1')).pendingItems[0]?.status).toBe('open');
+  });
+
+  test('「这张票我认不出」也能继续：处理前后都显示后果说明，这张发票连同行程单移出本次报销', async () => {
+    const adapter = renderPending('pending', null, { allocationRequired: true });
+    await screen.findByText('对照原件补填或作出选择。还剩 4 个。');
+    expect(within(detail()).getByTestId('give-up-note').textContent).toBe(ALLOCATION_GIVE_UP_NOTE);
+    fireEvent.click(within(detail()).getByRole('button', { name: '这张票我认不出' }));
+    expect(await within(detail()).findByRole('heading', { name: '补填起点与终点' })).toBeTruthy();
+    fireEvent.click(itemButton(ALLOCATION_TITLE));
+    expect(within(detail()).getByTestId('give-up-note').textContent).toBe(`你选了「这张票我认不出」。${ALLOCATION_GIVE_UP_NOTE}`);
+
+    let snapshot = await adapter.getSnapshot('T1');
+    expect(snapshot.materials.filter((material) => material.status === 'excluded').map((material) => material.materialId)).toEqual(['m03', 'm04']);
+    expect(snapshot.events.map((event) => event.no)).toEqual([1, 2, 3, 4, 5, 6]);
+    // 其余三项照常处理，流程继续：明细剩 6 行。
+    const answers = [{ origin: '张江高科', destination: '漕河泾开发区' }, { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' }, { choice: 'exclude' }];
+    for (const [index, answer] of answers.entries()) {
+      snapshot = await adapter.getSnapshot('T1');
+      const outcome = await adapter.answerPendingItem('T1', `p${index + 2}`, answer, snapshot.step.stepToken);
+      expect(outcome.ok).toBe(true);
+    }
+    snapshot = await adapter.getSnapshot('T1');
+    expect(snapshot.stage).toBe('project');
+    expect(snapshot.lines).toHaveLength(6);
+    expect(snapshot.confirmation.grossTotal).toBe('3903.40');
+    expect(await screen.findByRole('heading', { name: '没有待确认项了' })).toBeTruthy();
+    expect(screen.getByText(ALLOCATION_GIVE_UP_NOTE)).toBeTruthy();
+  });
+
+  test('空文本 PDF 与多页发票：要你处理，只能排除', async () => {
+    window.location.hash = '#/task/T1/pending';
+    const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 1 });
+    await adapter.uploadBatch('T1', [new File([], '扫描件_空白.pdf', { type: 'application/pdf' }), new File(['two pages'], '酒店_多页发票.pdf', { type: 'application/pdf' })]);
+    const uploaded = await adapter.getSnapshot('T1');
+    await adapter.startInventory('T1', uploaded.step.stepToken);
+    await waitFor(async () => expect((await adapter.getSnapshot('T1')).stage).toBe('pending'));
+    render(<App adapter={adapter} />);
+    await screen.findByText('对照原件补填或作出选择。还剩 2 个。');
+    for (const title of ['这份 PDF 没有可读取的内容', '多页发票']) {
+      fireEvent.click(itemButton(title));
+      expect(within(detail()).getByRole('heading', { name: title })).toBeTruthy();
+      expect(within(detail()).getByTestId('resolver').textContent).toBe('处理人：要你处理');
+      expect(within(detail()).getAllByRole('button').map((button) => button.textContent)).toEqual(['排除此材料']);
+    }
+    expect(within(detail()).getByText(/追加单页发票后重新盘点/)).toBeTruthy();
   });
 });

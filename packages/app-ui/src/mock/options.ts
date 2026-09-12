@@ -39,6 +39,10 @@ export type MockOptions = {
   catalogMismatch?: boolean;
   // `?preparation=blocked`：材料包缺项（曹操出行行程单与明细对不上）；排除这份行程单后重新准备即通过。
   preparationBlocked?: boolean;
+  // `?allocation=1`：盘点时高德合并发票的行程单三段合计 69.10 和票面价税合计 69.19 对不上，多出一个逐段分摊待确认项（mock 服务端按分判定守恒）。
+  allocationRequired?: boolean;
+  // `?duplicate=1`：盘点时跨任务查重命中（铁路电子客票_0809.pdf 已在已完成的任务 T3 里），整批停。
+  duplicateHit?: boolean;
   storage?: MockStorage;
   // `?location=unavailable`：mock 位置 Adapter 取不到网络位置，第一次新建任务时常驻城市没有默认值。不是故障场景。
   locationUnavailable?: boolean;
@@ -95,6 +99,16 @@ export function readMockOptions(search: string): MockOptions {
   if (preparation !== null) {
     if (preparation === 'blocked') options.preparationBlocked = true;
     else console.warn(`未知的 preparation「${preparation}」，可用值：blocked`);
+  }
+  const allocation = params.get('allocation');
+  if (allocation !== null) {
+    if (allocation === '1') options.allocationRequired = true;
+    else console.warn(`未知的 allocation「${allocation}」，可用值：1`);
+  }
+  const duplicate = params.get('duplicate');
+  if (duplicate !== null) {
+    if (duplicate === '1') options.duplicateHit = true;
+    else console.warn(`未知的 duplicate「${duplicate}」，可用值：1`);
   }
   const identity = params.get('identity');
   if (identity !== null) {

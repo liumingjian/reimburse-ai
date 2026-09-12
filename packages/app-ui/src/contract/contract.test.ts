@@ -2,10 +2,11 @@ import { describe, expect, test } from 'vitest';
 import { INITIAL_BOOK, MOCK_TODAY, annotateProject, confirmationDigest } from '../mock/fixtures/projects';
 import { ProjectBookSchema } from './project-book';
 import { t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from '../mock/fixtures/tasks';
+import { createMockAdapter } from '../mock/mock-adapter';
 import { FAULTS, readMockOptions } from '../mock/options';
-import { CREATE_TASK_ERRORS, CreateTaskInputSchema, PENDING_ANSWER_ERRORS, isRealDate, validatePendingAnswer } from './actions';
+import { ALLOCATION_ERRORS, CREATE_TASK_ERRORS, CreateTaskInputSchema, PENDING_ANSWER_ERRORS, isRealDate, validatePendingAnswer } from './actions';
 import { STAGE_DEFAULT_PAGE, TASK_STAGES, TaskStageSchema, pageAllowed, stageReached } from './stage';
-import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS, STEP_KINDS, TaskSnapshotSchema, UploadBatchSchema } from './snapshot';
+import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS, PendingAnswerSchema, STEP_KINDS, TaskSnapshotSchema, UploadBatchSchema } from './snapshot';
 import { TaskListSchema } from './task-list';
 
 describe('整单确认表', () => {
@@ -170,6 +171,63 @@ describe('契约 schema', () => {
     expect(validatePendingAnswer(choice, { choice: 'nope' })).toEqual({ choice: PENDING_ANSWER_ERRORS.choice });
   });
 
+  test('逐段分摊与处理人：?allocation=1 的各阶段夹具通过 schema；待确认项都带处理人；答复为 amounts 或 giveUp', () => {
+    for (const stage of TASK_STAGES) {
+      expect(() => TaskSnapshotSchema.parse(t1Snapshot(stage, false, true)), stage).not.toThrow();
+    }
+    expect(t1Snapshot('pending').pendingItems.map((item) => item.resolver)).toEqual(['要你处理', '要你处理', '要你处理']);
+    expect(t1Snapshot('pending').blockers).toEqual([]);
+    const pending = t1Snapshot('pending', false, true);
+    expect(pending.pendingItems.map((item) => [item.itemId, item.kind])).toEqual([
+      ['p1', 'allocation'],
+      ['p2', 'form'],
+      ['p3', 'form'],
+      ['p4', 'choice'],
+    ]);
+    const allocation = pending.pendingItems[0]?.allocation;
+    expect(allocation?.total).toBe('69.19');
+    expect(allocation?.segments.map((segment) => [segment.index, segment.route, segment.suggested])).toEqual([
+      [1, '虹桥枢纽 → 漕河泾', '26.69'],
+      [2, '漕河泾 → 静安寺', '20.85'],
+      [3, '静安寺 → 张江', '21.56'],
+    ]);
+    // project 起按原件金额答复，明细与默认相同。
+    const review = t1Snapshot('review', false, true);
+    expect(review.lines.map((line) => line.grossAmount)).toEqual(['26.69', '20.85', '21.65', '38.40', '32.00', '47.00', '73.00', '73.00', '3640.00']);
+    expect(review.lines.slice(0, 3).map((line) => line.taxAmount)).toEqual(['0.77', '0.61', '0.63']);
+
+    const target = { kind: 'allocation' as const, fields: [], choices: [], allocation: allocation ?? null };
+    expect(validatePendingAnswer(target, { giveUp: true })).toEqual({});
+    expect(validatePendingAnswer(target, { amounts: ['30.00', '20.00', '19.19'] })).toEqual({});
+    expect(validatePendingAnswer(target, { amounts: ['26.69', '0.00', '2'] })).toEqual({ 'segment-2': ALLOCATION_ERRORS.amount, 'segment-3': ALLOCATION_ERRORS.amount });
+    expect(validatePendingAnswer(target, { amounts: ['26.69'] })).toEqual({ allocation: ALLOCATION_ERRORS.missing });
+    expect(validatePendingAnswer(target, { choice: 'exclude' })).toEqual({ allocation: ALLOCATION_ERRORS.missing });
+    expect(PendingAnswerSchema.safeParse({ amounts: ['1.00'] }).success).toBe(true);
+    expect(PendingAnswerSchema.safeParse({ giveUp: true }).success).toBe(true);
+    expect(PendingAnswerSchema.safeParse({ giveUp: false }).success).toBe(false);
+  });
+
+  test('逐段金额被改过时，mock 服务端按比例重拆税额（余数归最大段），不含税金额 = 价税合计 - 税额', async () => {
+    const adapter = createMockAdapter({ seed: 'pending', fault: null, allocationRequired: true });
+    const before = await adapter.getSnapshot('T1');
+    const outcome = await adapter.answerPendingItem('T1', 'p1', { amounts: ['30.00', '20.00', '19.19'] }, before.step.stepToken);
+    expect(outcome.ok).toBe(true);
+    let snapshot = await adapter.getSnapshot('T1');
+    const answers = [{ origin: '张江高科', destination: '漕河泾开发区' }, { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' }, { choice: 'exclude' }];
+    for (const [index, answer] of answers.entries()) {
+      snapshot = await adapter.getSnapshot('T1');
+      expect((await adapter.answerPendingItem('T1', `p${index + 2}`, answer, snapshot.step.stepToken)).ok).toBe(true);
+    }
+    snapshot = await adapter.getSnapshot('T1');
+    const amap = snapshot.lines.slice(0, 3);
+    expect(amap.map((line) => [line.grossAmount, line.netAmount, line.taxAmount])).toEqual([
+      ['30.00', '29.12', '0.88'],
+      ['20.00', '19.42', '0.58'],
+      ['19.19', '18.64', '0.55'],
+    ]);
+    expect(snapshot.confirmation.grossTotal).toBe('3972.59');
+  });
+
   test('金额与日期格式不对的快照被拒绝', () => {
     const broken = t1Snapshot('done');
     broken.confirmation.grossTotal = '3972.5';
@@ -202,6 +260,10 @@ describe('报销任务阶段', () => {
     expect(readMockOptions('?seed=catalog&catalog=mismatch')).toEqual({ seed: 'catalog', fault: null, catalogMismatch: true });
     expect(readMockOptions('?seed=preparation&preparation=blocked')).toEqual({ seed: 'preparation', fault: null, preparationBlocked: true });
     expect(readMockOptions('?catalog=nope&preparation=nope')).toEqual({ seed: null, fault: null });
+    // ?allocation=1 / ?duplicate=1：逐段分摊、跨任务重复发票。
+    expect(readMockOptions('?seed=pending&allocation=1')).toEqual({ seed: 'pending', fault: null, allocationRequired: true });
+    expect(readMockOptions('?duplicate=1')).toEqual({ seed: null, fault: null, duplicateHit: true });
+    expect(readMockOptions('?allocation=yes&duplicate=0')).toEqual({ seed: null, fault: null });
   });
 
   test('个人项目簿夹具通过 schema；状态标签照内核：可选 / 已过期 / 复检未通过 / 项目号不安全', () => {

@@ -1,17 +1,12 @@
 import { MATERIAL_ROLE_LABELS, type ExpenseEvent, type Material, type TaskSnapshot } from '../contract/snapshot';
 import { formatDateTime } from '../format';
 import { taskHash } from '../router';
+import { DuplicateBlockers } from './DuplicateBlockers';
 import { PAGE_COPY } from './page-copy';
 
-// 材料盘点页：盘点进行中显示分阶段进度；结束后按费用事件归组显示主要报销凭证、参考材料、材料证据关联结论，
-// 以及每份材料的字段候选与来源（规则名或 user）。页面只渲染快照，不做配对、不算金额。
-
-const EVIDENCE_LABELS: Readonly<Record<Material['fields'][number]['evidence'], string>> = {
-  explicit: '',
-  derived: '推导',
-  ambiguous: '存疑',
-  missing: '缺失',
-};
+// 材料盘点页：只有盘点进度与材料清单。盘点进行中显示分阶段进度；结束后按费用事件归组列出主要报销凭证与参考材料、
+// 材料证据关联结论和每份材料的校验结果。不展示读出的字段及其来源（Skill 没有盘点结果表，内核不许把规则名给员工看）。
+// 跨任务重复发票命中时整批停，显示重复发票表。页面只渲染快照，不做配对、不算金额。
 
 function StatusBadge({ material }: { material: Material }) {
   if (material.status === 'ok') return <span className="badge badge-ok">通过</span>;
@@ -20,25 +15,7 @@ function StatusBadge({ material }: { material: Material }) {
   return <span className="badge">待盘点</span>;
 }
 
-function FieldList({ material }: { material: Material }) {
-  if (material.fields.length === 0) return <span className="muted">无</span>;
-  return (
-    <dl className="kv compact">
-      {material.fields.map((candidate) => (
-        <div key={candidate.key} className="kv-row">
-          <dt>{candidate.label}</dt>
-          <dd>
-            <span className="mono">{candidate.value || <span className="muted">未填</span>}</span>
-            <span className="caption source">
-              {candidate.source}
-              {EVIDENCE_LABELS[candidate.evidence] ? ` · ${EVIDENCE_LABELS[candidate.evidence]}` : ''}
-            </span>
-          </dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
+const COLUMNS = ['文件', '识别为', '校验', '状态'] as const;
 
 function MaterialRow({ material, roleLabel }: { material: Material; roleLabel: string }) {
   return (
@@ -51,9 +28,6 @@ function MaterialRow({ material, roleLabel }: { material: Material; roleLabel: s
         {material.kindLabel}
         {material.categoryLabel ? <div className="caption">{material.categoryLabel}</div> : null}
       </td>
-      <td>
-        <FieldList material={material} />
-      </td>
       <td>{material.checkText || <span className="muted">无</span>}</td>
       <td>
         <StatusBadge material={material} />
@@ -64,7 +38,7 @@ function MaterialRow({ material, roleLabel }: { material: Material; roleLabel: s
 
 type Group = { voucher: Material; events: ExpenseEvent[]; references: Material[] };
 
-// 服务端已按统一业务序号排好，同一主要报销凭证的事件相邻；这里只把相邻、同一凭证的事件收拢成一组显示（与整单明细确认页的行分组同理），
+// 服务端已按统一业务序号排好，同一主要报销凭证的事件相邻；这里只把相邻、同一凭证的事件收拢成一组显示，
 // 组内的参考材料照各事件列出的 id 显示。没有归入任何事件的材料由服务端在 inventory.ungroupedMaterialIds 里给出。
 function groupEvents(snapshot: TaskSnapshot, byId: ReadonlyMap<string, Material>): Group[] {
   const groups: Group[] = [];
@@ -98,7 +72,7 @@ function EventGroup({ group }: { group: Group }) {
   return (
     <tbody className="event-group" aria-label={eventTitle(group)}>
       <tr className="group-head">
-        <td colSpan={5}>
+        <td colSpan={COLUMNS.length}>
           <div className="group-title">{eventTitle(group)}</div>
           <ul className="event-lines">
             {group.events.map((event) => (
@@ -147,18 +121,25 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const taskId = snapshot.task.taskId;
   // 盘点结果的计数来自服务端（inventory.summary），页面不自己数。
   const summary = snapshot.inventory.status === 'done' ? snapshot.inventory.summary : null;
+  const blocked = snapshot.blockers.length > 0;
   const byId = new Map(snapshot.materials.map((material) => [material.materialId, material]));
   const groups = groupEvents(snapshot, byId);
   const ungrouped = snapshot.inventory.ungroupedMaterialIds.flatMap((id) => byId.get(id) ?? []);
+
+  const lead = !summary
+    ? copy.lead
+    : blocked
+      ? `上传批次的 ${summary.materialCount} 份材料已盘点，发现重复发票，这批材料整批暂停。`
+      : `上传批次的 ${summary.materialCount} 份材料已盘点完。${copy.lead}`;
 
   return (
     <>
       <div className="page-head">
         <div>
           <h1>{copy.title}</h1>
-          <p className="lead">{summary ? `上传批次的 ${summary.materialCount} 份材料已分别由对应规则认领。${copy.lead}` : copy.lead}</p>
+          <p className="lead">{lead}</p>
         </div>
-        {summary ? (
+        {summary && !blocked ? (
           <div className="actions">
             {summary.openPendingItemCount > 0 ? (
               <a className="btn btn-primary" href={taskHash(taskId, 'pending')}>
@@ -187,15 +168,14 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
               {snapshot.inventory.finishedAt ? ` · ${formatDateTime(snapshot.inventory.finishedAt)}` : ''}
             </span>
           </div>
+          <DuplicateBlockers snapshot={snapshot} />
           <section className="panel table" aria-label="盘点结果">
             <table className="data inventory">
               <thead>
                 <tr>
-                  <th>文件</th>
-                  <th>识别为</th>
-                  <th>字段候选 · 来源</th>
-                  <th>校验</th>
-                  <th>状态</th>
+                  {COLUMNS.map((column) => (
+                    <th key={column}>{column}</th>
+                  ))}
                 </tr>
               </thead>
               {groups.map((group) => (
@@ -204,10 +184,10 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
               {ungrouped.length > 0 ? (
                 <tbody className="event-group" aria-label="未归入费用事件">
                   <tr className="group-head">
-                    <td colSpan={5}>
+                    <td colSpan={COLUMNS.length}>
                       <div className="group-title">未归入费用事件</div>
                       <div className="evidence-note">
-                        <span className="muted">材料证据关联</span> 没有形成费用事件的材料：待确认或已排除。
+                        <span className="muted">材料证据关联</span> {blocked ? '整批暂停，还没有划分费用事件。' : '没有形成费用事件的材料：待确认或已排除。'}
                       </div>
                     </td>
                   </tr>

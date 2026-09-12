@@ -137,6 +137,7 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     inventory: inventoryNotStarted(),
     events: [],
     pendingItems: [],
+    blockers: [],
     lines: [],
     confirmation: { status: 'unconfirmed', confirmedAt: null, digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null, notice: null },
     paymentScreenshots: [],
@@ -151,8 +152,9 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
   };
 }
 
-// T1：进行中的任务，`?seed=` 决定它停在哪个阶段；unsupportedFault 对应 `?fault=unsupported-material`（曹操行程单变成不支持的版式）。
-export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false): TaskSnapshot {
+// T1：进行中的任务，`?seed=` 决定它停在哪个阶段；unsupportedFault 对应 `?fault=unsupported-material`（曹操行程单变成不支持的版式），
+// allocationRequired 对应 `?allocation=1`（高德合并发票需要逐段分摊；project 起按原件金额答复，明细与默认相同）。
+export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false, allocationRequired = false): TaskSnapshot {
   const snapshot = emptySnapshot(
     {
       taskId: T1_ID,
@@ -168,7 +170,7 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
     const batch = t1Batch();
     snapshot.batches = [batch];
     snapshot.inventory = inventoryDone('v1', T1_INVENTORY_FINISHED_AT);
-    const result = inventoryResult(t1Materials(batch), unsupportedFault);
+    const result = inventoryResult(t1Materials(batch), unsupportedFault, allocationRequired);
     if (stageReached(stage, 'project')) {
       // 待确认项都已按原型的既定答复处理，候选明细随之形成（No. 按内核分类排序）。
       for (const item of result.pendingItems) {

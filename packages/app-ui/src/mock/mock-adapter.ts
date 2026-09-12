@@ -49,7 +49,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const bus = createBus(options);
   let nextTaskNo = 4;
 
-  const seeded = t1Snapshot(options.seed ?? 'upload', options.fault === 'unsupported-material');
+  const seeded = t1Snapshot(options.seed ?? 'upload', options.fault === 'unsupported-material', options.allocationRequired === true);
   if (options.printSheet) seeded.printSheet = buildPrintSheet(seeded);
   bus.put(seeded);
   bus.put(t2Snapshot());

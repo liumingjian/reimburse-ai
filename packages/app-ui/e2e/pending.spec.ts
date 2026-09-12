@@ -21,7 +21,10 @@ test('左右分栏：原件预览随选中项切换，夹具文件能从 dist-mo
   await expect(photo).toHaveAttribute('src', 'fixtures/m09-taxi-photo.jpg');
   // 图片真的加载到了（说明 mock 构建把夹具复制进了 dist-mock/fixtures/）。
   await expect.poll(() => photo.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
-  await expect(detail(page).getByText('rule:taxi_receipt').first()).toBeVisible();
+  // 读出的字段照常显示，但不显示来源（规则名 / user）。
+  await expect(detail(page).getByText('04213377')).toBeVisible();
+  await expect(detail(page)).not.toContainText('rule:');
+  await expect(detail(page).getByTestId('resolver')).toHaveText('处理人：要你处理');
 
   await item(page, '不支持的材料类型').click();
   const frame = detail(page).locator('iframe[title="餐饮_发票.pdf 原件"]');

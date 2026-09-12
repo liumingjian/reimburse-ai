@@ -1,6 +1,6 @@
-import type { ActionError, ConfirmIdentityInput, CreateTaskInput, PendingAnswer, PlacementSlot, ProjectAssignmentInput } from './actions';
+import type { ActionError, ConfirmIdentityInput, CreateTaskInput, PlacementSlot, ProjectAssignmentInput } from './actions';
 import type { ProjectBook, ProjectBookResult } from './project-book';
-import type { Corners, TaskSnapshot } from './snapshot';
+import type { Corners, PendingAnswer, TaskSnapshot } from './snapshot';
 import type { TaskList } from './task-list';
 
 // 启动动作的结果：成功返回新任务列表；失败时 taskList 是服务端附带的最新列表（可能为 null）。

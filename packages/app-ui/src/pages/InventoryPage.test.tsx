@@ -1,14 +1,15 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { App } from '../App';
+import { BLOCKER_TABLE_COLUMNS } from '../contract/snapshot';
 import type { TaskStage } from '../contract/stage';
 import { createMockAdapter } from '../mock/mock-adapter';
-import type { Fault } from '../mock/options';
+import type { Fault, MockOptions } from '../mock/options';
 
-function renderAt(hash: string, seed: TaskStage | null, fault: Fault | null = null) {
+function renderAt(hash: string, seed: TaskStage | null, fault: Fault | null = null, extra: Partial<MockOptions> = {}) {
   window.location.hash = hash;
   // 阶段间隔 60ms：足够让进度态被看到，又不拖慢用例。
-  const adapter = createMockAdapter({ seed, fault, inventoryPhaseMs: 60 });
+  const adapter = createMockAdapter({ ...extra, seed, fault, inventoryPhaseMs: 60 });
   render(<App adapter={adapter} />);
   return adapter;
 }
@@ -35,7 +36,7 @@ function chooseFiles(names: string[]) {
 }
 
 describe('材料盘点', () => {
-  test('?seed=inventory：结果按费用事件归组，显示配对与守恒结论、字段候选来源，入口带待确认项数量', async () => {
+  test('?seed=inventory：只有材料清单，按费用事件归组，显示配对与守恒结论，不显示字段与来源；入口带待确认项数量', async () => {
     renderAt('#/task/T1/inventory', 'inventory');
     expect(await screen.findByRole('heading', { name: '材料盘点' })).toBeTruthy();
     expect(screen.getByRole('link', { name: '处理 3 个待确认项' }).getAttribute('href')).toBe('#/task/T1/pending');
@@ -46,6 +47,8 @@ describe('材料盘点', () => {
     expect(screen.getByText('盘点版本 v1 · 2026-09-11 14:20')).toBeTruthy();
 
     const results = screen.getByLabelText('盘点结果');
+    expect(within(results).getAllByRole('columnheader').map((node) => node.textContent)).toEqual(['文件', '识别为', '校验', '状态']);
+    expect(document.body.textContent).not.toMatch(/rule:|user|候选/);
     const groups = within(results).getAllByRole('rowgroup').filter((node) => node.classList.contains('event-group'));
     expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual([
       // 统一业务序号按内核确认表的分类排序：外地市内交通 → 长途交通 → 住宿，同一分类内按事件顺序。
@@ -65,7 +68,6 @@ describe('材料盘点', () => {
     expect(within(amap).getByText('高德打车_行程单.pdf')).toBeTruthy();
     expect(within(amap).getByText('主要报销凭证')).toBeTruthy();
     expect(within(amap).getByText('参考材料')).toBeTruthy();
-    expect(within(amap).getAllByText('rule:amap_itinerary').length).toBe(3);
     expect(within(amap).getByText('26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeTruthy();
 
     const hotel = groups[6] as HTMLElement;
@@ -74,8 +76,8 @@ describe('材料盘点', () => {
 
     const taxi = groups[3] as HTMLElement;
     expect(within(taxi).getByText('待确认')).toBeTruthy();
-    expect(within(taxi).getByText('90:60')).toBeTruthy();
-    expect(within(taxi).getByText('rule:taxi_receipt · 存疑')).toBeTruthy();
+    expect(within(taxi).getByText('票面年份「26」已补全为 2026；下车时间读数不合法')).toBeTruthy();
+    expect(within(taxi).queryByText('90:60')).toBeNull();
 
     const rest = groups[7] as HTMLElement;
     expect(within(rest).getByText('餐饮_发票.pdf')).toBeTruthy();
@@ -110,6 +112,33 @@ describe('材料盘点', () => {
     expect(within(rest).getByText('曹操出行_行程单.pdf')).toBeTruthy();
     expect(within(rest).getAllByText('未识别版式')).toHaveLength(2);
     expect(screen.getByText('没有找到可配对的行程单，按发票 1 段计一次费用')).toBeTruthy();
+  });
+
+  test('?duplicate=1：盘点后跨任务查重命中，整批停，显示重复发票表与命中的任务', async () => {
+    renderAt('#/task/T1/upload', 'upload', null, { duplicateHit: true });
+    await screen.findByText('拖入文件，或点击选择');
+    chooseFiles(FIXTURE_FILES);
+    await screen.findByRole('heading', { name: '上传批次 #1 · 11 份材料' });
+    fireEvent.click(screen.getByRole('button', { name: '开始材料盘点' }));
+
+    const table = await screen.findByRole('table', { name: '重复发票' }, { timeout: 3000 });
+    expect(within(table).getAllByRole('columnheader').map((node) => node.textContent)).toEqual([...BLOCKER_TABLE_COLUMNS]);
+    const cells = within(table).getAllByRole('cell').map((node) => node.textContent);
+    expect(cells[0]).toBe('1');
+    expect(cells[1]).toBe('铁路电子客票_0809.pdf');
+    expect(cells[3]).toContain('2026-06 北京培训');
+    expect(cells[4]).toBe('要你处理');
+    expect(within(screen.getByRole('list', { name: '命中的任务' })).getByText('2026-06 北京培训')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toContain('整批暂停');
+    // 整批停：没有费用事件，也没有进入待确认项或项目归属的入口。
+    expect(screen.queryByRole('link', { name: /^处理 \d+ 个待确认项$/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: '进入项目归属' })).toBeNull();
+    expect(screen.getByLabelText('未归入费用事件')).toBeTruthy();
+
+    window.location.hash = '#/task/T1/pending';
+    expect(await screen.findByText('这批材料整批暂停，没有形成待确认项。')).toBeTruthy();
+    expect(screen.getByRole('table', { name: '重复发票' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: '进入项目归属' })).toBeNull();
   });
 
   test('页面守卫：?seed=inventory 下直接打开后续页面显示阶段不可跳过', async () => {

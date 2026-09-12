@@ -1,0 +1,140 @@
+import { expect, test, type Page } from '@playwright/test';
+
+// 逐段分摊、待确认项处理人、跨任务重复发票（内核 allocation_required / intake_open_items / duplicate_blocked），
+// 以及盘点页与待确认项页不出现规则名、字段来源与「候选」。直接用 file:// 打开 mock 构建产物（pnpm build:mock）。
+const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
+const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
+
+const ALLOCATION = '合并交通发票逐段金额';
+const FORBIDDEN = /rule:|user|候选/;
+
+const list = (page: Page) => page.getByLabel('待确认项清单');
+const detail = (page: Page) => page.getByLabel('待确认项详情');
+const item = (page: Page, title: string) => list(page).getByRole('button', { name: new RegExp(`^${title}`) });
+const segment = (page: Page, index: number) => detail(page).getByLabel(new RegExp(`^第 ${index} 段`));
+const save = (page: Page) => detail(page).getByRole('button', { name: '保存并标记已处理' });
+
+const FIXTURE_FILES = [
+  '全季酒店_发票.pdf',
+  '全季酒店_结账单.pdf',
+  '高德打车_发票.pdf',
+  '高德打车_行程单.pdf',
+  '曹操出行_发票.pdf',
+  '曹操出行_行程单.pdf',
+  '铁路电子客票_0809.pdf',
+  '铁路电子客票_0822.pdf',
+  'IMG_4871.jpg',
+  'IMG_4906.jpg',
+  '餐饮_发票.pdf',
+];
+
+async function answerTaxis(page: Page) {
+  await item(page, '补填起点与终点').click();
+  await detail(page).getByLabel('起点 *').fill('张江高科');
+  await detail(page).getByLabel('终点 *').fill('漕河泾开发区');
+  await save(page).click();
+  await expect(detail(page).getByRole('heading', { name: '下车时间不合法，并补填起点与终点' })).toBeVisible();
+  await detail(page).getByLabel('下车时间 *').fill('19:06');
+  await detail(page).getByLabel('起点 *').fill('静安寺');
+  await detail(page).getByLabel('终点 *').fill('虹桥枢纽');
+  await save(page).click();
+  await expect(detail(page).getByRole('heading', { name: '不支持的材料类型' })).toBeVisible();
+  await detail(page).getByRole('button', { name: '排除此材料' }).click();
+}
+
+test('?allocation=1：出现逐段分摊待确认项；不守恒显示服务端错误，守恒后通过；每条都标明处理人', async ({ page }, testInfo) => {
+  await page.goto(open('?seed=pending&allocation=1', '#/task/T1/pending'));
+  await expect(page.getByText('还剩 4 个')).toBeVisible();
+  const buttons = list(page).getByRole('button');
+  await expect(buttons).toHaveCount(4);
+  for (const button of await buttons.all()) await expect(button).toContainText('要你处理');
+
+  await expect(detail(page).getByRole('heading', { name: ALLOCATION })).toBeVisible();
+  await expect(detail(page).getByTestId('resolver')).toHaveText('处理人：要你处理');
+  await expect(segment(page, 3)).toHaveValue('21.56');
+  await detail(page).getByRole('button', { name: '提交逐段金额' }).click();
+  await expect(detail(page).getByRole('alert')).toHaveText(
+    '各段加起来是 69.10 元，和票面价税合计 69.19 元对不上。请对照行程单重新填写，不会平均、不会按比例，也不会把差额加到任何一段上。',
+  );
+  await expect(page.getByText('还剩 4 个')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('allocation-not-conserved.png'), fullPage: true });
+
+  await segment(page, 3).fill('21.65');
+  await detail(page).getByRole('button', { name: '提交逐段金额' }).click();
+  await expect(detail(page).getByRole('heading', { name: '补填起点与终点' })).toBeVisible();
+  await expect(item(page, ALLOCATION)).toContainText('已处理');
+  await expect(page.getByText('还剩 3 个')).toBeVisible();
+
+  // 继续处理完，明细与默认相同（9 行）。
+  await answerTaxis(page);
+  await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
+  await page.getByRole('link', { name: '进入项目归属' }).click();
+  await expect(page.getByRole('checkbox', { name: /^选择明细 No\.\d+$/ })).toHaveCount(9);
+});
+
+test('?allocation=1：选「这张票我认不出」也能继续，并显示后果说明', async ({ page }, testInfo) => {
+  await page.goto(open('?seed=pending&allocation=1', '#/task/T1/pending'));
+  await expect(detail(page).getByTestId('give-up-note')).toContainText('移出本次报销');
+  await detail(page).getByRole('button', { name: '这张票我认不出' }).click();
+  await expect(detail(page).getByRole('heading', { name: '补填起点与终点' })).toBeVisible();
+  await item(page, ALLOCATION).click();
+  const note = detail(page).getByTestId('give-up-note');
+  await expect(note).toContainText('你选了「这张票我认不出」。');
+  await expect(note).toContainText('这张发票连同它的行程单移出本次报销');
+  await page.screenshot({ path: testInfo.outputPath('allocation-given-up.png'), fullPage: true });
+
+  await answerTaxis(page);
+  await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
+  await expect(page.getByText('这张发票连同它的行程单移出本次报销', { exact: false })).toBeVisible();
+  await page.getByRole('link', { name: '进入项目归属' }).click();
+  // 高德三段不再形成明细：剩 6 行。
+  await expect(page.getByRole('checkbox', { name: /^选择明细 No\.\d+$/ })).toHaveCount(6);
+});
+
+test('?duplicate=1：上传后整批停，显示重复发票表与命中的任务名', async ({ page }, testInfo) => {
+  await page.goto(open('?duplicate=1', '#/task/T1/upload'));
+  await page.locator('input[type=file]').setInputFiles(
+    FIXTURE_FILES.map((name) => ({ name, mimeType: name.endsWith('.jpg') ? 'image/jpeg' : 'application/pdf', buffer: Buffer.from(`fixture ${name}`) })),
+  );
+  await expect(page.getByRole('heading', { name: '上传批次 #1 · 11 份材料' })).toBeVisible();
+  await page.getByRole('button', { name: '开始材料盘点' }).click();
+
+  const table = page.getByRole('table', { name: '重复发票' });
+  await expect(table).toBeVisible({ timeout: 15000 });
+  await expect(table.locator('thead th')).toHaveText(['序号', '材料/明细', '参考材料', '待处理问题', '处理人']);
+  const cells = table.locator('tbody tr td');
+  await expect(cells.nth(1)).toHaveText('铁路电子客票_0809.pdf');
+  await expect(cells.nth(3)).toContainText('2026-06 北京培训');
+  await expect(cells.nth(4)).toHaveText('要你处理');
+  await expect(page.getByRole('list', { name: '命中的任务' })).toHaveText('2026-06 北京培训');
+  await expect(page.getByRole('link', { name: /^处理 \d+ 个待确认项$/ })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: '进入项目归属' })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('duplicate-blocked.png'), fullPage: true });
+
+  await page.evaluate(() => {
+    window.location.hash = '#/task/T1/pending';
+  });
+  await expect(page.getByText('这批材料整批暂停，没有形成待确认项。')).toBeVisible();
+  await expect(page.getByRole('list', { name: '命中的任务' })).toHaveText('2026-06 北京培训');
+});
+
+test('盘点页与待确认项页没有 rule:、user、「候选」文字', async ({ page }) => {
+  await page.goto(open('?seed=inventory', '#/task/T1/inventory'));
+  await expect(page.getByLabel('盘点结果')).toBeVisible();
+  expect(await page.locator('body').innerText()).not.toMatch(FORBIDDEN);
+
+  await page.goto(open('?seed=pending&allocation=1', '#/task/T1/pending'));
+  for (const title of [ALLOCATION, '补填起点与终点', '下车时间不合法', '不支持的材料类型']) {
+    await item(page, title).click();
+    await expect(detail(page).getByRole('heading').first()).toContainText(title);
+    expect(await page.locator('body').innerText()).not.toMatch(FORBIDDEN);
+  }
+  // 补填之后回看，也不显示字段来源。
+  await item(page, '补填起点与终点').click();
+  await detail(page).getByLabel('起点 *').fill('张江高科');
+  await detail(page).getByLabel('终点 *').fill('漕河泾开发区');
+  await save(page).click();
+  await item(page, '补填起点与终点').click();
+  await expect(detail(page).getByText('已处理')).toBeVisible();
+  expect(await page.locator('body').innerText()).not.toMatch(FORBIDDEN);
+});

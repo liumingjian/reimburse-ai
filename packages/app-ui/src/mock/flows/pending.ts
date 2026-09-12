@@ -1,6 +1,6 @@
-import { CONFIRM_REVIEW_ERRORS, PENDING_ANSWER_ERRORS, normalizePendingAnswer, validatePendingAnswer } from '../../contract/actions';
+import { ALLOCATION_ERRORS, CONFIRM_REVIEW_ERRORS, PENDING_ANSWER_ERRORS, normalizePendingAnswer, validatePendingAnswer } from '../../contract/actions';
 import type { AppAdapter } from '../../contract/adapter';
-import type { ProjectOption, TaskSnapshot } from '../../contract/snapshot';
+import { isAllocationAnswer, type ProjectOption, type TaskSnapshot } from '../../contract/snapshot';
 import type { MockBus } from '../bus';
 import { applyPendingAnswer, buildLines, openPendingItemCount } from '../fixtures/inventory';
 import { catalogPending, preparationPending } from '../fixtures/preparation';
@@ -77,6 +77,13 @@ export function createPendingFlow(bus: MockBus): PendingFlow {
         const errors = validatePendingAnswer(item, normalized);
         const firstError = Object.values(errors)[0];
         if (firstError) return { error: { code: 'invalid_answer', message: firstError } };
+        // 逐段分摊：各段之和必须与票面价税合计按分相等（内核 submitAllocation）；差一分就整轮退回，差额不抹到任何一段上。
+        if (item.kind === 'allocation' && item.allocation && isAllocationAnswer(normalized) && 'amounts' in normalized) {
+          const cents = normalized.amounts.reduce((sum, amount) => sum + Math.round(Number(amount) * 100), 0);
+          if (cents !== Math.round(Number(item.allocation.total) * 100)) {
+            return { error: { code: 'allocation_not_conserved', message: ALLOCATION_ERRORS.notConserved((cents / 100).toFixed(2), item.allocation.total) } };
+          }
+        }
         applyPendingAnswer({ materials: snapshot.materials, events: snapshot.events, pendingItems: snapshot.pendingItems }, item, normalized);
         snapshot.task.updatedAt = bus.now();
         settlePending(snapshot, bus.projectAllowList());
