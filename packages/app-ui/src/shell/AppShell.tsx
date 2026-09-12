@@ -29,11 +29,8 @@ export function AppShell({ nav, sidebar, children }: Props) {
         </nav>
         <div className="spacer" />
         {IS_MOCK ? <span className="mode-tag">模拟数据</span> : null}
-        {employee ? (
-          <span className="muted">
-            {employee.name} · {employee.department}
-          </span>
-        ) : null}
+        {/* 报销人只在身份已登记后显示，只显示姓名（内核身份没有部门）。 */}
+        {employee?.binding === 'bound' ? <span className="muted">{employee.displayName}</span> : null}
       </header>
       {state.connection === 'disconnected' || state.taskList.offline ? (
         <div className="banner" role="alert">

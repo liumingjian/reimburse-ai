@@ -37,7 +37,8 @@ describe('任务列表', () => {
 
     expect(screen.getByRole('button', { name: '新建报销任务' })).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(screen.getByText('林颂宜 · 产品研发部')).toBeTruthy();
+    expect(screen.getByText('林颂宜')).toBeTruthy();
+    expect(screen.queryByText(/产品研发部/)).toBeNull();
   });
 
   test('?seed=done 时 T1 显示已完成、价税合计与草稿号', async () => {

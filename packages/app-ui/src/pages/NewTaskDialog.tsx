@@ -20,7 +20,7 @@ export const NEW_TASK_COPY = {
 
 export const HOME_CITY_CAPTIONS: Readonly<Record<HomeCityDefault['source'] | 'none', string>> = {
   network: '根据网络位置推测，不对可直接改成你的常驻城市。',
-  remembered: '上次确认的常驻城市，可直接修改。',
+  remembered: '上次确认的常驻城市（按报销人身份记住），可直接修改。',
   none: '没有获取到网络位置，请填写你的常驻城市。',
 };
 
@@ -78,7 +78,7 @@ export function NewTaskDialog({ taskList, onClose }: { taskList: TaskList | null
         <p className="lead">{NEW_TASK_COPY.lead}</p>
         <div className="field">
           <label htmlFor="new-task-employee">{NEW_TASK_COPY.employee}</label>
-          <input className="input" id="new-task-employee" value={taskList.employee ? `${taskList.employee.name} · ${taskList.employee.department}` : '未确认'} readOnly />
+          <input className="input" id="new-task-employee" value={taskList.employee?.displayName ?? '未确认'} readOnly />
         </div>
         <div className="field">
           <label htmlFor="new-task-home-city">{NEW_TASK_COPY.homeCity}</label>

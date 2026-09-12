@@ -8,7 +8,9 @@ import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, invento
 // 夹具：三个虚构的报销任务。人物与数字沿用原型（林颂宜、上海出差、9 条明细合计 3972.59）。
 // 材料盘点结果、费用事件、待确认项与候选明细见 ./inventory.ts；本文件按阶段把它们装进快照。
 
-export const EMPLOYEE: Employee = { name: '林颂宜', department: '产品研发部' };
+// 报销系统当前登录的身份（虚构）：姓名、登录账号、账套。EMPLOYEE 是已登记（bound）的样子。
+export const LOGIN_IDENTITY: Omit<Employee, 'binding'> = { displayName: '林颂宜', account: 'linsongyi', tenant: '示例科技集团本部' };
+export const EMPLOYEE: Employee = { ...LOGIN_IDENTITY, binding: 'bound' };
 
 export const T1_ID = 'T1';
 export const T2_ID = 'T2';

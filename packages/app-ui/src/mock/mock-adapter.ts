@@ -1,10 +1,11 @@
-import { ServiceUnavailableError, type ActionOutcome, type AppAdapter } from '../contract/adapter';
-import { CREATE_TASK_ERRORS, CreateTaskInputSchema } from '../contract/actions';
+import { ServiceUnavailableError, type ActionOutcome, type AppAdapter, type StartupOutcome } from '../contract/adapter';
+import { CREATE_TASK_ERRORS, ConfirmIdentityInputSchema, CreateTaskInputSchema, STARTUP_ERRORS, type ActionError } from '../contract/actions';
 import { TaskListSchema, type TaskList } from '../contract/task-list';
 import { SERVICE_UNAVAILABLE_CODE, SERVICE_UNAVAILABLE_MESSAGE, createBus } from './bus';
 import { buildPrintSheet } from './fixtures/print';
 import { HOME_CITY } from './fixtures/projects';
-import { EMPLOYEE, T1_ID, emptySnapshot, t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from './fixtures/tasks';
+import { T1_ID, emptySnapshot, t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from './fixtures/tasks';
+import { createStartup } from './startup';
 import { createErpFlow } from './flows/erp';
 import { createInventoryFlow } from './flows/inventory';
 import { createPendingFlow } from './flows/pending';
@@ -13,7 +14,7 @@ import { createProjectFlow } from './flows/project';
 import type { MockOptions } from './options';
 
 export { SERVICE_UNAVAILABLE_CODE, SERVICE_UNAVAILABLE_MESSAGE } from './bus';
-export { FAULTS, readMockOptions, type Fault, type MockOptions } from './options';
+export { FAULTS, readMockOptions, type Fault, type MockOptions, type MockStorage } from './options';
 
 // 浏览器内 mock 适配器：实现与 HTTP 适配器相同的接口，用内存里的快照回答一切。只经 main.tsx 的动态 import 进入 mock 构建。
 // 本文件只做组装：公共底座（快照仓库、事件总线、断连模拟）在 ./bus.ts，各业务流程在 ./flows/：
@@ -39,6 +40,8 @@ export function installMockHooks(target: Window, adapter: MockAdapter): void {
 
 // 读快照与订阅不受断连影响（快照读的是内存）；任务列表断开期间读不到；其余都是动作，断开期间一律失败，原因就地显示在按钮旁。
 const READ_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['listTasks', 'getSnapshot', 'subscribe']);
+// 启动动作的失败形状带 taskList 而不是 snapshot。
+const STARTUP_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['recheckErpSession', 'confirmIdentity']);
 
 export function createMockAdapter(options: MockOptions): MockAdapter {
   const bus = createBus(options);
@@ -55,10 +58,20 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   // `?seed=catalog` / `?seed=preparation`：自动步骤接着走完，进入整单确认。
   project.resumeAutoSteps(T1_ID);
 
-  // 常驻城市默认值：员工确认过就用记住的城市；否则用 mock 位置 Adapter 的城市级网络位置（夹具员工在杭州）；
-  // `?location=unavailable` 下位置获取失败，又没有记忆，默认值为 null。
-  let rememberedCity: string | null = null;
+  const startup = createStartup(options);
+  const listNow = (): TaskList => {
+    const tasks = bus
+      .all()
+      .map(toListItem)
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+    return TaskListSchema.parse({ erpSession: startup.erpSession(), employee: startup.employee(), homeCity: homeCityDefault(), tasks });
+  };
+  const startupResult = (error: ActionError | null): StartupOutcome => (error ? { ok: false, error, taskList: listNow() } : { ok: true, taskList: listNow() });
+
+  // 常驻城市默认值：这个身份确认过就用记住的城市（持久存储，按 tenant + account 分键，刷新后仍在）；
+  // 否则用 mock 位置 Adapter 的城市级网络位置（夹具员工在杭州）；`?location=unavailable` 下位置获取失败，又没有记忆，默认值为 null。
   const homeCityDefault = (): TaskList['homeCity'] => {
+    const rememberedCity = startup.rememberedCity();
     if (rememberedCity) return { value: rememberedCity, source: 'remembered' };
     if (options.locationUnavailable) return null;
     return { value: HOME_CITY, source: 'network' };
@@ -67,24 +80,28 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const adapter: AppAdapter = {
     async listTasks() {
       if (!bus.listReachable()) throw new ServiceUnavailableError(SERVICE_UNAVAILABLE_MESSAGE);
-      const tasks = bus
-        .all()
-        .map(toListItem)
-        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
-      return TaskListSchema.parse({ employee: EMPLOYEE, homeCity: homeCityDefault(), tasks });
+      return listNow();
+    },
+    recheckErpSession: async () => startupResult(startup.recheckErpSession()),
+    async confirmIdentity(input) {
+      const parsed = ConfirmIdentityInputSchema.safeParse(input);
+      if (!parsed.success) return startupResult({ code: 'identity_changed', message: STARTUP_ERRORS.identityChanged });
+      return startupResult(startup.confirmIdentity(parsed.data));
     },
     getSnapshot: async (taskId) => bus.draft(taskId),
     subscribe: (taskId, onEvent) => bus.subscribe(taskId, onEvent),
     // 新建任务：服务端校验常驻城市，生成占位名称（`<创建日期> 新建报销`，费用期间为空），盘点结束后再按材料改名（见 flows/inventory.ts）。
-    // 这次确认的常驻城市成为任务的城市快照，并记为员工的常驻城市（本次会话里之后的默认值 source = remembered）。
+    // 这次确认的常驻城市成为任务的城市快照，并按身份记为员工的常驻城市（之后的默认值 source = remembered，刷新后仍在）。
+    // 启动没完成（未登录或身份未登记 / 不一致）时拒绝。
     async createTask(input) {
+      if (!startup.complete()) return bus.fail('startup_incomplete', CREATE_TASK_ERRORS.startupIncomplete);
       const parsed = CreateTaskInputSchema.safeParse(input);
       if (!parsed.success) return bus.fail('invalid_home_city', CREATE_TASK_ERRORS.homeCityRequired);
       const homeCity = parsed.data.homeCity;
       const taskId = `T${nextTaskNo}`;
       nextTaskNo += 1;
       const at = bus.now();
-      rememberedCity = homeCity;
+      startup.rememberCity(homeCity);
       bus.autoNamed.add(taskId);
       return bus.commit(emptySnapshot({ taskId, name: `${at.slice(0, 10)} 新建报销`, period: null, homeCity, createdAt: at, updatedAt: at }, 'upload'));
     },
@@ -100,9 +117,12 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const guarded: Record<string, unknown> = { ...adapter };
   for (const key of Object.keys(adapter) as (keyof AppAdapter)[]) {
     if (READ_METHODS.has(key)) continue;
-    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome>;
-    guarded[key] = async (...args: unknown[]): Promise<ActionOutcome> =>
-      bus.isConnected() ? original(...args) : bus.fail(SERVICE_UNAVAILABLE_CODE, SERVICE_UNAVAILABLE_MESSAGE);
+    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome | StartupOutcome>;
+    const down = (): ActionOutcome | StartupOutcome =>
+      STARTUP_METHODS.has(key)
+        ? { ok: false, error: { code: SERVICE_UNAVAILABLE_CODE, message: SERVICE_UNAVAILABLE_MESSAGE }, taskList: null }
+        : bus.fail(SERVICE_UNAVAILABLE_CODE, SERVICE_UNAVAILABLE_MESSAGE);
+    guarded[key] = async (...args: unknown[]) => (bus.isConnected() ? original(...args) : down());
   }
   return Object.assign(guarded as unknown as AppAdapter, { advanceElsewhere: pending.advanceElsewhere });
 }

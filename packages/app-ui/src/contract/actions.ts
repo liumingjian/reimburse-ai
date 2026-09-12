@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { DateSchema, IdSchema } from './primitives';
 import { CornersSchema, PENDING_CHOICE_KEY, TaskSnapshotSchema, type PendingItem } from './snapshot';
+import { TaskListSchema } from './task-list';
 
 // 接口三：动作端点。成功返回新快照；失败返回 { error }；stepToken 过期返回 HTTP 409 与 { error, snapshot }。
 
@@ -22,6 +23,28 @@ export type ActionFailure = z.infer<typeof ActionFailureSchema>;
 // 新建任务的校验文案，页面与服务端共用。
 export const CREATE_TASK_ERRORS = {
   homeCityRequired: '请填写常驻城市。',
+  startupIncomplete: '还没有登录报销系统并确认报销人身份，不能新建报销任务。',
+} as const;
+
+// 启动动作（任务之外）：「我已登录」请服务端再探测一次登录会话；「确认」登记当前登录身份。
+// 两者成功都返回整份新任务列表；失败返回 { error, taskList? }（带最新任务列表时页面据此重渲染）。
+// 确认身份时回传页面上看到的账号与账套：服务端重新读一次当前登录，对不上就拒绝（你认的只是你看过的那一个）。
+export const ConfirmIdentityInputSchema = z.object({
+  account: z.string().min(1),
+  tenant: z.string().min(1),
+});
+export type ConfirmIdentityInput = z.infer<typeof ConfirmIdentityInputSchema>;
+
+export const StartupFailureSchema = z.object({
+  error: ActionErrorSchema,
+  taskList: TaskListSchema.optional(),
+});
+export type StartupFailure = z.infer<typeof StartupFailureSchema>;
+
+export const STARTUP_ERRORS = {
+  notLoggedIn: '报销系统仍未登录。请在报销系统用本人账号登录后，再点「我已登录」。',
+  identityChanged: '当前登录身份与你刚才核对的不一致，请重新核对身份表。',
+  identityMismatched: '当前登录身份与已登记的报销人不一致，不能登记。',
 } as const;
 
 // 真实日期：格式对，且月日在日历上存在（2026-02-30 不算）。

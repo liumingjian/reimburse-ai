@@ -1,5 +1,5 @@
 import { STALE_STEP_CODE, STALE_STEP_NOTICE } from '../contract/actions';
-import { isServiceUnavailable, type ActionOutcome, type AppAdapter, type ConnectionState, type Unsubscribe } from '../contract/adapter';
+import { isServiceUnavailable, type ActionOutcome, type AppAdapter, type ConnectionState, type StartupOutcome, type Unsubscribe } from '../contract/adapter';
 import { TaskSnapshotSchema, type TaskSnapshot } from '../contract/snapshot';
 import { TaskListSchema, type TaskList } from '../contract/task-list';
 import { reconnectDelay } from './http-adapter';
@@ -100,6 +100,23 @@ export class AppStore {
         void this.loadTaskList();
       }, delay);
     }
+  }
+
+  // 启动动作（再探测登录、登记身份）：结果里带的任务列表直接替换当前列表，启动页或任务列表随之重渲染。
+  // 适配器抛错也按失败返回，原因交给页面就地显示。
+  async startup(run: (adapter: AppAdapter) => Promise<StartupOutcome>): Promise<StartupOutcome> {
+    let outcome: StartupOutcome;
+    try {
+      outcome = await run(this.adapter);
+    } catch (error) {
+      return { ok: false, error: { code: 'adapter_error', message: describe(error) }, taskList: null };
+    }
+    const raw = outcome.taskList;
+    if (raw) {
+      const data = this.options.validate ? TaskListSchema.parse(raw) : raw;
+      this.setState({ taskList: { status: 'ready', data, error: null, offline: false } });
+    }
+    return outcome;
   }
 
   // 打开任务：拉取快照并订阅事件流；同一任务被多个组件打开时只订阅一次。返回关闭函数。

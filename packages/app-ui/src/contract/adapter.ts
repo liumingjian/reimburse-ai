@@ -1,6 +1,11 @@
-import type { ActionError, CreateTaskInput, PendingAnswer, PlacementSlot, ProjectAssignmentInput } from './actions';
+import type { ActionError, ConfirmIdentityInput, CreateTaskInput, PendingAnswer, PlacementSlot, ProjectAssignmentInput } from './actions';
 import type { Corners, TaskSnapshot } from './snapshot';
 import type { TaskList } from './task-list';
+
+// 启动动作的结果：成功返回新任务列表；失败时 taskList 是服务端附带的最新列表（可能为 null）。
+export type StartupOutcome =
+  | { ok: true; taskList: TaskList }
+  | { ok: false; error: ActionError; taskList: TaskList | null };
 
 // 适配器接口：前端与服务端交互的唯一缝。四类接口：任务列表、任务快照、动作端点、事件流。
 // mock 适配器在浏览器内实现同一接口；HTTP 适配器按契约调用本地应用服务。
@@ -33,6 +38,10 @@ export function isServiceUnavailable(error: unknown): boolean {
 
 export interface AppAdapter {
   listTasks(): Promise<TaskList>;
+  // 启动：「我已登录」只是请服务端再探测一次报销系统登录，页面从不断言登录已发生。
+  recheckErpSession(): Promise<StartupOutcome>;
+  // 启动：登记当前登录身份（只能确认，不能改）。
+  confirmIdentity(input: ConfirmIdentityInput): Promise<StartupOutcome>;
   getSnapshot(taskId: string): Promise<TaskSnapshot>;
   subscribe(taskId: string, onEvent: (event: AdapterEvent) => void): Unsubscribe;
 

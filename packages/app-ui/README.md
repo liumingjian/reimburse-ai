@@ -22,11 +22,25 @@ Vite 7 + React 19 + TypeScript，只支持 Chrome，只做 zh-CN。视觉唯一�
 
 正式构建 `build` 产出 `dist/`，由本地应用服务托管，不含 mock 代码、测试钩子、夹具与示例材料（见 `check:dist`）。
 
+## QA：启动（登录报销系统与确认报销人身份）
+
+任何任务之前先完成启动：任务列表接口给出 `erpSession`（`logged_in` / `not_logged_in`）与 `employee`（姓名、登录账号、账套、`binding`）。
+没完成时任务列表、新建弹层与任务页一律换成启动页（地址不变，完成后原地进入）。默认场景已登录、身份已登记，直接进入任务列表。
+
+| 选项 | 表现 |
+| --- | --- |
+| `?erp=logged-out` | 先显示「登录报销系统」；点「我已登录」只请服务端再探测，mock 第一次即通过，随后进入身份确认（此前已确认过则直接进入任务列表） |
+| `?identity=unbound` | 显示「确认报销人身份」表（姓名 / 登录账号 / 账套，只能确认）；确认后进入任务列表，刷新后不再询问 |
+| `?identity=mismatched` | 整页阻塞「报销人身份不一致」，没有任何按钮 |
+
+mock 把身份登记与常驻城市写进 `localStorage`，按账套 + 登录账号分键，所以刷新后仍在；要重看 `?identity=unbound`，清除这个页面的站点数据即可。
+报销人只显示姓名，没有部门（内核身份里没有这一项）。
+
 ## QA：新建任务与全流程
 
 - 任务列表的「新建报销任务」在列表上打开弹层（`#/tasks/new` 是它的深链，取消回到 `#/tasks`）。弹层只有报销人（只读）与常驻城市：
   没有名称和日期，任务名称由服务端生成，创建时是占位名 `<日期> 新建报销`，盘点结束后按材料日期与城市改名（示例材料得到 `2026-08 上海出差`）并给出费用期间。
-- 常驻城市的默认值由服务端给出：第一次是网络位置候选「杭州」（说明「根据网络位置推测…」）；创建过任务后是上次确认的城市（本次页面会话内）。
+- 常驻城市的默认值由服务端给出：第一次是网络位置候选「杭州」（说明「根据网络位置推测…」）；创建过任务后是这个报销人身份上次确认的城市（按账套 + 登录账号持久记住，刷新页面后仍预填，说明「上次确认的常驻城市…」）。
   `?location=unavailable` 模拟位置获取失败：第一次打开时常驻城市留空，提示直接填写。它不是故障场景，可与 seed/fault 同用。
 - 全流程：新建任务后把 `dist-mock/sample-materials/` 里的 11 份文件一起拖进上传区，开始材料盘点，得到 3 个待确认项（两张出租车票、一张餐饮发票）。
   处理完进入项目归属（为每条明细选项目并填写报销事由）；提交后服务端自动核对报销信息、准备报销材料（本票是占位，各约 0.6 s 自动通过），
@@ -65,7 +79,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 | `readback-mismatch` | 严格回读 No.6（出租车）读到 74.00（本地 47.00）：写入停下，自动进入完成页，差异行高亮、不显示完成态，只能「转人工」；转人工后完成页与任务列表都显示「已转人工」 |
 | `service-disconnected` | 本地服务停一次：打开任务列表时立即（或打开任务页 0.3 s 后）出现全页横幅「本地服务未运行，请在终端重新执行 baox」；任务列表按退避自动重试，任务页期间动作在按钮旁失败；3 s 后恢复，横幅消失，列表出现、快照重新拉取 |
 
-未知的 seed / fault / location 在控制台警告后忽略。mock 构建还在 `window.__baoxMock` 上挂了一个 e2e 用的钩子：
+未知的 seed / fault / location / erp / identity 在控制台警告后忽略。mock 构建还在 `window.__baoxMock` 上挂了一个 e2e 用的钩子：
 `advanceElsewhere(taskId)` 模拟「另一个窗口推进了任务、这边还没收到推送」，下一次带旧 `stepToken` 的动作会得到 409，
 页面换上最新快照并提示「任务已在别处推进」。
 
@@ -86,6 +100,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 
 - `@baox/app-ui/contract`（`src/contract/index.ts`）：zod schema 与由它推导的类型。四类接口：任务列表（`TaskListSchema`）、任务快照（`TaskSnapshotSchema`）、动作端点（输入 schema 与错误文案在 `actions.ts`）、事件流。
 - `src/contract/http.ts` 的 `HTTP_ENDPOINTS`：每个适配器方法对应的方法、路径与请求体字段；动作名与 `ACTION_NAMES` 一致。`start-erp-write` 就是「去报销」（整单确认之后，`choose_action` 下接受），之后没有别的开始确认。
+- 启动：`TaskListSchema` 的 `erpSession` 与 `employee.binding` 决定启动页（`startupComplete`）。启动动作不属于任务：`POST /api/startup/recheck-erp-session`（「我已登录」，只再探测）与 `POST /api/startup/confirm-identity`（`account`、`tenant`，回传页面上看到的身份，服务端重读后对不上即拒绝）；成功返回整份任务列表，失败 `{ error, taskList? }`。未完成启动时服务端拒绝新建任务。常驻城市按身份（tenant + account）持久记忆。
 - 流程与阶段：`TASK_STAGES` 的顺序即流程（`stage.ts`）；`project` 之后服务端自动经过 `catalog`、`preparation` 进入 `review`。整单确认的 `digest` 绑定项目归属与事由，改派后确认记为 `invalidated`（`PROJECT_CHANGED_NOTICE`）。
 - 响应约定：成功 200 返回整份新快照；失败 `{ error: { code, message } }`（`message` 直接显示在按钮旁）；`stepToken` 过期返回 409 与 `{ error, snapshot }`（最新快照）。事件流为 SSE，`event: snapshot`，`data` 为整份快照；客户端断开后按 0.5 s 起翻倍、封顶 10 s 重连，恢复后重新拉取快照。
 - 值：金额两位小数字符串，日期 `YYYY-MM-DD`，时间 `HH:MM`，ID 不透明。上传为 multipart（`files`；支付截图为 `voucherMaterialId` + `file`，只在打印稿生成后接受）。

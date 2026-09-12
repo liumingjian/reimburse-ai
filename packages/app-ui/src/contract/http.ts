@@ -26,6 +26,9 @@ const action = (name: ActionName, ...fields: string[]): HttpEndpoint => ({ metho
 // 每个适配器方法对应的端点；`satisfies` 保证适配器接口加了方法这里必须跟着加。
 export const HTTP_ENDPOINTS = {
   listTasks: { method: 'GET', path: '/api/tasks', body: 'none', fields: [] },
+  // 启动动作不属于任何任务：成功 200 返回整份任务列表，失败 { error, taskList? }。
+  recheckErpSession: { method: 'POST', path: '/api/startup/recheck-erp-session', body: 'json', fields: [] },
+  confirmIdentity: { method: 'POST', path: '/api/startup/confirm-identity', body: 'json', fields: ['account', 'tenant'] },
   getSnapshot: { method: 'GET', path: '/api/tasks/:id', body: 'none', fields: [] },
   subscribe: { method: 'GET', path: '/api/tasks/:id/events', body: 'sse', fields: [] },
   createTask: { method: 'POST', path: '/api/tasks', body: 'json', fields: ['homeCity'] },

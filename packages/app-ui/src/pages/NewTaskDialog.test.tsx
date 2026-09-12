@@ -28,7 +28,7 @@ describe('新建报销任务弹层', () => {
     renderAt('#/tasks/new');
     const box = await dialog();
     const employee = await within(box).findByLabelText('报销人');
-    expect((employee as HTMLInputElement).value).toBe('林颂宜 · 产品研发部');
+    expect((employee as HTMLInputElement).value).toBe('林颂宜');
     expect((employee as HTMLInputElement).readOnly).toBe(true);
     expect((within(box).getByLabelText('常驻城市') as HTMLInputElement).value).toBe('杭州');
     expect(within(box).getByText('根据网络位置推测，不对可直接改成你的常驻城市。')).toBeTruthy();
@@ -64,7 +64,7 @@ describe('新建报销任务弹层', () => {
     window.location.hash = '#/tasks/new';
     const again = await dialog();
     await waitFor(() => expect((within(again).getByLabelText('常驻城市') as HTMLInputElement).value).toBe('上海'));
-    expect(within(again).getByText('上次确认的常驻城市，可直接修改。')).toBeTruthy();
+    expect(within(again).getByText('上次确认的常驻城市（按报销人身份记住），可直接修改。')).toBeTruthy();
   });
 
   test('?location=unavailable：没有记忆也没有网络位置，常驻城市留空并提示直接填写', async () => {

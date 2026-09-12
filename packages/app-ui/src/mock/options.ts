@@ -17,9 +17,23 @@ export type Fault = (typeof FAULTS)[number];
 // `?seed=print` 是 actions 阶段（打印稿预览不是阶段），且打印稿已经生成。
 const SEED_ALIASES: Readonly<Record<string, TaskStage>> = { assign: 'project', print: 'actions' };
 
+// `?identity=`：启动时报销人身份的状态（不给则已登记）。unbound 还没登记，显示身份确认表；mismatched 当前登录与已登记的人不一致，整页阻塞。
+export const IDENTITY_OPTIONS = ['unbound', 'mismatched'] as const;
+export type IdentityOption = (typeof IDENTITY_OPTIONS)[number];
+
+// mock 的「持久存储」：浏览器里是 localStorage（刷新后仍在），按 tenant + account 分键；测试可以注入替身。
+export type MockStorage = {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+};
+
 export type MockOptions = {
   seed: TaskStage | null;
   fault: Fault | null;
+  // `?erp=logged-out`：启动时报销系统还没登录，先显示登录提示；「我已登录」第一次再探测即通过，之后进入身份确认（除非此前已登记）。
+  erpLoggedOut?: boolean;
+  identity?: IdentityOption;
+  storage?: MockStorage;
   // `?location=unavailable`：mock 位置 Adapter 取不到网络位置，第一次新建任务时常驻城市没有默认值。不是故障场景。
   locationUnavailable?: boolean;
   // `?seed=print`：T1 的打印稿在打开时已经生成。
@@ -55,6 +69,16 @@ export function readMockOptions(search: string): MockOptions {
   if (location !== null) {
     if (location === 'unavailable') options.locationUnavailable = true;
     else console.warn(`未知的 location「${location}」，可用值：unavailable`);
+  }
+  const erp = params.get('erp');
+  if (erp !== null) {
+    if (erp === 'logged-out') options.erpLoggedOut = true;
+    else console.warn(`未知的 erp「${erp}」，可用值：logged-out`);
+  }
+  const identity = params.get('identity');
+  if (identity !== null) {
+    if ((IDENTITY_OPTIONS as readonly string[]).includes(identity)) options.identity = identity as IdentityOption;
+    else console.warn(`未知的 identity「${identity}」，可用值：${IDENTITY_OPTIONS.join(', ')}`);
   }
   return options;
 }

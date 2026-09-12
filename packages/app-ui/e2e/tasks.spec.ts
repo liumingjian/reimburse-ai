@@ -21,7 +21,8 @@ test('任务列表显示三个任务及其阶段徽标', async ({ page }, testIn
   await expect(t3.getByText('已完成')).toBeVisible();
   await expect(t3.getByText('2318.50')).toBeVisible();
 
-  await expect(page.getByText('林颂宜 · 产品研发部')).toBeVisible();
+  await expect(page.getByRole('banner').getByText('林颂宜', { exact: true })).toBeVisible();
+  await expect(page.getByText(/部门|产品研发部/)).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('tasks.png'), fullPage: true });
 });
 

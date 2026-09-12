@@ -27,6 +27,8 @@ const FORBIDDEN = [
   /service-disconnected/,
   /与已接收的/,
   /还没有检测到登录/,
+  /linsongyi/,
+  /示例科技集团/,
 ];
 
 function files(dir) {

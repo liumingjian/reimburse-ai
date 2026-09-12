@@ -11,6 +11,7 @@ import {
   parseActionResponse,
   parseSnapshotEvent,
   parseSnapshotResponse,
+  parseStartupResponse,
   parseTaskListResponse,
   reconnectDelay,
 } from './http-adapter';
@@ -19,9 +20,12 @@ import {
 const wire = <T,>(value: T): unknown => JSON.parse(JSON.stringify(value));
 
 describe('端点表', () => {
-  test('动作端点与 ACTION_NAMES 一一对应，路径都在 /api/tasks 下', () => {
+  test('动作端点与 ACTION_NAMES 一一对应，任务类路径都在 /api/tasks 下，启动动作在 /api/startup 下', () => {
     expect([...endpointActionNames()].sort()).toEqual([...ACTION_NAMES].sort());
-    for (const endpoint of Object.values(HTTP_ENDPOINTS)) expect(endpoint.path.startsWith('/api/tasks')).toBe(true);
+    for (const [name, endpoint] of Object.entries(HTTP_ENDPOINTS)) {
+      const prefix = name === 'recheckErpSession' || name === 'confirmIdentity' ? '/api/startup/' : '/api/tasks';
+      expect(endpoint.path.startsWith(prefix), name).toBe(true);
+    }
     expect(HTTP_ENDPOINTS.uploadBatch.body).toBe('multipart');
     expect(HTTP_ENDPOINTS.addPaymentScreenshot.body).toBe('multipart');
     expect(HTTP_ENDPOINTS.subscribe.body).toBe('sse');
@@ -29,11 +33,11 @@ describe('端点表', () => {
 });
 
 describe('任务列表 GET /api/tasks', () => {
-  const list = { employee: EMPLOYEE, homeCity: { value: '杭州', source: 'remembered' }, tasks: [t1Snapshot('done'), t2Snapshot(), t3Snapshot()].map(toListItem) };
+  const list = { erpSession: 'logged_in', employee: EMPLOYEE, homeCity: { value: '杭州', source: 'remembered' }, tasks: [t1Snapshot('done'), t2Snapshot(), t3Snapshot()].map(toListItem) };
 
   test('接受契约形状的列表', () => {
     expect(parseTaskListResponse(200, wire(list)).tasks).toHaveLength(3);
-    expect(parseTaskListResponse(200, wire({ employee: null, homeCity: null, tasks: [] })).tasks).toEqual([]);
+    expect(parseTaskListResponse(200, wire({ erpSession: 'not_logged_in', employee: null, homeCity: null, tasks: [] })).tasks).toEqual([]);
   });
 
   test('拒绝金额格式不对、缺字段或非 2xx', () => {
@@ -42,6 +46,31 @@ describe('任务列表 GET /api/tasks', () => {
     expect(() => parseTaskListResponse(200, badAmount)).toThrow();
     expect(() => parseTaskListResponse(200, { tasks: [] })).toThrow();
     expect(() => parseTaskListResponse(500, wire(list))).toThrow(/HTTP 500/);
+  });
+
+  test('员工身份只有姓名、登录账号、账套与绑定状态；缺 erpSession 或带部门的旧形状被拒绝', () => {
+    expect(() => parseTaskListResponse(200, wire({ ...list, employee: { name: '林颂宜', department: '产品研发部' } }))).toThrow();
+    const { erpSession: _omitted, ...withoutSession } = list;
+    expect(() => parseTaskListResponse(200, wire(withoutSession))).toThrow();
+    expect(() => parseTaskListResponse(200, wire({ ...list, employee: { ...EMPLOYEE, binding: 'maybe' } }))).toThrow();
+  });
+});
+
+describe('启动动作 POST /api/startup/*', () => {
+  const list = { erpSession: 'logged_in', employee: { ...EMPLOYEE, binding: 'unbound' }, homeCity: null, tasks: [] };
+
+  test('成功返回整份任务列表；失败带原因与可选的最新列表；其余拒绝', () => {
+    const ok = parseStartupResponse(200, wire(list));
+    expect(ok.ok && ok.taskList.employee?.binding).toBe('unbound');
+    const failed = parseStartupResponse(409, wire({ error: { code: 'identity_changed', message: '换人了' }, taskList: list }));
+    expect(failed.ok).toBe(false);
+    expect(!failed.ok && failed.error.message).toBe('换人了');
+    expect(!failed.ok && failed.taskList?.erpSession).toBe('logged_in');
+    const bare = parseStartupResponse(400, wire({ error: { code: 'not_logged_in', message: '未登录' } }));
+    expect(!bare.ok && bare.taskList).toBeNull();
+    expect(parseStartupResponse(200, { tasks: [] }).ok).toBe(false);
+    const unknown = parseStartupResponse(500, 'oops');
+    expect(!unknown.ok && unknown.error.code).toBe('http_500');
   });
 });
 

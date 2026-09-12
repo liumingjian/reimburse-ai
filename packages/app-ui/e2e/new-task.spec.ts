@@ -24,7 +24,7 @@ test('新建报销任务是任务列表上的弹层：预填网络位置候选�
   const box = dialog(page);
   await expect(box).toBeVisible();
   await expect(page.getByRole('heading', { name: '报销任务', exact: true })).toBeVisible();
-  await expect(box.getByLabel('报销人')).toHaveValue('林颂宜 · 产品研发部');
+  await expect(box.getByLabel('报销人')).toHaveValue('林颂宜');
   await expect(box.getByLabel('常驻城市')).toHaveValue('杭州');
   await expect(box.getByText('根据网络位置推测，不对可直接改成你的常驻城市。')).toBeVisible();
   await expect(box.getByText(/本地市内交通与外地市内交通/)).toBeVisible();
@@ -51,7 +51,7 @@ test('?location=unavailable：常驻城市没有默认值，提示直接填写�
 
   await jump(page, '#/tasks/new');
   await expect(dialog(page).getByLabel('常驻城市')).toHaveValue('苏州');
-  await expect(dialog(page).getByText('上次确认的常驻城市，可直接修改。')).toBeVisible();
+  await expect(dialog(page).getByText('上次确认的常驻城市（按报销人身份记住），可直接修改。')).toBeVisible();
 });
 
 test('全流程 QA：弹层创建任务，上传 sample-materials 的 11 份材料，盘点后 3 个待确认项，任务改名为 2026-08 上海出差', async ({ page }, testInfo) => {

@@ -13,4 +13,7 @@ afterEach(async () => {
   const { cleanup } = await import('@testing-library/react');
   cleanup();
   window.location.hash = '';
+  // mock 把身份登记与常驻城市写进 localStorage（刷新后仍在）；用例之间不共享。
+  // Node 25+ 自带的 localStorage 全局会遮住 jsdom 的，window.localStorage 可能是 undefined（mock 此时退回内存存储）。
+  window.localStorage?.clear?.();
 });

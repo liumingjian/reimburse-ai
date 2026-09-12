@@ -10,7 +10,7 @@ function fakeAdapter(sequence: TaskSnapshot[]) {
   let index = 0;
   let listener: ((event: AdapterEvent) => void) | null = null;
   const adapter = {
-    listTasks: async () => ({ employee: null, homeCity: null, tasks: [] }),
+    listTasks: async () => ({ erpSession: 'logged_in', employee: null, homeCity: null, tasks: [] }),
     getSnapshot: async () => {
       const snapshot = sequence[Math.min(index, sequence.length - 1)];
       index += 1;
@@ -42,7 +42,7 @@ describe('AppStore', () => {
       listTasks: async () => {
         calls += 1;
         if (calls < 3) throw new ServiceUnavailableError();
-        return { employee: null, homeCity: null, tasks: [] };
+        return { erpSession: 'logged_in', employee: null, homeCity: null, tasks: [] };
       },
     } as unknown as AppAdapter;
     const store = new AppStore(adapter, { validate: true, listRetryDelay: () => 5 });
