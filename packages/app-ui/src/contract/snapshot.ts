@@ -278,9 +278,7 @@ export const ConfirmationSchema = z.object({
   lineCount: z.number().int().nonnegative(),
   invoiceCount: z.number().int().nonnegative(),
   grossTotal: AmountSchema.nullable(),
-  // 材料包的文件数（内核随确认表附一句「核对材料已生成，共 N 份文件」，next.mjs:489-497）；材料包生成前为 null。
-  // 待服务端 spec 确认：材料包的具体构成（#114 的 preparation.packageFiles 落地后两者应一致）。
-  packageFileCount: z.number().int().nonnegative().nullable(),
+  // 材料包文件清单在 preparation.packageFiles（唯一来源），这里不再另记文件数。
   // 失效等提示，由服务端成句（如「材料已变更，之前的整单确认与已生成的打印稿作废」）。
   notice: z.string().nullable(),
 });
@@ -469,6 +467,83 @@ export const ReconcileSchema = z.object({
 });
 export type Reconcile = z.infer<typeof ReconcileSchema>;
 
+// ---- 报销信息核对与报销材料准备 ----
+
+// 两步都由服务端在提交项目归属后自动执行（内核 catalog_unverified → catalog_mismatch → preparation_package_pending
+// → preparation_blocked，next.mjs:1175-1217）。行里的文字由服务端成句（照内核话术，遵守禁用词），页面只照列渲染。
+
+// 处理人：内核 WHO（next.mjs:428）。
+export const RESOLVER_LABELS = ['要你处理', '我来处理', '系统'] as const;
+export const ResolverLabelSchema = z.enum(RESOLVER_LABELS);
+
+// 报销信息核对：只读核对项目与费用项目（编码在不在、名称对不对得上、已审核、未禁用）。
+// pending 还没开始（项目归属提交前）；running 核对中；matched 通过；mismatch 有不匹配，整单确认被阻塞，
+// 唯一处置是回到项目归属改派（此时当前 step 是 assign_projects），提交后服务端重新核对。
+export const CATALOG_STATUSES = ['pending', 'running', 'matched', 'mismatch'] as const;
+
+// 不匹配表的列，照内核 itemTable（next.mjs:452-458）；页面在前面按行序写序号。
+export const CATALOG_MISMATCH_COLUMNS = ['序号', '材料/明细', '参考材料', '待处理问题', '处理人'] as const;
+
+export const CatalogProblemSchema = z.object({
+  // 「材料/明细」列，如「项目号 P-2307」。
+  subject: z.string().min(1),
+  // 「参考材料」列；内核没有时写一个破折号，这里为 null（页面留空）。
+  reference: z.string().nullable(),
+  // 「待处理问题」列，如「项目 P-2307「华东客户交付」在报销系统里已被禁用，不能引用」。
+  reason: z.string().min(1),
+  resolver: ResolverLabelSchema,
+});
+export type CatalogProblem = z.infer<typeof CatalogProblemSchema>;
+
+export const CatalogSchema = z.object({
+  status: z.enum(CATALOG_STATUSES),
+  problems: z.array(CatalogProblemSchema),
+});
+export type Catalog = z.infer<typeof CatalogSchema>;
+
+// 报销材料准备：生成材料包（发票副本、参考材料、明细数据与明细文档、材料清单）并做充分性判定。
+// pending 还没生成或正在生成；blocked 已生成但有缺项，整单确认不可用（当前 step 是 resolve_preparation）；ready 可以整单确认。
+export const PREPARATION_STATUSES = ['pending', 'blocked', 'ready'] as const;
+
+// 缺项表的列，照内核 preparationProblemTable（next.mjs:477-487）。
+export const PREPARATION_PROBLEM_COLUMNS = ['序号', '准备缺项', '关联材料/明细', '处理人'] as const;
+
+export const PreparationProblemSchema = z.object({
+  problemId: IdSchema,
+  // 「准备缺项」列。
+  missing: z.string().min(1),
+  // 「关联材料/明细」列：文件名、明细或字段。
+  subject: z.string().min(1),
+  resolver: ResolverLabelSchema,
+  // 服务端判定这一项可以通过「排除这份材料」处理时给出材料 ID（页面据此显示入口）；否则为 null。
+  excludableMaterialId: IdSchema.nullable(),
+});
+export type PreparationProblem = z.infer<typeof PreparationProblemSchema>;
+
+// 材料包里的一份文件：包内相对路径与服务端给出的类别名（发票、参考材料、明细数据、明细文档、材料清单）。
+export const PackageFileSchema = z.object({
+  path: z.string().min(1),
+  kindLabel: z.string().min(1),
+});
+export type PackageFile = z.infer<typeof PackageFileSchema>;
+
+export const PreparationSchema = z.object({
+  status: z.enum(PREPARATION_STATUSES),
+  problems: z.array(PreparationProblemSchema),
+  // 已生成的材料包文件清单（有缺项时也生成，供核对缺什么）；还没生成为空。
+  packageFiles: z.array(PackageFileSchema),
+});
+export type Preparation = z.infer<typeof PreparationSchema>;
+
+// 两步的进度与阻塞提示，照内核话术（去掉对话里的第一人称与「告诉我」，报销系统不写作 ERP）。服务端与 mock 共用。
+export const CATALOG_PREPARATION_COPY = {
+  catalogRunning: '正在核对报销系统中的项目和费用项目，确认它们可以用于本次报销。',
+  catalogMismatch: '报销信息核对发现下列项目不匹配，整单确认暂不可用。请回到项目归属改派后重新提交，提交后会自动重新核对。',
+  preparationRunning: '材料已经整理完成，正在生成本次报销的核对材料。',
+  preparationBlocked: '核对材料已经生成，但还有下列事项需要补充或调整，整单确认暂不可用。处理完成后会自动重新核对。',
+  packageReady: (count: number) => `核对材料已生成，共 ${count} 份文件。`,
+} as const;
+
 // ---- 当前待答 step ----
 
 // 顺序即流程：答复待确认项 → 项目归属（assign_projects）→ 报销信息核对与材料准备（服务端自动，none）
@@ -484,6 +559,8 @@ export const STEP_KINDS = [
   // 第一次录入成功后服务端回到 assign_projects。
   'maintain_project_book',
   'assign_projects',
+  // 内核 preparation_blocked：材料包有缺项，等用户处理（如排除相关材料）；处理后服务端重新准备。
+  'resolve_preparation',
   'confirm_review',
   'choose_action',
   'erp_login',
@@ -528,6 +605,8 @@ export const TaskSnapshotSchema = z.object({
   paymentScreenshots: z.array(PaymentScreenshotSchema),
   printSheet: PrintSheetSchema,
   projectAssignment: ProjectAssignmentSchema,
+  catalog: CatalogSchema,
+  preparation: PreparationSchema,
   erp: ErpSchema,
   readback: ReadbackSchema,
   reconcile: ReconcileSchema,

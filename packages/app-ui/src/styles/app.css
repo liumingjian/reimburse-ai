@@ -971,6 +971,14 @@ table.confirm-table td {
   margin: var(--space-sm) 0 var(--space-md);
 }
 
+.package-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-xxs);
+}
+
 .screenshot-row {
   display: flex;
   flex-wrap: wrap;

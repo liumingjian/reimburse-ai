@@ -10,9 +10,9 @@ import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 import { ProjectBookPanel } from './ProjectBookPanel';
 
-// 当前 step 是这些时服务端接受提交项目归属：进入项目归属时，以及整单确认前后、ERP 写入开始之前的改派。
-// 页面只据此决定提交按钮是否可用；提交是否成立由服务端判定。
-const SUBMIT_STEP_KINDS: ReadonlySet<StepKind> = new Set<StepKind>(['assign_projects', 'confirm_review', 'choose_action']);
+// 当前 step 是这些时服务端接受提交项目归属：进入项目归属时（含报销信息核对不匹配后的改派），材料包缺项时，
+// 以及整单确认前后、ERP 写入开始之前的改派。页面只据此决定提交按钮是否可用；提交是否成立由服务端判定。
+const SUBMIT_STEP_KINDS: ReadonlySet<StepKind> = new Set<StepKind>(['assign_projects', 'resolve_preparation', 'confirm_review', 'choose_action']);
 
 // 项目归属页：待确认项处理完之后、整单确认之前（Skill 的 project_unassigned → select-task），两条路径都要经过。
 // 提交后服务端自动做报销信息核对与材料准备，再进入整单确认；确认绑定项目归属，确认后在这里改派会使确认失效。
@@ -66,7 +66,10 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   // ERP 写入开始后项目归属不能再改；此前随时可以改派（改派使整单确认失效）。
   const locked = snapshot.erp.status !== 'idle';
   const canSubmit = SUBMIT_STEP_KINDS.has(snapshot.step.kind);
-  const autoRunning = snapshot.stage === 'catalog' || snapshot.stage === 'preparation';
+  // 报销信息核对不匹配时，处置就是在本页改派后重新提交；材料包缺项在整单明细确认页处理。
+  const catalogMismatch = snapshot.catalog.status === 'mismatch';
+  const preparationBlocked = snapshot.preparation.status === 'blocked';
+  const autoRunning = (snapshot.stage === 'catalog' || snapshot.stage === 'preparation') && !catalogMismatch && !preparationBlocked;
   const { lines } = snapshot;
 
   const [pendingAssignments, setPendingAssignments] = useState<PendingAssignments>(() => savedAssignments(snapshot));
@@ -179,9 +182,17 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
         <div className="notice notice-info" role="status">
           已开始 ERP 填报，项目归属不能再修改。
         </div>
+      ) : catalogMismatch ? (
+        <div className="notice notice-err" role="alert">
+          报销信息核对发现项目不匹配：{snapshot.catalog.problems.map((problem) => problem.reason).join('；')}。请把相关明细改派到其他项目后重新提交，提交后会自动重新核对。
+        </div>
       ) : submitted ? (
-        <div className="notice notice-ok" role="status">
-          {autoRunning ? '项目归属已提交，正在核对报销信息并准备报销材料。' : '项目归属已提交。改派项目或修改事由会使整单明细确认失效，需要重新确认。'}
+        <div className={preparationBlocked ? 'notice notice-warn' : 'notice notice-ok'} role="status">
+          {preparationBlocked
+            ? '项目归属已提交。材料包还有缺项，请在整单明细确认页处理。'
+            : autoRunning
+              ? '项目归属已提交，正在核对报销信息并准备报销材料。'
+              : '项目归属已提交。改派项目或修改事由会使整单明细确认失效，需要重新确认。'}
           {pageAllowed(snapshot.stage, 'review') ? (
             <div className="btn-row">
               <a className="btn btn-secondary" href={taskHash(taskId, 'review')}>

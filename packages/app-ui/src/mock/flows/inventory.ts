@@ -3,6 +3,7 @@ import type { AppAdapter } from '../../contract/adapter';
 import { REVIEW_INVALIDATED_NOTICE, type TaskSnapshot } from '../../contract/snapshot';
 import type { MockBus } from '../bus';
 import { inventoryResult } from '../fixtures/inventory';
+import { catalogPending, preparationPending } from '../fixtures/preparation';
 import { inventoryNotStarted, uploadedMaterial } from '../fixtures/tasks';
 import { duplicateReason, judgeFile } from '../upload';
 import { settlePending } from './pending';
@@ -59,6 +60,9 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
       snapshot.confirmation = { ...snapshot.confirmation, status: 'invalidated', confirmedAt: null, notice: REVIEW_INVALIDATED_NOTICE };
     }
     if (snapshot.printSheet.status === 'generated') snapshot.printSheet.status = 'stale';
+    // 旧材料包作废；报销信息核对与材料准备在重新盘点、再次提交项目归属后重来。
+    snapshot.catalog = catalogPending();
+    snapshot.preparation = preparationPending();
     snapshot.stage = 'upload';
     reopenCount += 1;
     snapshot.step = { kind: 'start_inventory', stepToken: `tok-${snapshot.task.taskId}-upload-reopen-${reopenCount}` };

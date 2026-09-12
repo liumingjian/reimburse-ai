@@ -120,6 +120,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     answerPendingItem: pending.answerPendingItem,
     confirmReview: pending.confirmReview,
     submitProjectAssignment: project.submitProjectAssignment,
+    excludeMaterial: project.excludeMaterial,
     ...createPrintFlow(bus),
     ...createErpFlow(bus),
   };

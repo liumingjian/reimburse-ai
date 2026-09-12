@@ -98,7 +98,12 @@ describe('契约 schema', () => {
     expect(review.lines.filter((line) => line.groupId === 'g1')).toHaveLength(3);
     // 费用事件与候选明细共用同一个序号。
     expect(review.events.map((event) => [event.no, event.grossAmount])).toEqual(review.lines.map((line) => [line.no, line.grossAmount]));
-    expect(review.confirmation).toMatchObject({ status: 'unconfirmed', lineCount: 9, invoiceCount: 7, grossTotal: '3972.59', packageFileCount: 13 });
+    expect(review.confirmation).toMatchObject({ status: 'unconfirmed', lineCount: 9, invoiceCount: 7, grossTotal: '3972.59' });
+    // 材料包：7 张发票 + 3 份参考材料 + detail.json、detail.md、manifest.json，共 13 份；报销信息核对已通过。
+    expect(review.catalog).toEqual({ status: 'matched', problems: [] });
+    expect(review.preparation.status).toBe('ready');
+    expect(review.preparation.packageFiles).toHaveLength(13);
+    expect(review.preparation.packageFiles.slice(-3).map((file) => file.path)).toEqual(['detail.json', 'detail.md', 'manifest.json']);
     // 确认表字段：发票短标签按主要发票 materialId 编号（不跟随行序）；项目号在提交后写入；费用项目为虚构编码。
     expect(review.lines.map((line) => line.invoiceLabel)).toEqual(['发票2', '发票2', '发票2', '发票3', '发票6', '发票7', '发票4', '发票5', '发票1']);
     expect(review.lines.map((line) => line.projectCode)).toEqual(['P-3312', 'P-3312', 'P-3312', 'P-3312', 'P-3312', 'P-3312', 'P-2307', 'P-2307', 'P-2307']);
@@ -106,7 +111,11 @@ describe('契约 schema', () => {
     expect(review.lines[4]).toMatchObject({ origin: '张江高科', destination: '漕河泾开发区', endDate: null });
     expect(review.lines[6]).toMatchObject({ city: null, origin: '杭州东', destination: '上海虹桥', expenseItemCode: 'FY020101' });
     expect(t1Snapshot('project').lines.every((line) => line.projectCode === null && line.projectName === null)).toBe(true);
-    expect(t1Snapshot('project').confirmation.packageFileCount).toBeNull();
+    expect(t1Snapshot('project').preparation).toEqual({ status: 'pending', problems: [], packageFiles: [] });
+    expect(t1Snapshot('project').catalog.status).toBe('pending');
+    expect(t1Snapshot('catalog').catalog.status).toBe('running');
+    expect(t1Snapshot('preparation').catalog.status).toBe('matched');
+    expect(t1Snapshot('preparation').preparation.status).toBe('pending');
     expect(review.confirmation.digest).toMatch(/^digest-t1-v1-[0-9a-f]{8}$/);
     expect(t1Snapshot('actions').confirmation.status).toBe('confirmed');
     expect(t1Snapshot('actions').step.kind).toBe('choose_action');
@@ -189,6 +198,10 @@ describe('报销任务阶段', () => {
     // ?book=empty：个人项目簿初始为空。
     expect(readMockOptions('?seed=pending&book=empty')).toEqual({ seed: 'pending', fault: null, bookEmpty: true });
     expect(readMockOptions('?book=nope')).toEqual({ seed: null, fault: null });
+    // ?catalog=mismatch / ?preparation=blocked：报销信息核对不匹配、材料包缺项。
+    expect(readMockOptions('?seed=catalog&catalog=mismatch')).toEqual({ seed: 'catalog', fault: null, catalogMismatch: true });
+    expect(readMockOptions('?seed=preparation&preparation=blocked')).toEqual({ seed: 'preparation', fault: null, preparationBlocked: true });
+    expect(readMockOptions('?catalog=nope&preparation=nope')).toEqual({ seed: null, fault: null });
   });
 
   test('个人项目簿夹具通过 schema；状态标签照内核：可选 / 已过期 / 复检未通过 / 项目号不安全', () => {

@@ -508,11 +508,25 @@ const EXPENSE_ITEMS: Readonly<Record<string, { code: string; name: string }>> = 
   accommodation: { code: 'FY020102', name: '住宿费' },
 };
 
-// 材料包文件数：主要发票副本 + 参考材料 + 明细 Markdown、明细 JSON 与 manifest（mock 的构成，待服务端 spec 确认）。
-export function packageFileCount(lines: readonly Line[]): number {
-  const invoices = new Set(lines.map((line) => line.voucherMaterialId));
-  const references = new Set(lines.flatMap((line) => line.referenceMaterialIds));
-  return invoices.size + references.size + 3;
+// 上传文件名对应的示例档案 ID（m01…m11）；不认识的文件为 undefined。
+export function fixtureIdOfFile(fileName: string): string | undefined {
+  return FILE_TO_FIXTURE.get(fileName);
+}
+
+// 排除一份参考材料（处理材料包缺项）：不再关联任何费用事件与明细，也不进材料包；明细本身不变。
+export function excludeReferenceMaterial(snapshot: TaskSnapshot, materialId: string): void {
+  const material = snapshot.materials.find((candidate) => candidate.materialId === materialId);
+  if (!material) return;
+  material.role = 'excluded';
+  material.status = 'excluded';
+  material.checkText = '已排除：不关联明细，也不进入材料包';
+  for (const other of snapshot.materials) other.linkedMaterialIds = other.linkedMaterialIds.filter((id) => id !== materialId);
+  for (const event of snapshot.events) {
+    if (!event.referenceMaterialIds.includes(materialId)) continue;
+    event.referenceMaterialIds = event.referenceMaterialIds.filter((id) => id !== materialId);
+    if (event.referenceMaterialIds.length === 0 && event.evidenceNote) event.evidenceNote = '参考材料已排除，按发票计费用';
+  }
+  snapshot.lines = snapshot.lines.map((line) => ({ ...line, referenceMaterialIds: line.referenceMaterialIds.filter((id) => id !== materialId) }));
 }
 
 // 全部待确认项处理完后形成候选明细：一个费用事件一行，No. 沿用事件的统一业务序号（内核分类排序）；同一张发票的行共享 groupId。

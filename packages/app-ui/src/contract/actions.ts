@@ -170,6 +170,12 @@ export const PRINT_ACTION_ERRORS = {
   invalidCorners: '四个角点须在原图范围内，且按左上、右上、右下、左下的顺序围成一个区域。',
 } as const;
 
+// 处理材料包缺项（resolve_preparation 下）：排除服务端在缺项上标明可排除的那份材料，服务端随后重新准备材料包。
+export const EXCLUDE_MATERIAL_ERRORS = {
+  notReady: '现在没有需要处理的材料包缺项。',
+  notExcludable: '这份材料不能通过排除来处理，请按缺项说明处理。',
+} as const;
+
 // 动作名与 HTTP 路径片段一一对应：POST /api/tasks/:id/actions/<name>
 export const ACTION_NAMES = [
   'start-inventory',
@@ -181,6 +187,7 @@ export const ACTION_NAMES = [
   'rotate-placement',
   'crop-placement',
   'submit-project-assignment',
+  'exclude-material',
   'start-erp-write',
   'confirm-login',
   'reconcile',

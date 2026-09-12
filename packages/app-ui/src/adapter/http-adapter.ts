@@ -238,6 +238,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     rotatePlacement: (taskId, pageId, slot, rotate) => action(taskId, E.rotatePlacement, { pageId, slot, rotate }),
     cropPlacement: (taskId, pageId, slot, corners) => action(taskId, E.cropPlacement, { pageId, slot, corners }),
     submitProjectAssignment: (taskId, input, stepToken) => action(taskId, E.submitProjectAssignment, { ...input, stepToken }),
+    excludeMaterial: (taskId, materialId, stepToken) => action(taskId, E.excludeMaterial, { materialId, stepToken }),
     startErpWrite: (taskId, stepToken) => action(taskId, E.startErpWrite, { stepToken }),
     confirmLogin: (taskId, stepToken) => action(taskId, E.confirmLogin, { stepToken }),
     reconcile: (taskId, stepToken) => action(taskId, E.reconcile, { stepToken }),

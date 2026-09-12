@@ -35,6 +35,10 @@ export type MockOptions = {
   identity?: IdentityOption;
   // `?book=empty`：个人项目簿初始为空；走到项目归属时先进入维护入口，第一次录入成功后回到项目归属。
   bookEmpty?: boolean;
+  // `?catalog=mismatch`：报销信息核对把项目 P-2307 判为不匹配（报销系统里已被禁用）；把用到它的明细改派到别的项目后重新提交即通过。
+  catalogMismatch?: boolean;
+  // `?preparation=blocked`：材料包缺项（曹操出行行程单与明细对不上）；排除这份行程单后重新准备即通过。
+  preparationBlocked?: boolean;
   storage?: MockStorage;
   // `?location=unavailable`：mock 位置 Adapter 取不到网络位置，第一次新建任务时常驻城市没有默认值。不是故障场景。
   locationUnavailable?: boolean;
@@ -81,6 +85,16 @@ export function readMockOptions(search: string): MockOptions {
   if (book !== null) {
     if (book === 'empty') options.bookEmpty = true;
     else console.warn(`未知的 book「${book}」，可用值：empty`);
+  }
+  const catalog = params.get('catalog');
+  if (catalog !== null) {
+    if (catalog === 'mismatch') options.catalogMismatch = true;
+    else console.warn(`未知的 catalog「${catalog}」，可用值：mismatch`);
+  }
+  const preparation = params.get('preparation');
+  if (preparation !== null) {
+    if (preparation === 'blocked') options.preparationBlocked = true;
+    else console.warn(`未知的 preparation「${preparation}」，可用值：blocked`);
   }
   const identity = params.get('identity');
   if (identity !== null) {

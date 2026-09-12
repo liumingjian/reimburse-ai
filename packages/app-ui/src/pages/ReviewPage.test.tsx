@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { App } from '../App';
-import { STALE_STEP_NOTICE } from '../contract/actions';
-import { PROJECT_CHANGED_NOTICE, REVIEW_INVALIDATED_NOTICE } from '../contract/snapshot';
+import { EXCLUDE_MATERIAL_ERRORS, STALE_STEP_NOTICE } from '../contract/actions';
+import { CATALOG_PREPARATION_COPY, PROJECT_CHANGED_NOTICE, REVIEW_INVALIDATED_NOTICE } from '../contract/snapshot';
 import type { TaskStage } from '../contract/stage';
 import { createMockAdapter } from '../mock/mock-adapter';
 
@@ -41,11 +41,16 @@ describe('整单明细确认', () => {
     expect(cells(rows[0])).toEqual(['1', '发票2', 'P-3312 / 产品调研', '2026-08-10', '2026-08-10', '上海', '虹桥枢纽', '漕河泾', REMOTE, 'FY020103 / 外地市内交通费', '普通发票', '25.92', '0.77', '26.69']);
     expect(cells(rows[4]).slice(1, 8)).toEqual(['发票6', 'P-3312 / 产品调研', '2026-08-15', '2026-08-15', '上海', '张江高科', '漕河泾开发区']);
     expect(cells(rows[6]).slice(3, 8)).toEqual(['2026-08-09', '2026-08-09', '', '杭州东', '上海虹桥']);
-    // 不展示文件名、参考材料与合计行；表下注明材料包文件数。
-    const body = document.body.textContent ?? '';
-    expect(body).not.toMatch(/\.pdf|\.jpg|\.png|参考材料|同上|合计 ·/);
+    // 表内不展示文件名、参考材料与合计行；表下单独一节是材料包文件清单。
+    expect(table().textContent ?? '').not.toMatch(/\.pdf|\.jpg|\.png|参考材料|同上|合计 ·/);
     expect(screen.queryByTestId('gross-total')).toBeNull();
-    expect(screen.getByTestId('package-files').textContent).toBe('材料包已生成，共 13 份文件。');
+    expect(screen.getByTestId('package-files').textContent).toBe('核对材料已生成，共 13 份文件。');
+    const files = within(screen.getByRole('list', { name: '材料包文件' })).getAllByRole('listitem');
+    expect(files).toHaveLength(13);
+    expect(files[0]?.textContent).toBe('发票 invoices/全季酒店_发票.pdf');
+    expect(files.map((item) => item.textContent)).toContain('参考材料 evidence/曹操出行_行程单.pdf');
+    expect(screen.queryByRole('table', { name: '不匹配项' })).toBeNull();
+    expect(screen.queryByRole('table', { name: '准备缺项' })).toBeNull();
     // 项目归属在确认之前已完成，随确认一起生效；支付截图不在这里补充。
     expect(screen.getByTestId('review-purpose').textContent).toContain('上海产品评审出差');
     expect(screen.getByRole('link', { name: '修改项目归属' }).getAttribute('href')).toBe('#/task/T1/project');
@@ -150,12 +155,81 @@ describe('整单明细确认', () => {
     expect(after.stage).toBe('actions');
   });
 
-  test('?seed=catalog：确认页先显示报销信息核对与材料准备的进度，完成后才能确认', async () => {
+  test('?seed=catalog：确认页先显示报销信息核对与材料准备的进度（内核话术），完成后才能确认，并出现材料包文件清单', async () => {
     renderReview('catalog', 300);
-    expect(await screen.findByText(/正在核对报销信息/)).toBeTruthy();
+    expect(await screen.findByText(CATALOG_PREPARATION_COPY.catalogRunning)).toBeTruthy();
     expect(screen.queryByRole('button', { name: '确认' })).toBeNull();
-    expect(await screen.findByText(/正在准备报销材料/)).toBeTruthy();
+    expect(screen.queryByTestId('package-files')).toBeNull();
+    expect(await screen.findByText(CATALOG_PREPARATION_COPY.preparationRunning)).toBeTruthy();
     expect(await screen.findByRole('button', { name: '确认' })).toBeTruthy();
+    expect((checkbox() as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByTestId('package-files').textContent).toBe('核对材料已生成，共 13 份文件。');
+  });
+
+  test('?catalog=mismatch：不匹配表（列照内核）阻塞确认；回到项目归属把 No.7-9 改派出 P-2307 后重新核对通过', async () => {
+    window.location.hash = '#/task/T1/review';
+    const adapter = createMockAdapter({ seed: 'catalog', fault: null, autoStepMs: 5, catalogMismatch: true });
+    render(<App adapter={adapter} />);
+    const mismatch = await screen.findByRole('table', { name: '不匹配项' });
+    expect(within(mismatch).getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['序号', '材料/明细', '参考材料', '待处理问题', '处理人']);
+    const row = within(mismatch).getAllByRole('row').find((candidate) => candidate.closest('tbody'));
+    expect(cells(row)).toEqual(['1', '项目号 P-2307', '', '项目 P-2307「华东客户交付」在报销系统里已被禁用，不能引用', '要你处理']);
+    expect(screen.getByText(CATALOG_PREPARATION_COPY.catalogMismatch)).toBeTruthy();
+    expect((checkbox() as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByTestId('package-files')).toBeNull();
+    expect((await adapter.getSnapshot('T1')).step.kind).toBe('assign_projects');
+
+    fireEvent.click(screen.getByRole('link', { name: '回到项目归属改派' }));
+    expect(await screen.findByRole('heading', { name: '项目归属' })).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toContain('P-2307');
+    for (const no of [7, 8, 9]) fireEvent.click(screen.getByRole('checkbox', { name: `选择明细 No.${no}` }));
+    fireEvent.click(within(screen.getByRole('complementary', { name: '项目工作台' })).getByRole('button', { name: '归入 P-1180 内部培训' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确认覆盖' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认项目归属' }));
+
+    expect(await screen.findByRole('heading', { name: '整单明细确认' })).toBeTruthy();
+    await waitFor(() => expect((checkbox() as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByRole('table', { name: '不匹配项' })).toBeNull();
+    const snapshot = await adapter.getSnapshot('T1');
+    expect(snapshot.catalog.status).toBe('matched');
+    expect(snapshot.preparation.status).toBe('ready');
+  });
+
+  test('?preparation=blocked：缺项表（序号 | 准备缺项 | 关联材料/明细 | 处理人），确认不可用；排除相关材料后重新准备，确认恢复可用', async () => {
+    window.location.hash = '#/task/T1/review';
+    const adapter = createMockAdapter({ seed: 'preparation', fault: null, autoStepMs: 5, preparationBlocked: true });
+    render(<App adapter={adapter} />);
+    const problems = await screen.findByRole('table', { name: '准备缺项' });
+    expect(within(problems).getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['序号', '准备缺项', '关联材料/明细', '处理人']);
+    const row = within(problems).getAllByRole('row').find((candidate) => candidate.closest('tbody'));
+    expect(cells(row)[0]).toBe('1');
+    expect(cells(row)[1]).toContain('明细 No.4 的出发点与参考材料不一致');
+    expect(cells(row).slice(2)).toEqual(['曹操出行_行程单.pdf', '要你处理']);
+    expect(screen.getByText(CATALOG_PREPARATION_COPY.preparationBlocked)).toBeTruthy();
+    expect((checkbox() as HTMLButtonElement).disabled).toBe(true);
+    // 有缺项也生成材料包，供核对。
+    expect(screen.getByTestId('package-files').textContent).toBe('核对材料已生成，共 13 份文件。');
+    expect((await adapter.getSnapshot('T1')).step.kind).toBe('resolve_preparation');
+
+    fireEvent.click(screen.getByRole('button', { name: '排除 曹操出行_行程单.pdf' }));
+    await waitFor(() => expect((checkbox() as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByRole('table', { name: '准备缺项' })).toBeNull();
+    expect(screen.getByTestId('package-files').textContent).toBe('核对材料已生成，共 12 份文件。');
+    const snapshot = await adapter.getSnapshot('T1');
+    expect(snapshot.materials.find((material) => material.materialId === 'm06')?.role).toBe('excluded');
+    expect(snapshot.lines.find((line) => line.no === 4)?.referenceMaterialIds).toEqual([]);
+    expect(snapshot.step.kind).toBe('confirm_review');
+
+    fireEvent.click(checkbox());
+    expect(await screen.findByRole('link', { name: '去打印' })).toBeTruthy();
+  });
+
+  test('排除材料只在材料包缺项时、且只对服务端标明可排除的材料接受', async () => {
+    const adapter = createMockAdapter({ seed: 'review', fault: null });
+    const review = await adapter.getSnapshot('T1');
+    const outcome = await adapter.excludeMaterial('T1', 'm06', review.step.stepToken);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.ok ? '' : outcome.error.message).toBe(EXCLUDE_MATERIAL_ERRORS.notReady);
   });
 
   test('确认后追加材料：二次确认弹层，取消不改变任何状态，继续则确认失效并回到上传页接收新批次', async () => {

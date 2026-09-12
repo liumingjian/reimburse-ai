@@ -40,10 +40,11 @@ test('确认：?seed=review 是 No. 加内核 13 列，按费用分类排序，�
     await expect(cells.nth(4)).toHaveText((await cells.nth(3).textContent()) ?? '');
   }
   await expect(page.getByTestId('confirm-row-5').locator('td').nth(6)).toHaveText('张江高科');
-  // 页面上没有任何文件名或参考材料文字，也没有合计行。
-  const text = await page.locator('main').innerText();
+  // 确认表里没有任何文件名或参考材料文字，也没有合计行；材料包文件清单在表下单独一节。
+  const text = await table(page).innerText();
   expect(text).not.toMatch(/\.pdf|\.jpg|\.png|参考材料|合计 ·/);
-  await expect(page.getByTestId('package-files')).toHaveText('材料包已生成，共 13 份文件。');
+  await expect(page.getByTestId('package-files')).toHaveText('核对材料已生成，共 13 份文件。');
+  await expect(page.getByRole('list', { name: '材料包文件' }).getByRole('listitem')).toHaveCount(13);
   await expect(page.getByTestId('review-purpose')).toContainText('上海产品评审出差');
   // 支付截图入口在打印稿页，不在确认页。
   await expect(page.getByRole('button', { name: /补充支付截图/ })).toHaveCount(0);

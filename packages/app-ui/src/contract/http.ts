@@ -50,6 +50,7 @@ export const HTTP_ENDPOINTS = {
   rotatePlacement: action('rotate-placement', 'pageId', 'slot', 'rotate'),
   cropPlacement: action('crop-placement', 'pageId', 'slot', 'corners'),
   submitProjectAssignment: action('submit-project-assignment', 'purpose', 'projects', 'stepToken'),
+  excludeMaterial: action('exclude-material', 'materialId', 'stepToken'),
   startErpWrite: action('start-erp-write', 'stepToken'),
   confirmLogin: action('confirm-login', 'stepToken'),
   reconcile: action('reconcile', 'stepToken'),

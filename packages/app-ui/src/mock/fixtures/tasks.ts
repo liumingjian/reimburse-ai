@@ -3,7 +3,8 @@ import type { Inventory, Material, TaskSnapshot, UploadBatch, UploadFileResult }
 import type { Employee, TaskListItem } from '../../contract/task-list';
 import { HOME_CITY, SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, confirmationDigest, projectAssignmentOpen, projectAssignmentSubmitted, withLineProjects } from './projects';
 import { T2_ROWS, applyAbortAtSave, applyErpDone, emptyReadback, erpWaitingLogin, mismatchReason, readbackOf } from './erp';
-import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult, openPendingItemCount, packageFileCount, withInventoryProjection } from './inventory';
+import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult, openPendingItemCount, withInventoryProjection } from './inventory';
+import { catalogMatched, catalogPending, catalogRunning, packageFilesOf, preparationPending } from './preparation';
 
 // 夹具：三个虚构的报销任务。人物与数字沿用原型（林颂宜、上海出差、9 条明细合计 3972.59）。
 // 材料盘点结果、费用事件、待确认项与候选明细见 ./inventory.ts；本文件按阶段把它们装进快照。
@@ -137,10 +138,12 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     events: [],
     pendingItems: [],
     lines: [],
-    confirmation: { status: 'unconfirmed', confirmedAt: null, digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null, packageFileCount: null, notice: null },
+    confirmation: { status: 'unconfirmed', confirmedAt: null, digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null, notice: null },
     paymentScreenshots: [],
     printSheet: { status: 'not_generated', fileName: null, url: null, pages: [], notices: [] },
     projectAssignment: { status: 'not_started', purpose: null, homeCity: task.homeCity, assignments: [], projects: [], submittedAt: null },
+    catalog: catalogPending(),
+    preparation: preparationPending(),
     erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null },
     readback: emptyReadback(),
     reconcile: { status: 'none', bucket: null, action: null, actionCode: null, banner: null, draftNo: null, rows: [], reasons: [] },
@@ -189,9 +192,12 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
     snapshot.projectAssignment = projectAssignmentSubmitted({ purpose: T1_PURPOSE, homeCity: HOME_CITY, projects: T1_DONE_ASSIGNMENTS, submittedAt: '2026-09-11T14:28:00' });
     snapshot.lines = withLineProjects(snapshot.lines, snapshot.projectAssignment);
   }
+  // catalog：报销信息核对进行中；preparation：核对已通过，材料包生成中；review 起材料包就绪（T1 共 13 份文件）。
+  if (stage === 'catalog') snapshot.catalog = catalogRunning();
+  if (stageReached(stage, 'preparation')) snapshot.catalog = catalogMatched();
   if (stageReached(stage, 'review')) {
     snapshot.confirmation.digest = confirmationDigest(T1_ID, 'v1', snapshot.projectAssignment);
-    snapshot.confirmation.packageFileCount = packageFileCount(snapshot.lines);
+    snapshot.preparation = { status: 'ready', problems: [], packageFiles: packageFilesOf(snapshot.lines, snapshot.materials) };
   }
   if (stageReached(stage, 'actions')) snapshot.confirmation = { ...snapshot.confirmation, status: 'confirmed', confirmedAt: '2026-09-11T14:32:00' };
   // erp：「去报销」之后浏览器已启动，等待登录（检测到登录即自动写入）。done：草稿已保存、回读 9/9 一致。
@@ -223,9 +229,10 @@ export function t2Snapshot(): TaskSnapshot {
     lineCount: 5,
     invoiceCount: 5,
     grossTotal: '1264.00',
-    packageFileCount: null,
     notice: null,
   };
+  snapshot.catalog = catalogMatched();
+  snapshot.preparation = { status: 'ready', problems: [], packageFiles: [] };
   snapshot.erp = { status: 'aborted', steps: [], draftNo: T2_DRAFT_NO, abortReason: '保存草稿后回读超时，写入结果不确定。', loginNotice: null };
   snapshot.readback = readbackOf(T2_ROWS);
   snapshot.reconcile = {
@@ -262,9 +269,10 @@ export function t3Snapshot(): TaskSnapshot {
     lineCount: 4,
     invoiceCount: 4,
     grossTotal: '2318.50',
-    packageFileCount: null,
     notice: null,
   };
+  snapshot.catalog = catalogMatched();
+  snapshot.preparation = { status: 'ready', problems: [], packageFiles: [] };
   snapshot.erp = { status: 'done', steps: [], draftNo: T3_DRAFT_NO, abortReason: null, loginNotice: null };
   snapshot.readback = { status: 'matched', rows: [], summary: '明细 4/4 一致', localTotal: '2318.50', erpTotal: '2318.50' };
   return withInventoryProjection(snapshot);

@@ -73,6 +73,8 @@ export interface AppAdapter {
   rotatePlacement(taskId: string, pageId: string, slot: PlacementSlot, rotate: boolean): Promise<ActionOutcome>;
   cropPlacement(taskId: string, pageId: string, slot: PlacementSlot, corners: Corners): Promise<ActionOutcome>;
   submitProjectAssignment(taskId: string, input: ProjectAssignmentInput, stepToken: string): Promise<ActionOutcome>;
+  // 材料包有缺项（step resolve_preparation）时排除相关材料；服务端随后重新准备材料包。
+  excludeMaterial(taskId: string, materialId: string, stepToken: string): Promise<ActionOutcome>;
   startErpWrite(taskId: string, stepToken: string): Promise<ActionOutcome>;
   // 「我已登录，继续」只是请服务端再探测一次，页面从不断言登录已发生。
   confirmLogin(taskId: string, stepToken: string): Promise<ActionOutcome>;

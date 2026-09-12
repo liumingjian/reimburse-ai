@@ -3,6 +3,7 @@ import type { AppAdapter } from '../../contract/adapter';
 import type { ProjectOption, TaskSnapshot } from '../../contract/snapshot';
 import type { MockBus } from '../bus';
 import { applyPendingAnswer, buildLines, openPendingItemCount } from '../fixtures/inventory';
+import { catalogPending, preparationPending } from '../fixtures/preparation';
 import { projectAssignmentOpen, projectEntryStep } from '../fixtures/projects';
 
 // 待确认项答复与整单明细确认（mock 服务端的角色），以及 e2e 用的「别处推进」钩子。
@@ -11,6 +12,9 @@ import { projectAssignmentOpen, projectEntryStep } from '../fixtures/projects';
 // 都处理完 → 形成候选明细，进入项目归属（project / assign_projects）。整单确认在项目归属之后（摘要绑定项目）。
 export function settlePending(snapshot: TaskSnapshot, allowList: readonly ProjectOption[]): void {
   const taskId = snapshot.task.taskId;
+  // 明细重新形成：报销信息核对与材料包都要在下次提交项目归属后重来。
+  snapshot.catalog = catalogPending();
+  snapshot.preparation = preparationPending();
   const open = openPendingItemCount(snapshot.pendingItems);
   if (open > 0) {
     snapshot.stage = 'pending';
@@ -32,8 +36,6 @@ export function settlePending(snapshot: TaskSnapshot, allowList: readonly Projec
     lineCount: lines.length,
     invoiceCount: invoices,
     grossTotal: lines.length > 0 ? (cents / 100).toFixed(2) : null,
-    // 材料包要等项目归属提交、报销信息核对之后才生成。
-    packageFileCount: null,
   };
   // 进入项目归属：服务端随快照给出当前个人项目簿的允许列表。重新盘点后回到这里时，保留仍存在的明细的归属，但要重新提交。
   const assignment = snapshot.projectAssignment;

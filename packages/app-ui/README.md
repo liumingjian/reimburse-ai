@@ -67,8 +67,8 @@ mock 的项目簿只在内存里（刷新后回到夹具）。默认 6 条：P-2
 - 常驻城市的默认值由服务端给出：第一次是网络位置候选「杭州」（说明「根据网络位置推测…」）；创建过任务后是这个报销人身份上次确认的城市（按账套 + 登录账号持久记住，刷新页面后仍预填，说明「上次确认的常驻城市…」）。
   `?location=unavailable` 模拟位置获取失败：第一次打开时常驻城市留空，提示直接填写。它不是故障场景，可与 seed/fault 同用。
 - 全流程：新建任务后把 `dist-mock/sample-materials/` 里的 11 份文件一起拖进上传区，开始材料盘点，得到 3 个待确认项（两张出租车票、一张餐饮发票）。
-  处理完进入项目归属（为每条明细选项目并填写报销事由）；提交后服务端自动核对报销信息、准备报销材料（本票是占位，各约 0.6 s 自动通过），
-  再进入唯一一次整单明细确认。确认后「去打印」进入打印稿预览；「去报销」直接启动浏览器，登录后自动写入，没有「开始填报」。
+  处理完进入项目归属（为每条明细选项目并填写报销事由）；提交后服务端自动核对报销信息、准备报销材料（mock 各约 0.6 s，进度文案照内核话术），
+  再进入唯一一次整单明细确认；确认页表下是材料包文件清单（示例材料共 13 份：7 张发票、3 份参考材料、detail.json、detail.md、manifest.json）。确认后「去打印」进入打印稿预览；「去报销」直接启动浏览器，登录后自动写入，没有「开始填报」。
   mock 按业务文件名或示例原件文件名（`m01-hotel-invoice.pdf` 等）识别材料；其他文件成为「不支持的材料类型」待确认项。
 - 统一业务序号（整单确认表 No.、打印稿页序、ERP 明细行与回读表）由服务端给出，跟随内核确认表的分类排序：本地市内交通 → 外地市内交通 → 长途交通 → 住宿，
   同一分类内按事件顺序。示例材料得到 No.1-3 高德、No.4 曹操、No.5-6 出租车、No.7-8 铁路、No.9 住宿，合计 3972.59。
@@ -87,8 +87,8 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 | `inventory` | 11 份材料已盘点，结果按费用事件归组 |
 | `pending` | 3 个待确认项未处理 |
 | `project` / `assign` | 待确认项已处理，项目归属进行中，No.1、No.2 已归入 P-2307；整单确认页还不能进 |
-| `catalog` | 项目归属已提交，正在核对报销信息（占位，约 0.6 s 后自动进入材料准备） |
-| `preparation` | 正在准备报销材料（占位，约 0.6 s 后自动进入整单确认） |
+| `catalog` | 项目归属已提交，正在核对报销信息（约 0.6 s 后通过，进入材料准备；加 `&catalog=mismatch` 则停在不匹配表） |
+| `preparation` | 报销信息核对已通过，正在生成材料包（约 0.6 s 后就绪，进入整单确认；加 `&preparation=blocked` 则停在缺项表） |
 | `review` | 9 行整单明细（项目归属已提交）待「确认」 |
 | `actions` | 整单明细已确认，出现「去打印」「去报销」 |
 | `print` | 同 `actions`，且打印稿已生成（打开 `#/task/T1/print`） |
@@ -105,7 +105,18 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 | `readback-mismatch` | 严格回读 No.6（出租车）读到 74.00（本地 47.00）：写入停下，自动进入完成页，差异行高亮、不显示完成态，只能「转人工」；转人工后完成页与任务列表都显示「已转人工」 |
 | `service-disconnected` | 本地服务停一次：打开任务列表时立即（或打开任务页 0.3 s 后）出现全页横幅「本地服务未运行，请在终端重新执行 baox」；任务列表按退避自动重试，任务页期间动作在按钮旁失败；3 s 后恢复，横幅消失，列表出现、快照重新拉取 |
 
-未知的 seed / fault / location / erp / identity / book 在控制台警告后忽略。mock 构建还在 `window.__baoxMock` 上挂了一个 e2e 用的钩子：
+## QA：报销信息核对与材料包缺项
+
+两步都在下一次自动运行时生效：直接打开 `?seed=catalog` / `?seed=preparation`，或从更早的阶段走到提交项目归属。表格列名照内核，行文字由服务端给出。
+
+| 选项 | 表现 |
+| --- | --- |
+| `?catalog=mismatch` | 项目 P-2307 在 mock 报销系统里已被禁用：确认页显示「不匹配项」表（序号 \| 材料/明细 \| 参考材料 \| 待处理问题 \| 处理人），确认不可用。唯一处置是「回到项目归属改派」：把用到 P-2307 的明细（`?seed=catalog` 下是 No.7-9）改到别的项目后重新提交，核对通过。没用到 P-2307 就不会不匹配 |
+| `?preparation=blocked` | 曹操出行行程单与明细 No.4 的出发点对不上：确认页显示「准备缺项」表（序号 \| 准备缺项 \| 关联材料/明细 \| 处理人），确认不可用，材料包照样生成。点「排除 曹操出行_行程单.pdf」后重新准备，材料包变为 12 份，确认恢复可用 |
+
+例如 `dist-mock/index.html?seed=catalog&catalog=mismatch#/task/T1/review`、`dist-mock/index.html?seed=preparation&preparation=blocked#/task/T1/review`。
+
+未知的 seed / fault / location / erp / identity / book / catalog / preparation 在控制台警告后忽略。mock 构建还在 `window.__baoxMock` 上挂了一个 e2e 用的钩子：
 `advanceElsewhere(taskId)` 模拟「另一个窗口推进了任务、这边还没收到推送」，下一次带旧 `stepToken` 的动作会得到 409，
 页面换上最新快照并提示「任务已在别处推进」。
 
@@ -131,6 +142,10 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
   `POST /api/project-book/intake`（`number`）、`/remove`（`number`）、`/purge`、`/recheck`。服务端处理了请求就 200 返回 `{ status, verdict, note, book }`（`status` 照内核：admitted / rejected / not_logged_in / identity_mismatch / query_failed / removed / not_found / purged / none / done / empty，文案见 `PROJECT_BOOK_NOTES`），请求本身失败 `{ error, book? }`。
   项目簿一变，还没开始写入报销系统的任务经事件流拿到新的允许列表。流程门：进入项目归属时没有可选项目、也没有归属，step 为 `maintain_project_book`（页面换成维护入口），第一次录入成功后回到 `assign_projects`。
 - 流程与阶段：`TASK_STAGES` 的顺序即流程（`stage.ts`）；`project` 之后服务端自动经过 `catalog`、`preparation` 进入 `review`。整单确认的 `digest` 绑定项目归属与事由，改派后确认记为 `invalidated`（`PROJECT_CHANGED_NOTICE`）。
+- 报销信息核对与材料准备（`snapshot.ts`）：快照带 `catalog { status: pending | running | matched | mismatch, problems[] }` 与
+  `preparation { status: pending | blocked | ready, problems[], packageFiles[] }`。不匹配时阶段停在 `catalog`、step 为 `assign_projects`（改派后重新提交即重新核对）；
+  有缺项时阶段停在 `preparation`、step 为 `resolve_preparation`，缺项上 `excludableMaterialId` 不为空的，可用 `exclude-material`（`materialId`、`stepToken`）排除该材料，服务端随后重新准备。
+  材料包文件数只看 `packageFiles`（确认上不再另记）。表格列名常量：`CATALOG_MISMATCH_COLUMNS`、`PREPARATION_PROBLEM_COLUMNS`；进度与阻塞文案：`CATALOG_PREPARATION_COPY`。
 - 响应约定：成功 200 返回整份新快照；失败 `{ error: { code, message } }`（`message` 直接显示在按钮旁）；`stepToken` 过期返回 409 与 `{ error, snapshot }`（最新快照）。事件流为 SSE，`event: snapshot`，`data` 为整份快照；客户端断开后按 0.5 s 起翻倍、封顶 10 s 重连，恢复后重新拉取快照。
 - 值：金额两位小数字符串，日期 `YYYY-MM-DD`，时间 `HH:MM`，ID 不透明。上传为 multipart（`files`；支付截图为 `voucherMaterialId` + `file`，只在打印稿生成后接受）。
 - 验收样本：`src/mock/fixtures/`（各阶段快照）与 `fixtures/generated/`（原件、页图、PDF）。

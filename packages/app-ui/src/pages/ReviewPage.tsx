@@ -1,5 +1,13 @@
-import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS, type Line, type TaskSnapshot } from '../contract/snapshot';
-import { STAGE_DEFAULT_PAGE, type TaskStage } from '../contract/stage';
+import {
+  CATALOG_MISMATCH_COLUMNS,
+  CATALOG_PREPARATION_COPY,
+  CONFIRMATION_NO_COLUMN,
+  CONFIRMATION_TABLE_COLUMNS,
+  PREPARATION_PROBLEM_COLUMNS,
+  type Line,
+  type TaskSnapshot,
+} from '../contract/snapshot';
+import { STAGE_DEFAULT_PAGE } from '../contract/stage';
 import { formatDateTime } from '../format';
 import { navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
@@ -9,17 +17,21 @@ import { PAGE_COPY } from './page-copy';
 
 // 整单明细确认页：Skill 的唯一一次整单确认（preparation_confirmation），在项目归属、报销信息核对与材料准备之后。
 // 表格形状照内核 preparationConfirmationTable（next.mjs:513-559）：No. 加 13 列，按服务端给出的 lines[] 顺序（内核分类排序）逐行列出，
-// 无组标题、无合计行，不展示文件名、完整发票号与参考材料；表下只注明材料包文件数。
+// 无组标题、无合计行，表内不展示文件名、完整发票号与参考材料；表下是材料包文件清单（单独一节）。
 // 只能确认，不在表内修改：有不对的地方回到对应步骤修改。确认绑定项目归属，改派项目会使确认失效（提示由服务端给出）。
+// 提交项目归属后服务端自动做报销信息核对与材料准备（进度照内核话术）：核对不匹配时显示不匹配表，唯一处置是回到项目归属改派；
+// 材料包有缺项时显示缺项表，「确认」不可用，可排除服务端标明的相关材料。
 // 「确认」带快照里的摘要与 stepToken；确认后出现并列的「去打印」「去报销」：
 // 去打印只是进入打印稿页；去报销请服务端启动专用浏览器，登录后自动写入，没有「开始填报」。
 // 「追加材料」先二次确认，再请服务端使确认失效并回到上传页。支付截图在打印稿页补充，不在这里。
 
-// 提交项目归属后服务端自动执行的两步：显示进度，确认暂不可用。
-const AUTO_STEP_NOTICE: Partial<Record<TaskStage, string>> = {
-  catalog: '正在核对报销信息（项目与费用项目）。完成后在这里确认整单明细。',
-  preparation: '正在准备报销材料。完成后在这里确认整单明细。',
-};
+// 两步正在进行时的进度提示：确认暂不可用。
+function autoStepNotice(snapshot: TaskSnapshot): string | null {
+  const { stage, catalog, preparation } = snapshot;
+  if (stage === 'catalog' && catalog.status === 'running') return CATALOG_PREPARATION_COPY.catalogRunning;
+  if (stage === 'preparation' && preparation.status === 'pending') return CATALOG_PREPARATION_COPY.preparationRunning;
+  return null;
+}
 
 const NUMERIC_COLUMNS: ReadonlySet<string> = new Set(['费用金额', '税额', '总额']);
 
@@ -48,19 +60,25 @@ function cellsOf(line: Line): readonly string[] {
 export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const taskId = snapshot.task.taskId;
   const copy = PAGE_COPY.review;
-  const { confirmation, erp, stage, step } = snapshot;
+  const { confirmation, erp, stage, step, catalog, preparation } = snapshot;
   const confirmed = confirmation.status === 'confirmed';
-  const autoNotice = AUTO_STEP_NOTICE[stage] ?? null;
+  const autoNotice = autoStepNotice(snapshot);
+  const catalogMismatch = catalog.status === 'mismatch';
+  const preparationBlocked = preparation.status === 'blocked';
   const erpStarted = erp.status !== 'idle';
   const erpDone = erp.status === 'done';
   const purpose = snapshot.projectAssignment.purpose;
 
   const confirmAction = useAction(taskId);
   const claimAction = useAction(taskId);
+  const excludeAction = useAction(taskId);
   const reopen = useReopenUpload(snapshot, () => navigate(taskHash(taskId, 'upload')));
   const confirming = confirmAction.busy;
+  // 「确认」只在服务端给出 confirm_review 且材料包就绪时可用；有缺项或核对不匹配时不可用。
+  const confirmDisabled = confirming || snapshot.lines.length === 0 || step.kind !== 'confirm_review' || preparation.status !== 'ready' || catalogMismatch;
+  const exclude = (materialId: string) => excludeAction.run((adapter) => adapter.excludeMaterial(taskId, materialId, step.stepToken));
 
-  const confirm = () => confirmAction.run((adapter) => adapter.confirmReview(taskId, confirmation.digest ?? '', step.stepToken));
+  const confirm =() => confirmAction.run((adapter) => adapter.confirmReview(taskId, confirmation.digest ?? '', step.stepToken));
   // 去报销：请服务端开始 ERP 写入（启动浏览器；登录后自动写入），成功后进入 ERP 填报页看进度。
   const claim = async () => {
     const outcome = await claimAction.run((adapter) => adapter.startErpWrite(taskId, step.stepToken));
@@ -112,10 +130,98 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
         </table>
       </section>
 
-      {confirmation.packageFileCount !== null ? (
-        <p className="caption package-note" data-testid="package-files">
-          材料包已生成，共 {confirmation.packageFileCount} 份文件。
-        </p>
+      {catalogMismatch ? (
+        <section className="panel" aria-label="报销信息核对">
+          <div className="notice notice-err" role="alert">
+            {CATALOG_PREPARATION_COPY.catalogMismatch}
+            {!erpStarted ? (
+              <div className="btn-row">
+                <a className="btn btn-secondary" href={taskHash(taskId, 'project')}>
+                  回到项目归属改派
+                </a>
+              </div>
+            ) : null}
+          </div>
+          <table className="data" aria-label="不匹配项">
+            <thead>
+              <tr>
+                {CATALOG_MISMATCH_COLUMNS.map((label) => (
+                  <th key={label}>{label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {catalog.problems.map((problem, index) => (
+                <tr key={`${problem.subject}-${index}`}>
+                  <td className="mono">{index + 1}</td>
+                  <td>{problem.subject}</td>
+                  <td>{problem.reference ?? ''}</td>
+                  <td>{problem.reason}</td>
+                  <td>{problem.resolver}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
+
+      {preparationBlocked ? (
+        <section className="panel" aria-label="材料包缺项">
+          <div className="notice notice-warn" role="alert">
+            {CATALOG_PREPARATION_COPY.preparationBlocked}
+          </div>
+          <table className="data" aria-label="准备缺项">
+            <thead>
+              <tr>
+                {PREPARATION_PROBLEM_COLUMNS.map((label) => (
+                  <th key={label}>{label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {preparation.problems.map((problem, index) => (
+                <tr key={problem.problemId}>
+                  <td className="mono">{index + 1}</td>
+                  <td>{problem.missing}</td>
+                  <td>{problem.subject}</td>
+                  <td>{problem.resolver}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="btn-row">
+            {preparation.problems.map((problem) =>
+              problem.excludableMaterialId ? (
+                <button
+                  key={problem.problemId}
+                  className="btn btn-secondary btn-sm"
+                  type="button"
+                  disabled={excludeAction.busy || step.kind !== 'resolve_preparation'}
+                  onClick={() => void exclude(problem.excludableMaterialId ?? '')}
+                >
+                  排除 {problem.subject}
+                </button>
+              ) : null,
+            )}
+            <span className="caption">排除后这份材料不关联明细、也不进入材料包，系统会重新准备核对材料。</span>
+          </div>
+          <ActionError message={excludeAction.error} />
+        </section>
+      ) : null}
+
+      {preparation.packageFiles.length > 0 ? (
+        <section className="panel" aria-label="材料包">
+          <p className="caption package-note" data-testid="package-files">
+            {CATALOG_PREPARATION_COPY.packageReady(preparation.packageFiles.length)}
+          </p>
+          <ul className="package-files" aria-label="材料包文件">
+            {preparation.packageFiles.map((file) => (
+              <li key={file.path}>
+                <span className="caption">{file.kindLabel}</span> <span className="mono">{file.path}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
 
       <section className="panel" aria-label="整单确认">
@@ -184,7 +290,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
               <button
                 className="btn btn-primary"
                 type="button"
-                disabled={confirming || snapshot.lines.length === 0 || step.kind !== 'confirm_review'}
+                disabled={confirmDisabled}
                 onClick={() => void confirm()}
               >
                 确认
