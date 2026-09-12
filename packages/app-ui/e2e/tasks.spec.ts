@@ -38,7 +38,16 @@ test('点「继续」进入任务页面骨架，侧栏列出流程阶段', async
   await page.getByRole('link', { name: '继续 →' }).click();
   await expect(page).toHaveURL(/#\/task\/T1\/upload$/);
   await expect(page.getByRole('heading', { name: '上传材料' })).toBeVisible();
-  await expect(page.getByRole('list', { name: '流程阶段' }).getByRole('listitem')).toHaveCount(6);
+  // 顺序照 Skill：项目归属在整单明细确认之前。
+  await expect(page.getByRole('list', { name: '流程阶段' }).getByRole('listitem')).toHaveText([
+    /上传材料/,
+    /材料盘点/,
+    /待确认项/,
+    /项目归属/,
+    /整单明细确认/,
+    /去打印 \/ 去报销/,
+    /完成/,
+  ]);
 });
 
 test('未知路径回到任务列表', async ({ page }) => {

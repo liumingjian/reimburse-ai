@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeAll, describe, expect, test, vi } from 'vitest';
 import { App } from '../App';
 import type { AppAdapter } from '../contract/adapter';
+import { PAYMENT_SCREENSHOT_ERRORS } from '../contract/snapshot';
 import { createMockAdapter } from '../mock/mock-adapter';
 
 // jsdom 没有 PointerEvent 时补一个（带 clientX / pointerId 的 MouseEvent），让指针拖动能在单元测试里跑。
@@ -26,7 +27,15 @@ function renderPrint(printSheet: boolean) {
 }
 
 const pages = () => screen.getByRole('list', { name: '打印稿页面' });
+const hotelCard = () => within(pages()).getByRole('listitem', { name: 'No.9 · 08-09 · 住宿 · 3640.00' });
 const confirmationStatus = async (adapter: AppAdapter) => (await adapter.getSnapshot('T1')).confirmation.status;
+const png = (name = 'IMG_5011.png') => new File(['png bytes'], name, { type: 'image/png' });
+
+function chooseScreenshot(file: File) {
+  const input = screen.getByLabelText('选择支付截图：全季酒店_发票.pdf');
+  Object.defineProperty(input, 'files', { value: [file], configurable: true });
+  fireEvent.change(input);
+}
 
 // 原图 900x1200 显示成 450x600：显示像素 x2 = 原图像素。
 function stubEditorImage() {
@@ -38,25 +47,65 @@ function stubEditorImage() {
 }
 
 describe('打印稿预览', () => {
-  test('进入页面即生成打印稿：7 页页图，页眉整句来自快照（No.3-5 用普通连字符）', async () => {
+  test('进入页面即生成打印稿：7 页页图，页序与整单确认的 No. 一致（按内核分类排序），页眉整句来自快照', async () => {
     const adapter = renderPrint(false);
     const generate = vi.spyOn(adapter, 'generatePrintSheet');
     expect(await screen.findByRole('list', { name: '打印稿页面' })).toBeTruthy();
     expect(generate).toHaveBeenCalledWith('T1');
     const cards = within(pages()).getAllByRole('listitem').filter((item) => item.classList.contains('page-card'));
-    expect(cards).toHaveLength(7);
-    expect(cards[2]?.getAttribute('aria-label')).toBe('No.3-5 · 08-10 · 外地市内交通 · 69.19');
-    expect(within(cards[2] as HTMLElement).getByText('No.3-5 · 08-10 · 外地市内交通 · 69.19')).toBeTruthy();
-    expect(screen.getByTestId('page-image-pg3').getAttribute('src')).toBe('fixtures/print-pg3.png');
+    expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual([
+      'No.1-3 · 08-10 · 外地市内交通 · 69.19',
+      'No.4 · 08-11 · 外地市内交通 · 38.40',
+      'No.5 · 08-15 · 外地市内交通 · 32.00',
+      'No.6 · 08-19 · 外地市内交通 · 47.00',
+      'No.7 · 08-09 · 长途交通 · 73.00',
+      'No.8 · 08-22 · 长途交通 · 73.00',
+      'No.9 · 08-09 · 住宿 · 3640.00',
+    ]);
+    expect(within(cards[0] as HTMLElement).getByText('No.1-3 · 08-10 · 外地市内交通 · 69.19')).toBeTruthy();
+    expect(screen.getByTestId('page-image-pg1').getAttribute('src')).toBe('fixtures/print-pg1.png');
   });
 
   test('住宿发票缺支付截图：顶部提醒，下载链接仍然可用并指向合并 PDF', async () => {
     renderPrint(true);
     const notice = await screen.findByRole('status', { name: '打印提醒' });
-    expect(notice.textContent).toContain('No.2 住宿发票还没有支付截图');
+    expect(notice.textContent).toContain('No.9 住宿发票还没有支付截图');
+    expect(screen.queryByRole('link', { name: '去确认页补充支付截图' })).toBeNull();
     const download = screen.getByRole('link', { name: '下载打印稿 PDF' });
     expect(download.getAttribute('href')).toBe('fixtures/print-sheet.pdf');
     expect(download.getAttribute('download')).toBe('打印稿_2026-08上海出差.pdf');
+  });
+
+  test('支付截图只在打印稿页补充：只有住宿页有入口；非图片被拒；补上后提醒消失，移除后回来；整单明细确认不变', async () => {
+    const adapter = renderPrint(true);
+    await screen.findByRole('list', { name: '打印稿页面' });
+    expect(within(pages()).getAllByRole('button', { name: /^补充支付截图/ })).toHaveLength(1);
+    expect(within(hotelCard()).getByRole('button', { name: '补充支付截图：全季酒店_发票.pdf' })).toBeTruthy();
+
+    chooseScreenshot(new File(['%PDF'], '支付记录.pdf', { type: 'application/pdf' }));
+    expect((await within(hotelCard()).findByRole('alert')).textContent).toBe(PAYMENT_SCREENSHOT_ERRORS.notImage);
+    expect((await adapter.getSnapshot('T1')).paymentScreenshots).toHaveLength(0);
+
+    chooseScreenshot(png());
+    expect(await within(hotelCard()).findByText('IMG_5011.png')).toBeTruthy();
+    expect(screen.queryByRole('status', { name: '打印提醒' })).toBeNull();
+    let snapshot = await adapter.getSnapshot('T1');
+    expect(snapshot.paymentScreenshots).toMatchObject([{ voucherMaterialId: 'm01', fileName: 'IMG_5011.png' }]);
+    expect(snapshot.printSheet.pages.find((page) => page.pageId === 'pg7')?.screenshotId).toBe(snapshot.paymentScreenshots[0]?.screenshotId);
+    expect(snapshot.confirmation.status).toBe('confirmed');
+
+    fireEvent.click(within(hotelCard()).getByRole('button', { name: '移除支付截图：全季酒店_发票.pdf' }));
+    expect(await within(hotelCard()).findByRole('button', { name: '补充支付截图：全季酒店_发票.pdf' })).toBeTruthy();
+    expect(await screen.findByRole('status', { name: '打印提醒' })).toBeTruthy();
+    snapshot = await adapter.getSnapshot('T1');
+    expect(snapshot.paymentScreenshots).toHaveLength(0);
+    expect(snapshot.confirmation.status).toBe('confirmed');
+  });
+
+  test('打印稿还没生成时服务端拒绝补充支付截图（入口只在打印稿页）', async () => {
+    const adapter = createMockAdapter({ seed: 'actions', fault: null });
+    const outcome = await adapter.addPaymentScreenshot('T1', 'm01', png());
+    expect(outcome).toMatchObject({ ok: false, error: { code: 'print_not_generated', message: PAYMENT_SCREENSHOT_ERRORS.notGenerated } });
   });
 
   test('旋转：页图换成服务端给的新地址；整单明细确认不变', async () => {
@@ -64,8 +113,8 @@ describe('打印稿预览', () => {
     const rotate = vi.spyOn(adapter, 'rotatePlacement');
     fireEvent.click(await screen.findByRole('button', { name: '改为竖放：全季酒店_结账单.pdf' }));
     expect(await screen.findByRole('button', { name: '旋转 90°：全季酒店_结账单.pdf' })).toBeTruthy();
-    expect(rotate).toHaveBeenCalledWith('T1', 'pg2', 'bottom', false);
-    expect(screen.getByTestId('page-image-pg2').getAttribute('src')).toBe('fixtures/print-pg2-r00.png');
+    expect(rotate).toHaveBeenCalledWith('T1', 'pg7', 'bottom', false);
+    expect(screen.getByTestId('page-image-pg7').getAttribute('src')).toBe('fixtures/print-pg7-r00.png');
     expect(await confirmationStatus(adapter)).toBe('confirmed');
   });
 
@@ -100,7 +149,7 @@ describe('打印稿预览', () => {
     fireEvent.click(within(editor).getByRole('button', { name: '提交裁剪' }));
     const receipt = await screen.findByTestId('crop-receipt');
     expect(receipt.textContent).toBe('已提交裁剪：(200, 100) (586, 139) (890, 1199) (234, 921)');
-    expect(crop).toHaveBeenCalledWith('T1', 'pg5', 'top', [
+    expect(crop).toHaveBeenCalledWith('T1', 'pg3', 'top', [
       [200, 100],
       [586, 139],
       [890, 1199],

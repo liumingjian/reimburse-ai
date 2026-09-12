@@ -16,7 +16,7 @@ export const PROJECT_BOOK: readonly ProjectOption[] = [
   { number: 'P-0917', name: '旧版对账工具', selectable: false, statusLabel: '复检未通过' },
 ];
 
-// `?seed=project` 预置的归属：No.1 与 No.2 已归入 P-2307，用来演示批量归入时的冲突处理。
+// `?seed=project` 预置的归属：No.1 与 No.2（高德前两段）已归入 P-2307，用来演示批量归入时的冲突处理。
 export const SEED_ASSIGNMENTS: Readonly<Record<string, string>> = { l1: 'P-2307', l2: 'P-2307' };
 
 export const T1_PURPOSE = '上海产品评审出差';
@@ -29,7 +29,19 @@ function toAssignments(projects: Readonly<Record<string, string>>): ProjectAssig
   return Object.entries(projects).map(([lineId, projectNumber]) => ({ lineId, projectNumber, projectName: projectName(projectNumber) }));
 }
 
-// 整单明细确认之后，服务端随快照给出整份允许列表；还没进入项目归属时没有归属。
+// mock 的整单确认摘要：绑定盘点版本、报销事由与逐条项目归属（内核 preparationDigest 含 selection；材料包部分待服务端 spec 确认）。
+// 归属或事由一变，摘要就变，旧确认随之失效。
+export function confirmationDigest(taskId: string, versionId: string | null, assignment: ProjectAssignment): string {
+  const pairs = [...assignment.assignments].sort((a, b) => (a.lineId < b.lineId ? -1 : 1)).map((item) => `${item.lineId}=${item.projectNumber}`);
+  let hash = 0x811c9dc5;
+  for (const ch of [assignment.purpose ?? '', ...pairs].join('|')) {
+    hash ^= ch.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `digest-${taskId.toLowerCase()}-${versionId ?? 'v0'}-${hash.toString(16).padStart(8, '0')}`;
+}
+
+// 待确认项处理完、进入项目归属时，服务端随快照给出整份允许列表；还没提交时可能有预置归属。
 // homeCity 是任务自己的常驻城市快照（task.homeCity）。
 export function projectAssignmentOpen(homeCity: string, assignments: Readonly<Record<string, string>> = {}): ProjectAssignment {
   return {
@@ -53,15 +65,15 @@ export function projectAssignmentSubmitted(input: { purpose: string; homeCity: s
   };
 }
 
-// 已完成的 T1：9 条明细全部归属（住宿与长途归入 P-2307，市内交通归入 P-3312）。
+// 已提交归属的 T1：9 条明细全部归属（No.1-6 外地市内交通归入 P-3312，No.7-9 长途交通与住宿归入 P-2307）。
 export const T1_DONE_ASSIGNMENTS: Readonly<Record<string, string>> = {
-  l1: 'P-2307',
-  l2: 'P-2307',
+  l1: 'P-3312',
+  l2: 'P-3312',
   l3: 'P-3312',
   l4: 'P-3312',
   l5: 'P-3312',
   l6: 'P-3312',
-  l7: 'P-3312',
-  l8: 'P-3312',
+  l7: 'P-2307',
+  l8: 'P-2307',
   l9: 'P-2307',
 };

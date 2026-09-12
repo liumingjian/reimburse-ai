@@ -2,21 +2,22 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 
-// 打印稿预览（#104）：页图与页眉、旋转、四角裁剪（鼠标拖动角点）、下载合并 PDF；任何调整都不改变整单明细确认。
+// 打印稿预览：页图与页眉（页序跟随统一业务序号）、旋转、四角裁剪（鼠标拖动角点）、支付截图、下载合并 PDF；任何调整都不改变整单明细确认。
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 
 const PAGE_HEADERS = [
-  'No.1 · 08-09 · 长途交通 · 73.00',
-  'No.2 · 08-09 · 住宿 · 3640.00',
-  'No.3-5 · 08-10 · 外地市内交通 · 69.19',
-  'No.6 · 08-11 · 外地市内交通 · 38.40',
-  'No.7 · 08-15 · 外地市内交通 · 32.00',
-  'No.8 · 08-19 · 外地市内交通 · 47.00',
-  'No.9 · 08-22 · 长途交通 · 73.00',
+  'No.1-3 · 08-10 · 外地市内交通 · 69.19',
+  'No.4 · 08-11 · 外地市内交通 · 38.40',
+  'No.5 · 08-15 · 外地市内交通 · 32.00',
+  'No.6 · 08-19 · 外地市内交通 · 47.00',
+  'No.7 · 08-09 · 长途交通 · 73.00',
+  'No.8 · 08-22 · 长途交通 · 73.00',
+  'No.9 · 08-09 · 住宿 · 3640.00',
 ];
 
 const pageList = (page: Page) => page.getByRole('list', { name: '打印稿页面' });
+const hotelCard = (page: Page) => pageList(page).getByRole('listitem', { name: 'No.9 · 08-09 · 住宿 · 3640.00', exact: true });
 
 async function expectImageLoaded(page: Page, testId: string) {
   await expect.poll(() => page.getByTestId(testId).evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
@@ -35,7 +36,7 @@ test('?seed=print 直接打开：7 页页图与页眉，缺支付截图提醒，
   await expect(page.getByRole('heading', { name: '打印稿预览' })).toBeVisible();
   await expect(pageList(page).locator('.page-hdr')).toHaveText(PAGE_HEADERS);
   for (const id of ['pg1', 'pg3', 'pg5', 'pg7']) await expectImageLoaded(page, `page-image-${id}`);
-  await expect(page.getByRole('status', { name: '打印提醒' })).toContainText('No.2 住宿发票还没有支付截图');
+  await expect(page.getByRole('status', { name: '打印提醒' })).toContainText('No.9 住宿发票还没有支付截图');
 
   const download = page.getByRole('link', { name: '下载打印稿 PDF' });
   await expect(download).toBeVisible();
@@ -54,17 +55,42 @@ test('从「去打印」进入：页面请服务端生成打印稿后逐页显�
   await expect(page.getByRole('link', { name: '下载打印稿 PDF' })).toHaveAttribute('href', 'fixtures/print-sheet.pdf');
 });
 
+test('支付截图只在打印稿页补充：住宿页补上后提醒消失，移除后回来；整单明细确认不变，确认页没有入口', async ({ page }, testInfo) => {
+  await page.goto(open('?seed=print', '#/task/T1/print'));
+  await expect(pageList(page).getByRole('button', { name: /^补充支付截图/ })).toHaveCount(1);
+  await expect(hotelCard(page).getByRole('button', { name: '补充支付截图：全季酒店_发票.pdf' })).toBeVisible();
+  await hotelCard(page)
+    .getByLabel('选择支付截图：全季酒店_发票.pdf')
+    .setInputFiles({ name: 'IMG_5011.png', mimeType: 'image/png', buffer: Buffer.from('png bytes') });
+  await expect(hotelCard(page).getByText('IMG_5011.png')).toBeVisible();
+  await expect(page.getByRole('status', { name: '打印提醒' })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('print-screenshot.png'), fullPage: true });
+
+  await hotelCard(page).getByRole('button', { name: '移除支付截图：全季酒店_发票.pdf' }).click();
+  await expect(hotelCard(page).getByRole('button', { name: '补充支付截图：全季酒店_发票.pdf' })).toBeVisible();
+  await expect(page.getByRole('status', { name: '打印提醒' })).toBeVisible();
+
+  // 非图片被拒绝，原因就地显示。
+  await hotelCard(page)
+    .getByLabel('选择支付截图：全季酒店_发票.pdf')
+    .setInputFiles({ name: '支付记录.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF') });
+  await expect(hotelCard(page).getByRole('alert')).toHaveText('只接受图片（JPG、PNG）。');
+
+  await expectConfirmationUnchanged(page);
+  await expect(page.getByRole('button', { name: /补充支付截图/ })).toHaveCount(0);
+});
+
 test('旋转：结账单改为竖放后页图更新，再旋转回来；整单明细确认不变', async ({ page }) => {
   await page.goto(open('?seed=print', '#/task/T1/print'));
-  const image = page.getByTestId('page-image-pg2');
-  await expect(image).toHaveAttribute('src', 'fixtures/print-pg2.png');
+  const image = page.getByTestId('page-image-pg7');
+  await expect(image).toHaveAttribute('src', 'fixtures/print-pg7.png');
   await page.getByRole('button', { name: '改为竖放：全季酒店_结账单.pdf' }).click();
-  await expect(image).toHaveAttribute('src', 'fixtures/print-pg2-r00.png');
-  await expectImageLoaded(page, 'page-image-pg2');
+  await expect(image).toHaveAttribute('src', 'fixtures/print-pg7-r00.png');
+  await expectImageLoaded(page, 'page-image-pg7');
   await page.getByRole('button', { name: '旋转 90°：全季酒店_结账单.pdf' }).click();
-  await expect(image).toHaveAttribute('src', 'fixtures/print-pg2.png');
+  await expect(image).toHaveAttribute('src', 'fixtures/print-pg7.png');
   await page.getByRole('button', { name: '改为竖放：IMG_4871.jpg' }).click();
-  await expect(page.getByTestId('page-image-pg5')).toHaveAttribute('src', 'fixtures/print-pg5-r0.png');
+  await expect(page.getByTestId('page-image-pg3')).toHaveAttribute('src', 'fixtures/print-pg3-r0.png');
   await expectConfirmationUnchanged(page);
 });
 
@@ -106,6 +132,6 @@ test('四角裁剪：鼠标拖动角点，坐标以原图像素提交，回执�
   await editor.getByRole('button', { name: '提交裁剪' }).click();
   await expect(page.getByTestId('crop-receipt')).toHaveText(`已提交裁剪：(${expectedX}, ${expectedY}) (586, 139) (628, 893) (234, 921)`);
   await expect(editor).toHaveCount(0);
-  await expect(page.getByRole('listitem', { name: 'No.7 · 08-15 · 外地市内交通 · 32.00' })).toContainText('已手动微调裁剪');
+  await expect(page.getByRole('listitem', { name: 'No.5 · 08-15 · 外地市内交通 · 32.00' })).toContainText('已手动微调裁剪');
   await expectConfirmationUnchanged(page);
 });

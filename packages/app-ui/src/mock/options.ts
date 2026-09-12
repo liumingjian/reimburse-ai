@@ -26,6 +26,8 @@ export type MockOptions = {
   printSheet?: boolean;
   // 盘点每个阶段的推进间隔（毫秒）；测试可以调小。
   inventoryPhaseMs?: number;
+  // 提交项目归属后，报销信息核对 → 材料准备 → 整单确认每步的推进间隔（毫秒，默认 600）；测试可以调小。
+  autoStepMs?: number;
   // ERP 填报每一步的推进间隔（毫秒，默认 300）；正常场景下服务端自动探测到登录的延迟（默认 2500）。
   erpStepMs?: number;
   erpLoginAutoMs?: number;

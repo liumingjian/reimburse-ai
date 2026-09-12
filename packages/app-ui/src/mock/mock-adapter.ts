@@ -9,6 +9,7 @@ import { createErpFlow } from './flows/erp';
 import { createInventoryFlow } from './flows/inventory';
 import { createPendingFlow } from './flows/pending';
 import { createPrintFlow } from './flows/print';
+import { createProjectFlow } from './flows/project';
 import type { MockOptions } from './options';
 
 export { SERVICE_UNAVAILABLE_CODE, SERVICE_UNAVAILABLE_MESSAGE } from './bus';
@@ -16,7 +17,8 @@ export { FAULTS, readMockOptions, type Fault, type MockOptions } from './options
 
 // 浏览器内 mock 适配器：实现与 HTTP 适配器相同的接口，用内存里的快照回答一切。只经 main.tsx 的动态 import 进入 mock 构建。
 // 本文件只做组装：公共底座（快照仓库、事件总线、断连模拟）在 ./bus.ts，各业务流程在 ./flows/：
-// inventory（上传批次、材料盘点、追加材料）、pending（待确认项、整单明细确认）、print（支付截图、打印稿）、erp（项目归属、ERP 填报、对账）。
+// inventory（上传批次、材料盘点、追加材料）、pending（待确认项、整单明细确认）、project（项目归属，其后的报销信息核对与材料准备）、
+// print（打印稿、支付截图）、erp（去报销后的 ERP 填报、对账）。
 
 // 只在 mock 构建里挂到 window 上的测试钩子（e2e 用）：模拟「另一个窗口推进了任务」，而这边的事件流还没送到。
 export type MockHooks = {
@@ -49,6 +51,9 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   bus.put(t3Snapshot());
 
   const pending = createPendingFlow(bus);
+  const project = createProjectFlow(bus);
+  // `?seed=catalog` / `?seed=preparation`：自动步骤接着走完，进入整单确认。
+  project.resumeAutoSteps(T1_ID);
 
   // 常驻城市默认值：员工确认过就用记住的城市；否则用 mock 位置 Adapter 的城市级网络位置（夹具员工在杭州）；
   // `?location=unavailable` 下位置获取失败，又没有记忆，默认值为 null。
@@ -86,6 +91,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     ...createInventoryFlow(bus),
     answerPendingItem: pending.answerPendingItem,
     confirmReview: pending.confirmReview,
+    submitProjectAssignment: project.submitProjectAssignment,
     ...createPrintFlow(bus),
     ...createErpFlow(bus),
   };

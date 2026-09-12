@@ -17,15 +17,15 @@ type PageDef = {
   rotateBottom: boolean;
 };
 
-// 材料按文件名找（种子任务与现场上传得到的材料 id 不同）。
+// 材料按文件名找（种子任务与现场上传得到的材料 id 不同）。页序跟随统一业务序号（内核分类排序），与生成器的 PRINT_PAGES 一致。
 const PAGE_DEFS: readonly PageDef[] = [
-  { pageId: 'pg1', nos: 'No.1', date: '2026-08-09', categoryLabel: '长途交通', grossAmount: '73.00', top: '铁路电子客票_0809.pdf', bottom: null, rotateTop: false, rotateBottom: false },
-  { pageId: 'pg2', nos: 'No.2', date: '2026-08-09', categoryLabel: '住宿', grossAmount: '3640.00', top: '全季酒店_发票.pdf', bottom: '全季酒店_结账单.pdf', rotateTop: false, rotateBottom: true },
-  { pageId: 'pg3', nos: 'No.3-5', date: '2026-08-10', categoryLabel: '外地市内交通', grossAmount: '69.19', top: '高德打车_发票.pdf', bottom: '高德打车_行程单.pdf', rotateTop: false, rotateBottom: false },
-  { pageId: 'pg4', nos: 'No.6', date: '2026-08-11', categoryLabel: '外地市内交通', grossAmount: '38.40', top: '曹操出行_发票.pdf', bottom: '曹操出行_行程单.pdf', rotateTop: false, rotateBottom: false },
-  { pageId: 'pg5', nos: 'No.7', date: '2026-08-15', categoryLabel: '外地市内交通', grossAmount: '32.00', top: 'IMG_4871.jpg', bottom: null, rotateTop: true, rotateBottom: false },
-  { pageId: 'pg6', nos: 'No.8', date: '2026-08-19', categoryLabel: '外地市内交通', grossAmount: '47.00', top: 'IMG_4906.jpg', bottom: null, rotateTop: true, rotateBottom: false },
-  { pageId: 'pg7', nos: 'No.9', date: '2026-08-22', categoryLabel: '长途交通', grossAmount: '73.00', top: '铁路电子客票_0822.pdf', bottom: null, rotateTop: false, rotateBottom: false },
+  { pageId: 'pg1', nos: 'No.1-3', date: '2026-08-10', categoryLabel: '外地市内交通', grossAmount: '69.19', top: '高德打车_发票.pdf', bottom: '高德打车_行程单.pdf', rotateTop: false, rotateBottom: false },
+  { pageId: 'pg2', nos: 'No.4', date: '2026-08-11', categoryLabel: '外地市内交通', grossAmount: '38.40', top: '曹操出行_发票.pdf', bottom: '曹操出行_行程单.pdf', rotateTop: false, rotateBottom: false },
+  { pageId: 'pg3', nos: 'No.5', date: '2026-08-15', categoryLabel: '外地市内交通', grossAmount: '32.00', top: 'IMG_4871.jpg', bottom: null, rotateTop: true, rotateBottom: false },
+  { pageId: 'pg4', nos: 'No.6', date: '2026-08-19', categoryLabel: '外地市内交通', grossAmount: '47.00', top: 'IMG_4906.jpg', bottom: null, rotateTop: true, rotateBottom: false },
+  { pageId: 'pg5', nos: 'No.7', date: '2026-08-09', categoryLabel: '长途交通', grossAmount: '73.00', top: '铁路电子客票_0809.pdf', bottom: null, rotateTop: false, rotateBottom: false },
+  { pageId: 'pg6', nos: 'No.8', date: '2026-08-22', categoryLabel: '长途交通', grossAmount: '73.00', top: '铁路电子客票_0822.pdf', bottom: null, rotateTop: false, rotateBottom: false },
+  { pageId: 'pg7', nos: 'No.9', date: '2026-08-09', categoryLabel: '住宿', grossAmount: '3640.00', top: '全季酒店_发票.pdf', bottom: '全季酒店_结账单.pdf', rotateTop: false, rotateBottom: true },
 ];
 
 // 出租车票照片（900x1200）上自动检测到的纸张四角，原图像素。
@@ -66,6 +66,11 @@ function placement(materialId: string, fileName: string, rotate: boolean): Place
 
 const defOf = (pageId: string) => PAGE_DEFS.find((def) => def.pageId === pageId);
 
+// 住宿发票可以补充支付截图（打印稿住宿页下半页分栏放结账单与截图）：mock 服务端按费用分类判定。
+function acceptsScreenshot(snapshot: TaskSnapshot, voucherMaterialId: string): boolean {
+  return snapshot.lines.some((line) => line.voucherMaterialId === voucherMaterialId && line.category.code === 'accommodation');
+}
+
 // 生成打印稿：每张主要报销凭证一页，按统一业务序号；只收已确认明细里出现的凭证。
 export function buildPrintSheet(snapshot: TaskSnapshot): PrintSheet {
   const byName = new Map(snapshot.materials.map((material) => [material.fileName, material.materialId]));
@@ -77,6 +82,7 @@ export function buildPrintSheet(snapshot: TaskSnapshot): PrintSheet {
     const bottomId = def.bottom ? byName.get(def.bottom) : undefined;
     const no = snapshot.lines.find((line) => line.voucherMaterialId === topId)?.no ?? pages.length + 1;
     pages.push({
+      acceptsPaymentScreenshot: acceptsScreenshot(snapshot, topId),
       pageId: def.pageId,
       no,
       header: `${def.nos} · ${def.date.slice(5)} · ${def.categoryLabel} · ${def.grossAmount}`,
@@ -98,9 +104,9 @@ export function buildPrintSheet(snapshot: TaskSnapshot): PrintSheet {
 export function refreshScreenshots(sheet: PrintSheet, snapshot: TaskSnapshot): PrintSheet {
   const notices: string[] = [];
   const pages = sheet.pages.map((page) => {
-    const line = snapshot.lines.find((candidate) => candidate.voucherMaterialId === page.top?.materialId);
-    if (!line || !line.acceptsPaymentScreenshot) return page;
-    const shot = snapshot.paymentScreenshots.find((candidate) => candidate.voucherMaterialId === line.voucherMaterialId);
+    if (!page.acceptsPaymentScreenshot || !page.top) return page;
+    const voucherMaterialId = page.top.materialId;
+    const shot = snapshot.paymentScreenshots.find((candidate) => candidate.voucherMaterialId === voucherMaterialId);
     if (!shot) notices.push(MISSING_SCREENSHOT_NOTICE(page.nos, page.categoryLabel));
     return { ...page, screenshotId: shot?.screenshotId ?? null };
   });

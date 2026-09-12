@@ -2,13 +2,14 @@ import { TASK_STAGE_LABELS, pageAllowed, stageRank, stageReached, type TaskPage,
 import type { TaskSnapshot } from '../contract/snapshot';
 import { taskHash } from '../router';
 
-// 侧栏阶段列表：六个条目沿用原型；print / project / erp 三个页面都归到「去打印 / 去报销」。
+// 侧栏阶段列表，顺序照 Skill：项目归属在整单明细确认之前；print / erp 两个页面归到「去打印 / 去报销」。
 type Entry = { stage: TaskStage; label: string; page: TaskPage };
 
 export const SIDEBAR_ENTRIES: readonly Entry[] = [
   { stage: 'upload', label: '上传材料', page: 'upload' },
   { stage: 'inventory', label: '材料盘点', page: 'inventory' },
   { stage: 'pending', label: '待确认项', page: 'pending' },
+  { stage: 'project', label: '项目归属', page: 'project' },
   { stage: 'review', label: '整单明细确认', page: 'review' },
   { stage: 'actions', label: '去打印 / 去报销', page: 'review' },
   { stage: 'done', label: '完成', page: 'done' },
@@ -18,9 +19,9 @@ const ACTIVE_ENTRY: Readonly<Record<TaskPage, TaskStage>> = {
   upload: 'upload',
   inventory: 'inventory',
   pending: 'pending',
+  project: 'project',
   review: 'review',
   print: 'actions',
-  project: 'actions',
   erp: 'actions',
   done: 'done',
   reconcile: 'done',
@@ -54,8 +55,9 @@ export function Sidebar({ snapshot, page }: { snapshot: TaskSnapshot; page: Task
       <h3>流程阶段</h3>
       <ul className="stage-list" aria-label="流程阶段">
         {SIDEBAR_ENTRIES.map((entry, index) => {
-          // 待确认项页在盘点完成后就能进（阶段还停在 inventory 时也一样），其余条目按阶段先后。
-          const reached = entry.stage === 'pending' ? pageAllowed(stage, 'pending') : stageReached(stage, entry.stage);
+          // 条目能否进入跟随页面守卫（待确认项页在盘点完成后就能进；整单确认页在项目归属提交后就能进）；
+          // 「去打印 / 去报销」按阶段先后（确认之后）。
+          const reached = entry.stage === 'actions' ? stageReached(stage, 'actions') : pageAllowed(stage, entry.page);
           const active = entry.stage === activeStage;
           const done = !active && (stageRank(stage) > stageRank(entry.stage) || stage === 'done');
           const className = [active ? 'current' : '', reached ? '' : 'locked', done ? 'done' : '', 'stage'].filter(Boolean).join(' ');

@@ -45,11 +45,13 @@ export function createPrintFlow(bus: MockBus): PrintFlow {
   };
 
   return {
-    // 支付截图：只接受图片；每张住宿发票至多一张，再补即替换。只进 paymentScreenshots，不碰确认状态与 step。
+    // 支付截图：只在已生成的打印稿上补充（入口在打印稿页）；只接受图片；每张住宿发票至多一张，再补即替换。
+    // 只进 paymentScreenshots 与打印稿，不碰确认状态与 step。
     async addPaymentScreenshot(taskId, voucherMaterialId, file) {
       const snapshot = bus.draft(taskId);
-      const line = snapshot.lines.find((candidate) => candidate.voucherMaterialId === voucherMaterialId);
-      if (!line || !line.acceptsPaymentScreenshot) return bus.fail('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
+      if (snapshot.printSheet.status !== 'generated') return bus.fail('print_not_generated', PAYMENT_SCREENSHOT_ERRORS.notGenerated);
+      const page = snapshot.printSheet.pages.find((candidate) => candidate.top?.materialId === voucherMaterialId);
+      if (!page || !page.acceptsPaymentScreenshot) return bus.fail('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
       if (!isImage(file)) return bus.fail('not_image', PAYMENT_SCREENSHOT_ERRORS.notImage);
       const screenshotId = `s${nextScreenshotNo}`;
       nextScreenshotNo += 1;

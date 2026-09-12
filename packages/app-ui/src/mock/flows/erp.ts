@@ -1,12 +1,12 @@
-import { ERP_ACTION_ERRORS, PROJECT_ASSIGNMENT_ERRORS, ProjectAssignmentInputSchema } from '../../contract/actions';
+import { ERP_ACTION_ERRORS } from '../../contract/actions';
 import type { AppAdapter } from '../../contract/adapter';
 import { RECONCILE_ACTION_LABELS, type TaskSnapshot } from '../../contract/snapshot';
 import type { MockBus } from '../bus';
-import { ERP_STEP_INDEX, applyAbortAtSave, applyErpDone, applyReadbackMismatch, erpIdle, erpSteps, handedOffBanner, loginNotDetected } from '../fixtures/erp';
-import { projectAssignmentSubmitted } from '../fixtures/projects';
+import { ERP_STEP_INDEX, applyAbortAtSave, applyErpDone, applyReadbackMismatch, erpSteps, handedOffBanner, loginNotDetected } from '../fixtures/erp';
 import { T1_DRAFT_NO } from '../fixtures/tasks';
 
-// 项目归属提交、ERP 填报（定时推进、登录交接）、严格回读与对账（mock 服务端的角色）。
+// ERP 填报（「去报销」即开始：定时推进、登录交接、登录后自动写入）、严格回读与对账（mock 服务端的角色）。
+// 没有「开始填报」：整单确认之后点「去报销」启动浏览器，检测到登录就自动导入、写入、保存并回读（内核 erp_write_pending 自动执行）。
 // 保存与严格回读的结局按故障决定：erp-write-aborted 在保存步中止（停在对账）；readback-mismatch 停在完成页等待转人工。
 
 const DEFAULT_ERP_STEP_MS = 300;
@@ -14,7 +14,7 @@ const DEFAULT_ERP_LOGIN_AUTO_MS = 2500;
 // `?fault=erp-login-missing`：前两次「我已登录，继续」都探测不到登录，第三次才检测到；该故障下服务端不会自己探测到。
 const LOGIN_MISSING_ATTEMPTS = 2;
 
-export type ErpFlow = Pick<AppAdapter, 'submitProjectAssignment' | 'startErpWrite' | 'confirmLogin' | 'reconcile' | 'handOff'>;
+export type ErpFlow = Pick<AppAdapter, 'startErpWrite' | 'confirmLogin' | 'reconcile' | 'handOff'>;
 
 export function createErpFlow(bus: MockBus): ErpFlow {
   const { options } = bus;
@@ -79,43 +79,24 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     setTimeout(() => finishErpStep(taskId, run, index + 1), erpStepMs);
   };
 
+  const newRun = (taskId: string) => {
+    const run = nextErpRun;
+    nextErpRun += 1;
+    erpRuns.set(taskId, run);
+    loginAttempts.set(taskId, 0);
+    return run;
+  };
+
   return {
-    // 提交项目归属（服务端角色）：事由 1-100 字；每条明细都要有项目；项目必须在允许列表里且可选；不认识的明细拒绝。
-    // 通过后记下归属与事由，阶段推到 erp，ERP 填报入口开放。整单明细确认不动（摘要不含项目与事由）。
-    submitProjectAssignment: async (taskId, input, stepToken) =>
-      bus.withStep(taskId, stepToken, (snapshot) => {
-        if (snapshot.step.kind !== 'choose_action' && snapshot.step.kind !== 'assign_projects') {
-          return { error: { code: 'not_ready', message: PROJECT_ASSIGNMENT_ERRORS.notReady } };
-        }
-        const parsed = ProjectAssignmentInputSchema.safeParse(input);
-        if (!parsed.success) return { error: { code: 'invalid_purpose', message: PROJECT_ASSIGNMENT_ERRORS.purpose } };
-        const { purpose, projects } = parsed.data;
-        const lineIds = new Set(snapshot.lines.map((line) => line.lineId));
-        const unknown = Object.keys(projects).find((lineId) => !lineIds.has(lineId));
-        if (unknown) return { error: { code: 'unknown_line', message: PROJECT_ASSIGNMENT_ERRORS.unknownLine(unknown) } };
-        const allowed = new Set(snapshot.projectAssignment.projects.filter((project) => project.selectable).map((project) => project.number));
-        if (allowed.size === 0) return { error: { code: 'project_book_empty', message: PROJECT_ASSIGNMENT_ERRORS.bookEmpty } };
-        for (const line of snapshot.lines) {
-          const number = projects[line.lineId];
-          if (!number) return { error: { code: 'line_unassigned', message: PROJECT_ASSIGNMENT_ERRORS.lineUnassigned(line.no) } };
-          if (!allowed.has(number)) return { error: { code: 'project_not_allowed', message: PROJECT_ASSIGNMENT_ERRORS.projectNotAllowed(line.no, number) } };
-        }
-        const at = bus.now();
-        snapshot.projectAssignment = projectAssignmentSubmitted({ purpose, homeCity: snapshot.task.homeCity, projects, submittedAt: at });
-        snapshot.task.updatedAt = at;
-        snapshot.stage = 'erp';
-        snapshot.erp = erpIdle();
-        snapshot.step = { kind: 'start_erp_write', stepToken: `tok-${taskId}-erp` };
-        return snapshot;
-      }),
-    // 开始填报：第一步「启动浏览器」进行中，随后登录步等待。写入进行中没有待答 step（none）。
+    // 去报销：整单确认之后才接受（choose_action）。阶段推到 erp，第一步「启动浏览器」进行中，随后登录步等待；
+    // 写入进行中没有待答 step（none）。检测到登录后自动写入，不再有「开始填报」这道确认。
     startErpWrite: async (taskId, stepToken) =>
       bus.withStep(taskId, stepToken, (snapshot) => {
-        if (snapshot.step.kind !== 'start_erp_write') return { error: { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady } };
-        const run = nextErpRun;
-        nextErpRun += 1;
-        erpRuns.set(taskId, run);
-        loginAttempts.set(taskId, 0);
+        if (snapshot.step.kind !== 'choose_action' || snapshot.confirmation.status !== 'confirmed') {
+          return { error: { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady } };
+        }
+        const run = newRun(taskId);
+        snapshot.stage = 'erp';
         snapshot.erp = { status: 'running', steps: erpSteps(ERP_STEP_INDEX.browser, 'running'), draftNo: null, abortReason: null, loginNotice: null };
         snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-erp-run-${run}` };
         snapshot.task.updatedAt = bus.now();
@@ -123,10 +104,11 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         return snapshot;
       }),
     // 「我已登录，继续」= 请服务端再探测一次。探测不到：留在登录步，给出说明并换新凭据（摆给用户看的内容变了）。
+    // `?seed=erp` 打开时浏览器已在等待登录，但这一轮还没有编号：第一次探测时补上。
     confirmLogin: async (taskId, stepToken) =>
       bus.withStep(taskId, stepToken, (snapshot) => {
         if (snapshot.step.kind !== 'erp_login') return { error: { code: 'not_waiting_login', message: ERP_ACTION_ERRORS.notWaitingLogin } };
-        const run = erpRuns.get(taskId) ?? 0;
+        const run = erpRuns.get(taskId) ?? newRun(taskId);
         const attempt = (loginAttempts.get(taskId) ?? 0) + 1;
         loginAttempts.set(taskId, attempt);
         if (options.fault === 'erp-login-missing' && attempt <= LOGIN_MISSING_ATTEMPTS) {

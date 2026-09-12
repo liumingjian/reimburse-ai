@@ -7,7 +7,7 @@ import { createMockAdapter } from '../mock/mock-adapter';
 
 function renderProject(seed: TaskStage = 'project') {
   window.location.hash = '#/task/T1/project';
-  const adapter = createMockAdapter({ seed, fault: null, inventoryPhaseMs: 5 });
+  const adapter = createMockAdapter({ seed, fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
   render(<App adapter={adapter} />);
   return adapter;
 }
@@ -127,7 +127,7 @@ describe('项目归属', () => {
     expect(submitButton().disabled).toBe(true);
   });
 
-  test('提交：带 stepToken 送出，快照里项目归属变为已提交、进入 ERP 填报；整单明细确认不失效', async () => {
+  test('提交：带 stepToken 送出，项目归属变为已提交；服务端自动核对报销信息、准备材料后进入整单确认，确认绑定这份归属', async () => {
     const adapter = renderProject();
     await screen.findByRole('heading', { name: '项目归属' });
     const before = await adapter.getSnapshot('T1');
@@ -136,8 +136,9 @@ describe('项目归属', () => {
     assignTo('P-2311 华东客户交付二期');
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '只处理未归属' }));
     fireEvent.click(submitButton());
-    expect(await screen.findByRole('heading', { name: 'ERP 填报' })).toBeTruthy();
-    expect(window.location.hash).toBe('#/task/T1/erp');
+    expect(await screen.findByRole('heading', { name: '整单明细确认' })).toBeTruthy();
+    expect(window.location.hash).toBe('#/task/T1/review');
+    expect(await screen.findByRole('checkbox', { name: '我已核对整单明细' })).toBeTruthy();
 
     const after = await adapter.getSnapshot('T1');
     expect(after.projectAssignment.status).toBe('submitted');
@@ -145,33 +146,37 @@ describe('项目归属', () => {
     expect(after.projectAssignment.assignments).toHaveLength(9);
     expect(after.projectAssignment.assignments.find((item) => item.lineId === 'l1')).toMatchObject({ projectNumber: 'P-2307', projectName: '华东客户交付' });
     expect(after.projectAssignment.assignments.find((item) => item.lineId === 'l9')).toMatchObject({ projectNumber: 'P-2311' });
-    expect(after.stage).toBe('erp');
+    expect(after.stage).toBe('review');
+    expect(after.step.kind).toBe('confirm_review');
     expect(after.step.stepToken).not.toBe(before.step.stepToken);
-    expect(after.confirmation).toEqual(before.confirmation);
+    expect(after.confirmation.status).toBe('unconfirmed');
+    expect(after.confirmation.digest).toMatch(/^digest-t1-v1-/);
 
-    // 回到项目归属页：只读显示已提交结果，并有 ERP 填报入口。
+    // 回到项目归属页：显示已提交，ERP 写入开始前仍可改派，并有整单确认入口。
     window.location.hash = '#/task/T1/project';
-    expect(await screen.findByText(/项目归属已确认/)).toBeTruthy();
-    expect(screen.getByRole('link', { name: '进入 ERP 填报' }).getAttribute('href')).toBe('#/task/T1/erp');
-    expect(submitButton().disabled).toBe(true);
+    expect(await screen.findByText(/项目归属已提交/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: '去整单明细确认' }).getAttribute('href')).toBe('#/task/T1/review');
+    expect(submitButton().disabled).toBe(false);
   });
 
-  test('从去报销进入（阶段 actions）也能提交；提交前 ERP 填报页不能进', async () => {
-    const adapter = renderProject('actions');
+  test('项目归属没完成时，整单确认页不能进（阶段不可跳过）', async () => {
+    renderProject('project');
     await screen.findByRole('heading', { name: '项目归属' });
-    expect(summary()).toBe('已归属 0 / 9 条 · 合计 3972.59 元');
-    window.location.hash = '#/task/T1/erp';
+    window.location.hash = '#/task/T1/review';
     expect(await screen.findByRole('heading', { name: '还不能进入这一步' })).toBeTruthy();
-    window.location.hash = '#/task/T1/project';
-    await screen.findByRole('heading', { name: '项目归属' });
-    fireEvent.change(purpose(), { target: { value: '上海产品评审出差' } });
-    fireEvent.click(screen.getByRole('checkbox', { name: '全选当前明细' }));
-    assignTo('P-1180 内部培训');
-    fireEvent.click(submitButton());
-    expect(await screen.findByRole('heading', { name: 'ERP 填报' })).toBeTruthy();
-    const after = await adapter.getSnapshot('T1');
-    expect(after.projectAssignment.status).toBe('submitted');
-    expect(after.confirmation.status).toBe('confirmed');
+    expect(screen.getByText('阶段不可跳过，请按顺序完成前面的步骤。')).toBeTruthy();
+    expect(screen.getByRole('link', { name: '回到当前阶段' }).getAttribute('href')).toBe('#/task/T1/project');
+  });
+
+  test('ERP 写入开始后项目归属只读，服务端也拒绝改派', async () => {
+    const adapter = renderProject('erp');
+    expect(await screen.findByText('已开始 ERP 填报，项目归属不能再修改。')).toBeTruthy();
+    expect(submitButton().disabled).toBe(true);
+    expect((purpose() as HTMLInputElement).disabled).toBe(true);
+    const snapshot = await adapter.getSnapshot('T1');
+    const projects = Object.fromEntries(snapshot.lines.map((line) => [line.lineId, 'P-2307']));
+    const outcome = await adapter.submitProjectAssignment('T1', { purpose: '出差', projects }, snapshot.step.stepToken);
+    expect(outcome).toMatchObject({ ok: false, error: { code: 'not_ready' } });
   });
 
   test('服务端判定：不在允许列表或不可选的项目、缺项目、空事由都被拒绝，状态不变', async () => {

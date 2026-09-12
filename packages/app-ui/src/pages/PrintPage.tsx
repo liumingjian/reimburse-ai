@@ -1,15 +1,69 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import type { PlacementSlot } from '../contract/actions';
 import { ActionError } from '../shell/ActionError';
 import { useAction } from '../shell/useAction';
-import type { Corners, Placement, PrintPage as PrintSheetPage, TaskSnapshot } from '../contract/snapshot';
+import {
+  PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE,
+  type Corners,
+  type PaymentScreenshot,
+  type Placement,
+  type PrintPage as PrintSheetPage,
+  type TaskSnapshot,
+} from '../contract/snapshot';
 import { taskHash } from '../router';
 import { CropEditor, formatCorners } from './CropEditor';
 import { PAGE_COPY } from './page-copy';
 
-// 打印稿预览：逐页显示服务端渲染的页图与页眉（页眉整句来自快照，页面不拼）。
+// 打印稿预览：逐页显示服务端渲染的页图与页眉（页眉整句来自快照，页面不拼）；页序跟随统一业务序号。
 // 还没有打印稿（或旧稿已作废）时，进入页面即请服务端生成。旋转、四角裁剪只是打印设置：结果以服务端返回的新快照为准，
 // 不改原件，也不影响整单明细确认。提醒（如住宿发票还没有支付截图）不阻止下载。
+// 支付截图只在这里补充：服务端标了 acceptsPaymentScreenshot 的页（住宿发票）有「补充支付截图」入口，只影响打印稿。
+
+function ScreenshotControl({
+  page,
+  screenshot,
+  busy,
+  error,
+  onAdd,
+  onRemove,
+}: {
+  page: PrintSheetPage;
+  screenshot: PaymentScreenshot | null;
+  busy: boolean;
+  error: string | null;
+  onAdd: (file: File) => void;
+  onRemove: (screenshot: PaymentScreenshot) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const voucherName = page.top?.fileName ?? page.pageId;
+  const onChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (file) onAdd(file);
+  };
+  return (
+    <li>
+      <div className="placement-name">
+        <span className="caption">支付截图</span>
+        {screenshot ? <span className="mono">{screenshot.fileName}</span> : <span className="muted">未补充</span>}
+      </div>
+      <div className="caption">仅用于打印稿，放在下半页右侧；不上传 ERP，也不影响整单明细确认。</div>
+      <div className="btn-row screenshot-row">
+        {screenshot ? (
+          <button className="btn btn-tertiary btn-sm" type="button" disabled={busy} aria-label={`移除支付截图：${voucherName}`} onClick={() => onRemove(screenshot)}>
+            移除
+          </button>
+        ) : (
+          <button className="btn btn-secondary btn-sm" type="button" disabled={busy} aria-label={`补充支付截图：${voucherName}`} onClick={() => inputRef.current?.click()}>
+            补充支付截图
+          </button>
+        )}
+        <input ref={inputRef} type="file" accept={PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE} aria-label={`选择支付截图：${voucherName}`} onChange={onChange} />
+        <ActionError message={error} />
+      </div>
+    </li>
+  );
+}
 
 const SLOT_LABEL: Readonly<Record<PlacementSlot, string>> = { top: '上半页', bottom: '下半页' };
 const SLOTS: readonly PlacementSlot[] = ['top', 'bottom'];
@@ -62,6 +116,10 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   const rotate = (page: PrintSheetPage, slot: PlacementSlot, placement: Placement) =>
     run((adapter) => adapter.rotatePlacement(taskId, page.pageId, slot, !placement.rotate), `${page.pageId}-${slot}`);
+  const addScreenshot = (page: PrintSheetPage, voucherMaterialId: string, file: File) =>
+    run((adapter) => adapter.addPaymentScreenshot(taskId, voucherMaterialId, file), `shot-${page.pageId}`);
+  const removeScreenshot = (page: PrintSheetPage, screenshot: PaymentScreenshot) =>
+    run((adapter) => adapter.removePaymentScreenshot(taskId, screenshot.screenshotId), `shot-${page.pageId}`);
 
   const submitCrop = async (target: Editing, corners: Corners) => {
     const outcome = await run((adapter) => adapter.cropPlacement(taskId, target.pageId, target.slot, corners), 'crop');
@@ -109,11 +167,6 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
           {sheet.notices.map((notice) => (
             <p key={notice}>{notice}</p>
           ))}
-          <div className="btn-row">
-            <a className="btn btn-secondary btn-sm" href={taskHash(taskId, 'review')}>
-              去确认页补充支付截图
-            </a>
-          </div>
         </div>
       ) : null}
       {receipt ? (
@@ -196,7 +249,16 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
                       </li>
                     );
                   })}
-                  {page.screenshotId ? <li className="caption">下半页右侧放支付截图。</li> : null}
+                  {page.acceptsPaymentScreenshot && page.top ? (
+                    <ScreenshotControl
+                      page={page}
+                      screenshot={snapshot.paymentScreenshots.find((shot) => shot.screenshotId === page.screenshotId) ?? null}
+                      busy={busy}
+                      error={errorAt(`shot-${page.pageId}`)}
+                      onAdd={(file) => void addScreenshot(page, page.top?.materialId ?? '', file)}
+                      onRemove={(shot) => void removeScreenshot(page, shot)}
+                    />
+                  ) : null}
                 </ul>
               </li>
             ))}

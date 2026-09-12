@@ -6,8 +6,9 @@ import { ActionError } from '../shell/ActionError';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 
-// ERP 填报页：按服务端给出的步骤顺序显示进度。页面只做两件事：「开始填报」与「我已登录，继续」，都回传当前 stepToken。
-// 「我已登录，继续」只是请服务端再探测一次；登录是否成立、何时往下走由服务端决定（也可能自己探测到后推进）。
+// ERP 填报页：按服务端给出的步骤顺序显示进度。写入由整单确认页的「去报销」启动，这里没有「开始填报」：
+// 检测到登录后服务端自动导入、写入、保存并回读（内核 erp_write_pending 自动执行，交互契约不追加保存确认）。
+// 页面只做一件事：「我已登录，继续」（回传当前 stepToken），它只是请服务端再探测一次；登录是否成立、何时往下走由服务端决定。
 
 const STATUS_LABEL: Readonly<Record<ErpStep['status'], string>> = {
   todo: '',
@@ -32,7 +33,6 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
     if (was !== 'aborted' && erp.status === 'aborted' && stage !== 'erp') navigate(taskHash(taskId, STAGE_DEFAULT_PAGE[stage]), true);
   }, [erp.status, stage, taskId]);
 
-  const start = () => run((adapter) => adapter.startErpWrite(taskId, step.stepToken));
   const confirmLogin = () => run((adapter) => adapter.confirmLogin(taskId, step.stepToken));
   const waitingLogin = step.kind === 'erp_login';
 
@@ -88,13 +88,8 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
       </section>
 
       <section className="panel" aria-label="填报操作">
-        {step.kind === 'start_erp_write' ? (
-          <div className="btn-row">
-            <button className="btn btn-primary btn-lg" type="button" disabled={busy} onClick={() => void start()}>
-              开始填报
-            </button>
-            <span className="caption">只保存草稿，不提交审批。中途任何不一致都会停下来对账。</span>
-          </div>
+        {erp.status === 'idle' ? (
+          <p className="caption">还没有开始。整单明细确认后，在确认页点「去报销」。</p>
         ) : erp.status === 'done' ? (
           <>
             <div className="notice notice-ok" role="status">
@@ -120,7 +115,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
             ) : null}
           </>
         ) : (
-          <p className="caption">进行中，请不要关闭专用浏览器窗口。</p>
+          <p className="caption">进行中，请不要关闭专用浏览器窗口。只保存草稿，不提交审批；中途任何不一致都会停下来对账。</p>
         )}
         <ActionError message={error} />
       </section>

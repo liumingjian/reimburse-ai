@@ -165,15 +165,17 @@ export const OTHER_INVOICE = {
   grossWords: '贰佰肆拾圆整',
 };
 
-// 打印稿页（原型 PAGES）：费用类别用内核标签。页眉是 `No.x · 日期 · 类别 · 价税合计`，范围用 ASCII 连字符。
+// 打印稿页：费用类别用内核标签。页眉是 `No.x · 日期 · 类别 · 价税合计`，范围用 ASCII 连字符。
+// 页序与 No. 跟随统一业务序号（内核确认表的分类排序：本地市内交通 → 外地市内交通 → 长途交通 → 住宿，
+// 同一分类内按事件顺序，即主要报销凭证 materialId、再按行程段），与 src/mock/fixtures/print.ts 的 PAGE_DEFS 一致。
 export const PRINT_PAGES = [
-  { id: 'pg1', file: 'print-pg1.png', nos: 'No.1', date: '08-09', category: '长途交通', amount: '73.00', top: 'm07', bottom: null, rotateTop: false, rotateBottom: false },
-  { id: 'pg2', file: 'print-pg2.png', nos: 'No.2', date: '08-09', category: '住宿', amount: '3640.00', top: 'm01', bottom: 'm02', rotateTop: false, rotateBottom: true },
-  { id: 'pg3', file: 'print-pg3.png', nos: 'No.3-5', date: '08-10', category: '外地市内交通', amount: '69.19', top: 'm03', bottom: 'm04', rotateTop: false, rotateBottom: false },
-  { id: 'pg4', file: 'print-pg4.png', nos: 'No.6', date: '08-11', category: '外地市内交通', amount: '38.40', top: 'm05', bottom: 'm06', rotateTop: false, rotateBottom: false },
-  { id: 'pg5', file: 'print-pg5.png', nos: 'No.7', date: '08-15', category: '外地市内交通', amount: '32.00', top: 'm09', bottom: null, rotateTop: true, rotateBottom: false },
-  { id: 'pg6', file: 'print-pg6.png', nos: 'No.8', date: '08-19', category: '外地市内交通', amount: '47.00', top: 'm10', bottom: null, rotateTop: true, rotateBottom: false },
-  { id: 'pg7', file: 'print-pg7.png', nos: 'No.9', date: '08-22', category: '长途交通', amount: '73.00', top: 'm08', bottom: null, rotateTop: false, rotateBottom: false },
+  { id: 'pg1', file: 'print-pg1.png', nos: 'No.1-3', date: '08-10', category: '外地市内交通', amount: '69.19', top: 'm03', bottom: 'm04', rotateTop: false, rotateBottom: false },
+  { id: 'pg2', file: 'print-pg2.png', nos: 'No.4', date: '08-11', category: '外地市内交通', amount: '38.40', top: 'm05', bottom: 'm06', rotateTop: false, rotateBottom: false },
+  { id: 'pg3', file: 'print-pg3.png', nos: 'No.5', date: '08-15', category: '外地市内交通', amount: '32.00', top: 'm09', bottom: null, rotateTop: true, rotateBottom: false },
+  { id: 'pg4', file: 'print-pg4.png', nos: 'No.6', date: '08-19', category: '外地市内交通', amount: '47.00', top: 'm10', bottom: null, rotateTop: true, rotateBottom: false },
+  { id: 'pg5', file: 'print-pg5.png', nos: 'No.7', date: '08-09', category: '长途交通', amount: '73.00', top: 'm07', bottom: null, rotateTop: false, rotateBottom: false },
+  { id: 'pg6', file: 'print-pg6.png', nos: 'No.8', date: '08-22', category: '长途交通', amount: '73.00', top: 'm08', bottom: null, rotateTop: false, rotateBottom: false },
+  { id: 'pg7', file: 'print-pg7.png', nos: 'No.9', date: '08-09', category: '住宿', amount: '3640.00', top: 'm01', bottom: 'm02', rotateTop: false, rotateBottom: true },
 ];
 
 export function headerOf(page) {

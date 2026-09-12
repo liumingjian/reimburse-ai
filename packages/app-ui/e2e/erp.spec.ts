@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// ERP 填报、完成与对账（#106）。mock 每步 300 ms；正常场景下 2.5 s 后服务端自己探测到登录，这里都直接点「我已登录，继续」。
+// ERP 填报、完成与对账。「去报销」即开始写入，没有「开始填报」：?seed=erp 是浏览器已启动、登录步等待的状态。
+// mock 每步 300 ms；正常场景下 2.5 s 后服务端自己探测到登录，这里都直接点「我已登录，继续」。
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 
@@ -14,7 +15,7 @@ const bodyRows = (page: Page, table: string) => page.getByRole('table', { name: 
 async function startAndLogin(page: Page, query: string) {
   await page.goto(open(query, '#/task/T1/erp'));
   await expect(progress(page).locator('.step-title')).toHaveText(STEP_TITLES);
-  await page.getByRole('button', { name: '开始填报' }).click();
+  await expect(page.getByRole('button', { name: '开始填报' })).toHaveCount(0);
   await expect(stepItem(page, '登录')).toContainText('等待你操作');
   await loginButton(page).click();
 }
@@ -27,7 +28,7 @@ async function expectDone(page: Page) {
   await expect(page.locator('tr.row-err')).toHaveCount(0);
 }
 
-test('正常流程：?seed=erp 开始填报，步骤依次推进，登录后写完进入完成页', async ({ page }, testInfo) => {
+test('正常流程：?seed=erp 等待登录，点「我已登录，继续」后自动写完进入完成页', async ({ page }, testInfo) => {
   await startAndLogin(page, '?seed=erp');
   await expect(page.getByRole('link', { name: '查看完成结果' })).toBeVisible();
   await expect(progress(page).locator('li .status')).toHaveText(STEP_TITLES.map(() => '完成'));
@@ -35,6 +36,18 @@ test('正常流程：?seed=erp 开始填报，步骤依次推进，登录后写�
   await page.getByRole('link', { name: '查看完成结果' }).click();
   await expectDone(page);
   await page.screenshot({ path: testInfo.outputPath('done.png'), fullPage: true });
+});
+
+test('去报销：在整单确认页点去报销，浏览器启动后等待登录，登录后自动写完', async ({ page }) => {
+  await page.goto(open('?seed=actions', '#/task/T1/review'));
+  await page.getByRole('button', { name: '去报销', exact: true }).click();
+  await expect(page).toHaveURL(/#\/task\/T1\/erp$/);
+  await expect(page.getByRole('button', { name: '开始填报' })).toHaveCount(0);
+  await expect(stepItem(page, '登录')).toContainText('等待你操作');
+  await loginButton(page).click();
+  await expect(page.getByRole('link', { name: '查看完成结果' })).toBeVisible();
+  await page.getByRole('link', { name: '查看完成结果' }).click();
+  await expectDone(page);
 });
 
 test('?seed=done 直接打开完成页', async ({ page }) => {
@@ -48,8 +61,8 @@ test('readback-mismatch：严格回读停下后自动进入完成页，差异行
   await expect(page.getByRole('heading', { name: '完成', exact: true })).toBeVisible();
   await expect(page.getByTestId('draft-no')).toHaveText('BX20260911-0173');
   await expect(bodyRows(page, '逐条回读')).toHaveCount(9);
-  await expect(page.getByTestId('readback-8')).toHaveClass(/row-err/);
-  await expect(page.getByTestId('readback-8')).toContainText('74.00');
+  await expect(page.getByTestId('readback-6')).toHaveClass(/row-err/);
+  await expect(page.getByTestId('readback-6')).toContainText('74.00');
   await expect(page.locator('tr.row-err')).toHaveCount(1);
   await expect(page.getByText('明细 9/9 一致')).toHaveCount(0);
   await expect(page.getByRole('alert').filter({ hasText: '这份草稿不算完成' })).toBeVisible();

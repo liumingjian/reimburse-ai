@@ -1,13 +1,20 @@
 import { useCallback, useState } from 'react';
 import { PROJECT_ASSIGNMENT_ERRORS, PROJECT_CONFLICT_COPY, PURPOSE_MAX_LENGTH } from '../contract/actions';
-import type { Line, ProjectOption, TaskSnapshot } from '../contract/snapshot';
+import type { Line, ProjectOption, StepKind, TaskSnapshot } from '../contract/snapshot';
+import { pageAllowed } from '../contract/stage';
 import { navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
 import { ConfirmDialog } from '../shell/Dialog';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 
-// 项目归属页（只在「去报销」路径上）：规则照内核现有项目归属页面（project-workbench.mjs Variant B）。
+// 当前 step 是这些时服务端接受提交项目归属：进入项目归属时，以及整单确认前后、ERP 写入开始之前的改派。
+// 页面只据此决定提交按钮是否可用；提交是否成立由服务端判定。
+const SUBMIT_STEP_KINDS: ReadonlySet<StepKind> = new Set<StepKind>(['assign_projects', 'confirm_review', 'choose_action']);
+
+// 项目归属页：待确认项处理完之后、整单确认之前（Skill 的 project_unassigned → select-task），两条路径都要经过。
+// 提交后服务端自动做报销信息核对与材料准备，再进入整单确认；确认绑定项目归属，确认后在这里改派会使确认失效。
+// ERP 写入开始后只读。规则照内核现有项目归属页面（project-workbench.mjs Variant B）。
 // 左边是候选明细，勾选一条或多条后在右边的个人项目簿里「归入」某个项目；批量归入碰到已有其他项目的明细时，
 // 弹出「只处理未归属 / 确认覆盖 / 取消」。页头填报销事由。提交前的逐条选择只是表单输入；
 // 项目是否可用、归属是否成立由服务端判定（允许列表里的 selectable 与提交结果）。
@@ -33,6 +40,10 @@ export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const copy = PAGE_COPY.project;
   const assignment = snapshot.projectAssignment;
   const submitted = assignment.status === 'submitted';
+  // ERP 写入开始后项目归属不能再改；此前随时可以改派（改派使整单确认失效）。
+  const locked = snapshot.erp.status !== 'idle';
+  const canSubmit = SUBMIT_STEP_KINDS.has(snapshot.step.kind);
+  const autoRunning = snapshot.stage === 'catalog' || snapshot.stage === 'preparation';
   const { lines } = snapshot;
 
   const [pendingAssignments, setPendingAssignments] = useState<PendingAssignments>(() => savedAssignments(snapshot));
@@ -43,8 +54,8 @@ export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const { busy, error, run, clearError } = useAction(taskId);
 
-  // 已提交就只显示服务端记下的归属；否则显示本页正在编辑的选择。
-  const current: PendingAssignments = submitted ? savedAssignments(snapshot) : pendingAssignments;
+  // 只读（ERP 已开始）就只显示服务端记下的归属；否则显示本页正在编辑的选择（初值是服务端记下的归属）。
+  const current: PendingAssignments = locked ? savedAssignments(snapshot) : pendingAssignments;
   const nameOf = (number: string) =>
     assignment.projects.find((project) => project.number === number)?.name ??
     assignment.assignments.find((item) => item.projectNumber === number)?.projectName ??
@@ -113,7 +124,7 @@ export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
       if (number) projects[line.lineId] = number;
     }
     const outcome = await run((adapter) => adapter.submitProjectAssignment(taskId, { purpose: purpose.trim(), projects }, snapshot.step.stepToken));
-    if (outcome.ok) navigate(taskHash(taskId, 'erp'));
+    if (outcome.ok) navigate(taskHash(taskId, 'review'));
   };
 
   return (
@@ -131,7 +142,7 @@ export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
                 value={purpose}
                 maxLength={PURPOSE_MAX_LENGTH}
                 required
-                disabled={submitted}
+                disabled={locked}
                 placeholder="如：上海产品评审出差"
                 onChange={(event) => setPurpose(event.target.value)}
               />
@@ -141,14 +152,20 @@ export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
         </div>
       </div>
 
-      {submitted ? (
+      {locked ? (
+        <div className="notice notice-info" role="status">
+          已开始 ERP 填报，项目归属不能再修改。
+        </div>
+      ) : submitted ? (
         <div className="notice notice-ok" role="status">
-          项目归属已确认。
-          <div className="btn-row">
-            <a className="btn btn-primary" href={taskHash(taskId, 'erp')}>
-              进入 ERP 填报
-            </a>
-          </div>
+          {autoRunning ? '项目归属已提交，正在核对报销信息并准备报销材料。' : '项目归属已提交。改派项目或修改事由会使整单明细确认失效，需要重新确认。'}
+          {pageAllowed(snapshot.stage, 'review') ? (
+            <div className="btn-row">
+              <a className="btn btn-secondary" href={taskHash(taskId, 'review')}>
+                去整单明细确认
+              </a>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -156,11 +173,11 @@ export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
         <section className="panel table" aria-label="费用明细">
           <div className="assign-toolbar">
             <label className="check">
-              <input type="checkbox" checked={allVisibleSelected} disabled={submitted || visible.length === 0} onChange={toggleAll} />
+              <input type="checkbox" checked={allVisibleSelected} disabled={locked || visible.length === 0} onChange={toggleAll} />
               全选当前明细
             </label>
             <label className="check">
-              <input type="checkbox" checked={onlyUnassigned} disabled={submitted} onChange={toggleOnlyUnassigned} />
+              <input type="checkbox" checked={onlyUnassigned} disabled={locked} onChange={toggleOnlyUnassigned} />
               仅未归属
             </label>
             <span className="caption" role="status">
@@ -188,7 +205,7 @@ export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
                     project={current[line.lineId] ?? null}
                     nameOf={nameOf}
                     checked={selected.has(line.lineId)}
-                    disabled={submitted}
+                    disabled={locked}
                     onToggle={() => toggleLine(line.lineId)}
                   />
                 ))}
@@ -228,7 +245,7 @@ export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
                       className="btn btn-secondary btn-sm"
                       type="button"
                       aria-label={`归入 ${project.number} ${project.name}`}
-                      disabled={submitted || selected.size === 0}
+                      disabled={locked || selected.size === 0}
                       onClick={() => assign(project)}
                     >
                       归入
@@ -250,9 +267,14 @@ export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
           <span className="mono">{snapshot.confirmation.grossTotal ?? ''}</span> 元
         </p>
         <div className="btn-row">
-          {!submitted && !complete ? <span className="caption">{PROJECT_ASSIGNMENT_ERRORS.incomplete}</span> : null}
+          {!locked && !complete ? <span className="caption">{PROJECT_ASSIGNMENT_ERRORS.incomplete}</span> : null}
           <ActionError message={error} />
-          <button className="btn btn-primary" type="button" disabled={submitted || busy || !complete || conflict !== null} onClick={() => void submit()}>
+          <button
+            className="btn btn-primary"
+            type="button"
+            disabled={locked || busy || !complete || conflict !== null || !canSubmit}
+            onClick={() => void submit()}
+          >
             确认项目归属
           </button>
         </div>

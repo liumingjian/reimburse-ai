@@ -1,7 +1,7 @@
 import type { Erp, ErpStep, Line, Readback, ReadbackRow, Reconcile, TaskSnapshot } from '../../contract/snapshot';
 
 // ERP 填报、严格回读与对账的夹具（mock 服务端的角色）。步骤名照 spec #99 故事 26，说明沿用原型 ERP_STEPS。
-// 故障：readback-mismatch 让 No.8 的 ERP 回读金额不同；erp-write-aborted 在保存步中止。
+// 故障：readback-mismatch 让 No.6 的 ERP 回读金额不同；erp-write-aborted 在保存步中止。
 
 export const ERP_STEP_DEFS: ReadonlyArray<Pick<ErpStep, 'key' | 'title' | 'description'>> = [
   { key: 'browser', title: '启动浏览器', description: '打开专用浏览器窗口，使用独立的用户数据目录，不碰你日常的浏览器。' },
@@ -22,8 +22,9 @@ export function erpSteps(active: number, status: ErpStep['status'] = 'running'):
   }));
 }
 
-export function erpIdle(): Erp {
-  return { status: 'idle', steps: erpSteps(-1), draftNo: null, abortReason: null, loginNotice: null };
+// 「去报销」之后浏览器已启动、登录步等待（`?seed=erp` 的状态）。
+export function erpWaitingLogin(): Erp {
+  return { status: 'waiting_login', steps: erpSteps(ERP_STEP_INDEX.login, 'waiting'), draftNo: null, abortReason: null, loginNotice: null };
 }
 
 export function loginNotDetected(attempt: number): string {
@@ -33,8 +34,8 @@ export function loginNotDetected(attempt: number): string {
 export const SAVE_ABORT_REASON = '保存草稿时 ERP 没有在限定时间内返回结果，保存是否生效不确定。应用已停止写入，不会重放。';
 export const MISMATCH_ABORT_REASON = '严格回读发现 1 行与本地确认不一致，应用已停止，不会自动改写 ERP 里的行。';
 
-// readback-mismatch 故障：No.8（出租车 47.00）在 ERP 里读回 74.00。
-export const MISMATCH = { no: 8, erp: '74.00' } as const;
+// readback-mismatch 故障：No.6（出租车 47.00）在 ERP 里读回 74.00。
+export const MISMATCH = { no: 6, erp: '74.00' } as const;
 
 function cents(amount: string): number {
   return Math.round(Number(amount) * 100);

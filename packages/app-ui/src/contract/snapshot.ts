@@ -198,6 +198,9 @@ export type PendingItem = z.infer<typeof PendingItemSchema>;
 
 // ---- 候选明细（统一业务序号） ----
 
+// 统一业务序号（No.）由服务端给出，整单确认表、打印稿页序、ERP 明细行与回读表共用：
+// 跟随内核确认表的费用分类排序（next.mjs preparationConfirmationTable）：本地市内交通 → 外地市内交通 → 长途交通 → 住宿；
+// 同一分类内保持内核的事件顺序（先按主要报销凭证，再按行程段）。页面只按 lines[] 的顺序渲染，从不自己排序或编号。
 export const LineSchema = z.object({
   lineId: IdSchema,
   no: z.number().int().positive(),
@@ -215,24 +218,28 @@ export const LineSchema = z.object({
   netAmount: AmountSchema,
   taxAmount: AmountSchema,
   fromPendingItemId: IdSchema.nullable(),
-  // 这张发票是否可以补充支付截图（住宿发票为 true）；由服务端按票种判定，页面只据此显示入口。
-  acceptsPaymentScreenshot: z.boolean(),
 });
 export type Line = z.infer<typeof LineSchema>;
 
 // ---- 整单明细确认 ----
 
-// 确认失效语义（内核 §2.6）：追加或删除材料形成新的盘点版本，旧确认与已生成的打印稿作废，状态记为 invalidated，
-// 直到用户重新核对并确认。支付截图、打印稿的旋转与裁剪、项目归属都不进摘要，不使确认失效。
+// 唯一一次整单确认（内核 preparation_confirmation）：在项目归属、报销信息核对与材料准备之后。
+// 确认绑定的摘要包含项目归属与报销事由（内核 preparationDigest 的 sourceSnapshot 含 selection，preparation.mjs:973-992），
+// 以及材料包（待服务端 spec 确认具体构成）。因此：
+// - 追加或删除材料形成新的盘点版本，旧确认与已生成的打印稿作废；
+// - 确认后改派项目或改事由，旧确认失效，须重新确认；
+// 两种情况状态都记为 invalidated，直到用户重新核对并确认。支付截图、打印稿的旋转与裁剪不进摘要，不使确认失效。
 export const CONFIRMATION_STATUSES = ['unconfirmed', 'confirmed', 'invalidated'] as const;
 
-// 失效提示由服务端成句；这是标准文案，服务端与 mock 共用。
+// 失效提示由服务端成句；这些是标准文案，服务端与 mock 共用。
 export const REVIEW_INVALIDATED_NOTICE = '材料已变更，之前的整单明细确认与已生成的打印稿作废。请重新核对后再确认。';
+export const PROJECT_CHANGED_NOTICE = '项目归属已变更，之前的整单明细确认失效。请重新核对后再确认。';
 
 export const ConfirmationSchema = z.object({
   status: z.enum(CONFIRMATION_STATUSES),
   confirmedAt: DateTimeSchema.nullable(),
-  // 确认所绑定的摘要；确认动作回传它，服务端据此判断用户点头的是不是这一份。
+  // 确认所绑定的摘要（含项目归属）；确认动作回传它，服务端据此判断用户点头的是不是这一份。
+  // 项目归属提交、报销信息核对与材料准备完成之前为 null（还没有可确认的一份）。
   digest: z.string().nullable(),
   lineCount: z.number().int().nonnegative(),
   invoiceCount: z.number().int().nonnegative(),
@@ -245,12 +252,14 @@ export type Confirmation = z.infer<typeof ConfirmationSchema>;
 // ---- 支付截图与打印稿 ----
 
 // 支付截图只接受图片（JPG、PNG），只进打印稿，不改变整单明细确认。每张发票至多一张，再补即替换。
+// 入口在打印稿页（打印稿生成之后，按页的 acceptsPaymentScreenshot），不在整单确认页。
 export const PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE = '.jpg,.jpeg,.png,image/jpeg,image/png';
 
 export const PAYMENT_SCREENSHOT_ERRORS = {
   notImage: '只接受图片（JPG、PNG）。',
   notApplicable: '这张发票不需要支付截图。',
   notFound: '这张支付截图已经不存在。',
+  notGenerated: '请先生成打印稿，再在打印稿页补充支付截图。',
 } as const;
 
 export const PaymentScreenshotSchema = z.object({
@@ -286,7 +295,8 @@ export type Placement = z.infer<typeof PlacementSchema>;
 export const PrintPageSchema = z.object({
   pageId: IdSchema,
   no: z.number().int().positive(),
-  // 页眉整句，如「No.3-5 · 08-10 · 外地市内交通 · 69.19」；范围用 ASCII 连字符。页面原样显示，不自己拼。
+  // 页眉整句，如「No.1-3 · 08-10 · 外地市内交通 · 69.19」；范围用 ASCII 连字符。页面原样显示，不自己拼。
+  // 页序与 No. 都跟随统一业务序号（见 LineSchema）。
   header: z.string().min(1),
   nos: z.string().min(1),
   date: DateSchema,
@@ -296,6 +306,8 @@ export const PrintPageSchema = z.object({
   imageUrl: UrlSchema,
   top: PlacementSchema.nullable(),
   bottom: PlacementSchema.nullable(),
+  // 这一页的主要报销凭证能否补充支付截图（住宿发票为 true）；由服务端按票种判定，页面只据此显示入口。
+  acceptsPaymentScreenshot: z.boolean(),
   screenshotId: IdSchema.nullable(),
 });
 export type PrintPage = z.infer<typeof PrintPageSchema>;
@@ -310,7 +322,7 @@ export const PrintSheetSchema = z.object({
   fileName: z.string().nullable(),
   url: UrlSchema.nullable(),
   pages: z.array(PrintPageSchema),
-  // 服务端成句的提醒，如「No.2 住宿发票还没有支付截图。可以照常打印，该页下半页只放结账单。」；提醒不阻止下载。
+  // 服务端成句的提醒，如「No.9 住宿发票还没有支付截图。可以照常打印，该页下半页只放结账单。」；提醒不阻止下载。
   notices: z.array(z.string()),
 });
 export type PrintSheet = z.infer<typeof PrintSheetSchema>;
@@ -327,7 +339,9 @@ export const ProjectOptionSchema = z.object({
 });
 export type ProjectOption = z.infer<typeof ProjectOptionSchema>;
 
-// not_started：还没进入项目归属；pending：进入了、尚未提交（可能已有上次留下的归属）；submitted：已提交，可以去 ERP 填报。
+// 项目归属在待确认项处理完之后、整单确认之前（Skill 的 project_unassigned → select-task）。
+// not_started：还没进入项目归属；pending：进入了、尚未提交（可能已有上次留下的归属）；
+// submitted：已提交，服务端随后自动做报销信息核对与材料准备，再进入整单确认。ERP 写入开始前都可以改派（改派使确认失效）。
 export const PROJECT_ASSIGNMENT_STATUSES = ['not_started', 'pending', 'submitted'] as const;
 
 export const ProjectLineAssignmentSchema = z.object({
@@ -420,16 +434,18 @@ export type Reconcile = z.infer<typeof ReconcileSchema>;
 
 // ---- 当前待答 step ----
 
+// 顺序即流程：答复待确认项 → 项目归属（assign_projects）→ 报销信息核对与材料准备（服务端自动，none）
+// → 整单确认（confirm_review）→ 去打印 / 去报销（choose_action）。
+// 「去报销」即开始 ERP 写入，没有单独的「开始填报」：写入进行中为 none；登录步等待时为 erp_login；停在对账时为 reconcile。
+// 确认之后、写入开始之前，改派项目仍被接受（confirm_review / choose_action 下提交项目归属），并使确认失效。
 export const STEP_KINDS = [
   'none',
   'upload_materials',
   'start_inventory',
   'answer_pending',
+  'assign_projects',
   'confirm_review',
   'choose_action',
-  'assign_projects',
-  // 项目归属提交后等待「开始填报」；写入进行中为 none；登录步等待时为 erp_login；停在对账时为 reconcile。
-  'start_erp_write',
   'erp_login',
   'reconcile',
   // 严格回读不一致、停在完成页：只接受「转人工」。

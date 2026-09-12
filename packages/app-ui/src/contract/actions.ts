@@ -94,7 +94,7 @@ export const REOPEN_UPLOAD_ERRORS = {
 
 // ERP 填报与对账动作的错误：当前 step 不接受这个动作时服务端的回答（stepToken 过期仍走 stale_step）。
 export const ERP_ACTION_ERRORS = {
-  notReady: '现在还不能开始填报，请先确认项目归属。',
+  notReady: '现在还不能去报销，请先完成整单明细确认。',
   notWaitingLogin: '现在没有在等待登录。',
   notReconciling: '这个任务现在不在对账中。',
 } as const;
@@ -108,7 +108,7 @@ export const PROJECT_ASSIGNMENT_ERRORS = {
   lineUnassigned: (no: number) => `明细 No.${no} 还没有选项目`,
   projectNotAllowed: (no: number, number: string) => `明细 No.${no} 的项目 ${number} 不在当前本人项目簿可选集合中；要用它请先在维护页重新核验`,
   unknownLine: (lineId: string) => `提交里出现了不存在的明细 ${lineId}，这批明细可能已经变了`,
-  notReady: '还不能提交项目归属，请先完成整单明细确认。',
+  notReady: '现在不能提交项目归属：请先处理完待确认项；已开始 ERP 填报的任务不能再改派。',
   bookEmpty: '当前个人项目簿没有可选项目；先维护本人项目簿，再回来做任务选择',
 } as const;
 

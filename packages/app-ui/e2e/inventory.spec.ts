@@ -39,12 +39,12 @@ test('?seed=inventory：结果按费用事件归组，显示配对、守恒结�
   await expect(page.getByText('主要报销凭证 7')).toBeVisible();
   await expect(page.getByText('参考材料 3')).toBeVisible();
 
-  const amap = page.getByRole('rowgroup', { name: '费用事件 3-5 · 2026-08-10 至 2026-08-12 · 外地市内交通 · 26.69 + 20.85 + 21.65' });
+  const amap = page.getByRole('rowgroup', { name: '费用事件 1-3 · 2026-08-10 至 2026-08-12 · 外地市内交通 · 26.69 + 20.85 + 21.65' });
   await expect(amap.getByText('打车发票与行程单配对：26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeVisible();
   await expect(amap.getByText('高德打车_行程单.pdf')).toBeVisible();
   await expect(amap.getByText('rule:amap_itinerary').first()).toBeVisible();
 
-  const hotel = page.getByRole('rowgroup', { name: '费用事件 2 · 2026-08-09 至 2026-08-22 · 住宿 · 3640.00' });
+  const hotel = page.getByRole('rowgroup', { name: '费用事件 9 · 2026-08-09 至 2026-08-22 · 住宿 · 3640.00' });
   await expect(hotel.getByText('住宿发票 3640.00 = 结账单消费合计 3640.00；13 天 = 08-09 入住至 08-22 离店')).toBeVisible();
   await expect(hotel.getByText('rule:hotel_folio').first()).toBeVisible();
 

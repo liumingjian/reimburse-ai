@@ -165,8 +165,8 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
                 处理 {summary.openPendingItemCount} 个待确认项
               </a>
             ) : (
-              <a className="btn btn-primary" href={taskHash(taskId, 'review')}>
-                进入整单明细确认
+              <a className="btn btn-primary" href={taskHash(taskId, 'project')}>
+                进入项目归属
               </a>
             )}
           </div>

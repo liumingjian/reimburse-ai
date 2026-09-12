@@ -197,8 +197,8 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
                 ))}
               </ul>
             ) : null}
-            <a className="btn btn-primary btn-lg" href={taskHash(taskId, 'review')}>
-              进入整单明细确认
+            <a className="btn btn-primary btn-lg" href={taskHash(taskId, 'project')}>
+              进入项目归属
             </a>
           </div>
         </section>

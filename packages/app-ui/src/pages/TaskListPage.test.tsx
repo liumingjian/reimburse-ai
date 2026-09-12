@@ -60,8 +60,9 @@ describe('任务列表', () => {
   });
 
   test('严格回读不一致停在完成页的任务：徽标显示回读不一致，并给出查看结果入口', async () => {
-    const adapter = createMockAdapter({ seed: 'erp', fault: 'readback-mismatch', erpStepMs: 1, erpLoginAutoMs: 1 });
+    const adapter = createMockAdapter({ seed: 'actions', fault: 'readback-mismatch', erpStepMs: 1, erpLoginAutoMs: 1 });
     const t1 = await adapter.getSnapshot('T1');
+    // 去报销：整单确认之后开始写入，服务端自己探测到登录后自动写完。
     expect((await adapter.startErpWrite('T1', t1.step.stepToken)).ok).toBe(true);
     await vi.waitFor(async () => expect((await adapter.getSnapshot('T1')).stage).toBe('done'));
     window.location.hash = '#/tasks';
@@ -93,7 +94,15 @@ describe('任务页面骨架', () => {
     renderApp('#/task/T1/upload');
     expect(await screen.findByRole('heading', { name: '上传材料' })).toBeTruthy();
     const stages = screen.getByRole('list', { name: '流程阶段' });
-    expect(within(stages).getAllByRole('listitem')).toHaveLength(6);
+    expect(within(stages).getAllByRole('listitem').map((item) => item.textContent?.replace(/^\d/, ''))).toEqual([
+      '上传材料',
+      '材料盘点',
+      '待确认项',
+      '项目归属',
+      '整单明细确认',
+      '去打印 / 去报销',
+      '完成',
+    ]);
     expect(within(stages).getByText('上传材料').closest('a')?.getAttribute('aria-current')).toBe('step');
   });
 

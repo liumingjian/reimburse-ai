@@ -48,17 +48,18 @@ describe('材料盘点', () => {
     const results = screen.getByLabelText('盘点结果');
     const groups = within(results).getAllByRole('rowgroup').filter((node) => node.classList.contains('event-group'));
     expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual([
-      '费用事件 1 · 2026-08-09 · 长途交通 · 73.00',
-      '费用事件 2 · 2026-08-09 至 2026-08-22 · 住宿 · 3640.00',
-      '费用事件 3-5 · 2026-08-10 至 2026-08-12 · 外地市内交通 · 26.69 + 20.85 + 21.65',
-      '费用事件 6 · 2026-08-11 · 外地市内交通 · 38.40',
-      '费用事件 7 · 2026-08-15 · 外地市内交通 · 32.00',
-      '费用事件 8 · 2026-08-19 · 外地市内交通 · 47.00',
-      '费用事件 9 · 2026-08-22 · 长途交通 · 73.00',
+      // 统一业务序号按内核确认表的分类排序：外地市内交通 → 长途交通 → 住宿，同一分类内按事件顺序。
+      '费用事件 1-3 · 2026-08-10 至 2026-08-12 · 外地市内交通 · 26.69 + 20.85 + 21.65',
+      '费用事件 4 · 2026-08-11 · 外地市内交通 · 38.40',
+      '费用事件 5 · 2026-08-15 · 外地市内交通 · 32.00',
+      '费用事件 6 · 2026-08-19 · 外地市内交通 · 47.00',
+      '费用事件 7 · 2026-08-09 · 长途交通 · 73.00',
+      '费用事件 8 · 2026-08-22 · 长途交通 · 73.00',
+      '费用事件 9 · 2026-08-09 至 2026-08-22 · 住宿 · 3640.00',
       '未归入费用事件',
     ]);
 
-    const amap = groups[2] as HTMLElement;
+    const amap = groups[0] as HTMLElement;
     expect(within(amap).getByText('打车发票与行程单配对：26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeTruthy();
     expect(within(amap).getByText('高德打车_发票.pdf')).toBeTruthy();
     expect(within(amap).getByText('高德打车_行程单.pdf')).toBeTruthy();
@@ -67,11 +68,11 @@ describe('材料盘点', () => {
     expect(within(amap).getAllByText('rule:amap_itinerary').length).toBe(3);
     expect(within(amap).getByText('26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeTruthy();
 
-    const hotel = groups[1] as HTMLElement;
+    const hotel = groups[6] as HTMLElement;
     expect(within(hotel).getByText('住宿发票 3640.00 = 结账单消费合计 3640.00；13 天 = 08-09 入住至 08-22 离店')).toBeTruthy();
     expect(within(hotel).getByText('消费合计 = 发票价税合计；13 天 = 08-09 入住至 08-22 离店')).toBeTruthy();
 
-    const taxi = groups[5] as HTMLElement;
+    const taxi = groups[3] as HTMLElement;
     expect(within(taxi).getByText('待确认')).toBeTruthy();
     expect(within(taxi).getByText('90:60')).toBeTruthy();
     expect(within(taxi).getByText('rule:taxi_receipt · 存疑')).toBeTruthy();

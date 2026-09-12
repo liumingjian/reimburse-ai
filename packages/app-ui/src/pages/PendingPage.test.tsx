@@ -95,12 +95,13 @@ describe('待确认项', () => {
     fireEvent.click(within(detail()).getByRole('button', { name: '排除此材料' }));
     expect(await screen.findByRole('heading', { name: '没有待确认项了' })).toBeTruthy();
     expect(screen.getByText('本次盘点的 3 个待确认项都已处理。')).toBeTruthy();
-    const link = screen.getByRole('link', { name: '进入整单明细确认' });
-    expect(link.getAttribute('href')).toBe('#/task/T1/review');
+    const link = screen.getByRole('link', { name: '进入项目归属' });
+    expect(link.getAttribute('href')).toBe('#/task/T1/project');
 
-    // 答复都到了服务端：来源 user、材料已排除、阶段进入 review 并形成候选明细。
+    // 答复都到了服务端：来源 user、材料已排除、形成候选明细并进入项目归属（整单确认在项目归属之后）。
     const snapshot = await adapter.getSnapshot('T1');
-    expect(snapshot.stage).toBe('review');
+    expect(snapshot.stage).toBe('project');
+    expect(snapshot.step.kind).toBe('assign_projects');
     expect(snapshot.pendingItems.map((item) => item.answer)).toEqual([
       { origin: '张江高科', destination: '漕河泾开发区' },
       { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' },
@@ -112,9 +113,11 @@ describe('待确认项', () => {
     expect(snapshot.lines).toHaveLength(9);
     expect(snapshot.confirmation.grossTotal).toBe('3972.59');
 
-    // 进入整单明细确认不再被守卫拦住。
+    // 进入项目归属不再被守卫拦住；整单确认页还不能进（项目归属未完成）。
     fireEvent.click(link);
-    expect(await screen.findByRole('heading', { name: '整单明细确认' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: '项目归属' })).toBeTruthy();
+    window.location.hash = '#/task/T1/review';
+    expect(await screen.findByText('阶段不可跳过，请按顺序完成前面的步骤。')).toBeTruthy();
   });
 
   test('自行手工处理同样推进', async () => {
@@ -153,7 +156,7 @@ describe('待确认项', () => {
   test('?seed=review 打开待确认项页直接是空状态', async () => {
     renderPending('review');
     expect(await screen.findByRole('heading', { name: '没有待确认项了' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: '进入整单明细确认' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: '进入项目归属' })).toBeTruthy();
   });
 
   test('?fault=unsupported-material 多出一个不支持的材料类型待确认项', async () => {

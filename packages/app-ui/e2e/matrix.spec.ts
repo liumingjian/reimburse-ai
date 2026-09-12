@@ -11,14 +11,17 @@ const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 type Seed = { seed: string; stage: TaskStage; page: TaskPage; key: string };
 
 // 各 seed 默认页上一定出现的文字。
+// catalog / preparation 是自动步骤，几百毫秒后就进入整单确认；它们的默认页（整单确认页）上一直可见的是报销事由。
 const KEY_TEXT: Readonly<Record<TaskStage, string>> = {
   upload: '选择文件',
   inventory: '盘点版本 v1',
   pending: '还剩 3 个',
+  project: '已归属 2 / 9 条',
+  catalog: '上海产品评审出差',
+  preparation: '上海产品评审出差',
   review: '我已核对整单明细',
   actions: '整单明细已确认',
-  project: '已归属 2 / 9 条',
-  erp: '开始填报',
+  erp: '我已登录，继续',
   done: 'BX20260911-0173',
   reconcile: '中止原因',
 };
@@ -26,7 +29,7 @@ const KEY_TEXT: Readonly<Record<TaskStage, string>> = {
 const SEEDS: readonly Seed[] = [
   ...TASK_STAGES.map((stage) => ({ seed: stage, stage, page: STAGE_DEFAULT_PAGE[stage], key: KEY_TEXT[stage] })),
   { seed: 'assign', stage: 'project', page: 'project', key: KEY_TEXT.project },
-  { seed: 'print', stage: 'actions', page: 'print', key: 'No.3-5 · 08-10 · 外地市内交通 · 69.19' },
+  { seed: 'print', stage: 'actions', page: 'print', key: 'No.1-3 · 08-10 · 外地市内交通 · 69.19' },
 ];
 
 // 最后两个是 em-dash U+2014 与 en-dash U+2013。
@@ -51,9 +54,9 @@ async function shot(page: Page, testInfo: TestInfo) {
 
 const pdf = (name: string) => ({ name, mimeType: 'application/pdf', buffer: Buffer.from(`%PDF-1.4 ${name}`) });
 
+// ?seed=erp：已点「去报销」、浏览器等待登录（没有「开始填报」）；登录后自动写入。
 async function startErp(page: Page, fault: Fault) {
   await page.goto(open(`?seed=erp&fault=${fault}`, '#/task/T1/erp'));
-  await page.getByRole('button', { name: '开始填报' }).click();
   await page.getByRole('button', { name: '我已登录，继续' }).click();
 }
 
@@ -86,8 +89,8 @@ const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = 
   'readback-mismatch': async (page) => {
     await startErp(page, 'readback-mismatch');
     await expect(page).toHaveURL(/#\/task\/T1\/done$/);
-    await expect(page.getByTestId('readback-8')).toHaveClass(/row-err/);
-    await expect(page.getByTestId('readback-8')).toContainText('74.00');
+    await expect(page.getByTestId('readback-6')).toHaveClass(/row-err/);
+    await expect(page.getByTestId('readback-6')).toContainText('74.00');
     await expect(page.getByRole('button', { name: '转人工' })).toBeVisible();
   },
   'service-disconnected': async (page) => {

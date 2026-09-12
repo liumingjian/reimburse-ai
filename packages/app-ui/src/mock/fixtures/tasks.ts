@@ -1,8 +1,8 @@
 import { stageReached, type TaskStage } from '../../contract/stage';
 import type { Inventory, Material, TaskSnapshot, UploadBatch, UploadFileResult } from '../../contract/snapshot';
 import type { Employee, TaskListItem } from '../../contract/task-list';
-import { HOME_CITY, SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, projectAssignmentOpen, projectAssignmentSubmitted } from './projects';
-import { T2_ROWS, applyAbortAtSave, applyErpDone, emptyReadback, erpIdle, mismatchReason, readbackOf } from './erp';
+import { HOME_CITY, SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, confirmationDigest, projectAssignmentOpen, projectAssignmentSubmitted } from './projects';
+import { T2_ROWS, applyAbortAtSave, applyErpDone, emptyReadback, erpWaitingLogin, mismatchReason, readbackOf } from './erp';
 import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult, openPendingItemCount, withInventoryProjection } from './inventory';
 
 // 夹具：三个虚构的报销任务。人物与数字沿用原型（林颂宜、上海出差、9 条明细合计 3972.59）。
@@ -105,10 +105,12 @@ const STEP_BY_STAGE: Readonly<Record<TaskStage, TaskSnapshot['step']['kind']>> =
   upload: 'upload_materials',
   inventory: 'start_inventory',
   pending: 'answer_pending',
+  project: 'assign_projects',
+  catalog: 'none',
+  preparation: 'none',
   review: 'confirm_review',
   actions: 'choose_action',
-  project: 'assign_projects',
-  erp: 'start_erp_write',
+  erp: 'erp_login',
   done: 'none',
   reconcile: 'reconcile',
 };
@@ -162,15 +164,15 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
     snapshot.batches = [batch];
     snapshot.inventory = inventoryDone('v1', T1_INVENTORY_FINISHED_AT);
     const result = inventoryResult(t1Materials(batch), unsupportedFault);
-    if (stageReached(stage, 'review')) {
-      // 待确认项都已按原型的既定答复处理，候选明细随之形成。
+    if (stageReached(stage, 'project')) {
+      // 待确认项都已按原型的既定答复处理，候选明细随之形成（No. 按内核分类排序）。
       for (const item of result.pendingItems) {
         const material = result.materials.find((m) => m.materialId === item.materialId);
         const answer = material ? SEED_ANSWERS[material.materialId] : undefined;
         if (answer) applyPendingAnswer(result, item, answer);
       }
       snapshot.lines = buildLines(result);
-      snapshot.confirmation = { ...snapshot.confirmation, digest: 'digest-t1-v1', lineCount: 9, invoiceCount: 7, grossTotal: T1_GROSS_TOTAL };
+      snapshot.confirmation = { ...snapshot.confirmation, lineCount: 9, invoiceCount: 7, grossTotal: T1_GROSS_TOTAL };
     }
     snapshot.materials = result.materials;
     snapshot.events = result.events;
@@ -178,25 +180,17 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
     // 盘点已结束、还有待确认项：当前待答 step 就是答复待确认项。
     if (stage === 'inventory' && result.pendingItems.some((item) => item.status === 'open')) snapshot.step = { kind: 'answer_pending', stepToken: `tok-${T1_ID}-inventory` };
   }
-  if (stageReached(stage, 'actions')) {
-    snapshot.confirmation = {
-      status: 'confirmed',
-      confirmedAt: '2026-09-11T14:32:00',
-      digest: 'digest-t1-v1',
-      lineCount: 9,
-      invoiceCount: 7,
-      grossTotal: T1_GROSS_TOTAL,
-      notice: null,
-    };
-  }
-  // 确认之后服务端给出个人项目簿允许列表；project 阶段预置两条归属，erp 之后项目归属已提交。
-  if (stage === 'actions') snapshot.projectAssignment = projectAssignmentOpen(HOME_CITY);
+  // 进入项目归属时服务端给出个人项目簿允许列表：project 阶段预置两条归属（演示冲突处理）；
+  // 提交之后（报销信息核对起）9 条都已归属，整单确认的摘要绑定这份归属。
   if (stage === 'project') snapshot.projectAssignment = projectAssignmentOpen(HOME_CITY, SEED_ASSIGNMENTS);
-  if (stageReached(stage, 'erp')) {
-    snapshot.projectAssignment = projectAssignmentSubmitted({ purpose: T1_PURPOSE, homeCity: HOME_CITY, projects: T1_DONE_ASSIGNMENTS, submittedAt: '2026-09-11T14:40:00' });
+  if (stageReached(stage, 'catalog')) {
+    snapshot.projectAssignment = projectAssignmentSubmitted({ purpose: T1_PURPOSE, homeCity: HOME_CITY, projects: T1_DONE_ASSIGNMENTS, submittedAt: '2026-09-11T14:28:00' });
   }
-  // erp：等待「开始填报」，六个步骤都待开始。done：草稿已保存、回读 9/9 一致。reconcile：保存步中止后的对账（同 ?fault=erp-write-aborted 的结果）。
-  if (stage === 'erp') snapshot.erp = erpIdle();
+  if (stageReached(stage, 'review')) snapshot.confirmation.digest = confirmationDigest(T1_ID, 'v1', snapshot.projectAssignment);
+  if (stageReached(stage, 'actions')) snapshot.confirmation = { ...snapshot.confirmation, status: 'confirmed', confirmedAt: '2026-09-11T14:32:00' };
+  // erp：「去报销」之后浏览器已启动，等待登录（检测到登录即自动写入）。done：草稿已保存、回读 9/9 一致。
+  // reconcile：保存步中止后的对账（同 ?fault=erp-write-aborted 的结果）。
+  if (stage === 'erp') snapshot.erp = erpWaitingLogin();
   if (stage === 'done') applyErpDone(snapshot, T1_DRAFT_NO);
   if (stage === 'reconcile') applyAbortAtSave(snapshot);
   return withInventoryProjection(snapshot);

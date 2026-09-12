@@ -67,12 +67,13 @@ test('补填与排除：全部处理完显示没有待确认项了，并能进�
   await detail(page).getByRole('button', { name: '排除此材料' }).click();
   await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('pending-empty.png'), fullPage: true });
-  await page.getByRole('link', { name: '进入整单明细确认' }).click();
-  await expect(page).toHaveURL(/#\/task\/T1\/review$/);
-  await expect(page.getByRole('heading', { name: '整单明细确认' })).toBeVisible();
-  // 盘点页的入口也变成进入整单明细确认。
+  // 待确认项之后是项目归属（整单确认在项目归属之后）。
+  await page.getByRole('link', { name: '进入项目归属' }).click();
+  await expect(page).toHaveURL(/#\/task\/T1\/project$/);
+  await expect(page.getByRole('heading', { name: '项目归属' })).toBeVisible();
+  // 盘点页的入口也变成进入项目归属。
   await page.getByRole('link', { name: '材料盘点' }).click();
-  await expect(page.getByRole('link', { name: '进入整单明细确认' })).toBeVisible();
+  await expect(page.getByRole('link', { name: '进入项目归属' })).toBeVisible();
 });
 
 test('自行手工处理同样推进', async ({ page }) => {
@@ -86,7 +87,7 @@ test('自行手工处理同样推进', async ({ page }) => {
 test('?seed=review：待确认项页直接是空状态', async ({ page }) => {
   await page.goto(open('?seed=review', '#/task/T1/pending'));
   await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
-  await expect(page.getByRole('link', { name: '进入整单明细确认' })).toBeVisible();
+  await expect(page.getByRole('link', { name: '进入项目归属' })).toBeVisible();
 });
 
 test('?fault=unsupported-material：多出的不支持材料也能排除', async ({ page }) => {

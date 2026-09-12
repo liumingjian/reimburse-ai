@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// 项目归属（#105）：只在「去报销」路径上。直接用 file:// 打开 mock 构建产物（pnpm build:mock）。
+// 项目归属：待确认项之后、整单确认之前（两条路径都经过）。直接用 file:// 打开 mock 构建产物（pnpm build:mock）。
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 
@@ -12,6 +12,12 @@ const assignTo = (page: Page, label: string) => workbench(page).getByRole('butto
 const projectOf = (page: Page, no: number) => page.getByTestId(`project-of-${no}`);
 const submit = (page: Page) => page.getByRole('button', { name: '确认项目归属' });
 const conflictDialog = (page: Page) => page.getByRole('dialog', { name: '2 条明细已有其他项目归属，请确认是否覆盖' });
+
+async function jump(page: Page, hash: string) {
+  await page.evaluate((next) => {
+    window.location.hash = next;
+  }, hash);
+}
 
 async function selectConflict(page: Page) {
   await pick(page, 1);
@@ -65,21 +71,15 @@ test('冲突：取消不改变归属，只处理未归属只动未归属的明�
   await expect(page.getByTestId('assign-summary')).toHaveText('已归属 3 / 9 条 · 合计 3972.59 元');
 });
 
-test('提交：未归属或事由为空时不可用；提交后进入 ERP 填报，去打印路径不经过项目归属', async ({ page }, testInfo) => {
-  await page.goto(open('?seed=actions', '#/task/T1/review'));
-  // 去打印直达打印稿预览。
-  await page.getByRole('link', { name: '去打印', exact: true }).click();
-  await expect(page).toHaveURL(/#\/task\/T1\/print$/);
-  await page.evaluate(() => {
-    window.location.hash = '#/task/T1/review';
-  });
-  await page.getByRole('link', { name: '去报销', exact: true }).click();
-  await expect(page).toHaveURL(/#\/task\/T1\/project$/);
-  await expect(page.getByTestId('assign-summary')).toHaveText('已归属 0 / 9 条 · 合计 3972.59 元');
+test('提交：未归属或事由为空时不可用；提交后自动核对报销信息、准备材料，进入整单确认', async ({ page }, testInfo) => {
+  await page.goto(open('?seed=project', '#/task/T1/project'));
+  await expect(page.getByTestId('assign-summary')).toHaveText('已归属 2 / 9 条 · 合计 3972.59 元');
   await expect(submit(page)).toBeDisabled();
 
+  await page.getByRole('checkbox', { name: '仅未归属' }).click();
   await page.getByRole('checkbox', { name: '全选当前明细' }).click();
-  await assignTo(page, 'P-2307 华东客户交付');
+  await assignTo(page, 'P-3312 产品调研');
+  await page.getByRole('checkbox', { name: '仅未归属' }).click();
   await expect(page.getByTestId('assign-summary')).toHaveText('已归属 9 / 9 条 · 合计 3972.59 元');
   await expect(submit(page)).toBeDisabled();
   await page.getByLabel('报销事由').fill('上海产品评审出差');
@@ -87,15 +87,15 @@ test('提交：未归属或事由为空时不可用；提交后进入 ERP 填报
   await page.screenshot({ path: testInfo.outputPath('project-ready.png'), fullPage: true });
 
   await submit(page).click();
-  await expect(page).toHaveURL(/#\/task\/T1\/erp$/);
-  await expect(page.getByRole('heading', { name: 'ERP 填报' })).toBeVisible();
+  await expect(page).toHaveURL(/#\/task\/T1\/review$/);
+  await expect(page.getByRole('heading', { name: '整单明细确认' })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: '我已核对整单明细' })).toBeVisible();
+  await expect(page.getByTestId('review-purpose')).toContainText('上海产品评审出差');
 
-  // 回到项目归属：已确认，只读，有 ERP 填报入口。
-  await page.evaluate(() => {
-    window.location.hash = '#/task/T1/project';
-  });
-  await expect(page.getByText('项目归属已确认。')).toBeVisible();
-  await expect(submit(page)).toBeDisabled();
-  await page.getByRole('link', { name: '进入 ERP 填报' }).click();
-  await expect(page).toHaveURL(/#\/task\/T1\/erp$/);
+  // 回到项目归属：已提交，ERP 写入开始前仍可改派，有整单确认入口。
+  await jump(page, '#/task/T1/project');
+  await expect(page.getByText(/项目归属已提交/)).toBeVisible();
+  await expect(submit(page)).toBeEnabled();
+  await page.getByRole('link', { name: '去整单明细确认' }).click();
+  await expect(page).toHaveURL(/#\/task\/T1\/review$/);
 });
