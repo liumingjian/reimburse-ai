@@ -9,6 +9,8 @@ export function ConfirmDialog({
   cancelLabel = '取消',
   busy = false,
   error = null,
+  extraLabel,
+  onExtra,
   onConfirm,
   onCancel,
 }: {
@@ -18,6 +20,9 @@ export function ConfirmDialog({
   cancelLabel?: string;
   busy?: boolean;
   error?: string | null;
+  // 可选的第三个选项（如项目归属冲突的「只处理未归属」），排在取消与确认之间。
+  extraLabel?: string;
+  onExtra?: () => void;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -47,6 +52,11 @@ export function ConfirmDialog({
           <button ref={cancelRef} className="btn btn-secondary" type="button" disabled={busy} onClick={onCancel}>
             {cancelLabel}
           </button>
+          {extraLabel && onExtra ? (
+            <button className="btn btn-secondary" type="button" disabled={busy} onClick={onExtra}>
+              {extraLabel}
+            </button>
+          ) : null}
           <button className="btn btn-primary" type="button" disabled={busy} onClick={onConfirm}>
             {confirmLabel}
           </button>

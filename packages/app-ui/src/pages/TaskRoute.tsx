@@ -8,6 +8,7 @@ import { Sidebar } from '../shell/Sidebar';
 import { InventoryPage } from './InventoryPage';
 import { PAGE_COPY } from './page-copy';
 import { PendingPage } from './PendingPage';
+import { ProjectPage } from './ProjectPage';
 import { ReviewPage } from './ReviewPage';
 import { UploadPage } from './UploadPage';
 
@@ -19,6 +20,7 @@ function PageBody({ page, snapshot }: { page: TaskPage; snapshot: TaskSnapshot }
   if (page === 'inventory') return <InventoryPage snapshot={snapshot} />;
   if (page === 'pending') return <PendingPage snapshot={snapshot} />;
   if (page === 'review') return <ReviewPage snapshot={snapshot} />;
+  if (page === 'project') return <ProjectPage snapshot={snapshot} />;
   return <PageSkeleton page={page} snapshot={snapshot} />;
 }
 

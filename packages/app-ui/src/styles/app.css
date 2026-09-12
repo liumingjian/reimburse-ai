@@ -1019,6 +1019,119 @@ table.lines tfoot td {
   margin-top: var(--space-md);
 }
 
+/* 项目归属（去报销路径） */
+.head-main {
+  flex: 1;
+}
+
+.head-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-xs) var(--space-lg);
+  margin-top: var(--space-md);
+}
+
+.head-fields .field {
+  flex: 1;
+  max-width: calc(var(--layout-split-list-width) * 2);
+  margin-bottom: 0;
+}
+
+.head-fields .caption {
+  margin-bottom: var(--space-xs);
+}
+
+.project-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--layout-split-list-width);
+  align-items: start;
+  gap: var(--space-md);
+}
+
+.project-split .panel + .panel {
+  margin-top: 0;
+}
+
+.assign-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: var(--panel-border);
+  border-bottom-style: solid;
+}
+
+.assign-toolbar .caption {
+  margin-left: auto;
+}
+
+table.data th.pick,
+table.data td.pick {
+  width: calc(var(--layout-checkbox-size) + var(--space-md));
+}
+
+table.data td.pick input {
+  width: var(--layout-checkbox-size);
+  height: var(--layout-checkbox-size);
+  margin: 0;
+  accent-color: var(--color-primary);
+}
+
+.project-aside h2 {
+  margin-bottom: var(--space-xs);
+}
+
+.project-aside .input {
+  margin-bottom: var(--space-xs);
+}
+
+.project-options {
+  list-style: none;
+  margin: 0 0 var(--space-sm);
+  padding: 0;
+}
+
+.project-options li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  padding: var(--space-xs) 0;
+  border-bottom: var(--panel-border);
+  border-bottom-style: solid;
+}
+
+.project-options li.locked .name {
+  color: var(--color-ink-subtle);
+}
+
+.project-options .name {
+  font-weight: var(--text-button-weight);
+}
+
+.project-empty {
+  margin: var(--space-sm) 0;
+}
+
+.assign-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.project-split + .assign-footer {
+  margin-top: var(--space-md);
+}
+
+.assign-footer p {
+  margin-bottom: 0;
+  font-weight: var(--text-button-weight);
+}
+
 @media (max-width: 900px) {
   .layout {
     grid-template-columns: 1fr;
@@ -1036,6 +1149,7 @@ table.lines tfoot td {
 
   .form-grid,
   .split,
+  .project-split,
   .detail-grid,
   .two-actions {
     grid-template-columns: 1fr;

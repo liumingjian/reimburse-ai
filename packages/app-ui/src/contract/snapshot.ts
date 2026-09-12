@@ -283,6 +283,8 @@ export type PrintSheet = z.infer<typeof PrintSheetSchema>;
 
 // ---- 项目归属 ----
 
+// 规则照内核现有项目归属页面（project-workbench.mjs）：项目只能从个人项目簿的允许列表里选；
+// 允许列表整份随快照给出，selectable 与 statusLabel 由服务端判定（可选 / 已过期 / 复检未通过 / 项目号不安全），页面只据此显示。
 export const ProjectOptionSchema = z.object({
   number: z.string().min(1),
   name: z.string().min(1),
@@ -291,19 +293,27 @@ export const ProjectOptionSchema = z.object({
 });
 export type ProjectOption = z.infer<typeof ProjectOptionSchema>;
 
+// not_started：还没进入项目归属；pending：进入了、尚未提交（可能已有上次留下的归属）；submitted：已提交，可以去 ERP 填报。
+export const PROJECT_ASSIGNMENT_STATUSES = ['not_started', 'pending', 'submitted'] as const;
+
+export const ProjectLineAssignmentSchema = z.object({
+  lineId: IdSchema,
+  projectNumber: z.string().min(1),
+  projectName: z.string().min(1),
+});
+export type ProjectLineAssignment = z.infer<typeof ProjectLineAssignmentSchema>;
+
 export const ProjectAssignmentSchema = z.object({
-  status: z.enum(['not_started', 'pending', 'submitted']),
+  status: z.enum(PROJECT_ASSIGNMENT_STATUSES),
+  // 报销事由，至多 100 个字；未填为 null。
   purpose: z.string().nullable(),
+  // 常驻城市由身份确认固定，这里只读显示。
   homeCity: z.string().nullable(),
-  assignments: z.array(
-    z.object({
-      lineId: IdSchema,
-      projectNumber: z.string().min(1),
-      projectName: z.string().min(1),
-    }),
-  ),
+  // 服务端已记下的逐条归属（上次提交或预置的）；页面以它为初值。
+  assignments: z.array(ProjectLineAssignmentSchema),
   // 个人项目簿允许列表，打开页面时整份给出；搜索只缩小显示，不缩小允许列表。
   projects: z.array(ProjectOptionSchema),
+  submittedAt: DateTimeSchema.nullable(),
 });
 export type ProjectAssignment = z.infer<typeof ProjectAssignmentSchema>;
 

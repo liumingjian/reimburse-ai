@@ -1,6 +1,8 @@
 import {
   CONFIRM_REVIEW_ERRORS,
   PENDING_ANSWER_ERRORS,
+  PROJECT_ASSIGNMENT_ERRORS,
+  ProjectAssignmentInputSchema,
   REOPEN_UPLOAD_ERRORS,
   STALE_STEP_CODE,
   STALE_STEP_NOTICE,
@@ -12,6 +14,7 @@ import type { ActionOutcome, AdapterEvent, AppAdapter, Unsubscribe } from '../co
 import { PAYMENT_SCREENSHOT_ERRORS, REVIEW_INVALIDATED_NOTICE, TaskSnapshotSchema, type TaskSnapshot } from '../contract/snapshot';
 import { TaskListSchema, type TaskList } from '../contract/task-list';
 import { applyPendingAnswer, buildLines, inventoryResult } from './fixtures/inventory';
+import { projectAssignmentOpen, projectAssignmentSubmitted } from './fixtures/projects';
 import { EMPLOYEE, T1_ID, emptySnapshot, inventoryNotStarted, t1Snapshot, t2Snapshot, t3Snapshot, toListItem, uploadedMaterial } from './fixtures/tasks';
 import type { MockOptions } from './options';
 import { duplicateReason, judgeFile } from './upload';
@@ -20,7 +23,7 @@ export { FAULTS, readMockOptions, type Fault, type MockOptions } from './options
 
 // 浏览器内 mock 适配器：实现与 HTTP 适配器相同的接口，用内存里的快照回答一切。
 // 每份交出去的快照都过 schema 校验（失败即抛出），保证夹具与契约不脱节。
-// 已实现：任务列表、快照外壳、新建任务、上传批次、材料盘点（定时推进）、待确认项答复、整单明细确认、支付截图、确认后追加材料（确认失效）；
+// 已实现：任务列表、快照外壳、新建任务、上传批次、材料盘点（定时推进）、待确认项答复、整单明细确认、支付截图、确认后追加材料（确认失效）、项目归属提交；
 // 其余动作原样返回当前快照，由后续票逐个实现。
 
 const EMIT_DELAY_MS = 20;
@@ -267,6 +270,8 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
         snapshot.confirmation = { ...snapshot.confirmation, status: 'confirmed', confirmedAt: now(), notice: null };
         snapshot.task.updatedAt = snapshot.confirmation.confirmedAt ?? snapshot.task.updatedAt;
         snapshot.stage = 'actions';
+        // 确认之后服务端随快照给出个人项目簿允许列表（去报销路径要用）；已有的归属保留。
+        if (snapshot.projectAssignment.projects.length === 0) snapshot.projectAssignment = projectAssignmentOpen();
         snapshot.step = { kind: 'choose_action', stepToken: `tok-${taskId}-actions-${snapshot.inventory.versionId ?? 'v0'}` };
         return snapshot;
       }),
@@ -305,7 +310,33 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
     generatePrintSheet: unchanged,
     rotatePlacement: unchanged,
     cropPlacement: unchanged,
-    submitProjectAssignment: async (taskId, _input, stepToken) => withStep(taskId, stepToken, (snapshot) => snapshot),
+    // 提交项目归属（服务端角色）：事由 1-100 字；每条明细都要有项目；项目必须在允许列表里且可选；不认识的明细拒绝。
+    // 通过后记下归属与事由，阶段推到 erp，ERP 填报入口开放。整单明细确认不动（摘要不含项目与事由）。
+    submitProjectAssignment: async (taskId, input, stepToken) =>
+      withStep(taskId, stepToken, (snapshot) => {
+        if (snapshot.step.kind !== 'choose_action' && snapshot.step.kind !== 'assign_projects') {
+          return { error: { code: 'not_ready', message: PROJECT_ASSIGNMENT_ERRORS.notReady } };
+        }
+        const parsed = ProjectAssignmentInputSchema.safeParse(input);
+        if (!parsed.success) return { error: { code: 'invalid_purpose', message: PROJECT_ASSIGNMENT_ERRORS.purpose } };
+        const { purpose, projects } = parsed.data;
+        const lineIds = new Set(snapshot.lines.map((line) => line.lineId));
+        const unknown = Object.keys(projects).find((lineId) => !lineIds.has(lineId));
+        if (unknown) return { error: { code: 'unknown_line', message: PROJECT_ASSIGNMENT_ERRORS.unknownLine(unknown) } };
+        const allowed = new Set(snapshot.projectAssignment.projects.filter((project) => project.selectable).map((project) => project.number));
+        if (allowed.size === 0) return { error: { code: 'project_book_empty', message: PROJECT_ASSIGNMENT_ERRORS.bookEmpty } };
+        for (const line of snapshot.lines) {
+          const number = projects[line.lineId];
+          if (!number) return { error: { code: 'line_unassigned', message: PROJECT_ASSIGNMENT_ERRORS.lineUnassigned(line.no) } };
+          if (!allowed.has(number)) return { error: { code: 'project_not_allowed', message: PROJECT_ASSIGNMENT_ERRORS.projectNotAllowed(line.no, number) } };
+        }
+        const at = now();
+        snapshot.projectAssignment = projectAssignmentSubmitted({ purpose, projects, submittedAt: at });
+        snapshot.task.updatedAt = at;
+        snapshot.stage = 'erp';
+        snapshot.step = { kind: 'erp_login', stepToken: `tok-${taskId}-erp` };
+        return snapshot;
+      }),
     startErpWrite: async (taskId, stepToken) => withStep(taskId, stepToken, (snapshot) => snapshot),
     confirmLogin: async (taskId, stepToken) => withStep(taskId, stepToken, (snapshot) => snapshot),
     reconcile: unchanged,

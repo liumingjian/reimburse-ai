@@ -1,6 +1,7 @@
 import { stageReached, type TaskStage } from '../../contract/stage';
 import type { Inventory, Material, TaskSnapshot, UploadBatch, UploadFileResult } from '../../contract/snapshot';
 import type { Employee, TaskListItem } from '../../contract/task-list';
+import { SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, projectAssignmentOpen, projectAssignmentSubmitted } from './projects';
 import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult } from './inventory';
 
 // 夹具：三个虚构的报销任务。人物与数字沿用原型（林颂宜、上海出差、9 条明细合计 3972.59）。
@@ -134,7 +135,7 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     confirmation: { status: 'unconfirmed', confirmedAt: null, digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null, notice: null },
     paymentScreenshots: [],
     printSheet: { status: 'not_generated', fileName: null, url: null, pages: [], notices: [] },
-    projectAssignment: { status: 'not_started', purpose: null, homeCity: null, assignments: [], projects: [] },
+    projectAssignment: { status: 'not_started', purpose: null, homeCity: null, assignments: [], projects: [], submittedAt: null },
     erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null },
     readback: { status: 'none', rows: [], summary: null },
     reconcile: { status: 'none', bucket: null, action: null, banner: null, draftNo: null, rows: [], reasons: [] },
@@ -185,6 +186,12 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
       grossTotal: T1_GROSS_TOTAL,
       notice: null,
     };
+  }
+  // 确认之后服务端给出个人项目簿允许列表；project 阶段预置两条归属，erp 之后项目归属已提交。
+  if (stage === 'actions') snapshot.projectAssignment = projectAssignmentOpen();
+  if (stage === 'project') snapshot.projectAssignment = projectAssignmentOpen(SEED_ASSIGNMENTS);
+  if (stageReached(stage, 'erp')) {
+    snapshot.projectAssignment = projectAssignmentSubmitted({ purpose: T1_PURPOSE, projects: T1_DONE_ASSIGNMENTS, submittedAt: '2026-09-11T14:40:00' });
   }
   if (stage === 'done') {
     snapshot.erp = { status: 'done', steps: [], draftNo: T1_DRAFT_NO, abortReason: null, loginNotice: null };

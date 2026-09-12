@@ -81,7 +81,8 @@ const PAGE_REQUIRED_STAGE: Readonly<Record<TaskPage, TaskStage>> = {
   review: 'review',
   print: 'actions',
   project: 'actions',
-  erp: 'project',
+  // ERP 填报入口在项目归属提交之后才开放（提交把阶段推到 erp）。
+  erp: 'erp',
   done: 'done',
   reconcile: 'reconcile',
 };

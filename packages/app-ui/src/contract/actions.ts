@@ -110,8 +110,30 @@ export const REOPEN_UPLOAD_ERRORS = {
   erpStarted: '已开始 ERP 填报，不能再追加材料。',
 } as const;
 
+// 项目归属：文案照内核 selection.mjs / project-workbench.mjs。页面只拦「未填完」，项目是否可用由服务端判定。
+export const PURPOSE_MAX_LENGTH = 100;
+
+export const PROJECT_ASSIGNMENT_ERRORS = {
+  incomplete: '报销事由和每一条明细的项目都要填写',
+  purpose: '报销事由必须填写，且不超过 100 个字',
+  lineUnassigned: (no: number) => `明细 No.${no} 还没有选项目`,
+  projectNotAllowed: (no: number, number: string) => `明细 No.${no} 的项目 ${number} 不在当前本人项目簿可选集合中；要用它请先在维护页重新核验`,
+  unknownLine: (lineId: string) => `提交里出现了不存在的明细 ${lineId}，这批明细可能已经变了`,
+  notReady: '还不能提交项目归属，请先完成整单明细确认。',
+  bookEmpty: '当前个人项目簿没有可选项目；先维护本人项目簿，再回来做任务选择',
+} as const;
+
+// 批量归入碰到已有其他项目归属的明细时的三个选项（内核 Variant B）。
+export const PROJECT_CONFLICT_COPY = {
+  title: (count: number) => `${count} 条明细已有其他项目归属，请确认是否覆盖`,
+  onlyEmpty: '只处理未归属',
+  overwrite: '确认覆盖',
+  cancel: '取消',
+} as const;
+
 export const ProjectAssignmentInputSchema = z.object({
-  purpose: z.string().trim().min(1).max(100),
+  purpose: z.string().trim().min(1, PROJECT_ASSIGNMENT_ERRORS.purpose).max(PURPOSE_MAX_LENGTH, PROJECT_ASSIGNMENT_ERRORS.purpose),
+  // lineId → 项目号
   projects: z.record(IdSchema, z.string().min(1)),
 });
 export type ProjectAssignmentInput = z.infer<typeof ProjectAssignmentInputSchema>;

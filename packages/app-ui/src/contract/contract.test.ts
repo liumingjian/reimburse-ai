@@ -115,6 +115,9 @@ describe('报销任务阶段', () => {
     expect(TaskStageSchema.safeParse('print').success).toBe(false);
     expect(readMockOptions('?seed=review&fault=readback-mismatch')).toEqual({ seed: 'review', fault: 'readback-mismatch' });
     expect(readMockOptions('?seed=nope&fault=nope')).toEqual({ seed: null, fault: null });
+    // 票面写的 ?seed=assign 是 project 的别名。
+    expect(readMockOptions('?seed=assign')).toEqual({ seed: 'project', fault: null });
+    expect(readMockOptions('?seed=project')).toEqual({ seed: 'project', fault: null });
     expect(FAULTS).toHaveLength(6);
   });
 
@@ -124,7 +127,9 @@ describe('报销任务阶段', () => {
     expect(pageAllowed('upload', 'inventory')).toBe(false);
     expect(pageAllowed('actions', 'print')).toBe(true);
     expect(pageAllowed('actions', 'erp')).toBe(false);
-    expect(pageAllowed('project', 'erp')).toBe(true);
+    expect(pageAllowed('project', 'erp')).toBe(false);
+    expect(pageAllowed('erp', 'erp')).toBe(true);
+    expect(pageAllowed('actions', 'project')).toBe(true);
     expect(pageAllowed('reconcile', 'reconcile')).toBe(true);
     expect(pageAllowed('done', 'reconcile')).toBe(false);
   });

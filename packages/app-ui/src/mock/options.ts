@@ -12,6 +12,9 @@ export const FAULTS = [
 ] as const;
 export type Fault = (typeof FAULTS)[number];
 
+// 票面上用过的别名：`?seed=assign` 与 `?seed=project` 相同（阶段枚举里叫 project）。
+const SEED_ALIASES: Readonly<Record<string, TaskStage>> = { assign: 'project' };
+
 export type MockOptions = {
   seed: TaskStage | null;
   fault: Fault | null;
@@ -25,7 +28,8 @@ export function readMockOptions(search: string): MockOptions {
   const fault = params.get('fault');
   const options: MockOptions = { seed: null, fault: null };
   if (seed !== null) {
-    if (isStage(seed)) options.seed = seed;
+    const stage = SEED_ALIASES[seed] ?? seed;
+    if (isStage(stage)) options.seed = stage;
     else console.warn(`未知的 seed「${seed}」，可用值：${TASK_STAGES.join(', ')}`);
   }
   if (fault !== null) {
