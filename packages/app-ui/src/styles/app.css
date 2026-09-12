@@ -877,6 +877,148 @@ table.data tr.row-warn td {
   padding: 0;
 }
 
+/* 整单明细确认：色条归组、金额主次、勾选确认、并列的两个动作 */
+table.lines th.group-bar,
+table.lines td.group-bar {
+  width: var(--layout-group-bar-width);
+  padding: 0;
+}
+
+table.lines tbody td.group-bar {
+  background: var(--color-surface-3);
+}
+
+table.lines tbody tr.group-start td {
+  border-top: var(--layout-hairline-width) solid var(--color-hairline-strong);
+}
+
+table.lines tbody:first-of-type tr.group-start td {
+  border-top: 0;
+}
+
+table.lines td.secondary,
+table.lines th.secondary {
+  color: var(--color-ink-subtle);
+}
+
+table.lines td.gross {
+  font-weight: var(--text-headline-weight);
+}
+
+table.lines tfoot td {
+  border-bottom: 0;
+  border-top: var(--layout-hairline-width) solid var(--color-hairline-strong);
+  font-weight: var(--text-button-weight);
+}
+
+.screenshot-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-xxs);
+}
+
+.screenshot-row input[type='file'] {
+  display: none;
+}
+
+.table-error {
+  margin: var(--space-xs) var(--space-sm) var(--space-xxs);
+  color: var(--color-danger);
+  font-size: var(--text-caption-size);
+}
+
+.excluded-note {
+  margin: var(--space-sm) 0 var(--space-md);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-weight: var(--text-button-weight);
+}
+
+.check input {
+  width: var(--layout-checkbox-size);
+  height: var(--layout-checkbox-size);
+  margin: 0;
+  accent-color: var(--color-primary);
+}
+
+.check-caption {
+  margin: var(--space-xxs) 0 0 calc(var(--layout-checkbox-size) + var(--space-xs));
+}
+
+.confirm-error,
+.modal .error {
+  margin: var(--space-xs) 0 0;
+  color: var(--color-danger);
+  font-size: var(--text-caption-size);
+}
+
+.two-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.action-card {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--space-xs);
+  padding: var(--panel-padding);
+  border: var(--panel-border);
+  border-style: solid;
+  border-radius: var(--panel-rounded);
+  background: var(--color-surface-1);
+}
+
+.action-card p {
+  margin-bottom: 0;
+  color: var(--color-ink-muted);
+}
+
+.action-card .btn {
+  justify-self: start;
+}
+
+.after-actions {
+  margin-top: var(--space-md);
+}
+
+/* 弹层：唯一使用遮罩的地方 */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  display: grid;
+  place-items: center;
+  background: var(--color-overlay);
+}
+
+.modal {
+  width: var(--layout-dialog-width);
+  max-width: calc(100vw - var(--space-xl));
+  padding: var(--panel-padding);
+  border-radius: var(--panel-rounded);
+  background: var(--color-surface-1);
+}
+
+.modal h2 {
+  margin-bottom: var(--space-xs);
+}
+
+.modal-body .lead {
+  margin-bottom: 0;
+}
+
+.modal .btn-row {
+  justify-content: flex-end;
+  margin-top: var(--space-md);
+}
+
 @media (max-width: 900px) {
   .layout {
     grid-template-columns: 1fr;
@@ -894,7 +1036,8 @@ table.data tr.row-warn td {
 
   .form-grid,
   .split,
-  .detail-grid {
+  .detail-grid,
+  .two-actions {
     grid-template-columns: 1fr;
   }
 

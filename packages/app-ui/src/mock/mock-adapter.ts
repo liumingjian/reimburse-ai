@@ -1,6 +1,15 @@
-import { PENDING_ANSWER_ERRORS, STALE_STEP_CODE, STALE_STEP_NOTICE, normalizePendingAnswer, validatePendingAnswer, type ActionError } from '../contract/actions';
+import {
+  CONFIRM_REVIEW_ERRORS,
+  PENDING_ANSWER_ERRORS,
+  REOPEN_UPLOAD_ERRORS,
+  STALE_STEP_CODE,
+  STALE_STEP_NOTICE,
+  normalizePendingAnswer,
+  validatePendingAnswer,
+  type ActionError,
+} from '../contract/actions';
 import type { ActionOutcome, AdapterEvent, AppAdapter, Unsubscribe } from '../contract/adapter';
-import { TaskSnapshotSchema, type TaskSnapshot } from '../contract/snapshot';
+import { PAYMENT_SCREENSHOT_ERRORS, REVIEW_INVALIDATED_NOTICE, TaskSnapshotSchema, type TaskSnapshot } from '../contract/snapshot';
 import { TaskListSchema, type TaskList } from '../contract/task-list';
 import { applyPendingAnswer, buildLines, inventoryResult } from './fixtures/inventory';
 import { EMPLOYEE, T1_ID, emptySnapshot, inventoryNotStarted, t1Snapshot, t2Snapshot, t3Snapshot, toListItem, uploadedMaterial } from './fixtures/tasks';
@@ -11,7 +20,8 @@ export { FAULTS, readMockOptions, type Fault, type MockOptions } from './options
 
 // 浏览器内 mock 适配器：实现与 HTTP 适配器相同的接口，用内存里的快照回答一切。
 // 每份交出去的快照都过 schema 校验（失败即抛出），保证夹具与契约不脱节。
-// 已实现：任务列表、快照外壳、新建任务、上传批次、材料盘点（定时推进）、待确认项答复；其余动作原样返回当前快照，由后续票逐个实现。
+// 已实现：任务列表、快照外壳、新建任务、上传批次、材料盘点（定时推进）、待确认项答复、整单明细确认、支付截图、确认后追加材料（确认失效）；
+// 其余动作原样返回当前快照，由后续票逐个实现。
 
 const EMIT_DELAY_MS = 20;
 const DEFAULT_PHASE_MS = 450;
@@ -34,6 +44,8 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
   const listeners = new Map<string, Set<(event: AdapterEvent) => void>>();
   let nextTaskNo = 4;
   let nextFileNo = 1;
+  let nextScreenshotNo = 1;
+  let reopenCount = 0;
   const now = clock();
   const phaseMs = options.inventoryPhaseMs ?? DEFAULT_PHASE_MS;
 
@@ -111,9 +123,10 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
     snapshot.lines = lines;
     const invoices = new Set(lines.map((line) => line.voucherMaterialId)).size;
     const cents = lines.reduce((sum, line) => sum + Math.round(Number(line.grossAmount) * 100), 0);
+    // 旧确认因材料变更失效的，保持 invalidated 与提示，直到用户重新确认；否则是尚未确认。
     snapshot.confirmation = {
       ...snapshot.confirmation,
-      status: 'unconfirmed',
+      status: snapshot.confirmation.status === 'invalidated' ? 'invalidated' : 'unconfirmed',
       confirmedAt: null,
       digest: `digest-${taskId}-${snapshot.inventory.versionId ?? 'v0'}`,
       lineCount: lines.length,
@@ -122,6 +135,17 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
     };
     snapshot.stage = 'review';
     snapshot.step = { kind: 'confirm_review', stepToken: `tok-${taskId}-review-${snapshot.inventory.versionId ?? 'v0'}` };
+  };
+
+  // 材料变更（追加批次）：整单明细确认失效、打印稿作废，任务回到上传阶段等待新批次与新一轮盘点。
+  const invalidateForMaterialChange = (snapshot: TaskSnapshot) => {
+    if (snapshot.confirmation.status === 'confirmed') {
+      snapshot.confirmation = { ...snapshot.confirmation, status: 'invalidated', confirmedAt: null, notice: REVIEW_INVALIDATED_NOTICE };
+    }
+    if (snapshot.printSheet.status === 'generated') snapshot.printSheet.status = 'stale';
+    snapshot.stage = 'upload';
+    reopenCount += 1;
+    snapshot.step = { kind: 'start_inventory', stepToken: `tok-${snapshot.task.taskId}-upload-reopen-${reopenCount}` };
   };
 
   return {
@@ -181,6 +205,8 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
       }
       snapshot.batches.push(batch);
       snapshot.task.updatedAt = batch.uploadedAt;
+      // 盘点之后再追加批次：材料变了，旧确认失效，任务回到上传阶段（服务端兜底，即使页面没有先走 reopenUpload）。
+      if (snapshot.stage !== 'upload') invalidateForMaterialChange(snapshot);
       // 有材料后，当前待答 step 变成「开始材料盘点」；状态变了，凭据也换。
       if (snapshot.materials.length > 0) snapshot.step = { kind: 'start_inventory', stepToken: `tok-${taskId}-upload-${batchId}` };
       return commit(snapshot);
@@ -233,9 +259,49 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
         settlePending(snapshot);
         return snapshot;
       }),
-    confirmReview: async (taskId, _digest, stepToken) => withStep(taskId, stepToken, (snapshot) => snapshot),
-    addPaymentScreenshot: unchanged,
-    removePaymentScreenshot: unchanged,
+    // 确认整单明细：摘要必须是快照里的那一份；确认后进入「去打印 / 去报销」阶段。
+    confirmReview: async (taskId, digest, stepToken) =>
+      withStep(taskId, stepToken, (snapshot) => {
+        if (snapshot.lines.length === 0) return { error: { code: 'no_lines', message: CONFIRM_REVIEW_ERRORS.noLines } };
+        if (snapshot.confirmation.digest !== digest) return { error: { code: 'digest_mismatch', message: CONFIRM_REVIEW_ERRORS.digestMismatch } };
+        snapshot.confirmation = { ...snapshot.confirmation, status: 'confirmed', confirmedAt: now(), notice: null };
+        snapshot.task.updatedAt = snapshot.confirmation.confirmedAt ?? snapshot.task.updatedAt;
+        snapshot.stage = 'actions';
+        snapshot.step = { kind: 'choose_action', stepToken: `tok-${taskId}-actions-${snapshot.inventory.versionId ?? 'v0'}` };
+        return snapshot;
+      }),
+    // 确认后追加材料：整单明细确认失效、打印稿作废，回到上传阶段。ERP 已开始写入的任务不能再动材料。
+    reopenUpload: async (taskId, stepToken) =>
+      withStep(taskId, stepToken, (snapshot) => {
+        if (snapshot.erp.status !== 'idle') return { error: { code: 'erp_started', message: REOPEN_UPLOAD_ERRORS.erpStarted } };
+        invalidateForMaterialChange(snapshot);
+        snapshot.task.updatedAt = now();
+        return snapshot;
+      }),
+    // 支付截图：只接受图片；每张住宿发票至多一张，再补即替换。只进 paymentScreenshots，不碰确认状态与 step。
+    async addPaymentScreenshot(taskId, voucherMaterialId, file) {
+      const snapshot = clone(snapshotOf(taskId));
+      const line = snapshot.lines.find((candidate) => candidate.voucherMaterialId === voucherMaterialId);
+      if (!line || !line.acceptsPaymentScreenshot) {
+        return { ok: false, error: { code: 'screenshot_not_applicable', message: PAYMENT_SCREENSHOT_ERRORS.notApplicable }, snapshot: null };
+      }
+      if (!isImage(file)) return { ok: false, error: { code: 'not_image', message: PAYMENT_SCREENSHOT_ERRORS.notImage }, snapshot: null };
+      const screenshotId = `s${nextScreenshotNo}`;
+      nextScreenshotNo += 1;
+      snapshot.paymentScreenshots = snapshot.paymentScreenshots.filter((shot) => shot.voucherMaterialId !== voucherMaterialId);
+      snapshot.paymentScreenshots.push({ screenshotId, voucherMaterialId, fileName: file.name, url: objectUrl(file, screenshotId) });
+      snapshot.task.updatedAt = now();
+      return commit(snapshot);
+    },
+    async removePaymentScreenshot(taskId, screenshotId) {
+      const snapshot = clone(snapshotOf(taskId));
+      if (!snapshot.paymentScreenshots.some((shot) => shot.screenshotId === screenshotId)) {
+        return { ok: false, error: { code: 'screenshot_not_found', message: PAYMENT_SCREENSHOT_ERRORS.notFound }, snapshot: null };
+      }
+      snapshot.paymentScreenshots = snapshot.paymentScreenshots.filter((shot) => shot.screenshotId !== screenshotId);
+      snapshot.task.updatedAt = now();
+      return commit(snapshot);
+    },
     generatePrintSheet: unchanged,
     rotatePlacement: unchanged,
     cropPlacement: unchanged,
@@ -245,6 +311,19 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
     reconcile: unchanged,
     handOff: unchanged,
   };
+}
+
+// 图片判定按扩展名，其次按 MIME（无扩展名时）。
+function isImage(file: File): boolean {
+  const match = /\.([a-z0-9]+)$/i.exec(file.name);
+  if (match) return /^(jpe?g|png)$/i.test(match[1] ?? '');
+  return /^image\/(jpeg|png)$/.test(file.type);
+}
+
+// 浏览器里给截图一个可显示的对象 URL；jsdom 没有 createObjectURL，用占位地址。
+function objectUrl(file: File, screenshotId: string): string {
+  if (typeof URL.createObjectURL === 'function') return URL.createObjectURL(file);
+  return `mock:screenshot/${screenshotId}`;
 }
 
 export const MOCK_MAIN_TASK_ID = T1_ID;

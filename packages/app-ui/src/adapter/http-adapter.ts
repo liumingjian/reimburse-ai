@@ -80,6 +80,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     startInventory: (taskId, stepToken) => action(taskId, 'start-inventory', { stepToken }),
     answerPendingItem: (taskId, itemId, answer, stepToken) => action(taskId, 'answer-pending', { itemId, answer, stepToken }),
     confirmReview: (taskId, digest, stepToken) => action(taskId, 'confirm-review', { digest, stepToken }),
+    reopenUpload: (taskId, stepToken) => action(taskId, 'reopen-upload', { stepToken }),
     addPaymentScreenshot(taskId, voucherMaterialId, file) {
       const form = new FormData();
       form.append('voucherMaterialId', voucherMaterialId);

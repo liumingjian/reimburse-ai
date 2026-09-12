@@ -75,6 +75,10 @@ describe('契约 schema', () => {
     expect(review.lines.map((line) => line.grossAmount)).toEqual(['73.00', '3640.00', '26.69', '20.85', '21.65', '38.40', '32.00', '47.00', '73.00']);
     expect(review.lines[6]?.description).toBe('出租车 · 张江高科 → 漕河泾开发区');
     expect(review.lines.filter((line) => line.groupId === 'g3')).toHaveLength(3);
+    expect(review.lines.filter((line) => line.acceptsPaymentScreenshot).map((line) => line.no)).toEqual([2]);
+    expect(review.confirmation).toMatchObject({ status: 'unconfirmed', digest: 'digest-t1-v1', lineCount: 9, invoiceCount: 7, grossTotal: '3972.59' });
+    expect(t1Snapshot('actions').confirmation.status).toBe('confirmed');
+    expect(t1Snapshot('actions').step.kind).toBe('choose_action');
     expect(t1Snapshot('pending', true).pendingItems).toHaveLength(4);
   });
 

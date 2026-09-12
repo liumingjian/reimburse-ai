@@ -199,13 +199,22 @@ export const LineSchema = z.object({
   netAmount: AmountSchema,
   taxAmount: AmountSchema,
   fromPendingItemId: IdSchema.nullable(),
+  // 这张发票是否可以补充支付截图（住宿发票为 true）；由服务端按票种判定，页面只据此显示入口。
+  acceptsPaymentScreenshot: z.boolean(),
 });
 export type Line = z.infer<typeof LineSchema>;
 
 // ---- 整单明细确认 ----
 
+// 确认失效语义（内核 §2.6）：追加或删除材料形成新的盘点版本，旧确认与已生成的打印稿作废，状态记为 invalidated，
+// 直到用户重新核对并确认。支付截图、打印稿的旋转与裁剪、项目归属都不进摘要，不使确认失效。
+export const CONFIRMATION_STATUSES = ['unconfirmed', 'confirmed', 'invalidated'] as const;
+
+// 失效提示由服务端成句；这是标准文案，服务端与 mock 共用。
+export const REVIEW_INVALIDATED_NOTICE = '材料已变更，之前的整单明细确认与已生成的打印稿作废。请重新核对后再确认。';
+
 export const ConfirmationSchema = z.object({
-  status: z.enum(['unconfirmed', 'confirmed', 'invalidated']),
+  status: z.enum(CONFIRMATION_STATUSES),
   confirmedAt: DateTimeSchema.nullable(),
   // 确认所绑定的摘要；确认动作回传它，服务端据此判断用户点头的是不是这一份。
   digest: z.string().nullable(),
@@ -218,6 +227,15 @@ export const ConfirmationSchema = z.object({
 export type Confirmation = z.infer<typeof ConfirmationSchema>;
 
 // ---- 支付截图与打印稿 ----
+
+// 支付截图只接受图片（JPG、PNG），只进打印稿，不改变整单明细确认。每张发票至多一张，再补即替换。
+export const PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE = '.jpg,.jpeg,.png,image/jpeg,image/png';
+
+export const PAYMENT_SCREENSHOT_ERRORS = {
+  notImage: '只接受图片（JPG、PNG）。',
+  notApplicable: '这张发票不需要支付截图。',
+  notFound: '这张支付截图已经不存在。',
+} as const;
 
 export const PaymentScreenshotSchema = z.object({
   screenshotId: IdSchema,

@@ -99,6 +99,17 @@ export function normalizePendingAnswer(item: Pick<PendingItem, 'kind' | 'fields'
   return out;
 }
 
+// 确认整单明细：动作回传快照里的 confirmation.digest 与 stepToken，服务端据此判断用户点头的是不是这一份。
+export const CONFIRM_REVIEW_ERRORS = {
+  digestMismatch: '候选明细已更新，请重新核对后再确认。',
+  noLines: '还没有候选明细，不能确认。',
+} as const;
+
+// 追加材料（确认后）：任务回到上传阶段接收新批次；已有的整单明细确认失效，已生成的打印稿作废。
+export const REOPEN_UPLOAD_ERRORS = {
+  erpStarted: '已开始 ERP 填报，不能再追加材料。',
+} as const;
+
 export const ProjectAssignmentInputSchema = z.object({
   purpose: z.string().trim().min(1).max(100),
   projects: z.record(IdSchema, z.string().min(1)),
@@ -120,6 +131,7 @@ export const ACTION_NAMES = [
   'start-inventory',
   'answer-pending',
   'confirm-review',
+  'reopen-upload',
   'remove-payment-screenshot',
   'generate-print-sheet',
   'rotate-placement',

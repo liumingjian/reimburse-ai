@@ -28,6 +28,9 @@ export interface AppAdapter {
   startInventory(taskId: string, stepToken: string): Promise<ActionOutcome>;
   answerPendingItem(taskId: string, itemId: string, answer: PendingAnswer, stepToken: string): Promise<ActionOutcome>;
   confirmReview(taskId: string, digest: string, stepToken: string): Promise<ActionOutcome>;
+  // 确认后追加材料：先经页面二次确认，再请服务端使整单明细确认失效并回到上传阶段。
+  reopenUpload(taskId: string, stepToken: string): Promise<ActionOutcome>;
+  // 支付截图只进打印稿，不带 stepToken、不改变确认状态。
   addPaymentScreenshot(taskId: string, voucherMaterialId: string, file: File): Promise<ActionOutcome>;
   removePaymentScreenshot(taskId: string, screenshotId: string): Promise<ActionOutcome>;
   generatePrintSheet(taskId: string): Promise<ActionOutcome>;

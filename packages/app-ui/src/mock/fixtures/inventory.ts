@@ -512,6 +512,8 @@ export function buildLines(result: InventoryResult): Line[] {
       netAmount: facts.net,
       taxAmount: facts.tax,
       fromPendingItemId: pendingItem?.itemId ?? null,
+      // 住宿发票可以补充支付截图（打印稿住宿页下半页分栏放结账单与截图）。
+      acceptsPaymentScreenshot: event.category.code === 'accommodation',
     };
   });
 }

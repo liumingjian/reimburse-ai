@@ -1,0 +1,64 @@
+import { useEffect, useId, useRef, type ReactNode } from 'react';
+
+// 页内二次确认弹层：遮罩用 overlay token，不用 window.confirm。Esc、点遮罩、「取消」都关闭；打开时焦点落到取消按钮。
+
+export function ConfirmDialog({
+  title,
+  children,
+  confirmLabel,
+  cancelLabel = '取消',
+  busy = false,
+  error = null,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  children: ReactNode;
+  confirmLabel: string;
+  cancelLabel?: string;
+  busy?: boolean;
+  error?: string | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const titleId = useId();
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    cancelRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onCancel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
+  return (
+    <div className="modal-scrim" onClick={onCancel} data-testid="modal-scrim">
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={(event) => event.stopPropagation()}>
+        <h2 id={titleId}>{title}</h2>
+        <div className="modal-body">{children}</div>
+        {error ? (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <div className="btn-row">
+          <button ref={cancelRef} className="btn btn-secondary" type="button" disabled={busy} onClick={onCancel}>
+            {cancelLabel}
+          </button>
+          <button className="btn btn-primary" type="button" disabled={busy} onClick={onConfirm}>
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 「追加材料」的二次确认：文案在两个入口（整单明细确认页、上传页）共用。
+export const REOPEN_DIALOG = {
+  title: '追加材料会形成新的盘点版本',
+  body: '追加材料将使整单明细确认失效：已有的盘点结果和待确认项答复要重新形成，已生成的打印稿作废。继续后回到上传页追加新批次。',
+  confirm: '继续追加',
+} as const;
