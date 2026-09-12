@@ -16,6 +16,8 @@ export type ProjectBookService = Pick<AppAdapter, 'getProjectBook' | 'intakeProj
   allowList(): ProjectOption[];
   // 打开时按当前项目簿整理夹具任务（允许列表、`?book=empty` 下项目归属的维护门）。
   prepareSeed(taskId: string): void;
+  // 完全重置：项目簿清空（不改已有快照，它们随任务一起从列表中移除）。
+  reset(): void;
 };
 
 const EMPTY_BOOK: ProjectBook = { projects: [] };
@@ -66,6 +68,9 @@ export function createProjectBook(options: MockOptions, bus: MockBus, startup: M
 
   return {
     allowList,
+    reset() {
+      projects = [];
+    },
     prepareSeed(taskId) {
       const snapshot = bus.draft(taskId);
       // `?book=empty`：预置归属引用的项目不在项目簿里，去掉，让项目归属先走维护门。

@@ -2,7 +2,8 @@ import { stageReached, type TaskStage } from '../../contract/stage';
 import type { Inventory, Material, TaskSnapshot, UploadBatch, UploadFileResult } from '../../contract/snapshot';
 import type { Employee, TaskListItem } from '../../contract/task-list';
 import { HOME_CITY, SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, confirmationDigest, projectAssignmentOpen, projectAssignmentSubmitted, withLineProjects, withProjectUsage } from './projects';
-import { T2_ROWS, applyAbortAtSave, applyErpDone, emptyReadback, erpWaitingLogin, mismatchReason, readbackOf } from './erp';
+import { ABANDON_TASK_COPY } from '../../contract/actions';
+import { T2_ROWS, applyAbortAtSave, applyErpDone, emptyReadback, emptyReconcile, erpWaitingLogin, readbackOf, reconcileVerdict } from './erp';
 import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult, openPendingItemCount, withInventoryProjection } from './inventory';
 import { catalogMatched, catalogPending, catalogRunning, packageFilesOf, preparationPending } from './preparation';
 
@@ -147,7 +148,7 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     preparation: preparationPending(),
     erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null },
     readback: emptyReadback(),
-    reconcile: { status: 'none', bucket: null, action: null, actionCode: null, banner: null, draftNo: null, rows: [], reasons: [] },
+    reconcile: emptyReconcile(),
     step: { kind: STEP_BY_STAGE[stage], stepToken: `tok-${task.taskId}-${stage}` },
   };
 }
@@ -237,15 +238,14 @@ export function t2Snapshot(): TaskSnapshot {
   snapshot.preparation = { status: 'ready', problems: [], packageFiles: [] };
   snapshot.erp = { status: 'aborted', steps: [], draftNo: T2_DRAFT_NO, abortReason: '保存草稿后回读超时，写入结果不确定。', loginNotice: null };
   snapshot.readback = readbackOf(T2_ROWS);
+  // 已保存但严格逐行不一致 ⇒ 转人工（human_review），只允许转人工。
   snapshot.reconcile = {
     status: 'pending',
-    bucket: '已保存',
-    action: '转人工',
-    actionCode: 'hand_off',
-    banner: `ERP 中存在草稿 ${T2_DRAFT_NO}，5 行明细中 4 行一致，1 行金额不一致。`,
+    ...reconcileVerdict('已保存', false),
+    banner: `报销系统中存在草稿 ${T2_DRAFT_NO}，5 行明细中 4 行一致，1 行不一致。`,
     draftNo: T2_DRAFT_NO,
     rows: [...T2_ROWS],
-    reasons: [mismatchReason(3)],
+    reasons: [],
   };
   return withProjectUsage(withInventoryProjection(snapshot));
 }
@@ -287,6 +287,12 @@ function erpOutcomeOf(snapshot: TaskSnapshot): TaskListItem['erpOutcome'] {
   return 'none';
 }
 
+// 能否作废（内核 abandonTask）：一旦开始写入报销系统（含写入结果不确定、已完成），就不能作废。
+function abandonOf(snapshot: TaskSnapshot): Pick<TaskListItem, 'abandonable' | 'abandonBlockedReason'> {
+  const started = snapshot.erp.status !== 'idle' || stageReached(snapshot.stage, 'erp');
+  return started ? { abandonable: false, abandonBlockedReason: ABANDON_TASK_COPY.blockedReason } : { abandonable: true, abandonBlockedReason: null };
+}
+
 // 任务列表的一行由快照投影而来：mock 服务端负责，页面不做这件事。
 export function toListItem(snapshot: TaskSnapshot): TaskListItem {
   const draftNo = snapshot.erp.draftNo ?? snapshot.reconcile.draftNo;
@@ -299,6 +305,7 @@ export function toListItem(snapshot: TaskSnapshot): TaskListItem {
     erpDraftNo: draftNo,
     pendingCount: openPendingItemCount(snapshot.pendingItems),
     erpOutcome: erpOutcomeOf(snapshot),
+    ...abandonOf(snapshot),
     updatedAt: snapshot.task.updatedAt,
   };
 }

@@ -140,20 +140,43 @@ export function normalizePendingAnswer(item: Pick<PendingItem, 'kind' | 'fields'
 
 // 确认整单明细：动作回传快照里的 confirmation.digest 与 stepToken，服务端据此判断用户点头的是不是这一份。
 export const CONFIRM_REVIEW_ERRORS = {
-  digestMismatch: '候选明细已更新，请重新核对后再确认。',
-  noLines: '还没有候选明细，不能确认。',
+  digestMismatch: '整单明细已更新，请重新核对后再确认。',
+  noLines: '还没有明细，不能确认。',
 } as const;
 
 // 追加材料（确认后）：任务回到上传阶段接收新批次；已有的整单明细确认失效，已生成的打印稿作废。
 export const REOPEN_UPLOAD_ERRORS = {
-  erpStarted: '已开始 ERP 填报，不能再追加材料。',
+  erpStarted: '已开始写入报销系统，不能再追加材料。',
 } as const;
 
-// ERP 填报与对账动作的错误：当前 step 不接受这个动作时服务端的回答（stepToken 过期仍走 stale_step）。
+// 写入报销系统与对账动作的错误：当前 step 不接受这个动作时服务端的回答（stepToken 过期仍走 stale_step）。
+// notAllowed：对账结果不允许这个处置（页面只渲染 allowedActions，服务端仍然再核一次）。
 export const ERP_ACTION_ERRORS = {
   notReady: '现在还不能去报销，请先完成整单明细确认。',
   notWaitingLogin: '现在没有在等待登录。',
   notReconciling: '这个任务现在不在对账中。',
+  notAllowed: '当前对账结果不允许这个处置。',
+} as const;
+
+// 任务作废（任务之外的生命周期操作，内核 abandon-task）：只允许还没开始写入报销系统的任务；
+// 作废是状态变更不是删除，任务从列表中移除，材料与记录保留在本机，它占用的发票可以在别的任务里使用。
+export const ABANDON_TASK_COPY = {
+  // 已开始写入报销系统（含写入结果不确定）的任务不能作废：它占用的发票要靠只读对账解除（内核 workspace.mjs abandonTask）。
+  blockedReason: '已开始写入报销系统，不能作废：它占用的发票要靠对账解除。',
+  notFound: '没有这个报销任务，列表可能已经变了。',
+  dialogTitle: '作废这个报销任务？',
+  dialogBody: '作废后任务从列表中移除，材料与记录保留在本机，它占用的发票可以在别的任务里使用。作废不能撤销。',
+  confirm: '作废',
+} as const;
+
+// 完全重置（设置页，内核 reset）：清空本机数据后回到启动页。报销系统里已保存的草稿不受影响。
+export const RESET_COPY = {
+  title: '完全重置',
+  body: '清空本机的全部报销任务、材料、个人项目簿、已登记的报销人身份和常驻城市，回到启动页重新登录报销系统。报销系统里已保存的草稿不受影响。',
+  button: '完全重置',
+  dialogTitle: '清空本机全部数据？',
+  dialogBody: '本机的报销任务、材料、个人项目簿、报销人身份登记和常驻城市都会被清空，不能撤销。',
+  confirm: '清空并重置',
 } as const;
 
 // 项目归属：文案照内核 selection.mjs / project-workbench.mjs。页面只拦「未填完」，项目是否可用由服务端判定。
@@ -165,7 +188,7 @@ export const PROJECT_ASSIGNMENT_ERRORS = {
   lineUnassigned: (no: number) => `明细 No.${no} 还没有选项目`,
   projectNotAllowed: (no: number, number: string) => `明细 No.${no} 的项目 ${number} 不在当前本人项目簿可选集合中；要用它请先在维护页重新核验`,
   unknownLine: (lineId: string) => `提交里出现了不存在的明细 ${lineId}，这批明细可能已经变了`,
-  notReady: '现在不能提交项目归属：请先处理完待确认项；已开始 ERP 填报的任务不能再改派。',
+  notReady: '现在不能提交项目归属：请先处理完待确认项；已开始写入报销系统的任务不能再改派。',
   bookEmpty: '当前个人项目簿没有可选项目；先维护本人项目簿，再回来做任务选择',
   // 「归入」动作：新的归属只能用当前可选项目（已删除或失效的项目，已归入的明细可以沿用，但不能再归入新的明细）。
   projectNotSelectable: (number: string) => `项目 ${number} 不在当前本人项目簿可选集合中，不能归入新的明细；要用它请先在维护页重新核验`,

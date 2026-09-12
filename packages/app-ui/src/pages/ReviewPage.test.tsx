@@ -91,7 +91,7 @@ describe('整单明细确认', () => {
     expect(await screen.findByRole('heading', { name: '打印稿预览' })).toBeTruthy();
     window.location.hash = '#/task/T1/review';
     fireEvent.click(await screen.findByRole('button', { name: '去报销' }));
-    expect(await screen.findByRole('heading', { name: 'ERP 填报' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: '保存报销草稿' })).toBeTruthy();
     expect(window.location.hash).toBe('#/task/T1/erp');
     expect(screen.queryByRole('button', { name: '开始填报' })).toBeNull();
     snapshot = await adapter.getSnapshot('T1');

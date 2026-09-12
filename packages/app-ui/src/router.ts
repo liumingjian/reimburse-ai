@@ -8,6 +8,7 @@ export type Route =
   | { kind: 'tasks' }
   | { kind: 'new' }
   | { kind: 'projects' }
+  | { kind: 'settings' }
   | { kind: 'task'; taskId: string; page: TaskPage | null }
   | { kind: 'redirect'; to: string };
 
@@ -15,6 +16,8 @@ export const TASKS_HASH = '#/tasks';
 export const NEW_TASK_HASH = '#/tasks/new';
 // 个人项目簿：任务之外的全局页面，随时可进。
 export const PROJECTS_HASH = '#/projects';
+// 设置（完全重置）：全局页面。
+export const SETTINGS_HASH = '#/settings';
 
 export function taskHash(taskId: string, page: TaskPage): string {
   return `#/task/${encodeURIComponent(taskId)}/${page}`;
@@ -27,6 +30,7 @@ export function parseHash(hash: string): Route {
   if (head === 'tasks' && parts.length === 1) return { kind: 'tasks' };
   if (head === 'tasks' && second === 'new' && parts.length === 2) return { kind: 'new' };
   if (head === 'projects' && parts.length === 1) return { kind: 'projects' };
+  if (head === 'settings' && parts.length === 1) return { kind: 'settings' };
   if (head === 'task' && second && parts.length === 2) return { kind: 'task', taskId: second, page: null };
   if (head === 'task' && second && third && parts.length === 3 && isTaskPage(third)) {
     return { kind: 'task', taskId: second, page: third };

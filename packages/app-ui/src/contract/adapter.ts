@@ -8,6 +8,9 @@ export type StartupOutcome =
   | { ok: true; taskList: TaskList }
   | { ok: false; error: ActionError; taskList: TaskList | null };
 
+// 任务之外、返回整份任务列表的动作（启动、作废任务、完全重置）共用这个结果形状。
+export type TaskListOutcome = StartupOutcome;
+
 // 个人项目簿维护动作的结果：服务端处理了请求就是 ok（结果状态可能是 rejected 等没做成的，原因在 result.note）；
 // 请求本身失败（服务没响应、格式不符）才是 !ok，book 是服务端附带的最新项目簿（可能为 null）。
 export type ProjectBookOutcome =
@@ -49,6 +52,10 @@ export interface AppAdapter {
   recheckErpSession(): Promise<StartupOutcome>;
   // 启动：登记当前登录身份（只能确认，不能改）。
   confirmIdentity(input: ConfirmIdentityInput): Promise<StartupOutcome>;
+  // 作废任务：服务端判定能否作废（已开始写入报销系统的不能），成功返回不再含这个任务的任务列表。
+  abandonTask(taskId: string): Promise<TaskListOutcome>;
+  // 完全重置：清空本机数据（任务、项目簿、身份登记、常驻城市），返回重置后的任务列表（未登录，页面回到启动页）。
+  resetAll(): Promise<TaskListOutcome>;
   // 个人项目簿（任务之外，按当前登录身份分簿）：读取、录入（只给项目号，服务端核验后带回名称）、删除、清理全部失效、复检全部。
   // 每个动作服务端都重新核对当前登录身份；动作后受影响任务的项目允许列表随事件流更新。
   getProjectBook(): Promise<ProjectBook>;

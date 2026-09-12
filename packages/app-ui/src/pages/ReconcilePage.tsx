@@ -1,18 +1,18 @@
 import type { ActionOutcome, AppAdapter } from '../contract/adapter';
-import type { Reconcile, TaskSnapshot } from '../contract/snapshot';
+import { HUMAN_REVIEW_NOTICE, type Reconcile, type TaskSnapshot } from '../contract/snapshot';
 import { TASKS_HASH, navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 import { ReadbackTable } from './ReadbackTable';
 
-// ERP 对账页：写入中止后停在这里。显示中止原因、当前对账状态（对账中断点、建议处置、草稿号）与逐行比对，
-// 处置只有两种：重新对账（只读 ERP 再判定一次）或转人工。结论全部来自服务端；页面不重试写入、不改 ERP。
-// 服务端建议的处置（actionCode）用选中样式标出，不用主按钮。
+// 对账页：写入中止后停在这里。显示中止原因、当前对账状态（对账中断点、建议处置、草稿号）与逐行比对。
+// 处置只渲染服务端允许的那些（reconcile.allowedActions）：原地等待 = 重新对账（只读报销系统再判定一次）；转人工 = 终止后续写入。
+// 对账结果是转人工（humanReview）时显示固定句，且没有「重新对账」。结论全部来自服务端；页面不重试写入、不改报销系统。
 
 const STATUS_LABEL: Readonly<Record<Reconcile['status'], string>> = {
   none: '无',
-  pending: '等待你选择处置',
+  pending: '等待你处置',
   waiting: '原地等待',
   handed_off: '已转人工',
 };
@@ -23,6 +23,8 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
   const { erp, reconcile, step } = snapshot;
   const handedOff = reconcile.status === 'handed_off';
   const canAct = step.kind === 'reconcile';
+  const allowWait = reconcile.allowedActions.includes('wait');
+  const allowHandOff = reconcile.allowedActions.includes('hand_off');
   const { busy, error, run } = useAction(taskId);
 
   const act = async (action: (adapter: AppAdapter) => Promise<ActionOutcome>) => {
@@ -53,6 +55,11 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
 
       <section className="panel" aria-label="当前对账状态">
         <h2>当前对账状态</h2>
+        {reconcile.humanReview ? (
+          <div className="notice notice-warn" role="status" data-testid="human-review">
+            {HUMAN_REVIEW_NOTICE}
+          </div>
+        ) : null}
         {reconcile.banner ? (
           <div className={handedOff ? 'notice notice-info' : 'notice notice-warn'} role="status">
             {reconcile.banner}
@@ -65,14 +72,14 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
           </div>
           <div className="kv-row">
             <dt>对账中断点</dt>
-            <dd>{reconcile.bucket ?? '尚未判定'}</dd>
+            <dd data-testid="reconcile-bucket">{reconcile.bucket ?? '尚未判定'}</dd>
           </div>
           <div className="kv-row">
             <dt>建议处置</dt>
             <dd>{reconcile.action ?? '尚未判定'}</dd>
           </div>
           <div className="kv-row">
-            <dt>ERP 草稿</dt>
+            <dt>草稿号</dt>
             <dd className="mono">{reconcile.draftNo ?? '尚未读到草稿'}</dd>
           </div>
         </dl>
@@ -90,40 +97,32 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
           <ReadbackTable label="逐行比对" rows={reconcile.rows} localTotal={snapshot.readback.localTotal} erpTotal={snapshot.readback.erpTotal} />
         </section>
       ) : (
-        <p className="caption">还没有读到可以逐行比对的 ERP 明细。</p>
+        <p className="caption">还没有读到可以逐行比对的报销系统明细。</p>
       )}
 
-      {handedOff ? null : (
+      {handedOff || (!allowWait && !allowHandOff) ? null : (
         <section className="panel" aria-label="处置">
           <h2>处置</h2>
-          <p className="lead">只有两种：原地等待，或转人工。应用不会自动改写 ERP 里的行，也不会重试写入。</p>
+          <p className="lead">只给出当前对账结果允许的处置。应用不会自动改写报销系统里的行，也不会重试写入。</p>
           <div className="two-actions">
-            <div className="action-card">
-              <h3>原地等待</h3>
-              <p>你在 ERP 中查看或修正后，点重新对账。应用只读 ERP，不写入。</p>
-              <button
-                className="btn btn-secondary btn-toggle"
-                type="button"
-                aria-pressed={reconcile.actionCode === 'wait'}
-                disabled={busy || !canAct}
-                onClick={() => void act((adapter) => adapter.reconcile(taskId, step.stepToken))}
-              >
-                重新对账
-              </button>
-            </div>
-            <div className="action-card">
-              <h3>转人工</h3>
-              <p>任务标记为人工处理，保留对账记录，之后不再自动写入 ERP。</p>
-              <button
-                className="btn btn-secondary btn-toggle"
-                type="button"
-                aria-pressed={reconcile.actionCode === 'hand_off'}
-                disabled={busy || !canAct}
-                onClick={() => void act((adapter) => adapter.handOff(taskId, step.stepToken))}
-              >
-                转人工
-              </button>
-            </div>
+            {allowWait ? (
+              <div className="action-card">
+                <h3>原地等待</h3>
+                <p>你在报销系统中查看后，点重新对账。应用只读报销系统，不写入。</p>
+                <button className="btn btn-primary" type="button" disabled={busy || !canAct} onClick={() => void act((adapter) => adapter.reconcile(taskId, step.stepToken))}>
+                  重新对账
+                </button>
+              </div>
+            ) : null}
+            {allowHandOff ? (
+              <div className="action-card">
+                <h3>转人工</h3>
+                <p>任务标记为人工处理，保留对账记录，之后不再自动写入报销系统。</p>
+                <button className="btn btn-primary" type="button" disabled={busy || !canAct} onClick={() => void act((adapter) => adapter.handOff(taskId, step.stepToken))}>
+                  转人工
+                </button>
+              </div>
+            ) : null}
           </div>
           <ActionError message={error} />
         </section>

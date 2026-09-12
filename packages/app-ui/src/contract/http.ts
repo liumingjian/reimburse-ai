@@ -29,6 +29,9 @@ export const HTTP_ENDPOINTS = {
   // 启动动作不属于任何任务：成功 200 返回整份任务列表，失败 { error, taskList? }。
   recheckErpSession: { method: 'POST', path: '/api/startup/recheck-erp-session', body: 'json', fields: [] },
   confirmIdentity: { method: 'POST', path: '/api/startup/confirm-identity', body: 'json', fields: ['account', 'tenant'] },
+  // 作废任务与完全重置也返回整份任务列表（失败 { error, taskList? }），不是任务动作，不带 stepToken。
+  abandonTask: { method: 'POST', path: '/api/tasks/:id/abandon', body: 'json', fields: [] },
+  resetAll: { method: 'POST', path: '/api/reset', body: 'json', fields: [] },
   // 个人项目簿不属于任何任务：GET 返回 ProjectBook；维护动作处理了就 200 返回 ProjectBookResult（含没做成的状态与原因），
   // 请求本身失败 { error, book? }。
   getProjectBook: { method: 'GET', path: '/api/project-book', body: 'none', fields: [] },

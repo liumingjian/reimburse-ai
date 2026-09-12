@@ -1,17 +1,20 @@
-import { useCallback, useEffect, type MouseEvent } from 'react';
+import { useCallback, useEffect, useState, type MouseEvent } from 'react';
 import { useAppStore, useTaskList } from '../adapter/context';
-import { STAGE_DEFAULT_PAGE, TASK_STAGE_LABELS } from '../contract/stage';
+import { ABANDON_TASK_COPY } from '../contract/actions';
+import { RECONCILE_STATUS_LABEL, STAGE_DEFAULT_PAGE, TASK_STAGE_LABELS } from '../contract/stage';
 import { TASK_ERP_OUTCOME_LABELS, type TaskListItem } from '../contract/task-list';
 import { formatDateTime, formatPeriod } from '../format';
 import { NEW_TASK_HASH, TASKS_HASH, navigate, taskHash } from '../router';
 import { AppShell } from '../shell/AppShell';
+import { ConfirmDialog } from '../shell/Dialog';
 import { NewTaskDialog } from './NewTaskDialog';
 
-// 徽标：服务端给出的 ERP 结局（已转人工 / 回读不一致）优先于阶段名。
+// 徽标：服务端给出的写入结局（已转人工 / 回读不一致）优先，其次是对账中；其余显示内核 10 阶段名（「N/10 阶段名」）。
 function Badge({ task }: { task: TaskListItem }) {
   if (task.erpOutcome === 'handed_off') return <span className="badge badge-warn">{TASK_ERP_OUTCOME_LABELS.handed_off}</span>;
   if (task.erpOutcome === 'readback_mismatch') return <span className="badge badge-err">{TASK_ERP_OUTCOME_LABELS.readback_mismatch}</span>;
-  const className = task.stage === 'done' ? 'badge badge-ok' : task.stage === 'reconcile' ? 'badge badge-warn' : 'badge badge-primary';
+  if (task.stage === 'reconcile') return <span className="badge badge-warn">{RECONCILE_STATUS_LABEL}</span>;
+  const className = task.stage === 'done' ? 'badge badge-ok' : 'badge badge-primary';
   return <span className={className}>{TASK_STAGE_LABELS[task.stage]}</span>;
 }
 
@@ -21,12 +24,36 @@ function continueLabel(task: TaskListItem): string | null {
   return '继续 →';
 }
 
-function TaskRow({ task }: { task: TaskListItem }) {
+// 任务菜单里的「作废」：能否作废由服务端判定；不能时按钮不可用，并照抄服务端给出的原因。
+function AbandonControl({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: TaskListItem) => void }) {
+  const reasonId = `abandon-reason-${task.taskId}`;
+  return (
+    <div className="abandon">
+      <button
+        className="btn btn-tertiary"
+        type="button"
+        aria-label={`作废 ${task.name}`}
+        disabled={!task.abandonable}
+        aria-describedby={task.abandonable ? undefined : reasonId}
+        onClick={() => onAbandon(task)}
+      >
+        作废
+      </button>
+      {task.abandonable ? null : (
+        <span className="caption" id={reasonId}>
+          {task.abandonBlockedReason ?? ABANDON_TASK_COPY.blockedReason}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function TaskRow({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: TaskListItem) => void }) {
   const href = taskHash(task.taskId, STAGE_DEFAULT_PAGE[task.stage]);
   const label = continueLabel(task);
   const onRowClick = (event: MouseEvent<HTMLTableRowElement>) => {
     if (!label) return;
-    if ((event.target as HTMLElement).closest('a')) return;
+    if ((event.target as HTMLElement).closest('a, button, .abandon')) return;
     navigate(href);
   };
   return (
@@ -40,6 +67,9 @@ function TaskRow({ task }: { task: TaskListItem }) {
       <td className="mono">{task.erpDraftNo ?? <span className="muted">尚无</span>}</td>
       <td className="muted mono">{formatDateTime(task.updatedAt)}</td>
       <td>{label ? <a href={href}>{label}</a> : null}</td>
+      <td>
+        <AbandonControl task={task} onAbandon={onAbandon} />
+      </td>
     </tr>
   );
 }
@@ -49,10 +79,28 @@ export function TaskListPage({ newTask }: { newTask: boolean }) {
   const store = useAppStore();
   const taskList = useTaskList();
   const closeNewTask = useCallback(() => navigate(TASKS_HASH), []);
+  const [abandoning, setAbandoning] = useState<TaskListItem | null>(null);
+  const [abandonBusy, setAbandonBusy] = useState(false);
+  const [abandonError, setAbandonError] = useState<string | null>(null);
+  const closeAbandon = useCallback(() => {
+    setAbandoning(null);
+    setAbandonError(null);
+  }, []);
   // 每次回到任务列表都向服务端重新要一次：任务可能在任务页里推进过（如转人工），列表行要跟上服务端。
   useEffect(() => {
     void store.loadTaskList();
   }, [store]);
+
+  // 作废：服务端再核一次能否作废；成功后换上服务端给出的新列表（这个任务不在其中）。
+  const abandon = async (task: TaskListItem) => {
+    setAbandonBusy(true);
+    setAbandonError(null);
+    const outcome = await store.startup((adapter) => adapter.abandonTask(task.taskId));
+    setAbandonBusy(false);
+    if (outcome.ok) setAbandoning(null);
+    else setAbandonError(outcome.error.message);
+  };
+
   return (
     <AppShell nav="tasks">
       <div className="page-head">
@@ -89,14 +137,15 @@ export function TaskListPage({ newTask }: { newTask: boolean }) {
                   <th>费用期间</th>
                   <th>状态</th>
                   <th className="num">价税合计</th>
-                  <th>ERP 草稿</th>
+                  <th>草稿号</th>
                   <th>更新</th>
                   <th />
+                  <th>任务菜单</th>
                 </tr>
               </thead>
               <tbody>
                 {taskList.data.tasks.map((task) => (
-                  <TaskRow key={task.taskId} task={task} />
+                  <TaskRow key={task.taskId} task={task} onAbandon={setAbandoning} />
                 ))}
               </tbody>
             </table>
@@ -106,6 +155,20 @@ export function TaskListPage({ newTask }: { newTask: boolean }) {
         )}
       </section>
       {newTask ? <NewTaskDialog taskList={taskList.data} onClose={closeNewTask} /> : null}
+      {abandoning ? (
+        <ConfirmDialog
+          title={ABANDON_TASK_COPY.dialogTitle}
+          confirmLabel={ABANDON_TASK_COPY.confirm}
+          busy={abandonBusy}
+          error={abandonError}
+          onConfirm={() => void abandon(abandoning)}
+          onCancel={closeAbandon}
+        >
+          <p>
+            「{abandoning.name}」{ABANDON_TASK_COPY.dialogBody}
+          </p>
+        </ConfirmDialog>
+      ) : null}
     </AppShell>
   );
 }

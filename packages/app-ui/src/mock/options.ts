@@ -25,6 +25,7 @@ export type IdentityOption = (typeof IDENTITY_OPTIONS)[number];
 export type MockStorage = {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+  removeItem?(key: string): void;
 };
 
 export type MockOptions = {

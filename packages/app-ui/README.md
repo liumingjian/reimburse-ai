@@ -1,6 +1,7 @@
 # @baox/app-ui
 
-本地报销应用的前端模块：新建报销任务、上传材料、材料盘点、待确认项、项目归属、整单明细确认、打印稿预览、ERP 填报、完成与对账。
+本地报销应用的前端模块：新建报销任务、上传材料、材料盘点、待确认项、项目归属、整单明细确认、打印稿预览、保存报销草稿（写入报销系统）、完成与对账，以及全局的个人项目簿与设置（完全重置）。
+员工可见文案遵守内核禁用词（`FORBIDDEN_USER_TERMS`）：界面写「报销系统」不写 ERP，不说「候选」，阶段名用内核 10 阶段。
 流程顺序照 Skill 的实际运行顺序：待确认项 → 项目归属（含报销事由）→ 报销信息核对 → 报销材料准备 → 唯一一次整单明细确认 → 去打印 / 去报销。
 Vite 7 + React 19 + TypeScript，只支持 Chrome，只做 zh-CN。视觉唯一来源是本目录的 [`DESIGN.md`](./DESIGN.md)。
 
@@ -70,7 +71,7 @@ mock 的项目簿只在内存里（刷新后回到夹具）。默认 6 条：P-2
   处理完进入项目归属（为每条明细选项目并填写报销事由）；提交后服务端自动核对报销信息、准备报销材料（mock 各约 0.6 s，进度文案照内核话术），
   再进入唯一一次整单明细确认；确认页表下是材料包文件清单（示例材料共 13 份：7 张发票、3 份参考材料、detail.json、detail.md、manifest.json）。确认后「去打印」进入打印稿预览；「去报销」直接启动浏览器，登录后自动写入，没有「开始填报」。
   mock 按业务文件名或示例原件文件名（`m01-hotel-invoice.pdf` 等）识别材料；其他文件成为「不支持的材料类型」待确认项。
-- 统一业务序号（整单确认表 No.、打印稿页序、ERP 明细行与回读表）由服务端给出，跟随内核确认表的分类排序：本地市内交通 → 外地市内交通 → 长途交通 → 住宿，
+- 统一业务序号（整单确认表 No.、打印稿页序、报销系统明细行与回读表）由服务端给出，跟随内核确认表的分类排序：本地市内交通 → 外地市内交通 → 长途交通 → 住宿，
   同一分类内按事件顺序。示例材料得到 No.1-3 高德、No.4 曹操、No.5-6 出租车、No.7-8 铁路、No.9 住宿，合计 3972.59。
 - 整单确认表照内核 `preparationConfirmationTable`：No. 加 13 列（发票 | 项目号 | 起始日期 | 结束日期 | 住宿地/城市 | 出发点 | 目的地 | 费用分类 | 费用项目 | 发票类型 | 费用金额 | 税额 | 总额，
   列名常量 `CONFIRMATION_TABLE_COLUMNS`），无组标题、无合计行，不展示文件名与参考材料，表下注明材料包文件数。只能「确认」，有不对的地方回到对应步骤修改。
@@ -93,17 +94,31 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 | `actions` | 整单明细已确认，出现「去打印」「去报销」 |
 | `print` | 同 `actions`，且打印稿已生成（打开 `#/task/T1/print`） |
 | `erp` | 已点「去报销」：浏览器已启动、等待登录；点「我已登录，继续」后自动写入 |
-| `done` | 草稿 BX20260911-0173，回读 9/9 一致 |
-| `reconcile` | 保存步中止后的对账（原地等待） |
+| `done` | 草稿 BX20260911-0173，回读 9/9 一致，完成页显示固定句「报销草稿已保存。请打开报销系统检查，是否提交由你决定。」 |
+| `reconcile` | 保存步中止后的对账（对账中断点「未知」，原地等待：只有「重新对账」） |
 
 | `?fault=` | 表现 |
 | --- | --- |
 | `duplicate-upload` | 第二批起第一份可接收的文件被拒绝为「内容重复」 |
 | `unsupported-material` | 盘点多出一个待确认项：`曹操出行_行程单.pdf` 版式不支持 |
 | `erp-login-missing` | 「我已登录，继续」前两次提示「还没有检测到登录」，第三次通过；不会自动探测到登录 |
-| `erp-write-aborted` | 保存步中止，进入对账（对账中断点未知，建议原地等待）；重新对账读到草稿后完成；ERP 填报页自动进入对账页 |
-| `readback-mismatch` | 严格回读 No.6（出租车）读到 74.00（本地 47.00）：写入停下，自动进入完成页，差异行高亮、不显示完成态，只能「转人工」；转人工后完成页与任务列表都显示「已转人工」 |
+| `erp-write-aborted` | 保存步中止，进入对账（对账中断点「未知」⇒ 原地等待，只有「重新对账」，没有转人工）；重新对账读到草稿后完成；保存报销草稿页自动进入对账页 |
+| `readback-mismatch` | 严格回读 No.6（出租车）的申请报销金额读到 74.00（本地 47.00）：写入停下，自动进入完成页，差异行高亮、不显示完成态；点「展开」看到「申请报销金额 本地 47.00 / 报销系统 74.00」与原因句。已保存但逐行不一致 ⇒ 转人工：显示人工核对固定句，只能「转人工」；转人工后完成页与任务列表都显示「已转人工」 |
 | `service-disconnected` | 本地服务停一次：打开任务列表时立即（或打开任务页 0.3 s 后）出现全页横幅「本地服务未运行，请在终端重新执行 baox」；任务列表按退避自动重试，任务页期间动作在按钮旁失败；3 s 后恢复，横幅消失，列表出现、快照重新拉取 |
+
+## QA：回读、对账、用语、重置与作废
+
+- 写入进度照内核 erp-write 的阶段分 9 步：启动浏览器、登录、打开空白报销单、选择不生成费用明细、导入发票、收票回读、填写明细、保存草稿、严格回读。
+- 严格回读逐行比对内核的 9 个字段（申请报销金额、项目、费用项目、开始日期、结束日期、费用金额、税额、收票单号、发票类型）。行上显示申请报销金额两边的值；
+  不一致的行点「展开」列出对不上的字段（「字段 本地 X / 报销系统 Y」）与原因句。收票单号是虚构的 `SPD20260911000N`（按发票短标签编号）。
+- 对账页只显示对账结果允许的处置：未知、未保存·导入前、未保存·就绪待保存、身份成立的已保存 ⇒ 原地等待（只有「重新对账」）；
+  未保存·已导入未写明细、不自洽、逐行不一致或身份不成立的已保存 ⇒ 转人工（显示固定句「当前报销已暂停，材料和状态已保留。请在报销系统中核对；如无法判断，请联系报销管理员。」，只有「转人工」）。
+  T2 是「已保存 + 逐行不一致」，`?seed=reconcile` / `?fault=erp-write-aborted` 是「未知」。
+- 阶段名用内核 10 阶段：任务列表徽标写「3/10 材料盘点」「6/10 项目归属」「10/10 草稿交接」等，侧栏写「当前阶段」；对账中的任务仍写「对账中」（它是保存报销草稿里的停顿状态）。
+- 任务列表每行有「作废」（任务菜单列）：还没开始写入报销系统的任务二次确认后从列表消失（内核作废是状态变更，工作区保留）；
+  已开始写入报销系统的任务（T2、T3、`?seed=erp` 起的 T1）按钮不可用，旁边写原因「已开始写入报销系统，不能作废：它占用的发票要靠对账解除。」。
+- 顶栏「设置」（`#/settings`，不在启动门内，身份不一致时也能打开）有「完全重置」：二次确认后清空本机任务、个人项目簿、身份登记与常驻城市，回到启动页（登录报销系统）；
+  重新登录并确认身份后任务列表为空。内核 reset 在用户明确要求时不再二次确认；界面上的按钮加了一次确认，防止误点。
 
 ## QA：报销信息核对与材料包缺项
 
@@ -135,7 +150,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 
 | 脚本 | 作用 |
 | --- | --- |
-| `test` | Vitest + Testing Library（jsdom）：契约与夹具、HTTP 响应形状、仓库、各页面交互 |
+| `test` | Vitest + Testing Library（jsdom）：契约与夹具、HTTP 响应形状、仓库、各页面交互；`src/copy.test.ts` 扫描文案常量、mock 给出的文字与源码中文文案里的内核禁用词 |
 | `test:e2e` | 先 `build:mock`，再用 Playwright（`channel: 'chrome'`，需本机 Google Chrome）经 `file://` 打开 `dist-mock/index.html`；含全流程（`e2e/flow.spec.ts`）、seed × 页面、fault 全矩阵。截图是产物，在 `test-results/`（已 gitignore），不是像素基线 |
 | `check:dist` | 正式构建后检查 `dist/`：不许出现夹具人名、草稿号、`print-sheet.pdf`、`fixtures/`、`sample-materials`、mock 模块名与测试钩子，也不许有 `fixtures/`、`sample-materials/` 目录 |
 
@@ -158,6 +173,13 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
   `preparation { status: pending | blocked | ready, problems[], packageFiles[] }`。不匹配时阶段停在 `catalog`、step 为 `assign_projects`（改派后重新提交即重新核对）；
   有缺项时阶段停在 `preparation`、step 为 `resolve_preparation`，缺项上 `excludableMaterialId` 不为空的，可用 `exclude-material`（`materialId`、`stepToken`）排除该材料，服务端随后重新准备。
   材料包文件数只看 `packageFiles`（确认上不再另记）。表格列名常量：`CATALOG_MISMATCH_COLUMNS`、`PREPARATION_PROBLEM_COLUMNS`；进度与阻塞文案：`CATALOG_PREPARATION_COPY`。
+- 严格回读（`snapshot.ts`）：`ReadbackRow { no, description, matched, fields: [{ label, local, erp, matched }], reasons[] }`，`fields` 覆盖 `READBACK_FIELD_LABELS` 的 9 个字段，
+  一致与否、原因句都由服务端给出（description 与行级 matched 待服务端 spec 确认）。完成页的固定句是 `SAVE_COMPLETED_NOTICE`。
+- 对账（`snapshot.ts` `Reconcile`）：`bucket` 是 `RECONCILE_BUCKETS` 六类之一，`action` / `actionCode` 是内核判定，`allowedActions` 是允许的处置（页面只渲染这些，服务端也只接受这些，
+  否则 `action_not_allowed`），`humanReview` 为真时显示 `HUMAN_REVIEW_NOTICE` 且没有重新对账。`reasons` 只放不属于某一行的原因。
+- 阶段名：`stage.ts` 的 `KERNEL_PHASES`、`TASK_STAGE_PHASES`、`TASK_STAGE_LABELS`（「N/10 阶段名」）与 `RECONCILE_STATUS_LABEL`。
+- 作废与重置（任务之外，返回整份任务列表，失败 `{ error, taskList? }`）：`POST /api/tasks/:id/abandon`、`POST /api/reset`。
+  任务列表行带 `abandonable` 与 `abandonBlockedReason`（已开始写入报销系统的不能作废），文案见 `ABANDON_TASK_COPY`、`RESET_COPY`。
 - 待确认项（`snapshot.ts`）：`PendingItem` 带 `resolver`（`RESOLVER_LABELS`：要你处理 / 我来处理 / 系统）；`kind` 为 `form` / `choice` / `allocation`。
   逐段分摊（内核 `allocation_required`）的 `allocation = { segments: [{ index, date, route, suggested }], total, giveUpNote }`，`answer-pending` 的 `answer` 为 `{ amounts: [...] }`（按段顺序，两位小数）或 `{ giveUp: true }`；
   是否按分守恒由服务端判定，不守恒返回 `{ error }`（文案 `ALLOCATION_ERRORS.notConserved`），页面只显示。「认不出」的后果由服务端写在 `giveUpNote`。

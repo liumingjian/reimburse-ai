@@ -84,7 +84,7 @@ const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = 
   'erp-write-aborted': async (page) => {
     await startErp(page, 'erp-write-aborted');
     await expect(page).toHaveURL(/#\/task\/T1\/reconcile$/);
-    await expect(page.getByRole('region', { name: '中止原因' })).toContainText('保存草稿时 ERP 没有在限定时间内返回结果');
+    await expect(page.getByRole('region', { name: '中止原因' })).toContainText('保存草稿时报销系统没有在限定时间内返回结果');
   },
   'readback-mismatch': async (page) => {
     await startErp(page, 'readback-mismatch');

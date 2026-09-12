@@ -251,7 +251,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
               <div className="action-card">
                 <h3>去报销</h3>
                 <p>
-                  启动专用浏览器，你登录 ERP 后自动导入发票、写入 {confirmation.lineCount} 行明细、保存草稿并严格回读，中途不再确认。
+                  启动专用浏览器，你登录报销系统后自动导入发票、写入 {confirmation.lineCount} 行明细、保存草稿并严格回读，中途不再确认。
                   {erpDone && erp.draftNo ? `已完成，草稿 ${erp.draftNo}。` : ''}
                 </p>
                 {erpDone ? (

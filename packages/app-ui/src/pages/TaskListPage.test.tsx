@@ -1,6 +1,7 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { App } from '../App';
+import { ABANDON_TASK_COPY } from '../contract/actions';
 import { createMockAdapter } from '../mock/mock-adapter';
 import { SERVICE_DOWN_NOTICE } from '../shell/AppShell';
 
@@ -17,12 +18,12 @@ async function rowOf(name: string): Promise<HTMLElement> {
 }
 
 describe('任务列表', () => {
-  test('显示三个任务及其阶段徽标：进行中、对账中、已完成', async () => {
+  test('显示三个任务及其阶段徽标（内核 10 阶段名）：材料盘点、对账中、草稿交接', async () => {
     renderApp('#/tasks');
     expect(await screen.findByRole('heading', { name: '报销任务' })).toBeTruthy();
 
     const t1 = await rowOf('2026-08 上海出差（产品评审）');
-    expect(within(t1).getByText('上传材料')).toBeTruthy();
+    expect(within(t1).getByText('3/10 材料盘点')).toBeTruthy();
     expect(within(t1).getByText('未确认')).toBeTruthy();
     expect(within(t1).getByRole('link', { name: '继续 →' }).getAttribute('href')).toBe('#/task/T1/upload');
 
@@ -32,7 +33,7 @@ describe('任务列表', () => {
     expect(within(t2).getByRole('link', { name: '查看对账 →' }).getAttribute('href')).toBe('#/task/T2/reconcile');
 
     const t3 = await rowOf('2026-06 北京培训');
-    expect(within(t3).getByText('已完成')).toBeTruthy();
+    expect(within(t3).getByText('10/10 草稿交接')).toBeTruthy();
     expect(within(t3).getByText('BX20260702-0088')).toBeTruthy();
 
     expect(screen.getByRole('button', { name: '新建报销任务' })).toBeTruthy();
@@ -41,10 +42,10 @@ describe('任务列表', () => {
     expect(screen.queryByText(/产品研发部/)).toBeNull();
   });
 
-  test('?seed=done 时 T1 显示已完成、价税合计与草稿号', async () => {
+  test('?seed=done 时 T1 显示草稿交接、价税合计与草稿号', async () => {
     renderApp('#/tasks', 'done');
     const t1 = await rowOf('2026-08 上海出差（产品评审）');
-    expect(within(t1).getByText('已完成')).toBeTruthy();
+    expect(within(t1).getByText('10/10 草稿交接')).toBeTruthy();
     expect(within(t1).getByText('3972.59')).toBeTruthy();
     expect(within(t1).getByText('BX20260911-0173')).toBeTruthy();
   });
@@ -70,7 +71,7 @@ describe('任务列表', () => {
     render(<App adapter={adapter} />);
     const row = await rowOf('2026-08 上海出差（产品评审）');
     expect(within(row).getByText('回读不一致').className).toContain('badge-err');
-    expect(within(row).queryByText('已完成')).toBeNull();
+    expect(within(row).queryByText('10/10 草稿交接')).toBeNull();
     expect(within(row).getByRole('link', { name: '查看结果 →' }).getAttribute('href')).toBe('#/task/T1/done');
   });
 
@@ -81,6 +82,46 @@ describe('任务列表', () => {
     expect(screen.queryByText('2026-08 上海出差（产品评审）')).toBeNull();
     expect(await screen.findByText('2026-08 上海出差（产品评审）', {}, { timeout: 4000 })).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  test('作废：还没开始写入报销系统的任务确认后从列表消失；已开始写入的任务「作废」不可用并说明原因', async () => {
+    renderApp('#/tasks');
+    const t2 = await rowOf('2026-07 深圳客户拜访');
+    expect((within(t2).getByRole('button', { name: '作废 2026-07 深圳客户拜访' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(t2).getByText(ABANDON_TASK_COPY.blockedReason)).toBeTruthy();
+    const t3 = await rowOf('2026-06 北京培训');
+    expect((within(t3).getByRole('button', { name: '作废 2026-06 北京培训' }) as HTMLButtonElement).disabled).toBe(true);
+
+    const t1 = await rowOf('2026-08 上海出差（产品评审）');
+    fireEvent.click(within(t1).getByRole('button', { name: '作废 2026-08 上海出差（产品评审）' }));
+    // 点作废不进入任务页，先弹出二次确认。
+    expect(window.location.hash).toBe('#/tasks');
+    const dialog = screen.getByRole('dialog', { name: ABANDON_TASK_COPY.dialogTitle });
+    fireEvent.click(within(dialog).getByRole('button', { name: '作废' }));
+    await waitFor(() => expect(screen.queryByText('2026-08 上海出差（产品评审）')).toBeNull());
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByText('2026-07 深圳客户拜访')).toBeTruthy();
+  });
+
+  test('?seed=erp（已开始写入报销系统）：T1 的「作废」不可用；服务端也拒绝', async () => {
+    const adapter = createMockAdapter({ seed: 'erp', fault: null });
+    window.location.hash = '#/tasks';
+    render(<App adapter={adapter} />);
+    const t1 = await rowOf('2026-08 上海出差（产品评审）');
+    expect((within(t1).getByRole('button', { name: '作废 2026-08 上海出差（产品评审）' }) as HTMLButtonElement).disabled).toBe(true);
+    const refused = await adapter.abandonTask('T1');
+    expect(!refused.ok && refused.error.message).toBe(ABANDON_TASK_COPY.blockedReason);
+  });
+
+  test('设置页「完全重置」：二次确认后清空本机数据，回到启动页；重新登录并确认身份后任务列表为空', async () => {
+    renderApp('#/settings');
+    fireEvent.click(await screen.findByRole('button', { name: '完全重置' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: '清空本机全部数据？' })).getByRole('button', { name: '清空并重置' }));
+    expect(await screen.findByRole('heading', { name: '登录报销系统' })).toBeTruthy();
+    expect(window.location.hash).toBe('#/tasks');
+    fireEvent.click(screen.getByRole('button', { name: '我已登录' }));
+    fireEvent.click(await screen.findByRole('button', { name: '确认' }));
+    expect(await screen.findByRole('heading', { name: '还没有报销任务' })).toBeTruthy();
   });
 
   test('未知路径回到任务列表', async () => {
@@ -122,6 +163,7 @@ describe('任务页面骨架', () => {
     renderApp('#/task/T2/reconcile');
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
     expect(screen.queryByRole('list', { name: '流程阶段' })).toBeNull();
-    expect(screen.getByText('写入结果不确定后停在这里。处置只有原地等待或转人工。')).toBeTruthy();
+    expect(screen.getByText('写入结果不确定后停在这里。处置由对账结果决定：原地等待或转人工。')).toBeTruthy();
+    expect(screen.getByTestId('stage-phase').textContent).toBe('9/10 保存报销草稿');
   });
 });

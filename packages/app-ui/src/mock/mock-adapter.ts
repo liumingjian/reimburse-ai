@@ -1,5 +1,5 @@
 import { ServiceUnavailableError, type ActionOutcome, type AppAdapter, type ProjectBookOutcome, type StartupOutcome } from '../contract/adapter';
-import { CREATE_TASK_ERRORS, ConfirmIdentityInputSchema, CreateTaskInputSchema, STARTUP_ERRORS, type ActionError } from '../contract/actions';
+import { ABANDON_TASK_COPY, CREATE_TASK_ERRORS, ConfirmIdentityInputSchema, CreateTaskInputSchema, STARTUP_ERRORS, type ActionError } from '../contract/actions';
 import { TaskListSchema, type TaskList } from '../contract/task-list';
 import { SERVICE_UNAVAILABLE_CODE, SERVICE_UNAVAILABLE_MESSAGE, createBus } from './bus';
 import { buildPrintSheet } from './fixtures/print';
@@ -42,7 +42,7 @@ export function installMockHooks(target: Window, adapter: MockAdapter): void {
 // 读快照与订阅不受断连影响（快照读的是内存）；任务列表断开期间读不到；其余都是动作，断开期间一律失败，原因就地显示在按钮旁。
 const READ_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['listTasks', 'getSnapshot', 'subscribe', 'getProjectBook']);
 // 启动动作的失败形状带 taskList 而不是 snapshot；项目簿维护动作带 book。
-const STARTUP_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['recheckErpSession', 'confirmIdentity']);
+const STARTUP_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['recheckErpSession', 'confirmIdentity', 'abandonTask', 'resetAll']);
 const BOOK_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['intakeProject', 'removeProject', 'purgeInvalidProjects', 'recheckProjects']);
 
 export function createMockAdapter(options: MockOptions): MockAdapter {
@@ -65,9 +65,12 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const project = createProjectFlow(bus);
   // `?seed=catalog` / `?seed=preparation`：自动步骤接着走完，进入整单确认。
   project.resumeAutoSteps(T1_ID);
+  // 作废的任务与完全重置前的任务不再出现在列表里（内核作废是状态变更，工作区保留；快照留在内存里，免得定时器扑空）。
+  const hidden = new Set<string>();
   const listNow = (): TaskList => {
     const tasks = bus
       .all()
+      .filter((snapshot) => !hidden.has(snapshot.task.taskId))
       .map(toListItem)
       .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
     return TaskListSchema.parse({ erpSession: startup.erpSession(), employee: startup.employee(), homeCity: homeCityDefault(), tasks });
@@ -93,6 +96,22 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
       const parsed = ConfirmIdentityInputSchema.safeParse(input);
       if (!parsed.success) return startupResult({ code: 'identity_changed', message: STARTUP_ERRORS.identityChanged });
       return startupResult(startup.confirmIdentity(parsed.data));
+    },
+    // 作废：服务端按任务列表同一个判定（已开始写入报销系统的不能作废）再核一次。
+    async abandonTask(taskId) {
+      const snapshot = bus.all().find((candidate) => candidate.task.taskId === taskId && !hidden.has(taskId));
+      if (!snapshot) return startupResult({ code: 'task_not_found', message: ABANDON_TASK_COPY.notFound });
+      const item = toListItem(snapshot);
+      if (!item.abandonable) return startupResult({ code: 'not_abandonable', message: item.abandonBlockedReason ?? ABANDON_TASK_COPY.blockedReason });
+      hidden.add(taskId);
+      return startupResult(null);
+    },
+    // 完全重置：任务、项目簿、身份登记与常驻城市全部清空，登录会话断开。
+    async resetAll() {
+      for (const snapshot of bus.all()) hidden.add(snapshot.task.taskId);
+      book.reset();
+      startup.reset();
+      return startupResult(null);
     },
     getProjectBook: book.getProjectBook,
     intakeProject: book.intakeProject,

@@ -10,7 +10,7 @@ test('任务列表显示三个任务及其阶段徽标', async ({ page }, testIn
   await expect(page.getByRole('heading', { name: '报销任务' })).toBeVisible();
 
   const t1 = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ });
-  await expect(t1.getByText('上传材料')).toBeVisible();
+  await expect(t1.getByText('3/10 材料盘点')).toBeVisible();
   await expect(t1.getByText('未确认')).toBeVisible();
 
   const t2 = page.getByRole('row', { name: /2026-07 深圳客户拜访/ });
@@ -18,7 +18,7 @@ test('任务列表显示三个任务及其阶段徽标', async ({ page }, testIn
   await expect(t2.getByText('BX20260718-0142')).toBeVisible();
 
   const t3 = page.getByRole('row', { name: /2026-06 北京培训/ });
-  await expect(t3.getByText('已完成')).toBeVisible();
+  await expect(t3.getByText('10/10 草稿交接')).toBeVisible();
   await expect(t3.getByText('2318.50')).toBeVisible();
 
   await expect(page.getByRole('banner').getByText('林颂宜', { exact: true })).toBeVisible();
@@ -26,10 +26,10 @@ test('任务列表显示三个任务及其阶段徽标', async ({ page }, testIn
   await page.screenshot({ path: testInfo.outputPath('tasks.png'), fullPage: true });
 });
 
-test('?seed=done 让 T1 显示为已完成并带草稿号', async ({ page }) => {
+test('?seed=done 让 T1 显示为草稿交接并带草稿号', async ({ page }) => {
   await page.goto(open('?seed=done', '#/tasks'));
   const t1 = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ });
-  await expect(t1.getByText('已完成')).toBeVisible();
+  await expect(t1.getByText('10/10 草稿交接')).toBeVisible();
   await expect(t1.getByText('3972.59')).toBeVisible();
   await expect(t1.getByText('BX20260911-0173')).toBeVisible();
 });

@@ -592,7 +592,7 @@ export function applyPendingAnswer(result: InventoryResult, item: PendingItem, a
     const choice = values[PENDING_CHOICE_KEY];
     material.role = 'excluded';
     material.status = 'excluded';
-    material.checkText = choice === 'manual' ? '已标记为自行手工处理：你会在 ERP 里另行补录，应用不碰它' : '已排除：不进入明细，也不上传 ERP';
+    material.checkText = choice === 'manual' ? '已标记为自行手工处理：你会在报销系统里另行补录，应用不碰它' : '已排除：不进入明细，也不上传报销系统';
     return;
   }
   for (const f of item.fields) {

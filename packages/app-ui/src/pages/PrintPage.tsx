@@ -47,7 +47,7 @@ function ScreenshotControl({
         <span className="caption">支付截图</span>
         {screenshot ? <span className="mono">{screenshot.fileName}</span> : <span className="muted">未补充</span>}
       </div>
-      <div className="caption">仅用于打印稿，放在下半页右侧；不上传 ERP，也不影响整单明细确认。</div>
+      <div className="caption">仅用于打印稿，放在下半页右侧；不上传报销系统，也不影响整单明细确认。</div>
       <div className="btn-row screenshot-row">
         {screenshot ? (
           <button className="btn btn-tertiary btn-sm" type="button" disabled={busy} aria-label={`移除支付截图：${voucherName}`} onClick={() => onRemove(screenshot)}>

@@ -263,7 +263,7 @@ describe('项目归属（内核 Variant B 工作台）', () => {
   test('ERP 写入开始后项目归属只读，服务端也拒绝归入与改派', async () => {
     const { adapter, ready } = renderProject('erp');
     await ready;
-    expect(await screen.findByText('已开始 ERP 填报，项目归属不能再修改。')).toBeTruthy();
+    expect(await screen.findByText('已开始写入报销系统，项目归属不能再修改。')).toBeTruthy();
     expect(submitButton().disabled).toBe(true);
     expect((purpose() as HTMLInputElement).disabled).toBe(true);
     const snapshot = await adapter.getSnapshot('T1');

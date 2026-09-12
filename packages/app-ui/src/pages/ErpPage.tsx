@@ -65,7 +65,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
                   <div className="desc">{item.description}</div>
                   {item.status === 'waiting' && waitingLogin ? (
                     <div className="login-prompt">
-                      <p>请在专用浏览器窗口里用本人账号登录 ERP，完成后回到这里。</p>
+                      <p>请在专用浏览器窗口里用本人账号登录报销系统，完成后回到这里。</p>
                       {erp.loginNotice ? (
                         <div className="notice notice-warn" role="status">
                           {erp.loginNotice}
@@ -102,7 +102,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
         ) : erp.status === 'aborted' ? (
           <>
             <div className="notice notice-err" role="alert">
-              ERP 填报已停止：{erp.abortReason}
+              写入报销系统已停止：{erp.abortReason}
             </div>
             {stage === 'reconcile' ? (
               <a className="btn btn-primary" href={taskHash(taskId, 'reconcile')}>

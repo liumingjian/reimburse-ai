@@ -159,6 +159,8 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     },
     recheckErpSession: () => startup(url(E.recheckErpSession.path), {}),
     confirmIdentity: (input) => startup(url(E.confirmIdentity.path), input),
+    abandonTask: (taskId) => startup(url(E.abandonTask.path, taskId), {}),
+    resetAll: () => startup(url(E.resetAll.path), {}),
     async getProjectBook() {
       let response: Response;
       try {

@@ -27,7 +27,8 @@ describe('端点表', () => {
     expect([...endpointActionNames()].sort()).toEqual([...ACTION_NAMES].sort());
     const book = new Set(['getProjectBook', 'intakeProject', 'removeProject', 'purgeInvalidProjects', 'recheckProjects']);
     for (const [name, endpoint] of Object.entries(HTTP_ENDPOINTS)) {
-      const prefix = name === 'recheckErpSession' || name === 'confirmIdentity' ? '/api/startup/' : book.has(name) ? '/api/project-book' : '/api/tasks';
+      const prefix =
+        name === 'recheckErpSession' || name === 'confirmIdentity' ? '/api/startup/' : name === 'resetAll' ? '/api/reset' : book.has(name) ? '/api/project-book' : '/api/tasks';
       expect(endpoint.path.startsWith(prefix), name).toBe(true);
     }
     expect(HTTP_ENDPOINTS.uploadBatch.body).toBe('multipart');

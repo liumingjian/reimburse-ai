@@ -22,7 +22,7 @@ export function defaultStorage(): MockStorage {
     }
   }
   const memory = new Map<string, string>();
-  return { getItem: (key) => memory.get(key) ?? null, setItem: (key, value) => void memory.set(key, value) };
+  return { getItem: (key) => memory.get(key) ?? null, setItem: (key, value) => void memory.set(key, value), removeItem: (key) => void memory.delete(key) };
 }
 
 export type MockStartup = {
@@ -33,6 +33,8 @@ export type MockStartup = {
   confirmIdentity(input: ConfirmIdentityInput): ActionError | null;
   rememberedCity(): string | null;
   rememberCity(city: string): void;
+  // 完全重置：清掉身份登记与常驻城市，登录会话也断开（回到启动页，重新登录后要重新确认身份）。
+  reset(): void;
 };
 
 export function createStartup(options: MockOptions): MockStartup {
@@ -65,6 +67,15 @@ export function createStartup(options: MockOptions): MockStartup {
     rememberedCity: () => storage.getItem(identityKey('homeCity', identity)),
     rememberCity(city) {
       storage.setItem(identityKey('homeCity', identity), city);
+    },
+    reset() {
+      for (const kind of ['identity', 'homeCity'] as const) {
+        const key = identityKey(kind, identity);
+        if (storage.removeItem) storage.removeItem(key);
+        else storage.setItem(key, '');
+      }
+      erpSession = 'not_logged_in';
+      binding = 'unbound';
     },
   };
 }

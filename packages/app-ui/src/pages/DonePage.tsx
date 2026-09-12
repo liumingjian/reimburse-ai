@@ -1,13 +1,14 @@
-import type { TaskSnapshot } from '../contract/snapshot';
+import { HUMAN_REVIEW_NOTICE, SAVE_COMPLETED_NOTICE, type TaskSnapshot } from '../contract/snapshot';
 import { TASKS_HASH, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 import { ReadbackTable } from './ReadbackTable';
 
-// 完成页：ERP 草稿号与逐条回读表。只有服务端判定回读全部一致（readback.status = matched）才显示完成态。
-// 严格回读不一致时任务也停在这里，但不算完成：差异行按服务端逐行判定着色；当前待答 step 是 hand_off 时出现「转人工」，
-// 转人工后显示已转人工（终态）。
+// 完成页：草稿号与逐条回读表。只有服务端判定回读全部一致（readback.status = matched）才显示完成态与固定句
+// 「报销草稿已保存。请打开报销系统检查，是否提交由你决定。」（user-interaction-contract.md:70，逐字不改）。
+// 严格回读不一致时任务也停在这里，但不算完成：差异行按服务端逐行判定着色并可展开；对账结果是转人工（human_review）时显示固定句，
+// 当前待答 step 是 hand_off 且允许转人工时出现「转人工」，转人工后显示已转人工（终态）。
 
 const MISMATCH_LEAD = '草稿已保存，但严格回读与本地确认不一致。这份草稿不算完成。';
 
@@ -18,6 +19,7 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
   const matched = readback.status === 'matched';
   const mismatched = readback.status === 'mismatched';
   const handedOff = reconcile.status === 'handed_off';
+  const canHandOff = step.kind === 'hand_off' && reconcile.allowedActions.includes('hand_off');
   const { busy, error, run } = useAction(taskId);
 
   return (
@@ -38,7 +40,7 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
       </div>
 
       <div className="badge-row">
-        <span className="caption">ERP 草稿号</span>
+        <span className="caption">草稿号</span>
         <span className="mono" data-testid="draft-no">
           {erp.draftNo ?? '尚无'}
         </span>
@@ -47,12 +49,17 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
       </div>
 
       {matched ? (
-        <div className="notice notice-ok" role="status">
-          已完成：草稿 <span className="mono">{erp.draftNo}</span> 已保存，逐行回读与本地确认一致。接下来去 ERP 提交审批。
+        <div className="notice notice-ok" role="status" data-testid="save-completed">
+          {SAVE_COMPLETED_NOTICE}
         </div>
       ) : mismatched ? (
         <div className="notice notice-err" role="alert">
-          回读与本地确认不一致：{readback.summary}。这份草稿不算完成，不要直接在 ERP 里提交审批。
+          回读与本地确认不一致：{readback.summary}。这份草稿不算完成，不要直接在报销系统里提交审批。
+        </div>
+      ) : null}
+      {reconcile.humanReview ? (
+        <div className="notice notice-warn" role="status" data-testid="human-review">
+          {HUMAN_REVIEW_NOTICE}
         </div>
       ) : null}
       {reconcile.banner ? (
@@ -74,10 +81,10 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
         </section>
       ) : null}
 
-      {step.kind === 'hand_off' ? (
+      {canHandOff ? (
         <section className="panel" aria-label="转人工">
           <h2>转人工</h2>
-          <p className="lead">应用不会自动改写 ERP 里的行，也不会重试写入。转人工后任务标记为人工处理，保留回读记录，之后不再自动写入 ERP。</p>
+          <p className="lead">应用不会自动改写报销系统里的行，也不会重试写入。转人工后任务标记为人工处理，保留回读记录，之后不再自动写入报销系统。</p>
           <div className="btn-row">
             <button className="btn btn-primary" type="button" disabled={busy} onClick={() => void run((adapter) => adapter.handOff(taskId, step.stepToken))}>
               转人工

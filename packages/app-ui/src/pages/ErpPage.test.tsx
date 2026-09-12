@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { App } from '../App';
 import { createMockAdapter, type Fault } from '../mock/mock-adapter';
 
-const STEP_TITLES = ['启动浏览器', '登录', '导入发票', '填明细', '保存', '严格回读'];
+const STEP_TITLES = ['启动浏览器', '登录', '打开空白报销单', '选择不生成费用明细', '导入发票', '收票回读', '填写明细', '保存草稿', '严格回读'];
 
 // ?seed=erp：已在整单确认页点了「去报销」，浏览器已启动，登录步在等待。没有「开始填报」。
 function renderErp(fault: Fault | null = null, erpLoginAutoMs = 60_000) {
@@ -18,12 +18,12 @@ const stepItem = (title: string) => within(progress()).getByRole('listitem', { n
 const loginButton = () => screen.findByRole('button', { name: '我已登录，继续' });
 
 async function waitingLogin() {
-  await screen.findByRole('heading', { name: 'ERP 填报' });
+  await screen.findByRole('heading', { name: '保存报销草稿' });
   return loginButton();
 }
 
 describe('ERP 填报', () => {
-  test('六个步骤按顺序可见、没有「开始填报」；登录步有「我已登录，继续」并回传 stepToken；登录后自动写完，完成页逐条回读 9/9 一致', async () => {
+  test('九个步骤（含选择不生成费用明细、收票回读）按顺序可见、没有「开始填报」；登录步有「我已登录，继续」并回传 stepToken；登录后自动写完，完成页显示固定句与逐条回读 9/9 一致', async () => {
     const adapter = renderErp();
     const confirmLogin = vi.spyOn(adapter, 'confirmLogin');
     const button = await waitingLogin();
@@ -44,6 +44,8 @@ describe('ERP 填报', () => {
     expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();
     expect(screen.getByTestId('draft-no').textContent).toBe('BX20260911-0173');
     expect(screen.getByText('明细 9/9 一致')).toBeTruthy();
+    expect(screen.getByTestId('save-completed').textContent).toBe('报销草稿已保存。请打开报销系统检查，是否提交由你决定。');
+    expect(screen.queryByTestId('human-review')).toBeNull();
     const table = screen.getByRole('table', { name: '逐条回读' });
     const bodyRows = within(table).getAllByRole('row').filter((row) => row.closest('tbody'));
     expect(bodyRows).toHaveLength(9);
@@ -64,7 +66,7 @@ describe('ERP 填报', () => {
     const start = vi.spyOn(adapter, 'startErpWrite');
     render(<App adapter={adapter} />);
     fireEvent.click(await screen.findByRole('button', { name: '去报销' }));
-    expect(await screen.findByRole('heading', { name: 'ERP 填报' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: '保存报销草稿' })).toBeTruthy();
     expect(start).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('button', { name: '开始填报' })).toBeNull();
     expect(await screen.findByRole('link', { name: '查看完成结果' })).toBeTruthy();
@@ -88,16 +90,16 @@ describe('ERP 填报', () => {
     fireEvent.click(await waitingLogin());
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
     expect(window.location.hash).toBe('#/task/T1/reconcile');
-    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/保存草稿时 ERP 没有在限定时间内返回结果/)).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/保存草稿时报销系统没有在限定时间内返回结果/)).toBeTruthy();
     expect(screen.getByRole('button', { name: '重新对账' })).toBeTruthy();
   });
 
   test('直接打开已中止任务的 ERP 填报页不跳转，保留「进入对账」入口', async () => {
     window.location.hash = '#/task/T1/erp';
     render(<App adapter={createMockAdapter({ seed: 'reconcile', fault: null })} />);
-    expect(await screen.findByRole('heading', { name: 'ERP 填报' })).toBeTruthy();
-    expect(stepItem('保存').textContent).toContain('已中止');
-    expect(screen.getByRole('alert').textContent).toContain('ERP 填报已停止');
+    expect(await screen.findByRole('heading', { name: '保存报销草稿' })).toBeTruthy();
+    expect(stepItem('保存草稿').textContent).toContain('已中止');
+    expect(screen.getByRole('alert').textContent).toContain('写入报销系统已停止');
     expect(screen.getByRole('link', { name: '进入对账' }).getAttribute('href')).toBe('#/task/T1/reconcile');
   });
 
@@ -117,11 +119,22 @@ describe('ERP 填报', () => {
     expect(screen.getByText('明细 8/9 一致，1 行不一致')).toBeTruthy();
     expect(screen.queryByText(/^已完成：草稿/)).toBeNull();
     expect(screen.getByRole('alert').textContent).toContain('这份草稿不算完成');
-    expect(screen.getByText('ERP 中存在草稿 BX20260911-0173，9 行明细中 8 行一致，1 行金额不一致。')).toBeTruthy();
+    expect(screen.getByText('报销系统中存在草稿 BX20260911-0173，9 行明细中 8 行一致，1 行不一致。')).toBeTruthy();
+    expect(screen.queryByTestId('save-completed')).toBeNull();
+    // 已保存但逐行不一致 ⇒ 转人工（human_review）：固定句。
+    expect(screen.getByTestId('human-review').textContent).toBe('当前报销已暂停，材料和状态已保留。请在报销系统中核对；如无法判断，请联系报销管理员。');
+    // 不一致的行展开后逐项列出对不上的字段与原因。
+    expect(screen.queryByTestId('readback-detail-6')).toBeNull();
+    fireEvent.click(within(bad).getByRole('button', { name: '展开 No.6' }));
+    const detail = screen.getByTestId('readback-detail-6');
+    expect(within(detail).getByRole('list', { name: 'No.6 对不上的字段' }).textContent).toBe('申请报销金额 本地 47.00 / 报销系统 74.00');
+    expect(within(detail).getByRole('list', { name: 'No.6 原因' }).textContent).toContain('任务第 6 行没有一条同时匹配项目、费用项目、日期、金额和收票关联的报销系统明细');
+    fireEvent.click(within(bad).getByRole('button', { name: '收起 No.6' }));
+    expect(screen.queryByTestId('readback-detail-6')).toBeNull();
 
     const { stepToken } = (await adapter.getSnapshot('T1')).step;
     fireEvent.click(screen.getByRole('button', { name: '转人工' }));
-    expect(await screen.findByText(/已转人工处理：应用不再写入 ERP/)).toBeTruthy();
+    expect(await screen.findByText(/已转人工处理：应用不再写入报销系统/)).toBeTruthy();
     expect(handOff).toHaveBeenCalledWith('T1', stepToken);
     expect(screen.queryByRole('button', { name: '转人工' })).toBeNull();
     expect(screen.getByText('已转人工')).toBeTruthy();

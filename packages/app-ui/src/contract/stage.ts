@@ -21,20 +21,45 @@ export const TASK_STAGES = [
 export const TaskStageSchema = z.enum(TASK_STAGES);
 export type TaskStage = z.infer<typeof TaskStageSchema>;
 
-// 任务列表徽标与侧栏状态用的阶段名。
-export const TASK_STAGE_LABELS: Readonly<Record<TaskStage, string>> = {
-  upload: '上传材料',
+// 员工可见的阶段名只用内核的 10 阶段（interaction.mjs:12-21 PROGRESS，user-interaction-contract.md「业务进度」要求沿用这组编号）。
+// 1/10 环境准备与 2/10 身份与常驻城市发生在启动页与新建任务，不对应任务阶段。
+export const KERNEL_PHASES = [
+  '环境准备',
+  '身份与常驻城市',
+  '材料盘点',
+  '材料整理',
+  '划分费用事件',
+  '项目归属',
+  '报销信息核对',
+  '报销材料准备',
+  '保存报销草稿',
+  '草稿交接',
+] as const;
+export type KernelPhase = (typeof KERNEL_PHASES)[number];
+
+// 任务阶段落在内核哪一阶段：上传与盘点是材料盘点，待确认项是材料整理，整单确认与去打印 / 去报销属于报销材料准备
+// （内核 preparation_confirmation 用 PREPARATION_PROGRESS），写入与对账是保存报销草稿，完成是草稿交接。
+export const TASK_STAGE_PHASES: Readonly<Record<TaskStage, KernelPhase>> = {
+  upload: '材料盘点',
   inventory: '材料盘点',
-  pending: '待确认项',
+  pending: '材料整理',
   project: '项目归属',
   catalog: '报销信息核对',
   preparation: '报销材料准备',
-  review: '整单明细确认',
-  actions: '去打印 / 去报销',
-  erp: 'ERP 填报',
-  done: '已完成',
-  reconcile: '对账中',
+  review: '报销材料准备',
+  actions: '报销材料准备',
+  erp: '保存报销草稿',
+  done: '草稿交接',
+  reconcile: '保存报销草稿',
 };
+
+// 任务列表徽标与侧栏用的阶段名：「N/10 阶段名」。
+export const TASK_STAGE_LABELS: Readonly<Record<TaskStage, string>> = Object.fromEntries(
+  Object.entries(TASK_STAGE_PHASES).map(([stage, phase]) => [stage, `${KERNEL_PHASES.indexOf(phase) + 1}/10 ${phase}`]),
+) as Record<TaskStage, string>;
+
+// 对账不是内核的阶段而是保存报销草稿里的停顿状态；任务列表与侧栏用这个状态名代替阶段名。
+export const RECONCILE_STATUS_LABEL = '对账中';
 
 // 阶段在主线上的序号，用于「阶段不可跳过」的页面守卫；reconcile 与 erp 同级（都在 ERP 写入开始之后）。
 const STAGE_RANK: Readonly<Record<TaskStage, number>> = {

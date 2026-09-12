@@ -184,7 +184,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
 
       {locked ? (
         <div className="notice notice-info" role="status">
-          已开始 ERP 填报，项目归属不能再修改。
+          已开始写入报销系统，项目归属不能再修改。
         </div>
       ) : catalogMismatch ? (
         <div className="notice notice-err" role="alert">

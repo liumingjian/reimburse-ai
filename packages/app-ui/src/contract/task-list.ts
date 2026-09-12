@@ -49,6 +49,9 @@ export const TaskListItemSchema = z.object({
   erpDraftNo: z.string().min(1).nullable(),
   pendingCount: z.number().int().nonnegative(),
   erpOutcome: TaskErpOutcomeSchema,
+  // 能否作废由服务端判定：已开始写入报销系统的任务不能作废，abandonBlockedReason 给出原因（页面照抄在不可用的按钮旁）。
+  abandonable: z.boolean(),
+  abandonBlockedReason: z.string().min(1).nullable(),
   updatedAt: DateTimeSchema,
 });
 export type TaskListItem = z.infer<typeof TaskListItemSchema>;

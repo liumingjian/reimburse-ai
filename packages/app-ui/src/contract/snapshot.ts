@@ -510,7 +510,9 @@ export type ProjectAssignment = z.infer<typeof ProjectAssignmentSchema>;
 
 // ---- ERP 填报、回读、对账 ----
 
-// ERP 动作进度：步骤、标题与说明都由服务端给出（启动浏览器、登录、导入发票、填明细、保存、严格回读），页面按顺序渲染。
+// 写入报销系统的进度：步骤、标题与说明都由服务端给出，页面按顺序渲染。步骤划分照内核 erp-write 的阶段：
+// 启动浏览器、登录、打开空白报销单（navigate + preflight）、选择不生成费用明细（invoice_assistant）、导入发票（invoice_import）、
+// 收票回读（receipt_readback）、填写明细（preview + fill，逐值写入回读）、保存草稿（save）、严格回读。
 // 登录步处于 waiting 时，当前待答 step 是 erp_login；「我已登录，继续」只是请服务端再探测一次，探测不到就留在原地并给出 loginNotice。
 export const ErpStepSchema = z.object({
   key: z.string().min(1),
@@ -529,14 +531,29 @@ export const ErpSchema = z.object({
 });
 export type Erp = z.infer<typeof ErpSchema>;
 
+// 严格回读逐行比对的 9 个字段，名称与顺序照内核 matchTaskLines（erpreconcile.mjs）：每条明细要在报销系统里唯一匹配这 9 项。
+export const READBACK_FIELD_LABELS = ['申请报销金额', '项目', '费用项目', '开始日期', '结束日期', '费用金额', '税额', '收票单号', '发票类型'] as const;
+export const ReadbackFieldLabelSchema = z.enum(READBACK_FIELD_LABELS);
+
+export const ReadbackFieldSchema = z.object({
+  label: ReadbackFieldLabelSchema,
+  // 本地确认值与报销系统回读值，都是服务端给出的显示文本；读不到或没有时为 null。
+  local: z.string().nullable(),
+  erp: z.string().nullable(),
+  // 这一项是否一致由服务端判定。
+  matched: z.boolean(),
+});
+export type ReadbackField = z.infer<typeof ReadbackFieldSchema>;
+
+// 一条明细的严格回读：no 是统一业务序号；fields 覆盖 9 个字段（READBACK_FIELD_LABELS 的顺序）；
+// reasons 是服务端给出的这一行的原因句（照内核 matchTaskLines 的原因，报销系统不写作 ERP）。
+// description 与 matched 是服务端给的行说明和整行结论（页面不自己汇总 9 个字段）。待服务端 spec 确认。
 export const ReadbackRowSchema = z.object({
   no: z.number().int().positive(),
   description: z.string(),
-  local: AmountSchema,
-  // ERP 回读值；读不到时为 null（页面显示「需人工核对」）。
-  erp: AmountSchema.nullable(),
-  // 是否一致由服务端逐行判定（严格回读），页面只按这个标志着色。
   matched: z.boolean(),
+  fields: z.array(ReadbackFieldSchema),
+  reasons: z.array(z.string()),
 });
 export type ReadbackRow = z.infer<typeof ReadbackRowSchema>;
 
@@ -544,7 +561,7 @@ export const ReadbackSchema = z.object({
   status: z.enum(['none', 'matched', 'mismatched']),
   rows: z.array(ReadbackRowSchema),
   summary: z.string().nullable(),
-  // 本地确认与 ERP 回读的价税合计合计，由服务端给出；页面不求和。
+  // 本地确认与报销系统回读的申请报销金额合计，由服务端给出；页面不求和。
   localTotal: AmountSchema.nullable(),
   erpTotal: AmountSchema.nullable(),
 });
@@ -559,21 +576,37 @@ export const RECONCILE_ACTION_LABELS: Readonly<Record<ReconcileActionCode, (type
   hand_off: '转人工',
 };
 
-// ERP 对账：写入中止后停在 reconcile 阶段；严格回读不一致时停在 done 阶段（完成页显示差异行与转人工）。
-// bucket 是对账中断点（内核六类之一），action / actionCode 是建议处置的文案与代码。
-// status：pending 等待用户选择处置；waiting 已重新对账、原地等待；handed_off 已转人工（终止后续 ERP 写入，终态）。
-// 严格回读不一致时 rows 带逐行比对（与 readback.rows 相同），中止在保存步时 rows 可能为空。
+// 对账中断点：内核 classifyReconciliation 的 6 类（erpreconcile.mjs BUCKETS），逐字照抄。
+export const RECONCILE_BUCKETS = ['未知', '未保存·导入前', '未保存·已导入未写明细', '未保存·就绪待保存', '已保存', '不自洽'] as const;
+export const ReconcileBucketSchema = z.enum(RECONCILE_BUCKETS);
+export type ReconcileBucket = z.infer<typeof ReconcileBucketSchema>;
+
+// human_review 的固定句（user-interaction-contract.md:64，内核 handed_off_recover）：转人工的对账结果一律显示这句。
+export const HUMAN_REVIEW_NOTICE = '当前报销已暂停，材料和状态已保留。请在报销系统中核对；如无法判断，请联系报销管理员。';
+
+// 写入结果不确定后的对账：写入中止停在 reconcile 阶段；严格回读不一致停在 done 阶段（完成页显示差异行）。
+// bucket 与 action / actionCode 是内核判定（bucket 与处置的对应照内核：未知、未保存·导入前、未保存·就绪待保存、
+// 身份成立的已保存 ⇒ 原地等待；未保存·已导入未写明细、不自洽、身份不成立或逐行不一致的已保存 ⇒ 转人工）。
+// allowedActions 是服务端允许的处置，页面只渲染这些按钮（原地等待 = 重新对账，只读；转人工 = 终止后续写入）。
+// humanReview 为真时（转人工的结果）页面显示 HUMAN_REVIEW_NOTICE，且不给「重新对账」。
+// status：pending 等待用户处置；waiting 已重新对账、原地等待；handed_off 已转人工（终态）。
+// rows 是严格回读逐行比对（与 readback.rows 相同）；reasons 是不属于某一行的原因（逐行原因在 rows[].reasons）。
 export const ReconcileSchema = z.object({
   status: z.enum(['none', 'pending', 'waiting', 'handed_off']),
-  bucket: z.string().nullable(),
+  bucket: ReconcileBucketSchema.nullable(),
   action: z.enum(RECONCILE_ACTIONS).nullable(),
   actionCode: z.enum(RECONCILE_ACTION_CODES).nullable(),
+  allowedActions: z.array(z.enum(RECONCILE_ACTION_CODES)),
+  humanReview: z.boolean(),
   banner: z.string().nullable(),
   draftNo: z.string().nullable(),
   rows: z.array(ReadbackRowSchema),
   reasons: z.array(z.string()),
 });
 export type Reconcile = z.infer<typeof ReconcileSchema>;
+
+// 完成页的固定句（user-interaction-contract.md:70）：严格回读逐行一致、草稿保存成功时显示，逐字不改。
+export const SAVE_COMPLETED_NOTICE = '报销草稿已保存。请打开报销系统检查，是否提交由你决定。';
 
 // ---- 报销信息核对与报销材料准备 ----
 

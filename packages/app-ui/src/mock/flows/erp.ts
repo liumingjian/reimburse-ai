@@ -1,8 +1,8 @@
 import { ERP_ACTION_ERRORS } from '../../contract/actions';
 import type { AppAdapter } from '../../contract/adapter';
-import { RECONCILE_ACTION_LABELS, type TaskSnapshot } from '../../contract/snapshot';
+import type { TaskSnapshot } from '../../contract/snapshot';
 import type { MockBus } from '../bus';
-import { ERP_STEP_INDEX, applyAbortAtSave, applyErpDone, applyReadbackMismatch, erpSteps, handedOffBanner, loginNotDetected } from '../fixtures/erp';
+import { ERP_STEP_INDEX, applyAbortAtSave, applyErpDone, applyReadbackMismatch, erpSteps, handedOffBanner, loginNotDetected, reconcileVerdict } from '../fixtures/erp';
 import { T1_DRAFT_NO } from '../fixtures/tasks';
 
 // ERP 填报（「去报销」即开始：定时推进、登录交接、登录后自动写入）、严格回读与对账（mock 服务端的角色）。
@@ -46,14 +46,14 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     }, erpLoginAutoMs);
   };
 
-  // 探测到登录：从导入发票开始逐步推进。
+  // 探测到登录：从打开空白报销单开始逐步推进（选择不生成费用明细、导入发票、收票回读、填写明细、保存草稿、严格回读）。
   const loginDetected = (snapshot: TaskSnapshot, run: number) => {
     const taskId = snapshot.task.taskId;
     snapshot.erp.status = 'running';
     snapshot.erp.loginNotice = null;
-    snapshot.erp.steps = erpSteps(ERP_STEP_INDEX.import, 'running');
+    snapshot.erp.steps = erpSteps(ERP_STEP_INDEX.navigate, 'running');
     snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-erp-write-${run}` };
-    setTimeout(() => finishErpStep(taskId, run, ERP_STEP_INDEX.import), erpStepMs);
+    setTimeout(() => finishErpStep(taskId, run, ERP_STEP_INDEX.navigate), erpStepMs);
   };
 
   // 第 index 步结束：保存步在 erp-write-aborted 下中止；严格回读按 readback-mismatch 决定一致或停在完成页等待转人工。
@@ -119,10 +119,12 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         loginDetected(snapshot, run);
         return snapshot;
       }),
-    // 重新对账：只读 ERP 再判定一次。保存步中止的任务读到草稿且逐行一致 ⇒ 完成；仍有不一致的行 ⇒ 原地等待，结果写进横幅。
+    // 重新对账（原地等待）：只读报销系统再判定一次，只在对账结果允许原地等待时接受。
+    // 保存步中止的任务读到草稿且逐行一致 ⇒ 完成；否则留在原地，结果写进横幅。
     reconcile: async (taskId, stepToken) =>
       bus.withStep(taskId, stepToken, (snapshot) => {
         if (snapshot.step.kind !== 'reconcile') return { error: { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling } };
+        if (!snapshot.reconcile.allowedActions.includes('wait')) return { error: { code: 'action_not_allowed', message: ERP_ACTION_ERRORS.notAllowed } };
         const count = (reconcileCounts.get(taskId) ?? 0) + 1;
         reconcileCounts.set(taskId, count);
         snapshot.task.updatedAt = bus.now();
@@ -130,34 +132,32 @@ export function createErpFlow(bus: MockBus): ErpFlow {
           applyErpDone(snapshot, T1_DRAFT_NO);
           snapshot.reconcile = {
             ...snapshot.reconcile,
+            ...reconcileVerdict('已保存'),
             status: 'none',
-            bucket: '已保存',
-            action: RECONCILE_ACTION_LABELS.wait,
-            actionCode: 'wait',
-            banner: `重新对账：ERP 中已有草稿 ${T1_DRAFT_NO}，${snapshot.readback.rows.length} 行明细逐行一致。`,
+            allowedActions: [],
+            banner: `重新对账：报销系统中已有草稿 ${T1_DRAFT_NO}，${snapshot.readback.rows.length} 行明细逐行一致。`,
             draftNo: T1_DRAFT_NO,
             reasons: [],
           };
           return snapshot;
         }
-        const bad = snapshot.reconcile.rows.filter((row) => !row.matched).length;
         snapshot.reconcile.status = 'waiting';
-        snapshot.reconcile.banner = `已重新对账（第 ${count} 次）：ERP 草稿 ${snapshot.reconcile.draftNo ?? ''} 仍有 ${bad} 行与本地确认不一致。你在 ERP 中修正后可以再次对账，或者转人工。`;
+        snapshot.reconcile.banner = `已重新对账（第 ${count} 次）：还没有读到可以确认的草稿。你在报销系统中查看后可以再次对账。`;
         snapshot.step = { kind: 'reconcile', stepToken: `tok-${taskId}-reconcile-${count}` };
         return snapshot;
       }),
-    // 转人工：终止后续 ERP 写入，任务停在原阶段（对账页或回读不一致的完成页）并标记为已转人工（终态），对账记录保留。
+    // 转人工：终止后续写入，只在对账结果允许转人工时接受；任务停在原阶段（对账页或回读不一致的完成页）并标记为已转人工（终态）。
     handOff: async (taskId, stepToken) =>
       bus.withStep(taskId, stepToken, (snapshot) => {
         if (snapshot.step.kind !== 'reconcile' && snapshot.step.kind !== 'hand_off') {
           return { error: { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling } };
         }
+        if (!snapshot.reconcile.allowedActions.includes('hand_off')) return { error: { code: 'action_not_allowed', message: ERP_ACTION_ERRORS.notAllowed } };
         erpRuns.delete(taskId);
         snapshot.reconcile = {
           ...snapshot.reconcile,
           status: 'handed_off',
-          action: RECONCILE_ACTION_LABELS.hand_off,
-          actionCode: 'hand_off',
+          allowedActions: [],
           banner: handedOffBanner(snapshot.reconcile.draftNo),
         };
         snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-handed-off` };

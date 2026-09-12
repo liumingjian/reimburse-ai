@@ -158,7 +158,7 @@ function ChoiceForm({ item, onSubmit, state }: FormProps) {
         <ServerError state={state} />
       </div>
       <p className="caption choice-note">
-        {manual ? '排除后该材料不进入明细，也不上传 ERP；自行手工处理表示你会在 ERP 里另行补录，应用同样不碰它。' : '排除后该材料不进入明细，也不进材料包。'}
+        {manual ? '排除后该材料不进入明细，也不上传报销系统；自行手工处理表示你会在报销系统里另行补录，应用同样不碰它。' : '排除后该材料不进入明细，也不进材料包。'}
       </p>
     </div>
   );
