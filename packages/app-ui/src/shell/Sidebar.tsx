@@ -29,15 +29,19 @@ const ACTIVE_ENTRY: Readonly<Record<TaskPage, TaskStage>> = {
 export function Sidebar({ snapshot, page }: { snapshot: TaskSnapshot; page: TaskPage }) {
   const { stage } = snapshot;
   if (stage === 'reconcile') {
+    // 已转人工是对账的终态：应用不再写入 ERP，徽标与说明随服务端的对账状态变化。
+    const handedOff = snapshot.reconcile.status === 'handed_off';
     return (
       <aside className="sidebar">
         <h3>当前报销任务</h3>
         <div className="task-name">{snapshot.task.name}</div>
         <h3>状态</h3>
         <p className="status">
-          <span className="badge badge-warn">{TASK_STAGE_LABELS.reconcile}</span>
+          <span className="badge badge-warn">{handedOff ? '已转人工' : TASK_STAGE_LABELS.reconcile}</span>
         </p>
-        <p className="caption status">写入结果不确定后停在这里。处置只有原地等待或转人工。</p>
+        <p className="caption status">
+          {handedOff ? '已转人工处理，应用不再写入 ERP。' : '写入结果不确定后停在这里。处置只有原地等待或转人工。'}
+        </p>
       </aside>
     );
   }

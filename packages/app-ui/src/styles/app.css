@@ -704,6 +704,66 @@ table.data tr.clickable:hover td {
   color: var(--color-primary);
 }
 
+/* ERP 填报步骤：等待你操作 = warning，中止 = danger（DESIGN.md 语义色） */
+.steps .desc {
+  font-size: var(--text-caption-size);
+  color: var(--color-ink-subtle);
+}
+
+.steps .waiting .dot {
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+}
+
+.steps .waiting .status {
+  color: var(--color-warning);
+}
+
+.steps .failed .dot {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-on-primary);
+}
+
+.steps .failed .status {
+  color: var(--color-danger);
+}
+
+.login-prompt {
+  margin-top: var(--space-sm);
+}
+
+.login-prompt p {
+  margin: 0 0 var(--space-xs);
+}
+
+.login-prompt .notice {
+  margin-bottom: var(--space-xs);
+}
+
+.panel > .error {
+  margin: var(--space-xs) 0 0;
+  color: var(--color-danger);
+  font-size: var(--text-caption-size);
+}
+
+/* 回读与对账：不一致的行用 danger 底色，读不到的行用 warning（row-warn） */
+table.data tr.row-err td {
+  background: var(--color-danger-soft);
+}
+
+.abort-reason {
+  margin: 0;
+  color: var(--color-danger);
+}
+
+.reconcile-reasons {
+  margin: var(--space-sm) 0 0;
+  padding-left: var(--space-md);
+  color: var(--color-ink-muted);
+  font-size: var(--text-caption-size);
+}
+
 table.data tr.group-head td {
   padding: var(--space-sm);
   background: var(--color-surface-2);

@@ -5,10 +5,13 @@ import type { TaskSnapshot } from '../contract/snapshot';
 import { TASKS_HASH, navigate, taskHash } from '../router';
 import { AppShell } from '../shell/AppShell';
 import { Sidebar } from '../shell/Sidebar';
+import { DonePage } from './DonePage';
+import { ErpPage } from './ErpPage';
 import { InventoryPage } from './InventoryPage';
 import { PAGE_COPY } from './page-copy';
 import { PendingPage } from './PendingPage';
 import { ProjectPage } from './ProjectPage';
+import { ReconcilePage } from './ReconcilePage';
 import { ReviewPage } from './ReviewPage';
 import { UploadPage } from './UploadPage';
 
@@ -21,6 +24,9 @@ function PageBody({ page, snapshot }: { page: TaskPage; snapshot: TaskSnapshot }
   if (page === 'pending') return <PendingPage snapshot={snapshot} />;
   if (page === 'review') return <ReviewPage snapshot={snapshot} />;
   if (page === 'project') return <ProjectPage snapshot={snapshot} />;
+  if (page === 'erp') return <ErpPage snapshot={snapshot} />;
+  if (page === 'done') return <DonePage snapshot={snapshot} />;
+  if (page === 'reconcile') return <ReconcilePage snapshot={snapshot} />;
   return <PageSkeleton page={page} snapshot={snapshot} />;
 }
 

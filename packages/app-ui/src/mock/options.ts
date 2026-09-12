@@ -20,6 +20,9 @@ export type MockOptions = {
   fault: Fault | null;
   // 盘点每个阶段的推进间隔（毫秒）；测试可以调小。
   inventoryPhaseMs?: number;
+  // ERP 填报每一步的推进间隔（毫秒，默认 300）；正常场景下服务端自动探测到登录的延迟（默认 2500）。
+  erpStepMs?: number;
+  erpLoginAutoMs?: number;
 };
 
 export function readMockOptions(search: string): MockOptions {

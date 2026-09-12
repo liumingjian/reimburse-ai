@@ -110,6 +110,13 @@ export const REOPEN_UPLOAD_ERRORS = {
   erpStarted: '已开始 ERP 填报，不能再追加材料。',
 } as const;
 
+// ERP 填报与对账动作的错误：当前 step 不接受这个动作时服务端的回答（stepToken 过期仍走 stale_step）。
+export const ERP_ACTION_ERRORS = {
+  notReady: '现在还不能开始填报，请先确认项目归属。',
+  notWaitingLogin: '现在没有在等待登录。',
+  notReconciling: '这个任务现在不在对账中。',
+} as const;
+
 // 项目归属：文案照内核 selection.mjs / project-workbench.mjs。页面只拦「未填完」，项目是否可用由服务端判定。
 export const PURPOSE_MAX_LENGTH = 100;
 

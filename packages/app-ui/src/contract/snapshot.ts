@@ -319,6 +319,8 @@ export type ProjectAssignment = z.infer<typeof ProjectAssignmentSchema>;
 
 // ---- ERP 填报、回读、对账 ----
 
+// ERP 动作进度：步骤、标题与说明都由服务端给出（启动浏览器、登录、导入发票、填明细、保存、严格回读），页面按顺序渲染。
+// 登录步处于 waiting 时，当前待答 step 是 erp_login；「我已登录，继续」只是请服务端再探测一次，探测不到就留在原地并给出 loginNotice。
 export const ErpStepSchema = z.object({
   key: z.string().min(1),
   title: z.string().min(1),
@@ -340,7 +342,9 @@ export const ReadbackRowSchema = z.object({
   no: z.number().int().positive(),
   description: z.string(),
   local: AmountSchema,
+  // ERP 回读值；读不到时为 null（页面显示「需人工核对」）。
   erp: AmountSchema.nullable(),
+  // 是否一致由服务端逐行判定（严格回读），页面只按这个标志着色。
   matched: z.boolean(),
 });
 export type ReadbackRow = z.infer<typeof ReadbackRowSchema>;
@@ -349,11 +353,17 @@ export const ReadbackSchema = z.object({
   status: z.enum(['none', 'matched', 'mismatched']),
   rows: z.array(ReadbackRowSchema),
   summary: z.string().nullable(),
+  // 本地确认与 ERP 回读的价税合计合计，由服务端给出；页面不求和。
+  localTotal: AmountSchema.nullable(),
+  erpTotal: AmountSchema.nullable(),
 });
 export type Readback = z.infer<typeof ReadbackSchema>;
 
 export const RECONCILE_ACTIONS = ['原地等待', '转人工'] as const;
 
+// ERP 对账：写入中止或严格回读不一致后停在 reconcile 阶段。bucket 是对账中断点（内核六类之一），action 是建议处置。
+// status：pending 等待用户选择处置；waiting 已重新对账、原地等待；handed_off 已转人工（终止后续 ERP 写入，终态）。
+// 严格回读不一致时 rows 带逐行比对（与 readback.rows 相同），中止在保存步时 rows 可能为空。
 export const ReconcileSchema = z.object({
   status: z.enum(['none', 'pending', 'waiting', 'handed_off']),
   bucket: z.string().nullable(),
@@ -375,6 +385,8 @@ export const STEP_KINDS = [
   'confirm_review',
   'choose_action',
   'assign_projects',
+  // 项目归属提交后等待「开始填报」；写入进行中为 none；登录步等待时为 erp_login；停在对账时为 reconcile。
+  'start_erp_write',
   'erp_login',
   'reconcile',
 ] as const;

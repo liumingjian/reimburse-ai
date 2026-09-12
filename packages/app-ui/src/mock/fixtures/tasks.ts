@@ -2,6 +2,7 @@ import { stageReached, type TaskStage } from '../../contract/stage';
 import type { Inventory, Material, TaskSnapshot, UploadBatch, UploadFileResult } from '../../contract/snapshot';
 import type { Employee, TaskListItem } from '../../contract/task-list';
 import { SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, projectAssignmentOpen, projectAssignmentSubmitted } from './projects';
+import { T2_ROWS, applyAbortAtSave, applyErpDone, emptyReadback, erpIdle, mismatchReason, readbackOf } from './erp';
 import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult } from './inventory';
 
 // 夹具：三个虚构的报销任务。人物与数字沿用原型（林颂宜、上海出差、9 条明细合计 3972.59）。
@@ -107,7 +108,7 @@ const STEP_BY_STAGE: Readonly<Record<TaskStage, TaskSnapshot['step']['kind']>> =
   review: 'confirm_review',
   actions: 'choose_action',
   project: 'assign_projects',
-  erp: 'erp_login',
+  erp: 'start_erp_write',
   done: 'none',
   reconcile: 'reconcile',
 };
@@ -137,7 +138,7 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     printSheet: { status: 'not_generated', fileName: null, url: null, pages: [], notices: [] },
     projectAssignment: { status: 'not_started', purpose: null, homeCity: null, assignments: [], projects: [], submittedAt: null },
     erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null },
-    readback: { status: 'none', rows: [], summary: null },
+    readback: emptyReadback(),
     reconcile: { status: 'none', bucket: null, action: null, banner: null, draftNo: null, rows: [], reasons: [] },
     step: { kind: STEP_BY_STAGE[stage], stepToken: `tok-${task.taskId}-${stage}` },
   };
@@ -193,10 +194,10 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
   if (stageReached(stage, 'erp')) {
     snapshot.projectAssignment = projectAssignmentSubmitted({ purpose: T1_PURPOSE, projects: T1_DONE_ASSIGNMENTS, submittedAt: '2026-09-11T14:40:00' });
   }
-  if (stage === 'done') {
-    snapshot.erp = { status: 'done', steps: [], draftNo: T1_DRAFT_NO, abortReason: null, loginNotice: null };
-    snapshot.readback = { status: 'matched', rows: [], summary: '明细 9/9 一致' };
-  }
+  // erp：等待「开始填报」，六个步骤都待开始。done：草稿已保存、回读 9/9 一致。reconcile：保存步中止后的对账（同 ?fault=erp-write-aborted 的结果）。
+  if (stage === 'erp') snapshot.erp = erpIdle();
+  if (stage === 'done') applyErpDone(snapshot, T1_DRAFT_NO);
+  if (stage === 'reconcile') applyAbortAtSave(snapshot);
   return snapshot;
 }
 
@@ -223,14 +224,15 @@ export function t2Snapshot(): TaskSnapshot {
     notice: null,
   };
   snapshot.erp = { status: 'aborted', steps: [], draftNo: T2_DRAFT_NO, abortReason: '保存草稿后回读超时，写入结果不确定。', loginNotice: null };
+  snapshot.readback = readbackOf(T2_ROWS);
   snapshot.reconcile = {
     status: 'pending',
     bucket: '已保存',
     action: '转人工',
     banner: `ERP 中存在草稿 ${T2_DRAFT_NO}，5 行明细中 4 行一致，1 行金额不一致。`,
     draftNo: T2_DRAFT_NO,
-    rows: [],
-    reasons: [],
+    rows: [...T2_ROWS],
+    reasons: [mismatchReason(3)],
   };
   return snapshot;
 }
@@ -258,7 +260,7 @@ export function t3Snapshot(): TaskSnapshot {
     notice: null,
   };
   snapshot.erp = { status: 'done', steps: [], draftNo: T3_DRAFT_NO, abortReason: null, loginNotice: null };
-  snapshot.readback = { status: 'matched', rows: [], summary: '明细 4/4 一致' };
+  snapshot.readback = { status: 'matched', rows: [], summary: '明细 4/4 一致', localTotal: '2318.50', erpTotal: '2318.50' };
   return snapshot;
 }
 

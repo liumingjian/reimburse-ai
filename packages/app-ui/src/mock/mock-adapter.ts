@@ -1,5 +1,6 @@
 import {
   CONFIRM_REVIEW_ERRORS,
+  ERP_ACTION_ERRORS,
   PENDING_ANSWER_ERRORS,
   PROJECT_ASSIGNMENT_ERRORS,
   ProjectAssignmentInputSchema,
@@ -13,9 +14,18 @@ import {
 import type { ActionOutcome, AdapterEvent, AppAdapter, Unsubscribe } from '../contract/adapter';
 import { PAYMENT_SCREENSHOT_ERRORS, REVIEW_INVALIDATED_NOTICE, TaskSnapshotSchema, type TaskSnapshot } from '../contract/snapshot';
 import { TaskListSchema, type TaskList } from '../contract/task-list';
+import {
+  ERP_STEP_INDEX,
+  applyAbortAtSave,
+  applyErpDone,
+  applyReadbackMismatch,
+  erpSteps,
+  handedOffBanner,
+  loginNotDetected,
+} from './fixtures/erp';
 import { applyPendingAnswer, buildLines, inventoryResult } from './fixtures/inventory';
 import { projectAssignmentOpen, projectAssignmentSubmitted } from './fixtures/projects';
-import { EMPLOYEE, T1_ID, emptySnapshot, inventoryNotStarted, t1Snapshot, t2Snapshot, t3Snapshot, toListItem, uploadedMaterial } from './fixtures/tasks';
+import { EMPLOYEE, T1_DRAFT_NO, T1_ID, emptySnapshot, inventoryNotStarted, t1Snapshot, t2Snapshot, t3Snapshot, toListItem, uploadedMaterial } from './fixtures/tasks';
 import type { MockOptions } from './options';
 import { duplicateReason, judgeFile } from './upload';
 
@@ -23,11 +33,15 @@ export { FAULTS, readMockOptions, type Fault, type MockOptions } from './options
 
 // 浏览器内 mock 适配器：实现与 HTTP 适配器相同的接口，用内存里的快照回答一切。
 // 每份交出去的快照都过 schema 校验（失败即抛出），保证夹具与契约不脱节。
-// 已实现：任务列表、快照外壳、新建任务、上传批次、材料盘点（定时推进）、待确认项答复、整单明细确认、支付截图、确认后追加材料（确认失效）、项目归属提交；
-// 其余动作原样返回当前快照，由后续票逐个实现。
+// 已实现：任务列表、快照外壳、新建任务、上传批次、材料盘点（定时推进）、待确认项答复、整单明细确认、支付截图、确认后追加材料（确认失效）、项目归属提交、
+// ERP 填报（定时推进、登录交接）、严格回读、对账（重新对账 / 转人工）；打印稿动作原样返回当前快照，由后续票实现。
 
 const EMIT_DELAY_MS = 20;
 const DEFAULT_PHASE_MS = 450;
+const DEFAULT_ERP_STEP_MS = 300;
+const DEFAULT_ERP_LOGIN_AUTO_MS = 2500;
+// `?fault=erp-login-missing`：前两次「我已登录，继续」都探测不到登录，第三次才检测到；该故障下服务端不会自己探测到。
+const LOGIN_MISSING_ATTEMPTS = 2;
 
 // mock 的「现在」：夹具时间之后逐次递增，保证 updatedAt 单调。
 function clock(): () => string {
@@ -51,6 +65,13 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
   let reopenCount = 0;
   const now = clock();
   const phaseMs = options.inventoryPhaseMs ?? DEFAULT_PHASE_MS;
+  const erpStepMs = options.erpStepMs ?? DEFAULT_ERP_STEP_MS;
+  const erpLoginAutoMs = options.erpLoginAutoMs ?? DEFAULT_ERP_LOGIN_AUTO_MS;
+  // 每个任务当前这一轮 ERP 写入的编号、登录探测次数与重新对账次数；定时器只推进自己那一轮。
+  const erpRuns = new Map<string, number>();
+  const loginAttempts = new Map<string, number>();
+  const reconcileCounts = new Map<string, number>();
+  let nextErpRun = 1;
 
   const put = (snapshot: TaskSnapshot) => {
     snapshots.set(snapshot.task.taskId, TaskSnapshotSchema.parse(snapshot));
@@ -69,7 +90,9 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
   const commit = (snapshot: TaskSnapshot): ActionOutcome => {
     put(snapshot);
     const copy = clone(snapshot);
-    setTimeout(() => emit(snapshot.task.taskId, { type: 'snapshot', snapshot: clone(snapshot) }), EMIT_DELAY_MS);
+    // 事件流推送的是推送那一刻的最新快照（服务端定时推进可能已经走在这次动作前面），不是动作当时的副本。
+    const taskId = snapshot.task.taskId;
+    setTimeout(() => emit(taskId, { type: 'snapshot', snapshot: clone(snapshotOf(taskId)) }), EMIT_DELAY_MS);
     return { ok: true, snapshot: copy };
   };
 
@@ -149,6 +172,62 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
     snapshot.stage = 'upload';
     reopenCount += 1;
     snapshot.step = { kind: 'start_inventory', stepToken: `tok-${snapshot.task.taskId}-upload-reopen-${reopenCount}` };
+  };
+
+  // ---- ERP 填报（服务端角色）：定时推进各步，登录步等用户或自动探测，保存与严格回读按故障决定结局 ----
+
+  const erpRunLive = (snapshot: TaskSnapshot, run: number, status: TaskSnapshot['erp']['status']) =>
+    erpRuns.get(snapshot.task.taskId) === run && snapshot.erp.status === status;
+
+  // 浏览器已启动：登录步进入等待，当前待答 step 变为 erp_login。正常场景下服务端过一会儿自己探测到登录。
+  const reachLogin = (taskId: string, run: number) => {
+    const current = clone(snapshotOf(taskId));
+    if (!erpRunLive(current, run, 'running')) return;
+    current.erp.status = 'waiting_login';
+    current.erp.steps = erpSteps(ERP_STEP_INDEX.login, 'waiting');
+    current.step = { kind: 'erp_login', stepToken: `tok-${taskId}-erp-login-${run}-1` };
+    push(current);
+    if (options.fault !== 'erp-login-missing') {
+      setTimeout(() => {
+        const latest = clone(snapshotOf(taskId));
+        if (!erpRunLive(latest, run, 'waiting_login')) return;
+        loginDetected(latest, run);
+        push(latest);
+      }, erpLoginAutoMs);
+    }
+  };
+
+  // 探测到登录：从导入发票开始逐步推进。
+  const loginDetected = (snapshot: TaskSnapshot, run: number) => {
+    const taskId = snapshot.task.taskId;
+    snapshot.erp.status = 'running';
+    snapshot.erp.loginNotice = null;
+    snapshot.erp.steps = erpSteps(ERP_STEP_INDEX.import, 'running');
+    snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-erp-write-${run}` };
+    setTimeout(() => finishErpStep(taskId, run, ERP_STEP_INDEX.import), erpStepMs);
+  };
+
+  // 第 index 步结束：保存步在 erp-write-aborted 下中止；严格回读按 readback-mismatch 决定一致或停在对账。
+  const finishErpStep = (taskId: string, run: number, index: number) => {
+    const current = clone(snapshotOf(taskId));
+    if (!erpRunLive(current, run, 'running')) return;
+    current.task.updatedAt = now();
+    if (index === ERP_STEP_INDEX.save && options.fault === 'erp-write-aborted') {
+      applyAbortAtSave(current);
+      push(current);
+      return;
+    }
+    if (index === ERP_STEP_INDEX.save) current.erp.draftNo = T1_DRAFT_NO;
+    if (index === ERP_STEP_INDEX.readback) {
+      const draftNo = current.erp.draftNo ?? T1_DRAFT_NO;
+      if (options.fault === 'readback-mismatch') applyReadbackMismatch(current, draftNo);
+      else applyErpDone(current, draftNo);
+      push(current);
+      return;
+    }
+    current.erp.steps = erpSteps(index + 1, 'running');
+    push(current);
+    setTimeout(() => finishErpStep(taskId, run, index + 1), erpStepMs);
   };
 
   return {
@@ -334,13 +413,75 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
         snapshot.projectAssignment = projectAssignmentSubmitted({ purpose, projects, submittedAt: at });
         snapshot.task.updatedAt = at;
         snapshot.stage = 'erp';
-        snapshot.step = { kind: 'erp_login', stepToken: `tok-${taskId}-erp` };
+        snapshot.erp = { status: 'idle', steps: erpSteps(-1), draftNo: null, abortReason: null, loginNotice: null };
+        snapshot.step = { kind: 'start_erp_write', stepToken: `tok-${taskId}-erp` };
         return snapshot;
       }),
-    startErpWrite: async (taskId, stepToken) => withStep(taskId, stepToken, (snapshot) => snapshot),
-    confirmLogin: async (taskId, stepToken) => withStep(taskId, stepToken, (snapshot) => snapshot),
-    reconcile: unchanged,
-    handOff: unchanged,
+    // 开始填报：第一步「启动浏览器」进行中，随后登录步等待。写入进行中没有待答 step（none）。
+    startErpWrite: async (taskId, stepToken) =>
+      withStep(taskId, stepToken, (snapshot) => {
+        if (snapshot.step.kind !== 'start_erp_write') return { error: { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady } };
+        const run = nextErpRun;
+        nextErpRun += 1;
+        erpRuns.set(taskId, run);
+        loginAttempts.set(taskId, 0);
+        snapshot.erp = { status: 'running', steps: erpSteps(ERP_STEP_INDEX.browser, 'running'), draftNo: null, abortReason: null, loginNotice: null };
+        snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-erp-run-${run}` };
+        snapshot.task.updatedAt = now();
+        setTimeout(() => reachLogin(taskId, run), erpStepMs);
+        return snapshot;
+      }),
+    // 「我已登录，继续」= 请服务端再探测一次。探测不到：留在登录步，给出说明并换新凭据（摆给用户看的内容变了）。
+    confirmLogin: async (taskId, stepToken) =>
+      withStep(taskId, stepToken, (snapshot) => {
+        if (snapshot.step.kind !== 'erp_login') return { error: { code: 'not_waiting_login', message: ERP_ACTION_ERRORS.notWaitingLogin } };
+        const run = erpRuns.get(taskId) ?? 0;
+        const attempt = (loginAttempts.get(taskId) ?? 0) + 1;
+        loginAttempts.set(taskId, attempt);
+        if (options.fault === 'erp-login-missing' && attempt <= LOGIN_MISSING_ATTEMPTS) {
+          snapshot.erp.loginNotice = loginNotDetected(attempt);
+          snapshot.step = { kind: 'erp_login', stepToken: `tok-${taskId}-erp-login-${run}-${attempt + 1}` };
+          return snapshot;
+        }
+        loginDetected(snapshot, run);
+        return snapshot;
+      }),
+    // 重新对账：只读 ERP 再判定一次。保存步中止的任务读到草稿且逐行一致 ⇒ 完成；仍有不一致的行 ⇒ 原地等待，结果写进横幅。
+    reconcile: async (taskId, stepToken) =>
+      withStep(taskId, stepToken, (snapshot) => {
+        if (snapshot.step.kind !== 'reconcile') return { error: { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling } };
+        const count = (reconcileCounts.get(taskId) ?? 0) + 1;
+        reconcileCounts.set(taskId, count);
+        snapshot.task.updatedAt = now();
+        if (snapshot.reconcile.rows.length === 0 && snapshot.lines.length > 0) {
+          applyErpDone(snapshot, T1_DRAFT_NO);
+          snapshot.reconcile = {
+            ...snapshot.reconcile,
+            status: 'none',
+            bucket: '已保存',
+            action: '原地等待',
+            banner: `重新对账：ERP 中已有草稿 ${T1_DRAFT_NO}，${snapshot.readback.rows.length} 行明细逐行一致。`,
+            draftNo: T1_DRAFT_NO,
+            reasons: [],
+          };
+          return snapshot;
+        }
+        const bad = snapshot.reconcile.rows.filter((row) => !row.matched).length;
+        snapshot.reconcile.status = 'waiting';
+        snapshot.reconcile.banner = `已重新对账（第 ${count} 次）：ERP 草稿 ${snapshot.reconcile.draftNo ?? ''} 仍有 ${bad} 行与本地确认不一致。你在 ERP 中修正后可以再次对账，或者转人工。`;
+        snapshot.step = { kind: 'reconcile', stepToken: `tok-${taskId}-reconcile-${count}` };
+        return snapshot;
+      }),
+    // 转人工：终止后续 ERP 写入，任务停在对账阶段并标记为已转人工（终态），对账记录保留。
+    handOff: async (taskId, stepToken) =>
+      withStep(taskId, stepToken, (snapshot) => {
+        if (snapshot.step.kind !== 'reconcile') return { error: { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling } };
+        erpRuns.delete(taskId);
+        snapshot.reconcile = { ...snapshot.reconcile, status: 'handed_off', action: '转人工', banner: handedOffBanner(snapshot.reconcile.draftNo) };
+        snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-handed-off` };
+        snapshot.task.updatedAt = now();
+        return snapshot;
+      }),
   };
 }
 

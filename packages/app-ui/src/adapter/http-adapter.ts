@@ -94,7 +94,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     submitProjectAssignment: (taskId, input, stepToken) => action(taskId, 'submit-project-assignment', { ...input, stepToken }),
     startErpWrite: (taskId, stepToken) => action(taskId, 'start-erp-write', { stepToken }),
     confirmLogin: (taskId, stepToken) => action(taskId, 'confirm-login', { stepToken }),
-    reconcile: (taskId) => action(taskId, 'reconcile', {}),
-    handOff: (taskId) => action(taskId, 'hand-off', {}),
+    reconcile: (taskId, stepToken) => action(taskId, 'reconcile', { stepToken }),
+    handOff: (taskId, stepToken) => action(taskId, 'hand-off', { stepToken }),
   };
 }
