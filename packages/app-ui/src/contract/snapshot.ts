@@ -87,6 +87,8 @@ export const MaterialSchema = z.object({
   categoryLabel: z.string().nullable(),
   role: MaterialRoleSchema,
   shape: z.enum(['portrait', 'landscape', 'photo']),
+  // 原件类型决定预览方式：pdf 用 iframe，image 用 img。
+  mediaType: z.enum(['pdf', 'image']),
   status: z.enum(['uploaded', 'ok', 'pending', 'excluded']),
   // 「校验」列文本，由服务端成句（配对、金额守恒、二维码核对结果）。
   checkText: z.string(),
@@ -99,11 +101,25 @@ export const MaterialSchema = z.object({
 });
 export type Material = z.infer<typeof MaterialSchema>;
 
+export const ExpenseCategorySchema = z.object({
+  // 内核类别 code（accommodation / local_city_transport / long_distance / remote_city_transport）；页面只显示 label。
+  code: z.string().min(1),
+  label: z.string().min(1),
+});
+export type ExpenseCategory = z.infer<typeof ExpenseCategorySchema>;
+
 // 费用事件：一笔可报销消费，由主要报销凭证与参考材料共同证明；一个事件对应一条候选明细。
+// 事件按统一业务序号排列（no）；同一主要报销凭证的事件相邻。summary 与 evidenceNote 由服务端成句：
+// summary 是一句话描述（如「高德 · 虹桥枢纽 → 漕河泾」），evidenceNote 是该凭证组的材料证据关联结论
+// （如「打车发票与行程单配对：26.69 + 20.85 + 21.65 = 69.19，按分守恒」），只放在组内第一个事件上，其余为 null。
 export const ExpenseEventSchema = z.object({
   eventId: IdSchema,
+  no: z.number().int().positive(),
   voucherMaterialId: IdSchema,
   referenceMaterialIds: z.array(IdSchema),
+  category: ExpenseCategorySchema,
+  summary: z.string(),
+  evidenceNote: z.string().nullable(),
   date: DateSchema,
   endDate: DateSchema.nullable(),
   city: z.string().nullable(),
@@ -112,6 +128,24 @@ export const ExpenseEventSchema = z.object({
   grossAmount: AmountSchema,
 });
 export type ExpenseEvent = z.infer<typeof ExpenseEventSchema>;
+
+// ---- 材料盘点进度 ----
+
+// 盘点由服务端分阶段推进并推送快照；页面只显示阶段名与状态。
+export const InventoryPhaseSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+  status: z.enum(['todo', 'running', 'done']),
+});
+export type InventoryPhase = z.infer<typeof InventoryPhaseSchema>;
+
+export const InventorySchema = z.object({
+  status: z.enum(['not_started', 'running', 'done']),
+  versionId: z.string().nullable(),
+  phases: z.array(InventoryPhaseSchema),
+  finishedAt: DateTimeSchema.nullable(),
+});
+export type Inventory = z.infer<typeof InventorySchema>;
 
 // ---- 待确认项 ----
 
@@ -124,6 +158,15 @@ export const PendingFieldSchema = z.object({
 });
 export type PendingField = z.infer<typeof PendingFieldSchema>;
 
+export const PendingChoiceSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+});
+export type PendingChoice = z.infer<typeof PendingChoiceSchema>;
+
+// 答复形状：form 类按 fields[].key 逐个给值；choice 类给 { [PENDING_CHOICE_KEY]: choices[].key }。
+export const PENDING_CHOICE_KEY = 'choice';
+
 export const PendingItemSchema = z.object({
   itemId: IdSchema,
   materialId: IdSchema,
@@ -131,20 +174,13 @@ export const PendingItemSchema = z.object({
   why: z.string(),
   kind: z.enum(['form', 'choice']),
   fields: z.array(PendingFieldSchema),
-  choices: z.array(z.string().min(1)),
+  choices: z.array(PendingChoiceSchema),
   status: z.enum(['open', 'resolved']),
   answer: z.record(z.string(), z.string()).nullable(),
 });
 export type PendingItem = z.infer<typeof PendingItemSchema>;
 
 // ---- 候选明细（统一业务序号） ----
-
-export const ExpenseCategorySchema = z.object({
-  // 内核类别 code（accommodation / local_city_transport / long_distance / remote_city_transport）；页面只显示 label。
-  code: z.string().min(1),
-  label: z.string().min(1),
-});
-export type ExpenseCategory = z.infer<typeof ExpenseCategorySchema>;
 
 export const LineSchema = z.object({
   lineId: IdSchema,
@@ -340,6 +376,7 @@ export const TaskSnapshotSchema = z.object({
   stage: TaskStageSchema,
   batches: z.array(UploadBatchSchema),
   materials: z.array(MaterialSchema),
+  inventory: InventorySchema,
   events: z.array(ExpenseEventSchema),
   pendingItems: z.array(PendingItemSchema),
   lines: z.array(LineSchema),

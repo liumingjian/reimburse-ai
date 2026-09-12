@@ -106,6 +106,8 @@ layout:
   page-min-width: 320px
   dropzone-min-height: 200px
   file-size-width: 72px
+  split-list-width: 300px
+  detail-preview-width: 260px
 
 components:
   button-primary:
@@ -205,7 +207,8 @@ Linear 原件只记录深色营销站，并明确写了"不发布浅色版"，�
 ## 布局尺寸
 
 `layout` 组收纳页面 CSS 需要、又不属于颜色/字号/圆角/间距的几个固定尺寸：内容最大宽、hairline 与焦点环粗细、归组色条宽度、
-小号与大号控件高度、阶段序号圆点尺寸、页面最小宽度、上传拖放区最小高度、文件列表大小列宽。新的尺寸先加到这里，再在 CSS 里引用。
+小号与大号控件高度、阶段序号圆点尺寸、页面最小宽度、上传拖放区最小高度、文件列表大小列宽、待确认项左栏宽度、原件预览栏宽度。
+新的尺寸先加到这里，再在 CSS 里引用。
 
 ## 语义色
 

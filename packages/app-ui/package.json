@@ -18,7 +18,9 @@
     "test": "vitest run",
     "test:e2e": "vite build --mode mock && playwright test",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "tokens": "node scripts/build-tokens.mjs"
+    "tokens": "node scripts/build-tokens.mjs",
+    "fixtures": "node fixtures/scripts/generate.mjs && node fixtures/scripts/verify.mjs",
+    "fixtures:verify": "node fixtures/scripts/verify.mjs"
   },
   "dependencies": {
     "react": "^19.1.0",

@@ -1,9 +1,10 @@
 import { stageReached, type TaskStage } from '../../contract/stage';
-import type { Material, TaskSnapshot, UploadBatch, UploadFileResult } from '../../contract/snapshot';
+import type { Inventory, Material, TaskSnapshot, UploadBatch, UploadFileResult } from '../../contract/snapshot';
 import type { Employee, TaskListItem } from '../../contract/task-list';
+import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult } from './inventory';
 
 // 夹具：三个虚构的报销任务。人物与数字沿用原型（林颂宜、上海出差、9 条明细合计 3972.59）。
-// 本票只填任务列表需要的字段与快照外壳；材料、明细等分节由后续票加深。
+// 材料盘点结果、费用事件、待确认项与候选明细见 ./inventory.ts；本文件按阶段把它们装进快照。
 
 export const EMPLOYEE: Employee = { name: '林颂宜', department: '产品研发部' };
 
@@ -49,6 +50,10 @@ export function shapeOf(fileName: string): Material['shape'] {
   return /\.(jpe?g|png)$/i.test(fileName) ? 'photo' : 'portrait';
 }
 
+export function mediaTypeOf(fileName: string): Material['mediaType'] {
+  return /\.(jpe?g|png)$/i.test(fileName) ? 'image' : 'pdf';
+}
+
 // 刚接收、还没盘点的材料：角色与类别未定，盘点票（#102）再填字段与校验。
 export function uploadedMaterial(input: { materialId: string; batchId: string; fileName: string; size: number; contentHash: string }): Material {
   return {
@@ -61,6 +66,7 @@ export function uploadedMaterial(input: { materialId: string; batchId: string; f
     categoryLabel: null,
     role: 'uploaded',
     shape: shapeOf(input.fileName),
+    mediaType: mediaTypeOf(input.fileName),
     status: 'uploaded',
     checkText: '',
     linkedMaterialIds: [],
@@ -105,12 +111,23 @@ const STEP_BY_STAGE: Readonly<Record<TaskStage, TaskSnapshot['step']['kind']>> =
   reconcile: 'reconcile',
 };
 
+export const T1_INVENTORY_FINISHED_AT = '2026-09-11T14:20:00';
+
+export function inventoryNotStarted(): Inventory {
+  return { status: 'not_started', versionId: null, phases: INVENTORY_PHASES.map((phase) => ({ ...phase, status: 'todo' })), finishedAt: null };
+}
+
+export function inventoryDone(versionId: string, finishedAt: string): Inventory {
+  return { status: 'done', versionId, phases: INVENTORY_PHASES.map((phase) => ({ ...phase, status: 'done' })), finishedAt };
+}
+
 export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): TaskSnapshot {
   return {
     task,
     stage,
     batches: [],
     materials: [],
+    inventory: inventoryNotStarted(),
     events: [],
     pendingItems: [],
     lines: [],
@@ -125,8 +142,8 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
   };
 }
 
-// T1：进行中的任务，`?seed=` 决定它停在哪个阶段。
-export function t1Snapshot(stage: TaskStage = 'upload'): TaskSnapshot {
+// T1：进行中的任务，`?seed=` 决定它停在哪个阶段；unsupportedFault 对应 `?fault=unsupported-material`（曹操行程单变成不支持的版式）。
+export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false): TaskSnapshot {
   const snapshot = emptySnapshot(
     {
       taskId: T1_ID,
@@ -140,7 +157,23 @@ export function t1Snapshot(stage: TaskStage = 'upload'): TaskSnapshot {
   if (stageReached(stage, 'inventory')) {
     const batch = t1Batch();
     snapshot.batches = [batch];
-    snapshot.materials = t1Materials(batch);
+    snapshot.inventory = inventoryDone('v1', T1_INVENTORY_FINISHED_AT);
+    const result = inventoryResult(t1Materials(batch), unsupportedFault);
+    if (stageReached(stage, 'review')) {
+      // 待确认项都已按原型的既定答复处理，候选明细随之形成。
+      for (const item of result.pendingItems) {
+        const material = result.materials.find((m) => m.materialId === item.materialId);
+        const answer = material ? SEED_ANSWERS[material.materialId] : undefined;
+        if (answer) applyPendingAnswer(result, item, answer);
+      }
+      snapshot.lines = buildLines(result);
+      snapshot.confirmation = { ...snapshot.confirmation, digest: 'digest-t1-v1', lineCount: 9, invoiceCount: 7, grossTotal: T1_GROSS_TOTAL };
+    }
+    snapshot.materials = result.materials;
+    snapshot.events = result.events;
+    snapshot.pendingItems = result.pendingItems;
+    // 盘点已结束、还有待确认项：当前待答 step 就是答复待确认项。
+    if (stage === 'inventory' && result.pendingItems.some((item) => item.status === 'open')) snapshot.step = { kind: 'answer_pending', stepToken: `tok-${T1_ID}-inventory` };
   }
   if (stageReached(stage, 'actions')) {
     snapshot.confirmation = {
@@ -172,6 +205,7 @@ export function t2Snapshot(): TaskSnapshot {
     },
     'reconcile',
   );
+  snapshot.inventory = inventoryDone('v1', '2026-07-18T09:52:00');
   snapshot.confirmation = {
     status: 'confirmed',
     confirmedAt: '2026-07-18T10:02:00',
@@ -206,6 +240,7 @@ export function t3Snapshot(): TaskSnapshot {
     },
     'done',
   );
+  snapshot.inventory = inventoryDone('v1', '2026-06-30T15:20:00');
   snapshot.confirmation = {
     status: 'confirmed',
     confirmedAt: '2026-07-02T16:20:00',

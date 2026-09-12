@@ -15,6 +15,8 @@ export type Fault = (typeof FAULTS)[number];
 export type MockOptions = {
   seed: TaskStage | null;
   fault: Fault | null;
+  // 盘点每个阶段的推进间隔（毫秒）；测试可以调小。
+  inventoryPhaseMs?: number;
 };
 
 export function readMockOptions(search: string): MockOptions {

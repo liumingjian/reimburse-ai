@@ -5,7 +5,9 @@ import type { TaskSnapshot } from '../contract/snapshot';
 import { TASKS_HASH, navigate, taskHash } from '../router';
 import { AppShell } from '../shell/AppShell';
 import { Sidebar } from '../shell/Sidebar';
+import { InventoryPage } from './InventoryPage';
 import { PAGE_COPY } from './page-copy';
+import { PendingPage } from './PendingPage';
 import { UploadPage } from './UploadPage';
 
 export { PAGE_COPY } from './page-copy';
@@ -13,6 +15,8 @@ export { PAGE_COPY } from './page-copy';
 // 已实现的页面在这里分发；其余页面先放骨架，由后续票填充。
 function PageBody({ page, snapshot }: { page: TaskPage; snapshot: TaskSnapshot }) {
   if (page === 'upload') return <UploadPage snapshot={snapshot} />;
+  if (page === 'inventory') return <InventoryPage snapshot={snapshot} />;
+  if (page === 'pending') return <PendingPage snapshot={snapshot} />;
   return <PageSkeleton page={page} snapshot={snapshot} />;
 }
 

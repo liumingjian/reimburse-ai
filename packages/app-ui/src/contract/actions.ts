@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { DateSchema, IdSchema } from './primitives';
-import { CornersSchema, TaskSnapshotSchema } from './snapshot';
+import { CornersSchema, PENDING_CHOICE_KEY, TaskSnapshotSchema, type PendingItem } from './snapshot';
 
 // 接口三：动作端点。成功返回新快照；失败返回 { error }；stepToken 过期返回 HTTP 409 与 { error, snapshot }。
 
@@ -59,6 +59,45 @@ export type CreateTaskInput = z.infer<typeof CreateTaskInputSchema>;
 
 export const PendingAnswerSchema = z.record(z.string(), z.string());
 export type PendingAnswer = z.infer<typeof PendingAnswerSchema>;
+
+// 待确认项答复的格式校验文案，页面与服务端共用；页面据此在提交前拦住非法值，服务端再校验一次。
+export const PENDING_ANSWER_ERRORS = {
+  required: '必填，对照原件填写。',
+  time: '格式应为 HH:MM，且小时 00-23、分钟 00-59。',
+  date: '格式应为 YYYY-MM-DD，且是真实存在的日期。',
+  choice: '请选择一种处理方式。',
+  notOpen: '这个待确认项已经处理过了。',
+} as const;
+
+const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+
+// 返回按字段 key 归档的错误；空对象表示合法。值先 trim 再判定。
+export function validatePendingAnswer(item: Pick<PendingItem, 'kind' | 'fields' | 'choices'>, answer: PendingAnswer): Record<string, string> {
+  const errors: Record<string, string> = {};
+  if (item.kind === 'choice') {
+    const chosen = (answer[PENDING_CHOICE_KEY] ?? '').trim();
+    if (!item.choices.some((choice) => choice.key === chosen)) errors[PENDING_CHOICE_KEY] = PENDING_ANSWER_ERRORS.choice;
+    return errors;
+  }
+  for (const field of item.fields) {
+    const value = (answer[field.key] ?? '').trim();
+    if (!value) {
+      if (field.required) errors[field.key] = PENDING_ANSWER_ERRORS.required;
+      continue;
+    }
+    if (field.format === 'time' && !TIME_PATTERN.test(value)) errors[field.key] = PENDING_ANSWER_ERRORS.time;
+    if (field.format === 'date' && !isRealDate(value)) errors[field.key] = PENDING_ANSWER_ERRORS.date;
+  }
+  return errors;
+}
+
+// 去掉首尾空白后的答复；只保留该项定义的键。
+export function normalizePendingAnswer(item: Pick<PendingItem, 'kind' | 'fields'>, answer: PendingAnswer): PendingAnswer {
+  const keys = item.kind === 'choice' ? [PENDING_CHOICE_KEY] : item.fields.map((field) => field.key);
+  const out: PendingAnswer = {};
+  for (const key of keys) out[key] = (answer[key] ?? '').trim();
+  return out;
+}
 
 export const ProjectAssignmentInputSchema = z.object({
   purpose: z.string().trim().min(1).max(100),

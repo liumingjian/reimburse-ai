@@ -1,4 +1,4 @@
-import { TASK_STAGE_LABELS, stageRank, stageReached, type TaskPage, type TaskStage } from '../contract/stage';
+import { TASK_STAGE_LABELS, pageAllowed, stageRank, stageReached, type TaskPage, type TaskStage } from '../contract/stage';
 import type { TaskSnapshot } from '../contract/snapshot';
 import { taskHash } from '../router';
 
@@ -50,7 +50,8 @@ export function Sidebar({ snapshot, page }: { snapshot: TaskSnapshot; page: Task
       <h3>流程阶段</h3>
       <ul className="stage-list" aria-label="流程阶段">
         {SIDEBAR_ENTRIES.map((entry, index) => {
-          const reached = stageReached(stage, entry.stage);
+          // 待确认项页在盘点完成后就能进（阶段还停在 inventory 时也一样），其余条目按阶段先后。
+          const reached = entry.stage === 'pending' ? pageAllowed(stage, 'pending') : stageReached(stage, entry.stage);
           const active = entry.stage === activeStage;
           const done = !active && (stageRank(stage) > stageRank(entry.stage) || stage === 'done');
           const className = [active ? 'current' : '', reached ? '' : 'locked', done ? 'done' : '', 'stage'].filter(Boolean).join(' ');

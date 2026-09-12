@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from '../mock/fixtures/tasks';
 import { FAULTS, readMockOptions } from '../mock/options';
-import { CREATE_TASK_ERRORS, CreateTaskInputSchema, isRealDate } from './actions';
+import { CREATE_TASK_ERRORS, CreateTaskInputSchema, PENDING_ANSWER_ERRORS, isRealDate, validatePendingAnswer } from './actions';
 import { TASK_STAGES, TaskStageSchema, pageAllowed, stageReached } from './stage';
 import { TaskSnapshotSchema, UploadBatchSchema } from './snapshot';
 import { TaskListSchema } from './task-list';
@@ -54,6 +54,46 @@ describe('契约 schema', () => {
     expect(isRealDate('2024-02-29')).toBe(true);
     expect(isRealDate('2026-02-29')).toBe(false);
     expect(isRealDate('2026/09/03')).toBe(false);
+  });
+
+  test('盘点后的快照带材料识别结果、费用事件与待确认项；review 起带候选明细', () => {
+    const inventory = t1Snapshot('inventory');
+    expect(inventory.inventory.status).toBe('done');
+    expect(inventory.materials.filter((material) => material.role === 'primary_voucher')).toHaveLength(7);
+    expect(inventory.materials.filter((material) => material.role === 'reference')).toHaveLength(3);
+    expect(inventory.events.map((event) => event.no)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(inventory.pendingItems.map((item) => [item.itemId, item.kind, item.status])).toEqual([
+      ['p1', 'form', 'open'],
+      ['p2', 'form', 'open'],
+      ['p3', 'choice', 'open'],
+    ]);
+    expect(inventory.materials.every((material) => material.originalUrl?.startsWith('fixtures/'))).toBe(true);
+    expect(inventory.lines).toHaveLength(0);
+
+    const review = t1Snapshot('review');
+    expect(review.pendingItems.every((item) => item.status === 'resolved')).toBe(true);
+    expect(review.lines.map((line) => line.grossAmount)).toEqual(['73.00', '3640.00', '26.69', '20.85', '21.65', '38.40', '32.00', '47.00', '73.00']);
+    expect(review.lines[6]?.description).toBe('出租车 · 张江高科 → 漕河泾开发区');
+    expect(review.lines.filter((line) => line.groupId === 'g3')).toHaveLength(3);
+    expect(t1Snapshot('pending', true).pendingItems).toHaveLength(4);
+  });
+
+  test('待确认项答复校验：必填、HH:MM、日期与选择', () => {
+    const form = {
+      kind: 'form' as const,
+      fields: [
+        { key: 'alightTime', label: '下车时间', placeholder: '', required: true, format: 'time' as const },
+        { key: 'origin', label: '起点', placeholder: '', required: true, format: 'text' as const },
+        { key: 'day', label: '日期', placeholder: '', required: false, format: 'date' as const },
+      ],
+      choices: [],
+    };
+    expect(validatePendingAnswer(form, { alightTime: '19:06', origin: ' 静安寺 ' })).toEqual({});
+    expect(validatePendingAnswer(form, { alightTime: '90:60', origin: '' })).toEqual({ alightTime: PENDING_ANSWER_ERRORS.time, origin: PENDING_ANSWER_ERRORS.required });
+    expect(validatePendingAnswer(form, { alightTime: '24:00', origin: 'x', day: '2026-02-30' })).toEqual({ alightTime: PENDING_ANSWER_ERRORS.time, day: PENDING_ANSWER_ERRORS.date });
+    const choice = { kind: 'choice' as const, fields: [], choices: [{ key: 'exclude', label: '排除此材料' }] };
+    expect(validatePendingAnswer(choice, { choice: 'exclude' })).toEqual({});
+    expect(validatePendingAnswer(choice, { choice: 'nope' })).toEqual({ choice: PENDING_ANSWER_ERRORS.choice });
   });
 
   test('金额与日期格式不对的快照被拒绝', () => {

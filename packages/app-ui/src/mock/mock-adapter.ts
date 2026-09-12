@@ -1,8 +1,9 @@
-import { STALE_STEP_CODE, STALE_STEP_NOTICE } from '../contract/actions';
+import { PENDING_ANSWER_ERRORS, STALE_STEP_CODE, STALE_STEP_NOTICE, normalizePendingAnswer, validatePendingAnswer, type ActionError } from '../contract/actions';
 import type { ActionOutcome, AdapterEvent, AppAdapter, Unsubscribe } from '../contract/adapter';
 import { TaskSnapshotSchema, type TaskSnapshot } from '../contract/snapshot';
 import { TaskListSchema, type TaskList } from '../contract/task-list';
-import { EMPLOYEE, T1_ID, emptySnapshot, t1Snapshot, t2Snapshot, t3Snapshot, toListItem, uploadedMaterial } from './fixtures/tasks';
+import { applyPendingAnswer, buildLines, inventoryResult } from './fixtures/inventory';
+import { EMPLOYEE, T1_ID, emptySnapshot, inventoryNotStarted, t1Snapshot, t2Snapshot, t3Snapshot, toListItem, uploadedMaterial } from './fixtures/tasks';
 import type { MockOptions } from './options';
 import { duplicateReason, judgeFile } from './upload';
 
@@ -10,9 +11,10 @@ export { FAULTS, readMockOptions, type Fault, type MockOptions } from './options
 
 // 浏览器内 mock 适配器：实现与 HTTP 适配器相同的接口，用内存里的快照回答一切。
 // 每份交出去的快照都过 schema 校验（失败即抛出），保证夹具与契约不脱节。
-// 已实现：任务列表、快照外壳、新建任务、上传批次（逐文件接收/拒绝）；其余动作原样返回当前快照，由后续票逐个实现。
+// 已实现：任务列表、快照外壳、新建任务、上传批次、材料盘点（定时推进）、待确认项答复；其余动作原样返回当前快照，由后续票逐个实现。
 
 const EMIT_DELAY_MS = 20;
+const DEFAULT_PHASE_MS = 450;
 
 // mock 的「现在」：夹具时间之后逐次递增，保证 updatedAt 单调。
 function clock(): () => string {
@@ -25,18 +27,21 @@ function clock(): () => string {
   };
 }
 
+type StepResult = TaskSnapshot | { error: ActionError };
+
 export function createMockAdapter(options: MockOptions): AppAdapter {
   const snapshots = new Map<string, TaskSnapshot>();
   const listeners = new Map<string, Set<(event: AdapterEvent) => void>>();
   let nextTaskNo = 4;
   let nextFileNo = 1;
   const now = clock();
+  const phaseMs = options.inventoryPhaseMs ?? DEFAULT_PHASE_MS;
 
   const put = (snapshot: TaskSnapshot) => {
     snapshots.set(snapshot.task.taskId, TaskSnapshotSchema.parse(snapshot));
   };
 
-  put(t1Snapshot(options.seed ?? 'upload'));
+  put(t1Snapshot(options.seed ?? 'upload', options.fault === 'unsupported-material'));
   put(t2Snapshot());
   put(t3Snapshot());
 
@@ -53,6 +58,12 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
     return { ok: true, snapshot: copy };
   };
 
+  // 服务端自行推进（盘点阶段）：写入并立即推送，不经过动作返回值。
+  const push = (snapshot: TaskSnapshot) => {
+    put(snapshot);
+    emit(snapshot.task.taskId, { type: 'snapshot', snapshot: clone(snapshot) });
+  };
+
   const snapshotOf = (taskId: string): TaskSnapshot => {
     const snapshot = snapshots.get(taskId);
     if (!snapshot) throw new Error(`任务 ${taskId} 不存在`);
@@ -60,15 +71,58 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
   };
 
   // 回复类动作先核对 stepToken：过期即返回 409 语义（错误码 stale_step + 最新快照），状态不动。
-  const withStep = (taskId: string, stepToken: string, next: (snapshot: TaskSnapshot) => TaskSnapshot): ActionOutcome => {
+  const withStep = (taskId: string, stepToken: string, next: (snapshot: TaskSnapshot) => StepResult): ActionOutcome => {
     const current = snapshotOf(taskId);
     if (current.step.stepToken !== stepToken) {
       return { ok: false, error: { code: STALE_STEP_CODE, message: STALE_STEP_NOTICE }, snapshot: clone(current) };
     }
-    return commit(next(clone(current)));
+    const result = next(clone(current));
+    if ('error' in result) return { ok: false, error: result.error, snapshot: null };
+    return commit(result);
   };
 
   const unchanged = async (taskId: string): Promise<ActionOutcome> => ({ ok: true, snapshot: clone(snapshotOf(taskId)) });
+
+  const openCount = (snapshot: TaskSnapshot) => snapshot.pendingItems.filter((item) => item.status === 'open').length;
+
+  // 盘点结束：材料分类、费用事件与待确认项落进快照；有待确认项则进入 pending 阶段，否则直接形成候选明细进入 review。
+  const finishInventory = (snapshot: TaskSnapshot) => {
+    const result = inventoryResult(snapshot.materials, options.fault === 'unsupported-material');
+    snapshot.materials = result.materials;
+    snapshot.events = result.events;
+    snapshot.pendingItems = result.pendingItems;
+    snapshot.inventory.status = 'done';
+    snapshot.inventory.finishedAt = now();
+    snapshot.task.updatedAt = snapshot.inventory.finishedAt;
+    settlePending(snapshot);
+  };
+
+  // 待确认项状态变化后的阶段与 step：还有未处理项 → pending / answer_pending；都处理完 → review / confirm_review 并形成候选明细。
+  const settlePending = (snapshot: TaskSnapshot) => {
+    const taskId = snapshot.task.taskId;
+    const open = openCount(snapshot);
+    if (open > 0) {
+      snapshot.stage = 'pending';
+      snapshot.lines = [];
+      snapshot.step = { kind: 'answer_pending', stepToken: `tok-${taskId}-pending-${snapshot.pendingItems.length - open}` };
+      return;
+    }
+    const lines = buildLines({ materials: snapshot.materials, events: snapshot.events, pendingItems: snapshot.pendingItems });
+    snapshot.lines = lines;
+    const invoices = new Set(lines.map((line) => line.voucherMaterialId)).size;
+    const cents = lines.reduce((sum, line) => sum + Math.round(Number(line.grossAmount) * 100), 0);
+    snapshot.confirmation = {
+      ...snapshot.confirmation,
+      status: 'unconfirmed',
+      confirmedAt: null,
+      digest: `digest-${taskId}-${snapshot.inventory.versionId ?? 'v0'}`,
+      lineCount: lines.length,
+      invoiceCount: invoices,
+      grossTotal: lines.length > 0 ? (cents / 100).toFixed(2) : null,
+    };
+    snapshot.stage = 'review';
+    snapshot.step = { kind: 'confirm_review', stepToken: `tok-${taskId}-review-${snapshot.inventory.versionId ?? 'v0'}` };
+  };
 
   return {
     async listTasks(): Promise<TaskList> {
@@ -131,18 +185,54 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
       if (snapshot.materials.length > 0) snapshot.step = { kind: 'start_inventory', stepToken: `tok-${taskId}-upload-${batchId}` };
       return commit(snapshot);
     },
-    // 本票只做入口：把阶段推到 inventory 并给批次一个盘点版本；盘点进度与结果由 #102 实现。
+    // 开始材料盘点：阶段推到 inventory，盘点分阶段按定时器推进并推送快照；结束后形成结果。
     startInventory: async (taskId, stepToken) =>
       withStep(taskId, stepToken, (snapshot) => {
-        if (snapshot.materials.length === 0) return snapshot;
+        if (snapshot.materials.length === 0) return { error: { code: 'no_materials', message: '还没有被接收的材料。' } };
         const versionId = `v${snapshot.batches.length}`;
         for (const batch of snapshot.batches) batch.versionId = versionId;
         snapshot.stage = 'inventory';
         snapshot.task.updatedAt = now();
-        snapshot.step = { kind: 'start_inventory', stepToken: `tok-${taskId}-inventory` };
+        snapshot.inventory = { ...inventoryNotStarted(), status: 'running', versionId };
+        const first = snapshot.inventory.phases[0];
+        if (first) first.status = 'running';
+        snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-inventory-${versionId}` };
+
+        const phaseCount = snapshot.inventory.phases.length;
+        const advance = (index: number) => {
+          const current = clone(snapshotOf(taskId));
+          if (current.inventory.versionId !== versionId || current.inventory.status !== 'running') return;
+          const phases = current.inventory.phases;
+          const done = phases[index];
+          if (done) done.status = 'done';
+          const next = phases[index + 1];
+          if (next) {
+            next.status = 'running';
+            push(current);
+            setTimeout(() => advance(index + 1), phaseMs);
+          } else {
+            finishInventory(current);
+            push(current);
+          }
+        };
+        setTimeout(() => advance(0), phaseMs);
         return snapshot;
       }),
-    answerPendingItem: async (taskId, _itemId, _answer, stepToken) => withStep(taskId, stepToken, (snapshot) => snapshot),
+    // 答复待确认项：格式再校验一次；采用后材料字段来源记为 user；全部处理完进入整单明细确认。
+    answerPendingItem: async (taskId, itemId, answer, stepToken) =>
+      withStep(taskId, stepToken, (snapshot) => {
+        const item = snapshot.pendingItems.find((candidate) => candidate.itemId === itemId);
+        if (!item) return { error: { code: 'item_not_found', message: `待确认项 ${itemId} 不存在。` } };
+        if (item.status !== 'open') return { error: { code: 'item_not_open', message: PENDING_ANSWER_ERRORS.notOpen } };
+        const normalized = normalizePendingAnswer(item, answer);
+        const errors = validatePendingAnswer(item, normalized);
+        const firstError = Object.values(errors)[0];
+        if (firstError) return { error: { code: 'invalid_answer', message: firstError } };
+        applyPendingAnswer({ materials: snapshot.materials, events: snapshot.events, pendingItems: snapshot.pendingItems }, item, normalized);
+        snapshot.task.updatedAt = now();
+        settlePending(snapshot);
+        return snapshot;
+      }),
     confirmReview: async (taskId, _digest, stepToken) => withStep(taskId, stepToken, (snapshot) => snapshot),
     addPaymentScreenshot: unchanged,
     removePaymentScreenshot: unchanged,
