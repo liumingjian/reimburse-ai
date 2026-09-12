@@ -13,55 +13,56 @@ function renderReview(seed: TaskStage = 'review', autoStepMs = 5) {
   return adapter;
 }
 
-const table = () => screen.getByRole('table', { name: '候选明细' });
+const table = () => screen.getByRole('table', { name: '整单明细' });
 const confirmPanel = () => screen.getByLabelText('整单确认');
-const checkbox = () => within(confirmPanel()).getByRole('checkbox', { name: '我已核对整单明细' });
+const checkbox = () => within(confirmPanel()).getByRole('button', { name: '确认' });
 const printLink = () => screen.queryByRole('link', { name: '去打印' });
 const claimButton = () => screen.queryByRole('button', { name: '去报销' });
 const bodyRows = () => within(table()).getAllByRole('row').filter((row) => row.closest('tbody'));
-// Testing Library 跳过 aria-hidden 的色条单元格：0 是 No.，1 是日期，2 是费用类别。
-const cell = (row: HTMLElement, index: number) => within(row).getAllByRole('cell')[index]?.textContent;
+const cells = (row: HTMLElement | undefined) => (row ? within(row).getAllByRole('cell').map((cell) => cell.textContent) : []);
 
 const REMOTE = '外地市内交通';
+// 与内核 next.mjs:522-535 逐字一致的 13 列，前面加 No.。
+const HEADERS = ['No.', '发票', '项目号', '起始日期', '结束日期', '住宿地/城市', '出发点', '目的地', '费用分类', '费用项目', '发票类型', '费用金额', '税额', '总额'];
 
 describe('整单明细确认', () => {
-  test('?seed=review：9 行按统一业务序号列出，No.1 是外地市内交通的首条、住宿排最后；一票多段归为一组；合计与夹具一致；未勾选时没有动作按钮', async () => {
+  test('?seed=review：No. 加 13 列，按费用分类排序（外地市内交通、长途交通、住宿排最后），无组、无合计行、没有文件名与参考材料；只能「确认」', async () => {
     renderReview();
     expect(await screen.findByRole('heading', { name: '整单明细确认' })).toBeTruthy();
+    expect(within(table()).getAllByRole('columnheader').map((th) => th.textContent)).toEqual(HEADERS);
     const rows = bodyRows();
     expect(rows).toHaveLength(9);
-    expect(rows.map((row) => cell(row, 0))).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
-    expect(rows.map((row) => cell(row, 2))).toEqual([REMOTE, REMOTE, REMOTE, REMOTE, REMOTE, REMOTE, '长途交通', '长途交通', '住宿']);
-    expect(rows[0]?.textContent).toContain('高德 · 虹桥枢纽 → 漕河泾');
-    expect(rows[8]?.textContent).toContain('全季酒店 13 晚');
-    // 高德三段是同一张发票：同一 rowgroup，后两行的材料来源写「同上」。
-    const amap = within(table()).getByRole('rowgroup', { name: 'No.1-3 · 高德打车_发票.pdf' });
-    expect(within(amap).getAllByRole('row')).toHaveLength(3);
-    expect(within(amap).getAllByText('同上')).toHaveLength(2);
-    expect(within(amap).getByText('普通发票 · 参考材料：高德打车_行程单.pdf')).toBeTruthy();
-    expect(within(table()).getByRole('rowgroup', { name: 'No.4 · 曹操出行_发票.pdf' })).toBeTruthy();
-    expect(rows[4]?.textContent).toContain('出租车 · 张江高科 → 漕河泾开发区');
-    // 价税合计突出，不含税与税额为次要列。
-    const hotel = within(table()).getByRole('rowgroup', { name: 'No.9 · 全季酒店_发票.pdf' });
-    expect(within(hotel).getByText('3640.00').className).toContain('gross');
-    expect(within(hotel).getByText('3433.96').className).toContain('secondary');
-    expect(within(hotel).getByText('206.04').className).toContain('secondary');
-    expect(screen.getByTestId('gross-total').textContent).toBe('3972.59');
-    expect(screen.getByText('合计 · 7 张发票 · 9 行')).toBeTruthy();
-    expect(screen.getByText(/未进入明细：餐饮_发票\.pdf/)).toBeTruthy();
+    expect(within(table()).getAllByRole('rowgroup')).toHaveLength(2);
+    expect(rows.map((row) => cells(row)[0])).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
+    expect(rows.map((row) => cells(row)[8])).toEqual([REMOTE, REMOTE, REMOTE, REMOTE, REMOTE, REMOTE, '长途交通', '长途交通', '住宿']);
+    // 住宿：住宿地/城市为上海，起止日期为入住与离店；费用金额是不含税金额。
+    expect(cells(rows[8])).toEqual(['9', '发票1', 'P-2307 / 华东客户交付', '2026-08-09', '2026-08-22', '上海', '', '', '住宿', 'FY020102 / 住宿费', '增值税发票', '3433.96', '206.04', '3640.00']);
+    // 交通：结束日期与起始日期相同。
+    expect(cells(rows[0])).toEqual(['1', '发票2', 'P-3312 / 产品调研', '2026-08-10', '2026-08-10', '上海', '虹桥枢纽', '漕河泾', REMOTE, 'FY020103 / 外地市内交通费', '普通发票', '25.92', '0.77', '26.69']);
+    expect(cells(rows[4]).slice(1, 8)).toEqual(['发票6', 'P-3312 / 产品调研', '2026-08-15', '2026-08-15', '上海', '张江高科', '漕河泾开发区']);
+    expect(cells(rows[6]).slice(3, 8)).toEqual(['2026-08-09', '2026-08-09', '', '杭州东', '上海虹桥']);
+    // 不展示文件名、参考材料与合计行；表下注明材料包文件数。
+    const body = document.body.textContent ?? '';
+    expect(body).not.toMatch(/\.pdf|\.jpg|\.png|参考材料|同上|合计 ·/);
+    expect(screen.queryByTestId('gross-total')).toBeNull();
+    expect(screen.getByTestId('package-files').textContent).toBe('材料包已生成，共 13 份文件。');
     // 项目归属在确认之前已完成，随确认一起生效；支付截图不在这里补充。
     expect(screen.getByTestId('review-purpose').textContent).toContain('上海产品评审出差');
     expect(screen.getByRole('link', { name: '修改项目归属' }).getAttribute('href')).toBe('#/task/T1/project');
+    expect(screen.getByTestId('confirm-only').textContent).toContain('不能在表里修改');
+    expect(screen.getByRole('link', { name: '回到待确认项' }).getAttribute('href')).toBe('#/task/T1/pending');
     expect(screen.queryByRole('button', { name: /补充支付截图/ })).toBeNull();
     expect(screen.queryByLabelText(/选择支付截图/)).toBeNull();
+    expect(within(table()).queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('checkbox')).toBeNull();
 
-    expect((checkbox() as HTMLInputElement).checked).toBe(false);
+    expect((checkbox() as HTMLButtonElement).disabled).toBe(false);
     expect(printLink()).toBeNull();
     expect(claimButton()).toBeNull();
     expect(screen.queryByRole('button', { name: '追加材料' })).toBeNull();
   });
 
-  test('勾选即确认：出现并列的去打印与去报销；去打印进入打印稿，去报销请服务端开始写入并进入 ERP 填报页（没有开始填报）', async () => {
+  test('点「确认」：出现并列的去打印与去报销；去打印进入打印稿，去报销请服务端开始写入并进入 ERP 填报页（没有开始填报）', async () => {
     const adapter = renderReview();
     await screen.findByRole('heading', { name: '整单明细确认' });
     fireEvent.click(checkbox());
@@ -71,7 +72,7 @@ describe('整单明细确认', () => {
     expect(print.className).toBe(claim.className);
     expect(print.className).toContain('btn-primary');
     expect(screen.getByText(/^整单明细已确认（2026-09-11 \d\d:\d\d）/)).toBeTruthy();
-    expect(screen.queryByRole('checkbox', { name: '我已核对整单明细' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '确认' })).toBeNull();
     expect(screen.getByRole('button', { name: '追加材料' })).toBeTruthy();
 
     // 确认动作带着快照里的摘要（绑定项目归属）与 stepToken 到了服务端：阶段进入去打印 / 去报销。
@@ -124,7 +125,7 @@ describe('整单明细确认', () => {
 
     expect(await screen.findByRole('heading', { name: '整单明细确认' })).toBeTruthy();
     expect(await screen.findByText(PROJECT_CHANGED_NOTICE)).toBeTruthy();
-    expect(await screen.findByRole('checkbox', { name: '我已核对整单明细' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '确认' })).toBeTruthy();
     expect(printLink()).toBeNull();
     expect(claimButton()).toBeNull();
     let snapshot = await adapter.getSnapshot('T1');
@@ -152,9 +153,9 @@ describe('整单明细确认', () => {
   test('?seed=catalog：确认页先显示报销信息核对与材料准备的进度，完成后才能确认', async () => {
     renderReview('catalog', 300);
     expect(await screen.findByText(/正在核对报销信息/)).toBeTruthy();
-    expect(screen.queryByRole('checkbox', { name: '我已核对整单明细' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '确认' })).toBeNull();
     expect(await screen.findByText(/正在准备报销材料/)).toBeTruthy();
-    expect(await screen.findByRole('checkbox', { name: '我已核对整单明细' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '确认' })).toBeTruthy();
   });
 
   test('确认后追加材料：二次确认弹层，取消不改变任何状态，继续则确认失效并回到上传页接收新批次', async () => {

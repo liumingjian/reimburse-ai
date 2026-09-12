@@ -7,8 +7,8 @@ const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 const INVALIDATED = '材料已变更，之前的整单明细确认与已生成的打印稿作废。请重新核对后再确认。';
 const PROJECT_CHANGED = '项目归属已变更，之前的整单明细确认失效。请重新核对后再确认。';
 
-const table = (page: Page) => page.getByRole('table', { name: '候选明细' });
-const checkbox = (page: Page) => page.getByRole('checkbox', { name: '我已核对整单明细' });
+const table = (page: Page) => page.getByRole('table', { name: '整单明细' });
+const checkbox = (page: Page) => page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认', exact: true });
 const printLink = (page: Page) => page.getByRole('link', { name: '去打印', exact: true });
 const claimButton = (page: Page) => page.getByRole('button', { name: '去报销', exact: true });
 
@@ -19,23 +19,36 @@ async function jump(page: Page, hash: string) {
   }, hash);
 }
 
-test('确认：?seed=review 列出 9 行、合计 3972.59，No. 按费用分类排序；勾选后才出现并列的去打印与去报销', async ({ page }, testInfo) => {
+test('确认：?seed=review 是 No. 加内核 13 列，按费用分类排序，没有文件名与参考材料；点「确认」后才出现并列的去打印与去报销', async ({ page }, testInfo) => {
   await page.goto(open('?seed=review', '#/task/T1/review'));
   await expect(page.getByRole('heading', { name: '整单明细确认' })).toBeVisible();
+  await expect(table(page).locator('thead th')).toHaveText(['No.', '发票', '项目号', '起始日期', '结束日期', '住宿地/城市', '出发点', '目的地', '费用分类', '费用项目', '发票类型', '费用金额', '税额', '总额']);
   const rows = table(page).locator('tbody tr');
   await expect(rows).toHaveCount(9);
-  await expect(rows.locator('td:nth-child(2)')).toHaveText(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
+  await expect(rows.locator('td:nth-child(1)')).toHaveText(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
   const remote = '外地市内交通';
-  await expect(rows.locator('td:nth-child(4)')).toHaveText([remote, remote, remote, remote, remote, remote, '长途交通', '长途交通', '住宿']);
-  await expect(table(page).getByRole('rowgroup', { name: 'No.1-3 · 高德打车_发票.pdf' }).getByRole('row')).toHaveCount(3);
-  await expect(page.getByTestId('gross-total')).toHaveText('3972.59');
-  await expect(page.getByText('合计 · 7 张发票 · 9 行')).toBeVisible();
-  await expect(rows.nth(4)).toContainText('出租车 · 张江高科 → 漕河泾开发区');
+  // 外地市内交通在长途交通之前，住宿排最后。
+  await expect(rows.locator('td:nth-child(9)')).toHaveText([remote, remote, remote, remote, remote, remote, '长途交通', '长途交通', '住宿']);
+  // 住宿：住宿地/城市为上海，2026-08-09 至 2026-08-22；交通行结束日期与起始日期相同。
+  const hotel = page.getByTestId('confirm-row-9').locator('td');
+  await expect(hotel.nth(3)).toHaveText('2026-08-09');
+  await expect(hotel.nth(4)).toHaveText('2026-08-22');
+  await expect(hotel.nth(5)).toHaveText('上海');
+  await expect(hotel.nth(2)).toHaveText('P-2307 / 华东客户交付');
+  for (const no of [1, 2, 3, 4, 5, 6, 7, 8]) {
+    const cells = page.getByTestId(`confirm-row-${no}`).locator('td');
+    await expect(cells.nth(4)).toHaveText((await cells.nth(3).textContent()) ?? '');
+  }
+  await expect(page.getByTestId('confirm-row-5').locator('td').nth(6)).toHaveText('张江高科');
+  // 页面上没有任何文件名或参考材料文字，也没有合计行。
+  const text = await page.locator('main').innerText();
+  expect(text).not.toMatch(/\.pdf|\.jpg|\.png|参考材料|合计 ·/);
+  await expect(page.getByTestId('package-files')).toHaveText('材料包已生成，共 13 份文件。');
   await expect(page.getByTestId('review-purpose')).toContainText('上海产品评审出差');
   // 支付截图入口在打印稿页，不在确认页。
   await expect(page.getByRole('button', { name: /补充支付截图/ })).toHaveCount(0);
 
-  await expect(checkbox(page)).not.toBeChecked();
+  await expect(checkbox(page)).toBeEnabled();
   await expect(printLink(page)).toHaveCount(0);
   await expect(claimButton(page)).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('review-unconfirmed.png'), fullPage: true });

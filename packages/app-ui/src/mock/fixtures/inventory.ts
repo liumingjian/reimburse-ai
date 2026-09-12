@@ -500,9 +500,27 @@ export function applyPendingAnswer(result: InventoryResult, item: PendingItem, a
   }
 }
 
+// 虚构的费用项目编码与名称（内核 FY0xxxxx / 名称的写法），按费用分类给出。
+const EXPENSE_ITEMS: Readonly<Record<string, { code: string; name: string }>> = {
+  local_city_transport: { code: 'FY010101', name: '市内交通费' },
+  remote_city_transport: { code: 'FY020103', name: '外地市内交通费' },
+  long_distance: { code: 'FY020101', name: '长途交通费' },
+  accommodation: { code: 'FY020102', name: '住宿费' },
+};
+
+// 材料包文件数：主要发票副本 + 参考材料 + 明细 Markdown、明细 JSON 与 manifest（mock 的构成，待服务端 spec 确认）。
+export function packageFileCount(lines: readonly Line[]): number {
+  const invoices = new Set(lines.map((line) => line.voucherMaterialId));
+  const references = new Set(lines.flatMap((line) => line.referenceMaterialIds));
+  return invoices.size + references.size + 3;
+}
+
 // 全部待确认项处理完后形成候选明细：一个费用事件一行，No. 沿用事件的统一业务序号（内核分类排序）；同一张发票的行共享 groupId。
+// 发票短标签照内核：按主要发票的 materialId 顺序编号（与行序无关）。项目号在项目归属提交后才写入。
 export function buildLines(result: InventoryResult): Line[] {
   const groupOf = new Map<string, string>();
+  const vouchers = [...new Set(result.events.map((event) => event.voucherMaterialId))].sort((a, b) => a.localeCompare(b));
+  const invoiceLabel = new Map(vouchers.map((materialId, index) => [materialId, `发票${index + 1}`]));
   return result.events.map((event) => {
     const factsIndex = Number(event.eventId.slice(3)) - 1;
     const facts = LINE_FACTS.get(factsIndex) ?? { net: event.grossAmount, tax: '0.00', invoiceType: '普通发票' };
@@ -512,16 +530,25 @@ export function buildLines(result: InventoryResult): Line[] {
       groupOf.set(event.voucherMaterialId, groupId);
     }
     const pendingItem = result.pendingItems.find((item) => item.materialId === event.voucherMaterialId && item.kind === 'form');
+    const expense = EXPENSE_ITEMS[event.category.code] ?? null;
     return {
       lineId: `l${event.no}`,
       no: event.no,
       groupId,
       voucherMaterialId: event.voucherMaterialId,
+      invoiceLabel: invoiceLabel.get(event.voucherMaterialId) ?? '发票',
       eventId: event.eventId,
       date: event.date,
       endDate: event.endDate,
       category: event.category,
       description: event.summary,
+      city: event.city,
+      origin: event.origin,
+      destination: event.destination,
+      projectCode: null,
+      projectName: null,
+      expenseItemCode: expense?.code ?? null,
+      expenseItemName: expense?.name ?? null,
       invoiceType: facts.invoiceType,
       referenceMaterialIds: event.referenceMaterialIds,
       grossAmount: event.grossAmount,

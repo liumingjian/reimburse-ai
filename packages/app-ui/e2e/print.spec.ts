@@ -28,7 +28,7 @@ async function expectConfirmationUnchanged(page: Page) {
   await expect(page.getByRole('heading', { name: '整单明细确认' })).toBeVisible();
   await expect(page.getByText(/^整单明细已确认/)).toBeVisible();
   await expect(page.getByRole('link', { name: '去打印', exact: true })).toBeVisible();
-  await expect(page.getByRole('checkbox', { name: '我已核对整单明细' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认', exact: true })).toHaveCount(0);
 }
 
 test('?seed=print 直接打开：7 页页图与页眉，缺支付截图提醒，下载链接指向合并 PDF', async ({ page }, testInfo) => {

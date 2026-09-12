@@ -957,38 +957,18 @@ table.data tr.row-warn td {
   padding: 0;
 }
 
-/* 整单明细确认：色条归组、金额主次、勾选确认、并列的两个动作 */
-table.lines th.group-bar,
-table.lines td.group-bar {
-  width: var(--layout-group-bar-width);
-  padding: 0;
+/* 整单明细确认：No. 加内核 13 列，不归组、无合计行；列多时横向滚动，单元格不折行 */
+.confirm-table-wrap {
+  overflow-x: auto;
 }
 
-table.lines tbody td.group-bar {
-  background: var(--color-surface-3);
+table.confirm-table th,
+table.confirm-table td {
+  white-space: nowrap;
 }
 
-table.lines tbody tr.group-start td {
-  border-top: var(--layout-hairline-width) solid var(--color-hairline-strong);
-}
-
-table.lines tbody:first-of-type tr.group-start td {
-  border-top: 0;
-}
-
-table.lines td.secondary,
-table.lines th.secondary {
-  color: var(--color-ink-subtle);
-}
-
-table.lines td.gross {
-  font-weight: var(--text-headline-weight);
-}
-
-table.lines tfoot td {
-  border-bottom: 0;
-  border-top: var(--layout-hairline-width) solid var(--color-hairline-strong);
-  font-weight: var(--text-button-weight);
+.package-note {
+  margin: var(--space-sm) 0 var(--space-md);
 }
 
 .screenshot-row {
@@ -1007,10 +987,6 @@ table.lines tfoot td {
   margin: var(--space-xs) var(--space-sm) var(--space-xxs);
   color: var(--color-danger);
   font-size: var(--text-caption-size);
-}
-
-.excluded-note {
-  margin: var(--space-sm) 0 var(--space-md);
 }
 
 .check {

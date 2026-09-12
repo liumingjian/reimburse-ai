@@ -1,4 +1,4 @@
-import type { Line, Material, TaskSnapshot } from '../contract/snapshot';
+import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS, type Line, type TaskSnapshot } from '../contract/snapshot';
 import { STAGE_DEFAULT_PAGE, type TaskStage } from '../contract/stage';
 import { formatDateTime } from '../format';
 import { navigate, taskHash } from '../router';
@@ -8,9 +8,10 @@ import { useReopenUpload } from '../shell/useReopenUpload';
 import { PAGE_COPY } from './page-copy';
 
 // 整单明细确认页：Skill 的唯一一次整单确认（preparation_confirmation），在项目归属、报销信息核对与材料准备之后。
-// 候选明细按服务端给出的统一业务序号列出（内核分类排序），同一发票的多段以左侧色条归组；合计来自快照。
-// 确认绑定项目归属：确认后改派项目会使确认失效（提示由服务端给出）。
-// 勾选「我已核对整单明细」即确认（带快照里的摘要与 stepToken）；确认后出现并列的「去打印」「去报销」：
+// 表格形状照内核 preparationConfirmationTable（next.mjs:513-559）：No. 加 13 列，按服务端给出的 lines[] 顺序（内核分类排序）逐行列出，
+// 无组标题、无合计行，不展示文件名、完整发票号与参考材料；表下只注明材料包文件数。
+// 只能确认，不在表内修改：有不对的地方回到对应步骤修改。确认绑定项目归属，改派项目会使确认失效（提示由服务端给出）。
+// 「确认」带快照里的摘要与 stepToken；确认后出现并列的「去打印」「去报销」：
 // 去打印只是进入打印稿页；去报销请服务端启动专用浏览器，登录后自动写入，没有「开始填报」。
 // 「追加材料」先二次确认，再请服务端使确认失效并回到上传页。支付截图在打印稿页补充，不在这里。
 
@@ -20,59 +21,28 @@ const AUTO_STEP_NOTICE: Partial<Record<TaskStage, string>> = {
   preparation: '正在准备报销材料。完成后在这里确认整单明细。',
 };
 
-type Group = { groupId: string; lines: Line[]; voucher: Material | null };
+const NUMERIC_COLUMNS: ReadonlySet<string> = new Set(['费用金额', '税额', '总额']);
 
-// 服务端已按统一业务序号排好、同一发票的行相邻；这里只把相邻同组的行收拢成 tbody。
-function groupLines(snapshot: TaskSnapshot): Group[] {
-  const byId = new Map(snapshot.materials.map((material) => [material.materialId, material]));
-  const groups: Group[] = [];
-  for (const line of snapshot.lines) {
-    const last = groups[groups.length - 1];
-    if (last && last.groupId === line.groupId) last.lines.push(line);
-    else groups.push({ groupId: line.groupId, lines: [line], voucher: byId.get(line.voucherMaterialId) ?? null });
-  }
-  return groups;
-}
+// 「编码 / 名称」单元格，照内核 [code, name].filter(Boolean).join(' / ')。
+const codeAndName = (code: string | null, name: string | null) => [code, name].filter(Boolean).join(' / ');
 
-function groupLabel(group: Group): string {
-  const first = group.lines[0];
-  const last = group.lines[group.lines.length - 1];
-  if (!first || !last) return '';
-  const nos = first.no === last.no ? `No.${first.no}` : `No.${first.no}-${last.no}`;
-  return `${nos} · ${group.voucher?.fileName ?? first.voucherMaterialId}`;
-}
-
-function LineRow({ line, first, group, snapshot }: { line: Line; first: boolean; group: Group; snapshot: TaskSnapshot }) {
-  const byId = new Map(snapshot.materials.map((material) => [material.materialId, material]));
-  const references = line.referenceMaterialIds.map((id) => byId.get(id)?.fileName ?? id);
-  return (
-    <tr className={first ? 'group-start' : undefined} data-group={line.groupId}>
-      <td className="group-bar" aria-hidden="true" />
-      <td className="mono">{line.no}</td>
-      <td className="mono">
-        {line.date}
-        {line.endDate ? <div className="caption">至 {line.endDate}</div> : null}
-      </td>
-      <td>{line.category.label}</td>
-      <td>{line.description}</td>
-      <td>
-        {first ? (
-          <>
-            <span className="mono">{group.voucher?.fileName ?? line.voucherMaterialId}</span>
-            <div className="caption">
-              {line.invoiceType}
-              {references.length > 0 ? ` · 参考材料：${references.join('、')}` : ''}
-            </div>
-          </>
-        ) : (
-          <span className="muted">同上</span>
-        )}
-      </td>
-      <td className="num secondary">{line.netAmount}</td>
-      <td className="num secondary">{line.taxAmount}</td>
-      <td className="num gross">{line.grossAmount}</td>
-    </tr>
-  );
+// 一行的 13 个单元格，顺序与 CONFIRMATION_TABLE_COLUMNS 一致。结束日期照内核取 endDate ?? date（交通类与起始日期相同）。
+function cellsOf(line: Line): readonly string[] {
+  return [
+    line.invoiceLabel,
+    codeAndName(line.projectCode, line.projectName),
+    line.date,
+    line.endDate ?? line.date,
+    line.city ?? '',
+    line.origin ?? '',
+    line.destination ?? '',
+    line.category.label,
+    codeAndName(line.expenseItemCode, line.expenseItemName),
+    line.invoiceType,
+    line.netAmount,
+    line.taxAmount,
+    line.grossAmount,
+  ];
 }
 
 export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
@@ -80,8 +50,6 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const copy = PAGE_COPY.review;
   const { confirmation, erp, stage, step } = snapshot;
   const confirmed = confirmation.status === 'confirmed';
-  const groups = groupLines(snapshot);
-  const excluded = snapshot.materials.filter((material) => material.status === 'excluded');
   const autoNotice = AUTO_STEP_NOTICE[stage] ?? null;
   const erpStarted = erp.status !== 'idle';
   const erpDone = erp.status === 'done';
@@ -114,45 +82,39 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
         </div>
       ) : null}
 
-      <section className="panel table">
-        <table className="data lines" aria-label="候选明细">
+      <section className="panel table confirm-table-wrap">
+        <table className="data confirm-table" aria-label="整单明细">
           <thead>
             <tr>
-              <th className="group-bar" aria-hidden="true" />
-              <th>No.</th>
-              <th>日期</th>
-              <th>费用类别</th>
-              <th>说明</th>
-              <th>材料来源</th>
-              <th className="num secondary">不含税</th>
-              <th className="num secondary">税额</th>
-              <th className="num">价税合计</th>
+              <th>{CONFIRMATION_NO_COLUMN}</th>
+              {CONFIRMATION_TABLE_COLUMNS.map((label) => (
+                <th key={label} className={NUMERIC_COLUMNS.has(label) ? 'num' : undefined}>
+                  {label}
+                </th>
+              ))}
             </tr>
           </thead>
-          {groups.map((group) => (
-            <tbody key={group.groupId} className="line-group" aria-label={groupLabel(group)}>
-              {group.lines.map((line, index) => (
-                <LineRow key={line.lineId} line={line} first={index === 0} group={group} snapshot={snapshot} />
-              ))}
-            </tbody>
-          ))}
-          <tfoot>
-            <tr>
-              <td className="group-bar" aria-hidden="true" />
-              <td colSpan={7}>
-                合计 · {confirmation.invoiceCount} 张发票 · {confirmation.lineCount} 行
-              </td>
-              <td className="num gross" data-testid="gross-total">
-                {confirmation.grossTotal ?? ''}
-              </td>
-            </tr>
-          </tfoot>
+          <tbody>
+            {snapshot.lines.map((line) => (
+              <tr key={line.lineId} data-testid={`confirm-row-${line.no}`}>
+                <td className="mono">{line.no}</td>
+                {cellsOf(line).map((value, index) => {
+                  const label = CONFIRMATION_TABLE_COLUMNS[index] ?? '';
+                  return (
+                    <td key={label} className={NUMERIC_COLUMNS.has(label) ? 'num' : undefined}>
+                      {value}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
         </table>
       </section>
 
-      {excluded.length > 0 ? (
-        <p className="caption excluded-note">
-          未进入明细：{excluded.map((material) => `${material.fileName}（${material.checkText}）`).join('；')}
+      {confirmation.packageFileCount !== null ? (
+        <p className="caption package-note" data-testid="package-files">
+          材料包已生成，共 {confirmation.packageFileCount} 份文件。
         </p>
       ) : null}
 
@@ -215,16 +177,22 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
           </p>
         ) : (
           <>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={confirming}
+            <p className="caption" data-testid="confirm-only">
+              整单明细只能确认，不能在表里修改。有不对的地方，请回到对应的步骤修改：项目号或报销事由回到项目归属，明细内容回到待确认项。
+            </p>
+            <div className="btn-row">
+              <button
+                className="btn btn-primary"
+                type="button"
                 disabled={confirming || snapshot.lines.length === 0 || step.kind !== 'confirm_review'}
-                onChange={() => void confirm()}
-              />
-              我已核对整单明细
-            </label>
-            <p className="caption check-caption">勾选即确认：以上 {confirmation.lineCount} 行与原件一致，项目归属如上。确认后出现「去打印」与「去报销」。</p>
+                onClick={() => void confirm()}
+              >
+                确认
+              </button>
+              <a className="btn btn-tertiary btn-sm" href={taskHash(taskId, 'pending')}>
+                回到待确认项
+              </a>
+            </div>
             <ActionError message={confirmAction.error} />
           </>
         )}

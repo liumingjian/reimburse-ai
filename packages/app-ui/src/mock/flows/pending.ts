@@ -32,6 +32,8 @@ export function settlePending(snapshot: TaskSnapshot, allowList: readonly Projec
     lineCount: lines.length,
     invoiceCount: invoices,
     grossTotal: lines.length > 0 ? (cents / 100).toFixed(2) : null,
+    // 材料包要等项目归属提交、报销信息核对之后才生成。
+    packageFileCount: null,
   };
   // 进入项目归属：服务端随快照给出当前个人项目簿的允许列表。重新盘点后回到这里时，保留仍存在的明细的归属，但要重新提交。
   const assignment = snapshot.projectAssignment;

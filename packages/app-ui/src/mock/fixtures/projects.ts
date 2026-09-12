@@ -1,6 +1,6 @@
 import { isRealDate } from '../../contract/actions';
 import type { ProjectBookEntry } from '../../contract/project-book';
-import type { ProjectAssignment, ProjectOption, Step, TaskSnapshot } from '../../contract/snapshot';
+import type { Line, ProjectAssignment, ProjectOption, Step, TaskSnapshot } from '../../contract/snapshot';
 
 // 个人项目簿夹具：虚构的项目号与名称（沿用 prototypes/project-assignment-patterns 的写法），以及 mock「报销系统项目目录」。
 // 可选判定、状态标签与说明照内核 projects.mjs annotateProjects 移植（「ERP」写作「报销系统」），由 mock 服务端给出。
@@ -160,6 +160,15 @@ export function projectAssignmentSubmitted(input: {
     projects: allowList.map((project) => ({ ...project })),
     submittedAt: input.submittedAt,
   };
+}
+
+// 项目归属提交后，服务端把逐条归属写到明细上（内核 buildPreparation 的 projectCode / projectName）；未提交时清空。
+export function withLineProjects(lines: readonly Line[], assignment: ProjectAssignment): Line[] {
+  const byLine = new Map(assignment.assignments.map((item) => [item.lineId, item]));
+  return lines.map((line) => {
+    const item = assignment.status === 'submitted' ? byLine.get(line.lineId) : undefined;
+    return { ...line, projectCode: item?.projectNumber ?? null, projectName: item?.projectName ?? null };
+  });
 }
 
 // 进入项目归属时的 step（内核 project_book_empty 在 select-task 之前）：项目簿没有可选项目、也还没有任何归属时先维护项目簿；

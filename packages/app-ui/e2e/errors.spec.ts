@@ -9,7 +9,7 @@ const STALE = '任务已在别处推进';
 
 const banner = (page: Page) => page.getByRole('alert').filter({ hasText: BANNER });
 const staleNotice = (page: Page) => page.getByRole('status').filter({ hasText: STALE });
-const checkbox = (page: Page) => page.getByRole('checkbox', { name: '我已核对整单明细' });
+const checkbox = (page: Page) => page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认', exact: true });
 const printLink = (page: Page) => page.getByRole('link', { name: '去打印', exact: true });
 
 // 只在 mock 构建里存在的钩子：另一个窗口推进了任务，这边的事件流还没送到。
@@ -30,7 +30,7 @@ test('service-disconnected：横幅出现，断开期间动作就地失败且没
   const confirmRegion = page.getByRole('region', { name: '整单确认' });
   await expect(confirmRegion.getByRole('alert')).toHaveText(/操作没有送达/);
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(checkbox(page)).not.toBeChecked();
+  await expect(checkbox(page)).toBeEnabled();
 
   // mock 在断开 3 s 后恢复。
   await expect(banner(page)).toHaveCount(0, { timeout: 10_000 });
@@ -51,7 +51,7 @@ test('service-disconnected：断开期间打开别的任务页也显示横幅，
   await expect(banner(page)).toHaveCount(0, { timeout: 10_000 });
 });
 
-test('409：别处已确认整单，这边再勾选得到最新快照与提示，路由不变，没有就地错误', async ({ page }, testInfo) => {
+test('409：别处已确认整单，这边再点确认得到最新快照与提示，路由不变，没有就地错误', async ({ page }, testInfo) => {
   await page.goto(open('?seed=review', '#/task/T1/review'));
   await expect(checkbox(page)).toBeVisible();
   await advanceElsewhere(page, 'T1');

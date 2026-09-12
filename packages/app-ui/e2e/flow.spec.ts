@@ -54,7 +54,7 @@ test('全流程：从 ?seed=pending 一路走到去打印与去报销，顺序�
 
   // 3. 自动核对报销信息、准备材料之后，唯一一次整单确认
   await expect(page).toHaveURL(/#\/task\/T1\/review$/);
-  const checkbox = page.getByRole('checkbox', { name: '我已核对整单明细' });
+  const checkbox = page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认', exact: true });
   await expect(checkbox).toBeVisible();
   await expect(page.getByTestId('review-purpose')).toContainText('上海产品评审出差');
   await page.screenshot({ path: testInfo.outputPath('flow-review.png'), fullPage: true });
@@ -88,14 +88,15 @@ test('阶段不可跳过：项目归属没完成时直接打开整单确认页',
 
 test('统一业务序号：确认表 No.、打印稿页序与 ERP 回读行按分类排序且一致，No.1 是外地市内交通的首条，住宿排最后', async ({ page }) => {
   await page.goto(open('?seed=print', '#/task/T1/review'));
-  const rows = page.getByRole('table', { name: '候选明细' }).locator('tbody tr');
+  const rows = page.getByRole('table', { name: '整单明细' }).locator('tbody tr');
   await expect(rows).toHaveCount(9);
-  await expect(rows.nth(0).locator('td:nth-child(2)')).toHaveText('1');
-  await expect(rows.nth(0).locator('td:nth-child(4)')).toHaveText('外地市内交通');
-  await expect(rows.nth(0)).toContainText('高德 · 虹桥枢纽 → 漕河泾');
-  await expect(rows.nth(8).locator('td:nth-child(2)')).toHaveText('9');
-  await expect(rows.nth(8).locator('td:nth-child(4)')).toHaveText('住宿');
-  await expect(rows.nth(8)).toContainText('全季酒店 13 晚');
+  await expect(rows.nth(0).locator('td:nth-child(1)')).toHaveText('1');
+  await expect(rows.nth(0).locator('td:nth-child(9)')).toHaveText('外地市内交通');
+  await expect(rows.nth(0).locator('td:nth-child(7)')).toHaveText('虹桥枢纽');
+  await expect(rows.nth(0).locator('td:nth-child(8)')).toHaveText('漕河泾');
+  await expect(rows.nth(8).locator('td:nth-child(1)')).toHaveText('9');
+  await expect(rows.nth(8).locator('td:nth-child(9)')).toHaveText('住宿');
+  await expect(rows.nth(8).locator('td:nth-child(14)')).toHaveText('3640.00');
 
   await jump(page, '#/task/T1/print');
   const headers = page.getByRole('list', { name: '打印稿页面' }).locator('.page-hdr');

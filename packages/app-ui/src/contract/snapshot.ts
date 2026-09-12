@@ -204,14 +204,28 @@ export type PendingItem = z.infer<typeof PendingItemSchema>;
 export const LineSchema = z.object({
   lineId: IdSchema,
   no: z.number().int().positive(),
-  // 同一主要报销凭证的行共享 groupId，页面以左侧色条归组。
+  // 同一主要报销凭证的行共享 groupId（项目归属等页面用；整单确认表不归组）。
   groupId: IdSchema,
   voucherMaterialId: IdSchema,
+  // 发票短标签「发票N」，编号规则照内核（next.mjs:518-519）：按材料包里主要发票的 materialId 顺序编号，
+  // 所以不跟随表格行序。整单确认表只展示它，不展示完整发票号或文件名。
+  invoiceLabel: z.string().min(1),
   eventId: IdSchema.nullable(),
   date: DateSchema,
+  // 住宿为离店日期；交通类为 null（确认表的结束日期照内核取 endDate ?? date，即与起始日期相同）。
   endDate: DateSchema.nullable(),
   category: ExpenseCategorySchema,
   description: z.string(),
+  // 住宿地/城市、出发点、目的地（内核 line.city / origin / destination）；没有的为 null。
+  city: z.string().nullable(),
+  origin: z.string().nullable(),
+  destination: z.string().nullable(),
+  // 项目归属提交后由服务端写入（内核 buildPreparation 投影 selection，preparation.mjs:568-571）；之前为 null。
+  projectCode: z.string().nullable(),
+  projectName: z.string().nullable(),
+  // 费用项目编码与名称（如 FY020102 / 住宿费），由服务端给出；名称在报销信息核对后取报销系统回读值。
+  expenseItemCode: z.string().nullable(),
+  expenseItemName: z.string().nullable(),
   invoiceType: z.string().min(1),
   referenceMaterialIds: z.array(IdSchema),
   grossAmount: AmountSchema,
@@ -220,6 +234,26 @@ export const LineSchema = z.object({
   fromPendingItemId: IdSchema.nullable(),
 });
 export type Line = z.infer<typeof LineSchema>;
+
+// 整单确认表的 13 列，列名与顺序逐字照抄内核 preparationConfirmationTable（next.mjs:522-535）。
+// 页面在前面加一列 No.（统一业务序号，打印稿与 ERP 明细行共用）。「项目号」「费用项目」单元格为「编码 / 名称」，
+// 「费用金额」为不含税金额，「总额」为价税合计。按费用分类排序（服务端给出的 lines[] 顺序），无组标题、无合计行。
+export const CONFIRMATION_NO_COLUMN = 'No.';
+export const CONFIRMATION_TABLE_COLUMNS = [
+  '发票',
+  '项目号',
+  '起始日期',
+  '结束日期',
+  '住宿地/城市',
+  '出发点',
+  '目的地',
+  '费用分类',
+  '费用项目',
+  '发票类型',
+  '费用金额',
+  '税额',
+  '总额',
+] as const;
 
 // ---- 整单明细确认 ----
 
@@ -244,6 +278,9 @@ export const ConfirmationSchema = z.object({
   lineCount: z.number().int().nonnegative(),
   invoiceCount: z.number().int().nonnegative(),
   grossTotal: AmountSchema.nullable(),
+  // 材料包的文件数（内核随确认表附一句「核对材料已生成，共 N 份文件」，next.mjs:489-497）；材料包生成前为 null。
+  // 待服务端 spec 确认：材料包的具体构成（#114 的 preparation.packageFiles 落地后两者应一致）。
+  packageFileCount: z.number().int().nonnegative().nullable(),
   // 失效等提示，由服务端成句（如「材料已变更，之前的整单确认与已生成的打印稿作废」）。
   notice: z.string().nullable(),
 });

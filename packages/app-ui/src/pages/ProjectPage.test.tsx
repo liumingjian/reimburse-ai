@@ -138,7 +138,7 @@ describe('项目归属', () => {
     fireEvent.click(submitButton());
     expect(await screen.findByRole('heading', { name: '整单明细确认' })).toBeTruthy();
     expect(window.location.hash).toBe('#/task/T1/review');
-    expect(await screen.findByRole('checkbox', { name: '我已核对整单明细' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '确认' })).toBeTruthy();
 
     const after = await adapter.getSnapshot('T1');
     expect(after.projectAssignment.status).toBe('submitted');

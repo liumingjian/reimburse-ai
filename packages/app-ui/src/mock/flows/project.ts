@@ -2,7 +2,8 @@ import { PROJECT_ASSIGNMENT_ERRORS, ProjectAssignmentInputSchema } from '../../c
 import type { AppAdapter } from '../../contract/adapter';
 import { PROJECT_CHANGED_NOTICE, type StepKind, type TaskSnapshot } from '../../contract/snapshot';
 import type { MockBus } from '../bus';
-import { confirmationDigest, projectAssignmentSubmitted } from '../fixtures/projects';
+import { packageFileCount } from '../fixtures/inventory';
+import { confirmationDigest, projectAssignmentSubmitted, withLineProjects } from '../fixtures/projects';
 
 // 项目归属提交，以及其后服务端自动执行的报销信息核对（catalog）与报销材料准备（preparation）（mock 服务端的角色）。
 // 顺序照 Skill：project_unassigned → catalog_unverified → preparation_package_pending → preparation_confirmation。
@@ -29,6 +30,7 @@ function readyForReview(snapshot: TaskSnapshot): void {
     status: snapshot.confirmation.status === 'invalidated' ? 'invalidated' : 'unconfirmed',
     confirmedAt: null,
     digest,
+    packageFileCount: packageFileCount(snapshot.lines),
   };
   snapshot.stage = 'review';
   snapshot.step = { kind: 'confirm_review', stepToken: `tok-${taskId}-review-${digest.slice(-8)}` };
@@ -93,6 +95,7 @@ export function createProjectFlow(bus: MockBus): ProjectFlow {
           submittedAt: at,
           allowList: snapshot.projectAssignment.projects,
         });
+        snapshot.lines = withLineProjects(snapshot.lines, snapshot.projectAssignment);
         snapshot.task.updatedAt = at;
         const digest = confirmationDigest(taskId, snapshot.inventory.versionId, snapshot.projectAssignment);
         if (snapshot.confirmation.status === 'confirmed' && snapshot.confirmation.digest === digest) return snapshot;

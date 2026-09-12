@@ -1,9 +1,9 @@
 import { stageReached, type TaskStage } from '../../contract/stage';
 import type { Inventory, Material, TaskSnapshot, UploadBatch, UploadFileResult } from '../../contract/snapshot';
 import type { Employee, TaskListItem } from '../../contract/task-list';
-import { HOME_CITY, SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, confirmationDigest, projectAssignmentOpen, projectAssignmentSubmitted } from './projects';
+import { HOME_CITY, SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, confirmationDigest, projectAssignmentOpen, projectAssignmentSubmitted, withLineProjects } from './projects';
 import { T2_ROWS, applyAbortAtSave, applyErpDone, emptyReadback, erpWaitingLogin, mismatchReason, readbackOf } from './erp';
-import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult, openPendingItemCount, withInventoryProjection } from './inventory';
+import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult, openPendingItemCount, packageFileCount, withInventoryProjection } from './inventory';
 
 // 夹具：三个虚构的报销任务。人物与数字沿用原型（林颂宜、上海出差、9 条明细合计 3972.59）。
 // 材料盘点结果、费用事件、待确认项与候选明细见 ./inventory.ts；本文件按阶段把它们装进快照。
@@ -137,7 +137,7 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     events: [],
     pendingItems: [],
     lines: [],
-    confirmation: { status: 'unconfirmed', confirmedAt: null, digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null, notice: null },
+    confirmation: { status: 'unconfirmed', confirmedAt: null, digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null, packageFileCount: null, notice: null },
     paymentScreenshots: [],
     printSheet: { status: 'not_generated', fileName: null, url: null, pages: [], notices: [] },
     projectAssignment: { status: 'not_started', purpose: null, homeCity: task.homeCity, assignments: [], projects: [], submittedAt: null },
@@ -187,8 +187,12 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
   if (stage === 'project') snapshot.projectAssignment = projectAssignmentOpen(HOME_CITY, SEED_ASSIGNMENTS);
   if (stageReached(stage, 'catalog')) {
     snapshot.projectAssignment = projectAssignmentSubmitted({ purpose: T1_PURPOSE, homeCity: HOME_CITY, projects: T1_DONE_ASSIGNMENTS, submittedAt: '2026-09-11T14:28:00' });
+    snapshot.lines = withLineProjects(snapshot.lines, snapshot.projectAssignment);
   }
-  if (stageReached(stage, 'review')) snapshot.confirmation.digest = confirmationDigest(T1_ID, 'v1', snapshot.projectAssignment);
+  if (stageReached(stage, 'review')) {
+    snapshot.confirmation.digest = confirmationDigest(T1_ID, 'v1', snapshot.projectAssignment);
+    snapshot.confirmation.packageFileCount = packageFileCount(snapshot.lines);
+  }
   if (stageReached(stage, 'actions')) snapshot.confirmation = { ...snapshot.confirmation, status: 'confirmed', confirmedAt: '2026-09-11T14:32:00' };
   // erp：「去报销」之后浏览器已启动，等待登录（检测到登录即自动写入）。done：草稿已保存、回读 9/9 一致。
   // reconcile：保存步中止后的对账（同 ?fault=erp-write-aborted 的结果）。
@@ -219,6 +223,7 @@ export function t2Snapshot(): TaskSnapshot {
     lineCount: 5,
     invoiceCount: 5,
     grossTotal: '1264.00',
+    packageFileCount: null,
     notice: null,
   };
   snapshot.erp = { status: 'aborted', steps: [], draftNo: T2_DRAFT_NO, abortReason: '保存草稿后回读超时，写入结果不确定。', loginNotice: null };
@@ -257,6 +262,7 @@ export function t3Snapshot(): TaskSnapshot {
     lineCount: 4,
     invoiceCount: 4,
     grossTotal: '2318.50',
+    packageFileCount: null,
     notice: null,
   };
   snapshot.erp = { status: 'done', steps: [], draftNo: T3_DRAFT_NO, abortReason: null, loginNotice: null };
