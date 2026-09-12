@@ -1,8 +1,9 @@
 import { useCallback, useState } from 'react';
 import { useAppStore } from '../adapter/context';
-import { PROJECT_ASSIGNMENT_ERRORS, PROJECT_CONFLICT_COPY, PURPOSE_MAX_LENGTH, STALE_STEP_CODE } from '../contract/actions';
+import { PROJECT_ASSIGNMENT_ERRORS, PROJECT_CONFLICT_COPY, PURPOSE_MAX_LENGTH } from '../contract/actions';
 import type { Line, ProjectOption, TaskSnapshot } from '../contract/snapshot';
 import { navigate, taskHash } from '../router';
+import { ActionError, failureMessage } from '../shell/ActionError';
 import { ConfirmDialog } from '../shell/Dialog';
 import { PAGE_COPY } from './page-copy';
 
@@ -112,7 +113,7 @@ export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
     const outcome = await store.act(taskId, (adapter) => adapter.submitProjectAssignment(taskId, { purpose: purpose.trim(), projects }, snapshot.step.stepToken));
     setBusy(false);
     if (outcome.ok) navigate(taskHash(taskId, 'erp'));
-    else if (outcome.error.code !== STALE_STEP_CODE) setError(outcome.error.message);
+    else setError(failureMessage(outcome));
   };
 
   return (
@@ -250,11 +251,7 @@ export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
         </p>
         <div className="btn-row">
           {!submitted && !complete ? <span className="caption">{PROJECT_ASSIGNMENT_ERRORS.incomplete}</span> : null}
-          {error ? (
-            <span className="error" role="alert">
-              {error}
-            </span>
-          ) : null}
+          <ActionError message={error} />
           <button className="btn btn-primary" type="button" disabled={submitted || busy || !complete || conflict !== null} onClick={() => void submit()}>
             确认项目归属
           </button>

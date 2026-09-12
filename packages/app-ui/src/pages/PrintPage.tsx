@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../adapter/context';
 import type { PlacementSlot } from '../contract/actions';
+import type { ActionOutcome } from '../contract/adapter';
+import { ActionError, failureMessage } from '../shell/ActionError';
 import type { Corners, Placement, PrintPage as PrintSheetPage, TaskSnapshot } from '../contract/snapshot';
 import { taskHash } from '../router';
 import { CropEditor, formatCorners } from './CropEditor';
@@ -23,7 +25,13 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const confirmed = snapshot.confirmation.status === 'confirmed';
   const generated = sheet.status === 'generated';
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // 失败原因显示在触发它的按钮旁：generate（页头下载按钮旁）、<pageId>-<slot>（该放置的按钮旁）、crop（裁剪编辑器旁）。
+  const [failure, setFailure] = useState<{ key: string; message: string } | null>(null);
+  const fail = (key: string, outcome: ActionOutcome) => {
+    const message = failureMessage(outcome);
+    setFailure(message ? { key, message } : null);
+  };
+  const errorAt = (key: string) => (failure?.key === key ? failure.message : null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [receipt, setReceipt] = useState<string | null>(null);
   const requested = useRef(false);
@@ -41,7 +49,7 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
     requested.current = true;
     void store.act(taskId, (adapter) => adapter.generatePrintSheet(taskId)).then((outcome) => {
       requested.current = false;
-      if (!outcome.ok) setError(outcome.error.message);
+      fail('generate', outcome);
     });
   }, [store, taskId, confirmed, generated]);
 
@@ -63,19 +71,19 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   const rotate = async (page: PrintSheetPage, slot: PlacementSlot, placement: Placement) => {
     setBusy(true);
-    setError(null);
+    setFailure(null);
     const outcome = await store.act(taskId, (adapter) => adapter.rotatePlacement(taskId, page.pageId, slot, !placement.rotate));
     setBusy(false);
-    if (!outcome.ok) setError(outcome.error.message);
+    fail(`${page.pageId}-${slot}`, outcome);
   };
 
   const submitCrop = async (target: Editing, corners: Corners) => {
     setBusy(true);
-    setError(null);
+    setFailure(null);
     const outcome = await store.act(taskId, (adapter) => adapter.cropPlacement(taskId, target.pageId, target.slot, corners));
     setBusy(false);
     if (!outcome.ok) {
-      setError(outcome.error.message);
+      fail('crop', outcome);
       return;
     }
     // 回执显示服务端记下的坐标（回显），而不是本地草稿。
@@ -107,6 +115,7 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
               下载打印稿 PDF
             </button>
           )}
+          <ActionError message={errorAt('generate')} />
         </div>
       </div>
 
@@ -132,11 +141,6 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
           {receipt}
         </div>
       ) : null}
-      {error ? (
-        <div className="notice notice-err" role="alert">
-          {error}
-        </div>
-      ) : null}
 
       {editing && editingPage && editingPlacement?.corners && editingPlacement.imageUrl ? (
         <section className="panel crop-panel" aria-label="四角裁剪" ref={cropPanel}>
@@ -153,6 +157,7 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
             onSubmit={(corners) => void submitCrop(editing, corners)}
             onCancel={() => setEditing(null)}
           />
+          <ActionError message={errorAt('crop')} />
         </section>
       ) : null}
 
@@ -206,6 +211,7 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
                               调整四角
                             </button>
                           ) : null}
+                          <ActionError message={errorAt(`${page.pageId}-${slot}`)} />
                         </div>
                       </li>
                     );

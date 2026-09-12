@@ -4,4 +4,5 @@ export * from './stage';
 export * from './task-list';
 export * from './snapshot';
 export * from './actions';
+export * from './http';
 export type * from './adapter';

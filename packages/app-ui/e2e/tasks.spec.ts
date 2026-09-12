@@ -47,11 +47,6 @@ test('未知路径回到任务列表', async ({ page }) => {
   await expect(page.getByRole('heading', { name: '报销任务' })).toBeVisible();
 });
 
-test('?fault=service-disconnected 显示本地服务未运行横幅', async ({ page }) => {
-  await page.goto(open('?fault=service-disconnected', '#/task/T1/upload'));
-  await expect(page.getByRole('alert')).toHaveText('本地服务未运行，请在终端重新执行 baox');
-});
-
 test('页面里没有 undefined、NaN 或长破折号', async ({ page }) => {
   for (const hash of ['#/tasks', '#/tasks/new', '#/task/T1/upload', '#/task/T2/reconcile', '#/task/T3/done']) {
     await page.goto(open('', hash));

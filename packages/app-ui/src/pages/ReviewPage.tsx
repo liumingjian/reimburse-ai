@@ -4,6 +4,7 @@ import { STALE_STEP_CODE } from '../contract/actions';
 import { PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE, type Line, type Material, type PaymentScreenshot, type TaskSnapshot } from '../contract/snapshot';
 import { formatDateTime } from '../format';
 import { navigate, taskHash } from '../router';
+import { ActionError, failureMessage } from '../shell/ActionError';
 import { ConfirmDialog, REOPEN_DIALOG } from '../shell/Dialog';
 import { PAGE_COPY } from './page-copy';
 
@@ -153,7 +154,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
     setConfirming(true);
     const outcome = await store.act(taskId, (adapter) => adapter.confirmReview(taskId, confirmation.digest ?? '', snapshot.step.stepToken));
     setConfirming(false);
-    if (!outcome.ok && outcome.error.code !== STALE_STEP_CODE) setConfirmError(outcome.error.message);
+    setConfirmError(failureMessage(outcome));
   };
 
   const addScreenshot = async (line: Line, file: File) => {
@@ -161,7 +162,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
     setScreenshotBusy(true);
     const outcome = await store.act(taskId, (adapter) => adapter.addPaymentScreenshot(taskId, line.voucherMaterialId, file));
     setScreenshotBusy(false);
-    if (!outcome.ok) setScreenshotError(outcome.error.message);
+    setScreenshotError(failureMessage(outcome));
   };
 
   const removeScreenshot = async (screenshot: PaymentScreenshot) => {
@@ -169,7 +170,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
     setScreenshotBusy(true);
     const outcome = await store.act(taskId, (adapter) => adapter.removePaymentScreenshot(taskId, screenshot.screenshotId));
     setScreenshotBusy(false);
-    if (!outcome.ok) setScreenshotError(outcome.error.message);
+    setScreenshotError(failureMessage(outcome));
   };
 
   const closeDialog = useCallback(() => {
@@ -304,11 +305,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
               我已核对整单明细
             </label>
             <p className="caption check-caption">勾选即确认：以上 {confirmation.lineCount} 行与原件一致。确认后出现「去打印」与「去报销」。</p>
-            {confirmError ? (
-              <p className="error confirm-error" role="alert">
-                {confirmError}
-              </p>
-            ) : null}
+            <ActionError message={confirmError} />
           </>
         )}
       </section>

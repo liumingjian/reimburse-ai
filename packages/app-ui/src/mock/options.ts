@@ -26,6 +26,9 @@ export type MockOptions = {
   // ERP 填报每一步的推进间隔（毫秒，默认 300）；正常场景下服务端自动探测到登录的延迟（默认 2500）。
   erpStepMs?: number;
   erpLoginAutoMs?: number;
+  // `?fault=service-disconnected`：第一次订阅后多久断开（默认 300），断开后多久恢复（默认 3000）。
+  disconnectAfterMs?: number;
+  reconnectAfterMs?: number;
 };
 
 export function readMockOptions(search: string): MockOptions {
@@ -36,8 +39,8 @@ export function readMockOptions(search: string): MockOptions {
   if (seed !== null) {
     const stage = SEED_ALIASES[seed] ?? seed;
     if (isStage(stage)) options.seed = stage;
+    else console.warn(`未知的 seed「${seed}」，可用值：${[...TASK_STAGES, ...Object.keys(SEED_ALIASES)].join(', ')}`);
     if (seed === 'print') options.printSheet = true;
-    else console.warn(`未知的 seed「${seed}」，可用值：${TASK_STAGES.join(', ')}`);
   }
   if (fault !== null) {
     if (isFault(fault)) options.fault = fault;

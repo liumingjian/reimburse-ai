@@ -44,6 +44,31 @@ const DEFAULT_ERP_STEP_MS = 300;
 const DEFAULT_ERP_LOGIN_AUTO_MS = 2500;
 // `?fault=erp-login-missing`：前两次「我已登录，继续」都探测不到登录，第三次才检测到；该故障下服务端不会自己探测到。
 const LOGIN_MISSING_ATTEMPTS = 2;
+// `?fault=service-disconnected`：第一次订阅后断开，过一会儿恢复（只发生一次）；断开期间事件流不送达，动作失败。
+const DEFAULT_DISCONNECT_AFTER_MS = 300;
+const DEFAULT_RECONNECT_AFTER_MS = 3000;
+export const SERVICE_UNAVAILABLE_CODE = 'service_unavailable';
+export const SERVICE_UNAVAILABLE_MESSAGE = '本地服务没有响应，操作没有送达。请在终端重新执行 baox 后重试。';
+
+// 只在 mock 构建里挂到 window 上的测试钩子（e2e 用）：模拟「另一个窗口推进了任务」，而这边的事件流还没送到。
+export type MockHooks = {
+  advanceElsewhere(taskId: string): void;
+};
+
+declare global {
+  interface Window {
+    __baoxMock?: MockHooks;
+  }
+}
+
+export type MockAdapter = AppAdapter & MockHooks;
+
+export function installMockHooks(target: Window, adapter: MockAdapter): void {
+  target.__baoxMock = { advanceElsewhere: (taskId) => adapter.advanceElsewhere(taskId) };
+}
+
+// 读快照与订阅不受断连影响（快照读的是内存）；其余都是动作，断开期间一律失败，原因就地显示在按钮旁。
+const READ_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['listTasks', 'getSnapshot', 'subscribe']);
 
 // mock 的「现在」：夹具时间之后逐次递增，保证 updatedAt 单调。
 function clock(): () => string {
@@ -58,9 +83,12 @@ function clock(): () => string {
 
 type StepResult = TaskSnapshot | { error: ActionError };
 
-export function createMockAdapter(options: MockOptions): AppAdapter {
+export function createMockAdapter(options: MockOptions): MockAdapter {
   const snapshots = new Map<string, TaskSnapshot>();
   const listeners = new Map<string, Set<(event: AdapterEvent) => void>>();
+  let connected = true;
+  let outageScheduled = false;
+  let elsewhereCount = 0;
   let nextTaskNo = 4;
   let nextFileNo = 1;
   let nextScreenshotNo = 1;
@@ -87,8 +115,28 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
 
   const clone = (snapshot: TaskSnapshot): TaskSnapshot => structuredClone(snapshot);
 
+  // 断开期间事件流不送达（恢复后页面会重新拉取快照）。
   const emit = (taskId: string, event: AdapterEvent) => {
+    if (!connected) return;
     for (const listener of listeners.get(taskId) ?? []) listener(event);
+  };
+
+  const broadcast = (event: AdapterEvent) => {
+    for (const set of listeners.values()) for (const listener of set) listener(event);
+  };
+
+  // 服务断连与恢复：第一次订阅时排期，只发生一次。
+  const scheduleOutage = () => {
+    if (options.fault !== 'service-disconnected' || outageScheduled) return;
+    outageScheduled = true;
+    setTimeout(() => {
+      connected = false;
+      broadcast({ type: 'connection', state: 'disconnected' });
+      setTimeout(() => {
+        connected = true;
+        broadcast({ type: 'connection', state: 'connected' });
+      }, options.reconnectAfterMs ?? DEFAULT_RECONNECT_AFTER_MS);
+    }, options.disconnectAfterMs ?? DEFAULT_DISCONNECT_AFTER_MS);
   };
 
   const commit = (snapshot: TaskSnapshot): ActionOutcome => {
@@ -151,6 +199,27 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
   };
 
   const openCount = (snapshot: TaskSnapshot) => snapshot.pendingItems.filter((item) => item.status === 'open').length;
+
+  // 整单明细确认生效：进入「去打印 / 去报销」阶段。确认之后服务端随快照给出个人项目簿允许列表（去报销路径要用）；已有的归属保留。
+  const applyConfirm = (snapshot: TaskSnapshot) => {
+    const taskId = snapshot.task.taskId;
+    snapshot.confirmation = { ...snapshot.confirmation, status: 'confirmed', confirmedAt: now(), notice: null };
+    snapshot.task.updatedAt = snapshot.confirmation.confirmedAt ?? snapshot.task.updatedAt;
+    snapshot.stage = 'actions';
+    if (snapshot.projectAssignment.projects.length === 0) snapshot.projectAssignment = projectAssignmentOpen();
+    snapshot.step = { kind: 'choose_action', stepToken: `tok-${taskId}-actions-${snapshot.inventory.versionId ?? 'v0'}` };
+  };
+
+  // 测试钩子：另一个窗口推进了任务，但这边还没收到事件流。待整单确认的任务被确认；其余任务只是换了 stepToken。
+  // 只写内存、不推送，于是这边下一次带旧凭据的动作会得到 409 语义（stale_step + 最新快照）。
+  const advanceElsewhere = (taskId: string) => {
+    const snapshot = clone(snapshotOf(taskId));
+    elsewhereCount += 1;
+    if (snapshot.step.kind === 'confirm_review' && snapshot.lines.length > 0) applyConfirm(snapshot);
+    else snapshot.step = { ...snapshot.step, stepToken: `${snapshot.step.stepToken}-elsewhere-${elsewhereCount}` };
+    snapshot.task.updatedAt = now();
+    put(snapshot);
+  };
 
   // 盘点结束：材料分类、费用事件与待确认项落进快照；有待确认项则进入 pending 阶段，否则直接形成候选明细进入 review。
   const finishInventory = (snapshot: TaskSnapshot) => {
@@ -259,7 +328,7 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
     setTimeout(() => finishErpStep(taskId, run, index + 1), erpStepMs);
   };
 
-  return {
+  const adapter: AppAdapter = {
     async listTasks(): Promise<TaskList> {
       const tasks = [...snapshots.values()].map(toListItem).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
       return TaskListSchema.parse({ employee: EMPLOYEE, tasks });
@@ -271,12 +340,10 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
       const set = listeners.get(taskId) ?? new Set();
       set.add(onEvent);
       listeners.set(taskId, set);
-      const timers: ReturnType<typeof setTimeout>[] = [];
-      if (options.fault === 'service-disconnected') {
-        timers.push(setTimeout(() => onEvent({ type: 'connection', state: 'disconnected' }), 300));
-      }
+      scheduleOutage();
+      // 断开期间新打开的页面也要看到横幅。
+      if (!connected) setTimeout(() => onEvent({ type: 'connection', state: connected ? 'connected' : 'disconnected' }), 0);
       return () => {
-        for (const timer of timers) clearTimeout(timer);
         set.delete(onEvent);
       };
     },
@@ -375,12 +442,7 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
       withStep(taskId, stepToken, (snapshot) => {
         if (snapshot.lines.length === 0) return { error: { code: 'no_lines', message: CONFIRM_REVIEW_ERRORS.noLines } };
         if (snapshot.confirmation.digest !== digest) return { error: { code: 'digest_mismatch', message: CONFIRM_REVIEW_ERRORS.digestMismatch } };
-        snapshot.confirmation = { ...snapshot.confirmation, status: 'confirmed', confirmedAt: now(), notice: null };
-        snapshot.task.updatedAt = snapshot.confirmation.confirmedAt ?? snapshot.task.updatedAt;
-        snapshot.stage = 'actions';
-        // 确认之后服务端随快照给出个人项目簿允许列表（去报销路径要用）；已有的归属保留。
-        if (snapshot.projectAssignment.projects.length === 0) snapshot.projectAssignment = projectAssignmentOpen();
-        snapshot.step = { kind: 'choose_action', stepToken: `tok-${taskId}-actions-${snapshot.inventory.versionId ?? 'v0'}` };
+        applyConfirm(snapshot);
         return snapshot;
       }),
     // 确认后追加材料：整单明细确认失效、打印稿作废，回到上传阶段。ERP 已开始写入的任务不能再动材料。
@@ -529,6 +591,16 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
         return snapshot;
       }),
   };
+
+  // 断开期间动作不送达：统一包一层，失败原因由页面就地显示。
+  const guarded: Record<string, unknown> = { ...adapter };
+  for (const key of Object.keys(adapter) as (keyof AppAdapter)[]) {
+    if (READ_METHODS.has(key)) continue;
+    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome>;
+    guarded[key] = async (...args: unknown[]): Promise<ActionOutcome> =>
+      connected ? original(...args) : { ok: false, error: { code: SERVICE_UNAVAILABLE_CODE, message: SERVICE_UNAVAILABLE_MESSAGE }, snapshot: null };
+  }
+  return Object.assign(guarded as unknown as AppAdapter, { advanceElsewhere });
 }
 
 // 图片判定按扩展名，其次按 MIME（无扩展名时）。

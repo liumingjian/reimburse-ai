@@ -83,8 +83,14 @@ export class AppStore {
       existing.count += 1;
     } else {
       const unsubscribe = this.adapter.subscribe(taskId, (event) => {
-        if (event.type === 'snapshot') this.acceptSnapshot(event.snapshot);
-        else this.setState({ connection: event.state });
+        if (event.type === 'snapshot') {
+          this.acceptSnapshot(event.snapshot);
+          return;
+        }
+        const recovered = this.state.connection === 'disconnected' && event.state === 'connected';
+        this.setState({ connection: event.state });
+        // 断开期间可能错过了推送：恢复后重新拉取所有打开中的任务与已加载的任务列表。
+        if (recovered) this.resync();
       });
       this.subscriptions.set(taskId, { count: 1, unsubscribe });
       void this.refreshTask(taskId);
@@ -116,16 +122,30 @@ export class AppStore {
     this.patchEntry(snapshot.task.taskId, { status: 'ready', snapshot, error: null });
   }
 
-  // 执行一个动作：成功则采用返回的快照；stepToken 过期时采用附带的最新快照并留下提示。
+  // 执行一个动作：成功则采用返回的快照；stepToken 过期（409）时采用附带的最新快照（没带就重新拉取）并留下提示。
+  // 适配器抛错也按失败返回，原因交给页面就地显示。
   async act(taskId: string, run: (adapter: AppAdapter) => Promise<ActionOutcome>): Promise<ActionOutcome> {
-    const outcome = await run(this.adapter);
+    let outcome: ActionOutcome;
+    try {
+      outcome = await run(this.adapter);
+    } catch (error) {
+      return { ok: false, error: { code: 'adapter_error', message: describe(error) }, snapshot: null };
+    }
     if (outcome.ok) {
       this.acceptSnapshot(outcome.snapshot);
-    } else if (outcome.snapshot) {
-      this.acceptSnapshot(outcome.snapshot);
-      if (outcome.error.code === STALE_STEP_CODE) this.patchEntry(taskId, { notice: STALE_STEP_NOTICE });
+      return outcome;
+    }
+    if (outcome.snapshot) this.acceptSnapshot(outcome.snapshot);
+    if (outcome.error.code === STALE_STEP_CODE) {
+      this.patchEntry(taskId, { notice: STALE_STEP_NOTICE });
+      if (!outcome.snapshot) void this.refreshTask(taskId);
     }
     return outcome;
+  }
+
+  private resync(): void {
+    for (const taskId of this.subscriptions.keys()) void this.refreshTask(taskId);
+    if (this.state.taskList.status !== 'idle') void this.loadTaskList();
   }
 
   clearNotice(taskId: string): void {

@@ -4,6 +4,7 @@ import { STALE_STEP_CODE } from '../contract/actions';
 import { UPLOAD_ACCEPT_ATTRIBUTE, type TaskSnapshot, type UploadBatch } from '../contract/snapshot';
 import { formatBytes, hashPrefix } from '../format';
 import { navigate, taskHash } from '../router';
+import { ActionError, failureMessage } from '../shell/ActionError';
 import { ConfirmDialog, REOPEN_DIALOG } from '../shell/Dialog';
 import { PAGE_COPY } from './page-copy';
 
@@ -163,7 +164,7 @@ export function UploadPage({ snapshot }: { snapshot: TaskSnapshot }) {
     const outcome = await store.act(taskId, (adapter) => adapter.startInventory(taskId, snapshot.step.stepToken));
     setStarting(false);
     if (outcome.ok) navigate(taskHash(taskId, 'inventory'));
-    else if (outcome.error.code !== 'stale_step') setError(outcome.error.message);
+    else setError(failureMessage(outcome));
   };
 
   return (
@@ -209,11 +210,7 @@ export function UploadPage({ snapshot }: { snapshot: TaskSnapshot }) {
               追加下一批
             </button>
             <span className="caption">{hasMaterials ? '开始盘点后，追加或删除材料会形成新的盘点版本。' : '还没有被接收的材料，请追加下一批。'}</span>
-            {error ? (
-              <span className="error" role="alert">
-                {error}
-              </span>
-            ) : null}
+            <ActionError message={error} />
           </div>
         </section>
       )}

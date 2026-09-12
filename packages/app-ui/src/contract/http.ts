@@ -1,0 +1,55 @@
+import type { ActionName } from './actions';
+import type { AppAdapter } from './adapter';
+
+// 接口的 HTTP 形态：给服务端实现者的端点表，HTTP 适配器按同一张表发请求。
+// 成功 200 返回整份新快照；失败返回 { error: { code, message } }；stepToken 过期返回 409 与 { error, snapshot }（最新快照）。
+// 事件流是 SSE：`event: snapshot`，`data:` 为整份快照 JSON；断开后客户端按退避自动重连，重连成功后重新拉取快照。
+
+export const STALE_STEP_HTTP_STATUS = 409;
+export const SNAPSHOT_EVENT = 'snapshot';
+export const ACTION_PATH_PREFIX = '/api/tasks/:id/actions/';
+
+export type HttpEndpoint = {
+  readonly method: 'GET' | 'POST';
+  readonly path: string;
+  // 请求体：none / json（字段列在 fields）/ multipart（表单字段列在 fields）/ sse（事件流，GET）
+  readonly body: 'none' | 'json' | 'multipart' | 'sse';
+  readonly fields: readonly string[];
+};
+
+export function actionPath(name: ActionName): string {
+  return `${ACTION_PATH_PREFIX}${name}`;
+}
+
+const action = (name: ActionName, ...fields: string[]): HttpEndpoint => ({ method: 'POST', path: actionPath(name), body: 'json', fields });
+
+// 每个适配器方法对应的端点；`satisfies` 保证适配器接口加了方法这里必须跟着加。
+export const HTTP_ENDPOINTS = {
+  listTasks: { method: 'GET', path: '/api/tasks', body: 'none', fields: [] },
+  getSnapshot: { method: 'GET', path: '/api/tasks/:id', body: 'none', fields: [] },
+  subscribe: { method: 'GET', path: '/api/tasks/:id/events', body: 'sse', fields: [] },
+  createTask: { method: 'POST', path: '/api/tasks', body: 'json', fields: ['name', 'periodStart', 'periodEnd'] },
+  uploadBatch: { method: 'POST', path: '/api/tasks/:id/batches', body: 'multipart', fields: ['files'] },
+  addPaymentScreenshot: { method: 'POST', path: '/api/tasks/:id/payment-screenshots', body: 'multipart', fields: ['voucherMaterialId', 'file'] },
+  startInventory: action('start-inventory', 'stepToken'),
+  answerPendingItem: action('answer-pending', 'itemId', 'answer', 'stepToken'),
+  confirmReview: action('confirm-review', 'digest', 'stepToken'),
+  reopenUpload: action('reopen-upload', 'stepToken'),
+  removePaymentScreenshot: action('remove-payment-screenshot', 'screenshotId'),
+  generatePrintSheet: action('generate-print-sheet'),
+  rotatePlacement: action('rotate-placement', 'pageId', 'slot', 'rotate'),
+  cropPlacement: action('crop-placement', 'pageId', 'slot', 'corners'),
+  submitProjectAssignment: action('submit-project-assignment', 'purpose', 'projects', 'stepToken'),
+  startErpWrite: action('start-erp-write', 'stepToken'),
+  confirmLogin: action('confirm-login', 'stepToken'),
+  reconcile: action('reconcile', 'stepToken'),
+  handOff: action('hand-off', 'stepToken'),
+} as const satisfies Record<keyof AppAdapter, HttpEndpoint>;
+
+// 端点表里出现的动作名（用于核对与 ACTION_NAMES 同步）。
+export function endpointActionNames(): string[] {
+  return Object.values(HTTP_ENDPOINTS)
+    .map((endpoint) => endpoint.path)
+    .filter((path) => path.startsWith(ACTION_PATH_PREFIX))
+    .map((path) => path.slice(ACTION_PATH_PREFIX.length));
+}

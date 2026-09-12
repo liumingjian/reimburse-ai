@@ -1,100 +1,174 @@
-import { ActionFailureSchema, type ActionName } from '../contract/actions';
+import { ActionFailureSchema, STALE_STEP_CODE, STALE_STEP_NOTICE } from '../contract/actions';
 import type { ActionOutcome, AdapterEvent, AppAdapter, Unsubscribe } from '../contract/adapter';
+import { HTTP_ENDPOINTS, SNAPSHOT_EVENT, STALE_STEP_HTTP_STATUS } from '../contract/http';
 import { TaskSnapshotSchema, type TaskSnapshot } from '../contract/snapshot';
 import { TaskListSchema, type TaskList } from '../contract/task-list';
 
-// HTTP 适配器：按契约调用本地应用服务。路径约定（服务端 spec 以此为准）：
-//   GET  /api/tasks                          任务列表
-//   POST /api/tasks                          新建任务
-//   GET  /api/tasks/:id                      任务快照
-//   GET  /api/tasks/:id/events               SSE，event: snapshot，data: 快照 JSON
-//   POST /api/tasks/:id/batches              上传批次（multipart，字段 files）
-//   POST /api/tasks/:id/payment-screenshots  补充支付截图（multipart，字段 file + voucherMaterialId）
-//   POST /api/tasks/:id/actions/<name>       其余动作（JSON），名字见 ACTION_NAMES
-// 成功 200 返回快照；失败返回 { error }；stepToken 过期返回 409 { error, snapshot }。
+// HTTP 适配器：按 contract/http.ts 的端点表调用本地应用服务。每个响应都过 zod schema；
+// 409 一律映射为 stale_step（附带的最新快照交给仓库重渲染）；事件流断开后按退避自动重连。
 
 export type HttpAdapterOptions = {
   baseUrl?: string;
-  validate?: boolean;
 };
+
+export const INVALID_RESPONSE_CODE = 'invalid_response';
+export const NETWORK_ERROR_CODE = 'network';
+export const NETWORK_ERROR_MESSAGE = '本地服务没有响应，操作没有送达。请在终端重新执行 baox 后重试。';
+
+// 事件流重连间隔：0.5 s 起翻倍，封顶 10 s。
+export function reconnectDelay(attempt: number): number {
+  return Math.min(500 * 2 ** attempt, 10_000);
+}
+
+// ---- 解析边界：给定状态码与 JSON，决定接受还是拒绝（响应形状测试只测这一层）----
+
+const isSuccess = (status: number) => status >= 200 && status < 300;
+
+export function parseTaskListResponse(status: number, body: unknown): TaskList {
+  if (!isSuccess(status)) throw new Error(`任务列表加载失败（HTTP ${status}）`);
+  const parsed = TaskListSchema.safeParse(body);
+  if (!parsed.success) throw new Error('任务列表的格式与契约不符');
+  return parsed.data;
+}
+
+export function parseSnapshotResponse(status: number, body: unknown): TaskSnapshot {
+  if (!isSuccess(status)) throw new Error(`任务快照加载失败（HTTP ${status}）`);
+  const parsed = TaskSnapshotSchema.safeParse(body);
+  if (!parsed.success) throw new Error('任务快照的格式与契约不符');
+  return parsed.data;
+}
+
+export function parseActionResponse(status: number, body: unknown): ActionOutcome {
+  if (isSuccess(status)) {
+    const snapshot = TaskSnapshotSchema.safeParse(body);
+    if (snapshot.success) return { ok: true, snapshot: snapshot.data };
+    return { ok: false, error: { code: INVALID_RESPONSE_CODE, message: '服务端返回的快照格式与契约不符。' }, snapshot: null };
+  }
+  const failure = ActionFailureSchema.safeParse(body);
+  if (status === STALE_STEP_HTTP_STATUS) {
+    // 过期凭据：不论服务端写的错误码是什么，都按 stale_step 处理；没带快照时由仓库重新拉取。
+    const snapshot = failure.success ? (failure.data.snapshot ?? null) : null;
+    return { ok: false, error: { code: STALE_STEP_CODE, message: STALE_STEP_NOTICE }, snapshot };
+  }
+  if (failure.success) return { ok: false, error: failure.data.error, snapshot: failure.data.snapshot ?? null };
+  return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, snapshot: null };
+}
+
+// SSE 的一条 snapshot 事件：JSON 不合法或形状不符时返回 null（丢弃该条，等下一条或重连后的重新拉取）。
+export function parseSnapshotEvent(data: string): TaskSnapshot | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(data);
+  } catch {
+    return null;
+  }
+  const parsed = TaskSnapshotSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
+async function readJson(response: Response): Promise<unknown> {
+  return response.json().catch(() => null);
+}
+
+export async function outcomeFromResponse(response: Response): Promise<ActionOutcome> {
+  return parseActionResponse(response.status, await readJson(response));
+}
+
+// ---- 适配器 ----
 
 export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter {
   const base = (options.baseUrl ?? '').replace(/\/$/, '');
-  const validate = options.validate ?? false;
-  const taskUrl = (taskId: string) => `${base}/api/tasks/${encodeURIComponent(taskId)}`;
+  const url = (path: string, taskId?: string) => base + (taskId === undefined ? path : path.replace(':id', encodeURIComponent(taskId)));
+  const E = HTTP_ENDPOINTS;
 
-  const parseSnapshot = (raw: unknown): TaskSnapshot => (validate ? TaskSnapshotSchema.parse(raw) : (raw as TaskSnapshot));
-
-  async function outcomeOf(response: Response): Promise<ActionOutcome> {
-    const body: unknown = await response.json().catch(() => null);
-    if (response.ok) return { ok: true, snapshot: parseSnapshot(body) };
-    const failure = ActionFailureSchema.safeParse(body);
-    if (failure.success) {
-      return { ok: false, error: failure.data.error, snapshot: failure.data.snapshot ?? null };
-    }
-    return { ok: false, error: { code: `http_${response.status}`, message: `请求失败（HTTP ${response.status}）` }, snapshot: null };
-  }
-
-  async function post(url: string, body: BodyInit, contentType?: string): Promise<ActionOutcome> {
+  async function post(target: string, body: BodyInit, contentType?: string): Promise<ActionOutcome> {
+    let response: Response;
     try {
       const headers: Record<string, string> = contentType ? { 'content-type': contentType } : {};
-      return await outcomeOf(await fetch(url, { method: 'POST', body, headers }));
-    } catch (error) {
-      return { ok: false, error: { code: 'network', message: error instanceof Error ? error.message : '网络错误' }, snapshot: null };
+      response = await fetch(target, { method: 'POST', body, headers });
+    } catch {
+      return { ok: false, error: { code: NETWORK_ERROR_CODE, message: NETWORK_ERROR_MESSAGE }, snapshot: null };
     }
+    return outcomeFromResponse(response);
   }
 
-  const action = (taskId: string, name: ActionName, payload: Record<string, unknown>) =>
-    post(`${taskUrl(taskId)}/actions/${name}`, JSON.stringify(payload), 'application/json');
+  const json = (target: string, payload: unknown) => post(target, JSON.stringify(payload), 'application/json');
+  const action = (taskId: string, endpoint: { path: string }, payload: Record<string, unknown>) => json(url(endpoint.path, taskId), payload);
 
   return {
-    async listTasks(): Promise<TaskList> {
-      const response = await fetch(`${base}/api/tasks`);
-      if (!response.ok) throw new Error(`任务列表加载失败（HTTP ${response.status}）`);
-      const raw: unknown = await response.json();
-      return validate ? TaskListSchema.parse(raw) : (raw as TaskList);
+    async listTasks() {
+      const response = await fetch(url(E.listTasks.path));
+      return parseTaskListResponse(response.status, await readJson(response));
     },
     async getSnapshot(taskId) {
-      const response = await fetch(taskUrl(taskId));
-      if (!response.ok) throw new Error(`任务快照加载失败（HTTP ${response.status}）`);
-      return parseSnapshot(await response.json());
+      const response = await fetch(url(E.getSnapshot.path, taskId));
+      return parseSnapshotResponse(response.status, await readJson(response));
     },
     subscribe(taskId, onEvent): Unsubscribe {
-      const source = new EventSource(`${taskUrl(taskId)}/events`);
-      source.onopen = () => onEvent({ type: 'connection', state: 'connected' });
-      source.onerror = () => onEvent({ type: 'connection', state: 'disconnected' });
-      source.addEventListener('snapshot', (event: Event) => {
-        const data = (event as MessageEvent<string>).data;
-        const parsed: unknown = JSON.parse(data);
-        const message: AdapterEvent = { type: 'snapshot', snapshot: parseSnapshot(parsed) };
-        onEvent(message);
-      });
-      return () => source.close();
+      let source: EventSource | null = null;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let attempt = 0;
+      let closed = false;
+      let down = false;
+      const connect = () => {
+        const current = new EventSource(url(E.subscribe.path, taskId));
+        source = current;
+        current.onopen = () => {
+          attempt = 0;
+          if (down) {
+            down = false;
+            onEvent({ type: 'connection', state: 'connected' });
+          }
+        };
+        current.onerror = () => {
+          // 浏览器自带的重连间隔不可控：关掉连接，按退避自己重连；横幅只在第一次断开时出现。
+          current.close();
+          if (closed) return;
+          if (!down) {
+            down = true;
+            onEvent({ type: 'connection', state: 'disconnected' });
+          }
+          timer = setTimeout(connect, reconnectDelay(attempt));
+          attempt += 1;
+        };
+        current.addEventListener(SNAPSHOT_EVENT, (event: Event) => {
+          const snapshot = parseSnapshotEvent((event as MessageEvent<string>).data);
+          if (!snapshot) return;
+          const message: AdapterEvent = { type: 'snapshot', snapshot };
+          onEvent(message);
+        });
+      };
+      connect();
+      return () => {
+        closed = true;
+        if (timer) clearTimeout(timer);
+        source?.close();
+      };
     },
-    createTask: (input) => post(`${base}/api/tasks`, JSON.stringify(input), 'application/json'),
+    createTask: (input) => json(url(E.createTask.path), input),
     uploadBatch(taskId, files) {
       const form = new FormData();
       for (const file of files) form.append('files', file, file.name);
-      return post(`${taskUrl(taskId)}/batches`, form);
+      return post(url(E.uploadBatch.path, taskId), form);
     },
-    startInventory: (taskId, stepToken) => action(taskId, 'start-inventory', { stepToken }),
-    answerPendingItem: (taskId, itemId, answer, stepToken) => action(taskId, 'answer-pending', { itemId, answer, stepToken }),
-    confirmReview: (taskId, digest, stepToken) => action(taskId, 'confirm-review', { digest, stepToken }),
-    reopenUpload: (taskId, stepToken) => action(taskId, 'reopen-upload', { stepToken }),
     addPaymentScreenshot(taskId, voucherMaterialId, file) {
       const form = new FormData();
       form.append('voucherMaterialId', voucherMaterialId);
       form.append('file', file, file.name);
-      return post(`${taskUrl(taskId)}/payment-screenshots`, form);
+      return post(url(E.addPaymentScreenshot.path, taskId), form);
     },
-    removePaymentScreenshot: (taskId, screenshotId) => action(taskId, 'remove-payment-screenshot', { screenshotId }),
-    generatePrintSheet: (taskId) => action(taskId, 'generate-print-sheet', {}),
-    rotatePlacement: (taskId, pageId, slot, rotate) => action(taskId, 'rotate-placement', { pageId, slot, rotate }),
-    cropPlacement: (taskId, pageId, slot, corners) => action(taskId, 'crop-placement', { pageId, slot, corners }),
-    submitProjectAssignment: (taskId, input, stepToken) => action(taskId, 'submit-project-assignment', { ...input, stepToken }),
-    startErpWrite: (taskId, stepToken) => action(taskId, 'start-erp-write', { stepToken }),
-    confirmLogin: (taskId, stepToken) => action(taskId, 'confirm-login', { stepToken }),
-    reconcile: (taskId, stepToken) => action(taskId, 'reconcile', { stepToken }),
-    handOff: (taskId, stepToken) => action(taskId, 'hand-off', { stepToken }),
+    startInventory: (taskId, stepToken) => action(taskId, E.startInventory, { stepToken }),
+    answerPendingItem: (taskId, itemId, answer, stepToken) => action(taskId, E.answerPendingItem, { itemId, answer, stepToken }),
+    confirmReview: (taskId, digest, stepToken) => action(taskId, E.confirmReview, { digest, stepToken }),
+    reopenUpload: (taskId, stepToken) => action(taskId, E.reopenUpload, { stepToken }),
+    removePaymentScreenshot: (taskId, screenshotId) => action(taskId, E.removePaymentScreenshot, { screenshotId }),
+    generatePrintSheet: (taskId) => action(taskId, E.generatePrintSheet, {}),
+    rotatePlacement: (taskId, pageId, slot, rotate) => action(taskId, E.rotatePlacement, { pageId, slot, rotate }),
+    cropPlacement: (taskId, pageId, slot, corners) => action(taskId, E.cropPlacement, { pageId, slot, corners }),
+    submitProjectAssignment: (taskId, input, stepToken) => action(taskId, E.submitProjectAssignment, { ...input, stepToken }),
+    startErpWrite: (taskId, stepToken) => action(taskId, E.startErpWrite, { stepToken }),
+    confirmLogin: (taskId, stepToken) => action(taskId, E.confirmLogin, { stepToken }),
+    reconcile: (taskId, stepToken) => action(taskId, E.reconcile, { stepToken }),
+    handOff: (taskId, stepToken) => action(taskId, E.handOff, { stepToken }),
   };
 }

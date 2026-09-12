@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAppStore } from '../adapter/context';
-import { STALE_STEP_CODE } from '../contract/actions';
+import { ActionError, failureMessage } from '../shell/ActionError';
 import type { ActionOutcome, AppAdapter } from '../contract/adapter';
 import type { Reconcile, TaskSnapshot } from '../contract/snapshot';
 import { TASKS_HASH, navigate, taskHash } from '../router';
@@ -33,7 +33,7 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
     const outcome = await store.act(taskId, action);
     setBusy(false);
     if (outcome.ok && outcome.snapshot.stage === 'done') navigate(taskHash(taskId, 'done'));
-    else if (!outcome.ok && outcome.error.code !== STALE_STEP_CODE) setError(outcome.error.message);
+    else setError(failureMessage(outcome));
   };
 
   return (
@@ -129,11 +129,7 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
               </button>
             </div>
           </div>
-          {error ? (
-            <p className="error" role="alert">
-              {error}
-            </p>
-          ) : null}
+          <ActionError message={error} />
         </section>
       )}
     </>

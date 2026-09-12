@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAppStore } from '../adapter/context';
-import { STALE_STEP_CODE } from '../contract/actions';
+import { ActionError, failureMessage } from '../shell/ActionError';
 import type { ActionOutcome, AppAdapter } from '../contract/adapter';
 import type { ErpStep, TaskSnapshot } from '../contract/snapshot';
 import { taskHash } from '../router';
@@ -30,7 +30,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
     setError(null);
     const outcome = await store.act(taskId, action);
     setBusy(false);
-    if (!outcome.ok && outcome.error.code !== STALE_STEP_CODE) setError(outcome.error.message);
+    setError(failureMessage(outcome));
   };
 
   const start = () => run((adapter) => adapter.startErpWrite(taskId, step.stepToken));
@@ -119,11 +119,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
         ) : (
           <p className="caption">进行中，请不要关闭专用浏览器窗口。</p>
         )}
-        {error ? (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        ) : null}
+        <ActionError message={error} />
       </section>
     </>
   );

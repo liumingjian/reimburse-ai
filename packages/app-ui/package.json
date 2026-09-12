@@ -15,6 +15,7 @@
     "dev:mock": "vite --mode mock",
     "build": "vite build",
     "build:mock": "vite build --mode mock",
+    "check:dist": "vite build && node scripts/check-dist.mjs",
     "test": "vitest run",
     "test:e2e": "vite build --mode mock && playwright test",
     "typecheck": "tsc -p tsconfig.json --noEmit",
