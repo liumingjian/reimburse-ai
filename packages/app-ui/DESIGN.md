@@ -110,6 +110,9 @@ layout:
   detail-preview-width: 260px
   dialog-width: 440px
   checkbox-size: 16px
+  print-page-min-width: 280px
+  crop-editor-width: 480px
+  crop-handle-size: 18px
 
 components:
   button-primary:
@@ -210,7 +213,7 @@ Linear 原件只记录深色营销站，并明确写了"不发布浅色版"，�
 
 `layout` 组收纳页面 CSS 需要、又不属于颜色/字号/圆角/间距的几个固定尺寸：内容最大宽、hairline 与焦点环粗细、归组色条宽度、
 小号与大号控件高度、阶段序号圆点尺寸、页面最小宽度、上传拖放区最小高度、文件列表大小列宽、待确认项左栏宽度、原件预览栏宽度、
-弹层宽度、复选框尺寸。新的尺寸先加到这里，再在 CSS 里引用。
+弹层宽度、复选框尺寸、打印稿预览的页卡最小宽度、四角裁剪编辑器宽度与角点尺寸。新的尺寸先加到这里，再在 CSS 里引用。
 
 ## 语义色
 

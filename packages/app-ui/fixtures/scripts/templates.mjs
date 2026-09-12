@@ -10,6 +10,7 @@ import {
   HOTEL_INVOICE,
   OTHER_INVOICE,
   PRINT_PAGES,
+  PRINT_VARIANTS,
   RAIL_0809,
   RAIL_0822,
   TAXI_0815,
@@ -279,6 +280,28 @@ ${bottom ? bottom.css : ''}
 }
 
 export const PRINT_DOCS = PRINT_PAGES.map(printPage);
+export const VARIANT_DOCS = PRINT_VARIANTS.map((variant) => ({ ...printPage(variant), id: variant.file.replace(/\.png$/, '') }));
+
+// 合并打印稿：每张页图一页 A4（210mm x 297mm，边距 0）。
+export function printSheetDocument(imageUrls) {
+  const pages = imageUrls.map((url) => `<img src="${esc(url)}" alt="">`).join('\n');
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>print-sheet</title>
+<style>
+@page { size: 210mm 297mm; margin: 0; }
+html, body { margin: 0; padding: 0; }
+img { display: block; width: 210mm; height: 297mm; break-after: page; }
+img:last-child { break-after: auto; }
+</style>
+</head>
+<body>
+${pages}
+</body>
+</html>`;
+}
 
 // 完整 HTML 文档：@page 尺寸与片段一致，边距 0，保证 --print-to-pdf 得到一页。
 export function documentOf(doc) {

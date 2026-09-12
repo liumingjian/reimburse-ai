@@ -118,6 +118,8 @@ describe('报销任务阶段', () => {
     // 票面写的 ?seed=assign 是 project 的别名。
     expect(readMockOptions('?seed=assign')).toEqual({ seed: 'project', fault: null });
     expect(readMockOptions('?seed=project')).toEqual({ seed: 'project', fault: null });
+    // ?seed=print：actions 阶段，且打印稿已经生成（打印稿预览不是阶段）。
+    expect(readMockOptions('?seed=print')).toEqual({ seed: 'actions', fault: null, printSheet: true });
     expect(FAULTS).toHaveLength(6);
   });
 

@@ -155,6 +155,16 @@ export const CropInputSchema = z.object({
 });
 export type CropInput = z.infer<typeof CropInputSchema>;
 
+// 打印稿动作（生成、旋转、四角裁剪）的错误文案；服务端与 mock 共用。这些动作不是答复类，不带 stepToken。
+export const PRINT_ACTION_ERRORS = {
+  notConfirmed: '打印稿需要先完成整单明细确认。',
+  notGenerated: '打印稿还没有生成。',
+  pageNotFound: '这一页已经不存在，请刷新后重试。',
+  slotEmpty: '这半页没有放置材料。',
+  notCroppable: '这份材料不支持四角裁剪。',
+  invalidCorners: '四个角点须在原图范围内，且按左上、右上、右下、左下的顺序围成一个区域。',
+} as const;
+
 // 动作名与 HTTP 路径片段一一对应：POST /api/tasks/:id/actions/<name>
 export const ACTION_NAMES = [
   'start-inventory',

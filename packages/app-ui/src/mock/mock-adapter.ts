@@ -2,6 +2,7 @@ import {
   CONFIRM_REVIEW_ERRORS,
   ERP_ACTION_ERRORS,
   PENDING_ANSWER_ERRORS,
+  PRINT_ACTION_ERRORS,
   PROJECT_ASSIGNMENT_ERRORS,
   ProjectAssignmentInputSchema,
   REOPEN_UPLOAD_ERRORS,
@@ -24,6 +25,7 @@ import {
   loginNotDetected,
 } from './fixtures/erp';
 import { applyPendingAnswer, buildLines, inventoryResult } from './fixtures/inventory';
+import { buildPrintSheet, cornersValid, cropPage, refreshScreenshots, rotatePage } from './fixtures/print';
 import { projectAssignmentOpen, projectAssignmentSubmitted } from './fixtures/projects';
 import { EMPLOYEE, T1_DRAFT_NO, T1_ID, emptySnapshot, inventoryNotStarted, t1Snapshot, t2Snapshot, t3Snapshot, toListItem, uploadedMaterial } from './fixtures/tasks';
 import type { MockOptions } from './options';
@@ -34,7 +36,7 @@ export { FAULTS, readMockOptions, type Fault, type MockOptions } from './options
 // 浏览器内 mock 适配器：实现与 HTTP 适配器相同的接口，用内存里的快照回答一切。
 // 每份交出去的快照都过 schema 校验（失败即抛出），保证夹具与契约不脱节。
 // 已实现：任务列表、快照外壳、新建任务、上传批次、材料盘点（定时推进）、待确认项答复、整单明细确认、支付截图、确认后追加材料（确认失效）、项目归属提交、
-// ERP 填报（定时推进、登录交接）、严格回读、对账（重新对账 / 转人工）；打印稿动作原样返回当前快照，由后续票实现。
+// ERP 填报（定时推进、登录交接）、严格回读、对账（重新对账 / 转人工）、打印稿（生成、旋转、四角裁剪，都不碰整单明细确认）。
 
 const EMIT_DELAY_MS = 20;
 const DEFAULT_PHASE_MS = 450;
@@ -77,7 +79,9 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
     snapshots.set(snapshot.task.taskId, TaskSnapshotSchema.parse(snapshot));
   };
 
-  put(t1Snapshot(options.seed ?? 'upload', options.fault === 'unsupported-material'));
+  const seeded = t1Snapshot(options.seed ?? 'upload', options.fault === 'unsupported-material');
+  if (options.printSheet) seeded.printSheet = buildPrintSheet(seeded);
+  put(seeded);
   put(t2Snapshot());
   put(t3Snapshot());
 
@@ -119,7 +123,32 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
     return commit(result);
   };
 
-  const unchanged = async (taskId: string): Promise<ActionOutcome> => ({ ok: true, snapshot: clone(snapshotOf(taskId)) });
+  // 支付截图变了：已生成的打印稿随之更新该页截图与提醒（不作废、不碰确认）。
+  const afterScreenshotChange = (snapshot: TaskSnapshot) => {
+    if (snapshot.printSheet.status === 'generated') snapshot.printSheet = refreshScreenshots(snapshot.printSheet, snapshot);
+  };
+
+  // 打印稿的旋转与裁剪：只改这一页的放置（服务端立即重新渲染该页），不改原件、不碰确认状态与 step。
+  const adjustPage = (
+    taskId: string,
+    pageId: string,
+    slot: 'top' | 'bottom',
+    change: (page: TaskSnapshot['printSheet']['pages'][number]) => TaskSnapshot['printSheet']['pages'][number] | { error: ActionError },
+  ): ActionOutcome => {
+    const snapshot = clone(snapshotOf(taskId));
+    if (snapshot.printSheet.status !== 'generated') {
+      return { ok: false, error: { code: 'print_not_generated', message: PRINT_ACTION_ERRORS.notGenerated }, snapshot: null };
+    }
+    const index = snapshot.printSheet.pages.findIndex((page) => page.pageId === pageId);
+    const page = snapshot.printSheet.pages[index];
+    if (!page) return { ok: false, error: { code: 'page_not_found', message: PRINT_ACTION_ERRORS.pageNotFound }, snapshot: null };
+    if (!page[slot]) return { ok: false, error: { code: 'slot_empty', message: PRINT_ACTION_ERRORS.slotEmpty }, snapshot: null };
+    const result = change(page);
+    if ('error' in result) return { ok: false, error: result.error, snapshot: null };
+    snapshot.printSheet.pages[index] = result;
+    snapshot.task.updatedAt = now();
+    return commit(snapshot);
+  };
 
   const openCount = (snapshot: TaskSnapshot) => snapshot.pendingItems.filter((item) => item.status === 'open').length;
 
@@ -374,6 +403,7 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
       nextScreenshotNo += 1;
       snapshot.paymentScreenshots = snapshot.paymentScreenshots.filter((shot) => shot.voucherMaterialId !== voucherMaterialId);
       snapshot.paymentScreenshots.push({ screenshotId, voucherMaterialId, fileName: file.name, url: objectUrl(file, screenshotId) });
+      afterScreenshotChange(snapshot);
       snapshot.task.updatedAt = now();
       return commit(snapshot);
     },
@@ -383,12 +413,28 @@ export function createMockAdapter(options: MockOptions): AppAdapter {
         return { ok: false, error: { code: 'screenshot_not_found', message: PAYMENT_SCREENSHOT_ERRORS.notFound }, snapshot: null };
       }
       snapshot.paymentScreenshots = snapshot.paymentScreenshots.filter((shot) => shot.screenshotId !== screenshotId);
+      afterScreenshotChange(snapshot);
       snapshot.task.updatedAt = now();
       return commit(snapshot);
     },
-    generatePrintSheet: unchanged,
-    rotatePlacement: unchanged,
-    cropPlacement: unchanged,
+    // 生成打印稿：须已完成整单明细确认；已生成的直接返回（幂等），作废的按当前确认数据重新生成。
+    async generatePrintSheet(taskId) {
+      const snapshot = clone(snapshotOf(taskId));
+      if (snapshot.confirmation.status !== 'confirmed') {
+        return { ok: false, error: { code: 'not_confirmed', message: PRINT_ACTION_ERRORS.notConfirmed }, snapshot: null };
+      }
+      if (snapshot.printSheet.status === 'generated') return { ok: true, snapshot };
+      snapshot.printSheet = buildPrintSheet(snapshot);
+      snapshot.task.updatedAt = now();
+      return commit(snapshot);
+    },
+    rotatePlacement: async (taskId, pageId, slot, rotate) => adjustPage(taskId, pageId, slot, (page) => rotatePage(page, slot, rotate)),
+    cropPlacement: async (taskId, pageId, slot, corners) =>
+      adjustPage(taskId, pageId, slot, (page) => {
+        if (!page[slot]?.croppable) return { error: { code: 'not_croppable', message: PRINT_ACTION_ERRORS.notCroppable } };
+        if (!cornersValid(corners)) return { error: { code: 'invalid_corners', message: PRINT_ACTION_ERRORS.invalidCorners } };
+        return cropPage(page, slot, corners);
+      }),
     // 提交项目归属（服务端角色）：事由 1-100 字；每条明细都要有项目；项目必须在允许列表里且可选；不认识的明细拒绝。
     // 通过后记下归属与事由，阶段推到 erp，ERP 填报入口开放。整单明细确认不动（摘要不含项目与事由）。
     submitProjectAssignment: async (taskId, input, stepToken) =>

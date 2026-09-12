@@ -1192,6 +1192,171 @@ table.data td.pick input {
   font-weight: var(--text-button-weight);
 }
 
+/* 打印稿预览 */
+.print-summary {
+  margin-bottom: var(--space-md);
+}
+
+.print-notices p {
+  margin-bottom: var(--space-xxs);
+}
+
+.print-pages {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--layout-print-page-min-width), 1fr));
+  gap: var(--space-lg);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.page-card {
+  display: grid;
+  align-content: start;
+  gap: var(--space-xs);
+}
+
+.page-hdr {
+  overflow: hidden;
+  color: var(--color-ink-subtle);
+  font-size: var(--text-caption-size);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.page-image {
+  display: block;
+  width: 100%;
+  aspect-ratio: 210 / 297;
+  border: var(--layout-hairline-width) solid var(--color-hairline-strong);
+  background: var(--color-surface-1);
+  object-fit: contain;
+}
+
+.placements {
+  display: grid;
+  gap: var(--space-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.placements > li {
+  display: grid;
+  gap: var(--space-xxs);
+  padding-top: var(--space-xs);
+  border-top: var(--layout-hairline-width) solid var(--color-hairline);
+}
+
+.placement-name {
+  display: flex;
+  gap: var(--space-xs);
+  align-items: baseline;
+  min-width: 0;
+}
+
+.placement-name .mono {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.placements .btn-row {
+  margin-top: 0;
+}
+
+/* 四角裁剪编辑器 */
+.crop-panel {
+  margin-bottom: var(--space-lg);
+}
+
+.crop-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  align-items: baseline;
+  margin-bottom: var(--space-md);
+}
+
+.crop-head h2 {
+  margin-bottom: 0;
+}
+
+.crop-editor {
+  display: grid;
+  grid-template-columns: minmax(0, var(--layout-crop-editor-width)) minmax(0, 1fr);
+  gap: var(--space-lg);
+  align-items: start;
+}
+
+.crop-stage {
+  position: relative;
+  touch-action: none;
+  user-select: none;
+}
+
+.crop-stage img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: var(--layout-hairline-width) solid var(--color-hairline-strong);
+  border-radius: var(--radius-xs);
+}
+
+.crop-outline {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.crop-outline polygon {
+  fill: none;
+  stroke: var(--color-primary);
+  stroke-width: var(--layout-focus-ring-width);
+  vector-effect: non-scaling-stroke;
+}
+
+.crop-handle {
+  position: absolute;
+  width: var(--layout-crop-handle-size);
+  height: var(--layout-crop-handle-size);
+  padding: 0;
+  border: var(--layout-focus-ring-width) solid var(--color-primary);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-1);
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  touch-action: none;
+}
+
+.crop-handle:active {
+  background: var(--color-primary-soft);
+  cursor: grabbing;
+}
+
+.crop-handle:focus-visible {
+  outline: var(--layout-focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--layout-focus-ring-width);
+}
+
+.crop-coords {
+  display: grid;
+  gap: var(--space-xxs);
+  margin: var(--space-sm) 0 var(--space-md);
+  padding: 0;
+  list-style: none;
+}
+
+.crop-coords li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-xxs) 0;
+  border-bottom: var(--layout-hairline-width) solid var(--color-hairline);
+}
+
 @media (max-width: 900px) {
   .layout {
     grid-template-columns: 1fr;
@@ -1211,6 +1376,7 @@ table.data td.pick input {
   .split,
   .project-split,
   .detail-grid,
+  .crop-editor,
   .two-actions {
     grid-template-columns: 1fr;
   }

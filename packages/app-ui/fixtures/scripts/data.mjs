@@ -179,3 +179,22 @@ export const PRINT_PAGES = [
 export function headerOf(page) {
   return `${page.nos} · ${page.date} · ${page.category} · ${page.amount}`;
 }
+
+// 旋转变体（#104）：页面上可以把任一份放置的材料改为竖放 / 旋转 90°，mock 服务端据此换一张页图。
+// 文件名后缀 `-r<上><下>`，1 = 旋转 90°，如 `print-pg3-r10.png`；与默认放置相同的组合就是 `print-pgN.png` 本身。
+export function printPageFile(page, rotateTop, rotateBottom) {
+  if (rotateTop === page.rotateTop && (page.bottom === null || rotateBottom === page.rotateBottom)) return page.file;
+  const flags = page.bottom === null ? `${rotateTop ? 1 : 0}` : `${rotateTop ? 1 : 0}${rotateBottom ? 1 : 0}`;
+  return `print-${page.id}-r${flags}.png`;
+}
+
+// 每页除默认放置外的所有旋转组合：无下半页的页 1 个，有下半页的页 3 个。
+export const PRINT_VARIANTS = PRINT_PAGES.flatMap((page) => {
+  const combos = page.bottom === null ? [[true, false], [false, false]] : [[false, false], [false, true], [true, false], [true, true]];
+  return combos
+    .map(([rotateTop, rotateBottom]) => ({ ...page, rotateTop, rotateBottom, file: printPageFile(page, rotateTop, rotateBottom) }))
+    .filter((variant) => variant.file !== page.file);
+});
+
+// 合并打印稿样本：7 张默认页图按页序合成一份 A4 PDF，mock 的「下载打印稿 PDF」指向它。
+export const PRINT_SHEET_FILE = 'print-sheet.pdf';

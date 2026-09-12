@@ -245,14 +245,24 @@ export const PaymentScreenshotSchema = z.object({
 });
 export type PaymentScreenshot = z.infer<typeof PaymentScreenshotSchema>;
 
-export const PointSchema = z.tuple([z.number(), z.number()]);
+// 四角坐标：原图像素（左上原点），依次为左上、右上、右下、左下。
+export const PointSchema = z.tuple([z.number().nonnegative(), z.number().nonnegative()]);
 export const CornersSchema = z.tuple([PointSchema, PointSchema, PointSchema, PointSchema]);
 export type Corners = z.infer<typeof CornersSchema>;
 
+// 一页里放置的一份材料（上半页主要报销凭证 / 下半页证明材料）。旋转与裁剪都只是打印设置，不改原件、不进确认摘要。
 export const PlacementSchema = z.object({
   materialId: IdSchema,
+  fileName: z.string().min(1),
+  // 当前是否旋转 90° 放置。服务端先按「竖放 / 旋转 90° 哪个缩放更大」给出默认值，员工可以改。
   rotate: z.boolean(),
+  // 能否拖动四角微调裁剪（照片类材料，如出租车票照片）；由服务端判定，页面只据此显示入口。
+  croppable: z.boolean(),
+  // 当前使用的四角（原图像素）：自动检测的纸张边缘，或员工提交的微调结果；不可裁剪的材料为 null。
   corners: CornersSchema.nullable(),
+  // corners 是否来自员工手动微调（否则是自动检测）。
+  cropAdjusted: z.boolean(),
+  // 原图地址：四角编辑器在它上面拖动角点。
   imageUrl: UrlSchema.nullable(),
 });
 export type Placement = z.infer<typeof PlacementSchema>;
@@ -260,23 +270,31 @@ export type Placement = z.infer<typeof PlacementSchema>;
 export const PrintPageSchema = z.object({
   pageId: IdSchema,
   no: z.number().int().positive(),
-  // 页眉整句，如「No.3-5 · 08-10 · 外地市内交通 · 69.19」；范围用 ASCII 连字符。
+  // 页眉整句，如「No.3-5 · 08-10 · 外地市内交通 · 69.19」；范围用 ASCII 连字符。页面原样显示，不自己拼。
   header: z.string().min(1),
   nos: z.string().min(1),
   date: DateSchema,
   categoryLabel: z.string().min(1),
   grossAmount: AmountSchema,
+  // 服务端按当前放置（旋转、裁剪、支付截图）渲染出的整页页图；设置变了，地址随之变。
+  imageUrl: UrlSchema,
   top: PlacementSchema.nullable(),
   bottom: PlacementSchema.nullable(),
   screenshotId: IdSchema.nullable(),
 });
 export type PrintPage = z.infer<typeof PrintPageSchema>;
 
+// not_generated：还没生成；generated：页图与合并 PDF 可用（调整后服务端立即重新渲染，仍是 generated）；
+// stale：材料变更使确认失效，旧打印稿作废，须重新确认后再生成。
+export const PRINT_SHEET_STATUSES = ['not_generated', 'generated', 'stale'] as const;
+
 export const PrintSheetSchema = z.object({
-  status: z.enum(['not_generated', 'generated', 'stale']),
+  status: z.enum(PRINT_SHEET_STATUSES),
+  // 合并 PDF 的文件名与下载地址（generated 时有值）。
   fileName: z.string().nullable(),
   url: UrlSchema.nullable(),
   pages: z.array(PrintPageSchema),
+  // 服务端成句的提醒，如「No.2 住宿发票还没有支付截图。可以照常打印，该页下半页只放结账单。」；提醒不阻止下载。
   notices: z.array(z.string()),
 });
 export type PrintSheet = z.infer<typeof PrintSheetSchema>;

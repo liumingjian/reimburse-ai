@@ -8,8 +8,8 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, unlinkSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { PRINT_PAGES } from './data.mjs';
-import { DOCS, PRINT_DOCS, documentOf } from './templates.mjs';
+import { PRINT_PAGES, PRINT_SHEET_FILE, PRINT_VARIANTS } from './data.mjs';
+import { DOCS, PRINT_DOCS, VARIANT_DOCS, documentOf, printSheetDocument } from './templates.mjs';
 
 const CHROME_CANDIDATES = [
   process.env.CHROME_BIN,
@@ -34,7 +34,12 @@ export const MATERIAL_FILES = {
   m11: 'm11-other-invoice.pdf',
 };
 
-export const EXPECTED_FILES = [...Object.values(MATERIAL_FILES), ...PRINT_PAGES.map((page) => page.file)].sort();
+export const EXPECTED_FILES = [
+  ...Object.values(MATERIAL_FILES),
+  ...PRINT_PAGES.map((page) => page.file),
+  ...PRINT_VARIANTS.map((page) => page.file),
+  PRINT_SHEET_FILE,
+].sort();
 
 function chromeBinary() {
   const found = CHROME_CANDIDATES.find((candidate) => existsSync(candidate));
@@ -140,6 +145,20 @@ export async function generate() {
     produced.push(page.file);
     console.log(`生成 ${page.file}`);
   }
+  for (const [index, doc] of VARIANT_DOCS.entries()) {
+    const variant = PRINT_VARIANTS[index];
+    const target = join(OUTPUT_DIR, variant.file);
+    await chrome(binary, profile, [`--window-size=${doc.width},${doc.height}`, `--screenshot=${target}`], htmlOf(doc));
+    produced.push(variant.file);
+    console.log(`生成 ${variant.file}`);
+  }
+  // 合并打印稿：上面刚写出的默认页图逐页铺满 A4，打印成一份 PDF（没有文本层，只做下载样本）。
+  const sheetHtml = join(work, 'print-sheet.html');
+  writeFileSync(sheetHtml, printSheetDocument(PRINT_PAGES.map((page) => pathToFileURL(join(OUTPUT_DIR, page.file)).href)));
+  const sheetArgs = ['--allow-file-access-from-files', '--no-pdf-header-footer', `--print-to-pdf=${join(OUTPUT_DIR, PRINT_SHEET_FILE)}`];
+  await chrome(binary, profile, sheetArgs, pathToFileURL(sheetHtml).href);
+  produced.push(PRINT_SHEET_FILE);
+  console.log(`生成 ${PRINT_SHEET_FILE}`);
   rmSync(work, { recursive: true, force: true });
   return produced.sort();
 }

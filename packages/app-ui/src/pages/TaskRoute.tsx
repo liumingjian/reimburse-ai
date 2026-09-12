@@ -10,6 +10,7 @@ import { ErpPage } from './ErpPage';
 import { InventoryPage } from './InventoryPage';
 import { PAGE_COPY } from './page-copy';
 import { PendingPage } from './PendingPage';
+import { PrintPage } from './PrintPage';
 import { ProjectPage } from './ProjectPage';
 import { ReconcilePage } from './ReconcilePage';
 import { ReviewPage } from './ReviewPage';
@@ -23,6 +24,7 @@ function PageBody({ page, snapshot }: { page: TaskPage; snapshot: TaskSnapshot }
   if (page === 'inventory') return <InventoryPage snapshot={snapshot} />;
   if (page === 'pending') return <PendingPage snapshot={snapshot} />;
   if (page === 'review') return <ReviewPage snapshot={snapshot} />;
+  if (page === 'print') return <PrintPage snapshot={snapshot} />;
   if (page === 'project') return <ProjectPage snapshot={snapshot} />;
   if (page === 'erp') return <ErpPage snapshot={snapshot} />;
   if (page === 'done') return <DonePage snapshot={snapshot} />;
