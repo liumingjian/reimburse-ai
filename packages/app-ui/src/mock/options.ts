@@ -33,6 +33,8 @@ export type MockOptions = {
   // `?erp=logged-out`：启动时报销系统还没登录，先显示登录提示；「我已登录」第一次再探测即通过，之后进入身份确认（除非此前已登记）。
   erpLoggedOut?: boolean;
   identity?: IdentityOption;
+  // `?book=empty`：个人项目簿初始为空；走到项目归属时先进入维护入口，第一次录入成功后回到项目归属。
+  bookEmpty?: boolean;
   storage?: MockStorage;
   // `?location=unavailable`：mock 位置 Adapter 取不到网络位置，第一次新建任务时常驻城市没有默认值。不是故障场景。
   locationUnavailable?: boolean;
@@ -74,6 +76,11 @@ export function readMockOptions(search: string): MockOptions {
   if (erp !== null) {
     if (erp === 'logged-out') options.erpLoggedOut = true;
     else console.warn(`未知的 erp「${erp}」，可用值：logged-out`);
+  }
+  const book = params.get('book');
+  if (book !== null) {
+    if (book === 'empty') options.bookEmpty = true;
+    else console.warn(`未知的 book「${book}」，可用值：empty`);
   }
   const identity = params.get('identity');
   if (identity !== null) {

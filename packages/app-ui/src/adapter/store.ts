@@ -1,5 +1,6 @@
 import { STALE_STEP_CODE, STALE_STEP_NOTICE } from '../contract/actions';
-import { isServiceUnavailable, type ActionOutcome, type AppAdapter, type ConnectionState, type StartupOutcome, type Unsubscribe } from '../contract/adapter';
+import { isServiceUnavailable, type ActionOutcome, type AppAdapter, type ConnectionState, type ProjectBookOutcome, type StartupOutcome, type Unsubscribe } from '../contract/adapter';
+import { ProjectBookSchema, type ProjectBook } from '../contract/project-book';
 import { TaskSnapshotSchema, type TaskSnapshot } from '../contract/snapshot';
 import { TaskListSchema, type TaskList } from '../contract/task-list';
 import { reconnectDelay } from './http-adapter';
@@ -25,8 +26,16 @@ export type TaskEntry = {
   readonly notice: string | null;
 };
 
+// 个人项目簿：服务端给的整份项目簿，只在打开项目簿页面（或项目归属页的维护入口）时读取。
+export type ProjectBookState = {
+  readonly status: LoadStatus;
+  readonly data: ProjectBook | null;
+  readonly error: string | null;
+};
+
 export type AppState = {
   readonly taskList: TaskListState;
+  readonly projectBook: ProjectBookState;
   readonly tasks: Readonly<Record<string, TaskEntry>>;
   readonly connection: ConnectionState;
 };
@@ -35,6 +44,7 @@ const EMPTY_ENTRY: TaskEntry = { status: 'idle', snapshot: null, error: null, no
 
 const INITIAL_STATE: AppState = {
   taskList: { status: 'idle', data: null, error: null, offline: false },
+  projectBook: { status: 'idle', data: null, error: null },
   tasks: {},
   connection: 'connected',
 };
@@ -116,6 +126,36 @@ export class AppStore {
       const data = this.options.validate ? TaskListSchema.parse(raw) : raw;
       this.setState({ taskList: { status: 'ready', data, error: null, offline: false } });
     }
+    // 项目簿按登录身份分簿：登录或登记身份之后，已经读过的项目簿要按新身份重读。
+    if (outcome.ok && this.state.projectBook.status !== 'idle') void this.loadProjectBook();
+    return outcome;
+  }
+
+  async loadProjectBook(): Promise<void> {
+    const previous = this.state.projectBook;
+    this.setState({ projectBook: { status: 'loading', data: previous.data, error: null } });
+    try {
+      const raw = await this.adapter.getProjectBook();
+      const data = this.options.validate ? ProjectBookSchema.parse(raw) : raw;
+      this.setState({ projectBook: { status: 'ready', data, error: null } });
+    } catch (error) {
+      this.setState({ projectBook: { status: 'error', data: this.state.projectBook.data, error: describe(error) } });
+    }
+  }
+
+  // 项目簿维护动作：结果里的项目簿（或失败时附带的项目簿）直接替换当前项目簿。适配器抛错也按失败返回。
+  async projectBookAction(run: (adapter: AppAdapter) => Promise<ProjectBookOutcome>): Promise<ProjectBookOutcome> {
+    let outcome: ProjectBookOutcome;
+    try {
+      outcome = await run(this.adapter);
+    } catch (error) {
+      return { ok: false, error: { code: 'adapter_error', message: describe(error) }, book: null };
+    }
+    const raw = outcome.ok ? outcome.result.book : outcome.book;
+    if (raw) {
+      const data = this.options.validate ? ProjectBookSchema.parse(raw) : raw;
+      this.setState({ projectBook: { status: 'ready', data, error: null } });
+    }
     return outcome;
   }
 
@@ -189,6 +229,7 @@ export class AppStore {
   private resync(): void {
     for (const taskId of this.subscriptions.keys()) void this.refreshTask(taskId);
     if (this.state.taskList.status !== 'idle') void this.loadTaskList();
+    if (this.state.projectBook.status !== 'idle') void this.loadProjectBook();
   }
 
   clearNotice(taskId: string): void {

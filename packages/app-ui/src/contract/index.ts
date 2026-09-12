@@ -4,5 +4,6 @@ export * from './stage';
 export * from './task-list';
 export * from './snapshot';
 export * from './actions';
+export * from './project-book';
 export * from './http';
 export type * from './adapter';

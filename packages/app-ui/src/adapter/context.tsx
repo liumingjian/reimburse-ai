@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
-import type { AppState, AppStore, TaskEntry, TaskListState } from './store';
+import type { AppState, AppStore, ProjectBookState, TaskEntry, TaskListState } from './store';
 
 // 适配器经 React Context 注入：页面只认 useAppStore()，换适配器不改页面。
 
@@ -27,6 +27,16 @@ export function useTaskList(): TaskListState {
     if (state.taskList.status === 'idle') void store.loadTaskList();
   }, [store, state.taskList.status]);
   return state.taskList;
+}
+
+// 个人项目簿：第一次用到时读取；之后由维护动作的结果替换。
+export function useProjectBook(): ProjectBookState {
+  const store = useAppStore();
+  const state = useAppState();
+  useEffect(() => {
+    if (state.projectBook.status === 'idle') void store.loadProjectBook();
+  }, [store, state.projectBook.status]);
+  return state.projectBook;
 }
 
 export function useTask(taskId: string): TaskEntry {

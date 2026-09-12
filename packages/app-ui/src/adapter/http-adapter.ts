@@ -1,6 +1,7 @@
 import { ActionFailureSchema, STALE_STEP_CODE, STALE_STEP_NOTICE, StartupFailureSchema } from '../contract/actions';
-import { ServiceUnavailableError, type ActionOutcome, type AdapterEvent, type AppAdapter, type StartupOutcome, type Unsubscribe } from '../contract/adapter';
+import { ServiceUnavailableError, type ActionOutcome, type AdapterEvent, type AppAdapter, type ProjectBookOutcome, type StartupOutcome, type Unsubscribe } from '../contract/adapter';
 import { HTTP_ENDPOINTS, SNAPSHOT_EVENT, STALE_STEP_HTTP_STATUS } from '../contract/http';
+import { ProjectBookFailureSchema, ProjectBookResultSchema, ProjectBookSchema, type ProjectBook } from '../contract/project-book';
 import { TaskSnapshotSchema, type TaskSnapshot } from '../contract/snapshot';
 import { TaskListSchema, type TaskList } from '../contract/task-list';
 
@@ -41,6 +42,25 @@ export function parseStartupResponse(status: number, body: unknown): StartupOutc
   const failure = StartupFailureSchema.safeParse(body);
   if (failure.success) return { ok: false, error: failure.data.error, taskList: failure.data.taskList ?? null };
   return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, taskList: null };
+}
+
+export function parseProjectBookResponse(status: number, body: unknown): ProjectBook {
+  if (!isSuccess(status)) throw new Error(`个人项目簿加载失败（HTTP ${status}）`);
+  const parsed = ProjectBookSchema.safeParse(body);
+  if (!parsed.success) throw new Error('个人项目簿的格式与契约不符');
+  return parsed.data;
+}
+
+// 项目簿维护动作：处理了就是 200 + 结果（结果状态可能是 rejected 等）；请求本身失败是 { error, book? }。
+export function parseProjectBookActionResponse(status: number, body: unknown): ProjectBookOutcome {
+  if (isSuccess(status)) {
+    const result = ProjectBookResultSchema.safeParse(body);
+    if (result.success) return { ok: true, result: result.data };
+    return { ok: false, error: { code: INVALID_RESPONSE_CODE, message: '服务端返回的项目簿结果格式与契约不符。' }, book: null };
+  }
+  const failure = ProjectBookFailureSchema.safeParse(body);
+  if (failure.success) return { ok: false, error: failure.data.error, book: failure.data.book ?? null };
+  return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, book: null };
 }
 
 export function parseSnapshotResponse(status: number, body: unknown): TaskSnapshot {
@@ -115,6 +135,15 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     }
     return parseStartupResponse(response.status, await readJson(response));
   }
+  async function bookAction(target: string, payload: unknown): Promise<ProjectBookOutcome> {
+    let response: Response;
+    try {
+      response = await fetch(target, { method: 'POST', body: JSON.stringify(payload), headers: { 'content-type': 'application/json' } });
+    } catch {
+      return { ok: false, error: { code: NETWORK_ERROR_CODE, message: NETWORK_ERROR_MESSAGE }, book: null };
+    }
+    return parseProjectBookActionResponse(response.status, await readJson(response));
+  }
   const action = (taskId: string, endpoint: { path: string }, payload: Record<string, unknown>) => json(url(endpoint.path, taskId), payload);
 
   return {
@@ -130,6 +159,19 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     },
     recheckErpSession: () => startup(url(E.recheckErpSession.path), {}),
     confirmIdentity: (input) => startup(url(E.confirmIdentity.path), input),
+    async getProjectBook() {
+      let response: Response;
+      try {
+        response = await fetch(url(E.getProjectBook.path));
+      } catch {
+        throw new ServiceUnavailableError(NETWORK_ERROR_MESSAGE);
+      }
+      return parseProjectBookResponse(response.status, await readJson(response));
+    },
+    intakeProject: (number) => bookAction(url(E.intakeProject.path), { number }),
+    removeProject: (number) => bookAction(url(E.removeProject.path), { number }),
+    purgeInvalidProjects: () => bookAction(url(E.purgeInvalidProjects.path), {}),
+    recheckProjects: () => bookAction(url(E.recheckProjects.path), {}),
     async getSnapshot(taskId) {
       const response = await fetch(url(E.getSnapshot.path, taskId));
       return parseSnapshotResponse(response.status, await readJson(response));

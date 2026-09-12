@@ -443,6 +443,9 @@ export const STEP_KINDS = [
   'upload_materials',
   'start_inventory',
   'answer_pending',
+  // 内核 project_book_empty：个人项目簿没有可选项目、也还没有任何归属时，先维护项目簿（项目归属页换成维护入口）；
+  // 第一次录入成功后服务端回到 assign_projects。
+  'maintain_project_book',
   'assign_projects',
   'confirm_review',
   'choose_action',

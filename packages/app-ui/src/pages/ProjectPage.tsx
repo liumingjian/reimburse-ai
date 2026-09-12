@@ -1,12 +1,14 @@
 import { useCallback, useState } from 'react';
 import { PROJECT_ASSIGNMENT_ERRORS, PROJECT_CONFLICT_COPY, PURPOSE_MAX_LENGTH } from '../contract/actions';
+import { PROJECT_BOOK_COPY } from '../contract/project-book';
 import type { Line, ProjectOption, StepKind, TaskSnapshot } from '../contract/snapshot';
 import { pageAllowed } from '../contract/stage';
-import { navigate, taskHash } from '../router';
+import { PROJECTS_HASH, navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
 import { ConfirmDialog } from '../shell/Dialog';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
+import { ProjectBookPanel } from './ProjectBookPanel';
 
 // 当前 step 是这些时服务端接受提交项目归属：进入项目归属时，以及整单确认前后、ERP 写入开始之前的改派。
 // 页面只据此决定提交按钮是否可用；提交是否成立由服务端判定。
@@ -35,7 +37,28 @@ function matches(project: ProjectOption, query: string): boolean {
   return project.number.toLowerCase().includes(needle) || project.name.toLowerCase().includes(needle);
 }
 
+// 流程门（内核 project_book_empty）：服务端的当前 step 是 maintain_project_book 时，项目归属页换成个人项目簿维护入口。
+// 第一次录入成功后服务端把 step 换回 assign_projects，推送的新快照让本页自动回到项目归属。
 export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
+  if (snapshot.step.kind === 'maintain_project_book') return <ProjectBookGate />;
+  return <ProjectWorkbench snapshot={snapshot} />;
+}
+
+function ProjectBookGate() {
+  return (
+    <>
+      <div className="page-head">
+        <div>
+          <h1>{PROJECT_BOOK_COPY.gateTitle}</h1>
+          <p className="lead">{PROJECT_BOOK_COPY.gateLead}</p>
+        </div>
+      </div>
+      <ProjectBookPanel />
+    </>
+  );
+}
+
+function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   const taskId = snapshot.task.taskId;
   const copy = PAGE_COPY.project;
   const assignment = snapshot.projectAssignment;
@@ -258,6 +281,10 @@ export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
             </ul>
           )}
           <p className="caption">先在左边勾选明细，再点项目的「归入」。</p>
+          {/* 对 Skill 的小增强：项目归属页直接进入个人项目簿维护（README 注明）。 */}
+          <a className="btn btn-tertiary btn-sm book-link" href={PROJECTS_HASH}>
+            {PROJECT_BOOK_COPY.maintainLink}
+          </a>
         </aside>
       </div>
 

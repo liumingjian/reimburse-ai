@@ -1,4 +1,5 @@
 import type { ActionError, ConfirmIdentityInput, CreateTaskInput, PendingAnswer, PlacementSlot, ProjectAssignmentInput } from './actions';
+import type { ProjectBook, ProjectBookResult } from './project-book';
 import type { Corners, TaskSnapshot } from './snapshot';
 import type { TaskList } from './task-list';
 
@@ -6,6 +7,12 @@ import type { TaskList } from './task-list';
 export type StartupOutcome =
   | { ok: true; taskList: TaskList }
   | { ok: false; error: ActionError; taskList: TaskList | null };
+
+// 个人项目簿维护动作的结果：服务端处理了请求就是 ok（结果状态可能是 rejected 等没做成的，原因在 result.note）；
+// 请求本身失败（服务没响应、格式不符）才是 !ok，book 是服务端附带的最新项目簿（可能为 null）。
+export type ProjectBookOutcome =
+  | { ok: true; result: ProjectBookResult }
+  | { ok: false; error: ActionError; book: ProjectBook | null };
 
 // 适配器接口：前端与服务端交互的唯一缝。四类接口：任务列表、任务快照、动作端点、事件流。
 // mock 适配器在浏览器内实现同一接口；HTTP 适配器按契约调用本地应用服务。
@@ -42,6 +49,13 @@ export interface AppAdapter {
   recheckErpSession(): Promise<StartupOutcome>;
   // 启动：登记当前登录身份（只能确认，不能改）。
   confirmIdentity(input: ConfirmIdentityInput): Promise<StartupOutcome>;
+  // 个人项目簿（任务之外，按当前登录身份分簿）：读取、录入（只给项目号，服务端核验后带回名称）、删除、清理全部失效、复检全部。
+  // 每个动作服务端都重新核对当前登录身份；动作后受影响任务的项目允许列表随事件流更新。
+  getProjectBook(): Promise<ProjectBook>;
+  intakeProject(number: string): Promise<ProjectBookOutcome>;
+  removeProject(number: string): Promise<ProjectBookOutcome>;
+  purgeInvalidProjects(): Promise<ProjectBookOutcome>;
+  recheckProjects(): Promise<ProjectBookOutcome>;
   getSnapshot(taskId: string): Promise<TaskSnapshot>;
   subscribe(taskId: string, onEvent: (event: AdapterEvent) => void): Unsubscribe;
 

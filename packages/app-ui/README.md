@@ -36,6 +36,30 @@ Vite 7 + React 19 + TypeScript，只支持 Chrome，只做 zh-CN。视觉唯一�
 mock 把身份登记与常驻城市写进 `localStorage`，按账套 + 登录账号分键，所以刷新后仍在；要重看 `?identity=unbound`，清除这个页面的站点数据即可。
 报销人只显示姓名，没有部门（内核身份里没有这一项）。
 
+## QA：个人项目簿
+
+顶栏的「个人项目簿」与任务侧栏的「维护个人项目簿」都进入全局页面 `#/projects`（不在启动门内，随时可进）。页面照内核 `project-book-page.mjs`：只有「项目号」一个输入框，
+「核验并加入」由服务端先做安全字符校验（`^[A-Za-z0-9_-]{1,64}$`），再核对当前登录身份，再到报销系统核验，名称只取核验回读值；同号再次录入即覆盖，没有编辑，也不开放过期日。
+表头「项目号 | 名称 | 过期时间 | 状态」，状态（可选 / 已过期 / 复检未通过 / 项目号不安全）与说明由服务端给出；每行可「删除」，另有「复检全部」「清理全部失效」。结果文案照内核（「ERP」写作「报销系统」）。
+
+mock 的项目簿只在内存里（刷新后回到夹具）。默认 6 条：P-2307、P-2311、P-3312、P-1180 可选，P-4420 已过期，P-0917 复检未通过。录入按 mock 报销系统项目目录核验：
+
+| 项目号 | 核验结果 |
+| --- | --- |
+| `P-5108`、`P-6021`（及默认项目簿里的号码） | 通过，带回名称（苏州门店巡检、年度预算评审…） |
+| `P-0917` | 不可引用（unusable） |
+| `P-7700` | 对上 2 条记录（ambiguous） |
+| `P-9000` | 查询没有完成（query_failed） |
+| 其他安全号码 | 查不到（missing） |
+| 含空格、分号等字符 | 项目号不安全，服务端拒绝（unsafe） |
+
+| 选项 | 表现 |
+| --- | --- |
+| `?book=empty` | 项目簿初始为空。任务走到项目归属时（例如 `?seed=pending&book=empty` 处理完待确认项，或直接 `?seed=project&book=empty`），项目归属页换成「先维护个人项目簿」维护入口；第一次录入成功后自动回到项目归属，并能选到这个项目 |
+| `?erp=logged-out` | 在启动页点顶栏「个人项目簿」：页面照常打开并说明还没登录，项目簿为空；录入被拒绝，显示「没有已核对的报销系统身份…」 |
+
+项目归属页右栏的「去维护项目簿」链接是对 Skill 的小增强（Skill 的项目归属页没有跳转，只能明确要求维护）；维护后回到项目归属，允许列表已按新项目簿更新。
+
 ## QA：新建任务与全流程
 
 - 任务列表的「新建报销任务」在列表上打开弹层（`#/tasks/new` 是它的深链，取消回到 `#/tasks`）。弹层只有报销人（只读）与常驻城市：
@@ -79,7 +103,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 | `readback-mismatch` | 严格回读 No.6（出租车）读到 74.00（本地 47.00）：写入停下，自动进入完成页，差异行高亮、不显示完成态，只能「转人工」；转人工后完成页与任务列表都显示「已转人工」 |
 | `service-disconnected` | 本地服务停一次：打开任务列表时立即（或打开任务页 0.3 s 后）出现全页横幅「本地服务未运行，请在终端重新执行 baox」；任务列表按退避自动重试，任务页期间动作在按钮旁失败；3 s 后恢复，横幅消失，列表出现、快照重新拉取 |
 
-未知的 seed / fault / location / erp / identity 在控制台警告后忽略。mock 构建还在 `window.__baoxMock` 上挂了一个 e2e 用的钩子：
+未知的 seed / fault / location / erp / identity / book 在控制台警告后忽略。mock 构建还在 `window.__baoxMock` 上挂了一个 e2e 用的钩子：
 `advanceElsewhere(taskId)` 模拟「另一个窗口推进了任务、这边还没收到推送」，下一次带旧 `stepToken` 的动作会得到 409，
 页面换上最新快照并提示「任务已在别处推进」。
 
@@ -101,6 +125,9 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 - `@baox/app-ui/contract`（`src/contract/index.ts`）：zod schema 与由它推导的类型。四类接口：任务列表（`TaskListSchema`）、任务快照（`TaskSnapshotSchema`）、动作端点（输入 schema 与错误文案在 `actions.ts`）、事件流。
 - `src/contract/http.ts` 的 `HTTP_ENDPOINTS`：每个适配器方法对应的方法、路径与请求体字段；动作名与 `ACTION_NAMES` 一致。`start-erp-write` 就是「去报销」（整单确认之后，`choose_action` 下接受），之后没有别的开始确认。
 - 启动：`TaskListSchema` 的 `erpSession` 与 `employee.binding` 决定启动页（`startupComplete`）。启动动作不属于任务：`POST /api/startup/recheck-erp-session`（「我已登录」，只再探测）与 `POST /api/startup/confirm-identity`（`account`、`tenant`，回传页面上看到的身份，服务端重读后对不上即拒绝）；成功返回整份任务列表，失败 `{ error, taskList? }`。未完成启动时服务端拒绝新建任务。常驻城市按身份（tenant + account）持久记忆。
+- 个人项目簿（`contract/project-book.ts`）：`GET /api/project-book` 返回 `ProjectBook { projects: [{ number, name, expiresOn, lastCheckedAt, selectable, statusLabel, statusNote }] }`（身份没核对通过时为空）；
+  `POST /api/project-book/intake`（`number`）、`/remove`（`number`）、`/purge`、`/recheck`。服务端处理了请求就 200 返回 `{ status, verdict, note, book }`（`status` 照内核：admitted / rejected / not_logged_in / identity_mismatch / query_failed / removed / not_found / purged / none / done / empty，文案见 `PROJECT_BOOK_NOTES`），请求本身失败 `{ error, book? }`。
+  项目簿一变，还没开始写入报销系统的任务经事件流拿到新的允许列表。流程门：进入项目归属时没有可选项目、也没有归属，step 为 `maintain_project_book`（页面换成维护入口），第一次录入成功后回到 `assign_projects`。
 - 流程与阶段：`TASK_STAGES` 的顺序即流程（`stage.ts`）；`project` 之后服务端自动经过 `catalog`、`preparation` 进入 `review`。整单确认的 `digest` 绑定项目归属与事由，改派后确认记为 `invalidated`（`PROJECT_CHANGED_NOTICE`）。
 - 响应约定：成功 200 返回整份新快照；失败 `{ error: { code, message } }`（`message` 直接显示在按钮旁）；`stepToken` 过期返回 409 与 `{ error, snapshot }`（最新快照）。事件流为 SSE，`event: snapshot`，`data` 为整份快照；客户端断开后按 0.5 s 起翻倍、封顶 10 s 重连，恢复后重新拉取快照。
 - 值：金额两位小数字符串，日期 `YYYY-MM-DD`，时间 `HH:MM`，ID 不透明。上传为 multipart（`files`；支付截图为 `voucherMaterialId` + `file`，只在打印稿生成后接受）。

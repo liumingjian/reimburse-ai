@@ -4,11 +4,14 @@ import { describe, expect, test } from 'vitest';
 import { ACTION_NAMES, STALE_STEP_CODE } from '../contract/actions';
 import { HTTP_ENDPOINTS, endpointActionNames } from '../contract/http';
 import { TASK_STAGES } from '../contract/stage';
+import { INITIAL_BOOK, MOCK_TODAY, annotateProject } from '../mock/fixtures/projects';
 import { EMPLOYEE, t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from '../mock/fixtures/tasks';
 import {
   INVALID_RESPONSE_CODE,
   outcomeFromResponse,
   parseActionResponse,
+  parseProjectBookActionResponse,
+  parseProjectBookResponse,
   parseSnapshotEvent,
   parseSnapshotResponse,
   parseStartupResponse,
@@ -20,15 +23,42 @@ import {
 const wire = <T,>(value: T): unknown => JSON.parse(JSON.stringify(value));
 
 describe('端点表', () => {
-  test('动作端点与 ACTION_NAMES 一一对应，任务类路径都在 /api/tasks 下，启动动作在 /api/startup 下', () => {
+  test('动作端点与 ACTION_NAMES 一一对应，任务类路径都在 /api/tasks 下，启动动作在 /api/startup 下，项目簿在 /api/project-book 下', () => {
     expect([...endpointActionNames()].sort()).toEqual([...ACTION_NAMES].sort());
+    const book = new Set(['getProjectBook', 'intakeProject', 'removeProject', 'purgeInvalidProjects', 'recheckProjects']);
     for (const [name, endpoint] of Object.entries(HTTP_ENDPOINTS)) {
-      const prefix = name === 'recheckErpSession' || name === 'confirmIdentity' ? '/api/startup/' : '/api/tasks';
+      const prefix = name === 'recheckErpSession' || name === 'confirmIdentity' ? '/api/startup/' : book.has(name) ? '/api/project-book' : '/api/tasks';
       expect(endpoint.path.startsWith(prefix), name).toBe(true);
     }
     expect(HTTP_ENDPOINTS.uploadBatch.body).toBe('multipart');
     expect(HTTP_ENDPOINTS.addPaymentScreenshot.body).toBe('multipart');
     expect(HTTP_ENDPOINTS.subscribe.body).toBe('sse');
+  });
+});
+
+describe('个人项目簿 /api/project-book', () => {
+  const book = { projects: INITIAL_BOOK.map((project) => annotateProject(project, MOCK_TODAY)) };
+
+  test('GET 接受契约形状的项目簿；缺状态标签或非 2xx 被拒绝', () => {
+    expect(parseProjectBookResponse(200, wire(book)).projects).toHaveLength(6);
+    expect(parseProjectBookResponse(200, wire({ projects: [] })).projects).toEqual([]);
+    const bad = wire(book) as { projects: { statusLabel?: string }[] };
+    delete bad.projects[0]!.statusLabel;
+    expect(() => parseProjectBookResponse(200, bad)).toThrow();
+    expect(() => parseProjectBookResponse(500, wire(book))).toThrow(/HTTP 500/);
+  });
+
+  test('维护动作：200 的结果（含 rejected）原样交给页面；请求失败带 error 与可选项目簿；未知状态被拒绝', () => {
+    const rejected = { status: 'rejected', verdict: 'missing', note: '项目号 P-0000 在报销系统项目目录里查不到，没有加入个人项目簿；请核对后重新录入', book };
+    const ok = parseProjectBookActionResponse(200, wire(rejected));
+    expect(ok.ok && ok.result.status).toBe('rejected');
+    const unknown = parseProjectBookActionResponse(200, wire({ ...rejected, status: 'maybe' }));
+    expect(!unknown.ok && unknown.error.code).toBe(INVALID_RESPONSE_CODE);
+    const failed = parseProjectBookActionResponse(503, wire({ error: { code: 'down', message: '服务没有响应' }, book }));
+    expect(!failed.ok && failed.error.message).toBe('服务没有响应');
+    expect(!failed.ok && failed.book?.projects).toHaveLength(6);
+    const bare = parseProjectBookActionResponse(500, null);
+    expect(!bare.ok && bare.error.code).toBe('http_500');
   });
 });
 

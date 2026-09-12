@@ -1,7 +1,8 @@
 import { STALE_STEP_CODE, STALE_STEP_NOTICE, type ActionError } from '../contract/actions';
 import type { ActionOutcome, AdapterEvent, Unsubscribe } from '../contract/adapter';
-import { TaskSnapshotSchema, type TaskSnapshot } from '../contract/snapshot';
+import { TaskSnapshotSchema, type ProjectOption, type TaskSnapshot } from '../contract/snapshot';
 import { withInventoryProjection } from './fixtures/inventory';
+import { PROJECT_BOOK } from './fixtures/projects';
 import type { MockOptions } from './options';
 
 // mock 服务端的公共底座：内存里的快照仓库、事件总线、服务断连模拟、stepToken 核对与 mock 时钟。
@@ -37,6 +38,9 @@ export type MockBus = {
   isConnected(): boolean;
   // 名称仍由服务端生成的任务（经 createTask 新建的）：盘点结束时按材料日期与城市改名。夹具任务的名称是既定的，不改。
   readonly autoNamed: Set<string>;
+  // 当前个人项目簿的允许列表（进入项目归属时随快照给出）；由 mock 项目簿接上（useProjectAllowList），接上之前是默认夹具。
+  projectAllowList(): ProjectOption[];
+  useProjectAllowList(source: () => ProjectOption[]): void;
 };
 
 const clone = (snapshot: TaskSnapshot): TaskSnapshot => structuredClone(snapshot);
@@ -57,6 +61,7 @@ export function createBus(options: MockOptions): MockBus {
   const listeners = new Map<string, Set<(event: AdapterEvent) => void>>();
   let connected = true;
   let outageScheduled = false;
+  let allowListSource = (): ProjectOption[] => PROJECT_BOOK.map((project) => ({ ...project }));
 
   const snapshotOf = (taskId: string): TaskSnapshot => {
     const snapshot = snapshots.get(taskId);
@@ -140,5 +145,9 @@ export function createBus(options: MockOptions): MockBus {
     },
     isConnected: () => connected,
     autoNamed: new Set<string>(),
+    projectAllowList: () => allowListSource(),
+    useProjectAllowList(source) {
+      allowListSource = source;
+    },
   };
 }

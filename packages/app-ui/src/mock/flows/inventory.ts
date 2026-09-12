@@ -50,7 +50,7 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
     snapshot.inventory.finishedAt = bus.now();
     snapshot.task.updatedAt = snapshot.inventory.finishedAt;
     nameFromEvents(snapshot, bus.autoNamed.has(snapshot.task.taskId));
-    settlePending(snapshot);
+    settlePending(snapshot, bus.projectAllowList());
   };
 
   // 材料变更（追加批次）：整单明细确认失效、打印稿作废，任务回到上传阶段等待新批次与新一轮盘点。

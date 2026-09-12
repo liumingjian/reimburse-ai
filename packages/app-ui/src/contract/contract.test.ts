@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { confirmationDigest } from '../mock/fixtures/projects';
+import { INITIAL_BOOK, MOCK_TODAY, annotateProject, confirmationDigest } from '../mock/fixtures/projects';
+import { ProjectBookSchema } from './project-book';
 import { t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from '../mock/fixtures/tasks';
 import { FAULTS, readMockOptions } from '../mock/options';
 import { CREATE_TASK_ERRORS, CreateTaskInputSchema, PENDING_ANSWER_ERRORS, isRealDate, validatePendingAnswer } from './actions';
@@ -169,6 +170,22 @@ describe('报销任务阶段', () => {
     // ?seed=print：actions 阶段，且打印稿已经生成（打印稿预览不是阶段）。
     expect(readMockOptions('?seed=print')).toEqual({ seed: 'actions', fault: null, printSheet: true });
     expect(FAULTS).toHaveLength(6);
+    // ?book=empty：个人项目簿初始为空。
+    expect(readMockOptions('?seed=pending&book=empty')).toEqual({ seed: 'pending', fault: null, bookEmpty: true });
+    expect(readMockOptions('?book=nope')).toEqual({ seed: null, fault: null });
+  });
+
+  test('个人项目簿夹具通过 schema；状态标签照内核：可选 / 已过期 / 复检未通过 / 项目号不安全', () => {
+    const entries = INITIAL_BOOK.map((project) => annotateProject(project, MOCK_TODAY));
+    expect(() => ProjectBookSchema.parse({ projects: entries })).not.toThrow();
+    expect(entries.map((entry) => entry.statusLabel)).toEqual(['可选', '可选', '可选', '可选', '已过期', '复检未通过']);
+    expect(entries.map((entry) => entry.selectable)).toEqual([true, true, true, true, false, false]);
+    const unsafe = annotateProject({ number: 'P 1', name: null, expiresOn: null, lastCheckedAt: null, lastVerdict: 'unsafe' }, MOCK_TODAY);
+    expect(unsafe.selectable).toBe(false);
+    expect(unsafe.statusLabel).toBe('项目号不安全・复检未通过');
+    expect(unsafe.statusNote).toBe('项目号含有不能安全查询的字符，请删除后从报销系统重新录入；这个项目号含有不能安全查询的字符，请删除后从报销系统重新录入');
+    const unreadable = annotateProject({ number: 'P-1', name: 'x', expiresOn: '2026-02-30', lastCheckedAt: null, lastVerdict: 'confirmed' }, MOCK_TODAY);
+    expect(unreadable.statusNote).toBe('过期时间读不出来（2026-02-30），当作已过期');
   });
 
   test('页面守卫：阶段不可跳过；项目归属在整单确认之前，打印稿在确认之后，ERP 填报在去报销之后', () => {

@@ -1,6 +1,6 @@
 import { TASK_STAGE_LABELS, pageAllowed, stageRank, stageReached, type TaskPage, type TaskStage } from '../contract/stage';
 import type { TaskSnapshot } from '../contract/snapshot';
-import { taskHash } from '../router';
+import { PROJECTS_HASH, taskHash } from '../router';
 
 // 侧栏阶段列表，顺序照 Skill：项目归属在整单明细确认之前；print / erp 两个页面归到「去打印 / 去报销」。
 type Entry = { stage: TaskStage; label: string; page: TaskPage };
@@ -82,6 +82,10 @@ export function Sidebar({ snapshot, page }: { snapshot: TaskSnapshot; page: Task
           );
         })}
       </ul>
+      <h3 className="rules">个人项目簿</h3>
+      <p className="caption status">
+        <a href={PROJECTS_HASH}>维护个人项目簿</a>
+      </p>
       <h3 className="rules">规则</h3>
       <p className="caption status">阶段不可跳过。材料变更会使已有盘点与确认失效。</p>
     </aside>

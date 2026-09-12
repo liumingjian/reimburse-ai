@@ -1,10 +1,11 @@
-import { ServiceUnavailableError, type ActionOutcome, type AppAdapter, type StartupOutcome } from '../contract/adapter';
+import { ServiceUnavailableError, type ActionOutcome, type AppAdapter, type ProjectBookOutcome, type StartupOutcome } from '../contract/adapter';
 import { CREATE_TASK_ERRORS, ConfirmIdentityInputSchema, CreateTaskInputSchema, STARTUP_ERRORS, type ActionError } from '../contract/actions';
 import { TaskListSchema, type TaskList } from '../contract/task-list';
 import { SERVICE_UNAVAILABLE_CODE, SERVICE_UNAVAILABLE_MESSAGE, createBus } from './bus';
 import { buildPrintSheet } from './fixtures/print';
 import { HOME_CITY } from './fixtures/projects';
 import { T1_ID, emptySnapshot, t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from './fixtures/tasks';
+import { createProjectBook } from './project-book';
 import { createStartup } from './startup';
 import { createErpFlow } from './flows/erp';
 import { createInventoryFlow } from './flows/inventory';
@@ -39,9 +40,10 @@ export function installMockHooks(target: Window, adapter: MockAdapter): void {
 }
 
 // 读快照与订阅不受断连影响（快照读的是内存）；任务列表断开期间读不到；其余都是动作，断开期间一律失败，原因就地显示在按钮旁。
-const READ_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['listTasks', 'getSnapshot', 'subscribe']);
-// 启动动作的失败形状带 taskList 而不是 snapshot。
+const READ_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['listTasks', 'getSnapshot', 'subscribe', 'getProjectBook']);
+// 启动动作的失败形状带 taskList 而不是 snapshot；项目簿维护动作带 book。
 const STARTUP_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['recheckErpSession', 'confirmIdentity']);
+const BOOK_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['intakeProject', 'removeProject', 'purgeInvalidProjects', 'recheckProjects']);
 
 export function createMockAdapter(options: MockOptions): MockAdapter {
   const bus = createBus(options);
@@ -53,12 +55,16 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   bus.put(t2Snapshot());
   bus.put(t3Snapshot());
 
+  const startup = createStartup(options);
+  // 个人项目簿：任务进入项目归属时的允许列表跟随它；夹具 T1 按当前项目簿整理（`?book=empty` 下先走维护门）。
+  const book = createProjectBook(options, bus, startup);
+  bus.useProjectAllowList(book.allowList);
+  book.prepareSeed(T1_ID);
+
   const pending = createPendingFlow(bus);
   const project = createProjectFlow(bus);
   // `?seed=catalog` / `?seed=preparation`：自动步骤接着走完，进入整单确认。
   project.resumeAutoSteps(T1_ID);
-
-  const startup = createStartup(options);
   const listNow = (): TaskList => {
     const tasks = bus
       .all()
@@ -88,6 +94,11 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
       if (!parsed.success) return startupResult({ code: 'identity_changed', message: STARTUP_ERRORS.identityChanged });
       return startupResult(startup.confirmIdentity(parsed.data));
     },
+    getProjectBook: book.getProjectBook,
+    intakeProject: book.intakeProject,
+    removeProject: book.removeProject,
+    purgeInvalidProjects: book.purgeInvalidProjects,
+    recheckProjects: book.recheckProjects,
     getSnapshot: async (taskId) => bus.draft(taskId),
     subscribe: (taskId, onEvent) => bus.subscribe(taskId, onEvent),
     // 新建任务：服务端校验常驻城市，生成占位名称（`<创建日期> 新建报销`，费用期间为空），盘点结束后再按材料改名（见 flows/inventory.ts）。
@@ -117,11 +128,14 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const guarded: Record<string, unknown> = { ...adapter };
   for (const key of Object.keys(adapter) as (keyof AppAdapter)[]) {
     if (READ_METHODS.has(key)) continue;
-    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome | StartupOutcome>;
-    const down = (): ActionOutcome | StartupOutcome =>
+    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome | StartupOutcome | ProjectBookOutcome>;
+    const unavailable = { code: SERVICE_UNAVAILABLE_CODE, message: SERVICE_UNAVAILABLE_MESSAGE };
+    const down = (): ActionOutcome | StartupOutcome | ProjectBookOutcome =>
       STARTUP_METHODS.has(key)
-        ? { ok: false, error: { code: SERVICE_UNAVAILABLE_CODE, message: SERVICE_UNAVAILABLE_MESSAGE }, taskList: null }
-        : bus.fail(SERVICE_UNAVAILABLE_CODE, SERVICE_UNAVAILABLE_MESSAGE);
+        ? { ok: false, error: unavailable, taskList: null }
+        : BOOK_METHODS.has(key)
+          ? { ok: false, error: unavailable, book: null }
+          : bus.fail(SERVICE_UNAVAILABLE_CODE, SERVICE_UNAVAILABLE_MESSAGE);
     guarded[key] = async (...args: unknown[]) => (bus.isConnected() ? original(...args) : down());
   }
   return Object.assign(guarded as unknown as AppAdapter, { advanceElsewhere: pending.advanceElsewhere });

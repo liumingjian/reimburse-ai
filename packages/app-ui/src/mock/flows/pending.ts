@@ -1,15 +1,15 @@
 import { CONFIRM_REVIEW_ERRORS, PENDING_ANSWER_ERRORS, normalizePendingAnswer, validatePendingAnswer } from '../../contract/actions';
 import type { AppAdapter } from '../../contract/adapter';
-import type { TaskSnapshot } from '../../contract/snapshot';
+import type { ProjectOption, TaskSnapshot } from '../../contract/snapshot';
 import type { MockBus } from '../bus';
 import { applyPendingAnswer, buildLines, openPendingItemCount } from '../fixtures/inventory';
-import { projectAssignmentOpen } from '../fixtures/projects';
+import { projectAssignmentOpen, projectEntryStep } from '../fixtures/projects';
 
 // 待确认项答复与整单明细确认（mock 服务端的角色），以及 e2e 用的「别处推进」钩子。
 
 // 待确认项状态变化后的阶段与 step：还有未处理项 → pending / answer_pending；
 // 都处理完 → 形成候选明细，进入项目归属（project / assign_projects）。整单确认在项目归属之后（摘要绑定项目）。
-export function settlePending(snapshot: TaskSnapshot): void {
+export function settlePending(snapshot: TaskSnapshot, allowList: readonly ProjectOption[]): void {
   const taskId = snapshot.task.taskId;
   const open = openPendingItemCount(snapshot.pendingItems);
   if (open > 0) {
@@ -33,16 +33,18 @@ export function settlePending(snapshot: TaskSnapshot): void {
     invoiceCount: invoices,
     grossTotal: lines.length > 0 ? (cents / 100).toFixed(2) : null,
   };
-  // 进入项目归属：服务端随快照给出个人项目簿允许列表。重新盘点后回到这里时，保留仍存在的明细的归属，但要重新提交。
+  // 进入项目归属：服务端随快照给出当前个人项目簿的允许列表。重新盘点后回到这里时，保留仍存在的明细的归属，但要重新提交。
   const assignment = snapshot.projectAssignment;
-  if (assignment.projects.length === 0) {
-    snapshot.projectAssignment = projectAssignmentOpen(snapshot.task.homeCity);
+  if (assignment.status === 'not_started' && assignment.assignments.length === 0) {
+    snapshot.projectAssignment = projectAssignmentOpen(snapshot.task.homeCity, {}, allowList);
   } else if (assignment.status === 'submitted') {
     const lineIds = new Set(lines.map((line) => line.lineId));
     snapshot.projectAssignment = { ...assignment, status: 'pending', assignments: assignment.assignments.filter((item) => lineIds.has(item.lineId)), submittedAt: null };
   }
+  snapshot.projectAssignment.projects = allowList.map((project) => ({ ...project }));
   snapshot.stage = 'project';
-  snapshot.step = { kind: 'assign_projects', stepToken: `tok-${taskId}-project-${snapshot.inventory.versionId ?? 'v0'}` };
+  // 项目簿没有可选项目、也还没有归属：先维护项目簿（内核 project_book_empty），否则进入项目归属。
+  snapshot.step = projectEntryStep(snapshot);
 }
 
 // 整单明细确认生效：进入「去打印 / 去报销」阶段。
@@ -73,7 +75,7 @@ export function createPendingFlow(bus: MockBus): PendingFlow {
         if (firstError) return { error: { code: 'invalid_answer', message: firstError } };
         applyPendingAnswer({ materials: snapshot.materials, events: snapshot.events, pendingItems: snapshot.pendingItems }, item, normalized);
         snapshot.task.updatedAt = bus.now();
-        settlePending(snapshot);
+        settlePending(snapshot, bus.projectAllowList());
         return snapshot;
       }),
     // 确认整单明细：摘要必须是快照里的那一份；确认后进入「去打印 / 去报销」阶段。

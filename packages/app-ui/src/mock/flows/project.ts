@@ -86,7 +86,13 @@ export function createProjectFlow(bus: MockBus): ProjectFlow {
           if (!allowed.has(number)) return { error: { code: 'project_not_allowed', message: PROJECT_ASSIGNMENT_ERRORS.projectNotAllowed(line.no, number) } };
         }
         const at = bus.now();
-        snapshot.projectAssignment = projectAssignmentSubmitted({ purpose, homeCity: snapshot.task.homeCity, projects, submittedAt: at });
+        snapshot.projectAssignment = projectAssignmentSubmitted({
+          purpose,
+          homeCity: snapshot.task.homeCity,
+          projects,
+          submittedAt: at,
+          allowList: snapshot.projectAssignment.projects,
+        });
         snapshot.task.updatedAt = at;
         const digest = confirmationDigest(taskId, snapshot.inventory.versionId, snapshot.projectAssignment);
         if (snapshot.confirmation.status === 'confirmed' && snapshot.confirmation.digest === digest) return snapshot;

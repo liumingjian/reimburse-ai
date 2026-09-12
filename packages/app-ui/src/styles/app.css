@@ -1220,6 +1220,30 @@ table.data td.pick input {
   font-weight: var(--text-button-weight);
 }
 
+/* 个人项目簿 */
+.book-form {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-sm);
+}
+
+.book-form .field {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.book-message {
+  margin-top: var(--space-md);
+}
+
+.book-actions {
+  padding: var(--space-sm) var(--space-md);
+}
+
+.project-aside .book-link {
+  margin-top: var(--space-xs);
+}
+
 /* 打印稿预览 */
 .print-summary {
   margin-bottom: var(--space-md);

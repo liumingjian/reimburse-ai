@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react';
 import { useAppState, useTaskList } from '../adapter/context';
 import { IS_MOCK } from '../env';
-import { TASKS_HASH } from '../router';
+import { PROJECTS_HASH, TASKS_HASH } from '../router';
 
 export const SERVICE_DOWN_NOTICE = '本地服务未运行，请在终端重新执行 baox';
 
 type Props = {
-  nav: 'tasks';
+  nav: 'tasks' | 'projects';
   sidebar?: ReactNode;
   children: ReactNode;
 };
@@ -25,6 +25,9 @@ export function AppShell({ nav, sidebar, children }: Props) {
         <nav aria-label="全局">
           <a href={TASKS_HASH} aria-current={nav === 'tasks' ? 'page' : undefined}>
             报销任务
+          </a>
+          <a href={PROJECTS_HASH} aria-current={nav === 'projects' ? 'page' : undefined}>
+            个人项目簿
           </a>
         </nav>
         <div className="spacer" />

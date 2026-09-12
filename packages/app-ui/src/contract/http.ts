@@ -29,6 +29,13 @@ export const HTTP_ENDPOINTS = {
   // 启动动作不属于任何任务：成功 200 返回整份任务列表，失败 { error, taskList? }。
   recheckErpSession: { method: 'POST', path: '/api/startup/recheck-erp-session', body: 'json', fields: [] },
   confirmIdentity: { method: 'POST', path: '/api/startup/confirm-identity', body: 'json', fields: ['account', 'tenant'] },
+  // 个人项目簿不属于任何任务：GET 返回 ProjectBook；维护动作处理了就 200 返回 ProjectBookResult（含没做成的状态与原因），
+  // 请求本身失败 { error, book? }。
+  getProjectBook: { method: 'GET', path: '/api/project-book', body: 'none', fields: [] },
+  intakeProject: { method: 'POST', path: '/api/project-book/intake', body: 'json', fields: ['number'] },
+  removeProject: { method: 'POST', path: '/api/project-book/remove', body: 'json', fields: ['number'] },
+  purgeInvalidProjects: { method: 'POST', path: '/api/project-book/purge', body: 'json', fields: [] },
+  recheckProjects: { method: 'POST', path: '/api/project-book/recheck', body: 'json', fields: [] },
   getSnapshot: { method: 'GET', path: '/api/tasks/:id', body: 'none', fields: [] },
   subscribe: { method: 'GET', path: '/api/tasks/:id/events', body: 'sse', fields: [] },
   createTask: { method: 'POST', path: '/api/tasks', body: 'json', fields: ['homeCity'] },
