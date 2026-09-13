@@ -25,12 +25,12 @@ describe('任务列表', () => {
     const t1 = await rowOf('2026-08 上海出差（产品评审）');
     expect(within(t1).getByText('3/10 材料盘点')).toBeTruthy();
     expect(within(t1).getByText('未确认')).toBeTruthy();
-    expect(within(t1).getByRole('link', { name: '继续 →' }).getAttribute('href')).toBe('#/task/T1/upload');
+    expect(within(t1).getByRole('link', { name: '继续' }).getAttribute('href')).toBe('#/task/T1/upload');
 
     const t2 = await rowOf('2026-07 深圳客户拜访');
     expect(within(t2).getByText('对账中')).toBeTruthy();
     expect(within(t2).getByText('1264.00')).toBeTruthy();
-    expect(within(t2).getByRole('link', { name: '查看对账 →' }).getAttribute('href')).toBe('#/task/T2/reconcile');
+    expect(within(t2).getByRole('link', { name: '查看对账' }).getAttribute('href')).toBe('#/task/T2/reconcile');
 
     const t3 = await rowOf('2026-06 北京培训');
     expect(within(t3).getByText('10/10 草稿交接')).toBeTruthy();
@@ -57,7 +57,7 @@ describe('任务列表', () => {
     window.location.hash = '#/tasks';
     render(<App adapter={adapter} />);
     const row = await rowOf('2026-07 深圳客户拜访');
-    expect(within(row).getByText('已转人工').className).toContain('badge-warn');
+    expect(within(row).getByText('已转人工').className).toContain('tag-warning');
     expect(within(row).queryByText('对账中')).toBeNull();
   });
 
@@ -70,9 +70,9 @@ describe('任务列表', () => {
     window.location.hash = '#/tasks';
     render(<App adapter={adapter} />);
     const row = await rowOf('2026-08 上海出差（产品评审）');
-    expect(within(row).getByText('回读不一致').className).toContain('badge-err');
+    expect(within(row).getByText('回读不一致').className).toContain('tag-danger');
     expect(within(row).queryByText('10/10 草稿交接')).toBeNull();
-    expect(within(row).getByRole('link', { name: '查看结果 →' }).getAttribute('href')).toBe('#/task/T1/done');
+    expect(within(row).getByRole('link', { name: '查看结果' }).getAttribute('href')).toBe('#/task/T1/done');
   });
 
   test('service-disconnected：任务列表读不到时显示全页横幅并自动重试，恢复后横幅消失、列表出现', async () => {
@@ -101,6 +101,27 @@ describe('任务列表', () => {
     await waitFor(() => expect(screen.queryByText('2026-08 上海出差（产品评审）')).toBeNull());
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByText('2026-07 深圳客户拜访')).toBeTruthy();
+  });
+
+  test('工具栏：状态筛选的条数取自这张列表，筛选与搜索只挑行显示；不能作废的原因在提示里', async () => {
+    renderApp('#/tasks');
+    const t2 = await rowOf('2026-07 深圳客户拜访');
+    const locked = within(t2).getByRole('button', { name: '作废 2026-07 深圳客户拜访' });
+    const tip = document.getElementById(locked.getAttribute('aria-describedby') ?? '');
+    expect(tip?.getAttribute('role')).toBe('tooltip');
+    expect(tip?.textContent).toBe(ABANDON_TASK_COPY.blockedReason);
+
+    const filters = screen.getByRole('group', { name: '按状态筛选' });
+    expect(within(filters).getAllByRole('button').map((button) => button.textContent)).toEqual(['全部 3', '进行中 1', '对账中 1', '已交接 1']);
+    fireEvent.click(within(filters).getByRole('button', { name: '对账中 1' }));
+    expect(screen.queryByText('2026-08 上海出差（产品评审）')).toBeNull();
+    expect(screen.getByText('2026-07 深圳客户拜访')).toBeTruthy();
+    fireEvent.click(within(filters).getByRole('button', { name: '全部 3' }));
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索任务名或草稿号' }), { target: { value: 'BX20260702' } });
+    expect(screen.getByText('2026-06 北京培训')).toBeTruthy();
+    expect(screen.queryByText('2026-07 深圳客户拜访')).toBeNull();
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索任务名或草稿号' }), { target: { value: '不存在' } });
+    expect(screen.getByText('没有符合条件的任务。')).toBeTruthy();
   });
 
   test('?seed=erp（已开始写入报销系统）：T1 的「作废」不可用；服务端也拒绝', async () => {

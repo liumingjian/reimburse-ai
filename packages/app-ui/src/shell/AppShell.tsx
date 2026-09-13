@@ -11,7 +11,8 @@ type Props = {
   children: ReactNode;
 };
 
-// 应用壳：顶栏（品牌、全局导航、员工身份）+ 可选侧栏 + 主区。断连时全页横幅。
+// 应用壳（DESIGN.md「表面按层级语义排」）：顶栏与侧栏在着色框架里，主区是一整块白色工作面（sheet），页面内容都在里面。
+// 工作面本身不限宽：表格页铺满，表单页在页面里自己限到 720px。断连时框架里出现全宽横幅。
 export function AppShell({ nav, sidebar, children }: Props) {
   const state = useAppState();
   const taskList = useTaskList();
@@ -35,22 +36,25 @@ export function AppShell({ nav, sidebar, children }: Props) {
         </nav>
         <div className="spacer" />
         {IS_MOCK ? <span className="mode-tag">模拟数据</span> : null}
-        {/* 报销人只在身份已登记后显示，只显示姓名（内核身份没有部门）。 */}
-        {employee?.binding === 'bound' ? <span className="muted">{employee.displayName}</span> : null}
+        {/* 报销人只在身份已登记后显示，只显示姓名（内核身份没有部门）；头像圆里是姓名的第一个字，只作装饰。 */}
+        {employee?.binding === 'bound' ? (
+          <span className="user">
+            <span className="avatar" aria-hidden="true">
+              {employee.displayName.slice(0, 1)}
+            </span>
+            <span>{employee.displayName}</span>
+          </span>
+        ) : null}
       </header>
       {state.connection === 'disconnected' || state.taskList.offline ? (
         <div className="banner" role="alert">
           {SERVICE_DOWN_NOTICE}
         </div>
       ) : null}
-      {sidebar ? (
-        <div className="layout">
-          {sidebar}
-          <main className="main">{children}</main>
-        </div>
-      ) : (
-        <main className="main centered">{children}</main>
-      )}
+      <div className={sidebar ? 'layout with-sidebar' : 'layout'}>
+        {sidebar}
+        <main className="sheet">{children}</main>
+      </div>
     </>
   );
 }

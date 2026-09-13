@@ -100,8 +100,27 @@ test('版式：No. 固定在左、总额固定在右，中间横向滚动；同�
   const [wrapBox, noBox, grossBox] = await Promise.all([wrap.boundingBox(), cells.first().boundingBox(), cells.last().boundingBox()]);
   expect(wrapBox && noBox && Math.abs(noBox.x - wrapBox.x) < 3).toBe(true);
   expect(wrapBox && grossBox && Math.abs(grossBox.x + grossBox.width - (wrapBox.x + wrapBox.width)) < 3).toBe(true);
+  // 表头照常可读：No. 与总额两个表头也贴在两边。
+  const heads = table(page).locator('thead th');
+  const [noHead, grossHead] = await Promise.all([heads.first().boundingBox(), heads.last().boundingBox()]);
+  expect(wrapBox && noHead && Math.abs(noHead.x - wrapBox.x) < 3).toBe(true);
+  expect(wrapBox && grossHead && Math.abs(grossHead.x + grossHead.width - (wrapBox.x + wrapBox.width)) < 3).toBe(true);
+  await expect(heads.last()).toHaveText('总额');
   // 与上一行相同的项目号照常显示。
   await expect(cells.nth(2)).toHaveText('P-3312 / 产品调研');
+});
+
+test('宽度：1440 窗口、侧栏展开时整单明细表铺满工作面、不横向滚动', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(open('?seed=review', '#/task/T1/review'));
+  await expect(page.getByRole('heading', { name: '整单明细确认' })).toBeVisible();
+  const wrap = table(page).locator('xpath=..');
+  const [scrollWidth, clientWidth] = await wrap.evaluate((element) => [element.scrollWidth, element.clientWidth]);
+  expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+  // 表格铺满通栏容器，容器贴着工作面左右边线。
+  const [wrapBox, mainBox, tableBox] = await Promise.all([wrap.boundingBox(), page.locator('main').boundingBox(), table(page).boundingBox()]);
+  expect(wrapBox && mainBox && wrapBox.width > mainBox.width - 4).toBe(true);
+  expect(wrapBox && tableBox && Math.abs(tableBox.width - wrapBox.width) < 2).toBe(true);
 });
 
 test('分岔入口：?seed=actions 下去打印进入打印稿预览，去报销直接开始填报（没有「开始填报」）', async ({ page }) => {

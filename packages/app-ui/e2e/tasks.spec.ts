@@ -36,7 +36,7 @@ test('?seed=done 让 T1 显示为草稿交接并带草稿号', async ({ page }) 
 
 test('点「继续」进入任务页面骨架，侧栏列出流程阶段', async ({ page }) => {
   await page.goto(open('', '#/tasks'));
-  await page.getByRole('link', { name: '继续 →' }).click();
+  await page.getByRole('link', { name: '继续', exact: true }).click();
   await expect(page).toHaveURL(/#\/task\/T1\/upload$/);
   await expect(page.getByRole('heading', { name: '上传材料' })).toBeVisible();
   // 顺序照 Skill：项目归属在整单明细确认之前。
@@ -88,4 +88,28 @@ test('转人工后回到任务列表，该任务的徽标显示已转人工', as
   const t2 = page.getByRole('row', { name: /2026-07 深圳客户拜访/ });
   await expect(t2.getByText('已转人工')).toBeVisible();
   await expect(t2.getByText('对账中')).toHaveCount(0);
+});
+
+test('窄窗口：任务表不挤压列宽而是横向滚动，任务名固定在左、操作列固定在右；锁形作废按钮悬停出现原因', async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 700 });
+  await page.goto(open('', '#/tasks'));
+  const tasks = page.getByRole('table', { name: '报销任务' });
+  await expect(tasks).toBeVisible();
+  const wrap = tasks.locator('xpath=..');
+  const scrolled = await wrap.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+    return element.scrollLeft;
+  });
+  expect(scrolled).toBeGreaterThan(0);
+  const row = page.getByRole('row', { name: /2026-07 深圳客户拜访/ });
+  const [wrapBox, nameBox, actionsBox] = await Promise.all([wrap.boundingBox(), row.locator('td').first().boundingBox(), row.locator('td').last().boundingBox()]);
+  expect(wrapBox && nameBox && Math.abs(nameBox.x - wrapBox.x) < 3).toBe(true);
+  expect(wrapBox && actionsBox && Math.abs(actionsBox.x + actionsBox.width - (wrapBox.x + wrapBox.width)) < 3).toBe(true);
+  // 操作按钮不折行。
+  const continueBox = await row.getByRole('link', { name: '查看对账' }).boundingBox();
+  expect(continueBox && continueBox.height < 40).toBe(true);
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await row.locator('.has-tip').hover();
+  await expect(page.getByRole('tooltip').filter({ hasText: '不能作废' }).first()).toBeVisible();
 });

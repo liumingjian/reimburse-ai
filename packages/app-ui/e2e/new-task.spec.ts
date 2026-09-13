@@ -48,6 +48,8 @@ test('?location=unavailable：常驻城市没有默认值，提示直接填写�
   await box.getByLabel('常驻城市').fill('苏州');
   await box.getByLabel('常驻城市').press('Enter');
   await expect(page).toHaveURL(/#\/task\/T4\/upload$/);
+  // 等上传页真的渲染出来（任务列表与弹层已卸载）再跳回：hash 先变、React 后渲染，立刻跳回会让同一个弹层留着，读不到服务端记住的城市。
+  await expect(page.getByRole('heading', { name: '上传材料' })).toBeVisible();
 
   await jump(page, '#/tasks/new');
   await expect(dialog(page).getByLabel('常驻城市')).toHaveValue('苏州');

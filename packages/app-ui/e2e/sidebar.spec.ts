@@ -35,3 +35,24 @@ test('被守卫拦下时对应步骤不显示为当前；点未到的步骤出�
   await stages.getByRole('button', { name: '整单明细确认' }).click({ force: true });
   await expect(page.getByText('阶段不可跳过，请按顺序完成。')).toBeVisible();
 });
+
+test('步骤样式沿用上一版：已完成灰字加细勾，当前强调色字加左侧 2px 细条（无白底块），未到三级灰；侧栏在着色框架上', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(open('?seed=review', '#/task/T1/review'));
+  const stages = page.getByRole('list', { name: '流程阶段' });
+  const current = stages.getByRole('link', { name: '整单明细确认' });
+  await expect(current).toHaveAttribute('aria-current', 'step');
+  await expect(current).toHaveCSS('color', 'rgb(94, 106, 210)');
+  await expect(current).toHaveCSS('border-left-width', '2px');
+  await expect(current).toHaveCSS('border-left-color', 'rgb(94, 106, 210)');
+  await expect(current).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  const done = stages.getByRole('link', { name: '上传材料' });
+  await expect(done).toHaveCSS('color', 'rgb(75, 79, 87)');
+  await expect(done.locator('svg')).toHaveCount(1);
+  await expect(done).toHaveCSS('border-left-color', 'rgba(0, 0, 0, 0)');
+  const locked = stages.getByRole('button', { name: '去打印 / 去报销' });
+  await expect(locked).toHaveCSS('color', 'rgb(177, 181, 189)');
+  await expect(locked.locator('svg')).toHaveCount(0);
+  await expect(page.locator('aside.sidebar')).toHaveCSS('background-color', 'rgb(239, 241, 244)');
+  await expect(page.locator('main')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+});

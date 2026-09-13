@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { RECONCILE_STATUS_LABEL, pageAllowed, stageRank, stageReached, type TaskPage, type TaskStage } from '../contract/stage';
 import type { TaskSnapshot } from '../contract/snapshot';
+import { formatPeriod } from '../format';
 import { taskHash } from '../router';
+import { Icon } from './Icon';
 
 // 侧栏阶段列表，顺序照 Skill：项目归属在整单明细确认之前；print / erp 两个页面归到「去打印 / 去报销」。
+// 样式沿用上一版的步骤设计（DESIGN.md「侧栏」）：已完成是灰字加细线勾，当前是强调色字加左侧细条，未到是三级灰。
 type Entry = { stage: TaskStage; label: string; page: TaskPage };
 
 export const SIDEBAR_ENTRIES: readonly Entry[] = [
@@ -34,6 +37,7 @@ export const SIDEBAR_COPY = {
   lockedHint: '阶段不可跳过，请按顺序完成。',
   reconcileWaiting: '写入结果待对账。',
   reconcileHandedOff: '已转人工处理，应用不再写入报销系统。',
+  periodTitle: '费用期间',
 } as const;
 
 // 侧栏收起与否是界面偏好（不是业务状态），存在 localStorage；读不到（测试环境、隐私模式）时退回默认展开。
@@ -55,17 +59,26 @@ function writeCollapsed(value: boolean): void {
   }
 }
 
-function SidebarHead({ name, collapsed, onToggle }: { name: string; collapsed: boolean; onToggle: () => void }) {
+function SidebarHead({ snapshot, collapsed, onToggle }: { snapshot: TaskSnapshot; collapsed: boolean; onToggle: () => void }) {
   const label = collapsed ? SIDEBAR_COPY.expand : SIDEBAR_COPY.collapse;
+  const { name, period } = snapshot.task;
   return (
-    <div className="sidebar-head">
-      <div className="task-name" title={name}>
-        {name}
+    <>
+      <div className="sidebar-head">
+        <div className="task-name" title={name}>
+          {name}
+        </div>
+        <button className="sidebar-toggle" type="button" aria-expanded={!collapsed} aria-label={label} title={label} onClick={onToggle}>
+          <Icon name={collapsed ? 'side-panel--open' : 'side-panel--close'} />
+        </button>
       </div>
-      <button className="sidebar-toggle" type="button" aria-expanded={!collapsed} aria-label={label} title={label} onClick={onToggle}>
-        <span aria-hidden="true">{collapsed ? '›' : '‹'}</span>
-      </button>
-    </div>
+      {/* 费用期间由服务端给出（盘点前为 null，此时不显示这一行）。 */}
+      {period ? (
+        <p className="task-period" title={SIDEBAR_COPY.periodTitle}>
+          {formatPeriod(period)}
+        </p>
+      ) : null}
+    </>
   );
 }
 
@@ -79,16 +92,19 @@ export function Sidebar({ snapshot, page }: { snapshot: TaskSnapshot; page: Task
   };
   const className = collapsed ? 'sidebar is-collapsed' : 'sidebar';
   const { stage } = snapshot;
-  const head = <SidebarHead name={snapshot.task.name} collapsed={collapsed} onToggle={toggle} />;
+  const head = <SidebarHead snapshot={snapshot} collapsed={collapsed} onToggle={toggle} />;
 
   if (stage === 'reconcile') {
-    // 已转人工是对账的终态：应用不再写入报销系统，徽标与说明随服务端的对账状态变化。
+    // 已转人工是对账的终态：应用不再写入报销系统，标签与说明随服务端的对账状态变化。
     const handedOff = snapshot.reconcile.status === 'handed_off';
     return (
       <aside className={className}>
         {head}
         <p className="sidebar-status">
-          <span className="badge badge-warn">{handedOff ? '已转人工' : RECONCILE_STATUS_LABEL}</span>
+          <span className="tag tag-warning">
+            <Icon name="warning--alt--filled" />
+            {handedOff ? '已转人工' : RECONCILE_STATUS_LABEL}
+          </span>
           <span className="caption">{handedOff ? SIDEBAR_COPY.reconcileHandedOff : SIDEBAR_COPY.reconcileWaiting}</span>
         </p>
       </aside>
@@ -119,11 +135,7 @@ export function Sidebar({ snapshot, page }: { snapshot: TaskSnapshot; page: Task
                   {index + 1}
                 </span>
               ) : null}
-              {done ? (
-                <span className="check" aria-hidden="true">
-                  ✓
-                </span>
-              ) : null}
+              {done ? <Icon name="checkmark" className="done-mark" /> : null}
               <span className="stage-label">{entry.label}</span>
               {count > 0 ? <span className="count">{count}</span> : null}
             </>

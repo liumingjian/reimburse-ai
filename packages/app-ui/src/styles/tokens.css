@@ -61,7 +61,6 @@
   --layout-progress-width: 96px;
   --layout-search-width: 280px;
   --layout-tooltip-max-width: 280px;
-  --layout-content-max-width: 1200px;
   --layout-hairline-width: 1px;
   --layout-focus-ring-width: 2px;
   --layout-control-height-sm: 28px;
@@ -253,11 +252,9 @@
   --status-badge-typography: var(--text-caption);
   --status-badge-rounded: var(--radius-pill);
   --status-badge-padding: 2px 8px;
-  --sidebar-background-color: var(--color-surface-1);
+  --sidebar-background-color: var(--color-frame);
   --sidebar-width: 232px;
   --sidebar-rail-width: 56px;
-  --sidebar-border-right: 1px var(--color-hairline);
-  --top-bar-background-color: var(--color-surface-1);
-  --top-bar-height: 52px;
-  --top-bar-border-bottom: 1px var(--color-hairline);
+  --top-bar-background-color: var(--color-frame);
+  --top-bar-height: 48px;
 }
