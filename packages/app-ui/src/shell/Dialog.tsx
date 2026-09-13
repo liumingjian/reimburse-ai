@@ -14,8 +14,14 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
   focusCancel = true,
+  wide = false,
+  single = false,
 }: {
   focusCancel?: boolean;
+  // 宽弹层：放整块面板（如项目归属页就地新增项目的项目簿面板）。
+  wide?: boolean;
+  // 只留一个关闭按钮（confirmLabel，次要样式，点它走 onConfirm）：弹层里的面板自带主按钮，不再放第二个主按钮。
+  single?: boolean;
   title: string;
   children: ReactNode;
   confirmLabel: string;
@@ -46,7 +52,7 @@ export function ConfirmDialog({
 
   return (
     <div className="modal-scrim" onClick={onCancel} data-testid="modal-scrim">
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={(event) => event.stopPropagation()}>
+      <div className={wide ? 'modal modal-wide' : 'modal'} role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={(event) => event.stopPropagation()}>
         <h2 id={titleId}>{title}</h2>
         <div className="modal-body">{children}</div>
         {error ? (
@@ -55,17 +61,25 @@ export function ConfirmDialog({
           </p>
         ) : null}
         <div className="btn-row">
-          <button ref={cancelRef} className="btn btn-secondary" type="button" disabled={busy} onClick={onCancel}>
-            {cancelLabel}
-          </button>
-          {extraLabel && onExtra ? (
-            <button className="btn btn-secondary" type="button" disabled={busy} onClick={onExtra}>
-              {extraLabel}
+          {single ? (
+            <button ref={cancelRef} className="btn btn-secondary" type="button" disabled={busy} onClick={onConfirm}>
+              {confirmLabel}
             </button>
-          ) : null}
-          <button className="btn btn-primary" type="button" disabled={busy} onClick={onConfirm}>
-            {confirmLabel}
-          </button>
+          ) : (
+            <>
+              <button ref={cancelRef} className="btn btn-secondary" type="button" disabled={busy} onClick={onCancel}>
+                {cancelLabel}
+              </button>
+              {extraLabel && onExtra ? (
+                <button className="btn btn-secondary" type="button" disabled={busy} onClick={onExtra}>
+                  {extraLabel}
+                </button>
+              ) : null}
+              <button className="btn btn-primary" type="button" disabled={busy} onClick={onConfirm}>
+                {confirmLabel}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

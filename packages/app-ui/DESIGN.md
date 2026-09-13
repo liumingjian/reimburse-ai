@@ -109,6 +109,7 @@ layout:
   split-list-width: 300px
   detail-preview-width: 260px
   dialog-width: 440px
+  dialog-wide-width: 720px
   checkbox-size: 16px
   print-page-min-width: 280px
   crop-editor-width: 480px

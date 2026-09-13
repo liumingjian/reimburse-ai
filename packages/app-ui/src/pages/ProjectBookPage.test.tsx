@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { App } from '../App';
 import type { TaskStage } from '../contract/stage';
@@ -99,25 +99,62 @@ describe('个人项目簿 #/projects', () => {
 });
 
 describe('项目归属的项目簿门', () => {
-  test('?book=empty：项目归属页换成维护入口；录入一个后自动回到项目归属，并能选到这个项目', async () => {
+  test('?book=empty：录入一个后不自动离开，可以继续录第二个；点「项目录完了，开始归属」才进入工作台，两个项目都可选', async () => {
     renderApp('#/task/T1/project', { bookEmpty: true }, 'project');
     expect(await screen.findByRole('heading', { name: '先维护个人项目簿' })).toBeTruthy();
     expect(await screen.findByText('当前项目簿为空，请录入第一个项目。')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '确认项目归属' })).toBeNull();
+    const continueButton = () => screen.getByRole('button', { name: '项目录完了，开始归属' }) as HTMLButtonElement;
+    expect(continueButton().disabled).toBe(true);
+    expect(screen.getByText('至少录入一个可用项目后才能开始归属')).toBeTruthy();
 
     intake('P-5108');
+    expect(await screen.findByTestId('book-row-P-5108')).toBeTruthy();
+    await waitFor(() => expect(continueButton().disabled).toBe(false));
+    // 仍在维护门：项目簿面板还在，工作台没出现。
+    expect(screen.getByRole('heading', { name: '先维护个人项目簿' })).toBeTruthy();
+    expect(screen.queryByRole('complementary', { name: '项目工作台' })).toBeNull();
+    expect(screen.queryByText('至少录入一个可用项目后才能开始归属')).toBeNull();
+
+    intake('P-6021');
+    expect(await screen.findByTestId('book-row-P-6021')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '先维护个人项目簿' })).toBeTruthy();
+
+    fireEvent.click(continueButton());
     expect(await screen.findByRole('heading', { name: '项目归属' })).toBeTruthy();
     const workbench = screen.getByRole('complementary', { name: '项目工作台' });
+    expect(within(workbench).getByRole('button', { name: '归入 P-6021 年度预算评审' })).toBeTruthy();
     // 夹具预置的 No.1-2 归属（P-2307）照内核保留，项目簿门只看「没提交过、项目簿没有可选项目」；这里挑一条未归属的。
     fireEvent.click(screen.getByRole('checkbox', { name: '选择明细 No.3' }));
     fireEvent.click(within(workbench).getByRole('button', { name: '归入 P-5108 苏州门店巡检' }));
     expect(await screen.findByText((_, node) => node?.getAttribute('data-testid') === 'project-of-3' && node.textContent === 'P-5108 · 苏州门店巡检')).toBeTruthy();
   });
 
-  test('项目归属页有「去维护项目簿」链接，顶栏有常驻入口（侧栏不重复）', async () => {
+  test('项目簿已有项目时直接打开工作台；「新增项目」弹层里录入，勾选的明细保持勾选，新项目出现在列表', async () => {
     renderApp('#/task/T1/project', {}, 'project');
     await screen.findByRole('heading', { name: '项目归属' });
-    expect(screen.getByRole('link', { name: '去维护项目簿' }).getAttribute('href')).toBe('#/projects');
+    expect(screen.queryByRole('link', { name: '去维护项目簿' })).toBeNull();
+    const workbench = screen.getByRole('complementary', { name: '项目工作台' });
+    expect(within(workbench).queryByRole('button', { name: '归入 P-6021 年度预算评审' })).toBeNull();
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择明细 No.3' }));
+
+    fireEvent.click(within(workbench).getByRole('button', { name: '新增项目' }));
+    const dialog = await screen.findByRole('dialog', { name: '新增项目' });
+    fireEvent.change(within(dialog).getByLabelText('项目号'), { target: { value: 'P-6021' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '核验并加入' }));
+    expect(await within(dialog).findByTestId('book-row-P-6021')).toBeTruthy();
+    await within(workbench).findByRole('button', { name: '归入 P-6021 年度预算评审' });
+    fireEvent.click(within(dialog).getByRole('button', { name: '完成' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    expect((screen.getByRole('checkbox', { name: '选择明细 No.3' }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(within(workbench).getByRole('button', { name: '归入 P-6021 年度预算评审' }));
+    await waitFor(() => expect(screen.getByTestId('project-of-3').textContent).toBe('P-6021 · 年度预算评审'));
+  });
+
+  test('顶栏有常驻「个人项目簿」入口（侧栏不重复）', async () => {
+    renderApp('#/task/T1/project', {}, 'project');
+    await screen.findByRole('heading', { name: '项目归属' });
     expect(within(screen.getByRole('navigation', { name: '全局' })).getByRole('link', { name: '个人项目簿' }).getAttribute('href')).toBe('#/projects');
     expect(screen.queryByRole('link', { name: '维护个人项目簿' })).toBeNull();
   });

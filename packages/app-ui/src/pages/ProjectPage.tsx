@@ -3,7 +3,7 @@ import { PROJECT_ASSIGNMENT_ERRORS, PROJECT_CONFLICT_COPY, PURPOSE_MAX_LENGTH } 
 import { PROJECT_BOOK_COPY } from '../contract/project-book';
 import type { Line, ProjectLineAssignment, StepKind, TaskSnapshot } from '../contract/snapshot';
 import { pageAllowed } from '../contract/stage';
-import { PROJECTS_HASH, navigate, taskHash } from '../router';
+import { navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
 import { ConfirmDialog } from '../shell/Dialog';
 import { useAction } from '../shell/useAction';
@@ -20,7 +20,7 @@ const SUBMIT_STEP_KINDS: ReadonlySet<StepKind> = new Set<StepKind>(['assign_proj
 // - 左边明细按费用类别分组（服务端给出的 lines 顺序即内核分类排序），组标题带复选框和条数，可按类别全选；
 //   明细卡片展示日期范围、城市、路线和脱敏票号。
 // - 右边「本次已归入」区列出本次归属用到的项目，带条数与金额（服务端给出，页面不计算）；其下是个人项目簿中的可选项目
-//   （快照只给可选项目），已归入的项目不重复列出。不可选的项目不出现在这里，需要时从「去维护项目簿」进入项目簿查看。
+//   （快照只给可选项目），已归入的项目不重复列出。不可选的项目不出现在这里，需要时点「新增项目」在弹层里的项目簿查看。
 // 勾选明细后点项目的「归入」，由服务端改本次正在编辑的归属（working）；批量归入碰到已有其他项目的明细时，
 // 先弹出「只处理未归属 / 确认覆盖 / 取消」。页头填报销事由；常驻城市只读。
 
@@ -49,13 +49,19 @@ function groupByCategory(lines: readonly Line[]): { label: string; lines: Line[]
 }
 
 // 流程门（内核 project_book_empty）：服务端的当前 step 是 maintain_project_book 时，项目归属页换成个人项目簿维护入口。
-// 第一次录入成功后服务端把 step 换回 assign_projects，推送的新快照让本页自动回到项目归属。
+// 第一次录入成功后服务端把 step 换回 assign_projects，但本页不自动离开：报销材料可能归属不同项目，用户要把项目录完，
+// 点「项目录完了，开始归属」才进入工作台（内核：完成设置并提交后才继续）。按钮只在服务端 step 已离开维护门时可用。
+// 「留在维护门」只是界面状态：记下是哪个任务打开时处在维护门，换任务就不再作数，刷新后按服务端 step 重新决定。
 export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
-  if (snapshot.step.kind === 'maintain_project_book') return <ProjectBookGate />;
+  const taskId = snapshot.task.taskId;
+  const atGate = snapshot.step.kind === 'maintain_project_book';
+  const [gateTask, setGateTask] = useState<string | null>(atGate ? taskId : null);
+  if (atGate && gateTask !== taskId) setGateTask(taskId);
+  if (atGate || gateTask === taskId) return <ProjectBookGate canContinue={!atGate} onContinue={() => setGateTask(null)} />;
   return <ProjectWorkbench snapshot={snapshot} />;
 }
 
-function ProjectBookGate() {
+function ProjectBookGate({ canContinue, onContinue }: { canContinue: boolean; onContinue: () => void }) {
   return (
     <>
       <div className="page-head">
@@ -63,8 +69,15 @@ function ProjectBookGate() {
           <h1>{PROJECT_BOOK_COPY.gateTitle}</h1>
           <p className="lead">{PROJECT_BOOK_COPY.gateLead}</p>
         </div>
+        <div className="gate-continue">
+          {/* 每屏一个主按钮：可以继续时它是主按钮，录入按钮降为次要；此前录入按钮是主按钮。 */}
+          <button className={canContinue ? 'btn btn-primary' : 'btn btn-secondary'} type="button" disabled={!canContinue} onClick={onContinue}>
+            {PROJECT_BOOK_COPY.gateContinue}
+          </button>
+          {canContinue ? null : <span className="caption">{PROJECT_BOOK_COPY.gateContinueHint}</span>}
+        </div>
       </div>
-      <ProjectBookPanel />
+      <ProjectBookPanel primaryIntake={!canContinue} />
     </>
   );
 }
@@ -88,6 +101,8 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
   const [query, setQuery] = useState('');
   const [conflict, setConflict] = useState<Conflict | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const closeAdd = useCallback(() => setAddOpen(false), []);
   const { busy, error, run, clearError } = useAction(taskId);
 
   // 显示服务端记下的本次归属：只读（ERP 已开始）时是已提交的那一份，否则是正在编辑的 working。
@@ -321,11 +336,12 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
               ))}
             </ul>
           )}
-          <p className="caption">先在左边勾选明细，再点项目的「归入」。不可选的项目不在这里列出，可以去项目簿查看。</p>
-          {/* 对 Skill 的小增强：项目归属页直接进入个人项目簿维护（README 注明）。 */}
-          <a className="btn btn-tertiary btn-sm book-link" href={PROJECTS_HASH}>
-            {PROJECT_BOOK_COPY.maintainLink}
-          </a>
+          <p className="caption">先在左边勾选明细，再点项目的「归入」。</p>
+          {/* 就地新增（对 Skill 的小增强，README 注明）：弹层里是项目簿维护面板，勾选的明细不丢；
+              新项目随服务端推送的快照出现在上面的列表里。 */}
+          <button className="btn btn-secondary btn-sm add-project" type="button" disabled={locked} onClick={() => setAddOpen(true)}>
+            {PROJECT_BOOK_COPY.addProject}
+          </button>
         </aside>
       </div>
 
@@ -356,6 +372,12 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
           <p className="lead">
             要归入 {conflict.project.number} {conflict.project.name}。「只处理未归属」只给还没有项目的明细归入；「确认覆盖」把已勾选的明细全部改为这个项目。
           </p>
+        </ConfirmDialog>
+      ) : null}
+
+      {addOpen ? (
+        <ConfirmDialog title={PROJECT_BOOK_COPY.addProject} confirmLabel={PROJECT_BOOK_COPY.addDialogDone} wide single focusCancel={false} onConfirm={closeAdd} onCancel={closeAdd}>
+          <ProjectBookPanel primaryIntake autoFocus />
         </ConfirmDialog>
       ) : null}
     </>

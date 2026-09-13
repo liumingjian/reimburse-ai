@@ -8,7 +8,9 @@ import { PROJECT_BOOK_ACCEPTED_STATUSES, PROJECT_BOOK_COPY, type ProjectBookEntr
 
 type Message = { ok: boolean; text: string };
 
-export function ProjectBookPanel() {
+// primaryIntake：「核验并加入」是否用主按钮样式（每屏一个主按钮；项目簿门可以继续时由「开始归属」当主按钮）。
+// autoFocus：放在弹层里时打开即聚焦项目号输入框。
+export function ProjectBookPanel({ primaryIntake = true, autoFocus = false }: { primaryIntake?: boolean; autoFocus?: boolean }) {
   const store = useAppStore();
   const book = useProjectBook();
   const [number, setNumber] = useState('');
@@ -43,9 +45,16 @@ export function ProjectBookPanel() {
         >
           <div className="field">
             <label htmlFor="project-number">{PROJECT_BOOK_COPY.numberLabel}</label>
-            <input id="project-number" className="input mono" autoComplete="off" value={number} onChange={(event) => setNumber(event.target.value)} />
+            <input
+              id="project-number"
+              className="input mono"
+              autoComplete="off"
+              autoFocus={autoFocus}
+              value={number}
+              onChange={(event) => setNumber(event.target.value)}
+            />
           </div>
-          <button className="btn btn-primary" type="submit" disabled={busy || number.trim() === ''}>
+          <button className={primaryIntake ? 'btn btn-primary' : 'btn btn-secondary'} type="submit" disabled={busy || number.trim() === ''}>
             {PROJECT_BOOK_COPY.intake}
           </button>
         </form>

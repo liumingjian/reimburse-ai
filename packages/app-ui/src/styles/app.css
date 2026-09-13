@@ -1301,6 +1301,16 @@ table.confirm-table td.same-above {
   margin-bottom: var(--space-xs);
 }
 
+.modal-wide {
+  width: var(--layout-dialog-wide-width);
+  max-height: calc(100vh - var(--space-xl));
+  overflow-y: auto;
+}
+
+.modal-wide .panel + .panel {
+  margin-top: var(--space-md);
+}
+
 .modal-body .lead {
   margin-bottom: 0;
 }
@@ -1500,8 +1510,20 @@ table.data td.pick input {
   padding: var(--space-sm) var(--space-md);
 }
 
-.project-aside .book-link {
+.project-aside .add-project {
   margin-top: var(--space-xs);
+}
+
+/* 弹层里的项目簿表：项目号与日期不折行。 */
+.modal-wide td.mono {
+  white-space: nowrap;
+}
+
+.gate-continue {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-xxs);
 }
 
 /* 打印稿预览 */
