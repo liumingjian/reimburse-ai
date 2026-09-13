@@ -50,16 +50,27 @@ describe('任务步骤条', () => {
     expect(within(stages).getByText('3 项待处理')).toBeTruthy();
   });
 
-  test('被守卫拦下的页面不把对应步骤显示成当前；点未到的步骤给出一次说明', async () => {
+  test('点未到的步骤在步骤条里给出一次说明，不跳页', async () => {
+    renderApp('#/task/T1/review', 'review');
+    const stages = await screen.findByRole('list', { name: '流程阶段' });
+    const locked = stepButton(stages, '去打印 / 去报销');
+    expect(screen.queryByText('阶段不可跳过，请按顺序完成。')).toBeNull();
+    fireEvent.click(locked);
+    const hint = screen.getByText('阶段不可跳过，请按顺序完成。');
+    expect(hint.getAttribute('role')).toBe('status');
+    expect(screen.getByRole('region', { name: '任务进度' }).contains(hint)).toBe(true);
+    expect(window.location.hash).toBe('#/task/T1/review');
+  });
+
+  test('被守卫拦下的页面不把对应步骤显示成当前；守卫页已说明不可跳过，点未到的步骤不再出提示', async () => {
     renderApp('#/task/T1/review', 'inventory');
     expect(await screen.findByRole('heading', { name: '还不能进入这一步' })).toBeTruthy();
     const stages = screen.getByRole('list', { name: '流程阶段' });
     expect(within(stages).getAllByRole('button').filter((button) => button.getAttribute('aria-current') === 'step')).toHaveLength(0);
     const locked = stepButton(stages, '整单明细确认');
     expect(locked.getAttribute('aria-disabled')).toBe('true');
-    expect(screen.queryByText('阶段不可跳过，请按顺序完成。')).toBeNull();
     fireEvent.click(locked);
-    expect(screen.getByText('阶段不可跳过，请按顺序完成。').getAttribute('role')).toBe('status');
+    expect(screen.queryByText('阶段不可跳过，请按顺序完成。')).toBeNull();
     expect(window.location.hash).toBe('#/task/T1/review');
   });
 

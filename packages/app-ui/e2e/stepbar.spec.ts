@@ -74,13 +74,53 @@ test('Carbon Gray 10 原样：背景 #f4f4f4、主按钮 #0f62fe 直角；系统
   await expect(page).toHaveURL(/#\/task\/T1\/project$/);
 });
 
-test('被守卫拦下时对应步骤不显示为当前；点未到的步骤出现一句说明', async ({ page }) => {
+const HINT = '阶段不可跳过，请按顺序完成。';
+const labelColor = (page: Page, label: string) =>
+  stages(page).getByText(label, { exact: true }).evaluate((element) => getComputedStyle(element).color);
+
+for (const [width, height] of [
+  [1440, 900],
+  [1100, 800],
+] as const) {
+  test(`${width}px：未开放步骤用 text-secondary（不是 disabled 色）；点它提示出现在被点步骤正下方`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height });
+    await page.goto(open('?seed=inventory', '#/task/T1/inventory'));
+    await expect(page.getByRole('heading', { name: '材料盘点', level: 1 })).toBeVisible();
+
+    // Gray 10：text-secondary #525252；text-disabled 是 rgba(22, 22, 22, 0.25)。
+    const locked = await labelColor(page, '整单明细确认');
+    expect(locked).toBe('rgb(82, 82, 82)');
+    expect(locked).not.toBe(await labelColor(page, '上传材料'));
+    await expect(step(page, '整单明细确认')).toHaveAttribute('aria-disabled', 'true');
+
+    for (const label of ['项目归属', '完成']) {
+      // 未到的步骤带 aria-disabled（Playwright 视为不可用），仍可点出说明。
+      await step(page, label).click({ force: true });
+      const hint = page.getByRole('status').filter({ hasText: HINT });
+      await expect(hint).toBeVisible();
+      const hintBox = await hint.boundingBox();
+      const stepBox = await step(page, label).boundingBox();
+      if (!hintBox || !stepBox) throw new Error('量不到位置');
+      // 在步骤下方，左边与被点步骤对齐（而不是任务名下）。
+      expect(hintBox.y).toBeGreaterThanOrEqual(stepBox.y + stepBox.height - 1);
+      const text = await hint.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return range.getBoundingClientRect().left;
+      });
+      expect(Math.abs(text - stepBox.x)).toBeLessThan(4);
+    }
+    await expect(page).toHaveURL(/#\/task\/T1\/inventory$/);
+    await bar(page).screenshot({ path: testInfo.outputPath(`stepbar-locked-hint-${width}.png`) });
+  });
+}
+
+test('被守卫拦下时对应步骤不显示为当前；守卫页不出「阶段不可跳过」的步骤条提示', async ({ page }) => {
   await page.goto(open('?seed=inventory', '#/task/T1/review'));
   await expect(page.getByRole('heading', { name: '还不能进入这一步', level: 1 })).toBeVisible();
   await expect(stages(page).locator('[aria-current="step"]')).toHaveCount(0);
-  // 未到的步骤带 aria-disabled（Playwright 视为不可用），仍可点出说明。
   await step(page, '整单明细确认').click({ force: true });
-  await expect(page.getByRole('status').filter({ hasText: '阶段不可跳过，请按顺序完成。' })).toBeVisible();
+  await expect(bar(page).getByText(HINT)).toHaveCount(0);
   await expect(page).toHaveURL(/#\/task\/T1\/review$/);
 });
 
