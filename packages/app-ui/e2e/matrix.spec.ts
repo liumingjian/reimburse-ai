@@ -65,11 +65,11 @@ const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = 
   'duplicate-upload': async (page) => {
     await page.goto(open('?fault=duplicate-upload', '#/task/T1/upload'));
     await page.locator('input[type=file]').setInputFiles([pdf('铁路电子客票_0809.pdf')]);
-    await expect(page.getByRole('heading', { name: /^上传批次 #1 / })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /^上传批次 #1$/ })).toBeVisible();
     await page.getByRole('button', { name: '追加下一批' }).click();
     await page.locator('input[type=file]').setInputFiles([pdf('铁路电子客票_0822.pdf'), pdf('餐饮_发票.pdf')]);
     await expect(page.getByText(/^内容重复/)).toBeVisible();
-    await expect(page.getByRole('heading', { name: '上传批次 #2 · 1 份材料' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '上传批次 #2' })).toBeVisible();
   },
   'unsupported-material': async (page) => {
     await page.goto(open('?seed=pending&fault=unsupported-material', '#/task/T1/pending'));

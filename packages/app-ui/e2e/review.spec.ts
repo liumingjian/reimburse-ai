@@ -220,7 +220,7 @@ test('失效流程：追加材料先二次确认，取消不变；继续则确�
   await expect(page.getByText('拖入文件，或点击选择')).toBeVisible();
 
   await page.locator('input[type=file]').setInputFiles({ name: '地铁_发票.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 metro') });
-  await expect(page.getByRole('heading', { name: '上传批次 #2 · 1 份材料' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '上传批次 #2' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('review-invalidated-upload.png'), fullPage: true });
 
   // 旧确认失效：重新盘点前，整单明细确认页与打印页都不能进。

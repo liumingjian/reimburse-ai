@@ -38,7 +38,7 @@ test('全流程：从启动登录一路走到完成，上传 sample-materials �
 
   // 3. 上传示例材料并盘点。
   await page.locator('input[type=file]').setInputFiles(files);
-  await expect(page.getByRole('heading', { name: /^上传批次 #1 / })).toHaveText('上传批次 #1 · 11 份材料');
+  await expect(page.getByRole('heading', { name: /^上传批次 #1$/ })).toHaveText('上传批次 #1');
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/inventory$/);
   await expect(page.getByRole('link', { name: '处理 3 个待确认项' })).toBeVisible({ timeout: 15_000 });
@@ -80,7 +80,7 @@ test('全流程：从启动登录一路走到完成，上传 sample-materials �
   await page.getByRole('link', { name: '去打印', exact: true }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/print$/);
   await expect(page.getByRole('list', { name: '打印稿页面' }).locator('.page-hdr').first()).toHaveText('No.1-3 · 08-10 · 外地市内交通 · 69.19');
-  await page.getByRole('link', { name: '返回确认页' }).click();
+  await page.getByRole('list', { name: '流程阶段' }).getByRole('button', { name: /^整单明细确认/ }).click();
 
   // 8. 去报销：写入报销系统，登录后自动写入、保存草稿、严格回读。
   await page.getByRole('button', { name: '去报销', exact: true }).click();

@@ -36,7 +36,7 @@ export function ReadbackTable({
       <Table aria-label={label} size="md">
         <TableHead>
           <TableRow>
-            <TableHeader className="app-num app-sticky-start">No.</TableHeader>
+            <TableHeader className="app-no app-sticky-start">No.</TableHeader>
             <TableHeader>说明</TableHeader>
             <TableHeader className="app-num">本地申请报销金额</TableHeader>
             <TableHeader className="app-num">报销系统回读</TableHeader>
@@ -51,7 +51,7 @@ export function ReadbackTable({
             return (
               <Fragment key={row.no}>
                 <TableRow className={row.matched ? '' : 'app-row-mismatch'} data-testid={`readback-${row.no}`}>
-                  <TableCell className="app-num app-sticky-start">{row.no}</TableCell>
+                  <TableCell className="app-no app-sticky-start">{row.no}</TableCell>
                   <TableCell>{row.description}</TableCell>
                   <TableCell className="app-num">{gross?.local ?? ''}</TableCell>
                   <TableCell className="app-num">{gross ? (gross.erp ?? '未读到') : ''}</TableCell>

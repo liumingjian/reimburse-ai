@@ -84,7 +84,7 @@ test('转人工后回到任务列表，该任务的徽标显示已转人工', as
   await page.goto(open('', '#/task/T2/reconcile'));
   await page.getByRole('button', { name: '转人工' }).click();
   await expect(page.getByTestId('reconcile-status')).toHaveText('已转人工');
-  await page.getByRole('link', { name: '返回任务列表' }).click();
+  await page.getByRole('link', { name: '报销任务' }).click();
   const t2 = page.getByRole('row', { name: /2026-07 深圳客户拜访/ });
   await expect(t2.getByText('已转人工')).toBeVisible();
   await expect(t2.getByText('对账中')).toHaveCount(0);

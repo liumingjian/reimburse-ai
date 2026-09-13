@@ -15,7 +15,7 @@ async function choose(page: Page, files: Upload[]) {
   await page.locator('input[type=file]').setInputFiles(files);
 }
 
-const batch = (page: Page, no: number) => page.locator('section', { has: page.getByRole('heading', { name: new RegExp(`^上传批次 #${no} `) }) });
+const batch = (page: Page, no: number) => page.locator('section', { has: page.getByRole('heading', { name: new RegExp(`^上传批次 #${no}$`) }) });
 // 文件行：按文件名整串匹配（拒绝原因里也会出现别的文件名，所以不能用子串）。
 const row = (page: Page, panel: ReturnType<typeof batch>, fileName: string) => panel.locator('li', { has: page.getByText(fileName, { exact: true }) });
 
@@ -38,7 +38,11 @@ test('正常上传：pdf/jpg/png 逐文件已接收，按批次列出并出现�
   await page.goto(open('', '#/task/T1/upload'));
   await choose(page, [pdf('全季酒店_发票.pdf'), { name: 'IMG_4871.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('jpeg bytes') }, png('IMG_4906.png')]);
   const first = batch(page, 1);
-  await expect(first.getByRole('heading')).toHaveText('上传批次 #1 · 3 份材料');
+  await expect(first.getByRole('heading')).toHaveText('上传批次 #1');
+  // 批次信息是带标签的字段组，不是页面拼的中点串。
+  await expect(first.getByRole('term')).toHaveText('材料');
+  await expect(first.getByRole('definition')).toHaveText('3 份');
+  await expect(page.getByRole('main')).not.toContainText('·');
   await expect(first.getByText('已复制入任务目录')).toBeVisible();
   await expect(first.getByText('已接收')).toHaveCount(3);
   await expect(first.getByText(/^sha256:[0-9a-f]{8}$/)).toHaveCount(3);
@@ -59,7 +63,7 @@ test('拖入文件也能上传', async ({ page }) => {
   });
   await dropzone.dispatchEvent('drop', { dataTransfer });
   const first = batch(page, 1);
-  await expect(first.getByRole('heading')).toHaveText('上传批次 #1 · 1 份材料');
+  await expect(first.getByRole('heading')).toHaveText('上传批次 #1');
   await expect(row(page, first, '曹操出行_发票.pdf').getByText('已接收')).toBeVisible();
 });
 
@@ -73,7 +77,7 @@ test('各类拒绝：类型不支持、超过 20MB、HEIC、内容重复，逐�
     pdf('全季酒店_发票（副本）.pdf', 'same bytes'),
   ]);
   const first = batch(page, 1);
-  await expect(first.getByRole('heading')).toHaveText('上传批次 #1 · 1 份材料');
+  await expect(first.getByRole('heading')).toHaveText('上传批次 #1');
   await expect(first.getByText('拒绝 4 份')).toBeVisible();
   await expect(row(page, first, '备注.txt').getByText('类型不支持，只接受 PDF、JPG、PNG')).toBeVisible();
   await expect(row(page, first, '扫描件.pdf').getByText('超过 20MB')).toBeVisible();
@@ -86,12 +90,12 @@ test('各类拒绝：类型不支持、超过 20MB、HEIC、内容重复，逐�
 test('追加下一批形成上传批次 #2；开始材料盘点进入盘点页', async ({ page }) => {
   await page.goto(open('', '#/task/T1/upload'));
   await choose(page, [pdf('高德打车_发票.pdf')]);
-  await expect(batch(page, 1).getByRole('heading')).toHaveText('上传批次 #1 · 1 份材料');
+  await expect(batch(page, 1).getByRole('heading')).toHaveText('上传批次 #1');
 
   await page.getByRole('button', { name: '追加下一批' }).click();
   await expect(page.getByText('拖入文件，或点击选择')).toBeVisible();
   await choose(page, [pdf('高德打车_行程单.pdf'), png('IMG_4906.png')]);
-  await expect(batch(page, 2).getByRole('heading')).toHaveText('上传批次 #2 · 2 份材料');
+  await expect(batch(page, 2).getByRole('heading')).toHaveText('上传批次 #2');
   await expect(batch(page, 1)).toBeVisible();
   await expect(page.getByText('拖入文件，或点击选择')).toBeHidden();
 
@@ -103,11 +107,11 @@ test('追加下一批形成上传批次 #2；开始材料盘点进入盘点页',
 test('?fault=duplicate-upload 让追加批次里出现内容重复', async ({ page }) => {
   await page.goto(open('?fault=duplicate-upload', '#/task/T1/upload'));
   await choose(page, [pdf('铁路电子客票_0809.pdf')]);
-  await expect(batch(page, 1).getByRole('heading')).toHaveText('上传批次 #1 · 1 份材料');
+  await expect(batch(page, 1).getByRole('heading')).toHaveText('上传批次 #1');
   await page.getByRole('button', { name: '追加下一批' }).click();
   await choose(page, [pdf('铁路电子客票_0822.pdf'), pdf('餐饮_发票.pdf')]);
   const second = batch(page, 2);
-  await expect(second.getByRole('heading')).toHaveText('上传批次 #2 · 1 份材料');
+  await expect(second.getByRole('heading')).toHaveText('上传批次 #2');
   await expect(row(page, second, '铁路电子客票_0822.pdf').getByText(/^内容重复/)).toBeVisible();
   await expect(row(page, second, '餐饮_发票.pdf').getByText('已接收')).toBeVisible();
 });
@@ -120,7 +124,7 @@ test('守卫：没有材料时后续页面显示还没有上传材料；有材�
   await expect(page).toHaveURL(/#\/task\/T4\/upload$/);
 
   await choose(page, [pdf('餐饮_发票.pdf')]);
-  await expect(batch(page, 1).getByRole('heading')).toHaveText('上传批次 #1 · 1 份材料');
+  await expect(batch(page, 1).getByRole('heading')).toHaveText('上传批次 #1');
   await jump(page, '#/task/T4/review');
   await expect(page.getByRole('heading', { name: '还不能进入这一步' })).toBeVisible();
 });
@@ -128,7 +132,7 @@ test('守卫：没有材料时后续页面显示还没有上传材料；有材�
 test('?seed=inventory 的 T1 上传页列出批次 #1 的 11 份材料', async ({ page }) => {
   await page.goto(open('?seed=inventory', '#/task/T1/upload'));
   const first = batch(page, 1);
-  await expect(first.getByRole('heading')).toHaveText('上传批次 #1 · 11 份材料');
+  await expect(first.getByRole('heading')).toHaveText('上传批次 #1');
   await expect(first.getByText('已接收')).toHaveCount(11);
   await expect(page.getByRole('button', { name: '开始材料盘点' })).toBeVisible();
 });

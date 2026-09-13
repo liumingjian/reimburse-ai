@@ -64,7 +64,7 @@ test('?seed=inventory：材料清单按费用事件归组，显示配对与守�
 test('上传后开始材料盘点：先看到分阶段进度，再看到结果', async ({ page }, testInfo) => {
   await page.goto(open('', '#/task/T1/upload'));
   await uploadFixtureNames(page);
-  await expect(page.getByRole('heading', { name: '上传批次 #1 · 11 份材料' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '上传批次 #1' })).toBeVisible();
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   await expect(page).toHaveURL(/#\/task\/T1\/inventory$/);
   await expect(page.getByRole('status')).toHaveText(/^正在盘点：/);

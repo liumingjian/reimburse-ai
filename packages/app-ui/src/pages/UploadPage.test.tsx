@@ -53,7 +53,11 @@ describe('上传材料', () => {
       pdf('全季酒店_发票（副本）.pdf'),
     ]);
 
-    const panel = await batchPanel('上传批次 #1 · 1 份材料');
+    const panel = await batchPanel('上传批次 #1');
+    // 批次信息以带标签的字段组展示，页面文字里没有自己拼的「·」。
+    expect(within(panel).getByRole('term').textContent).toBe('材料');
+    expect(within(panel).getByRole('definition').textContent).toBe('1 份');
+    expect(screen.getByRole('main').textContent).not.toContain('·');
     expect(within(panel).getByText('拒绝 4 份')).toBeTruthy();
 
     const ok = rowOf(panel, '全季酒店_发票.pdf');
@@ -74,12 +78,12 @@ describe('上传材料', () => {
     renderUpload();
     await screen.findByText('拖入文件，或点击选择');
     chooseFiles([pdf('高德打车_发票.pdf', 'amap invoice')]);
-    await batchPanel('上传批次 #1 · 1 份材料');
+    await batchPanel('上传批次 #1');
 
     fireEvent.click(screen.getByRole('button', { name: '追加下一批' }));
     expect(screen.getByText('拖入文件，或点击选择')).toBeTruthy();
     chooseFiles([new File(['png bytes'], 'IMG_4906.png', { type: 'image/png' })]);
-    const second = await batchPanel('上传批次 #2 · 1 份材料');
+    const second = await batchPanel('上传批次 #2');
     expect(within(second).getByText('已复制入任务目录')).toBeTruthy();
     expect(screen.queryByText('拖入文件，或点击选择')).toBeNull();
 
@@ -92,10 +96,10 @@ describe('上传材料', () => {
     renderUpload('duplicate-upload');
     await screen.findByText('拖入文件，或点击选择');
     chooseFiles([pdf('铁路电子客票_0809.pdf', 'rail 0809')]);
-    await batchPanel('上传批次 #1 · 1 份材料');
+    await batchPanel('上传批次 #1');
     fireEvent.click(screen.getByRole('button', { name: '追加下一批' }));
     chooseFiles([pdf('铁路电子客票_0822.pdf', 'rail 0822')]);
-    const second = await batchPanel('上传批次 #2 · 0 份材料');
+    const second = await batchPanel('上传批次 #2');
     expect(within(second).getByText(/^内容重复/)).toBeTruthy();
   });
 
@@ -103,7 +107,7 @@ describe('上传材料', () => {
     renderUpload();
     await screen.findByText('拖入文件，或点击选择');
     chooseFiles([pdf('餐饮_发票.pdf')]);
-    await batchPanel('上传批次 #1 · 1 份材料');
+    await batchPanel('上传批次 #1');
     window.location.hash = '#/task/T1/review';
     expect(await screen.findByRole('heading', { name: '还不能进入这一步' })).toBeTruthy();
   });

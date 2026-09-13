@@ -67,7 +67,7 @@ test('全流程 QA：弹层创建任务，上传 sample-materials 的 11 份材�
   await expect(page.getByText(/^\d{4}-\d{2}-\d{2} 新建报销$/)).toBeVisible();
 
   await page.locator('input[type=file]').setInputFiles(files);
-  await expect(page.getByRole('heading', { name: /^上传批次 #1 / })).toHaveText('上传批次 #1 · 11 份材料');
+  await expect(page.getByRole('heading', { name: /^上传批次 #1$/ })).toHaveText('上传批次 #1');
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/inventory$/);
   await expect(page.getByRole('link', { name: '处理 3 个待确认项' })).toBeVisible({ timeout: 15_000 });

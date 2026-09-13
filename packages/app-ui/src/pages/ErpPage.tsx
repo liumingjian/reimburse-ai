@@ -50,15 +50,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   return (
     <>
-      <PageHeader
-        title={copy.title}
-        lead={copy.lead}
-        actions={
-          <Button kind="ghost" href={taskHash(taskId, 'review')}>
-            返回确认页
-          </Button>
-        }
-      />
+      <PageHeader title={copy.title} lead={copy.lead} />
 
       <section className="app-block" aria-label="填报进度">
         {erp.steps.length === 0 ? (

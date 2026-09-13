@@ -284,7 +284,7 @@ describe('整单明细确认', () => {
     const input = screen.getByLabelText('选择文件');
     Object.defineProperty(input, 'files', { value: [new File(['%PDF-1.4 more'], '地铁_发票.pdf', { type: 'application/pdf' })], configurable: true });
     fireEvent.change(input);
-    expect(await screen.findByRole('heading', { name: '上传批次 #2 · 1 份材料' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: '上传批次 #2' })).toBeTruthy();
     snapshot = await adapter.getSnapshot('T1');
     expect(snapshot.batches).toHaveLength(2);
     expect(snapshot.confirmation.status).toBe('invalidated');

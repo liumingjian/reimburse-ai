@@ -2,7 +2,7 @@ import { Button, InlineNotification } from '@carbon/react';
 import { Renew } from '@carbon/icons-react';
 import type { ActionOutcome, AppAdapter } from '../contract/adapter';
 import { HUMAN_REVIEW_NOTICE, type Reconcile, type TaskSnapshot } from '../contract/snapshot';
-import { TASKS_HASH, navigate, taskHash } from '../router';
+import { navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
@@ -37,15 +37,7 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   return (
     <>
-      <PageHeader
-        title={copy.title}
-        lead={copy.lead}
-        actions={
-          <Button kind="ghost" href={TASKS_HASH}>
-            返回任务列表
-          </Button>
-        }
-      />
+      <PageHeader title={copy.title} lead={copy.lead} />
 
       {erp.abortReason ? (
         <section className="app-abort" aria-label="中止原因">

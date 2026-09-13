@@ -136,9 +136,6 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
         lead={copy.lead}
         actions={
           <>
-            <Button kind="ghost" href={taskHash(taskId, 'review')}>
-              返回确认页
-            </Button>
             {generated && sheet.url ? (
               <Button href={sheet.url} {...({ download: sheet.fileName ?? true } as object)}>
                 下载打印稿 PDF

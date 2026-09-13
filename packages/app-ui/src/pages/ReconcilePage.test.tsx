@@ -44,6 +44,13 @@ describe('对账', () => {
     ['不自洽', true, '转人工', true],
   ];
 
+  test('页头没有孤立的「返回任务列表」：回任务列表走顶栏', async () => {
+    renderAt('#/task/T2/reconcile');
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.queryByRole('link', { name: '返回任务列表' })).toBeNull();
+    expect(screen.getByRole('link', { name: '报销任务' })).toBeTruthy();
+  });
+
   test('六个 bucket 都有判定', () => {
     expect(new Set(CASES.map(([bucket]) => bucket))).toEqual(new Set(RECONCILE_BUCKETS));
   });
