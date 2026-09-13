@@ -179,16 +179,23 @@ $gutter: $spacing-06;
 
 // ---------- 页头与通用文字 ----------
 
+// 页头统一负责节奏：标题到导语 $spacing-03（.app-lead），页头到内容 $spacing-07（页头的下内边距）。
+// 页面自己不再给页头后的第一块内容写上边距：紧跟页头的那块（跳过空的提示容器）上边距归零。
 .app-page-head {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: $spacing-07;
-  padding-block: $spacing-07 $spacing-06;
+  padding-block: $spacing-07;
 
   > :first-child {
     min-inline-size: 0;
   }
+}
+
+.app-page-head.app-page-head + *,
+.app-page-head.app-page-head + :empty + * {
+  margin-block-start: 0;
 }
 
 .app-page-title {
@@ -241,6 +248,32 @@ $gutter: $spacing-06;
 
 .app-nowrap {
   white-space: nowrap;
+}
+
+// 带标签的字段组（FieldGroup）：代替「A · B · C」中点串，写法同摘要条字段。
+.app-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-03 $spacing-07;
+  margin: 0;
+}
+
+.app-field {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-01;
+  min-inline-size: 0;
+}
+
+.app-field-key {
+  color: $text-secondary;
+  @include type.type-style('label-01');
+}
+
+.app-field-value {
+  margin: 0;
+  color: $text-primary;
+  @include type.type-style('body-compact-01');
 }
 
 .app-btn-row {
@@ -330,6 +363,19 @@ $gutter: $spacing-06;
   th.app-num .cds--table-header-label,
   td.app-num {
     text-align: end;
+  }
+
+  // No. 列：所有表格一律左对齐，列宽按内容收紧（width: 1% 让自动表格布局把这一列压到最窄）。
+  th.app-no,
+  td.app-no {
+    inline-size: 1%;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  th.app-no .cds--table-header-label,
+  td.app-no {
+    text-align: start;
   }
 
   td.app-wrap {

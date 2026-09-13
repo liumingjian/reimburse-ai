@@ -214,7 +214,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
         <Table aria-label="整单明细" size="md">
           <TableHead>
             <TableRow>
-              <TableHeader className="app-sticky-start">{CONFIRMATION_NO_COLUMN}</TableHeader>
+              <TableHeader className="app-no app-sticky-start">{CONFIRMATION_NO_COLUMN}</TableHeader>
               {CONFIRMATION_TABLE_COLUMNS.map((label) => (
                 <TableHeader key={label} className={headClass(label)}>
                   {headLabel(label)}

@@ -102,7 +102,7 @@ describe('材料盘点', () => {
     renderAt('#/task/T1/upload', 'upload');
     await screen.findByText('拖入文件，或点击选择');
     chooseFiles(FIXTURE_FILES);
-    await screen.findByRole('heading', { name: '上传批次 #1 · 11 份材料' });
+    await screen.findByRole('heading', { name: '上传批次 #1' });
     fireEvent.click(screen.getByRole('button', { name: '开始材料盘点' }));
 
     expect(await screen.findByRole('heading', { name: '材料盘点' })).toBeTruthy();
@@ -134,7 +134,7 @@ describe('材料盘点', () => {
     renderAt('#/task/T1/upload', 'upload', null, { duplicateHit: true });
     await screen.findByText('拖入文件，或点击选择');
     chooseFiles(FIXTURE_FILES);
-    await screen.findByRole('heading', { name: '上传批次 #1 · 11 份材料' });
+    await screen.findByRole('heading', { name: '上传批次 #1' });
     fireEvent.click(screen.getByRole('button', { name: '开始材料盘点' }));
 
     const table = await screen.findByRole('table', { name: '重复发票' }, { timeout: 3000 });

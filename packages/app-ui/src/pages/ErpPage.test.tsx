@@ -23,6 +23,12 @@ async function waitingLogin() {
 }
 
 describe('ERP 填报', () => {
+  test('页头没有孤立的「返回确认页」', async () => {
+    renderErp();
+    await waitingLogin();
+    expect(screen.queryByRole('link', { name: '返回确认页' })).toBeNull();
+  });
+
   test('九个步骤（含选择不生成费用明细、收票回读）按顺序可见、没有「开始填报」；登录步有「我已登录，继续」并回传 stepToken；登录后自动写完，完成页显示固定句与逐条回读 9/9 一致', async () => {
     const adapter = renderErp();
     const confirmLogin = vi.spyOn(adapter, 'confirmLogin');

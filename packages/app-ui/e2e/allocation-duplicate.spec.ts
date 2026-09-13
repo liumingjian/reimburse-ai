@@ -102,7 +102,7 @@ test('?duplicate=1：上传后整批停，显示重复发票表与命中的任�
   await page.locator('input[type=file]').setInputFiles(
     FIXTURE_FILES.map((name) => ({ name, mimeType: name.endsWith('.jpg') ? 'image/jpeg' : 'application/pdf', buffer: Buffer.from(`fixture ${name}`) })),
   );
-  await expect(page.getByRole('heading', { name: '上传批次 #1 · 11 份材料' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '上传批次 #1' })).toBeVisible();
   await page.getByRole('button', { name: '开始材料盘点' }).click();
 
   const table = page.getByRole('table', { name: '重复发票' });

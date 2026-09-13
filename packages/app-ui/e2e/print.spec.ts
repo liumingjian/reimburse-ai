@@ -24,7 +24,7 @@ async function expectImageLoaded(page: Page, testId: string) {
 }
 
 async function expectConfirmationUnchanged(page: Page) {
-  await page.getByRole('link', { name: '返回确认页' }).click();
+  await page.getByRole('list', { name: '流程阶段' }).getByRole('button', { name: /^整单明细确认/ }).click();
   await expect(page.getByRole('heading', { name: '整单明细确认' })).toBeVisible();
   await expect(page.getByText(/^整单明细已确认/)).toBeVisible();
   await expect(page.getByRole('link', { name: '去打印', exact: true })).toBeVisible();

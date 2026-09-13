@@ -5,6 +5,7 @@ import { UPLOAD_ACCEPT_ATTRIBUTE, type TaskSnapshot, type UploadBatch } from '..
 import { formatBytes, hashPrefix } from '../format';
 import { navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
+import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
 import { useReopenUpload } from '../shell/useReopenUpload';
@@ -82,13 +83,13 @@ function Dropzone({ busyCount, disabled, onFiles }: { busyCount: number; disable
 function BatchPanel({ batch }: { batch: UploadBatch }) {
   const accepted = batch.files.filter((file) => file.status === 'accepted').length;
   const rejected = batch.files.length - accepted;
-  const title = `上传批次 #${batch.no} · ${accepted} 份材料`;
   return (
     <section className="app-block" aria-labelledby={`batch-${batch.batchId}`}>
       <div className="app-block-head">
         <h2 className="app-section-title" id={`batch-${batch.batchId}`}>
-          {title}
+          上传批次 #{batch.no}
         </h2>
+        <FieldGroup fields={[{ label: '材料', value: `${accepted} 份` }]} />
         {rejected === 0 ? (
           <Tag type="green" renderIcon={CheckmarkFilled}>
             已复制入任务目录

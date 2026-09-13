@@ -51,15 +51,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   return (
     <>
-      <PageHeader
-        title={copy.title}
-        lead={copy.lead}
-        actions={
-          <Button kind="ghost" href={taskHash(taskId, 'review')}>
-            返回确认页
-          </Button>
-        }
-      />
+      <PageHeader title={copy.title} lead={copy.lead} />
 
       {/* 写入进行中：页头下方、步骤清单之前一条低对比 warning 通知。 */}
       {writing ? (

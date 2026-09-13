@@ -65,7 +65,7 @@ test('全流程：从 ?seed=pending 一路走到去打印与去报销，顺序�
   await expect(page.getByRole('button', { name: '去报销', exact: true })).toBeVisible();
   await page.getByRole('link', { name: '去打印', exact: true }).click();
   await expect(page.getByRole('list', { name: '打印稿页面' }).locator('.page-hdr').first()).toHaveText('No.1-3 · 08-10 · 外地市内交通 · 69.19');
-  await page.getByRole('link', { name: '返回确认页' }).click();
+  await page.getByRole('list', { name: '流程阶段' }).getByRole('button', { name: /^整单明细确认/ }).click();
   await page.getByRole('button', { name: '去报销', exact: true }).click();
   await expect(page).toHaveURL(/#\/task\/T1\/erp$/);
   await expect(page.getByRole('button', { name: '开始填报' })).toHaveCount(0);

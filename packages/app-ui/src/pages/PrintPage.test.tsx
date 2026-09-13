@@ -47,6 +47,13 @@ function stubEditorImage() {
 }
 
 describe('打印稿预览', () => {
+  test('页头没有孤立的「返回确认页」：往回走交给步骤条', async () => {
+    renderPrint(true);
+    await screen.findByRole('list', { name: '打印稿页面' });
+    expect(screen.queryByRole('link', { name: '返回确认页' })).toBeNull();
+    expect(within(screen.getByRole('list', { name: '流程阶段' })).getByRole('button', { name: /^整单明细确认/ })).toBeTruthy();
+  });
+
   test('进入页面即生成打印稿：7 页页图，页序与整单确认的 No. 一致（按内核分类排序），页眉整句来自快照', async () => {
     const adapter = renderPrint(false);
     const generate = vi.spyOn(adapter, 'generatePrintSheet');
