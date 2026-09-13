@@ -102,6 +102,7 @@ layout:
   control-height-sm: 28px
   control-height-lg: 44px
   stage-index-size: 20px
+  stage-bar-width: 2px
   page-min-width: 320px
   dropzone-min-height: 200px
   file-size-width: 72px
@@ -161,8 +162,9 @@ components:
     rounded: "{rounded.pill}"
     padding: 2px 8px
   sidebar:
-    backgroundColor: "{colors.canvas}"
+    backgroundColor: "{colors.surface-1}"
     width: 232px
+    railWidth: 56px
     borderRight: "1px {colors.hairline}"
   top-bar:
     backgroundColor: "{colors.surface-1}"
@@ -190,7 +192,7 @@ components:
 - **字重**：标题 600、正文 400、按钮 500。不用 700。
 - **圆角**：按钮和输入 8px，面板 12px，小标签 4px，状态徽标 pill。这是整套应用的固定规则，不再引入别的圆角。
 - **间距**：4px 基数。面板内距 20px，表格单元格 10px 12px，页面内容最大宽 1200px。
-- **等宽字体只用于数字与编号**：金额、发票号码、日期、序号用 `{typography.mono}`，方便对齐和核对；其余一律正文字体。
+- **等宽字体只用于编码、No. 与金额**：发票代码与号码、项目号、No.、金额用 `{typography.mono}`，金额再加 `tabular-nums` 并右对齐；文件名、日期说明和其余文字一律正文字体（见下文「版式规则」）。
 
 ## 为什么反转成浅色
 
@@ -211,8 +213,29 @@ Linear 原件只记录深色营销站，并明确写了"不发布浅色版"，�
 ## 布局尺寸
 
 `layout` 组收纳页面 CSS 需要、又不属于颜色/字号/圆角/间距的几个固定尺寸：内容最大宽、hairline 与焦点环粗细、归组色条宽度、
-小号与大号控件高度、阶段序号圆点尺寸、页面最小宽度、上传拖放区最小高度、文件列表大小列宽、待确认项左栏宽度、原件预览栏宽度、
+小号与大号控件高度、阶段序号圆点尺寸、侧栏当前步骤左侧细条宽度、页面最小宽度、上传拖放区最小高度、文件列表大小列宽、待确认项左栏宽度、原件预览栏宽度、
 弹层宽度、复选框尺寸、打印稿预览的页卡最小宽度、四角裁剪编辑器宽度与角点尺寸。新的尺寸先加到这里，再在 CSS 里引用。
+
+## 版式规则
+
+用户反馈界面杂乱、有压迫感。原因是层级扁平、信息重复，不是间距太紧。每个页面都守这几条：
+
+- **标题下最多一句话**：页面标题下的说明不超过一句、30 个字以内；其余解释放进可展开的说明或 `title` 提示里。
+- **一屏一个主按钮**：其余动作用次级或三级按钮（"去打印""去报销"并列是唯一例外，见上文）。
+- **只标记例外**：待确认、缺失、不一致这类需要处理的状态才带徽标；正常与已通过的状态不带徽标、不上色。
+- **等宽字体只给编码、No. 与金额**：金额用 `tabular-nums` 并右对齐；文件名用正文字体。
+- **单一强调色**：只用薰衣草蓝 `{colors.primary}`；绿色 `{colors.success}` 只用于"完成"含义。不用 em-dash 和 en-dash。
+
+## 侧栏
+
+侧栏只放两样东西：任务名（一行，超长省略，完整名称放在 `title` 里）和步骤列表。当前阶段的 10 阶段名只出现在任务列表的徽标上，
+个人项目簿走顶栏导航，不在侧栏重复。步骤列表只有一种样式、不画圆点：已完成是 `{colors.ink-muted}` 常规字加一个细勾（不填色、不用绿色），
+当前是强调色字加左侧 `{layout.stage-bar-width}` 细条，未到是 `{colors.ink-tertiary}`；待确认项的数量用中性灰。被守卫拦下的页面不把对应步骤显示成当前。
+点未到的步骤时，列表下方出现一句「阶段不可跳过，请按顺序完成。」（一行放得下）。对账中的任务侧栏是任务名加一行状态（徽标和一句短说明）。
+
+侧栏底色是 `{colors.surface-1}` 白色，右侧 hairline；主区保持 `{colors.canvas}` 灰。顶部按钮可把侧栏收起成 `{components.sidebar.railWidth}` 宽的窄栏，
+只剩展开按钮和每步一个紧凑标记（可访问名称是步骤名，能进的步骤仍是链接）。收起与否是界面偏好，存在 localStorage 的
+`baox.sidebar.collapsed`，默认展开；窄屏（900px 以下）侧栏照旧在上方完整展开，不显示收起按钮。宽度过渡在 `prefers-reduced-motion` 下关闭。
 
 ## 语义色
 

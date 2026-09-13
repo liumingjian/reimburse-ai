@@ -182,35 +182,71 @@ p {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   min-height: calc(100vh - var(--top-bar-height));
+  transition: grid-template-columns 0.15s;
+}
+
+/* 收起后只剩窄栏：展开按钮加每步一个紧凑标记。 */
+.layout:has(> .sidebar.is-collapsed) {
+  grid-template-columns: var(--sidebar-rail-width) minmax(0, 1fr);
 }
 
 .sidebar {
-  padding: var(--space-lg) var(--space-sm);
+  min-width: 0;
+  padding: var(--space-md) var(--space-xs);
   background: var(--sidebar-background-color);
   border-right: var(--sidebar-border-right);
   border-right-style: solid;
 }
 
-.sidebar h3 {
-  padding: 0 var(--space-sm);
-  margin-bottom: var(--space-xs);
-  font-size: var(--text-caption-size);
-  font-weight: var(--text-button-weight);
-  color: var(--color-ink-subtle);
-}
-
-.sidebar h3.rules {
-  margin-top: var(--space-lg);
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  padding: 0 0 var(--space-md) var(--space-sm);
 }
 
 .sidebar .task-name {
-  padding: 0 var(--space-sm) var(--space-md);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-weight: var(--text-headline-weight);
   letter-spacing: var(--text-headline-tracking);
 }
 
-.sidebar .status {
+.sidebar-toggle {
+  flex: none;
+  width: var(--layout-control-height-sm);
+  height: var(--layout-control-height-sm);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-ink-subtle);
+  font-size: var(--text-headline-size);
+  line-height: 1;
+}
+
+.sidebar-toggle:hover {
+  background: var(--color-surface-2);
+  color: var(--color-ink);
+}
+
+.sidebar-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xxs);
+  margin: 0;
   padding: 0 var(--space-sm);
+  color: var(--color-ink-muted);
+}
+
+.sidebar-hint {
+  margin: var(--space-sm) 0 0;
+  padding: 0 var(--space-sm);
+  color: var(--color-ink-subtle);
 }
 
 .stage-list {
@@ -223,13 +259,19 @@ p {
   margin-bottom: calc(var(--space-xxs) / 2);
 }
 
+/* 一种样式、不画圆点：已完成是常规灰字加细勾，当前是强调色字加左侧细条，未到是三级灰。 */
 .stage-list .stage {
   display: flex;
   align-items: center;
   gap: var(--space-xs);
+  width: 100%;
   padding: var(--space-xs) var(--space-sm);
-  border-radius: var(--radius-md);
+  border: 0;
+  border-left: var(--layout-stage-bar-width) solid transparent;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: transparent;
   color: var(--color-ink-muted);
+  text-align: left;
 }
 
 .stage-list a:hover {
@@ -238,42 +280,53 @@ p {
 }
 
 .stage-list .current {
-  background: var(--color-primary-soft);
+  border-left-color: var(--color-primary);
   color: var(--color-primary);
   font-weight: var(--text-button-weight);
 }
 
 .stage-list .locked {
   color: var(--color-ink-tertiary);
+  cursor: default;
 }
 
-.stage-list .idx {
+.stage-list .check {
   flex: none;
-  width: var(--layout-stage-index-size);
-  height: var(--layout-stage-index-size);
-  border: var(--layout-hairline-width) solid var(--color-hairline-strong);
-  border-radius: var(--radius-pill);
-  font-family: var(--font-mono);
+  color: var(--color-ink-subtle);
   font-size: var(--text-caption-size);
-  line-height: calc(var(--layout-stage-index-size) - 2 * var(--layout-hairline-width));
-  text-align: center;
-}
-
-.stage-list .done .idx {
-  background: var(--color-success);
-  border-color: var(--color-success);
-  color: var(--color-on-primary);
-}
-
-.stage-list .current .idx {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
 }
 
 .stage-list .count {
   margin-left: auto;
   font-size: var(--text-caption-size);
-  color: var(--color-warning);
+  color: var(--color-ink-subtle);
+}
+
+.stage-list .marker {
+  flex: none;
+  width: 100%;
+  font-size: var(--text-caption-size);
+  text-align: center;
+}
+
+.sidebar.is-collapsed .sidebar-head {
+  justify-content: center;
+  padding-left: 0;
+}
+
+.sidebar.is-collapsed .task-name,
+.sidebar.is-collapsed .stage-label,
+.sidebar.is-collapsed .check,
+.sidebar.is-collapsed .count,
+.sidebar.is-collapsed .sidebar-status,
+.sidebar.is-collapsed .sidebar-hint {
+  display: none;
+}
+
+.sidebar.is-collapsed .stage {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .main {
@@ -1453,6 +1506,44 @@ table.data td.pick input {
     border-bottom-style: solid;
   }
 
+  /* 窄屏保持原样：侧栏在上方完整展开，没有收起按钮。 */
+  .layout:has(> .sidebar.is-collapsed) {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar-toggle,
+  .stage-list .marker {
+    display: none;
+  }
+
+  .sidebar.is-collapsed .task-name,
+  .sidebar.is-collapsed .stage-label,
+  .sidebar.is-collapsed .check,
+  .sidebar.is-collapsed .count,
+  .sidebar.is-collapsed .sidebar-status,
+  .sidebar.is-collapsed .sidebar-hint {
+    display: revert;
+  }
+
+  .sidebar.is-collapsed .stage-list .count {
+    display: inline;
+  }
+
+  .sidebar.is-collapsed .sidebar-status {
+    display: flex;
+  }
+
+  .sidebar.is-collapsed .sidebar-head {
+    justify-content: flex-start;
+    padding-left: var(--space-sm);
+  }
+
+  .sidebar.is-collapsed .stage {
+    justify-content: flex-start;
+    padding-left: var(--space-sm);
+    padding-right: var(--space-sm);
+  }
+
   .main {
     padding: var(--space-lg) var(--space-md) calc(var(--space-xxl) * 2);
   }
@@ -1472,7 +1563,8 @@ table.data td.pick input {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .btn {
+  .btn,
+  .layout {
     transition: none;
   }
 }

@@ -93,10 +93,10 @@ test('?erp=logged-out 未完成登录：项目簿页从顶栏可进，说明原�
   await expect(row(page, 'P-5108')).toHaveCount(0);
 });
 
-test('入口：任务侧栏常驻「维护个人项目簿」，项目归属页有「去维护项目簿」；在项目簿录入后回到项目归属可选', async ({ page }) => {
+test('入口：顶栏常驻「个人项目簿」，项目归属页有「去维护项目簿」；在项目簿录入后回到项目归属可选', async ({ page }) => {
   await page.goto(open('?seed=project', '#/task/T1/project'));
   await expect(h1(page, '项目归属')).toBeVisible();
-  await expect(page.getByRole('link', { name: '维护个人项目簿' })).toHaveAttribute('href', '#/projects');
+  await expect(page.getByRole('navigation', { name: '全局' }).getByRole('link', { name: '个人项目簿' })).toHaveAttribute('href', '#/projects');
   await page.getByRole('link', { name: '去维护项目簿' }).click();
   await expect(h1(page, '个人项目簿')).toBeVisible();
   await intake(page, 'P-6021');

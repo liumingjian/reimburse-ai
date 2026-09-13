@@ -163,7 +163,9 @@ describe('任务页面骨架', () => {
     renderApp('#/task/T2/reconcile');
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
     expect(screen.queryByRole('list', { name: '流程阶段' })).toBeNull();
-    expect(screen.getByText('写入结果不确定后停在这里。处置由对账结果决定：原地等待或转人工。')).toBeTruthy();
-    expect(screen.getByTestId('stage-phase').textContent).toBe('9/10 保存报销草稿');
+    const sidebar = screen.getByText('写入结果待对账。').closest('aside');
+    if (!sidebar) throw new Error('状态说明不在侧栏里');
+    // 10 阶段名只在任务列表徽标上，侧栏不再重复。
+    expect(within(sidebar).queryByText('9/10 保存报销草稿')).toBeNull();
   });
 });

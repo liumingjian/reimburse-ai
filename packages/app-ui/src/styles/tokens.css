@@ -43,6 +43,7 @@
   --layout-control-height-sm: 28px;
   --layout-control-height-lg: 44px;
   --layout-stage-index-size: 20px;
+  --layout-stage-bar-width: 2px;
   --layout-page-min-width: 320px;
   --layout-dropzone-min-height: 200px;
   --layout-file-size-width: 72px;
@@ -128,8 +129,9 @@
   --status-badge-typography: var(--text-caption);
   --status-badge-rounded: var(--radius-pill);
   --status-badge-padding: 2px 8px;
-  --sidebar-background-color: var(--color-canvas);
+  --sidebar-background-color: var(--color-surface-1);
   --sidebar-width: 232px;
+  --sidebar-rail-width: 56px;
   --sidebar-border-right: 1px var(--color-hairline);
   --top-bar-background-color: var(--color-surface-1);
   --top-bar-height: 52px;

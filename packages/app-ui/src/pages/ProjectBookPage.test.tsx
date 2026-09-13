@@ -114,10 +114,11 @@ describe('项目归属的项目簿门', () => {
     expect(await screen.findByText((_, node) => node?.getAttribute('data-testid') === 'project-of-3' && node.textContent === 'P-5108 · 苏州门店巡检')).toBeTruthy();
   });
 
-  test('项目归属页有「去维护项目簿」链接，任务侧栏有常驻入口', async () => {
+  test('项目归属页有「去维护项目簿」链接，顶栏有常驻入口（侧栏不重复）', async () => {
     renderApp('#/task/T1/project', {}, 'project');
     await screen.findByRole('heading', { name: '项目归属' });
     expect(screen.getByRole('link', { name: '去维护项目簿' }).getAttribute('href')).toBe('#/projects');
-    expect(screen.getByRole('link', { name: '维护个人项目簿' }).getAttribute('href')).toBe('#/projects');
+    expect(within(screen.getByRole('navigation', { name: '全局' })).getByRole('link', { name: '个人项目簿' }).getAttribute('href')).toBe('#/projects');
+    expect(screen.queryByRole('link', { name: '维护个人项目簿' })).toBeNull();
   });
 });
