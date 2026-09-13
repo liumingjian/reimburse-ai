@@ -392,8 +392,12 @@ $gutter: $spacing-06;
 // ---------- 任务列表 ----------
 
 // 工具栏一行：搜索吸收剩余宽度，状态筛选按文字定宽（Carbon 的 content switcher 默认等分并截断文字）。
+// 实测工具栏内容层算出来是 display: block，搜索与筛选上下叠成两行，这里写明 flex。
 .app-table .cds--toolbar-content {
+  display: flex;
   flex-wrap: nowrap;
+  align-items: center;
+  inline-size: 100%;
 }
 
 .app-table .cds--toolbar-search-container-persistent {
@@ -411,7 +415,8 @@ $gutter: $spacing-06;
     inline-size: auto;
   }
 
-  .cds--content-switcher-btn {
+  // Carbon 用 .cds--content-switcher:not(--icon-only) .cds--content-switcher-btn 写了 inline-size: 100%，这里同样具体再加一层。
+  .cds--content-switcher:not(.cds--content-switcher--icon-only) .cds--content-switcher-btn {
     flex: none;
     inline-size: auto;
     white-space: nowrap;

@@ -182,7 +182,8 @@ function TaskTable({ tasks, onAbandon }: { tasks: readonly TaskListItem[]; onAba
   };
   return (
     <div className="bleed app-table">
-      <TableContainer title={TASK_LIST_COPY.tableTitle} description={`${visible.length} 个`}>
+      {/* 不给表格再起标题：页面标题已是「报销任务」，条数在筛选「全部 N」里。 */}
+      <TableContainer>
         <TableToolbar aria-label={TASK_LIST_COPY.toolbar}>
           <TableToolbarContent>
             <TableToolbarSearch
@@ -206,7 +207,7 @@ function TaskTable({ tasks, onAbandon }: { tasks: readonly TaskListItem[]; onAba
             </div>
           </TableToolbarContent>
         </TableToolbar>
-        {/* TableContainer 会把表格的可访问名称指向它的标题「全部任务」；这里指回页面标题「报销任务」。 */}
+        {/* 表格的可访问名称指向页面标题「报销任务」。 */}
         <Table aria-labelledby={TASK_LIST_TITLE_ID} size="lg">
           <TableHead>
             <TableRow>
