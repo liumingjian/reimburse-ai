@@ -47,6 +47,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   const confirmLogin = () => run((adapter) => adapter.confirmLogin(taskId, step.stepToken));
   const waitingLogin = step.kind === 'erp_login';
+  const writing = erp.status !== 'idle' && erp.status !== 'done' && erp.status !== 'aborted';
 
   return (
     <>
@@ -60,6 +61,20 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
         }
       />
 
+      {/* 写入进行中：页头下方、步骤清单之前一条低对比 warning 通知。 */}
+      {writing ? (
+        <InlineNotification
+          className="app-erp-writing"
+          kind="warning"
+          role="status"
+          lowContrast
+          hideCloseButton
+          statusIconDescription="注意"
+          title="进行中，请不要关闭专用浏览器窗口。"
+          subtitle="只保存草稿，不提交审批；中途任何不一致都会停下来对账。"
+        />
+      ) : null}
+
       <section className="app-block" aria-label="填报进度">
         {erp.steps.length === 0 ? (
           <p className="app-caption">还没有填报进度。</p>
@@ -70,7 +85,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
               return (
                 <li key={item.key} className={`is-${item.status}`} aria-label={item.title}>
                   <span className="app-step-dot" aria-hidden="true">
-                    {Icon ? <Icon /> : index + 1}
+                    {Icon ? <Icon /> : <span className="app-step-num">{index + 1}</span>}
                   </span>
                   <div>
                     <div className="step-title">{item.title}</div>
@@ -125,9 +140,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
               <Button href={taskHash(taskId, 'done')}>查看回读结果</Button>
             ) : null}
           </>
-        ) : (
-          <p className="app-caption">进行中，请不要关闭专用浏览器窗口。只保存草稿，不提交审批；中途任何不一致都会停下来对账。</p>
-        )}
+        ) : null}
         <ActionError message={error} />
       </section>
     </>

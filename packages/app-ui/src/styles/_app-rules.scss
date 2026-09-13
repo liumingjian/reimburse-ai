@@ -135,13 +135,14 @@ $gutter: $spacing-06;
 }
 
 // 未到的步骤：Carbon 的 disabled 样式带 pointer-events: none，点了就没有「阶段不可跳过」的说明；
-// 这里用 aria-disabled 加同样的颜色，仍可点出说明。
+// 这里用 aria-disabled，仍可点出说明。文字用 text-secondary（不是 disabled 色），全流程读得清；
+// 与已到的步骤靠图标区分（图标仍是不可用色）。
 .app-step-locked .cds--progress-step-button {
   cursor: not-allowed;
 
   .cds--progress-label,
   .cds--progress-label:hover {
-    color: $text-disabled;
+    color: $text-secondary;
     box-shadow: none;
   }
 

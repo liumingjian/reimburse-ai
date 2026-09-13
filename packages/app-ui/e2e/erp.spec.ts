@@ -31,6 +31,41 @@ async function expectDone(page: Page) {
   await expect(page.getByRole('row').filter({ hasText: '不一致' })).toHaveCount(0);
 }
 
+for (const [width, height] of [
+  [1440, 900],
+  [1100, 800],
+] as const) {
+  test(`${width}px：未开始步骤的标题比说明醒目，编号在圆里；「不要关闭专用浏览器窗口」是步骤清单之前的通知`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height });
+    await page.goto(open('?seed=erp', '#/task/T1/erp'));
+    await expect(stepItem(page, '登录')).toContainText('等待你操作');
+    const todo = stepItem(page, '导入发票');
+    const [titleColor, descColor] = await Promise.all([
+      todo.locator('.step-title').evaluate((element) => getComputedStyle(element).color),
+      todo.locator('.desc').evaluate((element) => getComputedStyle(element).color),
+    ]);
+    // Gray 10：标题 text-secondary #525252，说明 helper #6f6f6f。
+    expect(titleColor).toBe('rgb(82, 82, 82)');
+    expect(descColor).toBe('rgb(111, 111, 111)');
+
+    const num = await todo.getByText('5', { exact: true }).boundingBox();
+    const icon = await stepItem(page, '启动浏览器').locator('svg').first().boundingBox();
+    if (!num || !icon) throw new Error('量不到编号或图标');
+    expect(Math.abs(num.width - icon.width)).toBeLessThan(1);
+    expect(Math.abs(num.height - icon.height)).toBeLessThan(1);
+
+    const notice = page.getByRole('status').filter({ hasText: '进行中，请不要关闭专用浏览器窗口。' });
+    await expect(notice).toBeVisible();
+    const noticeBox = await notice.boundingBox();
+    const headBox = await page.getByRole('heading', { name: '保存报销草稿', level: 1 }).boundingBox();
+    const listBox = await progress(page).boundingBox();
+    if (!noticeBox || !headBox || !listBox) throw new Error('量不到位置');
+    expect(noticeBox.y).toBeGreaterThan(headBox.y + headBox.height);
+    expect(noticeBox.y + noticeBox.height).toBeLessThanOrEqual(listBox.y);
+    await page.screenshot({ path: testInfo.outputPath(`erp-steps-${width}.png`), fullPage: true });
+  });
+}
+
 test('正常流程：?seed=erp 等待登录，点「我已登录，继续」后九步自动写完进入完成页', async ({ page }, testInfo) => {
   await startAndLogin(page, '?seed=erp');
   await expect(page.getByRole('link', { name: '查看完成结果' })).toBeVisible();

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ProgressIndicator, ProgressStep, Tag } from '@carbon/react';
 import { WarningAltFilled } from '@carbon/icons-react';
 import { RECONCILE_STATUS_LABEL, pageAllowed, stageRank, stageReached, type TaskPage, type TaskStage } from '../contract/stage';
@@ -8,7 +8,7 @@ import { navigate, taskHash } from '../router';
 
 // 步骤条：任务页工作区顶部一条，左边任务名与费用期间，右边 7 步横排的 Carbon progress indicator。
 // 顺序照 Skill：项目归属在整单明细确认之前；print / erp 两个页面归到「去打印 / 去报销」。
-// 已到的步骤可点（进入对应页面）；未到的步骤是 aria-disabled，点了给出一句「阶段不可跳过」。
+// 已到的步骤可点（进入对应页面）；未到的步骤是 aria-disabled，点了在该步骤正下方给出一句「阶段不可跳过」（守卫页除外）。
 type Entry = { stage: TaskStage; label: string; page: TaskPage };
 
 export const STEP_ENTRIES: readonly Entry[] = [
@@ -76,7 +76,9 @@ function TaskTitle({ snapshot }: { snapshot: TaskSnapshot }) {
 }
 
 export function StepBar({ snapshot, page }: { snapshot: TaskSnapshot; page: TaskPage }) {
-  const [lockedHint, setLockedHint] = useState(false);
+  // 被点的未开放步骤相对步骤条左边的距离：提示出现在它的正下方。
+  const [lockedHintAt, setLockedHintAt] = useState<number | null>(null);
+  const barRef = useRef<HTMLElement>(null);
   const { stage } = snapshot;
   const taskId = snapshot.task.taskId;
 
@@ -111,16 +113,26 @@ export function StepBar({ snapshot, page }: { snapshot: TaskSnapshot; page: Task
     return { entry, reached, active, done, count };
   });
   const currentIndex = steps.findIndex((step) => step.active);
+  // 守卫页的正文已经说明了「阶段不可跳过」，这里不再重复。
+  const guarded = !pageAllowed(stage, page);
 
   const onChange = (index: number) => {
     const step = steps[index];
     if (!step) return;
-    if (step.reached) navigate(taskHash(taskId, step.entry.page));
-    else setLockedHint(true);
+    if (step.reached) {
+      navigate(taskHash(taskId, step.entry.page));
+      return;
+    }
+    if (guarded) return;
+    // 以步骤条的内容行为原点（与提示同一个内容盒），量被点步骤的左边。
+    const row = barRef.current?.querySelector('.app-stepbar-row');
+    const clicked = barRef.current?.querySelectorAll('.cds--progress-step')[index];
+    const left = row && clicked ? clicked.getBoundingClientRect().left - row.getBoundingClientRect().left : 0;
+    setLockedHintAt(Math.max(0, left));
   };
 
   return (
-    <section className="app-stepbar" aria-label={STEP_BAR_COPY.region}>
+    <section ref={barRef} className="app-stepbar" aria-label={STEP_BAR_COPY.region}>
       <div className="app-stepbar-row">
         <TaskTitle snapshot={snapshot} />
         <ProgressIndicator className="app-stepbar-steps" currentIndex={currentIndex} spaceEqually onChange={onChange} aria-label="流程阶段">
@@ -137,8 +149,8 @@ export function StepBar({ snapshot, page }: { snapshot: TaskSnapshot; page: Task
           ))}
         </ProgressIndicator>
       </div>
-      {lockedHint ? (
-        <p className="app-stepbar-hint" role="status">
+      {lockedHintAt !== null && !guarded ? (
+        <p className="app-stepbar-hint" role="status" style={{ paddingInlineStart: lockedHintAt }}>
           {STEP_BAR_COPY.lockedHint}
         </p>
       ) : null}

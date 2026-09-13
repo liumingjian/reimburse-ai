@@ -179,18 +179,20 @@ $gutter: $spacing-06;
     gap: $spacing-04;
     padding: $spacing-04 $spacing-05;
     border-block-end: 1px solid $border-subtle-01;
-
-    &.is-todo {
-      color: $text-disabled;
-    }
   }
 
   .step-title {
+    color: $text-primary;
     font-weight: 600;
   }
 
-  .desc {
+  // 未开始的步骤：标题降到 text-secondary，仍比 helper 色的说明醒目。
+  .is-todo .step-title {
     color: $text-secondary;
+  }
+
+  .desc {
+    color: $text-helper;
     @include type.type-style('helper-text-01');
   }
 
@@ -223,6 +225,24 @@ $gutter: $spacing-06;
   block-size: 1.25rem;
   color: $text-helper;
   @include type.type-style('label-01');
+}
+
+// 未开始步骤的编号：放进和状态图标同样大小（1rem）的圆里。
+.app-step-num {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  inline-size: 1rem;
+  block-size: 1rem;
+  border: 1px solid $border-strong-01;
+  border-radius: 50%;
+  color: $text-secondary;
+  font-size: 0.625rem;
+  line-height: 1;
+}
+
+.app-erp-writing {
+  margin-block-end: $spacing-05;
 }
 
 .app-login-prompt {
