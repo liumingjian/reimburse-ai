@@ -15,10 +15,12 @@ test('?erp=logged-out：先显示登录提示；「我已登录」后进入身�
 
   await page.getByRole('button', { name: '我已登录' }).click();
   await expect(h1(page, '确认报销人身份')).toBeVisible();
-  const table = page.getByRole('table', { name: '报销人身份' });
-  await expect(table.getByRole('row', { name: /姓名 林颂宜/ })).toBeVisible();
-  await expect(table.getByRole('row', { name: /登录账号 linsongyi/ })).toBeVisible();
-  await expect(table.getByRole('row', { name: /账套 示例科技集团本部/ })).toBeVisible();
+  await expect(page.getByRole('table')).toHaveCount(0);
+  await expect(page.getByLabel('姓名')).toContainText('林颂宜');
+  await expect(page.getByLabel('登录账号')).toContainText('linsongyi');
+  await expect(page.getByLabel('登录账号')).toContainText('用于确认是本人');
+  await expect(page.locator('body')).not.toContainText('判据');
+  await expect(page.getByLabel('账套')).toContainText('示例科技集团本部');
   await expect(page.getByRole('textbox')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('startup-identity.png'), fullPage: true });
 
@@ -38,12 +40,15 @@ test('?identity=unbound：确认身份后进入任务列表；刷新后不再询
   await expect(h1(page, '确认报销人身份')).toHaveCount(0);
 });
 
-test('?identity=mismatched：整页阻塞，没有任何按钮；任务列表、新建弹层与任务页都进不去', async ({ page }, testInfo) => {
+test('?identity=mismatched：整页阻塞，只有「重新检测」；任务列表、新建弹层与任务页都进不去', async ({ page }, testInfo) => {
   for (const hash of ['#/tasks', '#/tasks/new', '#/task/T1/upload']) {
     await page.goto(open('?identity=mismatched', hash));
     await expect(h1(page, '报销人身份不一致')).toBeVisible();
     await expect(page.getByRole('alert')).toContainText('当前登录身份与已登记的报销人不一致。请在报销系统切换回本人账号；已有报销不能中途更换报销人。');
-    await expect(page.getByRole('button')).toHaveCount(0);
+    await expect(page.getByRole('button')).toHaveText(['重新检测']);
+    await expect(page.locator('body')).not.toContainText('判据');
+    await page.getByRole('button', { name: '重新检测' }).click();
+    await expect(h1(page, '报销人身份不一致')).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.getByRole('table')).toHaveCount(0);
   }
@@ -53,7 +58,7 @@ test('?identity=mismatched：整页阻塞，没有任何按钮；任务列表、
 test('常驻城市按身份记住：新建任务确认苏州后刷新页面，再新建时预填苏州（上次确认）', async ({ page }) => {
   await page.goto(open('', '#/tasks/new'));
   const box = page.getByRole('dialog', { name: '新建报销任务' });
-  await expect(box.getByLabel('报销人')).toHaveValue('林颂宜');
+  await expect(box.getByLabel('报销人')).toHaveText('林颂宜');
   await expect(box.getByLabel('常驻城市')).toHaveValue('杭州');
   await box.getByLabel('常驻城市').fill('苏州');
   await box.getByRole('button', { name: '创建并上传材料' }).click();

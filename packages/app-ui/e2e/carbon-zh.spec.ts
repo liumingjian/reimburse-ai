@@ -57,6 +57,7 @@ const PAGES: ReadonlyArray<readonly [string, string]> = [
   ['?seed=inventory', '#/task/T1/review'],
   ['?fault=service-disconnected', '#/tasks'],
   ['?identity=unbound', '#/tasks'],
+  ['?identity=mismatched', '#/tasks'],
 ];
 
 async function englishLeftovers(page: Page): Promise<string[]> {
@@ -74,6 +75,20 @@ test('主要页面没有 Carbon 自带的英文文案', async ({ page }) => {
     await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
     expect(await englishLeftovers(page), `${query}${hash}`).toEqual([]);
   }
+});
+
+test('断连时的加载指示（InlineLoading）与不可用的新建按钮没有英文文案', async ({ page }, testInfo) => {
+  await page.goto(open('?fault=service-disconnected', '#/tasks'));
+  const waiting = page.locator('.cds--inline-loading').filter({ hasText: '正在等待本地服务恢复' });
+  await expect(waiting).toBeVisible();
+  await expect(page.getByRole('button', { name: '新建报销任务' })).toBeDisabled();
+  await page.screenshot({ path: testInfo.outputPath('tasks-disconnected.png'), fullPage: true });
+  expect(await englishLeftovers(page), '断连').toEqual([]);
+  // InlineLoading 的图标说明默认是英文小写 loading：可访问属性里也不许出现。
+  const loadingAttributes = await page.evaluate(() =>
+    [...document.querySelectorAll('[aria-label], [title]')].map((element) => `${element.getAttribute('aria-label') ?? ''} ${element.getAttribute('title') ?? ''}`).filter((text) => /loading/i.test(text)),
+  );
+  expect(loadingAttributes).toEqual([]);
 });
 
 test('弹层打开时也没有英文文案（作废确认、新建任务、追加材料）', async ({ page }) => {

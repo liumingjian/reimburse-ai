@@ -68,9 +68,9 @@ $gutter: $spacing-06;
 .app-dropzone {
   display: grid;
   place-items: center;
-  gap: $spacing-03;
-  min-block-size: 12rem;
-  padding: $spacing-07;
+  gap: $spacing-05;
+  min-block-size: 14rem;
+  padding: $spacing-09 $spacing-07;
   color: $text-secondary;
   text-align: center;
   background: $layer-01;
@@ -534,6 +534,25 @@ $gutter: $spacing-06;
 
 .app-kv-row {
   display: contents;
+}
+
+// 只读字段组（启动页身份、新建弹层的报销人）：标签与值上下对齐，说明是值后面的一行 helper 文字。
+.app-readonly-fields {
+  margin-block: $spacing-05;
+
+  dt {
+    @include type.type-style('label-01');
+  }
+
+  dd {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.app-readonly-note {
+  color: $text-helper;
+  @include type.type-style('helper-text-01');
 }
 
 // 选择类待确认项：已选项用选中样式（不用主按钮，主按钮一屏一个）。

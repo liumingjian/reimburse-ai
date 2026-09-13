@@ -4,6 +4,7 @@ import { App } from '../App';
 import { UPLOAD_MAX_FILE_BYTES } from '../contract/snapshot';
 import { createMockAdapter } from '../mock/mock-adapter';
 import type { Fault } from '../mock/options';
+import { UPLOAD_NEXT_STEP } from './UploadPage';
 
 function renderUpload(fault: Fault | null = null) {
   window.location.hash = '#/task/T1/upload';
@@ -20,6 +21,15 @@ function chooseFiles(files: File[]) {
   Object.defineProperty(input, 'files', { value: files, configurable: true });
   fireEvent.change(input);
 }
+
+describe('上传区说明', () => {
+  test('拖放区说明上传后的下一步是开始盘点', async () => {
+    renderUpload();
+    const zone = await screen.findByTestId('dropzone');
+    expect(zone.textContent).toContain(UPLOAD_NEXT_STEP);
+    expect(zone.textContent).toContain('开始盘点');
+  });
+});
 
 async function batchPanel(title: string): Promise<HTMLElement> {
   const heading = await screen.findByRole('heading', { name: title });

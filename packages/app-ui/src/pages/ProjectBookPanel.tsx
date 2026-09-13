@@ -11,6 +11,8 @@ import { PROJECT_BOOK_ACCEPTED_STATUSES, PROJECT_BOOK_COPY, type ProjectBookEntr
 
 type Message = { ok: boolean; text: string };
 
+const NUMBER_PLACEHOLDER = '如：P-2307';
+
 // primaryIntake：「核验并加入」是否用主按钮样式（每屏一个主按钮；项目簿门可以继续时由「开始归属」当主按钮）。
 // autoFocus：放在弹层里时打开即聚焦项目号输入框。
 export function ProjectBookPanel({ primaryIntake = true, autoFocus = false }: { primaryIntake?: boolean; autoFocus?: boolean }) {
@@ -50,13 +52,15 @@ export function ProjectBookPanel({ primaryIntake = true, autoFocus = false }: { 
             id="project-number"
             className="app-code"
             labelText={PROJECT_BOOK_COPY.numberLabel}
+            placeholder={NUMBER_PLACEHOLDER}
             autoComplete="off"
             autoFocus={autoFocus}
             {...(autoFocus ? { 'data-modal-primary-focus': true } : {})}
             value={number}
             onChange={(event) => setNumber(event.target.value)}
           />
-          <Button type="submit" kind={primaryIntake ? 'primary' : 'secondary'} renderIcon={Add} disabled={busy || number.trim() === ''}>
+          {/* md 与输入框同高（40px），两者在一行里底边对齐。 */}
+          <Button type="submit" size="md" kind={primaryIntake ? 'primary' : 'secondary'} renderIcon={Add} disabled={busy || number.trim() === ''}>
             {PROJECT_BOOK_COPY.intake}
           </Button>
         </form>

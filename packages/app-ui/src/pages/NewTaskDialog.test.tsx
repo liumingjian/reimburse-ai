@@ -27,9 +27,11 @@ describe('新建报销任务弹层', () => {
   test('#/tasks/new 深链：报销人只读，常驻城市预填网络位置候选并说明来源，没有名称与日期字段', async () => {
     renderAt('#/tasks/new');
     const box = await dialog();
+    // 报销人是只读字段，不是输入框：弹层里唯一的输入框是常驻城市。
     const employee = await within(box).findByLabelText('报销人');
-    expect((employee as HTMLInputElement).value).toBe('林颂宜');
-    expect((employee as HTMLInputElement).readOnly).toBe(true);
+    expect(employee.textContent).toBe('林颂宜');
+    expect(employee.tagName).not.toBe('INPUT');
+    expect(within(box).getAllByRole('textbox').map((input) => input.id)).toEqual(['new-task-home-city']);
     expect((within(box).getByLabelText('常驻城市') as HTMLInputElement).value).toBe('杭州');
     expect(within(box).getByText('根据网络位置推测，不对可直接改成你的常驻城市。')).toBeTruthy();
     expect(within(box).getByText(/本地市内交通与外地市内交通/)).toBeTruthy();

@@ -5,6 +5,7 @@ import { CreateTaskInputSchema } from '../contract/actions';
 import type { HomeCityDefault, TaskList } from '../contract/task-list';
 import { navigate, taskHash } from '../router';
 import { ConfirmDialog } from '../shell/Dialog';
+import { ReadOnlyFields } from '../shell/ReadOnlyFields';
 
 // 新建报销任务弹层（任务列表页上，`#/tasks/new` 深链也打开它）。任务名称与费用期间由服务端生成，这里只确认报销人与常驻城市。
 // 常驻城市的默认值来自服务端（记住的城市或网络位置候选），页面只照它预填并说明来源，从不自己定位。
@@ -77,7 +78,8 @@ export function NewTaskDialog({ taskList, onClose }: { taskList: TaskList | null
       ) : (
         <form className="app-form" onSubmit={onSubmit} noValidate>
           <p className="app-muted">{NEW_TASK_COPY.lead}</p>
-          <TextInput id="new-task-employee" labelText={NEW_TASK_COPY.employee} value={taskList.employee?.displayName ?? '未确认'} readOnly />
+          {/* 报销人来自已登记的身份，不能在这里改：画成只读字段，不画输入框。 */}
+          <ReadOnlyFields fields={[{ term: NEW_TASK_COPY.employee, value: taskList.employee?.displayName ?? '未确认' }]} />
           <TextInput
             id="new-task-home-city"
             name="homeCity"
@@ -87,7 +89,7 @@ export function NewTaskDialog({ taskList, onClose }: { taskList: TaskList | null
             required
             data-modal-primary-focus
             onChange={(event) => setEdited(event.target.value)}
-            // 表单里还有只读的报销人输入框，浏览器不做隐式提交；回车在这里直接提交。
+            // 回车在这里直接提交，不依赖浏览器的隐式提交（弹层的提交按钮在表单外）。
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
                 event.preventDefault();

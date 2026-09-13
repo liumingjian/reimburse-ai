@@ -80,8 +80,13 @@ describe('任务列表', () => {
     render(<App adapter={createMockAdapter({ seed: null, fault: 'service-disconnected', reconnectAfterMs: 300 })} />);
     expect((await screen.findByRole('alert')).textContent).toContain(SERVICE_DOWN_NOTICE);
     expect(screen.queryByText('2026-08 上海出差（产品评审）')).toBeNull();
+    // 断开期间不能新建；等待恢复以加载指示呈现。
+    expect((screen.getByRole('button', { name: '新建报销任务' }) as HTMLButtonElement).disabled).toBe(true);
+    const waiting = await screen.findByText('正在等待本地服务恢复，恢复后自动加载…');
+    expect(waiting.closest('.cds--inline-loading')).not.toBeNull();
     expect(await screen.findByText('2026-08 上海出差（产品评审）', {}, { timeout: 4000 })).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
+    expect((screen.getByRole('button', { name: '新建报销任务' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   test('作废：还没开始写入报销系统的任务确认后从列表消失；已开始写入的任务「作废」不可用并说明原因', async () => {
