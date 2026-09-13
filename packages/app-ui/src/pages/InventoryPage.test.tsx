@@ -113,7 +113,7 @@ describe('材料盘点', () => {
     fireEvent.click(screen.getByRole('button', { name: /^No\.1-3 / }));
     expect(screen.getByText('打车发票与行程单配对：26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeTruthy();
     // 步骤条的待确认项带数量。
-    expect(within(screen.getByRole('list', { name: '流程阶段' })).getByText('3', { selector: '.count' })).toBeTruthy();
+    expect(within(screen.getByRole('list', { name: '流程阶段' })).getByText('3 项待处理')).toBeTruthy();
   });
 
   test('?fault=unsupported-material：曹操行程单成为不支持的版式，待确认项变成 4 个', async () => {

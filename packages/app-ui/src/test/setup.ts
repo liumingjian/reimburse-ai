@@ -6,6 +6,27 @@ const hasDom = typeof window !== 'undefined';
 if (hasDom) {
   // jsdom 没有实现 scrollTo；页面切换时会调用它。
   window.scrollTo = () => {};
+  // jsdom 没有 matchMedia 与 ResizeObserver；Carbon 的顶栏、弹层与浮层会用到。
+  if (typeof window.matchMedia !== 'function') {
+    window.matchMedia = (query: string) =>
+      ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList;
+  }
+  if (typeof window.ResizeObserver !== 'function') {
+    window.ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+  }
 }
 
 afterEach(async () => {

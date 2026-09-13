@@ -57,7 +57,7 @@ describe('任务列表', () => {
     window.location.hash = '#/tasks';
     render(<App adapter={adapter} />);
     const row = await rowOf('2026-07 深圳客户拜访');
-    expect(within(row).getByText('已转人工').className).toContain('tag-warning');
+    expect(within(row).getByText('已转人工').closest('[data-tone]')?.getAttribute('data-tone')).toBe('warning');
     expect(within(row).queryByText('对账中')).toBeNull();
   });
 
@@ -70,7 +70,7 @@ describe('任务列表', () => {
     window.location.hash = '#/tasks';
     render(<App adapter={adapter} />);
     const row = await rowOf('2026-08 上海出差（产品评审）');
-    expect(within(row).getByText('回读不一致').className).toContain('tag-danger');
+    expect(within(row).getByText('回读不一致').closest('[data-tone]')?.getAttribute('data-tone')).toBe('danger');
     expect(within(row).queryByText('10/10 草稿交接')).toBeNull();
     expect(within(row).getByRole('link', { name: '查看结果' }).getAttribute('href')).toBe('#/task/T1/done');
   });
@@ -78,7 +78,7 @@ describe('任务列表', () => {
   test('service-disconnected：任务列表读不到时显示全页横幅并自动重试，恢复后横幅消失、列表出现', async () => {
     window.location.hash = '#/tasks';
     render(<App adapter={createMockAdapter({ seed: null, fault: 'service-disconnected', reconnectAfterMs: 300 })} />);
-    expect((await screen.findByRole('alert')).textContent).toBe(SERVICE_DOWN_NOTICE);
+    expect((await screen.findByRole('alert')).textContent).toContain(SERVICE_DOWN_NOTICE);
     expect(screen.queryByText('2026-08 上海出差（产品评审）')).toBeNull();
     expect(await screen.findByText('2026-08 上海出差（产品评审）', {}, { timeout: 4000 })).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
@@ -107,16 +107,20 @@ describe('任务列表', () => {
     renderApp('#/tasks');
     const t2 = await rowOf('2026-07 深圳客户拜访');
     const locked = within(t2).getByRole('button', { name: '作废 2026-07 深圳客户拜访' });
-    const tip = document.getElementById(locked.getAttribute('aria-describedby') ?? '');
+    // 提示挂在包着不可用按钮的可聚焦容器上（不可用的按钮收不到悬停与聚焦）。
+    const trigger = locked.closest('[aria-describedby]');
+    expect(trigger?.getAttribute('tabindex')).toBe('0');
+    const tip = document.getElementById(trigger?.getAttribute('aria-describedby') ?? '');
     expect(tip?.getAttribute('role')).toBe('tooltip');
     expect(tip?.textContent).toBe(ABANDON_TASK_COPY.blockedReason);
 
-    const filters = screen.getByRole('group', { name: '按状态筛选' });
-    expect(within(filters).getAllByRole('button').map((button) => button.textContent)).toEqual(['全部 3', '进行中 1', '对账中 1', '已交接 1']);
-    fireEvent.click(within(filters).getByRole('button', { name: '对账中 1' }));
+    const filters = screen.getByRole('tablist', { name: '按状态筛选' });
+    expect(within(filters).getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['全部 3', '进行中 1', '对账中 1', '已交接 1']);
+    fireEvent.click(within(filters).getByRole('tab', { name: '对账中 1' }));
+    expect(within(filters).getByRole('tab', { name: '对账中 1' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.queryByText('2026-08 上海出差（产品评审）')).toBeNull();
     expect(screen.getByText('2026-07 深圳客户拜访')).toBeTruthy();
-    fireEvent.click(within(filters).getByRole('button', { name: '全部 3' }));
+    fireEvent.click(within(filters).getByRole('tab', { name: '全部 3' }));
     fireEvent.change(screen.getByRole('searchbox', { name: '搜索任务名或草稿号' }), { target: { value: 'BX20260702' } });
     expect(screen.getByText('2026-06 北京培训')).toBeTruthy();
     expect(screen.queryByText('2026-07 深圳客户拜访')).toBeNull();
@@ -157,16 +161,11 @@ describe('任务页面骨架', () => {
     renderApp('#/task/T1/upload');
     expect(await screen.findByRole('heading', { name: '上传材料' })).toBeTruthy();
     const stages = screen.getByRole('list', { name: '流程阶段' });
-    expect(within(stages).getAllByRole('listitem').map((item) => item.textContent?.replace(/^\d/, ''))).toEqual([
-      '上传材料',
-      '材料盘点',
-      '待确认项',
-      '项目归属',
-      '整单明细确认',
-      '去打印 / 去报销',
-      '完成',
-    ]);
-    expect(within(stages).getByText('上传材料').closest('a')?.getAttribute('aria-current')).toBe('step');
+    const labels = ['上传材料', '材料盘点', '待确认项', '项目归属', '整单明细确认', '去打印 / 去报销', '完成'];
+    const items = within(stages).getAllByRole('listitem');
+    expect(items).toHaveLength(labels.length);
+    items.forEach((item, index) => expect(item.textContent?.startsWith(labels[index] ?? '?'), labels[index]).toBe(true));
+    expect(within(stages).getByRole('button', { name: /^上传材料/ }).getAttribute('aria-current')).toBe('step');
   });
 
   test('还没有上传材料时不能进入后续页面', async () => {
@@ -184,8 +183,8 @@ describe('任务页面骨架', () => {
     renderApp('#/task/T2/reconcile');
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
     expect(screen.queryByRole('list', { name: '流程阶段' })).toBeNull();
-    const bar = screen.getByText('写入结果待对账。').closest('.stepbar');
-    if (!(bar instanceof HTMLElement)) throw new Error('状态说明不在步骤条里');
+    const bar = screen.getByRole('region', { name: '任务进度' });
+    expect(within(bar).getByText('写入结果待对账。')).toBeTruthy();
     // 10 阶段名只在任务列表徽标上，步骤条不再重复。
     expect(within(bar).queryByText('9/10 保存报销草稿')).toBeNull();
   });

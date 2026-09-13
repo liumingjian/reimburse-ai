@@ -1,6 +1,9 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import { Button, ComposedModal, ModalBody, ModalFooter, ModalHeader } from '@carbon/react';
 
-// 页内二次确认弹层：遮罩用 overlay token，不用 window.confirm。Esc、点遮罩、「取消」都关闭；打开时焦点落到取消按钮。
+// 页内二次确认弹层（Carbon ComposedModal），不用 window.confirm。Esc、点遮罩、关闭按钮与「取消」都关闭；
+// 打开时焦点落到取消按钮（表单弹层传 focusCancel={false}，由带 data-modal-primary-focus 的输入框接住焦点）。
+export const DIALOG_CLOSE_LABEL = '关闭';
 
 export function ConfirmDialog({
   title,
@@ -34,55 +37,40 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  const titleId = useId();
-  const cancelRef = useRef<HTMLButtonElement>(null);
-
-  // 只在打开时落一次焦点（onCancel 变化不再抢焦点）；表单弹层传 focusCancel={false}，由输入框自己 autoFocus。
-  useEffect(() => {
-    if (focusCancel) cancelRef.current?.focus();
-  }, []);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCancel();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onCancel]);
-
+  const primaryFocus = focusCancel ? { 'data-modal-primary-focus': true } : {};
   return (
-    <div className="modal-scrim" onClick={onCancel} data-testid="modal-scrim">
-      <div className={wide ? 'modal modal-wide' : 'modal'} role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={(event) => event.stopPropagation()}>
-        <h2 id={titleId}>{title}</h2>
-        <div className="modal-body">{children}</div>
+    <ComposedModal open size={wide ? 'lg' : 'sm'} aria-label={title} preventCloseOnClickOutside={false} onClose={() => onCancel()}>
+      <ModalHeader title={title} iconDescription={DIALOG_CLOSE_LABEL} />
+      <ModalBody>
+        {children}
         {error ? (
-          <p className="error" role="alert">
+          <p className="app-dialog-error" role="alert">
             {error}
           </p>
         ) : null}
-        <div className="btn-row">
-          {single ? (
-            <button ref={cancelRef} className="btn btn-secondary" type="button" disabled={busy} onClick={onConfirm}>
+      </ModalBody>
+      <ModalFooter>
+        {single ? (
+          <Button kind="secondary" disabled={busy} onClick={onConfirm} {...primaryFocus}>
+            {confirmLabel}
+          </Button>
+        ) : (
+          <>
+            <Button kind="secondary" disabled={busy} onClick={onCancel} {...primaryFocus}>
+              {cancelLabel}
+            </Button>
+            {extraLabel && onExtra ? (
+              <Button kind="secondary" disabled={busy} onClick={onExtra}>
+                {extraLabel}
+              </Button>
+            ) : null}
+            <Button kind="primary" disabled={busy} onClick={onConfirm}>
               {confirmLabel}
-            </button>
-          ) : (
-            <>
-              <button ref={cancelRef} className="btn btn-secondary" type="button" disabled={busy} onClick={onCancel}>
-                {cancelLabel}
-              </button>
-              {extraLabel && onExtra ? (
-                <button className="btn btn-secondary" type="button" disabled={busy} onClick={onExtra}>
-                  {extraLabel}
-                </button>
-              ) : null}
-              <button className="btn btn-primary" type="button" disabled={busy} onClick={onConfirm}>
-                {confirmLabel}
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
+            </Button>
+          </>
+        )}
+      </ModalFooter>
+    </ComposedModal>
   );
 }
 

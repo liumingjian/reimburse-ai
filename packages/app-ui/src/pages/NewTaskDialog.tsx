@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { TextInput } from '@carbon/react';
 import { useAppStore } from '../adapter/context';
 import { CreateTaskInputSchema } from '../contract/actions';
 import type { HomeCityDefault, TaskList } from '../contract/task-list';
@@ -72,24 +73,19 @@ export function NewTaskDialog({ taskList, onClose }: { taskList: TaskList | null
       onCancel={onClose}
     >
       {!taskList ? (
-        <p className="caption loading">{NEW_TASK_COPY.loading}</p>
+        <p className="app-loading">{NEW_TASK_COPY.loading}</p>
       ) : (
-      <form className="new-task-form" onSubmit={onSubmit} noValidate>
-        <p className="lead">{NEW_TASK_COPY.lead}</p>
-        <div className="field">
-          <label htmlFor="new-task-employee">{NEW_TASK_COPY.employee}</label>
-          <input className="input" id="new-task-employee" value={taskList.employee?.displayName ?? '未确认'} readOnly />
-        </div>
-        <div className="field">
-          <label htmlFor="new-task-home-city">{NEW_TASK_COPY.homeCity}</label>
-          <input
-            className="input"
+        <form className="app-form" onSubmit={onSubmit} noValidate>
+          <p className="app-muted">{NEW_TASK_COPY.lead}</p>
+          <TextInput id="new-task-employee" labelText={NEW_TASK_COPY.employee} value={taskList.employee?.displayName ?? '未确认'} readOnly />
+          <TextInput
             id="new-task-home-city"
             name="homeCity"
+            labelText={NEW_TASK_COPY.homeCity}
             value={homeCity}
             placeholder={NEW_TASK_COPY.placeholder}
-            autoFocus
             required
+            data-modal-primary-focus
             onChange={(event) => setEdited(event.target.value)}
             // 表单里还有只读的报销人输入框，浏览器不做隐式提交；回车在这里直接提交。
             onKeyDown={(event) => {
@@ -98,20 +94,12 @@ export function NewTaskDialog({ taskList, onClose }: { taskList: TaskList | null
                 void submit();
               }
             }}
-            aria-invalid={fieldError ? 'true' : undefined}
-            aria-describedby={fieldError ? 'new-task-home-city-error' : 'new-task-home-city-hint'}
+            invalid={fieldError !== null}
+            invalidText={<span role="alert">{fieldError}</span>}
+            helperText={caption}
           />
-          {fieldError ? (
-            <div className="error" id="new-task-home-city-error" role="alert">
-              {fieldError}
-            </div>
-          ) : null}
-          <div className="hint" id="new-task-home-city-hint">
-            {caption}
-          </div>
-        </div>
-        <p className="caption">{NEW_TASK_COPY.explain}</p>
-      </form>
+          <p className="app-caption">{NEW_TASK_COPY.explain}</p>
+        </form>
       )}
     </ConfirmDialog>
   );

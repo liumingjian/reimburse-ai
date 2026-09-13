@@ -1,4 +1,18 @@
 import {
+  Button,
+  InlineNotification,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  Toggletip,
+  ToggletipButton,
+  ToggletipContent,
+} from '@carbon/react';
+import { ChevronDown, Folder, Information, Launch, Printer } from '@carbon/icons-react';
+import {
   CATALOG_MISMATCH_COLUMNS,
   CATALOG_PREPARATION_COPY,
   CONFIRMATION_NO_COLUMN,
@@ -11,14 +25,14 @@ import { STAGE_DEFAULT_PAGE } from '../contract/stage';
 import { formatDateTime } from '../format';
 import { navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
-import { Icon } from '../shell/Icon';
+import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
 import { useReopenUpload } from '../shell/useReopenUpload';
 import { PAGE_COPY, REVIEW_ORDER_NOTE } from './page-copy';
 
 // 整单明细确认页：Skill 的唯一一次整单确认（preparation_confirmation），在项目归属、报销信息核对与材料准备之后。
 // 表格形状照内核 preparationConfirmationTable（next.mjs:513-559）：No. 加 13 列，按服务端给出的 lines[] 顺序（内核分类排序）逐行列出，
-// 无组标题、无合计行，表内不展示文件名、完整发票号与参考材料；材料包文件清单在摘要条里（默认收起，#114 要求），
+// 无组标题、无合计行、不排序，表内不展示文件名、完整发票号与参考材料；材料包文件清单在摘要条里（默认收起，#114 要求），
 // 文件名只出现在这一节，类别名由服务端给出（不用「参考材料」字样）。
 // 只能确认，不在表内修改：有不对的地方回到对应步骤修改。确认绑定项目归属，改派项目会使确认失效（提示由服务端给出）。
 // 提交项目归属后服务端自动做报销信息核对与材料准备（进度照内核话术）：核对不匹配时显示不匹配表，唯一处置是回到项目归属改派；
@@ -40,17 +54,16 @@ const NUMERIC_COLUMNS: ReadonlySet<string> = new Set(['费用金额', '税额', 
 // 项目号与费用项目是「编码 / 名称」一对，折成两行难读：它们按内容定宽不折行，窄窗口时整张表横向滚动。
 const WRAP_COLUMNS: ReadonlySet<string> = new Set(['出发点', '目的地', '费用分类']);
 
-// 金额列右对齐；表比容器宽时整张表横向滚动，No. 固定在左、总额固定在右（DESIGN.md「数据表格」）。
+// 金额列右对齐；表比容器宽时整张表横向滚动，No. 固定在左、总额固定在右。
 const STICKY_END_COLUMN = CONFIRMATION_TABLE_COLUMNS[CONFIRMATION_TABLE_COLUMNS.length - 1];
 function columnClass(label: string): string {
-  return [NUMERIC_COLUMNS.has(label) ? 'num' : WRAP_COLUMNS.has(label) ? 'wrap' : 'nowrap', label === STICKY_END_COLUMN ? 'sticky-end gross' : '']
+  return [NUMERIC_COLUMNS.has(label) ? 'app-num' : WRAP_COLUMNS.has(label) ? 'app-wrap' : 'app-nowrap', label === STICKY_END_COLUMN ? 'app-sticky-end app-gross' : '']
     .filter(Boolean)
     .join(' ');
 }
 
-function headClass(label: string): string | undefined {
-  const classes = [NUMERIC_COLUMNS.has(label) ? 'num' : '', label === STICKY_END_COLUMN ? 'sticky-end' : '', label.includes('/') ? 'wrap-head' : ''].filter(Boolean);
-  return classes.length > 0 ? classes.join(' ') : undefined;
+function headClass(label: string): string {
+  return [NUMERIC_COLUMNS.has(label) ? 'app-num' : '', label === STICKY_END_COLUMN ? 'app-sticky-end' : '', label.includes('/') ? 'app-wrap-head' : ''].filter(Boolean).join(' ');
 }
 
 // 表头「住宿地/城市」比内容宽：窗口紧时在「/」后换成两行，宽时仍是一行。
@@ -95,7 +108,7 @@ function CellText({ cell }: { cell: Cell }) {
   if (!cell.code) return <>{cell.text}</>;
   return (
     <>
-      <span className="item-code">{`${cell.code} /`}</span> {cell.name}
+      <span className="app-item-code">{`${cell.code} /`}</span> {cell.name}
     </>
   );
 }
@@ -131,59 +144,57 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>{copy.title}</h1>
-          <p className="lead">{copy.lead}</p>
-          <details className="explain">
-            <summary>说明</summary>
+      <PageHeader title={copy.title} lead={copy.lead}>
+        <Toggletip align="bottom">
+          <ToggletipButton label="说明">
+            <Information />
+          </ToggletipButton>
+          <ToggletipContent>
             <p data-testid="confirm-only">
               整单明细只能确认，不能在表里修改。有不对的地方，请回到对应的步骤修改：项目号或报销事由回到项目归属，明细内容回到待确认项。
             </p>
-          </details>
-        </div>
-      </div>
+          </ToggletipContent>
+        </Toggletip>
+      </PageHeader>
 
       {confirmation.status === 'invalidated' && confirmation.notice ? (
-        <div className="notice notice-warn" role="status">
-          {confirmation.notice}
-        </div>
+        <InlineNotification className="app-notice-block" kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={confirmation.notice} />
       ) : null}
 
       {/* 摘要条：数字全部来自快照（服务端给出的条数、张数与价税合计），页面不计算。材料包清单默认收起。 */}
-      <div className="summary bleed" role="group" aria-label="确认摘要">
-        <div className="summary-field grow" data-testid="review-purpose">
-          <span className="k">报销事由</span>
-          <span className="v">{purpose ?? '未填写'}</span>
+      <div className="app-summary bleed" role="group" aria-label="确认摘要">
+        <div className="app-summary-field app-grow" data-testid="review-purpose">
+          <span className="app-summary-key">报销事由</span>
+          <span className="app-summary-value">{purpose ?? '未填写'}</span>
         </div>
         {confirmation.lineCount > 0 ? (
-          <div className="summary-field">
-            <span className="k">明细</span>
-            <span className="v">{confirmation.lineCount} 条</span>
+          <div className="app-summary-field">
+            <span className="app-summary-key">明细</span>
+            <span className="app-summary-value">{confirmation.lineCount} 条</span>
           </div>
         ) : null}
         {confirmation.invoiceCount > 0 ? (
-          <div className="summary-field">
-            <span className="k">发票</span>
-            <span className="v">{confirmation.invoiceCount} 张</span>
+          <div className="app-summary-field">
+            <span className="app-summary-key">发票</span>
+            <span className="app-summary-value">{confirmation.invoiceCount} 张</span>
           </div>
         ) : null}
         {packageFiles.length > 0 ? (
-          <section className="summary-field pkg" aria-label="材料包">
-            <details className="pkg-disclosure">
+          <section className="app-summary-field" aria-label="材料包">
+            <details className="app-pkg">
               <summary>
-                <Icon name="folder" />
+                <Folder />
                 材料包 {packageFiles.length} 份文件
-                <Icon name="chevron--down" className="chev" />
+                <ChevronDown className="app-chevron" />
               </summary>
-              <div className="pkg-panel">
-                <p className="caption" data-testid="package-files">
+              <div className="app-pkg-panel">
+                <p className="app-caption" data-testid="package-files">
                   {CATALOG_PREPARATION_COPY.packageReady(packageFiles.length)}
                 </p>
-                <ul className="package-files" aria-label="材料包文件">
+                <ul className="app-pkg-files" aria-label="材料包文件">
                   {packageFiles.map((file) => (
                     <li key={file.path}>
-                      <span className="caption">{file.kindLabel}</span> <span className="file-name">{file.path}</span>
+                      <span className="app-caption">{file.kindLabel}</span> <span>{file.path}</span>
                     </li>
                   ))}
                 </ul>
@@ -192,214 +203,209 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
           </section>
         ) : null}
         {confirmation.grossTotal ? (
-          <div className="summary-field total">
-            <span className="k">价税合计</span>
-            <span className="v num">{confirmation.grossTotal}</span>
+          <div className="app-summary-field app-summary-total">
+            <span className="app-summary-key">价税合计</span>
+            <span className="app-summary-value">{confirmation.grossTotal}</span>
           </div>
         ) : null}
       </div>
 
-      <div className="table-scroll bleed">
-        <table className="data confirm" aria-label="整单明细">
-          <thead>
-            <tr>
-              <th className="sticky-start">{CONFIRMATION_NO_COLUMN}</th>
+      <div className="bleed app-table app-review-table">
+        <Table aria-label="整单明细" size="md">
+          <TableHead>
+            <TableRow>
+              <TableHeader className="app-sticky-start">{CONFIRMATION_NO_COLUMN}</TableHeader>
               {CONFIRMATION_TABLE_COLUMNS.map((label) => (
-                <th key={label} className={headClass(label)}>
+                <TableHeader key={label} className={headClass(label)}>
                   {headLabel(label)}
-                </th>
+                </TableHeader>
               ))}
-            </tr>
-          </thead>
-          <tbody>
+            </TableRow>
+          </TableHead>
+          <TableBody>
             {snapshot.lines.map((line, row) => {
               // 同一分类里与上一行相同的文字单元格变淡（值照常在）；金额列不变淡。
               const previous = snapshot.lines[row - 1];
               const above = previous && previous.category.code === line.category.code ? cellsOf(previous) : null;
               return (
-                <tr key={line.lineId} data-testid={`confirm-row-${line.no}`}>
-                  <td className="no sticky-start">{line.no}</td>
+                <TableRow key={line.lineId} data-testid={`confirm-row-${line.no}`}>
+                  <TableCell className="app-no app-sticky-start">{line.no}</TableCell>
                   {cellsOf(line).map((cell, index) => {
                     const label = CONFIRMATION_TABLE_COLUMNS[index] ?? '';
                     const same = cell.text !== '' && !NUMERIC_COLUMNS.has(label) && above?.[index]?.text === cell.text;
                     return (
-                      <td key={label} className={same ? `${columnClass(label)} same-above` : columnClass(label)}>
+                      <TableCell key={label} className={same ? `${columnClass(label)} app-same-above` : columnClass(label)}>
                         <CellText cell={cell} />
-                      </td>
+                      </TableCell>
                     );
                   })}
-                </tr>
+                </TableRow>
               );
             })}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
-      <p className="table-note">
-        <Icon name="information" />
+      <p className="app-table-note">
+        <Information />
         {REVIEW_ORDER_NOTE}颜色变淡的格子与上一行相同。
       </p>
 
       {catalogMismatch ? (
-        <section className="block" aria-label="报销信息核对">
-          <div className="notice notice-err" role="alert">
-            {CATALOG_PREPARATION_COPY.catalogMismatch}
-            {!erpStarted ? (
-              <div className="btn-row">
-                <a className="btn btn-secondary btn-sm" href={taskHash(taskId, 'project')}>
-                  回到项目归属改派
-                </a>
-              </div>
-            ) : null}
-          </div>
-          <div className="table-scroll bleed">
-            <table className="data" aria-label="不匹配项">
-              <thead>
-                <tr>
+        <section className="app-block" aria-label="报销信息核对">
+          <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={CATALOG_PREPARATION_COPY.catalogMismatch} />
+          {!erpStarted ? (
+            <div className="app-btn-row app-block-row">
+              <Button kind="tertiary" size="sm" href={taskHash(taskId, 'project')}>
+                回到项目归属改派
+              </Button>
+            </div>
+          ) : null}
+          <div className="bleed app-table">
+            <Table aria-label="不匹配项">
+              <TableHead>
+                <TableRow>
                   {CATALOG_MISMATCH_COLUMNS.map((label) => (
-                    <th key={label}>{label}</th>
+                    <TableHeader key={label}>{label}</TableHeader>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
+                </TableRow>
+              </TableHead>
+              <TableBody>
                 {catalog.problems.map((problem, index) => (
-                  <tr key={`${problem.subject}-${index}`}>
-                    <td className="nowrap">{index + 1}</td>
-                    <td>{problem.subject}</td>
-                    <td>{problem.reference ?? ''}</td>
-                    <td>{problem.reason}</td>
-                    <td className="nowrap">{problem.resolver}</td>
-                  </tr>
+                  <TableRow key={`${problem.subject}-${index}`}>
+                    <TableCell className="app-nowrap">{index + 1}</TableCell>
+                    <TableCell>{problem.subject}</TableCell>
+                    <TableCell>{problem.reference ?? ''}</TableCell>
+                    <TableCell>{problem.reason}</TableCell>
+                    <TableCell className="app-nowrap">{problem.resolver}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         </section>
       ) : null}
 
       {preparationBlocked ? (
-        <section className="block" aria-label="材料包缺项">
-          <div className="notice notice-warn" role="alert">
-            {CATALOG_PREPARATION_COPY.preparationBlocked}
-          </div>
-          <div className="table-scroll bleed">
-            <table className="data" aria-label="准备缺项">
-              <thead>
-                <tr>
+        <section className="app-block" aria-label="材料包缺项">
+          <InlineNotification kind="warning" role="alert" lowContrast hideCloseButton statusIconDescription="注意" title={CATALOG_PREPARATION_COPY.preparationBlocked} />
+          <div className="bleed app-table">
+            <Table aria-label="准备缺项">
+              <TableHead>
+                <TableRow>
                   {PREPARATION_PROBLEM_COLUMNS.map((label) => (
-                    <th key={label}>{label}</th>
+                    <TableHeader key={label}>{label}</TableHeader>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
+                </TableRow>
+              </TableHead>
+              <TableBody>
                 {preparation.problems.map((problem, index) => (
-                  <tr key={problem.problemId}>
-                    <td className="nowrap">{index + 1}</td>
-                    <td>{problem.missing}</td>
-                    <td>{problem.subject}</td>
-                    <td className="nowrap">{problem.resolver}</td>
-                  </tr>
+                  <TableRow key={problem.problemId}>
+                    <TableCell className="app-nowrap">{index + 1}</TableCell>
+                    <TableCell>{problem.missing}</TableCell>
+                    <TableCell>{problem.subject}</TableCell>
+                    <TableCell className="app-nowrap">{problem.resolver}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
-          <div className="btn-row block-actions">
+          <div className="app-btn-row app-block-actions">
             {preparation.problems.map((problem) =>
               problem.excludableMaterialId ? (
-                <button
+                <Button
                   key={problem.problemId}
-                  className="btn btn-secondary btn-sm"
-                  type="button"
+                  kind="secondary"
+                  size="sm"
                   disabled={excludeAction.busy || step.kind !== 'resolve_preparation'}
                   onClick={() => void exclude(problem.excludableMaterialId ?? '')}
                 >
                   排除 {problem.subject}
-                </button>
+                </Button>
               ) : null,
             )}
-            <span className="caption">排除后这份材料不关联明细、也不进入材料包，系统会重新准备核对材料。</span>
+            <span className="app-caption">排除后这份材料不关联明细、也不进入材料包，系统会重新准备核对材料。</span>
           </div>
           <ActionError message={excludeAction.error} />
         </section>
       ) : null}
 
       {confirmed ? (
-        <section className="block confirmed-block" aria-label="整单确认">
-          <div className="notice notice-ok" role="status">
-            整单明细已确认{confirmation.confirmedAt ? `（${formatDateTime(confirmation.confirmedAt)}）` : ''}。下面两个按钮基于同一份确认数据，先后随意、可重复。
-          </div>
-          <div className="two-actions bleed">
-            <div className="action-card">
+        <section className="app-block" aria-label="整单确认">
+          <InlineNotification
+            kind="success"
+            role="status"
+            lowContrast
+            hideCloseButton
+            statusIconDescription="成功"
+            title={`整单明细已确认${confirmation.confirmedAt ? `（${formatDateTime(confirmation.confirmedAt)}）` : ''}。下面两个按钮基于同一份确认数据，先后随意、可重复。`}
+          />
+          <div className="app-two-actions bleed">
+            <div className="app-action-card">
               <h3>去打印</h3>
               <p>生成合并 PDF：每张发票一页 A4，发票在上、证明材料在下。住宿发票的支付截图在打印稿页补充。</p>
-              <a className="btn btn-primary btn-lg" href={taskHash(taskId, 'print')}>
-                <Icon name="printer" />
+              <Button href={taskHash(taskId, 'print')} renderIcon={Printer}>
                 去打印
-              </a>
+              </Button>
             </div>
-            <div className="action-card">
+            <div className="app-action-card">
               <h3>去报销</h3>
               <p>
                 启动专用浏览器，你登录报销系统后自动导入发票、写入 {confirmation.lineCount} 行明细、保存草稿并严格回读，中途不再确认。
                 {erpDone && erp.draftNo ? `已完成，草稿 ${erp.draftNo}。` : ''}
               </p>
               {erpDone ? (
-                <a className="btn btn-primary btn-lg" href={taskHash(taskId, 'done')}>
-                  查看结果
-                </a>
+                <Button href={taskHash(taskId, 'done')}>查看结果</Button>
               ) : erpStarted ? (
-                <a className="btn btn-primary btn-lg" href={taskHash(taskId, STAGE_DEFAULT_PAGE[stage])}>
-                  查看填报进度
-                </a>
+                <Button href={taskHash(taskId, STAGE_DEFAULT_PAGE[stage])}>查看填报进度</Button>
               ) : (
-                <button className="btn btn-primary btn-lg" type="button" disabled={claimAction.busy} onClick={() => void claim()}>
-                  <Icon name="launch" />
+                <Button renderIcon={Launch} disabled={claimAction.busy} onClick={() => void claim()}>
                   去报销
-                </button>
+                </Button>
               )}
               <ActionError message={claimAction.error} />
             </div>
           </div>
-          <div className="btn-row after-actions">
+          <div className="app-btn-row app-after-actions">
             {!erpStarted ? (
-              <a className="btn btn-tertiary btn-sm" href={taskHash(taskId, 'project')}>
+              <Button kind="ghost" size="sm" href={taskHash(taskId, 'project')}>
                 修改项目归属
-              </a>
+              </Button>
             ) : null}
-            <span className="caption">项目归属随整单确认一起生效，改派项目会使确认失效。</span>
+            <span className="app-caption">项目归属随整单确认一起生效，改派项目会使确认失效。</span>
           </div>
-          <div className="btn-row after-actions">
-            <button className="btn btn-tertiary btn-sm" type="button" disabled={erpStarted} onClick={reopen.open}>
+          <div className="app-btn-row app-after-actions">
+            <Button kind="ghost" size="sm" disabled={erpStarted} onClick={reopen.open}>
               追加材料
-            </button>
-            <span className="caption">追加材料会形成新的盘点版本，并使这次确认失效。</span>
+            </Button>
+            <span className="app-caption">追加材料会形成新的盘点版本，并使这次确认失效。</span>
           </div>
         </section>
       ) : (
-        // 吸底操作栏：横跨整张工作面、贴在工作面底边；左边一句后果说明，右边按钮，「确认」是唯一的主按钮、在最右。
-        <section className="action-bar bleed" aria-label="整单确认">
+        // 吸底操作栏：横跨整个工作区、贴在视口底边；左边一句后果说明，右边按钮，「确认」是唯一的主按钮、在最右。
+        <section className="app-action-bar" aria-label="整单确认">
           {autoNotice ? (
-            <p className="consequence loading" role="status">
+            <p className="app-consequence" role="status">
               {autoNotice}
             </p>
           ) : (
-            <p className="consequence">
-              <Icon name="information" />
+            <p className="app-consequence">
+              <Information />
               <strong>确认后项目归属一并生效</strong>
             </p>
           )}
           {!erpStarted ? (
-            <a className="btn btn-tertiary" href={taskHash(taskId, 'project')}>
+            <Button kind="ghost" size="md" href={taskHash(taskId, 'project')}>
               修改项目归属
-            </a>
+            </Button>
           ) : null}
           {!autoNotice ? (
             <>
-              <a className="btn btn-secondary" href={taskHash(taskId, 'pending')}>
+              <Button kind="secondary" size="md" href={taskHash(taskId, 'pending')}>
                 回到待确认项
-              </a>
-              <button className="btn btn-primary" type="button" disabled={confirmDisabled} onClick={() => void confirm()}>
+              </Button>
+              <Button kind="primary" size="md" disabled={confirmDisabled} onClick={() => void confirm()}>
                 确认
-              </button>
+              </Button>
             </>
           ) : null}
           <ActionError message={confirmAction.error} />

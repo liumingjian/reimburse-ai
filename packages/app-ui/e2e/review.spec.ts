@@ -66,8 +66,8 @@ test('确认：?seed=review 是 No. 加内核 13 列，按费用分类排序；�
   await expect(claimButton(page)).toBeVisible();
   await expect(page.getByText(/^整单明细已确认（/)).toBeVisible();
   // 两个入口同级样式、并排。
-  await expect(printLink(page)).toHaveClass(/btn-primary/);
-  await expect(claimButton(page)).toHaveClass(/btn-primary/);
+  await expect(printLink(page)).toHaveClass(/cds--btn--primary/);
+  await expect(claimButton(page)).toHaveClass(/cds--btn--primary/);
   const [a, b] = await Promise.all([printLink(page).boundingBox(), claimButton(page).boundingBox()]);
   expect(a && b && Math.abs(a.y - b.y) < 2 && a.x < b.x).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('review-confirmed.png'), fullPage: true });
@@ -172,7 +172,9 @@ test('分岔入口：?seed=actions 下去打印进入打印稿预览，去报销
   await expect(page.getByRole('button', { name: '开始填报' })).toHaveCount(0);
   await expect(page.getByRole('region', { name: '填报进度' }).getByRole('listitem', { name: '登录', exact: true })).toContainText('等待你操作');
   // 步骤条里「去打印 / 去报销」已经可进入。
-  await expect(page.getByRole('list', { name: '流程阶段' }).getByRole('link', { name: /去打印 \/ 去报销/ })).toBeVisible();
+  const actionsStep = page.getByRole('list', { name: '流程阶段' }).getByRole('button', { name: /^去打印 \/ 去报销/ });
+  await expect(actionsStep).toBeVisible();
+  await expect(actionsStep).not.toHaveAttribute('aria-disabled', 'true');
 });
 
 test('确认后改派项目：确认失效并提示重新确认，重新确认后两个入口回来', async ({ page }, testInfo) => {

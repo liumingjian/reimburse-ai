@@ -1,55 +1,50 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// 步骤条：任务页工作面顶部一行横排的 7 步（没有侧栏），工作面铺满宽度。
+// 步骤条：任务页工作区顶部一条，Carbon progress indicator 横排 7 步（没有侧栏），工作区铺满宽度。
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
-const ACCENT = 'rgb(94, 106, 210)';
+const LABELS = ['上传材料', '材料盘点', '待确认项', '项目归属', '整单明细确认', '去打印 / 去报销', '完成'];
 
-async function stepBoxes(page: Page) {
-  const items = page.getByRole('list', { name: '流程阶段' }).locator('.stepbar-step');
-  const count = await items.count();
-  const boxes = [];
-  for (let index = 0; index < count; index += 1) {
-    const box = await items.nth(index).boundingBox();
-    if (!box) throw new Error('步骤不可见');
-    boxes.push(box);
-  }
-  return boxes;
-}
+const stages = (page: Page) => page.getByRole('list', { name: '流程阶段' });
+const bar = (page: Page) => page.getByRole('region', { name: '任务进度' });
+const step = (page: Page, label: string) => stages(page).getByRole('button', { name: new RegExp(`^${label.replace(/[/]/g, '\\/')}`) });
 
 for (const [width, height] of [
   [1440, 900],
   [1100, 800],
 ] as const) {
-  test(`${width}px：7 步横排在一行、标签不折行、步骤条不横向滚动；没有侧栏，工作面铺满宽度`, async ({ page }) => {
+  test(`${width}px：7 步横排在一行、标签不折行、步骤条不横向滚动；没有侧栏，工作区铺满宽度`, async ({ page }) => {
     await page.setViewportSize({ width, height });
     await page.goto(open('?seed=review', '#/task/T1/review'));
     await expect(page.getByRole('heading', { name: '整单明细确认', level: 1 })).toBeVisible();
     await expect(page.locator('aside')).toHaveCount(0);
     await expect(page.getByRole('button', { name: /侧栏/ })).toHaveCount(0);
 
-    const boxes = await stepBoxes(page);
-    expect(boxes).toHaveLength(7);
-    const first = boxes[0];
-    if (!first) throw new Error('没有步骤');
-    for (const box of boxes) {
-      // 同一行，且每步只有一行高（不折行）。
-      expect(Math.abs(box.y - first.y)).toBeLessThan(2);
-      expect(Math.abs(box.height - first.height)).toBeLessThan(2);
+    const labels = [];
+    for (const label of LABELS) {
+      const box = await stages(page).getByText(label, { exact: true }).boundingBox();
+      if (!box) throw new Error(`步骤「${label}」不可见`);
+      labels.push(box);
     }
-    for (let index = 1; index < boxes.length; index += 1) {
-      const previous = boxes[index - 1];
-      const box = boxes[index];
+    const first = labels[0];
+    if (!first) throw new Error('没有步骤');
+    for (const box of labels) {
+      // 同一行，且每个标签只有一行高（不折行）。
+      expect(Math.abs(box.y - first.y)).toBeLessThan(2);
+      expect(box.height).toBeLessThan(24);
+    }
+    for (let index = 1; index < labels.length; index += 1) {
+      const previous = labels[index - 1];
+      const box = labels[index];
       if (previous && box) expect(box.x).toBeGreaterThan(previous.x + previous.width);
     }
-    const bar = page.locator('.stepbar');
-    const [scrollWidth, clientWidth] = await bar.evaluate((element) => [element.scrollWidth, element.clientWidth]);
+    const [scrollWidth, clientWidth] = await bar(page).evaluate((element) => [element.scrollWidth, element.clientWidth]);
     expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
-    const lastLabel = page.getByRole('list', { name: '流程阶段' }).locator('.stepbar-label').last();
-    const [labelBox, barBox] = await Promise.all([lastLabel.boundingBox(), bar.boundingBox()]);
-    expect(labelBox && barBox && labelBox.x + labelBox.width <= barBox.x + barBox.width).toBe(true);
+    const barBox = await bar(page).boundingBox();
+    const last = labels[labels.length - 1];
+    expect(last && barBox && last.x + last.width <= barBox.x + barBox.width).toBe(true);
 
-    // 工作面只留框架缝：宽度接近窗口宽。
+    // 工作区铺满宽度。
     const mainBox = await page.locator('main').boundingBox();
     expect(mainBox && mainBox.width > width - 24).toBe(true);
     // 步骤条在页面标题之上。
@@ -58,47 +53,41 @@ for (const [width, height] of [
   });
 }
 
-test('样式：已完成是强调色细圈里的勾、后面的连线是强调色；当前是强调色实心圆、标签 600；未到是三级灰', async ({ page }) => {
+test('Carbon Gray 10 原样：背景 #f4f4f4、主按钮 #0f62fe 直角；系统字体，没有 IBM Plex；步骤状态文字是中文', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(open('?seed=review', '#/task/T1/review'));
-  const stages = page.getByRole('list', { name: '流程阶段' });
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(244, 244, 244)');
+  const fontFamily = await page.locator('body').evaluate((element) => getComputedStyle(element).fontFamily);
+  expect(fontFamily).toContain('PingFang SC');
+  expect(fontFamily).not.toContain('Plex');
+  const confirm = page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认', exact: true });
+  await expect(confirm).toHaveCSS('background-color', 'rgb(15, 98, 254)');
+  await expect(confirm).toHaveCSS('border-top-left-radius', '0px');
 
-  const current = stages.getByRole('link', { name: '整单明细确认' });
-  await expect(current).toHaveAttribute('aria-current', 'step');
-  await expect(current).toHaveCSS('font-weight', '600');
-  await expect(current.locator('.stepbar-marker')).toHaveCSS('background-color', ACCENT);
-  await expect(current.locator('.stepbar-marker')).toHaveCSS('color', 'rgb(255, 255, 255)');
-
-  const done = stages.getByRole('link', { name: '上传材料' });
-  await expect(done.locator('.stepbar-marker svg')).toHaveCount(1);
-  await expect(done.locator('.stepbar-marker')).toHaveCSS('border-top-color', ACCENT);
-  const doneConnector = await stages.locator('li').first().evaluate((element) => getComputedStyle(element, '::after').backgroundColor);
-  expect(doneConnector).toBe(ACCENT);
-
-  const locked = stages.getByRole('button', { name: '去打印 / 去报销' });
-  await expect(locked).toHaveAttribute('aria-disabled', 'true');
-  await expect(locked).toHaveCSS('color', 'rgb(177, 181, 189)');
-  await expect(locked.locator('svg')).toHaveCount(0);
-  const lockedConnector = await stages.locator('li').nth(5).evaluate((element) => getComputedStyle(element, '::after').backgroundColor);
-  expect(lockedConnector).not.toBe(ACCENT);
-  await expect(page.locator('main')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(step(page, '整单明细确认')).toHaveAttribute('aria-current', 'step');
+  await expect(step(page, '整单明细确认')).toContainText('当前');
+  await expect(step(page, '上传材料')).toContainText('已完成');
+  await expect(step(page, '去打印 / 去报销')).toHaveAttribute('aria-disabled', 'true');
+  await expect(step(page, '去打印 / 去报销')).toContainText('未开放');
+  // 已到的步骤可点：进入对应页面。
+  await step(page, '项目归属').click();
+  await expect(page).toHaveURL(/#\/task\/T1\/project$/);
 });
 
 test('被守卫拦下时对应步骤不显示为当前；点未到的步骤出现一句说明', async ({ page }) => {
   await page.goto(open('?seed=inventory', '#/task/T1/review'));
   await expect(page.getByRole('heading', { name: '还不能进入这一步', level: 1 })).toBeVisible();
-  const stages = page.getByRole('list', { name: '流程阶段' });
-  await expect(stages.locator('[aria-current="step"]')).toHaveCount(0);
-  // 未到的步骤带 aria-disabled，仍可点出说明。
-  await stages.getByRole('button', { name: '整单明细确认' }).click({ force: true });
+  await expect(stages(page).locator('[aria-current="step"]')).toHaveCount(0);
+  // 未到的步骤带 aria-disabled（Playwright 视为不可用），仍可点出说明。
+  await step(page, '整单明细确认').click({ force: true });
   await expect(page.getByRole('status').filter({ hasText: '阶段不可跳过，请按顺序完成。' })).toBeVisible();
+  await expect(page).toHaveURL(/#\/task\/T1\/review$/);
 });
 
 test('对账中的任务：步骤条是任务名加状态标签与说明，不列步骤', async ({ page }) => {
   await page.goto(open('', '#/task/T2/reconcile'));
   await expect(page.getByRole('heading', { name: '对账', level: 1 })).toBeVisible();
-  const bar = page.locator('.stepbar');
-  await expect(bar).toContainText('写入结果待对账。');
-  await expect(bar.locator('.tag-warning')).toBeVisible();
-  await expect(page.getByRole('list', { name: '流程阶段' })).toHaveCount(0);
+  await expect(bar(page)).toContainText('写入结果待对账。');
+  await expect(bar(page).getByText('对账中', { exact: true })).toBeVisible();
+  await expect(stages(page)).toHaveCount(0);
 });

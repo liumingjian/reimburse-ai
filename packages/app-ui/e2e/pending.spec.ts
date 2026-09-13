@@ -75,7 +75,7 @@ test('补填与排除：全部处理完显示没有待确认项了，并能进�
   await expect(page).toHaveURL(/#\/task\/T1\/project$/);
   await expect(page.getByRole('heading', { name: '项目归属' })).toBeVisible();
   // 盘点页的入口也变成进入项目归属。
-  await page.getByRole('link', { name: '材料盘点' }).click();
+  await page.getByRole('list', { name: '流程阶段' }).getByRole('button', { name: /^材料盘点/ }).click();
   await expect(page.getByRole('link', { name: '进入项目归属' })).toBeVisible();
 });
 

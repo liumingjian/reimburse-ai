@@ -47,7 +47,13 @@ export function ProjectBookPanel({ primaryIntake = true, autoFocus = false }: { 
         >
           <div className="field">
             <label htmlFor="project-number">{PROJECT_BOOK_COPY.numberLabel}</label>
-            <input id="project-number" className="input code" autoComplete="off" autoFocus={autoFocus} value={number} onChange={(event) => setNumber(event.target.value)} />
+            <input
+              id="project-number"
+              className="input code"
+              autoComplete="off"
+              autoFocus={autoFocus}
+              {...(autoFocus ? { 'data-modal-primary-focus': true } : {})}
+              value={number} onChange={(event) => setNumber(event.target.value)} />
           </div>
           <button className={primaryIntake ? 'btn btn-primary' : 'btn btn-secondary'} type="submit" disabled={busy || number.trim() === ''}>
             <Icon name="add" />

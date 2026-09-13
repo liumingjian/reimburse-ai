@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { createHttpAdapter } from './adapter/http-adapter';
 import type { AppAdapter } from './contract/adapter';
+import './styles/carbon.scss';
 import './styles/tokens.css';
 import './styles/app.css';
 

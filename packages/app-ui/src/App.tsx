@@ -1,4 +1,5 @@
 import { useEffect, useMemo, type ReactNode } from 'react';
+import { FeatureFlags } from '@carbon/react';
 import { AppProvider, useTaskList } from './adapter/context';
 import { AppStore } from './adapter/store';
 import type { AppAdapter } from './contract/adapter';
@@ -73,11 +74,14 @@ function StartupGate({ children }: { children: ReactNode }) {
 
 export function App({ adapter }: { adapter: AppAdapter }) {
   const store = useMemo(() => new AppStore(adapter, { validate: VALIDATE_SNAPSHOTS }), [adapter]);
+  // Carbon 弹层默认用两个写着英文「Focus sentinel」的隐藏元素兜住焦点；打开这个开关改用不带哨兵元素的焦点循环。
   return (
-    <AppProvider store={store}>
-      <StartupGate>
-        <Routes />
-      </StartupGate>
-    </AppProvider>
+    <FeatureFlags enableFocusWrapWithoutSentinels>
+      <AppProvider store={store}>
+        <StartupGate>
+          <Routes />
+        </StartupGate>
+      </AppProvider>
+    </FeatureFlags>
   );
 }

@@ -32,7 +32,8 @@ test('新建报销任务是任务列表上的弹层：预填网络位置候选�
 
   await box.getByLabel('常驻城市').fill('');
   await box.getByRole('button', { name: '创建并上传材料' }).click();
-  await expect(box.getByRole('alert')).toHaveText('请填写常驻城市。');
+  // Carbon 输入框自带空的 role="alert" 字数提示，按文字取错误提示。
+  await expect(box.getByRole('alert').filter({ hasText: '请填写常驻城市。' })).toHaveText('请填写常驻城市。');
   await expect(page).toHaveURL(/#\/tasks\/new$/);
 
   await box.getByRole('button', { name: '取消' }).click();

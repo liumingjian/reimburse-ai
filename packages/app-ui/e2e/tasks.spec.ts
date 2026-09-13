@@ -110,6 +110,7 @@ test('窄窗口：任务表不挤压列宽而是横向滚动，任务名固定�
   expect(continueBox && continueBox.height < 40).toBe(true);
 
   await page.setViewportSize({ width: 1440, height: 900 });
-  await row.locator('.has-tip').hover();
+  // 不可用的按钮不接鼠标事件，悬停落在包着它的可聚焦容器上。
+  await row.getByRole('button', { name: '作废 2026-07 深圳客户拜访' }).locator('xpath=..').hover();
   await expect(page.getByRole('tooltip').filter({ hasText: '不能作废' }).first()).toBeVisible();
 });

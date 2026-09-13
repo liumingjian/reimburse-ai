@@ -7,6 +7,9 @@ import { defineConfig, type Plugin } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 
 const packageRoot = fileURLToPath(new URL('.', import.meta.url));
+// Carbon 的 Sass 包之间互相 @use（@carbon/styles → @carbon/type、@carbon/themes …）。pnpm 默认不把它们提升到包目录，
+// 让 Sass 也能从工作区根的 .pnpm/node_modules（pnpm 的隐藏提升目录）找到它们。
+const SASS_LOAD_PATHS = [resolve(packageRoot, 'node_modules'), resolve(packageRoot, '../../node_modules/.pnpm/node_modules')];
 const FIXTURES_SOURCE = resolve(packageRoot, 'fixtures/generated');
 const FIXTURES_PUBLIC_PATH = '/fixtures/';
 // 示例原件文件名 → 业务文件名的对照表（唯一来源；mock 的 PROFILES 与它一致，见 src/mock/fixtures/inventory.test.ts）。
@@ -67,6 +70,11 @@ export default defineConfig(({ mode }) => {
   return {
     base: './',
     plugins: [react(), ...(mock ? [viteSingleFile(), mockFixtures()] : [])],
+    css: {
+      preprocessorOptions: {
+        scss: { loadPaths: SASS_LOAD_PATHS, quietDeps: true, silenceDeprecations: ['import', 'global-builtin'] },
+      },
+    },
     build: {
       outDir: mock ? 'dist-mock' : 'dist',
       emptyOutDir: true,

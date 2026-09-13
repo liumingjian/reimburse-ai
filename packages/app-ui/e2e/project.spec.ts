@@ -76,7 +76,8 @@ test('冲突：取消不改变归属，只处理未归属只动未归属的明�
   await expect(projectOf(page, 1)).toHaveText('P-2307 · 华东客户交付');
 
   await selectConflict(page);
-  await expect(conflictDialog(page).getByRole('button')).toHaveText(['取消', '只处理未归属', '确认覆盖']);
+  // 只看有文字的按钮（Carbon 弹层右上角的关闭按钮只有图标与「关闭」读屏名）。
+  await expect(conflictDialog(page).getByRole('button').filter({ hasText: /\S/ })).toHaveText(['取消', '只处理未归属', '确认覆盖']);
   await page.screenshot({ path: testInfo.outputPath('project-conflict.png'), fullPage: true });
   await conflictDialog(page).getByRole('button', { name: '取消' }).click();
   await expect(conflictDialog(page)).toHaveCount(0);

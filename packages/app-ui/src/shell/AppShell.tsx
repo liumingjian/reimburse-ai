@@ -1,58 +1,66 @@
 import type { ReactNode } from 'react';
+import { Header, HeaderGlobalBar, HeaderMenuItem, HeaderName, HeaderNavigation, InlineNotification, Tag } from '@carbon/react';
+import { UserAvatar } from '@carbon/icons-react';
 import { useAppState, useTaskList } from '../adapter/context';
 import { IS_MOCK } from '../env';
 import { PROJECTS_HASH, SETTINGS_HASH, TASKS_HASH } from '../router';
 
 export const SERVICE_DOWN_NOTICE = '本地服务未运行，请在终端重新执行 baox';
 
+type Nav = 'tasks' | 'projects' | 'settings';
+
 type Props = {
-  nav: 'tasks' | 'projects' | 'settings';
+  nav: Nav;
   stepBar?: ReactNode;
   children: ReactNode;
 };
 
-// 应用壳（DESIGN.md「表面按层级语义排」）：顶栏在着色框架里，主区是一整块白色工作面（sheet），页面内容都在里面。
-// 没有侧栏：任务页的步骤条是工作面顶部的一行，工作面在所有页面都铺满宽度。
-// 工作面本身不限宽：表格页铺满，表单页在页面里自己限到 720px。断连时框架里出现全宽横幅。
+const NAV_ITEMS: readonly { key: Nav; label: string; href: string }[] = [
+  { key: 'tasks', label: '报销任务', href: TASKS_HASH },
+  { key: 'projects', label: '个人项目簿', href: PROJECTS_HASH },
+  { key: 'settings', label: '设置', href: SETTINGS_HASH },
+];
+
+// 应用壳：Carbon UI Shell 顶栏（全局导航、模拟数据标签与报销人），下面是工作区；任务页的步骤条是工作区顶部的一条。
+// 工作区不限宽：表格页铺满，表单页在页面里自己限宽。断连时顶栏下出现全宽横幅。
 export function AppShell({ nav, stepBar, children }: Props) {
   const state = useAppState();
   const taskList = useTaskList();
   const employee = taskList.data?.employee ?? null;
   return (
     <>
-      <header className="topbar">
-        <div className="brand">
-          baox<span>本地报销</span>
-        </div>
-        <nav aria-label="全局">
-          <a href={TASKS_HASH} aria-current={nav === 'tasks' ? 'page' : undefined}>
-            报销任务
-          </a>
-          <a href={PROJECTS_HASH} aria-current={nav === 'projects' ? 'page' : undefined}>
-            个人项目簿
-          </a>
-          <a href={SETTINGS_HASH} aria-current={nav === 'settings' ? 'page' : undefined}>
-            设置
-          </a>
-        </nav>
-        <div className="spacer" />
-        {IS_MOCK ? <span className="mode-tag">模拟数据</span> : null}
-        {/* 报销人只在身份已登记后显示，只显示姓名（内核身份没有部门）；头像圆里是姓名的第一个字，只作装饰。 */}
-        {employee?.binding === 'bound' ? (
-          <span className="user">
-            <span className="avatar" aria-hidden="true">
-              {employee.displayName.slice(0, 1)}
-            </span>
-            <span>{employee.displayName}</span>
-          </span>
+      <Header aria-label="baox 本地报销">
+        <HeaderName href={TASKS_HASH} prefix="baox">
+          本地报销
+        </HeaderName>
+        <HeaderNavigation aria-label="全局">
+          {NAV_ITEMS.map((item) => (
+            <HeaderMenuItem key={item.key} href={item.href} isActive={nav === item.key} {...(nav === item.key ? { 'aria-current': 'page' } : {})}>
+              {item.label}
+            </HeaderMenuItem>
+          ))}
+        </HeaderNavigation>
+        <HeaderGlobalBar>
+          <div className="app-header-tools">
+            {IS_MOCK ? (
+              <Tag type="cool-gray" size="sm">
+                模拟数据
+              </Tag>
+            ) : null}
+            {/* 报销人只在身份已登记后显示，只显示姓名（内核身份没有部门）。 */}
+            {employee?.binding === 'bound' ? (
+              <span className="app-user">
+                <UserAvatar size={20} aria-hidden="true" />
+                <span>{employee.displayName}</span>
+              </span>
+            ) : null}
+          </div>
+        </HeaderGlobalBar>
+      </Header>
+      <div className="app-frame">
+        {state.connection === 'disconnected' || state.taskList.offline ? (
+          <InlineNotification className="app-banner" kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={SERVICE_DOWN_NOTICE} />
         ) : null}
-      </header>
-      {state.connection === 'disconnected' || state.taskList.offline ? (
-        <div className="banner" role="alert">
-          {SERVICE_DOWN_NOTICE}
-        </div>
-      ) : null}
-      <div className="layout">
         <main className="sheet">
           {stepBar}
           {children}

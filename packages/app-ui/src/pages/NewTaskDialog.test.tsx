@@ -43,7 +43,8 @@ describe('新建报销任务弹层', () => {
     const input = await within(box).findByLabelText('常驻城市');
     fireEvent.change(input, { target: { value: '  ' } });
     fireEvent.click(within(box).getByRole('button', { name: '创建并上传材料' }));
-    expect((await within(box).findByRole('alert')).textContent).toBe('请填写常驻城市。');
+    // Carbon 输入框自带空的 role="alert" 字数提示；错误文字在另一个 alert 里。
+    expect((await within(box).findByText('请填写常驻城市。')).closest('[role="alert"]')).not.toBeNull();
     expect(input.getAttribute('aria-invalid')).toBe('true');
     expect(window.location.hash).toBe('#/tasks/new');
   });

@@ -90,7 +90,7 @@ describe('整单明细确认', () => {
     const claim = screen.getByRole('button', { name: '去报销' });
     expect(print.getAttribute('href')).toBe('#/task/T1/print');
     expect(print.className).toBe(claim.className);
-    expect(print.className).toContain('btn-primary');
+    expect(print.className).toContain('cds--btn--primary');
     expect(screen.getByText(/^整单明细已确认（2026-09-11 \d\d:\d\d）/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: '确认' })).toBeNull();
     expect(screen.getByRole('button', { name: '追加材料' })).toBeTruthy();
@@ -127,11 +127,16 @@ describe('整单明细确认', () => {
     expect(screen.getByRole('button', { name: '去报销' })).toBeTruthy();
     expect(screen.queryByRole('checkbox')).toBeNull();
     const stages = screen.getByRole('list', { name: '流程阶段' });
-    const labels = within(stages).getAllByRole('listitem').map((item) => item.textContent?.replace(/^(\d|✓)/, ''));
-    expect(labels).toEqual(['上传材料', '材料盘点', '待确认项', '项目归属', '整单明细确认', '去打印 / 去报销', '完成']);
-    expect(within(stages).getByText('整单明细确认').closest('a')?.getAttribute('aria-current')).toBe('step');
-    expect(within(stages).getByText('项目归属').closest('a')?.getAttribute('href')).toBe('#/task/T1/project');
-    expect(within(stages).getByText('去打印 / 去报销').closest('a')).toBeTruthy();
+    const labels = ['上传材料', '材料盘点', '待确认项', '项目归属', '整单明细确认', '去打印 / 去报销', '完成'];
+    within(stages)
+      .getAllByRole('listitem')
+      .forEach((item, index) => expect(item.textContent?.startsWith(labels[index] ?? '?'), labels[index]).toBe(true));
+    expect(within(stages).getByRole('button', { name: /^整单明细确认/ }).getAttribute('aria-current')).toBe('step');
+    expect(within(stages).getByRole('button', { name: /^去打印 \/ 去报销/ }).getAttribute('aria-disabled')).toBeNull();
+    const project = within(stages).getByRole('button', { name: /^项目归属/ });
+    expect(project.getAttribute('aria-disabled')).toBeNull();
+    fireEvent.click(project);
+    expect(window.location.hash).toBe('#/task/T1/project');
   });
 
   test('确认后改派项目：确认失效并提示重新确认；重新确认后两个入口回来', async () => {

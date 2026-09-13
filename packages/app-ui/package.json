@@ -24,6 +24,9 @@
     "fixtures:verify": "node fixtures/scripts/verify.mjs"
   },
   "dependencies": {
+    "@carbon/icons-react": "^11.88.0",
+    "@carbon/react": "^1.115.0",
+    "@carbon/styles": "^1.115.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zod": "^4.1.0"
@@ -37,6 +40,7 @@
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",
     "jsdom": "^27.0.0",
+    "sass": "^1.104.1",
     "typescript": "^5.9.2",
     "vite": "^7.1.0",
     "vite-plugin-singlefile": "^2.3.0",
