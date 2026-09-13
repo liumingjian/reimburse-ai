@@ -17,7 +17,7 @@ export const PAGE_COPY: Readonly<Record<TaskPage, { title: string; lead: string 
     lead: '在专用浏览器里登录报销系统后，自动打开空白报销单、选择不生成费用明细、导入发票、收票回读、填写明细、保存草稿并严格回读，中途不再确认。',
   },
   done: { title: '完成', lead: '逐行回读结果如下，打印稿可以在这里再次打开。' },
-  reconcile: { title: '对账', lead: '写入结果不确定。应用已停止写入并与报销系统对账，不会重放。' },
+  reconcile: { title: '对账', lead: '应用已停止写入并与报销系统对账，不会重放。' },
 };
 
 // 整单明细确认页「说明」展开区里的排序说明（DESIGN.md「版式规则」：标题下最多一句话，其余放进展开区）。

@@ -86,6 +86,21 @@ describe('对账', () => {
     expect(screen.getByRole('list', { name: 'No.3 原因' }).textContent).toContain('任务第 3 行');
   });
 
+  test('T2：顶部只有一条错误通知（写入结果不确定，副标题是中止原因），没有「当前对账状态」节标题；摘要条显示快照里的草稿号与一致、不一致行数；转人工在吸底栏，固定句写在后果说明里', async () => {
+    renderAt('#/task/T2/reconcile');
+    await screen.findByRole('heading', { name: '对账' });
+    const alerts = screen.getAllByRole('alert');
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.textContent).toContain('写入结果不确定');
+    expect(alerts[0]?.textContent).toContain('保存草稿后回读超时，写入结果不确定。');
+    expect(screen.queryByRole('heading', { name: '当前对账状态' })).toBeNull();
+    expect(screen.getByTestId('reconcile-draft-no').textContent).toBe('BX20260718-0142');
+    expect(screen.getByTestId('reconcile-banner').textContent).toBe('报销系统中存在草稿 BX20260718-0142，5 行明细中 4 行一致，1 行不一致。');
+    const bar = screen.getByRole('region', { name: '处置' });
+    expect(within(bar).getByTestId('human-review').textContent).toContain('请联系报销管理员');
+    expect(within(bar).getByText(/转人工后任务标记为人工处理/)).toBeTruthy();
+  });
+
   test('转人工：处置区消失，页面与步骤条都显示已转人工', async () => {
     renderAt('#/task/T2/reconcile');
     fireEvent.click(await screen.findByRole('button', { name: '转人工' }));
@@ -98,9 +113,9 @@ describe('对账', () => {
     renderAt('#/task/T1/reconcile', 'reconcile');
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
     expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/保存草稿时报销系统没有在限定时间内返回结果/)).toBeTruthy();
-    const state = screen.getByRole('region', { name: '当前对账状态' });
-    expect(within(state).getByText('未知')).toBeTruthy();
-    expect(within(state).getByText('尚未读到草稿')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: '当前对账状态' })).toBeNull();
+    expect(screen.getByTestId('reconcile-bucket').textContent).toBe('未知');
+    expect(screen.getByTestId('reconcile-draft-no').textContent).toBe('尚未读到草稿');
     expect(actionButtons()).toEqual(['重新对账']);
     expect(screen.queryByTestId('human-review')).toBeNull();
 

@@ -814,6 +814,19 @@ $gutter: $spacing-06;
   margin-block-start: $spacing-05;
 }
 
+// 对账吸底栏的后果说明：第一句是处置后果，第二句是人工核对固定句（含「请联系报销管理员」）。
+.app-reconcile-consequence {
+  align-items: flex-start;
+
+  svg {
+    fill: $support-warning;
+  }
+
+  p {
+    margin: 0;
+  }
+}
+
 .app-reconcile-reasons {
   margin: $spacing-04 0 0;
   padding-inline-start: $spacing-06;
