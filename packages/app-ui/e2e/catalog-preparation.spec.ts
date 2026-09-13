@@ -11,6 +11,15 @@ const PREPARATION_RUNNING = '材料已经整理完成，正在生成本次报销
 const confirmButton = (page: Page) => page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认', exact: true });
 const packageFiles = (page: Page) => page.getByRole('list', { name: '材料包文件' }).getByRole('listitem');
 
+// 材料包清单默认收起；收起时点开（重新准备后可能重新挂载成收起状态）。
+async function openPackage(page: Page) {
+  const details = page.getByRole('region', { name: '材料包' }).locator('details');
+  if (!(await details.evaluate((element) => (element as HTMLDetailsElement).open))) {
+    await page.getByRole('region', { name: '材料包' }).getByText(/^材料包 \d+ 份文件$/).click();
+  }
+  await expect(page.getByRole('list', { name: '材料包文件' })).toBeVisible();
+}
+
 async function reassign(page: Page, nos: readonly number[], project: string) {
   for (const no of nos) await page.getByRole('checkbox', { name: `选择明细 No.${no}` }).click();
   await page.getByRole('complementary', { name: '项目工作台' }).getByRole('button', { name: `归入 ${project}` }).click();
@@ -27,6 +36,7 @@ test('正常路径：提交项目归属后自动经过报销信息核对与材�
   await expect(page.getByText(PREPARATION_RUNNING)).toBeVisible();
   await expect(confirmButton(page)).toBeEnabled();
   await expect(page.getByTestId('package-files')).toHaveText('核对材料已生成，共 13 份文件。');
+  await openPackage(page);
   await expect(packageFiles(page)).toHaveCount(13);
   await expect(packageFiles(page).first()).toHaveText('发票 invoices/全季酒店_发票.pdf');
   await expect(packageFiles(page).last()).toHaveText('材料清单 manifest.json');
@@ -73,5 +83,7 @@ test('?preparation=blocked：显示缺项表，确认按钮不可用；排除相
   await expect(confirmButton(page)).toBeEnabled();
   await expect(problems).toHaveCount(0);
   await expect(page.getByTestId('package-files')).toHaveText('核对材料已生成，共 12 份文件。');
+  await openPackage(page);
+  await expect(packageFiles(page)).toHaveCount(12);
   await expect(packageFiles(page).filter({ hasText: '曹操出行_行程单.pdf' })).toHaveCount(0);
 });

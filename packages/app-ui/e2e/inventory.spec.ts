@@ -34,17 +34,26 @@ test('?seed=inventory：材料清单按费用事件归组，显示配对与守�
   await page.goto(open('?seed=inventory', '#/task/T1/inventory'));
   await expect(page.getByRole('heading', { name: '材料盘点' })).toBeVisible();
   await expect(page.getByRole('link', { name: '处理 3 个待确认项' })).toBeVisible();
-  await expect(page.getByText('通过 8')).toBeVisible();
-  await expect(page.getByText('待确认 3')).toBeVisible();
-  await expect(page.getByText('主要报销凭证 7')).toBeVisible();
-  await expect(page.getByText('参考材料 3')).toBeVisible();
+  await expect(page.getByText('11 份材料，8 份通过，3 份需要你处理')).toBeVisible();
+  await expect(page.getByText('主要报销凭证 7 · 参考材料 3 · 盘点版本 v1')).toBeVisible();
+  await expect(page.getByLabel('盘点结果').locator('.badge', { hasText: '通过' })).toHaveCount(0);
 
+  // 含待确认材料的事件默认展开；全部通过的事件收成一行，点开才看文件与材料证据关联。
+  const taxi = page.getByRole('rowgroup', { name: '费用事件 5 · 2026-08-15 · 外地市内交通 · 32.00' });
+  await expect(taxi.getByRole('button')).toHaveAttribute('aria-expanded', 'true');
+  await expect(taxi.getByText('IMG_4871.jpg')).toBeVisible();
   const amap = page.getByRole('rowgroup', { name: '费用事件 1-3 · 2026-08-10 至 2026-08-12 · 外地市内交通 · 26.69 + 20.85 + 21.65' });
+  const amapToggle = amap.getByRole('button');
+  await expect(amapToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(amap.getByText('高德打车_行程单.pdf')).toHaveCount(0);
+  await amapToggle.click();
+  await expect(amapToggle).toHaveAttribute('aria-expanded', 'true');
   await expect(amap.getByText('打车发票与行程单配对：26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeVisible();
   await expect(amap.getByText('高德打车_行程单.pdf')).toBeVisible();
   await expect(page.getByLabel('盘点结果').locator('thead th')).toHaveText(['文件', '识别为', '校验', '状态']);
 
   const hotel = page.getByRole('rowgroup', { name: '费用事件 9 · 2026-08-09 至 2026-08-22 · 住宿 · 3640.00' });
+  await hotel.getByRole('button').click();
   await expect(hotel.getByText('住宿发票 3640.00 = 结账单消费合计 3640.00；13 天 = 08-09 入住至 08-22 离店')).toBeVisible();
   await expect(page.getByLabel('盘点结果')).not.toContainText('rule:');
 
@@ -63,6 +72,7 @@ test('上传后开始材料盘点：先看到分阶段进度，再看到结果',
   await page.screenshot({ path: testInfo.outputPath('inventory-progress.png'), fullPage: true });
   await expect(page.getByRole('link', { name: '处理 3 个待确认项' })).toBeVisible({ timeout: 15000 });
   await expect(page.getByLabel('盘点进度')).toBeHidden();
+  await page.getByRole('button', { name: /^No\.1-3 / }).click();
   await expect(page.getByRole('cell', { name: '26.69 + 20.85 + 21.65 = 69.19，按分守恒', exact: true })).toBeVisible();
   await page.getByRole('link', { name: '处理 3 个待确认项' }).click();
   await expect(page.getByRole('heading', { name: '待确认项' })).toBeVisible();

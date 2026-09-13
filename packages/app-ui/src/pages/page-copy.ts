@@ -9,7 +9,7 @@ export const PAGE_COPY: Readonly<Record<TaskPage, { title: string; lead: string 
   project: { title: '项目归属', lead: '为每条明细指定项目号，并填写报销事由。提交后自动核对报销信息、准备报销材料，再进入整单明细确认。' },
   review: {
     title: '整单明细确认',
-    lead: '唯一一次整单确认，项目归属一并生效。明细按费用分类排序（本地市内交通、外地市内交通、长途交通、住宿），打印稿页序与报销系统明细行共用这个序号。',
+    lead: '唯一一次整单确认，项目归属一并生效。',
   },
   print: { title: '打印稿预览', lead: '每张主要报销凭证一页 A4，页序与整单确认的序号一致。页眉是业务序号、日期、费用类别与价税合计。住宿发票的支付截图在这里补充。' },
   erp: {
@@ -19,3 +19,6 @@ export const PAGE_COPY: Readonly<Record<TaskPage, { title: string; lead: string 
   done: { title: '完成', lead: '逐行回读结果如下，打印稿可以在这里再次打开。' },
   reconcile: { title: '对账', lead: '写入结果不确定。应用已停止写入并与报销系统对账，不会重放。' },
 };
+
+// 整单明细确认页「说明」展开区里的排序说明（DESIGN.md「版式规则」：标题下最多一句话，其余放进展开区）。
+export const REVIEW_ORDER_NOTE = '明细按费用分类排序（本地市内交通、外地市内交通、长途交通、住宿），打印稿页序与报销系统明细行共用这个序号。';

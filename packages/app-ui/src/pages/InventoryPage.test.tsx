@@ -40,11 +40,11 @@ describe('材料盘点', () => {
     renderAt('#/task/T1/inventory', 'inventory');
     expect(await screen.findByRole('heading', { name: '材料盘点' })).toBeTruthy();
     expect(screen.getByRole('link', { name: '处理 3 个待确认项' }).getAttribute('href')).toBe('#/task/T1/pending');
-    expect(screen.getByText('通过 8')).toBeTruthy();
-    expect(screen.getByText('待确认 3')).toBeTruthy();
-    expect(screen.getByText('主要报销凭证 7')).toBeTruthy();
-    expect(screen.getByText('参考材料 3')).toBeTruthy();
-    expect(screen.getByText('盘点版本 v1 · 2026-09-11 14:20')).toBeTruthy();
+    // 一句结论打头，计数全部来自服务端 summary；其余计数退成一行说明，不用徽标。
+    expect(screen.getByText('11 份材料，8 份通过，3 份需要你处理')).toBeTruthy();
+    expect(screen.getByText('主要报销凭证 7 · 参考材料 3 · 盘点版本 v1 · 2026-09-11 14:20')).toBeTruthy();
+    // 只标记例外：通过的材料不带「通过」徽标。
+    expect(screen.queryByText(/^通过/, { selector: '.badge' })).toBeNull();
 
     const results = screen.getByLabelText('盘点结果');
     expect(within(results).getAllByRole('columnheader').map((node) => node.textContent)).toEqual(['文件', '识别为', '校验', '状态']);
@@ -62,7 +62,15 @@ describe('材料盘点', () => {
       '未归入费用事件',
     ]);
 
+    // 全部通过的事件默认收成一行，文件与材料证据关联要点开才看到。
     const amap = groups[0] as HTMLElement;
+    const amapToggle = within(amap).getByRole('button');
+    expect(amapToggle.textContent).toBe('No.1-3 外地市内交通 08-10 至 08-12 26.69 + 20.85 + 21.65 2 份材料');
+    expect(amapToggle.getAttribute('aria-expanded')).toBe('false');
+    expect(within(amap).queryByText('高德打车_发票.pdf')).toBeNull();
+    expect(within(amap).queryByText(/^打车发票与行程单配对/)).toBeNull();
+    fireEvent.click(amapToggle);
+    expect(amapToggle.getAttribute('aria-expanded')).toBe('true');
     expect(within(amap).getByText('打车发票与行程单配对：26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeTruthy();
     expect(within(amap).getByText('高德打车_发票.pdf')).toBeTruthy();
     expect(within(amap).getByText('高德打车_行程单.pdf')).toBeTruthy();
@@ -71,10 +79,13 @@ describe('材料盘点', () => {
     expect(within(amap).getByText('26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeTruthy();
 
     const hotel = groups[6] as HTMLElement;
+    fireEvent.click(within(hotel).getByRole('button'));
     expect(within(hotel).getByText('住宿发票 3640.00 = 结账单消费合计 3640.00；13 天 = 08-09 入住至 08-22 离店')).toBeTruthy();
     expect(within(hotel).getByText('消费合计 = 发票价税合计；13 天 = 08-09 入住至 08-22 离店')).toBeTruthy();
 
+    // 含待确认材料的事件默认展开，只有待确认的材料带徽标。
     const taxi = groups[3] as HTMLElement;
+    expect(within(taxi).getByRole('button').getAttribute('aria-expanded')).toBe('true');
     expect(within(taxi).getByText('待确认')).toBeTruthy();
     expect(within(taxi).getByText('票面年份「26」已补全为 2026；下车时间读数不合法')).toBeTruthy();
     expect(within(taxi).queryByText('90:60')).toBeNull();
@@ -99,6 +110,7 @@ describe('材料盘点', () => {
 
     expect(await screen.findByRole('link', { name: '处理 3 个待确认项' })).toBeTruthy();
     expect(screen.queryByLabelText('盘点进度')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^No\.1-3 / }));
     expect(screen.getByText('打车发票与行程单配对：26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeTruthy();
     // 侧栏的待确认项条目带数量。
     expect(within(screen.getByRole('list', { name: '流程阶段' })).getByText('3', { selector: '.count' })).toBeTruthy();
@@ -107,10 +119,11 @@ describe('材料盘点', () => {
   test('?fault=unsupported-material：曹操行程单成为不支持的版式，待确认项变成 4 个', async () => {
     renderAt('#/task/T1/inventory', 'inventory', 'unsupported-material');
     expect(await screen.findByRole('link', { name: '处理 4 个待确认项' })).toBeTruthy();
-    expect(screen.getByText('待确认 4')).toBeTruthy();
+    expect(screen.getByText(/^11 份材料，\d+ 份通过，4 份需要你处理$/)).toBeTruthy();
     const rest = screen.getByLabelText('未归入费用事件');
     expect(within(rest).getByText('曹操出行_行程单.pdf')).toBeTruthy();
     expect(within(rest).getAllByText('未识别版式')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: /^No\.4 / }));
     expect(screen.getByText('没有找到可配对的行程单，按发票 1 段计一次费用')).toBeTruthy();
   });
 

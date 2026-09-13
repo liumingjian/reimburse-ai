@@ -46,6 +46,8 @@ test('确认：?seed=review 是 No. 加内核 13 列，按费用分类排序；�
   // 整页（主区）没有「参考材料」；文件名只在「材料包」一节（#114 的材料包文件清单），别的区域一个都没有。
   const main = page.locator('main');
   expect(await main.innerText()).not.toContain('参考材料');
+  // 材料包清单默认收起，点开再核对。
+  await page.getByRole('region', { name: '材料包' }).getByText('材料包 13 份文件').click();
   const packageText = await page.getByRole('region', { name: '材料包' }).innerText();
   expect((await main.innerText()).replace(packageText, '')).not.toMatch(/\.pdf|\.jpg|\.png/);
   await expect(page.getByTestId('package-files')).toHaveText('核对材料已生成，共 13 份文件。');
@@ -69,6 +71,37 @@ test('确认：?seed=review 是 No. 加内核 13 列，按费用分类排序；�
   const [a, b] = await Promise.all([printLink(page).boundingBox(), claimButton(page).boundingBox()]);
   expect(a && b && Math.abs(a.y - b.y) < 2 && a.x < b.x).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('review-confirmed.png'), fullPage: true });
+});
+
+test('版式：No. 固定在左、总额固定在右，中间横向滚动；同分类重复值变淡但仍在；操作栏吸底；材料包默认收起', async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 700 });
+  await page.goto(open('?seed=review', '#/task/T1/review'));
+  await expect(page.getByRole('heading', { name: '整单明细确认' })).toBeVisible();
+
+  const packages = page.getByRole('region', { name: '材料包' });
+  await expect(packages.getByRole('list', { name: '材料包文件' })).toBeHidden();
+  await packages.getByText('材料包 13 份文件').click();
+  await expect(packages.getByRole('list', { name: '材料包文件' }).getByRole('listitem')).toHaveCount(13);
+
+  // 吸底操作栏：页面比视口高时贴在视口底边。
+  const bar = page.getByRole('region', { name: '整单确认' });
+  await expect(bar).toContainText('确认后项目归属一并生效');
+  const barBox = await bar.boundingBox();
+  expect(barBox && Math.abs(barBox.y + barBox.height - 700) < 2).toBe(true);
+
+  // 横向滚到最右：No. 仍贴左边，总额贴右边。
+  const wrap = table(page).locator('xpath=..');
+  const scrolled = await wrap.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+    return element.scrollLeft;
+  });
+  expect(scrolled).toBeGreaterThan(0);
+  const cells = page.getByTestId('confirm-row-2').locator('td');
+  const [wrapBox, noBox, grossBox] = await Promise.all([wrap.boundingBox(), cells.first().boundingBox(), cells.last().boundingBox()]);
+  expect(wrapBox && noBox && Math.abs(noBox.x - wrapBox.x) < 3).toBe(true);
+  expect(wrapBox && grossBox && Math.abs(grossBox.x + grossBox.width - (wrapBox.x + wrapBox.width)) < 3).toBe(true);
+  // 与上一行相同的项目号照常显示。
+  await expect(cells.nth(2)).toHaveText('P-3312 / 产品调研');
 });
 
 test('分岔入口：?seed=actions 下去打印进入打印稿预览，去报销直接开始填报（没有「开始填报」）', async ({ page }) => {

@@ -13,7 +13,7 @@ import { navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
 import { useAction } from '../shell/useAction';
 import { useReopenUpload } from '../shell/useReopenUpload';
-import { PAGE_COPY } from './page-copy';
+import { PAGE_COPY, REVIEW_ORDER_NOTE } from './page-copy';
 
 // 整单明细确认页：Skill 的唯一一次整单确认（preparation_confirmation），在项目归属、报销信息核对与材料准备之后。
 // 表格形状照内核 preparationConfirmationTable（next.mjs:513-559）：No. 加 13 列，按服务端给出的 lines[] 顺序（内核分类排序）逐行列出，
@@ -35,6 +35,13 @@ function autoStepNotice(snapshot: TaskSnapshot): string | null {
 }
 
 const NUMERIC_COLUMNS: ReadonlySet<string> = new Set(['费用金额', '税额', '总额']);
+
+// 金额列右对齐；总额列固定在右侧（No. 固定在左侧），中间的列横向滚动。
+const STICKY_END_COLUMN = CONFIRMATION_TABLE_COLUMNS[CONFIRMATION_TABLE_COLUMNS.length - 1];
+function columnClass(label: string): string | undefined {
+  const classes = [NUMERIC_COLUMNS.has(label) ? 'num' : '', label === STICKY_END_COLUMN ? 'sticky-end' : ''].filter(Boolean);
+  return classes.length > 0 ? classes.join(' ') : undefined;
+}
 
 // 「编码 / 名称」单元格，照内核 [code, name].filter(Boolean).join(' / ')。
 const codeAndName = (code: string | null, name: string | null) => [code, name].filter(Boolean).join(' / ');
@@ -92,8 +99,18 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
         <div>
           <h1>{copy.title}</h1>
           <p className="lead">{copy.lead}</p>
+          <details className="explain">
+            <summary>说明</summary>
+            <p>{REVIEW_ORDER_NOTE}</p>
+            <p data-testid="confirm-only">
+              整单明细只能确认，不能在表里修改。有不对的地方，请回到对应的步骤修改：项目号或报销事由回到项目归属，明细内容回到待确认项。
+            </p>
+          </details>
         </div>
       </div>
+      <p className="caption page-meta" data-testid="review-purpose">
+        报销事由：{purpose ?? '未填写'}
+      </p>
 
       {confirmation.status === 'invalidated' && confirmation.notice ? (
         <div className="notice notice-warn" role="status">
@@ -105,28 +122,35 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
         <table className="data confirm-table" aria-label="整单明细">
           <thead>
             <tr>
-              <th>{CONFIRMATION_NO_COLUMN}</th>
+              <th className="sticky-start">{CONFIRMATION_NO_COLUMN}</th>
               {CONFIRMATION_TABLE_COLUMNS.map((label) => (
-                <th key={label} className={NUMERIC_COLUMNS.has(label) ? 'num' : undefined}>
+                <th key={label} className={columnClass(label)}>
                   {label}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {snapshot.lines.map((line) => (
-              <tr key={line.lineId} data-testid={`confirm-row-${line.no}`}>
-                <td className="mono">{line.no}</td>
-                {cellsOf(line).map((value, index) => {
-                  const label = CONFIRMATION_TABLE_COLUMNS[index] ?? '';
-                  return (
-                    <td key={label} className={NUMERIC_COLUMNS.has(label) ? 'num' : undefined}>
-                      {value}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
+            {snapshot.lines.map((line, row) => {
+              // 同一分类里与上一行相同的文字单元格变淡（值照常在）；金额列不变淡。
+              const previous = snapshot.lines[row - 1];
+              const above = previous && previous.category.code === line.category.code ? cellsOf(previous) : null;
+              return (
+                <tr key={line.lineId} data-testid={`confirm-row-${line.no}`}>
+                  <td className="mono sticky-start">{line.no}</td>
+                  {cellsOf(line).map((value, index) => {
+                    const label = CONFIRMATION_TABLE_COLUMNS[index] ?? '';
+                    const same = value !== '' && !NUMERIC_COLUMNS.has(label) && above?.[index] === value;
+                    const className = [columnClass(label), same ? 'same-above' : ''].filter(Boolean).join(' ');
+                    return (
+                      <td key={label} className={className || undefined}>
+                        {value}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </section>
@@ -212,31 +236,32 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
       {preparation.packageFiles.length > 0 ? (
         <section className="panel" aria-label="材料包">
-          <p className="caption package-note" data-testid="package-files">
-            {CATALOG_PREPARATION_COPY.packageReady(preparation.packageFiles.length)}
-          </p>
-          <ul className="package-files" aria-label="材料包文件">
-            {preparation.packageFiles.map((file) => (
-              <li key={file.path}>
-                <span className="caption">{file.kindLabel}</span> <span className="mono">{file.path}</span>
-              </li>
-            ))}
-          </ul>
+          <details className="disclosure">
+            <summary>材料包 {preparation.packageFiles.length} 份文件</summary>
+            <p className="caption package-note" data-testid="package-files">
+              {CATALOG_PREPARATION_COPY.packageReady(preparation.packageFiles.length)}
+            </p>
+            <ul className="package-files" aria-label="材料包文件">
+              {preparation.packageFiles.map((file) => (
+                <li key={file.path}>
+                  <span className="caption">{file.kindLabel}</span> <span className="file-name">{file.path}</span>
+                </li>
+              ))}
+            </ul>
+          </details>
         </section>
       ) : null}
 
-      <section className="panel" aria-label="整单确认">
-        <div className="btn-row">
-          <span className="caption" data-testid="review-purpose">
-            报销事由：{purpose ?? '未填写'}。项目归属随整单确认一起生效，改派项目会使确认失效。
-          </span>
-          {!erpStarted ? (
-            <a className="btn btn-tertiary btn-sm" href={taskHash(taskId, 'project')}>
-              修改项目归属
-            </a>
-          ) : null}
-        </div>
-        {confirmed ? (
+      {confirmed ? (
+        <section className="panel" aria-label="整单确认">
+          <div className="btn-row">
+            <span className="caption">项目归属随整单确认一起生效，改派项目会使确认失效。</span>
+            {!erpStarted ? (
+              <a className="btn btn-tertiary btn-sm" href={taskHash(taskId, 'project')}>
+                修改项目归属
+              </a>
+            ) : null}
+          </div>
           <>
             <div className="notice notice-ok" role="status">
               整单明细已确认{confirmation.confirmedAt ? `（${formatDateTime(confirmation.confirmedAt)}）` : ''}。下面两个按钮基于同一份确认数据，先后随意、可重复。
@@ -278,32 +303,37 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
               <span className="caption">追加材料会形成新的盘点版本，并使这次确认失效。</span>
             </div>
           </>
-        ) : autoNotice ? (
-          <p className="caption loading" role="status">
-            {autoNotice}
-          </p>
-        ) : (
-          <>
-            <p className="caption" data-testid="confirm-only">
-              整单明细只能确认，不能在表里修改。有不对的地方，请回到对应的步骤修改：项目号或报销事由回到项目归属，明细内容回到待确认项。
+        </section>
+      ) : (
+        // 吸底操作栏：左边一句话，右边按钮（「确认」是唯一的主按钮）。
+        <section className="panel action-bar" aria-label="整单确认">
+          {autoNotice ? (
+            <p className="bar-text loading" role="status">
+              {autoNotice}
             </p>
-            <div className="btn-row">
-              <button
-                className="btn btn-primary"
-                type="button"
-                disabled={confirmDisabled}
-                onClick={() => void confirm()}
-              >
-                确认
-              </button>
-              <a className="btn btn-tertiary btn-sm" href={taskHash(taskId, 'pending')}>
-                回到待确认项
+          ) : (
+            <p className="bar-text">确认后项目归属一并生效</p>
+          )}
+          <div className="btn-row">
+            {!autoNotice ? (
+              <>
+                <button className="btn btn-primary" type="button" disabled={confirmDisabled} onClick={() => void confirm()}>
+                  确认
+                </button>
+                <a className="btn btn-tertiary btn-sm" href={taskHash(taskId, 'pending')}>
+                  回到待确认项
+                </a>
+              </>
+            ) : null}
+            {!erpStarted ? (
+              <a className="btn btn-tertiary btn-sm" href={taskHash(taskId, 'project')}>
+                修改项目归属
               </a>
-            </div>
-            <ActionError message={confirmAction.error} />
-          </>
-        )}
-      </section>
+            ) : null}
+          </div>
+          <ActionError message={confirmAction.error} />
+        </section>
+      )}
 
       {reopen.dialog}
     </>

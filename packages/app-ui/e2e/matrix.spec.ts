@@ -19,7 +19,7 @@ const KEY_TEXT: Readonly<Record<TaskStage, string>> = {
   project: '已归属 2 / 9 条',
   catalog: '上海产品评审出差',
   preparation: '上海产品评审出差',
-  review: '整单明细只能确认',
+  review: '确认后项目归属一并生效',
   actions: '整单明细已确认',
   erp: '我已登录，继续',
   done: 'BX20260911-0173',

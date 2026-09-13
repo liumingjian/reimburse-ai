@@ -46,7 +46,13 @@ describe('整单明细确认', () => {
     expect(screen.queryByTestId('gross-total')).toBeNull();
     // 整页没有「参考材料」四个字；文件名只在「材料包」一节（#114 要求的材料包文件清单）里出现，别处没有。
     expect(document.body.textContent ?? '').not.toContain('参考材料');
+    // 标题下只有一句话，较长的解释在「说明」里；材料包清单默认收起，点开才看文件。
+    expect(screen.getByText('唯一一次整单确认，项目归属一并生效。')).toBeTruthy();
     const packageSection = screen.getByRole('region', { name: '材料包' });
+    const packageDetails = packageSection.querySelector('details');
+    expect(packageDetails?.open).toBe(false);
+    fireEvent.click(within(packageSection).getByText('材料包 13 份文件'));
+    expect(packageDetails?.open).toBe(true);
     const outside = (document.body.textContent ?? '').replace(packageSection.textContent ?? '', '');
     expect(outside).not.toMatch(/\.pdf|\.jpg|\.png/);
     expect(screen.getByTestId('package-files').textContent).toBe('核对材料已生成，共 13 份文件。');
@@ -66,6 +72,10 @@ describe('整单明细确认', () => {
     expect(within(table()).queryByRole('textbox')).toBeNull();
     expect(screen.queryByRole('checkbox')).toBeNull();
 
+    // 底部操作栏：左边一句话，右边「确认」加两个三级链接。
+    expect(within(confirmPanel()).getByText('确认后项目归属一并生效')).toBeTruthy();
+    expect(within(confirmPanel()).getByRole('link', { name: '回到待确认项' })).toBeTruthy();
+    expect(within(confirmPanel()).getByRole('link', { name: '修改项目归属' })).toBeTruthy();
     expect((checkbox() as HTMLButtonElement).disabled).toBe(false);
     expect(printLink()).toBeNull();
     expect(claimButton()).toBeNull();

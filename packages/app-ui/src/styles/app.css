@@ -851,6 +851,81 @@ table.data tbody:first-of-type tr.group-head td {
   font-weight: var(--text-button-weight);
 }
 
+/* 材料盘点：一句结论打头，其余计数退成一行说明文字（只标记例外，不用徽标）。 */
+.headline {
+  margin-bottom: 0;
+  font: var(--text-title);
+  letter-spacing: var(--text-title-tracking);
+}
+
+.meta-line {
+  margin: 0 0 var(--space-md);
+}
+
+.file-name {
+  overflow-wrap: anywhere;
+}
+
+/* 费用事件：收起时一行，通过的组用白底；含待确认材料的组左侧 warning 细条。 */
+table.inventory tr.group-head td {
+  padding: 0;
+  background: var(--color-surface-1);
+}
+
+table.inventory tbody.is-open tr.group-head td,
+table.inventory tr.group-detail td {
+  background: var(--color-surface-2);
+}
+
+table.inventory tr.group-detail td {
+  padding: 0 var(--space-sm) var(--space-sm);
+}
+
+table.inventory tbody[aria-label='未归入费用事件'] tr.group-head td {
+  padding: var(--space-sm);
+}
+
+table.inventory tbody.has-pending tr td:first-child {
+  border-left: var(--layout-stage-bar-width) solid var(--color-warning);
+}
+
+.group-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-md);
+  width: 100%;
+  padding: var(--space-sm);
+  border: 0;
+  background: none;
+  color: var(--color-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.group-toggle:hover {
+  background: var(--color-surface-2);
+}
+
+.group-toggle .group-no {
+  min-width: calc(var(--space-xxl) * 1.5);
+}
+
+.group-toggle .group-category {
+  min-width: calc(var(--space-xxl) * 2);
+  font-weight: var(--text-button-weight);
+}
+
+.group-toggle .group-dates {
+  color: var(--color-ink-muted);
+}
+
+.group-toggle .group-count {
+  margin-left: auto;
+  color: var(--color-ink-subtle);
+  font-size: var(--text-caption-size);
+}
+
 .event-lines {
   list-style: none;
   display: flex;
@@ -1010,9 +1085,15 @@ table.data tr.row-warn td {
   padding: 0;
 }
 
-/* 整单明细确认：No. 加内核 13 列，不归组、无合计行；列多时横向滚动，单元格不折行 */
+/* 整单明细确认：No. 加内核 13 列，不归组、无合计行；列多时中间横向滚动，No. 固定在左、总额固定在右，单元格不折行。
+   sticky 单元格要跟着滚动带走分隔线，所以这张表用 separate 边框模型。 */
 .confirm-table-wrap {
   overflow-x: auto;
+}
+
+table.confirm-table {
+  border-collapse: separate;
+  border-spacing: 0;
 }
 
 table.confirm-table th,
@@ -1020,8 +1101,79 @@ table.confirm-table td {
   white-space: nowrap;
 }
 
+table.confirm-table .sticky-start,
+table.confirm-table .sticky-end {
+  position: sticky;
+  z-index: 1;
+  background: var(--color-surface-1);
+}
+
+table.confirm-table .sticky-start {
+  left: 0;
+  border-right: var(--layout-hairline-width) solid var(--color-hairline);
+}
+
+table.confirm-table .sticky-end {
+  right: 0;
+  border-left: var(--layout-hairline-width) solid var(--color-hairline);
+}
+
+/* 与上一行同一分类里相同的值：字色变淡，值照常在。 */
+table.confirm-table td.same-above {
+  color: var(--color-ink-tertiary);
+}
+
+.page-meta {
+  margin: 0 0 var(--space-md);
+}
+
+.explain {
+  margin-top: var(--space-xxs);
+  font-size: var(--text-caption-size);
+  color: var(--color-ink-subtle);
+}
+
+.explain p {
+  margin: var(--space-xxs) 0 0;
+}
+
+/* 展开区：disclosure 三角用 CSS 画，不用 SVG。 */
+.disclosure > summary,
+.explain > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.disclosure > summary::-webkit-details-marker,
+.explain > summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure > summary::before,
+.explain > summary::before,
+.group-toggle .chevron {
+  content: '';
+  display: inline-block;
+  width: var(--space-xxs);
+  height: var(--space-xxs);
+  margin-right: var(--space-xs);
+  border-right: var(--layout-hairline-width) solid currentColor;
+  border-bottom: var(--layout-hairline-width) solid currentColor;
+  transform: translateY(calc(var(--layout-hairline-width) * -2)) rotate(-45deg);
+}
+
+.disclosure[open] > summary::before,
+.explain[open] > summary::before,
+.group-toggle[aria-expanded='true'] .chevron {
+  transform: translateY(calc(var(--layout-hairline-width) * -3)) rotate(45deg);
+}
+
+.disclosure > summary {
+  font-weight: var(--text-button-weight);
+}
+
 .package-note {
-  margin: var(--space-sm) 0 var(--space-md);
+  margin: var(--space-sm) 0 var(--space-xs);
 }
 
 .package-files {
@@ -1030,6 +1182,28 @@ table.confirm-table td {
   padding: 0;
   display: grid;
   gap: var(--space-xxs);
+}
+
+/* 吸底操作栏：左边一句话，右边按钮。 */
+.panel.action-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm) var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.action-bar .bar-text {
+  margin: 0;
+  color: var(--color-ink-muted);
+}
+
+.action-bar .action-error {
+  flex-basis: 100%;
 }
 
 .screenshot-row {
