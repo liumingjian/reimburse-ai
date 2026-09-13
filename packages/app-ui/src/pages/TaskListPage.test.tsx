@@ -97,6 +97,8 @@ describe('任务列表', () => {
     // 点作废不进入任务页，先弹出二次确认。
     expect(window.location.hash).toBe('#/tasks');
     const dialog = screen.getByRole('dialog', { name: ABANDON_TASK_COPY.dialogTitle });
+    // 作废不可撤销：确认按钮是红色 danger 按钮（jsdom 不算样式，只能看 Carbon 按钮种类的 class），文案不变。
+    expect(within(dialog).getByRole('button', { name: '作废' }).classList.contains('cds--btn--danger')).toBe(true);
     fireEvent.click(within(dialog).getByRole('button', { name: '作废' }));
     await waitFor(() => expect(screen.queryByText('2026-08 上海出差（产品评审）')).toBeNull());
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -141,7 +143,9 @@ describe('任务列表', () => {
   test('设置页「完全重置」：二次确认后清空本机数据，回到启动页；重新登录并确认身份后任务列表为空', async () => {
     renderApp('#/settings');
     fireEvent.click(await screen.findByRole('button', { name: '完全重置' }));
-    fireEvent.click(within(screen.getByRole('dialog', { name: '清空本机全部数据？' })).getByRole('button', { name: '清空并重置' }));
+    const resetConfirm = within(screen.getByRole('dialog', { name: '清空本机全部数据？' })).getByRole('button', { name: '清空并重置' });
+    expect(resetConfirm.classList.contains('cds--btn--danger')).toBe(true);
+    fireEvent.click(resetConfirm);
     expect(await screen.findByRole('heading', { name: '登录报销系统' })).toBeTruthy();
     expect(window.location.hash).toBe('#/tasks');
     fireEvent.click(screen.getByRole('button', { name: '我已登录' }));

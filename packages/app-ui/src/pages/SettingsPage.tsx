@@ -47,7 +47,7 @@ export function SettingsPage() {
         </section>
       </div>
       {open ? (
-        <ConfirmDialog title={RESET_COPY.dialogTitle} confirmLabel={RESET_COPY.confirm} busy={busy} error={error} onConfirm={() => void reset()} onCancel={close}>
+        <ConfirmDialog danger title={RESET_COPY.dialogTitle} confirmLabel={RESET_COPY.confirm} busy={busy} error={error} onConfirm={() => void reset()} onCancel={close}>
           <p>{RESET_COPY.dialogBody}</p>
         </ConfirmDialog>
       ) : null}
