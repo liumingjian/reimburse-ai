@@ -70,7 +70,7 @@ test('全流程：从启动登录一路走到完成，上传 sample-materials �
 
   // 6. 报销信息核对、材料准备自动完成后，唯一一次整单确认。
   await expect(page).toHaveURL(/#\/task\/T4\/review$/);
-  const confirm = page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认', exact: true });
+  const confirm = page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认整单明细', exact: true });
   await expect(confirm).toBeEnabled({ timeout: 15_000 });
   await expect(page.getByTestId('package-files')).toHaveText('核对材料已生成，共 13 份文件。');
   await expect(page.getByRole('table', { name: '整单明细' }).locator('tbody tr')).toHaveCount(9);

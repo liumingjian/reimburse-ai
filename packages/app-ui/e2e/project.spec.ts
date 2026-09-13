@@ -118,7 +118,7 @@ test('提交：未归属或事由为空时不可用；提交后自动核对报�
   await submit(page).click();
   await expect(page).toHaveURL(/#\/task\/T1\/review$/);
   await expect(page.getByRole('heading', { name: '整单明细确认' })).toBeVisible();
-  await expect(page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认整单明细', exact: true })).toBeVisible();
   await expect(page.getByTestId('review-purpose')).toContainText('上海产品评审出差');
 
   // 回到项目归属：已提交，ERP 写入开始前仍可改派，有整单确认入口。
@@ -146,6 +146,6 @@ test('在项目簿删除本任务已用的项目：提交仍通过；这个项�
   await page.getByLabel('报销事由').fill('上海产品评审出差（补）');
   await submit(page).click();
   await expect(page).toHaveURL(/#\/task\/T1\/review$/);
-  await expect(page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认', exact: true })).toBeEnabled();
+  await expect(page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认整单明细', exact: true })).toBeEnabled();
   await expect(page.getByTestId('confirm-row-9')).toContainText('P-2307 / 华东客户交付');
 });

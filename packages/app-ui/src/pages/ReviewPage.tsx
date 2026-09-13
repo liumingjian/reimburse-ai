@@ -37,7 +37,7 @@ import { PAGE_COPY, REVIEW_ORDER_NOTE } from './page-copy';
 // 只能确认，不在表内修改：有不对的地方回到对应步骤修改。确认绑定项目归属，改派项目会使确认失效（提示由服务端给出）。
 // 提交项目归属后服务端自动做报销信息核对与材料准备（进度照内核话术）：核对不匹配时显示不匹配表，唯一处置是回到项目归属改派；
 // 材料包有缺项时显示缺项表，「确认」不可用，可排除服务端标明的相关材料。
-// 「确认」带快照里的摘要与 stepToken；确认后出现并列的「去打印」「去报销」：
+// 「确认整单明细」带快照里的摘要与 stepToken；确认后在摘要条下方、表格上方出现并列的「去打印」「去报销」（首屏内，不进吸底栏）：
 // 去打印只是进入打印稿页；去报销请服务端启动专用浏览器，登录后自动写入，没有「开始填报」。
 // 「追加材料」先二次确认，再请服务端使确认失效并回到上传页。支付截图在打印稿页补充，不在这里。
 
@@ -210,6 +210,60 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
         ) : null}
       </div>
 
+      {confirmed ? (
+        // 确认后下一步就在眼前：两栏入口紧跟摘要条，排在整单明细表之前。
+        <section className="app-block app-review-done" aria-label="整单确认">
+          <InlineNotification
+            kind="success"
+            role="status"
+            lowContrast
+            hideCloseButton
+            statusIconDescription="成功"
+            title={`整单明细已确认${confirmation.confirmedAt ? `（${formatDateTime(confirmation.confirmedAt)}）` : ''}。下面两个按钮基于同一份确认数据，先后随意、可重复。`}
+          />
+          <div className="app-two-actions bleed">
+            <div className="app-action-card">
+              <h3>去打印</h3>
+              <p>生成合并 PDF：每张发票一页 A4，发票在上、证明材料在下。住宿发票的支付截图在打印稿页补充。</p>
+              <Button href={taskHash(taskId, 'print')} renderIcon={Printer}>
+                去打印
+              </Button>
+            </div>
+            <div className="app-action-card">
+              <h3>去报销</h3>
+              <p>
+                启动专用浏览器，你登录报销系统后自动导入发票、写入 {confirmation.lineCount} 行明细、保存草稿并严格回读，中途不再确认。
+                {erpDone && erp.draftNo ? `已完成，草稿 ${erp.draftNo}。` : ''}
+              </p>
+              {erpDone ? (
+                <Button href={taskHash(taskId, 'done')}>查看结果</Button>
+              ) : erpStarted ? (
+                <Button href={taskHash(taskId, STAGE_DEFAULT_PAGE[stage])}>查看填报进度</Button>
+              ) : (
+                <Button renderIcon={Launch} disabled={claimAction.busy} onClick={() => void claim()}>
+                  去报销
+                </Button>
+              )}
+              <ActionError message={claimAction.error} />
+            </div>
+          </div>
+          <div className="app-btn-row app-after-actions">
+            {!erpStarted ? (
+              <Button kind="ghost" size="sm" href={taskHash(taskId, 'project')}>
+                修改项目归属
+              </Button>
+            ) : null}
+            <span className="app-caption">改派项目会使这次确认失效。</span>
+          </div>
+          <div className="app-btn-row app-after-actions">
+            <Button kind="ghost" size="sm" disabled={erpStarted} onClick={reopen.open}>
+              追加材料
+            </Button>
+            <span className="app-caption">追加材料会形成新的盘点版本，并使这次确认失效。</span>
+          </div>
+        </section>
+      ) : null}
+
       <div className="bleed app-table app-review-table">
         <Table aria-label="整单明细" size="md">
           <TableHead>
@@ -329,59 +383,9 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
         </section>
       ) : null}
 
-      {confirmed ? (
-        <section className="app-block" aria-label="整单确认">
-          <InlineNotification
-            kind="success"
-            role="status"
-            lowContrast
-            hideCloseButton
-            statusIconDescription="成功"
-            title={`整单明细已确认${confirmation.confirmedAt ? `（${formatDateTime(confirmation.confirmedAt)}）` : ''}。下面两个按钮基于同一份确认数据，先后随意、可重复。`}
-          />
-          <div className="app-two-actions bleed">
-            <div className="app-action-card">
-              <h3>去打印</h3>
-              <p>生成合并 PDF：每张发票一页 A4，发票在上、证明材料在下。住宿发票的支付截图在打印稿页补充。</p>
-              <Button href={taskHash(taskId, 'print')} renderIcon={Printer}>
-                去打印
-              </Button>
-            </div>
-            <div className="app-action-card">
-              <h3>去报销</h3>
-              <p>
-                启动专用浏览器，你登录报销系统后自动导入发票、写入 {confirmation.lineCount} 行明细、保存草稿并严格回读，中途不再确认。
-                {erpDone && erp.draftNo ? `已完成，草稿 ${erp.draftNo}。` : ''}
-              </p>
-              {erpDone ? (
-                <Button href={taskHash(taskId, 'done')}>查看结果</Button>
-              ) : erpStarted ? (
-                <Button href={taskHash(taskId, STAGE_DEFAULT_PAGE[stage])}>查看填报进度</Button>
-              ) : (
-                <Button renderIcon={Launch} disabled={claimAction.busy} onClick={() => void claim()}>
-                  去报销
-                </Button>
-              )}
-              <ActionError message={claimAction.error} />
-            </div>
-          </div>
-          <div className="app-btn-row app-after-actions">
-            {!erpStarted ? (
-              <Button kind="ghost" size="sm" href={taskHash(taskId, 'project')}>
-                修改项目归属
-              </Button>
-            ) : null}
-            <span className="app-caption">项目归属随整单确认一起生效，改派项目会使确认失效。</span>
-          </div>
-          <div className="app-btn-row app-after-actions">
-            <Button kind="ghost" size="sm" disabled={erpStarted} onClick={reopen.open}>
-              追加材料
-            </Button>
-            <span className="app-caption">追加材料会形成新的盘点版本，并使这次确认失效。</span>
-          </div>
-        </section>
-      ) : (
-        // 吸底操作栏：横跨整个工作区、贴在视口底边；左边一句后果说明，右边按钮，「确认」是唯一的主按钮、在最右。
+      {!confirmed ? (
+        // 吸底操作栏：横跨整个工作区、贴在视口底边；左边一句后果说明（不重复页头导语），右边按钮。
+        // 按钮分量：「确认整单明细」是唯一的主按钮、在最右；两个往回走的操作都是 ghost。
         <section className="app-action-bar" aria-label="整单确认">
           {autoNotice ? (
             <p className="app-consequence" role="status">
@@ -390,7 +394,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
           ) : (
             <p className="app-consequence">
               <Information />
-              <strong>确认后项目归属一并生效</strong>
+              <strong>确认后即可去打印、去报销</strong>
             </p>
           )}
           {!erpStarted ? (
@@ -400,17 +404,17 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
           ) : null}
           {!autoNotice ? (
             <>
-              <Button kind="secondary" size="md" href={taskHash(taskId, 'pending')}>
+              <Button kind="ghost" size="md" href={taskHash(taskId, 'pending')}>
                 回到待确认项
               </Button>
               <Button kind="primary" size="md" disabled={confirmDisabled} onClick={() => void confirm()}>
-                确认
+                确认整单明细
               </Button>
             </>
           ) : null}
           <ActionError message={confirmAction.error} />
         </section>
-      )}
+      ) : null}
 
       {reopen.dialog}
     </>

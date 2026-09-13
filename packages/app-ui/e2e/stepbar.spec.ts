@@ -60,7 +60,7 @@ test('Carbon Gray 10 原样：背景 #f4f4f4、主按钮 #0f62fe 直角；系统
   const fontFamily = await page.locator('body').evaluate((element) => getComputedStyle(element).fontFamily);
   expect(fontFamily).toContain('PingFang SC');
   expect(fontFamily).not.toContain('Plex');
-  const confirm = page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认', exact: true });
+  const confirm = page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认整单明细', exact: true });
   await expect(confirm).toHaveCSS('background-color', 'rgb(15, 98, 254)');
   await expect(confirm).toHaveCSS('border-top-left-radius', '0px');
 

@@ -9,7 +9,7 @@ const STALE = '任务已在别处推进';
 
 const banner = (page: Page) => page.getByRole('alert').filter({ hasText: BANNER });
 const staleNotice = (page: Page) => page.getByRole('status').filter({ hasText: STALE });
-const checkbox = (page: Page) => page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认', exact: true });
+const checkbox = (page: Page) => page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认整单明细', exact: true });
 const printLink = (page: Page) => page.getByRole('link', { name: '去打印', exact: true });
 
 // 只在 mock 构建里存在的钩子：另一个窗口推进了任务，这边的事件流还没送到。
