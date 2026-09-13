@@ -140,7 +140,7 @@ export const InventoryPhaseSchema = z.object({
 export type InventoryPhase = z.infer<typeof InventoryPhaseSchema>;
 
 // 盘点结果的计数，由服务端给出（页面不按状态或角色自己数）。openPendingItemCount 是还没处理的待确认项个数，
-// 盘点页入口、待确认项页「还剩 n 个」与侧栏角标都读它。
+// 盘点页入口、待确认项页「还剩 n 个」与步骤条角标都读它。
 export const InventorySummarySchema = z.object({
   materialCount: z.number().int().nonnegative(),
   okCount: z.number().int().nonnegative(),

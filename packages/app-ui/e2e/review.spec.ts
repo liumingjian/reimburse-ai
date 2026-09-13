@@ -96,6 +96,8 @@ test('版式：No. 固定在左、总额固定在右，中间横向滚动；同�
     return element.scrollLeft;
   });
   expect(scrolled).toBeGreaterThan(0);
+  const [scrollWidth1100, clientWidth1100] = await wrap.evaluate((element) => [element.scrollWidth, element.clientWidth]);
+  console.log(`review table 1100: scrollWidth ${scrollWidth1100}, clientWidth ${clientWidth1100}`);
   const cells = page.getByTestId('confirm-row-2').locator('td');
   const [wrapBox, noBox, grossBox] = await Promise.all([wrap.boundingBox(), cells.first().boundingBox(), cells.last().boundingBox()]);
   expect(wrapBox && noBox && Math.abs(noBox.x - wrapBox.x) < 3).toBe(true);
@@ -110,13 +112,46 @@ test('版式：No. 固定在左、总额固定在右，中间横向滚动；同�
   await expect(cells.nth(2)).toHaveText('P-3312 / 产品调研');
 });
 
-test('宽度：1440 窗口、侧栏展开时整单明细表铺满工作面、不横向滚动', async ({ page }) => {
+test('宽度：1440 窗口整单明细表铺满工作面、不横向滚动；项目号与费用项目不折行', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(open('?seed=review', '#/task/T1/review'));
   await expect(page.getByRole('heading', { name: '整单明细确认' })).toBeVisible();
   const wrap = table(page).locator('xpath=..');
   const [scrollWidth, clientWidth] = await wrap.evaluate((element) => [element.scrollWidth, element.clientWidth]);
+  console.log(`review table 1440: scrollWidth ${scrollWidth}, clientWidth ${clientWidth}`);
   expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+  // 项目号、费用项目两列的每个单元格都只占一行。编码是小一号的等宽字，与名称同一行时两段文字的 top 不同，
+  // 所以按行归并：一段文字的 top 落在上一行底边之下才算新的一行。
+  const lines = await table(page).evaluate((element) => {
+    const heads = [...element.querySelectorAll('thead th')].map((th) => th.textContent?.trim() ?? '');
+    const result: Record<string, number> = {};
+    for (const label of ['项目号', '费用项目']) {
+      const index = heads.indexOf(label);
+      let max = 0;
+      for (const row of element.querySelectorAll('tbody tr')) {
+        const cell = row.children[index];
+        if (!(cell instanceof HTMLElement)) continue;
+        const range = document.createRange();
+        range.selectNodeContents(cell);
+        const rects = [...range.getClientRects()].filter((rect) => rect.width > 0).sort((a, b) => a.top - b.top);
+        let count = 0;
+        let lineBottom = Number.NEGATIVE_INFINITY;
+        for (const rect of rects) {
+          if (rect.top >= lineBottom - 1) {
+            count += 1;
+            lineBottom = rect.bottom;
+          } else {
+            lineBottom = Math.max(lineBottom, rect.bottom);
+          }
+        }
+        max = Math.max(max, count);
+      }
+      result[label] = max;
+    }
+    return result;
+  });
+  console.log(`review table 1440 line counts: ${JSON.stringify(lines)}`);
+  expect(lines).toEqual({ 项目号: 1, 费用项目: 1 });
   // 表格铺满通栏容器，容器贴着工作面左右边线。
   const [wrapBox, mainBox, tableBox] = await Promise.all([wrap.boundingBox(), page.locator('main').boundingBox(), table(page).boundingBox()]);
   expect(wrapBox && mainBox && wrapBox.width > mainBox.width - 4).toBe(true);
@@ -136,7 +171,7 @@ test('分岔入口：?seed=actions 下去打印进入打印稿预览，去报销
   await expect(page.getByRole('heading', { name: '保存报销草稿' })).toBeVisible();
   await expect(page.getByRole('button', { name: '开始填报' })).toHaveCount(0);
   await expect(page.getByRole('region', { name: '填报进度' }).getByRole('listitem', { name: '登录', exact: true })).toContainText('等待你操作');
-  // 侧栏里「去打印 / 去报销」已经可进入。
+  // 步骤条里「去打印 / 去报销」已经可进入。
   await expect(page.getByRole('list', { name: '流程阶段' }).getByRole('link', { name: /去打印 \/ 去报销/ })).toBeVisible();
 });
 

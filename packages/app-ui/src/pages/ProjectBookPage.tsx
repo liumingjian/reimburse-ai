@@ -5,7 +5,7 @@ import { TASKS_HASH } from '../router';
 import { AppShell } from '../shell/AppShell';
 import { ProjectBookPanel } from './ProjectBookPanel';
 
-// 全局页面 `#/projects`「个人项目簿」：顶栏与任务侧栏都有入口，不在启动门内。
+// 全局页面 `#/projects`「个人项目簿」：顶栏有入口，不在启动门内。
 // 启动没完成（没登录报销系统或身份没登记）时照常打开并说明原因；维护动作由服务端拒绝并给出原因。
 export function ProjectBookPage() {
   const taskList = useTaskList();

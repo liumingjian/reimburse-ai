@@ -34,7 +34,7 @@ describe('tokens.css 由 DESIGN.md 生成', () => {
       '--work-surface-gutter',
       '--button-primary-min-height',
       '--panel-padding',
-      '--sidebar-width',
+      '--step-bar-marker-size',
       '--top-bar-height',
     ]) {
       expect(definedTokens.has(name), name).toBe(true);

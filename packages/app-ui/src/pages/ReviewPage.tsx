@@ -36,8 +36,9 @@ function autoStepNotice(snapshot: TaskSnapshot): string | null {
 }
 
 const NUMERIC_COLUMNS: ReadonlySet<string> = new Set(['费用金额', '税额', '总额']);
-// 长文字列吸收剩余宽度并允许换行（中文只在「编码 / 名称」之间断开）；其余短列按内容收紧、不折行。
-const WRAP_COLUMNS: ReadonlySet<string> = new Set(['项目号', '出发点', '目的地', '费用分类', '费用项目']);
+// 长文字列吸收剩余宽度并允许换行（中文只在「编码 / 名称」之间断开）；其余列按内容收紧、不折行。
+// 项目号与费用项目是「编码 / 名称」一对，折成两行难读：它们按内容定宽不折行，窄窗口时整张表横向滚动。
+const WRAP_COLUMNS: ReadonlySet<string> = new Set(['出发点', '目的地', '费用分类']);
 
 // 金额列右对齐；表比容器宽时整张表横向滚动，No. 固定在左、总额固定在右（DESIGN.md「数据表格」）。
 const STICKY_END_COLUMN = CONFIRMATION_TABLE_COLUMNS[CONFIRMATION_TABLE_COLUMNS.length - 1];

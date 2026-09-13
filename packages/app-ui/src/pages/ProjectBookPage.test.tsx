@@ -152,7 +152,7 @@ describe('项目归属的项目簿门', () => {
     await waitFor(() => expect(screen.getByTestId('project-of-3').textContent).toBe('P-6021 · 年度预算评审'));
   });
 
-  test('顶栏有常驻「个人项目簿」入口（侧栏不重复）', async () => {
+  test('顶栏有常驻「个人项目簿」入口（步骤条不重复）', async () => {
     renderApp('#/task/T1/project', {}, 'project');
     await screen.findByRole('heading', { name: '项目归属' });
     expect(within(screen.getByRole('navigation', { name: '全局' })).getByRole('link', { name: '个人项目簿' }).getAttribute('href')).toBe('#/projects');

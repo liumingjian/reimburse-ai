@@ -79,7 +79,7 @@ describe('对账', () => {
     expect(screen.getByRole('list', { name: 'No.3 原因' }).textContent).toContain('任务第 3 行');
   });
 
-  test('转人工：处置区消失，页面与侧栏都显示已转人工', async () => {
+  test('转人工：处置区消失，页面与步骤条都显示已转人工', async () => {
     renderAt('#/task/T2/reconcile');
     fireEvent.click(await screen.findByRole('button', { name: '转人工' }));
     expect(await screen.findByText(/已转人工处理：应用不再写入报销系统/)).toBeTruthy();

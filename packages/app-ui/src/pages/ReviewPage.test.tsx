@@ -121,7 +121,7 @@ describe('整单明细确认', () => {
     expect((screen.getByRole('button', { name: '追加材料' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  test('?seed=actions：直接是已确认状态，两个入口并列；侧栏里项目归属排在整单明细确认之前', async () => {
+  test('?seed=actions：直接是已确认状态，两个入口并列；步骤条里项目归属排在整单明细确认之前', async () => {
     renderReview('actions');
     expect(await screen.findByRole('link', { name: '去打印' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '去报销' })).toBeTruthy();

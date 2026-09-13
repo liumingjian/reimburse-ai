@@ -56,12 +56,12 @@ export const TASK_STAGE_PHASES: Readonly<Record<TaskStage, KernelPhase>> = {
   reconcile: '保存报销草稿',
 };
 
-// 任务列表徽标与侧栏用的阶段名：「N/10 阶段名」。
+// 任务列表徽标用的阶段名：「N/10 阶段名」。
 export const TASK_STAGE_LABELS: Readonly<Record<TaskStage, string>> = Object.fromEntries(
   Object.entries(TASK_STAGE_PHASES).map(([stage, phase]) => [stage, `${KERNEL_PHASES.indexOf(phase) + 1}/10 ${phase}`]),
 ) as Record<TaskStage, string>;
 
-// 对账不是内核的阶段而是保存报销草稿里的停顿状态；任务列表与侧栏用这个状态名代替阶段名。
+// 对账不是内核的阶段而是保存报销草稿里的停顿状态；任务列表与步骤条用这个状态名代替阶段名。
 export const RECONCILE_STATUS_LABEL = '对账中';
 
 // 阶段在主线上的序号，用于「阶段不可跳过」的页面守卫；reconcile 与 erp 同级（都在 ERP 写入开始之后）。

@@ -1,5 +1,5 @@
 /* 页面样式只引用 tokens.css 里的自定义属性：不写字面颜色、字号、圆角与像素值（媒体查询除外）。
-   结构照 DESIGN.md 方案 B：顶栏与侧栏在着色框架里，主区是一整块白色工作面（.sheet），表格与操作栏在工作面里通栏（.bleed）。 */
+   结构照 DESIGN.md 方案 B：顶栏在着色框架里，任务页顶部是步骤条，主区是一整块白色工作面（.sheet），表格与操作栏在工作面里通栏（.bleed）。 */
 
 * {
   box-sizing: border-box;
@@ -225,23 +225,12 @@ svg.icon {
   color: var(--color-danger);
 }
 
-/* ---------- 外壳：框架、侧栏与白色工作面 ---------- */
+/* ---------- 外壳：框架与白色工作面（没有侧栏，工作面在所有页面铺满宽度） ---------- */
 
 .layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   padding: 0 var(--app-frame-gap) var(--app-frame-gap);
-  transition: grid-template-columns 0.15s;
-}
-
-.layout.with-sidebar {
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  padding-left: 0;
-}
-
-/* 收起后只剩窄栏：展开按钮加每步一个紧凑标记。 */
-.layout.with-sidebar:has(> .sidebar.is-collapsed) {
-  grid-template-columns: var(--sidebar-rail-width) minmax(0, 1fr);
 }
 
 /* 白色工作面：整块大圆角加一圈细边线，页面内容都在里面；不限宽。overflow: clip 裁出圆角又不打断吸顶吸底。 */
@@ -269,7 +258,8 @@ svg.icon {
   display: none;
 }
 
-.sheet > .notice:first-child {
+.sheet > .notice:first-child,
+.sheet > .stepbar + .notice {
   margin-top: var(--space-md);
 }
 
@@ -284,153 +274,163 @@ svg.icon {
   margin-right: calc(-1 * var(--work-surface-gutter));
 }
 
-.sidebar {
-  position: sticky;
-  top: var(--top-bar-height);
-  align-self: start;
-  max-height: calc(100vh - var(--top-bar-height));
-  overflow-y: auto;
-  min-width: 0;
-  padding: var(--space-xxs) var(--space-xs) var(--space-md);
-  background: var(--sidebar-background-color);
+/* ---------- 步骤条：任务页工作面顶部一行（DESIGN.md「步骤条」） ---------- */
+
+/* 通栏一条，下边一根细分隔线；左边任务名与费用期间，右边 7 步。 */
+.stepbar {
+  padding: var(--space-md) var(--work-surface-gutter);
+  border-bottom: var(--layout-hairline-width) solid var(--color-border-subtle);
 }
 
-.sidebar-head {
+.stepbar-row {
   display: flex;
   align-items: center;
-  gap: var(--space-xxs);
-  padding: 0 0 0 var(--space-sm);
+  gap: var(--space-lg);
+  min-width: 0;
 }
 
-.sidebar .task-name {
-  flex: 1;
-  min-width: 0;
+.stepbar-task {
+  flex: 0 1 var(--step-bar-task-width);
+  min-width: var(--step-bar-task-min-width);
+}
+
+.stepbar .task-name {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
   font: var(--text-heading-sm);
 }
 
-.sidebar .task-period {
+.stepbar .task-period {
   margin: 0;
-  padding: 0 var(--space-sm);
   white-space: nowrap;
   font: var(--text-label);
   letter-spacing: var(--text-label-tracking);
   color: var(--color-ink-subtle);
 }
 
-.sidebar-toggle {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: var(--layout-control-height-sm);
-  height: var(--layout-control-height-sm);
+.stepbar-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  margin: 0;
+  color: var(--color-ink-muted);
+}
+
+.stepbar-hint {
+  margin: var(--space-xs) 0 0;
+}
+
+.stepbar-steps {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
   padding: 0;
+  list-style: none;
+}
+
+/* 每一步后面一根连线吸收剩余宽度；最后一步不画线。走过的连线是强调色，没走到的是细灰线。
+   li 不设 min-width: 0：最窄就是步骤本身加最短连线，步骤不会被压扁或盖住下一步。 */
+.stepbar-steps li {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+}
+
+.stepbar-steps li:last-child {
+  flex: none;
+}
+
+.stepbar-steps li:not(:last-child)::after {
+  content: '';
+  flex: 1 1 auto;
+  min-width: var(--step-bar-connector-min-width);
+  height: var(--step-bar-connector-width);
+  margin: 0 var(--space-xs);
+  background: var(--color-hairline-strong);
+}
+
+.stepbar-steps li.is-done::after {
+  background: var(--color-primary);
+}
+
+.stepbar-step {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: var(--space-xs);
+  padding: var(--space-xxs);
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--color-ink-subtle);
-}
-
-.sidebar-toggle:hover {
-  background: var(--color-layer-hover);
-  color: var(--color-ink);
-}
-
-.sidebar-status {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-xs);
-  margin: var(--space-md) 0 0;
-  padding: 0 var(--space-sm);
   color: var(--color-ink-muted);
+  font: var(--text-body);
+  white-space: nowrap;
 }
 
-.sidebar-hint {
-  margin: var(--space-sm) 0 0;
-  padding: 0 var(--space-sm);
-}
-
-.stage-list {
-  list-style: none;
-  margin: var(--space-md) 0 0;
-  padding: 0;
-}
-
-.stage-list li {
-  margin-bottom: calc(var(--space-xxs) / 2);
-}
-
-/* 上一版的步骤样式：一种样式、不画圆点。已完成是灰字加细线勾，当前是强调色字加左侧细条（不加底色块），未到是三级灰。 */
-.stage-list .stage {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  width: 100%;
-  min-height: var(--layout-table-row-compact);
-  padding: var(--space-xxs) var(--space-sm);
-  border: 0;
-  border-left: var(--layout-stage-bar-width) solid transparent;
-  border-radius: 0 var(--radius-md) var(--radius-md) 0;
-  background: transparent;
-  color: var(--color-ink-muted);
-  text-align: left;
-}
-
-.stage-list a.stage:hover {
+a.stepbar-step:hover {
   background: var(--color-layer-hover);
   text-decoration: none;
 }
 
-.stage-list .current {
-  border-left-color: var(--color-primary);
-  color: var(--color-primary);
-  font-weight: var(--text-body-strong-weight);
+/* 圆形标记：序号由 data-n 画出（不进可访问名称）；已完成是强调色细圈里的勾，当前是强调色实心圆里的白色序号。 */
+.stepbar-marker {
+  display: grid;
+  place-items: center;
+  flex: none;
+  box-sizing: border-box;
+  width: var(--step-bar-marker-size);
+  height: var(--step-bar-marker-size);
+  border: var(--step-bar-marker-border) solid var(--color-hairline-strong);
+  border-radius: var(--radius-pill);
+  background: var(--color-layer-1);
+  color: var(--color-ink-subtle);
+  font: var(--text-label);
+  font-variant-numeric: tabular-nums;
 }
 
-.stage-list .locked {
+.stepbar-marker[data-n]::before {
+  content: attr(data-n);
+}
+
+.stepbar-step.done .stepbar-marker {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.stepbar-step.current {
+  color: var(--color-ink);
+  font-weight: var(--text-heading-sm-weight);
+}
+
+.stepbar-step.current .stepbar-marker {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  font-weight: var(--text-heading-sm-weight);
+}
+
+.stepbar-step.locked {
   color: var(--color-ink-tertiary);
   cursor: default;
 }
 
-.stage-list .done-mark {
-  color: var(--color-ink-subtle);
+.stepbar-step.locked .stepbar-marker {
+  border-color: var(--color-hairline);
+  color: var(--color-ink-tertiary);
 }
 
-.stage-list .count {
-  margin-left: auto;
+/* 待确认项的数量：中性灰的小胶囊，不做彩色徽标。 */
+.stepbar-step .count {
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-3);
+  color: var(--color-ink-muted);
   font: var(--text-label);
-  color: var(--color-ink-subtle);
-}
-
-.stage-list .marker {
-  flex: none;
-  width: 100%;
-  font: var(--text-label);
-  text-align: center;
-}
-
-.sidebar.is-collapsed .sidebar-head {
-  justify-content: center;
-  padding-left: 0;
-}
-
-.sidebar.is-collapsed .task-name,
-.sidebar.is-collapsed .task-period,
-.sidebar.is-collapsed .stage-label,
-.sidebar.is-collapsed .done-mark,
-.sidebar.is-collapsed .count,
-.sidebar.is-collapsed .sidebar-status,
-.sidebar.is-collapsed .sidebar-hint {
-  display: none;
-}
-
-.sidebar.is-collapsed .stage {
-  justify-content: center;
-  padding-left: 0;
-  padding-right: 0;
+  font-weight: var(--text-body-strong-weight);
 }
 
 /* ---------- 页头与节 ---------- */
@@ -2415,53 +2415,40 @@ table.assign-table tr.is-selected td {
   border-bottom: var(--layout-hairline-width) solid var(--color-border-subtle);
 }
 
-@media (max-width: 900px) {
-  .layout.with-sidebar,
-  .layout.with-sidebar:has(> .sidebar.is-collapsed) {
-    grid-template-columns: minmax(0, 1fr);
-    padding-left: var(--app-frame-gap);
+/* 步骤条放不下一行时：任务名与费用期间排在上面一行，7 步占满下面一行；标签降到 body-compact 字号，始终不折行、不横向滚动。 */
+@media (max-width: 1279px) {
+  .stepbar-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-sm);
   }
 
-  /* 窄屏保持原样：侧栏在上方完整展开，没有收起按钮。 */
-  .sidebar {
-    position: static;
-    max-height: none;
-    padding-bottom: var(--space-sm);
-  }
-
-  .sidebar-toggle,
-  .stage-list .marker {
-    display: none;
-  }
-
-  .sidebar.is-collapsed .task-name,
-  .sidebar.is-collapsed .stage-label,
-  .sidebar.is-collapsed .done-mark,
-  .sidebar.is-collapsed .sidebar-hint {
-    display: revert;
-  }
-
-  .sidebar.is-collapsed .task-period {
-    display: block;
-  }
-
-  .sidebar.is-collapsed .stage-list .count {
-    display: inline;
-  }
-
-  .sidebar.is-collapsed .sidebar-status {
+  .stepbar-task {
     display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    flex: none;
+    min-width: 0;
   }
 
-  .sidebar.is-collapsed .sidebar-head {
-    justify-content: flex-start;
-    padding-left: var(--space-sm);
+  .stepbar-status {
+    flex-wrap: wrap;
   }
 
-  .sidebar.is-collapsed .stage {
-    justify-content: flex-start;
-    padding-left: var(--space-sm);
-    padding-right: var(--space-sm);
+  .stepbar-step {
+    font: var(--text-body-compact);
+  }
+}
+
+@media (max-width: 900px) {
+  /* 很窄时只留当前步的标签，其余步只剩圆形标记（可访问名称仍是步骤名）。 */
+  .stepbar-step:not(.current) .stepbar-label {
+    position: absolute;
+    width: var(--layout-hairline-width);
+    height: var(--layout-hairline-width);
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   .sheet {
@@ -2497,7 +2484,6 @@ table.assign-table tr.is-selected td {
 
 @media (prefers-reduced-motion: reduce) {
   .btn,
-  .layout,
   .group-toggle .chevron {
     transition: none;
   }

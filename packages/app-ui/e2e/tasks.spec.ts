@@ -34,7 +34,7 @@ test('?seed=done 让 T1 显示为草稿交接并带草稿号', async ({ page }) 
   await expect(t1.getByText('BX20260911-0173')).toBeVisible();
 });
 
-test('点「继续」进入任务页面骨架，侧栏列出流程阶段', async ({ page }) => {
+test('点「继续」进入任务页面骨架，步骤条列出流程阶段', async ({ page }) => {
   await page.goto(open('', '#/tasks'));
   await page.getByRole('link', { name: '继续', exact: true }).click();
   await expect(page).toHaveURL(/#\/task\/T1\/upload$/);

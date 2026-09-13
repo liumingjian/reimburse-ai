@@ -4,7 +4,7 @@ import { STAGE_DEFAULT_PAGE, pageAllowed, type TaskPage } from '../contract/stag
 import type { TaskSnapshot } from '../contract/snapshot';
 import { TASKS_HASH, navigate, taskHash } from '../router';
 import { AppShell } from '../shell/AppShell';
-import { Sidebar } from '../shell/Sidebar';
+import { StepBar } from '../shell/StepBar';
 import { DonePage } from './DonePage';
 import { ErpPage } from './ErpPage';
 import { InventoryPage } from './InventoryPage';
@@ -114,7 +114,7 @@ export function TaskRoute({ taskId, page }: { taskId: string; page: TaskPage | n
   }
 
   return (
-    <AppShell nav="tasks" sidebar={<Sidebar snapshot={snapshot} page={page} />}>
+    <AppShell nav="tasks" stepBar={<StepBar snapshot={snapshot} page={page} />}>
       {entry.notice ? (
         <div className="notice notice-info" role="status">
           {entry.notice}

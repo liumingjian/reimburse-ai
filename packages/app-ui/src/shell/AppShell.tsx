@@ -7,13 +7,14 @@ export const SERVICE_DOWN_NOTICE = '本地服务未运行，请在终端重新�
 
 type Props = {
   nav: 'tasks' | 'projects' | 'settings';
-  sidebar?: ReactNode;
+  stepBar?: ReactNode;
   children: ReactNode;
 };
 
-// 应用壳（DESIGN.md「表面按层级语义排」）：顶栏与侧栏在着色框架里，主区是一整块白色工作面（sheet），页面内容都在里面。
+// 应用壳（DESIGN.md「表面按层级语义排」）：顶栏在着色框架里，主区是一整块白色工作面（sheet），页面内容都在里面。
+// 没有侧栏：任务页的步骤条是工作面顶部的一行，工作面在所有页面都铺满宽度。
 // 工作面本身不限宽：表格页铺满，表单页在页面里自己限到 720px。断连时框架里出现全宽横幅。
-export function AppShell({ nav, sidebar, children }: Props) {
+export function AppShell({ nav, stepBar, children }: Props) {
   const state = useAppState();
   const taskList = useTaskList();
   const employee = taskList.data?.employee ?? null;
@@ -51,9 +52,11 @@ export function AppShell({ nav, sidebar, children }: Props) {
           {SERVICE_DOWN_NOTICE}
         </div>
       ) : null}
-      <div className={sidebar ? 'layout with-sidebar' : 'layout'}>
-        {sidebar}
-        <main className="sheet">{children}</main>
+      <div className="layout">
+        <main className="sheet">
+          {stepBar}
+          {children}
+        </main>
       </div>
     </>
   );

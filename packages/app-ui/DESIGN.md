@@ -301,10 +301,13 @@ components:
     typography: "{typography.caption}"
     rounded: "{rounded.pill}"
     padding: 2px 8px
-  sidebar:
-    backgroundColor: "{colors.frame}"
-    width: 232px
-    railWidth: 56px
+  step-bar:
+    markerSize: 24px
+    markerBorder: 1px
+    connectorWidth: 2px
+    connectorMinWidth: 16px
+    taskWidth: 260px
+    taskMinWidth: 120px
   top-bar:
     backgroundColor: "{colors.frame}"
     height: 48px
@@ -451,7 +454,7 @@ Carbon 的 UI shell 与 data table 默认铺满可用宽度，只有表单和长
 ## 布局尺寸
 
 `layout` 组收纳页面 CSS 需要、又不属于颜色/字号/圆角/间距的固定尺寸：表单最大宽、页面内边距、框架缝宽、三档行高、工具栏与操作栏高度、图标尺寸、进度条粗细与宽度、搜索框与提示宽度；
-以及 hairline 与焦点环粗细、小号与大号控件高度、阶段序号圆点尺寸、侧栏当前步骤左侧细条宽度、页面最小宽度、上传拖放区最小高度、文件列表大小列宽、
+以及 hairline 与焦点环粗细、小号与大号控件高度、头像圆点尺寸、左侧状态细条宽度、页面最小宽度、上传拖放区最小高度、文件列表大小列宽、
 项目归属右侧工作台宽度与明细表最小宽度、待确认项右侧表单栏宽度、弹层宽度、复选框尺寸、打印稿预览的页卡最小宽度、四角裁剪编辑器宽度与角点尺寸。新的尺寸先加到这里，再在 CSS 里引用。
 
 ## 各页版式
@@ -483,25 +486,32 @@ Carbon 的 UI shell 与 data table 默认铺满可用宽度，只有表单和长
 - **数字对齐**：金额、日期、计数用 `tabular-nums`，金额右对齐；等宽字体只给标识符。
 - **不用中点拼元信息**：不写"A · B · C"这种串，用带标签的字段或表格列。不用全大写标签。
 
-## 侧栏
+## 步骤条
 
-侧栏沿用上一版（ui-calm-layout）的步骤样式，用户评审时点名保留（"侧边栏我觉得延用之前的步骤设计很好看"）；效果图里的圆形状态图标**不采用**。
+任务页不再有侧栏。原因：PR #120 用户 QA 指出纯文字的侧栏"看不出是按步骤推进"（"侧边栏需要改成之前那种按照步骤推进的效果，或者不要侧边栏了，全铺开是否更加大气一点"），
+两条一起做：去掉侧栏，把横排的步骤条（Carbon progress indicator 的样式）放在白色工作面最上面；工作面在所有页面都铺满宽度，宽表格有更多地方。
+个人项目簿、设置、任务列表本来就没有侧栏，版式不变。
 
-侧栏只放两样东西：任务名（一行，超长省略，完整名称放在 `title` 里，下面可有一行 `{typography.label}` 灰字的费用期间）和步骤列表。
-当前阶段的 10 阶段名只出现在任务列表的进度列上，个人项目簿走顶栏导航，不在侧栏重复。步骤列表只有一种样式、不画圆点：
+步骤条是工作面顶部通栏的一行，下边一根 1px 分隔线，在页面标题之上，随页面滚动（不吸顶）：
 
-- 已完成：`{colors.ink-muted}` 常规字，字前一个细线勾（Carbon `checkmark`，不填色、不用绿色）；
-- 当前：强调色字、500 字重，左侧 `{layout.stage-bar-width}` 强调色细条；不加白底色块，细条就是当前的标记；
-- 未到：`{colors.ink-tertiary}`，不是链接；
-- 待确认项的数量排在行尾，中性灰，不做彩色徽标；
-- 被守卫拦下的页面不把对应步骤显示成当前；点未到的步骤时，列表下方出现一句「阶段不可跳过，请按顺序完成。」。
+- 左边：任务名（`{typography.heading-sm}`，一行，超长省略，完整名称放在 `title` 里），下面一行 `{typography.label}` 灰字的费用期间（服务端给出时才有）；
+  宽 `{components.step-bar.taskWidth}`，最窄可缩到 `{components.step-bar.taskMinWidth}`。
+- 右边：7 步横排（上传材料、材料盘点、待确认项、项目归属、整单明细确认、去打印 / 去报销、完成），每步是 `{components.step-bar.markerSize}` 的圆形标记加标签，
+  步与步之间一根 `{components.step-bar.connectorWidth}` 连线吸收剩余宽度（不短于 `{components.step-bar.connectorMinWidth}`）。
+  - 已完成：强调色细圈里一个强调色的 Carbon `checkmark`，标签 `{colors.ink-muted}`；它后面的连线是强调色。
+  - 当前：强调色实心圆里白色序号，标签 `{colors.ink}` 600 字重；`aria-current="step"`。
+  - 能进但不是当前也没完成（比如在上传页回看时后面已到的步骤）：细灰圈里灰色序号，标签 `{colors.ink-muted}`，是链接。
+  - 未到：`{colors.hairline}` 细圈里三级灰序号，标签 `{colors.ink-tertiary}`，是带 `aria-disabled` 的按钮；连线细灰。
+  - 待确认项的数量是标签后的中性灰小胶囊（`{colors.surface-3}` 底），不做彩色徽标。
+  - 序号由 CSS 从 `data-n` 画出，不进可访问名称；步骤的可访问名称就是步骤名，列表名是「流程阶段」。
+- 被守卫拦下的页面不把对应步骤显示成当前；点未到的步骤时，步骤条下方出现一句「阶段不可跳过，请按顺序完成。」（`role=status`）。
+- 对账中的任务：右边不是步骤，而是一个 warning 标签（等待对账 / 已转人工）加一句短说明。
+- 当前阶段的 10 阶段名只出现在任务列表的进度列上，个人项目簿走顶栏导航，都不在步骤条里重复。
 
-对账中的任务侧栏是任务名加一行状态（标签和一句短说明）。
+宽度：1280px 以上任务名与 7 步在同一行；1280px 以下任务名与费用期间排成上面一行，7 步占满下面一行，标签降到 13px（`{typography.body-compact}`）；
+1100px 仍然一行放下 7 步，标签不折行、步骤条不横向滚动。900px 以下只保留当前步的标签，其余步只剩圆形标记（标签对读屏仍在）。
 
-侧栏底色是 `{colors.frame}`，与顶栏同属着色框架，不画右边线（白色工作面自带边线）；悬停用 `{colors.layer-hover}`。
-顶部按钮（Carbon `side-panel--close` / `side-panel--open` 图标）可把侧栏收起成 `{components.sidebar.railWidth}` 宽的窄栏，
-只剩展开按钮和每步一个紧凑标记（可访问名称是步骤名，能进的步骤仍是链接）。收起与否是界面偏好，存在 localStorage 的
-`baox.sidebar.collapsed`，默认展开；窄屏（900px 以下）侧栏照旧在上方完整展开，不显示收起按钮。宽度过渡在 `prefers-reduced-motion` 下关闭。
+上一版的侧栏收起按钮、窄栏和 localStorage 偏好 `baox.sidebar.collapsed` 随侧栏一起删除；`components.sidebar` 的宽度 token 已删。
 
 ## 语义色
 

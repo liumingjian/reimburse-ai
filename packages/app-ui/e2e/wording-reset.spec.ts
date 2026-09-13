@@ -53,7 +53,7 @@ test('界面上不出现内核禁用词（ERP、候选等）', async ({ page }) 
   await expectNoForbidden(page, 'T2 展开 No.3');
 });
 
-test('阶段名用内核 10 阶段：只出现在任务列表徽标上，侧栏不重复', async ({ page }) => {
+test('阶段名用内核 10 阶段：只出现在任务列表徽标上，步骤条不重复', async ({ page }) => {
   await page.goto(open('?seed=project', '#/tasks'));
   await expect(page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByText('6/10 项目归属')).toBeVisible();
   await expect(page.getByRole('row', { name: /2026-06 北京培训/ }).getByText('10/10 草稿交接')).toBeVisible();
@@ -63,7 +63,7 @@ test('阶段名用内核 10 阶段：只出现在任务列表徽标上，侧栏�
   await expect(page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByText('9/10 保存报销草稿')).toBeVisible();
   await page.goto(open('?seed=review', '#/task/T1/review'));
   await expect(page.getByRole('list', { name: '流程阶段' })).toBeVisible();
-  await expect(page.locator('aside.sidebar')).not.toContainText('/10');
+  await expect(page.locator('.stepbar')).not.toContainText('/10');
 });
 
 test('作废：T1 确认作废后从任务列表消失；已开始写入报销系统的 T2、T3「作废」不可用并说明原因', async ({ page }, testInfo) => {

@@ -253,9 +253,12 @@
   --status-badge-typography: var(--text-caption);
   --status-badge-rounded: var(--radius-pill);
   --status-badge-padding: 2px 8px;
-  --sidebar-background-color: var(--color-frame);
-  --sidebar-width: 232px;
-  --sidebar-rail-width: 56px;
+  --step-bar-marker-size: 24px;
+  --step-bar-marker-border: 1px;
+  --step-bar-connector-width: 2px;
+  --step-bar-connector-min-width: 16px;
+  --step-bar-task-width: 260px;
+  --step-bar-task-min-width: 120px;
   --top-bar-background-color: var(--color-frame);
   --top-bar-height: 48px;
 }

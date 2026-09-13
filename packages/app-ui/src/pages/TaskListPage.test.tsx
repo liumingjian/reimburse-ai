@@ -153,7 +153,7 @@ describe('任务列表', () => {
 });
 
 describe('任务页面骨架', () => {
-  test('打开任务页面时侧栏列出流程阶段，当前阶段高亮', async () => {
+  test('打开任务页面时步骤条列出流程阶段，当前阶段高亮', async () => {
     renderApp('#/task/T1/upload');
     expect(await screen.findByRole('heading', { name: '上传材料' })).toBeTruthy();
     const stages = screen.getByRole('list', { name: '流程阶段' });
@@ -180,13 +180,13 @@ describe('任务页面骨架', () => {
     expect(await screen.findByRole('heading', { name: '还不能进入这一步' })).toBeTruthy();
   });
 
-  test('对账中的任务侧栏显示状态而不是阶段列表', async () => {
+  test('对账中的任务步骤条显示状态而不是阶段列表', async () => {
     renderApp('#/task/T2/reconcile');
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
     expect(screen.queryByRole('list', { name: '流程阶段' })).toBeNull();
-    const sidebar = screen.getByText('写入结果待对账。').closest('aside');
-    if (!sidebar) throw new Error('状态说明不在侧栏里');
-    // 10 阶段名只在任务列表徽标上，侧栏不再重复。
-    expect(within(sidebar).queryByText('9/10 保存报销草稿')).toBeNull();
+    const bar = screen.getByText('写入结果待对账。').closest('.stepbar');
+    if (!(bar instanceof HTMLElement)) throw new Error('状态说明不在步骤条里');
+    // 10 阶段名只在任务列表徽标上，步骤条不再重复。
+    expect(within(bar).queryByText('9/10 保存报销草稿')).toBeNull();
   });
 });

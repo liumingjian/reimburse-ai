@@ -112,7 +112,7 @@ describe('材料盘点', () => {
     expect(screen.queryByLabelText('盘点进度')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /^No\.1-3 / }));
     expect(screen.getByText('打车发票与行程单配对：26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeTruthy();
-    // 侧栏的待确认项条目带数量。
+    // 步骤条的待确认项带数量。
     expect(within(screen.getByRole('list', { name: '流程阶段' })).getByText('3', { selector: '.count' })).toBeTruthy();
   });
 
