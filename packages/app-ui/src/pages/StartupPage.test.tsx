@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { App } from '../App';
 import { createMockAdapter, type MockOptions, type MockStorage } from '../mock/mock-adapter';
 import { STARTUP_COPY } from './StartupPage';
@@ -25,10 +25,15 @@ describe('启动页：登录与身份绑定', () => {
 
     fireEvent.click(screen.getByRole('button', { name: STARTUP_COPY.loggedIn }));
     await heading(STARTUP_COPY.identityTitle);
-    const table = screen.getByRole('table', { name: '报销人身份' });
-    expect(within(table).getByRole('row', { name: /姓名 林颂宜/ })).toBeTruthy();
-    expect(within(table).getByRole('row', { name: /登录账号 linsongyi 判据/ })).toBeTruthy();
-    expect(within(table).getByRole('row', { name: /账套 示例科技集团本部/ })).toBeTruthy();
+    // 身份是带标签的只读字段，不是表格，也没有输入框；说明用白话「用于确认是本人」，界面上不出现「判据」。
+    expect(screen.queryByRole('table')).toBeNull();
+    const fields = screen.getByLabelText('报销人身份');
+    expect(screen.getByLabelText('姓名').textContent).toContain('林颂宜');
+    expect(screen.getByLabelText('登录账号').textContent).toContain('linsongyi');
+    expect(screen.getByLabelText('登录账号').textContent).toContain('用于确认是本人');
+    expect(screen.getByLabelText('账套').textContent).toContain('示例科技集团本部');
+    expect(fields.textContent).not.toContain('判据');
+    expect(document.body.textContent).not.toContain('判据');
     expect(screen.queryByRole('textbox')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: STARTUP_COPY.confirm }));
@@ -51,12 +56,26 @@ describe('启动页：登录与身份绑定', () => {
     expect(screen.queryByRole('heading', { name: STARTUP_COPY.identityTitle })).toBeNull();
   });
 
-  test('?identity=mismatched：整页阻塞，没有任何按钮；任务页与新建弹层的深链也进不去', async () => {
+  test('?identity=mismatched：点「重新检测」向服务端重新读登录与身份，仍不一致就留在阻塞页', async () => {
+    window.location.hash = '#/tasks';
+    const adapter = createMockAdapter({ seed: null, fault: null, identity: 'mismatched' });
+    const listTasks = vi.spyOn(adapter, 'listTasks');
+    render(<App adapter={adapter} />);
+    await heading(STARTUP_COPY.mismatchTitle);
+    expect(document.body.textContent).not.toContain('判据');
+    const before = listTasks.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: STARTUP_COPY.recheck }));
+    await waitFor(() => expect(listTasks.mock.calls.length).toBe(before + 1));
+    await heading(STARTUP_COPY.mismatchTitle);
+    expect(screen.getByRole('button', { name: STARTUP_COPY.recheck })).toBeTruthy();
+  });
+
+  test('?identity=mismatched：整页阻塞，只有「重新检测」一个按钮；任务页与新建弹层的深链也进不去', async () => {
     for (const hash of ['#/tasks', '#/tasks/new', '#/task/T1/upload']) {
       const view = renderAt(hash, { identity: 'mismatched' });
       await heading(STARTUP_COPY.mismatchTitle);
       expect(screen.getByRole('alert').textContent).toContain(STARTUP_COPY.mismatchLead);
-      expect(screen.queryAllByRole('button')).toHaveLength(0);
+      expect(screen.queryAllByRole('button').map((button) => button.textContent)).toEqual([STARTUP_COPY.recheck]);
       expect(screen.queryByRole('dialog')).toBeNull();
       expect(screen.queryByRole('heading', { name: '上传材料' })).toBeNull();
       expect(window.location.hash).toBe(hash);

@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Button, InlineNotification, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@carbon/react';
-import { useAppStore } from '../adapter/context';
+import { Button, InlineNotification } from '@carbon/react';
+import { Renew } from '@carbon/icons-react';
+import { useAppStore, useTaskList } from '../adapter/context';
 import type { AppAdapter, StartupOutcome } from '../contract/adapter';
 import type { Employee, TaskList } from '../contract/task-list';
 import { ActionError } from '../shell/ActionError';
 import { AppShell } from '../shell/AppShell';
+import { ReadOnlyFields } from '../shell/ReadOnlyFields';
 
 // 启动页：任何任务之前先登录报销系统、确认报销人身份（内核 env_not_logged_in / env_identity_unknown /
 // env_identity_unbound / env_identity_mismatched，next.mjs:654-727）。显示哪一态完全由服务端的 erpSession 与 employee.binding 决定；
@@ -17,11 +19,12 @@ export const STARTUP_COPY = {
   loggedIn: '我已登录',
   identityTitle: '确认报销人身份',
   identityLead: '当前登录身份还没有登记。请核对身份表；确认是本人后点「确认」。如果不是，请先在报销系统切换到本人账号。',
-  identityCaption: '绑定判据是登录账号加账套，不含姓名。表里的值都读自报销系统当前登录，不能修改；记下之后这台电脑就只替这个身份报销。',
+  identityCaption: '用登录账号加账套确认是本人，不看姓名。这些值都读自报销系统当前登录，不能修改；记下之后这台电脑就只替这个身份报销。',
   confirm: '确认',
   mismatchTitle: '报销人身份不一致',
   mismatchLead: '当前登录身份与已登记的报销人不一致。请在报销系统切换回本人账号；已有报销不能中途更换报销人。',
-  mismatchCaption: '判据是登录账号加账套，换账套也算换人。切换回本人账号后刷新本页。',
+  mismatchCaption: '登录账号或账套任一不同都算换人。切换回本人账号后点「重新检测」。',
+  recheck: '重新检测',
   checking: '正在检查报销系统登录与报销人身份…',
   loadFailed: '启动状态读取失败',
   retry: '重试',
@@ -71,32 +74,17 @@ function LoginStep({ identityUnknown }: { identityUnknown: boolean }) {
 
 function IdentityStep({ employee }: { employee: Employee }) {
   const { busy, error, run } = useStartupAction();
-  const rows: ReadonlyArray<readonly [string, string, string]> = [
-    ['姓名', employee.displayName, '只给你认人，不作判据'],
-    ['登录账号', employee.account, '判据'],
-    ['账套', employee.tenant, '判据，换账套等于换人'],
-  ];
   return (
     <StartupSection title={STARTUP_COPY.identityTitle}>
       <p className="app-lead">{STARTUP_COPY.identityLead}</p>
-      <Table aria-label="报销人身份" size="md">
-        <TableHead>
-          <TableRow>
-            <TableHeader scope="col">项</TableHeader>
-            <TableHeader scope="col">当前登录信息</TableHeader>
-            <TableHeader scope="col">说明</TableHeader>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {rows.map(([field, value, note]) => (
-            <TableRow key={field}>
-              <TableHeader scope="row">{field}</TableHeader>
-              <TableCell className={field === '姓名' ? '' : 'app-code'}>{value}</TableCell>
-              <TableCell className="app-muted">{note}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+      <ReadOnlyFields
+        label="报销人身份"
+        fields={[
+          { term: '姓名', value: employee.displayName, note: '只用来让你认出是谁，不用于确认身份' },
+          { term: '登录账号', value: employee.account, note: '用于确认是本人', code: true },
+          { term: '账套', value: employee.tenant, note: '用于确认是本人，换账套等于换人', code: true },
+        ]}
+      />
       <p className="app-caption">{STARTUP_COPY.identityCaption}</p>
       <div className="app-btn-row">
         <Button disabled={busy} onClick={() => void run((adapter) => adapter.confirmIdentity({ account: employee.account, tenant: employee.tenant }))}>
@@ -108,12 +96,19 @@ function IdentityStep({ employee }: { employee: Employee }) {
   );
 }
 
-// 身份不一致：整页阻塞，没有任何可推进的按钮。
+// 身份不一致：整页阻塞，唯一的按钮是「重新检测」，等同刷新：向服务端重新要一次任务列表（含登录与身份状态），页面随结果切换。
 function MismatchStep() {
+  const store = useAppStore();
+  const checking = useTaskList().status === 'loading';
   return (
     <StartupSection title={STARTUP_COPY.mismatchTitle}>
       <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={STARTUP_COPY.mismatchLead} />
       <p className="app-caption">{STARTUP_COPY.mismatchCaption}</p>
+      <div className="app-btn-row">
+        <Button renderIcon={Renew} disabled={checking} onClick={() => void store.loadTaskList()}>
+          {STARTUP_COPY.recheck}
+        </Button>
+      </div>
     </StartupSection>
   );
 }

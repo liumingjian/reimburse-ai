@@ -15,6 +15,9 @@ import { PAGE_COPY } from './page-copy';
 // 整单明细已确认的任务再追加下一批，先弹出同一份二次确认，再请服务端使确认失效（回到上传阶段）。
 // 版式：拖放区在最上面；每个批次是一节，文件是通栏的紧凑行（状态用 Carbon 标签，带文字）。
 
+// 拖放区里说明下一步。盘点要员工点「开始材料盘点」才开始（服务端不会在上传后自动盘点），文案照实说。
+export const UPLOAD_NEXT_STEP = '上传后点「开始材料盘点」，系统开始盘点。';
+
 function Dropzone({ busyCount, disabled, onFiles }: { busyCount: number; disabled: boolean; onFiles: (files: File[]) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -54,6 +57,7 @@ function Dropzone({ busyCount, disabled, onFiles }: { busyCount: number; disable
         <>
           <strong>拖入文件，或点击选择</strong>
           <span className="app-muted">支持 PDF、JPG、PNG，单个文件不超过 20MB。原件会被复制进任务目录，不会被修改。</span>
+          <span className="app-muted">{UPLOAD_NEXT_STEP}</span>
           <Button kind="tertiary" size="md" disabled={disabled} onClick={() => inputRef.current?.click()}>
             选择文件
           </Button>

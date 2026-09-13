@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type MouseEvent } from 'react';
 import {
   Button,
   ContentSwitcher,
+  InlineLoading,
   ProgressBar,
   Switch,
   Table,
@@ -273,7 +274,8 @@ export function TaskListPage({ newTask }: { newTask: boolean }) {
         titleId={TASK_LIST_TITLE_ID}
         lead={TASK_LIST_COPY.lead}
         actions={
-          <Button renderIcon={Add} onClick={() => navigate(NEW_TASK_HASH)}>
+          // 本地服务断开时不能新建：按钮不可用，恢复后自动可用。
+          <Button renderIcon={Add} disabled={taskList.offline} onClick={() => navigate(NEW_TASK_HASH)}>
             新建报销任务
           </Button>
         }
@@ -296,7 +298,7 @@ export function TaskListPage({ newTask }: { newTask: boolean }) {
           <TaskTable tasks={taskList.data.tasks} onAbandon={setAbandoning} />
         )
       ) : (
-        <p className="app-loading">{taskList.offline ? '正在等待本地服务恢复，恢复后自动加载…' : '正在加载任务列表…'}</p>
+        <InlineLoading className="app-loading" iconDescription="正在加载" description={taskList.offline ? '正在等待本地服务恢复，恢复后自动加载…' : '正在加载任务列表…'} />
       )}
       {newTask ? <NewTaskDialog taskList={taskList.data} onClose={closeNewTask} /> : null}
       {abandoning ? (

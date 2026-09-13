@@ -24,7 +24,9 @@ test('新建报销任务是任务列表上的弹层：预填网络位置候选�
   const box = dialog(page);
   await expect(box).toBeVisible();
   await expect(page.getByRole('heading', { name: '报销任务', exact: true })).toBeVisible();
-  await expect(box.getByLabel('报销人')).toHaveValue('林颂宜');
+  // 报销人是只读字段，不是输入框。
+  await expect(box.getByLabel('报销人')).toHaveText('林颂宜');
+  await expect(box.getByRole('textbox')).toHaveCount(1);
   await expect(box.getByLabel('常驻城市')).toHaveValue('杭州');
   await expect(box.getByText('根据网络位置推测，不对可直接改成你的常驻城市。')).toBeVisible();
   await expect(box.getByText(/本地市内交通与外地市内交通/)).toBeVisible();
