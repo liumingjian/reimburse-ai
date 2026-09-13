@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { MATERIAL_ROLE_LABELS, type ExpenseEvent, type Material, type TaskSnapshot } from '../contract/snapshot';
 import { formatDateTime } from '../format';
 import { taskHash } from '../router';
+import { Icon } from '../shell/Icon';
 import { DuplicateBlockers } from './DuplicateBlockers';
 import { PAGE_COPY } from './page-copy';
 
@@ -9,16 +10,34 @@ import { PAGE_COPY } from './page-copy';
 // 材料证据关联结论和每份材料的校验结果。不展示读出的字段及其来源（Skill 没有盘点结果表，内核不许把规则名给员工看）。
 // 跨任务重复发票命中时整批停，显示重复发票表。页面只渲染快照，不做配对、不算金额。
 // 版式（DESIGN.md「版式规则」）：一句结论打头；全部通过的事件默认收成一行，点开才看文件与校验；
-// 含待确认材料的事件默认展开并加标记；只标记例外，通过的材料不带徽标。
+// 含待确认材料的事件默认展开并加标记；只标记例外，通过的材料不带标签。
+// 收起的事件行按表头的四列排开（序号与类别 | 日期 | 金额 | 材料数），和展开后的材料行、表头对齐。
 
-function StatusBadge({ material }: { material: Material }) {
-  if (material.status === 'pending') return <span className="badge badge-warn">待确认</span>;
-  if (material.status === 'excluded') return <span className="badge">已排除</span>;
-  if (material.status === 'uploaded') return <span className="badge">待盘点</span>;
+function StatusTag({ material }: { material: Material }) {
+  if (material.status === 'pending')
+    return (
+      <span className="tag tag-warning">
+        <Icon name="warning--alt--filled" />
+        待确认
+      </span>
+    );
+  if (material.status === 'excluded') return <span className="tag tag-neutral">已排除</span>;
+  if (material.status === 'uploaded') return <span className="tag tag-neutral">待盘点</span>;
   return null;
 }
 
 const COLUMNS = ['文件', '识别为', '校验', '状态'] as const;
+
+function Columns() {
+  return (
+    <colgroup>
+      <col className="col-file" />
+      <col className="col-kind" />
+      <col className="col-check" />
+      <col className="col-status" />
+    </colgroup>
+  );
+}
 
 function MaterialRow({ material, roleLabel }: { material: Material; roleLabel: string }) {
   return (
@@ -33,7 +52,7 @@ function MaterialRow({ material, roleLabel }: { material: Material; roleLabel: s
       </td>
       <td>{material.checkText || <span className="muted">无</span>}</td>
       <td>
-        <StatusBadge material={material} />
+        <StatusTag material={material} />
       </td>
     </tr>
   );
@@ -91,14 +110,14 @@ function EventGroup({ group, expanded, onToggle }: { group: Group; expanded: boo
       <tr className="group-head">
         <td colSpan={COLUMNS.length}>
           <button className="group-toggle" type="button" aria-expanded={expanded} onClick={onToggle}>
-            <span className="chevron" aria-hidden="true" />
             {parts ? (
               <>
-                <span className="mono group-no">No.{parts.nos}</span>{' '}
-                <span className="group-category">{parts.category}</span>{' '}
-                <span className="group-dates">{parts.dates}</span>{' '}
-                <span className="num group-gross">{parts.gross}</span>{' '}
-                <span className="group-count">{1 + group.references.length} 份材料</span>
+                <span className="gcol gcol-first">
+                  <Icon name="chevron--right" className="chevron" />
+                  <span className="group-no">No.{parts.nos}</span> <span className="group-category">{parts.category}</span>
+                </span>{' '}
+                <span className="gcol group-dates">{parts.dates}</span> <span className="gcol group-gross">{parts.gross}</span>{' '}
+                <span className="gcol group-count">{1 + group.references.length} 份材料</span>
               </>
             ) : null}
           </button>
@@ -111,7 +130,7 @@ function EventGroup({ group, expanded, onToggle }: { group: Group; expanded: boo
               <ul className="event-lines">
                 {group.events.map((event) => (
                   <li key={event.eventId}>
-                    <span className="mono">No.{event.no}</span> {event.summary} <span className="num">{event.grossAmount}</span>
+                    <span className="muted">No.{event.no}</span> {event.summary} <span className="amount">{event.grossAmount}</span>
                   </li>
                 ))}
               </ul>
@@ -132,17 +151,26 @@ function EventGroup({ group, expanded, onToggle }: { group: Group; expanded: boo
   );
 }
 
+// 盘点进度：Carbon 进度指示的竖排形式，状态用图标加文字。
+function PhaseMark({ status, index }: { status: string; index: number }) {
+  if (status === 'done') return <Icon name="checkmark--filled" />;
+  if (status === 'running') return <Icon name="in-progress" />;
+  return <>{index + 1}</>;
+}
+
 function Progress({ snapshot }: { snapshot: TaskSnapshot }) {
   const running = snapshot.inventory.phases.find((phase) => phase.status === 'running');
   return (
-    <section className="panel" aria-label="盘点进度">
-      <p className="lead" role="status">
+    <section className="block" aria-label="盘点进度">
+      <p className="progress-lead" role="status">
         {running ? `正在盘点：${running.label}` : '正在准备盘点'}
       </p>
       <ol className="steps">
         {snapshot.inventory.phases.map((phase, index) => (
           <li key={phase.key} className={phase.status}>
-            <span className="dot">{phase.status === 'done' ? '✓' : index + 1}</span>
+            <span className="dot" aria-hidden="true">
+              <PhaseMark status={phase.status} index={index} />
+            </span>
             <span>{phase.label}</span>
             <span className="status">{phase.status === 'done' ? '完成' : phase.status === 'running' ? '进行中' : ''}</span>
           </li>
@@ -187,6 +215,13 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
           <p className={summary ? 'headline' : 'lead'} title={summary ? copy.lead : undefined}>
             {headline}
           </p>
+          {summary ? (
+            <p className="caption meta-line">
+              {MATERIAL_ROLE_LABELS.primary_voucher} {summary.voucherCount} · {MATERIAL_ROLE_LABELS.reference} {summary.referenceCount} · 盘点版本{' '}
+              {snapshot.inventory.versionId ?? '?'}
+              {snapshot.inventory.finishedAt ? ` · ${formatDateTime(snapshot.inventory.finishedAt)}` : ''}
+            </p>
+          ) : null}
         </div>
         {summary && !blocked ? (
           <div className="actions">
@@ -207,14 +242,10 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
         <Progress snapshot={snapshot} />
       ) : (
         <>
-          <p className="caption meta-line">
-            {MATERIAL_ROLE_LABELS.primary_voucher} {summary.voucherCount} · {MATERIAL_ROLE_LABELS.reference} {summary.referenceCount} · 盘点版本{' '}
-            {snapshot.inventory.versionId ?? '?'}
-            {snapshot.inventory.finishedAt ? ` · ${formatDateTime(snapshot.inventory.finishedAt)}` : ''}
-          </p>
           <DuplicateBlockers snapshot={snapshot} />
-          <section className="panel table" aria-label="盘点结果">
+          <section className="table-scroll bleed inventory-table" aria-label="盘点结果">
             <table className="data inventory">
+              <Columns />
               <thead>
                 <tr>
                   {COLUMNS.map((column) => (
@@ -230,7 +261,7 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
               {ungrouped.length > 0 ? (
                 <tbody className="event-group is-open has-pending" aria-label="未归入费用事件">
                   <tr className="group-head">
-                    <td colSpan={COLUMNS.length}>
+                    <td colSpan={COLUMNS.length} className="ungrouped-head">
                       <div className="group-title">未归入费用事件</div>
                       <div className="evidence-note">
                         <span className="muted">材料证据关联</span> {blocked ? '整批暂停，还没有划分费用事件。' : '没有形成费用事件的材料：待确认或已排除。'}

@@ -16,32 +16,34 @@ export function DuplicateBlockers({ snapshot }: { snapshot: TaskSnapshot }) {
   const tasks = [...new Map(hits.flatMap((hit) => hit.tasks).map((task) => [task.taskId, task])).values()];
   const remove = (materialId: string) => run((adapter) => adapter.excludeMaterial(taskId, materialId, snapshot.step.stepToken));
   return (
-    <section className="panel" aria-label="跨任务重复发票">
+    <section className="block" aria-label="跨任务重复发票">
       <div className="notice notice-err" role="alert">
         {DUPLICATE_BLOCKER_COPY.blocked}
         {DUPLICATE_BLOCKER_COPY.disposal}
       </div>
-      <table className="data" aria-label="重复发票">
-        <thead>
-          <tr>
-            {BLOCKER_TABLE_COLUMNS.map((column) => (
-              <th key={column}>{column}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {hits.map((hit, index) => (
-            <tr key={hit.materialId}>
-              <td className="mono">{index + 1}</td>
-              <td className="mono">{hit.fileName}</td>
-              <td />
-              <td>{hit.reason}</td>
-              <td>{hit.resolver}</td>
+      <div className="table-scroll bleed">
+        <table className="data" aria-label="重复发票">
+          <thead>
+            <tr>
+              {BLOCKER_TABLE_COLUMNS.map((column) => (
+                <th key={column}>{column}</th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="btn-row">
+          </thead>
+          <tbody>
+            {hits.map((hit, index) => (
+              <tr key={hit.materialId}>
+                <td className="nowrap">{index + 1}</td>
+                <td className="file-name">{hit.fileName}</td>
+                <td />
+                <td>{hit.reason}</td>
+                <td className="nowrap">{hit.resolver}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="btn-row block-actions">
         {hits.map((hit) => (
           <button key={hit.materialId} className="btn btn-secondary btn-sm" type="button" disabled={busy} onClick={() => void remove(hit.materialId)}>
             移出 {hit.fileName}
@@ -50,8 +52,8 @@ export function DuplicateBlockers({ snapshot }: { snapshot: TaskSnapshot }) {
         <span className="caption">移出后这份文件不参与本次盘点，也不进入材料包。</span>
       </div>
       <ActionError message={error} />
-      <h2>命中的任务</h2>
-      <ul aria-label="命中的任务">
+      <h3 className="block-subhead">命中的任务</h3>
+      <ul className="plain-list" aria-label="命中的任务">
         {tasks.map((task) => (
           <li key={task.taskId}>{task.name}</li>
         ))}

@@ -1,6 +1,7 @@
 import { HUMAN_REVIEW_NOTICE, SAVE_COMPLETED_NOTICE, type TaskSnapshot } from '../contract/snapshot';
 import { TASKS_HASH, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
+import { Icon } from '../shell/Icon';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 import { ReadbackTable } from './ReadbackTable';
@@ -31,6 +32,7 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
         </div>
         <div className="actions">
           <a className="btn btn-secondary" href={taskHash(taskId, 'print')}>
+            <Icon name="printer" />
             打印稿
           </a>
           <a className={mismatched ? 'btn btn-secondary' : 'btn btn-primary'} href={TASKS_HASH}>
@@ -39,53 +41,75 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
         </div>
       </div>
 
-      <div className="badge-row">
-        <span className="caption">草稿号</span>
-        <span className="mono" data-testid="draft-no">
-          {erp.draftNo ?? '尚无'}
-        </span>
-        {readback.summary ? <span className={matched ? 'badge badge-ok' : 'badge badge-err'}>{readback.summary}</span> : null}
-        {handedOff ? <span className="badge badge-warn">已转人工</span> : null}
+      {/* 摘要条：草稿号与严格回读结论都来自服务端。 */}
+      <div className="summary bleed" role="group" aria-label="写入结果">
+        <div className="summary-field">
+          <span className="k">草稿号</span>
+          <span className="v code" data-testid="draft-no">
+            {erp.draftNo ?? '尚无'}
+          </span>
+        </div>
+        {readback.summary ? (
+          <div className="summary-field">
+            <span className="k">严格回读</span>
+            <span className="v">
+              <span className={matched ? 'tag tag-success' : 'tag tag-danger'}>
+                <Icon name={matched ? 'checkmark--filled' : 'error--filled'} />
+                {readback.summary}
+              </span>
+            </span>
+          </div>
+        ) : null}
+        {handedOff ? (
+          <div className="summary-field">
+            <span className="k">处置</span>
+            <span className="v">
+              <span className="tag tag-warning">
+                <Icon name="warning--alt--filled" />
+                已转人工
+              </span>
+            </span>
+          </div>
+        ) : null}
+        <div className="summary-field grow" />
       </div>
 
-      {matched ? (
-        <div className="notice notice-ok" role="status" data-testid="save-completed">
-          {SAVE_COMPLETED_NOTICE}
-        </div>
-      ) : mismatched ? (
-        <div className="notice notice-err" role="alert">
-          回读与本地确认不一致：{readback.summary}。这份草稿不算完成，不要直接在报销系统里提交审批。
-        </div>
-      ) : null}
-      {reconcile.humanReview ? (
-        <div className="notice notice-warn" role="status" data-testid="human-review">
-          {HUMAN_REVIEW_NOTICE}
-        </div>
-      ) : null}
-      {reconcile.banner ? (
-        <div className={handedOff || matched ? 'notice notice-info' : 'notice notice-warn'} role="status">
-          {reconcile.banner}
-        </div>
-      ) : null}
-      {mismatched && reconcile.reasons.length > 0 ? (
-        <ul className="reconcile-reasons">
-          {reconcile.reasons.map((reason) => (
-            <li key={reason}>{reason}</li>
-          ))}
-        </ul>
-      ) : null}
+      <div className="notices">
+        {matched ? (
+          <div className="notice notice-ok" role="status" data-testid="save-completed">
+            {SAVE_COMPLETED_NOTICE}
+          </div>
+        ) : mismatched ? (
+          <div className="notice notice-err" role="alert">
+            回读与本地确认不一致：{readback.summary}。这份草稿不算完成，不要直接在报销系统里提交审批。
+          </div>
+        ) : null}
+        {reconcile.humanReview ? (
+          <div className="notice notice-warn" role="status" data-testid="human-review">
+            {HUMAN_REVIEW_NOTICE}
+          </div>
+        ) : null}
+        {reconcile.banner ? (
+          <div className={handedOff || matched ? 'notice notice-info' : 'notice notice-warn'} role="status">
+            {reconcile.banner}
+          </div>
+        ) : null}
+        {mismatched && reconcile.reasons.length > 0 ? (
+          <ul className="reconcile-reasons">
+            {reconcile.reasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
 
-      {readback.rows.length > 0 ? (
-        <section className="panel table">
-          <ReadbackTable label="逐条回读" rows={readback.rows} localTotal={readback.localTotal} erpTotal={readback.erpTotal} />
-        </section>
-      ) : null}
+      {readback.rows.length > 0 ? <ReadbackTable label="逐条回读" rows={readback.rows} localTotal={readback.localTotal} erpTotal={readback.erpTotal} /> : null}
 
       {canHandOff ? (
-        <section className="panel" aria-label="转人工">
+        <section className="block" aria-label="转人工">
           <h2>转人工</h2>
           <p className="lead">应用不会自动改写报销系统里的行，也不会重试写入。转人工后任务标记为人工处理，保留回读记录，之后不再自动写入报销系统。</p>
-          <div className="btn-row">
+          <div className="btn-row block-actions">
             <button className="btn btn-primary" type="button" disabled={busy} onClick={() => void run((adapter) => adapter.handOff(taskId, step.stepToken))}>
               转人工
             </button>

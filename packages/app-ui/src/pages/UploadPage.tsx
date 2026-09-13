@@ -3,6 +3,7 @@ import { UPLOAD_ACCEPT_ATTRIBUTE, type TaskSnapshot, type UploadBatch } from '..
 import { formatBytes, hashPrefix } from '../format';
 import { navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
+import { Icon } from '../shell/Icon';
 import { useAction } from '../shell/useAction';
 import { useReopenUpload } from '../shell/useReopenUpload';
 import { PAGE_COPY } from './page-copy';
@@ -10,6 +11,7 @@ import { PAGE_COPY } from './page-copy';
 // 上传材料页：拖入或选择文件 → 适配器逐文件给出接收/拒绝 → 按上传批次列出；可追加下一批；有材料后出现「开始材料盘点」。
 // 页面不判定文件是否合规：所有结果来自快照里的批次记录。
 // 整单明细已确认的任务再追加下一批，先弹出同一份二次确认，再请服务端使确认失效（回到上传阶段）。
+// 版式（DESIGN.md）：批次是工作面里的通栏清单（紧凑行、状态标签带图标与文字），不是卡片。
 
 function Dropzone({ busyCount, disabled, onFiles }: { busyCount: number; disabled: boolean; onFiles: (files: File[]) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -43,6 +45,7 @@ function Dropzone({ busyCount, disabled, onFiles }: { busyCount: number; disable
       onClick={onZoneClick}
       data-testid="dropzone"
     >
+      <Icon name="upload" className="dropzone-icon" />
       {busyCount > 0 ? (
         <strong role="status">正在接收 {busyCount} 份文件…</strong>
       ) : (
@@ -75,28 +78,39 @@ function BatchPanel({ batch }: { batch: UploadBatch }) {
   const rejected = batch.files.length - accepted;
   const title = `上传批次 #${batch.no} · ${accepted} 份材料`;
   return (
-    <section className="panel" aria-labelledby={`batch-${batch.batchId}`}>
-      <div className="panel-head">
+    <section className="block" aria-labelledby={`batch-${batch.batchId}`}>
+      <div className="block-head">
         <h2 id={`batch-${batch.batchId}`}>{title}</h2>
-        {rejected === 0 ? <span className="badge badge-ok">已复制入任务目录</span> : <span className="badge badge-warn">拒绝 {rejected} 份</span>}
+        {rejected === 0 ? (
+          <span className="tag tag-success">
+            <Icon name="checkmark--filled" />
+            已复制入任务目录
+          </span>
+        ) : (
+          <span className="tag tag-warning">
+            <Icon name="warning--alt--filled" />
+            拒绝 {rejected} 份
+          </span>
+        )}
       </div>
-      <ul className="file-list">
+      <ul className="file-list bleed">
         {batch.files.map((file, index) => (
           <li key={file.fileId} className={file.status === 'rejected' ? 'rejected' : undefined}>
-            <span className="mono muted">{String(index + 1).padStart(2, '0')}</span>
+            <span className="file-index">{String(index + 1).padStart(2, '0')}</span>
+            <Icon name="document" className="file-icon" />
             <span className="name">{file.fileName}</span>
             {file.status === 'accepted' ? (
               <>
-                <span className="badge badge-ok">已接收</span>
-                <span className="mono muted">{file.contentHash ? hashPrefix(file.contentHash) : ''}</span>
+                <span className="tag tag-success">已接收</span>
+                <span className="code muted">{file.contentHash ? hashPrefix(file.contentHash) : ''}</span>
               </>
             ) : (
               <>
-                <span className="badge badge-err">拒绝</span>
+                <span className="tag tag-danger">拒绝</span>
                 <span className="reason">{file.reason}</span>
               </>
             )}
-            <span className="size mono muted">{formatBytes(file.size)}</span>
+            <span className="size muted">{formatBytes(file.size)}</span>
           </li>
         ))}
       </ul>
@@ -153,9 +167,9 @@ export function UploadPage({ snapshot }: { snapshot: TaskSnapshot }) {
         <BatchPanel key={batch.batchId} batch={batch} />
       ))}
       {!hasBatches || appending ? (
-        <section className="panel" aria-label={hasBatches ? '追加下一批' : '上传文件'}>
+        <section className={hasBatches ? 'block' : 'upload-first'} aria-label={hasBatches ? '追加下一批' : '上传文件'}>
           {hasBatches ? (
-            <div className="panel-head">
+            <div className="block-head">
               <h2>追加下一批</h2>
               <button className="btn btn-tertiary btn-sm" type="button" disabled={busy} onClick={() => setAppending(false)}>
                 取消
@@ -170,18 +184,17 @@ export function UploadPage({ snapshot }: { snapshot: TaskSnapshot }) {
           ) : null}
         </section>
       ) : (
-        <section className="panel">
-          <div className="btn-row">
-            <button className="btn btn-primary" type="button" disabled={busy || !hasMaterials} onClick={() => void startInventory()}>
-              开始材料盘点
-            </button>
-            <button className="btn btn-tertiary" type="button" disabled={busy} onClick={append}>
-              追加下一批
-            </button>
-            <span className="caption">{hasMaterials ? '开始盘点后，追加或删除材料会形成新的盘点版本。' : '还没有被接收的材料，请追加下一批。'}</span>
-            <ActionError message={error} />
-          </div>
-        </section>
+        <div className="btn-row block">
+          <button className="btn btn-primary" type="button" disabled={busy || !hasMaterials} onClick={() => void startInventory()}>
+            开始材料盘点
+          </button>
+          <button className="btn btn-tertiary" type="button" disabled={busy} onClick={append}>
+            <Icon name="add" />
+            追加下一批
+          </button>
+          <span className="caption">{hasMaterials ? '开始盘点后，追加或删除材料会形成新的盘点版本。' : '还没有被接收的材料，请追加下一批。'}</span>
+          <ActionError message={error} />
+        </div>
       )}
       {reopen.dialog}
     </>

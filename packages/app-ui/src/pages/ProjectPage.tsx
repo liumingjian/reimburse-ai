@@ -6,6 +6,7 @@ import { pageAllowed } from '../contract/stage';
 import { navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
 import { ConfirmDialog } from '../shell/Dialog';
+import { Icon } from '../shell/Icon';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 import { ProjectBookPanel } from './ProjectBookPanel';
@@ -18,11 +19,11 @@ const SUBMIT_STEP_KINDS: ReadonlySet<StepKind> = new Set<StepKind>(['assign_proj
 // 提交后服务端自动做报销信息核对与材料准备，再进入整单确认；确认绑定项目归属，确认后在这里改派会使确认失效。
 // ERP 写入开始后只读。形状照内核项目归属页面（project-workbench.mjs Variant B）：
 // - 左边明细按费用类别分组（服务端给出的 lines 顺序即内核分类排序），组标题带复选框和条数，可按类别全选；
-//   明细卡片展示日期范围、城市、路线和脱敏票号。
+//   每条明细是一行紧凑的表格行（日期范围、城市、路线与脱敏票号、当前归属、价税合计），各组共用同一套列宽，与顶部表头对齐。
 // - 右边「本次已归入」区列出本次归属用到的项目，带条数与金额（服务端给出，页面不计算）；其下是个人项目簿中的可选项目
 //   （快照只给可选项目），已归入的项目不重复列出。不可选的项目不出现在这里，需要时点「新增项目」在弹层里的项目簿查看。
 // 勾选明细后点项目的「归入」，由服务端改本次正在编辑的归属（working）；批量归入碰到已有其他项目的明细时，
-// 先弹出「只处理未归属 / 确认覆盖 / 取消」。页头填报销事由；常驻城市只读。
+// 先弹出「只处理未归属 / 确认覆盖 / 取消」。页头填报销事由；常驻城市只读。提交在吸底操作栏里。
 
 type Target = { number: string; name: string };
 type Conflict = { project: Target; count: number };
@@ -46,6 +47,20 @@ function groupByCategory(lines: readonly Line[]): { label: string; lines: Line[]
     else groups.push({ label: line.category.label, lines: [line] });
   }
   return groups;
+}
+
+// 各组的明细表共用一套列宽（table-layout: fixed），与顶部的表头对齐。
+function AssignColumns() {
+  return (
+    <colgroup>
+      <col className="col-pick" />
+      <col className="col-date" />
+      <col className="col-place" />
+      <col className="col-route" />
+      <col className="col-project" />
+      <col className="col-amount" />
+    </colgroup>
+  );
 }
 
 // 流程门（内核 project_book_empty）：服务端的当前 step 是 maintain_project_book 时，项目归属页换成个人项目簿维护入口。
@@ -214,7 +229,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
               : '项目归属已提交。改派项目或修改事由会使整单明细确认失效，需要重新确认。'}
           {pageAllowed(snapshot.stage, 'review') ? (
             <div className="btn-row">
-              <a className="btn btn-secondary" href={taskHash(taskId, 'review')}>
+              <a className="btn btn-secondary btn-sm" href={taskHash(taskId, 'review')}>
                 去整单明细确认
               </a>
             </div>
@@ -222,8 +237,8 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
         </div>
       ) : null}
 
-      <div className="project-split">
-        <section className="panel" aria-label="费用明细">
+      <div className="project-split bleed">
+        <section className="assign-main" aria-label="费用明细">
           <div className="assign-toolbar">
             <label className="check">
               <input
@@ -243,49 +258,68 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
             </span>
           </div>
           {groups.length > 0 ? (
-            groups.map((group) => {
-              const ids = group.lines.map((line) => line.lineId);
-              const all = ids.every((lineId) => selected.has(lineId));
-              const some = !all && ids.some((lineId) => selected.has(lineId));
-              return (
-                <section key={group.label} className="assign-group" aria-label={group.label}>
-                  <h2 className="assign-group-head">
-                    <label className="check">
-                      <input
-                        type="checkbox"
-                        aria-label={`选择${group.label}`}
-                        checked={all}
-                        ref={(box) => {
-                          if (box) box.indeterminate = some;
-                        }}
-                        disabled={locked}
-                        onChange={() => toggle(ids, !all)}
-                      />
-                      {group.label}
-                    </label>
-                    <span className="caption">{group.lines.length} 条</span>
-                  </h2>
-                  <ul className="expense-cards">
-                    {group.lines.map((line) => (
-                      <LineCard
-                        key={line.lineId}
-                        line={line}
-                        project={current[line.lineId] ?? null}
-                        checked={selected.has(line.lineId)}
-                        disabled={locked}
-                        onToggle={() => toggle([line.lineId], !selected.has(line.lineId))}
-                      />
-                    ))}
-                  </ul>
-                </section>
-              );
-            })
+            <>
+              {/* 表头只画一次（各组的表共用列宽）；读屏从每组表格的名称与单元格读出内容。 */}
+              <table className="data assign-table assign-colhead" aria-hidden="true">
+                <AssignColumns />
+                <thead>
+                  <tr>
+                    <th>No.</th>
+                    <th>日期</th>
+                    <th>城市</th>
+                    <th>路线 / 说明</th>
+                    <th>项目</th>
+                    <th className="num">价税合计</th>
+                  </tr>
+                </thead>
+              </table>
+              {groups.map((group) => {
+                const ids = group.lines.map((line) => line.lineId);
+                const all = ids.every((lineId) => selected.has(lineId));
+                const some = !all && ids.some((lineId) => selected.has(lineId));
+                return (
+                  <section key={group.label} className="assign-group" aria-label={group.label}>
+                    <h2 className="assign-group-head">
+                      <label className="check">
+                        <input
+                          type="checkbox"
+                          aria-label={`选择${group.label}`}
+                          checked={all}
+                          ref={(box) => {
+                            if (box) box.indeterminate = some;
+                          }}
+                          disabled={locked}
+                          onChange={() => toggle(ids, !all)}
+                        />
+                        {group.label}
+                      </label>
+                      <span className="caption">{group.lines.length} 条</span>
+                    </h2>
+                    <table className="data assign-table" aria-label={`${group.label}明细`}>
+                      <AssignColumns />
+                      <tbody>
+                        {group.lines.map((line) => (
+                          <LineRow
+                            key={line.lineId}
+                            line={line}
+                            project={current[line.lineId] ?? null}
+                            checked={selected.has(line.lineId)}
+                            disabled={locked}
+                            onToggle={() => toggle([line.lineId], !selected.has(line.lineId))}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  </section>
+                );
+              })}
+            </>
           ) : (
             <p className="empty caption">所有明细都已归属。</p>
           )}
         </section>
 
-        <aside className="panel project-aside" role="complementary" aria-label="项目工作台">
+        <aside className="project-aside" role="complementary" aria-label="项目工作台">
           <h2>本次已归入</h2>
           {assignment.usage.length > 0 ? (
             <ul className="project-options" aria-label="本次已归入">
@@ -294,13 +328,20 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
                   <div>
                     <div className="name">{entry.name}</div>
                     <div className="caption">
-                      <span className="mono">{entry.number}</span> ·{' '}
+                      <span className="code">{entry.number}</span> ·{' '}
                       <span data-testid={`usage-${entry.number}`}>
                         {entry.lineCount} 条 · {entry.grossTotal} 元
                       </span>
                     </div>
                   </div>
-                  {entry.selectable ? assignButton(entry) : <span className="badge badge-warn">已锁定</span>}
+                  {entry.selectable ? (
+                    assignButton(entry)
+                  ) : (
+                    <span className="tag tag-warning">
+                      <Icon name="locked" />
+                      已锁定
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -309,14 +350,10 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
           )}
 
           <h2>个人项目簿中的可选项目</h2>
-          <input
-            className="input"
-            type="search"
-            placeholder="查找项目号或名称"
-            aria-label="查找个人项目簿"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
+          <label className="search">
+            <Icon name="search" />
+            <input type="search" placeholder="查找项目号或名称" aria-label="查找个人项目簿" value={query} onChange={(event) => setQuery(event.target.value)} />
+          </label>
           {assignment.projects.length === 0 ? (
             <p className="caption project-empty">{PROJECT_ASSIGNMENT_ERRORS.bookEmpty}</p>
           ) : shownProjects.length === 0 ? (
@@ -329,7 +366,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
                 <li key={project.number}>
                   <div>
                     <div className="name">{project.name}</div>
-                    <div className="mono caption">{project.number}</div>
+                    <div className="code caption">{project.number}</div>
                   </div>
                   {assignButton(project)}
                 </li>
@@ -339,24 +376,23 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
           <p className="caption">先在左边勾选明细，再点项目的「归入」。</p>
           {/* 就地新增（对 Skill 的小增强，README 注明）：弹层里是项目簿维护面板，勾选的明细不丢；
               新项目随服务端推送的快照出现在上面的列表里。 */}
-          <button className="btn btn-secondary btn-sm add-project" type="button" disabled={locked} onClick={() => setAddOpen(true)}>
+          <button className="btn btn-tertiary btn-sm add-project" type="button" disabled={locked} onClick={() => setAddOpen(true)}>
+            <Icon name="add" />
             {PROJECT_BOOK_COPY.addProject}
           </button>
         </aside>
       </div>
 
-      <section className="panel assign-footer" aria-label="提交项目归属">
-        <p data-testid="assign-summary">
-          已归属 <span className="mono">{assignedCount}</span> / <span className="mono">{lines.length}</span> 条 · 合计{' '}
-          <span className="mono">{snapshot.confirmation.grossTotal ?? ''}</span> 元
+      {/* 吸底操作栏：左边已归属条数与服务端给出的价税合计，右边唯一的主按钮。 */}
+      <section className="action-bar bleed assign-footer" aria-label="提交项目归属">
+        <p className="consequence" data-testid="assign-summary">
+          已归属 <strong>{assignedCount}</strong> / <strong>{lines.length}</strong> 条 · 合计 <strong>{snapshot.confirmation.grossTotal ?? ''}</strong> 元
         </p>
-        <div className="btn-row">
-          {!locked && !complete ? <span className="caption">{PROJECT_ASSIGNMENT_ERRORS.incomplete}</span> : null}
-          <ActionError message={error} />
-          <button className="btn btn-primary" type="button" disabled={!canAct || busy || !complete || conflict !== null} onClick={() => void submit()}>
-            确认项目归属
-          </button>
-        </div>
+        {!locked && !complete ? <span className="caption">{PROJECT_ASSIGNMENT_ERRORS.incomplete}</span> : null}
+        <button className="btn btn-primary" type="button" disabled={!canAct || busy || !complete || conflict !== null} onClick={() => void submit()}>
+          确认项目归属
+        </button>
+        <ActionError message={error} />
       </section>
 
       {conflict ? (
@@ -384,9 +420,9 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   );
 }
 
-// 明细卡片（内核 project-workbench.mjs）：日期范围 · 城市，路线，脱敏票号，当前归属，价税合计。
-// 没有城市的（如长途交通）显示费用类别；没有路线的（如住宿）显示说明。
-function LineCard({
+// 明细行（内核 project-workbench.mjs 的明细卡片，改成一行）：No.、日期范围、城市（没有城市的如长途交通显示费用类别）、
+// 路线（没有路线的如住宿显示说明）与脱敏票号、当前归属、价税合计。
+function LineRow({
   line,
   project,
   checked,
@@ -401,25 +437,29 @@ function LineCard({
 }) {
   const dates = line.endDate && line.endDate !== line.date ? `${line.date} 至 ${line.endDate}` : line.date;
   return (
-    <li className="expense-card" data-testid={`line-card-${line.no}`}>
-      <input type="checkbox" aria-label={`选择明细 No.${line.no}`} checked={checked} disabled={disabled} onChange={onToggle} />
-      <div className="expense-body">
-        <strong>
-          <span className="mono">No.{line.no}</span> · <span className="mono">{dates}</span> · {line.city ?? line.category.label}
-        </strong>
-        <p>{line.route ?? line.description}</p>
-        {line.maskedNumber ? <p className="caption mono">{line.maskedNumber}</p> : null}
-        <p className="expense-project" data-testid={`project-of-${line.no}`}>
-          {project ? (
-            <>
-              <span className="mono">{project.projectNumber}</span> · {project.projectName}
-            </>
-          ) : (
-            <span className="badge">未归属</span>
-          )}
-        </p>
-      </div>
-      <strong className="num">{line.grossAmount} 元</strong>
-    </li>
+    <tr className={checked ? 'is-selected' : undefined} data-testid={`line-card-${line.no}`}>
+      <td className="pick-no">
+        <label className="pick-label">
+          <input type="checkbox" aria-label={`选择明细 No.${line.no}`} checked={checked} disabled={disabled} onChange={onToggle} />
+          <span className="muted">No.{line.no}</span>
+        </label>
+      </td>
+      <td className="nowrap">{dates}</td>
+      <td>{line.city ?? line.category.label}</td>
+      <td className="wrap">
+        {line.route ?? line.description}
+        {line.maskedNumber ? <div className="caption code">{line.maskedNumber}</div> : null}
+      </td>
+      <td data-testid={`project-of-${line.no}`}>
+        {project ? (
+          <>
+            <span className="code">{project.projectNumber}</span> · {project.projectName}
+          </>
+        ) : (
+          <span className="tag tag-neutral">未归属</span>
+        )}
+      </td>
+      <td className="num">{line.grossAmount} 元</td>
+    </tr>
   );
 }

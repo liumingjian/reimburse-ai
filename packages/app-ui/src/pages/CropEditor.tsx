@@ -138,7 +138,7 @@ export function CropEditor({
         <p className="caption">拖动四个角点贴合纸张边缘；选中角点后可用方向键微调，按住 Shift 每次移动 10 像素。坐标以原图像素计。</p>
         {natural ? (
           <p className="caption">
-            原图 <span className="mono">{`${natural.width} x ${natural.height}`}</span>
+            原图 <span>{`${natural.width} x ${natural.height}`}</span>
           </p>
         ) : (
           <p className="caption">正在载入原图…</p>
@@ -147,7 +147,7 @@ export function CropEditor({
           {corners.map((point, index) => (
             <li key={CORNER_NAMES[index]} data-testid={`corner-${index}`}>
               <span>{CORNER_NAMES[index]}</span>
-              <span className="mono">{formatPoint(point)}</span>
+              <span>{formatPoint(point)}</span>
             </li>
           ))}
         </ol>

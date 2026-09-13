@@ -45,7 +45,7 @@ function ScreenshotControl({
     <li>
       <div className="placement-name">
         <span className="caption">支付截图</span>
-        {screenshot ? <span className="mono">{screenshot.fileName}</span> : <span className="muted">未补充</span>}
+        {screenshot ? <span className="file-name">{screenshot.fileName}</span> : <span className="muted">未补充</span>}
       </div>
       <div className="caption">仅用于打印稿，放在下半页右侧；不上传报销系统，也不影响整单明细确认。</div>
       <div className="btn-row screenshot-row">
@@ -176,10 +176,10 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
       ) : null}
 
       {editing && editingPage && editingPlacement?.corners && editingPlacement.imageUrl ? (
-        <section className="panel crop-panel" aria-label="四角裁剪" ref={cropPanel}>
+        <section className="crop-panel" aria-label="四角裁剪" ref={cropPanel}>
           <div className="crop-head">
             <h2>{`调整四角 · ${editingPlacement.fileName}`}</h2>
-            <span className="caption mono">{editingPage.header}</span>
+            <span className="caption">{editingPage.header}</span>
           </div>
           <CropEditor
             key={`${editing.pageId}-${editing.slot}`}
@@ -203,7 +203,7 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
           <ol className="print-pages" aria-label="打印稿页面">
             {sheet.pages.map((page, index) => (
               <li key={page.pageId} className="page-card" aria-label={page.header}>
-                <div className="page-hdr mono">{page.header}</div>
+                <div className="page-hdr">{page.header}</div>
                 <img className="page-image" src={page.imageUrl} alt={`第 ${index + 1} 页页图`} data-testid={`page-image-${page.pageId}`} />
                 <ul className="placements">
                   {SLOTS.map((slot) => {
@@ -214,7 +214,7 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
                       <li key={slot}>
                         <div className="placement-name">
                           <span className="caption">{SLOT_LABEL[slot]}</span>
-                          <span className="mono">{placement.fileName}</span>
+                          <span className="file-name">{placement.fileName}</span>
                         </div>
                         <div className="caption">
                           {placement.rotate ? '旋转 90° 放置' : '竖放'}
@@ -265,7 +265,7 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
           </ol>
         </>
       ) : (
-        <section className="panel">
+        <section className="block">
           <p className="caption loading" role="status">
             正在生成打印稿…
           </p>

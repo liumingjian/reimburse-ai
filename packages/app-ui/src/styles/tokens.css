@@ -71,7 +71,8 @@
   --layout-dropzone-min-height: 200px;
   --layout-file-size-width: 72px;
   --layout-split-list-width: 300px;
-  --layout-detail-preview-width: 260px;
+  --layout-pending-side-width: 400px;
+  --layout-assign-table-min-width: 880px;
   --layout-dialog-width: 440px;
   --layout-dialog-wide-width: 720px;
   --layout-checkbox-size: 16px;

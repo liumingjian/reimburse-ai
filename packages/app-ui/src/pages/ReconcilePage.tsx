@@ -2,6 +2,7 @@ import type { ActionOutcome, AppAdapter } from '../contract/adapter';
 import { HUMAN_REVIEW_NOTICE, type Reconcile, type TaskSnapshot } from '../contract/snapshot';
 import { TASKS_HASH, navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
+import { Icon } from '../shell/Icon';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 import { ReadbackTable } from './ReadbackTable';
@@ -47,13 +48,13 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
       </div>
 
       {erp.abortReason ? (
-        <section className="panel" aria-label="中止原因">
+        <section className="notice notice-err abort-block" aria-label="中止原因">
           <h2>中止原因</h2>
           <p className="abort-reason">{erp.abortReason}</p>
         </section>
       ) : null}
 
-      <section className="panel" aria-label="当前对账状态">
+      <section className="block" aria-label="当前对账状态">
         <h2>当前对账状态</h2>
         {reconcile.humanReview ? (
           <div className="notice notice-warn" role="status" data-testid="human-review">
@@ -65,22 +66,26 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
             {reconcile.banner}
           </div>
         ) : null}
-        <dl className="kv compact">
-          <div className="kv-row">
-            <dt>处置状态</dt>
-            <dd data-testid="reconcile-status">{STATUS_LABEL[reconcile.status]}</dd>
+        <dl className="summary bleed kv-strip">
+          <div className="summary-field">
+            <dt className="k">处置状态</dt>
+            <dd className="v" data-testid="reconcile-status">
+              {STATUS_LABEL[reconcile.status]}
+            </dd>
           </div>
-          <div className="kv-row">
-            <dt>对账中断点</dt>
-            <dd data-testid="reconcile-bucket">{reconcile.bucket ?? '尚未判定'}</dd>
+          <div className="summary-field">
+            <dt className="k">对账中断点</dt>
+            <dd className="v" data-testid="reconcile-bucket">
+              {reconcile.bucket ?? '尚未判定'}
+            </dd>
           </div>
-          <div className="kv-row">
-            <dt>建议处置</dt>
-            <dd>{reconcile.action ?? '尚未判定'}</dd>
+          <div className="summary-field">
+            <dt className="k">建议处置</dt>
+            <dd className="v">{reconcile.action ?? '尚未判定'}</dd>
           </div>
-          <div className="kv-row">
-            <dt>草稿号</dt>
-            <dd className="mono">{reconcile.draftNo ?? '尚未读到草稿'}</dd>
+          <div className="summary-field grow">
+            <dt className="k">草稿号</dt>
+            <dd className="v code">{reconcile.draftNo ?? '尚未读到草稿'}</dd>
           </div>
         </dl>
         {reconcile.reasons.length > 0 ? (
@@ -93,23 +98,22 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
       </section>
 
       {reconcile.rows.length > 0 ? (
-        <section className="panel table">
-          <ReadbackTable label="逐行比对" rows={reconcile.rows} localTotal={snapshot.readback.localTotal} erpTotal={snapshot.readback.erpTotal} />
-        </section>
+        <ReadbackTable label="逐行比对" rows={reconcile.rows} localTotal={snapshot.readback.localTotal} erpTotal={snapshot.readback.erpTotal} />
       ) : (
         <p className="caption">还没有读到可以逐行比对的报销系统明细。</p>
       )}
 
       {handedOff || (!allowWait && !allowHandOff) ? null : (
-        <section className="panel" aria-label="处置">
+        <section className="block" aria-label="处置">
           <h2>处置</h2>
           <p className="lead">只给出当前对账结果允许的处置。应用不会自动改写报销系统里的行，也不会重试写入。</p>
-          <div className="two-actions">
+          <div className="two-actions bleed">
             {allowWait ? (
               <div className="action-card">
                 <h3>原地等待</h3>
                 <p>你在报销系统中查看后，点重新对账。应用只读报销系统，不写入。</p>
                 <button className="btn btn-primary" type="button" disabled={busy || !canAct} onClick={() => void act((adapter) => adapter.reconcile(taskId, step.stepToken))}>
+                  <Icon name="renew" />
                   重新对账
                 </button>
               </div>

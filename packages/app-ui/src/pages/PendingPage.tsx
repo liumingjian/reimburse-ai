@@ -2,11 +2,13 @@ import { useState, type FormEvent } from 'react';
 import { segmentKey, validatePendingAnswer } from '../contract/actions';
 import { PENDING_CHOICE_KEY, fieldAnswer, isAllocationAnswer, type FieldAnswer, type Material, type PendingAnswer, type PendingItem, type TaskSnapshot } from '../contract/snapshot';
 import { taskHash } from '../router';
+import { Icon } from '../shell/Icon';
 import { useAction } from '../shell/useAction';
 import { DuplicateBlockers } from './DuplicateBlockers';
 import { PAGE_COPY } from './page-copy';
 
-// 待确认项页：左侧清单、右侧详情（原件预览 + 读出的字段 + 补填表单、选择或逐段分摊）。每条都标明处理人（服务端给出，照内核开放项表）。
+// 待确认项页（核对页，DESIGN.md「宽度按页面类型定」铺满）：上面是紧凑的待确认项队列，下面左边是大尺寸的原件，
+// 右边是读出的字段与补填表单、选择或逐段分摊。每条都标明处理人（服务端给出，照内核开放项表）。
 // 所有答复经 answerPendingItem 携带 stepToken 提交；页面只做格式校验，采用与否由服务端决定（逐段分摊是否按分守恒也是）。
 // 选择类待确认项的已选项用选中样式（aria-pressed），不用主按钮。读出的字段不显示来源。
 
@@ -16,6 +18,15 @@ const EVIDENCE_LABELS: Readonly<Record<Material['fields'][number]['evidence'], s
   ambiguous: '存疑',
   missing: '缺失',
 };
+
+function Resolved() {
+  return (
+    <span className="tag tag-success">
+      <Icon name="checkmark--filled" />
+      已处理
+    </span>
+  );
+}
 
 function Preview({ material }: { material: Material | undefined }) {
   if (!material || !material.previewUrl) {
@@ -42,9 +53,9 @@ function Preview({ material }: { material: Material | undefined }) {
 function MaterialFields({ material }: { material: Material | undefined }) {
   if (!material) return null;
   return (
-    <>
-      <div className="caption preview-name">
-        <span className="mono">{material.fileName}</span> · {material.kindLabel}
+    <div className="material-fields">
+      <div className="preview-name">
+        <span className="file-name">{material.fileName}</span> · {material.kindLabel}
       </div>
       {material.fields.length > 0 ? (
         <dl className="kv">
@@ -52,7 +63,7 @@ function MaterialFields({ material }: { material: Material | undefined }) {
             <div key={field.key} className="kv-row">
               <dt>{field.label}</dt>
               <dd>
-                <span className="mono">{field.value || <span className="muted">未填</span>}</span>
+                <span>{field.value || <span className="muted">未填</span>}</span>
                 {EVIDENCE_LABELS[field.evidence] ? <span className="caption source">{EVIDENCE_LABELS[field.evidence]}</span> : null}
               </dd>
             </div>
@@ -61,7 +72,7 @@ function MaterialFields({ material }: { material: Material | undefined }) {
       ) : (
         <p className="caption">没有读出字段。</p>
       )}
-    </>
+    </div>
   );
 }
 
@@ -122,7 +133,7 @@ function AnswerForm({ item, onSubmit, state }: FormProps) {
       })}
       <div className="btn-row">
         {resolved ? (
-          <span className="badge badge-ok">已处理</span>
+          <Resolved />
         ) : (
           <button className="btn btn-primary" type="submit" disabled={state.busy}>
             保存并标记已处理
@@ -154,7 +165,7 @@ function ChoiceForm({ item, onSubmit, state }: FormProps) {
             {choice.label}
           </button>
         ))}
-        {resolved ? <span className="badge badge-ok">已处理</span> : null}
+        {resolved ? <Resolved /> : null}
         <ServerError state={state} />
       </div>
       <p className="caption choice-note">
@@ -188,9 +199,7 @@ function AllocationForm({ item, onSubmit, state }: FormProps) {
 
   return (
     <form onSubmit={submit} noValidate aria-label={item.title}>
-      <p className="caption">
-        票面价税合计 <span className="mono">{allocation.total}</span> 元；各段加起来必须正好等于它，对不对得上由系统核对。
-      </p>
+      <p className="caption">票面价税合计 {allocation.total} 元；各段加起来必须正好等于它，对不对得上由系统核对。</p>
       {allocation.segments.map((segment, index) => {
         const id = `pa-${item.itemId}-${segment.index}`;
         const error = errors[segmentKey(segment.index)];
@@ -200,7 +209,7 @@ function AllocationForm({ item, onSubmit, state }: FormProps) {
               第 {segment.index} 段 · {segment.date} · {segment.route}
             </label>
             <input
-              className="input mono"
+              className="input amount-input"
               id={id}
               inputMode="decimal"
               value={amounts[index] ?? ''}
@@ -225,7 +234,7 @@ function AllocationForm({ item, onSubmit, state }: FormProps) {
       ) : null}
       <div className="btn-row">
         {resolved ? (
-          <span className="badge badge-ok">已处理</span>
+          <Resolved />
         ) : (
           <>
             <button className="btn btn-primary" type="submit" disabled={state.busy}>
@@ -254,7 +263,7 @@ function GivenUpForm({ item, onExclude, state }: FormProps) {
     <div>
       <div className="btn-row">
         {resolved ? (
-          <span className="badge badge-ok">已处理</span>
+          <Resolved />
         ) : (
           <button className="btn btn-secondary" type="button" disabled={state.busy} onClick={() => void onExclude()}>
             排除这张发票及其行程单
@@ -335,7 +344,7 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
             <p className="lead">{items.length === 0 ? '本次盘点没有形成待确认项。' : `本次盘点的 ${items.length} 个待确认项都已处理。`}</p>
           </div>
         </div>
-        <section className="panel">
+        <section className="block">
           <div className="empty">
             <h2>没有待确认项了</h2>
             {items.length > 0 ? (
@@ -345,7 +354,7 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
                   return (
                     <li key={item.itemId}>
                       {item.title}
-                      <span className="mono muted"> · {materialOf(item)?.fileName ?? item.materialId}</span> <span className="badge badge-ok">已处理</span>
+                      <span className="muted"> · {materialOf(item)?.fileName ?? item.materialId}</span> <Resolved />
                       {note ? <div className="caption">{note}</div> : null}
                     </li>
                   );
@@ -372,45 +381,48 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
           </p>
         </div>
       </div>
-      <div className="split">
-        <section className="panel list-panel" aria-label="待确认项清单">
-          <ul className="item-list">
-            {items.map((item) => {
-              const file = materialOf(item)?.fileName ?? item.materialId;
-              const isSelected = selected?.itemId === item.itemId;
-              return (
-                <li key={item.itemId} className={isSelected ? 'selected' : undefined}>
-                  <button type="button" aria-current={isSelected ? 'true' : undefined} onClick={() => setSelectedId(item.itemId)}>
-                    <div className="title">{item.title}</div>
-                    <div className="sub">
-                      <span className="mono">{file}</span> · {item.resolver}
-                      {item.status === 'resolved' ? ' · 已处理' : ''}
-                    </div>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-        {selected ? (
-          <section className="panel" aria-label="待确认项详情">
+      {/* 队列：每项一行（标题、文件与处理人），当前项用选中底色，已处理的带勾。 */}
+      <section className="queue bleed" aria-label="待确认项清单">
+        <ul className="item-list">
+          {items.map((item) => {
+            const file = materialOf(item)?.fileName ?? item.materialId;
+            const isSelected = selected?.itemId === item.itemId;
+            const done = item.status === 'resolved';
+            return (
+              <li key={item.itemId} className={isSelected ? 'selected' : undefined}>
+                <button type="button" aria-current={isSelected ? 'true' : undefined} onClick={() => setSelectedId(item.itemId)}>
+                  <Icon name={done ? 'checkmark--filled' : 'warning--alt--filled'} className={done ? 'queue-mark done' : 'queue-mark'} />
+                  <div className="title">{item.title}</div>
+                  <div className="sub">
+                    {file} · {item.resolver}
+                    {done ? ' · 已处理' : ''}
+                  </div>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+      {selected ? (
+        <section className="pending-detail" aria-label="待确认项详情">
+          <div className="detail-head">
             <h2>{selected.title}</h2>
             <p className="caption" data-testid="resolver">
               处理人：{selected.resolver}
             </p>
             <p className="lead why">{selected.why}</p>
-            <div className="detail-grid">
-              <div>
-                <Preview material={material} />
-                <MaterialFields material={material} />
-              </div>
-              <div>
-                <ItemForm key={selected.itemId} item={selected} state={state} onSubmit={(answer) => submit(selected, answer)} onExclude={() => exclude(selected)} />
-              </div>
+          </div>
+          <div className="review-split">
+            <div className="viewer">
+              <Preview material={material} />
             </div>
-          </section>
-        ) : null}
-      </div>
+            <div className="detail-side">
+              <MaterialFields material={material} />
+              <ItemForm key={selected.itemId} item={selected} state={state} onSubmit={(answer) => submit(selected, answer)} onExclude={() => exclude(selected)} />
+            </div>
+          </div>
+        </section>
+      ) : null}
     </>
   );
 }
