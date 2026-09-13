@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { App } from '../App';
 import { PROJECT_ASSIGNMENT_ERRORS } from '../contract/actions';
 import type { AppAdapter } from '../contract/adapter';
@@ -20,7 +20,13 @@ const listNames = () =>
     ? []
     : [...(within(workbench()).getByRole('list', { name: '项目列表' }).querySelectorAll('.name') ?? [])].map((node) => node.textContent);
 const usageNames = () => [...(within(workbench()).queryByRole('list', { name: '本次已归入' })?.querySelectorAll('.name') ?? [])].map((node) => node.textContent);
-const usage = (number: string) => screen.getByTestId(`usage-${number}`).textContent;
+// 本次已归入的项目用字段组显示（项目号、条数、价税合计），这里取条数与价税合计两个值。
+const usage = (number: string) =>
+  within(screen.getByTestId(`usage-${number}`))
+    .getAllByRole('definition')
+    .slice(1)
+    .map((node) => node.textContent)
+    .join(' · ');
 const pick = (no: number) => fireEvent.click(screen.getByRole('checkbox', { name: `选择明细 No.${no}` }));
 const assignTo = (label: string) => fireEvent.click(within(workbench()).getByRole('button', { name: `归入 ${label}` }));
 const projectOf = (no: number) => screen.getByTestId(`project-of-${no}`).textContent;
@@ -34,16 +40,16 @@ describe('项目归属（内核 Variant B 工作台）', () => {
     const { ready } = renderProject();
     await ready;
     expect(await screen.findByRole('heading', { name: '项目归属' })).toBeTruthy();
-    expect(screen.getByText('常驻城市：杭州')).toBeTruthy();
+    // 常驻城市是带标签的只读字段，与报销事由并排。
+    const homeCity = screen.getByLabelText('常驻城市') as HTMLInputElement;
+    expect(homeCity.value).toBe('杭州');
+    expect(homeCity.readOnly).toBe(true);
     expect(usageNames()).toEqual(['华东客户交付']);
     expect(usage('P-2307')).toBe('2 条 · 47.54 元');
     expect(listNames()).toEqual(['华东客户交付二期', '产品调研', '内部培训']);
     expect(within(workbench()).queryByText('南京客户培训')).toBeNull();
     expect(within(workbench()).queryByText('旧版对账工具')).toBeNull();
     expect(within(workbench()).queryByText('已过期')).toBeNull();
-    // 没勾选明细时「归入」不可用。
-    expect((within(workbench()).getByRole('button', { name: '归入 P-3312 产品调研' }) as HTMLButtonElement).disabled).toBe(true);
-
     fireEvent.change(search(), { target: { value: '华东' } });
     expect(listNames()).toEqual(['华东客户交付二期']);
     fireEvent.change(search(), { target: { value: 'p-331' } });
@@ -53,6 +59,26 @@ describe('项目归属（内核 Variant B 工作台）', () => {
     expect(within(workbench()).getByText('没有匹配的可选项目')).toBeTruthy();
     fireEvent.change(search(), { target: { value: '' } });
     expect(listNames()).toHaveLength(3);
+  });
+
+  test('没勾选明细时「归入」仍是可点的按钮，点下就近提示「先勾选明细」，不发出归入请求', async () => {
+    const { adapter, ready } = renderProject();
+    const assignSpy = vi.spyOn(adapter, 'assignProjectLines');
+    await ready;
+    await screen.findByRole('heading', { name: '项目归属' });
+    const button = within(workbench()).getByRole('button', { name: '归入 P-3312 产品调研' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(button);
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(within(workbench()).getByText('先勾选明细')).toBeTruthy();
+    expect(assignSpy).not.toHaveBeenCalled();
+
+    // 勾选之后同一个按钮直接归入。
+    pick(3);
+    assignTo('P-3312 产品调研');
+    await settled(3, 'P-3312 / 产品调研');
+    expect(assignSpy).toHaveBeenCalledTimes(1);
   });
 
   test('明细按费用类别分组，组标题带条数；卡片有日期范围、城市、路线与脱敏票号', async () => {
@@ -82,7 +108,7 @@ describe('项目归属（内核 Variant B 工作台）', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: '选择外地市内交通' }));
     expect(screen.getByText('已选 6 条')).toBeTruthy();
     assignTo('P-2307 华东客户交付');
-    for (const no of [1, 2, 3, 4, 5, 6]) await settled(no, 'P-2307 · 华东客户交付');
+    for (const no of [1, 2, 3, 4, 5, 6]) await settled(no, 'P-2307 / 华东客户交付');
     expect(projectOf(7)).toBe('未归属');
     expect(usage('P-2307')).toBe('6 条 · 186.59 元');
     expect(screen.getByText('已选 0 条')).toBeTruthy();
@@ -109,13 +135,13 @@ describe('项目归属（内核 Variant B 工作台）', () => {
     const { ready } = renderProject();
     await ready;
     await screen.findByRole('heading', { name: '项目归属' });
-    expect(projectOf(1)).toBe('P-2307 · 华东客户交付');
+    expect(projectOf(1)).toBe('P-2307 / 华东客户交付');
     expect(projectOf(3)).toBe('未归属');
 
     pick(3);
     expect(screen.getByText('已选 1 条')).toBeTruthy();
     assignTo('P-1180 内部培训');
-    await settled(3, 'P-1180 · 内部培训');
+    await settled(3, 'P-1180 / 内部培训');
     expect(screen.getByText('已选 0 条')).toBeTruthy();
 
     // 批量：No.1、No.2（已归 P-2307）与 No.4（未归属）一起归入 P-3312。
@@ -130,7 +156,7 @@ describe('项目归属（内核 Variant B 工作台）', () => {
     let dialog = selectConflict();
     fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(projectOf(1)).toBe('P-2307 · 华东客户交付');
+    expect(projectOf(1)).toBe('P-2307 / 华东客户交付');
     expect(projectOf(4)).toBe('未归属');
     // 取消保留勾选，可以换个项目或调整勾选。
     expect(screen.getByText('已选 3 条')).toBeTruthy();
@@ -138,9 +164,9 @@ describe('项目归属（内核 Variant B 工作台）', () => {
 
     dialog = selectConflict();
     fireEvent.click(within(dialog).getByRole('button', { name: '只处理未归属' }));
-    await settled(4, 'P-3312 · 产品调研');
-    expect(projectOf(1)).toBe('P-2307 · 华东客户交付');
-    expect(projectOf(2)).toBe('P-2307 · 华东客户交付');
+    await settled(4, 'P-3312 / 产品调研');
+    expect(projectOf(1)).toBe('P-2307 / 华东客户交付');
+    expect(projectOf(2)).toBe('P-2307 / 华东客户交付');
 
     pick(1);
     pick(2);
@@ -148,37 +174,44 @@ describe('项目归属（内核 Variant B 工作台）', () => {
     assignTo('P-3312 产品调研');
     dialog = screen.getByRole('dialog', { name: '2 条明细已有其他项目归属，请确认是否覆盖' });
     fireEvent.click(within(dialog).getByRole('button', { name: '确认覆盖' }));
-    await settled(1, 'P-3312 · 产品调研');
-    expect(projectOf(2)).toBe('P-3312 · 产品调研');
-    expect(projectOf(5)).toBe('P-3312 · 产品调研');
+    await settled(1, 'P-3312 / 产品调研');
+    expect(projectOf(2)).toBe('P-3312 / 产品调研');
+    expect(projectOf(5)).toBe('P-3312 / 产品调研');
 
     // 同一项目再归入不算冲突。
     pick(1);
     pick(6);
     assignTo('P-3312 产品调研');
     expect(screen.queryByRole('dialog')).toBeNull();
-    await settled(6, 'P-3312 · 产品调研');
+    await settled(6, 'P-3312 / 产品调研');
   });
 
   test('提交按钮：任一明细未归属或事由为空时不可用，显示已归属 n/m 与合计；「仅未归属」只列未归属明细', async () => {
     const { ready } = renderProject();
     await ready;
     await screen.findByRole('heading', { name: '项目归属' });
-    expect(summary()).toBe('已归属 2 / 9 条 · 合计 3972.59 元');
+    // 吸底栏写的是整单合计（服务端给出），不是已归属部分的合计。
+    expect(summary()).toBe('已归属2 / 9 条整单合计3972.59 元');
+    expect(within(screen.getByTestId('assign-summary')).getByText('整单合计')).toBeTruthy();
     expect(submitButton().disabled).toBe(true);
     expect(screen.getByText(PROJECT_ASSIGNMENT_ERRORS.incomplete)).toBeTruthy();
 
     fireEvent.change(purpose(), { target: { value: '上海产品评审出差' } });
     expect(submitButton().disabled).toBe(true);
 
-    fireEvent.click(screen.getByRole('checkbox', { name: '仅未归属' }));
+    // 「未归属」筛选是切换器（与任务列表一致），不是复选框。
+    expect(screen.queryByRole('checkbox', { name: '仅未归属' })).toBeNull();
+    const filter = screen.getByRole('tablist', { name: '明细筛选' });
+    expect(within(filter).getByRole('tab', { name: '全部' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(within(filter).getByRole('tab', { name: '未归属' }));
+    expect(within(filter).getByRole('tab', { name: '未归属' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.queryByRole('checkbox', { name: '选择明细 No.1' })).toBeNull();
     fireEvent.click(screen.getByRole('checkbox', { name: '全选当前明细' }));
     expect(screen.getByText('已选 7 条')).toBeTruthy();
     assignTo('P-3312 产品调研');
     expect(await screen.findByText('所有明细都已归属。')).toBeTruthy();
-    fireEvent.click(screen.getByRole('checkbox', { name: '仅未归属' }));
-    expect(summary()).toBe('已归属 9 / 9 条 · 合计 3972.59 元');
+    fireEvent.click(within(filter).getByRole('tab', { name: '全部' }));
+    expect(summary()).toBe('已归属9 / 9 条整单合计3972.59 元');
     expect(submitButton().disabled).toBe(false);
     expect(screen.queryByText(PROJECT_ASSIGNMENT_ERRORS.incomplete)).toBeNull();
 
@@ -196,7 +229,7 @@ describe('项目归属（内核 Variant B 工作台）', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: '全选当前明细' }));
     assignTo('P-2311 华东客户交付二期');
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '只处理未归属' }));
-    await settled(9, 'P-2311 · 华东客户交付二期');
+    await settled(9, 'P-2311 / 华东客户交付二期');
     fireEvent.click(submitButton());
     expect(await screen.findByRole('heading', { name: '整单明细确认' })).toBeTruthy();
     expect(window.location.hash).toBe('#/task/T1/review');

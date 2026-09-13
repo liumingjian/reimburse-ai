@@ -91,8 +91,8 @@ test('?book=empty：从待确认项走到项目归属时被引导进维护入口
   await page.getByLabel('报销事由').fill('上海产品评审出差');
   await page.getByRole('checkbox', { name: '全选当前明细' }).locator('xpath=following-sibling::label[1]').click();
   await workbench.getByRole('button', { name: '归入 P-5108 苏州门店巡检' }).click();
-  await expect(page.getByTestId('project-of-1')).toHaveText('P-5108 · 苏州门店巡检');
-  await expect(page.getByTestId('assign-summary')).toHaveText('已归属 9 / 9 条 · 合计 3972.59 元');
+  await expect(page.getByTestId('project-of-1')).toHaveText('P-5108 / 苏州门店巡检');
+  await expect(page.getByTestId('assign-summary')).toHaveText('已归属9 / 9 条整单合计3972.59 元');
   await page.getByRole('button', { name: '确认项目归属' }).click();
   await expect(page).toHaveURL(/#\/task\/T1\/review$/);
 });
@@ -127,6 +127,6 @@ test('入口：顶栏常驻「个人项目簿」；项目归属页「新增项�
   await expect(page.getByRole('checkbox', { name: '选择明细 No.3' })).toBeChecked();
   await expect(page.getByRole('checkbox', { name: '选择明细 No.4' })).toBeChecked();
   await workbench.getByRole('button', { name: '归入 P-6021 年度预算评审' }).click();
-  await expect(page.getByTestId('project-of-3')).toHaveText('P-6021 · 年度预算评审');
-  await expect(page.getByTestId('project-of-4')).toHaveText('P-6021 · 年度预算评审');
+  await expect(page.getByTestId('project-of-3')).toHaveText('P-6021 / 年度预算评审');
+  await expect(page.getByTestId('project-of-4')).toHaveText('P-6021 / 年度预算评审');
 });

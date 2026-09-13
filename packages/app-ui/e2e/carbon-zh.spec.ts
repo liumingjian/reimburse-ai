@@ -91,6 +91,11 @@ test('弹层打开时也没有英文文案（作废确认、新建任务、追�
   await expect(page.getByRole('dialog').getByRole('alert').filter({ hasText: '请填写常驻城市。' })).toBeVisible();
   expect(await englishLeftovers(page), '新建任务（含错误）').toEqual([]);
 
+  await page.goto(open('?seed=project', '#/task/T1/project'));
+  await page.getByRole('complementary', { name: '项目工作台' }).getByRole('button', { name: '归入 P-3312 产品调研' }).click();
+  await expect(page.getByText('先勾选明细')).toBeVisible();
+  expect(await englishLeftovers(page), '项目归属「先勾选明细」提示').toEqual([]);
+
   await page.goto(open('?seed=actions', '#/task/T1/review'));
   await page.getByRole('button', { name: '追加材料' }).click();
   await expect(page.getByRole('dialog', { name: '追加材料会形成新的盘点版本' })).toBeVisible();

@@ -572,6 +572,12 @@ $gutter: $spacing-06;
     max-inline-size: 40rem;
   }
 
+  // 常驻城市：只读字段，与报销事由同一行、标签与输入框上下对齐，宽度按城市名收紧。
+  .app-home-city {
+    flex: none;
+    inline-size: 10rem;
+  }
+
   .app-caption {
     padding-block-end: $spacing-03;
   }

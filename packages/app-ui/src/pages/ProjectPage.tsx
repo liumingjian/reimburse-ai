@@ -1,5 +1,22 @@
 import { useCallback, useState } from 'react';
-import { Button, Checkbox, InlineNotification, Search, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag, TextInput } from '@carbon/react';
+import {
+  Button,
+  Checkbox,
+  ContentSwitcher,
+  InlineNotification,
+  Popover,
+  PopoverContent,
+  Search,
+  Switch,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  Tag,
+  TextInput,
+} from '@carbon/react';
 import { Add, Locked } from '@carbon/icons-react';
 import { PROJECT_ASSIGNMENT_ERRORS, PROJECT_CONFLICT_COPY, PURPOSE_MAX_LENGTH } from '../contract/actions';
 import { PROJECT_BOOK_COPY } from '../contract/project-book';
@@ -8,6 +25,7 @@ import { pageAllowed } from '../contract/stage';
 import { navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
 import { ConfirmDialog } from '../shell/Dialog';
+import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
@@ -124,6 +142,9 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
   const [query, setQuery] = useState('');
   const [conflict, setConflict] = useState<Conflict | null>(null);
+  // 没勾选明细时点了哪个项目的「归入」：就近显示「先勾选明细」提示。
+  const [hint, setHint] = useState<string | null>(null);
+  const closeHint = useCallback(() => setHint(null), []);
   const [addOpen, setAddOpen] = useState(false);
   const closeAdd = useCallback(() => setAddOpen(false), []);
   const { busy, error, run, clearError } = useAction(taskId);
@@ -141,6 +162,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   const complete = assignedCount === lines.length && lines.length > 0 && purpose.trim().length > 0;
 
   const toggle = (lineIds: readonly string[], on: boolean) => {
+    setHint(null);
     setSelected((previous) => {
       const next = new Set(previous);
       for (const lineId of lineIds) {
@@ -151,8 +173,9 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
     });
   };
 
-  const toggleOnlyUnassigned = () => {
-    setOnlyUnassigned((value) => !value);
+  const filterUnassigned = (on: boolean) => {
+    if (on === onlyUnassigned) return;
+    setOnlyUnassigned(on);
     setSelected(new Set());
   };
 
@@ -183,11 +206,34 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
     if (outcome.ok) navigate(taskHash(taskId, 'review'));
   };
 
-  const assignButton = (project: Target) => (
-    <Button kind="tertiary" size="sm" aria-label={`归入 ${project.number} ${project.name}`} disabled={!canAct || busy || selected.size === 0} onClick={() => assign(project)}>
-      归入
-    </Button>
-  );
+  // 「归入」没勾选明细时也保持按钮外观、可以点：点下就近弹出「先勾选明细」，不发请求。
+  // 提示照 Carbon Toggletip 的做法（Popover 加 caret、高对比、toggletip-content 样式）；不用 ToggletipButton，
+  // 是因为它会给触发器加重置样式、换成按钮组件时又丢掉 aria-expanded，这里要触发器仍是 Carbon 按钮。
+  // 点外面或按 Esc 关闭（Popover 的 onRequestClose），勾选明细后提示自动收起。
+  const assignButton = (project: Target) => {
+    const open = hint === project.number;
+    const hintId = `assign-hint-${project.number}`;
+    return (
+      <Popover open={open} align="left" caret highContrast dropShadow={false} onRequestClose={closeHint}>
+        <Button
+          kind="tertiary"
+          size="sm"
+          aria-label={`归入 ${project.number} ${project.name}`}
+          aria-expanded={selected.size === 0 ? open : undefined}
+          aria-controls={selected.size === 0 ? hintId : undefined}
+          disabled={!canAct || busy}
+          onClick={() => (selected.size === 0 ? setHint(open ? null : project.number) : assign(project))}
+        >
+          归入
+        </Button>
+        <PopoverContent>
+          <div id={hintId} className="cds--toggletip-content">
+            {open ? <p>先勾选明细</p> : null}
+          </div>
+        </PopoverContent>
+      </Popover>
+    );
+  };
 
   const submittedText = preparationBlocked
     ? '项目归属已提交。材料包还有缺项，请在整单明细确认页处理。'
@@ -210,7 +256,8 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
             placeholder="如：上海产品评审出差"
             onChange={(event) => setPurpose(event.target.value)}
           />
-          <span className="app-caption">常驻城市：{assignment.homeCity ?? '未确认'}</span>
+          {/* 常驻城市在新建任务时确认，这里只读；做成带标签的只读字段，与报销事由上下对齐。 */}
+          <TextInput id="home-city" className="app-home-city" labelText="常驻城市" value={assignment.homeCity ?? '未确认'} readOnly />
         </span>
       </PageHeader>
 
@@ -253,7 +300,11 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
               disabled={locked || visible.length === 0}
               onChange={() => toggle(visible.map((line) => line.lineId), !allVisibleSelected)}
             />
-            <Checkbox id="assign-only-unassigned" labelText="仅未归属" checked={onlyUnassigned} disabled={locked} onChange={toggleOnlyUnassigned} />
+            {/* 筛选不是行选择：与任务列表一样用 ContentSwitcher（全部 / 未归属），不用复选框。 */}
+            <ContentSwitcher aria-label="明细筛选" size="sm" selectedIndex={onlyUnassigned ? 1 : 0} onChange={(data: { index?: number }) => filterUnassigned(data.index === 1)}>
+              <Switch name="all" text="全部" disabled={locked} />
+              <Switch name="unassigned" text="未归属" disabled={locked} />
+            </ContentSwitcher>
             <span className="app-caption app-assign-count" role="status">
               已选 {selected.size} 条
             </span>
@@ -325,11 +376,16 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
                 <li key={entry.number} className={entry.selectable ? undefined : 'is-locked'}>
                   <div>
                     <div className="name">{entry.name}</div>
-                    <div className="app-caption">
-                      <span className="app-code">{entry.number}</span> ·{' '}
-                      <span data-testid={`usage-${entry.number}`}>
-                        {entry.lineCount} 条 · {entry.grossTotal} 元
-                      </span>
+                    {/* 条数与金额来自服务端，页面不计算；用字段组代替中点串。 */}
+                    <div data-testid={`usage-${entry.number}`}>
+                      <FieldGroup
+                        label={`${entry.name}的归入情况`}
+                        fields={[
+                          { label: '项目号', value: <span className="app-code">{entry.number}</span> },
+                          { label: '条数', value: `${entry.lineCount} 条` },
+                          { label: '价税合计', value: `${entry.grossTotal} 元` },
+                        ]}
+                      />
                     </div>
                   </div>
                   {entry.selectable ? (
@@ -383,11 +439,17 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
         </aside>
       </div>
 
-      {/* 吸底操作栏：左边已归属条数与服务端给出的价税合计，右边唯一的主按钮。 */}
+      {/* 吸底操作栏：左边已归属条数与服务端给出的整单合计（不是已归属部分的合计），右边唯一的主按钮。 */}
       <section className="app-action-bar" aria-label="提交项目归属">
-        <p className="app-consequence" data-testid="assign-summary">
-          已归属 <strong>{assignedCount}</strong> / <strong>{lines.length}</strong> 条 · 合计 <strong>{snapshot.confirmation.grossTotal ?? ''}</strong> 元
-        </p>
+        <div className="app-consequence" data-testid="assign-summary">
+          <FieldGroup
+            label="归属进度"
+            fields={[
+              { label: '已归属', value: `${assignedCount} / ${lines.length} 条` },
+              { label: '整单合计', value: `${snapshot.confirmation.grossTotal ?? ''} 元` },
+            ]}
+          />
+        </div>
         {!locked && !complete ? <span className="app-caption">{PROJECT_ASSIGNMENT_ERRORS.incomplete}</span> : null}
         <Button disabled={!canAct || busy || !complete || conflict !== null} onClick={() => void submit()}>
           确认项目归属
@@ -453,7 +515,7 @@ function LineRow({
       <TableCell data-testid={`project-of-${line.no}`}>
         {project ? (
           <>
-            <span className="app-code">{project.projectNumber}</span> · {project.projectName}
+            <span className="app-code">{project.projectNumber}</span> / {project.projectName}
           </>
         ) : (
           <Tag type="gray" size="sm">
