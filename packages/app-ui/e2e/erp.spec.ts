@@ -145,6 +145,21 @@ test('erp-login-missing：点继续后仍未检测到登录，提示保留、可
   await expect(page.getByRole('link', { name: '查看完成结果' })).toBeVisible();
 });
 
+test('对账页 T2：1440 与 1100 下「转人工」都在首屏内，顶部只有一条错误通知；附截图', async ({ page }, testInfo) => {
+  for (const [width, height] of [[1440, 900], [1100, 700]] as const) {
+    await page.setViewportSize({ width, height });
+    await page.goto(open('', '#/task/T2/reconcile'));
+    const handOff = page.getByRole('region', { name: '处置' }).getByRole('button', { name: '转人工' });
+    await expect(handOff).toBeVisible();
+    await expect(page.getByRole('alert')).toHaveCount(1);
+    const box = await handOff.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(height);
+    await page.screenshot({ path: testInfo.outputPath(`reconcile-t2-${width}.png`) });
+  }
+});
+
 test('对账页直接打开：T2（已保存、逐行不一致 ⇒ 转人工）显示固定句且没有重新对账；?seed=reconcile 打开 T1 的中止对账，保存报销草稿页保留进入对账入口', async ({ page }) => {
   await page.goto(open('', '#/task/T2/reconcile'));
   await expect(bodyRows(page, '逐行比对')).toHaveCount(5);

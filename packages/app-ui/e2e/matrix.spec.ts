@@ -23,7 +23,7 @@ const KEY_TEXT: Readonly<Record<TaskStage, string>> = {
   actions: '整单明细已确认',
   erp: '我已登录，继续',
   done: 'BX20260911-0173',
-  reconcile: '中止原因',
+  reconcile: '写入结果不确定',
 };
 
 const SEEDS: readonly Seed[] = [
