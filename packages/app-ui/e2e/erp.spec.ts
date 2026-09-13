@@ -28,7 +28,7 @@ async function expectDone(page: Page) {
   await expect(page.getByText('明细 9/9 一致')).toBeVisible();
   await expect(page.getByTestId('save-completed')).toHaveText(SAVE_COMPLETED);
   await expect(bodyRows(page, '逐条回读')).toHaveCount(9);
-  await expect(page.locator('tr.row-err')).toHaveCount(0);
+  await expect(page.getByRole('row').filter({ hasText: '不一致' })).toHaveCount(0);
 }
 
 test('正常流程：?seed=erp 等待登录，点「我已登录，继续」后九步自动写完进入完成页', async ({ page }, testInfo) => {
@@ -65,9 +65,9 @@ test('readback-mismatch：严格回读停下后自动进入完成页，差异行
   await expect(page.getByRole('heading', { name: '完成', exact: true })).toBeVisible();
   await expect(page.getByTestId('draft-no')).toHaveText('BX20260911-0173');
   await expect(bodyRows(page, '逐条回读')).toHaveCount(9);
-  await expect(page.getByTestId('readback-6')).toHaveClass(/row-err/);
+  await expect(page.getByTestId('readback-6')).toContainText('不一致');
   await expect(page.getByTestId('readback-6')).toContainText('74.00');
-  await expect(page.locator('tr.row-err')).toHaveCount(1);
+  await expect(page.getByRole('row').filter({ hasText: '不一致' })).toHaveCount(1);
   await expect(page.getByText('明细 9/9 一致')).toHaveCount(0);
   await expect(page.getByTestId('save-completed')).toHaveCount(0);
   await expect(page.getByTestId('human-review')).toHaveText(HUMAN_REVIEW);
@@ -113,7 +113,7 @@ test('erp-login-missing：点继续后仍未检测到登录，提示保留、可
 test('对账页直接打开：T2（已保存、逐行不一致 ⇒ 转人工）显示固定句且没有重新对账；?seed=reconcile 打开 T1 的中止对账，保存报销草稿页保留进入对账入口', async ({ page }) => {
   await page.goto(open('', '#/task/T2/reconcile'));
   await expect(bodyRows(page, '逐行比对')).toHaveCount(5);
-  await expect(page.getByTestId('readback-3')).toHaveClass(/row-err/);
+  await expect(page.getByTestId('readback-3')).toContainText('不一致');
   await expect(page.getByTestId('readback-local-total')).toHaveText('1264.00');
   await expect(page.getByTestId('human-review')).toHaveText(HUMAN_REVIEW);
   await expect(page.getByRole('button', { name: '重新对账' })).toHaveCount(0);

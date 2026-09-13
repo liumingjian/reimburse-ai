@@ -40,15 +40,15 @@ test('左右分栏：原件预览随选中项切换，夹具文件能从 dist-mo
 test('表单校验：必填与 HH:MM 格式阻止非法值', async ({ page }) => {
   await page.goto(open('?seed=pending', '#/task/T1/pending'));
   await save(page).click();
-  await expect(detail(page).getByRole('alert')).toHaveCount(2);
-  await expect(detail(page).getByRole('alert').first()).toHaveText('必填，对照原件填写。');
+  await expect(detail(page).getByRole('alert').filter({ hasText: /\S/ })).toHaveCount(2);
+  await expect(detail(page).getByRole('alert').filter({ hasText: /\S/ }).first()).toHaveText('必填，对照原件填写。');
 
   await item(page, '下车时间不合法').click();
   await detail(page).getByLabel('下车时间 *').fill('90:60');
   await detail(page).getByLabel('起点 *').fill('静安寺');
   await detail(page).getByLabel('终点 *').fill('虹桥枢纽');
   await save(page).click();
-  await expect(detail(page).getByRole('alert')).toHaveText('格式应为 HH:MM，且小时 00-23、分钟 00-59。');
+  await expect(detail(page).getByRole('alert').filter({ hasText: /\S/ })).toHaveText('格式应为 HH:MM，且小时 00-23、分钟 00-59。');
   await expect(page.getByText('还剩 3 个')).toBeVisible();
 });
 

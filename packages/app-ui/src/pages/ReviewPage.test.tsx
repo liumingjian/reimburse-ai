@@ -202,7 +202,7 @@ describe('整单明细确认', () => {
 
     fireEvent.click(screen.getByRole('link', { name: '回到项目归属改派' }));
     expect(await screen.findByRole('heading', { name: '项目归属' })).toBeTruthy();
-    expect(screen.getByRole('alert').textContent).toContain('P-2307');
+    expect(screen.getAllByRole('alert').map((node) => node.textContent).join('')).toContain('P-2307');
     for (const no of [7, 8, 9]) fireEvent.click(screen.getByRole('checkbox', { name: `选择明细 No.${no}` }));
     fireEvent.click(within(screen.getByRole('complementary', { name: '项目工作台' })).getByRole('button', { name: '归入 P-1180 内部培训' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确认覆盖' }));
@@ -273,7 +273,7 @@ describe('整单明细确认', () => {
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '继续追加' }));
     expect(await screen.findByRole('heading', { name: '上传材料' })).toBeTruthy();
     expect(window.location.hash).toBe('#/task/T1/upload');
-    expect(screen.getByRole('status').textContent).toBe(REVIEW_INVALIDATED_NOTICE);
+    expect(screen.getByRole('status').textContent).toContain(REVIEW_INVALIDATED_NOTICE);
     snapshot = await adapter.getSnapshot('T1');
     expect(snapshot.confirmation.status).toBe('invalidated');
     expect(snapshot.confirmation.notice).toBe(REVIEW_INVALIDATED_NOTICE);
@@ -302,7 +302,7 @@ describe('整单明细确认', () => {
     const dialog = screen.getByRole('dialog', { name: '追加材料会形成新的盘点版本' });
     fireEvent.click(within(dialog).getByRole('button', { name: '继续追加' }));
     expect(await screen.findByText('拖入文件，或点击选择')).toBeTruthy();
-    expect(screen.getByRole('status').textContent).toBe(REVIEW_INVALIDATED_NOTICE);
+    expect(screen.getByRole('status').textContent).toContain(REVIEW_INVALIDATED_NOTICE);
     expect((await adapter.getSnapshot('T1')).confirmation.status).toBe('invalidated');
   });
 

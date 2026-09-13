@@ -21,7 +21,7 @@ async function openPackage(page: Page) {
 }
 
 async function reassign(page: Page, nos: readonly number[], project: string) {
-  for (const no of nos) await page.getByRole('checkbox', { name: `选择明细 No.${no}` }).click();
+  for (const no of nos) await page.getByRole('checkbox', { name: `选择明细 No.${no}` }).locator('xpath=following-sibling::label[1]').click();
   await page.getByRole('complementary', { name: '项目工作台' }).getByRole('button', { name: `归入 ${project}` }).click();
   await page.getByRole('dialog', { name: `${nos.length} 条明细已有其他项目归属，请确认是否覆盖` }).getByRole('button', { name: '确认覆盖' }).click();
   await page.getByRole('button', { name: '确认项目归属' }).click();
@@ -55,7 +55,7 @@ test('?catalog=mismatch：显示不匹配表并阻塞确认；回到项目归属
 
   await page.getByRole('link', { name: '回到项目归属改派' }).click();
   await expect(page).toHaveURL(/#\/task\/T1\/project$/);
-  await expect(page.getByRole('alert')).toContainText('P-2307');
+  await expect(page.getByRole('alert').filter({ hasText: 'P-2307' })).toBeVisible();
   await reassign(page, [7, 8, 9], 'P-1180 内部培训');
 
   await expect(page).toHaveURL(/#\/task\/T1\/review$/);

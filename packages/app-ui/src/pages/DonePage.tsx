@@ -1,7 +1,9 @@
+import { Button, InlineNotification, Tag } from '@carbon/react';
+import { CheckmarkFilled, ErrorFilled, Printer, WarningAltFilled } from '@carbon/icons-react';
 import { HUMAN_REVIEW_NOTICE, SAVE_COMPLETED_NOTICE, type TaskSnapshot } from '../contract/snapshot';
 import { TASKS_HASH, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
-import { Icon } from '../shell/Icon';
+import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 import { ReadbackTable } from './ReadbackTable';
@@ -25,77 +27,84 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>{copy.title}</h1>
-          <p className="lead">{mismatched ? MISMATCH_LEAD : copy.lead}</p>
-        </div>
-        <div className="actions">
-          <a className="btn btn-secondary" href={taskHash(taskId, 'print')}>
-            <Icon name="printer" />
-            打印稿
-          </a>
-          <a className={mismatched ? 'btn btn-secondary' : 'btn btn-primary'} href={TASKS_HASH}>
-            返回任务列表
-          </a>
-        </div>
-      </div>
+      <PageHeader
+        title={copy.title}
+        lead={mismatched ? MISMATCH_LEAD : copy.lead}
+        actions={
+          <>
+            <Button kind="secondary" href={taskHash(taskId, 'print')} renderIcon={Printer}>
+              打印稿
+            </Button>
+            <Button kind={mismatched ? 'secondary' : 'primary'} href={TASKS_HASH}>
+              返回任务列表
+            </Button>
+          </>
+        }
+      />
 
       {/* 摘要条：草稿号与严格回读结论都来自服务端。 */}
-      <div className="summary bleed" role="group" aria-label="写入结果">
-        <div className="summary-field">
-          <span className="k">草稿号</span>
-          <span className="v code" data-testid="draft-no">
+      <div className="app-summary bleed" role="group" aria-label="写入结果">
+        <div className="app-summary-field">
+          <span className="app-summary-key">草稿号</span>
+          <span className="app-summary-value app-code" data-testid="draft-no">
             {erp.draftNo ?? '尚无'}
           </span>
         </div>
         {readback.summary ? (
-          <div className="summary-field">
-            <span className="k">严格回读</span>
-            <span className="v">
-              <span className={matched ? 'tag tag-success' : 'tag tag-danger'}>
-                <Icon name={matched ? 'checkmark--filled' : 'error--filled'} />
+          <div className="app-summary-field">
+            <span className="app-summary-key">严格回读</span>
+            <span className="app-summary-value">
+              <Tag type={matched ? 'green' : 'red'} renderIcon={matched ? CheckmarkFilled : ErrorFilled}>
                 {readback.summary}
-              </span>
+              </Tag>
             </span>
           </div>
         ) : null}
         {handedOff ? (
-          <div className="summary-field">
-            <span className="k">处置</span>
-            <span className="v">
-              <span className="tag tag-warning">
-                <Icon name="warning--alt--filled" />
+          <div className="app-summary-field">
+            <span className="app-summary-key">处置</span>
+            <span className="app-summary-value">
+              <Tag type="warm-gray" renderIcon={WarningAltFilled}>
                 已转人工
-              </span>
+              </Tag>
             </span>
           </div>
         ) : null}
-        <div className="summary-field grow" />
+        <div className="app-summary-field app-grow" />
       </div>
 
-      <div className="notices">
+      <div className="app-notices">
         {matched ? (
-          <div className="notice notice-ok" role="status" data-testid="save-completed">
-            {SAVE_COMPLETED_NOTICE}
-          </div>
+          <InlineNotification kind="success" role="status" lowContrast hideCloseButton statusIconDescription="成功">
+            <span data-testid="save-completed">{SAVE_COMPLETED_NOTICE}</span>
+          </InlineNotification>
         ) : mismatched ? (
-          <div className="notice notice-err" role="alert">
-            回读与本地确认不一致：{readback.summary}。这份草稿不算完成，不要直接在报销系统里提交审批。
-          </div>
+          <InlineNotification
+            kind="error"
+            role="alert"
+            lowContrast
+            hideCloseButton
+            statusIconDescription="错误"
+            title={`回读与本地确认不一致：${readback.summary ?? ''}。这份草稿不算完成，不要直接在报销系统里提交审批。`}
+          />
         ) : null}
         {reconcile.humanReview ? (
-          <div className="notice notice-warn" role="status" data-testid="human-review">
-            {HUMAN_REVIEW_NOTICE}
-          </div>
+          <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意">
+            <span data-testid="human-review">{HUMAN_REVIEW_NOTICE}</span>
+          </InlineNotification>
         ) : null}
         {reconcile.banner ? (
-          <div className={handedOff || matched ? 'notice notice-info' : 'notice notice-warn'} role="status">
-            {reconcile.banner}
-          </div>
+          <InlineNotification
+            kind={handedOff || matched ? 'info' : 'warning'}
+            role="status"
+            lowContrast
+            hideCloseButton
+            statusIconDescription={handedOff || matched ? '提示' : '注意'}
+            title={reconcile.banner}
+          />
         ) : null}
         {mismatched && reconcile.reasons.length > 0 ? (
-          <ul className="reconcile-reasons">
+          <ul className="app-reconcile-reasons">
             {reconcile.reasons.map((reason) => (
               <li key={reason}>{reason}</li>
             ))}
@@ -106,13 +115,13 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
       {readback.rows.length > 0 ? <ReadbackTable label="逐条回读" rows={readback.rows} localTotal={readback.localTotal} erpTotal={readback.erpTotal} /> : null}
 
       {canHandOff ? (
-        <section className="block" aria-label="转人工">
-          <h2>转人工</h2>
-          <p className="lead">应用不会自动改写报销系统里的行，也不会重试写入。转人工后任务标记为人工处理，保留回读记录，之后不再自动写入报销系统。</p>
-          <div className="btn-row block-actions">
-            <button className="btn btn-primary" type="button" disabled={busy} onClick={() => void run((adapter) => adapter.handOff(taskId, step.stepToken))}>
+        <section className="app-block" aria-label="转人工">
+          <h2 className="app-section-title">转人工</h2>
+          <p className="app-lead">应用不会自动改写报销系统里的行，也不会重试写入。转人工后任务标记为人工处理，保留回读记录，之后不再自动写入报销系统。</p>
+          <div className="app-btn-row app-block-actions">
+            <Button disabled={busy} onClick={() => void run((adapter) => adapter.handOff(taskId, step.stepToken))}>
               转人工
-            </button>
+            </Button>
             <ActionError message={error} />
           </div>
         </section>

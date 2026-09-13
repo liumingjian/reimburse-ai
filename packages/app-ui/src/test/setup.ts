@@ -1,6 +1,6 @@
 import { afterEach } from 'vitest';
 
-// 大多数用例跑在 jsdom 里；少数纯文件系统用例（如 tokens.test.ts）声明了 node 环境，这里要能两边都用。
+// 大多数用例跑在 jsdom 里；少数纯文件系统用例（如 no-dash.test.ts）声明了 node 环境，这里要能两边都用。
 const hasDom = typeof window !== 'undefined';
 
 if (hasDom) {

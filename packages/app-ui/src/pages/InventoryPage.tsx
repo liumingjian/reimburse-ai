@@ -1,28 +1,37 @@
 import { useState } from 'react';
+import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag } from '@carbon/react';
+import { CheckmarkFilled, ChevronRight, InProgress, WarningAltFilled } from '@carbon/icons-react';
 import { MATERIAL_ROLE_LABELS, type ExpenseEvent, type Material, type TaskSnapshot } from '../contract/snapshot';
 import { formatDateTime } from '../format';
 import { taskHash } from '../router';
-import { Icon } from '../shell/Icon';
 import { DuplicateBlockers } from './DuplicateBlockers';
 import { PAGE_COPY } from './page-copy';
 
 // 材料盘点页：只有盘点进度与材料清单。盘点进行中显示分阶段进度；结束后按费用事件归组列出主要报销凭证与参考材料、
 // 材料证据关联结论和每份材料的校验结果。不展示读出的字段及其来源（Skill 没有盘点结果表，内核不许把规则名给员工看）。
 // 跨任务重复发票命中时整批停，显示重复发票表。页面只渲染快照，不做配对、不算金额。
-// 版式（DESIGN.md「版式规则」）：一句结论打头；全部通过的事件默认收成一行，点开才看文件与校验；
-// 含待确认材料的事件默认展开并加标记；只标记例外，通过的材料不带标签。
-// 收起的事件行按表头的四列排开（序号与类别 | 日期 | 金额 | 材料数），和展开后的材料行、表头对齐。
+// 版式：一句结论打头；全部通过的事件默认收成一行，点开才看文件与校验；含待确认材料的事件默认展开并加标记；
+// 只标记例外，通过的材料不带标签。收起的事件行按表头的四列排开，和展开后的材料行、表头对齐。
 
 function StatusTag({ material }: { material: Material }) {
   if (material.status === 'pending')
     return (
-      <span className="tag tag-warning">
-        <Icon name="warning--alt--filled" />
+      <Tag type="warm-gray" size="sm" renderIcon={WarningAltFilled}>
         待确认
-      </span>
+      </Tag>
     );
-  if (material.status === 'excluded') return <span className="tag tag-neutral">已排除</span>;
-  if (material.status === 'uploaded') return <span className="tag tag-neutral">待盘点</span>;
+  if (material.status === 'excluded')
+    return (
+      <Tag type="gray" size="sm">
+        已排除
+      </Tag>
+    );
+  if (material.status === 'uploaded')
+    return (
+      <Tag type="gray" size="sm">
+        待盘点
+      </Tag>
+    );
   return null;
 }
 
@@ -31,30 +40,30 @@ const COLUMNS = ['文件', '识别为', '校验', '状态'] as const;
 function Columns() {
   return (
     <colgroup>
-      <col className="col-file" />
-      <col className="col-kind" />
-      <col className="col-check" />
-      <col className="col-status" />
+      <col className="app-col-file" />
+      <col className="app-col-kind" />
+      <col className="app-col-check" />
+      <col className="app-col-status" />
     </colgroup>
   );
 }
 
 function MaterialRow({ material, roleLabel }: { material: Material; roleLabel: string }) {
   return (
-    <tr className={material.status === 'pending' ? 'row-warn' : undefined}>
-      <td>
-        <span className="file-name">{material.fileName}</span>
-        <div className="caption">{roleLabel}</div>
-      </td>
-      <td>
+    <TableRow className={material.status === 'pending' ? 'app-row-warn' : ''}>
+      <TableCell>
+        <span className="app-file-name">{material.fileName}</span>
+        <div className="app-caption">{roleLabel}</div>
+      </TableCell>
+      <TableCell>
         {material.kindLabel}
-        {material.categoryLabel ? <div className="caption">{material.categoryLabel}</div> : null}
-      </td>
-      <td>{material.checkText || <span className="muted">无</span>}</td>
-      <td>
+        {material.categoryLabel ? <div className="app-caption">{material.categoryLabel}</div> : null}
+      </TableCell>
+      <TableCell>{material.checkText || <span className="app-muted">无</span>}</TableCell>
+      <TableCell>
         <StatusTag material={material} />
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -104,71 +113,71 @@ function EventGroup({ group, expanded, onToggle }: { group: Group; expanded: boo
   const note = group.events.map((event) => event.evidenceNote).find((text) => text);
   const parts = groupParts(group, true);
   const hasPending = [group.voucher, ...group.references].some((material) => material.status === 'pending');
-  const className = ['event-group', hasPending ? 'has-pending' : '', expanded ? 'is-open' : ''].filter(Boolean).join(' ');
+  const className = ['app-event-group', hasPending ? 'has-pending' : '', expanded ? 'is-open' : ''].filter(Boolean).join(' ');
   return (
-    <tbody className={className} aria-label={eventTitle(group)}>
-      <tr className="group-head">
-        <td colSpan={COLUMNS.length}>
-          <button className="group-toggle" type="button" aria-expanded={expanded} onClick={onToggle}>
+    <TableBody className={className} aria-label={eventTitle(group)}>
+      <TableRow className="app-group-head">
+        <TableCell colSpan={COLUMNS.length}>
+          <button className="app-group-toggle" type="button" aria-expanded={expanded} onClick={onToggle}>
             {parts ? (
               <>
-                <span className="gcol gcol-first">
-                  <Icon name="chevron--right" className="chevron" />
-                  <span className="group-no">No.{parts.nos}</span> <span className="group-category">{parts.category}</span>
+                <span className="app-gcol app-gcol-first">
+                  <ChevronRight className="app-chevron" aria-hidden="true" />
+                  <span className="app-group-no">No.{parts.nos}</span> <span className="app-group-category">{parts.category}</span>
                 </span>{' '}
-                <span className="gcol group-dates">{parts.dates}</span> <span className="gcol group-gross">{parts.gross}</span>{' '}
-                <span className="gcol group-count">{1 + group.references.length} 份材料</span>
+                <span className="app-gcol app-group-dates">{parts.dates}</span> <span className="app-gcol">{parts.gross}</span>{' '}
+                <span className="app-gcol app-group-count">{1 + group.references.length} 份材料</span>
               </>
             ) : null}
           </button>
-        </td>
-      </tr>
+        </TableCell>
+      </TableRow>
       {expanded ? (
         <>
-          <tr className="group-detail">
-            <td colSpan={COLUMNS.length}>
-              <ul className="event-lines">
+          <TableRow className="app-group-detail">
+            <TableCell colSpan={COLUMNS.length}>
+              <ul className="app-event-lines">
                 {group.events.map((event) => (
                   <li key={event.eventId}>
-                    <span className="muted">No.{event.no}</span> {event.summary} <span className="amount">{event.grossAmount}</span>
+                    <span className="app-muted">No.{event.no}</span> {event.summary} <span className="app-amount">{event.grossAmount}</span>
                   </li>
                 ))}
               </ul>
               {note ? (
-                <div className="evidence-note">
-                  <span className="muted">材料证据关联</span> {note}
+                <div className="app-evidence-note">
+                  <span className="app-muted">材料证据关联</span> {note}
                 </div>
               ) : null}
-            </td>
-          </tr>
+            </TableCell>
+          </TableRow>
           <MaterialRow material={group.voucher} roleLabel={MATERIAL_ROLE_LABELS.primary_voucher} />
           {group.references.map((reference) => (
             <MaterialRow key={reference.materialId} material={reference} roleLabel={MATERIAL_ROLE_LABELS.reference} />
           ))}
         </>
       ) : null}
-    </tbody>
+    </TableBody>
   );
 }
 
-// 盘点进度：Carbon 进度指示的竖排形式，状态用图标加文字。
+// 盘点进度：竖排的步骤清单，状态用图标加文字（颜色只是第二通道）。
 function PhaseMark({ status, index }: { status: string; index: number }) {
-  if (status === 'done') return <Icon name="checkmark--filled" />;
-  if (status === 'running') return <Icon name="in-progress" />;
+  if (status === 'done') return <CheckmarkFilled />;
+  if (status === 'running') return <InProgress />;
   return <>{index + 1}</>;
 }
 
 function Progress({ snapshot }: { snapshot: TaskSnapshot }) {
   const running = snapshot.inventory.phases.find((phase) => phase.status === 'running');
   return (
-    <section className="block" aria-label="盘点进度">
-      <p className="progress-lead" role="status">
+    <section className="app-block" aria-label="盘点进度">
+      <p className="app-progress-lead" role="status">
         {running ? `正在盘点：${running.label}` : '正在准备盘点'}
       </p>
-      <ol className="steps">
+      <ol className="app-steps">
         {snapshot.inventory.phases.map((phase, index) => (
-          <li key={phase.key} className={phase.status}>
-            <span className="dot" aria-hidden="true">
+          <li key={phase.key} className={`is-${phase.status}`}>
+            <span className="app-step-dot" aria-hidden="true">
               <PhaseMark status={phase.status} index={index} />
             </span>
             <span>{phase.label}</span>
@@ -209,14 +218,14 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   return (
     <>
-      <div className="page-head">
+      <div className="app-page-head">
         <div>
-          <h1>{copy.title}</h1>
-          <p className={summary ? 'headline' : 'lead'} title={summary ? copy.lead : undefined}>
+          <h1 className="app-page-title">{copy.title}</h1>
+          <p className={summary ? 'app-headline' : 'app-lead'} title={summary ? copy.lead : undefined}>
             {headline}
           </p>
           {summary ? (
-            <p className="caption meta-line">
+            <p className="app-caption app-meta-line">
               {MATERIAL_ROLE_LABELS.primary_voucher} {summary.voucherCount} · {MATERIAL_ROLE_LABELS.reference} {summary.referenceCount} · 盘点版本{' '}
               {snapshot.inventory.versionId ?? '?'}
               {snapshot.inventory.finishedAt ? ` · ${formatDateTime(snapshot.inventory.finishedAt)}` : ''}
@@ -224,15 +233,11 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
           ) : null}
         </div>
         {summary && !blocked ? (
-          <div className="actions">
+          <div className="app-page-actions">
             {summary.openPendingItemCount > 0 ? (
-              <a className="btn btn-primary" href={taskHash(taskId, 'pending')}>
-                处理 {summary.openPendingItemCount} 个待确认项
-              </a>
+              <Button href={taskHash(taskId, 'pending')}>处理 {summary.openPendingItemCount} 个待确认项</Button>
             ) : (
-              <a className="btn btn-primary" href={taskHash(taskId, 'project')}>
-                进入项目归属
-              </a>
+              <Button href={taskHash(taskId, 'project')}>进入项目归属</Button>
             )}
           </div>
         ) : null}
@@ -243,37 +248,37 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
       ) : (
         <>
           <DuplicateBlockers snapshot={snapshot} />
-          <section className="table-scroll bleed inventory-table" aria-label="盘点结果">
-            <table className="data inventory">
+          <section className="bleed app-table app-inventory" aria-label="盘点结果">
+            <Table size="md">
               <Columns />
-              <thead>
-                <tr>
+              <TableHead>
+                <TableRow>
                   {COLUMNS.map((column) => (
-                    <th key={column}>{column}</th>
+                    <TableHeader key={column}>{column}</TableHeader>
                   ))}
-                </tr>
-              </thead>
+                </TableRow>
+              </TableHead>
               {groups.map((group) => {
                 const key = group.voucher.materialId;
                 const pending = [group.voucher, ...group.references].some((material) => material.status === 'pending');
                 return <EventGroup key={key} group={group} expanded={pending !== toggled.has(key)} onToggle={() => toggle(key)} />;
               })}
               {ungrouped.length > 0 ? (
-                <tbody className="event-group is-open has-pending" aria-label="未归入费用事件">
-                  <tr className="group-head">
-                    <td colSpan={COLUMNS.length} className="ungrouped-head">
-                      <div className="group-title">未归入费用事件</div>
-                      <div className="evidence-note">
-                        <span className="muted">材料证据关联</span> {blocked ? '整批暂停，还没有划分费用事件。' : '没有形成费用事件的材料：待确认或已排除。'}
+                <TableBody className="app-event-group is-open has-pending" aria-label="未归入费用事件">
+                  <TableRow className="app-group-head">
+                    <TableCell colSpan={COLUMNS.length} className="app-ungrouped-head">
+                      <div className="app-group-title">未归入费用事件</div>
+                      <div className="app-evidence-note">
+                        <span className="app-muted">材料证据关联</span> {blocked ? '整批暂停，还没有划分费用事件。' : '没有形成费用事件的材料：待确认或已排除。'}
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                   {ungrouped.map((material) => (
                     <MaterialRow key={material.materialId} material={material} roleLabel={MATERIAL_ROLE_LABELS[material.role]} />
                   ))}
-                </tbody>
+                </TableBody>
               ) : null}
-            </table>
+            </Table>
           </section>
         </>
       )}

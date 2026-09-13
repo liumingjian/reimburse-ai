@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { Button } from '@carbon/react';
 import type { Corners } from '../contract/snapshot';
 
 // 四角裁剪编辑器：在原图上拖动四个角点（指针事件；选中角点后方向键微调，Shift 每次 10 像素）。
 // 角点坐标一律是原图像素：显示尺寸与原图尺寸（naturalWidth / naturalHeight）之比换算，取整并限制在原图范围内。
-// 编辑中的角点只是表单草稿；提交后以服务端回显的坐标为准。
+// 编辑中的角点只是表单草稿；提交后以服务端回显的坐标为准。Carbon 没有对应组件：编辑器手写，按钮用 Carbon。
 
 export const CORNER_NAMES = ['左上角', '右上角', '右下角', '左下角'] as const;
 
@@ -135,13 +136,13 @@ export function CropEditor({
         ) : null}
       </div>
       <div className="crop-side">
-        <p className="caption">拖动四个角点贴合纸张边缘；选中角点后可用方向键微调，按住 Shift 每次移动 10 像素。坐标以原图像素计。</p>
+        <p className="app-caption">拖动四个角点贴合纸张边缘；选中角点后可用方向键微调，按住 Shift 每次移动 10 像素。坐标以原图像素计。</p>
         {natural ? (
-          <p className="caption">
+          <p className="app-caption">
             原图 <span>{`${natural.width} x ${natural.height}`}</span>
           </p>
         ) : (
-          <p className="caption">正在载入原图…</p>
+          <p className="app-caption">正在载入原图…</p>
         )}
         <ol className="crop-coords" aria-label="四角坐标">
           {corners.map((point, index) => (
@@ -151,16 +152,16 @@ export function CropEditor({
             </li>
           ))}
         </ol>
-        <div className="btn-row">
-          <button className="btn btn-primary" type="button" disabled={busy || !natural} onClick={() => onSubmit(copy(corners))}>
+        <div className="app-btn-row">
+          <Button size="sm" disabled={busy || !natural} onClick={() => onSubmit(copy(corners))}>
             提交裁剪
-          </button>
-          <button className="btn btn-tertiary" type="button" disabled={busy} onClick={() => setCorners(copy(initial))}>
+          </Button>
+          <Button kind="ghost" size="sm" disabled={busy} onClick={() => setCorners(copy(initial))}>
             恢复
-          </button>
-          <button className="btn btn-tertiary" type="button" disabled={busy} onClick={onCancel}>
+          </Button>
+          <Button kind="ghost" size="sm" disabled={busy} onClick={onCancel}>
             取消
-          </button>
+          </Button>
         </div>
       </div>
     </div>

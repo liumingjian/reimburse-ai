@@ -181,7 +181,7 @@ test('确认后改派项目：确认失效并提示重新确认，重新确认�
   await page.goto(open('?seed=actions', '#/task/T1/review'));
   await page.getByRole('link', { name: '修改项目归属' }).click();
   await expect(page).toHaveURL(/#\/task\/T1\/project$/);
-  await page.getByRole('checkbox', { name: '选择明细 No.9' }).click();
+  await page.getByRole('checkbox', { name: '选择明细 No.9' }).locator('xpath=following-sibling::label[1]').click();
   await page.getByRole('complementary', { name: '项目工作台' }).getByRole('button', { name: '归入 P-1180 内部培训' }).click();
   await page.getByRole('dialog', { name: '1 条明细已有其他项目归属，请确认是否覆盖' }).getByRole('button', { name: '确认覆盖' }).click();
   await page.getByRole('button', { name: '确认项目归属' }).click();
@@ -216,7 +216,7 @@ test('失效流程：追加材料先二次确认，取消不变；继续则确�
   await dialog.getByRole('button', { name: '继续追加' }).click();
   await expect(page).toHaveURL(/#\/task\/T1\/upload$/);
   await expect(page.getByRole('heading', { name: '上传材料' })).toBeVisible();
-  await expect(page.getByRole('status')).toHaveText(INVALIDATED);
+  await expect(page.getByRole('status')).toContainText(INVALIDATED);
   await expect(page.getByText('拖入文件，或点击选择')).toBeVisible();
 
   await page.locator('input[type=file]').setInputFiles({ name: '地铁_发票.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 metro') });

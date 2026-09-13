@@ -10,7 +10,7 @@ const search = (page: Page) => page.getByRole('searchbox', { name: '查找个人
 const names = (page: Page) => workbench(page).getByRole('list', { name: '项目列表' }).locator('.name');
 const usedNames = (page: Page) => workbench(page).getByRole('list', { name: '本次已归入' }).locator('.name');
 const usage = (page: Page, number: string) => page.getByTestId(`usage-${number}`);
-const pick = (page: Page, no: number) => page.getByRole('checkbox', { name: `选择明细 No.${no}` }).click();
+const pick = (page: Page, no: number) => page.getByRole('checkbox', { name: `选择明细 No.${no}` }).locator('xpath=following-sibling::label[1]').click();
 const assignTo = (page: Page, label: string) => workbench(page).getByRole('button', { name: `归入 ${label}` }).click();
 const projectOf = (page: Page, no: number) => page.getByTestId(`project-of-${no}`);
 const submit = (page: Page) => page.getByRole('button', { name: '确认项目归属' });
@@ -56,7 +56,7 @@ test('按类别全选：勾选「外地市内交通」组标题一次归入 P-23
   await expect(page.getByTestId('line-card-9')).toContainText('2026-08-09 至 2026-08-22');
   await expect(page.getByTestId('line-card-7')).toContainText('杭州东 → 上海虹桥');
 
-  await page.getByRole('checkbox', { name: '选择外地市内交通' }).click();
+  await page.getByRole('checkbox', { name: '选择外地市内交通' }).locator('xpath=following-sibling::label[1]').click();
   await expect(page.getByText('已选 6 条')).toBeVisible();
   await assignTo(page, 'P-2307 华东客户交付');
   for (const no of [1, 2, 3, 4, 5, 6]) await expect(projectOf(page, no)).toHaveText('P-2307 · 华东客户交付');
@@ -104,11 +104,11 @@ test('提交：未归属或事由为空时不可用；提交后自动核对报�
   await expect(page.getByTestId('assign-summary')).toHaveText('已归属 2 / 9 条 · 合计 3972.59 元');
   await expect(submit(page)).toBeDisabled();
 
-  await page.getByRole('checkbox', { name: '仅未归属' }).click();
-  await page.getByRole('checkbox', { name: '全选当前明细' }).click();
+  await page.getByRole('checkbox', { name: '仅未归属' }).locator('xpath=following-sibling::label[1]').click();
+  await page.getByRole('checkbox', { name: '全选当前明细' }).locator('xpath=following-sibling::label[1]').click();
   await assignTo(page, 'P-3312 产品调研');
   await expect(page.getByText('所有明细都已归属。')).toBeVisible();
-  await page.getByRole('checkbox', { name: '仅未归属' }).click();
+  await page.getByRole('checkbox', { name: '仅未归属' }).locator('xpath=following-sibling::label[1]').click();
   await expect(page.getByTestId('assign-summary')).toHaveText('已归属 9 / 9 条 · 合计 3972.59 元');
   await expect(submit(page)).toBeDisabled();
   await page.getByLabel('报销事由').fill('上海产品评审出差');

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Button, InlineNotification, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@carbon/react';
 import { useAppStore } from '../adapter/context';
 import type { AppAdapter, StartupOutcome } from '../contract/adapter';
 import type { Employee, TaskList } from '../contract/task-list';
@@ -40,20 +41,31 @@ function useStartupAction() {
   return { busy, error, run };
 }
 
+// 启动页是表单页：内容限宽，不画卡片边框。
+function StartupSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="app-form-page app-startup" aria-labelledby="startup-title">
+      <h1 className="app-page-title" id="startup-title">
+        {title}
+      </h1>
+      {children}
+    </section>
+  );
+}
+
 function LoginStep({ identityUnknown }: { identityUnknown: boolean }) {
   const { busy, error, run } = useStartupAction();
   return (
-    <section className="panel form-panel" aria-labelledby="startup-title">
-      <h1 id="startup-title">{STARTUP_COPY.loginTitle}</h1>
-      <p className="lead">{identityUnknown ? STARTUP_COPY.unknownLead : STARTUP_COPY.loginLead}</p>
-      <p className="caption">{STARTUP_COPY.loginCaption}</p>
-      <div className="btn-row">
-        <button className="btn btn-primary" type="button" disabled={busy} onClick={() => void run((adapter) => adapter.recheckErpSession())}>
+    <StartupSection title={STARTUP_COPY.loginTitle}>
+      <p className="app-lead">{identityUnknown ? STARTUP_COPY.unknownLead : STARTUP_COPY.loginLead}</p>
+      <p className="app-caption">{STARTUP_COPY.loginCaption}</p>
+      <div className="app-btn-row">
+        <Button disabled={busy} onClick={() => void run((adapter) => adapter.recheckErpSession())}>
           {STARTUP_COPY.loggedIn}
-        </button>
+        </Button>
         <ActionError message={error} />
       </div>
-    </section>
+    </StartupSection>
   );
 }
 
@@ -65,53 +77,44 @@ function IdentityStep({ employee }: { employee: Employee }) {
     ['账套', employee.tenant, '判据，换账套等于换人'],
   ];
   return (
-    <section className="panel form-panel" aria-labelledby="startup-title">
-      <h1 id="startup-title">{STARTUP_COPY.identityTitle}</h1>
-      <p className="lead">{STARTUP_COPY.identityLead}</p>
-      <table className="data" aria-label="报销人身份">
-        <thead>
-          <tr>
-            <th scope="col">项</th>
-            <th scope="col">当前登录信息</th>
-            <th scope="col">说明</th>
-          </tr>
-        </thead>
-        <tbody>
+    <StartupSection title={STARTUP_COPY.identityTitle}>
+      <p className="app-lead">{STARTUP_COPY.identityLead}</p>
+      <Table aria-label="报销人身份" size="md">
+        <TableHead>
+          <TableRow>
+            <TableHeader scope="col">项</TableHeader>
+            <TableHeader scope="col">当前登录信息</TableHeader>
+            <TableHeader scope="col">说明</TableHeader>
+          </TableRow>
+        </TableHead>
+        <TableBody>
           {rows.map(([field, value, note]) => (
-            <tr key={field}>
-              <th scope="row">{field}</th>
-              <td className={field === '姓名' ? undefined : 'mono'}>{value}</td>
-              <td className="muted">{note}</td>
-            </tr>
+            <TableRow key={field}>
+              <TableHeader scope="row">{field}</TableHeader>
+              <TableCell className={field === '姓名' ? '' : 'app-code'}>{value}</TableCell>
+              <TableCell className="app-muted">{note}</TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
-      <p className="caption">{STARTUP_COPY.identityCaption}</p>
-      <div className="btn-row">
-        <button
-          className="btn btn-primary"
-          type="button"
-          disabled={busy}
-          onClick={() => void run((adapter) => adapter.confirmIdentity({ account: employee.account, tenant: employee.tenant }))}
-        >
+        </TableBody>
+      </Table>
+      <p className="app-caption">{STARTUP_COPY.identityCaption}</p>
+      <div className="app-btn-row">
+        <Button disabled={busy} onClick={() => void run((adapter) => adapter.confirmIdentity({ account: employee.account, tenant: employee.tenant }))}>
           {STARTUP_COPY.confirm}
-        </button>
+        </Button>
         <ActionError message={error} />
       </div>
-    </section>
+    </StartupSection>
   );
 }
 
 // 身份不一致：整页阻塞，没有任何可推进的按钮。
 function MismatchStep() {
   return (
-    <section className="panel form-panel" aria-labelledby="startup-title">
-      <h1 id="startup-title">{STARTUP_COPY.mismatchTitle}</h1>
-      <div className="notice notice-err" role="alert">
-        {STARTUP_COPY.mismatchLead}
-      </div>
-      <p className="caption">{STARTUP_COPY.mismatchCaption}</p>
-    </section>
+    <StartupSection title={STARTUP_COPY.mismatchTitle}>
+      <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={STARTUP_COPY.mismatchLead} />
+      <p className="app-caption">{STARTUP_COPY.mismatchCaption}</p>
+    </StartupSection>
   );
 }
 
@@ -145,15 +148,15 @@ export function StartupPending({ error }: { error: string | null }) {
   return (
     <AppShell nav="tasks">
       {error ? (
-        <div className="empty">
+        <div className="app-empty">
           <h2>{STARTUP_COPY.loadFailed}</h2>
           <p>{error}</p>
-          <button className="btn btn-secondary" type="button" onClick={() => void store.loadTaskList()}>
+          <Button kind="secondary" onClick={() => void store.loadTaskList()}>
             {STARTUP_COPY.retry}
-          </button>
+          </Button>
         </div>
       ) : (
-        <p className="caption loading">{STARTUP_COPY.checking}</p>
+        <p className="app-loading">{STARTUP_COPY.checking}</p>
       )}
     </AppShell>
   );

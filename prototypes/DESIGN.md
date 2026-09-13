@@ -1,8 +1,6 @@
 # DESIGN.md 已迁移
 
-视觉 token 的唯一来源现在是 [`packages/app-ui/DESIGN.md`](../packages/app-ui/DESIGN.md)。
-
-`packages/app-ui/scripts/build-tokens.mjs` 从它的 front matter 生成 `packages/app-ui/src/styles/tokens.css`；
-改样式先改那份文件，再运行 `pnpm --filter @baox/app-ui tokens`。
+`@baox/app-ui` 的视觉规则在 [`packages/app-ui/DESIGN.md`](../packages/app-ui/DESIGN.md)：界面用 IBM Carbon（`@carbon/react`）Gray 10 原样主题，
+加本应用自己的版式规则（ADR-0008，`docs/adr/0008-adopt-carbon-react.md`）。原先从 DESIGN.md front matter 生成 `tokens.css` 的脚本已删除。
 
 两份 getdesign 原件仍在本目录的 `design-md/` 下，逐字保留用于溯源。

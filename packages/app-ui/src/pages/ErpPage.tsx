@@ -1,16 +1,18 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ComponentType } from 'react';
+import { Button, InlineNotification } from '@carbon/react';
+import { CheckmarkFilled, ErrorFilled, InProgress, WarningAltFilled } from '@carbon/icons-react';
 import type { ErpStep, TaskSnapshot } from '../contract/snapshot';
 import { STAGE_DEFAULT_PAGE } from '../contract/stage';
 import { navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
-import { Icon, type IconName } from '../shell/Icon';
+import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 
 // ERP 填报页：按服务端给出的步骤顺序显示进度。写入由整单确认页的「去报销」启动，这里没有「开始填报」：
 // 检测到登录后服务端自动导入、写入、保存并回读（内核 erp_write_pending 自动执行，交互契约不追加保存确认）。
 // 页面只做一件事：「我已登录，继续」（回传当前 stepToken），它只是请服务端再探测一次；登录是否成立、何时往下走由服务端决定。
-// 版式：Carbon 进度指示的竖排形式，每步一个状态图标加状态文字（颜色只是第二通道）。
+// 版式：竖排步骤清单，每步一个状态图标加状态文字（颜色只是第二通道）；等待登录的一步里嵌登录说明与按钮，Carbon 的进度指示放不下，手写。
 
 const STATUS_LABEL: Readonly<Record<ErpStep['status'], string>> = {
   todo: '',
@@ -20,12 +22,12 @@ const STATUS_LABEL: Readonly<Record<ErpStep['status'], string>> = {
   failed: '已中止',
 };
 
-const STATUS_ICON: Readonly<Record<ErpStep['status'], IconName | null>> = {
+const STATUS_ICON: Readonly<Record<ErpStep['status'], ComponentType | null>> = {
   todo: null,
-  running: 'in-progress',
-  waiting: 'warning--alt--filled',
-  done: 'checkmark--filled',
-  failed: 'error--filled',
+  running: InProgress,
+  waiting: WarningAltFilled,
+  done: CheckmarkFilled,
+  failed: ErrorFilled,
 };
 
 export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
@@ -48,46 +50,42 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>{copy.title}</h1>
-          <p className="lead">{copy.lead}</p>
-        </div>
-        <div className="actions">
-          <a className="btn btn-tertiary" href={taskHash(taskId, 'review')}>
+      <PageHeader
+        title={copy.title}
+        lead={copy.lead}
+        actions={
+          <Button kind="ghost" href={taskHash(taskId, 'review')}>
             返回确认页
-          </a>
-        </div>
-      </div>
+          </Button>
+        }
+      />
 
-      <section className="block" aria-label="填报进度">
+      <section className="app-block" aria-label="填报进度">
         {erp.steps.length === 0 ? (
-          <p className="caption">还没有填报进度。</p>
+          <p className="app-caption">还没有填报进度。</p>
         ) : (
-          <ol className="steps erp-steps">
+          <ol className="app-steps">
             {erp.steps.map((item, index) => {
-              const icon = STATUS_ICON[item.status];
+              const Icon = STATUS_ICON[item.status];
               return (
-                <li key={item.key} className={item.status} aria-label={item.title}>
-                  <span className="dot" aria-hidden="true">
-                    {icon ? <Icon name={icon} /> : index + 1}
+                <li key={item.key} className={`is-${item.status}`} aria-label={item.title}>
+                  <span className="app-step-dot" aria-hidden="true">
+                    {Icon ? <Icon /> : index + 1}
                   </span>
                   <div>
                     <div className="step-title">{item.title}</div>
                     <div className="desc">{item.description}</div>
                     {item.status === 'waiting' && waitingLogin ? (
-                      <div className="login-prompt">
+                      <div className="app-login-prompt">
                         <p>请在专用浏览器窗口里用本人账号登录报销系统，完成后回到这里。</p>
                         {erp.loginNotice ? (
-                          <div className="notice notice-warn" role="status">
-                            {erp.loginNotice}
-                          </div>
+                          <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={erp.loginNotice} />
                         ) : null}
-                        <div className="btn-row">
-                          <button className="btn btn-primary" type="button" disabled={busy} onClick={() => void confirmLogin()}>
+                        <div className="app-btn-row">
+                          <Button disabled={busy} onClick={() => void confirmLogin()}>
                             我已登录，继续
-                          </button>
-                          <span className="caption">应用检测到登录后才会往下走。</span>
+                          </Button>
+                          <span className="app-caption">应用检测到登录后才会往下走。</span>
                         </div>
                       </div>
                     ) : null}
@@ -100,35 +98,35 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
         )}
       </section>
 
-      <section className="block" aria-label="填报操作">
+      <section className="app-block" aria-label="填报操作">
         {erp.status === 'idle' ? (
-          <p className="caption">还没有开始。整单明细确认后，在确认页点「去报销」。</p>
+          <p className="app-caption">还没有开始。整单明细确认后，在确认页点「去报销」。</p>
         ) : erp.status === 'done' ? (
           <>
-            <div className="notice notice-ok" role="status">
-              草稿 <span className="code">{erp.draftNo}</span> 已保存，严格回读：{snapshot.readback.summary}。
-            </div>
-            <a className="btn btn-primary" href={taskHash(taskId, 'done')}>
-              查看完成结果
-            </a>
+            <InlineNotification
+              kind="success"
+              role="status"
+              lowContrast
+              hideCloseButton
+              statusIconDescription="成功"
+            >
+              <span>
+                草稿 <span className="app-code">{erp.draftNo}</span> 已保存，严格回读：{snapshot.readback.summary}。
+              </span>
+            </InlineNotification>
+            <Button href={taskHash(taskId, 'done')}>查看完成结果</Button>
           </>
         ) : erp.status === 'aborted' ? (
           <>
-            <div className="notice notice-err" role="alert">
-              写入报销系统已停止：{erp.abortReason}
-            </div>
+            <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={`写入报销系统已停止：${erp.abortReason ?? ''}`} />
             {stage === 'reconcile' ? (
-              <a className="btn btn-primary" href={taskHash(taskId, 'reconcile')}>
-                进入对账
-              </a>
+              <Button href={taskHash(taskId, 'reconcile')}>进入对账</Button>
             ) : stage === 'done' ? (
-              <a className="btn btn-primary" href={taskHash(taskId, 'done')}>
-                查看回读结果
-              </a>
+              <Button href={taskHash(taskId, 'done')}>查看回读结果</Button>
             ) : null}
           </>
         ) : (
-          <p className="caption">进行中，请不要关闭专用浏览器窗口。只保存草稿，不提交审批；中途任何不一致都会停下来对账。</p>
+          <p className="app-caption">进行中，请不要关闭专用浏览器窗口。只保存草稿，不提交审批；中途任何不一致都会停下来对账。</p>
         )}
         <ActionError message={error} />
       </section>

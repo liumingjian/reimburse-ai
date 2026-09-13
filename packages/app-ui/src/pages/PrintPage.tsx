@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { Button, InlineNotification } from '@carbon/react';
 import type { PlacementSlot } from '../contract/actions';
 import { ActionError } from '../shell/ActionError';
+import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
 import {
   PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE,
@@ -18,6 +20,7 @@ import { PAGE_COPY } from './page-copy';
 // 还没有打印稿（或旧稿已作废）时，进入页面即请服务端生成。旋转、四角裁剪只是打印设置：结果以服务端返回的新快照为准，
 // 不改原件，也不影响整单明细确认。提醒（如住宿发票还没有支付截图）不阻止下载。
 // 支付截图只在这里补充：服务端标了 acceptsPaymentScreenshot 的页（住宿发票）有「补充支付截图」入口，只影响打印稿。
+// 页卡、页图与四角裁剪编辑器没有对应的 Carbon 组件，保持手写版式，按钮与提示用 Carbon。
 
 function ScreenshotControl({
   page,
@@ -43,20 +46,20 @@ function ScreenshotControl({
   };
   return (
     <li>
-      <div className="placement-name">
-        <span className="caption">支付截图</span>
-        {screenshot ? <span className="file-name">{screenshot.fileName}</span> : <span className="muted">未补充</span>}
+      <div className="app-placement-name">
+        <span className="app-caption">支付截图</span>
+        {screenshot ? <span className="app-file-name">{screenshot.fileName}</span> : <span className="app-muted">未补充</span>}
       </div>
-      <div className="caption">仅用于打印稿，放在下半页右侧；不上传报销系统，也不影响整单明细确认。</div>
-      <div className="btn-row screenshot-row">
+      <div className="app-caption">仅用于打印稿，放在下半页右侧；不上传报销系统，也不影响整单明细确认。</div>
+      <div className="app-btn-row app-screenshot-row">
         {screenshot ? (
-          <button className="btn btn-tertiary btn-sm" type="button" disabled={busy} aria-label={`移除支付截图：${voucherName}`} onClick={() => onRemove(screenshot)}>
+          <Button kind="ghost" size="sm" disabled={busy} aria-label={`移除支付截图：${voucherName}`} onClick={() => onRemove(screenshot)}>
             移除
-          </button>
+          </Button>
         ) : (
-          <button className="btn btn-secondary btn-sm" type="button" disabled={busy} aria-label={`补充支付截图：${voucherName}`} onClick={() => inputRef.current?.click()}>
+          <Button kind="tertiary" size="sm" disabled={busy} aria-label={`补充支付截图：${voucherName}`} onClick={() => inputRef.current?.click()}>
             补充支付截图
-          </button>
+          </Button>
         )}
         <input ref={inputRef} type="file" accept={PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE} aria-label={`选择支付截图：${voucherName}`} onChange={onChange} />
         <ActionError message={error} />
@@ -101,15 +104,8 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
   if (!confirmed) {
     return (
       <>
-        <div className="page-head">
-          <div>
-            <h1>还不能进入这一步</h1>
-            <p className="lead">打印稿需要先完成整单明细确认。</p>
-          </div>
-        </div>
-        <a className="btn btn-primary" href={taskHash(taskId, 'review')}>
-          去整单明细确认
-        </a>
+        <PageHeader title="还不能进入这一步" lead="打印稿需要先完成整单明细确认。" />
+        <Button href={taskHash(taskId, 'review')}>去整单明细确认</Button>
       </>
     );
   }
@@ -135,51 +131,49 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>{copy.title}</h1>
-          <p className="lead">{copy.lead}</p>
-        </div>
-        <div className="actions">
-          <a className="btn btn-tertiary" href={taskHash(taskId, 'review')}>
-            返回确认页
-          </a>
-          {generated && sheet.url ? (
-            <a className="btn btn-primary" href={sheet.url} download={sheet.fileName ?? true}>
-              下载打印稿 PDF
-            </a>
-          ) : (
-            <button className="btn btn-primary" type="button" disabled>
-              下载打印稿 PDF
-            </button>
-          )}
-          <ActionError message={errorAt('generate')} />
-        </div>
-      </div>
+      <PageHeader
+        title={copy.title}
+        lead={copy.lead}
+        actions={
+          <>
+            <Button kind="ghost" href={taskHash(taskId, 'review')}>
+              返回确认页
+            </Button>
+            {generated && sheet.url ? (
+              <Button href={sheet.url} {...({ download: sheet.fileName ?? true } as object)}>
+                下载打印稿 PDF
+              </Button>
+            ) : (
+              <Button disabled>下载打印稿 PDF</Button>
+            )}
+            <ActionError message={errorAt('generate')} />
+          </>
+        }
+      />
 
       {sheet.status === 'stale' ? (
-        <div className="notice notice-warn" role="status">
-          材料变更后旧打印稿已作废，正在按新的确认数据重新生成。
-        </div>
+        <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title="材料变更后旧打印稿已作废，正在按新的确认数据重新生成。" />
       ) : null}
       {generated && sheet.notices.length > 0 ? (
-        <div className="notice notice-warn print-notices" role="status" aria-label="打印提醒">
-          {sheet.notices.map((notice) => (
-            <p key={notice}>{notice}</p>
-          ))}
-        </div>
+        <section className="app-print-notices" role="status" aria-label="打印提醒">
+          <InlineNotification kind="warning" role="log" lowContrast hideCloseButton statusIconDescription="注意">
+            {sheet.notices.map((notice) => (
+              <p key={notice}>{notice}</p>
+            ))}
+          </InlineNotification>
+        </section>
       ) : null}
       {receipt ? (
-        <div className="notice notice-ok" role="status" data-testid="crop-receipt">
-          {receipt}
-        </div>
+        <InlineNotification kind="success" role="status" lowContrast hideCloseButton statusIconDescription="成功">
+          <span data-testid="crop-receipt">{receipt}</span>
+        </InlineNotification>
       ) : null}
 
       {editing && editingPage && editingPlacement?.corners && editingPlacement.imageUrl ? (
-        <section className="crop-panel" aria-label="四角裁剪" ref={cropPanel}>
-          <div className="crop-head">
-            <h2>{`调整四角 · ${editingPlacement.fileName}`}</h2>
-            <span className="caption">{editingPage.header}</span>
+        <section className="app-crop-panel" aria-label="四角裁剪" ref={cropPanel}>
+          <div className="app-crop-head">
+            <h2 className="app-section-title">{`调整四角 · ${editingPlacement.fileName}`}</h2>
+            <span className="app-caption">{editingPage.header}</span>
           </div>
           <CropEditor
             key={`${editing.pageId}-${editing.slot}`}
@@ -196,44 +190,38 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
       {generated ? (
         <>
-          <p className="caption print-summary">
+          <p className="app-caption app-print-summary">
             {sheet.fileName ? `${sheet.fileName} · ` : ''}
             {`${sheet.pages.length} 页 A4 纵向。旋转与裁剪只保存为打印设置，不改原件，也不影响整单明细确认。`}
           </p>
-          <ol className="print-pages" aria-label="打印稿页面">
+          <ol className="app-print-pages" aria-label="打印稿页面">
             {sheet.pages.map((page, index) => (
-              <li key={page.pageId} className="page-card" aria-label={page.header}>
+              <li key={page.pageId} className="app-page-card" aria-label={page.header}>
                 <div className="page-hdr">{page.header}</div>
-                <img className="page-image" src={page.imageUrl} alt={`第 ${index + 1} 页页图`} data-testid={`page-image-${page.pageId}`} />
-                <ul className="placements">
+                <img className="app-page-image" src={page.imageUrl} alt={`第 ${index + 1} 页页图`} data-testid={`page-image-${page.pageId}`} />
+                <ul className="app-placements">
                   {SLOTS.map((slot) => {
                     const placement = page[slot];
                     if (!placement) return null;
                     const rotateLabel = placement.rotate ? '改为竖放' : '旋转 90°';
                     return (
                       <li key={slot}>
-                        <div className="placement-name">
-                          <span className="caption">{SLOT_LABEL[slot]}</span>
-                          <span className="file-name">{placement.fileName}</span>
+                        <div className="app-placement-name">
+                          <span className="app-caption">{SLOT_LABEL[slot]}</span>
+                          <span className="app-file-name">{placement.fileName}</span>
                         </div>
-                        <div className="caption">
+                        <div className="app-caption">
                           {placement.rotate ? '旋转 90° 放置' : '竖放'}
                           {placement.croppable ? (placement.cropAdjusted ? ' · 已手动微调裁剪' : ' · 已自动裁边矫正') : ''}
                         </div>
-                        <div className="btn-row">
-                          <button
-                            className="btn btn-tertiary btn-sm"
-                            type="button"
-                            disabled={busy}
-                            aria-label={`${rotateLabel}：${placement.fileName}`}
-                            onClick={() => void rotate(page, slot, placement)}
-                          >
+                        <div className="app-btn-row">
+                          <Button kind="ghost" size="sm" disabled={busy} aria-label={`${rotateLabel}：${placement.fileName}`} onClick={() => void rotate(page, slot, placement)}>
                             {rotateLabel}
-                          </button>
+                          </Button>
                           {placement.croppable && placement.corners && placement.imageUrl ? (
-                            <button
-                              className="btn btn-tertiary btn-sm"
-                              type="button"
+                            <Button
+                              kind="ghost"
+                              size="sm"
                               disabled={busy}
                               aria-label={`调整四角：${placement.fileName}`}
                               onClick={() => {
@@ -242,7 +230,7 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
                               }}
                             >
                               调整四角
-                            </button>
+                            </Button>
                           ) : null}
                           <ActionError message={errorAt(`${page.pageId}-${slot}`)} />
                         </div>
@@ -265,8 +253,8 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
           </ol>
         </>
       ) : (
-        <section className="block">
-          <p className="caption loading" role="status">
+        <section className="app-block">
+          <p className="app-loading" role="status">
             正在生成打印稿…
           </p>
         </section>

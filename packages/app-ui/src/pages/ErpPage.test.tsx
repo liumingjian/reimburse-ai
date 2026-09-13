@@ -50,7 +50,7 @@ describe('ERP 填报', () => {
     const bodyRows = within(table).getAllByRole('row').filter((row) => row.closest('tbody'));
     expect(bodyRows).toHaveLength(9);
     for (const row of bodyRows) {
-      expect(row.className).not.toContain('row-err');
+      expect(within(row).queryByText('不一致')).toBeNull();
       expect(within(row).getByText('一致')).toBeTruthy();
     }
     // 回读行用同一个统一业务序号：No.1 是外地市内交通的首条，住宿排最后。
@@ -111,10 +111,10 @@ describe('ERP 填报', () => {
     expect(window.location.hash).toBe('#/task/T1/done');
     expect(screen.getByTestId('draft-no').textContent).toBe('BX20260911-0173');
     const bad = screen.getByTestId('readback-6');
-    expect(bad.className).toContain('row-err');
+    expect(bad.getAttribute('data-testid')).toBe('readback-6');
     expect(within(bad).getByText('不一致')).toBeTruthy();
     expect(within(bad).getByText('74.00')).toBeTruthy();
-    expect(screen.getByTestId('readback-5').className).not.toContain('row-err');
+    expect(within(screen.getByTestId('readback-5')).queryByText('不一致')).toBeNull();
     expect(screen.queryByText('明细 9/9 一致')).toBeNull();
     expect(screen.getByText('明细 8/9 一致，1 行不一致')).toBeTruthy();
     expect(screen.queryByText(/^已完成：草稿/)).toBeNull();

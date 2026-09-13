@@ -36,7 +36,7 @@ test('?seed=inventory：材料清单按费用事件归组，显示配对与守�
   await expect(page.getByRole('link', { name: '处理 3 个待确认项' })).toBeVisible();
   await expect(page.getByText('11 份材料，8 份通过，3 份需要你处理')).toBeVisible();
   await expect(page.getByText('主要报销凭证 7 · 参考材料 3 · 盘点版本 v1')).toBeVisible();
-  await expect(page.getByLabel('盘点结果').locator('.badge', { hasText: '通过' })).toHaveCount(0);
+  await expect(page.getByLabel('盘点结果').getByText('通过', { exact: true })).toHaveCount(0);
 
   // 含待确认材料的事件默认展开；全部通过的事件收成一行，点开才看文件与材料证据关联。
   const taxi = page.getByRole('rowgroup', { name: '费用事件 5 · 2026-08-15 · 外地市内交通 · 32.00' });

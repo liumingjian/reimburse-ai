@@ -70,8 +70,8 @@ describe('对账', () => {
     expect(screen.getByRole('button', { name: '转人工' })).toBeTruthy();
     const table = screen.getByRole('table', { name: '逐行比对' });
     expect(within(table).getAllByRole('row').filter((row) => row.closest('tbody'))).toHaveLength(5);
-    expect(screen.getByTestId('readback-3').className).toContain('row-err');
-    expect(screen.getByTestId('readback-1').className).not.toContain('row-err');
+    expect(within(screen.getByTestId('readback-3')).getByText('不一致')).toBeTruthy();
+    expect(within(screen.getByTestId('readback-1')).queryByText('不一致')).toBeNull();
     expect(screen.getByTestId('readback-local-total').textContent).toBe('1264.00');
     expect(screen.getByText('报销系统中存在草稿 BX20260718-0142，5 行明细中 4 行一致，1 行不一致。')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '展开 No.3' }));

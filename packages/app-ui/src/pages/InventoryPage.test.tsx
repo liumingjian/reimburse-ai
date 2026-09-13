@@ -44,12 +44,15 @@ describe('材料盘点', () => {
     expect(screen.getByText('11 份材料，8 份通过，3 份需要你处理')).toBeTruthy();
     expect(screen.getByText('主要报销凭证 7 · 参考材料 3 · 盘点版本 v1 · 2026-09-11 14:20')).toBeTruthy();
     // 只标记例外：通过的材料不带「通过」徽标。
-    expect(screen.queryByText(/^通过/, { selector: '.badge' })).toBeNull();
+    expect(screen.queryByText('通过', { exact: true })).toBeNull();
 
     const results = screen.getByLabelText('盘点结果');
     expect(within(results).getAllByRole('columnheader').map((node) => node.textContent)).toEqual(['文件', '识别为', '校验', '状态']);
     expect(document.body.textContent).not.toMatch(/rule:|user|候选/);
-    const groups = within(results).getAllByRole('rowgroup').filter((node) => node.classList.contains('event-group'));
+    // 费用事件组（含「未归入费用事件」）是带名称的 tbody；表头 thead 没有名称。
+    const groups = within(results)
+      .getAllByRole('rowgroup')
+      .filter((node) => node.hasAttribute('aria-label'));
     expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual([
       // 统一业务序号按内核确认表的分类排序：外地市内交通 → 长途交通 → 住宿，同一分类内按事件顺序。
       '费用事件 1-3 · 2026-08-10 至 2026-08-12 · 外地市内交通 · 26.69 + 20.85 + 21.65',

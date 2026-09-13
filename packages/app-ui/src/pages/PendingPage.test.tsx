@@ -61,7 +61,7 @@ describe('待确认项', () => {
     const adapter = renderPending();
     await screen.findByRole('heading', { name: '待确认项' });
     fireEvent.click(within(detail()).getByRole('button', { name: '保存并标记已处理' }));
-    expect(within(detail()).getAllByRole('alert').map((node) => node.textContent)).toEqual([PENDING_ANSWER_ERRORS.required, PENDING_ANSWER_ERRORS.required]);
+    expect(within(detail()).getAllByRole('alert').map((node) => node.textContent).filter(Boolean)).toEqual([PENDING_ANSWER_ERRORS.required, PENDING_ANSWER_ERRORS.required]);
     expect(within(detail()).getByLabelText('起点 *').getAttribute('aria-invalid')).toBe('true');
 
     fireEvent.click(itemButton('下车时间不合法'));
@@ -69,10 +69,10 @@ describe('待确认项', () => {
     fill('起点 *', '静安寺');
     fill('终点 *', '虹桥枢纽');
     fireEvent.click(within(detail()).getByRole('button', { name: '保存并标记已处理' }));
-    expect(within(detail()).getByRole('alert').textContent).toBe(PENDING_ANSWER_ERRORS.time);
+    expect(within(detail()).getAllByRole('alert').map((node) => node.textContent).filter(Boolean)).toEqual([PENDING_ANSWER_ERRORS.time]);
     fill('下车时间 *', '24:00');
     fireEvent.click(within(detail()).getByRole('button', { name: '保存并标记已处理' }));
-    expect(within(detail()).getByRole('alert').textContent).toBe(PENDING_ANSWER_ERRORS.time);
+    expect(within(detail()).getAllByRole('alert').map((node) => node.textContent).filter(Boolean)).toEqual([PENDING_ANSWER_ERRORS.time]);
 
     // 服务端状态没有动。
     const snapshot = await adapter.getSnapshot('T1');
@@ -141,7 +141,7 @@ describe('待确认项', () => {
     fireEvent.click(itemButton('不支持的材料类型'));
     const manual = within(detail()).getByRole('button', { name: '自行手工处理' });
     expect(manual.getAttribute('aria-pressed')).toBe('true');
-    expect(manual.className).not.toContain('btn-primary');
+    expect(manual.className).not.toContain('cds--btn--primary');
     expect(within(detail()).getByRole('button', { name: '排除此材料' }).getAttribute('aria-pressed')).toBe('false');
   });
 
@@ -217,7 +217,7 @@ describe('逐段分摊与处理人', () => {
     fireEvent.change(segmentInput(2), { target: { value: '20.8' } });
     fireEvent.change(segmentInput(3), { target: { value: '' } });
     submitAmounts();
-    expect(within(detail()).getAllByRole('alert').map((node) => node.textContent)).toEqual([ALLOCATION_ERRORS.amount, PENDING_ANSWER_ERRORS.required]);
+    expect(within(detail()).getAllByRole('alert').map((node) => node.textContent).filter(Boolean)).toEqual([ALLOCATION_ERRORS.amount, PENDING_ANSWER_ERRORS.required]);
     expect(segmentInput(2).getAttribute('aria-invalid')).toBe('true');
     expect((await adapter.getSnapshot('T1')).pendingItems[0]?.status).toBe('open');
   });

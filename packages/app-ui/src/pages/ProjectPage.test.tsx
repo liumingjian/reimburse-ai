@@ -59,7 +59,8 @@ describe('项目归属（内核 Variant B 工作台）', () => {
     const { ready } = renderProject();
     await ready;
     await screen.findByRole('heading', { name: '项目归属' });
-    const groups = screen.getAllByRole('region').filter((region) => region.classList.contains('assign-group'));
+    // 类别组是「费用明细」区域里按类别命名的区域。
+    const groups = within(screen.getByRole('region', { name: '费用明细' })).getAllByRole('region');
     expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual(['外地市内交通', '长途交通', '住宿']);
     expect(within(groups[0]!).getByText('6 条')).toBeTruthy();
     expect(within(groups[1]!).getByText('2 条')).toBeTruthy();
@@ -103,7 +104,8 @@ describe('项目归属（内核 Variant B 工作台）', () => {
     expect(snapshot.projectAssignment.assignments).toHaveLength(2);
   });
 
-  test('逐条与批量归入；批量碰到已有其他项目时三个选项：取消不变、只处理未归属、确认覆盖', async () => {
+  // 这个用例连着做好几轮归入与弹层选择；页面换成 Carbon 组件后在 jsdom 里渲染更慢，放宽到 15 秒（行为断言不变）。
+  test('逐条与批量归入；批量碰到已有其他项目时三个选项：取消不变、只处理未归属、确认覆盖', { timeout: 15_000 }, async () => {
     const { ready } = renderProject();
     await ready;
     await screen.findByRole('heading', { name: '项目归属' });

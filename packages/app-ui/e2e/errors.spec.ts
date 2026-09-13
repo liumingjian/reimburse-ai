@@ -77,5 +77,6 @@ test('409：待确认项答复凭据过期，答复没被采用，页面留在�
   await expect(staleNotice(page)).toBeVisible();
   await expect(page).toHaveURL(/#\/task\/T1\/pending$/);
   await expect(page.getByText('还剩 3 个')).toBeVisible();
-  await expect(detail.getByRole('alert')).toHaveCount(0);
+  // Carbon 输入框自带空的 role="alert" 字数提示，只看有文字的。
+  await expect(detail.getByRole('alert').filter({ hasText: /\S/ })).toHaveCount(0);
 });

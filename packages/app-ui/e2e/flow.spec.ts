@@ -47,7 +47,7 @@ test('全流程：从 ?seed=pending 一路走到去打印与去报销，顺序�
   await page.getByRole('link', { name: '进入项目归属' }).click();
   await expect(page).toHaveURL(/#\/task\/T1\/project$/);
   await page.getByLabel('报销事由').fill('上海产品评审出差');
-  await page.getByRole('checkbox', { name: '全选当前明细' }).click();
+  await page.getByRole('checkbox', { name: '全选当前明细' }).locator('xpath=following-sibling::label[1]').click();
   await page.getByRole('complementary', { name: '项目工作台' }).getByRole('button', { name: '归入 P-3312 产品调研' }).click();
   await expect(page.getByTestId('assign-summary')).toHaveText('已归属 9 / 9 条 · 合计 3972.59 元');
   await page.getByRole('button', { name: '确认项目归属' }).click();

@@ -1,4 +1,6 @@
 import { useCallback, useState } from 'react';
+import { Button, Checkbox, InlineNotification, Search, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag, TextInput } from '@carbon/react';
+import { Add, Locked } from '@carbon/icons-react';
 import { PROJECT_ASSIGNMENT_ERRORS, PROJECT_CONFLICT_COPY, PURPOSE_MAX_LENGTH } from '../contract/actions';
 import { PROJECT_BOOK_COPY } from '../contract/project-book';
 import type { Line, ProjectLineAssignment, StepKind, TaskSnapshot } from '../contract/snapshot';
@@ -6,7 +8,7 @@ import { pageAllowed } from '../contract/stage';
 import { navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
 import { ConfirmDialog } from '../shell/Dialog';
-import { Icon } from '../shell/Icon';
+import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 import { ProjectBookPanel } from './ProjectBookPanel';
@@ -53,14 +55,20 @@ function groupByCategory(lines: readonly Line[]): { label: string; lines: Line[]
 function AssignColumns() {
   return (
     <colgroup>
-      <col className="col-pick" />
-      <col className="col-date" />
-      <col className="col-place" />
-      <col className="col-route" />
-      <col className="col-project" />
-      <col className="col-amount" />
+      <col className="app-col-pick" />
+      <col className="app-col-date" />
+      <col className="app-col-place" />
+      <col className="app-col-route" />
+      <col className="app-col-project" />
+      <col className="app-col-amount" />
     </colgroup>
   );
+}
+
+// 搜索框的 onChange 在点清除按钮时也会触发，这里只取输入框的值。
+function searchValue(event: unknown): string {
+  const target = typeof event === 'object' && event !== null && 'target' in event ? (event.target as HTMLInputElement | null) : null;
+  return target?.value ?? '';
 }
 
 // 流程门（内核 project_book_empty）：服务端的当前 step 是 maintain_project_book 时，项目归属页换成个人项目簿维护入口。
@@ -79,19 +87,19 @@ export function ProjectPage({ snapshot }: { snapshot: TaskSnapshot }) {
 function ProjectBookGate({ canContinue, onContinue }: { canContinue: boolean; onContinue: () => void }) {
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>{PROJECT_BOOK_COPY.gateTitle}</h1>
-          <p className="lead">{PROJECT_BOOK_COPY.gateLead}</p>
-        </div>
-        <div className="gate-continue">
-          {/* 每屏一个主按钮：可以继续时它是主按钮，录入按钮降为次要；此前录入按钮是主按钮。 */}
-          <button className={canContinue ? 'btn btn-primary' : 'btn btn-secondary'} type="button" disabled={!canContinue} onClick={onContinue}>
-            {PROJECT_BOOK_COPY.gateContinue}
-          </button>
-          {canContinue ? null : <span className="caption">{PROJECT_BOOK_COPY.gateContinueHint}</span>}
-        </div>
-      </div>
+      <PageHeader
+        title={PROJECT_BOOK_COPY.gateTitle}
+        lead={PROJECT_BOOK_COPY.gateLead}
+        actions={
+          <div className="app-gate-continue">
+            {/* 每屏一个主按钮：可以继续时它是主按钮，录入按钮降为次要；此前录入按钮是主按钮。 */}
+            <Button kind={canContinue ? 'primary' : 'secondary'} disabled={!canContinue} onClick={onContinue}>
+              {PROJECT_BOOK_COPY.gateContinue}
+            </Button>
+            {canContinue ? null : <span className="app-caption">{PROJECT_BOOK_COPY.gateContinueHint}</span>}
+          </div>
+        }
+      />
       <ProjectBookPanel primaryIntake={!canContinue} />
     </>
   );
@@ -176,128 +184,118 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   };
 
   const assignButton = (project: Target) => (
-    <button
-      className="btn btn-secondary btn-sm"
-      type="button"
-      aria-label={`归入 ${project.number} ${project.name}`}
-      disabled={!canAct || busy || selected.size === 0}
-      onClick={() => assign(project)}
-    >
+    <Button kind="tertiary" size="sm" aria-label={`归入 ${project.number} ${project.name}`} disabled={!canAct || busy || selected.size === 0} onClick={() => assign(project)}>
       归入
-    </button>
+    </Button>
   );
+
+  const submittedText = preparationBlocked
+    ? '项目归属已提交。材料包还有缺项，请在整单明细确认页处理。'
+    : autoRunning
+      ? '项目归属已提交，正在核对报销信息并准备报销材料。'
+      : '项目归属已提交。改派项目或修改事由会使整单明细确认失效，需要重新确认。';
 
   return (
     <>
-      <div className="page-head">
-        <div className="head-main">
-          <h1>{copy.title}</h1>
-          <p className="lead">{copy.lead}</p>
-          <div className="head-fields">
-            <div className="field">
-              <label htmlFor="purpose">报销事由</label>
-              <input
-                id="purpose"
-                className="input"
-                value={purpose}
-                maxLength={PURPOSE_MAX_LENGTH}
-                required
-                disabled={locked}
-                placeholder="如：上海产品评审出差"
-                onChange={(event) => setPurpose(event.target.value)}
-              />
-            </div>
-            <p className="caption">常驻城市：{assignment.homeCity ?? '未确认'}</p>
-          </div>
-        </div>
-      </div>
+      <PageHeader title={copy.title} lead={copy.lead}>
+        <span className="app-head-fields">
+          <TextInput
+            id="purpose"
+            className="app-purpose"
+            labelText="报销事由"
+            value={purpose}
+            maxLength={PURPOSE_MAX_LENGTH}
+            required
+            disabled={locked}
+            placeholder="如：上海产品评审出差"
+            onChange={(event) => setPurpose(event.target.value)}
+          />
+          <span className="app-caption">常驻城市：{assignment.homeCity ?? '未确认'}</span>
+        </span>
+      </PageHeader>
 
       {locked ? (
-        <div className="notice notice-info" role="status">
-          已开始写入报销系统，项目归属不能再修改。
-        </div>
+        <InlineNotification kind="info" role="status" lowContrast hideCloseButton statusIconDescription="提示" title="已开始写入报销系统，项目归属不能再修改。" />
       ) : catalogMismatch ? (
-        <div className="notice notice-err" role="alert">
-          报销信息核对发现项目不匹配：{snapshot.catalog.problems.map((problem) => problem.reason).join('；')}。请把相关明细改派到其他项目后重新提交，提交后会自动重新核对。
-        </div>
+        <InlineNotification
+          kind="error"
+          role="alert"
+          lowContrast
+          hideCloseButton
+          statusIconDescription="错误"
+          title={`报销信息核对发现项目不匹配：${snapshot.catalog.problems.map((problem) => problem.reason).join('；')}。请把相关明细改派到其他项目后重新提交，提交后会自动重新核对。`}
+        />
       ) : submitted ? (
-        <div className={preparationBlocked ? 'notice notice-warn' : 'notice notice-ok'} role="status">
-          {preparationBlocked
-            ? '项目归属已提交。材料包还有缺项，请在整单明细确认页处理。'
-            : autoRunning
-              ? '项目归属已提交，正在核对报销信息并准备报销材料。'
-              : '项目归属已提交。改派项目或修改事由会使整单明细确认失效，需要重新确认。'}
+        <div className="app-notice">
+          <InlineNotification
+            kind={preparationBlocked ? 'warning' : 'success'}
+            role="status"
+            lowContrast
+            hideCloseButton
+            statusIconDescription={preparationBlocked ? '注意' : '成功'}
+            title={submittedText}
+          />
           {pageAllowed(snapshot.stage, 'review') ? (
-            <div className="btn-row">
-              <a className="btn btn-secondary btn-sm" href={taskHash(taskId, 'review')}>
-                去整单明细确认
-              </a>
-            </div>
+            <Button kind="tertiary" size="sm" href={taskHash(taskId, 'review')}>
+              去整单明细确认
+            </Button>
           ) : null}
         </div>
       ) : null}
 
-      <div className="project-split bleed">
-        <section className="assign-main" aria-label="费用明细">
-          <div className="assign-toolbar">
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={allVisibleSelected}
-                disabled={locked || visible.length === 0}
-                onChange={() => toggle(visible.map((line) => line.lineId), !allVisibleSelected)}
-              />
-              全选当前明细
-            </label>
-            <label className="check">
-              <input type="checkbox" checked={onlyUnassigned} disabled={locked} onChange={toggleOnlyUnassigned} />
-              仅未归属
-            </label>
-            <span className="caption" role="status">
+      <div className="app-project-split bleed">
+        <section className="app-assign-main" aria-label="费用明细">
+          <div className="app-assign-toolbar">
+            <Checkbox
+              id="assign-select-all"
+              labelText="全选当前明细"
+              checked={allVisibleSelected}
+              disabled={locked || visible.length === 0}
+              onChange={() => toggle(visible.map((line) => line.lineId), !allVisibleSelected)}
+            />
+            <Checkbox id="assign-only-unassigned" labelText="仅未归属" checked={onlyUnassigned} disabled={locked} onChange={toggleOnlyUnassigned} />
+            <span className="app-caption app-assign-count" role="status">
               已选 {selected.size} 条
             </span>
           </div>
           {groups.length > 0 ? (
             <>
               {/* 表头只画一次（各组的表共用列宽）；读屏从每组表格的名称与单元格读出内容。 */}
-              <table className="data assign-table assign-colhead" aria-hidden="true">
+              <Table className="app-assign-table app-assign-colhead" size="sm" aria-hidden="true">
                 <AssignColumns />
-                <thead>
-                  <tr>
-                    <th>No.</th>
-                    <th>日期</th>
-                    <th>城市</th>
-                    <th>路线 / 说明</th>
-                    <th>项目</th>
-                    <th className="num">价税合计</th>
-                  </tr>
-                </thead>
-              </table>
+                <TableHead>
+                  <TableRow>
+                    <TableHeader>No.</TableHeader>
+                    <TableHeader>日期</TableHeader>
+                    <TableHeader>城市</TableHeader>
+                    <TableHeader>路线 / 说明</TableHeader>
+                    <TableHeader>项目</TableHeader>
+                    <TableHeader className="app-num">价税合计</TableHeader>
+                  </TableRow>
+                </TableHead>
+              </Table>
               {groups.map((group) => {
                 const ids = group.lines.map((line) => line.lineId);
                 const all = ids.every((lineId) => selected.has(lineId));
                 const some = !all && ids.some((lineId) => selected.has(lineId));
                 return (
-                  <section key={group.label} className="assign-group" aria-label={group.label}>
-                    <h2 className="assign-group-head">
-                      <label className="check">
-                        <input
-                          type="checkbox"
-                          aria-label={`选择${group.label}`}
-                          checked={all}
-                          ref={(box) => {
-                            if (box) box.indeterminate = some;
-                          }}
-                          disabled={locked}
-                          onChange={() => toggle(ids, !all)}
-                        />
-                        {group.label}
-                      </label>
-                      <span className="caption">{group.lines.length} 条</span>
+                  <section key={group.label} className="app-assign-group" aria-label={group.label}>
+                    <h2 className="app-assign-group-head">
+                      <Checkbox
+                        id={`assign-group-${group.label}`}
+                        labelText={`选择${group.label}`}
+                        hideLabel
+                        checked={all}
+                        indeterminate={some}
+                        disabled={locked}
+                        onChange={() => toggle(ids, !all)}
+                      />
+                      <span>{group.label}</span>
+                      <span className="app-caption">{group.lines.length} 条</span>
                     </h2>
-                    <table className="data assign-table" aria-label={`${group.label}明细`}>
+                    <Table className="app-assign-table" size="sm" aria-label={`${group.label}明细`}>
                       <AssignColumns />
-                      <tbody>
+                      <TableBody>
                         {group.lines.map((line) => (
                           <LineRow
                             key={line.lineId}
@@ -308,27 +306,27 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
                             onToggle={() => toggle([line.lineId], !selected.has(line.lineId))}
                           />
                         ))}
-                      </tbody>
-                    </table>
+                      </TableBody>
+                    </Table>
                   </section>
                 );
               })}
             </>
           ) : (
-            <p className="empty caption">所有明细都已归属。</p>
+            <p className="app-caption app-assign-empty">所有明细都已归属。</p>
           )}
         </section>
 
-        <aside className="project-aside" role="complementary" aria-label="项目工作台">
-          <h2>本次已归入</h2>
+        <aside className="app-project-aside" role="complementary" aria-label="项目工作台">
+          <h2 className="app-aside-title">本次已归入</h2>
           {assignment.usage.length > 0 ? (
-            <ul className="project-options" aria-label="本次已归入">
+            <ul className="app-project-options" aria-label="本次已归入">
               {assignment.usage.map((entry) => (
-                <li key={entry.number} className={entry.selectable ? undefined : 'locked'}>
+                <li key={entry.number} className={entry.selectable ? undefined : 'is-locked'}>
                   <div>
                     <div className="name">{entry.name}</div>
-                    <div className="caption">
-                      <span className="code">{entry.number}</span> ·{' '}
+                    <div className="app-caption">
+                      <span className="app-code">{entry.number}</span> ·{' '}
                       <span data-testid={`usage-${entry.number}`}>
                         {entry.lineCount} 条 · {entry.grossTotal} 元
                       </span>
@@ -337,61 +335,63 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
                   {entry.selectable ? (
                     assignButton(entry)
                   ) : (
-                    <span className="tag tag-warning">
-                      <Icon name="locked" />
+                    <Tag type="warm-gray" size="sm" renderIcon={Locked}>
                       已锁定
-                    </span>
+                    </Tag>
                   )}
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="caption project-empty">暂无</p>
+            <p className="app-caption app-project-empty">暂无</p>
           )}
 
-          <h2>个人项目簿中的可选项目</h2>
-          <label className="search">
-            <Icon name="search" />
-            <input type="search" placeholder="查找项目号或名称" aria-label="查找个人项目簿" value={query} onChange={(event) => setQuery(event.target.value)} />
-          </label>
+          <h2 className="app-aside-title">个人项目簿中的可选项目</h2>
+          <Search
+            size="md"
+            labelText="查找个人项目簿"
+            placeholder="查找项目号或名称"
+            closeButtonLabelText="清除查找"
+            value={query}
+            onChange={(event: unknown) => setQuery(searchValue(event))}
+          />
           {assignment.projects.length === 0 ? (
-            <p className="caption project-empty">{PROJECT_ASSIGNMENT_ERRORS.bookEmpty}</p>
+            <p className="app-caption app-project-empty">{PROJECT_ASSIGNMENT_ERRORS.bookEmpty}</p>
           ) : shownProjects.length === 0 ? (
-            <p className="caption project-empty" role="status">
+            <p className="app-caption app-project-empty" role="status">
               没有匹配的可选项目
             </p>
           ) : (
-            <ul className="project-options" aria-label="项目列表">
+            <ul className="app-project-options" aria-label="项目列表">
               {shownProjects.map((project) => (
                 <li key={project.number}>
                   <div>
                     <div className="name">{project.name}</div>
-                    <div className="code caption">{project.number}</div>
+                    <div className="app-code app-caption">{project.number}</div>
                   </div>
                   {assignButton(project)}
                 </li>
               ))}
             </ul>
           )}
-          <p className="caption">先在左边勾选明细，再点项目的「归入」。</p>
+          <p className="app-caption">先在左边勾选明细，再点项目的「归入」。</p>
           {/* 就地新增（对 Skill 的小增强，README 注明）：弹层里是项目簿维护面板，勾选的明细不丢；
               新项目随服务端推送的快照出现在上面的列表里。 */}
-          <button className="btn btn-tertiary btn-sm add-project" type="button" disabled={locked} onClick={() => setAddOpen(true)}>
-            <Icon name="add" />
+          <Button kind="ghost" size="sm" renderIcon={Add} disabled={locked} onClick={() => setAddOpen(true)}>
             {PROJECT_BOOK_COPY.addProject}
-          </button>
+          </Button>
         </aside>
       </div>
 
       {/* 吸底操作栏：左边已归属条数与服务端给出的价税合计，右边唯一的主按钮。 */}
-      <section className="action-bar bleed assign-footer" aria-label="提交项目归属">
-        <p className="consequence" data-testid="assign-summary">
+      <section className="app-action-bar" aria-label="提交项目归属">
+        <p className="app-consequence" data-testid="assign-summary">
           已归属 <strong>{assignedCount}</strong> / <strong>{lines.length}</strong> 条 · 合计 <strong>{snapshot.confirmation.grossTotal ?? ''}</strong> 元
         </p>
-        {!locked && !complete ? <span className="caption">{PROJECT_ASSIGNMENT_ERRORS.incomplete}</span> : null}
-        <button className="btn btn-primary" type="button" disabled={!canAct || busy || !complete || conflict !== null} onClick={() => void submit()}>
+        {!locked && !complete ? <span className="app-caption">{PROJECT_ASSIGNMENT_ERRORS.incomplete}</span> : null}
+        <Button disabled={!canAct || busy || !complete || conflict !== null} onClick={() => void submit()}>
           确认项目归属
-        </button>
+        </Button>
         <ActionError message={error} />
       </section>
 
@@ -405,7 +405,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
           onConfirm={() => void assignSelected(conflict.project.number, false)}
           onCancel={cancelConflict}
         >
-          <p className="lead">
+          <p>
             要归入 {conflict.project.number} {conflict.project.name}。「只处理未归属」只给还没有项目的明细归入；「确认覆盖」把已勾选的明细全部改为这个项目。
           </p>
         </ConfirmDialog>
@@ -437,29 +437,31 @@ function LineRow({
 }) {
   const dates = line.endDate && line.endDate !== line.date ? `${line.date} 至 ${line.endDate}` : line.date;
   return (
-    <tr className={checked ? 'is-selected' : undefined} data-testid={`line-card-${line.no}`}>
-      <td className="pick-no">
-        <label className="pick-label">
-          <input type="checkbox" aria-label={`选择明细 No.${line.no}`} checked={checked} disabled={disabled} onChange={onToggle} />
-          <span className="muted">No.{line.no}</span>
-        </label>
-      </td>
-      <td className="nowrap">{dates}</td>
-      <td>{line.city ?? line.category.label}</td>
-      <td className="wrap">
+    <TableRow className={checked ? 'app-row-selected' : ''} data-testid={`line-card-${line.no}`}>
+      <TableCell className="app-pick-no">
+        <span className="app-pick-label">
+          <Checkbox id={`pick-${line.lineId}`} labelText={`选择明细 No.${line.no}`} hideLabel checked={checked} disabled={disabled} onChange={onToggle} />
+          <span className="app-muted">No.{line.no}</span>
+        </span>
+      </TableCell>
+      <TableCell className="app-nowrap">{dates}</TableCell>
+      <TableCell>{line.city ?? line.category.label}</TableCell>
+      <TableCell className="app-wrap">
         {line.route ?? line.description}
-        {line.maskedNumber ? <div className="caption code">{line.maskedNumber}</div> : null}
-      </td>
-      <td data-testid={`project-of-${line.no}`}>
+        {line.maskedNumber ? <div className="app-caption app-code">{line.maskedNumber}</div> : null}
+      </TableCell>
+      <TableCell data-testid={`project-of-${line.no}`}>
         {project ? (
           <>
-            <span className="code">{project.projectNumber}</span> · {project.projectName}
+            <span className="app-code">{project.projectNumber}</span> · {project.projectName}
           </>
         ) : (
-          <span className="tag tag-neutral">未归属</span>
+          <Tag type="gray" size="sm">
+            未归属
+          </Tag>
         )}
-      </td>
-      <td className="num">{line.grossAmount} 元</td>
-    </tr>
+      </TableCell>
+      <TableCell className="app-num">{line.grossAmount} 元</TableCell>
+    </TableRow>
   );
 }

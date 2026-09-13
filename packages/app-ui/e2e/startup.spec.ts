@@ -42,7 +42,7 @@ test('?identity=mismatched：整页阻塞，没有任何按钮；任务列表、
   for (const hash of ['#/tasks', '#/tasks/new', '#/task/T1/upload']) {
     await page.goto(open('?identity=mismatched', hash));
     await expect(h1(page, '报销人身份不一致')).toBeVisible();
-    await expect(page.getByRole('alert')).toHaveText('当前登录身份与已登记的报销人不一致。请在报销系统切换回本人账号；已有报销不能中途更换报销人。');
+    await expect(page.getByRole('alert')).toContainText('当前登录身份与已登记的报销人不一致。请在报销系统切换回本人账号；已有报销不能中途更换报销人。');
     await expect(page.getByRole('button')).toHaveCount(0);
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.getByRole('table')).toHaveCount(0);

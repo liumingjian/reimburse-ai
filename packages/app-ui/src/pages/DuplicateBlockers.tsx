@@ -1,3 +1,4 @@
+import { Button, InlineNotification, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@carbon/react';
 import { BLOCKER_TABLE_COLUMNS, DUPLICATE_BLOCKER_COPY, type TaskSnapshot } from '../contract/snapshot';
 import { ActionError } from '../shell/ActionError';
 import { useAction } from '../shell/useAction';
@@ -16,49 +17,53 @@ export function DuplicateBlockers({ snapshot }: { snapshot: TaskSnapshot }) {
   const tasks = [...new Map(hits.flatMap((hit) => hit.tasks).map((task) => [task.taskId, task])).values()];
   const remove = (materialId: string) => run((adapter) => adapter.excludeMaterial(taskId, materialId, snapshot.step.stepToken));
   return (
-    <section className="block" aria-label="跨任务重复发票">
-      <div className="notice notice-err" role="alert">
-        {DUPLICATE_BLOCKER_COPY.blocked}
-        {DUPLICATE_BLOCKER_COPY.disposal}
-      </div>
-      <div className="table-scroll bleed">
-        <table className="data" aria-label="重复发票">
-          <thead>
-            <tr>
+    <section className="app-block" aria-label="跨任务重复发票">
+      <InlineNotification
+        kind="error"
+        role="alert"
+        lowContrast
+        hideCloseButton
+        statusIconDescription="错误"
+        title={`${DUPLICATE_BLOCKER_COPY.blocked}${DUPLICATE_BLOCKER_COPY.disposal}`}
+      />
+      <div className="bleed app-table">
+        <Table aria-label="重复发票">
+          <TableHead>
+            <TableRow>
               {BLOCKER_TABLE_COLUMNS.map((column) => (
-                <th key={column}>{column}</th>
+                <TableHeader key={column}>{column}</TableHeader>
               ))}
-            </tr>
-          </thead>
-          <tbody>
+            </TableRow>
+          </TableHead>
+          <TableBody>
             {hits.map((hit, index) => (
-              <tr key={hit.materialId}>
-                <td className="nowrap">{index + 1}</td>
-                <td className="file-name">{hit.fileName}</td>
-                <td />
-                <td>{hit.reason}</td>
-                <td className="nowrap">{hit.resolver}</td>
-              </tr>
+              <TableRow key={hit.materialId}>
+                <TableCell className="app-nowrap">{index + 1}</TableCell>
+                <TableCell className="app-file-name">{hit.fileName}</TableCell>
+                <TableCell />
+                <TableCell>{hit.reason}</TableCell>
+                <TableCell className="app-nowrap">{hit.resolver}</TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
-      <div className="btn-row block-actions">
+      <div className="app-btn-row app-block-actions">
         {hits.map((hit) => (
-          <button key={hit.materialId} className="btn btn-secondary btn-sm" type="button" disabled={busy} onClick={() => void remove(hit.materialId)}>
+          <Button key={hit.materialId} kind="secondary" size="sm" disabled={busy} onClick={() => void remove(hit.materialId)}>
             移出 {hit.fileName}
-          </button>
+          </Button>
         ))}
-        <span className="caption">移出后这份文件不参与本次盘点，也不进入材料包。</span>
+        <span className="app-caption">移出后这份文件不参与本次盘点，也不进入材料包。</span>
       </div>
       <ActionError message={error} />
-      <h3 className="block-subhead">命中的任务</h3>
-      <ul className="plain-list" aria-label="命中的任务">
+      <h3 className="app-subhead">命中的任务</h3>
+      <ul className="app-plain-list" aria-label="命中的任务">
         {tasks.map((task) => (
           <li key={task.taskId}>{task.name}</li>
         ))}
       </ul>
-      <p className="caption">{DUPLICATE_BLOCKER_COPY.scope}</p>
+      <p className="app-caption">{DUPLICATE_BLOCKER_COPY.scope}</p>
     </section>
   );
 }

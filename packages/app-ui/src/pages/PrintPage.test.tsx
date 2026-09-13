@@ -52,7 +52,10 @@ describe('打印稿预览', () => {
     const generate = vi.spyOn(adapter, 'generatePrintSheet');
     expect(await screen.findByRole('list', { name: '打印稿页面' })).toBeTruthy();
     expect(generate).toHaveBeenCalledWith('T1');
-    const cards = within(pages()).getAllByRole('listitem').filter((item) => item.classList.contains('page-card'));
+    // 页卡是「打印稿页面」列表的直接子项，名称是页眉整句（页卡里的放置清单项没有名称）。
+    const cards = within(pages())
+      .getAllByRole('listitem')
+      .filter((item) => item.parentElement === pages() && item.hasAttribute('aria-label'));
     expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual([
       'No.1-3 · 08-10 · 外地市内交通 · 69.19',
       'No.4 · 08-11 · 外地市内交通 · 38.40',

@@ -12,7 +12,7 @@ export function failureMessage(outcome: ActionOutcome): string | null {
 export function ActionError({ message }: { message: string | null }) {
   if (!message) return null;
   return (
-    <span className="error action-error app-action-error" role="alert">
+    <span className="app-action-error" role="alert">
       {message}
     </span>
   );

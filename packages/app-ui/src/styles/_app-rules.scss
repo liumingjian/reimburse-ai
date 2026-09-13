@@ -325,7 +325,9 @@ $gutter: $spacing-06;
 }
 
 .cds--data-table {
-  th.app-num .cds--table-header-label {
+  // 金额与序号右对齐：Carbon 的 td 左对齐规则比 .app-num 更具体，这里写全。
+  th.app-num .cds--table-header-label,
+  td.app-num {
     text-align: end;
   }
 
@@ -349,14 +351,15 @@ $gutter: $spacing-06;
     inset-inline-end: 0;
   }
 
+  // 固定列用 Carbon 的上下文 layer token（$layer 等）：同一张表放进弹层（上一层）时底色跟着表格一起变。
   td.app-sticky-start,
   td.app-sticky-end {
-    background-color: $layer-01;
+    background-color: $layer;
   }
 
   tbody tr:hover td.app-sticky-start,
   tbody tr:hover td.app-sticky-end {
-    background-color: $layer-hover-01;
+    background-color: $layer-hover;
   }
 
   // 表头的固定列要盖住横向滚过来的其他表头。Carbon 给最后一个表头写了 th:last-of-type { position: static }，
@@ -365,7 +368,7 @@ $gutter: $spacing-06;
   thead th.app-sticky-end {
     position: sticky;
     z-index: 3;
-    background-color: $layer-accent-01;
+    background-color: $layer-accent;
   }
 
   tr.app-clickable {

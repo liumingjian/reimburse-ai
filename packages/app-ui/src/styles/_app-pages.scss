@@ -1,0 +1,1042 @@
+// 各页面自己的版式（上传、盘点、待确认项、项目归属、个人项目簿、表单页、对账与完成、打印稿、四角裁剪）。
+// 与 _app-rules.scss 同样只取 Carbon 的 spacing、theme、type token。没有 Carbon 对应物的部分（拖放区、原件预览、页卡、裁剪编辑器）手写。
+@use '@carbon/styles/scss/spacing' as *;
+@use '@carbon/styles/scss/theme' as *;
+@use '@carbon/styles/scss/type';
+
+$gutter: $spacing-06;
+
+.app-section-title {
+  margin: 0;
+  color: $text-primary;
+  @include type.type-style('heading-03');
+}
+
+.app-subhead {
+  margin: $spacing-06 0 $spacing-03;
+  @include type.type-style('heading-compact-02');
+}
+
+.app-plain-list {
+  margin: 0 0 $spacing-04;
+  padding-inline-start: $spacing-06;
+  list-style: disc;
+}
+
+.app-block-head {
+  display: flex;
+  align-items: center;
+  gap: $spacing-04;
+  margin-block-end: $spacing-04;
+
+  > .cds--btn {
+    margin-inline-start: auto;
+  }
+}
+
+.app-block-note {
+  display: block;
+  margin: $spacing-04 0 0;
+}
+
+.app-notices:not(:empty) {
+  display: grid;
+  gap: $spacing-03;
+  margin-block: $spacing-05;
+}
+
+.app-warning-text {
+  margin: $spacing-04 0 0;
+  padding: $spacing-03 $spacing-05;
+  color: $text-primary;
+  background: var(--cds-notification-background-warning);
+  border-inline-start: 3px solid $support-warning;
+}
+
+.app-file-name {
+  overflow-wrap: anywhere;
+}
+
+.app-cell-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: $spacing-03;
+}
+
+// ---------- 上传材料：拖放区与批次文件清单 ----------
+
+.app-dropzone {
+  display: grid;
+  place-items: center;
+  gap: $spacing-03;
+  min-block-size: 12rem;
+  padding: $spacing-07;
+  color: $text-secondary;
+  text-align: center;
+  background: $layer-01;
+  border: 1px dashed $border-strong-01;
+  cursor: pointer;
+
+  &:hover,
+  &.is-dragover {
+    border-color: $border-interactive;
+  }
+
+  &.is-dragover {
+    background: $layer-selected-01;
+  }
+
+  strong {
+    color: $text-primary;
+    @include type.type-style('heading-compact-02');
+  }
+
+  input[type='file'] {
+    display: none;
+  }
+}
+
+.app-dropzone-icon {
+  fill: $icon-secondary;
+}
+
+.app-upload-first {
+  margin-block-start: $spacing-03;
+}
+
+.app-file-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: $layer-01;
+  border-block-start: 1px solid $border-subtle-01;
+
+  li {
+    display: flex;
+    align-items: center;
+    gap: $spacing-04;
+    min-block-size: 2.5rem;
+    padding: $spacing-02 $gutter;
+    border-block-end: 1px solid $border-subtle-01;
+
+    &:hover {
+      background: $layer-hover-01;
+    }
+
+    &.is-rejected .app-file-name {
+      color: $text-secondary;
+    }
+  }
+
+  .app-file-name {
+    flex: 1;
+    min-inline-size: 0;
+  }
+}
+
+.app-file-index {
+  flex: none;
+  inline-size: $spacing-07;
+  color: $text-helper;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-file-icon {
+  flex: none;
+  fill: $icon-secondary;
+}
+
+.app-file-reason {
+  color: $text-error;
+  @include type.type-style('helper-text-01');
+}
+
+.app-file-size {
+  flex: none;
+  inline-size: 5rem;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+// ---------- 竖排步骤清单（盘点、保存报销草稿）：状态图标加文字 ----------
+
+.app-progress-lead {
+  margin: 0 0 $spacing-04;
+  color: $text-secondary;
+}
+
+.app-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: $layer-01;
+  border-block-start: 1px solid $border-subtle-01;
+
+  li {
+    display: grid;
+    grid-template-columns: 1rem minmax(0, 1fr) auto;
+    align-items: start;
+    gap: $spacing-04;
+    padding: $spacing-04 $spacing-05;
+    border-block-end: 1px solid $border-subtle-01;
+
+    &.is-todo {
+      color: $text-disabled;
+    }
+  }
+
+  .step-title {
+    font-weight: 600;
+  }
+
+  .desc {
+    color: $text-secondary;
+    @include type.type-style('helper-text-01');
+  }
+
+  .status {
+    color: $text-secondary;
+    white-space: nowrap;
+    @include type.type-style('label-01');
+  }
+
+  .is-done .app-step-dot svg {
+    fill: $support-success;
+  }
+
+  .is-running .app-step-dot svg {
+    fill: $support-info;
+  }
+
+  .is-waiting .app-step-dot svg {
+    fill: $support-warning;
+  }
+
+  .is-failed .app-step-dot svg {
+    fill: $support-error;
+  }
+}
+
+.app-step-dot {
+  display: grid;
+  place-items: center;
+  block-size: 1.25rem;
+  color: $text-helper;
+  @include type.type-style('label-01');
+}
+
+.app-login-prompt {
+  display: grid;
+  gap: $spacing-03;
+  margin-block-start: $spacing-04;
+  padding: $spacing-04 $spacing-05;
+  background: $layer-02;
+
+  p {
+    margin: 0;
+  }
+}
+
+// ---------- 材料盘点 ----------
+
+.app-headline {
+  margin: $spacing-03 0 0;
+  color: $text-primary;
+  @include type.type-style('heading-03');
+}
+
+.app-meta-line {
+  margin: $spacing-02 0 0;
+}
+
+.app-inventory .cds--data-table {
+  table-layout: fixed;
+
+  col.app-col-file {
+    inline-size: 34%;
+  }
+
+  col.app-col-kind {
+    inline-size: 20%;
+  }
+
+  col.app-col-check {
+    inline-size: 34%;
+  }
+
+  col.app-col-status {
+    inline-size: 12%;
+  }
+
+  tr.app-group-head td {
+    padding: 0;
+  }
+
+  tbody.is-open tr.app-group-head td,
+  tr.app-group-detail td {
+    background: $layer-02;
+  }
+
+  tr.app-group-detail td {
+    padding: 0 $gutter $spacing-04 calc(#{$gutter} + #{$spacing-06});
+  }
+
+  tr.app-group-head td.app-ungrouped-head {
+    padding: $spacing-04 $gutter;
+  }
+
+  tbody.has-pending tr td:first-child {
+    box-shadow: inset 3px 0 0 $support-warning;
+  }
+
+  tr.app-row-warn td {
+    background: var(--cds-notification-background-warning);
+  }
+}
+
+.app-group-toggle {
+  display: grid;
+  grid-template-columns: 34% 20% 34% 12%;
+  align-items: center;
+  inline-size: 100%;
+  min-block-size: 2.5rem;
+  padding: 0;
+  color: $text-primary;
+  text-align: start;
+  background: none;
+  border: 0;
+  cursor: pointer;
+
+  &:hover {
+    background: $layer-hover-01;
+  }
+
+  &:focus-visible {
+    outline: 2px solid $focus;
+    outline-offset: -2px;
+  }
+
+  &[aria-expanded='true'] .app-chevron {
+    transform: rotate(90deg);
+  }
+}
+
+.app-gcol {
+  min-inline-size: 0;
+  padding: $spacing-03 $spacing-05;
+}
+
+.app-gcol-first {
+  display: flex;
+  align-items: center;
+  gap: $spacing-03;
+  padding-inline-start: $gutter;
+}
+
+.app-chevron {
+  flex: none;
+  fill: $icon-secondary;
+}
+
+.app-group-no,
+.app-group-dates,
+.app-group-count {
+  color: $text-secondary;
+}
+
+.app-group-category,
+.app-group-title {
+  font-weight: 600;
+}
+
+.app-event-lines {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-02 $spacing-06;
+  margin: 0;
+  padding: 0;
+  color: $text-secondary;
+  list-style: none;
+  @include type.type-style('helper-text-01');
+}
+
+.app-amount {
+  color: $text-primary;
+}
+
+.app-evidence-note {
+  margin-block-start: $spacing-02;
+  @include type.type-style('helper-text-01');
+}
+
+// ---------- 待确认项：队列、原件与右侧表单 ----------
+
+.app-queue {
+  background: $layer-01;
+  border-block: 1px solid $border-subtle-01;
+}
+
+.app-item-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  li + li {
+    border-block-start: 1px solid $border-subtle-01;
+  }
+
+  button {
+    display: grid;
+    grid-template-columns: 1rem max-content minmax(0, 1fr);
+    align-items: center;
+    gap: $spacing-04;
+    inline-size: 100%;
+    min-block-size: 2.5rem;
+    padding: $spacing-02 $gutter;
+    color: $text-primary;
+    text-align: start;
+    background: transparent;
+    border: 0;
+    box-shadow: inset 3px 0 0 transparent;
+    cursor: pointer;
+
+    &:hover {
+      background: $layer-hover-01;
+    }
+
+    &:focus-visible {
+      outline: 2px solid $focus;
+      outline-offset: -2px;
+    }
+  }
+
+  .is-selected button {
+    background: $layer-selected-01;
+    box-shadow: inset 3px 0 0 $border-interactive;
+  }
+}
+
+.app-queue-mark {
+  fill: $support-warning;
+
+  &.is-done {
+    fill: $support-success;
+  }
+}
+
+.app-queue-title {
+  font-weight: 600;
+}
+
+.app-queue-sub {
+  min-inline-size: 0;
+  overflow: hidden;
+  color: $text-secondary;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  @include type.type-style('helper-text-01');
+}
+
+.app-pending-detail {
+  margin-block-start: $spacing-07;
+}
+
+.app-detail-head .app-caption {
+  margin: $spacing-02 0 0;
+}
+
+.app-why {
+  margin: $spacing-03 0 $spacing-06;
+}
+
+.app-review-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 25rem;
+  align-items: start;
+  gap: $spacing-07;
+}
+
+// 原件：layer 底上的一页，页面滚动时贴在顶栏下；高度不超过视口。
+.app-viewer {
+  position: sticky;
+  inset-block-start: calc(3rem + #{$spacing-05});
+  display: grid;
+  place-items: center;
+  padding: $spacing-05;
+  background: $layer-02;
+  border: 1px solid $border-subtle-01;
+}
+
+.app-doc-preview {
+  display: grid;
+  place-items: center;
+  inline-size: 100%;
+  overflow: hidden;
+  background: $layer-01;
+  border: 1px solid $border-strong-01;
+
+  &.is-portrait {
+    aspect-ratio: 210 / 297;
+    max-inline-size: calc((100vh - 3rem - #{$spacing-10} * 2) * 210 / 297);
+  }
+
+  &.is-landscape {
+    aspect-ratio: 297 / 210;
+  }
+
+  &.is-photo {
+    aspect-ratio: 3 / 4;
+    max-inline-size: calc((100vh - 3rem - #{$spacing-10} * 2) * 3 / 4);
+  }
+
+  img,
+  iframe {
+    display: block;
+    inline-size: 100%;
+    block-size: 100%;
+    object-fit: contain;
+    border: 0;
+  }
+}
+
+.app-material-fields {
+  margin-block-end: $spacing-06;
+  padding-block-end: $spacing-06;
+  border-block-end: 1px solid $border-subtle-01;
+}
+
+.app-preview-name {
+  margin-block-end: $spacing-04;
+  color: $text-secondary;
+  @include type.type-style('helper-text-01');
+}
+
+.app-kv {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: $spacing-03 $spacing-06;
+  margin: 0;
+
+  dt {
+    color: $text-secondary;
+  }
+
+  dd {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: $spacing-02 $spacing-03;
+    min-inline-size: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+.app-kv-row {
+  display: contents;
+}
+
+// 选择类待确认项：已选项用选中样式（不用主按钮，主按钮一屏一个）。
+.cds--btn.app-toggle.is-selected {
+  color: $text-primary;
+  background: $layer-selected-01;
+  box-shadow: inset 0 0 0 2px $border-interactive;
+}
+
+.app-choice-note {
+  margin-block-start: $spacing-04;
+}
+
+.app-resolved-list {
+  margin: 0 0 $spacing-06;
+  padding: 0;
+  list-style: none;
+
+  li {
+    padding-block: $spacing-02;
+  }
+}
+
+// ---------- 项目归属 ----------
+
+.app-head-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: $spacing-03 $spacing-07;
+  inline-size: 100%;
+  margin-block-start: $spacing-05;
+
+  .app-purpose {
+    flex: 1;
+    max-inline-size: 40rem;
+  }
+
+  .app-caption {
+    padding-block-end: $spacing-03;
+  }
+}
+
+.app-page-head .app-lead:has(.app-head-fields) {
+  flex-wrap: wrap;
+}
+
+.app-project-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20rem;
+  align-items: stretch;
+  margin-block-start: $spacing-05;
+  background: $layer-01;
+  border-block-start: 1px solid $border-subtle-01;
+}
+
+// 明细表不挤压：工作区放不下最小宽度时，左栏横向滚动。
+.app-assign-main {
+  min-inline-size: 0;
+  overflow-x: auto;
+
+  > * {
+    min-inline-size: 55rem;
+  }
+}
+
+.app-assign-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $spacing-03 $spacing-07;
+  min-block-size: 3rem;
+  padding: $spacing-03 $gutter;
+
+  .cds--form-item {
+    flex: none;
+  }
+}
+
+.app-assign-count {
+  margin-inline-start: auto;
+}
+
+// 各组的表共用一套列宽，表头只画一次。
+.cds--data-table.app-assign-table {
+  table-layout: fixed;
+
+  col.app-col-pick {
+    inline-size: 8.5rem;
+  }
+
+  col.app-col-date {
+    inline-size: 24%;
+  }
+
+  col.app-col-place {
+    inline-size: 11%;
+  }
+
+  col.app-col-project {
+    inline-size: 20%;
+  }
+
+  col.app-col-amount {
+    inline-size: 12%;
+  }
+
+  th:first-child,
+  td:first-child {
+    padding-inline-start: $gutter;
+  }
+
+  tr.app-row-selected td {
+    background: $layer-selected-01;
+  }
+}
+
+.cds--data-table.app-assign-colhead th:first-child {
+  padding-inline-start: calc(#{$gutter} + #{$spacing-06} + #{$spacing-03});
+}
+
+.app-assign-group-head {
+  display: flex;
+  align-items: center;
+  gap: $spacing-04;
+  margin: 0;
+  min-block-size: 2rem;
+  padding: $spacing-02 $gutter;
+  color: $text-primary;
+  background: $layer-02;
+  border-block-end: 1px solid $border-subtle-01;
+  @include type.type-style('heading-compact-01');
+
+  .cds--form-item {
+    flex: none;
+  }
+}
+
+.app-pick-label {
+  display: flex;
+  align-items: center;
+  gap: $spacing-03;
+  white-space: nowrap;
+
+  .cds--form-item {
+    flex: none;
+  }
+}
+
+.app-assign-empty {
+  padding: $spacing-06 $gutter;
+}
+
+.app-project-aside {
+  min-inline-size: 0;
+  padding: $spacing-05 $gutter;
+  border-inline-start: 1px solid $border-subtle-01;
+
+  .cds--search {
+    margin-block-end: $spacing-03;
+  }
+}
+
+.app-aside-title {
+  margin: 0 0 $spacing-03;
+  @include type.type-style('heading-compact-02');
+}
+
+.app-project-options + .app-aside-title,
+.app-project-empty + .app-aside-title {
+  margin-block-start: $spacing-07;
+}
+
+.app-project-options {
+  margin: 0 0 $spacing-04;
+  padding: 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: $spacing-03;
+    padding-block: $spacing-03;
+    border-block-end: 1px solid $border-subtle-01;
+  }
+
+  .name {
+    font-weight: 600;
+  }
+
+  li.is-locked .name {
+    color: $text-secondary;
+  }
+}
+
+.app-project-empty {
+  margin: $spacing-04 0;
+}
+
+.app-gate-continue {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: $spacing-02;
+}
+
+// ---------- 个人项目簿 ----------
+
+.app-book-intake {
+  max-inline-size: 45rem;
+  margin-block-end: $spacing-06;
+}
+
+.app-book-form {
+  display: flex;
+  align-items: flex-end;
+  gap: $spacing-04;
+
+  > .cds--form-item {
+    flex: 1;
+  }
+}
+
+.app-book-message {
+  margin-block-start: $spacing-04;
+}
+
+.app-table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-05;
+  min-block-size: 3rem;
+  padding: $spacing-03 $gutter;
+  background: $layer-01;
+  border-block-start: 1px solid $border-subtle-01;
+}
+
+.app-table-toolbar-title {
+  @include type.type-style('heading-compact-01');
+}
+
+// ---------- 表单页（设置、启动页）：内容限宽，节与节之间一条细线 ----------
+
+.app-form-page {
+  inline-size: 100%;
+  max-inline-size: 45rem;
+}
+
+.app-form-section {
+  display: grid;
+  justify-items: start;
+  gap: $spacing-04;
+  padding-block: $spacing-06;
+  border-block-start: 1px solid $border-subtle-01;
+
+  p {
+    margin: 0;
+    color: $text-secondary;
+  }
+}
+
+.app-startup {
+  display: grid;
+  gap: $spacing-05;
+  padding-block-start: $spacing-07;
+
+  .app-lead,
+  .app-caption {
+    margin: 0;
+  }
+}
+
+// ---------- 对账与完成 ----------
+
+.app-abort {
+  margin-block-start: $spacing-05;
+}
+
+.app-reconcile-reasons {
+  margin: $spacing-04 0 0;
+  padding-inline-start: $spacing-06;
+  color: $text-secondary;
+  list-style: disc;
+  @include type.type-style('helper-text-01');
+}
+
+.cds--data-table {
+  tr.app-row-mismatch td,
+  tr.app-row-mismatch td.app-sticky-start,
+  tr.app-row-mismatch td.app-sticky-end {
+    background: var(--cds-notification-background-error);
+  }
+
+  tr.app-row-detail td {
+    background: $layer-02;
+  }
+
+  tfoot td,
+  tfoot td.app-sticky-start,
+  tfoot td.app-sticky-end {
+    font-weight: 600;
+    background: $layer-02;
+  }
+}
+
+// ---------- 打印稿预览：页卡是 layer 底上的一页纸 ----------
+
+.app-print-notices {
+  margin-block-start: $spacing-05;
+
+  p {
+    margin: 0;
+  }
+}
+
+.app-print-summary {
+  margin: $spacing-05 0;
+}
+
+.app-print-pages {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(17.5rem, 1fr));
+  gap: $spacing-06;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-page-card {
+  display: grid;
+  align-content: start;
+  gap: $spacing-03;
+  padding: $spacing-04;
+  background: $layer-01;
+  border: 1px solid $border-subtle-01;
+}
+
+.page-hdr {
+  overflow: hidden;
+  color: $text-secondary;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  @include type.type-style('label-01');
+}
+
+.app-page-image {
+  display: block;
+  inline-size: 100%;
+  aspect-ratio: 210 / 297;
+  object-fit: contain;
+  background: $layer-02;
+  border: 1px solid $border-subtle-01;
+}
+
+.app-placements {
+  display: grid;
+  gap: $spacing-03;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  > li {
+    display: grid;
+    gap: $spacing-02;
+    padding-block-start: $spacing-03;
+    border-block-start: 1px solid $border-subtle-01;
+  }
+}
+
+.app-placement-name {
+  display: flex;
+  align-items: baseline;
+  gap: $spacing-03;
+  min-inline-size: 0;
+
+  .app-file-name {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+}
+
+.app-screenshot-row input[type='file'] {
+  display: none;
+}
+
+// ---------- 四角裁剪编辑器（手写，Carbon 没有对应组件） ----------
+
+.app-crop-panel {
+  margin-block: $spacing-05 $spacing-06;
+  padding: $spacing-05;
+  background: $layer-01;
+  border: 1px solid $border-subtle-01;
+}
+
+.app-crop-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: $spacing-04;
+  margin-block-end: $spacing-05;
+}
+
+.crop-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 30rem) minmax(0, 1fr);
+  align-items: start;
+  gap: $spacing-07;
+}
+
+.crop-stage {
+  position: relative;
+  touch-action: none;
+  user-select: none;
+
+  img {
+    display: block;
+    inline-size: 100%;
+    block-size: auto;
+    border: 1px solid $border-strong-01;
+  }
+}
+
+.crop-outline {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  pointer-events: none;
+
+  polygon {
+    fill: none;
+    stroke: $interactive;
+    stroke-width: 2px;
+    vector-effect: non-scaling-stroke;
+  }
+}
+
+.crop-handle {
+  position: absolute;
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  padding: 0;
+  background: $layer-01;
+  border: 2px solid $interactive;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  touch-action: none;
+
+  &:active {
+    background: $layer-selected-01;
+    cursor: grabbing;
+  }
+
+  &:focus-visible {
+    outline: 2px solid $focus;
+    outline-offset: 2px;
+  }
+}
+
+.crop-side .app-caption {
+  margin: 0 0 $spacing-03;
+}
+
+.crop-coords {
+  display: grid;
+  gap: $spacing-02;
+  margin: $spacing-04 0 $spacing-05;
+  padding: 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    justify-content: space-between;
+    gap: $spacing-05;
+    padding-block: $spacing-02;
+    border-block-end: 1px solid $border-subtle-01;
+  }
+}
+
+// 很窄的窗口：分栏改成上下排。
+@media (max-width: 56rem) {
+  .app-review-split,
+  .app-project-split,
+  .crop-editor,
+  .app-two-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-viewer {
+    position: static;
+  }
+
+  .app-project-aside {
+    border-inline-start: 0;
+    border-block-start: 1px solid $border-subtle-01;
+  }
+
+  .app-action-card + .app-action-card {
+    border-inline-start: 0;
+    border-block-start: 1px solid $border-subtle-01;
+  }
+}

@@ -55,7 +55,7 @@ describe('启动页：登录与身份绑定', () => {
     for (const hash of ['#/tasks', '#/tasks/new', '#/task/T1/upload']) {
       const view = renderAt(hash, { identity: 'mismatched' });
       await heading(STARTUP_COPY.mismatchTitle);
-      expect(screen.getByRole('alert').textContent).toBe(STARTUP_COPY.mismatchLead);
+      expect(screen.getByRole('alert').textContent).toContain(STARTUP_COPY.mismatchLead);
       expect(screen.queryAllByRole('button')).toHaveLength(0);
       expect(screen.queryByRole('dialog')).toBeNull();
       expect(screen.queryByRole('heading', { name: '上传材料' })).toBeNull();

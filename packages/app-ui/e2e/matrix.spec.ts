@@ -89,7 +89,7 @@ const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = 
   'readback-mismatch': async (page) => {
     await startErp(page, 'readback-mismatch');
     await expect(page).toHaveURL(/#\/task\/T1\/done$/);
-    await expect(page.getByTestId('readback-6')).toHaveClass(/row-err/);
+    await expect(page.getByTestId('readback-6')).toContainText('不一致');
     await expect(page.getByTestId('readback-6')).toContainText('74.00');
     await expect(page.getByRole('button', { name: '转人工' })).toBeVisible();
   },

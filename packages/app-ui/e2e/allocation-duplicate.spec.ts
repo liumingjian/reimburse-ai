@@ -54,7 +54,7 @@ test('?allocation=1：出现逐段分摊待确认项；不守恒显示服务端�
   await expect(detail(page).getByTestId('resolver')).toHaveText('处理人：要你处理');
   await expect(segment(page, 3)).toHaveValue('21.56');
   await detail(page).getByRole('button', { name: '提交逐段金额' }).click();
-  await expect(detail(page).getByRole('alert')).toHaveText(
+  await expect(detail(page).getByRole('alert').filter({ hasText: /\S/ })).toHaveText(
     '各段加起来是 69.10 元，和票面价税合计 69.19 元对不上。请对照行程单重新填写，不会平均、不会按比例，也不会把差额加到任何一段上。',
   );
   await expect(page.getByText('还剩 4 个')).toBeVisible();

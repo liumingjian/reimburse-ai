@@ -29,7 +29,7 @@ export function useReopenUpload(snapshot: TaskSnapshot, onReopened: () => void):
 
   const dialog = dialogOpen ? (
     <ConfirmDialog title={REOPEN_DIALOG.title} confirmLabel={REOPEN_DIALOG.confirm} busy={busy} error={error} onConfirm={() => void confirm()} onCancel={close}>
-      <p className="lead">{REOPEN_DIALOG.body}</p>
+      <p>{REOPEN_DIALOG.body}</p>
     </ConfirmDialog>
   ) : null;
 

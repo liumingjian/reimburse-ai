@@ -45,8 +45,10 @@ $system-mono: (ui-monospace, 'SF Mono', Menlo, Consolas, monospace);
 @use '@carbon/styles/scss/components/form';
 @use '@carbon/styles/scss/components/text-input';
 @use '@carbon/styles/scss/components/link';
+@use '@carbon/styles/scss/components/checkbox';
 
 @use './app-rules';
+@use './app-pages';
 
 :root {
   @include theme.theme();
