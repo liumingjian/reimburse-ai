@@ -303,6 +303,7 @@ export function TaskListPage({ newTask }: { newTask: boolean }) {
       {newTask ? <NewTaskDialog taskList={taskList.data} onClose={closeNewTask} /> : null}
       {abandoning ? (
         <ConfirmDialog
+          danger
           title={ABANDON_TASK_COPY.dialogTitle}
           confirmLabel={ABANDON_TASK_COPY.confirm}
           busy={abandonBusy}

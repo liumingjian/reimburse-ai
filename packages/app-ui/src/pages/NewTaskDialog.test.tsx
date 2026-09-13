@@ -19,6 +19,10 @@ describe('新建报销任务弹层', () => {
     await waitFor(() => expect(window.location.hash).toBe('#/tasks/new'));
     const box = await dialog();
     expect(screen.getByRole('heading', { name: '报销任务' })).toBeTruthy();
+    // 普通确认仍是蓝色主按钮，不是危险变体。
+    const create = within(box).getByRole('button', { name: '创建并上传材料' });
+    expect(create.classList.contains('cds--btn--primary')).toBe(true);
+    expect(create.classList.contains('cds--btn--danger')).toBe(false);
     fireEvent.click(within(box).getByRole('button', { name: '取消' }));
     await waitFor(() => expect(window.location.hash).toBe('#/tasks'));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());

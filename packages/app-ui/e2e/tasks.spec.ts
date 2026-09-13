@@ -26,6 +26,18 @@ test('任务列表显示三个任务及其阶段徽标', async ({ page }, testIn
   await page.screenshot({ path: testInfo.outputPath('tasks.png'), fullPage: true });
 });
 
+test('作废确认是危险弹层：确认按钮是红色 danger 按钮，文案仍是「作废」', async ({ page }, testInfo) => {
+  await page.goto(open('', '#/tasks'));
+  const t1 = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ });
+  await t1.getByRole('button', { name: '作废 2026-08 上海出差（产品评审）' }).click();
+  const dialog = page.getByRole('dialog', { name: '作废这个报销任务？' });
+  const confirm = dialog.getByRole('button', { name: '作废', exact: true });
+  await expect(confirm).toBeVisible();
+  // Carbon 的 $button-danger-primary（#da1e28），与普通确认的蓝色主按钮一眼可分。
+  await expect(confirm).toHaveCSS('background-color', 'rgb(218, 30, 40)');
+  await page.screenshot({ path: testInfo.outputPath('abandon-danger-confirm.png') });
+});
+
 test('?seed=done 让 T1 显示为草稿交接并带草稿号', async ({ page }) => {
   await page.goto(open('?seed=done', '#/tasks'));
   const t1 = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ });

@@ -19,8 +19,11 @@ export function ConfirmDialog({
   focusCancel = true,
   wide = false,
   single = false,
+  danger = false,
 }: {
   focusCancel?: boolean;
+  // 危险变体：破坏性、不可撤销的确认（作废任务、完全重置）。Carbon danger modal，确认按钮用红色 danger 按钮。
+  danger?: boolean;
   // 宽弹层：放整块面板（如项目归属页就地新增项目的项目簿面板）。
   wide?: boolean;
   // 只留一个关闭按钮（confirmLabel，次要样式，点它走 onConfirm）：弹层里的面板自带主按钮，不再放第二个主按钮。
@@ -39,7 +42,7 @@ export function ConfirmDialog({
 }) {
   const primaryFocus = focusCancel ? { 'data-modal-primary-focus': true } : {};
   return (
-    <ComposedModal open size={wide ? 'lg' : 'sm'} aria-label={title} preventCloseOnClickOutside={false} onClose={() => onCancel()}>
+    <ComposedModal open danger={danger} size={wide ? 'lg' : 'sm'} aria-label={title} preventCloseOnClickOutside={false} onClose={() => onCancel()}>
       <ModalHeader title={title} iconDescription={DIALOG_CLOSE_LABEL} />
       <ModalBody>
         {children}
@@ -64,7 +67,7 @@ export function ConfirmDialog({
                 {extraLabel}
               </Button>
             ) : null}
-            <Button kind="primary" disabled={busy} onClick={onConfirm}>
+            <Button kind={danger ? 'danger' : 'primary'} disabled={busy} onClick={onConfirm}>
               {confirmLabel}
             </Button>
           </>
