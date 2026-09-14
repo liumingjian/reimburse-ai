@@ -21,16 +21,18 @@ import { StatusTag } from '../shell/StatusTag';
 import { DuplicateBlockers } from './DuplicateBlockers';
 import { PAGE_COPY } from './page-copy';
 
-// 材料盘点页：只有盘点进度与材料清单。盘点进行中显示分阶段进度；结束后是一张 Carbon 可展开表格，
-// 每行一个费用事件组（同一主要报销凭证的相邻事件），展开后是该组的材料证据关联结论与材料小表。
-// 不展示读出的字段及其来源（Skill 没有盘点结果表，内核不许把规则名给员工看）。
-// 跨任务重复发票命中时整批停，显示重复发票表。页面只渲染快照，不做配对、不算金额。
-// 版式：含待确认材料的组默认展开，其余默认收起；用户点过的记在界面状态里；表头有「全部展开 / 全部收起」。
-// 只标记例外：通过的材料不带标签；需要注意的材料只用 warm-gray 加警示图标的标签标出，不给整行上底色。
-// 没有归入任何费用事件的材料单独一节，放在表格下方。
-// 标题下是和整单明细确认同一种摘要条，计数全部取服务端的 inventory.summary。
+// Material inventory (材料盘点) page: inventory progress and the material list only. While inventory runs it shows
+// phased progress; afterwards a Carbon expandable table with one row per expense event (费用事件) group (adjacent
+// events sharing one primary voucher). Expanding a row shows the evidence conclusion and a material sub-table.
+// Extracted fields and their sources are not shown (the kernel forbids exposing rule names to employees).
+// A cross-task duplicate-invoice hit pauses the whole batch and shows the duplicate table instead.
+// The page renders the snapshot only: no pairing, no amount arithmetic.
+// Layout: groups containing a pending (待确认) material open by default, others start collapsed; user toggles live in
+// UI state; the header has expand-all / collapse-all. Only exceptions are marked: passed materials carry no tag.
+// Materials not in any event get their own section below the table.
+// The summary bar matches whole-claim review; every count comes from the server's inventory.summary.
 
-// 需要注意的「待确认」用共用的状态标签（图标加文字）；已排除、待盘点是中性灰标签。
+// Pending uses the shared status tag (icon plus text); excluded and not-yet-inventoried use neutral gray tags.
 function StatusMark({ status }: { status: Material['status'] | null }) {
   if (status === 'pending') return <StatusTag tone="warning">待确认</StatusTag>;
   if (status === 'excluded') return <Tag type="gray">已排除</Tag>;
@@ -38,7 +40,8 @@ function StatusMark({ status }: { status: Material['status'] | null }) {
   return null;
 }
 
-// 收起的组行显示组内最严重的状态：待确认 > 待盘点 > 已排除 > 无。这只是把服务端给的状态排个显示先后，不做判定。
+// A collapsed group row shows the most severe status in the group: pending > uploaded > excluded > none.
+// This only orders server-given statuses for display; it makes no judgement.
 const STATUS_SEVERITY: ReadonlyArray<Material['status']> = ['pending', 'uploaded', 'excluded'];
 
 function groupStatus(materials: readonly Material[]): Material['status'] | null {
@@ -50,8 +53,9 @@ const MATERIAL_COLUMNS = ['文件', '识别为', '校验', '状态'] as const;
 
 type Group = { voucher: Material; events: ExpenseEvent[]; references: Material[] };
 
-// 服务端已按统一业务序号排好，同一主要报销凭证的事件相邻；这里只把相邻、同一凭证的事件收拢成一组显示，
-// 组内的参考材料照各事件列出的 id 显示。没有归入任何事件的材料由服务端在 inventory.ungroupedMaterialIds 里给出。
+// The server already orders events by business number, with events of the same primary voucher adjacent; this only
+// folds adjacent same-voucher events into one display group and lists the reference ids each event names.
+// Materials in no event come from the server in inventory.ungroupedMaterialIds.
 function groupEvents(snapshot: TaskSnapshot, byId: ReadonlyMap<string, Material>): Group[] {
   const groups: Group[] = [];
   for (const event of snapshot.events) {
@@ -69,7 +73,7 @@ function groupEvents(snapshot: TaskSnapshot, byId: ReadonlyMap<string, Material>
   return groups;
 }
 
-// 组的各部分：序号区间、日期、类别、金额。金额照服务端给的每个事件的价税合计列出，不求和。
+// Group parts: No. range, dates, category, amounts. Amounts list each event's server gross amount; never summed.
 function groupParts(group: Group) {
   const first = group.events[0];
   const last = group.events[group.events.length - 1];
@@ -85,9 +89,10 @@ function groupParts(group: Group) {
   return { nos, dates, category: first.category.label, gross };
 }
 
-// 材料小表：文件名（下面一行是角色）、识别为、校验、状态。
-// 校验文本已被材料证据关联结论完整说过时（如参考材料的「26.69 + 20.85 + 21.65 = 69.19，按分守恒」），
-// 不再重复一遍，改写「见材料证据关联」。只是比较两段服务端原文，不改写、不判定。
+// Material sub-table: file name (role on the line below), recognised as, check, status.
+// When the evidence conclusion already contains a material's check text verbatim (for example the reference's
+// "26.69 + 20.85 + 21.65 = 69.19，按分守恒"), the cell points to the conclusion instead of repeating it.
+// This only compares two server strings; it rewrites and judges nothing.
 function MaterialTable({ label, materials, note }: { label: string; materials: readonly Material[]; note: string | null }) {
   return (
     <Table size="sm" aria-label={label} className="app-material-table">
@@ -138,7 +143,7 @@ function GroupDetail({ group, title }: { group: Group; title: string }) {
           <span>{note}</span>
         </p>
       ) : null}
-      {/* 单个事件的组不再列自己的事件行：组行已经说过了。 */}
+      {/* A single-event group does not list its own event line: the group row already says it. */}
       {group.events.length > 1 ? (
         <ul className="app-event-lines" aria-label={`${title} 的明细`}>
           {group.events.map((event) => (
@@ -162,7 +167,7 @@ function SummaryField({ label, value, grow = false }: { label: string; value: st
   );
 }
 
-// 盘点进度：竖排的步骤清单，状态用图标加文字（颜色只是第二通道）。
+// Inventory progress: a vertical step list; status is icon plus text (colour is only a second channel).
 function PhaseMark({ status, index }: { status: string; index: number }) {
   if (status === 'done') return <CheckmarkFilled />;
   if (status === 'running') return <InProgress />;
@@ -194,13 +199,14 @@ function Progress({ snapshot }: { snapshot: TaskSnapshot }) {
 export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const copy = PAGE_COPY.inventory;
   const taskId = snapshot.task.taskId;
-  // 盘点结果的计数来自服务端（inventory.summary），页面不自己数。
+  // Inventory counts come from the server (inventory.summary); the page does not count.
   const summary = snapshot.inventory.status === 'done' ? snapshot.inventory.summary : null;
   const blocked = snapshot.blockers.length > 0;
   const byId = new Map(snapshot.materials.map((material) => [material.materialId, material]));
   const groups = groupEvents(snapshot, byId);
   const ungrouped = snapshot.inventory.ungroupedMaterialIds.flatMap((id) => byId.get(id) ?? []);
-  // 展开与否是纯界面状态：记下用户对各组的选择（含全部展开 / 全部收起），没选过的组由「组里有没有待确认材料」决定。
+  // Open / closed is pure UI state: remember the user's choice per group (including expand-all / collapse-all);
+  // groups never chosen follow "does the group contain a pending material".
   const [chosen, setChosen] = useState<ReadonlyMap<string, boolean>>(new Map());
   const rows = groups.map((group) => {
     const key = group.voucher.materialId;
@@ -236,7 +242,7 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
         <Progress snapshot={snapshot} />
       ) : (
         <>
-          {/* 摘要条：写法同整单明细确认；数字全部来自服务端的 inventory.summary，页面不数。 */}
+          {/* Summary bar, same pattern as whole-claim review; every number comes from inventory.summary. */}
           <div className="app-summary bleed" role="group" aria-label="盘点摘要">
             <SummaryField label="材料" value={`${summary.materialCount} 份`} />
             <SummaryField label="通过" value={`${summary.okCount} 份`} />
@@ -275,7 +281,7 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
                         isExpanded={expanded}
                         onExpand={() => setExpanded(key, !expanded)}
                         aria-label={title}
-                        aria-controls={expanded ? detailId : undefined}
+                        {...(expanded ? { 'aria-controls': detailId } : {})}
                         expandIconDescription={expanded ? '收起' : '展开'}
                       >
                         <TableCell>

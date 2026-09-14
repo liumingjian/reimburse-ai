@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// 材料盘点（#102）。直接用 file:// 打开 mock 构建产物（pnpm build:mock）。
+// Material inventory (#102, #137). Opens the mock build (pnpm build:mock) over file://.
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 
@@ -42,7 +42,7 @@ test('?seed=inventory：材料清单按费用事件归组，显示配对与守�
   await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
   await expect(page.getByLabel('盘点结果').getByText('通过', { exact: true })).toHaveCount(0);
 
-  // 含待确认材料的事件默认展开，组行状态列就是「待确认」；全部通过的事件收成一行，点开才看文件与材料证据关联。
+  // Groups with a pending material open by default with 待确认 in the status cell; fully passed groups start collapsed.
   const toggle = (name: string) => page.getByRole('button', { name, exact: true });
   const detail = (name: string) => page.getByRole('row', { name, exact: true });
   await expect(toggle('费用事件 No.5')).toHaveAttribute('aria-expanded', 'true');
@@ -68,7 +68,7 @@ test('?seed=inventory：材料清单按费用事件归组，显示配对与守�
   await expect(hotel.getByRole('list')).toHaveCount(0);
   await expect(page.getByLabel('盘点结果')).not.toContainText('rule:');
 
-  // 未归入费用事件的材料单独一节，在表格下方。
+  // Ungrouped materials get their own section below the table.
   const rest = page.getByRole('region', { name: '未归入费用事件' });
   await expect(rest.getByText('未识别版式')).toBeVisible();
   const tableBox = await groupTable.boundingBox();
@@ -89,7 +89,7 @@ test('全部展开与全部收起', async ({ page }) => {
   await expect(page.getByRole('table', { name: /的材料$/ })).toHaveCount(1);
 });
 
-// 需要注意的行只靠标签标出，没有整行黄底和自写的黄色左边条；1100 窗口不横向滚动。
+// Rows needing attention are marked by tags only: no row background or hand-drawn edge bar; no horizontal scroll at 1100.
 for (const width of [1440, 1100]) {
   test(`${width}：不横向滚动，没有整行黄底，待确认标签带图标，页头与摘要条没有中点串`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
@@ -107,7 +107,7 @@ for (const width of [1440, 1100]) {
     }
     await page.getByRole('button', { name: '全部展开', exact: true }).click();
 
-    // 状态列的「待确认」标签带警示图标：组行 No.5、No.6，展开后的两份材料，加未归入的一份。
+    // Each 待确认 status tag carries a warning icon: group rows No.5 and No.6, their two materials, and one ungrouped material.
     const pendingStatus = page.locator('main td:last-child').filter({ hasText: /^待确认$/ });
     await expect(pendingStatus).toHaveCount(5);
     for (const cell of await pendingStatus.all()) await expect(cell.locator('svg')).toBeVisible();

@@ -259,8 +259,8 @@ $gutter: $spacing-06;
 
 // ---------- 材料盘点 ----------
 
-// 费用事件表是 Carbon 可展开表格（TableExpandRow / TableExpandedRow），外观照 Carbon 原样。
-// 通栏表格的首列页边（.bleed）落在展开按钮列上，这里只收紧各列宽度，让 1100 窗口也不横向滚动。
+// The expense event table is a stock Carbon expandable table (TableExpandRow / TableExpandedRow).
+// The bleed table's page margin lands on the expand-button column; this only sets column widths so 1100 does not scroll.
 .app-inventory > .cds--data-table {
   table-layout: fixed;
 
@@ -294,7 +294,8 @@ $gutter: $spacing-06;
   font-variant-numeric: tabular-nums;
 }
 
-// 展开内容：结论一行，多事件组的明细一行，下面是材料小表；只用展开行自己的一种底色。
+// Expanded content: the conclusion line, event lines for multi-event groups, then the material sub-table;
+// one background only (the expanded row's own).
 .app-evidence-note {
   display: flex;
   flex-wrap: wrap;
@@ -325,7 +326,7 @@ $gutter: $spacing-06;
   font-variant-numeric: tabular-nums;
 }
 
-// 材料小表嵌在展开行里：不再套通栏页边，底色随展开行，各列按内容分宽。
+// Material sub-table inside the expanded row: no bleed margin, background follows the expanded row, columns sized by content.
 .app-inventory .app-material-table,
 .app-ungrouped .app-material-table {
   table-layout: fixed;
