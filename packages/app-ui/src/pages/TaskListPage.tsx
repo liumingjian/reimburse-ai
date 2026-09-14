@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState, type MouseEvent } from 'react';
 import {
   Button,
   ContentSwitcher,
+  OverflowMenu,
+  OverflowMenuItem,
   ProgressBar,
   Switch,
   Table,
@@ -15,9 +17,8 @@ import {
   TableToolbarContent,
   TableToolbarSearch,
   Tag,
-  Tooltip,
 } from '@carbon/react';
-import { Add, CheckmarkFilled, ErrorFilled, InProgress, Locked, WarningAltFilled } from '@carbon/icons-react';
+import { Add, CheckmarkFilled, ErrorFilled, InProgress, WarningAltFilled } from '@carbon/icons-react';
 import { useAppStore, useTaskList } from '../adapter/context';
 import { ABANDON_TASK_COPY } from '../contract/actions';
 import { KERNEL_PHASES, RECONCILE_STATUS_LABEL, STAGE_DEFAULT_PAGE, TASK_STAGE_LABELS, TASK_STAGE_PHASES } from '../contract/stage';
@@ -40,6 +41,8 @@ export const TASK_LIST_COPY = {
   active: '进行中',
   handedOver: '已交接',
   noMatch: '没有符合条件的任务。',
+  more: '更多',
+  moreMenu: '更多操作',
 } as const;
 
 // 状态列：服务端给出的写入结局优先（已转人工需要注意 / 回读不一致出错），其次是对账中（需要注意）、
@@ -97,24 +100,37 @@ function continueLabel(task: TaskListItem): string | null {
   return '继续';
 }
 
-// 「作废」：能否作废由服务端判定；不能时是带锁的不可用按钮，服务端给出的原因放在 Carbon 提示里（悬停时出现），不在单元格里挤一段话。
-function AbandonControl({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: TaskListItem) => void }) {
-  if (task.abandonable) {
-    return (
-      <Button kind="ghost" size="sm" aria-label={`作废 ${task.name}`} onClick={() => onAbandon(task)}>
-        作废
-      </Button>
-    );
-  }
-  // 不可用的按钮收不到悬停与聚焦事件：照 Carbon 的做法包一层可聚焦的容器作提示的触发元素，原因经 aria-describedby 读出。
+// 「更多」菜单：主操作以外的操作都在这里，目前只有「作废」（Carbon 的 delete 项，点下后打开危险确认）。
+// 能否作废由服务端判定；不能时菜单项置灰，下面一行照抄服务端给出的原因（读屏经 aria-describedby 读出）。
+function MoreMenu({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: TaskListItem) => void }) {
+  const reasonId = `abandon-reason-${task.taskId}`;
+  const reason = task.abandonBlockedReason ?? ABANDON_TASK_COPY.blockedReason;
   return (
-    <Tooltip description={task.abandonBlockedReason ?? ABANDON_TASK_COPY.blockedReason} align="left">
-      <span className="app-locked-action" tabIndex={0}>
-        <Button kind="ghost" size="sm" aria-label={`作废 ${task.name}`} disabled renderIcon={Locked}>
-          作废
-        </Button>
-      </span>
-    </Tooltip>
+    <OverflowMenu
+      iconDescription={TASK_LIST_COPY.more}
+      aria-label={`${task.name}的${TASK_LIST_COPY.moreMenu}`}
+      size="sm"
+      flipped
+      menuOptionsClass="app-more-menu"
+    >
+      {task.abandonable ? (
+        <OverflowMenuItem isDelete itemText={ABANDON_TASK_COPY.confirm} onClick={() => onAbandon(task)} />
+      ) : (
+        <OverflowMenuItem
+          disabled
+          aria-label={ABANDON_TASK_COPY.confirm}
+          aria-describedby={reasonId}
+          itemText={
+            <span className="app-more-menu-item">
+              <span>{ABANDON_TASK_COPY.confirm}</span>
+              <span id={reasonId} className="app-more-menu-reason">
+                {reason}
+              </span>
+            </span>
+          }
+        />
+      )}
+    </OverflowMenu>
   );
 }
 
@@ -150,7 +166,7 @@ function TaskRow({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: Ta
               {label}
             </Button>
           ) : null}
-          <AbandonControl task={task} onAbandon={onAbandon} />
+          <MoreMenu task={task} onAbandon={onAbandon} />
         </div>
       </TableCell>
     </TableRow>

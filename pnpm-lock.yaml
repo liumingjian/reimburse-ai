@@ -10,6 +10,9 @@ importers:
 
   packages/app-ui:
     dependencies:
+      '@carbon/feature-flags':
+        specifier: ^1.9.0
+        version: 1.9.0
       '@carbon/icons-react':
         specifier: ^11.88.0
         version: 11.88.0(react@19.3.0)

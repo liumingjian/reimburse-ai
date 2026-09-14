@@ -17,6 +17,29 @@ async function rowOf(name: string): Promise<HTMLElement> {
   return row;
 }
 
+// 打开一行的「更多」菜单（Carbon 把菜单挂在 body 下，按菜单的可访问名称找）。
+// Carbon 量出菜单位置之前给菜单写 visibility: hidden，jsdom 不排版、量不出位置，菜单一直是隐藏的；
+// 隐藏元素算不出可访问名称（aria-label 也不算），所以这里连隐藏的一起按角色找，再核对 aria-label 与文字。
+// 菜单在真实浏览器里可见、按可访问名称找得到，由 e2e（tasks.spec.ts、carbon-zh.spec.ts）检查。
+async function openMore(row: HTMLElement, name: string): Promise<HTMLElement> {
+  fireEvent.click(within(row).getByRole('button', { name: '更多' }));
+  const label = `${name}的更多操作`;
+  return waitFor(() => {
+    const menu = screen.queryAllByRole('menu', { hidden: true }).find((element) => element.getAttribute('aria-label') === label);
+    if (!menu) throw new Error(`没有打开「${label}」`);
+    return menu;
+  });
+}
+
+// 菜单里只有「作废」一项；可作废时文字就是「作废」，置灰时 aria-label 是「作废」，文字后面跟着原因。
+function abandonItem(menu: HTMLElement): HTMLButtonElement {
+  const items = within(menu).getAllByRole('menuitem', { hidden: true });
+  expect(items).toHaveLength(1);
+  const item = items[0] as HTMLButtonElement;
+  expect(item.getAttribute('aria-label') ?? item.textContent).toBe('作废');
+  return item;
+}
+
 describe('任务列表', () => {
   test('显示三个任务及其阶段徽标（内核 10 阶段名）：材料盘点、对账中、草稿交接', async () => {
     renderApp('#/tasks');
@@ -84,16 +107,35 @@ describe('任务列表', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  test('作废：还没开始写入报销系统的任务确认后从列表消失；已开始写入的任务「作废」不可用并说明原因', async () => {
+  test('操作列：每行只有一个可见的操作按钮和一个「更多」菜单，作废不再占一个按钮', async () => {
     renderApp('#/tasks');
-    const t2 = await rowOf('2026-07 深圳客户拜访');
-    expect((within(t2).getByRole('button', { name: '作废 2026-07 深圳客户拜访' }) as HTMLButtonElement).disabled).toBe(true);
-    expect(within(t2).getByText(ABANDON_TASK_COPY.blockedReason)).toBeTruthy();
+    for (const [name, primary] of [
+      ['2026-08 上海出差（产品评审）', '继续'],
+      ['2026-07 深圳客户拜访', '查看对账'],
+    ] as const) {
+      const row = await rowOf(name);
+      const actions = row.querySelector('td:last-child') as HTMLElement;
+      expect(within(actions).getAllByRole('link').map((link) => link.textContent)).toEqual([primary]);
+      expect(within(actions).getAllByRole('button')).toHaveLength(1);
+      expect(within(actions).getByRole('button', { name: '更多' })).toBeTruthy();
+      expect(within(row).queryByRole('button', { name: /作废/ })).toBeNull();
+    }
+    // 已交接、写入结局为 none 的任务没有主操作，只剩「更多」。
     const t3 = await rowOf('2026-06 北京培训');
-    expect((within(t3).getByRole('button', { name: '作废 2026-06 北京培训' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(t3).queryAllByRole('link')).toHaveLength(0);
+    expect(within(t3).getAllByRole('button')).toHaveLength(1);
+    expect(within(t3).getByRole('button', { name: '更多' })).toBeTruthy();
+  });
 
+  test('作废：可作废的任务从「更多」菜单作废，弹出危险确认，确认后从列表消失', async () => {
+    renderApp('#/tasks');
     const t1 = await rowOf('2026-08 上海出差（产品评审）');
-    fireEvent.click(within(t1).getByRole('button', { name: '作废 2026-08 上海出差（产品评审）' }));
+    const menu = await openMore(t1, '2026-08 上海出差（产品评审）');
+    const item = abandonItem(menu);
+    expect(item.disabled).toBe(false);
+    // Carbon 的 delete 项（红色危险项）。
+    expect(item.closest('li')?.classList.contains('cds--overflow-menu-options__option--danger')).toBe(true);
+    fireEvent.click(item);
     // 点作废不进入任务页，先弹出二次确认。
     expect(window.location.hash).toBe('#/tasks');
     const dialog = screen.getByRole('dialog', { name: ABANDON_TASK_COPY.dialogTitle });
@@ -105,16 +147,23 @@ describe('任务列表', () => {
     expect(screen.getByText('2026-07 深圳客户拜访')).toBeTruthy();
   });
 
-  test('工具栏：状态筛选的条数取自这张列表，筛选与搜索只挑行显示；不能作废的原因在提示里', async () => {
+  test('不可作废的任务：「更多」里的作废置灰，下面照抄服务端给出的原因', async () => {
     renderApp('#/tasks');
-    const t2 = await rowOf('2026-07 深圳客户拜访');
-    const locked = within(t2).getByRole('button', { name: '作废 2026-07 深圳客户拜访' });
-    // 提示挂在包着不可用按钮的可聚焦容器上（不可用的按钮收不到悬停与聚焦）。
-    const trigger = locked.closest('[aria-describedby]');
-    expect(trigger?.getAttribute('tabindex')).toBe('0');
-    const tip = document.getElementById(trigger?.getAttribute('aria-describedby') ?? '');
-    expect(tip?.getAttribute('role')).toBe('tooltip');
-    expect(tip?.textContent).toBe(ABANDON_TASK_COPY.blockedReason);
+    for (const name of ['2026-07 深圳客户拜访', '2026-06 北京培训']) {
+      const menu = await openMore(await rowOf(name), name);
+      const item = abandonItem(menu);
+      expect(item.disabled).toBe(true);
+      expect(within(menu).getByText(ABANDON_TASK_COPY.blockedReason)).toBeTruthy();
+      // 读屏把原因作为这一项的说明读出。
+      expect(document.getElementById(item.getAttribute('aria-describedby') ?? '')?.textContent).toBe(ABANDON_TASK_COPY.blockedReason);
+      fireEvent.click(item);
+      expect(screen.queryByRole('dialog')).toBeNull();
+    }
+  });
+
+  test('工具栏：状态筛选的条数取自这张列表，筛选与搜索只挑行显示', async () => {
+    renderApp('#/tasks');
+    await rowOf('2026-07 深圳客户拜访');
 
     const filters = screen.getByRole('tablist', { name: '按状态筛选' });
     expect(within(filters).getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['全部 3', '进行中 1', '对账中 1', '已交接 1']);
@@ -134,8 +183,8 @@ describe('任务列表', () => {
     const adapter = createMockAdapter({ seed: 'erp', fault: null });
     window.location.hash = '#/tasks';
     render(<App adapter={adapter} />);
-    const t1 = await rowOf('2026-08 上海出差（产品评审）');
-    expect((within(t1).getByRole('button', { name: '作废 2026-08 上海出差（产品评审）' }) as HTMLButtonElement).disabled).toBe(true);
+    const menu = await openMore(await rowOf('2026-08 上海出差（产品评审）'), '2026-08 上海出差（产品评审）');
+    expect(abandonItem(menu).disabled).toBe(true);
     const refused = await adapter.abandonTask('T1');
     expect(!refused.ok && refused.error.message).toBe(ABANDON_TASK_COPY.blockedReason);
   });

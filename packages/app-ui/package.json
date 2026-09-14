@@ -23,6 +23,7 @@
     "fixtures:verify": "node fixtures/scripts/verify.mjs"
   },
   "dependencies": {
+    "@carbon/feature-flags": "^1.9.0",
     "@carbon/icons-react": "^11.88.0",
     "@carbon/react": "^1.115.0",
     "@carbon/styles": "^1.115.0",

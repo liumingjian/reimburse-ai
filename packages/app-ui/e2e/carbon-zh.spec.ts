@@ -29,6 +29,8 @@ const ENGLISH = [
   'Show password',
   'Hide password',
   'Open menu',
+  'Options',
+  'Provide itemText',
   'Loading',
   'error icon',
   'info icon',
@@ -76,9 +78,20 @@ test('主要页面没有 Carbon 自带的英文文案', async ({ page }) => {
   }
 });
 
-test('弹层打开时也没有英文文案（作废确认、新建任务、追加材料）', async ({ page }) => {
+test('弹层打开时也没有英文文案（「更多」菜单、作废确认、新建任务、追加材料）', async ({ page }) => {
   await page.goto(open('', '#/tasks'));
-  await page.getByRole('button', { name: '作废 2026-08 上海出差（产品评审）' }).click();
+  // 「更多」菜单：菜单按钮的可访问名称与提示、菜单与菜单项都是中文（可作废与置灰两种都查）。
+  const moreButtons = page.getByRole('button', { name: '更多', exact: true });
+  await expect(moreButtons).toHaveCount(3);
+  await page.getByRole('row', { name: /2026-07 深圳客户拜访/ }).getByRole('button', { name: '更多' }).click();
+  await expect(page.getByRole('menu', { name: '2026-07 深圳客户拜访的更多操作' }).getByRole('menuitem', { name: '作废' })).toBeDisabled();
+  expect(await englishLeftovers(page), '「更多」菜单（不能作废）').toEqual([]);
+  await page.keyboard.press('Escape');
+  await page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByRole('button', { name: '更多' }).click();
+  const item = page.getByRole('menu', { name: '2026-08 上海出差（产品评审）的更多操作' }).getByRole('menuitem', { name: '作废' });
+  await expect(item).toBeEnabled();
+  expect(await englishLeftovers(page), '「更多」菜单').toEqual([]);
+  await item.click();
   await expect(page.getByRole('dialog', { name: '作废这个报销任务？' })).toBeVisible();
   expect(await englishLeftovers(page), '作废确认').toEqual([]);
   await page.keyboard.press('Escape');

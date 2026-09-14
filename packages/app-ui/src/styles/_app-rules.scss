@@ -460,15 +460,33 @@ $gutter: $spacing-06;
   .cds--btn:has(.cds--btn__icon) {
     padding-inline-end: $spacing-09;
   }
+}
 
-  // 不可用的「作废」不接鼠标事件：悬停落在包着它的可聚焦容器上，提示照常出现。
-  .cds--btn:disabled {
-    pointer-events: none;
-  }
+// 「更多」菜单：不能作废时菜单项下面有一行原因。Carbon 的菜单项定高、单行截断，这一项放开高度让原因折行读完；
+// 菜单也比 Carbon 默认的 10rem 宽一些，原因不至于折成好几行。
+.app-more-menu.cds--overflow-menu-options {
+  inline-size: 18rem;
+}
 
-  .app-locked-action {
-    display: inline-flex;
+.app-more-menu .cds--overflow-menu-options__option--disabled {
+  block-size: auto;
+
+  .cds--overflow-menu-options__btn {
+    block-size: auto;
+    padding-block: $spacing-03;
   }
+}
+
+.app-more-menu-item {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-02;
+  white-space: normal;
+}
+
+.app-more-menu-reason {
+  color: $text-secondary;
+  @include type.type-style('helper-text-01');
 }
 
 // ---------- 摘要条（整单明细确认、完成、对账） ----------

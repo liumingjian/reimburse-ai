@@ -1,4 +1,5 @@
 import { useEffect, useMemo, type ReactNode } from 'react';
+import { merge as mergeCarbonFlags } from '@carbon/feature-flags';
 import { FeatureFlags } from '@carbon/react';
 import { AppProvider, useTaskList } from './adapter/context';
 import { AppStore } from './adapter/store';
@@ -12,6 +13,10 @@ import { StartupPage, StartupPending } from './pages/StartupPage';
 import { TaskListPage } from './pages/TaskListPage';
 import { PAGE_COPY, TaskRoute } from './pages/TaskRoute';
 import { navigate, useRoute, type Route } from './router';
+
+// Carbon 的 OverflowMenu 浮层（FloatingMenu）读 @carbon/feature-flags 的全局开关，不读下面 <FeatureFlags> 的上下文：
+// 不打开的话，菜单打开时会多出两个写着英文「Focus sentinel」的读屏链接。
+mergeCarbonFlags({ 'enable-focus-wrap-without-sentinels': true });
 
 function titleOf(route: Route): string {
   switch (route.kind) {
@@ -75,6 +80,7 @@ function StartupGate({ children }: { children: ReactNode }) {
 export function App({ adapter }: { adapter: AppAdapter }) {
   const store = useMemo(() => new AppStore(adapter, { validate: VALIDATE_SNAPSHOTS }), [adapter]);
   // Carbon 弹层默认用两个写着英文「Focus sentinel」的隐藏元素兜住焦点；打开这个开关改用不带哨兵元素的焦点循环。
+  // 弹层（Modal）读这里的上下文开关；OverflowMenu 的浮层读全局开关，见文件顶部的 mergeCarbonFlags。
   return (
     <FeatureFlags enableFocusWrapWithoutSentinels>
       <AppProvider store={store}>
