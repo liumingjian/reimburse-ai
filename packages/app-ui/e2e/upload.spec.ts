@@ -54,8 +54,10 @@ test('正常上传：pdf/jpg/png 逐文件已接收，按批次列出并出现�
   await expect(row(page, first, '全季酒店_发票.pdf').getByRole('img', { name: 'PDF' })).toBeVisible();
   await expect(row(page, first, 'IMG_4871.jpg').getByRole('img', { name: '图片' })).toBeVisible();
   await expect(row(page, first, 'IMG_4906.png').getByRole('img', { name: '图片' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '开始材料盘点' })).toBeEnabled();
-  await expect(page.getByRole('button', { name: '追加下一批' })).toBeVisible();
+  const next = page.getByRole('region', { name: '下一步' });
+  await expect(next.getByRole('button', { name: '开始材料盘点' })).toBeEnabled();
+  await expect(next.getByRole('button', { name: '追加下一批' })).toBeVisible();
+  await expect(next).toContainText('开始盘点后，追加或删除材料会形成新的盘点版本。');
   await page.screenshot({ path: testInfo.outputPath('upload-accepted.png'), fullPage: true });
 });
 

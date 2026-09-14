@@ -4,7 +4,7 @@ import { Add, CheckmarkFilled, Document, DocumentPdf, Image as ImageIcon, Warnin
 import { UPLOAD_ACCEPT_ATTRIBUTE, type TaskSnapshot, type UploadBatch, type UploadFileResult } from '../contract/snapshot';
 import { formatBytes, hashPrefix } from '../format';
 import { navigate, taskHash } from '../router';
-import { ActionError } from '../shell/ActionError';
+import { ActionBar } from '../shell/ActionBar';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
@@ -17,6 +17,7 @@ import { PAGE_COPY } from './page-copy';
 // Layout follows Carbon's file uploader: label and format rules above a stock FileUploaderDropContainer
 // whose only content is the link-style prompt. File rows are tagged only when rejected (exceptions only).
 
+// 「开始材料盘点」与「追加下一批」在吸底操作栏里（#141），不在追加区打开时显示。
 // 拖放区下方说明下一步。盘点要员工点「开始材料盘点」才开始（服务端不会在上传后自动盘点），文案照实说。
 export const UPLOAD_NEXT_STEP = '上传后点「开始材料盘点」，系统开始盘点。';
 export const UPLOAD_PROMPT = '拖入文件，或点击选择';
@@ -173,16 +174,22 @@ export function UploadPage({ snapshot }: { snapshot: TaskSnapshot }) {
           ) : null}
         </section>
       ) : (
-        <div className="app-btn-row app-block">
-          <Button disabled={busy || !hasMaterials} onClick={() => void startInventory()}>
-            开始材料盘点
-          </Button>
-          <Button kind="ghost" renderIcon={Add} disabled={busy} onClick={append}>
-            追加下一批
-          </Button>
-          <span className="app-caption">{hasMaterials ? '开始盘点后，追加或删除材料会形成新的盘点版本。' : '还没有被接收的材料，请追加下一批。'}</span>
-          <ActionError message={error} />
-        </div>
+        <ActionBar
+          label="下一步"
+          consequence={hasMaterials ? '开始盘点后，追加或删除材料会形成新的盘点版本。' : null}
+          caption={hasMaterials ? null : '还没有被接收的材料，请追加下一批。'}
+          actions={
+            <>
+              <Button kind="ghost" renderIcon={Add} disabled={busy} onClick={append}>
+                追加下一批
+              </Button>
+              <Button disabled={busy || !hasMaterials} onClick={() => void startInventory()}>
+                开始材料盘点
+              </Button>
+            </>
+          }
+          error={error}
+        />
       )}
       {reopen.dialog}
     </>

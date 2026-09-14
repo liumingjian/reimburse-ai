@@ -16,6 +16,7 @@ import { CheckmarkFilled, InProgress } from '@carbon/icons-react';
 import { MATERIAL_ROLE_LABELS, type ExpenseEvent, type Material, type TaskSnapshot } from '../contract/snapshot';
 import { formatDateTime } from '../format';
 import { taskHash } from '../router';
+import { ActionBar } from '../shell/ActionBar';
 import { PageHeader } from '../shell/PageHeader';
 import { StatusTag } from '../shell/StatusTag';
 import { DuplicateBlockers } from './DuplicateBlockers';
@@ -31,6 +32,7 @@ import { PAGE_COPY } from './page-copy';
 // UI state; the header has expand-all / collapse-all. Only exceptions are marked: passed materials carry no tag.
 // Materials not in any event get their own section below the table.
 // The summary bar matches whole-claim review; every count comes from the server's inventory.summary.
+// The next step (处理 N 个待确认项 or 进入项目归属) sits in the sticky action bar, not the page header (#141).
 
 // Pending uses the shared status tag (icon plus text); excluded and not-yet-inventoried use neutral gray tags.
 function StatusMark({ status }: { status: Material['status'] | null }) {
@@ -224,19 +226,7 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   return (
     <>
-      <PageHeader
-        title={copy.title}
-        lead={lead}
-        actions={
-          summary && !blocked ? (
-            summary.openPendingItemCount > 0 ? (
-              <Button href={taskHash(taskId, 'pending')}>处理 {summary.openPendingItemCount} 个待确认项</Button>
-            ) : (
-              <Button href={taskHash(taskId, 'project')}>进入项目归属</Button>
-            )
-          ) : null
-        }
-      />
+      <PageHeader title={copy.title} lead={lead} />
 
       {!summary ? (
         <Progress snapshot={snapshot} />
@@ -316,6 +306,19 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
           ) : null}
         </>
       )}
+      {summary && !blocked ? (
+        <ActionBar
+          label="下一步"
+          consequence={summary.openPendingItemCount > 0 ? '待确认项处理完后，才能进入项目归属。' : null}
+          actions={
+            summary.openPendingItemCount > 0 ? (
+              <Button href={taskHash(taskId, 'pending')}>处理 {summary.openPendingItemCount} 个待确认项</Button>
+            ) : (
+              <Button href={taskHash(taskId, 'project')}>进入项目归属</Button>
+            )
+          }
+        />
+      ) : null}
     </>
   );
 }

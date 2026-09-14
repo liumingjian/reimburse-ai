@@ -46,7 +46,9 @@ describe('材料盘点', () => {
   test('?seed=inventory：费用事件可展开表格，列与表头一致，结论只说一次，不显示字段与来源；入口带待确认项数量', async () => {
     renderAt('#/task/T1/inventory', 'inventory');
     expect(await screen.findByRole('heading', { name: '材料盘点' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: '处理 3 个待确认项' }).getAttribute('href')).toBe('#/task/T1/pending');
+    // The next step sits in the sticky action bar; the page header carries no action (#141).
+    const next = screen.getByRole('region', { name: '下一步' });
+    expect(within(next).getByRole('link', { name: '处理 3 个待确认项' }).getAttribute('href')).toBe('#/task/T1/pending');
     // Summary bar under the title (same as whole-claim review); values match the server summary in the mock snapshot.
     const served = t1Snapshot('inventory').inventory;
     const counts = served.summary!;
