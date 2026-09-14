@@ -209,16 +209,16 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const ungrouped = snapshot.inventory.ungroupedMaterialIds.flatMap((id) => byId.get(id) ?? []);
   // Open / closed is pure UI state: remember the user's choice per group (including expand-all / collapse-all);
   // groups never chosen follow "does the group contain a pending material".
-  const [chosen, setChosen] = useState<ReadonlyMap<string, boolean>>(new Map());
+  const [userExpanded, setUserExpanded] = useState<ReadonlyMap<string, boolean>>(new Map());
   const rows = groups.map((group) => {
     const key = group.voucher.materialId;
     const materials = [group.voucher, ...group.references];
     const status = groupStatus(materials);
-    return { key, group, status, expanded: chosen.get(key) ?? status === 'pending' };
+    return { key, group, status, expanded: userExpanded.get(key) ?? status === 'pending' };
   });
   const allExpanded = rows.length > 0 && rows.every((row) => row.expanded);
-  const setExpanded = (key: string, expanded: boolean) => setChosen((previous) => new Map(previous).set(key, expanded));
-  const setAll = (expanded: boolean) => setChosen(new Map(rows.map((row) => [row.key, expanded])));
+  const setExpanded = (key: string, expanded: boolean) => setUserExpanded((previous) => new Map(previous).set(key, expanded));
+  const setAll = (expanded: boolean) => setUserExpanded(new Map(rows.map((row) => [row.key, expanded])));
 
   const version = snapshot.inventory.versionId;
   const finishedAt = snapshot.inventory.finishedAt;
@@ -309,7 +309,7 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
       {summary && !blocked ? (
         <ActionBar
           label="下一步"
-          consequence={summary.openPendingItemCount > 0 ? '待确认项处理完后，才能进入项目归属。' : null}
+          consequence={null}
           actions={
             summary.openPendingItemCount > 0 ? (
               <Button href={taskHash(taskId, 'pending')}>处理 {summary.openPendingItemCount} 个待确认项</Button>

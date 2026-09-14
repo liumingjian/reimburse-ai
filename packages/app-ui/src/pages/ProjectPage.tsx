@@ -49,21 +49,28 @@ const SUBMIT_STEP_KINDS: ReadonlySet<StepKind> = new Set<StepKind>(['assign_proj
 // ERP 写入开始后只读。形状照内核项目归属页面（project-workbench.mjs Variant B）：
 // - 左边明细按费用类别分组（服务端给出的 lines 顺序即内核分类排序），组标题带复选框和条数，可按类别全选；
 //   每条明细是一行紧凑的表格行（日期范围、城市、路线与脱敏票号、当前归属、价税合计），各组共用同一套列宽，与顶部表头对齐。
-// - 右边「本次归属」是只读摘要：本次归属用到的项目，带项目号、条数与金额（服务端给出，页面不计算），没有按钮。
-//   1280px 以下它排到明细表下方，明细表保留可读的列宽。
-// Carbon 批量操作模式（#138）：勾选明细后表格工具栏变成批量操作栏（已选 N 条、归入项目、取消）；没勾选时没有归入入口。
-// 「归入项目」打开项目弹层：搜索加单选列表，只列可选项目（快照只给可选项目），本次已用的排在前面并带条数；
-// 弹层里可以打开「新增项目」面板，勾选的明细与选中的项目都保留。确认后由服务端改本次正在编辑的归属（working）；
-// 碰到已有其他项目的明细时，先弹出「只处理未归属 / 确认覆盖 / 取消」。页头填报销事由；常驻城市只读。提交在吸底操作栏里。
+// - The right-hand summary (本次归属, this assignment) is read-only: the projects this assignment uses, with project
+//   number, line count and amount (from the server; the page computes nothing). No buttons.
+//   Below 1280px it moves under the line table, so the table keeps readable column widths.
+// Carbon batch-action mode (#138): once lines are selected, the table toolbar turns into the batch action bar
+// (已选 N 条, 归入项目 assign to project, 取消 cancel). With nothing selected there is no way to assign.
+// 归入项目 opens the project modal: a search plus a single-choice list of selectable projects only (the snapshot
+// only lists selectable ones), with projects already used here first and their line counts.
+// From the modal the user can open the 新增项目 (add project) panel; the selected lines and the chosen project are
+// kept. On confirm the server changes the assignment being edited (working).
+// If a selected line already has another project, the page first asks 只处理未归属 (only unassigned) / 确认覆盖
+// (overwrite) / 取消 (cancel). The page header holds the reimbursement purpose (报销事由); the home city is
+// read-only. Submitting lives in the sticky action bar.
 
 type Target = { number: string; name: string };
 type Conflict = { project: Target; count: number };
-// 项目弹层的一项：本次已用的项目带服务端给出的条数，其余为 null。
+// One entry in the project modal: projects already used here carry the server's line count; the rest carry null.
 type Option = Target & { lineCount: number | null };
-// 同一时刻最多一个弹层：项目弹层与「新增项目」面板交替打开（不叠两层），关掉面板回到项目弹层。
+// At most one modal at a time: the project modal and the 新增项目 (add project) panel take turns (never stacked);
+// closing the panel returns to the project modal.
 type Modal = 'none' | 'pick' | 'add';
 
-// Carbon 批量操作栏的文案（默认英文：items selected、Cancel）换成中文。
+// Chinese copy for Carbon's batch action bar (defaults are English: "items selected", "Cancel").
 function batchText(id: string, args?: { totalSelected?: number }): string {
   if (id === 'carbon.table.batch.cancel') return '取消';
   return `已选 ${args?.totalSelected ?? 0} 条`;
@@ -164,8 +171,8 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   const [query, setQuery] = useState('');
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [modal, setModal] = useState<Modal>('none');
-  // 项目弹层里选中的项目号（单选）；打开「新增项目」面板再回来时保留。
-  const [choice, setChoice] = useState<string | null>(null);
+  // Project number picked in the project modal (single choice); kept across a trip to the add-project panel.
+  const [pickedNumber, setPickedNumber] = useState<string | null>(null);
   const closeAdd = useCallback(() => setModal('pick'), []);
   const { busy, error, run, clearError } = useAction(taskId);
 
@@ -175,13 +182,15 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   const groups = groupByCategory(visible);
   const allVisibleSelected = visible.length > 0 && visible.every((line) => selected.has(line.lineId));
   const used = new Set(assignment.usage.map((entry) => entry.number));
-  // 弹层只列可选项目：本次已用的（可选的）在前，带条数；其余按项目簿顺序。不可选的（已锁定）不能归入新的明细，不列。
+  // The modal lists selectable projects only: those already used here (and still selectable) first, with line counts;
+  // the rest in project-book order. Locked projects cannot take new lines, so they are not listed.
   const options: Option[] = [
     ...assignment.usage.filter((entry) => entry.selectable).map((entry) => ({ number: entry.number, name: entry.name, lineCount: entry.lineCount })),
     ...assignment.projects.filter((project) => !used.has(project.number)).map((project) => ({ number: project.number, name: project.name, lineCount: null })),
   ];
   const shownOptions = options.filter((option) => matches(option, query));
-  const chosen = shownOptions.find((option) => option.number === choice) ?? null;
+  // The picked project, if it still matches the search; otherwise nothing is picked.
+  const pickedOption = shownOptions.find((option) => option.number === pickedNumber) ?? null;
   const assignedCount = lines.filter((line) => current[line.lineId]).length;
   // 提交按钮只看表单是否填完（每条明细都已归属、事由非空）：这是 #105 要求的输入校验，不是业务判定；
   // 项目能否用、归属是否成立仍由服务端在提交时判定。
@@ -214,7 +223,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
 
   const openPicker = () => {
     setQuery('');
-    setChoice(null);
+    setPickedNumber(null);
     setModal('pick');
   };
 
@@ -295,8 +304,9 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
 
       <div className="app-project-split bleed">
         <section className="app-assign-main" aria-label="费用明细">
-          {/* Carbon 表格工具栏：平时一行放全选、筛选与已选条数；勾选明细后批量操作栏盖住这一行（已选 N 条、归入项目、取消）。
-              批量操作栏没显示时 Carbon 给它 aria-hidden，读屏与按角色查找都看不到它。 */}
+          {/* Carbon table toolbar: normally one row with select-all, the filter and the selected count; once lines are
+              selected the batch action bar covers that row (已选 N 条, 归入项目, 取消).
+              While the batch action bar is not shown Carbon gives it aria-hidden, so screen readers and role queries skip it. */}
           <TableToolbar aria-label="明细工具栏">
             <TableBatchActions
               role="region"
@@ -310,7 +320,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
                 归入项目
               </TableBatchAction>
             </TableBatchActions>
-            <TableToolbarContent className="app-assign-toolbar" aria-hidden={selected.size > 0}>
+            <TableToolbarContent className="app-assign-toolbar" role="group" aria-label="明细选择与筛选" aria-hidden={selected.size > 0}>
               <Checkbox
                 id="assign-select-all"
                 labelText="全选当前明细"
@@ -318,7 +328,8 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
                 disabled={locked || visible.length === 0}
                 onChange={() => toggle(visible.map((line) => line.lineId), !allVisibleSelected)}
               />
-              {/* 筛选不是行选择：与任务列表一样用 ContentSwitcher（全部 / 未归属），不用复选框；宽度按内容。 */}
+              {/* Filtering is not row selection: like the task list it uses a ContentSwitcher (全部 all / 未归属 unassigned),
+                  not a checkbox, sized to its content. */}
               <ContentSwitcher aria-label="明细筛选" size="sm" selectedIndex={onlyUnassigned ? 1 : 0} onChange={(data: { index?: number }) => filterUnassigned(data.index === 1)}>
                 <Switch name="all" text="全部" disabled={locked} />
                 <Switch name="unassigned" text="未归属" disabled={locked} />
@@ -385,7 +396,8 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
           )}
         </section>
 
-        {/* 只读摘要：本次归属用到的项目，数字全部来自服务端；选项目在「归入项目」弹层里做。 */}
+        {/* Read-only summary of the projects this assignment uses; every number comes from the server. Picking a project
+            happens in the 归入项目 (assign to project) modal. */}
         <aside className="app-project-aside" role="complementary" aria-label="本次归属">
           <h2 className="app-aside-title">本次归属</h2>
           {assignment.usage.length > 0 ? (
@@ -406,7 +418,8 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
                       />
                     </div>
                   </div>
-                  {/* 已从项目簿删除的项目：已归入的明细沿用，但不能再归入新的明细（弹层里不列）。 */}
+                  {/* A project deleted from the project book: lines already assigned keep it, but it cannot take new lines
+                      (the modal does not list it). */}
                   {entry.selectable ? null : <StatusTag tone="locked">已锁定</StatusTag>}
                 </li>
               ))}
@@ -480,8 +493,8 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
                 name="assign-project"
                 legendText="选择项目"
                 orientation="vertical"
-                valueSelected={chosen?.number ?? ''}
-                onChange={(value: unknown) => setChoice(String(value))}
+                valueSelected={pickedOption?.number ?? ''}
+                onChange={(value: unknown) => setPickedNumber(String(value))}
               >
                 {shownOptions.map((option) => (
                   <RadioButton
@@ -492,7 +505,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
                       <span className="app-picker-option">
                         <span className="name">{option.name}</span>
                         <span className="app-code app-caption">{option.number}</span>
-                        {/* 本次已用的项目带条数（服务端给出）。 */}
+                        {/* Projects already used here show their line count (from the server). */}
                         {option.lineCount !== null ? <span className="app-caption">本次 {option.lineCount} 条</span> : null}
                       </span>
                     }
@@ -500,9 +513,10 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
                 ))}
               </RadioButtonGroup>
             )}
-            {/* 就地新增（对 Skill 的小增强，README 注明）：换成项目簿维护面板，关掉后回到这里，勾选的明细与选中的项目都不丢；
-                新项目随服务端推送的快照出现在列表里。 */}
-            <Button kind="ghost" size="sm" renderIcon={Add} onClick={() => setModal('add')}>
+            {/* In-place add (a small enhancement over the Skill, noted in the README): swaps to the project-book panel and
+                returns here on close, keeping the selected lines and the picked project. A new project shows up in the list
+                with the next snapshot the server pushes. Disabled once ERP writing has started, like every edit here. */}
+            <Button kind="ghost" size="sm" renderIcon={Add} disabled={locked} onClick={() => setModal('add')}>
               {PROJECT_BOOK_COPY.addProject}
             </Button>
           </ModalBody>
@@ -510,7 +524,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
             <Button kind="secondary" onClick={() => setModal('none')}>
               取消
             </Button>
-            <Button disabled={!chosen || !canAct || busy} onClick={() => (chosen ? assign(chosen) : undefined)}>
+            <Button disabled={!pickedOption || !canAct || busy} onClick={() => (pickedOption ? assign(pickedOption) : undefined)}>
               确认归入
             </Button>
           </ModalFooter>

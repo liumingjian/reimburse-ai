@@ -63,7 +63,7 @@ $gutter: $spacing-06;
   gap: $spacing-03;
 }
 
-// ---------- 上传材料：批次文件清单（拖放区是 Carbon 原样的 FileUploaderDropContainer，不另写样式） ----------
+// ---------- Upload (上传材料): batch file lists (the drop zone is a stock Carbon FileUploaderDropContainer, no extra styles) ----------
 
 .app-upload-first {
   margin-block-start: $spacing-03;
@@ -681,7 +681,8 @@ $doc-frame-block: var(--app-doc-frame-block);
   }
 }
 
-// 工具栏一行：全选、筛选（宽度按内容，不拉满）、已选条数。Carbon 的 toolbar-content 默认右对齐，这里改为从左排。
+// One toolbar row: select-all, the filter (sized to its content, not stretched), the selected count.
+// Carbon's toolbar-content aligns right by default; here it runs from the left.
 .cds--toolbar-content.app-assign-toolbar {
   justify-content: flex-start;
   align-items: center;
@@ -702,7 +703,7 @@ $doc-frame-block: var(--app-doc-frame-block);
   margin-inline-start: auto;
 }
 
-// 项目弹层的单选项：名称、项目号、本次条数排成一行。
+// A radio option in the project modal: name, project number and line count on one row.
 .app-picker-option {
   display: inline-flex;
   flex-wrap: wrap;
@@ -1143,7 +1144,8 @@ $doc-frame-block: var(--app-doc-frame-block);
   }
 }
 
-// 项目归属：1280px 以下「本次归属」摘要排到明细表下方，明细表保留可读的列宽（1100px 不横向滚动）。
+// Project assignment (项目归属): below 1280px the 本次归属 (this assignment) summary moves under the line table,
+// so the table keeps readable column widths (no horizontal scroll at 1100px).
 @media (max-width: 79.99rem) {
   .app-project-split {
     grid-template-columns: minmax(0, 1fr);
@@ -1155,7 +1157,7 @@ $doc-frame-block: var(--app-doc-frame-block);
   }
 }
 
-// 很窄的窗口：分栏改成上下排。
+// Very narrow windows: the split stacks vertically.
 @media (max-width: 56rem) {
   .crop-editor,
   .app-two-actions {

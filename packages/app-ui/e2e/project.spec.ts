@@ -225,7 +225,7 @@ for (const width of [1440, 1100]) {
     const selectAll = (await page.getByRole('checkbox', { name: '全选当前明细' }).locator('xpath=following-sibling::label[1]').boundingBox())!;
     const filter = (await page.getByRole('tablist', { name: '明细筛选' }).boundingBox())!;
     // The hidden batch action bar also holds an "已选 0 条" summary; measure the toolbar's own count.
-    const count = (await page.locator('.app-assign-toolbar').getByText('已选 0 条', { exact: true }).boundingBox())!;
+    const count = (await page.getByRole('group', { name: '明细选择与筛选' }).getByText('已选 0 条', { exact: true }).boundingBox())!;
     const middle = (box: { y: number; height: number }) => box.y + box.height / 2;
     expect(Math.abs(middle(filter) - middle(selectAll))).toBeLessThan(8);
     expect(Math.abs(middle(count) - middle(selectAll))).toBeLessThan(8);

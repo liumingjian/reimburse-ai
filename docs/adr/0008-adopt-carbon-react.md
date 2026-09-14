@@ -36,3 +36,14 @@
 - 以后升级 Carbon 大版本要跟着它的破坏性变更走。
 - 方案 B 的 PR #120 仍先合并：它的步骤条行为、横向滚动时首末列固定、测试时序修复与相关测试都沿用，
   只是 CSS 在迁移中被替换。迁移在分支 `ui-carbon-react` 上接着做。
+
+## Amendment (spec #135)
+
+Spec #135 adopts two DataTable features this ADR had left out, each on one page only:
+
+- Row expansion: the material inventory (材料盘点) expense-event table (#137).
+- Row selection with batch actions: project assignment (项目归属), where selected lines go to a project through
+  TableBatchActions (#138).
+
+Table sorting stays out. Every other table still has no row selection, batch actions or row expansion; each future
+use needs its own review. `packages/app-ui/DESIGN.md` records the current rules.

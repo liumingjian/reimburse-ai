@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Button, FileUploaderDropContainer, InlineNotification, Tag } from '@carbon/react';
 import { Add, CheckmarkFilled, Document, DocumentPdf, Image as ImageIcon, WarningAltFilled } from '@carbon/icons-react';
-import { UPLOAD_ACCEPT_ATTRIBUTE, type TaskSnapshot, type UploadBatch, type UploadFileResult } from '../contract/snapshot';
+import { UPLOAD_ACCEPT_ATTRIBUTE, uploadFileKind, type TaskSnapshot, type UploadBatch, type UploadFileResult } from '../contract/snapshot';
 import { formatBytes, hashPrefix } from '../format';
 import { navigate, taskHash } from '../router';
 import { ActionBar } from '../shell/ActionBar';
@@ -17,8 +17,10 @@ import { PAGE_COPY } from './page-copy';
 // Layout follows Carbon's file uploader: label and format rules above a stock FileUploaderDropContainer
 // whose only content is the link-style prompt. File rows are tagged only when rejected (exceptions only).
 
-// 「开始材料盘点」与「追加下一批」在吸底操作栏里（#141），不在追加区打开时显示。
-// 拖放区下方说明下一步。盘点要员工点「开始材料盘点」才开始（服务端不会在上传后自动盘点），文案照实说。
+// 开始材料盘点 (start material inventory) and 追加下一批 (append next batch) live in the sticky action bar (#141),
+// hidden while the append area is open.
+// The line under the drop zone states the next step. Inventory starts only when the employee clicks 开始材料盘点
+// (the server never starts it after an upload), and the copy says so.
 export const UPLOAD_NEXT_STEP = '上传后点「开始材料盘点」，系统开始盘点。';
 export const UPLOAD_PROMPT = '拖入文件，或点击选择';
 
@@ -56,10 +58,11 @@ function Dropzone({ busyCount, disabled, onFiles }: { busyCount: number; disable
 }
 
 // Icon by file type from the existing record (file name extension); anything else gets the plain document icon.
+// The type comes from the shared upload contract, so the icon and the accepted formats cannot drift apart.
 function FileIcon({ fileName }: { fileName: string }) {
-  const extension = fileName.split('.').pop()?.toLowerCase() ?? '';
-  if (extension === 'pdf') return <DocumentPdf className="app-file-icon" aria-label="PDF" />;
-  if (['jpg', 'jpeg', 'png', 'heic'].includes(extension)) return <ImageIcon className="app-file-icon" aria-label="图片" />;
+  const kind = uploadFileKind(fileName);
+  if (kind === 'pdf') return <DocumentPdf className="app-file-icon" aria-label="PDF" />;
+  if (kind === 'image') return <ImageIcon className="app-file-icon" aria-label="图片" />;
   return <Document className="app-file-icon" aria-hidden="true" />;
 }
 

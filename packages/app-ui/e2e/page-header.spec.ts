@@ -110,7 +110,9 @@ test('材料盘点与上传材料的下一步在吸底栏里，页头没有操�
   await expect(pageHead(page).getByRole('button')).toHaveCount(0);
   await expect(page.getByRole('region', { name: '下一步' }).getByRole('link', { name: '处理 3 个待确认项' })).toBeVisible();
 
-  await page.goto(open('?seed=upload', '#/task/T1/upload'));
+  // The upload page's next step needs at least one upload batch: a brand-new task shows only the drop zone
+  // (see upload.spec.ts), so this uses the inventory seed, whose T1 already has batch #1.
+  await page.goto(open('?seed=inventory', '#/task/T1/upload'));
   await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toBeVisible();
   await expect(pageHead(page).getByRole('button')).toHaveCount(0);
   const bar = page.getByRole('region', { name: '下一步' });
@@ -121,16 +123,41 @@ test('材料盘点与上传材料的下一步在吸底栏里，页头没有操�
   await expect(pageHead(page).getByRole('button', { name: '新建报销任务' })).toBeVisible();
 });
 
+// A primary button is one the user sees filled with the theme's primary button colour. Only buttons and
+// button-styled links reachable by role count, so elements Carbon keeps in the DOM but hides (aria-hidden batch
+// actions, closed modals) are skipped, as are invisible ones.
+async function visiblePrimaryButtons(page: Page): Promise<string[]> {
+  const main = page.getByRole('main');
+  const controls = await main.getByRole('button').or(main.getByRole('link')).all();
+  const primary: string[] = [];
+  for (const control of controls) {
+    if (!(await control.isVisible())) continue;
+    const filled = await control.evaluate((node) => {
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--cds-button-primary)';
+      node.append(probe);
+      const colour = getComputedStyle(probe).color;
+      probe.remove();
+      return getComputedStyle(node).backgroundColor === colour;
+    });
+    if (filled) primary.push((await control.innerText()).trim());
+  }
+  return primary;
+}
+
 test('步骤页最多一个主按钮', async ({ page }) => {
-  for (const [query, hash] of [
-    ['?seed=upload', '#/task/T1/upload'],
-    ['?seed=inventory', '#/task/T1/inventory'],
-    ['?seed=project', '#/task/T1/project'],
-    ['?seed=review', '#/task/T1/review'],
+  for (const [query, hash, expected] of [
+    ['?seed=upload', '#/task/T1/upload', []],
+    ['?seed=inventory', '#/task/T1/upload', ['开始材料盘点']],
+    ['?seed=inventory', '#/task/T1/inventory', ['处理 3 个待确认项']],
+    ['?seed=project', '#/task/T1/project', []],
+    ['?seed=review', '#/task/T1/review', null],
   ] as const) {
     await page.goto(open(query, hash));
     await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toBeVisible();
-    expect(await page.getByRole('main').locator('.cds--btn--primary').count(), `${hash} 主按钮数`).toBeLessThanOrEqual(1);
+    const primary = await visiblePrimaryButtons(page);
+    expect(primary.length, `${query}${hash} 主按钮：${primary.join('、')}`).toBeLessThanOrEqual(1);
+    if (expected) expect(primary, `${query}${hash} 主按钮`).toEqual(expected);
   }
 });
 
