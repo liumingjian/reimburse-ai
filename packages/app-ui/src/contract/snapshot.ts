@@ -10,29 +10,9 @@ import { TaskPeriodSchema } from './task-list';
 
 // 上传约束（spec #99）：接受 pdf/jpg/jpeg/png；HEIC 拒绝并提示；单文件 20MB；内容哈希重复由服务端拒绝。
 // 这些常量供服务端与 mock 共用；页面不据此判断，只显示服务端逐文件给出的结果。
-// The one definition of the accepted upload formats: the accepted extensions, the file input's accept attribute and
-// the page's file-type icon all derive from it.
-const UPLOAD_FORMATS = [
-  { extension: 'pdf', kind: 'pdf', mime: 'application/pdf' },
-  { extension: 'jpg', kind: 'image', mime: 'image/jpeg' },
-  { extension: 'jpeg', kind: 'image', mime: 'image/jpeg' },
-  { extension: 'png', kind: 'image', mime: 'image/png' },
-] as const;
-export type UploadFileKind = (typeof UPLOAD_FORMATS)[number]['kind'];
-export const UPLOAD_ACCEPTED_EXTENSIONS = UPLOAD_FORMATS.map((format) => format.extension);
+export const UPLOAD_ACCEPTED_EXTENSIONS = ['pdf', 'jpg', 'jpeg', 'png'] as const;
 export const UPLOAD_MAX_FILE_BYTES = 20 * 1024 * 1024;
-export const UPLOAD_ACCEPT_ATTRIBUTE = [
-  ...UPLOAD_FORMATS.map((format) => `.${format.extension}`),
-  ...new Set(UPLOAD_FORMATS.map((format) => format.mime)),
-].join(',');
-
-// File kind by name extension, for display only. HEIC is rejected on upload but is still an image, so a rejected HEIC
-// row keeps the image icon.
-export function uploadFileKind(fileName: string): UploadFileKind | null {
-  const extension = fileName.split('.').pop()?.toLowerCase() ?? '';
-  if (extension === 'heic') return 'image';
-  return UPLOAD_FORMATS.find((format) => format.extension === extension)?.kind ?? null;
-}
+export const UPLOAD_ACCEPT_ATTRIBUTE = '.pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png';
 
 export const UPLOAD_REJECT_CODES = ['unsupported_type', 'too_large', 'heic', 'duplicate_content'] as const;
 export const UploadRejectCodeSchema = z.enum(UPLOAD_REJECT_CODES);

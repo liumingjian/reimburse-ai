@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Button, FileUploaderDropContainer, InlineNotification, Tag } from '@carbon/react';
 import { Add, CheckmarkFilled, Document, DocumentPdf, Image as ImageIcon, WarningAltFilled } from '@carbon/icons-react';
-import { UPLOAD_ACCEPT_ATTRIBUTE, uploadFileKind, type TaskSnapshot, type UploadBatch, type UploadFileResult } from '../contract/snapshot';
+import { UPLOAD_ACCEPT_ATTRIBUTE, UPLOAD_ACCEPTED_EXTENSIONS, type TaskSnapshot, type UploadBatch, type UploadFileResult } from '../contract/snapshot';
 import { formatBytes, hashPrefix } from '../format';
 import { navigate, taskHash } from '../router';
 import { ActionBar } from '../shell/ActionBar';
@@ -57,10 +57,19 @@ function Dropzone({ busyCount, disabled, onFiles }: { busyCount: number; disable
   );
 }
 
+// File kind by name extension, for display only. Every accepted extension other than pdf is an image, read from the
+// contract's accepted list so the icon and the accepted formats cannot drift apart. HEIC is rejected on upload but is
+// still an image, so a rejected HEIC row keeps the image icon.
+function fileKind(fileName: string): 'pdf' | 'image' | null {
+  const extension = fileName.split('.').pop()?.toLowerCase() ?? '';
+  if (extension === 'pdf') return 'pdf';
+  if (extension === 'heic' || (UPLOAD_ACCEPTED_EXTENSIONS as readonly string[]).includes(extension)) return 'image';
+  return null;
+}
+
 // Icon by file type from the existing record (file name extension); anything else gets the plain document icon.
-// The type comes from the shared upload contract, so the icon and the accepted formats cannot drift apart.
 function FileIcon({ fileName }: { fileName: string }) {
-  const kind = uploadFileKind(fileName);
+  const kind = fileKind(fileName);
   if (kind === 'pdf') return <DocumentPdf className="app-file-icon" aria-label="PDF" />;
   if (kind === 'image') return <ImageIcon className="app-file-icon" aria-label="图片" />;
   return <Document className="app-file-icon" aria-hidden="true" />;
