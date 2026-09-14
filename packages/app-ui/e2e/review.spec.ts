@@ -212,7 +212,9 @@ test('确认后改派项目：确认失效并提示重新确认，重新确认�
   await page.getByRole('link', { name: '修改项目归属' }).click();
   await expect(page).toHaveURL(/#\/task\/T1\/project$/);
   await page.getByRole('checkbox', { name: '选择明细 No.9' }).locator('xpath=following-sibling::label[1]').click();
-  await page.getByRole('complementary', { name: '项目工作台' }).getByRole('button', { name: '归入 P-1180 内部培训' }).click();
+  await page.getByRole('region', { name: '批量操作' }).getByRole('button', { name: '归入项目' }).click();
+  await page.getByRole('dialog', { name: '归入项目' }).getByRole('radio', { name: /P-1180/ }).locator('xpath=following-sibling::label[1]').click();
+  await page.getByRole('dialog', { name: '归入项目' }).getByRole('button', { name: '确认归入' }).click();
   await page.getByRole('dialog', { name: '1 条明细已有其他项目归属，请确认是否覆盖' }).getByRole('button', { name: '确认覆盖' }).click();
   await page.getByRole('button', { name: '确认项目归属' }).click();
 

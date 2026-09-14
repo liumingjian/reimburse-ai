@@ -681,21 +681,41 @@ $doc-frame-block: var(--app-doc-frame-block);
   }
 }
 
-.app-assign-toolbar {
-  display: flex;
-  flex-wrap: wrap;
+// 工具栏一行：全选、筛选（宽度按内容，不拉满）、已选条数。Carbon 的 toolbar-content 默认右对齐，这里改为从左排。
+.cds--toolbar-content.app-assign-toolbar {
+  justify-content: flex-start;
   align-items: center;
-  gap: $spacing-03 $spacing-07;
-  min-block-size: 3rem;
-  padding: $spacing-03 $gutter;
+  gap: $spacing-07;
+  padding-inline: $gutter;
 
-  .cds--form-item {
+  .cds--form-item,
+  .cds--content-switcher {
     flex: none;
+  }
+
+  .cds--content-switcher {
+    inline-size: auto;
   }
 }
 
 .app-assign-count {
   margin-inline-start: auto;
+}
+
+// 项目弹层的单选项：名称、项目号、本次条数排成一行。
+.app-picker-option {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: $spacing-02 $spacing-04;
+
+  .name {
+    font-weight: 600;
+  }
+}
+
+.app-project-picker {
+  margin-block: $spacing-05 $spacing-03;
 }
 
 // 各组的表共用一套列宽，表头只画一次。
@@ -1123,17 +1143,23 @@ $doc-frame-block: var(--app-doc-frame-block);
   }
 }
 
-// 很窄的窗口：分栏改成上下排。
-@media (max-width: 56rem) {
-  .app-project-split,
-  .crop-editor,
-  .app-two-actions {
+// 项目归属：1280px 以下「本次归属」摘要排到明细表下方，明细表保留可读的列宽（1100px 不横向滚动）。
+@media (max-width: 79.99rem) {
+  .app-project-split {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .app-project-aside {
     border-inline-start: 0;
     border-block-start: 1px solid $border-subtle-01;
+  }
+}
+
+// 很窄的窗口：分栏改成上下排。
+@media (max-width: 56rem) {
+  .crop-editor,
+  .app-two-actions {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .app-action-card + .app-action-card {

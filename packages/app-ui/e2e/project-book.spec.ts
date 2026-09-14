@@ -93,11 +93,13 @@ test('?book=empty：从待确认项走到项目归属时被引导进维护入口
   await continueButton.click();
   await expect(h1(page, '项目归属')).toBeVisible();
   await expect(page).toHaveURL(/#\/task\/T1\/project$/);
-  const workbench = page.getByRole('complementary', { name: '项目工作台' });
-  await expect(workbench.getByRole('button', { name: '归入 P-6021 年度预算评审' })).toBeVisible();
   await page.getByLabel('报销事由').fill('上海产品评审出差');
   await page.getByRole('checkbox', { name: '全选当前明细' }).locator('xpath=following-sibling::label[1]').click();
-  await workbench.getByRole('button', { name: '归入 P-5108 苏州门店巡检' }).click();
+  await page.getByRole('region', { name: '批量操作' }).getByRole('button', { name: '归入项目' }).click();
+  const picker = page.getByRole('dialog', { name: '归入项目' });
+  await expect(picker.getByRole('radio', { name: /P-6021/ })).toHaveCount(1);
+  await picker.getByRole('radio', { name: /P-5108/ }).locator('xpath=following-sibling::label[1]').click();
+  await picker.getByRole('button', { name: '确认归入' }).click();
   await expect(page.getByTestId('project-of-1')).toHaveText('P-5108 / 苏州门店巡检');
   await expect(page.getByTestId('assign-summary')).toHaveText('已归属9 / 9 条整单合计3972.59 元');
   await page.getByRole('button', { name: '确认项目归属' }).click();
@@ -116,24 +118,27 @@ test('?erp=logged-out 未完成登录：项目簿页从顶栏可进，说明原�
   await expect(row(page, 'P-5108')).toHaveCount(0);
 });
 
-test('入口：顶栏常驻「个人项目簿」；项目归属页「新增项目」弹层就地录入，勾选的明细保持勾选，新项目可选', async ({ page }) => {
+test('入口：顶栏常驻「个人项目簿」；项目归属页「归入项目」弹层里点「新增项目」就地录入，勾选的明细保持勾选，新项目可选', async ({ page }) => {
   await page.goto(open('?seed=project', '#/task/T1/project'));
   await expect(h1(page, '项目归属')).toBeVisible();
   await expect(page.getByRole('navigation', { name: '全局' }).getByRole('link', { name: '个人项目簿' })).toHaveAttribute('href', '#/projects');
-  const workbench = page.getByRole('complementary', { name: '项目工作台' });
   await page.getByRole('checkbox', { name: '选择明细 No.3' }).locator('xpath=following-sibling::label[1]').click();
   await page.getByRole('checkbox', { name: '选择明细 No.4' }).locator('xpath=following-sibling::label[1]').click();
-  await workbench.getByRole('button', { name: '新增项目' }).click();
+  await page.getByRole('region', { name: '批量操作' }).getByRole('button', { name: '归入项目' }).click();
+  const picker = page.getByRole('dialog', { name: '归入项目' });
+  await expect(picker.getByRole('radio', { name: /P-6021/ })).toHaveCount(0);
+  await picker.getByRole('button', { name: '新增项目' }).click();
   const dialog = page.getByRole('dialog', { name: '新增项目' });
   await expect(dialog.getByLabel('项目号')).toBeFocused();
   await intake(page, 'P-6021');
   await expect(dialog.getByTestId('book-row-P-6021')).toContainText('年度预算评审');
   await dialog.getByRole('button', { name: '完成' }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(h1(page, '项目归属')).toBeVisible();
-  await expect(page.getByRole('checkbox', { name: '选择明细 No.3' })).toBeChecked();
-  await expect(page.getByRole('checkbox', { name: '选择明细 No.4' })).toBeChecked();
-  await workbench.getByRole('button', { name: '归入 P-6021 年度预算评审' }).click();
+  // 关掉面板回到项目弹层：新项目可选，勾选的明细还在。
+  await expect(picker.getByText('已选 2 条明细')).toBeVisible();
+  await picker.getByRole('radio', { name: /P-6021/ }).locator('xpath=following-sibling::label[1]').click();
+  await picker.getByRole('button', { name: '确认归入' }).click();
+  await expect(picker).toHaveCount(0);
   await expect(page.getByTestId('project-of-3')).toHaveText('P-6021 / 年度预算评审');
   await expect(page.getByTestId('project-of-4')).toHaveText('P-6021 / 年度预算评审');
 });

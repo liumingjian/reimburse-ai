@@ -21,6 +21,14 @@ const claimButton = () => screen.queryByRole('button', { name: '去报销' });
 const bodyRows = () => within(table()).getAllByRole('row').filter((row) => row.closest('tbody'));
 const cells = (row: HTMLElement | undefined) => (row ? within(row).getAllByRole('cell').map((cell) => cell.textContent) : []);
 
+// 项目归属页：勾选明细后经批量操作栏「归入项目」弹层单选项目并确认。
+const assignViaPicker = (number: string) => {
+  fireEvent.click(within(screen.getByRole('region', { name: '批量操作' })).getByRole('button', { name: '归入项目' }));
+  const picker = screen.getByRole('dialog', { name: '归入项目' });
+  fireEvent.click(within(picker).getByRole('radio', { name: new RegExp(number) }));
+  fireEvent.click(within(picker).getByRole('button', { name: '确认归入' }));
+};
+
 const REMOTE = '外地市内交通';
 // 与内核 next.mjs:522-535 逐字一致的 13 列，前面加 No.。
 const HEADERS = ['No.', '发票', '项目号', '起始日期', '结束日期', '住宿地/城市', '出发点', '目的地', '费用分类', '费用项目', '发票类型', '费用金额', '税额', '总额'];
@@ -153,7 +161,7 @@ describe('整单明细确认', () => {
     fireEvent.click(await screen.findByRole('link', { name: '修改项目归属' }));
     expect(await screen.findByRole('heading', { name: '项目归属' })).toBeTruthy();
     fireEvent.click(screen.getByRole('checkbox', { name: '选择明细 No.9' }));
-    fireEvent.click(within(screen.getByRole('complementary', { name: '项目工作台' })).getByRole('button', { name: '归入 P-1180 内部培训' }));
+    assignViaPicker('P-1180');
     fireEvent.click(within(screen.getByRole('dialog', { name: '1 条明细已有其他项目归属，请确认是否覆盖' })).getByRole('button', { name: '确认覆盖' }));
     await waitFor(() => expect(screen.getByTestId('project-of-9').textContent).toBe('P-1180 / 内部培训'));
     fireEvent.click(screen.getByRole('button', { name: '确认项目归属' }));
@@ -213,7 +221,7 @@ describe('整单明细确认', () => {
     expect(await screen.findByRole('heading', { name: '项目归属' })).toBeTruthy();
     expect(screen.getAllByRole('alert').map((node) => node.textContent).join('')).toContain('P-2307');
     for (const no of [7, 8, 9]) fireEvent.click(screen.getByRole('checkbox', { name: `选择明细 No.${no}` }));
-    fireEvent.click(within(screen.getByRole('complementary', { name: '项目工作台' })).getByRole('button', { name: '归入 P-1180 内部培训' }));
+    assignViaPicker('P-1180');
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确认覆盖' }));
     await waitFor(() => expect(screen.getByTestId('project-of-7').textContent).toBe('P-1180 / 内部培训'));
     fireEvent.click(screen.getByRole('button', { name: '确认项目归属' }));
