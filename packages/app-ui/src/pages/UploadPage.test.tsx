@@ -65,7 +65,7 @@ describe('上传材料', () => {
 
   test('逐文件显示接收与拒绝：类型不支持、超过 20MB、HEIC、内容重复', async () => {
     renderUpload();
-    await screen.findByText('拖入文件，或点击选择');
+    await screen.findByRole('button', { name: '拖入文件，或点击选择' });
     chooseFiles([
       pdf('全季酒店_发票.pdf'),
       new File(['not a receipt'], '备注.txt', { type: 'text/plain' }),
@@ -101,16 +101,16 @@ describe('上传材料', () => {
 
   test('追加下一批形成上传批次 #2，然后可以开始材料盘点', async () => {
     renderUpload();
-    await screen.findByText('拖入文件，或点击选择');
+    await screen.findByRole('button', { name: '拖入文件，或点击选择' });
     chooseFiles([pdf('高德打车_发票.pdf', 'amap invoice')]);
     await batchPanel('上传批次 #1');
 
     fireEvent.click(screen.getByRole('button', { name: '追加下一批' }));
-    expect(screen.getByText('拖入文件，或点击选择')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '拖入文件，或点击选择' })).toBeTruthy();
     chooseFiles([new File(['png bytes'], 'IMG_4906.png', { type: 'image/png' })]);
     const second = await batchPanel('上传批次 #2');
     expect(within(second).getByText('已复制入任务目录')).toBeTruthy();
-    expect(screen.queryByText('拖入文件，或点击选择')).toBeNull();
+    expect(screen.queryByRole('button', { name: '拖入文件，或点击选择' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '开始材料盘点' }));
     await waitFor(() => expect(window.location.hash).toBe('#/task/T1/inventory'));
@@ -119,7 +119,7 @@ describe('上传材料', () => {
 
   test('?fault=duplicate-upload 让第二批出现内容重复', async () => {
     renderUpload('duplicate-upload');
-    await screen.findByText('拖入文件，或点击选择');
+    await screen.findByRole('button', { name: '拖入文件，或点击选择' });
     chooseFiles([pdf('铁路电子客票_0809.pdf', 'rail 0809')]);
     await batchPanel('上传批次 #1');
     fireEvent.click(screen.getByRole('button', { name: '追加下一批' }));
@@ -130,7 +130,7 @@ describe('上传材料', () => {
 
   test('有材料但盘点没开始时，后续页面提示阶段不可跳过', async () => {
     renderUpload();
-    await screen.findByText('拖入文件，或点击选择');
+    await screen.findByRole('button', { name: '拖入文件，或点击选择' });
     chooseFiles([pdf('餐饮_发票.pdf')]);
     await batchPanel('上传批次 #1');
     window.location.hash = '#/task/T1/review';

@@ -64,11 +64,12 @@ function FileIcon({ fileName }: { fileName: string }) {
 
 function FileRow({ file, index }: { file: UploadFileResult; index: number }) {
   const rejected = file.status === 'rejected';
+  const digest = file.contentHash ? hashPrefix(file.contentHash) : null;
   return (
     <li className={rejected ? 'is-rejected' : undefined}>
       <span className="app-file-index">{String(index + 1).padStart(2, '0')}</span>
       <FileIcon fileName={file.fileName} />
-      <span className="app-file-name" title={file.contentHash ? `内容哈希 ${hashPrefix(file.contentHash)}` : undefined}>
+      <span className="app-file-name" title={digest ? `内容哈希 ${digest}` : undefined}>
         {file.fileName}
       </span>
       {rejected ? (

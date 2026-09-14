@@ -63,7 +63,9 @@ for (const width of [1440, 1100]) {
   test(`空的上传页 ${width}px：格式说明在上，短的拖放区只有链接提示，没有大块空白`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(open('?seed=upload', '#/task/T1/upload'));
-    const zone = page.getByRole('button', { name: '拖入文件，或点击选择' });
+    const zone = page.getByTestId('dropzone');
+    await expect(zone).toHaveRole('button');
+    await expect(zone).toHaveAccessibleName('拖入文件，或点击选择');
     await expect(zone).toHaveText('拖入文件，或点击选择');
     await expect(page.getByRole('button', { name: '选择文件' })).toHaveCount(0);
     const rules = page.getByText(/^支持 PDF、JPG、PNG，单个文件不超过 20MB。原件会被复制进任务目录，不会被修改。$/);
@@ -79,7 +81,9 @@ for (const width of [1440, 1100]) {
 
 test('点击拖放区或用键盘激活提示都打开文件选择器', async ({ page }) => {
   await page.goto(open('', '#/task/T1/upload'));
-  const zone = page.getByRole('button', { name: '拖入文件，或点击选择' });
+  const zone = page.getByTestId('dropzone');
+  await expect(zone).toHaveRole('button');
+  await expect(zone).toHaveAccessibleName('拖入文件，或点击选择');
   const byClick = page.waitForEvent('filechooser');
   await zone.click();
   expect((await byClick).isMultiple()).toBe(true);
@@ -136,11 +140,11 @@ test('追加下一批形成上传批次 #2；开始材料盘点进入盘点页',
   await expect(batch(page, 1).getByRole('heading')).toHaveText('上传批次 #1');
 
   await page.getByRole('button', { name: '追加下一批' }).click();
-  await expect(page.getByText('拖入文件，或点击选择')).toBeVisible();
+  await expect(page.getByTestId('dropzone')).toBeVisible();
   await choose(page, [pdf('高德打车_行程单.pdf'), png('IMG_4906.png')]);
   await expect(batch(page, 2).getByRole('heading')).toHaveText('上传批次 #2');
   await expect(batch(page, 1)).toBeVisible();
-  await expect(page.getByText('拖入文件，或点击选择')).toBeHidden();
+  await expect(page.getByTestId('dropzone')).toBeHidden();
 
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   await expect(page).toHaveURL(/#\/task\/T1\/inventory$/);

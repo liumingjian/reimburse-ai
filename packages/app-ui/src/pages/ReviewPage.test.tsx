@@ -310,7 +310,7 @@ describe('整单明细确认', () => {
     fireEvent.click(await screen.findByRole('button', { name: '追加下一批' }));
     const dialog = screen.getByRole('dialog', { name: '追加材料会形成新的盘点版本' });
     fireEvent.click(within(dialog).getByRole('button', { name: '继续追加' }));
-    expect(await screen.findByText('拖入文件，或点击选择')).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '拖入文件，或点击选择' })).toBeTruthy();
     expect(screen.getByRole('status').textContent).toContain(REVIEW_INVALIDATED_NOTICE);
     expect((await adapter.getSnapshot('T1')).confirmation.status).toBe('invalidated');
   });
