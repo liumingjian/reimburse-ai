@@ -1,6 +1,18 @@
 import { useState } from 'react';
-import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag } from '@carbon/react';
-import { CheckmarkFilled, ChevronRight, InProgress } from '@carbon/icons-react';
+import {
+  Button,
+  Table,
+  TableBody,
+  TableCell,
+  TableExpandedRow,
+  TableExpandHeader,
+  TableExpandRow,
+  TableHead,
+  TableHeader,
+  TableRow,
+  Tag,
+} from '@carbon/react';
+import { CheckmarkFilled, InProgress } from '@carbon/icons-react';
 import { MATERIAL_ROLE_LABELS, type ExpenseEvent, type Material, type TaskSnapshot } from '../contract/snapshot';
 import { formatDateTime } from '../format';
 import { taskHash } from '../router';
@@ -9,65 +21,32 @@ import { StatusTag } from '../shell/StatusTag';
 import { DuplicateBlockers } from './DuplicateBlockers';
 import { PAGE_COPY } from './page-copy';
 
-// 材料盘点页：只有盘点进度与材料清单。盘点进行中显示分阶段进度；结束后按费用事件归组列出主要报销凭证与参考材料、
-// 材料证据关联结论和每份材料的校验结果。不展示读出的字段及其来源（Skill 没有盘点结果表，内核不许把规则名给员工看）。
+// 材料盘点页：只有盘点进度与材料清单。盘点进行中显示分阶段进度；结束后是一张 Carbon 可展开表格，
+// 每行一个费用事件组（同一主要报销凭证的相邻事件），展开后是该组的材料证据关联结论与材料小表。
+// 不展示读出的字段及其来源（Skill 没有盘点结果表，内核不许把规则名给员工看）。
 // 跨任务重复发票命中时整批停，显示重复发票表。页面只渲染快照，不做配对、不算金额。
-// 版式：一句结论打头；全部通过的事件默认收成一行，点开才看文件与校验；含待确认材料的事件默认展开并加标记；
-// 只标记例外，通过的材料不带标签；需要注意的材料只用 warm-gray 加警示图标的标签标出，不给整行上底色。
-// 收起的事件行按表头的五列排开，和展开后的材料行、表头对齐；文件行缩进到事件行文字之下。
+// 版式：含待确认材料的组默认展开，其余默认收起；用户点过的记在界面状态里；表头有「全部展开 / 全部收起」。
+// 只标记例外：通过的材料不带标签；需要注意的材料只用 warm-gray 加警示图标的标签标出，不给整行上底色。
+// 没有归入任何费用事件的材料单独一节，放在表格下方。
 // 标题下是和整单明细确认同一种摘要条，计数全部取服务端的 inventory.summary。
 
 // 需要注意的「待确认」用共用的状态标签（图标加文字）；已排除、待盘点是中性灰标签。
-function MaterialStatus({ material }: { material: Material }) {
-  if (material.status === 'pending') return <StatusTag tone="warning">待确认</StatusTag>;
-  if (material.status === 'excluded')
-    return (
-      <Tag type="gray">
-        已排除
-      </Tag>
-    );
-  if (material.status === 'uploaded')
-    return (
-      <Tag type="gray">
-        待盘点
-      </Tag>
-    );
+function StatusMark({ status }: { status: Material['status'] | null }) {
+  if (status === 'pending') return <StatusTag tone="warning">待确认</StatusTag>;
+  if (status === 'excluded') return <Tag type="gray">已排除</Tag>;
+  if (status === 'uploaded') return <Tag type="gray">待盘点</Tag>;
   return null;
 }
 
-const COLUMNS = ['文件', '识别为', '校验', '份数', '状态'] as const;
+// 收起的组行显示组内最严重的状态：待确认 > 待盘点 > 已排除 > 无。这只是把服务端给的状态排个显示先后，不做判定。
+const STATUS_SEVERITY: ReadonlyArray<Material['status']> = ['pending', 'uploaded', 'excluded'];
 
-function Columns() {
-  return (
-    <colgroup>
-      <col className="app-col-file" />
-      <col className="app-col-kind" />
-      <col className="app-col-check" />
-      <col className="app-col-count" />
-      <col className="app-col-status" />
-    </colgroup>
-  );
+function groupStatus(materials: readonly Material[]): Material['status'] | null {
+  return STATUS_SEVERITY.find((status) => materials.some((material) => material.status === status)) ?? null;
 }
 
-function MaterialRow({ material, roleLabel }: { material: Material; roleLabel: string }) {
-  return (
-    <TableRow className="app-material-row">
-      <TableCell>
-        <span className="app-file-name">{material.fileName}</span>
-        <div className="app-caption">{roleLabel}</div>
-      </TableCell>
-      <TableCell>
-        {material.kindLabel}
-        {material.categoryLabel ? <div className="app-caption">{material.categoryLabel}</div> : null}
-      </TableCell>
-      <TableCell>{material.checkText || <span className="app-muted">无</span>}</TableCell>
-      <TableCell />
-      <TableCell>
-        <MaterialStatus material={material} />
-      </TableCell>
-    </TableRow>
-  );
-}
+const GROUP_COLUMNS = ['费用事件', '日期', '金额', '份数', '状态'] as const;
+const MATERIAL_COLUMNS = ['文件', '识别为', '校验', '状态'] as const;
 
 type Group = { voucher: Material; events: ExpenseEvent[]; references: Material[] };
 
@@ -91,11 +70,11 @@ function groupEvents(snapshot: TaskSnapshot, byId: ReadonlyMap<string, Material>
 }
 
 // 组的各部分：序号区间、日期、类别、金额。金额照服务端给的每个事件的价税合计列出，不求和。
-function groupParts(group: Group, shortDate: boolean) {
+function groupParts(group: Group) {
   const first = group.events[0];
   const last = group.events[group.events.length - 1];
   if (!first || !last) return null;
-  const day = (date: string) => (shortDate ? date.slice(5) : date);
+  const day = (date: string) => date.slice(5);
   const nos = first.no === last.no ? `${first.no}` : `${first.no}-${last.no}`;
   const dates = first.endDate
     ? `${day(first.date)} 至 ${day(first.endDate)}`
@@ -106,65 +85,71 @@ function groupParts(group: Group, shortDate: boolean) {
   return { nos, dates, category: first.category.label, gross };
 }
 
-// 组的可访问名称只写序号（「费用事件 No.1-3」）；日期、类别、金额由组标题行的各列读出，不拼中点串。
-function eventTitle(group: Group): string {
-  const parts = groupParts(group, false);
-  return parts ? `费用事件 No.${parts.nos}` : '';
-}
-
-// 材料证据关联：单独一行的灰色小标签，下面是服务端给的结论。
-function EvidenceNote({ children }: { children: string }) {
+// 材料小表：文件名（下面一行是角色）、识别为、校验、状态。
+// 校验文本已被材料证据关联结论完整说过时（如参考材料的「26.69 + 20.85 + 21.65 = 69.19，按分守恒」），
+// 不再重复一遍，改写「见材料证据关联」。只是比较两段服务端原文，不改写、不判定。
+function MaterialTable({ label, materials, note }: { label: string; materials: readonly Material[]; note: string | null }) {
   return (
-    <div className="app-evidence-note">
-      <div className="app-evidence-label">材料证据关联</div>
-      <div>{children}</div>
-    </div>
+    <Table size="sm" aria-label={label} className="app-material-table">
+      <TableHead>
+        <TableRow>
+          {MATERIAL_COLUMNS.map((column) => (
+            <TableHeader key={column}>{column}</TableHeader>
+          ))}
+        </TableRow>
+      </TableHead>
+      <TableBody>
+        {materials.map((material) => (
+          <TableRow key={material.materialId}>
+            <TableCell>
+              <span className="app-file-name">{material.fileName}</span>
+              <div className="app-caption">{MATERIAL_ROLE_LABELS[material.role]}</div>
+            </TableCell>
+            <TableCell>
+              {material.kindLabel}
+              {material.categoryLabel ? <div className="app-caption">{material.categoryLabel}</div> : null}
+            </TableCell>
+            <TableCell>
+              {!material.checkText ? (
+                <span className="app-muted">无</span>
+              ) : note && note.includes(material.checkText) ? (
+                <span className="app-muted">见材料证据关联</span>
+              ) : (
+                material.checkText
+              )}
+            </TableCell>
+            <TableCell>
+              <StatusMark status={material.status} />
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }
 
-function EventGroup({ group, expanded, onToggle }: { group: Group; expanded: boolean; onToggle: () => void }) {
-  const note = group.events.map((event) => event.evidenceNote).find((text) => text);
-  const parts = groupParts(group, true);
-  const className = ['app-event-group', expanded ? 'is-open' : ''].filter(Boolean).join(' ');
+function GroupDetail({ group, title }: { group: Group; title: string }) {
+  const note = group.events.map((event) => event.evidenceNote).find((text) => text) ?? null;
   return (
-    <TableBody className={className} aria-label={eventTitle(group)}>
-      <TableRow className="app-group-head">
-        <TableCell colSpan={COLUMNS.length}>
-          <button className="app-group-toggle" type="button" aria-expanded={expanded} onClick={onToggle}>
-            {parts ? (
-              <>
-                <span className="app-gcol app-gcol-first">
-                  <ChevronRight className="app-chevron" aria-hidden="true" />
-                  <span className="app-group-no">No.{parts.nos}</span> <span className="app-group-category">{parts.category}</span>
-                </span>{' '}
-                <span className="app-gcol app-group-dates">{parts.dates}</span> <span className="app-gcol">{parts.gross}</span>{' '}
-                <span className="app-gcol app-group-count">{1 + group.references.length} 份</span>
-              </>
-            ) : null}
-          </button>
-        </TableCell>
-      </TableRow>
-      {expanded ? (
-        <>
-          <TableRow className="app-group-detail">
-            <TableCell colSpan={COLUMNS.length}>
-              <ul className="app-event-lines">
-                {group.events.map((event) => (
-                  <li key={event.eventId}>
-                    <span className="app-muted">No.{event.no}</span> {event.summary} <span className="app-amount">{event.grossAmount}</span>
-                  </li>
-                ))}
-              </ul>
-              {note ? <EvidenceNote>{note}</EvidenceNote> : null}
-            </TableCell>
-          </TableRow>
-          <MaterialRow material={group.voucher} roleLabel={MATERIAL_ROLE_LABELS.primary_voucher} />
-          {group.references.map((reference) => (
-            <MaterialRow key={reference.materialId} material={reference} roleLabel={MATERIAL_ROLE_LABELS.reference} />
-          ))}
-        </>
+    <>
+      {note ? (
+        <p className="app-evidence-note">
+          <span className="app-evidence-label">材料证据关联</span>
+          <span>{note}</span>
+        </p>
       ) : null}
-    </TableBody>
+      {/* 单个事件的组不再列自己的事件行：组行已经说过了。 */}
+      {group.events.length > 1 ? (
+        <ul className="app-event-lines" aria-label={`${title} 的明细`}>
+          {group.events.map((event) => (
+            <li key={event.eventId}>
+              <span className="app-muted">No.{event.no}</span> {event.summary} <span className="app-amount">{event.grossAmount}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <MaterialTable label={`${title} 的材料`} materials={[group.voucher, ...group.references]} note={note} />
+    </>
   );
 }
 
@@ -215,15 +200,17 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const byId = new Map(snapshot.materials.map((material) => [material.materialId, material]));
   const groups = groupEvents(snapshot, byId);
   const ungrouped = snapshot.inventory.ungroupedMaterialIds.flatMap((id) => byId.get(id) ?? []);
-  // 展开与否是纯界面状态：记下用户点过的组，默认值由「组里有没有待确认材料」决定。
-  const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set());
-  const toggle = (key: string) =>
-    setToggled((previous) => {
-      const next = new Set(previous);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  // 展开与否是纯界面状态：记下用户对各组的选择（含全部展开 / 全部收起），没选过的组由「组里有没有待确认材料」决定。
+  const [chosen, setChosen] = useState<ReadonlyMap<string, boolean>>(new Map());
+  const rows = groups.map((group) => {
+    const key = group.voucher.materialId;
+    const materials = [group.voucher, ...group.references];
+    const status = groupStatus(materials);
+    return { key, group, status, expanded: chosen.get(key) ?? status === 'pending' };
+  });
+  const allExpanded = rows.length > 0 && rows.every((row) => row.expanded);
+  const setExpanded = (key: string, expanded: boolean) => setChosen((previous) => new Map(previous).set(key, expanded));
+  const setAll = (expanded: boolean) => setChosen(new Map(rows.map((row) => [row.key, expanded])));
 
   const version = snapshot.inventory.versionId;
   const finishedAt = snapshot.inventory.finishedAt;
@@ -260,36 +247,67 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
             {finishedAt ? <SummaryField label="盘点时间" value={formatDateTime(finishedAt)} /> : null}
           </div>
           <DuplicateBlockers snapshot={snapshot} />
-          <section className="bleed app-table app-inventory" aria-label="盘点结果">
-            <Table size="md">
-              <Columns />
-              <TableHead>
-                <TableRow>
-                  {COLUMNS.map((column) => (
-                    <TableHeader key={column}>{column}</TableHeader>
-                  ))}
-                </TableRow>
-              </TableHead>
-              {groups.map((group) => {
-                const key = group.voucher.materialId;
-                const pending = [group.voucher, ...group.references].some((material) => material.status === 'pending');
-                return <EventGroup key={key} group={group} expanded={pending !== toggled.has(key)} onToggle={() => toggle(key)} />;
-              })}
-              {ungrouped.length > 0 ? (
-                <TableBody className="app-event-group is-open" aria-label="未归入费用事件">
-                  <TableRow className="app-group-head">
-                    <TableCell colSpan={COLUMNS.length} className="app-ungrouped-head">
-                      <div className="app-group-title">未归入费用事件</div>
-                      <EvidenceNote>{blocked ? '整批暂停，还没有划分费用事件。' : '没有形成费用事件的材料：待确认或已排除。'}</EvidenceNote>
-                    </TableCell>
+          {rows.length > 0 ? (
+            <section className="bleed app-table app-inventory" aria-label="盘点结果">
+              <Table size="md" aria-label="费用事件">
+                <TableHead>
+                  <TableRow>
+                    <TableExpandHeader
+                      enableToggle
+                      isExpanded={allExpanded}
+                      onExpand={() => setAll(!allExpanded)}
+                      aria-label={allExpanded ? '全部收起' : '全部展开'}
+                      expandIconDescription={allExpanded ? '全部收起' : '全部展开'}
+                    />
+                    {GROUP_COLUMNS.map((column) => (
+                      <TableHeader key={column}>{column}</TableHeader>
+                    ))}
                   </TableRow>
-                  {ungrouped.map((material) => (
-                    <MaterialRow key={material.materialId} material={material} roleLabel={MATERIAL_ROLE_LABELS[material.role]} />
-                  ))}
+                </TableHead>
+                <TableBody>
+                  {rows.map(({ key, group, status, expanded }) => {
+                    const parts = groupParts(group);
+                    const title = parts ? `费用事件 No.${parts.nos}` : '费用事件';
+                    const detailId = `inventory-group-${key}`;
+                    return [
+                      <TableExpandRow
+                        key={key}
+                        isExpanded={expanded}
+                        onExpand={() => setExpanded(key, !expanded)}
+                        aria-label={title}
+                        aria-controls={expanded ? detailId : undefined}
+                        expandIconDescription={expanded ? '收起' : '展开'}
+                      >
+                        <TableCell>
+                          <span className="app-group-no">No.{parts?.nos}</span> <span className="app-group-category">{parts?.category}</span>
+                        </TableCell>
+                        <TableCell className="app-nowrap">{parts?.dates}</TableCell>
+                        <TableCell className="app-amount-cell">{parts?.gross}</TableCell>
+                        <TableCell className="app-nowrap">{1 + group.references.length} 份</TableCell>
+                        <TableCell>
+                          <StatusMark status={status} />
+                        </TableCell>
+                      </TableExpandRow>,
+                      expanded ? (
+                        <TableExpandedRow key={`${key}-detail`} id={detailId} colSpan={GROUP_COLUMNS.length + 1} aria-label={title}>
+                          <GroupDetail group={group} title={title} />
+                        </TableExpandedRow>
+                      ) : null,
+                    ];
+                  })}
                 </TableBody>
-              ) : null}
-            </Table>
-          </section>
+              </Table>
+            </section>
+          ) : null}
+          {ungrouped.length > 0 ? (
+            <section className="app-ungrouped" aria-label="未归入费用事件">
+              <h3 className="app-subhead">未归入费用事件</h3>
+              <p className="app-caption">{blocked ? '整批暂停，还没有划分费用事件。' : '没有形成费用事件的材料：待确认或已排除。'}</p>
+              <div className="bleed app-table">
+                <MaterialTable label="未归入费用事件的材料" materials={ungrouped} note={null} />
+              </div>
+            </section>
+          ) : null}
         </>
       )}
     </>

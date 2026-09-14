@@ -43,7 +43,7 @@ function chooseFiles(names: string[]) {
 }
 
 describe('材料盘点', () => {
-  test('?seed=inventory：只有材料清单，按费用事件归组，显示配对与守恒结论，不显示字段与来源；入口带待确认项数量', async () => {
+  test('?seed=inventory：费用事件可展开表格，列与表头一致，结论只说一次，不显示字段与来源；入口带待确认项数量', async () => {
     renderAt('#/task/T1/inventory', 'inventory');
     expect(await screen.findByRole('heading', { name: '材料盘点' })).toBeTruthy();
     expect(screen.getByRole('link', { name: '处理 3 个待确认项' }).getAttribute('href')).toBe('#/task/T1/pending');
@@ -67,13 +67,13 @@ describe('材料盘点', () => {
     expect(within(screen.getByLabelText('盘点结果')).queryByText('通过', { exact: true })).toBeNull();
 
     const results = screen.getByLabelText('盘点结果');
-    expect(within(results).getAllByRole('columnheader').map((node) => node.textContent)).toEqual(['文件', '识别为', '校验', '份数', '状态']);
     expect(document.body.textContent).not.toMatch(/rule:|user|候选/);
-    // 费用事件组（含「未归入费用事件」）是带名称的 tbody；表头 thead 没有名称。
-    const groups = within(results)
-      .getAllByRole('rowgroup')
-      .filter((node) => node.hasAttribute('aria-label'));
-    expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual([
+    // 收起的组行按表头排开：展开按钮列、费用事件、日期、金额、份数、状态。
+    const table = screen.getByRole('table', { name: '费用事件' });
+    expect(within(table).getAllByRole('columnheader').slice(0, 6).map((node) => node.textContent)).toEqual(['', '费用事件', '日期', '金额', '份数', '状态']);
+    // 每组一个展开按钮，可访问名称是「费用事件 No.x」，状态在 aria-expanded。
+    const toggles = within(results).getAllByRole('button', { name: /^费用事件 No\./ });
+    expect(toggles.map((toggle) => toggle.getAttribute('aria-label'))).toEqual([
       // 统一业务序号按内核确认表的分类排序：外地市内交通 → 长途交通 → 住宿，同一分类内按事件顺序。
       '费用事件 No.1-3',
       '费用事件 No.4',
@@ -82,67 +82,95 @@ describe('材料盘点', () => {
       '费用事件 No.7',
       '费用事件 No.8',
       '费用事件 No.9',
-      '未归入费用事件',
     ]);
+    const cellsOf = (name: string) =>
+      within(screen.getByRole('button', { name }).closest('tr') as HTMLElement)
+        .getAllByRole('cell')
+        .map((cell) => cell.textContent);
 
-    // 全部通过的事件默认收成一行，文件与材料证据关联要点开才看到。
-    const amap = groups[0] as HTMLElement;
-    const amapToggle = within(amap).getByRole('button');
-    expect(amapToggle.textContent).toBe('No.1-3 外地市内交通 08-10 至 08-12 26.69 + 20.85 + 21.65 2 份');
+    // 全部通过的事件默认收成一行：日期在日期列、金额（每个事件的价税合计，不求和）在金额列。
+    const amapToggle = screen.getByRole('button', { name: '费用事件 No.1-3' });
+    expect(cellsOf('费用事件 No.1-3')).toEqual(['', 'No.1-3 外地市内交通', '08-10 至 08-12', '26.69 + 20.85 + 21.65', '2 份', '']);
     expect(amapToggle.getAttribute('aria-expanded')).toBe('false');
-    expect(within(amap).queryByText('高德打车_发票.pdf')).toBeNull();
-    expect(within(amap).queryByText(/^打车发票与行程单配对/)).toBeNull();
+    expect(screen.queryByRole('row', { name: '费用事件 No.1-3' })).toBeNull();
+    expect(within(results).queryByText('高德打车_发票.pdf')).toBeNull();
     fireEvent.click(amapToggle);
     expect(amapToggle.getAttribute('aria-expanded')).toBe('true');
+    const amap = screen.getByRole('row', { name: '费用事件 No.1-3' });
+    // 材料证据关联只出现一次；参考材料的校验文本已被结论说过，不再重复。
+    expect(within(amap).getAllByText('材料证据关联')).toHaveLength(1);
     expect(within(amap).getByText('打车发票与行程单配对：26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeTruthy();
-    expect(within(amap).getByText('高德打车_发票.pdf')).toBeTruthy();
-    expect(within(amap).getByText('高德打车_行程单.pdf')).toBeTruthy();
-    expect(within(amap).getByText('主要报销凭证')).toBeTruthy();
-    expect(within(amap).getByText('参考材料')).toBeTruthy();
-    expect(within(amap).getByText('26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeTruthy();
+    expect(within(amap).queryByText('26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeNull();
+    expect(within(amap).getByText('见材料证据关联')).toBeTruthy();
+    // 多事件组列出各事件；材料小表四列：文件（与角色）、识别为、校验、状态。
+    expect(within(within(amap).getByRole('list', { name: '费用事件 No.1-3 的明细' })).getAllByRole('listitem')).toHaveLength(3);
+    const materials = within(amap).getByRole('table', { name: '费用事件 No.1-3 的材料' });
+    expect(within(materials).getAllByRole('columnheader').map((node) => node.textContent)).toEqual(['文件', '识别为', '校验', '状态']);
+    expect(within(materials).getByText('高德打车_发票.pdf')).toBeTruthy();
+    expect(within(materials).getByText('高德打车_行程单.pdf')).toBeTruthy();
+    expect(within(materials).getByText('主要报销凭证')).toBeTruthy();
+    expect(within(materials).getByText('参考材料')).toBeTruthy();
 
-    const hotel = groups[6] as HTMLElement;
-    fireEvent.click(within(hotel).getByRole('button'));
+    // 单事件组不再列自己的事件行。
+    fireEvent.click(screen.getByRole('button', { name: '费用事件 No.9' }));
+    const hotel = screen.getByRole('row', { name: '费用事件 No.9' });
+    expect(within(hotel).queryByRole('list')).toBeNull();
     expect(within(hotel).getByText('住宿发票 3640.00 = 结账单消费合计 3640.00；13 天 = 08-09 入住至 08-22 离店')).toBeTruthy();
     expect(within(hotel).getByText('消费合计 = 发票价税合计；13 天 = 08-09 入住至 08-22 离店')).toBeTruthy();
 
-    // 含待确认材料的事件默认展开，只有待确认的材料带徽标。
-    const taxi = groups[3] as HTMLElement;
-    expect(within(taxi).getByRole('button').getAttribute('aria-expanded')).toBe('true');
+    // 含待确认材料的事件默认展开，收起的组行状态列就显示「待确认」；只有待确认的材料带徽标。
+    expect(screen.getByRole('button', { name: '费用事件 No.5' }).getAttribute('aria-expanded')).toBe('true');
+    expect(cellsOf('费用事件 No.5')[5]).toBe('待确认');
+    const taxi = screen.getByRole('row', { name: '费用事件 No.5' });
     expect(within(taxi).getByText('待确认')).toBeTruthy();
     expect(within(taxi).getByText('票面年份「26」已补全为 2026；下车时间读数不合法')).toBeTruthy();
     expect(within(taxi).queryByText('90:60')).toBeNull();
 
-    const rest = groups[7] as HTMLElement;
+    // 没有归入费用事件的材料单独一节，在表格之后。
+    const rest = screen.getByRole('region', { name: '未归入费用事件' });
+    expect(table.compareDocumentPosition(rest) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(rest).getByText('餐饮_发票.pdf')).toBeTruthy();
     expect(within(rest).getByText('未识别版式')).toBeTruthy();
+    expect(within(rest).getByText('没有形成费用事件的材料：待确认或已排除。')).toBeTruthy();
   });
 
-  test('状态列只放标签、份数单独成列；每个「待确认」标签都带警示图标；页头与摘要条不拼中点串', async () => {
+  test('全部展开与全部收起；用户点过的组记住自己的选择', async () => {
+    renderAt('#/task/T1/inventory', 'inventory');
+    await screen.findByRole('heading', { name: '材料盘点' });
+    const toggles = () => screen.getAllByRole('button', { name: /^费用事件 No\./ });
+    fireEvent.click(screen.getByRole('button', { name: '全部展开' }));
+    for (const toggle of toggles()) expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getAllByRole('table', { name: /的材料$/ })).toHaveLength(8);
+    fireEvent.click(screen.getByRole('button', { name: '全部收起' }));
+    for (const toggle of toggles()) expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    // 收起后未归入的一节仍在。
+    expect(screen.getAllByRole('table', { name: /的材料$/ })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: '费用事件 No.4' }));
+    expect(screen.getByRole('button', { name: '费用事件 No.4' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: '费用事件 No.5' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByRole('button', { name: '全部展开' })).toBeTruthy();
+  });
+
+  test('材料行四列、状态列只放标签；每个「待确认」标签都带警示图标；页头与摘要条不拼中点串', async () => {
     renderAt('#/task/T1/inventory', 'inventory', 'unsupported-material');
     await screen.findByRole('link', { name: '处理 4 个待确认项' });
-    const results = screen.getByLabelText('盘点结果');
-    // 事件行：份数在「份数」列的位置。
-    for (const toggle of within(results).getAllByRole('button')) fireEvent.click(toggle);
-    for (const toggle of within(results).getAllByRole('button')) if (toggle.getAttribute('aria-expanded') === 'false') fireEvent.click(toggle);
-    expect(within(results).getByRole('button', { name: /^No\.1-3 / }).textContent).toMatch(/ 2 份$/);
+    fireEvent.click(screen.getByRole('button', { name: '全部展开' }));
 
-    // 材料行：五个单元格，份数列留空，状态列只有标签（或空）。
-    const materialRows = within(results)
-      .getAllByRole('row')
-      .filter((row) => within(row).queryAllByRole('cell').length === 5);
+    const materialRows = screen
+      .getAllByRole('table', { name: /的材料$/ })
+      .flatMap((table) => within(table).getAllByRole('row'))
+      .filter((row) => within(row).queryAllByRole('cell').length > 0);
     expect(materialRows).toHaveLength(11);
     for (const row of materialRows) {
       const cells = within(row).getAllByRole('cell');
-      expect(cells[3]?.textContent).toBe('');
-      expect(['', '待确认', '已排除', '待盘点']).toContain(cells[4]?.textContent);
+      expect(cells).toHaveLength(4);
+      expect(['', '待确认', '已排除', '待盘点']).toContain(cells[3]?.textContent);
     }
-
     // 「待确认」标签带警示图标：图标只有视觉通道，由 e2e/inventory.spec.ts 在浏览器里检查。
-    expect(materialRows.some((row) => within(row).getAllByRole('cell')[4]?.textContent === '待确认')).toBe(true);
+    expect(materialRows.some((row) => within(row).getAllByRole('cell')[3]?.textContent === '待确认')).toBe(true);
 
-    // 「材料证据关联」是单独一行的标签，不和结论连成一句。
-    for (const label of within(results).getAllByText('材料证据关联')) expect(label.textContent).toBe('材料证据关联');
+    // 「材料证据关联」是单独的标签，不和结论连成一段文字。
+    for (const label of screen.getAllByText('材料证据关联')) expect(label.textContent).toBe('材料证据关联');
 
     const head = screen.getByRole('heading', { level: 1 }).closest('.app-page-head') as HTMLElement;
     expect(head.textContent).not.toContain('·');
@@ -164,7 +192,7 @@ describe('材料盘点', () => {
 
     expect(await screen.findByRole('link', { name: '处理 3 个待确认项' })).toBeTruthy();
     expect(screen.queryByLabelText('盘点进度')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /^No\.1-3 / }));
+    fireEvent.click(screen.getByRole('button', { name: '费用事件 No.1-3' }));
     expect(screen.getByText('打车发票与行程单配对：26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeTruthy();
     // 步骤条的待确认项带数量。
     expect(within(screen.getByRole('list', { name: '流程阶段' })).getByText('3 项待处理')).toBeTruthy();
@@ -177,7 +205,7 @@ describe('材料盘点', () => {
     const rest = screen.getByLabelText('未归入费用事件');
     expect(within(rest).getByText('曹操出行_行程单.pdf')).toBeTruthy();
     expect(within(rest).getAllByText('未识别版式')).toHaveLength(2);
-    fireEvent.click(screen.getByRole('button', { name: /^No\.4 / }));
+    fireEvent.click(screen.getByRole('button', { name: '费用事件 No.4' }));
     expect(screen.getByText('没有找到可配对的行程单，按发票 1 段计一次费用')).toBeTruthy();
   });
 
