@@ -95,8 +95,11 @@ describe('上传材料', () => {
     expect(within(rowOf(panel, '全季酒店_发票（副本）.pdf')).getByText('内容重复，与已接收的「全季酒店_发票.pdf」内容相同')).toBeTruthy();
     expect(within(panel).getAllByText('拒绝')).toHaveLength(4);
 
-    expect(screen.getByRole('button', { name: '开始材料盘点' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '追加下一批' })).toBeTruthy();
+    // Both actions sit in the sticky action bar with the consequence line (#141).
+    const next = screen.getByRole('region', { name: '下一步' });
+    expect(within(next).getByRole('button', { name: '开始材料盘点' })).toBeTruthy();
+    expect(within(next).getByRole('button', { name: '追加下一批' })).toBeTruthy();
+    expect(within(next).getByText('开始盘点后，追加或删除材料会形成新的盘点版本。')).toBeTruthy();
   });
 
   test('追加下一批形成上传批次 #2，然后可以开始材料盘点', async () => {

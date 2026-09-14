@@ -33,7 +33,7 @@ async function jump(page: Page, hash: string) {
 test('?seed=inventory：材料清单按费用事件归组，显示配对与守恒结论，不显示字段来源', async ({ page }, testInfo) => {
   await page.goto(open('?seed=inventory', '#/task/T1/inventory'));
   await expect(page.getByRole('heading', { name: '材料盘点' })).toBeVisible();
-  await expect(page.getByRole('link', { name: '处理 3 个待确认项' })).toBeVisible();
+  await expect(page.getByRole('region', { name: '下一步' }).getByRole('link', { name: '处理 3 个待确认项' })).toBeVisible();
   const summary = page.getByRole('group', { name: '盘点摘要' });
   await expect(summary).toContainText('材料11 份');
   await expect(summary).toContainText('通过8 份');

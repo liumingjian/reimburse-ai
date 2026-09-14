@@ -99,3 +99,56 @@ test('整单明细、完成、对账表格的 No. 列左对齐，列宽按内容
     expect.soft(cellBox.width, `${table} No. 列宽按内容收紧`).toBeLessThanOrEqual(96);
   }
 });
+
+// Next step in the sticky bar (#141): step page headers keep only title and lead; the task list keeps its creation action.
+const pageHead = (page: Page) => page.getByRole('main').getByRole('heading', { level: 1 }).locator('xpath=../..');
+
+test('材料盘点与上传材料的下一步在吸底栏里，页头没有操作；任务列表页头保留新建报销任务', async ({ page }) => {
+  await page.goto(open('?seed=inventory', '#/task/T1/inventory'));
+  await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toBeVisible();
+  await expect(pageHead(page).getByRole('link')).toHaveCount(0);
+  await expect(pageHead(page).getByRole('button')).toHaveCount(0);
+  await expect(page.getByRole('region', { name: '下一步' }).getByRole('link', { name: '处理 3 个待确认项' })).toBeVisible();
+
+  await page.goto(open('?seed=upload', '#/task/T1/upload'));
+  await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toBeVisible();
+  await expect(pageHead(page).getByRole('button')).toHaveCount(0);
+  const bar = page.getByRole('region', { name: '下一步' });
+  await expect(bar.getByRole('button', { name: '开始材料盘点' })).toBeVisible();
+  await expect(bar.getByRole('button', { name: '追加下一批' })).toBeVisible();
+
+  await page.goto(open('', '#/tasks'));
+  await expect(pageHead(page).getByRole('button', { name: '新建报销任务' })).toBeVisible();
+});
+
+test('步骤页最多一个主按钮', async ({ page }) => {
+  for (const [query, hash] of [
+    ['?seed=upload', '#/task/T1/upload'],
+    ['?seed=inventory', '#/task/T1/inventory'],
+    ['?seed=project', '#/task/T1/project'],
+    ['?seed=review', '#/task/T1/review'],
+  ] as const) {
+    await page.goto(open(query, hash));
+    await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toBeVisible();
+    expect(await page.getByRole('main').locator('.cds--btn--primary').count(), `${hash} 主按钮数`).toBeLessThanOrEqual(1);
+  }
+});
+
+test('1440 与 1100 下吸底栏不遮住盘点表的最后一行', async ({ page }) => {
+  for (const [width, height] of [
+    [1440, 1000],
+    [1100, 900],
+  ] as const) {
+    await page.setViewportSize({ width, height });
+    await page.goto(open('?seed=inventory', '#/task/T1/inventory'));
+    const bar = page.getByRole('region', { name: '下一步' });
+    await expect(bar).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    const lastRow = page.getByRole('main').locator('tbody tr').last();
+    const [rowBottom, barTop] = await Promise.all([
+      lastRow.evaluate((row) => row.getBoundingClientRect().bottom),
+      bar.evaluate((node) => node.getBoundingClientRect().top),
+    ]);
+    expect(rowBottom, `${width} 最后一行底边不低于吸底栏顶边`).toBeLessThanOrEqual(barTop + 1);
+  }
+});
