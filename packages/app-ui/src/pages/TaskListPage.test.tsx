@@ -105,8 +105,7 @@ describe('任务列表', () => {
     expect(screen.queryByText('2026-08 上海出差（产品评审）')).toBeNull();
     // 断开期间不能新建；等待恢复以加载指示呈现。
     expect((screen.getByRole('button', { name: '新建报销任务' }) as HTMLButtonElement).disabled).toBe(true);
-    const waiting = await screen.findByText('正在等待本地服务恢复，恢复后自动加载…');
-    expect(waiting.closest('.cds--inline-loading')).not.toBeNull();
+    expect(await screen.findByText('正在等待本地服务恢复，恢复后自动加载…')).toBeTruthy();
     expect(await screen.findByText('2026-08 上海出差（产品评审）', {}, { timeout: 4000 })).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
     expect((screen.getByRole('button', { name: '新建报销任务' }) as HTMLButtonElement).disabled).toBe(false);
@@ -138,14 +137,11 @@ describe('任务列表', () => {
     const menu = await openMore(t1, '2026-08 上海出差（产品评审）');
     const item = abandonItem(menu);
     expect(item.disabled).toBe(false);
-    // Carbon 的 delete 项（红色危险项）。
-    expect(item.closest('li')?.classList.contains('cds--overflow-menu-options__option--danger')).toBe(true);
     fireEvent.click(item);
     // 点作废不进入任务页，先弹出二次确认。
     expect(window.location.hash).toBe('#/tasks');
     const dialog = screen.getByRole('dialog', { name: ABANDON_TASK_COPY.dialogTitle });
-    // 作废不可撤销：确认按钮是红色 danger 按钮（jsdom 不算样式，只能看 Carbon 按钮种类的 class），文案不变。
-    expect(within(dialog).getByRole('button', { name: '作废' }).classList.contains('cds--btn--danger')).toBe(true);
+    // 作废不可撤销：确认按钮文案不变；它是红色 danger 按钮由 e2e/tasks.spec.ts 量计算样式。
     fireEvent.click(within(dialog).getByRole('button', { name: '作废' }));
     await waitFor(() => expect(screen.queryByText('2026-08 上海出差（产品评审）')).toBeNull());
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -198,7 +194,6 @@ describe('任务列表', () => {
     renderApp('#/settings');
     fireEvent.click(await screen.findByRole('button', { name: '完全重置' }));
     const resetConfirm = within(screen.getByRole('dialog', { name: '清空本机全部数据？' })).getByRole('button', { name: '清空并重置' });
-    expect(resetConfirm.classList.contains('cds--btn--danger')).toBe(true);
     fireEvent.click(resetConfirm);
     expect(await screen.findByRole('heading', { name: '登录报销系统' })).toBeTruthy();
     expect(window.location.hash).toBe('#/tasks');

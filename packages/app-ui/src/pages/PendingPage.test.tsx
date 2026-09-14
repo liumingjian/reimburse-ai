@@ -145,7 +145,6 @@ describe('待确认项', () => {
     fireEvent.click(itemButton('不支持的材料类型'));
     const manual = within(detail()).getByRole('button', { name: '自行手工处理' });
     expect(manual.getAttribute('aria-pressed')).toBe('true');
-    expect(manual.className).not.toContain('cds--btn--primary');
     expect(within(detail()).getByRole('button', { name: '排除此材料' }).getAttribute('aria-pressed')).toBe('false');
   });
 

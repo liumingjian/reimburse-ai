@@ -98,7 +98,10 @@ test('完全重置：设置页二次确认后回到启动页；重新登录、�
   await page.getByRole('navigation', { name: '全局' }).getByRole('link', { name: '设置' }).click();
   await expect(page).toHaveURL(/#\/settings$/);
   await page.getByRole('button', { name: '完全重置' }).click();
-  await page.getByRole('dialog', { name: '清空本机全部数据？' }).getByRole('button', { name: '清空并重置' }).click();
+  const resetConfirm = page.getByRole('dialog', { name: '清空本机全部数据？' }).getByRole('button', { name: '清空并重置' });
+  // 危险弹层：确认按钮是 Carbon 的 $button-danger-primary（#da1e28）。
+  await expect(resetConfirm).toHaveCSS('background-color', 'rgb(218, 30, 40)');
+  await resetConfirm.click();
   await expect(page.getByRole('heading', { name: '登录报销系统', level: 1 })).toBeVisible();
   await expect(page).toHaveURL(/#\/tasks$/);
   await page.screenshot({ path: testInfo.outputPath('after-reset.png'), fullPage: true });

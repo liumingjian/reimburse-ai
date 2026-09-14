@@ -15,11 +15,16 @@ function renderProject(seed: TaskStage = 'project', prepare?: (adapter: AppAdapt
 
 const workbench = () => screen.getByRole('complementary', { name: '项目工作台' });
 const search = () => screen.getByRole('searchbox', { name: '查找个人项目簿' });
-const listNames = () =>
-  (within(workbench()).queryByRole('list', { name: '项目列表' })?.querySelectorAll('.name') ?? []).length === 0
-    ? []
-    : [...(within(workbench()).getByRole('list', { name: '项目列表' }).querySelectorAll('.name') ?? [])].map((node) => node.textContent);
-const usageNames = () => [...(within(workbench()).queryByRole('list', { name: '本次已归入' })?.querySelectorAll('.name') ?? [])].map((node) => node.textContent);
+// 列表里每个项目都有一个「归入 项目号 名称」按钮，按它的可访问名称取项目名称。
+const projectNames = (listName: string) => {
+  const list = within(workbench()).queryByRole('list', { name: listName });
+  if (!list) return [];
+  return within(list)
+    .queryAllByRole('button', { name: /^归入 / })
+    .map((button) => (button.getAttribute('aria-label') ?? '').replace(/^归入 \S+ /, ''));
+};
+const listNames = () => projectNames('项目列表');
+const usageNames = () => projectNames('本次已归入');
 // 本次已归入的项目用字段组显示（项目号、条数、价税合计），这里取条数与价税合计两个值。
 const usage = (number: string) =>
   within(screen.getByTestId(`usage-${number}`))
