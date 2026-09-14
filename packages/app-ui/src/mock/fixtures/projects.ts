@@ -80,13 +80,12 @@ function invalidReasons(project: StoredProject, today: string): InvalidReason[] 
 // 内核 annotateProjects：可选 = 安全项目号 + 未过期 + 最近一次核验 confirmed；标签按原因用「・」连接，说明用「；」连接。
 export function annotateProject(project: StoredProject, today: string): ProjectBookEntry {
   const reasons = invalidReasons(project, today);
-  // 能读出的过期时间已在「过期时间」列、「已过期」已在标签里，说明不再重复一遍；读不出来时才说明为什么当作已过期。
-  const notes = reasons.flatMap((reason) => {
+  const notes = reasons.map((reason) => {
     if (reason === 'expired') {
-      return project.expiresOn !== null && isRealDate(project.expiresOn) ? [] : [`过期时间读不出来（${String(project.expiresOn)}），当作已过期`];
+      return project.expiresOn !== null && isRealDate(project.expiresOn) ? `已过期（过期时间 ${project.expiresOn}）` : `过期时间读不出来（${String(project.expiresOn)}），当作已过期`;
     }
-    if (reason === 'unsafe') return ['项目号含有不能安全查询的字符，请删除后从报销系统重新录入'];
-    return [VERDICT_NOTE[project.lastVerdict] ?? `最近一次核对结果不是 confirmed（${project.lastVerdict}）`];
+    if (reason === 'unsafe') return '项目号含有不能安全查询的字符，请删除后从报销系统重新录入';
+    return VERDICT_NOTE[project.lastVerdict] ?? `最近一次核对结果不是 confirmed（${project.lastVerdict}）`;
   });
   return {
     number: project.number,

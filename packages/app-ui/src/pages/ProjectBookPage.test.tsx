@@ -31,11 +31,8 @@ describe('个人项目簿 #/projects', () => {
     await screen.findByTestId('book-row-P-2307');
     expect(bookRows()).toHaveLength(6);
     expect(screen.getByTestId('book-row-P-2307').textContent).toContain('永不过期');
-    // 过期时间只在自己的列里出现一次，状态标签下不再重复「已过期（过期时间 …）」。
-    const expired = screen.getByTestId('book-row-P-4420');
-    expect(expired.textContent).toContain('已过期');
-    expect(expired.textContent).not.toContain('已过期（过期时间');
-    expect(expired.textContent?.split('2026-08-31')).toHaveLength(2);
+    // 状态说明照内核 annotateProjects 原样显示（含「已过期（过期时间 …）」），页面不过滤服务端文字。
+    expect(screen.getByTestId('book-row-P-4420').textContent).toContain('已过期（过期时间 2026-08-31）');
     expect(numberInput().placeholder).toBe('如：P-2307');
     expect(screen.getByTestId('book-row-P-0917').textContent).toContain('复检未通过');
   });

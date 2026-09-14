@@ -21,7 +21,6 @@ test('录入：可核验的项目号加入列表，名称来自核验结果；�
   await expect(book(page).getByRole('columnheader')).toHaveText(['项目号', '名称', '过期时间', '状态', '']);
   await expect(book(page).locator('tbody tr')).toHaveCount(6);
   await expect(row(page, 'P-4420')).toContainText('已过期');
-  await expect(row(page, 'P-4420')).not.toContainText('已过期（过期时间');
   // 录入按钮与输入框同高，示例占位符提示格式。
   const input = page.getByLabel('项目号');
   await expect(input).toHaveAttribute('placeholder', '如：P-2307');
