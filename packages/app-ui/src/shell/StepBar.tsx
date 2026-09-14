@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react';
-import { ProgressIndicator, ProgressStep, Tag } from '@carbon/react';
+import { Link, ProgressIndicator, ProgressStep, Tag } from '@carbon/react';
 import { WarningAltFilled } from '@carbon/icons-react';
 import { RECONCILE_STATUS_LABEL, pageAllowed, stageRank, stageReached, type TaskPage, type TaskStage } from '../contract/stage';
 import type { TaskSnapshot } from '../contract/snapshot';
 import { formatPeriod } from '../format';
-import { navigate, taskHash } from '../router';
+import { TASKS_HASH, navigate, taskHash } from '../router';
 
 // 步骤条：任务页工作区顶部一条，左边任务名与费用期间，右边 7 步横排的 Carbon progress indicator。
 // 顺序照 Skill：项目归属在整单明细确认之前；print / erp 两个页面归到「去打印 / 去报销」。
@@ -62,9 +62,10 @@ function TaskTitle({ snapshot }: { snapshot: TaskSnapshot }) {
   const { name, period } = snapshot.task;
   return (
     <div className="app-stepbar-task">
-      <div className="app-stepbar-name" title={name}>
+      {/* The task name links back to the task list, so leaving the task does not require the global nav. */}
+      <Link className="app-stepbar-name" href={TASKS_HASH} title={name}>
         {name}
-      </div>
+      </Link>
       {/* 费用期间由服务端给出（盘点前为 null，此时不显示这一行）。 */}
       {period ? (
         <p className="app-stepbar-period" title={STEP_BAR_COPY.periodTitle}>
