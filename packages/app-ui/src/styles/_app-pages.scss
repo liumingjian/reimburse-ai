@@ -697,6 +697,19 @@ $doc-frame-block: var(--app-doc-frame-block);
   .cds--content-switcher {
     inline-size: auto;
   }
+
+  // Carbon sets inline-size: 100% on the buttons with .cds--content-switcher:not(--icon-only) .cds--content-switcher-btn,
+  // which splits the width evenly and clips 未归属 (unassigned); match that specificity so each label keeps its width.
+  .cds--content-switcher:not(.cds--content-switcher--icon-only) .cds--content-switcher-btn {
+    flex: none;
+    inline-size: auto;
+    white-space: nowrap;
+  }
+
+  .cds--content-switcher__label {
+    overflow: visible;
+    text-overflow: clip;
+  }
 }
 
 .app-assign-count {
