@@ -259,29 +259,23 @@ $gutter: $spacing-06;
 
 // ---------- 材料盘点 ----------
 
-.app-headline {
-  margin: $spacing-03 0 0;
-  color: $text-primary;
-  @include type.type-style('heading-03');
-}
-
-.app-meta-line {
-  margin: $spacing-02 0 0;
-}
-
 .app-inventory .cds--data-table {
   table-layout: fixed;
 
   col.app-col-file {
-    inline-size: 34%;
+    inline-size: 30%;
   }
 
   col.app-col-kind {
-    inline-size: 20%;
+    inline-size: 18%;
   }
 
   col.app-col-check {
-    inline-size: 34%;
+    inline-size: 32%;
+  }
+
+  col.app-col-count {
+    inline-size: 8%;
   }
 
   col.app-col-status {
@@ -305,18 +299,16 @@ $gutter: $spacing-06;
     padding: $spacing-04 $gutter;
   }
 
-  tbody.has-pending tr td:first-child {
-    box-shadow: inset 3px 0 0 $support-warning;
-  }
-
-  tr.app-row-warn td {
-    background: var(--cds-notification-background-warning);
+  // 文件行缩进到所属事件行文字之下：事件行文字从页边 + 展开图标（$spacing-06）开始，文件行再往里一级（$spacing-05）。
+  // 覆盖通栏表格首列的页边留白，所以写在这里。
+  tr.app-material-row td:first-child {
+    padding-inline-start: calc(#{$gutter} + #{$spacing-06} + #{$spacing-05});
   }
 }
 
 .app-group-toggle {
   display: grid;
-  grid-template-columns: 34% 20% 34% 12%;
+  grid-template-columns: 30% 18% 32% 8% 12%;
   align-items: center;
   inline-size: 100%;
   min-block-size: 2.5rem;
@@ -385,8 +377,14 @@ $gutter: $spacing-06;
 }
 
 .app-evidence-note {
-  margin-block-start: $spacing-02;
+  margin-block-start: $spacing-03;
   @include type.type-style('helper-text-01');
+}
+
+// 「材料证据关联」是单独一行的灰色小标签，结论在下一行。
+.app-evidence-label {
+  color: $text-secondary;
+  @include type.type-style('label-01');
 }
 
 // ---------- 待确认项：队列、原件与右侧表单 ----------
