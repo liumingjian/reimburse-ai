@@ -164,7 +164,7 @@ function TaskRow({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: Ta
 }
 
 // 工具栏的搜索与状态筛选只是在页面已拿到的这张列表里挑行显示（与「N 份材料」取文件清单长度同理），不改服务端的顺序。
-// 表格不加排序、行选择与行展开（ADR-0008：以后逐项评审）。
+// 表格不加排序、行选择与行展开（ADR-0012：以后逐项评审）。
 function TaskTable({ tasks, onAbandon }: { tasks: readonly TaskListItem[]; onAbandon: (task: TaskListItem) => void }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<StatusKey | 'all'>('all');

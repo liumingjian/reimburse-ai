@@ -1,5 +1,7 @@
 # 开源 OCR 方案对图片材料提取的适用性
 
+> **状态：选型已定（2026-09-11）。** 由 [ADR-0013](../adr/0013-managed-local-ocr-for-image-fields.md) 与[本地报销应用](../design/standalone-app.md)确定为受管 RapidOCR；下文推荐的 PaddleOCR.js（浏览器 WASM）未采用。
+
 **研究日期：2026-09-09。** 本文只回答一个设计问题：成熟的本地 OCR 能否成为图片材料字段候选提取 Skill 的实现基础。结论不是选型 ADR，也不修改现有流程。
 
 ## 结论

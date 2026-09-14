@@ -1,6 +1,6 @@
 # 文本 PDF 由 MarkItDown 转换，Agent 只提出候选
 
-状态：已接受。日期：2026-09-09。
+状态：已取代（2026-09-11）。原接受日期：2026-09-09。被[本地报销应用](../design/standalone-app.md)取代：文本 PDF 字段候选改由规则解析器产生（首选 `pdftext.mjs`，见 ADR-0003 状态行），MarkItDown 与 Agent 候选（`agent_from_markdown`）不再是必经环节。本文的内容哈希、原文证据和事实格式校验闸可带入规则解析器。继任 ADR 待补。
 
 ## 决定
 

@@ -2,7 +2,7 @@
 
 ## 用途与来源
 
-这份文件是 `@baox/app-ui` 所有页面的视觉依据。决定见 `docs/adr/0008-adopt-carbon-react.md`：界面改用 IBM Carbon 的
+这份文件是 `@baox/app-ui` 所有页面的视觉依据。决定见 `docs/adr/0012-adopt-carbon-react.md`：界面改用 IBM Carbon 的
 `@carbon/react` 组件与 `@carbon/styles`，主题 **Gray 10（g10）**，颜色、直角、间距、行高、字阶都照 Carbon 原样；
 上一版的 Linear 品牌层（强调色 #5e6ad2、8/12px 圆角、pill 标签）已删除。
 

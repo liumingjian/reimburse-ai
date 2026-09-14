@@ -1,5 +1,7 @@
 # Skill 声明的 PreToolUse 钩子，在项目域到底生不生效
 
+> **状态：归档（2026-09-11）。** [本地报销应用](../design/standalone-app.md)去掉了 Agent，Claude Code Skill 钩子的行为不再影响产品。本文仍是 [ADR-0010](../adr/0010-kernel-side-command-guard.md) 守卫的实测依据，`kernel/src/guard.mjs` 与 `kernel/test/skills.test.mjs` 引用它；随守卫一起删除。
+
 **结论：不生效。** SKILL.md 的 frontmatter 里声明的 `hooks.PreToolUse` 一次都不会被调起。
 同一个脚本挂到 `.claude/settings.json` 上则确实拦得住，而且连 `bypassPermissions` 都压不过它。
 

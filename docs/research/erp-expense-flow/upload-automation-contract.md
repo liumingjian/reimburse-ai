@@ -1,5 +1,7 @@
 # 发票自动上传契约
 
+> **实现注记（2026-09-11）：** 下文按 Playwright `filechooser` 描述；实际实现是内核 CDP 链路（`kernel/src/invoice-upload.mjs`）。固定 ERP 入口与无人值守上传的结论不变。
+
 验证日期：2026-09-04
 
 ## 结论
