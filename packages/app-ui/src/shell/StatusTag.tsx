@@ -4,7 +4,9 @@ import { CheckmarkFilled, ErrorFilled, InProgress, Locked, WarningAltFilled } fr
 
 // 状态标签（DESIGN.md「状态标签」）：图标加文字，颜色只是第二通道。
 // 一律用 Carbon Tag 的默认尺寸：Carbon 的 Tag 在 size="sm" 时不渲染 renderIcon，小号标签会丢掉图标，所以这里不接受 size。
-// 语气决定颜色与图标：进行中 blue、完成 green、出错 red、需要注意 warm-gray 加警告图标、已锁定 warm-gray 加锁。
+// Tone picks colour and icon: info blue, success green, danger red, warning warm-gray with a warning icon,
+// locked warm-gray with a lock. Every warning tag in the app goes through here; _app-rules.scss paints the warning
+// icon like Carbon's warning notification (yellow fill, dark "!") via data-tone.
 export type StatusTone = 'info' | 'success' | 'danger' | 'warning' | 'locked';
 
 const TONE_TYPE = { info: 'blue', success: 'green', danger: 'red', warning: 'warm-gray', locked: 'warm-gray' } as const;

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
-import { Link, ProgressIndicator, ProgressStep, Tag } from '@carbon/react';
-import { WarningAltFilled } from '@carbon/icons-react';
+import { Link, ProgressIndicator, ProgressStep } from '@carbon/react';
+import { StatusTag } from './StatusTag';
 import { RECONCILE_STATUS_LABEL, pageAllowed, stageRank, stageReached, type TaskPage, type TaskStage } from '../contract/stage';
 import type { TaskSnapshot } from '../contract/snapshot';
 import { formatPeriod } from '../format';
@@ -91,9 +91,7 @@ export function StepBar({ snapshot, page }: { snapshot: TaskSnapshot; page: Task
         <div className="app-stepbar-row">
           <TaskTitle snapshot={snapshot} />
           <p className="app-stepbar-status">
-            <Tag type="warm-gray" renderIcon={WarningAltFilled}>
-              {handedOff ? '已转人工' : RECONCILE_STATUS_LABEL}
-            </Tag>
+            <StatusTag tone="warning">{handedOff ? '已转人工' : RECONCILE_STATUS_LABEL}</StatusTag>
             <span>{handedOff ? STEP_BAR_COPY.reconcileHandedOff : STEP_BAR_COPY.reconcileWaiting}</span>
           </p>
         </div>

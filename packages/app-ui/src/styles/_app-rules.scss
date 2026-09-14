@@ -285,6 +285,35 @@ $gutter: $spacing-06;
   max-inline-size: none;
 }
 
+// Warning icon, painted like Carbon's warning notification: $support-warning fill with a dark "!" (the icon's inner
+// path is transparent by default). Only the warning tone: the locked tone keeps a plain gray lock.
+// Targets the svg itself: its fill="currentColor" attribute would beat a fill inherited from Carbon's icon wrapper.
+.cds--tag.app-status-tag[data-tone='warning'] .cds--tag__custom-icon svg,
+.cds--tag.app-status-tag[data-tone='warning'] svg.cds--tag__custom-icon,
+.app-warning-icon {
+  fill: $support-warning;
+
+  [data-icon-path='inner-path'] {
+    fill: $icon-primary;
+    opacity: 1;
+  }
+}
+
+// Summary bar value icons (decorative, aria-hidden): warning before 需处理, green check before 通过.
+.app-summary-value:has(.app-summary-icon) {
+  display: inline-flex;
+  align-items: center;
+  gap: $spacing-02;
+}
+
+.app-summary-icon {
+  flex: none;
+
+  &.is-success {
+    fill: $support-success;
+  }
+}
+
 .app-btn-row {
   display: flex;
   flex-wrap: wrap;

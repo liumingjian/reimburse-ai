@@ -17,9 +17,8 @@ import {
   TableToolbar,
   TableToolbarContent,
   TableToolbarSearch,
-  Tag,
 } from '@carbon/react';
-import { Add, CheckmarkFilled, ErrorFilled, InProgress, WarningAltFilled } from '@carbon/icons-react';
+import { Add } from '@carbon/icons-react';
 import { useAppStore, useTaskList } from '../adapter/context';
 import { ABANDON_TASK_COPY } from '../contract/actions';
 import { KERNEL_PHASES, RECONCILE_STATUS_LABEL, STAGE_DEFAULT_PAGE, TASK_STAGE_LABELS, TASK_STAGE_PHASES } from '../contract/stage';
@@ -29,6 +28,7 @@ import { NEW_TASK_HASH, TASKS_HASH, navigate, taskHash } from '../router';
 import { AppShell } from '../shell/AppShell';
 import { ConfirmDialog } from '../shell/Dialog';
 import { PageHeader } from '../shell/PageHeader';
+import { StatusTag } from '../shell/StatusTag';
 import { NewTaskDialog } from './NewTaskDialog';
 
 export const TASK_LIST_COPY = {
@@ -48,15 +48,12 @@ export const TASK_LIST_COPY = {
 
 // 状态列：服务端给出的写入结局优先（已转人工需要注意 / 回读不一致出错），其次是对账中（需要注意）、
 // 已交接（完成），其余都是进行中。全部照服务端字段判读，页面不推断别的。
-// Carbon 没有黄色标签：需要注意用最接近的 warm-gray，并始终带图标与文字。
+// Tags go through the shared StatusTag, so the warning tone looks the same on every page.
 type StatusKey = 'active' | 'reconcile' | 'handed_off' | 'readback_mismatch' | 'done';
 type Tone = 'info' | 'success' | 'warning' | 'danger';
 type Status = { key: StatusKey; label: string; tone: Tone };
 
 const TASK_LIST_TITLE_ID = 'task-list-title';
-
-const TONE_TAG ={ info: 'blue', success: 'green', warning: 'warm-gray', danger: 'red' } as const;
-const TONE_ICON = { info: InProgress, success: CheckmarkFilled, warning: WarningAltFilled, danger: ErrorFilled } as const;
 
 function statusOf(task: TaskListItem): Status {
   if (task.erpOutcome === 'handed_off') return { key: 'handed_off', label: TASK_ERP_OUTCOME_LABELS.handed_off, tone: 'warning' };
@@ -74,14 +71,6 @@ const FILTERS: readonly { key: StatusKey; label: string; always: boolean }[] = [
   { key: 'readback_mismatch', label: TASK_ERP_OUTCOME_LABELS.readback_mismatch, always: false },
   { key: 'done', label: TASK_LIST_COPY.handedOver, always: true },
 ];
-
-function StatusTag({ status }: { status: Status }) {
-  return (
-    <Tag type={TONE_TAG[status.tone]} renderIcon={TONE_ICON[status.tone]} data-tone={status.tone}>
-      {status.label}
-    </Tag>
-  );
-}
 
 // 进度列：内核 10 阶段的序号画成 Carbon 进度条，旁边是「N/10 阶段名」。写入结局不是 none 时状态列已经说明结局，这里只留进度条（契约：结局代替阶段名）。
 function Progress({ task, status }: { task: TaskListItem; status: Status }) {
@@ -152,7 +141,7 @@ function TaskRow({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: Ta
       </TableCell>
       <TableCell className="app-nowrap">{formatPeriod(task.period)}</TableCell>
       <TableCell>
-        <StatusTag status={status} />
+        <StatusTag tone={status.tone}>{status.label}</StatusTag>
       </TableCell>
       <TableCell>
         <Progress task={task} status={status} />

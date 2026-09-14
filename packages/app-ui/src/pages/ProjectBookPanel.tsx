@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Button, InlineNotification, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag, TextInput } from '@carbon/react';
-import { Add, CheckmarkFilled, Renew, TrashCan, WarningAltFilled } from '@carbon/icons-react';
+import { Button, InlineNotification, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextInput } from '@carbon/react';
+import { Add, Renew, TrashCan } from '@carbon/icons-react';
+import { StatusTag } from '../shell/StatusTag';
 import { useAppStore, useProjectBook } from '../adapter/context';
 import type { AppAdapter, ProjectBookOutcome } from '../contract/adapter';
 import { PROJECT_BOOK_ACCEPTED_STATUSES, PROJECT_BOOK_COPY, type ProjectBookEntry } from '../contract/project-book';
@@ -139,9 +140,7 @@ function BookRow({ project, busy, onRemove }: { project: ProjectBookEntry; busy:
       <TableCell>{project.name ?? PROJECT_BOOK_COPY.noName}</TableCell>
       <TableCell className="app-nowrap">{project.expiresOn ?? PROJECT_BOOK_COPY.neverExpires}</TableCell>
       <TableCell>
-        <Tag type={project.selectable ? 'green' : 'warm-gray'} renderIcon={project.selectable ? CheckmarkFilled : WarningAltFilled}>
-          {project.statusLabel}
-        </Tag>
+        <StatusTag tone={project.selectable ? 'success' : 'warning'}>{project.statusLabel}</StatusTag>
         {project.statusNote ? <div className="app-caption">{project.statusNote}</div> : null}
       </TableCell>
       <TableCell className="app-num app-sticky-end">

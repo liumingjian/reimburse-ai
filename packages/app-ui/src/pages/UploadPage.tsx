@@ -1,12 +1,13 @@
 import { useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
 import { Button, InlineNotification, ProgressBar, Tag } from '@carbon/react';
-import { Add, CheckmarkFilled, Document, DocumentPdf, Image as ImageIcon, WarningAltFilled } from '@carbon/icons-react';
+import { Add, Document, DocumentPdf, Image as ImageIcon } from '@carbon/icons-react';
 import { UPLOAD_ACCEPT_ATTRIBUTE, UPLOAD_ACCEPTED_EXTENSIONS, type TaskSnapshot, type UploadBatch, type UploadFileResult } from '../contract/snapshot';
 import { formatBytes, hashPrefix } from '../format';
 import { navigate, taskHash } from '../router';
 import { ActionBar } from '../shell/ActionBar';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
+import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
 import { useReopenUpload } from '../shell/useReopenUpload';
 import { PAGE_COPY } from './page-copy';
@@ -204,13 +205,9 @@ function BatchPanel({ batch }: { batch: UploadBatch }) {
         </h2>
         <FieldGroup fields={[{ label: '材料', value: `${accepted} 份` }]} />
         {rejected === 0 ? (
-          <Tag type="green" renderIcon={CheckmarkFilled}>
-            已复制入任务目录
-          </Tag>
+          <StatusTag tone="success">已复制入任务目录</StatusTag>
         ) : (
-          <Tag type="warm-gray" renderIcon={WarningAltFilled}>
-            拒绝 {rejected} 份
-          </Tag>
+          <StatusTag tone="warning">拒绝 {rejected} 份</StatusTag>
         )}
       </div>
       <ul className="app-file-list bleed">

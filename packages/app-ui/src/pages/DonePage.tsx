@@ -1,9 +1,10 @@
 import { Button, InlineNotification, Tag } from '@carbon/react';
-import { CheckmarkFilled, ErrorFilled, Printer, WarningAltFilled } from '@carbon/icons-react';
+import { CheckmarkFilled, ErrorFilled, Printer } from '@carbon/icons-react';
 import { HUMAN_REVIEW_NOTICE, SAVE_COMPLETED_NOTICE, type TaskSnapshot } from '../contract/snapshot';
 import { TASKS_HASH, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
 import { PageHeader } from '../shell/PageHeader';
+import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 import { ReadbackTable } from './ReadbackTable';
@@ -64,9 +65,7 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
           <div className="app-summary-field">
             <span className="app-summary-key">处置</span>
             <span className="app-summary-value">
-              <Tag type="warm-gray" renderIcon={WarningAltFilled}>
-                已转人工
-              </Tag>
+              <StatusTag tone="warning">已转人工</StatusTag>
             </span>
           </div>
         ) : null}

@@ -36,6 +36,8 @@ $system-mono: (ui-monospace, 'SF Mono', Menlo, Consolas, monospace);
 @use '@carbon/styles/scss/components/data-table';
 // Table toolbar and batch actions (TableToolbar, TableBatchActions) ship in a separate partial; without it they render as display: block.
 @use '@carbon/styles/scss/components/data-table/action';
+// Expandable rows (TableExpandRow, TableExpandHeader) also ship separately; without it the expand chevron never rotates.
+@use '@carbon/styles/scss/components/data-table/expandable';
 @use '@carbon/styles/scss/components/search';
 @use '@carbon/styles/scss/components/tag';
 @use '@carbon/styles/scss/components/popover';

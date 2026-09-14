@@ -10,7 +10,7 @@
 `tokens.css` 与它的测试随迁移删除。颜色与尺寸一律取 Carbon 的 token（Sass 变量，输出为 `var(--cds-…)`），不写字面颜色。
 
 - 样式入口 `src/styles/carbon.scss`：Carbon 配置（不输出 IBM Plex 字体）、系统字体、Gray 10 主题、reset、布局 token，
-  然后按组件引入用到的 Carbon 组件样式（按钮、UI Shell、进度指示、弹层、数据表格、搜索、标签、提示、内容切换、通知、进度条、表单、输入框、复选框、单选按钮、链接、溢出菜单），
+  然后按组件引入用到的 Carbon 组件样式（按钮、UI Shell、进度指示、弹层、数据表格（含工具栏批量操作与可展开行两个单独的分文件，漏引则展开箭头不转）、搜索、标签、提示、内容切换、通知、进度条、表单、输入框、复选框、单选按钮、链接、溢出菜单），
   以控制单文件体积。要用新的 Carbon 组件时在这里加一行 `@use '@carbon/styles/scss/components/<名字>'`。
 - 本应用的版式规则 `src/styles/_app-rules.scss`：只写 Carbon 不管的部分（下文「本应用的规则」），类名一律以 `app-` 开头，
   只引用 Carbon 的 spacing、theme、type token。尽量不改 `.cds--*` 的内部样式；确实要改时（如表格固定列、单元格里的按钮内边距）在规则旁写明原因。
@@ -29,7 +29,9 @@ getdesign 原件（linear.app、ibm、airtable）仍在 `prototypes/design-md/`�
   步骤条 ProgressIndicator；弹层 ComposedModal；表格 Table 系列（TableContainer、TableToolbar、TableToolbarSearch）；
   状态 Tag；提示 InlineNotification；限制说明 Tooltip / Toggletip；表单 TextInput、Checkbox、Search；进度 ProgressBar；筛选 ContentSwitcher。
 - **状态标签**：用 Carbon 的 Tag 类型，永远带文字，颜色只是第二通道：进行中 `blue`，完成 `green`，出错 `red`，中性 `gray`。
-  Carbon 没有黄色标签：**需要注意**（对账中、待确认、已转人工、已锁定）用最接近的 `warm-gray` 加警告图标。
+  Carbon 没有黄色标签：**需要注意**（对账中、待确认、已转人工）用最接近的 `warm-gray` 加警告图标，
+  图标照 Carbon 警告通知的画法（`$support-warning` 填充，里面的「!」深色），各页的警告标签一律经 `StatusTag` 的 `warning` 语气，看起来一样；
+  已锁定用 `warm-gray` 加锁，锁不上黄色。
 - **不随迁移加入**：DataTable 的排序、行选择与批量操作栏。#135 起行选择与批量操作栏只用在项目归属页（#138，见下文「项目归属：批量操作栏与项目弹层」），行展开只用在材料盘点的费用事件表（#137，见下文「盘点清单」）。整单明细的顺序由服务端决定（打印稿序号与报销系统明细行共用），
   能不能让用户重排是业务问题，以后逐项评审。表格一律照服务端给的顺序，不放排序按钮。
 
@@ -163,7 +165,10 @@ Search 加 RadioButtonGroup 单选，本次已用的项目在前并带条数；�
   每组展开按钮的可访问名称是「费用事件 No.x」，展开状态在 `aria-expanded`。
 - 展开内容只用展开行自己的底色：先是一行「材料证据关联」（label-01 灰色标签加结论），多事件组再列各事件一行，
   下面是材料小表（文件与角色、识别为、校验、状态）。材料的校验文本已被结论完整说过时写「见材料证据关联」，不重复。
-- 需要注意的材料只用 warm-gray 加警示图标的标签标出，不给整行上底色，也不画自己的彩色边条。
+- 展开按钮的箭头：收起时朝右，展开时朝下（组行与表头的「全部展开」一样）。
+- 待确认的行（组行与材料小表的行）左边一条 3px `$support-warning` 竖条，整行 `$notification-background-warning` 浅黄底，悬停时底色加深一档、竖条保留；
+  状态列照样是警告标签，颜色只是第二通道。已排除的行文字用 `$text-secondary`。
+- 摘要条里「需处理」大于 0 时值前带警告图标，「通过」带绿色 `$support-success` 对勾；图标不读屏，文字不变。
 - 没有归入费用事件的材料单独一节，放在表格下方，用同样的材料小表。
 
 ### 标题与版式

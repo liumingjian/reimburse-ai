@@ -89,9 +89,30 @@ test('全部展开与全部收起', async ({ page }) => {
   await expect(page.getByRole('table', { name: /的材料$/ })).toHaveCount(1);
 });
 
-// Rows needing attention are marked by tags only: no row background or hand-drawn edge bar; no horizontal scroll at 1100.
+// The expand chevron points right when collapsed and down when expanded, on group rows and the expand-all header.
+// Angle is read from the chevron's computed transform matrix, after Carbon's transition settles.
+test('展开箭头：收起朝右，展开朝下', async ({ page }) => {
+  await page.goto(open('?seed=inventory', '#/task/T1/inventory'));
+  const angle = (name: string) =>
+    page.getByRole('button', { name, exact: true }).locator('svg').evaluate((svg) => {
+      const matrix = new DOMMatrixReadOnly(getComputedStyle(svg).transform);
+      return Math.round((Math.atan2(matrix.b, matrix.a) * 180) / Math.PI);
+    });
+  // 0 = right, 90 = down.
+  await expect.poll(() => angle('费用事件 No.5')).toBe(90);
+  await expect.poll(() => angle('费用事件 No.1-3')).toBe(0);
+  await expect.poll(() => angle('全部展开')).toBe(0);
+  await page.getByRole('button', { name: '费用事件 No.1-3', exact: true }).click();
+  await expect.poll(() => angle('费用事件 No.1-3')).toBe(90);
+  await page.getByRole('button', { name: '费用事件 No.5', exact: true }).click();
+  await expect.poll(() => angle('费用事件 No.5')).toBe(0);
+  await page.getByRole('button', { name: '全部展开', exact: true }).click();
+  await expect.poll(() => angle('全部收起')).toBe(90);
+});
+
+// Pending rows carry the warning bar and background as a second channel; no horizontal scroll at 1100.
 for (const width of [1440, 1100]) {
-  test(`${width}：不横向滚动，没有整行黄底，待确认标签带图标，页头与摘要条没有中点串`, async ({ page }, testInfo) => {
+  test(`${width}：不横向滚动，待确认的行有黄色竖条与浅黄底，待确认标签带图标，页头与摘要条没有中点串`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(open('?seed=inventory', '#/task/T1/inventory'));
     await expect(page.getByRole('button', { name: '费用事件 No.5', exact: true })).toHaveAttribute('aria-expanded', 'true');
@@ -112,11 +133,20 @@ for (const width of [1440, 1100]) {
     await expect(pendingStatus).toHaveCount(5);
     for (const cell of await pendingStatus.all()) await expect(cell.locator('svg')).toBeVisible();
 
-    const cells = await page.getByLabel('盘点结果').locator('td').evaluateAll((tds) =>
-      tds.map((td) => {
-        const style = getComputedStyle(td);
-        return { background: style.backgroundColor, shadow: style.boxShadow };
-      }),
+    // Second channel: every row whose status cell reads 待确认 (group or material row) has the warning background and a
+    // leading inset bar; no other row has either. Rows are read from their own cells, so nested tables are covered.
+    await page.mouse.move(0, 0);
+    const rows = await page.locator('main tbody tr').evaluateAll((trs) =>
+      trs
+        .filter((tr) => tr.children.length > 1)
+        .map((tr) => {
+          const cells = [...tr.children] as HTMLElement[];
+          return {
+            pending: cells[cells.length - 1]!.textContent === '待确认',
+            backgrounds: cells.map((cell) => getComputedStyle(cell).backgroundColor),
+            bar: getComputedStyle(cells[0]!).boxShadow,
+          };
+        }),
     );
     const warningBackground = await page.evaluate(() => {
       const probe = document.createElement('div');
@@ -126,10 +156,15 @@ for (const width of [1440, 1100]) {
       probe.remove();
       return color;
     });
-    expect(cells.length).toBeGreaterThan(0);
-    for (const cell of cells) {
-      expect(cell.background).not.toBe(warningBackground);
-      expect(cell.shadow).not.toMatch(/inset/);
+    expect(rows.filter((row) => row.pending)).toHaveLength(5);
+    for (const row of rows) {
+      if (row.pending) {
+        for (const background of row.backgrounds) expect(background).toBe(warningBackground);
+        expect(row.bar).toMatch(/inset/);
+      } else {
+        for (const background of row.backgrounds) expect(background).not.toBe(warningBackground);
+        expect(row.bar).not.toMatch(/inset/);
+      }
     }
 
     const head = page.locator('.app-page-head');

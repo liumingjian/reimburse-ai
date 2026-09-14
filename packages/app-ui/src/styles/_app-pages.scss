@@ -396,6 +396,42 @@ $gutter: $spacing-06;
   }
 }
 
+// Expand chevron: Carbon's expandable table turns its ChevronRight glyph down when collapsed and up when expanded.
+// The inventory reads as a tree instead: right when collapsed, down when expanded, on group rows and the expand-all
+// header alike. Only the angle changes; Carbon's transition stays.
+// Carbon sets data-previous-value='collapsed' on the expand cell while the row is expanded.
+.app-inventory .cds--table-expand__svg {
+  transform: rotate(0deg);
+}
+
+.app-inventory .cds--table-expand[data-previous-value='collapsed'] .cds--table-expand__svg {
+  transform: rotate(90deg);
+}
+
+// Exception rows (group rows and material rows): the status tag stays the first channel; this is the second.
+// Pending gets Carbon's warning notification treatment: a 3px $support-warning bar at the start and the warning
+// notification background. Hover lays $background-hover over it so the row still darkens and the bar stays.
+// Excluded rows only dim their text.
+.app-inventory .cds--data-table tbody tr.is-pending > td,
+.app-ungrouped .cds--data-table tbody tr.is-pending > td {
+  background-color: var(--cds-notification-background-warning);
+
+  &:first-child {
+    box-shadow: inset 3px 0 0 $support-warning;
+  }
+}
+
+.app-inventory .cds--data-table tbody tr.is-pending:hover > td,
+.app-ungrouped .cds--data-table tbody tr.is-pending:hover > td {
+  background-color: var(--cds-notification-background-warning);
+  background-image: linear-gradient($background-hover, $background-hover);
+}
+
+.app-inventory .cds--data-table tbody tr.is-excluded > td,
+.app-ungrouped .cds--data-table tbody tr.is-excluded > td {
+  color: $text-secondary;
+}
+
 .app-group-no {
   color: $text-secondary;
   font-variant-numeric: tabular-nums;

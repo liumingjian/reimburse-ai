@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   Button,
   Table,
@@ -12,7 +12,7 @@ import {
   TableRow,
   Tag,
 } from '@carbon/react';
-import { CheckmarkFilled, InProgress } from '@carbon/icons-react';
+import { CheckmarkFilled, InProgress, WarningAltFilled } from '@carbon/icons-react';
 import { MATERIAL_ROLE_LABELS, type ExpenseEvent, type Material, type TaskSnapshot } from '../contract/snapshot';
 import { formatDateTime } from '../format';
 import { taskHash } from '../router';
@@ -48,6 +48,13 @@ const STATUS_SEVERITY: ReadonlyArray<Material['status']> = ['pending', 'uploaded
 
 function groupStatus(materials: readonly Material[]): Material['status'] | null {
   return STATUS_SEVERITY.find((status) => materials.some((material) => material.status === status)) ?? null;
+}
+
+// Row second channel (DESIGN.md「盘点清单」): pending rows get the warning bar and background, excluded rows dim.
+function rowProps(status: Material['status'] | null): { className?: string } {
+  if (status === 'pending') return { className: 'is-pending' };
+  if (status === 'excluded') return { className: 'is-excluded' };
+  return {};
 }
 
 const GROUP_COLUMNS = ['费用事件', '日期', '金额', '份数', '状态'] as const;
@@ -107,7 +114,7 @@ function MaterialTable({ label, materials, note }: { label: string; materials: r
       </TableHead>
       <TableBody>
         {materials.map((material) => (
-          <TableRow key={material.materialId}>
+          <TableRow key={material.materialId} {...rowProps(material.status)}>
             <TableCell>
               <span className="app-file-name">{material.fileName}</span>
               <div className="app-caption">{MATERIAL_ROLE_LABELS[material.role]}</div>
@@ -160,11 +167,15 @@ function GroupDetail({ group, title }: { group: Group; title: string }) {
   );
 }
 
-function SummaryField({ label, value, grow = false }: { label: string; value: string; grow?: boolean }) {
+// The optional icon is a decorative second channel (aria-hidden); the text carries the meaning.
+function SummaryField({ label, value, grow = false, icon = null }: { label: string; value: string; grow?: boolean; icon?: ReactNode }) {
   return (
     <div className={grow ? 'app-summary-field app-grow' : 'app-summary-field'}>
       <span className="app-summary-key">{label}</span>
-      <span className="app-summary-value">{value}</span>
+      <span className="app-summary-value">
+        {icon}
+        {value}
+      </span>
     </div>
   );
 }
@@ -235,8 +246,12 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
           {/* Summary bar, same pattern as whole-claim review; every number comes from inventory.summary. */}
           <div className="app-summary bleed" role="group" aria-label="盘点摘要">
             <SummaryField label="材料" value={`${summary.materialCount} 份`} />
-            <SummaryField label="通过" value={`${summary.okCount} 份`} />
-            <SummaryField label="需处理" value={`${summary.pendingMaterialCount} 份`} />
+            <SummaryField label="通过" value={`${summary.okCount} 份`} icon={<CheckmarkFilled className="app-summary-icon is-success" aria-hidden="true" />} />
+            <SummaryField
+              label="需处理"
+              value={`${summary.pendingMaterialCount} 份`}
+              icon={summary.pendingMaterialCount > 0 ? <WarningAltFilled className="app-summary-icon app-warning-icon" aria-hidden="true" /> : null}
+            />
             <SummaryField label={MATERIAL_ROLE_LABELS.primary_voucher} value={`${summary.voucherCount} 份`} />
             <SummaryField label={MATERIAL_ROLE_LABELS.reference} value={`${summary.referenceCount} 份`} />
             <SummaryField label="盘点版本" value={version ?? '无'} grow />
@@ -269,6 +284,7 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
                       <TableExpandRow
                         key={key}
                         isExpanded={expanded}
+                        {...rowProps(status)}
                         onExpand={() => setExpanded(key, !expanded)}
                         aria-label={title}
                         {...(expanded ? { 'aria-controls': detailId } : {})}
