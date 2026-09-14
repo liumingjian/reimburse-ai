@@ -2,7 +2,7 @@ import { isRealDate } from '../../contract/actions';
 import type { ProjectBookEntry } from '../../contract/project-book';
 import type { Line, ProjectAssignment, ProjectOption, Step, TaskSnapshot } from '../../contract/snapshot';
 
-// 个人项目簿夹具：虚构的项目号与名称（沿用 prototypes/project-assignment-patterns 的写法），以及 mock「报销系统项目目录」。
+// 个人项目簿夹具：虚构的项目号与名称，以及 mock「报销系统项目目录」。
 // 可选判定、状态标签与说明照内核 projects.mjs annotateProjects 移植（「ERP」写作「报销系统」），由 mock 服务端给出。
 
 // 夹具员工的常驻城市，也是 mock 位置 Adapter 第一次给出的城市级网络位置候选（见 mock-adapter 的 homeCityDefault）。

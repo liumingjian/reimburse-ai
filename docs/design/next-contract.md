@@ -1,5 +1,7 @@
 # `baox next` 的 JSON 契约
 
+> **状态：归档（2026-09-11）。** 本文描述模型调用 `baox next` 的契约（`speak` 原样念、`actor: model`、子 Agent 范围、在对话里提问），已被[本地报销应用](standalone-app.md)取代：消费方改为应用服务端和页面。仍保留的独有事实：`next` 输出骨架、`step.kind` 清单，以及应用服务端将沿用的 `stepToken` / `--after` / `--result` 协议。待 `packages/app-ui/src/contract` 与服务端文档覆盖这些内容后删除。
+
 模型在整个流程里**只调用两条命令**：
 
 ```bash
@@ -88,7 +90,7 @@ baox next --after <stepToken> [--result <file>]  # 答：我做完了，这是�
 
 `ask_user` **不用任何提问工具**（Claude Code 的 `AskUserQuestion` 之类）：用户可以把它关掉，
 别的 Agent 也未必有它，而「在对话里问一句」是哪里都有的。
-实测记录见 [terminal-questions-headless.md](../research/terminal-questions-headless.md)。
+实测记录见验证台账 V-46。
 
 问题由**内核渲染**成一整块文本放在 `step.prompt` 里，模型原样贴出去，和 `confirm_table`
 贴表格是同一套搬运：措辞、选项、编号、末项那个「其他」，都不交给模型组织

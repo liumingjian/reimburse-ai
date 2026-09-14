@@ -1,8 +1,6 @@
 # 复用用户已登录的 Chrome，由用户自行完成 ERP 登录
 
-> 2026-09-09 浏览器决定已调整：正式页面使用系统默认浏览器，ego 仅供显式自动化 QA。当前阶段只做材料准备和 ERP 只读核验，不执行填报。以下 Chrome/CDP 独占控制方案保留为历史记录；当前行为与验证范围见 [默认浏览器 QA](../qa/default-browser-2026-09-09.md)。
-
-> 当前范围：本文的“零依赖”只适用于 Node 内核和 ERP 浏览器外壳，即不带 npm 依赖；文本 PDF 的 MarkItDown 路径另需锁定的 Python/uv 运行时，见 [ADR-0011](0011-markitdown-agent-pdf-candidates.md)。本文早期关于所有运行时均可纯文件拷贝的表述只保留为历史记录。
+> **状态：已修订（2026-09-11，见[本地报销应用](../design/standalone-app.md)）。** 继续有效：内核经 CDP 驱动专用 profile 的 Chromium、用户自己登录 ERP、Node 内核零 npm 依赖。「去报销」即执行自动填报，此前「当前阶段不执行填报」的说法作废。下文中「Skill 引导用户」「内核随 Skill 拷贝」及 MarkItDown 运行时相关表述均为 Skill 时期的历史记录；普通页面用系统默认浏览器、ego 仅供自动化 QA 的规则见 AGENTS.md。
 
 ERP 自动化不自带浏览器，而是接管用户自己的 Chrome：Skill 引导用户以远程调试方式启动浏览器，**用户自己登录 ERP**，随后内核通过调试协议独占控制该浏览器完成上传、导入和保存草稿。
 

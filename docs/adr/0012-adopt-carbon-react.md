@@ -1,5 +1,7 @@
 # 前端 @baox/app-ui 改用 IBM Carbon 组件库（@carbon/react），外观取 Carbon 原样
 
+> 编号说明：本文原编号 0008，与 ERP 只读核对那篇撞号，改为 0012。
+
 规格 #99 当初定的是纯 CSS、token 由 `packages/app-ui/DESIGN.md` 生成、不加运行时依赖，视觉借 Linear。
 两轮 QA 说界面"太过简陋，比不上商业化产品"之后，方案 B 改为"Carbon 管布局与密度、Linear 管品牌"，
 仍然手写 CSS。再往前一步时做了可丢弃原型（分支 `proto-carbon-react`，`prototypes/carbon-react/`），

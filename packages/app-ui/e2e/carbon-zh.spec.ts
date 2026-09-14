@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// Carbon 组件自带的英文文案（默认参数、读屏文字、图标标题、aria-label、placeholder）都要换成中文（ADR-0008）。
+// Carbon 组件自带的英文文案（默认参数、读屏文字、图标标题、aria-label、placeholder）都要换成中文（ADR-0012）。
 // 检查整页文字（含视觉隐藏的读屏文字与 SVG 标题）和常见的可访问属性，弹层打开时也查一遍。
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;

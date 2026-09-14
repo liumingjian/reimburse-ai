@@ -1,4 +1,4 @@
-// 界面样式入口：IBM Carbon 原样主题 Gray 10（ADR-0008），加本应用自己的版式规则（_app.scss）。
+// 界面样式入口：IBM Carbon 原样主题 Gray 10（ADR-0012），加本应用自己的版式规则（_app.scss）。
 // 字体只换一次：Carbon 的 font-family 映射改成系统字体（中文苹方），不打包 IBM Plex；字阶与字重照 Carbon。
 // 组件样式按组件引入，只收本应用用到的组件，控制单文件体积。
 @use '@carbon/styles/scss/config' with (

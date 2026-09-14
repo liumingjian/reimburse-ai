@@ -157,7 +157,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 ## 夹具与样式
 
 - `fixtures`：用 HTML 模板经 headless Chrome 生成示例 PDF（带中文文本层）、出租车票照片、打印页图与合并 PDF，写入 `fixtures/generated/` 并校验（需 macOS 上的 Google Chrome 与 `sips`）。数据全部虚构，来源是 `fixtures/scripts/data.mjs`（打印页顺序与页眉跟随统一业务序号）。`fixtures:verify` 只校验。
-- 样式：界面用 IBM Carbon（`@carbon/react` 组件，`@carbon/styles` Gray 10 原样主题，ADR-0008）。入口是 `src/styles/carbon.scss`（主题、系统字体、按组件引入的样式），
+- 样式：界面用 IBM Carbon（`@carbon/react` 组件，`@carbon/styles` Gray 10 原样主题，ADR-0012）。入口是 `src/styles/carbon.scss`（主题、系统字体、按组件引入的样式），
   本应用自己的版式规则在 `src/styles/_app-rules.scss`，只引用 Carbon 的 token。规则见 `DESIGN.md`；原先由 DESIGN.md 生成 `tokens.css` 的脚本已删除。
 
 ## 给服务端实现者：契约入口

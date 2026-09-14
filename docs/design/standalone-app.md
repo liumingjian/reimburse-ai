@@ -21,6 +21,8 @@
 | 高铁 | 铁路电子客票 | 无 | 客票 / 空 |
 | 出租车 | 纸质机打车费发票照片 | 无 | 车票 / 空 |
 
+上表按材料类型（材料类型）列出；费用类别（费用类别）仍是住宿、本地市内交通、外地市内交通、长途交通四类，由内核 `deriveCategory` 推导（`kernel/src/selection.mjs:29-64`，编码见 `kernel/src/categories.mjs`）：住宿发票关联结账单 → 住宿；高铁（铁路电子客票）→ 长途交通；网约车、出租车 → 按费用发生城市是否等于常驻城市归入本地或外地市内交通。
+
 ## 实测依据
 
 2026-09-11 在本机样本（9 份电子材料 + 2 张出租车照片，含个人信息，不入库）上验证：
@@ -46,7 +48,7 @@
 
 - **启动**：终端执行一条命令（如 `baox`），在默认浏览器打开 `localhost` 页面。
 - **Skill 下线**：现有 `baox` / `baox-setup` / `baox-recover` / `extract-reimbursement-images` 不再是入口。`stepToken` 的幂等和不可跳步语义保留，改由页面回传。
-- **字段提取器**：沿用 ADR-0011 的分工——Python Worker 只做图片预处理和 OCR，TypeScript 规则产生字段候选。候选来源记为规则名（如 `rule:amap_itinerary`），替代 `agent_from_markdown` 和视觉读数来源。
+- **字段提取器**：沿用 ADR-0013（受管 OCR）的分工——Python Worker 只做图片预处理和 OCR，TypeScript 规则产生字段候选。候选来源记为规则名（如 `rule:amap_itinerary`），替代 `agent_from_markdown` 和视觉读数来源。
 - **打印稿生成器**：放在独立的 workspace package（如 `packages/print-sheet`），依赖 `pdf-lib`，以保持 Node 内核零 npm 依赖。
 
 ## 材料上传
@@ -136,7 +138,7 @@
 
 - **修订 ADR-0001、ADR-0009**：Skill 外壳和「模型只执行 `next`」让位于本地应用。内核判定下一步的原则不变，只是消费方从模型换成页面和服务端。
 - **取代 ADR-0011（MarkItDown）中的 Agent 候选**：文本 PDF 的字段候选改由规则解析器产生，MarkItDown 不再是必经环节。
-- **修订 ADR-0011（受管 OCR）与 ADR-0004**：图片路径从「默认模型视觉」改为「OCR + 规则，失败转手工补填」，不再有模型视觉回退。
+- **修订 ADR-0013（受管 OCR，原编号 0011）与 ADR-0004**：图片路径从「默认模型视觉」改为「OCR + 规则，失败转手工补填」，不再有模型视觉回退。
 - **ADR-0010 的命令守卫**失去防模型的必要性，但保留无害；实施时再决定是否移除。
 - **保持**：Node 内核零 npm 依赖（打印稿生成器放在独立 package）、空文本 PDF 必须阻塞、ERP 写入不重放、对账后只有原地等待和转人工两种处置。
 
