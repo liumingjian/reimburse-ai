@@ -615,11 +615,14 @@ $doc-frame-block: var(--app-doc-frame-block);
   gap: $spacing-03 $spacing-06;
   margin: 0;
 
+  // Compact type like the field group (.app-field-key / .app-field-value); without it the list inherits 16px body type.
   dt {
     color: $text-secondary;
+    @include type.type-style('label-01');
   }
 
   dd {
+    @include type.type-style('body-compact-01');
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -637,10 +640,6 @@ $doc-frame-block: var(--app-doc-frame-block);
 // 只读字段组（启动页身份、新建弹层的报销人）：标签与值上下对齐，说明是值后面的一行 helper 文字。
 .app-readonly-fields {
   margin-block: $spacing-05;
-
-  dt {
-    @include type.type-style('label-01');
-  }
 
   dd {
     flex-direction: column;

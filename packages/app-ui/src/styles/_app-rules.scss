@@ -114,9 +114,12 @@ $gutter: $spacing-06;
   min-inline-size: 7.5rem;
 }
 
-.app-stepbar-name {
+// The task name is a Carbon Link to the task list. Keep Carbon's link colour and focus ring;
+// only make it a truncating block (Link is inline-flex by default) in the heading type.
+.cds--link.app-stepbar-name {
+  display: block;
+  max-inline-size: 100%;
   overflow: hidden;
-  color: $text-primary;
   white-space: nowrap;
   text-overflow: ellipsis;
   @include type.type-style('heading-compact-02');
