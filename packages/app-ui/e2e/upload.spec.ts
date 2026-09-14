@@ -62,7 +62,7 @@ test('正常上传：pdf/jpg/png 逐文件已接收，按批次列出并出现�
 });
 
 for (const width of [1440, 1100]) {
-  test(`空的上传页 ${width}px：格式说明在上，短的拖放区只有链接提示，没有大块空白`, async ({ page }) => {
+  test(`空的上传页 ${width}px：格式说明在上，短的拖放区铺满宽度，只有小图标和链接提示，没有大块空白`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(open('?seed=upload', '#/task/T1/upload'));
     const zone = page.getByTestId('dropzone');
@@ -76,6 +76,15 @@ for (const width of [1440, 1100]) {
     if (!rulesBox || !zoneBox) throw new Error('说明或拖放区不可见');
     expect(rulesBox.y + rulesBox.height).toBeLessThanOrEqual(zoneBox.y);
     expect(zoneBox.height).toBeLessThanOrEqual(120);
+    // Spans the form width instead of Carbon's 320px cap.
+    expect(zoneBox.width).toBeGreaterThan(width * 0.8);
+    const icon = page.getByTestId('upload-drop-icon');
+    await expect(icon).toBeVisible();
+    const iconBox = await icon.boundingBox();
+    if (!iconBox) throw new Error('上传图标不可见');
+    expect(iconBox.width).toBe(16);
+    expect(iconBox.x).toBeGreaterThanOrEqual(zoneBox.x);
+    expect(iconBox.y + iconBox.height).toBeLessThanOrEqual(zoneBox.y + zoneBox.height);
     await expect(page.getByText('上传后点「开始材料盘点」，系统开始盘点。')).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });

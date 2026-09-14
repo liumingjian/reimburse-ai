@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button, FileUploaderDropContainer, InlineNotification, Tag } from '@carbon/react';
-import { Add, CheckmarkFilled, Document, DocumentPdf, Image as ImageIcon, WarningAltFilled } from '@carbon/icons-react';
+import { Add, CheckmarkFilled, Document, DocumentPdf, Image as ImageIcon, Upload, WarningAltFilled } from '@carbon/icons-react';
 import { UPLOAD_ACCEPT_ATTRIBUTE, UPLOAD_ACCEPTED_EXTENSIONS, type TaskSnapshot, type UploadBatch, type UploadFileResult } from '../contract/snapshot';
 import { formatBytes, hashPrefix } from '../format';
 import { navigate, taskHash } from '../router';
@@ -14,8 +14,8 @@ import { PAGE_COPY } from './page-copy';
 // 上传材料页：拖入或选择文件 → 适配器逐文件给出接收/拒绝 → 按上传批次列出；可追加下一批；有材料后出现「开始材料盘点」。
 // 页面不判定文件是否合规：所有结果来自快照里的批次记录。
 // 整单明细已确认的任务再追加下一批，先弹出同一份二次确认，再请服务端使确认失效（回到上传阶段）。
-// Layout follows Carbon's file uploader: label and format rules above a stock FileUploaderDropContainer
-// whose only content is the link-style prompt. File rows are tagged only when rejected (exceptions only).
+// Layout follows Carbon's file uploader: label and format rules above a stock FileUploaderDropContainer that spans the
+// form width, holding a 16px upload icon and the link-style prompt. File rows are tagged only when rejected (exceptions only).
 
 // 开始材料盘点 (start material inventory) and 追加下一批 (append next batch) live in the sticky action bar (#141),
 // hidden while the append area is open.
@@ -34,18 +34,22 @@ function Dropzone({ busyCount, disabled, onFiles }: { busyCount: number; disable
     <div className="cds--form-item">
       <p className="cds--file--label">材料文件</p>
       <p className="cds--label-description">支持 PDF、JPG、PNG，单个文件不超过 20MB。原件会被复制进任务目录，不会被修改。</p>
-      <FileUploaderDropContainer
-        labelText={UPLOAD_PROMPT}
-        multiple
-        accept={ACCEPT}
-        pattern={ANY_EXTENSION}
-        disabled={disabled}
-        data-testid="dropzone"
-        onAddFiles={(_event, { addedFiles }) => {
-          // Carbon flags type mismatches on the File objects; the page ignores that and lets the server judge.
-          if (addedFiles.length > 0) onFiles([...addedFiles]);
-        }}
-      />
+      {/* labelText only takes a string, so the icon is a sibling laid over the zone; it takes no clicks and has no name. */}
+      <div className="app-upload-drop">
+        <FileUploaderDropContainer
+          labelText={UPLOAD_PROMPT}
+          multiple
+          accept={ACCEPT}
+          pattern={ANY_EXTENSION}
+          disabled={disabled}
+          data-testid="dropzone"
+          onAddFiles={(_event, { addedFiles }) => {
+            // Carbon flags type mismatches on the File objects; the page ignores that and lets the server judge.
+            if (addedFiles.length > 0) onFiles([...addedFiles]);
+          }}
+        />
+        <Upload size={16} className="app-upload-drop-icon" aria-hidden="true" data-testid="upload-drop-icon" />
+      </div>
       {busyCount > 0 ? (
         <p className="cds--form__helper-text" role="status">
           正在接收 {busyCount} 份文件…

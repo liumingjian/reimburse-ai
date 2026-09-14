@@ -63,7 +63,35 @@ $gutter: $spacing-06;
   gap: $spacing-03;
 }
 
-// ---------- Upload (上传材料): batch file lists (the drop zone is a stock Carbon FileUploaderDropContainer, no extra styles) ----------
+// ---------- Upload (上传材料): drop zone and batch file lists ----------
+
+// The drop zone is a stock Carbon FileUploaderDropContainer. Carbon caps it at 320px through .cds--file-browse-btn;
+// here it spans the form width, and a 16px upload icon sits before the prompt, vertically centred on its first line.
+.app-upload-drop {
+  position: relative;
+  // .cds--form-item aligns its children to flex-start, which would shrink the zone to its prompt.
+  align-self: stretch;
+
+  .cds--file-browse-btn {
+    max-inline-size: none;
+  }
+
+  .cds--file__drop-container {
+    padding-inline-start: $spacing-05 + $spacing-06;
+  }
+
+  &:has(.cds--file-browse-btn--disabled) .app-upload-drop-icon {
+    fill: $icon-disabled;
+  }
+}
+
+.app-upload-drop-icon {
+  position: absolute;
+  inset-block-start: calc(#{$spacing-05} + 1px);
+  inset-inline-start: $spacing-05;
+  fill: $link-primary;
+  pointer-events: none;
+}
 
 .app-upload-first {
   margin-block-start: $spacing-03;
