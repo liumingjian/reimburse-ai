@@ -8,7 +8,7 @@ const INVALIDATED = '材料已变更，之前的整单明细确认与已生成�
 const PROJECT_CHANGED = '项目归属已变更，之前的整单明细确认失效。请重新核对后再确认。';
 
 const table = (page: Page) => page.getByRole('table', { name: '整单明细' });
-const checkbox = (page: Page) => page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认', exact: true });
+const checkbox = (page: Page) => page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认整单明细', exact: true });
 const printLink = (page: Page) => page.getByRole('link', { name: '去打印', exact: true });
 const claimButton = (page: Page) => page.getByRole('button', { name: '去报销', exact: true });
 
@@ -73,6 +73,36 @@ test('确认：?seed=review 是 No. 加内核 13 列，按费用分类排序；�
   await page.screenshot({ path: testInfo.outputPath('review-confirmed.png'), fullPage: true });
 });
 
+test('吸底栏与首屏：主按钮是「确认整单明细」、往回走的是 ghost；1440 下确认后去打印与去报销在首屏内、排在明细表之前', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(open('?seed=review', '#/task/T1/review'));
+  await expect(page.getByRole('heading', { name: '整单明细确认' })).toBeVisible();
+  const bar = page.getByRole('region', { name: '整单确认' });
+  await expect(checkbox(page)).toHaveClass(/cds--btn--primary/);
+  await expect(bar.getByRole('link', { name: '回到待确认项' })).toHaveClass(/cds--btn--ghost/);
+  await expect(bar.getByRole('link', { name: '修改项目归属' })).toHaveClass(/cds--btn--ghost/);
+  await expect(page.getByText('唯一一次整单确认，项目归属一并生效。')).toHaveCount(1);
+  await expect(bar).not.toContainText('项目归属一并生效');
+  await page.screenshot({ path: testInfo.outputPath('review-1440-before-confirm.png') });
+
+  await checkbox(page).click();
+  await expect(printLink(page)).toBeVisible();
+  const [print, claim, tableBox] = await Promise.all([printLink(page).boundingBox(), claimButton(page).boundingBox(), table(page).boundingBox()]);
+  // 不滚动就能看到两个入口：整个按钮都在 900 高的首屏内，且在明细表上方。
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  for (const box of [print, claim]) {
+    expect(box && box.y >= 0 && box.y + box.height <= 900).toBe(true);
+    expect(box && tableBox && box.y + box.height < tableBox.y).toBe(true);
+  }
+  const before = await page.evaluate(() => {
+    const table = document.querySelector('table[aria-label="整单明细"]');
+    const links = [...document.querySelectorAll('a, button')].filter((node) => node.textContent?.trim() === '去打印' || node.textContent?.trim() === '去报销');
+    return links.length === 2 && links.every((node) => table !== null && (node.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+  });
+  expect(before).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('review-1440-after-confirm.png') });
+});
+
 test('版式：No. 固定在左、总额固定在右，中间横向滚动；同分类重复值变淡但仍在；操作栏吸底；材料包默认收起', async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 700 });
   await page.goto(open('?seed=review', '#/task/T1/review'));
@@ -85,7 +115,7 @@ test('版式：No. 固定在左、总额固定在右，中间横向滚动；同�
 
   // 吸底操作栏：页面比视口高时贴在视口底边。
   const bar = page.getByRole('region', { name: '整单确认' });
-  await expect(bar).toContainText('确认后项目归属一并生效');
+  await expect(bar).toContainText('确认后即可去打印、去报销');
   const barBox = await bar.boundingBox();
   expect(barBox && Math.abs(barBox.y + barBox.height - 700) < 2).toBe(true);
 

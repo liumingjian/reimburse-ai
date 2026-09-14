@@ -760,3 +760,8 @@ $gutter: $spacing-06;
 .app-after-actions {
   margin-block-start: $spacing-05;
 }
+
+// 整单明细确认后的入口区排在摘要条与明细表之间：与下方表格隔开一段。
+.app-review-done {
+  margin-block-end: $spacing-07;
+}

@@ -8,7 +8,7 @@ const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 const CATALOG_RUNNING = '正在核对报销系统中的项目和费用项目，确认它们可以用于本次报销。';
 const PREPARATION_RUNNING = '材料已经整理完成，正在生成本次报销的核对材料。';
 
-const confirmButton = (page: Page) => page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认', exact: true });
+const confirmButton = (page: Page) => page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认整单明细', exact: true });
 const packageFiles = (page: Page) => page.getByRole('list', { name: '材料包文件' }).getByRole('listitem');
 
 // 材料包清单默认收起；收起时点开（重新准备后可能重新挂载成收起状态）。

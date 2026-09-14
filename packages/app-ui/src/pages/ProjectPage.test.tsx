@@ -233,7 +233,7 @@ describe('项目归属（内核 Variant B 工作台）', () => {
     fireEvent.click(submitButton());
     expect(await screen.findByRole('heading', { name: '整单明细确认' })).toBeTruthy();
     expect(window.location.hash).toBe('#/task/T1/review');
-    expect(await screen.findByRole('button', { name: '确认' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '确认整单明细' })).toBeTruthy();
 
     const after = await adapter.getSnapshot('T1');
     expect(after.projectAssignment.status).toBe('submitted');

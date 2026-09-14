@@ -54,7 +54,7 @@ test('全流程：从 ?seed=pending 一路走到去打印与去报销，顺序�
 
   // 3. 自动核对报销信息、准备材料之后，唯一一次整单确认
   await expect(page).toHaveURL(/#\/task\/T1\/review$/);
-  const checkbox = page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认', exact: true });
+  const checkbox = page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认整单明细', exact: true });
   await expect(checkbox).toBeVisible();
   await expect(page.getByTestId('review-purpose')).toContainText('上海产品评审出差');
   await page.screenshot({ path: testInfo.outputPath('flow-review.png'), fullPage: true });

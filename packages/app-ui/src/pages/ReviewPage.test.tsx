@@ -15,7 +15,7 @@ function renderReview(seed: TaskStage = 'review', autoStepMs = 5) {
 
 const table = () => screen.getByRole('table', { name: '整单明细' });
 const confirmPanel = () => screen.getByLabelText('整单确认');
-const checkbox = () => within(confirmPanel()).getByRole('button', { name: '确认' });
+const checkbox = () => within(confirmPanel()).getByRole('button', { name: '确认整单明细' });
 const printLink = () => screen.queryByRole('link', { name: '去打印' });
 const claimButton = () => screen.queryByRole('button', { name: '去报销' });
 const bodyRows = () => within(table()).getAllByRole('row').filter((row) => row.closest('tbody'));
@@ -72,10 +72,17 @@ describe('整单明细确认', () => {
     expect(within(table()).queryByRole('textbox')).toBeNull();
     expect(screen.queryByRole('checkbox')).toBeNull();
 
-    // 底部操作栏：左边一句话，右边「确认」加两个三级链接。
-    expect(within(confirmPanel()).getByText('确认后项目归属一并生效')).toBeTruthy();
-    expect(within(confirmPanel()).getByRole('link', { name: '回到待确认项' })).toBeTruthy();
-    expect(within(confirmPanel()).getByRole('link', { name: '修改项目归属' })).toBeTruthy();
+    // 底部操作栏：左边一句导语里没有的话，右边唯一的主按钮「确认整单明细」，两个往回走的操作是 ghost。
+    expect(within(confirmPanel()).getByText('确认后即可去打印、去报销')).toBeTruthy();
+    const back = within(confirmPanel()).getByRole('link', { name: '回到待确认项' });
+    const reassign = within(confirmPanel()).getByRole('link', { name: '修改项目归属' });
+    expect(back.className).toContain('cds--btn--ghost');
+    expect(reassign.className).toContain('cds--btn--ghost');
+    expect(checkbox().className).toContain('cds--btn--primary');
+    expect(within(confirmPanel()).queryByRole('button', { name: '确认' })).toBeNull();
+    // 同一句说明不出现两次：导语只在页头出现一次，吸底栏不再复述「项目归属一并生效」。
+    expect(screen.getAllByText('唯一一次整单确认，项目归属一并生效。')).toHaveLength(1);
+    expect(confirmPanel().textContent ?? '').not.toContain('项目归属一并生效');
     expect((checkbox() as HTMLButtonElement).disabled).toBe(false);
     expect(printLink()).toBeNull();
     expect(claimButton()).toBeNull();
@@ -91,8 +98,15 @@ describe('整单明细确认', () => {
     expect(print.getAttribute('href')).toBe('#/task/T1/print');
     expect(print.className).toBe(claim.className);
     expect(print.className).toContain('cds--btn--primary');
+    // 确认后下一步就在眼前：去打印、去报销在文档顺序上位于摘要条之后、整单明细表之前，且不在吸底栏里。
+    const summary = screen.getByRole('group', { name: '确认摘要' });
+    for (const entry of [print, claim]) {
+      expect(summary.compareDocumentPosition(entry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(entry.compareDocumentPosition(table()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(entry.closest('.app-action-bar')).toBeNull();
+    }
     expect(screen.getByText(/^整单明细已确认（2026-09-11 \d\d:\d\d）/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: '确认' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '确认整单明细' })).toBeNull();
     expect(screen.getByRole('button', { name: '追加材料' })).toBeTruthy();
 
     // 确认动作带着快照里的摘要（绑定项目归属）与 stepToken 到了服务端：阶段进入去打印 / 去报销。
@@ -151,7 +165,7 @@ describe('整单明细确认', () => {
 
     expect(await screen.findByRole('heading', { name: '整单明细确认' })).toBeTruthy();
     expect(await screen.findByText(PROJECT_CHANGED_NOTICE)).toBeTruthy();
-    expect(await screen.findByRole('button', { name: '确认' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '确认整单明细' })).toBeTruthy();
     expect(printLink()).toBeNull();
     expect(claimButton()).toBeNull();
     let snapshot = await adapter.getSnapshot('T1');
@@ -179,10 +193,10 @@ describe('整单明细确认', () => {
   test('?seed=catalog：确认页先显示报销信息核对与材料准备的进度（内核话术），完成后才能确认，并出现材料包文件清单', async () => {
     renderReview('catalog', 300);
     expect(await screen.findByText(CATALOG_PREPARATION_COPY.catalogRunning)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: '确认' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '确认整单明细' })).toBeNull();
     expect(screen.queryByTestId('package-files')).toBeNull();
     expect(await screen.findByText(CATALOG_PREPARATION_COPY.preparationRunning)).toBeTruthy();
-    expect(await screen.findByRole('button', { name: '确认' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '确认整单明细' })).toBeTruthy();
     expect((checkbox() as HTMLButtonElement).disabled).toBe(false);
     expect(screen.getByTestId('package-files').textContent).toBe('核对材料已生成，共 13 份文件。');
   });
