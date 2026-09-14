@@ -185,6 +185,99 @@ describe('待确认项', () => {
   });
 });
 
+describe('原件查看器', () => {
+  const viewer = () => within(detail()).getByTestId('doc-viewer');
+  const toolbar = () => within(viewer()).queryByRole('toolbar', { name: '原件查看' });
+  const tool = (name: string) => within(viewer()).getByRole('button', { name });
+  const readout = () => within(viewer()).getByRole('status').textContent;
+  const photo = () => within(viewer()).getByRole('img', { name: /原件$/ });
+
+  test('放大、缩小改变倍数读数，适应窗口回到默认；旋转 90° 改变原件方向', async () => {
+    renderPending();
+    await screen.findByRole('heading', { name: '待确认项' });
+    expect(toolbar()).toBeTruthy();
+    expect(readout()).toBe('当前倍数 100%');
+    expect(photo().style.transform).toContain('rotate(0deg)');
+
+    fireEvent.click(tool('放大'));
+    expect(readout()).toBe('当前倍数 125%');
+    fireEvent.click(tool('放大'));
+    fireEvent.click(tool('放大'));
+    expect(readout()).toBe('当前倍数 200%');
+    fireEvent.click(tool('缩小'));
+    expect(readout()).toBe('当前倍数 150%');
+    fireEvent.click(tool('适应窗口'));
+    expect(readout()).toBe('当前倍数 100%');
+
+    // 缩到最小档时「缩小」不可用。
+    for (let index = 0; index < 3; index += 1) fireEvent.click(tool('缩小'));
+    expect(readout()).toBe('当前倍数 25%');
+    expect(tool('缩小').hasAttribute('disabled')).toBe(true);
+    fireEvent.click(tool('适应窗口'));
+
+    fireEvent.click(tool('旋转 90°'));
+    expect(photo().style.transform).toContain('rotate(90deg)');
+    fireEvent.click(tool('旋转 90°'));
+    fireEvent.click(tool('旋转 90°'));
+    fireEvent.click(tool('旋转 90°'));
+    expect(photo().style.transform).toContain('rotate(0deg)');
+  });
+
+  test('切换到另一个待确认项后，倍数与角度回到默认', async () => {
+    renderPending();
+    await screen.findByRole('heading', { name: '待确认项' });
+    fireEvent.click(tool('放大'));
+    fireEvent.click(tool('旋转 90°'));
+    expect(readout()).toBe('当前倍数 125%');
+    fireEvent.click(itemButton('下车时间不合法'));
+    expect(within(detail()).getByRole('img', { name: 'IMG_4906.jpg 原件' })).toBeTruthy();
+    expect(readout()).toBe('当前倍数 100%');
+    expect(photo().style.transform).toContain('rotate(0deg)');
+    // 切回来也是默认。
+    fireEvent.click(itemButton('补填起点与终点'));
+    expect(readout()).toBe('当前倍数 100%');
+    expect(photo().style.transform).toContain('rotate(0deg)');
+  });
+
+  test('PDF 原件用浏览器自带预览，不出现工具栏', async () => {
+    renderPending();
+    await screen.findByRole('heading', { name: '待确认项' });
+    fireEvent.click(itemButton('不支持的材料类型'));
+    expect(within(detail()).getByTitle('餐饮_发票.pdf 原件').tagName).toBe('IFRAME');
+    expect(toolbar()).toBeNull();
+    expect(within(viewer()).queryByRole('button')).toBeNull();
+  });
+
+  test('查看操作不发出任何适配器调用', async () => {
+    window.location.hash = '#/task/T1/pending';
+    const adapter = createMockAdapter({ seed: 'pending', fault: null, inventoryPhaseMs: 5 });
+    const calls: string[] = [];
+    const spied = new Proxy(adapter, {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== 'function') return value;
+        return (...args: unknown[]) => {
+          calls.push(String(property));
+          return value.apply(target, args);
+        };
+      },
+    });
+    render(<App adapter={spied} />);
+    await screen.findByRole('heading', { name: '待确认项' });
+    await screen.findByText('对照原件补填或作出选择。还剩 3 个。');
+    calls.length = 0;
+
+    for (const name of ['放大', '放大', '缩小', '旋转 90°', '适应窗口']) fireEvent.click(tool(name));
+    fireEvent.pointerDown(within(viewer()).getByTestId('doc-frame'), { button: 0, clientX: 10, clientY: 10, pointerId: 1 });
+    fireEvent.pointerMove(within(viewer()).getByTestId('doc-frame'), { clientX: 40, clientY: 40, pointerId: 1 });
+    fireEvent.pointerUp(within(viewer()).getByTestId('doc-frame'), { pointerId: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls).toEqual([]);
+    const snapshot = await adapter.getSnapshot('T1');
+    expect(snapshot.pendingItems.every((item) => item.status === 'open')).toBe(true);
+  });
+});
+
 describe('逐段分摊与阻塞项', () => {
   const ALLOCATION_TITLE = '合并交通发票逐段金额';
   const segmentInput = (index: number) => within(detail()).getByLabelText(new RegExp(`^第 ${index} 段`)) as HTMLInputElement;

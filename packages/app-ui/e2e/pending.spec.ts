@@ -68,6 +68,76 @@ for (const [width, height] of [
   });
 }
 
+test('原件查看器：放大到 200% 后原件框可滚动、可拖动平移，页面宽度不变；旋转 90° 后仍完整显示在框内；附截图', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(open('?seed=pending', '#/task/T1/pending'));
+  const photo = detail(page).getByRole('img', { name: 'IMG_4871.jpg 原件' });
+  await expect.poll(() => photo.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBeGreaterThan(0);
+  const toolbar = detail(page).getByRole('toolbar', { name: '原件查看' });
+  const frame = detail(page).getByTestId('doc-frame');
+  const readout = detail(page).getByTestId('doc-viewer').getByRole('status');
+  const pageOverflow = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  const scrollable = () => frame.evaluate((node) => ({ x: node.scrollWidth - node.clientWidth, y: node.scrollHeight - node.clientHeight }));
+
+  await expect(readout).toHaveText('当前倍数 100%');
+  const fitFrame = await frame.boundingBox();
+  const fitViewer = await detail(page).getByTestId('doc-viewer').boundingBox();
+  if (!fitFrame || !fitViewer) throw new Error('原件框没有渲染');
+  // 适应窗口时框内不滚动。
+  expect(await scrollable()).toEqual({ x: 0, y: 0 });
+
+  // 键盘也能操作：聚焦「放大」按回车。
+  await toolbar.getByRole('button', { name: '放大', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await expect(readout).toHaveText('当前倍数 125%');
+  await toolbar.getByRole('button', { name: '放大', exact: true }).click();
+  await toolbar.getByRole('button', { name: '放大', exact: true }).click();
+  await expect(readout).toHaveText('当前倍数 200%');
+
+  await expect.poll(async () => (await scrollable()).x).toBeGreaterThan(0);
+  expect((await scrollable()).y).toBeGreaterThan(0);
+  // 框与原件栏尺寸不变，页面不横向滚动。
+  const zoomFrame = await frame.boundingBox();
+  const zoomViewer = await detail(page).getByTestId('doc-viewer').boundingBox();
+  expect(zoomFrame?.width).toBeCloseTo(fitFrame.width, 0);
+  expect(zoomFrame?.height).toBeCloseTo(fitFrame.height, 0);
+  expect(zoomViewer?.width).toBeCloseTo(fitViewer.width, 0);
+  expect(await pageOverflow()).toBeLessThanOrEqual(0);
+  const pageScrollBefore = await page.evaluate(() => window.scrollY);
+
+  // 按住拖动平移：框内滚动位置改变，页面不跳。
+  const before = await frame.evaluate((node) => ({ left: node.scrollLeft, top: node.scrollTop }));
+  const center = { x: fitFrame.x + fitFrame.width / 2, y: fitFrame.y + fitFrame.height / 2 };
+  await page.mouse.move(center.x, center.y);
+  await page.mouse.down();
+  await page.mouse.move(center.x + 60, center.y + 60, { steps: 5 });
+  await page.mouse.up();
+  const after = await frame.evaluate((node) => ({ left: node.scrollLeft, top: node.scrollTop }));
+  expect(after.left).toBeLessThan(before.left);
+  expect(after.top).toBeLessThan(before.top);
+  expect(await page.evaluate(() => window.scrollY)).toBe(pageScrollBefore);
+  await page.screenshot({ path: testInfo.outputPath('viewer-zoom-200.png') });
+
+  // 旋转 90°：回到适应窗口后按交换后的宽高适应，横过来的原件完整显示在框内。
+  await toolbar.getByRole('button', { name: '适应窗口', exact: true }).click();
+  await toolbar.getByRole('button', { name: '旋转 90°', exact: true }).click();
+  await expect(photo).toHaveCSS('transform', /matrix\(/);
+  await expect.poll(async () => {
+    const [photoBox, frameBox] = await Promise.all([photo.boundingBox(), frame.boundingBox()]);
+    if (!photoBox || !frameBox) return false;
+    return (
+      photoBox.width > photoBox.height &&
+      photoBox.x >= frameBox.x - 1 &&
+      photoBox.y >= frameBox.y - 1 &&
+      photoBox.x + photoBox.width <= frameBox.x + frameBox.width + 1 &&
+      photoBox.y + photoBox.height <= frameBox.y + frameBox.height + 1
+    );
+  }).toBe(true);
+  expect(await scrollable()).toEqual({ x: 0, y: 0 });
+  expect(await pageOverflow()).toBeLessThanOrEqual(0);
+  await page.screenshot({ path: testInfo.outputPath('viewer-rotate-90.png') });
+});
+
 test('1000 宽（1056px 以下）：原件在上、表单在下，都不横向溢出', async ({ page }) => {
   await page.setViewportSize({ width: 1000, height: 900 });
   await page.goto(open('?seed=pending', '#/task/T1/pending'));
