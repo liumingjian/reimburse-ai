@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// 逐段分摊、待确认项处理人、跨任务重复发票（内核 allocation_required / intake_open_items / duplicate_blocked），
+// 逐段分摊、待确认项阻塞项、跨任务重复发票（内核 allocation_required / intake_open_items / duplicate_blocked），
 // 以及盘点页与待确认项页不出现规则名、字段来源与「候选」。直接用 file:// 打开 mock 构建产物（pnpm build:mock）。
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
@@ -43,15 +43,15 @@ async function answerTaxis(page: Page) {
   await detail(page).getByRole('button', { name: '排除此材料' }).click();
 }
 
-test('?allocation=1：出现逐段分摊待确认项；不守恒显示服务端错误，守恒后通过；每条都标明处理人', async ({ page }, testInfo) => {
+test('?allocation=1：出现逐段分摊待确认项；不守恒显示服务端错误，守恒后通过；不显示处理人', async ({ page }, testInfo) => {
   await page.goto(open('?seed=pending&allocation=1', '#/task/T1/pending'));
   await expect(page.getByText('还剩 4 个')).toBeVisible();
   const buttons = list(page).getByRole('button');
   await expect(buttons).toHaveCount(4);
-  for (const button of await buttons.all()) await expect(button).toContainText('要你处理');
+  // 清单行不再重复处理人（说明文字里服务端给的「要你处理的事项」照常显示）。
+  await expect(list(page)).not.toContainText('要你处理');
 
   await expect(detail(page).getByRole('heading', { name: ALLOCATION })).toBeVisible();
-  await expect(detail(page).getByTestId('resolver')).toHaveText('处理人：要你处理');
   await expect(segment(page, 3)).toHaveValue('21.56');
   await detail(page).getByRole('button', { name: '提交逐段金额' }).click();
   await expect(detail(page).getByRole('alert').filter({ hasText: /\S/ })).toHaveText(
@@ -78,7 +78,9 @@ test('?allocation=1：选「这张票我认不出」照内核留下阻塞项；�
   await expect(detail(page).getByTestId('give-up-note')).toContainText('不能带着往下走');
   await detail(page).getByRole('button', { name: '这张票我认不出' }).click();
   await expect(detail(page).getByRole('heading', { name: '补填起点与终点' })).toBeVisible();
-  await expect(item(page, GIVEN_UP)).toContainText('要你处理');
+  // 新出现的阻塞项是未处理行：没有「已处理」标签。
+  await expect(item(page, GIVEN_UP)).toBeVisible();
+  await expect(item(page, GIVEN_UP).getByText('已处理', { exact: true })).toHaveCount(0);
   await item(page, ALLOCATION).click();
   await expect(detail(page).getByTestId('give-up-note')).toContainText('你选了「这张票我认不出」。');
 
