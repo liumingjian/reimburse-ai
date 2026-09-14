@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { Button, FileUploaderDropContainer, InlineNotification, Tag } from '@carbon/react';
-import { Add, CheckmarkFilled, Document, DocumentPdf, Image as ImageIcon, Upload, WarningAltFilled } from '@carbon/icons-react';
+import { useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
+import { Button, InlineNotification, ProgressBar, Tag } from '@carbon/react';
+import { Add, CheckmarkFilled, Document, DocumentPdf, Image as ImageIcon, WarningAltFilled } from '@carbon/icons-react';
 import { UPLOAD_ACCEPT_ATTRIBUTE, UPLOAD_ACCEPTED_EXTENSIONS, type TaskSnapshot, type UploadBatch, type UploadFileResult } from '../contract/snapshot';
 import { formatBytes, hashPrefix } from '../format';
 import { navigate, taskHash } from '../router';
@@ -14,49 +14,140 @@ import { PAGE_COPY } from './page-copy';
 // 上传材料页：拖入或选择文件 → 适配器逐文件给出接收/拒绝 → 按上传批次列出；可追加下一批；有材料后出现「开始材料盘点」。
 // 页面不判定文件是否合规：所有结果来自快照里的批次记录。
 // 整单明细已确认的任务再追加下一批，先弹出同一份二次确认，再请服务端使确认失效（回到上传阶段）。
-// Layout follows Carbon's file uploader: label and format rules above a stock FileUploaderDropContainer that spans the
-// form width, holding a 16px upload icon and the link-style prompt. File rows are tagged only when rejected (exceptions only).
+// The drop zone is design A from the QA prototype: a centred pictogram, the main line, the link-style prompt and the
+// format tags; the append area uses its one-line form. File rows are tagged only when rejected (exceptions only).
 
 // 开始材料盘点 (start material inventory) and 追加下一批 (append next batch) live in the sticky action bar (#141),
 // hidden while the append area is open.
 // The line under the drop zone states the next step. Inventory starts only when the employee clicks 开始材料盘点
 // (the server never starts it after an upload), and the copy says so.
 export const UPLOAD_NEXT_STEP = '上传后点「开始材料盘点」，系统开始盘点。';
+// Accessible name of the drop zone and of its file input. The visible copy is longer and changes with the drag state.
 export const UPLOAD_PROMPT = '拖入文件，或点击选择';
+export const UPLOAD_TITLE = '把材料拖到这里';
+export const UPLOAD_ORIGINALS_NOTE = '原件会被复制进任务目录，不会被修改。';
+const UPLOAD_DROP_NOW = '松开即可上传';
+const UPLOAD_FORMATS = ['PDF', 'JPG', 'PNG', '单个 ≤ 20MB'] as const;
 
-const ACCEPT = UPLOAD_ACCEPT_ATTRIBUTE.split(',');
-// Carbon drops files whose name has no extension before onAddFiles. This pattern matches an empty
-// extension instead, so every file reaches the server, which alone decides accept or reject.
-const ANY_EXTENSION = String.raw`\.?[^.]*$`;
-
-function Dropzone({ busyCount, disabled, onFiles }: { busyCount: number; disabled: boolean; onFiles: (files: File[]) => void }) {
+// Document with an upload badge, drawn in the Carbon pictogram manner; Carbon ships no drop-zone illustration.
+function UploadPictogram() {
   return (
-    <div className="cds--form-item">
-      <p className="cds--file--label">材料文件</p>
-      <p className="cds--label-description">支持 PDF、JPG、PNG，单个文件不超过 20MB。原件会被复制进任务目录，不会被修改。</p>
-      {/* labelText only takes a string, so the icon is a sibling laid over the zone; it takes no clicks and has no name. */}
-      <div className="app-upload-drop">
-        <FileUploaderDropContainer
-          labelText={UPLOAD_PROMPT}
-          multiple
-          accept={ACCEPT}
-          pattern={ANY_EXTENSION}
-          disabled={disabled}
-          data-testid="dropzone"
-          onAddFiles={(_event, { addedFiles }) => {
-            // Carbon flags type mismatches on the File objects; the page ignores that and lets the server judge.
-            if (addedFiles.length > 0) onFiles([...addedFiles]);
-          }}
-        />
-        <Upload size={16} className="app-upload-drop-icon" aria-hidden="true" data-testid="upload-drop-icon" />
+    <svg className="app-dropzone-pictogram" viewBox="0 0 72 72" aria-hidden="true" focusable="false">
+      <path className="app-pictogram-paper" d="M18 8h24l12 12v38a2 2 0 0 1-2 2H18a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2Z" />
+      <path className="app-pictogram-fold" d="M42 8v12h12" />
+      <path className="app-pictogram-lines" d="M23 28h20M23 35h24M23 42h14" />
+      <g className="app-pictogram-badge">
+        <circle cx="52" cy="52" r="13" />
+        <path d="M52 59V45m-6 6 6-6 6 6" />
+      </g>
+    </svg>
+  );
+}
+
+// Handwritten because Carbon's FileUploaderDropContainer only takes a string label. Like Carbon's, the zone answers
+// Enter and Space itself; it is a div with the button role so it can hold the pictogram, tags and progress bar.
+// Its name comes from a visually hidden prompt; the visible copy is aria-hidden so the name stays short.
+function Dropzone({ busyCount, disabled, compact, onFiles }: { busyCount: number; disabled: boolean; compact: boolean; onFiles: (files: File[]) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const pick = (list: FileList | null) => {
+    const files = list ? Array.from(list) : [];
+    if (files.length > 0) onFiles(files);
+  };
+  const openPicker = () => {
+    if (!disabled) inputRef.current?.click();
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    openPicker();
+  };
+  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setDragOver(false);
+    if (!disabled) pick(event.dataTransfer.files);
+  };
+
+  const busyText = `正在接收 ${busyCount} 份文件…`;
+  const className = ['app-dropzone', compact && 'is-compact', dragOver && 'is-dragover'].filter(Boolean).join(' ');
+  return (
+    <div>
+      {compact ? null : <p className="cds--label">材料文件</p>}
+      <div
+        className={className}
+        role="button"
+        tabIndex={disabled ? -1 : 0}
+        aria-disabled={disabled}
+        data-testid="dropzone"
+        onClick={openPicker}
+        onKeyDown={onKeyDown}
+        onDragOver={(event) => {
+          event.preventDefault();
+          if (!disabled) setDragOver(true);
+        }}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOver(false);
+        }}
+        onDrop={onDrop}
+      >
+        <span className="cds--visually-hidden">{UPLOAD_PROMPT}</span>
+        <UploadPictogram />
+        {busyCount > 0 ? (
+          <span className="app-dropzone-busy">
+            <span className="app-dropzone-title" role="status">
+              {busyText}
+            </span>
+            <ProgressBar className="app-dropzone-progress" label={busyText} hideLabel size="small" />
+          </span>
+        ) : (
+          <>
+            {compact ? (
+              <span className="app-dropzone-title" aria-hidden="true">
+                {dragOver ? (
+                  UPLOAD_DROP_NOW
+                ) : (
+                  <>
+                    追加材料：拖到这里，或 <span className="app-dropzone-link">点击选择</span>
+                  </>
+                )}
+              </span>
+            ) : (
+              <>
+                <span className="app-dropzone-title" aria-hidden="true">
+                  {dragOver ? UPLOAD_DROP_NOW : UPLOAD_TITLE}
+                </span>
+                <span className="app-dropzone-hint" aria-hidden="true">
+                  或 <span className="app-dropzone-link">点击选择文件</span>，可一次选多份
+                </span>
+              </>
+            )}
+            <span className="app-dropzone-tags" aria-hidden="true">
+              {UPLOAD_FORMATS.map((format) => (
+                <Tag key={format} type="gray" size="sm">
+                  {format}
+                </Tag>
+              ))}
+            </span>
+          </>
+        )}
       </div>
-      {busyCount > 0 ? (
-        <p className="cds--form__helper-text" role="status">
-          正在接收 {busyCount} 份文件…
-        </p>
-      ) : (
-        <p className="cds--form__helper-text">{UPLOAD_NEXT_STEP}</p>
-      )}
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        accept={UPLOAD_ACCEPT_ATTRIBUTE}
+        aria-label={UPLOAD_PROMPT}
+        className="cds--visually-hidden"
+        tabIndex={-1}
+        disabled={disabled}
+        onChange={(event) => {
+          pick(event.target.files);
+          event.target.value = '';
+        }}
+      />
+      <p className="cds--form__helper-text">{UPLOAD_NEXT_STEP}</p>
+      <p className="cds--form__helper-text">{UPLOAD_ORIGINALS_NOTE}</p>
     </div>
   );
 }
@@ -182,7 +273,7 @@ export function UploadPage({ snapshot }: { snapshot: TaskSnapshot }) {
               </Button>
             </div>
           ) : null}
-          <Dropzone busyCount={busyCount} disabled={busy} onFiles={(files) => void upload(files)} />
+          <Dropzone busyCount={busyCount} disabled={busy} compact={hasBatches} onFiles={(files) => void upload(files)} />
           {error ? (
             <p className="app-action-error app-block-note" role="alert">
               {error}

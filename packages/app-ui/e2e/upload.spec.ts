@@ -62,30 +62,25 @@ test('正常上传：pdf/jpg/png 逐文件已接收，按批次列出并出现�
 });
 
 for (const width of [1440, 1100]) {
-  test(`空的上传页 ${width}px：格式说明在上，短的拖放区铺满宽度，只有小图标和链接提示，没有大块空白`, async ({ page }) => {
+  test(`空的上传页 ${width}px：拖放区铺满宽度，主文案、链接提示与格式标签居中，不是大块空白；下方说明下一步`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(open('?seed=upload', '#/task/T1/upload'));
     const zone = page.getByTestId('dropzone');
     await expect(zone).toHaveRole('button');
     await expect(zone).toHaveAccessibleName('拖入文件，或点击选择');
-    await expect(zone).toHaveText('拖入文件，或点击选择');
+    const title = zone.getByText('把材料拖到这里', { exact: true });
+    await expect(title).toBeVisible();
+    await expect(zone.getByText('点击选择文件', { exact: true })).toBeVisible();
+    for (const format of ['PDF', 'JPG', 'PNG', '单个 ≤ 20MB']) await expect(zone.getByText(format, { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: '选择文件' })).toHaveCount(0);
-    const rules = page.getByText(/^支持 PDF、JPG、PNG，单个文件不超过 20MB。原件会被复制进任务目录，不会被修改。$/);
-    const rulesBox = await rules.boundingBox();
     const zoneBox = await zone.boundingBox();
-    if (!rulesBox || !zoneBox) throw new Error('说明或拖放区不可见');
-    expect(rulesBox.y + rulesBox.height).toBeLessThanOrEqual(zoneBox.y);
-    expect(zoneBox.height).toBeLessThanOrEqual(120);
-    // Spans the form width instead of Carbon's 320px cap.
+    const titleBox = await title.boundingBox();
+    if (!zoneBox || !titleBox) throw new Error('拖放区或主文案不可见');
     expect(zoneBox.width).toBeGreaterThan(width * 0.8);
-    const icon = page.getByTestId('upload-drop-icon');
-    await expect(icon).toBeVisible();
-    const iconBox = await icon.boundingBox();
-    if (!iconBox) throw new Error('上传图标不可见');
-    expect(iconBox.width).toBe(16);
-    expect(iconBox.x).toBeGreaterThanOrEqual(zoneBox.x);
-    expect(iconBox.y + iconBox.height).toBeLessThanOrEqual(zoneBox.y + zoneBox.height);
+    expect(Math.abs(titleBox.x + titleBox.width / 2 - (zoneBox.x + zoneBox.width / 2))).toBeLessThan(2);
+    expect(zoneBox.height).toBeLessThanOrEqual(280);
     await expect(page.getByText('上传后点「开始材料盘点」，系统开始盘点。')).toBeVisible();
+    await expect(page.getByText('原件会被复制进任务目录，不会被修改。')).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });
 }

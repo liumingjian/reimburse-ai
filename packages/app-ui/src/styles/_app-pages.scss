@@ -65,32 +65,154 @@ $gutter: $spacing-06;
 
 // ---------- Upload (上传材料): drop zone and batch file lists ----------
 
-// The drop zone is a stock Carbon FileUploaderDropContainer. Carbon caps it at 320px through .cds--file-browse-btn;
-// here it spans the form width, and a 16px upload icon sits before the prompt, vertically centred on its first line.
-.app-upload-drop {
-  position: relative;
-  // .cds--form-item aligns its children to flex-start, which would shrink the zone to its prompt.
-  align-self: stretch;
+// Drop zone (design A, picked in QA from a prototype): pictogram, main line, link-style prompt and format tags, centred
+// in a dashed area that spans the page width. Handwritten because Carbon's FileUploaderDropContainer only takes a
+// string label. The append area uses the one-line compact form.
+.app-dropzone {
+  @include type.type-style('body-compact-01');
 
-  .cds--file-browse-btn {
-    max-inline-size: none;
+  display: grid;
+  justify-items: center;
+  padding: $spacing-07 $spacing-06;
+  color: $text-primary;
+  text-align: center;
+  background: $layer-01;
+  border: 1px dashed $border-strong-01;
+  cursor: pointer;
+  transition:
+    background-color 110ms,
+    border-color 110ms;
+
+  &:hover {
+    border-color: $border-interactive;
   }
 
-  .cds--file__drop-container {
-    padding-inline-start: $spacing-05 + $spacing-06;
+  &:focus-visible {
+    outline: 2px solid $focus;
+    outline-offset: -2px;
   }
 
-  &:has(.cds--file-browse-btn--disabled) .app-upload-drop-icon {
+  // The border grows by 1px on drag-over; the padding shrinks by the same so the content does not move.
+  &.is-dragover {
+    padding: calc(#{$spacing-07} - 1px) calc(#{$spacing-06} - 1px);
+    background: $highlight;
+    border: 2px solid $border-interactive;
+  }
+
+  &[aria-disabled='true'] {
+    color: $text-disabled;
+    border-color: $border-disabled;
+    cursor: not-allowed;
+  }
+
+  &.is-compact {
+    grid-auto-flow: column;
+    align-items: center;
+    justify-content: center;
+    column-gap: $spacing-05;
+    padding: $spacing-05 $spacing-06;
+  }
+
+  &.is-compact.is-dragover {
+    padding: calc(#{$spacing-05} - 1px) calc(#{$spacing-06} - 1px);
+  }
+}
+
+.app-dropzone-pictogram {
+  overflow: visible;
+  inline-size: 4.5rem;
+  block-size: 4.5rem;
+  margin-block-end: $spacing-05;
+
+  .is-compact & {
+    inline-size: 2.5rem;
+    block-size: 2.5rem;
+    margin: 0;
+  }
+}
+
+.app-pictogram-paper {
+  fill: $layer-01;
+  stroke: $icon-primary;
+  stroke-width: 1.5;
+}
+
+.app-pictogram-fold {
+  fill: none;
+  stroke: $icon-primary;
+  stroke-width: 1.5;
+}
+
+.app-pictogram-lines {
+  fill: none;
+  stroke: $border-strong-01;
+  stroke-width: 1.5;
+}
+
+.app-pictogram-badge {
+  transform-origin: 52px 52px;
+  transition: transform 150ms;
+
+  circle {
+    fill: $interactive;
+  }
+
+  path {
+    fill: none;
+    stroke: $icon-on-color;
+    stroke-width: 2;
+  }
+
+  .is-dragover & {
+    transform: translateY(-4px) scale(1.08);
+  }
+
+  [aria-disabled='true'] & circle {
     fill: $icon-disabled;
   }
 }
 
-.app-upload-drop-icon {
-  position: absolute;
-  inset-block-start: calc(#{$spacing-05} + 1px);
-  inset-inline-start: $spacing-05;
-  fill: $link-primary;
-  pointer-events: none;
+.app-dropzone-title {
+  @include type.type-style('body-02');
+
+  .is-compact & {
+    @include type.type-style('body-compact-01');
+  }
+}
+
+.app-dropzone-hint {
+  margin: $spacing-02 0 $spacing-05;
+  color: $text-secondary;
+}
+
+.app-dropzone-link {
+  color: $link-primary;
+
+  [aria-disabled='true'] & {
+    color: $text-disabled;
+  }
+}
+
+.app-dropzone-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: $spacing-02;
+
+  .cds--tag {
+    margin: 0;
+  }
+}
+
+.app-dropzone-busy {
+  display: grid;
+  justify-items: center;
+  gap: $spacing-04;
+  inline-size: min(20rem, 100%);
+}
+
+.app-dropzone-progress {
+  inline-size: 100%;
 }
 
 .app-upload-first {

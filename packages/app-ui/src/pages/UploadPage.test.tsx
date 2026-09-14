@@ -4,7 +4,7 @@ import { App } from '../App';
 import { UPLOAD_MAX_FILE_BYTES } from '../contract/snapshot';
 import { createMockAdapter } from '../mock/mock-adapter';
 import type { Fault } from '../mock/options';
-import { UPLOAD_NEXT_STEP, UPLOAD_PROMPT } from './UploadPage';
+import { UPLOAD_NEXT_STEP, UPLOAD_ORIGINALS_NOTE, UPLOAD_PROMPT, UPLOAD_TITLE } from './UploadPage';
 
 function renderUpload(fault: Fault | null = null) {
   window.location.hash = '#/task/T1/upload';
@@ -23,14 +23,15 @@ function chooseFiles(files: File[]) {
 }
 
 describe('上传区说明', () => {
-  test('格式说明在拖放区上方，拖放区只有链接样式的提示，下方说明下一步是开始盘点', async () => {
+  test('拖放区里是主文案、链接样式的提示与格式标签，下方说明下一步是开始盘点、原件不会被修改', async () => {
     renderUpload();
     const zone = await screen.findByRole('button', { name: UPLOAD_PROMPT });
-    expect(zone.textContent).toBe(UPLOAD_PROMPT);
+    expect(within(zone).getByText(UPLOAD_TITLE)).toBeTruthy();
+    expect(within(zone).getByText('点击选择文件')).toBeTruthy();
+    for (const format of ['PDF', 'JPG', 'PNG', '单个 ≤ 20MB']) expect(within(zone).getByText(format)).toBeTruthy();
     const region = screen.getByRole('region', { name: '上传文件' });
-    const rules = within(region).getByText(/^支持 PDF、JPG、PNG，单个文件不超过 20MB。/);
-    expect(rules.compareDocumentPosition(zone) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(region).getByText(UPLOAD_NEXT_STEP)).toBeTruthy();
+    expect(within(region).getByText(UPLOAD_ORIGINALS_NOTE)).toBeTruthy();
     expect(screen.queryByRole('button', { name: '选择文件' })).toBeNull();
   });
 });
