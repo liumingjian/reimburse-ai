@@ -140,9 +140,14 @@ test('弹层打开时也没有英文文案（「更多」菜单、作废确认�
   expect(await englishLeftovers(page), '新建任务（含错误）').toEqual([]);
 
   await page.goto(open('?seed=project', '#/task/T1/project'));
-  await page.getByRole('complementary', { name: '项目工作台' }).getByRole('button', { name: '归入 P-3312 产品调研' }).click();
-  await expect(page.getByText('先勾选明细')).toBeVisible();
-  expect(await englishLeftovers(page), '项目归属「先勾选明细」提示').toEqual([]);
+  await page.getByRole('checkbox', { name: '选择明细 No.3' }).locator('xpath=following-sibling::label[1]').click();
+  const batch = page.getByRole('region', { name: '批量操作' });
+  await expect(batch.getByText('已选 1 条')).toBeVisible();
+  await expect(batch.getByRole('button', { name: '取消' })).toBeVisible();
+  expect(await englishLeftovers(page), '项目归属批量操作栏').toEqual([]);
+  await batch.getByRole('button', { name: '归入项目' }).click();
+  await expect(page.getByRole('dialog', { name: '归入项目' }).getByRole('searchbox', { name: '查找项目' })).toBeVisible();
+  expect(await englishLeftovers(page), '项目归属「归入项目」弹层').toEqual([]);
 
   await page.goto(open('?seed=actions', '#/task/T1/review'));
   await page.getByRole('button', { name: '追加材料' }).click();

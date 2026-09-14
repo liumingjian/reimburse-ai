@@ -46,6 +46,7 @@ $system-mono: (ui-monospace, 'SF Mono', Menlo, Consolas, monospace);
 @use '@carbon/styles/scss/components/text-input';
 @use '@carbon/styles/scss/components/link';
 @use '@carbon/styles/scss/components/checkbox';
+@use '@carbon/styles/scss/components/radio-button';
 @use '@carbon/styles/scss/components/overflow-menu';
 
 @use './app-rules';
