@@ -1,0 +1,823 @@
+// 本应用自己的版式规则（Carbon 不管的部分，DESIGN.md「本应用的规则」）：外壳与工作区、步骤条、页头、
+// 按页面类型定宽（宽表格铺满，窄窗口横向滚动、首末列固定）、摘要条、吸底操作栏。颜色、间距、字阶只取 Carbon 的 token。
+@use '@carbon/styles/scss/spacing' as *;
+@use '@carbon/styles/scss/theme' as *;
+@use '@carbon/styles/scss/type';
+
+// 工作区左右页边：宽表格、摘要条与操作栏用 .bleed 贴到两边，首末列再用同样的页边留白。
+$gutter: $spacing-06;
+
+// ---------- 外壳 ----------
+
+// Carbon 的 UI Shell 顶栏是 fixed，高 3rem。
+.app-frame {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 100vh;
+  padding-block-start: 3rem;
+}
+
+.app-header-tools {
+  display: flex;
+  align-items: center;
+  gap: $spacing-05;
+  padding-inline: $spacing-05;
+  block-size: 100%;
+}
+
+.app-user {
+  display: flex;
+  align-items: center;
+  gap: $spacing-03;
+  color: $text-primary;
+  @include type.type-style('body-compact-01');
+
+  svg {
+    fill: $icon-secondary;
+  }
+}
+
+.app-banner.cds--inline-notification {
+  max-inline-size: none;
+}
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  min-inline-size: 0;
+  padding: 0 $gutter $spacing-09;
+}
+
+// 有吸底操作栏的页面由操作栏贴底，不留底边距。
+.sheet:has(> .app-action-bar, > .action-bar) {
+  padding-block-end: 0;
+}
+
+// 工作区是纵向 flex：直接放在里面的单个按钮不拉伸成通栏。
+.sheet > .cds--btn {
+  align-self: flex-start;
+}
+
+.bleed {
+  margin-inline: calc(-1 * #{$gutter});
+}
+
+// 页内提示：铺满内容宽度（Carbon 默认限宽 50rem）。
+.sheet .cds--inline-notification {
+  max-inline-size: none;
+}
+
+.sheet > .app-notice {
+  margin-block-start: $spacing-05;
+}
+
+// 提示加一个「知道了」：按钮在提示右侧（Carbon 的 InlineNotification 里不能放可交互元素）。
+.app-notice {
+  display: flex;
+  align-items: center;
+  gap: $spacing-03;
+
+  > .cds--inline-notification {
+    flex: 1;
+    margin: 0;
+  }
+}
+
+// 页头下、正文前的整条提示（如确认失效）。
+.app-notice-block {
+  margin-block-end: $spacing-05;
+}
+
+.app-block-row {
+  margin-block-end: $spacing-05;
+}
+
+// ---------- 步骤条（任务页工作区顶部一条，Carbon progress indicator） ----------
+
+.app-stepbar {
+  padding: $spacing-05 $gutter;
+  margin-inline: calc(-1 * #{$gutter});
+  background: $layer-01;
+  border-block-end: 1px solid $border-subtle-01;
+}
+
+.app-stepbar-row {
+  display: flex;
+  align-items: center;
+  gap: $spacing-07;
+  min-inline-size: 0;
+}
+
+.app-stepbar-task {
+  flex: 0 1 16rem;
+  min-inline-size: 7.5rem;
+}
+
+// The task name is a Carbon Link to the task list. Keep Carbon's link colour and focus ring;
+// only make it a truncating block (Link is inline-flex by default) in the heading type.
+.cds--link.app-stepbar-name {
+  display: block;
+  max-inline-size: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  @include type.type-style('heading-compact-02');
+}
+
+.app-stepbar-period {
+  margin: 0;
+  color: $text-secondary;
+  white-space: nowrap;
+  @include type.type-style('label-01');
+}
+
+.app-stepbar-steps {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+// 未到的步骤：Carbon 的 disabled 样式带 pointer-events: none，点了就没有「阶段不可跳过」的说明；
+// 这里用 aria-disabled，仍可点出说明。文字用 text-secondary（不是 disabled 色），全流程读得清；
+// 与已到的步骤靠图标区分（图标仍是不可用色）。
+.app-step-locked .cds--progress-step-button {
+  cursor: not-allowed;
+
+  .cds--progress-label,
+  .cds--progress-label:hover {
+    color: $text-secondary;
+    box-shadow: none;
+  }
+
+  svg {
+    fill: $icon-disabled;
+  }
+}
+
+.app-stepbar-status {
+  display: flex;
+  align-items: center;
+  gap: $spacing-04;
+  margin: 0;
+  color: $text-secondary;
+}
+
+.app-stepbar-hint {
+  margin: $spacing-03 0 0;
+  color: $text-secondary;
+  @include type.type-style('helper-text-01');
+}
+
+// 放不下一行时：任务名与费用期间在上，7 步占满下面一行。
+@media (max-width: 79.99rem) {
+  .app-stepbar-row {
+    flex-wrap: wrap;
+    gap: $spacing-04;
+  }
+
+  .app-stepbar-task {
+    flex-basis: 100%;
+  }
+}
+
+// ---------- 页头与通用文字 ----------
+
+// 页头统一负责节奏：标题到导语 $spacing-03（.app-lead），页头到内容 $spacing-07（页头的下内边距）。
+// 页面自己不再给页头后的第一块内容写上边距：紧跟页头的那块（跳过空的提示容器）上边距归零。
+.app-page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: $spacing-07;
+  padding-block: $spacing-07;
+
+  > :first-child {
+    min-inline-size: 0;
+  }
+}
+
+.app-page-head.app-page-head + *,
+.app-page-head.app-page-head + :empty + * {
+  margin-block-start: 0;
+}
+
+.app-page-title {
+  margin: 0;
+  color: $text-primary;
+  @include type.type-style('heading-04');
+}
+
+.app-lead {
+  display: flex;
+  align-items: center;
+  gap: $spacing-03;
+  margin: $spacing-03 0 0;
+  color: $text-secondary;
+  @include type.type-style('body-01');
+}
+
+.app-page-actions {
+  display: flex;
+  flex: none;
+  gap: $spacing-03;
+}
+
+.app-caption {
+  color: $text-secondary;
+  @include type.type-style('helper-text-01');
+}
+
+.app-muted {
+  color: $text-secondary;
+}
+
+.app-loading {
+  margin: 0;
+  padding-block: $spacing-05;
+  color: $text-secondary;
+  @include type.type-style('body-01');
+}
+
+.app-code {
+  @include type.font-family('mono');
+  font-size: 0.8125rem;
+}
+
+.app-num {
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.app-nowrap {
+  white-space: nowrap;
+}
+
+// 带标签的字段组（FieldGroup）：代替「A · B · C」中点串，写法同摘要条字段。
+.app-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-03 $spacing-07;
+  margin: 0;
+}
+
+.app-field {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-01;
+  min-inline-size: 0;
+}
+
+.app-field-key {
+  color: $text-secondary;
+  @include type.type-style('label-01');
+}
+
+.app-field-value {
+  margin: 0;
+  color: $text-primary;
+  @include type.type-style('body-compact-01');
+}
+
+// 状态标签不被挤窄：Carbon 的 Tag 文字被截断时会换成带定义提示的按钮，状态字要完整显示。
+.cds--tag.app-status-tag {
+  flex: none;
+  max-inline-size: none;
+}
+
+// Warning icon, painted like Carbon's warning notification: $support-warning fill with a dark "!" (the icon's inner
+// path is transparent by default). Only the warning tone: the locked tone keeps a plain gray lock.
+// Targets the svg itself: its fill="currentColor" attribute would beat a fill inherited from Carbon's icon wrapper.
+.cds--tag.app-status-tag[data-tone='warning'] .cds--tag__custom-icon svg,
+.cds--tag.app-status-tag[data-tone='warning'] svg.cds--tag__custom-icon,
+.app-warning-icon {
+  fill: $support-warning;
+
+  [data-icon-path='inner-path'] {
+    fill: $icon-primary;
+    opacity: 1;
+  }
+}
+
+// Summary bar value icons (decorative, aria-hidden): warning before 需处理, green check before 通过.
+.app-summary-value:has(.app-summary-icon) {
+  display: inline-flex;
+  align-items: center;
+  gap: $spacing-02;
+}
+
+.app-summary-icon {
+  flex: none;
+
+  &.is-success {
+    fill: $support-success;
+  }
+}
+
+.app-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $spacing-03;
+}
+
+.app-block {
+  margin-block-start: $spacing-07;
+
+  > .cds--inline-notification {
+    margin-block-end: $spacing-05;
+  }
+
+  > .app-action-error {
+    display: block;
+    margin-block-start: $spacing-03;
+  }
+}
+
+.app-block-actions {
+  margin-block-start: $spacing-05;
+}
+
+.app-empty {
+  padding: $spacing-10 0;
+
+  h2 {
+    margin: 0 0 $spacing-03;
+    color: $text-primary;
+    @include type.type-style('heading-03');
+  }
+
+  p {
+    margin: 0 0 $spacing-05;
+    color: $text-secondary;
+  }
+}
+
+// 动作失败的就地提示（ActionError）：紧跟触发它的按钮。
+.app-action-error {
+  color: $text-error;
+  @include type.type-style('helper-text-01');
+}
+
+.app-dialog-error {
+  margin: $spacing-05 0 0;
+  color: $text-error;
+  @include type.type-style('helper-text-01');
+}
+
+.app-form {
+  display: grid;
+  gap: $spacing-06;
+
+  p {
+    margin: 0;
+  }
+}
+
+// ---------- 数据表格：铺满，放不下时横向滚动，首末列固定 ----------
+
+.app-table .cds--data-table-content {
+  container-type: scroll-state;
+}
+
+.bleed .cds--data-table {
+  th:first-child,
+  td:first-child {
+    padding-inline-start: $gutter;
+  }
+
+  th:last-child,
+  td:last-child {
+    padding-inline-end: $gutter;
+  }
+}
+
+.bleed > .cds--data-table-container > .cds--data-table-header {
+  padding-inline: $gutter;
+}
+
+.cds--data-table {
+  // 金额与序号右对齐：Carbon 的 td 左对齐规则比 .app-num 更具体，这里写全。
+  th.app-num .cds--table-header-label,
+  td.app-num {
+    text-align: end;
+  }
+
+  // No. 列：所有表格一律左对齐，列宽按内容收紧（width: 1% 让自动表格布局把这一列压到最窄）。
+  th.app-no,
+  td.app-no {
+    inline-size: 1%;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  th.app-no .cds--table-header-label,
+  td.app-no {
+    text-align: start;
+  }
+
+  td.app-wrap {
+    white-space: normal;
+    word-break: keep-all;
+    overflow-wrap: break-word;
+  }
+
+  .app-sticky-start,
+  .app-sticky-end {
+    position: sticky;
+    z-index: 1;
+  }
+
+  .app-sticky-start {
+    inset-inline-start: 0;
+  }
+
+  .app-sticky-end {
+    inset-inline-end: 0;
+  }
+
+  // 固定列用 Carbon 的上下文 layer token（$layer 等）：同一张表放进弹层（上一层）时底色跟着表格一起变。
+  td.app-sticky-start,
+  td.app-sticky-end {
+    background-color: $layer;
+  }
+
+  tbody tr:hover td.app-sticky-start,
+  tbody tr:hover td.app-sticky-end {
+    background-color: $layer-hover;
+  }
+
+  // 表头的固定列要盖住横向滚过来的其他表头。Carbon 给最后一个表头写了 th:last-of-type { position: static }，
+  // 这里用更具体的选择器保住 sticky。
+  thead th.app-sticky-start,
+  thead th.app-sticky-end {
+    position: sticky;
+    z-index: 3;
+    background-color: $layer-accent;
+  }
+
+  tr.app-clickable {
+    cursor: pointer;
+  }
+}
+
+// 分隔线只在那一侧真有内容被盖住时出现。
+@container scroll-state(scrollable: left) {
+  .cds--data-table .app-sticky-start {
+    box-shadow: inset -1px 0 0 $border-subtle-01;
+  }
+}
+
+@container scroll-state(scrollable: right) {
+  .cds--data-table .app-sticky-end {
+    box-shadow: inset 1px 0 0 $border-subtle-01;
+  }
+}
+
+// ---------- 任务列表 ----------
+
+// 工具栏一行：搜索吸收剩余宽度，状态筛选按文字定宽（Carbon 的 content switcher 默认等分并截断文字）。
+// 实测工具栏内容层算出来是 display: block，搜索与筛选上下叠成两行，这里写明 flex。
+.app-table .cds--toolbar-content {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  inline-size: 100%;
+}
+
+.app-table .cds--toolbar-search-container-persistent {
+  flex: 1 1 auto;
+  inline-size: auto;
+}
+
+.app-toolbar-filter {
+  display: flex;
+  flex: none;
+  align-items: center;
+  padding-inline: $spacing-05;
+
+  .cds--content-switcher {
+    inline-size: auto;
+  }
+
+  // Carbon 用 .cds--content-switcher:not(--icon-only) .cds--content-switcher-btn 写了 inline-size: 100%，这里同样具体再加一层。
+  .cds--content-switcher:not(.cds--content-switcher--icon-only) .cds--content-switcher-btn {
+    flex: none;
+    inline-size: auto;
+    white-space: nowrap;
+  }
+
+  .cds--content-switcher__label {
+    overflow: visible;
+    text-overflow: clip;
+  }
+}
+
+.app-task-name {
+  color: $text-primary;
+  @include type.type-style('heading-compact-01');
+}
+
+.app-progress {
+  display: flex;
+  align-items: center;
+  gap: $spacing-04;
+  white-space: nowrap;
+
+  .cds--progress-bar {
+    flex: none;
+    inline-size: 4.5rem;
+  }
+}
+
+.app-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: $spacing-02;
+  white-space: nowrap;
+
+  // 单元格里的按钮不留 Carbon 按钮给图标预留的右侧宽度。
+  .cds--btn {
+    padding-inline: $spacing-05;
+  }
+
+  .cds--btn:has(.cds--btn__icon) {
+    padding-inline-end: $spacing-09;
+  }
+}
+
+// 「更多」菜单：不能作废时菜单项下面有一行原因。Carbon 的菜单项定高、单行截断，这一项放开高度让原因折行读完；
+// 菜单也比 Carbon 默认的 10rem 宽一些，原因不至于折成好几行。
+.app-more-menu.cds--overflow-menu-options {
+  inline-size: 18rem;
+}
+
+.app-more-menu .cds--overflow-menu-options__option--disabled {
+  block-size: auto;
+
+  .cds--overflow-menu-options__btn {
+    block-size: auto;
+    padding-block: $spacing-03;
+  }
+}
+
+.app-more-menu-item {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-02;
+  white-space: normal;
+}
+
+.app-more-menu-reason {
+  color: $text-secondary;
+  @include type.type-style('helper-text-01');
+}
+
+// ---------- 摘要条（整单明细确认、完成、对账） ----------
+
+.app-summary {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  background: $layer-01;
+  border-block: 1px solid $border-subtle-01;
+}
+
+.app-summary-field {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: $spacing-01;
+  min-inline-size: 0;
+  padding: $spacing-04 $spacing-06;
+
+  &:first-child {
+    padding-inline-start: $gutter;
+  }
+
+  &:last-child {
+    padding-inline-end: $gutter;
+  }
+
+  & + & {
+    border-inline-start: 1px solid $border-subtle-01;
+  }
+
+  &.app-grow {
+    flex: 1;
+  }
+}
+
+.app-summary-key {
+  color: $text-secondary;
+  @include type.type-style('label-01');
+}
+
+.app-summary-value {
+  margin: 0;
+  color: $text-primary;
+  @include type.type-style('heading-compact-01');
+}
+
+.app-summary-total .app-summary-value {
+  font-variant-numeric: tabular-nums;
+  @include type.type-style('heading-03');
+}
+
+// 材料包：摘要条里的一个展开按钮；展开后清单铺在摘要条下方、横跨整个工作区。
+.app-pkg > summary {
+  display: flex;
+  align-items: center;
+  gap: $spacing-03;
+  color: $link-primary;
+  list-style: none;
+  cursor: pointer;
+  white-space: nowrap;
+  @include type.type-style('heading-compact-01');
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+
+  svg {
+    fill: currentColor;
+  }
+}
+
+.app-pkg[open] .app-chevron {
+  transform: rotate(180deg);
+}
+
+.app-pkg-panel {
+  position: absolute;
+  inset-block-start: 100%;
+  inset-inline: 0;
+  z-index: 5;
+  padding: $spacing-05 $gutter;
+  background: $layer-01;
+  border-block: 1px solid $border-strong-01;
+
+  .app-caption {
+    margin: 0 0 $spacing-03;
+  }
+}
+
+.app-pkg-files {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+  gap: $spacing-02 $spacing-07;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  li {
+    min-inline-size: 0;
+    overflow: hidden;
+    color: $text-secondary;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+}
+
+// ---------- 整单明细确认 ----------
+
+// 13 列 + No.：单元格用 body-compact，列间只留 Carbon 最小的单元格内边距，1440 宽时整张表铺满不滚动。
+.app-review-table .cds--data-table {
+  th,
+  td {
+    padding-inline: $spacing-03;
+  }
+
+  td {
+    @include type.type-style('body-compact-01');
+  }
+
+  th.app-wrap-head {
+    white-space: normal;
+    word-break: keep-all;
+  }
+
+  td.app-no {
+    color: $text-secondary;
+  }
+
+  td.app-gross {
+    font-weight: 600;
+  }
+
+  // 与上一行同一分类里相同的值：字色变淡，值照常在。
+  td.app-same-above,
+  td.app-same-above .app-item-code {
+    color: $text-helper;
+  }
+}
+
+.app-item-code {
+  margin-inline-end: $spacing-02;
+  color: $text-secondary;
+  white-space: nowrap;
+  @include type.font-family('mono');
+  font-size: 0.8125rem;
+}
+
+.app-table-note {
+  display: flex;
+  align-items: center;
+  gap: $spacing-03;
+  margin: 0;
+  padding-block: $spacing-04;
+  color: $text-secondary;
+  @include type.type-style('helper-text-01');
+
+  svg {
+    flex: none;
+    fill: $icon-secondary;
+  }
+}
+
+// 吸底操作栏：横跨整个工作区、贴在视口底边；左边一句后果说明，右边按钮，主按钮在最右。
+.app-action-bar {
+  position: sticky;
+  inset-block-end: 0;
+  z-index: 6;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $spacing-03 $spacing-05;
+  margin-block-start: auto;
+  margin-inline: calc(-1 * #{$gutter});
+  padding: $spacing-05 $gutter;
+  background: $layer-01;
+  border-block-start: 1px solid $border-subtle-01;
+
+  .app-action-error {
+    flex-basis: 100%;
+    text-align: end;
+  }
+}
+
+.app-consequence {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: $spacing-03;
+  min-inline-size: 0;
+  margin: 0;
+  color: $text-secondary;
+  @include type.type-style('body-01');
+
+  svg {
+    flex: none;
+    fill: $support-info;
+  }
+
+  strong {
+    color: $text-primary;
+    font-weight: 600;
+  }
+}
+
+// 两个并列入口（确认后的去打印 / 去报销、对账的两种处置）：工作区里的两栏，中间一条竖线。
+.app-two-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  background: $layer-01;
+  border-block: 1px solid $border-subtle-01;
+}
+
+.app-action-card {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: $spacing-03;
+  padding: $spacing-06 $gutter;
+
+  & + & {
+    border-inline-start: 1px solid $border-subtle-01;
+  }
+
+  h3 {
+    margin: 0;
+    color: $text-primary;
+    @include type.type-style('heading-03');
+  }
+
+  p {
+    margin: 0;
+    color: $text-secondary;
+  }
+
+  .cds--btn {
+    justify-self: start;
+  }
+}
+
+.app-after-actions {
+  margin-block-start: $spacing-05;
+}
+
+// 整单明细确认后的入口区排在摘要条与明细表之间：与下方表格隔开一段。
+.app-review-done {
+  margin-block-end: $spacing-07;
+}

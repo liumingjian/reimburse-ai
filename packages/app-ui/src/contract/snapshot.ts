@@ -1,0 +1,764 @@
+import { z } from 'zod';
+import { AmountSchema, DateSchema, DateTimeSchema, IdSchema, StepTokenSchema, UrlSchema } from './primitives';
+import { TaskStageSchema } from './stage';
+import { TaskPeriodSchema } from './task-list';
+
+// 接口二：单任务完整快照。前端只渲染这里的值，不保存第二份业务状态，不计算、不判定。
+// 本文件在 #100 定下所有分节的名字与最小形状；后续票只加深分节，不重排结构。
+
+// ---- 上传批次与材料 ----
+
+// 上传约束（spec #99）：接受 pdf/jpg/jpeg/png；HEIC 拒绝并提示；单文件 20MB；内容哈希重复由服务端拒绝。
+// 这些常量供服务端与 mock 共用；页面不据此判断，只显示服务端逐文件给出的结果。
+export const UPLOAD_ACCEPTED_EXTENSIONS = ['pdf', 'jpg', 'jpeg', 'png'] as const;
+export const UPLOAD_MAX_FILE_BYTES = 20 * 1024 * 1024;
+export const UPLOAD_ACCEPT_ATTRIBUTE = '.pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png';
+
+export const UPLOAD_REJECT_CODES = ['unsupported_type', 'too_large', 'heic', 'duplicate_content'] as const;
+export const UploadRejectCodeSchema = z.enum(UPLOAD_REJECT_CODES);
+export type UploadRejectCode = z.infer<typeof UploadRejectCodeSchema>;
+
+// 拒绝原因的固定开头；服务端可在其后补充细节（如与哪份材料重复）。
+export const UPLOAD_REJECT_MESSAGES: Readonly<Record<UploadRejectCode, string>> = {
+  unsupported_type: '类型不支持，只接受 PDF、JPG、PNG',
+  too_large: '超过 20MB',
+  heic: 'HEIC 不支持，请在 iPhone 相册导出为 JPG',
+  duplicate_content: '内容重复',
+};
+
+export const UploadFileResultSchema = z.object({
+  fileId: IdSchema,
+  fileName: z.string().min(1),
+  size: z.number().int().nonnegative(),
+  status: z.enum(['accepted', 'rejected']),
+  // 已接收的文件有内容哈希（sha256 十六进制），页面显示前 8 位作为身份；被拒绝的为 null。
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  // 拒绝原因由服务端给出成句（以 UPLOAD_REJECT_MESSAGES 开头，可补充细节）；已接收的为 null。
+  reasonCode: UploadRejectCodeSchema.nullable(),
+  reason: z.string().nullable(),
+  materialId: IdSchema.nullable(),
+});
+export type UploadFileResult = z.infer<typeof UploadFileResultSchema>;
+
+export const UploadBatchSchema = z.object({
+  batchId: IdSchema,
+  no: z.number().int().positive(),
+  uploadedAt: DateTimeSchema,
+  // 盘点版本；追加或删除材料后形成新版本，旧盘点与确认失效。
+  versionId: z.string().nullable(),
+  files: z.array(UploadFileResultSchema),
+});
+export type UploadBatch = z.infer<typeof UploadBatchSchema>;
+
+export const EVIDENCE_STATES = ['explicit', 'derived', 'ambiguous', 'missing'] as const;
+export const EvidenceStateSchema = z.enum(EVIDENCE_STATES);
+export type EvidenceState = z.infer<typeof EvidenceStateSchema>;
+
+// 字段候选：材料原文的解释，附来源（规则名如 rule:amap_itinerary，或 user）与材料证据状态。
+export const FieldCandidateSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+  value: z.string(),
+  source: z.string().min(1),
+  evidence: EvidenceStateSchema,
+});
+export type FieldCandidate = z.infer<typeof FieldCandidateSchema>;
+
+// uploaded：已接收但还没有盘点，角色未定。
+export const MATERIAL_ROLES = ['uploaded', 'primary_voucher', 'reference', 'pending', 'excluded'] as const;
+export const MaterialRoleSchema = z.enum(MATERIAL_ROLES);
+export type MaterialRole = z.infer<typeof MaterialRoleSchema>;
+
+export const MATERIAL_ROLE_LABELS: Readonly<Record<MaterialRole, string>> = {
+  uploaded: '待盘点',
+  primary_voucher: '主要报销凭证',
+  reference: '参考材料',
+  pending: '待确认',
+  excluded: '已排除',
+};
+
+export const MaterialSchema = z.object({
+  materialId: IdSchema,
+  batchId: IdSchema,
+  fileName: z.string().min(1),
+  contentHash: z.string().min(1),
+  size: z.number().int().nonnegative(),
+  kindLabel: z.string().min(1),
+  categoryLabel: z.string().nullable(),
+  role: MaterialRoleSchema,
+  shape: z.enum(['portrait', 'landscape', 'photo']),
+  // 原件类型决定预览方式：pdf 用 iframe，image 用 img。
+  mediaType: z.enum(['pdf', 'image']),
+  status: z.enum(['uploaded', 'ok', 'pending', 'excluded']),
+  // 「校验」列文本，由服务端成句（配对、金额守恒、二维码核对结果）。
+  checkText: z.string(),
+  // 材料证据关联：与本材料共同证明同一费用事件的其他材料。
+  linkedMaterialIds: z.array(IdSchema),
+  pendingItemIds: z.array(IdSchema),
+  originalUrl: UrlSchema.nullable(),
+  previewUrl: UrlSchema.nullable(),
+  fields: z.array(FieldCandidateSchema),
+});
+export type Material = z.infer<typeof MaterialSchema>;
+
+export const ExpenseCategorySchema = z.object({
+  // 内核类别 code（accommodation / local_city_transport / long_distance / remote_city_transport）；页面只显示 label。
+  code: z.string().min(1),
+  label: z.string().min(1),
+});
+export type ExpenseCategory = z.infer<typeof ExpenseCategorySchema>;
+
+// 费用事件：一笔可报销消费，由主要报销凭证与参考材料共同证明；一个事件对应一条候选明细。
+// 事件按统一业务序号排列（no）；同一主要报销凭证的事件相邻。summary 与 evidenceNote 由服务端成句：
+// summary 是一句话描述（如「高德 · 虹桥枢纽 → 漕河泾」），evidenceNote 是该凭证组的材料证据关联结论
+// （如「打车发票与行程单配对：26.69 + 20.85 + 21.65 = 69.19，按分守恒」），只放在组内第一个事件上，其余为 null。
+export const ExpenseEventSchema = z.object({
+  eventId: IdSchema,
+  no: z.number().int().positive(),
+  voucherMaterialId: IdSchema,
+  referenceMaterialIds: z.array(IdSchema),
+  category: ExpenseCategorySchema,
+  summary: z.string(),
+  evidenceNote: z.string().nullable(),
+  date: DateSchema,
+  endDate: DateSchema.nullable(),
+  city: z.string().nullable(),
+  origin: z.string().nullable(),
+  destination: z.string().nullable(),
+  grossAmount: AmountSchema,
+});
+export type ExpenseEvent = z.infer<typeof ExpenseEventSchema>;
+
+// ---- 材料盘点进度 ----
+
+// 盘点由服务端分阶段推进并推送快照；页面只显示阶段名与状态。
+export const InventoryPhaseSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+  status: z.enum(['todo', 'running', 'done']),
+});
+export type InventoryPhase = z.infer<typeof InventoryPhaseSchema>;
+
+// 盘点结果的计数，由服务端给出（页面不按状态或角色自己数）。openPendingItemCount 是还没处理的待确认项个数，
+// 盘点页入口、待确认项页「还剩 n 个」与步骤条角标都读它。
+export const InventorySummarySchema = z.object({
+  materialCount: z.number().int().nonnegative(),
+  okCount: z.number().int().nonnegative(),
+  pendingMaterialCount: z.number().int().nonnegative(),
+  voucherCount: z.number().int().nonnegative(),
+  referenceCount: z.number().int().nonnegative(),
+  openPendingItemCount: z.number().int().nonnegative(),
+});
+export type InventorySummary = z.infer<typeof InventorySummarySchema>;
+
+export const InventorySchema = z.object({
+  status: z.enum(['not_started', 'running', 'done']),
+  versionId: z.string().nullable(),
+  phases: z.array(InventoryPhaseSchema),
+  finishedAt: DateTimeSchema.nullable(),
+  // 盘点结束后才有值。
+  summary: InventorySummarySchema.nullable(),
+  // 没有归入任何费用事件的材料（待确认或已排除），按服务端给出的顺序显示在「未归入费用事件」组。
+  ungroupedMaterialIds: z.array(IdSchema),
+});
+export type Inventory = z.infer<typeof InventorySchema>;
+
+// ---- 待确认项 ----
+
+// 处理人：内核 WHO（next.mjs:428）。待确认项照内核开放项表（next.mjs:451-475）逐条标明；报销信息核对的不匹配表、
+// 材料包缺项表与重复发票表也用它。
+export const RESOLVER_LABELS = ['要你处理', '我来处理', '系统'] as const;
+export const ResolverLabelSchema = z.enum(RESOLVER_LABELS);
+export type ResolverLabel = z.infer<typeof ResolverLabelSchema>;
+
+export const PendingFieldSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+  placeholder: z.string(),
+  required: z.boolean(),
+  format: z.enum(['text', 'time', 'date']),
+});
+export type PendingField = z.infer<typeof PendingFieldSchema>;
+
+export const PendingChoiceSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+});
+export type PendingChoice = z.infer<typeof PendingChoiceSchema>;
+
+// 答复形状：
+// - form 类按 fields[].key 逐个给值；
+// - choice 类给 { [PENDING_CHOICE_KEY]: choices[].key }；
+// - allocation 类给 { amounts: [...] }（按 segments 顺序，每段的价税合计，两位小数）或 { giveUp: true }（「这张票我认不出」）。
+export const PENDING_CHOICE_KEY = 'choice';
+
+export const FieldAnswerSchema = z.record(z.string(), z.string());
+export type FieldAnswer = z.infer<typeof FieldAnswerSchema>;
+export const AllocationAnswerSchema = z.union([z.strictObject({ amounts: z.array(z.string()) }), z.strictObject({ giveUp: z.literal(true) })]);
+export type AllocationAnswer = z.infer<typeof AllocationAnswerSchema>;
+export const PendingAnswerSchema = z.union([AllocationAnswerSchema, FieldAnswerSchema]);
+export type PendingAnswer = z.infer<typeof PendingAnswerSchema>;
+
+export function isAllocationAnswer(answer: PendingAnswer): answer is AllocationAnswer {
+  const value = answer as Record<string, unknown>;
+  return Array.isArray(value.amounts) || value.giveUp === true;
+}
+
+// form / choice 类答复的键值；逐段分摊的答复或没有答复时为空对象。
+export function fieldAnswer(answer: PendingAnswer | null): FieldAnswer {
+  return answer && !isAllocationAnswer(answer) ? answer : {};
+}
+
+// 逐段分摊（内核 allocation_required，next.mjs:1112-1151，ADR-0005）：一张合并的交通发票票面只有一个价税合计、行程单上有多段，
+// 且逐段金额加起来和票面对不上时才出现。每段金额由用户给，是否按分守恒由服务端判定（不守恒返回错误，页面只显示）；
+// 服务端不平均、不按比例，也不把差额加到任何一段上。用户也可以选「这张票我认不出」放弃，后果说明由服务端给出（giveUpNote）。
+// 放弃照内核（allocate.mjs givenUpOpenItems，state.mjs allocation_given_up）：逐段分摊项记为已处理，同时出现一条阻塞的
+// given_up 待确认项。它不能答复，出路在材料一侧：用 exclude-material 把这张发票连同它的行程单排除，或追加逐段行程单后重新盘点。
+export const AllocationSegmentSchema = z.object({
+  // 第几段（从 1 起）。
+  index: z.number().int().positive(),
+  date: DateSchema,
+  // 如「虹桥枢纽 → 漕河泾」。
+  route: z.string().min(1),
+  // 行程单上写的这一段金额；没写为 null。页面拿它预填，不据此计算。
+  suggested: AmountSchema.nullable(),
+});
+export type AllocationSegment = z.infer<typeof AllocationSegmentSchema>;
+
+export const PendingAllocationSchema = z.object({
+  segments: z.array(AllocationSegmentSchema).min(1),
+  // 票面价税合计。
+  total: AmountSchema,
+  giveUpNote: z.string().min(1),
+});
+export type PendingAllocation = z.infer<typeof PendingAllocationSchema>;
+
+// given_up：内核 allocation_given_up，阻塞，不接受 answer-pending；why 是服务端给的后果说明，
+// 唯一的应用内处置是 exclude-material（materialId 就是这张发票，服务端连同它的行程单一起排除）。
+export const PENDING_ITEM_KINDS = ['form', 'choice', 'allocation', 'given_up'] as const;
+
+// 空文本 PDF、多页发票（内核 pdf_markdown_conversion_empty / multi_page_invoice）是「要你处理」的 choice 类，
+// 只给「排除」一个选择；换原件走追加材料、重新盘点。
+export const PendingItemSchema = z.object({
+  itemId: IdSchema,
+  materialId: IdSchema,
+  title: z.string().min(1),
+  why: z.string(),
+  kind: z.enum(PENDING_ITEM_KINDS),
+  resolver: ResolverLabelSchema,
+  fields: z.array(PendingFieldSchema),
+  choices: z.array(PendingChoiceSchema),
+  // allocation 类的逐段内容；其他类为 null。
+  allocation: PendingAllocationSchema.nullable(),
+  status: z.enum(['open', 'resolved']),
+  answer: PendingAnswerSchema.nullable(),
+});
+export type PendingItem = z.infer<typeof PendingItemSchema>;
+
+// ---- 整批停的阻塞项 ----
+
+// 跨任务重复发票（内核 duplicate_blocked，next.mjs:1088-1102；按发票身份判定，不是文件内容）：命中就停整批。
+// 盘点结束，但不划分费用事件、不形成待确认项；阶段停在 inventory，step 为 none（带凭据）。
+// 处置照内核「把文件移出」：exclude-material 带阻塞项的 materialId，服务端把它移出本次材料（之后重新盘点也不再算它），
+// 阻塞随之解除，接着划分费用事件与待确认项。
+// 行文字由服务端成句；表格列照内核 itemTable（next.mjs:452-458），「参考材料」列内核写破折号，页面留空。
+export const BLOCKER_KINDS = ['duplicate_across_tasks'] as const;
+export const BLOCKER_TABLE_COLUMNS = ['序号', '材料/明细', '参考材料', '待处理问题', '处理人'] as const;
+
+export const BlockerTaskSchema = z.object({
+  taskId: IdSchema,
+  name: z.string().min(1),
+});
+export type BlockerTask = z.infer<typeof BlockerTaskSchema>;
+
+export const BlockerSchema = z.object({
+  kind: z.enum(BLOCKER_KINDS),
+  materialId: IdSchema,
+  fileName: z.string().min(1),
+  // 「待处理问题」列，如「这张发票在报销任务「2026-06 北京培训」里也在……」。
+  reason: z.string().min(1),
+  resolver: ResolverLabelSchema,
+  // 命中的任务：仍占用这张发票的其他报销任务。
+  tasks: z.array(BlockerTaskSchema).min(1),
+});
+export type Blocker = z.infer<typeof BlockerSchema>;
+
+// 重复发票的阻塞与处置说明，照内核话术（去掉「告诉我」，报销系统不写作 ERP）。服务端与 mock 共用。
+export const DUPLICATE_BLOCKER_COPY = {
+  blocked: '发现重复发票：同一张发票不能报两次，这批材料整批暂停，不会划分费用事件。',
+  disposal: '请点「移出」把重复的发票移出本次材料，移出后接着划分费用事件。',
+  scope: '这里只比对了本机记过、仍占用发票的报销任务；直接在报销系统里录入的、同事报过的、或者换电脑之前报过的，这里查不到。',
+} as const;
+
+// ---- 候选明细（统一业务序号） ----
+
+// 统一业务序号（No.）由服务端给出，整单确认表、打印稿页序、ERP 明细行与回读表共用：
+// 跟随内核确认表的费用分类排序（next.mjs preparationConfirmationTable）：本地市内交通 → 外地市内交通 → 长途交通 → 住宿；
+// 同一分类内保持内核的事件顺序（先按主要报销凭证，再按行程段）。页面只按 lines[] 的顺序渲染，从不自己排序或编号。
+export const LineSchema = z.object({
+  lineId: IdSchema,
+  no: z.number().int().positive(),
+  voucherMaterialId: IdSchema,
+  // 发票短标签「发票N」，编号规则照内核（next.mjs:518-519）：按材料包里主要发票的 materialId 顺序编号，
+  // 所以不跟随表格行序。整单确认表只展示它，不展示完整发票号或文件名。
+  invoiceLabel: z.string().min(1),
+  eventId: IdSchema.nullable(),
+  date: DateSchema,
+  // 住宿为离店日期；交通类为 null（确认表的结束日期照内核取 endDate ?? date，即与起始日期相同）。
+  endDate: DateSchema.nullable(),
+  category: ExpenseCategorySchema,
+  description: z.string(),
+  // 住宿地/城市、出发点、目的地（内核 line.city / origin / destination）；没有的为 null。
+  city: z.string().nullable(),
+  origin: z.string().nullable(),
+  destination: z.string().nullable(),
+  // 路线（内核 line.route，如「杭州东 → 上海虹桥」）与脱敏票号（内核 maskNumber，如「2631************7734」）；
+  // 项目归属页的明细卡片照内核 project-workbench.mjs 展示。没有的为 null。
+  route: z.string().nullable(),
+  maskedNumber: z.string().nullable(),
+  // 项目归属提交后由服务端写入（内核 buildPreparation 投影 selection，preparation.mjs:568-571）；之前为 null。
+  projectCode: z.string().nullable(),
+  projectName: z.string().nullable(),
+  // 费用项目编码与名称（如 FY020102 / 住宿费），由服务端给出；名称在报销信息核对后取报销系统回读值。
+  expenseItemCode: z.string().nullable(),
+  expenseItemName: z.string().nullable(),
+  invoiceType: z.string().min(1),
+  referenceMaterialIds: z.array(IdSchema),
+  grossAmount: AmountSchema,
+  netAmount: AmountSchema,
+  taxAmount: AmountSchema,
+});
+export type Line = z.infer<typeof LineSchema>;
+
+// 整单确认表的 13 列，列名与顺序逐字照抄内核 preparationConfirmationTable（next.mjs:522-535）。
+// 页面在前面加一列 No.（统一业务序号，打印稿与 ERP 明细行共用）。「项目号」「费用项目」单元格为「编码 / 名称」，
+// 「费用金额」为不含税金额，「总额」为价税合计。按费用分类排序（服务端给出的 lines[] 顺序），无组标题、无合计行。
+export const CONFIRMATION_NO_COLUMN = 'No.';
+export const CONFIRMATION_TABLE_COLUMNS = [
+  '发票',
+  '项目号',
+  '起始日期',
+  '结束日期',
+  '住宿地/城市',
+  '出发点',
+  '目的地',
+  '费用分类',
+  '费用项目',
+  '发票类型',
+  '费用金额',
+  '税额',
+  '总额',
+] as const;
+
+// ---- 整单明细确认 ----
+
+// 唯一一次整单确认（内核 preparation_confirmation）：在项目归属、报销信息核对与材料准备之后。
+// 确认绑定的摘要包含项目归属与报销事由（内核 preparationDigest 的 sourceSnapshot 含 selection，preparation.mjs:973-992），
+// 以及材料包（待服务端 spec 确认具体构成）。因此：
+// - 追加或删除材料形成新的盘点版本，旧确认与已生成的打印稿作废；
+// - 确认后改派项目或改事由，旧确认失效，须重新确认；
+// 两种情况状态都记为 invalidated，直到用户重新核对并确认。支付截图、打印稿的旋转与裁剪不进摘要，不使确认失效。
+export const CONFIRMATION_STATUSES = ['unconfirmed', 'confirmed', 'invalidated'] as const;
+
+// 失效提示由服务端成句；这些是标准文案，服务端与 mock 共用。
+export const REVIEW_INVALIDATED_NOTICE = '材料已变更，之前的整单明细确认与已生成的打印稿作废。请重新核对后再确认。';
+export const PROJECT_CHANGED_NOTICE = '项目归属已变更，之前的整单明细确认失效。请重新核对后再确认。';
+
+export const ConfirmationSchema = z.object({
+  status: z.enum(CONFIRMATION_STATUSES),
+  confirmedAt: DateTimeSchema.nullable(),
+  // 确认所绑定的摘要（含项目归属）；确认动作回传它，服务端据此判断用户点头的是不是这一份。
+  // 项目归属提交、报销信息核对与材料准备完成之前为 null（还没有可确认的一份）。
+  digest: z.string().nullable(),
+  lineCount: z.number().int().nonnegative(),
+  invoiceCount: z.number().int().nonnegative(),
+  grossTotal: AmountSchema.nullable(),
+  // 材料包文件清单在 preparation.packageFiles（唯一来源），这里不再另记文件数。
+  // 失效等提示，由服务端成句（如「材料已变更，之前的整单确认与已生成的打印稿作废」）。
+  notice: z.string().nullable(),
+});
+export type Confirmation = z.infer<typeof ConfirmationSchema>;
+
+// ---- 支付截图与打印稿 ----
+
+// 支付截图只接受图片（JPG、PNG），只进打印稿，不改变整单明细确认。每张发票至多一张，再补即替换。
+// 入口在打印稿页（打印稿生成之后，按页的 acceptsPaymentScreenshot），不在整单确认页。
+export const PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE = '.jpg,.jpeg,.png,image/jpeg,image/png';
+
+export const PAYMENT_SCREENSHOT_ERRORS = {
+  notImage: '只接受图片（JPG、PNG）。',
+  notApplicable: '这张发票不需要支付截图。',
+  notFound: '这张支付截图已经不存在。',
+  notGenerated: '请先生成打印稿，再在打印稿页补充支付截图。',
+} as const;
+
+export const PaymentScreenshotSchema = z.object({
+  screenshotId: IdSchema,
+  voucherMaterialId: IdSchema,
+  fileName: z.string().min(1),
+  url: UrlSchema,
+});
+export type PaymentScreenshot = z.infer<typeof PaymentScreenshotSchema>;
+
+// 四角坐标：原图像素（左上原点），依次为左上、右上、右下、左下。
+export const PointSchema = z.tuple([z.number().nonnegative(), z.number().nonnegative()]);
+export const CornersSchema = z.tuple([PointSchema, PointSchema, PointSchema, PointSchema]);
+export type Corners = z.infer<typeof CornersSchema>;
+
+// 一页里放置的一份材料（上半页主要报销凭证 / 下半页证明材料）。旋转与裁剪都只是打印设置，不改原件、不进确认摘要。
+export const PlacementSchema = z.object({
+  materialId: IdSchema,
+  fileName: z.string().min(1),
+  // 当前是否旋转 90° 放置。服务端先按「竖放 / 旋转 90° 哪个缩放更大」给出默认值，员工可以改。
+  rotate: z.boolean(),
+  // 能否拖动四角微调裁剪（照片类材料，如出租车票照片）；由服务端判定，页面只据此显示入口。
+  croppable: z.boolean(),
+  // 当前使用的四角（原图像素）：自动检测的纸张边缘，或员工提交的微调结果；不可裁剪的材料为 null。
+  corners: CornersSchema.nullable(),
+  // corners 是否来自员工手动微调（否则是自动检测）。
+  cropAdjusted: z.boolean(),
+  // 原图地址：四角编辑器在它上面拖动角点。
+  imageUrl: UrlSchema.nullable(),
+});
+export type Placement = z.infer<typeof PlacementSchema>;
+
+export const PrintPageSchema = z.object({
+  pageId: IdSchema,
+  no: z.number().int().positive(),
+  // 页眉整句，如「No.1-3 · 08-10 · 外地市内交通 · 69.19」；范围用 ASCII 连字符。页面原样显示，不自己拼。
+  // 页序与 No. 都跟随统一业务序号（见 LineSchema）。
+  header: z.string().min(1),
+  nos: z.string().min(1),
+  date: DateSchema,
+  categoryLabel: z.string().min(1),
+  grossAmount: AmountSchema,
+  // 服务端按当前放置（旋转、裁剪、支付截图）渲染出的整页页图；设置变了，地址随之变。
+  imageUrl: UrlSchema,
+  top: PlacementSchema.nullable(),
+  bottom: PlacementSchema.nullable(),
+  // 这一页的主要报销凭证能否补充支付截图（住宿发票为 true）；由服务端按票种判定，页面只据此显示入口。
+  acceptsPaymentScreenshot: z.boolean(),
+  screenshotId: IdSchema.nullable(),
+});
+export type PrintPage = z.infer<typeof PrintPageSchema>;
+
+// not_generated：还没生成；generated：页图与合并 PDF 可用（调整后服务端立即重新渲染，仍是 generated）；
+// stale：材料变更使确认失效，旧打印稿作废，须重新确认后再生成。
+export const PRINT_SHEET_STATUSES = ['not_generated', 'generated', 'stale'] as const;
+
+export const PrintSheetSchema = z.object({
+  status: z.enum(PRINT_SHEET_STATUSES),
+  // 合并 PDF 的文件名与下载地址（generated 时有值）。
+  fileName: z.string().nullable(),
+  url: UrlSchema.nullable(),
+  pages: z.array(PrintPageSchema),
+  // 服务端成句的提醒，如「No.9 住宿发票还没有支付截图。可以照常打印，该页下半页只放结账单。」；提醒不阻止下载。
+  notices: z.array(z.string()),
+});
+export type PrintSheet = z.infer<typeof PrintSheetSchema>;
+
+// ---- 项目归属 ----
+
+// 规则照内核现有项目归属页面（project-workbench.mjs Variant B）：项目只能从个人项目簿的允许列表里选。
+// 允许列表只含可选项目（内核 selectableProjects，baox.mjs:1603）：不可选的（已过期 / 复检未通过 / 项目号不安全）不随快照给出，
+// 需要时去个人项目簿查看。可选判定在服务端。
+export const ProjectOptionSchema = z.object({
+  number: z.string().min(1),
+  name: z.string().min(1),
+});
+export type ProjectOption = z.infer<typeof ProjectOptionSchema>;
+
+// 「本次已归入」区的一项（内核 project-workbench.mjs 的 used 区）：本次正在编辑的归属里用到的项目，
+// 条数与金额（价税合计之和）由服务端算好给出，页面不计算。selectable 为 false 的是已经不在允许列表里的项目
+// （如已从项目簿删除）：已归入的明细可以沿用，但不能再归入新的明细（页面显示「已锁定」）。
+export const ProjectUsageSchema = z.object({
+  number: z.string().min(1),
+  name: z.string().min(1),
+  lineCount: z.number().int().positive(),
+  grossTotal: AmountSchema,
+  selectable: z.boolean(),
+});
+export type ProjectUsage = z.infer<typeof ProjectUsageSchema>;
+
+// 项目归属在待确认项处理完之后、整单确认之前（Skill 的 project_unassigned → select-task）。
+// not_started：还没进入项目归属；pending：进入了、尚未提交（可能已有上次留下的归属）；
+// submitted：已提交，服务端随后自动做报销信息核对与材料准备，再进入整单确认。ERP 写入开始前都可以改派（改派使确认失效）。
+export const PROJECT_ASSIGNMENT_STATUSES = ['not_started', 'pending', 'submitted'] as const;
+
+export const ProjectLineAssignmentSchema = z.object({
+  lineId: IdSchema,
+  projectNumber: z.string().min(1),
+  projectName: z.string().min(1),
+});
+export type ProjectLineAssignment = z.infer<typeof ProjectLineAssignmentSchema>;
+
+export const ProjectAssignmentSchema = z.object({
+  status: z.enum(PROJECT_ASSIGNMENT_STATUSES),
+  // 报销事由，至多 100 个字；未填为 null。
+  purpose: z.string().nullable(),
+  // 任务的常驻城市快照（与 task.homeCity 相同，创建任务时确认），这里只读显示。
+  homeCity: z.string().nullable(),
+  // 服务端已记下的逐条归属（上次提交或预置的）。整单确认的摘要绑定的是这一份。
+  assignments: z.array(ProjectLineAssignmentSchema),
+  // 本次正在编辑、尚未提交的逐条归属（按明细顺序）。「归入」动作（assign-project-lines）由服务端改它；
+  // 进入项目归属与每次提交后，它等于 assignments。页面显示它，提交时把它连同事由一起送出。
+  // working、usage 与 projects（项目簿变动）都是服务端状态：每次改动都换发 stepToken，另一个窗口带旧凭据提交会得到 409。
+  working: z.array(ProjectLineAssignmentSchema),
+  // 「本次已归入」区：working 里用到的项目，按首次出现的明细顺序，带条数与金额（服务端给出）。
+  usage: z.array(ProjectUsageSchema),
+  // 个人项目簿允许列表（只含可选项目），打开页面时整份给出；搜索只缩小显示，不缩小允许列表。
+  projects: z.array(ProjectOptionSchema),
+  submittedAt: DateTimeSchema.nullable(),
+});
+export type ProjectAssignment = z.infer<typeof ProjectAssignmentSchema>;
+
+// ---- ERP 填报、回读、对账 ----
+
+// 写入报销系统的进度：步骤、标题与说明都由服务端给出，页面按顺序渲染。步骤划分照内核 erp-write 的阶段：
+// 启动浏览器、登录、打开空白报销单（navigate + preflight）、选择不生成费用明细（invoice_assistant）、导入发票（invoice_import）、
+// 收票回读（receipt_readback）、填写明细（preview + fill，逐值写入回读）、保存草稿（save）、严格回读。
+// 登录步处于 waiting 时，当前待答 step 是 erp_login；「我已登录，继续」只是请服务端再探测一次，探测不到就留在原地并给出 loginNotice。
+export const ErpStepSchema = z.object({
+  key: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string(),
+  status: z.enum(['todo', 'running', 'waiting', 'done', 'failed']),
+});
+export type ErpStep = z.infer<typeof ErpStepSchema>;
+
+export const ErpSchema = z.object({
+  status: z.enum(['idle', 'running', 'waiting_login', 'aborted', 'done']),
+  steps: z.array(ErpStepSchema),
+  draftNo: z.string().nullable(),
+  abortReason: z.string().nullable(),
+  loginNotice: z.string().nullable(),
+});
+export type Erp = z.infer<typeof ErpSchema>;
+
+// 严格回读逐行比对的 9 个字段，名称与顺序照内核 matchTaskLines（erpreconcile.mjs）：每条明细要在报销系统里唯一匹配这 9 项。
+export const READBACK_FIELD_LABELS = ['申请报销金额', '项目', '费用项目', '开始日期', '结束日期', '费用金额', '税额', '收票单号', '发票类型'] as const;
+export const ReadbackFieldLabelSchema = z.enum(READBACK_FIELD_LABELS);
+
+export const ReadbackFieldSchema = z.object({
+  label: ReadbackFieldLabelSchema,
+  // 本地确认值与报销系统回读值，都是服务端给出的显示文本；读不到或没有时为 null。
+  local: z.string().nullable(),
+  erp: z.string().nullable(),
+  // 这一项是否一致由服务端判定。
+  matched: z.boolean(),
+});
+export type ReadbackField = z.infer<typeof ReadbackFieldSchema>;
+
+// 一条明细的严格回读：no 是统一业务序号；fields 覆盖 9 个字段（READBACK_FIELD_LABELS 的顺序）；
+// reasons 是服务端给出的这一行的原因句（照内核 matchTaskLines 的原因，报销系统不写作 ERP）。
+// description 与 matched 是服务端给的行说明和整行结论（页面不自己汇总 9 个字段）。待服务端 spec 确认。
+export const ReadbackRowSchema = z.object({
+  no: z.number().int().positive(),
+  description: z.string(),
+  matched: z.boolean(),
+  fields: z.array(ReadbackFieldSchema),
+  reasons: z.array(z.string()),
+});
+export type ReadbackRow = z.infer<typeof ReadbackRowSchema>;
+
+export const ReadbackSchema = z.object({
+  status: z.enum(['none', 'matched', 'mismatched']),
+  rows: z.array(ReadbackRowSchema),
+  summary: z.string().nullable(),
+  // 本地确认与报销系统回读的申请报销金额合计，由服务端给出；页面不求和。
+  localTotal: AmountSchema.nullable(),
+  erpTotal: AmountSchema.nullable(),
+});
+export type Readback = z.infer<typeof ReadbackSchema>;
+
+export const RECONCILE_ACTIONS = ['原地等待', '转人工'] as const;
+// 建议处置的代码：页面按代码分支，按 action（文案）显示。
+export const RECONCILE_ACTION_CODES = ['wait', 'hand_off'] as const;
+export type ReconcileActionCode = (typeof RECONCILE_ACTION_CODES)[number];
+export const RECONCILE_ACTION_LABELS: Readonly<Record<ReconcileActionCode, (typeof RECONCILE_ACTIONS)[number]>> = {
+  wait: '原地等待',
+  hand_off: '转人工',
+};
+
+// 对账中断点：内核 classifyReconciliation 的 6 类（erpreconcile.mjs BUCKETS），逐字照抄。
+export const RECONCILE_BUCKETS = ['未知', '未保存·导入前', '未保存·已导入未写明细', '未保存·就绪待保存', '已保存', '不自洽'] as const;
+export const ReconcileBucketSchema = z.enum(RECONCILE_BUCKETS);
+export type ReconcileBucket = z.infer<typeof ReconcileBucketSchema>;
+
+// human_review 的固定句（user-interaction-contract.md:64，内核 handed_off_recover）：转人工的对账结果一律显示这句。
+export const HUMAN_REVIEW_NOTICE = '当前报销已暂停，材料和状态已保留。请在报销系统中核对；如无法判断，请联系报销管理员。';
+
+// 写入结果不确定后的对账：写入中止停在 reconcile 阶段；严格回读不一致停在 done 阶段（完成页显示差异行）。
+// bucket 与 action / actionCode 是内核判定（bucket 与处置的对应照内核：未知、未保存·导入前、未保存·就绪待保存、
+// 身份成立的已保存 ⇒ 原地等待；未保存·已导入未写明细、不自洽、身份不成立或逐行不一致的已保存 ⇒ 转人工）。
+// allowedActions 是服务端允许的处置，页面只渲染这些按钮（原地等待 = 重新对账，只读；转人工 = 终止后续写入）。
+// humanReview 为真时（转人工的结果）页面显示 HUMAN_REVIEW_NOTICE，且不给「重新对账」。
+// status：pending 等待用户处置；waiting 已重新对账、原地等待；handed_off 已转人工（终态）。
+// rows 是严格回读逐行比对（与 readback.rows 相同）；reasons 是不属于某一行的原因（逐行原因在 rows[].reasons）。
+export const ReconcileSchema = z.object({
+  status: z.enum(['none', 'pending', 'waiting', 'handed_off']),
+  bucket: ReconcileBucketSchema.nullable(),
+  action: z.enum(RECONCILE_ACTIONS).nullable(),
+  actionCode: z.enum(RECONCILE_ACTION_CODES).nullable(),
+  allowedActions: z.array(z.enum(RECONCILE_ACTION_CODES)),
+  humanReview: z.boolean(),
+  banner: z.string().nullable(),
+  draftNo: z.string().nullable(),
+  rows: z.array(ReadbackRowSchema),
+  reasons: z.array(z.string()),
+}).refine((reconcile) => !(reconcile.humanReview && reconcile.allowedActions.includes('wait')), {
+  message: 'humanReview 为真时 allowedActions 不能含 wait（转人工之后不再重新对账）',
+  path: ['allowedActions'],
+});
+export type Reconcile = z.infer<typeof ReconcileSchema>;
+
+// 完成页的固定句（user-interaction-contract.md:70）：严格回读逐行一致、草稿保存成功时显示，逐字不改。
+export const SAVE_COMPLETED_NOTICE = '报销草稿已保存。请打开报销系统检查，是否提交由你决定。';
+
+// ---- 报销信息核对与报销材料准备 ----
+
+// 两步都由服务端在提交项目归属后自动执行（内核 catalog_unverified → catalog_mismatch → preparation_package_pending
+// → preparation_blocked，next.mjs:1175-1217）。行里的文字由服务端成句（照内核话术，遵守禁用词），页面只照列渲染。
+
+// 处理人（RESOLVER_LABELS）见「待确认项」一节。
+
+// 报销信息核对：只读核对项目与费用项目（编码在不在、名称对不对得上、已审核、未禁用）。
+// pending 还没开始（项目归属提交前）；running 核对中；matched 通过；mismatch 有不匹配，整单确认被阻塞，
+// 唯一处置是回到项目归属改派（此时当前 step 是 assign_projects），提交后服务端重新核对。
+export const CATALOG_STATUSES = ['pending', 'running', 'matched', 'mismatch'] as const;
+
+// 不匹配表的列，照内核 itemTable（next.mjs:452-458）；页面在前面按行序写序号。
+export const CATALOG_MISMATCH_COLUMNS = ['序号', '材料/明细', '参考材料', '待处理问题', '处理人'] as const;
+
+export const CatalogProblemSchema = z.object({
+  // 「材料/明细」列，如「项目号 P-2307」。
+  subject: z.string().min(1),
+  // 「参考材料」列；内核没有时写一个破折号，这里为 null（页面留空）。
+  reference: z.string().nullable(),
+  // 「待处理问题」列，如「项目 P-2307「华东客户交付」在报销系统里已被禁用，不能引用」。
+  reason: z.string().min(1),
+  resolver: ResolverLabelSchema,
+});
+export type CatalogProblem = z.infer<typeof CatalogProblemSchema>;
+
+export const CatalogSchema = z.object({
+  status: z.enum(CATALOG_STATUSES),
+  problems: z.array(CatalogProblemSchema),
+});
+export type Catalog = z.infer<typeof CatalogSchema>;
+
+// 报销材料准备：生成材料包（发票副本、参考材料、明细数据与明细文档、材料清单）并做充分性判定。
+// pending 还没生成或正在生成；blocked 已生成但有缺项，整单确认不可用（当前 step 是 resolve_preparation）；ready 可以整单确认。
+export const PREPARATION_STATUSES = ['pending', 'blocked', 'ready'] as const;
+
+// 缺项表的列，照内核 preparationProblemTable（next.mjs:477-487）。
+export const PREPARATION_PROBLEM_COLUMNS = ['序号', '准备缺项', '关联材料/明细', '处理人'] as const;
+
+export const PreparationProblemSchema = z.object({
+  problemId: IdSchema,
+  // 「准备缺项」列。
+  missing: z.string().min(1),
+  // 「关联材料/明细」列：文件名、明细或字段。
+  subject: z.string().min(1),
+  resolver: ResolverLabelSchema,
+  // 服务端判定这一项可以通过「排除这份材料」处理时给出材料 ID（页面据此显示入口）；否则为 null。
+  excludableMaterialId: IdSchema.nullable(),
+});
+export type PreparationProblem = z.infer<typeof PreparationProblemSchema>;
+
+// 材料包里的一份文件：包内相对路径与服务端给出的类别名（发票、参考材料、明细数据、明细文档、材料清单）。
+export const PackageFileSchema = z.object({
+  path: z.string().min(1),
+  kindLabel: z.string().min(1),
+});
+export type PackageFile = z.infer<typeof PackageFileSchema>;
+
+export const PreparationSchema = z.object({
+  status: z.enum(PREPARATION_STATUSES),
+  problems: z.array(PreparationProblemSchema),
+  // 已生成的材料包文件清单（有缺项时也生成，供核对缺什么）；还没生成为空。
+  packageFiles: z.array(PackageFileSchema),
+});
+export type Preparation = z.infer<typeof PreparationSchema>;
+
+// 两步的进度与阻塞提示，照内核话术（去掉对话里的第一人称与「告诉我」，报销系统不写作 ERP）。服务端与 mock 共用。
+export const CATALOG_PREPARATION_COPY = {
+  catalogRunning: '正在核对报销系统中的项目和费用项目，确认它们可以用于本次报销。',
+  catalogMismatch: '报销信息核对发现下列项目不匹配，整单确认暂不可用。请回到项目归属改派后重新提交，提交后会自动重新核对。',
+  preparationRunning: '材料已经整理完成，正在生成本次报销的核对材料。',
+  preparationBlocked: '核对材料已经生成，但还有下列事项需要补充或调整，整单确认暂不可用。处理完成后会自动重新核对。',
+  packageReady: (count: number) => `核对材料已生成，共 ${count} 份文件。`,
+} as const;
+
+// ---- 当前待答 step ----
+
+// 顺序即流程：答复待确认项 → 项目归属（assign_projects）→ 报销信息核对与材料准备（服务端自动，none）
+// → 整单确认（confirm_review）→ 去打印 / 去报销（choose_action）。
+// 「去报销」即开始 ERP 写入，没有单独的「开始填报」：写入进行中为 none；登录步等待时为 erp_login；停在对账时为 reconcile。
+// 确认之后、写入开始之前，改派项目仍被接受（confirm_review / choose_action 下提交项目归属），并使确认失效。
+export const STEP_KINDS = [
+  'none',
+  'upload_materials',
+  'start_inventory',
+  'answer_pending',
+  // 内核 project_book_empty：个人项目簿没有可选项目、也还没有任何归属时，先维护项目簿（项目归属页换成维护入口）；
+  // 第一次录入成功后服务端回到 assign_projects。
+  'maintain_project_book',
+  'assign_projects',
+  // 内核 preparation_blocked：材料包有缺项，等用户处理（如排除相关材料）；处理后服务端重新准备。
+  'resolve_preparation',
+  'confirm_review',
+  'choose_action',
+  'erp_login',
+  'reconcile',
+  // 严格回读不一致、停在完成页：只接受「转人工」。
+  'hand_off',
+] as const;
+export const StepKindSchema = z.enum(STEP_KINDS);
+export type StepKind = z.infer<typeof StepKindSchema>;
+
+// stepToken 语义与内核 issueStep 一致：状态没变就是同一个凭据，状态一变旧凭据作废；过期回传得到 409 与最新快照。
+// 没有例外：项目归属的草稿（working）、项目簿同步来的允许列表、排除材料，改了都换凭据。
+export const StepSchema = z.object({
+  kind: StepKindSchema,
+  stepToken: StepTokenSchema,
+});
+export type Step = z.infer<typeof StepSchema>;
+
+// ---- 快照 ----
+
+// 名称与费用期间由服务端生成：创建时是占位名称、期间为 null，盘点结束后按材料日期与城市改名并给出期间。
+// homeCity 是任务自己的常驻城市快照（创建时确认），之后重新确认常驻城市不影响既有任务。
+export const TaskInfoSchema = z.object({
+  taskId: IdSchema,
+  name: z.string().min(1),
+  period: TaskPeriodSchema.nullable(),
+  homeCity: z.string().min(1),
+  createdAt: DateTimeSchema,
+  updatedAt: DateTimeSchema,
+});
+export type TaskInfo = z.infer<typeof TaskInfoSchema>;
+
+export const TaskSnapshotSchema = z.object({
+  task: TaskInfoSchema,
+  stage: TaskStageSchema,
+  batches: z.array(UploadBatchSchema),
+  materials: z.array(MaterialSchema),
+  inventory: InventorySchema,
+  events: z.array(ExpenseEventSchema),
+  pendingItems: z.array(PendingItemSchema),
+  // 整批停的阻塞项（跨任务重复发票）；没有为空数组。
+  blockers: z.array(BlockerSchema),
+  lines: z.array(LineSchema),
+  confirmation: ConfirmationSchema,
+  paymentScreenshots: z.array(PaymentScreenshotSchema),
+  printSheet: PrintSheetSchema,
+  projectAssignment: ProjectAssignmentSchema,
+  catalog: CatalogSchema,
+  preparation: PreparationSchema,
+  erp: ErpSchema,
+  readback: ReadbackSchema,
+  reconcile: ReconcileSchema,
+  step: StepSchema,
+});
+export type TaskSnapshot = z.infer<typeof TaskSnapshotSchema>;

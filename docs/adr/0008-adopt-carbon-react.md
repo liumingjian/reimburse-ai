@@ -1,0 +1,49 @@
+# 前端 @baox/app-ui 改用 IBM Carbon 组件库（@carbon/react），外观取 Carbon 原样
+
+规格 #99 当初定的是纯 CSS、token 由 `packages/app-ui/DESIGN.md` 生成、不加运行时依赖，视觉借 Linear。
+两轮 QA 说界面"太过简陋，比不上商业化产品"之后，方案 B 改为"Carbon 管布局与密度、Linear 管品牌"，
+仍然手写 CSS。再往前一步时做了可丢弃原型（分支 `proto-carbon-react`，`prototypes/carbon-react/`），
+把任务列表、整单明细确认、待确认项三页用真正的 `@carbon/react` 各做一版原样、一版套品牌，与现状并排。
+用户看过后选了 **Carbon 原样**。
+
+决定：
+
+- `packages/app-ui` 的界面改用 `@carbon/react` 组件与 `@carbon/styles`（Sass），主题 **Gray 10**，
+  强调色、直角、行高、间距都照 Carbon 原样，不再保留 Linear 品牌层（#5e6ad2、8/12px 圆角、pill 标签）。
+- 规格 #99 的三条随之作废：纯 CSS、token 由 DESIGN.md 生成（`tokens.css` 与生成脚本删除）、不加运行时依赖。
+  DESIGN.md 改写为"Carbon Gray 10 原样主题，加本应用自己的规则"。
+- 本应用自己的规则保留，Carbon 不管它们：页面不计算业务值；界面文字只有中文，Carbon 自带的英文文案全部经组件参数
+  换成中文；不用破折号；按页面类型决定宽度，宽表格铺满、窄窗口横向滚动且首末列固定。
+- 字体用系统字体（中文苹方），只取 Carbon 的字阶与字重，不打包 IBM Plex。
+- 只换外观。契约、适配器、模拟数据、路由不动。Carbon 自带的表格排序、行选择与批量操作栏、行展开**不随迁移加入**，
+  以后逐项评审：整单明细的顺序由服务端决定，打印稿序号与报销系统明细行共用，能不能让用户重排是业务问题。
+
+## Considered Options
+
+- **继续手写 CSS，只把 Carbon 当参考**（方案 B 的现状）：体积最小（全部约 20 页的单文件 574 KB），
+  不用重写。没选，因为用户对照原型后更喜欢 Carbon 原样的质感，这正是前两轮 QA 要的"商业化产品"感。
+- **用 Carbon 组件但套回 Linear 品牌**：原型里约 40 条规则去改 Carbon 的内部类名，颜色能换干净，
+  圆角和字体没有 Carbon token，按钮标签左对齐和步骤条的样式改不掉。结果不比手写好，维护最贵。
+- **英文 Plex 加中文苹方**（原型的原样版）：中英文明显是两种字体。**IBM Plex Sans SC**：每个字重数 MB，
+  单文件打包要内联字体，而页面内容是用户数据，没法按字子集化。
+
+## Consequences
+
+- 单文件变重：原型里 React 加 Carbon 约 1.43 MB（只有 3 页），约是现有整个应用的 2.5 倍。
+  这是本机打开的应用，可以接受；样式按组件引入以压缩体积。
+- 约 18 个页面文件、5 个框架文件重写，`app.css` 基本删除。按样式类名查找的测试要改写，
+  按角色和标签查找的测试多数保留。
+- 以后升级 Carbon 大版本要跟着它的破坏性变更走。
+- 方案 B 的 PR #120 仍先合并：它的步骤条行为、横向滚动时首末列固定、测试时序修复与相关测试都沿用，
+  只是 CSS 在迁移中被替换。迁移在分支 `ui-carbon-react` 上接着做。
+
+## Amendment (spec #135)
+
+Spec #135 adopts two DataTable features this ADR had left out, each on one page only:
+
+- Row expansion: the material inventory (材料盘点) expense-event table (#137).
+- Row selection with batch actions: project assignment (项目归属), where selected lines go to a project through
+  TableBatchActions (#138).
+
+Table sorting stays out. Every other table still has no row selection, batch actions or row expansion; each future
+use needs its own review. `packages/app-ui/DESIGN.md` records the current rules.

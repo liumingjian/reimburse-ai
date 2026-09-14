@@ -1,0 +1,32 @@
+import type { ReactNode } from 'react';
+import { ActionError } from './ActionError';
+
+// Sticky bottom action bar (吸底操作栏, DESIGN.md「页面操作栏与并列入口」): spans the whole sheet and sticks to the
+// viewport's bottom edge. Left: one consequence or summary line that does not repeat the page lead. Then an optional
+// caption, then the actions with the primary button last (rightmost). The action error wraps onto its own row.
+// Contract for callers: at most one `kind="primary"` button in `actions`; backward steps use `kind="ghost"`.
+// `label` is the landmark's accessible name; e2e locators rely on it, so keep each page's existing wording.
+export type ActionBarProps = {
+  readonly label: string;
+  readonly consequence: ReactNode;
+  // Extra attributes for the consequence wrapper: a page-specific class, `role="status"` when the line is a live notice,
+  // or a test id for the summary.
+  readonly consequenceProps?: { readonly className?: string; readonly role?: 'status'; readonly 'data-testid'?: string };
+  readonly caption?: ReactNode;
+  readonly actions: ReactNode;
+  readonly error?: string | null;
+};
+
+export function ActionBar({ label, consequence, consequenceProps, caption, actions, error = null }: ActionBarProps) {
+  const { className, ...rest } = consequenceProps ?? {};
+  return (
+    <section className="app-action-bar" aria-label={label}>
+      <div className={className ? `app-consequence ${className}` : 'app-consequence'} {...rest}>
+        {consequence}
+      </div>
+      {caption ? <span className="app-caption">{caption}</span> : null}
+      {actions}
+      <ActionError message={error} />
+    </section>
+  );
+}
