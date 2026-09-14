@@ -131,3 +131,16 @@ test('对账中的任务：步骤条是任务名加状态标签与说明，不�
   await expect(bar(page).getByText('对账中', { exact: true })).toBeVisible();
   await expect(stages(page)).toHaveCount(0);
 });
+
+test('任务名是 Carbon 链接：点了回到任务列表；对账阶段同样有这个链接', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(open('?seed=review', '#/task/T1/review'));
+  await bar(page).getByRole('link', { name: '2026-08 上海出差（产品评审）' }).click();
+  await expect(page).toHaveURL(/#\/tasks$/);
+  await expect(page.getByRole('heading', { name: '报销任务', level: 1 })).toBeVisible();
+  await expect(bar(page)).toHaveCount(0);
+
+  await page.goto(open('?seed=reconcile', '#/task/T1/reconcile'));
+  await bar(page).getByRole('link', { name: '2026-08 上海出差（产品评审）' }).click();
+  await expect(page).toHaveURL(/#\/tasks$/);
+});

@@ -23,7 +23,7 @@ import { PROJECT_BOOK_COPY } from '../contract/project-book';
 import type { Line, ProjectLineAssignment, StepKind, TaskSnapshot } from '../contract/snapshot';
 import { pageAllowed } from '../contract/stage';
 import { navigate, taskHash } from '../router';
-import { ActionError } from '../shell/ActionError';
+import { ActionBar } from '../shell/ActionBar';
 import { ConfirmDialog } from '../shell/Dialog';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
@@ -439,8 +439,10 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
       </div>
 
       {/* 吸底操作栏：左边已归属条数与服务端给出的整单合计（不是已归属部分的合计），右边唯一的主按钮。 */}
-      <section className="app-action-bar" aria-label="提交项目归属">
-        <div className="app-consequence" data-testid="assign-summary">
+      <ActionBar
+        label="提交项目归属"
+        consequenceProps={{ 'data-testid': 'assign-summary' }}
+        consequence={
           <FieldGroup
             label="归属进度"
             fields={[
@@ -448,13 +450,15 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
               { label: '整单合计', value: `${snapshot.confirmation.grossTotal ?? ''} 元` },
             ]}
           />
-        </div>
-        {!locked && !complete ? <span className="app-caption">{PROJECT_ASSIGNMENT_ERRORS.incomplete}</span> : null}
-        <Button disabled={!canAct || busy || !complete || conflict !== null} onClick={() => void submit()}>
-          确认项目归属
-        </Button>
-        <ActionError message={error} />
-      </section>
+        }
+        caption={!locked && !complete ? PROJECT_ASSIGNMENT_ERRORS.incomplete : null}
+        actions={
+          <Button disabled={!canAct || busy || !complete || conflict !== null} onClick={() => void submit()}>
+            确认项目归属
+          </Button>
+        }
+        error={error}
+      />
 
       {conflict ? (
         <ConfirmDialog

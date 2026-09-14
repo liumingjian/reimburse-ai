@@ -24,6 +24,7 @@ import {
 import { STAGE_DEFAULT_PAGE } from '../contract/stage';
 import { formatDateTime } from '../format';
 import { navigate, taskHash } from '../router';
+import { ActionBar } from '../shell/ActionBar';
 import { ActionError } from '../shell/ActionError';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
@@ -386,34 +387,40 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
       {!confirmed ? (
         // 吸底操作栏：横跨整个工作区、贴在视口底边；左边一句后果说明（不重复页头导语），右边按钮。
         // 按钮分量：「确认整单明细」是唯一的主按钮、在最右；两个往回走的操作都是 ghost。
-        <section className="app-action-bar" aria-label="整单确认">
-          {autoNotice ? (
-            <p className="app-consequence" role="status">
-              {autoNotice}
-            </p>
-          ) : (
-            <p className="app-consequence">
-              <Information />
-              <strong>确认后即可去打印、去报销</strong>
-            </p>
-          )}
-          {!erpStarted ? (
-            <Button kind="ghost" size="md" href={taskHash(taskId, 'project')}>
-              修改项目归属
-            </Button>
-          ) : null}
-          {!autoNotice ? (
+        <ActionBar
+          label="整单确认"
+          consequenceProps={autoNotice ? { role: 'status' } : {}}
+          consequence={
+            autoNotice ? (
+              autoNotice
+            ) : (
+              <>
+                <Information />
+                <strong>确认后即可去打印、去报销</strong>
+              </>
+            )
+          }
+          actions={
             <>
-              <Button kind="ghost" size="md" href={taskHash(taskId, 'pending')}>
-                回到待确认项
-              </Button>
-              <Button kind="primary" size="md" disabled={confirmDisabled} onClick={() => void confirm()}>
-                确认整单明细
-              </Button>
+              {!erpStarted ? (
+                <Button kind="ghost" size="md" href={taskHash(taskId, 'project')}>
+                  修改项目归属
+                </Button>
+              ) : null}
+              {!autoNotice ? (
+                <>
+                  <Button kind="ghost" size="md" href={taskHash(taskId, 'pending')}>
+                    回到待确认项
+                  </Button>
+                  <Button kind="primary" size="md" disabled={confirmDisabled} onClick={() => void confirm()}>
+                    确认整单明细
+                  </Button>
+                </>
+              ) : null}
             </>
-          ) : null}
-          <ActionError message={confirmAction.error} />
-        </section>
+          }
+          error={confirmAction.error}
+        />
       ) : null}
 
       {reopen.dialog}

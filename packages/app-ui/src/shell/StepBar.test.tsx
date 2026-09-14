@@ -74,6 +74,22 @@ describe('任务步骤条', () => {
     expect(window.location.hash).toBe('#/task/T1/review');
   });
 
+  test('任务名是回到任务列表的链接', async () => {
+    renderApp('#/task/T1/inventory', 'inventory');
+    const bar = await screen.findByRole('region', { name: '任务进度' });
+    const link = within(bar).getByRole('link', { name: '2026-08 上海出差（产品评审）' });
+    expect(link.getAttribute('href')).toBe('#/tasks');
+    fireEvent.click(link);
+    expect(await screen.findByRole('heading', { name: '报销任务' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: '任务进度' })).toBeNull();
+  });
+
+  test('对账阶段的步骤条也有回到任务列表的任务名链接', async () => {
+    renderApp('#/task/T1/reconcile', 'reconcile');
+    const bar = await screen.findByRole('region', { name: '任务进度' });
+    expect(within(bar).getByRole('link', { name: '2026-08 上海出差（产品评审）' }).getAttribute('href')).toBe('#/tasks');
+  });
+
   test('非任务页面没有步骤条', async () => {
     renderApp('#/tasks');
     expect(await screen.findByRole('heading', { name: '报销任务' })).toBeTruthy();
