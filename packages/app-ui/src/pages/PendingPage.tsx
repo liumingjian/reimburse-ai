@@ -4,13 +4,16 @@ import { CheckmarkFilled, WarningAltFilled } from '@carbon/icons-react';
 import { segmentKey, validatePendingAnswer } from '../contract/actions';
 import { PENDING_CHOICE_KEY, fieldAnswer, isAllocationAnswer, type FieldAnswer, type Material, type PendingAnswer, type PendingItem, type TaskSnapshot } from '../contract/snapshot';
 import { taskHash } from '../router';
+import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
+import { DocViewer } from './DocViewer';
 import { DuplicateBlockers } from './DuplicateBlockers';
 import { PAGE_COPY } from './page-copy';
 
-// 待确认项页（核对页，铺满）：上面是紧凑的待确认项队列，下面左边是大尺寸的原件，
-// 右边是读出的字段与补填表单、选择或逐段分摊。每条都标明处理人（服务端给出，照内核开放项表）。
+// 待确认项页（核对页，铺满）：上面是紧凑的待确认项队列（图标、标题、文件名；已处理的变淡并带「已处理」标签），
+// 下面左边是原件栏（宽度跟着缩放后的原件走），右边占剩余宽度：标题与原因、补填表单（选择或逐段分摊），再往下是读出的字段。
+// 契约里的处理人（resolver）这一页不显示。
 // 所有答复经 answerPendingItem 携带 stepToken 提交；页面只做格式校验，采用与否由服务端决定（逐段分摊是否按分守恒也是）。
 // 选择类待确认项的已选项用选中样式（aria-pressed），不用主按钮。读出的字段不显示来源。
 
@@ -29,34 +32,18 @@ function Resolved() {
   );
 }
 
-function Preview({ material }: { material: Material | undefined }) {
-  if (!material || !material.previewUrl) {
-    return (
-      <div className={`app-doc-preview is-placeholder is-${material?.shape ?? 'portrait'}`} data-testid="preview">
-        <span className="app-caption">没有可用的预览</span>
-      </div>
-    );
-  }
-  if (material.mediaType === 'image') {
-    return (
-      <div className={`app-doc-preview is-${material.shape}`}>
-        <img src={material.previewUrl} alt={`${material.fileName} 原件`} data-testid="preview" />
-      </div>
-    );
-  }
-  return (
-    <div className={`app-doc-preview is-${material.shape}`}>
-      <iframe src={material.previewUrl} title={`${material.fileName} 原件`} data-testid="preview" />
-    </div>
-  );
-}
-
 function MaterialFields({ material }: { material: Material | undefined }) {
   if (!material) return null;
   return (
     <div className="app-material-fields">
       <div className="app-preview-name">
-        <span className="app-file-name">{material.fileName}</span> · {material.kindLabel}
+        <FieldGroup
+          label="材料"
+          fields={[
+            { label: '文件名', value: <span className="app-file-name">{material.fileName}</span> },
+            { label: '材料类别', value: material.kindLabel },
+          ]}
+        />
       </div>
       {material.fields.length > 0 ? (
         <dl className="app-kv">
@@ -342,22 +329,25 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
   return (
     <>
       <PageHeader title={copy.title} lead={`${copy.lead}还剩 ${remaining} 个。`} />
-      {/* 队列：每项一行（标题、文件与处理人），当前项用选中底色，已处理的带勾。 */}
+      {/* 队列：每项一行（图标、标题、文件名），当前项用选中底色；已处理的整行变淡，带勾和绿色「已处理」标签。 */}
       <section className="app-queue bleed" aria-label="待确认项清单">
         <ul className="app-item-list">
           {items.map((item) => {
             const file = materialOf(item)?.fileName ?? item.materialId;
             const isSelected = selected?.itemId === item.itemId;
             const done = item.status === 'resolved';
+            const classes = [isSelected ? 'is-selected' : '', done ? 'is-done' : ''].filter(Boolean).join(' ');
             return (
-              <li key={item.itemId} className={isSelected ? 'is-selected' : undefined}>
+              <li key={item.itemId} className={classes || undefined}>
                 <button type="button" aria-current={isSelected ? 'true' : undefined} onClick={() => setSelectedId(item.itemId)}>
                   {done ? <CheckmarkFilled className="app-queue-mark is-done" aria-hidden="true" /> : <WarningAltFilled className="app-queue-mark" aria-hidden="true" />}
-                  <div className="app-queue-title">{item.title}</div>
-                  <div className="app-queue-sub">
-                    {file} · {item.resolver}
-                    {done ? ' · 已处理' : ''}
-                  </div>
+                  <span className="app-queue-title">{item.title}</span>
+                  <span className="app-queue-sub">{file}</span>
+                  {done ? (
+                    <Tag as="span" type="green" size="sm" className="app-queue-tag">
+                      已处理
+                    </Tag>
+                  ) : null}
                 </button>
               </li>
             );
@@ -366,20 +356,15 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
       </section>
       {selected ? (
         <section className="app-pending-detail" aria-label="待确认项详情">
-          <div className="app-detail-head">
-            <h2 className="app-section-title">{selected.title}</h2>
-            <p className="app-caption" data-testid="resolver">
-              处理人：{selected.resolver}
-            </p>
-            <p className="app-lead app-why">{selected.why}</p>
-          </div>
           <div className="app-review-split">
-            <div className="app-viewer">
-              <Preview material={material} />
-            </div>
+            <DocViewer key={selected.itemId} material={material} />
             <div className="app-detail-side">
-              <MaterialFields material={material} />
+              <div className="app-detail-head">
+                <h2 className="app-section-title">{selected.title}</h2>
+                <p className="app-lead app-why">{selected.why}</p>
+              </div>
               <ItemForm key={selected.itemId} item={selected} state={state} onSubmit={(answer) => submit(selected, answer)} onExclude={() => exclude(selected)} />
+              <MaterialFields material={material} />
             </div>
           </div>
         </section>

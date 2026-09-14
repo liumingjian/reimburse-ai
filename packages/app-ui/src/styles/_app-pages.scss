@@ -387,7 +387,7 @@ $gutter: $spacing-06;
 
   button {
     display: grid;
-    grid-template-columns: 1rem max-content minmax(0, 1fr);
+    grid-template-columns: 1rem max-content minmax(0, 1fr) auto;
     align-items: center;
     gap: $spacing-04;
     inline-size: 100%;
@@ -414,6 +414,20 @@ $gutter: $spacing-06;
     background: $layer-selected-01;
     box-shadow: inset 3px 0 0 $border-interactive;
   }
+
+  // 已处理的行降低对比：标题改成次要文字色、常规字重；绿色「已处理」标签照常醒目。
+  .is-done .app-queue-title {
+    color: $text-secondary;
+    font-weight: 400;
+  }
+
+  .is-done .app-queue-sub {
+    color: $text-helper;
+  }
+}
+
+.cds--tag.app-queue-tag {
+  margin: 0;
 }
 
 .app-queue-mark {
@@ -441,43 +455,60 @@ $gutter: $spacing-06;
   margin-block-start: $spacing-07;
 }
 
-.app-detail-head .app-caption {
-  margin: $spacing-02 0 0;
-}
-
 .app-why {
   margin: $spacing-03 0 $spacing-06;
 }
 
+// 原件框的高度：一屏减去顶栏（3rem）、步骤条（约 4.5rem）和页头（约 7.5rem）。原件在这个高度里等比缩放，
+// 原件栏贴顶时整页原件仍在视口内。
+$doc-frame-block: calc(100vh - 15rem);
+
+// 两栏：原件栏按缩放后的原件定宽（auto），表单栏占剩余宽度、下限 25rem；两栏贴顶。
 .app-review-split {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 25rem;
+  grid-template-columns: minmax(0, auto) minmax(25rem, 1fr);
   align-items: start;
   gap: $spacing-07;
 }
 
-// 原件：layer 底上的一页，页面滚动时贴在顶栏下；高度不超过视口。
+// 原件：layer 底上的一页，页面滚动时贴在顶栏下，与表单保持并排对照。
 .app-viewer {
   position: sticky;
   inset-block-start: calc(3rem + #{$spacing-05});
   display: grid;
   place-items: center;
+  min-inline-size: 0;
   padding: $spacing-05;
   background: $layer-02;
   border: 1px solid $border-subtle-01;
 }
 
 .app-doc-preview {
-  display: grid;
-  place-items: center;
-  inline-size: 100%;
+  max-inline-size: 100%;
   overflow: hidden;
   background: $layer-01;
   border: 1px solid $border-strong-01;
 
+  // 图片：高度取原件框，宽度按图片自身比例（栏宽跟着走）；窄到放不下时收窄，图片仍等比。
+  &.is-image img {
+    display: block;
+    block-size: $doc-frame-block;
+    min-block-size: 20rem;
+    inline-size: auto;
+    max-inline-size: 100%;
+    object-fit: contain;
+  }
+
+  // PDF 与「没有可用的预览」：同样高度的框，宽度按材料版式的比例，占位不改变版面位置。
+  &.is-boxed {
+    display: grid;
+    place-items: center;
+    block-size: $doc-frame-block;
+    min-block-size: 20rem;
+  }
+
   &.is-portrait {
     aspect-ratio: 210 / 297;
-    max-inline-size: calc((100vh - 3rem - #{$spacing-10} * 2) * 210 / 297);
   }
 
   &.is-landscape {
@@ -486,23 +517,20 @@ $gutter: $spacing-06;
 
   &.is-photo {
     aspect-ratio: 3 / 4;
-    max-inline-size: calc((100vh - 3rem - #{$spacing-10} * 2) * 3 / 4);
   }
 
-  img,
   iframe {
     display: block;
     inline-size: 100%;
     block-size: 100%;
-    object-fit: contain;
     border: 0;
   }
 }
 
 .app-material-fields {
-  margin-block-end: $spacing-06;
-  padding-block-end: $spacing-06;
-  border-block-end: 1px solid $border-subtle-01;
+  margin-block-start: $spacing-07;
+  padding-block-start: $spacing-06;
+  border-block-start: 1px solid $border-subtle-01;
 }
 
 .app-preview-name {
@@ -1017,17 +1045,23 @@ $gutter: $spacing-06;
   }
 }
 
-// 很窄的窗口：分栏改成上下排。
-@media (max-width: 56rem) {
-  .app-review-split,
-  .app-project-split,
-  .crop-editor,
-  .app-two-actions {
+// 待确认项：1056px 以下原件在上、表单在下。
+@media (max-width: 65.99rem) {
+  .app-review-split {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .app-viewer {
     position: static;
+  }
+}
+
+// 很窄的窗口：分栏改成上下排。
+@media (max-width: 56rem) {
+  .app-project-split,
+  .crop-editor,
+  .app-two-actions {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .app-project-aside {
