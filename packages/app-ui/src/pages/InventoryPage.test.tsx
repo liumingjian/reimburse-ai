@@ -36,7 +36,7 @@ function summaryFields(): Record<string, string> {
 }
 
 function chooseFiles(names: string[]) {
-  const input = screen.getByLabelText('选择文件');
+  const input = screen.getByLabelText('拖入文件，或点击选择');
   const files = names.map((name) => new File([`fixture ${name}`], name, { type: name.endsWith('.jpg') ? 'image/jpeg' : 'application/pdf' }));
   Object.defineProperty(input, 'files', { value: files, configurable: true });
   fireEvent.change(input);
@@ -183,7 +183,7 @@ describe('材料盘点', () => {
 
   test('开始材料盘点后先看到分阶段进度，结束后看到结果与待确认项入口', async () => {
     renderAt('#/task/T1/upload', 'upload');
-    await screen.findByText('拖入文件，或点击选择');
+    await screen.findByRole('button', { name: '拖入文件，或点击选择' });
     chooseFiles(FIXTURE_FILES);
     await screen.findByRole('heading', { name: '上传批次 #1' });
     fireEvent.click(screen.getByRole('button', { name: '开始材料盘点' }));
@@ -215,7 +215,7 @@ describe('材料盘点', () => {
 
   test('?duplicate=1：盘点后跨任务查重命中，整批停，显示重复发票表与命中的任务', async () => {
     renderAt('#/task/T1/upload', 'upload', null, { duplicateHit: true });
-    await screen.findByText('拖入文件，或点击选择');
+    await screen.findByRole('button', { name: '拖入文件，或点击选择' });
     chooseFiles(FIXTURE_FILES);
     await screen.findByRole('heading', { name: '上传批次 #1' });
     fireEvent.click(screen.getByRole('button', { name: '开始材料盘点' }));

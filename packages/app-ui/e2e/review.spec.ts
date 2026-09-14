@@ -247,7 +247,7 @@ test('失效流程：追加材料先二次确认，取消不变；继续则确�
   await expect(page).toHaveURL(/#\/task\/T1\/upload$/);
   await expect(page.getByRole('heading', { name: '上传材料' })).toBeVisible();
   await expect(page.getByRole('status')).toContainText(INVALIDATED);
-  await expect(page.getByText('拖入文件，或点击选择')).toBeVisible();
+  await expect(page.getByTestId('dropzone')).toBeVisible();
 
   await page.locator('input[type=file]').setInputFiles({ name: '地铁_发票.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 metro') });
   await expect(page.getByRole('heading', { name: '上传批次 #2' })).toBeVisible();

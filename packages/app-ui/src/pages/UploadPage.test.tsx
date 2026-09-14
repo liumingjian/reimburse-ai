@@ -4,7 +4,7 @@ import { App } from '../App';
 import { UPLOAD_MAX_FILE_BYTES } from '../contract/snapshot';
 import { createMockAdapter } from '../mock/mock-adapter';
 import type { Fault } from '../mock/options';
-import { UPLOAD_NEXT_STEP } from './UploadPage';
+import { UPLOAD_NEXT_STEP, UPLOAD_PROMPT } from './UploadPage';
 
 function renderUpload(fault: Fault | null = null) {
   window.location.hash = '#/task/T1/upload';
@@ -17,17 +17,21 @@ function pdf(name: string, body = '%PDF-1.4 fixture') {
 
 // 用文件选择器上传：jsdom 里 input.files 只读，用 defineProperty 塞进去再触发 change。
 function chooseFiles(files: File[]) {
-  const input = screen.getByLabelText('选择文件');
+  const input = screen.getByLabelText(UPLOAD_PROMPT);
   Object.defineProperty(input, 'files', { value: files, configurable: true });
   fireEvent.change(input);
 }
 
 describe('上传区说明', () => {
-  test('拖放区说明上传后的下一步是开始盘点', async () => {
+  test('格式说明在拖放区上方，拖放区只有链接样式的提示，下方说明下一步是开始盘点', async () => {
     renderUpload();
-    const zone = await screen.findByTestId('dropzone');
-    expect(zone.textContent).toContain(UPLOAD_NEXT_STEP);
-    expect(zone.textContent).toContain('开始盘点');
+    const zone = await screen.findByRole('button', { name: UPLOAD_PROMPT });
+    expect(zone.textContent).toBe(UPLOAD_PROMPT);
+    const region = screen.getByRole('region', { name: '上传文件' });
+    const rules = within(region).getByText(/^支持 PDF、JPG、PNG，单个文件不超过 20MB。/);
+    expect(rules.compareDocumentPosition(zone) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(region).getByText(UPLOAD_NEXT_STEP)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '选择文件' })).toBeNull();
   });
 });
 
@@ -45,16 +49,23 @@ function rowOf(panel: HTMLElement, fileName: string): HTMLElement {
 }
 
 describe('上传材料', () => {
-  test('新任务先显示拖放区与文件选择按钮', async () => {
+  test('新任务先显示拖放区；点提示打开文件选择器', async () => {
     renderUpload();
-    expect(await screen.findByText('拖入文件，或点击选择')).toBeTruthy();
-    expect(screen.getByRole('button', { name: '选择文件' })).toBeTruthy();
+    const zone = await screen.findByRole('button', { name: UPLOAD_PROMPT });
     expect(screen.queryByRole('button', { name: '开始材料盘点' })).toBeNull();
+    const input = screen.getByLabelText(UPLOAD_PROMPT) as HTMLInputElement;
+    expect(input.multiple).toBe(true);
+    let opened = 0;
+    input.addEventListener('click', () => (opened += 1));
+    fireEvent.click(zone);
+    expect(opened).toBe(1);
+    fireEvent.keyDown(zone, { key: 'Enter', code: 'Enter', keyCode: 13 });
+    expect(opened).toBe(2);
   });
 
   test('逐文件显示接收与拒绝：类型不支持、超过 20MB、HEIC、内容重复', async () => {
     renderUpload();
-    await screen.findByText('拖入文件，或点击选择');
+    await screen.findByRole('button', { name: '拖入文件，或点击选择' });
     chooseFiles([
       pdf('全季酒店_发票.pdf'),
       new File(['not a receipt'], '备注.txt', { type: 'text/plain' }),
@@ -70,9 +81,13 @@ describe('上传材料', () => {
     expect(screen.getByRole('main').textContent).not.toContain('·');
     expect(within(panel).getByText('拒绝 4 份')).toBeTruthy();
 
+    // 已接收的行不打标签，内容哈希只在文件名的悬停提示里；PDF 与图片用不同图标。
     const ok = rowOf(panel, '全季酒店_发票.pdf');
-    expect(within(ok).getByText('已接收')).toBeTruthy();
-    expect(within(ok).getByText(/^sha256:[0-9a-f]{8}$/)).toBeTruthy();
+    expect(within(ok).queryByText('已接收')).toBeNull();
+    expect(ok.textContent).not.toMatch(/sha256/);
+    expect(within(ok).getByText('全季酒店_发票.pdf').getAttribute('title')).toMatch(/^内容哈希 sha256:[0-9a-f]{8}$/);
+    expect(within(ok).getByRole('img', { name: 'PDF' })).toBeTruthy();
+    expect(within(rowOf(panel, 'IMG_4871.HEIC')).getByRole('img', { name: '图片' })).toBeTruthy();
 
     expect(within(rowOf(panel, '备注.txt')).getByText('类型不支持，只接受 PDF、JPG、PNG')).toBeTruthy();
     expect(within(rowOf(panel, '扫描件.pdf')).getByText('超过 20MB')).toBeTruthy();
@@ -86,16 +101,16 @@ describe('上传材料', () => {
 
   test('追加下一批形成上传批次 #2，然后可以开始材料盘点', async () => {
     renderUpload();
-    await screen.findByText('拖入文件，或点击选择');
+    await screen.findByRole('button', { name: '拖入文件，或点击选择' });
     chooseFiles([pdf('高德打车_发票.pdf', 'amap invoice')]);
     await batchPanel('上传批次 #1');
 
     fireEvent.click(screen.getByRole('button', { name: '追加下一批' }));
-    expect(screen.getByText('拖入文件，或点击选择')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '拖入文件，或点击选择' })).toBeTruthy();
     chooseFiles([new File(['png bytes'], 'IMG_4906.png', { type: 'image/png' })]);
     const second = await batchPanel('上传批次 #2');
     expect(within(second).getByText('已复制入任务目录')).toBeTruthy();
-    expect(screen.queryByText('拖入文件，或点击选择')).toBeNull();
+    expect(screen.queryByRole('button', { name: '拖入文件，或点击选择' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '开始材料盘点' }));
     await waitFor(() => expect(window.location.hash).toBe('#/task/T1/inventory'));
@@ -104,7 +119,7 @@ describe('上传材料', () => {
 
   test('?fault=duplicate-upload 让第二批出现内容重复', async () => {
     renderUpload('duplicate-upload');
-    await screen.findByText('拖入文件，或点击选择');
+    await screen.findByRole('button', { name: '拖入文件，或点击选择' });
     chooseFiles([pdf('铁路电子客票_0809.pdf', 'rail 0809')]);
     await batchPanel('上传批次 #1');
     fireEvent.click(screen.getByRole('button', { name: '追加下一批' }));
@@ -115,7 +130,7 @@ describe('上传材料', () => {
 
   test('有材料但盘点没开始时，后续页面提示阶段不可跳过', async () => {
     renderUpload();
-    await screen.findByText('拖入文件，或点击选择');
+    await screen.findByRole('button', { name: '拖入文件，或点击选择' });
     chooseFiles([pdf('餐饮_发票.pdf')]);
     await batchPanel('上传批次 #1');
     window.location.hash = '#/task/T1/review';

@@ -13,7 +13,7 @@ type Seed = { seed: string; stage: TaskStage; page: TaskPage; key: string };
 // 各 seed 默认页上一定出现的文字。
 // catalog / preparation 是自动步骤，几百毫秒后就进入整单确认；它们的默认页（整单确认页）上一直可见的是报销事由。
 const KEY_TEXT: Readonly<Record<TaskStage, string>> = {
-  upload: '选择文件',
+  upload: '拖入文件，或点击选择',
   inventory: '盘点版本',
   pending: '还剩 3 个',
   // 吸底栏用字段组：标签「已归属」与值分开，这里认值。
