@@ -3,7 +3,7 @@ import { Renew, WarningAlt } from '@carbon/icons-react';
 import type { ActionOutcome, AppAdapter } from '../contract/adapter';
 import { HUMAN_REVIEW_NOTICE, type Reconcile, type TaskSnapshot } from '../contract/snapshot';
 import { navigate, taskHash } from '../router';
-import { ActionError } from '../shell/ActionError';
+import { ActionBar } from '../shell/ActionBar';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
@@ -105,28 +105,36 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
 
       {handedOff || (!allowWait && !allowHandOff) ? null : (
         // 吸底操作栏（与整单明细确认同一种）：左边写后果，右边放服务端允许的处置按钮。应用不自动改写报销系统，也不重试写入。
-        <section className="app-action-bar" aria-label="处置">
-          <div className="app-consequence app-reconcile-consequence">
-            <WarningAlt />
-            <div>
-              <p>
-                <strong>{allowHandOff ? '转人工后任务标记为人工处理，保留对账记录，之后不再自动写入报销系统。' : '请先在报销系统中查看，再点重新对账。应用只读报销系统，不写入。'}</strong>
-              </p>
-              {reconcile.humanReview ? <p data-testid="human-review">{HUMAN_REVIEW_NOTICE}</p> : null}
-            </div>
-          </div>
-          {allowWait ? (
-            <Button kind={allowHandOff ? 'secondary' : 'primary'} size="md" renderIcon={Renew} disabled={busy || !canAct} onClick={() => void act((adapter) => adapter.reconcile(taskId, step.stepToken))}>
-              重新对账
-            </Button>
-          ) : null}
-          {allowHandOff ? (
-            <Button kind="primary" size="md" disabled={busy || !canAct} onClick={() => void act((adapter) => adapter.handOff(taskId, step.stepToken))}>
-              转人工
-            </Button>
-          ) : null}
-          <ActionError message={error} />
-        </section>
+        <ActionBar
+          label="处置"
+          consequenceProps={{ className: 'app-reconcile-consequence' }}
+          consequence={
+            <>
+              <WarningAlt />
+              <div>
+                <p>
+                  <strong>{allowHandOff ? '转人工后任务标记为人工处理，保留对账记录，之后不再自动写入报销系统。' : '请先在报销系统中查看，再点重新对账。应用只读报销系统，不写入。'}</strong>
+                </p>
+                {reconcile.humanReview ? <p data-testid="human-review">{HUMAN_REVIEW_NOTICE}</p> : null}
+              </div>
+            </>
+          }
+          actions={
+            <>
+              {allowWait ? (
+                <Button kind={allowHandOff ? 'secondary' : 'primary'} size="md" renderIcon={Renew} disabled={busy || !canAct} onClick={() => void act((adapter) => adapter.reconcile(taskId, step.stepToken))}>
+                  重新对账
+                </Button>
+              ) : null}
+              {allowHandOff ? (
+                <Button kind="primary" size="md" disabled={busy || !canAct} onClick={() => void act((adapter) => adapter.handOff(taskId, step.stepToken))}>
+                  转人工
+                </Button>
+              ) : null}
+            </>
+          }
+          error={error}
+        />
       )}
     </>
   );
