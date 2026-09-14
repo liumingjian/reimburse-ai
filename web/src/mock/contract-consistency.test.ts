@@ -1,0 +1,283 @@
+// mock 与契约一致：夹具快照、mock 服务端的行为与 ?seed= 参数都要通过 @baox/contract 的 schema。纯 schema 测试在 packages/contract。
+import { describe, expect, test } from 'vitest';
+import {
+  ALLOCATION_ERRORS,
+  PENDING_ANSWER_ERRORS,
+  PendingAnswerSchema,
+  ProjectBookSchema,
+  STEP_KINDS,
+  TASK_STAGES,
+  TaskListSchema,
+  TaskSnapshotSchema,
+  TaskStageSchema,
+  UploadBatchSchema,
+  validatePendingAnswer,
+} from '@baox/contract';
+import { INITIAL_BOOK, MOCK_TODAY, annotateProject, confirmationDigest } from './fixtures/projects';
+import { t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from './fixtures/tasks';
+import { createMockAdapter } from './mock-adapter';
+import { FAULTS, readMockOptions } from './options';
+
+describe('契约 schema', () => {
+  test('每个阶段的 T1 夹具、T2 与 T3 夹具都通过快照 schema', () => {
+    for (const stage of TASK_STAGES) {
+      expect(() => TaskSnapshotSchema.parse(t1Snapshot(stage)), stage).not.toThrow();
+    }
+    expect(() => TaskSnapshotSchema.parse(t2Snapshot())).not.toThrow();
+    expect(() => TaskSnapshotSchema.parse(t3Snapshot())).not.toThrow();
+  });
+
+  test('由快照投影出的任务列表通过任务列表 schema', () => {
+    const list = { erpSession: 'logged_in', employee: { displayName: '林颂宜', account: 'linsongyi', tenant: '示例科技集团本部', binding: 'bound' }, homeCity: { value: '杭州', source: 'network' }, tasks: [t1Snapshot('done'), t2Snapshot(), t3Snapshot()].map(toListItem) };
+    const parsed = TaskListSchema.parse(list);
+    expect(parsed.tasks.map((task) => task.stage)).toEqual(['done', 'reconcile', 'done']);
+    expect(parsed.tasks[0]?.grossTotal).toBe('3972.59');
+    expect(parsed.tasks[0]?.erpDraftNo).toBe('BX20260911-0173');
+    expect(parsed.tasks.map((task) => task.erpOutcome)).toEqual(['none', 'none', 'none']);
+  });
+
+  test('上传批次里的材料与逐文件结果通过 schema；已接收的文件带 64 位内容哈希', () => {
+    const snapshot = t1Snapshot('inventory');
+    expect(snapshot.batches).toHaveLength(1);
+    expect(snapshot.materials).toHaveLength(11);
+    const batch = UploadBatchSchema.parse(snapshot.batches[0]);
+    for (const file of batch.files) {
+      expect(file.status).toBe('accepted');
+      expect(file.contentHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(snapshot.materials.some((material) => material.materialId === file.materialId)).toBe(true);
+    }
+    const rejected = { ...batch, files: [{ ...batch.files[0], status: 'rejected', contentHash: null, materialId: null, reasonCode: 'heic', reason: 'HEIC 不支持' }] };
+    expect(UploadBatchSchema.safeParse(rejected).success).toBe(true);
+    const badHash = { ...batch, files: [{ ...batch.files[0], contentHash: 'sha256:abcd' }] };
+    expect(UploadBatchSchema.safeParse(badHash).success).toBe(false);
+  });
+
+  test('盘点后的快照带材料识别结果、费用事件与待确认项；项目归属起带候选明细，No. 按内核分类排序', () => {
+    const inventory = t1Snapshot('inventory');
+    expect(inventory.inventory.status).toBe('done');
+    expect(inventory.materials.filter((material) => material.role === 'primary_voucher')).toHaveLength(7);
+    expect(inventory.materials.filter((material) => material.role === 'reference')).toHaveLength(3);
+    expect(inventory.events.map((event) => event.no)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(inventory.pendingItems.map((item) => [item.itemId, item.kind, item.status])).toEqual([
+      ['p1', 'form', 'open'],
+      ['p2', 'form', 'open'],
+      ['p3', 'choice', 'open'],
+    ]);
+    expect(inventory.materials.every((material) => material.originalUrl?.startsWith('fixtures/'))).toBe(true);
+    expect(inventory.lines).toHaveLength(0);
+
+    const review = t1Snapshot('review');
+    expect(review.pendingItems.every((item) => item.status === 'resolved')).toBe(true);
+    // 统一业务序号跟随内核确认表的分类排序（本地市内交通 → 外地市内交通 → 长途交通 → 住宿），同一分类内保持事件顺序。
+    expect(review.lines.map((line) => line.no)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(review.lines.map((line) => line.category.code)).toEqual([
+      'remote_city_transport',
+      'remote_city_transport',
+      'remote_city_transport',
+      'remote_city_transport',
+      'remote_city_transport',
+      'remote_city_transport',
+      'long_distance',
+      'long_distance',
+      'accommodation',
+    ]);
+    expect(review.lines.map((line) => line.grossAmount)).toEqual(['26.69', '20.85', '21.65', '38.40', '32.00', '47.00', '73.00', '73.00', '3640.00']);
+    expect(review.lines[4]?.description).toBe('出租车 · 张江高科 → 漕河泾开发区');
+    expect(review.lines.filter((line) => line.voucherMaterialId === 'm03')).toHaveLength(3);
+    // 费用事件与候选明细共用同一个序号。
+    expect(review.events.map((event) => [event.no, event.grossAmount])).toEqual(review.lines.map((line) => [line.no, line.grossAmount]));
+    expect(review.confirmation).toMatchObject({ status: 'unconfirmed', lineCount: 9, invoiceCount: 7, grossTotal: '3972.59' });
+    // 材料包：7 张发票 + 3 份参考材料 + detail.json、detail.md、manifest.json，共 13 份；报销信息核对已通过。
+    expect(review.catalog).toEqual({ status: 'matched', problems: [] });
+    expect(review.preparation.status).toBe('ready');
+    expect(review.preparation.packageFiles).toHaveLength(13);
+    expect(review.preparation.packageFiles.slice(-3).map((file) => file.path)).toEqual(['detail.json', 'detail.md', 'manifest.json']);
+    // 确认表字段：发票短标签按主要发票 materialId 编号（不跟随行序）；项目号在提交后写入；费用项目为虚构编码。
+    expect(review.lines.map((line) => line.invoiceLabel)).toEqual(['发票2', '发票2', '发票2', '发票3', '发票6', '发票7', '发票4', '发票5', '发票1']);
+    expect(review.lines.map((line) => line.projectCode)).toEqual(['P-3312', 'P-3312', 'P-3312', 'P-3312', 'P-3312', 'P-3312', 'P-2307', 'P-2307', 'P-2307']);
+    expect(review.lines[8]).toMatchObject({ city: '上海', date: '2026-08-09', endDate: '2026-08-22', projectName: '华东客户交付', expenseItemCode: 'FY020102', expenseItemName: '住宿费' });
+    expect(review.lines[4]).toMatchObject({ origin: '张江高科', destination: '漕河泾开发区', endDate: null });
+    expect(review.lines[6]).toMatchObject({ city: null, origin: '杭州东', destination: '上海虹桥', expenseItemCode: 'FY020101' });
+    // 项目归属页的卡片字段：路线（起点与终点都有才有）与脱敏票号（内核 maskNumber；铁路夹具没有发票号码）。
+    expect(review.lines.map((line) => line.maskedNumber)).toEqual([
+      '2631************7402',
+      '2631************7402',
+      '2631************7402',
+      '2631************0115',
+      '04****77',
+      '04****52',
+      null,
+      null,
+      '2631************7734',
+    ]);
+    expect(review.lines.map((line) => line.route)).toEqual([
+      '虹桥枢纽 → 漕河泾',
+      '漕河泾 → 静安寺',
+      '静安寺 → 张江',
+      '浦东机场 → 张江',
+      '张江高科 → 漕河泾开发区',
+      '静安寺 → 虹桥枢纽',
+      '杭州东 → 上海虹桥',
+      '上海虹桥 → 杭州东',
+      null,
+    ]);
+    // 允许列表只含可选项目；「本次已归入」的条数与金额由服务端投影给出。
+    expect(review.projectAssignment.projects.map((project) => project.number)).toEqual(['P-2307', 'P-2311', 'P-3312', 'P-1180']);
+    expect(review.projectAssignment.working).toEqual(review.projectAssignment.assignments);
+    expect(review.projectAssignment.usage).toEqual([
+      { number: 'P-3312', name: '产品调研', lineCount: 6, grossTotal: '186.59', selectable: true },
+      { number: 'P-2307', name: '华东客户交付', lineCount: 3, grossTotal: '3786.00', selectable: true },
+    ]);
+    expect(t1Snapshot('project').projectAssignment.usage).toEqual([{ number: 'P-2307', name: '华东客户交付', lineCount: 2, grossTotal: '47.54', selectable: true }]);
+    expect(t1Snapshot('project').lines.every((line) => line.projectCode === null && line.projectName === null)).toBe(true);
+    expect(t1Snapshot('project').preparation).toEqual({ status: 'pending', problems: [], packageFiles: [] });
+    expect(t1Snapshot('project').catalog.status).toBe('pending');
+    expect(t1Snapshot('catalog').catalog.status).toBe('running');
+    expect(t1Snapshot('preparation').catalog.status).toBe('matched');
+    expect(t1Snapshot('preparation').preparation.status).toBe('pending');
+    expect(review.confirmation.digest).toMatch(/^digest-t1-v1-[0-9a-f]{8}$/);
+    expect(t1Snapshot('actions').confirmation.status).toBe('confirmed');
+    expect(t1Snapshot('actions').step.kind).toBe('choose_action');
+    expect(t1Snapshot('pending', true).pendingItems).toHaveLength(4);
+  });
+
+  test('流程顺序照 Skill：项目归属在整单确认之前；整单确认的摘要绑定项目归属与事由；没有「开始填报」这一步', () => {
+    const project = t1Snapshot('project');
+    expect(project.lines).toHaveLength(9);
+    expect(project.step.kind).toBe('assign_projects');
+    expect(project.projectAssignment.status).toBe('pending');
+    expect(project.confirmation.digest).toBeNull();
+    for (const stage of ['catalog', 'preparation'] as const) {
+      const snapshot = t1Snapshot(stage);
+      expect(snapshot.projectAssignment.status, stage).toBe('submitted');
+      expect(snapshot.confirmation.digest, stage).toBeNull();
+      expect(snapshot.step.kind, stage).toBe('none');
+    }
+
+    const review = t1Snapshot('review');
+    expect(review.confirmation.digest).toBe(confirmationDigest('T1', 'v1', review.projectAssignment));
+    const moved = structuredClone(review.projectAssignment);
+    const first = moved.assignments[0];
+    if (first) first.projectNumber = 'P-1180';
+    expect(confirmationDigest('T1', 'v1', moved)).not.toBe(review.confirmation.digest);
+    expect(confirmationDigest('T1', 'v1', { ...review.projectAssignment, purpose: '另一个事由' })).not.toBe(review.confirmation.digest);
+
+    expect(STEP_KINDS.indexOf('assign_projects')).toBeLessThan(STEP_KINDS.indexOf('confirm_review'));
+    expect(STEP_KINDS.indexOf('confirm_review')).toBeLessThan(STEP_KINDS.indexOf('choose_action'));
+    expect((STEP_KINDS as readonly string[]).includes('start_erp_write')).toBe(false);
+    // ?seed=erp：已点「去报销」，浏览器启动后等待登录。
+    const erp = t1Snapshot('erp');
+    expect(erp.step.kind).toBe('erp_login');
+    expect(erp.erp.status).toBe('waiting_login');
+  });
+
+  test('逐段分摊与处理人：?allocation=1 的各阶段夹具通过 schema；待确认项都带处理人；答复为 amounts 或 giveUp', () => {
+    for (const stage of TASK_STAGES) {
+      expect(() => TaskSnapshotSchema.parse(t1Snapshot(stage, false, true)), stage).not.toThrow();
+    }
+    expect(t1Snapshot('pending').pendingItems.map((item) => item.resolver)).toEqual(['要你处理', '要你处理', '要你处理']);
+    expect(t1Snapshot('pending').blockers).toEqual([]);
+    const pending = t1Snapshot('pending', false, true);
+    expect(pending.pendingItems.map((item) => [item.itemId, item.kind])).toEqual([
+      ['p1', 'allocation'],
+      ['p2', 'form'],
+      ['p3', 'form'],
+      ['p4', 'choice'],
+    ]);
+    const allocation = pending.pendingItems[0]?.allocation;
+    expect(allocation?.total).toBe('69.19');
+    expect(allocation?.segments.map((segment) => [segment.index, segment.route, segment.suggested])).toEqual([
+      [1, '虹桥枢纽 → 漕河泾', '26.69'],
+      [2, '漕河泾 → 静安寺', '20.85'],
+      [3, '静安寺 → 张江', '21.56'],
+    ]);
+    // project 起按原件金额答复，明细与默认相同。
+    const review = t1Snapshot('review', false, true);
+    expect(review.lines.map((line) => line.grossAmount)).toEqual(['26.69', '20.85', '21.65', '38.40', '32.00', '47.00', '73.00', '73.00', '3640.00']);
+    expect(review.lines.slice(0, 3).map((line) => line.taxAmount)).toEqual(['0.77', '0.61', '0.63']);
+
+    const target = { kind: 'allocation' as const, fields: [], choices: [], allocation: allocation ?? null };
+    expect(validatePendingAnswer(target, { giveUp: true })).toEqual({});
+    expect(validatePendingAnswer(target, { amounts: ['30.00', '20.00', '19.19'] })).toEqual({});
+    expect(validatePendingAnswer(target, { amounts: ['26.69', '0.00', '2'] })).toEqual({ 'segment-2': ALLOCATION_ERRORS.amount, 'segment-3': ALLOCATION_ERRORS.amount });
+    expect(validatePendingAnswer(target, { amounts: ['26.69'] })).toEqual({ allocation: ALLOCATION_ERRORS.missing });
+    expect(validatePendingAnswer(target, { choice: 'exclude' })).toEqual({ allocation: ALLOCATION_ERRORS.missing });
+    // 「认不出」留下的 given_up 项不接受任何答复（出路是排除材料或追加行程单）。
+    expect(validatePendingAnswer({ kind: 'given_up', fields: [], choices: [] }, { choice: 'exclude' })).toEqual({ item: PENDING_ANSWER_ERRORS.notAnswerable });
+    expect(PendingAnswerSchema.safeParse({ amounts: ['1.00'] }).success).toBe(true);
+    expect(PendingAnswerSchema.safeParse({ giveUp: true }).success).toBe(true);
+    expect(PendingAnswerSchema.safeParse({ giveUp: false }).success).toBe(false);
+  });
+
+  test('逐段金额被改过时，mock 服务端按比例重拆税额（余数归最大段），不含税金额 = 价税合计 - 税额', async () => {
+    const adapter = createMockAdapter({ seed: 'pending', fault: null, allocationRequired: true });
+    const before = await adapter.getSnapshot('T1');
+    const outcome = await adapter.answerPendingItem('T1', 'p1', { amounts: ['30.00', '20.00', '19.19'] }, before.step.stepToken);
+    expect(outcome.ok).toBe(true);
+    let snapshot = await adapter.getSnapshot('T1');
+    const answers = [{ origin: '张江高科', destination: '漕河泾开发区' }, { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' }, { choice: 'exclude' }];
+    for (const [index, answer] of answers.entries()) {
+      snapshot = await adapter.getSnapshot('T1');
+      expect((await adapter.answerPendingItem('T1', `p${index + 2}`, answer, snapshot.step.stepToken)).ok).toBe(true);
+    }
+    snapshot = await adapter.getSnapshot('T1');
+    const amap = snapshot.lines.slice(0, 3);
+    expect(amap.map((line) => [line.grossAmount, line.netAmount, line.taxAmount])).toEqual([
+      ['30.00', '29.12', '0.88'],
+      ['20.00', '19.42', '0.58'],
+      ['19.19', '18.64', '0.55'],
+    ]);
+    expect(snapshot.confirmation.grossTotal).toBe('3972.59');
+  });
+
+  test('金额与日期格式不对的快照被拒绝', () => {
+    const broken = t1Snapshot('done');
+    broken.confirmation.grossTotal = '3972.5';
+    expect(() => TaskSnapshotSchema.parse(broken)).toThrow();
+    const badDate = t3Snapshot();
+    badDate.task.period = { start: '2026/06/02', end: '2026-06-05' };
+    expect(() => TaskSnapshotSchema.parse(badDate)).toThrow();
+  });
+});
+
+describe('报销任务阶段', () => {
+  test('阶段是闭合枚举，顺序照 Skill；?seed= 复用同一套名字，未知值被忽略', () => {
+    expect(TASK_STAGES).toEqual(['upload', 'inventory', 'pending', 'project', 'catalog', 'preparation', 'review', 'actions', 'erp', 'done', 'reconcile']);
+    expect(TaskStageSchema.safeParse('print').success).toBe(false);
+    expect(readMockOptions('?seed=review&fault=readback-mismatch')).toEqual({ seed: 'review', fault: 'readback-mismatch' });
+    expect(readMockOptions('?seed=nope&fault=nope')).toEqual({ seed: null, fault: null });
+    // ?location=unavailable 不是故障，与 seed/fault 并列。
+    expect(readMockOptions('?seed=review&location=unavailable')).toEqual({ seed: 'review', fault: null, locationUnavailable: true });
+    // 票面写的 ?seed=assign 是 project 的别名。
+    expect(readMockOptions('?seed=assign')).toEqual({ seed: 'project', fault: null });
+    expect(readMockOptions('?seed=project')).toEqual({ seed: 'project', fault: null });
+    expect(readMockOptions('?seed=catalog')).toEqual({ seed: 'catalog', fault: null });
+    // ?seed=print：actions 阶段，且打印稿已经生成（打印稿预览不是阶段）。
+    expect(readMockOptions('?seed=print')).toEqual({ seed: 'actions', fault: null, printSheet: true });
+    expect(FAULTS).toHaveLength(6);
+    // ?book=empty：个人项目簿初始为空。
+    expect(readMockOptions('?seed=pending&book=empty')).toEqual({ seed: 'pending', fault: null, bookEmpty: true });
+    expect(readMockOptions('?book=nope')).toEqual({ seed: null, fault: null });
+    // ?catalog=mismatch / ?preparation=blocked：报销信息核对不匹配、材料包缺项。
+    expect(readMockOptions('?seed=catalog&catalog=mismatch')).toEqual({ seed: 'catalog', fault: null, catalogMismatch: true });
+    expect(readMockOptions('?seed=preparation&preparation=blocked')).toEqual({ seed: 'preparation', fault: null, preparationBlocked: true });
+    expect(readMockOptions('?catalog=nope&preparation=nope')).toEqual({ seed: null, fault: null });
+    // ?allocation=1 / ?duplicate=1：逐段分摊、跨任务重复发票。
+    expect(readMockOptions('?seed=pending&allocation=1')).toEqual({ seed: 'pending', fault: null, allocationRequired: true });
+    expect(readMockOptions('?duplicate=1')).toEqual({ seed: null, fault: null, duplicateHit: true });
+    expect(readMockOptions('?allocation=yes&duplicate=0')).toEqual({ seed: null, fault: null });
+  });
+
+  test('个人项目簿夹具通过 schema；状态标签照内核：可选 / 已过期 / 复检未通过 / 项目号不安全', () => {
+    const entries = INITIAL_BOOK.map((project) => annotateProject(project, MOCK_TODAY));
+    expect(() => ProjectBookSchema.parse({ projects: entries })).not.toThrow();
+    expect(entries.map((entry) => entry.statusLabel)).toEqual(['可选', '可选', '可选', '可选', '已过期', '复检未通过']);
+    expect(entries.map((entry) => entry.selectable)).toEqual([true, true, true, true, false, false]);
+    const unsafe = annotateProject({ number: 'P 1', name: null, expiresOn: null, lastCheckedAt: null, lastVerdict: 'unsafe' }, MOCK_TODAY);
+    expect(unsafe.selectable).toBe(false);
+    expect(unsafe.statusLabel).toBe('项目号不安全・复检未通过');
+    expect(unsafe.statusNote).toBe('项目号含有不能安全查询的字符，请删除后从报销系统重新录入；这个项目号含有不能安全查询的字符，请删除后从报销系统重新录入');
+    const unreadable = annotateProject({ number: 'P-1', name: 'x', expiresOn: '2026-02-30', lastCheckedAt: null, lastVerdict: 'confirmed' }, MOCK_TODAY);
+    expect(unreadable.statusNote).toBe('过期时间读不出来（2026-02-30），当作已过期');
+  });
+});

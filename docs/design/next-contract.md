@@ -1,6 +1,6 @@
 # `baox next` 的 JSON 契约
 
-> **状态：归档（2026-09-11）。** 本文描述模型调用 `baox next` 的契约（`speak` 原样念、`actor: model`、子 Agent 范围、在对话里提问），已被[本地报销应用](standalone-app.md)取代：消费方改为应用服务端和页面。仍保留的独有事实：`next` 输出骨架、`step.kind` 清单，以及应用服务端将沿用的 `stepToken` / `--after` / `--result` 协议。待 `packages/app-ui/src/contract` 与服务端文档覆盖这些内容后删除。
+> **状态：归档（2026-09-11）。** 本文描述模型调用 `baox next` 的契约（`speak` 原样念、`actor: model`、子 Agent 范围、在对话里提问），已被[本地报销应用](standalone-app.md)取代：消费方改为应用服务端和页面。仍保留的独有事实：`next` 输出骨架、`step.kind` 清单，以及应用服务端将沿用的 `stepToken` / `--after` / `--result` 协议。待 `packages/contract/src` 与服务端文档覆盖这些内容后删除。
 
 模型在整个流程里**只调用两条命令**：
 
