@@ -41,9 +41,19 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
     <>
       <PageHeader title={copy.title} lead={copy.lead} />
 
-      {erp.abortReason ? (
+      {/* 写入中止（erp.status 为 aborted，契约：对账阶段就是写入结果不确定后的停顿）就说「写入结果不确定」；
+          中止原因是副标题，服务端没给时只写标题。 */}
+      {erp.status === 'aborted' ? (
         <section className="app-abort" aria-label="中止原因">
-          <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title="写入结果不确定" subtitle={erp.abortReason} />
+          <InlineNotification
+            kind="error"
+            role="alert"
+            lowContrast
+            hideCloseButton
+            statusIconDescription="错误"
+            title="写入结果不确定"
+            {...(erp.abortReason ? { subtitle: erp.abortReason } : {})}
+          />
         </section>
       ) : null}
 
