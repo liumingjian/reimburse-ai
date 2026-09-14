@@ -209,7 +209,7 @@ export function fieldAnswer(answer: PendingAnswer | null): FieldAnswer {
   return answer && !isAllocationAnswer(answer) ? answer : {};
 }
 
-// 逐段分摊（内核 allocation_required，next.mjs:1112-1151，ADR-0005）：一张合并的交通发票票面只有一个价税合计、行程单上有多段，
+// 逐段分摊（内核 allocation_required，next.mjs:1112-1151，docs/design/standalone-app.md）：一张合并的交通发票票面只有一个价税合计、行程单上有多段，
 // 且逐段金额加起来和票面对不上时才出现。每段金额由用户给，是否按分守恒由服务端判定（不守恒返回错误，页面只显示）；
 // 服务端不平均、不按比例，也不把差额加到任何一段上。用户也可以选「这张票我认不出」放弃，后果说明由服务端给出（giveUpNote）。
 // 放弃照内核（allocate.mjs givenUpOpenItems，state.mjs allocation_given_up）：逐段分摊项记为已处理，同时出现一条阻塞的
