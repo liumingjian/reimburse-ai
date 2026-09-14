@@ -16,7 +16,8 @@ const KEY_TEXT: Readonly<Record<TaskStage, string>> = {
   upload: '选择文件',
   inventory: '盘点版本 v1',
   pending: '还剩 3 个',
-  project: '已归属 2 / 9 条',
+  // 吸底栏用字段组：标签「已归属」与值分开，这里认值。
+  project: '2 / 9 条',
   catalog: '上海产品评审出差',
   preparation: '上海产品评审出差',
   review: '确认后项目归属一并生效',

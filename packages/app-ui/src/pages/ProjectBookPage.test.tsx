@@ -132,7 +132,7 @@ describe('项目归属的项目簿门', () => {
     // 夹具预置的 No.1-2 归属（P-2307）照内核保留，项目簿门只看「没提交过、项目簿没有可选项目」；这里挑一条未归属的。
     fireEvent.click(screen.getByRole('checkbox', { name: '选择明细 No.3' }));
     fireEvent.click(within(workbench).getByRole('button', { name: '归入 P-5108 苏州门店巡检' }));
-    expect(await screen.findByText((_, node) => node?.getAttribute('data-testid') === 'project-of-3' && node.textContent === 'P-5108 · 苏州门店巡检')).toBeTruthy();
+    expect(await screen.findByText((_, node) => node?.getAttribute('data-testid') === 'project-of-3' && node.textContent === 'P-5108 / 苏州门店巡检')).toBeTruthy();
   });
 
   test('项目簿已有项目时直接打开工作台；「新增项目」弹层里录入，勾选的明细保持勾选，新项目出现在列表', async () => {
@@ -154,7 +154,7 @@ describe('项目归属的项目簿门', () => {
 
     expect((screen.getByRole('checkbox', { name: '选择明细 No.3' }) as HTMLInputElement).checked).toBe(true);
     fireEvent.click(within(workbench).getByRole('button', { name: '归入 P-6021 年度预算评审' }));
-    await waitFor(() => expect(screen.getByTestId('project-of-3').textContent).toBe('P-6021 · 年度预算评审'));
+    await waitFor(() => expect(screen.getByTestId('project-of-3').textContent).toBe('P-6021 / 年度预算评审'));
   });
 
   test('顶栏有常驻「个人项目簿」入口（步骤条不重复）', async () => {

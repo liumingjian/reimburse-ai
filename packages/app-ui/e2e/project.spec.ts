@@ -9,7 +9,8 @@ const workbench = (page: Page) => page.getByRole('complementary', { name: '项�
 const search = (page: Page) => page.getByRole('searchbox', { name: '查找个人项目簿' });
 const names = (page: Page) => workbench(page).getByRole('list', { name: '项目列表' }).locator('.name');
 const usedNames = (page: Page) => workbench(page).getByRole('list', { name: '本次已归入' }).locator('.name');
-const usage = (page: Page, number: string) => page.getByTestId(`usage-${number}`);
+// 本次已归入的项目用字段组显示：项目号、条数、价税合计三个值。
+const usage = (page: Page, number: string) => page.getByTestId(`usage-${number}`).getByRole('definition');
 const pick = (page: Page, no: number) => page.getByRole('checkbox', { name: `选择明细 No.${no}` }).locator('xpath=following-sibling::label[1]').click();
 const assignTo = (page: Page, label: string) => workbench(page).getByRole('button', { name: `归入 ${label}` }).click();
 const projectOf = (page: Page, no: number) => page.getByTestId(`project-of-${no}`);
@@ -34,11 +35,11 @@ test('只列可选项目：?seed=assign 直接打开，不可选的项目不出�
   await page.goto(open('?seed=assign', '#/task/T1/project'));
   await expect(page.getByRole('heading', { name: '项目归属' })).toBeVisible();
   await expect(usedNames(page)).toHaveText(['华东客户交付']);
-  await expect(usage(page, 'P-2307')).toHaveText('2 条 · 47.54 元');
+  await expect(usage(page, 'P-2307')).toHaveText(['P-2307', '2 条', '47.54 元']);
   await expect(names(page)).toHaveText(['华东客户交付二期', '产品调研', '内部培训']);
   await expect(workbench(page).getByText('南京客户培训')).toHaveCount(0);
   await expect(workbench(page).getByText('旧版对账工具')).toHaveCount(0);
-  await expect(page.getByTestId('assign-summary')).toHaveText('已归属 2 / 9 条 · 合计 3972.59 元');
+  await expect(page.getByTestId('assign-summary')).toHaveText('已归属2 / 9 条整单合计3972.59 元');
   await page.screenshot({ path: testInfo.outputPath('project-initial.png'), fullPage: true });
 
   await search(page).fill('华东');
@@ -59,13 +60,13 @@ test('按类别全选：勾选「外地市内交通」组标题一次归入 P-23
   await page.getByRole('checkbox', { name: '选择外地市内交通' }).locator('xpath=following-sibling::label[1]').click();
   await expect(page.getByText('已选 6 条')).toBeVisible();
   await assignTo(page, 'P-2307 华东客户交付');
-  for (const no of [1, 2, 3, 4, 5, 6]) await expect(projectOf(page, no)).toHaveText('P-2307 · 华东客户交付');
+  for (const no of [1, 2, 3, 4, 5, 6]) await expect(projectOf(page, no)).toHaveText('P-2307 / 华东客户交付');
   await expect(projectOf(page, 7)).toHaveText('未归属');
-  await expect(usage(page, 'P-2307')).toHaveText('6 条 · 186.59 元');
+  await expect(usage(page, 'P-2307')).toHaveText(['P-2307', '6 条', '186.59 元']);
 
   await pick(page, 9);
   await assignTo(page, 'P-3312 产品调研');
-  await expect(usage(page, 'P-3312')).toHaveText('1 条 · 3640.00 元');
+  await expect(usage(page, 'P-3312')).toHaveText(['P-3312', '1 条', '3640.00 元']);
   await expect(usedNames(page)).toHaveText(['华东客户交付', '产品调研']);
   await expect(names(page)).toHaveText(['华东客户交付二期', '内部培训']);
   await page.screenshot({ path: testInfo.outputPath('project-group-assigned.png'), fullPage: true });
@@ -73,7 +74,7 @@ test('按类别全选：勾选「外地市内交通」组标题一次归入 P-23
 
 test('冲突：取消不改变归属，只处理未归属只动未归属的明细，确认覆盖全部改掉', async ({ page }, testInfo) => {
   await page.goto(open('?seed=project', '#/task/T1/project'));
-  await expect(projectOf(page, 1)).toHaveText('P-2307 · 华东客户交付');
+  await expect(projectOf(page, 1)).toHaveText('P-2307 / 华东客户交付');
 
   await selectConflict(page);
   // 只看有文字的按钮（Carbon 弹层右上角的关闭按钮只有图标与「关闭」读屏名）。
@@ -81,35 +82,37 @@ test('冲突：取消不改变归属，只处理未归属只动未归属的明�
   await page.screenshot({ path: testInfo.outputPath('project-conflict.png'), fullPage: true });
   await conflictDialog(page).getByRole('button', { name: '取消' }).click();
   await expect(conflictDialog(page)).toHaveCount(0);
-  await expect(projectOf(page, 1)).toHaveText('P-2307 · 华东客户交付');
+  await expect(projectOf(page, 1)).toHaveText('P-2307 / 华东客户交付');
   await expect(projectOf(page, 3)).toHaveText('未归属');
 
   // 取消保留勾选：再点一次归入，直接选「只处理未归属」。
   await assignTo(page, 'P-3312 产品调研');
   await conflictDialog(page).getByRole('button', { name: '只处理未归属' }).click();
-  await expect(projectOf(page, 3)).toHaveText('P-3312 · 产品调研');
-  await expect(projectOf(page, 1)).toHaveText('P-2307 · 华东客户交付');
-  await expect(projectOf(page, 2)).toHaveText('P-2307 · 华东客户交付');
+  await expect(projectOf(page, 3)).toHaveText('P-3312 / 产品调研');
+  await expect(projectOf(page, 1)).toHaveText('P-2307 / 华东客户交付');
+  await expect(projectOf(page, 2)).toHaveText('P-2307 / 华东客户交付');
 
   await selectConflict(page);
   await conflictDialog(page).getByRole('button', { name: '确认覆盖' }).click();
-  await expect(projectOf(page, 1)).toHaveText('P-3312 · 产品调研');
-  await expect(projectOf(page, 2)).toHaveText('P-3312 · 产品调研');
-  await expect(page.getByTestId('assign-summary')).toHaveText('已归属 3 / 9 条 · 合计 3972.59 元');
-  await expect(usage(page, 'P-3312')).toHaveText('3 条 · 69.19 元');
+  await expect(projectOf(page, 1)).toHaveText('P-3312 / 产品调研');
+  await expect(projectOf(page, 2)).toHaveText('P-3312 / 产品调研');
+  await expect(page.getByTestId('assign-summary')).toHaveText('已归属3 / 9 条整单合计3972.59 元');
+  await expect(usage(page, 'P-3312')).toHaveText(['P-3312', '3 条', '69.19 元']);
 });
 
 test('提交：未归属或事由为空时不可用；提交后自动核对报销信息、准备材料，进入整单确认', async ({ page }, testInfo) => {
   await page.goto(open('?seed=project', '#/task/T1/project'));
-  await expect(page.getByTestId('assign-summary')).toHaveText('已归属 2 / 9 条 · 合计 3972.59 元');
+  await expect(page.getByTestId('assign-summary')).toHaveText('已归属2 / 9 条整单合计3972.59 元');
   await expect(submit(page)).toBeDisabled();
 
-  await page.getByRole('checkbox', { name: '仅未归属' }).locator('xpath=following-sibling::label[1]').click();
+  // 「未归属」筛选是切换器（与任务列表一致），不是复选框。
+  await expect(page.getByRole('checkbox', { name: '仅未归属' })).toHaveCount(0);
+  await page.getByRole('tablist', { name: '明细筛选' }).getByRole('tab', { name: '未归属' }).click();
   await page.getByRole('checkbox', { name: '全选当前明细' }).locator('xpath=following-sibling::label[1]').click();
   await assignTo(page, 'P-3312 产品调研');
   await expect(page.getByText('所有明细都已归属。')).toBeVisible();
-  await page.getByRole('checkbox', { name: '仅未归属' }).locator('xpath=following-sibling::label[1]').click();
-  await expect(page.getByTestId('assign-summary')).toHaveText('已归属 9 / 9 条 · 合计 3972.59 元');
+  await page.getByRole('tablist', { name: '明细筛选' }).getByRole('tab', { name: '全部' }).click();
+  await expect(page.getByTestId('assign-summary')).toHaveText('已归属9 / 9 条整单合计3972.59 元');
   await expect(submit(page)).toBeDisabled();
   await page.getByLabel('报销事由').fill('上海产品评审出差');
   await expect(submit(page)).toBeEnabled();
@@ -137,7 +140,7 @@ test('在项目簿删除本任务已用的项目：提交仍通过；这个项�
 
   await jump(page, '#/task/T1/project');
   await expect(page.getByRole('heading', { name: '项目归属' })).toBeVisible();
-  await expect(usage(page, 'P-2307')).toHaveText('3 条 · 3786.00 元');
+  await expect(usage(page, 'P-2307')).toHaveText(['P-2307', '3 条', '3786.00 元']);
   await expect(workbench(page).getByRole('list', { name: '本次已归入' }).getByText('已锁定')).toBeVisible();
   await expect(workbench(page).getByRole('button', { name: '归入 P-2307 华东客户交付' })).toHaveCount(0);
   await expect(names(page)).toHaveText(['华东客户交付二期', '内部培训']);
@@ -149,3 +152,38 @@ test('在项目簿删除本任务已用的项目：提交仍通过；这个项�
   await expect(page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认', exact: true })).toBeEnabled();
   await expect(page.getByTestId('confirm-row-9')).toContainText('P-2307 / 华东客户交付');
 });
+
+test('没勾选明细时点「归入」：按钮外观不变，就近提示「先勾选明细」，归属不变', async ({ page }) => {
+  await page.goto(open('?seed=project', '#/task/T1/project'));
+  const button = workbench(page).getByRole('button', { name: '归入 P-3312 产品调研' });
+  await expect(button).toBeEnabled();
+  await button.click();
+  await expect(workbench(page).getByText('先勾选明细')).toBeVisible();
+  await expect(page.getByTestId('assign-summary')).toHaveText('已归属2 / 9 条整单合计3972.59 元');
+  await expect(projectOf(page, 3)).toHaveText('未归属');
+});
+
+// 评审提到吸底栏可能压住表格最后一行：在矮视口下滚到底，量最后一行与吸底栏的位置。
+for (const width of [1440, 1100]) {
+  test(`${width} 下滚到底后，最后一行完全在吸底栏之上；附截图`, async ({ page }, testInfo) => {
+    const height = 700;
+    await page.setViewportSize({ width, height });
+    await page.goto(open('?seed=project', '#/task/T1/project'));
+    const last = page.getByTestId('line-card-9');
+    const bar = page.getByRole('region', { name: '提交项目归属' });
+    await expect(last).toBeVisible();
+    await page.evaluate(() => {
+      window.scrollTo(0, document.documentElement.scrollHeight);
+      for (const element of document.querySelectorAll<HTMLElement>('*')) {
+        if (element.scrollHeight > element.clientHeight && getComputedStyle(element).overflowY !== 'visible') element.scrollTop = element.scrollHeight;
+      }
+    });
+    const row = (await last.boundingBox())!;
+    const barBox = (await bar.boundingBox())!;
+    // 吸底栏贴在视口底边，最后一行在它上面、且在视口内。
+    expect(barBox.y + barBox.height).toBeLessThanOrEqual(height + 0.5);
+    expect(row.y).toBeGreaterThanOrEqual(0);
+    expect(row.y + row.height).toBeLessThanOrEqual(barBox.y + 0.5);
+    await page.screenshot({ path: testInfo.outputPath(`project-bottom-${width}.png`) });
+  });
+}
