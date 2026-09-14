@@ -151,6 +151,9 @@ test('盘点页与待确认项页没有 rule:、user、「候选」文字', asyn
   await detail(page).getByLabel('起点 *').fill('张江高科');
   await detail(page).getByLabel('终点 *').fill('漕河泾开发区');
   await save(page).click();
+  // 等服务端采用答复：采用后页面会自动跳到下一个未处理项。答复还在路上时就点回这一项，随后到达的结果会把选中项
+  // 换成下一个未处理项，详情里就一直等不到「已处理」。先等清单里这一项出现「已处理」，再点回去看。
+  await expect(item(page, '补填起点与终点')).toContainText('已处理');
   await item(page, '补填起点与终点').click();
   await expect(detail(page).getByText('已处理')).toBeVisible();
   expect(await page.locator('body').innerText()).not.toMatch(FORBIDDEN);
