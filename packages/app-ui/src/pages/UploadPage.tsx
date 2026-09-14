@@ -1,7 +1,7 @@
-import { useRef, useState, type DragEvent, type MouseEvent } from 'react';
-import { Button, InlineNotification, Tag } from '@carbon/react';
-import { Add, CheckmarkFilled, Document, Upload, WarningAltFilled } from '@carbon/icons-react';
-import { UPLOAD_ACCEPT_ATTRIBUTE, type TaskSnapshot, type UploadBatch } from '../contract/snapshot';
+import { useState } from 'react';
+import { Button, FileUploaderDropContainer, InlineNotification, Tag } from '@carbon/react';
+import { Add, CheckmarkFilled, Document, DocumentPdf, Image as ImageIcon, WarningAltFilled } from '@carbon/icons-react';
+import { UPLOAD_ACCEPT_ATTRIBUTE, type TaskSnapshot, type UploadBatch, type UploadFileResult } from '../contract/snapshot';
 import { formatBytes, hashPrefix } from '../format';
 import { navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
@@ -14,69 +14,73 @@ import { PAGE_COPY } from './page-copy';
 // 上传材料页：拖入或选择文件 → 适配器逐文件给出接收/拒绝 → 按上传批次列出；可追加下一批；有材料后出现「开始材料盘点」。
 // 页面不判定文件是否合规：所有结果来自快照里的批次记录。
 // 整单明细已确认的任务再追加下一批，先弹出同一份二次确认，再请服务端使确认失效（回到上传阶段）。
-// 版式：拖放区在最上面；每个批次是一节，文件是通栏的紧凑行（状态用 Carbon 标签，带文字）。
+// Layout follows Carbon's file uploader: label and format rules above a stock FileUploaderDropContainer
+// whose only content is the link-style prompt. File rows are tagged only when rejected (exceptions only).
 
-// 拖放区里说明下一步。盘点要员工点「开始材料盘点」才开始（服务端不会在上传后自动盘点），文案照实说。
+// 拖放区下方说明下一步。盘点要员工点「开始材料盘点」才开始（服务端不会在上传后自动盘点），文案照实说。
 export const UPLOAD_NEXT_STEP = '上传后点「开始材料盘点」，系统开始盘点。';
+export const UPLOAD_PROMPT = '拖入文件，或点击选择';
+
+const ACCEPT = UPLOAD_ACCEPT_ATTRIBUTE.split(',');
+// Carbon drops files whose name has no extension before onAddFiles. This pattern matches an empty
+// extension instead, so every file reaches the server, which alone decides accept or reject.
+const ANY_EXTENSION = String.raw`\.?[^.]*$`;
 
 function Dropzone({ busyCount, disabled, onFiles }: { busyCount: number; disabled: boolean; onFiles: (files: File[]) => void }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [dragOver, setDragOver] = useState(false);
-
-  const pick = (list: FileList | null) => {
-    const files = list ? Array.from(list) : [];
-    if (files.length > 0) onFiles(files);
-  };
-
-  const onDrop = (event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    setDragOver(false);
-    if (!disabled) pick(event.dataTransfer.files);
-  };
-
-  const onZoneClick = (event: MouseEvent<HTMLDivElement>) => {
-    if ((event.target as HTMLElement).closest('button')) return;
-    inputRef.current?.click();
-  };
-
   return (
-    <div
-      className={dragOver ? 'app-dropzone is-dragover' : 'app-dropzone'}
-      onDragOver={(event) => {
-        event.preventDefault();
-        if (!disabled) setDragOver(true);
-      }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={onDrop}
-      onClick={onZoneClick}
-      data-testid="dropzone"
-    >
-      <Upload size={32} className="app-dropzone-icon" aria-hidden="true" />
-      {busyCount > 0 ? (
-        <strong role="status">正在接收 {busyCount} 份文件…</strong>
-      ) : (
-        <>
-          <strong>拖入文件，或点击选择</strong>
-          <span className="app-muted">支持 PDF、JPG、PNG，单个文件不超过 20MB。原件会被复制进任务目录，不会被修改。</span>
-          <span className="app-muted">{UPLOAD_NEXT_STEP}</span>
-          <Button kind="tertiary" size="md" disabled={disabled} onClick={() => inputRef.current?.click()}>
-            选择文件
-          </Button>
-        </>
-      )}
-      <input
-        ref={inputRef}
-        type="file"
+    <div className="cds--form-item">
+      <p className="cds--file--label">材料文件</p>
+      <p className="cds--label-description">支持 PDF、JPG、PNG，单个文件不超过 20MB。原件会被复制进任务目录，不会被修改。</p>
+      <FileUploaderDropContainer
+        labelText={UPLOAD_PROMPT}
         multiple
-        accept={UPLOAD_ACCEPT_ATTRIBUTE}
-        aria-label="选择文件"
+        accept={ACCEPT}
+        pattern={ANY_EXTENSION}
         disabled={disabled}
-        onChange={(event) => {
-          pick(event.target.files);
-          event.target.value = '';
+        data-testid="dropzone"
+        onAddFiles={(_event, { addedFiles }) => {
+          // Carbon flags type mismatches on the File objects; the page ignores that and lets the server judge.
+          if (addedFiles.length > 0) onFiles([...addedFiles]);
         }}
       />
+      {busyCount > 0 ? (
+        <p className="cds--form__helper-text" role="status">
+          正在接收 {busyCount} 份文件…
+        </p>
+      ) : (
+        <p className="cds--form__helper-text">{UPLOAD_NEXT_STEP}</p>
+      )}
     </div>
+  );
+}
+
+// Icon by file type from the existing record (file name extension); anything else gets the plain document icon.
+function FileIcon({ fileName }: { fileName: string }) {
+  const extension = fileName.split('.').pop()?.toLowerCase() ?? '';
+  if (extension === 'pdf') return <DocumentPdf className="app-file-icon" aria-label="PDF" />;
+  if (['jpg', 'jpeg', 'png', 'heic'].includes(extension)) return <ImageIcon className="app-file-icon" aria-label="图片" />;
+  return <Document className="app-file-icon" aria-hidden="true" />;
+}
+
+function FileRow({ file, index }: { file: UploadFileResult; index: number }) {
+  const rejected = file.status === 'rejected';
+  return (
+    <li className={rejected ? 'is-rejected' : undefined}>
+      <span className="app-file-index">{String(index + 1).padStart(2, '0')}</span>
+      <FileIcon fileName={file.fileName} />
+      <span className="app-file-name" title={file.contentHash ? `内容哈希 ${hashPrefix(file.contentHash)}` : undefined}>
+        {file.fileName}
+      </span>
+      {rejected ? (
+        <>
+          <Tag type="red" size="sm">
+            拒绝
+          </Tag>
+          <span className="app-file-reason">{file.reason}</span>
+        </>
+      ) : null}
+      <span className="app-file-size app-muted">{formatBytes(file.size)}</span>
+    </li>
   );
 }
 
@@ -102,27 +106,7 @@ function BatchPanel({ batch }: { batch: UploadBatch }) {
       </div>
       <ul className="app-file-list bleed">
         {batch.files.map((file, index) => (
-          <li key={file.fileId} className={file.status === 'rejected' ? 'is-rejected' : undefined}>
-            <span className="app-file-index">{String(index + 1).padStart(2, '0')}</span>
-            <Document className="app-file-icon" aria-hidden="true" />
-            <span className="app-file-name">{file.fileName}</span>
-            {file.status === 'accepted' ? (
-              <>
-                <Tag type="green" size="sm">
-                  已接收
-                </Tag>
-                <span className="app-code app-muted">{file.contentHash ? hashPrefix(file.contentHash) : ''}</span>
-              </>
-            ) : (
-              <>
-                <Tag type="red" size="sm">
-                  拒绝
-                </Tag>
-                <span className="app-file-reason">{file.reason}</span>
-              </>
-            )}
-            <span className="app-file-size app-muted">{formatBytes(file.size)}</span>
-          </li>
+          <FileRow key={file.fileId} file={file} index={index} />
         ))}
       </ul>
     </section>

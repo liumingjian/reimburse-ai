@@ -36,7 +36,7 @@ function summaryFields(): Record<string, string> {
 }
 
 function chooseFiles(names: string[]) {
-  const input = screen.getByLabelText('选择文件');
+  const input = screen.getByLabelText('拖入文件，或点击选择');
   const files = names.map((name) => new File([`fixture ${name}`], name, { type: name.endsWith('.jpg') ? 'image/jpeg' : 'application/pdf' }));
   Object.defineProperty(input, 'files', { value: files, configurable: true });
   fireEvent.change(input);

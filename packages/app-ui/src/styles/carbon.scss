@@ -47,6 +47,7 @@ $system-mono: (ui-monospace, 'SF Mono', Menlo, Consolas, monospace);
 @use '@carbon/styles/scss/components/link';
 @use '@carbon/styles/scss/components/checkbox';
 @use '@carbon/styles/scss/components/overflow-menu';
+@use '@carbon/styles/scss/components/file-uploader';
 
 @use './app-rules';
 @use './app-pages';

@@ -290,7 +290,7 @@ describe('整单明细确认', () => {
     expect(snapshot.step.kind).toBe('start_inventory');
 
     // 上传页直接打开了追加区，能接收新批次。
-    const input = screen.getByLabelText('选择文件');
+    const input = screen.getByLabelText('拖入文件，或点击选择');
     Object.defineProperty(input, 'files', { value: [new File(['%PDF-1.4 more'], '地铁_发票.pdf', { type: 'application/pdf' })], configurable: true });
     fireEvent.change(input);
     expect(await screen.findByRole('heading', { name: '上传批次 #2' })).toBeTruthy();

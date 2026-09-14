@@ -63,42 +63,7 @@ $gutter: $spacing-06;
   gap: $spacing-03;
 }
 
-// ---------- 上传材料：拖放区与批次文件清单 ----------
-
-.app-dropzone {
-  display: grid;
-  place-items: center;
-  gap: $spacing-05;
-  min-block-size: 14rem;
-  padding: $spacing-09 $spacing-07;
-  color: $text-secondary;
-  text-align: center;
-  background: $layer-01;
-  border: 1px dashed $border-strong-01;
-  cursor: pointer;
-
-  &:hover,
-  &.is-dragover {
-    border-color: $border-interactive;
-  }
-
-  &.is-dragover {
-    background: $layer-selected-01;
-  }
-
-  strong {
-    color: $text-primary;
-    @include type.type-style('heading-compact-02');
-  }
-
-  input[type='file'] {
-    display: none;
-  }
-}
-
-.app-dropzone-icon {
-  fill: $icon-secondary;
-}
+// ---------- 上传材料：批次文件清单（拖放区是 Carbon 原样的 FileUploaderDropContainer，不另写样式） ----------
 
 .app-upload-first {
   margin-block-start: $spacing-03;
