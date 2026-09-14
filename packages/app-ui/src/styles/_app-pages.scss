@@ -259,113 +259,62 @@ $gutter: $spacing-06;
 
 // ---------- 材料盘点 ----------
 
-.app-inventory .cds--data-table {
+// The expense event table is a stock Carbon expandable table (TableExpandRow / TableExpandedRow).
+// The bleed table's page margin lands on the expand-button column; this only sets column widths so 1100 does not scroll.
+.app-inventory > .cds--data-table {
   table-layout: fixed;
 
-  col.app-col-file {
-    inline-size: 30%;
+  > thead > tr > th:nth-child(2) {
+    inline-size: 34%;
   }
 
-  col.app-col-kind {
+  > thead > tr > th:nth-child(3) {
     inline-size: 18%;
   }
 
-  col.app-col-check {
-    inline-size: 32%;
+  > thead > tr > th:nth-child(5) {
+    inline-size: 10%;
   }
 
-  col.app-col-count {
-    inline-size: 8%;
-  }
-
-  col.app-col-status {
+  > thead > tr > th:nth-child(6) {
     inline-size: 12%;
   }
-
-  tr.app-group-head td {
-    padding: 0;
-  }
-
-  tbody.is-open tr.app-group-head td,
-  tr.app-group-detail td {
-    background: $layer-02;
-  }
-
-  tr.app-group-detail td {
-    padding: 0 $gutter $spacing-04 calc(#{$gutter} + #{$spacing-06});
-  }
-
-  tr.app-group-head td.app-ungrouped-head {
-    padding: $spacing-04 $gutter;
-  }
-
-  // 文件行缩进到所属事件行文字之下：事件行文字从页边 + 展开图标（$spacing-06）开始，文件行再往里一级（$spacing-05）。
-  // 覆盖通栏表格首列的页边留白，所以写在这里。
-  tr.app-material-row td:first-child {
-    padding-inline-start: calc(#{$gutter} + #{$spacing-06} + #{$spacing-05});
-  }
 }
 
-.app-group-toggle {
-  display: grid;
-  grid-template-columns: 30% 18% 32% 8% 12%;
-  align-items: center;
-  inline-size: 100%;
-  min-block-size: 2.5rem;
-  padding: 0;
-  color: $text-primary;
-  text-align: start;
-  background: none;
-  border: 0;
-  cursor: pointer;
-
-  &:hover {
-    background: $layer-hover-01;
-  }
-
-  &:focus-visible {
-    outline: 2px solid $focus;
-    outline-offset: -2px;
-  }
-
-  &[aria-expanded='true'] .app-chevron {
-    transform: rotate(90deg);
-  }
-}
-
-.app-gcol {
-  min-inline-size: 0;
-  padding: $spacing-03 $spacing-05;
-}
-
-.app-gcol-first {
-  display: flex;
-  align-items: center;
-  gap: $spacing-03;
-  padding-inline-start: $gutter;
-}
-
-.app-chevron {
-  flex: none;
-  fill: $icon-secondary;
-}
-
-.app-group-no,
-.app-group-dates,
-.app-group-count {
+.app-group-no {
   color: $text-secondary;
+  font-variant-numeric: tabular-nums;
 }
 
-.app-group-category,
-.app-group-title {
+.app-group-category {
   font-weight: 600;
+}
+
+.app-amount-cell {
+  font-variant-numeric: tabular-nums;
+}
+
+// Expanded content: the conclusion line, event lines for multi-event groups, then the material sub-table;
+// one background only (the expanded row's own).
+.app-evidence-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: $spacing-03;
+  margin: 0 0 $spacing-03;
+  @include type.type-style('body-compact-01');
+}
+
+.app-evidence-label {
+  color: $text-secondary;
+  @include type.type-style('label-01');
 }
 
 .app-event-lines {
   display: flex;
   flex-wrap: wrap;
   gap: $spacing-02 $spacing-06;
-  margin: 0;
+  margin: 0 0 $spacing-03;
   padding: 0;
   color: $text-secondary;
   list-style: none;
@@ -374,17 +323,48 @@ $gutter: $spacing-06;
 
 .app-amount {
   color: $text-primary;
+  font-variant-numeric: tabular-nums;
 }
 
-.app-evidence-note {
-  margin-block-start: $spacing-03;
-  @include type.type-style('helper-text-01');
+// Material sub-table inside the expanded row: no bleed margin, background follows the expanded row, columns sized by content.
+.app-inventory .app-material-table,
+.app-ungrouped .app-material-table {
+  table-layout: fixed;
+
+  th:first-child,
+  td:first-child {
+    inline-size: 32%;
+  }
+
+  th:nth-child(2),
+  td:nth-child(2) {
+    inline-size: 20%;
+  }
+
+  th:last-child,
+  td:last-child {
+    inline-size: 14%;
+  }
 }
 
-// 「材料证据关联」是单独一行的灰色小标签，结论在下一行。
-.app-evidence-label {
-  color: $text-secondary;
-  @include type.type-style('label-01');
+.app-inventory .app-material-table {
+  th:first-child,
+  td:first-child {
+    padding-inline-start: $spacing-05;
+  }
+
+  th:last-child,
+  td:last-child {
+    padding-inline-end: $spacing-05;
+  }
+}
+
+.app-ungrouped {
+  margin-block-start: $spacing-07;
+
+  > .app-caption {
+    margin-block-end: $spacing-03;
+  }
 }
 
 // ---------- 待确认项：队列、原件与右侧表单 ----------
