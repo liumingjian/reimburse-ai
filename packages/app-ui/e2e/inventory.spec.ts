@@ -34,8 +34,12 @@ test('?seed=inventory：材料清单按费用事件归组，显示配对与守�
   await page.goto(open('?seed=inventory', '#/task/T1/inventory'));
   await expect(page.getByRole('heading', { name: '材料盘点' })).toBeVisible();
   await expect(page.getByRole('link', { name: '处理 3 个待确认项' })).toBeVisible();
-  await expect(page.getByText('11 份材料，8 份通过，3 份需要你处理')).toBeVisible();
-  await expect(page.getByText('主要报销凭证 7 · 参考材料 3 · 盘点版本 v1')).toBeVisible();
+  const summary = page.getByRole('group', { name: '盘点摘要' });
+  await expect(summary).toContainText('材料11 份');
+  await expect(summary).toContainText('通过8 份');
+  await expect(summary).toContainText('需处理3 份');
+  await expect(summary).toContainText('盘点版本v1');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
   await expect(page.getByLabel('盘点结果').getByText('通过', { exact: true })).toHaveCount(0);
 
   // 含待确认材料的事件默认展开；全部通过的事件收成一行，点开才看文件与材料证据关联。
@@ -50,7 +54,7 @@ test('?seed=inventory：材料清单按费用事件归组，显示配对与守�
   await expect(amapToggle).toHaveAttribute('aria-expanded', 'true');
   await expect(amap.getByText('打车发票与行程单配对：26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeVisible();
   await expect(amap.getByText('高德打车_行程单.pdf')).toBeVisible();
-  await expect(page.getByLabel('盘点结果').locator('thead th')).toHaveText(['文件', '识别为', '校验', '状态']);
+  await expect(page.getByLabel('盘点结果').locator('thead th')).toHaveText(['文件', '识别为', '校验', '份数', '状态']);
 
   const hotel = page.getByRole('rowgroup', { name: '费用事件 9 · 2026-08-09 至 2026-08-22 · 住宿 · 3640.00' });
   await hotel.getByRole('button').click();
@@ -60,6 +64,54 @@ test('?seed=inventory：材料清单按费用事件归组，显示配对与守�
   await expect(page.getByRole('rowgroup', { name: '未归入费用事件' }).getByText('未识别版式')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('inventory-results.png'), fullPage: true });
 });
+
+// #128：文件行缩进到事件行文字之下；需要注意的行只靠标签标出，没有整行黄底和自写的黄色左边条。
+for (const width of [1440, 1100]) {
+  test(`${width}：文件行文字在所属事件行文字右侧，没有整行黄底，页头与摘要条没有中点串`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(open('?seed=inventory', '#/task/T1/inventory'));
+    const taxi = page.getByRole('rowgroup', { name: '费用事件 5 · 2026-08-15 · 外地市内交通 · 32.00' });
+    const eventText = await taxi.getByRole('button').getByText('No.5', { exact: true }).boundingBox();
+    const fileText = await taxi.getByText('IMG_4871.jpg').boundingBox();
+    expect(eventText && fileText).toBeTruthy();
+    expect(fileText!.x).toBeGreaterThan(eventText!.x);
+
+    const rest = page.getByRole('rowgroup', { name: '未归入费用事件' });
+    const restTitle = await rest.getByText('未归入费用事件', { exact: true }).boundingBox();
+    const restFile = await rest.getByText('餐饮_发票.pdf').boundingBox();
+    expect(restFile!.x).toBeGreaterThan(restTitle!.x);
+
+    // 状态列的「待确认」标签带警示图标（文件名下灰色的角色说明「待确认」不是标签）。
+    const pendingStatus = page.getByLabel('盘点结果').locator('tr > td:nth-child(5)').filter({ hasText: /^待确认$/ });
+    await expect(pendingStatus).toHaveCount(3);
+    for (const cell of await pendingStatus.all()) await expect(cell.locator('svg')).toBeVisible();
+
+    const cells = await page.getByLabel('盘点结果').locator('td').evaluateAll((tds) =>
+      tds.map((td) => {
+        const style = getComputedStyle(td);
+        return { background: style.backgroundColor, shadow: style.boxShadow };
+      }),
+    );
+    const warningBackground = await page.evaluate(() => {
+      const probe = document.createElement('div');
+      probe.style.background = 'var(--cds-notification-background-warning)';
+      document.body.append(probe);
+      const color = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return color;
+    });
+    expect(cells.length).toBeGreaterThan(0);
+    for (const cell of cells) {
+      expect(cell.background).not.toBe(warningBackground);
+      expect(cell.shadow).not.toMatch(/inset/);
+    }
+
+    const head = page.locator('.app-page-head');
+    await expect(head).not.toContainText('·');
+    await expect(page.getByRole('group', { name: '盘点摘要' })).not.toContainText('·');
+    await page.screenshot({ path: testInfo.outputPath(`inventory-${width}.png`), fullPage: true });
+  });
+}
 
 test('上传后开始材料盘点：先看到分阶段进度，再看到结果', async ({ page }, testInfo) => {
   await page.goto(open('', '#/task/T1/upload'));

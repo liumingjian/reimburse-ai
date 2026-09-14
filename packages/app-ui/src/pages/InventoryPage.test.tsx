@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { App } from '../App';
 import { BLOCKER_TABLE_COLUMNS } from '../contract/snapshot';
 import type { TaskStage } from '../contract/stage';
+import { t1Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
 import type { Fault, MockOptions } from '../mock/options';
 
@@ -28,6 +29,12 @@ const FIXTURE_FILES = [
   '餐饮_发票.pdf',
 ];
 
+// 摘要条里的字段：标签 → 值。
+function summaryFields(): Record<string, string> {
+  const bar = screen.getByRole('group', { name: '盘点摘要' });
+  return Object.fromEntries(Array.from(bar.children).map((field) => [field.children[0]?.textContent ?? '', field.children[1]?.textContent ?? '']));
+}
+
 function chooseFiles(names: string[]) {
   const input = screen.getByLabelText('选择文件');
   const files = names.map((name) => new File([`fixture ${name}`], name, { type: name.endsWith('.jpg') ? 'image/jpeg' : 'application/pdf' }));
@@ -40,14 +47,27 @@ describe('材料盘点', () => {
     renderAt('#/task/T1/inventory', 'inventory');
     expect(await screen.findByRole('heading', { name: '材料盘点' })).toBeTruthy();
     expect(screen.getByRole('link', { name: '处理 3 个待确认项' }).getAttribute('href')).toBe('#/task/T1/pending');
-    // 一句结论打头，计数全部来自服务端 summary；其余计数退成一行说明，不用徽标。
-    expect(screen.getByText('11 份材料，8 份通过，3 份需要你处理')).toBeTruthy();
-    expect(screen.getByText('主要报销凭证 7 · 参考材料 3 · 盘点版本 v1 · 2026-09-11 14:20')).toBeTruthy();
+    // 标题下是摘要条（同整单明细确认），数值与模拟快照里服务端给的汇总一致；页面只有一个大标题。
+    const served = t1Snapshot('inventory').inventory;
+    const counts = served.summary!;
+    expect(summaryFields()).toEqual({
+      材料: `${counts.materialCount} 份`,
+      通过: `${counts.okCount} 份`,
+      需处理: `${counts.pendingMaterialCount} 份`,
+      主要报销凭证: `${counts.voucherCount} 份`,
+      参考材料: `${counts.referenceCount} 份`,
+      盘点版本: served.versionId,
+      盘点时间: '2026-09-11 14:20',
+    });
+    expect(summaryFields()).toMatchObject({ 材料: '11 份', 通过: '8 份', 需处理: '3 份', 盘点版本: 'v1' });
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+    expect(screen.queryByText(/份需要你处理/)).toBeNull();
     // 只标记例外：通过的材料不带「通过」徽标。
-    expect(screen.queryByText('通过', { exact: true })).toBeNull();
+    // 摘要条里的「通过」是计数字段的标签，不算；只查盘点清单。
+    expect(within(screen.getByLabelText('盘点结果')).queryByText('通过', { exact: true })).toBeNull();
 
     const results = screen.getByLabelText('盘点结果');
-    expect(within(results).getAllByRole('columnheader').map((node) => node.textContent)).toEqual(['文件', '识别为', '校验', '状态']);
+    expect(within(results).getAllByRole('columnheader').map((node) => node.textContent)).toEqual(['文件', '识别为', '校验', '份数', '状态']);
     expect(document.body.textContent).not.toMatch(/rule:|user|候选/);
     // 费用事件组（含「未归入费用事件」）是带名称的 tbody；表头 thead 没有名称。
     const groups = within(results)
@@ -68,7 +88,7 @@ describe('材料盘点', () => {
     // 全部通过的事件默认收成一行，文件与材料证据关联要点开才看到。
     const amap = groups[0] as HTMLElement;
     const amapToggle = within(amap).getByRole('button');
-    expect(amapToggle.textContent).toBe('No.1-3 外地市内交通 08-10 至 08-12 26.69 + 20.85 + 21.65 2 份材料');
+    expect(amapToggle.textContent).toBe('No.1-3 外地市内交通 08-10 至 08-12 26.69 + 20.85 + 21.65 2 份');
     expect(amapToggle.getAttribute('aria-expanded')).toBe('false');
     expect(within(amap).queryByText('高德打车_发票.pdf')).toBeNull();
     expect(within(amap).queryByText(/^打车发票与行程单配对/)).toBeNull();
@@ -98,6 +118,41 @@ describe('材料盘点', () => {
     expect(within(rest).getByText('未识别版式')).toBeTruthy();
   });
 
+  test('状态列只放标签、份数单独成列；每个「待确认」标签都带警示图标；页头与摘要条不拼中点串', async () => {
+    renderAt('#/task/T1/inventory', 'inventory', 'unsupported-material');
+    await screen.findByRole('link', { name: '处理 4 个待确认项' });
+    const results = screen.getByLabelText('盘点结果');
+    // 事件行：份数在「份数」列的位置。
+    for (const toggle of within(results).getAllByRole('button')) fireEvent.click(toggle);
+    for (const toggle of within(results).getAllByRole('button')) if (toggle.getAttribute('aria-expanded') === 'false') fireEvent.click(toggle);
+    expect(within(results).getByRole('button', { name: /^No\.1-3 / }).textContent).toMatch(/ 2 份$/);
+
+    // 材料行：五个单元格，份数列留空，状态列只有标签（或空）。
+    const materialRows = within(results)
+      .getAllByRole('row')
+      .filter((row) => within(row).queryAllByRole('cell').length === 5);
+    expect(materialRows).toHaveLength(11);
+    for (const row of materialRows) {
+      const cells = within(row).getAllByRole('cell');
+      expect(cells[3]?.textContent).toBe('');
+      expect(['', '待确认', '已排除', '待盘点']).toContain(cells[4]?.textContent);
+    }
+
+    // 状态列里的「待确认」标签都带警示图标（文件名下那行灰色的角色说明「待确认」不是标签，不在此列）。
+    const pendingStatusCells = materialRows
+      .map((row) => within(row).getAllByRole('cell')[4])
+      .filter((cell) => cell?.textContent === '待确认');
+    expect(pendingStatusCells.length).toBeGreaterThan(0);
+    for (const cell of pendingStatusCells) expect(cell?.querySelector('svg')).not.toBeNull();
+
+    // 「材料证据关联」是单独一行的标签，不和结论连成一句。
+    for (const label of within(results).getAllByText('材料证据关联')) expect(label.textContent).toBe('材料证据关联');
+
+    const head = screen.getByRole('heading', { level: 1 }).closest('.app-page-head') as HTMLElement;
+    expect(head.textContent).not.toContain('·');
+    expect(screen.getByRole('group', { name: '盘点摘要' }).textContent).not.toContain('·');
+  });
+
   test('开始材料盘点后先看到分阶段进度，结束后看到结果与待确认项入口', async () => {
     renderAt('#/task/T1/upload', 'upload');
     await screen.findByText('拖入文件，或点击选择');
@@ -122,7 +177,7 @@ describe('材料盘点', () => {
   test('?fault=unsupported-material：曹操行程单成为不支持的版式，待确认项变成 4 个', async () => {
     renderAt('#/task/T1/inventory', 'inventory', 'unsupported-material');
     expect(await screen.findByRole('link', { name: '处理 4 个待确认项' })).toBeTruthy();
-    expect(screen.getByText(/^11 份材料，\d+ 份通过，4 份需要你处理$/)).toBeTruthy();
+    expect(summaryFields()).toMatchObject({ 材料: '11 份', 需处理: '4 份' });
     const rest = screen.getByLabelText('未归入费用事件');
     expect(within(rest).getByText('曹操出行_行程单.pdf')).toBeTruthy();
     expect(within(rest).getAllByText('未识别版式')).toHaveLength(2);

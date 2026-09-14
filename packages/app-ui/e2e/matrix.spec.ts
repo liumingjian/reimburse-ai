@@ -14,7 +14,7 @@ type Seed = { seed: string; stage: TaskStage; page: TaskPage; key: string };
 // catalog / preparation 是自动步骤，几百毫秒后就进入整单确认；它们的默认页（整单确认页）上一直可见的是报销事由。
 const KEY_TEXT: Readonly<Record<TaskStage, string>> = {
   upload: '选择文件',
-  inventory: '盘点版本 v1',
+  inventory: '盘点版本',
   pending: '还剩 3 个',
   project: '已归属 2 / 9 条',
   catalog: '上海产品评审出差',

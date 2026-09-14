@@ -4,6 +4,7 @@ import { CheckmarkFilled, ChevronRight, InProgress, WarningAltFilled } from '@ca
 import { MATERIAL_ROLE_LABELS, type ExpenseEvent, type Material, type TaskSnapshot } from '../contract/snapshot';
 import { formatDateTime } from '../format';
 import { taskHash } from '../router';
+import { PageHeader } from '../shell/PageHeader';
 import { DuplicateBlockers } from './DuplicateBlockers';
 import { PAGE_COPY } from './page-copy';
 
@@ -11,31 +12,34 @@ import { PAGE_COPY } from './page-copy';
 // 材料证据关联结论和每份材料的校验结果。不展示读出的字段及其来源（Skill 没有盘点结果表，内核不许把规则名给员工看）。
 // 跨任务重复发票命中时整批停，显示重复发票表。页面只渲染快照，不做配对、不算金额。
 // 版式：一句结论打头；全部通过的事件默认收成一行，点开才看文件与校验；含待确认材料的事件默认展开并加标记；
-// 只标记例外，通过的材料不带标签。收起的事件行按表头的四列排开，和展开后的材料行、表头对齐。
+// 只标记例外，通过的材料不带标签；需要注意的材料只用 warm-gray 加警示图标的标签标出，不给整行上底色。
+// 收起的事件行按表头的五列排开，和展开后的材料行、表头对齐；文件行缩进到事件行文字之下。
+// 标题下是和整单明细确认同一种摘要条，计数全部取服务端的 inventory.summary。
 
+// 标签用默认尺寸：Carbon 的 Tag 在 size="sm" 时不渲染 renderIcon，「待确认」会丢掉警示图标。
 function StatusTag({ material }: { material: Material }) {
   if (material.status === 'pending')
     return (
-      <Tag type="warm-gray" size="sm" renderIcon={WarningAltFilled}>
+      <Tag type="warm-gray" renderIcon={WarningAltFilled}>
         待确认
       </Tag>
     );
   if (material.status === 'excluded')
     return (
-      <Tag type="gray" size="sm">
+      <Tag type="gray">
         已排除
       </Tag>
     );
   if (material.status === 'uploaded')
     return (
-      <Tag type="gray" size="sm">
+      <Tag type="gray">
         待盘点
       </Tag>
     );
   return null;
 }
 
-const COLUMNS = ['文件', '识别为', '校验', '状态'] as const;
+const COLUMNS = ['文件', '识别为', '校验', '份数', '状态'] as const;
 
 function Columns() {
   return (
@@ -43,6 +47,7 @@ function Columns() {
       <col className="app-col-file" />
       <col className="app-col-kind" />
       <col className="app-col-check" />
+      <col className="app-col-count" />
       <col className="app-col-status" />
     </colgroup>
   );
@@ -50,7 +55,7 @@ function Columns() {
 
 function MaterialRow({ material, roleLabel }: { material: Material; roleLabel: string }) {
   return (
-    <TableRow className={material.status === 'pending' ? 'app-row-warn' : ''}>
+    <TableRow className="app-material-row">
       <TableCell>
         <span className="app-file-name">{material.fileName}</span>
         <div className="app-caption">{roleLabel}</div>
@@ -60,6 +65,7 @@ function MaterialRow({ material, roleLabel }: { material: Material; roleLabel: s
         {material.categoryLabel ? <div className="app-caption">{material.categoryLabel}</div> : null}
       </TableCell>
       <TableCell>{material.checkText || <span className="app-muted">无</span>}</TableCell>
+      <TableCell />
       <TableCell>
         <StatusTag material={material} />
       </TableCell>
@@ -109,11 +115,20 @@ function eventTitle(group: Group): string {
   return parts ? `费用事件 ${parts.nos} · ${parts.dates} · ${parts.category} · ${parts.gross}` : '';
 }
 
+// 材料证据关联：单独一行的灰色小标签，下面是服务端给的结论。
+function EvidenceNote({ children }: { children: string }) {
+  return (
+    <div className="app-evidence-note">
+      <div className="app-evidence-label">材料证据关联</div>
+      <div>{children}</div>
+    </div>
+  );
+}
+
 function EventGroup({ group, expanded, onToggle }: { group: Group; expanded: boolean; onToggle: () => void }) {
   const note = group.events.map((event) => event.evidenceNote).find((text) => text);
   const parts = groupParts(group, true);
-  const hasPending = [group.voucher, ...group.references].some((material) => material.status === 'pending');
-  const className = ['app-event-group', hasPending ? 'has-pending' : '', expanded ? 'is-open' : ''].filter(Boolean).join(' ');
+  const className = ['app-event-group', expanded ? 'is-open' : ''].filter(Boolean).join(' ');
   return (
     <TableBody className={className} aria-label={eventTitle(group)}>
       <TableRow className="app-group-head">
@@ -126,7 +141,7 @@ function EventGroup({ group, expanded, onToggle }: { group: Group; expanded: boo
                   <span className="app-group-no">No.{parts.nos}</span> <span className="app-group-category">{parts.category}</span>
                 </span>{' '}
                 <span className="app-gcol app-group-dates">{parts.dates}</span> <span className="app-gcol">{parts.gross}</span>{' '}
-                <span className="app-gcol app-group-count">{1 + group.references.length} 份材料</span>
+                <span className="app-gcol app-group-count">{1 + group.references.length} 份</span>
               </>
             ) : null}
           </button>
@@ -143,11 +158,7 @@ function EventGroup({ group, expanded, onToggle }: { group: Group; expanded: boo
                   </li>
                 ))}
               </ul>
-              {note ? (
-                <div className="app-evidence-note">
-                  <span className="app-muted">材料证据关联</span> {note}
-                </div>
-              ) : null}
+              {note ? <EvidenceNote>{note}</EvidenceNote> : null}
             </TableCell>
           </TableRow>
           <MaterialRow material={group.voucher} roleLabel={MATERIAL_ROLE_LABELS.primary_voucher} />
@@ -157,6 +168,15 @@ function EventGroup({ group, expanded, onToggle }: { group: Group; expanded: boo
         </>
       ) : null}
     </TableBody>
+  );
+}
+
+function SummaryField({ label, value, grow = false }: { label: string; value: string; grow?: boolean }) {
+  return (
+    <div className={grow ? 'app-summary-field app-grow' : 'app-summary-field'}>
+      <span className="app-summary-key">{label}</span>
+      <span className="app-summary-value">{value}</span>
+    </div>
   );
 }
 
@@ -208,45 +228,40 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
       return next;
     });
 
-  const headline = !summary
-    ? copy.lead
-    : blocked
-      ? `${summary.materialCount} 份材料，发现重复发票，整批暂停。`
-      : summary.pendingMaterialCount > 0
-        ? `${summary.materialCount} 份材料，${summary.okCount} 份通过，${summary.pendingMaterialCount} 份需要你处理`
-        : `${summary.materialCount} 份材料，${summary.okCount} 份通过`;
+  const version = snapshot.inventory.versionId;
+  const finishedAt = snapshot.inventory.finishedAt;
+  const lead = !summary ? copy.lead : blocked ? '发现重复发票，整批暂停。' : copy.lead;
 
   return (
     <>
-      <div className="app-page-head">
-        <div>
-          <h1 className="app-page-title">{copy.title}</h1>
-          <p className={summary ? 'app-headline' : 'app-lead'} title={summary ? copy.lead : undefined}>
-            {headline}
-          </p>
-          {summary ? (
-            <p className="app-caption app-meta-line">
-              {MATERIAL_ROLE_LABELS.primary_voucher} {summary.voucherCount} · {MATERIAL_ROLE_LABELS.reference} {summary.referenceCount} · 盘点版本{' '}
-              {snapshot.inventory.versionId ?? '?'}
-              {snapshot.inventory.finishedAt ? ` · ${formatDateTime(snapshot.inventory.finishedAt)}` : ''}
-            </p>
-          ) : null}
-        </div>
-        {summary && !blocked ? (
-          <div className="app-page-actions">
-            {summary.openPendingItemCount > 0 ? (
+      <PageHeader
+        title={copy.title}
+        lead={lead}
+        actions={
+          summary && !blocked ? (
+            summary.openPendingItemCount > 0 ? (
               <Button href={taskHash(taskId, 'pending')}>处理 {summary.openPendingItemCount} 个待确认项</Button>
             ) : (
               <Button href={taskHash(taskId, 'project')}>进入项目归属</Button>
-            )}
-          </div>
-        ) : null}
-      </div>
+            )
+          ) : null
+        }
+      />
 
       {!summary ? (
         <Progress snapshot={snapshot} />
       ) : (
         <>
+          {/* 摘要条：写法同整单明细确认；数字全部来自服务端的 inventory.summary，页面不数。 */}
+          <div className="app-summary bleed" role="group" aria-label="盘点摘要">
+            <SummaryField label="材料" value={`${summary.materialCount} 份`} />
+            <SummaryField label="通过" value={`${summary.okCount} 份`} />
+            <SummaryField label="需处理" value={`${summary.pendingMaterialCount} 份`} />
+            <SummaryField label={MATERIAL_ROLE_LABELS.primary_voucher} value={`${summary.voucherCount} 份`} />
+            <SummaryField label={MATERIAL_ROLE_LABELS.reference} value={`${summary.referenceCount} 份`} />
+            <SummaryField label="盘点版本" value={version ?? '无'} grow />
+            {finishedAt ? <SummaryField label="盘点时间" value={formatDateTime(finishedAt)} /> : null}
+          </div>
           <DuplicateBlockers snapshot={snapshot} />
           <section className="bleed app-table app-inventory" aria-label="盘点结果">
             <Table size="md">
@@ -264,13 +279,11 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
                 return <EventGroup key={key} group={group} expanded={pending !== toggled.has(key)} onToggle={() => toggle(key)} />;
               })}
               {ungrouped.length > 0 ? (
-                <TableBody className="app-event-group is-open has-pending" aria-label="未归入费用事件">
+                <TableBody className="app-event-group is-open" aria-label="未归入费用事件">
                   <TableRow className="app-group-head">
                     <TableCell colSpan={COLUMNS.length} className="app-ungrouped-head">
                       <div className="app-group-title">未归入费用事件</div>
-                      <div className="app-evidence-note">
-                        <span className="app-muted">材料证据关联</span> {blocked ? '整批暂停，还没有划分费用事件。' : '没有形成费用事件的材料：待确认或已排除。'}
-                      </div>
+                      <EvidenceNote>{blocked ? '整批暂停，还没有划分费用事件。' : '没有形成费用事件的材料：待确认或已排除。'}</EvidenceNote>
                     </TableCell>
                   </TableRow>
                   {ungrouped.map((material) => (
