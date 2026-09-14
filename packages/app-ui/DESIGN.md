@@ -10,7 +10,7 @@
 `tokens.css` 与它的测试随迁移删除。颜色与尺寸一律取 Carbon 的 token（Sass 变量，输出为 `var(--cds-…)`），不写字面颜色。
 
 - 样式入口 `src/styles/carbon.scss`：Carbon 配置（不输出 IBM Plex 字体）、系统字体、Gray 10 主题、reset、布局 token，
-  然后按组件引入用到的 Carbon 组件样式（按钮、UI Shell、进度指示、弹层、数据表格、搜索、标签、提示、内容切换、通知、进度条、表单、输入框、复选框、链接），
+  然后按组件引入用到的 Carbon 组件样式（按钮、UI Shell、进度指示、弹层、数据表格、搜索、标签、提示、内容切换、通知、进度条、表单、输入框、复选框、链接、溢出菜单），
   以控制单文件体积。要用新的 Carbon 组件时在这里加一行 `@use '@carbon/styles/scss/components/<名字>'`。
 - 本应用的版式规则 `src/styles/_app-rules.scss`：只写 Carbon 不管的部分（下文「本应用的规则」），类名一律以 `app-` 开头，
   只引用 Carbon 的 spacing、theme、type token。尽量不改 `.cds--*` 的内部样式；确实要改时（如表格固定列、单元格里的按钮内边距）在规则旁写明原因。
@@ -44,9 +44,11 @@ Carbon 组件自带的英文文案全部经组件参数换成中文，不留一�
 | ProgressStep 读屏状态（Complete / Current / Incomplete / Invalid） | `translateWithId`：已完成 / 当前 / 未完成（未到的步骤是「未开放」）/ 无效 |
 | ComposedModal 关闭按钮（Close） | `ModalHeader iconDescription="关闭"` |
 | Modal 焦点哨兵（隐藏的「Focus sentinel」） | `FeatureFlags enableFocusWrapWithoutSentinels`（`App.tsx`） |
+| OverflowMenu 浮层的焦点哨兵（同上） | 浮层读 `@carbon/feature-flags` 的全局开关而不是上面的上下文：`App.tsx` 顶部 `merge` 同一个开关 |
 | TableToolbar（data table toolbar）、TableToolbarSearch（Filter table、Clear search input） | `aria-label`、`labelText`、`placeholder`、`closeButtonLabelText` 都传中文 |
 | Search（Search、Clear search input） | `labelText`、`placeholder`、`closeButtonLabelText` |
 | InlineNotification 图标标题（error icon 等） | `statusIconDescription`：错误 / 注意 / 提示 / 成功 |
+| OverflowMenu 菜单按钮（Options）、菜单 | `iconDescription="更多"`，`aria-label` 写「<任务名>的更多操作」 |
 
 e2e `e2e/carbon-zh.spec.ts` 在主要页面与打开的弹层里查整页文字（含读屏文字、SVG 标题）和 `aria-label`、`title`、`placeholder`，
 出现 Carbon 常见英文文案即失败。新用一个 Carbon 组件时先查它的默认英文参数。
@@ -72,6 +74,8 @@ e2e `e2e/carbon-zh.spec.ts` 在主要页面与打开的弹层里查整页文字�
 每张宽表（整单明细确认、任务列表、回读与对账、个人项目簿）放在 Carbon 表格自带的 `overflow-x: auto` 容器里，表格铺满。
 窗口比各列按内容收紧后的宽度之和还窄时，整张表横向滚动，不再挤压列宽。滚动时标识列固定在左（No.；没有 No. 的表是任务名 / 项目号），
 收尾列固定在右（总额；任务列表与项目簿是操作列；回读表是比对列），固定列带所在行的底色，只有那一侧真有内容被盖住时才出现一条分隔线。
+操作列每行只放一个主操作按钮，其余操作收进 Carbon OverflowMenu「更多」；破坏性操作是其中的 delete 项，
+不能做时菜单项置灰，下面照抄服务端给出的原因。不再每行摆带锁的不可用按钮。
 整单明细表（No. 加 13 列）单元格用 body-compact、列间距用 Carbon 最小的单元格内边距，在 1440px 窗口上不横向滚动；1100px 窗口会滚动，这是预期的退路。
 项目号与费用项目是「编码 / 名称」一对，不折行；出发点、目的地、费用分类可以折行（中文 `word-break: keep-all`）。
 同一分类里与上一行相同的文字单元格变淡（值照常在），金额列不变淡。

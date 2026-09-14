@@ -29,7 +29,8 @@ test('任务列表显示三个任务及其阶段徽标', async ({ page }, testIn
 test('作废确认是危险弹层：确认按钮是红色 danger 按钮，文案仍是「作废」', async ({ page }, testInfo) => {
   await page.goto(open('', '#/tasks'));
   const t1 = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ });
-  await t1.getByRole('button', { name: '作废 2026-08 上海出差（产品评审）' }).click();
+  await t1.getByRole('button', { name: '更多' }).click();
+  await page.getByRole('menu', { name: '2026-08 上海出差（产品评审）的更多操作' }).getByRole('menuitem', { name: '作废' }).click();
   const dialog = page.getByRole('dialog', { name: '作废这个报销任务？' });
   const confirm = dialog.getByRole('button', { name: '作废', exact: true });
   await expect(confirm).toBeVisible();
@@ -102,7 +103,7 @@ test('转人工后回到任务列表，该任务的徽标显示已转人工', as
   await expect(t2.getByText('对账中')).toHaveCount(0);
 });
 
-test('窄窗口：任务表不挤压列宽而是横向滚动，任务名固定在左、操作列固定在右；锁形作废按钮悬停出现原因', async ({ page }) => {
+test('窄窗口：任务表不挤压列宽而是横向滚动，任务名固定在左、操作列固定在右', async ({ page }) => {
   await page.setViewportSize({ width: 800, height: 700 });
   await page.goto(open('', '#/tasks'));
   const tasks = page.getByRole('table', { name: '报销任务' });
@@ -120,9 +121,61 @@ test('窄窗口：任务表不挤压列宽而是横向滚动，任务名固定�
   // 操作按钮不折行。
   const continueBox = await row.getByRole('link', { name: '查看对账' }).boundingBox();
   expect(continueBox && continueBox.height < 40).toBe(true);
+});
 
+// 固定列的分隔线：只有那一侧真有内容被盖住时才出现（Carbon 的 $border-subtle-01，inset 1px）。
+const NO_DIVIDER = 'none';
+const START_DIVIDER = 'rgb(224, 224, 224) -1px 0px 0px 0px inset';
+const END_DIVIDER = 'rgb(224, 224, 224) 1px 0px 0px 0px inset';
+
+test('1440：任务表不横向滚动，固定列没有分隔线；「更多」里不能作废的一项置灰并写明原因', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  // 不可用的按钮不接鼠标事件，悬停落在包着它的可聚焦容器上。
-  await row.getByRole('button', { name: '作废 2026-07 深圳客户拜访' }).locator('xpath=..').hover();
-  await expect(page.getByRole('tooltip').filter({ hasText: '不能作废' }).first()).toBeVisible();
+  await page.goto(open('', '#/tasks'));
+  const tasks = page.getByRole('table', { name: '报销任务' });
+  await expect(tasks).toBeVisible();
+  const wrap = tasks.locator('xpath=..');
+  const [scrollWidth, clientWidth] = await wrap.evaluate((element) => [element.scrollWidth, element.clientWidth]);
+  console.log(`task table 1440: scrollWidth ${scrollWidth}, clientWidth ${clientWidth}`);
+  expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+  const heads = tasks.locator('thead th');
+  await expect(heads.first()).toHaveCSS('box-shadow', NO_DIVIDER);
+  await expect(heads.last()).toHaveCSS('box-shadow', NO_DIVIDER);
+  await expect(tasks.locator('tbody tr').first().locator('td').last()).toHaveCSS('box-shadow', NO_DIVIDER);
+  await page.screenshot({ path: testInfo.outputPath('tasks-1440.png') });
+
+  const t2 = page.getByRole('row', { name: /2026-07 深圳客户拜访/ });
+  await t2.getByRole('button', { name: '更多' }).click();
+  const menu = page.getByRole('menu', { name: '2026-07 深圳客户拜访的更多操作' });
+  await expect(menu.getByRole('menuitem', { name: '作废' })).toBeDisabled();
+  await expect(menu).toContainText('已开始写入报销系统，不能作废：它占用的发票要靠对账解除。');
+  await page.screenshot({ path: testInfo.outputPath('tasks-1440-more-blocked.png') });
+});
+
+test('1100：操作列变窄，价税合计完整可见；表格横向滚动，分隔线只在内容被盖住的一侧出现', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await page.goto(open('', '#/tasks'));
+  const tasks = page.getByRole('table', { name: '报销任务' });
+  await expect(tasks).toBeVisible();
+  const heads = tasks.locator('thead th');
+  const [grossBox, actionsBox] = await Promise.all([heads.filter({ hasText: '价税合计' }).boundingBox(), heads.last().boundingBox()]);
+  console.log(`task table 1100: 价税合计 right ${grossBox && grossBox.x + grossBox.width}, 操作 x ${actionsBox?.x}, 操作 width ${actionsBox?.width}`);
+  // 价税合计整列在固定的操作列左边，不被盖住；操作列只放一个按钮和「更多」。
+  expect(grossBox && actionsBox && grossBox.x + grossBox.width <= actionsBox.x).toBe(true);
+  expect(actionsBox && actionsBox.width < 180).toBe(true);
+  await expect(heads.last()).toHaveText('操作');
+
+  const wrap = tasks.locator('xpath=..');
+  const [scrollWidth, clientWidth] = await wrap.evaluate((element) => [element.scrollWidth, element.clientWidth]);
+  expect(scrollWidth).toBeGreaterThan(clientWidth);
+  // 还没滚：右边有内容在操作列下面，左边没有。
+  await expect(heads.last()).toHaveCSS('box-shadow', END_DIVIDER);
+  await expect(heads.first()).toHaveCSS('box-shadow', NO_DIVIDER);
+  await page.screenshot({ path: testInfo.outputPath('tasks-1100.png') });
+  // 滚到最右：左边的任务名列盖住内容，右边不再有。
+  await wrap.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+  });
+  await expect(heads.first()).toHaveCSS('box-shadow', START_DIVIDER);
+  await expect(heads.last()).toHaveCSS('box-shadow', NO_DIVIDER);
+  await page.screenshot({ path: testInfo.outputPath('tasks-1100-scrolled.png') });
 });
