@@ -91,6 +91,26 @@ test('断连时的加载指示（InlineLoading）与不可用的新建按钮没�
   expect(loadingAttributes).toEqual([]);
 });
 
+test('原件查看器工具栏：可访问名称与提示都是中文', async ({ page }) => {
+  await page.goto(open('?seed=pending', '#/task/T1/pending'));
+  const toolbar = page.getByRole('toolbar', { name: '原件查看' });
+  await expect(toolbar).toBeVisible();
+  const names = ['适应窗口', '放大', '缩小', '旋转 90°'];
+  for (const name of names) {
+    const button = toolbar.getByRole('button', { name, exact: true });
+    // 键盘聚焦时出现中文提示。
+    await button.focus();
+    await expect(page.getByRole('tooltip').filter({ hasText: name }).first()).toBeAttached();
+  }
+  expect(await englishLeftovers(page), '原件查看器').toEqual([]);
+  const labels = await toolbar.evaluate((node) =>
+    [...node.querySelectorAll('*')].flatMap((element) => ['aria-label', 'title'].map((name) => element.getAttribute(name) ?? '')).filter(Boolean),
+  );
+  for (const label of labels) expect(label, label).not.toMatch(/[A-Za-z]/);
+  const tooltips = await toolbar.locator('[role="tooltip"]').allTextContents();
+  expect(tooltips.sort()).toEqual([...names].sort());
+});
+
 test('弹层打开时也没有英文文案（作废确认、新建任务、追加材料）', async ({ page }) => {
   await page.goto(open('', '#/tasks'));
   await page.getByRole('button', { name: '作废 2026-08 上海出差（产品评审）' }).click();

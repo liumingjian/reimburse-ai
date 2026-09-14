@@ -481,7 +481,12 @@ $gutter: $spacing-06;
 
 // 原件框的高度：一屏减去顶栏（3rem）、步骤条（约 4.5rem）和页头（约 7.5rem）。原件在这个高度里等比缩放，
 // 原件栏贴顶时整页原件仍在视口内。
-$doc-frame-block: calc(100vh - 15rem);
+// 查看器按这个高度算框宽（CSS 变量，DocViewer 的内联样式也用它），下限 20rem。
+$doc-frame-block: var(--app-doc-frame-block);
+
+:root {
+  --app-doc-frame-block: max(20rem, calc(100vh - 15rem));
+}
 
 // 两栏：原件栏按缩放后的原件定宽（auto），表单栏占剩余宽度、下限 25rem；两栏贴顶。
 .app-review-split {
@@ -509,14 +514,23 @@ $doc-frame-block: calc(100vh - 15rem);
   background: $layer-01;
   border: 1px solid $border-strong-01;
 
-  // 图片：高度取原件框，宽度按图片自身比例（栏宽跟着走）；窄到放不下时收窄，图片仍等比。
-  &.is-image img {
-    display: block;
+  // 图片：框高取原件框，框宽按（旋转后的）图片比例由 DocViewer 内联给出，缩放时不变；窄到放不下时收窄。
+  // 原件放大后在框内滚动或按住拖动平移，页面本身不跳。
+  &.is-image {
+    display: grid;
     block-size: $doc-frame-block;
-    min-block-size: 20rem;
-    inline-size: auto;
-    max-inline-size: 100%;
-    object-fit: contain;
+    min-inline-size: 10rem;
+    overflow: auto;
+    overscroll-behavior: contain;
+    touch-action: none;
+  }
+
+  &.is-pannable {
+    cursor: grab;
+
+    &:active {
+      cursor: grabbing;
+    }
   }
 
   // PDF 与「没有可用的预览」：同样高度的框，宽度按材料版式的比例，占位不改变版面位置。
@@ -524,7 +538,6 @@ $doc-frame-block: calc(100vh - 15rem);
     display: grid;
     place-items: center;
     block-size: $doc-frame-block;
-    min-block-size: 20rem;
   }
 
   &.is-portrait {
@@ -544,6 +557,45 @@ $doc-frame-block: calc(100vh - 15rem);
     inline-size: 100%;
     block-size: 100%;
     border: 0;
+  }
+}
+
+// 原件查看器：工具栏在上，原件框在下，两者同宽。
+.app-doc-viewer {
+  display: grid;
+  gap: $spacing-03;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.app-doc-toolbar {
+  display: flex;
+  align-items: center;
+  gap: $spacing-02;
+}
+
+.app-doc-zoom {
+  margin-inline-start: $spacing-03;
+  color: $text-secondary;
+  font-variant-numeric: tabular-nums;
+  @include type.type-style('label-01');
+}
+
+// 画布是旋转后原件的外接框；比框小时居中，比框大时从左上角起滚动（auto 外边距不会裁掉溢出部分）。
+.app-doc-canvas {
+  position: relative;
+  margin: auto;
+  inline-size: 100%;
+  block-size: 100%;
+
+  img {
+    position: absolute;
+    inset-block-start: 50%;
+    inset-inline-start: 50%;
+    display: block;
+    max-inline-size: none;
+    user-select: none;
+    transform-origin: center;
   }
 }
 
