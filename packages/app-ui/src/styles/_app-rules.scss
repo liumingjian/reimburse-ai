@@ -276,6 +276,12 @@ $gutter: $spacing-06;
   @include type.type-style('body-compact-01');
 }
 
+// 状态标签不被挤窄：Carbon 的 Tag 文字被截断时会换成带定义提示的按钮，状态字要完整显示。
+.cds--tag.app-status-tag {
+  flex: none;
+  max-inline-size: none;
+}
+
 .app-btn-row {
   display: flex;
   flex-wrap: wrap;

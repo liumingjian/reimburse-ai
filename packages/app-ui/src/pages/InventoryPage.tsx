@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag } from '@carbon/react';
-import { CheckmarkFilled, ChevronRight, InProgress, WarningAltFilled } from '@carbon/icons-react';
+import { CheckmarkFilled, ChevronRight, InProgress } from '@carbon/icons-react';
 import { MATERIAL_ROLE_LABELS, type ExpenseEvent, type Material, type TaskSnapshot } from '../contract/snapshot';
 import { formatDateTime } from '../format';
 import { taskHash } from '../router';
 import { PageHeader } from '../shell/PageHeader';
+import { StatusTag } from '../shell/StatusTag';
 import { DuplicateBlockers } from './DuplicateBlockers';
 import { PAGE_COPY } from './page-copy';
 
@@ -16,14 +17,9 @@ import { PAGE_COPY } from './page-copy';
 // 收起的事件行按表头的五列排开，和展开后的材料行、表头对齐；文件行缩进到事件行文字之下。
 // 标题下是和整单明细确认同一种摘要条，计数全部取服务端的 inventory.summary。
 
-// 标签用默认尺寸：Carbon 的 Tag 在 size="sm" 时不渲染 renderIcon，「待确认」会丢掉警示图标。
-function StatusTag({ material }: { material: Material }) {
-  if (material.status === 'pending')
-    return (
-      <Tag type="warm-gray" renderIcon={WarningAltFilled}>
-        待确认
-      </Tag>
-    );
+// 需要注意的「待确认」用共用的状态标签（图标加文字）；已排除、待盘点是中性灰标签。
+function MaterialStatus({ material }: { material: Material }) {
+  if (material.status === 'pending') return <StatusTag tone="warning">待确认</StatusTag>;
   if (material.status === 'excluded')
     return (
       <Tag type="gray">
@@ -67,7 +63,7 @@ function MaterialRow({ material, roleLabel }: { material: Material; roleLabel: s
       <TableCell>{material.checkText || <span className="app-muted">无</span>}</TableCell>
       <TableCell />
       <TableCell>
-        <StatusTag material={material} />
+        <MaterialStatus material={material} />
       </TableCell>
     </TableRow>
   );
@@ -110,9 +106,10 @@ function groupParts(group: Group, shortDate: boolean) {
   return { nos, dates, category: first.category.label, gross };
 }
 
+// 组的可访问名称只写序号（「费用事件 No.1-3」）；日期、类别、金额由组标题行的各列读出，不拼中点串。
 function eventTitle(group: Group): string {
   const parts = groupParts(group, false);
-  return parts ? `费用事件 ${parts.nos} · ${parts.dates} · ${parts.category} · ${parts.gross}` : '';
+  return parts ? `费用事件 No.${parts.nos}` : '';
 }
 
 // 材料证据关联：单独一行的灰色小标签，下面是服务端给的结论。

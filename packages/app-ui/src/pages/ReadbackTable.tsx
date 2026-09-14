@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react';
-import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag } from '@carbon/react';
-import { CheckmarkFilled, ErrorFilled } from '@carbon/icons-react';
+import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@carbon/react';
 import type { ReadbackRow } from '../contract/snapshot';
+import { StatusTag } from '../shell/StatusTag';
 
 // 逐条回读表：本地确认 vs 报销系统回读。一致与否由服务端按 9 个字段逐行判定（row.matched、field.matched），页面只按标志着色。
 // 行上显示申请报销金额两边的值；不一致的行可以展开，列出服务端判为对不上的字段（「字段 本地 X / 报销系统 Y」）与这一行的原因。
@@ -57,14 +57,10 @@ export function ReadbackTable({
                   <TableCell className="app-num">{gross ? (gross.erp ?? '未读到') : ''}</TableCell>
                   <TableCell className="app-sticky-end app-nowrap">
                     {row.matched ? (
-                      <Tag type="green" size="sm" renderIcon={CheckmarkFilled}>
-                        一致
-                      </Tag>
+                      <StatusTag tone="success">一致</StatusTag>
                     ) : (
                       <span className="app-cell-actions">
-                        <Tag type="red" size="sm" renderIcon={ErrorFilled}>
-                          不一致
-                        </Tag>
+                        <StatusTag tone="danger">不一致</StatusTag>
                         <Button
                           kind="ghost"
                           size="sm"

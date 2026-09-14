@@ -664,6 +664,20 @@ $doc-frame-block: var(--app-doc-frame-block);
   margin-block-start: $spacing-04;
 }
 
+// 逐段分摊：每段一组，字段组（日期、路线）在上，金额输入框在下。
+.app-segment {
+  display: grid;
+  gap: $spacing-03;
+}
+
+.app-resolved-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $spacing-03;
+  margin-block-end: $spacing-02;
+}
+
 .app-resolved-list {
   margin: 0 0 $spacing-06;
   padding: 0;
@@ -744,8 +758,9 @@ $doc-frame-block: var(--app-doc-frame-block);
 .cds--data-table.app-assign-table {
   table-layout: fixed;
 
+  // No. 列按内容定宽（固定表格布局不会按内容收列宽）：左边距、复选框、间距，加上「No.12」与右内边距。
   col.app-col-pick {
-    inline-size: 8.5rem;
+    inline-size: calc(#{$gutter} + #{$spacing-06} + #{$spacing-03} + 3.5rem);
   }
 
   col.app-col-date {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { Button, InlineNotification } from '@carbon/react';
 import type { PlacementSlot } from '../contract/actions';
 import { ActionError } from '../shell/ActionError';
+import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
 import {
@@ -169,8 +170,13 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
       {editing && editingPage && editingPlacement?.corners && editingPlacement.imageUrl ? (
         <section className="app-crop-panel" aria-label="四角裁剪" ref={cropPanel}>
           <div className="app-crop-head">
-            <h2 className="app-section-title">{`调整四角 · ${editingPlacement.fileName}`}</h2>
-            <span className="app-caption">{editingPage.header}</span>
+            <h2 className="app-section-title">调整四角</h2>
+            <FieldGroup
+              fields={[
+                { label: '文件名', value: <span className="app-file-name">{editingPlacement.fileName}</span> },
+                { label: '所在页', value: editingPage.header },
+              ]}
+            />
           </div>
           <CropEditor
             key={`${editing.pageId}-${editing.slot}`}
@@ -187,10 +193,16 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
       {generated ? (
         <>
-          <p className="app-caption app-print-summary">
-            {sheet.fileName ? `${sheet.fileName} · ` : ''}
-            {`${sheet.pages.length} 页 A4 纵向。旋转与裁剪只保存为打印设置，不改原件，也不影响整单明细确认。`}
-          </p>
+          <div className="app-print-summary">
+            <FieldGroup
+              label="打印稿"
+              fields={[
+                ...(sheet.fileName ? [{ label: '文件名', value: <span className="app-file-name">{sheet.fileName}</span> }] : []),
+                { label: '页数', value: `${sheet.pages.length} 页 A4 纵向` },
+              ]}
+            />
+            <p className="app-caption">旋转与裁剪只保存为打印设置，不改原件，也不影响整单明细确认。</p>
+          </div>
           <ol className="app-print-pages" aria-label="打印稿页面">
             {sheet.pages.map((page, index) => (
               <li key={page.pageId} className="app-page-card" aria-label={page.header}>
@@ -207,10 +219,12 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
                           <span className="app-caption">{SLOT_LABEL[slot]}</span>
                           <span className="app-file-name">{placement.fileName}</span>
                         </div>
-                        <div className="app-caption">
-                          {placement.rotate ? '旋转 90° 放置' : '竖放'}
-                          {placement.croppable ? (placement.cropAdjusted ? ' · 已手动微调裁剪' : ' · 已自动裁边矫正') : ''}
-                        </div>
+                        <FieldGroup
+                          fields={[
+                            { label: '放置', value: placement.rotate ? '旋转 90° 放置' : '竖放' },
+                            ...(placement.croppable ? [{ label: '裁剪', value: placement.cropAdjusted ? '已手动微调裁剪' : '已自动裁边矫正' }] : []),
+                          ]}
+                        />
                         <div className="app-btn-row">
                           <Button kind="ghost" size="sm" disabled={busy} aria-label={`${rotateLabel}：${placement.fileName}`} onClick={() => void rotate(page, slot, placement)}>
                             {rotateLabel}

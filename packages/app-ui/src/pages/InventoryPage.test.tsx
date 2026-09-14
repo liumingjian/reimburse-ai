@@ -75,13 +75,13 @@ describe('材料盘点', () => {
       .filter((node) => node.hasAttribute('aria-label'));
     expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual([
       // 统一业务序号按内核确认表的分类排序：外地市内交通 → 长途交通 → 住宿，同一分类内按事件顺序。
-      '费用事件 1-3 · 2026-08-10 至 2026-08-12 · 外地市内交通 · 26.69 + 20.85 + 21.65',
-      '费用事件 4 · 2026-08-11 · 外地市内交通 · 38.40',
-      '费用事件 5 · 2026-08-15 · 外地市内交通 · 32.00',
-      '费用事件 6 · 2026-08-19 · 外地市内交通 · 47.00',
-      '费用事件 7 · 2026-08-09 · 长途交通 · 73.00',
-      '费用事件 8 · 2026-08-22 · 长途交通 · 73.00',
-      '费用事件 9 · 2026-08-09 至 2026-08-22 · 住宿 · 3640.00',
+      '费用事件 No.1-3',
+      '费用事件 No.4',
+      '费用事件 No.5',
+      '费用事件 No.6',
+      '费用事件 No.7',
+      '费用事件 No.8',
+      '费用事件 No.9',
       '未归入费用事件',
     ]);
 
@@ -138,12 +138,8 @@ describe('材料盘点', () => {
       expect(['', '待确认', '已排除', '待盘点']).toContain(cells[4]?.textContent);
     }
 
-    // 状态列里的「待确认」标签都带警示图标（文件名下那行灰色的角色说明「待确认」不是标签，不在此列）。
-    const pendingStatusCells = materialRows
-      .map((row) => within(row).getAllByRole('cell')[4])
-      .filter((cell) => cell?.textContent === '待确认');
-    expect(pendingStatusCells.length).toBeGreaterThan(0);
-    for (const cell of pendingStatusCells) expect(cell?.querySelector('svg')).not.toBeNull();
+    // 「待确认」标签带警示图标：图标只有视觉通道，由 e2e/inventory.spec.ts 在浏览器里检查。
+    expect(materialRows.some((row) => within(row).getAllByRole('cell')[4]?.textContent === '待确认')).toBe(true);
 
     // 「材料证据关联」是单独一行的标签，不和结论连成一句。
     for (const label of within(results).getAllByText('材料证据关联')) expect(label.textContent).toBe('材料证据关联');

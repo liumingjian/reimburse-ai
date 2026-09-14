@@ -43,10 +43,10 @@ test('?seed=inventory：材料清单按费用事件归组，显示配对与守�
   await expect(page.getByLabel('盘点结果').getByText('通过', { exact: true })).toHaveCount(0);
 
   // 含待确认材料的事件默认展开；全部通过的事件收成一行，点开才看文件与材料证据关联。
-  const taxi = page.getByRole('rowgroup', { name: '费用事件 5 · 2026-08-15 · 外地市内交通 · 32.00' });
+  const taxi = page.getByRole('rowgroup', { name: '费用事件 No.5' });
   await expect(taxi.getByRole('button')).toHaveAttribute('aria-expanded', 'true');
   await expect(taxi.getByText('IMG_4871.jpg')).toBeVisible();
-  const amap = page.getByRole('rowgroup', { name: '费用事件 1-3 · 2026-08-10 至 2026-08-12 · 外地市内交通 · 26.69 + 20.85 + 21.65' });
+  const amap = page.getByRole('rowgroup', { name: '费用事件 No.1-3' });
   const amapToggle = amap.getByRole('button');
   await expect(amapToggle).toHaveAttribute('aria-expanded', 'false');
   await expect(amap.getByText('高德打车_行程单.pdf')).toHaveCount(0);
@@ -56,7 +56,7 @@ test('?seed=inventory：材料清单按费用事件归组，显示配对与守�
   await expect(amap.getByText('高德打车_行程单.pdf')).toBeVisible();
   await expect(page.getByLabel('盘点结果').locator('thead th')).toHaveText(['文件', '识别为', '校验', '份数', '状态']);
 
-  const hotel = page.getByRole('rowgroup', { name: '费用事件 9 · 2026-08-09 至 2026-08-22 · 住宿 · 3640.00' });
+  const hotel = page.getByRole('rowgroup', { name: '费用事件 No.9' });
   await hotel.getByRole('button').click();
   await expect(hotel.getByText('住宿发票 3640.00 = 结账单消费合计 3640.00；13 天 = 08-09 入住至 08-22 离店')).toBeVisible();
   await expect(page.getByLabel('盘点结果')).not.toContainText('rule:');
@@ -70,7 +70,7 @@ for (const width of [1440, 1100]) {
   test(`${width}：文件行文字在所属事件行文字右侧，没有整行黄底，页头与摘要条没有中点串`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(open('?seed=inventory', '#/task/T1/inventory'));
-    const taxi = page.getByRole('rowgroup', { name: '费用事件 5 · 2026-08-15 · 外地市内交通 · 32.00' });
+    const taxi = page.getByRole('rowgroup', { name: '费用事件 No.5' });
     const eventText = await taxi.getByRole('button').getByText('No.5', { exact: true }).boundingBox();
     const fileText = await taxi.getByText('IMG_4871.jpg').boundingBox();
     expect(eventText && fileText).toBeTruthy();

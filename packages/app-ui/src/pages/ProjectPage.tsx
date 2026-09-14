@@ -17,7 +17,7 @@ import {
   Tag,
   TextInput,
 } from '@carbon/react';
-import { Add, Locked } from '@carbon/icons-react';
+import { Add } from '@carbon/icons-react';
 import { PROJECT_ASSIGNMENT_ERRORS, PROJECT_CONFLICT_COPY, PURPOSE_MAX_LENGTH } from '../contract/actions';
 import { PROJECT_BOOK_COPY } from '../contract/project-book';
 import type { Line, ProjectLineAssignment, StepKind, TaskSnapshot } from '../contract/snapshot';
@@ -27,6 +27,7 @@ import { ActionError } from '../shell/ActionError';
 import { ConfirmDialog } from '../shell/Dialog';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
+import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 import { ProjectBookPanel } from './ProjectBookPanel';
@@ -316,7 +317,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
                 <AssignColumns />
                 <TableHead>
                   <TableRow>
-                    <TableHeader>No.</TableHeader>
+                    <TableHeader className="app-no">No.</TableHeader>
                     <TableHeader>日期</TableHeader>
                     <TableHeader>城市</TableHeader>
                     <TableHeader>路线 / 说明</TableHeader>
@@ -391,9 +392,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
                   {entry.selectable ? (
                     assignButton(entry)
                   ) : (
-                    <Tag type="warm-gray" size="sm" renderIcon={Locked}>
-                      已锁定
-                    </Tag>
+                    <StatusTag tone="locked">已锁定</StatusTag>
                   )}
                 </li>
               ))}
@@ -500,7 +499,7 @@ function LineRow({
   const dates = line.endDate && line.endDate !== line.date ? `${line.date} 至 ${line.endDate}` : line.date;
   return (
     <TableRow className={checked ? 'app-row-selected' : ''} data-testid={`line-card-${line.no}`}>
-      <TableCell className="app-pick-no">
+      <TableCell className="app-no app-pick-no">
         <span className="app-pick-label">
           <Checkbox id={`pick-${line.lineId}`} labelText={`选择明细 No.${line.no}`} hideLabel checked={checked} disabled={disabled} onChange={onToggle} />
           <span className="app-muted">No.{line.no}</span>

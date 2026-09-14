@@ -6,6 +6,7 @@ import { PENDING_CHOICE_KEY, fieldAnswer, isAllocationAnswer, type FieldAnswer, 
 import { taskHash } from '../router';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
+import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
 import { DocViewer } from './DocViewer';
 import { DuplicateBlockers } from './DuplicateBlockers';
@@ -25,11 +26,7 @@ const EVIDENCE_LABELS: Readonly<Record<Material['fields'][number]['evidence'], s
 };
 
 function Resolved() {
-  return (
-    <Tag type="green" renderIcon={CheckmarkFilled}>
-      已处理
-    </Tag>
-  );
+  return <StatusTag tone="success">已处理</StatusTag>;
 }
 
 function MaterialFields({ material }: { material: Material | undefined }) {
@@ -180,19 +177,27 @@ function AllocationForm({ item, onSubmit, state }: FormProps) {
   return (
     <form className="app-form" onSubmit={submit} noValidate aria-label={item.title}>
       <p className="app-caption">票面价税合计 {allocation.total} 元；各段加起来必须正好等于它，对不对得上由系统核对。</p>
+      {/* 每段先用字段组列出日期与路线（不拼中点串），输入框的标签只写「第 N 段价税合计」。 */}
       {allocation.segments.map((segment, index) => (
-        <TextInput
-          key={segment.index}
-          id={`pa-${item.itemId}-${segment.index}`}
-          className="app-amount-input"
-          labelText={`第 ${segment.index} 段 · ${segment.date} · ${segment.route}`}
-          inputMode="decimal"
-          value={amounts[index] ?? ''}
-          disabled={resolved || state.busy}
-          onChange={(event) => setAmounts(amounts.map((value, position) => (position === index ? event.target.value : value)))}
-          {...(segment.suggested ? { helperText: `行程单上写的是 ${segment.suggested}` } : {})}
-          {...fieldError(errors[segmentKey(segment.index)])}
-        />
+        <div key={segment.index} className="app-segment">
+          <FieldGroup
+            fields={[
+              { label: '日期', value: segment.date },
+              { label: '路线', value: segment.route },
+            ]}
+          />
+          <TextInput
+            id={`pa-${item.itemId}-${segment.index}`}
+            className="app-amount-input"
+            labelText={`第 ${segment.index} 段价税合计`}
+            inputMode="decimal"
+            value={amounts[index] ?? ''}
+            disabled={resolved || state.busy}
+            onChange={(event) => setAmounts(amounts.map((value, position) => (position === index ? event.target.value : value)))}
+            {...(segment.suggested ? { helperText: `行程单上写的是 ${segment.suggested}` } : {})}
+            {...fieldError(errors[segmentKey(segment.index)])}
+          />
+        </div>
       ))}
       {errors.allocation ? (
         <p className="app-action-error" role="alert">
@@ -309,8 +314,10 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
                 const note = gaveUpNote(item);
                 return (
                   <li key={item.itemId}>
-                    {item.title}
-                    <span className="app-muted"> · {materialOf(item)?.fileName ?? item.materialId}</span> <Resolved />
+                    <div className="app-resolved-head">
+                      <span>{item.title}</span> <Resolved />
+                    </div>
+                    <FieldGroup fields={[{ label: '文件名', value: <span className="app-file-name">{materialOf(item)?.fileName ?? item.materialId}</span> }]} />
                     {note ? <div className="app-caption">{note}</div> : null}
                   </li>
                 );
@@ -344,9 +351,9 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
                   <span className="app-queue-title">{item.title}</span>
                   <span className="app-queue-sub">{file}</span>
                   {done ? (
-                    <Tag as="span" type="green" size="sm" className="app-queue-tag">
+                    <StatusTag as="span" tone="success" className="app-queue-tag">
                       已处理
-                    </Tag>
+                    </StatusTag>
                   ) : null}
                 </button>
               </li>
