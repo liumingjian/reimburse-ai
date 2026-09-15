@@ -5,11 +5,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
-import * as actions from '@baox/contract';
-import * as projectBook from '@baox/contract';
-import * as snapshot from '@baox/contract';
-import * as stage from '@baox/contract';
-import * as taskList from '@baox/contract';
+import * as contract from '@baox/contract';
 import { ERP_STEP_DEFS, handedOffBanner, loginNotDetected, mismatchReason, MISMATCH_ABORT_REASON, SAVE_ABORT_REASON } from './mock/fixtures/erp';
 import { t1Snapshot, t2Snapshot, t3Snapshot } from './mock/fixtures/tasks';
 import { PAGE_COPY } from './pages/page-copy';
@@ -75,9 +71,7 @@ const COPY_NAME = /^[A-Z_]+(COPY|ERRORS|NOTES|NOTICE|LABELS|COLUMNS|PHASES)$/;
 describe('员工可见文案不含内核禁用词', () => {
   test('契约里的文案常量', () => {
     const out: Array<[string, string]> = [];
-    for (const [moduleName, module] of Object.entries({ actions, projectBook, snapshot, stage, taskList })) {
-      for (const [name, value] of Object.entries(module)) if (COPY_NAME.test(name)) strings(value, `${moduleName}.${name}`, out);
-    }
+    for (const [name, value] of Object.entries(contract)) if (COPY_NAME.test(name)) strings(value, name, out);
     strings(PAGE_COPY, 'PAGE_COPY', out);
     strings(STARTUP_COPY, 'STARTUP_COPY', out);
     expect(out.length).toBeGreaterThan(50);

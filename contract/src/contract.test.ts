@@ -1,4 +1,4 @@
-// 纯 schema 测试：只依赖契约本身。夹具快照与 mock 行为的一致性测试在 web/src/mock/contract-consistency.test.ts。
+// Pure schema tests that depend on the contract alone. Fixture-snapshot and mock-behaviour consistency tests live in web/src/mock/contract-consistency.test.ts.
 import { describe, expect, test } from 'vitest';
 import { CREATE_TASK_ERRORS, CreateTaskInputSchema, PENDING_ANSWER_ERRORS, isRealDate, validatePendingAnswer } from './actions';
 import { STAGE_DEFAULT_PAGE, pageAllowed, stageReached } from './stage';

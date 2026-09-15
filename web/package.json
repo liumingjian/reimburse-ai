@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "本地报销应用前端：页面、HTTP 适配器与 mock 开发模式",
+  "description": "Local reimbursement app frontend: pages, the HTTP adapter and the mock dev mode",
   "engines": {
     "node": ">=24 <25"
   },
@@ -15,9 +15,7 @@
     "check:dist": "vite build && node scripts/check-dist.mjs",
     "test": "vitest run",
     "test:e2e": "vite build --mode mock && playwright test",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "fixtures": "node fixtures/scripts/generate.mjs && node fixtures/scripts/verify.mjs",
-    "fixtures:verify": "node fixtures/scripts/verify.mjs"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@baox/contract": "workspace:*",
@@ -29,7 +27,7 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
-    "@playwright/test": "1.63.0",
+    "@baox/fixtures": "workspace:*",
     "@testing-library/dom": "10.4.1",
     "@testing-library/react": "16.3.3",
     "@types/node": "24.13.3",
@@ -40,7 +38,6 @@
     "sass": "1.104.1",
     "typescript": "5.9.3",
     "vite": "7.3.6",
-    "vite-plugin-singlefile": "2.3.3",
-    "vitest": "3.2.7"
+    "vite-plugin-singlefile": "2.3.3"
   }
 }

@@ -23,8 +23,8 @@ import {
   type TaskList,
 } from '@baox/contract';
 
-// HTTP 适配器：按 @baox/contract 的 http.ts 端点表调用本地应用服务。每个响应都过 zod schema；
-// 409 一律映射为 stale_step（附带的最新快照交给仓库重渲染）；事件流断开后按退避自动重连。
+// HTTP adapter: calls the local app server per the endpoint table in @baox/contract (http.ts). Every response goes through a zod schema;
+// a 409 always maps to stale_step (the fresh snapshot it carries goes to the store to re-render); the event stream reconnects with backoff after a drop.
 
 export type HttpAdapterOptions = {
   baseUrl?: string;

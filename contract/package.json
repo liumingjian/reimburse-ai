@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "前端与本地应用服务之间的接口契约：zod schema 与由它推导的类型，只发布源码",
+  "description": "The interface contract between the frontend and the local app server: zod schemas and the types inferred from them, shipped as source",
   "engines": {
     "node": ">=24 <25"
   },
@@ -21,7 +21,6 @@
     "zod": "4.6.2"
   },
   "devDependencies": {
-    "typescript": "5.9.3",
-    "vitest": "3.2.7"
+    "typescript": "5.9.3"
   }
 }

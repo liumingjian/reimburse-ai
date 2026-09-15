@@ -156,16 +156,16 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 
 ## 夹具与样式
 
-- `fixtures`：用 HTML 模板经 headless Chrome 生成示例 PDF（带中文文本层）、出租车票照片、打印页图与合并 PDF，写入 `fixtures/generated/` 并校验（需 macOS 上的 Google Chrome 与 `sips`）。数据全部虚构，来源是 `fixtures/scripts/data.mjs`（打印页顺序与页眉跟随统一业务序号）。`fixtures:verify` 只校验。
+- Fixtures live in the `@baox/fixtures` package (`fixtures/` at the repo root). `pnpm --filter @baox/fixtures generate` renders sample PDFs (with a Chinese text layer), taxi-receipt photos, print page images and the merged PDF from HTML templates through headless Chrome into `fixtures/generated/`, then verifies them (needs Google Chrome and `sips` on macOS); `verify` only checks. All data is fictitious; its source is `fixtures/scripts/data.mjs` (print page order and headers follow the unified business number).
 - 样式：界面用 IBM Carbon（`@carbon/react` 组件，`@carbon/styles` Gray 10 原样主题，ADR-0012）。入口是 `src/styles/carbon.scss`（主题、系统字体、按组件引入的样式），
   本应用自己的版式规则在 `src/styles/_app-rules.scss`，只引用 Carbon 的 token。规则见 `DESIGN.md`；原先由 DESIGN.md 生成 `tokens.css` 的脚本已删除。
 
 ## 给服务端实现者：契约入口
 
-- `@baox/contract`（`packages/contract/src/index.ts`）：zod schema 与由它推导的类型。四类接口：任务列表（`TaskListSchema`）、任务快照（`TaskSnapshotSchema`）、动作端点（输入 schema 与错误文案在 `actions.ts`）、事件流。
-- `packages/contract/src/http.ts` 的 `HTTP_ENDPOINTS`：每个适配器方法对应的方法、路径与请求体字段；动作名与 `ACTION_NAMES` 一致。`start-erp-write` 就是「去报销」（整单确认之后，`choose_action` 下接受），之后没有别的开始确认。
+- `@baox/contract`（`contract/src/index.ts`）：zod schema 与由它推导的类型。四类接口：任务列表（`TaskListSchema`）、任务快照（`TaskSnapshotSchema`）、动作端点（输入 schema 与错误文案在 `actions.ts`）、事件流。
+- `contract/src/http.ts` 的 `HTTP_ENDPOINTS`：每个适配器方法对应的方法、路径与请求体字段；动作名与 `ACTION_NAMES` 一致。`start-erp-write` 就是「去报销」（整单确认之后，`choose_action` 下接受），之后没有别的开始确认。
 - 启动：`TaskListSchema` 的 `erpSession` 与 `employee.binding` 决定启动页（`startupComplete`）。启动动作不属于任务：`POST /api/startup/recheck-erp-session`（「我已登录」，只再探测）与 `POST /api/startup/confirm-identity`（`account`、`tenant`，回传页面上看到的身份，服务端重读后对不上即拒绝）；成功返回整份任务列表，失败 `{ error, taskList? }`。未完成启动时服务端拒绝新建任务。常驻城市按身份（tenant + account）持久记忆。
-- 个人项目簿（`packages/contract/src/project-book.ts`）：`GET /api/project-book` 返回 `ProjectBook { projects: [{ number, name, expiresOn, lastCheckedAt, selectable, statusLabel, statusNote }] }`（身份没核对通过时为空）；
+- 个人项目簿（`contract/src/project-book.ts`）：`GET /api/project-book` 返回 `ProjectBook { projects: [{ number, name, expiresOn, lastCheckedAt, selectable, statusLabel, statusNote }] }`（身份没核对通过时为空）；
   `POST /api/project-book/intake`（`number`）、`/remove`（`number`）、`/purge`、`/recheck`。服务端处理了请求就 200 返回 `{ status, verdict, note, book }`（`status` 照内核：admitted / rejected / not_logged_in / identity_mismatch / query_failed / removed / not_found / purged / none / done / empty，文案见 `PROJECT_BOOK_NOTES`），请求本身失败 `{ error, book? }`。
   项目簿一变，还没开始写入报销系统的任务经事件流拿到新的允许列表。流程门照内核 `!selectionApplied && projectBook.empty`：还没提交过项目归属、项目簿又没有可选项目时，step 为 `maintain_project_book`（页面换成维护入口；上次留下的归属不影响这个判断），第一次录入成功后回到 `assign_projects`。允许列表因项目簿变动而变时换发 `stepToken`。
 - 项目归属（`snapshot.ts` `ProjectAssignment`，照内核 Variant B）：`projects` 只含可选项目（不可选的不随快照给出）；`assignments` 是服务端记下的归属（整单确认绑定它），`working` 是本次正在编辑的归属，`usage` 是「本次已归入」区（`{ number, name, lineCount, grossTotal, selectable }`，条数与金额由服务端算好）。「归入」是动作 `assign-project-lines`（`lineIds`、`projectNumber`、`onlyUnassigned`、`stepToken`），只改 `working`（草稿也是服务端状态，每次都换发 `stepToken`），新的归属只能用可选项目；提交 `submit-project-assignment` 用当前可选集合重新校验，已删除或失效的项目不能用于新归属，但某条明细上次记下的就是它时可以沿用（`usage` 里 `selectable: false`，页面显示「已锁定」）。`Line` 另有 `route` 与 `maskedNumber`（内核 maskNumber），供明细卡片展示。

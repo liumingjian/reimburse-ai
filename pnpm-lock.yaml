@@ -6,9 +6,16 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      '@playwright/test':
+        specifier: 1.63.0
+        version: 1.63.0
+      vitest:
+        specifier: 3.2.7
+        version: 3.2.7(@types/node@24.13.3)(jsdom@27.4.0)(sass@1.104.1)(tsx@4.23.13)
 
-  packages/contract:
+  contract:
     dependencies:
       zod:
         specifier: 4.6.2
@@ -17,9 +24,8 @@ importers:
       typescript:
         specifier: 5.9.3
         version: 5.9.3
-      vitest:
-        specifier: 3.2.7
-        version: 3.2.7(@types/node@24.13.3)(jsdom@27.4.0)(sass@1.104.1)(tsx@4.23.13)
+
+  fixtures: {}
 
   packages/image-field-extraction:
     devDependencies:
@@ -37,7 +43,7 @@ importers:
     dependencies:
       '@baox/contract':
         specifier: workspace:*
-        version: link:../packages/contract
+        version: link:../contract
       '@carbon/feature-flags':
         specifier: 1.9.0
         version: 1.9.0
@@ -57,9 +63,9 @@ importers:
         specifier: 19.3.0
         version: 19.3.0(react@19.3.0)
     devDependencies:
-      '@playwright/test':
-        specifier: 1.63.0
-        version: 1.63.0
+      '@baox/fixtures':
+        specifier: workspace:*
+        version: link:../fixtures
       '@testing-library/dom':
         specifier: 10.4.1
         version: 10.4.1
@@ -93,9 +99,6 @@ importers:
       vite-plugin-singlefile:
         specifier: 2.3.3
         version: 2.3.3(rollup@4.63.1)(vite@7.3.6(@types/node@24.13.3)(sass@1.104.1)(tsx@4.23.13))
-      vitest:
-        specifier: 3.2.7
-        version: 3.2.7(@types/node@24.13.3)(jsdom@27.4.0)(sass@1.104.1)(tsx@4.23.13)
 
 packages:
 

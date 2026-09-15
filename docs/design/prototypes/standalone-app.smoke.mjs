@@ -3,7 +3,7 @@
   dump 渲染后的 DOM，确认三点：没有未捕获异常、每页出现应有的关键字、不出现 undefined / NaN / 长破折号。
   加 --shots 时顺带截图到 /tmp/rx/shots，供目视检查。
 
-    node prototypes/standalone-app.smoke.mjs [--shots]
+    node docs/design/prototypes/standalone-app.smoke.mjs [--shots]
 */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";

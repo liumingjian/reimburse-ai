@@ -1,7 +1,8 @@
 /// <reference types="vitest/config" />
-import { copyFileSync, createReadStream, cpSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { copyFileSync, createReadStream, cpSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { GENERATED_DIR as FIXTURES_SOURCE, SAMPLE_MATERIALS } from '@baox/fixtures';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
@@ -10,14 +11,7 @@ const packageRoot = fileURLToPath(new URL('.', import.meta.url));
 // Carbon 的 Sass 包之间互相 @use（@carbon/styles → @carbon/type、@carbon/themes …）。pnpm 默认不把它们提升到包目录，
 // 让 Sass 也能从工作区根的 .pnpm/node_modules（pnpm 的隐藏提升目录）找到它们。
 const SASS_LOAD_PATHS = [resolve(packageRoot, 'node_modules'), resolve(packageRoot, '../node_modules/.pnpm/node_modules')];
-const FIXTURES_SOURCE = resolve(packageRoot, 'fixtures/generated');
 const FIXTURES_PUBLIC_PATH = '/fixtures/';
-// 示例原件文件名 → 业务文件名的对照表（唯一来源；mock 的 PROFILES 与它一致，见 src/mock/fixtures/inventory.test.ts）。
-const SAMPLE_MATERIALS_FILE = resolve(packageRoot, 'fixtures/sample-materials.json');
-
-function readSampleMaterials(): Array<{ file: string; fileName: string }> {
-  return JSON.parse(readFileSync(SAMPLE_MATERIALS_FILE, 'utf8')) as Array<{ file: string; fileName: string }>;
-}
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
   pdf: 'application/pdf',
@@ -26,9 +20,9 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
   png: 'image/png',
 };
 
-// 只在 mock 模式：把脚本生成的示例原件（fixtures/generated/）复制到 dist-mock/fixtures/，
-// 开发服务器下从同一目录直接提供。单文件插件只内联 HTML 引用的 JS/CSS，这些文件保持独立，
-// 快照里的相对 URL（fixtures/xxx.pdf）在 file:// 与本地服务两种托管方式下都能打开。
+// Mock mode only: copy the generated sample originals (@baox/fixtures) to dist-mock/fixtures/, and serve them from the
+// same directory under the dev server. The single-file plugin only inlines the JS/CSS the HTML references, so these files
+// stay separate, and the relative URLs in snapshots (fixtures/xxx.pdf) open under both file:// and the local server.
 function mockFixtures(): Plugin {
   let outDir = 'dist-mock';
   return {
@@ -51,14 +45,14 @@ function mockFixtures(): Plugin {
     },
     closeBundle() {
       if (!existsSync(FIXTURES_SOURCE)) {
-        this.warn(`没有找到夹具目录 ${FIXTURES_SOURCE}，请先运行 pnpm --filter @baox/web fixtures`);
+        this.warn(`Fixture directory ${FIXTURES_SOURCE} not found; run pnpm --filter @baox/fixtures generate first`);
         return;
       }
       cpSync(FIXTURES_SOURCE, resolve(packageRoot, outDir, 'fixtures'), { recursive: true });
       // 手工 QA 用的示例材料：11 份原件按业务文件名复制到 dist-mock/sample-materials/，整个文件夹可直接拖进上传区。
       const samplesDir = resolve(packageRoot, outDir, 'sample-materials');
       mkdirSync(samplesDir, { recursive: true });
-      for (const sample of readSampleMaterials()) copyFileSync(join(FIXTURES_SOURCE, sample.file), join(samplesDir, sample.fileName));
+      for (const sample of SAMPLE_MATERIALS) copyFileSync(join(FIXTURES_SOURCE, sample.file), join(samplesDir, sample.fileName));
     },
   };
 }

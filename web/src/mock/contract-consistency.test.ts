@@ -1,4 +1,4 @@
-// mock 与契约一致：夹具快照、mock 服务端的行为与 ?seed= 参数都要通过 @baox/contract 的 schema。纯 schema 测试在 packages/contract。
+// Mock/contract consistency: fixture snapshots, mock server behaviour and ?seed= options must all pass the @baox/contract schemas. Pure schema tests live in contract/.
 import { describe, expect, test } from 'vitest';
 import {
   ALLOCATION_ERRORS,

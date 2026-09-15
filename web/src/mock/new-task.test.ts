@@ -1,11 +1,10 @@
 // @vitest-environment node
-import { readFileSync } from 'node:fs';
+import { SAMPLE_MATERIALS as SAMPLES } from '@baox/fixtures';
 import { describe, expect, test, vi } from 'vitest';
 import { PROFILES } from './fixtures/inventory';
 import { createMockAdapter } from './mock-adapter';
 
-// fixtures/sample-materials.json 是 build:mock 复制示例材料用的对照表；它与 mock 识别档案必须一致。
-const SAMPLES = JSON.parse(readFileSync(new URL('../../fixtures/sample-materials.json', import.meta.url), 'utf8')) as Array<{ file: string; fileName: string }>;
+// The @baox/fixtures manifest drives the build:mock copy of sample materials; it must agree with the mock's recognition profiles.
 
 async function inventoryOf(files: string[]) {
   const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 1 });

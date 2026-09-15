@@ -1,4 +1,4 @@
-// @baox/contract：前端与本地应用服务之间的接口契约。类型一律由 zod schema 推导。
+// @baox/contract: the interface contract between the frontend and the local app server. Every type is inferred from a zod schema.
 export * from './primitives';
 export * from './stage';
 export * from './task-list';

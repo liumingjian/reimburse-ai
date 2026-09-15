@@ -4,7 +4,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractPdfText } from '../../../kernel/src/pdftext.mjs';
+import { extractPdfText } from '../../kernel/src/pdftext.mjs';
 import {
   AMAP_INVOICE,
   AMAP_ITINERARY,

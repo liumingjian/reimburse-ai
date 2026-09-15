@@ -1,9 +1,9 @@
 import { useEffect, useMemo, type ReactNode } from 'react';
 import { merge as mergeCarbonFlags } from '@carbon/feature-flags';
 import { FeatureFlags } from '@carbon/react';
+import { type AppAdapter, PROJECT_BOOK_COPY, startupComplete } from '@baox/contract';
 import { AppProvider, useTaskList } from './adapter/context';
 import { AppStore } from './adapter/store';
-import { type AppAdapter, PROJECT_BOOK_COPY, startupComplete } from '@baox/contract';
 import { VALIDATE_SNAPSHOTS } from './env';
 import { ProjectBookPage } from './pages/ProjectBookPage';
 import { SettingsPage } from './pages/SettingsPage';

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 夹具生成器：HTML 模板 → headless Chrome → fixtures/generated/ 下的示例 PDF（带中文文本层）、出租车票照片（JPG）与打印页图（PNG）。
-// 用法：pnpm --filter @baox/web fixtures      （生成并校验）
-//       node fixtures/scripts/generate.mjs       （只生成）
+// Usage: pnpm --filter @baox/fixtures generate   (generate, then verify)
+//        node fixtures/scripts/generate.mjs      (generate only)
 // 只在 Mac 上运行：需要 Google Chrome 与 sips（PNG 转 JPG）。可重复运行，产物文件集固定（见 verify.mjs 的清单）。
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';

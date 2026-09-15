@@ -16,7 +16,7 @@
   只引用 Carbon 的 spacing、theme、type token。尽量不改 `.cds--*` 的内部样式；确实要改时（如表格固定列、单元格里的按钮内边距）在规则旁写明原因。
 - 图标只用 `@carbon/icons-react`，不手绘，不混用第二个图标库。
 
-getdesign 原件（linear.app、ibm、airtable）仍在 `prototypes/design-md/`，只作溯源；Carbon 原样与套品牌的对照原型在分支 `proto-carbon-react`。
+getdesign 原件（linear.app、ibm、airtable）仍在 `docs/design/prototypes/design-md/`，只作溯源；Carbon 原样与套品牌的对照原型在分支 `proto-carbon-react`。
 
 ## Carbon 原样的部分
 
