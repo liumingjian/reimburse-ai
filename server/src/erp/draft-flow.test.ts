@@ -1,0 +1,238 @@
+// Origin: kernel/test/erp-draft-flow.test.mjs (translated to Vitest; inputs and expected outputs kept).
+// The kernel's `linesDigest` (selection.mjs) is `previewLinesDigest`; `approvalCovers` lives in the protocol.
+import { describe, expect, it } from 'vitest';
+import { fillApprovedPreview, formReadbackToken, matchReceiptRows, saveApprovedPreview } from './executor/draft-flow';
+import { buildErpDraftPreview, previewLinesDigest as linesDigest, routePlanOf } from './preview';
+import { approvalCovers, type ApprovedPreview } from './protocol';
+
+const identity = { account: 'luo.liu', tenant: 'tenant-a' };
+const projectNames = ['项目一完整名称', '项目二完整名称', '项目二完整名称', '项目三完整名称'];
+const projectCodes = ['39163', '38480', '38480', '37269'];
+const expense = [['FY010003', '长途交通'], ['FY008001', '本地市内交通'], ['FY008001', '本地市内交通'], ['FY010001', '住宿']] as const;
+const facts = [
+  ['m-rail', '26427000000640558021', 'SPD-rail', '703.00', '644.95', '58.05'],
+  ['m-ride-a', '26327000001570964156', 'SPD-ride-a', '51.63', '50.12', '1.51'],
+  ['m-ride-b', '26342000002661673906', 'SPD-ride-b', '18.80', '18.25', '0.55'],
+  ['m-hotel', '26349119423005877606', 'SPD-hotel', '3640.00', '3433.96', '206.04'],
+] as const;
+const invoiceTypes = ['普通发票', '普通发票', '普通发票', '增值税发票'];
+const events = facts.map(([materialId], index) => ({
+  eventId: `ev-${index + 1}`, voucherMaterialId: materialId,
+  kind: ['rail_eticket', 'passenger_transport', 'passenger_transport', 'vat_common'][index],
+}));
+const built = {
+  versionId: 'v-1', events,
+  lineItems: facts.map(([materialId, , , total], index) => ({
+    lineId: `ev-${index + 1}`, eventId: `ev-${index + 1}`, voucherMaterialId: materialId,
+    kind: events[index]!.kind,
+    date: ['2026-08-22', '2026-08-27', '2026-08-22', '2026-08-09'][index],
+    ...(index === 3 ? { endDate: '2026-08-22' } : {}),
+    city: index === 3 ? '广州' : index === 0 ? null : '广州',
+    route: index === 0 ? '合肥南 → 广州南' : index === 1 ? '番禺广场地铁站D口 → 傍西酒堂' : index === 2 ? '时代天逸 傍西酒堂' : null,
+    netAmount: index === 0 ? null : facts[index]![4],
+    taxAmount: index === 0 ? null : facts[index]![5], totalAmount: total,
+    category: index === 3 ? 'accommodation' : 'local_city_transport',
+    invoiceType: invoiceTypes[index], invoiceTypeSource: 'fixture_mapping',
+  })),
+};
+const lines = built.lineItems.map((line, index) => ({
+  ...line, projectCode: projectCodes[index], projectSource: 'erp_catalog_confirmed',
+  projectsFrom: 'project_book', projectName: projectNames[index],
+  expenseItemCode: expense[index]![0], expenseItemName: expense[index]![1],
+  invoiceType: invoiceTypes[index], invoiceTypeSource: 'fixture_mapping',
+  ...(index === 2 ? { origin: '时代天逸', destination: '傍西酒堂', routeSource: 'vision_candidate' } : {}),
+}));
+const projects = Object.fromEntries(projectCodes.map((code, index) => [code, { code, name: projectNames[index === 2 ? 1 : index], verdict: 'confirmed' }]));
+const catalog = { versionId: built.versionId, linesDigest: linesDigest(built), identity, projects };
+const expenseItems = Object.fromEntries(expense.map(([code, name]) => [code, { code, name, verdict: 'confirmed' }]));
+const task = { taskId: 'task-1', currentVersionId: built.versionId, identity, homeCity: '广州' };
+const selection = {
+  versionId: built.versionId, linesDigest: linesDigest(built), identity, homeCity: '广州',
+  purpose: '客户支持', projects: Object.fromEntries(lines.map((line) => [line.lineId, line.projectCode])),
+  projectSource: 'erp_catalog_confirmed', projectsFrom: 'project_book',
+};
+const receiptCheck = {
+  taskId: task.taskId, versionId: built.versionId,
+  checks: facts.map(([materialId, invoiceNumber, receiptNumber, gross]) => ({
+    materialId, identityKey: `einvoice-20:${invoiceNumber}`, ok: true, rows: [[receiptNumber, '', '', Number(gross)]],
+  })),
+};
+const receiptReadback = {
+  fresh: true, taskId: task.taskId, versionId: built.versionId, identity,
+  rows: facts.map(([voucherMaterialId, invoiceNumber, receiptNumber, gross, net, tax]) => ({
+    voucherMaterialId, identityKey: `einvoice-20:${invoiceNumber}`, invoiceNumber,
+    receiptNumber, grossAmount: gross, netAmount: net, taxAmount: tax, source: 'erp_receipt',
+  })),
+};
+const freshGate = {
+  status: 'matched', fresh: true, taskId: task.taskId, versionId: built.versionId, identity,
+  scope: { taskId: task.taskId, versionId: built.versionId, identity },
+};
+const input = () => ({ task, built, lines, selection, catalog, expenseItems, receiptCheck, freshGate, receiptReadback });
+
+const columns = (...labels: string[]) => labels.map((label) => ({ label }));
+const data = (values: Record<string, string>) => ({ kind: 'data' as const, values });
+const receiptGrid = () => ({ ok: true as const, columns: columns('收票单', '发票号码', '不含税金额', '税额', '价税合计'),
+  rows: facts.map(([materialId, invoiceNumber, receiptNumber, gross, net, tax]) => data({
+    收票单: receiptNumber, 发票号码: `${invoiceNumber.slice(0, 4)}************${invoiceNumber.slice(-4)}`,
+    不含税金额: net, 税额: tax, 价税合计: gross, materialId,
+  })) });
+const detailGrid = (rowCount = 1, railTax = '0.00') => ({ ok: true as const, columns: columns(
+  '收票单号', '项目', '费用项目', '发票类型', '开始日期', '结束日期', '住宿/出差地', '出发地', '目的地', '费用金额', '税额', '申请报销金额',
+), rows: Array.from({ length: rowCount }, (_, index) => data(index === 0 ? {
+  收票单号: 'SPD-rail', 费用金额: '703.00', 税额: railTax, 申请报销金额: '703.00', 发票类型: '普通发票', 开始日期: '2026/9/9', 结束日期: '2026/9/9',
+} : {})) });
+const readings = (detail: ReturnType<typeof detailGrid>, mode = 'new', billNo: string | null = null, taskMatch: { ok: boolean; reasons: string[] } | null = null) => ({
+  formMode: { readable: true, value: mode }, billNo: { readable: true, value: billNo },
+  receiptsGrid: receiptGrid(), detailGrid: detail, taskMatch,
+  receipts: { readable: true, totalCents: 441343, rowCount: 4 },
+  detail: { readable: true, totalCents: 441343, rowCount: detail.rows.length },
+});
+
+const makePreview = (): ApprovedPreview => {
+  const result = buildErpDraftPreview(input());
+  expect(result.ready, result.problems.map((p) => p.message).join('; ')).toBe(true);
+  return result.expectedPreview!;
+};
+
+const okOps = {
+  writeHeader: async () => ({ ok: true }),
+  writeCell: async () => ({ ok: true }),
+  selectOption: async () => ({ ok: true }),
+  leaveEdit: async () => ({ ok: true, stillEditing: false }),
+};
+
+describe('ERP draft flow (草稿填写与保存)', () => {
+  it('fills the railway net/tax from the fresh receipt, never splits routes on spaces, ends same-day lines on the start date', () => {
+    const preview = makePreview();
+    expect([preview.lines[0]!.netAmount, preview.lines[0]!.taxAmount, preview.lines[0]!.netAmountSource, preview.lines[0]!.taxAmountSource])
+      .toEqual(['644.95', '58.05', 'erp_receipt', 'erp_receipt']);
+    expect(preview.lines[1]!.endDate).toBe('2026-08-27');
+    expect(preview.lines[2]!.routePlan).toEqual({ origin: '时代天逸', destination: '傍西酒堂', source: 'vision_candidate' });
+    expect(preview.fieldPlan!.details[0]!.fields.some((field) => field.column === '出发地')).toBe(true);
+    expect(preview.fieldPlan!.details[2]!.fields.some((field) => field.column === '出发地')).toBe(true);
+  });
+
+  it('blocks on a missing fresh railway net/tax, invoice-type source, hotel checkout or route structure', () => {
+    const noAmounts = buildErpDraftPreview({ ...input(), receiptReadback: {
+      ...receiptReadback, rows: receiptReadback.rows.map((row, index) => (index === 0 ? { ...row, netAmount: null, taxAmount: null } : row)),
+    } });
+    expect(noAmounts.ready).toBe(false);
+    expect(noAmounts.problems.some((p) => p.code === 'receipt_readback_amount_missing')).toBe(true);
+
+    const noType = buildErpDraftPreview({ ...input(), lines: lines.map((line, index) => (index === 2 ? { ...line, invoiceType: null, invoiceTypeSource: null } : line)) });
+    expect(noType.ready).toBe(false);
+    expect(noType.problems.some((p) => p.code === 'invoice_type_missing')).toBe(true);
+
+    const noHotelCheckout = buildErpDraftPreview({ ...input(), lines: lines.map((line, index) => (index === 3 ? (({ endDate: _e, ...rest }) => rest)(line as typeof line & { endDate?: string }) : line)) });
+    expect(noHotelCheckout.ready).toBe(false);
+    expect(noHotelCheckout.problems.some((p) => p.code === 'end_date_missing')).toBe(true);
+
+    expect(routePlanOf({ kind: 'passenger_transport', route: '时代天逸 傍西酒堂' })).toBeNull();
+    const noRoute = buildErpDraftPreview({ ...input(), lines: lines.map((line, index) => (index === 2
+      ? (({ origin: _o, destination: _d, routeSource: _r, ...rest }) => ({ ...rest, route: '时代天逸 傍西酒堂' }))(line as typeof line & { origin?: string; destination?: string; routeSource?: string })
+      : line)) });
+    expect(noRoute.ready).toBe(false);
+    expect(noRoute.problems.some((p) => p.code === 'route_structure_missing')).toBe(true);
+  });
+
+  it('matches receipt rows by unique invoice and receipt number; an equal amount is no substitute', () => {
+    const preview = makePreview();
+    const wrong = { ...receiptGrid(), rows: receiptGrid().rows.map((row, index) => (index === 0 ? data({ ...row.values, 发票号码: '26327000001570964156' }) : row)) };
+    const result = matchReceiptRows(wrong, preview);
+    expect(result.ok).toBe(false);
+    expect(result.reasons.some((reason) => /唯一匹配/.test(reason))).toBe(true);
+  });
+
+  it('refuses an old-number form or wrong receipts in preflight, and never guesses a toolbar without an addRow adapter', async () => {
+    const preview = makePreview();
+    const approval = { digest: preview.previewDigest!, preview };
+    const old = await fillApprovedPreview({}, {
+      approvedPreview: preview, approval, freshGate,
+      readCurrent: async () => readings(detailGrid(), 'modify', 'FYBX-1', null),
+    });
+    expect(old.ok).toBe(false);
+    expect(old.phase).toBe('preflight');
+    expect(!old.ok && old.problems.some((p) => p.code === 'new_form_required')).toBe(true);
+
+    const current = readings(detailGrid(), 'new', null, null);
+    const noAdd = await fillApprovedPreview({}, { approvedPreview: preview, approval, freshGate, readCurrent: async () => current, ops: okOps });
+    expect(noAdd.ok).toBe(false);
+    expect(!noAdd.ok && noAdd.problems.some((p) => p.code === 'add_row_adapter_required')).toBe(true);
+  });
+
+  it('reuses the one railway row, adds the other three under control, and stops at the first failed field read-back', async () => {
+    const preview = makePreview();
+    const approval = { digest: preview.previewDigest!, preview };
+    let reads = 0;
+    const readCurrent = async (expected: ApprovedPreview | null) => {
+      reads += 1;
+      if (expected) return readings(detailGrid(4), 'new', null, { ok: true, reasons: [] });
+      return readings(detailGrid(Math.min(reads, 4), reads === 1 ? '58.05' : '0.00'), 'new', null, null);
+    };
+    const calls: unknown[][] = [];
+    const ops = {
+      ...okOps,
+      writeCell: async (_page: unknown, spec: { row: number; column: string; value: string }) => { calls.push(['cell', spec.row, spec.column, spec.value]); return { ok: true }; },
+      selectOption: async (_page: unknown, spec: { row: number; column: string; option: string }) => { calls.push(['option', spec.row, spec.column, spec.option]); return { ok: true }; },
+    };
+    const added: string[] = [];
+    const filled = await fillApprovedPreview({}, {
+      approvedPreview: preview, approval, freshGate, readCurrent, ops,
+      addRow: async (_page, detail) => { added.push(detail.line.lineId); return { ok: true }; },
+    });
+    expect(filled.ok, !filled.ok ? filled.problems.map((p) => p.message).join('; ') : '').toBe(true);
+    expect(added).toEqual(['ev-2', 'ev-3', 'ev-4']);
+    expect(filled.ok && filled.rowsWritten.length).toBe(4);
+    expect(calls.some((call) => call[0] === 'cell' && call[2] === '税额' && call[3] === '0.00')).toBe(true);
+
+    let stopped = false;
+    const stoppedResult = await fillApprovedPreview({}, {
+      approvedPreview: preview, approval, freshGate,
+      readCurrent: async (expected) => (expected ? readings(detailGrid(4), 'new', null, { ok: true, reasons: [] }) : readings(detailGrid(1), 'new', null, null)),
+      ops: { ...ops, writeCell: async () => { stopped = true; return { ok: false, reason: '回读不一致' }; } },
+      addRow: async () => ({ ok: true }),
+    });
+    expect(stoppedResult.ok).toBe(false);
+    expect(stopped).toBe(true);
+    expect(!stoppedResult.ok && stoppedResult.problems.some((p) => p.code === 'field_write_failed' || p.code === 'tax_clear_failed')).toBe(true);
+  });
+
+  it('saves once only when the same form passes strict read-back; a failed save is not retried', async () => {
+    const preview = makePreview();
+    const approval = { digest: preview.previewDigest!, preview };
+    const before = readings(detailGrid(4), 'new', null, { ok: true, reasons: [] });
+    const fillResult = { ok: true, previewDigest: preview.previewDigest, formToken: formReadbackToken(before) };
+    let saves = 0;
+    let afterReads = 0;
+    const saved = await saveApprovedPreview({}, {
+      approvedPreview: preview, approval, freshGate, fillResult,
+      readCurrent: async () => {
+        afterReads += 1;
+        return afterReads === 1 ? before : readings(detailGrid(4), 'modify', 'FYBX-202609-1', { ok: true, reasons: [] });
+      },
+      save: async () => { saves += 1; },
+    });
+    expect(saved.ok).toBe(true);
+    expect(saved.status).toBe('saved');
+    expect(saves).toBe(1);
+
+    let failedSaves = 0;
+    const failed = await saveApprovedPreview({}, {
+      approvedPreview: preview, approval, freshGate, fillResult,
+      readCurrent: async () => before,
+      save: async () => { failedSaves += 1; throw Object.assign(new Error('save timeout'), { code: 'EGO_TIMEOUT' }); },
+    });
+    expect(failed.ok).toBe(false);
+    expect(failed.status).toBe('unknown');
+    expect(failed.saveAttempts).toBe(1);
+    expect(failedSaves).toBe(1);
+  });
+
+  it('lets an approval cover only the complete final preview; editing the railway tax voids it', () => {
+    const preview = makePreview();
+    expect(approvalCovers({ digest: preview.previewDigest!, preview }, preview)).toBe(true);
+    const changed = { ...preview, lines: preview.lines.map((line, index) => (index === 0 ? { ...line, taxAmount: '58.04' } : line)) };
+    expect(approvalCovers({ digest: preview.previewDigest!, preview }, changed)).toBe(false);
+  });
+});

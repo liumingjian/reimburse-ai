@@ -9,12 +9,14 @@
     "build": "pnpm -r build",
     "dev": "pnpm --parallel --filter @baox/server --filter @baox/web dev",
     "dev:mock": "pnpm --filter @baox/web dev:mock",
-    "test": "pnpm -r test",
+    "lint": "oxlint -c .oxlintrc.json --deny-warnings server/src",
+    "test": "pnpm lint && pnpm -r test",
     "test:e2e": "pnpm --filter @baox/server --filter @baox/web build && pnpm --filter @baox/web build:mock && pnpm --filter @baox/web exec playwright test",
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
+    "oxlint": "1.83.0",
     "vitest": "3.2.7"
   }
 }
