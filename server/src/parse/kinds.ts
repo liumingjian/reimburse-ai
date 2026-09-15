@@ -224,3 +224,16 @@ export const KINDS: Readonly<Record<MaterialKind, KindSpec>> = {
 export function slotOf(kind: MaterialKind, key: string): Slot | undefined {
   return KINDS[kind].slots.find((slot) => slot.key === key);
 }
+
+// Per-leg fields of an itinerary, keyed `segments[i].<field>` with a 0-based `i` (#184).
+const SEGMENT_FIELD_LABELS: Readonly<Record<string, string>> = { date: '日期', time: '上车时间', carType: '车型', city: '城市', origin: '起点', destination: '终点', amount: '金额' };
+const SEGMENT_KEY = /^segments\[(\d+)\]\.(\w+)$/;
+
+// The human label of a candidate key: the slot label, or 「第 N 段起点」 for a leg field; the raw key only as a last resort.
+export function fieldLabel(kind: MaterialKind, key: string): string {
+  const slot = slotOf(kind, key);
+  if (slot) return slot.label;
+  const leg = SEGMENT_KEY.exec(key);
+  if (leg?.[1] && leg[2]) return `第 ${Number(leg[1]) + 1} 段${SEGMENT_FIELD_LABELS[leg[2]] ?? leg[2]}`;
+  return key;
+}

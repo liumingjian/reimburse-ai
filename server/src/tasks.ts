@@ -2,14 +2,17 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
   ABANDON_TASK_COPY,
+  CONFIRM_REVIEW_ERRORS,
   CREATE_TASK_ERRORS,
   HOME_CITY_ERRORS,
   PENDING_ANSWER_ERRORS,
   PENDING_CHOICE_KEY,
   PROJECT_ASSIGNMENT_ERRORS,
+  REOPEN_UPLOAD_ERRORS,
   fieldAnswer,
   type ActionError,
   type AssignProjectLinesInput,
+  type Confirmation,
   type Line,
   type PendingAnswer,
   type ProjectAssignmentInput,
@@ -36,6 +39,7 @@ import { bookOptions, createBookService } from './books';
 import { unavailableCatalog } from './catalog/project-catalog';
 import { COMPANY_RULES, pinnedCompanyRules, putRuleSet, validHomeCity, type CompanyRules } from './rules/company-rules';
 import { rememberedHomeCity, rememberHomeCity } from './settings';
+import { confirmationDigest, confirmationStatus, confirmationView, type ConfirmationDigest, type ConfirmationFact } from './confirmation';
 
 // 报销任务 (reimbursement task) facts, the actions that append them, and the snapshot projected from them.
 // Every accepted change goes through `mutate`: stepToken check, refusal, revision bump, then `onChange` (SSE).
@@ -98,11 +102,16 @@ type Loaded = {
   rules: CompanyRules;
   // 项目归属 once the inventory is clean; null before.
   assignment: Assignment | null;
+  // The lines as listed (with project and expense item), the digest a confirmation would be made over (null while
+  // there is nothing to confirm), and the latest stored confirmation (#189).
+  lines: Line[];
+  digest: ConfirmationDigest | null;
+  confirmed: ConfirmationFact | null;
 };
 
-// Steps under which the assignment draft and the submission may change: before confirmation and after it, until the
-// first ERP action attempt (#191 adds choose_action and the ERP-attempt freeze).
-const ASSIGN_STEPS: ReadonlySet<string> = new Set(['assign_projects', 'confirm_review']);
+// Steps under which the assignment draft and the submission may change: before confirmation and after it (a change
+// invalidates the confirmation), until the first ERP action attempt (#191 adds the ERP-attempt freeze).
+const ASSIGN_STEPS: ReadonlySet<string> = new Set(['assign_projects', 'confirm_review', 'choose_action']);
 
 // The next material the parser job should parse. `preset` is an outcome decided without parsing (original missing).
 export type ParseWork = { runId: string; input: ParseInput; preset: ParseOutcome | null };
@@ -155,6 +164,7 @@ async function loadTask(tx: Tx, task: TaskTable, materials?: readonly MaterialRo
     lastReopenRevision: reopen?.revision ?? null,
     parse: null,
     project: null,
+    confirmation: 'unconfirmed',
   };
   const homeCity = await currentHomeCity(tx, task);
   const rules = await pinnedCompanyRules(tx, task.task_id);
@@ -186,7 +196,17 @@ async function loadTask(tx: Tx, task: TaskTable, materials?: readonly MaterialRo
     assignment = assignmentOf(view.lines, await assignmentFacts(tx, task.task_id), options, homeCity, true);
     facts.project = { lineCount: view.lines.length, selectableCount: options.length, workingCount: assignment.view.working.length, submitted: assignment.submitted !== null };
   }
-  return { facts, view, runId: current?.run_id ?? null, parsed: new Set(results.map((result) => result.material_id)), homeCity, rules, assignment };
+  const lines = enrichLines(view.lines, rules, assignment);
+  const submitted = assignment?.submitted ?? null;
+  const digest = submitted ? confirmationDigest({ lines, purpose: submitted.purpose, selection: submitted.selection, rules, catalogHash: submitted.catalogHash, homeCity }) : null;
+  const confirmed = await latestConfirmation(tx, task.task_id);
+  facts.confirmation = confirmationStatus(digest, confirmed, facts.lastReopenRevision);
+  return { facts, view, runId: current?.run_id ?? null, parsed: new Set(results.map((result) => result.material_id)), homeCity, rules, assignment, lines, digest, confirmed };
+}
+
+async function latestConfirmation(tx: Tx, taskId: string): Promise<ConfirmationFact | null> {
+  const row = await tx.selectFrom('review_confirmation').selectAll().where('task_id', '=', taskId).orderBy('revision', 'desc').executeTakeFirst();
+  return row ? { digest: row.digest, detail: row.detail_digest, project: row.project_digest, confirmedAt: row.confirmed_at, revision: row.revision } : null;
 }
 
 // Every other task that still holds invoices (open, or handed off after touching ERP), in any account.
@@ -224,8 +244,9 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     if (blockers.length === 0) return loaded;
     facts.parse = { ...facts.parse, openPendingItems: 0, blockers };
     facts.project = null;
+    facts.confirmation = confirmationStatus(null, loaded.confirmed, facts.lastReopenRevision);
     const summary = view.inventory.summary ? { ...view.inventory.summary, openPendingItemCount: 0 } : null;
-    return { ...loaded, facts, assignment: null, view: { ...view, pendingItems: [], events: [], lines: [], openPendingItems: 0, inventory: { ...view.inventory, summary } } };
+    return { ...loaded, facts, assignment: null, lines: [], digest: null, view: { ...view, pendingItems: [], events: [], lines: [], openPendingItems: 0, inventory: { ...view.inventory, summary } } };
   }
 
   async function snapshot(taskId: string): Promise<TaskSnapshot> {
@@ -357,10 +378,27 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     },
 
     // Back to upload after inventory. Uploading or re-starting inventory then forms the next result.
+    // After a confirmation this voids it for good (`confirmationStatus`); refused once ERP was touched.
     async reopenUpload(taskId: string, token: string): Promise<TaskSnapshot> {
       return mutate(taskId, token, async ({ tx, facts, at, revision }) => {
         if (!inventoried(facts)) return { code: 'not_ready', message: ACTION_COPY.notReopenable };
+        const attempt = await tx.selectFrom('erp_attempt').select('attempt_id').where('task_id', '=', taskId).executeTakeFirst();
+        if (attempt) return { code: 'erp_started', message: REOPEN_UPLOAD_ERRORS.erpStarted };
         await tx.insertInto('upload_reopen').values({ reopen_id: randomUUID(), task_id: taskId, account_id: accountId, revision, reopened_at: at }).execute();
+      });
+    },
+
+    // 整单明细确认: stores `{digest, confirmedAt}` for exactly the digest the user saw; any other digest is refused.
+    async confirmReview(taskId: string, digest: string, token: string): Promise<TaskSnapshot> {
+      return mutate(taskId, token, async ({ tx, facts, loaded, at, revision }) => {
+        if (project(facts).step.kind !== 'confirm_review' || !loaded.digest) return { code: 'not_ready', message: CONFIRM_REVIEW_ERRORS.notReady };
+        if (loaded.lines.length === 0) return { code: 'no_lines', message: CONFIRM_REVIEW_ERRORS.noLines };
+        if (digest !== loaded.digest.digest) return { code: 'digest_mismatch', message: CONFIRM_REVIEW_ERRORS.digestMismatch };
+        const { digest: current, detail, project: projectDigest } = loaded.digest;
+        await tx
+          .insertInto('review_confirmation')
+          .values({ confirmation_id: randomUUID(), task_id: taskId, account_id: accountId, digest: current, detail_digest: detail, project_digest: projectDigest, revision, confirmed_at: at })
+          .execute();
       });
     },
 
@@ -627,6 +665,7 @@ async function assignmentFacts(tx: Tx, taskId: string): Promise<AssignmentFact[]
       purpose: row.purpose,
       selection: JSON.parse(row.selection) as Record<string, PinnedProject>,
       linesDigest: row.lines_digest,
+      catalogHash: row.catalog_hash,
       submittedAt: row.created_at,
     })),
   ];
@@ -642,7 +681,7 @@ function enrichLines(lines: readonly Line[], rules: CompanyRules, assignment: As
   });
 }
 
-function projectSnapshot(task: TaskTable, { facts, view, homeCity, rules, assignment }: Loaded, batches: readonly UploadBatchTable[], rejections: readonly UploadRejectionTable[], materials: readonly MaterialRow[]): TaskSnapshot {
+function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, lines, digest, confirmed }: Loaded, batches: readonly UploadBatchTable[], rejections: readonly UploadRejectionTable[], materials: readonly MaterialRow[]): TaskSnapshot {
   const { stage, step, blockers } = project(facts);
   // A batch that added a material formed the next inventory version.
   const versionOf = new Map<string, string>();
@@ -663,13 +702,14 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, rules, assign
     events: view.events,
     pendingItems: view.pendingItems,
     blockers,
-    lines: enrichLines(view.lines, rules, assignment),
-    confirmation: { status: 'unconfirmed', confirmedAt: null, digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null, notice: null },
+    lines,
+    confirmation: confirmationView(digest, confirmed, facts.lastReopenRevision, lines) satisfies Confirmation,
     paymentScreenshots: [],
     printSheet: { status: 'not_generated', fileName: null, url: null, pages: [], notices: [] },
     projectAssignment: assignment?.view ?? { status: 'not_started', purpose: null, homeCity, assignments: [], working: [], usage: [], projects: [], submittedAt: null },
     catalog: { status: 'pending', problems: [] },
-    preparation: { status: 'pending', problems: [], packageFiles: [] },
+    // The catalog check moved into the ERP job (ADR-0014); nothing is prepared before the confirmation any more.
+    preparation: { status: digest ? 'ready' : 'pending', problems: [], packageFiles: [] },
     erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null },
     readback: { status: 'none', rows: [], summary: null, localTotal: null, erpTotal: null },
     reconcile: { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [] },

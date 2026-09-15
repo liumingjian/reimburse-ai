@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { project, type TaskFacts } from './projection';
 
 // The pure projection (ADR-0014): every stage reachable so far, from facts alone.
-const base: TaskFacts = { taskId: 't', revision: 7, lifecycle: 'open', versionNo: 0, includedMaterialCount: 0, lastRun: null, lastReopenRevision: null, parse: null, project: null };
+const base: TaskFacts = { taskId: 't', revision: 7, lifecycle: 'open', versionNo: 0, includedMaterialCount: 0, lastRun: null, lastReopenRevision: null, parse: null, project: null, confirmation: 'unconfirmed' };
 const run = { versionNo: 1, includedMaterialCount: 2, lastRun: { versionNo: 1, revision: 5 } };
 const facts = (patch: Partial<TaskFacts>): TaskFacts => ({ ...base, ...patch });
 

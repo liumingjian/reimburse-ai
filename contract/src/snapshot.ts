@@ -395,6 +395,8 @@ export const CONFIRMATION_STATUSES = ['unconfirmed', 'confirmed', 'invalidated']
 // 失效提示由服务端成句；这些是标准文案，服务端与 mock 共用。
 export const REVIEW_INVALIDATED_NOTICE = '材料已变更，之前的整单明细确认与已生成的打印稿作废。请重新核对后再确认。';
 export const PROJECT_CHANGED_NOTICE = '项目归属已变更，之前的整单明细确认失效。请重新核对后再确认。';
+// 明细内容（字段修改、常驻城市、公司规则）变了，材料没变。
+export const DETAIL_CHANGED_NOTICE = '整单明细已变更，之前的整单明细确认与已生成的打印稿作废。请重新核对后再确认。';
 
 export const ConfirmationSchema = z.object({
   status: z.enum(CONFIRMATION_STATUSES),

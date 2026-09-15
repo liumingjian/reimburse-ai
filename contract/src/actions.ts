@@ -136,6 +136,7 @@ export function normalizePendingAnswer(item: Pick<PendingItem, 'kind' | 'fields'
 // 确认整单明细：动作回传快照里的 confirmation.digest 与 stepToken，服务端据此判断用户点头的是不是这一份。
 export const CONFIRM_REVIEW_ERRORS = {
   digestMismatch: '整单明细已更新，请重新核对后再确认。',
+  notReady: '现在不需要确认整单明细：还没有提交项目归属，或已经确认过。',
   noLines: '还没有明细，不能确认。',
 } as const;
 

@@ -24,6 +24,8 @@ export type TaskFacts = {
   // 项目归属 (#188) once the inventory is clean: candidate lines, selectable projects in the books, lines in the working
   // draft, and whether a submission still stands on the current lines. null before that.
   project: { lineCount: number; selectableCount: number; workingCount: number; submitted: boolean } | null;
+  // 整单明细确认 (#189): derived by digest comparison (`confirmation.ts`); only `confirmed` moves past review.
+  confirmation: 'unconfirmed' | 'confirmed' | 'invalidated';
 };
 
 export type Projection = { stage: TaskStage; step: Step; blockers: Blocker[] };
@@ -60,8 +62,8 @@ export function project(facts: TaskFacts): Projection {
     const project = facts.project;
     // A clean inventory without any candidate line has nothing to assign.
     if (!project || project.lineCount === 0) return at('inventory', 'none');
-    // #189 owns what follows the submission (confirm-review); reassigning stays open under confirm_review.
-    if (project.submitted) return at('review', 'confirm_review');
+    // Reassigning stays open under confirm_review and choose_action, and invalidates a confirmation.
+    if (project.submitted) return facts.confirmation === 'confirmed' ? at('actions', 'choose_action') : at('review', 'confirm_review');
     // Kernel project_book_empty: nothing selectable and nothing drafted yet → maintain the book first.
     if (project.selectableCount === 0 && project.workingCount === 0) return at('project', 'maintain_project_book');
     return at('project', 'assign_projects');

@@ -205,7 +205,19 @@ export interface ProjectSubmissionTable {
   created_at: string;
 }
 
+export interface ReviewConfirmationTable {
+  confirmation_id: string;
+  task_id: string;
+  account_id: string;
+  digest: string;
+  detail_digest: string;
+  project_digest: string;
+  revision: number;
+  confirmed_at: string;
+}
+
 export interface Schema {
+  review_confirmation: ReviewConfirmationTable;
   rule_set: RuleSetTable;
   task_rule_pin: TaskRulePinTable;
   home_city_setting: HomeCitySettingTable;

@@ -10,7 +10,7 @@ import type { BookOption } from './books';
 export type PinnedProject = BookOption;
 
 export type AssignFact = { kind: 'assign'; revision: number; lineIds: readonly string[]; project: PinnedProject; onlyUnassigned: boolean };
-export type SubmitFact = { kind: 'submit'; revision: number; purpose: string; selection: Readonly<Record<string, PinnedProject>>; linesDigest: string; submittedAt: string };
+export type SubmitFact = { kind: 'submit'; revision: number; purpose: string; selection: Readonly<Record<string, PinnedProject>>; linesDigest: string; catalogHash: string; submittedAt: string };
 export type AssignmentFact = AssignFact | SubmitFact;
 
 // Kernel linesDigest: what a project choice is made for. Excluding, re-allocating or replacing a voucher changes it.
