@@ -1,0 +1,145 @@
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { extname, join, relative, sep } from 'node:path';
+import type { ParseOutcome } from '../parse/dispatch';
+import type { ParseInput } from '../parse/material';
+
+// Slice 16 (#196): parser quality gates on the private sample corpus, which lives only on the maintainer's mac
+// (`BAOX_PRIVATE_CORPUS`). Replaces #14's model-quality metrics for the rule parsers (ADR-0017).
+//
+// Corpus layout under the root:
+//   <kind>/<layout>/<file>.(pdf|jpg|jpeg|png)   expected to be recognised by that layout
+//   <kind>/<layout>/<file>.expected.json       optional `{ "<slot key>": "<value>" }` for field accuracy
+//   unrecognised/<file>                         expected to match no layout
+//
+// The report is aggregate only: layout ids, media, slot keys and counts. It never contains a file name, a path or a
+// field value, so it is safe to paste anywhere (pinned by `private-gate.test.ts`).
+
+export type Medium = 'pdf' | 'image';
+export type Threshold = { recognition: number; field: number };
+
+// Minimum share per layout and medium. Derivation (#147 OCR parity spike, recorded in the #196 PR):
+// - pdf: text-layer extraction matched the kernel on every fixture and every private PDF, amounts identical, and QR
+//   agreed with the text layer 3/3. The layouts are deterministic rules over exact text, so any miss is a rule bug: 100%.
+// - image: OCR had key fields identical to Python RapidOCR 13/13 and perspective kept 2/2 fields, but only on generated
+//   taxi photos. OCR reads are not exact, so the floor is #14's carried field-level gate: 98%.
+export const THRESHOLDS: Readonly<Record<Medium, Threshold>> = {
+  pdf: { recognition: 1, field: 1 },
+  image: { recognition: 0.98, field: 0.98 },
+};
+
+export type CorpusParser = (input: ParseInput) => Promise<ParseOutcome>;
+export type GateOptions = { parse?: CorpusParser; out?: (line: string) => void; thresholds?: Readonly<Record<Medium, Threshold>> };
+
+const MEDIA: Readonly<Record<string, Medium>> = { '.pdf': 'pdf', '.jpg': 'image', '.jpeg': 'image', '.png': 'image' };
+
+function* files(dir: string): Generator<string> {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) yield* files(path);
+    else if (MEDIA[extname(entry.name).toLowerCase()]) yield path;
+  }
+}
+
+type Tally = { hit: number; total: number };
+type Group = { files: number; recognised: number; otherLayout: number; unrecognised: number; ambiguous: number; failed: number; fields: Map<string, Tally> };
+const emptyGroup = (): Group => ({ files: 0, recognised: 0, otherLayout: 0, unrecognised: 0, ambiguous: 0, failed: 0, fields: new Map() });
+
+// A field is right when the layout produced it (directly or by a derivation) and every such candidate equals the
+// expected value: a conflicting second candidate is not a correct read.
+function fieldRight(outcome: Extract<ParseOutcome, { outcome: 'recognised' }>, key: string, expected: string): boolean {
+  const primary = `rule:${outcome.kind}/${outcome.layout}`;
+  const mine = outcome.candidates.filter((c) => c.key === key && (c.source === primary || c.source.startsWith(`${primary}.`)));
+  return mine.length > 0 && mine.every((c) => c.value === expected);
+}
+
+async function evaluate(root: string, parse: CorpusParser) {
+  const groups = new Map<string, Group>();
+  let ignored = 0;
+  let unreadableExpectations = 0;
+  for (const path of files(root)) {
+    const parts = relative(root, path).split(sep);
+    const medium = MEDIA[extname(path).toLowerCase()] ?? 'pdf';
+    const layoutId = parts[0] === 'unrecognised' ? 'unrecognised' : parts.length >= 3 ? `${parts[0]}/${parts[1]}` : null;
+    if (!layoutId) {
+      ignored += 1;
+      continue;
+    }
+    const id = `${layoutId}\t${medium}`;
+    const group = groups.get(id) ?? emptyGroup();
+    groups.set(id, group);
+    group.files += 1;
+    // The file name goes to the parser (some layouts may look at it) but never into the report.
+    const outcome = await parse({ materialId: 'private', fileName: parts[parts.length - 1] ?? '', mediaType: medium, bytes: new Uint8Array(readFileSync(path)) });
+    if (outcome.outcome === 'recognised') {
+      if (`${outcome.kind}/${outcome.layout}` !== layoutId) {
+        group.otherLayout += 1;
+        continue;
+      }
+      group.recognised += 1;
+      const sidecar = `${path}.expected.json`;
+      if (!existsSync(sidecar)) continue;
+      let expected: Record<string, string>;
+      try {
+        expected = JSON.parse(readFileSync(sidecar, 'utf8')) as Record<string, string>;
+      } catch {
+        unreadableExpectations += 1;
+        continue;
+      }
+      for (const [key, value] of Object.entries(expected)) {
+        const tally = group.fields.get(key) ?? { hit: 0, total: 0 };
+        group.fields.set(key, tally);
+        tally.total += 1;
+        if (fieldRight(outcome, key, String(value))) tally.hit += 1;
+      }
+    } else if (outcome.outcome === 'unrecognised') {
+      if (layoutId === 'unrecognised') group.recognised += 1;
+      else group.unrecognised += 1;
+    } else if (outcome.outcome === 'ambiguous') group.ambiguous += 1;
+    else group.failed += 1;
+  }
+  return { groups, ignored, unreadableExpectations };
+}
+
+const pct = (share: number) => `${(share * 100).toFixed(1)}%`;
+
+// Returns the exit code: 0 when every row meets its threshold (or the corpus is not configured), 1 otherwise.
+export async function runPrivateGate(root: string | undefined, options: GateOptions = {}): Promise<number> {
+  const out = options.out ?? ((line: string) => console.log(line));
+  const thresholds = options.thresholds ?? THRESHOLDS;
+  if (!root) {
+    out('test:private skipped: BAOX_PRIVATE_CORPUS is not set.');
+    return 0;
+  }
+  if (!existsSync(root) || !statSync(root).isDirectory()) {
+    out('test:private: BAOX_PRIVATE_CORPUS is not a directory.');
+    return 1;
+  }
+  const parse = options.parse ?? (await import('../parse/material')).parseMaterial;
+  const { groups, ignored, unreadableExpectations } = await evaluate(root, parse);
+
+  let failures = 0;
+  const row = (id: string, field: string, tally: Tally, floor: number) => {
+    const share = tally.hit / tally.total;
+    const ok = share >= floor;
+    if (!ok) failures += 1;
+    out([id, field, `${tally.hit}/${tally.total}`, pct(share), `>= ${pct(floor)}`, ok ? 'ok' : 'FAIL'].join('\t'));
+  };
+
+  out(['layout', 'medium', 'field', 'right', 'accuracy', 'threshold', 'verdict'].join('\t'));
+  for (const [id, group] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    const floor = thresholds[id.split('\t')[1] as Medium];
+    row(id, '(recognition)', { hit: group.recognised, total: group.files }, floor.recognition);
+    for (const [key, tally] of [...group.fields.entries()].sort(([a], [b]) => a.localeCompare(b))) row(id, key, tally, floor.field);
+    const misses = { 'other layout': group.otherLayout, unrecognised: group.unrecognised, ambiguous: group.ambiguous, failed: group.failed };
+    const listed = Object.entries(misses).filter(([, n]) => n > 0);
+    if (listed.length > 0) out(`  misses: ${listed.map(([what, n]) => `${what} ${n}`).join(', ')}`);
+  }
+  if (groups.size === 0) out('no samples found under <kind>/<layout>/ or unrecognised/');
+  if (ignored > 0) out(`ignored ${ignored} file(s) outside <kind>/<layout>/ or unrecognised/`);
+  if (unreadableExpectations > 0) {
+    failures += 1;
+    out(`FAIL: ${unreadableExpectations} expectation file(s) are not valid JSON`);
+  }
+  out(failures === 0 ? 'test:private: all gates met' : `test:private: ${failures} gate(s) below threshold`);
+  return failures === 0 ? 0 : 1;
+}

@@ -69,4 +69,5 @@ With no model in the loop, rule parsers and the user are the only producers of å
   - `taxi_receipt`: m09, m10;
   - unrecognised: m06, m11.
 
-  Private samples run through `test:private`. Accuracy gates per layout remain open on the map.
+  Private samples run through `test:private`, which gates per layout, medium and field (#196): text-layer PDFs must
+  be 100% recognised and 100% right per field; OCR images at least 98% (`server/src/quality/private-gate.ts`).
