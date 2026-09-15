@@ -14,7 +14,7 @@ await build({
   platform: 'node',
   target: 'node24',
   format: 'esm',
-  external: ['better-sqlite3', 'pdfjs-dist', 'unpdf', 'zxing-wasm', 'onnxruntime-node', 'sharp', '@techstark/opencv-js'],
+  external: ['better-sqlite3', 'pdfjs-dist', 'unpdf', 'zxing-wasm', 'onnxruntime-node', 'sharp', '@techstark/opencv-js', '@napi-rs/canvas'],
   banner: { js: "import { createRequire as __baoxCreateRequire } from 'node:module'; const require = __baoxCreateRequire(import.meta.url);" },
   logLevel: 'warning',
 });

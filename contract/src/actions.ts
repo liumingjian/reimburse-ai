@@ -248,6 +248,8 @@ export const PRINT_ACTION_ERRORS = {
   slotEmpty: '这半页没有放置材料。',
   notCroppable: '这份材料不支持四角裁剪。',
   invalidCorners: '四个角点须在原图范围内，且按左上、右上、右下、左下的顺序围成一个区域。',
+  // 生成前逐份核对原件哈希：磁盘上的原件与上传时不一致，就不生成（服务端）。
+  blobMismatch: '有一份原件与上传时的内容不一致，打印稿没有生成。请排除这份材料或重新上传后再试。',
 } as const;
 
 // 排除材料（exclude-material，带 stepToken），服务端只在三种情形下接受：

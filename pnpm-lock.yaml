@@ -47,12 +47,18 @@ importers:
       '@baox/contract':
         specifier: workspace:*
         version: link:../contract
+      '@cantoo/pdf-lib':
+        specifier: 2.9.2
+        version: 2.9.2(html-entities@2.6.0)
       '@gutenye/ocr-models':
         specifier: 1.4.2
         version: 1.4.2
       '@hono/node-server':
         specifier: 2.1.1
         version: 2.1.1(hono@4.13.8)
+      '@napi-rs/canvas':
+        specifier: 1.0.9
+        version: 1.0.9
       '@techstark/opencv-js':
         specifier: 4.12.0-release.1
         version: 4.12.0-release.1
@@ -87,9 +93,6 @@ importers:
       '@baox/fixtures':
         specifier: workspace:*
         version: link:../fixtures
-      '@cantoo/pdf-lib':
-        specifier: 2.9.2
-        version: 2.9.2(html-entities@2.6.0)
       '@types/better-sqlite3':
         specifier: 9.6.0
         version: 9.6.0
@@ -2656,7 +2659,6 @@ snapshots:
       '@napi-rs/canvas-linux-x64-musl': 1.0.9
       '@napi-rs/canvas-win32-arm64-msvc': 1.0.9
       '@napi-rs/canvas-win32-x64-msvc': 1.0.9
-    optional: true
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true

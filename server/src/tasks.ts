@@ -15,7 +15,9 @@ import {
   type ReconcileBucket,
   type AssignProjectLinesInput,
   type Confirmation,
+  type Corners,
   type Line,
+  type PlacementSlot,
   type PendingAnswer,
   type ProjectAssignmentInput,
   type TaskList,
@@ -43,6 +45,9 @@ import { unavailableCatalog } from './catalog/project-catalog';
 import { COMPANY_RULES, pinnedCompanyRules, putRuleSet, validHomeCity, type CompanyRules } from './rules/company-rules';
 import { rememberedHomeCity, rememberHomeCity } from './settings';
 import { confirmationDigest, confirmationStatus, confirmationView, type ConfirmationDigest, type ConfirmationFact } from './confirmation';
+import { loadPrintFacts, printFileShas, printView, sheetState, type PrintFacts } from './print/facts';
+import * as printActions from './print/service';
+import { PrintRefusal, type PrintCommit, type PrintState } from './print/service';
 
 // 报销任务 (reimbursement task) facts, the actions that append them, and the snapshot projected from them.
 // Every accepted change goes through `mutate`: stepToken check, refusal, revision bump, then `onChange` (SSE).
@@ -112,6 +117,8 @@ type Loaded = {
   lines: Line[];
   digest: ConfirmationDigest | null;
   confirmed: ConfirmationFact | null;
+  // 打印稿 (#190): settings, payment screenshots and the latest composed sheet.
+  print: PrintFacts;
 };
 
 // Steps under which the assignment draft and the submission may change: before confirmation and after it (a change
@@ -209,7 +216,8 @@ async function loadTask(tx: Tx, task: TaskTable, materials?: readonly MaterialRo
   const digest = submitted ? confirmationDigest({ lines, purpose: submitted.purpose, selection: submitted.selection, selectable: new Set(options.map((option) => `${option.source}:${option.number}`)), rules, catalogHash: submitted.catalogHash, homeCity }) : null;
   const confirmed = await latestConfirmation(tx, task.task_id);
   facts.confirmation = confirmationStatus(digest, confirmed, facts.lastReopenRevision);
-  return { facts, view, runId: current?.run_id ?? null, parsed: new Set(results.map((result) => result.material_id)), homeCity, rules, assignment, legacy, lines, digest, confirmed };
+  const print = await loadPrintFacts(tx, task.task_id);
+  return { facts, view, runId: current?.run_id ?? null, parsed: new Set(results.map((result) => result.material_id)), homeCity, rules, assignment, legacy, lines, digest, confirmed, print };
 }
 
 async function latestConfirmation(tx: Tx, taskId: string): Promise<ConfirmationFact | null> {
@@ -289,6 +297,39 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     if (outcome.kind === 'refused') throw new ActionRefusedError({ code: outcome.code, message: outcome.message }, fresh);
     onChange(fresh);
     return fresh;
+  }
+
+  // A 去打印 action. Print actions carry no stepToken from the page (contract); the server composes on the revision it
+  // read, outside any transaction, and commits through `mutate` with that revision's token: anything accepted in
+  // between turns the commit into a 409 stale_step with the fresh snapshot.
+  async function printChange(taskId: string, prepare: (state: PrintState) => Promise<PrintCommit | null>): Promise<TaskSnapshot> {
+    const task = await taskRow(db, taskId);
+    if (task.lifecycle !== 'open') throw new ActionRefusedError({ code: 'task_closed', message: ACTION_COPY.taskClosed }, await snapshot(taskId));
+    const rows = await materialRows(db, taskId);
+    const loaded = await load(db, task, rows);
+    const state: PrintState = {
+      taskId,
+      accountId,
+      dataDir,
+      confirmation: loaded.facts.confirmation,
+      confirmedRevision: loaded.confirmed?.revision ?? null,
+      lines: loaded.lines,
+      materials: loaded.view.materials,
+      sources: new Map(rows.filter((row) => !row.excluded).map((row) => [row.material_id, { sha256: row.blob_sha256, mediaType: mediaTypeOf(row), fileName: row.file_name }] as const)),
+      facts: loaded.print,
+    };
+    let commit: PrintCommit | null;
+    try {
+      commit = await prepare(state);
+    } catch (error) {
+      if (error instanceof PrintRefusal) throw new ActionRefusedError({ code: error.code, message: error.message }, await snapshot(taskId));
+      throw error;
+    }
+    if (!commit) return snapshot(taskId);
+    const run = commit;
+    return mutate(taskId, stepToken(task.task_id, task.revision), async ({ tx, at, revision }) => {
+      await run(tx, at, revision);
+    });
   }
 
   async function list(): Promise<TaskList> {
@@ -505,6 +546,22 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       });
     },
 
+    // ---- 去打印 (#190): only on a confirmed task; none of these touch the confirmation ----
+    generatePrintSheet: (taskId: string) => printChange(taskId, (state) => printActions.generate(state)),
+    rotatePlacement: (taskId: string, pageId: string, slot: PlacementSlot, rotate: boolean) => printChange(taskId, (state) => printActions.rotate(state, pageId, slot, rotate)),
+    cropPlacement: (taskId: string, pageId: string, slot: PlacementSlot, corners: Corners) => printChange(taskId, (state) => printActions.crop(state, pageId, slot, corners)),
+    addPaymentScreenshot: (taskId: string, voucherMaterialId: string, file: UploadedFile) => printChange(taskId, (state) => printActions.addScreenshot(state, voucherMaterialId, file)),
+    removePaymentScreenshot: (taskId: string, screenshotId: string) => printChange(taskId, (state) => printActions.removeScreenshot(state, screenshotId)),
+
+    // A content-addressed file of this task (an original, a payment screenshot, a composed sheet or page image).
+    async file(taskId: string, sha256: string): Promise<{ path: string; mime: string } | null> {
+      await taskRow(db, taskId);
+      const material = await db.selectFrom('material').select('material_id').where('task_id', '=', taskId).where('blob_sha256', '=', sha256).executeTakeFirst();
+      if (!material && !(await printFileShas(db, taskId)).has(sha256)) return null;
+      const blob = await db.selectFrom('blob').select('mime').where('sha256', '=', sha256).executeTakeFirst();
+      return blob ? { path: blobPath(dataDir, sha256), mime: blob.mime } : null;
+    },
+
     // The personal book changed: its open tasks get a new revision (their allow-list is part of the snapshot, so
     // the old stepToken is void) and push the fresh snapshot.
     async bookChanged(): Promise<void> {
@@ -690,7 +747,7 @@ function enrichLines(lines: readonly Line[], rules: CompanyRules, assignment: As
   });
 }
 
-function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, legacy, lines, digest, confirmed }: Loaded, batches: readonly UploadBatchTable[], rejections: readonly UploadRejectionTable[], materials: readonly MaterialRow[]): TaskSnapshot {
+function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, legacy, lines, digest, confirmed, print }: Loaded, batches: readonly UploadBatchTable[], rejections: readonly UploadRejectionTable[], materials: readonly MaterialRow[]): TaskSnapshot {
   const { stage, step, blockers } = project(facts);
   // A batch that added a material formed the next inventory version.
   const versionOf = new Map<string, string>();
@@ -713,8 +770,7 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
     blockers,
     lines,
     confirmation: confirmationView(digest, confirmed, facts.lastReopenRevision, lines) satisfies Confirmation,
-    paymentScreenshots: [],
-    printSheet: { status: 'not_generated', fileName: null, url: null, pages: [], notices: [] },
+    ...printView(task.task_id, task.name, print, sheetState(print, facts.confirmation, confirmed?.revision ?? null)),
     projectAssignment: assignment?.view ?? { status: 'not_started', purpose: null, homeCity, assignments: [], working: [], reselect: [], usage: [], projects: [], submittedAt: null },
     catalog: { status: 'pending', problems: [] },
     // The catalog check moved into the ERP job (ADR-0014); nothing is prepared before the confirmation any more.

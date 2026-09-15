@@ -387,6 +387,59 @@ const confirmation189: Migration = {
   },
 };
 
+// Slice #190: 打印稿 (print sheet). All append-only. `print_setting` holds the per-material print settings (rotation,
+// four crop corners; latest per material wins, so they survive a regeneration). `payment_screenshot` +
+// `payment_screenshot_removal` hold the 支付截图 (payment screenshots; the latest unremoved one per voucher is current).
+// `print_render` is one composed sheet (merged PDF + page images, both content-addressed blobs) bound to the
+// confirmation it was made from: a sheet whose `confirmation_revision` is not the standing confirmation is stale.
+const print190: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('print_setting')
+      .addColumn('setting_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('material_id', 'text', (c) => c.notNull().references('material.material_id'))
+      .addColumn('rotate', 'integer')
+      .addColumn('corners', 'text')
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema
+      .createTable('payment_screenshot')
+      .addColumn('screenshot_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('voucher_material_id', 'text', (c) => c.notNull().references('material.material_id'))
+      .addColumn('blob_sha256', 'text', (c) => c.notNull().references('blob.sha256'))
+      .addColumn('file_name', 'text', (c) => c.notNull())
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema
+      .createTable('payment_screenshot_removal')
+      .addColumn('removal_id', 'text', (c) => c.primaryKey())
+      .addColumn('screenshot_id', 'text', (c) => c.notNull().references('payment_screenshot.screenshot_id'))
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema
+      .createTable('print_render')
+      .addColumn('render_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('confirmation_revision', 'integer', (c) => c.notNull())
+      .addColumn('pdf_sha256', 'text', (c) => c.notNull().references('blob.sha256'))
+      .addColumn('pages', 'text', (c) => c.notNull())
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    for (const table of ['print_setting', 'payment_screenshot', 'payment_screenshot_removal', 'print_render']) await appendOnly(db, table);
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -400,4 +453,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0005_194_admin': admin194,
   '0005_195_legacy_import': legacyImport195,
   '0006_189_confirmation': confirmation189,
+  '0007_190_print': print190,
 };

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { ADMIN_ERRORS, AssignProjectLinesInputSchema, CreateTaskInputSchema, FORBIDDEN_CODE, ERP_ACTION_ERRORS, PendingAnswerSchema, ProjectAssignmentInputSchema, SetHomeCityInputSchema, type ProjectBookResult, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, type TaskSnapshot } from '@baox/contract';
+import { ADMIN_ERRORS, AssignProjectLinesInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, FORBIDDEN_CODE, ERP_ACTION_ERRORS, PendingAnswerSchema, ProjectAssignmentInputSchema, SetHomeCityInputSchema, type ProjectBookResult, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, type TaskSnapshot } from '@baox/contract';
 import { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
@@ -163,7 +163,26 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     return c.json(await tasksOf(c).upload(c.req.param('id'), files));
   });
 
-  app.post('/api/tasks/:id/abandon', async (c) => c.json(await tasksOf(c).voidTask(c.req.param('id'))));
+  // 补充支付截图 (multipart `voucherMaterialId`, `file`): print-only, no stepToken.
+  app.post('/api/tasks/:id/payment-screenshots', async (c) => {
+    const body = await c.req.parseBody();
+    const file = body['file'];
+    const voucherMaterialId = body['voucherMaterialId'];
+    if (!(file instanceof File) || typeof voucherMaterialId !== 'string' || voucherMaterialId === '') return failure(c, 400, 'invalid_input', '请求无效。');
+    const uploaded: UploadedFile = { fileName: file.name, mime: file.type, bytes: new Uint8Array(await file.arrayBuffer()) };
+    return c.json(await tasksOf(c).addPaymentScreenshot(c.req.param('id'), voucherMaterialId, uploaded));
+  });
+
+  // A content-addressed file of the task: originals (the corner editor's photo), payment screenshots, the merged print
+  // PDF and its page images. Immutable by construction, so the browser may cache it for good.
+  app.get('/api/tasks/:id/files/:sha256', async (c) => {
+    const sha256 = c.req.param('sha256');
+    const found = /^[0-9a-f]{64}$/.test(sha256) ? await tasksOf(c).file(c.req.param('id'), sha256) : null;
+    if (!found || !existsSync(found.path)) return failure(c, 404, 'not_found', '没有这个文件。');
+    return c.body(readFileSync(found.path), 200, { 'Content-Type': found.mime, 'Cache-Control': 'private, max-age=31536000, immutable' });
+  });
+
+  app.post('/api/tasks/:id/abandon',async (c) => c.json(await tasksOf(c).voidTask(c.req.param('id'))));
 
   // 去报销. Only the lease guard exists so far: while another task holds the ERP lease the answer is 409 with a
   // wording that names no account or task (ADR-0018). #191 replaces the not-ready tail with the real start.
@@ -227,6 +246,11 @@ const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
   'answer-pending': taskAction(withToken({ itemId: z.string().min(1), answer: PendingAnswerSchema }), (tasks, id, { itemId, answer, stepToken }) => tasks.answerPending(id, itemId, answer, stepToken)),
   'confirm-review': taskAction(withToken({ digest: z.string().min(1) }), (tasks, id, { digest, stepToken }) => tasks.confirmReview(id, digest, stepToken)),
   'exclude-material': taskAction(withToken({ materialId: z.string().min(1) }), (tasks, id, { materialId, stepToken }) => tasks.excludeMaterial(id, materialId, stepToken)),
+  // 去打印 (#190): print settings only, without a stepToken (contract); see `printChange` in tasks.ts.
+  'generate-print-sheet': taskAction(z.object({}), (tasks, id) => tasks.generatePrintSheet(id)),
+  'rotate-placement': taskAction(z.object({ pageId: z.string().min(1), slot: PlacementSlotSchema, rotate: z.boolean() }), (tasks, id, { pageId, slot, rotate }) => tasks.rotatePlacement(id, pageId, slot, rotate)),
+  'crop-placement': taskAction(CropInputSchema, (tasks, id, { pageId, slot, corners }) => tasks.cropPlacement(id, pageId, slot, corners)),
+  'remove-payment-screenshot': taskAction(z.object({ screenshotId: z.string().min(1) }), (tasks, id, { screenshotId }) => tasks.removePaymentScreenshot(id, screenshotId)),
 };
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {

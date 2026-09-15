@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { dirname, join, sep } from 'node:path';
 import { definePDFJSModule, extractImages, getDocumentProxy } from 'unpdf';
+import type { PDFDocumentProxy } from 'unpdf/pdfjs';
 import { normalise, type ParseDoc, type TextObservation } from './doc';
 import { decodeRaster } from './qr';
 
@@ -16,16 +17,21 @@ const STANDARD_FONT_DATA_URL = join(PDFJS_ROOT, 'standard_fonts') + sep;
 
 let configured: Promise<void> | null = null;
 
-export async function pdfDoc(bytes: Uint8Array): Promise<ParseDoc> {
+// A pdfjs document over a copy of `bytes` (pdfjs transfers, i.e. detaches, the buffer it is given). The caller
+// destroys it with `pdf.loadingTask.destroy()`. Also used by the print sheet (#190) to measure and render pages.
+export async function openPdf(bytes: Uint8Array): Promise<PDFDocumentProxy> {
   configured ??= definePDFJSModule(() => import('pdfjs-dist/legacy/build/pdf.mjs'));
   await configured;
-  // pdfjs transfers (detaches) the buffer it is given.
-  const pdf = await getDocumentProxy(new Uint8Array(bytes), {
+  return getDocumentProxy(new Uint8Array(bytes), {
     cMapUrl: CMAP_URL,
     cMapPacked: true,
     standardFontDataUrl: STANDARD_FONT_DATA_URL,
     disableFontFace: true,
   });
+}
+
+export async function pdfDoc(bytes: Uint8Array): Promise<ParseDoc> {
+  const pdf = await openPdf(bytes);
   try {
     const observations: TextObservation[] = [];
     const codes: string[] = [];
