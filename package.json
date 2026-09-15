@@ -10,6 +10,7 @@
     "dev": "pnpm --parallel --filter @baox/server --filter @baox/web dev",
     "dev:mock": "pnpm --filter @baox/web dev:mock",
     "test": "pnpm -r test",
+    "test:private": "pnpm --filter @baox/server test:private",
     "test:e2e": "pnpm --filter @baox/server --filter @baox/web build && pnpm --filter @baox/web build:mock && pnpm --filter @baox/web exec playwright test",
     "typecheck": "pnpm -r typecheck"
   },

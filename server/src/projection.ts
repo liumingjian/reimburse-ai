@@ -17,6 +17,9 @@ export type TaskFacts = {
   lastRun: { versionNo: number; revision: number } | null;
   // Revision of the latest reopen-upload, or null.
   lastReopenRevision: number | null;
+  // The parser job on the current run (#183): included materials still waiting for an outcome, and the open
+  // 待确认项 derived from the outcomes. null while the current version is not inventoried.
+  parse: { waiting: number; openPendingItems: number } | null;
 };
 
 export type Projection = { stage: TaskStage; step: Step; blockers: Blocker[] };
@@ -33,13 +36,23 @@ export function inventoried(facts: TaskFacts): boolean {
   return facts.lastReopenRevision === null || facts.lastReopenRevision < run.revision;
 }
 
+// The background parser job is working on the current run. While it runs the step is none and every mutation other
+// than the job's own gets 409 (ADR-0014).
+export function parseRunning(facts: TaskFacts): boolean {
+  return inventoried(facts) && (facts.parse?.waiting ?? 0) > 0;
+}
+
 export function project(facts: TaskFacts): Projection {
   const at = (stage: TaskStage, kind: Step['kind']): Projection => ({ stage, step: { kind, stepToken: stepToken(facts.taskId, facts.revision) }, blockers: [] });
   if (facts.lifecycle === 'voided') return at('voided', 'none');
   // 转人工 (handed off to a human) projects to reconcile, read-only (ADR-0014).
   if (facts.lifecycle === 'handed_off') return at('reconcile', 'none');
-  // Parsing lands in #183; until then an inventoried version rests in stage inventory with nothing left to do.
-  if (inventoried(facts)) return at('inventory', 'none');
+  if (inventoried(facts)) {
+    if (parseRunning(facts)) return at('inventory', 'none');
+    if ((facts.parse?.openPendingItems ?? 0) > 0) return at('pending', 'answer_pending');
+    // Project assignment lands in #188; until then a clean inventory rests in stage inventory with nothing to do.
+    return at('inventory', 'none');
+  }
   return at('upload', facts.includedMaterialCount > 0 ? 'start_inventory' : 'upload_materials');
 }
 

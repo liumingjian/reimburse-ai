@@ -69,8 +69,8 @@ test('两个上传批次逐一命中四种拒绝原因，排除一份材料后�
   await page.reload();
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   await expect(page).toHaveURL(/#\/task\/[^/]+\/inventory$/);
-  // Three accepted materials, one excluded.
-  await expect(page.getByRole('group', { name: '盘点摘要' }).getByText('2 份', { exact: true })).toBeVisible();
+  // Three accepted materials, one excluded. The summary appears once the parser job (#183) has finished.
+  await expect(page.getByRole('group', { name: '盘点摘要' })).toContainText('材料2 份');
 
   await page.goto('/#/tasks');
   const listed = page.getByRole('row', { name: /新建报销/ });

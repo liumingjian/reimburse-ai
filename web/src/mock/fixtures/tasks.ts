@@ -76,6 +76,8 @@ export function uploadedMaterial(input: { materialId: string; batchId: string; f
     fileName: input.fileName,
     contentHash: input.contentHash,
     size: input.size,
+    kind: null,
+    layout: null,
     kindLabel: '待盘点',
     categoryLabel: null,
     role: 'uploaded',

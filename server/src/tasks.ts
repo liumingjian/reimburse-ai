@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import {
   ABANDON_TASK_COPY,
   CREATE_TASK_ERRORS,
   type ActionError,
-  type Material,
   type TaskList,
   type TaskListItem,
   type TaskSnapshot,
@@ -14,8 +14,11 @@ import { sql } from 'kysely';
 import type { Db } from './db/database';
 import { IMPLICIT_ACCOUNT_ID } from './db/migrations';
 import type { MaterialTable, TaskTable, UploadBatchTable, UploadRejectionTable } from './db/schema';
-import { writeBlob } from './data-dir';
-import { inventoried, isNonTerminal, project, stepToken, type TaskFacts } from './projection';
+import { blobPath, writeBlob } from './data-dir';
+import { inventoryView, type InventoryView, type ViewMaterial } from './inventory-view';
+import type { ParseOutcome } from './parse/dispatch';
+import type { ParseInput } from './parse/material';
+import { inventoried, isNonTerminal, parseRunning, project, stepToken, type TaskFacts } from './projection';
 import { rejectByShape, rejectReason } from './upload-rules';
 
 // 报销任务 (reimbursement task) facts, the actions that append them, and the snapshot projected from them.
@@ -42,7 +45,7 @@ export class TaskNotFoundError extends Error {
   }
 }
 
-// A stale stepToken: the HTTP layer answers 409 with the fresh snapshot.
+// A stale stepToken, or any mutation while a job runs: the HTTP layer answers 409 with the fresh snapshot.
 export class StaleStepError extends Error {
   constructor(readonly snapshot: TaskSnapshot) {
     super('stale stepToken');
@@ -67,7 +70,27 @@ type Context = { tx: Tx; task: TaskTable; facts: TaskFacts; at: string; revision
 
 type MaterialRow = MaterialTable & { size: number; mime: string; row_no: number; excluded: number };
 
+type Loaded = { facts: TaskFacts; view: InventoryView; runId: string | null; parsed: ReadonlySet<string> };
+
+// The next material the parser job should parse. `preset` is an outcome decided without parsing (original missing).
+export type ParseWork = { runId: string; input: ParseInput; preset: ParseOutcome | null };
+
+// A refusal the parser job expects when the run moved on under it; never shown to anyone.
+const STALE_JOB = { code: 'stale_job', message: 'the inventory run changed under the parser job' } as const;
+
 export type TaskServiceOptions = { onChange?: (snapshot: TaskSnapshot) => void };
+
+const mediaTypeOf = (row: MaterialRow): 'pdf' | 'image' => (IMAGE_FILE.test(row.file_name) || row.mime.startsWith('image/') ? 'image' : 'pdf');
+
+const viewMaterial = (row: MaterialRow): ViewMaterial => ({
+  materialId: row.material_id,
+  batchId: row.batch_id,
+  fileName: row.file_name,
+  contentHash: row.blob_sha256,
+  size: row.size,
+  mediaType: mediaTypeOf(row),
+  excluded: Boolean(row.excluded),
+});
 
 export function createTaskService(db: Db, dataDir: string, { onChange = () => {} }: TaskServiceOptions = {}) {
   // Until accounts land (#193) every request acts as the implicit account.
@@ -91,11 +114,12 @@ export function createTaskService(db: Db, dataDir: string, { onChange = () => {}
       .execute();
   }
 
-  async function loadFacts(tx: Tx, task: TaskTable, materials?: readonly MaterialRow[]): Promise<TaskFacts> {
+  // Facts plus the inventory view of the current run (materials, pending items, events, lines).
+  async function load(tx: Tx, task: TaskTable, materials?: readonly MaterialRow[]): Promise<Loaded> {
     const rows = materials ?? (await materialRows(tx, task.task_id));
-    const run = await tx.selectFrom('inventory_run').select(['version_no', 'revision']).where('task_id', '=', task.task_id).orderBy('revision', 'desc').executeTakeFirst();
+    const run = await tx.selectFrom('inventory_run').select(['run_id', 'version_no', 'revision', 'started_at']).where('task_id', '=', task.task_id).orderBy('revision', 'desc').executeTakeFirst();
     const reopen = await tx.selectFrom('upload_reopen').select('revision').where('task_id', '=', task.task_id).orderBy('revision', 'desc').executeTakeFirst();
-    return {
+    const facts: TaskFacts = {
       taskId: task.task_id,
       revision: task.revision,
       lifecycle: task.lifecycle,
@@ -103,7 +127,22 @@ export function createTaskService(db: Db, dataDir: string, { onChange = () => {}
       includedMaterialCount: rows.filter((row) => !row.excluded).length,
       lastRun: run ? { versionNo: run.version_no, revision: run.revision } : null,
       lastReopenRevision: reopen?.revision ?? null,
+      parse: null,
     };
+    const current = run && inventoried(facts) ? run : null;
+    const results = current ? await tx.selectFrom('parse_result').select(['material_id', 'detail', 'created_at']).where('run_id', '=', current.run_id).orderBy('revision').execute() : [];
+    const view = inventoryView(
+      rows.map(viewMaterial),
+      current
+        ? {
+            outcomes: new Map(results.map((result) => [result.material_id, JSON.parse(result.detail) as ParseOutcome])),
+            startedAt: current.started_at,
+            finishedAt: results.at(-1)?.created_at ?? null,
+          }
+        : null,
+    );
+    if (current) facts.parse = { waiting: view.waiting, openPendingItems: view.openPendingItems };
+    return { facts, view, runId: current?.run_id ?? null, parsed: new Set(results.map((result) => result.material_id)) };
   }
 
   async function snapshot(taskId: string): Promise<TaskSnapshot> {
@@ -111,19 +150,22 @@ export function createTaskService(db: Db, dataDir: string, { onChange = () => {}
     const batches = await db.selectFrom('upload_batch').selectAll().where('task_id', '=', taskId).orderBy('no').execute();
     const rejections = await db.selectFrom('upload_rejection').selectAll().where('task_id', '=', taskId).execute();
     const materials = await materialRows(db, taskId);
-    return projectSnapshot(task, await loadFacts(db, task, materials), batches, rejections, materials);
+    return projectSnapshot(task, await load(db, task, materials), batches, rejections, materials);
   }
 
   // One accepted change: check the stepToken (when the action carries one), let `apply` refuse or append facts,
-  // bump the revision, then publish the fresh snapshot. A refusal or stale token writes nothing.
-  async function mutate(taskId: string, token: string | null, apply: (ctx: Context) => Promise<Refusal | void>): Promise<TaskSnapshot> {
+  // bump the revision, then publish the fresh snapshot. A refusal or stale token writes nothing. While the parser job
+  // runs, only the job itself (`job: true`) may write; everyone else gets the 409 of a stale step (ADR-0014).
+  async function mutate(taskId: string, token: string | null, apply: (ctx: Context) => Promise<Refusal | void>, { job = false } = {}): Promise<TaskSnapshot> {
     const outcome = await db.transaction().execute(async (tx): Promise<{ kind: 'ok' } | { kind: 'stale' } | ({ kind: 'refused' } & Refusal)> => {
       const task = await taskRow(tx, taskId);
       if (token !== null && token !== stepToken(task.task_id, task.revision)) return { kind: 'stale' };
       if (task.lifecycle !== 'open') return { kind: 'refused', code: 'task_closed', message: ACTION_COPY.taskClosed };
+      const { facts } = await load(tx, task);
+      if (!job && parseRunning(facts)) return { kind: 'stale' };
       const at = now();
       const revision = task.revision + 1;
-      const refusal = await apply({ tx, task, facts: await loadFacts(tx, task), at, revision });
+      const refusal = await apply({ tx, task, facts, at, revision });
       if (refusal) return { kind: 'refused', ...refusal };
       await tx.updateTable('task').set({ revision, updated_at: at }).where('task_id', '=', taskId).execute();
       return { kind: 'ok' };
@@ -140,7 +182,7 @@ export function createTaskService(db: Db, dataDir: string, { onChange = () => {}
     // 任务作废 (void task) removes the task from the list; its facts stay on disk.
     const tasks = await db.selectFrom('task').selectAll().where('account_id', '=', accountId).where('lifecycle', '!=', 'voided').orderBy('updated_at', 'desc').execute();
     const items: TaskListItem[] = [];
-    for (const task of tasks) items.push(listItem(task, await loadFacts(db, task)));
+    for (const task of tasks) items.push(listItem(task, (await load(db, task)).facts));
     return {
       // Identity-era startup fields (#193 removes them): the implicit account counts as logged in and bound.
       erpSession: 'logged_in',
@@ -204,7 +246,8 @@ export function createTaskService(db: Db, dataDir: string, { onChange = () => {}
       });
     },
 
-    // Explicit start of 材料盘点 on the current version (ADR-0014: inventory never starts by itself).
+    // Explicit start of 材料盘点 on the current version (ADR-0014: inventory never starts by itself). The run's
+    // materials then wait for the background parser job (`parse/jobs.ts`).
     async startInventory(taskId: string, token: string): Promise<TaskSnapshot> {
       return mutate(taskId, token, async ({ tx, facts, at, revision }) => {
         if (project(facts).step.kind !== 'start_inventory') return { code: 'not_ready', message: ACTION_COPY.notReadyToStart };
@@ -242,10 +285,79 @@ export function createTaskService(db: Db, dataDir: string, { onChange = () => {}
       const task = await db.selectFrom('task').selectAll().where('task_id', '=', taskId).where('account_id', '=', accountId).executeTakeFirst();
       if (!task || task.lifecycle === 'voided') throw new ActionRefusedError({ code: 'task_not_found', message: ABANDON_TASK_COPY.notFound }, null, await list());
       if (task.lifecycle !== 'open') throw new ActionRefusedError({ code: 'not_abandonable', message: ACTION_COPY.notAbandonable }, null, await list());
+      if (parseRunning((await load(db, task)).facts)) throw new StaleStepError(await snapshot(taskId));
       const at = now();
       await db.updateTable('task').set({ lifecycle: 'voided', revision: task.revision + 1, updated_at: at }).where('task_id', '=', taskId).execute();
       onChange(await snapshot(taskId));
       return list();
+    },
+
+    // ---- The parser job's side (parse/jobs.ts) ----
+
+    // The next material of the running inventory run: PDFs first, then images, each in upload order.
+    async nextToParse(taskId: string): Promise<ParseWork | null> {
+      const task = await taskRow(db, taskId);
+      if (task.lifecycle !== 'open') return null;
+      const rows = await materialRows(db, taskId);
+      const { facts, runId, parsed } = await load(db, task, rows);
+      if (!runId || !parseRunning(facts)) return null;
+      const todo = rows.filter((row) => !row.excluded && !parsed.has(row.material_id));
+      const next = todo.find((row) => mediaTypeOf(row) === 'pdf') ?? todo[0];
+      if (!next) return null;
+      const input = { materialId: next.material_id, fileName: next.file_name, mediaType: mediaTypeOf(next), bytes: new Uint8Array() };
+      try {
+        return { runId, input: { ...input, bytes: new Uint8Array(readFileSync(blobPath(dataDir, next.blob_sha256))) }, preset: null };
+      } catch {
+        return { runId, input, preset: { outcome: 'failed', retryable: false, reason: 'original file missing from the data directory' } };
+      }
+    },
+
+    // Appends one parser outcome as a fact of the run (bumping the revision and publishing). False when the run moved
+    // on or the task closed meanwhile; the job then stops.
+    async recordParse(taskId: string, runId: string, materialId: string, outcome: ParseOutcome): Promise<boolean> {
+      try {
+        await mutate(
+          taskId,
+          null,
+          async ({ tx, facts, at, revision }) => {
+            const latest = await tx.selectFrom('inventory_run').select('run_id').where('task_id', '=', taskId).orderBy('revision', 'desc').executeTakeFirst();
+            if (latest?.run_id !== runId || !parseRunning(facts)) return STALE_JOB;
+            const existing = await tx.selectFrom('parse_result').select('result_id').where('run_id', '=', runId).where('material_id', '=', materialId).executeTakeFirst();
+            if (existing) return STALE_JOB;
+            const recognised = outcome.outcome === 'recognised' ? outcome : null;
+            await tx
+              .insertInto('parse_result')
+              .values({
+                result_id: randomUUID(),
+                task_id: taskId,
+                account_id: accountId,
+                run_id: runId,
+                material_id: materialId,
+                outcome: outcome.outcome,
+                kind: recognised?.kind ?? null,
+                layout: recognised?.layout ?? null,
+                parser_version: recognised?.parserVersion ?? null,
+                detail: JSON.stringify(outcome),
+                revision,
+                created_at: at,
+              })
+              .execute();
+          },
+          { job: true },
+        );
+        return true;
+      } catch (error) {
+        if (error instanceof ActionRefusedError) return false;
+        throw error;
+      }
+    },
+
+    // Tasks whose current run still waits for outcomes: a restart resumes their parser jobs.
+    async parseBacklog(): Promise<string[]> {
+      const open = await db.selectFrom('task').selectAll().where('account_id', '=', accountId).where('lifecycle', '=', 'open').execute();
+      const ids: string[] = [];
+      for (const task of open) if (parseRunning((await load(db, task)).facts)) ids.push(task.task_id);
+      return ids;
     },
   };
 }
@@ -260,35 +372,11 @@ function listItem(task: TaskTable, facts: TaskFacts): TaskListItem {
     period: null,
     grossTotal: null,
     erpDraftNo: null,
-    pendingCount: 0,
+    pendingCount: facts.parse?.openPendingItems ?? 0,
     erpOutcome: 'none',
     abandonable: task.lifecycle === 'open',
     abandonBlockedReason: task.lifecycle === 'open' ? null : ACTION_COPY.notAbandonable,
     updatedAt: task.updated_at,
-  };
-}
-
-function material(row: MaterialRow): Material {
-  const image = IMAGE_FILE.test(row.file_name) || row.mime.startsWith('image/');
-  const excluded = Boolean(row.excluded);
-  return {
-    materialId: row.material_id,
-    batchId: row.batch_id,
-    fileName: row.file_name,
-    contentHash: row.blob_sha256,
-    size: row.size,
-    kindLabel: '待盘点',
-    categoryLabel: null,
-    role: excluded ? 'excluded' : 'uploaded',
-    shape: image ? 'photo' : 'portrait',
-    mediaType: image ? 'image' : 'pdf',
-    status: excluded ? 'excluded' : 'uploaded',
-    checkText: excluded ? '已排除：不参与盘点，也不进入材料包' : '',
-    linkedMaterialIds: [],
-    pendingItemIds: [],
-    originalUrl: null,
-    previewUrl: null,
-    fields: [],
   };
 }
 
@@ -311,7 +399,7 @@ function batchFiles(batchId: string, materials: readonly MaterialRow[], rejectio
   return entries.sort((a, b) => a.order - b.order).map((entry) => entry.file);
 }
 
-function projectSnapshot(task: TaskTable, facts: TaskFacts, batches: readonly UploadBatchTable[], rejections: readonly UploadRejectionTable[], materials: readonly MaterialRow[]): TaskSnapshot {
+function projectSnapshot(task: TaskTable, { facts, view }: Loaded, batches: readonly UploadBatchTable[], rejections: readonly UploadRejectionTable[], materials: readonly MaterialRow[]): TaskSnapshot {
   const { stage, step, blockers } = project(facts);
   // A batch that added a material formed the next inventory version.
   const versionOf = new Map<string, string>();
@@ -323,28 +411,16 @@ function projectSnapshot(task: TaskTable, facts: TaskFacts, batches: readonly Up
     versionId: versionOf.get(batch.batch_id) ?? null,
     files: batchFiles(batch.batch_id, materials, rejections),
   }));
-  const excludedIds = materials.filter((m) => m.excluded).map((m) => m.material_id);
-  const done = stage === 'inventory';
   return {
     task: { taskId: task.task_id, name: task.name, period: null, homeCity: task.home_city, createdAt: task.created_at, updatedAt: task.updated_at },
     stage,
     batches: batchViews,
-    materials: materials.map(material),
-    // Until parsing lands (#183) an inventory run finishes at once with every included material still unclassified.
-    inventory: done
-      ? {
-          status: 'done',
-          versionId: `v${facts.versionNo}`,
-          phases: [],
-          finishedAt: task.updated_at,
-          summary: { materialCount: facts.includedMaterialCount, okCount: 0, pendingMaterialCount: 0, voucherCount: 0, referenceCount: 0, openPendingItemCount: 0 },
-          ungroupedMaterialIds: excludedIds,
-        }
-      : { status: 'not_started', versionId: facts.versionNo > 0 ? `v${facts.versionNo}` : null, phases: [], finishedAt: null, summary: null, ungroupedMaterialIds: [] },
-    events: [],
-    pendingItems: [],
+    materials: view.materials,
+    inventory: { ...view.inventory, versionId: facts.versionNo > 0 ? `v${facts.versionNo}` : null },
+    events: view.events,
+    pendingItems: view.pendingItems,
     blockers,
-    lines: [],
+    lines: view.lines,
     confirmation: { status: 'unconfirmed', confirmedAt: null, digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null, notice: null },
     paymentScreenshots: [],
     printSheet: { status: 'not_generated', fileName: null, url: null, pages: [], notices: [] },

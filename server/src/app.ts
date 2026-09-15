@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { Db } from './db/database';
+import { workerExecutor, type ParseExecutor } from './parse/executor';
+import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { ActionRefusedError, createTaskService, StaleStepError, TaskNotFoundError, type TaskService, type UploadedFile } from './tasks';
 
 // The HTTP app. Wire rules (contract/src/http.ts): success is 200 with the whole new snapshot; failure is
@@ -17,18 +19,31 @@ export type AppOptions = {
   dataDir: string;
   // The built frontend (`web/dist`), served same-origin in production. Absent in tests and under `pnpm dev`.
   webDist?: string | null;
+  // Where the parser job parses; the server's one worker_thread by default. Tests inject inline or gated executors.
+  parser?: ParseExecutor;
 };
+
+// `close` stops the background jobs (after the material in flight) and releases the parse worker; call it before
+// closing the database.
+export type App = Hono & { close: () => Promise<void> };
 
 type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
 const failure = (c: Context, status: 400 | 404, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null }: AppOptions): Hono {
+export function createApp({ db, dataDir, webDist = null, parser }: AppOptions): App {
   const listeners = new Map<string, Set<SnapshotListener>>();
+  let jobs: ParseJobs | null = null;
   const publish = (snapshot: TaskSnapshot) => {
     for (const listener of listeners.get(snapshot.task.taskId) ?? []) listener(snapshot);
+    // A run with materials still waiting (just started, or mid-way) needs its parser job.
+    if (snapshot.inventory.status === 'running') jobs?.ensure(snapshot.task.taskId);
   };
   const tasks = createTaskService(db, dataDir, { onChange: publish });
+  const parseJobs = createParseJobs(tasks, parser ?? workerExecutor());
+  jobs = parseJobs;
+  // A restart mid-job picks the backlog up again: what is left is derived from the facts.
+  parseJobs.resumeAll();
 
   const app = new Hono();
 
@@ -95,7 +110,7 @@ export function createApp({ db, dataDir, webDist = null }: AppOptions): Hono {
 
   if (webDist) app.get('*', (c) => serveWebFile(c, webDist));
 
-  return app;
+  return Object.assign(app, { close: () => parseJobs.close() });
 }
 
 // Task actions (`POST /api/tasks/:id/actions/<name>`), each with its JSON input. Later slices add their entries here.

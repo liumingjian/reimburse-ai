@@ -54,12 +54,28 @@ export const EVIDENCE_STATES = ['explicit', 'derived', 'ambiguous', 'missing'] a
 export const EvidenceStateSchema = z.enum(EVIDENCE_STATES);
 export type EvidenceState = z.infer<typeof EvidenceStateSchema>;
 
-// 字段候选：材料原文的解释，附来源（规则名如 rule:amap_itinerary，或 user）与材料证据状态。
+// 材料种类 (material kind, ADR-0017): owns the slot schema, checks and manual-fill form. v1 has five kinds; a
+// 版式 (layout) belongs to exactly one kind.
+export const MATERIAL_KINDS = ['vat_invoice', 'rail_ticket', 'ride_itinerary', 'hotel_folio', 'taxi_receipt'] as const;
+export const MaterialKindSchema = z.enum(MATERIAL_KINDS);
+export type MaterialKind = z.infer<typeof MaterialKindSchema>;
+
+// A layout name inside its kind, e.g. `einvoice`, `12306`, `amap`.
+export const LAYOUT_NAME_PATTERN = /^[a-z0-9][a-z0-9_]*$/;
+
+// Candidate source (ADR-0017): `rule:<kind>/<layout>` from a layout parser, optionally `.<derivation>` for a derived
+// value (`rule:taxi_receipt/machine_printed.year_from_suffix`), or `user` for manual fill. The e-invoice QR code is
+// its own source, `rule:vat_invoice/einvoice_qr`.
+export const CANDIDATE_SOURCE_PATTERN = /^(?:rule:[a-z][a-z0-9_]*\/[a-z0-9][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)?|user)$/;
+
+// 字段候选：材料原文的解释，附来源（CANDIDATE_SOURCE_PATTERN）与材料证据状态。
 export const FieldCandidateSchema = z.object({
   key: z.string().min(1),
   label: z.string().min(1),
   value: z.string(),
-  source: z.string().min(1),
+  source: z.string().regex(CANDIDATE_SOURCE_PATTERN),
+  // Version of the parser that produced a `rule:` candidate; null for `user`.
+  parserVersion: z.string().min(1).nullable(),
   evidence: EvidenceStateSchema,
 });
 export type FieldCandidate = z.infer<typeof FieldCandidateSchema>;
@@ -83,6 +99,10 @@ export const MaterialSchema = z.object({
   fileName: z.string().min(1),
   contentHash: z.string().min(1),
   size: z.number().int().nonnegative(),
+  // 材料种类; null before inventory and while unrecognised (manual fill sets it, #187).
+  kind: MaterialKindSchema.nullable(),
+  // 版式 within the kind; null before inventory, while unrecognised, and for manual fill.
+  layout: z.string().regex(LAYOUT_NAME_PATTERN).nullable(),
   kindLabel: z.string().min(1),
   categoryLabel: z.string().nullable(),
   role: MaterialRoleSchema,

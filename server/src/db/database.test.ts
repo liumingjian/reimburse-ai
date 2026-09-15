@@ -1,11 +1,12 @@
-import { readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { GENERATED_DIR } from '@baox/fixtures';
 import { TaskSnapshotSchema } from '@baox/contract';
 import Database from 'better-sqlite3';
 import { Kysely, SqliteDialect, sql } from 'kysely';
 import { Migrator } from 'kysely/migration';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { databasePath } from '../data-dir';
+import { databasePath, writeBlob } from '../data-dir';
 import { startServer } from '../server';
 import { tempDataDir } from '../test/harness';
 import { DatabaseTooNewError, openDatabase } from './database';
@@ -46,6 +47,34 @@ describe('migrations on an existing database', () => {
       expect(snapshot.materials.map((m) => m.fileName)).toEqual(['old.pdf']);
       expect(snapshot.batches[0]?.files.map((f) => f.status)).toEqual(['accepted']);
       expect(snapshot.step.kind).toBe('start_inventory');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('migrates 0002_180 → latest, and resumes the parser job of a run that was left without outcomes', async () => {
+    const bytes = readFileSync(join(GENERATED_DIR, 'm01-hotel-invoice.pdf'));
+    const sha = writeBlob(dataDir, bytes);
+    const db = new Kysely<any>({ dialect: new SqliteDialect({ database: new Database(databasePath(dataDir)) }) });
+    const { error } = await new Migrator({ db, provider: { getMigrations: async () => MIGRATIONS } }).migrateTo('0002_180_inventory');
+    if (error) throw error;
+    const at = '2026-09-01T10:00:00Z';
+    await db.insertInto('task').values({ task_id: 'old-task', account_id: 'local', name: '旧任务', home_city: '杭州', lifecycle: 'open', revision: 3, created_at: at, updated_at: at }).execute();
+    await db.insertInto('upload_batch').values({ batch_id: 'old-batch', task_id: 'old-task', account_id: 'local', no: 1, uploaded_at: at }).execute();
+    await db.insertInto('blob').values({ sha256: sha, size: bytes.byteLength, mime: 'application/pdf', created_at: at }).execute();
+    await db.insertInto('material').values({ material_id: 'old-material', task_id: 'old-task', account_id: 'local', batch_id: 'old-batch', blob_sha256: sha, file_name: '全季酒店_发票.pdf', created_at: at, batch_seq: 0 }).execute();
+    await db.insertInto('inventory_run').values({ run_id: 'old-run', task_id: 'old-task', account_id: 'local', version_no: 1, revision: 3, started_at: at }).execute();
+    await db.destroy();
+
+    const server = await startServer({ dataDir, port: 0 });
+    try {
+      expect(backups()).toEqual([expect.stringMatching(/-0002_180_inventory\.sqlite$/)]);
+      let snapshot = TaskSnapshotSchema.parse(await (await fetch(`${server.url}/api/tasks/old-task`)).json());
+      for (let attempt = 0; snapshot.inventory.status !== 'done' && attempt < 500; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        snapshot = TaskSnapshotSchema.parse(await (await fetch(`${server.url}/api/tasks/old-task`)).json());
+      }
+      expect(snapshot.materials).toEqual([expect.objectContaining({ materialId: 'old-material', kind: 'vat_invoice', layout: 'einvoice', status: 'ok' })]);
     } finally {
       await server.close();
     }

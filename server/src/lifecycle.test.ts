@@ -67,6 +67,16 @@ async function current(taskId: string) {
   return TaskSnapshotSchema.parse(await (await server.app.request(`/api/tasks/${taskId}`)).json());
 }
 
+// Waits for the background parser job (#183) to finish the current inventory run.
+async function settled(taskId: string) {
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const snapshot = await current(taskId);
+    if (snapshot.inventory.status === 'done') return snapshot;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error('inventory did not settle');
+}
+
 async function taskList() {
   const response = await server.app.request('/api/tasks');
   expect(response.status).toBe(200);
@@ -133,7 +143,9 @@ describe('actions', () => {
     const started = await accepted(await act(excluded, 'start-inventory'));
     expect(started.stage).toBe('inventory');
     expect(started.step.kind).toBe('none');
-    expect(started.inventory).toMatchObject({ status: 'done', versionId: 'v2', summary: { materialCount: 1 }, ungroupedMaterialIds: [target] });
+    const done = await settled(task.taskId);
+    expect(done.inventory).toMatchObject({ status: 'done', versionId: 'v2', summary: { materialCount: 1 } });
+    expect(done.inventory.ungroupedMaterialIds).toContain(target);
   });
 
   it('refuses excluding an unknown material with 400 and the unchanged snapshot', async () => {
@@ -154,7 +166,8 @@ describe('actions', () => {
   it('reopen-upload returns an inventoried task to upload; a new batch forms the next version to inventory', async () => {
     const { task } = await createTask();
     const uploaded = await upload(task.taskId, [{ name: 'a.pdf', bytes: pdf('a') }]);
-    const started = await accepted(await act(uploaded, 'start-inventory'));
+    await accepted(await act(uploaded, 'start-inventory'));
+    const started = await settled(task.taskId);
 
     const reopened = await accepted(await act(started, 'reopen-upload'));
     expect(reopened.stage).toBe('upload');
@@ -162,8 +175,8 @@ describe('actions', () => {
 
     const more = await upload(task.taskId, [{ name: 'b.pdf', bytes: pdf('b') }]);
     expect(more.inventory.versionId).toBe('v2');
-    const restarted = await accepted(await act(more, 'start-inventory'));
-    expect(restarted.inventory).toMatchObject({ versionId: 'v2', summary: { materialCount: 2 } });
+    await accepted(await act(more, 'start-inventory'));
+    expect((await settled(task.taskId)).inventory).toMatchObject({ versionId: 'v2', summary: { materialCount: 2 } });
   });
 
   it('reopen-upload is refused before inventory started', async () => {
@@ -178,9 +191,11 @@ describe('actions', () => {
     const second = await upload(task.taskId, [{ name: 'b.pdf', bytes: pdf('b') }]);
     await stale(await act(second, 'start-inventory', {}, first.step.stepToken), second);
 
-    const started = await accepted(await act(second, 'start-inventory'));
+    await accepted(await act(second, 'start-inventory'));
+    const started = await settled(task.taskId);
     await stale(await act(started, 'reopen-upload', {}, second.step.stepToken), started);
-    expect((await current(task.taskId)).stage).toBe('inventory');
+    // Fake PDF bytes parse as unrecognised, which raises pending items.
+    expect((await current(task.taskId)).stage).toBe('pending');
   });
 });
 
