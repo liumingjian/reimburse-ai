@@ -82,9 +82,10 @@ export async function ocrImage(bytes: Uint8Array): Promise<TextObservation[]> {
 // The emscripten Module finishes compiling its wasm asynchronously. It is a thenable that resolves to itself, so it
 // must never be handed to `resolve()` or `await` as is (that recurses forever): wait on its `then`, drop `then`, and
 // hand it over wrapped.
+// Loaded with `require`, never `await import()`: a loader that re-exports the CommonJS `then` on the ES namespace
+// (vitest does) makes the awaited import itself recurse forever. The print sheet (#190) loads it in the main process.
 async function loadCv(): Promise<Cv> {
-  const imported = (await import('@techstark/opencv-js')) as unknown as { default?: unknown };
-  const module = (imported.default ?? imported) as { Mat?: unknown; then?: (ready: (value: unknown) => void) => void };
+  const module = createRequire(import.meta.url)('@techstark/opencv-js') as { Mat?: unknown; then?: (ready: (value: unknown) => void) => void };
   if (typeof module.Mat === 'function' || typeof module.then !== 'function') return module as unknown as Cv;
   const ready = await new Promise<{ cv: Cv }>((resolve) => {
     module.then?.((value) => {
@@ -187,6 +188,51 @@ function rectCorners(rect: { center: Point; size: { width: number; height: numbe
 // 透视矫正: the paper is the largest bright region; its outline, reduced to four corners, is warped to a rectangle.
 // Null when no paper-sized quadrilateral stands out (e.g. a flat scan): the photo is then read as is.
 function flattenPaper(cv: Cv, photo: Mat): Mat | null {
+  const quad = paperQuad(cv, photo);
+  return quad ? warp(cv, photo, quad) : null;
+}
+
+// ---- The print sheet's side (#190): the same corner search and warp, without the OCR models ----
+
+let cvOnly: Promise<Cv> | null = null;
+const printCv = (): Promise<Cv> => (cvOnly ??= loadCv());
+
+// Four corners in photo pixels (EXIF orientation applied; top-left, top-right, bottom-right, bottom-left).
+export type PaperCorners = [[number, number], [number, number], [number, number], [number, number]];
+
+// The photo's size and the paper's detected corners; null corners when no paper stands out.
+export async function paperCorners(bytes: Uint8Array): Promise<{ width: number; height: number; corners: PaperCorners | null }> {
+  const cv = await printCv();
+  const photo = await decode(cv, bytes);
+  try {
+    const quad = paperQuad(cv, photo);
+    const corners = quad ? (quad.map((p) => [Math.round(p.x), Math.round(p.y)]) as PaperCorners) : null;
+    return { width: photo.cols, height: photo.rows, corners };
+  } finally {
+    photo.delete();
+  }
+}
+
+// The paper inside `corners`, warped flat, as JPEG: what the print sheet embeds for a photo.
+export async function straightenedJpeg(bytes: Uint8Array, corners: PaperCorners): Promise<{ bytes: Uint8Array; width: number; height: number }> {
+  const cv = await printCv();
+  const photo = await decode(cv, bytes);
+  const flat = warp(
+    cv,
+    photo,
+    corners.map(([x, y]) => ({ x, y })) as [Point, Point, Point, Point],
+  );
+  try {
+    const { default: sharp } = await import('sharp');
+    const jpeg = await sharp(Buffer.from(flat.data), { raw: { width: flat.cols, height: flat.rows, channels: 3 } }).jpeg({ quality: 90 }).toBuffer();
+    return { bytes: new Uint8Array(jpeg), width: flat.cols, height: flat.rows };
+  } finally {
+    flat.delete();
+    photo.delete();
+  }
+}
+
+function paperQuad(cv: Cv, photo: Mat): [Point, Point, Point, Point] | null {
   const gray = new cv.Mat();
   const binary = new cv.Mat();
   const contours = new cv.MatVector();
@@ -218,7 +264,7 @@ function flattenPaper(cv: Cv, photo: Mat): Mat | null {
       cv.approxPolyDP(paper, approx, 0.02 * cv.arcLength(paper, true), true);
       const quad = approx.rows === 4 && cv.isContourConvex(approx) ? pointsOf(approx) : rectCorners(cv.minAreaRect(paper));
       approx.delete();
-      return warp(cv, photo, ordered(quad));
+      return ordered(quad);
     } finally {
       paper.delete();
     }

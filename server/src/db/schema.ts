@@ -300,7 +300,57 @@ export interface ErpApprovedPreviewTable {
   created_at: string;
 }
 
+// 打印稿 (#190): per-material print settings, payment screenshots, composed sheets. See migration 0007_190_print.
+export interface PrintSettingTable {
+  setting_id: string;
+  task_id: string;
+  account_id: string;
+  material_id: string;
+  // 1 = turned 90°, 0 = upright, null = this row does not set the rotation.
+  rotate: number | null;
+  // JSON `[[x, y] x 4]` in original-image pixels, or null = this row does not set the crop.
+  corners: string | null;
+  revision: number;
+  created_at: string;
+}
+
+export interface PaymentScreenshotTable {
+  screenshot_id: string;
+  task_id: string;
+  account_id: string;
+  voucher_material_id: string;
+  blob_sha256: string;
+  file_name: string;
+  revision: number;
+  created_at: string;
+}
+
+export interface PaymentScreenshotRemovalTable {
+  removal_id: string;
+  screenshot_id: string;
+  task_id: string;
+  account_id: string;
+  revision: number;
+  created_at: string;
+}
+
+export interface PrintRenderTable {
+  render_id: string;
+  task_id: string;
+  account_id: string;
+  confirmation_revision: number;
+  pdf_sha256: string;
+  // JSON `StoredPage[]` (server/src/print/facts.ts).
+  pages: string;
+  revision: number;
+  created_at: string;
+}
+
 export interface Schema {
+  print_setting: PrintSettingTable;
+  payment_screenshot: PaymentScreenshotTable;
+  payment_screenshot_removal: PaymentScreenshotRemovalTable;
+  print_render: PrintRenderTable;
   erp_job: ErpJobTable;
   erp_job_cancel: ErpJobCancelTable;
   erp_approved_preview: ErpApprovedPreviewTable;
