@@ -1,5 +1,6 @@
 import type { ExpenseEvent, Inventory, InventoryPhase, Line, Material, PendingField, PendingItem } from '@baox/contract';
 import type { ParseOutcome, Recognised } from './parse/dispatch';
+import { planTransport, type PlannedLine } from './allocation';
 import { KINDS, slotOf } from './parse/kinds';
 
 // The pure projection of one inventory run: uploaded materials plus their parser outcomes in; the materials view,
@@ -125,11 +126,22 @@ const valuesOf = (outcome: Recognised): Record<string, string> => {
   return values;
 };
 
-export function inventoryView(materials: readonly ViewMaterial[], results: RunResults): InventoryView {
+// `allocations`: per invoice materialId, the per-leg totals the user gave on its allocation item (#187 feeds them).
+export function inventoryView(materials: readonly ViewMaterial[], results: RunResults, allocations?: ReadonlyMap<string, readonly string[]>): InventoryView {
   const pendingItems: PendingItem[] = [];
-  const drafts: { material: ViewMaterial; draft: NonNullable<ReturnType<(typeof KINDS)['vat_invoice']['event']>> }[] = [];
+  const drafts: ({ material: ViewMaterial } & PlannedLine)[] = [];
   let waiting = 0;
   const waitingBy = { pdf: 0, image: 0 };
+
+  // Invoice ↔ itinerary pairing and per-leg lines / allocation items (#184), over the recognised included materials.
+  const transport = planTransport(
+    materials.flatMap((m) => {
+      const outcome = results?.outcomes.get(m.materialId);
+      if (m.excluded || outcome?.outcome !== 'recognised') return [];
+      return [{ materialId: m.materialId, fileName: m.fileName, kind: outcome.kind, layout: outcome.layout, values: valuesOf(outcome), ok: itemsOf(m, outcome).items.length === 0 }];
+    }),
+    allocations,
+  );
 
   const views = materials.map((m): Material => {
     const base: Material = {
@@ -163,7 +175,9 @@ export function inventoryView(materials: readonly ViewMaterial[], results: RunRe
       waitingBy[m.mediaType] += 1;
       return base;
     }
-    const { items, checkText } = itemsOf(m, outcome);
+    const own = itemsOf(m, outcome);
+    const items = [...own.items, ...(transport.items.get(m.materialId) ?? [])];
+    const checkText = [own.checkText, transport.notes.get(m.materialId)].filter(Boolean).join('；');
     pendingItems.push(...items);
     const status = items.length > 0 ? 'pending' : 'ok';
     if (!recognised) {
@@ -173,8 +187,10 @@ export function inventoryView(materials: readonly ViewMaterial[], results: RunRe
     const spec = KINDS[recognised.kind];
     const values = valuesOf(recognised);
     if (status === 'ok' && spec.role === 'primary_voucher') {
-      const draft = spec.event(values);
-      if (draft) drafts.push({ material: m, draft });
+      const planned = transport.lines.get(m.materialId);
+      const draft = planned ? null : spec.event(values);
+      if (planned) for (const line of planned) drafts.push({ material: m, ...line });
+      else if (draft) drafts.push({ material: m, draft, leg: null, referenceMaterialIds: [], evidenceNote: draft.evidenceNote ?? null });
     }
     return {
       ...base,
@@ -183,6 +199,7 @@ export function inventoryView(materials: readonly ViewMaterial[], results: RunRe
       role: status === 'ok' ? spec.role : 'pending',
       status,
       checkText,
+      linkedMaterialIds: transport.links.get(m.materialId) ?? [],
       pendingItemIds: items.map((item) => item.itemId),
       fields: recognised.candidates.map((c) => ({ key: c.key, label: slotOf(recognised.kind, c.key)?.label ?? c.key, value: c.value, source: c.source, parserVersion: c.parserVersion, evidence: c.evidence })),
     };
@@ -192,14 +209,17 @@ export function inventoryView(materials: readonly ViewMaterial[], results: RunRe
   // within a category, voucher upload order. Invoice labels follow voucher upload order.
   const rank = ['local_city_transport', 'city_transport', 'remote_city_transport', 'long_distance', 'accommodation'];
   const ordered = [...drafts].sort((a, b) => rank.indexOf(a.draft.category.code) - rank.indexOf(b.draft.category.code));
-  const invoiceNo = new Map(drafts.map((d, index) => [d.material.materialId, index + 1]));
+  const invoiceNo = new Map([...new Set(drafts.map((d) => d.material.materialId))].map((id, index) => [id, index + 1]));
   const events: ExpenseEvent[] = [];
   const lines: Line[] = [];
-  ordered.forEach(({ material, draft }, index) => {
-    const eventId = `event.${material.materialId}`;
-    events.push({ eventId, no: index + 1, voucherMaterialId: material.materialId, referenceMaterialIds: [], category: draft.category, summary: draft.summary, evidenceNote: null, date: draft.date, endDate: draft.endDate, city: null, origin: null, destination: null, grossAmount: draft.grossAmount });
+  ordered.forEach(({ material, draft, leg, referenceMaterialIds, evidenceNote }, index) => {
+    // One line per leg of a split invoice: `<materialId>.<leg>` (1-based leg).
+    const key = leg === null ? material.materialId : `${material.materialId}.${leg}`;
+    const eventId = `event.${key}`;
+    const trip = { city: draft.city ?? null, origin: draft.origin ?? null, destination: draft.destination ?? null };
+    events.push({ eventId, no: index + 1, voucherMaterialId: material.materialId, referenceMaterialIds, category: draft.category, summary: draft.summary, evidenceNote, date: draft.date, endDate: draft.endDate, ...trip, grossAmount: draft.grossAmount });
     lines.push({
-      lineId: `line.${material.materialId}`,
+      lineId: `line.${key}`,
       no: index + 1,
       voucherMaterialId: material.materialId,
       invoiceLabel: `发票${invoiceNo.get(material.materialId)}`,
@@ -208,17 +228,15 @@ export function inventoryView(materials: readonly ViewMaterial[], results: RunRe
       endDate: draft.endDate,
       category: draft.category,
       description: draft.description,
-      city: null,
-      origin: null,
-      destination: null,
-      route: null,
+      ...trip,
+      route: draft.route ?? null,
       maskedNumber: draft.maskedNumber,
       projectCode: null,
       projectName: null,
       expenseItemCode: null,
       expenseItemName: null,
       invoiceType: draft.invoiceType,
-      referenceMaterialIds: [],
+      referenceMaterialIds,
       grossAmount: draft.grossAmount,
       netAmount: draft.netAmount,
       taxAmount: draft.taxAmount,
@@ -226,7 +244,7 @@ export function inventoryView(materials: readonly ViewMaterial[], results: RunRe
   });
 
   const included = views.filter((v) => v.status !== 'excluded');
-  const grouped = new Set(events.map((e) => e.voucherMaterialId));
+  const grouped = new Set(events.flatMap((e) => [e.voucherMaterialId, ...e.referenceMaterialIds]));
   const phase = (key: keyof typeof PHASES, status: InventoryPhase['status']): InventoryPhase => ({ key, label: PHASES[key], status });
   const hasImages = materials.some((m) => !m.excluded && m.mediaType === 'image');
   const phases = !results
