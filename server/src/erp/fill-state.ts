@@ -2,12 +2,22 @@
 // executor events, its cancel, and the task's `erp_attempt` rows. Nothing about the phase is stored. The views below
 // turn the record into the snapshot's `erp`, `readback`, `reconcile` and `catalog` sections.
 
-import { READBACK_FIELD_LABELS, type Catalog, type Erp, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile } from '@baox/contract';
+import { HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, type Catalog, type Erp, type ErpCapture, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
+import { sql } from 'kysely';
 import type { Db } from '../db/database';
-import type { ErpJobTable } from '../db/schema';
+import type { ErpHandOffTable, ErpJobTable, TaskLifecycle } from '../db/schema';
 import type { ErpFacts, ErpPhase } from '../projection';
 import type { FrozenJob } from './fill-plan';
-import { ExecutorEventSchema, type ApprovedPreview, type ErpAccount, type ExecutorEvent, type ResultEvent } from './protocol';
+import { ExecutorEventSchema, type ApprovedPreview, type ErpAccount, type ExecutorEvent, type Preconditions, type ReadbackEvent, type ResultEvent } from './protocol';
+import type { ReconcileVerdict } from './reconcile';
+import { reconcileFromEvents } from './reconcile-job';
+
+// One judged reconcile read-back: the verdict (after the form-instance / target check), the bill number it read, and
+// whether it proves the draft saved exactly as approved (已保存, identity holds, strict per-line match passed).
+export type ReconcileJudgement = { verdict: ReconcileVerdict; billNo: string | null; saved: boolean };
+
+// The latest reconcile run on the fill job: running until its result, and the newest judgement of any run.
+export type ReconcileState = { jobId: string; result: ResultEvent | null; judged: ReconcileJudgement | null };
 
 export type ErpRecord = {
   // null when the task never started 去报销.
@@ -22,9 +32,38 @@ export type ErpRecord = {
   erpAccount: ErpAccount | null;
   // The preview the judge approved after import, if the job got that far.
   preview: ApprovedPreview | null;
+  // What the latest attempt of the fill job observed right before its mutation (form-instance UUID, CDP target).
+  attempt: Preconditions | null;
+  // 对账 (#192) on the latest fill job, and the task's 转人工.
+  reconcile: ReconcileState | null;
+  handOff: ErpHandOffTable | null;
 };
 
-export const NO_ERP: ErpRecord = { facts: null, attempted: false, job: null, frozen: null, events: [], result: null, erpAccount: null, preview: null };
+export const NO_ERP: ErpRecord = { facts: null, attempted: false, job: null, frozen: null, events: [], result: null, erpAccount: null, preview: null, attempt: null, reconcile: null, handOff: null };
+
+const eventsOf = async (tx: Db, jobId: string): Promise<ExecutorEvent[]> =>
+  (await tx.selectFrom('erp_job_event').select('payload').where('job_id', '=', jobId).orderBy('seq').execute()).map((row) => ExecutorEventSchema.parse(JSON.parse(row.payload)));
+const lastResult = (events: readonly ExecutorEvent[]): ResultEvent | null => [...events].reverse().find((event): event is ResultEvent => event.type === 'result') ?? null;
+
+/**
+ * Judge a reconcile job's read-back against the fill it reconciles. The job reads whatever single form is open, so a
+ * form under another form-instance UUID or in another CDP target than the fill's last attempt proves nothing about
+ * this task: 未知 (wait), with the reason. Null when the job produced no read-back.
+ */
+export function judgeReconcile(events: ExecutorEvent[], preview: ApprovedPreview | null, attempt: Preconditions | null): ReconcileJudgement | null {
+  const derived = reconcileFromEvents(events, preview);
+  if (!derived) return null;
+  const readback = [...events].reverse().find((event): event is ReadbackEvent => event.type === 'readback' && event.stage === 'reconcile')!;
+  const read = { ...readback.readings, ...readback.form };
+  const elsewhere: string[] = [];
+  if (attempt) {
+    if (read.formInstanceId && read.formInstanceId !== attempt.formInstanceId) elsewhere.push(`报销系统里打开的表单实例（${read.formInstanceId}）不是这次写入的那一张（${attempt.formInstanceId}），读到的内容不能说明这次写入的结果`);
+    if (read.targetId && attempt.targetId && read.targetId !== attempt.targetId) elsewhere.push('报销系统所在的浏览器标签页不是这次写入时的那一个，读到的内容不能说明这次写入的结果');
+  }
+  const verdict: ReconcileVerdict = elsewhere.length ? { ...derived.verdict, bucket: '未知', action: '原地等待', reasons: [...elsewhere, ...derived.verdict.reasons] } : derived.verdict;
+  const saved = elsewhere.length === 0 && preview !== null && verdict.bucket === '已保存' && verdict.action === '原地等待' && derived.readings.taskMatch?.ok === true;
+  return { verdict, billNo: read.billNo.readable ? read.billNo.value : null, saved };
+}
 
 /** The job's phase from its result (none yet = running) and whether its login pause was cancelled. */
 export function phaseOf(result: ResultEvent | null, cancelled: boolean): ErpPhase {
@@ -47,29 +86,53 @@ export function phaseOf(result: ResultEvent | null, cancelled: boolean): ErpPhas
 export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
   const attempt = await tx.selectFrom('erp_attempt').select(['erp_account', 'erp_tenant', 'erp_display_name']).where('task_id', '=', taskId).orderBy('started_at', 'desc').executeTakeFirst();
   const erpAccount = attempt ? { displayName: attempt.erp_display_name, account: attempt.erp_account, tenant: attempt.erp_tenant } : null;
+  const handOff = (await tx.selectFrom('erp_hand_off').selectAll().where('task_id', '=', taskId).orderBy('revision', 'desc').executeTakeFirst()) ?? null;
   const job = await tx.selectFrom('erp_job').selectAll().where('task_id', '=', taskId).orderBy('revision', 'desc').executeTakeFirst();
-  if (!job) return { ...NO_ERP, attempted: attempt !== undefined, erpAccount };
-  const rows = await tx.selectFrom('erp_job_event').select('payload').where('job_id', '=', job.job_id).orderBy('seq').execute();
-  const events = rows.map((row) => ExecutorEventSchema.parse(JSON.parse(row.payload)));
-  const result = [...events].reverse().find((event): event is ResultEvent => event.type === 'result') ?? null;
+  if (!job) return { ...NO_ERP, attempted: attempt !== undefined, erpAccount, handOff };
+  const events = await eventsOf(tx, job.job_id);
+  let result = lastResult(events);
   const cancelled = (await tx.selectFrom('erp_job_cancel').select('cancel_id').where('job_id', '=', job.job_id).executeTakeFirst()) !== undefined;
-  const phase = phaseOf(result, cancelled);
+  let phase = phaseOf(result, cancelled);
+  const approved = await tx.selectFrom('erp_approved_preview').select('preview').where('job_id', '=', job.job_id).executeTakeFirst();
+  const preview = approved ? (JSON.parse(approved.preview) as ApprovedPreview) : null;
+  const lastAttempt = await tx.selectFrom('erp_attempt').select('preconditions').where('job_id', '=', job.job_id).orderBy(sql`rowid`, 'desc').executeTakeFirst();
+  const attemptPre = lastAttempt ? (JSON.parse(lastAttempt.preconditions) as Preconditions) : null;
+  // The newest reconcile run decides running / its notice; the newest run that read the form decides the bucket.
+  let reconcile: ReconcileState | null = null;
+  for (const run of await tx.selectFrom('erp_reconcile_job').select('job_id').where('fill_job_id', '=', job.job_id).orderBy('revision', 'desc').execute()) {
+    const runEvents = await eventsOf(tx, run.job_id);
+    reconcile ??= { jobId: run.job_id, result: lastResult(runEvents), judged: null };
+    const judged = judgeReconcile(runEvents, preview, attemptPre);
+    if (judged) {
+      reconcile.judged = judged;
+      break;
+    }
+  }
+  // A reconcile that proves the draft saved exactly as approved (the same strict test a fill's `saved` passed) is
+  // ERP 草稿已交接: done, not a hand-off.
+  if (phase === 'unknown' && reconcile?.judged?.saved) {
+    phase = 'saved';
+    result = { type: 'result', status: 'saved', code: 'reconciled', message: null, billNo: reconcile.judged.billNo, capture: null };
+  }
   // A catalog mismatch sends the task back to project assignment until a new submission answers it.
   let reassign = false;
   if (phase === 'catalog_mismatch') {
     const submission = await tx.selectFrom('project_submission').select('revision').where('task_id', '=', taskId).orderBy('revision', 'desc').executeTakeFirst();
     reassign = !submission || submission.revision < job.revision;
   }
-  const approved = await tx.selectFrom('erp_approved_preview').select('preview').where('job_id', '=', job.job_id).executeTakeFirst();
+  const reconciling = phase === 'unknown' && reconcile !== null && reconcile.result === null;
   return {
-    facts: { jobId: job.job_id, trigger: job.trigger, revision: job.revision, phase, reassign },
+    facts: { jobId: job.job_id, trigger: job.trigger, revision: job.revision, phase, reassign, reconciling },
     attempted: attempt !== undefined,
     job,
     frozen: JSON.parse(job.plan) as FrozenJob,
     events,
     result,
     erpAccount,
-    preview: approved ? (JSON.parse(approved.preview) as ApprovedPreview) : null,
+    preview,
+    attempt: attemptPre,
+    reconcile,
+    handOff,
   };
 }
 
@@ -170,21 +233,84 @@ export function readbackView(record: ErpRecord, lines: readonly Line[]): Readbac
   return { status: 'matched', rows, summary: `明细 ${rows.length}/${rows.length} 一致`, localTotal: total, erpTotal: total };
 }
 
-/** ERP 写入结果未知 stops in reconcile. The bucket, the allowed actions and the read-only job are #192's. */
-export function reconcileView(record: ErpRecord): Reconcile | null {
+// The server-side sentence of each 对账中断点.
+const BUCKET_BANNER: Readonly<Record<ReconcileBucket, (billNo: string | null) => string>> = {
+  未知: () => '对账没有读清报销系统里这张单据的状态。请在报销系统里打开这次的报销单查看，再点「重新对账」；也可以转人工。',
+  '未保存·导入前': () => '报销系统里还没有导入发票，也没有保存草稿，发票没有被报销系统占用。',
+  '未保存·已导入未写明细': () => '发票已导入报销系统、明细还没有写，发票已被报销系统占用。只能转人工处理。',
+  '未保存·就绪待保存': () => '明细已写好，收票与明细合计一致，还没有保存。应用不会替你保存；请在报销系统里核对，或转人工。',
+  已保存: (billNo) => `报销系统里已有草稿${billNo ? ` ${billNo}` : ''}，但不能证明它与这次确认的明细逐行一致。`,
+  不自洽: () => '报销系统里这张单据前后对不上。只能转人工处理。',
+};
+
+// Why the latest reconcile run has no read-back, as the page says it.
+function runNotice(result: ResultEvent | null): string | null {
+  if (!result || result.status === 'read') return null;
+  if (result.status === 'waiting_login') return '对账前请先在报销专用浏览器窗口里登录报销系统，然后再对账。';
+  return `这次对账没有读到报销系统，可以再对账一次。原因：${result.message ?? result.code ?? ''}`;
+}
+
+/** ERP's own words and the cropped screenshot of the write that stopped (#32), as the page shows them. */
+function captureOf(record: ErpRecord, taskId: string): ErpCapture | null {
+  const capture = record.result?.capture;
+  if (!capture || (capture.erpText.length === 0 && !capture.screenshot)) return null;
+  return { erpText: capture.erpText, screenshotUrl: capture.screenshot ? `/api/tasks/${taskId}/erp-capture` : null };
+}
+
+/**
+ * 对账 (reconcile) after ERP 写入结果未知, and the terminal 转人工. Before any read and after a 原地等待 verdict the user
+ * may reconcile (read-only) again or hand off; a 转人工 verdict (incl. 已导入未写明细) allows only the hand-off.
+ */
+export function reconcileView(record: ErpRecord, taskId: string, lifecycle: TaskLifecycle): Reconcile | null {
+  const judged = record.reconcile?.judged ?? null;
+  const capture = captureOf(record, taskId);
+  const draftNo = judged?.billNo ?? record.result?.billNo ?? null;
+  const fillReasons = (record.result?.message ?? '').split('；').filter(Boolean);
+  if (lifecycle === 'handed_off' && record.handOff) {
+    return {
+      status: 'handed_off',
+      bucket: (record.handOff.bucket as ReconcileBucket | null) ?? null,
+      action: '转人工',
+      actionCode: 'hand_off',
+      allowedActions: [],
+      humanReview: true,
+      banner: HUMAN_REVIEW_NOTICE,
+      draftNo,
+      rows: [],
+      reasons: judged?.verdict.reasons ?? fillReasons,
+      capture,
+    };
+  }
   if (record.facts?.phase !== 'unknown') return null;
-  const message = record.result?.message ?? '';
+  const base = { draftNo, rows: [], capture };
+  if (record.facts.reconciling) {
+    return { ...base, status: 'pending', bucket: judged?.verdict.bucket ?? null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: '正在只读核对报销系统里的这张报销单，不会写入。', reasons: judged?.verdict.reasons ?? fillReasons };
+  }
+  const notice = runNotice(record.reconcile?.result ?? null);
+  if (!judged) {
+    return {
+      ...base,
+      status: 'pending',
+      bucket: null,
+      action: null,
+      actionCode: null,
+      allowedActions: ['wait', 'hand_off'],
+      humanReview: false,
+      banner: notice ?? '写入报销系统的结果不确定：应用已停止写入，不会重放。请先在报销系统里查看这张报销单，再点「开始对账」只读核对；也可以直接转人工。',
+      reasons: fillReasons,
+    };
+  }
+  const handOffOnly = judged.verdict.action === '转人工';
   return {
-    status: 'pending',
-    bucket: null,
-    action: null,
-    actionCode: null,
-    allowedActions: [],
-    humanReview: false,
-    banner: '写入报销系统的结果不确定：应用已停止写入，不会重放。请先在报销系统里查看这张报销单的实际状态。',
-    draftNo: record.result?.billNo ?? null,
-    rows: [],
-    reasons: message ? message.split('；').filter(Boolean) : [],
+    ...base,
+    status: handOffOnly ? 'pending' : 'waiting',
+    bucket: judged.verdict.bucket,
+    action: judged.verdict.action,
+    actionCode: handOffOnly ? 'hand_off' : 'wait',
+    allowedActions: handOffOnly ? ['hand_off'] : ['wait', 'hand_off'],
+    humanReview: handOffOnly,
+    banner: notice ?? BUCKET_BANNER[judged.verdict.bucket](judged.billNo),
+    reasons: judged.verdict.reasons,
   };
 }
 

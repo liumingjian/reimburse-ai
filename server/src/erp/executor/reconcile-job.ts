@@ -59,8 +59,11 @@ export async function runReconcileJob(rawPlan: unknown, ports: ReconcilePorts): 
     await step('login', 'done');
 
     await step('readback', 'running');
-    const readings = protocolReadings(await readForm(session));
-    await channel.emit({ type: 'readback', stage: 'reconcile', readings });
+    const form = await readForm(session);
+    const readings = protocolReadings(form);
+    // Which form was read: the server compares the form-instance UUID and the CDP target with the fill's attempt.
+    const target = { formInstanceId: form.formInstanceId, targetId: probe.page.cdpTargetId === undefined ? null : String(probe.page.cdpTargetId) };
+    await channel.emit({ type: 'readback', stage: 'reconcile', readings, form: target });
     await step('readback', 'done');
     return await finish('read', null, null, readings.billNo.value);
   } catch (error: any) {

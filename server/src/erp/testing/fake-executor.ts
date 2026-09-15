@@ -4,6 +4,7 @@
 // attempts, or a saved draft. `scripted()` plays one script per job run; the last one repeats.
 
 import type { FillExecutor } from '../fill-jobs';
+import type { ReconcileExecutor } from '../reconcile-job';
 import type { ErpAccount, ExecutorChannel, FillPlan, Mutation, ResultEvent, ResultStatus } from '../protocol';
 
 export type Script = (plan: FillPlan, channel: ExecutorChannel) => Promise<ResultEvent>;
@@ -86,6 +87,37 @@ export const savedDraft = (billNo = 'FYBX2026090001', erpAccount = TEST_ERP_ACCO
   await attempt(plan, channel, 'save', 2, erpAccount);
   await channel.emit({ type: 'step', step: 'save', status: 'done' });
   return result(channel, 'saved', null, null, billNo);
+};
+
+// A 1×1 PNG: stands in for the cropped screenshot of ERP's error dialog.
+export const TINY_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+export const UNCERTAIN_SAVE_ERP_TEXT = '保存超时：服务器繁忙，请稍后重试。';
+
+/** Imports and fills, then the save times out with an ERP dialog: ERP 写入结果未知, with ERP's own text and a screenshot. */
+export const uncertainSave: Script = async (plan, channel) => {
+  await pastCatalog(channel);
+  await attempt(plan, channel, 'import', 0, TEST_ERP_ACCOUNT);
+  await channel.emit({ type: 'step', step: 'import', status: 'done' });
+  await attempt(plan, channel, 'fill', 1, TEST_ERP_ACCOUNT);
+  await channel.emit({ type: 'step', step: 'fill', status: 'done' });
+  await attempt(plan, channel, 'save', 2, TEST_ERP_ACCOUNT);
+  await channel.emit({ type: 'step', step: 'save', status: 'running' });
+  await channel.emit({ type: 'step', step: 'save', status: 'failed' });
+  const event: ResultEvent = { type: 'result', status: 'unknown', code: 'save_timeout', message: '保存草稿后报销系统没有在限定时间内返回结果', billNo: null, capture: { erpText: [UNCERTAIN_SAVE_ERP_TEXT], screenshot: TINY_PNG } };
+  await channel.emit(event);
+  return event;
+};
+
+/** A reconcile job that finds no expense form open: every reading unreadable, so the server judges 未知. */
+export const noFormOpen: ReconcileExecutor = async (_plan, channel) => {
+  const reason = '页面上没有打开的费用报销单';
+  await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
+  await channel.emit({ type: 'step', step: 'chromium', status: 'done' });
+  await channel.emit({
+    type: 'readback', stage: 'reconcile',
+    readings: { formMode: { readable: false, value: null, reason }, billNo: { readable: false, value: null, reason }, receiptsGrid: { ok: false, reason }, detailGrid: { ok: false, reason } },
+  });
+  return result(channel, 'read', null, null);
 };
 
 /** Wraps a script so it waits for `release()` right after Chromium is ready: the job is observably running. */

@@ -56,6 +56,22 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
         </section>
       ) : null}
 
+      {/* 报销系统自己的原话（逐字，不改写）和写入停下时的裁剪截图。 */}
+      {reconcile.capture ? (
+        <section className="app-erp-capture" aria-label="报销系统原文">
+          {reconcile.capture.erpText.length > 0 ? (
+            <ul className="app-reconcile-reasons">
+              {reconcile.capture.erpText.map((text) => (
+                <li key={text} data-testid="erp-text">
+                  {text}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {reconcile.capture.screenshotUrl ? <img src={reconcile.capture.screenshotUrl} alt="报销系统截图" style={{ maxWidth: '100%' }} /> : null}
+        </section>
+      ) : null}
+
       <dl className="app-summary bleed" aria-label="对账摘要">
         <div className="app-summary-field">
           <dt className="app-summary-key">草稿号</dt>
@@ -122,7 +138,7 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
             <>
               {allowWait ? (
                 <Button kind={allowHandOff ? 'secondary' : 'primary'} size="md" renderIcon={Renew} disabled={busy || !canAct} onClick={() => void act((adapter) => adapter.reconcile(taskId, step.stepToken))}>
-                  重新对账
+                  {reconcile.bucket === null ? '开始对账' : '重新对账'}
                 </Button>
               ) : null}
               {allowHandOff ? (

@@ -51,6 +51,8 @@ import type { ErpLease } from './erp-lease';
 import type { ErpConfig } from './erp/config';
 import { buildFillJob, type FrozenJob } from './erp/fill-plan';
 import { newJobId, type FillRun, type FillTrigger } from './erp/fill-jobs';
+import { PROTOCOL_VERSION } from './erp/protocol';
+import type { ReconcileRun } from './erp/reconcile-jobs';
 import { catalogView, erpView, loadErp, readbackView, reconcileView, type ErpRecord } from './erp/fill-state';
 import { loadPrintFacts, printFileShas, printView, sheetState, type PrintFacts } from './print/facts';
 import * as printActions from './print/service';
@@ -140,8 +142,14 @@ export type ParseWork = { runId: string; input: ParseInput; preset: ParseOutcome
 // A refusal the parser job expects when the run moved on under it; never shown to anyone.
 const STALE_JOB = { code: 'stale_job', message: 'the inventory run changed under the parser job' } as const;
 
-// What the 去报销 actions need from the app: the global lease, the ERP to write to, and the background job runner.
-export type ErpServiceOptions = { lease: ErpLease; config: ErpConfig; run: (job: FillRun) => void };
+// What the 去报销 actions need from the app: the global lease, the ERP to write to, and the background job runners
+// (the fill job, and the read-only reconcile job of #192).
+export type ErpServiceOptions = { lease: ErpLease; config: ErpConfig; run: (job: FillRun) => void; reconcile: (job: ReconcileRun) => void };
+
+export const RECONCILE_COPY = {
+  notReconciling: ERP_ACTION_ERRORS.notReconciling,
+  notAllowed: ERP_ACTION_ERRORS.notAllowed,
+} as const;
 
 export type TaskServiceOptions = { onChange?: (snapshot: TaskSnapshot) => void; erp?: ErpServiceOptions };
 
@@ -306,7 +314,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       const { facts, view } = loaded;
       if (!job && parseRunning(facts)) return { kind: 'stale' };
       const phase = facts.erp?.phase;
-      if (!job && (phase === 'running' || (phase === 'waiting_login' && !loginPause))) return { kind: 'stale' };
+      if (!job && (phase === 'running' || facts.erp?.reconciling || (phase === 'waiting_login' && !loginPause))) return { kind: 'stale' };
       if (!job && phase === 'saved') return { kind: 'refused', code: 'task_closed', message: ACTION_COPY.taskClosed };
       if (!job && phase === 'unknown' && !erpAction) return { kind: 'refused', code: 'erp_started', message: ERP_ACTION_ERRORS.erpStarted };
       const at = now();
@@ -651,6 +659,63 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       );
     },
 
+    // 开始对账 / 重新对账: one run of the read-only reconcile job on the fill whose write result is unknown. Takes the
+    // ERP lease inside the accepted change (the job releases it on its result); refused when the current verdict
+    // allows only 转人工. Never touches the fill job: nothing is replayed.
+    async reconcile(taskId: string, token: string): Promise<TaskSnapshot> {
+      const started: { run: ReconcileRun | null } = { run: null };
+      try {
+        const snapshot = await mutate(
+          taskId,
+          token,
+          async ({ tx, task, facts, loaded, at, revision }) => {
+            if (!erp) return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
+            if (facts.erp?.phase !== 'unknown' || !loaded.erp.job) return { code: 'not_reconciling', message: RECONCILE_COPY.notReconciling };
+            const view = reconcileView(loaded.erp, taskId, task.lifecycle);
+            if (!view?.allowedActions.includes('wait')) return { code: 'action_not_allowed', message: RECONCILE_COPY.notAllowed };
+            const holder = erp.lease.holder();
+            if (holder && holder.taskId !== taskId) return { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
+            if (!erp.lease.acquire({ accountId, taskId })) return { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
+            const jobId = newJobId();
+            started.run = { jobId, accountId, taskId, plan: { protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId, taskId, erpOrigin: loaded.erp.frozen?.plan.erpOrigin ?? erp.config.origin } };
+            await tx.insertInto('erp_reconcile_job').values({ job_id: jobId, fill_job_id: loaded.erp.job.job_id, task_id: taskId, account_id: accountId, revision, started_at: at }).execute();
+          },
+          { erpAction: true },
+        );
+        if (started.run) erp?.reconcile(started.run);
+        return snapshot;
+      } catch (error) {
+        if (started.run) erp?.lease.release(taskId);
+        throw error;
+      }
+    },
+
+    // 转人工 (hand off to a human): terminal from any reconcile state. The task's lifecycle becomes `handed_off`
+    // (stage reconcile, read-only, still holding its invoices); the bucket it was made on is recorded; the lease goes.
+    async handOff(taskId: string, token: string): Promise<TaskSnapshot> {
+      const snapshot = await mutate(
+        taskId,
+        token,
+        async ({ tx, task, facts, loaded, at, revision }) => {
+          if (facts.erp?.phase !== 'unknown') return { code: 'not_reconciling', message: RECONCILE_COPY.notReconciling };
+          const view = reconcileView(loaded.erp, taskId, task.lifecycle);
+          if (!view?.allowedActions.includes('hand_off')) return { code: 'action_not_allowed', message: RECONCILE_COPY.notAllowed };
+          await tx.insertInto('erp_hand_off').values({ hand_off_id: randomUUID(), task_id: taskId, account_id: accountId, fill_job_id: loaded.erp.job?.job_id ?? null, bucket: view.bucket, revision, created_at: at }).execute();
+          await tx.updateTable('task').set({ lifecycle: 'handed_off' }).where('task_id', '=', taskId).execute();
+        },
+        { erpAction: true },
+      );
+      erp?.lease.release(taskId);
+      return snapshot;
+    },
+
+    // The cropped screenshot of ERP's error when the write stopped (#32), or null.
+    async erpCapture(taskId: string): Promise<Uint8Array | null> {
+      const task = await taskRow(db, taskId);
+      const screenshot = (await loadErp(db, task.task_id)).result?.capture?.screenshot;
+      return screenshot ? new Uint8Array(Buffer.from(screenshot, 'base64')) : null;
+    },
+
     // The ERP job's side (`erp/fill-jobs.ts`): appends its facts in one accepted revision and publishes. A task closed
     // under a running job (reset) still gets the facts, without a revision.
     async erpRecord(taskId: string, write: (tx: Db) => Promise<void>): Promise<void> {
@@ -699,7 +764,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       if (task.lifecycle !== 'open') throw new ActionRefusedError({ code: 'not_abandonable', message: ACTION_COPY.notAbandonable }, null, await list());
       const loaded = await load(db, task);
       const phase = loaded.facts.erp?.phase;
-      if (parseRunning(loaded.facts) || phase === 'running' || phase === 'waiting_login') throw new StaleStepError(await snapshot(taskId));
+      if (parseRunning(loaded.facts) || phase === 'running' || phase === 'waiting_login' || loaded.facts.erp?.reconciling) throw new StaleStepError(await snapshot(taskId));
       if (loaded.erp.attempted) throw new ActionRefusedError({ code: 'erp_started', message: ABANDON_TASK_COPY.blockedReason }, null, await list());
       const at = now();
       await db.updateTable('task').set({ lifecycle: 'voided', revision: task.revision + 1, updated_at: at }).where('task_id', '=', taskId).execute();
@@ -802,7 +867,7 @@ function listItem(task: TaskTable, { facts, legacy, erp }: Loaded): TaskListItem
     grossTotal: null,
     erpDraftNo: legacy?.bill_no ?? savedDraftNo,
     pendingCount: facts.parse?.openPendingItems ?? 0,
-    erpOutcome: legacy?.outcome === 'handed_off' ? 'handed_off' : 'none',
+    erpOutcome: legacy?.outcome === 'handed_off' || (task.origin !== 'legacy' && task.lifecycle === 'handed_off') ? 'handed_off' : 'none',
     // Not voidable once ERP was touched: the task holds its invoices until reconcile says otherwise.
     abandonable: task.lifecycle === 'open' && !erp.attempted,
     abandonBlockedReason: task.lifecycle !== 'open' ? ACTION_COPY.notAbandonable : erp.attempted ? ABANDON_TASK_COPY.blockedReason : null,
@@ -902,8 +967,8 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
     readback: readbackView(erp, lines),
     reconcile:
       legacy?.outcome === 'handed_off'
-        ? { status: 'handed_off', bucket: legacy.reconcile_bucket as ReconcileBucket | null, action: '转人工', actionCode: null, allowedActions: [], humanReview: true, banner: HUMAN_REVIEW_NOTICE, draftNo: legacy.bill_no, rows: [], reasons: [] }
-        : (reconcileView(erp) ?? { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [] }),
+        ? { status: 'handed_off', bucket: legacy.reconcile_bucket as ReconcileBucket | null, action: '转人工', actionCode: null, allowedActions: [], humanReview: true, banner: HUMAN_REVIEW_NOTICE, draftNo: legacy.bill_no, rows: [], reasons: [], capture: null }
+        : (reconcileView(erp, task.task_id, task.lifecycle) ?? { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [], capture: null }),
     step,
   };
 }

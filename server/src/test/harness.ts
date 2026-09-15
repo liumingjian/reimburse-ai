@@ -12,6 +12,7 @@ import type { ParseExecutor } from '../parse/executor';
 import type { ProjectCatalog } from '../catalog/project-catalog';
 import type { ErpConfig } from '../erp/config';
 import type { FillExecutor } from '../erp/fill-jobs';
+import type { ReconcileExecutor } from '../erp/reconcile-job';
 
 // The primary test seam: the Hono app on SQLite `:memory:`, with a throwaway data directory for blobs.
 // The parser job runs in the real parse worker unless a test injects another executor (`createTestServer({ parser })`).
@@ -69,13 +70,14 @@ export function testClient(app: Hono<AppEnv>, account: Account, cookie: string):
 // without it the import finds nothing.
 // `erpExecutor`: where 去报销 jobs run (e.g. `erp/testing/fake-executor.ts` `scripted(...)`); `erpConfig`: the ERP and
 // build the plan targets (the fake ERP's, when running the real executor on it).
-export async function createTestServer({ parser, projectCatalog, legacyHome = null, erpExecutor, erpConfig }: { parser?: ParseExecutor; projectCatalog?: ProjectCatalog; legacyHome?: string | null; erpExecutor?: FillExecutor; erpConfig?: ErpConfig } = {}): Promise<TestServer> {
-  const dataDir = tempDataDir();
-  const db = await openDatabase(':memory:');
+// `reconcileExecutor`: where 对账 jobs run (e.g. `runReconcileJob` on a fake ERP). `database` + `dataDir`: a file
+// database and data directory shared with an earlier server, to test a restart (default `:memory:` + a fresh dir).
+export async function createTestServer({ parser, projectCatalog, legacyHome = null, erpExecutor, reconcileExecutor, erpConfig, database = ':memory:', dataDir = tempDataDir() }: { parser?: ParseExecutor; projectCatalog?: ProjectCatalog; legacyHome?: string | null; erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor; erpConfig?: ErpConfig; database?: string; dataDir?: string } = {}): Promise<TestServer> {
+  const db = await openDatabase(database);
   let offset = 0;
   const clock: TestClock = { now: () => new Date(Date.now() + offset), advance: (ms) => void (offset += ms) };
   const erpLease = createInMemoryErpLease();
-  const app = createApp({ db, dataDir, now: clock.now, erpLease, legacyHome, ...(parser ? { parser } : {}), ...(projectCatalog ? { projectCatalog } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(erpConfig ? { erpConfig } : {}) });
+  const app = createApp({ db, dataDir, now: clock.now, erpLease, legacyHome, ...(parser ? { parser } : {}), ...(projectCatalog ? { projectCatalog } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(erpConfig ? { erpConfig } : {}) });
   let accounts = 0;
 
   async function signIn(username = `user${accounts + 1}`): Promise<TestClient> {

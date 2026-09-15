@@ -650,6 +650,14 @@ export const HUMAN_REVIEW_NOTICE = '当前报销已暂停，材料和状态已�
 // humanReview 为真时（转人工的结果）页面显示 HUMAN_REVIEW_NOTICE，且不给「重新对账」。
 // status：pending 等待用户处置；waiting 已重新对账、原地等待；handed_off 已转人工（终态）。
 // rows 是严格回读逐行比对（与 readback.rows 相同）；reasons 是不属于某一行的原因（逐行原因在 rows[].reasons）。
+// 写入中止时报销系统自己的原话（逐字，来自报销系统弹窗与发票助手）和裁剪截图（服务端地址，没有时为 null）。
+// 页面照原样显示，不改写、不翻译。
+export const ErpCaptureSchema = z.object({
+  erpText: z.array(z.string()),
+  screenshotUrl: z.string().nullable(),
+});
+export type ErpCapture = z.infer<typeof ErpCaptureSchema>;
+
 export const ReconcileSchema = z.object({
   status: z.enum(['none', 'pending', 'waiting', 'handed_off']),
   bucket: ReconcileBucketSchema.nullable(),
@@ -661,6 +669,7 @@ export const ReconcileSchema = z.object({
   draftNo: z.string().nullable(),
   rows: z.array(ReadbackRowSchema),
   reasons: z.array(z.string()),
+  capture: ErpCaptureSchema.nullable(),
 }).refine((reconcile) => !(reconcile.humanReview && reconcile.allowedActions.includes('wait')), {
   message: 'humanReview 为真时 allowedActions 不能含 wait（转人工之后不再重新对账）',
   path: ['allowedActions'],
