@@ -8,7 +8,9 @@ import { AuthRefusal, createAccountService, type Clock } from './accounts/accoun
 import { accountOf, mountAuthRoutes, requireAccount, type AppEnv } from './accounts/http';
 import type { Db } from './db/database';
 import { createInMemoryErpLease, type ErpLease } from './erp-lease';
-import { ActionRefusedError, createTaskService, StaleStepError, TaskNotFoundError, type TaskService, type UploadedFile } from './tasks';
+import { workerExecutor, type ParseExecutor } from './parse/executor';
+import { createParseJobs, type ParseJobs } from './parse/jobs';
+import { ActionRefusedError, createTaskService, parseBacklogOfAllAccounts, StaleStepError, TaskNotFoundError, type TaskService, type UploadedFile } from './tasks';
 
 // The HTTP app. Wire rules (contract/src/http.ts): success is 200 with the whole new snapshot; failure is
 // `{ error: { code, message } }`; a stale stepToken is 409 `{ error, snapshot }` with the fresh snapshot; SSE pushes
@@ -26,20 +28,35 @@ export type AppOptions = {
   now?: Clock;
   // The global ERP control lease (ADR-0016). #191 passes the one its ERP job acquires.
   erpLease?: ErpLease;
+  // Where the parser job parses; the server's one worker_thread by default. Tests inject inline or gated executors.
+  parser?: ParseExecutor;
 };
+
+// `close` stops the background jobs (after the material in flight) and releases the parse worker; call it before
+// closing the database.
+export type App = Hono<AppEnv> & { close: () => Promise<void> };
 
 type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
 const failure = (c: Context, status: 400 | 401 | 404 | 409, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease() }: AppOptions): Hono<AppEnv> {
+export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), parser }: AppOptions): App {
   const accounts = createAccountService(db, now);
   // Keyed by task id; a task's stream only ever opens for its owner.
   const listeners = new Map<string, Set<SnapshotListener>>();
-  const publish = (snapshot: TaskSnapshot) => {
+  let jobs: ParseJobs | null = null;
+  const publish = (snapshot: TaskSnapshot, accountId: string) => {
     for (const listener of listeners.get(snapshot.task.taskId) ?? []) listener(snapshot);
+    // A run with materials still waiting (just started, or mid-way) needs its parser job.
+    if (snapshot.inventory.status === 'running') jobs?.ensure(accountId, snapshot.task.taskId);
   };
-  const tasksOf = (c: Context<AppEnv>) => createTaskService(db, dataDir, accountOf(c).accountId, { onChange: publish });
+  // Every task service is scoped to one account; the parser job gets the owner's service for each task it drives.
+  const serviceFor = (accountId: string) => createTaskService(db, dataDir, accountId, { onChange: (snapshot) => publish(snapshot, accountId) });
+  const tasksOf = (c: Context<AppEnv>) => serviceFor(accountOf(c).accountId);
+  const parseJobs = createParseJobs(serviceFor, () => parseBacklogOfAllAccounts(db, dataDir), parser ?? workerExecutor());
+  jobs = parseJobs;
+  // A restart mid-job picks up every account's backlog again: what is left is derived from the facts.
+  parseJobs.resumeAll();
 
   const app = new Hono<AppEnv>();
 
@@ -125,7 +142,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
 
   if (webDist) app.get('*', (c) => serveWebFile(c, webDist));
 
-  return app;
+  return Object.assign(app, { close: () => parseJobs.close() });
 }
 
 // Task actions (`POST /api/tasks/:id/actions/<name>`), each with its JSON input. Later slices add their entries here.

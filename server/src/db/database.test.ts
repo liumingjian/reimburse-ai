@@ -1,11 +1,12 @@
-import { readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { GENERATED_DIR } from '@baox/fixtures';
 import { TaskSnapshotSchema } from '@baox/contract';
 import Database from 'better-sqlite3';
 import { Kysely, SqliteDialect, sql } from 'kysely';
 import { Migrator } from 'kysely/migration';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { databasePath } from '../data-dir';
+import { databasePath, writeBlob } from '../data-dir';
 import { startServer } from '../server';
 import { createTaskService } from '../tasks';
 import { tempDataDir } from '../test/harness';
@@ -55,6 +56,42 @@ describe('migrations on an existing database', () => {
       expect(snapshot.step.kind).toBe('start_inventory');
     } finally {
       await db.destroy();
+    }
+  });
+
+  it('migrates 0002_180 → latest, and resumes the parser job of a run that was left without outcomes', async () => {
+    const bytes = readFileSync(join(GENERATED_DIR, 'm01-hotel-invoice.pdf'));
+    const sha = writeBlob(dataDir, bytes);
+    const db = new Kysely<any>({ dialect: new SqliteDialect({ database: new Database(databasePath(dataDir)) }) });
+    const { error } = await new Migrator({ db, provider: { getMigrations: async () => MIGRATIONS } }).migrateTo('0002_180_inventory');
+    if (error) throw error;
+    const at = '2026-09-01T10:00:00Z';
+    await db.insertInto('task').values({ task_id: 'old-task', account_id: 'local', name: '旧任务', home_city: '杭州', lifecycle: 'open', revision: 3, created_at: at, updated_at: at }).execute();
+    await db.insertInto('upload_batch').values({ batch_id: 'old-batch', task_id: 'old-task', account_id: 'local', no: 1, uploaded_at: at }).execute();
+    await db.insertInto('blob').values({ sha256: sha, size: bytes.byteLength, mime: 'application/pdf', created_at: at }).execute();
+    await db.insertInto('material').values({ material_id: 'old-material', task_id: 'old-task', account_id: 'local', batch_id: 'old-batch', blob_sha256: sha, file_name: '全季酒店_发票.pdf', created_at: at, batch_seq: 0 }).execute();
+    await db.insertInto('inventory_run').values({ run_id: 'old-run', task_id: 'old-task', account_id: 'local', version_no: 1, revision: 3, started_at: at }).execute();
+    await db.destroy();
+
+    // The old task belongs to the implicit account, deactivated since 0002_193 (nobody can sign in to it): wait for
+    // the resumed job's outcome in the database file, then read the facts through the account-scoped service.
+    const server = await startServer({ dataDir, port: 0 });
+    const reader = new Database(databasePath(dataDir), { readonly: true });
+    try {
+      expect(backups()).toEqual([expect.stringMatching(/-0002_180_inventory\.sqlite$/)]);
+      const outcomes = reader.prepare<[string], { n: number }>('SELECT count(*) AS n FROM parse_result WHERE task_id = ?');
+      for (let attempt = 0; (outcomes.get('old-task')?.n ?? 0) === 0 && attempt < 500; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      reader.close();
+      await server.close();
+    }
+    const migrated = await openDatabase(databasePath(dataDir));
+    try {
+      const snapshot = TaskSnapshotSchema.parse(await createTaskService(migrated, dataDir, 'local').snapshot('old-task'));
+      expect(snapshot.inventory.status).toBe('done');
+      expect(snapshot.materials).toEqual([expect.objectContaining({ materialId: 'old-material', kind: 'vat_invoice', layout: 'einvoice', status: 'ok' })]);
+    } finally {
+      await migrated.destroy();
     }
   });
 

@@ -37,6 +37,7 @@ export async function startServer({ dataDir, port, webDist = null }: StartOption
       // Open SSE streams would keep the server alive forever.
       if ('closeAllConnections' in server) server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
+      await app.close();
       await db.destroy();
       release();
     },

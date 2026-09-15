@@ -12,6 +12,7 @@
     "build": "node scripts/build.mjs",
     "start": "node dist/main.mjs",
     "test": "vitest run",
+    "test:private": "tsx scripts/test-private.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -20,9 +21,14 @@
     "better-sqlite3": "13.0.3",
     "hono": "4.13.8",
     "kysely": "0.29.5",
-    "zod": "4.6.2"
+    "pdfjs-dist": "6.1.200",
+    "unpdf": "1.8.1",
+    "zod": "4.6.2",
+    "zxing-wasm": "3.1.4"
   },
   "devDependencies": {
+    "@baox/fixtures": "workspace:*",
+    "@cantoo/pdf-lib": "2.9.2",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "24.13.3",
     "esbuild": "0.28.2",

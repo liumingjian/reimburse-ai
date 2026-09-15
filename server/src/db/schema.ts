@@ -100,7 +100,24 @@ export interface UploadReopenTable {
   reopened_at: string;
 }
 
+// One parser outcome per material per inventory run (0003_183). `detail` is the JSON `ParseOutcome`.
+export interface ParseResultTable {
+  result_id: string;
+  task_id: string;
+  account_id: string;
+  run_id: string;
+  material_id: string;
+  outcome: 'recognised' | 'unrecognised' | 'ambiguous' | 'failed';
+  kind: string | null;
+  layout: string | null;
+  parser_version: string | null;
+  detail: string;
+  revision: number;
+  created_at: string;
+}
+
 export interface Schema {
+  parse_result: ParseResultTable;
   account: AccountTable;
   session: SessionTable;
   task: TaskTable;

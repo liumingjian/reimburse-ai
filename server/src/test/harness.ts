@@ -4,12 +4,14 @@ import { join } from 'node:path';
 import { SessionSchema, type Account } from '@baox/contract';
 import type { Hono } from 'hono';
 import type { AppEnv } from '../accounts/http';
-import { createApp } from '../app';
+import { createApp, type App } from '../app';
 import { ensureDataDir } from '../data-dir';
 import { openDatabase, type Db } from '../db/database';
 import { createInMemoryErpLease, type InMemoryErpLease } from '../erp-lease';
+import type { ParseExecutor } from '../parse/executor';
 
 // The primary test seam: the Hono app on SQLite `:memory:`, with a throwaway data directory for blobs.
+// The parser job runs in the real parse worker unless a test injects another executor (`createTestServer({ parser })`).
 // Every `/api/*` route except the auth ones needs a session: get a signed-in client with `signIn()`.
 //
 //   const alice = await server.signIn();          // the first call creates the admin, later calls register users
@@ -27,7 +29,7 @@ export type TestClient = {
 };
 
 export type TestServer = {
-  app: Hono<AppEnv>;
+  app: App;
   db: Db;
   dataDir: string;
   // Drives session expiry; starts at the real time.
@@ -60,13 +62,13 @@ export function testClient(app: Hono<AppEnv>, account: Account, cookie: string):
   };
 }
 
-export async function createTestServer(): Promise<TestServer> {
+export async function createTestServer({ parser }: { parser?: ParseExecutor } = {}): Promise<TestServer> {
   const dataDir = tempDataDir();
   const db = await openDatabase(':memory:');
   let offset = 0;
   const clock: TestClock = { now: () => new Date(Date.now() + offset), advance: (ms) => void (offset += ms) };
   const erpLease = createInMemoryErpLease();
-  const app = createApp({ db, dataDir, now: clock.now, erpLease });
+  const app = createApp({ db, dataDir, now: clock.now, erpLease, ...(parser ? { parser } : {}) });
   let accounts = 0;
 
   async function signIn(username = `user${accounts + 1}`): Promise<TestClient> {
@@ -93,6 +95,7 @@ export async function createTestServer(): Promise<TestServer> {
     erpLease,
     signIn,
     async close() {
+      await app.close();
       await db.destroy();
       rmSync(dataDir, { recursive: true, force: true });
     },

@@ -1,0 +1,72 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { GENERATED_DIR } from '@baox/fixtures';
+import { describe, expect, it } from 'vitest';
+import { dispatch } from '../dispatch';
+import { parseMaterial } from '../material';
+import { pdfDoc } from '../pdf';
+import { einvoice, QR_SOURCE, readQr } from './einvoice';
+import { LAYOUTS } from '.';
+
+// Unit tests of the `vat_invoice/einvoice` layout on the real text layer of @baox/fixtures (the PDF adapter inline,
+// no worker), with QR payloads injected into the document model.
+
+const fixture = (file: string) => new Uint8Array(readFileSync(join(GENERATED_DIR, file)));
+const AMAP_QR = '01,32,,26312000000101557402,69.19,20260813,,A1B2C3D4';
+
+describe('vat_invoice/einvoice', () => {
+  it('recognises m01 and fills every required slot', async () => {
+    const outcome = await parseMaterial({ materialId: 'm01', fileName: '全季酒店_发票.pdf', mediaType: 'pdf', bytes: fixture('m01-hotel-invoice.pdf') });
+    expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'vat_invoice', layout: 'einvoice', parserVersion: einvoice.version, kindLabel: '全电发票（专票）', missing: [] });
+  });
+
+  it('keeps evidence refs to the text observations a value came from', async () => {
+    const outcome = dispatch(await pdfDoc(fixture('m03-amap-invoice.pdf')), LAYOUTS);
+    if (outcome.outcome !== 'recognised') throw new Error(`expected recognised, got ${JSON.stringify(outcome)}`);
+    const number = outcome.candidates.find((c) => c.key === 'invoiceNumber');
+    expect(number?.refs).toEqual([{ page: 1, observationIds: [expect.stringMatching(/^p1\.\d+$/)], text: '发票号码：26312000000101557402' }]);
+  });
+
+  it('does not recognise an e-invoice outside the v1 kinds (m11, 餐饮) or a document without the invoice title (m06)', async () => {
+    expect(einvoice.recognise(await pdfDoc(fixture('m11-other-invoice.pdf')))).toBe(false);
+    expect(einvoice.recognise(await pdfDoc(fixture('m06-caocao-itinerary.pdf')))).toBe(false);
+  });
+
+  it('reads a 全电 QR payload; anything else is not one', () => {
+    expect(readQr(AMAP_QR)).toEqual({ invoiceNumber: '26312000000101557402', issueDate: '2026-08-13', totalAmount: '69.19', invoiceType: '普票' });
+    expect(readQr('01,31,,26312000000098127734,3640,20260822,,X')).toMatchObject({ totalAmount: '3640.00', invoiceType: '专票' });
+    expect(readQr('https://example.com/not-an-invoice')).toBeNull();
+  });
+
+  it('a QR that agrees with the face adds its candidates and a note; one that disagrees is a conflict; none is advisory', async () => {
+    const doc = await pdfDoc(fixture('m03-amap-invoice.pdf'));
+
+    const agreed = dispatch({ ...doc, codes: [AMAP_QR] }, LAYOUTS);
+    if (agreed.outcome !== 'recognised') throw new Error('expected recognised');
+    expect(agreed.candidates.filter((c) => c.source === QR_SOURCE).map((c) => c.key).sort()).toEqual(['invoiceNumber', 'invoiceType', 'issueDate', 'totalAmount']);
+    expect(agreed.findings).toEqual([{ kind: 'advisory', code: 'qr_match', message: '二维码核对一致：发票号码、开票日期、价税合计、票种' }]);
+
+    const tampered = dispatch({ ...doc, codes: [AMAP_QR.replace('69.19', '96.19')] }, LAYOUTS);
+    if (tampered.outcome !== 'recognised') throw new Error('expected recognised');
+    expect(tampered.findings).toEqual([
+      { kind: 'conflict', key: 'totalAmount', values: [{ source: 'rule:vat_invoice/einvoice', value: '69.19' }, { source: QR_SOURCE, value: '96.19' }] },
+    ]);
+
+    const unreadable = dispatch(doc, LAYOUTS);
+    if (unreadable.outcome !== 'recognised') throw new Error('expected recognised');
+    expect(unreadable.findings).toEqual([expect.objectContaining({ kind: 'advisory', code: 'qr_unreadable' })]);
+  });
+
+  it('reports a required slot it could not read as missing instead of guessing it', async () => {
+    const doc = await pdfDoc(fixture('m05-caocao-invoice.pdf'));
+    const withoutGross = { ...doc, observations: doc.observations.filter((o) => o.text !== '¥38.40') };
+    expect(dispatch(withoutGross, LAYOUTS)).toMatchObject({ outcome: 'recognised', missing: ['totalAmount'] });
+  });
+
+  it('flags amounts that do not conserve as a validation finding', async () => {
+    const doc = await pdfDoc(fixture('m05-caocao-invoice.pdf'));
+    const altered = { ...doc, observations: doc.observations.map((o) => (o.text === '¥38.40' ? { ...o, text: '¥38.41' } : o)) };
+    const outcome = dispatch(altered, LAYOUTS);
+    expect(outcome).toMatchObject({ outcome: 'recognised', findings: expect.arrayContaining([expect.objectContaining({ kind: 'validation', code: 'total_not_conserved' })]) });
+  });
+});

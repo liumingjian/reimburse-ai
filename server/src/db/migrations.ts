@@ -177,10 +177,35 @@ const erpAttempts: Migration = {
   },
 };
 
+// Slice #183: one parser outcome per material per inventory run, appended by the background parser job. The outcome
+// (candidates, findings) is plain JSON in `detail`; pending items are derived from it, never stored.
+const parse183: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('parse_result')
+      .addColumn('result_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('run_id', 'text', (c) => c.notNull().references('inventory_run.run_id'))
+      .addColumn('material_id', 'text', (c) => c.notNull().references('material.material_id'))
+      .addColumn('outcome', 'text', (c) => c.notNull().check(sql`outcome IN ('recognised', 'unrecognised', 'ambiguous', 'failed')`))
+      .addColumn('kind', 'text')
+      .addColumn('layout', 'text')
+      .addColumn('parser_version', 'text')
+      .addColumn('detail', 'text', (c) => c.notNull())
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .addUniqueConstraint('parse_result_run_material', ['run_id', 'material_id'])
+      .execute();
+    await appendOnly(db, 'parse_result');
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
   '0002_180_inventory': inventory180,
   '0002_193_accounts': accounts,
   '0003_181_erp_attempts': erpAttempts,
+  '0003_183_parse_results': parse183,
 };
