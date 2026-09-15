@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import type { FakeErpOptions, FakeInvoice } from '../executor/testing/fake-erp';
 import type { DraftJudgeInputs } from '../judge';
 import { previewLinesDigest } from '../preview';
-import { PROTOCOL_VERSION, type BlobSource, type FillPlan } from '../protocol';
+import { PROTOCOL_VERSION, type BlobSource, type FillPlan, type ReconcilePlan } from '../protocol';
 
 export const ERP_ORIGIN = 'http://erp.antute.com.cn';
 export const IDENTITY = { account: 'luo.liu', tenant: 'tenant-a' };
@@ -48,6 +48,10 @@ export const fillPlan = (taskId: string, overrides: Partial<FillPlan> = {}): Fil
   compatibility: COMPATIBILITY, catalog: { projects: PROJECTS, expenseItems: EXPENSE_ITEMS },
   invoices: INVOICES.map((invoice) => ({ sha256: sha(invoice.bytes), fileName: invoice.fileName, mime: 'application/pdf' })),
   purpose: '客户支持', ...overrides,
+});
+
+export const reconcilePlan = (taskId: string, overrides: Partial<ReconcilePlan> = {}): ReconcilePlan => ({
+  protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId: `reconcile-${taskId}`, taskId, erpOrigin: ERP_ORIGIN, ...overrides,
 });
 
 /** The server-side facts the judge turns into the approved preview (kernel shapes). */
