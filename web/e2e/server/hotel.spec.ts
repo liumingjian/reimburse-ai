@@ -60,7 +60,12 @@ test('酒店发票加全季结账单，盘点后得到一条带入住和离店�
 
   const folio = snapshot.materials.find((material) => material.fileName === sample('m02').name);
   expect(folio).toMatchObject({ kind: 'hotel_folio', layout: 'quanji', role: 'reference', status: 'ok' });
-  expect(snapshot.lines).toEqual([expect.objectContaining({ date: '2026-08-09', endDate: '2026-08-22', grossAmount: '3640.00', referenceMaterialIds: [folio?.materialId] })]);
+  expect(snapshot.lines).toEqual([
+    expect.objectContaining({ date: '2026-08-09', endDate: '2026-08-22', grossAmount: '3640.00', category: { code: 'accommodation', label: '住宿' }, referenceMaterialIds: [folio?.materialId] }),
+  ]);
+  // A clean stay moves on to the project stage (#188).
+  const taskId = /#\/task\/([^/]+)\//.exec(page.url())?.[1] ?? '';
+  await expect.poll(async () => TaskSnapshotSchema.parse(await (await page.request.get(`/api/tasks/${taskId}`)).json()).stage).toBe('project');
 });
 
 test('其他连锁的结账单认不出版式，转到手工补填', async ({ page, browser }) => {

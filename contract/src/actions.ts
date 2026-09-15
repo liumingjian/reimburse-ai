@@ -215,6 +215,18 @@ export const ProjectAssignmentInputSchema = z.object({
 });
 export type ProjectAssignmentInput = z.infer<typeof ProjectAssignmentInputSchema>;
 
+// 修改当前任务的常驻城市（set-home-city，带 stepToken）：第一次写入报销系统之前都可以改；改后按新城市重新推导费用类别、
+// 整单确认随之失效，并成为这个账号新建任务时的默认值（ADR-0014 经 ADR-0016 修订）。
+export const HOME_CITY_ERRORS = {
+  invalid: '常驻城市必须填写，且不超过 20 个字。',
+  locked: '已开始写入报销系统，常驻城市不能再修改。',
+} as const;
+
+export const SetHomeCityInputSchema = z.object({
+  homeCity: z.string().trim().min(1, HOME_CITY_ERRORS.invalid),
+});
+export type SetHomeCityInput = z.infer<typeof SetHomeCityInputSchema>;
+
 export const PlacementSlotSchema = z.enum(['top', 'bottom']);
 export type PlacementSlot = z.infer<typeof PlacementSlotSchema>;
 
@@ -257,6 +269,7 @@ export const ACTION_NAMES = [
   'assign-project-lines',
   'submit-project-assignment',
   'exclude-material',
+  'set-home-city',
   'start-erp-write',
   'confirm-login',
   'reconcile',

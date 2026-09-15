@@ -116,7 +116,91 @@ export interface ParseResultTable {
   created_at: string;
 }
 
+// ---- 0004_188 (all append-only) ----
+
+export interface RuleSetTable {
+  hash: string;
+  kind: 'company_rules' | 'project_catalog';
+  content: string;
+  created_at: string;
+}
+
+export interface TaskRulePinTable {
+  task_id: string;
+  account_id: string;
+  kind: string;
+  hash: string;
+  created_at: string;
+}
+
+export interface HomeCitySettingTable {
+  setting_id: string;
+  seq: number;
+  account_id: string;
+  home_city: string | null;
+  source: 'task_create' | 'task_edit' | 'reset' | 'legacy_import';
+  created_at: string;
+}
+
+export interface TaskHomeCityTable {
+  change_id: string;
+  task_id: string;
+  account_id: string;
+  home_city: string;
+  revision: number;
+  created_at: string;
+}
+
+export interface ProjectBookEventTable {
+  event_id: string;
+  seq: number;
+  scope: 'personal' | 'public';
+  owner_account_id: string | null;
+  number: string;
+  action: 'admitted' | 'checked' | 'removed';
+  name: string | null;
+  verdict: string | null;
+  expires_on: string | null;
+  actor_account_id: string;
+  created_at: string;
+}
+
+export interface ProjectAssignTable {
+  assign_id: string;
+  task_id: string;
+  account_id: string;
+  revision: number;
+  // JSON string[]
+  line_ids: string;
+  project_number: string;
+  project_name: string;
+  project_source: 'personal' | 'public';
+  only_unassigned: number;
+  created_at: string;
+}
+
+export interface ProjectSubmissionTable {
+  submission_id: string;
+  task_id: string;
+  account_id: string;
+  revision: number;
+  purpose: string;
+  // JSON Record<lineId, {number, name, source}>
+  selection: string;
+  lines_digest: string;
+  catalog_hash: string;
+  created_at: string;
+}
+
 export interface Schema {
+  rule_set: RuleSetTable;
+  task_rule_pin: TaskRulePinTable;
+  home_city_setting: HomeCitySettingTable;
+  task_home_city: TaskHomeCityTable;
+  project_book_event: ProjectBookEventTable;
+  project_assign: ProjectAssignTable;
+  project_submission: ProjectSubmissionTable;
+  erp_attempt: { attempt_id: string; job_id: string; task_id: string; action: 'import' | 'fill' | 'save'; preconditions: string; expected_postconditions: string; erp_build: string; form_id: string; erp_account: string; erp_tenant: string; erp_display_name: string; started_at: string };
   parse_result: ParseResultTable;
   account: AccountTable;
   session: SessionTable;

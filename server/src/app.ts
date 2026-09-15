@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { CreateTaskInputSchema, ERP_ACTION_ERRORS, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, type TaskSnapshot } from '@baox/contract';
+import { AssignProjectLinesInputSchema, CreateTaskInputSchema, ERP_ACTION_ERRORS, ProjectAssignmentInputSchema, SetHomeCityInputSchema, type ProjectBookResult, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, type TaskSnapshot } from '@baox/contract';
 import { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
@@ -10,6 +10,8 @@ import type { Db } from './db/database';
 import { createInMemoryErpLease, type ErpLease } from './erp-lease';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
+import { createBookService } from './books';
+import { unavailableCatalog, type ProjectCatalog } from './catalog/project-catalog';
 import { ActionRefusedError, createTaskService, parseBacklogOfAllAccounts, StaleStepError, TaskNotFoundError, type TaskService, type UploadedFile } from './tasks';
 
 // The HTTP app. Wire rules (contract/src/http.ts): success is 200 with the whole new snapshot; failure is
@@ -30,6 +32,9 @@ export type AppOptions = {
   erpLease?: ErpLease;
   // Where the parser job parses; the server's one worker_thread by default. Tests inject inline or gated executors.
   parser?: ParseExecutor;
+  // The read-only project catalog behind 个人项目簿 intake and recheck (ADR-0008). Unavailable until #191 wires the
+  // live ERP query adapter; tests and e2e pass a fixture-backed fake.
+  projectCatalog?: ProjectCatalog;
 };
 
 // `close` stops the background jobs (after the material in flight) and releases the parse worker; call it before
@@ -40,7 +45,7 @@ type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
 const failure = (c: Context, status: 400 | 401 | 404 | 409, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), parser }: AppOptions): App {
+export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), parser, projectCatalog = unavailableCatalog() }: AppOptions): App {
   const accounts = createAccountService(db, now);
   // Keyed by task id; a task's stream only ever opens for its owner.
   const listeners = new Map<string, Set<SnapshotListener>>();
@@ -85,6 +90,23 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // 完全重置 (reset), per account: voids the signed-in account's own tasks; other accounts, accounts themselves and
   // sessions are untouched. Answers the new task list.
   app.post('/api/reset', async (c) => c.json(await tasksOf(c).resetAll()));
+
+  // 个人项目簿 (personal book) of the signed-in account. A processed maintenance request is 200 with a
+  // ProjectBookResult, including the not-done statuses; a change pushes fresh snapshots of the account's open tasks.
+  const bookOf = (c: Context<AppEnv>) => createBookService(db, { scope: 'personal', ownerAccountId: accountOf(c).accountId }, accountOf(c).accountId, projectCatalog, now);
+  const CHANGED: ReadonlySet<ProjectBookResult['status']> = new Set(['admitted', 'removed', 'purged', 'done']);
+  const bookAction = (run: (c: Context<AppEnv>, number: string) => Promise<ProjectBookResult>, needsNumber: boolean) => async (c: Context<AppEnv>) => {
+    const body = (await c.req.json().catch(() => ({}))) as { number?: unknown };
+    if (needsNumber && (typeof body.number !== 'string' || body.number.trim() === '')) return c.json({ error: { code: 'invalid_input', message: '请填写项目号。' }, book: await bookOf(c).view() }, 400);
+    const result = await run(c, typeof body.number === 'string' ? body.number : '');
+    if (CHANGED.has(result.status)) await tasksOf(c).bookChanged();
+    return c.json(result);
+  };
+  app.get('/api/project-book', async (c) => c.json(await bookOf(c).view()));
+  app.post('/api/project-book/intake', bookAction((c, number) => bookOf(c).intake(number), true));
+  app.post('/api/project-book/remove', bookAction((c, number) => bookOf(c).remove(number), true));
+  app.post('/api/project-book/purge', bookAction((c) => bookOf(c).purge(), false));
+  app.post('/api/project-book/recheck', bookAction((c) => bookOf(c).recheck(), false));
 
   app.get('/api/tasks/:id', async (c) => c.json(await tasksOf(c).snapshot(c.req.param('id'))));
 
@@ -157,6 +179,9 @@ const taskAction = <S extends z.ZodType>(input: S, run: (tasks: TaskService, tas
 const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
   'start-inventory': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.startInventory(id, stepToken)),
   'reopen-upload': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.reopenUpload(id, stepToken)),
+  'assign-project-lines': taskAction(withToken(AssignProjectLinesInputSchema.shape), (tasks, id, { stepToken, ...input }) => tasks.assignProjectLines(id, input, stepToken)),
+  'submit-project-assignment': taskAction(withToken(ProjectAssignmentInputSchema.shape), (tasks, id, { stepToken, ...input }) => tasks.submitProjectAssignment(id, input, stepToken)),
+  'set-home-city': taskAction(withToken(SetHomeCityInputSchema.shape), (tasks, id, { stepToken, homeCity }) => tasks.setHomeCity(id, homeCity, stepToken)),
   'exclude-material': taskAction(withToken({ materialId: z.string().min(1) }), (tasks, id, { materialId, stepToken }) => tasks.excludeMaterial(id, materialId, stepToken)),
 };
 

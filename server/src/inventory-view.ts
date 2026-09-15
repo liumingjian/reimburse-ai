@@ -2,6 +2,7 @@ import type { ExpenseEvent, Inventory, InventoryPhase, Line, Material, PendingFi
 import type { ParseOutcome, Recognised } from './parse/dispatch';
 import { pairHotelStays, type StayVoucher } from './hotel-stay';
 import { CATEGORIES, KINDS, slotOf } from './parse/kinds';
+import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/company-rules';
 
 // The pure projection of one inventory run: uploaded materials plus their parser outcomes in; the materials view,
 // derived 待确认项 (pending items), expense events, candidate lines and inventory counts out. Nothing here is stored.
@@ -126,7 +127,12 @@ const valuesOf = (outcome: Recognised): Record<string, string> => {
   return values;
 };
 
-export function inventoryView(materials: readonly ViewMaterial[], results: RunResults): InventoryView {
+// The task's 常驻城市 and pinned company rules: categories are derived from them (ADR-0006).
+export type CategoryContext = { homeCity: string; rules: CompanyRules };
+
+const CITY_MISSING_CHECK = '取不到费用发生城市';
+
+export function inventoryView(materials: readonly ViewMaterial[], results: RunResults, { homeCity, rules }: CategoryContext = { homeCity: '', rules: COMPANY_RULES }): InventoryView {
   const pendingItems: PendingItem[] = [];
   const drafts: { material: ViewMaterial; draft: NonNullable<ReturnType<(typeof KINDS)['vat_invoice']['event']>> }[] = [];
   let waiting = 0;
@@ -166,21 +172,32 @@ export function inventoryView(materials: readonly ViewMaterial[], results: RunRe
       waitingBy[m.mediaType] += 1;
       return base;
     }
-    const { items, checkText } = itemsOf(m, outcome);
-    pendingItems.push(...items);
-    const status = items.length > 0 ? 'pending' : 'ok';
+    const { items, checkText: parsedCheck } = itemsOf(m, outcome);
+    let checkText = parsedCheck;
     if (!recognised) {
+      pendingItems.push(...items);
       const kindLabel = outcome.outcome === 'ambiguous' ? INVENTORY_COPY.ambiguous : outcome.outcome === 'failed' ? INVENTORY_COPY.failed : INVENTORY_COPY.unrecognised;
       return { ...base, kindLabel, role: 'pending', status: 'pending', checkText, pendingItemIds: items.map((item) => item.itemId) };
     }
     const spec = KINDS[recognised.kind];
     const values = valuesOf(recognised);
-    if (status === 'ok' && spec.role === 'primary_voucher') {
+    if (items.length === 0 && spec.role === 'primary_voucher') {
       const draft = spec.event(values);
-      if (draft) drafts.push({ material: m, draft });
-      if (draft?.category.code === CATEGORIES.accommodation.code) stayInvoices.push({ materialId: m.materialId, values });
+      const derived = draft ? deriveCategory(draft.category, draft.city ?? null, homeCity, rules) : null;
+      if (draft && derived && 'category' in derived) {
+        drafts.push({ material: m, draft: { ...draft, category: derived.category } });
+        if (derived.category.code === CATEGORIES.accommodation.code) stayInvoices.push({ materialId: m.materialId, values });
+      } else if (derived) {
+        // Kernel category_city_missing: city transport is never put on the home city for want of its own city.
+        items.push(
+          choice(`category_city_missing.${m.materialId}`, m.materialId, `「${m.fileName}」取不到费用发生城市`, '市内交通要按费用发生城市与常驻城市比对，才能分出本地还是外地；这张发票上没有城市，不能拿常驻城市顶替。请在上传页追加它的行程单后重新盘点，或排除这份材料。', [EXCLUDE]),
+        );
+        checkText = [checkText, CITY_MISSING_CHECK].filter(Boolean).join('；');
+      }
     }
-    if (status === 'ok' && recognised.kind === 'hotel_folio') folios.push({ materialId: m.materialId, values });
+    if (items.length === 0 && recognised.kind === 'hotel_folio') folios.push({ materialId: m.materialId, values });
+    pendingItems.push(...items);
+    const status = items.length > 0 ? 'pending' : 'ok';
     return {
       ...base,
       ...identity,
@@ -200,7 +217,7 @@ export function inventoryView(materials: readonly ViewMaterial[], results: RunRe
 
   // Business order (kernel confirmation table): local → out-of-town city transport → long distance → accommodation;
   // within a category, voucher upload order. Invoice labels follow voucher upload order.
-  const rank = ['local_city_transport', 'city_transport', 'remote_city_transport', 'long_distance', 'accommodation'];
+  const rank = ['local_city_transport', 'remote_city_transport', 'long_distance', 'accommodation'];
   const ordered = [...drafts].sort((a, b) => rank.indexOf(a.draft.category.code) - rank.indexOf(b.draft.category.code));
   const invoiceNo = new Map(drafts.map((d, index) => [d.material.materialId, index + 1]));
   const events: ExpenseEvent[] = [];
@@ -210,7 +227,7 @@ export function inventoryView(materials: readonly ViewMaterial[], results: RunRe
     const stay = stays.get(material.materialId);
     const draft = stay ? { ...own, date: stay.checkIn, endDate: stay.checkOut } : own;
     const referenceMaterialIds = stay ? [stay.folioId] : [];
-    events.push({ eventId, no: index + 1, voucherMaterialId: material.materialId, referenceMaterialIds, category: draft.category, summary: draft.summary, evidenceNote: stay?.note ?? null, date: draft.date, endDate: draft.endDate, city: null, origin: null, destination: null, grossAmount: draft.grossAmount });
+    events.push({ eventId, no: index + 1, voucherMaterialId: material.materialId, referenceMaterialIds, category: draft.category, summary: draft.summary, evidenceNote: stay?.note ?? null, date: draft.date, endDate: draft.endDate, city: draft.city ?? null, origin: null, destination: null, grossAmount: draft.grossAmount });
     lines.push({
       lineId: `line.${material.materialId}`,
       no: index + 1,
@@ -221,7 +238,7 @@ export function inventoryView(materials: readonly ViewMaterial[], results: RunRe
       endDate: draft.endDate,
       category: draft.category,
       description: draft.description,
-      city: null,
+      city: draft.city ?? null,
       origin: null,
       destination: null,
       route: null,

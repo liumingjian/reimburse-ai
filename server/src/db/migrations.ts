@@ -201,6 +201,92 @@ const parse183: Migration = {
   },
 };
 
+// Slice #188: pinned rules, home city memory and per-task edits, project books, project assignment. All insert-only.
+// - rule_set: content-addressed company rules and project catalogs (ADR-0015); task_rule_pin: what a task pinned.
+// - home_city_setting: per-account 常驻城市 history, the latest row is current (null = reset).
+// - task_home_city: edits of a task's home city snapshot after creation; the latest wins over task.home_city.
+// - project_book_event: personal (owner set) and public (owner null, #194) books as one event stream.
+// - project_assign / project_submission: the assignment draft edits and the submitted, pinned selections.
+const projects188: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('rule_set')
+      .addColumn('hash', 'text', (c) => c.primaryKey())
+      .addColumn('kind', 'text', (c) => c.notNull().check(sql`kind IN ('company_rules', 'project_catalog')`))
+      .addColumn('content', 'text', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema
+      .createTable('task_rule_pin')
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('kind', 'text', (c) => c.notNull())
+      .addColumn('hash', 'text', (c) => c.notNull().references('rule_set.hash'))
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .addPrimaryKeyConstraint('task_rule_pin_pk', ['task_id', 'kind'])
+      .execute();
+    await db.schema
+      .createTable('home_city_setting')
+      .addColumn('setting_id', 'text', (c) => c.primaryKey())
+      .addColumn('seq', 'integer', (c) => c.notNull().unique())
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('home_city', 'text')
+      .addColumn('source', 'text', (c) => c.notNull().check(sql`source IN ('task_create', 'task_edit', 'reset', 'legacy_import')`))
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema
+      .createTable('task_home_city')
+      .addColumn('change_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('home_city', 'text', (c) => c.notNull())
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema
+      .createTable('project_book_event')
+      .addColumn('event_id', 'text', (c) => c.primaryKey())
+      .addColumn('seq', 'integer', (c) => c.notNull().unique())
+      .addColumn('scope', 'text', (c) => c.notNull().check(sql`scope IN ('personal', 'public')`))
+      .addColumn('owner_account_id', 'text', (c) => c.references('account.account_id'))
+      .addColumn('number', 'text', (c) => c.notNull())
+      .addColumn('action', 'text', (c) => c.notNull().check(sql`action IN ('admitted', 'checked', 'removed')`))
+      .addColumn('name', 'text')
+      .addColumn('verdict', 'text')
+      .addColumn('expires_on', 'text')
+      .addColumn('actor_account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .addCheckConstraint('project_book_event_owner', sql`(scope = 'personal') = (owner_account_id IS NOT NULL)`)
+      .execute();
+    await db.schema
+      .createTable('project_assign')
+      .addColumn('assign_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('line_ids', 'text', (c) => c.notNull())
+      .addColumn('project_number', 'text', (c) => c.notNull())
+      .addColumn('project_name', 'text', (c) => c.notNull())
+      .addColumn('project_source', 'text', (c) => c.notNull().check(sql`project_source IN ('personal', 'public')`))
+      .addColumn('only_unassigned', 'integer', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema
+      .createTable('project_submission')
+      .addColumn('submission_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('purpose', 'text', (c) => c.notNull())
+      .addColumn('selection', 'text', (c) => c.notNull())
+      .addColumn('lines_digest', 'text', (c) => c.notNull())
+      .addColumn('catalog_hash', 'text', (c) => c.notNull().references('rule_set.hash'))
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    for (const table of ['rule_set', 'task_rule_pin', 'home_city_setting', 'task_home_city', 'project_book_event', 'project_assign', 'project_submission']) await appendOnly(db, table);
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -208,4 +294,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0002_193_accounts': accounts,
   '0003_181_erp_attempts': erpAttempts,
   '0003_183_parse_results': parse183,
+  '0004_188_projects': projects188,
 };
