@@ -17,6 +17,7 @@
     "start": "node dist/main.mjs",
     "test": "vitest run",
     "test:private": "tsx scripts/test-private.ts",
+    "test:erp-live": "tsx scripts/test-erp-live.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

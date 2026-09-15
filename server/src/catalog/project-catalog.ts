@@ -6,8 +6,9 @@ import { readFileSync } from 'node:fs';
 // numbers asked about are looked up, and the book stores only those.
 // Ported from kernel/src/erpcatalog.mjs `verifyProject` (verdicts) and projectintake.mjs (retries).
 //
-// The live adapter needs the ERP browser session, which the ERP job slice (#191) owns; until it is wired the server
-// runs with `unavailableCatalog()` (every lookup answers not_logged_in). Tests and the e2e server use `fixtureCatalog`.
+// The live adapter (`live-catalog.ts`) queries inside the logged-in ERP tab of the dedicated Chromium; `main.ts` wires
+// it. `createApp` defaults to `unavailableCatalog()` (every lookup answers not_logged_in). Tests and the e2e server use
+// `fixtureCatalog`.
 
 // Project numbers go into an ERP filter string, so only characters that cannot change its meaning pass.
 const SAFE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -61,9 +62,9 @@ export function fixtureCatalog(rows: readonly CatalogRow[], { unavailable = fals
 }
 
 // `BAOX_PROJECT_CATALOG_FIXTURE=<json file of CatalogRow[]>` makes the server use the fake (e2e only). Without it the
-// catalog is unavailable until #191 passes the live adapter.
-export function catalogFromEnv(env: NodeJS.ProcessEnv = process.env): ProjectCatalog {
+// server uses `fallback`: `main.ts` passes the live ERP adapter (`live-catalog.ts`).
+export function catalogFromEnv(env: NodeJS.ProcessEnv = process.env, fallback: () => ProjectCatalog = unavailableCatalog): ProjectCatalog {
   const file = env['BAOX_PROJECT_CATALOG_FIXTURE'];
-  if (!file) return unavailableCatalog();
+  if (!file) return fallback();
   return fixtureCatalog(JSON.parse(readFileSync(file, 'utf8')) as CatalogRow[]);
 }

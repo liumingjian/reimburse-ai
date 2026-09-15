@@ -28,6 +28,23 @@ export type TaskFacts = {
   legacyOutcome?: 'draft_handed_over' | 'handed_off';
   // 整单明细确认 (#189): derived by digest comparison (`confirmation.ts`); only `confirmed` moves past review.
   confirmation: 'unconfirmed' | 'confirmed' | 'invalidated';
+  // 去报销 (#191): the latest fill job of the task (`erp/fill-state.ts`); absent or null before the first one.
+  erp?: ErpFacts | null;
+};
+
+// The phase of a task's latest fill job, derived from its result (none yet = running) and a cancel of its login pause.
+// `saved`: the draft passed the strict read-back, ERP 草稿已交接 (terminal). `unknown`: ERP 写入结果未知 after an
+// attempt, reconcile. `aborted` / `catalog_mismatch` / `cancelled`: nothing was written.
+export type ErpPhase = 'running' | 'waiting_login' | 'cancelled' | 'catalog_mismatch' | 'aborted' | 'saved' | 'unknown';
+
+export type ErpFacts = {
+  jobId: string;
+  trigger: 'start' | 'confirm_login';
+  // The revision the job was accepted at.
+  revision: number;
+  phase: ErpPhase;
+  // A catalog mismatch that no later project submission answered yet: back to project assignment.
+  reassign: boolean;
 };
 
 export type Projection = { stage: TaskStage; step: Step; blockers: Blocker[] };
@@ -57,6 +74,20 @@ export function project(facts: TaskFacts): Projection {
   if (facts.legacyOutcome === 'draft_handed_over') return at('done', 'none');
   // 转人工 (handed off to a human) projects to reconcile, read-only (ADR-0014).
   if (facts.lifecycle === 'handed_off') return at('reconcile', 'none');
+  // 去报销: a saved draft is ERP 草稿已交接 (done); a write result unknown stops in reconcile; a running job or its
+  // login pause is the erp stage. Everything else about the job leaves the task where its other facts put it.
+  switch (facts.erp?.phase) {
+    case 'saved':
+      return at('done', 'none');
+    case 'unknown':
+      return at('reconcile', 'reconcile');
+    case 'running':
+      return at('erp', 'none');
+    case 'waiting_login':
+      return at('erp', 'erp_login');
+    default:
+      break;
+  }
   if (inventoried(facts)) {
     if (parseRunning(facts)) return at('inventory', 'none');
     // A cross-task duplicate stops the batch: no events, no pending items; the way out is excluding the material.
@@ -66,6 +97,8 @@ export function project(facts: TaskFacts): Projection {
     const project = facts.project;
     // A clean inventory without any candidate line has nothing to assign.
     if (!project || project.lineCount === 0) return at('inventory', 'none');
+    // A catalog mismatch found by the ERP job sends the task back to assignment until the next submission.
+    if (project.submitted && facts.erp?.reassign) return at('project', 'assign_projects');
     // Reassigning stays open under confirm_review and choose_action, and invalidates a confirmation.
     if (project.submitted) return facts.confirmation === 'confirmed' ? at('actions', 'choose_action') : at('review', 'confirm_review');
     // Kernel project_book_empty: nothing selectable and nothing drafted yet → maintain the book first.
@@ -75,8 +108,8 @@ export function project(facts: TaskFacts): Projection {
   return at('upload', facts.includedMaterialCount > 0 ? 'start_inventory' : 'upload_materials');
 }
 
-// At most one non-terminal task per account (ADR-0018). The derived terminal 草稿已交接 (draft handed over) joins
-// this rule when the ERP job lands (#192).
-export function isNonTerminal(lifecycle: TaskLifecycle): boolean {
-  return lifecycle === 'open';
+// At most one non-terminal task per account (ADR-0018). Terminal: voided, handed off (转人工, a lifecycle), and the
+// derived ERP 草稿已交接 (a saved fill job). A write result unknown is not terminal: reconcile still owns it.
+export function isNonTerminal(lifecycle: TaskLifecycle, erpPhase: ErpPhase | null = null): boolean {
+  return lifecycle === 'open' && erpPhase !== 'saved';
 }

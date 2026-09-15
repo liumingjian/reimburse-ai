@@ -1,0 +1,227 @@
+import { ABANDON_TASK_COPY, ERP_ACTION_ERRORS, TaskListSchema, type TaskSnapshot } from '@baox/contract';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { fixtureCatalog } from './catalog/project-catalog';
+import { abortBeforeAttempt, catalogMismatch, gated, loginWall, readbackMismatch, savedDraft, scripted, TEST_ERP_ACCOUNT, type ScriptedExecutor } from './erp/testing/fake-executor';
+import { api, sample } from './test/api';
+import { createTestServer, type TestClient, type TestServer } from './test/harness';
+
+// Slice 12 (#191): 去报销 (fill ERP) end to end on a fake executor. The job runs in the background; the snapshot is
+// derived from the persisted job facts (ADR-0014/0016): login pause, cancel, catalog mismatch, write result unknown,
+// saved draft. The global ERP lease is held only while a job runs.
+
+const CATALOG = fixtureCatalog([
+  { number: 'P-2307', name: '华东客户交付', audited: true, forbidden: false },
+  { number: 'P-3312', name: '产品调研', audited: true, forbidden: false },
+]);
+
+let server: TestServer;
+let alice: TestClient;
+let executor: ScriptedExecutor;
+beforeEach(async () => {
+  executor = scripted(loginWall);
+  server = await createTestServer({ projectCatalog: CATALOG, erpExecutor: executor });
+  alice = await server.signIn('alice');
+  for (const number of ['P-2307', 'P-3312']) expect((await alice.post('/api/project-book/intake', { number })).status).toBe(200);
+});
+afterEach(() => server.close());
+const client = api(() => alice);
+
+// Hotel e-invoice + its 全季 folio: one accommodation line, confirmed on P-2307 → actions / choose_action.
+async function confirmed(): Promise<TaskSnapshot> {
+  const { task } = await client.createTask('杭州');
+  const uploaded = await client.upload(task.taskId, [sample('m01'), sample('m02')]);
+  await client.accepted(await client.act(uploaded, 'start-inventory'));
+  const done = await client.settled(task.taskId);
+  expect(done.lines.length).toBeGreaterThan(0);
+  const review = await client.accepted(await client.act(done, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
+  const ready = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
+  expect(ready).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' } });
+  return ready;
+}
+
+// Waits until the background ERP job stopped running.
+async function settledErp(taskId: string, timeoutMs = 10_000): Promise<TaskSnapshot> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const snapshot = await client.current(taskId);
+    if (snapshot.erp.status !== 'running') return snapshot;
+    if (Date.now() > deadline) throw new Error('ERP job still running');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+async function start(snapshot: TaskSnapshot): Promise<TaskSnapshot> {
+  await client.accepted(await client.act(snapshot, 'start-erp-write'));
+  return settledErp(snapshot.task.taskId);
+}
+
+async function refused(response: Response, status: number, code: string) {
+  expect(response.status).toBe(status);
+  expect(((await response.json()) as { error: { code: string } }).error.code).toBe(code);
+}
+
+const taskList = async () => TaskListSchema.parse(await (await alice.request('/api/tasks')).json());
+
+describe('去报销 on a fake executor', () => {
+  it('pauses for login: stage erp, step erp_login, no attempt, lease released; confirm-login re-probes once', async () => {
+    const ready = await confirmed();
+    const waiting = await start(ready);
+    expect(waiting).toMatchObject({ stage: 'erp', step: { kind: 'erp_login' }, erp: { status: 'waiting_login', loginNotice: null } });
+    expect(waiting.erp.steps.find((step) => step.key === 'login')?.status).toBe('waiting');
+    expect(server.erpLease.holder()).toBeNull();
+    expect(executor.runs().map((run) => run.trigger)).toEqual(['start']);
+    // The plan carries the confirmed lines' projects and the voucher invoices by content.
+    expect(executor.runs()[0]!.plan).toMatchObject({ kind: 'fill', taskId: ready.task.taskId, purpose: '上海产品评审出差', catalog: { projects: [{ code: 'P-2307', name: '华东客户交付' }], expenseItems: [{ code: 'FY010001', name: '住宿' }] } });
+    expect(executor.runs()[0]!.plan.invoices).toHaveLength(1);
+
+    // Still not logged in: stays, with a notice.
+    const again = await client.accepted(await client.act(waiting, 'confirm-login'));
+    const still = await settledErp(again.task.taskId);
+    expect(still).toMatchObject({ stage: 'erp', step: { kind: 'erp_login' }, erp: { status: 'waiting_login' } });
+    expect(still.erp.loginNotice).toEqual(expect.any(String));
+    expect(executor.runs().map((run) => run.trigger)).toEqual(['start', 'confirm_login']);
+
+    executor.queue(savedDraft());
+    await client.accepted(await client.act(still, 'confirm-login'));
+    const done = await settledErp(still.task.taskId);
+    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', draftNo: 'FYBX2026090001' } });
+  });
+
+  it('cancel-erp-write returns to write-pending and the task can start again', async () => {
+    const waiting = await start(await confirmed());
+    const cancelled = await client.accepted(await client.act(waiting, 'cancel-erp-write'));
+    expect(cancelled).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, erp: { status: 'idle', abortReason: null }, confirmation: { status: 'confirmed' } });
+    await refused(await client.act(cancelled, 'cancel-erp-write'), 400, 'not_waiting_login');
+    await refused(await client.act(cancelled, 'confirm-login'), 400, 'not_waiting_login');
+
+    executor.queue(savedDraft());
+    expect((await start(cancelled)).stage).toBe('done');
+  });
+
+  it('answers every mutation other than confirm-login / cancel-erp-write with 409 during the login pause', async () => {
+    const waiting = await start(await confirmed());
+    const id = waiting.task.taskId;
+    const line = waiting.lines[0]!;
+    const mutations: Array<[string, Record<string, unknown>]> = [
+      ['start-inventory', {}],
+      ['reopen-upload', {}],
+      ['confirm-review', { digest: waiting.confirmation.digest }],
+      ['set-home-city', { homeCity: '上海' }],
+      ['submit-project-assignment', { purpose: '别的事由', projects: { [line.lineId]: 'P-3312' } }],
+      ['assign-project-lines', { lineIds: [line.lineId], projectNumber: 'P-3312', onlyUnassigned: false }],
+      ['answer-pending', { itemId: `edit.${line.voucherMaterialId}.description`, answer: { value: '改过的描述' } }],
+      ['exclude-material', { materialId: line.voucherMaterialId }],
+      ['start-erp-write', {}],
+    ];
+    for (const [name, body] of mutations) {
+      const response = await client.act(waiting, name, body);
+      expect(response.status, name).toBe(409);
+    }
+    expect((await client.uploadRaw(id, [sample('m03')])).status).toBe(409);
+    expect((await alice.post(`/api/tasks/${id}/abandon`, {})).status).toBe(409);
+    // Nothing changed: the same step still stands.
+    expect((await client.current(id)).step.stepToken).toBe(waiting.step.stepToken);
+  });
+
+  it('a catalog mismatch aborts before import, with no attempt, and returns to project assignment', async () => {
+    executor.queue(catalogMismatch);
+    const mismatch = await start(await confirmed());
+    expect(mismatch).toMatchObject({ stage: 'project', step: { kind: 'assign_projects' }, erp: { status: 'idle' }, catalog: { status: 'mismatch' } });
+    expect(mismatch.catalog.problems).toEqual([expect.objectContaining({ subject: '项目号 P-2307', resolver: '要你处理' })]);
+    expect(mismatch.catalog.problems[0]!.reason).toContain('改过名的项目');
+    expect(server.erpLease.holder()).toBeNull();
+    expect((await taskList()).tasks[0]).toMatchObject({ abandonable: true });
+
+    // Reassigning and resubmitting leaves the mismatch behind: review again, confirm, write again.
+    const resubmitted = await client.accepted(await client.act(mismatch, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(mismatch.lines.map((line) => [line.lineId, 'P-3312'])) }));
+    expect(resubmitted).toMatchObject({ stage: 'review', step: { kind: 'confirm_review' }, catalog: { status: 'pending' } });
+    const reconfirmed = await client.accepted(await client.act(resubmitted, 'confirm-review', { digest: resubmitted.confirmation.digest }));
+    executor.queue(savedDraft());
+    expect((await start(reconfirmed)).stage).toBe('done');
+  });
+
+  it('a read-back mismatch after an attempt is ERP 写入结果未知: reconcile, frozen, not voidable', async () => {
+    executor.queue(readbackMismatch);
+    const unknown = await start(await confirmed());
+    expect(unknown).toMatchObject({ stage: 'reconcile', step: { kind: 'reconcile' }, erp: { status: 'aborted' }, reconcile: { status: 'pending' } });
+    expect(unknown.erp.abortReason).toContain('金额相等不能代替逐行一致');
+    expect(unknown.erp.erpAccount).toEqual(TEST_ERP_ACCOUNT);
+    expect(server.erpLease.holder()).toBeNull();
+
+    await refused(await client.act(unknown, 'set-home-city', { homeCity: '上海' }), 400, 'erp_started');
+    await refused(await client.act(unknown, 'start-erp-write'), 400, 'erp_started');
+    const voided = await alice.post(`/api/tasks/${unknown.task.taskId}/abandon`, {});
+    expect(voided.status).toBe(400);
+    expect(await voided.json()).toMatchObject({ error: { code: 'erp_started', message: ABANDON_TASK_COPY.blockedReason } });
+    expect((await taskList()).tasks[0]).toMatchObject({ stage: 'reconcile', abandonable: false, abandonBlockedReason: ABANDON_TASK_COPY.blockedReason });
+    // Still the account's one non-terminal task.
+    await refused(await alice.post('/api/tasks', { homeCity: '杭州' }), 400, 'active_task_exists');
+  });
+
+  it('a saved draft that passed the strict read-back is done (ERP 草稿已交接), a terminal', async () => {
+    executor.queue(savedDraft('FYBX2026090077'));
+    const done = await start(await confirmed());
+    expect(done).toMatchObject({ stage: 'done', step: { kind: 'none' }, erp: { status: 'done', draftNo: 'FYBX2026090077', erpAccount: TEST_ERP_ACCOUNT }, readback: { status: 'matched' } });
+    expect(done.readback.rows).toHaveLength(done.lines.length);
+    expect(done.readback.rows.every((row) => row.matched)).toBe(true);
+    expect(done.erp.steps.every((step) => step.status === 'done')).toBe(true);
+    expect(server.erpLease.holder()).toBeNull();
+
+    expect((await taskList()).tasks[0]).toMatchObject({ stage: 'done', erpDraftNo: 'FYBX2026090077', abandonable: false });
+    await refused(await client.act(done, 'set-home-city', { homeCity: '上海' }), 400, 'task_closed');
+    // A draft handed over is terminal: the account may start the next task.
+    expect((await alice.post('/api/tasks', { homeCity: '杭州' })).status).toBe(200);
+  });
+
+  it('a failure before the first attempt_started returns to write-pending and allows retry', async () => {
+    executor.queue(abortBeforeAttempt, savedDraft());
+    const aborted = await start(await confirmed());
+    expect(aborted).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, erp: { status: 'idle' }, confirmation: { status: 'confirmed' } });
+    expect(aborted.erp.abortReason).toContain('ERP 兼容指纹不符');
+    expect(server.erpLease.holder()).toBeNull();
+    expect((await taskList()).tasks[0]).toMatchObject({ abandonable: true });
+    // Nothing was written, so the task is still editable.
+    expect((await client.act(aborted, 'set-home-city', { homeCity: '杭州' })).status).toBe(200);
+
+    const retried = await start(await client.current(aborted.task.taskId));
+    expect(retried.stage).toBe('done');
+  });
+
+  it('holds the global lease while the job runs: 409 stale for this task, 409 erp_in_use for another account', async () => {
+    const gate = gated(savedDraft());
+    executor.queue(gate.script);
+    const ready = await confirmed();
+    const running = await client.accepted(await client.act(ready, 'start-erp-write'));
+    await gate.running;
+    expect(running).toMatchObject({ stage: 'erp', step: { kind: 'none' }, erp: { status: 'running' } });
+    expect(server.erpLease.holder()).toEqual({ accountId: alice.account.accountId, taskId: ready.task.taskId });
+
+    const current = await client.current(ready.task.taskId);
+    expect((await client.act(current, 'set-home-city', { homeCity: '上海' })).status).toBe(409);
+
+    const bob = await server.signIn('bob');
+    const bobTask = await api(() => bob).createTask('杭州');
+    const blocked = await bob.post(`/api/tasks/${bobTask.task.taskId}/actions/start-erp-write`, { stepToken: bobTask.step.stepToken });
+    expect(blocked.status).toBe(409);
+    expect(await blocked.json()).toMatchObject({ error: { code: 'erp_in_use', message: ERP_ACTION_ERRORS.inUse } });
+
+    gate.release();
+    expect((await settledErp(ready.task.taskId)).stage).toBe('done');
+    expect(server.erpLease.holder()).toBeNull();
+  });
+
+  it('refuses to start when a confirmed line cannot be written to ERP, before any job', async () => {
+    const { task } = await client.createTask('杭州');
+    const uploaded = await client.upload(task.taskId, [sample('m07')]);
+    await client.accepted(await client.act(uploaded, 'start-inventory'));
+    const done = await client.settled(task.taskId);
+    const review = await client.accepted(await client.act(done, 'submit-project-assignment', { purpose: '出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
+    const ready = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
+    const response = await client.act(ready, 'start-erp-write');
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe('erp_preflight');
+    expect(body.error.message).toContain('铁路电子客票');
+    expect(executor.runs()).toEqual([]);
+  });
+});

@@ -41,8 +41,11 @@ export function erpSteps(active: number, status: ErpStep['status'] = 'running'):
 
 // 「去报销」之后浏览器已启动、登录步等待（`?seed=erp` 的状态）。
 export function erpWaitingLogin(): Erp {
-  return { status: 'waiting_login', steps: erpSteps(ERP_STEP_INDEX.login, 'waiting'), draftNo: null, abortReason: null, loginNotice: null };
+  return { status: 'waiting_login', steps: erpSteps(ERP_STEP_INDEX.login, 'waiting'), draftNo: null, abortReason: null, loginNotice: null, erpAccount: null };
 }
+
+// 写入时登录的报销系统账号与账套（虚构）：按尝试记录，完成页显示，从不与应用账号比对。
+export const MOCK_ERP_ACCOUNT = { displayName: '林颂宜', account: 'lin.songyi', tenant: '安图特科技' } as const;
 
 export function loginNotDetected(attempt: number): string {
   return `还没有检测到登录（第 ${attempt} 次检测）。请确认已在专用浏览器窗口里登录本人账号；登录页上显示的上次账号不算已登录。登录后再点一次「我已登录，继续」。`;
@@ -144,7 +147,7 @@ export function reconcileVerdict(
 
 // 写入完成：草稿已保存、严格回读逐行一致，阶段推到 done。
 export function applyErpDone(snapshot: TaskSnapshot, draftNo: string): void {
-  snapshot.erp = { status: 'done', steps: erpSteps(ERP_STEP_DEFS.length), draftNo, abortReason: null, loginNotice: null };
+  snapshot.erp = { status: 'done', steps: erpSteps(ERP_STEP_DEFS.length), draftNo, abortReason: null, loginNotice: null, erpAccount: { ...MOCK_ERP_ACCOUNT } };
   snapshot.readback = readbackOf(readbackRows(snapshot.lines));
   snapshot.stage = 'done';
   snapshot.step = { kind: 'none', stepToken: `tok-${snapshot.task.taskId}-done` };
@@ -155,7 +158,7 @@ export function applyErpDone(snapshot: TaskSnapshot, draftNo: string): void {
 export function applyReadbackMismatch(snapshot: TaskSnapshot, draftNo: string): void {
   const readback = readbackOf(readbackRows(snapshot.lines, MISMATCH));
   const bad = readback.rows.filter((row) => !row.matched);
-  snapshot.erp = { status: 'aborted', steps: erpSteps(ERP_STEP_INDEX.readback, 'failed'), draftNo, abortReason: MISMATCH_ABORT_REASON, loginNotice: null };
+  snapshot.erp = { status: 'aborted', steps: erpSteps(ERP_STEP_INDEX.readback, 'failed'), draftNo, abortReason: MISMATCH_ABORT_REASON, loginNotice: null, erpAccount: { ...MOCK_ERP_ACCOUNT } };
   snapshot.readback = readback;
   snapshot.reconcile = {
     status: 'pending',
@@ -171,7 +174,7 @@ export function applyReadbackMismatch(snapshot: TaskSnapshot, draftNo: string): 
 
 // 保存步中止：还没读到草稿，保存是否生效不确定（对账中断点「未知」⇒ 原地等待，只能重新对账）。
 export function applyAbortAtSave(snapshot: TaskSnapshot): void {
-  snapshot.erp = { status: 'aborted', steps: erpSteps(ERP_STEP_INDEX.save, 'failed'), draftNo: null, abortReason: SAVE_ABORT_REASON, loginNotice: null };
+  snapshot.erp = { status: 'aborted', steps: erpSteps(ERP_STEP_INDEX.save, 'failed'), draftNo: null, abortReason: SAVE_ABORT_REASON, loginNotice: null, erpAccount: { ...MOCK_ERP_ACCOUNT } };
   snapshot.readback = emptyReadback();
   snapshot.reconcile = {
     status: 'pending',

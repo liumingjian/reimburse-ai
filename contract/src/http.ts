@@ -73,6 +73,7 @@ export const HTTP_ENDPOINTS = {
   setTaskHomeCity: action('set-home-city', 'homeCity', 'stepToken'),
   startErpWrite: action('start-erp-write', 'stepToken'),
   confirmLogin: action('confirm-login', 'stepToken'),
+  cancelErpWrite: action('cancel-erp-write', 'stepToken'),
   reconcile: action('reconcile', 'stepToken'),
   handOff: action('hand-off', 'stepToken'),
 } as const satisfies Record<keyof AppAdapter, HttpEndpoint>;

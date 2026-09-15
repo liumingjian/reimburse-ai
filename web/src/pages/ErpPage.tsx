@@ -45,6 +45,11 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
   }, [erp.status, stage, taskId]);
 
   const confirmLogin = () => run((adapter) => adapter.confirmLogin(taskId, step.stepToken));
+  // 登录等待时放弃这次去报销：报销系统没有被改动，回到整单确认页，之后可以再去报销。
+  const cancel = async () => {
+    const outcome = await run((adapter) => adapter.cancelErpWrite(taskId, step.stepToken));
+    if (outcome.ok) navigate(taskHash(taskId, 'review'));
+  };
   const waitingLogin = step.kind === 'erp_login';
   const writing = erp.status !== 'idle' && erp.status !== 'done' && erp.status !== 'aborted';
 
@@ -91,7 +96,10 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
                           <Button disabled={busy} onClick={() => void confirmLogin()}>
                             我已登录，继续
                           </Button>
-                          <span className="app-caption">应用检测到登录后才会往下走。</span>
+                          <Button kind="ghost" disabled={busy} onClick={() => void cancel()}>
+                            取消去报销
+                          </Button>
+                          <span className="app-caption">应用检测到登录后才会往下走；取消不会改动报销系统。</span>
                         </div>
                       </div>
                     ) : null}

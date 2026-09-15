@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { ADMIN_ERRORS, AssignProjectLinesInputSchema, CreateTaskInputSchema, FORBIDDEN_CODE, ERP_ACTION_ERRORS, PendingAnswerSchema, ProjectAssignmentInputSchema, SetHomeCityInputSchema, type ProjectBookResult, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, type TaskSnapshot } from '@baox/contract';
+import { ADMIN_ERRORS, AssignProjectLinesInputSchema, CreateTaskInputSchema, FORBIDDEN_CODE, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, SetHomeCityInputSchema, type ProjectBookResult, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, type TaskSnapshot } from '@baox/contract';
 import { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
@@ -8,6 +8,8 @@ import { AuthRefusal, createAccountService, type Clock } from './accounts/accoun
 import { accountOf, mountAccountRoutes, mountAuthRoutes, requireAccount, type AppEnv } from './accounts/http';
 import type { Db } from './db/database';
 import { createInMemoryErpLease, type ErpLease } from './erp-lease';
+import { DEFAULT_ERP_CONFIG, type ErpConfig } from './erp/config';
+import { createFillJobs, unavailableExecutor, type FillExecutor } from './erp/fill-jobs';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
@@ -29,8 +31,13 @@ export type AppOptions = {
   webDist?: string | null;
   // Session expiry reads this clock; tests move it.
   now?: Clock;
-  // The global ERP control lease (ADR-0016). #191 passes the one its ERP job acquires.
+  // The global ERP control lease (ADR-0016): the fill job holds it while it runs. Tests pass theirs to observe it.
   erpLease?: ErpLease;
+  // Where 去报销 jobs run: `cdpFillExecutor` on the dedicated Chromium in production, a fake in tests. Without one,
+  // every job stops before touching anything.
+  erpExecutor?: FillExecutor;
+  // The ERP to write to and the build it may write to (`erp/config.ts`).
+  erpConfig?: ErpConfig;
   // Where the parser job parses; the server's one worker_thread by default. Tests inject inline or gated executors.
   parser?: ParseExecutor;
   // The read-only project catalog behind 个人项目簿 intake and recheck (ADR-0008). Unavailable until #191 wires the
@@ -49,7 +56,7 @@ type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
 const failure = (c: Context, status: 400 | 401 | 403 | 404 | 409, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), parser, projectCatalog = unavailableCatalog(), legacyHome = null }: AppOptions): App {
+export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor = unavailableExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null }: AppOptions): App {
   const accounts = createAccountService(db, now);
   const legacy = createLegacyImport(db, legacyHome, now);
   // Keyed by task id; a task's stream only ever opens for its owner.
@@ -60,8 +67,11 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     // A run with materials still waiting (just started, or mid-way) needs its parser job.
     if (snapshot.inventory.status === 'running') jobs?.ensure(accountId, snapshot.task.taskId);
   };
+  // The 去报销 jobs write their facts through the owner's task service (one revision per executor event).
+  const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor, record: (accountId, taskId, write) => serviceFor(accountId).erpRecord(taskId, write) });
   // Every task service is scoped to one account; the parser job gets the owner's service for each task it drives.
-  const serviceFor = (accountId: string) => createTaskService(db, dataDir, accountId, { onChange: (snapshot) => publish(snapshot, accountId) });
+  const serviceFor = (accountId: string) =>
+    createTaskService(db, dataDir, accountId, { onChange: (snapshot) => publish(snapshot, accountId), erp: { lease: erpLease, config: erpConfig, run: (job) => fillJobs.run(job) } });
   const tasksOf = (c: Context<AppEnv>) => serviceFor(accountOf(c).accountId);
   const parseJobs = createParseJobs(serviceFor, () => parseBacklogOfAllAccounts(db, dataDir), parser ?? workerExecutor());
   jobs = parseJobs;
@@ -77,7 +87,8 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     if (error instanceof StaleStepError) return c.json({ error: { code: STALE_STEP_CODE, message: STALE_STEP_NOTICE }, snapshot: error.snapshot }, STALE_STEP_HTTP_STATUS);
     if (error instanceof ActionRefusedError) {
       const body = { error: error.error, ...(error.snapshot ? { snapshot: error.snapshot } : {}), ...(error.taskList ? { taskList: error.taskList } : {}) };
-      return c.json(body, error.error.code === 'task_not_found' ? 404 : 400);
+      // `erp_in_use` is the one 409 refusal: the web adapter special-cases it; every other task-action 409 is stale_step.
+      return c.json(body, error.error.code === 'task_not_found' ? 404 : error.error.code === ERP_IN_USE_CODE ? 409 : 400);
     }
     throw error;
   });
@@ -165,17 +176,6 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
 
   app.post('/api/tasks/:id/abandon', async (c) => c.json(await tasksOf(c).voidTask(c.req.param('id'))));
 
-  // 去报销. Only the lease guard exists so far: while another task holds the ERP lease the answer is 409 with a
-  // wording that names no account or task (ADR-0018). #191 replaces the not-ready tail with the real start.
-  // Registered before the generic action route, which would otherwise answer it.
-  app.post('/api/tasks/:id/actions/start-erp-write', async (c) => {
-    const taskId = c.req.param('id');
-    const snapshot = await tasksOf(c).snapshot(taskId);
-    const holder = erpLease.holder();
-    if (holder && holder.taskId !== taskId) return c.json({ error: { code: 'erp_in_use', message: ERP_ACTION_ERRORS.inUse }, snapshot }, 409);
-    return failure(c, 400, 'not_ready', ERP_ACTION_ERRORS.notReady);
-  });
-
   app.post('/api/tasks/:id/actions/:name', async (c) => {
     const action = TASK_ACTIONS[c.req.param('name')];
     if (!action) return failure(c, 404, 'not_found', '没有这个接口。');
@@ -205,7 +205,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
 
   if (webDist) app.get('*', (c) => serveWebFile(c, webDist));
 
-  return Object.assign(app, { close: () => parseJobs.close() });
+  return Object.assign(app, { close: async () => { await parseJobs.close(); await fillJobs.close(); } });
 }
 
 // Task actions (`POST /api/tasks/:id/actions/<name>`), each with its JSON input. Later slices add their entries here.
@@ -227,6 +227,10 @@ const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
   'answer-pending': taskAction(withToken({ itemId: z.string().min(1), answer: PendingAnswerSchema }), (tasks, id, { itemId, answer, stepToken }) => tasks.answerPending(id, itemId, answer, stepToken)),
   'confirm-review': taskAction(withToken({ digest: z.string().min(1) }), (tasks, id, { digest, stepToken }) => tasks.confirmReview(id, digest, stepToken)),
   'exclude-material': taskAction(withToken({ materialId: z.string().min(1) }), (tasks, id, { materialId, stepToken }) => tasks.excludeMaterial(id, materialId, stepToken)),
+  // 去报销 and its login pause. While another task holds the ERP lease: 409 `erp_in_use`, naming no account or task.
+  'start-erp-write': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.startErpWrite(id, stepToken)),
+  'confirm-login': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.confirmLogin(id, stepToken)),
+  'cancel-erp-write': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.cancelErpWrite(id, stepToken)),
 };
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {

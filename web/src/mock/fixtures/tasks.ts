@@ -154,7 +154,7 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     projectAssignment: { status: 'not_started', purpose: null, homeCity: task.homeCity, assignments: [], working: [], reselect: [], usage: [], projects: [], submittedAt: null },
     catalog: catalogPending(),
     preparation: preparationPending(),
-    erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null },
+    erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null, erpAccount: null },
     readback: emptyReadback(),
     reconcile: emptyReconcile(),
     step: { kind: STEP_BY_STAGE[stage], stepToken: `tok-${task.taskId}-${stage}` },
@@ -244,7 +244,7 @@ export function t2Snapshot(): TaskSnapshot {
   };
   snapshot.catalog = catalogMatched();
   snapshot.preparation = { status: 'ready', problems: [], packageFiles: [] };
-  snapshot.erp = { status: 'aborted', steps: [], draftNo: T2_DRAFT_NO, abortReason: '保存草稿后回读超时，写入结果不确定。', loginNotice: null };
+  snapshot.erp = { status: 'aborted', steps: [], draftNo: T2_DRAFT_NO, abortReason: '保存草稿后回读超时，写入结果不确定。', loginNotice: null, erpAccount: null };
   snapshot.readback = readbackOf(T2_ROWS);
   // 已保存但严格逐行不一致 ⇒ 转人工（human_review），只允许转人工。
   snapshot.reconcile = {
@@ -283,7 +283,7 @@ export function t3Snapshot(): TaskSnapshot {
   };
   snapshot.catalog = catalogMatched();
   snapshot.preparation = { status: 'ready', problems: [], packageFiles: [] };
-  snapshot.erp = { status: 'done', steps: [], draftNo: T3_DRAFT_NO, abortReason: null, loginNotice: null };
+  snapshot.erp = { status: 'done', steps: [], draftNo: T3_DRAFT_NO, abortReason: null, loginNotice: null, erpAccount: null };
   snapshot.readback = { status: 'matched', rows: [], summary: '明细 4/4 一致', localTotal: '2318.50', erpTotal: '2318.50' };
   return withProjectUsage(withInventoryProjection(snapshot));
 }

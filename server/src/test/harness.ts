@@ -10,6 +10,8 @@ import { openDatabase, type Db } from '../db/database';
 import { createInMemoryErpLease, type InMemoryErpLease } from '../erp-lease';
 import type { ParseExecutor } from '../parse/executor';
 import type { ProjectCatalog } from '../catalog/project-catalog';
+import type { ErpConfig } from '../erp/config';
+import type { FillExecutor } from '../erp/fill-jobs';
 
 // The primary test seam: the Hono app on SQLite `:memory:`, with a throwaway data directory for blobs.
 // The parser job runs in the real parse worker unless a test injects another executor (`createTestServer({ parser })`).
@@ -65,13 +67,15 @@ export function testClient(app: Hono<AppEnv>, account: Account, cookie: string):
 
 // `legacyHome`: a legacy `~/.baox` tree (e.g. @baox/fixtures `LEGACY_BAOX_DIR`) imported when the first admin signs up;
 // without it the import finds nothing.
-export async function createTestServer({ parser, projectCatalog, legacyHome = null }: { parser?: ParseExecutor; projectCatalog?: ProjectCatalog; legacyHome?: string | null } = {}): Promise<TestServer> {
+// `erpExecutor`: where 去报销 jobs run (e.g. `erp/testing/fake-executor.ts` `scripted(...)`); `erpConfig`: the ERP and
+// build the plan targets (the fake ERP's, when running the real executor on it).
+export async function createTestServer({ parser, projectCatalog, legacyHome = null, erpExecutor, erpConfig }: { parser?: ParseExecutor; projectCatalog?: ProjectCatalog; legacyHome?: string | null; erpExecutor?: FillExecutor; erpConfig?: ErpConfig } = {}): Promise<TestServer> {
   const dataDir = tempDataDir();
   const db = await openDatabase(':memory:');
   let offset = 0;
   const clock: TestClock = { now: () => new Date(Date.now() + offset), advance: (ms) => void (offset += ms) };
   const erpLease = createInMemoryErpLease();
-  const app = createApp({ db, dataDir, now: clock.now, erpLease, legacyHome, ...(parser ? { parser } : {}), ...(projectCatalog ? { projectCatalog } : {}) });
+  const app = createApp({ db, dataDir, now: clock.now, erpLease, legacyHome, ...(parser ? { parser } : {}), ...(projectCatalog ? { projectCatalog } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(erpConfig ? { erpConfig } : {}) });
   let accounts = 0;
 
   async function signIn(username = `user${accounts + 1}`): Promise<TestClient> {

@@ -4,6 +4,8 @@ import {
   ABANDON_TASK_COPY,
   CONFIRM_REVIEW_ERRORS,
   CREATE_TASK_ERRORS,
+  ERP_ACTION_ERRORS,
+  ERP_IN_USE_CODE,
   HOME_CITY_ERRORS,
   PENDING_ANSWER_ERRORS,
   PENDING_CHOICE_KEY,
@@ -43,6 +45,11 @@ import { unavailableCatalog } from './catalog/project-catalog';
 import { COMPANY_RULES, pinnedCompanyRules, putRuleSet, validHomeCity, type CompanyRules } from './rules/company-rules';
 import { rememberedHomeCity, rememberHomeCity } from './settings';
 import { confirmationDigest, confirmationStatus, confirmationView, type ConfirmationDigest, type ConfirmationFact } from './confirmation';
+import type { ErpLease } from './erp-lease';
+import type { ErpConfig } from './erp/config';
+import { buildFillJob, type FrozenJob } from './erp/fill-plan';
+import { newJobId, type FillRun, type FillTrigger } from './erp/fill-jobs';
+import { catalogView, erpView, loadErp, readbackView, reconcileView, type ErpRecord } from './erp/fill-state';
 
 // 报销任务 (reimbursement task) facts, the actions that append them, and the snapshot projected from them.
 // Every accepted change goes through `mutate`: stepToken check, refusal, revision bump, then `onChange` (SSE).
@@ -112,10 +119,12 @@ type Loaded = {
   lines: Line[];
   digest: ConfirmationDigest | null;
   confirmed: ConfirmationFact | null;
+  // 去报销 (#191): the latest fill job and the task's ERP attempts.
+  erp: ErpRecord;
 };
 
 // Steps under which the assignment draft and the submission may change: before confirmation and after it (a change
-// invalidates the confirmation), until the first ERP action attempt (#191 adds the ERP-attempt freeze).
+// invalidates the confirmation). `mutate` freezes every change once a fill job made an ERP action attempt.
 const ASSIGN_STEPS: ReadonlySet<string> = new Set(['assign_projects', 'confirm_review', 'choose_action']);
 
 // The next material the parser job should parse. `preset` is an outcome decided without parsing (original missing).
@@ -124,7 +133,14 @@ export type ParseWork = { runId: string; input: ParseInput; preset: ParseOutcome
 // A refusal the parser job expects when the run moved on under it; never shown to anyone.
 const STALE_JOB = { code: 'stale_job', message: 'the inventory run changed under the parser job' } as const;
 
-export type TaskServiceOptions = { onChange?: (snapshot: TaskSnapshot) => void };
+// What the 去报销 actions need from the app: the global lease, the ERP to write to, and the background job runner.
+export type ErpServiceOptions = { lease: ErpLease; config: ErpConfig; run: (job: FillRun) => void };
+
+export type TaskServiceOptions = { onChange?: (snapshot: TaskSnapshot) => void; erp?: ErpServiceOptions };
+
+// `job`: the parser or ERP job's own write, allowed while a job runs. `loginPause`: accepted during an ERP login
+// pause (confirm-login, cancel-erp-write). `erpAction`: accepted after an ERP action attempt (reconcile, #192).
+type MutateOptions = { job?: boolean; loginPause?: boolean; erpAction?: boolean };
 
 const mediaTypeOf = (row: MaterialRow): 'pdf' | 'image' => (IMAGE_FILE.test(row.file_name) || row.mime.startsWith('image/') ? 'image' : 'pdf');
 
@@ -209,7 +225,9 @@ async function loadTask(tx: Tx, task: TaskTable, materials?: readonly MaterialRo
   const digest = submitted ? confirmationDigest({ lines, purpose: submitted.purpose, selection: submitted.selection, selectable: new Set(options.map((option) => `${option.source}:${option.number}`)), rules, catalogHash: submitted.catalogHash, homeCity }) : null;
   const confirmed = await latestConfirmation(tx, task.task_id);
   facts.confirmation = confirmationStatus(digest, confirmed, facts.lastReopenRevision);
-  return { facts, view, runId: current?.run_id ?? null, parsed: new Set(results.map((result) => result.material_id)), homeCity, rules, assignment, legacy, lines, digest, confirmed };
+  const erp = await loadErp(tx, task.task_id);
+  facts.erp = erp.facts;
+  return { facts, view, runId: current?.run_id ?? null, parsed: new Set(results.map((result) => result.material_id)), homeCity, rules, assignment, legacy, lines, digest, confirmed, erp };
 }
 
 async function latestConfirmation(tx: Tx, taskId: string): Promise<ConfirmationFact | null> {
@@ -236,7 +254,7 @@ async function excludeOnce(tx: Tx, taskId: string, accountId: string, materialId
 
 // Scoped to one account: every read and write sees only that account's tasks (ADR-0018). Another account's task is
 // indistinguishable from a missing one.
-export function createTaskService(db: Db, dataDir: string, accountId: string, { onChange = () => {} }: TaskServiceOptions = {}) {
+export function createTaskService(db: Db, dataDir: string, accountId: string, { onChange = () => {}, erp }: TaskServiceOptions = {}) {
   async function taskRow(tx: Tx, taskId: string): Promise<TaskTable> {
     const row = await tx.selectFrom('task').selectAll().where('task_id', '=', taskId).where('account_id', '=', accountId).executeTakeFirst();
     if (!row) throw new TaskNotFoundError(taskId);
@@ -268,8 +286,10 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
 
   // One accepted change: check the stepToken (when the action carries one), let `apply` refuse or append facts,
   // bump the revision, then publish the fresh snapshot. A refusal or stale token writes nothing. While the parser job
-  // runs, only the job itself (`job: true`) may write; everyone else gets the 409 of a stale step (ADR-0014).
-  async function mutate(taskId: string, token: string | null, apply: (ctx: Context) => Promise<Refusal | void>, { job = false } = {}): Promise<TaskSnapshot> {
+  // or an ERP job runs, only the job itself (`job: true`) may write; everyone else gets the 409 of a stale step
+  // (ADR-0014). During an ERP login pause only `loginPause` actions pass; after an ERP action attempt the task's facts
+  // are frozen, and a saved draft (ERP 草稿已交接) closes the task.
+  async function mutate(taskId: string, token: string | null, apply: (ctx: Context) => Promise<Refusal | void>, { job = false, loginPause = false, erpAction = false }: MutateOptions = {}): Promise<TaskSnapshot> {
     const outcome = await db.transaction().execute(async (tx): Promise<{ kind: 'ok' } | { kind: 'stale' } | ({ kind: 'refused' } & Refusal)> => {
       const task = await taskRow(tx, taskId);
       if (token !== null && token !== stepToken(task.task_id, task.revision)) return { kind: 'stale' };
@@ -277,6 +297,10 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       const loaded = await load(tx, task);
       const { facts, view } = loaded;
       if (!job && parseRunning(facts)) return { kind: 'stale' };
+      const phase = facts.erp?.phase;
+      if (!job && (phase === 'running' || (phase === 'waiting_login' && !loginPause))) return { kind: 'stale' };
+      if (!job && phase === 'saved') return { kind: 'refused', code: 'task_closed', message: ACTION_COPY.taskClosed };
+      if (!job && phase === 'unknown' && !erpAction) return { kind: 'refused', code: 'erp_started', message: ERP_ACTION_ERRORS.erpStarted };
       const at = now();
       const revision = task.revision + 1;
       const refusal = await apply({ tx, task, facts, loaded, view, at, revision });
@@ -289,6 +313,63 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     if (outcome.kind === 'refused') throw new ActionRefusedError({ code: outcome.code, message: outcome.message }, fresh);
     onChange(fresh);
     return fresh;
+  }
+
+  // 去报销 and 我已登录，继续: both start one run of the fill job. The lease is taken inside the accepted change, so a
+  // task never runs without it; the job itself releases it on its result.
+  async function startFillJob(taskId: string, token: string, trigger: FillTrigger): Promise<TaskSnapshot> {
+    const started: { run: FillRun | null } = { run: null };
+    const inUse = { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
+    const notWaiting = { code: 'not_waiting_login', message: ERP_ACTION_ERRORS.notWaitingLogin };
+    try {
+      const snapshot = await mutate(
+        taskId,
+        token,
+        async ({ tx, facts, loaded, at, revision }) => {
+          if (!erp) return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
+          const holder = erp.lease.holder();
+          if (holder && holder.taskId !== taskId) return inUse;
+          let frozen: FrozenJob;
+          let digest: string;
+          if (trigger === 'confirm_login') {
+            if (facts.erp?.phase !== 'waiting_login' || !loaded.erp.frozen || !loaded.erp.job) return notWaiting;
+            frozen = loaded.erp.frozen;
+            digest = loaded.erp.job.confirmation_digest;
+          } else {
+            if (loaded.erp.attempted) return { code: 'erp_started', message: ERP_ACTION_ERRORS.erpStarted };
+            if (project(facts).step.kind !== 'choose_action' || facts.confirmation !== 'confirmed' || !loaded.confirmed) return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
+            const rows = await materialRows(tx, taskId);
+            const kinds = new Map(loaded.view.materials.map((material) => [material.materialId, material.kind]));
+            const built = buildFillJob({
+              taskId,
+              jobId: 'unassigned',
+              versionId: `v${facts.versionNo}`,
+              homeCity: loaded.homeCity,
+              purpose: loaded.assignment?.submitted?.purpose ?? null,
+              lines: loaded.lines,
+              materials: rows.map((row) => ({ materialId: row.material_id, kind: kinds.get(row.material_id) ?? null, fileName: row.file_name, sha256: row.blob_sha256, mime: row.mime })),
+              claims: loaded.view.claims,
+              config: erp.config,
+            });
+            if (!built.ok) return { code: 'erp_preflight', message: ERP_ACTION_ERRORS.preflight(built.problems) };
+            frozen = built.job;
+            digest = loaded.confirmed.digest;
+          }
+          const jobId = newJobId();
+          const job: FrozenJob = { ...frozen, plan: { ...frozen.plan, jobId } };
+          if (!erp.lease.acquire({ accountId, taskId })) return inUse;
+          started.run = { jobId, accountId, taskId, trigger, frozen: job };
+          await tx.insertInto('erp_job').values({ job_id: jobId, task_id: taskId, account_id: accountId, kind: 'fill', trigger, confirmation_digest: digest, plan: JSON.stringify(job), revision, started_at: at }).execute();
+        },
+        { loginPause: trigger === 'confirm_login' },
+      );
+      if (started.run) erp?.run(started.run);
+      return snapshot;
+    } catch (error) {
+      // The change was not stored after the lease was taken: give it back.
+      if (started.run) erp?.lease.release(taskId);
+      throw error;
+    }
   }
 
   async function list(): Promise<TaskList> {
@@ -329,8 +410,8 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       const at = now();
       const taskId = randomUUID();
       const created = await db.transaction().execute(async (tx) => {
-        const open = await tx.selectFrom('task').select(['lifecycle']).where('account_id', '=', accountId).execute();
-        if (open.some((task) => isNonTerminal(task.lifecycle))) return false;
+        const open = await tx.selectFrom('task').select(['task_id', 'lifecycle']).where('account_id', '=', accountId).where('lifecycle', '=', 'open').execute();
+        for (const task of open) if (isNonTerminal(task.lifecycle, (await loadErp(tx, task.task_id)).facts?.phase ?? null)) return false;
         await tx
           .insertInto('task')
           .values({ task_id: taskId, account_id: accountId, name: `${at.slice(0, 10)} 新建报销`, home_city: homeCity, lifecycle: 'open', revision: 1, created_at: at, updated_at: at })
@@ -505,6 +586,41 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       });
     },
 
+    // 去报销: starts the fill job on the confirmed lines (stage erp). Refused before any job when a line could never be
+    // written (`erp_preflight`); 409 `erp_in_use` while another task holds the ERP lease.
+    startErpWrite(taskId: string, token: string): Promise<TaskSnapshot> {
+      return startFillJob(taskId, token, 'start');
+    },
+
+    // 我已登录，继续 during the login pause: one more run of the same frozen plan, which probes the login once.
+    confirmLogin(taskId: string, token: string): Promise<TaskSnapshot> {
+      return startFillJob(taskId, token, 'confirm_login');
+    },
+
+    // Gives up this 去报销 during the login pause: nothing was written, back to write-pending (choose_action).
+    async cancelErpWrite(taskId: string, token: string): Promise<TaskSnapshot> {
+      return mutate(
+        taskId,
+        token,
+        async ({ tx, facts, at, revision }) => {
+          if (facts.erp?.phase !== 'waiting_login') return { code: 'not_waiting_login', message: ERP_ACTION_ERRORS.notWaitingLogin };
+          await tx.insertInto('erp_job_cancel').values({ cancel_id: randomUUID(), job_id: facts.erp.jobId, task_id: taskId, account_id: accountId, revision, created_at: at }).execute();
+        },
+        { loginPause: true },
+      );
+    },
+
+    // The ERP job's side (`erp/fill-jobs.ts`): appends its facts in one accepted revision and publishes. A task closed
+    // under a running job (reset) still gets the facts, without a revision.
+    async erpRecord(taskId: string, write: (tx: Db) => Promise<void>): Promise<void> {
+      try {
+        await mutate(taskId, null, async ({ tx }) => write(tx), { job: true });
+      } catch (error) {
+        if (!(error instanceof ActionRefusedError)) throw error;
+        await write(db);
+      }
+    },
+
     // The personal book changed: its open tasks get a new revision (their allow-list is part of the snapshot, so
     // the old stepToken is void) and push the fresh snapshot.
     async bookChanged(): Promise<void> {
@@ -519,12 +635,15 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     },
 
     // 任务作废 (void task): a lifecycle change, not a deletion. Returns the task list without the task.
-    // TODO(#181/#192): refuse once an ERP action attempt exists (ADR-0007 occupancy); none exist before the ERP job.
+    // Refused once an ERP action attempt exists: its invoices stay held until reconcile releases them (ADR-0007).
     async voidTask(taskId: string): Promise<TaskList> {
       const task = await db.selectFrom('task').selectAll().where('task_id', '=', taskId).where('account_id', '=', accountId).executeTakeFirst();
       if (!task || task.lifecycle === 'voided') throw new ActionRefusedError({ code: 'task_not_found', message: ABANDON_TASK_COPY.notFound }, null, await list());
       if (task.lifecycle !== 'open') throw new ActionRefusedError({ code: 'not_abandonable', message: ACTION_COPY.notAbandonable }, null, await list());
-      if (parseRunning((await load(db, task)).facts)) throw new StaleStepError(await snapshot(taskId));
+      const loaded = await load(db, task);
+      const phase = loaded.facts.erp?.phase;
+      if (parseRunning(loaded.facts) || phase === 'running' || phase === 'waiting_login') throw new StaleStepError(await snapshot(taskId));
+      if (loaded.erp.attempted) throw new ActionRefusedError({ code: 'erp_started', message: ABANDON_TASK_COPY.blockedReason }, null, await list());
       const at = now();
       await db.updateTable('task').set({ lifecycle: 'voided', revision: task.revision + 1, updated_at: at }).where('task_id', '=', taskId).execute();
       onChange(await snapshot(taskId));
@@ -616,18 +735,20 @@ export async function parseBacklogOfAllAccounts(db: Db, dataDir: string): Promis
   return entries;
 }
 
-function listItem(task: TaskTable, { facts, legacy }: Loaded): TaskListItem {
+function listItem(task: TaskTable, { facts, legacy, erp }: Loaded): TaskListItem {
+  const savedDraftNo = erp.facts?.phase === 'saved' ? (erp.result?.billNo ?? null) : null;
   return {
     taskId: task.task_id,
     name: task.name,
     stage: project(facts).stage,
     period: null,
     grossTotal: null,
-    erpDraftNo: legacy?.bill_no ?? null,
+    erpDraftNo: legacy?.bill_no ?? savedDraftNo,
     pendingCount: facts.parse?.openPendingItems ?? 0,
     erpOutcome: legacy?.outcome === 'handed_off' ? 'handed_off' : 'none',
-    abandonable: task.lifecycle === 'open',
-    abandonBlockedReason: task.lifecycle === 'open' ? null : ACTION_COPY.notAbandonable,
+    // Not voidable once ERP was touched: the task holds its invoices until reconcile says otherwise.
+    abandonable: task.lifecycle === 'open' && !erp.attempted,
+    abandonBlockedReason: task.lifecycle !== 'open' ? ACTION_COPY.notAbandonable : erp.attempted ? ABANDON_TASK_COPY.blockedReason : null,
     updatedAt: task.updated_at,
   };
 }
@@ -690,7 +811,7 @@ function enrichLines(lines: readonly Line[], rules: CompanyRules, assignment: As
   });
 }
 
-function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, legacy, lines, digest, confirmed }: Loaded, batches: readonly UploadBatchTable[], rejections: readonly UploadRejectionTable[], materials: readonly MaterialRow[]): TaskSnapshot {
+function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, legacy, lines, digest, confirmed, erp }: Loaded, batches: readonly UploadBatchTable[], rejections: readonly UploadRejectionTable[], materials: readonly MaterialRow[]): TaskSnapshot {
   const { stage, step, blockers } = project(facts);
   // A batch that added a material formed the next inventory version.
   const versionOf = new Map<string, string>();
@@ -716,16 +837,17 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
     paymentScreenshots: [],
     printSheet: { status: 'not_generated', fileName: null, url: null, pages: [], notices: [] },
     projectAssignment: assignment?.view ?? { status: 'not_started', purpose: null, homeCity, assignments: [], working: [], reselect: [], usage: [], projects: [], submittedAt: null },
-    catalog: { status: 'pending', problems: [] },
-    // The catalog check moved into the ERP job (ADR-0014); nothing is prepared before the confirmation any more.
+    // The catalog check lives in the ERP job (ADR-0014); a mismatch it found shows here until the next submission.
+    catalog: catalogView(erp) ?? { status: 'pending', problems: [] },
+    // Nothing is prepared before the confirmation any more.
     preparation: { status: digest ? 'ready' : 'pending', problems: [], packageFiles: [] },
     // An imported legacy task shows only its stored ERP facts: the saved draft's number, or the 转人工 bucket.
-    erp: { status: legacy?.outcome === 'draft_handed_over' ? 'done' : 'idle', steps: [], draftNo: legacy?.bill_no ?? null, abortReason: null, loginNotice: null },
-    readback: { status: 'none', rows: [], summary: null, localTotal: null, erpTotal: null },
+    erp: legacy ? { status: legacy.outcome === 'draft_handed_over' ? 'done' : 'idle', steps: [], draftNo: legacy.bill_no, abortReason: null, loginNotice: null, erpAccount: null } : erpView(erp),
+    readback: readbackView(erp, lines),
     reconcile:
       legacy?.outcome === 'handed_off'
         ? { status: 'handed_off', bucket: legacy.reconcile_bucket as ReconcileBucket | null, action: '转人工', actionCode: null, allowedActions: [], humanReview: true, banner: HUMAN_REVIEW_NOTICE, draftNo: legacy.bill_no, rows: [], reasons: [] }
-        : { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [] },
+        : (reconcileView(erp) ?? { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [] }),
     step,
   };
 }

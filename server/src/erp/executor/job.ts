@@ -55,6 +55,10 @@ class DriftError extends ExecutorError {
 
 const MIME_EXTENSIONS: Record<string, string> = { 'application/pdf': '.pdf', 'image/png': '.png', 'image/jpeg': '.jpg' };
 
+// A draft-flow problem as the result message: its own sentence, then the server's reasons (strict read-back).
+const problemText = (problem: { message: string; [extra: string]: unknown }) =>
+  [problem.message, ...(Array.isArray(problem['reasons']) ? (problem['reasons'] as unknown[]).map(String) : [])].join('：');
+
 /** Fetch invoice bytes by content, verify the hash, and stage them for `DOM.setFileInputFiles`. */
 async function stageInvoices(refs: BlobRef[], blobs: BlobSource, root: string) {
   const dir = await mkdtemp(join(root, 'baox-erp-invoices-'));
@@ -247,7 +251,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
       approvedPreview: preview, approval, freshGate, readCurrent: reader(() => 'after_fill'),
       addRow: (p) => addDetailRow(p), ops,
     });
-    if (!filled.ok) return await finish('unknown', filled.problems[0]?.code ?? 'fill_failed', filled.problems.map((p) => p.message).join('；'));
+    if (!filled.ok) return await finish('unknown', filled.problems[0]?.code ?? 'fill_failed', filled.problems.map(problemText).join('；'));
     await step('fill', 'done');
 
     // 7. Save once, then the strict read-back of the saved form.
@@ -258,7 +262,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
       readCurrent: reader((n) => (n === 0 ? 'before_save' : 'after_save')),
       save: (p) => saveReimbursement(p),
     });
-    if (saved.status !== 'saved') return await finish('unknown', saved.problems?.[0]?.code ?? 'save_failed', saved.problems?.map((p) => p.message).join('；') ?? null);
+    if (saved.status !== 'saved') return await finish('unknown', saved.problems?.[0]?.code ?? 'save_failed', saved.problems?.map(problemText).join('；') ?? null);
     await step('save', 'done');
     return await finish('saved', null, null, saved.billNo ?? null);
   } catch (error: any) {

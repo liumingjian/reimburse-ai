@@ -20,7 +20,7 @@ export const test = base.extend<{ serverApp: ServerApp }>({
     const dataDir = mkdtempSync(join(tmpdir(), 'baox-e2e-'));
     const child = spawn(process.execPath, [SERVER_ENTRY], {
       // BAOX_HOME points at a directory that does not exist, so first-admin setup never reads the machine's real ~/.baox.
-      env: { ...process.env, BAOX_DATA_DIR: dataDir, BAOX_PORT: '0', BAOX_PROJECT_CATALOG_FIXTURE: PROJECT_CATALOG, BAOX_HOME: join(dataDir, 'no-legacy-baox') },
+      env: { ...process.env, BAOX_DATA_DIR: dataDir, BAOX_PORT: '0', BAOX_PROJECT_CATALOG_FIXTURE: PROJECT_CATALOG, BAOX_HOME: join(dataDir, 'no-legacy-baox'), BAOX_ERP_CHROMIUM: 'off' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let output = '';

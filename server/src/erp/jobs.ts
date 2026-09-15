@@ -23,35 +23,40 @@ export type AttemptRecord = {
   compatibility: AttemptStartedEvent['compatibility']; erpAccount: ErpAccount; startedAt: string;
 };
 
+/** Append one executor event to a job's log, inside whatever transaction `db` is. */
+export async function writeEvent(db: Db, jobId: string, taskId: string, event: ExecutorEvent, at: string): Promise<void> {
+  const erp = db.withTables<ErpTables>();
+  const last = await erp.selectFrom('erp_job_event').select((eb) => eb.fn.max('seq').as('seq')).where('job_id', '=', jobId).executeTakeFirst();
+  await erp.insertInto('erp_job_event').values({
+    event_id: randomUUID(), job_id: jobId, task_id: taskId, seq: Number(last?.seq ?? 0) + 1,
+    type: event.type, payload: JSON.stringify(event), created_at: at,
+  }).execute();
+}
+
+/** Persist an attempt and its event, inside whatever transaction `db` is. */
+export async function writeAttempt(db: Db, jobId: string, taskId: string, event: AttemptStartedEvent, at: string): Promise<void> {
+  await db.withTables<ErpTables>().insertInto('erp_attempt').values({
+    attempt_id: event.attemptId, job_id: jobId, task_id: taskId, action: event.action,
+    preconditions: JSON.stringify(event.preconditions), expected_postconditions: JSON.stringify(event.expectedPostconditions),
+    erp_build: event.compatibility.erpBuild, form_id: event.compatibility.formId,
+    erp_account: event.erpAccount.account, erp_tenant: event.erpAccount.tenant, erp_display_name: event.erpAccount.displayName,
+    started_at: at,
+  }).execute();
+  await writeEvent(db, jobId, taskId, event, at);
+}
+
 export function createErpJobs(db: Db, { now = () => new Date() }: { now?: () => Date } = {}) {
   const erp = db.withTables<ErpTables>();
-
-  const insertEvent = async (trx: typeof erp, jobId: string, taskId: string, event: ExecutorEvent) => {
-    const last = await trx.selectFrom('erp_job_event').select((eb) => eb.fn.max('seq').as('seq')).where('job_id', '=', jobId).executeTakeFirst();
-    await trx.insertInto('erp_job_event').values({
-      event_id: randomUUID(), job_id: jobId, task_id: taskId, seq: Number(last?.seq ?? 0) + 1,
-      type: event.type, payload: JSON.stringify(event), created_at: now().toISOString(),
-    }).execute();
-  };
 
   return {
     /** Append one executor event to the job's log. */
     async append(jobId: string, taskId: string, event: ExecutorEvent): Promise<void> {
-      await erp.transaction().execute((trx) => insertEvent(trx, jobId, taskId, event));
+      await db.transaction().execute((trx) => writeEvent(trx, jobId, taskId, event, now().toISOString()));
     },
 
     /** Persist an attempt (and its event) in one transaction. Only after this resolves may the executor mutate. */
     async recordAttempt(jobId: string, taskId: string, event: AttemptStartedEvent): Promise<void> {
-      await erp.transaction().execute(async (trx) => {
-        await trx.insertInto('erp_attempt').values({
-          attempt_id: event.attemptId, job_id: jobId, task_id: taskId, action: event.action,
-          preconditions: JSON.stringify(event.preconditions), expected_postconditions: JSON.stringify(event.expectedPostconditions),
-          erp_build: event.compatibility.erpBuild, form_id: event.compatibility.formId,
-          erp_account: event.erpAccount.account, erp_tenant: event.erpAccount.tenant, erp_display_name: event.erpAccount.displayName,
-          started_at: now().toISOString(),
-        }).execute();
-        await insertEvent(trx, jobId, taskId, event);
-      });
+      await db.transaction().execute((trx) => writeAttempt(trx, jobId, taskId, event, now().toISOString()));
     },
 
     async attempts(jobId: string): Promise<AttemptRecord[]> {
