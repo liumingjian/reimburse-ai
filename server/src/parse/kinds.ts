@@ -55,6 +55,19 @@ const VAT_INVOICE_SLOTS: readonly Slot[] = [
   { key: 'totalAmount', label: '价税合计', required: true, format: 'money' },
 ];
 
+// 出租车车费发票 (taxi receipt): every slot is read by OCR, so each is `fact_correctable` (ADR-0017).
+const TAXI_RECEIPT_SLOTS: readonly Slot[] = [
+  { key: 'invoiceCode', label: '发票代码', required: true, format: 'text' },
+  { key: 'invoiceNumber', label: '发票号码', required: true, format: 'text' },
+  { key: 'travelDate', label: '日期', required: true, format: 'date' },
+  { key: 'totalAmount', label: '金额', required: true, format: 'money' },
+  { key: 'plate', label: '车号', required: false, format: 'text' },
+  { key: 'boardTime', label: '上车时间', required: false, format: 'text' },
+  { key: 'alightTime', label: '下车时间', required: false, format: 'text' },
+  { key: 'distance', label: '里程', required: false, format: 'text' },
+  { key: 'city', label: '城市', required: false, format: 'text' },
+];
+
 // `*住宿服务*住宿费` → 住宿费; the 税收分类 (tax class) between the asterisks decides the category.
 const itemParts = (itemName: string | undefined) => /^\*([^*]+)\*(.*)$/.exec(itemName ?? '');
 
@@ -105,7 +118,32 @@ export const KINDS: Readonly<Record<MaterialKind, KindSpec>> = {
   rail_ticket: { kind: 'rail_ticket', label: '铁路电子客票', role: 'primary_voucher', slots: [], categoryLabel: noCategory, event: noEvent },
   ride_itinerary: { kind: 'ride_itinerary', label: '网约车行程单', role: 'reference', slots: [], categoryLabel: noCategory, event: noEvent },
   hotel_folio: { kind: 'hotel_folio', label: '酒店结账单', role: 'reference', slots: [], categoryLabel: noCategory, event: noEvent },
-  taxi_receipt: { kind: 'taxi_receipt', label: '出租车票', role: 'primary_voucher', slots: [], categoryLabel: noCategory, event: noEvent },
+  taxi_receipt: {
+    kind: 'taxi_receipt',
+    label: '出租车车费发票',
+    role: 'primary_voucher',
+    slots: TAXI_RECEIPT_SLOTS,
+    // Local vs out-of-town needs the task's home city (#188); until then a taxi ride is undivided 市内交通.
+    categoryLabel: () => CATEGORIES.city_transport.label,
+    event(values) {
+      const { travelDate, totalAmount, invoiceNumber, city } = values;
+      if (!travelDate || !totalAmount) return null;
+      const description = city ? `出租车（${city}）` : '出租车';
+      // A paper taxi receipt states one amount and no separable tax.
+      return {
+        category: CATEGORIES.city_transport,
+        summary: description,
+        description,
+        date: travelDate,
+        endDate: null,
+        grossAmount: totalAmount,
+        netAmount: totalAmount,
+        taxAmount: '0.00',
+        invoiceType: '普通发票',
+        maskedNumber: invoiceNumber ? maskNumber(invoiceNumber) : null,
+      };
+    },
+  },
 };
 
 export function slotOf(kind: MaterialKind, key: string): Slot | undefined {

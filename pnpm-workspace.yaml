@@ -10,3 +10,8 @@ packages:
 onlyBuiltDependencies:
   - better-sqlite3
   - esbuild
+
+# Install scripts deliberately skipped. onnxruntime-node's postinstall only downloads binaries the tarball omits (the
+# CUDA provider); the CPU binaries for macOS arm64 ship inside the package.
+ignoredBuiltDependencies:
+  - onnxruntime-node
