@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Material, TaskList, TaskListItem, TaskSnapshot, UploadBatch } from '@baox/contract';
 import type { Db } from './db/database';
-import { IMPLICIT_ACCOUNT_ID } from './db/migrations';
 import type { MaterialTable, TaskTable, UploadBatchTable } from './db/schema';
 import { writeBlob } from './data-dir';
 
@@ -20,10 +19,9 @@ export class TaskNotFoundError extends Error {
   }
 }
 
-export function createTaskService(db: Db, dataDir: string) {
-  // Until accounts land (#193) every request acts as the implicit account.
-  const accountId = IMPLICIT_ACCOUNT_ID;
-
+// Scoped to one account: every read and write sees only that account's tasks (ADR-0018). Another account's task is
+// indistinguishable from a missing one.
+export function createTaskService(db: Db, dataDir: string, accountId: string) {
   async function taskRow(taskId: string): Promise<TaskTable> {
     const row = await db.selectFrom('task').selectAll().where('task_id', '=', taskId).where('account_id', '=', accountId).executeTakeFirst();
     if (!row) throw new TaskNotFoundError(taskId);
@@ -49,15 +47,26 @@ export function createTaskService(db: Db, dataDir: string) {
     snapshot,
 
     async list(): Promise<TaskList> {
-      const account = await db.selectFrom('account').selectAll().where('account_id', '=', accountId).executeTakeFirstOrThrow();
-      const tasks = await db.selectFrom('task').selectAll().where('account_id', '=', accountId).orderBy('updated_at', 'desc').execute();
-      return {
-        // Identity-era startup fields (#193 removes them): the implicit account counts as logged in and bound.
-        erpSession: 'logged_in',
-        employee: { displayName: account.display_name, account: account.account_id, tenant: account.account_id, binding: 'bound' },
-        homeCity: null,
-        tasks: tasks.map(listItem),
-      };
+      const tasks = await db
+        .selectFrom('task')
+        .selectAll()
+        .where('account_id', '=', accountId)
+        .where('lifecycle', '!=', 'voided')
+        .orderBy('updated_at', 'desc')
+        .execute();
+      return { homeCity: null, tasks: tasks.map(listItem) };
+    },
+
+    // 完全重置 (reset) of this account: its open tasks are voided (facts stay, ADR-0015) and leave the list.
+    // The personal book and home city join this when they land (#188).
+    async resetAll(): Promise<TaskList> {
+      await db
+        .updateTable('task')
+        .set((eb) => ({ lifecycle: 'voided', revision: eb('revision', '+', 1), updated_at: now() }))
+        .where('account_id', '=', accountId)
+        .where('lifecycle', '=', 'open')
+        .execute();
+      return this.list();
     },
 
     async create(homeCity: string): Promise<TaskSnapshot> {

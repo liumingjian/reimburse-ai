@@ -36,9 +36,8 @@ const PAGES: ReadonlyArray<readonly [string, string]> = [
   ['?seed=reconcile', '#/task/T1/erp'],
   ['', '#/task/T2/reconcile'],
   ['', '#/task/T3/done'],
-  ['?erp=logged-out', '#/tasks'],
-  ['?identity=unbound', '#/tasks'],
-  ['?identity=mismatched', '#/tasks'],
+  ['?auth=setup', '#/tasks'],
+  ['?auth=signed-out', '#/tasks'],
   ['?seed=pending&book=empty&allocation=1', '#/task/T1/pending'],
 ];
 
@@ -93,28 +92,17 @@ test('?seed=erp：已开始写入报销系统的 T1「作废」不可用', async
   await expect(page.getByRole('menu', { name: '2026-08 上海出差（产品评审）的更多操作' }).getByRole('menuitem', { name: '作废' })).toBeDisabled();
 });
 
-test('完全重置：设置页二次确认后回到启动页；重新登录、确认身份后任务列表为空', async ({ page }, testInfo) => {
+test('完全重置：设置页二次确认后只清空当前账号的数据，仍然登录，任务列表为空', async ({ page }, testInfo) => {
   await page.goto(open('', '#/tasks'));
   await page.getByRole('navigation', { name: '全局' }).getByRole('link', { name: '设置' }).click();
   await expect(page).toHaveURL(/#\/settings$/);
   await page.getByRole('button', { name: '完全重置' }).click();
-  const resetConfirm = page.getByRole('dialog', { name: '清空本机全部数据？' }).getByRole('button', { name: '清空并重置' });
+  const resetConfirm = page.getByRole('dialog', { name: '清空你的全部数据？' }).getByRole('button', { name: '清空并重置' });
   // 危险弹层：确认按钮是 Carbon 的 $button-danger-primary（#da1e28）。
   await expect(resetConfirm).toHaveCSS('background-color', 'rgb(218, 30, 40)');
   await resetConfirm.click();
-  await expect(page.getByRole('heading', { name: '登录报销系统', level: 1 })).toBeVisible();
   await expect(page).toHaveURL(/#\/tasks$/);
-  await page.screenshot({ path: testInfo.outputPath('after-reset.png'), fullPage: true });
-  await page.getByRole('button', { name: '我已登录' }).click();
-  await expect(page.getByRole('heading', { name: '确认报销人身份', level: 1 })).toBeVisible();
-  await page.getByRole('button', { name: '确认', exact: true }).click();
   await expect(page.getByRole('heading', { name: '还没有报销任务' })).toBeVisible();
-});
-
-test('身份不一致整页阻塞时，设置页仍可打开并完全重置', async ({ page }) => {
-  await page.goto(open('?identity=mismatched', '#/settings'));
-  await expect(page.getByRole('heading', { name: '设置', level: 1 })).toBeVisible();
-  await page.getByRole('button', { name: '完全重置' }).click();
-  await page.getByRole('dialog', { name: '清空本机全部数据？' }).getByRole('button', { name: '清空并重置' }).click();
-  await expect(page.getByRole('heading', { name: '登录报销系统', level: 1 })).toBeVisible();
+  await expect(page.getByRole('banner').getByText('林颂宜', { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('after-reset.png'), fullPage: true });
 });

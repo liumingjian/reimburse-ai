@@ -1,13 +1,18 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { CreateTaskInputSchema, SNAPSHOT_EVENT, type TaskSnapshot } from '@baox/contract';
+import { CreateTaskInputSchema, ERP_ACTION_ERRORS, SNAPSHOT_EVENT, type TaskSnapshot } from '@baox/contract';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { AuthRefusal, createAccountService, type Clock } from './accounts/accounts';
+import { accountOf, mountAuthRoutes, requireAccount, type AppEnv } from './accounts/http';
 import type { Db } from './db/database';
+import { createInMemoryErpLease, type ErpLease } from './erp-lease';
 import { createTaskService, TaskNotFoundError, type UploadedFile } from './tasks';
 
 // The HTTP app. Wire rules (contract/src/http.ts): success is 200 with the whole new snapshot; failure is
 // `{ error: { code, message } }`; SSE pushes whole snapshots as `event: snapshot`.
+// Every `/api/*` route other than `/api/session` and `/api/auth/*` needs a session (401 otherwise) and acts only on
+// the signed-in account's data: a task of another account is 404, admins included (ADR-0018).
 // Tests drive it through `app.request()`; `startServer` puts it on 127.0.0.1.
 
 export type AppOptions = {
@@ -15,35 +20,49 @@ export type AppOptions = {
   dataDir: string;
   // The built frontend (`web/dist`), served same-origin in production. Absent in tests and under `pnpm dev`.
   webDist?: string | null;
+  // Session expiry reads this clock; tests move it.
+  now?: Clock;
+  // The global ERP control lease (ADR-0016). #191 passes the one its ERP job acquires.
+  erpLease?: ErpLease;
 };
 
 type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
-const failure = (c: Context, status: 400 | 404, code: string, message: string) => c.json({ error: { code, message } }, status);
+const failure = (c: Context, status: 400 | 401 | 404 | 409, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null }: AppOptions): Hono {
-  const tasks = createTaskService(db, dataDir);
+export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease() }: AppOptions): Hono<AppEnv> {
+  const accounts = createAccountService(db, now);
+  const tasksOf = (c: Context<AppEnv>) => createTaskService(db, dataDir, accountOf(c).accountId);
+  // Keyed by task id; a task's stream only ever opens for its owner.
   const listeners = new Map<string, Set<SnapshotListener>>();
   const publish = (snapshot: TaskSnapshot) => {
     for (const listener of listeners.get(snapshot.task.taskId) ?? []) listener(snapshot);
   };
 
-  const app = new Hono();
+  const app = new Hono<AppEnv>();
 
   app.onError((error, c) => {
     if (error instanceof TaskNotFoundError) return failure(c, 404, 'task_not_found', '没有这个报销任务。');
+    if (error instanceof AuthRefusal) return failure(c, error.status, error.code, error.message);
     throw error;
   });
 
-  app.get('/api/tasks', async (c) => c.json(await tasks.list()));
+  mountAuthRoutes(app, accounts);
+  app.use('/api/*', requireAccount(accounts));
+
+  app.get('/api/tasks', async (c) => c.json(await tasksOf(c).list()));
 
   app.post('/api/tasks', async (c) => {
     const input = CreateTaskInputSchema.safeParse(await c.req.json().catch(() => null));
     if (!input.success) return failure(c, 400, 'invalid_input', input.error.issues[0]?.message ?? '请求无效。');
-    return c.json(await tasks.create(input.data.homeCity));
+    return c.json(await tasksOf(c).create(input.data.homeCity));
   });
 
-  app.get('/api/tasks/:id', async (c) => c.json(await tasks.snapshot(c.req.param('id'))));
+  // 完全重置 (reset), per account: voids the signed-in account's own tasks; other accounts, accounts themselves and
+  // sessions are untouched. Answers the new task list.
+  app.post('/api/reset', async (c) => c.json(await tasksOf(c).resetAll()));
+
+  app.get('/api/tasks/:id', async (c) => c.json(await tasksOf(c).snapshot(c.req.param('id'))));
 
   app.post('/api/tasks/:id/batches', async (c) => {
     const body = await c.req.parseBody({ all: true });
@@ -54,15 +73,25 @@ export function createApp({ db, dataDir, webDist = null }: AppOptions): Hono {
       files.push({ fileName: entry.name, mime: entry.type || 'application/octet-stream', bytes: new Uint8Array(await entry.arrayBuffer()) });
     }
     if (files.length === 0) return failure(c, 400, 'no_files', '没有收到文件。');
-    const snapshot = await tasks.upload(c.req.param('id'), files);
+    const snapshot = await tasksOf(c).upload(c.req.param('id'), files);
     publish(snapshot);
     return c.json(snapshot);
+  });
+
+  // 去报销. Only the lease guard exists so far: while another task holds the ERP lease the answer is 409 with a
+  // wording that names no account or task (ADR-0018). #191 replaces the not-ready tail with the real start.
+  app.post('/api/tasks/:id/actions/start-erp-write', async (c) => {
+    const taskId = c.req.param('id');
+    const snapshot = await tasksOf(c).snapshot(taskId);
+    const holder = erpLease.holder();
+    if (holder && holder.taskId !== taskId) return c.json({ error: { code: 'erp_in_use', message: ERP_ACTION_ERRORS.inUse }, snapshot }, 409);
+    return failure(c, 400, 'not_ready', ERP_ACTION_ERRORS.notReady);
   });
 
   // SSE: the current snapshot on connect, then every new one. Nothing buffers it (the Vite proxy passes it through).
   app.get('/api/tasks/:id/events', async (c) => {
     const taskId = c.req.param('id');
-    const first = await tasks.snapshot(taskId);
+    const first = await tasksOf(c).snapshot(taskId);
     c.header('Cache-Control', 'no-cache');
     return streamSSE(c, async (stream) => {
       const send = (snapshot: TaskSnapshot) => stream.writeSSE({ event: SNAPSHOT_EVENT, data: JSON.stringify(snapshot) });

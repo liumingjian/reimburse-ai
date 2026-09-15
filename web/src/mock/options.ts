@@ -17,11 +17,11 @@ export type Fault = (typeof FAULTS)[number];
 // `?seed=print` 是 actions 阶段（打印稿预览不是阶段），且打印稿已经生成。
 const SEED_ALIASES: Readonly<Record<string, TaskStage>> = { assign: 'project', print: 'actions' };
 
-// `?identity=`：启动时报销人身份的状态（不给则已登记）。unbound 还没登记，显示身份确认表；mismatched 当前登录与已登记的人不一致，整页阻塞。
-export const IDENTITY_OPTIONS = ['unbound', 'mismatched'] as const;
-export type IdentityOption = (typeof IDENTITY_OPTIONS)[number];
+// `?auth=`：打开时的登录状态（不给则夹具账号已登录）。setup 还没有任何账号，只能创建管理员；signed-out 有夹具账号但没登录。
+export const AUTH_OPTIONS = ['setup', 'signed-out'] as const;
+export type AuthOption = (typeof AUTH_OPTIONS)[number];
 
-// mock 的「持久存储」：浏览器里是 localStorage（刷新后仍在），按 tenant + account 分键；测试可以注入替身。
+// mock 的「持久存储」：浏览器里是 localStorage（刷新后仍在），按账号分键；测试可以注入替身。
 export type MockStorage = {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
@@ -31,9 +31,7 @@ export type MockStorage = {
 export type MockOptions = {
   seed: TaskStage | null;
   fault: Fault | null;
-  // `?erp=logged-out`：启动时报销系统还没登录，先显示登录提示；「我已登录」第一次再探测即通过，之后进入身份确认（除非此前已登记）。
-  erpLoggedOut?: boolean;
-  identity?: IdentityOption;
+  auth?: AuthOption;
   // `?book=empty`：个人项目簿初始为空；走到项目归属时先进入维护入口，第一次录入成功后回到项目归属。
   bookEmpty?: boolean;
   // `?catalog=mismatch`：报销信息核对把项目 P-2307 判为不匹配（报销系统里已被禁用）；把用到它的明细改派到别的项目后重新提交即通过。
@@ -81,11 +79,6 @@ export function readMockOptions(search: string): MockOptions {
     if (location === 'unavailable') options.locationUnavailable = true;
     else console.warn(`未知的 location「${location}」，可用值：unavailable`);
   }
-  const erp = params.get('erp');
-  if (erp !== null) {
-    if (erp === 'logged-out') options.erpLoggedOut = true;
-    else console.warn(`未知的 erp「${erp}」，可用值：logged-out`);
-  }
   const book = params.get('book');
   if (book !== null) {
     if (book === 'empty') options.bookEmpty = true;
@@ -111,10 +104,10 @@ export function readMockOptions(search: string): MockOptions {
     if (duplicate === '1') options.duplicateHit = true;
     else console.warn(`未知的 duplicate「${duplicate}」，可用值：1`);
   }
-  const identity = params.get('identity');
-  if (identity !== null) {
-    if ((IDENTITY_OPTIONS as readonly string[]).includes(identity)) options.identity = identity as IdentityOption;
-    else console.warn(`未知的 identity「${identity}」，可用值：${IDENTITY_OPTIONS.join(', ')}`);
+  const auth = params.get('auth');
+  if (auth !== null) {
+    if ((AUTH_OPTIONS as readonly string[]).includes(auth)) options.auth = auth as AuthOption;
+    else console.warn(`未知的 auth「${auth}」，可用值：${AUTH_OPTIONS.join(', ')}`);
   }
   return options;
 }

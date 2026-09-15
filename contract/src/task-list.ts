@@ -2,26 +2,6 @@ import { z } from 'zod';
 import { AmountSchema, DateSchema, DateTimeSchema, IdSchema } from './primitives';
 import { TaskStageSchema } from './stage';
 
-// 报销人身份：三个值都是服务端从报销系统当前登录会话读到的原值（内核 `identityTable`，next.mjs:402-412）。
-// 绑定判据是登录账号 + 账套，不含显示名。binding：unbound 还没登记（启动页展示身份确认表，只能确认）；
-// bound 已登记且与当前登录一致；mismatched 当前登录与已登记的报销人不一致（整页阻塞）。没有部门：内核身份里没有这一项。
-export const EMPLOYEE_BINDINGS = ['unbound', 'bound', 'mismatched'] as const;
-export const EmployeeBindingSchema = z.enum(EMPLOYEE_BINDINGS);
-export type EmployeeBinding = z.infer<typeof EmployeeBindingSchema>;
-
-export const EmployeeSchema = z.object({
-  displayName: z.string().min(1),
-  account: z.string().min(1),
-  tenant: z.string().min(1),
-  binding: EmployeeBindingSchema,
-});
-export type Employee = z.infer<typeof EmployeeSchema>;
-
-// 报销系统登录会话，由服务端探测（内核 env_not_logged_in）。not_logged_in 时 employee 为 null（读不出当前身份）。
-export const ERP_SESSION_STATES = ['logged_in', 'not_logged_in'] as const;
-export const ErpSessionSchema = z.enum(ERP_SESSION_STATES);
-export type ErpSession = z.infer<typeof ErpSessionSchema>;
-
 export const TaskPeriodSchema = z.object({
   start: DateSchema,
   end: DateSchema,
@@ -65,18 +45,10 @@ export const HomeCityDefaultSchema = z.object({
 });
 export type HomeCityDefault = z.infer<typeof HomeCityDefaultSchema>;
 
-// 接口一：任务列表。服务端已按更新时间倒序排好；页面不再排序。
-// 启动状态也在这里：erpSession 与 employee.binding 决定页面先显示启动页（登录 / 确认身份 / 身份不一致），
-// 还是任务列表与任务页。homeCity 是按身份（tenant + account）记住的常驻城市或网络位置候选。
+// 接口一：任务列表（当前登录的应用账号自己的任务）。服务端已按更新时间倒序排好；页面不再排序。
+// homeCity 是这个账号记住的常驻城市或网络位置候选。
 export const TaskListSchema = z.object({
-  erpSession: ErpSessionSchema,
-  employee: EmployeeSchema.nullable(),
   homeCity: HomeCityDefaultSchema.nullable(),
   tasks: z.array(TaskListItemSchema),
 });
 export type TaskList = z.infer<typeof TaskListSchema>;
-
-// 启动是否完成：已登录且身份已登记、与当前登录一致。服务端给的两个状态原样判读，页面不做别的推断。
-export function startupComplete(list: Pick<TaskList, 'erpSession' | 'employee'>): boolean {
-  return list.erpSession === 'logged_in' && list.employee?.binding === 'bound';
-}

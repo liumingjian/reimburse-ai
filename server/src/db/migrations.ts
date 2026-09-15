@@ -5,7 +5,9 @@ import type { Migration } from 'kysely/migration';
 // A migration that runs against an existing database must be tested on a fixture of the prior version (ADR-0015);
 // the `VACUUM INTO backups/` step lands with the first such migration.
 
-export const IMPLICIT_ACCOUNT_ID = 'local';
+// The walking skeleton's implicit account. 0002_193_accounts removes it when it owns nothing; otherwise it stays as a
+// credential-less, deactivated account nobody can sign in to.
+const IMPLICIT_ACCOUNT_ID = 'local';
 const IMPLICIT_ACCOUNT_NAME = '本机用户';
 
 // Facts that are insert-only: SQLite refuses UPDATE and DELETE on them.
@@ -67,6 +69,32 @@ const initial: Migration = {
   },
 };
 
+// 应用账号 (app accounts, ADR-0018): credentials, role and the deactivation flag on `account`, plus server-side sessions.
+// `username` stays nullable only for the implicit account of 0001 when it already owns tasks.
+const accounts: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema.alterTable('account').addColumn('username', 'text').execute();
+    await db.schema.alterTable('account').addColumn('password_hash', 'text').execute();
+    await db.schema
+      .alterTable('account')
+      .addColumn('role', 'text', (c) => c.notNull().defaultTo('user').check(sql`role IN ('user', 'admin')`))
+      .execute();
+    await db.schema.alterTable('account').addColumn('active', 'integer', (c) => c.notNull().defaultTo(1)).execute();
+    await db.schema.createIndex('account_username').unique().on('account').column('username').execute();
+    await sql`DELETE FROM account WHERE account_id = ${IMPLICIT_ACCOUNT_ID} AND NOT EXISTS (SELECT 1 FROM task WHERE task.account_id = account.account_id)`.execute(db);
+    await sql`UPDATE account SET active = 0 WHERE username IS NULL`.execute(db);
+    // The browser holds a random token; only its sha256 is stored. `expires_at` slides on use (30 days).
+    await db.schema
+      .createTable('session')
+      .addColumn('token_sha256', 'text', (c) => c.primaryKey())
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .addColumn('expires_at', 'text', (c) => c.notNull())
+      .execute();
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
+  '0002_193_accounts': accounts,
 };

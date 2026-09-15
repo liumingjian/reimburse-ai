@@ -23,29 +23,14 @@ export type ActionFailure = z.infer<typeof ActionFailureSchema>;
 // 新建任务的校验文案，页面与服务端共用。
 export const CREATE_TASK_ERRORS = {
   homeCityRequired: '请填写常驻城市。',
-  startupIncomplete: '还没有登录报销系统并确认报销人身份，不能新建报销任务。',
 } as const;
 
-// 启动动作（任务之外）：「我已登录」请服务端再探测一次登录会话；「确认」登记当前登录身份。
-// 两者成功都返回整份新任务列表；失败返回 { error, taskList? }（带最新任务列表时页面据此重渲染）。
-// 确认身份时回传页面上看到的账号与账套：服务端重新读一次当前登录，对不上就拒绝（你认的只是你看过的那一个）。
-export const ConfirmIdentityInputSchema = z.object({
-  account: z.string().min(1),
-  tenant: z.string().min(1),
-});
-export type ConfirmIdentityInput = z.infer<typeof ConfirmIdentityInputSchema>;
-
-export const StartupFailureSchema = z.object({
+// 任务之外、返回整份任务列表的动作（作废任务、完全重置）失败时的形状：{ error, taskList? }。
+export const TaskListFailureSchema = z.object({
   error: ActionErrorSchema,
   taskList: TaskListSchema.optional(),
 });
-export type StartupFailure = z.infer<typeof StartupFailureSchema>;
-
-export const STARTUP_ERRORS = {
-  notLoggedIn: '报销系统仍未登录。请在报销系统用本人账号登录后，再点「我已登录」。',
-  identityChanged: '当前登录身份与你刚才核对的不一致，请重新核对身份表。',
-  identityMismatched: '当前登录身份与已登记的报销人不一致，不能登记。',
-} as const;
+export type TaskListFailure = z.infer<typeof TaskListFailureSchema>;
 
 // 真实日期：格式对，且月日在日历上存在（2026-02-30 不算）。
 export function isRealDate(value: string): boolean {
@@ -162,6 +147,8 @@ export const ERP_ACTION_ERRORS = {
   notWaitingLogin: '现在没有在等待登录。',
   notReconciling: '这个任务现在不在对账中。',
   notAllowed: '当前对账结果不允许这个处置。',
+  // Another task (of any account) holds the ERP lease; names no account or task (ADR-0018). HTTP 409 `erp_in_use`.
+  inUse: '报销系统正被另一个任务使用，请稍后再试。',
 } as const;
 
 // 任务作废（任务之外的生命周期操作，内核 abandon-task）：只允许还没开始写入报销系统的任务；
@@ -175,13 +162,14 @@ export const ABANDON_TASK_COPY = {
   confirm: '作废',
 } as const;
 
-// 完全重置（设置页，内核 reset）：清空本机数据后回到启动页。报销系统里已保存的草稿不受影响。
+// 完全重置（设置页）：只清空当前登录账号自己的数据（报销任务、个人项目簿、常驻城市），别的账号不受影响，账号本身与登录状态保留。
+// 报销系统里已保存的草稿不受影响。
 export const RESET_COPY = {
   title: '完全重置',
-  body: '清空本机的全部报销任务、材料、个人项目簿、已登记的报销人身份和常驻城市，回到启动页重新登录报销系统。报销系统里已保存的草稿不受影响。',
+  body: '清空你这个账号的全部报销任务、材料、个人项目簿和常驻城市，别的账号的数据不受影响。报销系统里已保存的草稿不受影响。',
   button: '完全重置',
-  dialogTitle: '清空本机全部数据？',
-  dialogBody: '本机的报销任务、材料、个人项目簿、报销人身份登记和常驻城市都会被清空，不能撤销。',
+  dialogTitle: '清空你的全部数据？',
+  dialogBody: '你这个账号的报销任务、材料、个人项目簿和常驻城市都会被清空，不能撤销。账号本身保留，不用重新登录。',
   confirm: '清空并重置',
 } as const;
 

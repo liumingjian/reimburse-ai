@@ -1,13 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
-import { expect, test } from './fixture';
+import { expect, signIn, test } from './fixture';
 
 // Slice 01 (#179) walking skeleton on the real server: new task → upload one PDF → the material is listed.
 const hotelInvoice = SAMPLE_MATERIALS.find((sample) => sample.file.startsWith('m01'));
 
 test('新建报销任务、上传一份 PDF，材料列在上传批次里，刷新后仍在', async ({ page }) => {
   if (!hotelInvoice) throw new Error('fixture m01 is missing from @baox/fixtures');
+  await signIn(page);
   await page.goto('/#/tasks');
   await page.getByRole('button', { name: '新建报销任务' }).click();
   const dialog = page.getByRole('dialog', { name: '新建报销任务' });

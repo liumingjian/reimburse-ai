@@ -25,10 +25,14 @@ const action = (name: ActionName, ...fields: string[]): HttpEndpoint => ({ metho
 
 // 每个适配器方法对应的端点；`satisfies` 保证适配器接口加了方法这里必须跟着加。
 export const HTTP_ENDPOINTS = {
+  // 应用账号：不需要会话；成功 200 返回 Session，失败 { error }。会话是 HttpOnly Cookie，页面读不到也不用管。
+  // 其余端点没有有效会话一律 401 { error: { code: 'unauthenticated' } }。
+  getSession: { method: 'GET', path: '/api/session', body: 'none', fields: [] },
+  setupAdmin: { method: 'POST', path: '/api/auth/setup', body: 'json', fields: ['username', 'password'] },
+  register: { method: 'POST', path: '/api/auth/register', body: 'json', fields: ['username', 'password'] },
+  login: { method: 'POST', path: '/api/auth/login', body: 'json', fields: ['username', 'password'] },
+  logout: { method: 'POST', path: '/api/auth/logout', body: 'json', fields: [] },
   listTasks: { method: 'GET', path: '/api/tasks', body: 'none', fields: [] },
-  // 启动动作不属于任何任务：成功 200 返回整份任务列表，失败 { error, taskList? }。
-  recheckErpSession: { method: 'POST', path: '/api/startup/recheck-erp-session', body: 'json', fields: [] },
-  confirmIdentity: { method: 'POST', path: '/api/startup/confirm-identity', body: 'json', fields: ['account', 'tenant'] },
   // 作废任务与完全重置也返回整份任务列表（失败 { error, taskList? }），不是任务动作，不带 stepToken。
   abandonTask: { method: 'POST', path: '/api/tasks/:id/abandon', body: 'json', fields: [] },
   resetAll: { method: 'POST', path: '/api/reset', body: 'json', fields: [] },

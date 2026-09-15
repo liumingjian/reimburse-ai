@@ -5,24 +5,22 @@ import { TaskSnapshotSchema } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DataDirLockedError } from './data-dir';
 import { startServer } from './server';
-import { createTestServer, tempDataDir, type TestServer } from './test/harness';
+import { createTestServer, tempDataDir, type TestClient, type TestServer } from './test/harness';
 
 // Slice 01 (#179): the walking skeleton through the primary seam, `app.request()` on SQLite `:memory:`.
 
 let server: TestServer;
+let client: TestClient;
 beforeEach(async () => {
   server = await createTestServer();
+  client = await server.signIn();
 });
 afterEach(() => server.close());
 
 const PDF_BYTES = Buffer.from('%PDF-1.4\n% baox walking skeleton\n%%EOF\n');
 
 async function createTask(homeCity = '杭州') {
-  const response = await server.app.request('/api/tasks', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ homeCity }),
-  });
+  const response = await client.post('/api/tasks', { homeCity });
   expect(response.status).toBe(200);
   return TaskSnapshotSchema.parse(await response.json());
 }
@@ -30,7 +28,7 @@ async function createTask(homeCity = '杭州') {
 async function upload(taskId: string, fileName: string, bytes: Buffer) {
   const form = new FormData();
   form.append('files', new File([bytes], fileName, { type: 'application/pdf' }));
-  const response = await server.app.request(`/api/tasks/${taskId}/batches`, { method: 'POST', body: form });
+  const response = await client.request(`/api/tasks/${taskId}/batches`, { method: 'POST', body: form });
   expect(response.status).toBe(200);
   return TaskSnapshotSchema.parse(await response.json());
 }
@@ -43,7 +41,7 @@ describe('create a task and upload one PDF', () => {
 
     await upload(created.task.taskId, '全季酒店_发票.pdf', PDF_BYTES);
 
-    const response = await server.app.request(`/api/tasks/${created.task.taskId}`);
+    const response = await client.request(`/api/tasks/${created.task.taskId}`);
     expect(response.status).toBe(200);
     const snapshot = TaskSnapshotSchema.parse(await response.json());
     expect(snapshot.task.homeCity).toBe('杭州');
