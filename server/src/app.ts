@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { AssignProjectLinesInputSchema, CreateTaskInputSchema, ERP_ACTION_ERRORS, ProjectAssignmentInputSchema, SetHomeCityInputSchema, type ProjectBookResult, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, type TaskSnapshot } from '@baox/contract';
+import { AssignProjectLinesInputSchema, CreateTaskInputSchema, ERP_ACTION_ERRORS, PendingAnswerSchema, ProjectAssignmentInputSchema, SetHomeCityInputSchema, type ProjectBookResult, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, type TaskSnapshot } from '@baox/contract';
 import { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
@@ -182,6 +182,8 @@ const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
   'assign-project-lines': taskAction(withToken(AssignProjectLinesInputSchema.shape), (tasks, id, { stepToken, ...input }) => tasks.assignProjectLines(id, input, stepToken)),
   'submit-project-assignment': taskAction(withToken(ProjectAssignmentInputSchema.shape), (tasks, id, { stepToken, ...input }) => tasks.submitProjectAssignment(id, input, stepToken)),
   'set-home-city': taskAction(withToken(SetHomeCityInputSchema.shape), (tasks, id, { stepToken, homeCity }) => tasks.setHomeCity(id, homeCity, stepToken)),
+  // A 待确认项 answer, or a field edit addressed `edit.<materialId>.<field>` with the answer `{ value }`.
+  'answer-pending': taskAction(withToken({ itemId: z.string().min(1), answer: PendingAnswerSchema }), (tasks, id, { itemId, answer, stepToken }) => tasks.answerPending(id, itemId, answer, stepToken)),
   'exclude-material': taskAction(withToken({ materialId: z.string().min(1) }), (tasks, id, { materialId, stepToken }) => tasks.excludeMaterial(id, materialId, stepToken)),
 };
 

@@ -56,6 +56,7 @@ export const PENDING_ANSWER_ERRORS = {
   required: '必填，对照原件填写。',
   time: '格式应为 HH:MM，且小时 00-23、分钟 00-59。',
   date: '格式应为 YYYY-MM-DD，且是真实存在的日期。',
+  money: '金额要写两位小数，例如 226.42。',
   choice: '请选择一种处理方式。',
   notOpen: '这个待确认项已经处理过了。',
   // given_up 项不接受答复：出路在材料一侧（排除这张发票，或追加逐段行程单后重新盘点）。
@@ -114,6 +115,7 @@ export function validatePendingAnswer(item: AnswerTarget, answer: PendingAnswer)
     }
     if (field.format === 'time' && !TIME_PATTERN.test(value)) errors[field.key] = PENDING_ANSWER_ERRORS.time;
     if (field.format === 'date' && !isRealDate(value)) errors[field.key] = PENDING_ANSWER_ERRORS.date;
+    if (field.format === 'money' && !AMOUNT_PATTERN.test(value)) errors[field.key] = PENDING_ANSWER_ERRORS.money;
   }
   return errors;
 }

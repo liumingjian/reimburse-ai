@@ -68,6 +68,14 @@ export const LAYOUT_NAME_PATTERN = /^[a-z0-9][a-z0-9_]*$/;
 // its own source, `rule:vat_invoice/einvoice_qr`.
 export const CANDIDATE_SOURCE_PATTERN = /^(?:rule:[a-z][a-z0-9_]*\/[a-z0-9][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)?|user)$/;
 
+// Edit classes (ADR-0017): `fact_locked` is a 票面事实 (face fact) from a PDF text layer or QR code and refuses edits;
+// `fact_correctable` comes from OCR or manual fill and is re-checked on correction, never back-calculated;
+// `presentation` is free wording stored as a 呈现值 (presentation value) while checks keep the resolved value;
+// `choice` is a derived business value limited to what the company rules allow.
+export const EDIT_CLASSES = ['fact_locked', 'fact_correctable', 'presentation', 'choice'] as const;
+export const EditClassSchema = z.enum(EDIT_CLASSES);
+export type EditClass = z.infer<typeof EditClassSchema>;
+
 // 字段候选：材料原文的解释，附来源（CANDIDATE_SOURCE_PATTERN）与材料证据状态。
 export const FieldCandidateSchema = z.object({
   key: z.string().min(1),
@@ -77,6 +85,8 @@ export const FieldCandidateSchema = z.object({
   // Version of the parser that produced a `rule:` candidate; null for `user`.
   parserVersion: z.string().min(1).nullable(),
   evidence: EvidenceStateSchema,
+  // Whether and how the user may edit this field (EDIT_CLASSES).
+  editClass: EditClassSchema,
 });
 export type FieldCandidate = z.infer<typeof FieldCandidateSchema>;
 
@@ -196,7 +206,8 @@ export const PendingFieldSchema = z.object({
   label: z.string().min(1),
   placeholder: z.string(),
   required: z.boolean(),
-  format: z.enum(['text', 'time', 'date']),
+  // money：两位小数的金额，如 226.42。
+  format: z.enum(['text', 'time', 'date', 'money']),
 });
 export type PendingField = z.infer<typeof PendingFieldSchema>;
 
@@ -298,8 +309,9 @@ export const BlockerSchema = z.object({
   // 「待处理问题」列，如「这张发票在报销任务「2026-06 北京培训」里也在……」。
   reason: z.string().min(1),
   resolver: ResolverLabelSchema,
-  // 命中的任务：仍占用这张发票的其他报销任务。
-  tasks: z.array(BlockerTaskSchema).min(1),
+  // 命中的任务：仍占用这张发票的自己的其他报销任务。另一个账号的任务占用时为空：只说「已被另一个账号的任务占用」，
+  // 不透露任务名称或任何细节（ADR-0018）。
+  tasks: z.array(BlockerTaskSchema),
 });
 export type Blocker = z.infer<typeof BlockerSchema>;
 

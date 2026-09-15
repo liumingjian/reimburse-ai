@@ -94,4 +94,13 @@ test('逐段金额加起来和发票对不上：不形成明细，出现一个�
       allocation: expect.objectContaining({ total: '69.19', segments: [expect.objectContaining({ suggested: '26.69' }), expect.objectContaining({ suggested: '20.85' }), expect.objectContaining({ suggested: '21.66' })] }),
     }),
   ]);
+
+  // The user reads the per-leg totals off the originals (#187); conserving, they become one line per leg (#184).
+  const amounts = ['30.00', '20.00', '19.19'];
+  for (const [index, amount] of amounts.entries()) await form.getByLabel(new RegExp(`^第 ${index + 1} 段价税合计`)).fill(amount);
+  await form.getByRole('button', { name: '提交逐段金额' }).click();
+  await expect.poll(async () => (await snapshotOf(page, taskId)).stage).toBe('project');
+  const answered = await snapshotOf(page, taskId);
+  expect(answered.pendingItems).toEqual([]);
+  expect(answered.lines.map((line) => line.grossAmount)).toEqual(amounts);
 });

@@ -57,12 +57,17 @@ export function DuplicateBlockers({ snapshot }: { snapshot: TaskSnapshot }) {
         <span className="app-caption">移出后这份文件不参与本次盘点，也不进入材料包。</span>
       </div>
       <ActionError message={error} />
-      <h3 className="app-subhead">命中的任务</h3>
-      <ul className="app-plain-list" aria-label="命中的任务">
-        {tasks.map((task) => (
-          <li key={task.taskId}>{task.name}</li>
-        ))}
-      </ul>
+      {/* 另一个账号的任务占用时服务端不给任务（行文字只说已被另一个账号的任务占用），这一节不显示。 */}
+      {tasks.length > 0 ? (
+        <>
+          <h3 className="app-subhead">命中的任务</h3>
+          <ul className="app-plain-list" aria-label="命中的任务">
+            {tasks.map((task) => (
+              <li key={task.taskId}>{task.name}</li>
+            ))}
+          </ul>
+        </>
+      ) : null}
       <p className="app-caption">{DUPLICATE_BLOCKER_COPY.scope}</p>
     </section>
   );

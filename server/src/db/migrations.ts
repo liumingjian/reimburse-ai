@@ -287,6 +287,26 @@ const projects188: Migration = {
   },
 };
 
+// Slice #187: answers to 待确认项 (pending items) and field edits, the 解析记录 (resolution records) of ADR-0014.
+// Pending items stay derived; an answer is carried over to every later run that derives the same item id.
+const pendingAnswers187: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('pending_answer')
+      .addColumn('answer_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('item_id', 'text', (c) => c.notNull())
+      .addColumn('material_id', 'text', (c) => c.notNull().references('material.material_id'))
+      .addColumn('answer', 'text', (c) => c.notNull())
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema.createIndex('pending_answer_task').on('pending_answer').columns(['task_id', 'revision']).execute();
+    await appendOnly(db, 'pending_answer');
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -294,5 +314,7 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0002_193_accounts': accounts,
   '0003_181_erp_attempts': erpAttempts,
   '0003_183_parse_results': parse183,
+  // Lexical order: 0004_187 runs before 0004_188. Neither depends on the other.
+  '0004_187_pending_answers': pendingAnswers187,
   '0004_188_projects': projects188,
 };

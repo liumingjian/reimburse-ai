@@ -151,6 +151,19 @@ export interface TaskHomeCityTable {
   created_at: string;
 }
 
+// One accepted answer to a 待确认项 or one field edit (0004_187), keyed by the item id `<code>.<materialId>[.<key>]`
+// or the edit address `edit.<materialId>.<field>`. The latest row per key wins; `answer` is the JSON answer.
+export interface PendingAnswerTable {
+  answer_id: string;
+  task_id: string;
+  account_id: string;
+  item_id: string;
+  material_id: string;
+  answer: string;
+  revision: number;
+  created_at: string;
+}
+
 export interface ProjectBookEventTable {
   event_id: string;
   seq: number;
@@ -202,6 +215,7 @@ export interface Schema {
   project_submission: ProjectSubmissionTable;
   erp_attempt: { attempt_id: string; job_id: string; task_id: string; action: 'import' | 'fill' | 'save'; preconditions: string; expected_postconditions: string; erp_build: string; form_id: string; erp_account: string; erp_tenant: string; erp_display_name: string; started_at: string };
   parse_result: ParseResultTable;
+  pending_answer: PendingAnswerTable;
   account: AccountTable;
   session: SessionTable;
   task: TaskTable;

@@ -19,7 +19,8 @@ export type TaskFacts = {
   lastReopenRevision: number | null;
   // The parser job on the current run (#183): included materials still waiting for an outcome, and the open
   // 待确认项 derived from the outcomes. null while the current version is not inventoried.
-  parse: { waiting: number; openPendingItems: number } | null;
+  // `blockers`: invoices of this inventory held by another task (发票占用); any stops the whole batch.
+  parse: { waiting: number; openPendingItems: number; blockers: Blocker[] } | null;
   // 项目归属 (#188) once the inventory is clean: candidate lines, selectable projects in the books, lines in the working
   // draft, and whether a submission still stands on the current lines. null before that.
   project: { lineCount: number; selectableCount: number; workingCount: number; submitted: boolean } | null;
@@ -52,6 +53,9 @@ export function project(facts: TaskFacts): Projection {
   if (facts.lifecycle === 'handed_off') return at('reconcile', 'none');
   if (inventoried(facts)) {
     if (parseRunning(facts)) return at('inventory', 'none');
+    // A cross-task duplicate stops the batch: no events, no pending items; the way out is excluding the material.
+    const blockers = facts.parse?.blockers ?? [];
+    if (blockers.length > 0) return { ...at('inventory', 'none'), blockers };
     if ((facts.parse?.openPendingItems ?? 0) > 0) return at('pending', 'answer_pending');
     const project = facts.project;
     // A clean inventory without any candidate line has nothing to assign.

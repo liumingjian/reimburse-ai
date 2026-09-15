@@ -23,11 +23,12 @@ beforeEach(() => boot());
 afterEach(() => server.close());
 const client = api(() => alice);
 
-// A second copy of the hotel e-invoice with different bytes (a trailing PDF comment), so the task has two lines.
+// The hotel e-invoice plus a rail ticket, so the task has two lines. (A byte-different copy of the same invoice is a
+// 重复发票 since #187 and blocks the inventory.)
 const hotel = sample('m01');
-const hotelCopy: Upload = { ...hotel, name: '全季酒店_发票_副本.pdf', bytes: Buffer.concat([Buffer.from(hotel.bytes), Buffer.from('\n% copy\n')]) };
+const rail = sample('m07');
 
-async function inventoried(files: readonly Upload[] = [hotel, hotelCopy], homeCity = '杭州'): Promise<TaskSnapshot> {
+async function inventoried(files: readonly Upload[] = [hotel, rail], homeCity = '杭州'): Promise<TaskSnapshot> {
   const { task } = await client.createTask(homeCity);
   const uploaded = await client.upload(task.taskId, files);
   await client.accepted(await client.act(uploaded, 'start-inventory'));
@@ -87,8 +88,8 @@ describe('submit-project-assignment', () => {
     const b = await client.accepted(await client.act(a, 'assign-project-lines', { lineIds: [first, second], projectNumber: 'P-3312', onlyUnassigned: true }));
     expect(b.projectAssignment.working.map((w) => w.projectNumber)).toEqual(['P-2307', 'P-3312']);
     expect(b.projectAssignment.usage).toEqual([
-      { number: 'P-2307', name: '华东客户交付', lineCount: 1, grossTotal: '3640.00', selectable: true },
-      { number: 'P-3312', name: '产品调研', lineCount: 1, grossTotal: '3640.00', selectable: true },
+      { number: 'P-2307', name: '华东客户交付', lineCount: 1, grossTotal: start.lines[0]?.grossAmount, selectable: true },
+      { number: 'P-3312', name: '产品调研', lineCount: 1, grossTotal: start.lines[1]?.grossAmount, selectable: true },
     ]);
     const c = await client.accepted(await client.act(b, 'assign-project-lines', { lineIds: [first, second], projectNumber: 'P-3312', onlyUnassigned: false }));
     expect(c.projectAssignment.working.map((w) => w.projectNumber)).toEqual(['P-3312', 'P-3312']);

@@ -118,6 +118,60 @@ describe('ride-hailing invoice + 高德 itinerary', () => {
     expect(snapshot.step.kind).toBe('answer_pending');
   });
 
+  describe('answering the allocation item (#187 answers into the #184 split)', () => {
+    async function skewed() {
+      await server.close();
+      server = await createTestServer({ parser: skewedItinerary('segments[2].amount', '21.66') });
+      signedIn = await server.signIn();
+      const snapshot = await inventoried([sample('m03'), sample('m04')]);
+      return { snapshot, invoice: byFileName(snapshot, sample('m03').name), itinerary: byFileName(snapshot, sample('m04').name) };
+    }
+
+    it('conserving per-leg totals form one line per leg with those amounts, and the task moves on to project', async () => {
+      const { snapshot, invoice, itinerary } = await skewed();
+      const itemId = `allocation.${invoice.materialId}`;
+
+      // Not conserving (69.20 ≠ 69.19): refused, nothing stored.
+      const wrong = await client.act(snapshot, 'answer-pending', { itemId, answer: { amounts: ['26.69', '20.85', '21.66'] } });
+      expect(wrong.status).toBe(400);
+      expect(((await wrong.json()) as { error: { code: string } }).error.code).toBe('allocation_not_conserved');
+
+      const fresh = await client.settled(snapshot.task.taskId);
+      const done = await client.accepted(await client.act(fresh, 'answer-pending', { itemId, answer: { amounts: ['30.00', '20.00', '19.19'] } }));
+      expect(done.pendingItems).toEqual([]);
+      expect(done.lines.map((l) => [l.lineId, l.grossAmount])).toEqual([
+        [`line.${invoice.materialId}.1`, '30.00'],
+        [`line.${invoice.materialId}.2`, '20.00'],
+        [`line.${invoice.materialId}.3`, '19.19'],
+      ]);
+      for (const line of done.lines) {
+        expect(line).toMatchObject({ referenceMaterialIds: [itinerary.materialId], category: { code: 'remote_city_transport' } });
+        expect((Math.round(Number(line.netAmount) * 100) + Math.round(Number(line.taxAmount) * 100)) / 100).toBe(Number(line.grossAmount));
+      }
+      expect(done.events[0]?.evidenceNote).toContain('逐段金额由你确认');
+      expect(byFileName(done, sample('m03').name)).toMatchObject({ status: 'ok', role: 'primary_voucher' });
+      expect(done.stage).toBe('project');
+    });
+
+    it('give-up raises a blocking given_up item; excluding the invoice also excludes its linked itinerary', async () => {
+      const { snapshot, invoice, itinerary } = await skewed();
+      const gaveUp = await client.accepted(await client.act(snapshot, 'answer-pending', { itemId: `allocation.${invoice.materialId}`, answer: { giveUp: true } }));
+      expect(gaveUp.pendingItems.map((i) => [i.itemId, i.kind, i.status])).toEqual([
+        [`allocation.${invoice.materialId}`, 'allocation', 'resolved'],
+        [`given_up.${invoice.materialId}`, 'given_up', 'open'],
+      ]);
+      expect(byFileName(gaveUp, sample('m03').name)).toMatchObject({ status: 'pending' });
+      expect(gaveUp.lines).toEqual([]);
+      expect(gaveUp.stage).toBe('pending');
+
+      const excluded = await client.accepted(await client.act(gaveUp, 'exclude-material', { materialId: invoice.materialId }));
+      expect(byFileName(excluded, sample('m03').name).status).toBe('excluded');
+      expect(byFileName(excluded, sample('m04').name).status).toBe('excluded');
+      expect(excluded.pendingItems).toEqual([]);
+      expect(itinerary.linkedMaterialIds).toEqual([invoice.materialId]);
+    });
+  });
+
   it('an invoice without an itinerary has no expense city and waits on category_city_missing; an itinerary without its invoice links nothing', async () => {
     const alone = await inventoried([sample('m03')]);
     const invoice = byFileName(alone, sample('m03').name);
