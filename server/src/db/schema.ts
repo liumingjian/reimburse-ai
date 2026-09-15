@@ -45,6 +45,47 @@ export interface MaterialTable {
   blob_sha256: string;
   file_name: string;
   created_at: string;
+  // Position within the batch (0002_180); null for materials uploaded before it.
+  batch_seq: number | null;
+}
+
+export interface UploadRejectionTable {
+  rejection_id: string;
+  task_id: string;
+  account_id: string;
+  batch_id: string;
+  batch_seq: number;
+  file_name: string;
+  size: number;
+  reason_code: 'unsupported_type' | 'too_large' | 'heic' | 'duplicate_content';
+  reason: string;
+  created_at: string;
+}
+
+export interface MaterialExclusionTable {
+  exclusion_id: string;
+  task_id: string;
+  account_id: string;
+  material_id: string;
+  revision: number;
+  created_at: string;
+}
+
+export interface InventoryRunTable {
+  run_id: string;
+  task_id: string;
+  account_id: string;
+  version_no: number;
+  revision: number;
+  started_at: string;
+}
+
+export interface UploadReopenTable {
+  reopen_id: string;
+  task_id: string;
+  account_id: string;
+  revision: number;
+  reopened_at: string;
 }
 
 export interface Schema {
@@ -53,4 +94,8 @@ export interface Schema {
   upload_batch: UploadBatchTable;
   blob: BlobTable;
   material: MaterialTable;
+  upload_rejection: UploadRejectionTable;
+  material_exclusion: MaterialExclusionTable;
+  inventory_run: InventoryRunTable;
+  upload_reopen: UploadReopenTable;
 }

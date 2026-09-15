@@ -1,13 +1,15 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { CreateTaskInputSchema, SNAPSHOT_EVENT, type TaskSnapshot } from '@baox/contract';
+import { CreateTaskInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, type TaskSnapshot } from '@baox/contract';
+import { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { Db } from './db/database';
-import { createTaskService, TaskNotFoundError, type UploadedFile } from './tasks';
+import { ActionRefusedError, createTaskService, StaleStepError, TaskNotFoundError, type TaskService, type UploadedFile } from './tasks';
 
 // The HTTP app. Wire rules (contract/src/http.ts): success is 200 with the whole new snapshot; failure is
-// `{ error: { code, message } }`; SSE pushes whole snapshots as `event: snapshot`.
+// `{ error: { code, message } }`; a stale stepToken is 409 `{ error, snapshot }` with the fresh snapshot; SSE pushes
+// whole snapshots as `event: snapshot`. The task service publishes every accepted change, so routes never do.
 // Tests drive it through `app.request()`; `startServer` puts it on 127.0.0.1.
 
 export type AppOptions = {
@@ -22,16 +24,21 @@ type SnapshotListener = (snapshot: TaskSnapshot) => void;
 const failure = (c: Context, status: 400 | 404, code: string, message: string) => c.json({ error: { code, message } }, status);
 
 export function createApp({ db, dataDir, webDist = null }: AppOptions): Hono {
-  const tasks = createTaskService(db, dataDir);
   const listeners = new Map<string, Set<SnapshotListener>>();
   const publish = (snapshot: TaskSnapshot) => {
     for (const listener of listeners.get(snapshot.task.taskId) ?? []) listener(snapshot);
   };
+  const tasks = createTaskService(db, dataDir, { onChange: publish });
 
   const app = new Hono();
 
   app.onError((error, c) => {
     if (error instanceof TaskNotFoundError) return failure(c, 404, 'task_not_found', '没有这个报销任务。');
+    if (error instanceof StaleStepError) return c.json({ error: { code: STALE_STEP_CODE, message: STALE_STEP_NOTICE }, snapshot: error.snapshot }, STALE_STEP_HTTP_STATUS);
+    if (error instanceof ActionRefusedError) {
+      const body = { error: error.error, ...(error.snapshot ? { snapshot: error.snapshot } : {}), ...(error.taskList ? { taskList: error.taskList } : {}) };
+      return c.json(body, error.error.code === 'task_not_found' ? 404 : 400);
+    }
     throw error;
   });
 
@@ -54,9 +61,17 @@ export function createApp({ db, dataDir, webDist = null }: AppOptions): Hono {
       files.push({ fileName: entry.name, mime: entry.type || 'application/octet-stream', bytes: new Uint8Array(await entry.arrayBuffer()) });
     }
     if (files.length === 0) return failure(c, 400, 'no_files', '没有收到文件。');
-    const snapshot = await tasks.upload(c.req.param('id'), files);
-    publish(snapshot);
-    return c.json(snapshot);
+    return c.json(await tasks.upload(c.req.param('id'), files));
+  });
+
+  app.post('/api/tasks/:id/abandon', async (c) => c.json(await tasks.voidTask(c.req.param('id'))));
+
+  app.post('/api/tasks/:id/actions/:name', async (c) => {
+    const action = TASK_ACTIONS[c.req.param('name')];
+    if (!action) return failure(c, 404, 'not_found', '没有这个接口。');
+    const input = action.input.safeParse(await c.req.json().catch(() => null));
+    if (!input.success) return failure(c, 400, 'invalid_input', input.error.issues[0]?.message ?? '请求无效。');
+    return c.json(await action.run(tasks, c.req.param('id'), input.data));
   });
 
   // SSE: the current snapshot on connect, then every new one. Nothing buffers it (the Vite proxy passes it through).
@@ -82,6 +97,21 @@ export function createApp({ db, dataDir, webDist = null }: AppOptions): Hono {
 
   return app;
 }
+
+// Task actions (`POST /api/tasks/:id/actions/<name>`), each with its JSON input. Later slices add their entries here.
+type TaskAction = { input: z.ZodType; run: (tasks: TaskService, taskId: string, input: unknown) => Promise<TaskSnapshot> };
+const withToken = <T extends z.ZodRawShape>(shape: T) => z.object({ stepToken: z.string().min(1), ...shape });
+// `run` only ever receives what `input` parsed.
+const taskAction = <S extends z.ZodType>(input: S, run: (tasks: TaskService, taskId: string, input: z.infer<S>) => Promise<TaskSnapshot>): TaskAction => ({
+  input,
+  run: (tasks, taskId, parsed) => run(tasks, taskId, parsed as z.infer<S>),
+});
+
+const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
+  'start-inventory': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.startInventory(id, stepToken)),
+  'reopen-upload': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.reopenUpload(id, stepToken)),
+  'exclude-material': taskAction(withToken({ materialId: z.string().min(1) }), (tasks, id, { materialId, stepToken }) => tasks.excludeMaterial(id, materialId, stepToken)),
+};
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
   '.html': 'text/html; charset=utf-8',

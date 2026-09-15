@@ -125,6 +125,7 @@ const STEP_BY_STAGE: Readonly<Record<TaskStage, TaskSnapshot['step']['kind']>> =
   erp: 'erp_login',
   done: 'none',
   reconcile: 'reconcile',
+  voided: 'none',
 };
 
 export const T1_INVENTORY_FINISHED_AT = '2026-09-11T14:20:00';
