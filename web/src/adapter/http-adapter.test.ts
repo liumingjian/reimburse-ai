@@ -1,7 +1,7 @@
 // @vitest-environment node
 // HTTP 适配器只做响应形状测试：给定这段 JSON（或这个 Response），适配器接受还是拒绝。不模拟服务端，不 mock fetch。
 import { describe, expect, test } from 'vitest';
-import { ACTION_NAMES, STALE_STEP_CODE, HTTP_ENDPOINTS, endpointActionNames, TASK_STAGES } from '@baox/contract';
+import { ACTION_NAMES, ERP_ACTION_ERRORS, STALE_STEP_CODE, HTTP_ENDPOINTS, endpointActionNames, TASK_STAGES } from '@baox/contract';
 import { INITIAL_BOOK, MOCK_TODAY, annotateProject } from '../mock/fixtures/projects';
 import { t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from '../mock/fixtures/tasks';
 import {
@@ -184,6 +184,12 @@ describe('动作端点 POST /api/tasks/:id/actions/<name> 等', () => {
       expect(outcome.error.code).toBe(STALE_STEP_CODE);
       expect(outcome.snapshot?.stage).toBe('actions');
     }
+  });
+
+  test('409 erp_in_use：报销系统正被另一个任务使用，保留错误码与原因，不当作 stale_step', () => {
+    const outcome = parseActionResponse(409, { error: { code: 'erp_in_use', message: ERP_ACTION_ERRORS.inUse }, snapshot: wire(t1Snapshot('actions')) });
+    expect(outcome).toMatchObject({ ok: false, error: { code: 'erp_in_use', message: ERP_ACTION_ERRORS.inUse } });
+    if (!outcome.ok) expect(outcome.snapshot?.stage).toBe('actions');
   });
 
   test('409 即使错误码不同或没带快照，也按 stale_step 处理（快照为空时由页面重新拉取）', () => {

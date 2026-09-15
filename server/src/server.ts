@@ -2,6 +2,8 @@ import type { AddressInfo } from 'node:net';
 import { serve } from '@hono/node-server';
 import { createApp } from './app';
 import type { ProjectCatalog } from './catalog/project-catalog';
+import type { ErpConfig } from './erp/config';
+import type { FillExecutor } from './erp/fill-jobs';
 import { acquireDataDirLock, databasePath, ensureDataDir } from './data-dir';
 import { openDatabase, type Db } from './db/database';
 
@@ -16,11 +18,13 @@ export type StartOptions = {
   projectCatalog?: ProjectCatalog;
   // The legacy `~/.baox` to import on first-admin creation; null or absent imports nothing.
   legacyHome?: string | null;
+  erpExecutor?: FillExecutor;
+  erpConfig?: ErpConfig;
 };
 
 export type RunningServer = { url: string; port: number; close: () => Promise<void> };
 
-export async function startServer({ dataDir, port, webDist = null, projectCatalog, legacyHome = null }: StartOptions): Promise<RunningServer> {
+export async function startServer({ dataDir, port, webDist = null, projectCatalog, legacyHome = null, erpExecutor, erpConfig }: StartOptions): Promise<RunningServer> {
   ensureDataDir(dataDir);
   const release = acquireDataDirLock(dataDir);
   let db: Db;
@@ -30,7 +34,7 @@ export async function startServer({ dataDir, port, webDist = null, projectCatalo
     release();
     throw error;
   }
-  const app = createApp({ db, dataDir, webDist, legacyHome, ...(projectCatalog ? { projectCatalog } : {}) });
+  const app = createApp({ db, dataDir, webDist, legacyHome, ...(projectCatalog ? { projectCatalog } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(erpConfig ? { erpConfig } : {}) });
   const { server, info } = await new Promise<{ server: ReturnType<typeof serve>; info: AddressInfo }>((resolve) => {
     const s = serve({ fetch: app.fetch, hostname: HOST, port }, (address) => resolve({ server: s, info: address }));
   });

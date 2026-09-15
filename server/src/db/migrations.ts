@@ -387,6 +387,46 @@ const confirmation189: Migration = {
   },
 };
 
+// Slice #191: 去报销 (fill ERP) jobs. `erp_job` is one run of the fill job (the plan and the judge's inputs, frozen at
+// the start); `erp_job_cancel` ends a login pause without writing; `erp_approved_preview` keeps the preview the judge
+// approved after import, so reconcile (#192) can compare against it. The ERP phase is derived from these plus
+// `erp_job_event` / `erp_attempt` (ADR-0014); all append-only.
+const erpJobs191: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('erp_job')
+      .addColumn('job_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('kind', 'text', (c) => c.notNull().check(sql`kind IN ('fill')`))
+      .addColumn('trigger', 'text', (c) => c.notNull().check(sql`trigger IN ('start', 'confirm_login')`))
+      .addColumn('confirmation_digest', 'text', (c) => c.notNull())
+      .addColumn('plan', 'text', (c) => c.notNull())
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('started_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema
+      .createTable('erp_job_cancel')
+      .addColumn('cancel_id', 'text', (c) => c.primaryKey())
+      .addColumn('job_id', 'text', (c) => c.notNull().references('erp_job.job_id'))
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema
+      .createTable('erp_approved_preview')
+      .addColumn('job_id', 'text', (c) => c.primaryKey().references('erp_job.job_id'))
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('digest', 'text', (c) => c.notNull())
+      .addColumn('preview', 'text', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    for (const table of ['erp_job', 'erp_job_cancel', 'erp_approved_preview']) await appendOnly(db, table);
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -400,4 +440,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0005_194_admin': admin194,
   '0005_195_legacy_import': legacyImport195,
   '0006_189_confirmation': confirmation189,
+  '0008_191_erp_jobs': erpJobs191,
 };

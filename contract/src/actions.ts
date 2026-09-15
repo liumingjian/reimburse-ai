@@ -154,7 +154,15 @@ export const ERP_ACTION_ERRORS = {
   notAllowed: '当前对账结果不允许这个处置。',
   // Another task (of any account) holds the ERP lease; names no account or task (ADR-0018). HTTP 409 `erp_in_use`.
   inUse: '报销系统正被另一个任务使用，请稍后再试。',
+  // Once an ERP action attempt exists the task's facts are frozen (ADR-0014).
+  erpStarted: '已开始写入报销系统，不能再改动；请按对账结果处理。',
+  // Checks that need no ERP (invoice identity, ERP invoice type, dates, amounts) failed; nothing was started.
+  preflight: (problems: readonly string[]) => `还不能写入报销系统：${problems.join('；')}。`,
 } as const;
+
+// The one task-action refusal that is HTTP 409 but not stale_step: the global ERP lease is held by another task.
+// The web adapter keeps its code and message; every other task-action 409 is stale_step.
+export const ERP_IN_USE_CODE = 'erp_in_use';
 
 // 任务作废（任务之外的生命周期操作，内核 abandon-task）：只允许还没开始写入报销系统的任务；
 // 作废是状态变更不是删除，任务从列表中移除，材料与记录保留在本机，它占用的发票可以在别的任务里使用。
@@ -275,6 +283,7 @@ export const ACTION_NAMES = [
   'set-home-city',
   'start-erp-write',
   'confirm-login',
+  'cancel-erp-write',
   'reconcile',
   'hand-off',
 ] as const;

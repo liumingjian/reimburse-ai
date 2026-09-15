@@ -23,6 +23,19 @@ async function waitingLogin() {
 }
 
 describe('ERP 填报', () => {
+  test('登录等待时可以「取消去报销」：回传 stepToken，回到整单确认页，可以再去报销', async () => {
+    const adapter = renderErp();
+    const cancel = vi.spyOn(adapter, 'cancelErpWrite');
+    await waitingLogin();
+    const { stepToken } = (await adapter.getSnapshot('T1')).step;
+    fireEvent.click(screen.getByRole('button', { name: '取消去报销' }));
+    expect(cancel).toHaveBeenCalledWith('T1', stepToken);
+    await vi.waitFor(async () => expect((await adapter.getSnapshot('T1')).stage).toBe('actions'));
+    const after = await adapter.getSnapshot('T1');
+    expect(after).toMatchObject({ step: { kind: 'choose_action' }, erp: { status: 'idle' } });
+    await vi.waitFor(() => expect(window.location.hash).toBe('#/task/T1/review'));
+  });
+
   test('页头没有孤立的「返回确认页」', async () => {
     renderErp();
     await waitingLogin();
@@ -49,6 +62,7 @@ describe('ERP 填报', () => {
     window.location.hash = '#/task/T1/done';
     expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();
     expect(screen.getByTestId('draft-no').textContent).toBe('BX20260911-0173');
+    expect(screen.getByTestId('erp-account').textContent).toBe('林颂宜（lin.songyi）· 账套 安图特科技');
     expect(screen.getByText('明细 9/9 一致')).toBeTruthy();
     expect(screen.getByTestId('save-completed').textContent).toBe('报销草稿已保存。请打开报销系统检查，是否提交由你决定。');
     expect(screen.queryByTestId('human-review')).toBeNull();
@@ -125,6 +139,7 @@ describe('ERP 填报', () => {
     expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();
     expect(window.location.hash).toBe('#/task/T1/done');
     expect(screen.getByTestId('draft-no').textContent).toBe('BX20260911-0173');
+    expect(screen.getByTestId('erp-account').textContent).toBe('林颂宜（lin.songyi）· 账套 安图特科技');
     const bad = screen.getByTestId('readback-6');
     expect(bad.getAttribute('data-testid')).toBe('readback-6');
     expect(within(bad).getByText('不一致')).toBeTruthy();

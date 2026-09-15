@@ -269,7 +269,42 @@ export interface ReviewConfirmationTable {
   confirmed_at: string;
 }
 
+// One run of the 去报销 fill job (#191). `plan` is `{ plan: FillPlan, judge: JudgeBase }` JSON, frozen at the start.
+export interface ErpJobTable {
+  job_id: string;
+  task_id: string;
+  account_id: string;
+  kind: 'fill';
+  trigger: 'start' | 'confirm_login';
+  confirmation_digest: string;
+  plan: string;
+  revision: number;
+  started_at: string;
+}
+
+export interface ErpJobCancelTable {
+  cancel_id: string;
+  job_id: string;
+  task_id: string;
+  account_id: string;
+  revision: number;
+  created_at: string;
+}
+
+export interface ErpApprovedPreviewTable {
+  job_id: string;
+  task_id: string;
+  account_id: string;
+  digest: string;
+  preview: string;
+  created_at: string;
+}
+
 export interface Schema {
+  erp_job: ErpJobTable;
+  erp_job_cancel: ErpJobCancelTable;
+  erp_approved_preview: ErpApprovedPreviewTable;
+  erp_job_event: { event_id: string; job_id: string; task_id: string; seq: number; type: string; payload: string; created_at: string };
   review_confirmation: ReviewConfirmationTable;
   import_run: ImportRunTable;
   legacy_task: LegacyTaskTable;

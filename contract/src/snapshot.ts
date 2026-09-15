@@ -571,12 +571,22 @@ export const ErpStepSchema = z.object({
 });
 export type ErpStep = z.infer<typeof ErpStepSchema>;
 
+// 这次写入登录的报销系统账号与账套：按尝试记录、在完成页显示，从不与应用账号比对（ADR-0016）。
+export const ErpAccountViewSchema = z.object({
+  displayName: z.string(),
+  account: z.string(),
+  tenant: z.string(),
+});
+export type ErpAccountView = z.infer<typeof ErpAccountViewSchema>;
+
+// idle 且 abortReason 有值：上一次去报销在写入前就停下了（报销系统没有被改动），可以直接再去报销。
 export const ErpSchema = z.object({
   status: z.enum(['idle', 'running', 'waiting_login', 'aborted', 'done']),
   steps: z.array(ErpStepSchema),
   draftNo: z.string().nullable(),
   abortReason: z.string().nullable(),
   loginNotice: z.string().nullable(),
+  erpAccount: ErpAccountViewSchema.nullable(),
 });
 export type Erp = z.infer<typeof ErpSchema>;
 

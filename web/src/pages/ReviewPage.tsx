@@ -295,6 +295,12 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
                   去报销
                 </Button>
               )}
+              {/* 上一次去报销在写入前就停下了（服务端给出原因）：报销系统没有被改动，可以直接再去报销。 */}
+              {!erpStarted && erp.abortReason ? (
+                <p className="app-caption" role="status" data-testid="erp-abort-reason">
+                  {erp.abortReason}
+                </p>
+              ) : null}
               <ActionError message={claimAction.error} />
             </div>
           </div>
