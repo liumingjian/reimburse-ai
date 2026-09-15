@@ -242,7 +242,7 @@ describe('契约 schema', () => {
 
 describe('报销任务阶段', () => {
   test('阶段是闭合枚举，顺序照 Skill；?seed= 复用同一套名字，未知值被忽略', () => {
-    expect(TASK_STAGES).toEqual(['upload', 'inventory', 'pending', 'project', 'catalog', 'preparation', 'review', 'actions', 'erp', 'done', 'reconcile']);
+    expect(TASK_STAGES).toEqual(['upload', 'inventory', 'pending', 'project', 'catalog', 'preparation', 'review', 'actions', 'erp', 'done', 'reconcile', 'voided']);
     expect(TaskStageSchema.safeParse('print').success).toBe(false);
     expect(readMockOptions('?seed=review&fault=readback-mismatch')).toEqual({ seed: 'review', fault: 'readback-mismatch' });
     expect(readMockOptions('?seed=nope&fault=nope')).toEqual({ seed: null, fault: null });

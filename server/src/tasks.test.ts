@@ -58,15 +58,16 @@ describe('create a task and upload one PDF', () => {
     expect(snapshot.batches[0]?.files[0]).toMatchObject({ status: 'accepted', materialId: snapshot.materials[0]?.materialId });
   });
 
-  it('stores the bytes once under files/sha256/<ab>/<hash>, and a second upload of them is a second material on the same blob', async () => {
+  // Since #180 the same bytes again in the same task are rejected as duplicate_content; the blob is still stored once.
+  it('stores the bytes once under files/sha256/<ab>/<hash>; the same bytes again in the task are rejected as duplicate_content', async () => {
     const { task } = await createTask();
     const hash = createHash('sha256').update(PDF_BYTES).digest('hex');
 
     await upload(task.taskId, '全季酒店_发票.pdf', PDF_BYTES);
     const second = await upload(task.taskId, '全季酒店_发票_副本.pdf', PDF_BYTES);
 
-    expect(second.materials.map((m) => m.contentHash)).toEqual([hash, hash]);
-    expect(new Set(second.materials.map((m) => m.materialId)).size).toBe(2);
+    expect(second.materials.map((m) => m.contentHash)).toEqual([hash]);
+    expect(second.batches[1]?.files[0]).toMatchObject({ status: 'rejected', reasonCode: 'duplicate_content' });
     const stored = readdirSync(join(server.dataDir, 'files', 'sha256'), { recursive: true, withFileTypes: true }).filter((entry) => entry.isFile());
     expect(stored.map((entry) => join(entry.parentPath, entry.name))).toEqual([join(server.dataDir, 'files', 'sha256', hash.slice(0, 2), hash)]);
     expect(readFileSync(stored.map((entry) => join(entry.parentPath, entry.name))[0] ?? '')).toEqual(PDF_BYTES);

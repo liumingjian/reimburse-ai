@@ -24,6 +24,8 @@ export type ActionFailure = z.infer<typeof ActionFailureSchema>;
 export const CREATE_TASK_ERRORS = {
   homeCityRequired: '请填写常驻城市。',
   startupIncomplete: '还没有登录报销系统并确认报销人身份，不能新建报销任务。',
+  // At most one non-terminal task per account (ADR-0018).
+  activeTaskExists: '已有一个进行中的报销任务。请先完成或作废它，再新建。',
 } as const;
 
 // 启动动作（任务之外）：「我已登录」请服务端再探测一次登录会话；「确认」登记当前登录身份。

@@ -67,6 +67,56 @@ const initial: Migration = {
   },
 };
 
+// Slice #180: rejected files of a batch, the file order within a batch, 材料排除 (material exclusion), start-inventory
+// runs and reopen-upload. Facts that order against each other carry the task `revision` they were accepted at.
+const inventory180: Migration = {
+  async up(db: Kysely<unknown>) {
+    // Position of the file within its batch; null for materials uploaded before this migration.
+    await sql`ALTER TABLE material ADD COLUMN batch_seq integer`.execute(db);
+    await db.schema
+      .createTable('upload_rejection')
+      .addColumn('rejection_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('batch_id', 'text', (c) => c.notNull().references('upload_batch.batch_id'))
+      .addColumn('batch_seq', 'integer', (c) => c.notNull())
+      .addColumn('file_name', 'text', (c) => c.notNull())
+      .addColumn('size', 'integer', (c) => c.notNull())
+      .addColumn('reason_code', 'text', (c) => c.notNull().check(sql`reason_code IN ('unsupported_type', 'too_large', 'heic', 'duplicate_content')`))
+      .addColumn('reason', 'text', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema
+      .createTable('material_exclusion')
+      .addColumn('exclusion_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('material_id', 'text', (c) => c.notNull().unique().references('material.material_id'))
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema
+      .createTable('inventory_run')
+      .addColumn('run_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('version_no', 'integer', (c) => c.notNull())
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('started_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema
+      .createTable('upload_reopen')
+      .addColumn('reopen_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('reopened_at', 'text', (c) => c.notNull())
+      .execute();
+    for (const table of ['upload_rejection', 'material_exclusion', 'inventory_run', 'upload_reopen']) await appendOnly(db, table);
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
+  '0002_180_inventory': inventory180,
 };
