@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { project, type TaskFacts } from './projection';
 
 // The pure projection (ADR-0014): every stage reachable so far, from facts alone.
-const base: TaskFacts = { taskId: 't', revision: 7, lifecycle: 'open', versionNo: 0, includedMaterialCount: 0, lastRun: null, lastReopenRevision: null, parse: null };
+const base: TaskFacts = { taskId: 't', revision: 7, lifecycle: 'open', versionNo: 0, includedMaterialCount: 0, lastRun: null, lastReopenRevision: null, parse: null, project: null };
 const run = { versionNo: 1, includedMaterialCount: 2, lastRun: { versionNo: 1, revision: 5 } };
 const facts = (patch: Partial<TaskFacts>): TaskFacts => ({ ...base, ...patch });
 
@@ -18,6 +18,12 @@ describe('project(facts)', () => {
     ['voided, whatever else is true', { lifecycle: 'voided', versionNo: 1, includedMaterialCount: 2 }, 'voided', 'none'],
     ['the parser job still has materials to parse', { ...run, parse: { waiting: 1, openPendingItems: 1 } }, 'inventory', 'none'],
     ['parsed, with open pending items', { ...run, parse: { waiting: 0, openPendingItems: 2 } }, 'pending', 'answer_pending'],
+    // #188 项目归属
+    ['clean, without candidate lines', { ...run, parse: { waiting: 0, openPendingItems: 0 }, project: { lineCount: 0, selectableCount: 1, workingCount: 0, submitted: false } }, 'inventory', 'none'],
+    ['clean, nothing selectable and nothing drafted', { ...run, parse: { waiting: 0, openPendingItems: 0 }, project: { lineCount: 2, selectableCount: 0, workingCount: 0, submitted: false } }, 'project', 'maintain_project_book'],
+    ['clean, a draft survives an emptied book', { ...run, parse: { waiting: 0, openPendingItems: 0 }, project: { lineCount: 2, selectableCount: 0, workingCount: 1, submitted: false } }, 'project', 'assign_projects'],
+    ['clean, with selectable projects', { ...run, parse: { waiting: 0, openPendingItems: 0 }, project: { lineCount: 2, selectableCount: 1, workingCount: 0, submitted: false } }, 'project', 'assign_projects'],
+    ['submitted on the current lines', { ...run, parse: { waiting: 0, openPendingItems: 0 }, project: { lineCount: 2, selectableCount: 0, workingCount: 2, submitted: true } }, 'review', 'confirm_review'],
     ['parsed clean: rests in inventory until project assignment (#188)', { ...run, parse: { waiting: 0, openPendingItems: 0 } }, 'inventory', 'none'],
     ['results of a reopened run no longer count', { ...run, lastReopenRevision: 6, parse: { waiting: 1, openPendingItems: 0 } }, 'upload', 'start_inventory'],
   ])('%s', (_name, patch, stage, step) => {

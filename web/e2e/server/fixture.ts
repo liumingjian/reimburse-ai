@@ -9,6 +9,8 @@ import { test as base, type Page } from '@playwright/test';
 // tests never share tasks or accounts. `baseURL` points at it: `page.goto('/#/tasks')`.
 const SERVER_ENTRY = fileURLToPath(new URL('../../../server/dist/main.mjs', import.meta.url));
 const LISTENING = /listening on (http:\/\/\S+)/;
+// The fixture-backed project catalog (the live ERP query adapter is #191's): P-2307 华东客户交付, P-3312 产品调研.
+const PROJECT_CATALOG = fileURLToPath(new URL('../../../server/src/catalog/testing/projects.fixture.json', import.meta.url));
 
 export type ServerApp = { url: string; dataDir: string };
 
@@ -17,7 +19,7 @@ export const test = base.extend<{ serverApp: ServerApp }>({
     if (!existsSync(SERVER_ENTRY)) throw new Error(`${SERVER_ENTRY} is missing; run root pnpm test:e2e (it builds the server)`);
     const dataDir = mkdtempSync(join(tmpdir(), 'baox-e2e-'));
     const child = spawn(process.execPath, [SERVER_ENTRY], {
-      env: { ...process.env, BAOX_DATA_DIR: dataDir, BAOX_PORT: '0' },
+      env: { ...process.env, BAOX_DATA_DIR: dataDir, BAOX_PORT: '0', BAOX_PROJECT_CATALOG_FIXTURE: PROJECT_CATALOG },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let output = '';

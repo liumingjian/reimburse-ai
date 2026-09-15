@@ -313,6 +313,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     assignProjectLines: (taskId, input, stepToken) => action(taskId, E.assignProjectLines, { ...input, stepToken }),
     submitProjectAssignment: (taskId, input, stepToken) => action(taskId, E.submitProjectAssignment, { ...input, stepToken }),
     excludeMaterial: (taskId, materialId, stepToken) => action(taskId, E.excludeMaterial, { materialId, stepToken }),
+    setTaskHomeCity: (taskId, homeCity, stepToken) => action(taskId, E.setTaskHomeCity, { homeCity, stepToken }),
     startErpWrite: (taskId, stepToken) => action(taskId, E.startErpWrite, { stepToken }),
     confirmLogin: (taskId, stepToken) => action(taskId, E.confirmLogin, { stepToken }),
     reconcile: (taskId, stepToken) => action(taskId, E.reconcile, { stepToken }),

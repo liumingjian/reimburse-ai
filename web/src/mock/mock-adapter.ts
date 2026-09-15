@@ -11,6 +11,7 @@ import {
   ABANDON_TASK_COPY,
   CREATE_TASK_ERRORS,
   CreateTaskInputSchema,
+  HOME_CITY_ERRORS,
   type ActionError,
   TaskListSchema,
   type TaskList,
@@ -179,6 +180,21 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
         return pending.excludeGivenUp(taskId, materialId, stepToken);
       }
       return project.excludeMaterial(taskId, materialId, stepToken);
+    },
+    // 修改当前任务的常驻城市：ERP 写入开始前可改，并记为这个账号的常驻城市（mock 不重新推导类别）。
+    async setTaskHomeCity(taskId, homeCity, stepToken) {
+      const value = homeCity.trim();
+      return bus.withStep(taskId, stepToken, (snapshot) => {
+        if (value.length === 0 || value.length > 20) return { error: { code: 'invalid_home_city', message: HOME_CITY_ERRORS.invalid } };
+        if (snapshot.erp.status !== 'idle') return { error: { code: 'home_city_locked', message: HOME_CITY_ERRORS.locked } };
+        auth.rememberCity(value);
+        return {
+          ...snapshot,
+          task: { ...snapshot.task, homeCity: value },
+          projectAssignment: { ...snapshot.projectAssignment, homeCity: value },
+          step: { ...snapshot.step, stepToken: bus.rotateToken(snapshot.step.stepToken) },
+        };
+      });
     },
     ...createPrintFlow(bus),
     ...createErpFlow(bus),

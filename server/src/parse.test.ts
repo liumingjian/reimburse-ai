@@ -57,8 +57,9 @@ describe('the vat_invoice/einvoice layout on @baox/fixtures', () => {
     });
     for (const field of hotel.fields) expect(field).toMatchObject({ source: EINVOICE, parserVersion: einvoice.version, evidence: 'explicit' });
 
+    // Parsed in full; alone (no itinerary, so no expense city) it waits on category_city_missing (#188).
     const amap = byFileName(snapshot, sample('m03').name);
-    expect(amap).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', status: 'ok' });
+    expect(amap).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', status: 'pending', pendingItemIds: [`category_city_missing.${amap.materialId}`] });
     expect(fieldValues(amap, EINVOICE)).toMatchObject({
       invoiceNumber: '26312000000101557402',
       issueDate: '2026-08-13',
@@ -80,7 +81,8 @@ describe('the vat_invoice/einvoice layout on @baox/fixtures', () => {
       expect(material.pendingItemIds).toHaveLength(1);
       expect(snapshot.inventory.ungroupedMaterialIds).toContain(material.materialId);
     }
-    expect(snapshot.inventory.summary).toMatchObject({ materialCount: 5, okCount: 3, pendingMaterialCount: 2, voucherCount: 3, openPendingItemCount: 2 });
+    // m03 and m05 are ride-hailing invoices without itineraries: no expense city, so each waits on category_city_missing (#188).
+    expect(snapshot.inventory.summary).toMatchObject({ materialCount: 5, okCount: 1, pendingMaterialCount: 4, voucherCount: 1, openPendingItemCount: 4 });
     // Unrecognised materials leave 待确认项 open: the task moves on to pending items.
     expect(snapshot.stage).toBe('pending');
     expect(snapshot.step.kind).toBe('answer_pending');
@@ -108,8 +110,9 @@ describe('the e-invoice QR code, a second evidence source', () => {
     const amap = sample('m03');
     const snapshot = await inventoriedFiles([{ ...amap, bytes: await withQr(amap.bytes, '01,32,,26312000000101557402,69.19,20260813,,A1B2C3D4') }]);
     const material = byFileName(snapshot, amap.name);
-    expect(material).toMatchObject({ status: 'ok', checkText: expect.stringContaining('二维码核对一致') });
-    expect(snapshot.pendingItems).toEqual([]);
+    expect(material).toMatchObject({ checkText: expect.stringContaining('二维码核对一致') });
+    // The QR raises nothing; the only item is the missing expense city of a ride-hailing invoice alone (#188).
+    expect(snapshot.pendingItems.map((item) => item.itemId)).toEqual([`category_city_missing.${material.materialId}`]);
   });
 
   it('an undecodable QR is advisory: the invoice is ok, raises no 待确认项 and forms its candidate line', async () => {
@@ -118,7 +121,8 @@ describe('the e-invoice QR code, a second evidence source', () => {
     const hotel = byFileName(snapshot, sample('m01').name);
     expect(hotel).toMatchObject({ status: 'ok', role: 'primary_voucher', categoryLabel: '住宿', checkText: expect.stringContaining('二维码无法识读') });
     expect(snapshot.pendingItems).toEqual([]);
-    expect(snapshot.stage).toBe('inventory');
+    // A clean inventory goes on to 项目归属; with an empty personal book, to maintaining it first (#188).
+    expect(snapshot).toMatchObject({ stage: 'project', step: { kind: 'maintain_project_book' } });
     expect(snapshot.events).toEqual([expect.objectContaining({ no: 1, voucherMaterialId: hotel.materialId, category: { code: 'accommodation', label: '住宿' }, date: '2026-08-22', grossAmount: '3640.00' })]);
     expect(snapshot.lines).toEqual([
       expect.objectContaining({
@@ -197,7 +201,8 @@ describe('the background parser job', () => {
 
     gate.release();
     const done = await client.settled(task.taskId);
-    expect(done.materials.map((material) => material.status)).toEqual(['ok', 'ok']);
+    // m03 alone has no expense city, so it waits on category_city_missing (#188).
+    expect(done.materials.map((material) => material.status)).toEqual(['ok', 'pending']);
     expect((await client.act(done, 'exclude-material', { materialId: done.materials[1]?.materialId })).status).toBe(200);
   });
 

@@ -20,6 +20,9 @@ export type TaskFacts = {
   // The parser job on the current run (#183): included materials still waiting for an outcome, and the open
   // 待确认项 derived from the outcomes. null while the current version is not inventoried.
   parse: { waiting: number; openPendingItems: number } | null;
+  // 项目归属 (#188) once the inventory is clean: candidate lines, selectable projects in the books, lines in the working
+  // draft, and whether a submission still stands on the current lines. null before that.
+  project: { lineCount: number; selectableCount: number; workingCount: number; submitted: boolean } | null;
 };
 
 export type Projection = { stage: TaskStage; step: Step; blockers: Blocker[] };
@@ -50,8 +53,14 @@ export function project(facts: TaskFacts): Projection {
   if (inventoried(facts)) {
     if (parseRunning(facts)) return at('inventory', 'none');
     if ((facts.parse?.openPendingItems ?? 0) > 0) return at('pending', 'answer_pending');
-    // Project assignment lands in #188; until then a clean inventory rests in stage inventory with nothing to do.
-    return at('inventory', 'none');
+    const project = facts.project;
+    // A clean inventory without any candidate line has nothing to assign.
+    if (!project || project.lineCount === 0) return at('inventory', 'none');
+    // #189 owns what follows the submission (confirm-review); reassigning stays open under confirm_review.
+    if (project.submitted) return at('review', 'confirm_review');
+    // Kernel project_book_empty: nothing selectable and nothing drafted yet → maintain the book first.
+    if (project.selectableCount === 0 && project.workingCount === 0) return at('project', 'maintain_project_book');
+    return at('project', 'assign_projects');
   }
   return at('upload', facts.includedMaterialCount > 0 ? 'start_inventory' : 'upload_materials');
 }

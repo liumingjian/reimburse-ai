@@ -20,6 +20,9 @@ export type EventDraft = {
   taxAmount: string;
   invoiceType: string;
   maskedNumber: string | null;
+  // 费用发生城市 (expense city). City transport needs it to be split into local / out-of-town against the task's home
+  // city (#188 `rules/company-rules.ts` deriveCategory); absent, the line blocks. #184 sets it from the itinerary.
+  city?: string | null;
 };
 
 export type KindSpec = {
@@ -36,8 +39,8 @@ export type KindSpec = {
 // Kernel category codes (contract ExpenseCategorySchema).
 export const CATEGORIES = {
   accommodation: { code: 'accommodation', label: '住宿' },
-  // Ride-hailing on an invoice alone: local vs out-of-town needs the itinerary's city (#184) and the task's home city
-  // (#188), so it stays undivided until those land.
+  // Undivided 市内交通: `deriveCategory` (rules/company-rules.ts) splits it into local / out-of-town from the expense
+  // city and the task's home city; a line never carries this code.
   city_transport: { code: 'city_transport', label: '市内交通' },
 } as const satisfies Record<string, ExpenseCategory>;
 
