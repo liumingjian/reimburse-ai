@@ -38,6 +38,19 @@ export const FillPlanSchema = z.object({
 });
 export type FillPlan = z.infer<typeof FillPlanSchema>;
 
+/**
+ * 对账 (reconcile): the second, read-only job kind. The executor probes the login, reads the open form once and
+ * sends it as a `readback` at stage `reconcile`; the server classifies it. No attempt, no ERP write, ever.
+ */
+export const ReconcilePlanSchema = z.object({
+  protocolVersion: z.literal(PROTOCOL_VERSION),
+  kind: z.literal('reconcile'),
+  jobId: z.string().min(1),
+  taskId: z.string().min(1),
+  erpOrigin: z.string().url(),
+});
+export type ReconcilePlan = z.infer<typeof ReconcilePlanSchema>;
+
 export const ErpAccountSchema = z.object({ displayName: z.string(), account: z.string(), tenant: z.string() });
 /** The ERP account and 账套 (account set) that were logged in. Recorded on the attempt, never compared. */
 export type ErpAccount = z.infer<typeof ErpAccountSchema>;
@@ -73,7 +86,7 @@ export const ReadingsSchema = z.object({
 });
 export type Readings = z.infer<typeof ReadingsSchema>;
 
-export const READBACK_STAGES = ['after_import', 'after_fill', 'before_save', 'after_save'] as const;
+export const READBACK_STAGES = ['after_import', 'after_fill', 'before_save', 'after_save', 'reconcile'] as const;
 export type ReadbackStage = (typeof READBACK_STAGES)[number];
 
 export const ErrorCaptureSchema = z.object({
@@ -83,7 +96,8 @@ export const ErrorCaptureSchema = z.object({
 });
 export type ErrorCapture = z.infer<typeof ErrorCaptureSchema>;
 
-export const RESULT_STATUSES = ['saved', 'aborted', 'unknown', 'waiting_login', 'catalog_mismatch'] as const;
+// `read`: a reconcile job delivered its read-back (the bucket is the server's, not the executor's).
+export const RESULT_STATUSES = ['saved', 'aborted', 'unknown', 'waiting_login', 'catalog_mismatch', 'read'] as const;
 export type ResultStatus = (typeof RESULT_STATUSES)[number];
 
 export const ExecutorEventSchema = z.discriminatedUnion('type', [
