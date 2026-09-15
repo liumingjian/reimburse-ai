@@ -29,6 +29,19 @@ export const unavailableExecutor: FillExecutor = async (_plan, channel) => {
   return event;
 };
 
+/**
+ * The server's own guard (ADR-0014: any loss after `attempt_started` is reconcile, never a replay): once an attempt
+ * of the job is durable, only `saved` or `unknown` may end it. An executor that believes nothing was written (e.g.
+ * its acknowledgement failed after the server persisted the attempt) still ends in `unknown`.
+ */
+export async function afterAttempts(tx: Db, jobId: string, event: ResultEvent): Promise<ResultEvent> {
+  if (event.status === 'saved' || event.status === 'unknown') return event;
+  const attempt = await tx.selectFrom('erp_attempt').select('attempt_id').where('job_id', '=', jobId).executeTakeFirst();
+  if (!attempt) return event;
+  const message = `已开始写入报销系统之后停止，写入结果不确定：${event.message ?? event.code ?? ''}`;
+  return { ...event, status: 'unknown', message };
+}
+
 export function createFillJobs({ db, lease, execute, record }: { db: Db; lease: ErpLease; execute: FillExecutor; record: RecordFacts }) {
   const active = new Set<Promise<void>>();
 
@@ -52,12 +65,13 @@ export function createFillJobs({ db, lease, execute, record }: { db: Db; lease: 
         case 'readback':
           await append((tx) => writeEvent(tx, jobId, taskId, event, at()));
           return judge(event, { erpAccount });
-        case 'result':
+        case 'result': {
           // Released before the result is visible, so whoever sees the result sees the lease free.
           lease.release(taskId);
           finished = true;
-          await append((tx) => writeEvent(tx, jobId, taskId, event, at()));
+          await append(async (tx) => writeEvent(tx, jobId, taskId, await afterAttempts(tx, jobId, event), at()));
           return undefined;
+        }
         default:
           await append((tx) => writeEvent(tx, jobId, taskId, event, at()));
           return undefined;

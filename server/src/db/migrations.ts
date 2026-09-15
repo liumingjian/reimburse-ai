@@ -427,6 +427,34 @@ const erpJobs191: Migration = {
   },
 };
 
+// Slice #192: 对账 (reconcile) and 转人工 (hand-off). `erp_reconcile_job` is one run of the read-only reconcile job on
+// the task's latest fill job (its events go to `erp_job_event` under its own job id); `erp_hand_off` records the
+// 转人工 and the bucket it was made on (the lifecycle `handed_off` is on `task`). Both append-only.
+const reconcile192: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('erp_reconcile_job')
+      .addColumn('job_id', 'text', (c) => c.primaryKey())
+      .addColumn('fill_job_id', 'text', (c) => c.notNull().references('erp_job.job_id'))
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('started_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema
+      .createTable('erp_hand_off')
+      .addColumn('hand_off_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('fill_job_id', 'text')
+      .addColumn('bucket', 'text')
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    for (const table of ['erp_reconcile_job', 'erp_hand_off']) await appendOnly(db, table);
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -441,4 +469,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0005_195_legacy_import': legacyImport195,
   '0006_189_confirmation': confirmation189,
   '0008_191_erp_jobs': erpJobs191,
+  '0009_192_reconcile': reconcile192,
 };

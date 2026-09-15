@@ -45,6 +45,8 @@ export type ErpFacts = {
   phase: ErpPhase;
   // A catalog mismatch that no later project submission answered yet: back to project assignment.
   reassign: boolean;
+  // A read-only 对账 (reconcile) job runs on this fill (#192): like a running job, only its own writes pass.
+  reconciling: boolean;
 };
 
 export type Projection = { stage: TaskStage; step: Step; blockers: Blocker[] };
@@ -80,7 +82,7 @@ export function project(facts: TaskFacts): Projection {
     case 'saved':
       return at('done', 'none');
     case 'unknown':
-      return at('reconcile', 'reconcile');
+      return at('reconcile', facts.erp.reconciling ? 'none' : 'reconcile');
     case 'running':
       return at('erp', 'none');
     case 'waiting_login':

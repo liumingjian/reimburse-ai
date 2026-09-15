@@ -5,7 +5,9 @@ import { cdpBrowser, ensureChromium } from './executor/browser';
 import { cdpPortOf } from './executor/chromium';
 import { runFillJob } from './executor/job';
 import { erpEntryOf } from './executor/probe';
+import { runReconcileJob } from './executor/reconcile-job';
 import type { FillExecutor } from './fill-jobs';
+import type { ReconcileExecutor } from './reconcile-job';
 import type { BlobSource } from './protocol';
 
 // The v1 executor: in process, on the dedicated Chromium profile under the data directory (ADR-0016).
@@ -14,6 +16,11 @@ import type { BlobSource } from './protocol';
 
 export function dataDirBlobs(dataDir: string): BlobSource {
   return { read: async (ref) => new Uint8Array(readFileSync(blobPath(dataDir, ref.sha256))) };
+}
+
+/** The read-only 对账 job on the same dedicated Chromium; it never starts the browser (nothing to reconcile without it). */
+export function cdpReconcileExecutor({ env = process.env }: { env?: NodeJS.ProcessEnv } = {}): ReconcileExecutor {
+  return (plan, channel) => runReconcileJob(plan, { browser: cdpBrowser(cdpPortOf(env)), channel, probeWaitMs: 0 });
 }
 
 export function cdpFillExecutor({ dataDir, env = process.env }: { dataDir: string; env?: NodeJS.ProcessEnv }): FillExecutor {

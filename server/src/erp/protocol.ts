@@ -116,7 +116,11 @@ export const ExecutorEventSchema = z.discriminatedUnion('type', [
     compatibility: CompatibilitySchema,
     erpAccount: ErpAccountSchema,
   }),
-  z.object({ type: z.literal('readback'), stage: z.enum(READBACK_STAGES), readings: ReadingsSchema }),
+  z.object({
+    type: z.literal('readback'), stage: z.enum(READBACK_STAGES), readings: ReadingsSchema,
+    // Which form was read (reconcile only): the server compares it with the fill's last attempt.
+    form: z.object({ formInstanceId: z.string().nullable(), targetId: z.string().nullable() }).optional(),
+  }),
   z.object({
     type: z.literal('result'),
     // `unknown` is ERP 写入结果未知 (write result unknown): it goes to reconcile, never to replay.

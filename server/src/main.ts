@@ -3,7 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { liveProjectCatalog } from './catalog/live-catalog';
 import { catalogFromEnv } from './catalog/project-catalog';
 import { resolveDataDir } from './data-dir';
-import { cdpFillExecutor } from './erp/cdp-executor';
+import { cdpFillExecutor, cdpReconcileExecutor } from './erp/cdp-executor';
+import { noFormOpen, scripted, uncertainSave } from './erp/testing/fake-executor';
 import { erpConfigFromEnv } from './erp/config';
 import { cdpBrowser } from './erp/executor/browser';
 import { cdpPortOf } from './erp/executor/chromium';
@@ -27,7 +28,10 @@ const port = Number(process.env['BAOX_PORT'] ?? DEFAULT_PORT);
 try {
   const erpConfig = erpConfigFromEnv();
   const projectCatalog = catalogFromEnv(process.env, () => liveProjectCatalog({ browser: cdpBrowser(cdpPortOf()), origin: erpConfig.origin }));
-  const server = await startServer({ dataDir, port, webDist: existsSync(WEB_DIST) ? WEB_DIST : null, projectCatalog, legacyHome: resolveLegacyHome(), erpExecutor: cdpFillExecutor({ dataDir }), erpConfig });
+  // `BAOX_ERP_FAKE=uncertain_save` (e2e only): the fill job ends in ERP 写入结果未知 after a save, and reconcile finds
+  // no form open. Never set outside e2e.
+  const fake = process.env['BAOX_ERP_FAKE'] === 'uncertain_save' ? { erpExecutor: scripted(uncertainSave), reconcileExecutor: noFormOpen } : null;
+  const server = await startServer({ dataDir, port, webDist: existsSync(WEB_DIST) ? WEB_DIST : null, projectCatalog, legacyHome: resolveLegacyHome(), erpExecutor: fake?.erpExecutor ?? cdpFillExecutor({ dataDir }), reconcileExecutor: fake?.reconcileExecutor ?? cdpReconcileExecutor(), erpConfig });
   console.log(`baox server listening on ${server.url} (data ${dataDir})`);
   const stop = () => void server.close().then(() => process.exit(0));
   process.once('SIGINT', stop);

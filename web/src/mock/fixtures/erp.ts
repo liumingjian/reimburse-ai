@@ -131,7 +131,7 @@ export function emptyReadback(): Readback {
 }
 
 export function emptyReconcile(): Reconcile {
-  return { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [] };
+  return { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [], capture: null };
 }
 
 // 对账判定（内核 classifyReconciliation 的对应）：bucket 决定处置；「已保存」还要看收票与明细合计是否相等、严格逐行是否一致。
@@ -167,6 +167,7 @@ export function applyReadbackMismatch(snapshot: TaskSnapshot, draftNo: string): 
     draftNo,
     rows: readback.rows,
     reasons: [],
+    capture: null,
   };
   snapshot.stage = 'done';
   snapshot.step = { kind: 'hand_off', stepToken: `tok-${snapshot.task.taskId}-hand-off` };
@@ -183,6 +184,7 @@ export function applyAbortAtSave(snapshot: TaskSnapshot): void {
     draftNo: null,
     rows: [],
     reasons: ['保存后没有同时读到修改页签、单据编号和严格逐行回读'],
+    capture: null,
   };
   snapshot.stage = 'reconcile';
   snapshot.step = { kind: 'reconcile', stepToken: `tok-${snapshot.task.taskId}-reconcile` };

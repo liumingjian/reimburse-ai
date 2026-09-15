@@ -254,6 +254,7 @@ export function t2Snapshot(): TaskSnapshot {
     draftNo: T2_DRAFT_NO,
     rows: [...T2_ROWS],
     reasons: [],
+    capture: null,
   };
   return withProjectUsage(withInventoryProjection(snapshot));
 }

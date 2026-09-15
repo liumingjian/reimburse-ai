@@ -9,7 +9,10 @@ import { accountOf, mountAccountRoutes, mountAuthRoutes, requireAccount, type Ap
 import type { Db } from './db/database';
 import { createInMemoryErpLease, type ErpLease } from './erp-lease';
 import { DEFAULT_ERP_CONFIG, type ErpConfig } from './erp/config';
-import { createFillJobs, unavailableExecutor, type FillExecutor } from './erp/fill-jobs';
+import { createFillJobs, unavailableExecutor, type FillExecutor, type RecordFacts } from './erp/fill-jobs';
+import type { ReconcileExecutor } from './erp/reconcile-job';
+import { createReconcileJobs, unavailableReconcileExecutor } from './erp/reconcile-jobs';
+import { recoverErpJobs } from './erp/recovery';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
@@ -36,6 +39,9 @@ export type AppOptions = {
   // Where 去报销 jobs run: `cdpFillExecutor` on the dedicated Chromium in production, a fake in tests. Without one,
   // every job stops before touching anything.
   erpExecutor?: FillExecutor;
+  // Where the read-only 对账 (reconcile) jobs run: `cdpReconcileExecutor` in production, a fake in tests. Without one,
+  // every reconcile stops at once with nothing read.
+  reconcileExecutor?: ReconcileExecutor;
   // The ERP to write to and the build it may write to (`erp/config.ts`).
   erpConfig?: ErpConfig;
   // Where the parser job parses; the server's one worker_thread by default. Tests inject inline or gated executors.
@@ -56,7 +62,7 @@ type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
 const failure = (c: Context, status: 400 | 401 | 403 | 404 | 409, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor = unavailableExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null }: AppOptions): App {
+export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor = unavailableExecutor, reconcileExecutor = unavailableReconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null }: AppOptions): App {
   const accounts = createAccountService(db, now);
   const legacy = createLegacyImport(db, legacyHome, now);
   // Keyed by task id; a task's stream only ever opens for its owner.
@@ -68,10 +74,15 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     if (snapshot.inventory.status === 'running') jobs?.ensure(accountId, snapshot.task.taskId);
   };
   // The 去报销 jobs write their facts through the owner's task service (one revision per executor event).
-  const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor, record: (accountId, taskId, write) => serviceFor(accountId).erpRecord(taskId, write) });
+  const record: RecordFacts = (accountId, taskId, write) => serviceFor(accountId).erpRecord(taskId, write);
+  const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor, record });
+  const reconcileJobs = createReconcileJobs({ lease: erpLease, execute: reconcileExecutor, record });
   // Every task service is scoped to one account; the parser job gets the owner's service for each task it drives.
   const serviceFor = (accountId: string) =>
-    createTaskService(db, dataDir, accountId, { onChange: (snapshot) => publish(snapshot, accountId), erp: { lease: erpLease, config: erpConfig, run: (job) => fillJobs.run(job) } });
+    createTaskService(db, dataDir, accountId, { onChange: (snapshot) => publish(snapshot, accountId), erp: { lease: erpLease, config: erpConfig, run: (job) => fillJobs.run(job), reconcile: (job) => reconcileJobs.run(job) } });
+  // A restart ends every ERP job the old process ran: each gets its result before any request is served (a fill with
+  // a durable attempt -> reconcile; never a replay).
+  const recovered = recoverErpJobs(db, record).catch((error: unknown) => console.error('ERP job recovery failed', error));
   const tasksOf = (c: Context<AppEnv>) => serviceFor(accountOf(c).accountId);
   const parseJobs = createParseJobs(serviceFor, () => parseBacklogOfAllAccounts(db, dataDir), parser ?? workerExecutor());
   jobs = parseJobs;
@@ -79,6 +90,11 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   parseJobs.resumeAll();
 
   const app = new Hono<AppEnv>();
+
+  app.use('/api/*', async (_c, next) => {
+    await recovered;
+    await next();
+  });
 
   app.onError((error, c) => {
     if (error instanceof TaskNotFoundError) return failure(c, 404, 'task_not_found', '没有这个报销任务。');
@@ -174,6 +190,13 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     return c.json(await tasksOf(c).upload(c.req.param('id'), files));
   });
 
+  // The cropped screenshot of ERP's error dialog when the write stopped (`reconcile.capture.screenshotUrl`).
+  app.get('/api/tasks/:id/erp-capture', async (c) => {
+    const png = await tasksOf(c).erpCapture(c.req.param('id'));
+    if (!png) return failure(c, 404, 'not_found', '没有报销系统截图。');
+    return new Response(Buffer.from(png), { status: 200, headers: { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' } });
+  });
+
   app.post('/api/tasks/:id/abandon', async (c) => c.json(await tasksOf(c).voidTask(c.req.param('id'))));
 
   app.post('/api/tasks/:id/actions/:name', async (c) => {
@@ -205,7 +228,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
 
   if (webDist) app.get('*', (c) => serveWebFile(c, webDist));
 
-  return Object.assign(app, { close: async () => { await parseJobs.close(); await fillJobs.close(); } });
+  return Object.assign(app, { close: async () => { await recovered; await parseJobs.close(); await fillJobs.close(); await reconcileJobs.close(); } });
 }
 
 // Task actions (`POST /api/tasks/:id/actions/<name>`), each with its JSON input. Later slices add their entries here.
@@ -231,6 +254,9 @@ const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
   'start-erp-write': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.startErpWrite(id, stepToken)),
   'confirm-login': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.confirmLogin(id, stepToken)),
   'cancel-erp-write': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.cancelErpWrite(id, stepToken)),
+  // 对账 (read-only, 409 `erp_in_use` while another task holds the lease) and 转人工 (terminal).
+  reconcile: taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.reconcile(id, stepToken)),
+  'hand-off': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.handOff(id, stepToken)),
 };
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {

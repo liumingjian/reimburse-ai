@@ -300,7 +300,28 @@ export interface ErpApprovedPreviewTable {
   created_at: string;
 }
 
+export interface ErpReconcileJobTable {
+  job_id: string;
+  fill_job_id: string;
+  task_id: string;
+  account_id: string;
+  revision: number;
+  started_at: string;
+}
+
+export interface ErpHandOffTable {
+  hand_off_id: string;
+  task_id: string;
+  account_id: string;
+  fill_job_id: string | null;
+  bucket: string | null;
+  revision: number;
+  created_at: string;
+}
+
 export interface Schema {
+  erp_reconcile_job: ErpReconcileJobTable;
+  erp_hand_off: ErpHandOffTable;
   erp_job: ErpJobTable;
   erp_job_cancel: ErpJobCancelTable;
   erp_approved_preview: ErpApprovedPreviewTable;
