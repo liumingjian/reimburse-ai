@@ -6,71 +6,26 @@ settings:
 
 importers:
 
-  .: {}
-
-  packages/app-ui:
-    dependencies:
-      '@carbon/feature-flags':
-        specifier: ^1.9.0
-        version: 1.9.0
-      '@carbon/icons-react':
-        specifier: ^11.88.0
-        version: 11.88.0(react@19.3.0)
-      '@carbon/react':
-        specifier: ^1.115.0
-        version: 1.115.0(react-dom@19.3.0(react@19.3.0))(react-is@18.3.1)(react@19.3.0)(sass@1.104.1)
-      '@carbon/styles':
-        specifier: ^1.115.0
-        version: 1.115.0(sass@1.104.1)
-      react:
-        specifier: ^19.1.0
-        version: 19.3.0
-      react-dom:
-        specifier: ^19.1.0
-        version: 19.3.0(react@19.3.0)
-      zod:
-        specifier: ^4.1.0
-        version: 4.6.2
+  .:
     devDependencies:
       '@playwright/test':
-        specifier: ^1.55.0
+        specifier: 1.63.0
         version: 1.63.0
-      '@testing-library/dom':
-        specifier: ^10.4.0
-        version: 10.4.1
-      '@testing-library/react':
-        specifier: ^16.3.0
-        version: 16.3.3(@testing-library/dom@10.4.1)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@types/node':
-        specifier: ^24.3.1
-        version: 24.13.3
-      '@types/react':
-        specifier: ^19.1.0
-        version: 19.3.0
-      '@types/react-dom':
-        specifier: ^19.1.0
-        version: 19.3.0(@types/react@19.3.0)
-      '@vitejs/plugin-react':
-        specifier: ^5.0.0
-        version: 5.2.0(vite@7.3.6(@types/node@24.13.3)(sass@1.104.1)(tsx@4.23.13))
-      jsdom:
-        specifier: ^27.0.0
-        version: 27.4.0
-      sass:
-        specifier: ^1.104.1
-        version: 1.104.1
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-      vite:
-        specifier: ^7.1.0
-        version: 7.3.6(@types/node@24.13.3)(sass@1.104.1)(tsx@4.23.13)
-      vite-plugin-singlefile:
-        specifier: ^2.3.0
-        version: 2.3.3(rollup@4.63.1)(vite@7.3.6(@types/node@24.13.3)(sass@1.104.1)(tsx@4.23.13))
       vitest:
-        specifier: ^3.2.0
+        specifier: 3.2.7
         version: 3.2.7(@types/node@24.13.3)(jsdom@27.4.0)(sass@1.104.1)(tsx@4.23.13)
+
+  contract:
+    dependencies:
+      zod:
+        specifier: 4.6.2
+        version: 4.6.2
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
+  fixtures: {}
 
   packages/image-field-extraction:
     devDependencies:
@@ -83,6 +38,67 @@ importers:
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+
+  web:
+    dependencies:
+      '@baox/contract':
+        specifier: workspace:*
+        version: link:../contract
+      '@carbon/feature-flags':
+        specifier: 1.9.0
+        version: 1.9.0
+      '@carbon/icons-react':
+        specifier: 11.88.0
+        version: 11.88.0(react@19.3.0)
+      '@carbon/react':
+        specifier: 1.115.0
+        version: 1.115.0(react-dom@19.3.0(react@19.3.0))(react-is@18.3.1)(react@19.3.0)(sass@1.104.1)
+      '@carbon/styles':
+        specifier: 1.115.0
+        version: 1.115.0(sass@1.104.1)
+      react:
+        specifier: 19.3.0
+        version: 19.3.0
+      react-dom:
+        specifier: 19.3.0
+        version: 19.3.0(react@19.3.0)
+    devDependencies:
+      '@baox/fixtures':
+        specifier: workspace:*
+        version: link:../fixtures
+      '@testing-library/dom':
+        specifier: 10.4.1
+        version: 10.4.1
+      '@testing-library/react':
+        specifier: 16.3.3
+        version: 16.3.3(@testing-library/dom@10.4.1)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
+      '@types/react':
+        specifier: 19.3.0
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: 19.3.0
+        version: 19.3.0(@types/react@19.3.0)
+      '@vitejs/plugin-react':
+        specifier: 5.2.0
+        version: 5.2.0(vite@7.3.6(@types/node@24.13.3)(sass@1.104.1)(tsx@4.23.13))
+      jsdom:
+        specifier: 27.4.0
+        version: 27.4.0
+      sass:
+        specifier: 1.104.1
+        version: 1.104.1
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vite:
+        specifier: 7.3.6
+        version: 7.3.6(@types/node@24.13.3)(sass@1.104.1)(tsx@4.23.13)
+      vite-plugin-singlefile:
+        specifier: 2.3.3
+        version: 2.3.3(rollup@4.63.1)(vite@7.3.6(@types/node@24.13.3)(sass@1.104.1)(tsx@4.23.13))
 
 packages:
 

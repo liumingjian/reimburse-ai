@@ -1,2 +1,7 @@
 packages:
-  - packages/*
+  - web
+  - server
+  - contract
+  - fixtures
+  # Frozen reference; removed together with kernel/ by the retirement PR.
+  - packages/image-field-extraction

@@ -1,0 +1,20 @@
+{
+  "name": "@baox/fixtures",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fictitious sample materials (invoice PDFs, taxi-receipt photos, print pages) for the mock build and tests, plus the manifest mapping each generated file to its business file name",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "exports": {
+    ".": {
+      "types": "./index.d.mts",
+      "default": "./index.mjs"
+    }
+  },
+  "scripts": {
+    "generate": "node scripts/generate.mjs && node scripts/verify.mjs",
+    "verify": "node scripts/verify.mjs"
+  }
+}

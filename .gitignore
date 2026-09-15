@@ -22,7 +22,7 @@ release/
 # Local reimbursement materials
 /resources/
 
-# app-ui build and test artifacts
+# web build and test artifacts
 dist-mock/
 test-results/
 playwright-report/

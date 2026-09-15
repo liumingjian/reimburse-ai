@@ -1,0 +1,26 @@
+{
+  "name": "@baox/contract",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The interface contract between the frontend and the local app server: zod schemas and the types inferred from them, shipped as source",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "zod": "4.6.2"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}
