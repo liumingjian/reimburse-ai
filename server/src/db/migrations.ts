@@ -67,6 +67,41 @@ const initial: Migration = {
   },
 };
 
+// Slice #181: the ERP job protocol's durable record (ADR-0016). Every executor event is appended; each
+// `attempt_started` also lands in erp_attempt before the executor may mutate ERP. Both are append-only.
+const erpAttempts: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('erp_job_event')
+      .addColumn('event_id', 'text', (c) => c.primaryKey())
+      .addColumn('job_id', 'text', (c) => c.notNull())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('seq', 'integer', (c) => c.notNull())
+      .addColumn('type', 'text', (c) => c.notNull())
+      .addColumn('payload', 'text', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .addUniqueConstraint('erp_job_event_job_seq', ['job_id', 'seq'])
+      .execute();
+    await db.schema
+      .createTable('erp_attempt')
+      .addColumn('attempt_id', 'text', (c) => c.primaryKey())
+      .addColumn('job_id', 'text', (c) => c.notNull())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('action', 'text', (c) => c.notNull().check(sql`action IN ('import', 'fill', 'save')`))
+      .addColumn('preconditions', 'text', (c) => c.notNull())
+      .addColumn('expected_postconditions', 'text', (c) => c.notNull())
+      .addColumn('erp_build', 'text', (c) => c.notNull())
+      .addColumn('form_id', 'text', (c) => c.notNull())
+      .addColumn('erp_account', 'text', (c) => c.notNull())
+      .addColumn('erp_tenant', 'text', (c) => c.notNull())
+      .addColumn('erp_display_name', 'text', (c) => c.notNull())
+      .addColumn('started_at', 'text', (c) => c.notNull())
+      .execute();
+    for (const table of ['erp_job_event', 'erp_attempt']) await appendOnly(db, table);
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
+  '0002_181_erp_attempts': erpAttempts,
 };

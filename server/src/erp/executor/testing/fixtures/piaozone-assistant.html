@@ -1,0 +1,26 @@
+<!doctype html>
+<!--
+  Recorded DOM fixture: the piaozone invoice assistant (发票无忧助手), a cross-origin iframe and its own CDP target
+  (verification-ledger V-45). Rows are Ant Design table rows with `input.ant-checkbox-input`; the "是否生成费用明细"
+  choice lives inside this iframe, not in an ERP `.k-window` (save-contract.md, 2026-09-06).
+  `data-action` attributes are fake-ERP behaviour hooks only.
+-->
+<html>
+<head><title>发票无忧助手</title></head>
+<body>
+<div class="pwy-assistant">
+  <div class="toolbar"><span data-action="upload-mode">上传发票影像</span></div>
+  <input type="file" multiple style="display:none">
+  <table class="ant-table">
+    <thead><tr><th><input type="checkbox" class="ant-checkbox-input"></th><th>发票号码</th><th>价税合计</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="footer"><button data-action="import">发票导入单据</button></div>
+  <div class="import-dialog" style="display:none">
+    <span>是否生成费用明细？</span>
+    <button data-action="not-fill">不生成费用明细</button>
+    <button data-action="fill">生成费用明细</button>
+  </div>
+</div>
+</body>
+</html>
