@@ -55,6 +55,20 @@ const VAT_INVOICE_SLOTS: readonly Slot[] = [
   { key: 'totalAmount', label: '价税合计', required: true, format: 'money' },
 ];
 
+// 酒店结账单 (hotel folio): reference material for a hotel invoice. `folioTotal` is not an invoice amount; it only
+// pairs the folio with its invoice. `checkOut` may be derived from 入住日期 + 天数.
+const HOTEL_FOLIO_SLOTS: readonly Slot[] = [
+  { key: 'hotelName', label: '酒店名称', required: true, format: 'text' },
+  { key: 'guestName', label: '入住人', required: false, format: 'text' },
+  { key: 'roomNumber', label: '房号', required: false, format: 'text' },
+  { key: 'checkIn', label: '入住日期', required: true, format: 'date' },
+  { key: 'checkOut', label: '离店日期', required: true, format: 'date' },
+  { key: 'nights', label: '天数', required: false, format: 'text' },
+  { key: 'roomRate', label: '房价', required: false, format: 'money' },
+  { key: 'folioTotal', label: '消费合计', required: true, format: 'money' },
+  { key: 'paidAmount', label: '已付款', required: false, format: 'money' },
+];
+
 // `*住宿服务*住宿费` → 住宿费; the 税收分类 (tax class) between the asterisks decides the category.
 const itemParts = (itemName: string | undefined) => /^\*([^*]+)\*(.*)$/.exec(itemName ?? '');
 
@@ -104,7 +118,8 @@ export const KINDS: Readonly<Record<MaterialKind, KindSpec>> = {
   // Slots, categories and events arrive with their layouts: rail #184, ride itinerary #184, folio #185, taxi #186.
   rail_ticket: { kind: 'rail_ticket', label: '铁路电子客票', role: 'primary_voucher', slots: [], categoryLabel: noCategory, event: noEvent },
   ride_itinerary: { kind: 'ride_itinerary', label: '网约车行程单', role: 'reference', slots: [], categoryLabel: noCategory, event: noEvent },
-  hotel_folio: { kind: 'hotel_folio', label: '酒店结账单', role: 'reference', slots: [], categoryLabel: noCategory, event: noEvent },
+  // A folio forms no event of its own: `hotel-stay.ts` pairs it with its hotel invoice for the stay dates.
+  hotel_folio: { kind: 'hotel_folio', label: '酒店结账单', role: 'reference', slots: HOTEL_FOLIO_SLOTS, categoryLabel: () => CATEGORIES.accommodation.label, event: noEvent },
   taxi_receipt: { kind: 'taxi_receipt', label: '出租车票', role: 'primary_voucher', slots: [], categoryLabel: noCategory, event: noEvent },
 };
 
