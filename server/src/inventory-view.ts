@@ -2,7 +2,7 @@ import { MATERIAL_KINDS, fieldAnswer, isAllocationAnswer, type ExpenseEvent, typ
 import type { ParseOutcome, Recognised } from './parse/dispatch';
 import { planTransport, type PlannedLine } from './allocation';
 import { pairHotelStays, type StayVoucher } from './hotel-stay';
-import { CATEGORIES, KINDS, slotOf, type EventDraft, type Slot } from './parse/kinds';
+import { CATEGORIES, fieldLabel, KINDS, slotOf, type EventDraft, type Slot } from './parse/kinds';
 import { chosen, EXCLUDE_CHOICE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
 import { editAddress, editedValue, type Editable } from './pending/edits';
 import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/company-rules';
@@ -73,6 +73,9 @@ const REPLACE_HINT = '换原件请在上传页追加材料后重新盘点。';
 const MANUAL_FILL = 'manual_fill';
 const REFERENCE = 'reference';
 const CITY_MISSING_CHECK = '取不到费用发生城市';
+
+// Titles of validation findings that are not about amounts (the default title is 金额核对不通过).
+const VALIDATION_TITLES: Readonly<Record<string, string>> = { segment_rows_incomplete: '逐段明细没有完整读到', route_incomplete: '行程路线没有完整读到' };
 
 // Line-level edits every kind with an event offers: the description is wording, the ERP invoice type a choice.
 const DESCRIPTION = 'description';
@@ -249,10 +252,10 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
     if (finding.kind === 'advisory') w.notes.push(finding.message);
     if (finding.kind === 'validation') {
       w.notes.push(finding.message);
-      add(choice(`validation_failure.${id}.${finding.code}`, id, `「${m.fileName}」金额核对不通过`, `${finding.message}票面事实不能修改。${REPLACE_HINT}`, [EXCLUDE]));
+      add(choice(`validation_failure.${id}.${finding.code}`, id, `「${m.fileName}」${VALIDATION_TITLES[finding.code] ?? '金额核对不通过'}`, `${finding.message}票面事实不能修改。${REPLACE_HINT}`, [EXCLUDE]));
     }
     if (finding.kind === 'conflict') {
-      const label = slotOf(resolved.kind, finding.key)?.label ?? finding.key;
+      const label = fieldLabel(resolved.kind, finding.key);
       const [face, other] = finding.values;
       const message = `二维码与票面不一致：${label} 票面 ${face?.value ?? ''}，二维码 ${other?.value ?? ''}`;
       w.notes.push(message);
@@ -279,7 +282,7 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
   w.values = values;
   // Every source's candidates stay visible (text layer and QR side by side); a `user` value replaces the candidates of
   // its key, since it is what counts now.
-  const label = (key: string) => slotOf(resolved.kind, key)?.label ?? key;
+  const label = (key: string) => fieldLabel(resolved.kind, key);
   const byUser = [...sourceOf].filter(([, origin]) => origin.source === 'user').map(([key]) => key);
   w.fields = [
     ...resolved.candidates

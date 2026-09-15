@@ -368,6 +368,25 @@ const legacyImport195: Migration = {
   },
 };
 
+// Slice #189: 整单明细确认 (whole-list detail confirmation) `{digest, confirmedAt}` (ADR-0014). The status is derived by
+// comparing the latest row's digest with the current one; `detail_digest` / `project_digest` pick the notice.
+const confirmation189: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('review_confirmation')
+      .addColumn('confirmation_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('digest', 'text', (c) => c.notNull())
+      .addColumn('detail_digest', 'text', (c) => c.notNull())
+      .addColumn('project_digest', 'text', (c) => c.notNull())
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('confirmed_at', 'text', (c) => c.notNull())
+      .execute();
+    await appendOnly(db, 'review_confirmation');
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -380,4 +399,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0004_188_projects': projects188,
   '0005_194_admin': admin194,
   '0005_195_legacy_import': legacyImport195,
+  '0006_189_confirmation': confirmation189,
 };

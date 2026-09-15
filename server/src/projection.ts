@@ -26,6 +26,8 @@ export type TaskFacts = {
   project: { lineCount: number; selectableCount: number; workingCount: number; submitted: boolean } | null;
   // An imported legacy task (#195, lifecycle `handed_off`): its terminal, ERP 草稿已交接 or 转人工.
   legacyOutcome?: 'draft_handed_over' | 'handed_off';
+  // 整单明细确认 (#189): derived by digest comparison (`confirmation.ts`); only `confirmed` moves past review.
+  confirmation: 'unconfirmed' | 'confirmed' | 'invalidated';
 };
 
 export type Projection = { stage: TaskStage; step: Step; blockers: Blocker[] };
@@ -64,8 +66,8 @@ export function project(facts: TaskFacts): Projection {
     const project = facts.project;
     // A clean inventory without any candidate line has nothing to assign.
     if (!project || project.lineCount === 0) return at('inventory', 'none');
-    // #189 owns what follows the submission (confirm-review); reassigning stays open under confirm_review.
-    if (project.submitted) return at('review', 'confirm_review');
+    // Reassigning stays open under confirm_review and choose_action, and invalidates a confirmation.
+    if (project.submitted) return facts.confirmation === 'confirmed' ? at('actions', 'choose_action') : at('review', 'confirm_review');
     // Kernel project_book_empty: nothing selectable and nothing drafted yet → maintain the book first.
     if (project.selectableCount === 0 && project.workingCount === 0) return at('project', 'maintain_project_book');
     return at('project', 'assign_projects');

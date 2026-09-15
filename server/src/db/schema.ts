@@ -258,7 +258,19 @@ export interface LegacyClaimTable {
   created_at: string;
 }
 
+export interface ReviewConfirmationTable {
+  confirmation_id: string;
+  task_id: string;
+  account_id: string;
+  digest: string;
+  detail_digest: string;
+  project_digest: string;
+  revision: number;
+  confirmed_at: string;
+}
+
 export interface Schema {
+  review_confirmation: ReviewConfirmationTable;
   import_run: ImportRunTable;
   legacy_task: LegacyTaskTable;
   legacy_claim: LegacyClaimTable;
