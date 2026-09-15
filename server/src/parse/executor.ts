@@ -29,12 +29,18 @@ function workerEntry(): { url: URL; execArgv: string[] } {
 }
 
 export type WorkerRequest = { id: number; input: ParseInput };
-export type WorkerReply = { id: number; outcome: ParseOutcome };
+// `ocrLoaded`: whether the worker has loaded the OCR models by the time it replies.
+export type WorkerReply = { id: number; outcome: ParseOutcome; ocrLoaded: boolean };
 
-export function workerExecutor({ idleMs = 2000 }: { idleMs?: number } = {}): ParseExecutor {
+// What the parse worker holds right now: whether it runs, and whether OCR is loaded in it.
+export type WorkerState = { running: boolean; ocrLoaded: boolean };
+
+export function workerExecutor({ idleMs = 2000 }: { idleMs?: number } = {}): ParseExecutor & { state(): WorkerState } {
   let worker: Worker | null = null;
   let idle: NodeJS.Timeout | null = null;
   let nextId = 0;
+  // OCR lives in the worker, so it goes when the worker goes.
+  let ocrLoaded = false;
   const waiting = new Map<number, (outcome: ParseOutcome) => void>();
 
   const failAll = (reason: string) => {
@@ -46,6 +52,7 @@ export function workerExecutor({ idleMs = 2000 }: { idleMs?: number } = {}): Par
     idle = setTimeout(() => {
       const current = worker;
       worker = null;
+      ocrLoaded = false;
       if (current && waiting.size === 0) void current.terminate();
     }, idleMs);
     idle.unref();
@@ -54,14 +61,18 @@ export function workerExecutor({ idleMs = 2000 }: { idleMs?: number } = {}): Par
   const spawn = (): Worker => {
     const entry = workerEntry();
     const spawned = new Worker(entry.url, { execArgv: entry.execArgv });
-    spawned.on('message', ({ id, outcome }: WorkerReply) => {
+    spawned.on('message', ({ id, outcome, ocrLoaded: loaded }: WorkerReply) => {
+      if (worker === spawned) ocrLoaded = loaded;
       waiting.get(id)?.(outcome);
       waiting.delete(id);
       if (waiting.size === 0) scheduleRelease();
     });
     spawned.on('error', (error) => failAll(`parse worker failed: ${error.message}`));
     spawned.on('exit', (code) => {
-      if (worker === spawned) worker = null;
+      if (worker === spawned) {
+        worker = null;
+        ocrLoaded = false;
+      }
       failAll(`parse worker exited (${code})`);
     });
     spawned.unref();
@@ -69,6 +80,7 @@ export function workerExecutor({ idleMs = 2000 }: { idleMs?: number } = {}): Par
   };
 
   return {
+    state: () => ({ running: worker !== null, ocrLoaded }),
     parse(input) {
       if (idle) clearTimeout(idle);
       idle = null;
@@ -84,6 +96,7 @@ export function workerExecutor({ idleMs = 2000 }: { idleMs?: number } = {}): Par
       if (idle) clearTimeout(idle);
       const current = worker;
       worker = null;
+      ocrLoaded = false;
       failAll('parse worker closed');
       if (current) await current.terminate();
     },

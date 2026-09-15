@@ -90,6 +90,19 @@ const HOTEL_FOLIO_SLOTS: readonly Slot[] = [
   { key: 'paidAmount', label: '已付款', required: false, format: 'money' },
 ];
 
+// 出租车车费发票 (taxi receipt): every slot is read by OCR, so each is `fact_correctable` (ADR-0017).
+const TAXI_RECEIPT_SLOTS: readonly Slot[] = [
+  { key: 'invoiceCode', label: '发票代码', required: true, format: 'text' },
+  { key: 'invoiceNumber', label: '发票号码', required: true, format: 'text' },
+  { key: 'travelDate', label: '日期', required: true, format: 'date' },
+  { key: 'totalAmount', label: '金额', required: true, format: 'money' },
+  { key: 'plate', label: '车号', required: false, format: 'text' },
+  { key: 'boardTime', label: '上车时间', required: false, format: 'text' },
+  { key: 'alightTime', label: '下车时间', required: false, format: 'text' },
+  { key: 'distance', label: '里程', required: false, format: 'text' },
+  { key: 'city', label: '城市', required: false, format: 'text' },
+];
+
 // `*住宿服务*住宿费` → 住宿费; the 税收分类 (tax class) between the asterisks decides the category.
 const itemParts = (itemName: string | undefined) => /^\*([^*]+)\*(.*)$/.exec(itemName ?? '');
 
@@ -213,12 +226,47 @@ export const KINDS: Readonly<Record<MaterialKind, KindSpec>> = {
     // The face 票种 decides the ERP invoice type; no company rule allows another one yet (#188 pins the rules).
     erpInvoiceTypes: (values) => [INVOICE_TYPES[values['invoiceType'] ?? ''] ?? '增值税发票'],
   },
-  // Slots, categories and events arrive with their layouts: rail #184, ride itinerary #184, folio #185, taxi #186.
   rail_ticket: RAIL_TICKET,
   ride_itinerary: RIDE_ITINERARY,
   // A folio forms no event of its own: `hotel-stay.ts` pairs it with its hotel invoice for the stay dates.
   hotel_folio: { kind: 'hotel_folio', label: '酒店结账单', role: 'reference', slots: HOTEL_FOLIO_SLOTS, categoryLabel: () => CATEGORIES.accommodation.label, event: noEvent },
-  taxi_receipt: { kind: 'taxi_receipt', label: '出租车票', role: 'primary_voucher', slots: [], categoryLabel: noCategory, event: noEvent },
+  taxi_receipt: {
+    kind: 'taxi_receipt',
+    label: '出租车车费发票',
+    role: 'primary_voucher',
+    slots: TAXI_RECEIPT_SLOTS,
+    categoryLabel: () => CATEGORIES.city_transport.label,
+    event(values) {
+      const { travelDate, totalAmount, invoiceNumber, city } = values;
+      if (!travelDate || !totalAmount) return null;
+      const description = city ? `出租车（${city}）` : '出租车';
+      // A paper taxi receipt states one amount and no separable tax. Undivided 市内交通: `deriveCategory` splits it by
+      // `city` (from the 开票地区码) against the home city; without a city the line blocks on category_city_missing.
+      return {
+        category: CATEGORIES.city_transport,
+        summary: description,
+        description,
+        date: travelDate,
+        endDate: null,
+        grossAmount: totalAmount,
+        netAmount: totalAmount,
+        taxAmount: '0.00',
+        invoiceType: '普通发票',
+        maskedNumber: invoiceNumber ? maskNumber(invoiceNumber) : null,
+        city: city || null,
+      };
+    },
+    check(values) {
+      const { invoiceCode, invoiceNumber } = values;
+      if (invoiceCode && !/^(?:\d{10}|\d{12})$/.test(invoiceCode)) return '发票代码应为 10 或 12 位数字。';
+      if (invoiceNumber && !/^\d{8}$/.test(invoiceNumber)) return '发票号码应为 8 位数字。';
+      return null;
+    },
+    // Kernel invoiceIdentity (parse.mjs:318): a pre-全电 invoice is identified by 发票代码 + 8-digit 发票号码.
+    identity: ({ invoiceCode, invoiceNumber }) =>
+      /^(?:\d{10}|\d{12})$/.test(invoiceCode ?? '') && /^\d{8}$/.test(invoiceNumber ?? '') ? `vat-legacy:${invoiceCode}:${invoiceNumber}` : null,
+    erpInvoiceTypes: () => ['普通发票'],
+  },
 };
 
 export function slotOf(kind: MaterialKind, key: string): Slot | undefined {

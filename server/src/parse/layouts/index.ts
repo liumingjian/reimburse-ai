@@ -3,6 +3,7 @@ import { amapItinerary } from './amap-itinerary';
 import { einvoice } from './einvoice';
 import { quanji } from './quanji';
 import { rail12306 } from './rail12306';
+import { machinePrinted } from './taxi';
 
 // The 版式 (layout) registry. Adding a layout: one module under `layouts/` exporting a `Layout`, plus one line here.
 // Order carries no meaning: dispatch needs exactly one match (ADR-0017), so a new layout whose anchors also hit an
@@ -12,5 +13,5 @@ export const LAYOUTS: readonly Layout[] = [
   rail12306,
   amapItinerary,
   quanji,
-  // taxi_receipt/machine_printed (#186)
+  machinePrinted,
 ];
