@@ -20,9 +20,15 @@ export type EventDraft = {
   taxAmount: string;
   invoiceType: string;
   maskedNumber: string | null;
-  // 费用发生城市 (expense city). City transport needs it to be split into local / out-of-town against the task's home
-  // city (#188 `rules/company-rules.ts` deriveCategory); absent, the line blocks. #184 sets it from the itinerary.
+  // Trip facts, when the material carries them (rail ticket face, itinerary leg); null/absent otherwise.
+  // `city` is the 费用发生城市 (expense city): city transport is split into local / out-of-town against the task's home
+  // city by `deriveCategory` (rules/company-rules.ts); absent, the line blocks on category_city_missing.
   city?: string | null;
+  origin?: string | null;
+  destination?: string | null;
+  route?: string | null;
+  // The evidence conclusion shown on the voucher group's first event.
+  evidenceNote?: string | null;
 };
 
 export type KindSpec = {
@@ -39,6 +45,7 @@ export type KindSpec = {
 // Kernel category codes (contract ExpenseCategorySchema).
 export const CATEGORIES = {
   accommodation: { code: 'accommodation', label: '住宿' },
+  long_distance: { code: 'long_distance', label: '长途交通' },
   // Undivided 市内交通: `deriveCategory` (rules/company-rules.ts) splits it into local / out-of-town from the expense
   // city and the task's home city; a line never carries this code.
   city_transport: { code: 'city_transport', label: '市内交通' },
@@ -92,6 +99,64 @@ const INVOICE_TYPES: Readonly<Record<string, string>> = { 专票: '增值税专�
 const noEvent = () => null;
 const noCategory = () => null;
 
+// 铁路电子客票 (rail e-ticket, #184). The face carries only the fare: net = fare and tax = 0 (the kernel's
+// `rail_total_tax_zero_rule`); the expense date is the travel date, never the issue date.
+const RAIL_TICKET: KindSpec = {
+  kind: 'rail_ticket',
+  label: '铁路电子客票',
+  role: 'primary_voucher',
+  slots: [
+    { key: 'invoiceNumber', label: '发票号码', required: true, format: 'text' },
+    { key: 'issueDate', label: '开票日期', required: true, format: 'date' },
+    { key: 'trainNumber', label: '车次', required: true, format: 'text' },
+    { key: 'departStation', label: '出发站', required: true, format: 'text' },
+    { key: 'arriveStation', label: '到达站', required: true, format: 'text' },
+    { key: 'travelDate', label: '乘车日期', required: true, format: 'date' },
+    { key: 'departTime', label: '开车时间', required: false, format: 'text' },
+    { key: 'seatClass', label: '席别', required: false, format: 'text' },
+    { key: 'passengerName', label: '乘车人', required: false, format: 'text' },
+    { key: 'totalAmount', label: '票价', required: true, format: 'money' },
+  ],
+  categoryLabel: () => CATEGORIES.long_distance.label,
+  event(values) {
+    const { travelDate, totalAmount, departStation, arriveStation, trainNumber, invoiceNumber } = values;
+    if (!travelDate || !totalAmount || !departStation || !arriveStation) return null;
+    const route = `${departStation} → ${arriveStation}`;
+    return {
+      category: CATEGORIES.long_distance,
+      summary: trainNumber ? `${trainNumber} ${route}` : route,
+      description: '火车票',
+      date: travelDate,
+      endDate: null,
+      grossAmount: totalAmount,
+      netAmount: totalAmount,
+      taxAmount: '0.00',
+      invoiceType: '铁路电子客票',
+      maskedNumber: invoiceNumber ? maskNumber(invoiceNumber) : null,
+      city: null,
+      origin: departStation,
+      destination: arriveStation,
+      route,
+      evidenceNote: '一张铁路电子客票就是一次费用；无需参考材料',
+    };
+  },
+};
+
+// 网约车行程单 (ride itinerary, #184): a reference material. It forms no event of its own; its legs split the paired
+// ride-hailing invoice (`server/src/allocation.ts`). Leg slots are keyed `segments[i].<field>` (0-based `i`).
+const RIDE_ITINERARY: KindSpec = {
+  kind: 'ride_itinerary',
+  label: '网约车行程单',
+  role: 'reference',
+  slots: [
+    { key: 'applyDate', label: '申请日期', required: false, format: 'date' },
+    { key: 'segmentCount', label: '行程段数', required: true, format: 'text' },
+    { key: 'itineraryTotal', label: '行程单合计', required: true, format: 'money' },
+  ],
+  categoryLabel: noCategory,
+  event: noEvent,
+};
+
 export const KINDS: Readonly<Record<MaterialKind, KindSpec>> = {
   vat_invoice: {
     kind: 'vat_invoice',
@@ -119,8 +184,8 @@ export const KINDS: Readonly<Record<MaterialKind, KindSpec>> = {
     },
   },
   // Slots, categories and events arrive with their layouts: rail #184, ride itinerary #184, folio #185, taxi #186.
-  rail_ticket: { kind: 'rail_ticket', label: '铁路电子客票', role: 'primary_voucher', slots: [], categoryLabel: noCategory, event: noEvent },
-  ride_itinerary: { kind: 'ride_itinerary', label: '网约车行程单', role: 'reference', slots: [], categoryLabel: noCategory, event: noEvent },
+  rail_ticket: RAIL_TICKET,
+  ride_itinerary: RIDE_ITINERARY,
   // A folio forms no event of its own: `hotel-stay.ts` pairs it with its hotel invoice for the stay dates.
   hotel_folio: { kind: 'hotel_folio', label: '酒店结账单', role: 'reference', slots: HOTEL_FOLIO_SLOTS, categoryLabel: () => CATEGORIES.accommodation.label, event: noEvent },
   taxi_receipt: { kind: 'taxi_receipt', label: '出租车票', role: 'primary_voucher', slots: [], categoryLabel: noCategory, event: noEvent },

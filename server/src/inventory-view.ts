@@ -1,5 +1,6 @@
 import type { ExpenseEvent, Inventory, InventoryPhase, Line, Material, PendingField, PendingItem } from '@baox/contract';
 import type { ParseOutcome, Recognised } from './parse/dispatch';
+import { planTransport, type PlannedLine } from './allocation';
 import { pairHotelStays, type StayVoucher } from './hotel-stay';
 import { CATEGORIES, KINDS, slotOf } from './parse/kinds';
 import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/company-rules';
@@ -132,13 +133,29 @@ export type CategoryContext = { homeCity: string; rules: CompanyRules };
 
 const CITY_MISSING_CHECK = '取不到费用发生城市';
 
-export function inventoryView(materials: readonly ViewMaterial[], results: RunResults, { homeCity, rules }: CategoryContext = { homeCity: '', rules: COMPANY_RULES }): InventoryView {
+// `allocations`: per invoice materialId, the per-leg totals the user gave on its allocation item (#187 feeds them).
+export function inventoryView(
+  materials: readonly ViewMaterial[],
+  results: RunResults,
+  { homeCity, rules }: CategoryContext = { homeCity: '', rules: COMPANY_RULES },
+  allocations?: ReadonlyMap<string, readonly string[]>,
+): InventoryView {
   const pendingItems: PendingItem[] = [];
-  const drafts: { material: ViewMaterial; draft: NonNullable<ReturnType<(typeof KINDS)['vat_invoice']['event']>> }[] = [];
+  const drafts: ({ material: ViewMaterial } & PlannedLine)[] = [];
   let waiting = 0;
   const waitingBy = { pdf: 0, image: 0 };
   const stayInvoices: StayVoucher[] = [];
   const folios: StayVoucher[] = [];
+
+  // Invoice ↔ itinerary pairing and per-leg lines / allocation items (#184), over the recognised included materials.
+  const transport = planTransport(
+    materials.flatMap((m) => {
+      const outcome = results?.outcomes.get(m.materialId);
+      if (m.excluded || outcome?.outcome !== 'recognised') return [];
+      return [{ materialId: m.materialId, fileName: m.fileName, kind: outcome.kind, layout: outcome.layout, values: valuesOf(outcome), ok: itemsOf(m, outcome).items.length === 0 }];
+    }),
+    allocations,
+  );
 
   const recognisedViews = materials.map((m): Material => {
     const base: Material = {
@@ -172,8 +189,9 @@ export function inventoryView(materials: readonly ViewMaterial[], results: RunRe
       waitingBy[m.mediaType] += 1;
       return base;
     }
-    const { items, checkText: parsedCheck } = itemsOf(m, outcome);
-    let checkText = parsedCheck;
+    const own = itemsOf(m, outcome);
+    const items = [...own.items, ...(transport.items.get(m.materialId) ?? [])];
+    let checkText = [own.checkText, transport.notes.get(m.materialId)].filter(Boolean).join('；');
     if (!recognised) {
       pendingItems.push(...items);
       const kindLabel = outcome.outcome === 'ambiguous' ? INVENTORY_COPY.ambiguous : outcome.outcome === 'failed' ? INVENTORY_COPY.failed : INVENTORY_COPY.unrecognised;
@@ -182,12 +200,15 @@ export function inventoryView(materials: readonly ViewMaterial[], results: RunRe
     const spec = KINDS[recognised.kind];
     const values = valuesOf(recognised);
     if (items.length === 0 && spec.role === 'primary_voucher') {
-      const draft = spec.event(values);
-      const derived = draft ? deriveCategory(draft.category, draft.city ?? null, homeCity, rules) : null;
-      if (draft && derived && 'category' in derived) {
-        drafts.push({ material: m, draft: { ...draft, category: derived.category } });
-        if (derived.category.code === CATEGORIES.accommodation.code) stayInvoices.push({ materialId: m.materialId, values });
-      } else if (derived) {
+      // A paired ride-hailing invoice forms one line per itinerary leg (#184); any other voucher its kind's single event.
+      const planned = transport.lines.get(m.materialId);
+      const single = planned ? null : spec.event(values);
+      const candidates: PlannedLine[] = planned ?? (single ? [{ draft: single, leg: null, referenceMaterialIds: [], evidenceNote: single.evidenceNote ?? null }] : []);
+      const derived = candidates.map((line) => ({ line, derived: deriveCategory(line.draft.category, line.draft.city ?? null, homeCity, rules) }));
+      if (derived.every(({ derived: d }) => 'category' in d)) {
+        for (const { line, derived: d } of derived) if ('category' in d) drafts.push({ material: m, ...line, draft: { ...line.draft, category: d.category } });
+        if (single && derived[0] && 'category' in derived[0].derived && derived[0].derived.category.code === CATEGORIES.accommodation.code) stayInvoices.push({ materialId: m.materialId, values });
+      } else {
         // Kernel category_city_missing: city transport is never put on the home city for want of its own city.
         items.push(
           choice(`category_city_missing.${m.materialId}`, m.materialId, `「${m.fileName}」取不到费用发生城市`, '市内交通要按费用发生城市与常驻城市比对，才能分出本地还是外地；这张发票上没有城市，不能拿常驻城市顶替。请在上传页追加它的行程单后重新盘点，或排除这份材料。', [EXCLUDE]),
@@ -205,6 +226,7 @@ export function inventoryView(materials: readonly ViewMaterial[], results: RunRe
       role: status === 'ok' ? spec.role : 'pending',
       status,
       checkText,
+      linkedMaterialIds: transport.links.get(m.materialId) ?? [],
       pendingItemIds: items.map((item) => item.itemId),
       fields: recognised.candidates.map((c) => ({ key: c.key, label: slotOf(recognised.kind, c.key)?.label ?? c.key, value: c.value, source: c.source, parserVersion: c.parserVersion, evidence: c.evidence })),
     };
@@ -219,17 +241,20 @@ export function inventoryView(materials: readonly ViewMaterial[], results: RunRe
   // within a category, voucher upload order. Invoice labels follow voucher upload order.
   const rank = ['local_city_transport', 'remote_city_transport', 'long_distance', 'accommodation'];
   const ordered = [...drafts].sort((a, b) => rank.indexOf(a.draft.category.code) - rank.indexOf(b.draft.category.code));
-  const invoiceNo = new Map(drafts.map((d, index) => [d.material.materialId, index + 1]));
+  const invoiceNo = new Map([...new Set(drafts.map((d) => d.material.materialId))].map((id, index) => [id, index + 1]));
   const events: ExpenseEvent[] = [];
   const lines: Line[] = [];
-  ordered.forEach(({ material, draft: own }, index) => {
-    const eventId = `event.${material.materialId}`;
+  ordered.forEach(({ material, draft: own, leg, referenceMaterialIds: legReferences, evidenceNote: legNote }, index) => {
+    // One line per leg of a split invoice: `<materialId>.<leg>` (1-based leg).
+    const key = leg === null ? material.materialId : `${material.materialId}.${leg}`;
+    const eventId = `event.${key}`;
     const stay = stays.get(material.materialId);
     const draft = stay ? { ...own, date: stay.checkIn, endDate: stay.checkOut } : own;
-    const referenceMaterialIds = stay ? [stay.folioId] : [];
-    events.push({ eventId, no: index + 1, voucherMaterialId: material.materialId, referenceMaterialIds, category: draft.category, summary: draft.summary, evidenceNote: stay?.note ?? null, date: draft.date, endDate: draft.endDate, city: draft.city ?? null, origin: null, destination: null, grossAmount: draft.grossAmount });
+    const referenceMaterialIds = stay ? [stay.folioId] : legReferences;
+    const trip = { city: draft.city ?? null, origin: draft.origin ?? null, destination: draft.destination ?? null };
+    events.push({ eventId, no: index + 1, voucherMaterialId: material.materialId, referenceMaterialIds, category: draft.category, summary: draft.summary, evidenceNote: stay?.note ?? legNote, date: draft.date, endDate: draft.endDate, ...trip, grossAmount: draft.grossAmount });
     lines.push({
-      lineId: `line.${material.materialId}`,
+      lineId: `line.${key}`,
       no: index + 1,
       voucherMaterialId: material.materialId,
       invoiceLabel: `发票${invoiceNo.get(material.materialId)}`,
@@ -238,10 +263,8 @@ export function inventoryView(materials: readonly ViewMaterial[], results: RunRe
       endDate: draft.endDate,
       category: draft.category,
       description: draft.description,
-      city: draft.city ?? null,
-      origin: null,
-      destination: null,
-      route: null,
+      ...trip,
+      route: draft.route ?? null,
       maskedNumber: draft.maskedNumber,
       projectCode: null,
       projectName: null,
