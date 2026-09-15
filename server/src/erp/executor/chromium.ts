@@ -1,4 +1,4 @@
-// Origin: kernel/src/chromium-cdp.mjs. Attach, list and evaluate Chromium pages over CDP.
+// Origin: 50931a3:kernel/src/chromium-cdp.mjs. Attach, list and evaluate Chromium pages over CDP.
 // The v1 executor drives the app's dedicated Chromium profile; the browser brand (Chrome, Edge) is not part of
 // this seam, and there is no fallback to another transport.
 

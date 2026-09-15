@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// 校验夹具产物：文件集与清单一致；每份 PDF 用内核的零依赖取字器（kernel/src/pdftext.mjs）抽出预期中文；图片有正确的文件头。
+// 校验夹具产物：文件集与清单一致；每份 PDF 用零依赖取字器（./pdftext.mjs，原内核取字器）抽出预期中文；图片有正确的文件头。
 // 用法：node fixtures/scripts/verify.mjs   退出码 0 = 全部通过。
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractPdfText } from '../../kernel/src/pdftext.mjs';
+import { extractPdfText } from './pdftext.mjs';
 import {
   AMAP_INVOICE,
   AMAP_ITINERARY,

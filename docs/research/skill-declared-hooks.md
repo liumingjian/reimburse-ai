@@ -1,6 +1,6 @@
 # Skill 声明的 PreToolUse 钩子，在项目域到底生不生效
 
-> **状态：归档（2026-09-11）。** [本地报销应用](../design/standalone-app.md)去掉了 Agent，Claude Code Skill 钩子的行为不再影响产品。本文仍是 [ADR-0010](../adr/0010-kernel-side-command-guard.md) 守卫的实测依据，`kernel/src/guard.mjs` 与 `kernel/test/skills.test.mjs` 引用它；随守卫一起删除。
+> **状态：归档（2026-09-11）。** [本地报销应用](../design/standalone-app.md)去掉了 Agent，Claude Code Skill 钩子的行为不再影响产品。本文仍是 [ADR-0010](../adr/0010-kernel-side-command-guard.md) 守卫的实测依据，`50931a3:kernel/src/guard.mjs` 与 `50931a3:kernel/test/skills.test.mjs` 引用它；随守卫一起删除。
 
 **结论：不生效。** SKILL.md 的 frontmatter 里声明的 `hooks.PreToolUse` 一次都不会被调起。
 同一个脚本挂到 `.claude/settings.json` 上则确实拦得住，而且连 `bypassPermissions` 都压不过它。
@@ -98,8 +98,8 @@ CLAUDE_PID=…
 
 ## 落到 1.0.0 的做法
 
-1. **守卫做进内核自身**（`kernel/src/guard.mjs`）。这是兜底的那一层，不依赖任何安装步骤。
-2. **`skills/baox/hooks/guard.mjs` 仍然保留**，但改挂 `.claude/settings.json`，作为可选的外层。
+1. **守卫做进内核自身**（`50931a3:kernel/src/guard.mjs`）。这是兜底的那一层，不依赖任何安装步骤。
+2. **`50931a3:skills/baox/hooks/guard.mjs` 仍然保留**，但改挂 `.claude/settings.json`，作为可选的外层。
    判据从内核那一份 import，不在钩子里抄第二遍。
 3. 放行的规矩是「`next`，外加内核**刚刚**放进 `step.argv` 的那一条」，
    不是「只有 `next`」——`kind: "run"` 那一步本来就要模型去跑低层命令。

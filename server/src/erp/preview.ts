@@ -1,6 +1,6 @@
 // Server-side construction of the ERP draft preview: the exact field plan the executor realises.
-// Origin: kernel/src/erp-write-preview.mjs (buildErpWritePreview, previewLinesDigest) and
-// kernel/src/erp-draft-flow.mjs (buildErpDraftPreview, routePlanOf). Codes and messages are kept.
+// Origin: 50931a3:kernel/src/erp-write-preview.mjs (buildErpWritePreview, previewLinesDigest) and
+// 50931a3:kernel/src/erp-draft-flow.mjs (buildErpDraftPreview, routePlanOf). Codes and messages are kept.
 // It reads no files, opens no browser and never saves.
 
 import { createHash } from 'node:crypto';

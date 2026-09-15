@@ -1,6 +1,6 @@
 // ERP 对账 (reconcile): the server-side classifier that places the current expense form in exactly one of the six
 // 对账中断点 (reconcile buckets) and gives one of the two actions (ADR-0016: the executor only observes, the server
-// judges). Origin: kernel/src/erpreconcile.mjs (BUCKETS, ACTIONS, sumColumn, classifyReconciliation, attemptRecord);
+// judges). Origin: 50931a3:kernel/src/erpreconcile.mjs (BUCKETS, ACTIONS, sumColumn, classifyReconciliation, attemptRecord);
 // contract: docs/research/erp-expense-flow/save-contract.md "erp-reconcile 判定契约" (issue #36).
 //
 // Every reading carries its own `readable`: "empty" is a conclusion, "unreadable" is a refusal to conclude.

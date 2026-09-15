@@ -1,5 +1,7 @@
 # 图片字段提取设计
 
+> **Status: superseded (2026-09-15, #197).** Superseded by ADR-0017 and slice #186 (`server/src/parse/`); the package and the Skill described here were deleted in #197. Paths below point into git commit `50931a3`, the last one that has the Skill-era code.
+
 > **状态：已修订（2026-09-11）。** 按[本地报销应用](standalone-app.md)，调用方改为应用服务端，不再是 `extract-reimbursement-images` Skill 的内部模块；图片只走 OCR + 规则，失败转手工补填，下文的模型视觉 Adapter 与视觉回退不再适用。模块 seam、Python Worker 与 JSONL 协议继续有效。
 
 本文是 `extract-reimbursement-images` 的实现规格。领域语言以根目录 `CONTEXT.md` 为准；架构决定见 [ADR-0013](../adr/0013-managed-local-ocr-for-image-fields.md)。
@@ -71,7 +73,7 @@ internal Skill
   -> model vision only when requested by the coordinator
 ```
 
-TypeScript 源码位于 `packages/image-field-extraction/`；Python 只实现 OCR Worker。内部 Skill 位于 `skills/extract-reimbursement-images/`，正常业务由 `baox` 给它版本化工单；Agent 不选择适配器或拼装低层命令。
+TypeScript 源码位于 `50931a3:packages/image-field-extraction/`；Python 只实现 OCR Worker。内部 Skill 位于 `50931a3:skills/extract-reimbursement-images/`，正常业务由 `baox` 给它版本化工单；Agent 不选择适配器或拼装低层命令。
 
 模型视觉是宿主能力，不能由本地 TypeScript 直接调用。默认适配器直接由主会话逐张读取图片；选择 `ocr-assisted` 时，OCR 先产出候选，返回 `needs_model_vision` 或候选校验失败的图片再由内部 Skill 交给模型视觉，并把结果交回同一套校验。同一张图片一次只采用一条最终候选路径，识别完成后继续材料关联和 ERP 明细构造，用户在最终整单清单中统一确认。
 

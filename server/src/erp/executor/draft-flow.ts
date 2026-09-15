@@ -1,5 +1,5 @@
 // The narrow boundary between an approved preview and an ERP draft: fill it, then save it exactly once.
-// Origin: kernel/src/erp-draft-flow.mjs (fillApprovedPreview, saveApprovedPreview, matchReceiptRows,
+// Origin: 50931a3:kernel/src/erp-draft-flow.mjs (fillApprovedPreview, saveApprovedPreview, matchReceiptRows,
 // formReadbackToken, completePreviewProblems). It never creates an approval and never retries a save.
 // Form actions are injected; `readCurrent` returns raw readings plus the server's strict verdict (`taskMatch`).
 

@@ -2,7 +2,7 @@ import { cents, compact, money, rows, type ParseDoc, type TextObservation } from
 import { ruleSource, type Candidate, type EvidenceRef, type Layout } from '../layout';
 
 // `rail_ticket/12306`: the 铁路电子客票 (rail e-ticket) face from the PDF text layer. Ported from the rail rules of
-// kernel/src/parse.mjs (`rail_eticket`): the face carries only the fare, so no net amount or tax is read — they are
+// 50931a3:kernel/src/parse.mjs (`rail_eticket`): the face carries only the fare, so no net amount or tax is read — they are
 // absent as a face fact, not a parse failure. The travel date (乘车日期), not the issue date, is the expense date.
 
 const KIND = 'rail_ticket';

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 // against ERP's own query service (`ExecuteBillQuery` on the `BJYC_ProJect` form, fields FNumber, FName,
 // FDocumentStatus, FForbidStatus), run in the user's logged-in ERP session. It checks, it never syncs: only the
 // numbers asked about are looked up, and the book stores only those.
-// Ported from kernel/src/erpcatalog.mjs `verifyProject` (verdicts) and projectintake.mjs (retries).
+// Ported from 50931a3:kernel/src/erpcatalog.mjs `verifyProject` (verdicts) and projectintake.mjs (retries).
 //
 // The live adapter (`live-catalog.ts`) queries inside the logged-in ERP tab of the dedicated Chromium; `main.ts` wires
 // it. `createApp` defaults to `unavailableCatalog()` (every lookup answers not_logged_in). Tests and the e2e server use

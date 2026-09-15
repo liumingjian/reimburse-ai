@@ -1,4 +1,4 @@
-// Origin: kernel/test/chromium-cdp.test.mjs (translated to Vitest; inputs and expected outputs kept).
+// Origin: 50931a3:kernel/test/chromium-cdp.test.mjs (translated to Vitest; inputs and expected outputs kept).
 // The kernel's erp-browser-adapters assertions (ego vs CDP adapter choice) become direct checks on the CDP page,
 // since the TypeScript executor targets CDP only (ADR-0016 drops ego).
 import { describe, expect, it } from 'vitest';

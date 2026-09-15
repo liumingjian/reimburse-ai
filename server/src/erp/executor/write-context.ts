@@ -1,4 +1,4 @@
-// Origin: kernel/src/erp-write-context.mjs. Chooses the write transport, attaches the authorised page, and
+// Origin: 50931a3:kernel/src/erp-write-context.mjs. Chooses the write transport, attaches the authorised page, and
 // prepares the blank form. The ego transport is dropped (ADR-0016); only Chromium over CDP remains.
 
 import { attachChromiumPage, chromiumCdpTransport, type ChromiumPage } from './chromium';

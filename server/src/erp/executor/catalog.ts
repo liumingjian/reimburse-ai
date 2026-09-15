@@ -1,6 +1,6 @@
 // 报销信息核对 (catalog check): the read-only check that every project and expense item of the plan exists in ERP,
 // carries the expected name, is audited and not forbidden. A mismatch aborts before import, with no attempt.
-// Origin: kernel/src/erpcatalog.mjs (queryRows, verifyExpenseItems, verifyProject). It calls only Kingdee's own
+// Origin: 50931a3:kernel/src/erpcatalog.mjs (queryRows, verifyExpenseItems, verifyProject). It calls only Kingdee's own
 // query service ExecuteBillQuery, with the user's logged-in session; nothing is written.
 
 import { evalIn, type CdpSession } from './cdp';

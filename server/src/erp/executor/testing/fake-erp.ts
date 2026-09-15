@@ -1,5 +1,5 @@
 // The fake ERP: a stateful fake CDP session over recorded DOM fixtures (./fixtures), after the kernel's
-// kernel/test/fake-session.mjs. Every executor expression really runs against a jsdom document; clicks and keys
+// 50931a3:kernel/test/fake-session.mjs. Every executor expression really runs against a jsdom document; clicks and keys
 // arrive as CDP `Input.*` events at viewport coordinates and are turned into the behaviour the research recorded
 // (docs/research/erp-expense-flow): edit-on-click cells, select-all + typing + Enter/Tab commit, F7 code -> name,
 // the invoice-type dropdown, linked recalculation, the piaozone assistant as a child target, save -> 修改 mode.

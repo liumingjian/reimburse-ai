@@ -1,6 +1,6 @@
 # The local app derives a task's stage and step from stored facts
 
-The new baox local app (no model in the loop, at most one non-terminal 报销任务 (reimbursement task), the server decides the next step) re-designs the task core instead of porting `kernel/src/state.mjs`. We keep ADR-0009's principle, that the next step follows only from facts the server itself observed, and drop everything that existed to steer a model. The server stores **facts**; a pure function `project(facts) → { stage, step, blockers }` derives what the page sees. No `stage` column exists. Decided in [#150](https://github.com/liumingjian/reimburse-ai/issues/150).
+The new baox local app (no model in the loop, at most one non-terminal 报销任务 (reimbursement task), the server decides the next step) re-designs the task core instead of porting `50931a3:kernel/src/state.mjs`. We keep ADR-0009's principle, that the next step follows only from facts the server itself observed, and drop everything that existed to steer a model. The server stores **facts**; a pure function `project(facts) → { stage, step, blockers }` derives what the page sees. No `stage` column exists. Decided in [#150](https://github.com/liumingjian/reimburse-ai/issues/150).
 
 This ADR settles the numbering collisions noted on the wayfinder map: on `origin/main` they were already resolved by renumbering (MarkItDown stays 0011, Carbon is 0012, managed OCR is 0013), so this is 0014.
 

@@ -8,8 +8,8 @@ import { pdfDoc } from '../pdf';
 import { LAYOUTS } from '.';
 import { rail12306 } from './rail12306';
 
-// Origin: kernel/test/parse.test.mjs (case `长途/26349119423005877606.pdf`: rail e-ticket, only the fare on the face,
-// net/tax absent as a face fact) and kernel/test/events.test.mjs (`铁路电子客票：一张票一个事件，乘车日期来自票面`:
+// Origin: 50931a3:kernel/test/parse.test.mjs (case `长途/26349119423005877606.pdf`: rail e-ticket, only the fare on the face,
+// net/tax absent as a face fact) and 50931a3:kernel/test/events.test.mjs (`铁路电子客票：一张票一个事件，乘车日期来自票面`:
 // the travel date, not the issue date, is the expense date; net = fare, tax = 0). Inputs are @baox/fixtures m07/m08.
 
 const fixture = (file: string) => new Uint8Array(readFileSync(join(GENERATED_DIR, file)));

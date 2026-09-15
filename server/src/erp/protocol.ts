@@ -223,7 +223,7 @@ export const fieldPlanOf = (preview: Pick<ApprovedPreview, 'purpose' | 'lines'>)
   }),
 });
 
-// Origin: kernel/src/erp-write-preview.mjs previewShape / erpWritePreviewDigest. Field order and defaults are kept
+// Origin: 50931a3:kernel/src/erp-write-preview.mjs previewShape / erpWritePreviewDigest. Field order and defaults are kept
 // byte-for-byte so a digest computed here equals the kernel's for the same preview.
 const previewShape = (preview: any) => ({
   taskId: preview?.taskId ?? null,
@@ -291,7 +291,7 @@ const previewShape = (preview: any) => ({
 export const erpWritePreviewDigest = (preview: unknown): string =>
   createHash('sha256').update(JSON.stringify(previewShape(preview))).digest('hex').slice(0, 32);
 
-/** Whether an approval covers exactly this preview; one changed field voids it. Origin: kernel/src/erpwrite.mjs. */
+/** Whether an approval covers exactly this preview; one changed field voids it. Origin: 50931a3:kernel/src/erpwrite.mjs. */
 export const approvalCovers = (approval: { digest?: string; preview?: unknown } | null | undefined, preview: unknown): boolean =>
   !!approval && !!approval.preview
   && approval.digest === erpWritePreviewDigest(preview)

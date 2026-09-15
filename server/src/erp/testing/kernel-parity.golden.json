@@ -1,5 +1,5 @@
 {
-  "_origin": "Recorded by driving kernel/src (erpwrite-cdp, erp-browser-adapters cdpFormAdapter, erp-cdp-read + erpreconcile readReconciliation, erp-write-readback, erp-draft-flow, erp-write-context) against server/src/erp/executor/testing/fake-erp.ts with server/src/erp/testing/scenario.ts (assumeReceiptLink on). Row `y` (fake layout) dropped. taskMatch = kernel matchTaskLines ok.",
+  "_origin": "Recorded by driving 50931a3:kernel/src (erpwrite-cdp, erp-browser-adapters cdpFormAdapter, erp-cdp-read + erpreconcile readReconciliation, erp-write-readback, erp-draft-flow, erp-write-context) against server/src/erp/executor/testing/fake-erp.ts with server/src/erp/testing/scenario.ts (assumeReceiptLink on). Row `y` (fake layout) dropped. taskMatch = kernel matchTaskLines ok.",
   "taskId": "task-parity",
   "previewDigest": "ad9b3e2f30cc6aed04a71276206fa394",
   "readbacks": {

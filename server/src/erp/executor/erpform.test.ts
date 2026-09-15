@@ -1,4 +1,4 @@
-// Origin: kernel/test/erpform.test.mjs (translated to Vitest; inputs and expected outputs kept). The selectOption
+// Origin: 50931a3:kernel/test/erpform.test.mjs (translated to Vitest; inputs and expected outputs kept). The selectOption
 // cases drop the kernel's unused `clicks`/`settleFirst` options, which selectOption never read.
 import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';

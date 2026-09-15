@@ -10,8 +10,8 @@ import { pdfDoc } from '../pdf';
 import { LAYOUTS } from '.';
 import { quanji } from './quanji';
 
-// Ported from kernel/test/parse.test.mjs (REFERENCES, the `hotel_folio` case: a folio is a reference material with no
-// invoice identity whose stay dates are candidates) and the folio half of kernel/test/events.test.mjs
+// Ported from 50931a3:kernel/test/parse.test.mjs (REFERENCES, the `hotel_folio` case: a folio is a reference material with no
+// invoice identity whose stay dates are candidates) and the folio half of 50931a3:kernel/test/events.test.mjs
 // ('住宿：入住日期来自结账单…'), on the real text layer of @baox/fixtures m02. The 全季 (Quanji) chain anchor is new:
 // the kernel matched any 结账单.
 

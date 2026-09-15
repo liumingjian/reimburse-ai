@@ -1,4 +1,4 @@
-// Origin: kernel/src/chrome.mjs (connect, evalIn, autoAttach, clickAt, typeText, pressKey, selectAll, targets).
+// Origin: 50931a3:kernel/src/chrome.mjs (connect, evalIn, autoAttach, clickAt, typeText, pressKey, selectAll, targets).
 // A minimal Chrome DevTools Protocol client. Node 24 ships a global WebSocket, so this needs no dependency.
 //
 // One connection carries many commands: Kingdee (金蝶) controls only accept real input events, so

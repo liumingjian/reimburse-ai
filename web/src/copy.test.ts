@@ -1,5 +1,5 @@
 // @vitest-environment node
-// 员工可见文案遵守内核 FORBIDDEN_USER_TERMS（kernel/src/interaction.mjs）：页面文案常量与源码里的中文文案都不许含禁用词。
+// 员工可见文案遵守内核 FORBIDDEN_USER_TERMS（50931a3:kernel/src/interaction.mjs）：页面文案常量与源码里的中文文案都不许含禁用词。
 // 只读文件系统与常量，不碰 DOM。
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';

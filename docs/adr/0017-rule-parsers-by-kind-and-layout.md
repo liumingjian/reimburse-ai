@@ -12,14 +12,14 @@ With no model in the loop, rule parsers and the user are the only producers of �
   - `taxi_receipt`.
 
   A layout parser belongs to one kind and only recognises and extracts. The v1 layouts are `vat_invoice/einvoice`, `rail_ticket/12306`, `ride_itinerary/amap`, `hotel_folio/quanji` and `taxi_receipt/machine_printed`. Supporting 滴滴 (Didi) itineraries or 汉庭 (Hanting) folios takes one new layout module and one registry line. A new kind, such as meal receipts or supplies, also needs a category and an ERP mapping, so it is outside v1.
-- **Dispatch.** Each layout exposes `recognise(doc)` and `parse(doc)`. `recognise` matches on hard anchors only. When exactly one layout matches, it parses. When none matches, the material is unrecognised. When several match, a blocking pending item is raised. First match wins no longer holds; it was the rule in `kernel/src/parse.mjs` and in `extractDocument`. A recognised layout with missing fields raises `missing_required`; that material still counts as recognised.
+- **Dispatch.** Each layout exposes `recognise(doc)` and `parse(doc)`. `recognise` matches on hard anchors only. When exactly one layout matches, it parses. When none matches, the material is unrecognised. When several match, a blocking pending item is raised. First match wins no longer holds; it was the rule in `50931a3:kernel/src/parse.mjs` and in `extractDocument`. A recognised layout with missing fields raises `missing_required`; that material still counts as recognised.
 - **Input.** Parsers read one source-agnostic model of positioned 文字观测 (text observations). The PDF adapter (unpdf) and the OCR adapter (`onnxruntime-node`, in-process per [#147](https://github.com/liumingjian/reimburse-ai/issues/147)) both produce it. NFKC normalisation, perspective correction of the taxi photo and QR decoding run before parsing. Shared layout helpers live in a module inside `server/`, which is their only consumer.
 - **Candidates.** The shape follows [#20](https://github.com/liumingjian/reimburse-ai/issues/20).
   - **Source.** A candidate's source is `rule:<kind>/<layout>` plus a `parserVersion`, or `user`. A derived candidate also names its rule, for example `rule:taxi_receipt/machine_printed.year_from_suffix`.
   - **Evidence.** Evidence refs carry `materialId`, page, text-observation ids and visible text. The OCR score stays on the text observation; candidates carry no confidence.
   - **Segments.** Segment slots are keyed `segments[i].<field>`. A re-parse that changes the segment count makes segment-keyed answers stale.
 - **QR.** On a 全电发票 the QR code is a second evidence source, `rule:vat_invoice/einvoice_qr`, which yields the invoice number, issue date, total including tax, and 专票/普票 (special or ordinary VAT invoice). A mismatch with the face is #20's `conflict`. An undecodable QR is advisory.
-- **Parser outcomes.** A parser returns `recognised | unrecognised | failed{retryable}`. These replace `needs_model_vision` in `packages/image-field-extraction`:
+- **Parser outcomes.** A parser returns `recognised | unrecognised | failed{retryable}`. These replace `needs_model_vision` in `50931a3:packages/image-field-extraction`:
   - `unsupported_document` and `insufficient_evidence` become `unrecognised`;
   - `ocr_failed` becomes a retryable `failed`;
   - `candidate_validation_failed` is no longer a parser outcome, because amount conservation is a validation rule that raises `validation_failure`.
@@ -52,7 +52,7 @@ With no model in the loop, rule parsers and the user are the only producers of �
 - **Earlier ADRs:**
   - supersedes the agent candidates of ADR-0011;
   - revises ADR-0004 and ADR-0013: no model vision and no Python worker; parse failures go to manual fill.
-- **`packages/image-field-extraction`:** stays frozen. Its rules are ported together with their tests as parity evidence, and the package is deleted in the retirement PR.
+- **`50931a3:packages/image-field-extraction`:** stays frozen. Its rules are ported together with their tests as parity evidence, and the package is deleted in the retirement PR.
 - **Contract:** gains the following, each changed in the slice that needs it:
   - `Material.kind`;
   - `Material.layout`, nullable while a material is unrecognised or filled in manually;

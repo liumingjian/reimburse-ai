@@ -1,5 +1,7 @@
 # 下一步做什么由内核判定，模型只执行；`baox next` 是模型唯一的入口
 
+> **Status: superseded (2026-09-15, #197).** Superseded by ADR-0014: the server derives stage and step from stored facts; `baox next` and the kernel were deleted in #197. Paths below point into git commit `50931a3`, the last one that has the Skill-era code.
+
 > **状态：部分取代（2026-09-11）。** 见[本地报销应用](../design/standalone-app.md)：状态判定是纯函数、`stepToken` 幂等、不许跳步继续有效；消费方由模型换成应用服务端和页面，「`baox next` 是模型唯一入口」「模型原样念 `speak`」不再适用，`speak` 措辞改为页面文案。继任 ADR 待补。
 
 0.9.x 里模型读 SKILL.md，自己决定下一条跑什么、参数怎么拼。那是模型质量差异
@@ -11,8 +13,8 @@
 
 三个决定：
 
-- **状态判定是一个纯函数**（`kernel/src/state.mjs`），入参是一份采集好的观测对象。
-  采集（碰文件系统和 CDP）单独放在 `kernel/src/observe.mjs`。分层是硬要求：
+- **状态判定是一个纯函数**（`50931a3:kernel/src/state.mjs`），入参是一份采集好的观测对象。
+  采集（碰文件系统和 CDP）单独放在 `50931a3:kernel/src/observe.mjs`。分层是硬要求：
   状态机的测试要能在一台没有 Chrome、没有材料目录的机器上跑完。
 - **`stepToken` 是"不可跳步"的物理实现**，不是给模型的告诫。凭据跟着状态走：
   状态没变就是同一个凭据（幂等），状态一变旧凭据当场作废。回传的凭据对不上就

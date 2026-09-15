@@ -1,4 +1,0 @@
-interface:
-  display_name: "Baox Reimbursement"
-  short_description: "Prepare reimbursement materials from invoices"
-  default_prompt: "使用 $baox 从这个材料目录开始或继续报销准备流程。"

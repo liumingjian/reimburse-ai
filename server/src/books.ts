@@ -6,7 +6,7 @@ import type { Db } from './db/database';
 // 项目簿 (project books): the 个人项目簿 (personal book, one per account) and, with #194, the 公共项目簿 (public book).
 // Both are the same append-only event stream `project_book_event` (admitted / checked / removed), told apart by
 // `scope` and `owner_account_id` (null for public); the current book is a fold of that stream.
-// Ported from kernel/src/projects.mjs (selectable rules, labels), projectintake.mjs (intake) and projectmaintain.mjs
+// Ported from 50931a3:kernel/src/projects.mjs (selectable rules, labels), projectintake.mjs (intake) and projectmaintain.mjs
 // (remove, purge, recheck). Names come only from the catalog; there is no edit, re-intake replaces.
 // In the public book a removal deactivates: the entry stays listed as 已停用 and cannot be chosen; re-intake revives it.
 

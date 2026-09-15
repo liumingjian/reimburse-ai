@@ -1,3 +1,4 @@
+// Origin: 50931a3:kernel/src/pdftext.mjs, rehomed by #197 for fixtures/scripts/verify.mjs only; the app parses PDFs with unpdf.
 import zlib from 'node:zlib';
 
 // 零依赖 PDF 取字。内核不允许有 npm 依赖（安装要能退化成纯文件拷贝），

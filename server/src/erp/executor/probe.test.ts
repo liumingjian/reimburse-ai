@@ -1,4 +1,4 @@
-// Origin: kernel/test/probe.test.mjs (translated to Vitest; inputs and expected outputs kept).
+// Origin: 50931a3:kernel/test/probe.test.mjs (translated to Vitest; inputs and expected outputs kept).
 // Observations come from a read-only probe of K3Cloud 8.2.0 on 2026-09-05: the login page and the main console
 // share one URL, so the samples differ only in DOM signals.
 import { describe, expect, it } from 'vitest';

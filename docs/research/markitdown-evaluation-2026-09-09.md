@@ -54,7 +54,7 @@
 
 ## JSON 模板边界
 
-以下保留评估时的结构提案；生产接口以 [Schema](../../kernel/src/pdf-markdown-schema.json) 和内核生成的材料工单为准。公共信封按 `invoice / ride_itinerary / hotel_folio` 区分字段集合，禁止未声明字段。模型不能自行填写权威元数据：
+以下保留评估时的结构提案；生产接口以 Schema（`50931a3:kernel/src/pdf-markdown-schema.json`） 和内核生成的材料工单为准。公共信封按 `invoice / ride_itinerary / hotel_folio` 区分字段集合，禁止未声明字段。模型不能自行填写权威元数据：
 
 ```json
 {

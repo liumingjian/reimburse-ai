@@ -1,6 +1,6 @@
 // One two-invoice fill scenario shared by the protocol job tests and the kernel parity golden:
 // a rail e-ticket (net/tax known only from the ERP receipt) and a ride-hailing invoice with a structured route.
-// Amounts and numbers follow kernel/test/erp-draft-flow.test.mjs.
+// Amounts and numbers follow 50931a3:kernel/test/erp-draft-flow.test.mjs.
 
 import { createHash } from 'node:crypto';
 import type { FakeErpOptions, FakeInvoice } from '../executor/testing/fake-erp';

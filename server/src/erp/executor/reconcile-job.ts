@@ -1,6 +1,6 @@
 // The read-only 对账 (reconcile) job of the v1 in-process executor (ADR-0016): Chromium ready -> login probe ->
 // one read of the open expense form -> `readback` (stage `reconcile`) -> `result` `read`.
-// It only evaluates: no click, key, scroll, navigation, upload or attempt. Origin: kernel/src/erpreconcile.mjs
+// It only evaluates: no click, key, scroll, navigation, upload or attempt. Origin: 50931a3:kernel/src/erpreconcile.mjs
 // readReconciliation (collection half); the judgement is the server's (server/src/erp/reconcile.ts).
 // The lazily rendered detail grid is not opened: opening it is a page side effect, and reconcile changes nothing.
 

@@ -1,4 +1,4 @@
-// Origin: kernel/src/probe.mjs. The read-only login probe: it reads what is already on the page and never
+// Origin: 50931a3:kernel/src/probe.mjs. The read-only login probe: it reads what is already on the page and never
 // navigates, clicks or calls a business service. Per ADR-0016 the probed identity is recorded, never compared.
 //
 // Facts measured on K3Cloud 8.2.0 (ADR-0002 addendum, ledger V-27 and V-42):

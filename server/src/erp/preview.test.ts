@@ -1,5 +1,5 @@
-// Origin: kernel/test/erp-write-preview.test.mjs (translated to Vitest; inputs and expected outputs kept).
-// `linesDigest` (kernel/src/selection.mjs) is the same function as `previewLinesDigest`.
+// Origin: 50931a3:kernel/test/erp-write-preview.test.mjs (translated to Vitest; inputs and expected outputs kept).
+// `linesDigest` (50931a3:kernel/src/selection.mjs) is the same function as `previewLinesDigest`.
 import { describe, expect, it } from 'vitest';
 import { buildErpWritePreview, previewLinesDigest as linesDigest } from './preview';
 import { approvalCovers, erpWritePreviewDigest, erpWritePreviewDigest as writePreviewDigest } from './protocol';

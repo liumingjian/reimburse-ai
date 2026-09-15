@@ -1,6 +1,5 @@
-// The executor-import lint rule (ADR-0016): the executor may import only `executor/**` and `../protocol`,
-// and no server code may import `kernel/`. Each case writes a throwaway file, runs the real oxlint config on it,
-// and removes it again.
+// The executor-import lint rule (ADR-0016): the executor may import only `executor/**` and `../protocol`.
+// Each case writes a throwaway file, runs the real oxlint config on it, and removes it again.
 import { spawnSync } from 'node:child_process';
 import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -31,8 +30,6 @@ describe('executor import boundary', () => {
     [EXECUTOR, "import { createApp } from '../../app';"],
     [TESTING, "import { createApp } from '../../../app';"],
     [TESTING, "import { judgeReadings } from '../../readback';"],
-    [EXECUTOR, "import { writeCell } from '../../../../kernel/src/erpform.mjs';"],
-    ['server/src', "import { writeCell } from '../../kernel/src/erpform.mjs';"],
   ])('fails when %s adds `%s`', (dir, source) => {
     const result = lint(dir, source);
     expect(result.failed, result.output).toBe(true);

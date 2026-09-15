@@ -1,5 +1,7 @@
 # 复用用户已登录的 Chrome，由用户自行完成 ERP 登录
 
+> **Status: superseded (2026-09-15, #197).** Superseded by ADR-0016: the server-owned ERP executor drives a dedicated Chromium profile under the app data directory; no Skill, no kernel copy (deleted in #197). Paths below point into git commit `50931a3`, the last one that has the Skill-era code.
+
 > **状态：已修订（2026-09-11，见[本地报销应用](../design/standalone-app.md)）。** 继续有效：内核经 CDP 驱动专用 profile 的 Chromium、用户自己登录 ERP、Node 内核零 npm 依赖。「去报销」即执行自动填报，此前「当前阶段不执行填报」的说法作废。下文中「Skill 引导用户」「内核随 Skill 拷贝」及 MarkItDown 运行时相关表述均为 Skill 时期的历史记录；普通页面用系统默认浏览器、ego 仅供自动化 QA 的规则见 AGENTS.md。
 
 ERP 自动化不自带浏览器，而是接管用户自己的 Chrome：Skill 引导用户以远程调试方式启动浏览器，**用户自己登录 ERP**，随后内核通过调试协议独占控制该浏览器完成上传、导入和保存草稿。
@@ -45,7 +47,7 @@ ERP 自动化不自带浏览器，而是接管用户自己的 Chrome：Skill 引
 ## 补记（2026-09-07，1.0.0：内核就地运行，数据目录搬到 `~/.baox`）
 
 - **上面 Consequences 里「内核安装在数据目录的 `runtime/`，不从 Skill 目录直接运行」这一条作废。** 内核现在就地运行，`baox` 展开成 `${CLAUDE_SKILL_DIR}/kernel/bin/baox.mjs`，`install-runtime`、`launch.mjs` 和整套版本闸一并删除。原来的理由是"多个 Skill 各夹带一份会造成版本漂移"，但那道闸挡不住真正发生过的事故：个人目录里的旧 Skill 静默遮蔽项目目录里的新 Skill 之后，旧 Skill 配旧内核完全自洽，闸门永远不触发（见上一条补记）。它挡住的只是安装步骤本身漏跑，而那个步骤是它自己引入的。就地运行之后，跑的是哪一份内核和跑的是哪一份 SKILL.md 从此是同一个问题，不可能对不上。
-- **版本号不再是闸，只是标签。** `kernel/VERSION` 继续由 `doctor` 报出来，用途只剩把用户报回来的问题钉到具体某一版。跨版本的兼容性判据改为数据目录里的 `schemaVersion`（见 [state-machine.md](../design/state-machine.md) 的 `schema_too_new`）——该判的是数据格式，不是代码版本。
+- **版本号不再是闸，只是标签。** `50931a3:kernel/VERSION` 继续由 `doctor` 报出来，用途只剩把用户报回来的问题钉到具体某一版。跨版本的兼容性判据改为数据目录里的 `schemaVersion`（见 [state-machine.md](../design/state-machine.md) 的 `schema_too_new`）——该判的是数据格式，不是代码版本。
 - **数据目录从 `~/Library/Application Support/baox/` 改到 `~/.baox/`**（`BAOX_HOME` 覆盖不变）。理由是用户自己找得到、打得开：这个目录里装着他本人的发票副本，出问题时第一句话应该是「打开 `~/.baox` 看看」。0.9.x 的既有数据在第一条命令上自动**拷**过去（不是移动），迁移只做一次，并在那条命令的输出里报 `migrated: { from, to }`。旧目录原样留着，装回 0.9.x 仍然可用——升级要能回滚，代价只是磁盘上多一份 `chrome-profile/`。
 
 ## 补记（2026-09-07，1.0.0：本地页面收窄到两处）
