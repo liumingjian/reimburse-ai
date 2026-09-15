@@ -4,7 +4,7 @@ import type { Db } from './db/database';
 // Per-account 常驻城市 (home city) memory: an append-only history whose latest row is the current value (ADR-0015
 // "each change also appends a history row"). A null value is a reset. New tasks default to it.
 
-export type HomeCitySource = 'task_create' | 'task_edit' | 'reset';
+export type HomeCitySource = 'task_create' | 'task_edit' | 'reset' | 'legacy_import';
 
 export async function rememberHomeCity(tx: Db, accountId: string, homeCity: string | null, source: HomeCitySource, at: string): Promise<void> {
   const last = await tx.selectFrom('home_city_setting').select((eb) => eb.fn.max('seq').as('seq')).executeTakeFirst();

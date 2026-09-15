@@ -1,0 +1,16 @@
+{
+  "owner": {
+    "account": "bob",
+    "tenant": "tenant-b"
+  },
+  "projects": [
+    {
+      "number": "B-0001",
+      "name": "Bob 的项目",
+      "confirmedAt": "2026-02-05T10:00:00.000Z",
+      "expiresOn": null,
+      "lastCheckedAt": null,
+      "lastVerdict": "confirmed"
+    }
+  ]
+}

@@ -31,7 +31,11 @@ export interface TaskTable {
   revision: number;
   created_at: string;
   updated_at: string;
+  // 0005_195: `legacy` for a read-only task imported from the legacy `~/.baox`; inserts default to `app`.
+  origin?: TaskOrigin | undefined;
 }
+
+export type TaskOrigin = 'app' | 'legacy';
 
 // Append-only from here down.
 export interface UploadBatchTable {
@@ -205,7 +209,47 @@ export interface ProjectSubmissionTable {
   created_at: string;
 }
 
+// ---- 0005_195 legacy import (all append-only) ----
+
+// One run of the legacy import; `report` is the JSON `LegacyImportReport`. The latest run is the current state.
+export interface ImportRunTable {
+  run_id: string;
+  seq: number;
+  account_id: string;
+  outcome: 'absent' | 'imported' | 'failed' | 'skipped';
+  report: string;
+  created_at: string;
+}
+
+// The ERP facts of one imported legacy task. `outcome`: `saved` → draft_handed_over (ERP 草稿已交接), else handed_off
+// (转人工).
+export interface LegacyTaskTable {
+  task_id: string;
+  account_id: string;
+  run_id: string;
+  legacy_task_id: string;
+  outcome: 'draft_handed_over' | 'handed_off';
+  erp_write_state: string;
+  erp_write_at: string | null;
+  reconcile_bucket: string | null;
+  bill_no: string | null;
+  created_at: string;
+}
+
+// One invoice identity an imported legacy task holds (发票占用).
+export interface LegacyClaimTable {
+  claim_id: string;
+  task_id: string;
+  account_id: string;
+  invoice_key: string;
+  file_name: string;
+  created_at: string;
+}
+
 export interface Schema {
+  import_run: ImportRunTable;
+  legacy_task: LegacyTaskTable;
+  legacy_claim: LegacyClaimTable;
   rule_set: RuleSetTable;
   task_rule_pin: TaskRulePinTable;
   home_city_setting: HomeCitySettingTable;

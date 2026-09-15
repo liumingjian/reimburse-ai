@@ -307,6 +307,48 @@ const pendingAnswers187: Migration = {
   },
 };
 
+// Slice #195: the one-time legacy `~/.baox` import (ADR-0015, ADR-0018). `import_run` records every run (absent,
+// imported, failed, skipped); an imported ERP-touched legacy task is a `task` with `origin = 'legacy'` and lifecycle
+// `handed_off`, plus its `legacy_task` facts and `legacy_claim` 发票占用 (invoice occupancy) keys.
+const legacyImport195: Migration = {
+  async up(db: Kysely<unknown>) {
+    await sql`ALTER TABLE task ADD COLUMN origin text NOT NULL DEFAULT 'app' CHECK (origin IN ('app', 'legacy'))`.execute(db);
+    await db.schema
+      .createTable('import_run')
+      .addColumn('run_id', 'text', (c) => c.primaryKey())
+      .addColumn('seq', 'integer', (c) => c.notNull().unique())
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('outcome', 'text', (c) => c.notNull().check(sql`outcome IN ('absent', 'imported', 'failed', 'skipped')`))
+      .addColumn('report', 'text', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema
+      .createTable('legacy_task')
+      .addColumn('task_id', 'text', (c) => c.primaryKey().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('run_id', 'text', (c) => c.notNull().references('import_run.run_id'))
+      .addColumn('legacy_task_id', 'text', (c) => c.notNull())
+      .addColumn('outcome', 'text', (c) => c.notNull().check(sql`outcome IN ('draft_handed_over', 'handed_off')`))
+      .addColumn('erp_write_state', 'text', (c) => c.notNull())
+      .addColumn('erp_write_at', 'text')
+      .addColumn('reconcile_bucket', 'text')
+      .addColumn('bill_no', 'text')
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema
+      .createTable('legacy_claim')
+      .addColumn('claim_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('invoice_key', 'text', (c) => c.notNull())
+      .addColumn('file_name', 'text', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await db.schema.createIndex('legacy_claim_key').on('legacy_claim').column('invoice_key').execute();
+    for (const table of ['import_run', 'legacy_task', 'legacy_claim']) await appendOnly(db, table);
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -317,4 +359,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   // Lexical order: 0004_187 runs before 0004_188. Neither depends on the other.
   '0004_187_pending_answers': pendingAnswers187,
   '0004_188_projects': projects188,
+  '0005_195_legacy_import': legacyImport195,
 };

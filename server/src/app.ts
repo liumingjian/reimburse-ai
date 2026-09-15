@@ -11,6 +11,7 @@ import { createInMemoryErpLease, type ErpLease } from './erp-lease';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService } from './books';
+import { createLegacyImport, LegacyImportRefusal } from './legacy/import';
 import { unavailableCatalog, type ProjectCatalog } from './catalog/project-catalog';
 import { ActionRefusedError, createTaskService, parseBacklogOfAllAccounts, StaleStepError, TaskNotFoundError, type TaskService, type UploadedFile } from './tasks';
 
@@ -35,6 +36,9 @@ export type AppOptions = {
   // The read-only project catalog behind 个人项目簿 intake and recheck (ADR-0008). Unavailable until #191 wires the
   // live ERP query adapter; tests and e2e pass a fixture-backed fake.
   projectCatalog?: ProjectCatalog;
+  // The legacy `~/.baox` read once when the first admin is created (ADR-0018). null (default) imports nothing;
+  // `main.ts` passes `$BAOX_HOME` or `~/.baox`.
+  legacyHome?: string | null;
 };
 
 // `close` stops the background jobs (after the material in flight) and releases the parse worker; call it before
@@ -45,8 +49,9 @@ type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
 const failure = (c: Context, status: 400 | 401 | 404 | 409, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), parser, projectCatalog = unavailableCatalog() }: AppOptions): App {
+export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), parser, projectCatalog = unavailableCatalog(), legacyHome = null }: AppOptions): App {
   const accounts = createAccountService(db, now);
+  const legacy = createLegacyImport(db, legacyHome, now);
   // Keyed by task id; a task's stream only ever opens for its owner.
   const listeners = new Map<string, Set<SnapshotListener>>();
   let jobs: ParseJobs | null = null;
@@ -68,6 +73,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   app.onError((error, c) => {
     if (error instanceof TaskNotFoundError) return failure(c, 404, 'task_not_found', '没有这个报销任务。');
     if (error instanceof AuthRefusal) return failure(c, error.status, error.code, error.message);
+    if (error instanceof LegacyImportRefusal) return failure(c, 400, error.code, error.message);
     if (error instanceof StaleStepError) return c.json({ error: { code: STALE_STEP_CODE, message: STALE_STEP_NOTICE }, snapshot: error.snapshot }, STALE_STEP_HTTP_STATUS);
     if (error instanceof ActionRefusedError) {
       const body = { error: error.error, ...(error.snapshot ? { snapshot: error.snapshot } : {}), ...(error.taskList ? { taskList: error.taskList } : {}) };
@@ -76,8 +82,25 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     throw error;
   });
 
-  mountAuthRoutes(app, accounts);
+  // Creating the first admin runs the one-time legacy import into that account (ADR-0018).
+  mountAuthRoutes(app, {
+    ...accounts,
+    async setup(credentials) {
+      const signedIn = await accounts.setup(credentials);
+      await legacy.onFirstAdmin(signedIn.account.accountId);
+      return signedIn;
+    },
+  });
   app.use('/api/*', requireAccount(accounts));
+
+  // 旧数据导入 (legacy import) as the signed-in account sees it; only the owner of a failed run may retry or skip.
+  app.get('/api/legacy-import', async (c) => c.json(await legacy.view(accountOf(c).accountId)));
+  app.post('/api/legacy-import/retry', async (c) => {
+    const view = await legacy.retry(accountOf(c).accountId);
+    await tasksOf(c).bookChanged();
+    return c.json(view);
+  });
+  app.post('/api/legacy-import/skip', async (c) => c.json(await legacy.skip(accountOf(c).accountId)));
 
   app.get('/api/tasks', async (c) => c.json(await tasksOf(c).list()));
 
