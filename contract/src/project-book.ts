@@ -94,7 +94,7 @@ export const PROJECT_BOOK_NOTES = {
 // 页面文案（照内核 project-book-page.mjs）。
 export const PROJECT_BOOK_COPY = {
   title: '个人项目簿',
-  lead: '项目号从报销系统核验后加入当前登录身份的项目簿。失效项目仍会保留，直到你删除它。',
+  lead: '项目号从报销系统核验后加入你这个账号的项目簿。失效项目仍会保留，直到你删除它。',
   numberLabel: '项目号',
   intake: '核验并加入',
   remove: '删除',
@@ -103,9 +103,6 @@ export const PROJECT_BOOK_COPY = {
   empty: '当前项目簿为空，请录入第一个项目。',
   neverExpires: '永不过期',
   noName: '未回读',
-  // 启动没完成时：项目簿按登录身份分簿，读不到也改不了（录入时服务端给出原因）。
-  startupIncomplete: '还没有登录报销系统并确认报销人身份：读不到个人项目簿，录入、删除、清理与复检都不会生效。',
-  toStartup: '去登录报销系统',
   // 流程门（内核 project_book_empty）：没有可选项目时项目归属页换成维护入口。录入后不自动离开：
   // 报销材料可能归属不同项目，用户录完再点「开始归属」（内核：完成设置并提交后才继续）。
   gateTitle: '先维护个人项目簿',

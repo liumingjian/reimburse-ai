@@ -12,7 +12,6 @@ import {
 } from '@baox/contract';
 import { sql } from 'kysely';
 import type { Db } from './db/database';
-import { IMPLICIT_ACCOUNT_ID } from './db/migrations';
 import type { MaterialTable, TaskTable, UploadBatchTable, UploadRejectionTable } from './db/schema';
 import { writeBlob } from './data-dir';
 import { inventoried, isNonTerminal, project, stepToken, type TaskFacts } from './projection';
@@ -69,10 +68,9 @@ type MaterialRow = MaterialTable & { size: number; mime: string; row_no: number;
 
 export type TaskServiceOptions = { onChange?: (snapshot: TaskSnapshot) => void };
 
-export function createTaskService(db: Db, dataDir: string, { onChange = () => {} }: TaskServiceOptions = {}) {
-  // Until accounts land (#193) every request acts as the implicit account.
-  const accountId = IMPLICIT_ACCOUNT_ID;
-
+// Scoped to one account: every read and write sees only that account's tasks (ADR-0018). Another account's task is
+// indistinguishable from a missing one.
+export function createTaskService(db: Db, dataDir: string, accountId: string, { onChange = () => {} }: TaskServiceOptions = {}) {
   async function taskRow(tx: Tx, taskId: string): Promise<TaskTable> {
     const row = await tx.selectFrom('task').selectAll().where('task_id', '=', taskId).where('account_id', '=', accountId).executeTakeFirst();
     if (!row) throw new TaskNotFoundError(taskId);
@@ -136,23 +134,30 @@ export function createTaskService(db: Db, dataDir: string, { onChange = () => {}
   }
 
   async function list(): Promise<TaskList> {
-    const account = await db.selectFrom('account').selectAll().where('account_id', '=', accountId).executeTakeFirstOrThrow();
     // 任务作废 (void task) removes the task from the list; its facts stay on disk.
     const tasks = await db.selectFrom('task').selectAll().where('account_id', '=', accountId).where('lifecycle', '!=', 'voided').orderBy('updated_at', 'desc').execute();
     const items: TaskListItem[] = [];
     for (const task of tasks) items.push(listItem(task, await loadFacts(db, task)));
-    return {
-      // Identity-era startup fields (#193 removes them): the implicit account counts as logged in and bound.
-      erpSession: 'logged_in',
-      employee: { displayName: account.display_name, account: account.account_id, tenant: account.account_id, binding: 'bound' },
-      homeCity: null,
-      tasks: items,
-    };
+    return { homeCity: null, tasks: items };
   }
 
   return {
     snapshot,
     list,
+
+    // 完全重置 (reset) of this account: its open tasks are voided (facts stay, ADR-0015) and leave the list.
+    // The personal book and home city join this when they land (#188).
+    async resetAll(): Promise<TaskList> {
+      const open = await db.selectFrom('task').select('task_id').where('account_id', '=', accountId).where('lifecycle', '=', 'open').execute();
+      await db
+        .updateTable('task')
+        .set((eb) => ({ lifecycle: 'voided', revision: eb('revision', '+', 1), updated_at: now() }))
+        .where('account_id', '=', accountId)
+        .where('lifecycle', '=', 'open')
+        .execute();
+      for (const { task_id } of open) onChange(await snapshot(task_id));
+      return list();
+    },
 
     // At most one non-terminal task per account.
     async create(homeCity: string): Promise<TaskSnapshot> {

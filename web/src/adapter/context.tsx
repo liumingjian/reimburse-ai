@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
-import type { AppState, AppStore, ProjectBookState, TaskEntry, TaskListState } from './store';
+import type { AppState, AppStore, ProjectBookState, SessionState, TaskEntry, TaskListState } from './store';
 
 // 适配器经 React Context 注入：页面只认 useAppStore()，换适配器不改页面。
 
@@ -18,6 +18,16 @@ export function useAppStore(): AppStore {
 export function useAppState(): AppState {
   const store = useAppStore();
   return useSyncExternalStore(store.subscribe, store.getState, store.getState);
+}
+
+// 应用账号的会话：第一次用到时读取；之后由账号动作的结果替换，401 时重读。
+export function useSession(): SessionState {
+  const store = useAppStore();
+  const state = useAppState();
+  useEffect(() => {
+    if (state.session.status === 'idle') void store.loadSession();
+  }, [store, state.session.status]);
+  return state.session;
 }
 
 export function useTaskList(): TaskListState {

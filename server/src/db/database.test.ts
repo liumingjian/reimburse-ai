@@ -7,6 +7,7 @@ import { Migrator } from 'kysely/migration';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { databasePath } from '../data-dir';
 import { startServer } from '../server';
+import { createTaskService } from '../tasks';
 import { tempDataDir } from '../test/harness';
 import { DatabaseTooNewError, openDatabase } from './database';
 import { MIGRATIONS } from './migrations';
@@ -40,14 +41,20 @@ describe('migrations on an existing database', () => {
     await priorVersionFixture('0001_initial');
 
     const server = await startServer({ dataDir, port: 0 });
+    await server.close();
+    expect(backups()).toEqual([expect.stringMatching(/^\d{8}T\d{6}\d*Z?-0001_initial\.sqlite$/)]);
+
+    // Since 0002_193 the implicit account that owns the old task is kept but deactivated (nobody can sign in to it),
+    // so its facts are read through the account-scoped service rather than over HTTP.
+    const db = await openDatabase(databasePath(dataDir));
     try {
-      expect(backups()).toEqual([expect.stringMatching(/^\d{8}T\d{6}\d*Z?-0001_initial\.sqlite$/)]);
-      const snapshot = TaskSnapshotSchema.parse(await (await fetch(`${server.url}/api/tasks/old-task`)).json());
+      expect(await db.selectFrom('account').select(['account_id', 'username', 'active']).execute()).toEqual([{ account_id: 'local', username: null, active: 0 }]);
+      const snapshot = TaskSnapshotSchema.parse(await createTaskService(db, dataDir, 'local').snapshot('old-task'));
       expect(snapshot.materials.map((m) => m.fileName)).toEqual(['old.pdf']);
       expect(snapshot.batches[0]?.files.map((f) => f.status)).toEqual(['accepted']);
       expect(snapshot.step.kind).toBe('start_inventory');
     } finally {
-      await server.close();
+      await db.destroy();
     }
   });
 

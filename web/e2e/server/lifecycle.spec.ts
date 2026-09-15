@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
 import { TaskSnapshotSchema } from '@baox/contract';
 import type { Locator, Page } from '@playwright/test';
-import { expect, test } from './fixture';
+import { expect, signIn, test } from './fixture';
 
 // Slice 02 (#180) on the real server: two upload batches hitting every reject code, exclude one material, start
 // 材料盘点 (material inventory), then 任务作废 (void the task) and take the freed slot with a new task.
@@ -29,6 +29,7 @@ test('两个上传批次逐一命中四种拒绝原因，排除一份材料后�
   const hotel = sample('m01');
   const amap = sample('m03');
   const caocao = sample('m05');
+  await signIn(page);
   await page.goto('/#/tasks');
   await createTask(page);
   const taskId = /#\/task\/([^/]+)\//.exec(page.url())?.[1] ?? '';

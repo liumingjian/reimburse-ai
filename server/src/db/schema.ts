@@ -1,12 +1,24 @@
-// Row types for kysely. Every per-user fact carries `account_id` (ADR-0015); until accounts land (#193) one
-// implicit account owns everything.
+// Row types for kysely. Every per-account fact carries `account_id` (ADR-0015, ADR-0018).
 
 export type TaskLifecycle = 'open' | 'voided' | 'handed_off';
 
+// Mutable: role, active flag and password change over an account's life. Accounts are deactivated, never deleted.
 export interface AccountTable {
   account_id: string;
   display_name: string;
   created_at: string;
+  username: string | null;
+  password_hash: string | null;
+  role: 'user' | 'admin';
+  active: number;
+}
+
+// Mutable: `expires_at` slides; logout deletes the row.
+export interface SessionTable {
+  token_sha256: string;
+  account_id: string;
+  created_at: string;
+  expires_at: string;
 }
 
 // Mutable: `lifecycle` and `revision` (the per-task stepToken counter, ADR-0014).
@@ -90,6 +102,7 @@ export interface UploadReopenTable {
 
 export interface Schema {
   account: AccountTable;
+  session: SessionTable;
   task: TaskTable;
   upload_batch: UploadBatchTable;
   blob: BlobTable;

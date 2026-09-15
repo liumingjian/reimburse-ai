@@ -4,24 +4,22 @@ import { useAppStore } from '../adapter/context';
 import { CreateTaskInputSchema, type HomeCityDefault, type TaskList } from '@baox/contract';
 import { navigate, taskHash } from '../router';
 import { ConfirmDialog } from '../shell/Dialog';
-import { ReadOnlyFields } from '../shell/ReadOnlyFields';
 
-// 新建报销任务弹层（任务列表页上，`#/tasks/new` 深链也打开它）。任务名称与费用期间由服务端生成，这里只确认报销人与常驻城市。
+// 新建报销任务弹层（任务列表页上，`#/tasks/new` 深链也打开它）。任务名称与费用期间由服务端生成，这里只确认常驻城市。
 // 常驻城市的默认值来自服务端（记住的城市或网络位置候选），页面只照它预填并说明来源，从不自己定位。
 export const NEW_TASK_COPY = {
   title: '新建报销任务',
   lead: '任务名称由系统生成，盘点后按材料的日期与城市自动命名。',
-  employee: '报销人',
   homeCity: '常驻城市',
   submit: '创建并上传材料',
   explain: '常驻城市用来区分本地市内交通与外地市内交通，只用于这次新建的任务；已有任务保留各自创建时的城市。',
-  loading: '正在读取报销人与常驻城市…',
+  loading: '正在读取常驻城市…',
   placeholder: '如：杭州',
 } as const;
 
 export const HOME_CITY_CAPTIONS: Readonly<Record<HomeCityDefault['source'] | 'none', string>> = {
   network: '根据网络位置推测，不对可直接改成你的常驻城市。',
-  remembered: '上次确认的常驻城市（按报销人身份记住），可直接修改。',
+  remembered: '上次确认的常驻城市（按你的账号记住），可直接修改。',
   none: '没有获取到网络位置，请填写你的常驻城市。',
 };
 
@@ -77,8 +75,6 @@ export function NewTaskDialog({ taskList, onClose }: { taskList: TaskList | null
       ) : (
         <form className="app-form" onSubmit={onSubmit} noValidate>
           <p className="app-muted">{NEW_TASK_COPY.lead}</p>
-          {/* 报销人来自已登记的身份，不能在这里改：画成只读字段，不画输入框。 */}
-          <ReadOnlyFields fields={[{ term: NEW_TASK_COPY.employee, value: taskList.employee?.displayName ?? '未确认' }]} />
           <TextInput
             id="new-task-home-city"
             name="homeCity"

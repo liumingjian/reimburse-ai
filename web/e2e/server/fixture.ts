@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test as base } from '@playwright/test';
+import { test as base, type Page } from '@playwright/test';
 
 // Every server-project test gets its own built server on its own throwaway data directory and a free port, so
 // tests never share tasks or accounts. `baseURL` points at it: `page.goto('/#/tasks')`.
@@ -41,3 +41,14 @@ export const test = base.extend<{ serverApp: ServerApp }>({
 });
 
 export { expect } from '@playwright/test';
+
+export const E2E_PASSWORD = 'e2e-password';
+
+// Signs the page's browser context in without the UI: the first call creates the admin, later calls register users.
+// `page.request` shares the context's cookie jar, so the next `page.goto` is already signed in.
+export async function signIn(page: Page, username = 'admin'): Promise<void> {
+  const session = (await (await page.request.get('/api/session')).json()) as { status: string };
+  const path = session.status === 'setup_required' ? '/api/auth/setup' : '/api/auth/register';
+  const response = await page.request.post(path, { data: { username, password: E2E_PASSWORD } });
+  if (!response.ok()) throw new Error(`signIn(${username}) failed: ${response.status()} ${await response.text()}`);
+}

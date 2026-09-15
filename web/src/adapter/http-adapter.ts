@@ -1,14 +1,20 @@
 import {
   ActionFailureSchema,
+  AuthFailureSchema,
   STALE_STEP_CODE,
   STALE_STEP_NOTICE,
-  StartupFailureSchema,
+  SessionSchema,
+  TaskListFailureSchema,
   ServiceUnavailableError,
+  UNAUTHENTICATED_HTTP_STATUS,
+  UnauthenticatedError,
   type ActionOutcome,
   type AdapterEvent,
   type AppAdapter,
+  type AuthOutcome,
   type ProjectBookOutcome,
-  type StartupOutcome,
+  type Session,
+  type TaskListOutcome,
   type Unsubscribe,
   HTTP_ENDPOINTS,
   SNAPSHOT_EVENT,
@@ -43,26 +49,52 @@ export function reconnectDelay(attempt: number): number {
 
 const isSuccess = (status: number) => status >= 200 && status < 300;
 
+// 读接口遇到 401：会话失效，抛出 UnauthenticatedError，仓库据此重读会话、页面回到登录。
+function refuseUnauthenticated(status: number): void {
+  if (status === UNAUTHENTICATED_HTTP_STATUS) throw new UnauthenticatedError();
+}
+
+export function parseSessionResponse(status: number, body: unknown): Session {
+  if (!isSuccess(status)) throw new Error(`登录状态读取失败（HTTP ${status}）`);
+  const parsed = SessionSchema.safeParse(body);
+  if (!parsed.success) throw new Error('登录状态的格式与契约不符');
+  return parsed.data;
+}
+
+// 账号动作（创建管理员、注册、登录、退出）：成功是新会话；失败是 { error }。
+export function parseAuthResponse(status: number, body: unknown): AuthOutcome {
+  if (isSuccess(status)) {
+    const session = SessionSchema.safeParse(body);
+    if (session.success) return { ok: true, session: session.data };
+    return { ok: false, error: { code: INVALID_RESPONSE_CODE, message: '服务端返回的登录状态格式与契约不符。' } };
+  }
+  const failure = AuthFailureSchema.safeParse(body);
+  if (failure.success) return { ok: false, error: failure.data.error };
+  return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` } };
+}
+
 export function parseTaskListResponse(status: number, body: unknown): TaskList {
+  refuseUnauthenticated(status);
   if (!isSuccess(status)) throw new Error(`任务列表加载失败（HTTP ${status}）`);
   const parsed = TaskListSchema.safeParse(body);
   if (!parsed.success) throw new Error('任务列表的格式与契约不符');
   return parsed.data;
 }
 
-// 启动动作（再探测登录、登记身份）：成功是整份任务列表；失败是 { error, taskList? }。
-export function parseStartupResponse(status: number, body: unknown): StartupOutcome {
+// 返回整份任务列表的动作（作废任务、完全重置）：成功是整份任务列表；失败是 { error, taskList? }。
+export function parseTaskListActionResponse(status: number, body: unknown): TaskListOutcome {
   if (isSuccess(status)) {
     const list = TaskListSchema.safeParse(body);
     if (list.success) return { ok: true, taskList: list.data };
     return { ok: false, error: { code: INVALID_RESPONSE_CODE, message: '服务端返回的任务列表格式与契约不符。' }, taskList: null };
   }
-  const failure = StartupFailureSchema.safeParse(body);
+  const failure = TaskListFailureSchema.safeParse(body);
   if (failure.success) return { ok: false, error: failure.data.error, taskList: failure.data.taskList ?? null };
   return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, taskList: null };
 }
 
 export function parseProjectBookResponse(status: number, body: unknown): ProjectBook {
+  refuseUnauthenticated(status);
   if (!isSuccess(status)) throw new Error(`个人项目簿加载失败（HTTP ${status}）`);
   const parsed = ProjectBookSchema.safeParse(body);
   if (!parsed.success) throw new Error('个人项目簿的格式与契约不符');
@@ -82,6 +114,7 @@ export function parseProjectBookActionResponse(status: number, body: unknown): P
 }
 
 export function parseSnapshotResponse(status: number, body: unknown): TaskSnapshot {
+  refuseUnauthenticated(status);
   if (!isSuccess(status)) throw new Error(`任务快照加载失败（HTTP ${status}）`);
   const parsed = TaskSnapshotSchema.safeParse(body);
   if (!parsed.success) throw new Error('任务快照的格式与契约不符');
@@ -144,14 +177,23 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
 
   const json = (target: string, payload: unknown) => post(target, JSON.stringify(payload), 'application/json');
 
-  async function startup(target: string, payload: unknown): Promise<StartupOutcome> {
+  async function taskListAction(target: string, payload: unknown): Promise<TaskListOutcome> {
     let response: Response;
     try {
       response = await fetch(target, { method: 'POST', body: JSON.stringify(payload), headers: { 'content-type': 'application/json' } });
     } catch {
       return { ok: false, error: { code: NETWORK_ERROR_CODE, message: NETWORK_ERROR_MESSAGE }, taskList: null };
     }
-    return parseStartupResponse(response.status, await readJson(response));
+    return parseTaskListActionResponse(response.status, await readJson(response));
+  }
+  async function authAction(target: string, payload: unknown): Promise<AuthOutcome> {
+    let response: Response;
+    try {
+      response = await fetch(target, { method: 'POST', body: JSON.stringify(payload), headers: { 'content-type': 'application/json' } });
+    } catch {
+      return { ok: false, error: { code: NETWORK_ERROR_CODE, message: NETWORK_ERROR_MESSAGE } };
+    }
+    return parseAuthResponse(response.status, await readJson(response));
   }
   async function bookAction(target: string, payload: unknown): Promise<ProjectBookOutcome> {
     let response: Response;
@@ -165,6 +207,19 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
   const action = (taskId: string, endpoint: { path: string }, payload: Record<string, unknown>) => json(url(endpoint.path, taskId), payload);
 
   return {
+    async getSession() {
+      let response: Response;
+      try {
+        response = await fetch(url(E.getSession.path));
+      } catch {
+        throw new ServiceUnavailableError(NETWORK_ERROR_MESSAGE);
+      }
+      return parseSessionResponse(response.status, await readJson(response));
+    },
+    setupAdmin: (input) => authAction(url(E.setupAdmin.path), input),
+    register: (input) => authAction(url(E.register.path), input),
+    login: (input) => authAction(url(E.login.path), input),
+    logout: () => authAction(url(E.logout.path), {}),
     async listTasks() {
       let response: Response;
       try {
@@ -175,10 +230,8 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
       }
       return parseTaskListResponse(response.status, await readJson(response));
     },
-    recheckErpSession: () => startup(url(E.recheckErpSession.path), {}),
-    confirmIdentity: (input) => startup(url(E.confirmIdentity.path), input),
-    abandonTask: (taskId) => startup(url(E.abandonTask.path, taskId), {}),
-    resetAll: () => startup(url(E.resetAll.path), {}),
+    abandonTask: (taskId) => taskListAction(url(E.abandonTask.path, taskId), {}),
+    resetAll: () => taskListAction(url(E.resetAll.path), {}),
     async getProjectBook() {
       let response: Response;
       try {

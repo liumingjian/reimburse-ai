@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 
-// spec #109 Testing Decisions：一条从启动登录到完成的全流程，用 dist-mock/sample-materials/ 的 11 份示例材料，其余都是 mock 默认值。
-// 启动登录 → 确认身份 → 新建任务 → 上传 → 盘点 → 待确认项 → 项目归属 → 报销信息核对与材料准备（自动）→ 整单确认
+// spec #109 Testing Decisions：一条从登录到完成的全流程，用 dist-mock/sample-materials/ 的 11 份示例材料，其余都是 mock 默认值。
+// 登录应用账号 → 新建任务 → 上传 → 盘点 → 待确认项 → 项目归属 → 报销信息核对与材料准备（自动）→ 整单确认
 // → 打印稿 → 去报销（写入报销系统）→ 完成。整条路径在同一个文档里走（只改 hash），mock 的内存状态一路保留。
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const SAMPLES_DIR = fileURLToPath(new URL('../dist-mock/sample-materials/', import.meta.url));
@@ -18,17 +18,17 @@ async function jump(page: Page, hash: string) {
   }, hash);
 }
 
-test('全流程：从启动登录一路走到完成，上传 sample-materials 的 11 份材料', async ({ page }, testInfo) => {
+test('全流程：从登录一路走到完成，上传 sample-materials 的 11 份材料', async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   const files = readdirSync(SAMPLES_DIR).map((name) => join(SAMPLES_DIR, name));
   expect(files).toHaveLength(11);
 
-  // 1. 启动：登录报销系统，确认报销人身份。
-  await page.goto(`${INDEX}?erp=logged-out&identity=unbound#/tasks`);
-  await expect(h1(page, '登录报销系统')).toBeVisible();
-  await page.getByRole('button', { name: '我已登录' }).click();
-  await expect(h1(page, '确认报销人身份')).toBeVisible();
-  await page.getByRole('button', { name: '确认', exact: true }).click();
+  // 1. 登录应用账号（夹具账号，mock 密码）。
+  await page.goto(`${INDEX}?auth=signed-out#/tasks`);
+  await expect(h1(page, '登录')).toBeVisible();
+  await page.getByLabel('用户名').fill('林颂宜');
+  await page.getByLabel('密码').fill('mock-password');
+  await page.getByRole('button', { name: '登录', exact: true }).click();
   await expect(h1(page, '报销任务')).toBeVisible();
 
   // 2. 新建任务（常驻城市用网络位置候选）。

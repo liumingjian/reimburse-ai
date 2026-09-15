@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'vitest';
 import { ACTION_NAMES, STALE_STEP_CODE, HTTP_ENDPOINTS, endpointActionNames, TASK_STAGES } from '@baox/contract';
 import { INITIAL_BOOK, MOCK_TODAY, annotateProject } from '../mock/fixtures/projects';
-import { EMPLOYEE, t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from '../mock/fixtures/tasks';
+import { t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from '../mock/fixtures/tasks';
 import {
   INVALID_RESPONSE_CODE,
   outcomeFromResponse,
@@ -12,7 +12,9 @@ import {
   parseProjectBookResponse,
   parseSnapshotEvent,
   parseSnapshotResponse,
-  parseStartupResponse,
+  parseAuthResponse,
+  parseSessionResponse,
+  parseTaskListActionResponse,
   parseTaskListResponse,
   reconnectDelay,
 } from './http-adapter';
@@ -21,12 +23,13 @@ import {
 const wire = <T,>(value: T): unknown => JSON.parse(JSON.stringify(value));
 
 describe('端点表', () => {
-  test('动作端点与 ACTION_NAMES 一一对应，任务类路径都在 /api/tasks 下，启动动作在 /api/startup 下，项目簿在 /api/project-book 下', () => {
+  test('动作端点与 ACTION_NAMES 一一对应，任务类路径都在 /api/tasks 下，账号在 /api/session 与 /api/auth 下，项目簿在 /api/project-book 下', () => {
     expect([...endpointActionNames()].sort()).toEqual([...ACTION_NAMES].sort());
     const book = new Set(['getProjectBook', 'intakeProject', 'removeProject', 'purgeInvalidProjects', 'recheckProjects']);
+    const auth = new Set(['setupAdmin', 'register', 'login', 'logout']);
     for (const [name, endpoint] of Object.entries(HTTP_ENDPOINTS)) {
       const prefix =
-        name === 'recheckErpSession' || name === 'confirmIdentity' ? '/api/startup/' : name === 'resetAll' ? '/api/reset' : book.has(name) ? '/api/project-book' : '/api/tasks';
+        name === 'getSession' ? '/api/session' : auth.has(name) ? '/api/auth/' : name === 'resetAll' ? '/api/reset' : book.has(name) ? '/api/project-book' : '/api/tasks';
       expect(endpoint.path.startsWith(prefix), name).toBe(true);
     }
     expect(HTTP_ENDPOINTS.uploadBatch.body).toBe('multipart');
@@ -62,11 +65,11 @@ describe('个人项目簿 /api/project-book', () => {
 });
 
 describe('任务列表 GET /api/tasks', () => {
-  const list = { erpSession: 'logged_in', employee: EMPLOYEE, homeCity: { value: '杭州', source: 'remembered' }, tasks: [t1Snapshot('done'), t2Snapshot(), t3Snapshot()].map(toListItem) };
+  const list = { homeCity: { value: '杭州', source: 'remembered' }, tasks: [t1Snapshot('done'), t2Snapshot(), t3Snapshot()].map(toListItem) };
 
   test('接受契约形状的列表', () => {
     expect(parseTaskListResponse(200, wire(list)).tasks).toHaveLength(3);
-    expect(parseTaskListResponse(200, wire({ erpSession: 'not_logged_in', employee: null, homeCity: null, tasks: [] })).tasks).toEqual([]);
+    expect(parseTaskListResponse(200, wire({ homeCity: null, tasks: [] })).tasks).toEqual([]);
   });
 
   test('拒绝金额格式不对、缺字段或非 2xx', () => {
@@ -77,28 +80,51 @@ describe('任务列表 GET /api/tasks', () => {
     expect(() => parseTaskListResponse(500, wire(list))).toThrow(/HTTP 500/);
   });
 
-  test('员工身份只有姓名、登录账号、账套与绑定状态；缺 erpSession 或带部门的旧形状被拒绝', () => {
-    expect(() => parseTaskListResponse(200, wire({ ...list, employee: { name: '林颂宜', department: '产品研发部' } }))).toThrow();
-    const { erpSession: _omitted, ...withoutSession } = list;
-    expect(() => parseTaskListResponse(200, wire(withoutSession))).toThrow();
-    expect(() => parseTaskListResponse(200, wire({ ...list, employee: { ...EMPLOYEE, binding: 'maybe' } }))).toThrow();
+  test('401 表示会话失效：抛出 UnauthenticatedError，仓库据此回到登录', () => {
+    expect(() => parseTaskListResponse(401, wire({ error: { code: 'unauthenticated', message: '请先登录。' } }))).toThrow(expect.objectContaining({ name: 'UnauthenticatedError' }));
+    expect(() => parseSnapshotResponse(401, null)).toThrow(expect.objectContaining({ name: 'UnauthenticatedError' }));
   });
 });
 
-describe('启动动作 POST /api/startup/*', () => {
-  const list = { erpSession: 'logged_in', employee: { ...EMPLOYEE, binding: 'unbound' }, homeCity: null, tasks: [] };
+describe('应用账号 /api/session 与 /api/auth/*', () => {
+  const signedIn = { status: 'signed_in', account: { accountId: 'a1', username: '林颂宜', role: 'admin' } };
+
+  test('会话：接受三种状态；角色只有 user 与 admin', () => {
+    expect(parseSessionResponse(200, wire({ status: 'setup_required', account: null })).status).toBe('setup_required');
+    expect(parseSessionResponse(200, wire(signedIn)).account?.role).toBe('admin');
+    expect(() => parseSessionResponse(200, wire({ ...signedIn, account: { ...signedIn.account, role: 'root' } }))).toThrow();
+    expect(() => parseSessionResponse(500, null)).toThrow(/HTTP 500/);
+  });
+
+  test('账号动作：成功是新会话；失败带原因；其余拒绝', () => {
+    const ok = parseAuthResponse(200, wire(signedIn));
+    expect(ok.ok && ok.session.account?.username).toBe('林颂宜');
+    const refused = parseAuthResponse(401, wire({ error: { code: 'invalid_credentials', message: '用户名或密码不对。' } }));
+    expect(!refused.ok && refused.error.code).toBe('invalid_credentials');
+    // Auth refusals the server answers with 409 (setup_done, setup_required, username_taken) keep their own code:
+    // only task actions map 409 to stale_step.
+    const setupDone = parseAuthResponse(409, wire({ error: { code: 'setup_done', message: '管理员已经创建。' } }));
+    expect(!setupDone.ok && setupDone.error.code).toBe('setup_done');
+    expect(parseAuthResponse(200, { status: 'maybe' }).ok).toBe(false);
+    const unknown = parseAuthResponse(500, 'oops');
+    expect(!unknown.ok && unknown.error.code).toBe('http_500');
+  });
+});
+
+describe('作废与重置 POST /api/tasks/:id/abandon、/api/reset', () => {
+  const list = { homeCity: null, tasks: [] };
 
   test('成功返回整份任务列表；失败带原因与可选的最新列表；其余拒绝', () => {
-    const ok = parseStartupResponse(200, wire(list));
-    expect(ok.ok && ok.taskList.employee?.binding).toBe('unbound');
-    const failed = parseStartupResponse(409, wire({ error: { code: 'identity_changed', message: '换人了' }, taskList: list }));
+    const ok = parseTaskListActionResponse(200, wire(list));
+    expect(ok.ok && ok.taskList.tasks).toEqual([]);
+    const failed = parseTaskListActionResponse(409, wire({ error: { code: 'not_abandonable', message: '不能作废' }, taskList: list }));
     expect(failed.ok).toBe(false);
-    expect(!failed.ok && failed.error.message).toBe('换人了');
-    expect(!failed.ok && failed.taskList?.erpSession).toBe('logged_in');
-    const bare = parseStartupResponse(400, wire({ error: { code: 'not_logged_in', message: '未登录' } }));
+    expect(!failed.ok && failed.error.message).toBe('不能作废');
+    expect(!failed.ok && failed.taskList?.tasks).toEqual([]);
+    const bare = parseTaskListActionResponse(400, wire({ error: { code: 'task_not_found', message: '没有' } }));
     expect(!bare.ok && bare.taskList).toBeNull();
-    expect(parseStartupResponse(200, { tasks: [] }).ok).toBe(false);
-    const unknown = parseStartupResponse(500, 'oops');
+    expect(parseTaskListActionResponse(200, { tasks: [] }).ok).toBe(false);
+    const unknown = parseTaskListActionResponse(500, 'oops');
     expect(!unknown.ok && unknown.error.code).toBe('http_500');
   });
 });

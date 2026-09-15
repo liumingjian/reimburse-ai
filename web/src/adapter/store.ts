@@ -2,11 +2,15 @@ import {
   STALE_STEP_CODE,
   STALE_STEP_NOTICE,
   isServiceUnavailable,
+  isUnauthenticated,
   type ActionOutcome,
   type AppAdapter,
+  type AuthOutcome,
   type ConnectionState,
   type ProjectBookOutcome,
-  type StartupOutcome,
+  SessionSchema,
+  type Session,
+  type TaskListOutcome,
   type Unsubscribe,
   ProjectBookSchema,
   type ProjectBook,
@@ -45,7 +49,15 @@ export type ProjectBookState = {
   readonly error: string | null;
 };
 
+// 应用账号的会话：页面先看它决定显示创建管理员 / 登录，还是任务列表与任务页。
+export type SessionState = {
+  readonly status: LoadStatus;
+  readonly data: Session | null;
+  readonly error: string | null;
+};
+
 export type AppState = {
+  readonly session: SessionState;
   readonly taskList: TaskListState;
   readonly projectBook: ProjectBookState;
   readonly tasks: Readonly<Record<string, TaskEntry>>;
@@ -55,6 +67,7 @@ export type AppState = {
 const EMPTY_ENTRY: TaskEntry = { status: 'idle', snapshot: null, error: null, notice: null };
 
 const INITIAL_STATE: AppState = {
+  session: { status: 'idle', data: null, error: null },
   taskList: { status: 'idle', data: null, error: null, offline: false },
   projectBook: { status: 'idle', data: null, error: null },
   tasks: {},
@@ -93,6 +106,49 @@ export class AppStore {
     return this.state.tasks[taskId] ?? EMPTY_ENTRY;
   }
 
+  async loadSession(): Promise<void> {
+    const previous = this.state.session;
+    this.setState({ session: { status: 'loading', data: previous.data, error: null } });
+    try {
+      const raw = await this.adapter.getSession();
+      const data = this.options.validate ? SessionSchema.parse(raw) : raw;
+      this.acceptSession(data);
+    } catch (error) {
+      this.setState({ session: { status: 'error', data: this.state.session.data, error: describe(error) } });
+    }
+  }
+
+  // 创建管理员、注册、登录、退出：结果里的会话直接替换当前会话。换了账号（或退出）就丢掉上一个账号的一切缓存。
+  async auth(run: (adapter: AppAdapter) => Promise<AuthOutcome>): Promise<AuthOutcome> {
+    let outcome: AuthOutcome;
+    try {
+      outcome = await run(this.adapter);
+      if (outcome.ok && this.options.validate) SessionSchema.parse(outcome.session);
+    } catch (error) {
+      return { ok: false, error: { code: 'adapter_error', message: describe(error) } };
+    }
+    if (outcome.ok) this.acceptSession(outcome.session);
+    return outcome;
+  }
+
+  private acceptSession(data: Session): void {
+    const before = this.state.session.data?.account?.accountId ?? null;
+    const after = data.account?.accountId ?? null;
+    if (before !== after) this.forgetAccountData();
+    this.setState({ session: { status: 'ready', data, error: null } });
+  }
+
+  // 会话失效（401）：重读会话，门随之回到登录。
+  private sessionLost(): void {
+    if (this.state.session.status !== 'loading') void this.loadSession();
+  }
+
+  private forgetAccountData(): void {
+    for (const subscription of this.subscriptions.values()) subscription.unsubscribe();
+    this.subscriptions.clear();
+    this.setState({ taskList: INITIAL_STATE.taskList, projectBook: INITIAL_STATE.projectBook, tasks: {} });
+  }
+
   // 任务列表是请求/响应（没有事件流）。连接类失败时保留 offline 标记（全页横幅）并按退避自动重试；恢复后横幅消失、列表出现。
   async loadTaskList(): Promise<void> {
     const previous = this.state.taskList;
@@ -109,6 +165,11 @@ export class AppStore {
       this.setState({ taskList: { status: 'ready', data, error: null, offline: false } });
     } catch (error) {
       const data = this.state.taskList.data;
+      if (isUnauthenticated(error)) {
+        this.setState({ taskList: { status: 'error', data, error: describe(error), offline: false } });
+        this.sessionLost();
+        return;
+      }
       if (!isServiceUnavailable(error)) {
         this.setState({ taskList: { status: 'error', data, error: describe(error), offline: false } });
         return;
@@ -124,10 +185,10 @@ export class AppStore {
     }
   }
 
-  // 启动动作（再探测登录、登记身份）：结果里带的任务列表直接替换当前列表，启动页或任务列表随之重渲染。
+  // 返回整份任务列表的动作（作废、完全重置）：结果里带的任务列表直接替换当前列表。
   // 适配器抛错也按失败返回，原因交给页面就地显示。
-  async startup(run: (adapter: AppAdapter) => Promise<StartupOutcome>): Promise<StartupOutcome> {
-    let outcome: StartupOutcome;
+  async taskListAction(run: (adapter: AppAdapter) => Promise<TaskListOutcome>): Promise<TaskListOutcome> {
+    let outcome: TaskListOutcome;
     let data: TaskList | null;
     // 校验也放在 try 里：列表形状不对时按失败返回，调用方的 busy 照常复位，不会卡在「处理中」。
     try {
@@ -138,14 +199,12 @@ export class AppStore {
       return { ok: false, error: { code: 'adapter_error', message: describe(error) }, taskList: null };
     }
     if (data) this.setState({ taskList: { status: 'ready', data, error: null, offline: false } });
-    // 项目簿按登录身份分簿：登录或登记身份之后，已经读过的项目簿要按新身份重读。
-    if (outcome.ok && this.state.projectBook.status !== 'idle') void this.loadProjectBook();
     return outcome;
   }
 
   // 作废一个任务：成功后除了换上新列表，还丢掉这个任务缓存的快照（深链接再打开会重新向服务端要，而不是显示旧数据）。
-  async abandonTask(taskId: string): Promise<StartupOutcome> {
-    const outcome = await this.startup((adapter) => adapter.abandonTask(taskId));
+  async abandonTask(taskId: string): Promise<TaskListOutcome> {
+    const outcome = await this.taskListAction((adapter) => adapter.abandonTask(taskId));
     if (outcome.ok) {
       const { [taskId]: _dropped, ...rest } = this.state.tasks;
       this.setState({ tasks: rest });
@@ -154,8 +213,8 @@ export class AppStore {
   }
 
   // 完全重置：成功后清掉所有缓存的任务快照与项目簿（项目簿回到未加载，下次打开时重读）。
-  async resetAll(): Promise<StartupOutcome> {
-    const outcome = await this.startup((adapter) => adapter.resetAll());
+  async resetAll(): Promise<TaskListOutcome> {
+    const outcome = await this.taskListAction((adapter) => adapter.resetAll());
     if (outcome.ok) this.setState({ tasks: {}, projectBook: { status: 'idle', data: null, error: null } });
     return outcome;
   }
@@ -169,6 +228,7 @@ export class AppStore {
       this.setState({ projectBook: { status: 'ready', data, error: null } });
     } catch (error) {
       this.setState({ projectBook: { status: 'error', data: this.state.projectBook.data, error: describe(error) } });
+      if (isUnauthenticated(error)) this.sessionLost();
     }
   }
 
@@ -225,6 +285,7 @@ export class AppStore {
       this.acceptSnapshot(snapshot);
     } catch (error) {
       this.patchEntry(taskId, { status: 'error', error: describe(error) });
+      if (isUnauthenticated(error)) this.sessionLost();
     }
   }
 

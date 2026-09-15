@@ -1,19 +1,21 @@
 import { ActionFailureSchema, TaskListSchema, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createTestServer, type TestServer } from './test/harness';
+import { createTestServer, type TestClient, type TestServer } from './test/harness';
 
 // Slice 02 (#180): upload batches, 材料盘点 (material inventory) and the task lifecycle, through `app.request()`.
 
 let server: TestServer;
+let client: TestClient;
 beforeEach(async () => {
   server = await createTestServer();
+  client = await server.signIn();
 });
 afterEach(() => server.close());
 
 const pdf = (text: string) => Buffer.from(`%PDF-1.4\n% ${text}\n%%EOF\n`);
 
-async function createTask(homeCity = '杭州') {
-  const response = await server.app.request('/api/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ homeCity }) });
+async function createTask(homeCity = '杭州', as = client) {
+  const response = await as.post('/api/tasks', { homeCity });
   expect(response.status).toBe(200);
   return TaskSnapshotSchema.parse(await response.json());
 }
@@ -23,17 +25,13 @@ type Upload = { name: string; bytes: Buffer | Uint8Array; type?: string };
 async function upload(taskId: string, files: readonly Upload[]) {
   const form = new FormData();
   for (const file of files) form.append('files', new File([file.bytes], file.name, { type: file.type ?? 'application/pdf' }));
-  const response = await server.app.request(`/api/tasks/${taskId}/batches`, { method: 'POST', body: form });
+  const response = await client.request(`/api/tasks/${taskId}/batches`, { method: 'POST', body: form });
   expect(response.status).toBe(200);
   return TaskSnapshotSchema.parse(await response.json());
 }
 
 function act(snapshot: TaskSnapshot, name: string, body: Record<string, unknown> = {}, stepToken = snapshot.step.stepToken) {
-  return server.app.request(`/api/tasks/${snapshot.task.taskId}/actions/${name}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ ...body, stepToken }),
-  });
+  return client.post(`/api/tasks/${snapshot.task.taskId}/actions/${name}`, { ...body, stepToken });
 }
 
 async function accepted(response: Response) {
@@ -64,17 +62,17 @@ async function stale(response: Response, fresh: TaskSnapshot) {
 }
 
 async function current(taskId: string) {
-  return TaskSnapshotSchema.parse(await (await server.app.request(`/api/tasks/${taskId}`)).json());
+  return TaskSnapshotSchema.parse(await (await client.request(`/api/tasks/${taskId}`)).json());
 }
 
-async function taskList() {
-  const response = await server.app.request('/api/tasks');
+async function taskList(as = client) {
+  const response = await as.request('/api/tasks');
   expect(response.status).toBe(200);
   return TaskListSchema.parse(await response.json());
 }
 
 async function voidTask(taskId: string) {
-  return server.app.request(`/api/tasks/${taskId}/abandon`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  return client.post(`/api/tasks/${taskId}/abandon`, {});
 }
 
 describe('upload batches', () => {
@@ -187,9 +185,17 @@ describe('actions', () => {
 describe('the task list and 任务作废 (void task)', () => {
   it('refuses a second task while the account has a non-terminal one', async () => {
     await createTask();
-    const response = await server.app.request('/api/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ homeCity: '上海' }) });
+    const response = await client.post('/api/tasks', { homeCity: '上海' });
     expect(response.status).toBe(400);
     expect(ActionFailureSchema.parse(await response.json()).error.code).toBe('active_task_exists');
+    expect((await taskList()).tasks).toHaveLength(1);
+  });
+
+  it('the one-non-terminal-task rule is per account: another account can still create its own', async () => {
+    await createTask();
+    const bob = await server.signIn('bob');
+    await createTask('上海', bob);
+    expect((await taskList(bob)).tasks).toHaveLength(1);
     expect((await taskList()).tasks).toHaveLength(1);
   });
 
@@ -221,7 +227,7 @@ describe('SSE', () => {
   it('a subscriber receives a snapshot event after an upload', async () => {
     const { task } = await createTask();
     const controller = new AbortController();
-    const response = await server.app.request(`/api/tasks/${task.taskId}/events`, { signal: controller.signal });
+    const response = await client.request(`/api/tasks/${task.taskId}/events`, { signal: controller.signal });
     expect(response.headers.get('content-type')).toContain('text/event-stream');
     const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
     let buffer = '';

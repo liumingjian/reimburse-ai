@@ -190,16 +190,14 @@ describe('任务列表', () => {
     expect(!refused.ok && refused.error.message).toBe(ABANDON_TASK_COPY.blockedReason);
   });
 
-  test('设置页「完全重置」：二次确认后清空本机数据，回到启动页；重新登录并确认身份后任务列表为空', async () => {
+  test('设置页「完全重置」：二次确认后只清空当前账号的数据，仍然登录，回到空的任务列表', async () => {
     renderApp('#/settings');
     fireEvent.click(await screen.findByRole('button', { name: '完全重置' }));
-    const resetConfirm = within(screen.getByRole('dialog', { name: '清空本机全部数据？' })).getByRole('button', { name: '清空并重置' });
+    const resetConfirm = within(screen.getByRole('dialog', { name: '清空你的全部数据？' })).getByRole('button', { name: '清空并重置' });
     fireEvent.click(resetConfirm);
-    expect(await screen.findByRole('heading', { name: '登录报销系统' })).toBeTruthy();
-    expect(window.location.hash).toBe('#/tasks');
-    fireEvent.click(screen.getByRole('button', { name: '我已登录' }));
-    fireEvent.click(await screen.findByRole('button', { name: '确认' }));
     expect(await screen.findByRole('heading', { name: '还没有报销任务' })).toBeTruthy();
+    expect(window.location.hash).toBe('#/tasks');
+    expect(screen.getByRole('button', { name: '退出登录' })).toBeTruthy();
   });
 
   test('未知路径回到任务列表', async () => {
