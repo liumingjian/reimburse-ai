@@ -1,0 +1,9 @@
+{
+  "taskId": "a1b2c3d4e5",
+  "versionId": "v1",
+  "updatedAt": "2026-04-01T08:30:00.000Z",
+  "invoices": [
+    { "identityKey": "einvoice-20:26312000000098127734", "number": "26312000000098127734", "materialId": "m-001", "fileName": "全季酒店_发票.pdf" },
+    { "identityKey": "einvoice-20:26312000000000000011", "number": "26312000000000000011", "materialId": "m-002", "fileName": "午餐_发票.pdf" }
+  ]
+}

@@ -63,13 +63,15 @@ export function testClient(app: Hono<AppEnv>, account: Account, cookie: string):
   };
 }
 
-export async function createTestServer({ parser, projectCatalog }: { parser?: ParseExecutor; projectCatalog?: ProjectCatalog } = {}): Promise<TestServer> {
+// `legacyHome`: a legacy `~/.baox` tree (e.g. @baox/fixtures `LEGACY_BAOX_DIR`) imported when the first admin signs up;
+// without it the import finds nothing.
+export async function createTestServer({ parser, projectCatalog, legacyHome = null }: { parser?: ParseExecutor; projectCatalog?: ProjectCatalog; legacyHome?: string | null } = {}): Promise<TestServer> {
   const dataDir = tempDataDir();
   const db = await openDatabase(':memory:');
   let offset = 0;
   const clock: TestClock = { now: () => new Date(Date.now() + offset), advance: (ms) => void (offset += ms) };
   const erpLease = createInMemoryErpLease();
-  const app = createApp({ db, dataDir, now: clock.now, erpLease, ...(parser ? { parser } : {}), ...(projectCatalog ? { projectCatalog } : {}) });
+  const app = createApp({ db, dataDir, now: clock.now, erpLease, legacyHome, ...(parser ? { parser } : {}), ...(projectCatalog ? { projectCatalog } : {}) });
   let accounts = 0;
 
   async function signIn(username = `user${accounts + 1}`): Promise<TestClient> {

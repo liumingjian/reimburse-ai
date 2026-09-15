@@ -1,0 +1,8 @@
+{
+  "taskId": "c1b2c3d4e5",
+  "versionId": "v1",
+  "updatedAt": "2026-06-01T08:30:00.000Z",
+  "invoices": [
+    { "identityKey": "einvoice-20:26312000000101557402", "number": "26312000000101557402", "materialId": "m-201", "fileName": "高德打车_发票.pdf" }
+  ]
+}

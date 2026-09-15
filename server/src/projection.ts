@@ -24,6 +24,8 @@ export type TaskFacts = {
   // 项目归属 (#188) once the inventory is clean: candidate lines, selectable projects in the books, lines in the working
   // draft, and whether a submission still stands on the current lines. null before that.
   project: { lineCount: number; selectableCount: number; workingCount: number; submitted: boolean } | null;
+  // An imported legacy task (#195, lifecycle `handed_off`): its terminal, ERP 草稿已交接 or 转人工.
+  legacyOutcome?: 'draft_handed_over' | 'handed_off';
 };
 
 export type Projection = { stage: TaskStage; step: Step; blockers: Blocker[] };
@@ -49,6 +51,8 @@ export function parseRunning(facts: TaskFacts): boolean {
 export function project(facts: TaskFacts): Projection {
   const at = (stage: TaskStage, kind: Step['kind']): Projection => ({ stage, step: { kind, stepToken: stepToken(facts.taskId, facts.revision) }, blockers: [] });
   if (facts.lifecycle === 'voided') return at('voided', 'none');
+  // A legacy task whose ERP draft was saved imports as ERP 草稿已交接 (draft handed over): done, read-only.
+  if (facts.legacyOutcome === 'draft_handed_over') return at('done', 'none');
   // 转人工 (handed off to a human) projects to reconcile, read-only (ADR-0014).
   if (facts.lifecycle === 'handed_off') return at('reconcile', 'none');
   if (inventoried(facts)) {

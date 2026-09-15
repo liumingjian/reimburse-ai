@@ -14,11 +14,13 @@ export type StartOptions = {
   port: number;
   webDist?: string | null;
   projectCatalog?: ProjectCatalog;
+  // The legacy `~/.baox` to import on first-admin creation; null or absent imports nothing.
+  legacyHome?: string | null;
 };
 
 export type RunningServer = { url: string; port: number; close: () => Promise<void> };
 
-export async function startServer({ dataDir, port, webDist = null, projectCatalog }: StartOptions): Promise<RunningServer> {
+export async function startServer({ dataDir, port, webDist = null, projectCatalog, legacyHome = null }: StartOptions): Promise<RunningServer> {
   ensureDataDir(dataDir);
   const release = acquireDataDirLock(dataDir);
   let db: Db;
@@ -28,7 +30,7 @@ export async function startServer({ dataDir, port, webDist = null, projectCatalo
     release();
     throw error;
   }
-  const app = createApp({ db, dataDir, webDist, ...(projectCatalog ? { projectCatalog } : {}) });
+  const app = createApp({ db, dataDir, webDist, legacyHome, ...(projectCatalog ? { projectCatalog } : {}) });
   const { server, info } = await new Promise<{ server: ReturnType<typeof serve>; info: AddressInfo }>((resolve) => {
     const s = serve({ fetch: app.fetch, hostname: HOST, port }, (address) => resolve({ server: s, info: address }));
   });

@@ -1,0 +1,8 @@
+{
+  "taskId": "b1b2c3d4e5",
+  "versionId": "v2",
+  "updatedAt": "2026-05-10T08:30:00.000Z",
+  "invoices": [
+    { "identityKey": "vat-legacy:131002325021:04213377", "number": "04213377", "materialId": "m-101", "fileName": "出租车_发票.jpg" }
+  ]
+}

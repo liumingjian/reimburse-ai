@@ -7,8 +7,10 @@ import {
   PENDING_ANSWER_ERRORS,
   PENDING_CHOICE_KEY,
   PROJECT_ASSIGNMENT_ERRORS,
+  HUMAN_REVIEW_NOTICE,
   fieldAnswer,
   type ActionError,
+  type ReconcileBucket,
   type AssignProjectLinesInput,
   type Line,
   type PendingAnswer,
@@ -21,7 +23,8 @@ import {
 } from '@baox/contract';
 import { sql } from 'kysely';
 import type { Db } from './db/database';
-import type { MaterialTable, TaskTable, UploadBatchTable, UploadRejectionTable } from './db/schema';
+import type { LegacyTaskTable, MaterialTable, TaskTable, UploadBatchTable, UploadRejectionTable } from './db/schema';
+import { legacyHoldings } from './legacy/import';
 import { blobPath, writeBlob } from './data-dir';
 import { inventoryView, type InventoryView, type ViewMaterial } from './inventory-view';
 import { occupancyBlockers, type Holding } from './occupancy-ledger';
@@ -98,6 +101,8 @@ type Loaded = {
   rules: CompanyRules;
   // 项目归属 once the inventory is clean; null before.
   assignment: Assignment | null;
+  // The ERP facts of an imported legacy task (#195); null for every task created in the app.
+  legacy: LegacyTaskTable | null;
 };
 
 // Steps under which the assignment draft and the submission may change: before confirmation and after it, until the
@@ -145,7 +150,9 @@ async function loadTask(tx: Tx, task: TaskTable, materials?: readonly MaterialRo
   const rows = materials ?? (await materialRows(tx, task.task_id));
   const run = await tx.selectFrom('inventory_run').select(['run_id', 'version_no', 'revision', 'started_at']).where('task_id', '=', task.task_id).orderBy('revision', 'desc').executeTakeFirst();
   const reopen = await tx.selectFrom('upload_reopen').select('revision').where('task_id', '=', task.task_id).orderBy('revision', 'desc').executeTakeFirst();
+  const legacy = task.origin === 'legacy' ? ((await tx.selectFrom('legacy_task').selectAll().where('task_id', '=', task.task_id).executeTakeFirst()) ?? null) : null;
   const facts: TaskFacts = {
+    ...(legacy ? { legacyOutcome: legacy.outcome } : {}),
     taskId: task.task_id,
     revision: task.revision,
     lifecycle: task.lifecycle,
@@ -186,18 +193,19 @@ async function loadTask(tx: Tx, task: TaskTable, materials?: readonly MaterialRo
     assignment = assignmentOf(view.lines, await assignmentFacts(tx, task.task_id), options, homeCity, true);
     facts.project = { lineCount: view.lines.length, selectableCount: options.length, workingCount: assignment.view.working.length, submitted: assignment.submitted !== null };
   }
-  return { facts, view, runId: current?.run_id ?? null, parsed: new Set(results.map((result) => result.material_id)), homeCity, rules, assignment };
+  return { facts, view, runId: current?.run_id ?? null, parsed: new Set(results.map((result) => result.material_id)), homeCity, rules, assignment, legacy };
 }
 
 // Every other task that still holds invoices (open, or handed off after touching ERP), in any account.
 async function holdings(tx: Tx, exceptTaskId: string): Promise<Holding[]> {
-  const others = await tx.selectFrom('task').selectAll().where('task_id', '!=', exceptTaskId).where('lifecycle', 'in', ['open', 'handed_off']).execute();
+  const others = await tx.selectFrom('task').selectAll().where('task_id', '!=', exceptTaskId).where('lifecycle', 'in', ['open', 'handed_off']).where('origin', '=', 'app').execute();
   const found: Holding[] = [];
   for (const task of others) {
     const { view } = await loadTask(tx, task);
     if (view.claims.length > 0) found.push({ accountId: task.account_id, taskId: task.task_id, taskName: task.name, handedOff: task.lifecycle === 'handed_off', claims: view.claims });
   }
-  return found;
+  // Imported legacy tasks hold only their stored invoice keys (#195).
+  return [...found, ...(await legacyHoldings(tx))];
 }
 
 async function excludeOnce(tx: Tx, taskId: string, accountId: string, materialId: string, revision: number, at: string): Promise<void> {
@@ -265,7 +273,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     // 任务作废 (void task) removes the task from the list; its facts stay on disk.
     const tasks = await db.selectFrom('task').selectAll().where('account_id', '=', accountId).where('lifecycle', '!=', 'voided').orderBy('updated_at', 'desc').execute();
     const items: TaskListItem[] = [];
-    for (const task of tasks) items.push(listItem(task, (await load(db, task)).facts));
+    for (const task of tasks) items.push(listItem(task, await load(db, task)));
     const remembered = await rememberedHomeCity(db, accountId);
     return { homeCity: remembered ? { value: remembered, source: 'remembered' } : null, tasks: items };
   }
@@ -569,16 +577,16 @@ export async function parseBacklogOfAllAccounts(db: Db, dataDir: string): Promis
   return entries;
 }
 
-function listItem(task: TaskTable, facts: TaskFacts): TaskListItem {
+function listItem(task: TaskTable, { facts, legacy }: Loaded): TaskListItem {
   return {
     taskId: task.task_id,
     name: task.name,
     stage: project(facts).stage,
     period: null,
     grossTotal: null,
-    erpDraftNo: null,
+    erpDraftNo: legacy?.bill_no ?? null,
     pendingCount: facts.parse?.openPendingItems ?? 0,
-    erpOutcome: 'none',
+    erpOutcome: legacy?.outcome === 'handed_off' ? 'handed_off' : 'none',
     abandonable: task.lifecycle === 'open',
     abandonBlockedReason: task.lifecycle === 'open' ? null : ACTION_COPY.notAbandonable,
     updatedAt: task.updated_at,
@@ -642,7 +650,7 @@ function enrichLines(lines: readonly Line[], rules: CompanyRules, assignment: As
   });
 }
 
-function projectSnapshot(task: TaskTable, { facts, view, homeCity, rules, assignment }: Loaded, batches: readonly UploadBatchTable[], rejections: readonly UploadRejectionTable[], materials: readonly MaterialRow[]): TaskSnapshot {
+function projectSnapshot(task: TaskTable, { facts, view, homeCity, rules, assignment, legacy }: Loaded, batches: readonly UploadBatchTable[], rejections: readonly UploadRejectionTable[], materials: readonly MaterialRow[]): TaskSnapshot {
   const { stage, step, blockers } = project(facts);
   // A batch that added a material formed the next inventory version.
   const versionOf = new Map<string, string>();
@@ -670,9 +678,13 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, rules, assign
     projectAssignment: assignment?.view ?? { status: 'not_started', purpose: null, homeCity, assignments: [], working: [], reselect: [], usage: [], projects: [], submittedAt: null },
     catalog: { status: 'pending', problems: [] },
     preparation: { status: 'pending', problems: [], packageFiles: [] },
-    erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null },
+    // An imported legacy task shows only its stored ERP facts: the saved draft's number, or the 转人工 bucket.
+    erp: { status: legacy?.outcome === 'draft_handed_over' ? 'done' : 'idle', steps: [], draftNo: legacy?.bill_no ?? null, abortReason: null, loginNotice: null },
     readback: { status: 'none', rows: [], summary: null, localTotal: null, erpTotal: null },
-    reconcile: { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [] },
+    reconcile:
+      legacy?.outcome === 'handed_off'
+        ? { status: 'handed_off', bucket: legacy.reconcile_bucket as ReconcileBucket | null, action: '转人工', actionCode: null, allowedActions: [], humanReview: true, banner: HUMAN_REVIEW_NOTICE, draftNo: legacy.bill_no, rows: [], reasons: [] }
+        : { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [] },
     step,
   };
 }

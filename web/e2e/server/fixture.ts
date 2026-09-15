@@ -19,7 +19,8 @@ export const test = base.extend<{ serverApp: ServerApp }>({
     if (!existsSync(SERVER_ENTRY)) throw new Error(`${SERVER_ENTRY} is missing; run root pnpm test:e2e (it builds the server)`);
     const dataDir = mkdtempSync(join(tmpdir(), 'baox-e2e-'));
     const child = spawn(process.execPath, [SERVER_ENTRY], {
-      env: { ...process.env, BAOX_DATA_DIR: dataDir, BAOX_PORT: '0', BAOX_PROJECT_CATALOG_FIXTURE: PROJECT_CATALOG },
+      // BAOX_HOME points at a directory that does not exist, so first-admin setup never reads the machine's real ~/.baox.
+      env: { ...process.env, BAOX_DATA_DIR: dataDir, BAOX_PORT: '0', BAOX_PROJECT_CATALOG_FIXTURE: PROJECT_CATALOG, BAOX_HOME: join(dataDir, 'no-legacy-baox') },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let output = '';
