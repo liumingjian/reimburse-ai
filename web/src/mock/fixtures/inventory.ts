@@ -42,6 +42,7 @@ const field = (key: string, label: string, value: string, source: string, eviden
   source,
   parserVersion: source === 'user' ? null : '1',
   evidence,
+  editClass: source === 'user' ? 'fact_correctable' : 'fact_locked',
 });
 
 type Profile = {
@@ -631,8 +632,9 @@ export function applyPendingAnswer(result: InventoryResult, item: PendingItem, a
       existing.value = value;
       existing.source = 'user';
       existing.evidence = 'explicit';
+      existing.editClass = 'fact_correctable';
     } else {
-      material.fields.push({ key: f.key, label: f.label, value, source: 'user', parserVersion: null, evidence: 'explicit' });
+      material.fields.push({ key: f.key, label: f.label, value, source: 'user', parserVersion: null, evidence: 'explicit', editClass: 'fact_correctable' });
     }
   }
   material.status = 'ok';

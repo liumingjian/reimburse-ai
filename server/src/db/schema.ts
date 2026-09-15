@@ -116,8 +116,22 @@ export interface ParseResultTable {
   created_at: string;
 }
 
+// One accepted answer to a 待确认项 or one field edit (0004_187), keyed by the item id `<code>.<materialId>[.<key>]`
+// or the edit address `edit.<materialId>.<field>`. The latest row per key wins; `answer` is the JSON answer.
+export interface PendingAnswerTable {
+  answer_id: string;
+  task_id: string;
+  account_id: string;
+  item_id: string;
+  material_id: string;
+  answer: string;
+  revision: number;
+  created_at: string;
+}
+
 export interface Schema {
   parse_result: ParseResultTable;
+  pending_answer: PendingAnswerTable;
   account: AccountTable;
   session: SessionTable;
   task: TaskTable;

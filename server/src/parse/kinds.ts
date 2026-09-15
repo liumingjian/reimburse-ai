@@ -31,7 +31,18 @@ export type KindSpec = {
   categoryLabel: (values: Readonly<Record<string, string>>) => string | null;
   // The expense event a recognised material forms on its own; null when it forms none (reference materials).
   event: (values: Readonly<Record<string, string>>) => EventDraft | null;
+  // Checks on resolved values that a `user` value (manual fill, correction) must pass before it is accepted; the
+  // first failure as a sentence, or null. Nothing is ever back-calculated to make a check pass (ADR-0017).
+  check?: (values: Readonly<Record<string, string>>) => string | null;
+  // The 发票身份 (invoice identity) behind 重复发票 and 发票占用 (occupancy), e.g. `einvoice-20:<number>`; null when
+  // the values carry none. Kinds without an identity never count as duplicates.
+  identity?: (values: Readonly<Record<string, string>>) => string | null;
+  // The ERP 发票类型 (ERP invoice type) values the company rules allow for these values (a `choice` edit).
+  // Defaults to the one the event draft derived.
+  erpInvoiceTypes?: (values: Readonly<Record<string, string>>) => string[];
 };
+
+const toCents = (value: string | undefined): number | null => (value !== undefined && /^-?\d+\.\d{2}$/.test(value) ? Math.round(Number(value) * 100) : null);
 
 // Kernel category codes (contract ExpenseCategorySchema).
 export const CATEGORIES = {
@@ -100,6 +111,20 @@ export const KINDS: Readonly<Record<MaterialKind, KindSpec>> = {
         maskedNumber: invoiceNumber ? maskNumber(invoiceNumber) : null,
       };
     },
+    check(values) {
+      const number = values['invoiceNumber'];
+      if (number && !/^\d{20}$/.test(number)) return '发票号码应为 20 位数字。';
+      const [net, tax, total] = [values['netAmount'], values['taxAmount'], values['totalAmount']];
+      const [n, t, g] = [toCents(net), toCents(tax), toCents(total)];
+      if (n !== null && t !== null && g !== null && n + t !== g) {
+        return `不含税金额 ${net} 加税额 ${tax} 与价税合计 ${total} 对不上。系统不会倒算或调整任何金额，请对照原件重新填写。`;
+      }
+      return null;
+    },
+    // Kernel invoiceIdentity (parse.mjs:319): a 全电发票 is identified by its 20-digit number.
+    identity: (values) => (/^\d{20}$/.test(values['invoiceNumber'] ?? '') ? `einvoice-20:${values['invoiceNumber']}` : null),
+    // The face 票种 decides the ERP invoice type; no company rule allows another one yet (#188 pins the rules).
+    erpInvoiceTypes: (values) => [INVOICE_TYPES[values['invoiceType'] ?? ''] ?? '增值税发票'],
   },
   // Slots, categories and events arrive with their layouts: rail #184, ride itinerary #184, folio #185, taxi #186.
   rail_ticket: { kind: 'rail_ticket', label: '铁路电子客票', role: 'primary_voucher', slots: [], categoryLabel: noCategory, event: noEvent },

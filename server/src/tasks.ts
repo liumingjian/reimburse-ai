@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs';
 import {
   ABANDON_TASK_COPY,
   CREATE_TASK_ERRORS,
+  PENDING_ANSWER_ERRORS,
+  PENDING_CHOICE_KEY,
+  fieldAnswer,
   type ActionError,
+  type PendingAnswer,
   type TaskList,
   type TaskListItem,
   type TaskSnapshot,
@@ -15,8 +19,11 @@ import type { Db } from './db/database';
 import type { MaterialTable, TaskTable, UploadBatchTable, UploadRejectionTable } from './db/schema';
 import { blobPath, writeBlob } from './data-dir';
 import { inventoryView, type InventoryView, type ViewMaterial } from './inventory-view';
+import { occupancyBlockers, type Holding } from './occupancy-ledger';
 import type { ParseOutcome } from './parse/dispatch';
 import type { ParseInput } from './parse/material';
+import { EXCLUDE_CHOICE, judgeAnswer, type Verdict } from './pending/answers';
+import { EDIT_COPY, EDIT_PREFIX, judgeEdit } from './pending/edits';
 import { inventoried, isNonTerminal, parseRunning, project, stepToken, type TaskFacts } from './projection';
 import { rejectByShape, rejectReason } from './upload-rules';
 
@@ -36,6 +43,8 @@ export const ACTION_COPY = {
   materialNotFound: '这个任务里没有这份材料。',
   alreadyExcluded: '这份材料已经排除。',
   notAbandonable: '这个报销任务已结束，不能作废。',
+  notAnswering: '现在没有可以答复的待确认项。',
+  itemNotFound: '这次盘点没有这个待确认项。',
 } as const;
 
 export class TaskNotFoundError extends Error {
@@ -65,7 +74,7 @@ export class ActionRefusedError extends Error {
 
 type Refusal = { code: string; message: string };
 type Tx = Db;
-type Context = { tx: Tx; task: TaskTable; facts: TaskFacts; at: string; revision: number };
+type Context = { tx: Tx; task: TaskTable; facts: TaskFacts; view: InventoryView; at: string; revision: number };
 
 type MaterialRow = MaterialTable & { size: number; mime: string; row_no: number; excluded: number };
 
@@ -89,7 +98,76 @@ const viewMaterial = (row: MaterialRow): ViewMaterial => ({
   size: row.size,
   mediaType: mediaTypeOf(row),
   excluded: Boolean(row.excluded),
+  uploadedAt: row.created_at,
 });
+
+async function materialRows(tx: Tx, taskId: string): Promise<MaterialRow[]> {
+  return tx
+    .selectFrom('material')
+    .innerJoin('blob', 'blob.sha256', 'material.blob_sha256')
+    .leftJoin('material_exclusion', 'material_exclusion.material_id', 'material.material_id')
+    .selectAll('material')
+    .select(['blob.size', 'blob.mime', sql<number>`material.rowid`.as('row_no'), sql<number>`material_exclusion.exclusion_id IS NOT NULL`.as('excluded')])
+    .where('material.task_id', '=', taskId)
+    .orderBy(sql`material.rowid`)
+    .execute();
+}
+
+// Facts plus the inventory view of the current run (materials, pending items, events, lines), with the stored answers
+// applied. Account-agnostic and without occupancy, so the occupancy ledger can read any task through it.
+async function loadTask(tx: Tx, task: TaskTable, materials?: readonly MaterialRow[]): Promise<Loaded> {
+  const rows = materials ?? (await materialRows(tx, task.task_id));
+  const run = await tx.selectFrom('inventory_run').select(['run_id', 'version_no', 'revision', 'started_at']).where('task_id', '=', task.task_id).orderBy('revision', 'desc').executeTakeFirst();
+  const reopen = await tx.selectFrom('upload_reopen').select('revision').where('task_id', '=', task.task_id).orderBy('revision', 'desc').executeTakeFirst();
+  const facts: TaskFacts = {
+    taskId: task.task_id,
+    revision: task.revision,
+    lifecycle: task.lifecycle,
+    versionNo: new Set(rows.map((row) => row.batch_id)).size,
+    includedMaterialCount: rows.filter((row) => !row.excluded).length,
+    lastRun: run ? { versionNo: run.version_no, revision: run.revision } : null,
+    lastReopenRevision: reopen?.revision ?? null,
+    parse: null,
+  };
+  const current = run && inventoried(facts) ? run : null;
+  const results = current ? await tx.selectFrom('parse_result').select(['material_id', 'detail', 'created_at']).where('run_id', '=', current.run_id).orderBy('revision').execute() : [];
+  // Answers outlive runs: a re-derived item with the same id meets its latest answer.
+  const answers = new Map<string, PendingAnswer>();
+  if (current) {
+    for (const row of await tx.selectFrom('pending_answer').select(['item_id', 'answer']).where('task_id', '=', task.task_id).orderBy('revision').execute()) {
+      answers.set(row.item_id, JSON.parse(row.answer) as PendingAnswer);
+    }
+  }
+  const view = inventoryView(
+    rows.map(viewMaterial),
+    current
+      ? {
+          outcomes: new Map(results.map((result) => [result.material_id, JSON.parse(result.detail) as ParseOutcome])),
+          startedAt: current.started_at,
+          finishedAt: results.at(-1)?.created_at ?? null,
+        }
+      : null,
+    answers,
+  );
+  if (current) facts.parse = { waiting: view.waiting, openPendingItems: view.openPendingItems, blockers: [] };
+  return { facts, view, runId: current?.run_id ?? null, parsed: new Set(results.map((result) => result.material_id)) };
+}
+
+// Every other task that still holds invoices (open, or handed off after touching ERP), in any account.
+async function holdings(tx: Tx, exceptTaskId: string): Promise<Holding[]> {
+  const others = await tx.selectFrom('task').selectAll().where('task_id', '!=', exceptTaskId).where('lifecycle', 'in', ['open', 'handed_off']).execute();
+  const found: Holding[] = [];
+  for (const task of others) {
+    const { view } = await loadTask(tx, task);
+    if (view.claims.length > 0) found.push({ accountId: task.account_id, taskId: task.task_id, taskName: task.name, handedOff: task.lifecycle === 'handed_off', claims: view.claims });
+  }
+  return found;
+}
+
+async function excludeOnce(tx: Tx, taskId: string, accountId: string, materialId: string, revision: number, at: string): Promise<void> {
+  const existing = await tx.selectFrom('material_exclusion').select('exclusion_id').where('material_id', '=', materialId).executeTakeFirst();
+  if (!existing) await tx.insertInto('material_exclusion').values({ exclusion_id: randomUUID(), task_id: taskId, account_id: accountId, material_id: materialId, revision, created_at: at }).execute();
+}
 
 // Scoped to one account: every read and write sees only that account's tasks (ADR-0018). Another account's task is
 // indistinguishable from a missing one.
@@ -100,47 +178,17 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     return row;
   }
 
-  async function materialRows(tx: Tx, taskId: string): Promise<MaterialRow[]> {
-    return tx
-      .selectFrom('material')
-      .innerJoin('blob', 'blob.sha256', 'material.blob_sha256')
-      .leftJoin('material_exclusion', 'material_exclusion.material_id', 'material.material_id')
-      .selectAll('material')
-      .select(['blob.size', 'blob.mime', sql<number>`material.rowid`.as('row_no'), sql<number>`material_exclusion.exclusion_id IS NOT NULL`.as('excluded')])
-      .where('material.task_id', '=', taskId)
-      .orderBy(sql`material.rowid`)
-      .execute();
-  }
-
-  // Facts plus the inventory view of the current run (materials, pending items, events, lines).
+  // The task's own facts and view, plus the cross-task 发票占用 blockers. A blocked batch forms no events and no
+  // pending items until the held invoices are excluded.
   async function load(tx: Tx, task: TaskTable, materials?: readonly MaterialRow[]): Promise<Loaded> {
-    const rows = materials ?? (await materialRows(tx, task.task_id));
-    const run = await tx.selectFrom('inventory_run').select(['run_id', 'version_no', 'revision', 'started_at']).where('task_id', '=', task.task_id).orderBy('revision', 'desc').executeTakeFirst();
-    const reopen = await tx.selectFrom('upload_reopen').select('revision').where('task_id', '=', task.task_id).orderBy('revision', 'desc').executeTakeFirst();
-    const facts: TaskFacts = {
-      taskId: task.task_id,
-      revision: task.revision,
-      lifecycle: task.lifecycle,
-      versionNo: new Set(rows.map((row) => row.batch_id)).size,
-      includedMaterialCount: rows.filter((row) => !row.excluded).length,
-      lastRun: run ? { versionNo: run.version_no, revision: run.revision } : null,
-      lastReopenRevision: reopen?.revision ?? null,
-      parse: null,
-    };
-    const current = run && inventoried(facts) ? run : null;
-    const results = current ? await tx.selectFrom('parse_result').select(['material_id', 'detail', 'created_at']).where('run_id', '=', current.run_id).orderBy('revision').execute() : [];
-    const view = inventoryView(
-      rows.map(viewMaterial),
-      current
-        ? {
-            outcomes: new Map(results.map((result) => [result.material_id, JSON.parse(result.detail) as ParseOutcome])),
-            startedAt: current.started_at,
-            finishedAt: results.at(-1)?.created_at ?? null,
-          }
-        : null,
-    );
-    if (current) facts.parse = { waiting: view.waiting, openPendingItems: view.openPendingItems };
-    return { facts, view, runId: current?.run_id ?? null, parsed: new Set(results.map((result) => result.material_id)) };
+    const loaded = await loadTask(tx, task, materials);
+    const { facts, view } = loaded;
+    if (!facts.parse || view.waiting > 0 || view.claims.length === 0 || task.lifecycle !== 'open') return loaded;
+    const blockers = await occupancyBlockers(await holdings(tx, task.task_id), accountId, view.claims);
+    if (blockers.length === 0) return loaded;
+    facts.parse = { ...facts.parse, openPendingItems: 0, blockers };
+    const summary = view.inventory.summary ? { ...view.inventory.summary, openPendingItemCount: 0 } : null;
+    return { ...loaded, facts, view: { ...view, pendingItems: [], events: [], lines: [], openPendingItems: 0, inventory: { ...view.inventory, summary } } };
   }
 
   async function snapshot(taskId: string): Promise<TaskSnapshot> {
@@ -159,11 +207,11 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       const task = await taskRow(tx, taskId);
       if (token !== null && token !== stepToken(task.task_id, task.revision)) return { kind: 'stale' };
       if (task.lifecycle !== 'open') return { kind: 'refused', code: 'task_closed', message: ACTION_COPY.taskClosed };
-      const { facts } = await load(tx, task);
+      const { facts, view } = await load(tx, task);
       if (!job && parseRunning(facts)) return { kind: 'stale' };
       const at = now();
       const revision = task.revision + 1;
-      const refusal = await apply({ tx, task, facts, at, revision });
+      const refusal = await apply({ tx, task, facts, view, at, revision });
       if (refusal) return { kind: 'refused', ...refusal };
       await tx.updateTable('task').set({ revision, updated_at: at }).where('task_id', '=', taskId).execute();
       return { kind: 'ok' };
@@ -270,7 +318,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
 
     // 人工纠正 (manual correction) inside the current version: excluding forms no new version.
     async excludeMaterial(taskId: string, materialId: string, token: string): Promise<TaskSnapshot> {
-      return mutate(taskId, token, async ({ tx, at, revision }) => {
+      return mutate(taskId, token, async ({ tx, view, at, revision }) => {
         const material = await tx
           .selectFrom('material')
           .leftJoin('material_exclusion', 'material_exclusion.material_id', 'material.material_id')
@@ -280,7 +328,41 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
           .executeTakeFirst();
         if (!material) return { code: 'material_not_found', message: ACTION_COPY.materialNotFound };
         if (material.exclusion_id) return { code: 'already_excluded', message: ACTION_COPY.alreadyExcluded };
-        await tx.insertInto('material_exclusion').values({ exclusion_id: randomUUID(), task_id: taskId, account_id: accountId, material_id: materialId, revision, created_at: at }).execute();
+        await excludeOnce(tx, taskId, accountId, materialId, revision, at);
+        // A given-up allocation (这张票我认不出) goes with its linked materials (the itinerary).
+        if (view.pendingItems.some((item) => item.kind === 'given_up' && item.status === 'open' && item.materialId === materialId)) {
+          for (const linked of view.materials.find((m) => m.materialId === materialId)?.linkedMaterialIds ?? []) await excludeOnce(tx, taskId, accountId, linked, revision, at);
+        }
+      });
+    },
+
+    // Answers one 待确认项, or edits one field (`edit.<materialId>.<field>`), per the item kind or the field's edit
+    // class. An accepted answer is stored under its item id and carried into every later derivation; the choice
+    // `exclude` also excludes the material.
+    async answerPending(taskId: string, itemId: string, answer: PendingAnswer, token: string): Promise<TaskSnapshot> {
+      return mutate(taskId, token, async ({ tx, facts, view, at, revision }) => {
+        if (!facts.parse || facts.parse.blockers.length > 0) return { code: 'not_ready', message: ACTION_COPY.notAnswering };
+        let verdict: Verdict;
+        let materialId: string;
+        const edit = itemId.startsWith(EDIT_PREFIX);
+        if (edit) {
+          const target = view.editables.get(itemId);
+          if (!target) return { code: 'field_not_found', message: EDIT_COPY.notFound };
+          verdict = judgeEdit(target, answer);
+          materialId = target.materialId;
+        } else {
+          const found = view.answerables.get(itemId);
+          if (!found) return { code: 'item_not_found', message: ACTION_COPY.itemNotFound };
+          if (found.item.status !== 'open') return { code: 'item_not_open', message: PENDING_ANSWER_ERRORS.notOpen };
+          verdict = judgeAnswer(found.item, answer, found.check);
+          materialId = found.item.materialId;
+        }
+        if (!verdict.ok) return { code: verdict.code, message: verdict.message };
+        await tx
+          .insertInto('pending_answer')
+          .values({ answer_id: randomUUID(), task_id: taskId, account_id: accountId, item_id: itemId, material_id: materialId, answer: JSON.stringify(verdict.answer), revision, created_at: at })
+          .execute();
+        if (!edit && fieldAnswer(verdict.answer)[PENDING_CHOICE_KEY] === EXCLUDE_CHOICE) await excludeOnce(tx, taskId, accountId, materialId, revision, at);
       });
     },
 
