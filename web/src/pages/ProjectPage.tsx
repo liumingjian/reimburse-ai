@@ -31,8 +31,11 @@ import {
   PROJECT_CONFLICT_COPY,
   PURPOSE_MAX_LENGTH,
   PROJECT_BOOK_COPY,
+  PROJECT_RESELECT_COPY,
+  PROJECT_SOURCE_LABEL,
   type Line,
   type ProjectLineAssignment,
+  type ProjectSource,
   type StepKind,
   type TaskSnapshot,
   pageAllowed,
@@ -72,7 +75,8 @@ const SUBMIT_STEP_KINDS: ReadonlySet<StepKind> = new Set<StepKind>(['assign_proj
 type Target = { number: string; name: string };
 type Conflict = { project: Target; count: number };
 // One entry in the project modal: projects already used here carry the server's line count; the rest carry null.
-type Option = Target & { lineCount: number | null };
+// `source` says which book offers it (个人 personal / 公共 public, #194).
+type Option = Target & { lineCount: number | null; source: ProjectSource };
 // At most one modal at a time: the project modal and the 新增项目 (add project) panel take turns (never stacked);
 // closing the panel returns to the project modal.
 type Modal = 'none' | 'pick' | 'add';
@@ -191,9 +195,10 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   const used = new Set(assignment.usage.map((entry) => entry.number));
   // The modal lists selectable projects only: those already used here (and still selectable) first, with line counts;
   // the rest in project-book order. Locked projects cannot take new lines, so they are not listed.
+  const sourceOf = (number: string): ProjectSource => assignment.projects.find((project) => project.number === number)?.source ?? 'personal';
   const options: Option[] = [
-    ...assignment.usage.filter((entry) => entry.selectable).map((entry) => ({ number: entry.number, name: entry.name, lineCount: entry.lineCount })),
-    ...assignment.projects.filter((project) => !used.has(project.number)).map((project) => ({ number: project.number, name: project.name, lineCount: null })),
+    ...assignment.usage.filter((entry) => entry.selectable).map((entry) => ({ number: entry.number, name: entry.name, lineCount: entry.lineCount, source: sourceOf(entry.number) })),
+    ...assignment.projects.filter((project) => !used.has(project.number)).map((project) => ({ number: project.number, name: project.name, lineCount: null, source: project.source })),
   ];
   const shownOptions = options.filter((option) => matches(option, query));
   // The picked project, if it still matches the search; otherwise nothing is picked.
@@ -307,6 +312,18 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
             </Button>
           ) : null}
         </div>
+      ) : null}
+
+      {/* #194: projects removed or deactivated before submission. The server already took these lines out of the
+          draft; the user picks a project for them again. */}
+      {!locked && assignment.reselect.length > 0 ? (
+        <InlineNotification kind="warning" role="alert" lowContrast hideCloseButton statusIconDescription="注意" title={PROJECT_RESELECT_COPY.title(assignment.reselect.length)}>
+          <ul className="app-reselect" data-testid="project-reselect">
+            {assignment.reselect.map((item) => (
+              <li key={item.lineId}>{PROJECT_RESELECT_COPY.line(lines.find((line) => line.lineId === item.lineId)?.no ?? 0, item.projectNumber, item.projectName)}</li>
+            ))}
+          </ul>
+        </InlineNotification>
       ) : null}
 
       <div className="app-project-split bleed">
@@ -512,6 +529,9 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
                       <span className="app-picker-option">
                         <span className="name">{option.name}</span>
                         <span className="app-code app-caption">{option.number}</span>
+                        <Tag type={option.source === 'public' ? 'teal' : 'gray'} size="sm">
+                          {PROJECT_SOURCE_LABEL[option.source]}
+                        </Tag>
                         {/* Projects already used here show their line count (from the server). */}
                         {option.lineCount !== null ? <span className="app-caption">本次 {option.lineCount} 条</span> : null}
                       </span>

@@ -56,7 +56,7 @@ describe('submit-project-assignment', () => {
     if (!first || !second) throw new Error('expected two lines');
 
     const one = await client.accepted(await client.act(start, 'assign-project-lines', { lineIds: [first.lineId], projectNumber: 'P-2307', onlyUnassigned: false }));
-    expect(one.projectAssignment.working).toEqual([{ lineId: first.lineId, projectNumber: 'P-2307', projectName: '华东客户交付' }]);
+    expect(one.projectAssignment.working).toEqual([{ lineId: first.lineId, projectNumber: 'P-2307', projectName: '华东客户交付', projectSource: 'personal' }]);
 
     await refused(await client.act(one, 'submit-project-assignment', { purpose: '杭州出差', projects: { [first.lineId]: 'P-2307' } }), 'incomplete');
     await refused(await client.act(one, 'submit-project-assignment', { purpose: '   ', projects: { [first.lineId]: 'P-2307', [second.lineId]: 'P-2307' } }), 'invalid_input');
@@ -102,7 +102,7 @@ describe('submit-project-assignment', () => {
     const after = await client.current(start.task.taskId);
     expect(after.step.kind).toBe('assign_projects');
     expect(after.step.stepToken).not.toBe(start.step.stepToken);
-    expect(after.projectAssignment.projects).toEqual([{ number: 'P-2307', name: '华东客户交付' }]);
+    expect(after.projectAssignment.projects).toEqual([{ number: 'P-2307', name: '华东客户交付', source: 'personal' }]);
   });
 });
 

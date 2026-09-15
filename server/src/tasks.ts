@@ -667,7 +667,7 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, rules, assign
     confirmation: { status: 'unconfirmed', confirmedAt: null, digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null, notice: null },
     paymentScreenshots: [],
     printSheet: { status: 'not_generated', fileName: null, url: null, pages: [], notices: [] },
-    projectAssignment: assignment?.view ?? { status: 'not_started', purpose: null, homeCity, assignments: [], working: [], usage: [], projects: [], submittedAt: null },
+    projectAssignment: assignment?.view ?? { status: 'not_started', purpose: null, homeCity, assignments: [], working: [], reselect: [], usage: [], projects: [], submittedAt: null },
     catalog: { status: 'pending', problems: [] },
     preparation: { status: 'pending', problems: [], packageFiles: [] },
     erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null },

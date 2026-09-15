@@ -1,4 +1,8 @@
 import {
+  AccountListFailureSchema,
+  AccountListSchema,
+  type AccountList,
+  type AccountListOutcome,
   ActionFailureSchema,
   AuthFailureSchema,
   STALE_STEP_CODE,
@@ -111,6 +115,30 @@ export function parseProjectBookActionResponse(status: number, body: unknown): P
   const failure = ProjectBookFailureSchema.safeParse(body);
   if (failure.success) return { ok: false, error: failure.data.error, book: failure.data.book ?? null };
   return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, book: null };
+}
+
+// 账号管理（管理员）：GET 返回账号列表；不是管理员时服务端说明原因（403），原样作为加载失败的原因。
+export function parseAccountListResponse(status: number, body: unknown): AccountList {
+  refuseUnauthenticated(status);
+  if (!isSuccess(status)) {
+    const failure = AuthFailureSchema.safeParse(body);
+    throw new Error(failure.success ? failure.data.error.message : `账号列表加载失败（HTTP ${status}）`);
+  }
+  const parsed = AccountListSchema.safeParse(body);
+  if (!parsed.success) throw new Error('账号列表的格式与契约不符');
+  return parsed.data;
+}
+
+// 账号更新：成功是新的账号列表；失败是 { error, accounts? }。
+export function parseAccountActionResponse(status: number, body: unknown): AccountListOutcome {
+  if (isSuccess(status)) {
+    const list = AccountListSchema.safeParse(body);
+    if (list.success) return { ok: true, accountList: list.data };
+    return { ok: false, error: { code: INVALID_RESPONSE_CODE, message: '服务端返回的账号列表格式与契约不符。' }, accountList: null };
+  }
+  const failure = AccountListFailureSchema.safeParse(body);
+  if (failure.success) return { ok: false, error: failure.data.error, accountList: failure.data.accounts ? { accounts: failure.data.accounts } : null };
+  return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, accountList: null };
 }
 
 export function parseSnapshotResponse(status: number, body: unknown): TaskSnapshot {
@@ -245,6 +273,37 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     removeProject: (number) => bookAction(url(E.removeProject.path), { number }),
     purgeInvalidProjects: () => bookAction(url(E.purgeInvalidProjects.path), {}),
     recheckProjects: () => bookAction(url(E.recheckProjects.path), {}),
+    changePassword: (input) => authAction(url(E.changePassword.path), input),
+    async listAccounts() {
+      let response: Response;
+      try {
+        response = await fetch(url(E.listAccounts.path));
+      } catch {
+        throw new ServiceUnavailableError(NETWORK_ERROR_MESSAGE);
+      }
+      return parseAccountListResponse(response.status, await readJson(response));
+    },
+    async updateAccount(accountId, change) {
+      let response: Response;
+      try {
+        response = await fetch(url(E.updateAccount.path, accountId), { method: 'POST', body: JSON.stringify(change), headers: { 'content-type': 'application/json' } });
+      } catch {
+        return { ok: false, error: { code: NETWORK_ERROR_CODE, message: NETWORK_ERROR_MESSAGE }, accountList: null };
+      }
+      return parseAccountActionResponse(response.status, await readJson(response));
+    },
+    async getPublicProjectBook() {
+      let response: Response;
+      try {
+        response = await fetch(url(E.getPublicProjectBook.path));
+      } catch {
+        throw new ServiceUnavailableError(NETWORK_ERROR_MESSAGE);
+      }
+      return parseProjectBookResponse(response.status, await readJson(response));
+    },
+    intakePublicProject: (number) => bookAction(url(E.intakePublicProject.path), { number }),
+    removePublicProject: (number) => bookAction(url(E.removePublicProject.path), { number }),
+    recheckPublicProjects: () => bookAction(url(E.recheckPublicProjects.path), {}),
     async getSnapshot(taskId) {
       const response = await fetch(url(E.getSnapshot.path, taskId));
       return parseSnapshotResponse(response.status, await readJson(response));

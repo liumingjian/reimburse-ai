@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Button, TextInput } from '@carbon/react';
-import { CredentialsInputSchema, type AppAdapter, type AuthOutcome, type CredentialsInput, type Session } from '@baox/contract';
+import { ChangePasswordInputSchema, CredentialsInputSchema, type AppAdapter, type AuthOutcome, type CredentialsInput, type Session } from '@baox/contract';
 import { useAppStore } from '../adapter/context';
 import { ActionError } from '../shell/ActionError';
 import { AppShell } from '../shell/AppShell';
@@ -120,6 +120,63 @@ export function AuthPage({ session }: { session: Session }) {
     <AppShell nav="tasks">
       {/* key: switching modes starts from an empty form. */}
       <CredentialsForm key={mode} mode={mode} onSwitch={mode === 'setup' ? null : () => setRegister(!register)} />
+    </AppShell>
+  );
+}
+
+// 修改密码 (#194): an admin set a temporary password (or the local `baox admin reset-password` did). Until the user
+// replaces it, the server answers every other endpoint 403, so this form is all the gate shows.
+export const CHANGE_PASSWORD_COPY = {
+  title: '修改密码',
+  lead: '你正在使用管理员设置的临时密码。请先改成只有你自己知道的密码，再继续使用。',
+  current: '临时密码',
+  next: '新密码',
+  submit: '修改密码',
+} as const;
+
+export function ChangePasswordPage() {
+  const store = useAppStore();
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    document.title = `baox · ${CHANGE_PASSWORD_COPY.title}`;
+  }, []);
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (busy) return;
+    const parsed = ChangePasswordInputSchema.safeParse({ currentPassword: current, newPassword: next });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? '请求无效。');
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    const outcome = await store.auth((adapter) => adapter.changePassword(parsed.data));
+    setBusy(false);
+    if (!outcome.ok) setError(outcome.error.message);
+  };
+
+  return (
+    <AppShell nav="tasks">
+      <section className="app-form-page app-startup" aria-labelledby="change-password-title">
+        <h1 className="app-page-title" id="change-password-title">
+          {CHANGE_PASSWORD_COPY.title}
+        </h1>
+        <p className="app-lead">{CHANGE_PASSWORD_COPY.lead}</p>
+        <form className="app-form" onSubmit={(event) => void submit(event)} noValidate>
+          <TextInput id="current-password" type="password" labelText={CHANGE_PASSWORD_COPY.current} autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} />
+          <TextInput id="new-password" type="password" labelText={CHANGE_PASSWORD_COPY.next} autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} />
+          <div className="app-btn-row">
+            <Button type="submit" disabled={busy}>
+              {CHANGE_PASSWORD_COPY.submit}
+            </Button>
+            <ActionError message={error} />
+          </div>
+        </form>
+      </section>
     </AppShell>
   );
 }

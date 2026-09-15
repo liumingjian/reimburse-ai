@@ -43,6 +43,17 @@ export const HTTP_ENDPOINTS = {
   removeProject: { method: 'POST', path: '/api/project-book/remove', body: 'json', fields: ['number'] },
   purgeInvalidProjects: { method: 'POST', path: '/api/project-book/purge', body: 'json', fields: [] },
   recheckProjects: { method: 'POST', path: '/api/project-book/recheck', body: 'json', fields: [] },
+  // 改密码需要会话；带临时密码的会话只能调用它（其余端点 403 password_change_required）。成功 200 返回 Session。
+  changePassword: { method: 'POST', path: '/api/auth/change-password', body: 'json', fields: ['currentPassword', 'newPassword'] },
+  // 账号管理（只对管理员，其他账号 403 forbidden）：GET 返回 AccountList；更新一次只带一项（role / active / temporaryPassword），
+  // 成功 200 返回新的 AccountList，失败 { error, accounts? }。`:id` 是账号 id。
+  listAccounts: { method: 'GET', path: '/api/admin/accounts', body: 'none', fields: [] },
+  updateAccount: { method: 'POST', path: '/api/admin/accounts/:id', body: 'json', fields: ['role', 'active', 'temporaryPassword'] },
+  // 公共项目簿：GET 所有账号可读；维护动作只对管理员（403 forbidden { error, book }），结果形状同个人项目簿。删除即停用。
+  getPublicProjectBook: { method: 'GET', path: '/api/public-project-book', body: 'none', fields: [] },
+  intakePublicProject: { method: 'POST', path: '/api/public-project-book/intake', body: 'json', fields: ['number'] },
+  removePublicProject: { method: 'POST', path: '/api/public-project-book/remove', body: 'json', fields: ['number'] },
+  recheckPublicProjects: { method: 'POST', path: '/api/public-project-book/recheck', body: 'json', fields: [] },
   getSnapshot: { method: 'GET', path: '/api/tasks/:id', body: 'none', fields: [] },
   subscribe: { method: 'GET', path: '/api/tasks/:id/events', body: 'sse', fields: [] },
   createTask: { method: 'POST', path: '/api/tasks', body: 'json', fields: ['homeCity'] },

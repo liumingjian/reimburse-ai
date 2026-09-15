@@ -307,6 +307,25 @@ const pendingAnswers187: Migration = {
   },
 };
 
+// 管理员 (admin) tools (#194):
+// - account.must_change_password: set by a temporary password (admin or `baox admin reset-password`), cleared by a change.
+// - account_event: append-only audit of account changes (role, deactivation, passwords); who did it, to whom, when.
+const admin194: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema.alterTable('account').addColumn('must_change_password', 'integer', (c) => c.notNull().defaultTo(0)).execute();
+    await db.schema
+      .createTable('account_event')
+      .addColumn('event_id', 'text', (c) => c.primaryKey())
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      // null when the local CLI acted (access to the machine is the authority).
+      .addColumn('actor_account_id', 'text', (c) => c.references('account.account_id'))
+      .addColumn('action', 'text', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await appendOnly(db, 'account_event');
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -317,4 +336,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   // Lexical order: 0004_187 runs before 0004_188. Neither depends on the other.
   '0004_187_pending_answers': pendingAnswers187,
   '0004_188_projects': projects188,
+  '0005_194_admin': admin194,
 };

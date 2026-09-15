@@ -7,7 +7,7 @@ import { build } from 'esbuild';
 // OCR models are resolved from @gutenye/ocr-models at runtime). The banner gives bundled CommonJS dependencies a
 // `require`.
 await build({
-  entryPoints: { main: 'src/main.ts', 'parse-worker': 'src/parse/worker.ts' },
+  entryPoints: { main: 'src/main.ts', 'parse-worker': 'src/parse/worker.ts', baox: 'src/cli-main.ts' },
   outdir: 'dist',
   outExtension: { '.js': '.mjs' },
   bundle: true,

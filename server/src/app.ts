@@ -1,16 +1,16 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { AssignProjectLinesInputSchema, CreateTaskInputSchema, ERP_ACTION_ERRORS, PendingAnswerSchema, ProjectAssignmentInputSchema, SetHomeCityInputSchema, type ProjectBookResult, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, type TaskSnapshot } from '@baox/contract';
+import { ADMIN_ERRORS, AssignProjectLinesInputSchema, CreateTaskInputSchema, FORBIDDEN_CODE, ERP_ACTION_ERRORS, PendingAnswerSchema, ProjectAssignmentInputSchema, SetHomeCityInputSchema, type ProjectBookResult, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, type TaskSnapshot } from '@baox/contract';
 import { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { AuthRefusal, createAccountService, type Clock } from './accounts/accounts';
-import { accountOf, mountAuthRoutes, requireAccount, type AppEnv } from './accounts/http';
+import { accountOf, mountAccountRoutes, mountAuthRoutes, requireAccount, type AppEnv } from './accounts/http';
 import type { Db } from './db/database';
 import { createInMemoryErpLease, type ErpLease } from './erp-lease';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
-import { createBookService } from './books';
+import { createBookService, type BookService } from './books';
 import { unavailableCatalog, type ProjectCatalog } from './catalog/project-catalog';
 import { ActionRefusedError, createTaskService, parseBacklogOfAllAccounts, StaleStepError, TaskNotFoundError, type TaskService, type UploadedFile } from './tasks';
 
@@ -43,7 +43,7 @@ export type App = Hono<AppEnv> & { close: () => Promise<void> };
 
 type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
-const failure = (c: Context, status: 400 | 401 | 404 | 409, code: string, message: string) => c.json({ error: { code, message } }, status);
+const failure = (c: Context, status: 400 | 401 | 403 | 404 | 409, code: string, message: string) => c.json({ error: { code, message } }, status);
 
 export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), parser, projectCatalog = unavailableCatalog() }: AppOptions): App {
   const accounts = createAccountService(db, now);
@@ -78,6 +78,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
 
   mountAuthRoutes(app, accounts);
   app.use('/api/*', requireAccount(accounts));
+  mountAccountRoutes(app, accounts);
 
   app.get('/api/tasks', async (c) => c.json(await tasksOf(c).list()));
 
@@ -91,22 +92,39 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // sessions are untouched. Answers the new task list.
   app.post('/api/reset', async (c) => c.json(await tasksOf(c).resetAll()));
 
-  // 个人项目簿 (personal book) of the signed-in account. A processed maintenance request is 200 with a
-  // ProjectBookResult, including the not-done statuses; a change pushes fresh snapshots of the account's open tasks.
-  const bookOf = (c: Context<AppEnv>) => createBookService(db, { scope: 'personal', ownerAccountId: accountOf(c).accountId }, accountOf(c).accountId, projectCatalog, now);
-  const CHANGED: ReadonlySet<ProjectBookResult['status']> = new Set(['admitted', 'removed', 'purged', 'done']);
-  const bookAction = (run: (c: Context<AppEnv>, number: string) => Promise<ProjectBookResult>, needsNumber: boolean) => async (c: Context<AppEnv>) => {
-    const body = (await c.req.json().catch(() => ({}))) as { number?: unknown };
-    if (needsNumber && (typeof body.number !== 'string' || body.number.trim() === '')) return c.json({ error: { code: 'invalid_input', message: '请填写项目号。' }, book: await bookOf(c).view() }, 400);
-    const result = await run(c, typeof body.number === 'string' ? body.number : '');
-    if (CHANGED.has(result.status)) await tasksOf(c).bookChanged();
-    return c.json(result);
+  // 个人项目簿 (personal book) of the signed-in account, and the shared 公共项目簿 (public book, #194) that every signed-in
+  // account reads and only admins edit. A processed maintenance request is 200 with a ProjectBookResult, including the
+  // not-done statuses; a change pushes fresh snapshots of the open tasks that offer the book (the owner's, or everyone's).
+  type BookOf = (c: Context<AppEnv>) => BookService;
+  const personalBookOf: BookOf = (c) => createBookService(db, { scope: 'personal', ownerAccountId: accountOf(c).accountId }, accountOf(c).accountId, projectCatalog, now);
+  const publicBookOf: BookOf = (c) => createBookService(db, { scope: 'public' }, accountOf(c).accountId, projectCatalog, now);
+  const everyOpenTaskChanged = async () => {
+    const owners = await db.selectFrom('task').select('account_id').distinct().where('lifecycle', '=', 'open').execute();
+    for (const { account_id } of owners) await serviceFor(account_id).bookChanged();
   };
-  app.get('/api/project-book', async (c) => c.json(await bookOf(c).view()));
-  app.post('/api/project-book/intake', bookAction((c, number) => bookOf(c).intake(number), true));
-  app.post('/api/project-book/remove', bookAction((c, number) => bookOf(c).remove(number), true));
-  app.post('/api/project-book/purge', bookAction((c) => bookOf(c).purge(), false));
-  app.post('/api/project-book/recheck', bookAction((c) => bookOf(c).recheck(), false));
+  const CHANGED: ReadonlySet<ProjectBookResult['status']> = new Set(['admitted', 'removed', 'purged', 'done']);
+  const bookAction =
+    (bookOf: BookOf, run: (book: BookService, number: string) => Promise<ProjectBookResult>, { needsNumber, adminOnly }: { needsNumber: boolean; adminOnly: boolean }) =>
+    async (c: Context<AppEnv>) => {
+      if (adminOnly && accountOf(c).role !== 'admin') return c.json({ error: { code: FORBIDDEN_CODE, message: ADMIN_ERRORS.forbidden }, book: await bookOf(c).view() }, 403);
+      const body = (await c.req.json().catch(() => ({}))) as { number?: unknown };
+      if (needsNumber && (typeof body.number !== 'string' || body.number.trim() === '')) return c.json({ error: { code: 'invalid_input', message: '请填写项目号。' }, book: await bookOf(c).view() }, 400);
+      const result = await run(bookOf(c), typeof body.number === 'string' ? body.number : '');
+      if (CHANGED.has(result.status)) await (adminOnly ? everyOpenTaskChanged() : tasksOf(c).bookChanged());
+      return c.json(result);
+    };
+  const personal = { adminOnly: false };
+  app.get('/api/project-book', async (c) => c.json(await personalBookOf(c).view()));
+  app.post('/api/project-book/intake', bookAction(personalBookOf, (book, number) => book.intake(number), { ...personal, needsNumber: true }));
+  app.post('/api/project-book/remove', bookAction(personalBookOf, (book, number) => book.remove(number), { ...personal, needsNumber: true }));
+  app.post('/api/project-book/purge', bookAction(personalBookOf, (book) => book.purge(), { ...personal, needsNumber: false }));
+  app.post('/api/project-book/recheck', bookAction(personalBookOf, (book) => book.recheck(), { ...personal, needsNumber: false }));
+  // Public removal deactivates (the entry stays, 已停用); there is no purge.
+  const adminOnly = { adminOnly: true };
+  app.get('/api/public-project-book', async (c) => c.json(await publicBookOf(c).view()));
+  app.post('/api/public-project-book/intake', bookAction(publicBookOf, (book, number) => book.intake(number), { ...adminOnly, needsNumber: true }));
+  app.post('/api/public-project-book/remove', bookAction(publicBookOf, (book, number) => book.remove(number), { ...adminOnly, needsNumber: true }));
+  app.post('/api/public-project-book/recheck', bookAction(publicBookOf, (book) => book.recheck(), { ...adminOnly, needsNumber: false }));
 
   app.get('/api/tasks/:id', async (c) => c.json(await tasksOf(c).snapshot(c.req.param('id'))));
 

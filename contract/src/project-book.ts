@@ -113,3 +113,26 @@ export const PROJECT_BOOK_COPY = {
   addProject: '新增项目',
   addDialogDone: '完成',
 } as const;
+
+// 公共项目簿（#194，ADR-0018）：与个人项目簿同一形状，管理员在网页里维护，所有账号共用。删除即停用（条目留在簿里，
+// 状态「已停用」，不能再选；再次录入即恢复）；每次改动都追加记录。维护接口只对管理员开放（其他账号 403 forbidden）。
+// 结果说明沿用 PROJECT_BOOK_NOTES，把「个人项目簿」换成「公共项目簿」；停用有自己的说明。
+export const PUBLIC_PROJECT_BOOK_NOTES = {
+  deactivated: (number: string, name: string | null) => `项目 ${number}「${name ?? '未回读'}」已在公共项目簿停用，不能再选；已提交任务中的归属不受影响`,
+} as const;
+
+export const PUBLIC_PROJECT_BOOK_COPY = {
+  title: '公共项目簿',
+  lead: '管理员维护、所有账号共用的项目。停用后不能再选，已提交的归属不受影响；每次改动都会留下记录。',
+  remove: '停用',
+  empty: '公共项目簿是空的，请录入第一个公共项目。',
+} as const;
+
+// 项目归属页：提交前项目被停用或删除的明细（projectAssignment.reselect），要重新选择项目。
+export const PROJECT_RESELECT_COPY = {
+  title: (count: number) => `${count} 条明细原来归入的项目已停用或已删除，请重新选择项目`,
+  line: (no: number, number: string, name: string) => `No.${no}：原项目 ${number} ${name}`,
+} as const;
+
+// 项目来源标签（项目归属页的项目列表与已归入明细）。
+export const PROJECT_SOURCE_LABEL = { personal: '个人', public: '公共' } as const;

@@ -3,13 +3,13 @@ import { Button, Header, HeaderGlobalBar, HeaderMenuItem, HeaderName, HeaderNavi
 import { UserAvatar } from '@carbon/icons-react';
 import { useAppState, useAppStore } from '../adapter/context';
 import { IS_MOCK } from '../env';
-import { PROJECTS_HASH, SETTINGS_HASH, TASKS_HASH, navigate } from '../router';
+import { ADMIN_HASH, PROJECTS_HASH, SETTINGS_HASH, TASKS_HASH, navigate } from '../router';
 
 export const SERVICE_DOWN_NOTICE = '本地服务未运行，请在终端重新执行 baox';
 export const LOGOUT_LABEL = '退出登录';
 export const ADMIN_TAG = '管理员';
 
-type Nav = 'tasks' | 'projects' | 'settings';
+type Nav = 'tasks' | 'projects' | 'settings' | 'admin';
 
 type Props = {
   nav: Nav;
@@ -17,9 +17,11 @@ type Props = {
   children: ReactNode;
 };
 
-const NAV_ITEMS: readonly { key: Nav; label: string; href: string }[] = [
+// 「管理」只对管理员显示（#194）。
+const NAV_ITEMS: readonly { key: Nav; label: string; href: string; adminOnly?: true }[] = [
   { key: 'tasks', label: '报销任务', href: TASKS_HASH },
   { key: 'projects', label: '个人项目簿', href: PROJECTS_HASH },
+  { key: 'admin', label: '管理', href: ADMIN_HASH, adminOnly: true },
   { key: 'settings', label: '设置', href: SETTINGS_HASH },
 ];
 
@@ -45,7 +47,7 @@ export function AppShell({ nav, stepBar, children }: Props) {
         </HeaderName>
         {account ? (
           <HeaderNavigation aria-label="全局">
-            {NAV_ITEMS.map((item) => (
+            {NAV_ITEMS.filter((item) => !item.adminOnly || account.role === 'admin').map((item) => (
               <HeaderMenuItem key={item.key} href={item.href} isActive={nav === item.key} {...(nav === item.key ? { 'aria-current': 'page' } : {})}>
                 {item.label}
               </HeaderMenuItem>

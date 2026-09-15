@@ -1,5 +1,5 @@
 import type { ActionError, AssignProjectLinesInput, CreateTaskInput, PlacementSlot, ProjectAssignmentInput } from './actions';
-import type { AuthOutcome, CredentialsInput, Session } from './auth';
+import type { AccountList, AccountListOutcome, AccountUpdateInput, AuthOutcome, ChangePasswordInput, CredentialsInput, Session } from './auth';
 import type { ProjectBook, ProjectBookResult } from './project-book';
 import type { Corners, PendingAnswer, TaskSnapshot } from './snapshot';
 import type { TaskList } from './task-list';
@@ -75,6 +75,17 @@ export interface AppAdapter {
   removeProject(number: string): Promise<ProjectBookOutcome>;
   purgeInvalidProjects(): Promise<ProjectBookOutcome>;
   recheckProjects(): Promise<ProjectBookOutcome>;
+  // 改密码（#194）：用临时密码登录后必须先改；成功返回新会话（signed_in）。
+  changePassword(input: ChangePasswordInput): Promise<AuthOutcome>;
+  // 管理员的账号管理：列出账号；设为管理员 / 取消管理员、停用 / 启用、设置临时密码，一次一项，成功返回新的账号列表。
+  // 取消或停用最后一位在用的管理员会被拒绝（last_admin）。非管理员一律 403 forbidden。
+  listAccounts(): Promise<AccountList>;
+  updateAccount(accountId: string, change: AccountUpdateInput): Promise<AccountListOutcome>;
+  // 公共项目簿：所有账号可读；录入、停用、复检只对管理员开放。结果形状同个人项目簿。
+  getPublicProjectBook(): Promise<ProjectBook>;
+  intakePublicProject(number: string): Promise<ProjectBookOutcome>;
+  removePublicProject(number: string): Promise<ProjectBookOutcome>;
+  recheckPublicProjects(): Promise<ProjectBookOutcome>;
   getSnapshot(taskId: string): Promise<TaskSnapshot>;
   subscribe(taskId: string, onEvent: (event: AdapterEvent) => void): Unsubscribe;
 

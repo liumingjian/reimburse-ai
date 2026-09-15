@@ -5,7 +5,8 @@ import { type AppAdapter, PROJECT_BOOK_COPY } from '@baox/contract';
 import { AppProvider, useSession } from './adapter/context';
 import { AppStore } from './adapter/store';
 import { VALIDATE_SNAPSHOTS } from './env';
-import { AuthPage, AuthPending } from './pages/AuthPage';
+import { AdminPage, ADMIN_COPY } from './pages/AdminPage';
+import { AuthPage, AuthPending, ChangePasswordPage } from './pages/AuthPage';
 import { ProjectBookPage } from './pages/ProjectBookPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TaskListPage } from './pages/TaskListPage';
@@ -26,6 +27,8 @@ function titleOf(route: Route): string {
       return PROJECT_BOOK_COPY.title;
     case 'settings':
       return '设置';
+    case 'admin':
+      return ADMIN_COPY.title;
     case 'task':
       return route.page ? PAGE_COPY[route.page].title : '报销任务';
     case 'redirect':
@@ -52,6 +55,8 @@ function Routes() {
       return <ProjectBookPage />;
     case 'settings':
       return <SettingsPage />;
+    case 'admin':
+      return <AdminPage />;
     case 'task':
       return <TaskRoute key={route.taskId} taskId={route.taskId} page={route.page} />;
     case 'redirect':
@@ -64,7 +69,7 @@ function Routes() {
 function AuthGate({ children }: { children: ReactNode }) {
   const session = useSession();
   const data = session.data;
-  if (data) return data.status === 'signed_in' ? children : <AuthPage session={data} />;
+  if (data) return data.status === 'signed_in' ? children : data.status === 'password_change_required' ? <ChangePasswordPage /> : <AuthPage session={data} />;
   return <AuthPending error={session.status === 'error' ? session.error : null} />;
 }
 

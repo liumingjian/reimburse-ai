@@ -6,6 +6,7 @@
     "node": ">=24 <25"
   },
   "scripts": {
+    "baox": "pnpm --silent --filter @baox/server baox",
     "build": "pnpm -r build",
     "dev": "pnpm --parallel --filter @baox/server --filter @baox/web dev",
     "dev:mock": "pnpm --filter @baox/web dev:mock",
