@@ -1,8 +1,12 @@
 import { defineConfig } from '@playwright/test';
 
-// e2e 只针对 mock 构建产物：用 Mac 上已安装的 Google Chrome 直接打开 dist-mock/index.html（file://）。
+// Two projects, both on the Mac's installed Google Chrome:
+// - mock: opens the mock build (dist-mock/index.html) over file://. Keeps only states the real server cannot cheaply
+//   reach; a mock spec duplicated by a passing server spec is deleted.
+// - server: journeys against the built server (server/dist/main.mjs) serving web/dist. Specs live in e2e/server/ and
+//   import `test` from ./server/fixture, which boots one server per test on a throwaway BAOX_DATA_DIR.
+// Root `pnpm test:e2e` builds everything first.
 export default defineConfig({
-  testDir: './e2e',
   outputDir: './test-results',
   fullyParallel: true,
   reporter: [['list']],
@@ -12,5 +16,8 @@ export default defineConfig({
     viewport: { width: 1440, height: 1000 },
     screenshot: 'only-on-failure',
   },
-  projects: [{ name: 'chrome' }],
+  projects: [
+    { name: 'mock', testDir: './e2e', testIgnore: 'server/**' },
+    { name: 'server', testDir: './e2e/server' },
+  ],
 });

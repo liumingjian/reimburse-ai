@@ -1,0 +1,56 @@
+// Row types for kysely. Every per-user fact carries `account_id` (ADR-0015); until accounts land (#193) one
+// implicit account owns everything.
+
+export type TaskLifecycle = 'open' | 'voided' | 'handed_off';
+
+export interface AccountTable {
+  account_id: string;
+  display_name: string;
+  created_at: string;
+}
+
+// Mutable: `lifecycle` and `revision` (the per-task stepToken counter, ADR-0014).
+export interface TaskTable {
+  task_id: string;
+  account_id: string;
+  name: string;
+  home_city: string;
+  lifecycle: TaskLifecycle;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// Append-only from here down.
+export interface UploadBatchTable {
+  batch_id: string;
+  task_id: string;
+  account_id: string;
+  no: number;
+  uploaded_at: string;
+}
+
+export interface BlobTable {
+  sha256: string;
+  size: number;
+  mime: string;
+  created_at: string;
+}
+
+export interface MaterialTable {
+  material_id: string;
+  task_id: string;
+  account_id: string;
+  batch_id: string;
+  blob_sha256: string;
+  file_name: string;
+  created_at: string;
+}
+
+export interface Schema {
+  account: AccountTable;
+  task: TaskTable;
+  upload_batch: UploadBatchTable;
+  blob: BlobTable;
+  material: MaterialTable;
+}
