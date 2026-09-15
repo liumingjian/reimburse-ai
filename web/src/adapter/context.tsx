@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
-import type { AppState, AppStore, ProjectBookState, SessionState, TaskEntry, TaskListState } from './store';
+import type { AccountsState, AppState, AppStore, BookScope, ProjectBookState, SessionState, TaskEntry, TaskListState } from './store';
 
 // 适配器经 React Context 注入：页面只认 useAppStore()，换适配器不改页面。
 
@@ -39,14 +39,29 @@ export function useTaskList(): TaskListState {
   return state.taskList;
 }
 
-// 个人项目簿：第一次用到时读取；之后由维护动作的结果替换。
+// 项目簿（个人或公共）：第一次用到时读取；之后由维护动作的结果替换。
+export function useBook(scope: BookScope): ProjectBookState {
+  const store = useAppStore();
+  const state = useAppState();
+  const book = scope === 'public' ? state.publicBook : state.projectBook;
+  useEffect(() => {
+    if (book.status === 'idle') void (scope === 'public' ? store.loadPublicBook() : store.loadProjectBook());
+  }, [store, scope, book.status]);
+  return book;
+}
+
 export function useProjectBook(): ProjectBookState {
+  return useBook('personal');
+}
+
+// 管理员页的账号列表：第一次用到时读取。
+export function useAccounts(): AccountsState {
   const store = useAppStore();
   const state = useAppState();
   useEffect(() => {
-    if (state.projectBook.status === 'idle') void store.loadProjectBook();
-  }, [store, state.projectBook.status]);
-  return state.projectBook;
+    if (state.accounts.status === 'idle') void store.loadAccounts();
+  }, [store, state.accounts.status]);
+  return state.accounts;
 }
 
 export function useTask(taskId: string): TaskEntry {

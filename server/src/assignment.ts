@@ -6,6 +6,8 @@ import type { BookOption } from './books';
 // `submit-project-assignment` stores the selection, pinning code + name + source per line (ADR-0018). A submission
 // stands on the candidate lines it was made for (kernel selection.mjs `linesDigest`): when the lines change it goes
 // stale and the task returns to assignment, keeping the draft for lines that still exist.
+// A draft line whose project stopped being selectable before submission (removed from the personal book, deactivated in
+// the public book) leaves the draft and is listed under `reselect`; only the standing submission's pin may be kept.
 
 export type PinnedProject = BookOption;
 
@@ -43,13 +45,19 @@ export function assignmentOf(lines: readonly Line[], facts: readonly AssignmentF
   const digest = linesDigest(lines);
   const last = [...ordered].reverse().find((fact): fact is SubmitFact => fact.kind === 'submit') ?? null;
   const submitted = last && last.linesDigest === digest ? last : null;
+  const selectable = new Set(options.map((option) => option.number));
+  const dropped = new Map<string, PinnedProject>();
+  for (const [lineId, project] of working) {
+    if (selectable.has(project.number) || submitted?.selection[lineId]?.number === project.number) continue;
+    dropped.set(lineId, project);
+    working.delete(lineId);
+  }
 
   const inLineOrder = (source: ReadonlyMap<string, PinnedProject>) =>
     lines.flatMap((line) => {
       const project = source.get(line.lineId);
-      return project ? [{ lineId: line.lineId, projectNumber: project.number, projectName: project.name }] : [];
+      return project ? [{ lineId: line.lineId, projectNumber: project.number, projectName: project.name, projectSource: project.source }] : [];
     });
-  const selectable = new Set(options.map((option) => option.number));
   const usage = new Map<string, ProjectUsage & { cents: number }>();
   for (const line of lines) {
     const project = working.get(line.lineId);
@@ -69,8 +77,9 @@ export function assignmentOf(lines: readonly Line[], facts: readonly AssignmentF
       homeCity,
       assignments: submitted ? inLineOrder(new Map(Object.entries(submitted.selection))) : [],
       working: inLineOrder(working),
+      reselect: inLineOrder(dropped),
       usage: [...usage.values()].map(({ cents: total, ...entry }) => ({ ...entry, grossTotal: yuan(total) })),
-      projects: options.map((option) => ({ number: option.number, name: option.name })),
+      projects: options.map((option) => ({ number: option.number, name: option.name, source: option.source })),
       submittedAt: submitted?.submittedAt ?? null,
     },
   };

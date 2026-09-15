@@ -7,7 +7,11 @@
   "engines": {
     "node": ">=24 <25"
   },
+  "bin": {
+    "baox": "dist/baox.mjs"
+  },
   "scripts": {
+    "baox": "tsx src/cli-main.ts",
     "dev": "tsx watch src/main.ts",
     "build": "node scripts/build.mjs",
     "start": "node dist/main.mjs",

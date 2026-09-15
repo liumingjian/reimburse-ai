@@ -479,12 +479,18 @@ export type PrintSheet = z.infer<typeof PrintSheetSchema>;
 
 // ---- 项目归属 ----
 
-// 规则照内核现有项目归属页面（project-workbench.mjs Variant B）：项目只能从个人项目簿的允许列表里选。
+// 规则照内核现有项目归属页面（project-workbench.mjs Variant B）：项目只能从允许列表里选。允许列表是个人项目簿
+// 与公共项目簿（#194）的可选项目并排给出，source 标明来自哪一本；同一个项目号两本都有时只给个人那条。
 // 允许列表只含可选项目（内核 selectableProjects，baox.mjs:1603）：不可选的（已过期 / 复检未通过 / 项目号不安全）不随快照给出，
 // 需要时去个人项目簿查看。可选判定在服务端。
+export const PROJECT_SOURCES = ['personal', 'public'] as const;
+export const ProjectSourceSchema = z.enum(PROJECT_SOURCES);
+export type ProjectSource = z.infer<typeof ProjectSourceSchema>;
+
 export const ProjectOptionSchema = z.object({
   number: z.string().min(1),
   name: z.string().min(1),
+  source: ProjectSourceSchema,
 });
 export type ProjectOption = z.infer<typeof ProjectOptionSchema>;
 
@@ -509,6 +515,8 @@ export const ProjectLineAssignmentSchema = z.object({
   lineId: IdSchema,
   projectNumber: z.string().min(1),
   projectName: z.string().min(1),
+  // 任务选择钉住的来源：个人项目簿或公共项目簿（ADR-0018）。
+  projectSource: ProjectSourceSchema,
 });
 export type ProjectLineAssignment = z.infer<typeof ProjectLineAssignmentSchema>;
 
@@ -526,7 +534,10 @@ export const ProjectAssignmentSchema = z.object({
   working: z.array(ProjectLineAssignmentSchema),
   // 「本次已归入」区：working 里用到的项目，按首次出现的明细顺序，带条数与金额（服务端给出）。
   usage: z.array(ProjectUsageSchema),
-  // 个人项目簿允许列表（只含可选项目），打开页面时整份给出；搜索只缩小显示，不缩小允许列表。
+  // 提交前项目已被停用或删除的明细（#194）：服务端已把它们从 working 里拿掉，这里列出原来归入的项目，页面提示重新选择。
+  // 已提交归属里钉住的项目不在此列（沿用）。
+  reselect: z.array(ProjectLineAssignmentSchema),
+  // 允许列表（只含可选项目），打开页面时整份给出；搜索只缩小显示，不缩小允许列表。
   projects: z.array(ProjectOptionSchema),
   submittedAt: DateTimeSchema.nullable(),
 });

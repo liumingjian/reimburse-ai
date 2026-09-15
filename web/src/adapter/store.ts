@@ -1,4 +1,7 @@
 import {
+  AccountListSchema,
+  type AccountList,
+  type AccountListOutcome,
   STALE_STEP_CODE,
   STALE_STEP_NOTICE,
   isServiceUnavailable,
@@ -49,6 +52,16 @@ export type ProjectBookState = {
   readonly error: string | null;
 };
 
+// 项目簿的两本：个人项目簿（按账号）与公共项目簿（所有账号共用，管理员维护，#194）。
+export type BookScope = 'personal' | 'public';
+
+// 管理员页的账号列表：只在打开管理页时读取；之后由账号更新的结果替换。
+export type AccountsState = {
+  readonly status: LoadStatus;
+  readonly data: AccountList | null;
+  readonly error: string | null;
+};
+
 // 应用账号的会话：页面先看它决定显示创建管理员 / 登录，还是任务列表与任务页。
 export type SessionState = {
   readonly status: LoadStatus;
@@ -60,6 +73,8 @@ export type AppState = {
   readonly session: SessionState;
   readonly taskList: TaskListState;
   readonly projectBook: ProjectBookState;
+  readonly publicBook: ProjectBookState;
+  readonly accounts: AccountsState;
   readonly tasks: Readonly<Record<string, TaskEntry>>;
   readonly connection: ConnectionState;
 };
@@ -70,6 +85,8 @@ const INITIAL_STATE: AppState = {
   session: { status: 'idle', data: null, error: null },
   taskList: { status: 'idle', data: null, error: null, offline: false },
   projectBook: { status: 'idle', data: null, error: null },
+  publicBook: { status: 'idle', data: null, error: null },
+  accounts: { status: 'idle', data: null, error: null },
   tasks: {},
   connection: 'connected',
 };
@@ -146,7 +163,7 @@ export class AppStore {
   private forgetAccountData(): void {
     for (const subscription of this.subscriptions.values()) subscription.unsubscribe();
     this.subscriptions.clear();
-    this.setState({ taskList: INITIAL_STATE.taskList, projectBook: INITIAL_STATE.projectBook, tasks: {} });
+    this.setState({ taskList: INITIAL_STATE.taskList, projectBook: INITIAL_STATE.projectBook, publicBook: INITIAL_STATE.publicBook, accounts: INITIAL_STATE.accounts, tasks: {} });
   }
 
   // 任务列表是请求/响应（没有事件流）。连接类失败时保留 offline 标记（全页横幅）并按退避自动重试；恢复后横幅消失、列表出现。
@@ -232,8 +249,52 @@ export class AppStore {
     }
   }
 
-  // 项目簿维护动作：结果里的项目簿（或失败时附带的项目簿）直接替换当前项目簿。适配器抛错也按失败返回。
-  async projectBookAction(run: (adapter: AppAdapter) => Promise<ProjectBookOutcome>): Promise<ProjectBookOutcome> {
+  async loadPublicBook(): Promise<void> {
+    const previous = this.state.publicBook;
+    this.setState({ publicBook: { status: 'loading', data: previous.data, error: null } });
+    try {
+      const raw = await this.adapter.getPublicProjectBook();
+      const data = this.options.validate ? ProjectBookSchema.parse(raw) : raw;
+      this.setState({ publicBook: { status: 'ready', data, error: null } });
+    } catch (error) {
+      this.setState({ publicBook: { status: 'error', data: this.state.publicBook.data, error: describe(error) } });
+      if (isUnauthenticated(error)) this.sessionLost();
+    }
+  }
+
+  async loadAccounts(): Promise<void> {
+    const previous = this.state.accounts;
+    this.setState({ accounts: { status: 'loading', data: previous.data, error: null } });
+    try {
+      const raw = await this.adapter.listAccounts();
+      const data = this.options.validate ? AccountListSchema.parse(raw) : raw;
+      this.setState({ accounts: { status: 'ready', data, error: null } });
+    } catch (error) {
+      this.setState({ accounts: { status: 'error', data: this.state.accounts.data, error: describe(error) } });
+      if (isUnauthenticated(error)) this.sessionLost();
+    }
+  }
+
+  // 账号更新（管理员）：结果里的账号列表（或失败时附带的列表）直接替换当前列表。改的是自己的角色时重读会话。
+  async accountAction(run: (adapter: AppAdapter) => Promise<AccountListOutcome>): Promise<AccountListOutcome> {
+    let outcome: AccountListOutcome;
+    let data: AccountList | null;
+    try {
+      outcome = await run(this.adapter);
+      const raw = outcome.accountList;
+      data = raw && this.options.validate ? AccountListSchema.parse(raw) : raw;
+    } catch (error) {
+      return { ok: false, error: { code: 'adapter_error', message: describe(error) }, accountList: null };
+    }
+    if (data) this.setState({ accounts: { status: 'ready', data, error: null } });
+    const me = this.state.session.data?.account;
+    const mine = me && data?.accounts.find((account) => account.accountId === me.accountId);
+    if (mine && mine.role !== me.role) void this.loadSession();
+    return outcome;
+  }
+
+  // 项目簿维护动作：结果里的项目簿（或失败时附带的项目簿）直接替换那一本。适配器抛错也按失败返回。
+  async projectBookAction(run: (adapter: AppAdapter) => Promise<ProjectBookOutcome>, scope: BookScope = 'personal'): Promise<ProjectBookOutcome> {
     let outcome: ProjectBookOutcome;
     let data: ProjectBook | null | undefined;
     try {
@@ -243,7 +304,7 @@ export class AppStore {
     } catch (error) {
       return { ok: false, error: { code: 'adapter_error', message: describe(error) }, book: null };
     }
-    if (data) this.setState({ projectBook: { status: 'ready', data, error: null } });
+    if (data) this.setState(scope === 'public' ? { publicBook: { status: 'ready', data, error: null } } : { projectBook: { status: 'ready', data, error: null } });
     return outcome;
   }
 
@@ -319,6 +380,7 @@ export class AppStore {
     for (const taskId of this.subscriptions.keys()) void this.refreshTask(taskId);
     if (this.state.taskList.status !== 'idle') void this.loadTaskList();
     if (this.state.projectBook.status !== 'idle') void this.loadProjectBook();
+    if (this.state.publicBook.status !== 'idle') void this.loadPublicBook();
   }
 
   clearNotice(taskId: string): void {

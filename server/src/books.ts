@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { PROJECT_BOOK_NOTES, type ProjectBook, type ProjectBookEntry, type ProjectBookResult } from '@baox/contract';
+import { PROJECT_BOOK_NOTES, PUBLIC_PROJECT_BOOK_NOTES, type ProjectBook, type ProjectBookEntry, type ProjectBookResult } from '@baox/contract';
 import { isSafeProjectNumber, type CatalogLookup, type ProjectCatalog } from './catalog/project-catalog';
 import type { Db } from './db/database';
 
@@ -8,13 +8,14 @@ import type { Db } from './db/database';
 // `scope` and `owner_account_id` (null for public); the current book is a fold of that stream.
 // Ported from kernel/src/projects.mjs (selectable rules, labels), projectintake.mjs (intake) and projectmaintain.mjs
 // (remove, purge, recheck). Names come only from the catalog; there is no edit, re-intake replaces.
+// In the public book a removal deactivates: the entry stays listed as 已停用 and cannot be chosen; re-intake revives it.
 
 export type BookRef = { scope: 'personal'; ownerAccountId: string } | { scope: 'public' };
 export type ProjectSource = BookRef['scope'];
 
 type Verdict = 'confirmed' | 'missing' | 'ambiguous' | 'unusable' | 'unsafe';
 
-export type BookEntry = { number: string; name: string | null; expiresOn: string | null; lastCheckedAt: string | null; verdict: Verdict };
+export type BookEntry = { number: string; name: string | null; expiresOn: string | null; lastCheckedAt: string | null; verdict: Verdict; deactivated: boolean };
 
 // A selectable project with where it came from; a task selection pins exactly this (code + name + source).
 export type BookOption = { number: string; name: string; source: ProjectSource };
@@ -32,20 +33,24 @@ const VERDICT_NOTE: Readonly<Record<Exclude<Verdict, 'confirmed'>, string>> = {
 // Local calendar day, YYYY-MM-DD (kernel localToday).
 const localDay = (now: Date) => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
-function invalidReasons(entry: BookEntry, today: string): ('unsafe' | 'expired' | 'unconfirmed')[] {
-  const reasons: ('unsafe' | 'expired' | 'unconfirmed')[] = [];
+type Reason = 'deactivated' | 'unsafe' | 'expired' | 'unconfirmed';
+
+function invalidReasons(entry: BookEntry, today: string): Reason[] {
+  if (entry.deactivated) return ['deactivated'];
+  const reasons: Reason[] = [];
   if (!isSafeProjectNumber(entry.number)) reasons.push('unsafe');
   if (entry.expiresOn !== null && entry.expiresOn < today) reasons.push('expired');
   if (entry.verdict !== 'confirmed') reasons.push('unconfirmed');
   return reasons;
 }
 
-const REASON_LABEL = { unsafe: '项目号不安全', expired: '已过期', unconfirmed: '复检未通过' } as const;
+const REASON_LABEL = { deactivated: '已停用', unsafe: '项目号不安全', expired: '已过期', unconfirmed: '复检未通过' } as const;
+const DEACTIVATED_NOTE = '管理员已在公共项目簿停用这个项目，不能再选';
 
 export function annotate(entry: BookEntry, today: string): ProjectBookEntry {
   const reasons = invalidReasons(entry, today);
   const notes = reasons.map((reason) =>
-    reason === 'expired' ? `已过期（过期时间 ${entry.expiresOn}）` : reason === 'unsafe' ? VERDICT_NOTE.unsafe : entry.verdict === 'confirmed' ? VERDICT_NOTE.unusable : VERDICT_NOTE[entry.verdict],
+    reason === 'deactivated' ? DEACTIVATED_NOTE : reason === 'expired' ? `已过期（过期时间 ${entry.expiresOn}）` : reason === 'unsafe' ? VERDICT_NOTE.unsafe : entry.verdict === 'confirmed' ? VERDICT_NOTE.unusable : VERDICT_NOTE[entry.verdict],
   );
   return {
     number: entry.number,
@@ -68,8 +73,11 @@ export async function readBook(db: Db, ref: BookRef): Promise<BookEntry[]> {
   const events = await scoped(db, ref).orderBy('seq').execute();
   const book = new Map<string, BookEntry>();
   for (const event of events) {
-    if (event.action === 'removed') book.delete(event.number);
-    else if (event.action === 'admitted') book.set(event.number, { number: event.number, name: event.name, expiresOn: event.expires_on, lastCheckedAt: event.created_at, verdict: 'confirmed' });
+    if (event.action === 'removed') {
+      const entry = book.get(event.number);
+      if (ref.scope === 'personal') book.delete(event.number);
+      else if (entry) book.set(event.number, { ...entry, deactivated: true });
+    } else if (event.action === 'admitted') book.set(event.number, { number: event.number, name: event.name, expiresOn: event.expires_on, lastCheckedAt: event.created_at, verdict: 'confirmed', deactivated: false });
     else {
       const entry = book.get(event.number);
       if (entry) book.set(event.number, { ...entry, name: event.verdict === 'confirmed' && event.name ? event.name : entry.name, verdict: (event.verdict ?? 'unusable') as Verdict, lastCheckedAt: event.created_at });
@@ -78,11 +86,15 @@ export async function readBook(db: Db, ref: BookRef): Promise<BookEntry[]> {
   return [...book.values()];
 }
 
-// Selectable projects a task may take new lines into: personal first, then public (#194 adds the public book here).
+// Selectable projects a task may take new lines into: personal first, then public ones whose number the personal book
+// does not already offer (a number is one choice; the account's own entry wins).
 export async function bookOptions(db: Db, accountId: string, now: Date): Promise<BookOption[]> {
   const today = localDay(now);
-  const personal = await readBook(db, { scope: 'personal', ownerAccountId: accountId });
-  return personal.filter((entry) => annotate(entry, today).selectable).map((entry) => ({ number: entry.number, name: entry.name ?? entry.number, source: 'personal' }));
+  const selectable = async (ref: BookRef) =>
+    (await readBook(db, ref)).filter((entry) => annotate(entry, today).selectable).map((entry): BookOption => ({ number: entry.number, name: entry.name ?? entry.number, source: ref.scope }));
+  const personal = await selectable({ scope: 'personal', ownerAccountId: accountId });
+  const taken = new Set(personal.map((option) => option.number));
+  return [...personal, ...(await selectable({ scope: 'public' })).filter((option) => !taken.has(option.number))];
 }
 
 type Append = { number: string; action: 'admitted' | 'checked' | 'removed'; name?: string | null; verdict?: Verdict | null };
@@ -123,7 +135,9 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
     });
   }
 
-  const result = async (status: ProjectBookResult['status'], note: string, verdict: ProjectBookResult['verdict'] = null): Promise<ProjectBookResult> => ({ status, verdict, note, book: await view() });
+  // The shared notes name the personal book; the public book says its own name.
+  const say = (note: string) => (ref.scope === 'public' ? note.replaceAll('个人项目簿', '公共项目簿') : note);
+  const result = async (status: ProjectBookResult['status'], note: string, verdict: ProjectBookResult['verdict'] = null): Promise<ProjectBookResult> => ({ status, verdict, note: say(note), book: await view() });
 
   async function lookup(number: string): Promise<CatalogLookup> {
     let answer = await catalog.lookup(number);
@@ -149,10 +163,10 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
 
     async remove(raw: string): Promise<ProjectBookResult> {
       const number = raw.trim();
-      const entry = (await readBook(db, ref)).find((candidate) => candidate.number === number);
+      const entry = (await readBook(db, ref)).find((candidate) => candidate.number === number && !candidate.deactivated);
       if (!entry) return result('not_found', PROJECT_BOOK_NOTES.notFound(number));
       await append([{ number, action: 'removed' }]);
-      return result('removed', PROJECT_BOOK_NOTES.removed(number, entry.name));
+      return result('removed', ref.scope === 'public' ? PUBLIC_PROJECT_BOOK_NOTES.deactivated(number, entry.name) : PROJECT_BOOK_NOTES.removed(number, entry.name));
     },
 
     // 清理全部失效: removes every entry that is not selectable today.
@@ -166,7 +180,8 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
 
     // 复检全部: asks the catalog about every entry; any failed lookup changes nothing. Recheck never removes.
     async recheck(): Promise<ProjectBookResult> {
-      const entries = await readBook(db, ref);
+      // Deactivated public entries are history, not asked about.
+      const entries = (await readBook(db, ref)).filter((entry) => !entry.deactivated);
       if (entries.length === 0) return result('empty', PROJECT_BOOK_NOTES.recheckEmpty);
       const checked: Append[] = [];
       for (const entry of entries) {
@@ -180,7 +195,7 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
       }
       await append(checked);
       const book = await view();
-      return { status: 'done', verdict: null, note: PROJECT_BOOK_NOTES.recheckDone(checked.length, book.projects.filter((p) => !p.selectable).length), book };
+      return { status: 'done', verdict: null, note: say(PROJECT_BOOK_NOTES.recheckDone(checked.length, book.projects.filter((p) => !p.selectable).length)), book };
     },
 
     // 完全重置 (reset) of a personal book: every current entry is removed (append-only, so as removal events).

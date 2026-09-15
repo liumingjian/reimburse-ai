@@ -11,6 +11,18 @@ export interface AccountTable {
   password_hash: string | null;
   role: 'user' | 'admin';
   active: number;
+  must_change_password: number;
+}
+
+export type AccountEventAction = 'promoted' | 'demoted' | 'deactivated' | 'reactivated' | 'temporary_password' | 'password_changed' | 'cli_reset_password';
+
+// Append-only audit of account changes (#194). `actor_account_id` is null for the local CLI.
+export interface AccountEventTable {
+  event_id: string;
+  account_id: string;
+  actor_account_id: string | null;
+  action: AccountEventAction;
+  created_at: string;
 }
 
 // Mutable: `expires_at` slides; logout deletes the row.
@@ -203,6 +215,7 @@ export interface Schema {
   erp_attempt: { attempt_id: string; job_id: string; task_id: string; action: 'import' | 'fill' | 'save'; preconditions: string; expected_postconditions: string; erp_build: string; form_id: string; erp_account: string; erp_tenant: string; erp_display_name: string; started_at: string };
   parse_result: ParseResultTable;
   account: AccountTable;
+  account_event: AccountEventTable;
   session: SessionTable;
   task: TaskTable;
   upload_batch: UploadBatchTable;

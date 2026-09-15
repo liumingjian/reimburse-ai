@@ -1,8 +1,10 @@
 import {
+  ADMIN_ERRORS,
   AUTH_ERRORS,
   ServiceUnavailableError,
   UNAUTHENTICATED_CODE,
   UnauthenticatedError,
+  type AccountListOutcome,
   type ActionOutcome,
   type AppAdapter,
   type AuthOutcome,
@@ -21,6 +23,7 @@ import { buildPrintSheet } from './fixtures/print';
 import { HOME_CITY } from './fixtures/projects';
 import { T1_ID, emptySnapshot, t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from './fixtures/tasks';
 import { createProjectBook } from './project-book';
+import { createPublicBook } from './public-book';
 import { MOCK_ACCOUNT, createAuth } from './auth';
 import { createErpFlow } from './flows/erp';
 import { createInventoryFlow } from './flows/inventory';
@@ -55,11 +58,12 @@ export function installMockHooks(target: Window, adapter: MockAdapter): void {
 }
 
 // 读快照与订阅不受断连影响（快照读的是内存）；任务列表断开期间读不到；其余都是动作，断开期间一律失败，原因就地显示在按钮旁。
-const READ_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['getSession', 'listTasks', 'getSnapshot', 'subscribe', 'getProjectBook']);
+const READ_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['getSession', 'listTasks', 'getSnapshot', 'subscribe', 'getProjectBook', 'getPublicProjectBook', 'listAccounts']);
 // 作废与重置的失败形状带 taskList 而不是 snapshot；账号动作只有 error；项目簿维护动作带 book。
 const LIST_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['abandonTask', 'resetAll']);
-const AUTH_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['setupAdmin', 'register', 'login', 'logout']);
-const BOOK_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['intakeProject', 'removeProject', 'purgeInvalidProjects', 'recheckProjects']);
+const AUTH_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['setupAdmin', 'register', 'login', 'logout', 'changePassword']);
+const BOOK_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['intakeProject', 'removeProject', 'purgeInvalidProjects', 'recheckProjects', 'intakePublicProject', 'removePublicProject', 'recheckPublicProjects']);
+const ACCOUNT_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['updateAccount']);
 
 export function createMockAdapter(options: MockOptions): MockAdapter {
   const bus = createBus(options);
@@ -77,6 +81,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const ownedByCurrent = (taskId: string) => (owners.get(taskId) ?? MOCK_ACCOUNT.accountId) === auth.account()?.accountId;
   // 个人项目簿：任务进入项目归属时的允许列表跟随它；夹具 T1 按当前项目簿整理（`?book=empty` 下先走维护门）。
   const book = createProjectBook(options, bus, auth);
+  const publicBook = createPublicBook(auth, () => bus.now());
   bus.useProjectAllowList(book.allowList);
   book.prepareSeed(T1_ID);
 
@@ -114,6 +119,15 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     register: async (input): Promise<AuthOutcome> => auth.register(input),
     login: async (input): Promise<AuthOutcome> => auth.login(input),
     logout: async (): Promise<AuthOutcome> => auth.logout(),
+    changePassword: async (input): Promise<AuthOutcome> => auth.changePassword(input),
+    async listAccounts() {
+      const account = auth.account();
+      if (!account) throw new UnauthenticatedError();
+      if (account.role !== 'admin') throw new Error(ADMIN_ERRORS.forbidden);
+      return auth.listAccounts();
+    },
+    updateAccount: async (accountId, change): Promise<AccountListOutcome> => auth.updateAccount(accountId, change),
+    ...publicBook,
     async listTasks() {
       if (!bus.listReachable()) throw new ServiceUnavailableError(SERVICE_UNAVAILABLE_MESSAGE);
       if (!auth.account()) throw new UnauthenticatedError();
@@ -204,10 +218,12 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const guarded: Record<string, unknown> = { ...adapter };
   for (const key of Object.keys(adapter) as (keyof AppAdapter)[]) {
     if (READ_METHODS.has(key)) continue;
-    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome>;
+    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome>;
     const unavailable = { code: SERVICE_UNAVAILABLE_CODE, message: SERVICE_UNAVAILABLE_MESSAGE };
-    const down = (): ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome =>
-      LIST_METHODS.has(key)
+    const down = (): ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome =>
+      ACCOUNT_METHODS.has(key)
+        ? { ok: false, error: unavailable, accountList: null }
+        : LIST_METHODS.has(key)
         ? { ok: false, error: unavailable, taskList: null }
         : AUTH_METHODS.has(key)
           ? { ok: false, error: unavailable }

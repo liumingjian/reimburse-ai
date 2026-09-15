@@ -5,7 +5,7 @@ import { build } from 'esbuild';
 // addon), and the parsing libraries that load their own assets (pdfjs CMaps and worker, zxing wasm) relative to their
 // package. The banner gives bundled CommonJS dependencies a `require`.
 await build({
-  entryPoints: { main: 'src/main.ts', 'parse-worker': 'src/parse/worker.ts' },
+  entryPoints: { main: 'src/main.ts', 'parse-worker': 'src/parse/worker.ts', baox: 'src/cli-main.ts' },
   outdir: 'dist',
   outExtension: { '.js': '.mjs' },
   bundle: true,

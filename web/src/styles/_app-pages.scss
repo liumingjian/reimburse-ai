@@ -1368,3 +1368,10 @@ $doc-frame-block: var(--app-doc-frame-block);
     border-block-start: 1px solid $border-subtle-01;
   }
 }
+
+// 项目归属页：提交前项目已停用、要重新选择的明细（#194）。
+.app-reselect {
+  margin: $spacing-02 0 0;
+  padding-left: $spacing-05;
+  list-style: disc;
+}
