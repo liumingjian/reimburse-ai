@@ -1,0 +1,32 @@
+{
+  "name": "@baox/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local reimbursement app server: Hono HTTP API over SQLite facts and content-addressed files, serving web/dist",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "node scripts/build.mjs",
+    "start": "node dist/main.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@baox/contract": "workspace:*",
+    "@hono/node-server": "2.1.1",
+    "better-sqlite3": "13.0.3",
+    "hono": "4.13.8",
+    "kysely": "0.29.5",
+    "zod": "4.6.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "24.13.3",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3"
+  }
+}

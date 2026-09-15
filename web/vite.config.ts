@@ -69,6 +69,9 @@ export default defineConfig(({ mode }) => {
         scss: { loadPaths: SASS_LOAD_PATHS, quietDeps: true, silenceDeprecations: ['import', 'global-builtin'] },
       },
     },
+    // `pnpm dev`: the page talks to the real server through /api, SSE included (http-proxy streams it unbuffered).
+    // Mock mode has no server.
+    server: mock ? {} : { proxy: { '/api': { target: `http://127.0.0.1:${process.env['BAOX_PORT'] ?? 4319}` } } },
     build: {
       outDir: mock ? 'dist-mock' : 'dist',
       emptyOutDir: true,
