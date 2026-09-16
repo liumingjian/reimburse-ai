@@ -23,6 +23,8 @@ import {
   SPACED_TITLE_INVOICE,
   SPLIT_NUMBER_INVOICE,
   TRANSPORT_INVOICE,
+  WIDE_COLUMN_INVOICE,
+  WRAPPED_ITEM_INVOICE,
 } from './data.mjs';
 import { EXPECTED_FILES, OUTPUT_DIR, PDF_DOC_FILES } from './generate.mjs';
 
@@ -43,6 +45,8 @@ const EXPECTED_TEXT = {
   r01: ['电子发票', '增值税专用发票', SPLIT_NUMBER_INVOICE.number, SPLIT_NUMBER_INVOICE.date, '住宿服务', SPLIT_NUMBER_INVOICE.gross, SPLIT_NUMBER_INVOICE.net, SPLIT_NUMBER_INVOICE.tax],
   r205: ['行程单', AMAP_ITINERARY_WRAPPED.brand, `共计${AMAP_ITINERARY_WRAPPED.count}单行程`, `合计${AMAP_ITINERARY_WRAPPED.total}元`, '2026-08-10', '08:52', '26.69元', '42.50', '虹桥枢纽', '张江'],
   r206: ['电子发票', '普通发票', TRANSPORT_INVOICE.number, TRANSPORT_INVOICE.date, '交通运输服务', '发票联', TRANSPORT_INVOICE.gross, TRANSPORT_INVOICE.net, TRANSPORT_INVOICE.tax],
+  r207: ['电子发票', '普通发票', WIDE_COLUMN_INVOICE.number, WIDE_COLUMN_INVOICE.date, '交通运输服务', '客运服务费', '合计', WIDE_COLUMN_INVOICE.gross, WIDE_COLUMN_INVOICE.net, WIDE_COLUMN_INVOICE.tax],
+  r208: ['电子发票', '普通发票', WRAPPED_ITEM_INVOICE.number, WRAPPED_ITEM_INVOICE.date, '交通运输服务', '预约调度费', '合计', WRAPPED_ITEM_INVOICE.gross, WRAPPED_ITEM_INVOICE.net, WRAPPED_ITEM_INVOICE.tax],
   r02: ['电子发票', '普通发票', SPACED_TITLE_INVOICE.number, SPACED_TITLE_INVOICE.date, '住宿服务', SPACED_TITLE_INVOICE.gross, SPACED_TITLE_INVOICE.net, SPACED_TITLE_INVOICE.tax],
 };
 

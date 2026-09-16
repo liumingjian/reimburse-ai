@@ -105,6 +105,73 @@ describe('vat_invoice/einvoice', () => {
     expect(KINDS.vat_invoice.categoryLabel(values)).toBe('市内交通');
   });
 
+  // #199: the goods table of a real face is not laid out the way a hand-written HTML table is. The column header is
+  // centred over a column far wider than the label, while the cell under it is left-aligned at the column's border —
+  // so the 项目名称 cell and the 合计 label are printed left of the 项目名称 header's own left edge.
+  it('reads the item table of r207, whose 项目名称 cell and 合计 label are drawn left of the centred header', async () => {
+    const doc = await pdfDoc(fixture('r207-einvoice-wide-name-column.pdf'));
+    // The fixture really carries the quirk: both cells end left of where the header label starts.
+    const header = doc.observations.find((o) => compact(o.text) === '项目名称');
+    const item = doc.observations.find((o) => compact(o.text).startsWith('*交通运输服务*'));
+    const total = doc.observations.find((o) => compact(o.text) === '合计');
+    expect(header).toBeDefined();
+    for (const left of [item, total]) {
+      expect(left).toBeDefined();
+      expect((left?.x ?? 0) + (left?.width ?? 0) / 2).toBeLessThan(header?.x ?? 0);
+    }
+
+    const outcome = dispatch(doc, LAYOUTS);
+    if (outcome.outcome !== 'recognised') throw new Error(`expected recognised, got ${JSON.stringify(outcome)}`);
+    expect(outcome).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', missing: [] });
+    expect(Object.fromEntries(outcome.candidates.map((c) => [c.key, c.value]))).toMatchObject({
+      itemName: '*交通运输服务*客运服务费',
+      netAmount: '31.55',
+      taxAmount: '0.95',
+      totalAmount: '32.50',
+    });
+    expect(outcome.findings.filter((f) => f.kind === 'validation')).toEqual([]);
+  });
+
+  it('reads a 项目名称 wrapped onto a second line (r208) as the whole name', async () => {
+    const doc = await pdfDoc(fixture('r208-einvoice-wrapped-item-name.pdf'));
+    // The fixture really wraps the name: no row carries the whole of it, and the tail is a row of its own.
+    const whole = '*交通运输服务*客运服务费(含高速费、停车费、预约调度费)';
+    const lines = joinedRows(doc, 1, 5);
+    expect(lines.some((row) => row.text.includes(whole))).toBe(false);
+    expect(lines.some((row) => whole.includes(row.text) && row.text.length > 1)).toBe(true);
+
+    const outcome = dispatch(doc, LAYOUTS);
+    if (outcome.outcome !== 'recognised') throw new Error(`expected recognised, got ${JSON.stringify(outcome)}`);
+    expect(outcome).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', missing: [] });
+    expect(Object.fromEntries(outcome.candidates.map((c) => [c.key, c.value]))).toMatchObject({
+      itemName: '*交通运输服务*客运服务费（含高速费、停车费、预约调度费）',
+      netAmount: '46.60',
+      taxAmount: '1.40',
+      totalAmount: '48.00',
+    });
+    expect(outcome.findings.filter((f) => f.kind === 'validation')).toEqual([]);
+  });
+
+  // The third shape the real corpus showed: a cell wider than its column. A 单价 printed to thirteen decimals reaches
+  // back under 项目名称, and its centre falls left of its own header — so where the cell's centre is says nothing, and
+  // the name cell would otherwise carry the price.
+  it('keeps a 单价 too wide for its column out of the 项目名称 cell', () => {
+    const doc = boxDoc([
+      ['项目名称', 67.5, 700, 36], ['单价', 214.5, 700, 27], ['数量', 299.5, 700, 27], ['金额', 387.5, 700, 27], ['税率/征收率', 436.8, 700, 49.5], ['税额', 554.5, 700, 27],
+      ['*交通运输服务*客运服务费', 16, 688, 106.6], ['34.1584158415842', 177, 688, 64.5], ['1', 322.3, 688, 4.2], ['31.55', 395.7, 688, 18.8], ['3%', 455.8, 688, 11.3], ['0.95', 567.9, 688, 14.6],
+      ['合', 60.5, 676, 9], ['计', 105.5, 676, 9], ['¥31.55', 386.7, 676, 27.8], ['¥0.95', 558.9, 676, 23.6],
+      ['价税合计(大写)', 49.5, 664, 72], ['(小写)', 408.5, 664, 36], ['¥32.50', 446, 664, 36.2],
+    ]);
+    // The row really carries the quirk: the price run starts left of where 单价 is printed, and its centre lands left
+    // of that header, while the item name and the 合计 label start left of 项目名称.
+    const price = doc.observations.find((o) => o.text.startsWith('34.'));
+    expect((price?.x ?? 0) + (price?.width ?? 0) / 2).toBeLessThan(214.5);
+    expect(price?.x).toBeLessThan(214.5);
+
+    const values = Object.fromEntries(einvoice.parse(doc).candidates.map((c) => [c.key, c.value]));
+    expect(values).toMatchObject({ itemName: '*交通运输服务*客运服务费', netAmount: '31.55', taxAmount: '0.95', totalAmount: '32.50' });
+  });
+
   // A real face draws a value one text run per glyph (ADR-0003). Every anchor here is a span match, and a span that
   // satisfies the anchor is not yet the value: the fragments of a value satisfy it too.
   it('reads a 价税合计 drawn glyph by glyph as the whole amount, not as the fragment 0.00', () => {
@@ -185,3 +252,10 @@ function textDoc(lines: readonly (string | readonly string[])[]): ParseDoc {
 }
 
 const glyphs = (text: string) => [...text];
+
+// A document of placed text runs: `[text, x, y, width]` in PDF user space, for a table whose cells are wider or
+// narrower than the header they belong under.
+function boxDoc(runs: readonly (readonly [string, number, number, number])[]): ParseDoc {
+  const observations = runs.map(([text, x, y, width], i) => ({ id: `p1.${i + 1}`, page: 1, x, y, width, height: 9, text, raw: text }));
+  return { mediaType: 'pdf', pageCount: 1, codes: [], observations };
+}

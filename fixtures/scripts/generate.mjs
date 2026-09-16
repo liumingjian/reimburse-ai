@@ -47,6 +47,8 @@ export const REGRESSION_FILES = {
   r204: 'r204-rail-split-runs.pdf',
   r205: 'r205-amap-itinerary-wrapped.pdf',
   r206: 'r206-transport-invoice.pdf',
+  r207: 'r207-einvoice-wide-name-column.pdf',
+  r208: 'r208-einvoice-wrapped-item-name.pdf',
 };
 
 export const PDF_DOC_FILES = { ...MATERIAL_FILES, ...REGRESSION_FILES };

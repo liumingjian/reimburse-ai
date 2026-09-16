@@ -7,7 +7,7 @@ import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout
 
 const KIND = 'vat_invoice';
 const NAME = 'einvoice';
-const VERSION = '2';
+const VERSION = '3';
 const SOURCE = ruleSource(KIND, NAME);
 export const QR_SOURCE = ruleSource(KIND, 'einvoice_qr');
 
@@ -53,18 +53,27 @@ function itemNames(lines: readonly JoinedRow[]): string[] {
   return lines.map((row) => row.text).filter((text) => ITEM_ROW.test(text));
 }
 
-type Row = { cells: Record<string, TextObservation[]>; name: string };
+type Row = { cells: Record<string, TextObservation[]>; name: string; y: number; height: number };
+
+// How far below an item row the rest of its 项目名称 may be printed, as a multiple of the row's text height. An item
+// name too long for its column is wrapped by the issuer, and the tail becomes a row of its own — text in the
+// 项目名称 column and nothing in any other. It sits one line pitch under its item row; the 合计 row and the boxes
+// below the table are several pitches away, so this bound keeps a name from swallowing them.
+const WRAP_PITCH = 2;
 
 const line = (observations: readonly TextObservation[]): JoinedRow => ({ page: observations[0]?.page ?? 1, y: observations[0]?.y ?? 0, text: cell(observations), observations });
-// The table's columns, from the header row: each header's key and where it starts. A header label is matched against a
-// span of that row, not against one text run — real faces draw `单位` and `税额` glyph by glyph, which used to leave
-// the table with two columns out of seven.
-function columns(header: readonly TextObservation[]): { key: string; x: number }[] {
-  const out: { key: string; x: number }[] = [];
+
+// The table's columns, from the header row: each header's key and the x range its label is printed over. A header
+// label is matched against a span of that row, not against one text run — real faces draw `单位` and `税额` glyph by
+// glyph, which used to leave the table with two columns out of seven.
+type Column = { key: string; x: number; right: number };
+function columns(header: readonly TextObservation[]): Column[] {
+  const out: Column[] = [];
   for (const span of spans(line(header))) {
     const key = COLUMNS[span.text];
     const first = span.observations[0];
-    if (key && first && !out.some((c) => c.key === key)) out.push({ key, x: first.x });
+    const last = span.observations.at(-1);
+    if (key && first && last && !out.some((c) => c.key === key)) out.push({ key, x: first.x, right: last.x + last.width });
   }
   return out.sort((a, b) => a.x - b.x);
 }
@@ -87,17 +96,43 @@ function cellsOf(row: readonly TextObservation[]): TextObservation[][] {
   return out;
 }
 
-// The column a cell belongs to: the right-most header starting at or left of the cell's centre. An amount is
-// right-aligned under its header — it starts left of the header's own left edge and ends right of it — while a wide
-// label such as 税率/征收率 reaches past the narrow `3%` printed under it, so the cell's centre against the headers'
-// left edges is the boundary both faces agree on. Text left of every header belongs to no column: merging it into
-// 项目名称 would break both the item-row anchor and the `合计` equality.
-function columnOf(headers: readonly { key: string; x: number }[], group: readonly TextObservation[]): string | null {
+// The column a cell belongs to.
+//
+// First, the header the cell shares ink with: a cell is printed under its own header, and a cell too wide for its
+// column spills out of it rather than moving — a 单价 printed to thirteen decimals reaches back under 项目名称, and
+// its centre is no longer anywhere near its own header. Overlap says where it belongs; the centre does not.
+//
+// Failing that, the right-most header starting at or left of the cell's centre: a narrow cell that shares ink with no
+// header at all (one glyph of a 合计 label drawn apart from the other) belongs to the column it sits in. An amount is
+// right-aligned under its header and a wide label such as 税率/征收率 reaches past the narrow `3%` printed under it,
+// so the centre against the headers' left edges is the boundary both faces agree on.
+//
+// Failing that too, the leftmost column, but only for a cell that begins left of its header. A header label is centred
+// over a column far wider than the label while the cell under it is left-aligned at the column's border: measured on
+// the real corpus, the 项目名称 cell and the 合计 label of a ride-hailing face are drawn 10 to 60 points left of the
+// 项目名称 header's own left edge, and leaving them in no column is what left `项目名称`, `不含税金额` and `税额`
+// unread. Beginning at the border is what tells them apart from a cell that merely overflows to the left.
+function columnOf(headers: readonly Column[], group: readonly TextObservation[]): string | null {
   const first = group[0];
   const last = group.at(-1);
   if (!first || !last) return null;
-  const centre = (first.x + last.x + last.width) / 2;
-  return headers.filter((h) => h.x <= centre).at(-1)?.key ?? null;
+  const left = first.x;
+  const right = last.x + last.width;
+  let shared: Column | null = null;
+  let widest = 0;
+  for (const header of headers) {
+    const overlap = Math.min(right, header.right) - Math.max(left, header.x);
+    if (overlap > widest) {
+      shared = header;
+      widest = overlap;
+    }
+  }
+  if (shared) return shared.key;
+  const centre = (left + right) / 2;
+  const under = headers.filter((h) => h.x <= centre).at(-1);
+  if (under) return under.key;
+  const leftmost = headers[0];
+  return leftmost && left < leftmost.x ? leftmost.key : null;
 }
 
 // The goods table: each cell keeps every observation that lands in its column. Item rows run from the header down to
@@ -108,19 +143,34 @@ function table(doc: ParseDoc): { items: Row[]; total: Row | null } {
   const headerAt = all.findIndex((row) => matchSpan([row], HEADER_CELL) !== null);
   if (headerAt < 0) return { items: [], total: null };
   const headers = columns(all[headerAt]?.observations ?? []);
-  const toRow = (row: readonly TextObservation[]): Row => {
+  const toRow = (row: JoinedRow): Row => {
     const cells: Record<string, TextObservation[]> = {};
-    for (const group of cellsOf(row)) {
+    for (const group of cellsOf(row.observations)) {
       const key = columnOf(headers, group);
       if (key) (cells[key] ??= []).push(...group);
     }
-    return { cells, name: cell(cells['name']) };
+    return { cells, name: cell(cells['name']), y: row.y, height: Math.max(...row.observations.map((o) => o.height), 0) };
+  };
+  // The second line of a wrapped 项目名称: nothing outside the name column, and printed just under the item row it
+  // belongs to. Its observations join that row's name cell, so the item is named as the face prints it.
+  const wraps = (item: Row, entry: Row) => {
+    const keys = Object.keys(entry.cells);
+    const below = item.y - entry.y;
+    return keys.length === 1 && keys[0] === 'name' && entry.name.length > 0 && below > 0 && below <= item.height * WRAP_PITCH;
   };
   const items: Row[] = [];
   for (const row of all.slice(headerAt + 1)) {
-    const entry = toRow(row.observations);
+    const entry = toRow(row);
     if (entry.name === '合计') return { items, total: entry };
-    if (ITEM_ROW.test(entry.name)) items.push(entry);
+    if (ITEM_ROW.test(entry.name)) {
+      items.push(entry);
+      continue;
+    }
+    const item = items.at(-1);
+    if (item && wraps(item, entry)) {
+      (item.cells['name'] ??= []).push(...(entry.cells['name'] ?? []));
+      item.name = cell(item.cells['name']);
+    }
   }
   return { items, total: null };
 }

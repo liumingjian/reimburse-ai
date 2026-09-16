@@ -5,5 +5,7 @@
   { "file": "r202-amap-itinerary-gap.pdf", "fileName": "行程单_金额待结算.pdf" },
   { "file": "r204-rail-split-runs.pdf", "fileName": "铁路电子客票_拆分文本串.pdf" },
   { "file": "r205-amap-itinerary-wrapped.pdf", "fileName": "拆分文本串_行程单_上车时间换行.pdf" },
-  { "file": "r206-transport-invoice.pdf", "fileName": "网约车_发票_交通运输服务.pdf" }
+  { "file": "r206-transport-invoice.pdf", "fileName": "网约车_发票_交通运输服务.pdf" },
+  { "file": "r207-einvoice-wide-name-column.pdf", "fileName": "网约车_发票_项目列居中表头.pdf" },
+  { "file": "r208-einvoice-wrapped-item-name.pdf", "fileName": "网约车_发票_项目名称换行.pdf" }
 ]

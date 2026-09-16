@@ -23,8 +23,15 @@ prints one skip line and exits 0, so CI and every other machine stay unaffected.
 
 ## What it gates
 
-Per layout and medium: the share of files recognised by that layout, and per expected key the share read exactly
-right. Floors live in `THRESHOLDS`: text-layer PDFs must be 100% recognised and 100% right per field — a rule is
+Per layout and medium: the share of files recognised by that layout, the share of files whose sidecar declares every
+key `REQUIRED_EXPECTATIONS` asks that layout for, and per expected key the share read exactly right. The middle row
+(`(expectations)`) exists because the gate scores only what a sidecar declares: #199 shipped with 8 of 10 real 全电发票
+faces whose item table went unread while every scored field was green, because no sidecar named 项目名称, 不含税金额
+or 税额. Adding a sample means writing its required keys down, or the gate fails.
+
+Derive each expected value from the source document itself — its own text and layout — and never from the parser's
+output. An expectation taken from the code under test proves nothing. When a value cannot be established
+independently, leave the key out and say so rather than guessing. Floors live in `THRESHOLDS`: text-layer PDFs must be 100% recognised and 100% right per field — a rule is
 deterministic, so a miss on a real file is a rule bug, not noise — and OCR images at least 98%.
 
 ## Why the output is safe to paste
