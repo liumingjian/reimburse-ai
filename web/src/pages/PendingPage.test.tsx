@@ -3,8 +3,12 @@ import { describe, expect, test } from 'vitest';
 import { App } from '../App';
 import { ALLOCATION_ERRORS, PENDING_ANSWER_ERRORS, STALE_STEP_NOTICE, type TaskStage } from '@baox/contract';
 import { ALLOCATION_GIVE_UP_NOTE, GIVEN_UP_TITLE, givenUpNote } from '../mock/fixtures/inventory';
+import { t1Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
 import type { Fault, MockOptions } from '../mock/options';
+import { AppProvider } from '../adapter/context';
+import { AppStore } from '../adapter/store';
+import { PendingPage } from './PendingPage';
 
 function renderPending(seed: TaskStage = 'pending', fault: Fault | null = null, extra: Partial<MockOptions> = {}) {
   window.location.hash = '#/task/T1/pending';
@@ -380,5 +384,25 @@ describe('逐段分摊与阻塞项', () => {
       expect(within(detail()).getAllByRole('button').map((button) => button.textContent)).toEqual(['排除此材料']);
     }
     expect(within(detail()).getByText(/追加单页发票后重新盘点/)).toBeTruthy();
+  });
+
+  // Server titles quote the file name (「IMG_4871.jpg」缺少字段). The queue row must not name the same file a second
+  // time, or the row reads 「IMG_4871.jpg」缺少字段 IMG_4871.jpg.
+  test('标题已经点名文件时，队列行不再重复文件名', () => {
+    const snapshot = t1Snapshot('pending');
+    const [first, ...rest] = snapshot.pendingItems;
+    if (!first) throw new Error('夹具里没有待确认项');
+    const fileName = snapshot.materials.find((material) => material.materialId === first.materialId)?.fileName ?? '';
+    const titled = { ...snapshot, pendingItems: [{ ...first, title: `「${fileName}」缺少字段` }, ...rest] };
+    const store = new AppStore(createMockAdapter({ seed: 'pending', fault: null }), { validate: true });
+    render(
+      <AppProvider store={store}>
+        <PendingPage snapshot={titled} />
+      </AppProvider>,
+    );
+    const rows = within(list()).getAllByRole('button');
+    expect(rows[0]?.textContent).toBe(`「${fileName}」缺少字段`);
+    // Titles that do not name the file keep the file name line.
+    expect(rows[1]?.textContent).toBe('下车时间不合法，并补填起点与终点IMG_4906.jpg');
   });
 });

@@ -359,7 +359,9 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
                 <button type="button" aria-current={isSelected ? 'true' : undefined} onClick={() => setSelectedId(item.itemId)}>
                   {done ? <CheckmarkFilled className="app-queue-mark is-done" aria-hidden="true" /> : <WarningAltFilled className="app-queue-mark" aria-hidden="true" />}
                   <span className="app-queue-title">{item.title}</span>
-                  <span className="app-queue-sub">{file}</span>
+                  {/* Most titles already quote the file name (「IMG_4871.jpg」缺少字段); repeating it here would name the
+                      same file twice in the row's accessible name, so the sub line only fills in what the title omits. */}
+                  {item.title.includes(file) ? null : <span className="app-queue-sub">{file}</span>}
                   {done ? (
                     <StatusTag as="span" tone="success" className="app-queue-tag">
                       已处理
