@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
+import { GENERATED_DIR, REGRESSION_MATERIALS, SAMPLE_MATERIALS } from '@baox/fixtures';
 import { TaskSnapshotSchema, type Material, type TaskSnapshot } from '@baox/contract';
 import { expect } from 'vitest';
 import type { TestClient } from './harness';
@@ -9,9 +9,10 @@ import type { TestClient } from './harness';
 
 export type Upload = { name: string; bytes: Buffer | Uint8Array; type?: string };
 
-// A sample original from @baox/fixtures by its id prefix (`m01`), under its business file name.
+// A generated original from @baox/fixtures by its id prefix — a sample material (`m01`) or a regression fixture
+// (`r01`) — under its business file name.
 export function sample(prefix: string): Upload {
-  const found = SAMPLE_MATERIALS.find((candidate) => candidate.file.startsWith(prefix));
+  const found = [...SAMPLE_MATERIALS, ...REGRESSION_MATERIALS].find((candidate) => candidate.file.startsWith(prefix));
   if (!found) throw new Error(`fixture ${prefix} is missing from @baox/fixtures`);
   return { name: found.fileName, bytes: readFileSync(join(GENERATED_DIR, found.file)), type: found.file.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg' };
 }

@@ -10,6 +10,16 @@ export type SampleMaterial = { file: string; fileName: string };
 /** The manifest, the single source of sample file names; the mock's recognition profiles must agree with it (see web/src/mock/new-task.test.ts). */
 export declare const SAMPLE_MATERIALS: readonly SampleMaterial[];
 
+/** Absolute path of `regression-materials.json`. */
+export declare const REGRESSION_MATERIALS_FILE: string;
+
+/**
+ * Fixtures that reproduce real-world PDF quirks the demo scenario cannot show — today, an e-invoice whose 发票号码
+ * label and digits are separate text runs and one whose title is letter-spaced across runs (#200). Test-only: they
+ * are not sample materials and are not copied into the mock build.
+ */
+export declare const REGRESSION_MATERIALS: readonly SampleMaterial[];
+
 /**
  * Absolute path of `legacy-baox/`: a synthetic legacy `~/.baox` (schemaVersion 1) for the one-time import. Alice
  * (tenant-a) is the bound identity; tasks a1 (`saved`), b1 (`upload_dispatched`), d1 (`erp-fill`, no invoices) touched

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_DIR } from '@baox/fixtures';
 import { describe, expect, it } from 'vitest';
+import { compact } from '../doc';
 import { dispatch } from '../dispatch';
 import { parseMaterial } from '../material';
 import { pdfDoc } from '../pdf';
@@ -25,6 +26,31 @@ describe('vat_invoice/einvoice', () => {
     if (outcome.outcome !== 'recognised') throw new Error(`expected recognised, got ${JSON.stringify(outcome)}`);
     const number = outcome.candidates.find((c) => c.key === 'invoiceNumber');
     expect(number?.refs).toEqual([{ page: 1, observationIds: [expect.stringMatching(/^p1\.\d+$/)], text: '发票号码：26312000000101557402' }]);
+  });
+
+  // #200: anchors match joined rows, so a face split into several text runs reads like any other.
+  it('recognises r01, whose 发票号码 label and digits are separate text runs', async () => {
+    const doc = await pdfDoc(fixture('r01-einvoice-split-number.pdf'));
+    // The fixture really splits them: no single observation carries label and digits together.
+    expect(doc.observations.some((o) => /^发票号码:\d{20}$/.test(compact(o.text)))).toBe(false);
+
+    const outcome = dispatch(doc, LAYOUTS);
+    expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（专票）', missing: [] });
+    if (outcome.outcome !== 'recognised') throw new Error('expected recognised');
+    const number = outcome.candidates.find((c) => c.key === 'invoiceNumber');
+    expect(number?.value).toBe('26312000000098127801');
+    // Evidence names every observation the row was joined from, and only real ones.
+    const ids = new Set(doc.observations.map((o) => o.id));
+    expect(number?.refs[0]?.observationIds.length).toBeGreaterThan(1);
+    for (const id of number?.refs[0]?.observationIds ?? []) expect(ids.has(id)).toBe(true);
+  });
+
+  it('recognises r02, whose title is letter-spaced across runs', async () => {
+    const doc = await pdfDoc(fixture('r02-einvoice-spaced-title.pdf'));
+    expect(doc.observations.some((o) => /^电子发票\(.+\)$/.test(compact(o.text)))).toBe(false);
+
+    const outcome = dispatch(doc, LAYOUTS);
+    expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（普票）', missing: [] });
   });
 
   it('does not recognise an e-invoice outside the v1 kinds (m11, 餐饮) or a document without the invoice title (m06)', async () => {

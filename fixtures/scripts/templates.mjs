@@ -13,6 +13,8 @@ import {
   PRINT_VARIANTS,
   RAIL_0809,
   RAIL_0822,
+  SPACED_TITLE_INVOICE,
+  SPLIT_NUMBER_INVOICE,
   TAXI_0815,
   TAXI_0819,
   headerOf,
@@ -35,6 +37,7 @@ function invoice(data, accent) {
 .inv .title { text-align: center; font-size: 26px; color: ${accent}; letter-spacing: 6px; border-bottom: 2px solid ${accent}; padding-bottom: 6px; margin: 0 120px 8px; }
 .inv .title-under { margin: 0 120px 18px; border-bottom: 1px solid ${accent}; }
 .inv .meta { text-align: right; font-size: 13px; line-height: 1.8; margin-bottom: 10px; }
+.inv .meta .apart { margin-left: 4px; }
 .inv .qr { position: absolute; left: 48px; top: 48px; width: 82px; height: 82px; border: 2px solid #333; display: grid; place-items: center; font-size: 11px; color: #555; }
 .inv table { width: 100%; border-collapse: collapse; margin-top: 12px; }
 .inv th, .inv td { border: 1px solid ${accent}; padding: 7px 8px; text-align: left; font-weight: 400; }
@@ -54,12 +57,15 @@ function invoice(data, accent) {
         `<tr><td>${esc(r.name)}</td><td>${esc(r.unit)}</td><td class="num">${esc(r.qty)}</td><td class="num">${esc(r.price)}</td><td class="num">${esc(r.net)}</td><td class="num">${esc(r.rate)}</td><td class="num">${esc(r.tax)}</td></tr>`,
     )
     .join('');
+  // 文本串切分（#200）：逐字成串的标题、与标签分开成串的号码，都是真实发票里常见的画法。
+  const title = data.spacedTitle ? [...data.title].map((ch) => `<span>${esc(ch)}</span>`).join('') : esc(data.title);
+  const number = data.splitNumber ? `发票号码：<span class="apart">${esc(data.number)}</span>` : `发票号码：${esc(data.number)}`;
   const body = `
 <div class="inv">
   <div class="qr">二维码</div>
-  <div class="title">${esc(data.title)}</div>
+  <div class="title">${title}</div>
   <div class="title-under"></div>
-  <div class="meta">发票号码：${esc(data.number)}<br>开票日期：${esc(data.date)}</div>
+  <div class="meta">${number}<br>开票日期：${esc(data.date)}</div>
   <div class="party">
     <div><b>购买方</b>名称：${esc(BUYER.name)}<br><b>信息</b>统一社会信用代码/纳税人识别号：${esc(BUYER.taxNo)}</div>
     <div><b>销售方</b>名称：${esc(data.seller.name)}<br><b>信息</b>统一社会信用代码/纳税人识别号：${esc(data.seller.taxNo)}</div>
@@ -238,6 +244,8 @@ export const DOCS = {
   m09: taxiPhoto(TAXI_0815),
   m10: taxiPhoto(TAXI_0819),
   m11: invoice(OTHER_INVOICE, '#8b3a3a'),
+  r01: invoice(SPLIT_NUMBER_INVOICE, '#8b3a3a'),
+  r02: invoice(SPACED_TITLE_INVOICE, '#8b3a3a'),
 };
 
 // 打印页里放置的材料：出租车用裁边并透视矫正后的条票，其余用原件版式。

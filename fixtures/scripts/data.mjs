@@ -165,6 +165,42 @@ export const OTHER_INVOICE = {
   grossWords: '贰佰肆拾圆整',
 };
 
+// ---- 回归夹具：真实 PDF 的文本串拆分（#200）----
+// 示例材料（m01…m11）每个锚点各画一串文本，真实发票不是这样：标签与取值常是两串，标题常常逐字一串。
+// 这两份夹具复现那种切分，其余版式与酒店发票一致（单独上传即可通过，不需要结账单）。
+
+export const SPLIT_NUMBER_INVOICE = {
+  id: 'r01',
+  file: 'r01-einvoice-split-number.pdf',
+  title: '电子发票（增值税专用发票）',
+  number: '26312000000098127801',
+  date: '2026年08月20日',
+  seller: { name: '上海某某酒店管理有限公司', taxNo: '91310000YYYYYYYY0B' },
+  rows: [{ name: '*住宿服务*住宿费', unit: '天', qty: '2', price: '264.15', net: '528.30', rate: '6%', tax: '31.70' }],
+  net: '528.30',
+  tax: '31.70',
+  gross: '560.00',
+  grossWords: '伍佰陆拾圆整',
+  // 「发票号码：」与 20 位号码分成两串。
+  splitNumber: true,
+};
+
+export const SPACED_TITLE_INVOICE = {
+  id: 'r02',
+  file: 'r02-einvoice-spaced-title.pdf',
+  title: '电子发票（普通发票）',
+  number: '26312000000098127802',
+  date: '2026年08月21日',
+  seller: { name: '上海某某酒店管理有限公司', taxNo: '91310000YYYYYYYY0B' },
+  rows: [{ name: '*住宿服务*住宿费', unit: '天', qty: '1', price: '264.15', net: '264.15', rate: '6%', tax: '15.85' }],
+  net: '264.15',
+  tax: '15.85',
+  gross: '280.00',
+  grossWords: '贰佰捌拾圆整',
+  // 标题逐字成串。
+  spacedTitle: true,
+};
+
 // 打印稿页：费用类别用内核标签。页眉是 `No.x · 日期 · 类别 · 价税合计`，范围用 ASCII 连字符。
 // 页序与 No. 跟随统一业务序号（内核确认表的分类排序：本地市内交通 → 外地市内交通 → 长途交通 → 住宿，
 // 同一分类内按事件顺序，即主要报销凭证 materialId、再按行程段），与 src/mock/fixtures/print.ts 的 PAGE_DEFS 一致。
