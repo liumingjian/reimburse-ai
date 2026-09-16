@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import { STALE_STEP_CODE, STALE_STEP_NOTICE, ServiceUnavailableError, UnauthenticatedError, type AdapterEvent, type AppAdapter, type TaskSnapshot } from '@baox/contract';
+import { ADMIN_ERRORS, AUTH_ERRORS, PASSWORD_CHANGE_REQUIRED_CODE, STALE_STEP_CODE, STALE_STEP_NOTICE, ServiceUnavailableError, UNAUTHENTICATED_CODE, UnauthenticatedError, type AdapterEvent, type AppAdapter, type TaskSnapshot } from '@baox/contract';
 import { t1Snapshot } from '../mock/fixtures/tasks';
 import { AppStore } from './store';
 
@@ -81,6 +81,40 @@ describe('AppStore：应用账号会话', () => {
     expect(store.getState().session.data?.status).toBe('signed_in');
     signedIn = false;
     await store.loadTaskList();
+    await vi.waitFor(() => expect(store.getState().session.data?.status).toBe('signed_out'));
+  });
+
+  // 读路径靠 UnauthenticatedError，动作路径只拿得到服务端的错误码：两条路都得回到登录，
+  // 否则会话早就没了，页面还把它当成一次普通的页内错误显示。
+  test('动作遇到 401 与 403 password_change_required：同样重读会话，门随之回到登录', async () => {
+    for (const error of [
+      { code: UNAUTHENTICATED_CODE, message: AUTH_ERRORS.unauthenticated },
+      { code: PASSWORD_CHANGE_REQUIRED_CODE, message: ADMIN_ERRORS.passwordChangeRequired },
+    ]) {
+      let signedIn = true;
+      const adapter = {
+        getSession: async () => (signedIn ? { status: 'signed_in', account: { accountId: 'a1', username: '张三', role: 'user' } } : { status: 'signed_out', account: null }),
+      } as unknown as AppAdapter;
+      const store = new AppStore(adapter, { validate: true });
+      await store.loadSession();
+      expect(store.getState().session.data?.status).toBe('signed_in');
+
+      signedIn = false;
+      await store.act('T1', async () => ({ ok: false, error, snapshot: null }));
+      await vi.waitFor(() => expect(store.getState().session.data?.status).toBe('signed_out'));
+    }
+  });
+
+  test('返回任务列表的动作遇到 401 也重读会话', async () => {
+    let signedIn = true;
+    const adapter = {
+      getSession: async () => (signedIn ? { status: 'signed_in', account: { accountId: 'a1', username: '张三', role: 'user' } } : { status: 'signed_out', account: null }),
+      resetAll: async () => ({ ok: false, error: { code: UNAUTHENTICATED_CODE, message: AUTH_ERRORS.unauthenticated }, taskList: null }),
+    } as unknown as AppAdapter;
+    const store = new AppStore(adapter, { validate: true });
+    await store.loadSession();
+    signedIn = false;
+    expect((await store.resetAll()).ok).toBe(false);
     await vi.waitFor(() => expect(store.getState().session.data?.status).toBe('signed_out'));
   });
 

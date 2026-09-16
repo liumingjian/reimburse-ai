@@ -54,6 +54,10 @@ export const HTTP_ENDPOINTS = {
   intakePublicProject: { method: 'POST', path: '/api/public-project-book/intake', body: 'json', fields: ['number'] },
   removePublicProject: { method: 'POST', path: '/api/public-project-book/remove', body: 'json', fields: ['number'] },
   recheckPublicProjects: { method: 'POST', path: '/api/public-project-book/recheck', body: 'json', fields: [] },
+  // 旧数据导入：GET 返回这个账号看到的导入结果；只有拥有失败那次导入的账号能重试或跳过（其余 400 import_not_pending）。
+  getLegacyImport: { method: 'GET', path: '/api/legacy-import', body: 'none', fields: [] },
+  retryLegacyImport: { method: 'POST', path: '/api/legacy-import/retry', body: 'json', fields: [] },
+  skipLegacyImport: { method: 'POST', path: '/api/legacy-import/skip', body: 'json', fields: [] },
   getSnapshot: { method: 'GET', path: '/api/tasks/:id', body: 'none', fields: [] },
   subscribe: { method: 'GET', path: '/api/tasks/:id/events', body: 'sse', fields: [] },
   createTask: { method: 'POST', path: '/api/tasks', body: 'json', fields: ['homeCity'] },

@@ -14,9 +14,10 @@ function isImage(file: File): boolean {
 }
 
 // 浏览器里给截图一个可显示的对象 URL；jsdom 没有 createObjectURL，用占位地址。
+// 占位地址也得是同源路径：契约只收同源地址（伪协议会直接进 img src），`mock:` 这样的自造协议过不了。
 function objectUrl(file: File, screenshotId: string): string {
   if (typeof URL.createObjectURL === 'function') return URL.createObjectURL(file);
-  return `mock:screenshot/${screenshotId}`;
+  return `mock/screenshot/${screenshotId}`;
 }
 
 export function createPrintFlow(bus: MockBus): PrintFlow {

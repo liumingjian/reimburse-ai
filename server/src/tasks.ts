@@ -40,7 +40,7 @@ import type { ParseInput } from './parse/material';
 import { EXCLUDE_CHOICE, judgeAnswer, type Verdict } from './pending/answers';
 import { EDIT_COPY, EDIT_PREFIX, judgeEdit } from './pending/edits';
 import { inventoried, isNonTerminal, parseRunning, project, stepToken, type TaskFacts } from './projection';
-import { rejectByShape, rejectReason } from './upload-rules';
+import { rejectByShape, rejectReason, storedMime } from './upload-rules';
 import { assignmentOf, checkAssign, checkSubmit, linesDigest, type Assignment, type AssignmentFact, type PinnedProject } from './assignment';
 import { bookOptions, createBookService, type BookOption } from './books';
 import { unavailableCatalog } from './catalog/project-catalog';
@@ -155,7 +155,9 @@ export type TaskServiceOptions = { onChange?: (snapshot: TaskSnapshot) => void; 
 
 // `job`: the parser or ERP job's own write, allowed while a job runs. `loginPause`: accepted during an ERP login
 // pause (confirm-login, cancel-erp-write). `erpAction`: accepted after an ERP action attempt (reconcile, #192).
-type MutateOptions = { job?: boolean; loginPause?: boolean; erpAction?: boolean };
+// `printOnly`: a 去打印 adjustment. Print never touches ERP (stories 57 and 63), so it stays open after 转人工 and
+// after the draft was handed over; it still stops at 任务作废, at an imported legacy task, and while a job runs.
+type MutateOptions = { job?: boolean; loginPause?: boolean; erpAction?: boolean; printOnly?: boolean };
 
 const mediaTypeOf = (row: MaterialRow): 'pdf' | 'image' => (IMAGE_FILE.test(row.file_name) || row.mime.startsWith('image/') ? 'image' : 'pdf');
 
@@ -305,18 +307,22 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
   // or an ERP job runs, only the job itself (`job: true`) may write; everyone else gets the 409 of a stale step
   // (ADR-0014). During an ERP login pause only `loginPause` actions pass; after an ERP action attempt the task's facts
   // are frozen, and a saved draft (ERP 草稿已交接) closes the task.
-  async function mutate(taskId: string, token: string | null, apply: (ctx: Context) => Promise<Refusal | void>, { job = false, loginPause = false, erpAction = false }: MutateOptions = {}): Promise<TaskSnapshot> {
+  async function mutate(taskId: string, token: string | null, apply: (ctx: Context) => Promise<Refusal | void>, { job = false, loginPause = false, erpAction = false, printOnly = false }: MutateOptions = {}): Promise<TaskSnapshot> {
     const outcome = await db.transaction().execute(async (tx): Promise<{ kind: 'ok' } | { kind: 'stale' } | ({ kind: 'refused' } & Refusal)> => {
       const task = await taskRow(tx, taskId);
       if (token !== null && token !== stepToken(task.task_id, task.revision)) return { kind: 'stale' };
-      if (task.lifecycle !== 'open') return { kind: 'refused', code: 'task_closed', message: ACTION_COPY.taskClosed };
+      // A print adjustment outlives the ERP write: only a voided task and an imported legacy one (which has no
+      // materials at all) are out of reach.
+      if (printOnly ? task.lifecycle === 'voided' || task.origin === 'legacy' : task.lifecycle !== 'open') {
+        return { kind: 'refused', code: 'task_closed', message: ACTION_COPY.taskClosed };
+      }
       const loaded = await load(tx, task);
       const { facts, view } = loaded;
       if (!job && parseRunning(facts)) return { kind: 'stale' };
       const phase = facts.erp?.phase;
       if (!job && (phase === 'running' || facts.erp?.reconciling || (phase === 'waiting_login' && !loginPause))) return { kind: 'stale' };
-      if (!job && phase === 'saved') return { kind: 'refused', code: 'task_closed', message: ACTION_COPY.taskClosed };
-      if (!job && phase === 'unknown' && !erpAction) return { kind: 'refused', code: 'erp_started', message: ERP_ACTION_ERRORS.erpStarted };
+      if (!job && !printOnly && phase === 'saved') return { kind: 'refused', code: 'task_closed', message: ACTION_COPY.taskClosed };
+      if (!job && !printOnly && phase === 'unknown' && !erpAction) return { kind: 'refused', code: 'erp_started', message: ERP_ACTION_ERRORS.erpStarted };
       const at = now();
       const revision = task.revision + 1;
       const refusal = await apply({ tx, task, facts, loaded, view, at, revision });
@@ -373,7 +379,8 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
           }
           const jobId = newJobId();
           const job: FrozenJob = { ...frozen, plan: { ...frozen.plan, jobId } };
-          if (!erp.lease.acquire({ accountId, taskId })) return inUse;
+          // Taken for this job, not for the task: the run that ends gives back only its own lease.
+          if (!erp.lease.acquire({ accountId, taskId, jobId })) return inUse;
           started.run = { jobId, accountId, taskId, trigger, frozen: job };
           await tx.insertInto('erp_job').values({ job_id: jobId, task_id: taskId, account_id: accountId, kind: 'fill', trigger, confirmation_digest: digest, plan: JSON.stringify(job), revision, started_at: at }).execute();
         },
@@ -382,8 +389,8 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       if (started.run) erp?.run(started.run);
       return snapshot;
     } catch (error) {
-      // The change was not stored after the lease was taken: give it back.
-      if (started.run) erp?.lease.release(taskId);
+      // The change was not stored after the lease was taken: give back this job's lease (never a later job's).
+      if (started.run) erp?.lease.release(started.run.jobId);
       throw error;
     }
   }
@@ -393,7 +400,9 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
   // between turns the commit into a 409 stale_step with the fresh snapshot.
   async function printChange(taskId: string, prepare: (state: PrintState) => Promise<PrintCommit | null>): Promise<TaskSnapshot> {
     const task = await taskRow(db, taskId);
-    if (task.lifecycle !== 'open') throw new ActionRefusedError({ code: 'task_closed', message: ACTION_COPY.taskClosed }, await snapshot(taskId));
+    // 去打印 needs no ERP, so it survives 转人工 and ERP 草稿已交接 (stories 57 and 63): the paper bundle is still
+    // wanted after the draft is filed. Only a voided task and an imported legacy one have nothing to print.
+    if (task.lifecycle === 'voided' || task.origin === 'legacy') throw new ActionRefusedError({ code: 'task_closed', message: ACTION_COPY.taskClosed }, await snapshot(taskId));
     const rows = await materialRows(db, taskId);
     const loaded = await load(db, task, rows);
     const state: PrintState = {
@@ -416,9 +425,14 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     }
     if (!commit) return snapshot(taskId);
     const run = commit;
-    return mutate(taskId, stepToken(task.task_id, task.revision), async ({ tx, at, revision }) => {
-      await run(tx, at, revision);
-    });
+    return mutate(
+      taskId,
+      stepToken(task.task_id, task.revision),
+      async ({ tx, at, revision }) => {
+        await run(tx, at, revision);
+      },
+      { printOnly: true },
+    );
   }
 
   async function list(): Promise<TaskList> {
@@ -430,23 +444,50 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     return { homeCity: remembered ? { value: remembered, source: 'remembered' } : null, tasks: items };
   }
 
+  // The one path 任务作废 takes, for the action and for 完全重置 alike. Check and void inside one transaction: a
+  // concurrent 去报销 writes its `erp_job` row in its own transaction, so whichever commits second sees the other and
+  // a task that took the ERP lease in between can no longer be voided (ADR-0007: invoices a job may have consumed are
+  // never released). Throws exactly the refusal the abandon action reports.
+  async function voidOne(taskId: string): Promise<void> {
+    const holder = erp?.lease.holder() ?? null;
+    const outcome = await db.transaction().execute(async (tx): Promise<'ok' | 'not_found' | 'closed' | 'running' | 'erp_started'> => {
+      const task = await tx.selectFrom('task').selectAll().where('task_id', '=', taskId).where('account_id', '=', accountId).executeTakeFirst();
+      if (!task || task.lifecycle === 'voided') return 'not_found';
+      if (task.lifecycle !== 'open') return 'closed';
+      const loaded = await load(tx, task);
+      const phase = loaded.facts.erp?.phase;
+      if (parseRunning(loaded.facts) || phase === 'running' || phase === 'waiting_login' || loaded.facts.erp?.reconciling || holder?.taskId === taskId) return 'running';
+      if (loaded.erp.attempted) return 'erp_started';
+      await tx.updateTable('task').set({ lifecycle: 'voided', revision: task.revision + 1, updated_at: now() }).where('task_id', '=', taskId).execute();
+      return 'ok';
+    });
+    if (outcome === 'not_found') throw new ActionRefusedError({ code: 'task_not_found', message: ABANDON_TASK_COPY.notFound }, null, await list());
+    if (outcome === 'closed') throw new ActionRefusedError({ code: 'not_abandonable', message: ACTION_COPY.notAbandonable }, null, await list());
+    if (outcome === 'running') throw new StaleStepError(await snapshot(taskId));
+    if (outcome === 'erp_started') throw new ActionRefusedError({ code: 'erp_started', message: ABANDON_TASK_COPY.blockedReason }, null, await list());
+    onChange(await snapshot(taskId));
+  }
+
   return {
     snapshot,
     list,
 
-    // 完全重置 (reset) of this account: its open tasks are voided (facts stay, ADR-0015) and leave the list; its
-    // personal book is emptied and its remembered home city forgotten (both as appended facts).
+    // 完全重置 (reset) of this account: its personal book is emptied and its remembered home city forgotten (both as
+    // appended facts), and every open task 任务作废 would accept is voided (facts stay, ADR-0015) and leaves the list.
+    // A task that touched ERP, or one whose job is running or holds the lease, is left exactly as it is: reset is a
+    // bulk abandon and may never release invoices the abandon action itself refuses to release (ADR-0007, story 21).
     async resetAll(): Promise<TaskList> {
       await createBookService(db, { scope: 'personal', ownerAccountId: accountId }, accountId, unavailableCatalog()).clear();
       if ((await rememberedHomeCity(db, accountId)) !== null) await rememberHomeCity(db, accountId, null, 'reset', now());
       const open = await db.selectFrom('task').select('task_id').where('account_id', '=', accountId).where('lifecycle', '=', 'open').execute();
-      await db
-        .updateTable('task')
-        .set((eb) => ({ lifecycle: 'voided', revision: eb('revision', '+', 1), updated_at: now() }))
-        .where('account_id', '=', accountId)
-        .where('lifecycle', '=', 'open')
-        .execute();
-      for (const { task_id } of open) onChange(await snapshot(task_id));
+      for (const { task_id } of open) {
+        try {
+          await voidOne(task_id);
+        } catch (error) {
+          // Kept, with its invoices: the task list still shows it.
+          if (!(error instanceof ActionRefusedError || error instanceof StaleStepError)) throw error;
+        }
+      }
       return list();
     },
 
@@ -498,7 +539,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
             continue;
           }
           known.set(file.sha256, file.fileName);
-          await tx.insertInto('blob').values({ sha256: file.sha256, size: file.bytes.byteLength, mime: file.mime, created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
+          await tx.insertInto('blob').values({ sha256: file.sha256, size: file.bytes.byteLength, mime: storedMime(file.fileName, file.mime), created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
           await tx
             .insertInto('material')
             .values({ material_id: randomUUID(), task_id: taskId, account_id: accountId, batch_id: batchId, blob_sha256: file.sha256, file_name: file.fileName, created_at: at, batch_seq: seq })
@@ -675,8 +716,8 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
             if (!view?.allowedActions.includes('wait')) return { code: 'action_not_allowed', message: RECONCILE_COPY.notAllowed };
             const holder = erp.lease.holder();
             if (holder && holder.taskId !== taskId) return { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
-            if (!erp.lease.acquire({ accountId, taskId })) return { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
             const jobId = newJobId();
+            if (!erp.lease.acquire({ accountId, taskId, jobId })) return { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
             started.run = { jobId, accountId, taskId, plan: { protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId, taskId, erpOrigin: loaded.erp.frozen?.plan.erpOrigin ?? erp.config.origin } };
             await tx.insertInto('erp_reconcile_job').values({ job_id: jobId, fill_job_id: loaded.erp.job.job_id, task_id: taskId, account_id: accountId, revision, started_at: at }).execute();
           },
@@ -685,7 +726,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
         if (started.run) erp?.reconcile(started.run);
         return snapshot;
       } catch (error) {
-        if (started.run) erp?.lease.release(taskId);
+        if (started.run) erp?.lease.release(started.run.jobId);
         throw error;
       }
     },
@@ -705,7 +746,8 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
         },
         { erpAction: true },
       );
-      erp?.lease.release(taskId);
+      // Terminal for the task: whichever job of it still holds the lease gives it up.
+      erp?.lease.releaseTask(taskId);
       return snapshot;
     },
 
@@ -759,16 +801,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     // 任务作废 (void task): a lifecycle change, not a deletion. Returns the task list without the task.
     // Refused once an ERP action attempt exists: its invoices stay held until reconcile releases them (ADR-0007).
     async voidTask(taskId: string): Promise<TaskList> {
-      const task = await db.selectFrom('task').selectAll().where('task_id', '=', taskId).where('account_id', '=', accountId).executeTakeFirst();
-      if (!task || task.lifecycle === 'voided') throw new ActionRefusedError({ code: 'task_not_found', message: ABANDON_TASK_COPY.notFound }, null, await list());
-      if (task.lifecycle !== 'open') throw new ActionRefusedError({ code: 'not_abandonable', message: ACTION_COPY.notAbandonable }, null, await list());
-      const loaded = await load(db, task);
-      const phase = loaded.facts.erp?.phase;
-      if (parseRunning(loaded.facts) || phase === 'running' || phase === 'waiting_login' || loaded.facts.erp?.reconciling) throw new StaleStepError(await snapshot(taskId));
-      if (loaded.erp.attempted) throw new ActionRefusedError({ code: 'erp_started', message: ABANDON_TASK_COPY.blockedReason }, null, await list());
-      const at = now();
-      await db.updateTable('task').set({ lifecycle: 'voided', revision: task.revision + 1, updated_at: at }).where('task_id', '=', taskId).execute();
-      onChange(await snapshot(taskId));
+      await voidOne(taskId);
       return list();
     },
 

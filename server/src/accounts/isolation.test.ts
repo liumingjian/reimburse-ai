@@ -62,7 +62,7 @@ describe('the global ERP lease', () => {
   it("gives a second account's start-erp-write 409 while another task holds the lease, naming nobody", async () => {
     const adminTask = await createTask(admin);
     const aliceTask = await createTask(alice);
-    expect(server.erpLease.acquire({ accountId: admin.account.accountId, taskId: adminTask.task.taskId })).toBe(true);
+    expect(server.erpLease.acquire({ accountId: admin.account.accountId, taskId: adminTask.task.taskId, jobId: 'admin-job' })).toBe(true);
 
     const response = await alice.post(`/api/tasks/${aliceTask.task.taskId}/actions/start-erp-write`, { stepToken: aliceTask.step.stepToken });
     expect(response.status).toBe(409);
@@ -73,7 +73,7 @@ describe('the global ERP lease', () => {
     // Both tasks carry the same placeholder name, so the holder's id and account are what must not show.
     for (const leak of [adminTask.task.taskId, admin.account.accountId, 'admin']) expect(text).not.toContain(leak);
 
-    server.erpLease.release(adminTask.task.taskId);
+    server.erpLease.release('admin-job');
     const free = await alice.post(`/api/tasks/${aliceTask.task.taskId}/actions/start-erp-write`, { stepToken: aliceTask.step.stepToken });
     expect(free.status).not.toBe(409);
   });

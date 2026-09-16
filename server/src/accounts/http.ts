@@ -89,7 +89,8 @@ export function mountAccountRoutes(app: Hono<AppEnv>, accounts: AccountService):
     const input = ChangePasswordInputSchema.safeParse(await c.req.json().catch(() => null));
     if (!input.success) return invalid(c, input.error.issues[0]?.message);
     const account = accountOf(c);
-    await accounts.changePassword(account.accountId, input.data);
+    // This browser's session survives; every other session of the account is dropped.
+    await accounts.changePassword(account.accountId, input.data, getCookie(c, SESSION_COOKIE));
     return c.json(sessionOf(account, false));
   });
 

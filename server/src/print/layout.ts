@@ -74,8 +74,12 @@ export type PagePlan = {
   categoryLabel: string;
   grossAmount: string;
   header: string;
-  // Only a 住宿 (hotel) page takes a 支付截图 (payment screenshot).
+  // Every voucher may take a 支付截图 (payment screenshot): story 61 asks for proof of payment beside its invoice,
+  // not only for 住宿. With one the bottom half splits (supporting material left, screenshot right).
   acceptsPaymentScreenshot: boolean;
+  // Whether a missing one is worth saying out loud. Only 住宿 is expected to carry proof of payment, so the reminder
+  // stays there; raising it on every voucher would bury the page in notices nobody asked for.
+  expectsPaymentScreenshot: boolean;
 };
 
 const cents = (amount: string): number => {
@@ -113,7 +117,8 @@ export function planPages(lines: readonly Line[], materials: readonly Material[]
       categoryLabel: first.category.label,
       grossAmount,
       header: `${nos} · ${first.date.slice(5)} · ${first.category.label} · ${grossAmount}`,
-      acceptsPaymentScreenshot: first.category.code === 'accommodation',
+      acceptsPaymentScreenshot: true,
+      expectsPaymentScreenshot: first.category.code === 'accommodation',
     });
   }
   return plans;

@@ -654,7 +654,8 @@ export const HUMAN_REVIEW_NOTICE = '当前报销已暂停，材料和状态已�
 // 页面照原样显示，不改写、不翻译。
 export const ErpCaptureSchema = z.object({
   erpText: z.array(z.string()),
-  screenshotUrl: z.string().nullable(),
+  // 同源路径（对账页把它直接放进 img src），与其余地址字段同一条规则。
+  screenshotUrl: UrlSchema.nullable(),
 });
 export type ErpCapture = z.infer<typeof ErpCaptureSchema>;
 

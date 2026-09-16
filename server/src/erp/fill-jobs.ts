@@ -42,6 +42,35 @@ export async function afterAttempts(tx: Db, jobId: string, event: ResultEvent): 
   return { ...event, status: 'unknown', message };
 }
 
+// The result a job gets when it ended without sending one of its own.
+const NO_RESULT_CODE = 'job_ended_without_result';
+const NO_RESULT_COPY = {
+  attempted: '已经开始写入报销系统之后，这次去报销没有给出结果（应用出错）。写入结果不确定，应用不会重放任何写入，请对账。',
+  fill: '这次去报销没有给出结果就结束了（应用出错）。报销系统没有被改动，可以再去报销。',
+  reconcile: '这次对账没有给出结果就结束了（应用出错）。对账只读，不会改动报销系统，可以再对账一次。',
+} as const;
+
+/**
+ * Closes a job that produced no `result` event, so its task never stays stuck in phase `running` with every mutation
+ * answering 409. Written straight to the database, without a revision or SSE: the recording path is exactly what may
+ * have failed. A fill job with a durable attempt ends `unknown` (reconcile, never a replay), one without an attempt
+ * and every reconcile job end `aborted` (nothing was written). Idempotent: a job that has its result keeps it.
+ */
+export async function ensureResult(db: Db, jobId: string, taskId: string, kind: 'fill' | 'reconcile'): Promise<void> {
+  const done = await db.selectFrom('erp_job_event').select('event_id').where('job_id', '=', jobId).where('type', '=', 'result').executeTakeFirst();
+  if (done) return;
+  const attempted = kind === 'fill' && (await db.selectFrom('erp_attempt').select('attempt_id').where('job_id', '=', jobId).executeTakeFirst()) !== undefined;
+  const event: ResultEvent = {
+    type: 'result',
+    status: attempted ? 'unknown' : 'aborted',
+    code: NO_RESULT_CODE,
+    message: attempted ? NO_RESULT_COPY.attempted : NO_RESULT_COPY[kind],
+    billNo: null,
+    capture: null,
+  };
+  await writeEvent(db, jobId, taskId, event, new Date().toISOString());
+}
+
 export function createFillJobs({ db, lease, execute, record }: { db: Db; lease: ErpLease; execute: FillExecutor; record: RecordFacts }) {
   const active = new Set<Promise<void>>();
 
@@ -67,9 +96,11 @@ export function createFillJobs({ db, lease, execute, record }: { db: Db; lease: 
           return judge(event, { erpAccount });
         case 'result': {
           // Released before the result is visible, so whoever sees the result sees the lease free.
-          lease.release(taskId);
-          finished = true;
+          lease.release(jobId);
+          // Marked finished only once the row is durable: a throw in here must leave it false, so the fallback in
+          // `drive`'s `finally` still gives the job a result.
           await append(async (tx) => writeEvent(tx, jobId, taskId, await afterAttempts(tx, jobId, event), at()));
+          finished = true;
           return undefined;
         }
         default:
@@ -88,7 +119,10 @@ export function createFillJobs({ db, lease, execute, record }: { db: Db; lease: 
         await channel.emit({ type: 'result', status: attempted ? 'unknown' : 'aborted', code: 'executor_error', message, billNo: null, capture: null });
       }
     } finally {
-      lease.release(taskId);
+      lease.release(jobId);
+      // A job without a result row stays phase `running` for ever and every mutation of its task gets 409. Whatever
+      // went wrong -- the executor returned without a result, or recording one threw -- give it one now.
+      if (!finished) await ensureResult(db, jobId, taskId, 'fill').catch((error: unknown) => console.error(`ERP job ${jobId} could not be closed`, error));
     }
   }
 

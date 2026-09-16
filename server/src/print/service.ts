@@ -6,6 +6,7 @@ import type { Db } from '../db/database';
 import { paperCorners, type PaperCorners } from '../parse/ocr';
 import { composeSheet, isJpegOrPng, pdfContent, photoContent, renderPages, screenshotContent, type Content, type Drawn } from './compose';
 import { sheetState, type PrintFacts, type PrintSetting, type Screenshot, type StoredPage, type StoredPlacement } from './facts';
+import { storedMime } from '../upload-rules';
 import { planPages, prefersRotation, REGIONS, type Region } from './layout';
 
 // 去打印 (print) actions. Each reads the task, composes outside any transaction, and hands back a commit that
@@ -86,7 +87,7 @@ export async function addScreenshot(state: PrintState, voucherMaterialId: string
   const screenshots = [...state.facts.screenshots.filter((s) => s.voucherMaterialId !== voucherMaterialId), shot];
   const composed = await compose(state, state.facts.settings, screenshots);
   return async (tx, at, revision) => {
-    await tx.insertInto('blob').values({ sha256, size: file.bytes.byteLength, mime: file.mime || 'application/octet-stream', created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
+    await tx.insertInto('blob').values({ sha256, size: file.bytes.byteLength, mime: storedMime(file.fileName, file.mime), created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
     await tx.insertInto('payment_screenshot').values({ screenshot_id: shot.screenshotId, task_id: state.taskId, account_id: state.accountId, voucher_material_id: voucherMaterialId, blob_sha256: sha256, file_name: file.fileName, revision, created_at: at }).execute();
     await renderCommit(state, composed)(tx, at, revision);
   };
@@ -119,11 +120,30 @@ function withSetting(settings: ReadonlyMap<string, PrintSetting>, materialId: st
   return next;
 }
 
-// Inside the original image, and in the order top-left, top-right, bottom-right, bottom-left around an area.
+// The smallest crop worth warping, as a fraction of the original's area: below this the quad is a slip of the finger,
+// not a crop, and straightening it yields an unreadable sliver.
+const MIN_CROP_AREA = 0.01;
+
+// Inside the original image, in the order top-left, top-right, bottom-right, bottom-left, and a real quadrilateral:
+// ordering alone accepts degenerate and self-intersecting quads (a bow tie passes every pairwise comparison).
+// Convex, wound consistently, and covering at least a hundredth of the page is what 透视矫正 can actually use.
 function cornersValid(corners: Corners, size: { width: number; height: number }): boolean {
   if (corners.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > size.width || y > size.height)) return false;
   const [tl, tr, br, bl] = corners;
-  return tl[0] < tr[0] && bl[0] < br[0] && tl[1] < bl[1] && tr[1] < br[1];
+  if (!(tl[0] < tr[0] && bl[0] < br[0] && tl[1] < bl[1] && tr[1] < br[1])) return false;
+  // Cross product of each pair of adjacent edges: all the same sign means convex and never self-intersecting.
+  const cross = corners.map(([x, y], index) => {
+    const [nx, ny] = corners[(index + 1) % 4]!;
+    const [fx, fy] = corners[(index + 2) % 4]!;
+    return (nx - x) * (fy - ny) - (ny - y) * (fx - nx);
+  });
+  if (!(cross.every((value) => value > 0) || cross.every((value) => value < 0))) return false;
+  // Shoelace area of the quad against the original.
+  const area = Math.abs(corners.reduce((sum, [x, y], index) => {
+    const [nx, ny] = corners[(index + 1) % 4]!;
+    return sum + (x * ny - nx * y);
+  }, 0)) / 2;
+  return area >= size.width * size.height * MIN_CROP_AREA;
 }
 
 function renderCommit(state: PrintState, composed: Composed): PrintCommit {
@@ -194,7 +214,7 @@ async function compose(state: PrintState, settings: ReadonlyMap<string, PrintSet
   const sheet: { header: string; drawn: Drawn[] }[] = [];
   const pages: Omit<StoredPage, 'pngSha256'>[] = [];
   for (const plan of plans) {
-    const shot = plan.acceptsPaymentScreenshot ? (screenshots.find((candidate) => candidate.voucherMaterialId === plan.voucherMaterialId) ?? null) : null;
+    const shot = screenshots.find((candidate) => candidate.voucherMaterialId === plan.voucherMaterialId) ?? null;
     const top = await prepared(plan.voucherMaterialId, 'top');
     const bottom = await prepared(plan.bottomMaterialId, shot ? 'bottom_left' : 'bottom');
     const drawn = [top?.drawn, bottom?.drawn].filter((d): d is Drawn => d !== undefined);
@@ -214,6 +234,7 @@ async function compose(state: PrintState, settings: ReadonlyMap<string, PrintSet
       top: top?.stored ?? null,
       bottom: bottom?.stored ?? null,
       acceptsPaymentScreenshot: plan.acceptsPaymentScreenshot,
+      expectsPaymentScreenshot: plan.expectsPaymentScreenshot,
       screenshotId: shot?.screenshotId ?? null,
     });
   }

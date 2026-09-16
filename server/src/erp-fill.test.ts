@@ -158,6 +158,25 @@ describe('去报销 on a fake executor', () => {
     await refused(await alice.post('/api/tasks', { homeCity: '杭州' }), 400, 'active_task_exists');
   });
 
+  it('完全重置 never voids a task that touched ERP: it keeps holding its invoices', async () => {
+    executor.queue(readbackMismatch);
+    const unknown = await start(await confirmed());
+    expect(unknown.stage).toBe('reconcile');
+
+    // Reset is a bulk 任务作废 and may not release invoices the abandon action itself refuses to release (story 21).
+    const reset = await alice.post('/api/reset', {});
+    expect(reset.status).toBe(200);
+    expect(TaskListSchema.parse(await reset.json()).tasks).toEqual([expect.objectContaining({ taskId: unknown.task.taskId, stage: 'reconcile', abandonable: false })]);
+    expect((await client.current(unknown.task.taskId)).stage).toBe('reconcile');
+  });
+
+  it('完全重置 still voids a task that never touched ERP', async () => {
+    const ready = await confirmed();
+    const reset = await alice.post('/api/reset', {});
+    expect(TaskListSchema.parse(await reset.json()).tasks).toEqual([]);
+    expect((await client.current(ready.task.taskId)).stage).toBe('voided');
+  });
+
   it('a saved draft that passed the strict read-back is done (ERP 草稿已交接), a terminal', async () => {
     executor.queue(savedDraft('FYBX2026090077'));
     const done = await start(await confirmed());
@@ -169,9 +188,12 @@ describe('去报销 on a fake executor', () => {
 
     expect((await taskList()).tasks[0]).toMatchObject({ stage: 'done', erpDraftNo: 'FYBX2026090077', abandonable: false });
     await refused(await client.act(done, 'set-home-city', { homeCity: '上海' }), 400, 'task_closed');
+    // 去打印 never needs ERP (stories 57 and 63), so the paper bundle is still available once the draft is filed.
+    expect((await alice.post(`/api/tasks/${done.task.taskId}/actions/generate-print-sheet`, {})).status).toBe(200);
+    expect((await client.current(done.task.taskId)).printSheet.status).toBe('generated');
     // A draft handed over is terminal: the account may start the next task.
     expect((await alice.post('/api/tasks', { homeCity: '杭州' })).status).toBe(200);
-  });
+  }, 120_000);
 
   it('a failure before the first attempt_started returns to write-pending and allows retry', async () => {
     executor.queue(abortBeforeAttempt, savedDraft());
@@ -194,7 +216,7 @@ describe('去报销 on a fake executor', () => {
     const running = await client.accepted(await client.act(ready, 'start-erp-write'));
     await gate.running;
     expect(running).toMatchObject({ stage: 'erp', step: { kind: 'none' }, erp: { status: 'running' } });
-    expect(server.erpLease.holder()).toEqual({ accountId: alice.account.accountId, taskId: ready.task.taskId });
+    expect(server.erpLease.holder()).toEqual({ accountId: alice.account.accountId, taskId: ready.task.taskId, jobId: expect.any(String) });
 
     const current = await client.current(ready.task.taskId);
     expect((await client.act(current, 'set-home-city', { homeCity: '上海' })).status).toBe(409);

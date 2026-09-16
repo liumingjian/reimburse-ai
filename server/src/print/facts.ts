@@ -29,6 +29,9 @@ export type StoredPage = {
   top: StoredPlacement | null;
   bottom: StoredPlacement | null;
   acceptsPaymentScreenshot: boolean;
+  // Absent in renders stored before every voucher could take a screenshot; those pages accepted one only when a
+  // missing one was worth a reminder, so the old flag is the right fallback.
+  expectsPaymentScreenshot?: boolean;
   screenshotId: string | null;
 };
 
@@ -111,7 +114,7 @@ export function printView(taskId: string, taskName: string, facts: PrintFacts, s
         acceptsPaymentScreenshot: page.acceptsPaymentScreenshot,
         screenshotId: page.screenshotId,
       })),
-      notices: render.pages.filter((page) => page.acceptsPaymentScreenshot && page.screenshotId === null).map((page) => missingScreenshotNotice(page.nos, page.categoryLabel)),
+      notices: render.pages.filter((page) => (page.expectsPaymentScreenshot ?? page.acceptsPaymentScreenshot) && page.screenshotId === null).map((page) => missingScreenshotNotice(page.nos, page.categoryLabel)),
     },
   };
 }

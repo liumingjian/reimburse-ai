@@ -79,24 +79,30 @@ export function createAccountService(db: Db, clock: Clock) {
     return { account, token, mustChangePassword };
   }
 
-  async function createAccount(credentials: CredentialsInput, role: Account['role']): Promise<Account> {
-    const taken = await db.selectFrom('account').select('account_id').where('username', '=', credentials.username).executeTakeFirst();
+  // Takes the password already hashed and runs inside the caller's transaction: scrypt is slow enough that two
+  // requests racing between the check and the insert would otherwise both pass it.
+  async function insertAccount(tx: Db, credentials: CredentialsInput, passwordHash: string, role: Account['role'], at: string): Promise<Account> {
+    const taken = await tx.selectFrom('account').select('account_id').where('username', '=', credentials.username).executeTakeFirst();
     if (taken) throw new AuthRefusal(409, 'username_taken', AUTH_ERRORS.usernameTaken);
     const account: Account = { accountId: randomUUID(), username: credentials.username, role };
-    await db
+    await tx
       .insertInto('account')
       .values({
         account_id: account.accountId,
         display_name: credentials.username,
         username: credentials.username,
-        password_hash: await hashPassword(credentials.password),
+        password_hash: passwordHash,
         role,
         active: 1,
         must_change_password: 0,
-        created_at: iso(clock()),
+        created_at: at,
       })
       .execute();
     return account;
+  }
+
+  async function firstAccount(tx: Db): Promise<boolean> {
+    return (await tx.selectFrom('account').select('account_id').where('username', 'is not', null).limit(1).executeTakeFirst()) === undefined;
   }
 
   // Every account with credentials, admins first, then by creation.
@@ -110,16 +116,32 @@ export function createAccountService(db: Db, clock: Clock) {
     hasAccounts,
     list,
 
-    // The first account ever becomes the admin; once one exists this is refused.
-    async setup(credentials: CredentialsInput): Promise<SignedIn> {
-      if (await hasAccounts()) throw new AuthRefusal(409, 'setup_done', AUTH_ERRORS.setupDone);
-      return openSession(await createAccount(credentials, 'admin'));
+    // The first account ever becomes the admin; once one exists this is refused. The check and the insert are one
+    // transaction, so two concurrent setups cannot both become admin. `onCreated` (the one-time legacy import,
+    // ADR-0018) runs inside that same transaction: the machine gets its admin together with its legacy data, or
+    // neither. Failing between the two would leave an admin with no `import_run` row, and the import could then never
+    // run, because setup refuses every later attempt with `setup_done`.
+    async setup(credentials: CredentialsInput, onCreated?: (tx: Db, accountId: string) => Promise<void>): Promise<SignedIn> {
+      const passwordHash = await hashPassword(credentials.password);
+      const at = iso(clock());
+      const account = await db.transaction().execute(async (tx) => {
+        if (!(await firstAccount(tx))) throw new AuthRefusal(409, 'setup_done', AUTH_ERRORS.setupDone);
+        const created = await insertAccount(tx, credentials, passwordHash, 'admin', at);
+        await onCreated?.(tx, created.accountId);
+        return created;
+      });
+      return openSession(account);
     },
 
     // Open self-registration, only after the admin exists.
     async register(credentials: CredentialsInput): Promise<SignedIn> {
-      if (!(await hasAccounts())) throw new AuthRefusal(409, 'setup_required', AUTH_ERRORS.setupRequired);
-      return openSession(await createAccount(credentials, 'user'));
+      const passwordHash = await hashPassword(credentials.password);
+      const at = iso(clock());
+      const account = await db.transaction().execute(async (tx) => {
+        if (await firstAccount(tx)) throw new AuthRefusal(409, 'setup_required', AUTH_ERRORS.setupRequired);
+        return insertAccount(tx, credentials, passwordHash, 'user', at);
+      });
+      return openSession(account);
     },
 
     // Unknown username, wrong password and a deactivated account all get the same answer.
@@ -135,11 +157,16 @@ export function createAccountService(db: Db, clock: Clock) {
     },
 
     // Replaces the signed-in account's password after checking the current one; clears a temporary password.
-    async changePassword(accountId: string, input: ChangePasswordInput): Promise<void> {
+    // Every other session of the account is dropped: whoever knew the old password (or was handed a temporary one)
+    // must not keep an open session afterwards. `keepToken` is the caller's own session, which stays signed in.
+    async changePassword(accountId: string, input: ChangePasswordInput, keepToken?: string): Promise<void> {
       const row = await db.selectFrom('account').selectAll().where('account_id', '=', accountId).executeTakeFirst();
       if (!row?.password_hash || !(await verifyPassword(input.currentPassword, row.password_hash))) throw new AuthRefusal(400, 'wrong_password', ADMIN_ERRORS.wrongPassword);
       if (input.newPassword === input.currentPassword) throw new AuthRefusal(400, 'same_password', ADMIN_ERRORS.samePassword);
       await db.updateTable('account').set({ password_hash: await hashPassword(input.newPassword), must_change_password: 0 }).where('account_id', '=', accountId).execute();
+      let drop = db.deleteFrom('session').where('account_id', '=', accountId);
+      if (keepToken) drop = drop.where('token_sha256', '!=', sha256(keepToken));
+      await drop.execute();
       await recordEvent(db, accountId, accountId, 'password_changed', iso(clock()));
     },
 

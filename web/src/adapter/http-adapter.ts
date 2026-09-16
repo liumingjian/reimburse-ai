@@ -24,6 +24,10 @@ import {
   HTTP_ENDPOINTS,
   SNAPSHOT_EVENT,
   STALE_STEP_HTTP_STATUS,
+  LegacyImportFailureSchema,
+  LegacyImportSchema,
+  type LegacyImport,
+  type LegacyImportOutcome,
   ProjectBookFailureSchema,
   ProjectBookResultSchema,
   ProjectBookSchema,
@@ -142,6 +146,27 @@ export function parseAccountActionResponse(status: number, body: unknown): Accou
   return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, accountList: null };
 }
 
+// 旧数据导入：GET 是读接口（401 抛 UnauthenticatedError）。
+export function parseLegacyImportResponse(status: number, body: unknown): LegacyImport {
+  refuseUnauthenticated(status);
+  if (!isSuccess(status)) throw new Error(`旧数据导入结果加载失败（HTTP ${status}）`);
+  const parsed = LegacyImportSchema.safeParse(body);
+  if (!parsed.success) throw new Error('旧数据导入结果的格式与契约不符');
+  return parsed.data;
+}
+
+// 重试 / 跳过：成功是新的导入结果；失败只有 { error }（如导入已经结束）。
+export function parseLegacyImportActionResponse(status: number, body: unknown): LegacyImportOutcome {
+  if (isSuccess(status)) {
+    const view = LegacyImportSchema.safeParse(body);
+    if (view.success) return { ok: true, legacyImport: view.data };
+    return { ok: false, error: { code: INVALID_RESPONSE_CODE, message: '服务端返回的旧数据导入结果格式与契约不符。' }, legacyImport: null };
+  }
+  const failure = LegacyImportFailureSchema.safeParse(body);
+  if (failure.success) return { ok: false, error: failure.data.error, legacyImport: null };
+  return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, legacyImport: null };
+}
+
 export function parseSnapshotResponse(status: number, body: unknown): TaskSnapshot {
   refuseUnauthenticated(status);
   if (!isSuccess(status)) throw new Error(`任务快照加载失败（HTTP ${status}）`);
@@ -235,6 +260,15 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     }
     return parseProjectBookActionResponse(response.status, await readJson(response));
   }
+  async function legacyImportAction(target: string): Promise<LegacyImportOutcome> {
+    let response: Response;
+    try {
+      response = await fetch(target, { method: 'POST', body: JSON.stringify({}), headers: { 'content-type': 'application/json' } });
+    } catch {
+      return { ok: false, error: { code: NETWORK_ERROR_CODE, message: NETWORK_ERROR_MESSAGE }, legacyImport: null };
+    }
+    return parseLegacyImportActionResponse(response.status, await readJson(response));
+  }
   const action = (taskId: string, endpoint: { path: string }, payload: Record<string, unknown>) => json(url(endpoint.path, taskId), payload);
 
   return {
@@ -307,6 +341,17 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     intakePublicProject: (number) => bookAction(url(E.intakePublicProject.path), { number }),
     removePublicProject: (number) => bookAction(url(E.removePublicProject.path), { number }),
     recheckPublicProjects: () => bookAction(url(E.recheckPublicProjects.path), {}),
+    async getLegacyImport() {
+      let response: Response;
+      try {
+        response = await fetch(url(E.getLegacyImport.path));
+      } catch {
+        throw new ServiceUnavailableError(NETWORK_ERROR_MESSAGE);
+      }
+      return parseLegacyImportResponse(response.status, await readJson(response));
+    },
+    retryLegacyImport: () => legacyImportAction(url(E.retryLegacyImport.path)),
+    skipLegacyImport: () => legacyImportAction(url(E.skipLegacyImport.path)),
     async getSnapshot(taskId) {
       const response = await fetch(url(E.getSnapshot.path, taskId));
       return parseSnapshotResponse(response.status, await readJson(response));
