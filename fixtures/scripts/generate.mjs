@@ -39,6 +39,7 @@ export const MATERIAL_FILES = {
 export const REGRESSION_FILES = {
   r01: 'r01-einvoice-split-number.pdf',
   r02: 'r02-einvoice-spaced-title.pdf',
+  r201: 'r201-bundled-fee-invoice.pdf',
 };
 
 export const PDF_DOC_FILES = { ...MATERIAL_FILES, ...REGRESSION_FILES };

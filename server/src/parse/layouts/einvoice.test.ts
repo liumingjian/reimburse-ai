@@ -51,6 +51,23 @@ describe('vat_invoice/einvoice', () => {
 
     const outcome = dispatch(doc, LAYOUTS);
     expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（普票）', missing: [] });
+  it('recognises an invoice that bundles an unrelated fee row beside a v1 service row, and takes its totals from the 合计 row', async () => {
+    const doc = await pdfDoc(fixture('r201-bundled-fee-invoice.pdf'));
+    const outcome = dispatch(doc, LAYOUTS);
+    if (outcome.outcome !== 'recognised') throw new Error(`expected recognised, got ${JSON.stringify(outcome)}`);
+    expect(outcome).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', missing: [] });
+    // 47.38 + 1.60 is the 合计 row over both item rows; the leading 运输服务 row alone is 41.55 + 1.25.
+    expect(Object.fromEntries(outcome.candidates.map((c) => [c.key, c.value]))).toMatchObject({
+      itemName: '*运输服务*客运服务费',
+      netAmount: '47.38',
+      taxAmount: '1.60',
+      totalAmount: '48.98',
+    });
+    expect(outcome.findings.filter((f) => f.kind === 'validation')).toEqual([]);
+
+    // Take the v1 service row away and nothing is left that this layout covers.
+    const noV1 = { ...doc, observations: doc.observations.map((o) => (o.text.includes('运输服务') ? { ...o, text: o.text.replace('运输服务', '餐饮服务') } : o)) };
+    expect(einvoice.recognise(noV1)).toBe(false);
   });
 
   it('does not recognise an e-invoice outside the v1 kinds (m11, 餐饮) or a document without the invoice title (m06)', async () => {
