@@ -5,7 +5,7 @@ import { expect, test, type Page } from '@playwright/test';
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 
-// 内核 FORBIDDEN_USER_TERMS（kernel/src/interaction.mjs:99-131）。
+// 内核 FORBIDDEN_USER_TERMS（50931a3:kernel/src/interaction.mjs:99-131）。
 const FORBIDDEN = [
   '内核', '模型', 'OCR', 'MarkItDown', 'Markdown', 'Node', 'CDP', 'AppleEvents', 'ego-browser', 'task space', 'BAOX_HOME', 'stepToken',
   'step.argv', 'blockedBy', 'resolvableBy', 'upload_dispatched', 'manifestHash', 'bundleHash', 'ERP', '候选', '原生票种', '手动 QA', '子 Agent',

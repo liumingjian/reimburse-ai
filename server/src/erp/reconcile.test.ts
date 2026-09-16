@@ -1,4 +1,4 @@
-// Origin: kernel/test/erpreconcile.test.mjs and kernel/test/erpreconcile-strict.test.mjs (translated to Vitest;
+// Origin: 50931a3:kernel/test/erpreconcile.test.mjs and 50931a3:kernel/test/erpreconcile-strict.test.mjs (translated to Vitest;
 // inputs and expected outputs kept). The kernel's readReconciliation cases are split: the read-only collection is
 // the executor's readForm (queue fake session, no Input.* event), the sums and the bucket are the server's.
 // The ego-transport refusal case is dropped with the ego adapter (ADR-0016).
@@ -237,7 +237,7 @@ describe('reconcile readings (readReconciliation)', () => {
   });
 });
 
-// ---- Strict per-line match (origin: kernel/test/erpreconcile-strict.test.mjs) ----
+// ---- Strict per-line match (origin: 50931a3:kernel/test/erpreconcile-strict.test.mjs) ----
 
 const identity = [
   ['m-rail', '26427000000640558021', 'SPD202609040022', '703.00', '644.95', '58.05'],

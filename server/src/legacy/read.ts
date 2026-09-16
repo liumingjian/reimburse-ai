@@ -7,7 +7,7 @@ import { validHomeCity } from '../rules/company-rules';
 import { bookFileKey, homeCityKey, LEGACY_INVOICE_KEY, type LegacyIdentity } from './keys';
 
 // Reads a legacy `~/.baox` (schemaVersion 1) without ever writing to it: only readFileSync/readdirSync/statSync.
-// Layout: kernel/src/paths.mjs, workspace.mjs, home-city.mjs, projects.mjs. Any corrupt file that the import needs
+// Layout: 50931a3:kernel/src/paths.mjs, workspace.mjs, home-city.mjs, projects.mjs. Any corrupt file that the import needs
 // makes the whole read `corrupt`, so the import writes nothing (ADR-0015). Stray `*.tmp` files from the kernel's
 // temp+rename writes are ignored. `identity.json` is read only to pick the bound identity's home city and book; it is
 // never imported (ADR-0018).
@@ -40,7 +40,7 @@ export type LegacyData = {
 
 export type LegacyRead = { kind: 'absent' } | { kind: 'corrupt'; problems: LegacyProblem[] } | { kind: 'ok'; data: LegacyData };
 
-// `$BAOX_HOME` or `~/.baox` (kernel/src/paths.mjs).
+// `$BAOX_HOME` or `~/.baox` (50931a3:kernel/src/paths.mjs).
 export function resolveLegacyHome(env: NodeJS.ProcessEnv = process.env): string {
   return env['BAOX_HOME'] || join(homedir(), '.baox');
 }

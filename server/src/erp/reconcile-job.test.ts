@@ -1,7 +1,7 @@
 // The executor seam for 对账 (reconcile): the read-only job driven through the protocol on the fake ERP, with the
 // real server channel persisting its events on SQLite `:memory:`. Parity: for each recorded draft state
 // (testing/reconcile-states.ts) the job reads what the kernel reads and lands in the kernel's bucket; the golden
-// was recorded by running kernel/src/erpreconcile.mjs readReconciliation (with erp-cdp-read.mjs readers) and
+// was recorded by running 50931a3:kernel/src/erpreconcile.mjs readReconciliation (with erp-cdp-read.mjs readers) and
 // classifyReconciliation against the same fake ERP states, see its `_origin`.
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';

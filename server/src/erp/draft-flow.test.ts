@@ -1,4 +1,4 @@
-// Origin: kernel/test/erp-draft-flow.test.mjs (translated to Vitest; inputs and expected outputs kept).
+// Origin: 50931a3:kernel/test/erp-draft-flow.test.mjs (translated to Vitest; inputs and expected outputs kept).
 // The kernel's `linesDigest` (selection.mjs) is `previewLinesDigest`; `approvalCovers` lives in the protocol.
 import { describe, expect, it } from 'vitest';
 import { fillApprovedPreview, formReadbackToken, matchReceiptRows, saveApprovedPreview } from './executor/draft-flow';

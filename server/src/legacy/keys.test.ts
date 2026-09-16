@@ -3,8 +3,8 @@ import { KINDS } from '../parse/kinds';
 import { bookFileKey, homeCityKey, legacyInvoiceKey } from './keys';
 
 // Parity with the legacy kernel's three identity derivations. Inputs and expected outputs are translated from
-// kernel/src/projects.mjs identityKey (+ kernel/test/projects.test.mjs), kernel/src/home-city.mjs identityKey
-// (+ kernel/test/home-city.test.mjs) and kernel/src/parse.mjs invoiceIdentity (+ kernel/test/parse.test.mjs).
+// 50931a3:kernel/src/projects.mjs identityKey (+ 50931a3:kernel/test/projects.test.mjs), 50931a3:kernel/src/home-city.mjs identityKey
+// (+ 50931a3:kernel/test/home-city.test.mjs) and 50931a3:kernel/src/parse.mjs invoiceIdentity (+ 50931a3:kernel/test/parse.test.mjs).
 
 const ALICE = { account: 'alice', tenant: 'tenant-a' };
 const BOB = { account: 'bob', tenant: 'tenant-a' };

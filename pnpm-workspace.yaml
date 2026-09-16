@@ -3,8 +3,6 @@ packages:
   - server
   - contract
   - fixtures
-  # Frozen reference; removed together with kernel/ by the retirement PR.
-  - packages/image-field-extraction
 
 # Native addons whose install script must run (pnpm 10 skips dependency build scripts unless listed).
 onlyBuiltDependencies:

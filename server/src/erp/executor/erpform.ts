@@ -1,4 +1,4 @@
-// Origin: kernel/src/erpform.mjs (CDP form primitives of the 费用报销单 expense reimbursement form).
+// Origin: 50931a3:kernel/src/erpform.mjs (CDP form primitives of the 费用报销单 expense reimbursement form).
 //
 // Facts measured on K3Cloud 8.2.0 (2026-09-05) that shape this module:
 //   1. Detail grid cells carry no field key, so grids are located and read by header label only.

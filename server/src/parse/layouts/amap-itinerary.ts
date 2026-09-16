@@ -2,7 +2,7 @@ import { cents, compact, money, rows, type ParseDoc, type TextObservation } from
 import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout } from '../layout';
 
 // `ride_itinerary/amap`: the 高德行程单 (Amap ride itinerary), a reference material listing each ride leg. PDF and image
-// alike: both arrive as positioned text observations. Ported from kernel/src/parse.mjs (`ride_itinerary`,
+// alike: both arrive as positioned text observations. Ported from 50931a3:kernel/src/parse.mjs (`ride_itinerary`,
 // `itinerarySegments`, `itineraryRouteLayout`): the leg rows are trusted only when their count equals the count the
 // itinerary declares (`共计N单行程`); origin and destination cells are merged by coordinates within each leg's row band,
 // so an address wrapped onto a second line is joined, never cut on spaces.

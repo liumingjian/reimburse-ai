@@ -1,5 +1,7 @@
 # 图片字段提取 Adapter：默认模型视觉，可选受管本地 OCR
 
+> **Status: superseded (2026-09-15, #197).** Superseded by ADR-0017 and slice #186: OCR runs in process (`onnxruntime-node`, `server/src/parse/ocr.ts`), with no Python worker and no model vision; `50931a3:packages/image-field-extraction` was deleted in #197. Paths below point into git commit `50931a3`, the last one that has the Skill-era code.
+
 > **状态：已修订（2026-09-11）。** 本文原编号 0011，与 MarkItDown 那篇撞号，改为 0013。[本地报销应用](../design/standalone-app.md)把「受管 OCR + TypeScript 规则」定为唯一的图片路径：失败转手工补填，不再有模型视觉默认路径或视觉回退；OCR 运行时归应用所有，不再是「Skill 自己的虚拟环境」。Python 只做预处理与 OCR、TypeScript 规则产生候选、受管 RapidOCR 继续有效。
 
 图片字段提取默认使用 `vision-direct`，直接调用模型自身的视觉能力；`extract-reimbursement-images` 提供可切换的 `ocr-assisted` 适配器，在需要时先批量运行受管本地 OCR，再把缺字段或校验失败的候选交给模型视觉。OCR 只产生文字观测，TypeScript 规则才产生字段候选，确定性校验和最终整单明细确认仍然不可省略。本决定修订 [ADR-0004](0004-vision-reads-images.md) 中“外部识图工具一律不收”的结论：版本锁定、资产哈希可核验、处理期不外连的正式适配器可以使用，Agent 临时寻找并调用任意识图工具仍然禁止。

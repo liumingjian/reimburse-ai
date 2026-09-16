@@ -1,4 +1,4 @@
-// Origin: kernel/test/erp-write-context.test.mjs (translated to Vitest; inputs and expected outputs kept).
+// Origin: 50931a3:kernel/test/erp-write-context.test.mjs (translated to Vitest; inputs and expected outputs kept).
 // The ego task-space case is dropped with ego itself (ADR-0016). "mark" is the kernel's upload_dispatched marker,
 // which the job protocol replaces with `attempt_started`.
 import { describe, expect, it } from 'vitest';

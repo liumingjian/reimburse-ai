@@ -1,8 +1,10 @@
 # 自己解 PDF 取字，不引入解析库，也不做 OCR
 
-> **状态：重新采用（2026-09-11）。** 2026-09-09 曾被 [ADR-0011（MarkItDown）](0011-markitdown-agent-pdf-candidates.md)取代；[本地报销应用](../design/standalone-app.md)又把 `kernel/src/pdftext.mjs` 定为文本 PDF 的首选取字来源，利用其逐项坐标做规则解析（须先在样本上验证，不通过时才改用受管 Python 中带坐标的解析器）。「Node 内核不内置 OCR；空文本 PDF 必须阻塞」继续有效。下文关于图片的修订注记已被 ADR-0004 的状态行取代。继任 ADR 待补。
+> **Status: superseded (2026-09-15, #197).** Superseded by ADR-0017: the app reads text PDFs with unpdf. `pdftext.mjs` survives only as `fixtures/scripts/pdftext.mjs`, which verifies the generated fixtures (#197). Paths below point into git commit `50931a3`, the last one that has the Skill-era code.
 
-发票事实提取的第一步是从 PDF 里取出票面文字。内核自带一个约 500 行的 PDF 取字实现（`kernel/src/pdftext.mjs`）：全文扫描间接对象、展开对象流、用 Node 内建 `zlib` 解 `FlateDecode`、解析 `/ToUnicode` CMap、跟踪文本矩阵与图形矩阵，最后按坐标拼回行。
+> **状态：重新采用（2026-09-11）。** 2026-09-09 曾被 [ADR-0011（MarkItDown）](0011-markitdown-agent-pdf-candidates.md)取代；[本地报销应用](../design/standalone-app.md)又把 `50931a3:kernel/src/pdftext.mjs` 定为文本 PDF 的首选取字来源，利用其逐项坐标做规则解析（须先在样本上验证，不通过时才改用受管 Python 中带坐标的解析器）。「Node 内核不内置 OCR；空文本 PDF 必须阻塞」继续有效。下文关于图片的修订注记已被 ADR-0004 的状态行取代。继任 ADR 待补。
+
+发票事实提取的第一步是从 PDF 里取出票面文字。内核自带一个约 500 行的 PDF 取字实现（`50931a3:kernel/src/pdftext.mjs`）：全文扫描间接对象、展开对象流、用 Node 内建 `zlib` 解 `FlateDecode`、解析 `/ToUnicode` CMap、跟踪文本矩阵与图形矩阵，最后按坐标拼回行。
 
 **内核自己不做 OCR。** PNG/JPG 以及取不出文字的扫描 PDF 一律落到 `needs_ocr` / `no_text`。
 

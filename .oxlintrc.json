@@ -1,18 +1,13 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "categories": { "correctness": "off" },
-  "rules": {
-    "no-restricted-imports": ["error", {
-      "patterns": [{ "group": ["**/kernel/**"], "message": "New code never imports kernel/ (spec #177): translate the kernel code instead." }]
-    }]
-  },
   "overrides": [
     {
       "files": ["server/src/erp/executor/*.ts"],
       "rules": {
         "no-restricted-imports": ["error", {
           "patterns": [{
-            "group": ["../**", "!../protocol", "**/kernel/**"],
+            "group": ["../**", "!../protocol"],
             "message": "ADR-0016: the ERP executor may import only server/src/erp/executor/** and ../protocol, never the rest of the server."
           }]
         }]
@@ -23,7 +18,7 @@
       "rules": {
         "no-restricted-imports": ["error", {
           "patterns": [{
-            "group": ["../../**", "!../../protocol", "**/kernel/**"],
+            "group": ["../../**", "!../../protocol"],
             "message": "ADR-0016: the ERP executor may import only server/src/erp/executor/** and ../protocol, never the rest of the server."
           }]
         }]

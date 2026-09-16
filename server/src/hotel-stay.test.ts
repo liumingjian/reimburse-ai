@@ -4,7 +4,7 @@ import { api, byFileName, sample } from './test/api';
 import { createTestServer, type TestClient, type TestServer } from './test/harness';
 
 // Slice 06 (#185): a hotel invoice plus a 全季 结账单 (folio) form one stay line with check-in and check-out dates.
-// Ported from kernel/test/events.test.mjs ('住宿：入住日期来自结账单…', the with-folio half) on @baox/fixtures m01 + m02.
+// Ported from 50931a3:kernel/test/events.test.mjs ('住宿：入住日期来自结账单…', the with-folio half) on @baox/fixtures m01 + m02.
 
 let server: TestServer;
 let signedIn: TestClient;

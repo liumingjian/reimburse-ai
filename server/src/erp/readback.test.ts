@@ -1,4 +1,4 @@
-// Origin: kernel/test/erp-write-readback.test.mjs (translated to Vitest; inputs and expected outputs kept).
+// Origin: 50931a3:kernel/test/erp-write-readback.test.mjs (translated to Vitest; inputs and expected outputs kept).
 import { describe, expect, it } from 'vitest';
 import { buildReceiptReadback } from './readback';
 

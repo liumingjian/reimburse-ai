@@ -1,6 +1,6 @@
 // The mutating ERP steps over CDP, plus #32's error capture.
-// Origin: kernel/src/erpwrite-cdp.mjs (openNewReimbursement, openInvoiceAssistant, uploadAndImportInvoices,
-// addDetailRow, saveReimbursement, closeInvoiceAssistant) and kernel/src/invoice-upload.mjs.
+// Origin: 50931a3:kernel/src/erpwrite-cdp.mjs (openNewReimbursement, openInvoiceAssistant, uploadAndImportInvoices,
+// addDetailRow, saveReimbursement, closeInvoiceAssistant) and 50931a3:kernel/src/invoice-upload.mjs.
 // Kernel waits are kept as upper bounds; `pace` shortens them on the fake ERP.
 
 import { autoAttach, clickAt, evalIn, screenshot, type CdpSession, type ChildTargets } from './cdp';

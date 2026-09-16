@@ -2,7 +2,7 @@ import type { MaterialKind, PendingItem } from '@baox/contract';
 import { cents, money } from './parse/doc';
 import { KINDS, type EventDraft } from './parse/kinds';
 
-// 逐段分摊 (per-leg allocation) and the ride-hailing invoice ↔ itinerary pairing, ported from kernel/src/events.mjs
+// 逐段分摊 (per-leg allocation) and the ride-hailing invoice ↔ itinerary pairing, ported from 50931a3:kernel/src/events.mjs
 // (`linkEvidence`, `conservingSegments`, `splitTax`, `buildEvents`). Two rules:
 //   1. Splitting needs evidence: an invoice becomes several legs only because its paired itinerary lists them.
 //   2. The system never makes up an amount: nothing is averaged or apportioned (by count, distance or time). Itinerary

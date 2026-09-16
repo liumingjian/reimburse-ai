@@ -1,5 +1,5 @@
 // Server-side judgement of ERP read-backs (ADR-0016: the executor only observes, the server compares).
-// Origin: kernel/src/erp-write-readback.mjs (buildReceiptReadback) and kernel/src/erpreconcile.mjs
+// Origin: 50931a3:kernel/src/erp-write-readback.mjs (buildReceiptReadback) and 50931a3:kernel/src/erpreconcile.mjs
 // (matchTaskLines, the strict per-line comparison). Inputs, codes and messages are kept.
 
 import type { Readings } from './protocol';
@@ -128,7 +128,7 @@ export function buildReceiptReadback({ grid, invoices = [], taskId, versionId, i
   return { ok: true as const, problems: [] as Problem[], receiptCheck, receiptReadback };
 }
 
-// ---- Strict per-line comparison (origin: kernel/src/erpreconcile.mjs matchTaskLines) ----
+// ---- Strict per-line comparison (origin: 50931a3:kernel/src/erpreconcile.mjs matchTaskLines) ----
 
 const RECEIPTS_COLUMN = '价税合计';
 const DETAIL_COLUMN = '申请报销金额';

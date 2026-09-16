@@ -1,4 +1,4 @@
-// Origin: kernel/test/fake-session.mjs. A queue fake: `Runtime.evaluate` returns pre-arranged values in order,
+// Origin: 50931a3:kernel/test/fake-session.mjs. A queue fake: `Runtime.evaluate` returns pre-arranged values in order,
 // every other command is only logged. It pins which input events are sent and where, which needs no browser.
 // The stateful fake ERP (fake-erp.ts) covers whole jobs; this one covers single primitives.
 

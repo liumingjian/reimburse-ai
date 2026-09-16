@@ -1,5 +1,5 @@
 // Parity (spec #177): a job driven through the protocol on the fake ERP produces the same read-backs as the kernel
-// on the same inputs. The golden was recorded by driving the kernel's own CDP path (kernel/src/erpwrite-cdp.mjs,
+// on the same inputs. The golden was recorded by driving the kernel's own CDP path (50931a3:kernel/src/erpwrite-cdp.mjs,
 // erp-browser-adapters.mjs, erp-cdp-read.mjs + erpreconcile.mjs readReconciliation, erp-write-readback.mjs,
 // erp-draft-flow.mjs) against a fresh fake ERP with the same scenario; see the golden's `_origin`.
 import { readFileSync } from 'node:fs';

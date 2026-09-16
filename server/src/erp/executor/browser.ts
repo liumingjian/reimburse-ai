@@ -1,6 +1,6 @@
 // The v1 browser port: the app's dedicated Chromium profile over CDP on 127.0.0.1 (ADR-0016). `ensureChromium` starts
 // it when nothing answers on the port, headed, with its own user data directory, never the user's own profile.
-// Origin: kernel/src/chrome.mjs (findChrome, launch).
+// Origin: 50931a3:kernel/src/chrome.mjs (findChrome, launch).
 
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';

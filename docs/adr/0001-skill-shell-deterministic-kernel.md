@@ -1,5 +1,7 @@
 # 用户入口是 Skill，业务判定留在确定性内核
 
+> **Status: superseded (2026-09-15, #197).** Superseded by the local app ([standalone-app](../design/standalone-app.md), ADR-0014 to ADR-0018): the Skill entry point and the Node kernel were deleted in #197; business judgement lives in the server (`server/src/`). Paths below point into git commit `50931a3`, the last one that has the Skill-era code.
+
 > **状态：部分取代（2026-09-11）。** 「用户入口是 Skill」一半已被[本地报销应用](../design/standalone-app.md)取代：入口改为本机页面，页面输入是来源为 `user` 的候选，而非对话。「业务判定只在确定性内核」一半继续有效。继任 ADR 待补。
 
 baox 的用户入口是 Claude Code Agent Skill，而不是员工直接使用的命令行工具：目标用户是公司内已经在用 Claude Code 的员工，让他们记 `baox run` / `baox resume` 这套命令和它们的失败语义没有必要，对话式引导才是更合适的前门。

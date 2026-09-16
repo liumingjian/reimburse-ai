@@ -8,8 +8,8 @@ import { pdfDoc } from '../pdf';
 import { LAYOUTS } from '.';
 import { amapItinerary } from './amap-itinerary';
 
-// Origin: kernel/test/parse.test.mjs (reference case `高德打车电子行程单`: kind ride_itinerary, role reference, no
-// invoice identity, `segmentCount` read from `共计N单行程`) and kernel/test/events.test.mjs
+// Origin: 50931a3:kernel/test/parse.test.mjs (reference case `高德打车电子行程单`: kind ride_itinerary, role reference, no
+// invoice identity, `segmentCount` read from `共计N单行程`) and 50931a3:kernel/test/events.test.mjs
 // (`行程单逐段明细取得出来，段数与它自己声明的一致`; the route columns are merged by coordinates so a wrapped address is
 // never split on spaces; a row count that disagrees with the declared count discards the rows). Inputs: m04 (高德),
 // m06 (曹操, not a v1 layout).

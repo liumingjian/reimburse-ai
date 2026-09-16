@@ -1,5 +1,5 @@
 // The executor's read-only view of the expense form: raw readings for the server to judge.
-// Origin: kernel/src/erpread.mjs (readFormTabs, readHeaderField) and kernel/src/erpreconcile.mjs
+// Origin: 50931a3:kernel/src/erpread.mjs (readFormTabs, readHeaderField) and 50931a3:kernel/src/erpreconcile.mjs
 // (readReconciliation's four readings). It evaluates only; it never clicks, scrolls or writes.
 
 import { evalIn, type CdpSession } from './cdp';

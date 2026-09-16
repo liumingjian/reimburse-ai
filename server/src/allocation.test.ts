@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { allocate, conservingLegs, pairItineraries, splitTax, type ItineraryRef, type RideInvoice } from './allocation';
 
-// Origin: kernel/test/events.test.mjs — 逐段分摊 (per-leg allocation) and evidence linking:
+// Origin: 50931a3:kernel/test/events.test.mjs — 逐段分摊 (per-leg allocation) and evidence linking:
 // `合并交通票：各段之和与价税合计分毫不差时，内核直接定案`, `差一分钱就得问用户，行程单金额只作候选`,
 // `分毫不差的判据不给一分钱的容差`, `用户提交逐段金额之后才拆出三条候选明细，且三项金额分别守恒`, `逐段金额之和差一分也不收`,
 // `用户给过的分摊压过行程单`, `拆税额只按票面比例…余数落在最大的一段`, `证据关联按合计金额相等连线，且要求唯一`.
