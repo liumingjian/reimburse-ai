@@ -338,3 +338,44 @@ export const PRINT_VARIANTS = PRINT_PAGES.flatMap((page) => {
 // The merged print-sheet sample: the seven default page images composed in page order into one A4 PDF, which the
 // mock's 「下载打印稿 PDF」 points at.
 export const PRINT_SHEET_FILE = 'print-sheet.pdf';
+
+// Regression fixtures (#199): the goods table of a real 全电发票 (fully-digitalised VAT e-invoice) is not drawn the way
+// a hand-written HTML table is. The column header is centred over a column far wider than the label, while the cell
+// under it is left-aligned at the column's border, so the 项目名称 (item name) cell and the 合计 (row total) label are
+// printed well left of the 项目名称 header's own left edge. Real ride-hailing faces also omit the 单位 (unit) column
+// and print 单价 (unit price) before 数量 (quantity).
+
+// The item name and the 合计 label both sit left of the header label: with the column band starting at the header's
+// left edge, neither lands in a column, so the table has no item row and no 合计 row at all.
+export const WIDE_COLUMN_INVOICE = {
+  id: 'r207',
+  file: 'r207-einvoice-wide-name-column.pdf',
+  title: '电子发票（普通发票）',
+  number: '26312000000104412931',
+  date: '2026年08月18日',
+  seller: { name: '某某出行科技（广州）有限公司', taxNo: '91440000TTTTTTTT0G' },
+  rows: [{ name: '*交通运输服务*客运服务费', unit: '', qty: '1', price: '31.55', net: '31.55', rate: '3%', tax: '0.95' }],
+  net: '31.55',
+  tax: '0.95',
+  gross: '32.50',
+  grossWords: '叁拾贰圆伍角整',
+  wideNameColumn: true,
+};
+
+// The same wide column with an item name too long for it: the issuer wraps the name, and its tail is printed as a row
+// of its own with nothing in any other column. The first line is wide enough to be centred right of the header, so the
+// name is found but cut short, while the 合计 label is still lost.
+export const WRAPPED_ITEM_INVOICE = {
+  id: 'r208',
+  file: 'r208-einvoice-wrapped-item-name.pdf',
+  title: '电子发票（普通发票）',
+  number: '26312000000104412947',
+  date: '2026年08月19日',
+  seller: { name: '某某出行科技（广州）有限公司', taxNo: '91440000TTTTTTTT0G' },
+  rows: [{ name: '*交通运输服务*客运服务费（含高速费、停车费、预约调度费）', unit: '', qty: '1', price: '46.60', net: '46.60', rate: '3%', tax: '1.40' }],
+  net: '46.60',
+  tax: '1.40',
+  gross: '48.00',
+  grossWords: '肆拾捌圆整',
+  wideNameColumn: true,
+};

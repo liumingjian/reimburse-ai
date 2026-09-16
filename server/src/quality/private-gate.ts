@@ -27,8 +27,18 @@ export const THRESHOLDS: Readonly<Record<Medium, Threshold>> = {
   image: { recognition: 0.98, field: 0.98 },
 };
 
+// Slot keys every sample of a layout has to be written down for. The gate scores what a sidecar declares and nothing
+// else, so a field nobody wrote down is a field it cannot see: #199 shipped with 8 of 10 real 全电发票
+// (fully-digitalised VAT e-invoice) faces whose 项目名称 (item name), 不含税金额 (net amount) and 税额 (tax amount)
+// went unread while this gate reported every einvoice sample right, because no expectation named those keys. A
+// sample that does not declare them is a hole in the gate, so it is reported as a failure rather than passed over.
+// A layout absent from this map declares whatever its sidecars happen to carry.
+export const REQUIRED_EXPECTATIONS: Readonly<Record<string, readonly string[]>> = {
+  'vat_invoice/einvoice': ['invoiceNumber', 'issueDate', 'itemName', 'netAmount', 'taxAmount', 'totalAmount'],
+};
+
 export type CorpusParser = (input: ParseInput) => Promise<ParseOutcome>;
-export type GateOptions = { parse?: CorpusParser; out?: (line: string) => void; thresholds?: Readonly<Record<Medium, Threshold>> };
+export type GateOptions = { parse?: CorpusParser; out?: (line: string) => void; thresholds?: Readonly<Record<Medium, Threshold>>; required?: Readonly<Record<string, readonly string[]>> };
 
 const MEDIA: Readonly<Record<string, Medium>> = { '.pdf': 'pdf', '.jpg': 'image', '.jpeg': 'image', '.png': 'image' };
 
@@ -41,8 +51,8 @@ function* files(dir: string): Generator<string> {
 }
 
 type Tally = { hit: number; total: number };
-type Group = { files: number; recognised: number; otherLayout: number; unrecognised: number; ambiguous: number; failed: number; fields: Map<string, Tally> };
-const emptyGroup = (): Group => ({ files: 0, recognised: 0, otherLayout: 0, unrecognised: 0, ambiguous: 0, failed: 0, fields: new Map() });
+type Group = { files: number; recognised: number; declared: number; otherLayout: number; unrecognised: number; ambiguous: number; failed: number; fields: Map<string, Tally> };
+const emptyGroup = (): Group => ({ files: 0, recognised: 0, declared: 0, otherLayout: 0, unrecognised: 0, ambiguous: 0, failed: 0, fields: new Map() });
 
 // A field is right when the layout produced it (directly or by a derivation) and every such candidate equals the
 // expected value: a conflicting second candidate is not a correct read.
@@ -52,7 +62,7 @@ function fieldRight(outcome: Extract<ParseOutcome, { outcome: 'recognised' }>, k
   return mine.length > 0 && mine.every((c) => c.value === expected);
 }
 
-async function evaluate(root: string, parse: CorpusParser) {
+async function evaluate(root: string, parse: CorpusParser, required: Readonly<Record<string, readonly string[]>>) {
   const groups = new Map<string, Group>();
   let ignored = 0;
   let unreadableExpectations = 0;
@@ -85,6 +95,7 @@ async function evaluate(root: string, parse: CorpusParser) {
         unreadableExpectations += 1;
         continue;
       }
+      if ((required[layoutId] ?? []).every((key) => (expected[key] ?? '') !== '')) group.declared += 1;
       for (const [key, value] of Object.entries(expected)) {
         const tally = group.fields.get(key) ?? { hit: 0, total: 0 };
         group.fields.set(key, tally);
@@ -115,7 +126,8 @@ export async function runPrivateGate(root: string | undefined, options: GateOpti
     return 1;
   }
   const parse = options.parse ?? (await import('../parse/material')).parseMaterial;
-  const { groups, ignored, unreadableExpectations } = await evaluate(root, parse);
+  const required = options.required ?? REQUIRED_EXPECTATIONS;
+  const { groups, ignored, unreadableExpectations } = await evaluate(root, parse, required);
 
   let failures = 0;
   const row = (id: string, field: string, tally: Tally, floor: number) => {
@@ -129,6 +141,10 @@ export async function runPrivateGate(root: string | undefined, options: GateOpti
   for (const [id, group] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     const floor = thresholds[id.split('\t')[1] as Medium];
     row(id, '(recognition)', { hit: group.recognised, total: group.files }, floor.recognition);
+    // Whether the samples are written down at all, before how well they are read: every recognised sample of a layout
+    // with required keys has to declare all of them. Writing an expectation down is not a matter of OCR accuracy, so
+    // this row's floor is the whole set on every medium.
+    if ((required[id.split('\t')[0] ?? ''] ?? []).length > 0 && group.recognised > 0) row(id, '(expectations)', { hit: group.declared, total: group.recognised }, 1);
     for (const [key, tally] of [...group.fields.entries()].sort(([a], [b]) => a.localeCompare(b))) row(id, key, tally, floor.field);
     const misses = { 'other layout': group.otherLayout, unrecognised: group.unrecognised, ambiguous: group.ambiguous, failed: group.failed };
     const listed = Object.entries(misses).filter(([, n]) => n > 0);

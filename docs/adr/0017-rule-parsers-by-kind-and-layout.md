@@ -64,7 +64,7 @@ With no model in the loop, rule parsers and the user are the only producers of �
 
   Manual fill reuses pending items of `kind: form`.
 - **Tests:** each layout has tests on `@baox/fixtures`. The `m` fixtures are the demo scenario's sample materials; the `r` fixtures are regression-only and reproduce how a real face is drawn — split text runs, fields sharing one baseline, a bundled item row, an unreadable cell:
-  - `vat_invoice`: m01, m03, m05; r01 (发票号码 apart from its label), r02 (letter-spaced title), r201 (a bundled non-v1 item row), r206 (`*交通运输服务*` and fields on one baseline);
+  - `vat_invoice`: m01, m03, m05; r01 (发票号码 apart from its label), r02 (letter-spaced title), r201 (a bundled non-v1 item row), r206 (`*交通运输服务*` and fields on one baseline), r207 (a goods table whose cells are left-aligned under centred headers), r208 (a 项目名称 wrapped onto a second line);
   - `hotel_folio/quanji`: m02;
   - `ride_itinerary/amap`: m04; r202 (a leg amount that reads 待结算), r205 (a wrapped 上车时间 cell and 元-suffixed amounts);
   - `rail_ticket`: m07, m08; r204 (a trip row with a seat cell, 票价 apart from its amount);
@@ -73,3 +73,5 @@ With no model in the loop, rule parsers and the user are the only producers of �
 
   Private samples run through `test:private`, which gates per layout, medium and field (#196): text-layer PDFs must
   be 100% recognised and 100% right per field; OCR images at least 98% (`server/src/quality/private-gate.ts`).
+  That gate scores only what an expectation sidecar declares, so `REQUIRED_EXPECTATIONS` names the keys a layout's
+  samples must all be written down for — a field nobody wrote down is one the gate cannot see (#199).

@@ -22,6 +22,8 @@ import {
   SPACED_TITLE_INVOICE,
   TRANSPORT_INVOICE,
   SPLIT_NUMBER_INVOICE,
+  WIDE_COLUMN_INVOICE,
+  WRAPPED_ITEM_INVOICE,
   TAXI_0815,
   TAXI_0819,
   headerOf,
@@ -58,14 +60,27 @@ function invoice(data, accent) {
 .inv .total { border: 1px solid ${accent}; padding: 8px 10px; display: flex; gap: 32px; }
 .inv .total b { color: ${accent}; font-weight: 400; }
 .inv .foot { margin-top: 24px; display: flex; justify-content: space-between; color: #555; }
+.inv.wide th { text-align: center; }
+.inv.wide td:first-child, .inv.wide th:first-child { width: 40%; }
 .inv .stamp { position: absolute; right: 70px; bottom: 120px; width: 150px; height: 150px; border: 3px solid rgba(200, 40, 40, 0.75); border-radius: 50%; color: rgba(200, 40, 40, 0.75); display: grid; place-items: center; font-size: 12px; text-align: center; transform: rotate(-12deg); }
 `;
+  // The goods table of a real 全电发票 (fully-digitalised VAT e-invoice) face (#199): no 单位 (unit) column, 单价 (unit
+  // price) before 数量 (quantity), a 项目名称 (item name) column far wider than its header, and a header label centred
+  // over it while the cell under it is left-aligned at the column's border.
+  const wide = data.wideNameColumn === true;
+  const head = wide
+    ? '<tr><th>项目名称</th><th>单价</th><th>数量</th><th>金额</th><th>税率/征收率</th><th>税额</th></tr>'
+    : '<tr><th>项目名称</th><th>单位</th><th>数量</th><th>单价</th><th>金额</th><th>税率/征收率</th><th>税额</th></tr>';
   const rows = data.rows
-    .map(
-      (r) =>
-        `<tr><td>${esc(r.name)}</td><td>${esc(r.unit)}</td><td class="num">${esc(r.qty)}</td><td class="num">${esc(r.price)}</td><td class="num">${esc(r.net)}</td><td class="num">${esc(r.rate)}</td><td class="num">${esc(r.tax)}</td></tr>`,
+    .map((r) =>
+      wide
+        ? `<tr><td>${esc(r.name)}</td><td class="num">${esc(r.price)}</td><td class="num">${esc(r.qty)}</td><td class="num">${esc(r.net)}</td><td class="num">${esc(r.rate)}</td><td class="num">${esc(r.tax)}</td></tr>`
+        : `<tr><td>${esc(r.name)}</td><td>${esc(r.unit)}</td><td class="num">${esc(r.qty)}</td><td class="num">${esc(r.price)}</td><td class="num">${esc(r.net)}</td><td class="num">${esc(r.rate)}</td><td class="num">${esc(r.tax)}</td></tr>`,
     )
     .join('');
+  const totalRow = wide
+    ? `<tr><td>合计</td><td></td><td></td><td class="num">¥${esc(data.net)}</td><td></td><td class="num">¥${esc(data.tax)}</td></tr>`
+    : `<tr><td>合计</td><td></td><td></td><td></td><td class="num">¥${esc(data.net)}</td><td></td><td class="num">¥${esc(data.tax)}</td></tr>`;
   // Text-run splits (#200): a title drawn one run per glyph and a number drawn apart from its label are both common
   // on a real invoice.
   const titleText = data.spacedTitle ? [...data.title].map((ch) => `<span>${esc(ch)}</span>`).join('') : esc(data.title);
@@ -77,7 +92,7 @@ function invoice(data, accent) {
   const issued = data.sharedBaseline ? `开票日期：<span class="apart">${esc(data.date)}</span>` : `开票日期：${esc(data.date)}`;
   const meta = data.sharedBaseline ? `${number}<span class="apart">${issued}</span>` : `${number}<br>${issued}`;
   const body = `
-<div class="inv">
+<div class="inv${wide ? ' wide' : ''}">
   <div class="qr">二维码</div>
   <div class="title">${title}</div>
   <div class="title-under"></div>
@@ -87,9 +102,9 @@ function invoice(data, accent) {
     <div><b>销售方</b>名称：${esc(data.seller.name)}<br><b>信息</b>统一社会信用代码/纳税人识别号：${esc(data.seller.taxNo)}</div>
   </div>
   <table>
-    <tr><th>项目名称</th><th>单位</th><th>数量</th><th>单价</th><th>金额</th><th>税率/征收率</th><th>税额</th></tr>
+    ${head}
     ${rows}
-    <tr><td>合计</td><td></td><td></td><td></td><td class="num">¥${esc(data.net)}</td><td></td><td class="num">¥${esc(data.tax)}</td></tr>
+    ${totalRow}
   </table>
   <div class="total"><span><b>价税合计（大写）</b>${esc(data.grossWords)}</span><span><b>（小写）</b>¥${esc(data.gross)}</span></div>
   <div class="foot"><span>备注：本发票由夹具生成器生成，人物与数字均为虚构。</span><span>开票人：某某</span></div>
@@ -280,6 +295,8 @@ export const DOCS = {
   r204: rail(RAIL_SPLIT_RUNS),
   r202: itinerary(AMAP_ITINERARY_GAP),
   r205: itinerary(AMAP_ITINERARY_WRAPPED),
+  r207: invoice(WIDE_COLUMN_INVOICE, '#8b3a3a'),
+  r208: invoice(WRAPPED_ITEM_INVOICE, '#8b3a3a'),
 };
 
 // Materials as placed on a print page: the taxi receipt as a cropped, perspective-corrected strip, everything else in
