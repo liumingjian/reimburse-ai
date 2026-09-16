@@ -229,6 +229,56 @@ describe('an itinerary drawn cell by cell', () => {
   });
 });
 
+describe('a whole trip uploaded in one go', () => {
+  // #206: the failure this spec exists for showed up only on a real multi-material upload — 材料 18 份 / 通过 0 份 /
+  // 主要报销凭证 0 份, every material split into text runs no anchor could match, and nothing in the suite caught it.
+  // This is that guard at the highest seam: the split-run fixtures uploaded together the way a trip arrives —
+  // invoices, an itinerary and a rail ticket — must produce 费用事件 (expense events), not a queue of 待确认项.
+  it('parses every material, forms an expense event per voucher and per leg, and moves past 待确认项', async () => {
+    const snapshot = await inventoried(['r01', 'r02', 'm03', 'r205', 'r204']);
+
+    const splitNumber = byFileName(snapshot, sample('r01').name);
+    const spacedTitle = byFileName(snapshot, sample('r02').name);
+    const rideInvoice = byFileName(snapshot, sample('m03').name);
+    const itinerary = byFileName(snapshot, sample('r205').name);
+    const rail = byFileName(snapshot, sample('r204').name);
+
+    for (const invoice of [splitNumber, spacedTitle]) {
+      expect(invoice).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', categoryLabel: '住宿', role: 'primary_voucher', status: 'ok', pendingItemIds: [] });
+    }
+    expect(rideInvoice).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', categoryLabel: '市内交通', role: 'primary_voucher', status: 'ok', pendingItemIds: [], linkedMaterialIds: [itinerary.materialId] });
+    expect(itinerary).toMatchObject({ kind: 'ride_itinerary', layout: 'amap', role: 'reference', status: 'ok', pendingItemIds: [], linkedMaterialIds: [rideInvoice.materialId] });
+    expect(rail).toMatchObject({ kind: 'rail_ticket', layout: '12306', categoryLabel: '长途交通', role: 'primary_voucher', status: 'ok', pendingItemIds: [] });
+    expect(fieldValues(rideInvoice, EINVOICE)).toMatchObject({ invoiceNumber: '26312000000101557402', totalAmount: '69.19' });
+    expect(fieldValues(rail, RAIL)).toMatchObject({ trainNumber: 'G1376', travelDate: '2026-08-23', totalAmount: '314.50' });
+
+    // Five materials, five events: one per itinerary leg, one per rail trip, one per hotel invoice.
+    expect(snapshot.events.map((event) => [event.no, event.voucherMaterialId, event.category.label, event.date, event.grossAmount])).toEqual([
+      [1, rideInvoice.materialId, '外地市内交通', '2026-08-10', '26.69'],
+      [2, rideInvoice.materialId, '外地市内交通', '2026-08-12', '42.50'],
+      [3, rail.materialId, '长途交通', '2026-08-23', '314.50'],
+      [4, splitNumber.materialId, '住宿', '2026-08-20', '560.00'],
+      [5, spacedTitle.materialId, '住宿', '2026-08-21', '280.00'],
+    ]);
+    expect(snapshot.lines.map((line) => line.grossAmount)).toEqual(['26.69', '42.50', '314.50', '560.00', '280.00']);
+
+    // The counts a user reads on the inventory page: a silent drop back to 通过 0 份 / 主要报销凭证 0 份 fails here.
+    expect(snapshot.inventory.summary).toMatchObject({
+      materialCount: 5,
+      okCount: 5,
+      pendingMaterialCount: 0,
+      voucherCount: 4,
+      referenceCount: 1,
+      openPendingItemCount: 0,
+    });
+    expect(snapshot.inventory.ungroupedMaterialIds).toEqual([]);
+    expect(snapshot.pendingItems).toEqual([]);
+
+    // Nothing left to answer, so the task leaves 待确认项 behind and goes on to 项目归属.
+    expect(snapshot.stage).toBe('project');
+  });
+});
+
 describe('the e-invoice QR code, a second evidence source', () => {
   it('a QR that disagrees with the text layer surfaces as a blocking conflict 待确认项', async () => {
     const amap = sample('m03');
