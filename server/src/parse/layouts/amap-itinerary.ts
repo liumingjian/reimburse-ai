@@ -1,4 +1,4 @@
-import { cents, compact, money, rows, type ParseDoc, type TextObservation } from '../doc';
+import { cents, compact, joinedRows, matchRow, money, rows, type JoinedRow, type ParseDoc, type TextObservation } from '../doc';
 import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout } from '../layout';
 
 // `ride_itinerary/amap`: the 高德行程单 (Amap ride itinerary), a reference material listing each ride leg. PDF and image
@@ -12,13 +12,17 @@ import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout
 
 const KIND = 'ride_itinerary';
 const NAME = 'amap';
-const VERSION = '1';
+const VERSION = '2';
 const SOURCE = ruleSource(KIND, NAME);
 
 const BRAND = /高德地图|AMAPITINERARY/;
 const APPLY_DATE = /^申请日期:(\d{4}-\d{2}-\d{2})$/;
 const SUMMARY = /^共计(\d+)单行程,合计([\d,]+\.\d{2})元$/;
-const TIME = /^(\d{4}-\d{2}-\d{2})\s*(\d{2}:\d{2})$/;
+// Matched against the 上车时间 cell read as one compacted string, so a date and an `HH:MM` printed on two lines join.
+const TIME = /^(\d{4}-\d{2}-\d{2})(\d{2}:\d{2})$/;
+// Real itineraries print the amount with its unit in the cell: `26.69元`. `cents()` takes `¥` and thousands
+// separators already, so only the suffix has to come off before it parses.
+const AMOUNT_UNIT = /元$/;
 
 const COLUMNS: readonly [RegExp, Column][] = [
   [/^序号$/, 'no'],
@@ -30,14 +34,24 @@ const COLUMNS: readonly [RegExp, Column][] = [
   [/^金额/, 'amount'],
 ];
 type Column = 'no' | 'carType' | 'time' | 'city' | 'origin' | 'destination' | 'amount';
-// Only these columns may wrap onto more lines within a row.
-const WRAPPING: ReadonlySet<Column> = new Set(['origin', 'destination']);
+// The per-column policy: may a cell absorb text from the lines below it, within its leg's row band? Real itineraries
+// wrap a long address, and they wrap 上车时间 between its date and its `HH:MM`. The remaining columns stay on the leg's
+// own baseline, so a neighbouring row's text can never drift into them.
+const WRAPPING: ReadonlySet<Column> = new Set(['time', 'origin', 'destination', 'amount']);
 
 const center = (o: TextObservation) => o.x + o.width / 2;
-const ref = (observations: TextObservation[]): EvidenceRef[] =>
+const ref = (observations: readonly TextObservation[]): EvidenceRef[] =>
   observations.length ? [{ page: observations[0]?.page ?? 1, observationIds: observations.map((o) => o.id), text: observations.map((o) => o.raw).join('') }] : [];
 
 type Header = { y: number; page: number; columns: { key: Column; center: number }[] };
+
+// Every page's joined rows in reading order. A layout anchor is matched against these: the pattern stays fully
+// anchored, only the haystack widens from one text run to the whole visual row (ADR-0017).
+function allRows(doc: ParseDoc): JoinedRow[] {
+  const out: JoinedRow[] = [];
+  for (let page = 1; page <= doc.pageCount; page += 1) out.push(...joinedRows(doc, page));
+  return out;
+}
 
 function header(doc: ParseDoc): Header | null {
   for (let page = 1; page <= doc.pageCount; page += 1) {
@@ -103,27 +117,29 @@ export const amapItinerary: Layout = {
   parse(doc) {
     const candidates: Candidate[] = [];
     const findings: Finding[] = [];
-    const add = (key: string, value: string | null | undefined, evidence: TextObservation[]) => {
+    const add = (key: string, value: string | null | undefined, evidence: readonly TextObservation[]) => {
       if (value) candidates.push({ key, value, source: SOURCE, parserVersion: VERSION, evidence: 'explicit', refs: ref(evidence) });
     };
 
     const apply = doc.observations.find((o) => APPLY_DATE.test(compact(o.text)));
     if (apply) add('applyDate', APPLY_DATE.exec(compact(apply.text))?.[1], [apply]);
 
-    const summary = doc.observations.find((o) => SUMMARY.test(compact(o.text)));
-    const declared = summary ? SUMMARY.exec(compact(summary.text)) : null;
-    const total = declared?.[2] ? cents(declared[2]) : null;
-    if (summary && declared) {
-      add('segmentCount', String(Number(declared[1])), [summary]);
-      if (total !== null) add('itineraryTotal', money(total), [summary]);
+    const summary = matchRow(allRows(doc), SUMMARY);
+    const total = summary?.match[2] ? cents(summary.match[2]) : null;
+    if (summary) {
+      add('segmentCount', String(Number(summary.match[1])), summary.row.observations);
+      if (total !== null) add('itineraryTotal', money(total), summary.row.observations);
     }
 
     const head = header(doc);
     const legs = head ? legRows(doc, head) : [];
     const text = (list: TextObservation[] | undefined) => (list ?? []).map((o) => compact(o.raw)).join('') || null;
+    // A cell read as one string: its observations top to bottom, left to right, joined and compacted the way anchors
+    // are matched everywhere else. A cell that wrapped onto a second line therefore reads as a single value.
+    const cell = (list: TextObservation[] | undefined) => compact((list ?? []).map((o) => o.text).join(''));
     const parsed = legs.map(({ index, cells }) => {
-      const time = TIME.exec(compact(cells.time?.map((o) => o.text).join(' ') ?? '').replace(/^(\d{4}-\d{2}-\d{2})(\d{2}:)/, '$1 $2'));
-      const amount = cells.amount?.[0] ? cents(cells.amount[0].text) : null;
+      const time = TIME.exec(cell(cells.time));
+      const amount = cents(cell(cells.amount).replace(AMOUNT_UNIT, ''));
       return { index, cells, date: time?.[1] ?? null, time: time?.[2] ?? null, amount: amount !== null && amount > 0 ? money(amount) : null };
     });
 
@@ -131,7 +147,7 @@ export const amapItinerary: Layout = {
     // amount. Otherwise a row was not read completely (wrapped tables are the known trap) and all of them are dropped.
     // Each clause is judged on its own and reports itself, so the refusal names the cause the user can check against
     // the original: a count message is emitted only when the counts really differ.
-    const declaredCount = declared ? Number(declared[1]) : null;
+    const declaredCount = summary ? Number(summary.match[1]) : null;
     const refusals: Finding[] = [];
     const refuse = (code: string, message: string) => refusals.push({ kind: 'validation', code, message });
     if (declaredCount === null) refuse('segment_rows_incomplete', `行程单声明的段数没读到，逐段明细读到 ${parsed.length} 行；整块不采用。`);
@@ -155,7 +171,7 @@ export const amapItinerary: Layout = {
       add(at('city'), text(leg.cells.city), leg.cells.city ?? []);
       add(at('origin'), text(leg.cells.origin), leg.cells.origin ?? []);
       add(at('destination'), text(leg.cells.destination), leg.cells.destination ?? []);
-      add(at('amount'), leg.amount, leg.cells.amount?.slice(0, 1) ?? []);
+      add(at('amount'), leg.amount, leg.cells.amount ?? []);
     });
     const unrouted = parsed.filter((leg) => !text(leg.cells.origin) || !text(leg.cells.destination)).map((leg) => leg.index);
     if (unrouted.length > 0) {

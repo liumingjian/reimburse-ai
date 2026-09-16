@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { GENERATED_DIR } from '@baox/fixtures';
 import { describe, expect, it } from 'vitest';
 import { dispatch, type Recognised } from '../dispatch';
-import type { ParseDoc, TextObservation } from '../doc';
+import { compact, type ParseDoc, type TextObservation } from '../doc';
 import { pdfDoc } from '../pdf';
 import { LAYOUTS } from '.';
 import { amapItinerary } from './amap-itinerary';
@@ -77,6 +77,39 @@ describe('ride_itinerary/amap', () => {
     const origin = doc.observations.find((o) => o.text === '虹桥枢纽') as TextObservation;
     const wrapped = { ...origin, id: 'p1.99', y: origin.y - 9, text: 'P9停车场', raw: 'P9停车场' };
     expect(values(recognised({ ...doc, observations: [...doc.observations, wrapped] }))['segments[0].origin']).toBe('虹桥枢纽P9停车场');
+  });
+
+  it('reads a wrapped 上车时间 cell and amounts printed as 26.69元 / ¥42.50 (r205)', async () => {
+    const doc = await pdfDoc(fixture('r205-amap-itinerary-wrapped.pdf'));
+    // The fixture really wraps leg 1's 上车时间: its date and its `HH:MM` are two observations on two baselines, and
+    // no single observation carries both. The summary line is split the same way.
+    expect(doc.observations.some((o) => /^\d{4}-\d{2}-\d{2}\s*08:52$/.test(o.text))).toBe(false);
+    const at = (text: string) => doc.observations.find((o) => o.text === text) as TextObservation;
+    expect(at('2026-08-10').y).toBeGreaterThan(at('08:52').y);
+    expect(doc.observations.some((o) => /^共计\d+单行程/.test(compact(o.text)))).toBe(false);
+
+    const outcome = recognised(doc);
+    expect(outcome).toMatchObject({ kind: 'ride_itinerary', layout: 'amap', missing: [], findings: [] });
+    expect(values(outcome)).toEqual({
+      applyDate: '2026-08-13',
+      segmentCount: '2',
+      itineraryTotal: '69.19',
+      // The date and the `HH:MM` are two text blocks on two lines of the same cell; they read as one value.
+      'segments[0].date': '2026-08-10',
+      'segments[0].time': '08:52',
+      'segments[0].carType': '经济型',
+      'segments[0].city': '上海市',
+      'segments[0].origin': '虹桥枢纽',
+      'segments[0].destination': '漕河泾',
+      'segments[0].amount': '26.69',
+      'segments[1].date': '2026-08-12',
+      'segments[1].time': '09:15',
+      'segments[1].carType': '经济型',
+      'segments[1].city': '上海市',
+      'segments[1].origin': '静安寺',
+      'segments[1].destination': '张江',
+      'segments[1].amount': '42.50',
+    });
   });
 
   // The message wording is what the user reads and acts on, so these cases assert it verbatim: each refusal has to name
