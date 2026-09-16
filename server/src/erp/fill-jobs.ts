@@ -80,8 +80,15 @@ export function createFillJobs({ db, lease, execute, record }: { db: Db; lease: 
     let erpAccount: ErpAccount | null = null;
     let finished = false;
     const judge = taskJudge(frozen.judge, {
+      // Through the task service like every other fact of the job: one revision and one pushed snapshot, rather than
+      // a bare insert the page never hears about.
       onApproved: async (preview) => {
-        await db.insertInto('erp_approved_preview').values({ job_id: jobId, task_id: taskId, account_id: accountId, digest: preview.previewDigest ?? '', preview: JSON.stringify(preview), created_at: at() }).execute();
+        await append(async (tx) => {
+          await tx
+            .insertInto('erp_approved_preview')
+            .values({ job_id: jobId, task_id: taskId, account_id: accountId, digest: preview.previewDigest ?? '', preview: JSON.stringify(preview), created_at: at() })
+            .execute();
+        });
       },
     });
     const emit = async (raw: ExecutorEvent) => {

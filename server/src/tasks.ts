@@ -157,7 +157,10 @@ export type TaskServiceOptions = { onChange?: (snapshot: TaskSnapshot) => void; 
 // pause (confirm-login, cancel-erp-write). `erpAction`: accepted after an ERP action attempt (reconcile, #192).
 // `printOnly`: a 去打印 adjustment. Print never touches ERP (stories 57 and 63), so it stays open after 转人工 and
 // after the draft was handed over; it still stops at 任务作废, at an imported legacy task, and while a job runs.
-type MutateOptions = { job?: boolean; loginPause?: boolean; erpAction?: boolean; printOnly?: boolean };
+// `ownsFreeze`: this action refuses a frozen task itself, with a reason of its own (修改常驻城市 says the home city is
+// locked, 追加材料 says why it cannot reopen). The central freeze below would otherwise answer first and replace those
+// with the generic one.
+type MutateOptions = { job?: boolean; loginPause?: boolean; erpAction?: boolean; printOnly?: boolean; ownsFreeze?: boolean };
 
 const mediaTypeOf = (row: MaterialRow): 'pdf' | 'image' => (IMAGE_FILE.test(row.file_name) || row.mime.startsWith('image/') ? 'image' : 'pdf');
 
@@ -307,7 +310,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
   // or an ERP job runs, only the job itself (`job: true`) may write; everyone else gets the 409 of a stale step
   // (ADR-0014). During an ERP login pause only `loginPause` actions pass; after an ERP action attempt the task's facts
   // are frozen, and a saved draft (ERP 草稿已交接) closes the task.
-  async function mutate(taskId: string, token: string | null, apply: (ctx: Context) => Promise<Refusal | void>, { job = false, loginPause = false, erpAction = false, printOnly = false }: MutateOptions = {}): Promise<TaskSnapshot> {
+  async function mutate(taskId: string, token: string | null, apply: (ctx: Context) => Promise<Refusal | void>, { job = false, loginPause = false, erpAction = false, printOnly = false, ownsFreeze = false }: MutateOptions = {}): Promise<TaskSnapshot> {
     const outcome = await db.transaction().execute(async (tx): Promise<{ kind: 'ok' } | { kind: 'stale' } | ({ kind: 'refused' } & Refusal)> => {
       const task = await taskRow(tx, taskId);
       if (token !== null && token !== stepToken(task.task_id, task.revision)) return { kind: 'stale' };
@@ -323,6 +326,12 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       if (!job && (phase === 'running' || facts.erp?.reconciling || (phase === 'waiting_login' && !loginPause))) return { kind: 'stale' };
       if (!job && !printOnly && phase === 'saved') return { kind: 'refused', code: 'task_closed', message: ACTION_COPY.taskClosed };
       if (!job && !printOnly && phase === 'unknown' && !erpAction) return { kind: 'refused', code: 'erp_started', message: ERP_ACTION_ERRORS.erpStarted };
+      // ADR-0014: a task's materials freeze at its first ERP action attempt. The phase checks above catch the shapes
+      // that freeze normally takes, but the rule is about the attempt existing at all, so it is stated once here
+      // rather than left to upload, exclude, answer-pending and assign to each remember separately. ERP actions
+      // (reconcile, hand-off) and the jobs' own writes are what may still move a frozen task; print never changes
+      // facts; and an action with a better reason of its own (`ownsFreeze`) gets to give it.
+      if (!job && !printOnly && !erpAction && !ownsFreeze && loaded.erp.attempted) return { kind: 'refused', code: 'erp_started', message: ERP_ACTION_ERRORS.erpStarted };
       const at = now();
       const revision = task.revision + 1;
       const refusal = await apply({ tx, task, facts, loaded, view, at, revision });
@@ -565,7 +574,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
         const attempt = await tx.selectFrom('erp_attempt').select('attempt_id').where('task_id', '=', taskId).executeTakeFirst();
         if (attempt) return { code: 'erp_started', message: REOPEN_UPLOAD_ERRORS.erpStarted };
         await tx.insertInto('upload_reopen').values({ reopen_id: randomUUID(), task_id: taskId, account_id: accountId, revision, reopened_at: at }).execute();
-      });
+      }, { ownsFreeze: true });
     },
 
     // 整单明细确认: stores `{digest, confirmedAt}` for exactly the digest the user saw; any other digest is refused.
@@ -642,7 +651,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
         if (attempt) return { code: 'home_city_locked', message: HOME_CITY_ERRORS.locked };
         await tx.insertInto('task_home_city').values({ change_id: randomUUID(), task_id: taskId, account_id: accountId, home_city: homeCity, revision, created_at: at }).execute();
         await rememberHomeCity(tx, accountId, homeCity, 'task_edit', at);
-      });
+      }, { ownsFreeze: true });
     },
 
     // 归入: edits the working draft only; new lines may only go to a currently selectable project.
@@ -765,7 +774,9 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
         await mutate(taskId, null, async ({ tx }) => write(tx), { job: true });
       } catch (error) {
         if (!(error instanceof ActionRefusedError)) throw error;
-        await write(db);
+        // The task closed under a running job, so there is no revision to bump. The facts still have to land, and
+        // `writeEvent` picks its `seq` as max + 1: without a transaction two of these could choose the same one.
+        await db.transaction().execute((tx) => write(tx));
       }
     },
 
