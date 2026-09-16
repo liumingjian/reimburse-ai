@@ -18,6 +18,7 @@ import {
   RAIL_0822,
   RAIL_SPLIT_RUNS,
   SPACED_TITLE_INVOICE,
+  TRANSPORT_INVOICE,
   SPLIT_NUMBER_INVOICE,
   TAXI_0815,
   TAXI_0819,
@@ -42,6 +43,7 @@ function invoice(data, accent) {
 .inv .title-under { margin: 0 120px 18px; border-bottom: 1px solid ${accent}; }
 .inv .meta { text-align: right; font-size: 13px; line-height: 1.8; margin-bottom: 10px; }
 .inv .meta .apart { margin-left: 4px; }
+.inv .title .beside { font-size: 13px; letter-spacing: 0; margin-left: 24px; }
 .inv .qr { position: absolute; left: 48px; top: 48px; width: 82px; height: 82px; border: 2px solid #333; display: grid; place-items: center; font-size: 11px; color: #555; }
 .inv table { width: 100%; border-collapse: collapse; margin-top: 12px; }
 .inv th, .inv td { border: 1px solid ${accent}; padding: 7px 8px; text-align: left; font-weight: 400; }
@@ -62,14 +64,19 @@ function invoice(data, accent) {
     )
     .join('');
   // 文本串切分（#200）：逐字成串的标题、与标签分开成串的号码，都是真实发票里常见的画法。
-  const title = data.spacedTitle ? [...data.title].map((ch) => `<span>${esc(ch)}</span>`).join('') : esc(data.title);
-  const number = data.splitNumber ? `发票号码：<span class="apart">${esc(data.number)}</span>` : `发票号码：${esc(data.number)}`;
+  const titleText = data.spacedTitle ? [...data.title].map((ch) => `<span>${esc(ch)}</span>`).join('') : esc(data.title);
+  // 同基线并排（#206）：标题旁印着联次，号码与开票日期共用一行，各自标签与取值分成两串。整行连起来，
+  // 三个锚点一个也匹配不上——只有行内的连续片段才正好是一个字段。
+  const title = data.sharedBaseline ? `${titleText}<span class="beside">发票联</span>` : titleText;
+  const number = data.splitNumber || data.sharedBaseline ? `发票号码：<span class="apart">${esc(data.number)}</span>` : `发票号码：${esc(data.number)}`;
+  const issued = data.sharedBaseline ? `开票日期：<span class="apart">${esc(data.date)}</span>` : `开票日期：${esc(data.date)}`;
+  const meta = data.sharedBaseline ? `${number}<span class="apart">${issued}</span>` : `${number}<br>${issued}`;
   const body = `
 <div class="inv">
   <div class="qr">二维码</div>
   <div class="title">${title}</div>
   <div class="title-under"></div>
-  <div class="meta">${number}<br>开票日期：${esc(data.date)}</div>
+  <div class="meta">${meta}</div>
   <div class="party">
     <div><b>购买方</b>名称：${esc(BUYER.name)}<br><b>信息</b>统一社会信用代码/纳税人识别号：${esc(BUYER.taxNo)}</div>
     <div><b>销售方</b>名称：${esc(data.seller.name)}<br><b>信息</b>统一社会信用代码/纳税人识别号：${esc(data.seller.taxNo)}</div>
@@ -262,6 +269,7 @@ export const DOCS = {
   r01: invoice(SPLIT_NUMBER_INVOICE, '#8b3a3a'),
   r02: invoice(SPACED_TITLE_INVOICE, '#8b3a3a'),
   r201: invoice(BUNDLED_FEE_INVOICE, '#8b3a3a'),
+  r206: invoice(TRANSPORT_INVOICE, '#8b3a3a'),
   r204: rail(RAIL_SPLIT_RUNS),
   m12: itinerary(AMAP_ITINERARY_GAP),
   r205: itinerary(AMAP_ITINERARY_WRAPPED),

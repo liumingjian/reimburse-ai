@@ -43,6 +43,7 @@ export const REGRESSION_FILES = {
   r201: 'r201-bundled-fee-invoice.pdf',
   r204: 'r204-rail-split-runs.pdf',
   r205: 'r205-amap-itinerary-wrapped.pdf',
+  r206: 'r206-transport-invoice.pdf',
 };
 
 export const PDF_DOC_FILES = { ...MATERIAL_FILES, ...REGRESSION_FILES };
