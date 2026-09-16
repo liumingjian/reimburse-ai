@@ -15,6 +15,7 @@ import {
   PRINT_VARIANTS,
   RAIL_0809,
   RAIL_0822,
+  RAIL_SPLIT_RUNS,
   SPACED_TITLE_INVOICE,
   SPLIT_NUMBER_INVOICE,
   TAXI_0815,
@@ -171,19 +172,25 @@ function rail(data) {
 .rail .route { font-size: 30px; font-weight: 600; grid-column: 1 / -1; margin-bottom: 8px; }
 .rail .route small { font-size: 16px; font-weight: 400; margin: 0 16px; }
 .rail .price { font-size: 26px; font-weight: 600; }
+.rail .apart { margin-left: 6px; }
 .rail .foot { margin-top: 24px; color: #666; font-size: 13px; }
 `;
+  // 文本串切分（#204）：车次后面再画一格座位号，「票价：」与金额分成两串 —— 真实客票就是这样画的。
+  const route = data.seatOnTripRow
+    ? `${esc(data.from)}<small>${esc(data.train)}</small>${esc(data.to)}<small>${esc(data.seat)}</small>`
+    : `${esc(data.from)}<small>${esc(data.train)}</small>${esc(data.to)}`;
+  const fare = data.splitFare ? `票价：<span class="apart">¥${esc(data.price)}</span>` : `票价：¥${esc(data.price)}`;
   const body = `
 <div class="rail">
   <div class="title">电子发票（铁路电子客票）</div>
   <div class="title-under"></div>
   <div class="meta">发票号码：${esc(data.number)}<br>开票日期：${esc(data.date)}</div>
   <div class="box">
-    <div class="route">${esc(data.from)}<small>${esc(data.train)}</small>${esc(data.to)}</div>
+    <div class="route">${route}</div>
     <div>乘车日期：${esc(data.date)}</div><div>开车时间：${esc(data.depart)}</div>
     <div>席别：${esc(data.seatClass)}</div><div>座位：${esc(data.seat)}</div>
     <div>乘车人：${esc(data.passenger)}</div><div>证件号：${esc(data.idMasked)}</div>
-    <div class="price">票价：¥${esc(data.price)}</div><div>购买方：${esc(BUYER.name)}</div>
+    <div class="price">${fare}</div><div>购买方：${esc(BUYER.name)}</div>
   </div>
   <div class="foot">本客票由夹具生成器生成，车次、席位与人物均为虚构。</div>
 </div>`;
@@ -249,6 +256,7 @@ export const DOCS = {
   r01: invoice(SPLIT_NUMBER_INVOICE, '#8b3a3a'),
   r02: invoice(SPACED_TITLE_INVOICE, '#8b3a3a'),
   r201: invoice(BUNDLED_FEE_INVOICE, '#8b3a3a'),
+  r204: rail(RAIL_SPLIT_RUNS),
   m12: itinerary(AMAP_ITINERARY_GAP),
 };
 

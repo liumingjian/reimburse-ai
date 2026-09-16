@@ -151,6 +151,26 @@ export const RAIL_0822 = {
   seat: '07车03F号',
 };
 
+// A rail ticket drawn the way a real 铁路电子客票 face is, and the way no generated fixture was before (#204): the trip
+// row carries a fourth cell (the seat), and 票价's label and amount are separate text runs beside another labelled
+// field. Both break an anchor that needs one text observation.
+export const RAIL_SPLIT_RUNS = {
+  ...RAIL_0809,
+  id: 'r204',
+  file: 'r204-rail-split-runs.pdf',
+  number: '26312000000102200758',
+  date: '2026年08月23日',
+  train: 'G1376',
+  from: '广州南',
+  to: '长沙南',
+  depart: '09:12',
+  seat: '07车05F号',
+  price: '314.50',
+  // 车次后面再画一格座位号；「票价：」与金额分成两串。
+  seatOnTripRow: true,
+  splitFare: true,
+};
+
 // 出租车票：m10 的下车时间在票面上是 19:06，但打印褪色，照片读数会读成 90:60（原型剧本）。
 export const TAXI_0815 = {
   id: 'm09',

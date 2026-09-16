@@ -86,6 +86,42 @@ export function matchRow(lines: readonly JoinedRow[], pattern: RegExp): { row: J
   return null;
 }
 
+// A contiguous run of one row's observations, read as a single string. A face that prints two labelled fields side by
+// side (the 铁路电子客票 box: `乘车日期：…` next to `开车时间：…`) and splits a label from its value gives an anchor
+// neither a single observation nor the whole joined row to match: the span is the haystack that holds both.
+export type RowSpan = {
+  page: number;
+  y: number;
+  // The span's observations joined and compacted, the same way `JoinedRow.text` is.
+  text: string;
+  observations: readonly TextObservation[];
+};
+
+// Every contiguous span of a row, shortest first, then left to right — so an anchor binds to the narrowest run of text
+// that satisfies it rather than swallowing the field printed beside it.
+export function spans(row: JoinedRow): RowSpan[] {
+  const out: RowSpan[] = [];
+  for (let size = 1; size <= row.observations.length; size += 1) {
+    for (let start = 0; start + size <= row.observations.length; start += 1) {
+      const observations = row.observations.slice(start, start + size);
+      out.push({ page: row.page, y: row.y, text: compact(observations.map((o) => o.text).join('')), observations });
+    }
+  }
+  return out;
+}
+
+// The first span, row by row, whose whole text matches `pattern`. Like `matchRow`, the pattern stays fully anchored:
+// only the haystack narrows (ADR-0017).
+export function matchSpan(lines: readonly JoinedRow[], pattern: RegExp): { span: RowSpan; match: RegExpExecArray } | null {
+  for (const row of lines) {
+    for (const span of spans(row)) {
+      const match = pattern.exec(span.text);
+      if (match) return { span, match };
+    }
+  }
+  return null;
+}
+
 // Money as integer cents, so sums conserve exactly. Accepts `¥3,433.96`, `-1.94`; null when not a 2-decimal amount.
 export function cents(text: string): number | null {
   const match = /^¥?(-)?(\d{1,3}(?:,\d{3})*|\d+)\.(\d{2})$/.exec(compact(text));

@@ -1,13 +1,17 @@
-import { cents, compact, money, rows, type ParseDoc, type TextObservation } from '../doc';
+import { cents, compact, joinedRows, matchSpan, money, spans, type JoinedRow, type ParseDoc, type RowSpan, type TextObservation } from '../doc';
 import { ruleSource, type Candidate, type EvidenceRef, type Layout } from '../layout';
 
 // `rail_ticket/12306`: the 铁路电子客票 (rail e-ticket) face from the PDF text layer. Ported from the rail rules of
 // 50931a3:kernel/src/parse.mjs (`rail_eticket`): the face carries only the fare, so no net amount or tax is read — they are
 // absent as a face fact, not a parse failure. The travel date (乘车日期), not the issue date, is the expense date.
+//
+// Anchors match spans of a visual row (#204). A real ticket draws its face as a two-column box, so 乘车日期 sits beside
+// 开车时间 and 票价 beside 购买方 on one row, and a label and its value are often separate text runs. The patterns stay
+// fully anchored (ADR-0017); only the haystack moves.
 
 const KIND = 'rail_ticket';
 const NAME = '12306';
-const VERSION = '1';
+const VERSION = '2';
 const SOURCE = ruleSource(KIND, NAME);
 
 // Hard anchors, on NFKC text without whitespace (`电 子 发 票 （…）` reads `电子发票(…)`).
@@ -21,32 +25,37 @@ const DEPART_RUN = /(\d{4})年(\d{1,2})月(\d{1,2})日(\d{1,2}):(\d{2})开/;
 const SEAT_CLASS = /^席别:(.+)$/;
 const PASSENGER = /^乘车人:(.+)$/;
 const FARE = /^票价:(¥?\d+\.\d{2})$/;
-const TRAIN = /^[A-Z]?\d{1,4}$/;
-// The kernel's one-line trip: `合肥南站 G1234 上海虹桥站`, matched on the line as printed (spaces kept), never on
-// the flattened page (a flattened `…日合肥南站` would swallow the text before the station).
-const TRIP_LINE = /^(\S+?)站?\s+([A-Z]?\d{1,4})\s+(\S+?)站?$/;
+// The trip as printed: `杭州东 G7522 上海虹桥`, or the kernel's one-line `合肥南站 G1234 上海虹桥站`. Station names run
+// two characters or more, the 站 suffix is optional, and the 车次 (train number) carries the span's only digits — so a
+// seat or a gate printed as a fourth cell on the same row falls outside the span instead of breaking it.
+const TRIP = /^(\D{2,}?)站?([A-Z]?\d{1,4})(\D{2,}?)站?$/;
 
 const pad = (n: string | undefined) => (n ?? '').padStart(2, '0');
-const station = (text: string) => text.replace(/站$/, '');
-const find = (doc: ParseDoc, pattern: RegExp) => doc.observations.find((o) => pattern.test(compact(o.text)));
+// Wording is presented as printed; only anchors and numbers use the normalised text.
+const visible = (span: RowSpan) => compact(span.observations.map((o) => o.raw).join(''));
 const ref = (...observations: TextObservation[]): EvidenceRef[] =>
   observations.length ? [{ page: observations[0]?.page ?? 1, observationIds: observations.map((o) => o.id), text: observations.map((o) => o.raw).join(' ') }] : [];
 
+// The whole document as visual rows: unlike an invoice, a ticket's face fields are not confined to page 1.
+function lines(doc: ParseDoc): JoinedRow[] {
+  const out: JoinedRow[] = [];
+  for (let page = 1; page <= doc.pageCount; page += 1) out.push(...joinedRows(doc, page));
+  return out;
+}
+
 type Trip = { from: string; train: string; to: string; evidence: TextObservation[] };
 
-// The trip row: `<from> <train> <to>`, either as three cells on one visual row or as one printed line.
-function trip(doc: ParseDoc): Trip | null {
-  for (let page = 1; page <= doc.pageCount; page += 1) {
-    for (const row of rows(doc, page)) {
-      const [from, train, to] = row;
-      if (row.length === 3 && from && train && to && TRAIN.test(compact(train.text)) && !TRAIN.test(compact(from.text)) && !TRAIN.test(compact(to.text))) {
-        return { from: station(compact(from.raw)), train: compact(train.text), to: station(compact(to.raw)), evidence: [from, train, to] };
-      }
+function trip(rows: readonly JoinedRow[]): Trip | null {
+  for (const row of rows) {
+    for (const span of spans(row)) {
+      const match = TRIP.exec(span.text);
+      const [, from, train, to] = match ?? [];
+      if (!from || !train || !to) continue;
+      // On a ticket that draws the trip as cells the 车次 is a cell of its own; a ticket that prints the trip as one
+      // line has no cells to check against. Either way, digits inside a longer cell (a gate, a seat) are not a 车次.
+      if (span.observations.length > 1 && !span.observations.some((o) => compact(o.text) === train)) continue;
+      return { from, train, to, evidence: [...span.observations] };
     }
-  }
-  for (const o of doc.observations) {
-    const match = TRIP_LINE.exec(o.text);
-    if (match?.[1] && match[2] && match[3] && /站$/.test(o.text.split(/\s+/)[0] ?? '')) return { from: station(match[1]), train: match[2], to: station(match[3]), evidence: [o] };
   }
   return null;
 }
@@ -58,7 +67,8 @@ export const rail12306: Layout = {
   label: '铁路电子客票',
 
   recognise(doc) {
-    return Boolean(find(doc, TITLE) && find(doc, NUMBER));
+    const rows = lines(doc);
+    return Boolean(matchSpan(rows, TITLE) && matchSpan(rows, NUMBER));
   },
 
   parse(doc) {
@@ -66,17 +76,16 @@ export const rail12306: Layout = {
     const add = (key: string, value: string | null | undefined, ...evidence: TextObservation[]) => {
       if (value) candidates.push({ key, value, source: SOURCE, parserVersion: VERSION, evidence: 'explicit', refs: ref(...evidence) });
     };
-    const read = (pattern: RegExp) => {
-      const o = find(doc, pattern);
-      return o ? { o, m: pattern.exec(compact(o.text)) } : null;
-    };
+    const rows = lines(doc);
+    const read = (pattern: RegExp) => matchSpan(rows, pattern);
+    const runs = (found: { span: RowSpan } | null) => (found ? [...found.span.observations] : []);
 
     const number = read(NUMBER);
-    if (number) add('invoiceNumber', number.m?.[1], number.o);
+    if (number) add('invoiceNumber', number.match[1], ...runs(number));
     const issued = read(ISSUE_DATE);
-    if (issued?.m) add('issueDate', `${issued.m[1]}-${pad(issued.m[2])}-${pad(issued.m[3])}`, issued.o);
+    if (issued) add('issueDate', `${issued.match[1]}-${pad(issued.match[2])}-${pad(issued.match[3])}`, ...runs(issued));
 
-    const route = trip(doc);
+    const route = trip(rows);
     if (route) {
       add('trainNumber', route.train, ...route.evidence);
       add('departStation', route.from, ...route.evidence);
@@ -85,21 +94,20 @@ export const rail12306: Layout = {
 
     const travel = read(TRAVEL_DATE);
     const time = read(DEPART_TIME);
-    const run = doc.observations.find((o) => DEPART_RUN.test(compact(o.text)));
-    const runMatch = run ? DEPART_RUN.exec(compact(run.text)) : null;
-    if (travel?.m) add('travelDate', `${travel.m[1]}-${pad(travel.m[2])}-${pad(travel.m[3])}`, travel.o);
-    else if (run && runMatch) add('travelDate', `${runMatch[1]}-${pad(runMatch[2])}-${pad(runMatch[3])}`, run);
-    if (time?.m) add('departTime', `${pad(time.m[1])}:${time.m[2]}`, time.o);
-    else if (run && runMatch) add('departTime', `${pad(runMatch[4])}:${runMatch[5]}`, run);
+    const run = read(DEPART_RUN);
+    if (travel) add('travelDate', `${travel.match[1]}-${pad(travel.match[2])}-${pad(travel.match[3])}`, ...runs(travel));
+    else if (run) add('travelDate', `${run.match[1]}-${pad(run.match[2])}-${pad(run.match[3])}`, ...runs(run));
+    if (time) add('departTime', `${pad(time.match[1])}:${time.match[2]}`, ...runs(time));
+    else if (run) add('departTime', `${pad(run.match[4])}:${run.match[5]}`, ...runs(run));
 
     const seat = read(SEAT_CLASS);
-    if (seat) add('seatClass', compact(seat.o.raw).replace(/^席别[:：]/, ''), seat.o);
+    if (seat) add('seatClass', visible(seat.span).replace(/^席别[:：]/, ''), ...runs(seat));
     const passenger = read(PASSENGER);
-    if (passenger) add('passengerName', compact(passenger.o.raw).replace(/^乘车人[:：]/, ''), passenger.o);
+    if (passenger) add('passengerName', visible(passenger.span).replace(/^乘车人[:：]/, ''), ...runs(passenger));
 
     const fare = read(FARE);
-    const fareCents = fare?.m?.[1] ? cents(fare.m[1]) : null;
-    if (fare && fareCents !== null) add('totalAmount', money(fareCents), fare.o);
+    const fareCents = fare?.match[1] ? cents(fare.match[1]) : null;
+    if (fare && fareCents !== null) add('totalAmount', money(fareCents), ...runs(fare));
 
     return { kindLabel: '铁路电子客票', candidates, findings: [] };
   },
