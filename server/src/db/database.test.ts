@@ -25,16 +25,30 @@ afterEach(() => rmSync(dataDir, { recursive: true, force: true }));
 const backups = () => readdirSync(join(dataDir, 'backups')).sort();
 
 // A database at the schema of `migration` (inclusive), with one task and one material in it.
-async function priorVersionFixture(migration: string): Promise<void> {
+// Named columns, and only the ones 0001 created: everything a later migration adds to these tables is nullable or has
+// a default, so the same rows insert cleanly at every version. A positional INSERT could not do this -- `task` gains
+// `origin` in 0005_195 -- and that is the point: these rows have to survive migrating forward from any version.
+// Returns the account id the fixture task belongs to.
+async function priorVersionFixture(migration: string): Promise<string> {
   const db = new Kysely<any>({ dialect: new SqliteDialect({ database: new Database(databasePath(dataDir)) }) });
   const { error } = await new Migrator({ db, provider: { getMigrations: async () => MIGRATIONS } }).migrateTo(migration);
   if (error) throw error;
   const at = '2026-09-01T10:00:00Z';
-  await sql`INSERT INTO task VALUES ('old-task', 'local', '旧任务', '杭州', 'open', 3, ${at}, ${at})`.execute(db);
-  await sql`INSERT INTO upload_batch VALUES ('old-batch', 'old-task', 'local', 1, ${at})`.execute(db);
-  await sql`INSERT INTO blob VALUES (${'a'.repeat(64)}, 12, 'application/pdf', ${at})`.execute(db);
-  await sql`INSERT INTO material VALUES ('old-material', 'old-task', 'local', 'old-batch', ${'a'.repeat(64)}, 'old.pdf', ${at})`.execute(db);
+  const sha = 'a'.repeat(64);
+  // 0002_193 deletes the implicit account of 0001 once it owns no tasks, so from that version on an empty database has
+  // no account at all. Take whichever account the version left behind, and make one only when there is none: what this
+  // fixture is about is the task facts surviving, not who owns them.
+  const owner = (await sql<{ account_id: string }>`SELECT account_id FROM account LIMIT 1`.execute(db)).rows[0]?.account_id ?? 'local';
+  await sql`INSERT OR IGNORE INTO account (account_id, display_name, created_at) VALUES (${owner}, '本机用户', ${at})`.execute(db);
+  await sql`INSERT INTO task (task_id, account_id, name, home_city, lifecycle, revision, created_at, updated_at)
+            VALUES ('old-task', ${owner}, '旧任务', '杭州', 'open', 3, ${at}, ${at})`.execute(db);
+  await sql`INSERT INTO upload_batch (batch_id, task_id, account_id, no, uploaded_at)
+            VALUES ('old-batch', 'old-task', ${owner}, 1, ${at})`.execute(db);
+  await sql`INSERT INTO blob (sha256, size, mime, created_at) VALUES (${sha}, 12, 'application/pdf', ${at})`.execute(db);
+  await sql`INSERT INTO material (material_id, task_id, account_id, batch_id, blob_sha256, file_name, created_at)
+            VALUES ('old-material', 'old-task', ${owner}, 'old-batch', ${sha}, 'old.pdf', ${at})`.execute(db);
   await db.destroy();
+  return owner;
 }
 
 describe('migrations on an existing database', () => {
@@ -93,6 +107,27 @@ describe('migrations on an existing database', () => {
     } finally {
       await migrated.destroy();
     }
+  });
+
+  // ADR-0015: every migration is tested on a populated database of the version before it, not only on an empty one.
+  // Driven off MIGRATIONS itself, so a new migration is covered the moment it is added.
+  const VERSIONS = Object.keys(MIGRATIONS);
+  const LATEST = VERSIONS[VERSIONS.length - 1]!;
+
+  it.each(VERSIONS)('migrates a populated %s database to latest with its facts intact', async (version) => {
+    const owner = await priorVersionFixture(version);
+
+    const db = await openDatabase(databasePath(dataDir));
+    try {
+      const snapshot = TaskSnapshotSchema.parse(await createTaskService(db, dataDir, owner).snapshot('old-task'));
+      expect(snapshot.task.name).toBe('旧任务');
+      expect(snapshot.materials.map((m) => m.fileName)).toEqual(['old.pdf']);
+      expect(snapshot.batches[0]?.files.map((f) => f.status)).toEqual(['accepted']);
+    } finally {
+      await db.destroy();
+    }
+    // An existing database is backed up before it is migrated; at the newest version nothing is pending to migrate.
+    expect(backups()).toEqual(version === LATEST ? [] : [expect.stringMatching(new RegExp(`-${version}\\.sqlite$`))]);
   });
 
   it('keeps only the last 5 backups', async () => {

@@ -7,7 +7,9 @@ import { test as base, type Page } from '@playwright/test';
 
 // Every server-project test gets its own built server on its own throwaway data directory and a free port, so
 // tests never share tasks or accounts. `baseURL` points at it: `page.goto('/#/tasks')`.
-const SERVER_ENTRY = fileURLToPath(new URL('../../../server/dist/main.mjs', import.meta.url));
+// The e2e-only entry: the same server as dist/main.mjs plus the scripted ERP doubles, built only under
+// BAOX_BUILD_E2E=1 so those doubles never ship. Root `pnpm test:e2e` builds it.
+const SERVER_ENTRY = fileURLToPath(new URL('../../../server/dist/e2e-main.mjs', import.meta.url));
 const LISTENING = /listening on (http:\/\/\S+)/;
 // The fixture-backed project catalog (the live ERP query adapter is #191's): P-2307 华东客户交付, P-3312 产品调研.
 const PROJECT_CATALOG = fileURLToPath(new URL('../../../server/src/catalog/testing/projects.fixture.json', import.meta.url));

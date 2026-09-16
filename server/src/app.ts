@@ -6,7 +6,8 @@ import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { streamSSE } from 'hono/streaming';
 import { AuthRefusal, createAccountService, type Clock } from './accounts/accounts';
-import { accountOf, mountAccountRoutes, mountAuthRoutes, requireAccount, type AppEnv } from './accounts/http';
+import { getCookie } from 'hono/cookie';
+import { accountOf, mountAccountRoutes, mountAuthRoutes, requireAccount, SESSION_COOKIE, type AppEnv } from './accounts/http';
 import type { Db } from './db/database';
 import { createInMemoryErpLease, type ErpLease } from './erp-lease';
 import { DEFAULT_ERP_CONFIG, type ErpConfig } from './erp/config';
@@ -272,17 +273,47 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // SSE: the current snapshot on connect, then every new one. Nothing buffers it (the Vite proxy passes it through).
   app.get('/api/tasks/:id/events', async (c) => {
     const taskId = c.req.param('id');
-    const first = await tasksOf(c).snapshot(taskId);
+    const tasks = tasksOf(c);
+    // Another account's task (or none) is a 404 before any stream opens.
+    await tasks.snapshot(taskId);
+    const token = getCookie(c, SESSION_COOKIE);
     c.header('Cache-Control', 'no-cache');
     return streamSSE(c, async (stream) => {
-      const send = (snapshot: TaskSnapshot) => stream.writeSSE({ event: SNAPSHOT_EVENT, data: JSON.stringify(snapshot) });
-      await send(first);
-      const listener: SnapshotListener = (snapshot) => void send(snapshot);
+      let stop!: () => void;
+      const finished = new Promise<void>((resolve) => {
+        stop = resolve;
+      });
+      stream.onAbort(stop);
+      // Every write goes through one chain, in the order it was queued. The first snapshot is queued *after*
+      // subscribing but read inside the chain, so it can only observe state at least as new as the subscription, and
+      // a change accepted in between is pushed rather than lost -- without letting that push overtake the first
+      // snapshot and walk the page backwards.
+      let queue: Promise<void> = Promise.resolve();
+      const enqueue = (of: () => TaskSnapshot | Promise<TaskSnapshot>) => {
+        queue = queue.then(async () => {
+          // A session revoked meanwhile (logout, or an admin deactivating the account) must not keep receiving this
+          // account's task: the stream ends and the browser's reconnect meets the gate.
+          if (token && !(await accounts.lookup(token))) {
+            stop();
+            return;
+          }
+          await stream.writeSSE({ event: SNAPSHOT_EVENT, data: JSON.stringify(await of()) });
+        });
+        return queue.catch(() => undefined);
+      };
+
+      const listener: SnapshotListener = (snapshot) => void enqueue(() => snapshot);
       const set = listeners.get(taskId) ?? new Set();
       set.add(listener);
       listeners.set(taskId, set);
-      await new Promise<void>((done) => stream.onAbort(done));
-      set.delete(listener);
+      try {
+        await enqueue(() => tasks.snapshot(taskId));
+        await finished;
+      } finally {
+        set.delete(listener);
+        // An empty set would otherwise hold its task id in the map for the life of the process.
+        if (set.size === 0) listeners.delete(taskId);
+      }
     });
   });
 
