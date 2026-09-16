@@ -7,7 +7,7 @@ import { chromium, expect } from '@playwright/test';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { qaValue } from './values.mjs';
+import { qaSelfCheck, qaValue } from './values.mjs';
 
 const BASE = process.env['QA_BASE'] ?? 'http://127.0.0.1:4319';
 const MATERIALS = process.env['QA_MATERIALS'] ?? '/Users/lmj/Documents/temp/baox-resources';
@@ -21,6 +21,9 @@ const SKIP = new Set(
     .filter(Boolean),
 );
 const PURPOSE = '广州本地用车费用报销（QA）';
+
+// The app's own wording for "no verified 报销系统 identity" (contract/src/project-book.ts).
+const NO_ERP_IDENTITY = /没有已核对的报销系统身份/;
 
 // A 1x1 PNG, enough to stand in for a payment screenshot.
 const PNG_1X1 = Buffer.from(
@@ -336,15 +339,33 @@ const MAX_CHOICE_DEPTH = 3;
 // Upper bound on sweep rounds, in case the queue keeps growing as items are answered.
 const MAX_PENDING_ROUNDS = 200;
 
-// The declared format of each manual-fill field, read from the snapshot: the page renders only the label,
-// while `PendingField.format` (contract/src/snapshot.ts) is what the app validates against.
-// Returns itemId → (field key → format); empty when the snapshot cannot be read, and then the value
-// generator falls back to the label.
-async function pendingFormats(context, taskId) {
+// What the driver knows about each 待确认项 before it answers it, read from the snapshot: the page renders
+// only the label, while `PendingField.format` (contract/src/snapshot.ts) is what the app validates against,
+// and the material's already-read fields carry the facts a new value has to stay consistent with (above all
+// the 价税合计, tax-inclusive total, 原文 价税合计).
+// Returns itemId → { formats: key → format, known: key → value, kind }; empty when the snapshot cannot be
+// read, and then the value generator falls back to the label.
+async function pendingContext(context, taskId) {
   const byItem = new Map();
   const snap = await (await context.request.get(`${BASE}/api/tasks/${taskId}`)).json().catch(() => null);
+  const materials = new Map((snap?.materials ?? []).map((m) => [m.materialId, m]));
   for (const item of snap?.pendingItems ?? []) {
-    byItem.set(item.itemId, new Map((item.fields ?? []).map((f) => [f.key, f.format])));
+    const material = materials.get(item.materialId);
+    const known = new Map();
+    for (const candidate of material?.fields ?? []) {
+      // Two sources can read the same field (text layer and QR code). They agree, or the app raises its own
+      // conflict item; either way the driver treats a disagreement as "not known".
+      if (known.has(candidate.key) && known.get(candidate.key) !== candidate.value) known.set(candidate.key, undefined);
+      else if (!known.has(candidate.key)) known.set(candidate.key, candidate.value);
+    }
+    byItem.set(item.itemId, {
+      formats: new Map((item.fields ?? []).map((f) => [f.key, f.format])),
+      known,
+      kind: material?.kind ?? undefined,
+      materialId: item.materialId,
+      title: item.title ?? '',
+      status: item.status,
+    });
   }
   return byItem;
 }
@@ -397,16 +418,24 @@ async function qaPending(page, context, state) {
     await target.click();
     await page.waitForTimeout(800);
 
-    const formats = await pendingFormats(context, id);
+    const items = await pendingContext(context, id);
     const detail = page.getByLabel('待确认项详情');
-    const handled = await handlePendingItem(page, detail, title, formats, 0);
+    const handled = await handlePendingItem(page, detail, title, items, 0);
     if (!handled) {
-      // Nothing on this item's detail pane the driver knows how to answer: give up on it now rather
-      // than spending its remaining attempts, and carry on with the rest of the queue.
       attempts.set(key, MAX_ATTEMPTS_PER_ITEM);
-      stuck.add(key);
-      warn('pending', `could not answer «${title}» automatically; leaving it for the operator`);
-      await shot(page, 'pending-unanswerable');
+      // An item can vanish while it is being answered: excluding a material takes its own items with it, and
+      // the list can still be showing the stale row. Ask the snapshot before blaming the driver's reach.
+      const after = await pendingContext(context, id);
+      const stillOpen = [...after.values()].some((entry) => entry.status === 'open' && entry.title && key.includes(entry.title.slice(0, 30)));
+      if (!stillOpen) {
+        ok('pending', `«${title}» was already resolved by the previous action`);
+      } else {
+        // Nothing on this item's detail pane the driver knows how to answer: give up on it now rather
+        // than spending its remaining attempts, and carry on with the rest of the queue.
+        stuck.add(key);
+        warn('pending', `could not answer «${title}» automatically; leaving it for the operator`);
+        await shot(page, 'pending-unanswerable');
+      }
     }
     await page.waitForTimeout(1200);
   }
@@ -423,9 +452,9 @@ async function qaPending(page, context, state) {
   }
 }
 
-// Answers one 待确认项. `formats` is itemId → (field key → declared format); `depth` bounds the chain of
+// Answers one 待确认项. `items` is what `pendingContext` read for each item; `depth` bounds the chain of
 // choices that replace one form with another.
-async function handlePendingItem(page, detail, title, formats, depth) {
+async function handlePendingItem(page, detail, title, items, depth) {
   // 1. per-segment allocation: the helper text carries the number to enter.
   const allocInputs = detail.locator('input[id^="pa-"]');
   if ((await allocInputs.count()) > 0) {
@@ -448,6 +477,7 @@ async function handlePendingItem(page, detail, title, formats, depth) {
   if (await visible(form, 1500)) {
     const inputs = form.locator('input[id^="pf-"]');
     const n = await inputs.count();
+    const fields = [];
     for (let i = 0; i < n; i += 1) {
       const input = inputs.nth(i);
       const id = (await input.getAttribute('id')) ?? '';
@@ -455,15 +485,36 @@ async function handlePendingItem(page, detail, title, formats, depth) {
       const key = (await input.getAttribute('name')) ?? '';
       const itemId = id.slice('pf-'.length, Math.max('pf-'.length, id.length - key.length - 1));
       const label = await page.locator(`label[for="${id}"]`).innerText().catch(() => '');
-      const format = formats.get(itemId)?.get(key);
-      await input.fill(qaValue({ key, label, format, city: HOME_CITY }));
+      fields.push({ input, key, label, itemId });
     }
+
+    const item = items.get(fields[0]?.itemId ?? '');
+    const known = Object.fromEntries([...(item?.known ?? new Map())].filter(([, value]) => value !== undefined));
+    // 发票代码 belongs to 出租车车费发票 alone, so it names the kind when the material itself has none yet
+    // (a 手工补填 of an unrecognised file picks its kind only as the form is submitted).
+    const kind = item?.kind ?? (fields.some((f) => f.key === 'invoiceCode') ? 'taxi_receipt' : undefined);
+    const filled = {};
+    for (const { input, key, label, itemId } of fields) {
+      const format = items.get(itemId)?.formats?.get(key);
+      // The 价税合计 is the anchor the other two amounts have to add up to; when the form asks for it too,
+      // `qaValue` derives all three from one stand-in total.
+      const value = qaValue({ key, label, format, city: HOME_CITY, kind, total: known['totalAmount'], seed: item?.materialId });
+      filled[key] = value;
+      await input.fill(value);
+    }
+
     await form.getByRole('button', { name: '保存并标记已处理' }).click();
     await page.waitForTimeout(1200);
     const errors = await detail.locator('[role=alert]').filter({ hasText: /\S/ }).allInnerTexts().catch(() => []);
     if (errors.length > 0) {
-      // A rejected value is a driver defect: the generator is supposed to satisfy every declared format.
-      defect('pending', `manual fill of «${title}» was refused: ${errors.join(' | ').slice(0, 200)}`);
+      const message = errors.join(' | ').replace(/\s+/g, ' ').slice(0, 200);
+      // A refusal the app is right to make is not an application defect. The driver re-runs the app's own
+      // checks over what it typed, merged with what was already read: if its submission satisfies them, the
+      // refusal is the app's problem; if it does not, the app is holding the line and the driver's stand-in
+      // values are simply not good enough to answer this item.
+      const reason = qaSelfCheck({ ...known, ...filled }, kind);
+      if (reason === null) defect('pending', `manual fill of «${title}» was refused although the driver's values are self-consistent: ${message}`);
+      else warn('pending', `«${title}» was refused by a check the driver cannot satisfy with stand-in values (${reason}): ${message}`);
       return false;
     }
     ok('pending', `manually filled «${title}» (${n} fields)`);
@@ -497,7 +548,7 @@ async function handlePendingItem(page, detail, title, formats, depth) {
     await page.waitForTimeout(1200);
     // A choice can be the whole answer (the item goes 已处理) or it can open a form in its place.
     if (await visible(detail.getByText('已处理', { exact: true }), 1500)) return true;
-    return handlePendingItem(page, detail, title, formats, depth + 1);
+    return handlePendingItem(page, detail, title, items, depth + 1);
   }
 
   return false;
@@ -518,6 +569,14 @@ async function qaProjectBook(page, state) {
   };
 
   const good = await intake('P-2307');
+  // 个人项目簿 (personal project book, 原文 个人项目簿) only takes a number the 报销系统 catalog confirmed, and
+  // the catalog is only reachable through a verified 报销系统 identity. A pass that skips ERP has none, so this
+  // refusal is the app holding its own line, not a defect — and nothing further in this area can be judged.
+  if (NO_ERP_IDENTITY.test(good)) {
+    warn('project-book', 'the project book refuses entry without a verified 报销系统 identity, so this area could not be exercised (run with a project-catalog fixture or a signed-in ERP browser to reach it)');
+    await shot(page, 'project-book-no-identity');
+    return;
+  }
   if (!good.includes('已加入')) defect('project-book', `P-2307 should be admitted but the app said: ${good}`);
   await intake('P-3312');
 
@@ -563,9 +622,14 @@ async function qaAssignment(page, state) {
 
   await page.getByLabel('报销事由').fill(PURPOSE);
 
+  const summaryText = async () => (await page.getByTestId('assign-summary').innerText().catch(() => '')).replace(/\s+/g, ' ');
+  const before = await summaryText();
   const submit = page.getByRole('button', { name: '确认项目归属' });
   if (await submit.isEnabled().catch(() => false)) {
-    warn('assignment', '确认项目归属 is enabled before any line has a project');
+    // The workbench is entered again after the 常驻城市 changes, and then the lines still carry the previous
+    // assignment — an enabled button is right. Only an empty 归属 with an enabled button is worth a look.
+    if (/已归属 0 \//.test(before)) warn('assignment', '确认项目归属 is enabled before any line has a project');
+    else ok('assignment', `确认项目归属 is enabled on re-entry, with the previous assignment still in place: ${before}`);
   }
 
   await page
@@ -578,15 +642,25 @@ async function qaAssignment(page, state) {
 
   const picker = page.getByRole('dialog', { name: '归入项目' });
   await expect(picker).toBeVisible({ timeout: 10000 });
-  await picker.getByRole('radio', { name: /P-2307/ }).locator('xpath=following-sibling::label[1]').click();
+  const project = picker.getByRole('radio', { name: /P-2307/ });
+  if (!(await visible(project, 5000))) {
+    // Nothing to assign to: the personal book stayed empty, which the project-book area already explained.
+    warn('assignment', 'the project picker offers no P-2307, so the assignment could not be submitted');
+    await shot(page, 'assignment-no-project');
+    return;
+  }
+  await project.locator('xpath=following-sibling::label[1]').click();
   await picker.getByRole('button', { name: '确认归入' }).click();
   await page.waitForTimeout(2000);
 
   const overwrite = page.getByRole('dialog', { name: /条明细已有其他项目归属/ });
   if (await visible(overwrite, 2000)) await overwrite.getByRole('button', { name: '确认覆盖' }).click();
 
-  const summary = (await page.getByTestId('assign-summary').innerText().catch(() => '')).replace(/\s+/g, ' ');
+  const summary = await summaryText();
   ok('assignment', `after assigning everything to P-2307: ${summary}`);
+  // 整单合计 is read from the confirmation, which does not exist yet at this step, so the workbench prints the
+  // unit with nothing in front of it. Not the driver's doing, and a reader has to decide whether it is meant.
+  if (/整单合计 元/.test(summary)) warn('assignment', 'the 整单合计 of the assignment summary shows the unit with no amount');
   await shot(page, 'assignment');
 
   await expect(submit).toBeEnabled({ timeout: 15000 });
@@ -632,28 +706,43 @@ async function qaReview(page, context, state) {
   }
   await shot(page, 'review');
 
-  // Changing the home city must invalidate the confirmation, and changing it back must revive it.
+  // Changing the 常驻城市 (home city, 原文 常驻城市) re-derives every line that depends on it — 市内交通 turns
+  // into 外地市内交通 and back — so the app is entitled to send the task back to 项目归属 and ask for the
+  // assignment again. Both the new city taking effect and the confirmation having to be re-earned are correct;
+  // only a city that does not take effect, or a page that will not show it, is a defect.
   const cityBlock = page.getByTestId('review-home-city');
-  const editCity = page.getByRole('button', { name: '修改常驻城市' });
-  if (await visible(editCity, 3000)) {
-    // The city editor is its own group; 常驻城市 also labels fields elsewhere on the page.
-    const editor = page.getByRole('group', { name: '修改常驻城市' });
+  if (await visible(page.getByRole('button', { name: '修改常驻城市' }), 3000)) {
     const setCity = async (city) => {
+      const editCity = page.getByRole('button', { name: '修改常驻城市' });
+      if (!(await visible(editCity, 10000))) {
+        defect('review', `the 修改常驻城市 control is gone before setting ${city}`);
+        return false;
+      }
+      await editCity.click();
+      // The city editor is its own group; 常驻城市 also labels fields elsewhere on the page.
+      const editor = page.getByRole('group', { name: '修改常驻城市' });
       await editor.getByLabel('常驻城市').fill(city);
       await editor.getByRole('button', { name: '保存', exact: true }).click();
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(3000);
+
+      const snap = await (await context.request.get(`${BASE}/api/tasks/${id}`)).json().catch(() => null);
+      if (snap?.task?.homeCity !== city) {
+        defect('review', `changing the home city to ${city} did not take effect`);
+        return false;
+      }
+      if (snap?.stage !== 'actions') {
+        warn('review', `changing the home city sent the task back to the ${snap?.stage} stage; re-doing the assignment to reach 整单明细确认 again`);
+        await qaAssignment(page, state);
+        await page.goto(`${BASE}/#/task/${id}/review`);
+        await page.waitForTimeout(3000);
+      }
+      const shown = (await cityBlock.innerText().catch(() => '')).replace(/\s+/g, ' ');
+      if (!shown.includes(city)) defect('review', `the review page does not show the home city ${city}: ${shown}`);
+      return true;
     };
 
-    await editCity.click();
-    await setCity('深圳');
-    const after = (await cityBlock.innerText().catch(() => '')).replace(/\s+/g, ' ');
-    if (after.includes('深圳')) ok('review', 'home city can be changed from the review page');
-    else defect('review', `changing the home city did not take effect: ${after}`);
-
-    await editCity.click();
+    if (await setCity('深圳')) ok('review', 'home city can be changed from the review page');
     await setCity(HOME_CITY);
-    const back = (await cityBlock.innerText().catch(() => '')).replace(/\s+/g, ' ');
-    if (!back.includes(HOME_CITY)) defect('review', `changing the home city back failed: ${back}`);
   } else {
     warn('review', 'no 修改常驻城市 control on the review page');
   }
