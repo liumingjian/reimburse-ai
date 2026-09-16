@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// 校验夹具产物：文件集与清单一致；每份 PDF 用零依赖取字器（./pdftext.mjs，原内核取字器）抽出预期中文；图片有正确的文件头。
-// 用法：node fixtures/scripts/verify.mjs   退出码 0 = 全部通过。
+// Verify the generated fixtures: the file set matches the manifest; every PDF yields the expected Chinese text through
+// the zero-dependency extractor (./pdftext.mjs, the original kernel extractor); every image has the right magic bytes.
+// Usage: node fixtures/scripts/verify.mjs   exit code 0 = everything passed.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,7 +26,7 @@ import {
 } from './data.mjs';
 import { EXPECTED_FILES, OUTPUT_DIR, PDF_DOC_FILES } from './generate.mjs';
 
-// 每份 PDF 必须抽得出的字符串：标题、号码、日期、金额与关键中文。
+// What every PDF must yield: its title, number, date, amounts and the wording that identifies the face.
 const EXPECTED_TEXT = {
   m01: ['电子发票', '增值税专用发票', HOTEL_INVOICE.number, HOTEL_INVOICE.date, HOTEL_INVOICE.seller.name, '价税合计', HOTEL_INVOICE.gross, HOTEL_INVOICE.net, HOTEL_INVOICE.tax, '住宿服务'],
   m02: ['结账单', HOTEL_FOLIO.hotel, '入住日期', HOTEL_FOLIO.checkIn, '离店日期', HOTEL_FOLIO.checkOut, '消费合计', HOTEL_FOLIO.total],
@@ -36,7 +37,7 @@ const EXPECTED_TEXT = {
   m07: ['铁路电子客票', RAIL_0809.number, RAIL_0809.date, RAIL_0809.train, RAIL_0809.from, RAIL_0809.to, RAIL_0809.price],
   m08: ['铁路电子客票', RAIL_0822.number, RAIL_0822.date, RAIL_0822.train, RAIL_0822.from, RAIL_0822.to, RAIL_0822.price],
   r201: ['电子发票', '普通发票', BUNDLED_FEE_INVOICE.number, BUNDLED_FEE_INVOICE.date, '运输服务', '经纪代理服务', '价税合计', BUNDLED_FEE_INVOICE.gross, BUNDLED_FEE_INVOICE.net, BUNDLED_FEE_INVOICE.tax],
-  m12: ['行程单', AMAP_ITINERARY_GAP.brand, `共计${AMAP_ITINERARY_GAP.count}单行程`, `合计${AMAP_ITINERARY_GAP.total}元`, '张江', '浦东机场', '待结算'],
+  r202: ['行程单', AMAP_ITINERARY_GAP.brand, `共计${AMAP_ITINERARY_GAP.count}单行程`, `合计${AMAP_ITINERARY_GAP.total}元`, '张江', '浦东机场', '待结算'],
   m11: ['电子发票', '普通发票', OTHER_INVOICE.number, OTHER_INVOICE.date, '餐饮服务', OTHER_INVOICE.gross],
   r204: ['铁路电子客票', RAIL_SPLIT_RUNS.number, RAIL_SPLIT_RUNS.date, RAIL_SPLIT_RUNS.train, RAIL_SPLIT_RUNS.from, RAIL_SPLIT_RUNS.to, RAIL_SPLIT_RUNS.seat, '票价', RAIL_SPLIT_RUNS.price],
   r01: ['电子发票', '增值税专用发票', SPLIT_NUMBER_INVOICE.number, SPLIT_NUMBER_INVOICE.date, '住宿服务', SPLIT_NUMBER_INVOICE.gross, SPLIT_NUMBER_INVOICE.net, SPLIT_NUMBER_INVOICE.tax],
@@ -51,7 +52,7 @@ const MAGIC = {
   png: (buf) => buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
 };
 
-// 取字结果里同一行的片段之间可能有空格；比对时去掉所有空白。
+// Fragments of one line may come back separated by spaces, so all whitespace is dropped before comparing.
 const squash = (s) => s.replace(/\s+/g, '');
 
 function verify() {

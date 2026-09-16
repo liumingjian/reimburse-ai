@@ -14,9 +14,10 @@ export declare const SAMPLE_MATERIALS: readonly SampleMaterial[];
 export declare const REGRESSION_MATERIALS_FILE: string;
 
 /**
- * Fixtures that reproduce real-world PDF quirks the demo scenario cannot show — today, an e-invoice whose 发票号码
- * label and digits are separate text runs and one whose title is letter-spaced across runs (#200). Test-only: they
- * are not sample materials and are not copied into the mock build.
+ * Fixtures that reproduce real-world faces the demo scenario cannot show: e-invoices whose text runs are split (a
+ * 发票号码 apart from its label, a letter-spaced title, fields sharing one baseline), an invoice that bundles a non-v1
+ * item row, a 铁路电子客票 drawn as a two-column box, and itineraries with a wrapped 上车时间 cell or an unreadable
+ * leg amount. Test-only: they are not sample materials and are not copied into the mock build.
  */
 export declare const REGRESSION_MATERIALS: readonly SampleMaterial[];
 

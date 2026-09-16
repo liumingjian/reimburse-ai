@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-// 夹具生成器：HTML 模板 → headless Chrome → fixtures/generated/ 下的示例 PDF（带中文文本层）、出租车票照片（JPG）与打印页图（PNG）。
+// The fixture generator: HTML templates → headless Chrome → the sample PDFs (with a Chinese text layer), taxi-receipt
+// photos (JPG) and print-page images (PNG) under fixtures/generated/.
 // Usage: pnpm --filter @baox/fixtures generate   (generate, then verify)
 //        node fixtures/scripts/generate.mjs      (generate only)
-//        node fixtures/scripts/generate.mjs r01 r02   (只重做这几份，不动其它产物)
-// 只在 Mac 上运行：需要 Google Chrome 与 sips（PNG 转 JPG）。可重复运行，产物文件集固定（见 verify.mjs 的清单）。
+//        node fixtures/scripts/generate.mjs r01 r02   (redo only these, leaving every other artifact alone)
+// Mac only: it needs Google Chrome and sips (PNG to JPG). Repeatable, and the set of artifacts is fixed (verify.mjs
+// holds the manifest).
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,7 +22,7 @@ const CHROME_CANDIDATES = [
 
 export const OUTPUT_DIR = fileURLToPath(new URL('../generated/', import.meta.url));
 
-// 材料 id → 产物文件名（与 src/mock/fixtures 里的 URL 一致）。
+// Material id → artifact file name (the same as the URLs under src/mock/fixtures).
 export const MATERIAL_FILES = {
   m01: 'm01-hotel-invoice.pdf',
   m02: 'm02-hotel-folio.pdf',
@@ -33,14 +35,15 @@ export const MATERIAL_FILES = {
   m09: 'm09-taxi-photo.jpg',
   m10: 'm10-taxi-photo.jpg',
   m11: 'm11-other-invoice.pdf',
-  m12: 'm12-amap-itinerary-gap.pdf',
 };
 
-// 回归夹具（#200 起）：复现真实 PDF 的文本串拆分，不属于 11 份示例材料的剧本，也不进 mock 的示例材料目录。
+// Regression fixtures (#200 onwards): they reproduce the text-run splits of a real PDF. They are not part of the
+// eleven sample materials' script and are not copied into the mock's sample-material directory.
 export const REGRESSION_FILES = {
   r01: 'r01-einvoice-split-number.pdf',
   r02: 'r02-einvoice-spaced-title.pdf',
   r201: 'r201-bundled-fee-invoice.pdf',
+  r202: 'r202-amap-itinerary-gap.pdf',
   r204: 'r204-rail-split-runs.pdf',
   r205: 'r205-amap-itinerary-wrapped.pdf',
   r206: 'r206-transport-invoice.pdf',
@@ -61,14 +64,16 @@ function chromeBinary() {
   return found;
 }
 
-// Chrome 写完产物后有时不退出（macOS 上 headless=new 的关闭挂起），所以不等它退出：
-// 盯着 stderr 里 Chrome 自己打印的「N bytes written to file」，看到就杀进程。超时 60 秒。
+// Chrome sometimes does not exit after writing its artifact (headless=new hangs on shutdown on macOS), so this does
+// not wait for it: it watches stderr for Chrome's own `N bytes written to file` and kills the process on sight.
+// Timeout: 60 seconds.
 const CHROME_TIMEOUT_MS = 60_000;
 const WRITTEN_PATTERN = /bytes written to file/;
 
 let launchNo = 0;
 
-// 每次启动用新的用户数据目录：上一次被 SIGKILL 的进程留下的 SingletonLock 不会拖住下一次。
+// A fresh user data directory per launch, so a SingletonLock left behind by the previously SIGKILLed process cannot
+// hold up the next one.
 function chrome(binary, workDir, extra, url) {
   launchNo += 1;
   const profileDir = join(workDir, `profile-${launchNo}`);
@@ -99,7 +104,7 @@ function chrome(binary, workDir, extra, url) {
       try {
         child.kill('SIGKILL');
       } catch {
-        // 已退出
+        // Already exited.
       }
       if (error) reject(error);
       else resolve();
@@ -123,13 +128,13 @@ function run(cmd, args) {
   if (result.status !== 0) throw new Error(`${cmd} ${args.join(' ')}\n退出码 ${result.status}\n${(result.stderr ?? '').slice(-2000)}`);
 }
 
-// `only`：只重做这几份材料（如 `['r01']`），产物目录不清空；不传就整批重做。
+// `only`: redo just these materials (e.g. `['r01']`) and leave the output directory alone; omit it to redo the lot.
 export async function generate(only = null) {
   const binary = chromeBinary();
   const work = mkdtempSync(join(tmpdir(), 'baox-fixtures-'));
   const profile = work;
   mkdirSync(OUTPUT_DIR, { recursive: true });
-  // 整批生成时先清空产物目录：文件集由本脚本唯一决定，旧文件不残留。
+  // A full run empties the output directory first: this script alone decides the file set, and no stale file survives.
   if (!only) for (const name of readdirSync(OUTPUT_DIR)) unlinkSync(join(OUTPUT_DIR, name));
   const wanted = (id) => !only || only.includes(id);
 
@@ -149,7 +154,7 @@ export async function generate(only = null) {
     } else {
       const png = join(work, `${id}.png`);
       await chrome(binary, profile, [`--window-size=${doc.width},${doc.height}`, `--screenshot=${png}`], htmlOf(doc));
-      // JPG 由 macOS 自带的 sips 转换，质量 70，控制体积。
+      // macOS's own sips converts to JPG at quality 70, which keeps the size down.
       run('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '70', png, '--out', target]);
     }
     produced.push(file);
@@ -171,12 +176,13 @@ export async function generate(only = null) {
     produced.push(variant.file);
     console.log(`生成 ${variant.file}`);
   }
-  // 只重做部分材料时到此为止：合并打印稿要所有页图都是这一轮刚写出的。
+  // A partial run stops here: the merged print sheet needs every page image to come from this same run.
   if (only) {
     rmSync(work, { recursive: true, force: true });
     return produced.sort();
   }
-  // 合并打印稿：上面刚写出的默认页图逐页铺满 A4，打印成一份 PDF（没有文本层，只做下载样本）。
+  // The merged print sheet: the default page images just written, one per A4 page, printed to a single PDF (no text
+// layer — it is a download sample only).
   const sheetHtml = join(work, 'print-sheet.html');
   writeFileSync(sheetHtml, printSheetDocument(PRINT_PAGES.map((page) => pathToFileURL(join(OUTPUT_DIR, page.file)).href)));
   const sheetArgs = ['--allow-file-access-from-files', '--no-pdf-header-footer', `--print-to-pdf=${join(OUTPUT_DIR, PRINT_SHEET_FILE)}`];

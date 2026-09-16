@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_DIR } from '@baox/fixtures';
 import { describe, expect, it } from 'vitest';
-import { type TextObservation } from '../doc';
+import { compact, type TextObservation } from '../doc';
 import { dispatch, type Recognised } from '../dispatch';
 import { KINDS } from '../kinds';
 import { pdfDoc } from '../pdf';
@@ -92,6 +92,35 @@ describe('rail_ticket/12306', () => {
     // Evidence still names the real text runs behind a joined value, not a synthesised one.
     const fare = outcome.candidates.find((c) => c.key === 'totalAmount');
     expect(fare?.refs).toEqual([{ page: 1, observationIds: ['p1.18', 'p1.19'], text: '票价: ¥314.50' }]);
+  });
+
+  // The r204 fixture is what the hand-built document above claims a real face looks like. Without this, that test is a
+  // tautology: it would pass on a fixture drawn as one run per field.
+  it('r204 really splits its runs: no text run carries 票价 with its amount, and none carries the whole trip row', async () => {
+    const doc = await pdfDoc(fixture('r204-rail-split-runs.pdf'));
+    const texts = doc.observations.map((o) => compact(o.text));
+    expect(texts.some((t) => t.includes('票价') && t.includes('314.50'))).toBe(false);
+    expect(texts.some((t) => t.includes('G1376') && t.includes('广州南'))).toBe(false);
+    expect(values(await recognised('r204-rail-split-runs.pdf'))).toMatchObject({ trainNumber: 'G1376', departStation: '广州南', arriveStation: '长沙南', totalAmount: '314.50' });
+  });
+
+  // 车次 (train number) is what tells a trip row from any other line of CJK, digits and CJK. It has to be a text run of
+  // its own, or the line has to name both stations with their 站 suffix — document order is not a guard, and these are
+  // three required, locked face facts.
+  it('does not read a gate and a waiting room as a trip, even when that line is printed above the real one', () => {
+    const doc = textDoc([
+      '电子发票(铁路电子客票)',
+      '发票号码:26312000000102200758',
+      '开票日期:2026年08月23日',
+      '检票口12候车室',
+      ['广州南', 'G1376', '长沙南'],
+      '乘车日期:2026年08月23日',
+      '票价:¥314.50',
+    ]);
+    const outcome = dispatch(doc, LAYOUTS);
+    expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'rail_ticket' });
+    if (outcome.outcome !== 'recognised') return;
+    expect(values(outcome)).toMatchObject({ trainNumber: 'G1376', departStation: '广州南', arriveStation: '长沙南' });
   });
 
   it('forms one event: date = travel date, route from the face, net = fare and tax 0, long-distance category', async () => {

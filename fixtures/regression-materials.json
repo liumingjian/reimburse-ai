@@ -2,6 +2,7 @@
   { "file": "r01-einvoice-split-number.pdf", "fileName": "拆分文本串_发票号码.pdf" },
   { "file": "r02-einvoice-spaced-title.pdf", "fileName": "拆分文本串_标题逐字.pdf" },
   { "file": "r201-bundled-fee-invoice.pdf", "fileName": "网约车_发票_含服务费.pdf" },
+  { "file": "r202-amap-itinerary-gap.pdf", "fileName": "行程单_金额待结算.pdf" },
   { "file": "r204-rail-split-runs.pdf", "fileName": "铁路电子客票_拆分文本串.pdf" },
   { "file": "r205-amap-itinerary-wrapped.pdf", "fileName": "拆分文本串_行程单_上车时间换行.pdf" },
   { "file": "r206-transport-invoice.pdf", "fileName": "网约车_发票_交通运输服务.pdf" }

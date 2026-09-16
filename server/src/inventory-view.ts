@@ -77,9 +77,9 @@ const CITY_MISSING_CHECK = '取不到费用发生城市';
 // slots it could not read.
 const MISSING_REQUIRED_CHECK = '缺少必填字段：';
 
-// Titles of validation findings that are not about amounts (the default title is 金额核对不通过). A code may
-// carry what it is about after a dot (`segment_field_unreadable.2.amount`), which keeps one item id per failing check;
-// the title is looked up on the part before it.
+// Titles of validation findings that are not about amounts (the default title is 金额核对不通过). A code may carry
+// what it is about after a dot (`segment_field_unreadable.2.amount`) so that the message can name the leg and the
+// field; the title, and the 待确认项 raised, are keyed on the part before the dot.
 const VALIDATION_TITLES: Readonly<Record<string, string>> = {
   segment_rows_incomplete: '逐段明细没有完整读到',
   segment_index_unexpected: '逐段明细的序号不对',
@@ -272,11 +272,20 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
     }
   }
 
+  // One blocker per material and cause. A per-leg refusal reports itself in its own message — an itinerary with a gap
+  // in the middle refuses every leg after it — but each of those messages would otherwise become its own 待确认项 with
+  // the same title and the same single action (排除), and 待确认项 is what the user is asked to work through. Every
+  // message is still kept as a note.
+  const raised = new Set<string>();
   for (const finding of resolved.findings) {
     if (finding.kind === 'advisory') w.notes.push(finding.message);
     if (finding.kind === 'validation') {
       w.notes.push(finding.message);
-      add(choice(`validation_failure.${id}.${finding.code}`, id, `「${m.fileName}」${validationTitle(finding.code)}`, `${finding.message}票面事实不能修改。${REPLACE_HINT}`, [EXCLUDE]));
+      const cause = finding.code.split('.')[0] ?? finding.code;
+      if (!raised.has(cause)) {
+        raised.add(cause);
+        add(choice(`validation_failure.${id}.${cause}`, id, `「${m.fileName}」${validationTitle(cause)}`, `${finding.message}票面事实不能修改。${REPLACE_HINT}`, [EXCLUDE]));
+      }
     }
     if (finding.kind === 'conflict') {
       const label = fieldLabel(resolved.kind, finding.key);

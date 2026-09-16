@@ -122,10 +122,26 @@ describe('ride_itinerary/amap', () => {
     expect(outcome.findings).toEqual([{ kind: 'validation', code: 'segment_rows_incomplete', message: '逐段明细读到 2 行，行程单声明 3 段，对不上；整块不采用。' }]);
   });
 
-  it('names the leg and the field when the counts agree but a leg amount is unreadable (m12), never a count mismatch', async () => {
-    const outcome = recognised(await pdfDoc(fixture('m12-amap-itinerary-gap.pdf')));
+  it('names the leg and the field when the counts agree but a leg amount is unreadable (r202), never a count mismatch', async () => {
+    const outcome = recognised(await pdfDoc(fixture('r202-amap-itinerary-gap.pdf')));
     expect(outcome.findings).toEqual([{ kind: 'validation', code: 'segment_field_unreadable.1.amount', message: '第 1 段的金额没读到；整块不采用。' }]);
     expect(values(outcome)).toEqual({ applyDate: '2026-08-13', segmentCount: '1', itineraryTotal: '32.50' });
+  });
+
+  // The last leg's row band reaches half a pitch below its baseline and its amount column has no right bound, so
+  // whatever is printed under the table is a candidate for that cell. A cell that reads as no amount refuses the whole
+  // block, so a table total line under the last leg used to discard every leg of the itinerary.
+  it('a total line printed under the last leg does not join its amount cell', () => {
+    const doc = itineraryDoc();
+    const parsed = recognised(doc);
+    expect(parsed.findings).toEqual([]);
+    expect(values(parsed)['segments[1].amount']).toBe('30.00');
+
+    const last = doc.observations.find((o) => o.text === '2') as TextObservation;
+    const belowTable: TextObservation = { id: 'p1.99', page: 1, x: 540, y: last.y - 25, width: 60, height: 10, text: '合计60.00元', raw: '合计60.00元' };
+    const withTotal = recognised({ ...doc, observations: [...doc.observations, belowTable] });
+    expect(withTotal.findings).toEqual([]);
+    expect(values(withTotal)['segments[1].amount']).toBe('30.00');
   });
 
   it('names the leg whose 上车时间 is unreadable while the counts agree', async () => {
@@ -150,3 +166,33 @@ describe('ride_itinerary/amap', () => {
     expect(outcome.findings).toEqual([{ kind: 'validation', code: 'segment_rows_incomplete', message: '行程单声明的段数没读到，逐段明细读到 3 行；整块不采用。' }]);
   });
 });
+
+// A hand-built itinerary with a generous row pitch: a header row, two legs, and leg 1's 上车时间 wrapped onto a second
+// line. Geometry is explicit so the row bands are, too.
+function itineraryDoc(): ParseDoc {
+  const observations: TextObservation[] = [];
+  const at = (x: number, y: number, text: string, width = text.length * 9) => {
+    observations.push({ id: `p1.${observations.length + 1}`, page: 1, x, y, width, height: 10, text, raw: text });
+  };
+  at(40, 780, '高德地图电子行程单');
+  at(40, 740, '申请日期:2026-08-13');
+  at(40, 720, '共计2单行程,合计60.00元');
+  const columns: [number, string][] = [[40, '序号'], [90, '车型'], [160, '上车时间'], [250, '城市'], [320, '起点'], [430, '终点'], [540, '金额']];
+  for (const [x, text] of columns) at(x, 700, text);
+  // Legs 60 points apart, so half a pitch below the last one reaches well past any wrapped line.
+  const legs = [
+    { y: 660, no: '1', from: '虹桥枢纽', to: '漕河泾' },
+    { y: 600, no: '2', from: '静安寺', to: '张江' },
+  ];
+  for (const leg of legs) {
+    at(40, leg.y, leg.no);
+    at(90, leg.y, '经济型');
+    at(160, leg.y, '2026-08-10');
+    at(160, leg.y - 12, '08:52');
+    at(250, leg.y, '上海市');
+    at(320, leg.y, leg.from);
+    at(430, leg.y, leg.to);
+    at(540, leg.y, '30.00元');
+  }
+  return { mediaType: 'pdf', pageCount: 1, codes: [], observations };
+}

@@ -38,6 +38,9 @@ type Column = 'no' | 'carType' | 'time' | 'city' | 'origin' | 'destination' | 'a
 // wrap a long address, and they wrap 上车时间 between its date and its `HH:MM`. The remaining columns stay on the leg's
 // own baseline, so a neighbouring row's text can never drift into them.
 const WRAPPING: ReadonlySet<Column> = new Set(['time', 'origin', 'destination', 'amount']);
+// How far below the line above it a wrapped line may sit, as a multiple of the text height. A continuation line
+// follows within about one line height; a wider gap is not a continuation.
+const CONTINUATION_GAP = 1.8;
 
 const center = (o: TextObservation) => o.x + o.width / 2;
 const ref = (observations: readonly TextObservation[]): EvidenceRef[] =>
@@ -82,6 +85,21 @@ function columnOf(head: Header, o: TextObservation): Column | null {
 
 type LegCells = { index: number; cells: Partial<Record<Column, TextObservation[]>> };
 
+// A cell read top to bottom, cut where the text stops being continuous. A wrapped cell's lines follow each other about
+// one line height apart; anything separated by a wider gap is not part of it. The last leg has no next row to bound
+// its band, and the right-most column (amount) has no right bound either, so without this cut a table total or a
+// right-aligned note printed under the table joins that leg's amount cell — and, reading as no amount at all, refuses
+// the whole block.
+function continuous(list: readonly TextObservation[]): TextObservation[] {
+  const out: TextObservation[] = [];
+  for (const o of list) {
+    const previous = out.at(-1);
+    if (previous && previous.y - o.y > Math.max(previous.height, o.height) * CONTINUATION_GAP) break;
+    out.push(o);
+  }
+  return out;
+}
+
 function legRows(doc: ParseDoc, head: Header): LegCells[] {
   const below = doc.observations.filter((o) => o.page === head.page && o.y < head.y - 2);
   const anchors = below.filter((o) => /^\d+$/.test(compact(o.text)) && columnOf(head, o) === 'no').sort((a, b) => b.y - a.y);
@@ -98,7 +116,12 @@ function legRows(doc: ParseDoc, head: Header): LegCells[] {
       const inRow = WRAPPING.has(column) ? o.y <= top && o.y > bottom : Math.abs(o.y - anchor.y) <= 3;
       if (inRow) (cells[column] ??= []).push(o);
     }
-    for (const list of Object.values(cells)) list.sort((a, b) => b.y - a.y || a.x - b.x);
+    for (const column of Object.keys(cells) as Column[]) {
+      const list = cells[column];
+      if (!list) continue;
+      list.sort((a, b) => b.y - a.y || a.x - b.x);
+      cells[column] = continuous(list);
+    }
     return { index: Number(compact(anchor.text)), cells };
   });
 }

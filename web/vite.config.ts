@@ -1,8 +1,8 @@
 /// <reference types="vitest/config" />
 import { copyFileSync, createReadStream, cpSync, existsSync, mkdirSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GENERATED_DIR as FIXTURES_SOURCE, SAMPLE_MATERIALS } from '@baox/fixtures';
+import { GENERATED_DIR as FIXTURES_SOURCE, REGRESSION_MATERIALS, SAMPLE_MATERIALS } from '@baox/fixtures';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
@@ -48,7 +48,9 @@ function mockFixtures(): Plugin {
         this.warn(`Fixture directory ${FIXTURES_SOURCE} not found; run pnpm --filter @baox/fixtures generate first`);
         return;
       }
-      cpSync(FIXTURES_SOURCE, resolve(packageRoot, outDir, 'fixtures'), { recursive: true });
+      // 回归夹具只给测试用，不进手工 QA 产物：按文件名排除，示例材料与打印页照常复制。
+      const regression = new Set(REGRESSION_MATERIALS.map((material) => material.file));
+      cpSync(FIXTURES_SOURCE, resolve(packageRoot, outDir, 'fixtures'), { recursive: true, filter: (source) => !regression.has(basename(source)) });
       // 手工 QA 用的示例材料：11 份原件按业务文件名复制到 dist-mock/sample-materials/，整个文件夹可直接拖进上传区。
       const samplesDir = resolve(packageRoot, outDir, 'sample-materials');
       mkdirSync(samplesDir, { recursive: true });
