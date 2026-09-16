@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { inlineExecutor, type ParseExecutor } from './parse/executor';
 import { einvoice, QR_SOURCE } from './parse/layouts/einvoice';
 import { LAYOUTS } from './parse/layouts';
+import { rail12306 } from './parse/layouts/rail12306';
 import { api, byFileName, fieldValues, sample, type Upload } from './test/api';
 import { createApp } from './app';
 import { createTestServer, testClient, type TestClient, type TestServer } from './test/harness';
@@ -27,6 +28,7 @@ async function useParser(parser: ParseExecutor) {
 }
 
 const EINVOICE = 'rule:vat_invoice/einvoice';
+const RAIL = 'rule:rail_ticket/12306';
 
 async function inventoriedFiles(files: readonly Upload[]) {
   const { task } = await client.createTask();
@@ -147,6 +149,36 @@ describe('an e-invoice whose text runs are split', () => {
       for (const field of material.fields) expect(field).toMatchObject({ source: EINVOICE, parserVersion: einvoice.version, evidence: 'explicit' });
     }
     expect(snapshot.inventory.summary).toMatchObject({ materialCount: 2, okCount: 2, pendingMaterialCount: 0, voucherCount: 2, openPendingItemCount: 0 });
+  });
+});
+
+describe('a 铁路电子客票 face whose text runs are split', () => {
+  // #204: a real ticket prints its face as a two-column box, so 票价 shares a row with 购买方 and its label and amount
+  // are separate runs, and the trip row carries a fourth cell (the seat). Both real tickets of the QA corpus were
+  // recognised and then dropped into manual fill because no anchor had one observation to itself.
+  it('parses r204 into its face fields and reaches ok, raising no missing-field 待确认项', async () => {
+    const snapshot = await inventoried(['r204']);
+
+    const rail = byFileName(snapshot, sample('r204').name);
+    expect(rail).toMatchObject({ kind: 'rail_ticket', layout: '12306', kindLabel: '铁路电子客票', categoryLabel: '长途交通', role: 'primary_voucher', status: 'ok', pendingItemIds: [] });
+    expect(fieldValues(rail, RAIL)).toEqual({
+      invoiceNumber: '26312000000102200758',
+      issueDate: '2026-08-23',
+      trainNumber: 'G1376',
+      departStation: '广州南',
+      arriveStation: '长沙南',
+      travelDate: '2026-08-23',
+      departTime: '09:12',
+      seatClass: '二等座',
+      passengerName: '林颂宜',
+      totalAmount: '314.50',
+    });
+    for (const field of rail.fields) expect(field).toMatchObject({ source: RAIL, parserVersion: rail12306.version, evidence: 'explicit' });
+
+    expect(snapshot.pendingItems).toEqual([]);
+    expect(snapshot.inventory.summary).toMatchObject({ materialCount: 1, okCount: 1, pendingMaterialCount: 0, voucherCount: 1, openPendingItemCount: 0 });
+    // The trip forms its own expense event, dated by the 乘车日期 rather than the 开票日期.
+    expect(snapshot.events).toEqual([expect.objectContaining({ no: 1, voucherMaterialId: rail.materialId, category: { code: 'long_distance', label: '长途交通' }, date: '2026-08-23', grossAmount: '314.50' })]);
   });
 });
 

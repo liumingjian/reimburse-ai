@@ -17,6 +17,7 @@ import {
   OTHER_INVOICE,
   RAIL_0809,
   RAIL_0822,
+  RAIL_SPLIT_RUNS,
   SPACED_TITLE_INVOICE,
   SPLIT_NUMBER_INVOICE,
 } from './data.mjs';
@@ -35,6 +36,7 @@ const EXPECTED_TEXT = {
   r201: ['电子发票', '普通发票', BUNDLED_FEE_INVOICE.number, BUNDLED_FEE_INVOICE.date, '运输服务', '经纪代理服务', '价税合计', BUNDLED_FEE_INVOICE.gross, BUNDLED_FEE_INVOICE.net, BUNDLED_FEE_INVOICE.tax],
   m12: ['行程单', AMAP_ITINERARY_GAP.brand, `共计${AMAP_ITINERARY_GAP.count}单行程`, `合计${AMAP_ITINERARY_GAP.total}元`, '张江', '浦东机场', '待结算'],
   m11: ['电子发票', '普通发票', OTHER_INVOICE.number, OTHER_INVOICE.date, '餐饮服务', OTHER_INVOICE.gross],
+  r204: ['铁路电子客票', RAIL_SPLIT_RUNS.number, RAIL_SPLIT_RUNS.date, RAIL_SPLIT_RUNS.train, RAIL_SPLIT_RUNS.from, RAIL_SPLIT_RUNS.to, RAIL_SPLIT_RUNS.seat, '票价', RAIL_SPLIT_RUNS.price],
   r01: ['电子发票', '增值税专用发票', SPLIT_NUMBER_INVOICE.number, SPLIT_NUMBER_INVOICE.date, '住宿服务', SPLIT_NUMBER_INVOICE.gross, SPLIT_NUMBER_INVOICE.net, SPLIT_NUMBER_INVOICE.tax],
   r02: ['电子发票', '普通发票', SPACED_TITLE_INVOICE.number, SPACED_TITLE_INVOICE.date, '住宿服务', SPACED_TITLE_INVOICE.gross, SPACED_TITLE_INVOICE.net, SPACED_TITLE_INVOICE.tax],
 };
