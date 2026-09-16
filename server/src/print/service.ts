@@ -205,8 +205,9 @@ async function compose(state: PrintState, settings: ReadonlyMap<string, PrintSet
     }
     const box = REGIONS[region];
     const turned = setting.rotate ?? prefersRotation(content.size, box);
+    const extraPages = content.kind === 'pdf' && content.pageCount > 1 ? { extraPageCount: content.pageCount - 1 } : {};
     return {
-      stored: { materialId, fileName: source.fileName, rotate: turned, croppable, corners, cropAdjusted: croppable && setting.corners !== undefined, original: photo },
+      stored: { materialId, fileName: source.fileName, rotate: turned, croppable, corners, cropAdjusted: croppable && setting.corners !== undefined, original: photo, ...extraPages },
       drawn: { content, rotate: turned, region: box },
     };
   };
@@ -236,6 +237,7 @@ async function compose(state: PrintState, settings: ReadonlyMap<string, PrintSet
       acceptsPaymentScreenshot: plan.acceptsPaymentScreenshot,
       expectsPaymentScreenshot: plan.expectsPaymentScreenshot,
       screenshotId: shot?.screenshotId ?? null,
+      droppedFileNames: plan.droppedMaterialIds.map((id) => state.sources.get(id)?.fileName).filter((name): name is string => name !== undefined),
     });
   }
   const pdf = await composeSheet(sheet);

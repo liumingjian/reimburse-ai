@@ -68,6 +68,9 @@ export type PagePlan = {
   pageId: string;
   voucherMaterialId: string;
   bottomMaterialId: string | null;
+  // The voucher's other supporting materials. One page holds one of them (the bottom half), so the rest are named in
+  // a notice rather than dropped without a word.
+  droppedMaterialIds: string[];
   no: number;
   nos: string;
   date: string;
@@ -106,11 +109,13 @@ export function planPages(lines: readonly Line[], materials: readonly Material[]
     const nos = first.no === last.no ? `No.${first.no}` : `No.${first.no}-${last.no}`;
     const grossAmount = amountOf(group.reduce((sum, line) => sum + cents(line.grossAmount), 0));
     const linked = materials.find((material) => material.materialId === voucherMaterialId)?.linkedMaterialIds ?? [];
-    const bottomMaterialId = [...group.flatMap((line) => line.referenceMaterialIds), ...linked].find((id) => known.has(id) && id !== voucherMaterialId) ?? null;
+    const supporting = [...new Set([...group.flatMap((line) => line.referenceMaterialIds), ...linked])].filter((id) => known.has(id) && id !== voucherMaterialId);
+    const [bottomMaterialId = null, ...droppedMaterialIds] = supporting;
     plans.push({
       pageId: `page.${voucherMaterialId}`,
       voucherMaterialId,
       bottomMaterialId,
+      droppedMaterialIds,
       no: first.no,
       nos,
       date: first.date,
@@ -125,3 +130,11 @@ export function planPages(lines: readonly Line[], materials: readonly Material[]
 }
 
 export const missingScreenshotNotice = (nos: string, categoryLabel: string): string => `${nos} ${categoryLabel}发票还没有支付截图。可以照常打印，该页下半页只放结账单。`;
+
+// 一页只有一个下半页，放不下第二份证明材料；说出来，别让它无声无息地少掉。
+export const droppedMaterialsNotice = (nos: string, fileNames: readonly string[]): string =>
+  `${nos} 还有 ${fileNames.length} 份证明材料没有放进打印稿（每页下半页只放一份）：${fileNames.join('、')}。这些材料请另外打印。`;
+
+// 多页的证明材料（长行程单、多页结账单）只嵌入了第 1 页。
+export const extraPagesNotice = (nos: string, fileName: string, pageCount: number): string =>
+  `${nos} 的「${fileName}」共 ${pageCount} 页，打印稿只放了第 1 页。其余 ${pageCount - 1} 页请另外打印。`;

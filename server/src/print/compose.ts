@@ -13,7 +13,8 @@ const canvasImport = () => import('@napi-rs/canvas');
 // Fractions of the page box (lower-left origin) that hold ink, padded; the rest is blank margin.
 type Trim = { left: number; bottom: number; right: number; top: number };
 
-export type Content = { kind: 'pdf'; bytes: Uint8Array; trim: Trim; size: Size } | { kind: 'image'; bytes: Uint8Array; size: Size };
+// `pageCount`: only page 1 is ever embedded, so the rest have to be reported rather than quietly left out.
+export type Content = { kind: 'pdf'; bytes: Uint8Array; trim: Trim; size: Size; pageCount: number } | { kind: 'image'; bytes: Uint8Array; size: Size };
 
 export type Drawn = { content: Content; rotate: boolean; region: Box };
 export type SheetPage = { header: string; drawn: readonly Drawn[] };
@@ -34,9 +35,10 @@ export async function pdfContent(bytes: Uint8Array): Promise<Content> {
   const pdf = await openPdf(bytes);
   try {
     const viewport = (await pdf.getPage(1)).getViewport({ scale: 1 });
+    const pageCount = pdf.numPages;
     const ink = await inkBox(new Uint8Array(await renderPageAsImage(pdf, 1, { canvasImport, scale: 1 })));
     const full = { width: viewport.width, height: viewport.height };
-    if (!ink) return { kind: 'pdf', bytes, trim: { left: 0, bottom: 0, right: 1, top: 1 }, size: full };
+    if (!ink) return { kind: 'pdf', bytes, trim: { left: 0, bottom: 0, right: 1, top: 1 }, size: full, pageCount };
     const padX = TRIM_PAD / viewport.width;
     const padY = TRIM_PAD / viewport.height;
     const trim = {
@@ -45,7 +47,7 @@ export async function pdfContent(bytes: Uint8Array): Promise<Content> {
       top: clamp01(1 - ink.top / ink.height + padY),
       bottom: clamp01(1 - ink.bottom / ink.height - padY),
     };
-    return { kind: 'pdf', bytes, trim, size: { width: (trim.right - trim.left) * viewport.width, height: (trim.top - trim.bottom) * viewport.height } };
+    return { kind: 'pdf', bytes, trim, size: { width: (trim.right - trim.left) * viewport.width, height: (trim.top - trim.bottom) * viewport.height }, pageCount };
   } finally {
     await pdf.loadingTask.destroy();
   }
