@@ -37,8 +37,8 @@ async function inventoriedFiles(files: readonly Upload[]) {
 const inventoried = (prefixes: readonly string[]) => inventoriedFiles(prefixes.map(sample));
 
 describe('the vat_invoice/einvoice layout on @baox/fixtures', () => {
-  it('parses m01, m03 and m05 into their face fields; m06 and m11 stay unrecognised', async () => {
-    const snapshot = await inventoried(['m01', 'm03', 'm05', 'm06', 'm11']);
+  it('parses m01, m03, m05 and r201 into their face fields; m06 and m11 stay unrecognised', async () => {
+    const snapshot = await inventoried(['m01', 'm03', 'm05', 'm06', 'm11', 'r201']);
 
     const hotel = byFileName(snapshot, sample('m01').name);
     expect(hotel).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', role: 'primary_voucher', status: 'ok' });
@@ -74,6 +74,21 @@ describe('the vat_invoice/einvoice layout on @baox/fixtures', () => {
     const caocao = byFileName(snapshot, sample('m05').name);
     expect(fieldValues(caocao, EINVOICE)).toMatchObject({ invoiceNumber: '26312000000099830115', issueDate: '2026-08-11', netAmount: '37.28', taxAmount: '1.12', totalAmount: '38.40' });
 
+    // A ride-hailing invoice that bundles an unrelated fee row beside its 运输服务 row is still recognised (#201),
+    // and its totals come from the 合计 row rather than from the leading item row.
+    const bundled = byFileName(snapshot, sample('r201').name);
+    expect(bundled).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', status: 'pending', pendingItemIds: [`category_city_missing.${bundled.materialId}`] });
+    expect(fieldValues(bundled, EINVOICE)).toMatchObject({
+      invoiceNumber: '26312000000104412880',
+      issueDate: '2026-08-16',
+      invoiceType: '普票',
+      sellerName: '某某出行服务（上海）有限公司',
+      itemName: '*运输服务*客运服务费',
+      netAmount: '47.38',
+      taxAmount: '1.60',
+      totalAmount: '48.98',
+    });
+
     // No v1 layout covers the 曹操 itinerary; a 餐饮 (catering) e-invoice is outside the v1 kinds.
     for (const prefix of ['m06', 'm11']) {
       const material = byFileName(snapshot, sample(prefix).name);
@@ -81,8 +96,8 @@ describe('the vat_invoice/einvoice layout on @baox/fixtures', () => {
       expect(material.pendingItemIds).toHaveLength(1);
       expect(snapshot.inventory.ungroupedMaterialIds).toContain(material.materialId);
     }
-    // m03 and m05 are ride-hailing invoices without itineraries: no expense city, so each waits on category_city_missing (#188).
-    expect(snapshot.inventory.summary).toMatchObject({ materialCount: 5, okCount: 1, pendingMaterialCount: 4, voucherCount: 1, openPendingItemCount: 4 });
+    // m03, m05 and r201 are ride-hailing invoices without itineraries: no expense city, so each waits on category_city_missing (#188).
+    expect(snapshot.inventory.summary).toMatchObject({ materialCount: 6, okCount: 1, pendingMaterialCount: 5, voucherCount: 1, openPendingItemCount: 5 });
     // Unrecognised materials leave 待确认项 open: the task moves on to pending items.
     expect(snapshot.stage).toBe('pending');
     expect(snapshot.step.kind).toBe('answer_pending');

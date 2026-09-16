@@ -34,8 +34,15 @@ export const MATERIAL_FILES = {
   m11: 'm11-other-invoice.pdf',
 };
 
+// 回归夹具 id → 产物文件名。不进 sample-materials.json：示例材料清单（m01–m11）是 mock 的演示集，
+// 回归夹具只服务测试，见 fixtures/index.mjs 的 REGRESSION_MATERIALS。
+export const REGRESSION_FILES = {
+  r201: 'r201-bundled-fee-invoice.pdf',
+};
+
 export const EXPECTED_FILES = [
   ...Object.values(MATERIAL_FILES),
+  ...Object.values(REGRESSION_FILES),
   ...PRINT_PAGES.map((page) => page.file),
   ...PRINT_VARIANTS.map((page) => page.file),
   PRINT_SHEET_FILE,
@@ -109,13 +116,15 @@ function run(cmd, args) {
   if (result.status !== 0) throw new Error(`${cmd} ${args.join(' ')}\n退出码 ${result.status}\n${(result.stderr ?? '').slice(-2000)}`);
 }
 
-export async function generate() {
+// only：只生成这些 id（如 `node scripts/generate.mjs r201`），用来补一份夹具而不重写其余产物；null = 全量重生成。
+export async function generate(only = null) {
+  const wanted = (id) => only === null || only.includes(id);
   const binary = chromeBinary();
   const work = mkdtempSync(join(tmpdir(), 'baox-fixtures-'));
   const profile = work;
   mkdirSync(OUTPUT_DIR, { recursive: true });
-  // 先清空产物目录：文件集由本脚本唯一决定，旧文件不残留。
-  for (const name of readdirSync(OUTPUT_DIR)) unlinkSync(join(OUTPUT_DIR, name));
+  // 先清空产物目录：文件集由本脚本唯一决定，旧文件不残留。只生成部分 id 时保留其余产物。
+  if (only === null) for (const name of readdirSync(OUTPUT_DIR)) unlinkSync(join(OUTPUT_DIR, name));
 
   const htmlOf = (doc) => {
     const path = join(work, `${doc.id}.html`);
@@ -124,7 +133,8 @@ export async function generate() {
   };
 
   const produced = [];
-  for (const [id, file] of Object.entries(MATERIAL_FILES)) {
+  for (const [id, file] of Object.entries({ ...MATERIAL_FILES, ...REGRESSION_FILES })) {
+    if (!wanted(id)) continue;
     const doc = DOCS[id];
     const target = join(OUTPUT_DIR, file);
     if (file.endsWith('.pdf')) {
@@ -140,6 +150,7 @@ export async function generate() {
   }
   for (const [index, doc] of PRINT_DOCS.entries()) {
     const page = PRINT_PAGES[index];
+    if (!wanted(page.id)) continue;
     const target = join(OUTPUT_DIR, page.file);
     await chrome(binary, profile, [`--window-size=${doc.width},${doc.height}`, `--screenshot=${target}`], htmlOf(doc));
     produced.push(page.file);
@@ -147,10 +158,16 @@ export async function generate() {
   }
   for (const [index, doc] of VARIANT_DOCS.entries()) {
     const variant = PRINT_VARIANTS[index];
+    if (!wanted(variant.id)) continue;
     const target = join(OUTPUT_DIR, variant.file);
     await chrome(binary, profile, [`--window-size=${doc.width},${doc.height}`, `--screenshot=${target}`], htmlOf(doc));
     produced.push(variant.file);
     console.log(`生成 ${variant.file}`);
+  }
+  // 只生成部分 id 时到此为止：合并打印稿要全部默认页图齐备。
+  if (only !== null) {
+    rmSync(work, { recursive: true, force: true });
+    return produced.sort();
   }
   // 合并打印稿：上面刚写出的默认页图逐页铺满 A4，打印成一份 PDF（没有文本层，只做下载样本）。
   const sheetHtml = join(work, 'print-sheet.html');
@@ -164,6 +181,6 @@ export async function generate() {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const produced = await generate();
+  const produced = await generate(process.argv.length > 2 ? process.argv.slice(2) : null);
   console.log(`共 ${produced.length} 个文件 → ${OUTPUT_DIR}`);
 }

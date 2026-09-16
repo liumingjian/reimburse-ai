@@ -62,6 +62,25 @@ export const AMAP_ITINERARY = {
   ],
 };
 
+// 回归夹具（不进示例材料清单）：真实网约车发票常把一行 v1 服务和一行无关费用（服务费 / 经纪代理服务）开在一起，
+// 识别不应因此整单作废；合计行与两行明细一致，所以只考识别门槛，不牵动勾稽校验。
+export const BUNDLED_FEE_INVOICE = {
+  id: 'r201',
+  file: 'r201-bundled-fee-invoice.pdf',
+  title: '电子发票（普通发票）',
+  number: '26312000000104412880',
+  date: '2026年08月16日',
+  seller: { name: '某某出行服务（上海）有限公司', taxNo: '91310000UUUUUUUU0F' },
+  rows: [
+    { name: '*运输服务*客运服务费', unit: '次', qty: '2', price: '', net: '41.55', rate: '3%', tax: '1.25' },
+    { name: '*经纪代理服务*平台服务费', unit: '次', qty: '1', price: '5.83', net: '5.83', rate: '6%', tax: '0.35' },
+  ],
+  net: '47.38',
+  tax: '1.60',
+  gross: '48.98',
+  grossWords: '肆拾捌圆玖角捌分',
+};
+
 export const CAOCAO_INVOICE = {
   id: 'm05',
   file: 'm05-caocao-invoice.pdf',

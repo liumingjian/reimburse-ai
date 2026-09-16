@@ -8,6 +8,7 @@ import { extractPdfText } from './pdftext.mjs';
 import {
   AMAP_INVOICE,
   AMAP_ITINERARY,
+  BUNDLED_FEE_INVOICE,
   CAOCAO_INVOICE,
   CAOCAO_ITINERARY,
   HOTEL_FOLIO,
@@ -16,7 +17,9 @@ import {
   RAIL_0809,
   RAIL_0822,
 } from './data.mjs';
-import { EXPECTED_FILES, MATERIAL_FILES, OUTPUT_DIR } from './generate.mjs';
+import { EXPECTED_FILES, MATERIAL_FILES, OUTPUT_DIR, REGRESSION_FILES } from './generate.mjs';
+
+const FILES = { ...MATERIAL_FILES, ...REGRESSION_FILES };
 
 // 每份 PDF 必须抽得出的字符串：标题、号码、日期、金额与关键中文。
 const EXPECTED_TEXT = {
@@ -28,6 +31,7 @@ const EXPECTED_TEXT = {
   m06: ['行程单', CAOCAO_ITINERARY.brand, '浦东机场', '张江', '38.40'],
   m07: ['铁路电子客票', RAIL_0809.number, RAIL_0809.date, RAIL_0809.train, RAIL_0809.from, RAIL_0809.to, RAIL_0809.price],
   m08: ['铁路电子客票', RAIL_0822.number, RAIL_0822.date, RAIL_0822.train, RAIL_0822.from, RAIL_0822.to, RAIL_0822.price],
+  r201: ['电子发票', '普通发票', BUNDLED_FEE_INVOICE.number, BUNDLED_FEE_INVOICE.date, '运输服务', '经纪代理服务', '价税合计', BUNDLED_FEE_INVOICE.gross, BUNDLED_FEE_INVOICE.net, BUNDLED_FEE_INVOICE.tax],
   m11: ['电子发票', '普通发票', OTHER_INVOICE.number, OTHER_INVOICE.date, '餐饮服务', OTHER_INVOICE.gross],
 };
 
@@ -57,7 +61,7 @@ function verify() {
     if (buf.length > 1.5 * 1024 * 1024) failures.push(`${name}：${(buf.length / 1024).toFixed(0)} KB，超过 1.5 MB`);
   }
   for (const [id, expected] of Object.entries(EXPECTED_TEXT)) {
-    const name = MATERIAL_FILES[id];
+    const name = FILES[id];
     const path = join(OUTPUT_DIR, name);
     let result;
     try {

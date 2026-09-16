@@ -10,6 +10,9 @@ export type SampleMaterial = { file: string; fileName: string };
 /** The manifest, the single source of sample file names; the mock's recognition profiles must agree with it (see web/src/mock/new-task.test.ts). */
 export declare const SAMPLE_MATERIALS: readonly SampleMaterial[];
 
+/** Generated materials that exist only for tests, outside the mock's demo set; same shape as the manifest. */
+export declare const REGRESSION_MATERIALS: readonly SampleMaterial[];
+
 /**
  * Absolute path of `legacy-baox/`: a synthetic legacy `~/.baox` (schemaVersion 1) for the one-time import. Alice
  * (tenant-a) is the bound identity; tasks a1 (`saved`), b1 (`upload_dispatched`), d1 (`erp-fill`, no invoices) touched

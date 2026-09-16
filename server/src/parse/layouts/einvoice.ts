@@ -16,6 +16,7 @@ const NUMBER = /^发票号码:(\d{20})$/;
 const ISSUE_DATE = /^开票日期:(\d{4})年(\d{2})月(\d{2})日$/;
 const ITEM_ROW = /^\*[^*]+\*/;
 // v1 kinds cover lodging and ride-hailing only; an e-invoice for anything else (e.g. 餐饮) is not this layout.
+// One such row is enough: real ride-hailing invoices bundle unrelated fee rows (服务费, 经纪代理服务) beside it.
 const V1_ITEM = /^\*(住宿服务|运输服务)\*/;
 const PARTY_NAME = /^名称:(.+)$/;
 const TAX_ID = /^(?:统一社会信用代码\/纳税人识别号:)?([0-9A-Z]{15,20})$/;
@@ -95,7 +96,7 @@ export const einvoice: Layout = {
 
   recognise(doc) {
     const items = itemNames(doc);
-    return Boolean(find(doc, TITLE) && find(doc, NUMBER)) && items.length > 0 && items.every((item) => V1_ITEM.test(item));
+    return Boolean(find(doc, TITLE) && find(doc, NUMBER)) && items.some((item) => V1_ITEM.test(item));
   },
 
   parse(doc) {
