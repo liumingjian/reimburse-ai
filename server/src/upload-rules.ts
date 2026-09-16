@@ -23,6 +23,19 @@ export function rejectByShape(fileName: string, mime: string, size: number): Upl
   return null;
 }
 
+const EXTENSION_MIME: Readonly<Record<string, string>> = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' };
+
+// The content type a stored original is kept and served under. Never the type the uploading browser claimed: blobs are
+// content-addressed and shared between accounts (the first upload's type would win for everyone), and the file is
+// served back from this origin, so a claimed `text/html` or `image/svg+xml` would be stored XSS. Derived from the
+// accepted extension, falling back to the client type only when it is one of the three kinds uploads accept.
+export function storedMime(fileName: string, mime: string): string {
+  const byExtension = EXTENSION_MIME[extensionOf(fileName)];
+  if (byExtension) return byExtension;
+  const canonical = MIME_EXTENSION[mime.toLowerCase()];
+  return (canonical ? EXTENSION_MIME[canonical] : undefined) ?? 'application/octet-stream';
+}
+
 export function rejectReason(code: UploadRejectCode, duplicateOf?: string): string {
   if (code === 'duplicate_content' && duplicateOf) return `${UPLOAD_REJECT_MESSAGES.duplicate_content}，与已接收的「${duplicateOf}」内容相同`;
   return UPLOAD_REJECT_MESSAGES[code];

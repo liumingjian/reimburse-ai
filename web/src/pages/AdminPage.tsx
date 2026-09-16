@@ -137,12 +137,17 @@ function AccountsSection({ myId }: { myId: string }) {
                   </TableCell>
                   <TableCell className="app-num app-sticky-end">
                     <div className="app-btn-row">
-                      <Button kind="ghost" size="sm" disabled={busy} onClick={() => void run(row.accountId, { role: row.role === 'admin' ? 'user' : 'admin' })}>
-                        {row.role === 'admin' ? ADMIN_COPY.demote : ADMIN_COPY.promote}
-                      </Button>
-                      <Button kind="ghost" size="sm" disabled={busy} onClick={() => void run(row.accountId, { active: !row.active })}>
-                        {row.active ? ADMIN_COPY.deactivate : ADMIN_COPY.reactivate}
-                      </Button>
+                      {/* 自己这一行不给「取消管理员」和「停用」：服务端也会拒绝（self_change），这里就不摆出来了。 */}
+                      {row.accountId === myId ? null : (
+                        <>
+                          <Button kind="ghost" size="sm" disabled={busy} onClick={() => void run(row.accountId, { role: row.role === 'admin' ? 'user' : 'admin' })}>
+                            {row.role === 'admin' ? ADMIN_COPY.demote : ADMIN_COPY.promote}
+                          </Button>
+                          <Button kind="ghost" size="sm" disabled={busy} onClick={() => void run(row.accountId, { active: !row.active })}>
+                            {row.active ? ADMIN_COPY.deactivate : ADMIN_COPY.reactivate}
+                          </Button>
+                        </>
+                      )}
                       <Button kind="ghost" size="sm" disabled={busy} onClick={() => setResetting(row)}>
                         {ADMIN_COPY.temporaryPassword}
                       </Button>

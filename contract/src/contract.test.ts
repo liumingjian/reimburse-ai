@@ -2,6 +2,7 @@
 import { describe, expect, test } from 'vitest';
 import { CREATE_TASK_ERRORS, CreateTaskInputSchema, PENDING_ANSWER_ERRORS, isRealDate, validatePendingAnswer } from './actions';
 import { STAGE_DEFAULT_PAGE, pageAllowed, stageReached } from './stage';
+import { UrlSchema } from './primitives';
 import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS } from './snapshot';
 
 describe('整单确认表', () => {
@@ -43,6 +44,22 @@ describe('契约 schema', () => {
     const choice = { kind: 'choice' as const, fields: [], choices: [{ key: 'exclude', label: '排除此材料' }] };
     expect(validatePendingAnswer(choice, { choice: 'exclude' })).toEqual({});
     expect(validatePendingAnswer(choice, { choice: 'nope' })).toEqual({ choice: PENDING_ANSWER_ERRORS.choice });
+  });
+});
+
+describe('地址字段', () => {
+  test('只收同源地址：伪协议与站外地址进不了 href / src', () => {
+    const accepts = (value: string) => UrlSchema.safeParse(value).success;
+    // 服务端与 mock 真正用到的形状。
+    for (const good of ['/api/tasks/t1/erp-capture', 'fixtures/m09-taxi-photo.jpg', 'fixtures/print-pg1.png', 'mock/screenshot/s1']) {
+      expect(accepts(good), good).toBe(true);
+    }
+    // 页面会把这些直接放进 href / src，伪协议就是以本源身份执行脚本。
+    for (const bad of ['javascript:alert(1)', 'JavaScript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'vbscript:msgbox(1)', 'http://evil.example.com/x', 'https://evil.example.com/x', '//evil.example.com/x']) {
+      expect(accepts(bad), bad).toBe(false);
+    }
+    // 页面自己用 URL.createObjectURL 造的支付截图预览地址，不来自服务端。
+    expect(accepts('blob:http://127.0.0.1:4319/6f1b-4c2a')).toBe(true);
   });
 });
 

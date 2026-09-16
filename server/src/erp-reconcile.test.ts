@@ -144,9 +144,13 @@ describe('fault injection at each ERP mutation point', () => {
     expect((await taskList()).tasks[0]).toMatchObject({ stage: 'reconcile', erpOutcome: 'handed_off', abandonable: false });
     const again = await client.act(handedOff, 'hand-off');
     expect(again.status).toBe(400);
+    // 去打印 never needs ERP (stories 57 and 63): 转人工 hands the ERP draft to a person, and that person still
+    // wants the paper bundle, so print stays open on a handed-off task.
+    expect((await alice.post(`/api/tasks/${handedOff.task.taskId}/actions/generate-print-sheet`, {})).status).toBe(200);
+    expect((await client.current(handedOff.task.taskId)).printSheet.status).toBe('generated');
     // Handed off is terminal: the account may start its next task; the handed-off task still holds its invoices.
     expect((await alice.post('/api/tasks', { homeCity: '杭州' })).status).toBe(200);
-  });
+  }, 120_000);
 
   it('a save that went through before the fault reconciles to 已保存 and, matching the approved preview line by line, is done', async () => {
     const stopped = await crashAt('after_save');
@@ -174,11 +178,11 @@ describe('fault injection at each ERP mutation point', () => {
 
   it('holds the ERP lease while reconcile reads: 409 erp_in_use for another task, the lease is freed on the result', async () => {
     const stopped = await crashAt('save');
-    server.erpLease.acquire({ accountId: 'someone', taskId: 'another-task' });
+    server.erpLease.acquire({ accountId: 'someone', taskId: 'another-task', jobId: 'another-job' });
     const blocked = await client.act(stopped, 'reconcile');
     expect(blocked.status).toBe(409);
     expect(((await blocked.json()) as { error: { code: string } }).error.code).toBe('erp_in_use');
-    server.erpLease.release('another-task');
+    server.erpLease.release('another-job');
     await reconcile(stopped);
     expect(server.erpLease.holder()).toBeNull();
   });

@@ -1,6 +1,6 @@
 import type { Corners, PaymentScreenshot, Placement, PrintSheet } from '@baox/contract';
 import type { Db } from '../db/database';
-import { missingScreenshotNotice } from './layout';
+import { droppedMaterialsNotice, extraPagesNotice, missingScreenshotNotice } from './layout';
 
 // The stored print facts of one task (migration 0007_190_print) and the snapshot's `printSheet` /
 // `paymentScreenshots` projected from them.
@@ -14,6 +14,8 @@ export type StoredPlacement = {
   cropAdjusted: boolean;
   // The original photo the corners refer to (EXIF orientation applied); null for a PDF.
   original: { sha256: string; width: number; height: number } | null;
+  // Pages of a multi-page PDF that were not embedded (only page 1 ever is). Absent means none were left out.
+  extraPageCount?: number;
 };
 
 export type StoredPage = {
@@ -29,7 +31,12 @@ export type StoredPage = {
   top: StoredPlacement | null;
   bottom: StoredPlacement | null;
   acceptsPaymentScreenshot: boolean;
+  // Absent in renders stored before every voucher could take a screenshot; those pages accepted one only when a
+  // missing one was worth a reminder, so the old flag is the right fallback.
+  expectsPaymentScreenshot?: boolean;
   screenshotId: string | null;
+  // Supporting materials this voucher has beyond the one on the bottom half; named in a notice, never dropped silently.
+  droppedFileNames?: string[];
 };
 
 export type Render = { renderId: string; confirmationRevision: number; pdfSha256: string; pages: StoredPage[] };
@@ -111,7 +118,15 @@ export function printView(taskId: string, taskName: string, facts: PrintFacts, s
         acceptsPaymentScreenshot: page.acceptsPaymentScreenshot,
         screenshotId: page.screenshotId,
       })),
-      notices: render.pages.filter((page) => page.acceptsPaymentScreenshot && page.screenshotId === null).map((page) => missingScreenshotNotice(page.nos, page.categoryLabel)),
+      // Everything the sheet could not carry is said out loud: a missing payment screenshot, the pages of a multi-page
+      // original that were not embedded, and the supporting materials a one-per-page bottom half had no room for.
+      notices: [
+        ...render.pages.filter((page) => (page.expectsPaymentScreenshot ?? page.acceptsPaymentScreenshot) && page.screenshotId === null).map((page) => missingScreenshotNotice(page.nos, page.categoryLabel)),
+        ...render.pages.flatMap((page) =>
+          [page.top, page.bottom].flatMap((placement) => (placement?.extraPageCount ? [extraPagesNotice(page.nos, placement.fileName, placement.extraPageCount + 1)] : [])),
+        ),
+        ...render.pages.flatMap((page) => (page.droppedFileNames && page.droppedFileNames.length > 0 ? [droppedMaterialsNotice(page.nos, page.droppedFileNames)] : [])),
+      ],
     },
   };
 }

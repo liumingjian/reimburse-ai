@@ -58,15 +58,15 @@ describe('reconcile job on the fake ERP', () => {
     expect([...buckets].sort()).toEqual(['不自洽', '已保存', '未保存·导入前', '未保存·已导入未写明细', '未保存·就绪待保存', '未知'].sort());
   });
 
-  it('issues no mutating CDP call in any state: only Runtime.evaluate, no ERP change, no attempt', async () => {
-    for (const state of RECONCILE_STATES) {
-      const { fake, preview } = await driveTo(state);
-      const { sent, newMutations, attempts } = await reconcile(fake, preview);
-      expect(sent.length, state).toBeGreaterThan(0);
-      expect([...new Set(sent.map((command) => command.method))], state).toEqual(['Runtime.evaluate']);
-      expect(newMutations, state).toEqual([]);
-      expect(attempts, state).toEqual([]);
-    }
+  // One state per test: driving all seven through a full fill and reconcile job inside a single 5s timeout made this
+  // flake. Each state now gets its own timeout, and a failure names the state that broke.
+  it.each(RECONCILE_STATES)('%s: issues no mutating CDP call, only Runtime.evaluate, no ERP change, no attempt', async (state) => {
+    const { fake, preview } = await driveTo(state);
+    const { sent, newMutations, attempts } = await reconcile(fake, preview);
+    expect(sent.length).toBeGreaterThan(0);
+    expect([...new Set(sent.map((command) => command.method))]).toEqual(['Runtime.evaluate']);
+    expect(newMutations).toEqual([]);
+    expect(attempts).toEqual([]);
   });
 
   it('pauses for login on the login page, without a read-back or any input', async () => {

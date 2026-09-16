@@ -85,11 +85,14 @@ describe('打印稿预览', () => {
     expect(download.getAttribute('download')).toBe('打印稿_2026-08上海出差.pdf');
   });
 
-  test('支付截图只在打印稿页补充：只有住宿页有入口；非图片被拒；补上后提醒消失，移除后回来；整单明细确认不变', async () => {
+  test('支付截图只在打印稿页补充：每张主要报销凭证都有入口；非图片被拒；补上后提醒消失，移除后回来；整单明细确认不变', async () => {
     const adapter = renderPrint(true);
     await screen.findByRole('list', { name: '打印稿页面' });
-    expect(within(pages()).getAllByRole('button', { name: /^补充支付截图/ })).toHaveLength(1);
+    // 故事 61：每张主要报销凭证都能配自己的支付截图，不只住宿。7 页各有一个入口。
+    expect(within(pages()).getAllByRole('button', { name: /^补充支付截图/ })).toHaveLength(7);
     expect(within(hotelCard()).getByRole('button', { name: '补充支付截图：全季酒店_发票.pdf' })).toBeTruthy();
+    // 提醒仍然只给住宿发票：其余页没补也不啰嗦。
+    expect((await screen.findByRole('status', { name: '打印提醒' })).textContent).toContain('No.9 住宿发票还没有支付截图');
 
     chooseScreenshot(new File(['%PDF'], '支付记录.pdf', { type: 'application/pdf' }));
     expect((await within(hotelCard()).findByRole('alert')).textContent).toBe(PAYMENT_SCREENSHOT_ERRORS.notImage);

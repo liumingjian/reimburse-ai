@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
-import type { AccountsState, AppState, AppStore, BookScope, ProjectBookState, SessionState, TaskEntry, TaskListState } from './store';
+import type { AccountsState, AppState, AppStore, BookScope, LegacyImportState, ProjectBookState, SessionState, TaskEntry, TaskListState } from './store';
 
 // 适配器经 React Context 注入：页面只认 useAppStore()，换适配器不改页面。
 
@@ -62,6 +62,16 @@ export function useAccounts(): AccountsState {
     if (state.accounts.status === 'idle') void store.loadAccounts();
   }, [store, state.accounts.status]);
   return state.accounts;
+}
+
+// 设置页的旧数据导入结果：第一次用到时读取；之后由重试 / 跳过的结果替换。
+export function useLegacyImport(): LegacyImportState {
+  const store = useAppStore();
+  const state = useAppState();
+  useEffect(() => {
+    if (state.legacyImport.status === 'idle') void store.loadLegacyImport();
+  }, [store, state.legacyImport.status]);
+  return state.legacyImport;
 }
 
 export function useTask(taskId: string): TaskEntry {

@@ -14,7 +14,7 @@
     "test": "pnpm lint && pnpm -r --workspace-concurrency=1 test",
     "test:private": "pnpm --filter @baox/server test:private",
     "test:erp-live": "pnpm --filter @baox/server test:erp-live",
-    "test:e2e": "pnpm --filter @baox/server --filter @baox/web build && pnpm --filter @baox/web build:mock && pnpm --filter @baox/web exec playwright test",
+    "test:e2e": "BAOX_BUILD_E2E=1 pnpm --filter @baox/server --filter @baox/web build && pnpm --filter @baox/web build:mock && pnpm --filter @baox/web exec playwright test",
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {

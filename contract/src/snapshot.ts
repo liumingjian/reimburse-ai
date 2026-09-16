@@ -643,10 +643,13 @@ export type ReconcileBucket = z.infer<typeof ReconcileBucketSchema>;
 // human_review 的固定句（user-interaction-contract.md:64，内核 handed_off_recover）：转人工的对账结果一律显示这句。
 export const HUMAN_REVIEW_NOTICE = '当前报销已暂停，材料和状态已保留。请在报销系统中核对；如无法判断，请联系报销管理员。';
 
-// 写入结果不确定后的对账：写入中止停在 reconcile 阶段；严格回读不一致停在 done 阶段（完成页显示差异行）。
+// 写入结果不确定后的对账：一律停在 reconcile 阶段。只有「已保存且逐行一致」才是 done（草稿已交接）；
+// 严格回读不一致的草稿没有被证明与确认过的明细一致，所以也停在对账，由用户决定原地等待还是转人工。
 // bucket 与 action / actionCode 是内核判定（bucket 与处置的对应照内核：未知、未保存·导入前、未保存·就绪待保存、
 // 身份成立的已保存 ⇒ 原地等待；未保存·已导入未写明细、不自洽、身份不成立或逐行不一致的已保存 ⇒ 转人工）。
 // allowedActions 是服务端允许的处置，页面只渲染这些按钮（原地等待 = 重新对账，只读；转人工 = 终止后续写入）。
+// action 是建议的处置，allowedActions 是可以做的处置：建议原地等待时也一直可以转人工（两个按钮），
+// 建议转人工时只能转人工（一个按钮）。
 // humanReview 为真时（转人工的结果）页面显示 HUMAN_REVIEW_NOTICE，且不给「重新对账」。
 // status：pending 等待用户处置；waiting 已重新对账、原地等待；handed_off 已转人工（终态）。
 // rows 是严格回读逐行比对（与 readback.rows 相同）；reasons 是不属于某一行的原因（逐行原因在 rows[].reasons）。
@@ -654,7 +657,8 @@ export const HUMAN_REVIEW_NOTICE = '当前报销已暂停，材料和状态已�
 // 页面照原样显示，不改写、不翻译。
 export const ErpCaptureSchema = z.object({
   erpText: z.array(z.string()),
-  screenshotUrl: z.string().nullable(),
+  // 同源路径（对账页把它直接放进 img src），与其余地址字段同一条规则。
+  screenshotUrl: UrlSchema.nullable(),
 });
 export type ErpCapture = z.infer<typeof ErpCaptureSchema>;
 

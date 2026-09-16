@@ -21,6 +21,10 @@ const SEED_ALIASES: Readonly<Record<string, TaskStage>> = { assign: 'project', p
 export const AUTH_OPTIONS = ['setup', 'signed-out'] as const;
 export type AuthOption = (typeof AUTH_OPTIONS)[number];
 
+// `?legacy=`：旧数据导入那一次的结果。failed 才有重试与跳过。
+export const LEGACY_OPTIONS = ['failed', 'imported', 'absent'] as const;
+export type LegacyOption = (typeof LEGACY_OPTIONS)[number];
+
 // mock 的「持久存储」：浏览器里是 localStorage（刷新后仍在），按账号分键；测试可以注入替身。
 export type MockStorage = {
   getItem(key: string): string | null;
@@ -42,6 +46,8 @@ export type MockOptions = {
   allocationRequired?: boolean;
   // `?duplicate=1`：盘点时跨任务查重命中（铁路电子客票_0809.pdf 已在已完成的任务 T3 里），整批停。
   duplicateHit?: boolean;
+  // `?legacy=failed|imported|absent`：设置页的旧数据导入面板摆出那一次导入的结果（不给则「没有运行过」）。
+  legacy?: LegacyOption;
   storage?: MockStorage;
   // `?location=unavailable`：mock 位置 Adapter 取不到网络位置，第一次新建任务时常驻城市没有默认值。不是故障场景。
   locationUnavailable?: boolean;
@@ -103,6 +109,11 @@ export function readMockOptions(search: string): MockOptions {
   if (duplicate !== null) {
     if (duplicate === '1') options.duplicateHit = true;
     else console.warn(`未知的 duplicate「${duplicate}」，可用值：1`);
+  }
+  const legacy = params.get('legacy');
+  if (legacy !== null) {
+    if ((LEGACY_OPTIONS as readonly string[]).includes(legacy)) options.legacy = legacy as LegacyOption;
+    else console.warn(`未知的 legacy「${legacy}」，可用值：${LEGACY_OPTIONS.join(', ')}`);
   }
   const auth = params.get('auth');
   if (auth !== null) {

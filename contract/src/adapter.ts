@@ -1,5 +1,6 @@
 import type { ActionError, AssignProjectLinesInput, CreateTaskInput, PlacementSlot, ProjectAssignmentInput } from './actions';
 import type { AccountList, AccountListOutcome, AccountUpdateInput, AuthOutcome, ChangePasswordInput, CredentialsInput, Session } from './auth';
+import type { LegacyImport, LegacyImportOutcome } from './legacy-import';
 import type { ProjectBook, ProjectBookResult } from './project-book';
 import type { Corners, PendingAnswer, TaskSnapshot } from './snapshot';
 import type { TaskList } from './task-list';
@@ -86,6 +87,11 @@ export interface AppAdapter {
   intakePublicProject(number: string): Promise<ProjectBookOutcome>;
   removePublicProject(number: string): Promise<ProjectBookOutcome>;
   recheckPublicProjects(): Promise<ProjectBookOutcome>;
+  // 旧数据导入（ADR-0018，只在创建第一个管理员时跑一次）：读这个账号看到的导入结果；旧数据损坏时报告里有逐个文件的原因，
+  // 由这个账号修好后重试，或明确跳过。跳过之后导入就此结束。
+  getLegacyImport(): Promise<LegacyImport>;
+  retryLegacyImport(): Promise<LegacyImportOutcome>;
+  skipLegacyImport(): Promise<LegacyImportOutcome>;
   getSnapshot(taskId: string): Promise<TaskSnapshot>;
   subscribe(taskId: string, onEvent: (event: AdapterEvent) => void): Unsubscribe;
 

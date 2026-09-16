@@ -117,28 +117,31 @@ async function write(tx: Db, accountId: string, runId: string, data: LegacyData,
 
 // `legacyHome` null disables the import (tests, unless they pass the fixture tree).
 export function createLegacyImport(db: Db, legacyHome: string | null, clock: () => Date) {
-  const latest = () => db.selectFrom('import_run').selectAll().orderBy('seq', 'desc').executeTakeFirst();
+  const latest = (tx: Db = db) => tx.selectFrom('import_run').selectAll().orderBy('seq', 'desc').executeTakeFirst();
 
-  async function run(accountId: string): Promise<void> {
+  // Always inside the caller's transaction, so the run row and everything it imported land together.
+  async function run(accountId: string, tx: Db): Promise<void> {
     const at = iso(clock());
     const read = legacyHome ? readLegacyTree(legacyHome) : ({ kind: 'absent' } as const);
-    if (read.kind === 'absent') await recordRun(db, accountId, 'absent', emptyReport(), at);
-    else if (read.kind === 'corrupt') await recordRun(db, accountId, 'failed', emptyReport(read.problems), at);
-    else await db.transaction().execute(async (tx) => write(tx, accountId, await recordRun(tx, accountId, 'imported', reportOf(read.data), at), read.data, at));
+    if (read.kind === 'absent') await recordRun(tx, accountId, 'absent', emptyReport(), at);
+    else if (read.kind === 'corrupt') await recordRun(tx, accountId, 'failed', emptyReport(read.problems), at);
+    else await write(tx, accountId, await recordRun(tx, accountId, 'imported', reportOf(read.data), at), read.data, at);
   }
 
-  // The owner's pending (failed) run, or a refusal.
-  async function pending(accountId: string): Promise<ImportRunTable> {
-    const row = await latest();
+  // The owner's pending (failed) run, or a refusal. Read inside the transaction that acts on it, so two concurrent
+  // retries cannot both pass it and both import.
+  async function pending(accountId: string, tx: Db): Promise<ImportRunTable> {
+    const row = await latest(tx);
     if (!row || row.account_id !== accountId || row.outcome !== 'failed') throw new LegacyImportRefusal();
     return row;
   }
 
   return {
-    // Called right after the first admin account is created. A second call finds the run and does nothing.
-    async onFirstAdmin(accountId: string): Promise<void> {
-      if (await latest()) return;
-      await run(accountId);
+    // Called right after the first admin account is created, inside that same transaction. A second call finds the
+    // run and does nothing.
+    async onFirstAdmin(accountId: string, tx: Db = db): Promise<void> {
+      if (await latest(tx)) return;
+      await run(accountId, tx);
     },
 
     async view(accountId: string): Promise<LegacyImport> {
@@ -148,15 +151,19 @@ export function createLegacyImport(db: Db, legacyHome: string | null, clock: () 
     },
 
     async retry(accountId: string): Promise<LegacyImport> {
-      await pending(accountId);
-      await run(accountId);
+      await db.transaction().execute(async (tx) => {
+        await pending(accountId, tx);
+        await run(accountId, tx);
+      });
       return this.view(accountId);
     },
 
     // 明确跳过 (explicit skip): recorded, and it ends the import for good.
     async skip(accountId: string): Promise<LegacyImport> {
-      const failed = await pending(accountId);
-      await recordRun(db, accountId, 'skipped', JSON.parse(failed.report) as LegacyImportReport, iso(clock()));
+      await db.transaction().execute(async (tx) => {
+        const failed = await pending(accountId, tx);
+        await recordRun(tx, accountId, 'skipped', JSON.parse(failed.report) as LegacyImportReport, iso(clock()));
+      });
       return this.view(accountId);
     },
   };

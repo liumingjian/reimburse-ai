@@ -54,11 +54,13 @@ describe('对账', () => {
     expect(new Set(CASES.map(([bucket]) => bucket))).toEqual(new Set(RECONCILE_BUCKETS));
   });
 
-  for (const [bucket, consistent, only, humanReview] of CASES) {
-    test(`${bucket}${bucket === '已保存' ? (consistent ? '（一致）' : '（逐行不一致）') : ''}：只显示「${only}」${humanReview ? '，显示人工核对固定句' : ''}`, () => {
+  for (const [bucket, consistent, suggested, humanReview] of CASES) {
+    // 建议转人工时只能转人工；建议原地等待时两个都能做（与服务端 reconcileView 的 allowedActions 一致）。
+    const expected = humanReview ? ['转人工'] : ['重新对账', '转人工'];
+    test(`${bucket}${bucket === '已保存' ? (consistent ? '（一致）' : '（逐行不一致）') : ''}：建议「${suggested}」，可做 ${expected.join(' / ')}${humanReview ? '，显示人工核对固定句' : ''}`, () => {
       renderVerdict(bucket, consistent);
       expect(screen.getByTestId('reconcile-bucket').textContent).toBe(bucket);
-      expect(actionButtons()).toEqual([only]);
+      expect(actionButtons()).toEqual(expected);
       if (humanReview) {
         expect(screen.getByTestId('human-review').textContent).toBe(HUMAN_REVIEW_NOTICE);
         expect(screen.queryByRole('button', { name: '重新对账' })).toBeNull();
@@ -115,7 +117,7 @@ describe('对账', () => {
     expect(screen.queryByRole('heading', { name: '当前对账状态' })).toBeNull();
     expect(screen.getByTestId('reconcile-bucket').textContent).toBe('未知');
     expect(screen.getByTestId('reconcile-draft-no').textContent).toBe('尚未读到草稿');
-    expect(actionButtons()).toEqual(['重新对账']);
+    expect(actionButtons()).toEqual(['重新对账', '转人工']);
     expect(screen.queryByTestId('human-review')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '重新对账' }));
@@ -125,13 +127,13 @@ describe('对账', () => {
     expect(screen.getByText(/重新对账：报销系统中已有草稿 BX20260911-0173/)).toBeTruthy();
   });
 
-  test('服务端也只接受允许的处置：未知 bucket 拒绝转人工，转人工的 bucket 拒绝重新对账', async () => {
+  test('服务端也只接受允许的处置：转人工的 bucket 拒绝重新对账，原地等待的 bucket 两种都接受', async () => {
     const adapter = createMockAdapter({ seed: 'reconcile', fault: null });
-    const t1 = await adapter.getSnapshot('T1');
-    const refused = await adapter.handOff('T1', t1.step.stepToken);
-    expect(!refused.ok && refused.error.code).toBe('action_not_allowed');
     const t2 = await adapter.getSnapshot('T2');
     const refusedWait = await adapter.reconcile('T2', t2.step.stepToken);
     expect(!refusedWait.ok && refusedWait.error.code).toBe('action_not_allowed');
+    // 建议原地等待（未知）时转人工一直是允许的：卡住的人总得能交给人处理。
+    const t1 = await adapter.getSnapshot('T1');
+    expect((await adapter.handOff('T1', t1.step.stepToken)).ok).toBe(true);
   });
 });

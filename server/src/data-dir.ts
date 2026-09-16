@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -18,9 +18,12 @@ export function databasePath(root: string): string {
   return join(root, 'baox.sqlite');
 }
 
+// `mkdirSync`'s mode is masked by the process umask, and a directory that already exists keeps whatever mode it had,
+// so the 0700 of ADR-0015 is set explicitly rather than only asked for.
 export function ensureDataDir(root: string): void {
   for (const dir of [root, join(root, 'files', 'sha256'), join(root, 'files', 'tmp'), join(root, 'backups')]) {
     mkdirSync(dir, { recursive: true, mode: DIR_MODE });
+    chmodSync(dir, DIR_MODE);
   }
 }
 
@@ -74,6 +77,7 @@ export function writeBlob(root: string, bytes: Uint8Array): string {
   const target = blobPath(root, sha256);
   if (existsSync(target)) return sha256;
   mkdirSync(dirname(target), { recursive: true, mode: DIR_MODE });
+  chmodSync(dirname(target), DIR_MODE);
   const temp = join(root, 'files', 'tmp', `${sha256}.${randomBytes(6).toString('hex')}`);
   const fd = openSync(temp, 'wx', FILE_MODE);
   try {

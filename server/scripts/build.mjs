@@ -6,8 +6,12 @@ import { build } from 'esbuild';
 // package, plus the OCR stack (onnxruntime-node and sharp are native addons; opencv-js is a 10 MB wasm build; the
 // OCR models are resolved from @gutenye/ocr-models at runtime). The banner gives bundled CommonJS dependencies a
 // `require`.
+// The e2e entry carries the scripted ERP doubles, so it is built only for the Playwright `server` project
+// (root `test:e2e` sets BAOX_BUILD_E2E=1) and never ends up in a bundle users run.
+const e2e = process.env['BAOX_BUILD_E2E'] === '1';
+
 await build({
-  entryPoints: { main: 'src/main.ts', 'parse-worker': 'src/parse/worker.ts', baox: 'src/cli-main.ts' },
+  entryPoints: { main: 'src/main.ts', 'parse-worker': 'src/parse/worker.ts', baox: 'src/cli-main.ts', ...(e2e ? { 'e2e-main': 'src/e2e-main.ts' } : {}) },
   outdir: 'dist',
   outExtension: { '.js': '.mjs' },
   bundle: true,

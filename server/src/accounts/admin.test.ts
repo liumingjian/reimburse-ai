@@ -21,7 +21,7 @@ async function refused(response: Response, status: number, code: string) {
 const update = (client: TestClient, accountId: string, change: unknown) => client.post(`/api/admin/accounts/${accountId}`, change);
 
 describe('promote and demote', () => {
-  it('refuses to demote the last admin, and allows it once another admin exists', async () => {
+  it('refuses to demote the last admin; once another admin exists only that other admin may do it', async () => {
     await refused(await update(admin, admin.account.accountId, { role: 'user' }), 400, 'last_admin');
 
     const bob = await server.signIn('bob');
@@ -29,7 +29,9 @@ describe('promote and demote', () => {
     expect(promoted.status).toBe(200);
     expect(AccountListSchema.parse(await promoted.json()).accounts.find((a) => a.username === 'bob')).toMatchObject({ role: 'admin', active: true });
 
-    expect((await update(admin, admin.account.accountId, { role: 'user' })).status).toBe(200);
+    // Even with a colleague around, giving up your own admin rights is refused: another admin does it for you.
+    await refused(await update(admin, admin.account.accountId, { role: 'user' }), 400, 'self_change');
+    expect((await update(bob, admin.account.accountId, { role: 'user' })).status).toBe(200);
     // The demoted account loses admin powers on its very next request.
     await refused(await admin.request('/api/admin/accounts'), 403, 'forbidden');
     await refused(await update(bob, bob.account.accountId, { role: 'user' }), 400, 'last_admin');

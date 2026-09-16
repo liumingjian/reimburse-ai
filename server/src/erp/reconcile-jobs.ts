@@ -4,8 +4,9 @@
 //
 // The global ERP lease is acquired by the `reconcile` action (`tasks.ts`) and released here on the result.
 
+import type { Db } from '../db/database';
 import type { ErpLease } from '../erp-lease';
-import type { RecordFacts } from './fill-jobs';
+import { ensureResult, type RecordFacts } from './fill-jobs';
 import { writeEvent } from './jobs';
 import { ExecutorEventSchema, type ExecutorChannel, type ExecutorEvent, type ReconcilePlan, type ResultEvent } from './protocol';
 import type { ReconcileExecutor } from './reconcile-job';
@@ -19,7 +20,7 @@ export const unavailableReconcileExecutor: ReconcileExecutor = async (_plan, cha
   return event;
 };
 
-export function createReconcileJobs({ lease, execute, record }: { lease: ErpLease; execute: ReconcileExecutor; record: RecordFacts }) {
+export function createReconcileJobs({ db, lease, execute, record }: { db: Db; lease: ErpLease; execute: ReconcileExecutor; record: RecordFacts }) {
   const active = new Set<Promise<void>>();
 
   async function drive({ jobId, accountId, taskId, plan }: ReconcileRun): Promise<void> {
@@ -29,11 +30,11 @@ export function createReconcileJobs({ lease, execute, record }: { lease: ErpLeas
       const event = ExecutorEventSchema.parse(raw);
       // A reconcile job never mutates ERP: an attempt from it is a bug, never a fact.
       if (event.type === 'attempt_started') throw new Error('a reconcile job may not start an ERP action attempt');
-      if (event.type === 'result') {
-        lease.release(taskId);
-        finished = true;
-      }
+      // Released before the result is visible, so whoever sees the result sees the lease free. `finished` is set only
+      // once the row is durable, so a throw while recording still leaves the fallback below a job to close.
+      if (event.type === 'result') lease.release(jobId);
       await record(accountId, taskId, (tx) => writeEvent(tx, jobId, taskId, event, at()));
+      if (event.type === 'result') finished = true;
       return event.type === 'readback' ? { ok: true as const } : undefined;
     };
     const channel = { emit: emit as ExecutorChannel['emit'] };
@@ -45,7 +46,9 @@ export function createReconcileJobs({ lease, execute, record }: { lease: ErpLeas
         await channel.emit({ type: 'result', status: 'aborted', code: 'executor_error', message, billNo: null, capture: null });
       }
     } finally {
-      lease.release(taskId);
+      lease.release(jobId);
+      // Never leave the run without a result: the task would stay 对账中 and refuse every mutation until a restart.
+      if (!finished) await ensureResult(db, jobId, taskId, 'reconcile').catch((error: unknown) => console.error(`ERP reconcile job ${jobId} could not be closed`, error));
     }
   }
 

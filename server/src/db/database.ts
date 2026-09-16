@@ -55,6 +55,11 @@ export async function openDatabase(path: string): Promise<Db> {
   if (onDisk) {
     chmodSync(path, 0o600);
     sqlite.pragma('journal_mode = WAL');
+    // WAL puts `-wal` and `-shm` beside the database. They hold the same reimbursement data and must be as private.
+    for (const suffix of ['-wal', '-shm']) {
+      const side = `${path}${suffix}`;
+      if (existsSync(side)) chmodSync(side, 0o600);
+    }
   }
   sqlite.pragma('foreign_keys = ON');
   const pending = Object.keys(MIGRATIONS).filter((name) => !executed.includes(name));
