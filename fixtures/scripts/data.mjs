@@ -81,6 +81,25 @@ export const BUNDLED_FEE_INVOICE = {
   grossWords: '肆拾捌圆玖角捌分',
 };
 
+// 回归夹具（不进示例材料清单）：真实网约车发票按 *交通运输服务* 开票，并且把几个字段画在同一条基线上
+// ——「发票号码」与「开票日期」并排一行，标题旁边还印着联次——所以把整行连起来，谁也匹配不上；只有行内那段
+// 连续的文本串正好是一个字段。标签与取值本身也是分开的两串。
+export const TRANSPORT_INVOICE = {
+  id: 'r206',
+  file: 'r206-transport-invoice.pdf',
+  title: '电子发票（普通发票）',
+  number: '26312000000104412906',
+  date: '2026年08月17日',
+  seller: { name: '某某出行科技（广州）有限公司', taxNo: '91440000TTTTTTTT0G' },
+  rows: [{ name: '*交通运输服务*客运服务费', unit: '次', qty: '1', price: '26.69', net: '26.69', rate: '3%', tax: '0.80' }],
+  net: '26.69',
+  tax: '0.80',
+  gross: '27.49',
+  grossWords: '贰拾柒圆肆角玖分',
+  // 同一条基线上并排的字段，标签与取值各成一串。
+  sharedBaseline: true,
+};
+
 // An itinerary whose declared leg count agrees with its parsed row count while that leg's amount cannot be read: the
 // amount cell says 待结算 (settlement pending). This is the case behind the false 「对不上」 (counts disagree) message.
 export const AMAP_ITINERARY_GAP = {

@@ -2,8 +2,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_DIR } from '@baox/fixtures';
 import { describe, expect, it } from 'vitest';
-import { compact } from '../doc';
+import { compact, joinedRows, matchRow, matchSpan } from '../doc';
 import { dispatch } from '../dispatch';
+import { KINDS } from '../kinds';
 import { parseMaterial } from '../material';
 import { pdfDoc } from '../pdf';
 import { einvoice, QR_SOURCE, readQr } from './einvoice';
@@ -70,6 +71,36 @@ describe('vat_invoice/einvoice', () => {
     // Take the v1 service row away and nothing is left that this layout covers.
     const noV1 = { ...doc, observations: doc.observations.map((o) => (o.text.includes('运输服务') ? { ...o, text: o.text.replace('运输服务', '餐饮服务') } : o)) };
     expect(einvoice.recognise(noV1)).toBe(false);
+  });
+
+  // #206: the shapes the real corpus showed — a 交通运输服务 item row, and anchors that share a baseline with the field
+  // printed beside them, so a whole joined row matches nothing.
+  it('recognises r206, a 交通运输服务 invoice whose 发票号码 and 开票日期 share one baseline', async () => {
+    const doc = await pdfDoc(fixture('r206-transport-invoice.pdf'));
+    // The fixture really shares baselines: the row carrying 发票号码 carries 开票日期 too, and the title row carries the
+    // 联次 beside it, so neither row reads as one anchor.
+    const lines = joinedRows(doc);
+    for (const pattern of [/^电子发票\((增值税专用发票|普通发票)\)$/, /^发票号码:(\d{20})$/, /^开票日期:(\d{4})年(\d{2})月(\d{2})日$/]) {
+      expect(matchRow(lines, pattern)).toBeNull();
+      expect(matchSpan(lines, pattern)).not.toBeNull();
+    }
+
+    const outcome = dispatch(doc, LAYOUTS);
+    if (outcome.outcome !== 'recognised') throw new Error(`expected recognised, got ${JSON.stringify(outcome)}`);
+    expect(outcome).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（普票）', missing: [] });
+    expect(Object.fromEntries(outcome.candidates.map((c) => [c.key, c.value]))).toMatchObject({
+      invoiceNumber: '26312000000104412906',
+      issueDate: '2026-08-17',
+      invoiceType: '普票',
+      itemName: '*交通运输服务*客运服务费',
+      netAmount: '26.69',
+      taxAmount: '0.80',
+      totalAmount: '27.49',
+    });
+    expect(outcome.findings.filter((f) => f.kind === 'validation')).toEqual([]);
+    // 交通运输服务 lands in the same 市内交通 category 运输服务 does: no new category, no new kind.
+    const values = Object.fromEntries(outcome.candidates.filter((c) => c.source === `rule:${outcome.kind}/${outcome.layout}`).map((c) => [c.key, c.value]));
+    expect(KINDS.vat_invoice.categoryLabel(values)).toBe('市内交通');
   });
 
   it('does not recognise an e-invoice outside the v1 kinds (m11, 餐饮) or a document without the invoice title (m06)', async () => {

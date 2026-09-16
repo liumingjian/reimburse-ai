@@ -1,4 +1,4 @@
-import { cents, compact, joinedRows, matchRow, money, rows, type JoinedRow, type ParseDoc, type TextObservation } from '../doc';
+import { cents, compact, joinedRows, matchSpan, money, rows, type JoinedRow, type ParseDoc, type TextObservation } from '../doc';
 import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout } from '../layout';
 
 // `ride_itinerary/amap`: the 高德行程单 (Amap ride itinerary), a reference material listing each ride leg. PDF and image
@@ -12,7 +12,7 @@ import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout
 
 const KIND = 'ride_itinerary';
 const NAME = 'amap';
-const VERSION = '2';
+const VERSION = '3';
 const SOURCE = ruleSource(KIND, NAME);
 
 const BRAND = /高德地图|AMAPITINERARY/;
@@ -121,14 +121,19 @@ export const amapItinerary: Layout = {
       if (value) candidates.push({ key, value, source: SOURCE, parserVersion: VERSION, evidence: 'explicit', refs: ref(evidence) });
     };
 
-    const apply = doc.observations.find((o) => APPLY_DATE.test(compact(o.text)));
-    if (apply) add('applyDate', APPLY_DATE.exec(compact(apply.text))?.[1], [apply]);
+    // 申请日期 and the 共计N单行程 summary are matched against row spans, not against one text run and not against the
+    // whole row: a real itinerary prints several fields on one baseline and splits a label from its value, so the
+    // narrowest contiguous run of a row is the only haystack that holds exactly one field (ADR-0017: the haystack
+    // narrows, the patterns stay fully anchored).
+    const lines = allRows(doc);
+    const apply = matchSpan(lines, APPLY_DATE);
+    if (apply) add('applyDate', apply.match[1], apply.span.observations);
 
-    const summary = matchRow(allRows(doc), SUMMARY);
+    const summary = matchSpan(lines, SUMMARY);
     const total = summary?.match[2] ? cents(summary.match[2]) : null;
     if (summary) {
-      add('segmentCount', String(Number(summary.match[1])), summary.row.observations);
-      if (total !== null) add('itineraryTotal', money(total), summary.row.observations);
+      add('segmentCount', String(Number(summary.match[1])), summary.span.observations);
+      if (total !== null) add('itineraryTotal', money(total), summary.span.observations);
     }
 
     const head = header(doc);

@@ -106,11 +106,23 @@ const TAXI_RECEIPT_SLOTS: readonly Slot[] = [
 // `*住宿服务*住宿费` → 住宿费; the 税收分类 (tax class) between the asterisks decides the category.
 const itemParts = (itemName: string | undefined) => /^\*([^*]+)\*(.*)$/.exec(itemName ?? '');
 
-function vatCategory(values: Readonly<Record<string, string>>): ExpenseCategory | null {
-  const taxClass = itemParts(values['itemName'])?.[1];
+// The v1 item rows, as they are actually printed. A face names either the fine 税收分类 (`*住宿服务*`, `*运输服务*`) or
+// its parent class (`*交通运输服务*` on ride-hailing invoices, `*生产生活服务*住宿费` on hotel ones), so both spellings
+// map here. The categories themselves are unchanged: this adds no 费用类别 (expense category) and no 材料种类
+// (material kind) to ADR-0017's v1 matrix. `vat_invoice/einvoice` gates recognition on the same map, so what the
+// layout accepts and what a line is categorised as can never drift apart.
+export function vatItemCategory(itemName: string | undefined): ExpenseCategory | null {
+  const parts = itemParts(itemName);
+  const taxClass = parts?.[1];
+  const description = parts?.[2] ?? '';
   if (taxClass === '住宿服务') return CATEGORIES.accommodation;
-  if (taxClass === '运输服务') return CATEGORIES.city_transport;
+  if (taxClass === '生产生活服务') return description.startsWith('住宿费') ? CATEGORIES.accommodation : null;
+  if (taxClass === '运输服务' || taxClass === '交通运输服务') return CATEGORIES.city_transport;
   return null;
+}
+
+function vatCategory(values: Readonly<Record<string, string>>): ExpenseCategory | null {
+  return vatItemCategory(values['itemName']);
 }
 
 // Kernel maskNumber: first 4 and last 4 digits, the rest starred.

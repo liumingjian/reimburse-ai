@@ -21,6 +21,7 @@ import {
   RAIL_SPLIT_RUNS,
   SPACED_TITLE_INVOICE,
   SPLIT_NUMBER_INVOICE,
+  TRANSPORT_INVOICE,
 } from './data.mjs';
 import { EXPECTED_FILES, OUTPUT_DIR, PDF_DOC_FILES } from './generate.mjs';
 
@@ -40,6 +41,7 @@ const EXPECTED_TEXT = {
   r204: ['铁路电子客票', RAIL_SPLIT_RUNS.number, RAIL_SPLIT_RUNS.date, RAIL_SPLIT_RUNS.train, RAIL_SPLIT_RUNS.from, RAIL_SPLIT_RUNS.to, RAIL_SPLIT_RUNS.seat, '票价', RAIL_SPLIT_RUNS.price],
   r01: ['电子发票', '增值税专用发票', SPLIT_NUMBER_INVOICE.number, SPLIT_NUMBER_INVOICE.date, '住宿服务', SPLIT_NUMBER_INVOICE.gross, SPLIT_NUMBER_INVOICE.net, SPLIT_NUMBER_INVOICE.tax],
   r205: ['行程单', AMAP_ITINERARY_WRAPPED.brand, `共计${AMAP_ITINERARY_WRAPPED.count}单行程`, `合计${AMAP_ITINERARY_WRAPPED.total}元`, '2026-08-10', '08:52', '26.69元', '42.50', '虹桥枢纽', '张江'],
+  r206: ['电子发票', '普通发票', TRANSPORT_INVOICE.number, TRANSPORT_INVOICE.date, '交通运输服务', '发票联', TRANSPORT_INVOICE.gross, TRANSPORT_INVOICE.net, TRANSPORT_INVOICE.tax],
   r02: ['电子发票', '普通发票', SPACED_TITLE_INVOICE.number, SPACED_TITLE_INVOICE.date, '住宿服务', SPACED_TITLE_INVOICE.gross, SPACED_TITLE_INVOICE.net, SPACED_TITLE_INVOICE.tax],
 };
 
