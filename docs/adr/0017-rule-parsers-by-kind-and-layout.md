@@ -39,6 +39,8 @@ With no model in the loop, rule parsers and the user are the only producers of �
 
   Anything else is unrecognised, including 曹操出行 (Caocao) itineraries, other chains' folios, road tickets and other vouchers. Payment screenshots are never parsed; they appear only on the print sheet.
 
+  `vat_invoice/einvoice` recognises an invoice when **at least one** item row names a v1 税收分类 (tax class), not when every row does: a real ride-hailing invoice bundles a 服务费 or 经纪代理服务 row beside the ride, and the whole invoice is not thrown away over it. The accepted classes are the fine ones, `住宿服务` and `运输服务`, and the parent ones, `生产生活服务` and `交通运输服务`, the parents only together with a description that names the v1 service (`住宿费`, `客运服务费`) — a parent class covers freight and much else besides. The categories are unchanged: no 费用类别 (expense category) and no 材料种类 (material kind) is added to this matrix.
+
 ## Considered Options
 
 - **One parser per kind only.** This means fewer modules, but each new vendor makes one module branch further, and layout quirks collide: the 曹操 invoice's negative discount line and the AA itinerary's wrapped cells would share one module.
@@ -61,11 +63,11 @@ With no model in the loop, rule parsers and the user are the only producers of �
   - `PendingField.format: money`.
 
   Manual fill reuses pending items of `kind: form`.
-- **Tests:** each layout has tests on `@baox/fixtures`:
-  - `vat_invoice`: m01, m03, m05;
+- **Tests:** each layout has tests on `@baox/fixtures`. The `m` fixtures are the demo scenario's sample materials; the `r` fixtures are regression-only and reproduce how a real face is drawn — split text runs, fields sharing one baseline, a bundled item row, an unreadable cell:
+  - `vat_invoice`: m01, m03, m05; r01 (发票号码 apart from its label), r02 (letter-spaced title), r201 (a bundled non-v1 item row), r206 (`*交通运输服务*` and fields on one baseline);
   - `hotel_folio/quanji`: m02;
-  - `ride_itinerary/amap`: m04;
-  - `rail_ticket`: m07, m08;
+  - `ride_itinerary/amap`: m04; r202 (a leg amount that reads 待结算), r205 (a wrapped 上车时间 cell and 元-suffixed amounts);
+  - `rail_ticket`: m07, m08; r204 (a trip row with a seat cell, 票价 apart from its amount);
   - `taxi_receipt`: m09, m10;
   - unrecognised: m06, m11.
 

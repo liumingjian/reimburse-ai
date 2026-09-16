@@ -1,5 +1,7 @@
-// HTML 模板：每份材料一个片段 { id, width, height, css, body }，由 generate.mjs 包成完整文档交给 headless Chrome。
-// 尺寸按 96dpi 像素：A4 纵向 794x1123，横向 1123x794。样式只服务夹具外观，与应用的 DESIGN.md 无关。
+// The HTML templates: one fragment { id, width, height, css, body } per material, which generate.mjs wraps into a
+// whole document and hands to headless Chrome.
+// Sizes are 96dpi pixels: A4 portrait 794x1123, landscape 1123x794. The styling serves the fixture's look only and has
+// nothing to do with the app's DESIGN.md.
 import {
   AMAP_INVOICE,
   AMAP_ITINERARY,
@@ -29,13 +31,14 @@ export const A4 = { width: 794, height: 1123 };
 export const A4_LANDSCAPE = { width: 1123, height: 794 };
 export const PHOTO = { width: 900, height: 1200 };
 
-// 字体决定文本层能否被原样抽回：PingFang / Songti / Hiragino 的 ToUnicode 会把「入日子金」等映射成康熙部首码位，
-// STHeiti / Yuanti SC / Arial Unicode MS / LiSong Pro 在 Chrome 152 下抽回的是正常汉字（fixtures/scripts/verify.mjs 会校验）。
+// The font decides whether the text layer can be extracted as written: the ToUnicode maps of PingFang / Songti /
+// Hiragino turn 入日子金 and friends into Kangxi radical code points, while STHeiti / Yuanti SC / Arial Unicode MS /
+// LiSong Pro come back as ordinary Han characters under Chrome 152 (fixtures/scripts/verify.mjs checks this).
 const FONT = '"STHeiti", "Yuanti SC", "Arial Unicode MS", "LiSong Pro", sans-serif';
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-// ---- 全电发票（专票/普票共用版式，只换标题与颜色）----
+// ---- 全电发票 (fully digital e-invoice): 专票 and 普票 share one layout, only the title and the colour differ ----
 function invoice(data, accent) {
   const css = `
 .inv { width: 794px; height: 1123px; padding: 56px 48px; font-family: ${FONT}; color: #222; font-size: 13px; position: relative; background: #fff; }
@@ -63,10 +66,12 @@ function invoice(data, accent) {
         `<tr><td>${esc(r.name)}</td><td>${esc(r.unit)}</td><td class="num">${esc(r.qty)}</td><td class="num">${esc(r.price)}</td><td class="num">${esc(r.net)}</td><td class="num">${esc(r.rate)}</td><td class="num">${esc(r.tax)}</td></tr>`,
     )
     .join('');
-  // 文本串切分（#200）：逐字成串的标题、与标签分开成串的号码，都是真实发票里常见的画法。
+  // Text-run splits (#200): a title drawn one run per glyph and a number drawn apart from its label are both common
+  // on a real invoice.
   const titleText = data.spacedTitle ? [...data.title].map((ch) => `<span>${esc(ch)}</span>`).join('') : esc(data.title);
-  // 同基线并排（#206）：标题旁印着联次，号码与开票日期共用一行，各自标签与取值分成两串。整行连起来，
-  // 三个锚点一个也匹配不上——只有行内的连续片段才正好是一个字段。
+  // Fields side by side on one baseline (#206): the 联次 (copy marker) beside the title, the number sharing a row with
+  // the 开票日期, each label a run apart from its value. Joined as a whole row, not one of the three anchors matches —
+  // only a contiguous run inside the row is exactly one field.
   const title = data.sharedBaseline ? `${titleText}<span class="beside">发票联</span>` : titleText;
   const number = data.splitNumber || data.sharedBaseline ? `发票号码：<span class="apart">${esc(data.number)}</span>` : `发票号码：${esc(data.number)}`;
   const issued = data.sharedBaseline ? `开票日期：<span class="apart">${esc(data.date)}</span>` : `开票日期：${esc(data.date)}`;
@@ -93,7 +98,7 @@ function invoice(data, accent) {
   return { id: data.id, ...A4, css, body };
 }
 
-// ---- 酒店结账单 ----
+// ---- 酒店结账单 (hotel folio) ----
 function folio(data) {
   const css = `
 .folio { width: 794px; height: 1123px; padding: 64px 72px; font-family: ${FONT}; color: #222; font-size: 13px; background: #fff; }
@@ -134,7 +139,7 @@ function folio(data) {
   return { id: data.id, ...A4, css, body };
 }
 
-// ---- 网约车行程单 ----
+// ---- 网约车行程单 (ride-hailing itinerary) ----
 function itinerary(data) {
   const css = `
 .itin { width: 794px; height: 1123px; padding: 64px 64px; font-family: ${FONT}; color: #222; font-size: 13px; background: #fff; }
@@ -149,7 +154,8 @@ function itinerary(data) {
 .itin td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .itin .note { margin-top: 28px; color: #777; font-size: 12px; line-height: 1.7; }
 `;
-  // 文本串切分（#205）：真实行程单把上车时间画成日期一行、时刻一行，摘要行也拆成好几串。
+  // Text-run splits (#205): a real itinerary draws 上车时间 as a date line and a time line, and splits the summary row
+  // across several runs.
   const rows = data.rows
     .map((r) => {
       const time = r.timeLines ? r.timeLines.map((line) => `<div>${esc(line)}</div>`).join('') : esc(r.time);
@@ -174,7 +180,7 @@ function itinerary(data) {
   return { id: data.id, ...A4, css, body };
 }
 
-// ---- 铁路电子客票（横向）----
+// ---- 铁路电子客票 (rail e-ticket), landscape ----
 function rail(data) {
   const css = `
 .rail { width: 1123px; height: 794px; padding: 60px 80px; font-family: ${FONT}; color: #222; font-size: 15px; background: #fff; position: relative; }
@@ -188,7 +194,8 @@ function rail(data) {
 .rail .apart { margin-left: 6px; }
 .rail .foot { margin-top: 24px; color: #666; font-size: 13px; }
 `;
-  // 文本串切分（#204）：车次后面再画一格座位号，「票价：」与金额分成两串 —— 真实客票就是这样画的。
+  // Text-run splits (#204): a seat cell drawn after the 车次, and 「票价：」 split from its amount — which is how a real
+  // ticket draws them.
   const route = data.seatOnTripRow
     ? `${esc(data.from)}<small>${esc(data.train)}</small>${esc(data.to)}<small>${esc(data.seat)}</small>`
     : `${esc(data.from)}<small>${esc(data.train)}</small>${esc(data.to)}`;
@@ -210,8 +217,8 @@ function rail(data) {
   return { id: data.id, ...A4_LANDSCAPE, css, body };
 }
 
-// ---- 出租车车费发票（纸质长条票）----
-// 单独作为条票片段（供打印页复用），照片版再把它放到桌面背景上。
+// ---- 出租车车费发票 (taxi receipt), the paper strip ----
+// Kept as a strip fragment of its own so the print pages can reuse it; the photo variant then lays it on a desk.
 export const TAXI_STRIP = { width: 300, height: 560 };
 function taxiStrip(data) {
   const faded = data.faded ? 'opacity: 0.42; letter-spacing: 1px;' : '';
@@ -242,7 +249,7 @@ function taxiStrip(data) {
   return { id: `${data.id}-strip`, ...TAXI_STRIP, css, body };
 }
 
-// 照片：条票放在桌面上，略微倾斜并带一点透视，模拟手机拍摄。
+// The photo: the strip on a desk, slightly askew and in perspective, the way a phone would catch it.
 function taxiPhoto(data) {
   const strip = taxiStrip(data);
   const css = `${strip.css}
@@ -271,14 +278,15 @@ export const DOCS = {
   r201: invoice(BUNDLED_FEE_INVOICE, '#8b3a3a'),
   r206: invoice(TRANSPORT_INVOICE, '#8b3a3a'),
   r204: rail(RAIL_SPLIT_RUNS),
-  m12: itinerary(AMAP_ITINERARY_GAP),
+  r202: itinerary(AMAP_ITINERARY_GAP),
   r205: itinerary(AMAP_ITINERARY_WRAPPED),
 };
 
-// 打印页里放置的材料：出租车用裁边并透视矫正后的条票，其余用原件版式。
+// Materials as placed on a print page: the taxi receipt as a cropped, perspective-corrected strip, everything else in
+// its original layout.
 const PLACED = { ...DOCS, m09: taxiStrip(TAXI_0815), m10: taxiStrip(TAXI_0819) };
 
-// ---- 打印页（A4 纵向：页眉 + 上半页主要报销凭证 + 下半页参考材料）----
+// ---- A print page (A4 portrait: header + the primary voucher on the top half + the reference material below) ----
 function place(doc, slot, rotate) {
   const w = rotate ? doc.height : doc.width;
   const h = rotate ? doc.width : doc.height;
@@ -317,7 +325,7 @@ ${bottom ? bottom.css : ''}
 export const PRINT_DOCS = PRINT_PAGES.map(printPage);
 export const VARIANT_DOCS = PRINT_VARIANTS.map((variant) => ({ ...printPage(variant), id: variant.file.replace(/\.png$/, '') }));
 
-// 合并打印稿：每张页图一页 A4（210mm x 297mm，边距 0）。
+// The merged print sheet: one A4 page (210mm x 297mm, no margin) per page image.
 export function printSheetDocument(imageUrls) {
   const pages = imageUrls.map((url) => `<img src="${esc(url)}" alt="">`).join('\n');
   return `<!doctype html>
@@ -338,7 +346,7 @@ ${pages}
 </html>`;
 }
 
-// 完整 HTML 文档：@page 尺寸与片段一致，边距 0，保证 --print-to-pdf 得到一页。
+// The whole HTML document: an @page size matching the fragment and no margin, so --print-to-pdf yields a single page.
 export function documentOf(doc) {
   const mm = (px) => `${((px * 25.4) / 96).toFixed(2)}mm`;
   return `<!doctype html>

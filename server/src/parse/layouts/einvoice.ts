@@ -1,4 +1,4 @@
-import { cents, compact, joinedRows, matchSpan, money, rows, spans, type JoinedRow, type ParseDoc, type TextObservation } from '../doc';
+import { cents, compact, joinedRows, matchSpan, money, spans, spansAt, type JoinedRow, type ParseDoc, type TextObservation } from '../doc';
 import { vatItemCategory } from '../kinds';
 import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout } from '../layout';
 
@@ -16,8 +16,15 @@ const TITLE = /^电子发票\((增值税专用发票|普通发票)\)$/;
 const NUMBER = /^发票号码:(\d{20})$/;
 const ISSUE_DATE = /^开票日期:(\d{4})年(\d{2})月(\d{2})日$/;
 const ITEM_ROW = /^\*[^*]+\*/;
-const PARTY_NAME = /^名称:(.+)$/;
+// The value is free text, so its span is read widest first: the narrowest match is the name's first text run, one
+// character on a face that draws a company name glyph by glyph. A colon can only begin the next label on the same
+// baseline — the buyer's 名称 and the seller's are printed side by side — so excluding it bounds the widest reading.
+const PARTY_NAME = /^名称:([^:]+)$/;
 const TAX_ID = /^(?:统一社会信用代码\/纳税人识别号:)?([0-9A-Z]{15,20})$/;
+// The goods table's header cell, and the 价税合计 label that the amount follows. Both are matched against a span of
+// their row, never against one text run: a real face draws either of them glyph by glyph.
+const HEADER_CELL = /^项目名称$/;
+const LOWER_LABEL = /^\(小写\)$/;
 
 // Baselines drift on a real face: the 合计 label and its two amounts are printed 5 points apart, and the buyer's and
 // the seller's 名称 differ by one and a half. Line pitch on these invoices is 12 points and more, so a row tolerance
@@ -62,43 +69,84 @@ function columns(header: readonly TextObservation[]): { key: string; x: number }
   return out.sort((a, b) => a.x - b.x);
 }
 
-// The column a cell belongs to: the right-most header starting at or left of the cell's centre, and the first column
-// for whatever is printed left of every header. An amount is right-aligned under its header — it starts left of the
-// header's own left edge and ends right of it — while a wide label such as 税率/征收率 reaches past the narrow `3%`
-// printed under it, so the cell's centre against the headers' left edges is the boundary both faces agree on.
-const columnOf = (headers: readonly { key: string; x: number }[], o: TextObservation) =>
-  headers.filter((h) => h.x <= o.x + o.width / 2).at(-1)?.key ?? headers[0]?.key ?? null;
+// One printed cell of a row: contiguous observations with no visible gap between them. A cell has to be assigned to its
+// column as a whole. Assigning each observation on its own splits a right-aligned amount drawn glyph by glyph — the
+// leading glyph's centre falls left of its own header while the rest fall right, so `264.15` reads as 数量 `2` and
+// 单价 `64.15`, and the truncated remainder still parses as money.
+function cellsOf(row: readonly TextObservation[]): TextObservation[][] {
+  const out: TextObservation[][] = [];
+  for (const o of row) {
+    const group = out.at(-1);
+    const previous = group?.at(-1);
+    // Glyphs of one cell are drawn edge to edge; two cells are a cell padding apart. That gap is tighter than the one
+    // between two fields of a form (`doc.ts`), which is why the table measures its own.
+    const joined = previous ? o.x - (previous.x + previous.width) <= Math.max(previous.height, o.height) / 2 : false;
+    if (group && joined) group.push(o);
+    else out.push([o]);
+  }
+  return out;
+}
+
+// The column a cell belongs to: the right-most header starting at or left of the cell's centre. An amount is
+// right-aligned under its header — it starts left of the header's own left edge and ends right of it — while a wide
+// label such as 税率/征收率 reaches past the narrow `3%` printed under it, so the cell's centre against the headers'
+// left edges is the boundary both faces agree on. Text left of every header belongs to no column: merging it into
+// 项目名称 would break both the item-row anchor and the `合计` equality.
+function columnOf(headers: readonly { key: string; x: number }[], group: readonly TextObservation[]): string | null {
+  const first = group[0];
+  const last = group.at(-1);
+  if (!first || !last) return null;
+  const centre = (first.x + last.x + last.width) / 2;
+  return headers.filter((h) => h.x <= centre).at(-1)?.key ?? null;
+}
 
 // The goods table: each cell keeps every observation that lands in its column. Item rows run from the header down to
-// the 合计 row.
+// the 合计 row. The header row is found by a span match, not by one text run carrying 项目名称: on a face that draws
+// the header glyph by glyph there is no such run, and the whole table would go unread.
 function table(doc: ParseDoc): { items: Row[]; total: Row | null } {
-  const all = rows(doc, 1, ROW_TOLERANCE);
-  const headerAt = all.findIndex((row) => row.some((o) => compact(o.text) === '项目名称'));
+  const all = joinedRows(doc, 1, ROW_TOLERANCE);
+  const headerAt = all.findIndex((row) => matchSpan([row], HEADER_CELL) !== null);
   if (headerAt < 0) return { items: [], total: null };
-  const headers = columns(all[headerAt] ?? []);
-  const toRow = (row: TextObservation[]): Row => {
+  const headers = columns(all[headerAt]?.observations ?? []);
+  const toRow = (row: readonly TextObservation[]): Row => {
     const cells: Record<string, TextObservation[]> = {};
-    for (const o of row) {
-      const key = columnOf(headers, o);
-      if (key) (cells[key] ??= []).push(o);
+    for (const group of cellsOf(row)) {
+      const key = columnOf(headers, group);
+      if (key) (cells[key] ??= []).push(...group);
     }
     return { cells, name: cell(cells['name']) };
   };
   const items: Row[] = [];
   for (const row of all.slice(headerAt + 1)) {
-    const entry = toRow(row);
+    const entry = toRow(row.observations);
     if (entry.name === '合计') return { items, total: entry };
     if (ITEM_ROW.test(entry.name)) items.push(entry);
   }
   return { items, total: null };
 }
 
-// The narrowest run of text after （小写） that reads as an amount. `spans()` is shortest-first, so a glyph-by-glyph
-// `¥26.69` binds as one amount and never swallows what is printed beside it.
+// The widest run of text after （小写） that reads as an amount. The start is pinned to the first observation after the
+// label and the widest reading wins: on a face that draws `¥560.00` glyph by glyph the narrowest reading is `0.00`, a
+// fragment of the value dressed as a value. Nothing parseable there means the amount was not read, and the slot stays
+// missing (ADR-0017: never back-calculated, never guessed).
 function amountAfter(row: readonly TextObservation[], at: number): { value: number; observations: readonly TextObservation[] } | null {
-  for (const span of spans(line(row.slice(at + 1)))) {
+  const rest = row.slice(at + 1);
+  if (rest.length === 0) return null;
+  for (const span of spansAt(line(rest), 0)) {
     const value = cents(span.text);
     if (value !== null) return { value, observations: span.observations };
+  }
+  return null;
+}
+
+// 价税合计: the widest amount printed after （小写） on that row. The label itself is a span too — it is drawn
+// `(`,`小`,`写`,`)` on a real face — so the amount starts at the observation after the span, not after one text run.
+function grossAmount(lines: readonly JoinedRow[]): { value: number; observations: readonly TextObservation[] } | null {
+  for (const row of lines) {
+    const label = matchSpan([row], LOWER_LABEL);
+    const last = label?.span.observations.at(-1);
+    const at = last ? row.observations.indexOf(last) : -1;
+    if (at >= 0) return amountAfter(row.observations, at);
   }
   return null;
 }
@@ -107,17 +155,21 @@ type PartyName = { observations: readonly TextObservation[]; x: number; y: numbe
 
 // A party's 名称 is a span: real faces draw the label and the company name as separate text runs, and print the
 // buyer's pair and the seller's pair on one baseline, so neither a single observation nor the whole row is the label's
-// haystack. Spans are shortest first, so the label binds to the run of text right after it.
+// haystack. Each start on the row is tried once and takes its widest match, so the label binds to the whole name drawn
+// after it and stops where the seller's box begins.
 function partyNames(lines: readonly JoinedRow[]): PartyName[] {
-  const found = new Map<string, PartyName>();
+  const found: PartyName[] = [];
   for (const row of lines) {
-    for (const span of spans(row)) {
-      const first = span.observations[0];
-      if (!first || found.has(first.id) || !PARTY_NAME.test(span.text)) continue;
-      found.set(first.id, { observations: span.observations, x: first.x, y: first.y });
+    for (let start = 0; start < row.observations.length; start += 1) {
+      for (const span of spansAt(row, start)) {
+        const first = span.observations[0];
+        if (!first || !PARTY_NAME.test(span.text)) continue;
+        found.push({ observations: span.observations, x: first.x, y: first.y });
+        break;
+      }
     }
   }
-  return [...found.values()].sort((a, b) => a.x - b.x);
+  return found.sort((a, b) => a.x - b.x);
 }
 
 function parties(doc: ParseDoc, lines: readonly JoinedRow[]) {
@@ -184,10 +236,18 @@ export const einvoice: Layout = {
 
     const { items, total } = table(doc);
     // The item row that decides the category: a bundled fee row may be printed first, and it is not what this invoice
-    // is for. Without a v1 row at all (manual fill, a face this layout no longer recognises) the first row still names
-    // the goods.
-    const priced = items.find((row) => vatItemCategory(row.name)) ?? items[0];
+    // is for. With no v1 row among the cells there is nothing to name — recognition read the joined rows, the table
+    // reads the name column, and when the two disagree the honest outcome is a missing 项目名称, not the row that
+    // happens to be printed first.
+    const priced = items.find((row) => vatItemCategory(row.name));
     if (priced) add('itemName', visible(priced.cells['name']), priced.cells['name'] ?? []);
+    // A recognised invoice may bundle a row outside the v1 kinds (#201): a 服务费 or 经纪代理服务 line printed beside
+    // the ride. The 合计 row covers both, so the reimbursed 价税合计 includes it — advisory, so the user sees it
+    // instead of the silence. No kind, category or amount changes.
+    const bundled = items.filter((row) => !vatItemCategory(row.name)).map((row) => visible(row.cells['name'])).filter(Boolean);
+    if (priced && bundled.length > 0) {
+      findings.push({ kind: 'advisory', code: 'bundled_items', message: `这张发票还开了：${bundled.join('、')}，价税合计把它们一起算了。` });
+    }
     const netCell = total?.cells['net'];
     const taxCell = total?.cells['tax'];
     const net = netCell ? cents(cell(netCell)) : null;
@@ -195,9 +255,7 @@ export const einvoice: Layout = {
     if (net !== null && netCell) add('netAmount', money(net), netCell);
     if (tax !== null && taxCell) add('taxAmount', money(tax), taxCell);
 
-    // 价税合计: the amount after （小写） on the same row.
-    const words = rows(doc, 1, ROW_TOLERANCE).find((row) => row.some((o) => compact(o.text) === '(小写)'));
-    const grossAt = words ? amountAfter(words, words.findIndex((w) => compact(w.text) === '(小写)')) : null;
+    const grossAt = grossAmount(lines);
     const gross = grossAt?.value ?? null;
     if (gross !== null && grossAt) add('totalAmount', money(gross), grossAt.observations);
 

@@ -1,14 +1,14 @@
 // Origin: 50931a3:kernel/src/pdftext.mjs, rehomed by #197 for fixtures/scripts/verify.mjs only; the app parses PDFs with unpdf.
 import zlib from 'node:zlib';
 
-// 零依赖 PDF 取字。内核不允许有 npm 依赖（安装要能退化成纯文件拷贝），
-// 所以这里自己解 PDF：Node 自带 zlib 就够解 FlateDecode，其余是解析工作。
+// Zero-dependency PDF text extraction. The kernel was not allowed npm dependencies (installing had to degrade to a
+// plain file copy), so it decodes the PDF itself: Node's own zlib covers FlateDecode, the rest is parsing.
 //
-// 只做取字，不做渲染，也不做 OCR：扫描件和图片发票取不出字，
-// 那是**解析失败**这个事实本身，交给上层形成待确认项，绝不猜。
+// Text only: no rendering and no OCR. A scan or a photographed invoice yields nothing, and that **is** the fact of a
+// failed parse — it goes up as a 待确认项 (pending item); it is never guessed at.
 //
-// 全篇在 latin1 字符串上工作：latin1 是字节到字符的一一映射，
-// 因此字符串下标 == 字节偏移，正则和 Buffer 偏移可以混用。
+// Everything here works on latin1 strings: latin1 maps bytes to characters one to one, so a string index is a byte
+// offset and regexes and Buffer offsets can be mixed freely.
 
 const WS = ' \t\r\n\f\0';
 const DELIM = '()<>[]{}/%';
@@ -22,7 +22,7 @@ class Lexer {
     const { s } = this;
     for (;;) {
       while (this.pos < s.length && isWs(s[this.pos])) this.pos++;
-      if (s[this.pos] === '%') {           // 注释直到行尾
+      if (s[this.pos] === '%') {           // A comment runs to the end of the line.
         while (this.pos < s.length && s[this.pos] !== '\n' && s[this.pos] !== '\r') this.pos++;
       } else return;
     }
@@ -73,7 +73,7 @@ class Lexer {
     if (t === 'false') return false;
     if (t === 'null') return null;
     if (/^[+-]?[\d.]+$/.test(t)) {
-      // "12 0 R" 是间接引用，要多看两个 token 才能确定。
+      // `12 0 R` is an indirect reference: it takes two more tokens to tell.
       const save = this.pos;
       const t2 = this.token();
       if (t2 !== null && /^\d+$/.test(t2)) {
@@ -103,7 +103,7 @@ class Lexer {
         const e = s[this.pos++];
         const map = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f' };
         if (map[e]) out += map[e];
-        else if (e >= '0' && e <= '7') {          // 八进制转义，最多三位
+        else if (e >= '0' && e <= '7') {          // An octal escape, three digits at most.
           let oct = e;
           while (oct.length < 3 && s[this.pos] >= '0' && s[this.pos] <= '7') oct += s[this.pos++];
           out += String.fromCharCode(parseInt(oct, 8));
@@ -137,7 +137,7 @@ class Lexer {
       this.skip();
       if (this.pos >= s.length) return dict;
       if (s[this.pos] === '>' && s[this.pos + 1] === '>') { this.pos += 2; return dict; }
-      if (s[this.pos] !== '/') { this.value(); continue; }   // 键必须是名字，否则跳过
+      if (s[this.pos] !== '/') { this.value(); continue; }   // A key has to be a name; skip anything else.
       this.pos++;
       const key = this.readName();
       dict[key] = this.value();
@@ -158,7 +158,7 @@ class Pdf {
     const re = /(?:^|[^0-9])(\d+)\s+(\d+)\s+obj\b/g;
     let m;
     while ((m = re.exec(this.s))) {
-      // 增量更新时同号对象后出现的覆盖先出现的，直接后写胜出。
+      // Under an incremental update the later object of a number overrides the earlier one: last write wins.
       this.objs.set(Number(m[1]), { bodyAt: re.lastIndex, parsed: undefined });
       re.lastIndex = re.lastIndex;
     }
@@ -167,7 +167,7 @@ class Pdf {
   get(v) {
     let seen = 0;
     while (v && typeof v === 'object' && 'ref' in v) {
-      if (++seen > 32) return null;                 // 引用成环，止损
+      if (++seen > 32) return null;                 // A reference cycle: cut the losses.
       v = this.object(v.ref);
     }
     return v;
@@ -177,7 +177,7 @@ class Pdf {
     const rec = this.objs.get(num);
     if (!rec) return null;
     if (rec.parsed !== undefined) return rec.parsed;
-    rec.parsed = null;                              // 先占位，避免自引用递归
+    rec.parsed = null;                              // A placeholder first, so a self-reference cannot recurse.
     const lx = new Lexer(this.s, rec.bodyAt);
     const val = lx.value();
     if (val && typeof val === 'object' && !Array.isArray(val) && lx.peek() === 'stream') {
@@ -188,7 +188,7 @@ class Pdf {
       let len = this.get(val.Length);
       if (typeof len !== 'number' || len < 0 || p + len > this.s.length
           || !/^\s*endstream/.test(this.s.slice(p + len, p + len + 20))) {
-        const e = this.s.indexOf('endstream', p);   // /Length 不可信时按 endstream 兜底
+        const e = this.s.indexOf('endstream', p);   // When /Length cannot be trusted, fall back to endstream.
         len = e < 0 ? 0 : e - p;
       }
       val.__stream = { at: p, len };
@@ -214,7 +214,7 @@ class Pdf {
         const hex = data.toString('latin1').replace(/[^0-9a-fA-F]/g, '');
         data = Buffer.from(hex.slice(0, hex.length - (hex.length % 2)), 'hex');
       } else {
-        return null;                                // DCTDecode（图片）等：这不是文字，直接放弃
+        return null;                                // DCTDecode (an image) and friends: this is not text, so give up.
       }
     }
     const parms = this.get(dict.DecodeParms);
@@ -245,7 +245,7 @@ class Pdf {
         pairs.push([objNum, off]);
       }
       for (const [objNum, off] of pairs) {
-        if (this.objs.has(objNum)) continue;        // 文件里直接出现的版本优先
+        if (this.objs.has(objNum)) continue;        // The version that appears in the file itself wins.
         this.objs.set(objNum, { bodyAt: 0, parsed: new Lexer(s, first + off).value() });
       }
     }
@@ -268,7 +268,7 @@ class Pdf {
     };
     if (root) visit(root.Pages, {}, 0);
     if (out.length) return out;
-    // 没有 Catalog（少见但确实存在）：退回按对象号顺序找 /Type /Page。
+    // No Catalog (rare, but it happens): fall back to scanning object numbers in order for /Type /Page.
     return [...this.objs.keys()].sort((a, b) => a - b)
       .map((n) => this.object(n))
       .filter((o) => o && typeof o === 'object' && this.get(o.Type)?.name === 'Page');
@@ -352,9 +352,10 @@ function loadFonts(pdf, page) {
     const tu = pdf.get(font.ToUnicode);
     const data = tu ? pdf.stream(tu) : null;
     if (data) { fonts.set(name, parseCMap(data.toString('latin1'))); continue; }
-    // 没有 ToUnicode 就只能靠 /Encoding 认字节怎么编的。实测两份真实发票各占一种：
-    // 铁路电子客票用 GBK-EUC-H（GBK 字节），网约车全电发票用 UniGB-UCS2-H（UTF-16BE 码位）。
-    // 认不出的编码不硬猜成中文，宁可按 latin1 出乱码 —— 乱码上层认得出，猜错认不出。
+    // Without a ToUnicode map, only /Encoding says how the bytes are encoded. Two real invoices were measured, one of
+    // each: a 铁路电子客票 uses GBK-EUC-H (GBK bytes), a ride-hailing 全电发票 uses UniGB-UCS2-H (UTF-16BE code points).
+    // An encoding this does not know is not forced into Chinese: latin1 mojibake is preferable, because mojibake is
+    // recognisable upstream and a wrong guess is not.
     const enc = pdf.get(font.Encoding)?.name ?? '';
     const charset = /UCS2|UTF16|Identity/i.test(enc) ? 'utf-16be'
       : /GBK|GB-EUC|GB2312|GBpc|GBK2K/i.test(enc) ? 'gbk'
@@ -382,9 +383,9 @@ function extractItems(pdf, content, fonts) {
   const items = [];
   const lx = new Lexer(content, 0);
   let tm = [1, 0, 0, 1, 0, 0], lm = tm, leading = 0, font = null, size = 1;
-  // 图形状态矩阵必须一起跟：真实位置是 tm × ctm。
-  // 忽略 cm 的后果实测过 —— 表格每个格子都是 `q cm BT..ET Q`，
-  // 于是整张行程单的三段行程会塌成一行，行程段边界当场消失。
+  // The graphics state matrix has to be tracked too: the real position is tm × ctm.
+  // Ignoring cm was measured — every table cell is its own `q cm BT..ET Q`, so all three legs of an itinerary collapse
+  // onto one line and the leg boundaries vanish on the spot.
   let ctm = [1, 0, 0, 1, 0, 0];
   const gs = [];
   const stack = [];
@@ -405,7 +406,8 @@ function extractItems(pdf, content, fonts) {
     }
     return out;
   };
-  // 字号要连同矩阵缩放一起算，后面拼行要靠它判断两块文字之间到底有没有空格。
+  // The font size counts the matrix scale in: joining a line later uses it to tell whether two pieces of text have a
+  // space between them.
   const at = () => {
     const m = mul(tm, ctm);
     return { x: m[4], y: m[5], size: size * Math.hypot(m[0], m[1]) };
@@ -453,7 +455,7 @@ function extractItems(pdf, content, fonts) {
           let out = '';
           for (const el of arr) {
             if (el && typeof el === 'object' && 'str' in el) out += decode(el.str);
-            // 负的字距调整够大就是一个视觉空格；这一步影响后面的字段切分。
+            // A large enough negative kerning adjustment is a visible space; this decides where fields split later.
             else if (typeof el === 'number' && el <= -200) out += ' ';
           }
           if (out) {
@@ -471,7 +473,8 @@ function extractItems(pdf, content, fonts) {
   return items;
 }
 
-// 半角字符大约占半个字号，中日韩全角占一个。只用来估宽度，不追求精确。
+// A half-width character is about half the font size wide, a CJK full-width one a whole size. An estimate for width
+// only; precision is not the point.
 const advance = (text, size) => {
   let w = 0;
   for (const ch of text) w += /[\u2e80-\ufaff\uff00-\uffef]/.test(ch) ? size : size * 0.5;

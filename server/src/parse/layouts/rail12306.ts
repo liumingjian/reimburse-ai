@@ -1,4 +1,4 @@
-import { cents, compact, joinedRows, matchSpan, money, spans, type JoinedRow, type ParseDoc, type RowSpan, type TextObservation } from '../doc';
+import { cents, compact, joinedRows, matchSpan, matchWidestSpan, money, spans, type JoinedRow, type ParseDoc, type RowSpan, type TextObservation } from '../doc';
 import { ruleSource, type Candidate, type EvidenceRef, type Layout } from '../layout';
 
 // `rail_ticket/12306`: the 铁路电子客票 (rail e-ticket) face from the PDF text layer. Ported from the rail rules of
@@ -20,15 +20,18 @@ const NUMBER = /^发票号码:(\d{20})$/;
 const ISSUE_DATE = /^开票日期:(\d{4})年(\d{1,2})月(\d{1,2})日$/;
 const TRAVEL_DATE = /^乘车日期:(\d{4})年(\d{1,2})月(\d{1,2})日$/;
 const DEPART_TIME = /^开车时间:(\d{1,2}):(\d{2})$/;
-// The 12306 wording the kernel parsed: `2026年08月22日07:05开` (date and departure time in one run).
-const DEPART_RUN = /(\d{4})年(\d{1,2})月(\d{1,2})日(\d{1,2}):(\d{2})开/;
-const SEAT_CLASS = /^席别:(.+)$/;
-const PASSENGER = /^乘车人:(.+)$/;
+// The 12306 wording the kernel parsed: `2026年08月22日07:05开` (date and departure time in one run). Anchored like
+// every other pattern here — `matchSpan` narrows the haystack, it never takes a substring.
+const DEPART_RUN = /^(\d{4})年(\d{1,2})月(\d{1,2})日(\d{1,2}):(\d{2})开$/;
+// Label plus free text: read widest first, so a value drawn glyph by glyph is the value and not its first glyph. A
+// colon can only begin the next label printed beside it (座位:, 证件号:), so excluding it bounds the widest reading.
+const SEAT_CLASS = /^席别:([^:]+)$/;
+const PASSENGER = /^乘车人:([^:]+)$/;
 const FARE = /^票价:(¥?\d+\.\d{2})$/;
-// The trip as printed: `杭州东 G7522 上海虹桥`, or the kernel's one-line `合肥南站 G1234 上海虹桥站`. Station names run
-// two characters or more, the 站 suffix is optional, and the 车次 (train number) carries the span's only digits — so a
-// seat or a gate printed as a fourth cell on the same row falls outside the span instead of breaking it.
-const TRIP = /^(\D{2,}?)站?([A-Z]?\d{1,4})(\D{2,}?)站?$/;
+// The trip as printed: `杭州东 G7522 上海虹桥`, or the kernel's one-line `合肥南站 G1234 上海虹桥站`. Station names are
+// CJK, two characters or more; the 站 suffix is optional but is captured, because on a trip printed as one text run it
+// is the only thing that tells a trip from any other CJK-digits-CJK line (`检票口12候车室` — a gate and a waiting room).
+const TRIP = /^([\u4e00-\u9fa5]{2,}?)(站)?([A-Z]?\d{1,4})([\u4e00-\u9fa5]{2,}?)(站)?$/;
 
 const pad = (n: string | undefined) => (n ?? '').padStart(2, '0');
 // Wording is presented as printed; only anchors and numbers use the normalised text.
@@ -49,11 +52,14 @@ function trip(rows: readonly JoinedRow[]): Trip | null {
   for (const row of rows) {
     for (const span of spans(row)) {
       const match = TRIP.exec(span.text);
-      const [, from, train, to] = match ?? [];
+      const [, from, fromSuffix, train, to, toSuffix] = match ?? [];
       if (!from || !train || !to) continue;
-      // On a ticket that draws the trip as cells the 车次 is a cell of its own; a ticket that prints the trip as one
-      // line has no cells to check against. Either way, digits inside a longer cell (a gate, a seat) are not a 车次.
-      if (span.observations.length > 1 && !span.observations.some((o) => compact(o.text) === train)) continue;
+      // Two structural guards, and a trip satisfies one of them. On a ticket that draws the trip as cells the 车次 is a
+      // text run of its own. On a ticket that prints the whole trip as one run there is no cell to check, and both
+      // stations carry their 站 suffix. Digits inside a longer run are otherwise not a 车次 — the route line simply
+      // being printed first is not what may decide three required, locked face facts.
+      const ownRun = span.observations.some((o) => compact(o.text) === train);
+      if (!ownRun && !(fromSuffix && toSuffix)) continue;
       return { from, train, to, evidence: [...span.observations] };
     }
   }
@@ -100,9 +106,9 @@ export const rail12306: Layout = {
     if (time) add('departTime', `${pad(time.match[1])}:${time.match[2]}`, ...runs(time));
     else if (run) add('departTime', `${pad(run.match[4])}:${run.match[5]}`, ...runs(run));
 
-    const seat = read(SEAT_CLASS);
+    const seat = matchWidestSpan(rows, SEAT_CLASS);
     if (seat) add('seatClass', visible(seat.span).replace(/^席别[:：]/, ''), ...runs(seat));
-    const passenger = read(PASSENGER);
+    const passenger = matchWidestSpan(rows, PASSENGER);
     if (passenger) add('passengerName', visible(passenger.span).replace(/^乘车人[:：]/, ''), ...runs(passenger));
 
     const fare = read(FARE);

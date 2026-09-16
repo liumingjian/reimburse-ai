@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_DIR } from '@baox/fixtures';
 import { describe, expect, it } from 'vitest';
-import { compact, joinedRows, matchRow, matchSpan } from '../doc';
+import { compact, joinedRows, matchSpan, type ParseDoc, type TextObservation } from '../doc';
 import { dispatch } from '../dispatch';
 import { KINDS } from '../kinds';
 import { parseMaterial } from '../material';
@@ -67,6 +67,8 @@ describe('vat_invoice/einvoice', () => {
       totalAmount: '48.98',
     });
     expect(outcome.findings.filter((f) => f.kind === 'validation')).toEqual([]);
+    // The bundled row is inside that total, so it is said out loud rather than passed over in silence.
+    expect(outcome.findings).toContainEqual({ kind: 'advisory', code: 'bundled_items', message: '这张发票还开了：*经纪代理服务*平台服务费，价税合计把它们一起算了。' });
 
     // Take the v1 service row away and nothing is left that this layout covers.
     const noV1 = { ...doc, observations: doc.observations.map((o) => (o.text.includes('运输服务') ? { ...o, text: o.text.replace('运输服务', '餐饮服务') } : o)) };
@@ -81,7 +83,7 @@ describe('vat_invoice/einvoice', () => {
     // 联次 beside it, so neither row reads as one anchor.
     const lines = joinedRows(doc);
     for (const pattern of [/^电子发票\((增值税专用发票|普通发票)\)$/, /^发票号码:(\d{20})$/, /^开票日期:(\d{4})年(\d{2})月(\d{2})日$/]) {
-      expect(matchRow(lines, pattern)).toBeNull();
+      expect(lines.some((row) => pattern.test(row.text))).toBe(false);
       expect(matchSpan(lines, pattern)).not.toBeNull();
     }
 
@@ -101,6 +103,25 @@ describe('vat_invoice/einvoice', () => {
     // 交通运输服务 lands in the same 市内交通 category 运输服务 does: no new category, no new kind.
     const values = Object.fromEntries(outcome.candidates.filter((c) => c.source === `rule:${outcome.kind}/${outcome.layout}`).map((c) => [c.key, c.value]));
     expect(KINDS.vat_invoice.categoryLabel(values)).toBe('市内交通');
+  });
+
+  // A real face draws a value one text run per glyph (ADR-0003). Every anchor here is a span match, and a span that
+  // satisfies the anchor is not yet the value: the fragments of a value satisfy it too.
+  it('reads a 价税合计 drawn glyph by glyph as the whole amount, not as the fragment 0.00', () => {
+    const doc = textDoc([['价税合计(大写)', '伍佰陆拾圆整', '(小写)', ...glyphs('¥560.00')]]);
+    // The fixture really splits it: no single observation carries the amount.
+    expect(doc.observations.some((o) => o.text.includes('560'))).toBe(false);
+    const values = Object.fromEntries(einvoice.parse(doc).candidates.map((c) => [c.key, c.value]));
+    expect(values['totalAmount']).toBe('560.00');
+  });
+
+  it('reads a 名称 drawn glyph by glyph as the whole company name, not as its first character', () => {
+    const doc = textDoc([['名称:', ...glyphs('某某科技(上海)有限公司'), '名称:', ...glyphs('上海某某酒店管理有限公司')]]);
+    expect(doc.observations.some((o) => o.text.length > 3)).toBe(false);
+    const values = Object.fromEntries(einvoice.parse(doc).candidates.map((c) => [c.key, c.value]));
+    // The two parties are printed on one baseline, so the widest reading must stop at the next label, not swallow it.
+    expect(values['buyerName']).toBe('某某科技(上海)有限公司');
+    expect(values['sellerName']).toBe('上海某某酒店管理有限公司');
   });
 
   it('does not recognise an e-invoice outside the v1 kinds (m11, 餐饮) or a document without the invoice title (m06)', async () => {
@@ -146,3 +167,21 @@ describe('vat_invoice/einvoice', () => {
     expect(outcome).toMatchObject({ outcome: 'recognised', findings: expect.arrayContaining([expect.objectContaining({ kind: 'validation', code: 'total_not_conserved' })]) });
   });
 });
+
+// A one-column text document, one line per visual row, top to bottom. A line given as several strings is drawn as
+// several text runs on that row, edge to edge — what a real face does with a label apart from its value, and with a
+// value drawn one run per glyph.
+function textDoc(lines: readonly (string | readonly string[])[]): ParseDoc {
+  const observations: TextObservation[] = [];
+  for (const [i, line] of lines.entries()) {
+    let x = 40;
+    for (const text of typeof line === 'string' ? [line] : line) {
+      const width = text.length * 9;
+      observations.push({ id: `p1.${observations.length + 1}`, page: 1, x, y: 800 - i * 20, width, height: 12, text, raw: text });
+      x += width;
+    }
+  }
+  return { mediaType: 'pdf', pageCount: 1, codes: [], observations };
+}
+
+const glyphs = (text: string) => [...text];

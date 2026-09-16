@@ -106,9 +106,15 @@ const TAXI_RECEIPT_SLOTS: readonly Slot[] = [
 // `*住宿服务*住宿费` → 住宿费; the 税收分类 (tax class) between the asterisks decides the category.
 const itemParts = (itemName: string | undefined) => /^\*([^*]+)\*(.*)$/.exec(itemName ?? '');
 
+// 交通运输服务 is a parent class: it covers 货物运输 (freight transport), 航空运输 and 水路运输 as well as carrying
+// people, so the class on its own does not make an invoice a 市内交通 voucher. Its description has to name a passenger
+// service, the way 生产生活服务 has to name 住宿费.
+const PASSENGER_TRANSPORT = /^(客运|网约车|出租车|打车|专车|快车|乘车)/;
+
 // The v1 item rows, as they are actually printed. A face names either the fine 税收分类 (`*住宿服务*`, `*运输服务*`) or
-// its parent class (`*交通运输服务*` on ride-hailing invoices, `*生产生活服务*住宿费` on hotel ones), so both spellings
-// map here. The categories themselves are unchanged: this adds no 费用类别 (expense category) and no 材料种类
+// its parent class (`*交通运输服务*` on ride-hailing invoices, `*生产生活服务*` on hotel ones), so both spellings map
+// here — a parent class only together with a description that names the v1 service, because the parent covers more
+// than v1 does. The categories themselves are unchanged: this adds no 费用类别 (expense category) and no 材料种类
 // (material kind) to ADR-0017's v1 matrix. `vat_invoice/einvoice` gates recognition on the same map, so what the
 // layout accepts and what a line is categorised as can never drift apart.
 export function vatItemCategory(itemName: string | undefined): ExpenseCategory | null {
@@ -117,7 +123,8 @@ export function vatItemCategory(itemName: string | undefined): ExpenseCategory |
   const description = parts?.[2] ?? '';
   if (taxClass === '住宿服务') return CATEGORIES.accommodation;
   if (taxClass === '生产生活服务') return description.startsWith('住宿费') ? CATEGORIES.accommodation : null;
-  if (taxClass === '运输服务' || taxClass === '交通运输服务') return CATEGORIES.city_transport;
+  if (taxClass === '运输服务') return CATEGORIES.city_transport;
+  if (taxClass === '交通运输服务') return PASSENGER_TRANSPORT.test(description) ? CATEGORIES.city_transport : null;
   return null;
 }
 
