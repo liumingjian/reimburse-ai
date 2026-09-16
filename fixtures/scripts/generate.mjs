@@ -33,6 +33,7 @@ export const MATERIAL_FILES = {
   m09: 'm09-taxi-photo.jpg',
   m10: 'm10-taxi-photo.jpg',
   m11: 'm11-other-invoice.pdf',
+  m12: 'm12-amap-itinerary-gap.pdf',
 };
 
 // 回归夹具（#200 起）：复现真实 PDF 的文本串拆分，不属于 11 份示例材料的剧本，也不进 mock 的示例材料目录。

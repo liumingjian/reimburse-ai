@@ -4,6 +4,7 @@ import {
   AMAP_INVOICE,
   AMAP_ITINERARY,
   BUNDLED_FEE_INVOICE,
+  AMAP_ITINERARY_GAP,
   BUYER,
   CAOCAO_INVOICE,
   CAOCAO_ITINERARY,
@@ -248,6 +249,7 @@ export const DOCS = {
   r01: invoice(SPLIT_NUMBER_INVOICE, '#8b3a3a'),
   r02: invoice(SPACED_TITLE_INVOICE, '#8b3a3a'),
   r201: invoice(BUNDLED_FEE_INVOICE, '#8b3a3a'),
+  m12: itinerary(AMAP_ITINERARY_GAP),
 };
 
 // 打印页里放置的材料：出租车用裁边并透视矫正后的条票，其余用原件版式。
