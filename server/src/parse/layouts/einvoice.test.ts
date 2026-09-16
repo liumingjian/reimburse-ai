@@ -51,6 +51,8 @@ describe('vat_invoice/einvoice', () => {
 
     const outcome = dispatch(doc, LAYOUTS);
     expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（普票）', missing: [] });
+  });
+
   it('recognises an invoice that bundles an unrelated fee row beside a v1 service row, and takes its totals from the 合计 row', async () => {
     const doc = await pdfDoc(fixture('r201-bundled-fee-invoice.pdf'));
     const outcome = dispatch(doc, LAYOUTS);

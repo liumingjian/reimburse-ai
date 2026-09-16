@@ -10,6 +10,7 @@ import {
   AMAP_ITINERARY,
   BUNDLED_FEE_INVOICE,
   AMAP_ITINERARY_GAP,
+  AMAP_ITINERARY_WRAPPED,
   CAOCAO_INVOICE,
   CAOCAO_ITINERARY,
   HOTEL_FOLIO,
@@ -36,6 +37,7 @@ const EXPECTED_TEXT = {
   m12: ['行程单', AMAP_ITINERARY_GAP.brand, `共计${AMAP_ITINERARY_GAP.count}单行程`, `合计${AMAP_ITINERARY_GAP.total}元`, '张江', '浦东机场', '待结算'],
   m11: ['电子发票', '普通发票', OTHER_INVOICE.number, OTHER_INVOICE.date, '餐饮服务', OTHER_INVOICE.gross],
   r01: ['电子发票', '增值税专用发票', SPLIT_NUMBER_INVOICE.number, SPLIT_NUMBER_INVOICE.date, '住宿服务', SPLIT_NUMBER_INVOICE.gross, SPLIT_NUMBER_INVOICE.net, SPLIT_NUMBER_INVOICE.tax],
+  r205: ['行程单', AMAP_ITINERARY_WRAPPED.brand, `共计${AMAP_ITINERARY_WRAPPED.count}单行程`, `合计${AMAP_ITINERARY_WRAPPED.total}元`, '2026-08-10', '08:52', '26.69元', '42.50', '虹桥枢纽', '张江'],
   r02: ['电子发票', '普通发票', SPACED_TITLE_INVOICE.number, SPACED_TITLE_INVOICE.date, '住宿服务', SPACED_TITLE_INVOICE.gross, SPACED_TITLE_INVOICE.net, SPACED_TITLE_INVOICE.tax],
 };
 

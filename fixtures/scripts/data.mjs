@@ -94,6 +94,25 @@ export const AMAP_ITINERARY_GAP = {
   rows: [{ no: '1', car: '经济型', time: '2026-08-11 19:04', city: '上海市', from: '张江', to: '浦东机场', amount: '待结算' }],
 };
 
+// 回归夹具（不进示例材料清单）：真实行程单把每个表格单元格画成独立文本串，上车时间常常日期一行、HH:MM 一行，
+// 金额带着单位（26.69元）或货币符号（¥42.50），`共计N单行程，合计X元` 也拆成好几串。合计与 m03 的价税合计一致，
+// 所以它能和那张打车发票配成费用事件。
+export const AMAP_ITINERARY_WRAPPED = {
+  id: 'r205',
+  file: 'r205-amap-itinerary-wrapped.pdf',
+  brand: '高德地图',
+  applyDate: '2026-08-13',
+  phone: EMPLOYEE.phoneMasked,
+  count: '2',
+  total: '69.19',
+  splitSummary: true,
+  rows: [
+    // 上车时间换行：日期与时刻是同一格里的两行。
+    { no: '1', car: '经济型', time: '2026-08-10 08:52', timeLines: ['2026-08-10', '08:52'], city: '上海市', from: '虹桥枢纽', to: '漕河泾', amount: '26.69元' },
+    { no: '2', car: '经济型', time: '2026-08-12 09:15', city: '上海市', from: '静安寺', to: '张江', amount: '¥42.50' },
+  ],
+};
+
 export const CAOCAO_INVOICE = {
   id: 'm05',
   file: 'm05-caocao-invoice.pdf',

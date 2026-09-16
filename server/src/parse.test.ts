@@ -27,6 +27,7 @@ async function useParser(parser: ParseExecutor) {
 }
 
 const EINVOICE = 'rule:vat_invoice/einvoice';
+const ITINERARY = 'rule:ride_itinerary/amap';
 
 async function inventoriedFiles(files: readonly Upload[]) {
   const { task } = await client.createTask();
@@ -147,6 +148,52 @@ describe('an e-invoice whose text runs are split', () => {
       for (const field of material.fields) expect(field).toMatchObject({ source: EINVOICE, parserVersion: einvoice.version, evidence: 'explicit' });
     }
     expect(snapshot.inventory.summary).toMatchObject({ materialCount: 2, okCount: 2, pendingMaterialCount: 0, voucherCount: 2, openPendingItemCount: 0 });
+  });
+});
+
+describe('an itinerary drawn cell by cell', () => {
+  // #205: a real 高德行程单 draws every table cell as its own text block. Its 上车时间 cell wraps between the date and
+  // the `HH:MM`, its amounts carry a unit (`26.69元`) or a currency mark (`¥42.50`), and its `共计N单行程` summary is
+  // several text runs. The legs must still read, so the trip and its invoice form 费用事件 (expense events).
+  it('parses r205 into its legs, and with the m03 invoice forms one expense event per leg', async () => {
+    const snapshot = await inventoried(['m03', 'r205']);
+
+    const invoice = byFileName(snapshot, sample('m03').name);
+    const itinerary = byFileName(snapshot, sample('r205').name);
+    expect(itinerary).toMatchObject({ kind: 'ride_itinerary', layout: 'amap', kindLabel: '高德行程单', role: 'reference', status: 'ok', pendingItemIds: [], linkedMaterialIds: [invoice.materialId] });
+    expect(fieldValues(itinerary, ITINERARY)).toEqual({
+      applyDate: '2026-08-13',
+      segmentCount: '2',
+      itineraryTotal: '69.19',
+      'segments[0].date': '2026-08-10',
+      'segments[0].time': '08:52',
+      'segments[0].carType': '经济型',
+      'segments[0].city': '上海市',
+      'segments[0].origin': '虹桥枢纽',
+      'segments[0].destination': '漕河泾',
+      'segments[0].amount': '26.69',
+      'segments[1].date': '2026-08-12',
+      'segments[1].time': '09:15',
+      'segments[1].carType': '经济型',
+      'segments[1].city': '上海市',
+      'segments[1].origin': '静安寺',
+      'segments[1].destination': '张江',
+      'segments[1].amount': '42.50',
+    });
+
+    // Paired with its invoice, the itinerary no longer leaves anything to answer: one line and one event per leg.
+    expect(snapshot.pendingItems).toEqual([]);
+    expect(snapshot.lines.map((line) => [line.no, line.date, line.city, line.route, line.grossAmount])).toEqual([
+      [1, '2026-08-10', '上海市', '虹桥枢纽 → 漕河泾', '26.69'],
+      [2, '2026-08-12', '上海市', '静安寺 → 张江', '42.50'],
+    ]);
+    expect(snapshot.events.map((event) => [event.summary, event.grossAmount])).toEqual([
+      ['高德 · 虹桥枢纽 → 漕河泾', '26.69'],
+      ['高德 · 静安寺 → 张江', '42.50'],
+    ]);
+    expect(snapshot.inventory.summary).toMatchObject({ materialCount: 2, okCount: 2, pendingMaterialCount: 0, voucherCount: 1, referenceCount: 1, openPendingItemCount: 0 });
+    expect(snapshot.inventory.ungroupedMaterialIds).toEqual([]);
+    expect(snapshot.stage).toBe('project');
   });
 });
 

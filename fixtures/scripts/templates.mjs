@@ -5,6 +5,7 @@ import {
   AMAP_ITINERARY,
   BUNDLED_FEE_INVOICE,
   AMAP_ITINERARY_GAP,
+  AMAP_ITINERARY_WRAPPED,
   BUYER,
   CAOCAO_INVOICE,
   CAOCAO_ITINERARY,
@@ -133,24 +134,29 @@ function itinerary(data) {
 .itin .brand { color: #1a73e8; font-weight: 600; font-size: 14px; margin-bottom: 20px; }
 .itin .meta { line-height: 1.9; margin-bottom: 8px; }
 .itin .summary { font-size: 15px; margin: 8px 0 20px; }
+.itin .summary .apart { margin-left: 3px; }
 .itin table { width: 100%; border-collapse: collapse; }
 .itin th, .itin td { border: 1px solid #d0d0d0; padding: 8px 6px; text-align: left; font-weight: 400; }
 .itin th { background: #f2f4f7; font-size: 12px; }
 .itin td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .itin .note { margin-top: 28px; color: #777; font-size: 12px; line-height: 1.7; }
 `;
+  // 文本串切分（#205）：真实行程单把上车时间画成日期一行、时刻一行，摘要行也拆成好几串。
   const rows = data.rows
-    .map(
-      (r) =>
-        `<tr><td>${esc(r.no)}</td><td>${esc(r.car)}</td><td>${esc(r.time)}</td><td>${esc(r.city)}</td><td>${esc(r.from)}</td><td>${esc(r.to)}</td><td class="num">${esc(r.amount)}</td></tr>`,
-    )
+    .map((r) => {
+      const time = r.timeLines ? r.timeLines.map((line) => `<div>${esc(line)}</div>`).join('') : esc(r.time);
+      return `<tr><td>${esc(r.no)}</td><td>${esc(r.car)}</td><td>${time}</td><td>${esc(r.city)}</td><td>${esc(r.from)}</td><td>${esc(r.to)}</td><td class="num">${esc(r.amount)}</td></tr>`;
+    })
     .join('');
+  const summary = data.splitSummary
+    ? `<span>共计</span><span class="apart">${esc(data.count)}</span><span class="apart">单行程，合计</span><span class="apart">${esc(data.total)}</span><span class="apart">元</span>`
+    : `共计${esc(data.count)}单行程，合计${esc(data.total)}元`;
   const body = `
 <div class="itin">
   <h1>行程单</h1>
   <div class="brand">${esc(data.brand)}</div>
   <div class="meta">申请日期：${esc(data.applyDate)}<br>行程人手机：${esc(data.phone)}</div>
-  <div class="summary">共计${esc(data.count)}单行程，合计${esc(data.total)}元</div>
+  <div class="summary">${summary}</div>
   <table>
     <tr><th>序号</th><th>车型</th><th>上车时间</th><th>城市</th><th>起点</th><th>终点</th><th>金额（元）</th></tr>
     ${rows}
@@ -250,6 +256,7 @@ export const DOCS = {
   r02: invoice(SPACED_TITLE_INVOICE, '#8b3a3a'),
   r201: invoice(BUNDLED_FEE_INVOICE, '#8b3a3a'),
   m12: itinerary(AMAP_ITINERARY_GAP),
+  r205: itinerary(AMAP_ITINERARY_WRAPPED),
 };
 
 // 打印页里放置的材料：出租车用裁边并透视矫正后的条票，其余用原件版式。
