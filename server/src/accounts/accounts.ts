@@ -177,11 +177,17 @@ export function createAccountService(db: Db, clock: Clock) {
       await db.transaction().execute(async (tx) => {
         const target = await tx.selectFrom('account').selectAll().where('account_id', '=', accountId).where('username', 'is not', null).executeTakeFirst();
         if (!target) throw new AuthRefusal(404, 'account_not_found', ADMIN_ERRORS.accountNotFound);
-        const wouldDropAdmin = target.role === 'admin' && target.active === 1 && (('role' in change && change.role === 'user') || ('active' in change && !change.active));
+        const givingUpAdmin = ('role' in change && change.role === 'user') || ('active' in change && !change.active);
+        const wouldDropAdmin = target.role === 'admin' && target.active === 1 && givingUpAdmin;
         if (wouldDropAdmin) {
           const admins = await tx.selectFrom('account').select((eb) => eb.fn.countAll<number>().as('n')).where('role', '=', 'admin').where('active', '=', 1).executeTakeFirstOrThrow();
           if (Number(admins.n) <= 1) throw new AuthRefusal(400, 'last_admin', ADMIN_ERRORS.lastAdmin);
         }
+        // Checked after the last-admin guard, so the sole admin still gets the more informative `last_admin`: an admin
+        // never takes their own admin rights or their own access away. The guard above only catches the case where
+        // nobody else is left, so with a colleague around an admin could otherwise lock themselves out of the machine
+        // they administer with one click. Another admin does it for them.
+        if (accountId === actor.accountId && givingUpAdmin) throw new AuthRefusal(400, 'self_change', ADMIN_ERRORS.selfChange);
         if ('role' in change) {
           if (change.role === target.role) return;
           await tx.updateTable('account').set({ role: change.role }).where('account_id', '=', accountId).execute();

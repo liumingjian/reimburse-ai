@@ -171,6 +171,11 @@ function stepsOf(record: ErpRecord): ErpStep[] {
   return steps;
 }
 
+// The executor's code for "报销信息核对 could not read the catalog" (`executor/job.ts`). Nothing was written and
+// nothing about the claim is wrong, so it gets its own sentence rather than the generic abort one.
+const CATALOG_QUERY_FAILED = 'catalog_query_failed';
+const CATALOG_QUERY_FAILED_REASON = '没能在报销系统里查到项目与费用项目，报销信息核对没有做完。报销系统没有被改动，明细也不用改：等报销系统能正常查询后再去报销。原因：';
+
 const LOGIN_NOT_DETECTED = '还没有检测到登录。请在报销专用浏览器窗口里登录报销系统（登录页上显示的上次账号不算已登录），完成后再点一次「我已登录，继续」。';
 
 export function erpView(record: ErpRecord): Erp {
@@ -184,7 +189,13 @@ export function erpView(record: ErpRecord): Erp {
     case 'waiting_login':
       return { ...idle, status: 'waiting_login', steps: stepsOf(record), loginNotice: facts.trigger === 'confirm_login' ? LOGIN_NOT_DETECTED : null };
     case 'aborted':
-      return { ...idle, abortReason: `上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：${reason}` };
+      return {
+        ...idle,
+        abortReason:
+          record.result?.code === CATALOG_QUERY_FAILED
+            ? `${CATALOG_QUERY_FAILED_REASON}${reason}`
+            : `上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：${reason}`,
+      };
     case 'saved':
       return { ...idle, status: 'done', steps: stepsOf(record), draftNo: record.result?.billNo ?? null };
     case 'unknown':

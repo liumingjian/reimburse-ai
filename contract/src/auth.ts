@@ -65,6 +65,7 @@ export const AuthFailureSchema = z.object({ error: ActionErrorSchema });
 export const ADMIN_ERRORS = {
   forbidden: '只有管理员可以这样做。',
   lastAdmin: '至少要保留一位在用的管理员，这个操作没有执行。',
+  selfChange: '不能取消自己的管理员身份，也不能停用自己的账号。需要的话，请让另一位管理员来做。',
   accountNotFound: '没有这个账号。',
   passwordChangeRequired: '请先把临时密码改成你自己的密码。',
   wrongPassword: '当前密码不对。',

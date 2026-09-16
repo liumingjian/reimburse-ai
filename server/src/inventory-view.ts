@@ -212,8 +212,21 @@ function work(m: ViewMaterial, outcome: ParseOutcome, answers: StoredAnswers, an
     }
     case 'failed':
       w.kindLabel = INVENTORY_COPY.failed;
-      w.notes.push(outcome.retryable ? '读取出错，可重新盘点再试' : '读取出错');
-      add(choice(`parse_failed.${id}`, id, `「${name}」识别失败`, outcome.retryable ? '读取时出错，重新盘点可以再试一次。' : '这份材料读取出错。', [EXCLUDE]));
+      // A retryable read error is worth another run, but this item cannot start one: the only choice it offers is
+      // exclude. Name the path that does work (reopen upload, then start 材料盘点 again) instead of promising a retry
+      // that is not on offer here.
+      w.notes.push(outcome.retryable ? '读取出错，重新打开上传后可以再盘点一次' : '读取出错');
+      add(
+        choice(
+          `parse_failed.${id}`,
+          id,
+          `「${name}」识别失败`,
+          outcome.retryable
+            ? '读取这份材料时出错。要再试一次，请回到上传页「重新打开上传」，然后重新开始材料盘点；也可以在这里排除它。'
+            : '这份材料读取出错。',
+          [EXCLUDE],
+        ),
+      );
       break;
     case 'recognised':
       w.resolved = outcome;

@@ -27,7 +27,7 @@ The new baox local app runs 去报销 (fill ERP) as a long background job: the p
   - baox app accounts are independent of ERP accounts: the user registers and logs in to baox, and authorises ERP only at 去报销.
   - Whichever ERP account is logged in may receive the draft. The probe records it on the attempt and never compares it.
   - A project that account cannot use is caught by the catalog check before import.
-- **ERP 自动化控制权 (automation control) is a server-side lease** (`jobId`, `taskId`, CDP `targetId`, heartbeat). It is global: one ERP job at a time, whatever the number of app users.
+- **ERP 自动化控制权 (automation control) is a server-side lease** (`jobId`, `taskId`, CDP `targetId`). It is global: one ERP job at a time, whatever the number of app users. The lease lives in memory and has **no heartbeat**: one process owns the data directory (a lock file), and a restart ends every job that process was running, so a lease never has to outlive the process that took it. It is keyed by `jobId`, not by task, so a job that finishes never releases the lease a newer job of the same task has already taken.
   - The executor must hold the lease to act.
   - The lease is released on `waiting_login`, abort, catalog mismatch, error and done. Only `confirm-login` re-takes it.
   - Before every mutating action, the executor re-checks the target, the single visible form-instance UUID, 新增/修改 mode and URL. Drift releases the lease and ends in write result unknown.

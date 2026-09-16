@@ -101,6 +101,25 @@ describe('the first admin', () => {
   });
 });
 
+describe('an admin acting on their own account', () => {
+  it('refuses self-demotion and self-deactivation even when another admin exists', async () => {
+    const admin = await server.signIn('admin');
+    const bob = await server.signIn('bob');
+    // With a second admin the last-admin guard no longer fires, so this pins the self-change guard on its own.
+    expect((await admin.post(`/api/admin/accounts/${bob.account.accountId}`, { role: 'admin' })).status).toBe(200);
+
+    for (const change of [{ role: 'user' }, { active: false }]) {
+      const refused = await admin.post(`/api/admin/accounts/${admin.account.accountId}`, change);
+      expect(refused.status).toBe(400);
+      expect(((await refused.json()) as { error: { code: string } }).error.code).toBe('self_change');
+    }
+    // Still an admin, still signed in.
+    expect((await admin.request('/api/admin/accounts')).status).toBe(200);
+    // Another admin may still do it: the guard is about doing it to yourself, not about the change being forbidden.
+    expect((await bob.post(`/api/admin/accounts/${admin.account.accountId}`, { role: 'user' })).status).toBe(200);
+  });
+});
+
 describe('changing the password', () => {
   it('drops the account\'s other sessions and keeps the one that changed it', async () => {
     const first = await server.signIn('alice');
