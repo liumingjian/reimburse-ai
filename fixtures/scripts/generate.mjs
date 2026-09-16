@@ -32,6 +32,7 @@ export const MATERIAL_FILES = {
   m09: 'm09-taxi-photo.jpg',
   m10: 'm10-taxi-photo.jpg',
   m11: 'm11-other-invoice.pdf',
+  m12: 'm12-amap-itinerary-gap.pdf',
 };
 
 export const EXPECTED_FILES = [

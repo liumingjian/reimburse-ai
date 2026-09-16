@@ -73,9 +73,20 @@ const REPLACE_HINT = '换原件请在上传页追加材料后重新盘点。';
 const MANUAL_FILL = 'manual_fill';
 const REFERENCE = 'reference';
 const CITY_MISSING_CHECK = '取不到费用发生城市';
+// A recognised material missing a required slot said nothing in the 校验 column, which rendered as 无; it now names the
+// slots it could not read.
+const MISSING_REQUIRED_CHECK = '缺少必填字段：';
 
-// Titles of validation findings that are not about amounts (the default title is 金额核对不通过).
-const VALIDATION_TITLES: Readonly<Record<string, string>> = { segment_rows_incomplete: '逐段明细没有完整读到', route_incomplete: '行程路线没有完整读到' };
+// Titles of validation findings that are not about amounts (the default title is 金额核对不通过). A code may
+// carry what it is about after a dot (`segment_field_unreadable.2.amount`), which keeps one item id per failing check;
+// the title is looked up on the part before it.
+const VALIDATION_TITLES: Readonly<Record<string, string>> = {
+  segment_rows_incomplete: '逐段明细没有完整读到',
+  segment_index_unexpected: '逐段明细的序号不对',
+  segment_field_unreadable: '逐段明细没有完整读到',
+  route_incomplete: '行程路线没有完整读到',
+};
+const validationTitle = (code: string) => VALIDATION_TITLES[code.split('.')[0] ?? code] ?? '金额核对不通过';
 
 // Line-level edits every kind with an event offers: the description is wording, the ERP invoice type a choice.
 const DESCRIPTION = 'description';
@@ -265,7 +276,7 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
     if (finding.kind === 'advisory') w.notes.push(finding.message);
     if (finding.kind === 'validation') {
       w.notes.push(finding.message);
-      add(choice(`validation_failure.${id}.${finding.code}`, id, `「${m.fileName}」${VALIDATION_TITLES[finding.code] ?? '金额核对不通过'}`, `${finding.message}票面事实不能修改。${REPLACE_HINT}`, [EXCLUDE]));
+      add(choice(`validation_failure.${id}.${finding.code}`, id, `「${m.fileName}」${validationTitle(finding.code)}`, `${finding.message}票面事实不能修改。${REPLACE_HINT}`, [EXCLUDE]));
     }
     if (finding.kind === 'conflict') {
       const label = fieldLabel(resolved.kind, finding.key);
@@ -289,6 +300,9 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
         values[key] = value;
         sourceOf.set(key, { source: 'user', parserVersion: null, evidence: 'explicit' });
       }
+      // Filled in: the gap is gone, so it is no longer what the 校验 column has to say.
+    } else {
+      w.notes.push(`${MISSING_REQUIRED_CHECK}${slots.map((slot) => slot.label).join('、')}`);
     }
   }
 

@@ -129,16 +129,21 @@ export const amapItinerary: Layout = {
 
     // Leg rows are trusted only as a whole: indexes 1..n in order, n = the declared count, each with a date and an
     // amount. Otherwise a row was not read completely (wrapped tables are the known trap) and all of them are dropped.
-    const complete =
-      declared !== null &&
-      parsed.length === Number(declared[1]) &&
-      parsed.every((leg, i) => leg.index === i + 1 && leg.date !== null && leg.amount !== null);
-    if (!complete) {
-      findings.push({
-        kind: 'validation',
-        code: 'segment_rows_incomplete',
-        message: `逐段明细读到 ${parsed.length} 行，行程单声明 ${declared ? `${declared[1]} 段` : '的段数没读到'}，对不上；整块不采用。`,
-      });
+    // Each clause is judged on its own and reports itself, so the refusal names the cause the user can check against
+    // the original: a count message is emitted only when the counts really differ.
+    const declaredCount = declared ? Number(declared[1]) : null;
+    const refusals: Finding[] = [];
+    const refuse = (code: string, message: string) => refusals.push({ kind: 'validation', code, message });
+    if (declaredCount === null) refuse('segment_rows_incomplete', `行程单声明的段数没读到，逐段明细读到 ${parsed.length} 行；整块不采用。`);
+    else if (parsed.length !== declaredCount) refuse('segment_rows_incomplete', `逐段明细读到 ${parsed.length} 行，行程单声明 ${declaredCount} 段，对不上；整块不采用。`);
+    parsed.forEach((leg, i) => {
+      const no = i + 1;
+      if (leg.index !== no) refuse(`segment_index_unexpected.${no}`, `第 ${no} 段的序号读成了 ${leg.index}；整块不采用。`);
+      if (leg.date === null) refuse(`segment_field_unreadable.${no}.date`, `第 ${no} 段的上车时间没读到；整块不采用。`);
+      if (leg.amount === null) refuse(`segment_field_unreadable.${no}.amount`, `第 ${no} 段的金额没读到；整块不采用。`);
+    });
+    if (refusals.length > 0) {
+      findings.push(...refusals);
       return { kindLabel: '高德行程单', candidates, findings };
     }
 

@@ -8,6 +8,7 @@ import { extractPdfText } from './pdftext.mjs';
 import {
   AMAP_INVOICE,
   AMAP_ITINERARY,
+  AMAP_ITINERARY_GAP,
   CAOCAO_INVOICE,
   CAOCAO_ITINERARY,
   HOTEL_FOLIO,
@@ -28,6 +29,7 @@ const EXPECTED_TEXT = {
   m06: ['行程单', CAOCAO_ITINERARY.brand, '浦东机场', '张江', '38.40'],
   m07: ['铁路电子客票', RAIL_0809.number, RAIL_0809.date, RAIL_0809.train, RAIL_0809.from, RAIL_0809.to, RAIL_0809.price],
   m08: ['铁路电子客票', RAIL_0822.number, RAIL_0822.date, RAIL_0822.train, RAIL_0822.from, RAIL_0822.to, RAIL_0822.price],
+  m12: ['行程单', AMAP_ITINERARY_GAP.brand, `共计${AMAP_ITINERARY_GAP.count}单行程`, `合计${AMAP_ITINERARY_GAP.total}元`, '张江', '浦东机场', '待结算'],
   m11: ['电子发票', '普通发票', OTHER_INVOICE.number, OTHER_INVOICE.date, '餐饮服务', OTHER_INVOICE.gross],
 };
 

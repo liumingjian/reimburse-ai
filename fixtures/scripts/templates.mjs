@@ -3,6 +3,7 @@
 import {
   AMAP_INVOICE,
   AMAP_ITINERARY,
+  AMAP_ITINERARY_GAP,
   BUYER,
   CAOCAO_INVOICE,
   CAOCAO_ITINERARY,
@@ -238,6 +239,7 @@ export const DOCS = {
   m09: taxiPhoto(TAXI_0815),
   m10: taxiPhoto(TAXI_0819),
   m11: invoice(OTHER_INVOICE, '#8b3a3a'),
+  m12: itinerary(AMAP_ITINERARY_GAP),
 };
 
 // 打印页里放置的材料：出租车用裁边并透视矫正后的条票，其余用原件版式。

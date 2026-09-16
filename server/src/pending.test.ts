@@ -132,12 +132,15 @@ describe('a recognised material with gaps', () => {
     expect(gap).toMatchObject({ kind: 'form', status: 'open' });
     expect(gap.fields.map((f) => f.key)).toEqual(['sellerName']);
     expect(start.lines).toEqual([]);
+    // The 校验 column used to be empty here, which the inventory renders as 无; it now names the slot that is missing.
+    expect(byFileName(start, sample('m01').name).checkText.split('；')).toContain('缺少必填字段：销售方名称');
 
     const done = await answered(start, gap.itemId, { sellerName: '上海某某酒店管理有限公司' });
     const hotel = byFileName(done, sample('m01').name);
     expect(hotel).toMatchObject({ status: 'ok', role: 'primary_voucher' });
     expect(hotel.fields.find((f) => f.key === 'sellerName')).toMatchObject({ source: 'user', editClass: 'fact_correctable' });
     expect(hotel.fields.find((f) => f.key === 'totalAmount')).toMatchObject({ source: 'rule:vat_invoice/einvoice', editClass: 'fact_locked' });
+    expect(hotel.checkText).not.toContain('缺少必填字段');
     expect(done.lines).toHaveLength(1);
   });
 });

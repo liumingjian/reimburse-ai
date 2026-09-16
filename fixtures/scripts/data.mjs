@@ -62,6 +62,19 @@ export const AMAP_ITINERARY = {
   ],
 };
 
+// An itinerary whose declared leg count agrees with its parsed row count while that leg's amount cannot be read: the
+// amount cell says 待结算 (settlement pending). This is the case behind the false 「对不上」 (counts disagree) message.
+export const AMAP_ITINERARY_GAP = {
+  id: 'm12',
+  file: 'm12-amap-itinerary-gap.pdf',
+  brand: '高德地图',
+  applyDate: '2026-08-13',
+  phone: EMPLOYEE.phoneMasked,
+  count: '1',
+  total: '32.50',
+  rows: [{ no: '1', car: '经济型', time: '2026-08-11 19:04', city: '上海市', from: '张江', to: '浦东机场', amount: '待结算' }],
+};
+
 export const CAOCAO_INVOICE = {
   id: 'm05',
   file: 'm05-caocao-invoice.pdf',

@@ -79,17 +79,41 @@ describe('ride_itinerary/amap', () => {
     expect(values(recognised({ ...doc, observations: [...doc.observations, wrapped] }))['segments[0].origin']).toBe('虹桥枢纽P9停车场');
   });
 
-  it('a leg row count that disagrees with the declared count discards the legs and raises a validation finding', async () => {
+  // The message wording is what the user reads and acts on, so these cases assert it verbatim: each refusal has to name
+  // the clause that actually failed, and a count mismatch may only be claimed when the counts really differ (#202).
+  it('a leg row count that disagrees with the declared count discards the legs and says so with both counts', async () => {
     const doc = await pdfDoc(fixture('m04-amap-itinerary.pdf'));
     const thirdRowY = doc.observations.find((o) => o.text === '21.65')?.y;
     const outcome = recognised({ ...doc, observations: doc.observations.filter((o) => o.y !== thirdRowY) });
     expect(outcome.candidates.some((c) => c.key.startsWith('segments['))).toBe(false);
-    expect(outcome.findings).toEqual([expect.objectContaining({ kind: 'validation', code: 'segment_rows_incomplete' })]);
+    expect(outcome.findings).toEqual([{ kind: 'validation', code: 'segment_rows_incomplete', message: '逐段明细读到 2 行，行程单声明 3 段，对不上；整块不采用。' }]);
   });
 
-  it('reports a declared total it could not read as missing', async () => {
+  it('names the leg and the field when the counts agree but a leg amount is unreadable (m12), never a count mismatch', async () => {
+    const outcome = recognised(await pdfDoc(fixture('m12-amap-itinerary-gap.pdf')));
+    expect(outcome.findings).toEqual([{ kind: 'validation', code: 'segment_field_unreadable.1.amount', message: '第 1 段的金额没读到；整块不采用。' }]);
+    expect(values(outcome)).toEqual({ applyDate: '2026-08-13', segmentCount: '1', itineraryTotal: '32.50' });
+  });
+
+  it('names the leg whose 上车时间 is unreadable while the counts agree', async () => {
+    const doc = await pdfDoc(fixture('m04-amap-itinerary.pdf'));
+    const outcome = recognised({ ...doc, observations: doc.observations.filter((o) => !o.text.includes('18:20')) });
+    expect(outcome.findings).toEqual([{ kind: 'validation', code: 'segment_field_unreadable.2.date', message: '第 2 段的上车时间没读到；整块不采用。' }]);
+  });
+
+  it('names the leg whose 序号 is not the one expected there', async () => {
+    const doc = await pdfDoc(fixture('m04-amap-itinerary.pdf'));
+    const thirdRowY = doc.observations.find((o) => o.text === '21.65')?.y;
+    const observations = doc.observations.map((o) => (o.y === thirdRowY && o.text === '3' ? { ...o, text: '4', raw: '4' } : o));
+    expect(recognised({ ...doc, observations }).findings).toEqual([
+      { kind: 'validation', code: 'segment_index_unexpected.3', message: '第 3 段的序号读成了 4；整块不采用。' },
+    ]);
+  });
+
+  it('reports a declared total it could not read as missing, and does not claim a count mismatch it cannot check', async () => {
     const doc = await pdfDoc(fixture('m04-amap-itinerary.pdf'));
     const outcome = recognised({ ...doc, observations: doc.observations.filter((o) => !o.text.startsWith('共计')) });
     expect(outcome.missing).toEqual(['segmentCount', 'itineraryTotal']);
+    expect(outcome.findings).toEqual([{ kind: 'validation', code: 'segment_rows_incomplete', message: '行程单声明的段数没读到，逐段明细读到 3 行；整块不采用。' }]);
   });
 });
