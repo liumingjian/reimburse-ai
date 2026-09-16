@@ -52,6 +52,40 @@ export function rows(doc: ParseDoc, page = 1, tolerance = 3): TextObservation[][
   return out;
 }
 
+// One visual row read as a single string. Real PDFs split a line into several text runs — a label and its value, a
+// table cell, sometimes one run per glyph — so a layout matches its hard anchors against this joined text instead of
+// against one observation (ADR-0017: the haystack widens, the patterns stay fully anchored).
+export type JoinedRow = {
+  page: number;
+  // Baseline of the row in PDF user space, for callers that relate rows to each other.
+  y: number;
+  // The row's observations left to right, joined and compacted the same way anchors are. Match against this.
+  text: string;
+  // The contributing observations, left to right, each with its id: evidence refs keep naming real text runs, and a
+  // caller that needs columns (itinerary cells) buckets these by x.
+  observations: readonly TextObservation[];
+};
+
+// The joined-row view of a page: `rows()` seen as text. Raw observations stay available; this derives from them.
+export function joinedRows(doc: ParseDoc, page = 1, tolerance = 3): JoinedRow[] {
+  return rows(doc, page, tolerance).map((row) => ({
+    page,
+    y: row[0]?.y ?? 0,
+    text: compact(row.map((o) => o.text).join('')),
+    observations: row,
+  }));
+}
+
+// The first row whose whole text matches `pattern`, with the match. `pattern` stays fully anchored: this is a row
+// match, never a substring or scored one.
+export function matchRow(lines: readonly JoinedRow[], pattern: RegExp): { row: JoinedRow; match: RegExpExecArray } | null {
+  for (const row of lines) {
+    const match = pattern.exec(row.text);
+    if (match) return { row, match };
+  }
+  return null;
+}
+
 // Money as integer cents, so sums conserve exactly. Accepts `¥3,433.96`, `-1.94`; null when not a 2-decimal amount.
 export function cents(text: string): number | null {
   const match = /^¥?(-)?(\d{1,3}(?:,\d{3})*|\d+)\.(\d{2})$/.exec(compact(text));

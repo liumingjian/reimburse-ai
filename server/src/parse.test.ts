@@ -89,6 +89,52 @@ describe('the vat_invoice/einvoice layout on @baox/fixtures', () => {
   });
 });
 
+describe('an e-invoice whose text runs are split', () => {
+  // #200: real PDF generators draw a label and its value as separate text runs, and letter-spaced titles glyph by
+  // glyph. Both fixtures carry the same face as any other e-invoice, so both must parse the same way.
+  it('parses r01 (发票号码 label apart from its digits) and r02 (letter-spaced title) into their face fields', async () => {
+    const snapshot = await inventoried(['r01', 'r02']);
+
+    const splitNumber = byFileName(snapshot, sample('r01').name);
+    expect(splitNumber).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（专票）', role: 'primary_voucher', status: 'ok', pendingItemIds: [] });
+    expect(fieldValues(splitNumber, EINVOICE)).toEqual({
+      invoiceNumber: '26312000000098127801',
+      issueDate: '2026-08-20',
+      invoiceType: '专票',
+      buyerName: '某某科技（上海）有限公司',
+      buyerTaxId: '91310000XXXXXXXX0A',
+      sellerName: '上海某某酒店管理有限公司',
+      sellerTaxId: '91310000YYYYYYYY0B',
+      itemName: '*住宿服务*住宿费',
+      netAmount: '528.30',
+      taxAmount: '31.70',
+      totalAmount: '560.00',
+    });
+
+    const spacedTitle = byFileName(snapshot, sample('r02').name);
+    expect(spacedTitle).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（普票）', role: 'primary_voucher', status: 'ok', pendingItemIds: [] });
+    expect(fieldValues(spacedTitle, EINVOICE)).toEqual({
+      invoiceNumber: '26312000000098127802',
+      issueDate: '2026-08-21',
+      invoiceType: '普票',
+      buyerName: '某某科技（上海）有限公司',
+      buyerTaxId: '91310000XXXXXXXX0A',
+      sellerName: '上海某某酒店管理有限公司',
+      sellerTaxId: '91310000YYYYYYYY0B',
+      itemName: '*住宿服务*住宿费',
+      netAmount: '264.15',
+      taxAmount: '15.85',
+      totalAmount: '280.00',
+    });
+
+    // Evidence still names real text observations, one per contributing run.
+    for (const material of [splitNumber, spacedTitle]) {
+      for (const field of material.fields) expect(field).toMatchObject({ source: EINVOICE, parserVersion: einvoice.version, evidence: 'explicit' });
+    }
+    expect(snapshot.inventory.summary).toMatchObject({ materialCount: 2, okCount: 2, pendingMaterialCount: 0, voucherCount: 2, openPendingItemCount: 0 });
+  });
+});
+
 describe('the e-invoice QR code, a second evidence source', () => {
   it('a QR that disagrees with the text layer surfaces as a blocking conflict 待确认项', async () => {
     const amap = sample('m03');

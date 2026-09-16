@@ -1,4 +1,4 @@
-import { cents, compact, money, rows, type ParseDoc, type TextObservation } from '../doc';
+import { cents, compact, joinedRows, matchRow, money, rows, type ParseDoc, type TextObservation } from '../doc';
 import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout } from '../layout';
 
 // `vat_invoice/einvoice`: the 全电发票 (fully digital e-invoice) face, from the PDF text layer (or, with #186, OCR),
@@ -94,8 +94,9 @@ export const einvoice: Layout = {
   label: '全电发票',
 
   recognise(doc) {
+    const lines = joinedRows(doc);
     const items = itemNames(doc);
-    return Boolean(find(doc, TITLE) && find(doc, NUMBER)) && items.length > 0 && items.every((item) => V1_ITEM.test(item));
+    return Boolean(matchRow(lines, TITLE) && matchRow(lines, NUMBER)) && items.length > 0 && items.every((item) => V1_ITEM.test(item));
   },
 
   parse(doc) {
@@ -105,14 +106,17 @@ export const einvoice: Layout = {
       if (value) candidates.push({ key, value, source: SOURCE, parserVersion: VERSION, evidence: 'explicit', refs: ref(...evidence) });
     };
 
-    const title = find(doc, TITLE);
-    const type = title ? TYPE_OF_TITLE[TITLE.exec(compact(title.text))?.[1] ?? ''] : undefined;
-    const number = find(doc, NUMBER);
+    // Title and 发票号码 read from joined rows: a letter-spaced title, or a label and its 20 digits drawn as separate
+    // text runs, are one row even though they are several observations.
+    const lines = joinedRows(doc);
+    const title = matchRow(lines, TITLE);
+    const type = title ? TYPE_OF_TITLE[title.match[1] ?? ''] : undefined;
+    const number = matchRow(lines, NUMBER);
     const date = find(doc, ISSUE_DATE);
     const dateParts = date ? ISSUE_DATE.exec(compact(date.text)) : null;
-    add('invoiceNumber', number ? NUMBER.exec(compact(number.text))?.[1] : null, ...(number ? [number] : []));
+    add('invoiceNumber', number?.match[1], ...(number ? number.row.observations : []));
     add('issueDate', dateParts ? `${dateParts[1]}-${dateParts[2]}-${dateParts[3]}` : null, ...(date ? [date] : []));
-    add('invoiceType', type, ...(title ? [title] : []));
+    add('invoiceType', type, ...(title ? title.row.observations : []));
 
     const { buyer, seller } = parties(doc);
     for (const [prefix, party] of [['buyer', buyer], ['seller', seller]] as const) {

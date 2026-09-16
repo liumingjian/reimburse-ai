@@ -15,8 +15,10 @@ import {
   OTHER_INVOICE,
   RAIL_0809,
   RAIL_0822,
+  SPACED_TITLE_INVOICE,
+  SPLIT_NUMBER_INVOICE,
 } from './data.mjs';
-import { EXPECTED_FILES, MATERIAL_FILES, OUTPUT_DIR } from './generate.mjs';
+import { EXPECTED_FILES, OUTPUT_DIR, PDF_DOC_FILES } from './generate.mjs';
 
 // 每份 PDF 必须抽得出的字符串：标题、号码、日期、金额与关键中文。
 const EXPECTED_TEXT = {
@@ -29,6 +31,8 @@ const EXPECTED_TEXT = {
   m07: ['铁路电子客票', RAIL_0809.number, RAIL_0809.date, RAIL_0809.train, RAIL_0809.from, RAIL_0809.to, RAIL_0809.price],
   m08: ['铁路电子客票', RAIL_0822.number, RAIL_0822.date, RAIL_0822.train, RAIL_0822.from, RAIL_0822.to, RAIL_0822.price],
   m11: ['电子发票', '普通发票', OTHER_INVOICE.number, OTHER_INVOICE.date, '餐饮服务', OTHER_INVOICE.gross],
+  r01: ['电子发票', '增值税专用发票', SPLIT_NUMBER_INVOICE.number, SPLIT_NUMBER_INVOICE.date, '住宿服务', SPLIT_NUMBER_INVOICE.gross, SPLIT_NUMBER_INVOICE.net, SPLIT_NUMBER_INVOICE.tax],
+  r02: ['电子发票', '普通发票', SPACED_TITLE_INVOICE.number, SPACED_TITLE_INVOICE.date, '住宿服务', SPACED_TITLE_INVOICE.gross, SPACED_TITLE_INVOICE.net, SPACED_TITLE_INVOICE.tax],
 };
 
 const MAGIC = {
@@ -57,7 +61,7 @@ function verify() {
     if (buf.length > 1.5 * 1024 * 1024) failures.push(`${name}：${(buf.length / 1024).toFixed(0)} KB，超过 1.5 MB`);
   }
   for (const [id, expected] of Object.entries(EXPECTED_TEXT)) {
-    const name = MATERIAL_FILES[id];
+    const name = PDF_DOC_FILES[id];
     const path = join(OUTPUT_DIR, name);
     let result;
     try {

@@ -2,6 +2,7 @@
 // 夹具生成器：HTML 模板 → headless Chrome → fixtures/generated/ 下的示例 PDF（带中文文本层）、出租车票照片（JPG）与打印页图（PNG）。
 // Usage: pnpm --filter @baox/fixtures generate   (generate, then verify)
 //        node fixtures/scripts/generate.mjs      (generate only)
+//        node fixtures/scripts/generate.mjs r01 r02   (只重做这几份，不动其它产物)
 // 只在 Mac 上运行：需要 Google Chrome 与 sips（PNG 转 JPG）。可重复运行，产物文件集固定（见 verify.mjs 的清单）。
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -34,8 +35,16 @@ export const MATERIAL_FILES = {
   m11: 'm11-other-invoice.pdf',
 };
 
+// 回归夹具（#200 起）：复现真实 PDF 的文本串拆分，不属于 11 份示例材料的剧本，也不进 mock 的示例材料目录。
+export const REGRESSION_FILES = {
+  r01: 'r01-einvoice-split-number.pdf',
+  r02: 'r02-einvoice-spaced-title.pdf',
+};
+
+export const PDF_DOC_FILES = { ...MATERIAL_FILES, ...REGRESSION_FILES };
+
 export const EXPECTED_FILES = [
-  ...Object.values(MATERIAL_FILES),
+  ...Object.values(PDF_DOC_FILES),
   ...PRINT_PAGES.map((page) => page.file),
   ...PRINT_VARIANTS.map((page) => page.file),
   PRINT_SHEET_FILE,
@@ -109,13 +118,15 @@ function run(cmd, args) {
   if (result.status !== 0) throw new Error(`${cmd} ${args.join(' ')}\n退出码 ${result.status}\n${(result.stderr ?? '').slice(-2000)}`);
 }
 
-export async function generate() {
+// `only`：只重做这几份材料（如 `['r01']`），产物目录不清空；不传就整批重做。
+export async function generate(only = null) {
   const binary = chromeBinary();
   const work = mkdtempSync(join(tmpdir(), 'baox-fixtures-'));
   const profile = work;
   mkdirSync(OUTPUT_DIR, { recursive: true });
-  // 先清空产物目录：文件集由本脚本唯一决定，旧文件不残留。
-  for (const name of readdirSync(OUTPUT_DIR)) unlinkSync(join(OUTPUT_DIR, name));
+  // 整批生成时先清空产物目录：文件集由本脚本唯一决定，旧文件不残留。
+  if (!only) for (const name of readdirSync(OUTPUT_DIR)) unlinkSync(join(OUTPUT_DIR, name));
+  const wanted = (id) => !only || only.includes(id);
 
   const htmlOf = (doc) => {
     const path = join(work, `${doc.id}.html`);
@@ -124,7 +135,8 @@ export async function generate() {
   };
 
   const produced = [];
-  for (const [id, file] of Object.entries(MATERIAL_FILES)) {
+  for (const [id, file] of Object.entries(PDF_DOC_FILES)) {
+    if (!wanted(id)) continue;
     const doc = DOCS[id];
     const target = join(OUTPUT_DIR, file);
     if (file.endsWith('.pdf')) {
@@ -140,6 +152,7 @@ export async function generate() {
   }
   for (const [index, doc] of PRINT_DOCS.entries()) {
     const page = PRINT_PAGES[index];
+    if (!wanted(page.id)) continue;
     const target = join(OUTPUT_DIR, page.file);
     await chrome(binary, profile, [`--window-size=${doc.width},${doc.height}`, `--screenshot=${target}`], htmlOf(doc));
     produced.push(page.file);
@@ -147,10 +160,16 @@ export async function generate() {
   }
   for (const [index, doc] of VARIANT_DOCS.entries()) {
     const variant = PRINT_VARIANTS[index];
+    if (!wanted(variant.id)) continue;
     const target = join(OUTPUT_DIR, variant.file);
     await chrome(binary, profile, [`--window-size=${doc.width},${doc.height}`, `--screenshot=${target}`], htmlOf(doc));
     produced.push(variant.file);
     console.log(`生成 ${variant.file}`);
+  }
+  // 只重做部分材料时到此为止：合并打印稿要所有页图都是这一轮刚写出的。
+  if (only) {
+    rmSync(work, { recursive: true, force: true });
+    return produced.sort();
   }
   // 合并打印稿：上面刚写出的默认页图逐页铺满 A4，打印成一份 PDF（没有文本层，只做下载样本）。
   const sheetHtml = join(work, 'print-sheet.html');
@@ -164,6 +183,7 @@ export async function generate() {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const produced = await generate();
+  const only = process.argv.slice(2);
+  const produced = await generate(only.length ? only : null);
   console.log(`共 ${produced.length} 个文件 → ${OUTPUT_DIR}`);
 }
