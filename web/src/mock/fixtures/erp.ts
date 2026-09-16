@@ -134,15 +134,16 @@ export function emptyReconcile(): Reconcile {
   return { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [], capture: null };
 }
 
-// 对账判定（内核 classifyReconciliation 的对应）：bucket 决定处置；「已保存」还要看收票与明细合计是否相等、严格逐行是否一致。
-// 原地等待只允许重新对账（只读）；转人工的结果是 human_review，只允许转人工。
+// 对账判定（内核 classifyReconciliation 的对应）：bucket 决定建议的处置；「已保存」还要看收票与明细合计是否相等、
+// 严格逐行是否一致。action 是建议，allowedActions 是能做的：建议原地等待时也一直可以转人工（服务端
+// fill-state.ts reconcileView 同此），建议转人工时只能转人工（human_review，不再给「重新对账」）。
 export function reconcileVerdict(
   bucket: ReconcileBucket,
   savedConsistent = true,
 ): Pick<Reconcile, 'bucket' | 'action' | 'actionCode' | 'allowedActions' | 'humanReview'> {
   const handOff = bucket === '未保存·已导入未写明细' || bucket === '不自洽' || (bucket === '已保存' && !savedConsistent);
   const code: ReconcileActionCode = handOff ? 'hand_off' : 'wait';
-  return { bucket, action: RECONCILE_ACTION_LABELS[code], actionCode: code, allowedActions: [code], humanReview: handOff };
+  return { bucket, action: RECONCILE_ACTION_LABELS[code], actionCode: code, allowedActions: handOff ? ['hand_off'] : ['wait', 'hand_off'], humanReview: handOff };
 }
 
 // 写入完成：草稿已保存、严格回读逐行一致，阶段推到 done。
@@ -154,7 +155,8 @@ export function applyErpDone(snapshot: TaskSnapshot, draftNo: string): void {
 }
 
 // 严格回读不一致：草稿已落库但与本地确认不一致，写入就此停下（已保存 + 逐行不一致 ⇒ 转人工，human_review）。
-// 任务停在完成页（done 阶段）但不算完成：完成页显示差异行，当前待答 step 是 hand_off，只接受「转人工」。
+// 停在对账（reconcile 阶段）：done 只留给「已保存且逐行一致」，没有被证明一致的草稿不算交接完成，
+// 服务端也从不把它投影成 done（fill-state.ts 只在 phase saved 时给 done）。对账页显示差异行，只接受「转人工」。
 export function applyReadbackMismatch(snapshot: TaskSnapshot, draftNo: string): void {
   const readback = readbackOf(readbackRows(snapshot.lines, MISMATCH));
   const bad = readback.rows.filter((row) => !row.matched);
@@ -169,8 +171,8 @@ export function applyReadbackMismatch(snapshot: TaskSnapshot, draftNo: string): 
     reasons: [],
     capture: null,
   };
-  snapshot.stage = 'done';
-  snapshot.step = { kind: 'hand_off', stepToken: `tok-${snapshot.task.taskId}-hand-off` };
+  snapshot.stage = 'reconcile';
+  snapshot.step = { kind: 'reconcile', stepToken: `tok-${snapshot.task.taskId}-reconcile` };
 }
 
 // 保存步中止：还没读到草稿，保存是否生效不确定（对账中断点「未知」⇒ 原地等待，只能重新对账）。

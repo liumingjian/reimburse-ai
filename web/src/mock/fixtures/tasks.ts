@@ -289,7 +289,8 @@ export function t3Snapshot(): TaskSnapshot {
   return withProjectUsage(withInventoryProjection(snapshot));
 }
 
-// 任务列表层面的 ERP 结局：已转人工优先；其次是停在完成页的严格回读不一致。
+// 任务列表层面的 ERP 结局：已转人工优先。严格回读不一致的草稿现在停在对账（不是完成），列表按「对账中」显示它，
+// 和服务端一致：服务端的列表也只给 handed_off 或 none。
 function erpOutcomeOf(snapshot: TaskSnapshot): TaskListItem['erpOutcome'] {
   if (snapshot.reconcile.status === 'handed_off') return 'handed_off';
   if (snapshot.stage === 'done' && snapshot.readback.status === 'mismatched') return 'readback_mismatch';

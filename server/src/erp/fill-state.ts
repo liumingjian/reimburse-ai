@@ -233,6 +233,47 @@ export function readbackView(record: ErpRecord, lines: readonly Line[]): Readbac
   return { status: 'matched', rows, summary: `明细 ${rows.length}/${rows.length} 一致`, localTotal: total, erpTotal: total };
 }
 
+// Reasons the strict comparison gave about one particular line ("任务第 3 行没有一条同时匹配…").
+const LINE_REASON = /任务第 (\d+) 行/;
+
+/**
+ * Per-line evidence for the 对账 page, built from the confirmed lines exactly as `readbackView` builds the saved
+ * draft's rows. Only 已保存 gets rows: that is the one bucket where the draft exists and the strict per-line
+ * comparison actually ran, so "this line did not match, and here is why" means something. Before a save there is
+ * nothing in ERP to compare a line against, and inventing rows would suggest otherwise.
+ *
+ * A reconcile read-back proves a whole form, not a value per field, so a line that drew a reason shows no ERP side
+ * rather than echoing the local one back as if it had been read.
+ */
+function reconcileRows(record: ErpRecord, judged: ReconcileJudgement | null, lines: readonly Line[]): ReadbackRow[] {
+  if (!judged || judged.verdict.bucket !== '已保存' || lines.length === 0) return [];
+  const previewLine = new Map((record.preview?.lines ?? []).map((line) => [line.lineId, line]));
+  const receipt = new Map((record.preview?.receiptBindings ?? []).map((binding) => [binding.voucherMaterialId, binding.receiptNumber]));
+  const perLine = new Map<number, string[]>();
+  for (const reason of judged.verdict.reasons) {
+    const no = Number(LINE_REASON.exec(reason)?.[1] ?? 0);
+    if (no > 0) perLine.set(no, [...(perLine.get(no) ?? []), reason]);
+  }
+  return lines.map((line, index) => {
+    const approved = previewLine.get(line.lineId);
+    const values: Record<(typeof READBACK_FIELD_LABELS)[number], string | null> = {
+      申请报销金额: line.grossAmount,
+      项目: line.projectName,
+      费用项目: line.expenseItemName,
+      开始日期: line.date,
+      结束日期: line.endDate ?? line.date,
+      费用金额: approved?.netAmount ?? line.netAmount,
+      税额: approved?.taxAmount ?? line.taxAmount,
+      收票单号: receipt.get(line.voucherMaterialId) ?? null,
+      发票类型: approved?.invoiceType ?? line.invoiceType,
+    };
+    const reasons = judged.saved ? [] : (perLine.get(index + 1) ?? []);
+    const matched = judged.saved || reasons.length === 0;
+    const fields: ReadbackField[] = READBACK_FIELD_LABELS.map((label) => ({ label, local: values[label], erp: matched ? values[label] : null, matched }));
+    return { no: line.no, description: line.description, matched, fields, reasons };
+  });
+}
+
 // The server-side sentence of each 对账中断点.
 const BUCKET_BANNER: Readonly<Record<ReconcileBucket, (billNo: string | null) => string>> = {
   未知: () => '对账没有读清报销系统里这张单据的状态。请在报销系统里打开这次的报销单查看，再点「重新对账」；也可以转人工。',
@@ -261,11 +302,12 @@ function captureOf(record: ErpRecord, taskId: string): ErpCapture | null {
  * 对账 (reconcile) after ERP 写入结果未知, and the terminal 转人工. Before any read and after a 原地等待 verdict the user
  * may reconcile (read-only) again or hand off; a 转人工 verdict (incl. 已导入未写明细) allows only the hand-off.
  */
-export function reconcileView(record: ErpRecord, taskId: string, lifecycle: TaskLifecycle): Reconcile | null {
+export function reconcileView(record: ErpRecord, taskId: string, lifecycle: TaskLifecycle, lines: readonly Line[] = []): Reconcile | null {
   const judged = record.reconcile?.judged ?? null;
   const capture = captureOf(record, taskId);
   const draftNo = judged?.billNo ?? record.result?.billNo ?? null;
   const fillReasons = (record.result?.message ?? '').split('；').filter(Boolean);
+  const rows = reconcileRows(record, judged, lines);
   if (lifecycle === 'handed_off' && record.handOff) {
     return {
       status: 'handed_off',
@@ -276,13 +318,13 @@ export function reconcileView(record: ErpRecord, taskId: string, lifecycle: Task
       humanReview: true,
       banner: HUMAN_REVIEW_NOTICE,
       draftNo,
-      rows: [],
+      rows,
       reasons: judged?.verdict.reasons ?? fillReasons,
       capture,
     };
   }
   if (record.facts?.phase !== 'unknown') return null;
-  const base = { draftNo, rows: [], capture };
+  const base = { draftNo, rows, capture };
   if (record.facts.reconciling) {
     return { ...base, status: 'pending', bucket: judged?.verdict.bucket ?? null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: '正在只读核对报销系统里的这张报销单，不会写入。', reasons: judged?.verdict.reasons ?? fillReasons };
   }

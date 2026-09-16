@@ -712,7 +712,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
           async ({ tx, task, facts, loaded, at, revision }) => {
             if (!erp) return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
             if (facts.erp?.phase !== 'unknown' || !loaded.erp.job) return { code: 'not_reconciling', message: RECONCILE_COPY.notReconciling };
-            const view = reconcileView(loaded.erp, taskId, task.lifecycle);
+            const view = reconcileView(loaded.erp, taskId, task.lifecycle, loaded.lines);
             if (!view?.allowedActions.includes('wait')) return { code: 'action_not_allowed', message: RECONCILE_COPY.notAllowed };
             const holder = erp.lease.holder();
             if (holder && holder.taskId !== taskId) return { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
@@ -739,7 +739,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
         token,
         async ({ tx, task, facts, loaded, at, revision }) => {
           if (facts.erp?.phase !== 'unknown') return { code: 'not_reconciling', message: RECONCILE_COPY.notReconciling };
-          const view = reconcileView(loaded.erp, taskId, task.lifecycle);
+          const view = reconcileView(loaded.erp, taskId, task.lifecycle, loaded.lines);
           if (!view?.allowedActions.includes('hand_off')) return { code: 'action_not_allowed', message: RECONCILE_COPY.notAllowed };
           await tx.insertInto('erp_hand_off').values({ hand_off_id: randomUUID(), task_id: taskId, account_id: accountId, fill_job_id: loaded.erp.job?.job_id ?? null, bucket: view.bucket, revision, created_at: at }).execute();
           await tx.updateTable('task').set({ lifecycle: 'handed_off' }).where('task_id', '=', taskId).execute();
@@ -1001,7 +1001,7 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
     reconcile:
       legacy?.outcome === 'handed_off'
         ? { status: 'handed_off', bucket: legacy.reconcile_bucket as ReconcileBucket | null, action: '转人工', actionCode: null, allowedActions: [], humanReview: true, banner: HUMAN_REVIEW_NOTICE, draftNo: legacy.bill_no, rows: [], reasons: [], capture: null }
-        : (reconcileView(erp, task.task_id, task.lifecycle) ?? { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [], capture: null }),
+        : (reconcileView(erp, task.task_id, task.lifecycle, lines) ?? { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [], capture: null }),
     step,
   };
 }
