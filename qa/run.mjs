@@ -14,6 +14,12 @@ const MATERIALS = process.env['QA_MATERIALS'] ?? '/Users/lmj/Documents/temp/baox
 const OUT = process.env['QA_OUT'] ?? '/tmp/baox-qa-artifacts';
 const ACCOUNT = { name: process.env['QA_USER'] ?? 'admin', password: process.env['QA_PASSWORD'] ?? 'admin123' };
 const HOME_CITY = process.env['QA_HOME_CITY'] ?? '广州';
+const SKIP = new Set(
+  (process.env['QA_SKIP'] ?? '')
+    .split(',')
+    .map((n) => n.trim())
+    .filter(Boolean),
+);
 const PURPOSE = '广州本地用车费用报销（QA）';
 
 // A 1x1 PNG, enough to stand in for a payment screenshot.
@@ -41,8 +47,13 @@ async function shot(page, label) {
 }
 
 // Runs one QA area in isolation: a throw fails only that area, and always leaves
-// a screenshot behind so a failure can be read after the fact.
+// a screenshot behind so a failure can be read after the fact. QA_SKIP names areas
+// to leave out, so a pass can cover everything except, say, the ERP write.
 async function area(page, name, body) {
+  if (SKIP.has(name)) {
+    console.log(`\n=== ${name} (skipped) ===`);
+    return;
+  }
   console.log(`\n=== ${name} ===`);
   try {
     await body();

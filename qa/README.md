@@ -36,6 +36,7 @@ BAOX_PROJECT_CATALOG_FIXTURE=$PWD/server/src/catalog/testing/projects.fixture.js
 | `QA_USER` / `QA_PASSWORD` | `admin` / `admin123` | 登录账号 |
 | `QA_HOME_CITY` | `广州` | 新建任务的常驻城市 |
 | `QA_HEADLESS` | 空 | 置 `1` 则无头运行（冒烟用；平时就该看着它跑） |
+| `QA_SKIP` | 逗号分隔的分区名，跳过不跑。例如 `QA_SKIP=erp-off` 可以跳过去报销那一段。 | 空 |
 
 ## 3. 跑一遍
 
