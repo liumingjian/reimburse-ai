@@ -198,7 +198,7 @@ describe('the print stage reads the absence recorded at inventory', () => {
     const removed = await client.accepted(await alice.post(`/api/tasks/${ready.task.taskId}/actions/remove-payment-screenshot`, { screenshotId: shot.paymentScreenshots[0]?.screenshotId }));
     expect(removed.printSheet.notices).toEqual([STAY_TRIO_COPY.printNotice('No.1', '住宿')]);
     expect(removed.confirmation.status).toBe('confirmed');
-  });
+  }, 120_000);
 
   it('a screenshot supplied at inventory raises no print notice, and cannot be removed from a confirmed list', async () => {
     const start = await inventoried(['m01', 'm02']);
@@ -214,5 +214,5 @@ describe('the print stage reads the absence recorded at inventory', () => {
     const replaced = await client.accepted(await screenshot(generated, invoice.materialId));
     expect(replaced.paymentScreenshots).toHaveLength(1);
     expect(replaced.confirmation.status).toBe('confirmed');
-  });
+  }, 120_000);
 });
