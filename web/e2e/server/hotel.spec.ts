@@ -59,7 +59,7 @@ test('酒店发票加全季结账单，盘点后得到一条带入住和离店�
   await expect(event).toContainText('3640.00');
 
   const folio = snapshot.materials.find((material) => material.fileName === sample('m02').name);
-  expect(folio).toMatchObject({ kind: 'hotel_folio', layout: 'quanji', role: 'reference', status: 'ok' });
+  expect(folio).toMatchObject({ kind: 'hotel_folio', layout: 'labelled', role: 'reference', status: 'ok' });
   expect(snapshot.lines).toEqual([
     expect.objectContaining({ date: '2026-08-09', endDate: '2026-08-22', grossAmount: '3640.00', category: { code: 'accommodation', label: '住宿' }, referenceMaterialIds: [folio?.materialId] }),
   ]);
