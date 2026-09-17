@@ -658,9 +658,10 @@ async function qaAssignment(page, state) {
 
   const summary = await summaryText();
   ok('assignment', `after assigning everything to P-2307: ${summary}`);
-  // 整单合计 is read from the confirmation, which does not exist yet at this step, so the workbench prints the
-  // unit with nothing in front of it. Not the driver's doing, and a reader has to decide whether it is meant.
-  if (/整单合计 元/.test(summary)) warn('assignment', 'the 整单合计 of the assignment summary shows the unit with no amount');
+  // 整单合计 now comes from the assignment view, which carries the whole-list total from the moment the workbench
+  // opens. It used to be read off the confirmation, which does not exist yet at this step, and the workbench printed
+  // the unit with nothing in front of it. An empty amount here is that defect back.
+  if (/整单合计\s*元/.test(summary)) defect('assignment', 'the 整单合计 of the assignment summary shows the unit with no amount');
   await shot(page, 'assignment');
 
   await expect(submit).toBeEnabled({ timeout: 15000 });

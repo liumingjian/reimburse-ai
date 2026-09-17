@@ -1001,7 +1001,7 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
     lines,
     confirmation: confirmationView(digest, confirmed, facts.lastReopenRevision, lines) satisfies Confirmation,
     ...printView(task.task_id, task.name, print, sheetState(print, facts.confirmation, confirmed?.revision ?? null)),
-    projectAssignment: assignment?.view ?? { status: 'not_started', purpose: null, homeCity, assignments: [], working: [], reselect: [], usage: [], projects: [], submittedAt: null },
+    projectAssignment: assignment?.view ?? { status: 'not_started', purpose: null, homeCity, assignments: [], working: [], reselect: [], usage: [], grossTotal: '0.00', projects: [], submittedAt: null },
     // The catalog check lives in the ERP job (ADR-0014); a mismatch it found shows here until the next submission.
     catalog: catalogView(erp) ?? { status: 'pending', problems: [] },
     // Nothing is prepared before the confirmation any more.

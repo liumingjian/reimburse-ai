@@ -95,6 +95,21 @@ describe('submit-project-assignment', () => {
     expect(c.projectAssignment.working.map((w) => w.projectNumber)).toEqual(['P-3312', 'P-3312']);
   });
 
+  // The assignment workbench prints 整单合计 before anything is submitted, so the whole-list total has to be on the
+  // assignment view itself. It used to read `confirmation.grossTotal`, which stays null until there is a confirmable
+  // whole list, and the workbench showed the unit with no amount.
+  it('the assignment view carries the whole-list total from the moment the workbench opens', async () => {
+    for (const number of ['P-2307']) await book('intake', { number });
+    const start = await inventoried();
+    const total = start.lines.reduce((sum, line) => sum + Math.round(Number(line.grossAmount) * 100), 0);
+    expect(start.confirmation.grossTotal).toBeNull();
+    expect(start.projectAssignment.grossTotal).toBe((total / 100).toFixed(2));
+    // It is the whole list, not the assigned part: assigning one line does not change it.
+    const one = await client.accepted(await client.act(start, 'assign-project-lines', { lineIds: [start.lines[0]?.lineId ?? ''], projectNumber: 'P-2307', onlyUnassigned: false }));
+    expect(one.projectAssignment.grossTotal).toBe((total / 100).toFixed(2));
+    expect(one.projectAssignment.usage[0]?.grossTotal).toBe(start.lines[0]?.grossAmount);
+  });
+
   it('an empty book sends a clean inventory to maintain_project_book; the first intake moves it to assign_projects', async () => {
     const start = await inventoried();
     expect(start).toMatchObject({ stage: 'project', step: { kind: 'maintain_project_book' } });

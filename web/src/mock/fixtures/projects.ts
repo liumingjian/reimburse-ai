@@ -140,6 +140,8 @@ export function withProjectUsage(snapshot: TaskSnapshot): TaskSnapshot {
   snapshot.projectAssignment = {
     ...assignment,
     working,
+    // 整单合计：全部明细，不只 working 里的那些。
+    grossTotal: (snapshot.lines.reduce((sum, line) => sum + Math.round(Number(line.grossAmount) * 100), 0) / 100).toFixed(2),
     usage: [...usage.values()].map((entry) => ({
       number: entry.number,
       name: entry.name,
@@ -185,6 +187,7 @@ export function projectAssignmentOpen(homeCity: string, assignments: Readonly<Re
     working: recorded.map((item) => ({ ...item })),
     reselect: [],
     usage: [],
+    grossTotal: '0.00',
     projects: allowList.map((project) => ({ ...project })),
     submittedAt: null,
   };
@@ -210,6 +213,7 @@ export function projectAssignmentSubmitted(input: {
     working: recorded.map((item) => ({ ...item })),
     reselect: [],
     usage: [],
+    grossTotal: '0.00',
     projects: allowList.map((project) => ({ ...project })),
     submittedAt: input.submittedAt,
   };

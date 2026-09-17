@@ -454,7 +454,9 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
         </aside>
       </div>
 
-      {/* 吸底操作栏：左边已归属条数与服务端给出的整单合计（不是已归属部分的合计），右边唯一的主按钮。 */}
+      {/* 吸底操作栏：左边已归属条数与服务端给出的整单合计（不是已归属部分的合计），右边唯一的主按钮。
+          合计取 projectAssignment.grossTotal，不是 confirmation.grossTotal：后者绑的是整单确认，
+          归属提交之前一直是 null，读它会让这里只剩一个「元」。 */}
       <ActionBar
         label="提交项目归属"
         consequenceProps={{ 'data-testid': 'assign-summary' }}
@@ -463,7 +465,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
             label="归属进度"
             fields={[
               { label: '已归属', value: `${assignedCount} / ${lines.length} 条` },
-              { label: '整单合计', value: `${snapshot.confirmation.grossTotal ?? ''} 元` },
+              { label: '整单合计', value: `${snapshot.projectAssignment.grossTotal} 元` },
             ]}
           />
         }

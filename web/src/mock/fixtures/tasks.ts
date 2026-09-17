@@ -151,7 +151,7 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     confirmation: { status: 'unconfirmed', confirmedAt: null, digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null, notice: null },
     paymentScreenshots: [],
     printSheet: { status: 'not_generated', fileName: null, url: null, pages: [], notices: [] },
-    projectAssignment: { status: 'not_started', purpose: null, homeCity: task.homeCity, assignments: [], working: [], reselect: [], usage: [], projects: [], submittedAt: null },
+    projectAssignment: { status: 'not_started', purpose: null, homeCity: task.homeCity, assignments: [], working: [], reselect: [], usage: [], grossTotal: '0.00', projects: [], submittedAt: null },
     catalog: catalogPending(),
     preparation: preparationPending(),
     erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null, erpAccount: null },
@@ -188,7 +188,6 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
         if (answer) applyPendingAnswer(result, item, answer);
       }
       snapshot.lines = buildLines(result);
-      snapshot.confirmation = { ...snapshot.confirmation, lineCount: 9, invoiceCount: 7, grossTotal: T1_GROSS_TOTAL };
     }
     snapshot.materials = result.materials;
     snapshot.events = result.events;
@@ -207,6 +206,9 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
   if (stage === 'catalog') snapshot.catalog = catalogRunning();
   if (stageReached(stage, 'preparation')) snapshot.catalog = catalogMatched();
   if (stageReached(stage, 'review')) {
+    // 整单确认的摘要与它的条数、张数、合计一起出现：服务端在还没有可确认的一份时把它们留空
+    // （confirmationView 的 `counted`）。mock 早早填上合计，就掩盖了归属页读错来源的毛病。
+    snapshot.confirmation = { ...snapshot.confirmation, lineCount: 9, invoiceCount: 7, grossTotal: T1_GROSS_TOTAL };
     snapshot.confirmation.digest = confirmationDigest(T1_ID, 'v1', snapshot.projectAssignment);
     snapshot.preparation = { status: 'ready', problems: [], packageFiles: packageFilesOf(snapshot.lines, snapshot.materials) };
   }

@@ -548,6 +548,9 @@ export const ProjectAssignmentSchema = z.object({
   working: z.array(ProjectLineAssignmentSchema),
   // 「本次已归入」区：working 里用到的项目，按首次出现的明细顺序，带条数与金额（服务端给出）。
   usage: z.array(ProjectUsageSchema),
+  // 整单价税合计（全部明细，不只已归属的那些），由服务端加总；没有明细时为 `0.00`。
+  // 归属页的吸底栏显示它。confirmation.grossTotal 不能用：它绑的是整单确认，提交归属之前一直是 null。
+  grossTotal: AmountSchema,
   // 提交前项目已被停用或删除的明细（#194）：服务端已把它们从 working 里拿掉，这里列出原来归入的项目，页面提示重新选择。
   // 已提交归属里钉住的项目不在此列（沿用）。
   reselect: z.array(ProjectLineAssignmentSchema),
