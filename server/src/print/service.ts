@@ -30,7 +30,7 @@ export type PrintState = {
   facts: PrintFacts;
   // The inventory's 住宿 trios (#213): which invoices take a screenshot before any sheet exists, and which recorded a
   // confirmed absence.
-  stays: readonly StayTrio[];
+  trios: readonly StayTrio[];
   // Whether the task made an ERP action attempt (its facts are frozen).
   erpAttempted: boolean;
 };
@@ -90,7 +90,7 @@ export async function addScreenshot(state: PrintState, voucherMaterialId: string
   if (generated) {
     const page = state.facts.render?.pages.find((candidate) => candidate.voucherMaterialId === voucherMaterialId);
     if (!page || !page.acceptsPaymentScreenshot) throw new PrintRefusal('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
-  } else if (!state.stays.some((stay) => stay.invoiceId === voucherMaterialId)) {
+  } else if (!state.trios.some((trio) => trio.invoiceId === voucherMaterialId)) {
     throw new PrintRefusal('print_not_generated', PAYMENT_SCREENSHOT_ERRORS.notGenerated);
   }
   const named = IMAGE_NAME.test(file.fileName) || (!/\.[a-z0-9]+$/i.test(file.fileName) && /^image\/(jpeg|png)$/.test(file.mime));
@@ -112,8 +112,8 @@ export async function addScreenshot(state: PrintState, voucherMaterialId: string
 export async function removeScreenshot(state: PrintState, screenshotId: string): Promise<PrintCommit> {
   const removing = state.facts.screenshots.find((shot) => shot.screenshotId === screenshotId);
   if (!removing) throw new PrintRefusal('screenshot_not_found', PAYMENT_SCREENSHOT_ERRORS.notFound);
-  const stay = state.stays.find((candidate) => candidate.invoiceId === removing.voucherMaterialId);
-  if (stay?.screenshot && !stay.screenshot.noneConfirmed && (state.confirmation === 'confirmed' || state.erpAttempted)) throw new PrintRefusal('screenshot_required', STAY_TRIO_COPY.removeLocked);
+  const trio = state.trios.find((candidate) => candidate.invoiceId === removing.voucherMaterialId);
+  if (trio?.screenshot && !trio.screenshot.noneConfirmed && (state.confirmation === 'confirmed' || state.erpAttempted)) throw new PrintRefusal('screenshot_required', STAY_TRIO_COPY.removeLocked);
   const screenshots = state.facts.screenshots.filter((shot) => shot.screenshotId !== screenshotId);
   const composed = stateOf(state) === 'generated' ? await compose(state, state.facts.settings, screenshots) : null;
   return async (tx, at, revision) => {

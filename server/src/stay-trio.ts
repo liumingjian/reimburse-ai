@@ -1,12 +1,13 @@
 import { STAY_TRIO_CONFIRM_NONE, STAY_TRIO_COPY, STAY_TRIO_ITEM_CODES, type PendingItem, type StayTrioElement } from '@baox/contract';
 import type { Stay, StayVoucher } from './hotel-stay';
-import { chosen, EXCLUDE_CHOICE, settle, type StoredAnswers } from './pending/answers';
+import { CATEGORIES } from './parse/kinds';
+import { chosen, EXCLUDE, settle, type StoredAnswers } from './pending/answers';
 
 // The 住宿 (accommodation) trio check at 盘点 (inventory), #213. 住宿 reimbursement takes a 发票 (invoice), a 结账单
 // (hotel folio) and a 支付截图 (payment screenshot); this module says, per stay, which of them are there and raises
 // one 待确认项 per missing element while the filer can still fetch it.
 //
-// Nothing is inferred (ADR-0017). An invoice is a clean 住宿 invoice that formed its own event; a folio is present
+// Nothing about the trio is inferred (#213). An invoice is a clean 住宿 invoice that formed its own event; a folio is present
 // only when a material resolved to `hotel_folio` is paired with that invoice (`pairHotelStays`, amounts to the
 // cent); a screenshot is present only when one is stored for that invoice. A folio no invoice pairs with is a stay
 // missing its invoice; it has no voucher, so no screenshot is asked of it.
@@ -39,7 +40,16 @@ export type TrioCheck = {
   items: ReadonlyMap<string, PendingItem[]>;
 };
 
-const EXCLUDE = { key: EXCLUDE_CHOICE, label: '排除这份材料' };
+const PRESENT: TrioPart = { present: true, noneConfirmed: false };
+
+// Which vouchers the trio covers: those the print stage composes as a 住宿 page. A page takes its category from the
+// voucher's first line in business order (`planPages`), so a voucher is a 住宿 voucher exactly when that line is 住宿.
+// `lines` must be in that order.
+export function stayVoucherIds(lines: readonly { voucherMaterialId: string; category: { code: string } }[]): Set<string> {
+  const first = new Map<string, string>();
+  for (const line of lines) if (!first.has(line.voucherMaterialId)) first.set(line.voucherMaterialId, line.category.code);
+  return new Set([...first].flatMap(([id, code]) => (code === CATEGORIES.accommodation.code ? [id] : [])));
+}
 
 function missingItem(element: StayTrioElement, material: TrioVoucher): PendingItem {
   const copy = STAY_TRIO_COPY[element];
@@ -78,14 +88,14 @@ export function checkStayTrios(invoices: readonly TrioVoucher[], folios: readonl
     trios.push({
       invoiceId: invoice.materialId,
       folioId,
-      invoice: { present: true, noneConfirmed: false },
+      invoice: PRESENT,
       folio: part('folio', invoice, folioId !== null),
       screenshot: part('screenshot', invoice, screenshots.has(invoice.materialId)),
     });
   }
   for (const folio of folios) {
     if (pairedInvoice.has(folio.materialId)) continue;
-    trios.push({ invoiceId: null, folioId: folio.materialId, invoice: part('invoice', folio, false), folio: { present: true, noneConfirmed: false }, screenshot: null });
+    trios.push({ invoiceId: null, folioId: folio.materialId, invoice: part('invoice', folio, false), folio: PRESENT, screenshot: null });
   }
   return { trios, items };
 }

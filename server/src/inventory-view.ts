@@ -2,11 +2,11 @@ import { MATERIAL_KINDS, fieldAnswer, isAllocationAnswer, type ExpenseEvent, typ
 import type { ParseOutcome, Recognised } from './parse/dispatch';
 import { planTransport, type PlannedLine } from './allocation';
 import { pairHotelStays } from './hotel-stay';
-import { CATEGORIES, fieldLabel, KINDS, slotOf, type EventDraft, type Slot } from './parse/kinds';
-import { chosen, EXCLUDE_CHOICE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
+import { fieldLabel, KINDS, slotOf, type EventDraft, type Slot } from './parse/kinds';
+import { chosen, EXCLUDE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
 import { editAddress, editedValue, type Editable } from './pending/edits';
 import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/company-rules';
-import { checkStayTrios, type StayTrio, type TrioVoucher } from './stay-trio';
+import { checkStayTrios, stayVoucherIds, type StayTrio, type TrioVoucher } from './stay-trio';
 
 // The pure projection of one inventory run: uploaded materials, their parser outcomes and the stored answers in; the
 // materials view, derived 待确认项 (pending items), expense events, candidate lines and inventory counts out. Nothing
@@ -54,7 +54,7 @@ export type InventoryView = {
   editables: ReadonlyMap<string, Editable>;
   claims: Claim[];
   // The 住宿 trio of every stay, once the run has finished (`stay-trio.ts`); the print stage reads recorded absences here.
-  stays: StayTrio[];
+  trios: StayTrio[];
 };
 
 // The task's 常驻城市 and pinned company rules: categories are derived from them (ADR-0006).
@@ -72,7 +72,6 @@ export const INVENTORY_COPY = {
 
 const PHASES = { pdf: '读取 PDF 文本层与二维码', photo: '读取照片票面' } as const;
 
-const EXCLUDE = { key: EXCLUDE_CHOICE, label: '排除这份材料' };
 const REPLACE_HINT = '换原件请在上传页追加材料后重新盘点。';
 const MANUAL_FILL = 'manual_fill';
 const REFERENCE = 'reference';
@@ -414,7 +413,6 @@ export function inventoryView(
   const views = new Map<string, Material>();
   const drafts: ({ material: ViewMaterial } & PlannedLine)[] = [];
   const pendingItems: PendingItem[] = [];
-  const stayInvoices: TrioVoucher[] = [];
   const folios: TrioVoucher[] = [];
   for (const w of worked) {
     const { m, resolved } = w;
@@ -432,7 +430,6 @@ export function inventoryView(
           const draft = lineEdits(m.materialId, allowedTypes ?? [line.draft.invoiceType], { ...line.draft, category: derived.category }, answers, editables);
           drafts.push({ material: m, ...line, draft });
         }
-        if (single && categorised[0] && 'category' in categorised[0].derived && categorised[0].derived.category.code === CATEGORIES.accommodation.code) stayInvoices.push({ materialId: m.materialId, fileName: m.fileName, values: w.values });
       } else {
         // Kernel category_city_missing: city transport is never put on the home city for want of its own city.
         const item = settle(
@@ -463,6 +460,15 @@ export function inventoryView(
     });
   }
 
+  // Business order (kernel confirmation table): local → out-of-town city transport → long distance → accommodation;
+  // within a category, voucher upload order. Invoice labels follow voucher upload order.
+  const rank = ['local_city_transport', 'remote_city_transport', 'long_distance', 'accommodation'];
+  const ordered = [...drafts].sort((a, b) => rank.indexOf(a.draft.category.code) - rank.indexOf(b.draft.category.code));
+
+  // The 住宿 invoices are the vouchers the print stage will compose as 住宿 pages, chosen by the same rule.
+  const stayIds = stayVoucherIds(ordered.map(({ material, draft }) => ({ voucherMaterialId: material.materialId, category: draft.category })));
+  const stayInvoices: TrioVoucher[] = worked.flatMap((w) => (stayIds.has(w.m.materialId) ? [{ materialId: w.m.materialId, fileName: w.m.fileName, values: w.values }] : []));
+
   // Pairing: a hotel invoice and its folio form one stay (`hotel-stay.ts`).
   const stays = new Map(pairHotelStays(stayInvoices, folios).map((stay) => [stay.invoiceId, stay]));
   const linked = new Map<string, string[]>([...stays.values()].flatMap((stay) => [[stay.invoiceId, [stay.folioId]], [stay.folioId, [stay.invoiceId]]]));
@@ -492,10 +498,6 @@ export function inventoryView(
     };
   });
 
-  // Business order (kernel confirmation table): local → out-of-town city transport → long distance → accommodation;
-  // within a category, voucher upload order. Invoice labels follow voucher upload order.
-  const rank = ['local_city_transport', 'remote_city_transport', 'long_distance', 'accommodation'];
-  const ordered = [...drafts].sort((a, b) => rank.indexOf(a.draft.category.code) - rank.indexOf(b.draft.category.code));
   const invoiceNo = new Map([...new Set(drafts.map((d) => d.material.materialId))].map((id, index) => [id, index + 1]));
   const events: ExpenseEvent[] = [];
   const lines: Line[] = [];
@@ -562,7 +564,7 @@ export function inventoryView(
       : null,
     ungroupedMaterialIds: done ? materialViews.filter((v) => !grouped.has(v.materialId) && (v.status === 'excluded' || v.status === 'pending' || v.role !== 'primary_voucher')).map((v) => v.materialId) : [],
   };
-  return { materials: materialViews, pendingItems, events: done ? events : [], lines: done ? lines : [], inventory, waiting, openPendingItems, answerables, editables, claims, stays: trio.trios };
+  return { materials: materialViews, pendingItems, events: done ? events : [], lines: done ? lines : [], inventory, waiting, openPendingItems, answerables, editables, claims, trios: trio.trios };
 }
 
 // The line-level edits: a presentation value over the description (checks never read it), and the ERP invoice type

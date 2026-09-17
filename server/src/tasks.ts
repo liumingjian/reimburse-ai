@@ -426,7 +426,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       materials: loaded.view.materials,
       sources: new Map(rows.filter((row) => !row.excluded).map((row) => [row.material_id, { sha256: row.blob_sha256, mediaType: mediaTypeOf(row), fileName: row.file_name }] as const)),
       facts: loaded.print,
-      stays: loaded.view.stays,
+      trios: loaded.view.trios,
       erpAttempted: loaded.erp.attempted,
     };
     let commit: PrintCommit | null;
@@ -1004,7 +1004,7 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
     blockers,
     lines,
     confirmation: confirmationView(digest, confirmed, facts.lastReopenRevision, lines) satisfies Confirmation,
-    ...printView(task.task_id, task.name, print, sheetState(print, facts.confirmation, confirmed?.revision ?? null), view.stays),
+    ...printView(task.task_id, task.name, print, sheetState(print, facts.confirmation, confirmed?.revision ?? null), view.trios),
     projectAssignment: assignment?.view ?? { status: 'not_started', purpose: null, homeCity, assignments: [], working: [], reselect: [], usage: [], grossTotal: '0.00', projects: [], submittedAt: null },
     // The catalog check lives in the ERP job (ADR-0014); a mismatch it found shows here until the next submission.
     catalog: catalogView(erp) ?? { status: 'pending', problems: [] },
