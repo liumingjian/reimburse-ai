@@ -63,7 +63,7 @@ type Profile = {
 // the mock still recognises it to keep its scripted journey.
 const RULE = {
   vat: 'rule:vat_invoice/einvoice',
-  folio: 'rule:hotel_folio/quanji',
+  folio: 'rule:hotel_folio/labelled',
   passenger: 'rule:vat_invoice/einvoice',
   amap: 'rule:ride_itinerary/amap',
   caocao: 'rule:ride_itinerary/caocao',
@@ -74,7 +74,7 @@ const RULE = {
 // 材料种类 / 版式 per fixture id; absent = unrecognised.
 const IDENTITY: Readonly<Record<string, { kind: MaterialKind; layout: string }>> = {
   m01: { kind: 'vat_invoice', layout: 'einvoice' },
-  m02: { kind: 'hotel_folio', layout: 'quanji' },
+  m02: { kind: 'hotel_folio', layout: 'labelled' },
   m03: { kind: 'vat_invoice', layout: 'einvoice' },
   m04: { kind: 'ride_itinerary', layout: 'amap' },
   m05: { kind: 'vat_invoice', layout: 'einvoice' },
@@ -110,7 +110,7 @@ export const PROFILES: Readonly<Record<string, Profile>> = {
   m02: {
     fileName: '全季酒店_结账单.pdf',
     file: 'm02-hotel-folio.pdf',
-    kindLabel: '结账单（全季版式）',
+    kindLabel: '酒店结账单',
     categoryLabel: '住宿',
     role: 'reference',
     shape: 'portrait',

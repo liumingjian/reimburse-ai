@@ -13,6 +13,7 @@ import {
   CAOCAO_INVOICE,
   CAOCAO_ITINERARY,
   HOTEL_FOLIO,
+  HOTEL_FOLIO_PHOTO,
   HOTEL_INVOICE,
   OTHER_INVOICE,
   PRINT_PAGES,
@@ -153,6 +154,35 @@ function folio(data) {
   <div class="note">本结账单为夹具生成器生成的示例，不是真实酒店单据。</div>
 </div>`;
   return { id: data.id, ...A4, css, body };
+}
+
+// The folio photo (#212): a label column and a value column a wide gap apart, so OCR reads each label and each value as
+// its own box, on a desk slightly askew the way a phone catches it.
+function folioPhoto(data) {
+  const css = `
+.photo { width: 900px; height: 1200px; background: #a89680; position: relative; overflow: hidden; }
+.photo .paper { position: absolute; left: 110px; top: 120px; width: 680px; height: 940px; padding: 56px 60px; background: #fbfaf6; color: #222; font-family: ${FONT}; transform: rotate(-2deg); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35); }
+.photo h1 { font-size: 40px; font-weight: 600; text-align: center; margin: 0 0 14px; letter-spacing: 6px; }
+.photo .hotel { font-size: 24px; text-align: center; margin-bottom: 40px; }
+.photo .field { display: flex; font-size: 26px; height: 58px; align-items: center; }
+.photo .field span:first-child { width: 250px; }
+.photo .sum { display: flex; justify-content: space-between; font-size: 28px; margin-top: 48px; border-top: 2px solid #555; padding-top: 22px; }
+.photo .note { margin-top: 64px; font-size: 18px; color: #777; text-align: center; }
+`;
+  const field = (label, value) => `<div class="field"><span>${esc(label)}</span><span>${esc(value)}</span></div>`;
+  const body = `
+<div class="photo"><div class="paper">
+  <h1>结账单</h1>
+  <div class="hotel">${esc(data.hotel)}</div>
+  ${field('入住人', data.guest)}
+  ${field('房号', data.room)}
+  ${field('入住日期', data.checkIn)}
+  ${field('离店日期', data.checkOut)}
+  ${field('天数', data.nights)}
+  <div class="sum"><span>消费合计</span><span>${esc(data.total)}</span></div>
+  <div class="note">夹具生成器生成，非真实单据</div>
+</div></div>`;
+  return { id: data.id, ...PHOTO, css, body };
 }
 
 // ---- 网约车行程单 (ride-hailing itinerary) ----
@@ -297,6 +327,7 @@ export const DOCS = {
   r202: itinerary(AMAP_ITINERARY_GAP),
   r205: itinerary(AMAP_ITINERARY_WRAPPED),
   r209: itinerary(AMAP_ITINERARY_CROSS_CITY),
+  r210: folioPhoto(HOTEL_FOLIO_PHOTO),
   r207: invoice(WIDE_COLUMN_INVOICE, '#8b3a3a'),
   r208: invoice(WRAPPED_ITEM_INVOICE, '#8b3a3a'),
 };

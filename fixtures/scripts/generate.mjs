@@ -37,7 +37,8 @@ export const MATERIAL_FILES = {
   m11: 'm11-other-invoice.pdf',
 };
 
-// Regression fixtures (#200 onwards): they reproduce the text-run splits of a real PDF. They are not part of the
+// Regression fixtures (#200 onwards): they reproduce how a real face is drawn — the text-run splits of a real PDF, or a
+// photo whose labels and values OCR reads as separate boxes (r210). They are not part of the
 // eleven sample materials' script and are not copied into the mock's sample-material directory.
 export const REGRESSION_FILES = {
   r01: 'r01-einvoice-split-number.pdf',
@@ -50,6 +51,7 @@ export const REGRESSION_FILES = {
   r207: 'r207-einvoice-wide-name-column.pdf',
   r208: 'r208-einvoice-wrapped-item-name.pdf',
   r209: 'r209-amap-itinerary-cross-city.pdf',
+  r210: 'r210-hotel-folio-photo.jpg',
 };
 
 export const PDF_DOC_FILES = { ...MATERIAL_FILES, ...REGRESSION_FILES };

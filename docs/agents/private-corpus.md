@@ -9,7 +9,7 @@ prints one skip line and exits 0, so CI and every other machine stay unaffected.
 1. Pick a directory outside the repository, e.g. `~/Documents/baox-private-corpus`.
 2. Put every material under `<kind>/<layout>/`, the same ids the registry uses
    (`server/src/parse/layouts/index.ts`) — e.g. `vat_invoice/einvoice/`, `rail_ticket/12306/`,
-   `ride_itinerary/amap/`. Accepted extensions: `.pdf`, `.jpg`, `.jpeg`, `.png`.
+   `ride_itinerary/amap/`, `hotel_folio/labelled/`. Accepted extensions: `.pdf`, `.jpg`, `.jpeg`, `.png`.
    A file that must match **no** layout goes under `unrecognised/` instead. Anything outside these two shapes is
    counted as ignored and measured by nothing.
 3. Beside a material, optionally add `<file>.expected.json` — a flat `{"<slot key>": "<value>"}` map of the fields
