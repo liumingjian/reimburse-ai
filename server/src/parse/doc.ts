@@ -181,3 +181,7 @@ export function money(value: number): string {
   const abs = Math.abs(value);
   return `${sign}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, '0')}`;
 }
+
+const DAY_MS = 86_400_000;
+// Whole days from one `YYYY-MM-DD` date to another (a stay's nights).
+export const daysBetween = (from: string, to: string): number => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);

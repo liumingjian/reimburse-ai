@@ -1,4 +1,4 @@
-import { cents, compact, money, rows, type ParseDoc, type TextObservation } from '../doc';
+import { cents, compact, daysBetween, money, rows, type ParseDoc, type TextObservation } from '../doc';
 import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout } from '../layout';
 
 // `hotel_folio/labelled`: a hotel 结账单 (folio) of any chain, read through the field labels every folio prints, from a
@@ -8,16 +8,19 @@ import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout
 // Recognition does not look at the chain name (#211): on a photo the name is never one contiguous text observation,
 // and the brand is incidental to what a folio proves. On a PDF a label and its value usually arrive as one text run;
 // on a photo they are separate boxes, so each value is read by position from its label (as `taxi_receipt/
-// machine_printed` does). A value that cannot be read stays missing: nothing is back-calculated (ADR-0017).
+// machine_printed` does). A value that cannot be read stays missing: no amount is back-calculated (ADR-0017), and no
+// date or 天数 (nights) is derived from the others (#212).
 
 const KIND = 'hotel_folio';
 const NAME = 'labelled';
 const VERSION = '1';
 const SOURCE = ruleSource(KIND, NAME);
+const LABEL = '酒店结账单';
 
 // Hard anchors, on NFKC text without whitespace: the folio title and all four accommodation labels. The title alone
-// is generic (restaurants print 结账单 too), so it never recognises on its own.
-const TITLE = /^结账单/;
+// is generic (restaurants print 结账单 too), so it never recognises on its own. The title box is 结账单 itself, with at
+// most a Latin subtitle (`结账单 GUEST FOLIO`); a box that merely starts with it (`结账单号:…`) is not the title.
+const TITLE = /^结账单[A-Za-z]*$/;
 const LABELS = {
   checkIn: '入住日期',
   checkOut: '离店日期',
@@ -71,10 +74,13 @@ const centre = (o: TextObservation) => o.y + o.height / 2;
 const allLabels = Object.values(LABELS);
 const stripLabel = (text: string, label: string) => compact(text).slice(label.length).replace(/^[:：]/, '');
 
-// The box that carries a label: the label alone (with or without its colon), or the label and its value in one run.
-function labelOf(doc: ParseDoc, label: string): TextObservation | undefined {
-  return doc.observations.find((o) => compact(o.text).startsWith(label));
-}
+// Whether a box carries `label`: the label alone, or the label, its colon and a value in one run. A longer word that
+// only starts with the label (`房号类型`) is not that label.
+const carries = (o: TextObservation, label: string) => {
+  const text = compact(o.text);
+  return text === label || (text.startsWith(label) && /^[:：]/.test(text.slice(label.length)));
+};
+const labelOf = (doc: ParseDoc, label: string): TextObservation | undefined => doc.observations.find((o) => carries(o, label));
 
 type Read = { text: string; raw: string; observations: TextObservation[] };
 
@@ -86,7 +92,7 @@ function valueOf(doc: ParseDoc, label: string): Read | null {
   if (!box) return null;
   const rest = stripLabel(box.text, label);
   if (rest) return { text: rest, raw: stripLabel(box.raw, label), observations: [box] };
-  const others = doc.observations.filter((o) => o !== box && o.page === box.page && !allLabels.some((l) => compact(o.text).startsWith(l)));
+  const others = doc.observations.filter((o) => o !== box && o.page === box.page && !allLabels.some((l) => carries(o, l)));
   const right = others
     .filter((o) => o.x >= box.x + box.width && Math.abs(centre(o) - centre(box)) <= box.height * ROW_BAND)
     .sort((a, b) => a.x - b.x)[0];
@@ -116,9 +122,6 @@ function dateOf(text: string): string | null {
   return null;
 }
 
-const DAY_MS = 86_400_000;
-const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);
-
 // The charge rows: each row between the 日期/项目/金额 header and 消费合计 that starts with a date, its amount right-most.
 // PDF only: per-night charge rows are not read from a photo (#211 non-goal). Null when the table is not there.
 function charges(doc: ParseDoc): number[] | null {
@@ -139,7 +142,7 @@ export const labelled: Layout = {
   kind: KIND,
   name: NAME,
   version: VERSION,
-  label: '酒店结账单',
+  label: LABEL,
 
   recognise(doc) {
     return Boolean(find(doc, TITLE)) && ANCHOR_LABELS.every((label) => labelOf(doc, label) !== undefined);
@@ -192,6 +195,6 @@ export const labelled: Layout = {
       findings.push({ kind: 'validation', code: 'charges_not_conserved', message: `消费明细加起来是 ${money(rowsTotal)}，和消费合计 ${money(total)} 对不上。` });
     }
 
-    return { kindLabel: '酒店结账单', candidates, findings };
+    return { kindLabel: LABEL, candidates, findings };
   },
 };

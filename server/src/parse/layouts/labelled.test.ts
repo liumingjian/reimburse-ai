@@ -130,6 +130,30 @@ describe('hotel_folio/labelled recognition anchors', () => {
     const stripped = (await folioDoc()).observations.filter((o) => !/^(入住日期|离店日期|房号|消费合计)/.test(o.text));
     expect(dispatch({ ...(await folioDoc()), observations: stripped }, LAYOUTS)).toEqual({ outcome: 'unrecognised', reason: 'no_layout' });
   });
+
+  it('anchors on the label itself, not on a longer word that starts with it', () => {
+    const renamed = (from: string, to: string) => photo(STAY('2026-08-09', '2026-08-22').map(([label, value]) => [label === from ? to : label, value] as const));
+    expect(dispatch(renamed('房号', '房号类型'), LAYOUTS)).toEqual({ outcome: 'unrecognised', reason: 'no_layout' });
+    expect(dispatch(renamed('消费合计', '消费合计金额'), LAYOUTS)).toEqual({ outcome: 'unrecognised', reason: 'no_layout' });
+    // The label with its colon, alone or with its value in one run, is still the label.
+    expect(values(recognised(renamed('房号', '房号:')))).toMatchObject({ roomNumber: '0816' });
+    const joined = photo(STAY('2026-08-09', '2026-08-22').map(([label, value]) => (label === '房号' ? (['房号：0816', null] as const) : ([label, value] as const))));
+    expect(values(recognised(joined))).toMatchObject({ roomNumber: '0816' });
+  });
+
+  it('never takes a longer word that starts with a label as that label', () => {
+    // 房号类型 sits above 房号 on the page and comes first in reading order; the 房号 value is still the real label's.
+    const doc = photo(STAY('2026-08-09', '2026-08-22'), [box('房号类型', 40, 960), box('大床房', 340, 960)]);
+    const firstWord = { ...doc, observations: [...doc.observations.slice(-2), ...doc.observations.slice(0, -2)] };
+    expect(values(recognised(firstWord))).toMatchObject({ roomNumber: '0816' });
+  });
+
+  it('anchors on the title box, not on any box that starts with 结账单', () => {
+    const doc = photo(STAY('2026-08-09', '2026-08-22'));
+    const retitled = (title: string) => ({ ...doc, observations: doc.observations.map((o) => (o.text === '结账单' ? { ...o, text: title, raw: title } : o)) });
+    expect(dispatch(retitled('结账单号:20260822001'), LAYOUTS)).toEqual({ outcome: 'unrecognised', reason: 'no_layout' });
+    expect(recognised(retitled('结账单 GUEST FOLIO')).layout).toBe('labelled');
+  });
 });
 
 describe('hotel_folio/labelled reads each value by position from its label', () => {
