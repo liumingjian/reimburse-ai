@@ -44,10 +44,7 @@ test('添加项目、全部明细归入、填写报销事由并提交', async ({
   await expect(page.getByLabel('常驻城市')).toHaveValue('杭州');
   await expect(page.getByRole('button', { name: '确认项目归属' })).toBeDisabled();
   await page.getByRole('checkbox', { name: '全选当前明细' }).locator('xpath=following-sibling::label[1]').click();
-  await page.getByRole('region', { name: '批量操作' }).getByRole('button', { name: '归入项目' }).click();
-  const picker = page.getByRole('dialog', { name: '归入项目' });
-  await picker.getByRole('radio', { name: /P-2307/ }).locator('xpath=following-sibling::label[1]').click();
-  await picker.getByRole('button', { name: '确认归入' }).click();
+  await page.getByRole('complementary', { name: '归入项目' }).getByRole('button', { name: /P-2307/ }).click();
   await expect(page.getByTestId('project-of-1')).toHaveText('P-2307 / 华东客户交付');
 
   // Submit is refused (disabled) until the purpose is filled.

@@ -95,7 +95,11 @@ $gutter: $spacing-06;
 
 // ---------- 步骤条（任务页工作区顶部一条，Carbon progress indicator） ----------
 
+// Sticks under the fixed global header while the page scrolls; StepBar publishes its height as --app-stepbar-h.
 .app-stepbar {
+  position: sticky;
+  inset-block-start: 3rem;
+  z-index: 7;
   padding: $spacing-05 $gutter;
   margin-inline: calc(-1 * #{$gutter});
   background: $layer-01;

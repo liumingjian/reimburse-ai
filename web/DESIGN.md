@@ -10,7 +10,7 @@
 `tokens.css` 与它的测试随迁移删除。颜色与尺寸一律取 Carbon 的 token（Sass 变量，输出为 `var(--cds-…)`），不写字面颜色。
 
 - 样式入口 `src/styles/carbon.scss`：Carbon 配置（不输出 IBM Plex 字体）、系统字体、Gray 10 主题、reset、布局 token，
-  然后按组件引入用到的 Carbon 组件样式（按钮、UI Shell、进度指示、弹层、数据表格（含工具栏批量操作与可展开行两个单独的分文件，漏引则展开箭头不转）、搜索、标签、提示、内容切换、通知、进度条、表单、输入框、复选框、单选按钮、链接、溢出菜单），
+  然后按组件引入用到的 Carbon 组件样式（按钮、UI Shell、进度指示、弹层、数据表格（含工具栏批量操作与可展开行两个单独的分文件，漏引则展开箭头不转）、搜索、标签、提示、内容切换、通知、进度条、表单、输入框、复选框、链接、溢出菜单），
   以控制单文件体积。要用新的 Carbon 组件时在这里加一行 `@use '@carbon/styles/scss/components/<名字>'`。
 - 本应用的版式规则 `src/styles/_app-rules.scss`：只写 Carbon 不管的部分（下文「本应用的规则」），类名一律以 `app-` 开头，
   只引用 Carbon 的 spacing、theme、type token。尽量不改 `.cds--*` 的内部样式；确实要改时（如表格固定列、单元格里的按钮内边距）在规则旁写明原因。
@@ -32,7 +32,7 @@ getdesign 原件（linear.app、ibm、airtable）仍在 `docs/design/prototypes/
   Carbon 没有黄色标签：**需要注意**（对账中、待确认、已转人工）用最接近的 `warm-gray` 加警告图标，
   图标照 Carbon 警告通知的画法（`$support-warning` 填充，里面的「!」深色），各页的警告标签一律经 `StatusTag` 的 `warning` 语气，看起来一样；
   已锁定用 `warm-gray` 加锁，锁不上黄色。
-- **不随迁移加入**：DataTable 的排序、行选择与批量操作栏。#135 起行选择与批量操作栏只用在项目归属页（#138，见下文「项目归属：批量操作栏与项目弹层」），行展开只用在材料盘点的费用事件表（#137，见下文「盘点清单」）。整单明细的顺序由服务端决定（打印稿序号与报销系统明细行共用），
+- **不随迁移加入**：DataTable 的排序、行选择与批量操作栏。#135 起行选择只用在项目归属页（#138，见下文「项目归属：勾选明细，点右侧项目归入」；那里也不用批量操作栏），行展开只用在材料盘点的费用事件表（#137，见下文「盘点清单」）。整单明细的顺序由服务端决定（打印稿序号与报销系统明细行共用），
   能不能让用户重排是业务问题，以后逐项评审。表格一律照服务端给的顺序，不放排序按钮。
 
 ## 本应用的规则（Carbon 不管）
@@ -84,7 +84,7 @@ e2e `e2e/carbon-zh.spec.ts` 在主要页面与打开的弹层里查整页文字�
 
 ### 步骤条
 
-任务页工作区顶部一条（`$layer-01`，下边一根细线），在页面标题之上，随页面滚动：左边任务名与费用期间，右边 Carbon ProgressIndicator 横排 7 步
+任务页工作区顶部一条（`$layer-01`，下边一根细线），在页面标题之上，吸顶（sticks under the global header on every task page and publishes its height as `--app-stepbar-h`, so other sticky parts pin below it）：左边任务名与费用期间，右边 Carbon ProgressIndicator 横排 7 步
 （上传材料、材料盘点、待确认项、项目归属、整单明细确认、去打印 / 去报销、完成），列表的可访问名称是「流程阶段」，整条是「任务进度」区域。
 
 - 已完成与已到的步骤可点，点了进入对应页面；当前步骤 `aria-current="step"`。
@@ -117,12 +117,28 @@ e2e `e2e/carbon-zh.spec.ts` 在主要页面与打开的弹层里查整页文字�
 框下两行说明：上传后要点「开始材料盘点」；原件会被复制进任务目录，不会被修改。文件行只给拒绝的文件打红色「拒绝」标签加原因，已接收的不打标签；内容哈希放在文件名的悬停提示里；
 图标按扩展名区分 PDF 与图片。
 
-### 项目归属：批量操作栏与项目弹层
+### 项目归属：勾选明细，点右侧项目归入
 
-项目归属页是上文「不加行选择与批量操作栏」的例外（#135）：Carbon TableToolbar 平时一行放全选、筛选（ContentSwitcher，宽度按内容）与已选条数；
-勾选明细后 TableBatchActions 盖住这一行（已选 N 条、归入项目、取消），没勾选时没有归入入口。「归入项目」打开 ComposedModal：
-Search 加 RadioButtonGroup 单选，本次已用的项目在前并带条数；弹层里可以换到「新增项目」面板，关掉后回来，勾选保留。
-右栏「本次归属」是只读摘要（项目名、项目号、条数、价税合计，全部来自服务端），没有按钮；1280px 以下排到明细表下方。
+The project assignment page is the one exception to "no row selection" above (#135), and it has no batch action bar and no modal:
+tick lines on the left, then click a project on the right.
+
+- Selection bar (`role="group"` 明细选择与筛选): sticks under the step bar while the lines scroll. One row holds 全选当前明细 (select all
+  visible lines), the filter (ContentSwitcher 全部 / 未归属, all / unassigned, sized to its content) and a status line
+  (`assign-selection`) saying what to do next: 勾选明细后，点右侧项目归入 → 已选 N 条，点右侧项目归入 → 已归入 <number> <name>
+  after a successful assignment. While lines are ticked the bar turns `$background-brand` and a ghost 取消选择 (clear selection) button appears.
+- 归入项目 (assign to project) panel: a `complementary` region beside the table, sticky between the step bar and the action bar.
+  The head (title, a status caption 先勾选左侧明细 / 已选 N 条 / 不能再修改, and a Search 查找项目) stays put; only the project list scrolls.
+  Every project is a full-width button (name, then number, 个人 / 公共 source Tag); clicking it assigns the ticked lines at once, with no
+  apply button. Projects already used here come first under 本次已归入 (used this time) with line count and amount (`2 条 / 47.54 元`,
+  from the server); the rest follow under 可选项目 (selectable projects) in project-book order. A used project that left the allowed list
+  shows 已锁定 (locked) and stays disabled. All projects are disabled until a line is ticked, while ERP writing has started, and while
+  the conflict dialog is open.
+- Search matches the project number or name as a substring or with its characters in order (an abbreviation finds the full name) and marks
+  the hit characters; no hit shows 没有匹配的项目. Enter assigns the ticked lines when exactly one selectable project matches.
+- If a ticked line already has another project, a ConfirmDialog asks 只处理未归属 (only unassigned) / 确认覆盖 (overwrite) / 取消; cancel keeps the ticks.
+- The panel foot has 新增项目 (add project), which opens the project-book panel in a dialog; after 完成 the ticks are kept and the new
+  project appears in the list.
+- Below 1280px the panel narrows (18rem) but stays beside the table; only below 56rem does it stack under the table and stop sticking.
 
 ### 危险确认
 
@@ -139,7 +155,7 @@ Search 加 RadioButtonGroup 单选，本次已用的项目在前并带条数；�
 
 - 上面是待确认项清单：每行只放警示或完成图标、标题、文件名。已处理的行降低对比，并带绿色「已处理」标签。契约里的处理人这一页不显示。
 - 下面两栏贴顶：左边原件栏，宽度跟着缩放后的原件走；右边占剩余宽度（下限 400px），依次是标题与原因、补填表单、读出的字段（文件名与材料类别用字段组）。
-- 原件在「一屏高度减去顶栏、步骤条和页头」的框内等比缩放，页面滚动时原件栏贴在顶栏下。PDF 与「没有可用的预览」用同样高度的框，占位不改变版面位置。
+- 原件在「一屏高度减去顶栏、步骤条和页头」的框内等比缩放，页面滚动时原件栏贴在步骤条下。PDF 与「没有可用的预览」用同样高度的框，占位不改变版面位置。
 - 1056px 以下原件在上、表单在下。
 
 ### 原件查看器：仅供查看，不存
@@ -185,7 +201,7 @@ Search 加 RadioButtonGroup 单选，本次已用的项目在前并带条数；�
 ## 不做的事
 
 - 不用 Linear 品牌层（#5e6ad2、圆角、pill 标签），不打包 IBM Plex。
-- 不加表格排序。行选择与批量操作栏只用在项目归属页（见「项目归属：批量操作栏与项目弹层」），行展开只用在材料盘点的费用事件表（见「盘点清单」）；
+- 不加表格排序，不加批量操作栏。行选择只用在项目归属页（见「项目归属：勾选明细，点右侧项目归入」），行展开只用在材料盘点的费用事件表（见「盘点清单」）；
   其他表格都不加，以后逐项评审。
 - 不写字面颜色；不引入第二个组件库或图标库。
 - 不用 em-dash 和 en-dash；按钮上不加「→」。

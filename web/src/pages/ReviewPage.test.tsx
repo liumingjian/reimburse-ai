@@ -19,12 +19,9 @@ const claimButton = () => screen.queryByRole('button', { name: '去报销' });
 const bodyRows = () => within(table()).getAllByRole('row').filter((row) => row.closest('tbody'));
 const cells = (row: HTMLElement | undefined) => (row ? within(row).getAllByRole('cell').map((cell) => cell.textContent) : []);
 
-// 项目归属页：勾选明细后经批量操作栏「归入项目」弹层单选项目并确认。
+// 项目归属页：勾选明细后点右侧「归入项目」面板里的项目。
 const assignViaPicker = (number: string) => {
-  fireEvent.click(within(screen.getByRole('region', { name: '批量操作' })).getByRole('button', { name: '归入项目' }));
-  const picker = screen.getByRole('dialog', { name: '归入项目' });
-  fireEvent.click(within(picker).getByRole('radio', { name: new RegExp(number) }));
-  fireEvent.click(within(picker).getByRole('button', { name: '确认归入' }));
+  fireEvent.click(within(screen.getByRole('complementary', { name: '归入项目' })).getByRole('button', { name: new RegExp(number) }));
 };
 
 const REMOTE = '外地市内交通';

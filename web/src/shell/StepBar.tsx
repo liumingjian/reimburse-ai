@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Link, ProgressIndicator, ProgressStep } from '@carbon/react';
 import { StatusTag } from './StatusTag';
+import { useStickyHeight } from './useStickyHeight';
 import { RECONCILE_STATUS_LABEL, pageAllowed, stageRank, stageReached, type TaskPage, type TaskStage, type TaskSnapshot } from '@baox/contract';
 import { formatPeriod } from '../format';
 import { TASKS_HASH, navigate, taskHash } from '../router';
@@ -79,6 +80,8 @@ export function StepBar({ snapshot, page }: { snapshot: TaskSnapshot; page: Task
   // 被点的未开放步骤相对步骤条左边的距离：提示出现在它的正下方。
   const [lockedHintAt, setLockedHintAt] = useState<number | null>(null);
   const barRef = useRef<HTMLElement>(null);
+  // The step bar sticks under the global header; its height lets sticky page parts pin below it.
+  useStickyHeight(barRef, '--app-stepbar-h');
   const { stage } = snapshot;
   const taskId = snapshot.task.taskId;
 
@@ -86,7 +89,7 @@ export function StepBar({ snapshot, page }: { snapshot: TaskSnapshot; page: Task
     // 已转人工是对账的终态：应用不再写入报销系统，标签与说明随服务端的对账状态变化。
     const handedOff = snapshot.reconcile.status === 'handed_off';
     return (
-      <section className="app-stepbar" aria-label={STEP_BAR_COPY.region}>
+      <section ref={barRef} className="app-stepbar" aria-label={STEP_BAR_COPY.region}>
         <div className="app-stepbar-row">
           <TaskTitle snapshot={snapshot} />
           <p className="app-stepbar-status">

@@ -22,10 +22,7 @@ async function openPackage(page: Page) {
 
 async function reassign(page: Page, nos: readonly number[], project: string) {
   for (const no of nos) await page.getByRole('checkbox', { name: `选择明细 No.${no}` }).locator('xpath=following-sibling::label[1]').click();
-  await page.getByRole('region', { name: '批量操作' }).getByRole('button', { name: '归入项目' }).click();
-  const picker = page.getByRole('dialog', { name: '归入项目' });
-  await picker.getByRole('radio', { name: new RegExp(project.split(' ')[0]!) }).locator('xpath=following-sibling::label[1]').click();
-  await picker.getByRole('button', { name: '确认归入' }).click();
+  await page.getByRole('complementary', { name: '归入项目' }).getByRole('button', { name: new RegExp(project.split(' ')[0]!) }).click();
   await page.getByRole('dialog', { name: `${nos.length} 条明细已有其他项目归属，请确认是否覆盖` }).getByRole('button', { name: '确认覆盖' }).click();
   await page.getByRole('button', { name: '确认项目归属' }).click();
 }
