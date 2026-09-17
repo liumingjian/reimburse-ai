@@ -1,11 +1,12 @@
 import { MATERIAL_KINDS, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type InventoryPhase, type Line, type Material, type MaterialKind, type PendingField, type PendingItem } from '@baox/contract';
 import type { ParseOutcome, Recognised } from './parse/dispatch';
 import { planTransport, type PlannedLine } from './allocation';
-import { pairHotelStays, type StayVoucher } from './hotel-stay';
+import { pairHotelStays } from './hotel-stay';
 import { CATEGORIES, fieldLabel, KINDS, slotOf, type EventDraft, type Slot } from './parse/kinds';
 import { chosen, EXCLUDE_CHOICE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
 import { editAddress, editedValue, type Editable } from './pending/edits';
 import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/company-rules';
+import { checkStayTrios, type StayTrio, type TrioVoucher } from './stay-trio';
 
 // The pure projection of one inventory run: uploaded materials, their parser outcomes and the stored answers in; the
 // materials view, derived 待确认项 (pending items), expense events, candidate lines and inventory counts out. Nothing
@@ -14,7 +15,8 @@ import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/compan
 //
 // Item codes: unrecognised → manual_kind → manual_fill (手工补填, manual fill), ambiguous_layout, parse_failed,
 // validation_failure, qr_conflict, missing_required, duplicate_invoice (重复发票 inside the task),
-// category_city_missing (#188); allocation, itinerary_ambiguous and given_up come from #184's transport plan
+// category_city_missing (#188), stay_invoice_missing / stay_folio_missing / stay_screenshot_missing (the 住宿 trio,
+// #213, `stay-trio.ts`); allocation, itinerary_ambiguous and given_up come from #184's transport plan
 // (`allocation.ts`), answered generically (`pending/answers.ts`).
 
 export type ViewMaterial = {
@@ -51,6 +53,8 @@ export type InventoryView = {
   // Every editable field by edit address `edit.<materialId>.<field>`.
   editables: ReadonlyMap<string, Editable>;
   claims: Claim[];
+  // The 住宿 trio of every stay, once the run has finished (`stay-trio.ts`); the print stage reads recorded absences here.
+  stays: StayTrio[];
 };
 
 // The task's 常驻城市 and pinned company rules: categories are derived from them (ADR-0006).
@@ -329,12 +333,13 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
 }
 
 // `answers`: the latest stored answer per item id / edit address (#187), allocation answers included — they reach
-// #184's per-leg split through `planTransport`.
+// #184's per-leg split through `planTransport`. `screenshots`: the voucher material ids that have a current 支付截图.
 export function inventoryView(
   materials: readonly ViewMaterial[],
   results: RunResults,
   { homeCity, rules }: CategoryContext = { homeCity: '', rules: COMPANY_RULES },
   answers: StoredAnswers = new Map(),
+  screenshots: ReadonlySet<string> = new Set(),
 ): InventoryView {
   const answerables = new Map<string, Answerable>();
   const editables = new Map<string, Editable>();
@@ -409,8 +414,8 @@ export function inventoryView(
   const views = new Map<string, Material>();
   const drafts: ({ material: ViewMaterial } & PlannedLine)[] = [];
   const pendingItems: PendingItem[] = [];
-  const stayInvoices: StayVoucher[] = [];
-  const folios: StayVoucher[] = [];
+  const stayInvoices: TrioVoucher[] = [];
+  const folios: TrioVoucher[] = [];
   for (const w of worked) {
     const { m, resolved } = w;
     const spec = resolved ? KINDS[resolved.kind] : null;
@@ -427,7 +432,7 @@ export function inventoryView(
           const draft = lineEdits(m.materialId, allowedTypes ?? [line.draft.invoiceType], { ...line.draft, category: derived.category }, answers, editables);
           drafts.push({ material: m, ...line, draft });
         }
-        if (single && categorised[0] && 'category' in categorised[0].derived && categorised[0].derived.category.code === CATEGORIES.accommodation.code) stayInvoices.push({ materialId: m.materialId, values: w.values });
+        if (single && categorised[0] && 'category' in categorised[0].derived && categorised[0].derived.category.code === CATEGORIES.accommodation.code) stayInvoices.push({ materialId: m.materialId, fileName: m.fileName, values: w.values });
       } else {
         // Kernel category_city_missing: city transport is never put on the home city for want of its own city.
         const item = settle(
@@ -440,7 +445,7 @@ export function inventoryView(
       }
     }
     const open = w.items.some(isOpen);
-    if (!open && !w.reference && resolved?.kind === 'hotel_folio') folios.push({ materialId: m.materialId, values: w.values });
+    if (!open && !w.reference && resolved?.kind === 'hotel_folio') folios.push({ materialId: m.materialId, fileName: m.fileName, values: w.values });
     pendingItems.push(...w.items);
     const role = open ? 'pending' : w.reference ? 'reference' : spec ? spec.role : 'pending';
     views.set(m.materialId, {
@@ -462,6 +467,13 @@ export function inventoryView(
   const stays = new Map(pairHotelStays(stayInvoices, folios).map((stay) => [stay.invoiceId, stay]));
   const linked = new Map<string, string[]>([...stays.values()].flatMap((stay) => [[stay.invoiceId, [stay.folioId]], [stay.folioId, [stay.invoiceId]]]));
 
+  // The 住宿 trio (#213), only over a finished run: a folio still being read is not yet missing.
+  const trio = results && waiting === 0 ? checkStayTrios(stayInvoices, folios, [...stays.values()], screenshots, answers) : { trios: [], items: new Map<string, PendingItem[]>() };
+  for (const items of trio.items.values()) {
+    for (const item of items) answerables.set(item.itemId, { item });
+    pendingItems.push(...items);
+  }
+
   const materialViews = materials.map((m): Material => {
     const outcome = results?.outcomes.get(m.materialId);
     const recognised = outcome?.outcome === 'recognised' ? outcome : null;
@@ -470,7 +482,14 @@ export function inventoryView(
       return { ...baseMaterial(m), ...identity, role: 'excluded', status: 'excluded', checkText: INVENTORY_COPY.excludedCheck };
     }
     const view = views.get(m.materialId) ?? baseMaterial(m);
-    return { ...view, linkedMaterialIds: linked.get(m.materialId) ?? view.linkedMaterialIds };
+    // A trio item sits on a material that is otherwise clean: it keeps its role, but is pending while the item is open.
+    const trioItems = trio.items.get(m.materialId) ?? [];
+    return {
+      ...view,
+      status: trioItems.some(isOpen) ? 'pending' : view.status,
+      pendingItemIds: [...view.pendingItemIds, ...trioItems.map((item) => item.itemId)],
+      linkedMaterialIds: linked.get(m.materialId) ?? view.linkedMaterialIds,
+    };
   });
 
   // Business order (kernel confirmation table): local → out-of-town city transport → long distance → accommodation;
@@ -543,7 +562,7 @@ export function inventoryView(
       : null,
     ungroupedMaterialIds: done ? materialViews.filter((v) => !grouped.has(v.materialId) && (v.status === 'excluded' || v.status === 'pending' || v.role !== 'primary_voucher')).map((v) => v.materialId) : [],
   };
-  return { materials: materialViews, pendingItems, events: done ? events : [], lines: done ? lines : [], inventory, waiting, openPendingItems, answerables, editables, claims };
+  return { materials: materialViews, pendingItems, events: done ? events : [], lines: done ? lines : [], inventory, waiting, openPendingItems, answerables, editables, claims, stays: trio.trios };
 }
 
 // The line-level edits: a presentation value over the description (checks never read it), and the ERP invoice type

@@ -32,7 +32,7 @@ async function inventoried(files: readonly Upload[] = [hotel, rail], homeCity = 
   const { task } = await client.createTask(homeCity);
   const uploaded = await client.upload(task.taskId, files);
   await client.accepted(await client.act(uploaded, 'start-inventory'));
-  return client.settled(task.taskId);
+  return client.withoutStayGaps(await client.settled(task.taskId));
 }
 
 async function book(path: string, body: unknown = {}) {

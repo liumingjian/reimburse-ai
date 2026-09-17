@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { PAYMENT_SCREENSHOT_ERRORS, PRINT_ACTION_ERRORS, type Corners, type Line, type Material, type PlacementSlot } from '@baox/contract';
+import { PAYMENT_SCREENSHOT_ERRORS, PRINT_ACTION_ERRORS, STAY_TRIO_COPY, type Corners, type Line, type Material, type PlacementSlot } from '@baox/contract';
 import { blobPath, writeBlob } from '../data-dir';
 import type { Db } from '../db/database';
 import { paperCorners, type PaperCorners } from '../parse/ocr';
@@ -8,6 +8,7 @@ import { composeSheet, isJpegOrPng, pdfContent, photoContent, renderPages, scree
 import { sheetState, type PrintFacts, type PrintSetting, type Screenshot, type StoredPage, type StoredPlacement } from './facts';
 import { storedMime } from '../upload-rules';
 import { planPages, prefersRotation, REGIONS, type Region } from './layout';
+import type { StayTrio } from '../stay-trio';
 
 // 去打印 (print) actions. Each reads the task, composes outside any transaction, and hands back a commit that
 // `tasks.ts` runs through `mutate` at the revision it read, so a change in between is a 409 stale_step.
@@ -27,6 +28,11 @@ export type PrintState = {
   // Included materials by id.
   sources: ReadonlyMap<string, PrintSource>;
   facts: PrintFacts;
+  // The inventory's 住宿 trios (#213): which invoices take a screenshot before any sheet exists, and which recorded a
+  // confirmed absence.
+  stays: readonly StayTrio[];
+  // Whether the task made an ERP action attempt (its facts are frozen).
+  erpAttempted: boolean;
 };
 
 export type PrintCommit = (tx: Db, at: string, revision: number) => Promise<void>;
@@ -75,26 +81,39 @@ export async function crop(state: PrintState, pageId: string, slot: PlacementSlo
   };
 }
 
-// 补充支付截图: only on a generated sheet, only for a page that takes one; a second one replaces the first.
+// 补充支付截图; a second one replaces the first. On a generated sheet: for a page that takes one, and the sheet is
+// recomposed. Without a generated sheet this used to be refused outright. #213 relaxes that on purpose for a 住宿
+// invoice: the inventory's missing-screenshot item is answered by supplying the screenshot, before the list is
+// confirmed and before any sheet exists. Only the fact is stored then; the sheet picks it up when it is generated.
 export async function addScreenshot(state: PrintState, voucherMaterialId: string, file: { fileName: string; mime: string; bytes: Uint8Array }): Promise<PrintCommit> {
-  if (stateOf(state) !== 'generated') throw new PrintRefusal('print_not_generated', PAYMENT_SCREENSHOT_ERRORS.notGenerated);
-  const page = state.facts.render?.pages.find((candidate) => candidate.voucherMaterialId === voucherMaterialId);
-  if (!page || !page.acceptsPaymentScreenshot) throw new PrintRefusal('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
+  const generated = stateOf(state) === 'generated';
+  if (generated) {
+    const page = state.facts.render?.pages.find((candidate) => candidate.voucherMaterialId === voucherMaterialId);
+    if (!page || !page.acceptsPaymentScreenshot) throw new PrintRefusal('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
+  } else if (!state.stays.some((stay) => stay.invoiceId === voucherMaterialId)) {
+    throw new PrintRefusal('print_not_generated', PAYMENT_SCREENSHOT_ERRORS.notGenerated);
+  }
   const named = IMAGE_NAME.test(file.fileName) || (!/\.[a-z0-9]+$/i.test(file.fileName) && /^image\/(jpeg|png)$/.test(file.mime));
   if (!named || !(await isJpegOrPng(file.bytes))) throw new PrintRefusal('not_image', PAYMENT_SCREENSHOT_ERRORS.notImage);
   const sha256 = writeBlob(state.dataDir, file.bytes);
   const shot: Screenshot = { screenshotId: randomUUID(), voucherMaterialId, fileName: file.fileName, sha256 };
   const screenshots = [...state.facts.screenshots.filter((s) => s.voucherMaterialId !== voucherMaterialId), shot];
-  const composed = await compose(state, state.facts.settings, screenshots);
+  const composed = generated ? await compose(state, state.facts.settings, screenshots) : null;
   return async (tx, at, revision) => {
     await tx.insertInto('blob').values({ sha256, size: file.bytes.byteLength, mime: storedMime(file.fileName, file.mime), created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
     await tx.insertInto('payment_screenshot').values({ screenshot_id: shot.screenshotId, task_id: state.taskId, account_id: state.accountId, voucher_material_id: voucherMaterialId, blob_sha256: sha256, file_name: file.fileName, revision, created_at: at }).execute();
-    await renderCommit(state, composed)(tx, at, revision);
+    if (composed) await renderCommit(state, composed)(tx, at, revision);
   };
 }
 
+// Removing a 住宿 invoice's screenshot reopens its missing-screenshot item unless an absence was confirmed. Before the
+// list is confirmed that is just the check asking again; after it (or once ERP was touched) it would pull a confirmed
+// list back into inventory from the print page, so it is refused there and the screenshot can only be replaced.
 export async function removeScreenshot(state: PrintState, screenshotId: string): Promise<PrintCommit> {
-  if (!state.facts.screenshots.some((shot) => shot.screenshotId === screenshotId)) throw new PrintRefusal('screenshot_not_found', PAYMENT_SCREENSHOT_ERRORS.notFound);
+  const removing = state.facts.screenshots.find((shot) => shot.screenshotId === screenshotId);
+  if (!removing) throw new PrintRefusal('screenshot_not_found', PAYMENT_SCREENSHOT_ERRORS.notFound);
+  const stay = state.stays.find((candidate) => candidate.invoiceId === removing.voucherMaterialId);
+  if (stay?.screenshot && !stay.screenshot.noneConfirmed && (state.confirmation === 'confirmed' || state.erpAttempted)) throw new PrintRefusal('screenshot_required', STAY_TRIO_COPY.removeLocked);
   const screenshots = state.facts.screenshots.filter((shot) => shot.screenshotId !== screenshotId);
   const composed = stateOf(state) === 'generated' ? await compose(state, state.facts.settings, screenshots) : null;
   return async (tx, at, revision) => {
@@ -235,7 +254,6 @@ async function compose(state: PrintState, settings: ReadonlyMap<string, PrintSet
       top: top?.stored ?? null,
       bottom: bottom?.stored ?? null,
       acceptsPaymentScreenshot: plan.acceptsPaymentScreenshot,
-      expectsPaymentScreenshot: plan.expectsPaymentScreenshot,
       screenshotId: shot?.screenshotId ?? null,
       droppedFileNames: plan.droppedMaterialIds.map((id) => state.sources.get(id)?.fileName).filter((name): name is string => name !== undefined),
     });

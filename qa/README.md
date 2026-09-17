@@ -82,7 +82,17 @@ QA_BASE=http://127.0.0.1:4399 QA_MATERIALS=/tmp/baox-qa-mats QA_HEADLESS=1 pnpm 
 期望：`erp.status` 变成 `aborted`，`erp.abortReason` 说得出是浏览器不可用，页面上也能看到这句话，
 任务本身不被改动。驱动会把这三点分别记成 `ok` 或 `DEFECT`。
 
-## 5. 待确认项是怎么填的
+## 5. 住宿三件套（`stay-trio` 分区）
+
+盘点结束后、处理待确认项之前，`stay-trio` 分区核对住宿报销的三件套（发票、结账单、支付截图，#213）：
+
+- 每个缺件的待确认项，标题都要说出缺的是哪一件、是哪份材料的，否则记 `DEFECT`；
+- 三件都齐的住宿发票不应该有这类待确认项，缺件却没有待确认项同样记 `DEFECT`；
+- 缺支付截图的那一项，驱动会在待确认项页直接上传一张 1x1 PNG，确认这一项随之消失。
+
+合成材料里的 m01 发票与 m02 结账单能配对、没有支付截图，冒烟跑一遍就能走到上传这一步。
+
+## 6. 待确认项是怎么填的
 
 - 填什么由 `qa/values.mjs` 决定。它先看字段声明的 `format`（`money` / `date` / `time` / `text`，
   从 `GET /api/tasks/:id` 的 `pendingItems[].fields[].format` 读到），读不到才退回按标签猜。

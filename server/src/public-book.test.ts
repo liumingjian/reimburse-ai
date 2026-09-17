@@ -43,7 +43,7 @@ async function inventoried(): Promise<TaskSnapshot> {
   const { task } = await asBob.createTask('杭州');
   const uploaded = await asBob.upload(task.taskId, [hotel, rail]);
   await asBob.accepted(await asBob.act(uploaded, 'start-inventory'));
-  return asBob.settled(task.taskId);
+  return asBob.withoutStayGaps(await asBob.settled(task.taskId));
 }
 
 describe('editing the public book', () => {

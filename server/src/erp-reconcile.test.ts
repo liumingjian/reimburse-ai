@@ -68,7 +68,7 @@ async function confirmed(): Promise<TaskSnapshot> {
   const { task } = await client.createTask('杭州');
   const uploaded = await client.upload(task.taskId, [invoice, sample('m02')]);
   await client.accepted(await client.act(uploaded, 'start-inventory'));
-  const done = await client.settled(task.taskId);
+  const done = await client.withoutStayGaps(await client.settled(task.taskId));
   const review = await client.accepted(await client.act(done, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
   const ready = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
   const [line] = ready.lines;
@@ -210,7 +210,7 @@ describe('crash recovery', () => {
     const { task } = await firstClient.createTask('杭州');
     const uploaded = await firstClient.upload(task.taskId, [sample('m01'), sample('m02')]);
     await firstClient.accepted(await firstClient.act(uploaded, 'start-inventory'));
-    const done = await firstClient.settled(task.taskId);
+    const done = await firstClient.withoutStayGaps(await firstClient.settled(task.taskId));
     const review = await firstClient.accepted(await firstClient.act(done, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
     const ready = await firstClient.accepted(await firstClient.act(review, 'confirm-review', { digest: review.confirmation.digest }));
     await firstClient.accepted(await firstClient.act(ready, 'start-erp-write'));

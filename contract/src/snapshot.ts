@@ -415,9 +415,60 @@ export type Confirmation = z.infer<typeof ConfirmationSchema>;
 
 // ---- 支付截图与打印稿 ----
 
-// 支付截图只接受图片（JPG、PNG），只进打印稿，不改变整单明细确认。每张发票至多一张，再补即替换。
-// 入口在打印稿页（打印稿生成之后，按页的 acceptsPaymentScreenshot），不在整单确认页。
+// 支付截图只接受图片（JPG、PNG），只进打印稿，不改变明细。每张发票至多一张，再补即替换。
+// 入口在打印稿页（打印稿生成之后，按页的 acceptsPaymentScreenshot），住宿发票另外在待确认项页（#213，见 STAY_TRIO_COPY）。
 export const PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE = '.jpg,.jpeg,.png,image/jpeg,image/png';
+
+// The 住宿 (accommodation) trio check at 盘点 (inventory), #213. 住宿 reimbursement takes three materials: the 发票
+// (invoice), the 结账单 (hotel folio) and the 支付截图 (payment screenshot). Inventory raises one 待确认项 per missing
+// element; the item disappears once the material is supplied, or settles on the choice `STAY_TRIO_CONFIRM_NONE`,
+// which records the absence. The print stage reads that record instead of judging the absence again. All filer-facing
+// wording of the check lives here, shared by the server and the page.
+export const STAY_TRIO_ELEMENTS = ['invoice', 'folio', 'screenshot'] as const;
+export type StayTrioElement = (typeof STAY_TRIO_ELEMENTS)[number];
+
+// Item ids are `<code>.<materialId>`: the invoice's id for folio / screenshot, the folio's id for a missing invoice.
+export const STAY_TRIO_ITEM_CODES: Readonly<Record<StayTrioElement, string>> = {
+  invoice: 'stay_invoice_missing',
+  folio: 'stay_folio_missing',
+  screenshot: 'stay_screenshot_missing',
+};
+export const STAY_TRIO_CONFIRM_NONE = 'confirm_none';
+
+// Whether a pending item is the missing-screenshot item, which the page answers with an upload as well as a choice.
+export const isStayScreenshotItem = (item: Pick<PendingItem, 'itemId'>): boolean => item.itemId.startsWith(`${STAY_TRIO_ITEM_CODES.screenshot}.`);
+
+const TRIO = '住宿报销要发票、结账单、支付截图三样。';
+const amountNote = (label: string, amount: string | undefined) => (amount ? `（${label} ${amount} 元）` : '');
+
+export const STAY_TRIO_COPY = {
+  folio: {
+    title: (invoiceFileName: string) => `住宿发票「${invoiceFileName}」缺少结账单`,
+    why: (totalAmount: string | undefined) =>
+      `${TRIO}这张住宿发票${amountNote('价税合计', totalAmount)}没有配对到结账单：结账单的消费合计要和发票价税合计一分不差，才算同一次住宿。请在上传页追加结账单后重新盘点；确实没有结账单，就选「确认没有结账单」，这条明细的日期只能用发票上的日期。`,
+    confirmNone: '确认没有结账单',
+  },
+  screenshot: {
+    title: (invoiceFileName: string) => `住宿发票「${invoiceFileName}」缺少支付截图`,
+    why: (totalAmount: string | undefined) =>
+      `${TRIO}这张住宿发票${amountNote('价税合计', totalAmount)}还没有支付截图。可以在这里直接上传支付截图（JPG、PNG）；确实没有，就选「确认没有支付截图」，打印稿这一页不放支付截图。`,
+    confirmNone: '确认没有支付截图',
+    upload: '上传支付截图',
+    // The file input's accessible name.
+    inputLabel: (invoiceFileName: string) => `选择这张住宿发票的支付截图：${invoiceFileName}`,
+    uploadNote: '上传后这一项自动消失；支付截图只进打印稿，不上传报销系统。',
+  },
+  invoice: {
+    title: (folioFileName: string) => `结账单「${folioFileName}」缺少住宿发票`,
+    why: (folioTotal: string | undefined) =>
+      `${TRIO}这张结账单${amountNote('消费合计', folioTotal)}没有配对到住宿发票：发票价税合计要和结账单消费合计一分不差，才算同一次住宿。没有发票就形成不了明细。请在上传页追加住宿发票后重新盘点；确实没有，就选「确认没有住宿发票」，这张结账单只作为参考材料留下。`,
+    confirmNone: '确认没有住宿发票',
+  },
+  // 打印稿 notice for a 住宿 page whose screenshot absence was confirmed at inventory.
+  printNotice: (nos: string, categoryLabel: string) => `${nos} ${categoryLabel}发票在盘点时已确认没有支付截图，这一页不放支付截图。`,
+  // Refusal: removing the screenshot would reopen the check on a list that is already confirmed.
+  removeLocked: '整单明细已经确认，这张住宿发票的支付截图只能替换，不能移除。',
+} as const;
 
 export const PAYMENT_SCREENSHOT_ERRORS = {
   notImage: '只接受图片（JPG、PNG）。',

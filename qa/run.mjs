@@ -138,6 +138,7 @@ async function runAreas({ page, context, files }) {
   await area(page, 'task-list', () => qaTaskList(page, context, state));
   await area(page, 'upload', () => qaUpload(page, files, state));
   await area(page, 'inventory', () => qaInventory(page, context, state));
+  await area(page, 'stay-trio', () => qaStayTrio(page, context, state));
   await area(page, 'pending', () => qaPending(page, context, state));
   await area(page, 'project-book', () => qaProjectBook(page, state));
   await area(page, 'assignment', () => qaAssignment(page, state));
@@ -329,6 +330,87 @@ async function qaInventory(page, context, state) {
   } else {
     defect('inventory', 'the 费用事件 table is missing after inventory finished');
   }
+}
+
+// The 住宿 (accommodation) trio (#213): a hotel invoice missing its 结账单 or 支付截图, or a folio missing its invoice,
+// must be named in the 待确认项 queue during inventory — which element, on which material. The element each item code
+// stands for, as the title has to say it:
+const STAY_TRIO = { stay_folio_missing: '结账单', stay_screenshot_missing: '支付截图', stay_invoice_missing: '住宿发票' };
+
+async function qaStayTrio(page, context, state) {
+  const id = state.taskId;
+  const read = async () => (await context.request.get(`${BASE}/api/tasks/${id}`)).json().catch(() => null);
+  const snap = await read();
+  if (!snap) {
+    warn('stay-trio', 'could not read the task snapshot');
+    return;
+  }
+  const byId = new Map(snap.materials.map((m) => [m.materialId, m]));
+  const codeOf = (item) => item.itemId.split('.')[0];
+  const trio = snap.pendingItems.filter((item) => codeOf(item) in STAY_TRIO);
+  const open = trio.filter((item) => item.status === 'open');
+
+  // Each item names its element and its material.
+  for (const item of open) {
+    const element = STAY_TRIO[codeOf(item)];
+    const fileName = byId.get(item.materialId)?.fileName ?? '';
+    if (item.title.includes(element) && fileName && item.title.includes(fileName)) ok('stay-trio', `the queue names the missing ${element} of «${fileName}»: ${item.title}`);
+    else defect('stay-trio', `the item ${item.itemId} does not name its missing ${element} and its material «${fileName}»: ${item.title}`);
+  }
+
+  // The normal case stays quiet, and no gap goes unmentioned: a clean hotel invoice either has its folio and screenshot,
+  // or an item (open, or answered 确认没有) about each one that is missing.
+  const shots = new Set((snap.paymentScreenshots ?? []).map((shot) => shot.voucherMaterialId));
+  const asked = new Set(trio.map((item) => item.itemId));
+  const cleanInvoices = snap.materials.filter((m) => m.role === 'primary_voucher' && m.categoryLabel === '住宿' && !m.pendingItemIds.some((itemId) => !(itemId.split('.')[0] in STAY_TRIO) && snap.pendingItems.find((i) => i.itemId === itemId)?.status === 'open'));
+  for (const invoice of cleanInvoices) {
+    const gaps = [
+      ...(invoice.linkedMaterialIds.some((linked) => byId.get(linked)?.kind === 'hotel_folio') ? [] : [['stay_folio_missing', '结账单']]),
+      ...(shots.has(invoice.materialId) ? [] : [['stay_screenshot_missing', '支付截图']]),
+    ];
+    const unmentioned = gaps.filter(([code]) => !asked.has(`${code}.${invoice.materialId}`));
+    if (unmentioned.length > 0) defect('stay-trio', `«${invoice.fileName}» has no ${unmentioned.map(([, element]) => element).join('、')} but the 待确认项 queue does not say so`);
+    else if (gaps.length === 0 && [...asked].some((itemId) => itemId.endsWith(`.${invoice.materialId}`) && open.some((item) => item.itemId === itemId))) defect('stay-trio', `«${invoice.fileName}» has its whole trio but still raises an open trio item`);
+    else if (gaps.length === 0) ok('stay-trio', `«${invoice.fileName}» has its whole trio and raises no item`);
+  }
+  if (open.length === 0 && cleanInvoices.length === 0) {
+    ok('stay-trio', 'no 住宿 trio item in this upload; nothing more to check');
+    return;
+  }
+
+  // The queue on the page shows them, and a missing screenshot can be attached from there.
+  await page.goto(`${BASE}/#/task/${id}/pending`);
+  const list = page.getByLabel('待确认项清单');
+  if (!(await visible(list, 10000))) {
+    if (open.length > 0) defect('stay-trio', 'the 待确认项 page shows no queue although trio items are open');
+    return;
+  }
+  for (const item of open) {
+    const row = list.getByRole('button', { name: item.title, exact: false });
+    if ((await row.count()) > 0) ok('stay-trio', `the pending page lists «${item.title}»`);
+    else defect('stay-trio', `the pending page does not list «${item.title}»`);
+  }
+  const missingShot = open.find((item) => codeOf(item) === 'stay_screenshot_missing');
+  if (!missingShot) return;
+  await list.getByRole('button', { name: missingShot.title, exact: false }).first().click();
+  const input = page.getByLabel(/^选择这张住宿发票的支付截图：/);
+  if ((await input.count()) === 0) {
+    defect('stay-trio', `«${missingShot.title}» offers no way to upload the screenshot from the pending page`);
+    await shot(page, 'stay-trio-no-upload');
+    return;
+  }
+  await shot(page, 'stay-trio-screenshot-item');
+  await input.first().setInputFiles({ name: 'IMG_QA_STAY.png', mimeType: 'image/png', buffer: PNG_1X1 });
+  let after = null;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await page.waitForTimeout(500);
+    after = await read();
+    if (!after?.pendingItems.some((item) => item.itemId === missingShot.itemId)) break;
+  }
+  const attached = after?.paymentScreenshots?.some((s) => s.voucherMaterialId === missingShot.materialId);
+  if (attached && !after.pendingItems.some((item) => item.itemId === missingShot.itemId)) ok('stay-trio', 'attaching the screenshot from the pending page resolves the missing-screenshot item');
+  else defect('stay-trio', `attaching a screenshot from the pending page did not resolve ${missingShot.itemId} (attached: ${Boolean(attached)})`);
+  await shot(page, 'stay-trio-screenshot-attached');
 }
 
 // A 待确认项 the driver fails to answer is tried this many times and then left for the operator,
