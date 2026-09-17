@@ -77,7 +77,7 @@ const VAT_INVOICE_SLOTS: readonly Slot[] = [
 ];
 
 // 酒店结账单 (hotel folio): reference material for a hotel invoice. `folioTotal` is not an invoice amount; it only
-// pairs the folio with its invoice. Neither date is derived from the other and 天数 (nights), ADR-0017. The hotel name
+// pairs the folio with its invoice. Neither date is derived from the other and 天数 (nights) (#212). The hotel name
 // is not required: what a folio proves is the stay, and a photographed folio rarely yields its name as one text run
 // (#211).
 const HOTEL_FOLIO_SLOTS: readonly Slot[] = [
