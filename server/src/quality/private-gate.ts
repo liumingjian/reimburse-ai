@@ -35,6 +35,10 @@ export const THRESHOLDS: Readonly<Record<Medium, Threshold>> = {
 // A layout absent from this map declares whatever its sidecars happen to carry.
 export const REQUIRED_EXPECTATIONS: Readonly<Record<string, readonly string[]>> = {
   'vat_invoice/einvoice': ['invoiceNumber', 'issueDate', 'itemName', 'netAmount', 'taxAmount', 'totalAmount'],
+  // #210: an itinerary is the only place a ride-hailing invoice's expense city can come from, and its 合计 is what
+  // pairs it with that invoice. A sidecar naming neither a leg's 城市 nor the header could not see that every real
+  // ride invoice was reaching no line at all, so both are required.
+  'ride_itinerary/amap': ['applyDate', 'segmentCount', 'itineraryTotal', 'segments[0].city'],
 };
 
 export type CorpusParser = (input: ParseInput) => Promise<ParseOutcome>;

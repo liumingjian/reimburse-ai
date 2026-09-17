@@ -8,6 +8,7 @@ import {
   BUNDLED_FEE_INVOICE,
   AMAP_ITINERARY_GAP,
   AMAP_ITINERARY_WRAPPED,
+  AMAP_ITINERARY_CROSS_CITY,
   BUYER,
   CAOCAO_INVOICE,
   CAOCAO_ITINERARY,
@@ -184,7 +185,7 @@ function itinerary(data) {
 <div class="itin">
   <h1>行程单</h1>
   <div class="brand">${esc(data.brand)}</div>
-  <div class="meta">申请日期：${esc(data.applyDate)}<br>行程人手机：${esc(data.phone)}</div>
+  <div class="meta">${esc(data.applyLabel ?? '申请日期')}：${esc(data.applyDate)}<br>行程人手机：${esc(data.phone)}</div>
   <div class="summary">${summary}</div>
   <table>
     <tr><th>序号</th><th>车型</th><th>上车时间</th><th>城市</th><th>起点</th><th>终点</th><th>金额（元）</th></tr>
@@ -295,6 +296,7 @@ export const DOCS = {
   r204: rail(RAIL_SPLIT_RUNS),
   r202: itinerary(AMAP_ITINERARY_GAP),
   r205: itinerary(AMAP_ITINERARY_WRAPPED),
+  r209: itinerary(AMAP_ITINERARY_CROSS_CITY),
   r207: invoice(WIDE_COLUMN_INVOICE, '#8b3a3a'),
   r208: invoice(WRAPPED_ITEM_INVOICE, '#8b3a3a'),
 };

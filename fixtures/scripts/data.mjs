@@ -137,6 +137,26 @@ export const AMAP_ITINERARY_WRAPPED = {
   ],
 };
 
+// Regression fixture (not a sample material): the 高德行程单 that pairs with r206, the 交通运输服务 (parent tax class)
+// ride invoice — the pairing no fixture covered before (#210). Three things it exercises at once: its 合计 equals
+// r206's 价税合计, so a parent-class invoice has to be admitted to the pairing at all; its two legs sit in two
+// different cities, so one line categorises 本地 and the other 外地 off the same invoice; and its header prints the
+// 申请时间 label real itineraries use, not the 申请日期 the other fixtures print.
+export const AMAP_ITINERARY_CROSS_CITY = {
+  id: 'r209',
+  file: 'r209-amap-itinerary-cross-city.pdf',
+  brand: '高德地图',
+  applyLabel: '申请时间',
+  applyDate: '2026-08-17',
+  phone: EMPLOYEE.phoneMasked,
+  count: '2',
+  total: '27.49',
+  rows: [
+    { no: '1', car: '经济型', time: '2026-08-16 08:40', city: '杭州市', from: '城站', to: '黄龙', amount: '12.49' },
+    { no: '2', car: '经济型', time: '2026-08-17 09:30', city: '上海市', from: '虹桥枢纽', to: '漕河泾', amount: '15.00' },
+  ],
+};
+
 export const CAOCAO_INVOICE = {
   id: 'm05',
   file: 'm05-caocao-invoice.pdf',
