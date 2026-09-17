@@ -172,6 +172,31 @@ describe('ride-hailing invoice + 高德 itinerary', () => {
     });
   });
 
+  // #210: what every real ride-hailing invoice looks like — the 交通运输服务 (transport services) parent tax class, not
+  // the fine 运输服务 class every fixture used to print. Pairing has to admit it on the same rule that categorises it,
+  // or the invoice is recognised, categorised 市内交通 and then silently kept out of the pairing, which leaves it with
+  // no city at all. The itinerary's two legs sit in two cities, so the same invoice must also split into one 本地 and
+  // one 外地 line rather than blocking on the ambiguity.
+  it('a *交通运输服务* invoice pairs too, and legs in two cities give one 本地 and one 外地 line', async () => {
+    const snapshot = await inventoried([sample('r206'), sample('r209')]);
+    const invoice = byFileName(snapshot, sample('r206').name);
+    const itinerary = byFileName(snapshot, sample('r209').name);
+    expect(invoice).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', role: 'primary_voucher', status: 'ok', categoryLabel: '市内交通', linkedMaterialIds: [itinerary.materialId] });
+    expect(itinerary).toMatchObject({ kind: 'ride_itinerary', layout: 'amap', role: 'reference', status: 'ok', linkedMaterialIds: [invoice.materialId] });
+    expect(snapshot.pendingItems).toEqual([]);
+    expect(snapshot.stage).toBe('project');
+
+    // Each leg carries the city the itinerary printed for it, and is categorised against the task's home city (杭州).
+    expect(snapshot.lines.map((l) => [l.date, l.city, l.route, l.grossAmount, l.netAmount, l.taxAmount, l.category.code])).toEqual([
+      ['2026-08-16', '杭州市', '城站 → 黄龙', '12.49', '12.13', '0.36', 'local_city_transport'],
+      ['2026-08-17', '上海市', '虹桥枢纽 → 漕河泾', '15.00', '14.56', '0.44', 'remote_city_transport'],
+    ]);
+    for (const line of snapshot.lines) expect(line).toMatchObject({ voucherMaterialId: invoice.materialId, referenceMaterialIds: [itinerary.materialId] });
+    // The header slots a real itinerary prints: its label is 申请时间, not the 申请日期 the generated fixtures used.
+    const header = Object.fromEntries(itinerary.fields.map((field) => [field.key, field.value]));
+    expect(header).toMatchObject({ applyDate: '2026-08-17', segmentCount: '2', itineraryTotal: '27.49' });
+  });
+
   it('an invoice without an itinerary has no expense city and waits on category_city_missing; an itinerary without its invoice links nothing', async () => {
     const alone = await inventoried([sample('m03')]);
     const invoice = byFileName(alone, sample('m03').name);

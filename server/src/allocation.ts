@@ -1,6 +1,6 @@
 import type { MaterialKind, PendingItem } from '@baox/contract';
 import { cents, money } from './parse/doc';
-import { KINDS, type EventDraft } from './parse/kinds';
+import { CATEGORIES, KINDS, vatItemCategory, type EventDraft } from './parse/kinds';
 
 // 逐段分摊 (per-leg allocation) and the ride-hailing invoice ↔ itinerary pairing, ported from 50931a3:kernel/src/events.mjs
 // (`linkEvidence`, `conservingSegments`, `splitTax`, `buildEvents`). Two rules:
@@ -132,7 +132,6 @@ export type TransportPlan = {
 };
 
 const BRANDS: Readonly<Record<string, string>> = { amap: '高德' };
-const RIDE_HAILING = /^\*运输服务\*/;
 export const ALLOCATION_GIVE_UP_NOTE = '放弃后这张发票不形成明细：请把它连同行程单排除，或补充能逐段核对的行程单后重新盘点。';
 
 const arrow = (from: string | null, to: string | null) => (from && to ? `${from} → ${to}` : null);
@@ -142,7 +141,11 @@ const push = <T>(map: Map<string, T[]>, key: string, value: T) => map.set(key, [
 // `answers`: per invoice materialId, the per-leg totals the user gave on its allocation item (#187).
 export function planTransport(materials: readonly TransportMaterial[], answers: ReadonlyMap<string, readonly string[]> = new Map()): TransportPlan {
   const plan: TransportPlan = { lines: new Map(), items: new Map(), links: new Map(), notes: new Map() };
-  const invoices = materials.filter((m) => m.kind === 'vat_invoice' && RIDE_HAILING.test(m.values['itemName'] ?? ''));
+  // One anchor, not two (#210): a ride-hailing invoice here is exactly a face the kind classifier categorises as
+  // 市内交通. A second copy of the 税收分类 (tax classification) pattern used to live here and only knew the fine
+  // 运输服务 class, so every face printing the parent 交通运输服务 class — which is what real ride invoices print —
+  // was categorised 市内交通 and then silently kept out of the pairing, leaving it with no expense city at all.
+  const invoices = materials.filter((m) => m.kind === 'vat_invoice' && vatItemCategory(m.values['itemName'])?.code === CATEGORIES.city_transport.code);
   const itineraries = materials.filter((m) => m.kind === 'ride_itinerary' && m.ok);
   const { pairs, ambiguous, unlinked } = pairItineraries(invoices, itineraries);
   const byId = new Map(materials.map((m) => [m.materialId, m]));

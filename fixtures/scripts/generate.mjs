@@ -49,6 +49,7 @@ export const REGRESSION_FILES = {
   r206: 'r206-transport-invoice.pdf',
   r207: 'r207-einvoice-wide-name-column.pdf',
   r208: 'r208-einvoice-wrapped-item-name.pdf',
+  r209: 'r209-amap-itinerary-cross-city.pdf',
 };
 
 export const PDF_DOC_FILES = { ...MATERIAL_FILES, ...REGRESSION_FILES };

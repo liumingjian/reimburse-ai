@@ -12,11 +12,14 @@ import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout
 
 const KIND = 'ride_itinerary';
 const NAME = 'amap';
-const VERSION = '3';
+const VERSION = '4';
 const SOURCE = ruleSource(KIND, NAME);
 
 const BRAND = /高德地图|AMAPITINERARY/;
-const APPLY_DATE = /^申请日期:(\d{4}-\d{2}-\d{2})$/;
+// The label over the date the itinerary was asked for: real 高德 itineraries print 申请时间, others print 申请日期.
+// Both spellings are a face's own label, so the anchor names both rather than falling back from one to the other; it
+// stays fully anchored on the date, and a header that prints neither leaves `applyDate` missing (ADR-0017).
+const APPLY_DATE = /^申请(?:日期|时间):(\d{4}-\d{2}-\d{2})$/;
 const SUMMARY = /^共计(\d+)单行程,合计([\d,]+\.\d{2})元$/;
 // Matched against the 上车时间 cell read as one compacted string, so a date and an `HH:MM` printed on two lines join.
 const TIME = /^(\d{4}-\d{2}-\d{2})(\d{2}:\d{2})$/;
@@ -144,10 +147,10 @@ export const amapItinerary: Layout = {
       if (value) candidates.push({ key, value, source: SOURCE, parserVersion: VERSION, evidence: 'explicit', refs: ref(evidence) });
     };
 
-    // 申请日期 and the 共计N单行程 summary are matched against row spans, not against one text run and not against the
-    // whole row: a real itinerary prints several fields on one baseline and splits a label from its value, so the
-    // narrowest contiguous run of a row is the only haystack that holds exactly one field (ADR-0017: the haystack
-    // narrows, the patterns stay fully anchored).
+    // The 申请时间 header field and the 共计N单行程 summary are matched against row spans, not against one text run and
+    // not against the whole row: a real itinerary prints several fields on one baseline and splits a label from its
+    // value, so the narrowest contiguous run of a row is the only haystack that holds exactly one field (ADR-0017:
+    // the haystack narrows, the patterns stay fully anchored).
     const lines = allRows(doc);
     const apply = matchSpan(lines, APPLY_DATE);
     if (apply) add('applyDate', apply.match[1], apply.span.observations);
