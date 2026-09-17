@@ -1,4 +1,4 @@
-import { STAY_TRIO_CONFIRM_NONE, STAY_TRIO_COPY, STAY_TRIO_ITEM_CODES, type PendingItem, type StayTrioElement } from '@baox/contract';
+import { STAY_TRIO_CONFIRM_NONE, STAY_TRIO_COPY, stayTrioItemId, type PendingItem, type StayTrioElement } from '@baox/contract';
 import type { Stay, StayVoucher } from './hotel-stay';
 import { CATEGORIES } from './parse/kinds';
 import { chosen, EXCLUDE, settle, type StoredAnswers } from './pending/answers';
@@ -55,7 +55,7 @@ function missingItem(element: StayTrioElement, material: TrioVoucher): PendingIt
   const copy = STAY_TRIO_COPY[element];
   const amount = element === 'invoice' ? material.values['folioTotal'] : material.values['totalAmount'];
   return {
-    itemId: `${STAY_TRIO_ITEM_CODES[element]}.${material.materialId}`,
+    itemId: stayTrioItemId(element, material.materialId),
     materialId: material.materialId,
     title: copy.title(material.fileName),
     why: copy.why(amount),

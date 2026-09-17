@@ -334,8 +334,12 @@ async function qaInventory(page, context, state) {
 
 // The 住宿 (accommodation) trio (#213): a hotel invoice missing its 结账单 or 支付截图, or a folio missing its invoice,
 // must be named in the 待确认项 queue during inventory — which element, on which material. The element each item code
-// stands for, as the title has to say it:
+// stands for, as the title has to say it. The ids mirror the contract's `stayTrioItemId` / `stayTrioElementOf`: this
+// driver runs under plain `node`, which cannot load `@baox/contract` (TypeScript source with extensionless imports),
+// so the `<code>.<materialId>` shape is built and read only through the two helpers below.
 const STAY_TRIO = { stay_folio_missing: '结账单', stay_screenshot_missing: '支付截图', stay_invoice_missing: '住宿发票' };
+const trioItemId = (code, materialId) => `${code}.${materialId}`;
+const trioCodeOf = (itemId) => itemId.split('.')[0];
 
 async function qaStayTrio(page, context, state) {
   const id = state.taskId;
@@ -346,13 +350,12 @@ async function qaStayTrio(page, context, state) {
     return;
   }
   const byId = new Map(snap.materials.map((m) => [m.materialId, m]));
-  const codeOf = (item) => item.itemId.split('.')[0];
-  const trio = snap.pendingItems.filter((item) => codeOf(item) in STAY_TRIO);
+  const trio = snap.pendingItems.filter((item) => trioCodeOf(item.itemId) in STAY_TRIO);
   const open = trio.filter((item) => item.status === 'open');
 
   // Each item names its element and its material.
   for (const item of open) {
-    const element = STAY_TRIO[codeOf(item)];
+    const element = STAY_TRIO[trioCodeOf(item.itemId)];
     const fileName = byId.get(item.materialId)?.fileName ?? '';
     if (item.title.includes(element) && fileName && item.title.includes(fileName)) ok('stay-trio', `the queue names the missing ${element} of «${fileName}»: ${item.title}`);
     else defect('stay-trio', `the item ${item.itemId} does not name its missing ${element} and its material «${fileName}»: ${item.title}`);
@@ -362,15 +365,15 @@ async function qaStayTrio(page, context, state) {
   // or an item (open, or answered 确认没有) about each one that is missing.
   const shots = new Set((snap.paymentScreenshots ?? []).map((shot) => shot.voucherMaterialId));
   const asked = new Set(trio.map((item) => item.itemId));
-  const cleanInvoices = snap.materials.filter((m) => m.role === 'primary_voucher' && m.categoryLabel === '住宿' && !m.pendingItemIds.some((itemId) => !(itemId.split('.')[0] in STAY_TRIO) && snap.pendingItems.find((i) => i.itemId === itemId)?.status === 'open'));
+  const cleanInvoices = snap.materials.filter((m) => m.role === 'primary_voucher' && m.categoryLabel === '住宿' && !m.pendingItemIds.some((itemId) => !(trioCodeOf(itemId) in STAY_TRIO) && snap.pendingItems.find((i) => i.itemId === itemId)?.status === 'open'));
   for (const invoice of cleanInvoices) {
     const gaps = [
       ...(invoice.linkedMaterialIds.some((linked) => byId.get(linked)?.kind === 'hotel_folio') ? [] : [['stay_folio_missing', '结账单']]),
       ...(shots.has(invoice.materialId) ? [] : [['stay_screenshot_missing', '支付截图']]),
     ];
-    const unmentioned = gaps.filter(([code]) => !asked.has(`${code}.${invoice.materialId}`));
+    const unmentioned = gaps.filter(([code]) => !asked.has(trioItemId(code, invoice.materialId)));
     if (unmentioned.length > 0) defect('stay-trio', `«${invoice.fileName}» has no ${unmentioned.map(([, element]) => element).join('、')} but the 待确认项 queue does not say so`);
-    else if (gaps.length === 0 && [...asked].some((itemId) => itemId.endsWith(`.${invoice.materialId}`) && open.some((item) => item.itemId === itemId))) defect('stay-trio', `«${invoice.fileName}» has its whole trio but still raises an open trio item`);
+    else if (gaps.length === 0 && Object.keys(STAY_TRIO).some((code) => asked.has(trioItemId(code, invoice.materialId)) && open.some((item) => item.itemId === trioItemId(code, invoice.materialId)))) defect('stay-trio', `«${invoice.fileName}» has its whole trio but still raises an open trio item`);
     else if (gaps.length === 0) ok('stay-trio', `«${invoice.fileName}» has its whole trio and raises no item`);
   }
   if (open.length === 0 && cleanInvoices.length === 0) {
@@ -390,7 +393,7 @@ async function qaStayTrio(page, context, state) {
     if ((await row.count()) > 0) ok('stay-trio', `the pending page lists «${item.title}»`);
     else defect('stay-trio', `the pending page does not list «${item.title}»`);
   }
-  const missingShot = open.find((item) => codeOf(item) === 'stay_screenshot_missing');
+  const missingShot = open.find((item) => trioCodeOf(item.itemId) === 'stay_screenshot_missing');
   if (!missingShot) return;
   await list.getByRole('button', { name: missingShot.title, exact: false }).first().click();
   const input = page.getByLabel(/^选择这张住宿发票的支付截图：/);

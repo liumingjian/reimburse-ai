@@ -415,8 +415,10 @@ export type Confirmation = z.infer<typeof ConfirmationSchema>;
 
 // ---- 支付截图与打印稿 ----
 
-// 支付截图只接受图片（JPG、PNG），只进打印稿，不改变明细。每张发票至多一张，再补即替换。
-// 入口在打印稿页（打印稿生成之后，按页的 acceptsPaymentScreenshot），住宿发票另外在待确认项页（#213，见 STAY_TRIO_COPY）。
+// A 支付截图 (payment screenshot) is an image only (JPG, PNG). It goes on the 打印稿 (print sheet) alone and never changes
+// the lines. One per invoice; another one replaces it. It is added on the print page once the sheet is generated (per
+// page, `acceptsPaymentScreenshot`), and for a 住宿 (accommodation) invoice also on the 待确认项 (pending items) page
+// (#213, see STAY_TRIO_COPY).
 export const PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE = '.jpg,.jpeg,.png,image/jpeg,image/png';
 
 // The 住宿 (accommodation) trio check at 盘点 (inventory), #213. 住宿 reimbursement takes three materials: the 发票
@@ -435,8 +437,12 @@ export const STAY_TRIO_ITEM_CODES: Readonly<Record<StayTrioElement, string>> = {
 };
 export const STAY_TRIO_CONFIRM_NONE = 'confirm_none';
 
+// The one place a trio item id is built and read back.
+export const stayTrioItemId = (element: StayTrioElement, materialId: string): string => `${STAY_TRIO_ITEM_CODES[element]}.${materialId}`;
+export const stayTrioElementOf = (itemId: string): StayTrioElement | null => STAY_TRIO_ELEMENTS.find((element) => itemId.startsWith(`${STAY_TRIO_ITEM_CODES[element]}.`)) ?? null;
+
 // Whether a pending item is the missing-screenshot item, which the page answers with an upload as well as a choice.
-export const isStayScreenshotItem = (item: Pick<PendingItem, 'itemId'>): boolean => item.itemId.startsWith(`${STAY_TRIO_ITEM_CODES.screenshot}.`);
+export const isStayScreenshotItem = (item: Pick<PendingItem, 'itemId'>): boolean => stayTrioElementOf(item.itemId) === 'screenshot';
 
 const TRIO = '住宿报销要发票、结账单、支付截图三样。';
 const amountNote = (label: string, amount: string | undefined) => (amount ? `（${label} ${amount} 元）` : '');

@@ -6,8 +6,7 @@ export const GENERATED_DIR = fileURLToPath(new URL('./generated', import.meta.ur
 export const SAMPLE_MATERIALS_FILE = fileURLToPath(new URL('./sample-materials.json', import.meta.url));
 export const SAMPLE_MATERIALS = JSON.parse(readFileSync(SAMPLE_MATERIALS_FILE, 'utf8'));
 // Regression fixtures (#200 onwards): they reproduce how a real face is drawn (split PDF text runs, a photographed
-// folio). Test-only — not part of the
-// sample-material script.
+// folio). Test-only — not part of the sample-material script.
 export const REGRESSION_MATERIALS_FILE = fileURLToPath(new URL('./regression-materials.json', import.meta.url));
 export const REGRESSION_MATERIALS = JSON.parse(readFileSync(REGRESSION_MATERIALS_FILE, 'utf8'));
 // A synthetic legacy `~/.baox` (schemaVersion 1) for the one-time import (#195). Read-only: tests copy it before
