@@ -1,7 +1,8 @@
-import type { Corners, PaymentScreenshot, Placement, PrintSheet } from '@baox/contract';
+import { STAY_TRIO_COPY, type Corners, type PaymentScreenshot, type Placement, type PrintSheet } from '@baox/contract';
 import type { Db } from '../db/database';
+import { CATEGORIES } from '../parse/kinds';
 import type { StayTrio } from '../stay-trio';
-import { droppedMaterialsNotice, extraPagesNotice, missingScreenshotNotice } from './layout';
+import { droppedMaterialsNotice, extraPagesNotice, unrecordedScreenshotNotice } from './layout';
 
 // The stored print facts of one task (migration 0007_190_print) and the snapshot's `printSheet` /
 // `paymentScreenshots` projected from them.
@@ -82,12 +83,19 @@ export function sheetState(facts: PrintFacts, confirmation: 'unconfirmed' | 'con
 // Every file the task's print facts refer to; `GET /api/tasks/:id/files/:sha256` serves only a task's own files.
 export const fileUrl = (taskId: string, sha256: string): string => `/api/tasks/${taskId}/files/${sha256}`;
 
-// `stays`: the inventory's 住宿 trios. A missing screenshot is noticed where the filer confirmed its absence there, so
-// print and inventory read one recorded fact instead of judging the absence twice (#213).
-export function printView(taskId: string, taskName: string, facts: PrintFacts, state: SheetState, stays: readonly StayTrio[] = []): { printSheet: PrintSheet; paymentScreenshots: PaymentScreenshot[] } {
+// `trios`: the inventory's 住宿 trios. Where a page's invoice has one, its record decides the missing-screenshot notice
+// (a confirmed absence), so print and inventory read one fact instead of judging the absence twice (#213). A 住宿 page
+// with no record still gets a notice rather than silence.
+export function printView(taskId: string, taskName: string, facts: PrintFacts, state: SheetState, trios: readonly StayTrio[] = []): { printSheet: PrintSheet; paymentScreenshots: PaymentScreenshot[] } {
   const paymentScreenshots = facts.screenshots.map((shot) => ({ screenshotId: shot.screenshotId, voucherMaterialId: shot.voucherMaterialId, fileName: shot.fileName, url: fileUrl(taskId, shot.sha256) }));
   const render = facts.render;
-  const confirmedNone = new Set(stays.flatMap((stay) => (stay.invoiceId && stay.screenshot?.noneConfirmed ? [stay.invoiceId] : [])));
+  const recorded = new Map(trios.flatMap((trio) => (trio.invoiceId ? [[trio.invoiceId, trio] as const] : [])));
+  const screenshotNotice = (page: StoredPage): string[] => {
+    if (page.screenshotId !== null) return [];
+    const trio = recorded.get(page.voucherMaterialId);
+    if (trio) return trio.screenshot?.noneConfirmed ? [STAY_TRIO_COPY.printNotice(page.nos, page.categoryLabel)] : [];
+    return page.categoryLabel === CATEGORIES.accommodation.label ? [unrecordedScreenshotNotice(page.nos, page.categoryLabel)] : [];
+  };
   if (state !== 'generated' || !render) return { paymentScreenshots, printSheet: { status: state, fileName: null, url: null, pages: [], notices: [] } };
   const placement = (stored: StoredPlacement | null): Placement | null =>
     stored && {
@@ -122,7 +130,7 @@ export function printView(taskId: string, taskName: string, facts: PrintFacts, s
       // Everything the sheet could not carry is said out loud: a missing payment screenshot, the pages of a multi-page
       // original that were not embedded, and the supporting materials a one-per-page bottom half had no room for.
       notices: [
-        ...render.pages.filter((page) => page.screenshotId === null && confirmedNone.has(page.voucherMaterialId)).map((page) => missingScreenshotNotice(page.nos, page.categoryLabel)),
+        ...render.pages.flatMap(screenshotNotice),
         ...render.pages.flatMap((page) =>
           [page.top, page.bottom].flatMap((placement) => (placement?.extraPageCount ? [extraPagesNotice(page.nos, placement.fileName, placement.extraPageCount + 1)] : [])),
         ),

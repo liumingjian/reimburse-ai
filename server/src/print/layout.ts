@@ -1,4 +1,4 @@
-import { STAY_TRIO_COPY, type Line, type Material } from '@baox/contract';
+import type { Line, Material } from '@baox/contract';
 
 // 打印稿 (print sheet) layout, pure (docs/design/standalone-app.md「打印稿」): one A4 portrait page per 主要报销凭证
 // (primary voucher), the voucher on the top half and its 证明材料 (supporting material) on the bottom half, a thin
@@ -126,8 +126,9 @@ export function planPages(lines: readonly Line[], materials: readonly Material[]
   return plans;
 }
 
-// A 住宿 page without a screenshot, whose absence the filer confirmed at inventory (#213).
-export const missingScreenshotNotice = STAY_TRIO_COPY.printNotice;
+// A 住宿 page without a screenshot and without an inventory trio record of it (a task inventoried before #213). A
+// recorded absence says `STAY_TRIO_COPY.printNotice` instead.
+export const unrecordedScreenshotNotice = (nos: string, categoryLabel: string): string => `${nos} ${categoryLabel}发票还没有支付截图。可以照常打印，该页下半页只放结账单。`;
 
 // 一页只有一个下半页，放不下第二份证明材料；说出来，别让它无声无息地少掉。
 export const droppedMaterialsNotice = (nos: string, fileNames: readonly string[]): string =>
