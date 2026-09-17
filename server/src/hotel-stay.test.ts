@@ -20,7 +20,10 @@ describe('a hotel invoice with its 全季 folio', () => {
     const { task } = await client.createTask();
     const uploaded = await client.upload(task.taskId, [sample('m01'), sample('m02')]);
     await client.accepted(await client.act(uploaded, 'start-inventory'));
-    const snapshot = await client.settled(task.taskId);
+    const inventoried = await client.settled(task.taskId);
+    // Paired, so the 住宿 trio check (#213) asks only for the payment screenshot; answered here with 确认没有.
+    expect(inventoried.pendingItems.map((item) => item.itemId)).toEqual([`stay_screenshot_missing.${byFileName(inventoried, sample('m01').name).materialId}`]);
+    const snapshot = await client.withoutStayGaps(inventoried);
 
     const invoice = byFileName(snapshot, sample('m01').name);
     const folio = byFileName(snapshot, sample('m02').name);
@@ -33,7 +36,7 @@ describe('a hotel invoice with its 全季 folio', () => {
     expect(snapshot.lines).toEqual([
       expect.objectContaining({ voucherMaterialId: invoice.materialId, referenceMaterialIds: [folio.materialId], date: '2026-08-09', endDate: '2026-08-22', category: { code: 'accommodation', label: '住宿' }, grossAmount: '3640.00' }),
     ]);
-    expect(snapshot.pendingItems).toEqual([]);
+    expect(snapshot.pendingItems.filter((item) => item.status === 'open')).toEqual([]);
     expect(snapshot.inventory.ungroupedMaterialIds).toEqual([]);
     expect(snapshot.inventory.summary).toMatchObject({ materialCount: 2, okCount: 2, voucherCount: 1, referenceCount: 1 });
   });

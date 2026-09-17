@@ -35,7 +35,8 @@ async function inventoriedFiles(files: readonly Upload[]) {
   const { task } = await client.createTask();
   const uploaded = await client.upload(task.taskId, files);
   await client.accepted(await client.act(uploaded, 'start-inventory'));
-  return client.settled(task.taskId);
+  // These tests are about reading materials, not the 住宿 trio (#213): its items are answered with 确认没有.
+  return client.withoutStayGaps(await client.settled(task.taskId));
 }
 const inventoried = (prefixes: readonly string[]) => inventoriedFiles(prefixes.map(sample));
 
@@ -114,7 +115,8 @@ describe('an e-invoice whose text runs are split', () => {
     const snapshot = await inventoried(['r01', 'r02']);
 
     const splitNumber = byFileName(snapshot, sample('r01').name);
-    expect(splitNumber).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（专票）', role: 'primary_voucher', status: 'ok', pendingItemIds: [] });
+    // Its only items are the 住宿 trio's (#213), answered by `inventoried`.
+    expect(splitNumber).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（专票）', role: 'primary_voucher', status: 'ok' });
     expect(fieldValues(splitNumber, EINVOICE)).toEqual({
       invoiceNumber: '26312000000098127801',
       issueDate: '2026-08-20',
@@ -130,7 +132,7 @@ describe('an e-invoice whose text runs are split', () => {
     });
 
     const spacedTitle = byFileName(snapshot, sample('r02').name);
-    expect(spacedTitle).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（普票）', role: 'primary_voucher', status: 'ok', pendingItemIds: [] });
+    expect(spacedTitle).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（普票）', role: 'primary_voucher', status: 'ok' });
     expect(fieldValues(spacedTitle, EINVOICE)).toEqual({
       invoiceNumber: '26312000000098127802',
       issueDate: '2026-08-21',
@@ -244,7 +246,8 @@ describe('a whole trip uploaded in one go', () => {
     const rail = byFileName(snapshot, sample('r204').name);
 
     for (const invoice of [splitNumber, spacedTitle]) {
-      expect(invoice).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', categoryLabel: '住宿', role: 'primary_voucher', status: 'ok', pendingItemIds: [] });
+      // Their only items are the 住宿 trio's (#213), answered by `inventoried`.
+      expect(invoice).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', categoryLabel: '住宿', role: 'primary_voucher', status: 'ok' });
     }
     expect(rideInvoice).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', categoryLabel: '市内交通', role: 'primary_voucher', status: 'ok', pendingItemIds: [], linkedMaterialIds: [itinerary.materialId] });
     expect(itinerary).toMatchObject({ kind: 'ride_itinerary', layout: 'amap', role: 'reference', status: 'ok', pendingItemIds: [], linkedMaterialIds: [rideInvoice.materialId] });
@@ -272,7 +275,8 @@ describe('a whole trip uploaded in one go', () => {
       openPendingItemCount: 0,
     });
     expect(snapshot.inventory.ungroupedMaterialIds).toEqual([]);
-    expect(snapshot.pendingItems).toEqual([]);
+    // The only items are the 住宿 trio's (#213), answered by `inventoried`.
+    expect(snapshot.pendingItems.filter((item) => !item.itemId.startsWith('stay_'))).toEqual([]);
 
     // Nothing left to answer, so the task leaves 待确认项 behind and goes on to 项目归属.
     expect(snapshot.stage).toBe('project');
@@ -310,7 +314,7 @@ describe('the e-invoice QR code, a second evidence source', () => {
     const snapshot = await inventoried(['m01']);
     const hotel = byFileName(snapshot, sample('m01').name);
     expect(hotel).toMatchObject({ status: 'ok', role: 'primary_voucher', categoryLabel: '住宿', checkText: expect.stringContaining('二维码无法识读') });
-    expect(snapshot.pendingItems).toEqual([]);
+    expect(snapshot.pendingItems.filter((item) => !item.itemId.startsWith('stay_'))).toEqual([]);
     // A clean inventory goes on to 项目归属; with an empty personal book, to maintaining it first (#188).
     expect(snapshot).toMatchObject({ stage: 'project', step: { kind: 'maintain_project_book' } });
     expect(snapshot.events).toEqual([expect.objectContaining({ no: 1, voucherMaterialId: hotel.materialId, category: { code: 'accommodation', label: '住宿' }, date: '2026-08-22', grossAmount: '3640.00' })]);
@@ -391,13 +395,15 @@ describe('the background parser job', () => {
 
     gate.release();
     const done = await client.settled(task.taskId);
-    // m03 alone has no expense city, so it waits on category_city_missing (#188).
-    expect(done.materials.map((material) => material.status)).toEqual(['ok', 'pending']);
+    // m03 alone has no expense city, so it waits on category_city_missing (#188); the hotel invoice m01 alone waits on
+    // the 住宿 trio check (#213).
+    expect(done.materials.map((material) => material.status)).toEqual(['pending', 'pending']);
     expect((await client.act(done, 'exclude-material', { materialId: done.materials[1]?.materialId })).status).toBe(200);
   });
 
   it('publishes per-material progress: each outcome bumps the revision and lands in the snapshot', async () => {
-    const snapshot = await inventoried(['m01', 'm03']);
+    // Not a hotel invoice: the 住宿 trio's answers would add revisions of their own.
+    const snapshot = await inventoried(['m07', 'm03']);
     // Created (1), uploaded (2), started (3), then one fact per material.
     expect(snapshot.step.stepToken).toBe(`${snapshot.task.taskId}.5`);
     expect(snapshot.inventory.phases).toEqual([expect.objectContaining({ key: 'pdf', status: 'done' })]);
@@ -423,7 +429,11 @@ describe('restart', () => {
     try {
       const again = (who: TestClient) => api(() => testClient(restarted, who.account, who.cookie));
       const [aliceTask, bobTask] = await Promise.all([again(signedIn).settled(taskIds[0] ?? ''), again(bob).settled(taskIds[1] ?? '')]);
-      for (const snapshot of [aliceTask, bobTask]) expect(snapshot.materials.map((material) => material.status)).toEqual(['ok']);
+      // Parsed: the hotel invoice alone is read, and waits only on the 住宿 trio check (#213).
+      for (const snapshot of [aliceTask, bobTask]) {
+        expect(snapshot.materials.map((material) => material.kind)).toEqual(['vat_invoice']);
+        expect(snapshot.pendingItems.every((item) => item.itemId.startsWith('stay_'))).toBe(true);
+      }
     } finally {
       await restarted.close();
     }

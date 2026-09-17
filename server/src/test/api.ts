@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_DIR, REGRESSION_MATERIALS, SAMPLE_MATERIALS } from '@baox/fixtures';
-import { TaskSnapshotSchema, type Material, type TaskSnapshot } from '@baox/contract';
+import { STAY_TRIO_CONFIRM_NONE, STAY_TRIO_ITEM_CODES, TaskSnapshotSchema, type Material, type TaskSnapshot } from '@baox/contract';
 import { expect } from 'vitest';
 import type { TestClient } from './harness';
 
@@ -53,6 +53,18 @@ export function api(client: () => TestClient) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ ...body, stepToken }),
       });
+    },
+
+    // The 住宿 trio check (#213) asks a hotel invoice for its 结账单 and 支付截图. A test about something else answers
+    // every open trio item with 确认没有 and goes on from the resulting snapshot.
+    async withoutStayGaps(snapshot: TaskSnapshot): Promise<TaskSnapshot> {
+      const codes = Object.values(STAY_TRIO_ITEM_CODES);
+      let latest = snapshot;
+      for (const item of snapshot.pendingItems) {
+        if (item.status !== 'open' || !codes.some((code) => item.itemId.startsWith(`${code}.`))) continue;
+        latest = await accepted(await this.act(latest, 'answer-pending', { itemId: item.itemId, answer: { choice: STAY_TRIO_CONFIRM_NONE } }));
+      }
+      return latest;
     },
 
     // Waits until the background parser job has finished the current inventory run.

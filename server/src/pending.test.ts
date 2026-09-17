@@ -22,7 +22,8 @@ async function inventoriedFiles(files: readonly Upload[], who = client) {
   const { task } = await who.createTask();
   const uploaded = await who.upload(task.taskId, files);
   await who.accepted(await who.act(uploaded, 'start-inventory'));
-  return who.settled(task.taskId);
+  // The 住宿 trio (#213) is tested in stay-trio.test.ts; here its items are answered with 确认没有.
+  return who.withoutStayGaps(await who.settled(task.taskId));
 }
 const inventoried = (prefixes: readonly string[]) => inventoriedFiles(prefixes.map(sample));
 
@@ -135,7 +136,8 @@ describe('a recognised material with gaps', () => {
     // The 校验 column used to be empty here, which the inventory renders as 无; it now names the slot that is missing.
     expect(byFileName(start, sample('m01').name).checkText.split('；')).toContain('缺少必填字段：销售方名称');
 
-    const done = await answered(start, gap.itemId, { sellerName: '上海某某酒店管理有限公司' });
+    // Clean now, so the 住宿 trio (#213) asks for its folio and screenshot: answered with 确认没有.
+    const done = await client.withoutStayGaps(await answered(start, gap.itemId, { sellerName: '上海某某酒店管理有限公司' }));
     const hotel = byFileName(done, sample('m01').name);
     expect(hotel).toMatchObject({ status: 'ok', role: 'primary_voucher' });
     expect(hotel.fields.find((f) => f.key === 'sellerName')).toMatchObject({ source: 'user', editClass: 'fact_correctable' });
@@ -152,7 +154,7 @@ describe('ambiguous layouts', () => {
     signedIn = await server.signIn();
     const start = await inventoried(['m01']);
     const id = byFileName(start, sample('m01').name).materialId;
-    const done = await answered(start, `ambiguous_layout.${id}`, { choice: 'layout:vat_invoice/einvoice_copy' });
+    const done = await client.withoutStayGaps(await answered(start, `ambiguous_layout.${id}`, { choice: 'layout:vat_invoice/einvoice_copy' }));
     expect(byFileName(done, sample('m01').name)).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice_copy', status: 'ok' });
     expect(done.lines).toHaveLength(1);
   });
@@ -244,7 +246,7 @@ describe('重复发票 (duplicate invoices) inside the task', () => {
 
     const done = await answered(start, duplicate.itemId, { choice: 'exclude' });
     expect(byFileName(done, '全季酒店_发票_副本.pdf').status).toBe('excluded');
-    expect(done.pendingItems).toEqual([]);
+    expect(done.pendingItems.filter((candidate) => candidate.status === 'open')).toEqual([]);
     expect(done.lines).toHaveLength(1);
   });
 });

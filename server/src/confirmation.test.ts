@@ -29,7 +29,7 @@ async function submitted(): Promise<TaskSnapshot> {
   const { task } = await client.createTask('杭州');
   const uploaded = await client.upload(task.taskId, [sample('m01'), sample('m07')]);
   await client.accepted(await client.act(uploaded, 'start-inventory'));
-  const done = await client.settled(task.taskId);
+  const done = await client.withoutStayGaps(await client.settled(task.taskId));
   return submit(done, PURPOSE);
 }
 
@@ -95,7 +95,7 @@ describe('confirmation status', () => {
     const { task } = await client.createTask('杭州');
     const uploaded = await client.upload(task.taskId, [sample('m01'), sample('m07')]);
     await client.accepted(await client.act(uploaded, 'start-inventory'));
-    const done = await client.settled(task.taskId);
+    const done = await client.withoutStayGaps(await client.settled(task.taskId));
     const review = await client.accepted(
       await client.act(done, 'submit-project-assignment', { purpose: PURPOSE, projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-9001'])) }),
     );
