@@ -34,6 +34,21 @@ export const HOTEL_FOLIO = {
   paid: '3640.00',
 };
 
+// Regression fixture (#212): a folio photographed on a desk. Each label and its value are separate boxes, the dates
+// are printed in two shapes other than YYYY-MM-DD, and the hotel is not a chain any layout names. Its 消费合计 equals
+// the m01 hotel invoice's 价税合计, so the two pair into one stay.
+export const HOTEL_FOLIO_PHOTO = {
+  id: 'r210',
+  file: 'r210-hotel-folio-photo.jpg',
+  hotel: '某某悦居酒店（上海某某店）',
+  guest: EMPLOYEE.name,
+  room: '0816',
+  checkIn: '2026/08/09',
+  checkOut: '2026年08月22日',
+  nights: '13',
+  total: '3640.00',
+};
+
 export const AMAP_INVOICE = {
   id: 'm03',
   file: 'm03-amap-invoice.pdf',

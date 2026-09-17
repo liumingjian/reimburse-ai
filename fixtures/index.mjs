@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 export const GENERATED_DIR = fileURLToPath(new URL('./generated', import.meta.url));
 export const SAMPLE_MATERIALS_FILE = fileURLToPath(new URL('./sample-materials.json', import.meta.url));
 export const SAMPLE_MATERIALS = JSON.parse(readFileSync(SAMPLE_MATERIALS_FILE, 'utf8'));
-// Regression fixtures (#200 onwards): they reproduce the text-run splits of a real PDF. Test-only — not part of the
+// Regression fixtures (#200 onwards): they reproduce how a real face is drawn (split PDF text runs, a photographed
+// folio). Test-only — not part of the
 // sample-material script.
 export const REGRESSION_MATERIALS_FILE = fileURLToPath(new URL('./regression-materials.json', import.meta.url));
 export const REGRESSION_MATERIALS = JSON.parse(readFileSync(REGRESSION_MATERIALS_FILE, 'utf8'));
