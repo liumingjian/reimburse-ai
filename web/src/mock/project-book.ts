@@ -127,7 +127,7 @@ export function createProjectBook(
       }
     }
     if (snapshot.stage === 'project' && (snapshot.step.kind === 'assign_projects' || snapshot.step.kind === 'maintain_project_book')) {
-      snapshot.step = projectEntryStep(snapshot);
+      snapshot.step = { ...projectEntryStep(snapshot), stepToken: snapshot.step.stepToken };
     }
     if (refreshFingerprint(snapshot) === before) return null;
     snapshot.step = { ...snapshot.step, stepToken: bus.rotateToken(snapshot.step.stepToken) };
