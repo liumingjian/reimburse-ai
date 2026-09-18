@@ -37,21 +37,17 @@ Vite 7 + React 19 + TypeScript，只支持 Chrome，只做 zh-CN。视觉唯一�
 mock 把身份登记与常驻城市写进 `localStorage`，按账套 + 登录账号分键，所以刷新后仍在；要重看 `?identity=unbound`，清除这个页面的站点数据即可。
 报销人只显示姓名，没有部门（内核身份里没有这一项）。
 
-## QA：个人项目簿
+## QA: project books
 
-顶栏的「个人项目簿」进入全局页面 `#/projects`。录入表单有「项目号」和「项目名称」；「加入项目」只校验项目号安全字符（`^[A-Za-z0-9_-]{1,64}$`）并保存用户录入的名称，不访问报销系统项目目录。同一账号不能重复录入同一项目号；公共项目号也不能录入个人项目簿。
+The personal project book (个人项目簿) is available at `#/projects`. Enter a project number (项目号) and project name in “项目号” and “项目名称”, then select “加入项目”. Intake is offline: names are entered manually, and local availability does not represent an ERP check. The existing pre-import ERP checks still apply.
 
-表头是「项目号 | 名称 | 状态」。新录入的项目立即可用于新的项目归属，提交去报销前仍会核对项目。项目簿保留历史状态说明，但本页不提供删除、复检或批量清理。
+Rows offer “编辑”, “停用”, and “恢复” according to their lifecycle state. Editing retains proposed input on failure; cancellation writes nothing. Deactivated entries stay visible and reserve their numbers. Duplicate intake never replaces an existing entry. Only the owning account maintains its personal entries; different owners can use the same personal number independently.
 
-同页会显示完整的「公共项目簿」供所有成员查看和选择；管理员在 `#/admin` 录入公共项目。公共项目号会保留给公共项目簿，管理员暂时不能把已存在于任何个人项目簿中的项目号加入公共项目簿。
+Every signed-in member can view the complete public project book (公共项目簿) on the same page. Administrators maintain it at `#/admin`. Active and inactive public entries reserve their numbers against personal intake, renumbering, and restoration. A public creation or renumbering that matches personal entries first requests explicit conversion confirmation. Cancel changes nothing; confirmation consolidates matching personal entries for future use while preserving submitted task snapshots.
 
-mock 的项目簿只在内存里（刷新后回到夹具）。默认 6 条保留旧夹具状态；任意安全项目号配合非空项目名称都可以离线录入。
+Open assignment views receive updated choices after maintenance. Previously submitted number, name, and source remain historical snapshots. Maintenance offers neither ERP-derived name correction nor destructive bulk cleanup.
 
-| 选项 | 表现 |
-| --- | --- |
-| `?book=empty` | 项目簿初始为空。任务走到项目归属时（例如 `?seed=pending&book=empty` 处理完待确认项，或直接 `?seed=project&book=empty`），项目归属页换成「先维护个人项目簿」维护入口；录入后不自动离开（可以继续录其他项目），至少有一个可用项目后「项目录完了，开始归属」可点，点了才进入项目归属 |
-
-项目归属页右栏的「新增项目」按钮是对 Skill 的小增强（Skill 的项目归属页没有跳转，只能明确要求维护）：弹层里是同一个项目簿维护面板，就地录入后勾选的明细不丢，允许列表按新项目簿更新。完整的项目簿页从顶栏「个人项目簿」进入。
+Mock entries are development fixtures, scoped to the fixture account; new accounts start with empty personal books. Mock books live in memory and reset on reload. Production has no default project catalog. Use `?book=empty` to exercise the empty-book assignment gate. Intake leaves the gate open until the user selects “项目录完了，开始归属”. The assignment panel's “新增项目” dialog uses the same form and preserves selected lines when closed.
 
 ## QA：新建任务与全流程
 
