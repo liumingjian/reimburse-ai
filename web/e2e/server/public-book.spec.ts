@@ -162,3 +162,36 @@ test('public conversion is explicit, cancellable, and shared across personal own
   await firstContext.close();
   await secondContext.close();
 });
+
+test('renumber conversion preserves an inactive public project and edit values after cancellation', async ({ page, browser, serverApp }) => {
+  await signIn(page, 'admin');
+  const memberContext = await browser.newContext({ baseURL: serverApp.url });
+  const member = await memberContext.newPage();
+  await signIn(member, '成员');
+  await member.request.post('/api/project-book/intake', { data: { number: 'RENUMBER-TARGET', name: '个人项目' } });
+  await page.request.post('/api/public-project-book/intake', { data: { number: 'PUBLIC-OLD', name: '原公共名称' } });
+  await page.request.post('/api/public-project-book/deactivate', { data: { number: 'PUBLIC-OLD' } });
+  await page.goto('/#/admin');
+  await page.getByRole('button', { name: '编辑 PUBLIC-OLD', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: '编辑项目', exact: true });
+  await edit.getByLabel('项目号', { exact: true }).fill('RENUMBER-TARGET');
+  await edit.getByLabel('项目名称', { exact: true }).fill('修正公共名称');
+  await edit.getByRole('button', { name: '保存', exact: true }).click();
+  const conversion = page.getByRole('dialog').filter({ has: page.getByRole('button', { name: /确认/ }) });
+  await expect(conversion).toContainText('RENUMBER-TARGET');
+  await conversion.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(edit.getByLabel('项目号', { exact: true })).toHaveValue('RENUMBER-TARGET');
+  await expect(edit.getByLabel('项目名称', { exact: true })).toHaveValue('修正公共名称');
+  const prior = ProjectBookSchema.parse(await (await page.request.get('/api/public-project-book')).json());
+  expect(prior.projects).toEqual([expect.objectContaining({ number: 'PUBLIC-OLD', name: '原公共名称', active: false })]);
+  await edit.getByRole('button', { name: '保存', exact: true }).click();
+  await conversion.getByRole('button', { name: /确认/ }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByTestId('book-row-PUBLIC-OLD')).toHaveCount(0);
+  await expect(page.getByTestId('book-row-RENUMBER-TARGET')).toContainText('已停用');
+  await page.reload();
+  await expect(page.getByTestId('book-row-RENUMBER-TARGET')).toContainText('修正公共名称');
+  const personal = ProjectBookSchema.parse(await (await member.request.get('/api/project-book')).json());
+  expect(personal.projects.some((project) => project.number === 'RENUMBER-TARGET' && project.selectable)).toBe(false);
+  await memberContext.close();
+});
