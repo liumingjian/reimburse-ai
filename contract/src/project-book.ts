@@ -30,10 +30,19 @@ export const ProjectBookIntakeInputSchema = z.object({
 });
 export type ProjectBookIntakeInput = z.infer<typeof ProjectBookIntakeInputSchema>;
 
-export const PROJECT_BOOK_RESULT_STATUSES = ['admitted', 'rejected'] as const;
+// An edit identifies the entry as it was displayed when the form opened. The server folds the accepted change as a
+// new fact, so this original number is never used to overwrite another entry.
+export const ProjectBookEditInputSchema = z.object({
+  originalNumber: z.string(),
+  number: z.string(),
+  name: z.string(),
+});
+export type ProjectBookEditInput = z.infer<typeof ProjectBookEditInputSchema>;
+
+export const PROJECT_BOOK_RESULT_STATUSES = ['admitted', 'edited', 'rejected'] as const;
 export type ProjectBookResultStatus = (typeof PROJECT_BOOK_RESULT_STATUSES)[number];
 
-export const PROJECT_BOOK_ACCEPTED_STATUSES: ReadonlySet<ProjectBookResultStatus> = new Set<ProjectBookResultStatus>(['admitted']);
+export const PROJECT_BOOK_ACCEPTED_STATUSES: ReadonlySet<ProjectBookResultStatus> = new Set<ProjectBookResultStatus>(['admitted', 'edited']);
 
 // `unsafe` is the only machine-readable validation verdict. Duplicate and ownership feedback remains intentionally
 // generic so public intake does not disclose another member's personal book.
@@ -63,6 +72,13 @@ export const PROJECT_BOOK_NOTES = {
   publicReserved: (number: string) => `项目号 ${number} 已记录在公共项目簿中，请在项目归属时使用公共项目。`,
   publicPersonalCollision: (number: string) => `项目号 ${number} 已记录在个人项目簿中，暂不能加入公共项目簿。`,
   admitted: (number: string, name: string) => `项目 ${number}「${name}」已加入个人项目簿，可用于新的项目归属。`,
+  editMissing: (number: string) => `项目号 ${number} 未记录在个人项目簿中，无法修改。`,
+  editUnsafe: (number: string) => `项目号 ${JSON.stringify(number)} 含有不能安全使用的字符，未修改项目。`,
+  editDuplicate: (number: string) => `项目号 ${number} 已记录在个人项目簿中，无法改为该项目号。`,
+  editPublicReserved: (number: string) => `项目号 ${number} 已记录在公共项目簿中，无法改为该项目号。`,
+  editPublicPersonalCollision: (number: string) => `项目号 ${number} 已记录在个人项目簿中，暂不能改为公共项目。`,
+  edited: (originalNumber: string, number: string, name: string) =>
+    originalNumber === number ? `项目 ${number} 的名称已更新为「${name}」。` : `项目 ${originalNumber} 已更新为 ${number}「${name}」。`,
 } as const;
 
 export const PROJECT_BOOK_COPY = {
@@ -71,6 +87,8 @@ export const PROJECT_BOOK_COPY = {
   numberLabel: '项目号',
   nameLabel: '项目名称',
   intake: '加入项目',
+  edit: '编辑项目',
+  save: '保存',
   empty: '当前项目簿为空，请录入第一个项目。',
   noName: '未记录名称',
   gateTitle: '先维护个人项目簿',

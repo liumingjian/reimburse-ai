@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Button, InlineNotification, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextInput } from '@carbon/react';
-import { Add } from '@carbon/icons-react';
+import { Add, Edit } from '@carbon/icons-react';
 import { StatusTag } from '../shell/StatusTag';
 import { useAppStore, useBook } from '../adapter/context';
 import type { BookScope } from '../adapter/store';
-import { type AppAdapter, type ProjectBookOutcome, PROJECT_BOOK_ACCEPTED_STATUSES, PROJECT_BOOK_COPY, PUBLIC_PROJECT_BOOK_COPY, type ProjectBookEntry } from '@baox/contract';
+import { type AppAdapter, type ProjectBookEditInput, type ProjectBookOutcome, PROJECT_BOOK_ACCEPTED_STATUSES, PROJECT_BOOK_COPY, PUBLIC_PROJECT_BOOK_COPY, type ProjectBookEntry } from '@baox/contract';
+import { ConfirmDialog } from '../shell/Dialog';
 
 // The same table presents both scopes. Personal intake is available wherever the personal panel appears; the public
 // panel becomes editable only on the administrator surface, while the project page always shows its read-only view.
@@ -15,6 +16,7 @@ type BookOps = {
   title: string;
   empty: string;
   intake: (adapter: AppAdapter, input: { number: string; name: string }) => Promise<ProjectBookOutcome>;
+  edit: (adapter: AppAdapter, input: ProjectBookEditInput) => Promise<ProjectBookOutcome>;
 };
 
 const OPS: Readonly<Record<BookScope, BookOps>> = {
@@ -22,11 +24,13 @@ const OPS: Readonly<Record<BookScope, BookOps>> = {
     title: PROJECT_BOOK_COPY.title,
     empty: PROJECT_BOOK_COPY.empty,
     intake: (adapter, input) => adapter.intakeProject(input),
+    edit: (adapter, input) => adapter.editProject(input),
   },
   public: {
     title: PUBLIC_PROJECT_BOOK_COPY.title,
     empty: PUBLIC_PROJECT_BOOK_COPY.empty,
     intake: (adapter, input) => adapter.intakePublicProject(input),
+    edit: (adapter, input) => adapter.editPublicProject(input),
   },
 };
 
@@ -51,6 +55,10 @@ export function ProjectBookPanel({
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
+  const [editing, setEditing] = useState<ProjectBookEntry | null>(null);
+  const [editNumber, setEditNumber] = useState('');
+  const [editName, setEditName] = useState('');
+  const [editError, setEditError] = useState<string | null>(null);
   const inputId = scope === 'personal' ? 'project-number' : 'public-project-number';
   const nameId = scope === 'personal' ? 'project-name' : 'public-project-name';
 
@@ -68,6 +76,36 @@ export function ProjectBookPanel({
       setNumber('');
       setName('');
     }
+  };
+
+  const openEdit = (project: ProjectBookEntry) => {
+    setEditing(project);
+    setEditNumber(project.number);
+    setEditName(project.name ?? '');
+    setEditError(null);
+  };
+
+  const closeEdit = () => {
+    setEditing(null);
+    setEditError(null);
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    setBusy(true);
+    setEditError(null);
+    const outcome = await store.projectBookAction((adapter) => ops.edit(adapter, { originalNumber: editing.number, number: editNumber, name: editName }), scope);
+    setBusy(false);
+    if (!outcome.ok) {
+      setEditError(outcome.error.message);
+      return;
+    }
+    if (!PROJECT_BOOK_ACCEPTED_STATUSES.has(outcome.result.status)) {
+      setEditError(outcome.result.note);
+      return;
+    }
+    setMessage({ ok: true, text: outcome.result.note });
+    closeEdit();
   };
 
   const projects = book.data?.projects ?? [];
@@ -143,14 +181,15 @@ export function ProjectBookPanel({
                   <TableHeader className="app-sticky-start">项目号</TableHeader>
                   <TableHeader>名称</TableHeader>
                   <TableHeader>状态</TableHeader>
+                  {canMaintain ? <TableHeader className="app-sticky-end" aria-label="操作" /> : null}
                 </TableRow>
               </TableHead>
               <TableBody>
                 {projects.length > 0 ? (
-                  projects.map((project) => <BookRow key={project.number} project={project} />)
+                  projects.map((project) => <BookRow key={project.number} project={project} onEdit={canMaintain ? openEdit : null} />)
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={3} className="app-muted">
+                    <TableCell colSpan={canMaintain ? 4 : 3} className="app-muted">
                       {ops.empty}
                     </TableCell>
                   </TableRow>
@@ -160,11 +199,41 @@ export function ProjectBookPanel({
           </div>
         )}
       </section>
+      {editing ? (
+        <ConfirmDialog
+          title={PROJECT_BOOK_COPY.edit}
+          confirmLabel={PROJECT_BOOK_COPY.save}
+          busy={busy}
+          error={editError}
+          focusCancel={false}
+          onConfirm={() => void saveEdit()}
+          onCancel={closeEdit}
+        >
+          <div className="app-book-form">
+            <TextInput
+              id={scope === 'personal' ? 'edit-project-number' : 'edit-public-project-number'}
+              className="app-code"
+              labelText={PROJECT_BOOK_COPY.numberLabel}
+              autoComplete="off"
+              data-modal-primary-focus
+              value={editNumber}
+              onChange={(event) => setEditNumber(event.target.value)}
+            />
+            <TextInput
+              id={scope === 'personal' ? 'edit-project-name' : 'edit-public-project-name'}
+              labelText={PROJECT_BOOK_COPY.nameLabel}
+              autoComplete="off"
+              value={editName}
+              onChange={(event) => setEditName(event.target.value)}
+            />
+          </div>
+        </ConfirmDialog>
+      ) : null}
     </>
   );
 }
 
-function BookRow({ project }: { project: ProjectBookEntry }) {
+function BookRow({ project, onEdit }: { project: ProjectBookEntry; onEdit: ((project: ProjectBookEntry) => void) | null }) {
   return (
     <TableRow data-testid={`book-row-${project.number}`}>
       <TableCell className="app-sticky-start app-nowrap">
@@ -175,6 +244,11 @@ function BookRow({ project }: { project: ProjectBookEntry }) {
         <StatusTag tone={project.selectable ? 'success' : 'warning'}>{project.statusLabel}</StatusTag>
         {project.statusNote ? <div className="app-caption">{project.statusNote}</div> : null}
       </TableCell>
+      {onEdit ? (
+        <TableCell className="app-sticky-end app-num">
+          <Button kind="ghost" size="sm" hasIconOnly renderIcon={Edit} iconDescription={`编辑 ${project.number}`} tooltipAlignment="end" onClick={() => onEdit(project)} />
+        </TableCell>
+      ) : null}
     </TableRow>
   );
 }

@@ -1,4 +1,4 @@
-import { AUTH_ERRORS, UNAUTHENTICATED_CODE, PROJECT_BOOK_NOTES, type AppAdapter, type ProjectBook, type ProjectBookIntakeInput, type ProjectBookOutcome, type ProjectBookResult, type ProjectOption, stageReached } from '@baox/contract';
+import { AUTH_ERRORS, UNAUTHENTICATED_CODE, PROJECT_BOOK_NOTES, type AppAdapter, type ProjectBook, type ProjectBookEditInput, type ProjectBookIntakeInput, type ProjectBookOutcome, type ProjectBookResult, type ProjectOption, stageReached } from '@baox/contract';
 import type { MockAuth } from './auth';
 import type { MockBus } from './bus';
 import { INITIAL_BOOK, MOCK_TODAY, annotateProject, isSafeProjectNumber, projectEntryStep, type StoredProject } from './fixtures/projects';
@@ -21,7 +21,7 @@ export function createMockBookState(options: MockOptions, fixtureAccountId: stri
   };
 }
 
-export type ProjectBookService = Pick<AppAdapter, 'getProjectBook' | 'intakeProject'> & {
+export type ProjectBookService = Pick<AppAdapter, 'getProjectBook' | 'intakeProject' | 'editProject'> & {
   allowList(): ProjectOption[];
   prepareSeed(taskId: string): void;
   refreshTasks(): void;
@@ -136,6 +136,27 @@ export function createProjectBook(
       ]);
       refreshAccountTasks(account.accountId);
       return done('admitted', PROJECT_BOOK_NOTES.admitted(number, name), account.accountId);
+    },
+
+    async editProject(input: ProjectBookEditInput) {
+      const account = auth.account();
+      if (!account) return unauthenticated();
+      const originalNumber = input.originalNumber.trim();
+      const number = input.number.trim();
+      const name = input.name.trim();
+      if (number === '') return done('rejected', PROJECT_BOOK_NOTES.numberRequired, account.accountId);
+      if (!isSafeProjectNumber(number)) return done('rejected', PROJECT_BOOK_NOTES.editUnsafe(number), account.accountId, 'unsafe');
+      if (name === '') return done('rejected', PROJECT_BOOK_NOTES.nameRequired, account.accountId);
+      const personal = personalFor(account.accountId);
+      const index = personal.findIndex((project) => project.number === originalNumber);
+      if (index < 0) return done('rejected', PROJECT_BOOK_NOTES.editMissing(originalNumber), account.accountId);
+      if (number !== originalNumber && personal.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.editDuplicate(number), account.accountId);
+      if (number !== originalNumber && state.publicProjects.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.editPublicReserved(number), account.accountId);
+
+      const existing = personal[index]!;
+      state.personalByAccount.set(account.accountId, personal.map((project, projectIndex) => (projectIndex === index ? { ...existing, number, name } : project)));
+      refreshAccountTasks(account.accountId);
+      return done('edited', PROJECT_BOOK_NOTES.edited(originalNumber, number, name), account.accountId);
     },
   };
 }

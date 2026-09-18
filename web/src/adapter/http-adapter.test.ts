@@ -1,10 +1,11 @@
 // @vitest-environment node
 // HTTP 适配器只做响应形状测试：给定这段 JSON（或这个 Response），适配器接受还是拒绝。不模拟服务端，不 mock fetch。
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { ACTION_NAMES, ERP_ACTION_ERRORS, STALE_STEP_CODE, HTTP_ENDPOINTS, endpointActionNames, TASK_STAGES } from '@baox/contract';
 import { INITIAL_BOOK, MOCK_TODAY, annotateProject } from '../mock/fixtures/projects';
 import { t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from '../mock/fixtures/tasks';
 import {
+  createHttpAdapter,
   INVALID_RESPONSE_CODE,
   outcomeFromResponse,
   parseActionResponse,
@@ -25,10 +26,10 @@ const wire = <T,>(value: T): unknown => JSON.parse(JSON.stringify(value));
 describe('端点表', () => {
   test('动作端点与 ACTION_NAMES 一一对应，任务类路径都在 /api/tasks 下，账号在 /api/session 与 /api/auth 下，项目簿在 /api/project-book 下，旧数据导入在 /api/legacy-import 下', () => {
     expect([...endpointActionNames()].sort()).toEqual([...ACTION_NAMES].sort());
-    const book = new Set(['getProjectBook', 'intakeProject']);
+    const book = new Set(['getProjectBook', 'intakeProject', 'editProject']);
     const auth = new Set(['setupAdmin', 'register', 'login', 'logout', 'changePassword']);
     const admin = new Set(['listAccounts', 'updateAccount']);
-    const publicBook = new Set(['getPublicProjectBook', 'intakePublicProject']);
+    const publicBook = new Set(['getPublicProjectBook', 'intakePublicProject', 'editPublicProject']);
     const legacy = new Set(['getLegacyImport', 'retryLegacyImport', 'skipLegacyImport']);
     for (const [name, endpoint] of Object.entries(HTTP_ENDPOINTS)) {
       const prefix =
@@ -78,6 +79,22 @@ describe('个人项目簿 /api/project-book', () => {
     expect(!failed.ok && failed.book?.projects).toHaveLength(6);
     const bare = parseProjectBookActionResponse(500, null);
     expect(!bare.ok && bare.error.code).toBe('http_500');
+  });
+
+  test('编辑请求带上原项目号、建议项目号和名称，并接受 edited 结果', async () => {
+    const response = { status: 'edited', verdict: null, note: '已修改', book: { projects: [] } };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(response), { status: 200 }));
+    try {
+      const outcome = await createHttpAdapter({ baseUrl: 'http://local' }).editProject({ originalNumber: 'OLD-1', number: 'NEW-1', name: '新名称' });
+      expect(fetchMock).toHaveBeenCalledWith('http://local/api/project-book/edit', {
+        method: 'POST',
+        body: JSON.stringify({ originalNumber: 'OLD-1', number: 'NEW-1', name: '新名称' }),
+        headers: { 'content-type': 'application/json' },
+      });
+      expect(outcome).toMatchObject({ ok: true, result: { status: 'edited' } });
+    } finally {
+      fetchMock.mockRestore();
+    }
   });
 });
 

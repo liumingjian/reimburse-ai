@@ -516,6 +516,15 @@ const offlineProjectIntake218: Migration = {
   },
 };
 
+// #220: correcting a project appends a maintenance fact. The previous identity makes a renumbering explicit while
+// retaining the original event stream; `maintenance_action` leaves the historical `action` constraint untouched.
+const projectEdit220: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema.alterTable('project_book_event').addColumn('maintenance_action', 'text').execute();
+    await db.schema.alterTable('project_book_event').addColumn('previous_number', 'text').execute();
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -533,4 +542,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0008_191_erp_jobs': erpJobs191,
   '0009_192_reconcile': reconcile192,
   '0010_218_offline_project_intake': offlineProjectIntake218,
+  '0012_220_project_edit': projectEdit220,
 };

@@ -193,6 +193,10 @@ export interface ProjectBookEventTable {
   // Null preserves the meaning of facts written before offline intake. `manual` marks a locally entered name that has
   // never been represented as a successful ERP catalog check.
   admission_source: 'manual' | null;
+  // Maintenance facts retain the coarse legacy action so older database constraints remain valid. The maintenance
+  // action and prior identity carry the specific operation for the fold.
+  maintenance_action: 'edited' | null;
+  previous_number: string | null;
   actor_account_id: string;
   created_at: string;
 }
