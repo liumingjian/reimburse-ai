@@ -68,8 +68,7 @@ test('管理员添加公共项目，用户把明细归入它；提交前停用�
   await expect(user.getByTestId('project-of-1')).toHaveText('P-2307 / 华东客户交付');
 
   // The admin deactivates it before the user submits: the user's page drops the line back to 未归属 and says why.
-  await book.getByTestId('book-row-P-2307').getByRole('button', { name: '更多' }).click();
-  await page.getByRole('menu', { name: '项目 P-2307 的更多操作' }).getByRole('menuitem', { name: '停用项目 P-2307' }).click();
+  await page.getByTestId('book-row-P-2307').getByRole('button', { name: '停用项目 P-2307' }).click();
   await expect(book.getByTestId('book-message')).toContainText('已停用，不能用于新的项目归属');
   await expect(book.getByTestId('book-row-P-2307')).toContainText('已停用');
   await expect(user.getByTestId('project-reselect')).toContainText('原项目 P-2307 华东客户交付');
@@ -111,15 +110,13 @@ test('public projects are read-only for members and retain lifecycle changes aft
   const readOnly = member.getByRole('table', { name: '公共项目簿' });
   await expect(readOnly.getByTestId('book-row-OFFLINE-101')).toContainText('产品调研');
   await expect(readOnly.getByRole('button')).toHaveCount(0);
-  await publicBook.getByTestId('book-row-OFFLINE-101').getByRole('button', { name: '更多' }).click();
-  await page.getByRole('menu', { name: '项目 OFFLINE-101 的更多操作' }).getByRole('menuitem', { name: '停用项目 OFFLINE-101' }).click();
+  await page.getByTestId('book-row-OFFLINE-101').getByRole('button', { name: '停用项目 OFFLINE-101' }).click();
   await expect(publicBook.getByTestId('book-row-OFFLINE-101')).toContainText('已停用');
   await member.reload();
   await expect(readOnly.getByTestId('book-row-OFFLINE-101')).toContainText('已停用');
 
   await page.reload();
-  await publicBook.getByTestId('book-row-OFFLINE-101').getByRole('button', { name: '更多' }).click();
-  await page.getByRole('menu', { name: '项目 OFFLINE-101 的更多操作' }).getByRole('menuitem', { name: '恢复项目 OFFLINE-101' }).click();
+  await page.getByTestId('book-row-OFFLINE-101').getByRole('button', { name: '恢复项目 OFFLINE-101' }).click();
   await expect(publicBook.getByTestId('book-row-OFFLINE-101')).toContainText('可选');
   await member.reload();
   await expect(readOnly.getByTestId('book-row-OFFLINE-101')).toContainText('可选');

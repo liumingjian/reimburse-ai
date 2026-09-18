@@ -58,7 +58,8 @@ export function isUnauthenticated(error: unknown): boolean {
 }
 
 export interface AppAdapter {
-  // 应用账号（ADR-0018）：当前会话；还没有账号时只能创建管理员，之后可以注册与登录。成功都返回新会话。
+  // App accounts (应用账号, ADR-0018): the first account is an authorized administrator. Later registration
+  // submits a pending application and returns a signed-out session; administrator approval is required for login.
   getSession(): Promise<Session>;
   setupAdmin(input: CredentialsInput): Promise<AuthOutcome>;
   register(input: CredentialsInput): Promise<AuthOutcome>;
@@ -91,6 +92,7 @@ export interface AppAdapter {
   confirmPublicProjectConversion(input: PublicProjectConversionInput): Promise<ProjectBookOutcome>;
   deactivatePublicProject(input: ProjectBookLifecycleInput): Promise<ProjectBookOutcome>;
   restorePublicProject(input: ProjectBookLifecycleInput): Promise<ProjectBookOutcome>;
+  deletePublicProject(input: ProjectBookLifecycleInput): Promise<ProjectBookOutcome>;
   // 旧数据导入（ADR-0018，只在创建第一个管理员时跑一次）：读这个账号看到的导入结果；旧数据损坏时报告里有逐个文件的原因，
   // 由这个账号修好后重试，或明确跳过。跳过之后导入就此结束。
   getLegacyImport(): Promise<LegacyImport>;

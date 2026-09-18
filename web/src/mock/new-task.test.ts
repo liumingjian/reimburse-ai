@@ -77,6 +77,11 @@ describe('mock 服务端：新建任务命名与示例材料识别', () => {
     expect((await adapter.startInventory(created.snapshot.task.taskId, uploaded.snapshot.step.stepToken)).ok).toBe(true);
 
     expect((await adapter.register({ username: 'other-owner', password: 'test-password' })).ok).toBe(true);
+    expect((await adapter.login({ username: MOCK_ACCOUNT.username, password: MOCK_PASSWORD })).ok).toBe(true);
+    const pending = (await adapter.listAccounts()).accounts.find((account) => account.username === 'other-owner');
+    if (!pending) throw new Error('pending account was not listed');
+    expect((await adapter.updateAccount(pending.accountId, { approved: true })).ok).toBe(true);
+    expect((await adapter.login({ username: 'other-owner', password: 'test-password' })).ok).toBe(true);
     expect(await adapter.intakeProject({ number: 'B-PRIVATE', name: 'Owner B private' })).toMatchObject({ ok: true, result: { status: 'admitted' } });
     await new Promise((resolve) => setTimeout(resolve, 50));
 

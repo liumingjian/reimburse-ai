@@ -49,7 +49,7 @@ export const HTTP_ENDPOINTS = {
   // 账号管理（只对管理员，其他账号 403 forbidden）：GET 返回 AccountList；更新一次只带一项（role / active / temporaryPassword），
   // 成功 200 返回新的 AccountList，失败 { error, accounts? }。`:id` 是账号 id。
   listAccounts: { method: 'GET', path: '/api/admin/accounts', body: 'none', fields: [] },
-  updateAccount: { method: 'POST', path: '/api/admin/accounts/:id', body: 'json', fields: ['role', 'active', 'temporaryPassword'] },
+  updateAccount: { method: 'POST', path: '/api/admin/accounts/:id', body: 'json', fields: ['role', 'active', 'approved', 'temporaryPassword'] },
   // The public project book (公共项目簿) is readable by every account; offline maintenance is administrator-only
   // (403 forbidden { error, book }) and has the same result shape as a personal project book.
   getPublicProjectBook: { method: 'GET', path: '/api/public-project-book', body: 'none', fields: [] },
@@ -58,6 +58,7 @@ export const HTTP_ENDPOINTS = {
   confirmPublicProjectConversion: { method: 'POST', path: '/api/public-project-book/convert', body: 'json', fields: ['operation', 'originalNumber', 'originalName', 'originalActive', 'number', 'name'] },
   deactivatePublicProject: { method: 'POST', path: '/api/public-project-book/deactivate', body: 'json', fields: ['number'] },
   restorePublicProject: { method: 'POST', path: '/api/public-project-book/restore', body: 'json', fields: ['number'] },
+  deletePublicProject: { method: 'POST', path: '/api/public-project-book/delete', body: 'json', fields: ['number'] },
   // 旧数据导入：GET 返回这个账号看到的导入结果；只有拥有失败那次导入的账号能重试或跳过（其余 400 import_not_pending）。
   getLegacyImport: { method: 'GET', path: '/api/legacy-import', body: 'none', fields: [] },
   retryLegacyImport: { method: 'POST', path: '/api/legacy-import/retry', body: 'json', fields: [] },

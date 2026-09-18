@@ -6,7 +6,7 @@ import type { MockBookState } from './project-book';
 // Public entries are visible to every signed-in account. A public number reserves that number globally, while a
 // personal collision stays intentionally generic and identifies only the personal book, never its owner.
 
-export type PublicBookService = Pick<AppAdapter, 'getPublicProjectBook' | 'intakePublicProject' | 'editPublicProject' | 'confirmPublicProjectConversion' | 'deactivatePublicProject' | 'restorePublicProject'>;
+export type PublicBookService = Pick<AppAdapter, 'getPublicProjectBook' | 'intakePublicProject' | 'editPublicProject' | 'confirmPublicProjectConversion' | 'deactivatePublicProject' | 'restorePublicProject' | 'deletePublicProject'>;
 
 const EMPTY_BOOK: ProjectBook = { projects: [] };
 
@@ -49,6 +49,17 @@ export function createPublicBook(auth: MockAuth, state: MockBookState, refreshAl
       state.publicProjects = state.publicProjects.map((project) => (project.number === number ? { ...project, active: false } : project));
       refreshAllTasks();
       return done('deactivated', PROJECT_BOOK_NOTES.deactivated(number));
+    },
+
+    async deletePublicProject(input: ProjectBookLifecycleInput) {
+      const account = auth.account();
+      if (!account) return unauthenticated();
+      if (account.role !== 'admin') return forbidden();
+      const number = input.number.trim();
+      if (!state.publicProjects.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.notFound(number));
+      state.publicProjects = state.publicProjects.filter((project) => project.number !== number);
+      refreshAllTasks();
+      return done('deleted', PROJECT_BOOK_NOTES.deleted(number));
     },
 
     async restorePublicProject(input: ProjectBookLifecycleInput) {

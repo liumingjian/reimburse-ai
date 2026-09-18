@@ -87,6 +87,11 @@ describe('个人项目簿 #/projects', () => {
   test('keeps mock personal books isolated and rejects a public collision', async () => {
     const adapter = createMockAdapter({ seed: null, fault: null });
     expect((await adapter.register({ username: '另一位员工', password: 'new-password' })).ok).toBe(true);
+    expect((await adapter.login({ username: MOCK_ACCOUNT.username, password: MOCK_PASSWORD })).ok).toBe(true);
+    const pending = (await adapter.listAccounts()).accounts.find((account) => account.username === '另一位员工');
+    if (!pending) throw new Error('pending account was not listed');
+    expect((await adapter.updateAccount(pending.accountId, { approved: true })).ok).toBe(true);
+    expect((await adapter.login({ username: '另一位员工', password: 'new-password' })).ok).toBe(true);
     expect(await adapter.getProjectBook()).toEqual({ projects: [] });
     expect((await adapter.intakeProject({ number: 'PERSONAL-ONLY', name: '另一位员工的项目' })).ok).toBe(true);
 

@@ -29,7 +29,7 @@ describe('端点表', () => {
     const book = new Set(['getProjectBook', 'intakeProject', 'editProject', 'deactivateProject', 'restoreProject', 'deleteProject']);
     const auth = new Set(['setupAdmin', 'register', 'login', 'logout', 'changePassword']);
     const admin = new Set(['listAccounts', 'updateAccount']);
-    const publicBook = new Set(['getPublicProjectBook', 'intakePublicProject', 'editPublicProject', 'confirmPublicProjectConversion', 'deactivatePublicProject', 'restorePublicProject']);
+    const publicBook = new Set(['getPublicProjectBook', 'intakePublicProject', 'editPublicProject', 'confirmPublicProjectConversion', 'deactivatePublicProject', 'restorePublicProject', 'deletePublicProject']);
     const legacy = new Set(['getLegacyImport', 'retryLegacyImport', 'skipLegacyImport']);
     for (const [name, endpoint] of Object.entries(HTTP_ENDPOINTS)) {
       const prefix =

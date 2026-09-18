@@ -1,4 +1,4 @@
-import { SessionSchema, TaskSnapshotSchema } from '@baox/contract';
+import { AccountListSchema, SessionSchema, TaskSnapshotSchema } from '@baox/contract';
 import Database from 'better-sqlite3';
 import { Kysely, SqliteDialect, sql } from 'kysely';
 import { Migrator } from 'kysely/migration';
@@ -56,18 +56,54 @@ describe('first-admin bootstrap', () => {
   });
 });
 
-describe('register, login and logout', () => {
-  it('refuses registration until the admin exists; afterwards anyone may register as a plain user', async () => {
+describe('register, approval, login and logout', () => {
+  it('keeps a self-registration pending until an admin explicitly approves it, then audits and permits login', async () => {
     const early = await server.app.request('/api/auth/register', json({ username: 'alice', password: 'correct horse' }));
     expect(early.status).toBe(409);
 
-    await server.signIn('admin');
+    const admin = await server.signIn('admin');
     const response = await server.app.request('/api/auth/register', json({ username: 'alice', password: 'correct horse' }));
     expect(response.status).toBe(200);
-    expect(await session(cookieOf(response))).toMatchObject({ status: 'signed_in', account: { username: 'alice', role: 'user' } });
+    expect(SessionSchema.parse(await response.json())).toEqual({ status: 'signed_out', account: null });
+    expect((await server.app.request('/api/tasks', { headers: { cookie: cookieOf(response) } })).status).toBe(401);
+
+    const listed = AccountListSchema.parse(await (await admin.request('/api/admin/accounts')).json());
+    const pending = listed.accounts.find((account) => account.username === 'alice');
+    expect(pending).toMatchObject({ role: 'user', active: true, approved: false, mustChangePassword: false });
+    if (!pending) throw new Error('pending registration was not listed');
+
+    const pendingLogin = await server.app.request('/api/auth/login', json({ username: 'alice', password: 'correct horse' }));
+    expect(pendingLogin.status).toBe(403);
+    expect(await pendingLogin.json()).toMatchObject({ error: { code: 'pending_approval' } });
+
+    // No other administrator operation can turn a pending registration into usable credentials.
+    for (const change of [{ active: true }, { role: 'admin' }, { temporaryPassword: 'temporary-1' }]) {
+      const blocked = await admin.post(`/api/admin/accounts/${pending.accountId}`, change);
+      expect(blocked.status).toBe(400);
+      expect(await blocked.json()).toMatchObject({ error: { code: 'approval_required' } });
+    }
+    expect((await server.app.request('/api/auth/login', json({ username: 'alice', password: 'correct horse' }))).status).toBe(403);
+
+    const approved = await admin.post(`/api/admin/accounts/${pending.accountId}`, { approved: true });
+    expect(approved.status).toBe(200);
+    expect(AccountListSchema.parse(await approved.json()).accounts.find((account) => account.accountId === pending.accountId)).toMatchObject({ role: 'user', active: true, approved: true, mustChangePassword: false });
+    expect(await server.db.selectFrom('account_event').select(['account_id', 'actor_account_id', 'action']).where('account_id', '=', pending.accountId).execute()).toEqual([{ account_id: pending.accountId, actor_account_id: admin.account.accountId, action: 'approved' }]);
+
+    const login = await server.app.request('/api/auth/login', json({ username: 'alice', password: 'correct horse' }));
+    expect(login.status).toBe(200);
+    expect(await session(cookieOf(login))).toMatchObject({ status: 'signed_in', account: { username: 'alice', role: 'user' } });
 
     const taken = await server.app.request('/api/auth/register', json({ username: 'alice', password: 'another one' }));
     expect(taken.status).toBe(409);
+  });
+
+  it('clears a prior session when that browser submits a registration', async () => {
+    const admin = await server.signIn('admin');
+    const registered = await server.app.request('/api/auth/register', json({ username: 'alice', password: 'correct horse' }, admin.cookie));
+    expect(registered.status).toBe(200);
+    expect(SessionSchema.parse(await registered.json())).toEqual({ status: 'signed_out', account: null });
+    expect(await session(cookieOf(registered))).toEqual({ status: 'signed_out', account: null });
+    expect((await admin.request('/api/tasks')).status).toBe(401);
   });
 
   it('validates credentials before touching anything', async () => {
@@ -140,6 +176,15 @@ describe('sessions', () => {
       }
     }
   });
+
+  it('drops an existing session when its account becomes pending approval', async () => {
+    const admin = await server.signIn('admin');
+    await server.db.updateTable('account').set({ approved: 0 }).where('account_id', '=', admin.account.accountId).execute();
+
+    expect((await admin.request('/api/tasks')).status).toBe(401);
+    expect(await session(admin.cookie)).toEqual({ status: 'signed_out', account: null });
+    expect(await server.db.selectFrom('session').select('token_sha256').where('account_id', '=', admin.account.accountId).execute()).toEqual([]);
+  });
 });
 
 describe('migration 0002_193_accounts', () => {
@@ -149,7 +194,7 @@ describe('migration 0002_193_accounts', () => {
     expect((await initialOnly.migrateToLatest()).error).toBeUndefined();
     await seed(db);
     expect((await new Migrator({ db, provider: { getMigrations: async () => MIGRATIONS } }).migrateToLatest()).error).toBeUndefined();
-    const rows = await sql<{ account_id: string; username: string | null; active: number }>`SELECT account_id, username, active FROM account`.execute(db);
+    const rows = await sql<{ account_id: string; username: string | null; active: number; approved: number }>`SELECT account_id, username, active, approved FROM account`.execute(db);
     await db.destroy();
     return rows.rows;
   }
@@ -163,6 +208,28 @@ describe('migration 0002_193_accounts', () => {
       await sql`INSERT INTO task (task_id, account_id, name, home_city, lifecycle, revision, created_at, updated_at)
                 VALUES ('t1', 'local', 'x', '杭州', 'open', 1, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`.execute(db);
     });
-    expect(rows).toEqual([{ account_id: 'local', username: null, active: 0 }]);
+    expect(rows).toEqual([{ account_id: 'local', username: null, active: 0, approved: 1 }]);
+  });
+});
+
+describe('migration 0013_222_account_approval', () => {
+  it('preserves the active state of existing accounts while authorizing them', async () => {
+    const db = new Kysely<unknown>({ dialect: new SqliteDialect({ database: new Database(':memory:') }) });
+    try {
+      const beforeApproval = Object.fromEntries(Object.entries(MIGRATIONS).filter(([name]) => name < '0013_222_account_approval'));
+      expect((await new Migrator({ db, provider: { getMigrations: async () => beforeApproval } }).migrateToLatest()).error).toBeUndefined();
+      await sql`INSERT INTO account (account_id, display_name, created_at, username, password_hash, role, active, must_change_password)
+                VALUES ('active-user', 'active-user', '2026-09-01T00:00:00Z', 'active-user', 'hash', 'user', 1, 0),
+                       ('inactive-user', 'inactive-user', '2026-09-01T00:00:00Z', 'inactive-user', 'hash', 'user', 0, 0)`.execute(db);
+
+      expect((await new Migrator({ db, provider: { getMigrations: async () => MIGRATIONS } }).migrateToLatest()).error).toBeUndefined();
+      const rows = await sql<{ username: string; active: number; approved: number }>`SELECT username, active, approved FROM account WHERE username IS NOT NULL ORDER BY username`.execute(db);
+      expect(rows.rows).toEqual([
+        { username: 'active-user', active: 1, approved: 1 },
+        { username: 'inactive-user', active: 0, approved: 1 },
+      ]);
+    } finally {
+      await db.destroy();
+    }
   });
 });

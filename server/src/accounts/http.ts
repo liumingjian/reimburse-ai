@@ -72,7 +72,17 @@ export function mountAuthRoutes(app: Hono<AppEnv>, accounts: AccountService): vo
     return c.json({ status: (await accounts.hasAccounts()) ? 'signed_out' : 'setup_required', account: null } satisfies Session);
   });
   app.post('/api/auth/setup', withCredentials(accounts.setup));
-  app.post('/api/auth/register', withCredentials(accounts.register));
+  app.post('/api/auth/register', async (c) => {
+    const input = CredentialsInputSchema.safeParse(await c.req.json().catch(() => null));
+    if (!input.success) return invalid(c, input.error.issues[0]?.message);
+    await accounts.register(input.data);
+    // Registration may be submitted from a browser that still has another account's session. Clear it so the returned
+    // signed-out state cannot leave that prior identity usable in the same context.
+    const previousToken = getCookie(c, SESSION_COOKIE);
+    if (previousToken) await accounts.logout(previousToken);
+    deleteCookie(c, SESSION_COOKIE, { path: '/' });
+    return c.json({ status: 'signed_out', account: null } satisfies Session);
+  });
   app.post('/api/auth/login', withCredentials(accounts.login));
   app.post('/api/auth/logout', async (c) => {
     const token = getCookie(c, SESSION_COOKIE);

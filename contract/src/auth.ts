@@ -38,6 +38,7 @@ export const AUTH_ERRORS = {
   passwordTooShort: `密码至少 ${PASSWORD_MIN_LENGTH} 位。`,
   usernameTaken: '这个用户名已被使用，请换一个。',
   invalidCredentials: '用户名或密码不对。',
+  pendingApproval: '这个账号正在等待管理员批准。',
   setupDone: '管理员已经创建，请登录或注册。',
   setupRequired: '还没有管理员，请先创建管理员。',
   unauthenticated: '请先登录。',
@@ -67,6 +68,7 @@ export const ADMIN_ERRORS = {
   lastAdmin: '至少要保留一位在用的管理员，这个操作没有执行。',
   selfChange: '不能取消自己的管理员身份，也不能停用自己的账号。需要的话，请让另一位管理员来做。',
   accountNotFound: '没有这个账号。',
+  approvalRequired: '请先批准这个账号的注册申请。',
   passwordChangeRequired: '请先把临时密码改成你自己的密码。',
   wrongPassword: '当前密码不对。',
   samePassword: '新密码不能和当前密码相同。',
@@ -75,9 +77,11 @@ export const ADMIN_ERRORS = {
 export const FORBIDDEN_CODE = 'forbidden';
 export const PASSWORD_CHANGE_REQUIRED_CODE = 'password_change_required';
 
-// An account as the admin page lists it. `mustChangePassword`: a temporary password is set and not yet changed.
+// An account as the admin page lists it. `approved` is distinct from `active`: a pending registration cannot sign in
+// even if an administrator later changes its role, activation, or password before approving it.
 export const AdminAccountSchema = AccountSchema.extend({
   active: z.boolean(),
+  approved: z.boolean(),
   mustChangePassword: z.boolean(),
 });
 export type AdminAccount = z.infer<typeof AdminAccountSchema>;
@@ -86,10 +90,12 @@ export type AdminAccount = z.infer<typeof AdminAccountSchema>;
 export const AccountListSchema = z.object({ accounts: z.array(AdminAccountSchema) });
 export type AccountList = z.infer<typeof AccountListSchema>;
 
-// POST /api/admin/accounts/:id takes exactly one change: promote/demote, deactivate/reactivate, or a temporary password.
+// POST /api/admin/accounts/:id takes exactly one change: approve a registration, promote/demote,
+// deactivate/reactivate, or set a temporary password.
 export const AccountUpdateInputSchema = z.union([
   z.object({ role: AccountRoleSchema }).strict(),
   z.object({ active: z.boolean() }).strict(),
+  z.object({ approved: z.literal(true) }).strict(),
   z.object({ temporaryPassword: z.string().min(PASSWORD_MIN_LENGTH, AUTH_ERRORS.passwordTooShort) }).strict(),
 ]);
 export type AccountUpdateInput = z.infer<typeof AccountUpdateInputSchema>;

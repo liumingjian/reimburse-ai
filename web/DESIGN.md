@@ -76,8 +76,7 @@ e2e `e2e/carbon-zh.spec.ts` 在主要页面与打开的弹层里查整页文字�
 每张宽表（整单明细确认、任务列表、回读与对账、个人项目簿）放在 Carbon 表格自带的 `overflow-x: auto` 容器里，表格铺满。
 窗口比各列按内容收紧后的宽度之和还窄时，整张表横向滚动，不再挤压列宽。滚动时标识列固定在左（No.；没有 No. 的表是任务名 / 项目号），
 收尾列固定在右（总额；任务列表与项目簿是操作列；回读表是比对列），固定列带所在行的底色，只有那一侧真有内容被盖住时才出现一条分隔线。
-操作列每行只放一个主操作按钮，其余操作收进 Carbon OverflowMenu「更多」；破坏性操作是其中的 delete 项，
-不能做时菜单项置灰，下面照抄服务端给出的原因。不再每行摆带锁的不可用按钮。
+Task rows show one primary action and place secondary actions in the Carbon overflow menu (更多). A blocked action includes the server-provided reason. Project maintenance rows show three adjacent text buttons: Edit (编辑), Deactivate/Restore (停用/恢复), and Delete (删除). Deletion uses a danger ghost button and requires confirmation; public maintenance actions are administrator-only.
 整单明细表（No. 加 13 列）单元格用 body-compact、列间距用 Carbon 最小的单元格内边距，在 1440px 窗口上不横向滚动；1100px 窗口会滚动，这是预期的退路。
 项目号与费用项目是「编码 / 名称」一对，不折行；出发点、目的地、费用分类可以折行（中文 `word-break: keep-all`）。
 同一分类里与上一行相同的文字单元格变淡（值照常在），金额列不变淡。

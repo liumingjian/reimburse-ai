@@ -133,7 +133,7 @@ export const PROJECT_BOOK_COPY = {
 
 export const PUBLIC_PROJECT_BOOK_COPY = {
   title: '公共项目簿',
-  lead: '所有成员都可以查看和使用公共项目。只有管理员可以录入公共项目。',
+  lead: '所有成员都可以查看和使用公共项目。只有管理员可以维护公共项目。',
   empty: '公共项目簿为空。',
   conversionTitle: '确认转为公共项目',
   conversionLead: (number: string) => `项目号 ${number} 已在个人项目簿中。确认后，所有同号个人项目将合并到公共项目簿；已有报销记录不会改变。`,

@@ -532,6 +532,14 @@ const projectEdit220: Migration = {
   },
 };
 
+// Self-registration starts as a pending application. Existing accounts are approved by the default so this
+// representation change cannot lock people out of an established local installation.
+const accountApproval222: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema.alterTable('account').addColumn('approved', 'integer', (c) => c.notNull().defaultTo(1)).execute();
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -551,4 +559,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0010_218_offline_project_intake': offlineProjectIntake218,
   '0011_219_project_lifecycle': projectLifecycle219,
   '0012_220_project_edit': projectEdit220,
+  '0013_222_account_approval': accountApproval222,
 };

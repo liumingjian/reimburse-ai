@@ -265,7 +265,7 @@ _Avoid_：发票项目、自动推断项目
 _Avoid_：自由输入项目、模糊匹配项目
 
 **应用账号**：
-用户在 baox 中注册并登录的身份，报销任务、个人项目簿和常驻城市都按它归属；它与 ERP 账号相互独立，不作对应。账号只能停用，不能删除。
+An app account (应用账号) owns its reimbursement tasks, personal project book, and home city independently of any ERP account. The first account is an authorized administrator; subsequent self-registrations require administrator approval before login. Approval is separate from activation, and accounts may be deactivated but not deleted.
 _Avoid_：ERP 账号、员工身份、个人绑定、用户档案
 
 **管理员**：
@@ -277,7 +277,7 @@ The personal project book (个人项目簿) is the project collection maintained
 _Avoid_：任意项目号、第二套项目主数据
 
 **公共项目簿**：
-The public project book (公共项目簿) is the project collection maintained by administrators and visible to every app account, with active entries available for task selection. Only administrators may add, edit, deactivate, or reactivate its entries. A public entry reserves its number from personal admission; promoting existing same-number personal entries to a public project requires explicit confirmation and preserves historical task selections. Ordinary members may only view and select public entries.
+The public project book (公共项目簿) is the project collection maintained by administrators and visible to every app account, with active entries available for task selection. Only administrators may add, edit, deactivate, reactivate, or delete its entries. Deletion releases the public number reservation while preserving historical reimbursement records. A public entry reserves its number from personal admission; promoting existing same-number personal entries to a public project requires explicit confirmation and preserves historical task selections. Ordinary members may only view and select public entries.
 _Avoid_：全局项目目录、项目目录、共享个人项目簿
 
 **本地市内交通**：

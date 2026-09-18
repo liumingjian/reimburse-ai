@@ -10,22 +10,8 @@ function renderApp(hash: string) {
   return adapter;
 }
 
-async function openMore(number: string): Promise<HTMLElement> {
-  const row = screen.getByTestId(`book-row-${number}`);
-  fireEvent.click(within(row).getByRole('button', { name: '更多' }));
-  const label = `项目 ${number} 的更多操作`;
-  return waitFor(() => {
-    const menu = screen.queryAllByRole('menu', { hidden: true }).find((element) => element.getAttribute('aria-label') === label);
-    if (!menu) throw new Error(`Menu "${label}" did not open`);
-    return menu;
-  });
-}
-
-function lifecycleItem(menu: HTMLElement, label: string): HTMLButtonElement {
-  const items = within(menu).getAllByRole('menuitem', { hidden: true });
-  const item = items.find((entry) => entry.getAttribute('aria-label') === label) as HTMLButtonElement;
-  expect(item.getAttribute('aria-label') ?? item.textContent).toBe(label);
-  return item;
+function lifecycleItem(number: string, label: string): HTMLElement {
+  return within(screen.getByTestId(`book-row-${number}`)).getByRole('button', { name: label });
 }
 
 describe('project book lifecycle controls', () => {
@@ -34,18 +20,18 @@ describe('project book lifecycle controls', () => {
     await screen.findByTestId('book-row-P-2307');
 
     const row = screen.getByTestId('book-row-P-2307');
-    expect(within(row).getAllByRole('button')).toHaveLength(2);
+    expect(within(row).getAllByRole('button')).toHaveLength(3);
     expect(within(row).getByRole('button', { name: '编辑 P-2307' })).toBeTruthy();
-    fireEvent.click(lifecycleItem(await openMore('P-2307'), '停用项目 P-2307'));
+    fireEvent.click(lifecycleItem('P-2307', '停用项目 P-2307'));
     expect((await screen.findByTestId('book-message')).textContent).toContain('已停用');
     expect(screen.getByTestId('book-row-P-2307').textContent).toContain('已停用');
-    const restore = lifecycleItem(await openMore('P-2307'), '恢复项目 P-2307');
+    const restore = lifecycleItem('P-2307', '恢复项目 P-2307');
     expect(restore).toBeTruthy();
 
     fireEvent.click(restore);
     expect((await screen.findByTestId('book-message')).textContent).toContain('已恢复');
     expect(screen.getByTestId('book-row-P-2307').textContent).toContain('可选');
-    expect(lifecycleItem(await openMore('P-2307'), '停用项目 P-2307')).toBeTruthy();
+    expect(lifecycleItem('P-2307', '停用项目 P-2307')).toBeTruthy();
   });
 
   test('updates mock assignment availability without discarding a draft permanently', async () => {
@@ -73,23 +59,22 @@ describe('project book lifecycle controls', () => {
 
     const publicTable = await screen.findByRole('table', { name: '公共项目簿' });
     expect(within(publicTable).getByTestId('book-row-PUBLIC-LIFE')).toBeTruthy();
-    expect(within(publicTable).queryByRole('button', { name: '更多' })).toBeNull();
+    expect(within(publicTable).queryByRole('button')).toBeNull();
 
     window.location.hash = '#/admin';
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     await screen.findByRole('heading', { name: '管理', level: 1 });
     expect(await screen.findByTestId('book-row-PUBLIC-LIFE')).toBeTruthy();
 
-    const publicMenu = await openMore('PUBLIC-LIFE');
-    expect(within(publicMenu).getAllByRole('menuitem', { hidden: true })).toHaveLength(1);
-    fireEvent.click(lifecycleItem(publicMenu, '停用项目 PUBLIC-LIFE'));
+    expect(within(screen.getByTestId('book-row-PUBLIC-LIFE')).getAllByRole('button')).toHaveLength(3);
+    fireEvent.click(lifecycleItem('PUBLIC-LIFE', '停用项目 PUBLIC-LIFE'));
     expect((await screen.findByTestId('book-message')).textContent).toContain('已停用');
-    const restore = lifecycleItem(await openMore('PUBLIC-LIFE'), '恢复项目 PUBLIC-LIFE');
+    const restore = lifecycleItem('PUBLIC-LIFE', '恢复项目 PUBLIC-LIFE');
     expect(restore).toBeTruthy();
 
     fireEvent.click(restore);
     expect((await screen.findByTestId('book-message')).textContent).toContain('已恢复');
-    expect(lifecycleItem(await openMore('PUBLIC-LIFE'), '停用项目 PUBLIC-LIFE')).toBeTruthy();
+    expect(lifecycleItem('PUBLIC-LIFE', '停用项目 PUBLIC-LIFE')).toBeTruthy();
   });
 });
 
@@ -100,12 +85,12 @@ test.each([true, false])('personal deletion confirms or cancels for active=%s', 
   window.location.hash = '#/projects';
   render(<App adapter={adapter} />);
   await screen.findByTestId('book-row-P-2307');
-  fireEvent.click(lifecycleItem(await openMore('P-2307'), '删除项目 P-2307'));
+  fireEvent.click(lifecycleItem('P-2307', '删除项目 P-2307'));
   let dialog = screen.getByRole('dialog', { name: '删除个人项目' });
   expect(dialog.textContent).toContain('已有报销记录保持不变');
   fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
   expect(screen.getByTestId('book-row-P-2307')).toBeTruthy();
-  fireEvent.click(lifecycleItem(await openMore('P-2307'), '删除项目 P-2307'));
+  fireEvent.click(lifecycleItem('P-2307', '删除项目 P-2307'));
   dialog = screen.getByRole('dialog', { name: '删除个人项目' });
   fireEvent.click(within(dialog).getByRole('button', { name: '删除' }));
   await waitFor(() => expect(screen.queryByTestId('book-row-P-2307')).toBeNull());
@@ -118,11 +103,32 @@ test('failed deletion keeps the project and dialog available for retry', async (
   const adapter = renderApp('#/projects');
   await screen.findByTestId('book-row-P-2307');
   vi.spyOn(adapter, 'deleteProject').mockResolvedValueOnce({ ok: false, error: { code: 'network_error', message: '连接失败，请重试。' }, book: null });
-  fireEvent.click(lifecycleItem(await openMore('P-2307'), '删除项目 P-2307'));
+  fireEvent.click(lifecycleItem('P-2307', '删除项目 P-2307'));
   const dialog = screen.getByRole('dialog', { name: '删除个人项目' });
   fireEvent.click(within(dialog).getByRole('button', { name: '删除' }));
   expect((await within(dialog).findByRole('alert')).textContent).toContain('连接失败');
   expect(screen.getByTestId('book-row-P-2307')).toBeTruthy();
   fireEvent.click(within(dialog).getByRole('button', { name: '删除' }));
   await waitFor(() => expect(screen.queryByTestId('book-row-P-2307')).toBeNull());
+});
+
+test.each([true, false])('public deletion confirms or cancels for active=%s', async (active) => {
+  const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
+  await adapter.intakePublicProject({ number: 'PUBLIC-DELETE', name: '待删除公共项目' });
+  if (!active) await adapter.deactivatePublicProject({ number: 'PUBLIC-DELETE' });
+  window.location.hash = '#/admin';
+  render(<App adapter={adapter} />);
+  const row = await screen.findByTestId('book-row-PUBLIC-DELETE');
+  expect(within(row).getAllByRole('button')).toHaveLength(3);
+  fireEvent.click(lifecycleItem('PUBLIC-DELETE', '删除项目 PUBLIC-DELETE'));
+  let dialog = screen.getByRole('dialog', { name: '删除公共项目' });
+  expect(dialog.textContent).toContain('所有成员将无法再选择该公共项目');
+  fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+  expect(screen.getByTestId('book-row-PUBLIC-DELETE')).toBeTruthy();
+  fireEvent.click(lifecycleItem('PUBLIC-DELETE', '删除项目 PUBLIC-DELETE'));
+  dialog = screen.getByRole('dialog', { name: '删除公共项目' });
+  fireEvent.click(within(dialog).getByRole('button', { name: '删除' }));
+  await waitFor(() => expect(screen.queryByTestId('book-row-PUBLIC-DELETE')).toBeNull());
+  expect(await adapter.getPublicProjectBook()).toEqual({ projects: [] });
+  expect(await adapter.intakeProject({ number: 'PUBLIC-DELETE', name: '释放后的个人项目' })).toMatchObject({ ok: true, result: { status: 'admitted' } });
 });

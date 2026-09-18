@@ -10,11 +10,12 @@ import { AppShell } from '../shell/AppShell';
 // The route stays as it is, so a deep link opens in place once signed in.
 export const AUTH_COPY = {
   setupTitle: '创建管理员',
-  setupLead: '这台电脑上还没有应用账号。先创建管理员账号：它是第一个账号，创建后其他人可以自行注册。',
+  setupLead: '这台电脑上还没有应用账号。先创建管理员账号：它是第一个账号，创建后其他人可以申请注册，得到批准后再登录。',
   loginTitle: '登录',
   loginLead: '用你的应用账号登录。应用账号只在这台电脑上使用，与报销系统的账号无关。',
   registerTitle: '注册',
-  registerLead: '注册一个新的应用账号。你的报销任务、个人项目簿和常驻城市只有你自己看得到。',
+  registerLead: '申请一个新的应用账号。管理员批准后，你才能登录；你的报销任务、个人项目簿和常驻城市只有你自己看得到。',
+  registrationPending: '注册申请已提交，请等待管理员批准后再登录。',
   username: '用户名',
   password: '密码',
   setupSubmit: '创建管理员',
@@ -35,7 +36,7 @@ const MODES: Readonly<Record<Mode, { title: string; lead: string; submit: string
   register: { title: AUTH_COPY.registerTitle, lead: AUTH_COPY.registerLead, submit: AUTH_COPY.registerSubmit, run: (adapter, input) => adapter.register(input) },
 };
 
-function CredentialsForm({ mode, onSwitch }: { mode: Mode; onSwitch: (() => void) | null }) {
+function CredentialsForm({ mode, onSwitch, registrationNotice, onRegistered }: { mode: Mode; onSwitch: (() => void) | null; registrationNotice: string | null; onRegistered: () => void }) {
   const store = useAppStore();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -63,6 +64,7 @@ function CredentialsForm({ mode, onSwitch }: { mode: Mode; onSwitch: (() => void
     const outcome = await store.auth((adapter) => copy.run(adapter, parsed.data));
     setBusy(false);
     if (!outcome.ok) setError(outcome.error.message);
+    else if (mode === 'register' && outcome.session.status === 'signed_out') onRegistered();
   };
 
   return (
@@ -104,6 +106,7 @@ function CredentialsForm({ mode, onSwitch }: { mode: Mode; onSwitch: (() => void
           ) : null}
           <ActionError message={error} />
         </div>
+        {registrationNotice ? <p className="app-caption" role="status">{registrationNotice}</p> : null}
       </form>
     </section>
   );
@@ -111,6 +114,7 @@ function CredentialsForm({ mode, onSwitch }: { mode: Mode; onSwitch: (() => void
 
 export function AuthPage({ session }: { session: Session }) {
   const [register, setRegister] = useState(false);
+  const [registrationNotice, setRegistrationNotice] = useState<string | null>(null);
   const mode: Mode = session.status === 'setup_required' ? 'setup' : register ? 'register' : 'login';
   const title = MODES[mode].title;
   useEffect(() => {
@@ -119,7 +123,23 @@ export function AuthPage({ session }: { session: Session }) {
   return (
     <AppShell nav="tasks">
       {/* key: switching modes starts from an empty form. */}
-      <CredentialsForm key={mode} mode={mode} onSwitch={mode === 'setup' ? null : () => setRegister(!register)} />
+      <CredentialsForm
+        key={mode}
+        mode={mode}
+        onSwitch={
+          mode === 'setup'
+            ? null
+            : () => {
+                setRegister(!register);
+                setRegistrationNotice(null);
+              }
+        }
+        registrationNotice={registrationNotice}
+        onRegistered={() => {
+          setRegister(false);
+          setRegistrationNotice(AUTH_COPY.registrationPending);
+        }}
+      />
     </AppShell>
   );
 }

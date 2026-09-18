@@ -77,6 +77,7 @@ const BOOK_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>([
   'confirmPublicProjectConversion',
   'deactivatePublicProject',
   'restorePublicProject',
+  'deletePublicProject',
 ]);
 const ACCOUNT_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['updateAccount']);
 

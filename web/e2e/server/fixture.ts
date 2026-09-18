@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect as baseExpect, test as base, type Page } from '@playwright/test';
-import { STAY_TRIO_CONFIRM_NONE, stayTrioElementOf, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
+import { AccountListSchema, SessionSchema, STAY_TRIO_CONFIRM_NONE, stayTrioElementOf, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 
 // Every server-project test gets its own built server on its own throwaway data directory and a free port, so
 // tests never share tasks or accounts. `baseURL` points at it: `page.goto('/#/tasks')`.
@@ -51,14 +51,46 @@ export const test = base.extend<{ serverApp: ServerApp; serverEnv: Record<string
 export { expect } from '@playwright/test';
 
 export const E2E_PASSWORD = 'e2e-password';
+const administrators = new Map<string, { username: string; password: string }>();
 
-// Signs the page's browser context in without the UI: the first call creates the admin, later calls register users.
-// `page.request` shares the context's cookie jar, so the next `page.goto` is already signed in.
+// Signs the page's browser context in without the UI: the first call creates the administrator; later calls submit a
+// registration, approve it through that administrator, then log the requested user in. `page.request` shares the
+// context's cookie jar, so the next `page.goto` is already signed in.
 export async function signIn(page: Page, username = 'admin'): Promise<void> {
-  const session = (await (await page.request.get('/api/session')).json()) as { status: string };
-  const path = session.status === 'setup_required' ? '/api/auth/setup' : '/api/auth/register';
-  const response = await page.request.post(path, { data: { username, password: E2E_PASSWORD } });
-  if (!response.ok()) throw new Error(`signIn(${username}) failed: ${response.status()} ${await response.text()}`);
+  let sessionResponse = await page.request.get('/api/session');
+  let session = SessionSchema.parse(await sessionResponse.json());
+  const origin = new URL(sessionResponse.url()).origin;
+  if (session.status === 'signed_in' || session.status === 'password_change_required') {
+    const logout = await page.request.post('/api/auth/logout');
+    if (!logout.ok()) throw new Error(`signIn(${username}) could not clear the existing session: ${logout.status()} ${await logout.text()}`);
+    sessionResponse = await page.request.get('/api/session');
+    session = SessionSchema.parse(await sessionResponse.json());
+  }
+
+  if (session.status === 'setup_required') {
+    const setup = await page.request.post('/api/auth/setup', { data: { username, password: E2E_PASSWORD } });
+    if (!setup.ok()) throw new Error(`signIn(${username}) setup failed: ${setup.status()} ${await setup.text()}`);
+    administrators.set(origin, { username, password: E2E_PASSWORD });
+    return;
+  }
+
+  const registered = await page.request.post('/api/auth/register', { data: { username, password: E2E_PASSWORD } });
+  if (!registered.ok()) throw new Error(`signIn(${username}) registration failed: ${registered.status()} ${await registered.text()}`);
+  if (SessionSchema.parse(await registered.json()).status !== 'signed_out') throw new Error(`signIn(${username}) registration unexpectedly created a session`);
+  const administrator = administrators.get(origin);
+  if (!administrator) throw new Error(`signIn(${username}) has no administrator credentials for ${origin}`);
+  const adminLogin = await page.request.post('/api/auth/login', { data: administrator });
+  if (!adminLogin.ok()) throw new Error(`signIn(${username}) administrator login failed: ${adminLogin.status()} ${await adminLogin.text()}`);
+  const listed = await page.request.get('/api/admin/accounts');
+  if (!listed.ok()) throw new Error(`signIn(${username}) account listing failed: ${listed.status()} ${await listed.text()}`);
+  const account = AccountListSchema.parse(await listed.json()).accounts.find((candidate) => candidate.username === username);
+  if (!account || account.approved) throw new Error(`signIn(${username}) pending registration was not listed`);
+  const approved = await page.request.post(`/api/admin/accounts/${account.accountId}`, { data: { approved: true } });
+  if (!approved.ok()) throw new Error(`signIn(${username}) approval failed: ${approved.status()} ${await approved.text()}`);
+  const logout = await page.request.post('/api/auth/logout');
+  if (!logout.ok()) throw new Error(`signIn(${username}) administrator logout failed: ${logout.status()} ${await logout.text()}`);
+  const login = await page.request.post('/api/auth/login', { data: { username, password: E2E_PASSWORD } });
+  if (!login.ok()) throw new Error(`signIn(${username}) login failed: ${login.status()} ${await login.text()}`);
 }
 
 // The 住宿 (accommodation) trio check (#213) runs at 盘点 (inventory): a 住宿 invoice missing its 结账单 (hotel folio)

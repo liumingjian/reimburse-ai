@@ -344,6 +344,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     confirmPublicProjectConversion: (input) => bookAction(url(E.confirmPublicProjectConversion.path), input),
     deactivatePublicProject: (input) => bookAction(url(E.deactivatePublicProject.path), input),
     restorePublicProject: (input) => bookAction(url(E.restorePublicProject.path), input),
+    deletePublicProject: (input) => bookAction(url(E.deletePublicProject.path), input),
     async getLegacyImport() {
       let response: Response;
       try {

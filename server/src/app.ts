@@ -247,6 +247,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   app.post('/api/project-book/delete', lifecycleBookAction(personalBookOf, personal, 'delete'));
   app.post('/api/public-project-book/deactivate', lifecycleBookAction(publicBookOf, adminOnly, 'deactivate'));
   app.post('/api/public-project-book/restore', lifecycleBookAction(publicBookOf, adminOnly, 'restore'));
+  app.post('/api/public-project-book/delete', lifecycleBookAction(publicBookOf, adminOnly, 'delete'));
 
   app.get('/api/tasks/:id', async (c) => c.json(await tasksOf(c).snapshot(c.req.param('id'))));
 

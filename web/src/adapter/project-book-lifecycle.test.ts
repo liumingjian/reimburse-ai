@@ -36,7 +36,8 @@ describe('project lifecycle HTTP adapter', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(outcome('restored')), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(outcome('deleted')), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(outcome('deactivated')), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(outcome('restored')), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify(outcome('restored')), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(outcome('deleted')), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     const adapter = createHttpAdapter({ baseUrl: 'http://127.0.0.1:3199/' });
 
@@ -45,6 +46,7 @@ describe('project lifecycle HTTP adapter', () => {
     expect(await adapter.deleteProject({ number: 'LIFE-1' })).toMatchObject({ ok: true, result: { status: 'deleted' } });
     expect(await adapter.deactivatePublicProject({ number: 'LIFE-1' })).toMatchObject({ ok: true, result: { status: 'deactivated' } });
     expect(await adapter.restorePublicProject({ number: 'LIFE-1' })).toMatchObject({ ok: true, result: { status: 'restored' } });
+    expect(await adapter.deletePublicProject({ number: 'LIFE-1' })).toMatchObject({ ok: true, result: { status: 'deleted' } });
 
     expect(fetchMock.mock.calls.map(([url, init]) => [url, init && (init as RequestInit).method, init && (init as RequestInit).body])).toEqual([
       ['http://127.0.0.1:3199/api/project-book/deactivate', 'POST', JSON.stringify({ number: 'LIFE-1' })],
@@ -52,6 +54,7 @@ describe('project lifecycle HTTP adapter', () => {
       ['http://127.0.0.1:3199/api/project-book/delete', 'POST', JSON.stringify({ number: 'LIFE-1' })],
       ['http://127.0.0.1:3199/api/public-project-book/deactivate', 'POST', JSON.stringify({ number: 'LIFE-1' })],
       ['http://127.0.0.1:3199/api/public-project-book/restore', 'POST', JSON.stringify({ number: 'LIFE-1' })],
+      ['http://127.0.0.1:3199/api/public-project-book/delete', 'POST', JSON.stringify({ number: 'LIFE-1' })],
     ]);
   });
 });

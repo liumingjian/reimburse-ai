@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Button, InlineNotification, OverflowMenu, OverflowMenuItem, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextInput } from '@carbon/react';
-import { Add, Edit } from '@carbon/icons-react';
+import { Button, InlineNotification, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextInput } from '@carbon/react';
+import { Add } from '@carbon/icons-react';
 import { StatusTag } from '../shell/StatusTag';
 import { useAppStore, useBook } from '../adapter/context';
 import type { BookScope } from '../adapter/store';
@@ -19,6 +19,7 @@ type BookOps = {
   intake: (adapter: AppAdapter, input: { number: string; name: string }) => Promise<ProjectBookOutcome>;
   edit: (adapter: AppAdapter, input: ProjectBookEditInput) => Promise<ProjectBookOutcome>;
   deactivate: (adapter: AppAdapter, input: { number: string }) => Promise<ProjectBookOutcome>;
+  delete: (adapter: AppAdapter, input: { number: string }) => Promise<ProjectBookOutcome>;
   restore: (adapter: AppAdapter, input: { number: string }) => Promise<ProjectBookOutcome>;
 };
 
@@ -30,6 +31,7 @@ const OPS: Readonly<Record<BookScope, BookOps>> = {
     edit: (adapter, input) => adapter.editProject(input),
     deactivate: (adapter, input) => adapter.deactivateProject(input),
     restore: (adapter, input) => adapter.restoreProject(input),
+    delete: (adapter, input) => adapter.deleteProject(input),
   },
   public: {
     title: PUBLIC_PROJECT_BOOK_COPY.title,
@@ -38,6 +40,7 @@ const OPS: Readonly<Record<BookScope, BookOps>> = {
     edit: (adapter, input) => adapter.editPublicProject(input),
     deactivate: (adapter, input) => adapter.deactivatePublicProject(input),
     restore: (adapter, input) => adapter.restorePublicProject(input),
+    delete: (adapter, input) => adapter.deletePublicProject(input),
   },
 };
 
@@ -181,7 +184,7 @@ export function ProjectBookPanel({
     if (!deleting) return;
     setBusy(true);
     setDeleteError(null);
-    const outcome = await store.projectBookAction((adapter) => adapter.deleteProject({ number: deleting.number }), 'personal');
+    const outcome = await store.projectBookAction((adapter) => ops.delete(adapter, { number: deleting.number }), scope);
     setBusy(false);
     if (!outcome.ok) {
       setDeleteError(outcome.error.message);
@@ -293,7 +296,7 @@ export function ProjectBookPanel({
                       busy={busy}
                       onEdit={openEdit}
                       onLifecycle={runLifecycle}
-                      onDelete={scope === 'personal' ? openDelete : undefined}
+                      onDelete={openDelete}
                     />
                   ))
                 ) : (
@@ -310,7 +313,7 @@ export function ProjectBookPanel({
       </section>
       {deleting ? (
         <ConfirmDialog
-          title="删除个人项目"
+          title={scope === 'personal' ? '删除个人项目' : '删除公共项目'}
           confirmLabel={PROJECT_BOOK_COPY.delete}
           busy={busy}
           error={deleteError}
@@ -318,7 +321,7 @@ export function ProjectBookPanel({
           onConfirm={() => void confirmDelete()}
           onCancel={() => setDeleting(null)}
         >
-          <p>确定删除项目 {deleting.number}「{deleting.name}」吗？删除后将从个人项目簿移除，未提交任务中使用该项目的明细需要重新选择项目。已有报销记录保持不变。</p>
+          <p>确定删除项目 {deleting.number}「{deleting.name}」吗？删除后将从{ops.title}移除{scope === 'public' ? '，所有成员将无法再选择该公共项目' : ''}，未提交任务中使用该项目的明细需要重新选择项目。已有报销记录保持不变。</p>
         </ConfirmDialog>
       ) : null}
       {editing ? (
@@ -380,7 +383,7 @@ function BookRow({
   canMaintain: boolean;
   busy: boolean;
   onEdit: (project: ProjectBookEntry) => void;
-  onDelete: ((project: ProjectBookEntry) => void) | undefined;
+  onDelete: (project: ProjectBookEntry) => void;
   onLifecycle: (action: 'deactivate' | 'restore', projectNumber: string) => void;
 }) {
   return (
@@ -396,16 +399,11 @@ function BookRow({
       {canMaintain ? (
         <TableCell className="app-sticky-end app-num">
           <div className="app-row-actions">
-            <Button kind="ghost" size="sm" hasIconOnly renderIcon={Edit} iconDescription={`编辑 ${project.number}`} tooltipAlignment="end" disabled={busy} onClick={() => onEdit(project)} />
-            <OverflowMenu iconDescription="更多" aria-label={`项目 ${project.number} 的更多操作`} size="sm" flipped menuOptionsClass="app-more-menu">
-              <OverflowMenuItem
-                itemText={project.active ? PROJECT_BOOK_COPY.deactivate : PROJECT_BOOK_COPY.restore}
-                aria-label={`${project.active ? '停用' : '恢复'}项目 ${project.number}`}
-                disabled={busy}
-                onClick={() => onLifecycle(project.active ? 'deactivate' : 'restore', project.number)}
-              />
-              {onDelete ? <OverflowMenuItem isDelete itemText={PROJECT_BOOK_COPY.delete} aria-label={`删除项目 ${project.number}`} disabled={busy} onClick={() => onDelete(project)} /> : null}
-            </OverflowMenu>
+            <Button kind="ghost" size="sm" aria-label={`编辑 ${project.number}`} disabled={busy} onClick={() => onEdit(project)}>编辑</Button>
+            <Button kind="ghost" size="sm" aria-label={`${project.active ? '停用' : '恢复'}项目 ${project.number}`} disabled={busy} onClick={() => onLifecycle(project.active ? 'deactivate' : 'restore', project.number)}>
+              {project.active ? PROJECT_BOOK_COPY.deactivate : PROJECT_BOOK_COPY.restore}
+            </Button>
+            <Button kind="danger--ghost" size="sm" aria-label={`删除项目 ${project.number}`} disabled={busy} onClick={() => onDelete(project)}>{PROJECT_BOOK_COPY.delete}</Button>
           </div>
         </TableCell>
       ) : null}

@@ -208,6 +208,8 @@ describe('lifecycle persistence', () => {
     try {
       await book(owner, '/api/project-book/intake', { number: 'RESTART-LIFE', name: '重启后仍停用' });
       await book(owner, '/api/project-book/deactivate', { number: 'RESTART-LIFE' });
+      await book(owner, '/api/public-project-book/intake', { number: 'RESTART-DELETE', name: '重启后保持删除' });
+      await book(owner, '/api/public-project-book/delete', { number: 'RESTART-DELETE' });
       await first.app.close();
       await first.db.destroy();
 
@@ -215,6 +217,8 @@ describe('lifecycle persistence', () => {
       try {
         const restored = ProjectBookSchema.parse(await (await testClient(second.app, owner.account, owner.cookie).request('/api/project-book')).json());
         expect(restored.projects).toEqual([expect.objectContaining({ number: 'RESTART-LIFE', name: '重启后仍停用', active: false, selectable: false, statusLabel: '已停用' })]);
+        const publicBook = ProjectBookSchema.parse(await (await testClient(second.app, owner.account, owner.cookie).request('/api/public-project-book')).json());
+        expect(publicBook.projects).toEqual([]);
       } finally {
         await second.close();
       }
@@ -222,6 +226,38 @@ describe('lifecycle persistence', () => {
       // The first process was explicitly closed above. The catch path still releases its resources if setup failed.
       await first.app.close().catch(() => undefined);
       await first.db.destroy().catch(() => undefined);
+    }
+  });
+});
+
+
+describe('public project deletion', () => {
+  it.each([true, false])('requires an administrator, releases the number, and records explicit deletion (active=%s)', async (active) => {
+    await book(admin, '/api/public-project-book/intake', { number: 'PUBLIC-DELETE', name: '待删除公共项目' });
+    if (!active) await book(admin, '/api/public-project-book/deactivate', { number: 'PUBLIC-DELETE' });
+    expect((await member.post('/api/public-project-book/delete', { number: 'PUBLIC-DELETE' })).status).toBe(403);
+    expect((await book(admin, '/api/public-project-book/delete', { number: 'PUBLIC-DELETE' })).status).toBe('deleted');
+    expect(ProjectBookSchema.parse(await (await member.request('/api/public-project-book')).json()).projects).toEqual([]);
+    const event = await server.db.selectFrom('project_book_event').select(['action', 'maintenance_action']).where('number', '=', 'PUBLIC-DELETE').orderBy('seq', 'desc').executeTakeFirstOrThrow();
+    expect(event).toEqual({ action: 'removed', maintenance_action: 'deleted' });
+    expect((await book(admin, '/api/public-project-book/restore', { number: 'PUBLIC-DELETE' })).status).toBe('rejected');
+    expect((await book(member, '/api/project-book/intake', { number: 'PUBLIC-DELETE', name: '重新使用项目号' })).status).toBe('admitted');
+  });
+
+  it.each([false, true])('refreshes member task options and preserves submitted history (submitted=%s)', async (submitted) => {
+    await book(admin, '/api/public-project-book/intake', { number: 'TASK-LIFE', name: '公共历史名称' });
+    const start = await inventoried();
+    const first = start.lines[0]!;
+    const drafted = await memberApi.accepted(await memberApi.act(start, 'assign-project-lines', { lineIds: [first.lineId], projectNumber: 'TASK-LIFE', onlyUnassigned: false }));
+    if (submitted) await memberApi.accepted(await memberApi.act(drafted, 'submit-project-assignment', { purpose: '杭州出差', projects: Object.fromEntries(drafted.lines.map((line) => [line.lineId, 'TASK-LIFE'])) }));
+    await book(admin, '/api/public-project-book/delete', { number: 'TASK-LIFE' });
+    const after = await memberApi.current(start.task.taskId);
+    expect(after.projectAssignment.projects).toEqual([]);
+    if (submitted) {
+      expect(after.projectAssignment.assignments).toEqual(expect.arrayContaining([expect.objectContaining({ projectNumber: 'TASK-LIFE', projectName: '公共历史名称', projectSource: 'public' })]));
+    } else {
+      expect(after.projectAssignment.working).toEqual([]);
+      expect(after.projectAssignment.reselect).toEqual(expect.arrayContaining([expect.objectContaining({ lineId: first.lineId, projectNumber: 'TASK-LIFE' })]));
     }
   });
 });

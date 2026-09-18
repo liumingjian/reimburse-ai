@@ -188,8 +188,7 @@ test('提交：未归属或事由为空时不可用；提交后自动核对报�
 test('deactivating a submitted project preserves its snapshot and prevents new assignments', async ({ page }, testInfo) => {
   await page.goto(open('?seed=review', '#/projects'));
   await expect(page.getByRole('heading', { name: '个人项目簿', level: 1 })).toBeVisible();
-  await page.getByTestId('book-row-P-2307').getByRole('button', { name: '更多' }).click();
-  await page.getByRole('menu', { name: '项目 P-2307 的更多操作' }).getByRole('menuitem', { name: '停用项目 P-2307' }).click();
+  await page.getByTestId('book-row-P-2307').getByRole('button', { name: '停用项目 P-2307' }).click();
   await expect(page.getByTestId('book-row-P-2307')).toContainText('已停用');
 
   await jump(page, '#/task/T1/project');

@@ -89,6 +89,10 @@ function annotatePersonalEntry(entry: BookEntry, today: string, publicNumbers: R
 }
 
 function applyEvent(book: Map<string, BookEntry>, event: ProjectBookEventTable, scope: BookRef['scope']): void {
+  if (event.maintenance_action === 'deleted') {
+    book.delete(event.number);
+    return;
+  }
   if (event.maintenance_action === 'converted') {
     if (scope === 'personal') book.delete(event.number);
     return;
@@ -418,7 +422,7 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
       const decision = await serializeBookMutation(db, async (tx): Promise<DeleteDecision> => {
         const entry = (await readBook(tx, ref)).find((candidate) => candidate.number === number);
         if (!entry) return 'not_found';
-        await append(tx, ref, actorAccountId, at(), [{ number, action: 'removed' }]);
+        await append(tx, ref, actorAccountId, at(), [{ number, action: 'removed', ...(ref.scope === 'public' ? { maintenanceAction: 'deleted' as const } : {}) }]);
         return 'deleted';
       });
 
