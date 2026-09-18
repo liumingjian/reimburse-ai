@@ -7,6 +7,7 @@ import { Kysely, SqliteDialect, sql } from 'kysely';
 import { Migrator } from 'kysely/migration';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { databasePath, writeBlob } from '../data-dir';
+import { readBook } from '../books';
 import { startServer } from '../server';
 import { createTaskService } from '../tasks';
 import { tempDataDir } from '../test/harness';
@@ -47,6 +48,24 @@ async function priorVersionFixture(migration: string): Promise<string> {
   await sql`INSERT INTO blob (sha256, size, mime, created_at) VALUES (${sha}, 12, 'application/pdf', ${at})`.execute(db);
   await sql`INSERT INTO material (material_id, task_id, account_id, batch_id, blob_sha256, file_name, created_at)
             VALUES ('old-material', 'old-task', ${owner}, 'old-batch', ${sha}, 'old.pdf', ${at})`.execute(db);
+  // Populate the project stream as soon as that version supports it. These are legacy facts even on newer schemas;
+  // maintenance migrations must preserve removal semantics and existing cross-scope collisions.
+  if (migration >= '0004_188_projects') {
+    const facts = [
+      ['personal', owner, 'OLD-ACTIVE', 'admitted', '历史个人项目'],
+      ['personal', owner, 'OLD-REMOVED', 'admitted', '历史移除项目'],
+      ['personal', owner, 'OLD-REMOVED', 'removed', null],
+      ['personal', owner, 'OLD-SHARED', 'admitted', '个人历史名称'],
+      ['public', null, 'OLD-SHARED', 'admitted', '公共历史名称'],
+      ['public', null, 'OLD-INACTIVE', 'admitted', '历史公共项目'],
+      ['public', null, 'OLD-INACTIVE', 'removed', null],
+    ];
+    for (const [index, [scope, account, number, action, name]] of facts.entries()) {
+      await sql`INSERT INTO project_book_event
+        (event_id, seq, scope, owner_account_id, number, action, name, actor_account_id, created_at)
+        VALUES (${'old-project-' + index}, ${index + 1}, ${scope}, ${account}, ${number}, ${action}, ${name}, ${owner}, ${at})`.execute(db);
+    }
+  }
   await db.destroy();
   return owner;
 }
@@ -125,6 +144,18 @@ describe('migrations on an existing database', () => {
       expect(snapshot.task.name).toBe('旧任务');
       expect(snapshot.materials.map((m) => m.fileName)).toEqual(['old.pdf']);
       expect(snapshot.batches[0]?.files.map((f) => f.status)).toEqual(['accepted']);
+      if (version >= '0004_188_projects') {
+        expect(await readBook(db, { scope: 'personal', ownerAccountId: owner })).toEqual([
+          expect.objectContaining({ number: 'OLD-ACTIVE', name: '历史个人项目', deactivated: false, lastCheckedAt: '2026-09-01T10:00:00Z' }),
+          expect.objectContaining({ number: 'OLD-SHARED', name: '个人历史名称', deactivated: false }),
+        ]);
+        expect(await readBook(db, { scope: 'public' })).toEqual([
+          expect.objectContaining({ number: 'OLD-SHARED', name: '公共历史名称', deactivated: false }),
+          expect.objectContaining({ number: 'OLD-INACTIVE', name: '历史公共项目', deactivated: true }),
+        ]);
+        await expect(sql`UPDATE project_book_event SET name = 'changed'`.execute(db)).rejects.toThrow();
+        await expect(sql`DELETE FROM project_book_event`.execute(db)).rejects.toThrow();
+      }
     } finally {
       await db.destroy();
     }
