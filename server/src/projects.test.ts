@@ -1,11 +1,12 @@
 import { ProjectBookResultSchema, ProjectBookSchema, TaskListSchema, type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fixtureCatalog, type ProjectCatalog } from './catalog/project-catalog';
+import { databasePath } from './data-dir';
 import { api, sample, type Upload } from './test/api';
-import { createTestServer, type TestClient, type TestServer } from './test/harness';
+import { createTestServer, tempDataDir, testClient, type TestClient, type TestServer } from './test/harness';
 
-// Slice 09 (#188): 个人项目簿 (personal project book), 常驻城市 (home city) and 项目归属 (project assignment) through
-// `app.request()`. The project catalog is the fixture-backed fake of the ERP query-service port (ADR-0008).
+// Personal project intake, home city, and project assignment through `app.request()`. Project-book intake is local:
+// the catalog seam remains for ERP pre-submit behavior, but this test never relies on it for admission.
 
 const CATALOG = fixtureCatalog([
   { number: 'P-2307', name: '华东客户交付', audited: true, forbidden: false },
@@ -36,7 +37,14 @@ async function inventoried(files: readonly Upload[] = [hotel, rail], homeCity = 
 }
 
 async function book(path: string, body: unknown = {}) {
-  const response = await alice.post(`/api/project-book/${path}`, body);
+  if (path !== 'intake') throw new Error(`unsupported project-book action: ${path}`);
+  const input = body as { number?: string; name?: string };
+  const names: Readonly<Record<string, string>> = {
+    'P-2307': '华东客户交付',
+    'P-3312': '产品调研',
+    'P-9001': '已停用项目',
+  };
+  const response = await alice.post('/api/project-book/intake', { number: input.number ?? '', name: input.name ?? names[input.number ?? ''] ?? '本地项目' });
   expect(response.status).toBe(200);
   return ProjectBookResultSchema.parse(await response.json());
 }
@@ -122,38 +130,22 @@ describe('submit-project-assignment', () => {
 });
 
 describe('the submitted selection is pinned', () => {
-  it('editing the personal book after submit does not change the submitted selection', async () => {
-    await book('intake', { number: 'P-2307' });
+  it('the submitted selection retains the locally entered name when the public book later changes', async () => {
+    await book('intake', { number: 'P-2307', name: '本地输入的名称' });
     const start = await inventoried();
     const projects = Object.fromEntries(start.lines.map((line) => [line.lineId, 'P-2307']));
     await client.accepted(await client.act(start, 'submit-project-assignment', { purpose: '杭州出差', projects }));
 
-    await book('remove', { number: 'P-2307' });
+    const publicResult = ProjectBookResultSchema.parse(await (await alice.post('/api/public-project-book/intake', { number: 'PUBLIC-NEW', name: '后加公共项目' })).json());
+    expect(publicResult.status).toBe('admitted');
     const after = await client.current(start.task.taskId);
-    expect(after.projectAssignment).toMatchObject({ status: 'submitted', purpose: '杭州出差', projects: [] });
+    expect(after.projectAssignment).toMatchObject({ status: 'submitted', purpose: '杭州出差' });
     expect(after.projectAssignment.assignments.map((a) => [a.projectNumber, a.projectName])).toEqual([
-      ['P-2307', '华东客户交付'],
-      ['P-2307', '华东客户交付'],
+      ['P-2307', '本地输入的名称'],
+      ['P-2307', '本地输入的名称'],
     ]);
     expect(after.lines.map((line) => line.projectCode)).toEqual(['P-2307', 'P-2307']);
-    expect(after.projectAssignment.usage).toEqual([expect.objectContaining({ number: 'P-2307', selectable: false })]);
-
-    // Re-submitting the same, now-removed project on the same lines is still accepted (the pin carries it).
-    const again = await client.accepted(await client.act(after, 'submit-project-assignment', { purpose: '杭州出差（改）', projects }));
-    expect(again.lines.map((line) => line.projectName)).toEqual(['华东客户交付', '华东客户交付']);
-  });
-
-  it('a later catalog rename does not reach the submitted names', async () => {
-    const renamed = fixtureCatalog([{ number: 'P-2307', name: '华东客户交付', audited: true, forbidden: false }]);
-    await server.close();
-    await boot(renamed);
-    await book('intake', { number: 'P-2307' });
-    const start = await inventoried();
-    const projects = Object.fromEntries(start.lines.map((line) => [line.lineId, 'P-2307']));
-    await client.accepted(await client.act(start, 'submit-project-assignment', { purpose: '出差', projects }));
-    renamed.replace([{ number: 'P-2307', name: '华东客户交付二期', audited: true, forbidden: false }]);
-    expect((await book('recheck')).book.projects[0]?.name).toBe('华东客户交付二期');
-    expect((await client.current(start.task.taskId)).lines.map((line) => line.projectName)).toEqual(['华东客户交付', '华东客户交付']);
+    expect(after.projectAssignment.projects).toEqual(expect.arrayContaining([{ number: 'PUBLIC-NEW', name: '后加公共项目', source: 'public' }]));
   });
 });
 
@@ -194,52 +186,62 @@ describe('home city', () => {
 });
 
 describe('the personal book', () => {
-  it('intake takes the name from the catalog and rejects missing, unusable and unsafe numbers', async () => {
-    expect((await book('intake', { number: 'P-2307' })).book.projects).toEqual([
-      expect.objectContaining({ number: 'P-2307', name: '华东客户交付', selectable: true, statusLabel: '可选' }),
-    ]);
-    expect(await book('intake', { number: 'P-0000' })).toMatchObject({ status: 'rejected', verdict: 'missing' });
-    expect(await book('intake', { number: 'P-9001' })).toMatchObject({ status: 'rejected', verdict: 'unusable' });
-    expect(await book('intake', { number: 'P-12;' })).toMatchObject({ status: 'rejected', verdict: 'unsafe' });
-    expect(ProjectBookSchema.parse(await (await alice.request('/api/project-book')).json()).projects.map((p) => p.number)).toEqual(['P-2307']);
-  });
-
-  it('recheck marks a project that went unusable; purge removes it; remove removes one', async () => {
-    const live = fixtureCatalog([
-      { number: 'P-2307', name: '华东客户交付', audited: true, forbidden: false },
-      { number: 'P-3312', name: '产品调研', audited: true, forbidden: false },
-    ]);
-    await server.close();
-    await boot(live);
-    for (const number of ['P-2307', 'P-3312']) await book('intake', { number });
-    live.replace([{ number: 'P-2307', name: '华东客户交付', audited: true, forbidden: true }]);
-    const rechecked = await book('recheck');
-    expect(rechecked).toMatchObject({ status: 'done' });
-    expect(rechecked.book.projects.map((p) => [p.number, p.selectable])).toEqual([
-      ['P-2307', false],
-      ['P-3312', false],
-    ]);
-    expect(await book('purge')).toMatchObject({ status: 'purged', book: { projects: [] } });
-    expect(await book('purge')).toMatchObject({ status: 'none' });
-    expect(await book('remove', { number: 'P-2307' })).toMatchObject({ status: 'not_found' });
-  });
-
-  it('without a reachable catalog, intake changes nothing and says why', async () => {
+  it('admits a trimmed arbitrary safe number without calling an unavailable ERP catalog', async () => {
     await server.close();
     await boot(fixtureCatalog([], { unavailable: true }));
-    expect(await book('intake', { number: 'P-2307' })).toMatchObject({ status: 'not_logged_in', book: { projects: [] } });
+    const admitted = await book('intake', { number: '  LOCAL-0000 ', name: '  不在 ERP 目录中的本地项目  ' });
+    expect(admitted).toMatchObject({
+      status: 'admitted',
+      verdict: null,
+      book: { projects: [expect.objectContaining({ number: 'LOCAL-0000', name: '不在 ERP 目录中的本地项目', expiresOn: null, lastCheckedAt: null, selectable: true })] },
+    });
+    expect(await server.db.selectFrom('project_book_event').select(['action', 'admission_source', 'name']).where('number', '=', 'LOCAL-0000').execute()).toEqual([
+      { action: 'admitted', admission_source: 'manual', name: '不在 ERP 目录中的本地项目' },
+    ]);
+  });
+
+  it('rejects incomplete, unsafe, and duplicate local admissions without changing the saved fact', async () => {
+    const missingNumber = await alice.post('/api/project-book/intake', { number: ' ', name: '名称' });
+    expect(ProjectBookResultSchema.parse(await missingNumber.json())).toMatchObject({ status: 'rejected', note: '请填写项目号。' });
+    const missingName = await alice.post('/api/project-book/intake', { number: 'LOCAL-1', name: ' ' });
+    expect(ProjectBookResultSchema.parse(await missingName.json())).toMatchObject({ status: 'rejected', note: '请填写项目名称。' });
+    expect(await book('intake', { number: 'P-12;', name: '非法字符' })).toMatchObject({ status: 'rejected', verdict: 'unsafe' });
+    expect((await book('intake', { number: 'LOCAL-1', name: '原名称' })).status).toBe('admitted');
+    expect(await book('intake', { number: 'LOCAL-1', name: '新名称' })).toMatchObject({ status: 'rejected', note: expect.stringContaining('未重复加入') });
+    expect(ProjectBookSchema.parse(await (await alice.request('/api/project-book')).json()).projects).toEqual([expect.objectContaining({ number: 'LOCAL-1', name: '原名称' })]);
+  });
+
+  it('persists a manual admission across an application restart', async () => {
+    const dataDir = tempDataDir();
+    const database = databasePath(dataDir);
+    const first = await createTestServer({ database, dataDir, projectCatalog: fixtureCatalog([], { unavailable: true }) });
+    const owner = await first.signIn('restart-owner');
+    const admitted = ProjectBookResultSchema.parse(await (await owner.post('/api/project-book/intake', { number: 'RESTART-1', name: '重启后仍在' })).json());
+    expect(admitted.status).toBe('admitted');
+
+    // A process restart closes only the server and database; the data directory remains for the replacement process.
+    await first.app.close();
+    await first.db.destroy();
+    const second = await createTestServer({ database, dataDir, projectCatalog: fixtureCatalog([], { unavailable: true }) });
+    try {
+      const restored = ProjectBookSchema.parse(await (await testClient(second.app, owner.account, owner.cookie).request('/api/project-book')).json());
+      expect(restored.projects).toEqual([expect.objectContaining({ number: 'RESTART-1', name: '重启后仍在', lastCheckedAt: null, selectable: true })]);
+    } finally {
+      await second.close();
+    }
   });
 
   it('is per account, and resetAll clears this account’s book and home city only', async () => {
     await book('intake', { number: 'P-2307' });
     await inventoried([hotel], '杭州');
     const bob = await server.signIn('bob');
-    await bob.post('/api/project-book/intake', { number: 'P-3312' });
+    await bob.post('/api/project-book/intake', { number: 'P-3312', name: '产品调研' });
     expect(ProjectBookSchema.parse(await (await bob.request('/api/project-book')).json()).projects.map((p) => p.number)).toEqual(['P-3312']);
 
     const reset = TaskListSchema.parse(await (await alice.post('/api/reset', {})).json());
     expect(reset).toEqual({ homeCity: null, tasks: [] });
     expect(ProjectBookSchema.parse(await (await alice.request('/api/project-book')).json()).projects).toEqual([]);
     expect(ProjectBookSchema.parse(await (await bob.request('/api/project-book')).json()).projects.map((p) => p.number)).toEqual(['P-3312']);
+    expect(await server.db.selectFrom('project_book_event').select('action').where('owner_account_id', '=', alice.account.accountId).orderBy('seq').execute()).toEqual([{ action: 'admitted' }, { action: 'removed' }]);
   });
 });

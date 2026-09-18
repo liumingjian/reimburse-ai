@@ -306,10 +306,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
       }
       return parseProjectBookResponse(response.status, await readJson(response));
     },
-    intakeProject: (number) => bookAction(url(E.intakeProject.path), { number }),
-    removeProject: (number) => bookAction(url(E.removeProject.path), { number }),
-    purgeInvalidProjects: () => bookAction(url(E.purgeInvalidProjects.path), {}),
-    recheckProjects: () => bookAction(url(E.recheckProjects.path), {}),
+    intakeProject: (input) => bookAction(url(E.intakeProject.path), input),
     changePassword: (input) => authAction(url(E.changePassword.path), input),
     async listAccounts() {
       let response: Response;
@@ -338,9 +335,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
       }
       return parseProjectBookResponse(response.status, await readJson(response));
     },
-    intakePublicProject: (number) => bookAction(url(E.intakePublicProject.path), { number }),
-    removePublicProject: (number) => bookAction(url(E.removePublicProject.path), { number }),
-    recheckPublicProjects: () => bookAction(url(E.recheckPublicProjects.path), {}),
+    intakePublicProject: (input) => bookAction(url(E.intakePublicProject.path), input),
     async getLegacyImport() {
       let response: Response;
       try {
