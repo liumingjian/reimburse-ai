@@ -3,7 +3,8 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test as base, type Page } from '@playwright/test';
+import { expect as baseExpect, test as base, type Page } from '@playwright/test';
+import { STAY_TRIO_CONFIRM_NONE, stayTrioElementOf, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 
 // Every server-project test gets its own built server on its own throwaway data directory and a free port, so
 // tests never share tasks or accounts. `baseURL` points at it: `page.goto('/#/tasks')`.
@@ -58,4 +59,25 @@ export async function signIn(page: Page, username = 'admin'): Promise<void> {
   const path = session.status === 'setup_required' ? '/api/auth/setup' : '/api/auth/register';
   const response = await page.request.post(path, { data: { username, password: E2E_PASSWORD } });
   if (!response.ok()) throw new Error(`signIn(${username}) failed: ${response.status()} ${await response.text()}`);
+}
+
+// The 住宿 (accommodation) trio check (#213) runs at 盘点 (inventory): a 住宿 invoice missing its 结账单 (hotel folio)
+// or its 支付截图 (payment screenshot) gets one 待确认项 (pending item) per missing element, and the task waits at
+// `answer_pending` until they are answered. A spec whose subject lies further down the flow uploads the invoice
+// without those two, so it calls this to answer every open trio item with 确认没有 (confirm none) and move on; the
+// check itself is covered by server/src/stay-trio.test.ts and, on the page, by hotel.spec.ts.
+// Waits for the inventory run to finish first, so every item is derived. Returns the snapshot after the last answer.
+export async function answerStayGaps(page: Page, taskId: string): Promise<TaskSnapshot> {
+  const read = async (): Promise<TaskSnapshot> => TaskSnapshotSchema.parse(await (await page.request.get(`/api/tasks/${taskId}`)).json());
+  await baseExpect.poll(async () => (await read()).inventory.status, { timeout: 60_000 }).toBe('done');
+  let snapshot = await read();
+  for (const item of snapshot.pendingItems) {
+    if (item.status !== 'open' || stayTrioElementOf(item.itemId) === null) continue;
+    const answered = await page.request.post(`/api/tasks/${taskId}/actions/answer-pending`, {
+      data: { itemId: item.itemId, answer: { choice: STAY_TRIO_CONFIRM_NONE }, stepToken: snapshot.step.stepToken },
+    });
+    if (!answered.ok()) throw new Error(`answer-pending ${item.itemId} failed: ${answered.status()} ${await answered.text()}`);
+    snapshot = TaskSnapshotSchema.parse(await answered.json());
+  }
+  return snapshot;
 }

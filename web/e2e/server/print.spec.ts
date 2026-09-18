@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
 import { TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Locator, Page } from '@playwright/test';
-import { expect, signIn, test } from './fixture';
+import { answerStayGaps, expect, signIn, test } from './fixture';
 
 // Slice 11 (#190) on the real server: 去打印. A task with a hotel invoice, its folio and a taxi photo is brought to
 // choose_action through the API; the page then generates the merged sheet, and the user rotates, crops, attaches a
@@ -37,7 +37,8 @@ async function confirmedTask(page: Page): Promise<string> {
     expect(uploaded.ok()).toBe(true);
   }
   await act(page, await snapshotOf(page, taskId), 'start-inventory');
-  await expect.poll(async () => (await snapshotOf(page, taskId)).inventory.status, { timeout: 90_000 }).toBe('done');
+  // Waits out inventory and answers the 住宿 trio gaps it raises; the 支付截图 this test adds goes on from the print page.
+  await answerStayGaps(page, taskId);
   expect((await page.request.post('/api/project-book/intake', { data: { number: 'P-2307' } })).ok()).toBe(true);
   const ready = await snapshotOf(page, taskId);
   const review = await act(page, ready, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(ready.lines.map((line) => [line.lineId, 'P-2307'])) });
@@ -64,7 +65,8 @@ test('去打印：生成合并打印稿，旋转、四角裁剪、补充支付�
   const hotel = pages.getByRole('listitem', { name: HOTEL_HEADER, exact: true });
   await expectLoaded(taxi.locator('img.app-page-image'));
   await expectLoaded(hotel.locator('img.app-page-image'));
-  await expect(page.getByRole('status', { name: '打印提醒' })).toContainText('No.2 住宿发票还没有支付截图');
+  // The absence was recorded at inventory (确认没有支付截图 above), so the notice says so instead of asking again (#213).
+  await expect(page.getByRole('status', { name: '打印提醒' })).toContainText('No.2 住宿发票在盘点时已确认没有支付截图');
 
   // Rotate the folio: the page image is rendered again and the button flips.
   const hotelImage = hotel.locator('img.app-page-image');

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
 import { TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Locator, Page } from '@playwright/test';
-import { expect, signIn, test } from './fixture';
+import { answerStayGaps, expect, signIn, test } from './fixture';
 
 // Slice 14b (#194) on the real server: the admin adds a 公共项目簿 (public project book) entry on the 管理 page; a user
 // assigns a line to it; the admin deactivates it before the user submits, which forces a re-select; the submission
@@ -57,6 +57,9 @@ test('管理员添加公共项目，用户把明细归入它；提交前停用�
   await user.locator('input[type=file]').setInputFiles({ name: hotelInvoice.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, hotelInvoice.file)) });
   await expect(user.getByText(hotelInvoice.fileName, { exact: true })).toBeVisible();
   await user.getByRole('button', { name: '开始材料盘点' }).click();
+  // #213: the 住宿 invoice comes alone, so inventory asks for its 结账单 and 支付截图; answered with 确认没有, since this
+  // test is about the public project book.
+  await answerStayGaps(user, taskId);
   await expect.poll(async () => (await snapshotOf(user, taskId)).step.kind).toBe('assign_projects');
   await user.goto(`/#/task/${taskId}/project`);
   await expect(user.getByRole('heading', { name: '项目归属' })).toBeVisible();

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
 import { TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Browser, Page } from '@playwright/test';
-import { expect, signIn, test } from './fixture';
+import { answerStayGaps, expect, signIn, test } from './fixture';
 
 // Slice 06 (#185) on the real server: a hotel invoice plus a 全季 结账单 (folio) give one line with check-in and
 // check-out dates; a folio from another chain is unrecognised and offers 手工补填 (manual fill).
@@ -63,8 +63,13 @@ test('酒店发票加全季结账单，盘点后得到一条带入住和离店�
   expect(snapshot.lines).toEqual([
     expect.objectContaining({ date: '2026-08-09', endDate: '2026-08-22', grossAmount: '3640.00', category: { code: 'accommodation', label: '住宿' }, referenceMaterialIds: [folio?.materialId] }),
   ]);
-  // A clean stay moves on to the project stage (#188).
+  // Paired, so #213's trio check asks only for the 支付截图; answering it with 确认没有 leaves no open item.
+  const invoice = snapshot.materials.find((material) => material.fileName === sample('m01').name);
+  expect(snapshot.pendingItems.map((item) => item.itemId)).toEqual([`stay_screenshot_missing.${invoice?.materialId}`]);
   const taskId = /#\/task\/([^/]+)\//.exec(page.url())?.[1] ?? '';
+  await answerStayGaps(page, taskId);
+
+  // A clean stay moves on to the project stage (#188).
   await expect.poll(async () => TaskSnapshotSchema.parse(await (await page.request.get(`/api/tasks/${taskId}`)).json()).stage).toBe('project');
 });
 

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
 import { TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Page } from '@playwright/test';
-import { expect, signIn, test } from './fixture';
+import { answerStayGaps, expect, signIn, test } from './fixture';
 
 // Slice 10 (#189) on the real server: 整单明细确认 (whole-list detail confirmation). The task is brought to review
 // through the API (upload, inventory, project book, assignment); the page then confirms and offers 去打印 / 去报销.
@@ -33,7 +33,8 @@ async function reviewTask(page: Page): Promise<string> {
     expect(uploaded.ok()).toBe(true);
   }
   await act(page, await snapshotOf(page, taskId), 'start-inventory');
-  await expect.poll(async () => (await snapshotOf(page, taskId)).inventory.status).toBe('done');
+  // Waits out inventory and answers the 住宿 trio gap it raises; this test is about 整单确认 (whole-claim review).
+  await answerStayGaps(page, taskId);
   expect((await page.request.post('/api/project-book/intake', { data: { number: 'P-2307' } })).ok()).toBe(true);
   const ready = await snapshotOf(page, taskId);
   const submitted = await act(page, ready, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(ready.lines.map((line) => [line.lineId, 'P-2307'])) });
