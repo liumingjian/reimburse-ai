@@ -139,6 +139,7 @@ export function inventoryDone(versionId: string, finishedAt: string): Inventory 
 
 export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): TaskSnapshot {
   return {
+    revision: 1,
     task,
     stage,
     batches: [],

@@ -30,12 +30,14 @@ export type StepResult = TaskSnapshot | { error: ActionError };
 export type MockBus = {
   readonly options: MockOptions;
   now(): string;
-  put(snapshot: TaskSnapshot): void;
+  // Seed snapshots retain their supplied revision. An unobserved accepted change can request the same increment
+  // that commit and push apply before storing their snapshots.
+  put(snapshot: TaskSnapshot, advanceRevision?: boolean): void;
   // 当前快照的一份可修改副本。
   draft(taskId: string): TaskSnapshot;
   all(): TaskSnapshot[];
-  // 动作成功：写入并返回新快照，稍后把推送那一刻的最新快照推给订阅者。
-  commit(snapshot: TaskSnapshot): ActionOutcome;
+  // An accepted action writes and returns a snapshot, then publishes the latest view. New tasks are already born at revision 1.
+  commit(snapshot: TaskSnapshot, advanceRevision?: boolean): ActionOutcome;
   // 服务端自行推进（定时器）：写入并立即推送，不经过动作返回值。
   push(snapshot: TaskSnapshot): void;
   // 回复类动作先核对 stepToken：过期即返回 409 语义（stale_step + 最新快照），状态不动。
@@ -84,8 +86,9 @@ export function createBus(options: MockOptions): MockBus {
     return snapshot;
   };
 
-  const put = (snapshot: TaskSnapshot) => {
-    snapshots.set(snapshot.task.taskId, TaskSnapshotSchema.parse(withProjectUsage(withInventoryProjection(snapshot))));
+  const put = (snapshot: TaskSnapshot, advanceRevision = false) => {
+    const next = advanceRevision ? { ...snapshot, revision: snapshot.revision + 1 } : snapshot;
+    snapshots.set(next.task.taskId, TaskSnapshotSchema.parse(withProjectUsage(withInventoryProjection(next))));
   };
 
   // 断开期间事件流不送达（恢复后页面会重新拉取快照）。
@@ -114,8 +117,8 @@ export function createBus(options: MockOptions): MockBus {
     else setTimeout(goDown, delayMs);
   };
 
-  const commit = (snapshot: TaskSnapshot): ActionOutcome => {
-    put(snapshot);
+  const commit = (snapshot: TaskSnapshot, advanceRevision = true): ActionOutcome => {
+    put(snapshot, advanceRevision);
     const taskId = snapshot.task.taskId;
     setTimeout(() => emit(taskId, { type: 'snapshot', snapshot: clone(snapshotOf(taskId)) }), EMIT_DELAY_MS);
     return { ok: true, snapshot: clone(snapshotOf(taskId)) };
@@ -129,7 +132,7 @@ export function createBus(options: MockOptions): MockBus {
     all: () => [...snapshots.values()],
     commit,
     push(snapshot) {
-      put(snapshot);
+      put(snapshot, true);
       const taskId = snapshot.task.taskId;
       emit(taskId, { type: 'snapshot', snapshot: clone(snapshotOf(taskId)) });
     },

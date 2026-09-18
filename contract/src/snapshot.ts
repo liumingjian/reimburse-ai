@@ -868,6 +868,9 @@ export const TaskInfoSchema = z.object({
 export type TaskInfo = z.infer<typeof TaskInfoSchema>;
 
 export const TaskSnapshotSchema = z.object({
+  // Monotonic per-task snapshot version. Clients use it to order whole snapshots received through HTTP and SSE;
+  // `stepToken` remains an opaque command capability.
+  revision: z.number().int().positive(),
   task: TaskInfoSchema,
   stage: TaskStageSchema,
   batches: z.array(UploadBatchSchema),

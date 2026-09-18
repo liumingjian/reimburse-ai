@@ -136,7 +136,7 @@ export function createPendingFlow(bus: MockBus): PendingFlow {
       if (snapshot.step.kind === 'confirm_review' && snapshot.lines.length > 0) applyConfirm(snapshot, bus.now());
       else snapshot.step = { ...snapshot.step, stepToken: `${snapshot.step.stepToken}-elsewhere-${elsewhereCount}` };
       snapshot.task.updatedAt = bus.now();
-      bus.put(snapshot);
+      bus.put(snapshot, true);
     },
   };
 }

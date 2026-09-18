@@ -993,6 +993,7 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
     files: batchFiles(batch.batch_id, materials, rejections),
   }));
   return {
+    revision: task.revision,
     task: { taskId: task.task_id, name: task.name, period: null, homeCity, createdAt: task.created_at, updatedAt: task.updated_at },
     stage,
     batches: batchViews,

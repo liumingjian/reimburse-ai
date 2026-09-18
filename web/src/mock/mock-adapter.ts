@@ -192,7 +192,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
       owners.set(taskId, account.accountId);
       auth.rememberCity(homeCity);
       bus.autoNamed.add(taskId);
-      return bus.commit(emptySnapshot({ taskId, name: `${at.slice(0, 10)} 新建报销`, period: null, homeCity, createdAt: at, updatedAt: at }, 'upload'));
+      return bus.commit(emptySnapshot({ taskId, name: `${at.slice(0, 10)} 新建报销`, period: null, homeCity, createdAt: at, updatedAt: at }, 'upload'), false);
     },
     uploadBatch: inventory.uploadBatch,
     startInventory: inventory.startInventory,
