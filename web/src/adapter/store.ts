@@ -364,6 +364,12 @@ export class AppStore {
       return { ok: false, error: { code: 'adapter_error', message: describe(error) }, book: null };
     }
     if (data) this.setState(scope === 'public' ? { publicBook: { status: 'ready', data, error: null } } : { projectBook: { status: 'ready', data, error: null } });
+    // A public conversion removes the matching entry from the signed-in administrator's personal project book (个人项目簿).
+    // Drop known-obsolete data before reloading so a failed read exposes a retry state instead of selectable old data.
+    if (scope === 'public' && outcome.ok && outcome.result.status === 'converted' && this.state.projectBook.status !== 'idle') {
+      this.setState({ projectBook: { status: 'idle', data: null, error: null } });
+      await this.loadProjectBook();
+    }
     if (!outcome.ok) this.checkSession(outcome.error);
     return outcome;
   }

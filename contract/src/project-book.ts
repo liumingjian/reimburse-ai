@@ -2,8 +2,8 @@ import { z } from 'zod';
 import { ActionErrorSchema } from './actions';
 import { DateTimeSchema } from './primitives';
 
-// 项目簿 (project books) are owned by an application account or shared publicly. New entries are local preparation
-// records: entering one makes it available for 项目归属 (project assignment), but does not claim ERP verification.
+// Project books (项目簿) are owned by an application account or shared publicly. New entries are local preparation
+// records: entering one makes it available for project assignment (项目归属), but does not claim ERP verification.
 // Legacy facts retain their older presentation fields so migration never rewrites their business history.
 
 export const ProjectBookEntrySchema = z.object({

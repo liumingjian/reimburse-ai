@@ -98,7 +98,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const ownerOfTask = (taskId: string) => owners.get(taskId) ?? MOCK_ACCOUNT.accountId;
   const book = createProjectBook(options, bus, auth, bookState, ownerOfTask);
   const publicBook = createPublicBook(auth, bookState, book.refreshAllTasks);
-  bus.useProjectAllowList(book.allowList);
+  bus.useProjectAllowList((taskId) => book.allowList(taskId));
   book.prepareSeed(T1_ID);
 
   const inventory = createInventoryFlow(bus);

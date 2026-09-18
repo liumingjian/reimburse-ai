@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { SAMPLE_MATERIALS as SAMPLES } from '@baox/fixtures';
 import { describe, expect, test, vi } from 'vitest';
+import { MOCK_ACCOUNT, MOCK_PASSWORD } from './auth';
 import { PROFILES } from './fixtures/inventory';
 import { createMockAdapter } from './mock-adapter';
 
@@ -64,5 +65,40 @@ describe('mock 服务端：新建任务命名与示例材料识别', () => {
     expect((await adapter.listTasks()).homeCity).toEqual({ value: '苏州', source: 'remembered' });
     const unavailable = createMockAdapter({ seed: null, fault: null, locationUnavailable: true });
     expect((await unavailable.listTasks()).homeCity).toBeNull();
+  });
+
+  test('background inventory resolves project options from the task owner after an account switch', async () => {
+    const adapter = createMockAdapter({ seed: null, fault: null, bookEmpty: true, inventoryPhaseMs: 5 });
+    expect(await adapter.intakeProject({ number: 'A-PRIVATE', name: 'Owner A private' })).toMatchObject({ ok: true, result: { status: 'admitted' } });
+    const created = await adapter.createTask({ homeCity: '杭州' });
+    if (!created.ok) throw new Error(created.error.message);
+    const uploaded = await adapter.uploadBatch(created.snapshot.task.taskId, [new File(['rail'], 'm07-rail-0809.pdf', { type: 'application/pdf' })]);
+    if (!uploaded.ok) throw new Error(uploaded.error.message);
+    expect((await adapter.startInventory(created.snapshot.task.taskId, uploaded.snapshot.step.stepToken)).ok).toBe(true);
+
+    expect((await adapter.register({ username: 'other-owner', password: 'test-password' })).ok).toBe(true);
+    expect(await adapter.intakeProject({ number: 'B-PRIVATE', name: 'Owner B private' })).toMatchObject({ ok: true, result: { status: 'admitted' } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect((await adapter.login({ username: MOCK_ACCOUNT.username, password: MOCK_PASSWORD })).ok).toBe(true);
+    const completed = await adapter.getSnapshot(created.snapshot.task.taskId);
+    expect(completed.inventory.status).toBe('done');
+    expect(completed.projectAssignment.projects).toEqual([{ number: 'A-PRIVATE', name: 'Owner A private', source: 'personal' }]);
+  });
+
+  test('unchanged resubmission preserves historical pins after a personal project becomes public', async () => {
+    const adapter = createMockAdapter({ seed: 'review', fault: null, autoStepMs: 1 });
+    const before = await adapter.getSnapshot('T1');
+    const historicalPins = before.projectAssignment.assignments.filter((assignment) => assignment.projectNumber === 'P-3312');
+
+    expect(await adapter.intakePublicProject({ number: 'P-3312', name: 'Public replacement name' })).toMatchObject({ ok: true, result: { status: 'conversion_required' } });
+    expect(await adapter.confirmPublicProjectConversion({ operation: 'intake', number: 'P-3312', name: 'Public replacement name' })).toMatchObject({ ok: true, result: { status: 'converted' } });
+    const converted = await adapter.getSnapshot('T1');
+    expect(converted.projectAssignment.projects).toContainEqual({ number: 'P-3312', name: 'Public replacement name', source: 'public' });
+
+    const projects = Object.fromEntries(converted.projectAssignment.assignments.map((assignment) => [assignment.lineId, assignment.projectNumber]));
+    const submitted = await adapter.submitProjectAssignment('T1', { purpose: converted.projectAssignment.purpose ?? 'Travel', projects }, converted.step.stepToken);
+    if (!submitted.ok) throw new Error(submitted.error.message);
+    expect(submitted.snapshot.projectAssignment.assignments.filter((assignment) => assignment.projectNumber === 'P-3312')).toEqual(historicalPins);
   });
 });

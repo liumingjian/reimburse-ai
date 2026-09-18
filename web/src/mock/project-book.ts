@@ -22,7 +22,7 @@ export function createMockBookState(options: MockOptions, fixtureAccountId: stri
 }
 
 export type ProjectBookService = Pick<AppAdapter, 'getProjectBook' | 'intakeProject' | 'editProject' | 'deactivateProject' | 'restoreProject'> & {
-  allowList(): ProjectOption[];
+  allowList(taskId?: string): ProjectOption[];
   prepareSeed(taskId: string): void;
   refreshTasks(): void;
   refreshAllTasks(): void;
@@ -74,7 +74,11 @@ export function createProjectBook(
       .map((project): ProjectOption => ({ number: project.number, name: project.name ?? project.number, source: 'public' }));
     return [...personal, ...shared];
   };
-  const allowList = (): ProjectOption[] => {
+  const allowList = (taskId?: string): ProjectOption[] => {
+    if (taskId) {
+      const owner = ownerOfTask(taskId);
+      return owner ? allowListFor(owner) : [];
+    }
     const account = auth.account();
     return account ? allowListFor(account.accountId) : [];
   };
@@ -85,10 +89,13 @@ export function createProjectBook(
   const unauthenticated = (): ProjectBookOutcome => ({ ok: false, error: { code: UNAUTHENTICATED_CODE, message: AUTH_ERRORS.unauthenticated }, book: null });
   const availabilityConfirmations = new Map<string, { confirmation: TaskSnapshot['confirmation']; selection: string }>();
 
+  const refreshFingerprint = (snapshot: TaskSnapshot) =>
+    JSON.stringify([snapshot.projectAssignment.projects, snapshot.projectAssignment.working, snapshot.projectAssignment.reselect, snapshot.projectAssignment.usage, snapshot.confirmation, snapshot.stage, snapshot.step]);
+
   const applyBook = (taskId: string, list: readonly ProjectOption[]) => {
     const snapshot = bus.draft(taskId);
     if (!stageReached(snapshot.stage, 'project') || snapshot.erp.status !== 'idle' || snapshot.stage === 'done' || snapshot.stage === 'reconcile') return null;
-    const before = JSON.stringify([snapshot.projectAssignment.projects, snapshot.projectAssignment.working, snapshot.projectAssignment.reselect, snapshot.projectAssignment.usage, snapshot.confirmation, snapshot.stage, snapshot.step]);
+    const before = refreshFingerprint(snapshot);
     snapshot.projectAssignment.projects = list.map((project) => ({ ...project }));
     const selectable = new Set(list.map((project) => `${project.source}:${project.number}`));
     if (snapshot.projectAssignment.status !== 'submitted') {
@@ -122,7 +129,7 @@ export function createProjectBook(
     if (snapshot.stage === 'project' && (snapshot.step.kind === 'assign_projects' || snapshot.step.kind === 'maintain_project_book')) {
       snapshot.step = projectEntryStep(snapshot);
     }
-    if (JSON.stringify([snapshot.projectAssignment.projects, snapshot.step]) === before) return null;
+    if (refreshFingerprint(snapshot) === before) return null;
     snapshot.step = { ...snapshot.step, stepToken: bus.rotateToken(snapshot.step.stepToken) };
     return snapshot;
   };

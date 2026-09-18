@@ -36,8 +36,8 @@ export const HTTP_ENDPOINTS = {
   // 作废任务与完全重置也返回整份任务列表（失败 { error, taskList? }），不是任务动作，不带 stepToken。
   abandonTask: { method: 'POST', path: '/api/tasks/:id/abandon', body: 'json', fields: [] },
   resetAll: { method: 'POST', path: '/api/reset', body: 'json', fields: [] },
-  // 个人项目簿不属于任何任务：GET 返回 ProjectBook；离线录入处理后返回 ProjectBookResult，
-  // 请求本身失败 { error, book? }。
+  // Personal project books (个人项目簿) do not belong to a task: GET returns ProjectBook, and an offline maintenance
+  // request returns ProjectBookResult. A request-level failure returns { error, book? }.
   getProjectBook: { method: 'GET', path: '/api/project-book', body: 'none', fields: [] },
   intakeProject: { method: 'POST', path: '/api/project-book/intake', body: 'json', fields: ['number', 'name'] },
   editProject: { method: 'POST', path: '/api/project-book/edit', body: 'json', fields: ['originalNumber', 'number', 'name'] },
@@ -49,7 +49,8 @@ export const HTTP_ENDPOINTS = {
   // 成功 200 返回新的 AccountList，失败 { error, accounts? }。`:id` 是账号 id。
   listAccounts: { method: 'GET', path: '/api/admin/accounts', body: 'none', fields: [] },
   updateAccount: { method: 'POST', path: '/api/admin/accounts/:id', body: 'json', fields: ['role', 'active', 'temporaryPassword'] },
-  // 公共项目簿：GET 所有账号可读；离线录入只对管理员（403 forbidden { error, book }），结果形状同个人项目簿。
+  // The public project book (公共项目簿) is readable by every account; offline maintenance is administrator-only
+  // (403 forbidden { error, book }) and has the same result shape as a personal project book.
   getPublicProjectBook: { method: 'GET', path: '/api/public-project-book', body: 'none', fields: [] },
   intakePublicProject: { method: 'POST', path: '/api/public-project-book/intake', body: 'json', fields: ['number', 'name'] },
   editPublicProject: { method: 'POST', path: '/api/public-project-book/edit', body: 'json', fields: ['originalNumber', 'number', 'name'] },

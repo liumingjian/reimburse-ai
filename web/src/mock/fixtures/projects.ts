@@ -209,9 +209,12 @@ export function projectAssignmentSubmitted(input: {
   previous?: ProjectAssignment['assignments'];
 }): ProjectAssignment {
   const allowList = input.allowList ?? PROJECT_BOOK;
-  // 沿用的旧归属（项目已不在允许列表里）名称取上次记下的。
-  const known = [...allowList, ...(input.previous ?? []).map((item) => ({ number: item.projectNumber, name: item.projectName, source: item.projectSource }))];
-  const recorded = toAssignments(input.projects, known);
+  const previousByLine = new Map((input.previous ?? []).map((item) => [item.lineId, item]));
+  const recorded = Object.entries(input.projects).map(([lineId, projectNumber]) => {
+    const previous = previousByLine.get(lineId);
+    if (previous?.projectNumber === projectNumber) return { ...previous };
+    return { lineId, projectNumber, projectName: projectName(projectNumber, allowList), projectSource: projectSource(projectNumber, allowList) };
+  });
   return {
     status: 'submitted',
     purpose: input.purpose,

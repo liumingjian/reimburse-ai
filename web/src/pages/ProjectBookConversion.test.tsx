@@ -27,8 +27,11 @@ function editInput(label: '项目号' | '项目名称') {
 }
 
 describe('公共项目转换', () => {
-  test('prompts before public intake, cancels without writing, and confirms the explicit conversion', async () => {
-    renderApp('#/admin');
+  test('prompts before public intake, cancels without writing, confirms the explicit conversion, and refreshes the personal-book cache', async () => {
+    renderApp('#/projects');
+    await screen.findByTestId('book-row-P-2307');
+    window.location.hash = '#/admin';
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
     await screen.findByRole('heading', { name: '管理', level: 1 });
     const numberInput = screen.getByLabelText('项目号') as HTMLInputElement;
     const nameInput = screen.getByLabelText('项目名称') as HTMLInputElement;
@@ -49,6 +52,11 @@ describe('公共项目转换', () => {
     fireEvent.click(within(secondConversion).getByRole('button', { name: '确认转换' }));
     expect((await screen.findByTestId('book-row-P-2307')).textContent).toContain('转为公共的项目');
     expect(screen.getByTestId('book-message').textContent).toContain('已转为公共项目');
+
+    window.location.hash = '#/projects';
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    const personalTable = await screen.findByRole('table', { name: '个人项目簿' });
+    await waitFor(() => expect(within(personalTable).queryByTestId('book-row-P-2307')).toBeNull());
   });
 
   test('returns a public renumber conversion cancellation to the edit form with its proposed values', async () => {

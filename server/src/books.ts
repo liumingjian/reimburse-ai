@@ -5,7 +5,7 @@ import { isSafeProjectNumber } from './catalog/project-catalog';
 import type { Db } from './db/database';
 import type { ProjectBookEventTable, Schema } from './db/schema';
 
-// 项目簿 (project books) fold append-only facts. A manual `admitted` fact carries `admission_source = manual`; it is
+// Project books (项目簿) fold append-only facts. A manual `admitted` fact carries `admission_source = manual`; it is
 // usable locally without pretending that an ERP catalog check happened. Older facts retain their original fold rules.
 
 export type BookRef = { scope: 'personal'; ownerAccountId: string } | { scope: 'public' };
