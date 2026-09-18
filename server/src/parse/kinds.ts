@@ -77,9 +77,11 @@ const VAT_INVOICE_SLOTS: readonly Slot[] = [
 ];
 
 // 酒店结账单 (hotel folio): reference material for a hotel invoice. `folioTotal` is not an invoice amount; it only
-// pairs the folio with its invoice. `checkOut` may be derived from 入住日期 + 天数.
+// pairs the folio with its invoice. Neither date is derived from the other and 天数 (nights) (#212). The hotel name
+// is not required: what a folio proves is the stay, and a photographed folio rarely yields its name as one text run
+// (#211).
 const HOTEL_FOLIO_SLOTS: readonly Slot[] = [
-  { key: 'hotelName', label: '酒店名称', required: true, format: 'text' },
+  { key: 'hotelName', label: '酒店名称', required: false, format: 'text' },
   { key: 'guestName', label: '入住人', required: false, format: 'text' },
   { key: 'roomNumber', label: '房号', required: false, format: 'text' },
   { key: 'checkIn', label: '入住日期', required: true, format: 'date' },
@@ -106,11 +108,30 @@ const TAXI_RECEIPT_SLOTS: readonly Slot[] = [
 // `*住宿服务*住宿费` → 住宿费; the 税收分类 (tax class) between the asterisks decides the category.
 const itemParts = (itemName: string | undefined) => /^\*([^*]+)\*(.*)$/.exec(itemName ?? '');
 
-function vatCategory(values: Readonly<Record<string, string>>): ExpenseCategory | null {
-  const taxClass = itemParts(values['itemName'])?.[1];
+// 交通运输服务 is a parent class: it covers 货物运输 (freight transport), 航空运输 and 水路运输 as well as carrying
+// people, so the class on its own does not make an invoice a 市内交通 voucher. Its description has to name a passenger
+// service, the way 生产生活服务 has to name 住宿费.
+const PASSENGER_TRANSPORT = /^(客运|网约车|出租车|打车|专车|快车|乘车)/;
+
+// The v1 item rows, as they are actually printed. A face names either the fine 税收分类 (`*住宿服务*`, `*运输服务*`) or
+// its parent class (`*交通运输服务*` on ride-hailing invoices, `*生产生活服务*` on hotel ones), so both spellings map
+// here — a parent class only together with a description that names the v1 service, because the parent covers more
+// than v1 does. The categories themselves are unchanged: this adds no 费用类别 (expense category) and no 材料种类
+// (material kind) to ADR-0017's v1 matrix. `vat_invoice/einvoice` gates recognition on the same map, so what the
+// layout accepts and what a line is categorised as can never drift apart.
+export function vatItemCategory(itemName: string | undefined): ExpenseCategory | null {
+  const parts = itemParts(itemName);
+  const taxClass = parts?.[1];
+  const description = parts?.[2] ?? '';
   if (taxClass === '住宿服务') return CATEGORIES.accommodation;
+  if (taxClass === '生产生活服务') return description.startsWith('住宿费') ? CATEGORIES.accommodation : null;
   if (taxClass === '运输服务') return CATEGORIES.city_transport;
+  if (taxClass === '交通运输服务') return PASSENGER_TRANSPORT.test(description) ? CATEGORIES.city_transport : null;
   return null;
+}
+
+function vatCategory(values: Readonly<Record<string, string>>): ExpenseCategory | null {
+  return vatItemCategory(values['itemName']);
 }
 
 // Kernel maskNumber: first 4 and last 4 digits, the rest starred.

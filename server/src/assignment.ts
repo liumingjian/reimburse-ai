@@ -79,6 +79,7 @@ export function assignmentOf(lines: readonly Line[], facts: readonly AssignmentF
       working: inLineOrder(working),
       reselect: inLineOrder(dropped),
       usage: [...usage.values()].map(({ cents: total, ...entry }) => ({ ...entry, grossTotal: yuan(total) })),
+      grossTotal: yuan(lines.reduce((sum, line) => sum + cents(line.grossAmount), 0)),
       projects: options.map((option) => ({ number: option.number, name: option.name, source: option.source })),
       submittedAt: submitted?.submittedAt ?? null,
     },

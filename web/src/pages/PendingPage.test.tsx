@@ -1,10 +1,14 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { App } from '../App';
-import { ALLOCATION_ERRORS, PENDING_ANSWER_ERRORS, STALE_STEP_NOTICE, type TaskStage } from '@baox/contract';
+import { ALLOCATION_ERRORS, PENDING_ANSWER_ERRORS, STALE_STEP_NOTICE, STAY_TRIO_COPY, type PendingItem, type TaskStage } from '@baox/contract';
 import { ALLOCATION_GIVE_UP_NOTE, GIVEN_UP_TITLE, givenUpNote } from '../mock/fixtures/inventory';
+import { t1Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
 import type { Fault, MockOptions } from '../mock/options';
+import { AppProvider } from '../adapter/context';
+import { AppStore } from '../adapter/store';
+import { PendingPage } from './PendingPage';
 
 function renderPending(seed: TaskStage = 'pending', fault: Fault | null = null, extra: Partial<MockOptions> = {}) {
   window.location.hash = '#/task/T1/pending';
@@ -380,5 +384,64 @@ describe('逐段分摊与阻塞项', () => {
       expect(within(detail()).getAllByRole('button').map((button) => button.textContent)).toEqual(['排除此材料']);
     }
     expect(within(detail()).getByText(/追加单页发票后重新盘点/)).toBeTruthy();
+  });
+
+  // Server titles quote the file name (「IMG_4871.jpg」缺少字段). The queue row must not name the same file a second
+  // time, or the row reads 「IMG_4871.jpg」缺少字段 IMG_4871.jpg.
+  test('标题已经点名文件时，队列行不再重复文件名', () => {
+    const snapshot = t1Snapshot('pending');
+    const [first, ...rest] = snapshot.pendingItems;
+    if (!first) throw new Error('夹具里没有待确认项');
+    const fileName = snapshot.materials.find((material) => material.materialId === first.materialId)?.fileName ?? '';
+    const titled = { ...snapshot, pendingItems: [{ ...first, title: `「${fileName}」缺少字段` }, ...rest] };
+    const store = new AppStore(createMockAdapter({ seed: 'pending', fault: null }), { validate: true });
+    render(
+      <AppProvider store={store}>
+        <PendingPage snapshot={titled} />
+      </AppProvider>,
+    );
+    const rows = within(list()).getAllByRole('button');
+    expect(rows[0]?.textContent).toBe(`「${fileName}」缺少字段`);
+    // Titles that do not name the file keep the file name line.
+    expect(rows[1]?.textContent).toBe('下车时间不合法，并补填起点与终点IMG_4906.jpg');
+  });
+
+  // #213: a 住宿 invoice missing its 支付截图 is answered by uploading the screenshot right here, or by 确认没有.
+  test('住宿发票缺少支付截图：在待确认项里直接上传支付截图，也可以确认没有', async () => {
+    const snapshot = t1Snapshot('pending');
+    const invoice = snapshot.materials.find((material) => material.materialId === 'm01');
+    if (!invoice) throw new Error('夹具里没有住宿发票');
+    const trio: PendingItem = {
+      itemId: 'stay_screenshot_missing.m01',
+      materialId: 'm01',
+      title: STAY_TRIO_COPY.screenshot.title(invoice.fileName),
+      why: STAY_TRIO_COPY.screenshot.why('3640.00'),
+      kind: 'choice',
+      resolver: '要你处理',
+      fields: [],
+      choices: [
+        { key: 'confirm_none', label: STAY_TRIO_COPY.screenshot.confirmNone },
+        { key: 'exclude', label: '排除这份材料' },
+      ],
+      allocation: null,
+      status: 'open',
+      answer: null,
+    };
+    const adapter = createMockAdapter({ seed: 'pending', fault: null });
+    const add = vi.spyOn(adapter, 'addPaymentScreenshot').mockImplementation(async (taskId) => ({ ok: true, snapshot: await adapter.getSnapshot(taskId) }));
+    const store = new AppStore(adapter, { validate: true });
+    render(
+      <AppProvider store={store}>
+        <PendingPage snapshot={{ ...snapshot, pendingItems: [trio, ...snapshot.pendingItems] }} />
+      </AppProvider>,
+    );
+    expect(within(detail()).getByRole('heading', { name: trio.title })).toBeTruthy();
+    expect(within(detail()).getByText(STAY_TRIO_COPY.screenshot.why('3640.00'))).toBeTruthy();
+    expect(within(detail()).getByRole('button', { name: STAY_TRIO_COPY.screenshot.confirmNone })).toBeTruthy();
+    expect(within(detail()).getByRole('button', { name: STAY_TRIO_COPY.screenshot.upload })).toBeTruthy();
+
+    const file = new File([new Uint8Array([137, 80, 78, 71])], 'IMG_5011.png', { type: 'image/png' });
+    fireEvent.change(within(detail()).getByLabelText(STAY_TRIO_COPY.screenshot.inputLabel(invoice.fileName)), { target: { files: [file] } });
+    await waitFor(() => expect(add).toHaveBeenCalledWith('T1', 'm01', file));
   });
 });

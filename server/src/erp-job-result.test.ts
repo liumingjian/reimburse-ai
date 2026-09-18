@@ -35,7 +35,7 @@ async function confirmed(): Promise<TaskSnapshot> {
   const { task } = await client.createTask('杭州');
   const uploaded = await client.upload(task.taskId, [sample('m01'), sample('m02')]);
   await client.accepted(await client.act(uploaded, 'start-inventory'));
-  const done = await client.settled(task.taskId);
+  const done = await client.withoutStayGaps(await client.settled(task.taskId));
   const review = await client.accepted(await client.act(done, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
   return client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
 }

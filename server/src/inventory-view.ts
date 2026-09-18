@@ -1,11 +1,12 @@
 import { MATERIAL_KINDS, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type InventoryPhase, type Line, type Material, type MaterialKind, type PendingField, type PendingItem } from '@baox/contract';
 import type { ParseOutcome, Recognised } from './parse/dispatch';
 import { planTransport, type PlannedLine } from './allocation';
-import { pairHotelStays, type StayVoucher } from './hotel-stay';
-import { CATEGORIES, fieldLabel, KINDS, slotOf, type EventDraft, type Slot } from './parse/kinds';
-import { chosen, EXCLUDE_CHOICE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
+import { pairHotelStays } from './hotel-stay';
+import { fieldLabel, KINDS, slotOf, type EventDraft, type Slot } from './parse/kinds';
+import { chosen, EXCLUDE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
 import { editAddress, editedValue, type Editable } from './pending/edits';
 import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/company-rules';
+import { checkStayTrios, stayVoucherIds, type StayTrio, type TrioVoucher } from './stay-trio';
 
 // The pure projection of one inventory run: uploaded materials, their parser outcomes and the stored answers in; the
 // materials view, derived 待确认项 (pending items), expense events, candidate lines and inventory counts out. Nothing
@@ -14,7 +15,8 @@ import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/compan
 //
 // Item codes: unrecognised → manual_kind → manual_fill (手工补填, manual fill), ambiguous_layout, parse_failed,
 // validation_failure, qr_conflict, missing_required, duplicate_invoice (重复发票 inside the task),
-// category_city_missing (#188); allocation, itinerary_ambiguous and given_up come from #184's transport plan
+// category_city_missing (#188), stay_invoice_missing / stay_folio_missing / stay_screenshot_missing (the 住宿 trio,
+// #213, `stay-trio.ts`); allocation, itinerary_ambiguous and given_up come from #184's transport plan
 // (`allocation.ts`), answered generically (`pending/answers.ts`).
 
 export type ViewMaterial = {
@@ -51,6 +53,8 @@ export type InventoryView = {
   // Every editable field by edit address `edit.<materialId>.<field>`.
   editables: ReadonlyMap<string, Editable>;
   claims: Claim[];
+  // The 住宿 trio of every stay, once the run has finished (`stay-trio.ts`); the print stage reads recorded absences here.
+  trios: StayTrio[];
 };
 
 // The task's 常驻城市 and pinned company rules: categories are derived from them (ADR-0006).
@@ -68,14 +72,24 @@ export const INVENTORY_COPY = {
 
 const PHASES = { pdf: '读取 PDF 文本层与二维码', photo: '读取照片票面' } as const;
 
-const EXCLUDE = { key: EXCLUDE_CHOICE, label: '排除这份材料' };
 const REPLACE_HINT = '换原件请在上传页追加材料后重新盘点。';
 const MANUAL_FILL = 'manual_fill';
 const REFERENCE = 'reference';
 const CITY_MISSING_CHECK = '取不到费用发生城市';
+// A recognised material missing a required slot said nothing in the 校验 column, which rendered as 无; it now names the
+// slots it could not read.
+const MISSING_REQUIRED_CHECK = '缺少必填字段：';
 
-// Titles of validation findings that are not about amounts (the default title is 金额核对不通过).
-const VALIDATION_TITLES: Readonly<Record<string, string>> = { segment_rows_incomplete: '逐段明细没有完整读到', route_incomplete: '行程路线没有完整读到' };
+// Titles of validation findings that are not about amounts (the default title is 金额核对不通过). A code may carry
+// what it is about after a dot (`segment_field_unreadable.2.amount`) so that the message can name the leg and the
+// field; the title, and the 待确认项 raised, are keyed on the part before the dot.
+const VALIDATION_TITLES: Readonly<Record<string, string>> = {
+  segment_rows_incomplete: '逐段明细没有完整读到',
+  segment_index_unexpected: '逐段明细的序号不对',
+  segment_field_unreadable: '逐段明细没有完整读到',
+  route_incomplete: '行程路线没有完整读到',
+};
+const validationTitle = (code: string) => VALIDATION_TITLES[code.split('.')[0] ?? code] ?? '金额核对不通过';
 
 // Line-level edits every kind with an event offers: the description is wording, the ERP invoice type a choice.
 const DESCRIPTION = 'description';
@@ -261,11 +275,20 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
     }
   }
 
+  // One blocker per material and cause. A per-leg refusal reports itself in its own message — an itinerary with a gap
+  // in the middle refuses every leg after it — but each of those messages would otherwise become its own 待确认项 with
+  // the same title and the same single action (排除), and 待确认项 is what the user is asked to work through. Every
+  // message is still kept as a note.
+  const raised = new Set<string>();
   for (const finding of resolved.findings) {
     if (finding.kind === 'advisory') w.notes.push(finding.message);
     if (finding.kind === 'validation') {
       w.notes.push(finding.message);
-      add(choice(`validation_failure.${id}.${finding.code}`, id, `「${m.fileName}」${VALIDATION_TITLES[finding.code] ?? '金额核对不通过'}`, `${finding.message}票面事实不能修改。${REPLACE_HINT}`, [EXCLUDE]));
+      const cause = finding.code.split('.')[0] ?? finding.code;
+      if (!raised.has(cause)) {
+        raised.add(cause);
+        add(choice(`validation_failure.${id}.${cause}`, id, `「${m.fileName}」${validationTitle(cause)}`, `${finding.message}票面事实不能修改。${REPLACE_HINT}`, [EXCLUDE]));
+      }
     }
     if (finding.kind === 'conflict') {
       const label = fieldLabel(resolved.kind, finding.key);
@@ -289,6 +312,9 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
         values[key] = value;
         sourceOf.set(key, { source: 'user', parserVersion: null, evidence: 'explicit' });
       }
+      // Filled in: the gap is gone, so it is no longer what the 校验 column has to say.
+    } else {
+      w.notes.push(`${MISSING_REQUIRED_CHECK}${slots.map((slot) => slot.label).join('、')}`);
     }
   }
 
@@ -306,12 +332,13 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
 }
 
 // `answers`: the latest stored answer per item id / edit address (#187), allocation answers included — they reach
-// #184's per-leg split through `planTransport`.
+// #184's per-leg split through `planTransport`. `screenshots`: the voucher material ids that have a current 支付截图.
 export function inventoryView(
   materials: readonly ViewMaterial[],
   results: RunResults,
   { homeCity, rules }: CategoryContext = { homeCity: '', rules: COMPANY_RULES },
   answers: StoredAnswers = new Map(),
+  screenshots: ReadonlySet<string> = new Set(),
 ): InventoryView {
   const answerables = new Map<string, Answerable>();
   const editables = new Map<string, Editable>();
@@ -386,8 +413,7 @@ export function inventoryView(
   const views = new Map<string, Material>();
   const drafts: ({ material: ViewMaterial } & PlannedLine)[] = [];
   const pendingItems: PendingItem[] = [];
-  const stayInvoices: StayVoucher[] = [];
-  const folios: StayVoucher[] = [];
+  const folios: TrioVoucher[] = [];
   for (const w of worked) {
     const { m, resolved } = w;
     const spec = resolved ? KINDS[resolved.kind] : null;
@@ -404,7 +430,6 @@ export function inventoryView(
           const draft = lineEdits(m.materialId, allowedTypes ?? [line.draft.invoiceType], { ...line.draft, category: derived.category }, answers, editables);
           drafts.push({ material: m, ...line, draft });
         }
-        if (single && categorised[0] && 'category' in categorised[0].derived && categorised[0].derived.category.code === CATEGORIES.accommodation.code) stayInvoices.push({ materialId: m.materialId, values: w.values });
       } else {
         // Kernel category_city_missing: city transport is never put on the home city for want of its own city.
         const item = settle(
@@ -417,7 +442,7 @@ export function inventoryView(
       }
     }
     const open = w.items.some(isOpen);
-    if (!open && !w.reference && resolved?.kind === 'hotel_folio') folios.push({ materialId: m.materialId, values: w.values });
+    if (!open && !w.reference && resolved?.kind === 'hotel_folio') folios.push({ materialId: m.materialId, fileName: m.fileName, values: w.values });
     pendingItems.push(...w.items);
     const role = open ? 'pending' : w.reference ? 'reference' : spec ? spec.role : 'pending';
     views.set(m.materialId, {
@@ -435,9 +460,25 @@ export function inventoryView(
     });
   }
 
+  // Business order (kernel confirmation table): local → out-of-town city transport → long distance → accommodation;
+  // within a category, voucher upload order. Invoice labels follow voucher upload order.
+  const rank = ['local_city_transport', 'remote_city_transport', 'long_distance', 'accommodation'];
+  const ordered = [...drafts].sort((a, b) => rank.indexOf(a.draft.category.code) - rank.indexOf(b.draft.category.code));
+
+  // The 住宿 invoices are the vouchers the print stage will compose as 住宿 pages, chosen by the same rule.
+  const stayIds = stayVoucherIds(ordered.map(({ material, draft }) => ({ voucherMaterialId: material.materialId, category: draft.category })));
+  const stayInvoices: TrioVoucher[] = worked.flatMap((w) => (stayIds.has(w.m.materialId) ? [{ materialId: w.m.materialId, fileName: w.m.fileName, values: w.values }] : []));
+
   // Pairing: a hotel invoice and its folio form one stay (`hotel-stay.ts`).
   const stays = new Map(pairHotelStays(stayInvoices, folios).map((stay) => [stay.invoiceId, stay]));
   const linked = new Map<string, string[]>([...stays.values()].flatMap((stay) => [[stay.invoiceId, [stay.folioId]], [stay.folioId, [stay.invoiceId]]]));
+
+  // The 住宿 trio (#213), only over a finished run: a folio still being read is not yet missing.
+  const trio = results && waiting === 0 ? checkStayTrios(stayInvoices, folios, [...stays.values()], screenshots, answers) : { trios: [], items: new Map<string, PendingItem[]>() };
+  for (const items of trio.items.values()) {
+    for (const item of items) answerables.set(item.itemId, { item });
+    pendingItems.push(...items);
+  }
 
   const materialViews = materials.map((m): Material => {
     const outcome = results?.outcomes.get(m.materialId);
@@ -447,13 +488,16 @@ export function inventoryView(
       return { ...baseMaterial(m), ...identity, role: 'excluded', status: 'excluded', checkText: INVENTORY_COPY.excludedCheck };
     }
     const view = views.get(m.materialId) ?? baseMaterial(m);
-    return { ...view, linkedMaterialIds: linked.get(m.materialId) ?? view.linkedMaterialIds };
+    // A trio item sits on a material that is otherwise clean: it keeps its role, but is pending while the item is open.
+    const trioItems = trio.items.get(m.materialId) ?? [];
+    return {
+      ...view,
+      status: trioItems.some(isOpen) ? 'pending' : view.status,
+      pendingItemIds: [...view.pendingItemIds, ...trioItems.map((item) => item.itemId)],
+      linkedMaterialIds: linked.get(m.materialId) ?? view.linkedMaterialIds,
+    };
   });
 
-  // Business order (kernel confirmation table): local → out-of-town city transport → long distance → accommodation;
-  // within a category, voucher upload order. Invoice labels follow voucher upload order.
-  const rank = ['local_city_transport', 'remote_city_transport', 'long_distance', 'accommodation'];
-  const ordered = [...drafts].sort((a, b) => rank.indexOf(a.draft.category.code) - rank.indexOf(b.draft.category.code));
   const invoiceNo = new Map([...new Set(drafts.map((d) => d.material.materialId))].map((id, index) => [id, index + 1]));
   const events: ExpenseEvent[] = [];
   const lines: Line[] = [];
@@ -520,7 +564,7 @@ export function inventoryView(
       : null,
     ungroupedMaterialIds: done ? materialViews.filter((v) => !grouped.has(v.materialId) && (v.status === 'excluded' || v.status === 'pending' || v.role !== 'primary_voucher')).map((v) => v.materialId) : [],
   };
-  return { materials: materialViews, pendingItems, events: done ? events : [], lines: done ? lines : [], inventory, waiting, openPendingItems, answerables, editables, claims };
+  return { materials: materialViews, pendingItems, events: done ? events : [], lines: done ? lines : [], inventory, waiting, openPendingItems, answerables, editables, claims, trios: trio.trios };
 }
 
 // The line-level edits: a presentation value over the description (checks never read it), and the ERP invoice type

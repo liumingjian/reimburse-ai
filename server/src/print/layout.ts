@@ -79,10 +79,8 @@ export type PagePlan = {
   header: string;
   // Every voucher may take a 支付截图 (payment screenshot): story 61 asks for proof of payment beside its invoice,
   // not only for 住宿. With one the bottom half splits (supporting material left, screenshot right).
+  // Whether a missing one is worth a notice is not judged here: the inventory's 住宿 trio check recorded it (#213).
   acceptsPaymentScreenshot: boolean;
-  // Whether a missing one is worth saying out loud. Only 住宿 is expected to carry proof of payment, so the reminder
-  // stays there; raising it on every voucher would bury the page in notices nobody asked for.
-  expectsPaymentScreenshot: boolean;
 };
 
 const cents = (amount: string): number => {
@@ -123,13 +121,14 @@ export function planPages(lines: readonly Line[], materials: readonly Material[]
       grossAmount,
       header: `${nos} · ${first.date.slice(5)} · ${first.category.label} · ${grossAmount}`,
       acceptsPaymentScreenshot: true,
-      expectsPaymentScreenshot: first.category.code === 'accommodation',
     });
   }
   return plans;
 }
 
-export const missingScreenshotNotice = (nos: string, categoryLabel: string): string => `${nos} ${categoryLabel}发票还没有支付截图。可以照常打印，该页下半页只放结账单。`;
+// A 住宿 page without a screenshot and without an inventory trio record of it (a task inventoried before #213). A
+// recorded absence says `STAY_TRIO_COPY.printNotice` instead.
+export const unrecordedScreenshotNotice = (nos: string, categoryLabel: string): string => `${nos} ${categoryLabel}发票还没有支付截图。可以照常打印，该页下半页只放结账单。`;
 
 // 一页只有一个下半页，放不下第二份证明材料；说出来，别让它无声无息地少掉。
 export const droppedMaterialsNotice = (nos: string, fileNames: readonly string[]): string =>

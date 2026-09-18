@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ParseOutcome } from '../parse/dispatch';
 import type { ParseInput } from '../parse/material';
-import { runPrivateGate, THRESHOLDS, type CorpusParser } from './private-gate';
+import { REQUIRED_EXPECTATIONS, runPrivateGate, THRESHOLDS, type CorpusParser } from './private-gate';
 
 // Slice 16 (#196): `pnpm test:private` gates parser accuracy on the private corpus. These tests build a throwaway
 // corpus with a fake parser, so they never need the real samples.
@@ -89,6 +89,27 @@ describe('pnpm test:private (#196)', () => {
 
     expect(report).toMatch(/rail_ticket\/12306\s+pdf\s+\(recognition\)\s+0\/1\s+0\.0%\s+>= 100\.0%\s+FAIL/);
     expect(code).toBe(1);
+  });
+
+  // #199: the gate scores only what a sidecar declares, so an undeclared field is a field it cannot see — 8 of 10 real
+  // 全电发票 (fully-digitalised VAT e-invoice) faces had their item table unread while this report was all green.
+  it('fails a sample that does not declare every expectation its layout requires', async () => {
+    const values = { invoiceNumber: '26312000000104412931', issueDate: '2026-08-18', itemName: '*交通运输服务*客运服务费', netAmount: '31.55', taxAmount: '0.95', totalAmount: '32.50' };
+    put('vat_invoice/einvoice/declared.pdf', sample('vat_invoice', 'einvoice', values));
+    expectFields('vat_invoice/einvoice/declared.pdf', values);
+    put('vat_invoice/einvoice/silent.pdf', sample('vat_invoice', 'einvoice', values));
+    // Every field it does declare is read right, and it still fails: what it leaves out is the point.
+    expectFields('vat_invoice/einvoice/silent.pdf', { invoiceNumber: values.invoiceNumber, issueDate: values.issueDate, totalAmount: values.totalAmount });
+
+    const { code, report } = await run(root);
+
+    expect(report).toMatch(/vat_invoice\/einvoice\s+pdf\s+\(expectations\)\s+1\/2\s+50\.0%\s+>= 100\.0%\s+FAIL/);
+    expect(report).toMatch(/vat_invoice\/einvoice\s+pdf\s+totalAmount\s+2\/2\s+100\.0%\s+>= 100\.0%\s+ok/);
+    expect(code).toBe(1);
+  });
+
+  it('requires the item table fields of a 全电发票 to be written down', () => {
+    expect(REQUIRED_EXPECTATIONS['vat_invoice/einvoice']).toEqual(['invoiceNumber', 'issueDate', 'itemName', 'netAmount', 'taxAmount', 'totalAmount']);
   });
 
   it('skips cleanly (exit 0) when BAOX_PRIVATE_CORPUS is unset', async () => {

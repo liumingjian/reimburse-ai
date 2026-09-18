@@ -1,6 +1,7 @@
-import { PRINT_ACTION_ERRORS, type ActionError, type PlacementSlot, type ActionOutcome, type AppAdapter, PAYMENT_SCREENSHOT_ERRORS, type PrintPage, type TaskSnapshot } from '@baox/contract';
+import { PRINT_ACTION_ERRORS, stayTrioItemId, type ActionError, type PlacementSlot, type ActionOutcome, type AppAdapter, PAYMENT_SCREENSHOT_ERRORS, type PrintPage, type TaskSnapshot } from '@baox/contract';
 import type { MockBus } from '../bus';
 import { buildPrintSheet, cornersValid, cropPage, refreshScreenshots, rotatePage } from '../fixtures/print';
+import { settlePending } from './pending';
 
 // 支付截图与打印稿（生成、旋转、四角裁剪）。这些动作都不碰整单明细确认与 step，也不带 stepToken。
 
@@ -44,18 +45,29 @@ export function createPrintFlow(bus: MockBus): PrintFlow {
   };
 
   return {
-    // 支付截图：只在已生成的打印稿上补充（入口在打印稿页）；只接受图片；每张住宿发票至多一张，再补即替换。
-    // 只进 paymentScreenshots 与打印稿，不碰确认状态与 step。
+    // 支付截图 (payment screenshot): added on a generated 打印稿 (print sheet), from the print page; images only; one per
+    // invoice, another one replaces it. It touches only paymentScreenshots and the sheet, never the confirmation or step.
+    // Like the server (#213), a 住宿 invoice whose missing-screenshot item is open takes one before any sheet exists;
+    // the item then goes away.
     async addPaymentScreenshot(taskId, voucherMaterialId, file) {
       const snapshot = bus.draft(taskId);
-      if (snapshot.printSheet.status !== 'generated') return bus.fail('print_not_generated', PAYMENT_SCREENSHOT_ERRORS.notGenerated);
-      const page = snapshot.printSheet.pages.find((candidate) => candidate.top?.materialId === voucherMaterialId);
-      if (!page || !page.acceptsPaymentScreenshot) return bus.fail('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
+      const trioItemId = stayTrioItemId('screenshot', voucherMaterialId);
+      const asked = snapshot.pendingItems.some((item) => item.itemId === trioItemId && item.status === 'open');
+      if (snapshot.printSheet.status === 'generated') {
+        const page = snapshot.printSheet.pages.find((candidate) => candidate.top?.materialId === voucherMaterialId);
+        if (!page || !page.acceptsPaymentScreenshot) return bus.fail('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
+      } else if (!asked) {
+        return bus.fail('print_not_generated', PAYMENT_SCREENSHOT_ERRORS.notGenerated);
+      }
       if (!isImage(file)) return bus.fail('not_image', PAYMENT_SCREENSHOT_ERRORS.notImage);
       const screenshotId = `s${nextScreenshotNo}`;
       nextScreenshotNo += 1;
       snapshot.paymentScreenshots = snapshot.paymentScreenshots.filter((shot) => shot.voucherMaterialId !== voucherMaterialId);
       snapshot.paymentScreenshots.push({ screenshotId, voucherMaterialId, fileName: file.name, url: objectUrl(file, screenshotId) });
+      if (asked) {
+        snapshot.pendingItems = snapshot.pendingItems.filter((item) => item.itemId !== trioItemId);
+        settlePending(snapshot, bus.projectAllowList());
+      }
       afterScreenshotChange(snapshot);
       snapshot.task.updatedAt = bus.now();
       return bus.commit(snapshot);

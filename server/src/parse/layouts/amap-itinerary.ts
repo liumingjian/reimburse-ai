@@ -1,4 +1,4 @@
-import { cents, compact, money, rows, type ParseDoc, type TextObservation } from '../doc';
+import { cents, compact, joinedRows, matchSpan, money, rows, type JoinedRow, type ParseDoc, type TextObservation } from '../doc';
 import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout } from '../layout';
 
 // `ride_itinerary/amap`: the 高德行程单 (Amap ride itinerary), a reference material listing each ride leg. PDF and image
@@ -12,13 +12,20 @@ import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout
 
 const KIND = 'ride_itinerary';
 const NAME = 'amap';
-const VERSION = '1';
+const VERSION = '4';
 const SOURCE = ruleSource(KIND, NAME);
 
 const BRAND = /高德地图|AMAPITINERARY/;
-const APPLY_DATE = /^申请日期:(\d{4}-\d{2}-\d{2})$/;
+// The label over the date the itinerary was asked for: real 高德 itineraries print 申请时间, others print 申请日期.
+// Both spellings are a face's own label, so the anchor names both rather than falling back from one to the other; it
+// stays fully anchored on the date, and a header that prints neither leaves `applyDate` missing (ADR-0017).
+const APPLY_DATE = /^申请(?:日期|时间):(\d{4}-\d{2}-\d{2})$/;
 const SUMMARY = /^共计(\d+)单行程,合计([\d,]+\.\d{2})元$/;
-const TIME = /^(\d{4}-\d{2}-\d{2})\s*(\d{2}:\d{2})$/;
+// Matched against the 上车时间 cell read as one compacted string, so a date and an `HH:MM` printed on two lines join.
+const TIME = /^(\d{4}-\d{2}-\d{2})(\d{2}:\d{2})$/;
+// Real itineraries print the amount with its unit in the cell: `26.69元`. `cents()` takes `¥` and thousands
+// separators already, so only the suffix has to come off before it parses.
+const AMOUNT_UNIT = /元$/;
 
 const COLUMNS: readonly [RegExp, Column][] = [
   [/^序号$/, 'no'],
@@ -30,14 +37,27 @@ const COLUMNS: readonly [RegExp, Column][] = [
   [/^金额/, 'amount'],
 ];
 type Column = 'no' | 'carType' | 'time' | 'city' | 'origin' | 'destination' | 'amount';
-// Only these columns may wrap onto more lines within a row.
-const WRAPPING: ReadonlySet<Column> = new Set(['origin', 'destination']);
+// The per-column policy: may a cell absorb text from the lines below it, within its leg's row band? Real itineraries
+// wrap a long address, and they wrap 上车时间 between its date and its `HH:MM`. The remaining columns stay on the leg's
+// own baseline, so a neighbouring row's text can never drift into them.
+const WRAPPING: ReadonlySet<Column> = new Set(['time', 'origin', 'destination', 'amount']);
+// How far below the line above it a wrapped line may sit, as a multiple of the text height. A continuation line
+// follows within about one line height; a wider gap is not a continuation.
+const CONTINUATION_GAP = 1.8;
 
 const center = (o: TextObservation) => o.x + o.width / 2;
-const ref = (observations: TextObservation[]): EvidenceRef[] =>
+const ref = (observations: readonly TextObservation[]): EvidenceRef[] =>
   observations.length ? [{ page: observations[0]?.page ?? 1, observationIds: observations.map((o) => o.id), text: observations.map((o) => o.raw).join('') }] : [];
 
 type Header = { y: number; page: number; columns: { key: Column; center: number }[] };
+
+// Every page's joined rows in reading order. A layout anchor is matched against these: the pattern stays fully
+// anchored, only the haystack widens from one text run to the whole visual row (ADR-0017).
+function allRows(doc: ParseDoc): JoinedRow[] {
+  const out: JoinedRow[] = [];
+  for (let page = 1; page <= doc.pageCount; page += 1) out.push(...joinedRows(doc, page));
+  return out;
+}
 
 function header(doc: ParseDoc): Header | null {
   for (let page = 1; page <= doc.pageCount; page += 1) {
@@ -68,6 +88,21 @@ function columnOf(head: Header, o: TextObservation): Column | null {
 
 type LegCells = { index: number; cells: Partial<Record<Column, TextObservation[]>> };
 
+// A cell read top to bottom, cut where the text stops being continuous. A wrapped cell's lines follow each other about
+// one line height apart; anything separated by a wider gap is not part of it. The last leg has no next row to bound
+// its band, and the right-most column (amount) has no right bound either, so without this cut a table total or a
+// right-aligned note printed under the table joins that leg's amount cell — and, reading as no amount at all, refuses
+// the whole block.
+function continuous(list: readonly TextObservation[]): TextObservation[] {
+  const out: TextObservation[] = [];
+  for (const o of list) {
+    const previous = out.at(-1);
+    if (previous && previous.y - o.y > Math.max(previous.height, o.height) * CONTINUATION_GAP) break;
+    out.push(o);
+  }
+  return out;
+}
+
 function legRows(doc: ParseDoc, head: Header): LegCells[] {
   const below = doc.observations.filter((o) => o.page === head.page && o.y < head.y - 2);
   const anchors = below.filter((o) => /^\d+$/.test(compact(o.text)) && columnOf(head, o) === 'no').sort((a, b) => b.y - a.y);
@@ -84,7 +119,12 @@ function legRows(doc: ParseDoc, head: Header): LegCells[] {
       const inRow = WRAPPING.has(column) ? o.y <= top && o.y > bottom : Math.abs(o.y - anchor.y) <= 3;
       if (inRow) (cells[column] ??= []).push(o);
     }
-    for (const list of Object.values(cells)) list.sort((a, b) => b.y - a.y || a.x - b.x);
+    for (const column of Object.keys(cells) as Column[]) {
+      const list = cells[column];
+      if (!list) continue;
+      list.sort((a, b) => b.y - a.y || a.x - b.x);
+      cells[column] = continuous(list);
+    }
     return { index: Number(compact(anchor.text)), cells };
   });
 }
@@ -103,42 +143,54 @@ export const amapItinerary: Layout = {
   parse(doc) {
     const candidates: Candidate[] = [];
     const findings: Finding[] = [];
-    const add = (key: string, value: string | null | undefined, evidence: TextObservation[]) => {
+    const add = (key: string, value: string | null | undefined, evidence: readonly TextObservation[]) => {
       if (value) candidates.push({ key, value, source: SOURCE, parserVersion: VERSION, evidence: 'explicit', refs: ref(evidence) });
     };
 
-    const apply = doc.observations.find((o) => APPLY_DATE.test(compact(o.text)));
-    if (apply) add('applyDate', APPLY_DATE.exec(compact(apply.text))?.[1], [apply]);
+    // The 申请时间 header field and the 共计N单行程 summary are matched against row spans, not against one text run and
+    // not against the whole row: a real itinerary prints several fields on one baseline and splits a label from its
+    // value, so the narrowest contiguous run of a row is the only haystack that holds exactly one field (ADR-0017:
+    // the haystack narrows, the patterns stay fully anchored).
+    const lines = allRows(doc);
+    const apply = matchSpan(lines, APPLY_DATE);
+    if (apply) add('applyDate', apply.match[1], apply.span.observations);
 
-    const summary = doc.observations.find((o) => SUMMARY.test(compact(o.text)));
-    const declared = summary ? SUMMARY.exec(compact(summary.text)) : null;
-    const total = declared?.[2] ? cents(declared[2]) : null;
-    if (summary && declared) {
-      add('segmentCount', String(Number(declared[1])), [summary]);
-      if (total !== null) add('itineraryTotal', money(total), [summary]);
+    const summary = matchSpan(lines, SUMMARY);
+    const total = summary?.match[2] ? cents(summary.match[2]) : null;
+    if (summary) {
+      add('segmentCount', String(Number(summary.match[1])), summary.span.observations);
+      if (total !== null) add('itineraryTotal', money(total), summary.span.observations);
     }
 
     const head = header(doc);
     const legs = head ? legRows(doc, head) : [];
     const text = (list: TextObservation[] | undefined) => (list ?? []).map((o) => compact(o.raw)).join('') || null;
+    // A cell read as one string: its observations top to bottom, left to right, joined and compacted the way anchors
+    // are matched everywhere else. A cell that wrapped onto a second line therefore reads as a single value.
+    const cell = (list: TextObservation[] | undefined) => compact((list ?? []).map((o) => o.text).join(''));
     const parsed = legs.map(({ index, cells }) => {
-      const time = TIME.exec(compact(cells.time?.map((o) => o.text).join(' ') ?? '').replace(/^(\d{4}-\d{2}-\d{2})(\d{2}:)/, '$1 $2'));
-      const amount = cells.amount?.[0] ? cents(cells.amount[0].text) : null;
+      const time = TIME.exec(cell(cells.time));
+      const amount = cents(cell(cells.amount).replace(AMOUNT_UNIT, ''));
       return { index, cells, date: time?.[1] ?? null, time: time?.[2] ?? null, amount: amount !== null && amount > 0 ? money(amount) : null };
     });
 
     // Leg rows are trusted only as a whole: indexes 1..n in order, n = the declared count, each with a date and an
     // amount. Otherwise a row was not read completely (wrapped tables are the known trap) and all of them are dropped.
-    const complete =
-      declared !== null &&
-      parsed.length === Number(declared[1]) &&
-      parsed.every((leg, i) => leg.index === i + 1 && leg.date !== null && leg.amount !== null);
-    if (!complete) {
-      findings.push({
-        kind: 'validation',
-        code: 'segment_rows_incomplete',
-        message: `逐段明细读到 ${parsed.length} 行，行程单声明 ${declared ? `${declared[1]} 段` : '的段数没读到'}，对不上；整块不采用。`,
-      });
+    // Each clause is judged on its own and reports itself, so the refusal names the cause the user can check against
+    // the original: a count message is emitted only when the counts really differ.
+    const declaredCount = summary ? Number(summary.match[1]) : null;
+    const refusals: Finding[] = [];
+    const refuse = (code: string, message: string) => refusals.push({ kind: 'validation', code, message });
+    if (declaredCount === null) refuse('segment_rows_incomplete', `行程单声明的段数没读到，逐段明细读到 ${parsed.length} 行；整块不采用。`);
+    else if (parsed.length !== declaredCount) refuse('segment_rows_incomplete', `逐段明细读到 ${parsed.length} 行，行程单声明 ${declaredCount} 段，对不上；整块不采用。`);
+    parsed.forEach((leg, i) => {
+      const no = i + 1;
+      if (leg.index !== no) refuse(`segment_index_unexpected.${no}`, `第 ${no} 段的序号读成了 ${leg.index}；整块不采用。`);
+      if (leg.date === null) refuse(`segment_field_unreadable.${no}.date`, `第 ${no} 段的上车时间没读到；整块不采用。`);
+      if (leg.amount === null) refuse(`segment_field_unreadable.${no}.amount`, `第 ${no} 段的金额没读到；整块不采用。`);
+    });
+    if (refusals.length > 0) {
+      findings.push(...refusals);
       return { kindLabel: '高德行程单', candidates, findings };
     }
 
@@ -150,7 +202,7 @@ export const amapItinerary: Layout = {
       add(at('city'), text(leg.cells.city), leg.cells.city ?? []);
       add(at('origin'), text(leg.cells.origin), leg.cells.origin ?? []);
       add(at('destination'), text(leg.cells.destination), leg.cells.destination ?? []);
-      add(at('amount'), leg.amount, leg.cells.amount?.slice(0, 1) ?? []);
+      add(at('amount'), leg.amount, leg.cells.amount ?? []);
     });
     const unrouted = parsed.filter((leg) => !text(leg.cells.origin) || !text(leg.cells.destination)).map((leg) => leg.index);
     if (unrouted.length > 0) {

@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { ActionError } from './ActionError';
+import { useStickyHeight } from './useStickyHeight';
 
 // Sticky bottom action bar (吸底操作栏, DESIGN.md「页面操作栏与并列入口」): spans the whole sheet and sticks to the
 // viewport's bottom edge. Left: one consequence or summary line that does not repeat the page lead. Then an optional
@@ -19,8 +20,11 @@ export type ActionBarProps = {
 
 export function ActionBar({ label, consequence, consequenceProps, caption, actions, error = null }: ActionBarProps) {
   const { className, ...rest } = consequenceProps ?? {};
+  const barRef = useRef<HTMLElement>(null);
+  // Its height lets sticky page parts (the project panel) stop above it.
+  useStickyHeight(barRef, '--app-action-bar-h');
   return (
-    <section className="app-action-bar" aria-label={label}>
+    <section ref={barRef} className="app-action-bar" aria-label={label}>
       <div className={className ? `app-consequence ${className}` : 'app-consequence'} {...rest}>
         {consequence}
       </div>

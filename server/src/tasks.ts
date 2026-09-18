@@ -220,6 +220,8 @@ async function loadTask(tx: Tx, task: TaskTable, materials?: readonly MaterialRo
       answers.set(row.item_id, JSON.parse(row.answer) as PendingAnswer);
     }
   }
+  // Payment screenshots are print facts, but the 住宿 trio check at inventory reads them too (#213).
+  const print = await loadPrintFacts(tx, task.task_id);
   const view = inventoryView(
     rows.map(viewMaterial),
     current
@@ -231,6 +233,7 @@ async function loadTask(tx: Tx, task: TaskTable, materials?: readonly MaterialRo
       : null,
     { homeCity, rules },
     answers,
+    new Set(print.screenshots.map((shot) => shot.voucherMaterialId)),
   );
   if (current) facts.parse = { waiting: view.waiting, openPendingItems: view.openPendingItems, blockers: [] };
   let assignment: Assignment | null = null;
@@ -247,7 +250,6 @@ async function loadTask(tx: Tx, task: TaskTable, materials?: readonly MaterialRo
   facts.confirmation = confirmationStatus(digest, confirmed, facts.lastReopenRevision);
   const erp = await loadErp(tx, task.task_id);
   facts.erp = erp.facts;
-  const print = await loadPrintFacts(tx, task.task_id);
   return { facts, view, runId: current?.run_id ?? null, parsed: new Set(results.map((result) => result.material_id)), homeCity, rules, assignment, legacy, lines, digest, confirmed, erp, print };
 }
 
@@ -424,6 +426,8 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       materials: loaded.view.materials,
       sources: new Map(rows.filter((row) => !row.excluded).map((row) => [row.material_id, { sha256: row.blob_sha256, mediaType: mediaTypeOf(row), fileName: row.file_name }] as const)),
       facts: loaded.print,
+      trios: loaded.view.trios,
+      erpAttempted: loaded.erp.attempted,
     };
     let commit: PrintCommit | null;
     try {
@@ -1000,8 +1004,8 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
     blockers,
     lines,
     confirmation: confirmationView(digest, confirmed, facts.lastReopenRevision, lines) satisfies Confirmation,
-    ...printView(task.task_id, task.name, print, sheetState(print, facts.confirmation, confirmed?.revision ?? null)),
-    projectAssignment: assignment?.view ?? { status: 'not_started', purpose: null, homeCity, assignments: [], working: [], reselect: [], usage: [], projects: [], submittedAt: null },
+    ...printView(task.task_id, task.name, print, sheetState(print, facts.confirmation, confirmed?.revision ?? null), view.trios),
+    projectAssignment: assignment?.view ?? { status: 'not_started', purpose: null, homeCity, assignments: [], working: [], reselect: [], usage: [], grossTotal: '0.00', projects: [], submittedAt: null },
     // The catalog check lives in the ERP job (ADR-0014); a mismatch it found shows here until the next submission.
     catalog: catalogView(erp) ?? { status: 'pending', problems: [] },
     // Nothing is prepared before the confirmation any more.

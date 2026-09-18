@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
 import { TaskListSchema, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Page } from '@playwright/test';
-import { expect, signIn, test } from './fixture';
+import { answerStayGaps, expect, signIn, test } from './fixture';
 
 // Slice 12 (#191) on the real server: the two ways 去报销 stops before it writes anything. Both were covered only
 // against the mock, so nothing checked that the real server projects them the same way.
@@ -35,7 +35,8 @@ async function confirmedTask(page: Page): Promise<string> {
     expect(uploaded.ok()).toBe(true);
   }
   await act(page, await snapshotOf(page, taskId), 'start-inventory');
-  await expect.poll(async () => (await snapshotOf(page, taskId)).inventory.status, { timeout: 60_000 }).toBe('done');
+  // Waits out inventory and answers the 住宿 trio gap it raises (no 支付截图 here); this test is about the ERP stage.
+  await answerStayGaps(page, taskId);
   for (const number of PROJECTS) expect((await page.request.post('/api/project-book/intake', { data: { number } })).ok()).toBe(true);
   const ready = await snapshotOf(page, taskId);
   const review = await act(page, ready, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(ready.lines.map((line) => [line.lineId, PROJECTS[0]])) });

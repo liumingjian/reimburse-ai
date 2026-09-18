@@ -29,6 +29,8 @@ export type Answerable = { item: PendingItem; check?: AnswerCheck };
 export type StoredAnswers = ReadonlyMap<string, PendingAnswer>;
 
 export const EXCLUDE_CHOICE = 'exclude';
+// The choice every blocking item on a material offers: leave the material out.
+export const EXCLUDE = { key: EXCLUDE_CHOICE, label: '排除这份材料' };
 
 const toCents = (amount: string): number => Math.round(Number(amount) * 100);
 const yuan = (cents: number): string => `${cents < 0 ? '-' : ''}${Math.floor(Math.abs(cents) / 100)}.${String(Math.abs(cents) % 100).padStart(2, '0')}`;

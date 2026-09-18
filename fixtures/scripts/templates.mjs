@@ -1,18 +1,31 @@
-// HTML 模板：每份材料一个片段 { id, width, height, css, body }，由 generate.mjs 包成完整文档交给 headless Chrome。
-// 尺寸按 96dpi 像素：A4 纵向 794x1123，横向 1123x794。样式只服务夹具外观，与应用的 DESIGN.md 无关。
+// The HTML templates: one fragment { id, width, height, css, body } per material, which generate.mjs wraps into a
+// whole document and hands to headless Chrome.
+// Sizes are 96dpi pixels: A4 portrait 794x1123, landscape 1123x794. The styling serves the fixture's look only and has
+// nothing to do with the app's DESIGN.md.
 import {
   AMAP_INVOICE,
   AMAP_ITINERARY,
+  BUNDLED_FEE_INVOICE,
+  AMAP_ITINERARY_GAP,
+  AMAP_ITINERARY_WRAPPED,
+  AMAP_ITINERARY_CROSS_CITY,
   BUYER,
   CAOCAO_INVOICE,
   CAOCAO_ITINERARY,
   HOTEL_FOLIO,
+  HOTEL_FOLIO_PHOTO,
   HOTEL_INVOICE,
   OTHER_INVOICE,
   PRINT_PAGES,
   PRINT_VARIANTS,
   RAIL_0809,
   RAIL_0822,
+  RAIL_SPLIT_RUNS,
+  SPACED_TITLE_INVOICE,
+  TRANSPORT_INVOICE,
+  SPLIT_NUMBER_INVOICE,
+  WIDE_COLUMN_INVOICE,
+  WRAPPED_ITEM_INVOICE,
   TAXI_0815,
   TAXI_0819,
   headerOf,
@@ -22,19 +35,22 @@ export const A4 = { width: 794, height: 1123 };
 export const A4_LANDSCAPE = { width: 1123, height: 794 };
 export const PHOTO = { width: 900, height: 1200 };
 
-// 字体决定文本层能否被原样抽回：PingFang / Songti / Hiragino 的 ToUnicode 会把「入日子金」等映射成康熙部首码位，
-// STHeiti / Yuanti SC / Arial Unicode MS / LiSong Pro 在 Chrome 152 下抽回的是正常汉字（fixtures/scripts/verify.mjs 会校验）。
+// The font decides whether the text layer can be extracted as written: the ToUnicode maps of PingFang / Songti /
+// Hiragino turn 入日子金 and friends into Kangxi radical code points, while STHeiti / Yuanti SC / Arial Unicode MS /
+// LiSong Pro come back as ordinary Han characters under Chrome 152 (fixtures/scripts/verify.mjs checks this).
 const FONT = '"STHeiti", "Yuanti SC", "Arial Unicode MS", "LiSong Pro", sans-serif';
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-// ---- 全电发票（专票/普票共用版式，只换标题与颜色）----
+// ---- 全电发票 (fully digital e-invoice): 专票 and 普票 share one layout, only the title and the colour differ ----
 function invoice(data, accent) {
   const css = `
 .inv { width: 794px; height: 1123px; padding: 56px 48px; font-family: ${FONT}; color: #222; font-size: 13px; position: relative; background: #fff; }
 .inv .title { text-align: center; font-size: 26px; color: ${accent}; letter-spacing: 6px; border-bottom: 2px solid ${accent}; padding-bottom: 6px; margin: 0 120px 8px; }
 .inv .title-under { margin: 0 120px 18px; border-bottom: 1px solid ${accent}; }
 .inv .meta { text-align: right; font-size: 13px; line-height: 1.8; margin-bottom: 10px; }
+.inv .meta .apart { margin-left: 4px; }
+.inv .title .beside { font-size: 13px; letter-spacing: 0; margin-left: 24px; }
 .inv .qr { position: absolute; left: 48px; top: 48px; width: 82px; height: 82px; border: 2px solid #333; display: grid; place-items: center; font-size: 11px; color: #555; }
 .inv table { width: 100%; border-collapse: collapse; margin-top: 12px; }
 .inv th, .inv td { border: 1px solid ${accent}; padding: 7px 8px; text-align: left; font-weight: 400; }
@@ -46,28 +62,51 @@ function invoice(data, accent) {
 .inv .total { border: 1px solid ${accent}; padding: 8px 10px; display: flex; gap: 32px; }
 .inv .total b { color: ${accent}; font-weight: 400; }
 .inv .foot { margin-top: 24px; display: flex; justify-content: space-between; color: #555; }
+.inv.wide th { text-align: center; }
+.inv.wide td:first-child, .inv.wide th:first-child { width: 40%; }
 .inv .stamp { position: absolute; right: 70px; bottom: 120px; width: 150px; height: 150px; border: 3px solid rgba(200, 40, 40, 0.75); border-radius: 50%; color: rgba(200, 40, 40, 0.75); display: grid; place-items: center; font-size: 12px; text-align: center; transform: rotate(-12deg); }
 `;
+  // The goods table of a real 全电发票 (fully-digitalised VAT e-invoice) face (#199): no 单位 (unit) column, 单价 (unit
+  // price) before 数量 (quantity), a 项目名称 (item name) column far wider than its header, and a header label centred
+  // over it while the cell under it is left-aligned at the column's border.
+  const wide = data.wideNameColumn === true;
+  const head = wide
+    ? '<tr><th>项目名称</th><th>单价</th><th>数量</th><th>金额</th><th>税率/征收率</th><th>税额</th></tr>'
+    : '<tr><th>项目名称</th><th>单位</th><th>数量</th><th>单价</th><th>金额</th><th>税率/征收率</th><th>税额</th></tr>';
   const rows = data.rows
-    .map(
-      (r) =>
-        `<tr><td>${esc(r.name)}</td><td>${esc(r.unit)}</td><td class="num">${esc(r.qty)}</td><td class="num">${esc(r.price)}</td><td class="num">${esc(r.net)}</td><td class="num">${esc(r.rate)}</td><td class="num">${esc(r.tax)}</td></tr>`,
+    .map((r) =>
+      wide
+        ? `<tr><td>${esc(r.name)}</td><td class="num">${esc(r.price)}</td><td class="num">${esc(r.qty)}</td><td class="num">${esc(r.net)}</td><td class="num">${esc(r.rate)}</td><td class="num">${esc(r.tax)}</td></tr>`
+        : `<tr><td>${esc(r.name)}</td><td>${esc(r.unit)}</td><td class="num">${esc(r.qty)}</td><td class="num">${esc(r.price)}</td><td class="num">${esc(r.net)}</td><td class="num">${esc(r.rate)}</td><td class="num">${esc(r.tax)}</td></tr>`,
     )
     .join('');
+  const totalRow = wide
+    ? `<tr><td>合计</td><td></td><td></td><td class="num">¥${esc(data.net)}</td><td></td><td class="num">¥${esc(data.tax)}</td></tr>`
+    : `<tr><td>合计</td><td></td><td></td><td></td><td class="num">¥${esc(data.net)}</td><td></td><td class="num">¥${esc(data.tax)}</td></tr>`;
+  // Text-run splits (#200): a title drawn one run per glyph and a number drawn apart from its label are both common
+  // on a real invoice.
+  const titleText = data.spacedTitle ? [...data.title].map((ch) => `<span>${esc(ch)}</span>`).join('') : esc(data.title);
+  // Fields side by side on one baseline (#206): the 联次 (copy marker) beside the title, the number sharing a row with
+  // the 开票日期, each label a run apart from its value. Joined as a whole row, not one of the three anchors matches —
+  // only a contiguous run inside the row is exactly one field.
+  const title = data.sharedBaseline ? `${titleText}<span class="beside">发票联</span>` : titleText;
+  const number = data.splitNumber || data.sharedBaseline ? `发票号码：<span class="apart">${esc(data.number)}</span>` : `发票号码：${esc(data.number)}`;
+  const issued = data.sharedBaseline ? `开票日期：<span class="apart">${esc(data.date)}</span>` : `开票日期：${esc(data.date)}`;
+  const meta = data.sharedBaseline ? `${number}<span class="apart">${issued}</span>` : `${number}<br>${issued}`;
   const body = `
-<div class="inv">
+<div class="inv${wide ? ' wide' : ''}">
   <div class="qr">二维码</div>
-  <div class="title">${esc(data.title)}</div>
+  <div class="title">${title}</div>
   <div class="title-under"></div>
-  <div class="meta">发票号码：${esc(data.number)}<br>开票日期：${esc(data.date)}</div>
+  <div class="meta">${meta}</div>
   <div class="party">
     <div><b>购买方</b>名称：${esc(BUYER.name)}<br><b>信息</b>统一社会信用代码/纳税人识别号：${esc(BUYER.taxNo)}</div>
     <div><b>销售方</b>名称：${esc(data.seller.name)}<br><b>信息</b>统一社会信用代码/纳税人识别号：${esc(data.seller.taxNo)}</div>
   </div>
   <table>
-    <tr><th>项目名称</th><th>单位</th><th>数量</th><th>单价</th><th>金额</th><th>税率/征收率</th><th>税额</th></tr>
+    ${head}
     ${rows}
-    <tr><td>合计</td><td></td><td></td><td></td><td class="num">¥${esc(data.net)}</td><td></td><td class="num">¥${esc(data.tax)}</td></tr>
+    ${totalRow}
   </table>
   <div class="total"><span><b>价税合计（大写）</b>${esc(data.grossWords)}</span><span><b>（小写）</b>¥${esc(data.gross)}</span></div>
   <div class="foot"><span>备注：本发票由夹具生成器生成，人物与数字均为虚构。</span><span>开票人：某某</span></div>
@@ -76,7 +115,7 @@ function invoice(data, accent) {
   return { id: data.id, ...A4, css, body };
 }
 
-// ---- 酒店结账单 ----
+// ---- 酒店结账单 (hotel folio) ----
 function folio(data) {
   const css = `
 .folio { width: 794px; height: 1123px; padding: 64px 72px; font-family: ${FONT}; color: #222; font-size: 13px; background: #fff; }
@@ -117,7 +156,36 @@ function folio(data) {
   return { id: data.id, ...A4, css, body };
 }
 
-// ---- 网约车行程单 ----
+// The folio photo (#212): a label column and a value column a wide gap apart, so OCR reads each label and each value as
+// its own box, on a desk slightly askew the way a phone catches it.
+function folioPhoto(data) {
+  const css = `
+.photo { width: 900px; height: 1200px; background: #a89680; position: relative; overflow: hidden; }
+.photo .paper { position: absolute; left: 110px; top: 120px; width: 680px; height: 940px; padding: 56px 60px; background: #fbfaf6; color: #222; font-family: ${FONT}; transform: rotate(-2deg); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35); }
+.photo h1 { font-size: 40px; font-weight: 600; text-align: center; margin: 0 0 14px; letter-spacing: 6px; }
+.photo .hotel { font-size: 24px; text-align: center; margin-bottom: 40px; }
+.photo .field { display: flex; font-size: 26px; height: 58px; align-items: center; }
+.photo .field span:first-child { width: 250px; }
+.photo .sum { display: flex; justify-content: space-between; font-size: 28px; margin-top: 48px; border-top: 2px solid #555; padding-top: 22px; }
+.photo .note { margin-top: 64px; font-size: 18px; color: #777; text-align: center; }
+`;
+  const field = (label, value) => `<div class="field"><span>${esc(label)}</span><span>${esc(value)}</span></div>`;
+  const body = `
+<div class="photo"><div class="paper">
+  <h1>结账单</h1>
+  <div class="hotel">${esc(data.hotel)}</div>
+  ${field('入住人', data.guest)}
+  ${field('房号', data.room)}
+  ${field('入住日期', data.checkIn)}
+  ${field('离店日期', data.checkOut)}
+  ${field('天数', data.nights)}
+  <div class="sum"><span>消费合计</span><span>${esc(data.total)}</span></div>
+  <div class="note">夹具生成器生成，非真实单据</div>
+</div></div>`;
+  return { id: data.id, ...PHOTO, css, body };
+}
+
+// ---- 网约车行程单 (ride-hailing itinerary) ----
 function itinerary(data) {
   const css = `
 .itin { width: 794px; height: 1123px; padding: 64px 64px; font-family: ${FONT}; color: #222; font-size: 13px; background: #fff; }
@@ -125,24 +193,30 @@ function itinerary(data) {
 .itin .brand { color: #1a73e8; font-weight: 600; font-size: 14px; margin-bottom: 20px; }
 .itin .meta { line-height: 1.9; margin-bottom: 8px; }
 .itin .summary { font-size: 15px; margin: 8px 0 20px; }
+.itin .summary .apart { margin-left: 3px; }
 .itin table { width: 100%; border-collapse: collapse; }
 .itin th, .itin td { border: 1px solid #d0d0d0; padding: 8px 6px; text-align: left; font-weight: 400; }
 .itin th { background: #f2f4f7; font-size: 12px; }
 .itin td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .itin .note { margin-top: 28px; color: #777; font-size: 12px; line-height: 1.7; }
 `;
+  // Text-run splits (#205): a real itinerary draws 上车时间 as a date line and a time line, and splits the summary row
+  // across several runs.
   const rows = data.rows
-    .map(
-      (r) =>
-        `<tr><td>${esc(r.no)}</td><td>${esc(r.car)}</td><td>${esc(r.time)}</td><td>${esc(r.city)}</td><td>${esc(r.from)}</td><td>${esc(r.to)}</td><td class="num">${esc(r.amount)}</td></tr>`,
-    )
+    .map((r) => {
+      const time = r.timeLines ? r.timeLines.map((line) => `<div>${esc(line)}</div>`).join('') : esc(r.time);
+      return `<tr><td>${esc(r.no)}</td><td>${esc(r.car)}</td><td>${time}</td><td>${esc(r.city)}</td><td>${esc(r.from)}</td><td>${esc(r.to)}</td><td class="num">${esc(r.amount)}</td></tr>`;
+    })
     .join('');
+  const summary = data.splitSummary
+    ? `<span>共计</span><span class="apart">${esc(data.count)}</span><span class="apart">单行程，合计</span><span class="apart">${esc(data.total)}</span><span class="apart">元</span>`
+    : `共计${esc(data.count)}单行程，合计${esc(data.total)}元`;
   const body = `
 <div class="itin">
   <h1>行程单</h1>
   <div class="brand">${esc(data.brand)}</div>
-  <div class="meta">申请日期：${esc(data.applyDate)}<br>行程人手机：${esc(data.phone)}</div>
-  <div class="summary">共计${esc(data.count)}单行程，合计${esc(data.total)}元</div>
+  <div class="meta">${esc(data.applyLabel ?? '申请日期')}：${esc(data.applyDate)}<br>行程人手机：${esc(data.phone)}</div>
+  <div class="summary">${summary}</div>
   <table>
     <tr><th>序号</th><th>车型</th><th>上车时间</th><th>城市</th><th>起点</th><th>终点</th><th>金额（元）</th></tr>
     ${rows}
@@ -152,7 +226,7 @@ function itinerary(data) {
   return { id: data.id, ...A4, css, body };
 }
 
-// ---- 铁路电子客票（横向）----
+// ---- 铁路电子客票 (rail e-ticket), landscape ----
 function rail(data) {
   const css = `
 .rail { width: 1123px; height: 794px; padding: 60px 80px; font-family: ${FONT}; color: #222; font-size: 15px; background: #fff; position: relative; }
@@ -163,27 +237,34 @@ function rail(data) {
 .rail .route { font-size: 30px; font-weight: 600; grid-column: 1 / -1; margin-bottom: 8px; }
 .rail .route small { font-size: 16px; font-weight: 400; margin: 0 16px; }
 .rail .price { font-size: 26px; font-weight: 600; }
+.rail .apart { margin-left: 6px; }
 .rail .foot { margin-top: 24px; color: #666; font-size: 13px; }
 `;
+  // Text-run splits (#204): a seat cell drawn after the 车次, and 「票价：」 split from its amount — which is how a real
+  // ticket draws them.
+  const route = data.seatOnTripRow
+    ? `${esc(data.from)}<small>${esc(data.train)}</small>${esc(data.to)}<small>${esc(data.seat)}</small>`
+    : `${esc(data.from)}<small>${esc(data.train)}</small>${esc(data.to)}`;
+  const fare = data.splitFare ? `票价：<span class="apart">¥${esc(data.price)}</span>` : `票价：¥${esc(data.price)}`;
   const body = `
 <div class="rail">
   <div class="title">电子发票（铁路电子客票）</div>
   <div class="title-under"></div>
   <div class="meta">发票号码：${esc(data.number)}<br>开票日期：${esc(data.date)}</div>
   <div class="box">
-    <div class="route">${esc(data.from)}<small>${esc(data.train)}</small>${esc(data.to)}</div>
+    <div class="route">${route}</div>
     <div>乘车日期：${esc(data.date)}</div><div>开车时间：${esc(data.depart)}</div>
     <div>席别：${esc(data.seatClass)}</div><div>座位：${esc(data.seat)}</div>
     <div>乘车人：${esc(data.passenger)}</div><div>证件号：${esc(data.idMasked)}</div>
-    <div class="price">票价：¥${esc(data.price)}</div><div>购买方：${esc(BUYER.name)}</div>
+    <div class="price">${fare}</div><div>购买方：${esc(BUYER.name)}</div>
   </div>
   <div class="foot">本客票由夹具生成器生成，车次、席位与人物均为虚构。</div>
 </div>`;
   return { id: data.id, ...A4_LANDSCAPE, css, body };
 }
 
-// ---- 出租车车费发票（纸质长条票）----
-// 单独作为条票片段（供打印页复用），照片版再把它放到桌面背景上。
+// ---- 出租车车费发票 (taxi receipt), the paper strip ----
+// Kept as a strip fragment of its own so the print pages can reuse it; the photo variant then lays it on a desk.
 export const TAXI_STRIP = { width: 300, height: 560 };
 function taxiStrip(data) {
   const faded = data.faded ? 'opacity: 0.42; letter-spacing: 1px;' : '';
@@ -214,7 +295,7 @@ function taxiStrip(data) {
   return { id: `${data.id}-strip`, ...TAXI_STRIP, css, body };
 }
 
-// 照片：条票放在桌面上，略微倾斜并带一点透视，模拟手机拍摄。
+// The photo: the strip on a desk, slightly askew and in perspective, the way a phone would catch it.
 function taxiPhoto(data) {
   const strip = taxiStrip(data);
   const css = `${strip.css}
@@ -238,12 +319,24 @@ export const DOCS = {
   m09: taxiPhoto(TAXI_0815),
   m10: taxiPhoto(TAXI_0819),
   m11: invoice(OTHER_INVOICE, '#8b3a3a'),
+  r01: invoice(SPLIT_NUMBER_INVOICE, '#8b3a3a'),
+  r02: invoice(SPACED_TITLE_INVOICE, '#8b3a3a'),
+  r201: invoice(BUNDLED_FEE_INVOICE, '#8b3a3a'),
+  r206: invoice(TRANSPORT_INVOICE, '#8b3a3a'),
+  r204: rail(RAIL_SPLIT_RUNS),
+  r202: itinerary(AMAP_ITINERARY_GAP),
+  r205: itinerary(AMAP_ITINERARY_WRAPPED),
+  r209: itinerary(AMAP_ITINERARY_CROSS_CITY),
+  r210: folioPhoto(HOTEL_FOLIO_PHOTO),
+  r207: invoice(WIDE_COLUMN_INVOICE, '#8b3a3a'),
+  r208: invoice(WRAPPED_ITEM_INVOICE, '#8b3a3a'),
 };
 
-// 打印页里放置的材料：出租车用裁边并透视矫正后的条票，其余用原件版式。
+// Materials as placed on a print page: the taxi receipt as a cropped, perspective-corrected strip, everything else in
+// its original layout.
 const PLACED = { ...DOCS, m09: taxiStrip(TAXI_0815), m10: taxiStrip(TAXI_0819) };
 
-// ---- 打印页（A4 纵向：页眉 + 上半页主要报销凭证 + 下半页参考材料）----
+// ---- A print page (A4 portrait: header + the primary voucher on the top half + the reference material below) ----
 function place(doc, slot, rotate) {
   const w = rotate ? doc.height : doc.width;
   const h = rotate ? doc.width : doc.height;
@@ -282,7 +375,7 @@ ${bottom ? bottom.css : ''}
 export const PRINT_DOCS = PRINT_PAGES.map(printPage);
 export const VARIANT_DOCS = PRINT_VARIANTS.map((variant) => ({ ...printPage(variant), id: variant.file.replace(/\.png$/, '') }));
 
-// 合并打印稿：每张页图一页 A4（210mm x 297mm，边距 0）。
+// The merged print sheet: one A4 page (210mm x 297mm, no margin) per page image.
 export function printSheetDocument(imageUrls) {
   const pages = imageUrls.map((url) => `<img src="${esc(url)}" alt="">`).join('\n');
   return `<!doctype html>
@@ -303,7 +396,7 @@ ${pages}
 </html>`;
 }
 
-// 完整 HTML 文档：@page 尺寸与片段一致，边距 0，保证 --print-to-pdf 得到一页。
+// The whole HTML document: an @page size matching the fragment and no margin, so --print-to-pdf yields a single page.
 export function documentOf(doc) {
   const mm = (px) => `${((px * 25.4) / 96).toFixed(2)}mm`;
   return `<!doctype html>

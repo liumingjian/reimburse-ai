@@ -11,7 +11,7 @@ With no model in the loop, rule parsers and the user are the only producers of �
   - `hotel_folio`;
   - `taxi_receipt`.
 
-  A layout parser belongs to one kind and only recognises and extracts. The v1 layouts are `vat_invoice/einvoice`, `rail_ticket/12306`, `ride_itinerary/amap`, `hotel_folio/quanji` and `taxi_receipt/machine_printed`. Supporting 滴滴 (Didi) itineraries or 汉庭 (Hanting) folios takes one new layout module and one registry line. A new kind, such as meal receipts or supplies, also needs a category and an ERP mapping, so it is outside v1.
+  A layout parser belongs to one kind and only recognises and extracts. The v1 layouts are `vat_invoice/einvoice`, `rail_ticket/12306`, `ride_itinerary/amap`, `hotel_folio/labelled` and `taxi_receipt/machine_printed`. Supporting 滴滴 (Didi) itineraries takes one new layout module and one registry line. A folio layout recognises on the folio's own field labels, not a chain name, so it covers every chain (#211, #212). A new kind, such as meal receipts or supplies, also needs a category and an ERP mapping, so it is outside v1.
 - **Dispatch.** Each layout exposes `recognise(doc)` and `parse(doc)`. `recognise` matches on hard anchors only. When exactly one layout matches, it parses. When none matches, the material is unrecognised. When several match, a blocking pending item is raised. First match wins no longer holds; it was the rule in `50931a3:kernel/src/parse.mjs` and in `extractDocument`. A recognised layout with missing fields raises `missing_required`; that material still counts as recognised.
 - **Input.** Parsers read one source-agnostic model of positioned 文字观测 (text observations). The PDF adapter (unpdf) and the OCR adapter (`onnxruntime-node`, in-process per [#147](https://github.com/liumingjian/reimburse-ai/issues/147)) both produce it. NFKC normalisation, perspective correction of the taxi photo and QR decoding run before parsing. Shared layout helpers live in a module inside `server/`, which is their only consumer.
 - **Candidates.** The shape follows [#20](https://github.com/liumingjian/reimburse-ai/issues/20).
@@ -34,10 +34,12 @@ With no model in the loop, rule parsers and the user are the only producers of �
   - `vat_invoice/einvoice`: PDF and image.
   - `rail_ticket/12306`: PDF.
   - `ride_itinerary/amap`: PDF and image.
-  - `hotel_folio/quanji`: PDF.
+  - `hotel_folio/labelled`: PDF and image. Each value is read by position from its label: right of it within half a text height, else directly below within one text height.
   - `taxi_receipt/machine_printed`: photo.
 
-  Anything else is unrecognised, including 曹操出行 (Caocao) itineraries, other chains' folios, road tickets and other vouchers. Payment screenshots are never parsed; they appear only on the print sheet.
+  Anything else is unrecognised, including 曹操出行 (Caocao) itineraries, road tickets and other vouchers. Payment screenshots are never parsed. They appear on the print sheet, and at inventory only their presence is checked, for the 住宿 (accommodation) trio of invoice, folio and screenshot ([#213](https://github.com/liumingjian/reimburse-ai/issues/213)).
+
+  `vat_invoice/einvoice` recognises an invoice when **at least one** item row names a v1 税收分类 (tax class), not when every row does: a real ride-hailing invoice bundles a 服务费 or 经纪代理服务 row beside the ride, and the whole invoice is not thrown away over it. The accepted classes are the fine ones, `住宿服务` and `运输服务`, and the parent ones, `生产生活服务` and `交通运输服务`, the parents only together with a description that names the v1 service (`住宿费`, `客运服务费`) — a parent class covers freight and much else besides. The categories are unchanged: no 费用类别 (expense category) and no 材料种类 (material kind) is added to this matrix.
 
 ## Considered Options
 
@@ -61,13 +63,15 @@ With no model in the loop, rule parsers and the user are the only producers of �
   - `PendingField.format: money`.
 
   Manual fill reuses pending items of `kind: form`.
-- **Tests:** each layout has tests on `@baox/fixtures`:
-  - `vat_invoice`: m01, m03, m05;
-  - `hotel_folio/quanji`: m02;
-  - `ride_itinerary/amap`: m04;
-  - `rail_ticket`: m07, m08;
+- **Tests:** each layout has tests on `@baox/fixtures`. The `m` fixtures are the demo scenario's sample materials; the `r` fixtures are regression-only and reproduce how a real face is drawn — split text runs, fields sharing one baseline, a bundled item row, an unreadable cell:
+  - `vat_invoice`: m01, m03, m05; r01 (发票号码 apart from its label), r02 (letter-spaced title), r201 (a bundled non-v1 item row), r206 (`*交通运输服务*` and fields on one baseline), r207 (a goods table whose cells are left-aligned under centred headers), r208 (a 项目名称 wrapped onto a second line);
+  - `hotel_folio/labelled`: m02; r210 (a folio photo whose labels and values are separate boxes, dates as `2026/08/09` and `2026年08月22日`);
+  - `ride_itinerary/amap`: m04; r202 (a leg amount that reads 待结算), r205 (a wrapped 上车时间 cell and 元-suffixed amounts);
+  - `rail_ticket`: m07, m08; r204 (a trip row with a seat cell, 票价 apart from its amount);
   - `taxi_receipt`: m09, m10;
   - unrecognised: m06, m11.
 
   Private samples run through `test:private`, which gates per layout, medium and field (#196): text-layer PDFs must
   be 100% recognised and 100% right per field; OCR images at least 98% (`server/src/quality/private-gate.ts`).
+  That gate scores only what an expectation sidecar declares, so `REQUIRED_EXPECTATIONS` names the keys a layout's
+  samples must all be written down for — a field nobody wrote down is one the gate cannot see (#199).

@@ -1,9 +1,12 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Button, Tag, TextInput } from '@carbon/react';
 import { CheckmarkFilled, WarningAltFilled } from '@carbon/icons-react';
 import {
   segmentKey,
+  isStayScreenshotItem,
   validatePendingAnswer,
+  PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE,
+  STAY_TRIO_COPY,
   PENDING_CHOICE_KEY,
   fieldAnswer,
   isAllocationAnswer,
@@ -27,6 +30,7 @@ import { PAGE_COPY } from './page-copy';
 // 契约里的处理人（resolver）这一页不显示。
 // 所有答复经 answerPendingItem 携带 stepToken 提交；页面只做格式校验，采用与否由服务端决定（逐段分摊是否按分守恒也是）。
 // 选择类待确认项的已选项用选中样式（aria-pressed），不用主按钮。读出的字段不显示来源。
+// A 住宿 invoice's missing-screenshot item (#213) also takes the screenshot itself: uploading it makes the item go away.
 
 const EVIDENCE_LABELS: Readonly<Record<Material['fields'][number]['evidence'], string>> = {
   explicit: '',
@@ -76,7 +80,14 @@ function MaterialFields({ material }: { material: Material | undefined }) {
 }
 
 type SubmitState = { busy: boolean; error: string | null };
-type FormProps = { item: PendingItem; onSubmit: (answer: PendingAnswer) => Promise<void>; onExclude: () => Promise<void>; state: SubmitState };
+type FormProps = {
+  item: PendingItem;
+  fileName: string;
+  onSubmit: (answer: PendingAnswer) => Promise<void>;
+  onExclude: () => Promise<void>;
+  onScreenshot: (file: File) => Promise<void>;
+  state: SubmitState;
+};
 
 function ServerError({ state }: { state: SubmitState }) {
   return state.error ? (
@@ -133,12 +144,33 @@ function AnswerForm({ item, onSubmit, state }: FormProps) {
   );
 }
 
-function ChoiceForm({ item, onSubmit, state }: FormProps) {
+// The file input stays hidden behind the button (`.app-screenshot-row`), as on the print page.
+function ScreenshotUpload({ fileName, onScreenshot, state }: Pick<FormProps, 'fileName' | 'onScreenshot' | 'state'>) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const copy = STAY_TRIO_COPY.screenshot;
+  const onChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (file) void onScreenshot(file);
+  };
+  return (
+    <div className="app-btn-row app-screenshot-row">
+      <Button disabled={state.busy} onClick={() => inputRef.current?.click()}>
+        {copy.upload}
+      </Button>
+      <input ref={inputRef} type="file" accept={PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE} aria-label={copy.inputLabel(fileName)} onChange={onChange} />
+      <span className="app-caption">{copy.uploadNote}</span>
+    </div>
+  );
+}
+
+function ChoiceForm({ item, fileName, onSubmit, onScreenshot, state }: FormProps) {
   const resolved = item.status === 'resolved';
   const chosen = fieldAnswer(item.answer)[PENDING_CHOICE_KEY];
   const manual = item.choices.some((choice) => choice.key === 'manual');
   return (
     <div>
+      {!resolved && isStayScreenshotItem(item) ? <ScreenshotUpload fileName={fileName} onScreenshot={onScreenshot} state={state} /> : null}
       <div className="app-btn-row">
         {item.choices.map((choice) => (
           <Button
@@ -301,6 +333,9 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const exclude = async (item: PendingItem) => {
     settle(await run((adapter) => adapter.excludeMaterial(taskId, item.materialId, snapshot.step.stepToken)));
   };
+  const attachScreenshot = async (item: PendingItem, file: File) => {
+    settle(await run((adapter) => adapter.addPaymentScreenshot(taskId, item.materialId, file)));
+  };
 
   // 跨任务重复发票命中：整批停，没有待确认项，也不能进入项目归属。
   if (snapshot.blockers.length > 0) {
@@ -359,7 +394,9 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
                 <button type="button" aria-current={isSelected ? 'true' : undefined} onClick={() => setSelectedId(item.itemId)}>
                   {done ? <CheckmarkFilled className="app-queue-mark is-done" aria-hidden="true" /> : <WarningAltFilled className="app-queue-mark" aria-hidden="true" />}
                   <span className="app-queue-title">{item.title}</span>
-                  <span className="app-queue-sub">{file}</span>
+                  {/* Most titles already quote the file name (「IMG_4871.jpg」缺少字段); repeating it here would name the
+                      same file twice in the row's accessible name, so the sub line only fills in what the title omits. */}
+                  {item.title.includes(file) ? null : <span className="app-queue-sub">{file}</span>}
                   {done ? (
                     <StatusTag as="span" tone="success" className="app-queue-tag">
                       已处理
@@ -380,7 +417,15 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
                 <h2 className="app-section-title">{selected.title}</h2>
                 <p className="app-lead app-why">{selected.why}</p>
               </div>
-              <ItemForm key={selected.itemId} item={selected} state={state} onSubmit={(answer) => submit(selected, answer)} onExclude={() => exclude(selected)} />
+              <ItemForm
+                key={selected.itemId}
+                item={selected}
+                fileName={material?.fileName ?? selected.materialId}
+                state={state}
+                onSubmit={(answer) => submit(selected, answer)}
+                onExclude={() => exclude(selected)}
+                onScreenshot={(file) => attachScreenshot(selected, file)}
+              />
               <MaterialFields material={material} />
             </div>
           </div>

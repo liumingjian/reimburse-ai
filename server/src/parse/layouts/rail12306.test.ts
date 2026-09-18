@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_DIR } from '@baox/fixtures';
 import { describe, expect, it } from 'vitest';
+import { compact, type TextObservation } from '../doc';
 import { dispatch, type Recognised } from '../dispatch';
 import { KINDS } from '../kinds';
 import { pdfDoc } from '../pdf';
@@ -60,6 +61,68 @@ describe('rail_ticket/12306', () => {
     expect(values(outcome)).toMatchObject({ departStation: '合肥南', trainNumber: 'G1234', arriveStation: '上海虹桥', travelDate: '2026-08-22', departTime: '07:05', totalAmount: '703.00', issueDate: '2026-09-02' });
   });
 
+  // #204: a real ticket draws its face as a two-column box and splits a label from its value, so no anchor has one
+  // observation to itself. The face still has to read.
+  it('reads a face whose trip row carries a seat cell and whose labels are apart from their values', () => {
+    const doc = textDoc([
+      '电子发票(铁路电子客票)',
+      ['发票号码:', '26312000000102200758'],
+      '开票日期:2026年08月23日',
+      ['广州南', 'G1376', '长沙南', '07车05F号'],
+      ['乘车日期:', '2026年08月23日', '开车时间:', '09:12'],
+      ['席别:二等座', '座位:07车05F号'],
+      ['乘车人:', '林颂宜', '证件号:4401**********0018'],
+      ['票价:', '¥314.50', '购买方:某某科技(上海)有限公司'],
+    ]);
+    const outcome = dispatch(doc, LAYOUTS);
+    expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'rail_ticket', missing: [], findings: [] });
+    if (outcome.outcome !== 'recognised') return;
+    expect(values(outcome)).toEqual({
+      invoiceNumber: '26312000000102200758',
+      issueDate: '2026-08-23',
+      trainNumber: 'G1376',
+      departStation: '广州南',
+      arriveStation: '长沙南',
+      travelDate: '2026-08-23',
+      departTime: '09:12',
+      seatClass: '二等座',
+      passengerName: '林颂宜',
+      totalAmount: '314.50',
+    });
+    // Evidence still names the real text runs behind a joined value, not a synthesised one.
+    const fare = outcome.candidates.find((c) => c.key === 'totalAmount');
+    expect(fare?.refs).toEqual([{ page: 1, observationIds: ['p1.18', 'p1.19'], text: '票价: ¥314.50' }]);
+  });
+
+  // The r204 fixture is what the hand-built document above claims a real face looks like. Without this, that test is a
+  // tautology: it would pass on a fixture drawn as one run per field.
+  it('r204 really splits its runs: no text run carries 票价 with its amount, and none carries the whole trip row', async () => {
+    const doc = await pdfDoc(fixture('r204-rail-split-runs.pdf'));
+    const texts = doc.observations.map((o) => compact(o.text));
+    expect(texts.some((t) => t.includes('票价') && t.includes('314.50'))).toBe(false);
+    expect(texts.some((t) => t.includes('G1376') && t.includes('广州南'))).toBe(false);
+    expect(values(await recognised('r204-rail-split-runs.pdf'))).toMatchObject({ trainNumber: 'G1376', departStation: '广州南', arriveStation: '长沙南', totalAmount: '314.50' });
+  });
+
+  // 车次 (train number) is what tells a trip row from any other line of CJK, digits and CJK. It has to be a text run of
+  // its own, or the line has to name both stations with their 站 suffix — document order is not a guard, and these are
+  // three required, locked face facts.
+  it('does not read a gate and a waiting room as a trip, even when that line is printed above the real one', () => {
+    const doc = textDoc([
+      '电子发票(铁路电子客票)',
+      '发票号码:26312000000102200758',
+      '开票日期:2026年08月23日',
+      '检票口12候车室',
+      ['广州南', 'G1376', '长沙南'],
+      '乘车日期:2026年08月23日',
+      '票价:¥314.50',
+    ]);
+    const outcome = dispatch(doc, LAYOUTS);
+    expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'rail_ticket' });
+    if (outcome.outcome !== 'recognised') return;
+    expect(values(outcome)).toMatchObject({ trainNumber: 'G1376', departStation: '广州南', arriveStation: '长沙南' });
+  });
+
   it('forms one event: date = travel date, route from the face, net = fare and tax 0, long-distance category', async () => {
     const draft = KINDS.rail_ticket.event(values(await recognised('m07-rail-0809.pdf')));
     expect(draft).toMatchObject({
@@ -90,12 +153,17 @@ describe('rail_ticket/12306', () => {
   });
 });
 
-// A one-column text document, one observation per line, top to bottom.
-function textDoc(lines: string[]) {
-  return {
-    mediaType: 'pdf' as const,
-    pageCount: 1,
-    codes: [],
-    observations: lines.map((text, i) => ({ id: `p1.${i + 1}`, page: 1, x: 40, y: 800 - i * 20, width: 200, height: 12, text, raw: text })),
-  };
+// A one-column text document, one line per visual row, top to bottom. A line given as several strings is drawn as
+// several text runs on that one row — what a real face does with a label apart from its value, and with two labelled
+// fields printed side by side.
+function textDoc(lines: readonly (string | readonly string[])[]) {
+  const observations: TextObservation[] = [];
+  for (const [i, line] of lines.entries()) {
+    let x = 40;
+    for (const text of typeof line === 'string' ? [line] : line) {
+      observations.push({ id: `p1.${observations.length + 1}`, page: 1, x, y: 800 - i * 20, width: text.length * 9, height: 12, text, raw: text });
+      x += text.length * 9 + 8;
+    }
+  }
+  return { mediaType: 'pdf' as const, pageCount: 1, codes: [], observations };
 }

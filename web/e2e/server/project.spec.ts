@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
 import { TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Page } from '@playwright/test';
-import { expect, signIn, test } from './fixture';
+import { answerStayGaps, expect, signIn, test } from './fixture';
 
 // Slice 09 (#188) on the real server: with an empty 个人项目簿 the project page opens on the book gate; add a project
 // (its name comes from the fixture-backed catalog), assign every line to it and submit the 报销事由 (purpose).
@@ -28,6 +28,11 @@ test('添加项目、全部明细归入、填写报销事由并提交', async ({
   await page.locator('input[type=file]').setInputFiles({ name: hotelInvoice.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, hotelInvoice.file)) });
   await expect(page.getByText(hotelInvoice.fileName, { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '开始材料盘点' }).click();
+  // #213: the 住宿 invoice comes alone, so inventory asks for its 结账单 and 支付截图 and holds the material at 待确认;
+  // answered with 确认没有, after which the material passes and the task goes on to the project book.
+  await expect(page.getByRole('group', { name: '盘点摘要' })).toContainText('需处理1 份');
+  await answerStayGaps(page, taskId);
+  await page.reload();
   await expect(page.getByRole('group', { name: '盘点摘要' })).toContainText('通过1 份');
   await expect.poll(async () => (await snapshotOf(page, taskId)).step.kind).toBe('maintain_project_book');
 
@@ -44,10 +49,7 @@ test('添加项目、全部明细归入、填写报销事由并提交', async ({
   await expect(page.getByLabel('常驻城市')).toHaveValue('杭州');
   await expect(page.getByRole('button', { name: '确认项目归属' })).toBeDisabled();
   await page.getByRole('checkbox', { name: '全选当前明细' }).locator('xpath=following-sibling::label[1]').click();
-  await page.getByRole('region', { name: '批量操作' }).getByRole('button', { name: '归入项目' }).click();
-  const picker = page.getByRole('dialog', { name: '归入项目' });
-  await picker.getByRole('radio', { name: /P-2307/ }).locator('xpath=following-sibling::label[1]').click();
-  await picker.getByRole('button', { name: '确认归入' }).click();
+  await page.getByRole('complementary', { name: '归入项目' }).getByRole('button', { name: /P-2307/ }).click();
   await expect(page.getByTestId('project-of-1')).toHaveText('P-2307 / 华东客户交付');
 
   // Submit is refused (disabled) until the purpose is filled.

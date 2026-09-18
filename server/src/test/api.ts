@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
-import { TaskSnapshotSchema, type Material, type TaskSnapshot } from '@baox/contract';
+import { GENERATED_DIR, REGRESSION_MATERIALS, SAMPLE_MATERIALS } from '@baox/fixtures';
+import { STAY_TRIO_CONFIRM_NONE, stayTrioElementOf, TaskSnapshotSchema, type Material, type TaskSnapshot } from '@baox/contract';
 import { expect } from 'vitest';
 import type { TestClient } from './harness';
 
@@ -9,9 +9,10 @@ import type { TestClient } from './harness';
 
 export type Upload = { name: string; bytes: Buffer | Uint8Array; type?: string };
 
-// A sample original from @baox/fixtures by its id prefix (`m01`), under its business file name.
+// A generated original from @baox/fixtures by its id prefix — a sample material (`m01`) or a regression fixture
+// (`r01`) — under its business file name.
 export function sample(prefix: string): Upload {
-  const found = SAMPLE_MATERIALS.find((candidate) => candidate.file.startsWith(prefix));
+  const found = [...SAMPLE_MATERIALS, ...REGRESSION_MATERIALS].find((candidate) => candidate.file.startsWith(prefix));
   if (!found) throw new Error(`fixture ${prefix} is missing from @baox/fixtures`);
   return { name: found.fileName, bytes: readFileSync(join(GENERATED_DIR, found.file)), type: found.file.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg' };
 }
@@ -52,6 +53,17 @@ export function api(client: () => TestClient) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ ...body, stepToken }),
       });
+    },
+
+    // The 住宿 trio check (#213) asks a hotel invoice for its 结账单 and 支付截图. A test about something else answers
+    // every open trio item with 确认没有 and goes on from the resulting snapshot.
+    async withoutStayGaps(snapshot: TaskSnapshot): Promise<TaskSnapshot> {
+      let latest = snapshot;
+      for (const item of snapshot.pendingItems) {
+        if (item.status !== 'open' || stayTrioElementOf(item.itemId) === null) continue;
+        latest = await accepted(await this.act(latest, 'answer-pending', { itemId: item.itemId, answer: { choice: STAY_TRIO_CONFIRM_NONE } }));
+      }
+      return latest;
     },
 
     // Waits until the background parser job has finished the current inventory run.

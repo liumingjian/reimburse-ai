@@ -1,5 +1,6 @@
-// 夹具数据：全部虚构，沿用原型（林颂宜、2026-08 上海出差）的人物与数字。不含任何真实个人信息。
-// 这里是模板的唯一数据来源；src/mock/fixtures 里的快照字段值与此逐一对应。
+// Fixture data: entirely fictional, reusing the prototype's cast and numbers (林颂宜, an August 2026 Shanghai trip).
+// No real personal data. This is the templates' single source of data; the snapshot field values under
+// src/mock/fixtures correspond to it one by one.
 
 export const EMPLOYEE = { name: '林颂宜', dept: '产品研发部', phoneMasked: '138****4021' };
 
@@ -33,6 +34,21 @@ export const HOTEL_FOLIO = {
   paid: '3640.00',
 };
 
+// Regression fixture (#212): a folio photographed on a desk. Each label and its value are separate boxes, the dates
+// are printed in two shapes other than YYYY-MM-DD, and the hotel is not a chain any layout names. Its 消费合计 equals
+// the m01 hotel invoice's 价税合计, so the two pair into one stay.
+export const HOTEL_FOLIO_PHOTO = {
+  id: 'r210',
+  file: 'r210-hotel-folio-photo.jpg',
+  hotel: '某某悦居酒店（上海某某店）',
+  guest: EMPLOYEE.name,
+  room: '0816',
+  checkIn: '2026/08/09',
+  checkOut: '2026年08月22日',
+  nights: '13',
+  total: '3640.00',
+};
+
 export const AMAP_INVOICE = {
   id: 'm03',
   file: 'm03-amap-invoice.pdf',
@@ -59,6 +75,100 @@ export const AMAP_ITINERARY = {
     { no: '1', car: '经济型', time: '2026-08-10 08:52', city: '上海市', from: '虹桥枢纽', to: '漕河泾', amount: '26.69' },
     { no: '2', car: '经济型', time: '2026-08-10 18:20', city: '上海市', from: '漕河泾', to: '静安寺', amount: '20.85' },
     { no: '3', car: '经济型', time: '2026-08-12 09:15', city: '上海市', from: '静安寺', to: '张江', amount: '21.65' },
+  ],
+};
+
+// Regression fixture (not a sample material): a real ride-hailing invoice often prints one v1 service row beside an
+// unrelated fee row (服务费 service fee, 经纪代理服务 brokerage service), and recognition must not throw the whole
+// invoice away over it. The 合计 (total) row agrees with both item rows, so this fixture exercises the recognition
+// gate only and leaves the conservation checks alone.
+export const BUNDLED_FEE_INVOICE = {
+  id: 'r201',
+  file: 'r201-bundled-fee-invoice.pdf',
+  title: '电子发票（普通发票）',
+  number: '26312000000104412880',
+  date: '2026年08月16日',
+  seller: { name: '某某出行服务（上海）有限公司', taxNo: '91310000UUUUUUUU0F' },
+  rows: [
+    { name: '*运输服务*客运服务费', unit: '次', qty: '2', price: '', net: '41.55', rate: '3%', tax: '1.25' },
+    { name: '*经纪代理服务*平台服务费', unit: '次', qty: '1', price: '5.83', net: '5.83', rate: '6%', tax: '0.35' },
+  ],
+  net: '47.38',
+  tax: '1.60',
+  gross: '48.98',
+  grossWords: '肆拾捌圆玖角捌分',
+};
+
+// Regression fixture (not a sample material): a real ride-hailing invoice is issued under *交通运输服务* (transport
+// services, the parent tax class) and prints several fields on one baseline — 发票号码 beside 开票日期, the 联次 (copy
+// marker) beside the title — so a whole joined row matches nothing; only a contiguous run of text inside the row is
+// exactly one field. The label and its value are two separate runs as well.
+export const TRANSPORT_INVOICE = {
+  id: 'r206',
+  file: 'r206-transport-invoice.pdf',
+  title: '电子发票（普通发票）',
+  number: '26312000000104412906',
+  date: '2026年08月17日',
+  seller: { name: '某某出行科技（广州）有限公司', taxNo: '91440000TTTTTTTT0G' },
+  rows: [{ name: '*交通运输服务*客运服务费', unit: '次', qty: '1', price: '26.69', net: '26.69', rate: '3%', tax: '0.80' }],
+  net: '26.69',
+  tax: '0.80',
+  gross: '27.49',
+  grossWords: '贰拾柒圆肆角玖分',
+  // Fields printed side by side on one baseline, each label a run apart from its value.
+  sharedBaseline: true,
+};
+
+// An itinerary whose declared leg count agrees with its parsed row count while that leg's amount cannot be read: the
+// amount cell says 待结算 (settlement pending). This is the case behind the false 「对不上」 (counts disagree) message.
+export const AMAP_ITINERARY_GAP = {
+  id: 'r202',
+  file: 'r202-amap-itinerary-gap.pdf',
+  brand: '高德地图',
+  applyDate: '2026-08-13',
+  phone: EMPLOYEE.phoneMasked,
+  count: '1',
+  total: '32.50',
+  rows: [{ no: '1', car: '经济型', time: '2026-08-11 19:04', city: '上海市', from: '张江', to: '浦东机场', amount: '待结算' }],
+};
+
+// Regression fixture (not a sample material): a real itinerary draws every table cell as its own text run, wraps
+// 上车时间 (pick-up time) with the date on one line and HH:MM on the next, and gives the amount a unit (26.69元) or a
+// currency sign (¥42.50); `共计N单行程，合计X元` is split across several runs too. Its total equals m03's 价税合计, so
+// the two pair into expense events.
+export const AMAP_ITINERARY_WRAPPED = {
+  id: 'r205',
+  file: 'r205-amap-itinerary-wrapped.pdf',
+  brand: '高德地图',
+  applyDate: '2026-08-13',
+  phone: EMPLOYEE.phoneMasked,
+  count: '2',
+  total: '69.19',
+  splitSummary: true,
+  rows: [
+    // A wrapped 上车时间: the date and the time are two lines of one cell.
+    { no: '1', car: '经济型', time: '2026-08-10 08:52', timeLines: ['2026-08-10', '08:52'], city: '上海市', from: '虹桥枢纽', to: '漕河泾', amount: '26.69元' },
+    { no: '2', car: '经济型', time: '2026-08-12 09:15', city: '上海市', from: '静安寺', to: '张江', amount: '¥42.50' },
+  ],
+};
+
+// Regression fixture (not a sample material): the 高德行程单 that pairs with r206, the 交通运输服务 (parent tax class)
+// ride invoice — the pairing no fixture covered before (#210). Three things it exercises at once: its 合计 equals
+// r206's 价税合计, so a parent-class invoice has to be admitted to the pairing at all; its two legs sit in two
+// different cities, so one line categorises 本地 and the other 外地 off the same invoice; and its header prints the
+// 申请时间 label real itineraries use, not the 申请日期 the other fixtures print.
+export const AMAP_ITINERARY_CROSS_CITY = {
+  id: 'r209',
+  file: 'r209-amap-itinerary-cross-city.pdf',
+  brand: '高德地图',
+  applyLabel: '申请时间',
+  applyDate: '2026-08-17',
+  phone: EMPLOYEE.phoneMasked,
+  count: '2',
+  total: '27.49',
+  rows: [
+    { no: '1', car: '经济型', time: '2026-08-16 08:40', city: '杭州市', from: '城站', to: '黄龙', amount: '12.49' },
+    { no: '2', car: '经济型', time: '2026-08-17 09:30', city: '上海市', from: '虹桥枢纽', to: '漕河泾', amount: '15.00' },
   ],
 };
 
@@ -119,7 +229,28 @@ export const RAIL_0822 = {
   seat: '07车03F号',
 };
 
-// 出租车票：m10 的下车时间在票面上是 19:06，但打印褪色，照片读数会读成 90:60（原型剧本）。
+// A rail ticket drawn the way a real 铁路电子客票 face is, and the way no generated fixture was before (#204): the trip
+// row carries a fourth cell (the seat), and 票价's label and amount are separate text runs beside another labelled
+// field. Both break an anchor that needs one text observation.
+export const RAIL_SPLIT_RUNS = {
+  ...RAIL_0809,
+  id: 'r204',
+  file: 'r204-rail-split-runs.pdf',
+  number: '26312000000102200758',
+  date: '2026年08月23日',
+  train: 'G1376',
+  from: '广州南',
+  to: '长沙南',
+  depart: '09:12',
+  seat: '07车05F号',
+  price: '314.50',
+  // A seat cell drawn after the 车次 (train number); 「票价：」 and its amount are two separate runs.
+  seatOnTripRow: true,
+  splitFare: true,
+};
+
+// Taxi receipts: m10's 下车时间 (drop-off time) reads 19:06 on the face, but the print has faded, so the photo is read
+// as 90:60 (the prototype's script).
 export const TAXI_0815 = {
   id: 'm09',
   file: 'm09-taxi-photo.jpg',
@@ -165,9 +296,48 @@ export const OTHER_INVOICE = {
   grossWords: '贰佰肆拾圆整',
 };
 
-// 打印稿页：费用类别用内核标签。页眉是 `No.x · 日期 · 类别 · 价税合计`，范围用 ASCII 连字符。
-// 页序与 No. 跟随统一业务序号（内核确认表的分类排序：本地市内交通 → 外地市内交通 → 长途交通 → 住宿，
-// 同一分类内按事件顺序，即主要报销凭证 materialId、再按行程段），与 src/mock/fixtures/print.ts 的 PAGE_DEFS 一致。
+// ---- Regression fixtures: the text-run splits of a real PDF (#200) ----
+// The sample materials (m01…m11) draw one text run per anchor; a real invoice does not — a label and its value are
+// usually two runs, and a title is often one run per glyph. These two fixtures reproduce those splits; the rest of the
+// layout matches the hotel invoice, so each uploads on its own with no folio needed.
+
+export const SPLIT_NUMBER_INVOICE = {
+  id: 'r01',
+  file: 'r01-einvoice-split-number.pdf',
+  title: '电子发票（增值税专用发票）',
+  number: '26312000000098127801',
+  date: '2026年08月20日',
+  seller: { name: '上海某某酒店管理有限公司', taxNo: '91310000YYYYYYYY0B' },
+  rows: [{ name: '*住宿服务*住宿费', unit: '天', qty: '2', price: '264.15', net: '528.30', rate: '6%', tax: '31.70' }],
+  net: '528.30',
+  tax: '31.70',
+  gross: '560.00',
+  grossWords: '伍佰陆拾圆整',
+  // 「发票号码：」 and the 20 digits are two separate runs.
+  splitNumber: true,
+};
+
+export const SPACED_TITLE_INVOICE = {
+  id: 'r02',
+  file: 'r02-einvoice-spaced-title.pdf',
+  title: '电子发票（普通发票）',
+  number: '26312000000098127802',
+  date: '2026年08月21日',
+  seller: { name: '上海某某酒店管理有限公司', taxNo: '91310000YYYYYYYY0B' },
+  rows: [{ name: '*住宿服务*住宿费', unit: '天', qty: '1', price: '264.15', net: '264.15', rate: '6%', tax: '15.85' }],
+  net: '264.15',
+  tax: '15.85',
+  gross: '280.00',
+  grossWords: '贰佰捌拾圆整',
+  // The title is drawn one run per glyph.
+  spacedTitle: true,
+};
+
+// Print-sheet pages: the 费用类别 (expense category) uses the kernel labels. The header reads
+// `No.x · date · category · 价税合计`, with an ASCII hyphen for ranges.
+// Page order and No. follow the unified business numbering (the kernel confirmation table's category order: local
+// 市内交通 → out-of-town 市内交通 → 长途交通 → 住宿; within a category by event order, that is by the primary
+// voucher's materialId and then by itinerary leg), matching PAGE_DEFS in src/mock/fixtures/print.ts.
 export const PRINT_PAGES = [
   { id: 'pg1', file: 'print-pg1.png', nos: 'No.1-3', date: '08-10', category: '外地市内交通', amount: '69.19', top: 'm03', bottom: 'm04', rotateTop: false, rotateBottom: false },
   { id: 'pg2', file: 'print-pg2.png', nos: 'No.4', date: '08-11', category: '外地市内交通', amount: '38.40', top: 'm05', bottom: 'm06', rotateTop: false, rotateBottom: false },
@@ -182,15 +352,17 @@ export function headerOf(page) {
   return `${page.nos} · ${page.date} · ${page.category} · ${page.amount}`;
 }
 
-// 旋转变体（#104）：页面上可以把任一份放置的材料改为竖放 / 旋转 90°，mock 服务端据此换一张页图。
-// 文件名后缀 `-r<上><下>`，1 = 旋转 90°，如 `print-pg3-r10.png`；与默认放置相同的组合就是 `print-pgN.png` 本身。
+// Rotation variants (#104): any placed material on a page can be turned upright or rotated 90°, and the mock server
+// serves a different page image for it.
+// The file name carries the suffix `-r<top><bottom>`, 1 = rotated 90° (`print-pg3-r10.png`); the combination that
+// equals the default placement is `print-pgN.png` itself.
 export function printPageFile(page, rotateTop, rotateBottom) {
   if (rotateTop === page.rotateTop && (page.bottom === null || rotateBottom === page.rotateBottom)) return page.file;
   const flags = page.bottom === null ? `${rotateTop ? 1 : 0}` : `${rotateTop ? 1 : 0}${rotateBottom ? 1 : 0}`;
   return `print-${page.id}-r${flags}.png`;
 }
 
-// 每页除默认放置外的所有旋转组合：无下半页的页 1 个，有下半页的页 3 个。
+// Every rotation combination other than the default placement: one for a page without a bottom half, three with one.
 export const PRINT_VARIANTS = PRINT_PAGES.flatMap((page) => {
   const combos = page.bottom === null ? [[true, false], [false, false]] : [[false, false], [false, true], [true, false], [true, true]];
   return combos
@@ -198,5 +370,47 @@ export const PRINT_VARIANTS = PRINT_PAGES.flatMap((page) => {
     .filter((variant) => variant.file !== page.file);
 });
 
-// 合并打印稿样本：7 张默认页图按页序合成一份 A4 PDF，mock 的「下载打印稿 PDF」指向它。
+// The merged print-sheet sample: the seven default page images composed in page order into one A4 PDF, which the
+// mock's 「下载打印稿 PDF」 points at.
 export const PRINT_SHEET_FILE = 'print-sheet.pdf';
+
+// Regression fixtures (#199): the goods table of a real 全电发票 (fully-digitalised VAT e-invoice) is not drawn the way
+// a hand-written HTML table is. The column header is centred over a column far wider than the label, while the cell
+// under it is left-aligned at the column's border, so the 项目名称 (item name) cell and the 合计 (row total) label are
+// printed well left of the 项目名称 header's own left edge. Real ride-hailing faces also omit the 单位 (unit) column
+// and print 单价 (unit price) before 数量 (quantity).
+
+// The item name and the 合计 label both sit left of the header label: with the column band starting at the header's
+// left edge, neither lands in a column, so the table has no item row and no 合计 row at all.
+export const WIDE_COLUMN_INVOICE = {
+  id: 'r207',
+  file: 'r207-einvoice-wide-name-column.pdf',
+  title: '电子发票（普通发票）',
+  number: '26312000000104412931',
+  date: '2026年08月18日',
+  seller: { name: '某某出行科技（广州）有限公司', taxNo: '91440000TTTTTTTT0G' },
+  rows: [{ name: '*交通运输服务*客运服务费', unit: '', qty: '1', price: '31.55', net: '31.55', rate: '3%', tax: '0.95' }],
+  net: '31.55',
+  tax: '0.95',
+  gross: '32.50',
+  grossWords: '叁拾贰圆伍角整',
+  wideNameColumn: true,
+};
+
+// The same wide column with an item name too long for it: the issuer wraps the name, and its tail is printed as a row
+// of its own with nothing in any other column. The first line is wide enough to be centred right of the header, so the
+// name is found but cut short, while the 合计 label is still lost.
+export const WRAPPED_ITEM_INVOICE = {
+  id: 'r208',
+  file: 'r208-einvoice-wrapped-item-name.pdf',
+  title: '电子发票（普通发票）',
+  number: '26312000000104412947',
+  date: '2026年08月19日',
+  seller: { name: '某某出行科技（广州）有限公司', taxNo: '91440000TTTTTTTT0G' },
+  rows: [{ name: '*交通运输服务*客运服务费（含高速费、停车费、预约调度费）', unit: '', qty: '1', price: '46.60', net: '46.60', rate: '3%', tax: '1.40' }],
+  net: '46.60',
+  tax: '1.40',
+  gross: '48.00',
+  grossWords: '肆拾捌圆整',
+  wideNameColumn: true,
+};

@@ -1,30 +1,5 @@
-import { useCallback, useState } from 'react';
-import {
-  Button,
-  Checkbox,
-  ComposedModal,
-  ContentSwitcher,
-  InlineNotification,
-  ModalBody,
-  ModalFooter,
-  ModalHeader,
-  RadioButton,
-  RadioButtonGroup,
-  Search,
-  Switch,
-  Table,
-  TableBatchAction,
-  TableBatchActions,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-  TableToolbar,
-  TableToolbarContent,
-  Tag,
-  TextInput,
-} from '@carbon/react';
+import { useCallback, useState, type KeyboardEvent } from 'react';
+import { Button, Checkbox, ContentSwitcher, InlineNotification, Search, Switch, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag, TextInput } from '@carbon/react';
 import { Add } from '@carbon/icons-react';
 import {
   PROJECT_ASSIGNMENT_ERRORS,
@@ -42,7 +17,7 @@ import {
 } from '@baox/contract';
 import { navigate, taskHash } from '../router';
 import { ActionBar } from '../shell/ActionBar';
-import { ConfirmDialog, DIALOG_CLOSE_LABEL } from '../shell/Dialog';
+import { ConfirmDialog } from '../shell/Dialog';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { StatusTag } from '../shell/StatusTag';
@@ -56,45 +31,75 @@ const SUBMIT_STEP_KINDS: ReadonlySet<StepKind> = new Set<StepKind>(['assign_proj
 
 // 项目归属页：待确认项处理完之后、整单确认之前（Skill 的 project_unassigned → select-task），两条路径都要经过。
 // 提交后服务端自动做报销信息核对与材料准备，再进入整单确认；确认绑定项目归属，确认后在这里改派会使确认失效。
-// ERP 写入开始后只读。形状照内核项目归属页面（project-workbench.mjs Variant B）：
+// ERP 写入开始后只读。Shape follows the workbench prototype (92b61a7 variant B, re-confirmed by the user on
+// prototype/project-assign-interaction variant A): tick lines on the left, then click a project on the right. No modal.
 // - 左边明细按费用类别分组（服务端给出的 lines 顺序即内核分类排序），组标题带复选框和条数，可按类别全选；
 //   每条明细是一行紧凑的表格行（日期范围、城市、路线与脱敏票号、当前归属、价税合计），各组共用同一套列宽，与顶部表头对齐。
-// - The right-hand summary (本次归属, this assignment) is read-only: the projects this assignment uses, with project
-//   number, line count and amount (from the server; the page computes nothing). No buttons.
-//   Below 1280px it moves under the line table, so the table keeps readable column widths.
-// Carbon batch-action mode (#138): once lines are selected, the table toolbar turns into the batch action bar
-// (已选 N 条, 归入项目 assign to project, 取消 cancel). With nothing selected there is no way to assign.
-// 归入项目 opens the project modal: a search plus a single-choice list of selectable projects only (the snapshot
-// only lists selectable ones), with projects already used here first and their line counts.
-// From the modal the user can open the 新增项目 (add project) panel; the selected lines and the chosen project are
-// kept. On confirm the server changes the assignment being edited (working).
-// If a selected line already has another project, the page first asks 只处理未归属 (only unassigned) / 确认覆盖
-// (overwrite) / 取消 (cancel). The page header holds the reimbursement purpose (报销事由); the home city is
-// read-only. Submitting lives in the sticky action bar.
+// - A sticky selection bar sits above the table: select-all, the 全部 / 未归属 (all / unassigned) filter, and a status
+//   line that says what to do next (tick lines, then click a project) or what the last assignment did.
+// - The right-hand 归入项目 (assign to project) panel is sticky between the step bar and the action bar. Its head
+//   (search) stays put and only the project list scrolls. Every project is itself the drop target: clicking it assigns
+//   the ticked lines, with no apply button. Projects used here come first (本次已归入) with line count and amount from
+//   the server; the rest follow in project-book order. Until lines are ticked the projects are disabled and the head
+//   says so. Enter in the search assigns to the only matching project.
+// - If a ticked line already has another project, the page first asks 只处理未归属 (only unassigned) / 确认覆盖
+//   (overwrite) / 取消 (cancel). 新增项目 (add project) opens the project-book panel; the ticked lines are kept.
+// The page header holds the reimbursement purpose (报销事由); the home city is read-only. Submitting lives in the
+// sticky action bar.
 
 type Target = { number: string; name: string };
-type Conflict = { project: Target; count: number };
-// One entry in the project modal: projects already used here carry the server's line count; the rest carry null.
-// `source` says which book offers it (个人 personal / 公共 public, #194).
-type Option = Target & { lineCount: number | null; source: ProjectSource };
-// At most one modal at a time: the project modal and the 新增项目 (add project) panel take turns (never stacked);
-// closing the panel returns to the project modal.
-type Modal = 'none' | 'pick' | 'add';
-
-// Chinese copy for Carbon's batch action bar (defaults are English: "items selected", "Cancel").
-function batchText(id: string, args?: { totalSelected?: number }): string {
-  if (id === 'carbon.table.batch.cancel') return '取消';
-  return `已选 ${args?.totalSelected ?? 0} 条`;
-}
+type Conflict = { lineIds: string[]; project: Target; count: number };
+// One project in the panel. `usage` is set for projects this assignment already uses (from the server);
+// `selectable` is false for a used project that left the allowed list (已锁定, locked): kept lines stay, new ones cannot go in.
+type Option = Target & { source: ProjectSource; usage: { lineCount: number; grossTotal: string } | null; selectable: boolean };
 
 function byLine(items: readonly ProjectLineAssignment[]): Readonly<Record<string, ProjectLineAssignment>> {
   return Object.fromEntries(items.map((item) => [item.lineId, item]));
 }
 
+// Search: every space-separated word must hit the project number or name, as a substring or with its characters in
+// order, so an abbreviation like 浦发 finds 上海浦东发展银行. Returns the matched character positions, or null.
+export function projectHits(text: string, query: string): ReadonlySet<number> | null {
+  const hay = text.toLowerCase();
+  const marks = new Set<number>();
+  for (const word of query.trim().toLowerCase().split(/\s+/).filter(Boolean)) {
+    const at = hay.indexOf(word);
+    if (at >= 0) {
+      for (let index = 0; index < word.length; index += 1) marks.add(at + index);
+      continue;
+    }
+    let from = 0;
+    for (const char of word) {
+      const found = hay.indexOf(char, from);
+      if (found < 0) return null;
+      marks.add(found);
+      from = found + 1;
+    }
+  }
+  return marks;
+}
+
 function matches(project: Target, query: string): boolean {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return true;
-  return project.number.toLowerCase().includes(needle) || project.name.toLowerCase().includes(needle);
+  return projectHits(`${project.number} ${project.name}`, query) !== null;
+}
+
+// Marks the searched characters in a project number or name.
+function Highlight({ text, query }: { text: string; query: string }) {
+  const marks = query.trim() ? projectHits(text, query) : null;
+  if (!marks || marks.size === 0) return <>{text}</>;
+  return (
+    <>
+      {[...text].map((char, index) =>
+        marks.has(index) ? (
+          <mark key={index} className="app-search-hit">
+            {char}
+          </mark>
+        ) : (
+          char
+        ),
+      )}
+    </>
+  );
 }
 
 // 按费用类别分组，组的先后跟随明细顺序（内核 project-workbench.mjs 以 categoryLabel 分组）。
@@ -181,10 +186,10 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
   const [query, setQuery] = useState('');
   const [conflict, setConflict] = useState<Conflict | null>(null);
-  const [modal, setModal] = useState<Modal>('none');
-  // Project number picked in the project modal (single choice); kept across a trip to the add-project panel.
-  const [pickedNumber, setPickedNumber] = useState<string | null>(null);
-  const closeAdd = useCallback(() => setModal('pick'), []);
+  const [adding, setAdding] = useState(false);
+  // What the last assignment did, shown in the selection bar until lines are ticked again.
+  const [lastAssigned, setLastAssigned] = useState<string | null>(null);
+  const closeAdd = useCallback(() => setAdding(false), []);
   const { busy, error, run, clearError } = useAction(taskId);
 
   // 显示服务端记下的本次归属：只读（ERP 已开始）时是已提交的那一份，否则是正在编辑的 working。
@@ -193,22 +198,30 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   const groups = groupByCategory(visible);
   const allVisibleSelected = visible.length > 0 && visible.every((line) => selected.has(line.lineId));
   const used = new Set(assignment.usage.map((entry) => entry.number));
-  // The modal lists selectable projects only: those already used here (and still selectable) first, with line counts;
-  // the rest in project-book order. Locked projects cannot take new lines, so they are not listed.
   const sourceOf = (number: string): ProjectSource => assignment.projects.find((project) => project.number === number)?.source ?? 'personal';
+  // Used projects first (including locked ones, so their lines stay explained), then the rest in project-book order.
   const options: Option[] = [
-    ...assignment.usage.filter((entry) => entry.selectable).map((entry) => ({ number: entry.number, name: entry.name, lineCount: entry.lineCount, source: sourceOf(entry.number) })),
-    ...assignment.projects.filter((project) => !used.has(project.number)).map((project) => ({ number: project.number, name: project.name, lineCount: null, source: project.source })),
+    ...assignment.usage.map((entry) => ({
+      number: entry.number,
+      name: entry.name,
+      source: sourceOf(entry.number),
+      usage: { lineCount: entry.lineCount, grossTotal: entry.grossTotal },
+      selectable: entry.selectable,
+    })),
+    ...assignment.projects.filter((project) => !used.has(project.number)).map((project) => ({ ...project, usage: null, selectable: true })),
   ];
-  const shownOptions = options.filter((option) => matches(option, query));
-  // The picked project, if it still matches the search; otherwise nothing is picked.
-  const pickedOption = shownOptions.find((option) => option.number === pickedNumber) ?? null;
+  const shown = options.filter((option) => matches(option, query));
+  const shownUsed = shown.filter((option) => option.usage !== null);
+  const shownRest = shown.filter((option) => option.usage === null);
+  const nothingSelected = selected.size === 0;
+  const canAssign = canAct && !busy && !nothingSelected && conflict === null;
   const assignedCount = lines.filter((line) => current[line.lineId]).length;
   // 提交按钮只看表单是否填完（每条明细都已归属、事由非空）：这是 #105 要求的输入校验，不是业务判定；
   // 项目能否用、归属是否成立仍由服务端在提交时判定。
   const complete = assignedCount === lines.length && lines.length > 0 && purpose.trim().length > 0;
 
   const toggle = (lineIds: readonly string[], on: boolean) => {
+    setLastAssigned(null);
     setSelected((previous) => {
       const next = new Set(previous);
       for (const lineId of lineIds) {
@@ -225,29 +238,33 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
     setSelected(new Set());
   };
 
-  const assignSelected = async (number: string, onlyEmpty: boolean) => {
+  const assignLines = async (lineIds: string[], project: Target, onlyEmpty: boolean) => {
     setConflict(null);
     clearError();
-    const lineIds = lines.map((line) => line.lineId).filter((lineId) => selected.has(lineId));
-    const outcome = await run((adapter) => adapter.assignProjectLines(taskId, { lineIds, projectNumber: number, onlyUnassigned: onlyEmpty }, snapshot.step.stepToken));
-    if (outcome.ok) setSelected(new Set());
-  };
-
-  const openPicker = () => {
-    setQuery('');
-    setPickedNumber(null);
-    setModal('pick');
+    const outcome = await run((adapter) => adapter.assignProjectLines(taskId, { lineIds, projectNumber: project.number, onlyUnassigned: onlyEmpty }, snapshot.step.stepToken));
+    if (outcome.ok) {
+      setSelected(new Set());
+      setLastAssigned(`已归入 ${project.number} ${project.name}`);
+    }
   };
 
   // 冲突检测拿已勾选明细在服务端记下的本次归属与目标项目比较，只用来决定是否先弹出三选一提示。
-  const assign = (project: Target) => {
-    setModal('none');
-    const conflicts = [...selected].filter((lineId) => {
+  const assign = (project: Option) => {
+    if (!canAssign || !project.selectable) return;
+    const lineIds = lines.map((line) => line.lineId).filter((lineId) => selected.has(lineId));
+    const conflicts = lineIds.filter((lineId) => {
       const existing = current[lineId];
       return existing !== undefined && existing.projectNumber !== project.number;
     });
-    if (conflicts.length > 0) setConflict({ project, count: conflicts.length });
-    else void assignSelected(project.number, false);
+    if (conflicts.length > 0) setConflict({ lineIds, project, count: conflicts.length });
+    else void assignLines(lineIds, project, false);
+  };
+
+  // Enter in the search box assigns the ticked lines when exactly one selectable project matches.
+  const onSearchKey = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter') return;
+    const candidates = shown.filter((option) => option.selectable);
+    if (candidates.length === 1) assign(candidates[0]!);
   };
 
   const cancelConflict = useCallback(() => setConflict(null), []);
@@ -264,6 +281,41 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
     : autoRunning
       ? '项目归属已提交，正在核对报销信息并准备报销材料。'
       : '项目归属已提交。改派项目或修改事由会使整单明细确认失效，需要重新确认。';
+
+  const selectionStatus = locked ? '项目归属已锁定' : nothingSelected ? (lastAssigned ?? '勾选明细后，点右侧项目归入') : `已选 ${selected.size} 条，点右侧项目归入`;
+  const panelStatus = locked ? '不能再修改' : nothingSelected ? '先勾选左侧明细' : `已选 ${selected.size} 条`;
+
+  const projectItem = (option: Option) => (
+    <li key={option.number}>
+      <button
+        type="button"
+        className="app-project-target"
+        disabled={!canAssign || !option.selectable}
+        aria-describedby="assign-panel-status"
+        onClick={() => assign(option)}
+      >
+        <span className="app-project-target-name">
+          <Highlight text={option.name} query={query} />
+        </span>
+        <span className="app-project-target-meta">
+          <span className="app-code">
+            <Highlight text={option.number} query={query} />
+          </span>
+          <Tag type={option.source === 'public' ? 'teal' : 'gray'} size="sm">
+            {PROJECT_SOURCE_LABEL[option.source]}
+          </Tag>
+          {/* 条数与金额来自服务端，页面不计算。 */}
+          {option.usage ? (
+            <span className="app-caption" data-testid={`usage-${option.number}`}>
+              {option.usage.lineCount} 条 / {option.usage.grossTotal} 元
+            </span>
+          ) : null}
+          {/* A project deleted from the project book: lines already assigned keep it, but it cannot take new lines. */}
+          {option.selectable ? null : <StatusTag tone="locked">已锁定</StatusTag>}
+        </span>
+      </button>
+    </li>
+  );
 
   return (
     <>
@@ -328,39 +380,29 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
 
       <div className="app-project-split bleed">
         <section className="app-assign-main" aria-label="费用明细">
-          {/* Carbon table toolbar: normally one row with select-all, the filter and the selected count; once lines are
-              selected the batch action bar covers that row (已选 N 条, 归入项目, 取消).
-              While the batch action bar is not shown Carbon gives it aria-hidden, so screen readers and role queries skip it. */}
-          <TableToolbar aria-label="明细工具栏">
-            <TableBatchActions
-              role="region"
-              aria-label="批量操作"
-              shouldShowBatchActions={selected.size > 0}
-              totalSelected={selected.size}
-              onCancel={() => setSelected(new Set())}
-              translateWithId={batchText}
-            >
-              <TableBatchAction renderIcon={Add} iconDescription="归入项目" disabled={!canAct || busy} onClick={openPicker}>
-                归入项目
-              </TableBatchAction>
-            </TableBatchActions>
-            <TableToolbarContent className="app-assign-toolbar" role="group" aria-label="明细选择与筛选" aria-hidden={selected.size > 0}>
-              <Checkbox
-                id="assign-select-all"
-                labelText="全选当前明细"
-                checked={allVisibleSelected}
-                disabled={locked || visible.length === 0}
-                onChange={() => toggle(visible.map((line) => line.lineId), !allVisibleSelected)}
-              />
-              {/* Filtering is not row selection: like the task list it uses a ContentSwitcher (全部 all / 未归属 unassigned),
-                  not a checkbox, sized to its content. */}
-              <ContentSwitcher aria-label="明细筛选" size="sm" selectedIndex={onlyUnassigned ? 1 : 0} onChange={(data: { index?: number }) => filterUnassigned(data.index === 1)}>
-                <Switch name="all" text="全部" disabled={locked} />
-                <Switch name="unassigned" text="未归属" disabled={locked} />
-              </ContentSwitcher>
-              <span className="app-caption app-assign-count">已选 {selected.size} 条</span>
-            </TableToolbarContent>
-          </TableToolbar>
+          {/* Sticky selection bar under the step bar: select-all, the filter, and what to do next. */}
+          <div className={nothingSelected ? 'app-assign-toolbar' : 'app-assign-toolbar is-selecting'} role="group" aria-label="明细选择与筛选">
+            <Checkbox
+              id="assign-select-all"
+              labelText="全选当前明细"
+              checked={allVisibleSelected}
+              disabled={locked || visible.length === 0}
+              onChange={() => toggle(visible.map((line) => line.lineId), !allVisibleSelected)}
+            />
+            {/* Filtering is not row selection: like the task list it uses a ContentSwitcher (全部 all / 未归属 unassigned). */}
+            <ContentSwitcher aria-label="明细筛选" size="sm" selectedIndex={onlyUnassigned ? 1 : 0} onChange={(data: { index?: number }) => filterUnassigned(data.index === 1)}>
+              <Switch name="all" text="全部" disabled={locked} />
+              <Switch name="unassigned" text="未归属" disabled={locked} />
+            </ContentSwitcher>
+            <span className="app-assign-status" role="status" data-testid="assign-selection">
+              {selectionStatus}
+            </span>
+            {nothingSelected ? null : (
+              <Button kind="ghost" size="sm" onClick={() => setSelected(new Set())}>
+                取消选择
+              </Button>
+            )}
+          </div>
           {groups.length > 0 ? (
             <>
               {/* 表头只画一次（各组的表共用列宽）；读屏从每组表格的名称与单元格读出内容。 */}
@@ -420,41 +462,66 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
           )}
         </section>
 
-        {/* Read-only summary of the projects this assignment uses; every number comes from the server. Picking a project
-            happens in the 归入项目 (assign to project) modal. */}
-        <aside className="app-project-aside" role="complementary" aria-label="本次归属">
-          <h2 className="app-aside-title">本次归属</h2>
-          {assignment.usage.length > 0 ? (
-            <ul className="app-project-options" aria-label="本次归属的项目">
-              {assignment.usage.map((entry) => (
-                <li key={entry.number} className={entry.selectable ? undefined : 'is-locked'}>
-                  <div>
-                    <div className="name">{entry.name}</div>
-                    {/* 条数与金额来自服务端，页面不计算；用字段组代替中点串。 */}
-                    <div data-testid={`usage-${entry.number}`}>
-                      <FieldGroup
-                        label={`${entry.name}的归入情况`}
-                        fields={[
-                          { label: '项目号', value: <span className="app-code">{entry.number}</span> },
-                          { label: '条数', value: `${entry.lineCount} 条` },
-                          { label: '价税合计', value: `${entry.grossTotal} 元` },
-                        ]}
-                      />
-                    </div>
-                  </div>
-                  {/* A project deleted from the project book: lines already assigned keep it, but it cannot take new lines
-                      (the modal does not list it). */}
-                  {entry.selectable ? null : <StatusTag tone="locked">已锁定</StatusTag>}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="app-caption app-project-empty">暂无</p>
-          )}
+        {/* The projects are the drop targets: clicking one assigns the ticked lines. Pinned beside the table. */}
+        <aside className="app-project-panel" role="complementary" aria-label="归入项目">
+          <div className="app-project-panel-head">
+            <div className="app-project-panel-title">
+              <h2>归入项目</h2>
+              <span className="app-caption" id="assign-panel-status">
+                {panelStatus}
+              </span>
+            </div>
+            <Search
+              size="md"
+              labelText="查找项目"
+              placeholder="搜项目号或名称"
+              closeButtonLabelText="清除查找"
+              value={query}
+              onChange={(event: unknown) => setQuery(searchValue(event))}
+              onKeyDown={onSearchKey}
+            />
+          </div>
+          <div className="app-project-panel-list">
+            {options.length === 0 ? (
+              <p className="app-caption app-project-empty">{PROJECT_ASSIGNMENT_ERRORS.bookEmpty}</p>
+            ) : shown.length === 0 ? (
+              <p className="app-caption app-project-empty" role="status">
+                没有匹配的项目
+              </p>
+            ) : (
+              <>
+                {shownUsed.length > 0 ? (
+                  <>
+                    <h3 className="app-project-panel-group">本次已归入</h3>
+                    <ul className="app-project-targets" aria-label="本次已归入">
+                      {shownUsed.map(projectItem)}
+                    </ul>
+                  </>
+                ) : null}
+                {shownRest.length > 0 ? (
+                  <>
+                    <h3 className="app-project-panel-group">可选项目</h3>
+                    <ul className="app-project-targets" aria-label="可选项目">
+                      {shownRest.map(projectItem)}
+                    </ul>
+                  </>
+                ) : null}
+              </>
+            )}
+          </div>
+          <div className="app-project-panel-foot">
+            {/* In-place add (a small enhancement over the Skill, noted in the README): opens the project-book panel; the
+                ticked lines are kept. A new project shows up in the list with the next snapshot the server pushes. */}
+            <Button kind="ghost" size="sm" renderIcon={Add} disabled={locked} onClick={() => setAdding(true)}>
+              {PROJECT_BOOK_COPY.addProject}
+            </Button>
+          </div>
         </aside>
       </div>
 
-      {/* 吸底操作栏：左边已归属条数与服务端给出的整单合计（不是已归属部分的合计），右边唯一的主按钮。 */}
+      {/* 吸底操作栏：左边已归属条数与服务端给出的整单合计（不是已归属部分的合计），右边唯一的主按钮。
+          合计取 projectAssignment.grossTotal，不是 confirmation.grossTotal：后者绑的是整单确认，
+          归属提交之前一直是 null，读它会让这里只剩一个「元」。 */}
       <ActionBar
         label="提交项目归属"
         consequenceProps={{ 'data-testid': 'assign-summary' }}
@@ -463,7 +530,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
             label="归属进度"
             fields={[
               { label: '已归属', value: `${assignedCount} / ${lines.length} 条` },
-              { label: '整单合计', value: `${snapshot.confirmation.grossTotal ?? ''} 元` },
+              { label: '整单合计', value: `${snapshot.projectAssignment.grossTotal} 元` },
             ]}
           />
         }
@@ -482,8 +549,8 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
           confirmLabel={PROJECT_CONFLICT_COPY.overwrite}
           cancelLabel={PROJECT_CONFLICT_COPY.cancel}
           extraLabel={PROJECT_CONFLICT_COPY.onlyEmpty}
-          onExtra={() => void assignSelected(conflict.project.number, true)}
-          onConfirm={() => void assignSelected(conflict.project.number, false)}
+          onExtra={() => void assignLines(conflict.lineIds, conflict.project, true)}
+          onConfirm={() => void assignLines(conflict.lineIds, conflict.project, false)}
           onCancel={cancelConflict}
         >
           <p>
@@ -492,73 +559,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
         </ConfirmDialog>
       ) : null}
 
-      {modal === 'pick' ? (
-        <ComposedModal open size="sm" aria-label="归入项目" preventCloseOnClickOutside={false} onClose={() => setModal('none')}>
-          <ModalHeader title="归入项目" label={`已选 ${selected.size} 条明细`} iconDescription={DIALOG_CLOSE_LABEL} />
-          <ModalBody>
-            <Search
-              size="md"
-              labelText="查找项目"
-              placeholder="查找项目号或名称"
-              closeButtonLabelText="清除查找"
-              value={query}
-              data-modal-primary-focus
-              onChange={(event: unknown) => setQuery(searchValue(event))}
-            />
-            {options.length === 0 ? (
-              <p className="app-caption app-project-empty">{PROJECT_ASSIGNMENT_ERRORS.bookEmpty}</p>
-            ) : shownOptions.length === 0 ? (
-              <p className="app-caption app-project-empty" role="status">
-                没有匹配的可选项目
-              </p>
-            ) : (
-              <RadioButtonGroup
-                className="app-project-picker"
-                name="assign-project"
-                legendText="选择项目"
-                orientation="vertical"
-                valueSelected={pickedOption?.number ?? ''}
-                onChange={(value: unknown) => setPickedNumber(String(value))}
-              >
-                {shownOptions.map((option) => (
-                  <RadioButton
-                    key={option.number}
-                    id={`assign-project-${option.number}`}
-                    value={option.number}
-                    labelText={
-                      <span className="app-picker-option">
-                        <span className="name">{option.name}</span>
-                        <span className="app-code app-caption">{option.number}</span>
-                        <Tag type={option.source === 'public' ? 'teal' : 'gray'} size="sm">
-                          {PROJECT_SOURCE_LABEL[option.source]}
-                        </Tag>
-                        {/* Projects already used here show their line count (from the server). */}
-                        {option.lineCount !== null ? <span className="app-caption">本次 {option.lineCount} 条</span> : null}
-                      </span>
-                    }
-                  />
-                ))}
-              </RadioButtonGroup>
-            )}
-            {/* In-place add (a small enhancement over the Skill, noted in the README): swaps to the project-book panel and
-                returns here on close, keeping the selected lines and the picked project. A new project shows up in the list
-                with the next snapshot the server pushes. Disabled once ERP writing has started, like every edit here. */}
-            <Button kind="ghost" size="sm" renderIcon={Add} disabled={locked} onClick={() => setModal('add')}>
-              {PROJECT_BOOK_COPY.addProject}
-            </Button>
-          </ModalBody>
-          <ModalFooter>
-            <Button kind="secondary" onClick={() => setModal('none')}>
-              取消
-            </Button>
-            <Button disabled={!pickedOption || !canAct || busy} onClick={() => (pickedOption ? assign(pickedOption) : undefined)}>
-              确认归入
-            </Button>
-          </ModalFooter>
-        </ComposedModal>
-      ) : null}
-
-      {modal === 'add' ? (
+      {adding ? (
         <ConfirmDialog title={PROJECT_BOOK_COPY.addProject} confirmLabel={PROJECT_BOOK_COPY.addDialogDone} wide single focusCancel={false} onConfirm={closeAdd} onCancel={closeAdd}>
           <ProjectBookPanel primaryIntake autoFocus />
         </ConfirmDialog>
@@ -599,9 +600,9 @@ function LineRow({
       </TableCell>
       <TableCell data-testid={`project-of-${line.no}`}>
         {project ? (
-          <>
+          <span className="app-project-of" title={`${project.projectNumber} / ${project.projectName}`}>
             <span className="app-code">{project.projectNumber}</span> / {project.projectName}
-          </>
+          </span>
         ) : (
           <Tag type="gray" size="sm">
             未归属

@@ -628,7 +628,7 @@ $doc-frame-block: var(--app-doc-frame-block);
 // 原件：layer 底上的一页，页面滚动时贴在顶栏下，与表单保持并排对照。
 .app-viewer {
   position: sticky;
-  inset-block-start: calc(3rem + #{$spacing-05});
+  inset-block-start: calc(3rem + var(--app-stepbar-h, 0px) + #{$spacing-05});
   display: grid;
   place-items: center;
   min-inline-size: 0;
@@ -848,32 +848,34 @@ $doc-frame-block: var(--app-doc-frame-block);
   flex-wrap: wrap;
 }
 
+// Line table on the left, the sticky 归入项目 (assign to project) panel on the right. Top-aligned so the panel can stick.
 .app-project-split {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 20rem;
-  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr) 22rem;
+  align-items: start;
   margin-block-start: $spacing-05;
   background: $layer-01;
   border-block-start: 1px solid $border-subtle-01;
 }
 
-// 明细表不挤压：工作区放不下最小宽度时，左栏横向滚动。
+// No horizontal scroll container here: it would stop the selection bar from sticking. Fixed table layout squeezes instead.
 .app-assign-main {
   min-inline-size: 0;
-  overflow-x: auto;
-
-  > * {
-    min-inline-size: 55rem;
-  }
 }
 
-// One toolbar row: select-all, the filter (sized to its content, not stretched), the selected count.
-// Carbon's toolbar-content aligns right by default; here it runs from the left.
-.cds--toolbar-content.app-assign-toolbar {
-  justify-content: flex-start;
+// Selection bar: sticks under the step bar while the lines scroll. Highlighted while lines are ticked.
+.app-assign-toolbar {
+  position: sticky;
+  inset-block-start: calc(3rem + var(--app-stepbar-h, 0px));
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: $spacing-07;
-  padding-inline: $gutter;
+  gap: $spacing-03 $spacing-06;
+  min-block-size: 3rem;
+  padding: $spacing-03 $gutter;
+  background: $layer-accent-01;
+  border-block-end: 1px solid $border-subtle-01;
 
   .cds--form-item,
   .cds--content-switcher {
@@ -896,26 +898,17 @@ $doc-frame-block: var(--app-doc-frame-block);
     overflow: visible;
     text-overflow: clip;
   }
-}
 
-.app-assign-count {
-  margin-inline-start: auto;
-}
-
-// A radio option in the project modal: name, project number and line count on one row.
-.app-picker-option {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: $spacing-02 $spacing-04;
-
-  .name {
-    font-weight: 600;
+  // Ticked lines: a light highlight with an interactive edge, so every control keeps its normal contrast.
+  &.is-selecting {
+    background: $highlight;
+    box-shadow: inset 3px 0 0 $border-interactive;
   }
 }
 
-.app-project-picker {
-  margin-block: $spacing-05 $spacing-03;
+.app-assign-status {
+  flex: 1 1 12rem;
+  @include type.type-style('body-compact-01');
 }
 
 // 各组的表共用一套列宽，表头只画一次。
@@ -950,6 +943,14 @@ $doc-frame-block: var(--app-doc-frame-block);
 
   tr.app-row-selected td {
     background: $layer-selected-01;
+  }
+
+  // Real project names are long: keep the project cell to two lines (the full text stays in the DOM).
+  .app-project-of {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 }
 
@@ -989,51 +990,117 @@ $doc-frame-block: var(--app-doc-frame-block);
   padding: $spacing-06 $gutter;
 }
 
-.app-project-aside {
+// 归入项目 panel: sticks between the step bar and the action bar. Head (search) and foot stay; the project list scrolls.
+.app-project-panel {
+  position: sticky;
+  inset-block-start: calc(3rem + var(--app-stepbar-h, 0px));
+  display: flex;
+  flex-direction: column;
   min-inline-size: 0;
-  padding: $spacing-05 $gutter;
+  max-block-size: calc(100vh - 3rem - var(--app-stepbar-h, 0px) - var(--app-action-bar-h, 0px));
+  background: $layer-01;
   border-inline-start: 1px solid $border-subtle-01;
+}
 
-  .cds--search {
-    margin-block-end: $spacing-03;
+.app-project-panel-head {
+  flex: none;
+  padding: $spacing-05 $spacing-05 $spacing-04;
+  border-block-end: 1px solid $border-subtle-01;
+}
+
+.app-project-panel-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: $spacing-03;
+  margin-block-end: $spacing-03;
+
+  h2 {
+    margin: 0;
+    @include type.type-style('heading-compact-02');
   }
 }
 
-.app-aside-title {
-  margin: 0 0 $spacing-03;
-  @include type.type-style('heading-compact-02');
+.app-project-panel-list {
+  flex: 1 1 auto;
+  min-block-size: 6rem;
+  overflow-y: auto;
+  padding: $spacing-03 $spacing-03 $spacing-05;
 }
 
-.app-project-options + .app-aside-title,
-.app-project-empty + .app-aside-title {
-  margin-block-start: $spacing-07;
+.app-project-panel-group {
+  margin: $spacing-04 $spacing-03 $spacing-02;
+  color: $text-secondary;
+  @include type.type-style('label-01');
+
+  &:first-child {
+    margin-block-start: $spacing-02;
+  }
 }
 
-.app-project-options {
-  margin: 0 0 $spacing-04;
+.app-project-panel-foot {
+  flex: none;
+  padding: $spacing-02 $spacing-03;
+  border-block-start: 1px solid $border-subtle-01;
+}
+
+.app-project-targets {
+  margin: 0;
   padding: 0;
   list-style: none;
 
-  li {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: $spacing-03;
-    padding-block: $spacing-03;
-    border-block-end: 1px solid $border-subtle-01;
+  li + li {
+    margin-block-start: $spacing-02;
+  }
+}
+
+// One project: a full-width button (name, then number, source, usage). Clicking it assigns the ticked lines.
+.app-project-target {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-02;
+  inline-size: 100%;
+  padding: $spacing-04;
+  color: $text-primary;
+  text-align: start;
+  background: $layer-02;
+  border: 1px solid $border-subtle-01;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: $layer-hover-02;
+    border-color: $border-interactive;
   }
 
-  .name {
-    font-weight: 600;
+  &:focus-visible {
+    outline: 2px solid $focus;
+    outline-offset: -2px;
   }
 
-  li.is-locked .name {
+  &:disabled {
+    cursor: not-allowed;
     color: $text-secondary;
   }
 }
 
+.app-project-target-name {
+  @include type.type-style('body-compact-01');
+}
+
+.app-project-target-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $spacing-02 $spacing-03;
+}
+
+.app-search-hit {
+  color: inherit;
+  background: $highlight;
+}
+
 .app-project-empty {
-  margin: $spacing-04 0;
+  margin: $spacing-04 $spacing-03;
 }
 
 .app-gate-continue {
@@ -1343,21 +1410,26 @@ $doc-frame-block: var(--app-doc-frame-block);
   }
 }
 
-// Project assignment (项目归属): below 1280px the 本次归属 (this assignment) summary moves under the line table,
-// so the table keeps readable column widths (no horizontal scroll at 1100px).
+// Project assignment (项目归属): the panel stays beside the lines (that is the interaction), only narrower below 1280px.
 @media (max-width: 79.99rem) {
   .app-project-split {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .app-project-aside {
-    border-inline-start: 0;
-    border-block-start: 1px solid $border-subtle-01;
+    grid-template-columns: minmax(0, 1fr) 18rem;
   }
 }
 
 // Very narrow windows: the split stacks vertically.
 @media (max-width: 56rem) {
+  .app-project-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-project-panel {
+    position: static;
+    max-block-size: none;
+    border-inline-start: 0;
+    border-block-start: 1px solid $border-subtle-01;
+  }
+
   .crop-editor,
   .app-two-actions {
     grid-template-columns: minmax(0, 1fr);

@@ -29,7 +29,7 @@ async function confirmed(prefixes: readonly string[]): Promise<TaskSnapshot> {
   const { task } = await client.createTask('杭州');
   const uploaded = await client.upload(task.taskId, prefixes.map(sample));
   await client.accepted(await client.act(uploaded, 'start-inventory'));
-  const done = await client.settled(task.taskId, 120_000);
+  const done = await client.withoutStayGaps(await client.settled(task.taskId, 120_000));
   expect(done.pendingItems.filter((item) => item.status === 'open')).toEqual([]);
   const review = await client.accepted(await client.act(done, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
   const confirmedTask = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
@@ -86,9 +86,10 @@ describe('generate-print-sheet', () => {
     // Photos are croppable with detected corners; PDFs are not.
     expect(sheet.pages[1]?.top).toMatchObject({ croppable: true, cropAdjusted: false, corners: expect.any(Array) });
     expect(sheet.pages[0]?.top).toMatchObject({ croppable: false, corners: null });
-    // Every voucher can take a payment screenshot (story 61); only the hotel page says so when it has none.
+    // Every voucher can take a payment screenshot (story 61); only the hotel page, whose absence was confirmed at
+    // inventory (#213), says so.
     expect(sheet.pages.map((page) => page.acceptsPaymentScreenshot)).toEqual([true, true, true, true, true, true]);
-    expect(sheet.notices).toEqual(['No.8 住宿发票还没有支付截图。可以照常打印，该页下半页只放结账单。']);
+    expect(sheet.notices).toEqual(['No.8 住宿发票在盘点时已确认没有支付截图，这一页不放支付截图。']);
     // Generating is print-only: the confirmation stands.
     expect(generated.confirmation).toEqual(task.confirmation);
 
@@ -183,7 +184,7 @@ describe('print settings', () => {
     // 支付截图 is not hotel-only: the taxi voucher takes one too, and it raises no notice either way (story 61).
     const onTaxi = await client.accepted(await screenshot(task, taxi.top.materialId, new File([png], 'IMG_5012.png', { type: 'image/png' })));
     expect(onTaxi.printSheet.pages[0]?.screenshotId).toEqual(expect.any(String));
-    expect(onTaxi.printSheet.notices).toEqual(['No.2 住宿发票还没有支付截图。可以照常打印，该页下半页只放结账单。']);
+    expect(onTaxi.printSheet.notices).toEqual(['No.2 住宿发票在盘点时已确认没有支付截图，这一页不放支付截图。']);
     await client.accepted(await print(onTaxi, 'remove-payment-screenshot', { screenshotId: onTaxi.paymentScreenshots[0]?.screenshotId }));
     const shot = await client.accepted(await screenshot(task, hotel.top.materialId, new File([png], 'IMG_5011.png', { type: 'image/png' })));
     expect(shot.paymentScreenshots).toEqual([expect.objectContaining({ voucherMaterialId: hotel.top.materialId, fileName: 'IMG_5011.png' })]);
@@ -194,7 +195,7 @@ describe('print settings', () => {
 
     const removed = await client.accepted(await print(shot, 'remove-payment-screenshot', { screenshotId: shot.paymentScreenshots[0]?.screenshotId }));
     expect(removed.paymentScreenshots).toEqual([]);
-    expect(removed.printSheet.notices).toEqual(['No.2 住宿发票还没有支付截图。可以照常打印，该页下半页只放结账单。']);
+    expect(removed.printSheet.notices).toEqual(['No.2 住宿发票在盘点时已确认没有支付截图，这一页不放支付截图。']);
     await refused(await print(removed, 'remove-payment-screenshot', { screenshotId: 'gone' }), 'screenshot_not_found');
     // The settings survive: the folio keeps its rotation and the photo its corners.
     expect(removed.printSheet.pages[1]?.bottom?.rotate).toBe(!hotel.bottom.rotate);
