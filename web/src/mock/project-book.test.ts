@@ -29,4 +29,40 @@ describe('mock project-book refreshes', () => {
     expect(changed.projectAssignment.projects.some((project) => project.number === 'P-2307')).toBe(false);
     expect(changed.confirmation.status).toBe('invalidated');
   });
+
+  test('leaves an unchanged project-stage task untouched', () => {
+    const options: MockOptions = { seed: 'project', fault: null };
+    const bus = createBus(options);
+    bus.put(t1Snapshot('project'));
+    const auth = createAuth(options);
+    const state = createMockBookState(options, MOCK_ACCOUNT.accountId);
+    const book = createProjectBook(options, bus, auth, state, () => MOCK_ACCOUNT.accountId);
+    book.prepareSeed(T1_ID);
+
+    const before = bus.draft(T1_ID);
+    book.refreshTasks();
+    const unchanged = bus.draft(T1_ID);
+
+    expect(unchanged.revision).toBe(before.revision);
+    expect(unchanged.step.stepToken).toBe(before.step.stepToken);
+    expect(unchanged.step.kind).toBe('assign_projects');
+  });
+
+  test('leaves an unchanged empty-book stage task untouched', () => {
+    const options: MockOptions = { seed: 'project', fault: null, bookEmpty: true };
+    const bus = createBus(options);
+    bus.put(t1Snapshot('project'));
+    const auth = createAuth(options);
+    const state = createMockBookState(options, MOCK_ACCOUNT.accountId);
+    const book = createProjectBook(options, bus, auth, state, () => MOCK_ACCOUNT.accountId);
+    book.prepareSeed(T1_ID);
+
+    const before = bus.draft(T1_ID);
+    book.refreshTasks();
+    const unchanged = bus.draft(T1_ID);
+
+    expect(unchanged.revision).toBe(before.revision);
+    expect(unchanged.step.stepToken).toBe(before.step.stepToken);
+    expect(unchanged.step.kind).toBe('maintain_project_book');
+  });
 });
