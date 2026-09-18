@@ -340,6 +340,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     },
     intakePublicProject: (input) => bookAction(url(E.intakePublicProject.path), input),
     editPublicProject: (input) => bookAction(url(E.editPublicProject.path), input),
+    confirmPublicProjectConversion: (input) => bookAction(url(E.confirmPublicProjectConversion.path), input),
     deactivatePublicProject: (input) => bookAction(url(E.deactivatePublicProject.path), input),
     restorePublicProject: (input) => bookAction(url(E.restorePublicProject.path), input),
     async getLegacyImport() {

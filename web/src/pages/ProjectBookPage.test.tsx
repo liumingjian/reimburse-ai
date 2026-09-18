@@ -35,7 +35,7 @@ describe('个人项目簿 #/projects', () => {
     // Initialize the seeded personal book before asserting the public collision.
     await adapter.getProjectBook();
     const collision = await adapter.intakePublicProject({ number: 'P-2307', name: '不应公开' });
-    expect(collision).toMatchObject({ ok: true, result: { status: 'rejected', note: '项目号 P-2307 已记录在个人项目簿中，暂不能加入公共项目簿。' } });
+    expect(collision).toMatchObject({ ok: true, result: { status: 'conversion_required', note: '项目号 P-2307 已记录在个人项目簿中。确认后，所有同号个人项目将转为公共项目；已有报销记录保持不变。' } });
     await adapter.intakePublicProject({ number: 'PUB-100', name: '全员共享项目' });
     window.location.hash = '#/projects';
     render(<App adapter={adapter} />);
@@ -95,7 +95,7 @@ describe('个人项目簿 #/projects', () => {
     expect((await adapter.getProjectBook()).projects.some((project) => project.number === 'PERSONAL-ONLY')).toBe(false);
     expect(await adapter.intakePublicProject({ number: 'PERSONAL-ONLY', name: '不应公开' })).toMatchObject({
       ok: true,
-      result: { status: 'rejected', note: '项目号 PERSONAL-ONLY 已记录在个人项目簿中，暂不能加入公共项目簿。' },
+      result: { status: 'conversion_required', note: '项目号 PERSONAL-ONLY 已记录在个人项目簿中。确认后，所有同号个人项目将转为公共项目；已有报销记录保持不变。' },
     });
   });
 });

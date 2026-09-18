@@ -195,7 +195,7 @@ export interface ProjectBookEventTable {
   admission_source: 'manual' | null;
   // Null preserves the legacy event fold. Lifecycle and later maintenance facts use this explicit discriminator while
   // retaining the original `action` values accepted by the historical SQLite CHECK constraint.
-  maintenance_action: 'deactivated' | 'restored' | 'edited' | null;
+  maintenance_action: 'deactivated' | 'restored' | 'edited' | 'converted' | null;
   // An edit carries its original identity separately so a renumbering remains an append-only fact.
   previous_number: string | null;
   actor_account_id: string;

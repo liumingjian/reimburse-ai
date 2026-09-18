@@ -48,14 +48,14 @@ describe('offline public intake', () => {
     expect(ProjectBookSchema.parse(await (await bob.request('/api/project-book')).json()).projects).toEqual([]);
   });
 
-  it('keeps personal books independent, rejects collisions across scopes, and does not reveal the personal owner', async () => {
+  it('keeps personal books independent, prompts for public conversion, and does not reveal the personal owner', async () => {
     expect((await intake(bob, '/api/project-book/intake', { number: 'PERSONAL-7', name: 'Bob 私有项目' })).status).toBe('admitted');
     const other = await server.signIn('alice');
     expect((await intake(other, '/api/project-book/intake', { number: 'PERSONAL-7', name: 'Alice 私有项目' })).status).toBe('admitted');
     expect(await intake(bob, '/api/project-book/intake', { number: 'PERSONAL-7', name: '重复名称' })).toMatchObject({ status: 'rejected', note: expect.stringContaining('未重复加入') });
 
     const blockedPublic = await intake(admin, '/api/public-project-book/intake', { number: 'PERSONAL-7', name: '不应公开' });
-    expect(blockedPublic).toMatchObject({ status: 'rejected', note: PROJECT_BOOK_NOTES.publicPersonalCollision('PERSONAL-7') });
+    expect(blockedPublic).toMatchObject({ status: 'conversion_required', note: PROJECT_BOOK_NOTES.conversionRequired('PERSONAL-7') });
     expect(blockedPublic.note).not.toContain('bob');
     expect(blockedPublic.note).not.toContain('alice');
 
@@ -70,7 +70,7 @@ describe('offline public intake', () => {
       admin.post('/api/public-project-book/intake', { number: 'RACE-1', name: '公共竞态项目' }),
     ]);
     const outcomes = await Promise.all([personal.json(), shared.json()]).then((bodies) => bodies.map((body) => ProjectBookResultSchema.parse(body)));
-    expect(outcomes.map((outcome) => outcome.status).sort()).toEqual(['admitted', 'rejected']);
+    expect(outcomes.map((outcome) => outcome.status).sort()).toEqual(['admitted', 'conversion_required']);
 
     const personalBook = ProjectBookSchema.parse(await (await bob.request('/api/project-book')).json());
     const publicBook = ProjectBookSchema.parse(await (await bob.request('/api/public-project-book')).json());

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Transaction } from 'kysely';
-import { PROJECT_BOOK_NOTES, type ProjectBook, type ProjectBookEditInput, type ProjectBookEntry, type ProjectBookIntakeInput, type ProjectBookLifecycleInput, type ProjectBookResult } from '@baox/contract';
+import { PROJECT_BOOK_NOTES, type ProjectBook, type ProjectBookEditInput, type ProjectBookEntry, type ProjectBookIntakeInput, type ProjectBookLifecycleInput, type ProjectBookResult, type PublicProjectConversionInput } from '@baox/contract';
 import { isSafeProjectNumber } from './catalog/project-catalog';
 import type { Db } from './db/database';
 import type { ProjectBookEventTable, Schema } from './db/schema';
@@ -89,6 +89,10 @@ function annotatePersonalEntry(entry: BookEntry, today: string, publicNumbers: R
 }
 
 function applyEvent(book: Map<string, BookEntry>, event: ProjectBookEventTable, scope: BookRef['scope']): void {
+  if (event.maintenance_action === 'converted') {
+    if (scope === 'personal') book.delete(event.number);
+    return;
+  }
   if (event.maintenance_action === 'edited') {
     const previousNumber = event.previous_number ?? event.number;
     const entry = book.get(previousNumber);
@@ -237,6 +241,11 @@ async function append(tx: BookDb, ref: BookRef, actorAccountId: string, at: stri
 type IntakeDecision = 'admitted' | 'duplicate' | 'public_reserved' | 'personal_collision';
 type EditDecision = 'edited' | 'missing' | 'duplicate' | 'public_reserved' | 'personal_collision';
 type LifecycleDecision = 'deactivated' | 'restored' | 'not_found' | 'already_active' | 'already_inactive' | 'public_reserved';
+type ConversionDecision = 'converted' | 'duplicate' | 'missing' | 'stale';
+
+function matchingPersonalOwners(books: ReadonlyMap<string, readonly BookEntry[]>, number: string): string[] {
+  return [...books].flatMap(([ownerAccountId, entries]) => (entries.some((entry) => entry.number === number) ? [ownerAccountId] : []));
+}
 
 export function createBookService(db: Db, ref: BookRef, actorAccountId: string, now: () => Date = () => new Date()) {
   const at = () => `${now().toISOString().slice(0, 19)}Z`;
@@ -276,7 +285,7 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
           if (publicEntries.some((entry) => entry.number === number)) return 'public_reserved';
         } else {
           const books = await personalBooks(tx);
-          if ([...books.values()].some((entries) => entries.some((entry) => entry.number === number))) return 'personal_collision';
+          if (matchingPersonalOwners(books, number).length > 0) return 'personal_collision';
         }
 
         await append(tx, ref, actorAccountId, at(), [{ number, name, action: 'admitted', admissionSource: 'manual' }]);
@@ -288,7 +297,7 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
       if (decision === 'public_reserved') return result('rejected', PROJECT_BOOK_NOTES.publicReserved(number));
       // This is deliberately not localized: the collision is in a private personal book, not the public book being
       // created, and the note must not disclose whose book it is.
-      return result('rejected', PROJECT_BOOK_NOTES.publicPersonalCollision(number), null, false);
+      return result('conversion_required', PROJECT_BOOK_NOTES.conversionRequired(number), null, false);
     },
 
     async edit(input: ProjectBookEditInput): Promise<ProjectBookResult> {
@@ -312,7 +321,7 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
         }
         if (number !== originalNumber && ref.scope === 'public') {
           const books = await personalBooks(tx);
-          if ([...books.values()].some((entries) => entries.some((entry) => entry.number === number))) return 'personal_collision';
+          if (matchingPersonalOwners(books, number).length > 0) return 'personal_collision';
         }
 
         await append(tx, ref, actorAccountId, at(), [{ number, name, action: 'checked', maintenanceAction: 'edited', previousNumber: originalNumber }]);
@@ -324,7 +333,47 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
       if (decision === 'duplicate') return result('rejected', PROJECT_BOOK_NOTES.editDuplicate(number));
       if (decision === 'public_reserved') return result('rejected', PROJECT_BOOK_NOTES.editPublicReserved(number));
       // As with intake, the collision comes from another private book and must not identify its owner.
-      return result('rejected', PROJECT_BOOK_NOTES.editPublicPersonalCollision(number), null, false);
+      return result('conversion_required', PROJECT_BOOK_NOTES.conversionRequired(number), null, false);
+    },
+
+    async confirmConversion(input: PublicProjectConversionInput): Promise<ProjectBookResult> {
+      if (ref.scope !== 'public') return result('rejected', PROJECT_BOOK_NOTES.conversionStale);
+      const number = input.number.trim();
+      const name = input.name.trim();
+      if (number === '') return result('rejected', PROJECT_BOOK_NOTES.numberRequired);
+      if (!isSafeProjectNumber(number)) return result('rejected', PROJECT_BOOK_NOTES.unsafe(number), 'unsafe');
+      if (name === '') return result('rejected', PROJECT_BOOK_NOTES.nameRequired);
+
+      const decision = await serializeBookMutation(db, async (tx): Promise<ConversionDecision> => {
+        const current = await readBook(tx, ref);
+        let publicEvents: readonly Append[];
+
+        if (input.operation === 'intake') {
+          if (current.some((entry) => entry.number === number)) return 'duplicate';
+          publicEvents = [{ number, name, action: 'admitted', admissionSource: 'manual' }];
+        } else {
+          const originalNumber = input.originalNumber.trim();
+          const entry = current.find((candidate) => candidate.number === originalNumber);
+          if (!entry) return 'missing';
+          if (number === originalNumber || entry.name !== input.originalName || !entry.deactivated !== input.originalActive) return 'stale';
+          if (current.some((candidate) => candidate.number === number)) return 'duplicate';
+          publicEvents = [{ number, name, action: 'checked', maintenanceAction: 'edited', previousNumber: originalNumber }];
+        }
+
+        const owners = matchingPersonalOwners(await personalBooks(tx), number);
+        if (owners.length === 0) return 'stale';
+        const createdAt = at();
+        await append(tx, ref, actorAccountId, createdAt, publicEvents);
+        for (const ownerAccountId of owners) {
+          await append(tx, { scope: 'personal', ownerAccountId }, actorAccountId, createdAt, [{ number, action: 'removed', maintenanceAction: 'converted' }]);
+        }
+        return 'converted';
+      });
+
+      if (decision === 'converted') return result('converted', PROJECT_BOOK_NOTES.converted(number, name), null, false);
+      if (decision === 'duplicate') return result('rejected', input.operation === 'intake' ? PROJECT_BOOK_NOTES.duplicate(number) : PROJECT_BOOK_NOTES.editDuplicate(number));
+      if (decision === 'missing') return result('rejected', PROJECT_BOOK_NOTES.editMissing(input.operation === 'edit' ? input.originalNumber : number));
+      return result('rejected', PROJECT_BOOK_NOTES.conversionStale, null, false);
     },
 
     async deactivate(input: ProjectBookLifecycleInput): Promise<ProjectBookResult> {

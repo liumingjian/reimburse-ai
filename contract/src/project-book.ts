@@ -42,15 +42,27 @@ export const ProjectBookEditInputSchema = z.object({
 });
 export type ProjectBookEditInput = z.infer<typeof ProjectBookEditInputSchema>;
 
+// A public collision is only consolidated after a second, explicit request. An edit carries the public entry the
+// prompt was based on as well, so confirmation can refuse a stale rename or lifecycle change rather than overwrite it.
+export const PublicProjectConversionInputSchema = z.discriminatedUnion('operation', [
+  ProjectBookIntakeInputSchema.extend({ operation: z.literal('intake') }),
+  ProjectBookEditInputSchema.extend({
+    operation: z.literal('edit'),
+    originalName: z.string().nullable(),
+    originalActive: z.boolean(),
+  }),
+]);
+export type PublicProjectConversionInput = z.infer<typeof PublicProjectConversionInputSchema>;
+
 export const ProjectBookLifecycleInputSchema = z.object({
   number: z.string(),
 });
 export type ProjectBookLifecycleInput = z.infer<typeof ProjectBookLifecycleInputSchema>;
 
-export const PROJECT_BOOK_RESULT_STATUSES = ['admitted', 'edited', 'deactivated', 'restored', 'rejected'] as const;
+export const PROJECT_BOOK_RESULT_STATUSES = ['admitted', 'edited', 'deactivated', 'restored', 'converted', 'conversion_required', 'rejected'] as const;
 export type ProjectBookResultStatus = (typeof PROJECT_BOOK_RESULT_STATUSES)[number];
 
-export const PROJECT_BOOK_ACCEPTED_STATUSES: ReadonlySet<ProjectBookResultStatus> = new Set<ProjectBookResultStatus>(['admitted', 'edited', 'deactivated', 'restored']);
+export const PROJECT_BOOK_ACCEPTED_STATUSES: ReadonlySet<ProjectBookResultStatus> = new Set<ProjectBookResultStatus>(['admitted', 'edited', 'deactivated', 'restored', 'converted']);
 
 // `unsafe` is the only machine-readable validation verdict. Duplicate and ownership feedback remains intentionally
 // generic so public intake does not disclose another member's personal book.
@@ -79,6 +91,9 @@ export const PROJECT_BOOK_NOTES = {
   duplicate: (number: string) => `项目号 ${number} 已记录在个人项目簿中，未重复加入。`,
   publicReserved: (number: string) => `项目号 ${number} 已记录在公共项目簿中，请在项目归属时使用公共项目。`,
   publicPersonalCollision: (number: string) => `项目号 ${number} 已记录在个人项目簿中，暂不能加入公共项目簿。`,
+  conversionRequired: (number: string) => `项目号 ${number} 已记录在个人项目簿中。确认后，所有同号个人项目将转为公共项目；已有报销记录保持不变。`,
+  conversionStale: '项目簿已变化，请重新提交项目并确认转换。',
+  converted: (number: string, name: string) => `项目 ${number}「${name}」已转为公共项目，所有同号个人项目已合并；已有报销记录保持不变。`,
   admitted: (number: string, name: string) => `项目 ${number}「${name}」已加入个人项目簿，可用于新的项目归属。`,
   editMissing: (number: string) => `项目号 ${number} 未记录在个人项目簿中，无法修改。`,
   editUnsafe: (number: string) => `项目号 ${JSON.stringify(number)} 含有不能安全使用的字符，未修改项目。`,
@@ -118,6 +133,9 @@ export const PUBLIC_PROJECT_BOOK_COPY = {
   title: '公共项目簿',
   lead: '所有成员都可以查看和使用公共项目。只有管理员可以录入公共项目。',
   empty: '公共项目簿为空。',
+  conversionTitle: '确认转为公共项目',
+  conversionLead: (number: string) => `项目号 ${number} 已在个人项目簿中。确认后，所有同号个人项目将合并到公共项目簿；已有报销记录不会改变。`,
+  conversionConfirm: '确认转换',
 } as const;
 
 export const PROJECT_RESELECT_COPY = {
