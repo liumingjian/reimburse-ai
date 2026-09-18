@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button, InlineNotification, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextInput } from '@carbon/react';
-import { Add } from '@carbon/icons-react';
+import { Add, PauseFilled, Renew } from '@carbon/icons-react';
 import { StatusTag } from '../shell/StatusTag';
 import { useAppStore, useBook } from '../adapter/context';
 import type { BookScope } from '../adapter/store';
@@ -15,6 +15,8 @@ type BookOps = {
   title: string;
   empty: string;
   intake: (adapter: AppAdapter, input: { number: string; name: string }) => Promise<ProjectBookOutcome>;
+  deactivate: (adapter: AppAdapter, input: { number: string }) => Promise<ProjectBookOutcome>;
+  restore: (adapter: AppAdapter, input: { number: string }) => Promise<ProjectBookOutcome>;
 };
 
 const OPS: Readonly<Record<BookScope, BookOps>> = {
@@ -22,11 +24,15 @@ const OPS: Readonly<Record<BookScope, BookOps>> = {
     title: PROJECT_BOOK_COPY.title,
     empty: PROJECT_BOOK_COPY.empty,
     intake: (adapter, input) => adapter.intakeProject(input),
+    deactivate: (adapter, input) => adapter.deactivateProject(input),
+    restore: (adapter, input) => adapter.restoreProject(input),
   },
   public: {
     title: PUBLIC_PROJECT_BOOK_COPY.title,
     empty: PUBLIC_PROJECT_BOOK_COPY.empty,
     intake: (adapter, input) => adapter.intakePublicProject(input),
+    deactivate: (adapter, input) => adapter.deactivatePublicProject(input),
+    restore: (adapter, input) => adapter.restorePublicProject(input),
   },
 };
 
@@ -68,6 +74,18 @@ export function ProjectBookPanel({
       setNumber('');
       setName('');
     }
+  };
+
+  const runLifecycle = async (action: 'deactivate' | 'restore', projectNumber: string) => {
+    setBusy(true);
+    setMessage(null);
+    const outcome = await store.projectBookAction((adapter) => ops[action](adapter, { number: projectNumber }), scope);
+    setBusy(false);
+    if (!outcome.ok) {
+      setMessage({ ok: false, text: outcome.error.message });
+      return;
+    }
+    setMessage({ ok: PROJECT_BOOK_ACCEPTED_STATUSES.has(outcome.result.status), text: outcome.result.note });
   };
 
   const projects = book.data?.projects ?? [];
@@ -143,14 +161,15 @@ export function ProjectBookPanel({
                   <TableHeader className="app-sticky-start">项目号</TableHeader>
                   <TableHeader>名称</TableHeader>
                   <TableHeader>状态</TableHeader>
+                  {canMaintain ? <TableHeader>操作</TableHeader> : null}
                 </TableRow>
               </TableHead>
               <TableBody>
                 {projects.length > 0 ? (
-                  projects.map((project) => <BookRow key={project.number} project={project} />)
+                  projects.map((project) => <BookRow key={project.number} project={project} canMaintain={canMaintain} busy={busy} onLifecycle={runLifecycle} />)
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={3} className="app-muted">
+                    <TableCell colSpan={canMaintain ? 4 : 3} className="app-muted">
                       {ops.empty}
                     </TableCell>
                   </TableRow>
@@ -164,7 +183,17 @@ export function ProjectBookPanel({
   );
 }
 
-function BookRow({ project }: { project: ProjectBookEntry }) {
+function BookRow({
+  project,
+  canMaintain,
+  busy,
+  onLifecycle,
+}: {
+  project: ProjectBookEntry;
+  canMaintain: boolean;
+  busy: boolean;
+  onLifecycle: (action: 'deactivate' | 'restore', projectNumber: string) => void;
+}) {
   return (
     <TableRow data-testid={`book-row-${project.number}`}>
       <TableCell className="app-sticky-start app-nowrap">
@@ -175,6 +204,19 @@ function BookRow({ project }: { project: ProjectBookEntry }) {
         <StatusTag tone={project.selectable ? 'success' : 'warning'}>{project.statusLabel}</StatusTag>
         {project.statusNote ? <div className="app-caption">{project.statusNote}</div> : null}
       </TableCell>
+      {canMaintain ? (
+        <TableCell className="app-nowrap">
+          {project.active ? (
+            <Button kind="ghost" size="sm" renderIcon={PauseFilled} disabled={busy} aria-label={`停用项目 ${project.number}`} onClick={() => onLifecycle('deactivate', project.number)}>
+              {PROJECT_BOOK_COPY.deactivate}
+            </Button>
+          ) : (
+            <Button kind="ghost" size="sm" renderIcon={Renew} disabled={busy} aria-label={`恢复项目 ${project.number}`} onClick={() => onLifecycle('restore', project.number)}>
+              {PROJECT_BOOK_COPY.restore}
+            </Button>
+          )}
+        </TableCell>
+      ) : null}
     </TableRow>
   );
 }
