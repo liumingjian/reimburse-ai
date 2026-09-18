@@ -412,6 +412,13 @@ export class AppStore {
 
   acceptSnapshot(raw: TaskSnapshot): void {
     const snapshot = this.options.validate ? TaskSnapshotSchema.parse(raw) : raw;
+    const current = this.entry(snapshot.task.taskId).snapshot;
+    if (current && snapshot.revision < current.revision) {
+      // The request completed successfully, but an SSE event already delivered a newer view. Keep that view while
+      // resolving any loading or error state left by the older request.
+      this.patchEntry(snapshot.task.taskId, { status: 'ready', error: null });
+      return;
+    }
     this.patchEntry(snapshot.task.taskId, { status: 'ready', snapshot, error: null });
   }
 

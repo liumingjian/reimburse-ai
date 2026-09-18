@@ -32,6 +32,17 @@ describe('mock 服务端：新建任务命名与示例材料识别', () => {
     expect(snapshot.materials.filter((material) => material.kindLabel === '未识别版式')).toHaveLength(1);
   });
 
+  test('new task snapshots start at revision 1 and accepted changes advance the revision', async () => {
+    const adapter = createMockAdapter({ seed: null, fault: null });
+    const created = await adapter.createTask({ homeCity: '杭州' });
+    if (!created.ok) throw new Error(created.error.message);
+    const uploaded = await adapter.uploadBatch(created.snapshot.task.taskId, [new File(['invoice'], 'invoice.pdf', { type: 'application/pdf' })]);
+    if (!uploaded.ok) throw new Error(uploaded.error.message);
+
+    expect(created.snapshot.revision).toBe(1);
+    expect(uploaded.snapshot.revision).toBe(2);
+  });
+
   test('按示例原件文件名（m01-hotel-invoice.pdf 等）上传也能识别', async () => {
     const { snapshot } = await inventoryOf(SAMPLES.map((sample) => sample.file));
     expect(snapshot.task.name).toBe('2026-08 上海出差');

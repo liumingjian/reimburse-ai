@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import { ADMIN_ERRORS, AUTH_ERRORS, PASSWORD_CHANGE_REQUIRED_CODE, STALE_STEP_CODE, STALE_STEP_NOTICE, ServiceUnavailableError, UNAUTHENTICATED_CODE, UnauthenticatedError, type AdapterEvent, type AppAdapter, type TaskSnapshot } from '@baox/contract';
+import { ADMIN_ERRORS, AUTH_ERRORS, PASSWORD_CHANGE_REQUIRED_CODE, STALE_STEP_CODE, STALE_STEP_NOTICE, ServiceUnavailableError, UNAUTHENTICATED_CODE, UnauthenticatedError, type ActionOutcome, type AdapterEvent, type AppAdapter, type TaskSnapshot } from '@baox/contract';
 import { t1Snapshot } from '../mock/fixtures/tasks';
 import { AppStore } from './store';
 
@@ -31,6 +31,18 @@ async function opened(sequence: TaskSnapshot[]) {
   store.openTask('T1');
   await vi.waitFor(() => expect(store.entry('T1').snapshot?.stage).toBe(sequence[0]?.stage));
   return { store, ...fake };
+}
+
+function projectSnapshot(revision: number, projectNumber: string): TaskSnapshot {
+  const snapshot = t1Snapshot('project');
+  return {
+    ...snapshot,
+    revision,
+    projectAssignment: {
+      ...snapshot.projectAssignment,
+      projects: [{ number: projectNumber, name: `${projectNumber} 项目`, source: 'public' }],
+    },
+  };
 }
 
 describe('AppStore：作废、重置与启动类动作', () => {
@@ -204,5 +216,59 @@ describe('AppStore', () => {
     emit({ type: 'connection', state: 'connected' });
     expect(store.getState().connection).toBe('connected');
     await vi.waitFor(() => expect(store.entry('T1').snapshot?.stage).toBe('done'));
+  });
+
+  test('keeps a newer subscription snapshot when an older action response arrives later', async () => {
+    const initial = projectSnapshot(25, 'P-ORIGINAL');
+    const olderResponse = projectSnapshot(26, 'P-PENDING');
+    const refreshedBySubscription = projectSnapshot(30, 'P-PUBLIC-REFRESHED');
+    let resolveAction: (outcome: ActionOutcome) => void = () => undefined;
+    const response = new Promise<ActionOutcome>((resolve) => {
+      resolveAction = resolve;
+    });
+    const { store, emit } = await opened([initial]);
+
+    const action = store.act('T1', async () => response);
+    emit({ type: 'snapshot', snapshot: refreshedBySubscription });
+    resolveAction({ ok: true, snapshot: olderResponse });
+    await action;
+
+    expect(store.entry('T1').snapshot).toMatchObject({
+      revision: 30,
+      projectAssignment: { projects: [{ number: 'P-PUBLIC-REFRESHED', source: 'public' }] },
+    });
+  });
+
+  test('accepts a newer HTTP action snapshot after a subscription snapshot', async () => {
+    const { store } = await opened([projectSnapshot(30, 'P-PUBLIC-REFRESHED')]);
+    await store.act('T1', async () => ({ ok: true, snapshot: projectSnapshot(31, 'P-HTTP-NEWER') }));
+
+    expect(store.entry('T1').snapshot).toMatchObject({
+      revision: 31,
+      projectAssignment: { projects: [{ number: 'P-HTTP-NEWER', source: 'public' }] },
+    });
+  });
+
+  test('accepts an unchanged revision to complete a refresh', async () => {
+    const current = projectSnapshot(30, 'P-CURRENT');
+    let fail = true;
+    const adapter = {
+      getSnapshot: async () => {
+        if (fail) throw new Error('temporary read failure');
+        return structuredClone(current);
+      },
+    } as unknown as AppAdapter;
+    const store = new AppStore(adapter, { validate: true });
+    store.acceptSnapshot(current);
+
+    await store.refreshTask('T1');
+    expect(store.entry('T1')).toMatchObject({ status: 'error', error: 'temporary read failure', snapshot: { revision: 30 } });
+
+    fail = false;
+    const refresh = store.refreshTask('T1');
+    expect(store.entry('T1')).toMatchObject({ status: 'loading', error: null, snapshot: { revision: 30 } });
+    await refresh;
+
+    expect(store.entry('T1')).toMatchObject({ status: 'ready', error: null, snapshot: { revision: 30 } });
   });
 });
