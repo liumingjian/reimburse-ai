@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
 import { HUMAN_REVIEW_NOTICE, TaskListSchema, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Page } from '@playwright/test';
-import { expect, signIn, test } from './fixture';
+import { answerStayGaps, expect, signIn, test } from './fixture';
 
 // Slice 13 (#192) on the real server: a forced uncertain save (`BAOX_ERP_FAKE=uncertain_save`: the fill job ends in
 // ERP 写入结果未知 after its save attempt, with ERP's own dialog text and a screenshot) reaches reconcile; the page
@@ -31,7 +31,8 @@ async function confirmedTask(page: Page): Promise<string> {
     expect(uploaded.ok()).toBe(true);
   }
   await act(page, await snapshotOf(page, taskId), 'start-inventory');
-  await expect.poll(async () => (await snapshotOf(page, taskId)).inventory.status).toBe('done');
+  // Waits out inventory and answers the 住宿 trio gap it raises; this test is about 对账 (reconciliation).
+  await answerStayGaps(page, taskId);
   expect((await page.request.post('/api/project-book/intake', { data: { number: 'P-2307' } })).ok()).toBe(true);
   const ready = await snapshotOf(page, taskId);
   const review = await act(page, ready, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(ready.lines.map((line) => [line.lineId, 'P-2307'])) });

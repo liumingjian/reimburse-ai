@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
 import { TaskSnapshotSchema } from '@baox/contract';
-import { expect, signIn, test } from './fixture';
+import { answerStayGaps, expect, signIn, test } from './fixture';
 
 // Slice 04 (#183) on the real server: upload a 全电发票 (e-invoice), start 材料盘点, and the background parser job
 // turns it into a candidate line, pushed to the page over SSE.
@@ -26,8 +26,12 @@ test('上传一张全电发票、开始材料盘点，解析完成后看到它�
 
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   await expect(page).toHaveURL(/#\/task\/[^/]+\/inventory$/);
+  // #213: a 住宿 invoice uploaded on its own has neither 结账单 nor 支付截图, and while those items are open the
+  // material reads 待确认. Answered with 确认没有 so the summary below is about the parse, this test's subject.
+  await answerStayGaps(page, taskId);
+  await page.reload();
 
-  // The summary appears once the parser job has finished; no reload needed.
+  // The summary the page shows after that reload is the finished parser job's.
   const summary = page.getByRole('group', { name: '盘点摘要' });
   await expect(summary).toContainText('材料1 份');
   await expect(summary).toContainText('通过1 份');
