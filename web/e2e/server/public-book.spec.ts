@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
-import { TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
+import { ProjectBookSchema, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Locator, Page } from '@playwright/test';
 import { answerStayGaps, expect, signIn, test } from './fixture';
 
@@ -121,4 +121,44 @@ test('public projects are read-only for members and retain lifecycle changes aft
   await member.reload();
   await expect(readOnly.getByTestId('book-row-OFFLINE-101')).toContainText('可选');
   await memberContext.close();
+});
+
+test('public conversion is explicit, cancellable, and shared across personal owners', async ({ page, browser, serverApp }) => {
+  await signIn(page, 'admin');
+  const firstContext = await browser.newContext({ baseURL: serverApp.url });
+  const secondContext = await browser.newContext({ baseURL: serverApp.url });
+  const first = await firstContext.newPage();
+  const second = await secondContext.newPage();
+  await signIn(first, '成员甲');
+  await signIn(second, '成员乙');
+  for (const member of [first, second]) {
+    const result = await member.request.post('/api/project-book/intake', { data: { number: 'CONVERT-101', name: '个人维护名称' } });
+    expect(result.ok()).toBe(true);
+  }
+  const ownBook = async (member: Page) => ProjectBookSchema.parse(await (await member.request.get('/api/project-book')).json());
+  await page.goto('/#/admin');
+  const publicBook = page.getByRole('region', { name: '公共项目簿', exact: true }).filter({ has: page.getByLabel('项目名称', { exact: true }) });
+  await publicBook.getByLabel('项目号', { exact: true }).fill('CONVERT-101');
+  await publicBook.getByLabel('项目名称', { exact: true }).fill('公共维护名称');
+  await publicBook.getByRole('button', { name: '加入项目', exact: true }).click();
+  const conversion = page.getByRole('dialog');
+  await expect(conversion).toContainText('CONVERT-101');
+  await expect(publicBook.getByTestId('book-row-CONVERT-101')).toHaveCount(0);
+  expect((await ownBook(first)).projects[0]?.selectable).toBe(true);
+  await conversion.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(conversion).toHaveCount(0);
+  expect((await ownBook(second)).projects[0]?.selectable).toBe(true);
+  await expect(publicBook.getByLabel('项目名称', { exact: true })).toHaveValue('公共维护名称');
+
+  await publicBook.getByRole('button', { name: '加入项目', exact: true }).click();
+  await expect(conversion).toBeVisible();
+  await conversion.getByRole('button', { name: /确认/ }).click();
+  await expect(publicBook.getByTestId('book-row-CONVERT-101')).toContainText('公共维护名称');
+  for (const member of [first, second]) {
+    expect((await ownBook(member)).projects.some((project) => project.number === 'CONVERT-101' && project.selectable)).toBe(false);
+    await member.goto('/#/projects');
+    await expect(member.getByRole('table', { name: '公共项目簿' }).getByTestId('book-row-CONVERT-101')).toContainText('公共维护名称');
+  }
+  await firstContext.close();
+  await secondContext.close();
 });
