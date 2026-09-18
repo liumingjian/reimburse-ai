@@ -69,7 +69,7 @@ test('管理员添加公共项目，用户把明细归入它；提交前停用�
 
   // The admin deactivates it before the user submits: the user's page drops the line back to 未归属 and says why.
   await book.getByRole('button', { name: '停用项目 P-2307' }).click();
-  await expect(book.getByTestId('book-message')).toContainText('已在公共项目簿停用');
+  await expect(book.getByTestId('book-message')).toContainText('已停用，不能用于新的项目归属');
   await expect(book.getByTestId('book-row-P-2307')).toContainText('已停用');
   await expect(user.getByTestId('project-reselect')).toContainText('原项目 P-2307 华东客户交付');
   await expect(user.getByTestId('project-of-1')).toContainText('未归属');
