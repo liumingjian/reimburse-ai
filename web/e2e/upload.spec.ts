@@ -4,7 +4,6 @@ import { expect, test, type Page } from '@playwright/test';
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 
-const MAX_BYTES = 20 * 1024 * 1024;
 
 type Upload = { name: string; mimeType: string; buffer: Buffer };
 
@@ -117,45 +116,7 @@ test('拖入文件也能上传', async ({ page }) => {
   await expect(first.getByText('已复制入任务目录')).toBeVisible();
 });
 
-test('各类拒绝：类型不支持、超过 20MB、HEIC、内容重复，逐文件给出原因', async ({ page }, testInfo) => {
-  await page.goto(open('', '#/task/T1/upload'));
-  await choose(page, [
-    pdf('全季酒店_发票.pdf', 'same bytes'),
-    { name: '备注.txt', mimeType: 'text/plain', buffer: Buffer.from('not a receipt') },
-    { name: '扫描件.pdf', mimeType: 'application/pdf', buffer: Buffer.alloc(MAX_BYTES + 1) },
-    { name: 'IMG_4871.HEIC', mimeType: 'image/heic', buffer: Buffer.from('heic bytes') },
-    pdf('全季酒店_发票（副本）.pdf', 'same bytes'),
-  ]);
-  const first = batch(page, 1);
-  await expect(first.getByRole('heading')).toHaveText('上传批次 #1');
-  await expect(first.getByText('拒绝 4 份')).toBeVisible();
-  await expect(row(page, first, '备注.txt').getByText('类型不支持，只接受 PDF、JPG、PNG')).toBeVisible();
-  await expect(row(page, first, '扫描件.pdf').getByText('超过 20MB')).toBeVisible();
-  await expect(row(page, first, 'IMG_4871.HEIC').getByText('HEIC 不支持，请在 iPhone 相册导出为 JPG')).toBeVisible();
-  await expect(row(page, first, '全季酒店_发票（副本）.pdf').getByText('内容重复，与已接收的「全季酒店_发票.pdf」内容相同')).toBeVisible();
-  // 只有被拒绝的行带红色「拒绝」标签；已接收的行没有标签。
-  await expect(first.getByText('拒绝', { exact: true })).toHaveCount(4);
-  await expect(row(page, first, '全季酒店_发票.pdf')).toBeVisible();
-  await expect(row(page, first, '全季酒店_发票.pdf').getByText('拒绝', { exact: true })).toHaveCount(0);
-  await page.screenshot({ path: testInfo.outputPath('upload-rejected.png'), fullPage: true });
-});
-
-test('追加下一批形成上传批次 #2；开始材料盘点进入盘点页', async ({ page }) => {
-  await page.goto(open('', '#/task/T1/upload'));
-  await choose(page, [pdf('高德打车_发票.pdf')]);
-  await expect(batch(page, 1).getByRole('heading')).toHaveText('上传批次 #1');
-
-  await page.getByRole('button', { name: '追加下一批' }).click();
-  await expect(page.getByTestId('dropzone')).toBeVisible();
-  await choose(page, [pdf('高德打车_行程单.pdf'), png('IMG_4906.png')]);
-  await expect(batch(page, 2).getByRole('heading')).toHaveText('上传批次 #2');
-  await expect(batch(page, 1)).toBeVisible();
-  await expect(page.getByTestId('dropzone')).toBeHidden();
-
-  await page.getByRole('button', { name: '开始材料盘点' }).click();
-  await expect(page).toHaveURL(/#\/task\/T1\/inventory$/);
-  await expect(page.getByRole('heading', { name: '材料盘点' })).toBeVisible();
-});
+// Every reject code, batch #2 and starting inventory are covered on the real server: e2e/server/lifecycle.spec.ts.
 
 test('?fault=duplicate-upload 让追加批次里出现内容重复', async ({ page }) => {
   await page.goto(open('?fault=duplicate-upload', '#/task/T1/upload'));

@@ -28,7 +28,7 @@ describe('个人项目簿 #/projects', () => {
   test('表头、状态标签与说明来自服务端；过期时间为空显示永不过期', async () => {
     renderApp('#/projects');
     expect(await screen.findByRole('heading', { name: '个人项目簿', level: 1 })).toBeTruthy();
-    expect(screen.getByText('项目号从报销系统核验后加入当前登录身份的项目簿。失效项目仍会保留，直到你删除它。')).toBeTruthy();
+    expect(screen.getByText('项目号从报销系统核验后加入你这个账号的项目簿。失效项目仍会保留，直到你删除它。')).toBeTruthy();
     const table = screen.getByRole('table', { name: '个人项目簿' });
     expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['项目号', '名称', '过期时间', '状态', '']);
     await screen.findByTestId('book-row-P-2307');
@@ -84,16 +84,6 @@ describe('个人项目簿 #/projects', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '清理全部失效' }));
     expect(await screen.findByText('当前没有失效项目，一条都没删')).toBeTruthy();
-  });
-
-  test('?erp=logged-out 未完成登录：页面照常打开并说明原因；录入被拒并显示原因', async () => {
-    renderApp('#/projects', { erpLoggedOut: true });
-    expect(await screen.findByRole('heading', { name: '个人项目簿', level: 1 })).toBeTruthy();
-    expect((await screen.findByRole('note')).textContent).toContain('还没有登录报销系统并确认报销人身份');
-    expect(await screen.findByText('当前项目簿为空，请录入第一个项目。')).toBeTruthy();
-    intake('P-5108');
-    expect((await message()).textContent).toBe('没有已核对的报销系统身份，不能向个人项目簿录入项目');
-    expect(screen.queryByTestId('book-row-P-5108')).toBeNull();
   });
 
   test('顶栏常驻入口', async () => {

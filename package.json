@@ -2,13 +2,24 @@
   "name": "reimburse-ai",
   "private": true,
   "packageManager": "pnpm@10.17.1",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
+    "baox": "pnpm --silent --filter @baox/server baox",
     "build": "pnpm -r build",
-    "test": "pnpm -r test",
+    "dev": "pnpm --parallel --filter @baox/server --filter @baox/web dev",
+    "dev:mock": "pnpm --filter @baox/web dev:mock",
+    "lint": "oxlint -c .oxlintrc.json --deny-warnings server/src",
+    "test": "pnpm lint && pnpm -r --workspace-concurrency=1 test",
+    "test:private": "pnpm --filter @baox/server test:private",
+    "test:erp-live": "pnpm --filter @baox/server test:erp-live",
+    "test:e2e": "BAOX_BUILD_E2E=1 pnpm --filter @baox/server --filter @baox/web build && pnpm --filter @baox/web build:mock && pnpm --filter @baox/web exec playwright test",
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
+    "oxlint": "1.83.0",
     "vitest": "3.2.7"
   }
 }

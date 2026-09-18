@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": { "correctness": "off" },
+  "overrides": [
+    {
+      "files": ["server/src/erp/executor/*.ts"],
+      "rules": {
+        "no-restricted-imports": ["error", {
+          "patterns": [{
+            "group": ["../**", "!../protocol"],
+            "message": "ADR-0016: the ERP executor may import only server/src/erp/executor/** and ../protocol, never the rest of the server."
+          }]
+        }]
+      }
+    },
+    {
+      "files": ["server/src/erp/executor/*/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": ["error", {
+          "patterns": [{
+            "group": ["../../**", "!../../protocol"],
+            "message": "ADR-0016: the ERP executor may import only server/src/erp/executor/** and ../protocol, never the rest of the server."
+          }]
+        }]
+      }
+    }
+  ]
+}

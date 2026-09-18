@@ -1,5 +1,5 @@
 // @vitest-environment node
-// 员工可见文案遵守内核 FORBIDDEN_USER_TERMS（kernel/src/interaction.mjs）：页面文案常量与源码里的中文文案都不许含禁用词。
+// 员工可见文案遵守内核 FORBIDDEN_USER_TERMS（50931a3:kernel/src/interaction.mjs）：页面文案常量与源码里的中文文案都不许含禁用词。
 // 只读文件系统与常量，不碰 DOM。
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -9,7 +9,7 @@ import * as contract from '@baox/contract';
 import { ERP_STEP_DEFS, handedOffBanner, loginNotDetected, mismatchReason, MISMATCH_ABORT_REASON, SAVE_ABORT_REASON } from './mock/fixtures/erp';
 import { t1Snapshot, t2Snapshot, t3Snapshot } from './mock/fixtures/tasks';
 import { PAGE_COPY } from './pages/page-copy';
-import { STARTUP_COPY } from './pages/StartupPage';
+import { AUTH_COPY } from './pages/AuthPage';
 
 // 照抄内核 interaction.mjs:99-131（员工可见内容里一律不出现）。
 const FORBIDDEN_USER_TERMS = [
@@ -73,7 +73,7 @@ describe('员工可见文案不含内核禁用词', () => {
     const out: Array<[string, string]> = [];
     for (const [name, value] of Object.entries(contract)) if (COPY_NAME.test(name)) strings(value, name, out);
     strings(PAGE_COPY, 'PAGE_COPY', out);
-    strings(STARTUP_COPY, 'STARTUP_COPY', out);
+    strings(AUTH_COPY, 'AUTH_COPY', out);
     expect(out.length).toBeGreaterThan(50);
     for (const [path, text] of out) expect(hits(text), `${path}：${text}`).toEqual([]);
   });

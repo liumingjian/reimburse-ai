@@ -9,6 +9,7 @@ import {
   type FieldCandidate,
   type Line,
   type Material,
+  type MaterialKind,
   type PendingAnswer,
   type PendingItem,
   type TaskSnapshot,
@@ -39,7 +40,9 @@ const field = (key: string, label: string, value: string, source: string, eviden
   label,
   value,
   source,
+  parserVersion: source === 'user' ? null : '1',
   evidence,
+  editClass: source === 'user' ? 'fact_correctable' : 'fact_locked',
 });
 
 type Profile = {
@@ -56,15 +59,31 @@ type Profile = {
   fields: FieldCandidate[];
 };
 
+// Candidate sources in the contract pattern `rule:<kind>/<layout>` (ADR-0017). The 曹操 itinerary has no v1 layout;
+// the mock still recognises it to keep its scripted journey.
 const RULE = {
-  vat: 'rule:vat_invoice',
-  folio: 'rule:hotel_folio',
-  passenger: 'rule:passenger_transport',
-  amap: 'rule:amap_itinerary',
-  caocao: 'rule:caocao_itinerary',
-  rail: 'rule:rail_eticket',
-  taxi: 'rule:taxi_receipt',
+  vat: 'rule:vat_invoice/einvoice',
+  folio: 'rule:hotel_folio/quanji',
+  passenger: 'rule:vat_invoice/einvoice',
+  amap: 'rule:ride_itinerary/amap',
+  caocao: 'rule:ride_itinerary/caocao',
+  rail: 'rule:rail_ticket/12306',
+  taxi: 'rule:taxi_receipt/machine_printed',
 } as const;
+
+// 材料种类 / 版式 per fixture id; absent = unrecognised.
+const IDENTITY: Readonly<Record<string, { kind: MaterialKind; layout: string }>> = {
+  m01: { kind: 'vat_invoice', layout: 'einvoice' },
+  m02: { kind: 'hotel_folio', layout: 'quanji' },
+  m03: { kind: 'vat_invoice', layout: 'einvoice' },
+  m04: { kind: 'ride_itinerary', layout: 'amap' },
+  m05: { kind: 'vat_invoice', layout: 'einvoice' },
+  m06: { kind: 'ride_itinerary', layout: 'caocao' },
+  m07: { kind: 'rail_ticket', layout: '12306' },
+  m08: { kind: 'rail_ticket', layout: '12306' },
+  m09: { kind: 'taxi_receipt', layout: 'machine_printed' },
+  m10: { kind: 'taxi_receipt', layout: 'machine_printed' },
+};
 
 // 以夹具材料 id（m01…m11）为键的识别档案。
 export const PROFILES: Readonly<Record<string, Profile>> = {
@@ -530,8 +549,11 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
     if (fixtureId === 'm05' && unsupportedFault) checkText = '二维码核对一致；没有找到可配对的行程单，按发票 1 段';
     if (splitting) checkText = ALLOCATION_CHECK.voucher;
     if (allocationRequired && fixtureId === 'm04') checkText = ALLOCATION_CHECK.itinerary;
+    const identity = unknown || !fixtureId ? null : (IDENTITY[fixtureId] ?? null);
     return {
       ...material,
+      kind: identity?.kind ?? null,
+      layout: identity?.layout ?? null,
       kindLabel: p.kindLabel,
       categoryLabel: p.categoryLabel,
       role: p.role,
@@ -610,8 +632,9 @@ export function applyPendingAnswer(result: InventoryResult, item: PendingItem, a
       existing.value = value;
       existing.source = 'user';
       existing.evidence = 'explicit';
+      existing.editClass = 'fact_correctable';
     } else {
-      material.fields.push({ key: f.key, label: f.label, value, source: 'user', evidence: 'explicit' });
+      material.fields.push({ key: f.key, label: f.label, value, source: 'user', parserVersion: null, evidence: 'explicit', editClass: 'fact_correctable' });
     }
   }
   material.status = 'ok';

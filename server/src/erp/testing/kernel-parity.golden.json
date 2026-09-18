@@ -1,0 +1,936 @@
+{
+  "_origin": "Recorded by driving 50931a3:kernel/src (erpwrite-cdp, erp-browser-adapters cdpFormAdapter, erp-cdp-read + erpreconcile readReconciliation, erp-write-readback, erp-draft-flow, erp-write-context) against server/src/erp/executor/testing/fake-erp.ts with server/src/erp/testing/scenario.ts (assumeReceiptLink on). Row `y` (fake layout) dropped. taskMatch = kernel matchTaskLines ok.",
+  "taskId": "task-parity",
+  "previewDigest": "ad9b3e2f30cc6aed04a71276206fa394",
+  "readbacks": {
+    "after_import": {
+      "formMode": {
+        "readable": true,
+        "value": "new"
+      },
+      "billNo": {
+        "readable": true,
+        "value": null
+      },
+      "receiptsGrid": {
+        "ok": true,
+        "columns": [
+          {
+            "label": "收票单",
+            "required": false
+          },
+          {
+            "label": "发票号码",
+            "required": false
+          },
+          {
+            "label": "销方名称",
+            "required": false
+          },
+          {
+            "label": "开票日期",
+            "required": false
+          },
+          {
+            "label": "不含税金额",
+            "required": false
+          },
+          {
+            "label": "税额",
+            "required": false
+          },
+          {
+            "label": "价税合计",
+            "required": false
+          },
+          {
+            "label": "发票类别",
+            "required": false
+          }
+        ],
+        "rowCount": 2,
+        "rows": [
+          {
+            "kind": "data",
+            "editing": false,
+            "values": {
+              "收票单": "SPD202609040022",
+              "发票号码": "2642************8021",
+              "销方名称": "中国铁路广州局集团有限公司",
+              "开票日期": "2026-09-04",
+              "不含税金额": "644.95",
+              "税额": "58.05",
+              "价税合计": "703.00",
+              "发票类别": "电子铁路客票"
+            },
+            "editValues": {}
+          },
+          {
+            "kind": "data",
+            "editing": false,
+            "values": {
+              "收票单": "SPD202609020037",
+              "发票号码": "2632************4156",
+              "销方名称": "苏州市吉利优行电子科技有限公司",
+              "开票日期": "2026-09-02",
+              "不含税金额": "50.12",
+              "税额": "1.51",
+              "价税合计": "51.63",
+              "发票类别": "全电普通发票"
+            },
+            "editValues": {}
+          },
+          {
+            "kind": "total",
+            "editing": false,
+            "values": {
+              "收票单": "",
+              "发票号码": "",
+              "销方名称": "",
+              "开票日期": "",
+              "不含税金额": "",
+              "税额": "",
+              "价税合计": "754.63",
+              "发票类别": ""
+            },
+            "editValues": {}
+          }
+        ],
+        "matchedGrids": 1
+      },
+      "detailGrid": {
+        "ok": true,
+        "columns": [
+          {
+            "label": "收票单号",
+            "required": false
+          },
+          {
+            "label": "项目",
+            "required": true
+          },
+          {
+            "label": "费用项目",
+            "required": true
+          },
+          {
+            "label": "发票类型",
+            "required": false
+          },
+          {
+            "label": "开始日期",
+            "required": false
+          },
+          {
+            "label": "结束日期",
+            "required": false
+          },
+          {
+            "label": "住宿/出差地",
+            "required": false
+          },
+          {
+            "label": "出发地",
+            "required": false
+          },
+          {
+            "label": "目的地",
+            "required": false
+          },
+          {
+            "label": "费用金额",
+            "required": false
+          },
+          {
+            "label": "税额",
+            "required": false
+          },
+          {
+            "label": "申请报销金额",
+            "required": false
+          },
+          {
+            "label": "申请付款金额",
+            "required": false
+          }
+        ],
+        "rowCount": 1,
+        "rows": [
+          {
+            "kind": "data",
+            "editing": false,
+            "values": {
+              "收票单号": "",
+              "项目": "",
+              "费用项目": "",
+              "发票类型": "普通发票",
+              "开始日期": "2026/9/15",
+              "结束日期": "2026/9/15",
+              "住宿/出差地": "",
+              "出发地": "",
+              "目的地": "",
+              "费用金额": "",
+              "税额": "",
+              "申请报销金额": "",
+              "申请付款金额": ""
+            },
+            "editValues": {}
+          }
+        ],
+        "matchedGrids": 1
+      }
+    },
+    "after_fill": {
+      "formMode": {
+        "readable": true,
+        "value": "new"
+      },
+      "billNo": {
+        "readable": true,
+        "value": null
+      },
+      "receiptsGrid": {
+        "ok": true,
+        "columns": [
+          {
+            "label": "收票单",
+            "required": false
+          },
+          {
+            "label": "发票号码",
+            "required": false
+          },
+          {
+            "label": "销方名称",
+            "required": false
+          },
+          {
+            "label": "开票日期",
+            "required": false
+          },
+          {
+            "label": "不含税金额",
+            "required": false
+          },
+          {
+            "label": "税额",
+            "required": false
+          },
+          {
+            "label": "价税合计",
+            "required": false
+          },
+          {
+            "label": "发票类别",
+            "required": false
+          }
+        ],
+        "rowCount": 2,
+        "rows": [
+          {
+            "kind": "data",
+            "editing": false,
+            "values": {
+              "收票单": "SPD202609040022",
+              "发票号码": "2642************8021",
+              "销方名称": "中国铁路广州局集团有限公司",
+              "开票日期": "2026-09-04",
+              "不含税金额": "644.95",
+              "税额": "58.05",
+              "价税合计": "703.00",
+              "发票类别": "电子铁路客票"
+            },
+            "editValues": {}
+          },
+          {
+            "kind": "data",
+            "editing": false,
+            "values": {
+              "收票单": "SPD202609020037",
+              "发票号码": "2632************4156",
+              "销方名称": "苏州市吉利优行电子科技有限公司",
+              "开票日期": "2026-09-02",
+              "不含税金额": "50.12",
+              "税额": "1.51",
+              "价税合计": "51.63",
+              "发票类别": "全电普通发票"
+            },
+            "editValues": {}
+          },
+          {
+            "kind": "total",
+            "editing": false,
+            "values": {
+              "收票单": "",
+              "发票号码": "",
+              "销方名称": "",
+              "开票日期": "",
+              "不含税金额": "",
+              "税额": "",
+              "价税合计": "754.63",
+              "发票类别": ""
+            },
+            "editValues": {}
+          }
+        ],
+        "matchedGrids": 1
+      },
+      "detailGrid": {
+        "ok": true,
+        "columns": [
+          {
+            "label": "收票单号",
+            "required": false
+          },
+          {
+            "label": "项目",
+            "required": true
+          },
+          {
+            "label": "费用项目",
+            "required": true
+          },
+          {
+            "label": "发票类型",
+            "required": false
+          },
+          {
+            "label": "开始日期",
+            "required": false
+          },
+          {
+            "label": "结束日期",
+            "required": false
+          },
+          {
+            "label": "住宿/出差地",
+            "required": false
+          },
+          {
+            "label": "出发地",
+            "required": false
+          },
+          {
+            "label": "目的地",
+            "required": false
+          },
+          {
+            "label": "费用金额",
+            "required": false
+          },
+          {
+            "label": "税额",
+            "required": false
+          },
+          {
+            "label": "申请报销金额",
+            "required": false
+          },
+          {
+            "label": "申请付款金额",
+            "required": false
+          }
+        ],
+        "rowCount": 2,
+        "rows": [
+          {
+            "kind": "data",
+            "editing": false,
+            "values": {
+              "收票单号": "SPD202609040022",
+              "项目": "中国农业发展银行河南省分行-20-2614",
+              "费用项目": "长途交通",
+              "发票类型": "普通发票",
+              "开始日期": "2026/8/22",
+              "结束日期": "2026/8/22",
+              "住宿/出差地": "",
+              "出发地": "合肥南",
+              "目的地": "广州南",
+              "费用金额": "¥644.95",
+              "税额": "¥58.05",
+              "申请报销金额": "¥703.00",
+              "申请付款金额": "¥703.00"
+            },
+            "editValues": {}
+          },
+          {
+            "kind": "data",
+            "editing": false,
+            "values": {
+              "收票单号": "SPD202609020037",
+              "项目": "中国农业发展银行河南省分行-20-1961",
+              "费用项目": "本地市内交通",
+              "发票类型": "普通发票",
+              "开始日期": "2026/8/27",
+              "结束日期": "2026/8/27",
+              "住宿/出差地": "广州",
+              "出发地": "番禺广场地铁站D口",
+              "目的地": "傍西酒堂",
+              "费用金额": "¥50.12",
+              "税额": "¥1.51",
+              "申请报销金额": "¥51.63",
+              "申请付款金额": "¥51.63"
+            },
+            "editValues": {}
+          },
+          {
+            "kind": "total",
+            "editing": false,
+            "values": {
+              "收票单号": "",
+              "项目": "",
+              "费用项目": "",
+              "发票类型": "",
+              "开始日期": "",
+              "结束日期": "",
+              "住宿/出差地": "",
+              "出发地": "",
+              "目的地": "",
+              "费用金额": "",
+              "税额": "",
+              "申请报销金额": "¥754.63",
+              "申请付款金额": ""
+            },
+            "editValues": {}
+          }
+        ],
+        "matchedGrids": 1
+      },
+      "taskMatch": true
+    },
+    "before_save": {
+      "formMode": {
+        "readable": true,
+        "value": "new"
+      },
+      "billNo": {
+        "readable": true,
+        "value": null
+      },
+      "receiptsGrid": {
+        "ok": true,
+        "columns": [
+          {
+            "label": "收票单",
+            "required": false
+          },
+          {
+            "label": "发票号码",
+            "required": false
+          },
+          {
+            "label": "销方名称",
+            "required": false
+          },
+          {
+            "label": "开票日期",
+            "required": false
+          },
+          {
+            "label": "不含税金额",
+            "required": false
+          },
+          {
+            "label": "税额",
+            "required": false
+          },
+          {
+            "label": "价税合计",
+            "required": false
+          },
+          {
+            "label": "发票类别",
+            "required": false
+          }
+        ],
+        "rowCount": 2,
+        "rows": [
+          {
+            "kind": "data",
+            "editing": false,
+            "values": {
+              "收票单": "SPD202609040022",
+              "发票号码": "2642************8021",
+              "销方名称": "中国铁路广州局集团有限公司",
+              "开票日期": "2026-09-04",
+              "不含税金额": "644.95",
+              "税额": "58.05",
+              "价税合计": "703.00",
+              "发票类别": "电子铁路客票"
+            },
+            "editValues": {}
+          },
+          {
+            "kind": "data",
+            "editing": false,
+            "values": {
+              "收票单": "SPD202609020037",
+              "发票号码": "2632************4156",
+              "销方名称": "苏州市吉利优行电子科技有限公司",
+              "开票日期": "2026-09-02",
+              "不含税金额": "50.12",
+              "税额": "1.51",
+              "价税合计": "51.63",
+              "发票类别": "全电普通发票"
+            },
+            "editValues": {}
+          },
+          {
+            "kind": "total",
+            "editing": false,
+            "values": {
+              "收票单": "",
+              "发票号码": "",
+              "销方名称": "",
+              "开票日期": "",
+              "不含税金额": "",
+              "税额": "",
+              "价税合计": "754.63",
+              "发票类别": ""
+            },
+            "editValues": {}
+          }
+        ],
+        "matchedGrids": 1
+      },
+      "detailGrid": {
+        "ok": true,
+        "columns": [
+          {
+            "label": "收票单号",
+            "required": false
+          },
+          {
+            "label": "项目",
+            "required": true
+          },
+          {
+            "label": "费用项目",
+            "required": true
+          },
+          {
+            "label": "发票类型",
+            "required": false
+          },
+          {
+            "label": "开始日期",
+            "required": false
+          },
+          {
+            "label": "结束日期",
+            "required": false
+          },
+          {
+            "label": "住宿/出差地",
+            "required": false
+          },
+          {
+            "label": "出发地",
+            "required": false
+          },
+          {
+            "label": "目的地",
+            "required": false
+          },
+          {
+            "label": "费用金额",
+            "required": false
+          },
+          {
+            "label": "税额",
+            "required": false
+          },
+          {
+            "label": "申请报销金额",
+            "required": false
+          },
+          {
+            "label": "申请付款金额",
+            "required": false
+          }
+        ],
+        "rowCount": 2,
+        "rows": [
+          {
+            "kind": "data",
+            "editing": false,
+            "values": {
+              "收票单号": "SPD202609040022",
+              "项目": "中国农业发展银行河南省分行-20-2614",
+              "费用项目": "长途交通",
+              "发票类型": "普通发票",
+              "开始日期": "2026/8/22",
+              "结束日期": "2026/8/22",
+              "住宿/出差地": "",
+              "出发地": "合肥南",
+              "目的地": "广州南",
+              "费用金额": "¥644.95",
+              "税额": "¥58.05",
+              "申请报销金额": "¥703.00",
+              "申请付款金额": "¥703.00"
+            },
+            "editValues": {}
+          },
+          {
+            "kind": "data",
+            "editing": false,
+            "values": {
+              "收票单号": "SPD202609020037",
+              "项目": "中国农业发展银行河南省分行-20-1961",
+              "费用项目": "本地市内交通",
+              "发票类型": "普通发票",
+              "开始日期": "2026/8/27",
+              "结束日期": "2026/8/27",
+              "住宿/出差地": "广州",
+              "出发地": "番禺广场地铁站D口",
+              "目的地": "傍西酒堂",
+              "费用金额": "¥50.12",
+              "税额": "¥1.51",
+              "申请报销金额": "¥51.63",
+              "申请付款金额": "¥51.63"
+            },
+            "editValues": {}
+          },
+          {
+            "kind": "total",
+            "editing": false,
+            "values": {
+              "收票单号": "",
+              "项目": "",
+              "费用项目": "",
+              "发票类型": "",
+              "开始日期": "",
+              "结束日期": "",
+              "住宿/出差地": "",
+              "出发地": "",
+              "目的地": "",
+              "费用金额": "",
+              "税额": "",
+              "申请报销金额": "¥754.63",
+              "申请付款金额": ""
+            },
+            "editValues": {}
+          }
+        ],
+        "matchedGrids": 1
+      },
+      "taskMatch": true
+    },
+    "after_save": {
+      "formMode": {
+        "readable": true,
+        "value": "modify"
+      },
+      "billNo": {
+        "readable": true,
+        "value": "FYBX2026090001"
+      },
+      "receiptsGrid": {
+        "ok": true,
+        "columns": [
+          {
+            "label": "收票单",
+            "required": false
+          },
+          {
+            "label": "发票号码",
+            "required": false
+          },
+          {
+            "label": "销方名称",
+            "required": false
+          },
+          {
+            "label": "开票日期",
+            "required": false
+          },
+          {
+            "label": "不含税金额",
+            "required": false
+          },
+          {
+            "label": "税额",
+            "required": false
+          },
+          {
+            "label": "价税合计",
+            "required": false
+          },
+          {
+            "label": "发票类别",
+            "required": false
+          }
+        ],
+        "rowCount": 2,
+        "rows": [
+          {
+            "kind": "data",
+            "editing": false,
+            "values": {
+              "收票单": "SPD202609040022",
+              "发票号码": "2642************8021",
+              "销方名称": "中国铁路广州局集团有限公司",
+              "开票日期": "2026-09-04",
+              "不含税金额": "644.95",
+              "税额": "58.05",
+              "价税合计": "703.00",
+              "发票类别": "电子铁路客票"
+            },
+            "editValues": {}
+          },
+          {
+            "kind": "data",
+            "editing": false,
+            "values": {
+              "收票单": "SPD202609020037",
+              "发票号码": "2632************4156",
+              "销方名称": "苏州市吉利优行电子科技有限公司",
+              "开票日期": "2026-09-02",
+              "不含税金额": "50.12",
+              "税额": "1.51",
+              "价税合计": "51.63",
+              "发票类别": "全电普通发票"
+            },
+            "editValues": {}
+          },
+          {
+            "kind": "total",
+            "editing": false,
+            "values": {
+              "收票单": "",
+              "发票号码": "",
+              "销方名称": "",
+              "开票日期": "",
+              "不含税金额": "",
+              "税额": "",
+              "价税合计": "754.63",
+              "发票类别": ""
+            },
+            "editValues": {}
+          }
+        ],
+        "matchedGrids": 1
+      },
+      "detailGrid": {
+        "ok": true,
+        "columns": [
+          {
+            "label": "收票单号",
+            "required": false
+          },
+          {
+            "label": "项目",
+            "required": true
+          },
+          {
+            "label": "费用项目",
+            "required": true
+          },
+          {
+            "label": "发票类型",
+            "required": false
+          },
+          {
+            "label": "开始日期",
+            "required": false
+          },
+          {
+            "label": "结束日期",
+            "required": false
+          },
+          {
+            "label": "住宿/出差地",
+            "required": false
+          },
+          {
+            "label": "出发地",
+            "required": false
+          },
+          {
+            "label": "目的地",
+            "required": false
+          },
+          {
+            "label": "费用金额",
+            "required": false
+          },
+          {
+            "label": "税额",
+            "required": false
+          },
+          {
+            "label": "申请报销金额",
+            "required": false
+          },
+          {
+            "label": "申请付款金额",
+            "required": false
+          }
+        ],
+        "rowCount": 2,
+        "rows": [
+          {
+            "kind": "data",
+            "editing": false,
+            "values": {
+              "收票单号": "SPD202609040022",
+              "项目": "中国农业发展银行河南省分行-20-2614",
+              "费用项目": "长途交通",
+              "发票类型": "普通发票",
+              "开始日期": "2026/8/22",
+              "结束日期": "2026/8/22",
+              "住宿/出差地": "",
+              "出发地": "合肥南",
+              "目的地": "广州南",
+              "费用金额": "¥644.95",
+              "税额": "¥58.05",
+              "申请报销金额": "¥703.00",
+              "申请付款金额": "¥703.00"
+            },
+            "editValues": {}
+          },
+          {
+            "kind": "data",
+            "editing": false,
+            "values": {
+              "收票单号": "SPD202609020037",
+              "项目": "中国农业发展银行河南省分行-20-1961",
+              "费用项目": "本地市内交通",
+              "发票类型": "普通发票",
+              "开始日期": "2026/8/27",
+              "结束日期": "2026/8/27",
+              "住宿/出差地": "广州",
+              "出发地": "番禺广场地铁站D口",
+              "目的地": "傍西酒堂",
+              "费用金额": "¥50.12",
+              "税额": "¥1.51",
+              "申请报销金额": "¥51.63",
+              "申请付款金额": "¥51.63"
+            },
+            "editValues": {}
+          },
+          {
+            "kind": "total",
+            "editing": false,
+            "values": {
+              "收票单号": "",
+              "项目": "",
+              "费用项目": "",
+              "发票类型": "",
+              "开始日期": "",
+              "结束日期": "",
+              "住宿/出差地": "",
+              "出发地": "",
+              "目的地": "",
+              "费用金额": "",
+              "税额": "",
+              "申请报销金额": "¥754.63",
+              "申请付款金额": ""
+            },
+            "editValues": {}
+          }
+        ],
+        "matchedGrids": 1
+      },
+      "taskMatch": true
+    }
+  },
+  "mutations": [
+    {
+      "kind": "import",
+      "detail": "SPD202609040022,SPD202609020037"
+    },
+    {
+      "kind": "header",
+      "detail": "FCAUSA=客户支持"
+    },
+    {
+      "kind": "cell",
+      "detail": "项目=中国农业发展银行河南省分行-20-2614"
+    },
+    {
+      "kind": "cell",
+      "detail": "费用项目=长途交通"
+    },
+    {
+      "kind": "option",
+      "detail": "发票类型=普通发票"
+    },
+    {
+      "kind": "cell",
+      "detail": "开始日期=2026/8/22"
+    },
+    {
+      "kind": "cell",
+      "detail": "结束日期=2026/8/22"
+    },
+    {
+      "kind": "cell",
+      "detail": "出发地=合肥南"
+    },
+    {
+      "kind": "cell",
+      "detail": "目的地=广州南"
+    },
+    {
+      "kind": "cell",
+      "detail": "费用金额=¥644.95"
+    },
+    {
+      "kind": "cell",
+      "detail": "税额=¥58.05"
+    },
+    {
+      "kind": "addRow",
+      "detail": "2"
+    },
+    {
+      "kind": "cell",
+      "detail": "项目=中国农业发展银行河南省分行-20-1961"
+    },
+    {
+      "kind": "cell",
+      "detail": "费用项目=本地市内交通"
+    },
+    {
+      "kind": "option",
+      "detail": "发票类型=普通发票"
+    },
+    {
+      "kind": "cell",
+      "detail": "开始日期=2026/8/27"
+    },
+    {
+      "kind": "cell",
+      "detail": "结束日期=2026/8/27"
+    },
+    {
+      "kind": "cell",
+      "detail": "住宿/出差地=广州"
+    },
+    {
+      "kind": "cell",
+      "detail": "出发地=番禺广场地铁站D口"
+    },
+    {
+      "kind": "cell",
+      "detail": "目的地=傍西酒堂"
+    },
+    {
+      "kind": "cell",
+      "detail": "费用金额=¥50.12"
+    },
+    {
+      "kind": "cell",
+      "detail": "税额=¥1.51"
+    },
+    {
+      "kind": "save",
+      "detail": "FYBX2026090001"
+    }
+  ],
+  "result": {
+    "status": "saved",
+    "billNo": "FYBX2026090001"
+  }
+}

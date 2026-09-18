@@ -84,18 +84,19 @@ describe('任务列表', () => {
     expect(within(row).queryByText('对账中')).toBeNull();
   });
 
-  test('严格回读不一致停在完成页的任务：徽标显示回读不一致，并给出查看结果入口', async () => {
+  test('严格回读不一致的任务：停在对账而不是草稿交接，列表给出查看对账入口', async () => {
     const adapter = createMockAdapter({ seed: 'actions', fault: 'readback-mismatch', erpStepMs: 1, erpLoginAutoMs: 1 });
     const t1 = await adapter.getSnapshot('T1');
     // 去报销：整单确认之后开始写入，服务端自己探测到登录后自动写完。
     expect((await adapter.startErpWrite('T1', t1.step.stepToken)).ok).toBe(true);
-    await vi.waitFor(async () => expect((await adapter.getSnapshot('T1')).stage).toBe('done'));
+    // 已保存但逐行不一致的草稿没有被证明与确认过的明细一致，不算交接完成。
+    await vi.waitFor(async () => expect((await adapter.getSnapshot('T1')).stage).toBe('reconcile'));
     window.location.hash = '#/tasks';
     render(<App adapter={adapter} />);
     const row = await rowOf('2026-08 上海出差（产品评审）');
-    expect(within(row).getByText('回读不一致').closest('[data-tone]')?.getAttribute('data-tone')).toBe('danger');
+    expect(within(row).getByText('对账中').closest('[data-tone]')?.getAttribute('data-tone')).toBe('warning');
     expect(within(row).queryByText('10/10 草稿交接')).toBeNull();
-    expect(within(row).getByRole('link', { name: '查看结果' }).getAttribute('href')).toBe('#/task/T1/done');
+    expect(within(row).getByRole('link', { name: '查看对账' }).getAttribute('href')).toBe('#/task/T1/reconcile');
   });
 
   test('service-disconnected：任务列表读不到时显示全页横幅并自动重试，恢复后横幅消失、列表出现', async () => {
@@ -190,16 +191,14 @@ describe('任务列表', () => {
     expect(!refused.ok && refused.error.message).toBe(ABANDON_TASK_COPY.blockedReason);
   });
 
-  test('设置页「完全重置」：二次确认后清空本机数据，回到启动页；重新登录并确认身份后任务列表为空', async () => {
+  test('设置页「完全重置」：二次确认后只清空当前账号的数据，仍然登录，回到空的任务列表', async () => {
     renderApp('#/settings');
     fireEvent.click(await screen.findByRole('button', { name: '完全重置' }));
-    const resetConfirm = within(screen.getByRole('dialog', { name: '清空本机全部数据？' })).getByRole('button', { name: '清空并重置' });
+    const resetConfirm = within(screen.getByRole('dialog', { name: '清空你的全部数据？' })).getByRole('button', { name: '清空并重置' });
     fireEvent.click(resetConfirm);
-    expect(await screen.findByRole('heading', { name: '登录报销系统' })).toBeTruthy();
-    expect(window.location.hash).toBe('#/tasks');
-    fireEvent.click(screen.getByRole('button', { name: '我已登录' }));
-    fireEvent.click(await screen.findByRole('button', { name: '确认' }));
     expect(await screen.findByRole('heading', { name: '还没有报销任务' })).toBeTruthy();
+    expect(window.location.hash).toBe('#/tasks');
+    expect(screen.getByRole('button', { name: '退出登录' })).toBeTruthy();
   });
 
   test('未知路径回到任务列表', async () => {

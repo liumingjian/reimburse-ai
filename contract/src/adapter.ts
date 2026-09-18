@@ -1,15 +1,14 @@
-import type { ActionError, AssignProjectLinesInput, ConfirmIdentityInput, CreateTaskInput, PlacementSlot, ProjectAssignmentInput } from './actions';
+import type { ActionError, AssignProjectLinesInput, CreateTaskInput, PlacementSlot, ProjectAssignmentInput } from './actions';
+import type { AccountList, AccountListOutcome, AccountUpdateInput, AuthOutcome, ChangePasswordInput, CredentialsInput, Session } from './auth';
+import type { LegacyImport, LegacyImportOutcome } from './legacy-import';
 import type { ProjectBook, ProjectBookResult } from './project-book';
 import type { Corners, PendingAnswer, TaskSnapshot } from './snapshot';
 import type { TaskList } from './task-list';
 
-// 启动动作的结果：成功返回新任务列表；失败时 taskList 是服务端附带的最新列表（可能为 null）。
-export type StartupOutcome =
+// 任务之外、返回整份任务列表的动作（作废任务、完全重置）的结果：成功返回新任务列表；失败时 taskList 是服务端附带的最新列表（可能为 null）。
+export type TaskListOutcome =
   | { ok: true; taskList: TaskList }
   | { ok: false; error: ActionError; taskList: TaskList | null };
-
-// 任务之外、返回整份任务列表的动作（启动、作废任务、完全重置）共用这个结果形状。
-export type TaskListOutcome = StartupOutcome;
 
 // 个人项目簿维护动作的结果：服务端处理了请求就是 ok（结果状态可能是 rejected 等没做成的，原因在 result.note）；
 // 请求本身失败（服务没响应、格式不符）才是 !ok，book 是服务端附带的最新项目簿（可能为 null）。
@@ -46,23 +45,53 @@ export function isServiceUnavailable(error: unknown): boolean {
   return error instanceof Error && error.name === 'ServiceUnavailableError';
 }
 
+// 登录失效：除账号接口外的请求没带有效会话（HTTP 401）。适配器读数据遇到它时抛出这个错误，仓库据此重读会话，页面回到登录。
+export class UnauthenticatedError extends Error {
+  constructor(message = '请先登录。') {
+    super(message);
+    this.name = 'UnauthenticatedError';
+  }
+}
+
+export function isUnauthenticated(error: unknown): boolean {
+  return error instanceof Error && error.name === 'UnauthenticatedError';
+}
+
 export interface AppAdapter {
+  // 应用账号（ADR-0018）：当前会话；还没有账号时只能创建管理员，之后可以注册与登录。成功都返回新会话。
+  getSession(): Promise<Session>;
+  setupAdmin(input: CredentialsInput): Promise<AuthOutcome>;
+  register(input: CredentialsInput): Promise<AuthOutcome>;
+  login(input: CredentialsInput): Promise<AuthOutcome>;
+  logout(): Promise<AuthOutcome>;
   listTasks(): Promise<TaskList>;
-  // 启动：「我已登录」只是请服务端再探测一次报销系统登录，页面从不断言登录已发生。
-  recheckErpSession(): Promise<StartupOutcome>;
-  // 启动：登记当前登录身份（只能确认，不能改）。
-  confirmIdentity(input: ConfirmIdentityInput): Promise<StartupOutcome>;
   // 作废任务：服务端判定能否作废（已开始写入报销系统的不能），成功返回不再含这个任务的任务列表。
   abandonTask(taskId: string): Promise<TaskListOutcome>;
-  // 完全重置：清空本机数据（任务、项目簿、身份登记、常驻城市），返回重置后的任务列表（未登录，页面回到启动页）。
+  // 完全重置：清空当前账号自己的数据（任务、项目簿、常驻城市），返回重置后的任务列表；别的账号与登录状态不变。
   resetAll(): Promise<TaskListOutcome>;
-  // 个人项目簿（任务之外，按当前登录身份分簿）：读取、录入（只给项目号，服务端核验后带回名称）、删除、清理全部失效、复检全部。
-  // 每个动作服务端都重新核对当前登录身份；动作后受影响任务的项目允许列表随事件流更新。
+  // 个人项目簿（任务之外，按应用账号分簿）：读取、录入（只给项目号，服务端核验后带回名称）、删除、清理全部失效、复检全部。
+  // 动作后受影响任务的项目允许列表随事件流更新。
   getProjectBook(): Promise<ProjectBook>;
   intakeProject(number: string): Promise<ProjectBookOutcome>;
   removeProject(number: string): Promise<ProjectBookOutcome>;
   purgeInvalidProjects(): Promise<ProjectBookOutcome>;
   recheckProjects(): Promise<ProjectBookOutcome>;
+  // 改密码（#194）：用临时密码登录后必须先改；成功返回新会话（signed_in）。
+  changePassword(input: ChangePasswordInput): Promise<AuthOutcome>;
+  // 管理员的账号管理：列出账号；设为管理员 / 取消管理员、停用 / 启用、设置临时密码，一次一项，成功返回新的账号列表。
+  // 取消或停用最后一位在用的管理员会被拒绝（last_admin）。非管理员一律 403 forbidden。
+  listAccounts(): Promise<AccountList>;
+  updateAccount(accountId: string, change: AccountUpdateInput): Promise<AccountListOutcome>;
+  // 公共项目簿：所有账号可读；录入、停用、复检只对管理员开放。结果形状同个人项目簿。
+  getPublicProjectBook(): Promise<ProjectBook>;
+  intakePublicProject(number: string): Promise<ProjectBookOutcome>;
+  removePublicProject(number: string): Promise<ProjectBookOutcome>;
+  recheckPublicProjects(): Promise<ProjectBookOutcome>;
+  // 旧数据导入（ADR-0018，只在创建第一个管理员时跑一次）：读这个账号看到的导入结果；旧数据损坏时报告里有逐个文件的原因，
+  // 由这个账号修好后重试，或明确跳过。跳过之后导入就此结束。
+  getLegacyImport(): Promise<LegacyImport>;
+  retryLegacyImport(): Promise<LegacyImportOutcome>;
+  skipLegacyImport(): Promise<LegacyImportOutcome>;
   getSnapshot(taskId: string): Promise<TaskSnapshot>;
   subscribe(taskId: string, onEvent: (event: AdapterEvent) => void): Unsubscribe;
 
@@ -84,9 +113,13 @@ export interface AppAdapter {
   submitProjectAssignment(taskId: string, input: ProjectAssignmentInput, stepToken: string): Promise<ActionOutcome>;
   // 材料包有缺项（step resolve_preparation）时排除相关材料；服务端随后重新准备材料包。
   excludeMaterial(taskId: string, materialId: string, stepToken: string): Promise<ActionOutcome>;
+  // 修改当前任务的常驻城市：第一次写入报销系统之前可改；服务端重新推导费用类别，并记为这个账号的常驻城市。
+  setTaskHomeCity(taskId: string, homeCity: string, stepToken: string): Promise<ActionOutcome>;
   startErpWrite(taskId: string, stepToken: string): Promise<ActionOutcome>;
   // 「我已登录，继续」只是请服务端再探测一次，页面从不断言登录已发生。
   confirmLogin(taskId: string, stepToken: string): Promise<ActionOutcome>;
+  // 登录等待时放弃这次去报销：什么都没有写入，任务回到「去打印 / 去报销」，之后可以再去报销。
+  cancelErpWrite(taskId: string, stepToken: string): Promise<ActionOutcome>;
   // 重新对账：只读 ERP 再判定一次，不发起任何写入。转人工：终止后续 ERP 写入，交给用户接管。两者都回传当前对账 step 的 stepToken。
   reconcile(taskId: string, stepToken: string): Promise<ActionOutcome>;
   handOff(taskId: string, stepToken: string): Promise<ActionOutcome>;

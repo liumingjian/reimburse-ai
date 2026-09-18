@@ -54,13 +54,39 @@ export const EVIDENCE_STATES = ['explicit', 'derived', 'ambiguous', 'missing'] a
 export const EvidenceStateSchema = z.enum(EVIDENCE_STATES);
 export type EvidenceState = z.infer<typeof EvidenceStateSchema>;
 
-// 字段候选：材料原文的解释，附来源（规则名如 rule:amap_itinerary，或 user）与材料证据状态。
+// 材料种类 (material kind, ADR-0017): owns the slot schema, checks and manual-fill form. v1 has five kinds; a
+// 版式 (layout) belongs to exactly one kind.
+export const MATERIAL_KINDS = ['vat_invoice', 'rail_ticket', 'ride_itinerary', 'hotel_folio', 'taxi_receipt'] as const;
+export const MaterialKindSchema = z.enum(MATERIAL_KINDS);
+export type MaterialKind = z.infer<typeof MaterialKindSchema>;
+
+// A layout name inside its kind, e.g. `einvoice`, `12306`, `amap`.
+export const LAYOUT_NAME_PATTERN = /^[a-z0-9][a-z0-9_]*$/;
+
+// Candidate source (ADR-0017): `rule:<kind>/<layout>` from a layout parser, optionally `.<derivation>` for a derived
+// value (`rule:taxi_receipt/machine_printed.year_from_suffix`), or `user` for manual fill. The e-invoice QR code is
+// its own source, `rule:vat_invoice/einvoice_qr`.
+export const CANDIDATE_SOURCE_PATTERN = /^(?:rule:[a-z][a-z0-9_]*\/[a-z0-9][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)?|user)$/;
+
+// Edit classes (ADR-0017): `fact_locked` is a 票面事实 (face fact) from a PDF text layer or QR code and refuses edits;
+// `fact_correctable` comes from OCR or manual fill and is re-checked on correction, never back-calculated;
+// `presentation` is free wording stored as a 呈现值 (presentation value) while checks keep the resolved value;
+// `choice` is a derived business value limited to what the company rules allow.
+export const EDIT_CLASSES = ['fact_locked', 'fact_correctable', 'presentation', 'choice'] as const;
+export const EditClassSchema = z.enum(EDIT_CLASSES);
+export type EditClass = z.infer<typeof EditClassSchema>;
+
+// 字段候选：材料原文的解释，附来源（CANDIDATE_SOURCE_PATTERN）与材料证据状态。
 export const FieldCandidateSchema = z.object({
   key: z.string().min(1),
   label: z.string().min(1),
   value: z.string(),
-  source: z.string().min(1),
+  source: z.string().regex(CANDIDATE_SOURCE_PATTERN),
+  // Version of the parser that produced a `rule:` candidate; null for `user`.
+  parserVersion: z.string().min(1).nullable(),
   evidence: EvidenceStateSchema,
+  // Whether and how the user may edit this field (EDIT_CLASSES).
+  editClass: EditClassSchema,
 });
 export type FieldCandidate = z.infer<typeof FieldCandidateSchema>;
 
@@ -83,6 +109,10 @@ export const MaterialSchema = z.object({
   fileName: z.string().min(1),
   contentHash: z.string().min(1),
   size: z.number().int().nonnegative(),
+  // 材料种类; null before inventory and while unrecognised (manual fill sets it, #187).
+  kind: MaterialKindSchema.nullable(),
+  // 版式 within the kind; null before inventory, while unrecognised, and for manual fill.
+  layout: z.string().regex(LAYOUT_NAME_PATTERN).nullable(),
   kindLabel: z.string().min(1),
   categoryLabel: z.string().nullable(),
   role: MaterialRoleSchema,
@@ -176,7 +206,8 @@ export const PendingFieldSchema = z.object({
   label: z.string().min(1),
   placeholder: z.string(),
   required: z.boolean(),
-  format: z.enum(['text', 'time', 'date']),
+  // money：两位小数的金额，如 226.42。
+  format: z.enum(['text', 'time', 'date', 'money']),
 });
 export type PendingField = z.infer<typeof PendingFieldSchema>;
 
@@ -278,8 +309,9 @@ export const BlockerSchema = z.object({
   // 「待处理问题」列，如「这张发票在报销任务「2026-06 北京培训」里也在……」。
   reason: z.string().min(1),
   resolver: ResolverLabelSchema,
-  // 命中的任务：仍占用这张发票的其他报销任务。
-  tasks: z.array(BlockerTaskSchema).min(1),
+  // 命中的任务：仍占用这张发票的自己的其他报销任务。另一个账号的任务占用时为空：只说「已被另一个账号的任务占用」，
+  // 不透露任务名称或任何细节（ADR-0018）。
+  tasks: z.array(BlockerTaskSchema),
 });
 export type Blocker = z.infer<typeof BlockerSchema>;
 
@@ -363,6 +395,8 @@ export const CONFIRMATION_STATUSES = ['unconfirmed', 'confirmed', 'invalidated']
 // 失效提示由服务端成句；这些是标准文案，服务端与 mock 共用。
 export const REVIEW_INVALIDATED_NOTICE = '材料已变更，之前的整单明细确认与已生成的打印稿作废。请重新核对后再确认。';
 export const PROJECT_CHANGED_NOTICE = '项目归属已变更，之前的整单明细确认失效。请重新核对后再确认。';
+// 明细内容（字段修改、常驻城市、公司规则）变了，材料没变。
+export const DETAIL_CHANGED_NOTICE = '整单明细已变更，之前的整单明细确认与已生成的打印稿作废。请重新核对后再确认。';
 
 export const ConfirmationSchema = z.object({
   status: z.enum(CONFIRMATION_STATUSES),
@@ -459,12 +493,18 @@ export type PrintSheet = z.infer<typeof PrintSheetSchema>;
 
 // ---- 项目归属 ----
 
-// 规则照内核现有项目归属页面（project-workbench.mjs Variant B）：项目只能从个人项目簿的允许列表里选。
+// 规则照内核现有项目归属页面（project-workbench.mjs Variant B）：项目只能从允许列表里选。允许列表是个人项目簿
+// 与公共项目簿（#194）的可选项目并排给出，source 标明来自哪一本；同一个项目号两本都有时只给个人那条。
 // 允许列表只含可选项目（内核 selectableProjects，baox.mjs:1603）：不可选的（已过期 / 复检未通过 / 项目号不安全）不随快照给出，
 // 需要时去个人项目簿查看。可选判定在服务端。
+export const PROJECT_SOURCES = ['personal', 'public'] as const;
+export const ProjectSourceSchema = z.enum(PROJECT_SOURCES);
+export type ProjectSource = z.infer<typeof ProjectSourceSchema>;
+
 export const ProjectOptionSchema = z.object({
   number: z.string().min(1),
   name: z.string().min(1),
+  source: ProjectSourceSchema,
 });
 export type ProjectOption = z.infer<typeof ProjectOptionSchema>;
 
@@ -489,6 +529,8 @@ export const ProjectLineAssignmentSchema = z.object({
   lineId: IdSchema,
   projectNumber: z.string().min(1),
   projectName: z.string().min(1),
+  // 任务选择钉住的来源：个人项目簿或公共项目簿（ADR-0018）。
+  projectSource: ProjectSourceSchema,
 });
 export type ProjectLineAssignment = z.infer<typeof ProjectLineAssignmentSchema>;
 
@@ -506,7 +548,10 @@ export const ProjectAssignmentSchema = z.object({
   working: z.array(ProjectLineAssignmentSchema),
   // 「本次已归入」区：working 里用到的项目，按首次出现的明细顺序，带条数与金额（服务端给出）。
   usage: z.array(ProjectUsageSchema),
-  // 个人项目簿允许列表（只含可选项目），打开页面时整份给出；搜索只缩小显示，不缩小允许列表。
+  // 提交前项目已被停用或删除的明细（#194）：服务端已把它们从 working 里拿掉，这里列出原来归入的项目，页面提示重新选择。
+  // 已提交归属里钉住的项目不在此列（沿用）。
+  reselect: z.array(ProjectLineAssignmentSchema),
+  // 允许列表（只含可选项目），打开页面时整份给出；搜索只缩小显示，不缩小允许列表。
   projects: z.array(ProjectOptionSchema),
   submittedAt: DateTimeSchema.nullable(),
 });
@@ -526,12 +571,22 @@ export const ErpStepSchema = z.object({
 });
 export type ErpStep = z.infer<typeof ErpStepSchema>;
 
+// 这次写入登录的报销系统账号与账套：按尝试记录、在完成页显示，从不与应用账号比对（ADR-0016）。
+export const ErpAccountViewSchema = z.object({
+  displayName: z.string(),
+  account: z.string(),
+  tenant: z.string(),
+});
+export type ErpAccountView = z.infer<typeof ErpAccountViewSchema>;
+
+// idle 且 abortReason 有值：上一次去报销在写入前就停下了（报销系统没有被改动），可以直接再去报销。
 export const ErpSchema = z.object({
   status: z.enum(['idle', 'running', 'waiting_login', 'aborted', 'done']),
   steps: z.array(ErpStepSchema),
   draftNo: z.string().nullable(),
   abortReason: z.string().nullable(),
   loginNotice: z.string().nullable(),
+  erpAccount: ErpAccountViewSchema.nullable(),
 });
 export type Erp = z.infer<typeof ErpSchema>;
 
@@ -588,13 +643,25 @@ export type ReconcileBucket = z.infer<typeof ReconcileBucketSchema>;
 // human_review 的固定句（user-interaction-contract.md:64，内核 handed_off_recover）：转人工的对账结果一律显示这句。
 export const HUMAN_REVIEW_NOTICE = '当前报销已暂停，材料和状态已保留。请在报销系统中核对；如无法判断，请联系报销管理员。';
 
-// 写入结果不确定后的对账：写入中止停在 reconcile 阶段；严格回读不一致停在 done 阶段（完成页显示差异行）。
+// 写入结果不确定后的对账：一律停在 reconcile 阶段。只有「已保存且逐行一致」才是 done（草稿已交接）；
+// 严格回读不一致的草稿没有被证明与确认过的明细一致，所以也停在对账，由用户决定原地等待还是转人工。
 // bucket 与 action / actionCode 是内核判定（bucket 与处置的对应照内核：未知、未保存·导入前、未保存·就绪待保存、
 // 身份成立的已保存 ⇒ 原地等待；未保存·已导入未写明细、不自洽、身份不成立或逐行不一致的已保存 ⇒ 转人工）。
 // allowedActions 是服务端允许的处置，页面只渲染这些按钮（原地等待 = 重新对账，只读；转人工 = 终止后续写入）。
+// action 是建议的处置，allowedActions 是可以做的处置：建议原地等待时也一直可以转人工（两个按钮），
+// 建议转人工时只能转人工（一个按钮）。
 // humanReview 为真时（转人工的结果）页面显示 HUMAN_REVIEW_NOTICE，且不给「重新对账」。
 // status：pending 等待用户处置；waiting 已重新对账、原地等待；handed_off 已转人工（终态）。
 // rows 是严格回读逐行比对（与 readback.rows 相同）；reasons 是不属于某一行的原因（逐行原因在 rows[].reasons）。
+// 写入中止时报销系统自己的原话（逐字，来自报销系统弹窗与发票助手）和裁剪截图（服务端地址，没有时为 null）。
+// 页面照原样显示，不改写、不翻译。
+export const ErpCaptureSchema = z.object({
+  erpText: z.array(z.string()),
+  // 同源路径（对账页把它直接放进 img src），与其余地址字段同一条规则。
+  screenshotUrl: UrlSchema.nullable(),
+});
+export type ErpCapture = z.infer<typeof ErpCaptureSchema>;
+
 export const ReconcileSchema = z.object({
   status: z.enum(['none', 'pending', 'waiting', 'handed_off']),
   bucket: ReconcileBucketSchema.nullable(),
@@ -606,6 +673,7 @@ export const ReconcileSchema = z.object({
   draftNo: z.string().nullable(),
   rows: z.array(ReadbackRowSchema),
   reasons: z.array(z.string()),
+  capture: ErpCaptureSchema.nullable(),
 }).refine((reconcile) => !(reconcile.humanReview && reconcile.allowedActions.includes('wait')), {
   message: 'humanReview 为真时 allowedActions 不能含 wait（转人工之后不再重新对账）',
   path: ['allowedActions'],

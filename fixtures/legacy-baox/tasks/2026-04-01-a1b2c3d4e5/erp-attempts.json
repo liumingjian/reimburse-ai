@@ -1,0 +1,20 @@
+{
+  "attempts": [
+    {
+      "at": "2026-04-02T09:25:00.000Z",
+      "kind": "erp-reconcile",
+      "bucket": "未知",
+      "action": "原地等待",
+      "reasons": [],
+      "readings": { "formMode": "edit", "billNo": null }
+    },
+    {
+      "at": "2026-04-02T09:28:00.000Z",
+      "kind": "erp-reconcile",
+      "bucket": "已保存",
+      "action": "转人工",
+      "reasons": [],
+      "readings": { "formMode": "view", "billNo": "BX-2026-0401" }
+    }
+  ]
+}

@@ -25,13 +25,11 @@ describe('新建报销任务弹层', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
-  test('#/tasks/new 深链：报销人只读，常驻城市预填网络位置候选并说明来源，没有名称与日期字段', async () => {
+  test('#/tasks/new 深链：常驻城市预填网络位置候选并说明来源，没有名称与日期字段', async () => {
     renderAt('#/tasks/new');
     const box = await dialog();
-    // 报销人是只读字段，不是输入框：弹层里唯一的输入框是常驻城市。
-    const employee = await within(box).findByLabelText('报销人');
-    expect(employee.textContent).toBe('林颂宜');
-    expect(employee.tagName).not.toBe('INPUT');
+    // 弹层里唯一的输入框是常驻城市。
+    await within(box).findByLabelText('常驻城市');
     expect(within(box).getAllByRole('textbox').map((input) => input.id)).toEqual(['new-task-home-city']);
     expect((within(box).getByLabelText('常驻城市') as HTMLInputElement).value).toBe('杭州');
     expect(within(box).getByText('根据网络位置推测，不对可直接改成你的常驻城市。')).toBeTruthy();
@@ -68,7 +66,7 @@ describe('新建报销任务弹层', () => {
     window.location.hash = '#/tasks/new';
     const again = await dialog();
     await waitFor(() => expect((within(again).getByLabelText('常驻城市') as HTMLInputElement).value).toBe('上海'));
-    expect(within(again).getByText('上次确认的常驻城市（按报销人身份记住），可直接修改。')).toBeTruthy();
+    expect(within(again).getByText('上次确认的常驻城市（按你的账号记住），可直接修改。')).toBeTruthy();
   });
 
   test('?location=unavailable：没有记忆也没有网络位置，常驻城市留空并提示直接填写', async () => {

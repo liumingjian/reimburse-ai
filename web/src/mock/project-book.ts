@@ -2,11 +2,11 @@ import { type AppAdapter, type ProjectBookOutcome, PROJECT_BOOK_NOTES, type Proj
 import type { MockBus } from './bus';
 import { INITIAL_BOOK, MOCK_TODAY, allowListOf, annotateProject, isSafeProjectNumber, projectEntryStep, verifyProjectNumber, type StoredProject } from './fixtures/projects';
 import type { MockOptions } from './options';
-import type { MockStartup } from './startup';
+import type { MockAuth } from './auth';
 
 // mock 服务端的个人项目簿（内核 projectintake.mjs / projectmaintain.mjs 的行为）：
-// 录入先做安全字符校验，再核对当前登录身份，再到 mock 报销系统项目目录核验，只有 confirmed 才写入（同号覆盖）；
-// 删除、清理全部失效、复检全部同样先核对身份；复检不自动删除。项目簿只存在内存里，刷新后回到夹具（`?book=empty` 时为空）。
+// 录入先做安全字符校验，再确认已登录应用账号，再到 mock 报销系统项目目录核验，只有 confirmed 才写入（同号覆盖）；
+// 删除、清理全部失效、复检全部同样先确认已登录；复检不自动删除。项目簿只存在内存里，刷新后回到夹具（`?book=empty` 时为空）。
 // 项目簿一变，还没开始写入报销系统的任务随之拿到新的允许列表；停在「先维护项目簿」的任务有了可选项目就回到项目归属。
 
 export type ProjectBookService = Pick<AppAdapter, 'getProjectBook' | 'intakeProject' | 'removeProject' | 'purgeInvalidProjects' | 'recheckProjects'> & {
@@ -19,14 +19,14 @@ export type ProjectBookService = Pick<AppAdapter, 'getProjectBook' | 'intakeProj
 
 const EMPTY_BOOK: ProjectBook = { projects: [] };
 
-export function createProjectBook(options: MockOptions, bus: MockBus, startup: MockStartup): ProjectBookService {
+export function createProjectBook(options: MockOptions, bus: MockBus, auth: MockAuth): ProjectBookService {
   let projects: StoredProject[] = options.bookEmpty ? [] : INITIAL_BOOK.map((project) => ({ ...project }));
   const today = MOCK_TODAY;
 
   const annotated = () => projects.map((project) => annotateProject(project, today));
   const bookNow = (): ProjectBook => ({ projects: annotated() });
-  // 身份没核对通过时不读项目簿。
-  const visibleBook = (): ProjectBook => (startup.complete() ? bookNow() : EMPTY_BOOK);
+  // 没登录时不读项目簿。
+  const visibleBook = (): ProjectBook => (auth.account() ? bookNow() : EMPTY_BOOK);
   const allowList = () => allowListOf(annotated());
 
   const done = (status: ProjectBookResult['status'], note: string, book: ProjectBook = bookNow(), verdict: ProjectBookResult['verdict'] = null): ProjectBookOutcome => ({
@@ -34,14 +34,8 @@ export function createProjectBook(options: MockOptions, bus: MockBus, startup: M
     result: { status, verdict, note, book },
   });
 
-  // 每个维护动作都先核对当前登录身份：没登录或身份没登记 → not_logged_in；与已登记的人不一致 → identity_mismatch。
-  const gate = (notLoggedInNote: string): ProjectBookOutcome | null => {
-    const employee = startup.employee();
-    if (startup.erpSession() !== 'logged_in' || !employee) return done('not_logged_in', notLoggedInNote, EMPTY_BOOK);
-    if (employee.binding === 'mismatched') return done('identity_mismatch', PROJECT_BOOK_NOTES.identityMismatch, EMPTY_BOOK);
-    if (employee.binding !== 'bound') return done('not_logged_in', notLoggedInNote, EMPTY_BOOK);
-    return null;
-  };
+  // 每个维护动作都先确认已登录应用账号（没登录 → not_logged_in）。
+  const gate = (notLoggedInNote: string): ProjectBookOutcome | null => (auth.account() ? null : done('not_logged_in', notLoggedInNote, EMPTY_BOOK));
 
   // 允许列表跟随项目簿；项目归属阶段的 step 按「有没有可选项目、有没有归属」重新判定（维护门的进出）。
   const applyBook = (taskId: string, list: readonly ProjectOption[]) => {

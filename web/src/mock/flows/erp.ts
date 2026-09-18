@@ -12,7 +12,7 @@ const DEFAULT_ERP_LOGIN_AUTO_MS = 2500;
 // `?fault=erp-login-missing`：前两次「我已登录，继续」都探测不到登录，第三次才检测到；该故障下服务端不会自己探测到。
 const LOGIN_MISSING_ATTEMPTS = 2;
 
-export type ErpFlow = Pick<AppAdapter, 'startErpWrite' | 'confirmLogin' | 'reconcile' | 'handOff'>;
+export type ErpFlow = Pick<AppAdapter, 'startErpWrite' | 'confirmLogin' | 'cancelErpWrite' | 'reconcile' | 'handOff'>;
 
 export function createErpFlow(bus: MockBus): ErpFlow {
   const { options } = bus;
@@ -95,7 +95,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         }
         const run = newRun(taskId);
         snapshot.stage = 'erp';
-        snapshot.erp = { status: 'running', steps: erpSteps(ERP_STEP_INDEX.browser, 'running'), draftNo: null, abortReason: null, loginNotice: null };
+        snapshot.erp = { status: 'running', steps: erpSteps(ERP_STEP_INDEX.browser, 'running'), draftNo: null, abortReason: null, loginNotice: null, erpAccount: null };
         snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-erp-run-${run}` };
         snapshot.task.updatedAt = bus.now();
         setTimeout(() => reachLogin(taskId, run), erpStepMs);
@@ -115,6 +115,17 @@ export function createErpFlow(bus: MockBus): ErpFlow {
           return snapshot;
         }
         loginDetected(snapshot, run);
+        return snapshot;
+      }),
+    // 登录等待时放弃这次去报销：什么都没写，回到「去打印 / 去报销」，之后可以再去报销。
+    cancelErpWrite: async (taskId, stepToken) =>
+      bus.withStep(taskId, stepToken, (snapshot) => {
+        if (snapshot.step.kind !== 'erp_login') return { error: { code: 'not_waiting_login', message: ERP_ACTION_ERRORS.notWaitingLogin } };
+        erpRuns.delete(taskId);
+        snapshot.stage = 'actions';
+        snapshot.erp = { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null, erpAccount: null };
+        snapshot.step = { kind: 'choose_action', stepToken: bus.rotateToken(`tok-${taskId}-actions`) };
+        snapshot.task.updatedAt = bus.now();
         return snapshot;
       }),
     // 重新对账（原地等待）：只读报销系统再判定一次，只在对账结果允许原地等待时接受。

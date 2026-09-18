@@ -28,7 +28,7 @@ describe('契约 schema', () => {
   });
 
   test('由快照投影出的任务列表通过任务列表 schema', () => {
-    const list = { erpSession: 'logged_in', employee: { displayName: '林颂宜', account: 'linsongyi', tenant: '示例科技集团本部', binding: 'bound' }, homeCity: { value: '杭州', source: 'network' }, tasks: [t1Snapshot('done'), t2Snapshot(), t3Snapshot()].map(toListItem) };
+    const list = { homeCity: { value: '杭州', source: 'network' }, tasks: [t1Snapshot('done'), t2Snapshot(), t3Snapshot()].map(toListItem) };
     const parsed = TaskListSchema.parse(list);
     expect(parsed.tasks.map((task) => task.stage)).toEqual(['done', 'reconcile', 'done']);
     expect(parsed.tasks[0]?.grossTotal).toBe('3972.59');
@@ -242,7 +242,7 @@ describe('契约 schema', () => {
 
 describe('报销任务阶段', () => {
   test('阶段是闭合枚举，顺序照 Skill；?seed= 复用同一套名字，未知值被忽略', () => {
-    expect(TASK_STAGES).toEqual(['upload', 'inventory', 'pending', 'project', 'catalog', 'preparation', 'review', 'actions', 'erp', 'done', 'reconcile']);
+    expect(TASK_STAGES).toEqual(['upload', 'inventory', 'pending', 'project', 'catalog', 'preparation', 'review', 'actions', 'erp', 'done', 'reconcile', 'voided']);
     expect(TaskStageSchema.safeParse('print').success).toBe(false);
     expect(readMockOptions('?seed=review&fault=readback-mismatch')).toEqual({ seed: 'review', fault: 'readback-mismatch' });
     expect(readMockOptions('?seed=nope&fault=nope')).toEqual({ seed: null, fault: null });

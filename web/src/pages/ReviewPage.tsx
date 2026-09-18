@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Button,
   InlineNotification,
@@ -7,6 +8,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TextInput,
   Toggletip,
   ToggletipButton,
   ToggletipContent,
@@ -41,6 +43,53 @@ import { PAGE_COPY, REVIEW_ORDER_NOTE } from './page-copy';
 // 「确认整单明细」带快照里的摘要与 stepToken；确认后在摘要条下方、表格上方出现并列的「去打印」「去报销」（首屏内，不进吸底栏）：
 // 去打印只是进入打印稿页；去报销请服务端启动专用浏览器，登录后自动写入，没有「开始填报」。
 // 「追加材料」先二次确认，再请服务端使确认失效并回到上传页。支付截图在打印稿页补充，不在这里。
+
+// 常驻城市：到第一次写入报销系统之前都可以改；改了会重新划分本地与外地市内交通，确认随之失效（服务端判定）。
+function HomeCityField({ snapshot, locked }: { snapshot: TaskSnapshot; locked: boolean }) {
+  const taskId = snapshot.task.taskId;
+  const current = snapshot.task.homeCity ?? '';
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(current);
+  const action = useAction(taskId);
+  const save = async () => {
+    const outcome = await action.run((adapter) => adapter.setTaskHomeCity(taskId, value.trim(), snapshot.step.stepToken));
+    if (outcome.ok) setEditing(false);
+  };
+  if (!editing) {
+    return (
+      <div className="app-summary-field" data-testid="review-home-city">
+        <span className="app-summary-key">常驻城市</span>
+        <span className="app-summary-value">{current || '未确认'}</span>
+        {!locked ? (
+          <Button
+            kind="ghost"
+            size="sm"
+            onClick={() => {
+              setValue(current);
+              setEditing(true);
+            }}
+          >
+            修改常驻城市
+          </Button>
+        ) : null}
+      </div>
+    );
+  }
+  return (
+    <div className="app-summary-field" role="group" aria-label="修改常驻城市">
+      <TextInput id="review-home-city" labelText="常驻城市" size="sm" value={value} onChange={(event) => setValue(event.target.value)} helperText="改了会重新划分本地与外地市内交通，整单确认随之失效。" />
+      <div className="app-btn-row">
+        <Button size="sm" disabled={action.busy || value.trim() === ''} onClick={() => void save()}>
+          保存
+        </Button>
+        <Button kind="ghost" size="sm" disabled={action.busy} onClick={() => setEditing(false)}>
+          取消
+        </Button>
+      </div>
+      <ActionError message={action.error} />
+    </div>
+  );
+}
 
 // 两步正在进行时的进度提示：确认暂不可用。
 function autoStepNotice(snapshot: TaskSnapshot): string | null {
@@ -168,6 +217,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
           <span className="app-summary-key">报销事由</span>
           <span className="app-summary-value">{purpose ?? '未填写'}</span>
         </div>
+        <HomeCityField snapshot={snapshot} locked={erpStarted} />
         {confirmation.lineCount > 0 ? (
           <div className="app-summary-field">
             <span className="app-summary-key">明细</span>
@@ -245,6 +295,12 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
                   去报销
                 </Button>
               )}
+              {/* 上一次去报销在写入前就停下了（服务端给出原因）：报销系统没有被改动，可以直接再去报销。 */}
+              {!erpStarted && erp.abortReason ? (
+                <p className="app-caption" role="status" data-testid="erp-abort-reason">
+                  {erp.abortReason}
+                </p>
+              ) : null}
               <ActionError message={claimAction.error} />
             </div>
           </div>

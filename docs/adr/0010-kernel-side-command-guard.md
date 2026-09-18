@@ -1,12 +1,14 @@
 # 「模型不拼命令」的守卫做在内核里，不做在 Skill 声明的 hook 里
 
+> **Status: superseded (2026-09-15, #197).** Superseded by ADR-0014, which retires the guard; the guard and the Skill hook were deleted with the kernel in #197. Paths below point into git commit `50931a3`, the last one that has the Skill-era code.
+
 > **状态：已修订（2026-09-11）。** [本地报销应用](../design/standalone-app.md)去掉了 Agent，本文针对模型的威胁模型已不存在；守卫无害，暂时保留，是否移除在实施本地应用时由继任 ADR 决定。
 
 [ADR-0009](./0009-kernel-decides-next-step.md) 把"下一步做什么"搬进了内核，
 但那之后模型**仍然**握着一台能任意执行 shell 的机器。说明书里写着"除 `next`
 以外的子命令你一条都不敲"，那是一句劝告；这条 ADR 记的是它怎么变成机制。
 
-**守卫做在内核自身**（`kernel/src/guard.mjs`）：除 `next` 以外的子命令，
+**守卫做在内核自身**（`50931a3:kernel/src/guard.mjs`）：除 `next` 以外的子命令，
 在内核检测到自己是被 Agent 调起的时候一律拒绝执行，退出码 2，并把这次拒绝
 记进 `<数据目录>/logs/refused.jsonl`。
 
@@ -22,7 +24,7 @@
 
 ## 为什么不是 Skill frontmatter 里的 hook
 
-施工单原定的做法是在 `skills/baox/SKILL.md` 的 frontmatter 里声明 `hooks.PreToolUse`。
+施工单原定的做法是在 `50931a3:skills/baox/SKILL.md` 的 frontmatter 里声明 `hooks.PreToolUse`。
 合并前做了真机实测，**结论和预期相反**：
 
 | | Skill frontmatter | `.claude/settings.json` |
@@ -56,8 +58,8 @@ frontmatter 里的 `hooks` 键被静默忽略——没有警告，没有报错�
   shell 的机器上本来就挡不住。它真正的意义是：加上它是一次留痕的、明知故犯的动作。
 - **`refused.jsonl` 是验收判据本身。**「全程模型只出现过 `baox next`」不靠回看对话确认，
   靠这个文件为空确认。所以它只在拒绝时写；放行不记，否则"为空"就不再是个信号。
-- `skills/baox/hooks/guard.mjs` 仍然保留，作为**可选的外层**，挂在 `.claude/settings.json`
-  上（怎么挂见 INSTALL.md）。它的判据从内核那一份 import，不在钩子里抄第二遍。
+- `50931a3:skills/baox/hooks/guard.mjs` 仍然保留，作为**可选的外层**，挂在 `.claude/settings.json`
+  上（怎么挂见 `50931a3:docs/INSTALL.md`）。它的判据从内核那一份 import，不在钩子里抄第二遍。
   装了它，命令连进程都不会起；没装，内核那一层照样拦得住。
 - Claude Code 哪天让 frontmatter 的 `hooks` 生效了，外层可以收回 SKILL.md，
   内核这一层不受影响，照样留着。

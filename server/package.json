@@ -1,0 +1,49 @@
+{
+  "name": "@baox/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local reimbursement app server: Hono HTTP API over SQLite facts and content-addressed files, serving web/dist",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "bin": {
+    "baox": "dist/baox.mjs"
+  },
+  "scripts": {
+    "baox": "tsx src/cli-main.ts",
+    "dev": "tsx watch src/main.ts",
+    "build": "node scripts/build.mjs",
+    "start": "node dist/main.mjs",
+    "test": "vitest run",
+    "test:private": "tsx scripts/test-private.ts",
+    "test:erp-live": "tsx scripts/test-erp-live.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@baox/contract": "workspace:*",
+    "@cantoo/pdf-lib": "2.9.2",
+    "@gutenye/ocr-models": "1.4.2",
+    "@hono/node-server": "2.1.1",
+    "@napi-rs/canvas": "1.0.9",
+    "@techstark/opencv-js": "4.12.0-release.1",
+    "better-sqlite3": "13.0.3",
+    "hono": "4.13.8",
+    "kysely": "0.29.5",
+    "onnxruntime-node": "1.30.0",
+    "pdfjs-dist": "6.1.200",
+    "sharp": "0.35.4",
+    "unpdf": "1.8.1",
+    "zod": "4.6.2",
+    "zxing-wasm": "3.1.4"
+  },
+  "devDependencies": {
+    "@baox/fixtures": "workspace:*",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "24.13.3",
+    "esbuild": "0.28.2",
+    "jsdom": "27.4.0",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3"
+  }
+}

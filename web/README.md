@@ -11,7 +11,7 @@ Vite 7 + React 19 + TypeScript，只支持 Chrome，只做 zh-CN。视觉唯一�
 
 | 脚本 | 作用 |
 | --- | --- |
-| `dev` | 开发服务器，使用 HTTP 适配器连本地应用服务（`/api/...`，同源） |
+| `dev` | 开发服务器，使用 HTTP 适配器连本地应用服务：Vite 把 `/api`（含 SSE）代理到 `127.0.0.1:${BAOX_PORT:-4319}`。根目录 `pnpm dev` 同时启动服务端（`tsx watch`）与本页面 |
 | `dev:mock` | 开发服务器，使用浏览器内 mock 适配器与夹具，不需要任何服务 |
 | `typecheck` | `tsc --noEmit` |
 
@@ -151,7 +151,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 | 脚本 | 作用 |
 | --- | --- |
 | `test` | Vitest + Testing Library（jsdom）：契约与夹具、HTTP 响应形状、仓库、各页面交互；`src/copy.test.ts` 扫描文案常量、mock 给出的文字与源码中文文案里的内核禁用词 |
-| `test:e2e` | 先 `build:mock`，再用 Playwright（`channel: 'chrome'`，需本机 Google Chrome）经 `file://` 打开 `dist-mock/index.html`；含从启动登录到完成的全流程（`e2e/journey.spec.ts`，上传 `sample-materials/`）、从待确认项起的流程顺序（`e2e/flow.spec.ts`）、seed × 页面、fault 全矩阵。截图是产物，在 `test-results/`（已 gitignore），不是像素基线 |
+| `test:e2e` | 即根目录 `pnpm test:e2e`：先构建服务端、`dist/` 与 `dist-mock/`，再跑 Playwright 的两个项目（`channel: 'chrome'`，需本机 Google Chrome）。`server` 项目在 `e2e/server/`，每个测试经 `e2e/server/fixture.ts` 启动一个构建好的服务端（临时 `BAOX_DATA_DIR`、空闲端口，托管 `dist/`）；`mock` 项目是其余 spec，经 `file://` 打开 `dist-mock/index.html`，只保留真实服务端难以到达的状态；含从启动登录到完成的全流程（`e2e/journey.spec.ts`，上传 `sample-materials/`）、从待确认项起的流程顺序（`e2e/flow.spec.ts`）、seed × 页面、fault 全矩阵。截图是产物，在 `test-results/`（已 gitignore），不是像素基线 |
 | `check:dist` | 正式构建后检查 `dist/`：不许出现夹具人名、草稿号、`print-sheet.pdf`、`fixtures/`、`sample-materials`、mock 模块名与测试钩子，也不许有 `fixtures/`、`sample-materials/` 目录 |
 
 ## 夹具与样式

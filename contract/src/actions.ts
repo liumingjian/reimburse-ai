@@ -23,29 +23,16 @@ export type ActionFailure = z.infer<typeof ActionFailureSchema>;
 // 新建任务的校验文案，页面与服务端共用。
 export const CREATE_TASK_ERRORS = {
   homeCityRequired: '请填写常驻城市。',
-  startupIncomplete: '还没有登录报销系统并确认报销人身份，不能新建报销任务。',
+  // At most one non-terminal task per account (ADR-0018).
+  activeTaskExists: '已有一个进行中的报销任务。请先完成或作废它，再新建。',
 } as const;
 
-// 启动动作（任务之外）：「我已登录」请服务端再探测一次登录会话；「确认」登记当前登录身份。
-// 两者成功都返回整份新任务列表；失败返回 { error, taskList? }（带最新任务列表时页面据此重渲染）。
-// 确认身份时回传页面上看到的账号与账套：服务端重新读一次当前登录，对不上就拒绝（你认的只是你看过的那一个）。
-export const ConfirmIdentityInputSchema = z.object({
-  account: z.string().min(1),
-  tenant: z.string().min(1),
-});
-export type ConfirmIdentityInput = z.infer<typeof ConfirmIdentityInputSchema>;
-
-export const StartupFailureSchema = z.object({
+// 任务之外、返回整份任务列表的动作（作废任务、完全重置）失败时的形状：{ error, taskList? }。
+export const TaskListFailureSchema = z.object({
   error: ActionErrorSchema,
   taskList: TaskListSchema.optional(),
 });
-export type StartupFailure = z.infer<typeof StartupFailureSchema>;
-
-export const STARTUP_ERRORS = {
-  notLoggedIn: '报销系统仍未登录。请在报销系统用本人账号登录后，再点「我已登录」。',
-  identityChanged: '当前登录身份与你刚才核对的不一致，请重新核对身份表。',
-  identityMismatched: '当前登录身份与已登记的报销人不一致，不能登记。',
-} as const;
+export type TaskListFailure = z.infer<typeof TaskListFailureSchema>;
 
 // 真实日期：格式对，且月日在日历上存在（2026-02-30 不算）。
 export function isRealDate(value: string): boolean {
@@ -69,6 +56,7 @@ export const PENDING_ANSWER_ERRORS = {
   required: '必填，对照原件填写。',
   time: '格式应为 HH:MM，且小时 00-23、分钟 00-59。',
   date: '格式应为 YYYY-MM-DD，且是真实存在的日期。',
+  money: '金额要写两位小数，例如 226.42。',
   choice: '请选择一种处理方式。',
   notOpen: '这个待确认项已经处理过了。',
   // given_up 项不接受答复：出路在材料一侧（排除这张发票，或追加逐段行程单后重新盘点）。
@@ -127,6 +115,7 @@ export function validatePendingAnswer(item: AnswerTarget, answer: PendingAnswer)
     }
     if (field.format === 'time' && !TIME_PATTERN.test(value)) errors[field.key] = PENDING_ANSWER_ERRORS.time;
     if (field.format === 'date' && !isRealDate(value)) errors[field.key] = PENDING_ANSWER_ERRORS.date;
+    if (field.format === 'money' && !AMOUNT_PATTERN.test(value)) errors[field.key] = PENDING_ANSWER_ERRORS.money;
   }
   return errors;
 }
@@ -147,6 +136,7 @@ export function normalizePendingAnswer(item: Pick<PendingItem, 'kind' | 'fields'
 // 确认整单明细：动作回传快照里的 confirmation.digest 与 stepToken，服务端据此判断用户点头的是不是这一份。
 export const CONFIRM_REVIEW_ERRORS = {
   digestMismatch: '整单明细已更新，请重新核对后再确认。',
+  notReady: '现在不需要确认整单明细：还没有提交项目归属，或已经确认过。',
   noLines: '还没有明细，不能确认。',
 } as const;
 
@@ -162,7 +152,17 @@ export const ERP_ACTION_ERRORS = {
   notWaitingLogin: '现在没有在等待登录。',
   notReconciling: '这个任务现在不在对账中。',
   notAllowed: '当前对账结果不允许这个处置。',
+  // Another task (of any account) holds the ERP lease; names no account or task (ADR-0018). HTTP 409 `erp_in_use`.
+  inUse: '报销系统正被另一个任务使用，请稍后再试。',
+  // Once an ERP action attempt exists the task's facts are frozen (ADR-0014).
+  erpStarted: '已开始写入报销系统，不能再改动；请按对账结果处理。',
+  // Checks that need no ERP (invoice identity, ERP invoice type, dates, amounts) failed; nothing was started.
+  preflight: (problems: readonly string[]) => `还不能写入报销系统：${problems.join('；')}。`,
 } as const;
+
+// The one task-action refusal that is HTTP 409 but not stale_step: the global ERP lease is held by another task.
+// The web adapter keeps its code and message; every other task-action 409 is stale_step.
+export const ERP_IN_USE_CODE = 'erp_in_use';
 
 // 任务作废（任务之外的生命周期操作，内核 abandon-task）：只允许还没开始写入报销系统的任务；
 // 作废是状态变更不是删除，任务从列表中移除，材料与记录保留在本机，它占用的发票可以在别的任务里使用。
@@ -175,13 +175,14 @@ export const ABANDON_TASK_COPY = {
   confirm: '作废',
 } as const;
 
-// 完全重置（设置页，内核 reset）：清空本机数据后回到启动页。报销系统里已保存的草稿不受影响。
+// 完全重置（设置页）：只清空当前登录账号自己的数据（报销任务、个人项目簿、常驻城市），别的账号不受影响，账号本身与登录状态保留。
+// 报销系统里已保存的草稿不受影响。
 export const RESET_COPY = {
   title: '完全重置',
-  body: '清空本机的全部报销任务、材料、个人项目簿、已登记的报销人身份和常驻城市，回到启动页重新登录报销系统。报销系统里已保存的草稿不受影响。',
+  body: '清空你这个账号的全部报销任务、材料、个人项目簿和常驻城市，别的账号的数据不受影响。报销系统里已保存的草稿不受影响。',
   button: '完全重置',
-  dialogTitle: '清空本机全部数据？',
-  dialogBody: '本机的报销任务、材料、个人项目簿、报销人身份登记和常驻城市都会被清空，不能撤销。',
+  dialogTitle: '清空你的全部数据？',
+  dialogBody: '你这个账号的报销任务、材料、个人项目簿和常驻城市都会被清空，不能撤销。账号本身保留，不用重新登录。',
   confirm: '清空并重置',
 } as const;
 
@@ -225,6 +226,18 @@ export const ProjectAssignmentInputSchema = z.object({
 });
 export type ProjectAssignmentInput = z.infer<typeof ProjectAssignmentInputSchema>;
 
+// 修改当前任务的常驻城市（set-home-city，带 stepToken）：第一次写入报销系统之前都可以改；改后按新城市重新推导费用类别、
+// 整单确认随之失效，并成为这个账号新建任务时的默认值（ADR-0014 经 ADR-0016 修订）。
+export const HOME_CITY_ERRORS = {
+  invalid: '常驻城市必须填写，且不超过 20 个字。',
+  locked: '已开始写入报销系统，常驻城市不能再修改。',
+} as const;
+
+export const SetHomeCityInputSchema = z.object({
+  homeCity: z.string().trim().min(1, HOME_CITY_ERRORS.invalid),
+});
+export type SetHomeCityInput = z.infer<typeof SetHomeCityInputSchema>;
+
 export const PlacementSlotSchema = z.enum(['top', 'bottom']);
 export type PlacementSlot = z.infer<typeof PlacementSlotSchema>;
 
@@ -243,6 +256,8 @@ export const PRINT_ACTION_ERRORS = {
   slotEmpty: '这半页没有放置材料。',
   notCroppable: '这份材料不支持四角裁剪。',
   invalidCorners: '四个角点须在原图范围内，且按左上、右上、右下、左下的顺序围成一个区域。',
+  // 生成前逐份核对原件哈希：磁盘上的原件与上传时不一致，就不生成（服务端）。
+  blobMismatch: '有一份原件与上传时的内容不一致，打印稿没有生成。请排除这份材料或重新上传后再试。',
 } as const;
 
 // 排除材料（exclude-material，带 stepToken），服务端只在三种情形下接受：
@@ -267,8 +282,10 @@ export const ACTION_NAMES = [
   'assign-project-lines',
   'submit-project-assignment',
   'exclude-material',
+  'set-home-city',
   'start-erp-write',
   'confirm-login',
+  'cancel-erp-write',
   'reconcile',
   'hand-off',
 ] as const;

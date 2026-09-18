@@ -25,6 +25,8 @@ const KEY_TEXT: Readonly<Record<TaskStage, string>> = {
   erp: '我已登录，继续',
   done: 'BX20260911-0173',
   reconcile: '写入结果不确定',
+  // A voided T1 has no materials yet; its only page is upload.
+  voided: '把材料拖到这里',
 };
 
 const SEEDS: readonly Seed[] = [
@@ -41,7 +43,8 @@ const BANNER = '本地服务未运行，请在终端重新执行 baox';
 function expectedHeading(stage: TaskStage, page: TaskPage): string {
   if (pageAllowed(stage, page)) return PAGE_COPY[page].title;
   // seed=upload 的 T1 还没有任何材料；其余阶段有材料但还没到这一步。
-  return stage === 'upload' ? '还没有上传材料' : '还不能进入这一步';
+  // A voided T1 also has no materials.
+  return stage === 'upload' || stage === 'voided' ? '还没有上传材料' : '还不能进入这一步';
 }
 
 async function expectClean(page: Page, label: string) {
@@ -89,7 +92,8 @@ const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = 
   },
   'readback-mismatch': async (page) => {
     await startErp(page, 'readback-mismatch');
-    await expect(page).toHaveURL(/#\/task\/T1\/done$/);
+    // 已保存但逐行不一致 ⇒ 停在对账，只能转人工。
+    await expect(page).toHaveURL(/#\/task\/T1\/reconcile$/);
     await expect(page.getByTestId('readback-6')).toContainText('不一致');
     await expect(page.getByTestId('readback-6')).toContainText('74.00');
     await expect(page.getByRole('button', { name: '转人工' })).toBeVisible();

@@ -94,7 +94,7 @@ export const PROJECT_BOOK_NOTES = {
 // 页面文案（照内核 project-book-page.mjs）。
 export const PROJECT_BOOK_COPY = {
   title: '个人项目簿',
-  lead: '项目号从报销系统核验后加入当前登录身份的项目簿。失效项目仍会保留，直到你删除它。',
+  lead: '项目号从报销系统核验后加入你这个账号的项目簿。失效项目仍会保留，直到你删除它。',
   numberLabel: '项目号',
   intake: '核验并加入',
   remove: '删除',
@@ -103,9 +103,6 @@ export const PROJECT_BOOK_COPY = {
   empty: '当前项目簿为空，请录入第一个项目。',
   neverExpires: '永不过期',
   noName: '未回读',
-  // 启动没完成时：项目簿按登录身份分簿，读不到也改不了（录入时服务端给出原因）。
-  startupIncomplete: '还没有登录报销系统并确认报销人身份：读不到个人项目簿，录入、删除、清理与复检都不会生效。',
-  toStartup: '去登录报销系统',
   // 流程门（内核 project_book_empty）：没有可选项目时项目归属页换成维护入口。录入后不自动离开：
   // 报销材料可能归属不同项目，用户录完再点「开始归属」（内核：完成设置并提交后才继续）。
   gateTitle: '先维护个人项目簿',
@@ -116,3 +113,26 @@ export const PROJECT_BOOK_COPY = {
   addProject: '新增项目',
   addDialogDone: '完成',
 } as const;
+
+// 公共项目簿（#194，ADR-0018）：与个人项目簿同一形状，管理员在网页里维护，所有账号共用。删除即停用（条目留在簿里，
+// 状态「已停用」，不能再选；再次录入即恢复）；每次改动都追加记录。维护接口只对管理员开放（其他账号 403 forbidden）。
+// 结果说明沿用 PROJECT_BOOK_NOTES，把「个人项目簿」换成「公共项目簿」；停用有自己的说明。
+export const PUBLIC_PROJECT_BOOK_NOTES = {
+  deactivated: (number: string, name: string | null) => `项目 ${number}「${name ?? '未回读'}」已在公共项目簿停用，不能再选；已提交任务中的归属不受影响`,
+} as const;
+
+export const PUBLIC_PROJECT_BOOK_COPY = {
+  title: '公共项目簿',
+  lead: '管理员维护、所有账号共用的项目。停用后不能再选，已提交的归属不受影响；每次改动都会留下记录。',
+  remove: '停用',
+  empty: '公共项目簿是空的，请录入第一个公共项目。',
+} as const;
+
+// 项目归属页：提交前项目被停用或删除的明细（projectAssignment.reselect），要重新选择项目。
+export const PROJECT_RESELECT_COPY = {
+  title: (count: number) => `${count} 条明细原来归入的项目已停用或已删除，请重新选择项目`,
+  line: (no: number, number: string, name: string) => `No.${no}：原项目 ${number} ${name}`,
+} as const;
+
+// 项目来源标签（项目归属页的项目列表与已归入明细）。
+export const PROJECT_SOURCE_LABEL = { personal: '个人', public: '公共' } as const;

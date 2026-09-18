@@ -14,7 +14,7 @@
     "build:mock": "vite build --mode mock",
     "check:dist": "vite build && node scripts/check-dist.mjs",
     "test": "vitest run",
-    "test:e2e": "vite build --mode mock && playwright test",
+    "test:e2e": "pnpm -w run test:e2e",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

@@ -8,7 +8,12 @@ export const TimeSchema = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, '时�
 export const DateTimeSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})?$/, '时刻应为 ISO 8601');
 export const IdSchema = z.string().min(1);
 export const StepTokenSchema = z.string().min(1);
-export const UrlSchema = z.string().min(1);
+// 地址只接受同源位置：这些值会直接进入页面的 href / src（原件预览、打印稿、对账截图），
+// 所以 `javascript:`、`data:` 这类伪协议和 `//别处` 这样的协议相对地址必须挡在契约这一层。
+// 允许 `/api/...` 这样以 / 开头的路径，以及 `fixtures/...` 这样的相对路径。
+// `blob:` 是页面自己用 URL.createObjectURL 从用户选中的文件造出来的（支付截图预览），不来自服务端，放行。
+const SAME_ORIGIN_URL = /^(?:blob:\S+|(?!\/\/)(?![a-zA-Z][a-zA-Z\d+.-]*:)\S+)$/;
+export const UrlSchema = z.string().min(1).regex(SAME_ORIGIN_URL, '地址只能是同源路径');
 
 export type Amount = z.infer<typeof AmountSchema>;
 export type DateString = z.infer<typeof DateSchema>;

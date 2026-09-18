@@ -106,18 +106,6 @@ test('?book=empty：从待确认项走到项目归属时被引导进维护入口
   await expect(page).toHaveURL(/#\/task\/T1\/review$/);
 });
 
-test('?erp=logged-out 未完成登录：项目簿页从顶栏可进，说明原因；录入被拒并显示原因', async ({ page }) => {
-  await page.goto(open('?erp=logged-out', '#/tasks'));
-  await expect(h1(page, '登录报销系统')).toBeVisible();
-  await page.getByRole('navigation', { name: '全局' }).getByRole('link', { name: '个人项目簿' }).click();
-  await expect(h1(page, '个人项目簿')).toBeVisible();
-  await expect(page.getByRole('note')).toContainText('还没有登录报销系统并确认报销人身份');
-  await expect(page.getByText('当前项目簿为空，请录入第一个项目。')).toBeVisible();
-  await intake(page, 'P-5108');
-  await expect(message(page)).toHaveText('没有已核对的报销系统身份，不能向个人项目簿录入项目');
-  await expect(row(page, 'P-5108')).toHaveCount(0);
-});
-
 test('入口：顶栏常驻「个人项目簿」；项目归属页「归入项目」弹层里点「新增项目」就地录入，勾选的明细保持勾选，新项目可选', async ({ page }) => {
   await page.goto(open('?seed=project', '#/task/T1/project'));
   await expect(h1(page, '项目归属')).toBeVisible();

@@ -1,14 +1,20 @@
 import {
+  ADMIN_ERRORS,
+  AUTH_ERRORS,
   ServiceUnavailableError,
+  UNAUTHENTICATED_CODE,
+  UnauthenticatedError,
+  type AccountListOutcome,
   type ActionOutcome,
   type AppAdapter,
+  type AuthOutcome,
+  type LegacyImportOutcome,
   type ProjectBookOutcome,
-  type StartupOutcome,
+  type TaskListOutcome,
   ABANDON_TASK_COPY,
   CREATE_TASK_ERRORS,
-  ConfirmIdentityInputSchema,
   CreateTaskInputSchema,
-  STARTUP_ERRORS,
+  HOME_CITY_ERRORS,
   type ActionError,
   TaskListSchema,
   type TaskList,
@@ -18,12 +24,14 @@ import { buildPrintSheet } from './fixtures/print';
 import { HOME_CITY } from './fixtures/projects';
 import { T1_ID, emptySnapshot, t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from './fixtures/tasks';
 import { createProjectBook } from './project-book';
-import { createStartup } from './startup';
+import { createPublicBook } from './public-book';
+import { MOCK_ACCOUNT, createAuth } from './auth';
 import { createErpFlow } from './flows/erp';
 import { createInventoryFlow } from './flows/inventory';
 import { createPendingFlow } from './flows/pending';
 import { createPrintFlow } from './flows/print';
 import { createProjectFlow } from './flows/project';
+import { createLegacyImportFlow } from './legacy-import';
 import type { MockOptions } from './options';
 
 export { SERVICE_UNAVAILABLE_CODE, SERVICE_UNAVAILABLE_MESSAGE } from './bus';
@@ -52,10 +60,14 @@ export function installMockHooks(target: Window, adapter: MockAdapter): void {
 }
 
 // 读快照与订阅不受断连影响（快照读的是内存）；任务列表断开期间读不到；其余都是动作，断开期间一律失败，原因就地显示在按钮旁。
-const READ_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['listTasks', 'getSnapshot', 'subscribe', 'getProjectBook']);
-// 启动动作的失败形状带 taskList 而不是 snapshot；项目簿维护动作带 book。
-const STARTUP_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['recheckErpSession', 'confirmIdentity', 'abandonTask', 'resetAll']);
-const BOOK_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['intakeProject', 'removeProject', 'purgeInvalidProjects', 'recheckProjects']);
+const READ_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['getSession', 'listTasks', 'getSnapshot', 'subscribe', 'getProjectBook', 'getPublicProjectBook', 'listAccounts', 'getLegacyImport']);
+// 旧数据导入的重试 / 跳过带回新的导入结果。
+const LEGACY_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['retryLegacyImport', 'skipLegacyImport']);
+// 作废与重置的失败形状带 taskList 而不是 snapshot；账号动作只有 error；项目簿维护动作带 book。
+const LIST_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['abandonTask', 'resetAll']);
+const AUTH_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['setupAdmin', 'register', 'login', 'logout', 'changePassword']);
+const BOOK_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['intakeProject', 'removeProject', 'purgeInvalidProjects', 'recheckProjects', 'intakePublicProject', 'removePublicProject', 'recheckPublicProjects']);
+const ACCOUNT_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['updateAccount']);
 
 export function createMockAdapter(options: MockOptions): MockAdapter {
   const bus = createBus(options);
@@ -67,9 +79,13 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   bus.put(t2Snapshot());
   bus.put(t3Snapshot());
 
-  const startup = createStartup(options);
+  const auth = createAuth(options);
+  // 夹具任务 T1-T3 属于夹具账号；新建的任务属于创建它的账号。别的账号看不到，也打不开（ADR-0018）。
+  const owners = new Map<string, string>();
+  const ownedByCurrent = (taskId: string) => (owners.get(taskId) ?? MOCK_ACCOUNT.accountId) === auth.account()?.accountId;
   // 个人项目簿：任务进入项目归属时的允许列表跟随它；夹具 T1 按当前项目簿整理（`?book=empty` 下先走维护门）。
-  const book = createProjectBook(options, bus, startup);
+  const book = createProjectBook(options, bus, auth);
+  const publicBook = createPublicBook(auth, () => bus.now());
   bus.useProjectAllowList(book.allowList);
   book.prepareSeed(T1_ID);
 
@@ -83,48 +99,61 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const listNow = (): TaskList => {
     const tasks = bus
       .all()
-      .filter((snapshot) => !hidden.has(snapshot.task.taskId))
+      .filter((snapshot) => !hidden.has(snapshot.task.taskId) && ownedByCurrent(snapshot.task.taskId))
       .map(toListItem)
       .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
-    return TaskListSchema.parse({ erpSession: startup.erpSession(), employee: startup.employee(), homeCity: homeCityDefault(), tasks });
+    return TaskListSchema.parse({ homeCity: homeCityDefault(), tasks });
   };
-  const startupResult = (error: ActionError | null): StartupOutcome => (error ? { ok: false, error, taskList: listNow() } : { ok: true, taskList: listNow() });
+  const listResult = (error: ActionError | null): TaskListOutcome => (error ? { ok: false, error, taskList: listNow() } : { ok: true, taskList: listNow() });
+  const signedOut = (): TaskListOutcome => ({ ok: false, error: { code: UNAUTHENTICATED_CODE, message: AUTH_ERRORS.unauthenticated }, taskList: null });
 
-  // 常驻城市默认值：这个身份确认过就用记住的城市（持久存储，按 tenant + account 分键，刷新后仍在）；
+  // 常驻城市默认值：这个账号确认过就用记住的城市（持久存储，按账号分键，刷新后仍在）；
   // 否则用 mock 位置 Adapter 的城市级网络位置（夹具员工在杭州）；`?location=unavailable` 下位置获取失败，又没有记忆，默认值为 null。
   const homeCityDefault = (): TaskList['homeCity'] => {
-    const rememberedCity = startup.rememberedCity();
+    const rememberedCity = auth.rememberedCity();
     if (rememberedCity) return { value: rememberedCity, source: 'remembered' };
     if (options.locationUnavailable) return null;
     return { value: HOME_CITY, source: 'network' };
   };
 
   const adapter: AppAdapter = {
+    // The session reads memory, like snapshots: a disconnect shows up on the task list (banner), not at the gate.
+    getSession: async () => auth.session(),
+    setupAdmin: async (input): Promise<AuthOutcome> => auth.setupAdmin(input),
+    register: async (input): Promise<AuthOutcome> => auth.register(input),
+    login: async (input): Promise<AuthOutcome> => auth.login(input),
+    logout: async (): Promise<AuthOutcome> => auth.logout(),
+    changePassword: async (input): Promise<AuthOutcome> => auth.changePassword(input),
+    async listAccounts() {
+      const account = auth.account();
+      if (!account) throw new UnauthenticatedError();
+      if (account.role !== 'admin') throw new Error(ADMIN_ERRORS.forbidden);
+      return auth.listAccounts();
+    },
+    updateAccount: async (accountId, change): Promise<AccountListOutcome> => auth.updateAccount(accountId, change),
+    ...publicBook,
     async listTasks() {
       if (!bus.listReachable()) throw new ServiceUnavailableError(SERVICE_UNAVAILABLE_MESSAGE);
+      if (!auth.account()) throw new UnauthenticatedError();
       return listNow();
-    },
-    recheckErpSession: async () => startupResult(startup.recheckErpSession()),
-    async confirmIdentity(input) {
-      const parsed = ConfirmIdentityInputSchema.safeParse(input);
-      if (!parsed.success) return startupResult({ code: 'identity_changed', message: STARTUP_ERRORS.identityChanged });
-      return startupResult(startup.confirmIdentity(parsed.data));
     },
     // 作废：服务端按任务列表同一个判定（已开始写入报销系统的不能作废）再核一次。
     async abandonTask(taskId) {
-      const snapshot = bus.all().find((candidate) => candidate.task.taskId === taskId && !hidden.has(taskId));
-      if (!snapshot) return startupResult({ code: 'task_not_found', message: ABANDON_TASK_COPY.notFound });
+      if (!auth.account()) return signedOut();
+      const snapshot = bus.all().find((candidate) => candidate.task.taskId === taskId && !hidden.has(taskId) && ownedByCurrent(taskId));
+      if (!snapshot) return listResult({ code: 'task_not_found', message: ABANDON_TASK_COPY.notFound });
       const item = toListItem(snapshot);
-      if (!item.abandonable) return startupResult({ code: 'not_abandonable', message: item.abandonBlockedReason ?? ABANDON_TASK_COPY.blockedReason });
+      if (!item.abandonable) return listResult({ code: 'not_abandonable', message: item.abandonBlockedReason ?? ABANDON_TASK_COPY.blockedReason });
       hidden.add(taskId);
-      return startupResult(null);
+      return listResult(null);
     },
-    // 完全重置：任务、项目簿、身份登记与常驻城市全部清空，登录会话断开。
+    // 完全重置：只清空当前账号的任务、项目簿与常驻城市；账号与登录状态保留。
     async resetAll() {
-      for (const snapshot of bus.all()) hidden.add(snapshot.task.taskId);
+      if (!auth.account()) return signedOut();
+      for (const snapshot of bus.all()) if (ownedByCurrent(snapshot.task.taskId)) hidden.add(snapshot.task.taskId);
       book.reset();
-      startup.reset();
-      return startupResult(null);
+      auth.forgetCity();
+      return listResult(null);
     },
     getProjectBook: book.getProjectBook,
     intakeProject: book.intakeProject,
@@ -133,22 +162,24 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     recheckProjects: book.recheckProjects,
     // 作废或重置掉的任务不再能打开（深链接也一样）：和不存在的任务同样报错。
     async getSnapshot(taskId) {
-      if (hidden.has(taskId)) throw new Error(`任务 ${taskId} 不存在`);
+      if (hidden.has(taskId) || !ownedByCurrent(taskId)) throw new Error(`任务 ${taskId} 不存在`);
       return bus.draft(taskId);
     },
     subscribe: (taskId, onEvent) => bus.subscribe(taskId, onEvent),
     // 新建任务：服务端校验常驻城市，生成占位名称（`<创建日期> 新建报销`，费用期间为空），盘点结束后再按材料改名（见 flows/inventory.ts）。
-    // 这次确认的常驻城市成为任务的城市快照，并按身份记为员工的常驻城市（之后的默认值 source = remembered，刷新后仍在）。
-    // 启动没完成（未登录或身份未登记 / 不一致）时拒绝。
+    // 这次确认的常驻城市成为任务的城市快照，并记为这个账号的常驻城市（之后的默认值 source = remembered，刷新后仍在）。
+    // 没登录时拒绝。
     async createTask(input) {
-      if (!startup.complete()) return bus.fail('startup_incomplete', CREATE_TASK_ERRORS.startupIncomplete);
+      const account = auth.account();
+      if (!account) return bus.fail(UNAUTHENTICATED_CODE, AUTH_ERRORS.unauthenticated);
       const parsed = CreateTaskInputSchema.safeParse(input);
       if (!parsed.success) return bus.fail('invalid_home_city', CREATE_TASK_ERRORS.homeCityRequired);
       const homeCity = parsed.data.homeCity;
       const taskId = `T${nextTaskNo}`;
       nextTaskNo += 1;
       const at = bus.now();
-      startup.rememberCity(homeCity);
+      owners.set(taskId, account.accountId);
+      auth.rememberCity(homeCity);
       bus.autoNamed.add(taskId);
       return bus.commit(emptySnapshot({ taskId, name: `${at.slice(0, 10)} 新建报销`, period: null, homeCity, createdAt: at, updatedAt: at }, 'upload'));
     },
@@ -168,6 +199,22 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
       }
       return project.excludeMaterial(taskId, materialId, stepToken);
     },
+    // 修改当前任务的常驻城市：ERP 写入开始前可改，并记为这个账号的常驻城市（mock 不重新推导类别）。
+    async setTaskHomeCity(taskId, homeCity, stepToken) {
+      const value = homeCity.trim();
+      return bus.withStep(taskId, stepToken, (snapshot) => {
+        if (value.length === 0 || value.length > 20) return { error: { code: 'invalid_home_city', message: HOME_CITY_ERRORS.invalid } };
+        if (snapshot.erp.status !== 'idle') return { error: { code: 'home_city_locked', message: HOME_CITY_ERRORS.locked } };
+        auth.rememberCity(value);
+        return {
+          ...snapshot,
+          task: { ...snapshot.task, homeCity: value },
+          projectAssignment: { ...snapshot.projectAssignment, homeCity: value },
+          step: { ...snapshot.step, stepToken: bus.rotateToken(snapshot.step.stepToken) },
+        };
+      });
+    },
+    ...createLegacyImportFlow(options),
     ...createPrintFlow(bus),
     ...createErpFlow(bus),
   };
@@ -176,12 +223,18 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const guarded: Record<string, unknown> = { ...adapter };
   for (const key of Object.keys(adapter) as (keyof AppAdapter)[]) {
     if (READ_METHODS.has(key)) continue;
-    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome | StartupOutcome | ProjectBookOutcome>;
+    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome>;
     const unavailable = { code: SERVICE_UNAVAILABLE_CODE, message: SERVICE_UNAVAILABLE_MESSAGE };
-    const down = (): ActionOutcome | StartupOutcome | ProjectBookOutcome =>
-      STARTUP_METHODS.has(key)
+    const down = (): ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome =>
+      ACCOUNT_METHODS.has(key)
+        ? { ok: false, error: unavailable, accountList: null }
+        : LEGACY_METHODS.has(key)
+        ? { ok: false, error: unavailable, legacyImport: null }
+        : LIST_METHODS.has(key)
         ? { ok: false, error: unavailable, taskList: null }
-        : BOOK_METHODS.has(key)
+        : AUTH_METHODS.has(key)
+          ? { ok: false, error: unavailable }
+          : BOOK_METHODS.has(key)
           ? { ok: false, error: unavailable, book: null }
           : bus.fail(SERVICE_UNAVAILABLE_CODE, SERVICE_UNAVAILABLE_MESSAGE);
     guarded[key] = async (...args: unknown[]) => (bus.isConnected() ? original(...args) : down());

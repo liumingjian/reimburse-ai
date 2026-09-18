@@ -98,7 +98,7 @@ export function annotateProject(project: StoredProject, today: string): ProjectB
 
 // 项目归属页的允许列表（随任务快照给出）：只含可选项目（内核 selectableProjects），不可选的不出现在选择区。
 export function allowListOf(entries: readonly ProjectBookEntry[]): ProjectOption[] {
-  return entries.filter((entry) => entry.selectable).map((entry) => ({ number: entry.number, name: entry.name ?? entry.number }));
+  return entries.filter((entry) => entry.selectable).map((entry) => ({ number: entry.number, name: entry.name ?? entry.number, source: 'personal' as const }));
 }
 
 // 默认项目簿对应的允许列表（夹具快照构建时用；mock 服务端运行时按当前项目簿重新给出）。
@@ -113,8 +113,12 @@ export function projectName(number: string, projects: readonly ProjectOption[] =
   return projects.find((project) => project.number === number)?.name ?? number;
 }
 
+export function projectSource(number: string, projects: readonly ProjectOption[] = PROJECT_BOOK): ProjectOption['source'] {
+  return projects.find((project) => project.number === number)?.source ?? 'personal';
+}
+
 function toAssignments(projects: Readonly<Record<string, string>>, allowList: readonly ProjectOption[]): ProjectAssignment['assignments'] {
-  return Object.entries(projects).map(([lineId, projectNumber]) => ({ lineId, projectNumber, projectName: projectName(projectNumber, allowList) }));
+  return Object.entries(projects).map(([lineId, projectNumber]) => ({ lineId, projectNumber, projectName: projectName(projectNumber, allowList), projectSource: projectSource(projectNumber, allowList) }));
 }
 
 // 服务端投影「本次已归入」：working 按明细顺序排好，逐个项目数条数、按分加总价税合计；
@@ -152,7 +156,7 @@ export function assignWorking(assignment: ProjectAssignment, lineIds: readonly s
   const next = new Map(assignment.working.map((item) => [item.lineId, item]));
   for (const lineId of lineIds) {
     if (onlyUnassigned && next.has(lineId)) continue;
-    next.set(lineId, { lineId, projectNumber: number, projectName: projectName(number, assignment.projects) });
+    next.set(lineId, { lineId, projectNumber: number, projectName: projectName(number, assignment.projects), projectSource: projectSource(number, assignment.projects) });
   }
   return [...next.values()];
 }
@@ -179,6 +183,7 @@ export function projectAssignmentOpen(homeCity: string, assignments: Readonly<Re
     homeCity,
     assignments: recorded,
     working: recorded.map((item) => ({ ...item })),
+    reselect: [],
     usage: [],
     projects: allowList.map((project) => ({ ...project })),
     submittedAt: null,
@@ -195,7 +200,7 @@ export function projectAssignmentSubmitted(input: {
 }): ProjectAssignment {
   const allowList = input.allowList ?? PROJECT_BOOK;
   // 沿用的旧归属（项目已不在允许列表里）名称取上次记下的。
-  const known = [...allowList, ...(input.previous ?? []).map((item) => ({ number: item.projectNumber, name: item.projectName }))];
+  const known = [...allowList, ...(input.previous ?? []).map((item) => ({ number: item.projectNumber, name: item.projectName, source: item.projectSource }))];
   const recorded = toAssignments(input.projects, known);
   return {
     status: 'submitted',
@@ -203,6 +208,7 @@ export function projectAssignmentSubmitted(input: {
     homeCity: input.homeCity,
     assignments: recorded,
     working: recorded.map((item) => ({ ...item })),
+    reselect: [],
     usage: [],
     projects: allowList.map((project) => ({ ...project })),
     submittedAt: input.submittedAt,

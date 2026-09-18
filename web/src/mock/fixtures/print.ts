@@ -65,8 +65,9 @@ function placement(materialId: string, fileName: string, rotate: boolean): Place
 
 const defOf = (pageId: string) => PAGE_DEFS.find((def) => def.pageId === pageId);
 
-// 住宿发票可以补充支付截图（打印稿住宿页下半页分栏放结账单与截图）：mock 服务端按费用分类判定。
-function acceptsScreenshot(snapshot: TaskSnapshot, voucherMaterialId: string): boolean {
+// 每张主要报销凭证都可以补充支付截图（故事 61），补了就放在下半页右侧分栏。
+// 但只有住宿发票「应该」有支付截图：没补时才提醒。每页都提醒会把打印页塞满没人要的提示。
+function expectsScreenshot(snapshot: TaskSnapshot, voucherMaterialId: string): boolean {
   return snapshot.lines.some((line) => line.voucherMaterialId === voucherMaterialId && line.category.code === 'accommodation');
 }
 
@@ -81,7 +82,7 @@ export function buildPrintSheet(snapshot: TaskSnapshot): PrintSheet {
     const bottomId = def.bottom ? byName.get(def.bottom) : undefined;
     const no = snapshot.lines.find((line) => line.voucherMaterialId === topId)?.no ?? pages.length + 1;
     pages.push({
-      acceptsPaymentScreenshot: acceptsScreenshot(snapshot, topId),
+      acceptsPaymentScreenshot: true,
       pageId: def.pageId,
       no,
       header: `${def.nos} · ${def.date.slice(5)} · ${def.categoryLabel} · ${def.grossAmount}`,
@@ -106,7 +107,7 @@ export function refreshScreenshots(sheet: PrintSheet, snapshot: TaskSnapshot): P
     if (!page.acceptsPaymentScreenshot || !page.top) return page;
     const voucherMaterialId = page.top.materialId;
     const shot = snapshot.paymentScreenshots.find((candidate) => candidate.voucherMaterialId === voucherMaterialId);
-    if (!shot) notices.push(MISSING_SCREENSHOT_NOTICE(page.nos, page.categoryLabel));
+    if (!shot && expectsScreenshot(snapshot, voucherMaterialId)) notices.push(MISSING_SCREENSHOT_NOTICE(page.nos, page.categoryLabel));
     return { ...page, screenshotId: shot?.screenshotId ?? null };
   });
   return { ...sheet, pages, notices };

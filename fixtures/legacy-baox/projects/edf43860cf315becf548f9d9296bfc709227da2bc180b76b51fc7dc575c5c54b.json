@@ -1,0 +1,24 @@
+{
+  "owner": {
+    "account": "alice",
+    "tenant": "tenant-a"
+  },
+  "projects": [
+    {
+      "number": "P-2307",
+      "name": "华东客户交付",
+      "confirmedAt": "2026-02-03T10:00:00.000Z",
+      "expiresOn": "2026-12-31",
+      "lastCheckedAt": "2026-06-01T10:00:00.000Z",
+      "lastVerdict": "confirmed"
+    },
+    {
+      "number": "P-3312",
+      "name": "产品调研",
+      "confirmedAt": "2026-02-04T10:00:00.000Z",
+      "expiresOn": null,
+      "lastCheckedAt": "2026-06-01T10:00:00.000Z",
+      "lastVerdict": "missing"
+    }
+  ]
+}

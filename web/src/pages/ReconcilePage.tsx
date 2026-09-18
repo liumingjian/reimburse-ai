@@ -12,6 +12,7 @@ import { ReadbackTable } from './ReadbackTable';
 // 事实（草稿号、对账中断点、处置状态、建议处置、对账结果句）放进摘要条；逐行比对照旧；
 // 唯一要做的处置放在吸底操作栏里，左边写后果（含人工核对固定句），右边放按钮。
 // 处置只渲染服务端允许的那些（reconcile.allowedActions）：原地等待 = 重新对账（只读报销系统再判定一次）；转人工 = 终止后续写入。
+// 建议的那个（reconcile.actionCode）是主按钮，后果说明也按它写：建议原地等待时通常两个按钮都在，但主张的是先去看再对账。
 // 结论和一致、不一致的行数全部来自服务端（reconcile.banner），页面不自己数行、不重试写入、不改报销系统。
 
 const STATUS_LABEL: Readonly<Record<Reconcile['status'], string>> = {
@@ -29,6 +30,8 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
   const canAct = step.kind === 'reconcile';
   const allowWait = reconcile.allowedActions.includes('wait');
   const allowHandOff = reconcile.allowedActions.includes('hand_off');
+  // 建议的处置：两个按钮都在时，它是主按钮，后果说明也按它写。
+  const suggestHandOff = reconcile.actionCode === 'hand_off';
   const { busy, error, run } = useAction(taskId);
 
   const act = async (action: (adapter: AppAdapter) => Promise<ActionOutcome>) => {
@@ -53,6 +56,22 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
             title="写入结果不确定"
             {...(erp.abortReason ? { subtitle: erp.abortReason } : {})}
           />
+        </section>
+      ) : null}
+
+      {/* 报销系统自己的原话（逐字，不改写）和写入停下时的裁剪截图。 */}
+      {reconcile.capture ? (
+        <section className="app-erp-capture" aria-label="报销系统原文">
+          {reconcile.capture.erpText.length > 0 ? (
+            <ul className="app-reconcile-reasons">
+              {reconcile.capture.erpText.map((text) => (
+                <li key={text} data-testid="erp-text">
+                  {text}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {reconcile.capture.screenshotUrl ? <img src={reconcile.capture.screenshotUrl} alt="报销系统截图" style={{ maxWidth: '100%' }} /> : null}
         </section>
       ) : null}
 
@@ -112,7 +131,7 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
               <WarningAlt />
               <div>
                 <p>
-                  <strong>{allowHandOff ? '转人工后任务标记为人工处理，保留对账记录，之后不再自动写入报销系统。' : '请先在报销系统中查看，再点重新对账。应用只读报销系统，不写入。'}</strong>
+                  <strong>{suggestHandOff ? '转人工后任务标记为人工处理，保留对账记录，之后不再自动写入报销系统。' : '请先在报销系统中查看，再点重新对账。应用只读报销系统，不写入。'}</strong>
                 </p>
                 {reconcile.humanReview ? <p data-testid="human-review">{HUMAN_REVIEW_NOTICE}</p> : null}
               </div>
@@ -121,12 +140,12 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
           actions={
             <>
               {allowWait ? (
-                <Button kind={allowHandOff ? 'secondary' : 'primary'} size="md" renderIcon={Renew} disabled={busy || !canAct} onClick={() => void act((adapter) => adapter.reconcile(taskId, step.stepToken))}>
-                  重新对账
+                <Button kind={suggestHandOff ? 'secondary' : 'primary'} size="md" renderIcon={Renew} disabled={busy || !canAct} onClick={() => void act((adapter) => adapter.reconcile(taskId, step.stepToken))}>
+                  {reconcile.bucket === null ? '开始对账' : '重新对账'}
                 </Button>
               ) : null}
               {allowHandOff ? (
-                <Button kind="primary" size="md" disabled={busy || !canAct} onClick={() => void act((adapter) => adapter.handOff(taskId, step.stepToken))}>
+                <Button kind={suggestHandOff ? 'primary' : 'secondary'} size="md" disabled={busy || !canAct} onClick={() => void act((adapter) => adapter.handOff(taskId, step.stepToken))}>
                   转人工
                 </Button>
               ) : null}

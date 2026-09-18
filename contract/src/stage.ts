@@ -17,6 +17,8 @@ export const TASK_STAGES = [
   'erp',
   'done',
   'reconcile',
+  // 任务作废 (void task): terminal and read-only (ADR-0014). Voided tasks leave the task list.
+  'voided',
 ] as const;
 export const TaskStageSchema = z.enum(TASK_STAGES);
 export type TaskStage = z.infer<typeof TaskStageSchema>;
@@ -54,6 +56,8 @@ export const TASK_STAGE_PHASES: Readonly<Record<TaskStage, KernelPhase>> = {
   erp: '保存报销草稿',
   done: '草稿交接',
   reconcile: '保存报销草稿',
+  // Never listed (voided tasks leave the list); the phase badge disappears with KERNEL_PHASES (#191).
+  voided: '材料盘点',
 };
 
 // 任务列表徽标用的阶段名：「N/10 阶段名」。
@@ -77,6 +81,7 @@ const STAGE_RANK: Readonly<Record<TaskStage, number>> = {
   erp: 8,
   reconcile: 8,
   done: 9,
+  voided: 0,
 };
 
 export function stageRank(stage: TaskStage): number {
@@ -110,6 +115,7 @@ export const STAGE_DEFAULT_PAGE: Readonly<Record<TaskStage, TaskPage>> = {
   erp: 'erp',
   done: 'done',
   reconcile: 'reconcile',
+  voided: 'upload',
 };
 
 // 进入某页面至少要到达的阶段；done 与 reconcile 两页只对处于该阶段的任务开放。
@@ -128,6 +134,8 @@ const PAGE_REQUIRED_STAGE: Readonly<Record<TaskPage, TaskStage>> = {
 };
 
 export function pageAllowed(stage: TaskStage, page: TaskPage): boolean {
+  // A voided task keeps only its upload page, read-only.
+  if (stage === 'voided') return page === 'upload';
   if (page === 'done' || page === 'reconcile') return stage === page;
   return stageReached(stage, PAGE_REQUIRED_STAGE[page]);
 }

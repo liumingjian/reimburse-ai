@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import { STALE_STEP_CODE, STALE_STEP_NOTICE, ServiceUnavailableError, type AdapterEvent, type AppAdapter, type TaskSnapshot } from '@baox/contract';
+import { ADMIN_ERRORS, AUTH_ERRORS, PASSWORD_CHANGE_REQUIRED_CODE, STALE_STEP_CODE, STALE_STEP_NOTICE, ServiceUnavailableError, UNAUTHENTICATED_CODE, UnauthenticatedError, type AdapterEvent, type AppAdapter, type TaskSnapshot } from '@baox/contract';
 import { t1Snapshot } from '../mock/fixtures/tasks';
 import { AppStore } from './store';
 
@@ -8,7 +8,7 @@ function fakeAdapter(sequence: TaskSnapshot[]) {
   let index = 0;
   let listener: ((event: AdapterEvent) => void) | null = null;
   const adapter = {
-    listTasks: async () => ({ erpSession: 'logged_in', employee: null, homeCity: null, tasks: [] }),
+    listTasks: async () => ({ homeCity: null, tasks: [] }),
     getSnapshot: async () => {
       const snapshot = sequence[Math.min(index, sequence.length - 1)];
       index += 1;
@@ -34,7 +34,7 @@ async function opened(sequence: TaskSnapshot[]) {
 }
 
 describe('AppStore：作废、重置与启动类动作', () => {
-  const emptyList = { erpSession: 'logged_in', employee: null, homeCity: null, tasks: [] };
+  const emptyList = { homeCity: null, tasks: [] };
 
   test('作废成功后丢掉这个任务缓存的快照；完全重置成功后清掉所有任务快照，项目簿回到未加载', async () => {
     const { store, adapter } = await opened([t1Snapshot('review')]);
@@ -60,10 +60,76 @@ describe('AppStore：作废、重置与启动类动作', () => {
     expect(store.entry('T1').snapshot?.stage).toBe('review');
   });
 
-  test('启动类动作带回的任务列表形状不对：按失败返回而不是抛出（调用方的「处理中」能复位）', async () => {
+  test('返回任务列表的动作带回的列表形状不对：按失败返回而不是抛出（调用方的「处理中」能复位）', async () => {
     const store = new AppStore(fakeAdapter([t1Snapshot('review')]).adapter, { validate: true });
-    const outcome = await store.startup(async () => ({ ok: true, taskList: { tasks: 'bad' } as never }));
+    const outcome = await store.taskListAction(async () => ({ ok: true, taskList: { tasks: 'bad' } as never }));
     expect(outcome).toMatchObject({ ok: false, error: { code: 'adapter_error' } });
+  });
+});
+
+describe('AppStore：应用账号会话', () => {
+  test('读任务列表遇到 401：重读会话，页面随之回到登录', async () => {
+    let signedIn = true;
+    const adapter = {
+      getSession: async () => (signedIn ? { status: 'signed_in', account: { accountId: 'a1', username: '张三', role: 'user' } } : { status: 'signed_out', account: null }),
+      listTasks: async () => {
+        throw new UnauthenticatedError();
+      },
+    } as unknown as AppAdapter;
+    const store = new AppStore(adapter, { validate: true });
+    await store.loadSession();
+    expect(store.getState().session.data?.status).toBe('signed_in');
+    signedIn = false;
+    await store.loadTaskList();
+    await vi.waitFor(() => expect(store.getState().session.data?.status).toBe('signed_out'));
+  });
+
+  // 读路径靠 UnauthenticatedError，动作路径只拿得到服务端的错误码：两条路都得回到登录，
+  // 否则会话早就没了，页面还把它当成一次普通的页内错误显示。
+  test('动作遇到 401 与 403 password_change_required：同样重读会话，门随之回到登录', async () => {
+    for (const error of [
+      { code: UNAUTHENTICATED_CODE, message: AUTH_ERRORS.unauthenticated },
+      { code: PASSWORD_CHANGE_REQUIRED_CODE, message: ADMIN_ERRORS.passwordChangeRequired },
+    ]) {
+      let signedIn = true;
+      const adapter = {
+        getSession: async () => (signedIn ? { status: 'signed_in', account: { accountId: 'a1', username: '张三', role: 'user' } } : { status: 'signed_out', account: null }),
+      } as unknown as AppAdapter;
+      const store = new AppStore(adapter, { validate: true });
+      await store.loadSession();
+      expect(store.getState().session.data?.status).toBe('signed_in');
+
+      signedIn = false;
+      await store.act('T1', async () => ({ ok: false, error, snapshot: null }));
+      await vi.waitFor(() => expect(store.getState().session.data?.status).toBe('signed_out'));
+    }
+  });
+
+  test('返回任务列表的动作遇到 401 也重读会话', async () => {
+    let signedIn = true;
+    const adapter = {
+      getSession: async () => (signedIn ? { status: 'signed_in', account: { accountId: 'a1', username: '张三', role: 'user' } } : { status: 'signed_out', account: null }),
+      resetAll: async () => ({ ok: false, error: { code: UNAUTHENTICATED_CODE, message: AUTH_ERRORS.unauthenticated }, taskList: null }),
+    } as unknown as AppAdapter;
+    const store = new AppStore(adapter, { validate: true });
+    await store.loadSession();
+    signedIn = false;
+    expect((await store.resetAll()).ok).toBe(false);
+    await vi.waitFor(() => expect(store.getState().session.data?.status).toBe('signed_out'));
+  });
+
+  test('换了账号就丢掉上一个账号缓存的任务列表与快照', async () => {
+    const { store, adapter } = await opened([t1Snapshot('review')]);
+    const fake = adapter as unknown as Record<string, unknown>;
+    fake.getSession = async () => ({ status: 'signed_in', account: { accountId: 'a1', username: '张三', role: 'user' } });
+    await store.loadSession();
+    await store.loadTaskList();
+    await store.refreshTask('T1');
+    expect(store.entry('T1').snapshot).not.toBeNull();
+    fake.logout = async () => ({ ok: true, session: { status: 'signed_out', account: null } });
+    expect((await store.auth((a) => a.logout())).ok).toBe(true);
+    expect(store.getState().tasks).toEqual({});
+    expect(store.getState().taskList.status).toBe('idle');
   });
 });
 
@@ -74,7 +140,7 @@ describe('AppStore', () => {
       listTasks: async () => {
         calls += 1;
         if (calls < 3) throw new ServiceUnavailableError();
-        return { erpSession: 'logged_in', employee: null, homeCity: null, tasks: [] };
+        return { homeCity: null, tasks: [] };
       },
     } as unknown as AppAdapter;
     const store = new AppStore(adapter, { validate: true, listRetryDelay: () => 5 });

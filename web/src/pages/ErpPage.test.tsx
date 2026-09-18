@@ -23,6 +23,19 @@ async function waitingLogin() {
 }
 
 describe('ERP 填报', () => {
+  test('登录等待时可以「取消去报销」：回传 stepToken，回到整单确认页，可以再去报销', async () => {
+    const adapter = renderErp();
+    const cancel = vi.spyOn(adapter, 'cancelErpWrite');
+    await waitingLogin();
+    const { stepToken } = (await adapter.getSnapshot('T1')).step;
+    fireEvent.click(screen.getByRole('button', { name: '取消去报销' }));
+    expect(cancel).toHaveBeenCalledWith('T1', stepToken);
+    await vi.waitFor(async () => expect((await adapter.getSnapshot('T1')).stage).toBe('actions'));
+    const after = await adapter.getSnapshot('T1');
+    expect(after).toMatchObject({ step: { kind: 'choose_action' }, erp: { status: 'idle' } });
+    await vi.waitFor(() => expect(window.location.hash).toBe('#/task/T1/review'));
+  });
+
   test('页头没有孤立的「返回确认页」', async () => {
     renderErp();
     await waitingLogin();
@@ -49,6 +62,7 @@ describe('ERP 填报', () => {
     window.location.hash = '#/task/T1/done';
     expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();
     expect(screen.getByTestId('draft-no').textContent).toBe('BX20260911-0173');
+    expect(screen.getByTestId('erp-account').textContent).toBe('林颂宜（lin.songyi）· 账套 安图特科技');
     expect(screen.getByText('明细 9/9 一致')).toBeTruthy();
     expect(screen.getByTestId('save-completed').textContent).toBe('报销草稿已保存。请打开报销系统检查，是否提交由你决定。');
     expect(screen.queryByTestId('human-review')).toBeNull();
@@ -118,26 +132,24 @@ describe('ERP 填报', () => {
     expect(screen.getByRole('link', { name: '进入对账' }).getAttribute('href')).toBe('#/task/T1/reconcile');
   });
 
-  test('readback-mismatch：写入停下后进入完成页，差异行高亮（danger）、没有完成态；转人工（带 stepToken）后显示已转人工，任务列表也是', async () => {
+  // 已保存但逐行不一致的草稿没有被证明与确认过的明细一致，所以停在对账而不是完成：done 只留给「已保存且逐行一致」，
+  // 服务端也从不把它投影成 done。
+  test('readback-mismatch：写入停下后进入对账页，差异行高亮、显示人工核对固定句；只能转人工（带 stepToken），任务列表也显示已转人工', async () => {
     const adapter = renderErp('readback-mismatch');
     const handOff = vi.spyOn(adapter, 'handOff');
     fireEvent.click(await waitingLogin());
-    expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();
-    expect(window.location.hash).toBe('#/task/T1/done');
-    expect(screen.getByTestId('draft-no').textContent).toBe('BX20260911-0173');
+    expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
+    expect(window.location.hash).toBe('#/task/T1/reconcile');
+    expect(screen.getByTestId('reconcile-draft-no').textContent).toBe('BX20260911-0173');
+    expect(screen.getByTestId('reconcile-bucket').textContent).toBe('已保存');
     const bad = screen.getByTestId('readback-6');
-    expect(bad.getAttribute('data-testid')).toBe('readback-6');
     expect(within(bad).getByText('不一致')).toBeTruthy();
     expect(within(bad).getByText('74.00')).toBeTruthy();
     expect(within(screen.getByTestId('readback-5')).queryByText('不一致')).toBeNull();
-    expect(screen.queryByText('明细 9/9 一致')).toBeNull();
-    expect(screen.getByText('明细 8/9 一致，1 行不一致')).toBeTruthy();
-    expect(screen.queryByText(/^已完成：草稿/)).toBeNull();
-    expect(screen.getByRole('alert').textContent).toContain('这份草稿不算完成');
     expect(screen.getByText('报销系统中存在草稿 BX20260911-0173，9 行明细中 8 行一致，1 行不一致。')).toBeTruthy();
-    expect(screen.queryByTestId('save-completed')).toBeNull();
-    // 已保存但逐行不一致 ⇒ 转人工（human_review）：固定句。
+    // 已保存但逐行不一致 ⇒ 转人工（human_review）：固定句，且不给「重新对账」。
     expect(screen.getByTestId('human-review').textContent).toBe('当前报销已暂停，材料和状态已保留。请在报销系统中核对；如无法判断，请联系报销管理员。');
+    expect(screen.queryByRole('button', { name: '重新对账' })).toBeNull();
     // 不一致的行展开后逐项列出对不上的字段与原因。
     expect(screen.queryByTestId('readback-detail-6')).toBeNull();
     fireEvent.click(within(bad).getByRole('button', { name: '展开 No.6' }));
@@ -152,7 +164,6 @@ describe('ERP 填报', () => {
     expect(await screen.findByText(/已转人工处理：应用不再写入报销系统/)).toBeTruthy();
     expect(handOff).toHaveBeenCalledWith('T1', stepToken);
     expect(screen.queryByRole('button', { name: '转人工' })).toBeNull();
-    expect(screen.getByText('已转人工')).toBeTruthy();
 
     window.location.hash = '#/tasks';
     const row = await screen.findByRole('row', { name: /2026-08 上海出差（产品评审）/ });

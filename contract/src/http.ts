@@ -25,10 +25,14 @@ const action = (name: ActionName, ...fields: string[]): HttpEndpoint => ({ metho
 
 // 每个适配器方法对应的端点；`satisfies` 保证适配器接口加了方法这里必须跟着加。
 export const HTTP_ENDPOINTS = {
+  // 应用账号：不需要会话；成功 200 返回 Session，失败 { error }。会话是 HttpOnly Cookie，页面读不到也不用管。
+  // 其余端点没有有效会话一律 401 { error: { code: 'unauthenticated' } }。
+  getSession: { method: 'GET', path: '/api/session', body: 'none', fields: [] },
+  setupAdmin: { method: 'POST', path: '/api/auth/setup', body: 'json', fields: ['username', 'password'] },
+  register: { method: 'POST', path: '/api/auth/register', body: 'json', fields: ['username', 'password'] },
+  login: { method: 'POST', path: '/api/auth/login', body: 'json', fields: ['username', 'password'] },
+  logout: { method: 'POST', path: '/api/auth/logout', body: 'json', fields: [] },
   listTasks: { method: 'GET', path: '/api/tasks', body: 'none', fields: [] },
-  // 启动动作不属于任何任务：成功 200 返回整份任务列表，失败 { error, taskList? }。
-  recheckErpSession: { method: 'POST', path: '/api/startup/recheck-erp-session', body: 'json', fields: [] },
-  confirmIdentity: { method: 'POST', path: '/api/startup/confirm-identity', body: 'json', fields: ['account', 'tenant'] },
   // 作废任务与完全重置也返回整份任务列表（失败 { error, taskList? }），不是任务动作，不带 stepToken。
   abandonTask: { method: 'POST', path: '/api/tasks/:id/abandon', body: 'json', fields: [] },
   resetAll: { method: 'POST', path: '/api/reset', body: 'json', fields: [] },
@@ -39,6 +43,21 @@ export const HTTP_ENDPOINTS = {
   removeProject: { method: 'POST', path: '/api/project-book/remove', body: 'json', fields: ['number'] },
   purgeInvalidProjects: { method: 'POST', path: '/api/project-book/purge', body: 'json', fields: [] },
   recheckProjects: { method: 'POST', path: '/api/project-book/recheck', body: 'json', fields: [] },
+  // 改密码需要会话；带临时密码的会话只能调用它（其余端点 403 password_change_required）。成功 200 返回 Session。
+  changePassword: { method: 'POST', path: '/api/auth/change-password', body: 'json', fields: ['currentPassword', 'newPassword'] },
+  // 账号管理（只对管理员，其他账号 403 forbidden）：GET 返回 AccountList；更新一次只带一项（role / active / temporaryPassword），
+  // 成功 200 返回新的 AccountList，失败 { error, accounts? }。`:id` 是账号 id。
+  listAccounts: { method: 'GET', path: '/api/admin/accounts', body: 'none', fields: [] },
+  updateAccount: { method: 'POST', path: '/api/admin/accounts/:id', body: 'json', fields: ['role', 'active', 'temporaryPassword'] },
+  // 公共项目簿：GET 所有账号可读；维护动作只对管理员（403 forbidden { error, book }），结果形状同个人项目簿。删除即停用。
+  getPublicProjectBook: { method: 'GET', path: '/api/public-project-book', body: 'none', fields: [] },
+  intakePublicProject: { method: 'POST', path: '/api/public-project-book/intake', body: 'json', fields: ['number'] },
+  removePublicProject: { method: 'POST', path: '/api/public-project-book/remove', body: 'json', fields: ['number'] },
+  recheckPublicProjects: { method: 'POST', path: '/api/public-project-book/recheck', body: 'json', fields: [] },
+  // 旧数据导入：GET 返回这个账号看到的导入结果；只有拥有失败那次导入的账号能重试或跳过（其余 400 import_not_pending）。
+  getLegacyImport: { method: 'GET', path: '/api/legacy-import', body: 'none', fields: [] },
+  retryLegacyImport: { method: 'POST', path: '/api/legacy-import/retry', body: 'json', fields: [] },
+  skipLegacyImport: { method: 'POST', path: '/api/legacy-import/skip', body: 'json', fields: [] },
   getSnapshot: { method: 'GET', path: '/api/tasks/:id', body: 'none', fields: [] },
   subscribe: { method: 'GET', path: '/api/tasks/:id/events', body: 'sse', fields: [] },
   createTask: { method: 'POST', path: '/api/tasks', body: 'json', fields: ['homeCity'] },
@@ -55,8 +74,10 @@ export const HTTP_ENDPOINTS = {
   assignProjectLines: action('assign-project-lines', 'lineIds', 'projectNumber', 'onlyUnassigned', 'stepToken'),
   submitProjectAssignment: action('submit-project-assignment', 'purpose', 'projects', 'stepToken'),
   excludeMaterial: action('exclude-material', 'materialId', 'stepToken'),
+  setTaskHomeCity: action('set-home-city', 'homeCity', 'stepToken'),
   startErpWrite: action('start-erp-write', 'stepToken'),
   confirmLogin: action('confirm-login', 'stepToken'),
+  cancelErpWrite: action('cancel-erp-write', 'stepToken'),
   reconcile: action('reconcile', 'stepToken'),
   handOff: action('hand-off', 'stepToken'),
 } as const satisfies Record<keyof AppAdapter, HttpEndpoint>;

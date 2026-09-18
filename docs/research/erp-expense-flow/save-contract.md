@@ -596,7 +596,7 @@ iframe 里弹了下一步而没人应答，或者那一下坐标压根没落在�
 
 ### 实现 backlog（不再开决策票）
 
-- `kernel/src/erpform.mjs` 的 `headerField` 兜底 `visible.length > 0 ? visible : all` 是 **fail-open 缺陷**：
+- `50931a3:kernel/src/erpform.mjs` 的 `headerField` 兜底 `visible.length > 0 ? visible : all` 是 **fail-open 缺陷**：
   零可见实例时静默取全集第一个，实测在隐藏字段上取到**陈旧**实例。
   改成零可见实例即 `{ok:false, reason:'无可见实例'}`，可见实例多于一个也 `{ok:false}`。
 - 网格语义锚点：`readGrid` 的调用方按表头标签认网格，不按 `.kd-grid-panel` 索引。

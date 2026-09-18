@@ -58,8 +58,8 @@ const PAGES: ReadonlyArray<readonly [string, string]> = [
   ['', '#/task/T2/reconcile'],
   ['?seed=inventory', '#/task/T1/review'],
   ['?fault=service-disconnected', '#/tasks'],
-  ['?identity=unbound', '#/tasks'],
-  ['?identity=mismatched', '#/tasks'],
+  ['?auth=setup', '#/tasks'],
+  ['?auth=signed-out', '#/tasks'],
 ];
 
 async function englishLeftovers(page: Page): Promise<string[]> {

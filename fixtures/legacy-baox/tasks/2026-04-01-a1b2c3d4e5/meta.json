@@ -1,0 +1,15 @@
+{
+  "taskId": "a1b2c3d4e5",
+  "createdAt": "2026-04-01T08:00:00.000Z",
+  "status": "archived",
+  "sourceKey": "0123456789abcdef",
+  "sourceLabel": "四月出差",
+  "currentVersionId": "v1",
+  "identity": { "account": "alice", "tenant": "tenant-a" },
+  "homeCity": "杭州",
+  "updatedAt": "2026-04-02T09:30:00.000Z",
+  "archivedAt": "2026-04-03T00:00:00.000Z",
+  "archivedReason": "migrated-0.9",
+  "erpWriteState": "saved",
+  "erpWriteAt": "2026-04-02T09:20:00.000Z"
+}

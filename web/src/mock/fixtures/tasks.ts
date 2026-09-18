@@ -6,7 +6,6 @@ import {
   type TaskSnapshot,
   type UploadBatch,
   type UploadFileResult,
-  type Employee,
   type TaskListItem,
   ABANDON_TASK_COPY,
 } from '@baox/contract';
@@ -19,8 +18,6 @@ import { catalogMatched, catalogPending, catalogRunning, packageFilesOf, prepara
 // 材料盘点结果、费用事件、待确认项与候选明细见 ./inventory.ts；本文件按阶段把它们装进快照。
 
 // 报销系统当前登录的身份（虚构）：姓名、登录账号、账套。EMPLOYEE 是已登记（bound）的样子。
-export const LOGIN_IDENTITY: Omit<Employee, 'binding'> = { displayName: '林颂宜', account: 'linsongyi', tenant: '示例科技集团本部' };
-export const EMPLOYEE: Employee = { ...LOGIN_IDENTITY, binding: 'bound' };
 
 export const T1_ID = 'T1';
 export const T2_ID = 'T2';
@@ -76,6 +73,8 @@ export function uploadedMaterial(input: { materialId: string; batchId: string; f
     fileName: input.fileName,
     contentHash: input.contentHash,
     size: input.size,
+    kind: null,
+    layout: null,
     kindLabel: '待盘点',
     categoryLabel: null,
     role: 'uploaded',
@@ -125,6 +124,7 @@ const STEP_BY_STAGE: Readonly<Record<TaskStage, TaskSnapshot['step']['kind']>> =
   erp: 'erp_login',
   done: 'none',
   reconcile: 'reconcile',
+  voided: 'none',
 };
 
 export const T1_INVENTORY_FINISHED_AT = '2026-09-11T14:20:00';
@@ -151,10 +151,10 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     confirmation: { status: 'unconfirmed', confirmedAt: null, digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null, notice: null },
     paymentScreenshots: [],
     printSheet: { status: 'not_generated', fileName: null, url: null, pages: [], notices: [] },
-    projectAssignment: { status: 'not_started', purpose: null, homeCity: task.homeCity, assignments: [], working: [], usage: [], projects: [], submittedAt: null },
+    projectAssignment: { status: 'not_started', purpose: null, homeCity: task.homeCity, assignments: [], working: [], reselect: [], usage: [], projects: [], submittedAt: null },
     catalog: catalogPending(),
     preparation: preparationPending(),
-    erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null },
+    erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null, erpAccount: null },
     readback: emptyReadback(),
     reconcile: emptyReconcile(),
     step: { kind: STEP_BY_STAGE[stage], stepToken: `tok-${task.taskId}-${stage}` },
@@ -244,7 +244,7 @@ export function t2Snapshot(): TaskSnapshot {
   };
   snapshot.catalog = catalogMatched();
   snapshot.preparation = { status: 'ready', problems: [], packageFiles: [] };
-  snapshot.erp = { status: 'aborted', steps: [], draftNo: T2_DRAFT_NO, abortReason: '保存草稿后回读超时，写入结果不确定。', loginNotice: null };
+  snapshot.erp = { status: 'aborted', steps: [], draftNo: T2_DRAFT_NO, abortReason: '保存草稿后回读超时，写入结果不确定。', loginNotice: null, erpAccount: null };
   snapshot.readback = readbackOf(T2_ROWS);
   // 已保存但严格逐行不一致 ⇒ 转人工（human_review），只允许转人工。
   snapshot.reconcile = {
@@ -254,6 +254,7 @@ export function t2Snapshot(): TaskSnapshot {
     draftNo: T2_DRAFT_NO,
     rows: [...T2_ROWS],
     reasons: [],
+    capture: null,
   };
   return withProjectUsage(withInventoryProjection(snapshot));
 }
@@ -283,12 +284,13 @@ export function t3Snapshot(): TaskSnapshot {
   };
   snapshot.catalog = catalogMatched();
   snapshot.preparation = { status: 'ready', problems: [], packageFiles: [] };
-  snapshot.erp = { status: 'done', steps: [], draftNo: T3_DRAFT_NO, abortReason: null, loginNotice: null };
+  snapshot.erp = { status: 'done', steps: [], draftNo: T3_DRAFT_NO, abortReason: null, loginNotice: null, erpAccount: null };
   snapshot.readback = { status: 'matched', rows: [], summary: '明细 4/4 一致', localTotal: '2318.50', erpTotal: '2318.50' };
   return withProjectUsage(withInventoryProjection(snapshot));
 }
 
-// 任务列表层面的 ERP 结局：已转人工优先；其次是停在完成页的严格回读不一致。
+// 任务列表层面的 ERP 结局：已转人工优先。严格回读不一致的草稿现在停在对账（不是完成），列表按「对账中」显示它，
+// 和服务端一致：服务端的列表也只给 handed_off 或 none。
 function erpOutcomeOf(snapshot: TaskSnapshot): TaskListItem['erpOutcome'] {
   if (snapshot.reconcile.status === 'handed_off') return 'handed_off';
   if (snapshot.stage === 'done' && snapshot.readback.status === 'mismatched') return 'readback_mismatch';

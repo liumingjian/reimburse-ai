@@ -51,6 +51,13 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
             {erp.draftNo ?? '尚无'}
           </span>
         </div>
+        {/* 这次写入登录的报销系统账号与账套：只是记录，从不与应用账号比对。 */}
+        {erp.erpAccount ? (
+          <div className="app-summary-field">
+            <span className="app-summary-key">报销系统账号</span>
+            <span className="app-summary-value" data-testid="erp-account">{`${erp.erpAccount.displayName}（${erp.erpAccount.account}）· 账套 ${erp.erpAccount.tenant}`}</span>
+          </div>
+        ) : null}
         {readback.summary ? (
           <div className="app-summary-field">
             <span className="app-summary-key">严格回读</span>
