@@ -508,6 +508,14 @@ const reconcile192: Migration = {
   },
 };
 
+// #218: local project intake records an explicit source on new admitted facts. Existing rows remain null so their
+// prior catalog-derived meaning and append-only history are preserved exactly.
+const offlineProjectIntake218: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema.alterTable('project_book_event').addColumn('admission_source', 'text').execute();
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -524,4 +532,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0007_190_print': print190,
   '0008_191_erp_jobs': erpJobs191,
   '0009_192_reconcile': reconcile192,
+  '0010_218_offline_project_intake': offlineProjectIntake218,
 };

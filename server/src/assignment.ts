@@ -45,10 +45,11 @@ export function assignmentOf(lines: readonly Line[], facts: readonly AssignmentF
   const digest = linesDigest(lines);
   const last = [...ordered].reverse().find((fact): fact is SubmitFact => fact.kind === 'submit') ?? null;
   const submitted = last && last.linesDigest === digest ? last : null;
-  const selectable = new Set(options.map((option) => option.number));
+  const optionKey = (project: PinnedProject) => `${project.source}:${project.number}`;
+  const selectable = new Set(options.map(optionKey));
   const dropped = new Map<string, PinnedProject>();
   for (const [lineId, project] of working) {
-    if (selectable.has(project.number) || submitted?.selection[lineId]?.number === project.number) continue;
+    if (selectable.has(optionKey(project)) || submitted?.selection[lineId]?.number === project.number) continue;
     dropped.set(lineId, project);
     working.delete(lineId);
   }
@@ -62,7 +63,7 @@ export function assignmentOf(lines: readonly Line[], facts: readonly AssignmentF
   for (const line of lines) {
     const project = working.get(line.lineId);
     if (!project) continue;
-    const entry = usage.get(project.number) ?? { number: project.number, name: project.name, lineCount: 0, grossTotal: '0.00', selectable: selectable.has(project.number), cents: 0 };
+    const entry = usage.get(project.number) ?? { number: project.number, name: project.name, lineCount: 0, grossTotal: '0.00', selectable: selectable.has(optionKey(project)), cents: 0 };
     entry.lineCount += 1;
     entry.cents += cents(line.grossAmount);
     usage.set(project.number, entry);

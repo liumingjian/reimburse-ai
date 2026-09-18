@@ -48,7 +48,7 @@ export function AdminPage() {
           <section className="app-block" aria-label={PUBLIC_PROJECT_BOOK_COPY.title}>
             <h2 className="app-section-title">{PUBLIC_PROJECT_BOOK_COPY.title}</h2>
             <p className="app-lead">{PUBLIC_PROJECT_BOOK_COPY.lead}</p>
-            <ProjectBookPanel scope="public" primaryIntake={false} />
+            <ProjectBookPanel scope="public" primaryIntake={false} canMaintain />
           </section>
         </>
       ) : (

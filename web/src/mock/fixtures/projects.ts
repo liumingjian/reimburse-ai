@@ -71,7 +71,9 @@ function invalidReasons(project: StoredProject, today: string): InvalidReason[] 
   const reasons: InvalidReason[] = [];
   if (!isSafeProjectNumber(project.number)) reasons.push('unsafe');
   if (project.expiresOn !== null && (!isRealDate(project.expiresOn) || project.expiresOn < today)) reasons.push('expired');
-  if (project.lastVerdict !== 'confirmed') reasons.push('unconfirmed');
+  // `local` is an offline admission: its explicit name is usable for assignment before the later ERP pre-submit
+  // validation. Legacy fixture rows retain the earlier catalog-verdict rules.
+  if (project.lastVerdict !== 'confirmed' && project.lastVerdict !== 'local') reasons.push('unconfirmed');
   return reasons;
 }
 

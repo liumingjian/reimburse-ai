@@ -253,7 +253,7 @@ ERP 在新增费用报销单时根据当前登录身份和系统设置带出的�
 _Avoid_：公司规则、个人绑定
 
 **项目号**：
-A project number (项目号) is the ERP-assigned business identifier, unique within a personal book and within the public book. Different members may record the same number independently, but a personal entry cannot duplicate a public project number; it is not a selector's display index.
+A project number (项目号) is the ERP-assigned business identifier, unique within a personal book and within the public book. Different members may record the same number independently, but a personal entry cannot duplicate a public project number; it is not a selector's display index. A locally admitted number and name are planning records, not proof that the current ERP project master data accepts that pair; a later read-only ERP check establishes current referenceability.
 _Avoid_：项目编号、项目序号、项目索引
 
 **项目归属**：
@@ -277,7 +277,7 @@ The personal project book (个人项目簿) is the project collection maintained
 _Avoid_：任意项目号、第二套项目主数据
 
 **公共项目簿**：
-The public project book (公共项目簿) is the project collection maintained by administrators and visible to every app account, with active entries available for task selection. Only administrators may add, edit, deactivate, or reactivate its entries; promoting existing same-number personal entries to a public project preserves historical task selections, and ordinary members may only view and select public entries.
+The public project book (公共项目簿) is the project collection maintained by administrators and visible to every app account, with active entries available for task selection. Only administrators may add, edit, deactivate, or reactivate its entries. A public entry reserves its number from personal admission; promoting existing same-number personal entries to a public project requires explicit confirmation and preserves historical task selections. Ordinary members may only view and select public entries.
 _Avoid_：全局项目目录、项目目录、共享个人项目簿
 
 **本地市内交通**：
@@ -312,8 +312,10 @@ _Avoid_：存档任务、迁移任务、在途任务
 用 ERP 自带的查询服务确认一条主数据在 ERP 目录里存在、名称一致、已审核且未禁用的动作；它只查不写，不打开任何单据。它证明该主数据可被引用，不证明引用它的费用明细能保存成功。
 _Avoid_：项目校验、同步主数据、拉取目录、验证项目合法性
 
-**项目号来源等级**：
-项目号与其核验证据的关系：任务选择来自本人项目簿，主数据只读核对证明该编码和名称当前可引用；旧的自由输入记录不能自动成为本人项目簿的有效选择。
+**项目号来源等级 (project-number evidence level)**：
+The relationship between a project number and its evidence. A manual admission is a local planning claim; an ERP
+read-only check proves that a code and name are currently referenceable. Legacy facts retain their historical evidence
+rather than being silently reclassified.
 _Avoid_：项目已确认、项目有效、项目已验证
 
 ### 写入回读

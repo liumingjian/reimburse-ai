@@ -73,6 +73,7 @@ async function write(tx: Db, accountId: string, runId: string, data: LegacyData,
         name: project.name,
         verdict: null,
         expires_on: project.expiresOn,
+        admission_source: null,
         actor_account_id: accountId,
         created_at: project.confirmedAt ?? at,
       })

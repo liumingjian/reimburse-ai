@@ -190,6 +190,9 @@ export interface ProjectBookEventTable {
   name: string | null;
   verdict: string | null;
   expires_on: string | null;
+  // Null preserves the meaning of facts written before offline intake. `manual` marks a locally entered name that has
+  // never been represented as a successful ERP catalog check.
+  admission_source: 'manual' | null;
   actor_account_id: string;
   created_at: string;
 }
