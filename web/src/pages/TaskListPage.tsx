@@ -3,8 +3,7 @@ import {
   Button,
   ContentSwitcher,
   InlineLoading,
-  OverflowMenu,
-  OverflowMenuItem,
+  Tooltip,
   ProgressBar,
   Switch,
   Table,
@@ -40,8 +39,6 @@ export const TASK_LIST_COPY = {
   active: '进行中',
   handedOver: '已交接',
   noMatch: '没有符合条件的任务。',
-  more: '更多',
-  moreMenu: '更多操作',
 } as const;
 
 // 状态列：服务端给出的写入结局优先（已转人工需要注意 / 回读不一致出错），其次是对账中（需要注意）、
@@ -88,37 +85,17 @@ function continueLabel(task: TaskListItem): string | null {
   return '继续';
 }
 
-// 「更多」菜单：主操作以外的操作都在这里，目前只有「作废」（Carbon 的 delete 项，点下后打开危险确认）。
-// 能否作废由服务端判定；不能时菜单项置灰，下面一行照抄服务端给出的原因（读屏经 aria-describedby 读出）。
-function MoreMenu({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: TaskListItem) => void }) {
+// Keep abandonment visible beside the primary action. A focusable wrapper exposes the server's refusal reason
+// on hover or keyboard focus even though the underlying destructive action remains disabled.
+function AbandonButton({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: TaskListItem) => void }) {
+  if (task.abandonable) return <Button kind="danger--ghost" size="sm" onClick={() => onAbandon(task)}>{ABANDON_TASK_COPY.confirm}</Button>;
   const reasonId = `abandon-reason-${task.taskId}`;
-  const reason = task.abandonBlockedReason ?? ABANDON_TASK_COPY.blockedReason;
   return (
-    <OverflowMenu
-      iconDescription={TASK_LIST_COPY.more}
-      aria-label={`${task.name}的${TASK_LIST_COPY.moreMenu}`}
-      size="sm"
-      flipped
-      menuOptionsClass={task.abandonable ? 'app-more-menu' : 'app-more-menu app-more-menu--with-reason'}
-    >
-      {task.abandonable ? (
-        <OverflowMenuItem isDelete itemText={ABANDON_TASK_COPY.confirm} onClick={() => onAbandon(task)} />
-      ) : (
-        <OverflowMenuItem
-          disabled
-          aria-label={ABANDON_TASK_COPY.confirm}
-          aria-describedby={reasonId}
-          itemText={
-            <span className="app-more-menu-item">
-              <span>{ABANDON_TASK_COPY.confirm}</span>
-              <span id={reasonId} className="app-more-menu-reason">
-                {reason}
-              </span>
-            </span>
-          }
-        />
-      )}
-    </OverflowMenu>
+    <Tooltip autoAlign align="bottom-end" description={<span id={reasonId}>{task.abandonBlockedReason ?? ABANDON_TASK_COPY.blockedReason}</span>}>
+      <span tabIndex={0} aria-label="无法作废的原因" className="app-abandon-disabled">
+        <Button kind="danger--ghost" size="sm" disabled aria-describedby={reasonId}>{ABANDON_TASK_COPY.confirm}</Button>
+      </span>
+    </Tooltip>
   );
 }
 
@@ -147,14 +124,14 @@ function TaskRow({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: Ta
       <TableCell className="app-num">{task.grossTotal ?? <span className="app-muted">未确认</span>}</TableCell>
       <TableCell className="app-nowrap">{task.erpDraftNo ? <span className="app-code">{task.erpDraftNo}</span> : <span className="app-muted">尚无</span>}</TableCell>
       <TableCell className="app-nowrap app-muted">{formatDateTime(task.updatedAt)}</TableCell>
-      <TableCell className="app-sticky-end">
+      <TableCell className="app-sticky-end app-task-actions">
         <div className="app-row-actions">
           {label ? (
-            <Button kind="tertiary" size="sm" href={href}>
+            <Button kind="ghost" size="sm" href={href}>
               {label}
             </Button>
           ) : null}
-          <MoreMenu task={task} onAbandon={onAbandon} />
+          <AbandonButton task={task} onAbandon={onAbandon} />
         </div>
       </TableCell>
     </TableRow>

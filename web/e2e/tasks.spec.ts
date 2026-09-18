@@ -29,15 +29,7 @@ test('任务列表显示三个任务及其阶段徽标', async ({ page }, testIn
 test('作废确认是危险弹层：确认按钮是红色 danger 按钮，文案仍是「作废」', async ({ page }, testInfo) => {
   await page.goto(open('', '#/tasks'));
   const t1 = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ });
-  await t1.getByRole('button', { name: '更多' }).click();
-  const actionMenu = page.getByRole('menu', { name: '2026-08 上海出差（产品评审）的更多操作' });
-  const actionItem = actionMenu.getByRole('menuitem', { name: '作废' });
-  const menuBox = await actionMenu.boundingBox();
-  const itemBox = await actionItem.boundingBox();
-  expect(menuBox!.width).toBeLessThanOrEqual(164);
-  expect(Math.abs(menuBox!.width - itemBox!.width)).toBeLessThanOrEqual(4);
-  await page.screenshot({ path: testInfo.outputPath('task-action-menu.png') });
-  await actionItem.click();
+  await t1.getByRole('button', { name: '作废' }).click();
   const dialog = page.getByRole('dialog', { name: '作废这个报销任务？' });
   const confirm = dialog.getByRole('button', { name: '作废', exact: true });
   await expect(confirm).toBeVisible();
@@ -135,7 +127,7 @@ const NO_DIVIDER = 'none';
 const START_DIVIDER = 'rgb(224, 224, 224) -1px 0px 0px 0px inset';
 const END_DIVIDER = 'rgb(224, 224, 224) 1px 0px 0px 0px inset';
 
-test('1440：任务表不横向滚动，固定列没有分隔线；「更多」里不能作废的一项置灰并写明原因', async ({ page }, testInfo) => {
+test('1440：任务表不横向滚动，固定列没有分隔线；disabled abandonment explains its refusal on keyboard focus', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(open('', '#/tasks'));
   const tasks = page.getByRole('table', { name: '报销任务' });
@@ -151,14 +143,18 @@ test('1440：任务表不横向滚动，固定列没有分隔线；「更多」�
   await page.screenshot({ path: testInfo.outputPath('tasks-1440.png') });
 
   const t2 = page.getByRole('row', { name: /2026-07 深圳客户拜访/ });
-  await t2.getByRole('button', { name: '更多' }).click();
-  const menu = page.getByRole('menu', { name: '2026-07 深圳客户拜访的更多操作' });
-  await expect(menu.getByRole('menuitem', { name: '作废' })).toBeDisabled();
-  const menuBox = await menu.boundingBox();
-  const itemBox = await menu.getByRole('menuitem', { name: '作废' }).boundingBox();
-  expect(Math.abs(menuBox!.width - itemBox!.width)).toBeLessThanOrEqual(4);
-  await expect(menu).toContainText('已开始写入报销系统，不能作废：它占用的发票要靠对账解除。');
-  await page.screenshot({ path: testInfo.outputPath('tasks-1440-more-blocked.png') });
+  await expect(t2.getByRole('button', { name: '作废' })).toBeDisabled();
+  await t2.getByLabel('无法作废的原因').focus();
+  await expect(page.getByRole('tooltip')).toContainText('已开始写入报销系统，不能作废：它占用的发票要靠对账解除。');
+  const tooltip = page.getByRole('tooltip');
+  const unobscured = await tooltip.evaluate((element) => {
+    const content = element.querySelector('.cds--popover-content') ?? element;
+    const rect = content.getBoundingClientRect();
+    if (content.scrollWidth > content.clientWidth) return false;
+    return [0.1, 0.5, 0.9].every((fraction) => content.contains(document.elementFromPoint(rect.left + rect.width * fraction, rect.top + rect.height / 2)));
+  });
+  expect(unobscured).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('tasks-1440-abandon-blocked.png') });
 });
 
 test('1100：操作列变窄，价税合计完整可见；表格横向滚动，分隔线只在内容被盖住的一侧出现', async ({ page }, testInfo) => {
@@ -169,9 +165,9 @@ test('1100：操作列变窄，价税合计完整可见；表格横向滚动，�
   const heads = tasks.locator('thead th');
   const [grossBox, actionsBox] = await Promise.all([heads.filter({ hasText: '价税合计' }).boundingBox(), heads.last().boundingBox()]);
   console.log(`task table 1100: 价税合计 right ${grossBox && grossBox.x + grossBox.width}, 操作 x ${actionsBox?.x}, 操作 width ${actionsBox?.width}`);
-  // 价税合计整列在固定的操作列左边，不被盖住；操作列只放一个按钮和「更多」。
+  // 价税合计整列在固定的操作列左边，不被盖住；actions remain adjacent.
   expect(grossBox && actionsBox && grossBox.x + grossBox.width <= actionsBox.x).toBe(true);
-  expect(actionsBox && actionsBox.width < 180).toBe(true);
+  expect(actionsBox && actionsBox.width < 220).toBe(true);
   await expect(heads.last()).toHaveText('操作');
 
   const wrap = tasks.locator('xpath=..');
