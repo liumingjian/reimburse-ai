@@ -68,7 +68,7 @@ test('管理员添加公共项目，用户把明细归入它；提交前停用�
   await expect(user.getByTestId('project-of-1')).toHaveText('P-2307 / 华东客户交付');
 
   // The admin deactivates it before the user submits: the user's page drops the line back to 未归属 and says why.
-  await book.getByRole('button', { name: '停用 P-2307' }).click();
+  await book.getByRole('button', { name: '停用项目 P-2307' }).click();
   await expect(book.getByTestId('book-message')).toContainText('已在公共项目簿停用');
   await expect(book.getByTestId('book-row-P-2307')).toContainText('已停用');
   await expect(user.getByTestId('project-reselect')).toContainText('原项目 P-2307 华东客户交付');
@@ -110,13 +110,13 @@ test('public projects are read-only for members and retain lifecycle changes aft
   const readOnly = member.getByRole('table', { name: '公共项目簿' });
   await expect(readOnly.getByTestId('book-row-OFFLINE-101')).toContainText('产品调研');
   await expect(readOnly.getByRole('button')).toHaveCount(0);
-  await publicBook.getByRole('button', { name: '停用 OFFLINE-101', exact: true }).click();
+  await publicBook.getByRole('button', { name: '停用项目 OFFLINE-101', exact: true }).click();
   await expect(publicBook.getByTestId('book-row-OFFLINE-101')).toContainText('已停用');
   await member.reload();
   await expect(readOnly.getByTestId('book-row-OFFLINE-101')).toContainText('已停用');
 
   await page.reload();
-  await publicBook.getByRole('button', { name: '恢复 OFFLINE-101', exact: true }).click();
+  await publicBook.getByRole('button', { name: '恢复项目 OFFLINE-101', exact: true }).click();
   await expect(publicBook.getByTestId('book-row-OFFLINE-101')).toContainText('可选');
   await member.reload();
   await expect(readOnly.getByTestId('book-row-OFFLINE-101')).toContainText('可选');
