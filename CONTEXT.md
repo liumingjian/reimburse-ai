@@ -253,7 +253,7 @@ ERP 在新增费用报销单时根据当前登录身份和系统设置带出的�
 _Avoid_：公司规则、个人绑定
 
 **项目号**：
-ERP 项目主数据为一个项目分配的业务编号；它与项目名称共同标识 v1 项目目录中的项目，不等同于项目选择器中的项目序号。
+A project number (项目号) is the ERP-assigned business identifier, unique within a personal book and within the public book. Different members may record the same number independently, but a personal entry cannot duplicate a public project number; it is not a selector's display index.
 _Avoid_：项目编号、项目序号、项目索引
 
 **项目归属**：
@@ -273,11 +273,11 @@ _Avoid_：ERP 账号、员工身份、个人绑定、用户档案
 _Avoid_：超级用户、运维、ERP 管理员
 
 **个人项目簿**：
-员工按本人应用账号维护、且与 ERP 项目编码和名称对应的项目集合；任务选择仅允许使用本人项目簿与公共项目簿中当前可选的项目。
+The personal project book (个人项目簿) is the project collection maintained by its owning app account, using manually entered project numbers and names that are checked against ERP before invoice import. Entries can be edited, deactivated, or reactivated; only currently selectable entries from the owner's book or the public project book may receive new assignments, and later book changes do not rewrite existing task selections.
 _Avoid_：任意项目号、第二套项目主数据
 
 **公共项目簿**：
-由管理员维护、所有用户只读可用的项目集合，同样与 ERP 项目编码和名称对应；只有管理员能修改，普通用户只能查看并在任务选择中使用。
+The public project book (公共项目簿) is the project collection maintained by administrators and visible to every app account, with active entries available for task selection. Only administrators may add, edit, deactivate, or reactivate its entries; promoting existing same-number personal entries to a public project preserves historical task selections, and ordinary members may only view and select public entries.
 _Avoid_：全局项目目录、项目目录、共享个人项目簿
 
 **本地市内交通**：
