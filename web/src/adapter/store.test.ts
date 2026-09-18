@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
-import { ADMIN_ERRORS, AUTH_ERRORS, PASSWORD_CHANGE_REQUIRED_CODE, STALE_STEP_CODE, STALE_STEP_NOTICE, ServiceUnavailableError, UNAUTHENTICATED_CODE, UnauthenticatedError, type AdapterEvent, type AppAdapter, type TaskSnapshot } from '@baox/contract';
+import { ADMIN_ERRORS, AUTH_ERRORS, PASSWORD_CHANGE_REQUIRED_CODE, STALE_STEP_CODE, STALE_STEP_NOTICE, ServiceUnavailableError, UNAUTHENTICATED_CODE, UnauthenticatedError, type ActionOutcome, type AdapterEvent, type AppAdapter, type ProjectBook, type TaskSnapshot } from '@baox/contract';
+import { createMockAdapter } from '../mock/mock-adapter';
 import { t1Snapshot } from '../mock/fixtures/tasks';
 import { AppStore } from './store';
 
@@ -33,6 +34,28 @@ async function opened(sequence: TaskSnapshot[]) {
   return { store, ...fake };
 }
 
+function projectSnapshot(revision: number, projectNumber: string): TaskSnapshot {
+  const snapshot = t1Snapshot('project');
+  return {
+    ...snapshot,
+    revision,
+    projectAssignment: {
+      ...snapshot.projectAssignment,
+      projects: [{ number: projectNumber, name: `${projectNumber} 项目`, source: 'public' }],
+    },
+  };
+}
+
+function deferred<T>() {
+  let resolve: (value: T | PromiseLike<T>) => void = () => undefined;
+  let reject: (reason?: unknown) => void = () => undefined;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('AppStore：作废、重置与启动类动作', () => {
   const emptyList = { homeCity: null, tasks: [] };
 
@@ -51,6 +74,22 @@ describe('AppStore：作废、重置与启动类动作', () => {
     expect(store.getState().tasks).toEqual({});
     expect(store.getState().projectBook.status).toBe('idle');
     expect(store.getState().taskList.data?.tasks).toEqual([]);
+  });
+
+  test('ignores a pending personal book read after reset', async () => {
+    const adapter = createMockAdapter({ seed: null, fault: null });
+    const store = new AppStore(adapter, { validate: true });
+    const stale = await adapter.getProjectBook();
+    const pending = deferred<ProjectBook>();
+    adapter.getProjectBook = async () => pending.promise;
+
+    const read = store.loadProjectBook();
+    expect(store.getState().projectBook.status).toBe('loading');
+    expect((await store.resetAll()).ok).toBe(true);
+    pending.resolve(stale);
+    await read;
+
+    expect(store.getState().projectBook).toEqual({ status: 'idle', data: null, error: null });
   });
 
   test('作废失败时快照留着', async () => {
@@ -131,9 +170,105 @@ describe('AppStore：应用账号会话', () => {
     expect(store.getState().tasks).toEqual({});
     expect(store.getState().taskList.status).toBe('idle');
   });
+
+  test('ignores a pending personal book read after logout', async () => {
+    const adapter = createMockAdapter({ seed: null, fault: null });
+    const store = new AppStore(adapter, { validate: true });
+    await store.loadSession();
+    const stale = await adapter.getProjectBook();
+    const pending = deferred<ProjectBook>();
+    adapter.getProjectBook = async () => pending.promise;
+
+    const read = store.loadProjectBook();
+    expect((await store.auth((current) => current.logout())).ok).toBe(true);
+    pending.resolve(stale);
+    await read;
+
+    expect(store.getState().projectBook).toEqual({ status: 'idle', data: null, error: null });
+  });
 });
 
 describe('AppStore', () => {
+  test('clears a converted personal entry when its required refresh fails', async () => {
+    const adapter = createMockAdapter({ seed: null, fault: null });
+    const store = new AppStore(adapter, { validate: true });
+    await store.loadProjectBook();
+    expect(store.getState().projectBook.data?.projects.some((project) => project.number === 'P-2307')).toBe(true);
+
+    expect(await store.projectBookAction((current) => current.intakePublicProject({ number: 'P-2307', name: '公共项目' }), 'public')).toMatchObject({ ok: true, result: { status: 'conversion_required' } });
+    adapter.getProjectBook = async () => {
+      throw new Error('personal book unavailable');
+    };
+    expect(await store.projectBookAction((current) => current.confirmPublicProjectConversion({ operation: 'intake', number: 'P-2307', name: '公共项目' }), 'public')).toMatchObject({ ok: true, result: { status: 'converted' } });
+
+    expect(store.getState().projectBook).toEqual({ status: 'error', data: null, error: 'personal book unavailable' });
+  });
+
+  test('keeps a personal action result over an older personal book read', async () => {
+    const adapter = createMockAdapter({ seed: null, fault: null, bookEmpty: true });
+    const store = new AppStore(adapter, { validate: true });
+    const stale = await adapter.getProjectBook();
+    const pending = deferred<ProjectBook>();
+    adapter.getProjectBook = async () => pending.promise;
+
+    const read = store.loadProjectBook();
+    expect(await store.projectBookAction((current) => current.intakeProject({ number: 'P-NEW', name: '新项目' }))).toMatchObject({ ok: true, result: { status: 'admitted' } });
+    expect(store.getState().projectBook.data?.projects.some((project) => project.number === 'P-NEW')).toBe(true);
+
+    pending.resolve(stale);
+    await read;
+
+    expect(store.getState().projectBook.data?.projects.some((project) => project.number === 'P-NEW')).toBe(true);
+  });
+
+  test('keeps the converted personal book after an older pre-conversion read succeeds', async () => {
+    const adapter = createMockAdapter({ seed: null, fault: null, bookEmpty: true });
+    const store = new AppStore(adapter, { validate: true });
+    expect(await store.projectBookAction((current) => current.intakeProject({ number: 'OWN-1', name: '个人项目' }))).toMatchObject({ ok: true, result: { status: 'admitted' } });
+    const readCurrentBook = adapter.getProjectBook;
+    const stale = await readCurrentBook();
+    const pending = deferred<ProjectBook>();
+    let reads = 0;
+    adapter.getProjectBook = async () => {
+      reads += 1;
+      return reads === 1 ? pending.promise : readCurrentBook();
+    };
+
+    const preConversionRead = store.loadProjectBook();
+    expect(await store.projectBookAction((current) => current.intakePublicProject({ number: 'OWN-1', name: '公共项目' }), 'public')).toMatchObject({ ok: true, result: { status: 'conversion_required' } });
+    expect(await store.projectBookAction((current) => current.confirmPublicProjectConversion({ operation: 'intake', number: 'OWN-1', name: '公共项目' }), 'public')).toMatchObject({ ok: true, result: { status: 'converted' } });
+    expect(store.getState().projectBook.data?.projects.some((project) => project.number === 'OWN-1')).toBe(false);
+
+    pending.resolve(stale);
+    await preConversionRead;
+
+    expect(store.getState().projectBook).toMatchObject({ status: 'ready', error: null });
+    expect(store.getState().projectBook.data?.projects.some((project) => project.number === 'OWN-1')).toBe(false);
+  });
+
+  test('keeps the converted personal book after an older pre-conversion read fails', async () => {
+    const adapter = createMockAdapter({ seed: null, fault: null, bookEmpty: true });
+    const store = new AppStore(adapter, { validate: true });
+    expect(await store.projectBookAction((current) => current.intakeProject({ number: 'OWN-1', name: '个人项目' }))).toMatchObject({ ok: true, result: { status: 'admitted' } });
+    const readCurrentBook = adapter.getProjectBook;
+    const pending = deferred<ProjectBook>();
+    let reads = 0;
+    adapter.getProjectBook = async () => {
+      reads += 1;
+      return reads === 1 ? pending.promise : readCurrentBook();
+    };
+
+    const preConversionRead = store.loadProjectBook();
+    expect(await store.projectBookAction((current) => current.intakePublicProject({ number: 'OWN-1', name: '公共项目' }), 'public')).toMatchObject({ ok: true, result: { status: 'conversion_required' } });
+    expect(await store.projectBookAction((current) => current.confirmPublicProjectConversion({ operation: 'intake', number: 'OWN-1', name: '公共项目' }), 'public')).toMatchObject({ ok: true, result: { status: 'converted' } });
+
+    pending.reject(new Error('old personal read failed'));
+    await preConversionRead;
+
+    expect(store.getState().projectBook).toMatchObject({ status: 'ready', error: null });
+    expect(store.getState().projectBook.data?.projects.some((project) => project.number === 'OWN-1')).toBe(false);
+  });
+
   test('任务列表连接类失败：标记 offline（全页横幅）并按退避自动重试，恢复后列表就绪、offline 清除', async () => {
     let calls = 0;
     const adapter = {
@@ -204,5 +339,59 @@ describe('AppStore', () => {
     emit({ type: 'connection', state: 'connected' });
     expect(store.getState().connection).toBe('connected');
     await vi.waitFor(() => expect(store.entry('T1').snapshot?.stage).toBe('done'));
+  });
+
+  test('keeps a newer subscription snapshot when an older action response arrives later', async () => {
+    const initial = projectSnapshot(25, 'P-ORIGINAL');
+    const olderResponse = projectSnapshot(26, 'P-PENDING');
+    const refreshedBySubscription = projectSnapshot(30, 'P-PUBLIC-REFRESHED');
+    let resolveAction: (outcome: ActionOutcome) => void = () => undefined;
+    const response = new Promise<ActionOutcome>((resolve) => {
+      resolveAction = resolve;
+    });
+    const { store, emit } = await opened([initial]);
+
+    const action = store.act('T1', async () => response);
+    emit({ type: 'snapshot', snapshot: refreshedBySubscription });
+    resolveAction({ ok: true, snapshot: olderResponse });
+    await action;
+
+    expect(store.entry('T1').snapshot).toMatchObject({
+      revision: 30,
+      projectAssignment: { projects: [{ number: 'P-PUBLIC-REFRESHED', source: 'public' }] },
+    });
+  });
+
+  test('accepts a newer HTTP action snapshot after a subscription snapshot', async () => {
+    const { store } = await opened([projectSnapshot(30, 'P-PUBLIC-REFRESHED')]);
+    await store.act('T1', async () => ({ ok: true, snapshot: projectSnapshot(31, 'P-HTTP-NEWER') }));
+
+    expect(store.entry('T1').snapshot).toMatchObject({
+      revision: 31,
+      projectAssignment: { projects: [{ number: 'P-HTTP-NEWER', source: 'public' }] },
+    });
+  });
+
+  test('accepts an unchanged revision to complete a refresh', async () => {
+    const current = projectSnapshot(30, 'P-CURRENT');
+    let fail = true;
+    const adapter = {
+      getSnapshot: async () => {
+        if (fail) throw new Error('temporary read failure');
+        return structuredClone(current);
+      },
+    } as unknown as AppAdapter;
+    const store = new AppStore(adapter, { validate: true });
+    store.acceptSnapshot(current);
+
+    await store.refreshTask('T1');
+    expect(store.entry('T1')).toMatchObject({ status: 'error', error: 'temporary read failure', snapshot: { revision: 30 } });
+
+    fail = false;
+    const refresh = store.refreshTask('T1');
+    expect(store.entry('T1')).toMatchObject({ status: 'loading', error: null, snapshot: { revision: 30 } });
+    await refresh;
+
+    expect(store.entry('T1')).toMatchObject({ status: 'ready', error: null, snapshot: { revision: 30 } });
   });
 });

@@ -4,9 +4,10 @@ import type { Db } from '../db/database';
 import type { AccountEventAction, AccountTable } from '../db/schema';
 import { hashPassword, verifyPassword } from './password';
 
-// 应用账号 (app accounts) and their server-side sessions (ADR-0018). The first account is the admin; register opens
-// after it. A session is a random token held by the browser; the database keeps only its sha256 and a sliding expiry.
-// Admins promote/demote, deactivate/reactivate and set temporary passwords; at least one active admin always remains.
+// App accounts (应用账号) and their server-side sessions (ADR-0018). The first account is an approved admin; later
+// registrations wait for an explicit administrator approval. A session is a random token held by the browser; the
+// database keeps only its sha256 and a sliding expiry. Admins promote/demote, deactivate/reactivate and set temporary
+// passwords; at least one approved, active admin always remains.
 
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 // A session's expiry is pushed out at most once per this interval, so ordinary requests don't write.
@@ -81,7 +82,7 @@ export function createAccountService(db: Db, clock: Clock) {
 
   // Takes the password already hashed and runs inside the caller's transaction: scrypt is slow enough that two
   // requests racing between the check and the insert would otherwise both pass it.
-  async function insertAccount(tx: Db, credentials: CredentialsInput, passwordHash: string, role: Account['role'], at: string): Promise<Account> {
+  async function insertAccount(tx: Db, credentials: CredentialsInput, passwordHash: string, role: Account['role'], approved: boolean, at: string): Promise<Account> {
     const taken = await tx.selectFrom('account').select('account_id').where('username', '=', credentials.username).executeTakeFirst();
     if (taken) throw new AuthRefusal(409, 'username_taken', AUTH_ERRORS.usernameTaken);
     const account: Account = { accountId: randomUUID(), username: credentials.username, role };
@@ -94,6 +95,7 @@ export function createAccountService(db: Db, clock: Clock) {
         password_hash: passwordHash,
         role,
         active: 1,
+        approved: approved ? 1 : 0,
         must_change_password: 0,
         created_at: at,
       })
@@ -108,7 +110,7 @@ export function createAccountService(db: Db, clock: Clock) {
   // Every account with credentials, admins first, then by creation.
   async function list(): Promise<AccountList> {
     const rows = await db.selectFrom('account').selectAll().where('username', 'is not', null).orderBy('created_at').orderBy('username').execute();
-    const accounts = rows.map((row) => ({ ...toAccount(row), active: row.active === 1, mustChangePassword: row.must_change_password === 1 }));
+    const accounts = rows.map((row) => ({ ...toAccount(row), active: row.active === 1, approved: row.approved === 1, mustChangePassword: row.must_change_password === 1 }));
     return { accounts: [...accounts.filter((a) => a.role === 'admin'), ...accounts.filter((a) => a.role !== 'admin')] };
   }
 
@@ -126,29 +128,31 @@ export function createAccountService(db: Db, clock: Clock) {
       const at = iso(clock());
       const account = await db.transaction().execute(async (tx) => {
         if (!(await firstAccount(tx))) throw new AuthRefusal(409, 'setup_done', AUTH_ERRORS.setupDone);
-        const created = await insertAccount(tx, credentials, passwordHash, 'admin', at);
+        const created = await insertAccount(tx, credentials, passwordHash, 'admin', true, at);
         await onCreated?.(tx, created.accountId);
         return created;
       });
       return openSession(account);
     },
 
-    // Open self-registration, only after the admin exists.
-    async register(credentials: CredentialsInput): Promise<SignedIn> {
+    // Open self-registration, only after the first administrator exists. A registration creates no session: it waits
+    // for an administrator's separately audited approval before credentials can open one.
+    async register(credentials: CredentialsInput): Promise<void> {
       const passwordHash = await hashPassword(credentials.password);
       const at = iso(clock());
-      const account = await db.transaction().execute(async (tx) => {
+      await db.transaction().execute(async (tx) => {
         if (await firstAccount(tx)) throw new AuthRefusal(409, 'setup_required', AUTH_ERRORS.setupRequired);
-        return insertAccount(tx, credentials, passwordHash, 'user', at);
+        await insertAccount(tx, credentials, passwordHash, 'user', false, at);
       });
-      return openSession(account);
     },
 
-    // Unknown username, wrong password and a deactivated account all get the same answer.
+    // A pending account learns its status only after proving its password. Unknown usernames, wrong passwords and
+    // deactivated accounts retain the generic answer.
     async login(credentials: CredentialsInput): Promise<SignedIn> {
       const row = await db.selectFrom('account').selectAll().where('username', '=', credentials.username).executeTakeFirst();
-      const ok = row?.password_hash && row.active === 1 && (await verifyPassword(credentials.password, row.password_hash));
-      if (!row || !ok) throw new AuthRefusal(401, 'invalid_credentials', AUTH_ERRORS.invalidCredentials);
+      if (!row?.password_hash || !(await verifyPassword(credentials.password, row.password_hash))) throw new AuthRefusal(401, 'invalid_credentials', AUTH_ERRORS.invalidCredentials);
+      if (row.approved !== 1) throw new AuthRefusal(403, 'pending_approval', AUTH_ERRORS.pendingApproval);
+      if (row.active !== 1) throw new AuthRefusal(401, 'invalid_credentials', AUTH_ERRORS.invalidCredentials);
       return openSession(toAccount(row), row.must_change_password === 1);
     },
 
@@ -177,10 +181,18 @@ export function createAccountService(db: Db, clock: Clock) {
       await db.transaction().execute(async (tx) => {
         const target = await tx.selectFrom('account').selectAll().where('account_id', '=', accountId).where('username', 'is not', null).executeTakeFirst();
         if (!target) throw new AuthRefusal(404, 'account_not_found', ADMIN_ERRORS.accountNotFound);
+        if ('approved' in change) {
+          if (target.approved === 1) return;
+          await tx.updateTable('account').set({ approved: 1 }).where('account_id', '=', accountId).execute();
+          await recordEvent(tx, accountId, actor.accountId, 'approved', at);
+          return;
+        }
+        // Do not let activation, promotion, or a password reset become a second path to usable credentials.
+        if (target.approved !== 1) throw new AuthRefusal(400, 'approval_required', ADMIN_ERRORS.approvalRequired);
         const givingUpAdmin = ('role' in change && change.role === 'user') || ('active' in change && !change.active);
-        const wouldDropAdmin = target.role === 'admin' && target.active === 1 && givingUpAdmin;
+        const wouldDropAdmin = target.role === 'admin' && target.active === 1 && target.approved === 1 && givingUpAdmin;
         if (wouldDropAdmin) {
-          const admins = await tx.selectFrom('account').select((eb) => eb.fn.countAll<number>().as('n')).where('role', '=', 'admin').where('active', '=', 1).executeTakeFirstOrThrow();
+          const admins = await tx.selectFrom('account').select((eb) => eb.fn.countAll<number>().as('n')).where('role', '=', 'admin').where('active', '=', 1).where('approved', '=', 1).executeTakeFirstOrThrow();
           if (Number(admins.n) <= 1) throw new AuthRefusal(400, 'last_admin', ADMIN_ERRORS.lastAdmin);
         }
         // Checked after the last-admin guard, so the sole admin still gets the more informative `last_admin`: an admin
@@ -205,7 +217,7 @@ export function createAccountService(db: Db, clock: Clock) {
       return list();
     },
 
-    // The account behind a session token, or null when the token is unknown, expired or its account deactivated.
+    // The account behind a session token, or null when the token is unknown, expired, pending approval or deactivated.
     // Use slides the expiry forward.
     async lookup(token: string | undefined): Promise<SessionLookup | null> {
       if (!token) return null;
@@ -213,12 +225,12 @@ export function createAccountService(db: Db, clock: Clock) {
       const row = await db
         .selectFrom('session')
         .innerJoin('account', 'account.account_id', 'session.account_id')
-        .select(['session.token_sha256', 'session.expires_at', 'account.account_id', 'account.username', 'account.role', 'account.active', 'account.must_change_password'])
+        .select(['session.token_sha256', 'session.expires_at', 'account.account_id', 'account.username', 'account.role', 'account.active', 'account.approved', 'account.must_change_password'])
         .where('session.token_sha256', '=', sha256(token))
         .executeTakeFirst();
       if (!row) return null;
       const expiresAt = Date.parse(row.expires_at);
-      if (expiresAt <= now.getTime() || row.active !== 1) {
+      if (expiresAt <= now.getTime() || row.active !== 1 || row.approved !== 1) {
         await db.deleteFrom('session').where('token_sha256', '=', row.token_sha256).execute();
         return null;
       }

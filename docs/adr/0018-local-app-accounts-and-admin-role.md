@@ -7,7 +7,7 @@ baox v1 stays a single local process, yet it gets real app accounts. The data mo
 - **Local only.** The server binds `127.0.0.1`. Accounts exist for data ownership and roles, not as network hardening. LAN or remote access, TLS and brute-force protection stay V2.
 - **Credentials.** Username + password, hashed with salted `node:crypto` `scrypt` (no dependency). Server-side sessions live in SQLite. The browser holds only a random token in an `HttpOnly; SameSite=Strict` cookie, which expires on a fixed sliding window (30 days). Logout deletes the session row.
 - **Registration and the first admin.**
-  - While no account exists, the app shows only "create admin". That first account becomes the admin, and open self-registration unlocks after it.
+  - While no account exists, the app shows only "create admin". That first account becomes the authorized admin. Later self-registration creates a pending application and grants no session; an administrator must explicitly approve it before login. Existing accounts retain authorization during migration. Approval is separate from activation and role, so restoration or promotion cannot bypass approval.
   - Admins may promote or demote others. The server always keeps at least one admin.
 - **Two roles.** `user` and `admin`, stored as a flag on the account. An admin is a full user (own project book, home city, tasks) plus two powers: editing the 公共项目簿 (public project book) and managing accounts.
 - **Accounts are deactivated, never deleted.** A deactivated account cannot log in. Its tasks, audit records and 发票占用 (invoice occupancy) stay as they are.
@@ -19,7 +19,7 @@ baox v1 stays a single local process, yet it gets real app accounts. The data mo
   - **Invoice occupancy is global.** A legal invoice cannot be reimbursed twice by anyone. A clash across accounts says only "occupied by another account's task", with no name or task details. Content-addressed blobs may be deduplicated on disk, but they are reachable only through the owner's tasks.
 - **Public project book.**
   - Stored in SQLite in the same shape as personal books, with public scope instead of an owner.
-  - Admins edit it in the web UI. Removal deactivates the entry. Changes are append-only (ADR-0015).
+  - Admins edit, deactivate/restore, and delete public entries in the web UI. Deactivation reserves the project number; deletion releases it and preserves submitted history. Legacy removal facts retain their original deactivation meaning. Changes are append-only (ADR-0015).
   - 任务选择 (task selection) pins code + name + source (`public` / `personal`) per line. Later public-book edits do not touch submitted selections, and the ERP catalog check still verifies them.
   - An entry deactivated before submission can no longer be chosen, so the page asks the user to re-select.
 - **Legacy import.** The one-time `~/.baox` import runs when the first admin is created, and everything goes to that account: project book (it stays personal and is not seeded into the public book), home city, and invoice occupancy from ERP-touched legacy tasks. Legacy identity bindings are no longer imported, because nothing reads them after ADR-0016. This amends ADR-0015's import scope.

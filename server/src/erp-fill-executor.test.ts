@@ -29,7 +29,7 @@ beforeEach(async () => {
   fake = null;
   server = await createTestServer({ projectCatalog: CATALOG, erpExecutor: executor, erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY } });
   alice = await server.signIn('alice');
-  expect((await alice.post('/api/project-book/intake', { number: 'P-2307' })).status).toBe(200);
+  expect((await alice.post('/api/project-book/intake', { number: 'P-2307', name: '华东客户交付' })).status).toBe(200);
 });
 afterEach(() => server.close());
 const client = api(() => alice);

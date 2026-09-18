@@ -76,8 +76,7 @@ test('两个上传批次逐一命中四种拒绝原因，排除一份材料后�
   await page.goto('/#/tasks');
   const listed = page.getByRole('row', { name: /新建报销/ });
   await expect(listed).toHaveCount(1);
-  await listed.getByRole('button', { name: '更多' }).click();
-  await page.getByRole('menuitem', { name: '作废' }).click();
+  await listed.getByRole('button', { name: '作废' }).click();
   await page.getByRole('dialog', { name: '作废这个报销任务？' }).getByRole('button', { name: '作废', exact: true }).click();
   await expect(listed).toHaveCount(0);
 

@@ -2,137 +2,147 @@ import { z } from 'zod';
 import { ActionErrorSchema } from './actions';
 import { DateTimeSchema } from './primitives';
 
-// 个人项目簿：任务之外的全局数据，按当前报销系统登录身份（tenant + account）分簿（内核 projects.mjs）。
-// 页面照内核 project-book-page.mjs：只录项目号，名称只取报销系统核验回读值；没有编辑，同号再次录入即覆盖；
-// 过期日不开放（Skill 里固定传 null，一律「永不过期」）。可选判定、状态标签与说明都由服务端给出，页面只显示。
-// 文案照内核 projectintake.mjs / projectmaintain.mjs，员工可见的「ERP」一律写作「报销系统」（内核 FORBIDDEN_USER_TERMS）。
+// Project books (项目簿) are owned by an application account or shared publicly. New entries are local preparation
+// records: entering one makes it available for project assignment (项目归属), but does not claim ERP verification.
+// Legacy facts retain their older presentation fields so migration never rewrites their business history.
 
 export const ProjectBookEntrySchema = z.object({
   number: z.string().min(1),
-  // 报销系统回读的项目名称；回读为空时为 null（页面显示「未回读」）。
   name: z.string().min(1).nullable(),
-  // null 表示永不过期。原样给出（内核读不出的过期时间也会原样出现，并当作已过期）。
   expiresOn: z.string().min(1).nullable(),
+  // Local intake deliberately returns null. A timestamp here is only a legacy catalog-check record.
   lastCheckedAt: DateTimeSchema.nullable(),
-  // 内核 annotateProjects：安全项目号 + 未过期 + 最近一次核验 confirmed 才可选。
+  // Lifecycle state is independent from ERP availability. An active legacy entry can still be unselectable when its
+  // former catalog verdict is invalid, while an inactive entry remains visible and reserves its number.
+  active: z.boolean(),
   selectable: z.boolean(),
-  // 可选 / 已过期 / 复检未通过 / 项目号不安全（多个原因用「・」连接）。
   statusLabel: z.string().min(1),
   statusNote: z.string().min(1).nullable(),
 });
 export type ProjectBookEntry = z.infer<typeof ProjectBookEntrySchema>;
 
-// 接口：GET /api/project-book。身份没核对通过时服务端不读项目簿，返回空列表。
 export const ProjectBookSchema = z.object({
   projects: z.array(ProjectBookEntrySchema),
 });
 export type ProjectBook = z.infer<typeof ProjectBookSchema>;
 
-// 维护动作的结果状态（内核 intakeProject / removeProject / purgeInvalidProjects / recheckAll）：
-// 录入 admitted / rejected / not_logged_in / identity_mismatch / query_failed；删除 removed / not_found；
-// 清理失效 purged / none；复检 done / empty（以及 not_logged_in / identity_mismatch / query_failed）。
-export const PROJECT_BOOK_RESULT_STATUSES = [
-  'admitted',
-  'rejected',
-  'not_logged_in',
-  'identity_mismatch',
-  'query_failed',
-  'removed',
-  'not_found',
-  'purged',
-  'none',
-  'done',
-  'empty',
-] as const;
+// Both book scopes accept the same explicit, offline intake data.
+export const ProjectBookIntakeInputSchema = z.object({
+  number: z.string(),
+  name: z.string(),
+});
+export type ProjectBookIntakeInput = z.infer<typeof ProjectBookIntakeInputSchema>;
+
+// An edit identifies the entry as it was displayed when the form opened. The server folds the accepted change as a
+// new fact, so this original number is never used to overwrite another entry.
+export const ProjectBookEditInputSchema = z.object({
+  originalNumber: z.string(),
+  number: z.string(),
+  name: z.string(),
+});
+export type ProjectBookEditInput = z.infer<typeof ProjectBookEditInputSchema>;
+
+// A public collision is only consolidated after a second, explicit request. An edit carries the public entry the
+// prompt was based on as well, so confirmation can refuse a stale rename or lifecycle change rather than overwrite it.
+export const PublicProjectConversionInputSchema = z.discriminatedUnion('operation', [
+  ProjectBookIntakeInputSchema.extend({ operation: z.literal('intake') }),
+  ProjectBookEditInputSchema.extend({
+    operation: z.literal('edit'),
+    originalName: z.string().nullable(),
+    originalActive: z.boolean(),
+  }),
+]);
+export type PublicProjectConversionInput = z.infer<typeof PublicProjectConversionInputSchema>;
+
+export const ProjectBookLifecycleInputSchema = z.object({
+  number: z.string(),
+});
+export type ProjectBookLifecycleInput = z.infer<typeof ProjectBookLifecycleInputSchema>;
+
+export const PROJECT_BOOK_RESULT_STATUSES = ['admitted', 'edited', 'deactivated', 'restored', 'deleted', 'converted', 'conversion_required', 'rejected'] as const;
 export type ProjectBookResultStatus = (typeof PROJECT_BOOK_RESULT_STATUSES)[number];
 
-// 内核维护页把这些状态当作「完成了」（serve.mjs serveProjectBookPage 的 acceptResult），其余是没做成、要显示原因。
-export const PROJECT_BOOK_ACCEPTED_STATUSES: ReadonlySet<ProjectBookResultStatus> = new Set<ProjectBookResultStatus>(['admitted', 'removed', 'purged', 'none', 'done', 'empty']);
+export const PROJECT_BOOK_ACCEPTED_STATUSES: ReadonlySet<ProjectBookResultStatus> = new Set<ProjectBookResultStatus>(['admitted', 'edited', 'deactivated', 'restored', 'deleted', 'converted']);
 
-// 录入被拒的核验结论：missing 查不到、ambiguous 对上多条、unusable 不可引用、unsafe 项目号含不能安全查询的字符。
-export const PROJECT_REJECTION_VERDICTS = ['missing', 'ambiguous', 'unusable', 'unsafe'] as const;
+// `unsafe` is the only machine-readable validation verdict. Duplicate and ownership feedback remains intentionally
+// generic so public intake does not disclose another member's personal book.
+export const PROJECT_REJECTION_VERDICTS = ['unsafe'] as const;
 
 export const ProjectBookResultSchema = z.object({
   status: z.enum(PROJECT_BOOK_RESULT_STATUSES),
   verdict: z.enum(PROJECT_REJECTION_VERDICTS).nullable(),
-  // 服务端成句的结果说明，页面原样显示。
   note: z.string().min(1),
-  // 动作之后的整份项目簿（没改动时是原簿；身份没核对通过时为空）。
   book: ProjectBookSchema,
 });
 export type ProjectBookResult = z.infer<typeof ProjectBookResultSchema>;
 
-// 维护动作的 HTTP 响应：服务端处理了请求就是 200 + ProjectBookResult（含 rejected 等没做成的状态）；
-// 请求本身失败时是 { error, book? }。
 export const ProjectBookFailureSchema = z.object({
   error: ActionErrorSchema,
   book: ProjectBookSchema.optional(),
 });
 export type ProjectBookFailure = z.infer<typeof ProjectBookFailureSchema>;
 
-// 结果说明文案（照内核 projectintake.mjs / projectmaintain.mjs，「ERP」写作「报销系统」）。服务端与 mock 共用。
+// User-facing feedback is shared by the HTTP server and mock adapter. Names and numbers remain in the submitted form
+// after every rejected result, so the caller can correct only the offending value.
 export const PROJECT_BOOK_NOTES = {
-  unsafe: (number: string) => `项目号 ${JSON.stringify(number)} 含有不能安全查询的字符，没有加入个人项目簿`,
-  intakeNotLoggedIn: '没有已核对的报销系统身份，不能向个人项目簿录入项目',
-  maintainNotLoggedIn: '没有已核对的报销系统身份，不能修改个人项目簿',
-  recheckNotLoggedIn: '没有已核对的报销系统身份，不能复检个人项目簿',
-  identityMismatch: '当前报销系统身份已变化，个人项目簿没有改动；请回到原身份后重试',
-  intakeQueryFailed: (reason: string) => `报销系统项目核对没有完成（${reason}），个人项目簿没有改动；稍后重试`,
-  missing: (number: string) => `项目号 ${number} 在报销系统项目目录里查不到，没有加入个人项目簿；请核对后重新录入`,
-  ambiguous: (number: string, count: number | null) => `项目号 ${number} 在报销系统里对上了 ${count ?? '多'} 条记录，没有加入个人项目簿；请核实唯一项目号`,
-  unusable: (number: string, name: string | null) => `项目 ${number}「${name ?? '未回读'}」在报销系统里不可引用，没有加入个人项目簿`,
-  admitted: (number: string, name: string | null) => `项目 ${number}「${name ?? '未回读'}」已加入个人项目簿，名称取自报销系统回读值；没有设置过期时间`,
-  notFound: (number: string) => `个人项目簿里没有项目号 ${number}`,
-  removed: (number: string, name: string | null) => `项目 ${number}「${name ?? '未回读'}」已从个人项目簿删除；已选任务中的历史归属不受影响`,
-  purgeNone: '当前没有失效项目，一条都没删',
-  purged: (count: number) => `已清理 ${count} 条失效项目；合法历史任务中的项目归属不受影响`,
-  recheckEmpty: '个人项目簿是空的，没有什么可复检的',
-  recheckQueryFailed: (reason: string) => `复检没有完成（${reason}），个人项目簿没有改动`,
-  recheckDone: (checked: number, invalid: number) => `复检了 ${checked} 条项目，其中 ${invalid} 条当前不可选；复检不会自动删除项目`,
+  numberRequired: '请填写项目号。',
+  nameRequired: '请填写项目名称。',
+  unsafe: (number: string) => `项目号 ${JSON.stringify(number)} 含有不能安全使用的字符，未加入个人项目簿。`,
+  duplicate: (number: string) => `项目号 ${number} 已记录在个人项目簿中，未重复加入。`,
+  publicReserved: (number: string) => `项目号 ${number} 已记录在公共项目簿中，请在项目归属时使用公共项目。`,
+  publicPersonalCollision: (number: string) => `项目号 ${number} 已记录在个人项目簿中，暂不能加入公共项目簿。`,
+  conversionRequired: (number: string) => `项目号 ${number} 已记录在个人项目簿中。确认后，所有同号个人项目将转为公共项目；已有报销记录保持不变。`,
+  conversionStale: '项目簿已变化，请重新提交项目并确认转换。',
+  converted: (number: string, name: string) => `项目 ${number}「${name}」已转为公共项目，所有同号个人项目已合并；已有报销记录保持不变。`,
+  admitted: (number: string, name: string) => `项目 ${number}「${name}」已加入个人项目簿，可用于新的项目归属。`,
+  editMissing: (number: string) => `项目号 ${number} 未记录在个人项目簿中，无法修改。`,
+  editUnsafe: (number: string) => `项目号 ${JSON.stringify(number)} 含有不能安全使用的字符，未修改项目。`,
+  editDuplicate: (number: string) => `项目号 ${number} 已记录在个人项目簿中，无法改为该项目号。`,
+  editPublicReserved: (number: string) => `项目号 ${number} 已记录在公共项目簿中，无法改为该项目号。`,
+  editPublicPersonalCollision: (number: string) => `项目号 ${number} 已记录在个人项目簿中，暂不能改为公共项目。`,
+  edited: (originalNumber: string, number: string, name: string) =>
+    originalNumber === number ? `项目 ${number} 的名称已更新为「${name}」。` : `项目 ${originalNumber} 已更新为 ${number}「${name}」。`,
+  deactivated: (number: string) => `项目号 ${number} 已停用，不能用于新的项目归属。`,
+  restored: (number: string) => `项目号 ${number} 已恢复，可用于新的项目归属。`,
+  deleted: (number: string) => `项目号 ${number} 已从个人项目簿删除。`,
+  notFound: (number: string) => `个人项目簿里没有项目号 ${number}。`,
+  alreadyActive: (number: string) => `项目号 ${number} 当前处于启用状态，无需恢复。`,
+  alreadyInactive: (number: string) => `项目号 ${number} 已停用。`,
 } as const;
 
-// 页面文案（照内核 project-book-page.mjs）。
 export const PROJECT_BOOK_COPY = {
   title: '个人项目簿',
-  lead: '项目号从报销系统核验后加入你这个账号的项目簿。失效项目仍会保留，直到你删除它。',
+  lead: '录入项目号和项目名称后，可在新的项目归属中选择。提交去报销前仍会核对项目。',
   numberLabel: '项目号',
-  intake: '核验并加入',
-  remove: '删除',
-  recheck: '复检全部',
-  purge: '清理全部失效',
+  nameLabel: '项目名称',
+  intake: '加入项目',
+  edit: '编辑项目',
+  save: '保存',
+  deactivate: '停用',
+  restore: '恢复',
+  delete: '删除',
   empty: '当前项目簿为空，请录入第一个项目。',
-  neverExpires: '永不过期',
-  noName: '未回读',
-  // 流程门（内核 project_book_empty）：没有可选项目时项目归属页换成维护入口。录入后不自动离开：
-  // 报销材料可能归属不同项目，用户录完再点「开始归属」（内核：完成设置并提交后才继续）。
+  noName: '未记录名称',
   gateTitle: '先维护个人项目簿',
   gateLead: '录完本次要用的项目，再开始归属。',
   gateContinue: '项目录完了，开始归属',
   gateContinueHint: '至少录入一个可用项目后才能开始归属',
-  // 项目归属页就地新增项目：弹层里是同一个项目簿维护面板。
   addProject: '新增项目',
   addDialogDone: '完成',
 } as const;
 
-// 公共项目簿（#194，ADR-0018）：与个人项目簿同一形状，管理员在网页里维护，所有账号共用。删除即停用（条目留在簿里，
-// 状态「已停用」，不能再选；再次录入即恢复）；每次改动都追加记录。维护接口只对管理员开放（其他账号 403 forbidden）。
-// 结果说明沿用 PROJECT_BOOK_NOTES，把「个人项目簿」换成「公共项目簿」；停用有自己的说明。
-export const PUBLIC_PROJECT_BOOK_NOTES = {
-  deactivated: (number: string, name: string | null) => `项目 ${number}「${name ?? '未回读'}」已在公共项目簿停用，不能再选；已提交任务中的归属不受影响`,
-} as const;
-
 export const PUBLIC_PROJECT_BOOK_COPY = {
   title: '公共项目簿',
-  lead: '管理员维护、所有账号共用的项目。停用后不能再选，已提交的归属不受影响；每次改动都会留下记录。',
-  remove: '停用',
-  empty: '公共项目簿是空的，请录入第一个公共项目。',
+  lead: '所有成员都可以查看和使用公共项目。只有管理员可以维护公共项目。',
+  empty: '公共项目簿为空。',
+  conversionTitle: '确认转为公共项目',
+  conversionLead: (number: string) => `项目号 ${number} 已在个人项目簿中。确认后，所有同号个人项目将合并到公共项目簿；已有报销记录不会改变。`,
+  conversionConfirm: '确认转换',
 } as const;
 
-// 项目归属页：提交前项目被停用或删除的明细（projectAssignment.reselect），要重新选择项目。
 export const PROJECT_RESELECT_COPY = {
   title: (count: number) => `${count} 条明细原来归入的项目已停用或已删除，请重新选择项目`,
   line: (no: number, number: string, name: string) => `No.${no}：原项目 ${number} ${name}`,
 } as const;
 
-// 项目来源标签（项目归属页的项目列表与已归入明细）。
 export const PROJECT_SOURCE_LABEL = { personal: '个人', public: '公共' } as const;

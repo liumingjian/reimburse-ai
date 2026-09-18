@@ -1,7 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// 个人项目簿（#112）：全局页面 #/projects，录入经 mock 报销系统核验、删除、清理失效、复检全部；
-// 以及项目归属的项目簿门（?book=empty）与登录会话缺失时的拒绝。直接用 file:// 打开 mock 构建产物。
+// Offline personal project book (个人项目簿) journeys in the mock build, including the assignment gate and inline intake.
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 
@@ -10,51 +9,28 @@ const book = (page: Page) => page.getByRole('table', { name: '个人项目簿' }
 const row = (page: Page, number: string) => page.getByTestId(`book-row-${number}`);
 const message = (page: Page) => page.getByTestId('book-message');
 
-async function intake(page: Page, number: string) {
-  await page.getByLabel('项目号').fill(number);
-  await page.getByRole('button', { name: '核验并加入' }).click();
+async function intake(page: Page, number: string, name = number === 'P-6021' ? '年度预算评审' : '苏州门店巡检') {
+  await page.getByLabel('项目号', { exact: true }).fill(number);
+  await page.getByLabel('项目名称', { exact: true }).fill(name);
+  await page.getByRole('button', { name: '加入项目', exact: true }).click();
 }
 
-test('录入：可核验的项目号加入列表，名称来自核验结果；查不到与非法字符显示内核的拒绝文案', async ({ page }, testInfo) => {
-  await page.goto(open('', '#/projects'));
+test('offline intake preserves names and retains input on duplicate or unsafe numbers', async ({ page }, testInfo) => {
+  await page.goto(open('?fault=erp-login-missing', '#/projects'));
   await expect(h1(page, '个人项目簿')).toBeVisible();
-  await expect(book(page).getByRole('columnheader')).toHaveText(['项目号', '名称', '过期时间', '状态', '']);
-  await expect(book(page).locator('tbody tr')).toHaveCount(6);
-  await expect(row(page, 'P-4420')).toContainText('已过期');
-  // 录入按钮与输入框同高，示例占位符提示格式。
-  const input = page.getByLabel('项目号');
-  await expect(input).toHaveAttribute('placeholder', '如：P-2307');
-  const inputBox = await input.boundingBox();
-  const buttonBox = await page.getByRole('button', { name: '核验并加入' }).boundingBox();
-  expect(inputBox && buttonBox && Math.round(buttonBox.height)).toBe(inputBox && Math.round(inputBox.height));
-  expect(inputBox && buttonBox && Math.round(buttonBox.y + buttonBox.height)).toBe(inputBox && Math.round(inputBox.y + inputBox.height));
-
-  await intake(page, 'P-5108');
-  await expect(message(page)).toHaveText('项目 P-5108「苏州门店巡检」已加入个人项目簿，名称取自报销系统回读值；没有设置过期时间');
-  await expect(row(page, 'P-5108')).toContainText('苏州门店巡检');
-  await expect(row(page, 'P-5108')).toContainText('永不过期');
-  await expect(row(page, 'P-5108')).toContainText('可选');
-
-  await intake(page, 'P-0000');
-  await expect(message(page)).toHaveText('项目号 P-0000 在报销系统项目目录里查不到，没有加入个人项目簿；请核对后重新录入');
-  await intake(page, 'P-12;');
-  await expect(message(page)).toHaveText('项目号 "P-12;" 含有不能安全查询的字符，没有加入个人项目簿');
-  await expect(book(page).locator('tbody tr')).toHaveCount(7);
+  await expect(book(page).getByRole('columnheader')).toHaveText(['项目号', '名称', '状态', '']);
+  await intake(page, 'LOCAL-5108', '本地维护项目');
+  await expect(row(page, 'LOCAL-5108')).toContainText('本地维护项目');
+  await expect(row(page, 'LOCAL-5108')).toContainText('可选');
+  await intake(page, 'LOCAL-5108', '重复名称');
+  await expect(message(page)).toContainText('已');
+  await expect(page.getByLabel('项目号', { exact: true })).toHaveValue('LOCAL-5108');
+  await expect(page.getByLabel('项目名称', { exact: true })).toHaveValue('重复名称');
+  await expect(row(page, 'LOCAL-5108')).toContainText('本地维护项目');
+  await intake(page, 'P-12;', '不安全项目');
+  await expect(message(page)).toContainText('不能安全');
+  await expect(row(page, 'P-12;')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('project-book.png'), fullPage: true });
-});
-
-test('复检全部、删除、清理全部失效：结果文案照内核', async ({ page }) => {
-  await page.goto(open('', '#/projects'));
-  await page.getByRole('button', { name: '复检全部' }).click();
-  await expect(message(page)).toHaveText('复检了 6 条项目，其中 2 条当前不可选；复检不会自动删除项目');
-  await page.getByRole('button', { name: '删除 P-1180' }).click();
-  await expect(message(page)).toHaveText('项目 P-1180「内部培训」已从个人项目簿删除；已选任务中的历史归属不受影响');
-  await expect(row(page, 'P-1180')).toHaveCount(0);
-  await page.getByRole('button', { name: '清理全部失效' }).click();
-  await expect(message(page)).toHaveText('已清理 2 条失效项目；合法历史任务中的项目归属不受影响');
-  await expect(book(page).locator('tbody tr')).toHaveCount(3);
-  await page.getByRole('button', { name: '清理全部失效' }).click();
-  await expect(message(page)).toHaveText('当前没有失效项目，一条都没删');
 });
 
 test('?book=empty：从待确认项走到项目归属时被引导进维护入口，录完两个项目再点开始归属，两个项目都可选', async ({ page }, testInfo) => {

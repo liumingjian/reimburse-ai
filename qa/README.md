@@ -20,15 +20,15 @@ node server/dist/main.mjs              # 输出 listening on http://127.0.0.1:43
 用 `BAOX_DATA_DIR` 指一个**专给 QA 用的数据目录**：驱动会作废遗留的未完成任务，别指着日常数据。
 第一次启动后在页面上创建管理员 `admin / admin123`（或用下面的 `QA_USER` / `QA_PASSWORD` 换成你自己的）。
 
-项目簿那一段用的是 `P-2307`、`P-3312` 等演示项目号。不想连真实 ERP 查项目号时，加上：
+The project-book section enters explicit numbers and names offline, including `P-2307` and `P-3312`, and checks duplicate and unsafe-number feedback. No ERP session or catalog fixture is needed to reach project assignment and whole-list confirmation. The administrator section uses a separate `QA-PUBLIC` number so it does not silently convert a member's personal entry.
+
+For later ERP checks against demonstration project numbers, the existing optional catalog fixture remains available:
 
 ```bash
 BAOX_PROJECT_CATALOG_FIXTURE=$PWD/server/src/catalog/testing/projects.fixture.json
 ```
 
-**不加这一项、又没有已核对的报销系统身份时**，个人项目簿会拒绝录入（这是对的），项目归属也就没有项目可选；
-驱动会把这两处记成 `WARN` 并说明这一段没跑到，不会记成缺陷。要走通 项目归属 → 整单明细确认 → 打印稿，
-就得让项目号查得到：要么上面这个 fixture，要么一个已登录的报销系统浏览器。
+This fixture does not make local intake ERP-verified. The operator-only ERP sections retain their existing session and environment requirements.
 
 ## 2. 驱动认的环境变量
 

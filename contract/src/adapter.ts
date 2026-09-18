@@ -1,7 +1,7 @@
 import type { ActionError, AssignProjectLinesInput, CreateTaskInput, PlacementSlot, ProjectAssignmentInput } from './actions';
 import type { AccountList, AccountListOutcome, AccountUpdateInput, AuthOutcome, ChangePasswordInput, CredentialsInput, Session } from './auth';
 import type { LegacyImport, LegacyImportOutcome } from './legacy-import';
-import type { ProjectBook, ProjectBookResult } from './project-book';
+import type { ProjectBook, ProjectBookEditInput, ProjectBookIntakeInput, ProjectBookLifecycleInput, ProjectBookResult, PublicProjectConversionInput } from './project-book';
 import type { Corners, PendingAnswer, TaskSnapshot } from './snapshot';
 import type { TaskList } from './task-list';
 
@@ -58,7 +58,8 @@ export function isUnauthenticated(error: unknown): boolean {
 }
 
 export interface AppAdapter {
-  // 应用账号（ADR-0018）：当前会话；还没有账号时只能创建管理员，之后可以注册与登录。成功都返回新会话。
+  // App accounts (应用账号, ADR-0018): the first account is an authorized administrator. Later registration
+  // submits a pending application and returns a signed-out session; administrator approval is required for login.
   getSession(): Promise<Session>;
   setupAdmin(input: CredentialsInput): Promise<AuthOutcome>;
   register(input: CredentialsInput): Promise<AuthOutcome>;
@@ -69,24 +70,29 @@ export interface AppAdapter {
   abandonTask(taskId: string): Promise<TaskListOutcome>;
   // 完全重置：清空当前账号自己的数据（任务、项目簿、常驻城市），返回重置后的任务列表；别的账号与登录状态不变。
   resetAll(): Promise<TaskListOutcome>;
-  // 个人项目簿（任务之外，按应用账号分簿）：读取、录入（只给项目号，服务端核验后带回名称）、删除、清理全部失效、复检全部。
-  // 动作后受影响任务的项目允许列表随事件流更新。
+  // Personal project books (个人项目簿) are outside tasks and scoped to an app account. Members enter a number and
+  // name explicitly; affected task options update through the event stream.
   getProjectBook(): Promise<ProjectBook>;
-  intakeProject(number: string): Promise<ProjectBookOutcome>;
-  removeProject(number: string): Promise<ProjectBookOutcome>;
-  purgeInvalidProjects(): Promise<ProjectBookOutcome>;
-  recheckProjects(): Promise<ProjectBookOutcome>;
+  intakeProject(input: ProjectBookIntakeInput): Promise<ProjectBookOutcome>;
+  editProject(input: ProjectBookEditInput): Promise<ProjectBookOutcome>;
+  deactivateProject(input: ProjectBookLifecycleInput): Promise<ProjectBookOutcome>;
+  restoreProject(input: ProjectBookLifecycleInput): Promise<ProjectBookOutcome>;
+  deleteProject(input: ProjectBookLifecycleInput): Promise<ProjectBookOutcome>;
   // 改密码（#194）：用临时密码登录后必须先改；成功返回新会话（signed_in）。
   changePassword(input: ChangePasswordInput): Promise<AuthOutcome>;
   // 管理员的账号管理：列出账号；设为管理员 / 取消管理员、停用 / 启用、设置临时密码，一次一项，成功返回新的账号列表。
   // 取消或停用最后一位在用的管理员会被拒绝（last_admin）。非管理员一律 403 forbidden。
   listAccounts(): Promise<AccountList>;
   updateAccount(accountId: string, change: AccountUpdateInput): Promise<AccountListOutcome>;
-  // 公共项目簿：所有账号可读；录入、停用、复检只对管理员开放。结果形状同个人项目簿。
+  // The public project book (公共项目簿) is readable by every account; only administrators may maintain it. Its
+  // result shape matches a personal project book.
   getPublicProjectBook(): Promise<ProjectBook>;
-  intakePublicProject(number: string): Promise<ProjectBookOutcome>;
-  removePublicProject(number: string): Promise<ProjectBookOutcome>;
-  recheckPublicProjects(): Promise<ProjectBookOutcome>;
+  intakePublicProject(input: ProjectBookIntakeInput): Promise<ProjectBookOutcome>;
+  editPublicProject(input: ProjectBookEditInput): Promise<ProjectBookOutcome>;
+  confirmPublicProjectConversion(input: PublicProjectConversionInput): Promise<ProjectBookOutcome>;
+  deactivatePublicProject(input: ProjectBookLifecycleInput): Promise<ProjectBookOutcome>;
+  restorePublicProject(input: ProjectBookLifecycleInput): Promise<ProjectBookOutcome>;
+  deletePublicProject(input: ProjectBookLifecycleInput): Promise<ProjectBookOutcome>;
   // 旧数据导入（ADR-0018，只在创建第一个管理员时跑一次）：读这个账号看到的导入结果；旧数据损坏时报告里有逐个文件的原因，
   // 由这个账号修好后重试，或明确跳过。跳过之后导入就此结束。
   getLegacyImport(): Promise<LegacyImport>;

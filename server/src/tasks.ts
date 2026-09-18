@@ -43,7 +43,6 @@ import { inventoried, isNonTerminal, parseRunning, project, stepToken, type Task
 import { rejectByShape, rejectReason, storedMime } from './upload-rules';
 import { assignmentOf, checkAssign, checkSubmit, linesDigest, type Assignment, type AssignmentFact, type PinnedProject } from './assignment';
 import { bookOptions, createBookService, type BookOption } from './books';
-import { unavailableCatalog } from './catalog/project-catalog';
 import { COMPANY_RULES, pinnedCompanyRules, putRuleSet, validHomeCity, type CompanyRules } from './rules/company-rules';
 import { rememberedHomeCity, rememberHomeCity } from './settings';
 import { confirmationDigest, confirmationStatus, confirmationView, type ConfirmationDigest, type ConfirmationFact } from './confirmation';
@@ -490,7 +489,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     // A task that touched ERP, or one whose job is running or holds the lease, is left exactly as it is: reset is a
     // bulk abandon and may never release invoices the abandon action itself refuses to release (ADR-0007, story 21).
     async resetAll(): Promise<TaskList> {
-      await createBookService(db, { scope: 'personal', ownerAccountId: accountId }, accountId, unavailableCatalog()).clear();
+      await createBookService(db, { scope: 'personal', ownerAccountId: accountId }, accountId).clear();
       if ((await rememberedHomeCity(db, accountId)) !== null) await rememberHomeCity(db, accountId, null, 'reset', now());
       const open = await db.selectFrom('task').select('task_id').where('account_id', '=', accountId).where('lifecycle', '=', 'open').execute();
       for (const { task_id } of open) {
@@ -994,6 +993,7 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
     files: batchFiles(batch.batch_id, materials, rejections),
   }));
   return {
+    revision: task.revision,
     task: { taskId: task.task_id, name: task.name, period: null, homeCity, createdAt: task.created_at, updatedAt: task.updated_at },
     stage,
     batches: batchViews,

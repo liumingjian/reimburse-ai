@@ -57,7 +57,7 @@ beforeEach(async () => {
   fillRuns = 0;
   server = await createTestServer({ projectCatalog: CATALOG, erpExecutor: fillExecutor, reconcileExecutor, erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY } });
   alice = await server.signIn('alice');
-  expect((await alice.post('/api/project-book/intake', { number: 'P-2307' })).status).toBe(200);
+  expect((await alice.post('/api/project-book/intake', { number: 'P-2307', name: '华东客户交付' })).status).toBe(200);
 });
 afterEach(() => server.close());
 const client = api(() => alice);
@@ -205,7 +205,7 @@ describe('crash recovery', () => {
     };
     const first = await createTestServer({ projectCatalog: CATALOG, erpExecutor: dying, database, dataDir: dir });
     const owner = await first.signIn('alice');
-    expect((await owner.post('/api/project-book/intake', { number: 'P-2307' })).status).toBe(200);
+    expect((await owner.post('/api/project-book/intake', { number: 'P-2307', name: '华东客户交付' })).status).toBe(200);
     const firstClient = api(() => owner);
     const { task } = await firstClient.createTask('杭州');
     const uploaded = await firstClient.upload(task.taskId, [sample('m01'), sample('m02')]);

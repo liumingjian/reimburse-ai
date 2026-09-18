@@ -23,7 +23,7 @@ import { SERVICE_UNAVAILABLE_CODE, SERVICE_UNAVAILABLE_MESSAGE, createBus } from
 import { buildPrintSheet } from './fixtures/print';
 import { HOME_CITY } from './fixtures/projects';
 import { T1_ID, emptySnapshot, t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from './fixtures/tasks';
-import { createProjectBook } from './project-book';
+import { createMockBookState, createProjectBook } from './project-book';
 import { createPublicBook } from './public-book';
 import { MOCK_ACCOUNT, createAuth } from './auth';
 import { createErpFlow } from './flows/erp';
@@ -66,7 +66,19 @@ const LEGACY_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(
 // 作废与重置的失败形状带 taskList 而不是 snapshot；账号动作只有 error；项目簿维护动作带 book。
 const LIST_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['abandonTask', 'resetAll']);
 const AUTH_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['setupAdmin', 'register', 'login', 'logout', 'changePassword']);
-const BOOK_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['intakeProject', 'removeProject', 'purgeInvalidProjects', 'recheckProjects', 'intakePublicProject', 'removePublicProject', 'recheckPublicProjects']);
+const BOOK_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>([
+  'intakeProject',
+  'editProject',
+  'deactivateProject',
+  'restoreProject',
+  'deleteProject',
+  'intakePublicProject',
+  'editPublicProject',
+  'confirmPublicProjectConversion',
+  'deactivatePublicProject',
+  'restorePublicProject',
+  'deletePublicProject',
+]);
 const ACCOUNT_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['updateAccount']);
 
 export function createMockAdapter(options: MockOptions): MockAdapter {
@@ -84,9 +96,11 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const owners = new Map<string, string>();
   const ownedByCurrent = (taskId: string) => (owners.get(taskId) ?? MOCK_ACCOUNT.accountId) === auth.account()?.accountId;
   // 个人项目簿：任务进入项目归属时的允许列表跟随它；夹具 T1 按当前项目簿整理（`?book=empty` 下先走维护门）。
-  const book = createProjectBook(options, bus, auth);
-  const publicBook = createPublicBook(auth, () => bus.now());
-  bus.useProjectAllowList(book.allowList);
+  const bookState = createMockBookState(options, MOCK_ACCOUNT.accountId);
+  const ownerOfTask = (taskId: string) => owners.get(taskId) ?? MOCK_ACCOUNT.accountId;
+  const book = createProjectBook(options, bus, auth, bookState, ownerOfTask);
+  const publicBook = createPublicBook(auth, bookState, book.refreshAllTasks);
+  bus.useProjectAllowList((taskId) => book.allowList(taskId));
   book.prepareSeed(T1_ID);
 
   const inventory = createInventoryFlow(bus);
@@ -157,9 +171,10 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     },
     getProjectBook: book.getProjectBook,
     intakeProject: book.intakeProject,
-    removeProject: book.removeProject,
-    purgeInvalidProjects: book.purgeInvalidProjects,
-    recheckProjects: book.recheckProjects,
+    editProject: book.editProject,
+    deactivateProject: book.deactivateProject,
+    restoreProject: book.restoreProject,
+    deleteProject: book.deleteProject,
     // 作废或重置掉的任务不再能打开（深链接也一样）：和不存在的任务同样报错。
     async getSnapshot(taskId) {
       if (hidden.has(taskId) || !ownedByCurrent(taskId)) throw new Error(`任务 ${taskId} 不存在`);
@@ -181,7 +196,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
       owners.set(taskId, account.accountId);
       auth.rememberCity(homeCity);
       bus.autoNamed.add(taskId);
-      return bus.commit(emptySnapshot({ taskId, name: `${at.slice(0, 10)} 新建报销`, period: null, homeCity, createdAt: at, updatedAt: at }, 'upload'));
+      return bus.commit(emptySnapshot({ taskId, name: `${at.slice(0, 10)} 新建报销`, period: null, homeCity, createdAt: at, updatedAt: at }, 'upload'), false);
     },
     uploadBatch: inventory.uploadBatch,
     startInventory: inventory.startInventory,

@@ -49,13 +49,30 @@ describe('登录门：应用账号', () => {
     expect(window.location.hash).toBe('#/task/T1/upload');
   });
 
-  test('注册一个新账号：只看得到自己的任务；退出登录回到登录页', async () => {
-    renderAt('#/tasks', { auth: 'signed-out' });
+  test('registration stays signed out until an administrator approves it, then the user can log in to an isolated task list', async () => {
+    const adapter = renderAt('#/tasks', { auth: 'signed-out' });
     await heading(AUTH_COPY.loginTitle);
     fireEvent.click(screen.getByRole('button', { name: AUTH_COPY.toRegister }));
     await heading(AUTH_COPY.registerTitle);
     fill('张三', 'correct horse');
     fireEvent.click(screen.getByRole('button', { name: AUTH_COPY.registerSubmit }));
+    await heading(AUTH_COPY.loginTitle);
+    expect(await screen.findByText(AUTH_COPY.registrationPending)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '退出登录' })).toBeNull();
+
+    fill('张三', 'correct horse');
+    fireEvent.click(screen.getByRole('button', { name: AUTH_COPY.loginSubmit }));
+    expect(await screen.findByText(AUTH_ERRORS.pendingApproval)).toBeTruthy();
+
+    const adminLogin = await adapter.login({ username: '林颂宜', password: MOCK_PASSWORD });
+    expect(adminLogin.ok).toBe(true);
+    const pending = (await adapter.listAccounts()).accounts.find((account) => account.username === '张三');
+    if (!pending) throw new Error('pending account was not listed');
+    expect((await adapter.updateAccount(pending.accountId, { approved: true })).ok).toBe(true);
+    await adapter.logout();
+
+    fill('张三', 'correct horse');
+    fireEvent.click(screen.getByRole('button', { name: AUTH_COPY.loginSubmit }));
     await heading('报销任务');
     expect(await screen.findByRole('heading', { name: '还没有报销任务' })).toBeTruthy();
 

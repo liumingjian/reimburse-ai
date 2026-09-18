@@ -1,80 +1,134 @@
-import { ADMIN_ERRORS, FORBIDDEN_CODE, PROJECT_BOOK_NOTES, PUBLIC_PROJECT_BOOK_NOTES, type AppAdapter, type ProjectBook, type ProjectBookEntry, type ProjectBookOutcome, type ProjectBookResult } from '@baox/contract';
+import { ADMIN_ERRORS, AUTH_ERRORS, FORBIDDEN_CODE, PROJECT_BOOK_NOTES, UNAUTHENTICATED_CODE, type AppAdapter, type ProjectBook, type ProjectBookEditInput, type ProjectBookIntakeInput, type ProjectBookLifecycleInput, type ProjectBookOutcome, type ProjectBookResult, type PublicProjectConversionInput } from '@baox/contract';
 import type { MockAuth } from './auth';
-import { MOCK_TODAY, annotateProject, isSafeProjectNumber, verifyProjectNumber, type StoredProject } from './fixtures/projects';
+import { MOCK_TODAY, annotateProject, isSafeProjectNumber } from './fixtures/projects';
+import type { MockBookState } from './project-book';
 
-// mock 服务端的公共项目簿（#194）：所有账号可读，只有管理员能录入、停用、复检。删除即停用：条目留在簿里，状态「已停用」。
-// 简化：mock 里公共项目不进入任务的项目允许列表（真实服务端会并排给出）；公共项目簿从空开始，只存在内存里。
+// Public entries are visible to every signed-in account. A public number reserves that number globally, while a
+// personal collision stays intentionally generic and identifies only the personal book, never its owner.
 
-export type PublicBookService = Pick<AppAdapter, 'getPublicProjectBook' | 'intakePublicProject' | 'removePublicProject' | 'recheckPublicProjects'>;
+export type PublicBookService = Pick<AppAdapter, 'getPublicProjectBook' | 'intakePublicProject' | 'editPublicProject' | 'confirmPublicProjectConversion' | 'deactivatePublicProject' | 'restorePublicProject' | 'deletePublicProject'>;
 
-type Stored = StoredProject & { deactivated: boolean };
+const EMPTY_BOOK: ProjectBook = { projects: [] };
 
-const say = (note: string) => note.replaceAll('个人项目簿', '公共项目簿');
-
-function annotate(project: Stored): ProjectBookEntry {
-  if (!project.deactivated) return annotateProject(project, MOCK_TODAY);
-  return { ...annotateProject(project, MOCK_TODAY), selectable: false, statusLabel: '已停用', statusNote: '管理员已在公共项目簿停用这个项目，不能再选' };
-}
-
-export function createPublicBook(auth: MockAuth, now: () => string): PublicBookService {
-  let projects: Stored[] = [];
-  const bookNow = (): ProjectBook => ({ projects: projects.map(annotate) });
-  const done = (status: ProjectBookResult['status'], note: string, verdict: ProjectBookResult['verdict'] = null): ProjectBookOutcome => ({ ok: true, result: { status, verdict, note: say(note), book: bookNow() } });
-  const gate = (): ProjectBookOutcome | null => {
-    const account = auth.account();
-    if (!account) return done('not_logged_in', PROJECT_BOOK_NOTES.maintainNotLoggedIn);
-    return account.role === 'admin' ? null : { ok: false, error: { code: FORBIDDEN_CODE, message: ADMIN_ERRORS.forbidden }, book: bookNow() };
-  };
+export function createPublicBook(auth: MockAuth, state: MockBookState, refreshAllTasks: () => void): PublicBookService {
+  const bookNow = (): ProjectBook => ({ projects: state.publicProjects.map((project) => annotateProject(project, MOCK_TODAY)) });
+  const say = (note: string) => note.replaceAll('个人项目簿', '公共项目簿');
+  const done = (status: ProjectBookResult['status'], note: string, verdict: ProjectBookResult['verdict'] = null, localizeBookName = true): ProjectBookOutcome => ({ ok: true, result: { status, verdict, note: localizeBookName ? say(note) : note, book: bookNow() } });
+  const unauthenticated = (): ProjectBookOutcome => ({ ok: false, error: { code: UNAUTHENTICATED_CODE, message: AUTH_ERRORS.unauthenticated }, book: null });
+  const forbidden = (): ProjectBookOutcome => ({ ok: false, error: { code: FORBIDDEN_CODE, message: ADMIN_ERRORS.forbidden }, book: bookNow() });
 
   return {
-    getPublicProjectBook: async () => (auth.account() ? bookNow() : { projects: [] }),
-    async intakePublicProject(number) {
-      const blocked = gate();
-      if (blocked) return blocked;
-      const trimmed = number.trim();
-      if (!trimmed || !isSafeProjectNumber(trimmed)) return done('rejected', PROJECT_BOOK_NOTES.unsafe(trimmed), 'unsafe');
-      const verdict = verifyProjectNumber(trimmed);
-      switch (verdict.verdict) {
-        case 'failed':
-          return done('query_failed', PROJECT_BOOK_NOTES.intakeQueryFailed(verdict.reason));
-        case 'missing':
-          return done('rejected', PROJECT_BOOK_NOTES.missing(trimmed), 'missing');
-        case 'ambiguous':
-          return done('rejected', PROJECT_BOOK_NOTES.ambiguous(trimmed, verdict.count), 'ambiguous');
-        case 'unusable':
-          return done('rejected', PROJECT_BOOK_NOTES.unusable(trimmed, verdict.name), 'unusable');
-        case 'confirmed': {
-          const entry: Stored = { number: trimmed, name: verdict.name, expiresOn: null, lastCheckedAt: now(), lastVerdict: 'confirmed', deactivated: false };
-          projects = projects.some((project) => project.number === trimmed) ? projects.map((project) => (project.number === trimmed ? entry : project)) : [...projects, entry];
-          return done('admitted', PROJECT_BOOK_NOTES.admitted(trimmed, entry.name));
-        }
+    getPublicProjectBook: async () => (auth.account() ? bookNow() : EMPTY_BOOK),
+    async intakePublicProject(input: ProjectBookIntakeInput) {
+      const account = auth.account();
+      if (!account) return unauthenticated();
+      if (account.role !== 'admin') return forbidden();
+      const number = input.number.trim();
+      const name = input.name.trim();
+      if (number === '') return done('rejected', PROJECT_BOOK_NOTES.numberRequired);
+      if (!isSafeProjectNumber(number)) return done('rejected', PROJECT_BOOK_NOTES.unsafe(number), 'unsafe');
+      if (name === '') return done('rejected', PROJECT_BOOK_NOTES.nameRequired);
+      if (state.publicProjects.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.duplicate(number));
+      if ([...state.personalByAccount.values()].some((projects) => projects.some((project) => project.number === number))) {
+        return done('conversion_required', PROJECT_BOOK_NOTES.conversionRequired(number), null, false);
       }
+
+      state.publicProjects = [...state.publicProjects, { number, name, expiresOn: null, lastCheckedAt: null, lastVerdict: 'local', active: true }];
+      refreshAllTasks();
+      return done('admitted', PROJECT_BOOK_NOTES.admitted(number, name));
     },
-    async removePublicProject(number) {
-      const blocked = gate();
-      if (blocked) return blocked;
-      const trimmed = number.trim();
-      const found = projects.find((project) => project.number === trimmed && !project.deactivated);
-      if (!found) return done('not_found', PROJECT_BOOK_NOTES.notFound(trimmed));
-      projects = projects.map((project) => (project === found ? { ...project, deactivated: true } : project));
-      return done('removed', PUBLIC_PROJECT_BOOK_NOTES.deactivated(found.number, found.name));
+
+    async deactivatePublicProject(input: ProjectBookLifecycleInput) {
+      const account = auth.account();
+      if (!account) return unauthenticated();
+      if (account.role !== 'admin') return forbidden();
+      const number = input.number.trim();
+      const entry = state.publicProjects.find((project) => project.number === number);
+      if (!entry) return done('rejected', PROJECT_BOOK_NOTES.notFound(number));
+      if (entry.active === false) return done('rejected', PROJECT_BOOK_NOTES.alreadyInactive(number));
+      state.publicProjects = state.publicProjects.map((project) => (project.number === number ? { ...project, active: false } : project));
+      refreshAllTasks();
+      return done('deactivated', PROJECT_BOOK_NOTES.deactivated(number));
     },
-    async recheckPublicProjects() {
-      const blocked = gate();
-      if (blocked) return blocked;
-      const live = projects.filter((project) => !project.deactivated);
-      if (live.length === 0) return done('empty', PROJECT_BOOK_NOTES.recheckEmpty);
-      for (const project of live) {
-        const verdict = verifyProjectNumber(project.number);
-        if (verdict.verdict === 'failed') return done('query_failed', PROJECT_BOOK_NOTES.recheckQueryFailed(verdict.reason));
+
+    async deletePublicProject(input: ProjectBookLifecycleInput) {
+      const account = auth.account();
+      if (!account) return unauthenticated();
+      if (account.role !== 'admin') return forbidden();
+      const number = input.number.trim();
+      if (!state.publicProjects.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.notFound(number));
+      state.publicProjects = state.publicProjects.filter((project) => project.number !== number);
+      refreshAllTasks();
+      return done('deleted', PROJECT_BOOK_NOTES.deleted(number));
+    },
+
+    async restorePublicProject(input: ProjectBookLifecycleInput) {
+      const account = auth.account();
+      if (!account) return unauthenticated();
+      if (account.role !== 'admin') return forbidden();
+      const number = input.number.trim();
+      const entry = state.publicProjects.find((project) => project.number === number);
+      if (!entry) return done('rejected', PROJECT_BOOK_NOTES.notFound(number));
+      if (entry.active !== false) return done('rejected', PROJECT_BOOK_NOTES.alreadyActive(number));
+      state.publicProjects = state.publicProjects.map((project) => (project.number === number ? { ...project, active: true } : project));
+      refreshAllTasks();
+      return done('restored', PROJECT_BOOK_NOTES.restored(number));
+    },
+
+    async editPublicProject(input: ProjectBookEditInput) {
+      const account = auth.account();
+      if (!account) return unauthenticated();
+      if (account.role !== 'admin') return forbidden();
+      const originalNumber = input.originalNumber.trim();
+      const number = input.number.trim();
+      const name = input.name.trim();
+      if (number === '') return done('rejected', PROJECT_BOOK_NOTES.numberRequired);
+      if (!isSafeProjectNumber(number)) return done('rejected', PROJECT_BOOK_NOTES.editUnsafe(number).replace('个人项目簿', '公共项目簿'), 'unsafe');
+      if (name === '') return done('rejected', PROJECT_BOOK_NOTES.nameRequired);
+      const index = state.publicProjects.findIndex((project) => project.number === originalNumber);
+      if (index < 0) return done('rejected', PROJECT_BOOK_NOTES.editMissing(originalNumber).replace('个人项目簿', '公共项目簿'));
+      if (number !== originalNumber && state.publicProjects.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.editDuplicate(number).replace('个人项目簿', '公共项目簿'));
+      if (number !== originalNumber && [...state.personalByAccount.values()].some((projects) => projects.some((project) => project.number === number))) {
+        return done('conversion_required', PROJECT_BOOK_NOTES.conversionRequired(number), null, false);
       }
-      const at = now();
-      projects = projects.map((project) => {
-        if (project.deactivated) return project;
-        const verdict = verifyProjectNumber(project.number);
-        return { ...project, ...(verdict.verdict === 'confirmed' ? { name: verdict.name } : {}), lastVerdict: verdict.verdict, lastCheckedAt: at };
-      });
-      return done('done', PROJECT_BOOK_NOTES.recheckDone(live.length, projects.map(annotate).filter((project) => !project.selectable).length));
+
+      const existing = state.publicProjects[index]!;
+      state.publicProjects = state.publicProjects.map((project, projectIndex) => (projectIndex === index ? { ...existing, number, name } : project));
+      refreshAllTasks();
+      return done('edited', PROJECT_BOOK_NOTES.edited(originalNumber, number, name).replace('个人项目簿', '公共项目簿'));
+    },
+
+    async confirmPublicProjectConversion(input: PublicProjectConversionInput) {
+      const account = auth.account();
+      if (!account) return unauthenticated();
+      if (account.role !== 'admin') return forbidden();
+      const number = input.number.trim();
+      const name = input.name.trim();
+      if (number === '') return done('rejected', PROJECT_BOOK_NOTES.numberRequired);
+      if (!isSafeProjectNumber(number)) return done('rejected', PROJECT_BOOK_NOTES.unsafe(number), 'unsafe');
+      if (name === '') return done('rejected', PROJECT_BOOK_NOTES.nameRequired);
+
+      if (input.operation === 'intake') {
+        if (state.publicProjects.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.duplicate(number));
+      } else {
+        const originalNumber = input.originalNumber.trim();
+        const existing = state.publicProjects.find((project) => project.number === originalNumber);
+        if (!existing) return done('rejected', PROJECT_BOOK_NOTES.editMissing(originalNumber));
+        if (number === originalNumber || existing.name !== input.originalName || existing.active !== input.originalActive) return done('rejected', PROJECT_BOOK_NOTES.conversionStale, null, false);
+        if (state.publicProjects.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.editDuplicate(number));
+      }
+
+      const personalMatches = [...state.personalByAccount.entries()].filter(([, projects]) => projects.some((project) => project.number === number));
+      if (personalMatches.length === 0) return done('rejected', PROJECT_BOOK_NOTES.conversionStale, null, false);
+      if (input.operation === 'intake') {
+        state.publicProjects = [...state.publicProjects, { number, name, expiresOn: null, lastCheckedAt: null, lastVerdict: 'local', active: true }];
+      } else {
+        const originalNumber = input.originalNumber.trim();
+        state.publicProjects = state.publicProjects.map((project) => (project.number === originalNumber ? { ...project, number, name } : project));
+      }
+      for (const [accountId, projects] of personalMatches) state.personalByAccount.set(accountId, projects.filter((project) => project.number !== number));
+      refreshAllTasks();
+      return done('converted', PROJECT_BOOK_NOTES.converted(number, name), null, false);
     },
   };
 }

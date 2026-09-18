@@ -22,9 +22,6 @@ const SKIP = new Set(
 );
 const PURPOSE = '广州本地用车费用报销（QA）';
 
-// The app's own wording for "no verified 报销系统 identity" (contract/src/project-book.ts).
-const NO_ERP_IDENTITY = /没有已核对的报销系统身份/;
-
 // A 1x1 PNG, enough to stand in for a payment screenshot.
 const PNG_1X1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -644,48 +641,27 @@ async function qaProjectBook(page, state) {
   await expect(page.getByRole('heading', { name: '个人项目簿', level: 1 })).toBeVisible({ timeout: 15000 });
 
   const message = page.getByTestId('book-message');
-  const intake = async (number) => {
-    await page.getByLabel('项目号').fill(number);
-    await page.getByRole('button', { name: '核验并加入' }).click();
+  const intake = async (number, name) => {
+    await page.getByLabel('项目号', { exact: true }).fill(number);
+    await page.getByLabel('项目名称', { exact: true }).fill(name);
+    await page.getByRole('button', { name: '加入项目', exact: true }).click();
     await page.waitForTimeout(2500);
     const text = (await message.innerText().catch(() => '(no message)')).replace(/\s+/g, ' ');
     ok('project-book', `«${number}» → ${text}`);
     return text;
   };
 
-  const good = await intake('P-2307');
-  // 个人项目簿 (personal project book, 原文 个人项目簿) only takes a number the 报销系统 catalog confirmed, and
-  // the catalog is only reachable through a verified 报销系统 identity. A pass that skips ERP has none, so this
-  // refusal is the app holding its own line, not a defect — and nothing further in this area can be judged.
-  if (NO_ERP_IDENTITY.test(good)) {
-    warn('project-book', 'the project book refuses entry without a verified 报销系统 identity, so this area could not be exercised (run with a project-catalog fixture or a signed-in ERP browser to reach it)');
-    await shot(page, 'project-book-no-identity');
-    return;
-  }
-  if (!good.includes('已加入')) defect('project-book', `P-2307 should be admitted but the app said: ${good}`);
-  await intake('P-3312');
-
-  const forbidden = await intake('P-9001');
-  if (forbidden.includes('已加入') && !/停用|不可选|失效/.test(forbidden)) {
-    defect('project-book', `P-9001 is forbidden in the catalog but was admitted as usable: ${forbidden}`);
-  }
-
-  const missing = await intake('P-0000');
-  if (!/查不到|没有加入/.test(missing)) defect('project-book', `an unknown project number was not refused: ${missing}`);
-
-  const unsafe = await intake('P-12;');
-  if (!/不能安全查询|没有加入/.test(unsafe)) defect('project-book', `an unsafe project number was not refused: ${unsafe}`);
-
+  // Offline intake needs no ERP session. A repeat QA run may find its prior entry, which must not be overwritten.
+  const good = await intake('P-2307', '华东客户交付');
+  if (!/已加入|已记录/.test(good)) defect('project-book', `P-2307 should be admitted or already recorded: ${good}`);
+  await intake('P-3312', '产品调研');
+  const local = await intake('QA-LOCAL', '离线维护测试项目');
+  if (!/已加入|已记录/.test(local)) defect('project-book', `safe local project was not recorded: ${local}`);
+  const duplicate = await intake('P-2307', '不应覆盖的重复名称');
+  if (!duplicate.includes('已记录')) defect('project-book', `duplicate intake was not refused: ${duplicate}`);
+  const unsafe = await intake('P-12;', '非法项目号');
+  if (!unsafe.includes('不能安全')) defect('project-book', `unsafe project number was not refused: ${unsafe}`);
   await shot(page, 'project-book');
-
-  const recheck = page.getByRole('button', { name: '复检全部' });
-  if (await visible(recheck, 3000)) {
-    await recheck.click();
-    await page.waitForTimeout(3000);
-    ok('project-book', `复检全部 → ${(await message.innerText().catch(() => '')).replace(/\s+/g, ' ')}`);
-  } else {
-    warn('project-book', 'no 复检全部 button');
-  }
   void state;
 }
 
@@ -1009,16 +985,17 @@ async function qaAdmin(page) {
     defect('admin', 'the 应用账号 table is missing');
   }
 
-  const publicBook = page.getByRole('region', { name: '公共项目簿' });
+  const publicBook = page.getByRole('region', { name: '公共项目簿', exact: true }).filter({ has: page.getByLabel('项目名称', { exact: true }) });
   if (await visible(publicBook, 8000)) {
-    await publicBook.getByLabel('项目号').fill('P-3312');
-    await publicBook.getByRole('button', { name: '核验并加入' }).click();
+    await publicBook.getByLabel('项目号', { exact: true }).fill('QA-PUBLIC');
+    await publicBook.getByLabel('项目名称', { exact: true }).fill('公共维护测试项目');
+    await publicBook.getByRole('button', { name: '加入项目', exact: true }).click();
     await page.waitForTimeout(3000);
     const msg = (await publicBook.getByTestId('book-message').innerText().catch(() => '')).replace(/\s+/g, ' ');
     ok('admin', `public book intake: ${msg}`);
     if (!msg.includes('公共项目簿')) defect('admin', `adding to the public book did not confirm: ${msg}`);
     if (await visible(publicBook.getByRole('button', { name: '清理全部失效' }), 2000)) {
-      defect('admin', 'the public book offers 清理全部失效, which belongs to the personal book only');
+      defect('admin', 'the public book unexpectedly offers destructive bulk cleanup');
     }
   } else {
     defect('admin', 'the 公共项目簿 section is missing from the admin page');

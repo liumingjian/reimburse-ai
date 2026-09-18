@@ -306,10 +306,11 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
       }
       return parseProjectBookResponse(response.status, await readJson(response));
     },
-    intakeProject: (number) => bookAction(url(E.intakeProject.path), { number }),
-    removeProject: (number) => bookAction(url(E.removeProject.path), { number }),
-    purgeInvalidProjects: () => bookAction(url(E.purgeInvalidProjects.path), {}),
-    recheckProjects: () => bookAction(url(E.recheckProjects.path), {}),
+    intakeProject: (input) => bookAction(url(E.intakeProject.path), input),
+    editProject: (input) => bookAction(url(E.editProject.path), input),
+    deactivateProject: (input) => bookAction(url(E.deactivateProject.path), input),
+    restoreProject: (input) => bookAction(url(E.restoreProject.path), input),
+    deleteProject: (input) => bookAction(url(E.deleteProject.path), input),
     changePassword: (input) => authAction(url(E.changePassword.path), input),
     async listAccounts() {
       let response: Response;
@@ -338,9 +339,12 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
       }
       return parseProjectBookResponse(response.status, await readJson(response));
     },
-    intakePublicProject: (number) => bookAction(url(E.intakePublicProject.path), { number }),
-    removePublicProject: (number) => bookAction(url(E.removePublicProject.path), { number }),
-    recheckPublicProjects: () => bookAction(url(E.recheckPublicProjects.path), {}),
+    intakePublicProject: (input) => bookAction(url(E.intakePublicProject.path), input),
+    editPublicProject: (input) => bookAction(url(E.editPublicProject.path), input),
+    confirmPublicProjectConversion: (input) => bookAction(url(E.confirmPublicProjectConversion.path), input),
+    deactivatePublicProject: (input) => bookAction(url(E.deactivatePublicProject.path), input),
+    restorePublicProject: (input) => bookAction(url(E.restorePublicProject.path), input),
+    deletePublicProject: (input) => bookAction(url(E.deletePublicProject.path), input),
     async getLegacyImport() {
       let response: Response;
       try {

@@ -185,11 +185,11 @@ test('提交：未归属或事由为空时不可用；提交后自动核对报�
   await expect(page).toHaveURL(/#\/task\/T1\/review$/);
 });
 
-test('在项目簿删除本任务已用的项目：提交仍通过；这个项目「已锁定」，勾选明细后面板里也不能点它', async ({ page }, testInfo) => {
+test('deactivating a submitted project preserves its snapshot and prevents new assignments', async ({ page }, testInfo) => {
   await page.goto(open('?seed=review', '#/projects'));
   await expect(page.getByRole('heading', { name: '个人项目簿', level: 1 })).toBeVisible();
-  await page.getByRole('button', { name: '删除 P-2307' }).click();
-  await expect(page.getByTestId('book-row-P-2307')).toHaveCount(0);
+  await page.getByTestId('book-row-P-2307').getByRole('button', { name: '停用项目 P-2307' }).click();
+  await expect(page.getByTestId('book-row-P-2307')).toContainText('已停用');
 
   await jump(page, '#/task/T1/project');
   await expect(page.getByRole('heading', { name: '项目归属' })).toBeVisible();

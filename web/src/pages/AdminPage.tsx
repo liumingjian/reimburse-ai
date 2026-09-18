@@ -9,12 +9,12 @@ import { PageHeader } from '../shell/PageHeader';
 import { StatusTag } from '../shell/StatusTag';
 import { ProjectBookPanel } from './ProjectBookPanel';
 
-// 管理页 `#/admin`（#194，ADR-0018）：只有管理员看得到入口。上半是账号管理：设为管理员 / 取消管理员、停用 / 启用、
-// 设置临时密码（对方下次登录必须先改密码）；账号只停用、不删除。下半是公共项目簿维护面板。
-// 能否执行都由服务端判定（例如不能取消或停用最后一位管理员），页面只显示结果与原因。
+// The #/admin page (管理页, #194, ADR-0018) is visible only to administrators. It manages approval, roles,
+// activation, and temporary passwords; accounts are deactivated rather than deleted. The public book panel follows.
+// The server decides whether each action is valid, such as preserving the last active administrator.
 export const ADMIN_COPY = {
   title: '管理',
-  lead: '管理这台电脑上的应用账号和所有人共用的公共项目簿。账号只停用、不删除，停用账号的任务与记录都会保留。',
+  lead: '管理这台电脑上的应用账号和所有人共用的公共项目簿。新注册账号要先批准；账号只停用、不删除，停用账号的任务与记录都会保留。',
   accountsTitle: '应用账号',
   onlyAdmins: '只有管理员可以打开这个页面。',
   loading: '正在读取账号…',
@@ -23,6 +23,9 @@ export const ADMIN_COPY = {
   roleUser: '用户',
   active: '在用',
   inactive: '已停用',
+  pendingApproval: '待审批',
+  approve: '批准',
+  approvalDone: (username: string) => `已批准 ${username} 的注册申请。`,
   mustChange: '待改密码',
   promote: '设为管理员',
   demote: '取消管理员',
@@ -48,7 +51,7 @@ export function AdminPage() {
           <section className="app-block" aria-label={PUBLIC_PROJECT_BOOK_COPY.title}>
             <h2 className="app-section-title">{PUBLIC_PROJECT_BOOK_COPY.title}</h2>
             <p className="app-lead">{PUBLIC_PROJECT_BOOK_COPY.lead}</p>
-            <ProjectBookPanel scope="public" primaryIntake={false} />
+            <ProjectBookPanel scope="public" primaryIntake={false} canMaintain />
           </section>
         </>
       ) : (
@@ -99,6 +102,11 @@ function AccountsSection({ myId }: { myId: string }) {
     closeReset();
   };
 
+  const approve = async (row: AdminAccount) => {
+    const outcome = await run(row.accountId, { approved: true });
+    if (outcome.ok) setNotice(ADMIN_COPY.approvalDone(row.username));
+  };
+
   const rows = accounts.data?.accounts ?? [];
   return (
     <section className="app-block" aria-label={ADMIN_COPY.accountsTitle}>
@@ -132,25 +140,33 @@ function AccountsSection({ myId }: { myId: string }) {
                   </TableCell>
                   <TableCell>{row.role === 'admin' ? ADMIN_COPY.roleAdmin : ADMIN_COPY.roleUser}</TableCell>
                   <TableCell>
-                    <StatusTag tone={row.active ? 'success' : 'locked'}>{row.active ? ADMIN_COPY.active : ADMIN_COPY.inactive}</StatusTag>
-                    {row.mustChangePassword ? <StatusTag tone="warning">{ADMIN_COPY.mustChange}</StatusTag> : null}
+                    {!row.approved ? <StatusTag tone="warning">{ADMIN_COPY.pendingApproval}</StatusTag> : <StatusTag tone={row.active ? 'success' : 'locked'}>{row.active ? ADMIN_COPY.active : ADMIN_COPY.inactive}</StatusTag>}
+                    {row.approved && row.mustChangePassword ? <StatusTag tone="warning">{ADMIN_COPY.mustChange}</StatusTag> : null}
                   </TableCell>
                   <TableCell className="app-num app-sticky-end">
                     <div className="app-btn-row">
-                      {/* 自己这一行不给「取消管理员」和「停用」：服务端也会拒绝（self_change），这里就不摆出来了。 */}
-                      {row.accountId === myId ? null : (
+                      {!row.approved ? (
+                        <Button kind="ghost" size="sm" disabled={busy} onClick={() => void approve(row)}>
+                          {ADMIN_COPY.approve}
+                        </Button>
+                      ) : (
                         <>
-                          <Button kind="ghost" size="sm" disabled={busy} onClick={() => void run(row.accountId, { role: row.role === 'admin' ? 'user' : 'admin' })}>
-                            {row.role === 'admin' ? ADMIN_COPY.demote : ADMIN_COPY.promote}
-                          </Button>
-                          <Button kind="ghost" size="sm" disabled={busy} onClick={() => void run(row.accountId, { active: !row.active })}>
-                            {row.active ? ADMIN_COPY.deactivate : ADMIN_COPY.reactivate}
+                          {/* The current account has no demotion or deactivation controls; the server rejects self changes too. */}
+                          {row.accountId === myId ? null : (
+                            <>
+                              <Button kind="ghost" size="sm" disabled={busy} onClick={() => void run(row.accountId, { role: row.role === 'admin' ? 'user' : 'admin' })}>
+                                {row.role === 'admin' ? ADMIN_COPY.demote : ADMIN_COPY.promote}
+                              </Button>
+                              <Button kind="ghost" size="sm" disabled={busy} onClick={() => void run(row.accountId, { active: !row.active })}>
+                                {row.active ? ADMIN_COPY.deactivate : ADMIN_COPY.reactivate}
+                              </Button>
+                            </>
+                          )}
+                          <Button kind="ghost" size="sm" disabled={busy} onClick={() => setResetting(row)}>
+                            {ADMIN_COPY.temporaryPassword}
                           </Button>
                         </>
                       )}
-                      <Button kind="ghost" size="sm" disabled={busy} onClick={() => setResetting(row)}>
-                        {ADMIN_COPY.temporaryPassword}
-                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>

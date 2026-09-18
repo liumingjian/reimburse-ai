@@ -277,39 +277,6 @@ describe('项目归属（工作台：勾选明细，点右侧项目归入）', (
     expect(submitButton().disabled).toBe(false);
   });
 
-  test('在项目簿删除本任务已用的项目：已归入的明细沿用，提交仍通过；这个项目在面板里显示「已锁定」且不能点', async () => {
-    const { adapter, ready } = renderProject('review', async (a) => {
-      const removed = await a.removeProject('P-2307');
-      expect(removed).toMatchObject({ ok: true, result: { status: 'removed' } });
-    });
-    await ready;
-    await screen.findByRole('heading', { name: '项目归属' });
-    expect(usage('P-2307')).toBe('3 条 / 3786.00 元');
-    expect(within(target('P-2307')).getByText('已锁定')).toBeTruthy();
-    pick(1);
-    expect(target('P-2307').disabled).toBe(true);
-    expect(projectButtons('可选项目').map(numberOf)).toEqual(expect.arrayContaining(['P-2311', 'P-1180']));
-    expect(target('P-2311').disabled).toBe(false);
-    fireEvent.click(screen.getByRole('button', { name: '取消选择' }));
-
-    // 服务端同样拒绝新的归属用它（归入与提交都拒绝）。
-    const snapshot = await adapter.getSnapshot('T1');
-    const assignOutcome = await adapter.assignProjectLines('T1', { lineIds: ['l1'], projectNumber: 'P-2307', onlyUnassigned: false }, snapshot.step.stepToken);
-    expect(assignOutcome).toMatchObject({ ok: false, error: { code: 'project_not_allowed', message: PROJECT_ASSIGNMENT_ERRORS.projectNotSelectable('P-2307') } });
-    const projects = Object.fromEntries(snapshot.projectAssignment.assignments.map((item) => [item.lineId, item.projectNumber]));
-    const submitOutcome = await adapter.submitProjectAssignment('T1', { purpose: '出差', projects: { ...projects, l1: 'P-2307' } }, snapshot.step.stepToken);
-    expect(submitOutcome).toMatchObject({ ok: false, error: { code: 'project_not_allowed', message: PROJECT_ASSIGNMENT_ERRORS.projectNotAllowed(1, 'P-2307') } });
-
-    // 沿用旧归属、改一下事由后提交：通过，进入整单确认。
-    fireEvent.change(purpose(), { target: { value: '上海产品评审出差（补）' } });
-    fireEvent.click(submitButton());
-    expect(await screen.findByRole('heading', { name: '整单明细确认' })).toBeTruthy();
-    const after = await adapter.getSnapshot('T1');
-    expect(after.projectAssignment.status).toBe('submitted');
-    expect(after.projectAssignment.assignments.find((item) => item.lineId === 'l9')).toMatchObject({ projectNumber: 'P-2307', projectName: '华东客户交付' });
-    expect(after.projectAssignment.projects.map((project) => project.number)).not.toContain('P-2307');
-  });
-
   test('项目归属没完成时，整单确认页不能进（阶段不可跳过）', async () => {
     const { ready } = renderProject('project');
     await ready;

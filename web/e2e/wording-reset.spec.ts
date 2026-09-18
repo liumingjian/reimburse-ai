@@ -68,15 +68,13 @@ test('阶段名用内核 10 阶段：只出现在任务列表徽标上，步骤�
 test('作废：T1 确认作废后从任务列表消失；已开始写入报销系统的 T2、T3「作废」不可用并说明原因', async ({ page }, testInfo) => {
   await page.goto(open('', '#/tasks'));
   for (const name of ['2026-07 深圳客户拜访', '2026-06 北京培训']) {
-    await page.getByRole('row', { name: new RegExp(name) }).getByRole('button', { name: '更多' }).click();
-    const menu = page.getByRole('menu', { name: `${name}的更多操作` });
-    await expect(menu.getByRole('menuitem', { name: '作废' })).toBeDisabled();
-    await expect(menu).toContainText('已开始写入报销系统，不能作废');
+    const row = page.getByRole('row', { name: new RegExp(name) });
+    await expect(row.getByRole('button', { name: '作废' })).toBeDisabled();
+    await row.getByLabel('无法作废的原因').hover();
+    await expect(page.getByRole('tooltip')).toContainText('已开始写入报销系统，不能作废');
     await page.keyboard.press('Escape');
-    await expect(menu).toHaveCount(0);
   }
-  await page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByRole('button', { name: '更多' }).click();
-  await page.getByRole('menu', { name: '2026-08 上海出差（产品评审）的更多操作' }).getByRole('menuitem', { name: '作废' }).click();
+  await page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByRole('button', { name: '作废' }).click();
   const dialog = page.getByRole('dialog', { name: '作废这个报销任务？' });
   await expect(dialog).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('abandon-dialog.png'), fullPage: true });
@@ -88,8 +86,7 @@ test('作废：T1 确认作废后从任务列表消失；已开始写入报销�
 
 test('?seed=erp：已开始写入报销系统的 T1「作废」不可用', async ({ page }) => {
   await page.goto(open('?seed=erp', '#/tasks'));
-  await page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByRole('button', { name: '更多' }).click();
-  await expect(page.getByRole('menu', { name: '2026-08 上海出差（产品评审）的更多操作' }).getByRole('menuitem', { name: '作废' })).toBeDisabled();
+  await expect(page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByRole('button', { name: '作废' })).toBeDisabled();
 });
 
 test('完全重置：设置页二次确认后只清空当前账号的数据，仍然登录，任务列表为空', async ({ page }, testInfo) => {

@@ -1,60 +1,143 @@
-import { type AppAdapter, type ProjectBookOutcome, PROJECT_BOOK_NOTES, type ProjectBook, type ProjectBookResult, type ProjectOption, stageReached } from '@baox/contract';
-import type { MockBus } from './bus';
-import { INITIAL_BOOK, MOCK_TODAY, allowListOf, annotateProject, isSafeProjectNumber, projectEntryStep, verifyProjectNumber, type StoredProject } from './fixtures/projects';
-import type { MockOptions } from './options';
+import { AUTH_ERRORS, UNAUTHENTICATED_CODE, PROJECT_BOOK_NOTES, PROJECT_CHANGED_NOTICE, type AppAdapter, type ProjectBook, type ProjectBookEditInput, type ProjectBookIntakeInput, type ProjectBookLifecycleInput, type ProjectBookOutcome, type ProjectBookResult, type ProjectOption, type TaskSnapshot, stageReached } from '@baox/contract';
 import type { MockAuth } from './auth';
+import type { MockBus } from './bus';
+import { INITIAL_BOOK, MOCK_TODAY, annotateProject, isSafeProjectNumber, projectEntryStep, withProjectUsage, type StoredProject } from './fixtures/projects';
+import type { MockOptions } from './options';
 
-// mock 服务端的个人项目簿（内核 projectintake.mjs / projectmaintain.mjs 的行为）：
-// 录入先做安全字符校验，再确认已登录应用账号，再到 mock 报销系统项目目录核验，只有 confirmed 才写入（同号覆盖）；
-// 删除、清理全部失效、复检全部同样先确认已登录；复检不自动删除。项目簿只存在内存里，刷新后回到夹具（`?book=empty` 时为空）。
-// 项目簿一变，还没开始写入报销系统的任务随之拿到新的允许列表；停在「先维护项目簿」的任务有了可选项目就回到项目归属。
+// The mock mirrors the local application's two project books. Manual admissions intentionally never consult the
+// fixture ERP directory: they only validate the project number and retain the name entered by the member.
 
-export type ProjectBookService = Pick<AppAdapter, 'getProjectBook' | 'intakeProject' | 'removeProject' | 'purgeInvalidProjects' | 'recheckProjects'> & {
-  allowList(): ProjectOption[];
-  // 打开时按当前项目簿整理夹具任务（允许列表、`?book=empty` 下项目归属的维护门）。
+export type MockBookState = {
+  readonly personalByAccount: Map<string, StoredProject[]>;
+  publicProjects: StoredProject[];
+};
+
+export function createMockBookState(options: MockOptions, fixtureAccountId: string): MockBookState {
+  return {
+    personalByAccount: new Map(
+      options.bookEmpty ? [] : [[fixtureAccountId, INITIAL_BOOK.map((project) => ({ ...project }))]],
+    ),
+    publicProjects: [],
+  };
+}
+
+export type ProjectBookService = Pick<AppAdapter, 'getProjectBook' | 'intakeProject' | 'editProject' | 'deactivateProject' | 'restoreProject' | 'deleteProject'> & {
+  allowList(taskId?: string): ProjectOption[];
   prepareSeed(taskId: string): void;
-  // 完全重置：项目簿清空（不改已有快照，它们随任务一起从列表中移除）。
+  refreshTasks(): void;
+  refreshAllTasks(): void;
   reset(): void;
 };
 
 const EMPTY_BOOK: ProjectBook = { projects: [] };
 
-export function createProjectBook(options: MockOptions, bus: MockBus, auth: MockAuth): ProjectBookService {
-  let projects: StoredProject[] = options.bookEmpty ? [] : INITIAL_BOOK.map((project) => ({ ...project }));
-  const today = MOCK_TODAY;
-
-  const annotated = () => projects.map((project) => annotateProject(project, today));
-  const bookNow = (): ProjectBook => ({ projects: annotated() });
-  // 没登录时不读项目簿。
-  const visibleBook = (): ProjectBook => (auth.account() ? bookNow() : EMPTY_BOOK);
-  const allowList = () => allowListOf(annotated());
-
-  const done = (status: ProjectBookResult['status'], note: string, book: ProjectBook = bookNow(), verdict: ProjectBookResult['verdict'] = null): ProjectBookOutcome => ({
+export function createProjectBook(
+  _options: MockOptions,
+  bus: MockBus,
+  auth: MockAuth,
+  state: MockBookState,
+  ownerOfTask: (taskId: string) => string | null,
+): ProjectBookService {
+  const personalFor = (accountId: string): StoredProject[] => {
+    const existing = state.personalByAccount.get(accountId);
+    if (existing) return existing;
+    const empty: StoredProject[] = [];
+    state.personalByAccount.set(accountId, empty);
+    return empty;
+  };
+  const annotated = (accountId: string) => {
+    const publicNumbers = new Set(state.publicProjects.map((project) => project.number));
+    return personalFor(accountId).map((project) => {
+      const entry = annotateProject(project, MOCK_TODAY);
+      if (!publicNumbers.has(entry.number)) return entry;
+      const notes = [entry.statusNote, PROJECT_BOOK_NOTES.publicReserved(entry.number)].filter((note): note is string => note !== null);
+      return {
+        ...entry,
+        selectable: false,
+        statusLabel: entry.statusLabel === '可选' ? '公共项目已保留' : `${entry.statusLabel}・公共项目已保留`,
+        statusNote: [...new Set(notes)].join('；'),
+      };
+    });
+  };
+  const publicAnnotated = () => state.publicProjects.map((project) => annotateProject(project, MOCK_TODAY));
+  const bookNow = (accountId: string): ProjectBook => ({ projects: annotated(accountId) });
+  const visibleBook = (): ProjectBook => {
+    const account = auth.account();
+    return account ? bookNow(account.accountId) : EMPTY_BOOK;
+  };
+  const allowListFor = (accountId: string): ProjectOption[] => {
+    const personal = annotated(accountId)
+      .filter((project) => project.selectable)
+      .map((project): ProjectOption => ({ number: project.number, name: project.name ?? project.number, source: 'personal' }));
+    const shared = publicAnnotated()
+      .filter((project) => project.selectable)
+      .map((project): ProjectOption => ({ number: project.number, name: project.name ?? project.number, source: 'public' }));
+    return [...personal, ...shared];
+  };
+  const allowList = (taskId?: string): ProjectOption[] => {
+    if (taskId) {
+      const owner = ownerOfTask(taskId);
+      return owner ? allowListFor(owner) : [];
+    }
+    const account = auth.account();
+    return account ? allowListFor(account.accountId) : [];
+  };
+  const done = (status: ProjectBookResult['status'], note: string, accountId: string, verdict: ProjectBookResult['verdict'] = null): ProjectBookOutcome => ({
     ok: true,
-    result: { status, verdict, note, book },
+    result: { status, verdict, note, book: bookNow(accountId) },
   });
+  const unauthenticated = (): ProjectBookOutcome => ({ ok: false, error: { code: UNAUTHENTICATED_CODE, message: AUTH_ERRORS.unauthenticated }, book: null });
+  const availabilityConfirmations = new Map<string, { confirmation: TaskSnapshot['confirmation']; selection: string }>();
 
-  // 每个维护动作都先确认已登录应用账号（没登录 → not_logged_in）。
-  const gate = (notLoggedInNote: string): ProjectBookOutcome | null => (auth.account() ? null : done('not_logged_in', notLoggedInNote, EMPTY_BOOK));
+  const refreshFingerprint = (snapshot: TaskSnapshot) =>
+    JSON.stringify([snapshot.projectAssignment.projects, snapshot.projectAssignment.working, snapshot.projectAssignment.reselect, snapshot.projectAssignment.usage, snapshot.confirmation, snapshot.stage, snapshot.step]);
 
-  // 允许列表跟随项目簿；项目归属阶段的 step 按「有没有可选项目、有没有归属」重新判定（维护门的进出）。
   const applyBook = (taskId: string, list: readonly ProjectOption[]) => {
     const snapshot = bus.draft(taskId);
     if (!stageReached(snapshot.stage, 'project') || snapshot.erp.status !== 'idle' || snapshot.stage === 'done' || snapshot.stage === 'reconcile') return null;
-    const before = JSON.stringify([snapshot.projectAssignment.projects, snapshot.step]);
+    const before = refreshFingerprint(snapshot);
     snapshot.projectAssignment.projects = list.map((project) => ({ ...project }));
-    if (snapshot.stage === 'project' && (snapshot.step.kind === 'assign_projects' || snapshot.step.kind === 'maintain_project_book')) {
-      snapshot.step = projectEntryStep(snapshot);
+    const selectable = new Set(list.map((project) => `${project.source}:${project.number}`));
+    if (snapshot.projectAssignment.status !== 'submitted') {
+      const candidates = new Map(snapshot.projectAssignment.reselect.map((entry) => [entry.lineId, entry]));
+      for (const entry of snapshot.projectAssignment.working) candidates.set(entry.lineId, entry);
+      snapshot.projectAssignment.working = [];
+      snapshot.projectAssignment.reselect = [];
+      for (const entry of candidates.values()) {
+        if (selectable.has(`${entry.projectSource}:${entry.projectNumber}`)) snapshot.projectAssignment.working.push(entry);
+        else snapshot.projectAssignment.reselect.push(entry);
+      }
     }
-    if (JSON.stringify([snapshot.projectAssignment.projects, snapshot.step]) === before) return null;
-    // 允许列表变了就是状态变了：换发 stepToken（step 种类可能不变）。
+    withProjectUsage(snapshot);
+
+    const selection = JSON.stringify(snapshot.projectAssignment.assignments.map((entry) => [entry.lineId, entry.projectSource, entry.projectNumber]));
+    const submittedAvailable = snapshot.projectAssignment.status === 'submitted' && snapshot.projectAssignment.assignments.every((entry) => selectable.has(`${entry.projectSource}:${entry.projectNumber}`));
+    if (!submittedAvailable && snapshot.confirmation.status === 'confirmed') {
+      availabilityConfirmations.set(taskId, { confirmation: { ...snapshot.confirmation }, selection });
+      snapshot.confirmation = { ...snapshot.confirmation, status: 'invalidated', confirmedAt: null, notice: PROJECT_CHANGED_NOTICE };
+      snapshot.stage = 'review';
+      snapshot.step = { kind: 'confirm_review', stepToken: snapshot.step.stepToken };
+    } else if (submittedAvailable && snapshot.confirmation.status === 'invalidated') {
+      const prior = availabilityConfirmations.get(taskId);
+      if (prior?.selection === selection) {
+        snapshot.confirmation = prior.confirmation;
+        snapshot.stage = 'actions';
+        snapshot.step = { kind: 'choose_action', stepToken: snapshot.step.stepToken };
+        availabilityConfirmations.delete(taskId);
+      }
+    }
+    if (snapshot.stage === 'project' && (snapshot.step.kind === 'assign_projects' || snapshot.step.kind === 'maintain_project_book')) {
+      snapshot.step = { ...projectEntryStep(snapshot), stepToken: snapshot.step.stepToken };
+    }
+    if (refreshFingerprint(snapshot) === before) return null;
     snapshot.step = { ...snapshot.step, stepToken: bus.rotateToken(snapshot.step.stepToken) };
     return snapshot;
   };
 
-  const syncTasks = () => {
-    const list = allowList();
+  const refreshAccountTasks = (accountId: string) => {
+    const list = allowListFor(accountId);
     for (const current of bus.all()) {
+      if (ownerOfTask(current.task.taskId) !== accountId) continue;
       const next = applyBook(current.task.taskId, list);
       if (next) bus.push(next);
     }
@@ -63,84 +146,104 @@ export function createProjectBook(options: MockOptions, bus: MockBus, auth: Mock
   return {
     allowList,
     reset() {
-      projects = [];
+      const account = auth.account();
+      if (!account) return;
+      state.personalByAccount.set(account.accountId, []);
+      refreshAccountTasks(account.accountId);
     },
     prepareSeed(taskId) {
-      const next = applyBook(taskId, allowList());
+      const owner = ownerOfTask(taskId);
+      if (!owner) return;
+      const next = applyBook(taskId, allowListFor(owner));
       if (next) bus.put(next);
+    },
+    refreshTasks() {
+      const account = auth.account();
+      if (account) refreshAccountTasks(account.accountId);
+    },
+    refreshAllTasks() {
+      const owners = new Set(bus.all().map((snapshot) => ownerOfTask(snapshot.task.taskId)).filter((owner): owner is string => owner !== null));
+      for (const owner of owners) refreshAccountTasks(owner);
     },
     getProjectBook: async () => visibleBook(),
 
-    async intakeProject(number) {
-      const trimmed = number.trim();
-      if (!trimmed || !isSafeProjectNumber(trimmed)) return done('rejected', PROJECT_BOOK_NOTES.unsafe(trimmed), visibleBook(), 'unsafe');
-      const blocked = gate(PROJECT_BOOK_NOTES.intakeNotLoggedIn);
-      if (blocked) return blocked;
-      const verdict = verifyProjectNumber(trimmed);
-      switch (verdict.verdict) {
-        case 'failed':
-          return done('query_failed', PROJECT_BOOK_NOTES.intakeQueryFailed(verdict.reason));
-        case 'missing':
-          return done('rejected', PROJECT_BOOK_NOTES.missing(trimmed), bookNow(), 'missing');
-        case 'ambiguous':
-          return done('rejected', PROJECT_BOOK_NOTES.ambiguous(trimmed, verdict.count), bookNow(), 'ambiguous');
-        case 'unusable':
-          return done('rejected', PROJECT_BOOK_NOTES.unusable(trimmed, verdict.name), bookNow(), 'unusable');
-        case 'confirmed': {
-          // 名称只取核验回读值；过期日不开放（永不过期）；同号再次录入覆盖原记录。
-          const entry: StoredProject = { number: trimmed, name: verdict.name, expiresOn: null, lastCheckedAt: bus.now(), lastVerdict: 'confirmed' };
-          const index = projects.findIndex((project) => project.number === trimmed);
-          projects = index >= 0 ? projects.map((project, i) => (i === index ? entry : project)) : [...projects, entry];
-          syncTasks();
-          return done('admitted', PROJECT_BOOK_NOTES.admitted(trimmed, entry.name));
-        }
-      }
+    async intakeProject(input: ProjectBookIntakeInput) {
+      const account = auth.account();
+      if (!account) return unauthenticated();
+      const number = input.number.trim();
+      const name = input.name.trim();
+      if (number === '') return done('rejected', PROJECT_BOOK_NOTES.numberRequired, account.accountId);
+      if (!isSafeProjectNumber(number)) return done('rejected', PROJECT_BOOK_NOTES.unsafe(number), account.accountId, 'unsafe');
+      if (name === '') return done('rejected', PROJECT_BOOK_NOTES.nameRequired, account.accountId);
+      const personal = personalFor(account.accountId);
+      if (personal.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.duplicate(number), account.accountId);
+      if (state.publicProjects.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.publicReserved(number), account.accountId);
+
+      state.personalByAccount.set(account.accountId, [
+        ...personal,
+        { number, name, expiresOn: null, lastCheckedAt: null, lastVerdict: 'local', active: true },
+      ]);
+      refreshAccountTasks(account.accountId);
+      return done('admitted', PROJECT_BOOK_NOTES.admitted(number, name), account.accountId);
     },
 
-    async removeProject(number) {
-      const blocked = gate(PROJECT_BOOK_NOTES.maintainNotLoggedIn);
-      if (blocked) return blocked;
-      const trimmed = number.trim();
-      const removed = projects.find((project) => project.number === trimmed);
-      if (!removed) return done('not_found', PROJECT_BOOK_NOTES.notFound(trimmed));
-      projects = projects.filter((project) => project !== removed);
-      syncTasks();
-      return done('removed', PROJECT_BOOK_NOTES.removed(removed.number, removed.name));
+    async editProject(input: ProjectBookEditInput) {
+      const account = auth.account();
+      if (!account) return unauthenticated();
+      const originalNumber = input.originalNumber.trim();
+      const number = input.number.trim();
+      const name = input.name.trim();
+      if (number === '') return done('rejected', PROJECT_BOOK_NOTES.numberRequired, account.accountId);
+      if (!isSafeProjectNumber(number)) return done('rejected', PROJECT_BOOK_NOTES.editUnsafe(number), account.accountId, 'unsafe');
+      if (name === '') return done('rejected', PROJECT_BOOK_NOTES.nameRequired, account.accountId);
+      const personal = personalFor(account.accountId);
+      const index = personal.findIndex((project) => project.number === originalNumber);
+      if (index < 0) return done('rejected', PROJECT_BOOK_NOTES.editMissing(originalNumber), account.accountId);
+      if (number !== originalNumber && personal.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.editDuplicate(number), account.accountId);
+      if (number !== originalNumber && state.publicProjects.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.editPublicReserved(number), account.accountId);
+
+      const existing = personal[index]!;
+      state.personalByAccount.set(account.accountId, personal.map((project, projectIndex) => (projectIndex === index ? { ...existing, number, name } : project)));
+      refreshAccountTasks(account.accountId);
+      return done('edited', PROJECT_BOOK_NOTES.edited(originalNumber, number, name), account.accountId);
     },
 
-    async purgeInvalidProjects() {
-      const blocked = gate(PROJECT_BOOK_NOTES.maintainNotLoggedIn);
-      if (blocked) return blocked;
-      const kept = projects.filter((project) => annotateProject(project, today).selectable);
-      const removedCount = projects.length - kept.length;
-      if (removedCount === 0) return done('none', PROJECT_BOOK_NOTES.purgeNone);
-      projects = kept;
-      syncTasks();
-      return done('purged', PROJECT_BOOK_NOTES.purged(removedCount));
+    async deactivateProject(input: ProjectBookLifecycleInput) {
+      const account = auth.account();
+      if (!account) return unauthenticated();
+      const number = input.number.trim();
+      const personal = personalFor(account.accountId);
+      const entry = personal.find((project) => project.number === number);
+      if (!entry) return done('rejected', PROJECT_BOOK_NOTES.notFound(number), account.accountId);
+      if (entry.active === false) return done('rejected', PROJECT_BOOK_NOTES.alreadyInactive(number), account.accountId);
+      state.personalByAccount.set(account.accountId, personal.map((project) => (project.number === number ? { ...project, active: false } : project)));
+      refreshAccountTasks(account.accountId);
+      return done('deactivated', PROJECT_BOOK_NOTES.deactivated(number), account.accountId);
     },
 
-    async recheckProjects() {
-      const blocked = gate(PROJECT_BOOK_NOTES.recheckNotLoggedIn);
-      if (blocked) return blocked;
-      if (projects.length === 0) return done('empty', PROJECT_BOOK_NOTES.recheckEmpty);
-      const askable = projects.filter((project) => isSafeProjectNumber(project.number));
-      const verdicts = new Map<string, ReturnType<typeof verifyProjectNumber>>();
-      for (const project of askable) {
-        const verdict = verifyProjectNumber(project.number);
-        // 任何一条查询没完成：整次复检作废，项目簿不动。
-        if (verdict.verdict === 'failed') return done('query_failed', PROJECT_BOOK_NOTES.recheckQueryFailed(verdict.reason));
-        verdicts.set(project.number, verdict);
-      }
-      const at = bus.now();
-      projects = projects.map((project) => {
-        if (!isSafeProjectNumber(project.number)) return { ...project, lastVerdict: 'unsafe' };
-        const verdict = verdicts.get(project.number);
-        if (!verdict) return project;
-        return { ...project, ...(verdict.verdict === 'confirmed' ? { name: verdict.name } : {}), lastVerdict: verdict.verdict, lastCheckedAt: at };
-      });
-      syncTasks();
-      const invalid = annotated().filter((project) => !project.selectable).length;
-      return done('done', PROJECT_BOOK_NOTES.recheckDone(askable.length, invalid));
+    async restoreProject(input: ProjectBookLifecycleInput) {
+      const account = auth.account();
+      if (!account) return unauthenticated();
+      const number = input.number.trim();
+      const personal = personalFor(account.accountId);
+      const entry = personal.find((project) => project.number === number);
+      if (!entry) return done('rejected', PROJECT_BOOK_NOTES.notFound(number), account.accountId);
+      if (entry.active !== false) return done('rejected', PROJECT_BOOK_NOTES.alreadyActive(number), account.accountId);
+      if (state.publicProjects.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.publicReserved(number), account.accountId);
+      state.personalByAccount.set(account.accountId, personal.map((project) => (project.number === number ? { ...project, active: true } : project)));
+      refreshAccountTasks(account.accountId);
+      return done('restored', PROJECT_BOOK_NOTES.restored(number), account.accountId);
+    },
+
+    async deleteProject(input: ProjectBookLifecycleInput) {
+      const account = auth.account();
+      if (!account) return unauthenticated();
+      const number = input.number.trim();
+      const personal = personalFor(account.accountId);
+      if (!personal.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.notFound(number), account.accountId);
+      state.personalByAccount.set(account.accountId, personal.filter((project) => project.number !== number));
+      refreshAccountTasks(account.accountId);
+      return done('deleted', PROJECT_BOOK_NOTES.deleted(number), account.accountId);
     },
   };
 }

@@ -113,19 +113,17 @@ test('原件查看器工具栏：可访问名称与提示都是中文', async ({
   expect(tooltips.sort()).toEqual([...names].sort());
 });
 
-test('弹层打开时也没有英文文案（「更多」菜单、作废确认、新建任务、追加材料）', async ({ page }) => {
+test('弹层打开时也没有英文文案（不可作废提示、作废确认、新建任务、追加材料）', async ({ page }) => {
   await page.goto(open('', '#/tasks'));
-  // 「更多」菜单：菜单按钮的可访问名称与提示、菜单与菜单项都是中文（可作废与置灰两种都查）。
-  const moreButtons = page.getByRole('button', { name: '更多', exact: true });
-  await expect(moreButtons).toHaveCount(3);
-  await page.getByRole('row', { name: /2026-07 深圳客户拜访/ }).getByRole('button', { name: '更多' }).click();
-  await expect(page.getByRole('menu', { name: '2026-07 深圳客户拜访的更多操作' }).getByRole('menuitem', { name: '作废' })).toBeDisabled();
-  expect(await englishLeftovers(page), '「更多」菜单（不能作废）').toEqual([]);
+  await expect(page.getByRole('button', { name: '更多', exact: true })).toHaveCount(0);
+  const blocked = page.getByRole('row', { name: /2026-07 深圳客户拜访/ });
+  await expect(blocked.getByRole('button', { name: '作废' })).toBeDisabled();
+  await blocked.getByLabel('无法作废的原因').hover();
+  await expect(page.getByRole('tooltip')).toBeVisible();
+  expect(await englishLeftovers(page), '不可作废提示').toEqual([]);
   await page.keyboard.press('Escape');
-  await page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByRole('button', { name: '更多' }).click();
-  const item = page.getByRole('menu', { name: '2026-08 上海出差（产品评审）的更多操作' }).getByRole('menuitem', { name: '作废' });
+  const item = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByRole('button', { name: '作废' });
   await expect(item).toBeEnabled();
-  expect(await englishLeftovers(page), '「更多」菜单').toEqual([]);
   await item.click();
   await expect(page.getByRole('dialog', { name: '作废这个报销任务？' })).toBeVisible();
   expect(await englishLeftovers(page), '作废确认').toEqual([]);

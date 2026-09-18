@@ -30,12 +30,14 @@ export type StepResult = TaskSnapshot | { error: ActionError };
 export type MockBus = {
   readonly options: MockOptions;
   now(): string;
-  put(snapshot: TaskSnapshot): void;
+  // Seed snapshots retain their supplied revision. An unobserved accepted change can request the same increment
+  // that commit and push apply before storing their snapshots.
+  put(snapshot: TaskSnapshot, advanceRevision?: boolean): void;
   // 当前快照的一份可修改副本。
   draft(taskId: string): TaskSnapshot;
   all(): TaskSnapshot[];
-  // 动作成功：写入并返回新快照，稍后把推送那一刻的最新快照推给订阅者。
-  commit(snapshot: TaskSnapshot): ActionOutcome;
+  // An accepted action writes and returns a snapshot, then publishes the latest view. New tasks are already born at revision 1.
+  commit(snapshot: TaskSnapshot, advanceRevision?: boolean): ActionOutcome;
   // 服务端自行推进（定时器）：写入并立即推送，不经过动作返回值。
   push(snapshot: TaskSnapshot): void;
   // 回复类动作先核对 stepToken：过期即返回 409 语义（stale_step + 最新快照），状态不动。
@@ -47,9 +49,10 @@ export type MockBus = {
   isConnected(): boolean;
   // 名称仍由服务端生成的任务（经 createTask 新建的）：盘点结束时按材料日期与城市改名。夹具任务的名称是既定的，不改。
   readonly autoNamed: Set<string>;
-  // 当前个人项目簿的允许列表（进入项目归属时随快照给出）；由 mock 项目簿接上（useProjectAllowList），接上之前是默认夹具。
-  projectAllowList(): ProjectOption[];
-  useProjectAllowList(source: () => ProjectOption[]): void;
+  // The task owner's project options are added to its assignment snapshot. The mock project-book service supplies the
+  // list; until it is wired, the bus uses the default fixture list.
+  projectAllowList(taskId: string): ProjectOption[];
+  useProjectAllowList(source: (taskId: string) => ProjectOption[]): void;
   // 用户经 exclude-material 移出本次材料的材料（重复发票、认不出的合并发票及其行程单）：之后重新盘点也不再算它们。
   removedMaterials(taskId: string): Set<string>;
   // 状态变了但 step 种类没变时换发的新凭据（项目归属草稿、项目簿同步）：在原凭据后加一个全局递增的序号。
@@ -74,7 +77,7 @@ export function createBus(options: MockOptions): MockBus {
   const listeners = new Map<string, Set<(event: AdapterEvent) => void>>();
   let connected = true;
   let outageScheduled = false;
-  let allowListSource = (): ProjectOption[] => PROJECT_BOOK.map((project) => ({ ...project }));
+  let allowListSource = (_taskId: string): ProjectOption[] => PROJECT_BOOK.map((project) => ({ ...project }));
   const removed = new Map<string, Set<string>>();
   let rotation = 0;
 
@@ -84,8 +87,9 @@ export function createBus(options: MockOptions): MockBus {
     return snapshot;
   };
 
-  const put = (snapshot: TaskSnapshot) => {
-    snapshots.set(snapshot.task.taskId, TaskSnapshotSchema.parse(withProjectUsage(withInventoryProjection(snapshot))));
+  const put = (snapshot: TaskSnapshot, advanceRevision = false) => {
+    const next = advanceRevision ? { ...snapshot, revision: snapshot.revision + 1 } : snapshot;
+    snapshots.set(next.task.taskId, TaskSnapshotSchema.parse(withProjectUsage(withInventoryProjection(next))));
   };
 
   // 断开期间事件流不送达（恢复后页面会重新拉取快照）。
@@ -114,8 +118,8 @@ export function createBus(options: MockOptions): MockBus {
     else setTimeout(goDown, delayMs);
   };
 
-  const commit = (snapshot: TaskSnapshot): ActionOutcome => {
-    put(snapshot);
+  const commit = (snapshot: TaskSnapshot, advanceRevision = true): ActionOutcome => {
+    put(snapshot, advanceRevision);
     const taskId = snapshot.task.taskId;
     setTimeout(() => emit(taskId, { type: 'snapshot', snapshot: clone(snapshotOf(taskId)) }), EMIT_DELAY_MS);
     return { ok: true, snapshot: clone(snapshotOf(taskId)) };
@@ -129,7 +133,7 @@ export function createBus(options: MockOptions): MockBus {
     all: () => [...snapshots.values()],
     commit,
     push(snapshot) {
-      put(snapshot);
+      put(snapshot, true);
       const taskId = snapshot.task.taskId;
       emit(taskId, { type: 'snapshot', snapshot: clone(snapshotOf(taskId)) });
     },
@@ -160,7 +164,7 @@ export function createBus(options: MockOptions): MockBus {
     },
     isConnected: () => connected,
     autoNamed: new Set<string>(),
-    projectAllowList: () => allowListSource(),
+    projectAllowList: (taskId) => allowListSource(taskId),
     useProjectAllowList(source) {
       allowListSource = source;
     },

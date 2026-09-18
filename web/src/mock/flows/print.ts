@@ -66,7 +66,7 @@ export function createPrintFlow(bus: MockBus): PrintFlow {
       snapshot.paymentScreenshots.push({ screenshotId, voucherMaterialId, fileName: file.name, url: objectUrl(file, screenshotId) });
       if (asked) {
         snapshot.pendingItems = snapshot.pendingItems.filter((item) => item.itemId !== trioItemId);
-        settlePending(snapshot, bus.projectAllowList());
+        settlePending(snapshot, bus.projectAllowList(taskId));
       }
       afterScreenshotChange(snapshot);
       snapshot.task.updatedAt = bus.now();

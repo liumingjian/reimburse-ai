@@ -102,7 +102,7 @@ export function createPendingFlow(bus: MockBus): PendingFlow {
         }
         applyPendingAnswer({ materials: snapshot.materials, events: snapshot.events, pendingItems: snapshot.pendingItems }, item, normalized);
         snapshot.task.updatedAt = bus.now();
-        settlePending(snapshot, bus.projectAllowList());
+        settlePending(snapshot, bus.projectAllowList(taskId));
         return snapshot;
       }),
     // 处理 given_up 待确认项：排除这张发票连同它的行程单（之后重新盘点也不再算它们），这一项记为已处理；
@@ -114,7 +114,7 @@ export function createPendingFlow(bus: MockBus): PendingFlow {
         const removed = excludeGivenUpVoucher({ materials: snapshot.materials, events: snapshot.events, pendingItems: snapshot.pendingItems }, item);
         for (const id of removed) bus.removedMaterials(taskId).add(id);
         snapshot.task.updatedAt = bus.now();
-        settlePending(snapshot, bus.projectAllowList());
+        settlePending(snapshot, bus.projectAllowList(taskId));
         return snapshot;
       }),
     // 确认整单明细：摘要必须是快照里的那一份；确认后进入「去打印 / 去报销」阶段。
@@ -136,7 +136,7 @@ export function createPendingFlow(bus: MockBus): PendingFlow {
       if (snapshot.step.kind === 'confirm_review' && snapshot.lines.length > 0) applyConfirm(snapshot, bus.now());
       else snapshot.step = { ...snapshot.step, stepToken: `${snapshot.step.stepToken}-elsewhere-${elsewhereCount}` };
       snapshot.task.updatedAt = bus.now();
-      bus.put(snapshot);
+      bus.put(snapshot, true);
     },
   };
 }

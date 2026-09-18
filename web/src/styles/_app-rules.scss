@@ -551,32 +551,24 @@ $gutter: $spacing-06;
   }
 }
 
-// 「更多」菜单：不能作废时菜单项下面有一行原因。Carbon 的菜单项定高、单行截断，这一项放开高度让原因折行读完；
-// 菜单也比 Carbon 默认的 10rem 宽一些，原因不至于折成好几行。
-.app-more-menu.cds--overflow-menu-options {
-  inline-size: 18rem;
+// Keep an open refusal tooltip above neighboring sticky action cells.
+.app-table .cds--data-table td.app-task-actions:has(.cds--popover--open) {
+  z-index: 4;
 }
 
-.app-more-menu .cds--overflow-menu-options__option--disabled {
-  block-size: auto;
-
-  .cds--overflow-menu-options__btn {
-    block-size: auto;
-    padding-block: $spacing-03;
-  }
-}
-
-.app-more-menu-item {
-  display: flex;
-  flex-direction: column;
-  gap: $spacing-02;
+.app-task-actions .cds--tooltip-content {
   white-space: normal;
 }
 
-.app-more-menu-reason {
-  color: $text-secondary;
-  @include type.type-style('helper-text-01');
+// Disabled controls do not receive pointer events; the focusable tooltip trigger explains the refusal.
+.app-abandon-disabled {
+  display: inline-flex;
+
+  .cds--btn:disabled {
+    pointer-events: none;
+  }
 }
+
 
 // ---------- 摘要条（整单明细确认、完成、对账） ----------
 

@@ -6,7 +6,7 @@ import type { Page } from '@playwright/test';
 import { answerStayGaps, expect, signIn, test } from './fixture';
 
 // Slice 09 (#188) on the real server: with an empty 个人项目簿 the project page opens on the book gate; add a project
-// (its name comes from the fixture-backed catalog), assign every line to it and submit the 报销事由 (purpose).
+// with a manually entered name, assign every line to it and submit the reimbursement purpose (报销事由).
 
 const hotelInvoice = SAMPLE_MATERIALS.find((sample) => sample.file.startsWith('m01'));
 
@@ -39,8 +39,9 @@ test('添加项目、全部明细归入、填写报销事由并提交', async ({
   // The book gate: add P-2307, then start assigning.
   await page.goto(`/#/task/${taskId}/project`);
   await page.getByLabel('项目号').fill('P-2307');
-  await page.getByRole('button', { name: '核验并加入' }).click();
-  await expect(page.getByTestId('book-message')).toHaveText('项目 P-2307「华东客户交付」已加入个人项目簿，名称取自报销系统回读值；没有设置过期时间');
+  await page.getByLabel('项目名称').fill('华东客户交付');
+  await page.getByRole('button', { name: '加入项目', exact: true }).click();
+  await expect(page.getByTestId('book-message')).toContainText('已加入个人项目簿');
   await expect(page.getByTestId('book-row-P-2307')).toContainText('可选');
   await page.getByRole('button', { name: '项目录完了，开始归属' }).click();
 
@@ -61,4 +62,32 @@ test('添加项目、全部明细归入、填写报销事由并提交', async ({
   const submitted = await snapshotOf(page, taskId);
   expect(submitted).toMatchObject({ stage: 'review', projectAssignment: { status: 'submitted', purpose: '上海产品评审出差' } });
   expect(submitted.lines.map((line) => [line.projectCode, line.projectName, line.expenseItemCode])).toEqual([['P-2307', '华东客户交付', 'FY010001']]);
+});
+
+test('personal project editing can be cancelled and a saved renumber survives reload', async ({ page }) => {
+  await signIn(page);
+  await page.goto('/#/projects');
+  await page.getByLabel('项目号', { exact: true }).fill('EDIT-101');
+  await page.getByLabel('项目名称', { exact: true }).fill('原项目名称');
+  await page.getByRole('button', { name: '加入项目', exact: true }).click();
+  await expect(page.getByTestId('book-row-EDIT-101')).toContainText('原项目名称');
+
+  await page.getByRole('button', { name: '编辑 EDIT-101', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: /编辑/ });
+  await expect(edit.getByLabel('项目号', { exact: true })).toHaveValue('EDIT-101');
+  await edit.getByLabel('项目名称', { exact: true }).fill('取消的名称');
+  await edit.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(edit).toHaveCount(0);
+  await expect(page.getByTestId('book-row-EDIT-101')).toContainText('原项目名称');
+
+  await page.getByRole('button', { name: '编辑 EDIT-101', exact: true }).click();
+  await expect(edit.getByLabel('项目名称', { exact: true })).toHaveValue('原项目名称');
+  await edit.getByLabel('项目号', { exact: true }).fill('EDIT-102');
+  await edit.getByLabel('项目名称', { exact: true }).fill('修正后的名称');
+  await edit.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(edit).toHaveCount(0);
+  await expect(page.getByTestId('book-row-EDIT-101')).toHaveCount(0);
+  await expect(page.getByTestId('book-row-EDIT-102')).toContainText('修正后的名称');
+  await page.reload();
+  await expect(page.getByTestId('book-row-EDIT-102')).toContainText('修正后的名称');
 });

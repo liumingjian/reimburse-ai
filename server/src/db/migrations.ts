@@ -508,6 +508,38 @@ const reconcile192: Migration = {
   },
 };
 
+// #218: local project intake records an explicit source on new admitted facts. Existing rows remain null so their
+// prior catalog-derived meaning and append-only history are preserved exactly.
+const offlineProjectIntake218: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema.alterTable('project_book_event').addColumn('admission_source', 'text').execute();
+  },
+};
+
+// #219: lifecycle facts remain in the existing append-only project stream. `maintenance_action` distinguishes their
+// semantics from legacy `removed` / `admitted` rows without rebuilding the historical table and its action CHECK.
+const projectLifecycle219: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema.alterTable('project_book_event').addColumn('maintenance_action', 'text').execute();
+  },
+};
+
+// #220: correcting a project appends a maintenance fact. The previous identity makes a renumbering explicit while
+// retaining the original event stream; `maintenance_action` is owned by the preceding lifecycle migration.
+const projectEdit220: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema.alterTable('project_book_event').addColumn('previous_number', 'text').execute();
+  },
+};
+
+// Self-registration starts as a pending application. Existing accounts are approved by the default so this
+// representation change cannot lock people out of an established local installation.
+const accountApproval222: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema.alterTable('account').addColumn('approved', 'integer', (c) => c.notNull().defaultTo(1)).execute();
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -524,4 +556,8 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0007_190_print': print190,
   '0008_191_erp_jobs': erpJobs191,
   '0009_192_reconcile': reconcile192,
+  '0010_218_offline_project_intake': offlineProjectIntake218,
+  '0011_219_project_lifecycle': projectLifecycle219,
+  '0012_220_project_edit': projectEdit220,
+  '0013_222_account_approval': accountApproval222,
 };

@@ -17,7 +17,7 @@ let alice: TestClient;
 beforeEach(async () => {
   server = await createTestServer({ projectCatalog: CATALOG });
   alice = await server.signIn('alice');
-  expect((await alice.post('/api/project-book/intake', { number: 'P-2307' })).status).toBe(200);
+  expect((await alice.post('/api/project-book/intake', { number: 'P-2307', name: '华东客户交付' })).status).toBe(200);
 });
 afterEach(() => server.close());
 const client = api(() => alice);
@@ -91,7 +91,7 @@ describe('confirmation status', () => {
   });
 
   it('a public project deactivated after confirmation invalidates it; reviving it restores it (#194)', async () => {
-    expect((await alice.post('/api/public-project-book/intake', { number: 'P-9001' })).status).toBe(200);
+    expect((await alice.post('/api/public-project-book/intake', { number: 'P-9001', name: '公共平台建设' })).status).toBe(200);
     const { task } = await client.createTask('杭州');
     const uploaded = await client.upload(task.taskId, [sample('m01'), sample('m07')]);
     await client.accepted(await client.act(uploaded, 'start-inventory'));
@@ -104,11 +104,11 @@ describe('confirmation status', () => {
     expect(onPublic.confirmation.status).toBe('confirmed');
 
     // Deactivated: the standing submission keeps its pin (#194), but the confirmation no longer holds.
-    expect((await alice.post('/api/public-project-book/remove', { number: 'P-9001' })).status).toBe(200);
+    expect((await alice.post('/api/public-project-book/deactivate', { number: 'P-9001' })).status).toBe(200);
     const deactivated = await client.settled(task.taskId);
     expect(deactivated).toMatchObject({ stage: 'review', step: { kind: 'confirm_review' }, confirmation: { status: 'invalidated', notice: PROJECT_CHANGED_NOTICE } });
 
-    expect((await alice.post('/api/public-project-book/intake', { number: 'P-9001' })).status).toBe(200);
+    expect((await alice.post('/api/public-project-book/restore', { number: 'P-9001' })).status).toBe(200);
     const revived = await client.settled(task.taskId);
     expect(revived).toMatchObject({ stage: 'actions', confirmation: { status: 'confirmed', digest: onPublic.confirmation.digest } });
   });

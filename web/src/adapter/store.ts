@@ -117,6 +117,7 @@ export class AppStore {
   private state: AppState = INITIAL_STATE;
   private readonly listeners = new Set<() => void>();
   private readonly subscriptions = new Map<string, { count: number; unsubscribe: Unsubscribe }>();
+  private readonly bookReadGeneration: Record<BookScope, number> = { personal: 0, public: 0 };
   private listRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private listRetryAttempt = 0;
 
@@ -184,6 +185,8 @@ export class AppStore {
   private forgetAccountData(): void {
     for (const subscription of this.subscriptions.values()) subscription.unsubscribe();
     this.subscriptions.clear();
+    this.invalidateBookRead('personal');
+    this.invalidateBookRead('public');
     this.setState({ taskList: INITIAL_STATE.taskList, projectBook: INITIAL_STATE.projectBook, publicBook: INITIAL_STATE.publicBook, accounts: INITIAL_STATE.accounts, legacyImport: INITIAL_STATE.legacyImport, tasks: {} });
   }
 
@@ -254,31 +257,40 @@ export class AppStore {
   // 完全重置：成功后清掉所有缓存的任务快照与项目簿（项目簿回到未加载，下次打开时重读）。
   async resetAll(): Promise<TaskListOutcome> {
     const outcome = await this.taskListAction((adapter) => adapter.resetAll());
-    if (outcome.ok) this.setState({ tasks: {}, projectBook: { status: 'idle', data: null, error: null } });
+    if (outcome.ok) {
+      this.invalidateBookRead('personal');
+      this.setState({ tasks: {}, projectBook: { status: 'idle', data: null, error: null } });
+    }
     return outcome;
   }
 
   async loadProjectBook(): Promise<void> {
+    const generation = this.startBookRead('personal');
     const previous = this.state.projectBook;
     this.setState({ projectBook: { status: 'loading', data: previous.data, error: null } });
     try {
       const raw = await this.adapter.getProjectBook();
       const data = this.options.validate ? ProjectBookSchema.parse(raw) : raw;
+      if (!this.isCurrentBookRead('personal', generation)) return;
       this.setState({ projectBook: { status: 'ready', data, error: null } });
     } catch (error) {
+      if (!this.isCurrentBookRead('personal', generation)) return;
       this.setState({ projectBook: { status: 'error', data: this.state.projectBook.data, error: describe(error) } });
       if (isUnauthenticated(error)) this.sessionLost();
     }
   }
 
   async loadPublicBook(): Promise<void> {
+    const generation = this.startBookRead('public');
     const previous = this.state.publicBook;
     this.setState({ publicBook: { status: 'loading', data: previous.data, error: null } });
     try {
       const raw = await this.adapter.getPublicProjectBook();
       const data = this.options.validate ? ProjectBookSchema.parse(raw) : raw;
+      if (!this.isCurrentBookRead('public', generation)) return;
       this.setState({ publicBook: { status: 'ready', data, error: null } });
     } catch (error) {
+      if (!this.isCurrentBookRead('public', generation)) return;
       this.setState({ publicBook: { status: 'error', data: this.state.publicBook.data, error: describe(error) } });
       if (isUnauthenticated(error)) this.sessionLost();
     }
@@ -363,7 +375,17 @@ export class AppStore {
     } catch (error) {
       return { ok: false, error: { code: 'adapter_error', message: describe(error) }, book: null };
     }
-    if (data) this.setState(scope === 'public' ? { publicBook: { status: 'ready', data, error: null } } : { projectBook: { status: 'ready', data, error: null } });
+    if (data) {
+      this.invalidateBookRead(scope);
+      this.setState(scope === 'public' ? { publicBook: { status: 'ready', data, error: null } } : { projectBook: { status: 'ready', data, error: null } });
+    }
+    // A public conversion removes the matching entry from the signed-in administrator's personal project book (个人项目簿).
+    // Drop known-obsolete data before reloading so a failed read exposes a retry state instead of selectable old data.
+    if (scope === 'public' && outcome.ok && outcome.result.status === 'converted' && this.state.projectBook.status !== 'idle') {
+      this.invalidateBookRead('personal');
+      this.setState({ projectBook: { status: 'idle', data: null, error: null } });
+      await this.loadProjectBook();
+    }
     if (!outcome.ok) this.checkSession(outcome.error);
     return outcome;
   }
@@ -412,6 +434,13 @@ export class AppStore {
 
   acceptSnapshot(raw: TaskSnapshot): void {
     const snapshot = this.options.validate ? TaskSnapshotSchema.parse(raw) : raw;
+    const current = this.entry(snapshot.task.taskId).snapshot;
+    if (current && snapshot.revision < current.revision) {
+      // The request completed successfully, but an SSE event already delivered a newer view. Keep that view while
+      // resolving any loading or error state left by the older request.
+      this.patchEntry(snapshot.task.taskId, { status: 'ready', error: null });
+      return;
+    }
     this.patchEntry(snapshot.task.taskId, { status: 'ready', snapshot, error: null });
   }
 
@@ -451,6 +480,19 @@ export class AppStore {
   private patchEntry(taskId: string, patch: Partial<TaskEntry>): void {
     const next: TaskEntry = { ...this.entry(taskId), ...patch };
     this.setState({ tasks: { ...this.state.tasks, [taskId]: next } });
+  }
+
+  private startBookRead(scope: BookScope): number {
+    this.bookReadGeneration[scope] += 1;
+    return this.bookReadGeneration[scope];
+  }
+
+  private invalidateBookRead(scope: BookScope): void {
+    this.bookReadGeneration[scope] += 1;
+  }
+
+  private isCurrentBookRead(scope: BookScope, generation: number): boolean {
+    return this.bookReadGeneration[scope] === generation;
   }
 
   private setState(patch: Partial<AppState>): void {

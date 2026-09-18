@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SessionSchema, type Account } from '@baox/contract';
+import { AccountListSchema, SessionSchema, type Account } from '@baox/contract';
 import type { Hono } from 'hono';
 import type { AppEnv } from '../accounts/http';
 import { createApp, type App } from '../app';
@@ -18,7 +18,8 @@ import type { ReconcileExecutor } from '../erp/reconcile-job';
 // The parser job runs in the real parse worker unless a test injects another executor (`createTestServer({ parser })`).
 // Every `/api/*` route except the auth ones needs a session: get a signed-in client with `signIn()`.
 //
-//   const alice = await server.signIn();          // the first call creates the admin, later calls register users
+//   const alice = await server.signIn();          // the first call creates the admin; later calls register, approve,
+//                                                  // and log users in through the same public account routes
 //   const response = await alice.request('/api/tasks');
 //   await alice.post('/api/tasks', { homeCity: '杭州' });
 
@@ -79,21 +80,41 @@ export async function createTestServer({ parser, projectCatalog, legacyHome = nu
   const erpLease = createInMemoryErpLease();
   const app = createApp({ db, dataDir, now: clock.now, erpLease, legacyHome, ...(parser ? { parser } : {}), ...(projectCatalog ? { projectCatalog } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(erpConfig ? { erpConfig } : {}) });
   let accounts = 0;
+  let administrator: TestClient | null = null;
+
+  const clientFrom = async (response: Response, action: string): Promise<TestClient> => {
+    if (response.status !== 200) throw new Error(`${action} failed: ${response.status} ${await response.text()}`);
+    const session = SessionSchema.parse(await response.json());
+    if (!session.account) throw new Error(`${action}: no account in the session`);
+    const cookie = (response.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    return testClient(app, session.account, cookie);
+  };
 
   async function signIn(username = `user${accounts + 1}`): Promise<TestClient> {
     const status = SessionSchema.parse(await (await app.request('/api/session')).json()).status;
-    const path = status === 'setup_required' ? '/api/auth/setup' : '/api/auth/register';
-    const response = await app.request(path, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username, password: TEST_PASSWORD }),
-    });
-    if (response.status !== 200) throw new Error(`signIn(${username}) failed: ${response.status} ${await response.text()}`);
+    const credentials = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, password: TEST_PASSWORD }) };
+    if (status === 'setup_required') {
+      const client = await clientFrom(await app.request('/api/auth/setup', credentials), `signIn(${username})`);
+      administrator = client;
+      accounts += 1;
+      return client;
+    }
+
+    const registered = await app.request('/api/auth/register', credentials);
+    if (registered.status !== 200) throw new Error(`signIn(${username}) failed: ${registered.status} ${await registered.text()}`);
+    const pending = SessionSchema.parse(await registered.json());
+    if (pending.status !== 'signed_out' || pending.account !== null) throw new Error(`signIn(${username}): registration did not stay signed out`);
+    if (!administrator) throw new Error(`signIn(${username}): no administrator is available to approve the registration`);
+    const listed = await administrator.request('/api/admin/accounts');
+    if (listed.status !== 200) throw new Error(`signIn(${username}): listing pending registration failed: ${listed.status} ${await listed.text()}`);
+    const account = AccountListSchema.parse(await listed.json()).accounts.find((candidate) => candidate.username === username);
+    if (!account || account.approved) throw new Error(`signIn(${username}): pending registration was not listed`);
+    const approved = await administrator.post(`/api/admin/accounts/${account.accountId}`, { approved: true });
+    if (approved.status !== 200) throw new Error(`signIn(${username}): approval failed: ${approved.status} ${await approved.text()}`);
+
+    const client = await clientFrom(await app.request('/api/auth/login', credentials), `signIn(${username})`);
     accounts += 1;
-    const session = SessionSchema.parse(await response.json());
-    if (!session.account) throw new Error('signIn: no account in the session');
-    const cookie = (response.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
-    return testClient(app, session.account, cookie);
+    return client;
   }
 
   return {

@@ -2,7 +2,7 @@
 
 export type TaskLifecycle = 'open' | 'voided' | 'handed_off';
 
-// Mutable: role, active flag and password change over an account's life. Accounts are deactivated, never deleted.
+// Mutable: role, active and approval flags, and password change over an account's life. Accounts are never deleted.
 export interface AccountTable {
   account_id: string;
   display_name: string;
@@ -11,10 +11,11 @@ export interface AccountTable {
   password_hash: string | null;
   role: 'user' | 'admin';
   active: number;
+  approved: number;
   must_change_password: number;
 }
 
-export type AccountEventAction = 'promoted' | 'demoted' | 'deactivated' | 'reactivated' | 'temporary_password' | 'password_changed' | 'cli_reset_password';
+export type AccountEventAction = 'approved' | 'promoted' | 'demoted' | 'deactivated' | 'reactivated' | 'temporary_password' | 'password_changed' | 'cli_reset_password';
 
 // Append-only audit of account changes (#194). `actor_account_id` is null for the local CLI.
 export interface AccountEventTable {
@@ -190,6 +191,14 @@ export interface ProjectBookEventTable {
   name: string | null;
   verdict: string | null;
   expires_on: string | null;
+  // Null preserves the meaning of facts written before offline intake. `manual` marks a locally entered name that has
+  // never been represented as a successful ERP catalog check.
+  admission_source: 'manual' | null;
+  // Null preserves the legacy event fold. Lifecycle and later maintenance facts use this explicit discriminator while
+  // retaining the original `action` values accepted by the historical SQLite CHECK constraint.
+  maintenance_action: 'deactivated' | 'restored' | 'edited' | 'converted' | 'deleted' | null;
+  // An edit carries its original identity separately so a renumbering remains an append-only fact.
+  previous_number: string | null;
   actor_account_id: string;
   created_at: string;
 }

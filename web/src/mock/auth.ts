@@ -1,6 +1,7 @@
 import {
   ADMIN_ERRORS,
   AUTH_ERRORS,
+  AccountUpdateInputSchema,
   ChangePasswordInputSchema,
   CredentialsInputSchema,
   type Account,
@@ -15,11 +16,11 @@ import {
 } from '@baox/contract';
 import type { MockOptions, MockStorage } from './options';
 
-// The mock server's 应用账号 (app accounts): accounts and the session live in memory, so a reload starts over from the
+// The mock server's app accounts (应用账号): accounts and the session live in memory, so a reload starts over from the
 // `?auth=` option. By default the fixture account is signed in; `?auth=signed-out` starts at login, `?auth=setup`
 // with no account at all. The remembered home city is per account in persistent storage (localStorage in the browser).
-// Admin tools (#194) follow the server: at least one active admin remains, deactivated accounts cannot log in, and a
-// temporary password must be changed at next login.
+// Admin tools (#194) follow the server: at least one approved, active admin remains; pending registrations cannot log
+// in; deactivated accounts cannot log in; and a temporary password must be changed at next login.
 
 export const MOCK_ACCOUNT: Account = { accountId: 'A1', username: '林颂宜', role: 'admin' };
 export const MOCK_PASSWORD = 'mock-password';
@@ -54,11 +55,11 @@ export type MockAuth = {
   forgetCity(): void;
 };
 
-type Stored = Account & { password: string; active: boolean; mustChangePassword: boolean };
+type Stored = Account & { password: string; active: boolean; approved: boolean; mustChangePassword: boolean };
 
 export function createAuth(options: MockOptions): MockAuth {
   const storage = options.storage ?? defaultStorage();
-  let accounts: Stored[] = options.auth === 'setup' ? [] : [{ ...MOCK_ACCOUNT, password: MOCK_PASSWORD, active: true, mustChangePassword: false }];
+  let accounts: Stored[] = options.auth === 'setup' ? [] : [{ ...MOCK_ACCOUNT, password: MOCK_PASSWORD, active: true, approved: true, mustChangePassword: false }];
   let currentId: string | null = options.auth ? null : MOCK_ACCOUNT.accountId;
   let nextId = 2;
 
@@ -79,32 +80,34 @@ export function createAuth(options: MockOptions): MockAuth {
     const parsed = CredentialsInputSchema.safeParse(input);
     return parsed.success ? parsed.data : { code: 'invalid_input', message: parsed.error.issues[0]?.message ?? '请求无效。' };
   };
-  const create = (input: CredentialsInput, role: Account['role']): AuthOutcome => {
+  const create = (input: CredentialsInput, role: Account['role'], approved: boolean): AuthOutcome => {
     const valid = validate(input);
     if ('code' in valid) return { ok: false, error: valid };
     if (accounts.some((candidate) => candidate.username === valid.username)) return refuse('username_taken', AUTH_ERRORS.usernameTaken);
-    const created: Stored = { accountId: `A${nextId}`, username: valid.username, role, password: valid.password, active: true, mustChangePassword: false };
+    const created: Stored = { accountId: `A${nextId}`, username: valid.username, role, password: valid.password, active: true, approved, mustChangePassword: false };
     nextId += 1;
     accounts.push(created);
-    currentId = created.accountId;
+    currentId = approved ? created.accountId : null;
     return { ok: true, session: session() };
   };
   const cityKey = () => `baox.mock.homeCity.${currentId ?? 'none'}`;
   const listAccounts = (): AccountList => ({
-    accounts: [...accounts.filter((a) => a.role === 'admin'), ...accounts.filter((a) => a.role !== 'admin')].map((a) => ({ ...publicAccount(a), active: a.active, mustChangePassword: a.mustChangePassword })),
+    accounts: [...accounts.filter((a) => a.role === 'admin'), ...accounts.filter((a) => a.role !== 'admin')].map((a) => ({ ...publicAccount(a), active: a.active, approved: a.approved, mustChangePassword: a.mustChangePassword })),
   });
   const refuseList = (code: string, message: string): AccountListOutcome => ({ ok: false, error: { code, message }, accountList: listAccounts() });
 
   return {
     session,
     account,
-    setupAdmin: (input) => (accounts.length > 0 ? refuse('setup_done', AUTH_ERRORS.setupDone) : create(input, 'admin')),
-    register: (input) => (accounts.length === 0 ? refuse('setup_required', AUTH_ERRORS.setupRequired) : create(input, 'user')),
+    setupAdmin: (input) => (accounts.length > 0 ? refuse('setup_done', AUTH_ERRORS.setupDone) : create(input, 'admin', true)),
+    register: (input) => (accounts.length === 0 ? refuse('setup_required', AUTH_ERRORS.setupRequired) : create(input, 'user', false)),
     login(input) {
       const valid = validate(input);
       if ('code' in valid) return { ok: false, error: valid };
-      const found = accounts.find((candidate) => candidate.username === valid.username && candidate.password === valid.password && candidate.active);
+      const found = accounts.find((candidate) => candidate.username === valid.username && candidate.password === valid.password);
       if (!found) return refuse('invalid_credentials', AUTH_ERRORS.invalidCredentials);
+      if (!found.approved) return refuse('pending_approval', AUTH_ERRORS.pendingApproval);
+      if (!found.active) return refuse('invalid_credentials', AUTH_ERRORS.invalidCredentials);
       currentId = found.accountId;
       return { ok: true, session: session() };
     },
@@ -125,16 +128,21 @@ export function createAuth(options: MockOptions): MockAuth {
     listAccounts,
     updateAccount(accountId, change) {
       if (account()?.role !== 'admin') return { ok: false, error: { code: 'forbidden', message: ADMIN_ERRORS.forbidden }, accountList: null };
+      const parsed = AccountUpdateInputSchema.safeParse(change);
+      if (!parsed.success) return refuseList('invalid_input', parsed.error.issues[0]?.message ?? '请求无效。');
       const target = accounts.find((a) => a.accountId === accountId);
       if (!target) return refuseList('account_not_found', ADMIN_ERRORS.accountNotFound);
-      const dropsAdmin = target.role === 'admin' && target.active && (('role' in change && change.role === 'user') || ('active' in change && !change.active));
-      if (dropsAdmin && accounts.filter((a) => a.role === 'admin' && a.active).length <= 1) return refuseList('last_admin', ADMIN_ERRORS.lastAdmin);
+      if (!('approved' in parsed.data) && !target.approved) return refuseList('approval_required', ADMIN_ERRORS.approvalRequired);
+      const dropsAdmin = target.role === 'admin' && target.active && target.approved && (('role' in parsed.data && parsed.data.role === 'user') || ('active' in parsed.data && !parsed.data.active));
+      if (dropsAdmin && accounts.filter((a) => a.role === 'admin' && a.active && a.approved).length <= 1) return refuseList('last_admin', ADMIN_ERRORS.lastAdmin);
       const next: Stored =
-        'role' in change
-          ? { ...target, role: change.role }
-          : 'active' in change
-            ? { ...target, active: change.active }
-            : { ...target, password: change.temporaryPassword, mustChangePassword: true };
+        'approved' in parsed.data
+          ? { ...target, approved: true }
+          : 'role' in parsed.data
+            ? { ...target, role: parsed.data.role }
+            : 'active' in parsed.data
+              ? { ...target, active: parsed.data.active }
+              : { ...target, password: parsed.data.temporaryPassword, mustChangePassword: true };
       accounts = accounts.map((a) => (a === target ? next : a));
       // Deactivation and a temporary password sign the account out.
       if (accountId === currentId && (!next.active || next.mustChangePassword)) currentId = null;
