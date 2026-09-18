@@ -188,10 +188,13 @@ async function report(): Promise<void> {
 // is enough. The password is never logged, and never leaves this process except into the page it authenticates.
 function loginScript(user: string, secret: string): string {
   return `(() => {
-    const seen = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-    const secretBox = [...document.querySelectorAll('input[type=password]')].filter(seen)[0];
+    const seen = (el) => !!el && (() => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; })();
+    // Measured on 金蝶云星空 8.2.0.20250701: the login page carries #user (account) and #password, plus a second
+    // visible #CAuser for certificate login that must not be mistaken for the account box. Ids first, shape as fallback.
+    const byId = (id) => { const el = document.getElementById(id); return seen(el) ? el : null; };
+    const secretBox = byId('password') || [...document.querySelectorAll('input[type=password]')].filter(seen)[0];
     if (!secretBox) return { ok: false, why: 'no visible password input' };
-    const userBox = [...document.querySelectorAll('input')].filter((el) => el !== secretBox && seen(el) && !/^(checkbox|radio|hidden|submit|button|file)$/i.test(el.type))[0];
+    const userBox = byId('user') || [...document.querySelectorAll('input')].filter((el) => el !== secretBox && seen(el) && !/^(checkbox|radio|hidden|submit|button|file)$/i.test(el.type))[0];
     if (!userBox) return { ok: false, why: 'no visible account input' };
     const put = (el, value) => {
       el.focus();
@@ -209,18 +212,25 @@ function loginScript(user: string, secret: string): string {
   })()`;
 }
 
-async function signIn(timeoutMs = 90_000): Promise<Awaited<ReturnType<typeof probeNow>>> {
+async function signIn(fillMs = 60_000, settleMs = 90_000): Promise<Awaited<ReturnType<typeof probeNow>>> {
+  // `document.readyState` reaches 'complete' well before Kendo has laid the login form out, so a single attempt
+  // fires into an empty page and reports "no visible password input". Keep trying until the form is really there.
+  const fillDeadline = Date.now() + fillMs;
   let submitted = false;
-  for (const page of (await browser.listPages()).filter((page) => sameOrigin(page.url, erpConfig.origin))) {
-    const outcome = await evaluateChromiumPage<{ ok: boolean; why?: string }>(page as never, loginScript(account!, password), { timeoutMs: 10_000 }).catch(() => null);
-    if (outcome?.ok) { submitted = true; break; }
-    if (outcome?.why) say(`login form not usable on one tab: ${outcome.why}`);
+  let lastWhy = 'no ERP tab';
+  while (!submitted && Date.now() < fillDeadline) {
+    for (const page of (await browser.listPages()).filter((page) => sameOrigin(page.url, erpConfig.origin))) {
+      const outcome = await evaluateChromiumPage<{ ok: boolean; why?: string }>(page as never, loginScript(account!, password), { timeoutMs: 10_000 }).catch(() => null);
+      if (outcome?.ok) { submitted = true; break; }
+      if (outcome?.why) lastWhy = outcome.why;
+    }
+    if (!submitted) await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  say(submitted ? `submitted the login form as ${account}.` : 'could not fill the login form; waiting in case someone logs in by hand.');
-  const deadline = Date.now() + timeoutMs;
+  say(submitted ? `submitted the login form as ${account}.` : `could not fill the login form (${lastWhy}); waiting in case someone logs in by hand.`);
+  const settleDeadline = Date.now() + settleMs;
   for (;;) {
     const result = await probeNow();
-    if (result.status === 'matched' || Date.now() > deadline) return result;
+    if (result.status === 'matched' || Date.now() > settleDeadline) return result;
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
 }
