@@ -19,9 +19,9 @@ const intake = (value: string) => {
   fireEvent.click(intakeButton());
 };
 const message = () => screen.findByTestId('book-message');
-// 项目归属页的批量操作栏与「归入项目」弹层。
-const openPicker = () => fireEvent.click(within(screen.getByRole('region', { name: '批量操作' })).getByRole('button', { name: '归入项目' }));
-const picker = () => screen.getByRole('dialog', { name: '归入项目' });
+// 项目归属页右侧的「归入项目」面板：每个项目是一个按钮。
+const panel = () => screen.getByRole('complementary', { name: '归入项目' });
+const panelProject = (number: string) => within(panel()).queryByRole('button', { name: new RegExp(number) }) as HTMLButtonElement | null;
 const bookRows = () => within(screen.getByRole('table', { name: '个人项目簿' })).queryAllByTestId(/^book-row-/);
 
 describe('个人项目簿 #/projects', () => {
@@ -108,7 +108,7 @@ describe('项目归属的项目簿门', () => {
     await waitFor(() => expect(continueButton().disabled).toBe(false));
     // 仍在维护门：项目簿面板还在，工作台没出现。
     expect(screen.getByRole('heading', { name: '先维护个人项目簿' })).toBeTruthy();
-    expect(screen.queryByRole('complementary', { name: '项目工作台' })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: '归入项目' })).toBeNull();
     expect(screen.queryByText('至少录入一个可用项目后才能开始归属')).toBeNull();
 
     intake('P-6021');
@@ -119,33 +119,30 @@ describe('项目归属的项目簿门', () => {
     expect(await screen.findByRole('heading', { name: '项目归属' })).toBeTruthy();
     // 夹具预置的 No.1-2 归属（P-2307）照内核保留，项目簿门只看「没提交过、项目簿没有可选项目」；这里挑一条未归属的。
     fireEvent.click(screen.getByRole('checkbox', { name: '选择明细 No.3' }));
-    openPicker();
-    expect(within(picker()).getByRole('radio', { name: /P-6021/ })).toBeTruthy();
-    fireEvent.click(within(picker()).getByRole('radio', { name: /P-5108/ }));
-    fireEvent.click(within(picker()).getByRole('button', { name: '确认归入' }));
+    expect(panelProject('P-6021')).toBeTruthy();
+    fireEvent.click(panelProject('P-5108')!);
     expect(await screen.findByText((_, node) => node?.getAttribute('data-testid') === 'project-of-3' && node.textContent === 'P-5108 / 苏州门店巡检')).toBeTruthy();
   });
 
-  test('项目簿已有项目时直接打开工作台；项目弹层里点「新增项目」录入，回到弹层后勾选保持、新项目出现在列表', async () => {
+  test('项目簿已有项目时直接打开工作台；面板里点「新增项目」录入，关掉后勾选保持、新项目出现在面板里可直接归入', async () => {
     renderApp('#/task/T1/project', {}, 'project');
     await screen.findByRole('heading', { name: '项目归属' });
     expect(screen.queryByRole('link', { name: '去维护项目簿' })).toBeNull();
     fireEvent.click(screen.getByRole('checkbox', { name: '选择明细 No.3' }));
-    openPicker();
-    expect(within(picker()).queryByRole('radio', { name: /P-6021/ })).toBeNull();
+    expect(panelProject('P-6021')).toBeNull();
 
-    fireEvent.click(within(picker()).getByRole('button', { name: '新增项目' }));
+    fireEvent.click(within(panel()).getByRole('button', { name: '新增项目' }));
     const dialog = await screen.findByRole('dialog', { name: '新增项目' });
     fireEvent.change(within(dialog).getByLabelText('项目号'), { target: { value: 'P-6021' } });
     fireEvent.click(within(dialog).getByRole('button', { name: '核验并加入' }));
     expect(await within(dialog).findByTestId('book-row-P-6021')).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: '完成' }));
 
-    // 关掉面板回到项目弹层：新项目可选，勾选的明细还在。
-    fireEvent.click(await within(picker()).findByRole('radio', { name: /P-6021/ }));
-    expect(within(picker()).getByText('已选 1 条明细')).toBeTruthy();
-    fireEvent.click(within(picker()).getByRole('button', { name: '确认归入' }));
+    // 关掉弹层：新项目出现在面板里，勾选的明细还在。
     expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(panelProject('P-6021')).toBeTruthy());
+    expect(within(panel()).getByText('已选 1 条')).toBeTruthy();
+    fireEvent.click(panelProject('P-6021')!);
     await waitFor(() => expect(screen.getByTestId('project-of-3').textContent).toBe('P-6021 / 年度预算评审'));
   });
 

@@ -721,21 +721,25 @@ async function qaAssignment(page, state) {
     .getByRole('checkbox', { name: '全选当前明细' })
     .locator('xpath=following-sibling::label[1]')
     .click();
-  const batchBar = page.getByRole('region', { name: '批量操作' });
-  await expect(batchBar).toBeVisible({ timeout: 10000 });
-  await batchBar.getByRole('button', { name: '归入项目' }).click();
+  await expect(page.getByTestId('assign-selection')).toHaveText(/^已选 \d+ 条/, { timeout: 10000 });
 
-  const picker = page.getByRole('dialog', { name: '归入项目' });
-  await expect(picker).toBeVisible({ timeout: 10000 });
-  const project = picker.getByRole('radio', { name: /P-2307/ });
+  // The 归入项目 (assign to project) panel beside the lines: every project is a button, and clicking it assigns
+  // the ticked lines at once.
+  const assignPanel = page.getByRole('complementary', { name: '归入项目' });
+  await expect(assignPanel).toBeVisible({ timeout: 10000 });
+  const project = assignPanel.getByRole('button', { name: /P-2307/ });
   if (!(await visible(project, 5000))) {
     // Nothing to assign to: the personal book stayed empty, which the project-book area already explained.
-    warn('assignment', 'the project picker offers no P-2307, so the assignment could not be submitted');
+    warn('assignment', 'the 归入项目 panel offers no P-2307, so the assignment could not be submitted');
     await shot(page, 'assignment-no-project');
     return;
   }
-  await project.locator('xpath=following-sibling::label[1]').click();
-  await picker.getByRole('button', { name: '确认归入' }).click();
+  if (!(await project.isEnabled().catch(() => false))) {
+    warn('assignment', 'P-2307 in the 归入项目 panel is disabled after ticking every line (locked, or a conflict is pending)');
+    await shot(page, 'assignment-project-disabled');
+    return;
+  }
+  await project.click();
   await page.waitForTimeout(2000);
 
   const overwrite = page.getByRole('dialog', { name: /条明细已有其他项目归属/ });

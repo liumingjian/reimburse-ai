@@ -17,12 +17,9 @@ async function snapshotOf(page: Page, taskId: string): Promise<TaskSnapshot> {
 
 async function assignAllTo(page: Page, number: string) {
   await page.getByRole('checkbox', { name: '全选当前明细' }).locator('xpath=following-sibling::label[1]').click();
-  await page.getByRole('region', { name: '批量操作' }).getByRole('button', { name: '归入项目' }).click();
-  const picker = page.getByRole('dialog', { name: '归入项目' });
-  const option = picker.getByRole('radio', { name: new RegExp(number) });
-  await expect(picker.locator('.app-picker-option', { hasText: number })).toContainText('公共');
-  await option.locator('xpath=following-sibling::label[1]').click();
-  await picker.getByRole('button', { name: '确认归入' }).click();
+  const target = page.getByRole('complementary', { name: '归入项目' }).getByRole('button', { name: new RegExp(number) });
+  await expect(target).toContainText('公共');
+  await target.click();
 }
 
 async function intakePublic(book: Locator, number: string) {

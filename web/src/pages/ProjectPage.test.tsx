@@ -11,45 +11,32 @@ function renderProject(seed: TaskStage = 'project', prepare?: (adapter: AppAdapt
   return { adapter, ready };
 }
 
-// 右栏「本次归属」只读摘要；每个项目用字段组显示项目号、条数、价税合计。
-const panel = () => screen.getByRole('complementary', { name: '本次归属' });
-const usageNumbers = () => {
-  const list = within(panel()).queryByRole('list', { name: '本次归属的项目' });
-  if (!list) return [];
-  return within(list)
-    .getAllByRole('listitem')
-    .map((item) => within(item).getAllByRole('definition')[0]!.textContent);
+// Right-hand 归入项目 (assign to project) panel: every project is a button; clicking it assigns the ticked lines.
+const panel = () => screen.getByRole('complementary', { name: '归入项目' });
+const projectButtons = (listName?: string) => {
+  const scope = listName ? within(panel()).queryByRole('list', { name: listName }) : panel();
+  if (!scope) return [];
+  return within(scope)
+    .queryAllByRole('button')
+    .filter((button) => button.classList.contains('app-project-target')) as HTMLButtonElement[];
 };
-const usage = (number: string) =>
-  within(screen.getByTestId(`usage-${number}`))
-    .getAllByRole('definition')
-    .slice(1)
-    .map((node) => node.textContent)
-    .join(' · ');
-// 批量操作栏只在勾选了明细时出现（没显示时 Carbon 给它 aria-hidden）。
-const batch = () => screen.getByRole('region', { name: '批量操作' });
-const noBatch = () => expect(screen.queryByRole('region', { name: '批量操作' })).toBeNull();
-const picker = () => screen.getByRole('dialog', { name: '归入项目' });
-const openPicker = () => fireEvent.click(within(batch()).getByRole('button', { name: '归入项目' }));
-const optionNumbers = () => within(picker()).queryAllByRole('radio').map((radio) => (radio as HTMLInputElement).value);
-const choose = (number: string) => fireEvent.click(within(picker()).getByRole('radio', { name: new RegExp(number) }));
-const confirmButton = () => within(picker()).getByRole('button', { name: '确认归入' }) as HTMLButtonElement;
-const pickerSearch = () => within(picker()).getByRole('searchbox', { name: '查找项目' });
-// 用批量操作栏归入：打开项目弹层、单选项目、确认。
-const assignTo = (number: string) => {
-  openPicker();
-  choose(number);
-  fireEvent.click(confirmButton());
-};
+const numberOf = (button: HTMLElement) => button.querySelector('.app-code')!.textContent;
+const usageNumbers = () => projectButtons('本次已归入').map(numberOf);
+const optionNumbers = () => projectButtons().map(numberOf);
+const usage = (number: string) => screen.getByTestId(`usage-${number}`).textContent;
+const target = (number: string) => projectButtons().find((button) => numberOf(button) === number)!;
+const panelSearch = () => within(panel()).getByRole('searchbox', { name: '查找项目' });
+const selection = () => screen.getByTestId('assign-selection').textContent;
+// Assign the ticked lines: click the project in the panel.
+const assignTo = (number: string) => fireEvent.click(target(number));
 const pick = (no: number) => fireEvent.click(screen.getByRole('checkbox', { name: `选择明细 No.${no}` }));
 const projectOf = (no: number) => screen.getByTestId(`project-of-${no}`).textContent;
 const submitButton = () => screen.getByRole('button', { name: '确认项目归属' }) as HTMLButtonElement;
 const summary = () => screen.getByTestId('assign-summary').textContent;
 const purpose = () => screen.getByLabelText('报销事由');
 const settled = async (no: number, text: string) => waitFor(() => expect(projectOf(no)).toBe(text));
-
-describe('项目归属（内核 Variant B 工作台，Carbon 批量操作）', () => {
-  test('右栏「本次归属」只读、没有按钮；没勾选时没有归入入口；勾选后批量操作栏的取消清空勾选', async () => {
+describe('项目归属（工作台：勾选明细，点右侧项目归入）', () => {
+  test('右栏「归入项目」面板：没勾选时项目不可点并提示先勾选；勾选后可点；取消选择清空勾选', async () => {
     const { adapter, ready } = renderProject();
     const assignSpy = vi.spyOn(adapter, 'assignProjectLines');
     await ready;
@@ -58,58 +45,59 @@ describe('项目归属（内核 Variant B 工作台，Carbon 批量操作）', (
     const homeCity = screen.getByLabelText('常驻城市') as HTMLInputElement;
     expect(homeCity.value).toBe('杭州');
     expect(homeCity.readOnly).toBe(true);
+    // No modal: the batch action bar and the 归入项目 modal button are gone.
+    expect(screen.queryByRole('region', { name: '批量操作' })).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
 
     expect(usageNumbers()).toEqual(['P-2307']);
+    expect(usage('P-2307')).toBe('2 条 / 47.54 元');
     expect(within(panel()).getByText('华东客户交付')).toBeTruthy();
-    expect(usage('P-2307')).toBe('2 条 · 47.54 元');
-    expect(within(panel()).queryAllByRole('button')).toEqual([]);
-
-    noBatch();
-    expect(screen.queryByRole('button', { name: '归入项目' })).toBeNull();
-    expect(screen.queryByText('先勾选明细')).toBeNull();
+    expect(selection()).toBe('勾选明细后，点右侧项目归入');
+    expect(within(panel()).getByText('先勾选左侧明细')).toBeTruthy();
+    expect(projectButtons().every((button) => button.disabled)).toBe(true);
 
     pick(3);
     pick(4);
-    expect(within(batch()).getByText('已选 2 条')).toBeTruthy();
-    fireEvent.click(within(batch()).getByRole('button', { name: '取消' }));
-    noBatch();
+    expect(selection()).toBe('已选 2 条，点右侧项目归入');
+    expect(within(panel()).getByText('已选 2 条')).toBeTruthy();
+    expect(projectButtons().every((button) => !button.disabled)).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: '取消选择' }));
+    expect(selection()).toBe('勾选明细后，点右侧项目归入');
     expect((screen.getByRole('checkbox', { name: '选择明细 No.3' }) as HTMLInputElement).checked).toBe(false);
+    expect(target('P-3312').disabled).toBe(true);
     expect(assignSpy).not.toHaveBeenCalled();
   });
 
-  test('项目弹层：只列可选项目，本次已用的在前并带条数；搜索过滤列表；选中项目前不能确认；取消保留勾选', async () => {
+  test('面板列表：只列可选项目，本次已用的在前并带条数与金额；按项目号、名称或简称搜索并高亮；搜到唯一项目时回车直接归入', async () => {
     const { ready } = renderProject();
     await ready;
     await screen.findByRole('heading', { name: '项目归属' });
-    pick(3);
-    openPicker();
     expect(optionNumbers()).toEqual(['P-2307', 'P-2311', 'P-3312', 'P-1180']);
-    expect(within(picker()).getByRole('radio', { name: /P-2307.*本次 2 条/ })).toBeTruthy();
+    expect(projectButtons('可选项目').map(numberOf)).toEqual(['P-2311', 'P-3312', 'P-1180']);
     // 不可选的（已过期、复检未通过）不出现。
-    expect(within(picker()).queryByText('南京客户培训')).toBeNull();
-    expect(within(picker()).queryByText('旧版对账工具')).toBeNull();
-    expect(confirmButton().disabled).toBe(true);
+    expect(within(panel()).queryByText('南京客户培训')).toBeNull();
+    expect(within(panel()).queryByText('旧版对账工具')).toBeNull();
 
-    fireEvent.change(pickerSearch(), { target: { value: '华东' } });
+    fireEvent.change(panelSearch(), { target: { value: '华东' } });
     expect(optionNumbers()).toEqual(['P-2307', 'P-2311']);
-    fireEvent.change(pickerSearch(), { target: { value: 'p-331' } });
+    fireEvent.change(panelSearch(), { target: { value: 'p-331' } });
     expect(optionNumbers()).toEqual(['P-3312']);
-    fireEvent.change(pickerSearch(), { target: { value: '不存在的项目' } });
+    // Characters in order also match, so an abbreviation finds the full name; the hit characters are marked.
+    fireEvent.change(panelSearch(), { target: { value: '华交 二期' } });
+    expect(optionNumbers()).toEqual(['P-2311']);
+    expect(Array.from(target('P-2311').querySelectorAll('mark')).map((mark) => mark.textContent).join('')).toBe('华交二期');
+    fireEvent.change(panelSearch(), { target: { value: '不存在的项目' } });
     expect(optionNumbers()).toEqual([]);
-    expect(within(picker()).getByText('没有匹配的可选项目')).toBeTruthy();
-    fireEvent.change(pickerSearch(), { target: { value: '' } });
-    expect(optionNumbers()).toHaveLength(4);
+    expect(within(panel()).getByText('没有匹配的项目')).toBeTruthy();
 
-    choose('P-3312');
-    expect(confirmButton().disabled).toBe(false);
-    fireEvent.click(within(picker()).getByRole('button', { name: '取消' }));
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(within(batch()).getByText('已选 1 条')).toBeTruthy();
+    // Enter without ticked lines does nothing; with lines ticked and a single match it assigns.
+    fireEvent.change(panelSearch(), { target: { value: '产品' } });
+    fireEvent.keyDown(panelSearch(), { key: 'Enter' });
     expect(projectOf(3)).toBe('未归属');
-
-    assignTo('P-3312');
+    pick(3);
+    fireEvent.keyDown(panelSearch(), { key: 'Enter' });
     await settled(3, 'P-3312 / 产品调研');
-    noBatch();
+    expect(selection()).toBe('已归入 P-3312 产品调研');
   });
 
   test('明细按费用类别分组，组标题带条数；卡片有日期范围、城市、路线与脱敏票号', async () => {
@@ -139,22 +127,19 @@ describe('项目归属（内核 Variant B 工作台，Carbon 批量操作）', (
     await ready;
     await screen.findByRole('heading', { name: '项目归属' });
     fireEvent.click(screen.getByRole('checkbox', { name: '选择外地市内交通' }));
-    expect(within(batch()).getByText('已选 6 条')).toBeTruthy();
+    expect(selection()).toBe('已选 6 条，点右侧项目归入');
     assignTo('P-2307');
     for (const no of [1, 2, 3, 4, 5, 6]) await settled(no, 'P-2307 / 华东客户交付');
     expect(projectOf(7)).toBe('未归属');
-    expect(usage('P-2307')).toBe('6 条 · 186.59 元');
-    noBatch();
+    expect(usage('P-2307')).toBe('6 条 / 186.59 元');
+    expect(selection()).toBe('已归入 P-2307 华东客户交付');
 
-    // 归入一个新项目：它进入「本次归属」，在弹层里排到本次已用的项目之后、其余项目之前。
+    // 归入一个新项目：它进入「本次已归入」，排到本次已用的项目之后、其余项目之前。
     pick(9);
     assignTo('P-3312');
-    await waitFor(() => expect(usage('P-3312')).toBe('1 条 · 3640.00 元'));
+    await waitFor(() => expect(usage('P-3312')).toBe('1 条 / 3640.00 元'));
     expect(usageNumbers()).toEqual(['P-2307', 'P-3312']);
-    pick(7);
-    openPicker();
     expect(optionNumbers()).toEqual(['P-2307', 'P-3312', 'P-2311', 'P-1180']);
-    fireEvent.click(within(picker()).getByRole('button', { name: '取消' }));
 
     // 条数与金额是服务端给的，归入只改正在编辑的归属，没有提交。
     const snapshot = await adapter.getSnapshot('T1');
@@ -166,7 +151,7 @@ describe('项目归属（内核 Variant B 工作台，Carbon 批量操作）', (
     expect(snapshot.projectAssignment.assignments).toHaveLength(2);
   });
 
-  // 这个用例连着做好几轮归入与弹层选择；页面换成 Carbon 组件后在 jsdom 里渲染更慢，放宽到 15 秒（行为断言不变）。
+  // 这个用例连着做好几轮归入；页面换成 Carbon 组件后在 jsdom 里渲染更慢，放宽到 15 秒（行为断言不变）。
   test('逐条与批量归入；批量碰到已有其他项目时三个选项：取消不变、只处理未归属、确认覆盖', { timeout: 15_000 }, async () => {
     const { ready } = renderProject();
     await ready;
@@ -175,10 +160,10 @@ describe('项目归属（内核 Variant B 工作台，Carbon 批量操作）', (
     expect(projectOf(3)).toBe('未归属');
 
     pick(3);
-    expect(within(batch()).getByText('已选 1 条')).toBeTruthy();
+    expect(selection()).toBe('已选 1 条，点右侧项目归入');
     assignTo('P-1180');
     await settled(3, 'P-1180 / 内部培训');
-    noBatch();
+    expect(selection()).toBe('已归入 P-1180 内部培训');
 
     // 批量：No.1、No.2（已归 P-2307）与 No.4（未归属）一起归入 P-3312。
     const selectConflict = () => {
@@ -195,7 +180,9 @@ describe('项目归属（内核 Variant B 工作台，Carbon 批量操作）', (
     expect(projectOf(1)).toBe('P-2307 / 华东客户交付');
     expect(projectOf(4)).toBe('未归属');
     // 取消保留勾选，可以换个项目或调整勾选。
-    expect(within(batch()).getByText('已选 3 条')).toBeTruthy();
+    expect(selection()).toBe('已选 3 条，点右侧项目归入');
+    // While the overwrite question was open nothing else could be assigned; after cancel the projects work again.
+    expect(target('P-3312').disabled).toBe(false);
     for (const no of [1, 2, 4]) pick(no);
 
     dialog = selectConflict();
@@ -243,7 +230,7 @@ describe('项目归属（内核 Variant B 工作台，Carbon 批量操作）', (
     expect(within(filter).getByRole('tab', { name: '未归属' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.queryByRole('checkbox', { name: '选择明细 No.1' })).toBeNull();
     fireEvent.click(screen.getByRole('checkbox', { name: '全选当前明细' }));
-    expect(within(batch()).getByText('已选 7 条')).toBeTruthy();
+    expect(selection()).toBe('已选 7 条，点右侧项目归入');
     assignTo('P-3312');
     expect(await screen.findByText('所有明细都已归属。')).toBeTruthy();
     fireEvent.click(within(filter).getByRole('tab', { name: '全部' }));
@@ -290,22 +277,20 @@ describe('项目归属（内核 Variant B 工作台，Carbon 批量操作）', (
     expect(submitButton().disabled).toBe(false);
   });
 
-  test('在项目簿删除本任务已用的项目：已归入的明细沿用，提交仍通过；这个项目显示「已锁定」，弹层里不能选它', async () => {
+  test('在项目簿删除本任务已用的项目：已归入的明细沿用，提交仍通过；这个项目在面板里显示「已锁定」且不能点', async () => {
     const { adapter, ready } = renderProject('review', async (a) => {
       const removed = await a.removeProject('P-2307');
       expect(removed).toMatchObject({ ok: true, result: { status: 'removed' } });
     });
     await ready;
     await screen.findByRole('heading', { name: '项目归属' });
-    expect(usage('P-2307')).toBe('3 条 · 3786.00 元');
-    const list = within(panel()).getByRole('list', { name: '本次归属的项目' });
-    expect(within(list).getByText('已锁定')).toBeTruthy();
+    expect(usage('P-2307')).toBe('3 条 / 3786.00 元');
+    expect(within(target('P-2307')).getByText('已锁定')).toBeTruthy();
     pick(1);
-    openPicker();
-    expect(optionNumbers()).not.toContain('P-2307');
-    expect(optionNumbers()).toEqual(expect.arrayContaining(['P-2311', 'P-1180']));
-    fireEvent.click(within(picker()).getByRole('button', { name: '取消' }));
-    fireEvent.click(within(batch()).getByRole('button', { name: '取消' }));
+    expect(target('P-2307').disabled).toBe(true);
+    expect(projectButtons('可选项目').map(numberOf)).toEqual(expect.arrayContaining(['P-2311', 'P-1180']));
+    expect(target('P-2311').disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '取消选择' }));
 
     // 服务端同样拒绝新的归属用它（归入与提交都拒绝）。
     const snapshot = await adapter.getSnapshot('T1');
@@ -335,7 +320,7 @@ describe('项目归属（内核 Variant B 工作台，Carbon 批量操作）', (
     expect(screen.getByRole('link', { name: '回到当前阶段' }).getAttribute('href')).toBe('#/task/T1/project');
   });
 
-  test('ERP 写入开始后项目归属只读：不能勾选明细，没有批量操作；服务端也拒绝归入与改派', async () => {
+  test('ERP 写入开始后项目归属只读：不能勾选明细，面板里的项目不能点；服务端也拒绝归入与改派', async () => {
     const { adapter, ready } = renderProject('erp');
     await ready;
     expect(await screen.findByText('已开始写入报销系统，项目归属不能再修改。')).toBeTruthy();
@@ -343,8 +328,10 @@ describe('项目归属（内核 Variant B 工作台，Carbon 批量操作）', (
     expect((purpose() as HTMLInputElement).disabled).toBe(true);
     expect((screen.getByRole('checkbox', { name: '全选当前明细' }) as HTMLInputElement).disabled).toBe(true);
     expect((screen.getByRole('checkbox', { name: '选择明细 No.1' }) as HTMLInputElement).disabled).toBe(true);
-    noBatch();
-    expect(screen.queryByRole('button', { name: '归入项目' })).toBeNull();
+    expect(projectButtons().length).toBeGreaterThan(0);
+    expect(projectButtons().every((button) => button.disabled)).toBe(true);
+    expect(within(panel()).getByText('不能再修改')).toBeTruthy();
+    expect((within(panel()).getByRole('button', { name: '新增项目' }) as HTMLButtonElement).disabled).toBe(true);
     const snapshot = await adapter.getSnapshot('T1');
     const projects = Object.fromEntries(snapshot.lines.map((line) => [line.lineId, 'P-2307']));
     const outcome = await adapter.submitProjectAssignment('T1', { purpose: '出差', projects }, snapshot.step.stepToken);

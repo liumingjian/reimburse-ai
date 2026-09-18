@@ -141,13 +141,18 @@ test('弹层打开时也没有英文文案（「更多」菜单、作废确认�
 
   await page.goto(open('?seed=project', '#/task/T1/project'));
   await page.getByRole('checkbox', { name: '选择明细 No.3' }).locator('xpath=following-sibling::label[1]').click();
-  const batch = page.getByRole('region', { name: '批量操作' });
-  await expect(batch.getByText('已选 1 条')).toBeVisible();
-  await expect(batch.getByRole('button', { name: '取消' })).toBeVisible();
-  expect(await englishLeftovers(page), '项目归属批量操作栏').toEqual([]);
-  await batch.getByRole('button', { name: '归入项目' }).click();
-  await expect(page.getByRole('dialog', { name: '归入项目' }).getByRole('searchbox', { name: '查找项目' })).toBeVisible();
-  expect(await englishLeftovers(page), '项目归属「归入项目」弹层').toEqual([]);
+  const selectionBar = page.getByRole('group', { name: '明细选择与筛选' });
+  await expect(selectionBar.getByTestId('assign-selection')).toHaveText('已选 1 条，点右侧项目归入');
+  await expect(selectionBar.getByRole('button', { name: '取消选择' })).toBeVisible();
+  expect(await englishLeftovers(page), '项目归属选择栏（已勾选）').toEqual([]);
+  // 「归入项目」面板的 Carbon 搜索框：占位文字与输入后出现的清除按钮都是中文。
+  const assignPanel = page.getByRole('complementary', { name: '归入项目' });
+  const search = assignPanel.getByRole('searchbox', { name: '查找项目' });
+  await expect(search).toHaveAttribute('placeholder', '搜项目号或名称');
+  await search.fill('没有这个项目');
+  await expect(assignPanel.getByRole('button', { name: '清除查找' })).toBeVisible();
+  await expect(assignPanel.getByText('没有匹配的项目')).toBeVisible();
+  expect(await englishLeftovers(page), '项目归属「归入项目」面板（搜索无结果）').toEqual([]);
 
   await page.goto(open('?seed=actions', '#/task/T1/review'));
   await page.getByRole('button', { name: '追加材料' }).click();
