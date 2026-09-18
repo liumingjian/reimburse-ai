@@ -21,7 +21,7 @@ beforeEach(async () => {
   executor = scripted(loginWall);
   server = await createTestServer({ projectCatalog: CATALOG, erpExecutor: executor });
   alice = await server.signIn('alice');
-  for (const number of ['P-2307', 'P-3312']) expect((await alice.post('/api/project-book/intake', { number })).status).toBe(200);
+  for (const number of ['P-2307', 'P-3312']) expect((await alice.post('/api/project-book/intake', { number, name: number === 'P-2307' ? '华东客户交付' : '产品调研' })).status).toBe(200);
 });
 afterEach(() => server.close());
 const client = api(() => alice);

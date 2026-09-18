@@ -40,7 +40,7 @@ test('管理员添加公共项目，用户把明细归入它；提交前停用�
   await page.goto('/#/admin');
   await expect(page.getByRole('heading', { name: '管理', level: 1 })).toBeVisible();
   await expect(page.getByTestId('account-row-张三')).toContainText('用户');
-  const book = page.getByRole('region', { name: '公共项目簿' });
+  const book = page.getByRole('region', { name: '公共项目簿', exact: true }).filter({ has: page.getByLabel('项目名称', { exact: true }) });
   await intakePublic(book, 'P-2307');
   await expect(book.getByTestId('book-message')).toContainText('已加入公共项目簿');
   // A second public project stays selectable after the deactivation below.
@@ -103,7 +103,7 @@ test('public projects are read-only for members and retain lifecycle changes aft
   const member = await memberContext.newPage();
   await signIn(member, '成员');
   await page.goto('/#/admin');
-  const publicBook = page.getByRole('region', { name: '公共项目簿' });
+  const publicBook = page.getByRole('region', { name: '公共项目簿', exact: true }).filter({ has: page.getByLabel('项目名称', { exact: true }) });
   await intakePublic(publicBook, 'OFFLINE-101');
 
   await member.goto('/#/projects');
