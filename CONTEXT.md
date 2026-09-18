@@ -273,7 +273,7 @@ _Avoid_：ERP 账号、员工身份、个人绑定、用户档案
 _Avoid_：超级用户、运维、ERP 管理员
 
 **个人项目簿**：
-The personal project book (个人项目簿) is the project collection maintained by its owning app account, using manually entered project numbers and names that are checked against ERP before invoice import. Entries can be edited, deactivated, or reactivated; only currently selectable entries from the owner's book or the public project book may receive new assignments, and later book changes do not rewrite existing task selections.
+The personal project book (个人项目簿) is the project collection maintained by its owning app account, using manually entered project numbers and names that are checked against ERP before invoice import. Entries can be edited, deactivated, reactivated, or deleted from the personal collection; deletion preserves historical reimbursement records and releases the number for later intake; only currently selectable entries from the owner's book or the public project book may receive new assignments, and later book changes do not rewrite existing task selections.
 _Avoid_：任意项目号、第二套项目主数据
 
 **公共项目簿**：

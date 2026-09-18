@@ -43,6 +43,7 @@ export const HTTP_ENDPOINTS = {
   editProject: { method: 'POST', path: '/api/project-book/edit', body: 'json', fields: ['originalNumber', 'number', 'name'] },
   deactivateProject: { method: 'POST', path: '/api/project-book/deactivate', body: 'json', fields: ['number'] },
   restoreProject: { method: 'POST', path: '/api/project-book/restore', body: 'json', fields: ['number'] },
+  deleteProject: { method: 'POST', path: '/api/project-book/delete', body: 'json', fields: ['number'] },
   // 改密码需要会话；带临时密码的会话只能调用它（其余端点 403 password_change_required）。成功 200 返回 Session。
   changePassword: { method: 'POST', path: '/api/auth/change-password', body: 'json', fields: ['currentPassword', 'newPassword'] },
   // 账号管理（只对管理员，其他账号 403 forbidden）：GET 返回 AccountList；更新一次只带一项（role / active / temporaryPassword），

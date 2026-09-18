@@ -30,7 +30,14 @@ test('作废确认是危险弹层：确认按钮是红色 danger 按钮，文案
   await page.goto(open('', '#/tasks'));
   const t1 = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ });
   await t1.getByRole('button', { name: '更多' }).click();
-  await page.getByRole('menu', { name: '2026-08 上海出差（产品评审）的更多操作' }).getByRole('menuitem', { name: '作废' }).click();
+  const actionMenu = page.getByRole('menu', { name: '2026-08 上海出差（产品评审）的更多操作' });
+  const actionItem = actionMenu.getByRole('menuitem', { name: '作废' });
+  const menuBox = await actionMenu.boundingBox();
+  const itemBox = await actionItem.boundingBox();
+  expect(menuBox!.width).toBeLessThanOrEqual(164);
+  expect(Math.abs(menuBox!.width - itemBox!.width)).toBeLessThanOrEqual(4);
+  await page.screenshot({ path: testInfo.outputPath('task-action-menu.png') });
+  await actionItem.click();
   const dialog = page.getByRole('dialog', { name: '作废这个报销任务？' });
   const confirm = dialog.getByRole('button', { name: '作废', exact: true });
   await expect(confirm).toBeVisible();
@@ -147,6 +154,9 @@ test('1440：任务表不横向滚动，固定列没有分隔线；「更多」�
   await t2.getByRole('button', { name: '更多' }).click();
   const menu = page.getByRole('menu', { name: '2026-07 深圳客户拜访的更多操作' });
   await expect(menu.getByRole('menuitem', { name: '作废' })).toBeDisabled();
+  const menuBox = await menu.boundingBox();
+  const itemBox = await menu.getByRole('menuitem', { name: '作废' }).boundingBox();
+  expect(Math.abs(menuBox!.width - itemBox!.width)).toBeLessThanOrEqual(4);
   await expect(menu).toContainText('已开始写入报销系统，不能作废：它占用的发票要靠对账解除。');
   await page.screenshot({ path: testInfo.outputPath('tasks-1440-more-blocked.png') });
 });

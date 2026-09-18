@@ -65,4 +65,17 @@ describe('mock project-book refreshes', () => {
     expect(unchanged.step.stepToken).toBe(before.step.stepToken);
     expect(unchanged.step.kind).toBe('maintain_project_book');
   });
+
+  test('deletes inactive personal entries and allows their number to be admitted again', async () => {
+    const options: MockOptions = { seed: null, fault: null };
+    const bus = createBus(options);
+    const auth = createAuth(options);
+    const state = createMockBookState(options, MOCK_ACCOUNT.accountId);
+    const book = createProjectBook(options, bus, auth, state, () => MOCK_ACCOUNT.accountId);
+
+    expect(await book.deactivateProject({ number: 'P-2307' })).toMatchObject({ ok: true, result: { status: 'deactivated' } });
+    expect(await book.deleteProject({ number: 'P-2307' })).toMatchObject({ ok: true, result: { status: 'deleted', book: { projects: expect.not.arrayContaining([expect.objectContaining({ number: 'P-2307' })]) } } });
+    expect(await book.intakeProject({ number: 'P-2307', name: '重新录入项目' })).toMatchObject({ ok: true, result: { status: 'admitted' } });
+    expect(await book.getProjectBook()).toMatchObject({ projects: expect.arrayContaining([expect.objectContaining({ number: 'P-2307', name: '重新录入项目', active: true, selectable: true })]) });
+  });
 });

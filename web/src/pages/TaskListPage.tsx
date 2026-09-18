@@ -99,7 +99,7 @@ function MoreMenu({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: T
       aria-label={`${task.name}的${TASK_LIST_COPY.moreMenu}`}
       size="sm"
       flipped
-      menuOptionsClass="app-more-menu"
+      menuOptionsClass={task.abandonable ? 'app-more-menu' : 'app-more-menu app-more-menu--with-reason'}
     >
       {task.abandonable ? (
         <OverflowMenuItem isDelete itemText={ABANDON_TASK_COPY.confirm} onClick={() => onAbandon(task)} />

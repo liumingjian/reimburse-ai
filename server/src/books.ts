@@ -241,6 +241,7 @@ async function append(tx: BookDb, ref: BookRef, actorAccountId: string, at: stri
 type IntakeDecision = 'admitted' | 'duplicate' | 'public_reserved' | 'personal_collision';
 type EditDecision = 'edited' | 'missing' | 'duplicate' | 'public_reserved' | 'personal_collision';
 type LifecycleDecision = 'deactivated' | 'restored' | 'not_found' | 'already_active' | 'already_inactive' | 'public_reserved';
+type DeleteDecision = 'deleted' | 'not_found';
 type ConversionDecision = 'converted' | 'duplicate' | 'missing' | 'stale';
 
 function matchingPersonalOwners(books: ReadonlyMap<string, readonly BookEntry[]>, number: string): string[] {
@@ -410,6 +411,19 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
       if (decision === 'already_active') return result('rejected', PROJECT_BOOK_NOTES.alreadyActive(number));
       if (decision === 'public_reserved') return result('rejected', PROJECT_BOOK_NOTES.publicReserved(number));
       return result('rejected', PROJECT_BOOK_NOTES.alreadyInactive(number));
+    },
+
+    async delete(input: ProjectBookLifecycleInput): Promise<ProjectBookResult> {
+      const number = input.number.trim();
+      const decision = await serializeBookMutation(db, async (tx): Promise<DeleteDecision> => {
+        const entry = (await readBook(tx, ref)).find((candidate) => candidate.number === number);
+        if (!entry) return 'not_found';
+        await append(tx, ref, actorAccountId, at(), [{ number, action: 'removed' }]);
+        return 'deleted';
+      });
+
+      if (decision === 'deleted') return result('deleted', PROJECT_BOOK_NOTES.deleted(number));
+      return result('rejected', PROJECT_BOOK_NOTES.notFound(number));
     },
 
     // Reset is an account-scoped cleanup of the user’s own data. Facts stay append-only so legacy history and task

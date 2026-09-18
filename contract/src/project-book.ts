@@ -59,10 +59,10 @@ export const ProjectBookLifecycleInputSchema = z.object({
 });
 export type ProjectBookLifecycleInput = z.infer<typeof ProjectBookLifecycleInputSchema>;
 
-export const PROJECT_BOOK_RESULT_STATUSES = ['admitted', 'edited', 'deactivated', 'restored', 'converted', 'conversion_required', 'rejected'] as const;
+export const PROJECT_BOOK_RESULT_STATUSES = ['admitted', 'edited', 'deactivated', 'restored', 'deleted', 'converted', 'conversion_required', 'rejected'] as const;
 export type ProjectBookResultStatus = (typeof PROJECT_BOOK_RESULT_STATUSES)[number];
 
-export const PROJECT_BOOK_ACCEPTED_STATUSES: ReadonlySet<ProjectBookResultStatus> = new Set<ProjectBookResultStatus>(['admitted', 'edited', 'deactivated', 'restored', 'converted']);
+export const PROJECT_BOOK_ACCEPTED_STATUSES: ReadonlySet<ProjectBookResultStatus> = new Set<ProjectBookResultStatus>(['admitted', 'edited', 'deactivated', 'restored', 'deleted', 'converted']);
 
 // `unsafe` is the only machine-readable validation verdict. Duplicate and ownership feedback remains intentionally
 // generic so public intake does not disclose another member's personal book.
@@ -104,6 +104,7 @@ export const PROJECT_BOOK_NOTES = {
     originalNumber === number ? `项目 ${number} 的名称已更新为「${name}」。` : `项目 ${originalNumber} 已更新为 ${number}「${name}」。`,
   deactivated: (number: string) => `项目号 ${number} 已停用，不能用于新的项目归属。`,
   restored: (number: string) => `项目号 ${number} 已恢复，可用于新的项目归属。`,
+  deleted: (number: string) => `项目号 ${number} 已从个人项目簿删除。`,
   notFound: (number: string) => `个人项目簿里没有项目号 ${number}。`,
   alreadyActive: (number: string) => `项目号 ${number} 当前处于启用状态，无需恢复。`,
   alreadyInactive: (number: string) => `项目号 ${number} 已停用。`,
@@ -119,6 +120,7 @@ export const PROJECT_BOOK_COPY = {
   save: '保存',
   deactivate: '停用',
   restore: '恢复',
+  delete: '删除',
   empty: '当前项目簿为空，请录入第一个项目。',
   noName: '未记录名称',
   gateTitle: '先维护个人项目簿',

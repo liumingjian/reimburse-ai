@@ -71,6 +71,7 @@ const BOOK_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>([
   'editProject',
   'deactivateProject',
   'restoreProject',
+  'deleteProject',
   'intakePublicProject',
   'editPublicProject',
   'confirmPublicProjectConversion',
@@ -172,6 +173,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     editProject: book.editProject,
     deactivateProject: book.deactivateProject,
     restoreProject: book.restoreProject,
+    deleteProject: book.deleteProject,
     // 作废或重置掉的任务不再能打开（深链接也一样）：和不存在的任务同样报错。
     async getSnapshot(taskId) {
       if (hidden.has(taskId) || !ownedByCurrent(taskId)) throw new Error(`任务 ${taskId} 不存在`);

@@ -551,9 +551,17 @@ $gutter: $spacing-06;
   }
 }
 
-// 「更多」菜单：不能作废时菜单项下面有一行原因。Carbon 的菜单项定高、单行截断，这一项放开高度让原因折行读完；
-// 菜单也比 Carbon 默认的 10rem 宽一些，原因不至于折成好几行。
+// Compact action menus expand only when a disabled action includes a multiline reason.
 .app-more-menu.cds--overflow-menu-options {
+  inline-size: 10rem;
+}
+
+// Fill the menu surface, including focus and danger backgrounds, beyond Carbon's default button width cap.
+.app-more-menu .cds--overflow-menu-options__btn {
+  max-inline-size: none;
+}
+
+.app-more-menu--with-reason.cds--overflow-menu-options {
   inline-size: 18rem;
 }
 

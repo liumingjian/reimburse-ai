@@ -72,7 +72,37 @@ describe('personal project lifecycle', () => {
     ]);
   });
 
-  it('refreshes open assignment work, refuses fresh inactive assignments, and preserves submitted pins', async () => {
+  it('deletes an inactive personal entry, scopes the action, and permits reintake', async () => {
+    await book(member, '/api/project-book/intake', { number: 'DELETE-1', name: '待删除项目' });
+    expect(await book(admin, '/api/project-book/delete', { number: 'DELETE-1' })).toMatchObject({ status: 'rejected', book: { projects: [] } });
+    await book(member, '/api/project-book/deactivate', { number: 'DELETE-1' });
+
+    const responses = await Promise.all([
+      member.post('/api/project-book/delete', { number: 'DELETE-1' }),
+      member.post('/api/project-book/delete', { number: 'DELETE-1' }),
+    ]);
+    const results = await Promise.all(responses.map(async (response) => {
+      expect(response.status).toBe(200);
+      return ProjectBookResultSchema.parse(await response.json());
+    }));
+    expect(results.map((result) => result.status).sort()).toEqual(['deleted', 'rejected']);
+    expect(results.find((result) => result.status === 'deleted')).toMatchObject({ book: { projects: [] } });
+
+    expect(
+      await server.db.selectFrom('project_book_event').select(['action', 'maintenance_action']).where('number', '=', 'DELETE-1').orderBy('seq').execute(),
+    ).toEqual([
+      { action: 'admitted', maintenance_action: null },
+      { action: 'removed', maintenance_action: 'deactivated' },
+      { action: 'removed', maintenance_action: null },
+    ]);
+
+    expect(await book(member, '/api/project-book/intake', { number: 'DELETE-1', name: '重新录入项目' })).toMatchObject({
+      status: 'admitted',
+      book: { projects: [expect.objectContaining({ number: 'DELETE-1', name: '重新录入项目', active: true, selectable: true })] },
+    });
+  });
+
+  it.each(['deactivate', 'delete'] as const)('refreshes open assignment work, refuses fresh inactive assignments, and preserves submitted pins after %s', async (action) => {
     await book(member, '/api/project-book/intake', { number: 'TASK-LIFE', name: '任务生命周期项目' });
     const start = await inventoried();
     const [first] = start.lines;
@@ -101,7 +131,7 @@ describe('personal project lifecycle', () => {
     const submitted = await memberApi.accepted(await memberApi.act(revived, 'submit-project-assignment', { purpose: '杭州出差', projects }));
     expect(submitted.projectAssignment.status).toBe('submitted');
 
-    await book(member, '/api/project-book/deactivate', { number: 'TASK-LIFE' });
+    expect((await book(member, `/api/project-book/${action}`, { number: 'TASK-LIFE' })).status).toBe(action === 'delete' ? 'deleted' : 'deactivated');
     const after = await memberApi.current(start.task.taskId);
     expect(after.projectAssignment.projects).not.toEqual(expect.arrayContaining([expect.objectContaining({ number: 'TASK-LIFE' })]));
     expect(after.projectAssignment.assignments).toEqual(

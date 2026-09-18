@@ -76,6 +76,7 @@ export interface AppAdapter {
   editProject(input: ProjectBookEditInput): Promise<ProjectBookOutcome>;
   deactivateProject(input: ProjectBookLifecycleInput): Promise<ProjectBookOutcome>;
   restoreProject(input: ProjectBookLifecycleInput): Promise<ProjectBookOutcome>;
+  deleteProject(input: ProjectBookLifecycleInput): Promise<ProjectBookOutcome>;
   // 改密码（#194）：用临时密码登录后必须先改；成功返回新会话（signed_in）。
   changePassword(input: ChangePasswordInput): Promise<AuthOutcome>;
   // 管理员的账号管理：列出账号；设为管理员 / 取消管理员、停用 / 启用、设置临时密码，一次一项，成功返回新的账号列表。

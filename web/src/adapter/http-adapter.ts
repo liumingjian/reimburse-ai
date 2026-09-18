@@ -310,6 +310,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     editProject: (input) => bookAction(url(E.editProject.path), input),
     deactivateProject: (input) => bookAction(url(E.deactivateProject.path), input),
     restoreProject: (input) => bookAction(url(E.restoreProject.path), input),
+    deleteProject: (input) => bookAction(url(E.deleteProject.path), input),
     changePassword: (input) => authAction(url(E.changePassword.path), input),
     async listAccounts() {
       let response: Response;

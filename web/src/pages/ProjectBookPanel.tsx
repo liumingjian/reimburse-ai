@@ -62,6 +62,8 @@ export function ProjectBookPanel({
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
+  const [deleting, setDeleting] = useState<ProjectBookEntry | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [editing, setEditing] = useState<ProjectBookEntry | null>(null);
   const [editNumber, setEditNumber] = useState('');
   const [editName, setEditName] = useState('');
@@ -97,6 +99,11 @@ export function ProjectBookPanel({
     setEditNumber(project.number);
     setEditName(project.name ?? '');
     setEditError(null);
+  };
+
+  const openDelete = (project: ProjectBookEntry) => {
+    setDeleting(project);
+    setDeleteError(null);
   };
 
   const closeEdit = () => {
@@ -168,6 +175,24 @@ export function ProjectBookPanel({
       setName('');
     }
     setConversion(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleting) return;
+    setBusy(true);
+    setDeleteError(null);
+    const outcome = await store.projectBookAction((adapter) => adapter.deleteProject({ number: deleting.number }), 'personal');
+    setBusy(false);
+    if (!outcome.ok) {
+      setDeleteError(outcome.error.message);
+      return;
+    }
+    if (outcome.result.status !== 'deleted') {
+      setDeleteError(outcome.result.note);
+      return;
+    }
+    setMessage({ ok: true, text: outcome.result.note });
+    setDeleting(null);
   };
 
   const runLifecycle = async (action: 'deactivate' | 'restore', projectNumber: string) => {
@@ -260,7 +285,17 @@ export function ProjectBookPanel({
               </TableHead>
               <TableBody>
                 {projects.length > 0 ? (
-                  projects.map((project) => <BookRow key={project.number} project={project} canMaintain={canMaintain} busy={busy} onEdit={openEdit} onLifecycle={runLifecycle} />)
+                  projects.map((project) => (
+                    <BookRow
+                      key={project.number}
+                      project={project}
+                      canMaintain={canMaintain}
+                      busy={busy}
+                      onEdit={openEdit}
+                      onLifecycle={runLifecycle}
+                      onDelete={scope === 'personal' ? openDelete : undefined}
+                    />
+                  ))
                 ) : (
                   <TableRow>
                     <TableCell colSpan={canMaintain ? 4 : 3} className="app-muted">
@@ -273,6 +308,19 @@ export function ProjectBookPanel({
           </div>
         )}
       </section>
+      {deleting ? (
+        <ConfirmDialog
+          title="删除个人项目"
+          confirmLabel={PROJECT_BOOK_COPY.delete}
+          busy={busy}
+          error={deleteError}
+          danger
+          onConfirm={() => void confirmDelete()}
+          onCancel={() => setDeleting(null)}
+        >
+          <p>确定删除项目 {deleting.number}「{deleting.name}」吗？删除后将从个人项目簿移除，未提交任务中使用该项目的明细需要重新选择项目。已有报销记录保持不变。</p>
+        </ConfirmDialog>
+      ) : null}
       {editing ? (
         <ConfirmDialog
           title={PROJECT_BOOK_COPY.edit}
@@ -326,11 +374,13 @@ function BookRow({
   busy,
   onEdit,
   onLifecycle,
+  onDelete,
 }: {
   project: ProjectBookEntry;
   canMaintain: boolean;
   busy: boolean;
   onEdit: (project: ProjectBookEntry) => void;
+  onDelete: ((project: ProjectBookEntry) => void) | undefined;
   onLifecycle: (action: 'deactivate' | 'restore', projectNumber: string) => void;
 }) {
   return (
@@ -354,6 +404,7 @@ function BookRow({
                 disabled={busy}
                 onClick={() => onLifecycle(project.active ? 'deactivate' : 'restore', project.number)}
               />
+              {onDelete ? <OverflowMenuItem isDelete itemText={PROJECT_BOOK_COPY.delete} aria-label={`删除项目 ${project.number}`} disabled={busy} onClick={() => onDelete(project)} /> : null}
             </OverflowMenu>
           </div>
         </TableCell>

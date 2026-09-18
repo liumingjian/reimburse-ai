@@ -21,7 +21,7 @@ export function createMockBookState(options: MockOptions, fixtureAccountId: stri
   };
 }
 
-export type ProjectBookService = Pick<AppAdapter, 'getProjectBook' | 'intakeProject' | 'editProject' | 'deactivateProject' | 'restoreProject'> & {
+export type ProjectBookService = Pick<AppAdapter, 'getProjectBook' | 'intakeProject' | 'editProject' | 'deactivateProject' | 'restoreProject' | 'deleteProject'> & {
   allowList(taskId?: string): ProjectOption[];
   prepareSeed(taskId: string): void;
   refreshTasks(): void;
@@ -233,6 +233,17 @@ export function createProjectBook(
       state.personalByAccount.set(account.accountId, personal.map((project) => (project.number === number ? { ...project, active: true } : project)));
       refreshAccountTasks(account.accountId);
       return done('restored', PROJECT_BOOK_NOTES.restored(number), account.accountId);
+    },
+
+    async deleteProject(input: ProjectBookLifecycleInput) {
+      const account = auth.account();
+      if (!account) return unauthenticated();
+      const number = input.number.trim();
+      const personal = personalFor(account.accountId);
+      if (!personal.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.notFound(number), account.accountId);
+      state.personalByAccount.set(account.accountId, personal.filter((project) => project.number !== number));
+      refreshAccountTasks(account.accountId);
+      return done('deleted', PROJECT_BOOK_NOTES.deleted(number), account.accountId);
     },
   };
 }
