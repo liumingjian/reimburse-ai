@@ -6,8 +6,16 @@
 //   BAOX_ERP_LIVE=1
 //   BAOX_ERP_TEST_ACCOUNT, BAOX_ERP_TEST_TENANT  the dedicated test identity (ERP account + 账套); the run stops before
 //                                                any write when the logged-in ERP identity is anyone else
+//   BAOX_ERP_TEST_PASSWORD                       optional; when set the harness fills the ERP login form itself so a
+//                                                run needs nobody at the machine. Development only: the product never
+//                                                fills ERP credentials (ADR-0016), the employee logs in and thereby
+//                                                authorises ERP. Empty falls back to waiting for a human to log in.
 //   BAOX_ERP_LIVE_SAMPLE                         a directory with sample.json:
 //                                                { "homeCity": "合肥", "purpose": "…", "project": "<项目号>", "files": ["a.pdf"] }
+//
+// `--probe-only` logs in, prints the ERP identity (this is how you read 账套 the first time) and exits. It builds no
+// task, starts no app and writes nothing, so it needs neither BAOX_ERP_LIVE nor a sample.
+//
 // Optional: BAOX_ERP_ORIGIN / BAOX_ERP_BUILD / BAOX_ERP_FORM_ID (erp/config.ts), BAOX_CHROMIUM_CDP_PORT (9333),
 // BAOX_ERP_LIVE_PROFILE (dedicated Chromium profile, default ~/.baox-erp-live/chromium-profile), BAOX_EGO_TASK_SPACE.
 //
@@ -29,16 +37,19 @@ function refuse(message: string): never {
 }
 
 const env = process.env;
-if (env['BAOX_ERP_LIVE'] !== '1') refuse('set BAOX_ERP_LIVE=1 to run against the real ERP (it saves a real draft).');
+const probeOnly = process.argv.includes('--probe-only');
+if (!probeOnly && env['BAOX_ERP_LIVE'] !== '1') refuse('set BAOX_ERP_LIVE=1 to run against the real ERP (it saves a real draft).');
 const account = env['BAOX_ERP_TEST_ACCOUNT']?.trim();
 const tenant = env['BAOX_ERP_TEST_TENANT']?.trim();
-if (!account || !tenant) refuse('set BAOX_ERP_TEST_ACCOUNT and BAOX_ERP_TEST_TENANT to the dedicated ERP test identity.');
+const password = env['BAOX_ERP_TEST_PASSWORD']?.trim() ?? '';
+if (!account) refuse('set BAOX_ERP_TEST_ACCOUNT to the dedicated ERP test account.');
+if (!tenant && !probeOnly) refuse('set BAOX_ERP_TEST_TENANT to the dedicated 账套; `--probe-only` prints it off a logged-in session.');
 const sampleDir = env['BAOX_ERP_LIVE_SAMPLE']?.trim();
-if (!sampleDir || !existsSync(join(sampleDir, 'sample.json'))) refuse('set BAOX_ERP_LIVE_SAMPLE to a directory holding sample.json and the desensitised invoices.');
+if (!probeOnly && (!sampleDir || !existsSync(join(sampleDir, 'sample.json')))) refuse('set BAOX_ERP_LIVE_SAMPLE to a directory holding sample.json and the desensitised invoices.');
 
 type Sample = { homeCity: string; purpose: string; project: string; files: string[] };
-const sample = JSON.parse(readFileSync(join(sampleDir, 'sample.json'), 'utf8')) as Sample;
-if (!sample.homeCity || !sample.purpose || !sample.project || !Array.isArray(sample.files) || sample.files.length === 0) refuse('sample.json needs homeCity, purpose, project and files.');
+const sample: Sample = probeOnly ? { homeCity: '', purpose: '', project: '', files: [] } : (JSON.parse(readFileSync(join(sampleDir!, 'sample.json'), 'utf8')) as Sample);
+if (!probeOnly && (!sample.homeCity || !sample.purpose || !sample.project || !Array.isArray(sample.files) || sample.files.length === 0)) refuse('sample.json needs homeCity, purpose, project and files.');
 
 // Only now load the app: a refused run touches nothing.
 const { TaskSnapshotSchema } = await import('@baox/contract');
@@ -49,7 +60,7 @@ const { cdpFillExecutor } = await import('../src/erp/cdp-executor');
 const { erpConfigFromEnv } = await import('../src/erp/config');
 const { cdpBrowser, ensureChromium } = await import('../src/erp/executor/browser');
 const { cdpPortOf, evaluateChromiumPage } = await import('../src/erp/executor/chromium');
-const { erpEntryOf, probeIdentity } = await import('../src/erp/executor/probe');
+const { erpEntryOf, probeIdentity, sameOrigin } = await import('../src/erp/executor/probe');
 const { startServer } = await import('../src/server');
 
 type Snapshot = ReturnType<typeof TaskSnapshotSchema.parse>;
@@ -61,12 +72,26 @@ const webDist = fileURLToPath(new URL('../../web/dist', import.meta.url));
 const ask = createInterface({ input: process.stdin, output: process.stdout });
 const say = (line: string) => console.log(`[erp-live] ${line}`);
 
-// 1. The dedicated Chromium, headed, on its own persistent profile; the user logs in as the test identity.
+// 1. The dedicated Chromium, headed, on its own persistent profile. The session lives in that profile, so a second run
+// usually finds it already logged in and types nothing.
 await ensureChromium({ port: cdpPort, profileDir: env['BAOX_ERP_LIVE_PROFILE'] || join(homedir(), '.baox-erp-live', 'chromium-profile'), openUrl: erpEntryOf(erpConfig.origin), env });
-await ask.question(`[erp-live] In the dedicated Chromium window, log in to ${erpConfig.origin} as ${account} (账套 ${tenant}), then press Enter. `);
 const browser = cdpBrowser(cdpPort);
-const probe = await probeIdentity({ origin: erpConfig.origin, waitMs: 30_000, transport: 'chromium-cdp', listTabs: () => browser.listPages(), evaluate: (page, expression) => evaluateChromiumPage(page as never, expression) });
+const probeNow = () => probeIdentity({ origin: erpConfig.origin, waitMs: 30_000, transport: 'chromium-cdp', listTabs: () => browser.listPages(), evaluate: (page, expression) => evaluateChromiumPage(page as never, expression) });
+
+let probe = await probeNow();
+if (probe.status !== 'matched') {
+  if (password) probe = await signIn();
+  else {
+    await ask.question(`[erp-live] In the dedicated Chromium window, log in to ${erpConfig.origin} as ${account}${tenant ? ` (账套 ${tenant})` : ''}, then press Enter. `);
+    probe = await probeNow();
+  }
+}
 if (probe.status !== 'matched' || !probe.identity) refuse(`no logged-in ERP session (${probe.status}: ${probe.hint ?? ''}). Nothing was written.`);
+if (probeOnly) {
+  say(`ERP identity: 显示名 ${probe.identity.displayName} / 账号 ${probe.identity.account} / 账套 ${probe.identity.tenant}`);
+  say(`put this in .env:  export BAOX_ERP_TEST_TENANT='${probe.identity.tenant}'`);
+  process.exit(0);
+}
 if (probe.identity.account !== account || probe.identity.tenant !== tenant) refuse(`the logged-in ERP identity is ${probe.identity.account} / ${probe.identity.tenant}, not the dedicated test identity. Nothing was written.`);
 say(`ERP identity ${probe.identity.displayName} (${account}, 账套 ${tenant}) confirmed.`);
 
@@ -108,7 +133,7 @@ try {
 
   let task = snapshotOf((await post('/api/tasks', { homeCity: sample.homeCity })).body);
   const form = new FormData();
-  for (const file of sample.files) form.append('files', new File([readFileSync(join(sampleDir, file))], basename(file), { type: file.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg' }));
+  for (const file of sample.files) form.append('files', new File([readFileSync(join(sampleDir!, file))], basename(file), { type: file.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg' }));
   task = snapshotOf((await call(`/api/tasks/${task.task.taskId}/batches`, { method: 'POST', body: form })).body);
   task = await act(task, 'start-inventory');
   task = await until(task.task.taskId, (s) => s.inventory.status === 'done', 5 * 60_000);
@@ -121,7 +146,8 @@ try {
   for (;;) {
     task = await until(task.task.taskId, (s) => s.erp.status !== 'running');
     if (task.step.kind !== 'erp_login') break;
-    await ask.question(`[erp-live] ERP asks for a login${task.erp.loginNotice ? ` (${task.erp.loginNotice})` : ''}. Log in, then press Enter. `);
+    if (password) { say(`ERP asks for a login${task.erp.loginNotice ? ` (${task.erp.loginNotice})` : ''}; signing in again.`); await signIn(); }
+    else await ask.question(`[erp-live] ERP asks for a login${task.erp.loginNotice ? ` (${task.erp.loginNotice})` : ''}. Log in, then press Enter. `);
     task = await act(task, 'confirm-login');
   }
 
@@ -153,6 +179,49 @@ async function report(): Promise<void> {
     }
   } finally {
     await db.destroy();
+  }
+}
+
+// Fills the ERP login form in the dedicated Chromium and waits for the console. Harness only: in the product the
+// employee logs in themselves, and that login IS the ERP authorisation (ADR-0016). The form is plain HTML — the Kendo
+// controls that ignore programmatic assignment live on the bill, not here — so a native-setter write plus input/change
+// is enough. The password is never logged, and never leaves this process except into the page it authenticates.
+function loginScript(user: string, secret: string): string {
+  return `(() => {
+    const seen = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const secretBox = [...document.querySelectorAll('input[type=password]')].filter(seen)[0];
+    if (!secretBox) return { ok: false, why: 'no visible password input' };
+    const userBox = [...document.querySelectorAll('input')].filter((el) => el !== secretBox && seen(el) && !/^(checkbox|radio|hidden|submit|button|file)$/i.test(el.type))[0];
+    if (!userBox) return { ok: false, why: 'no visible account input' };
+    const put = (el, value) => {
+      el.focus();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    put(userBox, ${JSON.stringify(user)});
+    put(secretBox, ${JSON.stringify(secret)});
+    const button = [...document.querySelectorAll('button, a, input[type=submit], div[role=button]')].filter(seen)
+      .find((el) => ((el.innerText || el.value || '').trim() === '登录'));
+    if (!button) return { ok: false, why: 'no visible 登录 button' };
+    button.click();
+    return { ok: true };
+  })()`;
+}
+
+async function signIn(timeoutMs = 90_000): Promise<Awaited<ReturnType<typeof probeNow>>> {
+  let submitted = false;
+  for (const page of (await browser.listPages()).filter((page) => sameOrigin(page.url, erpConfig.origin))) {
+    const outcome = await evaluateChromiumPage<{ ok: boolean; why?: string }>(page as never, loginScript(account!, password), { timeoutMs: 10_000 }).catch(() => null);
+    if (outcome?.ok) { submitted = true; break; }
+    if (outcome?.why) say(`login form not usable on one tab: ${outcome.why}`);
+  }
+  say(submitted ? `submitted the login form as ${account}.` : 'could not fill the login form; waiting in case someone logs in by hand.');
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const result = await probeNow();
+    if (result.status === 'matched' || Date.now() > deadline) return result;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
   }
 }
 
