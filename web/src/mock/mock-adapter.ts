@@ -73,6 +73,7 @@ const BOOK_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>([
   'restoreProject',
   'intakePublicProject',
   'editPublicProject',
+  'confirmPublicProjectConversion',
   'deactivatePublicProject',
   'restorePublicProject',
 ]);

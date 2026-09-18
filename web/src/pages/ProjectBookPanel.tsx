@@ -4,13 +4,14 @@ import { Add, Edit, PauseFilled, Renew } from '@carbon/icons-react';
 import { StatusTag } from '../shell/StatusTag';
 import { useAppStore, useBook } from '../adapter/context';
 import type { BookScope } from '../adapter/store';
-import { type AppAdapter, type ProjectBookEditInput, type ProjectBookOutcome, PROJECT_BOOK_ACCEPTED_STATUSES, PROJECT_BOOK_COPY, PUBLIC_PROJECT_BOOK_COPY, type ProjectBookEntry } from '@baox/contract';
+import { type AppAdapter, type ProjectBookEditInput, type ProjectBookOutcome, type PublicProjectConversionInput, PROJECT_BOOK_ACCEPTED_STATUSES, PROJECT_BOOK_COPY, PUBLIC_PROJECT_BOOK_COPY, type ProjectBookEntry } from '@baox/contract';
 import { ConfirmDialog } from '../shell/Dialog';
 
 // The same table presents both scopes. Personal intake is available wherever the personal panel appears; the public
 // panel becomes editable only on the administrator surface, while the project page always shows its read-only view.
 
 type Message = { ok: boolean; text: string };
+type ConversionPrompt = { input: PublicProjectConversionInput; editEntry: ProjectBookEntry | null };
 
 type BookOps = {
   title: string;
@@ -65,6 +66,8 @@ export function ProjectBookPanel({
   const [editNumber, setEditNumber] = useState('');
   const [editName, setEditName] = useState('');
   const [editError, setEditError] = useState<string | null>(null);
+  const [conversion, setConversion] = useState<ConversionPrompt | null>(null);
+  const [conversionError, setConversionError] = useState<string | null>(null);
   const inputId = scope === 'personal' ? 'project-number' : 'public-project-number';
   const nameId = scope === 'personal' ? 'project-name' : 'public-project-name';
 
@@ -75,6 +78,11 @@ export function ProjectBookPanel({
     setBusy(false);
     if (!outcome.ok) {
       setMessage({ ok: false, text: outcome.error.message });
+      return;
+    }
+    if (scope === 'public' && outcome.result.status === 'conversion_required') {
+      setConversion({ input: { operation: 'intake', number, name }, editEntry: null });
+      setConversionError(null);
       return;
     }
     setMessage({ ok: PROJECT_BOOK_ACCEPTED_STATUSES.has(outcome.result.status), text: outcome.result.note });
@@ -106,12 +114,60 @@ export function ProjectBookPanel({
       setEditError(outcome.error.message);
       return;
     }
+    if (scope === 'public' && outcome.result.status === 'conversion_required') {
+      setEditing(null);
+      setConversion({
+        input: {
+          operation: 'edit',
+          originalNumber: editing.number,
+          originalName: editing.name,
+          originalActive: editing.active,
+          number: editNumber,
+          name: editName,
+        },
+        editEntry: editing,
+      });
+      setConversionError(null);
+      return;
+    }
     if (!PROJECT_BOOK_ACCEPTED_STATUSES.has(outcome.result.status)) {
       setEditError(outcome.result.note);
       return;
     }
     setMessage({ ok: true, text: outcome.result.note });
     closeEdit();
+  };
+
+  const cancelConversion = () => {
+    const pending = conversion;
+    setConversion(null);
+    setConversionError(null);
+    if (!pending?.editEntry) return;
+    setEditing(pending.editEntry);
+    setEditNumber(pending.input.number);
+    setEditName(pending.input.name);
+  };
+
+  const confirmConversion = async () => {
+    if (!conversion) return;
+    setBusy(true);
+    setConversionError(null);
+    const outcome = await store.projectBookAction((adapter) => adapter.confirmPublicProjectConversion(conversion.input), 'public');
+    setBusy(false);
+    if (!outcome.ok) {
+      setConversionError(outcome.error.message);
+      return;
+    }
+    if (outcome.result.status !== 'converted') {
+      setConversionError(outcome.result.note);
+      return;
+    }
+    setMessage({ ok: true, text: outcome.result.note });
+    if (conversion.input.operation === 'intake') {
+      setNumber('');
+      setName('');
+    }
+    setConversion(null);
   };
 
   const runLifecycle = async (action: 'deactivate' | 'restore', projectNumber: string) => {
@@ -245,6 +301,19 @@ export function ProjectBookPanel({
               onChange={(event) => setEditName(event.target.value)}
             />
           </div>
+        </ConfirmDialog>
+      ) : null}
+      {conversion ? (
+        <ConfirmDialog
+          title={PUBLIC_PROJECT_BOOK_COPY.conversionTitle}
+          confirmLabel={PUBLIC_PROJECT_BOOK_COPY.conversionConfirm}
+          busy={busy}
+          error={conversionError}
+          danger
+          onConfirm={() => void confirmConversion()}
+          onCancel={cancelConversion}
+        >
+          <p>{PUBLIC_PROJECT_BOOK_COPY.conversionLead(conversion.input.number.trim())}</p>
         </ConfirmDialog>
       ) : null}
     </>

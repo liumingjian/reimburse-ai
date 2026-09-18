@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { ADMIN_ERRORS, AssignProjectLinesInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, FORBIDDEN_CODE, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
+import { ADMIN_ERRORS, AssignProjectLinesInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, FORBIDDEN_CODE, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
 import { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -192,7 +192,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     const owners = await db.selectFrom('task').select('account_id').distinct().where('lifecycle', '=', 'open').execute();
     for (const { account_id } of owners) await serviceFor(account_id).bookChanged();
   };
-  const CHANGED: ReadonlySet<ProjectBookResult['status']> = new Set(['admitted', 'edited', 'deactivated', 'restored']);
+  const CHANGED: ReadonlySet<ProjectBookResult['status']> = new Set(['admitted', 'edited', 'deactivated', 'restored', 'converted']);
   const intakeBookAction =
     (bookOf: BookOf, { adminOnly }: { adminOnly: boolean }) =>
     async (c: Context<AppEnv>) => {
@@ -227,11 +227,20 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
       if (CHANGED.has(result.status)) await (adminOnly ? everyOpenTaskChanged() : tasksOf(c).bookChanged());
       return c.json(result);
     };
+  const confirmPublicConversion = async (c: Context<AppEnv>) => {
+    if (accountOf(c).role !== 'admin') return c.json({ error: { code: FORBIDDEN_CODE, message: ADMIN_ERRORS.forbidden }, book: await publicBookOf(c).view() }, 403);
+    const input = PublicProjectConversionInputSchema.safeParse(await c.req.json().catch(() => null));
+    if (!input.success) return c.json({ error: { code: 'invalid_input', message: '请求无效。' }, book: await publicBookOf(c).view() }, 400);
+    const result = await publicBookOf(c).confirmConversion(input.data);
+    if (CHANGED.has(result.status)) await everyOpenTaskChanged();
+    return c.json(result);
+  };
   const adminOnly = { adminOnly: true };
   app.get('/api/public-project-book', async (c) => c.json(await publicBookOf(c).view()));
   app.post('/api/public-project-book/intake', intakeBookAction(publicBookOf, adminOnly));
   app.post('/api/project-book/edit', editBookAction(personalBookOf, personal));
   app.post('/api/public-project-book/edit', editBookAction(publicBookOf, adminOnly));
+  app.post('/api/public-project-book/convert', confirmPublicConversion);
   app.post('/api/project-book/deactivate', lifecycleBookAction(personalBookOf, personal, 'deactivate'));
   app.post('/api/project-book/restore', lifecycleBookAction(personalBookOf, personal, 'restore'));
   app.post('/api/public-project-book/deactivate', lifecycleBookAction(publicBookOf, adminOnly, 'deactivate'));

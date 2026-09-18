@@ -53,6 +53,7 @@ export const HTTP_ENDPOINTS = {
   getPublicProjectBook: { method: 'GET', path: '/api/public-project-book', body: 'none', fields: [] },
   intakePublicProject: { method: 'POST', path: '/api/public-project-book/intake', body: 'json', fields: ['number', 'name'] },
   editPublicProject: { method: 'POST', path: '/api/public-project-book/edit', body: 'json', fields: ['originalNumber', 'number', 'name'] },
+  confirmPublicProjectConversion: { method: 'POST', path: '/api/public-project-book/convert', body: 'json', fields: ['operation', 'originalNumber', 'originalName', 'originalActive', 'number', 'name'] },
   deactivatePublicProject: { method: 'POST', path: '/api/public-project-book/deactivate', body: 'json', fields: ['number'] },
   restorePublicProject: { method: 'POST', path: '/api/public-project-book/restore', body: 'json', fields: ['number'] },
   // 旧数据导入：GET 返回这个账号看到的导入结果；只有拥有失败那次导入的账号能重试或跳过（其余 400 import_not_pending）。

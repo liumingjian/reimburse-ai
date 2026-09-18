@@ -88,7 +88,7 @@ describe('project-book edits', () => {
     expect(await server.db.selectFrom('project_book_event').select('maintenance_action').where('owner_account_id', '=', bob.account.accountId).execute()).toEqual([{ maintenance_action: null }, { maintenance_action: null }]);
   });
 
-  it('scopes personal edits to their owner and public edits to administrators, while refusing a public renumber into a personal collision', async () => {
+  it('scopes personal edits to their owner and public edits to administrators, while prompting a public renumber into a personal collision', async () => {
     await intake(alice, '/api/project-book/intake', { number: 'ALICE-ONLY', name: 'Alice 私有项目' });
     await intake(admin, '/api/public-project-book/intake', { number: 'PUBLIC-OLD', name: '公共原名称' });
 
@@ -99,7 +99,7 @@ describe('project-book edits', () => {
     expect(await forbidden.json()).toMatchObject({ error: { code: 'forbidden' } });
 
     const collision = await edit(admin, '/api/public-project-book/edit', { originalNumber: 'PUBLIC-OLD', number: 'ALICE-ONLY', name: '不应公开' });
-    expect(collision).toMatchObject({ status: 'rejected', note: expect.stringContaining('个人项目簿') });
+    expect(collision).toMatchObject({ status: 'conversion_required', note: expect.stringContaining('个人项目簿') });
     const renamed = await edit(admin, '/api/public-project-book/edit', { originalNumber: 'PUBLIC-OLD', number: 'PUBLIC-OLD', name: '公共新名称' });
     expect(renamed).toMatchObject({ status: 'edited', book: { projects: [expect.objectContaining({ number: 'PUBLIC-OLD', name: '公共新名称' })] } });
     expect(ProjectBookSchema.parse(await (await alice.request('/api/project-book')).json()).projects).toEqual([expect.objectContaining({ number: 'ALICE-ONLY', name: 'Alice 私有项目' })]);
@@ -113,7 +113,7 @@ describe('project-book edits', () => {
       edit(bob, '/api/project-book/edit', { originalNumber: 'PERSONAL-SOURCE', number: 'RACE-TARGET', name: '个人竞争项目' }),
       edit(admin, '/api/public-project-book/edit', { originalNumber: 'PUBLIC-SOURCE', number: 'RACE-TARGET', name: '公共竞争项目' }),
     ]);
-    expect([personal.status, shared.status].sort()).toEqual(['edited', 'rejected']);
+    expect([personal.status, shared.status].sort()).toEqual(['conversion_required', 'edited']);
     const personalBook = ProjectBookSchema.parse(await (await bob.request('/api/project-book')).json());
     const publicBook = ProjectBookSchema.parse(await (await bob.request('/api/public-project-book')).json());
     expect(personalBook.projects.some((project) => project.number === 'RACE-TARGET')).not.toBe(publicBook.projects.some((project) => project.number === 'RACE-TARGET'));

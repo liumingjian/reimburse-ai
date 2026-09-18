@@ -1,7 +1,7 @@
 import type { ActionError, AssignProjectLinesInput, CreateTaskInput, PlacementSlot, ProjectAssignmentInput } from './actions';
 import type { AccountList, AccountListOutcome, AccountUpdateInput, AuthOutcome, ChangePasswordInput, CredentialsInput, Session } from './auth';
 import type { LegacyImport, LegacyImportOutcome } from './legacy-import';
-import type { ProjectBook, ProjectBookEditInput, ProjectBookIntakeInput, ProjectBookLifecycleInput, ProjectBookResult } from './project-book';
+import type { ProjectBook, ProjectBookEditInput, ProjectBookIntakeInput, ProjectBookLifecycleInput, ProjectBookResult, PublicProjectConversionInput } from './project-book';
 import type { Corners, PendingAnswer, TaskSnapshot } from './snapshot';
 import type { TaskList } from './task-list';
 
@@ -85,6 +85,7 @@ export interface AppAdapter {
   getPublicProjectBook(): Promise<ProjectBook>;
   intakePublicProject(input: ProjectBookIntakeInput): Promise<ProjectBookOutcome>;
   editPublicProject(input: ProjectBookEditInput): Promise<ProjectBookOutcome>;
+  confirmPublicProjectConversion(input: PublicProjectConversionInput): Promise<ProjectBookOutcome>;
   deactivatePublicProject(input: ProjectBookLifecycleInput): Promise<ProjectBookOutcome>;
   restorePublicProject(input: ProjectBookLifecycleInput): Promise<ProjectBookOutcome>;
   // 旧数据导入（ADR-0018，只在创建第一个管理员时跑一次）：读这个账号看到的导入结果；旧数据损坏时报告里有逐个文件的原因，
