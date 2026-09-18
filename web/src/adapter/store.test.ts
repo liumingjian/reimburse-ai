@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 import { ADMIN_ERRORS, AUTH_ERRORS, PASSWORD_CHANGE_REQUIRED_CODE, STALE_STEP_CODE, STALE_STEP_NOTICE, ServiceUnavailableError, UNAUTHENTICATED_CODE, UnauthenticatedError, type ActionOutcome, type AdapterEvent, type AppAdapter, type TaskSnapshot } from '@baox/contract';
+import { createMockAdapter } from '../mock/mock-adapter';
 import { t1Snapshot } from '../mock/fixtures/tasks';
 import { AppStore } from './store';
 
@@ -146,6 +147,21 @@ describe('AppStore：应用账号会话', () => {
 });
 
 describe('AppStore', () => {
+  test('clears a converted personal entry when its required refresh fails', async () => {
+    const adapter = createMockAdapter({ seed: null, fault: null });
+    const store = new AppStore(adapter, { validate: true });
+    await store.loadProjectBook();
+    expect(store.getState().projectBook.data?.projects.some((project) => project.number === 'P-2307')).toBe(true);
+
+    expect(await store.projectBookAction((current) => current.intakePublicProject({ number: 'P-2307', name: '公共项目' }), 'public')).toMatchObject({ ok: true, result: { status: 'conversion_required' } });
+    adapter.getProjectBook = async () => {
+      throw new Error('personal book unavailable');
+    };
+    expect(await store.projectBookAction((current) => current.confirmPublicProjectConversion({ operation: 'intake', number: 'P-2307', name: '公共项目' }), 'public')).toMatchObject({ ok: true, result: { status: 'converted' } });
+
+    expect(store.getState().projectBook).toEqual({ status: 'error', data: null, error: 'personal book unavailable' });
+  });
+
   test('任务列表连接类失败：标记 offline（全页横幅）并按退避自动重试，恢复后列表就绪、offline 清除', async () => {
     let calls = 0;
     const adapter = {

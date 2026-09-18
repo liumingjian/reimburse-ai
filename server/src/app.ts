@@ -162,7 +162,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   app.use('/api/*', requireAccount(accounts));
   mountAccountRoutes(app, accounts);
 
-  // 旧数据导入 (legacy import) as the signed-in account sees it; only the owner of a failed run may retry or skip.
+  // Legacy import (旧数据导入) as the signed-in account sees it; only the owner of a failed run may retry or skip.
   app.get('/api/legacy-import', async (c) => c.json(await legacy.view(accountOf(c).accountId)));
   app.post('/api/legacy-import/retry', async (c) => {
     const view = await legacy.retry(accountOf(c).accountId);
@@ -179,12 +179,13 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     return c.json(await tasksOf(c).create(input.data.homeCity));
   });
 
-  // 完全重置 (reset), per account: voids the signed-in account's own tasks; other accounts, accounts themselves and
+  // Reset (完全重置), per account: voids the signed-in account's own tasks; other accounts, accounts themselves and
   // sessions are untouched. Answers the new task list.
   app.post('/api/reset', async (c) => c.json(await tasksOf(c).resetAll()));
 
-  // 个人项目簿 (personal book) belongs to the signed-in account. Every account can read the shared 公共项目簿 (public
-  // book); admins alone can add an entry. Intake is offline and a changed book pushes fresh snapshots of open tasks.
+  // The personal project book (个人项目簿) belongs to the signed-in account. Every account can read the shared public
+  // project book (公共项目簿); admins alone can add an entry. Intake is offline and a changed book pushes fresh
+  // snapshots of open tasks.
   type BookOf = (c: Context<AppEnv>) => BookService;
   const personalBookOf: BookOf = (c) => createBookService(db, { scope: 'personal', ownerAccountId: accountOf(c).accountId }, accountOf(c).accountId, now);
   const publicBookOf: BookOf = (c) => createBookService(db, { scope: 'public' }, accountOf(c).accountId, now);

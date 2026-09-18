@@ -49,9 +49,10 @@ export type MockBus = {
   isConnected(): boolean;
   // 名称仍由服务端生成的任务（经 createTask 新建的）：盘点结束时按材料日期与城市改名。夹具任务的名称是既定的，不改。
   readonly autoNamed: Set<string>;
-  // 当前个人项目簿的允许列表（进入项目归属时随快照给出）；由 mock 项目簿接上（useProjectAllowList），接上之前是默认夹具。
-  projectAllowList(): ProjectOption[];
-  useProjectAllowList(source: () => ProjectOption[]): void;
+  // The task owner's project options are added to its assignment snapshot. The mock project-book service supplies the
+  // list; until it is wired, the bus uses the default fixture list.
+  projectAllowList(taskId: string): ProjectOption[];
+  useProjectAllowList(source: (taskId: string) => ProjectOption[]): void;
   // 用户经 exclude-material 移出本次材料的材料（重复发票、认不出的合并发票及其行程单）：之后重新盘点也不再算它们。
   removedMaterials(taskId: string): Set<string>;
   // 状态变了但 step 种类没变时换发的新凭据（项目归属草稿、项目簿同步）：在原凭据后加一个全局递增的序号。
@@ -76,7 +77,7 @@ export function createBus(options: MockOptions): MockBus {
   const listeners = new Map<string, Set<(event: AdapterEvent) => void>>();
   let connected = true;
   let outageScheduled = false;
-  let allowListSource = (): ProjectOption[] => PROJECT_BOOK.map((project) => ({ ...project }));
+  let allowListSource = (_taskId: string): ProjectOption[] => PROJECT_BOOK.map((project) => ({ ...project }));
   const removed = new Map<string, Set<string>>();
   let rotation = 0;
 
@@ -163,7 +164,7 @@ export function createBus(options: MockOptions): MockBus {
     },
     isConnected: () => connected,
     autoNamed: new Set<string>(),
-    projectAllowList: () => allowListSource(),
+    projectAllowList: (taskId) => allowListSource(taskId),
     useProjectAllowList(source) {
       allowListSource = source;
     },

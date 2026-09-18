@@ -79,7 +79,7 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
     snapshot.events = result.events;
     snapshot.pendingItems = result.pendingItems;
     nameFromEvents(snapshot, bus.autoNamed.has(snapshot.task.taskId));
-    settlePending(snapshot, bus.projectAllowList());
+    settlePending(snapshot, bus.projectAllowList(snapshot.task.taskId));
   };
 
   const finishInventory = (snapshot: TaskSnapshot) => {

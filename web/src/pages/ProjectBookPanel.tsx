@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Button, InlineNotification, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextInput } from '@carbon/react';
-import { Add, Edit, PauseFilled, Renew } from '@carbon/icons-react';
+import { Button, InlineNotification, OverflowMenu, OverflowMenuItem, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextInput } from '@carbon/react';
+import { Add, Edit } from '@carbon/icons-react';
 import { StatusTag } from '../shell/StatusTag';
 import { useAppStore, useBook } from '../adapter/context';
 import type { BookScope } from '../adapter/store';
@@ -345,16 +345,17 @@ function BookRow({
       </TableCell>
       {canMaintain ? (
         <TableCell className="app-sticky-end app-num">
-          <Button kind="ghost" size="sm" hasIconOnly renderIcon={Edit} iconDescription={`编辑 ${project.number}`} tooltipAlignment="end" disabled={busy} onClick={() => onEdit(project)} />
-          {project.active ? (
-            <Button kind="ghost" size="sm" renderIcon={PauseFilled} disabled={busy} aria-label={`停用项目 ${project.number}`} onClick={() => onLifecycle('deactivate', project.number)}>
-              {PROJECT_BOOK_COPY.deactivate}
-            </Button>
-          ) : (
-            <Button kind="ghost" size="sm" renderIcon={Renew} disabled={busy} aria-label={`恢复项目 ${project.number}`} onClick={() => onLifecycle('restore', project.number)}>
-              {PROJECT_BOOK_COPY.restore}
-            </Button>
-          )}
+          <div className="app-row-actions">
+            <Button kind="ghost" size="sm" hasIconOnly renderIcon={Edit} iconDescription={`编辑 ${project.number}`} tooltipAlignment="end" disabled={busy} onClick={() => onEdit(project)} />
+            <OverflowMenu iconDescription="更多" aria-label={`项目 ${project.number} 的更多操作`} size="sm" flipped menuOptionsClass="app-more-menu">
+              <OverflowMenuItem
+                itemText={project.active ? PROJECT_BOOK_COPY.deactivate : PROJECT_BOOK_COPY.restore}
+                aria-label={`${project.active ? '停用' : '恢复'}项目 ${project.number}`}
+                disabled={busy}
+                onClick={() => onLifecycle(project.active ? 'deactivate' : 'restore', project.number)}
+              />
+            </OverflowMenu>
+          </div>
         </TableCell>
       ) : null}
     </TableRow>

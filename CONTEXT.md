@@ -312,7 +312,7 @@ _Avoid_：存档任务、迁移任务、在途任务
 用 ERP 自带的查询服务确认一条主数据在 ERP 目录里存在、名称一致、已审核且未禁用的动作；它只查不写，不打开任何单据。它证明该主数据可被引用，不证明引用它的费用明细能保存成功。
 _Avoid_：项目校验、同步主数据、拉取目录、验证项目合法性
 
-**项目号来源等级 (project-number evidence level)**：
+**Project-number evidence level (项目号来源等级)**：
 The relationship between a project number and its evidence. A manual admission is a local planning claim; an ERP
 read-only check proves that a code and name are currently referenceable. Legacy facts retain their historical evidence
 rather than being silently reclassified.

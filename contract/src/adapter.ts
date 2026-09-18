@@ -69,7 +69,8 @@ export interface AppAdapter {
   abandonTask(taskId: string): Promise<TaskListOutcome>;
   // 完全重置：清空当前账号自己的数据（任务、项目簿、常驻城市），返回重置后的任务列表；别的账号与登录状态不变。
   resetAll(): Promise<TaskListOutcome>;
-  // 个人项目簿（任务之外，按应用账号分簿）：显式录入项目号和名称。动作后受影响任务的项目允许列表随事件流更新。
+  // Personal project books (个人项目簿) are outside tasks and scoped to an app account. Members enter a number and
+  // name explicitly; affected task options update through the event stream.
   getProjectBook(): Promise<ProjectBook>;
   intakeProject(input: ProjectBookIntakeInput): Promise<ProjectBookOutcome>;
   editProject(input: ProjectBookEditInput): Promise<ProjectBookOutcome>;
@@ -81,7 +82,8 @@ export interface AppAdapter {
   // 取消或停用最后一位在用的管理员会被拒绝（last_admin）。非管理员一律 403 forbidden。
   listAccounts(): Promise<AccountList>;
   updateAccount(accountId: string, change: AccountUpdateInput): Promise<AccountListOutcome>;
-  // 公共项目簿：所有账号可读；录入只对管理员开放。结果形状同个人项目簿。
+  // The public project book (公共项目簿) is readable by every account; only administrators may maintain it. Its
+  // result shape matches a personal project book.
   getPublicProjectBook(): Promise<ProjectBook>;
   intakePublicProject(input: ProjectBookIntakeInput): Promise<ProjectBookOutcome>;
   editPublicProject(input: ProjectBookEditInput): Promise<ProjectBookOutcome>;

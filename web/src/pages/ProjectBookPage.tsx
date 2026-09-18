@@ -3,7 +3,7 @@ import { AppShell } from '../shell/AppShell';
 import { PageHeader } from '../shell/PageHeader';
 import { ProjectBookPanel } from './ProjectBookPanel';
 
-// 全局页面 `#/projects` shows the signed-in member's personal book beside the read-only shared book. Public changes
+// The global route `#/projects` shows the signed-in member's personal book beside the read-only shared book. Public changes
 // remain on the administrator surface so ordinary members never receive public mutation controls.
 export function ProjectBookPage() {
   return (
