@@ -37,7 +37,7 @@ async function confirmedTask(page: Page): Promise<string> {
   await act(page, await snapshotOf(page, taskId), 'start-inventory');
   // Waits out inventory and answers the 住宿 trio gap it raises (no 支付截图 here); this test is about the ERP stage.
   await answerStayGaps(page, taskId);
-  for (const number of PROJECTS) expect((await page.request.post('/api/project-book/intake', { data: { number } })).ok()).toBe(true);
+  for (const number of PROJECTS) expect((await page.request.post('/api/project-book/intake', { data: { number, name: number === 'P-2307' ? '华东客户交付' : '产品调研' } })).ok()).toBe(true);
   const ready = await snapshotOf(page, taskId);
   const review = await act(page, ready, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(ready.lines.map((line) => [line.lineId, PROJECTS[0]])) });
   const confirmed = await act(page, review, 'confirm-review', { digest: review.confirmation.digest });

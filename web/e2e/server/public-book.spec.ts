@@ -24,7 +24,8 @@ async function assignAllTo(page: Page, number: string) {
 
 async function intakePublic(book: Locator, number: string) {
   await book.getByLabel('项目号').fill(number);
-  await book.getByRole('button', { name: '核验并加入' }).click();
+  await book.getByLabel('项目名称').fill(number === 'P-2307' ? '华东客户交付' : '产品调研');
+  await book.getByRole('button', { name: '加入项目', exact: true }).click();
   await expect(book.getByTestId(`book-row-${number}`)).toContainText('可选');
 }
 
@@ -93,5 +94,31 @@ test('非管理员打不开管理页，也改不了公共项目簿', async ({ pa
   await signIn(page, '张三');
   await page.goto('/#/admin');
   await expect(page.getByText('只有管理员可以打开这个页面。')).toBeVisible();
-  expect((await page.request.post('/api/public-project-book/intake', { data: { number: 'P-2307' } })).status()).toBe(403);
+  expect((await page.request.post('/api/public-project-book/intake', { data: { number: 'P-2307', name: '华东客户交付' } })).status()).toBe(403);
+});
+
+test('public projects are read-only for members and retain lifecycle changes after reload', async ({ page, browser, serverApp }) => {
+  await signIn(page, 'admin');
+  const memberContext = await browser.newContext({ baseURL: serverApp.url });
+  const member = await memberContext.newPage();
+  await signIn(member, '成员');
+  await page.goto('/#/admin');
+  const publicBook = page.getByRole('region', { name: '公共项目簿' });
+  await intakePublic(publicBook, 'OFFLINE-101');
+
+  await member.goto('/#/projects');
+  const readOnly = member.getByRole('table', { name: '公共项目簿' });
+  await expect(readOnly.getByTestId('book-row-OFFLINE-101')).toContainText('产品调研');
+  await expect(readOnly.getByRole('button')).toHaveCount(0);
+  await publicBook.getByRole('button', { name: '停用 OFFLINE-101', exact: true }).click();
+  await expect(publicBook.getByTestId('book-row-OFFLINE-101')).toContainText('已停用');
+  await member.reload();
+  await expect(readOnly.getByTestId('book-row-OFFLINE-101')).toContainText('已停用');
+
+  await page.reload();
+  await publicBook.getByRole('button', { name: '恢复 OFFLINE-101', exact: true }).click();
+  await expect(publicBook.getByTestId('book-row-OFFLINE-101')).toContainText('可选');
+  await member.reload();
+  await expect(readOnly.getByTestId('book-row-OFFLINE-101')).toContainText('可选');
+  await memberContext.close();
 });

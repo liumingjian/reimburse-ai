@@ -35,7 +35,7 @@ async function reviewTask(page: Page): Promise<string> {
   await act(page, await snapshotOf(page, taskId), 'start-inventory');
   // Waits out inventory and answers the 住宿 trio gap it raises; this test is about 整单确认 (whole-claim review).
   await answerStayGaps(page, taskId);
-  expect((await page.request.post('/api/project-book/intake', { data: { number: 'P-2307' } })).ok()).toBe(true);
+  expect((await page.request.post('/api/project-book/intake', { data: { number: 'P-2307', name: '华东客户交付' } })).ok()).toBe(true);
   const ready = await snapshotOf(page, taskId);
   const submitted = await act(page, ready, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(ready.lines.map((line) => [line.lineId, 'P-2307'])) });
   expect(submitted).toMatchObject({ stage: 'review', step: { kind: 'confirm_review' } });
