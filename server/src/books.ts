@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Transaction } from 'kysely';
-import { PROJECT_BOOK_NOTES, type ProjectBook, type ProjectBookEntry, type ProjectBookIntakeInput, type ProjectBookResult } from '@baox/contract';
+import { PROJECT_BOOK_NOTES, type ProjectBook, type ProjectBookEditInput, type ProjectBookEntry, type ProjectBookIntakeInput, type ProjectBookResult } from '@baox/contract';
 import { isSafeProjectNumber } from './catalog/project-catalog';
 import type { Db } from './db/database';
 import type { ProjectBookEventTable, Schema } from './db/schema';
@@ -73,6 +73,14 @@ export function annotate(entry: BookEntry, today: string): ProjectBookEntry {
 }
 
 function applyEvent(book: Map<string, BookEntry>, event: ProjectBookEventTable, scope: BookRef['scope']): void {
+  if (event.maintenance_action === 'edited') {
+    const previousNumber = event.previous_number ?? event.number;
+    const entry = book.get(previousNumber);
+    if (!entry) return;
+    book.delete(previousNumber);
+    book.set(event.number, { ...entry, number: event.number, name: event.name ?? entry.name });
+    return;
+  }
   if (event.action === 'removed') {
     const entry = book.get(event.number);
     if (scope === 'personal') book.delete(event.number);
@@ -143,7 +151,14 @@ export async function bookOptions(db: BookDb, accountId: string, now: Date): Pro
   return [...personal, ...publicOptions];
 }
 
-type Append = { number: string; action: 'admitted' | 'removed'; name?: string | null; admissionSource?: 'manual' };
+type Append = {
+  number: string;
+  action: 'admitted' | 'checked' | 'removed';
+  name?: string | null;
+  admissionSource?: 'manual';
+  maintenanceAction?: 'edited';
+  previousNumber?: string | null;
+};
 
 const bookMutationTail = new WeakMap<object, Promise<void>>();
 
@@ -184,6 +199,8 @@ async function append(tx: BookDb, ref: BookRef, actorAccountId: string, at: stri
         verdict: null,
         expires_on: null,
         admission_source: event.admissionSource ?? null,
+        maintenance_action: event.maintenanceAction ?? null,
+        previous_number: event.previousNumber ?? null,
         actor_account_id: actorAccountId,
         created_at: at,
       })
@@ -192,6 +209,7 @@ async function append(tx: BookDb, ref: BookRef, actorAccountId: string, at: stri
 }
 
 type IntakeDecision = 'admitted' | 'duplicate' | 'public_reserved' | 'personal_collision';
+type EditDecision = 'edited' | 'missing' | 'duplicate' | 'public_reserved' | 'personal_collision';
 
 export function createBookService(db: Db, ref: BookRef, actorAccountId: string, now: () => Date = () => new Date()) {
   const at = () => `${now().toISOString().slice(0, 19)}Z`;
@@ -241,6 +259,42 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
       // This is deliberately not localized: the collision is in a private personal book, not the public book being
       // created, and the note must not disclose whose book it is.
       return result('rejected', PROJECT_BOOK_NOTES.publicPersonalCollision(number), null, false);
+    },
+
+    async edit(input: ProjectBookEditInput): Promise<ProjectBookResult> {
+      const originalNumber = input.originalNumber.trim();
+      const number = input.number.trim();
+      const name = input.name.trim();
+      if (number === '') return result('rejected', PROJECT_BOOK_NOTES.numberRequired);
+      if (!isSafeProjectNumber(number)) return result('rejected', PROJECT_BOOK_NOTES.editUnsafe(number), 'unsafe');
+      if (name === '') return result('rejected', PROJECT_BOOK_NOTES.nameRequired);
+
+      const decision = await serializeBookMutation(db, async (tx): Promise<EditDecision> => {
+        const current = await readBook(tx, ref);
+        if (!current.some((entry) => entry.number === originalNumber)) return 'missing';
+        if (number !== originalNumber && current.some((entry) => entry.number === number)) return 'duplicate';
+
+        // A name-only correction preserves a legacy cross-scope collision. A changed identity must meet the same
+        // reservation rules as intake, under the same transaction as the appended fact.
+        if (number !== originalNumber && ref.scope === 'personal') {
+          const publicEntries = await readBook(tx, { scope: 'public' });
+          if (publicEntries.some((entry) => entry.number === number)) return 'public_reserved';
+        }
+        if (number !== originalNumber && ref.scope === 'public') {
+          const books = await personalBooks(tx);
+          if ([...books.values()].some((entries) => entries.some((entry) => entry.number === number))) return 'personal_collision';
+        }
+
+        await append(tx, ref, actorAccountId, at(), [{ number, name, action: 'checked', maintenanceAction: 'edited', previousNumber: originalNumber }]);
+        return 'edited';
+      });
+
+      if (decision === 'edited') return result('edited', PROJECT_BOOK_NOTES.edited(originalNumber, number, name));
+      if (decision === 'missing') return result('rejected', PROJECT_BOOK_NOTES.editMissing(originalNumber));
+      if (decision === 'duplicate') return result('rejected', PROJECT_BOOK_NOTES.editDuplicate(number));
+      if (decision === 'public_reserved') return result('rejected', PROJECT_BOOK_NOTES.editPublicReserved(number));
+      // As with intake, the collision comes from another private book and must not identify its owner.
+      return result('rejected', PROJECT_BOOK_NOTES.editPublicPersonalCollision(number), null, false);
     },
 
     // Reset is an account-scoped cleanup of the user’s own data. Facts stay append-only so legacy history and task

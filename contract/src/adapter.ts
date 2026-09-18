@@ -1,7 +1,7 @@
 import type { ActionError, AssignProjectLinesInput, CreateTaskInput, PlacementSlot, ProjectAssignmentInput } from './actions';
 import type { AccountList, AccountListOutcome, AccountUpdateInput, AuthOutcome, ChangePasswordInput, CredentialsInput, Session } from './auth';
 import type { LegacyImport, LegacyImportOutcome } from './legacy-import';
-import type { ProjectBook, ProjectBookIntakeInput, ProjectBookResult } from './project-book';
+import type { ProjectBook, ProjectBookEditInput, ProjectBookIntakeInput, ProjectBookResult } from './project-book';
 import type { Corners, PendingAnswer, TaskSnapshot } from './snapshot';
 import type { TaskList } from './task-list';
 
@@ -72,6 +72,7 @@ export interface AppAdapter {
   // 个人项目簿（任务之外，按应用账号分簿）：显式录入项目号和名称。动作后受影响任务的项目允许列表随事件流更新。
   getProjectBook(): Promise<ProjectBook>;
   intakeProject(input: ProjectBookIntakeInput): Promise<ProjectBookOutcome>;
+  editProject(input: ProjectBookEditInput): Promise<ProjectBookOutcome>;
   // 改密码（#194）：用临时密码登录后必须先改；成功返回新会话（signed_in）。
   changePassword(input: ChangePasswordInput): Promise<AuthOutcome>;
   // 管理员的账号管理：列出账号；设为管理员 / 取消管理员、停用 / 启用、设置临时密码，一次一项，成功返回新的账号列表。
@@ -81,6 +82,7 @@ export interface AppAdapter {
   // 公共项目簿：所有账号可读；录入只对管理员开放。结果形状同个人项目簿。
   getPublicProjectBook(): Promise<ProjectBook>;
   intakePublicProject(input: ProjectBookIntakeInput): Promise<ProjectBookOutcome>;
+  editPublicProject(input: ProjectBookEditInput): Promise<ProjectBookOutcome>;
   // 旧数据导入（ADR-0018，只在创建第一个管理员时跑一次）：读这个账号看到的导入结果；旧数据损坏时报告里有逐个文件的原因，
   // 由这个账号修好后重试，或明确跳过。跳过之后导入就此结束。
   getLegacyImport(): Promise<LegacyImport>;

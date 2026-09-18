@@ -40,6 +40,7 @@ export const HTTP_ENDPOINTS = {
   // 请求本身失败 { error, book? }。
   getProjectBook: { method: 'GET', path: '/api/project-book', body: 'none', fields: [] },
   intakeProject: { method: 'POST', path: '/api/project-book/intake', body: 'json', fields: ['number', 'name'] },
+  editProject: { method: 'POST', path: '/api/project-book/edit', body: 'json', fields: ['originalNumber', 'number', 'name'] },
   // 改密码需要会话；带临时密码的会话只能调用它（其余端点 403 password_change_required）。成功 200 返回 Session。
   changePassword: { method: 'POST', path: '/api/auth/change-password', body: 'json', fields: ['currentPassword', 'newPassword'] },
   // 账号管理（只对管理员，其他账号 403 forbidden）：GET 返回 AccountList；更新一次只带一项（role / active / temporaryPassword），
@@ -49,6 +50,7 @@ export const HTTP_ENDPOINTS = {
   // 公共项目簿：GET 所有账号可读；离线录入只对管理员（403 forbidden { error, book }），结果形状同个人项目簿。
   getPublicProjectBook: { method: 'GET', path: '/api/public-project-book', body: 'none', fields: [] },
   intakePublicProject: { method: 'POST', path: '/api/public-project-book/intake', body: 'json', fields: ['number', 'name'] },
+  editPublicProject: { method: 'POST', path: '/api/public-project-book/edit', body: 'json', fields: ['originalNumber', 'number', 'name'] },
   // 旧数据导入：GET 返回这个账号看到的导入结果；只有拥有失败那次导入的账号能重试或跳过（其余 400 import_not_pending）。
   getLegacyImport: { method: 'GET', path: '/api/legacy-import', body: 'none', fields: [] },
   retryLegacyImport: { method: 'POST', path: '/api/legacy-import/retry', body: 'json', fields: [] },
