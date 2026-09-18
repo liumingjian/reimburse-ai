@@ -1,7 +1,7 @@
-import { AUTH_ERRORS, UNAUTHENTICATED_CODE, PROJECT_BOOK_NOTES, type AppAdapter, type ProjectBook, type ProjectBookEditInput, type ProjectBookIntakeInput, type ProjectBookOutcome, type ProjectBookResult, type ProjectOption, stageReached } from '@baox/contract';
+import { AUTH_ERRORS, UNAUTHENTICATED_CODE, PROJECT_BOOK_NOTES, PROJECT_CHANGED_NOTICE, type AppAdapter, type ProjectBook, type ProjectBookEditInput, type ProjectBookIntakeInput, type ProjectBookLifecycleInput, type ProjectBookOutcome, type ProjectBookResult, type ProjectOption, type TaskSnapshot, stageReached } from '@baox/contract';
 import type { MockAuth } from './auth';
 import type { MockBus } from './bus';
-import { INITIAL_BOOK, MOCK_TODAY, annotateProject, isSafeProjectNumber, projectEntryStep, type StoredProject } from './fixtures/projects';
+import { INITIAL_BOOK, MOCK_TODAY, annotateProject, isSafeProjectNumber, projectEntryStep, withProjectUsage, type StoredProject } from './fixtures/projects';
 import type { MockOptions } from './options';
 
 // The mock mirrors the local application's two project books. Manual admissions intentionally never consult the
@@ -21,7 +21,7 @@ export function createMockBookState(options: MockOptions, fixtureAccountId: stri
   };
 }
 
-export type ProjectBookService = Pick<AppAdapter, 'getProjectBook' | 'intakeProject' | 'editProject'> & {
+export type ProjectBookService = Pick<AppAdapter, 'getProjectBook' | 'intakeProject' | 'editProject' | 'deactivateProject' | 'restoreProject'> & {
   allowList(): ProjectOption[];
   prepareSeed(taskId: string): void;
   refreshTasks(): void;
@@ -45,7 +45,20 @@ export function createProjectBook(
     state.personalByAccount.set(accountId, empty);
     return empty;
   };
-  const annotated = (accountId: string) => personalFor(accountId).map((project) => annotateProject(project, MOCK_TODAY));
+  const annotated = (accountId: string) => {
+    const publicNumbers = new Set(state.publicProjects.map((project) => project.number));
+    return personalFor(accountId).map((project) => {
+      const entry = annotateProject(project, MOCK_TODAY);
+      if (!publicNumbers.has(entry.number)) return entry;
+      const notes = [entry.statusNote, PROJECT_BOOK_NOTES.publicReserved(entry.number)].filter((note): note is string => note !== null);
+      return {
+        ...entry,
+        selectable: false,
+        statusLabel: entry.statusLabel === '可选' ? '公共项目已保留' : `${entry.statusLabel}・公共项目已保留`,
+        statusNote: [...new Set(notes)].join('；'),
+      };
+    });
+  };
   const publicAnnotated = () => state.publicProjects.map((project) => annotateProject(project, MOCK_TODAY));
   const bookNow = (accountId: string): ProjectBook => ({ projects: annotated(accountId) });
   const visibleBook = (): ProjectBook => {
@@ -53,9 +66,8 @@ export function createProjectBook(
     return account ? bookNow(account.accountId) : EMPTY_BOOK;
   };
   const allowListFor = (accountId: string): ProjectOption[] => {
-    const publicNumbers = new Set(state.publicProjects.map((project) => project.number));
     const personal = annotated(accountId)
-      .filter((project) => project.selectable && !publicNumbers.has(project.number))
+      .filter((project) => project.selectable)
       .map((project): ProjectOption => ({ number: project.number, name: project.name ?? project.number, source: 'personal' }));
     const shared = publicAnnotated()
       .filter((project) => project.selectable)
@@ -71,12 +83,42 @@ export function createProjectBook(
     result: { status, verdict, note, book: bookNow(accountId) },
   });
   const unauthenticated = (): ProjectBookOutcome => ({ ok: false, error: { code: UNAUTHENTICATED_CODE, message: AUTH_ERRORS.unauthenticated }, book: null });
+  const availabilityConfirmations = new Map<string, { confirmation: TaskSnapshot['confirmation']; selection: string }>();
 
   const applyBook = (taskId: string, list: readonly ProjectOption[]) => {
     const snapshot = bus.draft(taskId);
     if (!stageReached(snapshot.stage, 'project') || snapshot.erp.status !== 'idle' || snapshot.stage === 'done' || snapshot.stage === 'reconcile') return null;
-    const before = JSON.stringify([snapshot.projectAssignment.projects, snapshot.step]);
+    const before = JSON.stringify([snapshot.projectAssignment.projects, snapshot.projectAssignment.working, snapshot.projectAssignment.reselect, snapshot.projectAssignment.usage, snapshot.confirmation, snapshot.stage, snapshot.step]);
     snapshot.projectAssignment.projects = list.map((project) => ({ ...project }));
+    const selectable = new Set(list.map((project) => `${project.source}:${project.number}`));
+    if (snapshot.projectAssignment.status !== 'submitted') {
+      const candidates = new Map(snapshot.projectAssignment.reselect.map((entry) => [entry.lineId, entry]));
+      for (const entry of snapshot.projectAssignment.working) candidates.set(entry.lineId, entry);
+      snapshot.projectAssignment.working = [];
+      snapshot.projectAssignment.reselect = [];
+      for (const entry of candidates.values()) {
+        if (selectable.has(`${entry.projectSource}:${entry.projectNumber}`)) snapshot.projectAssignment.working.push(entry);
+        else snapshot.projectAssignment.reselect.push(entry);
+      }
+    }
+    withProjectUsage(snapshot);
+
+    const selection = JSON.stringify(snapshot.projectAssignment.assignments.map((entry) => [entry.lineId, entry.projectSource, entry.projectNumber]));
+    const submittedAvailable = snapshot.projectAssignment.status === 'submitted' && snapshot.projectAssignment.assignments.every((entry) => selectable.has(`${entry.projectSource}:${entry.projectNumber}`));
+    if (!submittedAvailable && snapshot.confirmation.status === 'confirmed') {
+      availabilityConfirmations.set(taskId, { confirmation: { ...snapshot.confirmation }, selection });
+      snapshot.confirmation = { ...snapshot.confirmation, status: 'invalidated', confirmedAt: null, notice: PROJECT_CHANGED_NOTICE };
+      snapshot.stage = 'review';
+      snapshot.step = { kind: 'confirm_review', stepToken: snapshot.step.stepToken };
+    } else if (submittedAvailable && snapshot.confirmation.status === 'invalidated') {
+      const prior = availabilityConfirmations.get(taskId);
+      if (prior?.selection === selection) {
+        snapshot.confirmation = prior.confirmation;
+        snapshot.stage = 'actions';
+        snapshot.step = { kind: 'choose_action', stepToken: snapshot.step.stepToken };
+        availabilityConfirmations.delete(taskId);
+      }
+    }
     if (snapshot.stage === 'project' && (snapshot.step.kind === 'assign_projects' || snapshot.step.kind === 'maintain_project_book')) {
       snapshot.step = projectEntryStep(snapshot);
     }
@@ -132,7 +174,7 @@ export function createProjectBook(
 
       state.personalByAccount.set(account.accountId, [
         ...personal,
-        { number, name, expiresOn: null, lastCheckedAt: null, lastVerdict: 'local' },
+        { number, name, expiresOn: null, lastCheckedAt: null, lastVerdict: 'local', active: true },
       ]);
       refreshAccountTasks(account.accountId);
       return done('admitted', PROJECT_BOOK_NOTES.admitted(number, name), account.accountId);
@@ -157,6 +199,33 @@ export function createProjectBook(
       state.personalByAccount.set(account.accountId, personal.map((project, projectIndex) => (projectIndex === index ? { ...existing, number, name } : project)));
       refreshAccountTasks(account.accountId);
       return done('edited', PROJECT_BOOK_NOTES.edited(originalNumber, number, name), account.accountId);
+    },
+
+    async deactivateProject(input: ProjectBookLifecycleInput) {
+      const account = auth.account();
+      if (!account) return unauthenticated();
+      const number = input.number.trim();
+      const personal = personalFor(account.accountId);
+      const entry = personal.find((project) => project.number === number);
+      if (!entry) return done('rejected', PROJECT_BOOK_NOTES.notFound(number), account.accountId);
+      if (entry.active === false) return done('rejected', PROJECT_BOOK_NOTES.alreadyInactive(number), account.accountId);
+      state.personalByAccount.set(account.accountId, personal.map((project) => (project.number === number ? { ...project, active: false } : project)));
+      refreshAccountTasks(account.accountId);
+      return done('deactivated', PROJECT_BOOK_NOTES.deactivated(number), account.accountId);
+    },
+
+    async restoreProject(input: ProjectBookLifecycleInput) {
+      const account = auth.account();
+      if (!account) return unauthenticated();
+      const number = input.number.trim();
+      const personal = personalFor(account.accountId);
+      const entry = personal.find((project) => project.number === number);
+      if (!entry) return done('rejected', PROJECT_BOOK_NOTES.notFound(number), account.accountId);
+      if (entry.active !== false) return done('rejected', PROJECT_BOOK_NOTES.alreadyActive(number), account.accountId);
+      if (state.publicProjects.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.publicReserved(number), account.accountId);
+      state.personalByAccount.set(account.accountId, personal.map((project) => (project.number === number ? { ...project, active: true } : project)));
+      refreshAccountTasks(account.accountId);
+      return done('restored', PROJECT_BOOK_NOTES.restored(number), account.accountId);
     },
   };
 }

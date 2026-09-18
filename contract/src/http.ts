@@ -41,6 +41,8 @@ export const HTTP_ENDPOINTS = {
   getProjectBook: { method: 'GET', path: '/api/project-book', body: 'none', fields: [] },
   intakeProject: { method: 'POST', path: '/api/project-book/intake', body: 'json', fields: ['number', 'name'] },
   editProject: { method: 'POST', path: '/api/project-book/edit', body: 'json', fields: ['originalNumber', 'number', 'name'] },
+  deactivateProject: { method: 'POST', path: '/api/project-book/deactivate', body: 'json', fields: ['number'] },
+  restoreProject: { method: 'POST', path: '/api/project-book/restore', body: 'json', fields: ['number'] },
   // 改密码需要会话；带临时密码的会话只能调用它（其余端点 403 password_change_required）。成功 200 返回 Session。
   changePassword: { method: 'POST', path: '/api/auth/change-password', body: 'json', fields: ['currentPassword', 'newPassword'] },
   // 账号管理（只对管理员，其他账号 403 forbidden）：GET 返回 AccountList；更新一次只带一项（role / active / temporaryPassword），
@@ -51,6 +53,8 @@ export const HTTP_ENDPOINTS = {
   getPublicProjectBook: { method: 'GET', path: '/api/public-project-book', body: 'none', fields: [] },
   intakePublicProject: { method: 'POST', path: '/api/public-project-book/intake', body: 'json', fields: ['number', 'name'] },
   editPublicProject: { method: 'POST', path: '/api/public-project-book/edit', body: 'json', fields: ['originalNumber', 'number', 'name'] },
+  deactivatePublicProject: { method: 'POST', path: '/api/public-project-book/deactivate', body: 'json', fields: ['number'] },
+  restorePublicProject: { method: 'POST', path: '/api/public-project-book/restore', body: 'json', fields: ['number'] },
   // 旧数据导入：GET 返回这个账号看到的导入结果；只有拥有失败那次导入的账号能重试或跳过（其余 400 import_not_pending）。
   getLegacyImport: { method: 'GET', path: '/api/legacy-import', body: 'none', fields: [] },
   retryLegacyImport: { method: 'POST', path: '/api/legacy-import/retry', body: 'json', fields: [] },

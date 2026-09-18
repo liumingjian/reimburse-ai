@@ -66,7 +66,16 @@ const LEGACY_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(
 // 作废与重置的失败形状带 taskList 而不是 snapshot；账号动作只有 error；项目簿维护动作带 book。
 const LIST_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['abandonTask', 'resetAll']);
 const AUTH_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['setupAdmin', 'register', 'login', 'logout', 'changePassword']);
-const BOOK_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['intakeProject', 'editProject', 'intakePublicProject', 'editPublicProject']);
+const BOOK_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>([
+  'intakeProject',
+  'editProject',
+  'deactivateProject',
+  'restoreProject',
+  'intakePublicProject',
+  'editPublicProject',
+  'deactivatePublicProject',
+  'restorePublicProject',
+]);
 const ACCOUNT_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['updateAccount']);
 
 export function createMockAdapter(options: MockOptions): MockAdapter {
@@ -160,6 +169,8 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     getProjectBook: book.getProjectBook,
     intakeProject: book.intakeProject,
     editProject: book.editProject,
+    deactivateProject: book.deactivateProject,
+    restoreProject: book.restoreProject,
     // 作废或重置掉的任务不再能打开（深链接也一样）：和不存在的任务同样报错。
     async getSnapshot(taskId) {
       if (hidden.has(taskId) || !ownedByCurrent(taskId)) throw new Error(`任务 ${taskId} 不存在`);

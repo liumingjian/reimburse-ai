@@ -12,6 +12,9 @@ export const ProjectBookEntrySchema = z.object({
   expiresOn: z.string().min(1).nullable(),
   // Local intake deliberately returns null. A timestamp here is only a legacy catalog-check record.
   lastCheckedAt: DateTimeSchema.nullable(),
+  // Lifecycle state is independent from ERP availability. An active legacy entry can still be unselectable when its
+  // former catalog verdict is invalid, while an inactive entry remains visible and reserves its number.
+  active: z.boolean(),
   selectable: z.boolean(),
   statusLabel: z.string().min(1),
   statusNote: z.string().min(1).nullable(),
@@ -39,10 +42,15 @@ export const ProjectBookEditInputSchema = z.object({
 });
 export type ProjectBookEditInput = z.infer<typeof ProjectBookEditInputSchema>;
 
-export const PROJECT_BOOK_RESULT_STATUSES = ['admitted', 'edited', 'rejected'] as const;
+export const ProjectBookLifecycleInputSchema = z.object({
+  number: z.string(),
+});
+export type ProjectBookLifecycleInput = z.infer<typeof ProjectBookLifecycleInputSchema>;
+
+export const PROJECT_BOOK_RESULT_STATUSES = ['admitted', 'edited', 'deactivated', 'restored', 'rejected'] as const;
 export type ProjectBookResultStatus = (typeof PROJECT_BOOK_RESULT_STATUSES)[number];
 
-export const PROJECT_BOOK_ACCEPTED_STATUSES: ReadonlySet<ProjectBookResultStatus> = new Set<ProjectBookResultStatus>(['admitted', 'edited']);
+export const PROJECT_BOOK_ACCEPTED_STATUSES: ReadonlySet<ProjectBookResultStatus> = new Set<ProjectBookResultStatus>(['admitted', 'edited', 'deactivated', 'restored']);
 
 // `unsafe` is the only machine-readable validation verdict. Duplicate and ownership feedback remains intentionally
 // generic so public intake does not disclose another member's personal book.
@@ -79,6 +87,11 @@ export const PROJECT_BOOK_NOTES = {
   editPublicPersonalCollision: (number: string) => `项目号 ${number} 已记录在个人项目簿中，暂不能改为公共项目。`,
   edited: (originalNumber: string, number: string, name: string) =>
     originalNumber === number ? `项目 ${number} 的名称已更新为「${name}」。` : `项目 ${originalNumber} 已更新为 ${number}「${name}」。`,
+  deactivated: (number: string) => `项目号 ${number} 已停用，不能用于新的项目归属。`,
+  restored: (number: string) => `项目号 ${number} 已恢复，可用于新的项目归属。`,
+  notFound: (number: string) => `个人项目簿里没有项目号 ${number}。`,
+  alreadyActive: (number: string) => `项目号 ${number} 当前处于启用状态，无需恢复。`,
+  alreadyInactive: (number: string) => `项目号 ${number} 已停用。`,
 } as const;
 
 export const PROJECT_BOOK_COPY = {
@@ -89,6 +102,8 @@ export const PROJECT_BOOK_COPY = {
   intake: '加入项目',
   edit: '编辑项目',
   save: '保存',
+  deactivate: '停用',
+  restore: '恢复',
   empty: '当前项目簿为空，请录入第一个项目。',
   noName: '未记录名称',
   gateTitle: '先维护个人项目簿',

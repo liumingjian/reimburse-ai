@@ -17,6 +17,8 @@ export type StoredProject = {
   expiresOn: string | null;
   lastCheckedAt: string | null;
   lastVerdict: string;
+  // Older mock fixtures did not persist this field. Missing means active so they retain their previous meaning.
+  active?: boolean;
 };
 
 // 默认项目簿：4 条可选，P-4420 已过期，P-0917 复检未通过（最近一次核验：不可引用）。`?book=empty` 时为空。
@@ -58,8 +60,8 @@ export function verifyProjectNumber(number: string): DirectoryVerdict | { verdic
 const SAFE_PROJECT_NUMBER = /^[A-Za-z0-9_-]{1,64}$/;
 export const isSafeProjectNumber = (value: string): boolean => SAFE_PROJECT_NUMBER.test(value);
 
-type InvalidReason = 'unsafe' | 'expired' | 'unconfirmed';
-const REASON_LABEL: Readonly<Record<InvalidReason, string>> = { expired: '已过期', unconfirmed: '复检未通过', unsafe: '项目号不安全' };
+type InvalidReason = 'deactivated' | 'unsafe' | 'expired' | 'unconfirmed';
+const REASON_LABEL: Readonly<Record<InvalidReason, string>> = { deactivated: '已停用', expired: '已过期', unconfirmed: '复检未通过', unsafe: '项目号不安全' };
 const VERDICT_NOTE: Readonly<Record<string, string>> = {
   missing: '最近一次核对时报销系统里查不到这个项目号',
   ambiguous: '最近一次核对时这个项目号在报销系统里对上了多条记录',
@@ -69,6 +71,7 @@ const VERDICT_NOTE: Readonly<Record<string, string>> = {
 
 function invalidReasons(project: StoredProject, today: string): InvalidReason[] {
   const reasons: InvalidReason[] = [];
+  if (project.active === false) reasons.push('deactivated');
   if (!isSafeProjectNumber(project.number)) reasons.push('unsafe');
   if (project.expiresOn !== null && (!isRealDate(project.expiresOn) || project.expiresOn < today)) reasons.push('expired');
   // `local` is an offline admission: its explicit name is usable for assignment before the later ERP pre-submit
@@ -81,6 +84,7 @@ function invalidReasons(project: StoredProject, today: string): InvalidReason[] 
 export function annotateProject(project: StoredProject, today: string): ProjectBookEntry {
   const reasons = invalidReasons(project, today);
   const notes = reasons.map((reason) => {
+    if (reason === 'deactivated') return '这个项目已停用，不能再选';
     if (reason === 'expired') {
       return project.expiresOn !== null && isRealDate(project.expiresOn) ? `已过期（过期时间 ${project.expiresOn}）` : `过期时间读不出来（${String(project.expiresOn)}），当作已过期`;
     }
@@ -92,6 +96,7 @@ export function annotateProject(project: StoredProject, today: string): ProjectB
     name: project.name,
     expiresOn: project.expiresOn,
     lastCheckedAt: project.lastCheckedAt,
+    active: project.active !== false,
     selectable: reasons.length === 0,
     statusLabel: reasons.length > 0 ? reasons.map((reason) => REASON_LABEL[reason]).join('・') : '可选',
     statusNote: notes.length > 0 ? notes.join('；') : null,
