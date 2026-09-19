@@ -107,8 +107,6 @@ async function clickPoint(page: WritePage, session: CdpSession, snippet: string,
 }
 
 const containsText = (needle: string) => `(document.body?.innerText || '').includes(${JSON.stringify(needle)})`;
-const waitText = (page: WritePage, session: CdpSession, needle: string, timeoutMs = 15_000) =>
-  waitFor(() => evalIn<boolean>(session, containsText(needle)), Boolean, cap(page, timeoutMs), paceOf(page).pollMs);
 const waitVisibleText = async (page: WritePage, session: CdpSession, text: string, timeoutMs = 15_000) =>
   (await waitFor(() => evalIn<Point>(session, textPoint(text)), (result) => result?.ok === true, cap(page, timeoutMs), paceOf(page).pollMs))?.ok === true;
 
@@ -297,16 +295,66 @@ export async function uploadInvoices(page: WritePage, paths: string[], { timeout
 }
 
 /**
+ * What the ERP has said about the import. The 发票导入单据 click's whole answer arrives on the ERP page, not in the
+ * assistant: measured live 2026-09-19 with 12 invoices, the assistant showed 「数据导入中...」 then
+ * 「完成发票和附件操作...」 for six seconds, and between t+6s and t+7s its OOPIF target detached with NOTHING
+ * replacing it (`Target.attachedToTarget` fired for no new piaozone target), the 发票无忧助手 window vanished, a
+ * 处理结果 window appeared and the 收票网格 went from its total row alone to ten data rows — all in one snapshot.
+ *
+ * 处理结果 carries the per-invoice verdict ADR-0027 wants the import judged on: 「执行成功：10；执行失败：2」 with a
+ * line per invoice — 「…接收成功，生成收票单【SPD…】」, 「…已存在对应的收票单【SPD…】，已进行覆盖！」 (ADR-0026's
+ * overwrite, seen live) or a refusal naming the bill that holds the invoice.
+ */
+const importResponse = `(() => {
+  const vis = ${visible};
+  const txt = (n) => String(n.textContent || '').replace(/\\s+/g, ' ').trim();
+  const windows = [...document.querySelectorAll('.k-window')].filter(vis).map(txt)
+    .filter((t) => t && !t.startsWith('发票无忧助手'));
+  if (windows.length === 0) return { answered: false };
+  const text = windows.join(' | ');
+  const counts = /执行成功：(\\d+)[^\\d]*执行失败：(\\d+)/.exec(text);
+  // 处理结果 paints its title first and its per-invoice grid a moment later. Reading on first sight of the window
+  // gave the text 「处理结果」 and nothing else, which is an answer with its answer missing, so the wait continues
+  // until the summary line is there. Any other dialog (a plain 提示) has said all it is going to say.
+  if (!counts && text.includes('处理结果')) return { answered: false };
+  return { answered: true, text: text.slice(0, 2000), succeeded: counts ? Number(counts[1]) : null, failed: counts ? Number(counts[2]) : null };
+})()`;
+
+type ImportResponse = { answered: boolean; text?: string; succeeded?: number | null; failed?: number | null };
+
+/**
  * THE import mutation, and the only irreversible act baox performs (ADR-0025, ADR-0028): the 发票导入单据 click
  * binds the selected invoices to this 费用报销单 and mints its 收票单. Nothing before it is irreversible, and
  * nothing may call this without a durable `attempt_started` already recorded.
+ *
+ * It used to click 不生成费用明细 a second time here, on the assistant's own session, and that killed every live
+ * run with `Session with given id not found`: the target it was sent to had just detached. The second click was
+ * never needed. 不生成费用明细 is chosen ONCE, up front, on the ERP's 选择发票 split-button menu
+ * (`openInvoiceAssistant`), and the assistant then imports in that mode without asking again — the name appearing
+ * twice in the old code was a collision, not a repetition. V-45 round 4 inferred an in-iframe 是否生成费用明细
+ * step from a human run that had not chosen the mode up front; measured on baox's own path, it does not exist.
  */
-export async function importInvoices(page: WritePage, { timeoutMs = 45_000 } = {}) {
+export async function importInvoices(page: WritePage, { timeoutMs = 120_000 } = {}) {
   const assistant = await assistantSession(page, Math.min(timeoutMs, 45_000));
   await clickText(page, assistant, '发票导入单据', { timeoutMs: 15_000 });
-  await clickText(page, assistant, '不生成费用明细', { timeoutMs: 45_000 });
-  await waitText(page, page.session, '收票信息', 120_000);
-  return { ok: true };
+  // From here on the assistant's session is dead and everything is read on the ERP page.
+  const answer = await waitFor(() => evalIn<ImportResponse>(page.session, importResponse), (r) => r?.answered === true,
+    cap(page, timeoutMs), paceOf(page).pollMs);
+  if (!answer?.answered) {
+    throw new ExecutorError('INVOICE_IMPORT_NOT_ANSWERED',
+      `点了「发票导入单据」之后，报销系统在 ${Math.round(cap(page, timeoutMs) / 1000)} 秒内没有给出处理结果`);
+  }
+  // Anything short of 执行失败：0 stops the run, and the window is left open so #32's capture keeps ERP's own words
+  // (ADR-0027: the run aborts to 转人工 carrying the verbatim text; 申请解绑 and 删除发票 are never clicked).
+  if (answer.failed !== 0) {
+    throw new ExecutorError('INVOICE_IMPORT_REFUSED', `报销系统没有收下全部发票：${answer.text ?? ''}`);
+  }
+  // 处理结果 floats over the form at z-index 10005 with no 遮罩, so a toolbar click aimed at the form underneath
+  // would land on the report instead — the silent-failure class V-45 recorded for the modal assistant window.
+  // 退出 closes the report and nothing else; it is not on the never-click list.
+  await clickCss(page, page.session, '[id$="-tbExit"]', '处理结果的「退出」');
+  await waitFor(() => evalIn<ImportResponse>(page.session, importResponse), (r) => r?.answered === false, cap(page, 15_000), paceOf(page).pollMs);
+  return { ok: true, report: answer.text ?? '' };
 }
 
 /** Add one detail row through the toolbar (新增行). Part of the fill mutation. */

@@ -71,6 +71,13 @@
     <span class="k-window-title">发票无忧助手</span>
     <a aria-label="Close" data-action="close-window">×</a>
   </div>
+  <!-- ERP's answer to 发票导入单据: one line per invoice, with a summary. Measured live 2026-09-19; it floats over
+       the form (z-index 10005, no 遮罩) until 退出 closes it. -->
+  <div class="k-window" id="result-window" style="display:none">
+    <span class="k-window-title">处理结果</span>
+    <span class="kdmenuitem-content" id="Result-BILLMENU_TOOLBAR-tbExit" data-action="close-window">退出</span>
+    <span class="k-window-message"></span>
+  </div>
   <div class="k-window" id="message-window" style="display:none">
     <span class="k-window-title">提示</span>
     <span class="k-window-message"></span>

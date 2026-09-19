@@ -406,6 +406,18 @@ export async function createFakeErp(options: FakeErpOptions) {
     show(win, true);
   }
 
+  /**
+   * ERP's 处理结果 window: its answer to 发票导入单据, one line per invoice. 退出 closes it.
+   * It opens empty and fills in a moment later — live 2026-09-19 a read on first sight of the window returned the
+   * text 「处理结果」 alone, with no 执行成功/执行失败 summary in it yet.
+   */
+  function result(text: string) {
+    const win = q('#result-window');
+    win.querySelector('.k-window-message').textContent = '';
+    show(win, true);
+    setTimeout(() => { win.querySelector('.k-window-message').textContent = text; }, 0);
+  }
+
   function emitEvent(method: string, params: Record<string, unknown>) {
     for (const listener of listeners.get(method) ?? []) listener(params, null);
   }
@@ -432,19 +444,11 @@ export async function createFakeErp(options: FakeErpOptions) {
     if (!child) return;
     const rows = [...child.doc.document.querySelectorAll('tbody tr')].filter((tr: any) => tr.querySelector('input.ant-checkbox-input')?.checked);
     const selected = (rows as any[]).map((row) => invoicesBySha.get(row.getAttribute('data-sha256'))!);
-    // An invoice bound to a 历史费用报销单 (a past bill) is refused by name and the whole import is dropped: ERP's own
-    // words, in its own 提示 window, are the only thing that comes back (ADR-0027).
-    const refused = selected.find((invoice) => invoice.importRefusal);
-    if (refused) {
-      show(q('#assistant-window'), false);
-      message(refused.importRefusal!);
-      const dropped = child;
-      setTimeout(() => {
-        if (child === dropped) child = null;
-        emitEvent('Target.detachedFromTarget', { sessionId: dropped.sessionId });
-      }, 0);
-      return;
-    }
+    // A refusal is per invoice, not per import: measured live 2026-09-19, two invoices already bound to a SAVED
+    // 费用报销单 were refused by name while the other ten bound in the same click (「执行成功：10；执行失败：2」).
+    // ERP's own words come back in the 处理结果 window, one line per invoice (ADR-0027 judges on that list).
+    const refused = selected.filter((invoice) => invoice.importRefusal);
+    const accepted = selected.filter((invoice) => !invoice.importRefusal);
     const tbody = grid('receipts').querySelector('tbody');
     const footer = tbody.querySelector('tr.k-footer-template');
     const rowFor = (receiptNumber: string) => dataRows('receipts').find((tr: any) => textOf(tr, 'receipts', '收票单') === receiptNumber);
@@ -456,7 +460,8 @@ export async function createFakeErp(options: FakeErpOptions) {
       return tr;
     };
     const imported: string[] = [];
-    for (const invoice of selected) {
+    const report: string[] = [];
+    for (const invoice of accepted) {
       const masked = `${invoice.invoiceNumber.slice(0, 4)}************${invoice.invoiceNumber.slice(-4)}`;
       const values = [invoice.receiptNumber, masked, invoice.seller, invoice.issueDate, invoice.net, invoice.tax, invoice.gross, invoice.category];
       // A 收票单 ERP already holds is re-bound to the bill being imported into, rather than minted a second time:
@@ -474,14 +479,22 @@ export async function createFakeErp(options: FakeErpOptions) {
       } else {
         appendRow(values);
       }
+      // Minting a 收票单 and overwriting one ERP already holds read differently in the report, and the difference
+      // is how ADR-0026's overwrite shows up on screen.
+      report.push(`接收发票成功 号码为【${invoice.invoiceNumber}】的发票${bound
+        ? `已存在对应的收票单【${invoice.receiptNumber}】，已进行覆盖！`
+        : `接收成功，生成收票单【${invoice.receiptNumber}】`}`);
       receiptLedger.set(invoice.receiptNumber, values);
       imported.push(invoice.receiptNumber);
     }
+    for (const invoice of refused) report.push(`接收发票失败 号码为【${invoice.invoiceNumber}】的发票${invoice.importRefusal}`);
     updateTotals();
     show(q('#assistant-window'), false);
+    result(`执行成功：${accepted.length}；执行失败：${refused.length} ${report.join(' ')}`);
     const closing = child;
     mutate('import', imported.join(','));
-    // The iframe target goes away after this click completes: its own mouseReleased still reaches it.
+    // The iframe target goes away after this click completes, and NOTHING replaces it: the whole answer to the
+    // click is on the ERP page. Its own mouseReleased still reaches it.
     setTimeout(() => {
       if (child === closing) child = null;
       emitEvent('Target.detachedFromTarget', { sessionId: closing.sessionId });
@@ -554,8 +567,9 @@ export async function createFakeErp(options: FakeErpOptions) {
       show(doc.querySelector('#assistant-upload'), true);
     }
     if (action === 'notice-ok') show(doc.querySelector('#assistant-notice'), false);
-    if (action === 'import') show(doc.querySelector('.import-dialog'), true);
-    if (action === 'not-fill') importInvoices();
+    // 发票导入单据 imports in the mode already chosen on the ERP's split-button menu. It asks nothing further:
+    // measured live 2026-09-19, no 是否生成费用明细 dialog exists on this path, in the iframe or anywhere else.
+    if (action === 'import') importInvoices();
   }
 
   function key(doc: FakeDocument, params: Record<string, any>) {

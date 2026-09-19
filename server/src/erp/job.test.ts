@@ -8,7 +8,7 @@ import type { Db } from '../db/database';
 import { createTaskService } from '../tasks';
 import { createTestServer, type TestServer } from '../test/harness';
 import { runFillJob } from './executor/job';
-import { importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type WritePage } from './executor/steps';
+import { captureErpError, importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type WritePage } from './executor/steps';
 import { createFakeErp, type FakeErp } from './executor/testing/fake-erp';
 import { createErpJobs, serverChannel, type ErpJobs } from './jobs';
 import { createDraftJudge } from './judge';
@@ -73,7 +73,7 @@ async function uploadAndImport(page: WritePage, invoices: typeof INVOICES) {
     });
     await openInvoiceAssistant(page, { timeoutMs: 2000 });
     await uploadInvoices(page, paths);
-    await importInvoices(page);
+    return await importInvoices(page);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -306,5 +306,47 @@ describe('re-importing an invoice the bill already holds', () => {
     expect(receiptNumbers(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
     expect(receiptLinks(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
     expect(receiptTotal(fake)).toEqual(total);
+  });
+});
+
+// What the 发票导入单据 click does, measured live on 2026-09-19 with 12 real invoices: the assistant showed
+// 「数据导入中...」 then 「完成发票和附件操作...」 for six seconds, and between t+6s and t+7s its OOPIF target
+// detached with nothing replacing it, the 发票无忧助手 window vanished, ERP raised a 处理结果 window reading
+// 「执行成功：10；执行失败：2」 and the 收票网格 went from its total row alone to ten data rows. Before that
+// measurement this step clicked 不生成费用明细 a second time on the assistant's session and every live run died
+// there with `Session with given id not found`.
+describe('the 发票导入单据 click', () => {
+  const windowText = (fake: FakeErp, id: string) => {
+    const win = fake.document.querySelector(id) as any;
+    return win.style.display === 'none' ? null : String(win.textContent ?? '').replace(/\s+/g, ' ').trim();
+  };
+
+  it('is the last thing the assistant is asked: ERP answers in 处理结果, and 退出 closes it before the fill', async () => {
+    const [rail, ride] = INVOICES;
+    const fake = await createFakeErp(fakeErpOptions());
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    const imported = await uploadAndImport(page, [rail!, ride!]);
+
+    expect(imported.report).toContain('执行成功：2；执行失败：0');
+    expect(imported.report).toContain(`生成收票单【${rail!.receiptNumber}】`);
+    expect(receiptNumbers(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
+    // 处理结果 floats over the form with no 遮罩, so a toolbar click aimed at the form would land on it instead.
+    expect(windowText(fake, '#result-window')).toBeNull();
+  });
+
+  it('carries ERP\'s own refusal for the invoices it would not take, and leaves 处理结果 open for the capture', async () => {
+    const [rail, ride] = INVOICES;
+    // Measured live: two invoices already bound to a SAVED 费用报销单 were refused by name while the other ten bound.
+    const refusal = '已经与【费用报销单-FYBX20260911000011】关联，如需覆盖收票，请到对应单据删除收票信息后保存再重新收票';
+    const fake = await createFakeErp(fakeErpOptions({ invoices: [{ ...rail!, importRefusal: refusal }, ride!] }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+
+    await expect(uploadAndImport(page, [rail!, ride!])).rejects.toMatchObject({ code: 'INVOICE_IMPORT_REFUSED' });
+    // The refusal is per invoice, not per import: the other one is bound, and that is what re-import has to live with.
+    expect(receiptNumbers(fake)).toEqual([ride!.receiptNumber]);
+    expect(windowText(fake, '#result-window')).toContain(refusal);
+    expect((await captureErpError(page)).erpText.join(' ')).toContain(refusal);
   });
 });
