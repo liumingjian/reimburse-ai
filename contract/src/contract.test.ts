@@ -3,7 +3,8 @@ import { describe, expect, test } from 'vitest';
 import { CREATE_TASK_ERRORS, CreateTaskInputSchema, PENDING_ANSWER_ERRORS, isRealDate, validatePendingAnswer } from './actions';
 import { STAGE_DEFAULT_PAGE, pageAllowed, stageReached } from './stage';
 import { UrlSchema } from './primitives';
-import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS } from './snapshot';
+import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS, ERP_HANDOVER_STEP_COPY, HANDOVER_COMPLETED_NOTICE } from './snapshot';
+import { KERNEL_PHASES } from './stage';
 
 describe('整单确认表', () => {
   test('13 列的列名与顺序与内核 preparationConfirmationTable（next.mjs:522-535）逐字一致，No. 另加在最前', () => {
@@ -81,5 +82,29 @@ describe('报销任务阶段', () => {
     expect(pageAllowed('done', 'reconcile')).toBe(false);
     expect(STAGE_DEFAULT_PAGE.catalog).toBe('review');
     expect(STAGE_DEFAULT_PAGE.preparation).toBe('review');
+  });
+});
+
+// 交接文案（hand-over copy）的三条硬要求来自 ADR-0028：单据没有被保存、由员工自己点保存、
+// 保存时报错只能回到应用重新去报销（不手工补填），保存之后对账收尾。
+describe('交接文案', () => {
+  test('完成页固定句说明单据还没有保存，且不声称保存过、不提草稿', () => {
+    for (const forbidden of ['已保存', '草稿']) expect(HANDOVER_COMPLETED_NOTICE).not.toContain(forbidden);
+    expect(HANDOVER_COMPLETED_NOTICE).toContain('还没有保存');
+    expect(HANDOVER_COMPLETED_NOTICE).toContain('由你自己点「保存」');
+  });
+
+  test('完成页固定句带上 ADR-0028 的两条要求：报错回来重新去报销、保存后对账收尾', () => {
+    for (const required of ['字段必录提示', '处理结果', '重新去报销', '不要手工补填']) {
+      expect(HANDOVER_COMPLETED_NOTICE).toContain(required);
+    }
+    expect(HANDOVER_COMPLETED_NOTICE).toContain('保存成功后回到这里再对一次账，这是最后一步。');
+  });
+
+  test('交接步与任务列表徽标都不再说草稿', () => {
+    expect(ERP_HANDOVER_STEP_COPY.key).toBe('handover');
+    for (const text of [ERP_HANDOVER_STEP_COPY.title, ERP_HANDOVER_STEP_COPY.description, ...KERNEL_PHASES]) {
+      expect(text).not.toContain('草稿');
+    }
   });
 });

@@ -37,7 +37,7 @@ function ReportFields({ report }: { report: LegacyImportReport }) {
       fields={[
         { label: '常驻城市', value: report.homeCity ?? <span className="app-muted">没有</span> },
         { label: '个人项目簿', value: `${report.projects} 个项目` },
-        { label: '报销系统草稿已交接', value: `${report.handedOver} 个任务` },
+        { label: '报销系统单据已交接', value: `${report.handedOver} 个任务` },
         { label: '转人工', value: `${report.handedOff} 个任务` },
         { label: '发票占用', value: `${report.invoices} 张发票` },
       ]}

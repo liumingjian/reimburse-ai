@@ -32,7 +32,7 @@ export const TASK_LIST_COPY = {
   lead: '每次出差一个任务，材料、确认数据与打印设置都存在任务目录里。',
   tableTitle: '全部任务',
   toolbar: '任务表工具栏',
-  search: '搜索任务名或草稿号',
+  search: '搜索任务名或单据编号',
   clearSearch: '清除搜索',
   filterGroup: '按状态筛选',
   all: '全部',
@@ -197,7 +197,7 @@ function TaskTable({ tasks, onAbandon }: { tasks: readonly TaskListItem[]; onAba
               <TableHeader>状态</TableHeader>
               <TableHeader>进度</TableHeader>
               <TableHeader className="app-num">价税合计</TableHeader>
-              <TableHeader>草稿号</TableHeader>
+              <TableHeader>单据编号</TableHeader>
               <TableHeader>更新时间</TableHeader>
               <TableHeader className="app-sticky-end app-num">操作</TableHeader>
             </TableRow>

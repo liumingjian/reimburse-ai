@@ -1,11 +1,11 @@
 import { ERP_ACTION_ERRORS, type AppAdapter, type TaskSnapshot } from '@baox/contract';
 import type { MockBus } from '../bus';
-import { ERP_STEP_INDEX, applyAbortAtSave, applyErpDone, applyReadbackMismatch, emptyReconcile, erpSteps, handedOffBanner, loginNotDetected, reconcileVerdict } from '../fixtures/erp';
+import { ERP_STEP_INDEX, applyAbortAtHandover, applyErpDone, applyReadbackMismatch, emptyReconcile, erpSteps, handedOffBanner, loginNotDetected, reconcileVerdict } from '../fixtures/erp';
 import { T1_DRAFT_NO } from '../fixtures/tasks';
 
 // ERP 填报（「去报销」即开始：定时推进、登录交接、登录后自动写入）、严格回读与对账（mock 服务端的角色）。
-// 没有「开始填报」：整单确认之后点「去报销」启动浏览器，检测到登录就自动导入、写入、保存并回读（内核 erp_write_pending 自动执行）。
-// 保存与严格回读的结局按故障决定：erp-write-aborted 在保存步中止（停在对账）；readback-mismatch 停在完成页等待转人工。
+// 没有「开始填报」：整单确认之后点「去报销」启动浏览器，检测到登录就自动导入、写入、回读并交接（内核 erp_write_pending 自动执行）。
+// 严格回读与交接的结局按故障决定：erp-write-aborted 在交接步中止（停在对账）；readback-mismatch 停在完成页等待转人工。
 
 const DEFAULT_ERP_STEP_MS = 300;
 const DEFAULT_ERP_LOGIN_AUTO_MS = 2500;
@@ -44,7 +44,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     }, erpLoginAutoMs);
   };
 
-  // 探测到登录：从打开空白报销单开始逐步推进（选择不生成费用明细、导入发票、收票回读、填写明细、保存草稿、严格回读）。
+  // 探测到登录：从打开空白报销单开始逐步推进（选择不生成费用明细、导入发票、收票回读、填写明细、严格回读、交接单据）。
   const loginDetected = (snapshot: TaskSnapshot, run: number) => {
     const taskId = snapshot.task.taskId;
     snapshot.erp.status = 'running';
@@ -54,21 +54,19 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     setTimeout(() => finishErpStep(taskId, run, ERP_STEP_INDEX.navigate), erpStepMs);
   };
 
-  // 第 index 步结束：保存步在 erp-write-aborted 下中止；严格回读按 readback-mismatch 决定一致或停在完成页等待转人工。
+  // 第 index 步结束：严格回读按 readback-mismatch 决定一致或停在完成页等待转人工；交接步在 erp-write-aborted 下中止。
   const finishErpStep = (taskId: string, run: number, index: number) => {
     const current = bus.draft(taskId);
     if (!erpRunLive(current, run, 'running')) return;
     current.task.updatedAt = bus.now();
-    if (index === ERP_STEP_INDEX.save && options.fault === 'erp-write-aborted') {
-      applyAbortAtSave(current);
+    if (index === ERP_STEP_INDEX.readback && options.fault === 'readback-mismatch') {
+      applyReadbackMismatch(current, current.erp.draftNo ?? T1_DRAFT_NO);
       bus.push(current);
       return;
     }
-    if (index === ERP_STEP_INDEX.save) current.erp.draftNo = T1_DRAFT_NO;
-    if (index === ERP_STEP_INDEX.readback) {
-      const draftNo = current.erp.draftNo ?? T1_DRAFT_NO;
-      if (options.fault === 'readback-mismatch') applyReadbackMismatch(current, draftNo);
-      else applyErpDone(current, draftNo);
+    if (index === ERP_STEP_INDEX.handover) {
+      if (options.fault === 'erp-write-aborted') applyAbortAtHandover(current);
+      else applyErpDone(current, current.erp.draftNo ?? T1_DRAFT_NO);
       bus.push(current);
       return;
     }
@@ -129,7 +127,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         return snapshot;
       }),
     // 重新对账（原地等待）：只读报销系统再判定一次，只在对账结果允许原地等待时接受。
-    // 保存步中止的任务读到草稿且逐行一致 ⇒ 完成；否则留在原地，结果写进横幅。
+    // 交接步中止的任务读到单据且逐行一致 ⇒ 完成；否则留在原地，结果写进横幅。
     reconcile: async (taskId, stepToken) =>
       bus.withStep(taskId, stepToken, (snapshot) => {
         if (snapshot.step.kind !== 'reconcile') return { error: { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling } };

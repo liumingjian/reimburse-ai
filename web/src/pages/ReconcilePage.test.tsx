@@ -139,7 +139,7 @@ describe('对账', () => {
   test('?seed=reconcile（T1 保存步中止，未知 ⇒ 原地等待）：只有「重新对账」；读到草稿且逐行一致，进入完成页并显示固定句', async () => {
     renderAt('#/task/T1/reconcile', 'reconcile');
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
-    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/保存草稿时报销系统没有在限定时间内返回结果/)).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/交接单据时报销系统没有在限定时间内返回结果/)).toBeTruthy();
     expect(screen.queryByRole('heading', { name: '当前对账状态' })).toBeNull();
     expect(screen.getByTestId('reconcile-bucket').textContent).toBe('未知');
     expect(screen.getByTestId('reconcile-draft-no').textContent).toBe('尚未读到草稿');
@@ -149,7 +149,7 @@ describe('对账', () => {
     fireEvent.click(screen.getByRole('button', { name: '重新对账' }));
     expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();
     expect(screen.getByText('明细 9/9 一致')).toBeTruthy();
-    expect(screen.getByTestId('save-completed').textContent).toBe('报销草稿已保存。请打开报销系统检查，是否提交由你决定。');
+    expect(screen.getByTestId('handover-completed').textContent).toBe('报销单已经按你确认的明细填好，还没有保存。请在报销系统里逐行核对，由你自己点「保存」。保存时如果弹出「字段必录提示」或「处理结果」，说明有字段没有真正写进报销系统：回到这里重新去报销这一项，不要手工补填。保存成功后回到这里再对一次账，这是最后一步。');
     expect(screen.getByText(/重新对账：报销系统中已有草稿 BX20260911-0173/)).toBeTruthy();
   });
 
