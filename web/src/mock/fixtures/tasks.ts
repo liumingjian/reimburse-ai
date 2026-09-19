@@ -214,10 +214,11 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
     snapshot.preparation = { status: 'ready', problems: [], packageFiles: packageFilesOf(snapshot.lines, snapshot.materials) };
   }
   if (stageReached(stage, 'actions')) snapshot.confirmation = { ...snapshot.confirmation, status: 'confirmed', confirmedAt: '2026-09-11T14:32:00' };
-  // erp：「去报销」之后浏览器已启动，等待登录（检测到登录即自动写入）。done：草稿已保存、回读 9/9 一致。
-  // reconcile：保存步中止后的对账（同 ?fault=erp-write-aborted 的结果）。
+  // erp：「去报销」之后浏览器已启动，等待登录（检测到登录即自动写入）。done：回读 9/9 一致、单据已交接；
+  // 交接时单据还没有保存，所以没有单据编号（服务端同此）；只有 T3 那种由员工自己保存过的任务才有编号。
+  // reconcile：交接步中止后的对账（同 ?fault=erp-write-aborted 的结果）。
   if (stage === 'erp') snapshot.erp = erpWaitingLogin();
-  if (stage === 'done') applyErpDone(snapshot, T1_DRAFT_NO);
+  if (stage === 'done') applyErpDone(snapshot);
   if (stage === 'reconcile') applyAbortAtHandover(snapshot);
   return withProjectUsage(withInventoryProjection(snapshot));
 }
@@ -247,7 +248,7 @@ export function t2Snapshot(): TaskSnapshot {
   };
   snapshot.catalog = catalogMatched();
   snapshot.preparation = { status: 'ready', problems: [], packageFiles: [] };
-  snapshot.erp = { status: 'aborted', steps: [], draftNo: T2_DRAFT_NO, abortReason: '保存草稿后回读超时，写入结果不确定。', loginNotice: null, erpAccount: null };
+  snapshot.erp = { status: 'aborted', steps: [], draftNo: T2_DRAFT_NO, abortReason: '严格回读时报销系统没有在限定时间内返回结果，写入结果不确定。', loginNotice: null, erpAccount: null };
   snapshot.readback = readbackOf(T2_ROWS);
   // 已保存但严格逐行不一致 ⇒ 转人工（human_review），只允许转人工。
   snapshot.reconcile = {
@@ -262,7 +263,8 @@ export function t2Snapshot(): TaskSnapshot {
   return withProjectUsage(withInventoryProjection(snapshot));
 }
 
-// T3：已完成。
+// T3：已完成，而且员工自己保存过，单据编号是这么来的。演示里唯一一条真的有编号的已完成任务：
+// 刚交接、还没保存的任务（T1 的 done）没有编号。
 export function t3Snapshot(): TaskSnapshot {
   const snapshot = emptySnapshot(
     {

@@ -24,9 +24,9 @@ const RECEIPT_NUMBER = 'SPD202609150001';
 const DUPLICATE_REFUSAL = '重复报销，禁止导入：该发票已被历史费用报销单占用。';
 
 // Where the fill job dies: right after the attempt of that mutation is durable (before ERP changes), or once the
-// strict pre-save read-back that precedes the hand-over is durable. The job never saves (ADR-0028), so there is no
+// strict hand-over read-back is durable. The job never saves (ADR-0028), so there is no
 // `save` attempt to die at.
-type Fault = Exclude<Mutation, 'save'> | 'before_save';
+type Fault = Exclude<Mutation, 'save'> | 'before_hand_over';
 
 let server: TestServer;
 let alice: TestClient;
@@ -45,7 +45,7 @@ function faulty(channel: ExecutorChannel): ExecutorChannel {
   const emit = async (event: ExecutorEvent) => {
     const reply = await (channel.emit as (event: ExecutorEvent) => Promise<unknown>)(event);
     if (event.type === 'attempt_started' && event.action === fault) throw new Error(`injected fault at ${event.action}`);
-    if (event.type === 'readback' && event.stage === 'before_save' && fault === 'before_save') throw new Error('injected fault at before_save');
+    if (event.type === 'readback' && event.stage === 'before_hand_over' && fault === 'before_hand_over') throw new Error('injected fault at before_hand_over');
     return reply;
   };
   return { emit: emit as ExecutorChannel['emit'] };
@@ -213,6 +213,11 @@ describe('fault injection at each ERP mutation point', () => {
     expect(jobs).toHaveLength(2);
     const recoveryJob = jobs[1]!;
     expect(recoveryJob).not.toBe(firstJob);
+    // The audit trail tells the recovery from the original 去报销 by what is on the row, not by row order.
+    expect(await server.db.selectFrom('erp_job').select(['job_id', 'trigger']).where('task_id', '=', taskId).orderBy('started_at').execute()).toEqual([
+      { job_id: firstJob, trigger: 'start' },
+      { job_id: recoveryJob, trigger: 'refill' },
+    ]);
     const attempts = await server.db.selectFrom('erp_attempt').select(['job_id', 'action']).where('task_id', '=', taskId).execute();
     expect(attempts.filter((attempt) => attempt.job_id === recoveryJob).map((attempt) => attempt.action)).toEqual(['import', 'fill']);
     expect(attempts.filter((attempt) => attempt.job_id === firstJob).length).toBeGreaterThan(0);
@@ -225,7 +230,7 @@ describe('fault injection at each ERP mutation point', () => {
   }, 180_000);
 
   it('重新去报销 is absent once the readings carry a 单据编号, and 转人工 remains offered', async () => {
-    const stopped = await crashAt('before_save');
+    const stopped = await crashAt('before_hand_over');
     // The employee saved the form themselves, and what ERP holds is not what was confirmed line by line.
     const project = fake!.document.querySelector('.kd-grid-panel[data-grid="detail"] tbody tr.k-master-row')!.children[1]!;
     project.textContent = '另一个项目';
@@ -278,7 +283,7 @@ describe('fault injection at each ERP mutation point', () => {
   }, 120_000);
 
   it('a form the employee saved themselves reconciles to 已保存 and, matching the approved preview line by line, is done', async () => {
-    const stopped = await crashAt('before_save');
+    const stopped = await crashAt('before_hand_over');
     expect(stopped.stage).toBe('reconcile');
     // baox never clicks 保存 (ADR-0028); the employee does, and 对账 is how that save becomes evidence.
     fake!.employeeSaves();
@@ -288,7 +293,7 @@ describe('fault injection at each ERP mutation point', () => {
   });
 
   it('a filled, unsaved form that matches the approved preview line by line reconciles to the hand-over terminal', async () => {
-    const stopped = await crashAt('before_save');
+    const stopped = await crashAt('before_hand_over');
     expect(stopped.stage).toBe('reconcile');
     // The resume path: nobody saved, so 对账 reads 未保存·就绪待保存 with the strict per-line match satisfied. That is
     // ERP 单据已交接 (bill handed over), the same terminal a clean run reaches — not a breakpoint.
@@ -305,7 +310,7 @@ describe('fault injection at each ERP mutation point', () => {
   }, 120_000);
 
   it('the hand-over promotion needs the strict per-line match: a detail row that drifted stays a breakpoint', async () => {
-    const stopped = await crashAt('before_save');
+    const stopped = await crashAt('before_hand_over');
     // The unsaved form drifts on one detail cell. The amounts are untouched, so 收票 and 明细 still agree to the cent
     // — only the strict per-line match fails, and that alone must keep the task out of the terminal.
     driftDetailCell('开始日期', '2026/01/01');
@@ -318,7 +323,7 @@ describe('fault injection at each ERP mutation point', () => {
   }, 120_000);
 
   it('a form under another instance UUID than the attempt\'s is never judged: 未知', async () => {
-    const stopped = await crashAt('before_save');
+    const stopped = await crashAt('before_hand_over');
     fake!.replaceFormInstance();
     const judged = await reconcile(stopped);
     expect(judged.reconcile).toMatchObject({ bucket: '未知', allowedActions: ['wait', 'hand_off'] });
@@ -334,7 +339,7 @@ describe('fault injection at each ERP mutation point', () => {
   });
 
   it('holds the ERP lease while reconcile reads: 409 erp_in_use for another task, the lease is freed on the result', async () => {
-    const stopped = await crashAt('before_save');
+    const stopped = await crashAt('before_hand_over');
     server.erpLease.acquire({ accountId: 'someone', taskId: 'another-task', jobId: 'another-job' });
     const blocked = await client.act(stopped, 'reconcile');
     expect(blocked.status).toBe(409);

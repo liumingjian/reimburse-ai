@@ -18,7 +18,7 @@ test('任务列表显示三个任务及其阶段徽标', async ({ page }, testIn
   await expect(t2.getByText('BX20260718-0142')).toBeVisible();
 
   const t3 = page.getByRole('row', { name: /2026-06 北京培训/ });
-  await expect(t3.getByText('10/10 草稿交接')).toBeVisible();
+  await expect(t3.getByText('10/10 单据交接')).toBeVisible();
   await expect(t3.getByText('2318.50')).toBeVisible();
 
   await expect(page.getByRole('banner').getByText('林颂宜', { exact: true })).toBeVisible();
@@ -38,12 +38,13 @@ test('作废确认是危险弹层：确认按钮是红色 danger 按钮，文案
   await page.screenshot({ path: testInfo.outputPath('abandon-danger-confirm.png') });
 });
 
-test('?seed=done 让 T1 显示为草稿交接并带草稿号', async ({ page }) => {
+test('?seed=done 让 T1 显示为单据交接，且没有单据编号（交接时还没有保存）', async ({ page }) => {
   await page.goto(open('?seed=done', '#/tasks'));
   const t1 = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ });
-  await expect(t1.getByText('10/10 草稿交接')).toBeVisible();
+  await expect(t1.getByText('10/10 单据交接')).toBeVisible();
   await expect(t1.getByText('3972.59')).toBeVisible();
-  await expect(t1.getByText('BX20260911-0173')).toBeVisible();
+  // ADR-0028: the hand-over leaves the bill unsaved, so it has no 单据编号 (bill number) yet.
+  await expect(t1.getByText('BX20260911-0173')).toHaveCount(0);
 });
 
 test('点「继续」进入任务页面骨架，步骤条列出流程阶段', async ({ page }) => {

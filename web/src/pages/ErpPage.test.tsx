@@ -61,7 +61,8 @@ describe('ERP 填报', () => {
 
     window.location.hash = '#/task/T1/done';
     expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();
-    expect(screen.getByTestId('draft-no').textContent).toBe('BX20260911-0173');
+    // ADR-0028：交接时单据还没有保存，所以完成页没有单据编号。
+    expect(screen.getByTestId('draft-no').textContent).toBe('尚无');
     expect(screen.getByTestId('erp-account').textContent).toBe('林颂宜（lin.songyi）· 账套 安图特科技');
     expect(screen.getByText('明细 9/9 一致')).toBeTruthy();
     expect(screen.getByTestId('handover-completed').textContent).toBe('报销单已经按你确认的明细填好，还没有保存。请在报销系统里逐行核对，由你自己点「保存」。保存时如果弹出「字段必录提示」或「处理结果」，说明有字段没有真正写进报销系统：回到这里重新去报销这一项，不要手工补填。保存成功后回到这里再对一次账，这是最后一步。');

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const packageRoot = fileURLToPath(new URL('..', import.meta.url));
 const dist = resolve(packageRoot, process.argv[2] ?? 'dist');
 
-// 夹具里的虚构人物、任务、草稿号与文件名；mock 模块与钩子的名字；mock 专用文案。
+// 夹具里的虚构人物、任务、单据编号与文件名；mock 模块与钩子的名字；mock 专用文案。
 const FORBIDDEN = [
   /林颂宜/,
   /上海出差/,

@@ -43,7 +43,9 @@ describe('契约 schema', () => {
     const parsed = TaskListSchema.parse(list);
     expect(parsed.tasks.map((task) => task.stage)).toEqual(['done', 'reconcile', 'done']);
     expect(parsed.tasks[0]?.grossTotal).toBe('3972.59');
-    expect(parsed.tasks[0]?.erpDraftNo).toBe('BX20260911-0173');
+    // 交接后没有单据编号（还没有保存）；T3 那张是员工自己保存过的，才有编号。
+    expect(parsed.tasks[0]?.erpDraftNo).toBeNull();
+    expect(parsed.tasks[2]?.erpDraftNo).toBe('BX20260702-0088');
     expect(parsed.tasks.map((task) => task.erpOutcome)).toEqual(['none', 'none', 'none']);
   });
 

@@ -96,7 +96,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(attempts[1]!.preconditions.receiptRowCount).toBe(2);
 
     const events = await jobs.events(`job-${taskId}`);
-    expect(events.filter((e) => e.type === 'readback').map((e) => (e as { stage: string }).stage)).toEqual(['after_import', 'after_fill', 'before_save']);
+    expect(events.filter((e) => e.type === 'readback').map((e) => (e as { stage: string }).stage)).toEqual(['after_import', 'after_fill', 'before_hand_over']);
     expect(events.at(-1)).toMatchObject({ type: 'result', status: 'handed_over' });
     expect(fake.mutations.map((m) => m.kind).filter((k, i, all) => all.indexOf(k) === i)).toEqual(['import', 'header', 'cell', 'option', 'addRow']);
   });

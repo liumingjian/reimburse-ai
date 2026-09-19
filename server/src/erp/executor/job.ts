@@ -252,13 +252,13 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     if (!filled.ok) return await finish('unknown', filled.problems[0]?.code ?? 'fill_failed', filled.problems.map(problemText).join('；'));
     await step('fill', 'done');
 
-    // 7. The strict pre-save read-back, then the hand-over: no attempt is started, because nothing is written.
+    // 7. The strict hand-over read-back, then the hand-over itself: no attempt is started, because nothing is written.
     await step('handover', 'running');
     const handOver = await handOverApprovedPreview({
       approvedPreview: preview, approval, freshGate, fillResult: filled,
-      readCurrent: reader('before_save'),
+      readCurrent: reader('before_hand_over'),
     });
-    if (!handOver.ok) return await finish('unknown', handOver.problems?.[0]?.code ?? 'hand_over_failed', handOver.problems?.map(problemText).join('；') ?? null);
+    if (handOver.status !== 'handed_over') return await finish('unknown', handOver.problems?.[0]?.code ?? 'hand_over_failed', handOver.problems?.map(problemText).join('；') ?? null);
     await step('handover', 'done');
     // ERP 单据已交接: the form is filled and unsaved, so there is no 单据编号 (bill number) to report.
     return await finish('handed_over', null, null, null);

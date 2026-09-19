@@ -163,6 +163,46 @@ describe('migrations on an existing database', () => {
     expect(backups()).toEqual(version === LATEST ? [] : [expect.stringMatching(new RegExp(`-${version}\\.sqlite$`))]);
   });
 
+  // 0014 rebuilds `erp_job` to widen the `trigger` CHECK, which is the only way SQLite allows it. The rows, the
+  // children that reference them and the append-only triggers all have to come through that rebuild intact.
+  it('migrates 0013 → latest with the ERP job rows, their children and their append-only rule intact', async () => {
+    const owner = await priorVersionFixture('0013_222_account_approval');
+    const at = '2026-09-01T10:00:00Z';
+    const db = new Kysely<any>({ dialect: new SqliteDialect({ database: new Database(databasePath(dataDir)) }) });
+    for (const [jobId, trigger] of [['old-job', 'start'], ['old-login', 'confirm_login']] as const) {
+      await sql`INSERT INTO erp_job (job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at)
+                VALUES (${jobId}, 'old-task', ${owner}, 'fill', ${trigger}, 'digest', '{}', 3, ${at})`.execute(db);
+    }
+    await sql`INSERT INTO erp_job_cancel (cancel_id, job_id, task_id, account_id, revision, created_at)
+              VALUES ('old-cancel', 'old-login', 'old-task', ${owner}, 3, ${at})`.execute(db);
+    await sql`INSERT INTO erp_approved_preview (job_id, task_id, account_id, digest, preview, created_at)
+              VALUES ('old-job', 'old-task', ${owner}, 'digest', '{}', ${at})`.execute(db);
+    await sql`INSERT INTO erp_reconcile_job (job_id, fill_job_id, task_id, account_id, revision, started_at)
+              VALUES ('old-reconcile', 'old-job', 'old-task', ${owner}, 3, ${at})`.execute(db);
+    await db.destroy();
+
+    const migrated = await openDatabase(databasePath(dataDir));
+    try {
+      expect(await migrated.selectFrom('erp_job').select(['job_id', 'trigger']).orderBy('job_id').execute()).toEqual([
+        { job_id: 'old-job', trigger: 'start' },
+        { job_id: 'old-login', trigger: 'confirm_login' },
+      ]);
+      // The children still point at the parent that was rebuilt under them.
+      expect(await migrated.selectFrom('erp_reconcile_job').select(['fill_job_id']).execute()).toEqual([{ fill_job_id: 'old-job' }]);
+      expect(await migrated.selectFrom('erp_job_cancel').select(['job_id']).execute()).toEqual([{ job_id: 'old-login' }]);
+      expect(await migrated.selectFrom('erp_approved_preview').select(['job_id']).execute()).toEqual([{ job_id: 'old-job' }]);
+      // 重新去报销 is now storable, an unknown trigger still is not, and the table is still append-only.
+      await sql`INSERT INTO erp_job (job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at)
+                VALUES ('new-refill', 'old-task', ${owner}, 'fill', 'refill', 'digest', '{}', 4, ${at})`.execute(migrated);
+      await expect(sql`INSERT INTO erp_job (job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at)
+                       VALUES ('bogus', 'old-task', ${owner}, 'fill', 'whatever', 'digest', '{}', 4, ${at})`.execute(migrated)).rejects.toThrow();
+      await expect(sql`UPDATE erp_job SET trigger = 'start' WHERE job_id = 'new-refill'`.execute(migrated)).rejects.toThrow();
+      await expect(sql`DELETE FROM erp_job WHERE job_id = 'new-refill'`.execute(migrated)).rejects.toThrow();
+    } finally {
+      await migrated.destroy();
+    }
+  });
+
   it('keeps only the last 5 backups', async () => {
     await priorVersionFixture('0001_initial');
     for (const stamp of ['20260101T000000Z', '20260102T000000Z', '20260103T000000Z', '20260104T000000Z', '20260105T000000Z']) {

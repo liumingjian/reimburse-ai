@@ -142,18 +142,23 @@ export function emptyReconcile(): Reconcile {
 export function reconcileVerdict(
   bucket: ReconcileBucket,
   savedConsistent = true,
+  billNo: string | null = null,
 ): Pick<Reconcile, 'bucket' | 'action' | 'actionCode' | 'allowedActions' | 'humanReview'> {
   // 未保存·已导入未写明细：什么都没有落库，出路是「重新去报销」（重开一张单据再走一遍）和「转人工」，不是转人工的结果。
-  if (bucket === '未保存·已导入未写明细') {
+  // 这条出路和服务端（fill-state.ts reconcileView）一样看读数：报销系统里一旦有了单据编号，就说明员工自己保存过，
+  // 重新导入会动到一张真实存在的单据，只能转人工。
+  if (bucket === '未保存·已导入未写明细' && billNo === null) {
     return { bucket, action: RECONCILE_ACTION_LABELS.refill, actionCode: 'refill', allowedActions: ['refill', 'hand_off'], humanReview: false };
   }
-  const handOff = bucket === '不自洽' || (bucket === '已保存' && !savedConsistent);
+  const handOff = bucket === '不自洽' || bucket === '未保存·已导入未写明细' || (bucket === '已保存' && !savedConsistent);
   const code: ReconcileActionCode = handOff ? 'hand_off' : 'wait';
   return { bucket, action: RECONCILE_ACTION_LABELS[code], actionCode: code, allowedActions: handOff ? ['hand_off'] : ['wait', 'hand_off'], humanReview: handOff };
 }
 
 // 写入完成：严格回读逐行一致、单据已交接，阶段推到 done。
-export function applyErpDone(snapshot: TaskSnapshot, draftNo: string): void {
+// 交接时单据还没有保存，所以没有单据编号（服务端 fill-state.ts 的 handed_over 一样给 null）。只有员工自己保存过、
+// 再对一次账读到「已保存」，才会有编号，那时由调用方把编号传进来。
+export function applyErpDone(snapshot: TaskSnapshot, draftNo: string | null = null): void {
   snapshot.erp = { status: 'done', steps: erpSteps(ERP_STEP_DEFS.length), draftNo, abortReason: null, loginNotice: null, erpAccount: { ...MOCK_ERP_ACCOUNT } };
   snapshot.readback = readbackOf(readbackRows(snapshot.lines));
   snapshot.stage = 'done';
