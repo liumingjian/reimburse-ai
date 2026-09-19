@@ -11,6 +11,7 @@ import type { ReconcileExecutor } from './erp/reconcile-job';
 import { COMPATIBILITY, ERP_ORIGIN, FAST_PACE, fakeErpOptions } from './erp/testing/scenario';
 import { handedOver, noFormOpen, scripted, TEST_ERP_ACCOUNT } from './erp/testing/fake-executor';
 import { api, sample } from './test/api';
+import { BACKSTOP_MS } from './test/deadlines';
 import { createTestServer, tempDataDir, testClient, type TestClient, type TestServer } from './test/harness';
 import { join } from 'node:path';
 
@@ -96,7 +97,7 @@ async function confirmed(): Promise<TaskSnapshot> {
 
 // Waits until neither the fill job nor a reconcile job runs.
 async function settled(taskId: string): Promise<TaskSnapshot> {
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + BACKSTOP_MS;
   for (;;) {
     const snapshot = await client.current(taskId);
     if (snapshot.erp.status !== 'running' && snapshot.step.kind !== 'none') return snapshot;
