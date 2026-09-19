@@ -147,17 +147,19 @@ export async function probeIdentity({
 
 /**
  * The compatibility fingerprint source: the ERP build and the form id on the current page.
- * ASSUMPTION (not yet verified on the live ERP, see docs/research/erp-expense-flow/exploration.md): the build is
- * the `8.2.0.YYYYMMDD` string K3Cloud shows in an element whose class mentions "version", and the form id is the
- * `data-formid` attribute of the visible form container (`ER_ExpReimbursement`). `pnpm test:erp-live` must confirm.
+ * Verified against the live ERP (金蝶云星空 K3Cloud) on 2026-09-19, which corrected three guesses:
+ *   - the build is not stated by any element on the form page. The `8.2.0.20250701` in exploration.md is the
+ *     release the LOGIN page prints, and this snippet runs long after login. What the console does publish is the
+ *     `?ver=` cache-busting suffix on its static assets, hung on `window.KDResVer`, reading `8.2.830.9`. That is the
+ *     better tripwire anyway: it moves when the front-end resources move, which is when these selectors break;
+ *   - the form id attribute is `data-kdformid`, not `data-formid`;
+ *   - the console shell carries a form id of its own (`BOS_HtmlConsole`), so the whole document holds several.
+ *     Only the active tab's container is asked, where one open 费用报销单 means exactly one id.
  */
 export const COMPATIBILITY_SNIPPET = `(() => {
   const vis = (n) => { const b = n.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
-  let erpBuild = null;
-  for (const n of document.querySelectorAll('[class*=version]')) {
-    const m = /(\\d+\\.\\d+\\.\\d+\\.\\d{8})/.exec(n.textContent || '');
-    if (m) { erpBuild = m[1]; break; }
-  }
-  const forms = [...document.querySelectorAll('[data-formid]')].filter(vis).map((n) => n.getAttribute('data-formid'));
+  const erpBuild = (/\\d+(?:\\.\\d+)+/.exec(String(window.KDResVer || '')) || [null])[0];
+  const scope = document.querySelector('.k-content.k-state-active') || document;
+  const forms = [...scope.querySelectorAll('[data-kdformid]')].filter(vis).map((n) => n.getAttribute('data-kdformid'));
   return { erpBuild, formIds: [...new Set(forms)] };
 })()`;

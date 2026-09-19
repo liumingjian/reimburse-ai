@@ -61,7 +61,7 @@ export const abortBeforeAttempt: Script = async (_plan, channel) => {
   await pastCatalog(channel);
   await channel.emit({ type: 'step', step: 'compatibility', status: 'running' });
   await channel.emit({ type: 'step', step: 'compatibility', status: 'failed' });
-  return result(channel, 'aborted', 'compatibility_mismatch', 'ERP 兼容指纹不符：期望 8.2.0.20250701 / ER_ExpReimbursement，实际 8.3.0 / ER_ExpReimbursement');
+  return result(channel, 'aborted', 'compatibility_mismatch', '报销系统的版本与上次核对时不一致，没有继续：期望 8.2.830.9 / ER_ExpReimbursement，实际 8.3.101.2 / ER_ExpReimbursement。报销系统没有被改动。');
 };
 
 /** Imports and fills, then the strict read-back before save fails: ERP 写入结果未知. */

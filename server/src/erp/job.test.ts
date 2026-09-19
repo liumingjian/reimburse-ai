@@ -87,7 +87,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     const attempts = await jobs.attempts(`job-${taskId}`);
     expect(attempts.map((a) => a.action)).toEqual(['import', 'fill']);
     for (const attempt of attempts) {
-      expect(attempt.compatibility).toEqual({ erpBuild: '8.2.0.20250701', formId: 'ER_ExpReimbursement' });
+      expect(attempt.compatibility).toEqual({ erpBuild: '8.2.830.9', formId: 'ER_ExpReimbursement' });
       expect(attempt.erpAccount).toEqual({ displayName: '刘明建', account: 'luo.liu', tenant: 'tenant-a' });
       expect(attempt.preconditions).toMatchObject({ targetId: 'erp-page-1', formInstanceId: 'a1b2c3d4e5f6', formMode: 'new', billNo: null,
         url: 'http://erp.antute.com.cn/k3cloud/html5/index.aspx' });
@@ -164,10 +164,10 @@ describe('fill job through the protocol on the fake ERP', () => {
   });
 
   it('aborts on a compatibility fingerprint mismatch before any attempt', async () => {
-    const fake = await createFakeErp(fakeErpOptions({ erpBuild: '8.3.0.20260101' }));
+    const fake = await createFakeErp(fakeErpOptions({ erpBuild: '8.3.101.2' }));
     const result = await run(fake);
     expect(result).toMatchObject({ status: 'aborted', code: 'compatibility_mismatch' });
-    expect(result.message).toMatch(/8\.3\.0\.20260101/);
+    expect(result.message).toMatch(/8\.3\.101\.2/);
     expect(await jobs.attempts(`job-${taskId}`)).toEqual([]);
     expect(fake.mutations).toEqual([]);
   });

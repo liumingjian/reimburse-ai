@@ -36,6 +36,26 @@ describe('ERP 填报', () => {
     await vi.waitFor(() => expect(window.location.hash).toBe('#/task/T1/review'));
   });
 
+  // 写入前就停下的作业退回 actions，比 erp 早，于是这一页当场关上、换成守卫页。报销系统前进到 done / reconcile
+  // 时不会这样（那两个阶段在 erp 之后，本页仍开放），所以只有这一种停下会把人撞到守卫页上。
+  test('写入前就停下：关上的填报页说出停下的原因，不是一句「阶段不可跳过」', async () => {
+    const adapter = renderErp('erp-stopped-before-write');
+    fireEvent.click(await waitingLogin());
+
+    await vi.waitFor(async () => expect((await adapter.getSnapshot('T1')).stage).toBe('actions'));
+    const after = await adapter.getSnapshot('T1');
+    expect(after.erp).toMatchObject({ status: 'idle', abortReason: expect.stringContaining('报销系统的版本') });
+
+    expect(await screen.findByRole('heading', { name: '这次去报销停下了' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: '还不能进入这一步' })).toBeNull();
+    expect(screen.getByRole('link', { name: '回到当前阶段' }).getAttribute('href')).toBe('#/task/T1/review');
+
+    // 回到整单确认页：原因也写在那里，而且可以直接再去报销。
+    window.location.hash = '#/task/T1/review';
+    expect((await screen.findByTestId('erp-abort-reason')).textContent).toBe(after.erp.abortReason);
+    expect((await screen.findByRole('button', { name: '去报销' })).hasAttribute('disabled')).toBe(false);
+  });
+
   test('页头没有孤立的「返回确认页」', async () => {
     renderErp();
     await waitingLogin();

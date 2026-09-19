@@ -197,7 +197,8 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
         const formId = probed?.formIds?.length === 1 ? probed.formIds[0]! : null;
         if (probed?.erpBuild !== plan.compatibility.erpBuild || formId !== plan.compatibility.formId) {
           throw new ExecutorError('compatibility_mismatch',
-            `ERP 兼容指纹不符：期望 ${plan.compatibility.erpBuild} / ${plan.compatibility.formId}，实际 ${probed?.erpBuild ?? '读不到'} / ${formId ?? `${probed?.formIds?.length ?? 0} 个表单`}`);
+            `报销系统的版本与上次核对时不一致，没有继续：期望 ${plan.compatibility.erpBuild} / ${plan.compatibility.formId}，`
+            + `实际 ${probed?.erpBuild ?? '读不到'} / ${formId ?? `${probed?.formIds?.length ?? 0} 个表单`}。报销系统没有被改动。`);
         }
         compatibility = { erpBuild: probed.erpBuild, formId };
         await step('compatibility', 'done');

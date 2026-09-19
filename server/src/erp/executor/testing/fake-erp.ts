@@ -150,7 +150,7 @@ export async function createFakeErp(options: FakeErpOptions) {
   const origin = options.origin ?? 'http://erp.antute.com.cn';
   const url = `${origin}/k3cloud/html5/index.aspx`;
   const account = options.account ?? { displayName: '刘明建', account: 'luo.liu', tenant: 'tenant-a' };
-  const erpBuild = options.erpBuild ?? '8.2.0.20250701';
+  const erpBuild = options.erpBuild ?? '8.2.830.9';
   const formId = options.formId ?? 'ER_ExpReimbursement';
   const today = options.today ?? '2026/9/15';
   const billNo = options.billNo ?? 'FYBX2026090001';
@@ -181,6 +181,9 @@ export async function createFakeErp(options: FakeErpOptions) {
       .replaceAll('{{UUID}}', formUuid).replaceAll('{{DISPLAY_NAME}}', escapeHtml(account.displayName))
       .replaceAll('{{BUILD}}', erpBuild).replaceAll('{{FORM_ID}}', formId).replaceAll('{{TODAY}}', today);
     const doc = new FakeDocument(html, url);
+    // K3Cloud states its front-end resource version nowhere in the DOM, only on this global, which is where the
+    // compatibility fingerprint reads it. jsdom runs no inline script, so the fake sets it directly.
+    (doc.window as unknown as { KDResVer: string }).KDResVer = `?ver=${erpBuild}`;
     // localStorage keeps the last account even on the login page (probe.mjs fact 4).
     doc.window.localStorage.setItem('k3cloudloginInfo', JSON.stringify({ user: account.account, acc: account.tenant }));
     doc.window.fetch = async (_input: string, init: { body: string }) => {

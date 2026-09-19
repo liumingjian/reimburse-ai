@@ -88,7 +88,16 @@ const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = 
   'erp-write-aborted': async (page) => {
     await startErp(page, 'erp-write-aborted');
     await expect(page).toHaveURL(/#\/task\/T1\/reconcile$/);
-    await expect(page.getByRole('region', { name: '中止原因' })).toContainText('保存草稿时报销系统没有在限定时间内返回结果');
+    await expect(page.getByRole('region', { name: '中止原因' })).toContainText('交接单据时报销系统没有在限定时间内返回结果');
+  },
+  // 写入前就停下：阶段退回 actions，填报页当场关上，守卫页说出原因；回到整单确认页可以直接再去报销。
+  'erp-stopped-before-write': async (page) => {
+    await startErp(page, 'erp-stopped-before-write');
+    await expect(page.getByRole('heading', { name: '这次去报销停下了' })).toBeVisible();
+    await page.getByRole('link', { name: '回到当前阶段' }).click();
+    await expect(page).toHaveURL(/#\/task\/T1\/review$/);
+    await expect(page.getByTestId('erp-abort-reason')).toContainText('报销系统的版本与上次核对时不一致');
+    await expect(page.getByRole('button', { name: '去报销', exact: true })).toBeEnabled();
   },
   'readback-mismatch': async (page) => {
     await startErp(page, 'readback-mismatch');

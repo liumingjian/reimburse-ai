@@ -8,6 +8,7 @@ export const FAULTS = [
   'unsupported-material',
   'erp-login-missing',
   'erp-write-aborted',
+  'erp-stopped-before-write',
   'readback-mismatch',
   'service-disconnected',
 ] as const;

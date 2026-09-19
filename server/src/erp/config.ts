@@ -4,14 +4,15 @@ import type { Compatibility } from './protocol';
 // Where the fill job writes and which ERP build it may write to. The compatibility fingerprint aborts a job before
 // any attempt when ERP was upgraded under us (ADR-0016).
 //
-// UNVERIFIED on the live ERP: the build string and the selectors that read it (`probe.ts` COMPATIBILITY_SNIPPET).
-// `pnpm test:erp-live` confirms them; until then `BAOX_ERP_BUILD` / `BAOX_ERP_FORM_ID` override the defaults.
+// Verified against the live ERP on 2026-09-19 (`probe.ts` COMPATIBILITY_SNIPPET carries what the probe corrected).
+// The build moves with every K3Cloud patch, and a moved build is exactly what this fingerprint is meant to catch:
+// the job aborts before any attempt and a human re-verifies. `BAOX_ERP_BUILD` / `BAOX_ERP_FORM_ID` override it.
 
 export type ErpConfig = { origin: string; compatibility: Compatibility };
 
 export const DEFAULT_ERP_CONFIG: ErpConfig = {
   origin: DEFAULT_ERP_ORIGIN,
-  compatibility: { erpBuild: '8.2.0.20250701', formId: 'ER_ExpReimbursement' },
+  compatibility: { erpBuild: '8.2.830.9', formId: 'ER_ExpReimbursement' },
 };
 
 export function erpConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ErpConfig {

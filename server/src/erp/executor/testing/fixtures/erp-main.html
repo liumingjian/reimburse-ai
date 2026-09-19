@@ -6,16 +6,17 @@
   with header cells and `k-footer-template` total rows, the 收票信息 split button and its `tbNotFillEntry` item,
   the `tbNewList` row button, the `.k-window` assistant dialog) and probe.mjs (`kd-mainconsole-usernametext`).
   Only the shapes the executor's selectors read are kept. `data-action` attributes are fake-ERP behaviour hooks;
-  no executor selector reads them. Placeholders: {{UUID}} {{DISPLAY_NAME}} {{BUILD}} {{FORM_ID}} {{TODAY}}.
+  no executor selector reads them. Placeholders: {{UUID}} {{DISPLAY_NAME}} {{FORM_ID}} {{TODAY}}.
+  Verified against the live ERP on 2026-09-19: the form id is on `data-kdformid` (not `data-formid`), the console
+  shell carries one too, and no element states the build.
 -->
 <html>
 <head><title>金蝶云星空</title></head>
 <body>
-<div class="kd-mainconsole">
+<div class="kd-mainconsole" data-kdformid="BOS_HtmlConsole">
   <div class="kd-mainconsole-header">
     <span class="kd_SystemMenu" data-action="system-menu">菜单</span>
     <span class="kd-mainconsole-usernametext">{{DISPLAY_NAME}}</span>
-    <span class="kd-version">V{{BUILD}}</span>
   </div>
   <div class="kd-mainconsole-shortcuts">
     <span data-action="open-list">我的费用报销</span>
@@ -23,7 +24,9 @@
   <div id="expense-list" style="display:none">
     <span class="kd-btn" data-action="new-form">新增</span>
   </div>
-  <div id="expense-form" data-formid="{{FORM_ID}}" style="display:none">
+  <!-- The open form sits in the active tab container; scoping the probe to it excludes the console shell above. -->
+  <div class="k-content k-state-active">
+  <div id="expense-form" data-kdformid="{{FORM_ID}}" style="display:none">
     <div class="form-tabs"><span class="form-tab">费用报销单-新增</span></div>
     <div class="section-bar">
       <span data-action="section">基本信息</span>
@@ -62,6 +65,7 @@
         </tbody>
       </table>
     </div>
+  </div>
   </div>
   <div class="k-window" id="assistant-window" style="display:none">
     <span class="k-window-title">发票无忧助手</span>

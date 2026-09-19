@@ -267,7 +267,7 @@ describe('报销任务阶段', () => {
     expect(readMockOptions('?seed=catalog')).toEqual({ seed: 'catalog', fault: null });
     // ?seed=print：actions 阶段，且打印稿已经生成（打印稿预览不是阶段）。
     expect(readMockOptions('?seed=print')).toEqual({ seed: 'actions', fault: null, printSheet: true });
-    expect(FAULTS).toHaveLength(6);
+    expect(FAULTS).toHaveLength(7);
     // ?book=empty：个人项目簿初始为空。
     expect(readMockOptions('?seed=pending&book=empty')).toEqual({ seed: 'pending', fault: null, bookEmpty: true });
     expect(readMockOptions('?book=nope')).toEqual({ seed: null, fault: null });

@@ -204,7 +204,7 @@ describe('去报销 on a fake executor', () => {
     executor.queue(abortBeforeAttempt, handedOver());
     const aborted = await start(await confirmed());
     expect(aborted).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, erp: { status: 'idle' }, confirmation: { status: 'confirmed' } });
-    expect(aborted.erp.abortReason).toContain('ERP 兼容指纹不符');
+    expect(aborted.erp.abortReason).toContain('报销系统的版本与上次核对时不一致');
     expect(server.erpLease.holder()).toBeNull();
     expect((await taskList()).tasks[0]).toMatchObject({ abandonable: true });
     // Nothing was written, so the task is still editable.
