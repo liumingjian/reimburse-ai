@@ -8,7 +8,7 @@
 //      refused to open: 选择发票 sat at y=1237 and 不生成费用明细 at y=941 in a viewport 908 high,
 //      `document.elementFromPoint` returned null at both, and both clicks were lost.
 //   2. COVERED. A point inside the viewport belongs to whatever is painted on top of it. Measured live
-//      2026-09-19 (V-56): the 处理结果 window survived the import's 退出 and floated over the form at z-index
+//      2026-09-19 (V-54): the 处理结果 window survived the import's 退出 and floated over the form at z-index
 //      10005 with no 遮罩, so `elementFromPoint(371, 334)` — the centre of the 事由 header field — answered a
 //      `SPAN「接收发票」` inside the report. The click went to the report, the field never took focus, and
 //      `writeHeader` blamed the control.

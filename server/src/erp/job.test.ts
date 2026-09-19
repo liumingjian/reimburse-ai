@@ -209,7 +209,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(fake.mutations.map((m) => m.kind)).toContain('import');
   });
 
-  // Live 2026-09-19, the round after V-56 was fixed: the very first act of 去报销 after the form opened —
+  // Live 2026-09-19, the round after V-54 was fixed: the very first act of 去报销 after the form opened —
   // clicking the 收票信息 区域锚点 at (312, 145) — hit-tested to an anonymous DIV, the ERP's own blocking overlay
   // over the top bar while the form finishes opening. That is a form that is BUSY, not stuck. Reading the anchor
   // once and refusing stopped a run that would have gone through a second later; clicking it anyway sends the
@@ -219,6 +219,16 @@ describe('fill job through the protocol on the fake ERP', () => {
     const result = await run(fake);
     expect(result, JSON.stringify(result)).toMatchObject({ status: 'handed_over' });
     expect(fake.mutations.map((m) => m.kind)).toContain('import');
+  });
+
+  // Live 2026-09-20, the round after the date columns were fixed: the fill had written 项目 and 费用项目 into
+  // row 1 and stopped on 「发票类型」的落点（x=629 y=843）上盖着DIV. Read again a minute later, that point answered
+  // the cell itself — the cover was momentary, and selectOption read the point exactly once.
+  it('outwaits a cover that is over the 发票类型 cell for a moment, instead of refusing on one read', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, invoiceTypeCoverTicks: 30 }));
+    const result = await run(fake);
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'handed_over' });
+    expect(fake.mutations.map((m) => m.kind)).toContain('option');
   });
 
   it('stops before 发票导入单据 when the operator brake is set, having uploaded and ticked but imported nothing', async () => {
@@ -458,7 +468,7 @@ describe('the 发票导入单据 click', () => {
       .rejects.toMatchObject({ code: 'INVOICE_IMPORT_NOT_ANSWERED', message: /没有任何变化/ });
   });
 
-  // V-56, and the class behind it: a wait whose verdict is discarded, and a click on a point nobody hit-tested.
+  // V-54, and the class behind it: a wait whose verdict is discarded, and a click on a point nobody hit-tested.
   //
   // Live 2026-09-19 a 去报销 imported ten invoices cleanly, judged them cleanly, passed the `after_import`
   // read-back, started 填费用明细 for the first time ever and died 4.1 s later on `header_write_failed`

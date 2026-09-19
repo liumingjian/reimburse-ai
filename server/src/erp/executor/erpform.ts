@@ -5,7 +5,9 @@
 //   2. The grid scrolls horizontally. Cell text stays in the DOM, so reads never scroll; writes must scroll the
 //      target column into view first, because real mouse events hit viewport coordinates.
 //   3. Kingdee controls ignore programmatic assignment ("visible while editing, lost on blur"). The only write
-//      path is: real click into edit mode -> select all -> type key by key -> Enter/Tab.
+//      path is: real click into edit mode -> empty the editor -> type key by key -> Enter/Tab.
+//   4. Emptying it is not select-all: the date editors are Kendo datepickers, they open pre-filled with today,
+//      and they ignore select-all, so the typed value is appended to today's date (`clearEditor`).
 // Every write is read back at once from the non-editing cell text: written and received by ERP are different.
 // This module never saves.
 
@@ -250,12 +252,60 @@ export const cellMatches = (text: string, want: string, expect: Expect | undefin
   return expect.mode === 'endsWith' ? String(text).endsWith(expect.value) : sameValue(text, expect.value);
 };
 
+/**
+ * Empty the bound editor before typing into it, and prove it empty rather than assume it.
+ *
+ * Select-all is not enough, measured live 2026-09-20 on the 开始日期 (start date) editor of the 费用明细 grid.
+ * That cell is a Kendo datepicker (`data-role="datepicker"`, `.k-widget.k-datepicker`) which the ERP opens
+ * PRE-FILLED with today's date, and it ignores select-all however it is dispatched — `rawKeyDown` or `keyDown`,
+ * with `commands: ['selectAll']` or a bare Meta+A: `selectionStart == selectionEnd == 9` before and after, every
+ * time. So the typed date was APPENDED, and the datepicker parses the front of what it holds and ignores the
+ * rest:
+ *   typed 2026/9/1  into 2026/9/20 -> input "2026/9/202026/9/1" -> cell read back 2026/9/20 (today)
+ *   typed 2026/9/3  into 2026/9/2  -> input "2026/9/22026/9/3"  -> cell read back 2026/9/22 (a date nobody asked for)
+ * The first shape is what stopped the live fill of 2026-09-19 on `field_write_failed`; the second is worse,
+ * because it would have passed a laxer read-back with the wrong date on the bill.
+ *
+ * Backspace does clear it — but only what is LEFT of the caret, and the caret lands where the click landed, not
+ * at the end. Traced live on 结束日期, whose click put the caret at 8 of 9: `2026/9/20` went
+ * `2026/9/0`, `2026/90`, ... , `20`, `0` and then stopped dead, because a Backspace at offset 0 does nothing.
+ * That stranded `0` is what stopped the fill of 2026-09-20 one column further on than the round before it.
+ * Delete takes what is right of the caret, and the two together empty the control from wherever the caret is:
+ * measured on the same cell, `afterBackspaces="0"`, `afterDeletes=""`, and the typed date then committed and read
+ * back. Both keys go to a bound editor and the grid keeps its rows (measured 1 -> 1 across the Deletes, including
+ * Deletes sent to an already empty control — this is not a 删除行).
+ *
+ * The commit key was never the problem: with an empty control, `2026/9/6`, `2026-09-07` and `2026/09/08` all
+ * committed faithfully on Enter AND on Tab, all read back as `YYYY/M/D`. Date columns need no commit of their
+ * own — the CLEARING is what they need.
+ *
+ * Select-all stays first: it is measured to work on the other editors (费用金额 opens with its value already
+ * selected, 事由 went 2..2 -> 0..2), and where it works one Backspace then empties the whole selection. An
+ * editor already read as empty is left alone, which is every write into a blank cell.
+ */
+async function clearEditor(session: CdpSession, at: () => Promise<CellTarget>, ready: CellTarget,
+  { rounds = 2 } = {}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  await selectAll(session);
+  let seen = String(ready.editValue ?? '');
+  for (let round = 0; round < rounds && seen !== ''; round++) {
+    // One more than the length each way: with a live selection the first Backspace takes all of it, and from any
+    // caret position the two runs together cover the whole value. The extra keys land on an empty control.
+    for (let i = 0; i < seen.length + 1; i++) await pressKey(session, 'Backspace');
+    for (let i = 0; i < seen.length + 1; i++) await pressKey(session, 'Delete');
+    const now = await at();
+    if (!now.ok) return { ok: false, reason: `清空「${ready.column}」时读不到这一格：${now.reason ?? ''}` };
+    seen = String(now.editValue ?? '');
+  }
+  return seen === '' ? { ok: true }
+    : { ok: false, reason: `「${ready.column}」的编辑控件清不空（还剩「${seen}」），不往还有旧值的控件里打字` };
+}
+
 export type CellWrite = {
   which?: number; row?: number; column: string; value: string; expect?: Expect; commit?: 'Enter' | 'Tab';
   clicks?: number; readyMs?: number; settleMs?: number; settleFirst?: boolean; pace?: Pace;
 };
 
-/** Write one detail cell: real click -> select all -> type -> commit key -> read back. */
+/** Write one detail cell: real click -> empty the editor -> type -> commit key -> read back. */
 export async function writeCell(session: CdpSession, { which = 0, row = 0, column, value, expect = null,
   commit = 'Enter', clicks = 3, readyMs = 9000, settleMs = 8000, settleFirst = true, pace = DEFAULT_PACE }: CellWrite) {
   // Wait for the previous cell's recalculation first: a click during it is swallowed or its editor is taken away.
@@ -289,7 +339,10 @@ export async function writeCell(session: CdpSession, { which = 0, row = 0, colum
         + `（焦点在 ${ready?.focusTag ?? '别处'}），不往一个没绑好的控件里打字` };
   }
 
-  await selectAll(session);
+  const emptied = await clearEditor(session, at, ready);
+  if (!emptied.ok) {
+    return { ok: false, column, wrote: String(value), before: before.text, reason: emptied.reason };
+  }
   await typeText(session, String(value));
   await pressKey(session, commit);
 
@@ -310,7 +363,13 @@ export type OptionSelect = { which?: number; row?: number; column: string; optio
 /** Dropdown column (发票类型 invoice type): open, pick the exactly-equal item, read back. */
 export async function selectOption(session: CdpSession, { which = 0, row = 0, column, option,
   readyMs = 6000, settleMs = 6000, pace = DEFAULT_PACE }: OptionSelect) {
-  const before = await cellTarget(session, { which, row, column });
+  // Poll for the point, do not read it once. Live 2026-09-20 a 去报销 that had just written 项目 and 费用项目 into
+  // row 1 stopped here on 「发票类型」的落点（x=629 y=843）上盖着DIV, and a read of that same point a minute later
+  // answered the cell itself — an anonymous DIV had been over it for a moment while the row settled. A cell that
+  // is momentarily covered is BUSY, not unreachable; `showSection` already outwaits the same kind of cover.
+  // The refusal stays for a cover that is still there at the end, and still names what is in the way.
+  const before = await waitFor(() => cellTarget(session, { which, row, column }),
+    (c) => c.ok && c.onTarget === true, readyMs, pace.pollMs);
   if (!before.ok) return { ...before, ok: false, column };
   const blocked = reachProblem(`「${column}」`, before);
   if (blocked) return { ok: false, column, target: before, reason: blocked };
@@ -374,7 +433,7 @@ export async function headerField(session: CdpSession, key: string, { scroll = t
 export async function writeHeader(session: CdpSession, key: string, value: string, { readyMs = 4000, settleMs = 600, pace = DEFAULT_PACE }: { readyMs?: number; settleMs?: number; pace?: Pace } = {}) {
   const before = await headerField(session, key);
   if (!before.ok) return { ...before, ok: false, key };
-  // Refuse BEFORE the click, naming what is at the point. This is the defect V-56 cost a whole live round: the
+  // Refuse BEFORE the click, naming what is at the point. This is the defect V-54 cost a whole live round: the
   // 处理结果 window floated over 事由 at z-index 10005, the click went to a SPAN「接收发票」 inside the report,
   // focus never arrived, and the message blamed the control — so the next four hours were spent on the control.
   const blocked = reachProblem(`表头字段 ${key}`, before);

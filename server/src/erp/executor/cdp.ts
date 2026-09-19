@@ -198,6 +198,7 @@ const KEYS: Record<string, { windowsVirtualKeyCode: number; code: string; key: s
   Tab: { windowsVirtualKeyCode: 9, code: 'Tab', key: 'Tab' },
   Escape: { windowsVirtualKeyCode: 27, code: 'Escape', key: 'Escape' },
   Backspace: { windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' },
+  Delete: { windowsVirtualKeyCode: 46, code: 'Delete', key: 'Delete' },
   a: { windowsVirtualKeyCode: 65, code: 'KeyA', key: 'a' },
   ArrowDown: { windowsVirtualKeyCode: 40, code: 'ArrowDown', key: 'ArrowDown' },
   ArrowUp: { windowsVirtualKeyCode: 38, code: 'ArrowUp', key: 'ArrowUp' },

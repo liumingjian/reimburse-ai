@@ -147,7 +147,7 @@ describe('erpform write primitives on a fake CDP session', () => {
     expect((await writeCell(textCell, { column: '费用项目', value: 'FY008001', readyMs: 0, settleMs: 0, settleFirst: false })).matched).toBe(false);
   });
 
-  // V-56: a 处理结果 window floating at z-index 10005 with no 遮罩 owns every point under it, so a click aimed at
+  // V-54: a 处理结果 window floating at z-index 10005 with no 遮罩 owns every point under it, so a click aimed at
   // the cell is delivered to the report and the cell never enters edit mode. Refused before the click, naming the
   // cover — 「这一格里没有绑好的编辑控件」 was an accusation against a cell that was exactly where it said it was.
   it('does not click a cell a floating window is sitting on, and names what is at the point', async () => {
@@ -226,7 +226,7 @@ const fakeNode = (
 /**
  * A stand-in for whatever is painted at the field's point. `null` models a clear form: a node that contains
  * everything, which is what the real page answers when the control's own wrapper is on top. `cover` models the
- * V-56 shape — a report window owning the point instead.
+ * V-54 shape — a report window owning the point instead.
  */
 const TOP_OF_THE_STACK = { tagName: 'DIV', id: '', className: '', textContent: '', contains: () => true };
 const COVERING_REPORT = { tagName: 'SPAN', id: '', className: 'k-window-message', textContent: '接收发票 成功', contains: () => false };
@@ -295,5 +295,40 @@ describe('headerField fails closed (issue #36 backlog)', () => {
     const read = await runHeaderField(nodes, { scroll: false });
     expect(read.result.value).toBe('FYBX2026090007');
     expect(read.scrolled, 'no scroll on the reconcile path').toEqual([]);
+  });
+});
+
+// The 开始日期 defect of 2026-09-19, measured on the live control 2026-09-20 (`server/scripts/probe-date.ts`):
+// the editor is a Kendo datepicker the ERP opens pre-filled with today, it ignores select-all, and the typed
+// date is appended to today's — which the datepicker then parses off the front, keeping today.
+describe('emptying a pre-filled editor before typing', () => {
+  const dateFrames = (cleared: string) => [
+    { ok: true, column: '开始日期', text: '2026/9/20', x: 400, y: 850, inView: true, onTarget: true },
+    { ok: true, column: '开始日期', text: '', editValue: '2026/9/20', x: 400, y: 850, inView: true, onTarget: true, editing: true, focused: true, editorBound: true },
+    { ok: true, column: '开始日期', text: '', editValue: cleared, x: 400, y: 850, inView: true, onTarget: true, editing: true, focused: true, editorBound: true },
+    { ok: true, column: '开始日期', text: '2026/9/6', x: 400, y: 850, inView: true, onTarget: true },
+  ];
+
+  it('backspaces the pre-filled date away and types only after the editor reads empty', async () => {
+    const s = fakeSession(dateFrames(''));
+    const r = await writeCell(s, { column: '开始日期', value: '2026/9/6', expect: { mode: 'equals', value: '2026/9/6' }, clicks: 1, readyMs: 0, settleMs: 0, settleFirst: false });
+    expect({ ok: r.ok, before: r.before, after: r.after }).toEqual({ ok: true, before: '2026/9/20', after: '2026/9/6' });
+    const keys = inputs(s).filter((c) => c.method === 'Input.dispatchKeyEvent' && c.params.type !== 'keyUp');
+    const backspaces = keys.filter((c) => c.params.key === 'Backspace');
+    expect(backspaces.length, 'one Backspace per character, plus one for a live selection').toBe('2026/9/20'.length + 1);
+    expect(keys.filter((c) => c.params.key === 'Delete').length, 'and as many Deletes, for what sits right of the caret').toBe('2026/9/20'.length + 1);
+    const firstTyped = keys.findIndex((c) => typeof c.params.text === 'string' && c.params.text === '2');
+    const lastClearing = keys.map((c) => c.params.key).lastIndexOf('Delete');
+    expect(lastClearing, 'nothing is typed until the old value is gone').toBeLessThan(firstTyped);
+  });
+
+  it('refuses to type into an editor it could not empty, instead of appending to what is there', async () => {
+    // Two rounds of Backspace, both read back the untouched value: the control is not answering.
+    const stuck = dateFrames('2026/9/20');
+    const s = fakeSession([stuck[0], stuck[1], stuck[2], stuck[2]]);
+    const r = await writeCell(s, { column: '开始日期', value: '2026/9/6', clicks: 1, readyMs: 0, settleMs: 0, settleFirst: false });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/清不空/);
+    expect(inputs(s).some((c) => c.params.text === '6'), 'no character of the new date was typed').toBe(false);
   });
 });

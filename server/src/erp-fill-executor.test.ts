@@ -94,7 +94,7 @@ describe('去报销 with the real executor on the fake ERP', () => {
     expect(fake!.document.querySelector('.form-tab')!.textContent).toBe('费用报销单-新增');
   });
 
-  // V-56, all the way out to what the employee reads. A 处理结果 window that will not close leaves the import
+  // V-54, all the way out to what the employee reads. A 处理结果 window that will not close leaves the import
   // complete and the fill unable to start; `unknown` is the honest protocol answer, because a durable attempt
   // exists and the 费用报销单 is not finished. What must NOT happen is the employee being told 「结果不确定」 about
   // ten invoices that are demonstrably bound.

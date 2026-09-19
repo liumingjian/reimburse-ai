@@ -20,7 +20,7 @@ describe('the hit-tested click', () => {
       .filter((name) => !['cdp.ts', 'hit.ts'].includes(name));
     const callers = files.filter((name) => /\bclickAt\s*\(/.test(readFileSync(join(here, name), 'utf8')));
     // `cdp.ts` defines it and `hit.ts` is the one caller; a new call anywhere else is a click that nobody
-    // hit-tested, which is how the 处理结果 window came to swallow the fill's first keystroke (V-56).
+    // hit-tested, which is how the 处理结果 window came to swallow the fill's first keystroke (V-54).
     expect(callers).toEqual([]);
   });
 

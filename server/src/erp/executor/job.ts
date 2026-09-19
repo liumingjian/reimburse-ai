@@ -279,7 +279,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     //    is floating over the form.
     //
     //    An ERP dialog has no 遮罩 (modal backdrop): it floats at z-index 10005 and swallows every click aimed at
-    //    the form beneath it, silently. V-56 measured exactly that — a 处理结果 that survived the import's 退出,
+    //    the form beneath it, silently. V-54 measured exactly that — a 处理结果 that survived the import's 退出,
     //    `elementFromPoint` at the 事由 field answering a SPAN「接收发票」 inside the report, and the fill dying
     //    4.1 s in on `header_write_failed`. The import itself had fully succeeded: ten invoices bound, judged
     //    clean, `after_import` passed. Running the check AFTER `attempt_started` is what turned that into

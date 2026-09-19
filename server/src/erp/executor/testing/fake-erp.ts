@@ -102,7 +102,7 @@ export type FakeErpOptions = {
    * 处理结果 answers 发票导入单据 in full and then refuses to close: its 退出 does nothing, the window keeps
    * floating over the form, and the form's own 事由 control answers `elementFromPoint` with the report's text.
    *
-   * The live shape of V-56, 2026-09-19. A 去报销 imported ten invoices cleanly, judged them cleanly, passed the
+   * The live shape of V-54, 2026-09-19. A 去报销 imported ten invoices cleanly, judged them cleanly, passed the
    * `after_import` read-back, started 填费用明细 for the first time ever and died 4.1 s later on
    * `header_write_failed`: the 处理结果 window had survived the import's 退出 and floated at z-index 10005 over
    * the form (rect 257,168 768x529), `elementFromPoint(371, 334)` — the centre of 事由, whose locator was
@@ -122,6 +122,15 @@ export type FakeErpOptions = {
    * `tabs.ts` already outwaits on the tab strip.
    */
   sectionOverlayTicks?: number;
+  /**
+   * How many ERP-page evaluations an anonymous DIV sits over the 发票类型 (invoice type) cell of every detail row.
+   *
+   * Measured live 2026-09-20: a 去报销 that had written 项目 and 费用项目 into row 1 stopped on
+   * 「发票类型」的落点（x=629 y=843）上盖着DIV — and a read of that very point a minute later answered the cell
+   * itself (`SPAN.kd-grid-cellspan「普通发票」`, 569,826 120x34). The cover was momentary; `selectOption` read the
+   * point once and refused.
+   */
+  invoiceTypeCoverTicks?: number;
 };
 export type FakeMutation = { kind: 'import' | 'cell' | 'option' | 'header' | 'addRow' | 'save'; detail: string };
 
@@ -282,13 +291,15 @@ export async function createFakeErp(options: FakeErpOptions) {
   let formUuid = 'a1b2c3d4e5f6';
   let main: FakeDocument = await render();
   let child: { doc: FakeDocument; sessionId: string; targetId: string } | null = null;
-  let editor: { td: any; tr: any; input: any; column: string } | null = null;
+  // `before` is the cell's value when the editor opened: a datepicker keeps it when it cannot parse what it holds.
+  let editor: { td: any; tr: any; input: any; column: string; before: string } | null = null;
   let activePane: string | null = null;
   let uploadBatches = 0;
   let assistantTicks = 0;
   let mainTicks = 0;
   let formPanelActiveAt: number | null = null;
   let blockerUntil: number | null = null;
+  let optionCoverUntil: number | null = null;
   let pendingReport: { start: number; due: number; summary: string; rows: readonly string[] } | null = null;
   const pendingRecognition: Array<{ due: number; files: string[] }> = [];
   let dropdown: { td: any; tr: any; list: any; span: any } | null = null;
@@ -344,6 +355,22 @@ export async function createFakeErp(options: FakeErpOptions) {
   const show = (el: any, on: boolean) => { if (el) el.style.display = on ? '' : 'none'; };
   const visible = (el: any) => !!el && !main.hidden(el);
 
+/**
+ * What a Kendo datepicker makes of a string, measured live on the 开始日期 editor 2026-09-20: it parses the
+ * FRONT of the value and ignores whatever follows. `2026/9/202026/9/1` became 2026/9/20 and
+ * `2026/9/22026/9/3` became 2026/9/22 — a wrong date that looks perfectly plausible. Both formats the ERP
+ * accepts normalise to `YYYY/M/D`: `2026-09-07` read back 2026/9/7 and `2026/09/08` read back 2026/9/8.
+ * No leading date at all: the control keeps the value it had (not measured on an EMPTY commit, which this
+ * fake therefore treats the same way).
+ */
+const DATE_COLUMNS = new Set(['开始日期', '结束日期']);
+const setCaret = (el: any, at: number) => { try { el.setSelectionRange(at, at); } catch { /* not a text input */ } };
+const caretOf = (el: any) => (typeof el.selectionStart === 'number' ? el.selectionStart : String(el.value).length);
+const kendoDate = (raw: string) => {
+  const m = /^\s*(\d{4})[/-](\d{1,2})[/-](\d{1,2})/.exec(String(raw));
+  return m ? `${m[1]}/${Number(m[2])}/${Number(m[3])}` : null;
+};
+
   function display(column: string, raw: string) {
     switch (column) {
       case '项目': return options.projects.find((p) => p.code === raw)?.name ?? '';
@@ -382,9 +409,13 @@ export async function createFakeErp(options: FakeErpOptions) {
 
   function commitEditor() {
     if (!editor) return;
-    const { td, tr, input, column } = editor;
+    const { td, tr, input, column, before } = editor;
     editor = null;
-    const text = display(column, String(input.value).trim());
+    // A date column is not read as text: the datepicker parses what it holds, and what it cannot parse it
+    // refuses, keeping its previous value — which is how a typed date silently became today's.
+    const text = DATE_COLUMNS.has(column)
+      ? kendoDate(String(input.value)) ?? before
+      : display(column, String(input.value).trim());
     td.textContent = text;
     tr.classList.remove('k-grid-edit-row');
     mutate('cell', `${column}=${text}`);
@@ -404,6 +435,8 @@ export async function createFakeErp(options: FakeErpOptions) {
   }
 
   function editCell(td: any) {
+    // Live, the cover was over the NEXT cell to be written, right after the previous one committed.
+    if (options.invoiceTypeCoverTicks) optionCoverUntil = mainTicks + options.invoiceTypeCoverTicks;
     const tr = td.parentElement;
     const column = DETAIL_COLUMNS[[...tr.children].indexOf(td)]!;
     if (READONLY_COLUMNS.has(column)) return;
@@ -429,10 +462,16 @@ export async function createFakeErp(options: FakeErpOptions) {
     const current = String(td.textContent).trim().replace(/^[¥￥]/, '');
     td.textContent = '';
     const input = main.document.createElement('input');
+    // A date column's editor is a Kendo datepicker, and select-all does nothing to it (see `key`). Everything
+    // else in this grid is a plain input that select-all works on.
+    if (DATE_COLUMNS.has(column)) input.setAttribute('data-role', 'datepicker');
     input.value = current;
     td.appendChild(input);
     input.focus();
-    editor = { td, tr, input, column };
+    // The caret lands where the CLICK landed, not at the end of the value: traced live on 结束日期, a click at the
+    // centre of the cell put it at offset 8 of `2026/9/20`, so Backspace alone stranded the last character.
+    setCaret(input, Math.max(0, current.length - 1));
+    editor = { td, tr, input, column, before: current };
   }
 
   function pickOption(text: string) {
@@ -694,14 +733,40 @@ export async function createFakeErp(options: FakeErpOptions) {
 
   function key(doc: FakeDocument, params: Record<string, any>) {
     const active = doc.document.activeElement;
-    if (params.type === 'rawKeyDown' && Array.isArray(params.commands) && params.commands.includes('selectAll')) { doc.selectAllOn = active; return; }
+    if (params.type === 'rawKeyDown' && Array.isArray(params.commands) && params.commands.includes('selectAll')) {
+      // Measured live 2026-09-20 on the 开始日期 editor: select-all leaves the caret where it was
+      // (`selectionStart == selectionEnd == 9`) however it is dispatched — `rawKeyDown` or `keyDown`, with the
+      // `selectAll` command or a bare Meta+A. The next keystroke then APPENDS. Only this control ignores it:
+      // the 费用金额 editor opens with its value already selected, and the 事由 cell went 2..2 -> 0..2.
+      if (!(active && active.getAttribute && active.getAttribute('data-role') === 'datepicker')) doc.selectAllOn = active;
+      return;
+    }
     if (params.type === 'keyDown' && typeof params.text === 'string') {
       if (active && /^(INPUT|TEXTAREA)$/.test(active.tagName)) {
-        if (doc.selectAllOn === active) { active.value = params.text; doc.selectAllOn = null; } else active.value += params.text;
+        if (doc.selectAllOn === active) { active.value = params.text; doc.selectAllOn = null; }
+        else {
+          const at = caretOf(active);
+          active.value = String(active.value).slice(0, at) + params.text + String(active.value).slice(at);
+        }
+        setCaret(active, caretOf(active));
       }
       return;
     }
     if (params.type !== 'rawKeyDown' || doc !== main) return;
+    // Backspace is the only clearing this datepicker answers to: live, 14 of them emptied it and the typed date
+    // then committed faithfully on both Enter and Tab.
+    if (params.key === 'Backspace' || params.key === 'Delete') {
+      if (active && /^(INPUT|TEXTAREA)$/.test(active.tagName)) {
+        const value = String(active.value);
+        const at = caretOf(active);
+        if (doc.selectAllOn === active) { active.value = ''; doc.selectAllOn = null; setCaret(active, 0); }
+        else if (params.key === 'Backspace') {
+          // Only what is left of the caret, which is the whole defect.
+          if (at > 0) { active.value = value.slice(0, at - 1) + value.slice(at); setCaret(active, at - 1); }
+        } else if (at < value.length) { active.value = value.slice(0, at) + value.slice(at + 1); setCaret(active, at); }
+      }
+      return;
+    }
     if (params.key === 'Enter' || params.key === 'Tab') {
       if (editor && active === editor.input) return commitEditor();
       if (active && String(active.id).endsWith('-EDITOR')) { active.blur(); mutate('header', `${String(active.id).split('-').slice(-2, -1)[0]}=${active.value}`); }
@@ -784,6 +849,17 @@ export async function createFakeErp(options: FakeErpOptions) {
     refreshAssistant();
   }
 
+  /** The momentary cover over 发票类型: on for the first few reads of each row, then gone. */
+  function syncOptionCover() {
+    if (!options.invoiceTypeCoverTicks) return;
+    const covered = optionCoverUntil !== null && mainTicks < optionCoverUntil;
+    for (const tr of dataRows('detail')) {
+      const td = cellOf(tr, 'detail', '发票类型');
+      if (covered) td.setAttribute('data-covered-by', '#form-blocker');
+      else td.removeAttribute('data-covered-by');
+    }
+  }
+
   /** The form's blocking overlay coming down once it has finished opening, a few reads after 新增. */
   function clearBlocker() {
     if (blockerUntil === null || mainTicks < blockerUntil) return;
@@ -820,7 +896,7 @@ export async function createFakeErp(options: FakeErpOptions) {
       if (!sessionId && !targetAlive) throw new Error('CDP 连接已关闭');
       const doc = sessionId ? child!.doc : main;
       if (sessionId) { assistantTicks += 1; flushRecognition(); }
-      else { mainTicks += 1; syncFormPanel(); clearBlocker(); paintReport(); }
+      else { mainTicks += 1; syncFormPanel(); clearBlocker(); syncOptionCover(); paintReport(); }
       switch (method) {
         case 'Runtime.evaluate': return doc.evaluate(String(params.expression));
         case 'Input.dispatchMouseEvent':

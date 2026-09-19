@@ -527,7 +527,7 @@ export async function importInvoices(page: WritePage, { budget = IMPORT_BUDGET }
     throw new ExecutorError('INVOICE_IMPORT_REFUSED', `报销系统没有收下全部发票：${answer.text ?? ''}`);
   }
   // 处理结果 floats over the form at z-index 10005 with no 遮罩, so every later click aimed at the form underneath
-  // would land on the report instead — V-56: the fill's very first act, 事由, was delivered to a SPAN「接收发票」
+  // would land on the report instead — V-54: the fill's very first act, 事由, was delivered to a SPAN「接收发票」
   // inside this report and the run died four seconds into 填费用明细.
   //
   // This used to be one blind `clickCss('[id$="-tbExit"]')` followed by a `waitFor` whose verdict was DISCARDED,
