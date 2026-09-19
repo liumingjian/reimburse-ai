@@ -430,5 +430,6 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     cancelErpWrite: (taskId, stepToken) => action(taskId, E.cancelErpWrite, { stepToken }),
     reconcile: (taskId, stepToken) => action(taskId, E.reconcile, { stepToken }),
     handOff: (taskId, stepToken) => action(taskId, E.handOff, { stepToken }),
+    refill: (taskId, stepToken) => action(taskId, E.refill, { stepToken }),
   };
 }

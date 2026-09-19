@@ -1,10 +1,10 @@
-import { HUMAN_REVIEW_NOTICE, TaskListSchema, type TaskSnapshot } from '@baox/contract';
+import { HUMAN_REVIEW_NOTICE, OCCUPANCY_COPY, TaskListSchema, type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fixtureCatalog } from './catalog/project-catalog';
 import { dataDirBlobs } from './erp/cdp-executor';
 import { runFillJob } from './erp/executor/job';
 import { runReconcileJob } from './erp/executor/reconcile-job';
-import { createFakeErp, type FakeErp, type FakeErpOptions } from './erp/executor/testing/fake-erp';
+import { createFakeErp, type FakeErp, type FakeErpOptions, type FakeReceiptLedger } from './erp/executor/testing/fake-erp';
 import type { FillExecutor } from './erp/fill-jobs';
 import type { ExecutorChannel, ExecutorEvent, Mutation } from './erp/protocol';
 import type { ReconcileExecutor } from './erp/reconcile-job';
@@ -20,6 +20,8 @@ import { join } from 'node:path';
 
 const CATALOG = fixtureCatalog([{ number: 'P-2307', name: '华东客户交付', audited: true, forbidden: false }]);
 const RECEIPT_NUMBER = 'SPD202609150001';
+// ERP's verbatim refusal of an invoice bound to a 历史费用报销单 (a past reimbursement bill).
+const DUPLICATE_REFUSAL = '重复报销，禁止导入：该发票已被历史费用报销单占用。';
 
 // Where the fill job dies: right after the attempt of that mutation is durable (before ERP changes), or once the
 // strict pre-save read-back that precedes the hand-over is durable. The job never saves (ADR-0028), so there is no
@@ -28,10 +30,15 @@ type Fault = Exclude<Mutation, 'save'> | 'before_save';
 
 let server: TestServer;
 let alice: TestClient;
+let bobClient: TestClient;
 let fakeOptions: FakeErpOptions;
 let fake: FakeErp | null = null;
 let fault: Fault | null = null;
 let fillRuns = 0;
+// The 收票单 (receipt records) ERP holds. A fill run gets a new page instance (V-45: the 发票助手 is usable once per
+// page instance), and this ledger is what outlives it: ADR-0026's finding is precisely that the 收票单 an abandoned
+// unsaved bill created is still there, and that re-importing its invoice overwrites it instead of adding a second.
+let receiptLedger: FakeReceiptLedger = new Map();
 
 // The channel as the executor sees it, with the crash injected after the server has persisted the event.
 function faulty(channel: ExecutorChannel): ExecutorChannel {
@@ -56,8 +63,10 @@ beforeEach(async () => {
   fake = null;
   fault = null;
   fillRuns = 0;
+  receiptLedger = new Map();
   server = await createTestServer({ projectCatalog: CATALOG, erpExecutor: fillExecutor, reconcileExecutor, erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY } });
   alice = await server.signIn('alice');
+  bobClient = await server.signIn('bob');
   expect((await alice.post('/api/project-book/intake', { number: 'P-2307', name: '华东客户交付' })).status).toBe(200);
 });
 afterEach(() => server.close());
@@ -80,6 +89,7 @@ async function confirmed(): Promise<TaskSnapshot> {
     projects: [{ code: 'P-2307', name: '华东客户交付' }],
     expenseItems: [{ code: 'FY010001', name: '住宿' }],
     assumeReceiptLink: true,
+    receiptLedger,
   });
   return ready;
 }
@@ -110,11 +120,21 @@ async function reconcile(snapshot: TaskSnapshot): Promise<TaskSnapshot> {
 
 const taskList = async () => TaskListSchema.parse(await (await alice.request('/api/tasks')).json());
 
+// The 收票信息 grid as a page reader sees it: the 收票单 (receipt number) of each data row, and the grid's
+// 价税合计 total. Duplication shows in both.
+const RECEIPTS_GRID = '.kd-grid-panel[data-grid="receipts"]';
+const receiptNumbers = (erp: FakeErp) =>
+  [...erp.document.querySelectorAll(`${RECEIPTS_GRID} tbody tr`)]
+    .filter((tr) => !tr.classList.contains('k-footer-template'))
+    .map((tr) => String(tr.children[0]?.textContent ?? '').trim());
+const receiptTotal = (erp: FakeErp) => String(erp.document.querySelector(`${RECEIPTS_GRID} tr.k-footer-template`)?.children[6]?.textContent ?? '').trim();
+const jobIds = async (taskId: string) => (await server.db.selectFrom('erp_job').select(['job_id']).where('task_id', '=', taskId).where('kind', '=', 'fill').orderBy('started_at').execute()).map((row) => row.job_id);
+
 describe('fault injection at each ERP mutation point', () => {
   it.each([
     // The fake ERP's blank form keeps one empty detail row, which reads as unreadable: 未知 (unverified on a real ERP).
     ['import', '未知', ['wait', 'hand_off']],
-    ['fill', '未保存·已导入未写明细', ['hand_off']],
+    ['fill', '未保存·已导入未写明细', ['refill', 'hand_off']],
   ] as const)('a fault at %s stops in reconcile, and the reconcile job lands in %s', async (point, bucket, allowed) => {
     const stopped = await crashAt(point);
     // Write result unknown: reconcile before any read, offering only 开始对账 and 转人工.
@@ -132,24 +152,129 @@ describe('fault injection at each ERP mutation point', () => {
     expect(server.erpLease.holder()).toBeNull();
   });
 
-  it('已导入未写明细 always goes to 转人工: reconcile is refused, hand-off is terminal', async () => {
+  it('已导入未写明细 with no 单据编号 is recoverable: the exits are 重新去报销 and 转人工, and it is not a 转人工 outcome', async () => {
     const judged = await reconcile(await crashAt('fill'));
-    expect(judged.reconcile).toMatchObject({ bucket: '未保存·已导入未写明细', action: '转人工', actionCode: 'hand_off', allowedActions: ['hand_off'], humanReview: true });
-    const refused = await client.act(judged, 'reconcile');
-    expect(refused.status).toBe(400);
-    expect(((await refused.json()) as { error: { code: string } }).error.code).toBe('action_not_allowed');
+    expect(judged.reconcile).toMatchObject({
+      bucket: '未保存·已导入未写明细', action: '原地等待', actionCode: 'refill',
+      allowedActions: ['refill', 'hand_off'], humanReview: false, draftNo: null,
+    });
+    // The banner says what ADR-0027 asks it to say: the invoices are held by the unsaved bill, not spent, and the
+    // abandoned form needs no cleanup.
+    expect(judged.reconcile.banner).toContain('没有保存的单据');
+    expect(judged.reconcile.banner).toContain('不需要你去清理');
+    // 原地等待 here is 重新去报销, not 再对一次账: 重新对账 is refused exactly as it was before this exit existed.
+    await refusedWith(await client.act(judged, 'reconcile'), 400, 'action_not_allowed');
 
+    // 转人工 is the other exit, and it is still terminal.
     const handedOff = await client.accepted(await client.act(judged, 'hand-off'));
     expect(handedOff).toMatchObject({ stage: 'reconcile', step: { kind: 'none' }, reconcile: { status: 'handed_off', bucket: '未保存·已导入未写明细', allowedActions: [], humanReview: true, banner: HUMAN_REVIEW_NOTICE } });
     expect((await taskList()).tasks[0]).toMatchObject({ stage: 'reconcile', erpOutcome: 'handed_off', abandonable: false });
-    const again = await client.act(handedOff, 'hand-off');
-    expect(again.status).toBe(400);
+    await refusedWith(await client.act(handedOff, 'refill'), 400, 'task_closed');
     // 去打印 never needs ERP (stories 57 and 63): 转人工 hands the ERP draft to a person, and that person still
     // wants the paper bundle, so print stays open on a handed-off task.
     expect((await alice.post(`/api/tasks/${handedOff.task.taskId}/actions/generate-print-sheet`, {})).status).toBe(200);
     expect((await client.current(handedOff.task.taskId)).printSheet.status).toBe('generated');
     // Handed off is terminal: the account may start its next task; the handed-off task still holds its invoices.
     expect((await alice.post('/api/tasks', { homeCity: '杭州' })).status).toBe(200);
+  }, 120_000);
+
+  it('重新去报销 runs the fill again on a fresh 新增单 and hands over, with the 收票网格 holding N rows and not 2N', async () => {
+    const judged = await reconcile(await crashAt('fill'));
+    const taskId = judged.task.taskId;
+    const [firstJob] = await jobIds(taskId);
+    // What the abandoned bill left in ERP: one 收票行 per invoice, and the total of those rows.
+    expect(receiptNumbers(fake!)).toEqual([RECEIPT_NUMBER]);
+    const importedTotal = receiptTotal(fake!);
+
+    // The recovery takes the global ERP lease like any other fill job.
+    server.erpLease.acquire({ accountId: 'someone', taskId: 'another-task', jobId: 'another-job' });
+    await refusedWith(await client.act(judged, 'refill'), 409, 'erp_in_use');
+    server.erpLease.release('another-job');
+
+    fault = null;
+    const started = await client.accepted(await client.act(judged, 'refill'));
+    expect(started).toMatchObject({ stage: 'erp', erp: { status: 'running' } });
+    const over = await settled(taskId);
+    expect(over).toMatchObject({ stage: 'done', erp: { status: 'done', draftNo: null }, readback: { status: 'matched' } });
+    expect(fillRuns).toBe(2);
+    expect(server.erpLease.holder()).toBeNull();
+
+    // The second run imported the same invoice into a fresh 新增单. ERP still holds the 收票单 it minted for the bill
+    // that was abandoned unsaved, so this import overwrote it rather than minting a second one: N rows, not 2N, and
+    // the grid's total is the one invoice's, not twice it.
+    expect(receiptNumbers(fake!)).toEqual([RECEIPT_NUMBER]);
+    expect(receiptTotal(fake!)).toBe(importedTotal);
+    expect(fake!.mutations.some((mutation) => mutation.kind === 'save')).toBe(false);
+    // The app's own duplicate gate did not block the re-import: the occupancy belongs to this same 报销任务.
+    expect(over.blockers).toEqual([]);
+
+    // A new fill job on the same task, with its own attempts; the 对账 job still points at the fill job it read.
+    const jobs = await jobIds(taskId);
+    expect(jobs).toHaveLength(2);
+    const recoveryJob = jobs[1]!;
+    expect(recoveryJob).not.toBe(firstJob);
+    const attempts = await server.db.selectFrom('erp_attempt').select(['job_id', 'action']).where('task_id', '=', taskId).execute();
+    expect(attempts.filter((attempt) => attempt.job_id === recoveryJob).map((attempt) => attempt.action)).toEqual(['import', 'fill']);
+    expect(attempts.filter((attempt) => attempt.job_id === firstJob).length).toBeGreaterThan(0);
+    expect((await server.db.selectFrom('erp_reconcile_job').select(['fill_job_id']).where('task_id', '=', taskId).execute()).map((row) => row.fill_job_id)).toEqual([firstJob]);
+
+    // Nothing was re-confirmed: the same confirmation, the same lines.
+    expect(await server.db.selectFrom('review_confirmation').select(['digest']).where('task_id', '=', taskId).execute()).toHaveLength(1);
+    expect(over.confirmation.status).toBe('confirmed');
+    expect(over.lines.map((line) => line.lineId)).toEqual(judged.lines.map((line) => line.lineId));
+  }, 180_000);
+
+  it('重新去报销 is absent once the readings carry a 单据编号, and 转人工 remains offered', async () => {
+    const stopped = await crashAt('before_save');
+    // The employee saved the form themselves, and what ERP holds is not what was confirmed line by line.
+    const project = fake!.document.querySelector('.kd-grid-panel[data-grid="detail"] tbody tr.k-master-row')!.children[1]!;
+    project.textContent = '另一个项目';
+    fake!.employeeSaves();
+    const judged = await reconcile(stopped);
+    expect(judged.reconcile).toMatchObject({ bucket: '已保存', actionCode: 'hand_off', allowedActions: ['hand_off'], humanReview: true });
+    expect(judged.reconcile.draftNo).toEqual(expect.any(String));
+    await refusedWith(await client.act(judged, 'refill'), 400, 'action_not_allowed');
+    expect((await client.accepted(await client.act(judged, 'hand-off'))).reconcile.status).toBe('handed_off');
+  });
+
+  it('重新去报销 is refused when the snapshot did not offer it, and 去报销 stays refused on an attempted task', async () => {
+    const judged = await reconcile(await crashAt('import'));
+    expect(judged.reconcile.allowedActions).toEqual(['wait', 'hand_off']);
+    await refusedWith(await client.act(judged, 'refill'), 400, 'action_not_allowed');
+    // The bypass belongs to 重新去报销 alone: the start path still refuses a task whose ERP was already attempted.
+    await refusedWith(await client.act(judged, 'start-erp-write'), 400, 'erp_started');
+    expect(fillRuns).toBe(1);
+  });
+
+  it('an invoice ERP refuses as 重复报销，禁止导入 aborts, carrying its words through, and offers only 转人工', async () => {
+    const ready = await confirmed();
+    fakeOptions.invoices[0]!.importRefusal = DUPLICATE_REFUSAL;
+    await client.accepted(await client.act(ready, 'start-erp-write'));
+    const stopped = await settled(ready.task.taskId);
+    expect(stopped).toMatchObject({ stage: 'reconcile', erp: { status: 'aborted' } });
+    // ERP's own words, verbatim: the invoice is bound to a 历史费用报销单 and this run cannot fix it.
+    expect(stopped.reconcile.capture?.erpText.join(' ')).toContain(DUPLICATE_REFUSAL);
+    expect(stopped.reconcile.allowedActions).not.toContain('refill');
+    expect(stopped.reconcile.allowedActions).toContain('hand_off');
+    await refusedWith(await client.act(stopped, 'refill'), 400, 'action_not_allowed');
+    expect(receiptNumbers(fake!)).toEqual([]);
+    expect((await client.accepted(await client.act(stopped, 'hand-off'))).reconcile.status).toBe('handed_off');
+  });
+
+  it('an invoice held by a different 报销任务 is still a hard block', async () => {
+    // The recovery is offered on alice's task, so its own occupancy does not block its own re-import.
+    const judged = await reconcile(await crashAt('fill'));
+    expect(judged.reconcile.allowedActions).toContain('refill');
+    // Another task holding the same invoice is a different matter: ADR-0007's hard block is unchanged, and the
+    // other account's task is never named (ADR-0018).
+    const bob = api(() => bobClient);
+    const { task: second } = await bob.createTask('杭州');
+    const uploaded = await bob.upload(second.taskId, [sample('m01')]);
+    await bob.accepted(await bob.act(uploaded, 'start-inventory'));
+    const blocked = await bob.settled(second.taskId);
+    expect(blocked.stage).toBe('inventory');
+    expect(blocked.blockers).toHaveLength(1);
+    expect(blocked.blockers[0]).toMatchObject({ kind: 'duplicate_across_tasks', resolver: '要你处理', reason: OCCUPANCY_COPY.otherAccount, tasks: [] });
   }, 120_000);
 
   it('a form the employee saved themselves reconciles to 已保存 and, matching the approved preview line by line, is done', async () => {

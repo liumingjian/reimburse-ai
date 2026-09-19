@@ -2,7 +2,7 @@
 // executor events, its cancel, and the task's `erp_attempt` rows. Nothing about the phase is stored. The views below
 // turn the record into the snapshot's `erp`, `readback`, `reconcile` and `catalog` sections.
 
-import { HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, type Catalog, type Erp, type ErpCapture, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
+import { HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, type Catalog, type Erp, type ErpCapture, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
 import { sql } from 'kysely';
 import type { Db } from '../db/database';
 import type { ErpHandOffTable, ErpJobTable, TaskLifecycle } from '../db/schema';
@@ -298,7 +298,12 @@ function reconcileRows(record: ErpRecord, judged: ReconcileJudgement | null, lin
 const BUCKET_BANNER: Readonly<Record<ReconcileBucket, (billNo: string | null) => string>> = {
   未知: () => '对账没有读清报销系统里这张单据的状态。请在报销系统里打开这次的报销单查看，再点「重新对账」；也可以转人工。',
   '未保存·导入前': () => '报销系统里还没有导入发票，也没有保存草稿，发票没有被报销系统占用。',
-  '未保存·已导入未写明细': () => '发票已导入报销系统、明细还没有写，发票已被报销系统占用。只能转人工处理。',
+  // Two readings share this bucket. With no 单据编号 nothing was persisted: the invoices are held by the unsaved
+  // bill and the import can be replayed onto a fresh one (ADR-0026, ADR-0027). With one, the employee saved, and
+  // re-importing would act on a bill that exists.
+  '未保存·已导入未写明细': (billNo) => (billNo
+    ? `报销系统里已有单据 ${billNo}，发票已导入、明细还没有写。只能转人工处理。`
+    : '发票已导入报销系统、明细还没有写。占着这些发票的是刚才那张没有保存的单据，不是被报销掉了：重新去报销会重开一张单据再导一次，报销系统会覆盖掉原来的收票记录。那张没保存的单据没有单据编号，关掉也不会留下单据，不需要你去清理。'),
   '未保存·就绪待保存': () => '明细已写好，收票与明细合计一致，还没有保存。应用不会替你保存；请在报销系统里核对，或转人工。',
   已保存: (billNo) => `报销系统里已有草稿${billNo ? ` ${billNo}` : ''}，但不能证明它与这次确认的明细逐行一致。`,
   不自洽: () => '报销系统里这张单据前后对不上。只能转人工处理。',
@@ -360,6 +365,28 @@ export function reconcileView(record: ErpRecord, taskId: string, lifecycle: Task
       humanReview: false,
       banner: notice ?? '写入报销系统的结果不确定：应用已停止写入，不会重放。请先在报销系统里查看这张报销单，再点「开始对账」只读核对；也可以直接转人工。',
       reasons: fillReasons,
+    };
+  }
+  // 重新去报销 (ADR-0027): the exit out of an import that was never saved. The gate is observational and lives
+  // here, in the one view that decides allowed actions, because the reading it needs is the one this view already
+  // holds. It is not gated on the attempt log: baox never saves (ADR-0028), so "this job started no save attempt"
+  // is vacuously true and carries no information. A 单据编号 means the employee saved and re-importing would act on
+  // a bill that exists, so that reading keeps 转人工. An unreadable 单据编号 cell also reads as null here, and that
+  // is the conservative side of the reading only because the bucket itself already required 新增 mode with no bill.
+  const refillable = judged.verdict.bucket === '未保存·已导入未写明细' && judged.billNo === null;
+  // Offering the recovery is not a 转人工 outcome, whatever the classifier suggested for the bucket: the disposition
+  // is 原地等待 (the code says which of its two exits is suggested) and humanReview is false.
+  if (refillable) {
+    return {
+      ...base,
+      status: 'pending',
+      bucket: judged.verdict.bucket,
+      action: RECONCILE_ACTION_LABELS.refill,
+      actionCode: 'refill',
+      allowedActions: ['refill', 'hand_off'],
+      humanReview: false,
+      banner: notice ?? BUCKET_BANNER[judged.verdict.bucket](judged.billNo),
+      reasons: judged.verdict.reasons,
     };
   }
   const handOffOnly = judged.verdict.action === '转人工';

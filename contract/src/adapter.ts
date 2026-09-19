@@ -129,4 +129,6 @@ export interface AppAdapter {
   // 重新对账：只读 ERP 再判定一次，不发起任何写入。转人工：终止后续 ERP 写入，交给用户接管。两者都回传当前对账 step 的 stepToken。
   reconcile(taskId: string, stepToken: string): Promise<ActionOutcome>;
   handOff(taskId: string, stepToken: string): Promise<ActionOutcome>;
+  // 重新去报销：发票已导入、明细还没写、报销系统里还没有单据编号时的那条出路。重开一张单据，从头走一遍去报销。
+  refill(taskId: string, stepToken: string): Promise<ActionOutcome>;
 }
