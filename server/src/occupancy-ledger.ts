@@ -6,6 +6,10 @@ import type { Claim } from './inventory-view';
 // after touching ERP) claims the invoice identities of its current inventory. A voided task holds nothing.
 // Between two tasks the earlier upload holds the invoice; a handed-off task always does (ERP may have consumed it).
 // #195 adds imported legacy holdings as more `Holding`s.
+//
+// Every occupancy is owned by the 报销任务 (reimbursement task) that created it: `Holding.taskId`. That ownership is
+// what decides whether it blocks an import. The ERP-side 收票占用 (receipt occupancy) an import leaves behind is the
+// same hold read from the other side and is owned by the same task, so one rule covers both (ADR-0025).
 
 export type Holding = { accountId: string; taskId: string; taskName: string; handedOff: boolean; claims: readonly Claim[] };
 
@@ -30,11 +34,17 @@ export const OCCUPANCY_REASON = {
   ownTask: (name: string) => `这张发票在报销任务「${name}」里也在，那个任务仍占用它。`,
 } as const;
 
-// The `duplicate_across_tasks` blockers of the viewer's claims. Another account's task is never named (ADR-0018).
-export async function occupancyBlockers(holdings: readonly Holding[], viewerAccountId: string, claims: readonly Claim[]): Promise<Blocker[]> {
+// The `duplicate_across_tasks` blockers of the claims `importingTaskId` is about to take into ERP. Another account's
+// task is never named (ADR-0018).
+//
+// An occupancy the importing task owns is not a blocker on that task: re-importing invoices this same 报销任务
+// already holds is permitted, which is what keeps a recovery after an import that was never saved reachable
+// (ADR-0026). An occupancy owned by any other task stays a hard block, unchanged from ADR-0007.
+export async function occupancyBlockers(holdings: readonly Holding[], viewerAccountId: string, importingTaskId: string, claims: readonly Claim[]): Promise<Blocker[]> {
+  const others = holdings.filter((holding) => holding.taskId !== importingTaskId);
   const blockers: Blocker[] = [];
   for (const claim of claims) {
-    const clash = await occupancyClash(ledgerFor(holdings, claim), viewerAccountId, claim.key);
+    const clash = await occupancyClash(ledgerFor(others, claim), viewerAccountId, claim.key);
     if (!clash) continue;
     const base = { kind: 'duplicate_across_tasks' as const, materialId: claim.materialId, fileName: claim.fileName, resolver: '要你处理' as const };
     blockers.push(clash.scope === 'own_task' ? { ...base, reason: OCCUPANCY_REASON.ownTask(clash.task.name), tasks: [clash.task] } : { ...base, reason: clash.reason, tasks: [] });

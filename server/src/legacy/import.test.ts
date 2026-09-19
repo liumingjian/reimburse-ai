@@ -7,6 +7,7 @@ import { ActionFailureSchema, LegacyImportSchema, OCCUPANCY_COPY, TaskSnapshotSc
 import { sql } from 'kysely';
 import { afterEach, describe, expect, it } from 'vitest';
 import { readBook } from '../books';
+import { OCCUPANCY_REASON } from '../occupancy-ledger';
 import { api, byFileName, sample } from '../test/api';
 import { createTestServer, type TestClient, type TestServer } from '../test/harness';
 
@@ -143,8 +144,12 @@ describe('first-admin creation imports the legacy tree', () => {
     await client.accepted(await client.act(uploaded, 'start-inventory'));
     const mine = await client.settled(task.taskId);
     const m01 = byFileName(mine, sample('m01').name);
+    // The occupancy carries the id of the 报销任务 (reimbursement task) that owns it, and that is the task the
+    // blocker names (#238).
+    const holder = { taskId: await legacyTaskId(admin, '旧版任务 四月出差'), name: '旧版任务 四月出差' };
+    expect(holder.taskId).not.toBe(task.taskId);
     expect(mine.blockers).toEqual([
-      expect.objectContaining({ kind: 'duplicate_across_tasks', materialId: m01.materialId, tasks: [expect.objectContaining({ name: '旧版任务 四月出差' })] }),
+      expect.objectContaining({ kind: 'duplicate_across_tasks', materialId: m01.materialId, reason: OCCUPANCY_REASON.ownTask(holder.name), tasks: [holder] }),
     ]);
 
     const bob = await server.signIn('bob');

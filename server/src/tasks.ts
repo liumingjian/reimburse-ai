@@ -257,9 +257,11 @@ async function latestConfirmation(tx: Tx, taskId: string): Promise<ConfirmationF
   return row ? { digest: row.digest, detail: row.detail_digest, project: row.project_digest, confirmedAt: row.confirmed_at, revision: row.revision } : null;
 }
 
-// Every other task that still holds invoices (open, or handed off after touching ERP), in any account.
-async function holdings(tx: Tx, exceptTaskId: string): Promise<Holding[]> {
-  const others = await tx.selectFrom('task').selectAll().where('task_id', '!=', exceptTaskId).where('lifecycle', 'in', ['open', 'handed_off']).where('origin', '=', 'app').execute();
+// Every other task that still holds invoices (open, or handed off after touching ERP), in any account. The importing
+// task's own occupancy is left out here because `occupancyBlockers` would discard it anyway — that rule lives there,
+// this is only the query that avoids loading a task whose hold can never block it.
+async function holdings(tx: Tx, importingTaskId: string): Promise<Holding[]> {
+  const others = await tx.selectFrom('task').selectAll().where('task_id', '!=', importingTaskId).where('lifecycle', 'in', ['open', 'handed_off']).where('origin', '=', 'app').execute();
   const found: Holding[] = [];
   for (const task of others) {
     const { view } = await loadTask(tx, task);
@@ -289,7 +291,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     const loaded = await loadTask(tx, task, materials);
     const { facts, view } = loaded;
     if (!facts.parse || view.waiting > 0 || view.claims.length === 0 || task.lifecycle !== 'open') return loaded;
-    const blockers = await occupancyBlockers(await holdings(tx, task.task_id), accountId, view.claims);
+    const blockers = await occupancyBlockers(await holdings(tx, task.task_id), accountId, task.task_id, view.claims);
     if (blockers.length === 0) return loaded;
     facts.parse = { ...facts.parse, openPendingItems: 0, blockers };
     facts.project = null;
