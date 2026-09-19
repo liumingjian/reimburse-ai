@@ -389,13 +389,13 @@ export async function selectOption(session: CdpSession, { which = 0, row = 0, co
   // y=697）上盖着DIV: the list had just been painted, and the first read of its item answered the thing still on
   // top of it. The cell was already polled; the item was not, so the one read that decided was the earliest one.
   const probe = async () => ({ items: await listItems(), cell: await cellTarget(session, { which, row, column, scroll: false }) });
-  const ready2 = (p: { items: Array<Reach & { text: string }>; cell: CellTarget }) => {
+  const itemReady = (p: { items: Array<Reach & { text: string }>; cell: CellTarget }) => {
     if (!(p.items.length > 0 && p.cell.ok && p.cell.focused === true)) return false;
     const wanted = p.items.filter((i) => i.text === option);
     // Zero or several is a refusal, not something waiting will mend: stop and let the caller say which it was.
     return wanted.length !== 1 || wanted[0]!.onTarget === true;
   };
-  const seen = await waitFor(probe, ready2, readyMs, pace.pollMs);
+  const seen = await waitFor(probe, itemReady, readyMs, pace.pollMs);
   const items = seen.items;
   const ready = seen.items.length > 0 && seen.cell.ok && seen.cell.focused === true;
 
