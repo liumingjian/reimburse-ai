@@ -1,7 +1,7 @@
 import { ABANDON_TASK_COPY, ERP_ACTION_ERRORS, TaskListSchema, type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fixtureCatalog } from './catalog/project-catalog';
-import { abortBeforeAttempt, catalogMismatch, gated, loginWall, readbackMismatch, savedDraft, scripted, TEST_ERP_ACCOUNT, type ScriptedExecutor } from './erp/testing/fake-executor';
+import { abortBeforeAttempt, catalogMismatch, gated, handedOver, loginWall, readbackMismatch, scripted, TEST_ERP_ACCOUNT, type ScriptedExecutor } from './erp/testing/fake-executor';
 import { api, sample } from './test/api';
 import { createTestServer, type TestClient, type TestServer } from './test/harness';
 
@@ -81,10 +81,10 @@ describe('去报销 on a fake executor', () => {
     expect(still.erp.loginNotice).toEqual(expect.any(String));
     expect(executor.runs().map((run) => run.trigger)).toEqual(['start', 'confirm_login']);
 
-    executor.queue(savedDraft());
+    executor.queue(handedOver());
     await client.accepted(await client.act(still, 'confirm-login'));
     const done = await settledErp(still.task.taskId);
-    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', draftNo: 'FYBX2026090001' } });
+    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', draftNo: null } });
   });
 
   it('cancel-erp-write returns to write-pending and the task can start again', async () => {
@@ -94,7 +94,7 @@ describe('去报销 on a fake executor', () => {
     await refused(await client.act(cancelled, 'cancel-erp-write'), 400, 'not_waiting_login');
     await refused(await client.act(cancelled, 'confirm-login'), 400, 'not_waiting_login');
 
-    executor.queue(savedDraft());
+    executor.queue(handedOver());
     expect((await start(cancelled)).stage).toBe('done');
   });
 
@@ -136,7 +136,7 @@ describe('去报销 on a fake executor', () => {
     const resubmitted = await client.accepted(await client.act(mismatch, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(mismatch.lines.map((line) => [line.lineId, 'P-3312'])) }));
     expect(resubmitted).toMatchObject({ stage: 'review', step: { kind: 'confirm_review' }, catalog: { status: 'pending' } });
     const reconfirmed = await client.accepted(await client.act(resubmitted, 'confirm-review', { digest: resubmitted.confirmation.digest }));
-    executor.queue(savedDraft());
+    executor.queue(handedOver());
     expect((await start(reconfirmed)).stage).toBe('done');
   });
 
@@ -177,26 +177,27 @@ describe('去报销 on a fake executor', () => {
     expect((await client.current(ready.task.taskId)).stage).toBe('voided');
   });
 
-  it('a saved draft that passed the strict read-back is done (ERP 草稿已交接), a terminal', async () => {
-    executor.queue(savedDraft('FYBX2026090077'));
+  it('a filled, unsaved form that passed the strict read-back is done (ERP 草稿已交接), a terminal', async () => {
+    executor.queue(handedOver());
     const done = await start(await confirmed());
-    expect(done).toMatchObject({ stage: 'done', step: { kind: 'none' }, erp: { status: 'done', draftNo: 'FYBX2026090077', erpAccount: TEST_ERP_ACCOUNT }, readback: { status: 'matched' } });
+    // Nothing was saved, so there is no 单据编号 to report — the read-back rows are the whole of the evidence.
+    expect(done).toMatchObject({ stage: 'done', step: { kind: 'none' }, erp: { status: 'done', draftNo: null, erpAccount: TEST_ERP_ACCOUNT }, readback: { status: 'matched' } });
     expect(done.readback.rows).toHaveLength(done.lines.length);
     expect(done.readback.rows.every((row) => row.matched)).toBe(true);
     expect(done.erp.steps.every((step) => step.status === 'done')).toBe(true);
     expect(server.erpLease.holder()).toBeNull();
 
-    expect((await taskList()).tasks[0]).toMatchObject({ stage: 'done', erpDraftNo: 'FYBX2026090077', abandonable: false });
+    expect((await taskList()).tasks[0]).toMatchObject({ stage: 'done', erpDraftNo: null, abandonable: false });
     await refused(await client.act(done, 'set-home-city', { homeCity: '上海' }), 400, 'task_closed');
-    // 去打印 never needs ERP (stories 57 and 63), so the paper bundle is still available once the draft is filed.
+    // 去打印 never needs ERP (stories 57 and 63), so the paper bundle is still available once the form is handed over.
     expect((await alice.post(`/api/tasks/${done.task.taskId}/actions/generate-print-sheet`, {})).status).toBe(200);
     expect((await client.current(done.task.taskId)).printSheet.status).toBe('generated');
-    // A draft handed over is terminal: the account may start the next task.
+    // The hand-over is terminal: the account may start the next task.
     expect((await alice.post('/api/tasks', { homeCity: '杭州' })).status).toBe(200);
   }, 120_000);
 
   it('a failure before the first attempt_started returns to write-pending and allows retry', async () => {
-    executor.queue(abortBeforeAttempt, savedDraft());
+    executor.queue(abortBeforeAttempt, handedOver());
     const aborted = await start(await confirmed());
     expect(aborted).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, erp: { status: 'idle' }, confirmation: { status: 'confirmed' } });
     expect(aborted.erp.abortReason).toContain('ERP 兼容指纹不符');
@@ -210,7 +211,7 @@ describe('去报销 on a fake executor', () => {
   });
 
   it('holds the global lease while the job runs: 409 stale for this task, 409 erp_in_use for another account', async () => {
-    const gate = gated(savedDraft());
+    const gate = gated(handedOver());
     executor.queue(gate.script);
     const ready = await confirmed();
     const running = await client.accepted(await client.act(ready, 'start-erp-write'));

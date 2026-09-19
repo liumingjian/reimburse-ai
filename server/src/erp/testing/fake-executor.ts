@@ -75,8 +75,8 @@ export const readbackMismatch: Script = async (plan, channel) => {
   return result(channel, 'unknown', 'strict_readback_failed', '任务第 1 行没有一条同时匹配项目、费用项目、日期、金额和收票关联的 ERP 明细；金额相等不能代替逐行一致');
 };
 
-/** Imports, fills and saves a draft whose strict read-back passed. */
-export const savedDraft = (billNo = 'FYBX2026090001', erpAccount = TEST_ERP_ACCOUNT): Script => async (plan, channel) => {
+/** Imports, fills and hands the filled, unsaved 费用报销单 over: no save attempt and no 单据编号 (ADR-0028). */
+export const handedOver = (erpAccount = TEST_ERP_ACCOUNT): Script => async (plan, channel) => {
   await pastCatalog(channel);
   await channel.emit({ type: 'step', step: 'navigate', status: 'running' });
   await channel.emit({ type: 'step', step: 'navigate', status: 'done' });
@@ -84,9 +84,8 @@ export const savedDraft = (billNo = 'FYBX2026090001', erpAccount = TEST_ERP_ACCO
   await channel.emit({ type: 'step', step: 'import', status: 'done' });
   await attempt(plan, channel, 'fill', 1, erpAccount);
   await channel.emit({ type: 'step', step: 'fill', status: 'done' });
-  await attempt(plan, channel, 'save', 2, erpAccount);
-  await channel.emit({ type: 'step', step: 'save', status: 'done' });
-  return result(channel, 'saved', null, null, billNo);
+  await channel.emit({ type: 'step', step: 'handover', status: 'done' });
+  return result(channel, 'handed_over', null, null, null);
 };
 
 // A 1×1 PNG: stands in for the cropped screenshot of ERP's error dialog.

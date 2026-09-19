@@ -66,20 +66,34 @@ async function settledErp(taskId: string): Promise<TaskSnapshot> {
 }
 
 describe('去报销 with the real executor on the fake ERP', () => {
-  it('imports, fills and saves a draft that passes the strict read-back: done', async () => {
+  it('imports and fills a form that passes the strict read-back, then hands it over unsaved: done', async () => {
     const ready = await confirmed(true);
     await client.accepted(await client.act(ready, 'start-erp-write'));
     const done = await settledErp(ready.task.taskId);
     expect(done.erp.abortReason, JSON.stringify(done.erp)).toBeNull();
     expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', erpAccount: ERP_ACCOUNT }, readback: { status: 'matched' } });
-    expect(done.erp.draftNo).toEqual(expect.any(String));
+    // Nothing was saved, so there is no 单据编号 (bill number) — the strict read-back rows are the evidence instead.
+    expect(done.erp.draftNo).toBeNull();
+    expect(done.readback.rows).toHaveLength(done.lines.length);
     expect(done.readback.rows[0]!.fields.find((field) => field.label === '收票单号')?.erp).toBe(RECEIPT_NUMBER);
-    expect(fake!.mutations.some((mutation) => mutation.kind === 'save')).toBe(true);
+    expect(fake!.mutations.some((mutation) => mutation.kind === 'save')).toBe(false);
     const preview = await server.db.selectFrom('erp_approved_preview').select('preview').executeTakeFirstOrThrow();
     expect(JSON.parse(preview.preview)).toMatchObject({ taskId: ready.task.taskId, identity: { account: ERP_ACCOUNT.account, tenant: ERP_ACCOUNT.tenant } });
   });
 
-  it('stops before save when ERP leaves 收票单号 empty on the detail rows (as research recorded): reconcile, saying why', async () => {
+  it('starts no 保存 动作尝试 and records no save mutation: baox cannot commit the 费用报销单 (ADR-0028)', async () => {
+    const ready = await confirmed(true);
+    await client.accepted(await client.act(ready, 'start-erp-write'));
+    expect((await settledErp(ready.task.taskId)).stage).toBe('done');
+
+    const attempts = await server.db.selectFrom('erp_attempt').select('action').where('task_id', '=', ready.task.taskId).execute();
+    expect(attempts.map((attempt) => attempt.action).sort()).toEqual(['fill', 'import']);
+    expect(fake!.mutations.some((mutation) => mutation.kind === 'save')).toBe(false);
+    // ERP still shows the 新增 (new) tab: the 费用报销单 never reached the ERP's database.
+    expect(fake!.document.querySelector('.form-tab')!.textContent).toBe('费用报销单-新增');
+  });
+
+  it('stops before the hand-over when ERP leaves 收票单号 empty on the detail rows (as research recorded): reconcile, saying why', async () => {
     const ready = await confirmed(false);
     await client.accepted(await client.act(ready, 'start-erp-write'));
     const stopped = await settledErp(ready.task.taskId);

@@ -325,7 +325,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       if (!job && parseRunning(facts)) return { kind: 'stale' };
       const phase = facts.erp?.phase;
       if (!job && (phase === 'running' || facts.erp?.reconciling || (phase === 'waiting_login' && !loginPause))) return { kind: 'stale' };
-      if (!job && !printOnly && phase === 'saved') return { kind: 'refused', code: 'task_closed', message: ACTION_COPY.taskClosed };
+      if (!job && !printOnly && (phase === 'handed_over' || phase === 'saved')) return { kind: 'refused', code: 'task_closed', message: ACTION_COPY.taskClosed };
       if (!job && !printOnly && phase === 'unknown' && !erpAction) return { kind: 'refused', code: 'erp_started', message: ERP_ACTION_ERRORS.erpStarted };
       // ADR-0014: a task's materials freeze at its first ERP action attempt. The phase checks above catch the shapes
       // that freeze normally takes, but the rule is about the attempt existing at all, so it is stated once here

@@ -9,21 +9,22 @@ import type { FillExecutor } from './erp/fill-jobs';
 import type { ExecutorChannel, ExecutorEvent, Mutation } from './erp/protocol';
 import type { ReconcileExecutor } from './erp/reconcile-job';
 import { COMPATIBILITY, ERP_ORIGIN, FAST_PACE, fakeErpOptions } from './erp/testing/scenario';
-import { noFormOpen, savedDraft, scripted, TEST_ERP_ACCOUNT } from './erp/testing/fake-executor';
+import { handedOver, noFormOpen, scripted, TEST_ERP_ACCOUNT } from './erp/testing/fake-executor';
 import { api, sample } from './test/api';
 import { createTestServer, tempDataDir, testClient, type TestClient, type TestServer } from './test/harness';
 import { join } from 'node:path';
 
 // Slice 13 (#192): any loss after `attempt_started` lands in reconcile, never in a replay. Faults are injected into
-// the real executor on the fake ERP at each mutation point (import, fill, save): the attempt is durable, then the job
-// dies. The read-only reconcile job then reads the same fake ERP and the server places it in one 对账中断点.
+// the real executor on the fake ERP at each mutation point (import, fill): the attempt is durable, then the job dies.
+// The read-only reconcile job then reads the same fake ERP and the server places it in one 对账中断点.
 
 const CATALOG = fixtureCatalog([{ number: 'P-2307', name: '华东客户交付', audited: true, forbidden: false }]);
 const RECEIPT_NUMBER = 'SPD202609150001';
 
-// Where the fill job dies: right after the attempt of that mutation is durable (before ERP changes), or after the
-// save went through, while its strict read-back runs.
-type Fault = Mutation | 'after_save';
+// Where the fill job dies: right after the attempt of that mutation is durable (before ERP changes), or once the
+// strict pre-save read-back that precedes the hand-over is durable. The job never saves (ADR-0028), so there is no
+// `save` attempt to die at.
+type Fault = Exclude<Mutation, 'save'> | 'before_save';
 
 let server: TestServer;
 let alice: TestClient;
@@ -37,7 +38,7 @@ function faulty(channel: ExecutorChannel): ExecutorChannel {
   const emit = async (event: ExecutorEvent) => {
     const reply = await (channel.emit as (event: ExecutorEvent) => Promise<unknown>)(event);
     if (event.type === 'attempt_started' && event.action === fault) throw new Error(`injected fault at ${event.action}`);
-    if (event.type === 'readback' && event.stage === 'after_save' && fault === 'after_save') throw new Error('injected fault after save');
+    if (event.type === 'readback' && event.stage === 'before_save' && fault === 'before_save') throw new Error('injected fault at before_save');
     return reply;
   };
   return { emit: emit as ExecutorChannel['emit'] };
@@ -114,7 +115,6 @@ describe('fault injection at each ERP mutation point', () => {
     // The fake ERP's blank form keeps one empty detail row, which reads as unreadable: 未知 (unverified on a real ERP).
     ['import', '未知', ['wait', 'hand_off']],
     ['fill', '未保存·已导入未写明细', ['hand_off']],
-    ['save', '未保存·就绪待保存', ['wait', 'hand_off']],
   ] as const)('a fault at %s stops in reconcile, and the reconcile job lands in %s', async (point, bucket, allowed) => {
     const stopped = await crashAt(point);
     // Write result unknown: reconcile before any read, offering only 开始对账 and 转人工.
@@ -152,16 +152,18 @@ describe('fault injection at each ERP mutation point', () => {
     expect((await alice.post('/api/tasks', { homeCity: '杭州' })).status).toBe(200);
   }, 120_000);
 
-  it('a save that went through before the fault reconciles to 已保存 and, matching the approved preview line by line, is done', async () => {
-    const stopped = await crashAt('after_save');
+  it('a form the employee saved themselves reconciles to 已保存 and, matching the approved preview line by line, is done', async () => {
+    const stopped = await crashAt('before_save');
     expect(stopped.stage).toBe('reconcile');
+    // baox never clicks 保存 (ADR-0028); the employee does, and 对账 is how that save becomes evidence.
+    fake!.employeeSaves();
     const judged = await reconcile(stopped);
     expect(judged).toMatchObject({ stage: 'done', erp: { status: 'done' }, readback: { status: 'matched' } });
     expect(judged.erp.draftNo).toEqual(expect.any(String));
   });
 
   it('a form under another instance UUID than the attempt\'s is never judged: 未知', async () => {
-    const stopped = await crashAt('save');
+    const stopped = await crashAt('before_save');
     fake!.replaceFormInstance();
     const judged = await reconcile(stopped);
     expect(judged.reconcile).toMatchObject({ bucket: '未知', allowedActions: ['wait', 'hand_off'] });
@@ -177,7 +179,7 @@ describe('fault injection at each ERP mutation point', () => {
   });
 
   it('holds the ERP lease while reconcile reads: 409 erp_in_use for another task, the lease is freed on the result', async () => {
-    const stopped = await crashAt('save');
+    const stopped = await crashAt('before_save');
     server.erpLease.acquire({ accountId: 'someone', taskId: 'another-task', jobId: 'another-job' });
     const blocked = await client.act(stopped, 'reconcile');
     expect(blocked.status).toBe(409);
@@ -219,7 +221,7 @@ describe('crash recovery', () => {
     expect(running).toMatchObject({ stage: 'erp', erp: { status: 'running' } });
 
     // The second process on the same data: the job gets its result before any request is served.
-    const neverRun = scripted(savedDraft());
+    const neverRun = scripted(handedOver());
     const second = await createTestServer({ projectCatalog: CATALOG, erpExecutor: neverRun, reconcileExecutor: noFormOpen, database, dataDir: dir });
     const again = api(() => testClient(second.app, owner.account, owner.cookie));
     const back = await again.current(task.taskId);
