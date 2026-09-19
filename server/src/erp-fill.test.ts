@@ -237,18 +237,33 @@ describe('去报销 on a fake executor', () => {
     expect(server.erpLease.holder()).toBeNull();
   });
 
+  // A 住宿 line needs its 离店日期, which only the folio carries; the hotel invoice on its own cannot be written.
   it('refuses to start when a confirmed line cannot be written to ERP, before any job', async () => {
     const { task } = await client.createTask('杭州');
-    const uploaded = await client.upload(task.taskId, [sample('m07')]);
+    const uploaded = await client.upload(task.taskId, [sample('m01')]);
     await client.accepted(await client.act(uploaded, 'start-inventory'));
-    const done = await client.settled(task.taskId);
+    const done = await client.withoutStayGaps(await client.settled(task.taskId));
     const review = await client.accepted(await client.act(done, 'submit-project-assignment', { purpose: '出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
     const ready = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
     const response = await client.act(ready, 'start-erp-write');
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: { code: string; message: string } };
     expect(body.error.code).toBe('erp_preflight');
-    expect(body.error.message).toContain('铁路电子客票');
+    expect(body.error.message).toContain('离店日期');
     expect(executor.runs()).toEqual([]);
+  });
+
+  // ERP's 发票类型 enum has no 铁路电子客票 entry, so a rail e-ticket writes as 普通发票 and the preflight lets it through.
+  it('writes a 铁路电子客票 line as 普通发票 instead of refusing it', async () => {
+    const { task } = await client.createTask('杭州');
+    const uploaded = await client.upload(task.taskId, [sample('m07')]);
+    await client.accepted(await client.act(uploaded, 'start-inventory'));
+    const done = await client.settled(task.taskId);
+    const review = await client.accepted(await client.act(done, 'submit-project-assignment', { purpose: '出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
+    const ready = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
+    expect(ready.lines.map((line) => line.invoiceType)).toEqual(['普通发票']);
+    await client.accepted(await client.act(ready, 'start-erp-write'));
+    await settledErp(task.taskId);
+    expect(executor.runs()).toHaveLength(1);
   });
 });

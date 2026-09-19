@@ -21,8 +21,8 @@ export const ERP_INVOICE_TYPES: readonly string[] = ['普通发票', '增值税�
 // A line's invoice type is the face 票种 the confirmation showed; ERP's 发票类型 is its own enum (recorded in
 // docs/research/erp-expense-flow/deep-dive/11-invoice-type-enum.md: 普通发票、增值税发票、机票、火车票、其他运输票、其他).
 // 专票 → 增值税发票 follows that record's temporary validation, not a confirmed company mapping; `test:erp-live`
-// checks it on a real draft. A 铁路电子客票 would need 火车票, which the strict read-back does not accept yet: no entry,
-// so the preflight refuses it.
+// checks it on a real draft. A 铁路电子客票 is not an ERP enum value at all, so the rail kind offers 普通发票 as its only
+// 报销系统发票类型 (`parse/kinds.ts`) and never reaches this map under that name.
 export const ERP_INVOICE_TYPE_OF: Readonly<Record<string, string>> = {
   增值税专用发票: '增值税发票',
   增值税发票: '增值税发票',
