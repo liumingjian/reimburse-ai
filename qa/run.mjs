@@ -7,6 +7,7 @@ import { chromium, expect } from '@playwright/test';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { erpIdleFindings, erpProjectTarget, waitForChange } from './checks.mjs';
 import { qaSelfCheck, qaValue } from './values.mjs';
 
 const BASE = process.env['QA_BASE'] ?? 'http://127.0.0.1:4319';
@@ -21,6 +22,10 @@ const SKIP = new Set(
     .filter(Boolean),
 );
 const PURPOSE = '广州本地用车费用报销（QA）';
+// The project every line is assigned to, and so the one 报销信息核对 (the catalog check, 原文 报销信息核对)
+// looks up in the real 报销系统 before 去报销 may write anything. QA_PROJECT / QA_PROJECT_NAME name a project
+// of the operator's own account; without them this is an offline fixture number the catalog will refuse.
+const PROJECT = erpProjectTarget(process.env);
 
 // A 1x1 PNG, enough to stand in for a payment screenshot.
 const PNG_1X1 = Buffer.from(
@@ -67,6 +72,8 @@ async function materials() {
   const names = (await readdir(MATERIALS)).filter((n) => /\.(pdf|jpe?g|png)$/i.test(n));
   return names.sort().map((n) => join(MATERIALS, n));
 }
+
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const visible = async (locator, timeout = 5000) =>
   locator
@@ -661,12 +668,25 @@ async function qaProjectBook(page, state) {
   if (!duplicate.includes('已记录')) defect('project-book', `duplicate intake was not refused: ${duplicate}`);
   const unsafe = await intake('P-12;', '非法项目号');
   if (!unsafe.includes('不能安全')) defect('project-book', `unsafe project number was not refused: ${unsafe}`);
+
+  // The ERP sections need a project the real 报销系统 carries, and it can only be assigned once it is in the
+  // book. Intake is offline either way (qa/README.md), so this adds nothing to what the section above checks.
+  if (PROJECT.real) {
+    const real = await intake(PROJECT.number, PROJECT.name);
+    if (!/已加入|已记录/.test(real)) {
+      defect('project-book', `QA_PROJECT ${PROJECT.number} was not recorded, so the ERP sections have nothing to assign to: ${real}`);
+    }
+  }
   await shot(page, 'project-book');
   void state;
 }
 
 async function qaAssignment(page, state) {
   const id = state.taskId;
+  // Said here, where the project is chosen: 报销信息核对, 去报销 and the 发票无忧助手 all hang off it, and an
+  // offline fixture number stops all three for a reason of the driver's own making.
+  if (PROJECT.warning) warn('erp-project', PROJECT.warning);
+  else ok('erp-project', `the ERP sections will use project ${PROJECT.number}「${PROJECT.name}」`);
   await page.goto(`${BASE}/#/task/${id}/project`);
   await page.waitForTimeout(2500);
 
@@ -703,15 +723,15 @@ async function qaAssignment(page, state) {
   // the ticked lines at once.
   const assignPanel = page.getByRole('complementary', { name: '归入项目' });
   await expect(assignPanel).toBeVisible({ timeout: 10000 });
-  const project = assignPanel.getByRole('button', { name: /P-2307/ });
+  const project = assignPanel.getByRole('button', { name: new RegExp(escapeRegExp(PROJECT.number)) });
   if (!(await visible(project, 5000))) {
     // Nothing to assign to: the personal book stayed empty, which the project-book area already explained.
-    warn('assignment', 'the 归入项目 panel offers no P-2307, so the assignment could not be submitted');
+    warn('assignment', `the 归入项目 panel offers no ${PROJECT.number}, so the assignment could not be submitted`);
     await shot(page, 'assignment-no-project');
     return;
   }
   if (!(await project.isEnabled().catch(() => false))) {
-    warn('assignment', 'P-2307 in the 归入项目 panel is disabled after ticking every line (locked, or a conflict is pending)');
+    warn('assignment', `${PROJECT.number} in the 归入项目 panel is disabled after ticking every line (locked, or a conflict is pending)`);
     await shot(page, 'assignment-project-disabled');
     return;
   }
@@ -722,7 +742,7 @@ async function qaAssignment(page, state) {
   if (await visible(overwrite, 2000)) await overwrite.getByRole('button', { name: '确认覆盖' }).click();
 
   const summary = await summaryText();
-  ok('assignment', `after assigning everything to P-2307: ${summary}`);
+  ok('assignment', `after assigning everything to ${PROJECT.number}: ${summary}`);
   // 整单合计 now comes from the assignment view, which carries the whole-list total from the moment the workbench
   // opens. It used to be read off the confirmation, which does not exist yet at this step, and the workbench printed
   // the unit with nothing in front of it. An empty amount here is that defect back.
@@ -857,16 +877,23 @@ async function qaPrint(page, files, state) {
   const reminder = page.getByRole('status', { name: '打印提醒' });
   if (await visible(reminder, 3000)) ok('print', `reminders: ${(await reminder.innerText()).replace(/\s+/g, ' ')}`);
 
-  // Rotate: the server must re-render, so the image src has to change.
+  // Rotate: the server must re-render, so the image src has to change. `imageUrl` is content-addressed
+  // (server/src/print/facts.ts), so a finished re-render cannot leave the src alone — but the re-render takes
+  // seconds, measured at about seven against the live app. Poll for the change instead of sleeping a fixed
+  // span shorter than the work: an unchanged src is only a defect once the whole budget is spent.
   const rotate = page.getByRole('button', { name: /^(旋转 90°|改为竖放)：/ }).first();
   if (await visible(rotate, 5000)) {
     const img = pages.locator('img.app-page-image').first();
     const before = await img.getAttribute('src');
     await rotate.click();
-    await page.waitForTimeout(4000);
-    const after = await img.getAttribute('src');
-    if (before === after) defect('print', 'rotating a placement did not re-render the page image');
-    else ok('print', 'rotate re-renders the page');
+    const rendered = await waitForChange(() => img.getAttribute('src'), {
+      from: before,
+      timeout: 45000,
+      interval: 500,
+      sleep: (ms) => page.waitForTimeout(ms),
+    });
+    if (rendered.changed) ok('print', `rotate re-renders the page (after ~${Math.round(rendered.waited / 1000)}s)`);
+    else defect('print', 'rotating a placement did not re-render the page image within 45s');
   } else {
     warn('print', 'no rotate control found');
   }
@@ -1017,26 +1044,33 @@ async function qaErpOff(page, context, state) {
   await page.waitForTimeout(5000);
 
   // With the dedicated chromium off the job must abort before touching anything.
+  //
+  // `erp.status` is not the whole answer. A 报销信息核对 (catalog check) refusal is mapped to the plain `idle`
+  // ERP view on purpose (server/src/erp/fill-state.ts) because its problems belong to the snapshot's `catalog`
+  // section — so read that section too, or a correct refusal reads as the app going quiet.
   const deadline = Date.now() + 120000;
   let status = null;
   let reason = null;
+  let catalog = null;
   while (Date.now() < deadline) {
     const snap = await (await context.request.get(`${BASE}/api/tasks/${id}`)).json().catch(() => null);
     status = snap?.erp?.status ?? null;
     reason = snap?.erp?.abortReason ?? null;
+    catalog = snap?.catalog ?? null;
     if (status === 'aborted' || status === 'done' || status === 'waiting_login') break;
+    // A catalog mismatch is terminal for this attempt; there is nothing further to wait for.
+    if (catalog?.status === 'mismatch') break;
     await page.waitForTimeout(3000);
   }
   await shot(page, 'erp-off');
 
   if (status === 'idle' || status === null) {
-    // The write can also be refused before it starts (a preflight the ERP browser has nothing to do with).
-    // That is a different path from the one under test, so say which one happened instead of blaming the browser.
+    // The write can also be refused before it starts — by 报销信息核对, or by a preflight the ERP browser has
+    // nothing to do with. Both are the server refusing with a reason, which is not a defect; name the refusal
+    // so the next operator does not have to go digging in erp_job_event for it.
     const refusals = await page.locator('[role=alert]').filter({ hasText: /\S/ }).allInnerTexts().catch(() => []);
-    if (refusals.length > 0) {
-      warn('erp-off', `去报销 was refused before the write started, so the browser-off path was not reached: ${refusals.join(' | ').replace(/\s+/g, ' ').slice(0, 300)}`);
-      return;
-    }
+    for (const finding of erpIdleFindings({ catalog, refusals })) note(finding.level, 'erp-off', finding.text);
+    return;
   }
 
   if (status === 'aborted') {

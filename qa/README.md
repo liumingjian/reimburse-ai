@@ -22,6 +22,16 @@ node server/dist/main.mjs              # 输出 listening on http://127.0.0.1:43
 
 The project-book section enters explicit numbers and names offline, including `P-2307` and `P-3312`, and checks duplicate and unsafe-number feedback. No ERP session or catalog fixture is needed to reach project assignment and whole-list confirmation. The administrator section uses a separate `QA-PUBLIC` number so it does not silently convert a member's personal entry.
 
+`P-2307` 与 `P-3312` **只是离线夹具号**：真报销系统里没有这两个项目，报销信息核对会（正确地）说查不到。
+所以凡是要真打到报销系统的那几段（项目归属之后的报销信息核对、去报销），必须用 `QA_PROJECT` /
+`QA_PROJECT_NAME` 给一个**你这个账号真有的**项目，例如
+`QA_PROJECT=111705 QA_PROJECT_NAME='安徽省农村信用社联合社-开源软件运维人员驻场服务-25-111705'`
+（这是维护者账号的项目簿里真有的一个，换个账号就未必有——驱动不会替你猜，也没有默认值）。
+给了之后，`project-book` 那一段会把它一起录进个人项目簿，`assignment` 把全部明细归到它名下。
+
+不给 `QA_PROJECT` 时驱动照跑，但会在 `erp-project` 记一条 `WARN`，明说这一趟用的是离线夹具号、
+去报销会停在报销信息核对那一步、发票无忧助手根本打不开——那不是应用的缺陷，是这一趟没配项目号。
+
 For later ERP checks against demonstration project numbers, the existing optional catalog fixture remains available:
 
 ```bash
@@ -39,6 +49,8 @@ This fixture does not make local intake ERP-verified. The operator-only ERP sect
 | `QA_OUT` | `/tmp/baox-qa-artifacts` | 截图与 `findings.json` 的落地目录 |
 | `QA_USER` / `QA_PASSWORD` | `admin` / `admin123` | 登录账号 |
 | `QA_HOME_CITY` | `广州` | 新建任务的常驻城市 |
+| `QA_PROJECT` | 空（回落到离线号 `P-2307`） | 归属与去报销用的项目号，要填**你这个报销系统账号真有的**项目 |
+| `QA_PROJECT_NAME` | 同 `QA_PROJECT` | 该项目在报销系统里的名称，报销信息核对连名称一起比 |
 | `QA_HEADLESS` | 空 | 置 `1` 则无头运行（冒烟用；平时就该看着它跑） |
 | `QA_SKIP` | 逗号分隔的分区名，跳过不跑。例如 `QA_SKIP=erp-off` 可以跳过去报销那一段。 | 空 |
 
@@ -82,6 +94,11 @@ QA_BASE=http://127.0.0.1:4399 QA_MATERIALS=/tmp/baox-qa-mats QA_HEADLESS=1 pnpm 
 期望：`erp.status` 变成 `aborted`，`erp.abortReason` 说得出是浏览器不可用，页面上也能看到这句话，
 任务本身不被改动。驱动会把这三点分别记成 `ok` 或 `DEFECT`。
 
+`erp.status` 一个字段不够看：报销信息核对不通过时，快照里的 `erp.status` 是**故意**留在 `idle` 的
+（`server/src/erp/fill-state.ts`），问题都写在快照的 `catalog` 一节里。驱动两节一起读：看到 `catalog`
+里有理由充分的拒绝，就照着理由记 `ok`（并另记一条 `WARN` 说这一趟没走到「浏览器关着」那条路），
+**不会**记成 `DEFECT`——**服务端有理由的拒绝不是缺陷**。只有 `idle` 且哪儿都没有拒绝理由，才是缺陷。
+
 ## 5. 住宿三件套（`stay-trio` 分区）
 
 盘点结束后、处理待确认项之前，`stay-trio` 分区核对住宿报销的三件套（发票、结账单、支付截图，#213）：
@@ -110,7 +127,8 @@ QA_BASE=http://127.0.0.1:4399 QA_MATERIALS=/tmp/baox-qa-mats QA_HEADLESS=1 pnpm 
   不会在一项上空转；选择类连环打开新表单的链路也有深度上限。
 - 跑完若还有没解决的项，日志里会列出来，并留下 `pending-stuck` 截图。
 
-不开浏览器也能检一下取值逻辑（同样不在 CI 里）：
+不开浏览器也能检一下取值逻辑（`qa/values.mjs`）与驱动那几处不碰浏览器的判断（`qa/checks.mjs`：
+用哪个项目号、`idle` 的 ERP 视图该怎么读、旋转要等多久）——同样不在 CI 里：
 
 ```bash
 node --test "qa/*.test.mjs"
