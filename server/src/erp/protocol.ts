@@ -87,7 +87,10 @@ export const ReadingsSchema = z.object({
 });
 export type Readings = z.infer<typeof ReadingsSchema>;
 
-export const READBACK_STAGES = ['after_import', 'after_fill', 'before_save', 'after_save', 'reconcile'] as const;
+// The moments a fill job reads the form back. `before_hand_over` is the strict read the hand-over gate makes before
+// it hands the filled, unsaved 单据 (bill) to the employee; it was `before_save` until ADR-0028 took the save away,
+// and there is no read after a save because baox never saves.
+export const READBACK_STAGES = ['after_import', 'after_fill', 'before_hand_over', 'reconcile'] as const;
 export type ReadbackStage = (typeof READBACK_STAGES)[number];
 
 export const ErrorCaptureSchema = z.object({

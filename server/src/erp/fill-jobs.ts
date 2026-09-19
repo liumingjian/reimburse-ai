@@ -12,7 +12,11 @@ import { taskJudge, type FrozenJob } from './fill-plan';
 import { writeAttempt, writeEvent } from './jobs';
 import { ExecutorEventSchema, type ErpAccount, type ExecutorChannel, type ExecutorEvent, type FillPlan, type ResultEvent } from './protocol';
 
-export type FillTrigger = 'start' | 'confirm_login';
+// What started this run of the fill job, recorded on `erp_job.trigger` so the audit trail can tell them apart:
+// `start` is 去报销, `confirm_login` is 我已登录，继续, `refill` is 重新去报销 (the recovery after an import that was
+// never saved, ADR-0027). `refill` runs exactly like `start` — a fresh plan on a fresh 新增单 — and differs only in
+// what it is allowed to start from, which `tasks.ts` decides.
+export type FillTrigger = 'start' | 'confirm_login' | 'refill';
 
 // `confirm_login` is the user's 我已登录，继续: the executor probes the login once and never polls for it.
 export type FillExecutor = (plan: FillPlan, channel: ExecutorChannel, options: { trigger: FillTrigger }) => Promise<ResultEvent>;

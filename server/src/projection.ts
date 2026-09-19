@@ -41,7 +41,7 @@ export type ErpPhase = 'running' | 'waiting_login' | 'cancelled' | 'catalog_mism
 
 export type ErpFacts = {
   jobId: string;
-  trigger: 'start' | 'confirm_login';
+  trigger: 'start' | 'confirm_login' | 'refill';
   // The revision the job was accepted at.
   revision: number;
   phase: ErpPhase;

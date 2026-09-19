@@ -24,7 +24,7 @@ getdesign 原件（linear.app、ibm、airtable）仍在 `docs/design/prototypes/
   主按钮是 Carbon 的 `$button-primary`（#0f62fe），直角。一屏一个主按钮（「去打印」「去报销」并列是唯一例外）。
 - **字体**：系统字体（苹方），在 `carbon.scss` 里把 Carbon 的 `font-family` 映射整体换掉一次；**不打包 IBM Plex**。
   字号、字重、行高照 Carbon 的字阶（heading-04 页面标题、heading-03 节标题、body-01 正文、body-compact-01 宽表单元格、label-01 / helper-text-01 说明）。
-  等宽只给标识符（草稿号、项目号、费用项目编码、内容哈希），用系统等宽字体；日期、金额、No. 用正文字体加 `tabular-nums`。
+  等宽只给标识符（单据编号、项目号、费用项目编码、内容哈希），用系统等宽字体；日期、金额、No. 用正文字体加 `tabular-nums`。
 - **组件**：顶栏 UI Shell Header（HeaderNavigation：报销任务 / 个人项目簿 / 设置；右侧模拟数据标签与报销人）；
   步骤条 ProgressIndicator；弹层 ComposedModal；表格 Table 系列（TableContainer、TableToolbar、TableToolbarSearch）；
   状态 Tag；提示 InlineNotification；限制说明 Tooltip / Toggletip；表单 TextInput、Checkbox、Search；进度 ProgressBar；筛选 ContentSwitcher。
@@ -100,7 +100,7 @@ Task rows show the primary action and Abandon (作废) as adjacent text buttons.
 页头右侧只留给页面级的新建操作（任务列表的「新建报销任务」）。待确认项页不算：「保存并标记已处理」是逐项表单的提交，不是这一步的下一步。
 需要整页确认的页面和对账页的处置同样用吸底操作栏：通栏、贴视口底边、1px 上边线，左边一句后果说明，右边按钮，主按钮在最右。
 左边的后果说明不重复页头导语，写导语里没有的信息；没有新信息就不写。
-对账页顶部只有一条错误通知（标题「写入结果不确定」，副标题是中止原因）；草稿号、对账结果句等事实进摘要条；人工核对固定句写在吸底栏的后果说明里。
+对账页顶部只有一条错误通知（标题「写入结果不确定」，副标题是中止原因）；单据编号、对账结果句等事实进摘要条；人工核对固定句写在吸底栏的后果说明里。
 
 - 吸底栏按钮分量：只有一个主按钮，文案说清确认的是什么（如「确认整单明细」「确认项目归属」），不单写「确认」。
   往回走的操作（回到上一步修改、回到待确认项）一律用 ghost，不用 secondary，不与主按钮争分量。

@@ -284,7 +284,8 @@ export interface ErpJobTable {
   task_id: string;
   account_id: string;
   kind: 'fill';
-  trigger: 'start' | 'confirm_login';
+  // 去报销 / 我已登录，继续 / 重新去报销 (ADR-0027). See `erp/fill-jobs.ts` FillTrigger.
+  trigger: 'start' | 'confirm_login' | 'refill';
   confirmation_digest: string;
   plan: string;
   revision: number;

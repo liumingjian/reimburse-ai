@@ -209,24 +209,24 @@ describe('ERP draft flow (草稿填写与保存)', () => {
       approvedPreview: preview, approval, freshGate, fillResult,
       readCurrent: async () => { reads += 1; return before; },
     });
-    expect(handedOver).toMatchObject({ ok: true, status: 'handed_over' });
+    expect(handedOver).toMatchObject({ status: 'handed_over' });
     expect(handedOver.readings).toBe(before);
     // One read: the strict 逐行回读 (per-line read-back) is the whole gate, and nothing follows it.
     expect(reads).toBe(1);
 
-    // The pre-save preconditions that blocked a mismatched form still block the hand-over, with the same codes.
+    // The preconditions that blocked a mismatched form before the save still block the hand-over, under the hand-over's names.
     const drifted = await handOverApprovedPreview({
       approvedPreview: preview, approval, freshGate, fillResult,
       readCurrent: async () => readings(detailGrid(4), 'modify', 'FYBX-202609-1', { ok: true, reasons: [] }),
     });
-    expect(drifted).toMatchObject({ ok: false, status: 'blocked' });
-    expect(drifted.problems?.[0]?.code).toBe('same_form_precondition_failed');
+    expect(drifted).toMatchObject({ status: 'blocked' });
+    expect(drifted.problems?.[0]?.code).toBe('hand_over_precondition_failed');
 
     const unfilled = await handOverApprovedPreview({
       approvedPreview: preview, approval, freshGate, fillResult: null,
       readCurrent: async () => { throw new Error('the form must not be read without a fill read-back'); },
     });
-    expect(unfilled).toMatchObject({ ok: false, status: 'blocked' });
+    expect(unfilled).toMatchObject({ status: 'blocked' });
     expect(unfilled.problems?.some((problem) => problem.code === 'fill_result_missing')).toBe(true);
   });
 

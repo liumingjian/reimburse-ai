@@ -303,8 +303,9 @@ export async function fillApprovedPreview<P>(page: P, {
   return { ok: true, phase: 'filled', previewDigest: approvedPreview.previewDigest, formToken: formReadbackToken(readings), rowsWritten, readings: after };
 }
 
+// `status` carries the whole outcome: `handed_over` is the one success, and it is the only status without problems.
 export type HandOverResult = {
-  ok: boolean; status: 'handed_over' | 'blocked' | 'unknown';
+  status: 'handed_over' | 'blocked' | 'unknown';
   problems?: Problem[]; readings?: CurrentReadings;
 };
 
@@ -327,14 +328,14 @@ export async function handOverApprovedPreview({
   if (!fillResult?.ok || fillResult.previewDigest !== approvedPreview?.previewDigest) {
     problems.push({ code: 'fill_result_missing', message: '没有同一完整预览的成功填充回读' });
   }
-  if (problems.length) return { ok: false, status: 'blocked', problems };
+  if (problems.length) return { status: 'blocked', problems };
   let before: CurrentReadings;
   try { before = await readCurrent(approvedPreview); } catch (error: any) {
-    return { ok: false, status: 'unknown', problems: [{ code: error?.code ?? 'pre_save_read_failed', message: error?.message ?? String(error) }] };
+    return { status: 'unknown', problems: [{ code: error?.code ?? 'hand_over_read_failed', message: error?.message ?? String(error) }] };
   }
   if (formReadbackToken(before) !== fillResult!.formToken || before.formMode?.value !== 'new'
     || before.billNo?.value !== null || !before.taskMatch?.ok || !matchReceiptRows(before.receiptsGrid, approvedPreview).ok) {
-    return { ok: false, status: 'blocked', problems: [{ code: 'same_form_precondition_failed', message: '填充后当前页已不是同一张新增空号单，未保存' }] };
+    return { status: 'blocked', problems: [{ code: 'hand_over_precondition_failed', message: '填充后当前页已不是同一张新增空号单，没有交接' }] };
   }
-  return { ok: true, status: 'handed_over', readings: before };
+  return { status: 'handed_over', readings: before };
 }

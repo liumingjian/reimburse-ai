@@ -46,12 +46,14 @@ describe('任务列表', () => {
     expect(screen.queryByText(/产品研发部/)).toBeNull();
   });
 
-  test('?seed=done 时 T1 显示单据交接、价税合计与单据编号', async () => {
+  // ADR-0028：交接把填好、未保存的单据交给员工，报销系统还没有生成单据编号，所以这一列是空的。
+  // 有编号的是 T3：那张单据是员工自己保存过的。
+  test('?seed=done 时 T1 显示单据交接与价税合计，单据编号一列为空（交接时还没有保存）', async () => {
     renderApp('#/tasks', 'done');
     const t1 = await rowOf('2026-08 上海出差（产品评审）');
     expect(within(t1).getByText('10/10 单据交接')).toBeTruthy();
     expect(within(t1).getByText('3972.59')).toBeTruthy();
-    expect(within(t1).getByText('BX20260911-0173')).toBeTruthy();
+    expect(within(t1).queryByText('BX20260911-0173')).toBeNull();
   });
 
   test('转人工的任务：徽标显示已转人工（服务端给出的列表字段），而不是对账中', async () => {

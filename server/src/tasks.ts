@@ -14,6 +14,7 @@ import {
   REOPEN_UPLOAD_ERRORS,
   fieldAnswer,
   type ActionError,
+  type Reconcile,
   type ReconcileBucket,
   type AssignProjectLinesInput,
   type Confirmation,
@@ -130,6 +131,12 @@ type Loaded = {
   // 打印稿 (#190): settings, payment screenshots and the latest composed sheet.
   print: PrintFacts;
 };
+
+// The 对账 (reconcile) verdict as the page read it, or null when the task is not reconciling. 重新对账, 转人工 and
+// 重新去报销 are each gated on it, and its four inputs always travel together as the loaded task and its row.
+function reconcileNow(loaded: Loaded, task: TaskTable): Reconcile | null {
+  return reconcileView(loaded.erp, task.task_id, task.lifecycle, loaded.lines);
+}
 
 // Steps under which the assignment draft and the submission may change: before confirmation and after it (a change
 // invalidates the confirmation). `mutate` freezes every change once a fill job made an ERP action attempt.
@@ -352,11 +359,12 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
   // 去报销, 我已登录，继续 and 重新去报销: all three start one run of the fill job. The lease is taken inside the accepted
   // change, so a task never runs without it; the job itself releases it on its result.
   //
-  // `recovery` is 重新去报销 (ADR-0027) and nothing else. It is the only caller that may start a fill on a task whose
-  // ERP was already attempted, and it earns that by re-checking, against the same view the page read, that the
-  // current 对账 verdict offers the recovery. Attaching the bypass to the caller rather than to the start path is
-  // the point: 去报销 on an attempted task stays refused.
-  async function startFillJob(taskId: string, token: string, trigger: FillTrigger, recovery = false): Promise<TaskSnapshot> {
+  // The `refill` trigger is 重新去报销 (ADR-0027) and nothing else. It is the only trigger that may start a fill on a
+  // task whose ERP was already attempted, and it earns that by re-checking, against the same view the page read,
+  // that the current 对账 verdict offers the recovery. The bypass hangs off this one trigger value and nothing else:
+  // `start` (去报销) on an attempted task stays refused, and `confirm_login` never reaches the branch at all.
+  async function startFillJob(taskId: string, token: string, trigger: FillTrigger): Promise<TaskSnapshot> {
+    const recovery = trigger === 'refill';
     const started: { run: FillRun | null } = { run: null };
     const inUse = { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
     const notWaiting = { code: 'not_waiting_login', message: ERP_ACTION_ERRORS.notWaitingLogin };
@@ -375,18 +383,19 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
             frozen = loaded.erp.frozen;
             digest = loaded.erp.job.confirmation_digest;
           } else {
+            // Where this start is taken from. The recovery's two checks replace 去报销's two, one for one: the 对账
+            // verdict stands in for the 已开始写入 refusal, and 对账 stands in for choose_action as the step it is
+            // taken from. This is the whole of the bypass; everything below holds for both.
             if (recovery) {
-              // The recovery replaces the two checks below it, one for one: the 对账 verdict stands in for the
-              // 已开始写入 refusal, and 对账 stands in for choose_action as the step this is taken from.
               if (facts.erp?.phase !== 'unknown') return { code: 'not_reconciling', message: RECONCILE_COPY.notReconciling };
-              const view = reconcileView(loaded.erp, taskId, task.lifecycle, loaded.lines);
-              if (!view?.allowedActions.includes('refill')) return { code: 'action_not_allowed', message: RECONCILE_COPY.notAllowed };
-            } else if (loaded.erp.attempted) {
-              return { code: 'erp_started', message: ERP_ACTION_ERRORS.erpStarted };
+              if (!reconcileNow(loaded, task)?.allowedActions.includes('refill')) return { code: 'action_not_allowed', message: RECONCILE_COPY.notAllowed };
+            } else {
+              if (loaded.erp.attempted) return { code: 'erp_started', message: ERP_ACTION_ERRORS.erpStarted };
+              if (project(facts).step.kind !== 'choose_action') return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
             }
             // Nothing is re-confirmed: the recovery rebuilds its plan from the same confirmed materials, lines,
             // projects and 事由, and refuses just as 去报销 does if that confirmation is not there.
-            if ((!recovery && project(facts).step.kind !== 'choose_action') || facts.confirmation !== 'confirmed' || !loaded.confirmed) return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
+            if (facts.confirmation !== 'confirmed' || !loaded.confirmed) return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
             const rows = await materialRows(tx, taskId);
             const kinds = new Map(loaded.view.materials.map((material) => [material.materialId, material.kind]));
             const built = buildFillJob({
@@ -720,9 +729,10 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
 
     // 重新去报销 (ADR-0027): the exit out of 未保存·已导入未写明细 while the ERP shows no 单据编号. A new fill job on the
     // same 报销任务, on a fresh 新增单 — never the old page instance (V-45) — which takes the global ERP lease and
-    // opens its own attempts. The 对账 job row keeps pointing at the fill job it read, so the audit trail stands.
+    // opens its own attempts. The 对账 job row keeps pointing at the fill job it read, and the new job row carries
+    // trigger `refill`, so the audit trail tells the recovery from the original 去报销 without reading row order.
     refill(taskId: string, token: string): Promise<TaskSnapshot> {
-      return startFillJob(taskId, token, 'start', true);
+      return startFillJob(taskId, token, 'refill');
     },
 
     // Gives up this 去报销 during the login pause: nothing was written, back to write-pending (choose_action).
@@ -750,8 +760,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
           async ({ tx, task, facts, loaded, at, revision }) => {
             if (!erp) return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
             if (facts.erp?.phase !== 'unknown' || !loaded.erp.job) return { code: 'not_reconciling', message: RECONCILE_COPY.notReconciling };
-            const view = reconcileView(loaded.erp, taskId, task.lifecycle, loaded.lines);
-            if (!view?.allowedActions.includes('wait')) return { code: 'action_not_allowed', message: RECONCILE_COPY.notAllowed };
+            if (!reconcileNow(loaded, task)?.allowedActions.includes('wait')) return { code: 'action_not_allowed', message: RECONCILE_COPY.notAllowed };
             const holder = erp.lease.holder();
             if (holder && holder.taskId !== taskId) return { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
             const jobId = newJobId();
@@ -777,7 +786,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
         token,
         async ({ tx, task, facts, loaded, at, revision }) => {
           if (facts.erp?.phase !== 'unknown') return { code: 'not_reconciling', message: RECONCILE_COPY.notReconciling };
-          const view = reconcileView(loaded.erp, taskId, task.lifecycle, loaded.lines);
+          const view = reconcileNow(loaded, task);
           if (!view?.allowedActions.includes('hand_off')) return { code: 'action_not_allowed', message: RECONCILE_COPY.notAllowed };
           await tx.insertInto('erp_hand_off').values({ hand_off_id: randomUUID(), task_id: taskId, account_id: accountId, fill_job_id: loaded.erp.job?.job_id ?? null, bucket: view.bucket, revision, created_at: at }).execute();
           await tx.updateTable('task').set({ lifecycle: 'handed_off' }).where('task_id', '=', taskId).execute();

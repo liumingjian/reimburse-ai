@@ -9,7 +9,7 @@ import { PAGE_COPY } from './page-copy';
 import { ReadbackTable } from './ReadbackTable';
 
 // 对账页：写入中止后停在这里。页面只说一件事：顶部一条错误通知（写入结果不确定，副标题是中止原因）；
-// 事实（草稿号、对账中断点、处置状态、建议处置、对账结果句）放进摘要条；逐行比对照旧；
+// 事实（单据编号、对账中断点、处置状态、建议处置、对账结果句）放进摘要条；逐行比对照旧；
 // 唯一要做的处置放在吸底操作栏里，左边写后果（含人工核对固定句），右边放按钮。
 // 处置只渲染服务端允许的那些（reconcile.allowedActions）：原地等待有两条出路，wait = 重新对账（只读报销系统再判定一次）、
 // refill = 重新去报销（重开一张单据从头走一遍）；转人工 = 终止后续写入。
@@ -83,9 +83,9 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
 
       <dl className="app-summary bleed" aria-label="对账摘要">
         <div className="app-summary-field">
-          <dt className="app-summary-key">草稿号</dt>
+          <dt className="app-summary-key">单据编号</dt>
           <dd className="app-summary-value app-code" data-testid="reconcile-draft-no">
-            {reconcile.draftNo ?? '尚未读到草稿'}
+            {reconcile.draftNo ?? '尚未读到单据编号'}
           </dd>
         </div>
         <div className="app-summary-field">

@@ -1,6 +1,6 @@
 import { ERP_ACTION_ERRORS, type AppAdapter, type TaskSnapshot } from '@baox/contract';
 import type { MockBus } from '../bus';
-import { ERP_STEP_INDEX, applyAbortAtHandover, applyErpDone, applyReadbackMismatch, emptyReconcile, erpSteps, handedOffBanner, loginNotDetected, reconcileVerdict } from '../fixtures/erp';
+import { ERP_STEP_INDEX, applyAbortAtHandover, applyErpDone, applyReadbackMismatch, emptyReconcile, erpSteps, handedOffBanner, loginNotDetected } from '../fixtures/erp';
 import { T1_DRAFT_NO } from '../fixtures/tasks';
 
 // ERP 填报（「去报销」即开始：定时推进、登录交接、登录后自动写入）、严格回读与对账（mock 服务端的角色）。
@@ -66,7 +66,8 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     }
     if (index === ERP_STEP_INDEX.handover) {
       if (options.fault === 'erp-write-aborted') applyAbortAtHandover(current);
-      else applyErpDone(current, current.erp.draftNo ?? T1_DRAFT_NO);
+      // 交接：单据填好了但没有保存，所以没有单据编号（服务端 handed_over 同此）。
+      else applyErpDone(current);
       bus.push(current);
       return;
     }
@@ -127,7 +128,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         return snapshot;
       }),
     // 重新对账（原地等待）：只读报销系统再判定一次，只在对账结果允许原地等待时接受。
-    // 交接步中止的任务读到单据且逐行一致 ⇒ 完成；否则留在原地，结果写进横幅。
+    // 交接步中止的任务读到单据且逐行一致 ⇒ 单据交接完成；否则留在原地，结果写进横幅。
     reconcile: async (taskId, stepToken) =>
       bus.withStep(taskId, stepToken, (snapshot) => {
         if (snapshot.step.kind !== 'reconcile') return { error: { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling } };
@@ -135,21 +136,15 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         const count = (reconcileCounts.get(taskId) ?? 0) + 1;
         reconcileCounts.set(taskId, count);
         snapshot.task.updatedAt = bus.now();
+        // 读到的是一张填好、待员工保存、逐行一致的单据（对账中断点「未保存·就绪待保存」）：这就是单据交接完成，
+        // 不是一个中断点。服务端在 fill-state.ts 里把它提升为 handed_over，对账区随之清空；mock 照做。
         if (snapshot.reconcile.rows.length === 0 && snapshot.lines.length > 0) {
-          applyErpDone(snapshot, T1_DRAFT_NO);
-          snapshot.reconcile = {
-            ...snapshot.reconcile,
-            ...reconcileVerdict('已保存'),
-            status: 'none',
-            allowedActions: [],
-            banner: `重新对账：报销系统中已有草稿 ${T1_DRAFT_NO}，${snapshot.readback.rows.length} 行明细逐行一致。`,
-            draftNo: T1_DRAFT_NO,
-            reasons: [],
-          };
+          applyErpDone(snapshot);
+          snapshot.reconcile = emptyReconcile();
           return snapshot;
         }
         snapshot.reconcile.status = 'waiting';
-        snapshot.reconcile.banner = `已重新对账（第 ${count} 次）：还没有读到可以确认的草稿。你在报销系统中查看后可以再次对账。`;
+        snapshot.reconcile.banner = `已重新对账（第 ${count} 次）：还没有读到可以确认的单据。你在报销系统中查看后可以再次对账。`;
         snapshot.step = { kind: 'reconcile', stepToken: `tok-${taskId}-reconcile-${count}` };
         return snapshot;
       }),

@@ -140,7 +140,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 | --- | --- |
 | `test` | Vitest + Testing Library（jsdom）：契约与夹具、HTTP 响应形状、仓库、各页面交互；`src/copy.test.ts` 扫描文案常量、mock 给出的文字与源码中文文案里的内核禁用词 |
 | `test:e2e` | 即根目录 `pnpm test:e2e`：先构建服务端、`dist/` 与 `dist-mock/`，再跑 Playwright 的两个项目（`channel: 'chrome'`，需本机 Google Chrome）。`server` 项目在 `e2e/server/`，每个测试经 `e2e/server/fixture.ts` 启动一个构建好的服务端（临时 `BAOX_DATA_DIR`、空闲端口，托管 `dist/`）；`mock` 项目是其余 spec，经 `file://` 打开 `dist-mock/index.html`，只保留真实服务端难以到达的状态；含从启动登录到完成的全流程（`e2e/journey.spec.ts`，上传 `sample-materials/`）、从待确认项起的流程顺序（`e2e/flow.spec.ts`）、seed × 页面、fault 全矩阵。截图是产物，在 `test-results/`（已 gitignore），不是像素基线 |
-| `check:dist` | 正式构建后检查 `dist/`：不许出现夹具人名、草稿号、`print-sheet.pdf`、`fixtures/`、`sample-materials`、mock 模块名与测试钩子，也不许有 `fixtures/`、`sample-materials/` 目录 |
+| `check:dist` | 正式构建后检查 `dist/`：不许出现夹具人名、单据编号、`print-sheet.pdf`、`fixtures/`、`sample-materials`、mock 模块名与测试钩子，也不许有 `fixtures/`、`sample-materials/` 目录 |
 
 ## 夹具与样式
 
