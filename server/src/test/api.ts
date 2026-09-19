@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { GENERATED_DIR, REGRESSION_MATERIALS, SAMPLE_MATERIALS } from '@baox/fixtures';
 import { STAY_TRIO_CONFIRM_NONE, stayTrioElementOf, TaskSnapshotSchema, type Material, type TaskSnapshot } from '@baox/contract';
 import { expect } from 'vitest';
+import { BACKSTOP_MS } from './deadlines';
 import type { TestClient } from './harness';
 
 // Contract-level helpers over a signed-in client's `request()`: an action goes in, a contract-parsed snapshot comes out.
@@ -67,7 +68,7 @@ export function api(client: () => TestClient) {
     },
 
     // Waits until the background parser job has finished the current inventory run.
-    async settled(taskId: string, timeoutMs = 20_000): Promise<TaskSnapshot> {
+    async settled(taskId: string, timeoutMs = BACKSTOP_MS): Promise<TaskSnapshot> {
       const deadline = Date.now() + timeoutMs;
       for (;;) {
         const snapshot = await current(taskId);
