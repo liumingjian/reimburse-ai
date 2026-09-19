@@ -202,7 +202,7 @@ describe('vat_invoice/einvoice', () => {
     expect(readQr('https://example.com/not-an-invoice')).toBeNull();
   });
 
-  it('a QR that agrees with the face adds its candidates and a note; one that disagrees is a conflict; none is advisory', async () => {
+  it('a QR that agrees with the face adds its candidates and a note; one that disagrees is a note too, never a 待确认项', async () => {
     const doc = await pdfDoc(fixture('m03-amap-invoice.pdf'));
 
     const agreed = dispatch({ ...doc, codes: [AMAP_QR] }, LAYOUTS);
@@ -210,11 +210,14 @@ describe('vat_invoice/einvoice', () => {
     expect(agreed.candidates.filter((c) => c.source === QR_SOURCE).map((c) => c.key).sort()).toEqual(['invoiceNumber', 'invoiceType', 'issueDate', 'totalAmount']);
     expect(agreed.findings).toEqual([{ kind: 'advisory', code: 'qr_match', message: '二维码核对一致：发票号码、开票日期、价税合计、票种' }]);
 
+    // A disagreement is reported and nothing more: the face stays the value, and no finding of a blocking kind is
+    // raised (ADR-0017, amended). The QR is read, kept and shown; it judges nothing.
     const tampered = dispatch({ ...doc, codes: [AMAP_QR.replace('69.19', '96.19')] }, LAYOUTS);
     if (tampered.outcome !== 'recognised') throw new Error('expected recognised');
     expect(tampered.findings).toEqual([
-      { kind: 'conflict', key: 'totalAmount', values: [{ source: 'rule:vat_invoice/einvoice', value: '69.19' }, { source: QR_SOURCE, value: '96.19' }] },
+      { kind: 'advisory', code: 'qr_differs', message: '二维码与票面不一致，仅作提示，以票面为准：价税合计 票面 69.19，二维码 96.19' },
     ]);
+    expect(tampered.findings.every((f) => f.kind === 'advisory')).toBe(true);
 
     const unreadable = dispatch(doc, LAYOUTS);
     if (unreadable.outcome !== 'recognised') throw new Error('expected recognised');

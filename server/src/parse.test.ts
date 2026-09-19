@@ -284,20 +284,23 @@ describe('a whole trip uploaded in one go', () => {
 });
 
 describe('the e-invoice QR code, a second evidence source', () => {
-  it('a QR that disagrees with the text layer surfaces as a blocking conflict 待确认项', async () => {
+  it('a QR that disagrees with the text layer is noted and blocks nothing: the face is the value', async () => {
     const amap = sample('m03');
     const snapshot = await inventoriedFiles([{ ...amap, bytes: await withQr(amap.bytes, '01,32,,26312000000101557402,96.19,20260813,,A1B2C3D4') }]);
 
     const material = byFileName(snapshot, amap.name);
-    expect(material).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', status: 'pending', role: 'pending' });
+    // `pending` here is the missing expense city below, not the QR: an agreeing QR leaves the material in exactly
+    // the same state.
+    expect(material).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice' });
+    // Both readings stay visible, and the disagreement is in the 校验 column — but the face is what the invoice is
+    // worth, and the QR never judges it (ADR-0017, amended).
     expect(fieldValues(material, QR_SOURCE)).toMatchObject({ totalAmount: '96.19', invoiceNumber: '26312000000101557402' });
     expect(fieldValues(material, EINVOICE)).toMatchObject({ totalAmount: '69.19' });
-    expect(snapshot.pendingItems).toEqual([
-      expect.objectContaining({ materialId: material.materialId, kind: 'choice', status: 'open', why: expect.stringContaining('价税合计 票面 69.19，二维码 96.19') }),
-    ]);
-    expect(material.pendingItemIds).toEqual(snapshot.pendingItems.map((item) => item.itemId));
-    expect(snapshot.stage).toBe('pending');
-    expect(snapshot.lines).toEqual([]);
+    expect(material.checkText).toContain('二维码与票面不一致');
+    expect(material.checkText).toContain('价税合计 票面 69.19，二维码 96.19');
+    // The only item is the missing expense city of a ride-hailing invoice alone (#188) — the same one the agreeing
+    // QR leaves behind. Nothing about the QR is answerable, so nothing about it is asked.
+    expect(snapshot.pendingItems.map((item) => item.itemId)).toEqual([`category_city_missing.${material.materialId}`]);
   });
 
   it('a QR that agrees is noted in the check text and blocks nothing', async () => {
