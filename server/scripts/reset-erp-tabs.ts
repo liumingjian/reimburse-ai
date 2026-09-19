@@ -16,8 +16,10 @@ try {
   await sleep(1500);
   console.log('close tabs:', JSON.stringify(await evalIn(session, `(() => {
     const vis = ${VIS};
+    // A tab that is still loading is captioned 「费用报销单 - 新增」 with spaces; an exact match left those open,
+    // and a run that then reused one got a 发票助手 window whose iframe never loaded (V-45's spent page instance).
     const tabs = [...document.querySelectorAll('li.k-item')].filter(vis)
-      .filter((n) => String(n.textContent || '').trim() === '费用报销单-新增');
+      .filter((n) => /^费用报销单\s*-\s*新增$/.test(String(n.textContent || '').trim()));
     let closed = 0;
     for (const tab of tabs) {
       const closer = [...tab.querySelectorAll('span.mainTabCloseButton')].filter(vis);

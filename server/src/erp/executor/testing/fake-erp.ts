@@ -4,8 +4,11 @@
 // (docs/research/erp-expense-flow): edit-on-click cells, select-all + typing + Enter/Tab commit, F7 code -> name,
 // the invoice-type dropdown, linked recalculation, the piaozone assistant as a child target, save -> 修改 mode.
 //
-// Layout: jsdom has none, so every visible element gets a unique 8x8 box on a 10px grid inside the viewport, in
+// Layout: jsdom has none, so every visible element gets a unique 8x8 box on a 10px grid in DOCUMENT coordinates, in
 // the order it is first measured. Hidden (display:none / visibility:hidden / [hidden]) elements measure 0x0.
+// `data-below-fold` puts a box at an explicit document y instead, so a test can place a control past the bottom of
+// the viewport. Rects are document y minus `scrollTop`, `scrollIntoView` centres the box, and a click outside the
+// viewport hits nothing — which is what the real browser does, and what the invoice assistant broke on.
 //
 // `assumeReceiptLink` is an UNVERIFIED assumption, off by default: research says that in 不生成费用明细 mode ERP
 // leaves the detail row's 收票单号 empty, while the strict read-back requires it. With the flag on, committing 税额
@@ -53,6 +56,12 @@ export type FakeErpOptions = {
   receiptLedger?: FakeReceiptLedger;
   /** 电脑端选取 does nothing, so the assistant never leaves its entry menu and no upload is possible. */
   assistantStuckOnEntryMenu?: boolean;
+  /**
+   * The 不生成费用明细 menu item opens past the bottom of the viewport, where a real mouse event reaches nothing.
+   * Live on 2026-09-19 the 收票信息 anchor had not finished scrolling, so the item landed at y=941 in a viewport
+   * 908 high; the click was lost and the run died on INVOICE_ASSISTANT_NOT_FOUND 90s later.
+   */
+  notFillEntryBelowFold?: boolean;
 };
 export type FakeMutation = { kind: 'import' | 'cell' | 'option' | 'header' | 'addRow' | 'save'; detail: string };
 
@@ -81,6 +90,7 @@ class FakeDocument {
   readonly document: any;
   private readonly slots: any[] = [];
   private readonly slotOf = new WeakMap<object, number>();
+  private scrollTop = 0;
   selectAllOn: any = null;
 
   constructor(html: string, url: string) {
@@ -91,21 +101,16 @@ class FakeDocument {
     const proto = this.window.HTMLElement.prototype;
     proto.getBoundingClientRect = function (this: any) {
       if (!this.isConnected || self.hidden(this)) return { ...ZERO };
-      let slot = self.slotOf.get(this);
-      if (slot === undefined) {
-        slot = self.slots.length;
-        self.slots.push(this);
-        self.slotOf.set(this, slot);
-      }
-      const x = ORIGIN + (slot % COLS) * SLOT;
-      const y = ORIGIN + Math.floor(slot / COLS) * SLOT;
-      // `data-zero-height` models an inline element whose only child is a block box: laid out, hit-testable, but
-      // measuring 0 high. The 发票助手's 电脑端选取 anchor is one (76x0 live, 2026-09-19).
-      const height = this.hasAttribute?.('data-zero-height') ? 0 : BOX;
+      const { x, docY, height } = self.layout(this);
+      const y = docY - self.scrollTop;
       return { x, y, left: x, top: y, width: BOX, height, right: x + BOX, bottom: y + height };
     };
     Object.defineProperty(proto, 'innerText', { configurable: true, get(this: any) { return self.visibleText(this); } });
-    proto.scrollIntoView = function () { /* every box is already in view */ };
+    proto.scrollIntoView = function (this: any) {
+      if (!this.isConnected || self.hidden(this)) return;
+      const { docY, height } = self.layout(this);
+      self.scrollTop = Math.max(0, Math.round(docY + height / 2 - self.window.innerHeight / 2));
+    };
   }
 
   ready(): Promise<void> {
@@ -129,13 +134,43 @@ class FakeDocument {
     return out;
   }
 
-  /** The element whose box centre is (x, y), as the executor computes centres. */
+  /** This element's box in document coordinates: its grid slot, or the explicit y `data-below-fold` gives it. */
+  layout(el: any): { x: number; docY: number; height: number } {
+    let slot = this.slotOf.get(el);
+    if (slot === undefined) {
+      slot = this.slots.length;
+      this.slots.push(el);
+      this.slotOf.set(el, slot);
+    }
+    const below = el.getAttribute?.('data-below-fold');
+    // `data-zero-height` models an inline element whose only child is a block box: laid out, hit-testable, but
+    // measuring 0 high. The 发票助手's 电脑端选取 anchor is one (76x0 live, 2026-09-19).
+    return {
+      x: ORIGIN + (slot % COLS) * SLOT,
+      docY: below === null || below === undefined ? ORIGIN + Math.floor(slot / COLS) * SLOT : Number(below),
+      height: el.hasAttribute?.('data-zero-height') ? 0 : BOX,
+    };
+  }
+
+  /**
+   * The element whose box centre is (x, y), as the executor computes centres — and `null` for a point outside the
+   * viewport, where a real `Input.dispatchMouseEvent` reaches nothing and `document.elementFromPoint` returns null.
+   */
   elementAt(x: number, y: number): any {
+    if (y < 0 || y >= this.window.innerHeight || x < 0 || x >= this.window.innerWidth) return null;
     const col = (x - ORIGIN - BOX / 2) / SLOT;
-    const row = (y - ORIGIN - BOX / 2) / SLOT;
-    if (!Number.isInteger(col) || !Number.isInteger(row) || col < 0 || col >= COLS) return null;
-    const el = this.slots[row * COLS + col];
-    return el && el.isConnected && !this.hidden(el) ? el : null;
+    const row = (y + this.scrollTop - ORIGIN - BOX / 2) / SLOT;
+    if (Number.isInteger(col) && Number.isInteger(row) && col >= 0 && col < COLS) {
+      const el = this.slots[row * COLS + col];
+      if (el && el.isConnected && !this.hidden(el) && el.getAttribute?.('data-below-fold') === null) return el;
+    }
+    // A `data-below-fold` box is off the slot grid, so it is found by measuring the few that exist.
+    for (const el of this.slots) {
+      if (!el.isConnected || this.hidden(el) || el.getAttribute?.('data-below-fold') === null) continue;
+      const b = el.getBoundingClientRect();
+      if (Math.round(b.x + b.width / 2) === x && Math.round(b.y + b.height / 2) === y) return el;
+    }
+    return null;
   }
 
   async evaluate(expression: string) {
@@ -201,6 +236,7 @@ export async function createFakeErp(options: FakeErpOptions) {
       return { status: 200, text: async () => JSON.stringify(body) };
     };
     await doc.ready();
+    if (options.notFillEntryBelowFold) doc.document.querySelector('a[id$="tbNotFillEntry"]')?.setAttribute('data-below-fold', '1240');
     return doc;
   }
 

@@ -177,6 +177,16 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(fake.mutations).toEqual([]);
   });
 
+  it('scrolls a menu item that opened below the fold into view instead of clicking a point that hits nothing', async () => {
+    // The live failure of 2026-09-19 (job 37dcd84b, INVOICE_ASSISTANT_NOT_FOUND after a 90s wait): 收票信息 had not
+    // finished scrolling, so 不生成费用明细 opened at y=941 in a viewport 908 high. The item was measured, the click
+    // was dispatched at that point, `document.elementFromPoint` there was null, and the assistant never opened.
+    const fake = await createFakeErp(fakeErpOptions({ notFillEntryBelowFold: true, assumeReceiptLink: true }));
+    const result = await run(fake);
+    expect(result.status).toBe('handed_over');
+    expect(fake.mutations.map((m) => m.kind)).toContain('import');
+  });
+
   it('aborts on a compatibility fingerprint mismatch before any attempt', async () => {
     const fake = await createFakeErp(fakeErpOptions({ erpBuild: '8.3.101.2' }));
     const result = await run(fake);

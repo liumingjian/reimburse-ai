@@ -35,32 +35,58 @@ const visible = `(n) => {
   return b.width > 0 && b.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
 }`;
 
+/**
+ * Where to send a real mouse event so it reaches `n` — the one measurement every click here depends on.
+ *
+ * `Input.dispatchMouseEvent` hits VIEWPORT coordinates, and a point outside the viewport hits nothing at all:
+ * the click is swallowed in silence, and the step that follows waits for an effect that can never arrive.
+ * Measured live on 2026-09-19 while the assistant refused to open (INVOICE_ASSISTANT_NOT_FOUND): the 收票信息
+ * anchor had not finished scrolling, so 选择发票 sat at y=1237 and 不生成费用明细 at y=941 in a viewport 908 high,
+ * `document.elementFromPoint` returned null at both points, and both clicks were lost. Rendered and laid out is
+ * not the same as reachable, and `visible` above only answers the first.
+ *
+ * So a point is scrolled into view and re-measured before it is used, and a node that is still unreachable
+ * reports `ok: false` rather than being clicked blind — every caller polls, so the next poll re-measures.
+ * `erpform.ts` has scrolled its grid cells into view from the start; this is that same discipline for the
+ * toolbar, the menus and the assistant.
+ */
+const pointOf = `(n) => {
+  const inView = (b) => b.top >= 0 && b.bottom <= window.innerHeight && b.left >= 0 && b.right <= window.innerWidth;
+  let b = n.getBoundingClientRect();
+  if (!inView(b)) { n.scrollIntoView({ block: 'center' }); b = n.getBoundingClientRect(); }
+  if (!inView(b)) return { ok: false, offscreen: true };
+  return { ok: true, x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) };
+}`;
+
 const textPoint = (text: string, { exact = true } = {}) => `(() => {
   const wanted = ${JSON.stringify(String(text))};
   const vis = ${visible};
+  const at = ${pointOf};
   const nodes = [...document.querySelectorAll('body *')].filter((n) => {
     if (!vis(n) || n.children.length !== 0) return false;
     const value = String(n.textContent || '').replace(/\\s+/g, ' ').trim();
     return ${exact ? 'value === wanted' : 'value.includes(wanted)'};
   });
   if (nodes.length !== 1) return { ok: false, count: nodes.length };
-  const b = nodes[0].getBoundingClientRect();
-  return { ok: true, x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) };
+  return at(nodes[0]);
 })()`;
 
 const cssPoint = (selector: string) => `(() => {
   const vis = ${visible};
+  const at = ${pointOf};
   const nodes = [...document.querySelectorAll(${JSON.stringify(selector)})].filter(vis);
   if (nodes.length !== 1) return { ok: false, count: nodes.length };
-  const b = nodes[0].getBoundingClientRect();
-  return { ok: true, x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) };
+  return at(nodes[0]);
 })()`;
 
-type Point = { ok: boolean; x: number; y: number; count?: number };
+type Point = { ok: boolean; x: number; y: number; count?: number; offscreen?: boolean };
 
-async function clickCss(page: WritePage, session: CdpSession, selector: string, label: string) {
-  const point = await evalIn<Point>(session, cssPoint(selector));
-  if (!point?.ok) throw new ExecutorError('CHROMIUM_TARGET_NOT_UNIQUE', `${label}不可唯一定位（匹配 ${point?.count ?? 0} 个）`);
+async function clickCss(page: WritePage, session: CdpSession, selector: string, label: string, { timeoutMs = 15_000 } = {}) {
+  const point = await waitFor(() => evalIn<Point>(session, cssPoint(selector)), (result) => result?.ok === true, cap(page, timeoutMs), paceOf(page).pollMs);
+  if (!point?.ok) {
+    throw new ExecutorError('CHROMIUM_TARGET_NOT_UNIQUE',
+      point?.offscreen ? `${label}停在视口之外，无法点击` : `${label}不可唯一定位（匹配 ${point?.count ?? 0} 个）`);
+  }
   await clickAt(session, point.x, point.y);
   return point;
 }
@@ -173,11 +199,10 @@ const computerPickerPoint = `(() => {
   const item = caption.closest('.accessItem') || caption.parentElement;
   const anchors = item ? [...item.querySelectorAll('a[href]')] : [];
   if (anchors.length !== 1) return { ok: false, count: anchors.length };
-  const b = [anchors[0], ...anchors[0].querySelectorAll('*')]
-    .map((n) => n.getBoundingClientRect())
-    .find((r) => r.width > 0 && r.height > 0);
-  if (!b) return { ok: false, count: 0 };
-  return { ok: true, x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) };
+  const painted = [anchors[0], ...anchors[0].querySelectorAll('*')]
+    .find((n) => { const r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+  if (!painted) return { ok: false, count: 0 };
+  return (${pointOf})(painted);
 })()`;
 
 // The entry menu is ready when its document has finished loading and every entry is laid out with a destination.
