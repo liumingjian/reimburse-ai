@@ -1,7 +1,8 @@
 // The v1 in-process ERP executor: one fill plan in, protocol events out (ADR-0016).
 //
 // Job order: Chromium ready -> login probe -> 报销信息核对 (catalog check) -> navigate + compatibility fingerprint
-// -> import -> fill -> save -> strict read-back. Before each mutation the executor observes its preconditions,
+// -> import -> fill -> strict read-back -> hand-over. The job never clicks 保存 (save): it ends with the 费用报销单
+// filled and unsaved, and the employee commits it (ADR-0028). Before each mutation the executor observes its preconditions,
 // sends `attempt_started`, waits for the server to persist it, and re-checks target, form-instance UUID, 新增 mode
 // and URL. Failure before the first attempt aborts cleanly (retryable); anything after it is ERP 写入结果未知
 // (write result unknown) and goes to reconcile, never to replay. The executor never judges read-backs: it sends
@@ -18,13 +19,13 @@ import {
 import { evalIn, type CdpSession } from './cdp';
 import { checkCatalog } from './catalog';
 import { ExecutorError, type ChromiumPage } from './chromium';
-import { fillApprovedPreview, saveApprovedPreview, type CurrentReadings } from './draft-flow';
+import { fillApprovedPreview, handOverApprovedPreview, type CurrentReadings } from './draft-flow';
 import { leaveEdit, selectOption, writeCell, writeHeader } from './erpform';
 import { DEFAULT_PACE, type Pace } from './pace';
 import { COMPATIBILITY_SNIPPET, probeIdentity, sameOrigin } from './probe';
 import { pageUrl, protocolReadings, readForm, type FormReadings } from './reader';
 import {
-  addDetailRow, captureErpError, invoiceUploadGroups, openInvoiceAssistant, openNewReimbursement, saveReimbursement,
+  addDetailRow, captureErpError, invoiceUploadGroups, openInvoiceAssistant, openNewReimbursement,
   uploadAndImportInvoices, type WritePage,
 } from './steps';
 import { prepareErpWrite } from './write-context';
@@ -89,13 +90,13 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
   let compatibility: Compatibility | null = null;
   let currentStep: Parameters<typeof step>[0] | null = null;
 
-  async function step(name: 'chromium' | 'login' | 'catalog' | 'compatibility' | 'navigate' | 'import' | 'fill' | 'save' | 'readback', status: 'running' | 'done' | 'failed') {
+  async function step(name: 'chromium' | 'login' | 'catalog' | 'compatibility' | 'navigate' | 'import' | 'fill' | 'handover' | 'readback', status: 'running' | 'done' | 'failed') {
     currentStep = status === 'running' ? name : null;
     await channel.emit({ type: 'step', step: name, status });
   }
 
   async function finish(status: ResultStatus, code: string | null, message: string | null, billNo: string | null = null): Promise<ResultEvent> {
-    if (currentStep && status !== 'saved') await step(currentStep, 'failed');
+    if (currentStep && status !== 'handed_over') await step(currentStep, 'failed');
     const capture = status === 'aborted' || status === 'unknown' ? (write ? await captureErpError(write) : null) : null;
     const event: ResultEvent = { type: 'result', status, code, message, billNo, capture };
     await channel.emit(event);
@@ -228,14 +229,11 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     const freshGate: FreshGate = importVerdict.freshGate;
 
     // Readers for draft-flow: raw readings plus, when a comparison is due, the server's verdict as `taskMatch`.
-    const reader = (stageOf: (n: number) => ReadbackStage) => {
-      let judged = 0;
-      return async (expected: ApprovedPreview | null): Promise<CurrentReadings> => {
-        const readings = protocolReadings(await readForm(session));
-        if (!expected) return { ...readings, taskMatch: null };
-        const verdict = await channel.emit({ type: 'readback', stage: stageOf(judged++), readings });
-        return { ...readings, taskMatch: verdict.ok ? { ok: true, reasons: [] } : { ok: false, reasons: verdict.reasons } };
-      };
+    const reader = (stage: ReadbackStage) => async (expected: ApprovedPreview | null): Promise<CurrentReadings> => {
+      const readings = protocolReadings(await readForm(session));
+      if (!expected) return { ...readings, taskMatch: null };
+      const verdict = await channel.emit({ type: 'readback', stage, readings });
+      return { ...readings, taskMatch: verdict.ok ? { ok: true, reasons: [] } : { ok: false, reasons: verdict.reasons } };
     };
     const ops = {
       writeHeader: (p: WritePage, key: string, value: string) => writeHeader(p.session, key, value, { pace, settleMs: pace.settleMs }),
@@ -248,23 +246,22 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     await startAttempt('fill', { formMode: 'new', billNo: null, detailRowCount: preview.lines.length });
     await step('fill', 'running');
     const filled = await fillApprovedPreview(write, {
-      approvedPreview: preview, approval, freshGate, readCurrent: reader(() => 'after_fill'),
+      approvedPreview: preview, approval, freshGate, readCurrent: reader('after_fill'),
       addRow: (p) => addDetailRow(p), ops,
     });
     if (!filled.ok) return await finish('unknown', filled.problems[0]?.code ?? 'fill_failed', filled.problems.map(problemText).join('；'));
     await step('fill', 'done');
 
-    // 7. Save once, then the strict read-back of the saved form.
-    await startAttempt('save', { formMode: 'modify', billNo: 'present', detailRowCount: preview.lines.length });
-    await step('save', 'running');
-    const saved = await saveApprovedPreview(write, {
+    // 7. The strict pre-save read-back, then the hand-over: no attempt is started, because nothing is written.
+    await step('handover', 'running');
+    const handOver = await handOverApprovedPreview({
       approvedPreview: preview, approval, freshGate, fillResult: filled,
-      readCurrent: reader((n) => (n === 0 ? 'before_save' : 'after_save')),
-      save: (p) => saveReimbursement(p),
+      readCurrent: reader('before_save'),
     });
-    if (saved.status !== 'saved') return await finish('unknown', saved.problems?.[0]?.code ?? 'save_failed', saved.problems?.map(problemText).join('；') ?? null);
-    await step('save', 'done');
-    return await finish('saved', null, null, saved.billNo ?? null);
+    if (!handOver.ok) return await finish('unknown', handOver.problems?.[0]?.code ?? 'hand_over_failed', handOver.problems?.map(problemText).join('；') ?? null);
+    await step('handover', 'done');
+    // ERP 单据已交接: the form is filled and unsaved, so there is no 单据编号 (bill number) to report.
+    return await finish('handed_over', null, null, null);
   } catch (error: any) {
     return await finish(attempted ? 'unknown' : 'aborted', error?.code ?? 'executor_error', error?.message ?? String(error));
   } finally {

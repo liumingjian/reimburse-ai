@@ -73,6 +73,8 @@ export function phaseOf(result: ResultEvent | null, cancelled: boolean): ErpPhas
       return cancelled ? 'cancelled' : 'waiting_login';
     case 'catalog_mismatch':
       return 'catalog_mismatch';
+    case 'handed_over':
+      return 'handed_over';
     case 'saved':
       return 'saved';
     case 'unknown':
@@ -148,7 +150,8 @@ const DISPLAY_STEPS: ReadonlyArray<{ key: string; title: string; description: st
   { key: 'import', title: '导入发票', description: '在发票助手里选择「不生成费用明细」，导入这次的发票。', from: ['import'] },
   { key: 'receipt', title: '收票回读', description: '逐票回读收票单号、发票号码、不含税金额、税额与价税合计。', from: ['readback'] },
   { key: 'fill', title: '填写明细', description: '按统一业务序号逐行写入明细，每个值写入后从单元格回读。', from: ['fill'] },
-  { key: 'save', title: '保存草稿', description: '只保存一次草稿，不提交审批；保存后逐行严格回读。', from: ['save'] },
+  // `save` is the step name fill jobs emitted before ADR-0028; `handover` is what they emit now.
+  { key: 'save', title: '保存草稿', description: '只保存一次草稿，不提交审批；保存后逐行严格回读。', from: ['save', 'handover'] },
 ];
 
 function stepsOf(record: ErpRecord): ErpStep[] {
@@ -163,7 +166,7 @@ function stepsOf(record: ErpRecord): ErpStep[] {
       else if (seen === 'running' && status !== 'failed') status = 'running';
       else if (seen === 'done' && status === 'todo') status = 'done';
     }
-    if (phase === 'saved') status = 'done';
+    if (phase === 'handed_over' || phase === 'saved') status = 'done';
     if (phase === 'waiting_login' && key === 'login') status = 'waiting';
     return { key, title, description, status };
   });
@@ -196,6 +199,9 @@ export function erpView(record: ErpRecord): Erp {
             ? `${CATALOG_QUERY_FAILED_REASON}${reason}`
             : `上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：${reason}`,
       };
+    case 'handed_over':
+      // ERP 单据已交接: nothing was saved, so there is no 单据编号 (bill number) to report.
+      return { ...idle, status: 'done', steps: stepsOf(record), draftNo: null };
     case 'saved':
       return { ...idle, status: 'done', steps: stepsOf(record), draftNo: record.result?.billNo ?? null };
     case 'unknown':
@@ -215,12 +221,15 @@ const centsOf = (amount: string | null | undefined) => {
 };
 
 /**
- * The strict read-back of a saved draft. A `saved` result exists only after the server judged the saved form equal to
- * the approved preview on every row and all nine fields, so each field's ERP side equals its local side. Net and tax
- * come from the approved preview (a rail line's come from ERP's receipt), the receipt number from its bindings.
+ * The strict read-back the terminal rests on. A `handed_over` result exists only after the server judged the filled
+ * form equal to the approved preview on every row and all nine fields, and a `saved` one only after the same
+ * comparison on the saved form, so each field's ERP side equals its local side. At hand-over these rows are the
+ * evidence the employee is asked to trust before they click 保存 (save). Net and tax come from the approved preview
+ * (a rail line's come from ERP's receipt), the receipt number from its bindings.
  */
 export function readbackView(record: ErpRecord, lines: readonly Line[]): Readback {
-  if (record.facts?.phase !== 'saved') return EMPTY_READBACK;
+  const phase = record.facts?.phase;
+  if (phase !== 'handed_over' && phase !== 'saved') return EMPTY_READBACK;
   const previewLine = new Map((record.preview?.lines ?? []).map((line) => [line.lineId, line]));
   const receipt = new Map((record.preview?.receiptBindings ?? []).map((binding) => [binding.voucherMaterialId, binding.receiptNumber]));
   const rows: ReadbackRow[] = lines.map((line) => {

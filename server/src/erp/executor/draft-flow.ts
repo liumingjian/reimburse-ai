@@ -1,6 +1,7 @@
-// The narrow boundary between an approved preview and an ERP draft: fill it, then save it exactly once.
+// The narrow boundary between an approved preview and an ERP 费用报销单 (expense reimbursement bill): fill it, read it
+// back strictly, and hand it over unsaved (ADR-0028). Nothing here clicks 保存 (save).
 // Origin: 50931a3:kernel/src/erp-draft-flow.mjs (fillApprovedPreview, saveApprovedPreview, matchReceiptRows,
-// formReadbackToken, completePreviewProblems). It never creates an approval and never retries a save.
+// formReadbackToken, completePreviewProblems). It never creates an approval.
 // Form actions are injected; `readCurrent` returns raw readings plus the server's strict verdict (`taskMatch`).
 
 import { approvalCovers, erpWritePreviewDigest, fieldPlanOf, type Approval, type ApprovedPreview, type FreshGate } from '../protocol';
@@ -302,52 +303,38 @@ export async function fillApprovedPreview<P>(page: P, {
   return { ok: true, phase: 'filled', previewDigest: approvedPreview.previewDigest, formToken: formReadbackToken(readings), rowsWritten, readings: after };
 }
 
-export type SaveResult = {
-  ok: boolean; status: 'saved' | 'blocked' | 'failed' | 'unknown'; saveAttempts: number;
-  billNo?: string | null; problems?: Problem[]; readings?: CurrentReadings;
+export type HandOverResult = {
+  ok: boolean; status: 'handed_over' | 'blocked' | 'unknown';
+  problems?: Problem[]; readings?: CurrentReadings;
 };
 
-/** Save exactly once after the fill read-back and a same-form re-check. A failed save is never retried. */
-export async function saveApprovedPreview<P>(page: P, {
-  approvedPreview, approval, freshGate, fillResult, readCurrent, save = null,
+/**
+ * The hand-over gate (ADR-0028): the strict pre-save verification that used to precede the save, now the end of the
+ * job. It re-checks the gate and the approval, that the fill read-back covered this very preview on this very form,
+ * that the page is still the same 新增 (new) form with an empty 单据编号 (bill number), that every detail line still
+ * matches the approved preview field by field, and that the 收票 (receipt) rows are still the approved ones. It takes
+ * no save adapter and performs no mutation: baox never clicks 保存 (save), the employee does. The readings it
+ * verified come back as the evidence of the hand-over.
+ */
+export async function handOverApprovedPreview({
+  approvedPreview, approval, freshGate, fillResult, readCurrent,
 }: {
   approvedPreview: ApprovedPreview; approval: Approval | null | undefined; freshGate: FreshGate | null | undefined;
   fillResult: { ok: boolean; previewDigest?: string | undefined; formToken?: string } | null | undefined;
   readCurrent: (expected: ApprovedPreview | null) => Promise<CurrentReadings>;
-  save?: ((page: P) => Promise<unknown>) | null;
-}): Promise<SaveResult> {
+}): Promise<HandOverResult> {
   const problems: Problem[] = gateAndApprovalProblems(approvedPreview, freshGate, approval);
   if (!fillResult?.ok || fillResult.previewDigest !== approvedPreview?.previewDigest) {
     problems.push({ code: 'fill_result_missing', message: '没有同一完整预览的成功填充回读' });
   }
-  if (problems.length) return { ok: false, status: 'blocked', saveAttempts: 0, problems };
-  if (typeof save !== 'function') {
-    return { ok: false, status: 'blocked', saveAttempts: 0, problems: [{ code: 'save_adapter_required', message: '保存动作必须由受控 save 适配器显式提供' }] };
-  }
+  if (problems.length) return { ok: false, status: 'blocked', problems };
   let before: CurrentReadings;
   try { before = await readCurrent(approvedPreview); } catch (error: any) {
-    return { ok: false, status: 'unknown', saveAttempts: 0, problems: [{ code: error?.code ?? 'pre_save_read_failed', message: error?.message ?? String(error) }] };
+    return { ok: false, status: 'unknown', problems: [{ code: error?.code ?? 'pre_save_read_failed', message: error?.message ?? String(error) }] };
   }
   if (formReadbackToken(before) !== fillResult!.formToken || before.formMode?.value !== 'new'
     || before.billNo?.value !== null || !before.taskMatch?.ok || !matchReceiptRows(before.receiptsGrid, approvedPreview).ok) {
-    return { ok: false, status: 'blocked', saveAttempts: 0, problems: [{ code: 'same_form_precondition_failed', message: '填充后当前页已不是同一张新增空号单，未保存' }] };
+    return { ok: false, status: 'blocked', problems: [{ code: 'same_form_precondition_failed', message: '填充后当前页已不是同一张新增空号单，未保存' }] };
   }
-  try { await save(page); } catch (error: any) {
-    return { ok: false, status: 'unknown', saveAttempts: 1, problems: [{ code: error?.code ?? 'save_unknown', message: error?.message ?? String(error) }] };
-  }
-  let after: CurrentReadings;
-  try { after = await readCurrent(approvedPreview); } catch (error: any) {
-    return { ok: false, status: 'unknown', saveAttempts: 1, problems: [{ code: error?.code ?? 'post_save_read_failed', message: error?.message ?? String(error) }] };
-  }
-  const receipt = matchReceiptRows(after.receiptsGrid, approvedPreview);
-  if (after.formMode?.value === 'modify' && after.billNo?.readable === true && text(after.billNo.value) && after.taskMatch?.ok && receipt.ok) {
-    return { ok: true, status: 'saved', saveAttempts: 1, billNo: after.billNo.value ?? null, readings: after };
-  }
-  const readable = after.formMode?.readable === true && after.billNo?.readable === true;
-  return {
-    ok: false, status: readable ? 'failed' : 'unknown', saveAttempts: 1,
-    problems: [{ code: 'save_postcondition_failed', message: '保存后没有同时读到修改页签、单据编号和严格逐行回读',
-      reasons: [...(after.taskMatch?.reasons ?? []), ...receipt.reasons] }],
-    readings: after,
-  };
+  return { ok: true, status: 'handed_over', readings: before };
 }

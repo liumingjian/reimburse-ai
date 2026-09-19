@@ -33,9 +33,11 @@ export type TaskFacts = {
 };
 
 // The phase of a task's latest fill job, derived from its result (none yet = running) and a cancel of its login pause.
-// `saved`: the draft passed the strict read-back, ERP 草稿已交接 (terminal). `unknown`: ERP 写入结果未知 after an
-// attempt, reconcile. `aborted` / `catalog_mismatch` / `cancelled`: nothing was written.
-export type ErpPhase = 'running' | 'waiting_login' | 'cancelled' | 'catalog_mismatch' | 'aborted' | 'saved' | 'unknown';
+// `handed_over`: the filled, unsaved form passed the strict read-back, ERP 草稿已交接 (terminal, ADR-0028).
+// `saved`: a 对账 (reconcile) proved the employee's own save, or a legacy import recorded one — also terminal.
+// `unknown`: ERP 写入结果未知 after an attempt, reconcile. `aborted` / `catalog_mismatch` / `cancelled`: nothing
+// was written.
+export type ErpPhase = 'running' | 'waiting_login' | 'cancelled' | 'catalog_mismatch' | 'aborted' | 'handed_over' | 'saved' | 'unknown';
 
 export type ErpFacts = {
   jobId: string;
@@ -79,6 +81,7 @@ export function project(facts: TaskFacts): Projection {
   // 去报销: a saved draft is ERP 草稿已交接 (done); a write result unknown stops in reconcile; a running job or its
   // login pause is the erp stage. Everything else about the job leaves the task where its other facts put it.
   switch (facts.erp?.phase) {
+    case 'handed_over':
     case 'saved':
       return at('done', 'none');
     case 'unknown':
@@ -113,5 +116,5 @@ export function project(facts: TaskFacts): Projection {
 // At most one non-terminal task per account (ADR-0018). Terminal: voided, handed off (转人工, a lifecycle), and the
 // derived ERP 草稿已交接 (a saved fill job). A write result unknown is not terminal: reconcile still owns it.
 export function isNonTerminal(lifecycle: TaskLifecycle, erpPhase: ErpPhase | null = null): boolean {
-  return lifecycle === 'open' && erpPhase !== 'saved';
+  return lifecycle === 'open' && erpPhase !== 'handed_over' && erpPhase !== 'saved';
 }

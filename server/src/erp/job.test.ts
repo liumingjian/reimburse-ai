@@ -40,13 +40,13 @@ const run = (fake: FakeErp, channel = channelFor(), plan = fillPlan(taskId)) =>
 const inputEvents = (fake: FakeErp) => fake.commands.filter((c) => c.method.startsWith('Input.') || c.method === 'DOM.setFileInputFiles');
 
 describe('fill job through the protocol on the fake ERP', () => {
-  it('saves a draft, persisting an attempt before import, fill and save', async () => {
+  it('hands over a filled, unsaved form, persisting an attempt before import and fill', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
     const result = await run(fake);
-    expect(result, JSON.stringify(result)).toMatchObject({ type: 'result', status: 'saved', billNo: 'FYBX2026090001', code: null });
+    expect(result, JSON.stringify(result)).toMatchObject({ type: 'result', status: 'handed_over', billNo: null, code: null });
 
     const attempts = await jobs.attempts(`job-${taskId}`);
-    expect(attempts.map((a) => a.action)).toEqual(['import', 'fill', 'save']);
+    expect(attempts.map((a) => a.action)).toEqual(['import', 'fill']);
     for (const attempt of attempts) {
       expect(attempt.compatibility).toEqual({ erpBuild: '8.2.0.20250701', formId: 'ER_ExpReimbursement' });
       expect(attempt.erpAccount).toEqual({ displayName: '刘明建', account: 'luo.liu', tenant: 'tenant-a' });
@@ -57,9 +57,9 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(attempts[1]!.preconditions.receiptRowCount).toBe(2);
 
     const events = await jobs.events(`job-${taskId}`);
-    expect(events.filter((e) => e.type === 'readback').map((e) => (e as { stage: string }).stage)).toEqual(['after_import', 'after_fill', 'before_save', 'after_save']);
-    expect(events.at(-1)).toMatchObject({ type: 'result', status: 'saved' });
-    expect(fake.mutations.map((m) => m.kind).filter((k, i, all) => all.indexOf(k) === i)).toEqual(['import', 'header', 'cell', 'option', 'addRow', 'save']);
+    expect(events.filter((e) => e.type === 'readback').map((e) => (e as { stage: string }).stage)).toEqual(['after_import', 'after_fill', 'before_save']);
+    expect(events.at(-1)).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(fake.mutations.map((m) => m.kind).filter((k, i, all) => all.indexOf(k) === i)).toEqual(['import', 'header', 'cell', 'option', 'addRow']);
   });
 
   it('makes no mutation before the server acknowledges attempt_started', async () => {
@@ -85,7 +85,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(fake.mutations).toEqual([]);
     expect(fake.commands.some((c) => c.method === 'DOM.setFileInputFiles')).toBe(false);
     release();
-    expect((await job).status).toBe('saved');
+    expect((await job).status).toBe('handed_over');
     expect(persistedBeforeAck).toBe(true);
 
     const at = (label: string) => order.indexOf(label);
@@ -94,8 +94,11 @@ describe('fill job through the protocol on the fake ERP', () => {
     const fillWrites = order.map((kind, index) => ({ kind, index })).filter((m) => ['header', 'cell', 'option', 'addRow'].includes(m.kind));
     expect(fillWrites.length).toBeGreaterThan(0);
     expect(Math.min(...fillWrites.map((m) => m.index))).toBeGreaterThan(at('attempt:fill'));
-    expect(Math.max(...fillWrites.map((m) => m.index))).toBeLessThan(at('attempt:save'));
-    expect(order.indexOf('save')).toBeGreaterThan(at('attempt:save'));
+    // The fill writes are the last thing that happens: the job ends at the hand-over, so there is no save attempt
+    // and no save mutation to order against (ADR-0028).
+    expect(Math.max(...fillWrites.map((m) => m.index))).toBe(order.length - 1);
+    expect(order).not.toContain('attempt:save');
+    expect(order).not.toContain('save');
   });
 
   it('pauses for login without any attempt or input when ERP sits on the login page', async () => {
@@ -157,7 +160,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(fake.mutations).toEqual([]);
   });
 
-  it('stops before save when the strict read-back fails (no 收票单号 link on detail rows, as research recorded)', async () => {
+  it('stops before the hand-over when the strict read-back fails (no 收票单号 link on detail rows, as research recorded)', async () => {
     const fake = await createFakeErp(fakeErpOptions());
     const result = await run(fake);
     expect(result).toMatchObject({ status: 'unknown', code: 'strict_readback_failed' });

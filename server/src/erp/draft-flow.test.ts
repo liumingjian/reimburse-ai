@@ -1,7 +1,7 @@
 // Origin: 50931a3:kernel/test/erp-draft-flow.test.mjs (translated to Vitest; inputs and expected outputs kept).
 // The kernel's `linesDigest` (selection.mjs) is `previewLinesDigest`; `approvalCovers` lives in the protocol.
 import { describe, expect, it } from 'vitest';
-import { fillApprovedPreview, formReadbackToken, matchReceiptRows, saveApprovedPreview } from './executor/draft-flow';
+import { fillApprovedPreview, formReadbackToken, handOverApprovedPreview, matchReceiptRows } from './executor/draft-flow';
 import { buildErpDraftPreview, previewLinesDigest as linesDigest, routePlanOf } from './preview';
 import { approvalCovers, type ApprovedPreview } from './protocol';
 
@@ -198,35 +198,36 @@ describe('ERP draft flow (草稿填写与保存)', () => {
     expect(!stoppedResult.ok && stoppedResult.problems.some((p) => p.code === 'field_write_failed' || p.code === 'tax_clear_failed')).toBe(true);
   });
 
-  it('saves once only when the same form passes strict read-back; a failed save is not retried', async () => {
+  it('hands over only when the same form still passes the strict read-back, and never saves', async () => {
     const preview = makePreview();
     const approval = { digest: preview.previewDigest!, preview };
     const before = readings(detailGrid(4), 'new', null, { ok: true, reasons: [] });
     const fillResult = { ok: true, previewDigest: preview.previewDigest, formToken: formReadbackToken(before) };
-    let saves = 0;
-    let afterReads = 0;
-    const saved = await saveApprovedPreview({}, {
-      approvedPreview: preview, approval, freshGate, fillResult,
-      readCurrent: async () => {
-        afterReads += 1;
-        return afterReads === 1 ? before : readings(detailGrid(4), 'modify', 'FYBX-202609-1', { ok: true, reasons: [] });
-      },
-      save: async () => { saves += 1; },
-    });
-    expect(saved.ok).toBe(true);
-    expect(saved.status).toBe('saved');
-    expect(saves).toBe(1);
 
-    let failedSaves = 0;
-    const failed = await saveApprovedPreview({}, {
+    let reads = 0;
+    const handedOver = await handOverApprovedPreview({
       approvedPreview: preview, approval, freshGate, fillResult,
-      readCurrent: async () => before,
-      save: async () => { failedSaves += 1; throw Object.assign(new Error('save timeout'), { code: 'EGO_TIMEOUT' }); },
+      readCurrent: async () => { reads += 1; return before; },
     });
-    expect(failed.ok).toBe(false);
-    expect(failed.status).toBe('unknown');
-    expect(failed.saveAttempts).toBe(1);
-    expect(failedSaves).toBe(1);
+    expect(handedOver).toMatchObject({ ok: true, status: 'handed_over' });
+    expect(handedOver.readings).toBe(before);
+    // One read: the strict 逐行回读 (per-line read-back) is the whole gate, and nothing follows it.
+    expect(reads).toBe(1);
+
+    // The pre-save preconditions that blocked a mismatched form still block the hand-over, with the same codes.
+    const drifted = await handOverApprovedPreview({
+      approvedPreview: preview, approval, freshGate, fillResult,
+      readCurrent: async () => readings(detailGrid(4), 'modify', 'FYBX-202609-1', { ok: true, reasons: [] }),
+    });
+    expect(drifted).toMatchObject({ ok: false, status: 'blocked' });
+    expect(drifted.problems?.[0]?.code).toBe('same_form_precondition_failed');
+
+    const unfilled = await handOverApprovedPreview({
+      approvedPreview: preview, approval, freshGate, fillResult: null,
+      readCurrent: async () => { throw new Error('the form must not be read without a fill read-back'); },
+    });
+    expect(unfilled).toMatchObject({ ok: false, status: 'blocked' });
+    expect(unfilled.problems?.some((problem) => problem.code === 'fill_result_missing')).toBe(true);
   });
 
   it('lets an approval cover only the complete final preview; editing the railway tax voids it', () => {

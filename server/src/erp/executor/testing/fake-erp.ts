@@ -485,6 +485,11 @@ export async function createFakeErp(options: FakeErpOptions) {
     },
     /** The user logs in on the same page (same URL, new DOM). */
     async login() { loggedIn = true; main = await render(); },
+    /**
+     * The employee clicks 保存 (save) themselves. baox never does (ADR-0028), so this is the only way a fake ERP
+     * reaches 已保存 — exactly as it happens in production, by a human at the keyboard.
+     */
+    employeeSaves() { save(); },
     /** Drift: ERP re-renders the form under a new form-instance UUID. */
     replaceFormInstance() {
       const next = 'f0e1d2c3b4a5';

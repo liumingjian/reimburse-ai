@@ -31,11 +31,12 @@ export const unavailableExecutor: FillExecutor = async (_plan, channel) => {
 
 /**
  * The server's own guard (ADR-0014: any loss after `attempt_started` is reconcile, never a replay): once an attempt
- * of the job is durable, only `saved` or `unknown` may end it. An executor that believes nothing was written (e.g.
- * its acknowledgement failed after the server persisted the attempt) still ends in `unknown`.
+ * of the job is durable, only a terminal success (`handed_over`, or the legacy `saved`) or `unknown` may end it. An
+ * executor that believes nothing was written (e.g. its acknowledgement failed after the server persisted the attempt)
+ * still ends in `unknown`.
  */
 export async function afterAttempts(tx: Db, jobId: string, event: ResultEvent): Promise<ResultEvent> {
-  if (event.status === 'saved' || event.status === 'unknown') return event;
+  if (event.status === 'handed_over' || event.status === 'saved' || event.status === 'unknown') return event;
   const attempt = await tx.selectFrom('erp_attempt').select('attempt_id').where('job_id', '=', jobId).executeTakeFirst();
   if (!attempt) return event;
   const message = `已开始写入报销系统之后停止，写入结果不确定：${event.message ?? event.code ?? ''}`;
