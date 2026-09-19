@@ -312,7 +312,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
   // bump the revision, then publish the fresh snapshot. A refusal or stale token writes nothing. While the parser job
   // or an ERP job runs, only the job itself (`job: true`) may write; everyone else gets the 409 of a stale step
   // (ADR-0014). During an ERP login pause only `loginPause` actions pass; after an ERP action attempt the task's facts
-  // are frozen, and a saved draft (ERP 草稿已交接) closes the task.
+  // are frozen, and a saved draft (ERP 单据已交接) closes the task.
   async function mutate(taskId: string, token: string | null, apply: (ctx: Context) => Promise<Refusal | void>, { job = false, loginPause = false, erpAction = false, printOnly = false, ownsFreeze = false }: MutateOptions = {}): Promise<TaskSnapshot> {
     const outcome = await db.transaction().execute(async (tx): Promise<{ kind: 'ok' } | { kind: 'stale' } | ({ kind: 'refused' } & Refusal)> => {
       const task = await taskRow(tx, taskId);
@@ -412,7 +412,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
   // between turns the commit into a 409 stale_step with the fresh snapshot.
   async function printChange(taskId: string, prepare: (state: PrintState) => Promise<PrintCommit | null>): Promise<TaskSnapshot> {
     const task = await taskRow(db, taskId);
-    // 去打印 needs no ERP, so it survives 转人工 and ERP 草稿已交接 (stories 57 and 63): the paper bundle is still
+    // 去打印 needs no ERP, so it survives 转人工 and ERP 单据已交接 (stories 57 and 63): the paper bundle is still
     // wanted after the draft is filed. Only a voided task and an imported legacy one have nothing to print.
     if (task.lifecycle === 'voided' || task.origin === 'legacy') throw new ActionRefusedError({ code: 'task_closed', message: ACTION_COPY.taskClosed }, await snapshot(taskId));
     const rows = await materialRows(db, taskId);

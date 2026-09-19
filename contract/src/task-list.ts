@@ -8,7 +8,7 @@ export const TaskPeriodSchema = z.object({
 });
 export type TaskPeriod = z.infer<typeof TaskPeriodSchema>;
 
-// 任务列表层面的 ERP 结局，由服务端给出：none 无需人工；readback_mismatch 草稿已保存但严格回读不一致（停在完成页，不算完成）；
+// 任务列表层面的 ERP 结局，由服务端给出：none 无需人工；readback_mismatch 严格回读与本地确认不一致（停在完成页，不算完成）；
 // handed_off 已转人工（终态）。非 none 时列表徽标显示对应文案（warning / danger 语义），代替阶段名。
 export const TASK_ERP_OUTCOMES = ['none', 'readback_mismatch', 'handed_off'] as const;
 export const TaskErpOutcomeSchema = z.enum(TASK_ERP_OUTCOMES);
@@ -19,7 +19,7 @@ export const TASK_ERP_OUTCOME_LABELS: Readonly<Record<Exclude<TaskErpOutcome, 'n
   handed_off: '已转人工',
 };
 
-// 任务列表的一行。价税合计只在整单明细确认后才有值；ERP 草稿号只在保存草稿后才有值。
+// 任务列表的一行。价税合计只在整单明细确认后才有值；单据编号只在员工自己保存过之后才读得到。
 export const TaskListItemSchema = z.object({
   taskId: IdSchema,
   name: z.string().min(1),

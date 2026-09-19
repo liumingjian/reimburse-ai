@@ -164,7 +164,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
   `exclude-material` 另外接受两种情形（见 `EXCLUDE_MATERIAL_ERRORS` 注释）：`given_up` 待确认项的发票（连同它的行程单排除），与重复发票阻塞项上的材料（移出本次材料后接着盘点）。
   材料包文件数只看 `packageFiles`（确认上不再另记）。表格列名常量：`CATALOG_MISMATCH_COLUMNS`、`PREPARATION_PROBLEM_COLUMNS`；进度与阻塞文案：`CATALOG_PREPARATION_COPY`。
 - 严格回读（`snapshot.ts`）：`ReadbackRow { no, description, matched, fields: [{ label, local, erp, matched }], reasons[] }`，`fields` 覆盖 `READBACK_FIELD_LABELS` 的 9 个字段，
-  一致与否、原因句都由服务端给出（description 与行级 matched 待服务端 spec 确认）。完成页的固定句是 `SAVE_COMPLETED_NOTICE`。
+  一致与否、原因句都由服务端给出（description 与行级 matched 待服务端 spec 确认）。完成页的固定句是 `HANDOVER_COMPLETED_NOTICE`。
 - 对账（`snapshot.ts` `Reconcile`）：`bucket` 是 `RECONCILE_BUCKETS` 六类之一，`action` / `actionCode` 是内核判定，`allowedActions` 是允许的处置（页面只渲染这些，服务端也只接受这些，
   否则 `action_not_allowed`），`humanReview` 为真时显示 `HUMAN_REVIEW_NOTICE` 且没有重新对账。`reasons` 只放不属于某一行的原因。
 - 阶段名：`stage.ts` 的 `KERNEL_PHASES`、`TASK_STAGE_PHASES`、`TASK_STAGE_LABELS`（「N/10 阶段名」）与 `RECONCILE_STATUS_LABEL`。

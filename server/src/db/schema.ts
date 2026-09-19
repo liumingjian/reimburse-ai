@@ -242,7 +242,7 @@ export interface ImportRunTable {
   created_at: string;
 }
 
-// The ERP facts of one imported legacy task. `outcome`: `saved` → draft_handed_over (ERP 草稿已交接), else handed_off
+// The ERP facts of one imported legacy task. `outcome`: `saved` → draft_handed_over (ERP 单据已交接), else handed_off
 // (转人工).
 export interface LegacyTaskTable {
   task_id: string;

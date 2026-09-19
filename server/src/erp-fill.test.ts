@@ -1,4 +1,4 @@
-import { ABANDON_TASK_COPY, ERP_ACTION_ERRORS, TaskListSchema, type TaskSnapshot } from '@baox/contract';
+import { ABANDON_TASK_COPY, ERP_ACTION_ERRORS, ERP_HANDOVER_STEP_COPY, TaskListSchema, type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fixtureCatalog } from './catalog/project-catalog';
 import { abortBeforeAttempt, catalogMismatch, gated, handedOver, loginWall, readbackMismatch, scripted, TEST_ERP_ACCOUNT, type ScriptedExecutor } from './erp/testing/fake-executor';
@@ -7,7 +7,7 @@ import { createTestServer, type TestClient, type TestServer } from './test/harne
 
 // Slice 12 (#191): 去报销 (fill ERP) end to end on a fake executor. The job runs in the background; the snapshot is
 // derived from the persisted job facts (ADR-0014/0016): login pause, cancel, catalog mismatch, write result unknown,
-// saved draft. The global ERP lease is held only while a job runs.
+// hand-over. The global ERP lease is held only while a job runs.
 
 const CATALOG = fixtureCatalog([
   { number: 'P-2307', name: '华东客户交付', audited: true, forbidden: false },
@@ -177,7 +177,7 @@ describe('去报销 on a fake executor', () => {
     expect((await client.current(ready.task.taskId)).stage).toBe('voided');
   });
 
-  it('a filled, unsaved form that passed the strict read-back is done (ERP 草稿已交接), a terminal', async () => {
+  it('a filled, unsaved form that passed the strict read-back is done (ERP 单据已交接), a terminal', async () => {
     executor.queue(handedOver());
     const done = await start(await confirmed());
     // Nothing was saved, so there is no 单据编号 to report — the read-back rows are the whole of the evidence.
@@ -185,6 +185,10 @@ describe('去报销 on a fake executor', () => {
     expect(done.readback.rows).toHaveLength(done.lines.length);
     expect(done.readback.rows.every((row) => row.matched)).toBe(true);
     expect(done.erp.steps.every((step) => step.status === 'done')).toBe(true);
+    // The list closes on the hand-over step, and its copy comes from the contract: the web mock's step list reads the
+    // same constant, so the two lists cannot drift apart (ADR-0028).
+    expect(done.erp.steps.at(-1)).toMatchObject({ ...ERP_HANDOVER_STEP_COPY, status: 'done' });
+    expect(done.erp.steps.some((step) => step.title.includes('保存'))).toBe(false);
     expect(server.erpLease.holder()).toBeNull();
 
     expect((await taskList()).tasks[0]).toMatchObject({ stage: 'done', erpDraftNo: null, abandonable: false });

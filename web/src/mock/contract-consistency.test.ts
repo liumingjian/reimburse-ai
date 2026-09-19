@@ -2,6 +2,8 @@
 import { describe, expect, test } from 'vitest';
 import {
   ALLOCATION_ERRORS,
+  ERP_HANDOVER_STEP_COPY,
+  ErpStepSchema,
   PENDING_ANSWER_ERRORS,
   PendingAnswerSchema,
   ProjectBookSchema,
@@ -13,6 +15,7 @@ import {
   UploadBatchSchema,
   validatePendingAnswer,
 } from '@baox/contract';
+import { ERP_STEP_DEFS, ERP_STEP_INDEX, erpSteps } from './fixtures/erp';
 import { INITIAL_BOOK, MOCK_TODAY, annotateProject, confirmationDigest } from './fixtures/projects';
 import { t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from './fixtures/tasks';
 import { createMockAdapter } from './mock-adapter';
@@ -25,6 +28,14 @@ describe('契约 schema', () => {
     }
     expect(() => TaskSnapshotSchema.parse(t2Snapshot())).not.toThrow();
     expect(() => TaskSnapshotSchema.parse(t3Snapshot())).not.toThrow();
+  });
+
+  // 交接步（handover）的文案只有契约一份：服务端的 DISPLAY_STEPS 与这里的 ERP_STEP_DEFS 都读它，改一处两边一起动。
+  test('mock 的写入步骤清单以契约里的交接步收尾，文案与服务端同源', () => {
+    expect(ERP_STEP_DEFS.at(-1)).toEqual(ERP_HANDOVER_STEP_COPY);
+    expect(ERP_STEP_INDEX.handover).toBe(ERP_STEP_DEFS.length - 1);
+    expect(ERP_STEP_DEFS.some((step) => step.title.includes('保存'))).toBe(false);
+    for (const step of erpSteps(ERP_STEP_DEFS.length)) expect(() => ErpStepSchema.parse(step)).not.toThrow();
   });
 
   test('由快照投影出的任务列表通过任务列表 schema', () => {
