@@ -5,6 +5,11 @@ one of the two 处置 (dispositions), 原地等待 or 转人工. The classificat
 employee sees for each breakpoint had never been designed, and the six differ on the question they most want answered.
 Decided in [#232](https://github.com/liumingjian/reimburse-ai/issues/232).
 
+> **Amended 2026-09-19 by [ADR-0027](0027-recovery-after-an-import-that-was-never-saved.md).** Two rows of the
+> table below changed. The premise for sending 未保存·已导入未写明细 to 转人工 — "the invoices are consumed and
+> the import cannot be replayed" — was false: ADR-0026 shows the ERP overwrites the 收票单 on re-import. The rest
+> of this ADR stands, and ADR-0027 rests on it.
+
 ## Decisions
 
 - **One 对账结果 page with six sets of copy**, and buttons driven by the disposition. CONTEXT.md defines a breakpoint
@@ -18,8 +23,8 @@ Decided in [#232](https://github.com/liumingjian/reimburse-ai/issues/232).
   | 中断点 | 处置 | Exit offered |
   | --- | --- | --- |
   | 未保存·导入前 | 原地等待 | 重新去报销, stating plainly that no ERP write happened and no invoice is occupied |
-  | 未保存·已导入未写明细 | 转人工 | 转人工; the invoices are consumed and the import cannot be replayed |
-  | 未保存·就绪待保存 | 转人工 | 转人工 |
+  | 未保存·已导入未写明细 | ~~转人工~~ 原地等待 | 重新去报销 when this job started no `save` attempt, else 转人工 ([ADR-0027](0027-recovery-after-an-import-that-was-never-saved.md)) |
+  | 未保存·就绪待保存 | 转人工 (but `reconcile.ts` returns 原地等待 — unresolved, see ADR-0027) | 重新去报销 under the same gate, else 转人工 |
   | 已保存, identity holds | 原地等待 | This is success: it projects as ERP 草稿已交接 and the word 对账 never appears |
   | 已保存, identity fails | 转人工 | 转人工 |
   | 未知 | 原地等待 | 再对一次账 / 转人工 |
@@ -41,6 +46,10 @@ Decided in [#232](https://github.com/liumingjian/reimburse-ai/issues/232).
   missing. Rejected, and this is the load-bearing rejection: that breakpoint is reached *after* `attempt_started`, so
   re-running the save is precisely the replay ADR-0016 forbids. It would assume we know the earlier save did not take
   effect, which is the one thing 对账 exists because we do not know.
+  **(Still rejected after ADR-0027.** That ADR offers a fresh attempt on a *fresh* form, gated on no `save` attempt
+  ever having been started — so it never re-fires a save, and never assumes anything about one. What ADR-0027 does
+  correct is the sentence above reading `attempt_started` as job-level: attempts carry an `action`, and "an import
+  attempt exists" is not "a save attempt exists".)
 - **Send 未保存·导入前 to 转人工 as well, for a uniform rule.** Rejected: it charges a manual hand-off for a run that
   provably wrote nothing and consumed no invoice, which teaches employees that stopping is always expensive.
 - **Treat 已保存 with a holding identity as a reconcile outcome and show the 对账 page.** Rejected: that state is
