@@ -5,6 +5,7 @@
 // Form actions are injected; `readCurrent` returns raw readings plus the server's strict verdict (`taskMatch`).
 
 import { approvalCovers, erpWritePreviewDigest, fieldPlanOf, type Approval, type ApprovedPreview, type FreshGate } from '../protocol';
+import { sleep } from './pace';
 
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const MONEY = /^\d+(?:\.\d{1,2})?$/;
@@ -183,6 +184,46 @@ const detailRowsForFill = (grid: GridLike, preview: ApprovedPreview) => {
   return { ok: reasons.length === 0, reasons, rowByMaterial, placeholders };
 };
 
+/**
+ * ERP's own computed 申请报销金额 (claimed amount), checked against the two numbers baox wrote into the row.
+ *
+ * A write is not verified by reading back the cell it was typed into. `writeCell` (erpform.ts) compares the very
+ * cell it has just typed into, so a value that is in the DOM and never reached ERP's model reads back as a
+ * success. Measured live 2026-09-20: a fill wrote eleven 费用明细行, every cell read back what had been typed
+ * into it, and three rows carried a 申请报销金额 that was not 费用金额 + 税额 —
+ *   row  1  ¥32.18 + ¥0.32     -> ¥32.18      (the tax never landed)
+ *   row  2  ¥15.56 + ¥0.47     -> ¥0.47       (the net never landed)
+ *   row 11  ¥1,677.36 + ¥100.64 -> ¥1,677.36  (the tax never landed)
+ * The form total came out 7,219.03 against the task's 7,335.55, short by exactly 0.32 + 15.56 + 100.64. Nothing
+ * in the fill looked at it, because nothing asked ERP what IT had made of the write.
+ *
+ * So the computed column is the witness: where ERP computes a value from what baox wrote, that value — not the
+ * input cell — is what says the write arrived. 申请付款金额 is computed from the same pair and would serve as a
+ * second witness; this checks the one the strict read-back already compares against the task.
+ */
+export const computedTotalProblem = (
+  values: Record<string, string> | undefined,
+  planned: { net: string | null; tax: string | null },
+  label: string,
+): string | null => {
+  const row = values ?? {};
+  const net = cents(row['费用金额']);
+  const tax = cents(row['税额']);
+  const computed = cents(row['申请报销金额']);
+  const shown = (column: string) => `「${column}」${row[column] ?? '读不出'}`;
+  if (net === null || tax === null) return `${label}的${shown('费用金额')}、${shown('税额')}读不出金额，不当这一行写好了`;
+  const wantNet = cents(planned.net);
+  const wantTax = cents(planned.tax);
+  if (wantNet !== null && net !== wantNet) return `${label}的${shown('费用金额')}不是要写的 ${planned.net}`;
+  if (wantTax !== null && tax !== wantTax) return `${label}的${shown('税额')}不是要写的 ${planned.tax}`;
+  if (computed === null) return `${label}的${shown('申请报销金额')}读不出：报销系统没有算出这一行的金额`;
+  if (computed !== net + tax) {
+    return `${label}的${shown('申请报销金额')}不等于${shown('费用金额')} + ${shown('税额')}：`
+      + '单元格里回读到的数没有进到报销系统自己的账里，这一行的金额是错的';
+  }
+  return null;
+};
+
 export type CurrentReadings = {
   formMode?: { readable?: boolean; value?: string | null };
   billNo?: { readable?: boolean; value?: string | null };
@@ -220,11 +261,14 @@ export type FillResult =
  */
 export async function fillApprovedPreview<P>(page: P, {
   approvedPreview, approval, freshGate, readCurrent, addRow = null, writeDeps = {}, ops = {},
+  witnessReads = 8, witnessDelayMs = 900,
 }: {
   approvedPreview: ApprovedPreview; approval: Approval | null | undefined; freshGate: FreshGate | null | undefined;
   readCurrent: (expected: ApprovedPreview | null) => Promise<CurrentReadings>;
   addRow?: ((page: P, detail: { line: ApprovedPreview['lines'][number]; current: CurrentReadings }) => Promise<ActionResult>) | null;
   writeDeps?: unknown; ops?: FormOps<P>;
+  /** How many times the computed column is re-read while ERP is still recalculating, and how long between reads. */
+  witnessReads?: number; witnessDelayMs?: number;
 }): Promise<FillResult> {
   const problems: Problem[] = gateAndApprovalProblems(approvedPreview, freshGate, approval);
   if (problems.length) return fail('preflight', problems);
@@ -287,6 +331,23 @@ export async function fillApprovedPreview<P>(page: P, {
       if (!result || !result.ok) {
         return fail('fill', [{ code: 'field_write_failed', message: (result && result.reason) || `字段 ${field.column} 回读失败`, lineId: line.lineId, column: field.column }], { readings, rowsWritten });
       }
+    }
+
+    // The row is written; now ask ERP what it made of it. The computed column is polled rather than read once:
+    // the row is still in edit when 税额 commits, and a value that is merely late is not a value that was lost.
+    const planned = {
+      net: text(plan.fields.find((field) => field.column === '费用金额')?.value),
+      tax: text(plan.fields.find((field) => field.column === '税额')?.value),
+    };
+    let witness: string | null = null;
+    for (let read = 0; read < Math.max(1, witnessReads); read++) {
+      if (read > 0) await sleep(witnessDelayMs);
+      readings = await readCurrent(null);
+      witness = computedTotalProblem(dataRows(readings.detailGrid)[rowIndex]?.values, planned, `明细第 ${rowIndex + 1} 行`);
+      if (!witness) break;
+    }
+    if (witness) {
+      return fail('fill', [{ code: 'computed_total_mismatch', message: witness, lineId: line.lineId }], { readings, rowsWritten });
     }
     rowsWritten.push({ lineId: line.lineId, rowIndex });
   }

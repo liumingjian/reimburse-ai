@@ -305,7 +305,15 @@ export type CellWrite = {
   clicks?: number; readyMs?: number; settleMs?: number; settleFirst?: boolean; pace?: Pace;
 };
 
-/** Write one detail cell: real click -> empty the editor -> type -> commit key -> read back. */
+/**
+ * Write one detail cell: real click -> empty the editor -> type -> commit key -> read back.
+ *
+ * The read-back is of the CELL THIS JUST TYPED INTO, so it proves the value is in the DOM and nothing more. A
+ * value that never reached ERP's own model reads back here as a success — measured live 2026-09-20, three of
+ * eleven 费用明细行 whose 费用金额 and 税额 both read back correctly and whose ERP-computed 申请报销金额 was not
+ * their sum. Where ERP computes something from what was written, that computed value is the witness:
+ * `computedTotalProblem` in draft-flow.ts checks it row by row.
+ */
 export async function writeCell(session: CdpSession, { which = 0, row = 0, column, value, expect = null,
   commit = 'Enter', clicks = 3, readyMs = 9000, settleMs = 8000, settleFirst = true, pace = DEFAULT_PACE }: CellWrite) {
   // Wait for the previous cell's recalculation first: a click during it is swallowed or its editor is taken away.

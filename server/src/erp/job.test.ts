@@ -105,6 +105,29 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(fake.mutations.map((m) => m.kind).filter((k, i, all) => all.indexOf(k) === i)).toEqual(['import', 'header', 'cell', 'option', 'addRow']);
   });
 
+  // A write is not verified by reading back the cell it was typed into. Live 2026-09-20 three of eleven rows read
+  // back both money cells correctly and still carried a 申请报销金额 that was not 费用金额 + 税额, so the bill was
+  // 116.52 short of the task. ERP's own computed column is the only witness that the value reached ERP, and it is
+  // checked row by row, while the row that got it wrong is still the row being written.
+  it('stops on the row whose 申请报销金额 disagrees with 费用金额 + 税额, instead of writing on past it', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, moneyWritesNotTaken: [{ row: 1, column: '税额' }] }));
+    const result = await run(fake);
+    expect(result).toMatchObject({ type: 'result', status: 'unknown', code: 'computed_total_mismatch' });
+    expect(String((result as { message?: string }).message)).toContain('明细第 2 行');
+    expect(String((result as { message?: string }).message)).toContain('申请报销金额');
+    // Both rows' computed column, off the fake form: row 1 adds up, row 2 is exactly its 税额 short.
+    expect(column(fake, 'detail', 11)).toEqual(['¥703.00', '¥50.12']);
+  });
+
+  // The same rule from the other side: a 费用金额 that never reaches the model leaves 申请报销金额 = 税额 alone,
+  // which is live row 2's shape (¥15.56 + ¥0.47 -> ¥0.47).
+  it('catches a 费用金额 that never reached the model just as well as a lost 税额', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, moneyWritesNotTaken: [{ row: 0, column: '费用金额' }] }));
+    const result = await run(fake);
+    expect(result).toMatchObject({ type: 'result', status: 'unknown', code: 'computed_total_mismatch' });
+    expect(String((result as { message?: string }).message)).toContain('明细第 1 行');
+  });
+
   // The whole point of fixing D-A and D-B together: a report that will not close must never be allowed to turn a
   // successful import into a mystery. The import is done and judged; the fill has not started and will not start
   // over a form with something floating on it — and the refusal is decided BEFORE `attempt_started` for the fill,

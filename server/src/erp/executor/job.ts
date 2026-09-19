@@ -302,7 +302,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     await step('fill', 'running');
     const filled = await fillApprovedPreview(write, {
       approvedPreview: preview, approval, freshGate, readCurrent: reader('after_fill'),
-      addRow: (p) => addDetailRow(p), ops,
+      addRow: (p) => addDetailRow(p), ops, witnessDelayMs: pace.quietMs,
     });
     if (!filled.ok) return await finish('unknown', filled.problems[0]?.code ?? 'fill_failed', filled.problems.map(problemText).join('；'));
     await step('fill', 'done');

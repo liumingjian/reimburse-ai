@@ -1,7 +1,7 @@
 // Origin: 50931a3:kernel/test/erp-draft-flow.test.mjs (translated to Vitest; inputs and expected outputs kept).
 // The kernel's `linesDigest` (selection.mjs) is `previewLinesDigest`; `approvalCovers` lives in the protocol.
 import { describe, expect, it } from 'vitest';
-import { fillApprovedPreview, formReadbackToken, handOverApprovedPreview, matchReceiptRows } from './executor/draft-flow';
+import { computedTotalProblem, fillApprovedPreview, formReadbackToken, handOverApprovedPreview, matchReceiptRows } from './executor/draft-flow';
 import { buildErpDraftPreview, previewLinesDigest as linesDigest, routePlanOf } from './preview';
 import { approvalCovers, type ApprovedPreview } from './protocol';
 
@@ -82,6 +82,40 @@ const detailGrid = (rowCount = 1, railTax = '0.00') => ({ ok: true as const, col
 ), rows: Array.from({ length: rowCount }, (_, index) => data(index === 0 ? {
   收票单号: 'SPD-rail', 费用金额: '703.00', 税额: railTax, 申请报销金额: '703.00', 发票类型: '普通发票', 开始日期: '2026/9/9', 结束日期: '2026/9/9',
 } : {})) });
+/**
+ * A 费用明细 grid that answers with what the ops wrote into it, with 申请报销金额 computed from 费用金额 + 税额 the
+ * way ERP computes it. The fill now reads that computed column back as the witness that a write reached ERP, so a
+ * stub grid that never moves would be a form where nothing was ever written.
+ */
+const writableDetailGrid = (seed: Array<Record<string, string>> = []) => {
+  const rows = seed.map((values) => ({ ...values }));
+  const cents = (value: string | undefined) => {
+    const normalized = String(value ?? '').replace(/[¥￥,\s]/g, '');
+    if (!/^\d+(\.\d{1,2})?$/.test(normalized)) return null;
+    const [whole, fraction = ''] = normalized.split('.');
+    return Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+  };
+  const recompute = (row: Record<string, string>) => {
+    const net = cents(row['费用金额']);
+    const tax = cents(row['税额']) ?? 0;
+    row['申请报销金额'] = net === null ? '' : ((net + tax) / 100).toFixed(2);
+  };
+  return {
+    rows,
+    addRow: () => { rows.push({}); },
+    write: (row: number, column: string, value: string) => {
+      const target = rows[row] ?? (rows[row] = {});
+      target[column] = value;
+      // A new 费用金额 clears 税额, as the real grid does (erpform.ts settleGrid note).
+      if (column === '费用金额') target['税额'] = '0.00';
+      recompute(target);
+    },
+    grid: () => ({ ok: true as const, columns: columns(
+      '收票单号', '项目', '费用项目', '发票类型', '开始日期', '结束日期', '住宿/出差地', '出发地', '目的地', '费用金额', '税额', '申请报销金额',
+    ), rows: rows.map((values) => data(values)) }),
+  };
+};
+
 const readings = (detail: ReturnType<typeof detailGrid>, mode = 'new', billNo: string | null = null, taskMatch: { ok: boolean; reasons: string[] } | null = null) => ({
   formMode: { readable: true, value: mode }, billNo: { readable: true, value: billNo },
   receiptsGrid: receiptGrid(), detailGrid: detail, taskMatch,
@@ -144,6 +178,23 @@ describe('ERP draft flow (草稿填写与保存)', () => {
     expect(result.reasons.some((reason) => /唯一匹配/.test(reason))).toBe(true);
   });
 
+  // The three rows of the live fill of 2026-09-20, with their own numbers. Every one of them read back both money
+  // cells correctly; only ERP's computed 申请报销金额 says the value never arrived.
+  it('reads the computed 申请报销金额 as the witness that a money write reached ERP, not the cell it was typed into', () => {
+    const row = (net: string, tax: string, sum: string) => ({ 费用金额: net, 税额: tax, 申请报销金额: sum });
+    expect(computedTotalProblem(row('¥32.18', '¥0.32', '¥32.50'), { net: '32.18', tax: '0.32' }, '明细第 1 行')).toBe(null);
+    expect(computedTotalProblem(row('¥32.18', '¥0.32', '¥32.18'), { net: '32.18', tax: '0.32' }, '明细第 1 行'))
+      .toMatch(/明细第 1 行.*申请报销金额.*没有进到报销系统自己的账里/);
+    expect(computedTotalProblem(row('¥15.56', '¥0.47', '¥0.47'), { net: '15.56', tax: '0.47' }, '明细第 2 行'))
+      .toMatch(/明细第 2 行/);
+    expect(computedTotalProblem(row('¥1,677.36', '¥100.64', '¥1,677.36'), { net: '1677.36', tax: '100.64' }, '明细第 11 行'))
+      .toMatch(/明细第 11 行/);
+    expect(computedTotalProblem(row('¥1,677.36', '¥100.64', '¥1,778.00'), { net: '1677.36', tax: '100.64' }, '明细第 11 行')).toBe(null);
+    // A cell that does not hold what was asked for is caught by the same reading, computed column or not.
+    expect(computedTotalProblem(row('¥32.18', '¥0.32', '¥32.50'), { net: '32.19', tax: '0.32' }, '明细第 1 行')).toMatch(/费用金额/);
+    expect(computedTotalProblem(row('¥32.18', '', '¥32.18'), { net: '32.18', tax: '0.32' }, '明细第 1 行')).toMatch(/读不出金额/);
+  });
+
   it('refuses an old-number form or wrong receipts in preflight, and never guesses a toolbar without an addRow adapter', async () => {
     const preview = makePreview();
     const approval = { digest: preview.previewDigest!, preview };
@@ -155,8 +206,10 @@ describe('ERP draft flow (草稿填写与保存)', () => {
     expect(old.phase).toBe('preflight');
     expect(!old.ok && old.problems.some((p) => p.code === 'new_form_required')).toBe(true);
 
-    const current = readings(detailGrid(), 'new', null, null);
-    const noAdd = await fillApprovedPreview({}, { approvedPreview: preview, approval, freshGate, readCurrent: async () => current, ops: okOps });
+    const form = writableDetailGrid([{ 收票单号: 'SPD-rail', 费用金额: '703.00', 税额: '0.00', 申请报销金额: '703.00', 发票类型: '普通发票', 开始日期: '2026/9/9', 结束日期: '2026/9/9' }]);
+    const writing = { ...okOps, writeCell: async (_page: unknown, spec: { row: number; column: string; value: string }) => { form.write(spec.row, spec.column, spec.value); return { ok: true }; } };
+    const noAdd = await fillApprovedPreview({}, { approvedPreview: preview, approval, freshGate,
+      readCurrent: async () => readings(form.grid() as ReturnType<typeof detailGrid>, 'new', null, null), ops: writing });
     expect(noAdd.ok).toBe(false);
     expect(!noAdd.ok && noAdd.problems.some((p) => p.code === 'add_row_adapter_required')).toBe(true);
   });
@@ -164,22 +217,21 @@ describe('ERP draft flow (草稿填写与保存)', () => {
   it('reuses the one railway row, adds the other three under control, and stops at the first failed field read-back', async () => {
     const preview = makePreview();
     const approval = { digest: preview.previewDigest!, preview };
-    let reads = 0;
-    const readCurrent = async (expected: ApprovedPreview | null) => {
-      reads += 1;
-      if (expected) return readings(detailGrid(4), 'new', null, { ok: true, reasons: [] });
-      return readings(detailGrid(Math.min(reads, 4), reads === 1 ? '58.05' : '0.00'), 'new', null, null);
-    };
+    // The railway row arrives from the import carrying the receipt's own 税额, which the fill clears before it
+    // writes the pair; every write lands in the grid and ERP recomputes 申请报销金额 from it.
+    const form = writableDetailGrid([{ 收票单号: 'SPD-rail', 费用金额: '703.00', 税额: '58.05', 申请报销金额: '761.05' }]);
+    const readCurrent = async (expected: ApprovedPreview | null) =>
+      readings(form.grid() as ReturnType<typeof detailGrid>, 'new', null, expected ? { ok: true, reasons: [] } : null);
     const calls: unknown[][] = [];
     const ops = {
       ...okOps,
-      writeCell: async (_page: unknown, spec: { row: number; column: string; value: string }) => { calls.push(['cell', spec.row, spec.column, spec.value]); return { ok: true }; },
+      writeCell: async (_page: unknown, spec: { row: number; column: string; value: string }) => { calls.push(['cell', spec.row, spec.column, spec.value]); form.write(spec.row, spec.column, spec.value); return { ok: true }; },
       selectOption: async (_page: unknown, spec: { row: number; column: string; option: string }) => { calls.push(['option', spec.row, spec.column, spec.option]); return { ok: true }; },
     };
     const added: string[] = [];
     const filled = await fillApprovedPreview({}, {
       approvedPreview: preview, approval, freshGate, readCurrent, ops,
-      addRow: async (_page, detail) => { added.push(detail.line.lineId); return { ok: true }; },
+      addRow: async (_page, detail) => { added.push(detail.line.lineId); form.addRow(); return { ok: true }; },
     });
     expect(filled.ok, !filled.ok ? filled.problems.map((p) => p.message).join('; ') : '').toBe(true);
     expect(added).toEqual(['ev-2', 'ev-3', 'ev-4']);
@@ -189,7 +241,7 @@ describe('ERP draft flow (草稿填写与保存)', () => {
     let stopped = false;
     const stoppedResult = await fillApprovedPreview({}, {
       approvedPreview: preview, approval, freshGate,
-      readCurrent: async (expected) => (expected ? readings(detailGrid(4), 'new', null, { ok: true, reasons: [] }) : readings(detailGrid(1), 'new', null, null)),
+      readCurrent: async (expected) => readings(detailGrid(1), 'new', null, expected ? { ok: true, reasons: [] } : null),
       ops: { ...ops, writeCell: async () => { stopped = true; return { ok: false, reason: '回读不一致' }; } },
       addRow: async () => ({ ok: true }),
     });

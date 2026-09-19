@@ -147,6 +147,20 @@ export type FakeErpOptions = {
    */
   editRowLingersTicks?: number;
   /**
+   * Money writes that land in the CELL and never reach ERP's model: `{ row, column }`, 0-based row, 费用金额 or
+   * 税额. The cell shows the typed value and reads back as written; ERP goes on computing 申请报销金额 from the
+   * value it kept, which this fake models as 0.00 — so a dropped 税额 leaves 申请报销金额 = 费用金额 and a
+   * dropped 费用金额 leaves 申请报销金额 = 税额.
+   *
+   * That is the live shape of 2026-09-20, where a fill wrote eleven 费用明细行, every cell read back the value
+   * typed into it, and three rows still carried a 申请报销金额 that was not 费用金额 + 税额: row 1 ¥32.18 + ¥0.32
+   * -> ¥32.18, row 2 ¥15.56 + ¥0.47 -> ¥0.47, row 11 ¥1,677.36 + ¥100.64 -> ¥1,677.36. The form total was
+   * 116.52 short and nothing in the fill noticed, because `writeCell` compares the cell it typed into. The
+   * MECHANISM is not modelled here (it has not been measured: the ERP host was unreachable for this round) —
+   * only the outcome ERP was observed to produce, so the fake stops being kinder than the live page.
+   */
+  moneyWritesNotTaken?: Array<{ row: number; column: '费用金额' | '税额' }>;
+  /**
    * How many ERP-page evaluations the freshly opened 发票类型 dropdown's own items sit under a cover — the list
    * painted, its items measurable, and `document.elementFromPoint` at the wanted item still answering the thing
    * on top of it.
@@ -409,9 +423,17 @@ const kendoDate = (raw: string) => {
     }
   }
 
+  // What ERP kept for a cell whose write never reached its model: the cell shows the typed value, the model does
+  // not have it. Keyed by the <td>, so it follows the row it belongs to.
+  const notTaken = new Map<any, string>();
+  const modelOf = (tr: any, column: string) => {
+    const td = cellOf(tr, 'detail', column);
+    return notTaken.has(td) ? notTaken.get(td)! : textOf(tr, 'detail', column);
+  };
+
   function recalc(tr: any) {
-    const net = cents(textOf(tr, 'detail', '费用金额'));
-    const tax = cents(textOf(tr, 'detail', '税额')) ?? 0;
+    const net = cents(modelOf(tr, '费用金额'));
+    const tax = cents(modelOf(tr, '税额')) ?? 0;
     const total = net === null ? '' : money(net + tax);
     setText(tr, 'detail', '申请报销金额', total);
     setText(tr, 'detail', '申请付款金额', total);
@@ -427,8 +449,8 @@ const kendoDate = (raw: string) => {
 
   function linkReceipt(tr: any) {
     if (!options.assumeReceiptLink || textOf(tr, 'detail', '收票单号')) return;
-    const net = cents(textOf(tr, 'detail', '费用金额'));
-    const tax = cents(textOf(tr, 'detail', '税额'));
+    const net = cents(modelOf(tr, '费用金额'));
+    const tax = cents(modelOf(tr, '税额'));
     const linked = new Set(dataRows('detail').map((row) => textOf(row, 'detail', '收票单号')).filter(Boolean));
     const hits = dataRows('receipts').filter((row) => cents(textOf(row, 'receipts', '不含税金额')) === net
       && cents(textOf(row, 'receipts', '税额')) === tax && !linked.has(textOf(row, 'receipts', '收票单')));
@@ -445,6 +467,10 @@ const kendoDate = (raw: string) => {
       ? kendoDate(String(input.value)) ?? before
       : display(column, String(input.value).trim());
     td.textContent = text;
+    // A write ERP does not take: the cell keeps the typed value, ERP's model keeps 0.00 (`moneyWritesNotTaken`).
+    const rowIndex = dataRows('detail').indexOf(tr);
+    if ((options.moneyWritesNotTaken ?? []).some((drop) => drop.row === rowIndex && drop.column === column)) notTaken.set(td, '0.00');
+    else notTaken.delete(td);
     leaveEditClass(tr);
     mutate('cell', `${column}=${text}`);
     // Linked recalculation: a new 费用金额 clears 税额 (kernel erpform settleGrid note).
