@@ -5,6 +5,10 @@ one of the two 处置 (dispositions), 原地等待 or 转人工. The classificat
 employee sees for each breakpoint had never been designed, and the six differ on the question they most want answered.
 Decided in [#232](https://github.com/liumingjian/reimburse-ai/issues/232).
 
+> **Amended again 2026-09-19 by [ADR-0028](0028-baox-fills-the-form-the-employee-saves-it.md).** baox no longer
+> clicks 保存, so 未保存·就绪待保存 leaves the breakpoint table and becomes the success reading — a filled,
+> read-back, unsaved form is what a hand-over looks like. 已保存 now means the employee saved it themselves.
+>
 > **Amended 2026-09-19 by [ADR-0027](0027-recovery-after-an-import-that-was-never-saved.md).** Two rows of the
 > table below changed. The premise for sending 未保存·已导入未写明细 to 转人工 — "the invoices are consumed and
 > the import cannot be replayed" — was false: ADR-0026 shows the ERP overwrites the 收票单 on re-import. The rest
@@ -23,9 +27,9 @@ Decided in [#232](https://github.com/liumingjian/reimburse-ai/issues/232).
   | 中断点 | 处置 | Exit offered |
   | --- | --- | --- |
   | 未保存·导入前 | 原地等待 | 重新去报销, stating plainly that no ERP write happened and no invoice is occupied |
-  | 未保存·已导入未写明细 | ~~转人工~~ 原地等待 | 重新去报销 when this job started no `save` attempt, else 转人工 ([ADR-0027](0027-recovery-after-an-import-that-was-never-saved.md)) |
-  | 未保存·就绪待保存 | 转人工 (but `reconcile.ts` returns 原地等待 — unresolved, see ADR-0027) | 重新去报销 under the same gate, else 转人工 |
-  | 已保存, identity holds | 原地等待 | This is success: it projects as ERP 草稿已交接 and the word 对账 never appears |
+  | 未保存·已导入未写明细 | ~~转人工~~ 原地等待 | 重新去报销 while the ERP shows no 单据编号 ([ADR-0027](0027-recovery-after-an-import-that-was-never-saved.md), as restated by ADR-0028), else 转人工 |
+  | ~~未保存·就绪待保存~~ | not a breakpoint | Success: the form is filled and handed over for the employee to save ([ADR-0028](0028-baox-fills-the-form-the-employee-saves-it.md)) |
+  | 已保存, identity holds | 原地等待 | Success: the employee has saved it. It projects as ERP 单据已交接 and the word 对账 never appears |
   | 已保存, identity fails | 转人工 | 转人工 |
   | 未知 | 原地等待 | 再对一次账 / 转人工 |
 

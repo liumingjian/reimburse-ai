@@ -8,6 +8,14 @@ grounds that "the invoices are consumed and the import cannot be replayed".
 
 This ADR designs what replaces it. Decided in a grilling round on 2026-09-19.
 
+> **Restated the same day by [ADR-0028](0028-baox-fills-the-form-the-employee-saves-it.md).** baox no longer clicks
+> 保存, so "this job started no `save` attempt" is vacuously true and carries no information. The gate becomes
+> observational: **重新去报销 is offered while the ERP shows no 单据编号.** A 单据编号 means the employee has saved,
+> and re-importing would land in the one cell ADR-0026 left blank, so that case keeps 转人工. Everything below —
+> why the prohibition is narrower than it was read, where the gate lives, what the recovery does, the task-owned
+> 收票占用 — stands unchanged; only the predicate is different. The section on 未保存·就绪待保存 is superseded:
+> that bucket is no longer a breakpoint at all.
+
 ## The replay prohibition is narrower than it was read
 
 ADR-0016: "Any loss after it (server restart, executor crash, lost connection, drift) becomes ERP 写入结果未知
