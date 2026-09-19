@@ -8,6 +8,7 @@ import type { FillExecutor } from './erp/fill-jobs';
 import { RECEIPT_LINK_NOTE } from './erp/fill-plan';
 import { COMPATIBILITY, ERP_ACCOUNT, ERP_ORIGIN, FAST_PACE, fakeErpOptions } from './erp/testing/scenario';
 import { api, sample } from './test/api';
+import { BACKSTOP_MS } from './test/deadlines';
 import { createTestServer, type TestClient, type TestServer } from './test/harness';
 
 // The real executor (`runFillJob`) on the fake ERP, with the fill plan and the judge built from the task's confirmed
@@ -56,7 +57,7 @@ async function confirmed(assumeReceiptLink: boolean): Promise<TaskSnapshot> {
 }
 
 async function settledErp(taskId: string): Promise<TaskSnapshot> {
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + BACKSTOP_MS;
   for (;;) {
     const snapshot = await client.current(taskId);
     if (snapshot.erp.status !== 'running') return snapshot;
