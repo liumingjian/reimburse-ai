@@ -42,6 +42,10 @@
       <span data-action="section">付款信息</span>
       <span data-action="section">明细信息</span>
       <span data-action="section">收票信息</span>
+      <!-- The ERP's own blocking overlay while a form opens (`kd-ui-blockingExtention-item`): it covers the top
+           bar, so a section anchor's point answers IT and the navigation click is swallowed. Hidden unless
+           `sectionOverlayTicks` puts it up. -->
+      <div id="form-blocker" class="kd-ui-blockingExtention-item" style="display:none"></div>
     </div>
     <div class="form-toolbar"><span class="kd-btn" data-action="save">保存</span></div>
     <div class="header-fields">

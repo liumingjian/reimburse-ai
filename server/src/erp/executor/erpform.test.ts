@@ -19,9 +19,9 @@ describe('erpform write primitives on a fake CDP session', () => {
 
   it('clicks at the read-back coordinates and counts as matched only when the value agrees', async () => {
     const s = fakeSession([
-      { ok: true, column: '费用金额', text: '0.00', x: 900, y: 420, inView: true },
-      { ok: true, column: '费用金额', text: '', x: 900, y: 420, inView: true, editing: true, focused: true, editorBound: true },
-      { ok: true, column: '费用金额', text: '18.25', x: 900, y: 420, inView: true },
+      { ok: true, column: '费用金额', text: '0.00', x: 900, y: 420, inView: true, onTarget: true },
+      { ok: true, column: '费用金额', text: '', x: 900, y: 420, inView: true, onTarget: true, editing: true, focused: true, editorBound: true },
+      { ok: true, column: '费用金额', text: '18.25', x: 900, y: 420, inView: true, onTarget: true },
     ]);
     const r = await writeCell(s, { column: '费用金额', value: '18.25', clicks: 1, readyMs: 0, settleMs: 0, settleFirst: false });
     expect({ ok: r.ok, before: r.before, after: r.after, matched: r.matched }).toEqual({ ok: true, before: '0.00', after: '18.25', matched: true });
@@ -31,9 +31,9 @@ describe('erpform write primitives on a fake CDP session', () => {
 
   it('writes an F7 field by code and reads back a name: only a caller-given expectation makes it pass', async () => {
     const frames = () => [
-      { ok: true, column: '费用项目', text: '', x: 500, y: 420, inView: true },
-      { ok: true, column: '费用项目', text: '', x: 500, y: 420, inView: true, editing: true, focused: true, editorBound: true },
-      { ok: true, column: '费用项目', text: '本地市内交通', x: 500, y: 420, inView: true },
+      { ok: true, column: '费用项目', text: '', x: 500, y: 420, inView: true, onTarget: true },
+      { ok: true, column: '费用项目', text: '', x: 500, y: 420, inView: true, onTarget: true, editing: true, focused: true, editorBound: true },
+      { ok: true, column: '费用项目', text: '本地市内交通', x: 500, y: 420, inView: true, onTarget: true },
     ];
     const named = fakeSession(frames());
     const r = await writeCell(named, { column: '费用项目', value: 'FY008001', expect: { mode: 'equals', value: '本地市内交通' }, clicks: 1, readyMs: 0, settleMs: 0, settleFirst: false });
@@ -45,8 +45,8 @@ describe('erpform write primitives on a fake CDP session', () => {
 
   it('does not count an unreadable field as written', async () => {
     const s = fakeSession([
-      { ok: true, column: '税额', text: '0.00', x: 700, y: 420, inView: true },
-      { ok: true, column: '税额', text: '', x: 700, y: 420, inView: true, editing: true, focused: true, editorBound: true },
+      { ok: true, column: '税额', text: '0.00', x: 700, y: 420, inView: true, onTarget: true },
+      { ok: true, column: '税额', text: '', x: 700, y: 420, inView: true, onTarget: true, editing: true, focused: true, editorBound: true },
       { ok: false, reason: '这个网格里没有「税额」列' },
     ]);
     const r = await writeCell(s, { column: '税额', value: '0.55', clicks: 1, readyMs: 0, settleMs: 0, settleFirst: false });
@@ -56,9 +56,9 @@ describe('erpform write primitives on a fake CDP session', () => {
 
   it('commits a header with Tab: the purpose must really blur, Enter does not count', async () => {
     const s = fakeSession([
-      { ok: true, id: 'u-FCAUSA-EDITOR', value: '', x: 300, y: 200, inView: true },
-      { ok: true, id: 'u-FCAUSA-EDITOR', value: '', x: 300, y: 200, inView: true, focused: true },
-      { ok: true, id: 'u-FCAUSA-EDITOR', value: '客户支持', x: 300, y: 200, inView: true },
+      { ok: true, id: 'u-FCAUSA-EDITOR', value: '', x: 300, y: 200, inView: true, onTarget: true },
+      { ok: true, id: 'u-FCAUSA-EDITOR', value: '', x: 300, y: 200, inView: true, onTarget: true, focused: true },
+      { ok: true, id: 'u-FCAUSA-EDITOR', value: '客户支持', x: 300, y: 200, inView: true, onTarget: true },
     ]);
     const r = await writeHeader(s, 'FCAUSA', '客户支持', { readyMs: 0, settleMs: 0 });
     expect(r.matched).toBe(true);
@@ -84,9 +84,9 @@ describe('erpform write primitives on a fake CDP session', () => {
 
   it('does not count a value visible in an editing input as written', async () => {
     const s = fakeSession([
-      { ok: true, column: '费用金额', text: '0.00', x: 900, y: 420, inView: true, editing: false, editValue: null },
-      { ok: true, column: '费用金额', text: '', x: 900, y: 420, inView: true, editing: true, focused: true, editorBound: true, editValue: null },
-      { ok: true, column: '费用金额', text: '', x: 900, y: 420, inView: true, editing: true, editValue: '18.25' },
+      { ok: true, column: '费用金额', text: '0.00', x: 900, y: 420, inView: true, onTarget: true, editing: false, editValue: null },
+      { ok: true, column: '费用金额', text: '', x: 900, y: 420, inView: true, onTarget: true, editing: true, focused: true, editorBound: true, editValue: null },
+      { ok: true, column: '费用金额', text: '', x: 900, y: 420, inView: true, onTarget: true, editing: true, editValue: '18.25' },
     ]);
     const r = await writeCell(s, { column: '费用金额', value: '18.25', clicks: 1, readyMs: 0, settleMs: 0, settleFirst: false });
     expect(r.matched, 'the input value must not stand in for the non-editing cell text').toBe(false);
@@ -96,9 +96,9 @@ describe('erpform write primitives on a fake CDP session', () => {
 
   it('stops when the dropdown has no exactly-equal option instead of picking a look-alike', async () => {
     const s = fakeSession([
-      { ok: true, column: '发票类型', text: '普通发票', x: 594, y: 286, inView: true },
-      [{ text: '普通发票', x: 594, y: 341 }, { text: '增值税发票', x: 594, y: 365 }],
-      { ok: true, column: '发票类型', text: '普通发票', x: 594, y: 286, inView: true, editing: true, focused: true, editorBound: true },
+      { ok: true, column: '发票类型', text: '普通发票', x: 594, y: 286, inView: true, onTarget: true },
+      [{ text: '普通发票', x: 594, y: 341, inView: true, onTarget: true }, { text: '增值税发票', x: 594, y: 365, inView: true, onTarget: true }],
+      { ok: true, column: '发票类型', text: '普通发票', x: 594, y: 286, inView: true, onTarget: true, editing: true, focused: true, editorBound: true },
     ]);
     const r = await selectOption(s, { column: '发票类型', option: '其他运输票', readyMs: 0 });
     expect(r.ok).toBe(false);
@@ -109,9 +109,9 @@ describe('erpform write primitives on a fake CDP session', () => {
 
   it('does not guess between several same-named options', async () => {
     const s = fakeSession([
-      { ok: true, column: '发票类型', text: '', x: 594, y: 286, inView: true },
-      [{ text: '其他', x: 1, y: 2 }, { text: '其他', x: 1, y: 3 }],
-      { ok: true, column: '发票类型', text: '', x: 594, y: 286, inView: true, editing: true, focused: true, editorBound: true },
+      { ok: true, column: '发票类型', text: '', x: 594, y: 286, inView: true, onTarget: true },
+      [{ text: '其他', x: 1, y: 2, inView: true, onTarget: true }, { text: '其他', x: 1, y: 3, inView: true, onTarget: true }],
+      { ok: true, column: '发票类型', text: '', x: 594, y: 286, inView: true, onTarget: true, editing: true, focused: true, editorBound: true },
     ]);
     const r = await selectOption(s, { column: '发票类型', option: '其他', readyMs: 0 });
     expect(r.ok).toBe(false);
@@ -119,8 +119,8 @@ describe('erpform write primitives on a fake CDP session', () => {
   });
 
   it("clicks the chosen option's own coordinates, and a stale read-back means nothing was written", async () => {
-    const base = (text: string) => ({ ok: true, column: '发票类型', text, x: 594, y: 286, inView: true, editing: true, focused: true, editorBound: true });
-    const list = [{ text: '普通发票', x: 594, y: 341 }, { text: '其他运输票', x: 594, y: 436 }];
+    const base = (text: string) => ({ ok: true, column: '发票类型', text, x: 594, y: 286, inView: true, onTarget: true, editing: true, focused: true, editorBound: true });
+    const list = [{ text: '普通发票', x: 594, y: 341, inView: true, onTarget: true }, { text: '其他运输票', x: 594, y: 436, inView: true, onTarget: true }];
     const ok = fakeSession([base('普通发票'), list, base('普通发票'), base('其他运输票')]);
     const r = await selectOption(ok, { column: '发票类型', option: '其他运输票', readyMs: 0, settleMs: 0 });
     expect(r.ok).toBe(true);
@@ -134,23 +134,37 @@ describe('erpform write primitives on a fake CDP session', () => {
 
   it('accepts a currency sign on money read-backs, but normalises only number shapes', async () => {
     const money = fakeSession([
-      { ok: true, column: '费用金额', text: '0.00', x: 900, y: 420, inView: true },
-      { ok: true, column: '费用金额', text: '', x: 900, y: 420, inView: true, editing: true, focused: true, editorBound: true },
-      { ok: true, column: '费用金额', text: '¥18.25', x: 900, y: 420, inView: true },
+      { ok: true, column: '费用金额', text: '0.00', x: 900, y: 420, inView: true, onTarget: true },
+      { ok: true, column: '费用金额', text: '', x: 900, y: 420, inView: true, onTarget: true, editing: true, focused: true, editorBound: true },
+      { ok: true, column: '费用金额', text: '¥18.25', x: 900, y: 420, inView: true, onTarget: true },
     ]);
     expect((await writeCell(money, { column: '费用金额', value: '18.25', readyMs: 0, settleMs: 0, settleFirst: false })).matched).toBe(true);
     const textCell = fakeSession([
-      { ok: true, column: '费用项目', text: '', x: 900, y: 420, inView: true },
-      { ok: true, column: '费用项目', text: '', x: 900, y: 420, inView: true, editing: true, focused: true, editorBound: true },
-      { ok: true, column: '费用项目', text: '本地市内交通', x: 900, y: 420, inView: true },
+      { ok: true, column: '费用项目', text: '', x: 900, y: 420, inView: true, onTarget: true },
+      { ok: true, column: '费用项目', text: '', x: 900, y: 420, inView: true, onTarget: true, editing: true, focused: true, editorBound: true },
+      { ok: true, column: '费用项目', text: '本地市内交通', x: 900, y: 420, inView: true, onTarget: true },
     ]);
     expect((await writeCell(textCell, { column: '费用项目', value: 'FY008001', readyMs: 0, settleMs: 0, settleFirst: false })).matched).toBe(false);
   });
 
+  // V-56: a 处理结果 window floating at z-index 10005 with no 遮罩 owns every point under it, so a click aimed at
+  // the cell is delivered to the report and the cell never enters edit mode. Refused before the click, naming the
+  // cover — 「这一格里没有绑好的编辑控件」 was an accusation against a cell that was exactly where it said it was.
+  it('does not click a cell a floating window is sitting on, and names what is at the point', async () => {
+    const s = fakeSession([
+      { ok: true, column: '费用金额', text: '0.00', x: 900, y: 420, inView: true, onTarget: false,
+        cover: { tag: 'SPAN', id: '', cls: 'k-window-message', text: '接收发票 成功' } },
+    ]);
+    const r = await writeCell(s, { column: '费用金额', value: '18.25', clicks: 1, readyMs: 0, settleMs: 0, settleFirst: false });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('SPAN「接收发票 成功」');
+    expect(inputs(s).length, 'a covered cell is not clicked at all').toBe(0);
+  });
+
   it('types nothing when the cell has no bound editor: typed keys would be dropped silently', async () => {
     const s = fakeSession([
-      { ok: true, column: '费用金额', text: '0.00', x: 900, y: 420, inView: true },
-      { ok: true, column: '费用金额', text: '0.00', x: 900, y: 420, inView: true, editing: true, focused: true, focusTag: 'TD', editorBound: false },
+      { ok: true, column: '费用金额', text: '0.00', x: 900, y: 420, inView: true, onTarget: true },
+      { ok: true, column: '费用金额', text: '0.00', x: 900, y: 420, inView: true, onTarget: true, editing: true, focused: true, focusTag: 'TD', editorBound: false },
     ]);
     const r = await writeCell(s, { column: '费用金额', value: '18.25', clicks: 1, readyMs: 0, settleMs: 0, settleFirst: false });
     expect(r.ok).toBe(false);
@@ -160,9 +174,9 @@ describe('erpform write primitives on a fake CDP session', () => {
 
   it('treats a stale old value as not written, even when the cell already had one', async () => {
     const s = fakeSession([
-      { ok: true, column: '费用金额', text: '¥18.25', x: 900, y: 420, inView: true },
-      { ok: true, column: '费用金额', text: '¥18.25', x: 900, y: 420, inView: true, editing: true, focused: true, editorBound: true },
-      { ok: true, column: '费用金额', text: '¥18.25', x: 900, y: 420, inView: true },
+      { ok: true, column: '费用金额', text: '¥18.25', x: 900, y: 420, inView: true, onTarget: true },
+      { ok: true, column: '费用金额', text: '¥18.25', x: 900, y: 420, inView: true, onTarget: true, editing: true, focused: true, editorBound: true },
+      { ok: true, column: '费用金额', text: '¥18.25', x: 900, y: 420, inView: true, onTarget: true },
     ]);
     const r = await writeCell(s, { column: '费用金额', value: '644.95', clicks: 1, readyMs: 0, settleMs: 0, settleFirst: false });
     expect(r.ok).toBe(false);
@@ -170,7 +184,7 @@ describe('erpform write primitives on a fake CDP session', () => {
   });
 
   it('passes a rewrite of the value already present; it is not "no change"', async () => {
-    const same = { ok: true, column: '项目', text: '某某项目-25-111454', x: 900, y: 420, inView: true };
+    const same = { ok: true, column: '项目', text: '某某项目-25-111454', x: 900, y: 420, inView: true, onTarget: true };
     const s = fakeSession([same, { ...same, editing: true, focused: true, editorBound: true }, same]);
     const r = await writeCell(s, { column: '项目', value: '111454', expect: { mode: 'endsWith', value: '-111454' }, clicks: 1, readyMs: 0, settleMs: 0, settleFirst: false });
     expect(r.ok).toBe(true);
@@ -178,8 +192,8 @@ describe('erpform write primitives on a fake CDP session', () => {
 
   it('types nothing into a header control that did not take focus', async () => {
     const s = fakeSession([
-      { ok: true, id: 'u-FCAUSA-EDITOR', value: '', x: 300, y: 200, inView: true },
-      { ok: true, id: 'u-FCAUSA-EDITOR', value: '', x: 300, y: 200, inView: true, focused: false },
+      { ok: true, id: 'u-FCAUSA-EDITOR', value: '', x: 300, y: 200, inView: true, onTarget: true },
+      { ok: true, id: 'u-FCAUSA-EDITOR', value: '', x: 300, y: 200, inView: true, onTarget: true, focused: false },
     ]);
     const r = await writeHeader(s, 'FCAUSA', '客户支持', { readyMs: 0, settleMs: 0 });
     expect(r.ok).toBe(false);
@@ -209,14 +223,23 @@ const fakeNode = (
   scrollIntoView: () => scrolled.push(id),
 });
 
-async function runHeaderField(nodes: FakeHeaderNode[], { scroll = true, key = 'FBILLNO' } = {}) {
+/**
+ * A stand-in for whatever is painted at the field's point. `null` models a clear form: a node that contains
+ * everything, which is what the real page answers when the control's own wrapper is on top. `cover` models the
+ * V-56 shape — a report window owning the point instead.
+ */
+const TOP_OF_THE_STACK = { tagName: 'DIV', id: '', className: '', textContent: '', contains: () => true };
+const COVERING_REPORT = { tagName: 'SPAN', id: '', className: 'k-window-message', textContent: '接收发票 成功', contains: () => false };
+
+async function runHeaderField(nodes: FakeHeaderNode[], { scroll = true, key = 'FBILLNO', covered = false } = {}) {
   const probe = fakeSession([null]);
   await headerField(probe, key, { scroll });
   const [expression] = expressions(probe);
   const scrolled: string[] = [];
   const built = nodes.map((n) => fakeNode(n, { scrolled, all: nodes }));
   const ctx = {
-    document: { querySelectorAll: () => built, activeElement: null },
+    document: { querySelectorAll: () => built, activeElement: null,
+      elementFromPoint: () => (covered ? COVERING_REPORT : TOP_OF_THE_STACK) },
     getComputedStyle: (n: { id: string }) => {
       const hidden = nodes.find((x) => x.id === n.id)?.visible === false;
       return { visibility: hidden ? 'hidden' : 'visible', display: hidden ? 'none' : 'block' };
@@ -251,6 +274,17 @@ describe('headerField fails closed (issue #36 backlog)', () => {
     expect(result.reason).toBeUndefined();
     expect([result.ok, result.visibleInstances, result.visibleNodes]).toEqual([true, 1, 2]);
     expect([result.id, result.instance, result.value]).toEqual(['aaa-FCAUSA-EDITOR', 'aaa', '广州本地用车']);
+  });
+
+  // The locator is asked one more question than «where is it»: what a mouse event sent there would reach. Live
+  // 2026-09-19 the answer was a SPAN「接收发票」 inside the 处理结果 window floating over the form, and the write
+  // that followed blamed the control for not taking focus.
+  it('reports what is at the field\'s point, so a covered field is never typed into', async () => {
+    const nodes = [{ id: 'aaa-FCAUSA-EDITOR', value: '' }];
+    expect(await runHeaderField(nodes, { key: 'FCAUSA' }).then((r) => r.result.onTarget)).toBe(true);
+    const { result } = await runHeaderField(nodes, { key: 'FCAUSA', covered: true });
+    expect(result.ok, 'the field is still found: being covered is not being missing').toBe(true);
+    expect([result.onTarget, result.cover.tag, result.cover.text]).toEqual([false, 'SPAN', '接收发票 成功']);
   });
 
   it('gives a value only for exactly one visible instance; the read-only probe never scrolls', async () => {

@@ -8,6 +8,7 @@ import type { Db } from '../db/database';
 import { createTaskService } from '../tasks';
 import { createTestServer, type TestServer } from '../test/harness';
 import { runFillJob } from './executor/job';
+import { writeHeader } from './executor/erpform';
 import { captureErpError, importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type ImportBudget, type WritePage } from './executor/steps';
 import { createFakeErp, type FakeErp } from './executor/testing/fake-erp';
 import { createErpJobs, serverChannel, type ErpJobs } from './jobs';
@@ -102,6 +103,27 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(fake.mutations.map((m) => m.kind).filter((k, i, all) => all.indexOf(k) === i)).toEqual(['import', 'header', 'cell', 'option', 'addRow']);
   });
 
+  // The whole point of fixing D-A and D-B together: a report that will not close must never be allowed to turn a
+  // successful import into a mystery. The import is done and judged; the fill has not started and will not start
+  // over a form with something floating on it — and the refusal is decided BEFORE `attempt_started` for the fill,
+  // so no fill attempt is ever recorded for a fill that never touched the form.
+  it('stops before the fill attempt when a window will not leave the form, and tells the employee the invoices are bound', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, importReportStaysOpen: true }));
+    const result = await run(fake);
+    expect(result).toMatchObject({ type: 'result', status: 'unknown', code: 'form_obstructed_before_fill' });
+    // The first sentence is the part that is certain: the invoices are bound. Then what is in the way.
+    expect(result.message).toContain('发票已经全部导入并绑定');
+    expect(result.message).toContain('处理结果');
+    expect(result.message).not.toContain('结果不确定');
+    // One attempt, not two: the fill never started, so the task carries no record of a fill that wrote nothing.
+    expect((await jobs.attempts(`job-${taskId}`)).map((a) => a.action)).toEqual(['import']);
+    // The import's read-back still ran and still passed; nothing after it did.
+    const events = await jobs.events(`job-${taskId}`);
+    expect(events.filter((e) => e.type === 'readback').map((e) => (e as { stage: string }).stage)).toEqual(['after_import']);
+    // Nothing was typed into the form or into the report.
+    expect(fake.mutations.map((m) => m.kind)).toEqual(['import']);
+  });
+
   it('makes no mutation before the server acknowledges attempt_started', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
     const order: string[] = [];
@@ -183,7 +205,19 @@ describe('fill job through the protocol on the fake ERP', () => {
     // was dispatched at that point, `document.elementFromPoint` there was null, and the assistant never opened.
     const fake = await createFakeErp(fakeErpOptions({ notFillEntryBelowFold: true, assumeReceiptLink: true }));
     const result = await run(fake);
-    expect(result.status).toBe('handed_over');
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'handed_over' });
+    expect(fake.mutations.map((m) => m.kind)).toContain('import');
+  });
+
+  // Live 2026-09-19, the round after V-56 was fixed: the very first act of 去报销 after the form opened —
+  // clicking the 收票信息 区域锚点 at (312, 145) — hit-tested to an anonymous DIV, the ERP's own blocking overlay
+  // over the top bar while the form finishes opening. That is a form that is BUSY, not stuck. Reading the anchor
+  // once and refusing stopped a run that would have gone through a second later; clicking it anyway sends the
+  // navigation into the overlay and calls a section shown that never was.
+  it('outwaits the blocking overlay a form paints over its own section anchors', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, sectionOverlayTicks: 6 }));
+    const result = await run(fake);
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'handed_over' });
     expect(fake.mutations.map((m) => m.kind)).toContain('import');
   });
 
@@ -206,7 +240,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     delete process.env['BAOX_ERP_STOP_BEFORE_IMPORT'];
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
     const result = await run(fake);
-    expect(result.status).toBe('handed_over');
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'handed_over' });
     expect(fake.mutations.map((m) => m.kind)).toContain('import');
   });
 
@@ -422,6 +456,45 @@ describe('the 发票导入单据 click', () => {
     const budget = { appearMs: 2000, stallMs: 30, hardCapMs: 4000 };
     await expect(uploadAndImport(page, [rail!, ride!], budget))
       .rejects.toMatchObject({ code: 'INVOICE_IMPORT_NOT_ANSWERED', message: /没有任何变化/ });
+  });
+
+  // V-56, and the class behind it: a wait whose verdict is discarded, and a click on a point nobody hit-tested.
+  //
+  // Live 2026-09-19 a 去报销 imported ten invoices cleanly, judged them cleanly, passed the `after_import`
+  // read-back, started 填费用明细 for the first time ever and died 4.1 s later on `header_write_failed`
+  // 「点了表头字段 FCAUSA 之后焦点没有落进这个控件」. The locator was right and the field was where it said.
+  // The 处理结果 window had survived the import's 退出 and floated over the form at z-index 10005 with no 遮罩:
+  // `elementFromPoint(371, 334)` answered a SPAN「接收发票」 inside the report. `importInvoices` had clicked a
+  // point it never hit-tested and thrown away the verdict of the wait that followed, so it returned `{ok:true}`
+  // over a report that was still standing.
+  it('says whether 处理结果 actually closed, instead of returning ok over a report that is still up', async () => {
+    const [rail, ride] = INVOICES;
+    const fake = await createFakeErp(fakeErpOptions({ importReportStaysOpen: true }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    const imported = await uploadAndImport(page, [rail!, ride!]);
+    // The import itself went right and still says so: this is not an error, and reporting it as one would call a
+    // completed irreversible act a failure.
+    expect(imported).toMatchObject({ ok: true, reportClosed: false });
+    expect(imported.report).toContain('全部执行成功：2');
+    expect(imported.stillOpen.join(' ')).toContain('处理结果');
+    expect(windowText(fake, '#result-window')).toContain('处理结果');
+  });
+
+  it('writes nothing into a header field the report is sitting on, and names what is in the way', async () => {
+    const [rail, ride] = INVOICES;
+    const fake = await createFakeErp(fakeErpOptions({ importReportStaysOpen: true }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    await uploadAndImport(page, [rail!, ride!]);
+    const written = await writeHeader(fake.session, 'FCAUSA', '客户支持', { pace: FAST_PACE, settleMs: 1 });
+    // 「焦点没有落进这个控件」 is what this said live, and it is an accusation against a control that was fine.
+    expect(written.ok).toBe(false);
+    // Names what is at the point — the report's own window — rather than accusing the control.
+    expect(written.reason).toContain('盖着SPAN');
+    expect(written.reason).not.toContain('焦点没有落进');
+    // Refused before the click, so nothing was typed anywhere — not into the report, not into the form.
+    expect(fake.mutations.map((m) => m.kind)).not.toContain('header');
   });
 
   it('carries ERP\'s own refusal for the invoices it would not take, and leaves 处理结果 open for the capture', async () => {

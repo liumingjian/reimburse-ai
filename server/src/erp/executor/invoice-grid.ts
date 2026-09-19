@@ -21,8 +21,9 @@
 // into view, re-measure, refuse with a reason if it is still not reachable, act, and read the result back on the
 // same identity. A relocation is diagnosis, so a row gets at most one; a loop would be denial.
 
-import { clickAt, evalIn, type CdpSession } from './cdp';
+import { evalIn, type CdpSession } from './cdp';
 import { ExecutorError } from './chromium';
+import { HIT_JS, clickReach, describeCover, type Cover, type Reach } from './hit';
 import { DEFAULT_PACE, sleep, waitFor, type Pace } from './pace';
 
 export type GridPage = { pace?: Pace };
@@ -39,9 +40,10 @@ const HELPERS = `
   const numberCol = () => [...document.querySelectorAll('thead th')].map(text).findIndex((h) => h.includes('发票号码'));
   const rows = () => [...document.querySelectorAll('tbody tr')].filter((tr) => vis(tr) && !/measure-row/.test(String(tr.className)));
   const keyOf = (tr) => { const col = numberCol(); const cell = col < 0 ? null : [...tr.querySelectorAll('td')][col]; return cell ? text(cell) : null; };
-  const inView = (b) => b.top >= 0 && b.bottom <= window.innerHeight && b.left >= 0 && b.right <= window.innerWidth;
-  const at = (n) => { const b = n.getBoundingClientRect();
-    return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2), inView: inView(b) }; };
+  // Where to click a node and what a mouse event there would actually reach: the one rule from hit.ts, the same
+  // one the ERP page's own clicks go through. The table has no inner scroller, so scrollIntoView scrolls the
+  // assistant's own document, and this is the answer a real mouse event would get at that point.
+  const at = ${HIT_JS};
   // A tab's caption is the 票种 plus its count (\`数电票 10\`); the count is the assistant's own, not a row count.
   const paneOf = (n, i) => { const caption = text(n); const m = /(\\d+)\\s*$/.exec(caption);
     return { index: i, caption, label: caption.replace(/\\s*\\d+\\s*$/, '').trim() || caption,
@@ -50,9 +52,8 @@ const HELPERS = `
 
 export type Pane = { index: number; caption: string; label: string; count: number | null; active: boolean };
 export type PaneRow = { key: string | null; checked: boolean };
-export type RowTarget = {
-  ok: boolean; reason?: string; count?: number; checked?: boolean; disabled?: boolean;
-  x?: number; y?: number; inView?: boolean; onTop?: { tag: string; cls: string; isTarget: boolean } | null;
+export type RowTarget = Partial<Reach> & {
+  ok: boolean; reason?: string; count?: number; checked?: boolean; disabled?: boolean; cover?: Cover | null;
 };
 
 /** The 票种 tab strip. An assistant with no tab strip is one pane, and the walk below is a walk of length one. */
@@ -91,13 +92,7 @@ const rowTarget = (assistant: CdpSession, key: string, { scroll = true } = {}) =
     const input = hit[0].querySelector('input.ant-checkbox-input');
     if (!input) return { ok: false, reason: 'checkbox', count: 0 };
     if (${scroll ? 'true' : 'false'}) input.scrollIntoView({ block: 'center' });
-    const point = at(input);
-    // The table has no inner scroller, so scrollIntoView scrolls the assistant's own document, and this is the
-    // answer a real mouse event would get at that point.
-    const top = point.inView ? document.elementFromPoint(point.x, point.y) : null;
-    return { ok: true, checked: input.checked, disabled: input.disabled, ...point,
-      onTop: top ? { tag: top.tagName, cls: String(top.className || '').slice(0, 70),
-        isTarget: top === input || top === input.parentElement || top.contains(input) } : null };
+    return { ok: true, checked: input.checked, disabled: input.disabled, ...at(input) };
   })()`);
 
 const tabTarget = (assistant: CdpSession, label: string) =>
@@ -108,6 +103,10 @@ const tabTarget = (assistant: CdpSession, label: string) =>
     hit[0].scrollIntoView({ block: 'center' });
     return { ok: true, caption: text(hit[0]), ...at(hit[0]) };
   })()`);
+
+/** What is in the way of a point that was found but cannot be clicked, in the employee's words. */
+const obstruction = (target: RowTarget | null | undefined) =>
+  target?.inView === false ? '滚动之后仍然不在可见范围内' : `上面盖着${describeCover(target?.cover)}，点不到它`;
 
 const where = (pane: string | null, key: string) => (pane ? `「${pane}」里的发票 ${key}` : `发票 ${key}`);
 
@@ -133,14 +132,14 @@ async function ensureTicked(page: GridPage, assistant: CdpSession, pane: string 
       throw new ExecutorError('INVOICE_SELECTION_UNCONFIRMED',
         `发票助手里${where(pane, key)}滚动之后仍然不在可见范围内（y=${target.y}），不在看不见的地方点击，${NOTHING_IMPORTED}`);
     }
-    if (!target.onTop || !target.onTop.isTarget) {
+    if (!target.onTarget) {
       throw new ExecutorError('INVOICE_SELECTION_OBSTRUCTED',
-        `发票助手里${where(pane, key)}的勾选框上面盖着${target.onTop ? `另一个元素（${target.onTop.tag}${target.onTop.cls ? ` class=${target.onTop.cls}` : ''}）` : '空白'}，点不到它，${NOTHING_IMPORTED}`);
+        `发票助手里${where(pane, key)}的勾选框${obstruction(target)}，${NOTHING_IMPORTED}`);
     }
     // The relocation is the diagnosis: a point already known not to have worked is not clicked a second time.
     if (clickedAt && target.x === clickedAt.x && target.y === clickedAt.y) break;
     clickedAt = { x: target.x!, y: target.y! };
-    await clickAt(assistant, clickedAt.x, clickedAt.y);
+    await clickReach(assistant, target, `发票助手里${where(pane, key)}的勾选框`, 'INVOICE_SELECTION_OBSTRUCTED');
     const after = await confirmed();
     if (after?.ok && after.checked) return { key, clicked: true };
   }
@@ -151,12 +150,14 @@ async function ensureTicked(page: GridPage, assistant: CdpSession, pane: string 
 /** Bring one 票种 pane to the front and wait until it is the active one. */
 async function switchTo(page: GridPage, assistant: CdpSession, label: string) {
   const pace = paceOf(page);
+  // Hit-tested like every other click: an assistant that paints a 温馨提示 over its own tab strip would otherwise
+  // swallow the switch, and the walk would tick one pane twice and call the other one empty.
   const target = await tabTarget(assistant, label);
-  if (!target?.ok || !target.inView) {
+  if (!target?.ok || !target.onTarget) {
     throw new ExecutorError('INVOICE_GROUP_SWITCH_FAILED',
-      `发票助手里「${label}」这一类发票的页签${target?.ok ? '不在可见范围内' : `匹配到 ${target?.count ?? 0} 个`}，切不过去，${NOTHING_IMPORTED}`);
+      `发票助手里「${label}」这一类发票的页签${target?.ok ? obstruction(target) : `匹配到 ${target?.count ?? 0} 个`}，切不过去，${NOTHING_IMPORTED}`);
   }
-  await clickAt(assistant, target.x!, target.y!);
+  await clickReach(assistant, target, `发票助手里「${label}」的页签`, 'INVOICE_GROUP_SWITCH_FAILED');
   const shown = await waitFor(() => readPane(assistant), (value) => value?.active === label, cap(page, 15_000), pace.pollMs);
   if (shown?.active !== label) {
     throw new ExecutorError('INVOICE_GROUP_SWITCH_FAILED',

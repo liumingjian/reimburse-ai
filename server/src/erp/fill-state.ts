@@ -203,6 +203,16 @@ function stepsOf(record: ErpRecord): ErpStep[] {
 const CATALOG_QUERY_FAILED = 'catalog_query_failed';
 const CATALOG_QUERY_FAILED_REASON = '没能在报销系统里查到项目与费用项目，报销信息核对没有做完。报销系统没有被改动，明细也不用改：等报销系统能正常查询后再去报销。原因：';
 
+/**
+ * The executor's code for 「发票全部导入成功，但表单上盖着关不掉的窗口，费用明细没有开始填」
+ * (`executor/job.ts`). The phase is `unknown` because a durable attempt exists (ADR-0016) and the 费用报销单 is
+ * not finished — but the import itself is NOT in doubt: it was judged on 处理结果 and confirmed by the
+ * `after_import` read-back before this stop. Telling that employee 「写入报销系统的结果不确定」 would be false
+ * about the part that is certain and useless about the part that is not, so this code keeps the executor's own
+ * sentence, which names both: the invoices are bound, and a window is in the way.
+ */
+const FORM_OBSTRUCTED_BEFORE_FILL = 'form_obstructed_before_fill';
+
 const LOGIN_NOT_DETECTED = '还没有检测到登录。请在报销专用浏览器窗口里登录报销系统（登录页上显示的上次账号不算已登录），完成后再点一次「我已登录，继续」。';
 
 export function erpView(record: ErpRecord): Erp {
@@ -229,7 +239,10 @@ export function erpView(record: ErpRecord): Erp {
     case 'saved':
       return { ...idle, status: 'done', steps: stepsOf(record), draftNo: record.result?.billNo ?? null };
     case 'unknown':
-      return { ...idle, status: 'aborted', steps: stepsOf(record), draftNo: record.result?.billNo ?? null, abortReason: `写入报销系统的结果不确定，应用已停止写入，不会重放。原因：${reason}` };
+      return { ...idle, status: 'aborted', steps: stepsOf(record), draftNo: record.result?.billNo ?? null,
+        abortReason: record.result?.code === FORM_OBSTRUCTED_BEFORE_FILL
+          ? reason
+          : `写入报销系统的结果不确定，应用已停止写入，不会重放。原因：${reason}` };
     default:
       // Cancelled login pause, or a catalog mismatch (its problems are in the catalog section): nothing was written.
       return idle;

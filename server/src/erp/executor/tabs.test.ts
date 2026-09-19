@@ -14,7 +14,10 @@ import { CONFIRM_MS, closeFormTab, formIdOf, type Point, type Tab, type TabActio
 
 const FORM_ID = 'd12769c1-2a2c-40c1-90b2-17140dcf5651';
 const TAB: Tab = { id: `li_${FORM_ID}FMAINTAB_c`, text: '费用报销单-新增', active: true, isNew: true, isForm: true };
-const POINTS = { link: { x: 11, y: 11 }, close: { x: 22, y: 22 }, no: { x: 129, y: 182 }, yes: { x: 79, y: 182 } };
+// Points here are the hit-tested `Reach` every click in the executor takes (hit.ts): a point this strip hands
+// out is one that has already been proved to reach the node it names.
+const reach = (x: number, y: number) => ({ x, y, inView: true, onTarget: true, cover: null });
+const POINTS = { link: reach(11, 11), close: reach(22, 22), no: reach(129, 182), yes: reach(79, 182) };
 
 type FakeOptions = { confirmDelayMs: number | null; closeDelayMs?: number; blockedForMs?: number };
 

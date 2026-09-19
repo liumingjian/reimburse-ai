@@ -7,7 +7,7 @@ import { chromium, expect } from '@playwright/test';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { ERP_WRITE_BUDGET_MS, erpPollSettled, erpProjectTarget, erpWriteFindings, waitForChange } from './checks.mjs';
+import { ERP_WRITE_BUDGET_MS, STAGE_PAGE, abortReasonFindings, abortReasonPage, erpPollSettled, erpProjectTarget, erpWriteFindings, waitForChange } from './checks.mjs';
 import { qaSelfCheck, qaValue } from './values.mjs';
 
 const BASE = process.env['QA_BASE'] ?? 'http://127.0.0.1:4319';
@@ -1079,11 +1079,25 @@ async function qaErpWrite(page, context, state) {
     note(finding.level, 'erp-write', finding.text);
   }
 
-  // Whatever stopped the write, the employee has to be able to read it without opening a console.
+  // Whatever stopped the write, the employee has to be able to read it without opening a console — on the page the
+  // app puts them on, which after a write that started is NOT this one. ReviewPage prints the reason only while
+  // `erp.status` is `idle`; past that it shows 「查看填报进度」 and the reason lives on the task's stage page. The
+  // driver used to assert here regardless and called the reason unreadable, about an app that was showing it one
+  // click away.
   if (String(reason ?? '').trim()) {
-    const shown = await page.getByText('写入报销系统已停止', { exact: false }).isVisible().catch(() => false);
-    const onReview = await page.getByTestId('erp-abort-reason').isVisible().catch(() => false);
-    if (!shown && !onReview) defect('erp-write', 'the abort reason is not shown anywhere in the UI');
+    const where = abortReasonPage(status);
+    if (where === 'stage') {
+      const snap = await (await context.request.get(`${BASE}/api/tasks/${id}`)).json().catch(() => null);
+      const stagePage = STAGE_PAGE[snap?.stage] ?? 'erp';
+      await page.goto(`${BASE}/#/task/${id}/${stagePage}`);
+      await page.waitForTimeout(2000);
+      await shot(page, 'erp-write-reason');
+    }
+    // The reason's own words, not a heading that might be shown for some other reason.
+    const needle = String(reason).replace(/\s+/g, ' ').trim().slice(0, 24);
+    const shown = (await page.getByText(needle, { exact: false }).first().isVisible().catch(() => false))
+      || (await page.getByTestId('erp-abort-reason').isVisible().catch(() => false));
+    for (const finding of abortReasonFindings({ reason, shown, page: where })) note(finding.level, 'erp-write', finding.text);
   }
 }
 

@@ -98,8 +98,30 @@ export type FakeErpOptions = {
   importReportTicks?: number;
   /** The window opens and its report never arrives at all: the hang the budget's stall clock has to catch. */
   importReportStalled?: boolean;
+  /**
+   * 处理结果 answers 发票导入单据 in full and then refuses to close: its 退出 does nothing, the window keeps
+   * floating over the form, and the form's own 事由 control answers `elementFromPoint` with the report's text.
+   *
+   * The live shape of V-56, 2026-09-19. A 去报销 imported ten invoices cleanly, judged them cleanly, passed the
+   * `after_import` read-back, started 填费用明细 for the first time ever and died 4.1 s later on
+   * `header_write_failed`: the 处理结果 window had survived the import's 退出 and floated at z-index 10005 over
+   * the form (rect 257,168 768x529), `elementFromPoint(371, 334)` — the centre of 事由, whose locator was
+   * perfectly correct — answered a SPAN「接收发票」 inside the report, and `activeElement` was that cell. A fully
+   * successful irreversible import was reported to the employee as 结果不确定.
+   */
+  importReportStaysOpen?: boolean;
   /** 新增 is clicked and no form opens — the navigation that reports success while achieving nothing. */
   newFormClickDead?: boolean;
+  /**
+   * How many ERP-page evaluations after 新增 the form's own blocking overlay stays over the top bar, so every
+   * 区域锚点 (section anchor) answers `elementFromPoint` with that overlay instead of itself.
+   *
+   * Measured live 2026-09-19 on a freshly opened 费用报销单-新增: `openInvoiceAssistant`'s first act, clicking the
+   * 收票信息 anchor at (312, 145), hit-tested to an anonymous DIV and the run stopped before writing anything.
+   * A form that is still opening is BUSY, not stuck, so this is outwaited rather than refused — the same overlay
+   * `tabs.ts` already outwaits on the tab strip.
+   */
+  sectionOverlayTicks?: number;
 };
 export type FakeMutation = { kind: 'import' | 'cell' | 'option' | 'header' | 'addRow' | 'save'; detail: string };
 
@@ -266,6 +288,7 @@ export async function createFakeErp(options: FakeErpOptions) {
   let assistantTicks = 0;
   let mainTicks = 0;
   let formPanelActiveAt: number | null = null;
+  let blockerUntil: number | null = null;
   let pendingReport: { start: number; due: number; summary: string; rows: readonly string[] } | null = null;
   const pendingRecognition: Array<{ due: number; files: string[] }> = [];
   let dropdown: { td: any; tr: any; list: any; span: any } | null = null;
@@ -455,6 +478,11 @@ export async function createFakeErp(options: FakeErpOptions) {
     const win = q('#result-window');
     win.querySelector('.k-window-message').textContent = '';
     show(win, true);
+    // No 遮罩 (modal backdrop) live: the window floats over the form and takes every click aimed at what is
+    // under it, silently. 事由 is the first control the fill touches, so that is the one this covers.
+    if (options.importReportStaysOpen) {
+      q(`[id$="-FCAUSA-EDITOR"]`).setAttribute('data-covered-by', '#result-window .k-window-message');
+    }
     if (options.importReportStalled) return;
     const ticks = Math.max(1, options.importReportTicks ?? 2);
     pendingReport = { start: mainTicks, due: mainTicks + ticks, summary, rows };
@@ -600,6 +628,11 @@ export async function createFakeErp(options: FakeErpOptions) {
         if (options.newFormClickDead) return undefined;
         show(q('#expense-list'), false);
         show(q('#expense-form'), true);
+        if (options.sectionOverlayTicks) {
+          blockerUntil = mainTicks + options.sectionOverlayTicks;
+          show(q('#form-blocker'), true);
+          for (const anchor of main.document.querySelectorAll('[data-action="section"]')) anchor.setAttribute('data-covered-by', '#form-blocker');
+        }
         formPanelActiveAt = mainTicks + (options.formPanelActiveTicks ?? 0);
         return syncFormPanel();
       case 'section': return undefined;
@@ -617,7 +650,13 @@ export async function createFakeErp(options: FakeErpOptions) {
         return mutate('addRow', String(dataRows('detail').length));
       }
       case 'save': return save();
-      case 'close-window': return show(el.closest('.k-window'), false);
+      case 'close-window': {
+        const win = el.closest('.k-window');
+        // A 处理结果 whose 退出 does nothing: the click lands, the window stays, and everything under it is
+        // unreachable from then on.
+        if (options.importReportStaysOpen && win.id === 'result-window') return undefined;
+        return show(win, false);
+      }
       default:
         if (el.matches('input') && String(el.id).endsWith('-EDITOR') && !el.readOnly) el.focus();
         return undefined;
@@ -745,6 +784,14 @@ export async function createFakeErp(options: FakeErpOptions) {
     refreshAssistant();
   }
 
+  /** The form's blocking overlay coming down once it has finished opening, a few reads after 新增. */
+  function clearBlocker() {
+    if (blockerUntil === null || mainTicks < blockerUntil) return;
+    show(q('#form-blocker'), false);
+    for (const anchor of main.document.querySelectorAll('[data-action="section"]')) anchor.removeAttribute('data-covered-by');
+    blockerUntil = null;
+  }
+
   /** Kendo moving `k-state-active` from the console's tab panel onto the newly opened form's, a few reads late. */
   function syncFormPanel() {
     if (formPanelActiveAt === null || mainTicks < formPanelActiveAt) return;
@@ -773,7 +820,7 @@ export async function createFakeErp(options: FakeErpOptions) {
       if (!sessionId && !targetAlive) throw new Error('CDP 连接已关闭');
       const doc = sessionId ? child!.doc : main;
       if (sessionId) { assistantTicks += 1; flushRecognition(); }
-      else { mainTicks += 1; syncFormPanel(); paintReport(); }
+      else { mainTicks += 1; syncFormPanel(); clearBlocker(); paintReport(); }
       switch (method) {
         case 'Runtime.evaluate': return doc.evaluate(String(params.expression));
         case 'Input.dispatchMouseEvent':

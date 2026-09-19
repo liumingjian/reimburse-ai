@@ -25,7 +25,7 @@ import { DEFAULT_PACE, waitFor, type Pace } from './pace';
 import { COMPATIBILITY_SNIPPET, probeIdentity, sameOrigin } from './probe';
 import { pageUrl, protocolReadings, readForm, type FormReadings } from './reader';
 import {
-  addDetailRow, captureErpError, invoiceUploadGroups, openInvoiceAssistant, openNewReimbursement,
+  addDetailRow, captureErpError, closeErpDialogs, invoiceUploadGroups, openInvoiceAssistant, openNewReimbursement,
   importInvoices, uploadInvoices, type WritePage,
 } from './steps';
 import { prepareErpWrite } from './write-context';
@@ -245,7 +245,9 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
         '按 BAOX_ERP_STOP_BEFORE_IMPORT 的要求，在「发票导入单据」之前停下了：发票已上传并全部勾选，但没有导入任何发票。');
     }
     await startAttempt('import', { formMode: 'new', billNo: null, receiptRowCount: plan.invoices.length });
-    await importInvoices(write);
+    // The import's own answer is read, not discarded: its 处理结果 text is ERP's verbatim verdict on every
+    // invoice, and `reportClosed` says whether the report it opened actually went away.
+    const importResult = await importInvoices(write);
     await step('import', 'done');
 
     await step('readback', 'running');
@@ -270,10 +272,32 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
       writeHeader: (p: WritePage, key: string, value: string) => writeHeader(p.session, key, value, { pace, settleMs: pace.settleMs }),
       writeCell: (p: WritePage, spec: { which: number; row: number; column: string; value: string; expect: { mode: 'equals'; value: string } | null }) => writeCell(p.session, { ...spec, pace }),
       selectOption: (p: WritePage, spec: { which: number; row: number; column: string; option: string }) => selectOption(p.session, { ...spec, pace }),
-      leaveEdit: (p: WritePage, options: { label: string }) => leaveEdit(p.session, { ...options, settleMs: pace.settleMs }),
+      leaveEdit: (p: WritePage, options: { label: string }) => leaveEdit(p.session, { ...options, settleMs: pace.settleMs, pace }),
     };
 
-    // 6. Fill.
+    // 6. Fill. Its preflight comes FIRST, before the attempt is recorded, and the thing it checks is that nothing
+    //    is floating over the form.
+    //
+    //    An ERP dialog has no 遮罩 (modal backdrop): it floats at z-index 10005 and swallows every click aimed at
+    //    the form beneath it, silently. V-56 measured exactly that — a 处理结果 that survived the import's 退出,
+    //    `elementFromPoint` at the 事由 field answering a SPAN「接收发票」 inside the report, and the fill dying
+    //    4.1 s in on `header_write_failed`. The import itself had fully succeeded: ten invoices bound, judged
+    //    clean, `after_import` passed. Running the check AFTER `attempt_started` is what turned that into
+    //    `status: unknown` — the worst available answer to a write that went right.
+    //
+    //    So the obstruction is cleared and verified here, while a refusal is still a refusal about the FILL and
+    //    the import behind it stands on its own footing. The employee is told what is true: the invoices are
+    //    bound, and a window is in the way. It asks even though the import already closed what it opened: over a
+    //    clear form that costs one read, and trusting the previous step's word about the page is the habit that
+    //    put this whole check on the wrong side of the attempt in the first place.
+    const clear = await closeErpDialogs(write);
+    if (!clear.ok) {
+      return await finish('unknown', 'form_obstructed_before_fill',
+        `发票已经全部导入并绑定到这张费用报销单：收票 ${plan.invoices.length} 行已核对通过，`
+        + `报销系统的原话是「${(importResult.report || '').slice(0, 200)}」。这一步是好的。`
+        + `接下来的「填写费用明细」没有开始，因为报销系统还有窗口盖在表单上，关不掉：${clear.remaining.join(' | ')}。`
+        + '请在报销专用浏览器窗口里关掉它，然后回到这个任务继续。');
+    }
     await startAttempt('fill', { formMode: 'new', billNo: null, detailRowCount: preview.lines.length });
     await step('fill', 'running');
     const filled = await fillApprovedPreview(write, {

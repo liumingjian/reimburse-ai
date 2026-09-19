@@ -5,11 +5,13 @@
 // no counterpart here: ADR-0028 leaves the 保存 (save) click to the employee, so this module cannot perform it.
 // Kernel waits are kept as upper bounds; `pace` shortens them on the fake ERP.
 
-import { autoAttach, clickAt, evalIn, screenshot, type CdpSession, type ChildTargets } from './cdp';
+import { autoAttach, evalIn, screenshot, type CdpSession, type ChildTargets } from './cdp';
 import { ExecutorError } from './chromium';
 import { showSection } from './erpform';
+import { HIT_JS, clickReach, reachProblem, type Reach } from './hit';
 import { readPane, recognisedTotal, selectRecognisedInvoices } from './invoice-grid';
 import { DEFAULT_PACE, sleep, waitFor, type Pace } from './pace';
+import { dialogsSnippet, dismissPoint } from './tabs';
 
 export type WritePage = { session: CdpSession; children?: ChildTargets; pace?: Pace };
 
@@ -39,24 +41,23 @@ const visible = `(n) => {
 /**
  * Where to send a real mouse event so it reaches `n` — the one measurement every click here depends on.
  *
- * `Input.dispatchMouseEvent` hits VIEWPORT coordinates, and a point outside the viewport hits nothing at all:
- * the click is swallowed in silence, and the step that follows waits for an effect that can never arrive.
- * Measured live on 2026-09-19 while the assistant refused to open (INVOICE_ASSISTANT_NOT_FOUND): the 收票信息
- * anchor had not finished scrolling, so 选择发票 sat at y=1237 and 不生成费用明细 at y=941 in a viewport 908 high,
- * `document.elementFromPoint` returned null at both points, and both clicks were lost. Rendered and laid out is
- * not the same as reachable, and `visible` above only answers the first.
+ * Two questions, not one, and `visible` answers neither. A point outside the viewport hits nothing at all
+ * (measured live 2026-09-19: 选择发票 at y=1237 in a viewport 908 high, `elementFromPoint` null, the click lost),
+ * and a point inside it belongs to whatever is painted on top (measured live 2026-09-19: the 处理结果 window
+ * floating at z-index 10005 answered the form's own header field with a `SPAN「接收发票」`). Rendered and laid
+ * out is not the same as reachable.
  *
- * So a point is scrolled into view and re-measured before it is used, and a node that is still unreachable
- * reports `ok: false` rather than being clicked blind — every caller polls, so the next poll re-measures.
- * `erpform.ts` has scrolled its grid cells into view from the start; this is that same discipline for the
- * toolbar, the menus and the assistant.
+ * So a point is scrolled into view, re-measured, AND hit-tested by `hit.ts`'s one rule before it is used; a node
+ * that is unreachable for either reason reports `onTarget: false` with what is in the way, rather than being
+ * clicked blind. Every caller polls, so the next poll re-measures. `erpform.ts` has scrolled its grid cells into
+ * view from the start and `tabs.ts` has hit-tested from the start; this is those two disciplines, in one place,
+ * for the toolbar, the menus and the assistant as well.
  */
 const pointOf = `(n) => {
-  const inView = (b) => b.top >= 0 && b.bottom <= window.innerHeight && b.left >= 0 && b.right <= window.innerWidth;
-  let b = n.getBoundingClientRect();
-  if (!inView(b)) { n.scrollIntoView({ block: 'center' }); b = n.getBoundingClientRect(); }
-  if (!inView(b)) return { ok: false, offscreen: true };
-  return { ok: true, x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) };
+  const hitOf = ${HIT_JS};
+  const inViewport = (b) => b.top >= 0 && b.bottom <= window.innerHeight && b.left >= 0 && b.right <= window.innerWidth;
+  if (!inViewport(n.getBoundingClientRect())) n.scrollIntoView({ block: 'center' });
+  return { ok: true, ...hitOf(n) };
 }`;
 
 const textPoint = (text: string, { exact = true } = {}) => `(() => {
@@ -80,35 +81,41 @@ const cssPoint = (selector: string) => `(() => {
   return at(nodes[0]);
 })()`;
 
-type Point = { ok: boolean; x: number; y: number; count?: number; offscreen?: boolean };
+// `ok` says the locator found exactly one node; the `Reach` fields say whether its point can be clicked. A point
+// is only ever clicked when both hold, and the refusal names whichever of the two failed.
+type Point = Partial<Reach> & { ok: boolean; count?: number };
+const reachable = (point: Point | null | undefined) => point?.ok === true && point.onTarget === true;
 
-async function clickCss(page: WritePage, session: CdpSession, selector: string, label: string, { timeoutMs = 15_000 } = {}) {
-  const point = await waitFor(() => evalIn<Point>(session, cssPoint(selector)), (result) => result?.ok === true, cap(page, timeoutMs), paceOf(page).pollMs);
-  if (!point?.ok) {
-    throw new ExecutorError('CHROMIUM_TARGET_NOT_UNIQUE',
-      point?.offscreen ? `${label}停在视口之外，无法点击` : `${label}不可唯一定位（匹配 ${point?.count ?? 0} 个）`);
-  }
-  await clickAt(session, point.x, point.y);
+/**
+ * Poll a locator until it finds its node AND that node's point reaches it, then click. This is the only way the
+ * toolbar, the menus and the assistant are clicked: the wait's verdict is read, never discarded, and `clickReach`
+ * cannot be handed a point that has not been hit-tested.
+ */
+async function clickWhere(page: WritePage, session: CdpSession, snippet: string, label: string, notFound: (count: number) => ExecutorError, { timeoutMs = 15_000 } = {}) {
+  const point = await waitFor(() => evalIn<Point>(session, snippet), reachable, cap(page, timeoutMs), paceOf(page).pollMs);
+  if (point?.ok !== true) throw notFound(point?.count ?? 0);
+  await clickReach(session, point, label, 'CHROMIUM_TARGET_OBSTRUCTED');
   return point;
 }
 
-async function clickText(page: WritePage, session: CdpSession, text: string, { timeoutMs = 15_000, exact = true } = {}) {
-  const point = await waitFor(() => evalIn<Point>(session, textPoint(text, { exact })), (result) => result?.ok === true, cap(page, timeoutMs), paceOf(page).pollMs);
-  if (!point?.ok) throw new ExecutorError('CHROMIUM_TARGET_NOT_FOUND', `找不到唯一的「${text}」按钮或菜单项`);
-  await clickAt(session, point.x, point.y);
-  return point;
-}
+const clickCss = (page: WritePage, session: CdpSession, selector: string, label: string, options: { timeoutMs?: number } = {}) =>
+  clickWhere(page, session, cssPoint(selector), label,
+    (count) => new ExecutorError('CHROMIUM_TARGET_NOT_UNIQUE', `${label}不可唯一定位（匹配 ${count} 个）`), options);
 
-async function clickPoint(page: WritePage, session: CdpSession, snippet: string, label: string, { timeoutMs = 15_000 } = {}) {
-  const point = await waitFor(() => evalIn<Point>(session, snippet), (result) => result?.ok === true, cap(page, timeoutMs), paceOf(page).pollMs);
-  if (!point?.ok) throw new ExecutorError('CHROMIUM_TARGET_NOT_FOUND', `找不到${label}`);
-  await clickAt(session, point.x, point.y);
-  return point;
-}
+const clickText = (page: WritePage, session: CdpSession, text: string, { exact = true, ...options }: { timeoutMs?: number; exact?: boolean } = {}) =>
+  clickWhere(page, session, textPoint(text, { exact }), `「${text}」`,
+    () => new ExecutorError('CHROMIUM_TARGET_NOT_FOUND', `找不到唯一的「${text}」按钮或菜单项`), options);
+
+const clickPoint = (page: WritePage, session: CdpSession, snippet: string, label: string, options: { timeoutMs?: number } = {}) =>
+  clickWhere(page, session, snippet, label,
+    () => new ExecutorError('CHROMIUM_TARGET_NOT_FOUND', `找不到${label}`), options);
 
 const containsText = (needle: string) => `(document.body?.innerText || '').includes(${JSON.stringify(needle)})`;
+// On screen and reachable by a scroll — the question a postcondition asks. NOT hit-tested: this is a read, and a
+// caption that something is momentarily painted over is still on screen. Only clicks demand `onTarget`.
+const onScreen = (point: Point | null | undefined) => point?.ok === true && point.inView === true;
 const waitVisibleText = async (page: WritePage, session: CdpSession, text: string, timeoutMs = 15_000) =>
-  (await waitFor(() => evalIn<Point>(session, textPoint(text)), (result) => result?.ok === true, cap(page, timeoutMs), paceOf(page).pollMs))?.ok === true;
+  onScreen(await waitFor(() => evalIn<Point>(session, textPoint(text)), onScreen, cap(page, timeoutMs), paceOf(page).pollMs));
 
 /** The piaozone invoice assistant (发票无忧助手) lives in a cross-origin iframe: its own CDP target. */
 async function assistantSession(page: WritePage, timeoutMs = 45_000): Promise<CdpSession> {
@@ -171,7 +178,7 @@ const importModeTarget = `(() => {
   const wanted = anchorsOf(${JSON.stringify(NOT_FILL_ENTRY)});
   if (wanted.length !== 1) return { ok: false, count: wanted.length, items };
   const point = at(wanted[0]);
-  if (!point.ok) return { ...point, items, wantedId: wanted[0].id };
+  if (!point.inView) return { ...point, items, wantedId: wanted[0].id };
   const hit = document.elementFromPoint(point.x, point.y);
   const anchor = hit && hit.closest ? hit.closest('a[id]') : null;
   return {
@@ -196,7 +203,7 @@ const hitAt = (x: number, y: number) => `(() => {
 export async function openInvoiceAssistant(page: WritePage, { timeoutMs = 90_000 } = {}) {
   const { session } = page;
   page.children ??= await autoAttach(session);
-  const section = await showSection(session, '收票信息', { settleMs: paceOf(page).settleMs });
+  const section = await showSection(session, '收票信息', { settleMs: paceOf(page).settleMs, pace: paceOf(page) });
   if (!section.ok) throw new ExecutorError('INVOICE_ASSISTANT_ENTRY_NOT_FOUND', section.reason);
   await clickCss(page, session, 'div[id*="FRECINVINFO_ENTRYBAR-tbReceiveInv_wrapper"] > a.k-split-button-arrow', '选择发票下拉按钮');
   await sleep(paceOf(page).settleMs);
@@ -221,16 +228,16 @@ export async function openInvoiceAssistant(page: WritePage, { timeoutMs = 90_000
   // point until it settles. Only a point that resolves to 不生成费用明细 is ever clicked.
   const target = await waitFor(() => evalIn<ModeTarget>(session, importModeTarget), reaches, cap(page, timeoutMs), paceOf(page).pollMs);
   if (!reaches(target)) {
-    const wrong = target?.hitId ? `点到的是 ${target.hitId}（${target.hitTag}「${target.hitText}」）` : `那个点上什么都没有（${target?.offscreen ? '在视口之外' : `匹配 ${target?.count ?? 0} 项`}）`;
+    const wrong = target?.hitId ? `点到的是 ${target.hitId}（${target.hitTag}「${target.hitText}」）` : `那个点上什么都没有（${target?.ok !== true ? `匹配 ${target?.count ?? 0} 项` : target?.inView === false ? '在视口之外' : '读不到'}）`;
     throw new ExecutorError('INVOICE_IMPORT_MODE_NOT_SELECTED',
       `「不生成费用明细」没有确认落点，没有点它：${wrong}；菜单里有 ${(target?.items ?? []).join('、') || '（读不到菜单项）'}。`
       + '导入模式选错会让报销系统自己写费用明细，且不可撤销，所以停在这里。');
   }
-  await clickAt(session, target.x, target.y);
+  await clickReach(session, target, IMPORT_MODES[NOT_FILL_ENTRY]!, 'INVOICE_IMPORT_MODE_NOT_SELECTED');
   await sleep(paceOf(page).settleMs);
   // The same point, read again: with the menu closed it no longer answers the item, which is the evidence that the
   // click went to the item that was there and not to something that is still sitting under the cursor.
-  const after = await evalIn<{ id: string | null; tag: string | null; menuOpen: boolean }>(session, hitAt(target.x, target.y));
+  const after = await evalIn<{ id: string | null; tag: string | null; menuOpen: boolean }>(session, hitAt(target.x!, target.y!));
   await assistantSession(page, timeoutMs);
   return {
     ok: true, mode: IMPORT_MODES[NOT_FILL_ENTRY]!, selectedId: target.wantedId ?? target.hitId ?? null,
@@ -342,8 +349,8 @@ export async function uploadInvoices(page: WritePage, paths: string[], { timeout
   // A first visit is covered by a 温馨提示 dialog that swallows clicks on the grid behind it. Later visits have none,
   // so not finding it is normal.
   const notice = await evalIn<Point>(assistant, textPoint('知道了'));
-  if (notice?.ok) {
-    await clickAt(assistant, notice.x, notice.y);
+  if (reachable(notice)) {
+    await clickReach(assistant, notice, '发票助手的「知道了」');
     await sleep(paceOf(page).settleMs);
   }
   if ((await uploadState(assistant)).total > 0) {
@@ -519,12 +526,48 @@ export async function importInvoices(page: WritePage, { budget = IMPORT_BUDGET }
   if (answer.failed !== 0) {
     throw new ExecutorError('INVOICE_IMPORT_REFUSED', `报销系统没有收下全部发票：${answer.text ?? ''}`);
   }
-  // 处理结果 floats over the form at z-index 10005 with no 遮罩, so a toolbar click aimed at the form underneath
-  // would land on the report instead — the silent-failure class V-45 recorded for the modal assistant window.
-  // 退出 closes the report and nothing else; it is not on the never-click list.
-  await clickCss(page, page.session, '[id$="-tbExit"]', '处理结果的「退出」');
-  await waitFor(() => evalIn<ImportResponse>(page.session, importResponse), (r) => r?.answered === false, cap(page, 15_000), paceOf(page).pollMs);
-  return { ok: true, report: answer.text ?? '' };
+  // 处理结果 floats over the form at z-index 10005 with no 遮罩, so every later click aimed at the form underneath
+  // would land on the report instead — V-56: the fill's very first act, 事由, was delivered to a SPAN「接收发票」
+  // inside this report and the run died four seconds into 填费用明细.
+  //
+  // This used to be one blind `clickCss('[id$="-tbExit"]')` followed by a `waitFor` whose verdict was DISCARDED,
+  // so `importInvoices` returned `{ok:true}` whether or not the report had closed. It now closes the report and
+  // says whether it managed to — and it does NOT throw when it could not: the import succeeded, the invoices are
+  // bound, and turning that into an error would report a completed irreversible act as a failure. The caller
+  // decides (`job.ts` refuses to start the fill over an obstructed form, before recording a fill attempt).
+  const dismissed = await closeErpDialogs(page);
+  return { ok: true, report: answer.text ?? '', reportClosed: dismissed.ok, stillOpen: dismissed.remaining };
+}
+
+/**
+ * Close whatever ERP still has floating over the 费用报销单, and say what is left. Never throws.
+ *
+ * WHOSE RESPONSIBILITY IS IT — both ends, and for different reasons. The import opened 处理结果 and is the only
+ * step that knows what it said, so the import closes it. The fill cannot trust a page it did not create — a plain
+ * 提示, a second 处理结果 from an earlier round or a leftover assistant window would each be just as fatal and
+ * just as silent — so the fill asks again in its own preflight, before its attempt is recorded. One without the
+ * other leaves a hole: closing only at the import trusts that nothing appears afterwards, and checking only at
+ * the fill leaves the report standing over every read in between.
+ *
+ * The dialog's own 退出 is preferred over the window Close, and neither is on the never-click list: 退出 dismisses
+ * a report, saves nothing and deletes nothing. What comes back is the verbatim text of whatever would not go, so
+ * the employee can be told which window to close rather than that something is wrong.
+ */
+export async function closeErpDialogs(page: WritePage, { timeoutMs = 15_000, attempts = 3 } = {}) {
+  const pace = paceOf(page);
+  const listed = () => evalIn<string[]>(page.session, dialogsSnippet);
+  const round = Math.ceil(timeoutMs / attempts);
+  let remaining = await listed();
+  for (let attempt = 0; attempt < attempts && remaining.length > 0; attempt += 1) {
+    // Polled: a window that has just opened is still animating, and its 退出 answers the hit test a moment later.
+    const point = await waitFor(() => evalIn<Reach | null>(page.session, dismissPoint), Boolean, cap(page, round), pace.pollMs);
+    // No closer that a mouse event can reach: clicking anyway is how a dialog gets answered by whatever is on top.
+    if (reachProblem('这个窗口的关闭位置', point)) break;
+    await clickReach(page.session, point, '报销系统弹出窗口的「退出」');
+    const before = remaining.length;
+    remaining = await waitFor(listed, (windows) => windows.length < before, cap(page, round), pace.pollMs);
+  }
+  return { ok: remaining.length === 0, remaining };
 }
 
 /** Add one detail row through the toolbar (新增行). Part of the fill mutation. */

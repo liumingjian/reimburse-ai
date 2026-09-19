@@ -11,7 +11,8 @@
 //
 // 否 declines to save; it is not the 保存 that ADR-0028 reserves for the employee, and no 单据 is deleted (an
 // unsaved 新增 form has none to delete). 是 is never clicked, whatever the cost of leaving a tab open.
-import { clickAt, evalIn, type CdpSession } from './cdp';
+import { evalIn, type CdpSession } from './cdp';
+import { HIT_JS, clickReach, type Reach } from './hit';
 import { sleep, waitFor } from './pace';
 
 export const VIS = `(n) => { const b = n.getBoundingClientRect(); const s = getComputedStyle(n); return b.width > 0 && b.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; }`;
@@ -22,21 +23,18 @@ export const VIS = `(n) => { const b = n.getBoundingClientRect(); const s = getC
 const NEW_FORM_TAB = String.raw`/^费用报销单\s*-\s*新增$/`;
 const FORM_TAB = String.raw`/^费用报销单\s*-\s*(新增|修改|查看)$/`;
 
-export type Point = { x: number; y: number } | null;
+export type Point = Reach | null;
 export type Tab = { id: string; text: string; active: boolean; isNew: boolean; isForm: boolean };
 
-// Where to click a node so the click reaches IT. A leftover 处理结果 window floats over the form at z-index 10005
-// with no 遮罩, and the 是否保存 confirm bar paints underneath it: a click on the bar's own rect landed on the
-// report instead, the confirm went unanswered and the tab stayed open — with the script reporting a click it had
-// made and an outcome it had not. So every point here is hit-tested before it is used.
-export const HIT = `(n) => {
-  const b = n.getBoundingClientRect();
-  if (!(b.width > 0 && b.height > 0)) return null;
-  const x = Math.round(b.x + b.width / 2), y = Math.round(b.y + b.height / 2);
-  const hit = document.elementFromPoint(x, y);
-  if (!hit || !(hit === n || n.contains(hit) || hit.contains(n))) return null;
-  return { x, y };
-}`;
+// Where to click a node so the click reaches IT, or null when no click of this node is possible right now. A
+// leftover 处理结果 window floats over the form at z-index 10005 with no 遮罩, and the 是否保存 confirm bar paints
+// underneath it: a click on the bar's own rect landed on the report instead, the confirm went unanswered and the
+// tab stayed open — with the script reporting a click it had made and an outcome it had not.
+//
+// The rule itself is `hit.ts`, shared with every other click in the executor. What this file adds is its own
+// policy on an unreachable point: null, so the waits below keep polling. A covered closer is a tab that is busy,
+// not a tab that is stuck, and it is outwaited rather than reported.
+export const HIT = `(n) => { const r = (${HIT_JS})(n); return r.onTarget ? r : null; }`;
 
 /** Every dialog the ERP is still showing, by its text. */
 export const dialogsSnippet = `(() => {
@@ -54,7 +52,11 @@ export const dismissPoint = `(() => {
   const exit = [...win.querySelectorAll('[id$="-tbExit"]')].filter(vis)[0];
   const close = [...win.querySelectorAll('a[aria-label="Close"]')].filter(vis)[0];
   const node = exit || close;
-  return node ? at(node) : null;
+  if (!node) return null;
+  // Scrolled in first, like every other click path: a dialog raised while the page was scrolled can hold its own
+  // 退出 outside the viewport, where a real mouse event reaches nothing and the window would be reported unclosable.
+  node.scrollIntoView({ block: 'center' });
+  return at(node);
 })()`;
 
 /** The open closable tabs, by caption and by the id the strip gives them, in strip order. */
@@ -139,7 +141,7 @@ export type TabActions = {
   tabPoint(id: string, part: 'link' | 'close'): Promise<Point>;
   /** The point of this tab's own standing 否, or null when no 是否保存 bar of its is up. */
   declinePoint(formId: string | null): Promise<Point>;
-  click(point: { x: number; y: number }): Promise<void>;
+  click(point: Reach): Promise<void>;
   settle(ms: number): Promise<void>;
 };
 
@@ -221,7 +223,7 @@ export function tabActions(session: CdpSession): TabActions {
     tabs: () => evalIn<Tab[]>(session, tabsSnippet),
     tabPoint: (id, part) => evalIn<Point>(session, tabPoint(id, part)),
     declinePoint: (formId) => evalIn<Point>(session, declineSavePoint(formId)),
-    click: (point) => clickAt(session, point.x, point.y),
+    click: async (point) => { await clickReach(session, point, '页签上的这个位置'); },
     settle: (ms) => sleep(ms),
   };
 }

@@ -200,3 +200,45 @@ export function erpWriteFindings({ status = null, abortReason = null, catalog = 
   }
   return erpIdleFindings({ catalog, refusals, abortReason });
 }
+
+/**
+ * Where the abort reason is on screen — and it is not always the page the driver is standing on.
+ *
+ * The driver used to click 去报销 on `#/task/:id/review`, wait, and then look for the reason THERE. That is right
+ * for exactly one outcome and wrong for every other:
+ *
+ *   - a clean abort keeps `erp.status` at `idle`, the task stays on its old stage, and `ReviewPage.tsx:299` prints
+ *     the reason under 去报销 as `data-testid="erp-abort-reason"` — but only while `erp.status === 'idle'`;
+ *   - anything that started writing reports `erp.status: 'aborted'` (the `unknown` phase), and the same ReviewPage
+ *     branch then shows 「查看填报进度」 INSTEAD of the reason and sends the employee to the task's current stage
+ *     page, where the reason is (`ErpPage.tsx:135`, `ReconcilePage.tsx:63`, `TaskRoute.tsx:49`).
+ *
+ * So `the abort reason is not shown anywhere in the UI` was the driver asserting on a page the app had already
+ * moved the employee off. Verified against the three components on 2026-09-19: the app shows it, the driver was
+ * looking in one place.
+ */
+export function abortReasonPage(status) {
+  return status === null || status === undefined || status === 'idle' ? 'review' : 'stage';
+}
+
+/**
+ * The task page for a stage, mirroring `contract/src/stage.ts`'s `STAGE_DEFAULT_PAGE` — which is the map
+ * ReviewPage's own 「查看填报进度」 button uses, so following it is following the employee.
+ * `qa/checks.test.mjs` pins this copy against that source.
+ */
+export const STAGE_PAGE = {
+  upload: 'upload', inventory: 'inventory', pending: 'pending', project: 'project',
+  catalog: 'review', preparation: 'review', review: 'review', actions: 'review',
+  erp: 'erp', done: 'done', reconcile: 'reconcile', voided: 'upload',
+};
+
+/**
+ * What the `erp-write` area records about the reason being readable. `shown` is what the driver found on the page
+ * `abortReasonPage` sent it to; `page` is that page, so a failure names where it looked.
+ */
+export function abortReasonFindings({ reason = null, shown = false, page = null } = {}) {
+  const text = String(reason ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return [];
+  if (shown) return [{ level: 'ok', text: `the reason 去报销 stopped is readable on the ${page} page without opening a console` }];
+  return [{ level: 'DEFECT', text: `去报销 recorded a reason the employee cannot read: nothing on the ${page} page shows「${text.slice(0, 120)}」` }];
+}

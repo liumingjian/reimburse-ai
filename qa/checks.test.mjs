@@ -7,7 +7,7 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { ERP_WRITE_BUDGET_MS, EXAMPLE_REAL_PROJECT, OFFLINE_PROJECT, catalogRefusal, erpIdleFindings, erpPollSettled, erpProjectTarget, erpWriteFindings, waitForChange } from './checks.mjs';
+import { ERP_WRITE_BUDGET_MS, EXAMPLE_REAL_PROJECT, OFFLINE_PROJECT, STAGE_PAGE, abortReasonFindings, abortReasonPage, catalogRefusal, erpIdleFindings, erpPollSettled, erpProjectTarget, erpWriteFindings, waitForChange } from './checks.mjs';
 
 const repo = new URL('..', import.meta.url);
 const read = (path) => readFile(fileURLToPath(new URL(path, repo)), 'utf8');
@@ -257,4 +257,48 @@ test('fill-state still reports a clean abort as idle, which is why the above mat
   const aborted = fillState.slice(from, fillState.indexOf("case 'handed_over':", from));
   assert.ok(aborted.includes('abortReason'), 'the aborted phase no longer sets abortReason');
   assert.ok(!/status: 'aborted'/.test(aborted), 'the aborted phase now sets status too — the driver can be simplified');
+});
+
+// --- D-D: where the abort reason is on screen ------------------------------------------------------
+//
+// `the abort reason is not shown anywhere in the UI` was the driver's verdict on an app that shows it in three
+// places. It asserted on `#/task/:id/review` without following the task to the page the app had just sent the
+// employee to. These pin the rule it now follows.
+
+test('a clean abort keeps the employee on 整单确认, where ReviewPage prints the reason', () => {
+  assert.equal(abortReasonPage('idle'), 'review');
+  assert.equal(abortReasonPage(null), 'review');
+});
+
+test('a write that started moves the reason off 整单确认 and onto the task stage page', () => {
+  // ReviewPage's branch is `!erpStarted && erp.abortReason`, and `erpStarted` is `erp.status !== 'idle'`, so the
+  // caption the driver looked for is not rendered at all once a write has begun.
+  for (const status of ['aborted', 'running', 'done', 'waiting_login']) assert.equal(abortReasonPage(status), 'stage');
+});
+
+test('the stage→page map is the contract\'s own, or the driver follows the employee to the wrong page', async () => {
+  const source = await read('contract/src/stage.ts');
+  const body = /STAGE_DEFAULT_PAGE:[^=]*=\s*\{([^}]*)\}/.exec(source)?.[1];
+  assert.ok(body, 'STAGE_DEFAULT_PAGE must be readable from contract/src/stage.ts');
+  const fromContract = Object.fromEntries([...body.matchAll(/(\w+):\s*'([^']+)'/g)].map((m) => [m[1], m[2]]));
+  assert.deepEqual(STAGE_PAGE, fromContract);
+});
+
+test('a reason nobody can read is the defect; a readable one is the pass, and both name the page', () => {
+  assert.deepEqual(abortReasonFindings({ reason: '  ' }), []);
+  const bad = abortReasonFindings({ reason: '写入报销系统的结果不确定', shown: false, page: 'stage' });
+  assert.equal(bad[0].level, 'DEFECT');
+  assert.match(bad[0].text, /stage page/);
+  assert.match(bad[0].text, /写入报销系统的结果不确定/);
+  const good = abortReasonFindings({ reason: '写入报销系统的结果不确定', shown: true, page: 'review' });
+  assert.equal(good[0].level, 'ok');
+});
+
+test('the driver really follows the task to its stage page before asserting', async () => {
+  const run = await read('qa/run.mjs');
+  assert.match(run, /abortReasonPage\(status\)/);
+  assert.match(run, /STAGE_PAGE\[snap\?\.stage\]/);
+  assert.match(run, /abortReasonFindings\(/);
+  // The old one-place assertion is gone.
+  assert.ok(!run.includes('the abort reason is not shown anywhere in the UI'));
 });

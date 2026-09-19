@@ -14,10 +14,12 @@
 // one group would be a guess about which 单 is being written to, and an ambiguous control inside the one group is
 // refused rather than picked. `scroll` is for writes only — the reconcile probe must have no side effects.
 
-export type HeaderField = {
+import { HIT_JS, type Reach } from './hit';
+
+export type HeaderField = Partial<Reach> & {
   ok: boolean; reason?: string; id?: string; instance?: string; tag?: string;
   instances?: number; visibleInstances?: number; visibleNodes?: number;
-  focused?: boolean; value: string; x: number; y: number; inView?: boolean;
+  focused?: boolean; value: string; x: number; y: number;
 };
 
 export const headerFieldSnippet = (key: string, { scroll = false } = {}) => `(() => {
@@ -60,12 +62,14 @@ export const headerFieldSnippet = (key: string, { scroll = false } = {}) => `(()
     instances: all.length, visibleInstances: groups.size, visibleNodes: visible.length };
   const input = nestedInputs[0] || null;
   const t = input || n;
-  const b = t.getBoundingClientRect();
   const a = document.activeElement;
+  // Where to click it AND what a mouse event there would actually reach. The second half is why: live 2026-09-19
+  // the 处理结果 window floated over this very field at z-index 10005 with no 遮罩, elementFromPoint(371, 334)
+  // answered a SPAN「接收发票」 inside the report, and the write blamed the control for not taking focus.
+  // Read-only, so the reconcile probe may ask it too.
   return { ok: true, id: n.id, instance, tag: t.tagName,
     instances: all.length, visibleInstances: groups.size, visibleNodes: visible.length,
     focused: a === t || (n.contains(a) && a !== n),
     value: String(input ? input.value : n.innerText).replace(/\\s+/g, ' ').trim(),
-    x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2),
-    inView: b.left >= 0 && b.right <= innerWidth && b.top >= 0 && b.bottom <= innerHeight };
+    ...(${HIT_JS})(t) };
 })()`;
