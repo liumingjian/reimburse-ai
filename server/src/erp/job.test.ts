@@ -9,7 +9,7 @@ import { createTaskService } from '../tasks';
 import { createTestServer, type TestServer } from '../test/harness';
 import { runFillJob } from './executor/job';
 import { writeHeader } from './executor/erpform';
-import { captureErpError, importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type ImportBudget, type WritePage } from './executor/steps';
+import { addDetailRow, captureErpError, importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type ImportBudget, type WritePage } from './executor/steps';
 import { createFakeErp, type FakeErp } from './executor/testing/fake-erp';
 import { createErpJobs, serverChannel, type ErpJobs } from './jobs';
 import { createDraftJudge } from './judge';
@@ -50,6 +50,8 @@ const column = (fake: FakeErp, grid: 'detail' | 'receipts', index: number) =>
   [...fake.document.querySelectorAll(`.kd-grid-panel[data-grid="${grid}"] tbody tr`)]
     .filter((tr) => !tr.classList.contains('k-footer-template'))
     .map((tr) => String(tr.children[index]?.textContent ?? '').trim());
+/** 费用明细 data rows, footer excluded — the count `addDetailRow` has to make true. */
+const detailRowCount = (fake: FakeErp) => column(fake, 'detail', 0).length;
 /** 收票单 (receipt number), the identity ERP keys a 收票行 (receipt row) by. */
 const receiptNumbers = (fake: FakeErp) => column(fake, 'receipts', 0);
 /** The 收票单号 link each 费用明细行 (detail row) carries, empty ones dropped. */
@@ -376,6 +378,63 @@ describe('opening a new 费用报销单', () => {
     // form and failed later, somewhere else, saying something else.
     await expect(openNewReimbursement(writePage(fake), { timeoutMs: 200 }))
       .rejects.toMatchObject({ code: 'ERP_NEW_FORM_NOT_OPENED' });
+  });
+});
+
+// Live 2026-09-20: a 去报销 wrote 费用明细 row 1 in full — 项目, 费用项目, 发票类型, both dates, both amounts — read
+// every one of them back off the real form, clicked 新增行 and stopped on `add_row_not_observed`. The row was on
+// the form. The click was never lost; the read was too early, because `addDetailRow` returned `{ok:true}` without
+// waiting for anything and `draft-flow.ts` asserted the new row count in the very next read.
+describe('adding a 费用明细行', () => {
+  it('returns only once the new row is in the grid the caller then reads', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ newRowAppearsAfterTicks: 3 }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    const before = detailRowCount(fake);
+    const added = await addDetailRow(page, { timeoutMs: 2000 });
+    // The grid is read the way the caller reads it, at the moment the step hands back.
+    expect(detailRowCount(fake)).toBe(before + 1);
+    expect(added).toMatchObject({ ok: true, rowCount: before + 1, rowIndex: before });
+  });
+
+  it('refuses when the row never appears, instead of reporting a click as a row', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ newRowAppearsAfterTicks: 100_000 }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    const before = detailRowCount(fake);
+    await expect(addDetailRow(page, { timeoutMs: 200 })).rejects.toMatchObject({ code: 'ERP_DETAIL_ROW_NOT_ADDED' });
+    expect(detailRowCount(fake)).toBe(before);
+  });
+
+  it('carries a whole fill through an ERP that paints the row late', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ newRowAppearsAfterTicks: 3 }));
+    // The run still stops where it stopped before — at the strict read-back — and no longer at the add.
+    const result = await run(fake);
+    expect(result).toMatchObject({ status: 'unknown', code: 'strict_readback_failed' });
+    // Two lines over one placeholder row: exactly one 新增行, and it was waited for rather than assumed.
+    expect(fake.mutations.filter((m) => m.kind === 'addRow')).toEqual([{ kind: 'addRow', detail: '2' }]);
+  });
+
+  // Live 2026-09-20, five 费用明细行 further in than any run had ever got: the sixth row's 发票类型 dropdown opened
+  // and the run stopped on 「发票类型」候选项「普通发票」的落点（x=629 y=697）上盖着DIV. The cell's point had been
+  // polled since the round before; the ITEM's point was read once, out of the probe that had just waited for the
+  // list to appear — the earliest possible read of a list that was still being painted.
+  it('waits for the dropdown item it wants to be reachable, not just painted', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ optionItemCoverTicks: 3 }));
+    const result = await run(fake);
+    expect(result).toMatchObject({ status: 'unknown', code: 'strict_readback_failed' });
+    expect(fake.mutations.filter((m) => m.kind === 'option')).toEqual([
+      { kind: 'option', detail: '发票类型=普通发票' }, { kind: 'option', detail: '发票类型=普通发票' },
+    ]);
+  });
+
+  // The same read-too-early, one step later: the grid keeps `k-grid-edit-row` on the committed row for a render
+  // or two, and `leaveEdit` used to read that state exactly once — reporting a form that is merely still painting
+  // as a form stuck in edit (`leave_edit_failed`).
+  it('leaves edit mode over a grid that drops its edit row a render late', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ editRowLingersTicks: 3 }));
+    const result = await run(fake);
+    expect(result).toMatchObject({ status: 'unknown', code: 'strict_readback_failed' });
   });
 });
 

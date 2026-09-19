@@ -131,6 +131,31 @@ export type FakeErpOptions = {
    * point once and refused.
    */
   invoiceTypeCoverTicks?: number;
+  /**
+   * How many ERP-page evaluations after 新增行 the new 费用明细行 takes to appear in the grid.
+   *
+   * Measured live 2026-09-20: a 去报销 wrote detail row 1 in full, read it back off the real form, clicked
+   * 新增行 and stopped on `add_row_not_observed` — while the row WAS on the form a moment later. The click was
+   * never lost; the read was too early. ERP adds the row through its own re-render, and `addDetailRow` returned
+   * `{ok:true}` the instant the click was dispatched.
+   */
+  newRowAppearsAfterTicks?: number;
+  /**
+   * How many ERP-page evaluations a committed row keeps its `k-grid-edit-row` class — the grid still reporting
+   * the row as being edited for a render or two after the value has been taken. `leaveEdit` reads that state
+   * once, and `draft-flow.ts` turns `stillEditing: true` into `leave_edit_failed`.
+   */
+  editRowLingersTicks?: number;
+  /**
+   * How many ERP-page evaluations the freshly opened 发票类型 dropdown's own items sit under a cover — the list
+   * painted, its items measurable, and `document.elementFromPoint` at the wanted item still answering the thing
+   * on top of it.
+   *
+   * Measured live 2026-09-20: a 去报销 wrote five 费用明细行 in full, opened 发票类型 on the sixth and stopped on
+   * 「发票类型」候选项「普通发票」的落点（x=629 y=697）上盖着DIV. The cell's own point is polled since the last
+   * round; the ITEM's was read exactly once, out of the same probe that had just waited for the list to appear.
+   */
+  optionItemCoverTicks?: number;
 };
 export type FakeMutation = { kind: 'import' | 'cell' | 'option' | 'header' | 'addRow' | 'save'; detail: string };
 
@@ -300,6 +325,9 @@ export async function createFakeErp(options: FakeErpOptions) {
   let formPanelActiveAt: number | null = null;
   let blockerUntil: number | null = null;
   let optionCoverUntil: number | null = null;
+  let pendingNewRow: number | null = null;
+  let optionItemCoverUntil: number | null = null;
+  const lingeringEditRows: Array<{ tr: any; due: number }> = [];
   let pendingReport: { start: number; due: number; summary: string; rows: readonly string[] } | null = null;
   const pendingRecognition: Array<{ due: number; files: string[] }> = [];
   let dropdown: { td: any; tr: any; list: any; span: any } | null = null;
@@ -417,7 +445,7 @@ const kendoDate = (raw: string) => {
       ? kendoDate(String(input.value)) ?? before
       : display(column, String(input.value).trim());
     td.textContent = text;
-    tr.classList.remove('k-grid-edit-row');
+    leaveEditClass(tr);
     mutate('cell', `${column}=${text}`);
     // Linked recalculation: a new 费用金额 clears 税额 (kernel erpform settleGrid note).
     if (column === '费用金额') setText(tr, 'detail', '税额', '');
@@ -429,7 +457,7 @@ const kendoDate = (raw: string) => {
   function closeDropdown() {
     if (!dropdown) return;
     dropdown.list.remove();
-    dropdown.tr.classList.remove('k-grid-edit-row');
+    leaveEditClass(dropdown.tr);
     dropdown.span.blur();
     dropdown = null;
   }
@@ -456,7 +484,9 @@ const kendoDate = (raw: string) => {
         list.appendChild(li);
       }
       main.document.body.appendChild(list);
+      if (options.optionItemCoverTicks) optionItemCoverUntil = mainTicks + options.optionItemCoverTicks;
       dropdown = { td, tr, list, span };
+      syncOptionItemCover();
       return;
     }
     const current = String(td.textContent).trim().replace(/^[¥￥]/, '');
@@ -484,6 +514,36 @@ const kendoDate = (raw: string) => {
     // Changing the invoice type clears an entered tax (save-contract order note).
     if (before !== text) { setText(tr, 'detail', '税额', ''); recalc(tr); }
     updateTotals();
+  }
+
+  /** Append one blank 费用明细行 above the footer, and log the click that asked for it. */
+  function insertDetailRow() {
+    const tbody = grid('detail').querySelector('tbody');
+    tbody.insertBefore(defaultRow(), tbody.querySelector('tr.k-footer-template'));
+    mutate('addRow', String(dataRows('detail').length));
+  }
+
+  /** Drop the edit class, or let it linger for a few reads when the test asks for the lingering shape. */
+  function leaveEditClass(tr: any) {
+    const delay = options.editRowLingersTicks ?? 0;
+    if (delay > 0) lingeringEditRows.push({ tr, due: mainTicks + delay });
+    else tr.classList.remove('k-grid-edit-row');
+  }
+
+  /** Rows the grid still paints as being edited, after the value was taken. */
+  function flushEditClass() {
+    for (const pending of [...lingeringEditRows]) {
+      if (mainTicks < pending.due) continue;
+      pending.tr.classList.remove('k-grid-edit-row');
+      lingeringEditRows.splice(lingeringEditRows.indexOf(pending), 1);
+    }
+  }
+
+  /** A 新增行 whose row ERP has not painted yet. */
+  function flushNewRow() {
+    if (pendingNewRow === null || mainTicks < pendingNewRow) return;
+    pendingNewRow = null;
+    insertDetailRow();
   }
 
   function defaultRow() {
@@ -684,9 +744,10 @@ const kendoDate = (raw: string) => {
         return openAssistant();
       }
       case 'new-row': {
-        const tbody = grid('detail').querySelector('tbody');
-        tbody.insertBefore(defaultRow(), tbody.querySelector('tr.k-footer-template'));
-        return mutate('addRow', String(dataRows('detail').length));
+        // ERP paints the new row in its own re-render, which is not the click's own turn of the event loop.
+        const delay = options.newRowAppearsAfterTicks ?? 0;
+        if (delay > 0) { pendingNewRow = mainTicks + delay; return undefined; }
+        return insertDetailRow();
       }
       case 'save': return save();
       case 'close-window': {
@@ -860,6 +921,16 @@ const kendoDate = (raw: string) => {
     }
   }
 
+  /** The cover over the dropdown's own items: on for the first few reads of a freshly opened list, then gone. */
+  function syncOptionItemCover() {
+    if (!options.optionItemCoverTicks || !dropdown) return;
+    const covered = optionItemCoverUntil !== null && mainTicks < optionItemCoverUntil;
+    for (const li of dropdown.list.querySelectorAll('li')) {
+      if (covered) li.setAttribute('data-covered-by', '#form-blocker');
+      else li.removeAttribute('data-covered-by');
+    }
+  }
+
   /** The form's blocking overlay coming down once it has finished opening, a few reads after 新增. */
   function clearBlocker() {
     if (blockerUntil === null || mainTicks < blockerUntil) return;
@@ -896,7 +967,7 @@ const kendoDate = (raw: string) => {
       if (!sessionId && !targetAlive) throw new Error('CDP 连接已关闭');
       const doc = sessionId ? child!.doc : main;
       if (sessionId) { assistantTicks += 1; flushRecognition(); }
-      else { mainTicks += 1; syncFormPanel(); clearBlocker(); syncOptionCover(); paintReport(); }
+      else { mainTicks += 1; syncFormPanel(); clearBlocker(); syncOptionCover(); paintReport(); flushNewRow(); flushEditClass(); syncOptionItemCover(); }
       switch (method) {
         case 'Runtime.evaluate': return doc.evaluate(String(params.expression));
         case 'Input.dispatchMouseEvent':

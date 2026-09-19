@@ -7,10 +7,11 @@
 
 import { autoAttach, evalIn, screenshot, type CdpSession, type ChildTargets } from './cdp';
 import { ExecutorError } from './chromium';
-import { showSection } from './erpform';
+import { readGridByColumn, showSection } from './erpform';
 import { HIT_JS, clickReach, reachProblem, type Reach } from './hit';
 import { readPane, recognisedTotal, selectRecognisedInvoices } from './invoice-grid';
 import { DEFAULT_PACE, sleep, waitFor, type Pace } from './pace';
+import { DETAIL_COLUMN } from './reader';
 import { dialogsSnippet, dismissPoint } from './tabs';
 
 export type WritePage = { session: CdpSession; children?: ChildTargets; pace?: Pace };
@@ -556,24 +557,52 @@ export async function importInvoices(page: WritePage, { budget = IMPORT_BUDGET }
 export async function closeErpDialogs(page: WritePage, { timeoutMs = 15_000, attempts = 3 } = {}) {
   const pace = paceOf(page);
   const listed = () => evalIn<string[]>(page.session, dialogsSnippet);
-  const round = Math.ceil(timeoutMs / attempts);
+  // `timeoutMs` is the budget for CLOSING THE WINDOWS, not for one wait inside one attempt. It used to be divided
+  // by the attempts and then handed to each of the two waits separately, so a window that never closes cost up to
+  // 2 x attempts x timeoutMs/attempts — twice the stated budget, and `pace` could not shorten it at all, because
+  // the cap applied to a round rather than to the step (on the fast fake pace: 12 s for a 2 s longMs).
+  const deadline = Date.now() + cap(page, timeoutMs);
+  const left = () => Math.max(0, deadline - Date.now());
+  const round = Math.ceil(cap(page, timeoutMs) / attempts);
   let remaining = await listed();
-  for (let attempt = 0; attempt < attempts && remaining.length > 0; attempt += 1) {
+  for (let attempt = 0; attempt < attempts && remaining.length > 0 && left() > 0; attempt += 1) {
     // Polled: a window that has just opened is still animating, and its 退出 answers the hit test a moment later.
-    const point = await waitFor(() => evalIn<Reach | null>(page.session, dismissPoint), Boolean, cap(page, round), pace.pollMs);
+    const point = await waitFor(() => evalIn<Reach | null>(page.session, dismissPoint), Boolean, Math.min(round, left()), pace.pollMs);
     // No closer that a mouse event can reach: clicking anyway is how a dialog gets answered by whatever is on top.
     if (reachProblem('这个窗口的关闭位置', point)) break;
     await clickReach(page.session, point, '报销系统弹出窗口的「退出」');
     const before = remaining.length;
-    remaining = await waitFor(listed, (windows) => windows.length < before, cap(page, round), pace.pollMs);
+    remaining = await waitFor(listed, (windows) => windows.length < before, Math.min(round, left()), pace.pollMs);
   }
   return { ok: remaining.length === 0, remaining };
 }
 
-/** Add one detail row through the toolbar (新增行). Part of the fill mutation. */
-export async function addDetailRow(page: WritePage) {
+/**
+ * Add one detail row through the toolbar (新增行), and wait until that row is in the grid.
+ *
+ * Measured live 2026-09-20: a 去报销 wrote 费用明细 row 1 in full, read it back off the real form, clicked 新增行
+ * and stopped on `add_row_not_observed` — while the row WAS on the form. The click was never lost; ERP paints the
+ * row in its own re-render, and this step returned `{ok:true}` the instant the click was dispatched, so
+ * `draft-flow.ts`'s `currentRows.length === previousRowCount + 1` ran against a grid that had not changed yet.
+ *
+ * So the postcondition is waited for here, through the SAME reading the caller then asserts on
+ * (`readGridByColumn(DETAIL_COLUMN)`, data rows only): a row this step reports is a row that reading can see.
+ * A step reports what it actually achieved — the rule `openNewReimbursement` was put under earlier on this branch.
+ */
+export async function addDetailRow(page: WritePage, { timeoutMs = 15_000 } = {}) {
+  const count = async () => {
+    const grid = await readGridByColumn(page.session, DETAIL_COLUMN);
+    return grid.ok ? grid.rows.filter((row) => row.kind === 'data').length : null;
+  };
+  const before = await count();
+  if (before === null) throw new ExecutorError('ERP_DETAIL_GRID_UNREADABLE', '点「新增行」之前读不出费用明细网格，不往读不出的网格上加行');
   await clickCss(page, page.session, 'a[id$="tbNewList"]', '新增明细行');
-  return { ok: true };
+  const after = await waitFor(count, (rows) => rows !== null && rows > before, cap(page, timeoutMs), paceOf(page).pollMs);
+  if (after === null || after <= before) {
+    throw new ExecutorError('ERP_DETAIL_ROW_NOT_ADDED',
+      `点过「新增行」之后 ${Math.round(cap(page, timeoutMs) / 1000)} 秒内费用明细网格还是 ${before} 行：新的费用明细行没有出现`);
+  }
+  return { ok: true, rowCount: after, rowIndex: after - 1 };
 }
 
 export async function closeInvoiceAssistant(page: WritePage) {

@@ -384,8 +384,18 @@ export async function selectOption(session: CdpSession, { which = 0, row = 0, co
     return [...document.querySelectorAll('ul[class*=k-list] li, li[role=option]')].filter(vis)
       .map((n) => ({ text: n.innerText.replace(/\\s+/g, ' ').trim(), ...at(n) }));
   })()`);
+  // The WANTED item's own point is part of the condition, not something read once afterwards. Live 2026-09-20 a
+  // 去报销 that had written five 费用明细行 in full stopped here on 「发票类型」候选项「普通发票」的落点（x=629
+  // y=697）上盖着DIV: the list had just been painted, and the first read of its item answered the thing still on
+  // top of it. The cell was already polled; the item was not, so the one read that decided was the earliest one.
   const probe = async () => ({ items: await listItems(), cell: await cellTarget(session, { which, row, column, scroll: false }) });
-  const seen = await waitFor(probe, (p) => p.items.length > 0 && p.cell.ok && p.cell.focused === true, readyMs, pace.pollMs);
+  const ready2 = (p: { items: Array<Reach & { text: string }>; cell: CellTarget }) => {
+    if (!(p.items.length > 0 && p.cell.ok && p.cell.focused === true)) return false;
+    const wanted = p.items.filter((i) => i.text === option);
+    // Zero or several is a refusal, not something waiting will mend: stop and let the caller say which it was.
+    return wanted.length !== 1 || wanted[0]!.onTarget === true;
+  };
+  const seen = await waitFor(probe, ready2, readyMs, pace.pollMs);
   const items = seen.items;
   const ready = seen.items.length > 0 && seen.cell.ok && seen.cell.focused === true;
 
@@ -413,12 +423,20 @@ export async function selectOption(session: CdpSession, { which = 0, row = 0, co
     reason: matched ? undefined : `点中了「${option}」，但单元格回读仍然是「${after.ok ? after.text : '读不出'}」` };
 }
 
-/** Leave edit mode before the final read-back; clicking a section anchor is the lightest blur available. */
-export async function leaveEdit(session: CdpSession, { label = '明细信息', settleMs = 1200, pace = DEFAULT_PACE }: { label?: string; settleMs?: number; pace?: Pace } = {}) {
+/**
+ * Leave edit mode before the final read-back; clicking a section anchor is the lightest blur available.
+ *
+ * The leaving is WAITED for, not read once. The grid keeps `k-grid-edit-row` on the row for its own next render
+ * or two after taking the value, and a single read taken right after the click turns that render into
+ * `leave_edit_failed` — the same read-too-early that `addDetailRow` was returning `{ok:true}` over. The refusal
+ * stays for a row that is still in edit at the end of the wait.
+ */
+export async function leaveEdit(session: CdpSession, { label = '明细信息', settleMs = 1200, editMs = 8000, pace = DEFAULT_PACE }: { label?: string; settleMs?: number; editMs?: number; pace?: Pace } = {}) {
   const shown = await showSection(session, label, { settleMs, pace });
   if (!shown.ok) return shown;
-  const grid = await readGrid(session, 0);
-  return { ok: true as const, stillEditing: grid.ok ? grid.rows.some((r) => r.editing) : null };
+  const editing = (grid: Grid) => (grid.ok ? grid.rows.some((r) => r.editing) : null);
+  const grid = await waitFor(() => readGrid(session, 0), (g) => editing(g) === false, editMs, pace.pollMs);
+  return { ok: true as const, stillEditing: editing(grid) };
 }
 
 /**
