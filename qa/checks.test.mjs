@@ -7,7 +7,7 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { EXAMPLE_REAL_PROJECT, OFFLINE_PROJECT, catalogRefusal, erpIdleFindings, erpProjectTarget, waitForChange } from './checks.mjs';
+import { EXAMPLE_REAL_PROJECT, OFFLINE_PROJECT, catalogRefusal, erpIdleFindings, erpPollSettled, erpProjectTarget, waitForChange } from './checks.mjs';
 
 const repo = new URL('..', import.meta.url);
 const read = (path) => readFile(fileURLToPath(new URL(path, repo)), 'utf8');
@@ -155,4 +155,51 @@ test('an explicit starting value is honoured, so a change during the action is n
   const result = await waitForChange(async () => 'after', { from: 'before', timeout: 30000, interval: 500, sleep, now });
   assert.equal(result.changed, true);
   assert.equal(result.from, 'before');
+});
+
+// --- F4: a clean abort speaks through abortReason, not through status ------------------------------
+
+test('a clean abort is the good outcome, not a defect: status stays idle and abortReason carries the reason', () => {
+  const found = erpIdleFindings({
+    abortReason: '上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：报销专用 Chromium 浏览器不可用',
+  });
+  assert.equal(found.filter((f) => f.level === 'DEFECT').length, 0);
+  const good = found.find((f) => f.level === 'ok');
+  assert.ok(good, 'a clean abort was not recorded as ok');
+  assert.match(good.text, /停止|stopped before any change/);
+});
+
+test('a clean abort that does not blame the dedicated browser is still ok, but warns', () => {
+  const found = erpIdleFindings({ abortReason: '停止了，原因：发票无忧助手没有建立页面连接' });
+  assert.equal(found.filter((f) => f.level === 'DEFECT').length, 0);
+  assert.ok(found.some((f) => f.level === 'WARN' && /dedicated browser/.test(f.text)));
+});
+
+test('an idle view with no reason of any kind is still the one real defect', () => {
+  const found = erpIdleFindings({ abortReason: '   ', catalog: { status: 'matched' }, refusals: [] });
+  assert.equal(found.filter((f) => f.level === 'DEFECT').length, 1);
+});
+
+test('the poll stops as soon as abortReason appears, because status will never move', () => {
+  assert.equal(erpPollSettled({ status: 'idle', abortReason: null, catalog: null }), false);
+  assert.equal(erpPollSettled({ status: 'idle', abortReason: '停止了', catalog: null }), true);
+  assert.equal(erpPollSettled({ status: 'idle', abortReason: '  ', catalog: { status: 'mismatch' } }), true);
+  assert.equal(erpPollSettled({ status: 'aborted' }), true);
+  assert.equal(erpPollSettled({ status: 'running' }), false);
+});
+
+test('the driver reads abortReason, not just erp.status', async () => {
+  const run = await read('qa/run.mjs');
+  assert.match(run, /erpPollSettled\(\{\s*status,\s*abortReason: reason/);
+  assert.match(run, /erpIdleFindings\(\{[^)]*abortReason: reason/);
+});
+
+test('fill-state still reports a clean abort as idle, which is why the above matters', async () => {
+  const fillState = await read('server/src/erp/fill-state.ts');
+  // `case 'handed_over':` appears in an earlier switch too, so anchor on the aborted case and read forward.
+  const from = fillState.indexOf("case 'aborted':");
+  assert.ok(from > 0, 'fill-state no longer has an aborted phase');
+  const aborted = fillState.slice(from, fillState.indexOf("case 'handed_over':", from));
+  assert.ok(aborted.includes('abortReason'), 'the aborted phase no longer sets abortReason');
+  assert.ok(!/status: 'aborted'/.test(aborted), 'the aborted phase now sets status too — the driver can be simplified');
 });

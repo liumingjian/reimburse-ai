@@ -63,17 +63,33 @@ export function catalogRefusal(catalog) {
 /**
  * What the `erp-off` area records when `erp.status` never left `idle`.
  *
- * `idle` on its own does not mean the app did nothing: a catalog mismatch is mapped to the plain `idle` ERP
- * view on purpose (server/src/erp/fill-state.ts), because its problems belong to the snapshot's `catalog`
- * section. A server refusal with a good reason is not a defect — so name the refusal and move on. Only an
- * `idle` with no refusal anywhere is the app going quiet, which is.
+ * `idle` on its own does not mean the app did nothing, and it has two separate reasons for saying so.
+ *
+ * A clean abort — the job stopped BEFORE writing anything — also reports `status: 'idle'`, and carries its
+ * explanation in `erp.abortReason`; only the `unknown` phase, where the write may have landed, reports
+ * `status: 'aborted'` (server/src/erp/fill-state.ts:210-224). Watching `status` alone therefore misses exactly
+ * the case this section exists to check, which is how a correct abort was recorded as a defect.
+ *
+ * A catalog mismatch is likewise mapped to the plain `idle` view on purpose, because its problems belong to
+ * the snapshot's `catalog` section. A server refusal with a good reason is not a defect — so name the refusal
+ * and move on. Only an `idle` with no reason anywhere is the app going quiet, which is.
  *
  * `refusals` are the page's own `role=alert` texts (a preflight refusal the ERP browser has nothing to do
  * with). Returns a list of `{ level, text }`.
  */
-export function erpIdleFindings({ catalog = null, refusals = [] } = {}) {
+export function erpIdleFindings({ catalog = null, refusals = [], abortReason = null } = {}) {
   const notReached =
     'so the browser-off path under test was never reached. Assign the lines to a project this ERP account really has (QA_PROJECT) to exercise it.';
+
+  // A clean abort is the good outcome of this section, not a silence: it says the run stopped before writing.
+  const reason = String(abortReason ?? '').replace(/\s+/g, ' ').trim();
+  if (reason) {
+    const found = [{ level: 'ok', text: `the ERP write stopped before any change: ${reason.slice(0, 220)}` }];
+    if (!/浏览器|Chrome|9333/.test(reason)) {
+      found.push({ level: 'WARN', text: 'the abort reason does not say the dedicated browser is unavailable' });
+    }
+    return found;
+  }
 
   const refusal = catalogRefusal(catalog);
   if (refusal) {
@@ -98,6 +114,17 @@ export function erpIdleFindings({ catalog = null, refusals = [] } = {}) {
     },
   ];
 }
+
+/**
+ * Whether the `erp-off` poll can stop. A clean abort never changes `erp.status`, so waiting for it to leave
+ * `idle` burns the whole budget on a state that has already settled; `abortReason` is what actually moves.
+ */
+export function erpPollSettled({ status = null, abortReason = null, catalog = null } = {}) {
+  if (status === 'aborted' || status === 'done' || status === 'waiting_login') return true;
+  if (String(abortReason ?? '').trim()) return true;
+  return catalog?.status === 'mismatch';
+}
+
 
 const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

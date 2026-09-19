@@ -7,7 +7,7 @@ import { chromium, expect } from '@playwright/test';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { erpIdleFindings, erpProjectTarget, waitForChange } from './checks.mjs';
+import { erpIdleFindings, erpPollSettled, erpProjectTarget, waitForChange } from './checks.mjs';
 import { qaSelfCheck, qaValue } from './values.mjs';
 
 const BASE = process.env['QA_BASE'] ?? 'http://127.0.0.1:4319';
@@ -1057,9 +1057,9 @@ async function qaErpOff(page, context, state) {
     status = snap?.erp?.status ?? null;
     reason = snap?.erp?.abortReason ?? null;
     catalog = snap?.catalog ?? null;
-    if (status === 'aborted' || status === 'done' || status === 'waiting_login') break;
-    // A catalog mismatch is terminal for this attempt; there is nothing further to wait for.
-    if (catalog?.status === 'mismatch') break;
+    // A clean abort keeps `status` at `idle` and speaks through `abortReason`; a catalog mismatch is terminal
+    // for this attempt. Neither will ever move `status`, so neither is worth the rest of the budget.
+    if (erpPollSettled({ status, abortReason: reason, catalog })) break;
     await page.waitForTimeout(3000);
   }
   await shot(page, 'erp-off');
@@ -1069,7 +1069,7 @@ async function qaErpOff(page, context, state) {
     // nothing to do with. Both are the server refusing with a reason, which is not a defect; name the refusal
     // so the next operator does not have to go digging in erp_job_event for it.
     const refusals = await page.locator('[role=alert]').filter({ hasText: /\S/ }).allInnerTexts().catch(() => []);
-    for (const finding of erpIdleFindings({ catalog, refusals })) note(finding.level, 'erp-off', finding.text);
+    for (const finding of erpIdleFindings({ catalog, refusals, abortReason: reason })) note(finding.level, 'erp-off', finding.text);
     return;
   }
 
