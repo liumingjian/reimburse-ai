@@ -47,11 +47,21 @@
     </div>
     <div class="toolbar"><span>上传发票影像</span><span>上传附件影像</span><span>企业收到的发票</span></div>
     <input type="file" multiple accept=".ofd,.xml,.zip,.pdf,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.gif,.tif,.tiff" style="display:none">
+    <!-- The grid groups its recognised rows by 票种 (invoice kind) into an antd tab strip, one pane per 票种,
+         captioned `<票种> <count>` with `ant-tabs-tab-active` on the current one. Measured live 2026-09-19:
+         `数电票 10` and `数电票（铁路电子客票） 2` for the 12 invoices of one task. The fake ERP fills the strip
+         and the panes from the uploaded invoices' 票种; only the current pane's `<tbody>` is displayed, and a
+         tick SURVIVES a switch, because the tick lives on the row's own checkbox and switching only hides it. -->
+    <div class="ant-tabs"><div class="ant-tabs-nav" id="assistant-tabs"></div></div>
     <table class="ant-table">
-      <thead><tr><th><input type="checkbox" class="ant-checkbox-input"></th><th>发票号码</th><th>价税合计</th></tr></thead>
-      <tbody></tbody>
+      <thead><tr><th><input type="checkbox" class="ant-checkbox-input"></th><th>销方名称</th><th>发票号码</th><th>价税合计</th><th>税额</th><th>开票日期</th><th>发票信息</th><th>操作</th></tr></thead>
     </table>
-    <div class="footer"><button data-action="import">发票导入单据</button></div>
+    <!-- Whatever paints over a row's checkbox. Live 2026-09-19 `document.elementFromPoint` at row 5's tick point
+         returned an IMG, not the input, and that click could not have reached the checkbox. -->
+    <img id="assistant-overlay" alt="">
+    <!-- 已选取N张发票 counts what was uploaded into the assistant, NOT what is ticked: measured live it read
+         「已选取12张发票」 unchanged through a tick, an untick and two tab switches. It is not a selection witness. -->
+    <div class="footer"><span id="assistant-selected">已选取0张发票 所有已选发票已选0份附件</span><button data-action="import">发票导入单据</button></div>
     <div class="import-dialog" style="display:none">
       <span>是否生成费用明细？</span>
       <button data-action="not-fill">不生成费用明细</button>

@@ -62,6 +62,21 @@ export type FakeErpOptions = {
    * 908 high; the click was lost and the run died on INVOICE_ASSISTANT_NOT_FOUND 90s later.
    */
   notFillEntryBelowFold?: boolean;
+  /** Clicking a 票种 tab does nothing: the pane never changes, so rows in the other 票种 stay out of reach. */
+  assistantPaneSwitchDead?: boolean;
+  /** 发票号码 whose checkbox refuses to toggle — a click that lands and still leaves the row unticked. */
+  assistantDeadTickNumbers?: string[];
+  /**
+   * The 发票号码 whose tick point is painted over: `document.elementFromPoint` there answers the overlay `<img>`,
+   * exactly as it did live on 2026-09-19 for the row sitting at the bottom edge of the 800x530 iframe viewport.
+   */
+  assistantCoveredTickNumbers?: string[];
+  /**
+   * Recognition of every upload batch after the first lands this many assistant evaluations later, and lands in
+   * its own 票种 pane. The first batch's rows stay on screen throughout, so `rows.length > 0` is true the whole
+   * time and cannot say whether the second batch has been recognised.
+   */
+  assistantRecognitionTicks?: number;
 };
 export type FakeMutation = { kind: 'import' | 'cell' | 'option' | 'header' | 'addRow' | 'save'; detail: string };
 
@@ -74,6 +89,12 @@ const READONLY_COLUMNS = new Set(['收票单号', '申请报销金额', '申请�
 const INVOICE_TYPES = ['普通发票', '增值税发票', '其他运输票'];
 const DETAIL_COLUMNS = ['收票单号', '项目', '费用项目', '发票类型', '开始日期', '结束日期', '住宿/出差地', '出发地', '目的地', '费用金额', '税额', '申请报销金额', '申请付款金额'];
 const RECEIPT_COLUMNS = ['收票单', '发票号码', '销方名称', '开票日期', '不含税金额', '税额', '价税合计', '发票类别'];
+// The recognised-row grid of the 发票助手, as probe-grid.ts measured it live on 2026-09-19.
+const ASSISTANT_COLUMNS = ['', '销方名称', '发票号码', '价税合计', '税额', '开票日期', '发票信息', '操作'];
+// Rows are laid out down a page taller than the viewport, so the later ones are out of reach until something
+// scrolls them in — live, rows 0-4 of 10 were inside the 530-high iframe viewport and rows 6-9 were not.
+const ASSISTANT_ROW_TOP = 300;
+const ASSISTANT_ROW_STEP = 250;
 
 const cents = (text: string | null | undefined) => {
   const s = String(text ?? '').replace(/[¥￥,\s]/g, '');
@@ -106,6 +127,9 @@ class FakeDocument {
       return { x, y, left: x, top: y, width: BOX, height, right: x + BOX, bottom: y + height };
     };
     Object.defineProperty(proto, 'innerText', { configurable: true, get(this: any) { return self.visibleText(this); } });
+    // jsdom has no hit testing, so the fake answers `elementFromPoint` with its own layout — the same answer a
+    // click at that point gets, which is the whole point of asking.
+    this.document.elementFromPoint = (x: number, y: number) => self.elementAt(x, y);
     proto.scrollIntoView = function (this: any) {
       if (!this.isConnected || self.hidden(this)) return;
       const { docY, height } = self.layout(this);
@@ -162,15 +186,21 @@ class FakeDocument {
     const row = (y + this.scrollTop - ORIGIN - BOX / 2) / SLOT;
     if (Number.isInteger(col) && Number.isInteger(row) && col >= 0 && col < COLS) {
       const el = this.slots[row * COLS + col];
-      if (el && el.isConnected && !this.hidden(el) && el.getAttribute?.('data-below-fold') === null) return el;
+      if (el && el.isConnected && !this.hidden(el) && el.getAttribute?.('data-below-fold') === null) return this.covering(el);
     }
     // A `data-below-fold` box is off the slot grid, so it is found by measuring the few that exist.
     for (const el of this.slots) {
       if (!el.isConnected || this.hidden(el) || el.getAttribute?.('data-below-fold') === null) continue;
       const b = el.getBoundingClientRect();
-      if (Math.round(b.x + b.width / 2) === x && Math.round(b.y + b.height / 2) === y) return el;
+      if (Math.round(b.x + b.width / 2) === x && Math.round(b.y + b.height / 2) === y) return this.covering(el);
     }
     return null;
+  }
+
+  /** `data-covered-by` names an element painted over this one: what is at the point is the cover, not the target. */
+  covering(el: any): any {
+    const selector = el.getAttribute?.('data-covered-by');
+    return selector ? this.document.querySelector(selector) ?? el : el;
   }
 
   async evaluate(expression: string) {
@@ -208,6 +238,10 @@ export async function createFakeErp(options: FakeErpOptions) {
   let main: FakeDocument = await render();
   let child: { doc: FakeDocument; sessionId: string; targetId: string } | null = null;
   let editor: { td: any; tr: any; input: any; column: string } | null = null;
+  let activePane: string | null = null;
+  let uploadBatches = 0;
+  let assistantTicks = 0;
+  const pendingRecognition: Array<{ due: number; files: string[] }> = [];
   let dropdown: { td: any; tr: any; list: any; span: any } | null = null;
 
   function mutate(kind: FakeMutation['kind'], detail: string) {
@@ -381,6 +415,10 @@ export async function createFakeErp(options: FakeErpOptions) {
     const doc = new FakeDocument(fixture('piaozone-assistant.html'), 'https://www.piaozone.com/pwy-assistant/index.html');
     await doc.ready();
     child = { doc, sessionId: 'piaozone-session-1', targetId: 'piaozone-1' };
+    activePane = null;
+    uploadBatches = 0;
+    assistantTicks = 0;
+    pendingRecognition.length = 0;
     if (autoAttach) {
       const { sessionId, targetId } = child;
       setTimeout(() => {
@@ -494,7 +532,20 @@ export async function createFakeErp(options: FakeErpOptions) {
 
   function clickAssistant(el: any) {
     if (!child) return;
-    if (el.matches('input.ant-checkbox-input')) { el.checked = !el.checked; return; }
+    // The 票种 tab strip. Switching hides one pane and shows another; it touches no checkbox, which is why a tick
+    // survives a switch (measured live 2026-09-19: 4/10 ticked, switch away, switch back, still 4/10).
+    const tab = el.closest?.('.ant-tabs-tab');
+    if (tab) {
+      if (!options.assistantPaneSwitchDead) showPane(String(tab.getAttribute('data-pane')));
+      return;
+    }
+    if (el.matches('input.ant-checkbox-input')) {
+      if (el.closest('thead')) return; // the header 全选 is on the never-click list; the fake refuses it too
+      const number = assistantKeyOf(el.closest('tr'));
+      if ((options.assistantDeadTickNumbers ?? []).includes(number)) return;
+      el.checked = !el.checked;
+      return;
+    }
     const doc = child.doc.document;
     const action = el.closest('[data-action]')?.getAttribute('data-action');
     // 电脑端选取 leaves the entry menu for the upload view; that is where the file input and the grid live.
@@ -525,18 +576,91 @@ export async function createFakeErp(options: FakeErpOptions) {
     if (params.key === 'Escape') closeDropdown();
   }
 
-  function setFiles(files: string[]) {
+  const assistantKeyOf = (tr: any) =>
+    String(tr?.children?.[ASSISTANT_COLUMNS.indexOf('发票号码')]?.textContent ?? '').trim();
+
+  /** The `<tbody>` of one 票种 pane, and its tab, created on first sight of that 票种. */
+  function paneOf(label: string) {
+    const doc = child!.doc.document;
+    const existing = doc.querySelector(`tbody[data-pane="${label}"]`);
+    if (existing) return existing;
+    const tbody = doc.createElement('tbody');
+    tbody.setAttribute('data-pane', label);
+    doc.querySelector('.ant-table').appendChild(tbody);
+    const tab = doc.createElement('div');
+    tab.className = 'ant-tabs-tab';
+    tab.setAttribute('data-pane', label);
+    doc.querySelector('#assistant-tabs').appendChild(tab);
+    // The first 票种 to arrive is the one the grid opens on; later ones start hidden.
+    showPane(doc.querySelectorAll('tbody[data-pane]').length === 1 ? label : activePane);
+    return tbody;
+  }
+
+  function showPane(label: string | null) {
+    activePane = label;
+    const doc = child!.doc.document;
+    for (const tbody of doc.querySelectorAll('tbody[data-pane]')) show(tbody, tbody.getAttribute('data-pane') === label);
+    for (const tab of doc.querySelectorAll('.ant-tabs-tab')) {
+      tab.className = tab.getAttribute('data-pane') === label ? 'ant-tabs-tab-active ant-tabs-tab' : ' ant-tabs-tab';
+    }
+  }
+
+  /** Tab captions (`<票种> <count>`) and the 已选取N张发票 footer, which counts UPLOADS and never ticks. */
+  function refreshAssistant() {
+    const doc = child!.doc.document;
+    let uploaded = 0;
+    for (const tbody of doc.querySelectorAll('tbody[data-pane]')) {
+      const label = tbody.getAttribute('data-pane');
+      const count = tbody.querySelectorAll('tr').length;
+      uploaded += count;
+      doc.querySelector(`.ant-tabs-tab[data-pane="${label}"]`).textContent = `${label} ${count}`;
+    }
+    doc.querySelector('#assistant-selected').textContent = `已选取${uploaded}张发票 所有已选发票已选0份附件`;
+  }
+
+  function recognise(files: string[]) {
     if (!child) return;
-    const tbody = child.doc.document.querySelector('tbody');
+    const doc = child.doc.document;
     for (const path of files) {
       const hash = sha256(readFileSync(path));
       const invoice = invoicesBySha.get(hash);
-      if (!invoice || tbody.querySelector(`tr[data-sha256="${hash}"]`)) continue; // unknown files are not recognised; duplicates dedupe by number
-      const tr = child.doc.document.createElement('tr');
+      if (!invoice || doc.querySelector(`tr[data-sha256="${hash}"]`)) continue; // unknown files are not recognised; duplicates dedupe by number
+      // 票种 is what the grid groups by, so the fake groups by the invoice's own 发票类别.
+      const tbody = paneOf(invoice.category);
+      const tr = doc.createElement('tr');
       tr.setAttribute('data-sha256', hash);
-      tr.innerHTML = `<td><input type="checkbox" class="ant-checkbox-input"></td><td>${invoice.invoiceNumber}</td><td>${invoice.gross}</td>`;
+      tr.innerHTML = ASSISTANT_COLUMNS.map((column) => {
+        switch (column) {
+          case '': return '<td><input type="checkbox" class="ant-checkbox-input"></td>';
+          case '销方名称': return `<td>${escapeHtml(invoice.seller)}</td>`;
+          case '发票号码': return `<td>${escapeHtml(invoice.invoiceNumber)}</td>`;
+          case '价税合计': return `<td>${escapeHtml(invoice.gross)}</td>`;
+          case '税额': return `<td>${escapeHtml(invoice.tax)}</td>`;
+          case '开票日期': return `<td>${escapeHtml(invoice.issueDate)}</td>`;
+          default: return '<td></td>';
+        }
+      }).join('');
       tbody.appendChild(tr);
+      // Each row sits one row-height further down a page taller than the viewport: the later ones are unreachable
+      // until something scrolls them in.
+      const input = tr.querySelector('input.ant-checkbox-input');
+      input.setAttribute('data-below-fold', String(ASSISTANT_ROW_TOP + (tbody.querySelectorAll('tr').length - 1) * ASSISTANT_ROW_STEP));
+      if ((options.assistantCoveredTickNumbers ?? []).includes(invoice.invoiceNumber)) input.setAttribute('data-covered-by', '#assistant-overlay');
     }
+    refreshAssistant();
+  }
+
+  /** Recognition that has not landed yet, because `assistantRecognitionTicks` holds this batch back. */
+  function flushRecognition() {
+    while (pendingRecognition.length && pendingRecognition[0]!.due <= assistantTicks) recognise(pendingRecognition.shift()!.files);
+  }
+
+  function setFiles(files: string[]) {
+    if (!child) return;
+    const delay = options.assistantRecognitionTicks ?? 0;
+    if (delay > 0 && uploadBatches > 0) pendingRecognition.push({ due: assistantTicks + delay, files });
+    else recognise(files);
+    uploadBatches += 1;
   }
 
   const session: CdpSession = {
@@ -545,6 +669,7 @@ export async function createFakeErp(options: FakeErpOptions) {
       if (sessionId && (!child || sessionId !== child.sessionId)) throw new Error(`No session with given id: ${sessionId}`);
       if (!sessionId && !targetAlive) throw new Error('CDP 连接已关闭');
       const doc = sessionId ? child!.doc : main;
+      if (sessionId) { assistantTicks += 1; flushRecognition(); }
       switch (method) {
         case 'Runtime.evaluate': return doc.evaluate(String(params.expression));
         case 'Input.dispatchMouseEvent':
@@ -579,6 +704,8 @@ export async function createFakeErp(options: FakeErpOptions) {
   return {
     session, mutations, commands, hooks,
     get document() { return main.document; },
+    /** The 发票助手's own document while it is open — its 票种 panes, their rows and their ticks. */
+    get assistantDocument() { return child?.doc.document ?? null; },
     browser: {
       listPages: async () => (targetAlive ? [page] : []),
       attach: async (candidate: ChromiumPage) => ({ ...candidate, automation: 'cdp' as const, session }),

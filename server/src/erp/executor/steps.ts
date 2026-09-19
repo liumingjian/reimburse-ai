@@ -8,6 +8,7 @@
 import { autoAttach, clickAt, evalIn, screenshot, type CdpSession, type ChildTargets } from './cdp';
 import { ExecutorError } from './chromium';
 import { showSection } from './erpform';
+import { readPane, recognisedTotal, selectRecognisedInvoices } from './invoice-grid';
 import { DEFAULT_PACE, sleep, waitFor, type Pace } from './pace';
 
 export type WritePage = { session: CdpSession; children?: ChildTargets; pace?: Pace };
@@ -174,14 +175,6 @@ const fileInput = async (session: CdpSession, files: string[]) => {
   await session.send('DOM.setFileInputFiles', { nodeId, files });
 };
 
-type Checkbox = { checked: boolean; x: number; y: number };
-const dataCheckboxes = (session: CdpSession) => evalIn<Checkbox[]>(session, `(() => {
-  const vis = ${visible};
-  return [...document.querySelectorAll('input.ant-checkbox-input')]
-    .filter((n) => vis(n) && !n.closest('thead'))
-    .map((n) => { const b = n.getBoundingClientRect();
-      return { checked: n.checked, x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) }; });
-})()`);
 // 发票无忧助手 opens on its entry menu (电脑端选取 / 手机端选取 / 扫码枪扫描 / 扫描仪扫描). Only 电脑端选取 reaches
 // the view that carries the file input, and it is an `<a>` wrapping an icon whose 电脑端选取 caption is a SIBLING
 // `<p>`: clicking the caption does nothing at all.
@@ -237,11 +230,15 @@ const hasOwnText = (text: string) => `(() => {
   return [...document.querySelectorAll('body *')].some((n) => vis(n) && own(n) === ${JSON.stringify(text)});
 })()`;
 
-const uploadState = (session: CdpSession) => evalIn<{ processing: boolean; rows: Array<{ checked: boolean }> }>(session, `(() => {
-  const vis = ${visible};
-  const rows = [...document.querySelectorAll('input.ant-checkbox-input')].filter((n) => vis(n) && !n.closest('thead'));
-  return { processing: (document.body?.innerText || '').includes('上传处理中'), rows: rows.map((n) => ({ checked: n.checked })) };
-})()`);
+/**
+ * Has this upload batch been recognised? Counted across ALL 票种 panes, never on the visible rows: with panes, a
+ * second batch's rows land in a pane that is not showing while the first batch keeps the visible rows above zero,
+ * so a wait on "there are rows" returns at once and the executor proceeds as if the batch had been recognised.
+ */
+const uploadState = async (session: CdpSession) => ({
+  processing: Boolean(await evalIn<boolean>(session, containsText('上传处理中'))),
+  total: (await recognisedTotal(session)) ?? 0,
+});
 
 /**
  * Upload the staged invoice files into the assistant, wait for recognition, and select every recognised row.
@@ -278,28 +275,25 @@ export async function uploadInvoices(page: WritePage, paths: string[], { timeout
     await clickAt(assistant, notice.x, notice.y);
     await sleep(paceOf(page).settleMs);
   }
-  if ((await dataCheckboxes(assistant)).length > 0) {
+  if ((await uploadState(assistant)).total > 0) {
     throw new ExecutorError('INVOICE_ASSISTANT_NOT_EMPTY', '发票助手中已有未归属的发票行，拒绝把它们混入当前任务');
   }
   for (const files of groups) {
+    const before = (await uploadState(assistant)).total;
     await fileInput(assistant, files);
-    const state = await waitFor(() => uploadState(assistant), (value) => Array.isArray(value?.rows) && value.rows.length > 0 && !value.processing, cap(page, 90_000), pace.pollMs);
-    if (!Array.isArray(state?.rows) || state.rows.length === 0) throw new ExecutorError('INVOICE_SELECTION_EMPTY', '发票助手没有返回可勾选的识别结果');
-    if (state.rows.some((row) => row.checked)) throw new ExecutorError('INVOICE_SELECTION_PRESELECTED', '发票助手返回了预先勾选的识别结果，拒绝继续导入');
-  }
-  const rows = await dataCheckboxes(assistant);
-  if (rows.some((row) => row.checked)) throw new ExecutorError('INVOICE_SELECTION_PRESELECTED', '发票助手返回了预先勾选的识别结果，拒绝继续导入');
-  let selected = 0;
-  for (const row of rows) {
-    await clickAt(assistant, row.x, row.y);
-    const checked = await waitFor(() => dataCheckboxes(assistant), (value) => Array.isArray(value) && value.filter((item) => item.checked).length >= selected + 1, cap(page, 5000), pace.pollMs);
-    if (!Array.isArray(checked) || checked.filter((item) => item.checked).length < selected + 1) {
-      throw new ExecutorError('INVOICE_SELECTION_UNCONFIRMED', '发票识别结果没有确认勾选，拒绝继续导入');
+    // Recognition of this batch is this count rising by the size of the batch. A batch that recognises fewer rows
+    // than it was given is not stopped here — the identity-keyed count in `selectRecognisedInvoices` is the real
+    // gate, and it can say which invoices are missing, where a count can only say how many.
+    const state = await waitFor(() => uploadState(assistant), (value) => value.total >= before + files.length && !value.processing, cap(page, 90_000), pace.pollMs);
+    if (state.total <= before) throw new ExecutorError('INVOICE_SELECTION_EMPTY', '发票助手没有返回可勾选的识别结果');
+    if ((await readPane(assistant)).rows.some((row) => row.checked)) {
+      throw new ExecutorError('INVOICE_SELECTION_PRESELECTED', '发票助手返回了预先勾选的识别结果，拒绝继续导入');
     }
-    selected += 1;
   }
-  if (!selected) throw new ExecutorError('INVOICE_SELECTION_EMPTY', '发票助手没有可导入的识别结果');
-  return { ok: true, selectedRows: rows.length };
+  // One file is one invoice is one 收票行 all through this repo (`job.ts` posts receiptRowCount = plan.invoices.length
+  // as the import postcondition), so the number of staged paths is how many rows must end up ticked.
+  const selection = await selectRecognisedInvoices(page, assistant, paths.length);
+  return { ok: true, selectedRows: selection.selected, panes: selection.panes };
 }
 
 /**
