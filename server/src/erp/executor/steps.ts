@@ -158,17 +158,35 @@ const dataCheckboxes = (session: CdpSession) => evalIn<Checkbox[]>(session, `(()
 })()`);
 // 发票无忧助手 opens on its entry menu (电脑端选取 / 手机端选取 / 扫码枪扫描 / 扫描仪扫描). Only 电脑端选取 reaches
 // the view that carries the file input, and it is an `<a>` wrapping an icon whose 电脑端选取 caption is a SIBLING
-// `<p>`: clicking the caption does nothing at all. Verified on the live assistant 2026-09-19.
+// `<p>`: clicking the caption does nothing at all.
+//
+// The anchor is also unmeasurable in the usual way. Live on 2026-09-19 it reports a 76x0 rect — it is inline and its
+// only child is a block `<img>` (76x74), which contributes nothing to the anchor's own line box. Filtering anchors by
+// "has a non-empty rect" therefore discards the one entry we want, which is how this step failed with
+// `找不到发票助手的「电脑端选取」入口` on a page that was showing all four entries. So the anchor is located
+// structurally (exactly one `a[href]` inside the visible `.accessItem`) and measured by whatever it paints.
 const computerPickerPoint = `(() => {
   const vis = ${visible};
   const own = (n) => [...n.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent.trim()).join('').trim();
   const caption = [...document.querySelectorAll('body *')].find((n) => vis(n) && own(n) === '电脑端选取');
   if (!caption) return { ok: false, count: 0 };
   const item = caption.closest('.accessItem') || caption.parentElement;
-  const anchors = item ? [...item.querySelectorAll('a[href]')].filter(vis) : [];
+  const anchors = item ? [...item.querySelectorAll('a[href]')] : [];
   if (anchors.length !== 1) return { ok: false, count: anchors.length };
-  const b = anchors[0].getBoundingClientRect();
+  const b = [anchors[0], ...anchors[0].querySelectorAll('*')]
+    .map((n) => n.getBoundingClientRect())
+    .find((r) => r.width > 0 && r.height > 0);
+  if (!b) return { ok: false, count: 0 };
   return { ok: true, x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) };
+})()`;
+
+// The entry menu is ready when its document has finished loading and every entry is laid out with a destination.
+// Four entries live (电脑端选取 / 手机端选取 / 扫码枪扫描 / 扫描仪扫描); this asks only that they are all present.
+const assistantEntryReady = `(() => {
+  if (document.readyState !== 'complete') return false;
+  const vis = ${visible};
+  const items = [...document.querySelectorAll('.accessItem')].filter(vis);
+  return items.length >= 4 && items.every((n) => n.querySelector('a[href]'));
 })()`;
 
 const fileInputCount = (session: CdpSession) =>
@@ -198,6 +216,15 @@ export async function uploadInvoices(page: WritePage, paths: string[], { timeout
   const pace = paceOf(page);
   const groups = invoiceUploadGroups(paths);
   const assistant = await assistantSession(page, Math.min(timeoutMs, 45_000));
+  // The entry menu must be more than painted before it is clicked. 电脑端选取 is a plain `<a href>`, so a click that
+  // lands before the assistant's own router has taken it over performs a full page load of /fpzs/kdInvoices — and
+  // that route, entered cold, loads its document (readyState complete, its scripts fetched) but never mounts:
+  // `#root` stays empty for good, so the app sees a blank page with the right URL. Observed live 2026-09-19:
+  // clicking immediately produced that blank view every time, and settling first produced the upload view every
+  // time. The threshold is not knowable from outside, so this waits generously; `pace` keeps tests instant.
+  const entryReady = await waitFor(() => evalIn<boolean>(assistant, assistantEntryReady), Boolean, cap(page, 30_000), pace.pollMs);
+  if (!entryReady) throw new ExecutorError('INVOICE_ASSISTANT_ENTRY_NOT_READY', '发票助手的入口页没有就绪');
+  await sleep(pace.settleMs * 8);
   // 电脑端选取, then the app sets the files itself from its own staging directory: no employee ever picks a file,
   // and no OS file chooser is ever opened (the input is hidden, which `DOM.setFileInputFiles` does not care about).
   await clickPoint(page, assistant, computerPickerPoint, '发票助手的「电脑端选取」入口', { timeoutMs: 15_000 });

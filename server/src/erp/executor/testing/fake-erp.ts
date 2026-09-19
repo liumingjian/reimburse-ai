@@ -99,7 +99,10 @@ class FakeDocument {
       }
       const x = ORIGIN + (slot % COLS) * SLOT;
       const y = ORIGIN + Math.floor(slot / COLS) * SLOT;
-      return { x, y, left: x, top: y, width: BOX, height: BOX, right: x + BOX, bottom: y + BOX };
+      // `data-zero-height` models an inline element whose only child is a block box: laid out, hit-testable, but
+      // measuring 0 high. The 发票助手's 电脑端选取 anchor is one (76x0 live, 2026-09-19).
+      const height = this.hasAttribute?.('data-zero-height') ? 0 : BOX;
+      return { x, y, left: x, top: y, width: BOX, height, right: x + BOX, bottom: y + height };
     };
     Object.defineProperty(proto, 'innerText', { configurable: true, get(this: any) { return self.visibleText(this); } });
     proto.scrollIntoView = function () { /* every box is already in view */ };
