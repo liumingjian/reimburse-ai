@@ -16,6 +16,14 @@
 // `--probe-only` logs in, prints the ERP identity (this is how you read 账套 the first time) and exits. It builds no
 // task, starts no app and writes nothing, so it needs neither BAOX_ERP_LIVE nor a sample.
 //
+// `--probe-toolbar` goes one step further and still costs nothing: it opens one fresh 费用报销单-新增, reveals the
+// 收票信息 section and prints every visible control on every toolbar, with its id. It uploads nothing, imports nothing
+// and saves nothing, so no invoice is consumed and no 收票占用 is created (ADR-0025 puts that boundary at the
+// 发票导入单据 click, which this never reaches). It exists because nothing in the repo has ever touched a delete
+// control on the 收票网格 — `steps.ts` knows only tbReceiveInv / tbNotFillEntry / tbNewList — and ADR-0026 unbanned
+// 「删除发票」 for human use while leaving what it actually does unverified. Knowing the control's id is the first
+// thing any later experiment needs, and this is the only part of that experiment that is free.
+//
 // Optional: BAOX_ERP_ORIGIN / BAOX_ERP_BUILD / BAOX_ERP_FORM_ID (erp/config.ts), BAOX_CHROMIUM_CDP_PORT (9333),
 // BAOX_ERP_LIVE_PROFILE (dedicated Chromium profile, default ~/.baox-erp-live/chromium-profile), BAOX_EGO_TASK_SPACE.
 //
@@ -38,18 +46,21 @@ function refuse(message: string): never {
 
 const env = process.env;
 const probeOnly = process.argv.includes('--probe-only');
-if (!probeOnly && env['BAOX_ERP_LIVE'] !== '1') refuse('set BAOX_ERP_LIVE=1 to run against the real ERP (it saves a real draft).');
+const probeToolbar = process.argv.includes('--probe-toolbar');
+// Both probes are read-only, so they are exempt from the same guards: neither builds a task nor reaches a mutation.
+const readOnly = probeOnly || probeToolbar;
+if (!readOnly && env['BAOX_ERP_LIVE'] !== '1') refuse('set BAOX_ERP_LIVE=1 to run against the real ERP (it saves a real draft).');
 const account = env['BAOX_ERP_TEST_ACCOUNT']?.trim();
 const tenant = env['BAOX_ERP_TEST_TENANT']?.trim();
 const password = env['BAOX_ERP_TEST_PASSWORD']?.trim() ?? '';
 if (!account) refuse('set BAOX_ERP_TEST_ACCOUNT to the dedicated ERP test account.');
-if (!tenant && !probeOnly) refuse('set BAOX_ERP_TEST_TENANT to the dedicated 账套; `--probe-only` prints it off a logged-in session.');
+if (!tenant && !readOnly) refuse('set BAOX_ERP_TEST_TENANT to the dedicated 账套; `--probe-only` prints it off a logged-in session.');
 const sampleDir = env['BAOX_ERP_LIVE_SAMPLE']?.trim();
-if (!probeOnly && (!sampleDir || !existsSync(join(sampleDir, 'sample.json')))) refuse('set BAOX_ERP_LIVE_SAMPLE to a directory holding sample.json and the desensitised invoices.');
+if (!readOnly && (!sampleDir || !existsSync(join(sampleDir, 'sample.json')))) refuse('set BAOX_ERP_LIVE_SAMPLE to a directory holding sample.json and the desensitised invoices.');
 
 type Sample = { homeCity: string; purpose: string; project: string; files: string[] };
-const sample: Sample = probeOnly ? { homeCity: '', purpose: '', project: '', files: [] } : (JSON.parse(readFileSync(join(sampleDir!, 'sample.json'), 'utf8')) as Sample);
-if (!probeOnly && (!sample.homeCity || !sample.purpose || !sample.project || !Array.isArray(sample.files) || sample.files.length === 0)) refuse('sample.json needs homeCity, purpose, project and files.');
+const sample: Sample = readOnly ? { homeCity: '', purpose: '', project: '', files: [] } : (JSON.parse(readFileSync(join(sampleDir!, 'sample.json'), 'utf8')) as Sample);
+if (!readOnly && (!sample.homeCity || !sample.purpose || !sample.project || !Array.isArray(sample.files) || sample.files.length === 0)) refuse('sample.json needs homeCity, purpose, project and files.');
 
 // Only now load the app: a refused run touches nothing.
 const { TaskSnapshotSchema } = await import('@baox/contract');
@@ -61,6 +72,9 @@ const { erpConfigFromEnv } = await import('../src/erp/config');
 const { cdpBrowser, ensureChromium } = await import('../src/erp/executor/browser');
 const { cdpPortOf, evaluateChromiumPage } = await import('../src/erp/executor/chromium');
 const { erpEntryOf, probeIdentity, sameOrigin } = await import('../src/erp/executor/probe');
+const { showSection } = await import('../src/erp/executor/erpform');
+const { DEFAULT_PACE } = await import('../src/erp/executor/pace');
+const { openNewReimbursement } = await import('../src/erp/executor/steps');
 const { startServer } = await import('../src/server');
 
 type Snapshot = ReturnType<typeof TaskSnapshotSchema.parse>;
@@ -90,6 +104,28 @@ if (probe.status !== 'matched' || !probe.identity) refuse(`no logged-in ERP sess
 if (probeOnly) {
   say(`ERP identity: 显示名 ${probe.identity.displayName} / 账号 ${probe.identity.account} / 账套 ${probe.identity.tenant}`);
   say(`put this in .env:  export BAOX_ERP_TEST_TENANT='${probe.identity.tenant}'`);
+  process.exit(0);
+}
+if (probeToolbar) {
+  // One fresh form, the 收票信息 section revealed, every toolbar read out. Nothing is clicked beyond the menu path
+  // that opens the form, so this run ends with an unsaved 新增单 and no ERP-side trace.
+  const session = await browser.attach(probe.page as never);
+  const write = { session, pace: DEFAULT_PACE };
+  await openNewReimbursement(write as never);
+  const section = await showSection(session as never, '收票信息', { settleMs: DEFAULT_PACE.settleMs });
+  if (!section.ok) refuse(`收票信息 section did not open: ${section.reason}. Nothing was written.`);
+  const bars = await evaluateChromiumPage(probe.page as never, `(() => {
+    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    return JSON.stringify([...document.querySelectorAll('[id*="ENTRYBAR"]')].filter(vis).map((bar) => ({
+      barId: bar.id,
+      items: [...bar.querySelectorAll('a[id], span[id], button[id]')].filter(vis)
+        .map((el) => ({ id: el.id, text: (el.innerText || '').trim().slice(0, 40) }))
+        .filter((item) => item.text),
+    })));
+  })()` as never) as unknown as string;
+  say('toolbars on a fresh 费用报销单-新增 (read-only; nothing uploaded, imported or saved):');
+  console.log(JSON.stringify(JSON.parse(bars), null, 2));
+  say('the form is an unsaved 新增单; close the tab and it leaves no trace.');
   process.exit(0);
 }
 if (probe.identity.account !== account || probe.identity.tenant !== tenant) refuse(`the logged-in ERP identity is ${probe.identity.account} / ${probe.identity.tenant}, not the dedicated test identity. Nothing was written.`);
