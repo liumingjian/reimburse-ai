@@ -219,6 +219,15 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     //    to, so it stays retryable and stays voidable.
     await step('import', 'running');
     await uploadInvoices(write, staged.paths);
+    // An operator brake for live QA, and nothing else. Upload and 勾选 are free and repeatable, but the
+    // 发票导入单据 click that follows is the one irreversible act, and a QA round that wants to verify selection
+    // against the real ERP has no reason to spend it: the invoices get bound to a 费用报销单 that nobody will save.
+    // Unset — which is every real run — this changes nothing. It deliberately throws BEFORE startAttempt, so the
+    // task keeps a clean `aborted` with no attempt row, and stays both retryable and voidable.
+    if (process.env['BAOX_ERP_STOP_BEFORE_IMPORT'] === '1') {
+      throw new ExecutorError('IMPORT_STOPPED_BEFORE_BOUNDARY',
+        '按 BAOX_ERP_STOP_BEFORE_IMPORT 的要求，在「发票导入单据」之前停下了：发票已上传并全部勾选，但没有导入任何发票。');
+    }
     await startAttempt('import', { formMode: 'new', billNo: null, receiptRowCount: plan.invoices.length });
     await importInvoices(write);
     await step('import', 'done');

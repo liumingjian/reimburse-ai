@@ -187,6 +187,29 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(fake.mutations.map((m) => m.kind)).toContain('import');
   });
 
+  it('stops before 发票导入单据 when the operator brake is set, having uploaded and ticked but imported nothing', async () => {
+    // The brake exists because a live QA round that only wants to verify 勾选 has no reason to spend the one
+    // irreversible act. It must land before startAttempt, or the task stops being cleanly retryable.
+    process.env['BAOX_ERP_STOP_BEFORE_IMPORT'] = '1';
+    try {
+      const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
+      const result = await run(fake);
+      expect(result).toMatchObject({ status: 'aborted', code: 'IMPORT_STOPPED_BEFORE_BOUNDARY' });
+      expect(await jobs.attempts(`job-${taskId}`)).toEqual([]);
+      expect(fake.mutations).toEqual([]);
+    } finally {
+      delete process.env['BAOX_ERP_STOP_BEFORE_IMPORT'];
+    }
+  });
+
+  it('imports normally when the brake is unset, which is every real run', async () => {
+    delete process.env['BAOX_ERP_STOP_BEFORE_IMPORT'];
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
+    const result = await run(fake);
+    expect(result.status).toBe('handed_over');
+    expect(fake.mutations.map((m) => m.kind)).toContain('import');
+  });
+
   it('aborts on a compatibility fingerprint mismatch before any attempt', async () => {
     const fake = await createFakeErp(fakeErpOptions({ erpBuild: '8.3.101.2' }));
     const result = await run(fake);
