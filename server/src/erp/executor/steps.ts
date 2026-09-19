@@ -71,6 +71,13 @@ async function clickText(page: WritePage, session: CdpSession, text: string, { t
   return point;
 }
 
+async function clickPoint(page: WritePage, session: CdpSession, snippet: string, label: string, { timeoutMs = 15_000 } = {}) {
+  const point = await waitFor(() => evalIn<Point>(session, snippet), (result) => result?.ok === true, cap(page, timeoutMs), paceOf(page).pollMs);
+  if (!point?.ok) throw new ExecutorError('CHROMIUM_TARGET_NOT_FOUND', `找不到${label}`);
+  await clickAt(session, point.x, point.y);
+  return point;
+}
+
 const containsText = (needle: string) => `(document.body?.innerText || '').includes(${JSON.stringify(needle)})`;
 const waitText = (page: WritePage, session: CdpSession, needle: string, timeoutMs = 15_000) =>
   waitFor(() => evalIn<boolean>(session, containsText(needle)), Boolean, cap(page, timeoutMs), paceOf(page).pollMs);
@@ -148,6 +155,31 @@ const dataCheckboxes = (session: CdpSession) => evalIn<Checkbox[]>(session, `(()
     .map((n) => { const b = n.getBoundingClientRect();
       return { checked: n.checked, x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) }; });
 })()`);
+// 发票无忧助手 opens on its entry menu (电脑端选取 / 手机端选取 / 扫码枪扫描 / 扫描仪扫描). Only 电脑端选取 reaches
+// the view that carries the file input, and it is an `<a>` wrapping an icon whose 电脑端选取 caption is a SIBLING
+// `<p>`: clicking the caption does nothing at all. Verified on the live assistant 2026-09-19.
+const computerPickerPoint = `(() => {
+  const vis = ${visible};
+  const own = (n) => [...n.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent.trim()).join('').trim();
+  const caption = [...document.querySelectorAll('body *')].find((n) => vis(n) && own(n) === '电脑端选取');
+  if (!caption) return { ok: false, count: 0 };
+  const item = caption.closest('.accessItem') || caption.parentElement;
+  const anchors = item ? [...item.querySelectorAll('a[href]')].filter(vis) : [];
+  if (anchors.length !== 1) return { ok: false, count: anchors.length };
+  const b = anchors[0].getBoundingClientRect();
+  return { ok: true, x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) };
+})()`;
+
+const fileInputCount = (session: CdpSession) =>
+  evalIn<number>(session, `document.querySelectorAll('input[type=file]').length`);
+
+// Some assistant captions are not leaf nodes, so this asks for a node's OWN text rather than `textPoint`'s leaf.
+const hasOwnText = (text: string) => `(() => {
+  const vis = ${visible};
+  const own = (n) => [...n.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent.trim()).join('').trim();
+  return [...document.querySelectorAll('body *')].some((n) => vis(n) && own(n) === ${JSON.stringify(text)});
+})()`;
+
 const uploadState = (session: CdpSession) => evalIn<{ processing: boolean; rows: Array<{ checked: boolean }> }>(session, `(() => {
   const vis = ${visible};
   const rows = [...document.querySelectorAll('input.ant-checkbox-input')].filter((n) => vis(n) && !n.closest('thead'));
@@ -161,10 +193,24 @@ export async function uploadAndImportInvoices(page: WritePage, paths: string[], 
   const pace = paceOf(page);
   const groups = invoiceUploadGroups(paths);
   const assistant = await assistantSession(page, Math.min(timeoutMs, 45_000));
+  // 电脑端选取, then the app sets the files itself from its own staging directory: no employee ever picks a file,
+  // and no OS file chooser is ever opened (the input is hidden, which `DOM.setFileInputFiles` does not care about).
+  await clickPoint(page, assistant, computerPickerPoint, '发票助手的「电脑端选取」入口', { timeoutMs: 15_000 });
+  // 上传发票影像 names the upload view itself. The old code waited for it on the entry menu, where it has never
+  // existed: the text was right, its page was not.
+  const onUploadView = await waitFor(() => evalIn<boolean>(assistant, hasOwnText('上传发票影像')), Boolean, cap(page, 30_000), pace.pollMs);
+  if (!onUploadView) throw new ExecutorError('INVOICE_UPLOAD_VIEW_NOT_FOUND', '发票助手的电脑端选取页没有打开：找不到「上传发票影像」');
+  if (!await fileInputCount(assistant)) throw new ExecutorError('INVOICE_FILE_INPUT_NOT_FOUND', '发票助手的电脑端选取页没有文件上传控件');
+  // A first visit is covered by a 温馨提示 dialog that swallows clicks on the grid behind it. Later visits have none,
+  // so not finding it is normal.
+  const notice = await evalIn<Point>(assistant, textPoint('知道了'));
+  if (notice?.ok) {
+    await clickAt(assistant, notice.x, notice.y);
+    await sleep(paceOf(page).settleMs);
+  }
   if ((await dataCheckboxes(assistant)).length > 0) {
     throw new ExecutorError('INVOICE_ASSISTANT_NOT_EMPTY', '发票助手中已有未归属的发票行，拒绝把它们混入当前任务');
   }
-  if (!await waitText(page, assistant, '上传发票影像', 3000)) await clickText(page, assistant, '上传发票影像', { timeoutMs: 15_000 });
   for (const files of groups) {
     await fileInput(assistant, files);
     const state = await waitFor(() => uploadState(assistant), (value) => Array.isArray(value?.rows) && value.rows.length > 0 && !value.processing, cap(page, 90_000), pace.pollMs);

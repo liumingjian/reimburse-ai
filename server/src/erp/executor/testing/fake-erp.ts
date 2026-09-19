@@ -454,8 +454,15 @@ export async function createFakeErp(options: FakeErpOptions) {
   function clickAssistant(el: any) {
     if (!child) return;
     if (el.matches('input.ant-checkbox-input')) { el.checked = !el.checked; return; }
+    const doc = child.doc.document;
     const action = el.closest('[data-action]')?.getAttribute('data-action');
-    if (action === 'import') show(child.doc.document.querySelector('.import-dialog'), true);
+    // 电脑端选取 leaves the entry menu for the upload view; that is where the file input and the grid live.
+    if (action === 'computer-picker') {
+      show(doc.querySelector('.fpzsHome'), false);
+      show(doc.querySelector('#assistant-upload'), true);
+    }
+    if (action === 'notice-ok') show(doc.querySelector('#assistant-notice'), false);
+    if (action === 'import') show(doc.querySelector('.import-dialog'), true);
     if (action === 'not-fill') importInvoices();
   }
 

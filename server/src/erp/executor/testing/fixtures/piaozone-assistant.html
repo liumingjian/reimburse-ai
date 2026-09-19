@@ -4,22 +4,54 @@
   (verification-ledger V-45). Rows are Ant Design table rows with `input.ant-checkbox-input`; the "是否生成费用明细"
   choice lives inside this iframe, not in an ERP `.k-window` (save-contract.md, 2026-09-06).
   `data-action` attributes are fake-ERP behaviour hooks only.
+
+  Rebuilt from a read-only probe of the live assistant on 2026-09-19. It has two views, not one:
+
+    /m4-web/fpzs/index      the entry menu: 电脑端选取 / 手机端选取 / 扫码枪扫描 / 扫描仪扫描. Each entry is an <a>
+                            wrapping an icon, and its caption is a SIBLING <p>, so the caption is not clickable.
+                            Only 电脑端选取 leads anywhere the app can upload from.
+    /m4-web/fpzs/kdInvoices the upload view: the 上传发票影像 tab, one hidden `multiple` file input accepting
+                            .ofd/.xml/.zip/.pdf/.xls/.xlsx/.png/.jpg/.jpeg/.bmp/.gif/.tif/.tiff, the recognised-row
+                            grid, and 发票导入单据. A first visit is covered by a 温馨提示 dialog whose 知道了 button
+                            must be dismissed before the grid can be clicked.
+
+  The earlier fixture put 上传发票影像 and the file input on the entry view, which no live version ever did.
 -->
 <html>
-<head><title>发票无忧助手</title></head>
+<head><title>发票助手</title></head>
 <body>
-<div class="pwy-assistant">
-  <div class="toolbar"><span data-action="upload-mode">上传发票影像</span></div>
-  <input type="file" multiple style="display:none">
-  <table class="ant-table">
-    <thead><tr><th><input type="checkbox" class="ant-checkbox-input"></th><th>发票号码</th><th>价税合计</th></tr></thead>
-    <tbody></tbody>
-  </table>
-  <div class="footer"><button data-action="import">发票导入单据</button></div>
-  <div class="import-dialog" style="display:none">
-    <span>是否生成费用明细？</span>
-    <button data-action="not-fill">不生成费用明细</button>
-    <button data-action="fill">生成费用明细</button>
+<div id="root">
+  <div class="fpzsHome">
+    <div class="fpzsHomeGrid">
+      <div class="row">
+        <div class="accessItem"><a href="/m4-web/fpzs/kdInvoices" data-action="computer-picker"><img alt=""></a><p>电脑端选取</p></div>
+        <div class="accessItem"><a href="#mobile"><img alt=""></a><p>手机端选取</p></div>
+      </div>
+      <div class="row">
+        <div class="accessItem"><a href="#gun"><img alt=""></a><p>扫码枪扫描</p></div>
+        <div class="accessItem"><a href="#scanner"><img alt=""></a><p>扫描仪扫描</p></div>
+      </div>
+    </div>
+    <div class="footer"><span class="choosed">所有已选发票</span><span class="controlConfig">发票合规性要求</span></div>
+  </div>
+  <div class="pwy-assistant" id="assistant-upload" style="display:none">
+    <div class="notice" id="assistant-notice">
+      <span>温馨提示</span>
+      <p>原【上传单张发票】按钮和【上传含多张发票的PDF】按钮合二为一，统一使用【上传发票】按钮上传即可。</p>
+      <button data-action="notice-ok">知道了</button>
+    </div>
+    <div class="toolbar"><span>上传发票影像</span><span>上传附件影像</span><span>企业收到的发票</span></div>
+    <input type="file" multiple accept=".ofd,.xml,.zip,.pdf,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.gif,.tif,.tiff" style="display:none">
+    <table class="ant-table">
+      <thead><tr><th><input type="checkbox" class="ant-checkbox-input"></th><th>发票号码</th><th>价税合计</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="footer"><button data-action="import">发票导入单据</button></div>
+    <div class="import-dialog" style="display:none">
+      <span>是否生成费用明细？</span>
+      <button data-action="not-fill">不生成费用明细</button>
+      <button data-action="fill">生成费用明细</button>
+    </div>
   </div>
 </div>
 </body>
