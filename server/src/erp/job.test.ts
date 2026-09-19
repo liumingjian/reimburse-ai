@@ -1,15 +1,20 @@
 // The executor seam (spec #177 Testing Decisions): fill jobs driven through the job protocol against the fake ERP,
 // with the real server channel persisting events and attempts on SQLite `:memory:`.
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../db/database';
 import { createTaskService } from '../tasks';
 import { createTestServer, type TestServer } from '../test/harness';
 import { runFillJob } from './executor/job';
+import { openInvoiceAssistant, openNewReimbursement, uploadAndImportInvoices, type WritePage } from './executor/steps';
 import { createFakeErp, type FakeErp } from './executor/testing/fake-erp';
 import { createErpJobs, serverChannel, type ErpJobs } from './jobs';
 import { createDraftJudge } from './judge';
 import type { ExecutorChannel, ExecutorEvent } from './protocol';
-import { blobSource, FAST_PACE, fakeErpOptions, fillPlan, judgeInputs } from './testing/scenario';
+import { driveTo } from './testing/reconcile-states';
+import { blobSource, FAST_PACE, fakeErpOptions, fillPlan, INVOICES, judgeInputs } from './testing/scenario';
 
 let server: TestServer;
 let db: Db;
@@ -38,6 +43,40 @@ const run = (fake: FakeErp, channel = channelFor(), plan = fillPlan(taskId)) =>
   runFillJob(plan, { browser: fake.browser, blobs: blobSource(), channel, pace: FAST_PACE, probeWaitMs: 0 });
 
 const inputEvents = (fake: FakeErp) => fake.commands.filter((c) => c.method.startsWith('Input.') || c.method === 'DOM.setFileInputFiles');
+
+/** The grid as a page reader sees it: data rows only, one column's text per row. */
+const column = (fake: FakeErp, grid: 'detail' | 'receipts', index: number) =>
+  [...fake.document.querySelectorAll(`.kd-grid-panel[data-grid="${grid}"] tbody tr`)]
+    .filter((tr) => !tr.classList.contains('k-footer-template'))
+    .map((tr) => String(tr.children[index]?.textContent ?? '').trim());
+/** 收票单 (receipt number), the identity ERP keys a 收票行 (receipt row) by. */
+const receiptNumbers = (fake: FakeErp) => column(fake, 'receipts', 0);
+/** The 收票单号 link each 费用明细行 (detail row) carries, empty ones dropped. */
+const receiptLinks = (fake: FakeErp) => column(fake, 'detail', 0).filter(Boolean);
+/** The 收票信息 footer's 价税合计 total. */
+const receiptTotal = (fake: FakeErp) =>
+  String(fake.document.querySelector('.kd-grid-panel[data-grid="receipts"] tr.k-footer-template')?.children[6]?.textContent ?? '').trim();
+
+const writePage = (fake: FakeErp): WritePage => ({ session: fake.session, pace: FAST_PACE });
+
+/**
+ * The fill job's own import step over an ERP form that is already open. A whole second fill job cannot reach it:
+ * the pre-import preflight refuses a form that is not one blank 费用报销单-新增.
+ */
+async function importInvoices(page: WritePage, invoices: typeof INVOICES) {
+  const dir = mkdtempSync(join(tmpdir(), 'baox-reimport-'));
+  try {
+    const paths = invoices.map((invoice, index) => {
+      const path = join(dir, `${index + 1}-${invoice.materialId}.pdf`);
+      writeFileSync(path, invoice.bytes);
+      return path;
+    });
+    await openInvoiceAssistant(page, { timeoutMs: 2000 });
+    await uploadAndImportInvoices(page, paths);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 describe('fill job through the protocol on the fake ERP', () => {
   it('hands over a filled, unsaved form, persisting an attempt before import and fill', async () => {
@@ -176,5 +215,49 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(result).toMatchObject({ status: 'aborted', code: 'BLOB_HASH_MISMATCH' });
     expect(await jobs.attempts(`job-${taskId}`)).toEqual([]);
     expect(inputEvents(fake)).toEqual([]);
+  });
+});
+
+// What ERP does when an invoice the bill already holds is imported again: it rewrites that 收票行 (receipt row),
+// which it keys by its 收票单 (receipt number), instead of adding a second one (ADR-0026). Driven through the fill
+// job's own import step, for the reason `importInvoices` gives.
+describe('re-importing an invoice the bill already holds', () => {
+  it('rewrites its 收票行 in place and appends only the invoice the bill does not hold yet', async () => {
+    const [rail, ride] = INVOICES;
+    const fake = await createFakeErp(fakeErpOptions());
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    await importInvoices(page, [rail!]);
+    expect(receiptNumbers(fake)).toEqual([rail!.receiptNumber]);
+
+    await importInvoices(page, [rail!, ride!]);
+    expect(receiptNumbers(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
+
+    // Rows and totals are what a single import of the same set leaves behind.
+    const once = await createFakeErp(fakeErpOptions());
+    const oncePage = writePage(once);
+    await openNewReimbursement(oncePage, { timeoutMs: 2000 });
+    await importInvoices(oncePage, [rail!, ride!]);
+    expect(receiptNumbers(fake)).toEqual(receiptNumbers(once));
+    expect(receiptTotal(fake)).toEqual(receiptTotal(once));
+
+    // One `import` entry per import, listing the 收票单 it wrote: the mutation log keeps its shape.
+    expect(fake.mutations).toEqual([
+      { kind: 'import', detail: rail!.receiptNumber },
+      { kind: 'import', detail: `${rail!.receiptNumber},${ride!.receiptNumber}` },
+    ]);
+  });
+
+  it('strands no 费用明细行 on a 收票单号 that no longer holds its invoice', async () => {
+    const [rail, ride] = INVOICES;
+    // A fill that stopped before the save: 收票行 imported, detail rows written and linked to them.
+    const { fake } = await driveTo('filled');
+    expect(receiptLinks(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
+    const total = receiptTotal(fake);
+
+    await importInvoices(writePage(fake), [rail!, ride!]);
+    expect(receiptNumbers(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
+    expect(receiptLinks(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
+    expect(receiptTotal(fake)).toEqual(total);
   });
 });
