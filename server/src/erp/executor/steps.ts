@@ -144,6 +144,54 @@ export async function openNewReimbursement(page: WritePage, { timeoutMs = 45_000
   return { ok: true, form: '费用报销单-新增' };
 }
 
+// The three adjacent items of the 选择发票 split menu, in the order they are painted (live 2026-09-19). Only the
+// last one leaves the 费用明细 grid alone; the other two make ERP write the detail rows itself, over a bill this
+// run is about to import into, and there is no second chance to choose.
+const IMPORT_MODES: Readonly<Record<string, string>> = {
+  tbMergeFillEntry: '合并生成费用明细',
+  tbMappingFillEntry: '不合并生成费用明细',
+  tbNotFillEntry: '不生成费用明细',
+};
+const NOT_FILL_ENTRY = 'tbNotFillEntry';
+
+/**
+ * Where 不生成费用明细 is, AND which element a mouse event sent there would actually reach.
+ *
+ * Caption proximity is not enough. The three items sit next to each other, a click delivered to the neighbour is
+ * silent (V-53: an occluded page receives no mouse event at all, and a covered point answers with its cover), and
+ * the wrong item writes 费用明细 rows that nobody asked for — D2's observed shape. So the point is hit-tested with
+ * `document.elementFromPoint` before it is used, and the anchor found there is identified BY ELEMENT ID.
+ */
+const importModeTarget = `(() => {
+  const vis = ${visible};
+  const at = ${pointOf};
+  const ids = ${JSON.stringify(Object.keys(IMPORT_MODES))};
+  const anchorsOf = (id) => [...document.querySelectorAll('a[id$="' + id + '"]')].filter(vis);
+  const items = ids.flatMap((id) => anchorsOf(id).map((n) => n.id));
+  const wanted = anchorsOf(${JSON.stringify(NOT_FILL_ENTRY)});
+  if (wanted.length !== 1) return { ok: false, count: wanted.length, items };
+  const point = at(wanted[0]);
+  if (!point.ok) return { ...point, items, wantedId: wanted[0].id };
+  const hit = document.elementFromPoint(point.x, point.y);
+  const anchor = hit && hit.closest ? hit.closest('a[id]') : null;
+  return {
+    ...point, items, wantedId: wanted[0].id,
+    hitId: anchor ? anchor.id : null,
+    hitTag: hit ? hit.tagName : null,
+    hitText: hit ? String(hit.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40) : null,
+  };
+})()`;
+
+/** What is at (x, y) now — the same question, asked again after the click. */
+const hitAt = (x: number, y: number) => `(() => {
+  const hit = document.elementFromPoint(${x}, ${y});
+  const anchor = hit && hit.closest ? hit.closest('a[id]') : null;
+  return {
+    id: anchor ? anchor.id : null, tag: hit ? hit.tagName : null,
+    menuOpen: [...document.querySelectorAll('a[id$="${NOT_FILL_ENTRY}"]')].some(${visible}),
+  };
+})()`;
+
 /** Open the fixed "不生成费用明细" (do not generate expense details) assistant entry. Writes nothing. */
 export async function openInvoiceAssistant(page: WritePage, { timeoutMs = 90_000 } = {}) {
   const { session } = page;
@@ -154,7 +202,7 @@ export async function openInvoiceAssistant(page: WritePage, { timeoutMs = 90_000
   await sleep(paceOf(page).settleMs);
   const menuVisible = await evalIn<boolean>(session, `(() => {
     const vis = ${visible};
-    return [...document.querySelectorAll('a[id$="tbNotFillEntry"]')].some(vis);
+    return [...document.querySelectorAll('a[id$="${NOT_FILL_ENTRY}"]')].some(vis);
   })()`);
   if (!menuVisible) {
     await evalIn(session, `(() => {
@@ -166,10 +214,28 @@ export async function openInvoiceAssistant(page: WritePage, { timeoutMs = 90_000
     })()`);
     await sleep(Math.min(300, paceOf(page).settleMs));
   }
-  await clickText(page, session, '不生成费用明细', { timeoutMs });
+
+  type ModeTarget = Point & { items?: string[]; wantedId?: string; hitId?: string | null; hitTag?: string | null; hitText?: string | null };
+  const reaches = (t: ModeTarget | null) => t?.ok === true && String(t.hitId ?? '').endsWith(NOT_FILL_ENTRY);
+  // Polled, because the menu is still animating open for a moment and the item's neighbour may be what is at the
+  // point until it settles. Only a point that resolves to 不生成费用明细 is ever clicked.
+  const target = await waitFor(() => evalIn<ModeTarget>(session, importModeTarget), reaches, cap(page, timeoutMs), paceOf(page).pollMs);
+  if (!reaches(target)) {
+    const wrong = target?.hitId ? `点到的是 ${target.hitId}（${target.hitTag}「${target.hitText}」）` : `那个点上什么都没有（${target?.offscreen ? '在视口之外' : `匹配 ${target?.count ?? 0} 项`}）`;
+    throw new ExecutorError('INVOICE_IMPORT_MODE_NOT_SELECTED',
+      `「不生成费用明细」没有确认落点，没有点它：${wrong}；菜单里有 ${(target?.items ?? []).join('、') || '（读不到菜单项）'}。`
+      + '导入模式选错会让报销系统自己写费用明细，且不可撤销，所以停在这里。');
+  }
+  await clickAt(session, target.x, target.y);
   await sleep(paceOf(page).settleMs);
+  // The same point, read again: with the menu closed it no longer answers the item, which is the evidence that the
+  // click went to the item that was there and not to something that is still sitting under the cursor.
+  const after = await evalIn<{ id: string | null; tag: string | null; menuOpen: boolean }>(session, hitAt(target.x, target.y));
   await assistantSession(page, timeoutMs);
-  return { ok: true, mode: '不生成费用明细' };
+  return {
+    ok: true, mode: IMPORT_MODES[NOT_FILL_ENTRY]!, selectedId: target.wantedId ?? target.hitId ?? null,
+    menuItemIds: target.items ?? [], hitBefore: target.hitId ?? null, hitAfter: after?.id ?? null, menuOpenAfter: after?.menuOpen ?? null,
+  };
 }
 
 const fileInput = async (session: CdpSession, files: string[]) => {

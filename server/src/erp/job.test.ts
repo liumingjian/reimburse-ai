@@ -335,6 +335,40 @@ describe('opening a new 费用报销单', () => {
   });
 });
 
+// The 选择发票 split menu holds three adjacent items — `tbMergeFillEntry 合并生成费用明细`,
+// `tbMappingFillEntry 不合并生成费用明细`, `tbNotFillEntry 不生成费用明细` — and only the last leaves the
+// 费用明细 grid alone. D2 (a live run that believed it had chosen 不生成费用明细 and found two rows aggregated by
+// 发票类型 with the 收票单号 comma-joined) is exactly the shape 合并生成费用明细 produces, on a page where V-53
+// proved a mouse event can be delivered somewhere other than where it was aimed. The mode cannot be re-chosen:
+// the next thing that happens is the import.
+describe('choosing the import mode on the 选择发票 menu', () => {
+  it('proves by element id which item the click reaches, and refuses when that is not 不生成费用明细', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ notFillEntryHitsNeighbour: true }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    await expect(openInvoiceAssistant(page, { timeoutMs: 200 }))
+      .rejects.toMatchObject({ code: 'INVOICE_IMPORT_MODE_NOT_SELECTED', message: expect.stringContaining('tbMergeFillEntry') });
+    // Refusing is the whole point: not one click of the irreversible path may run in the wrong mode.
+    expect(fake.importMode).toBe(null);
+    expect(fake.mutations).toEqual([]);
+  });
+
+  it('names the item it selected, read back from the page rather than assumed', async () => {
+    const fake = await createFakeErp(fakeErpOptions({}));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    const opened = await openInvoiceAssistant(page, { timeoutMs: 2000 });
+    expect(opened).toMatchObject({ ok: true, mode: '不生成费用明细' });
+    expect(String(opened.selectedId)).toMatch(/tbNotFillEntry$/);
+    expect(opened.menuItemIds).toEqual(['tbMergeFillEntry', 'tbMappingFillEntry', 'tbNotFillEntry'].map((id) => expect.stringContaining(id)));
+    expect(fake.importMode).toBe('不生成费用明细');
+    // V-53 again: the assistant lives in its own OOPIF target, and every tick is clicked into it, so that session
+    // is told it is focused too — best-effort there, fatal on the page target.
+    expect(fake.commands.filter((c) => c.method === 'Emulation.setFocusEmulationEnabled').map((c) => c.sessionId))
+      .toContain('piaozone-session-1');
+  });
+});
+
 describe('the 发票导入单据 click', () => {
   const windowText = (fake: FakeErp, id: string) => {
     const win = fake.document.querySelector(id) as any;

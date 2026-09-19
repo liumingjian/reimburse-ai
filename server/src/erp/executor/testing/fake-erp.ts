@@ -62,6 +62,12 @@ export type FakeErpOptions = {
    * 908 high; the click was lost and the run died on INVOICE_ASSISTANT_NOT_FOUND 90s later.
    */
   notFillEntryBelowFold?: boolean;
+  /**
+   * The 不生成费用明细 item is measured correctly and the mouse event lands on its NEIGHBOUR 合并生成费用明细
+   * instead — the shape V-53 proved possible on this page, where a mis-delivered click is silent. ERP then imports
+   * in merge mode and writes the 费用明细 rows itself, which is D2's observed shape.
+   */
+  notFillEntryHitsNeighbour?: boolean;
   /** Clicking a 票种 tab does nothing: the pane never changes, so rows in the other 票种 stay out of reach. */
   assistantPaneSwitchDead?: boolean;
   /** 发票号码 whose checkbox refuses to toggle — a click that lands and still leaves the row unticked. */
@@ -263,6 +269,12 @@ export async function createFakeErp(options: FakeErpOptions) {
   let pendingReport: { start: number; due: number; summary: string; rows: readonly string[] } | null = null;
   const pendingRecognition: Array<{ due: number; files: string[] }> = [];
   let dropdown: { td: any; tr: any; list: any; span: any } | null = null;
+  /**
+   * Which 选择发票 menu item the clicks actually landed on. 合并生成费用明细 / 不合并生成费用明细 make ERP write
+   * the 费用明细 rows itself, so a run that reaches the import in either of them has already gone wrong; the fake
+   * records the mode rather than simulating those rows, and the tests assert no wrong mode is ever reached.
+   */
+  let importMode: string | null = null;
 
   function mutate(kind: FakeMutation['kind'], detail: string) {
     const mutation = { kind, detail };
@@ -291,6 +303,7 @@ export async function createFakeErp(options: FakeErpOptions) {
     };
     await doc.ready();
     if (options.notFillEntryBelowFold) doc.document.querySelector('a[id$="tbNotFillEntry"]')?.setAttribute('data-below-fold', '1240');
+    if (options.notFillEntryHitsNeighbour) doc.document.querySelector('a[id$="tbNotFillEntry"]')?.setAttribute('data-covered-by', 'a[id$="tbMergeFillEntry"]');
     return doc;
   }
 
@@ -590,8 +603,14 @@ export async function createFakeErp(options: FakeErpOptions) {
         formPanelActiveAt = mainTicks + (options.formPanelActiveTicks ?? 0);
         return syncFormPanel();
       case 'section': return undefined;
-      case 'split-arrow': return show(q('a[id$="tbNotFillEntry"]'), true);
-      case 'not-fill-entry': show(q('a[id$="tbNotFillEntry"]'), false); return openAssistant();
+      case 'split-arrow':
+        for (const item of main.document.querySelectorAll('a.kdmenuitem[data-mode]')) show(item, true);
+        return undefined;
+      case 'fill-entry': {
+        importMode = el.closest('[data-mode]').getAttribute('data-mode');
+        for (const item of main.document.querySelectorAll('a.kdmenuitem[data-mode]')) show(item, false);
+        return openAssistant();
+      }
       case 'new-row': {
         const tbody = grid('detail').querySelector('tbody');
         tbody.insertBefore(defaultRow(), tbody.querySelector('tr.k-footer-template'));
@@ -789,6 +808,8 @@ export async function createFakeErp(options: FakeErpOptions) {
   return {
     session, mutations, commands, hooks,
     get document() { return main.document; },
+    /** Which 选择发票 menu item the clicks actually landed on, null until one of them is clicked. */
+    get importMode() { return importMode; },
     /** The 发票助手's own document while it is open — its 票种 panes, their rows and their ticks. */
     get assistantDocument() { return child?.doc.document ?? null; },
     browser: {

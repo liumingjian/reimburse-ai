@@ -3,7 +3,8 @@
 // since the TypeScript executor targets CDP only (ADR-0016 drops ego).
 import { describe, expect, it } from 'vitest';
 import {
-  attachChromiumPage, CHROMIUM_CDP_AMBIGUOUS, CHROMIUM_CDP_TRANSPORT, CHROMIUM_CDP_UNAVAILABLE, chromiumCdpTransport,
+  attachChromiumPage, CHROMIUM_CDP_AMBIGUOUS, CHROMIUM_CDP_TRANSPORT, CHROMIUM_CDP_UNAVAILABLE,
+  CHROMIUM_FOCUS_EMULATION_FAILED, chromiumCdpTransport,
   evaluateChromiumPage, isCdpChromiumPage, listChromiumPages, type ChromiumPage,
 } from './chromium';
 import { formTabs } from './erpform';
@@ -25,6 +26,35 @@ describe('Chromium CDP page connector', () => {
     expect(connected.cdpTargetId).toBe('target-1');
     expect(isCdpChromiumPage(connected)).toBe(true);
     expect(await formTabs(connected.session)).toEqual([]);
+  });
+
+  // V-53, measured live 2026-09-19: with the dedicated Chromium's window occluded, `document.visibilityState` is
+  // `hidden` and a hidden page receives NO `Input.dispatchMouseEvent` — CDP accepts the click and delivers it
+  // nowhere. Occlusion is the normal state of a background automation browser, so attaching claims focus.
+  it('claims focus on every page it attaches to, because an occluded page receives no mouse event at all', async () => {
+    const sent: Array<{ method: string; params: unknown }> = [];
+    const session = { send: async (method: string, params: unknown) => { sent.push({ method, params }); return {}; }, close() {} };
+    const connected = await attachChromiumPage(page, {
+      port: 9222,
+      targetsFn: async () => [{ id: 'target-1', url: page.url, webSocketDebuggerUrl: 'ws://127.0.0.1:9222/devtools/page/1' }],
+      connectFn: async () => session,
+    });
+    expect(isCdpChromiumPage(connected)).toBe(true);
+    expect(sent).toContainEqual({ method: 'Emulation.setFocusEmulationEnabled', params: { enabled: true } });
+  });
+
+  it('stops when the browser refuses focus emulation, rather than clicking into a page that cannot be clicked', async () => {
+    let closed = false;
+    const session = {
+      send: async (method: string) => { if (method === 'Emulation.setFocusEmulationEnabled') throw new Error('不支持的方法'); return {}; },
+      close() { closed = true; },
+    };
+    await expect(attachChromiumPage(page, {
+      port: 9222,
+      targetsFn: async () => [{ id: 'target-1', url: page.url, webSocketDebuggerUrl: 'ws://127.0.0.1:9222/devtools/page/1' }],
+      connectFn: async () => session,
+    })).rejects.toMatchObject({ code: CHROMIUM_FOCUS_EMULATION_FAILED });
+    expect(closed).toBe(true);
   });
 
   it('hard-stops when the target page is missing; never guesses another tab', async () => {

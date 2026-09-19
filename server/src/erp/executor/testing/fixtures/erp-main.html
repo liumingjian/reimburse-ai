@@ -66,7 +66,12 @@
     </div>
     <div class="receipt-toolbar">
       <div id="{{UUID}}-FRECINVINFO_ENTRYBAR-tbReceiveInv_wrapper"><a class="k-button">选择发票</a><a class="k-button k-split-button-arrow" data-action="split-arrow"><span class="k-icon k-i-arrow-s"></span></a></div>
-      <a id="{{UUID}}-FRECINVINFO_ENTRYBAR-tbNotFillEntry" class="kdmenuitem" data-action="not-fill-entry" style="display:none">不生成费用明细</a>
+      <!-- The 选择发票 split menu holds THREE adjacent items live (measured 2026-09-19); only the last one leaves
+           the 费用明细 grid alone. Their order and captions are the live ones, so a click that lands one item
+           off lands where it lands live. -->
+      <a id="{{UUID}}-FRECINVINFO_ENTRYBAR-tbMergeFillEntry" class="kdmenuitem" data-action="fill-entry" data-mode="合并生成费用明细" style="display:none">合并生成费用明细</a>
+      <a id="{{UUID}}-FRECINVINFO_ENTRYBAR-tbMappingFillEntry" class="kdmenuitem" data-action="fill-entry" data-mode="不合并生成费用明细" style="display:none">不合并生成费用明细</a>
+      <a id="{{UUID}}-FRECINVINFO_ENTRYBAR-tbNotFillEntry" class="kdmenuitem" data-action="fill-entry" data-mode="不生成费用明细" style="display:none">不生成费用明细</a>
     </div>
     <div class="kd-grid-panel" data-grid="receipts">
       <table>

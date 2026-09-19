@@ -10,7 +10,7 @@
 // 修改 and 查看 tabs are closed under the same discipline. They matter more, not less: a 修改 tab sits on a REAL
 // saved 费用报销单, one stray click away from a 保存 this program is never allowed to make. Closing it writes
 // nothing, and the bill is left exactly as the employee saved it.
-import { clickAt, connect, evalIn, targets } from '../src/erp/executor/cdp';
+import { clickAt, connect, enableFocusEmulation, evalIn, targets } from '../src/erp/executor/cdp';
 import { cdpPortOf } from '../src/erp/executor/chromium';
 import { closeInvoiceAssistant, type WritePage } from '../src/erp/executor/steps';
 import { sleep } from '../src/erp/executor/pace';
@@ -19,6 +19,10 @@ import { closeFormTab, dialogsSnippet, dismissPoint, tabActions, tabsSnippet, ty
 const erp = (await targets(cdpPortOf())).find((t) => t.type === 'page' && String(t.url).includes('erp.antute.com.cn'));
 if (!erp) { console.error('no ERP page open'); process.exit(1); }
 const session = await connect(erp.webSocketDebuggerUrl!);
+// V-53: an occluded ERP window is `hidden`, and a hidden page receives no `Input.dispatchMouseEvent` at all —
+// CDP accepts every click here and delivers none. The executor claims focus when it attaches; this script
+// connects on its own, so it has to claim it too, or it reports clicks it made and outcomes it never got.
+console.log('focus emulation:', JSON.stringify(await enableFocusEmulation(session)));
 try {
   const page: WritePage = { session };
   const actions = tabActions(session);
