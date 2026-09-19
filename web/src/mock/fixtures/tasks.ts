@@ -10,7 +10,7 @@ import {
   ABANDON_TASK_COPY,
 } from '@baox/contract';
 import { HOME_CITY, SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, confirmationDigest, projectAssignmentOpen, projectAssignmentSubmitted, withLineProjects, withProjectUsage } from './projects';
-import { T2_ROWS, applyAbortAtSave, applyErpDone, emptyReadback, emptyReconcile, erpWaitingLogin, readbackOf, reconcileVerdict } from './erp';
+import { T2_ROWS, applyAbortAtHandover, applyErpDone, emptyReadback, emptyReconcile, erpWaitingLogin, readbackOf, reconcileVerdict } from './erp';
 import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult, openPendingItemCount, withInventoryProjection } from './inventory';
 import { catalogMatched, catalogPending, catalogRunning, packageFilesOf, preparationPending } from './preparation';
 
@@ -218,7 +218,7 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
   // reconcile：保存步中止后的对账（同 ?fault=erp-write-aborted 的结果）。
   if (stage === 'erp') snapshot.erp = erpWaitingLogin();
   if (stage === 'done') applyErpDone(snapshot, T1_DRAFT_NO);
-  if (stage === 'reconcile') applyAbortAtSave(snapshot);
+  if (stage === 'reconcile') applyAbortAtHandover(snapshot);
   return withProjectUsage(withInventoryProjection(snapshot));
 }
 

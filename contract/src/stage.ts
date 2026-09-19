@@ -34,8 +34,8 @@ export const KERNEL_PHASES = [
   '项目归属',
   '报销信息核对',
   '报销材料准备',
-  '保存报销草稿',
-  '草稿交接',
+  '填写报销单',
+  '单据交接',
 ] as const;
 export type KernelPhase = (typeof KERNEL_PHASES)[number];
 
@@ -43,7 +43,7 @@ export type KernelPhase = (typeof KERNEL_PHASES)[number];
 // （补填字段、排除材料）和 5/10 的 allocation_required / events_pending；pending 一个阶段装两种，这里统一记 4/10。
 // 要精确到 5/10，需要服务端在快照里直接给阶段名（待服务端 spec 确认），页面不自己看待确认项种类去猜。
 // 任务阶段落在内核哪一阶段：上传与盘点是材料盘点，待确认项是材料整理，整单确认与去打印 / 去报销属于报销材料准备
-// （内核 preparation_confirmation 用 PREPARATION_PROGRESS），写入与对账是保存报销草稿，完成是草稿交接。
+// （内核 preparation_confirmation 用 PREPARATION_PROGRESS），写入与对账是填写报销单，完成是单据交接。
 export const TASK_STAGE_PHASES: Readonly<Record<TaskStage, KernelPhase>> = {
   upload: '材料盘点',
   inventory: '材料盘点',
@@ -53,9 +53,9 @@ export const TASK_STAGE_PHASES: Readonly<Record<TaskStage, KernelPhase>> = {
   preparation: '报销材料准备',
   review: '报销材料准备',
   actions: '报销材料准备',
-  erp: '保存报销草稿',
-  done: '草稿交接',
-  reconcile: '保存报销草稿',
+  erp: '填写报销单',
+  done: '单据交接',
+  reconcile: '填写报销单',
   // Never listed (voided tasks leave the list); the phase badge disappears with KERNEL_PHASES (#191).
   voided: '材料盘点',
 };
@@ -65,7 +65,7 @@ export const TASK_STAGE_LABELS: Readonly<Record<TaskStage, string>> = Object.fro
   Object.entries(TASK_STAGE_PHASES).map(([stage, phase]) => [stage, `${KERNEL_PHASES.indexOf(phase) + 1}/10 ${phase}`]),
 ) as Record<TaskStage, string>;
 
-// 对账不是内核的阶段而是保存报销草稿里的停顿状态；任务列表与步骤条用这个状态名代替阶段名。
+// 对账不是内核的阶段而是填写报销单里的停顿状态；任务列表与步骤条用这个状态名代替阶段名。
 export const RECONCILE_STATUS_LABEL = '对账中';
 
 // 阶段在主线上的序号，用于「阶段不可跳过」的页面守卫；reconcile 与 erp 同级（都在 ERP 写入开始之后）。

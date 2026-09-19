@@ -2,7 +2,7 @@
 // executor events, its cancel, and the task's `erp_attempt` rows. Nothing about the phase is stored. The views below
 // turn the record into the snapshot's `erp`, `readback`, `reconcile` and `catalog` sections.
 
-import { HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, type Catalog, type Erp, type ErpCapture, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
+import { ERP_HANDOVER_STEP_COPY, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, type Catalog, type Erp, type ErpCapture, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
 import { sql } from 'kysely';
 import type { Db } from '../db/database';
 import type { ErpHandOffTable, ErpJobTable, TaskLifecycle } from '../db/schema';
@@ -118,7 +118,7 @@ export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
     }
   }
   // A reconcile that proves the draft saved exactly as approved (the same strict test a fill's `saved` passed) is
-  // ERP 草稿已交接: done, not a hand-off.
+  // ERP 单据已交接: done, not a hand-off.
   if (phase === 'unknown' && reconcile?.judged?.saved) {
     phase = 'saved';
     result = { type: 'result', status: 'saved', code: 'reconciled', message: null, billNo: reconcile.judged.billNo, capture: null };
@@ -164,8 +164,9 @@ const DISPLAY_STEPS: ReadonlyArray<{ key: string; title: string; description: st
   { key: 'import', title: '导入发票', description: '在发票助手里选择「不生成费用明细」，导入这次的发票。', from: ['import'] },
   { key: 'receipt', title: '收票回读', description: '逐票回读收票单号、发票号码、不含税金额、税额与价税合计。', from: ['readback'] },
   { key: 'fill', title: '填写明细', description: '按统一业务序号逐行写入明细，每个值写入后从单元格回读。', from: ['fill'] },
-  // `save` is the step name fill jobs emitted before ADR-0028; `handover` is what they emit now.
-  { key: 'save', title: '保存草稿', description: '只保存一次草稿，不提交审批；保存后逐行严格回读。', from: ['save', 'handover'] },
+  // `save` is the step name fill jobs emitted before ADR-0028; `handover` is what they emit now. The copy lives in
+  // the contract so this list and the web mock's step list cannot drift apart.
+  { ...ERP_HANDOVER_STEP_COPY, from: ['save', 'handover'] },
 ];
 
 function stepsOf(record: ErpRecord): ErpStep[] {
@@ -311,9 +312,13 @@ function reconcileRows(record: ErpRecord, judged: ReconcileJudgement | null, lin
 // The server-side sentence of each 对账中断点.
 const BUCKET_BANNER: Readonly<Record<ReconcileBucket, (billNo: string | null) => string>> = {
   未知: () => '对账没有读清报销系统里这张单据的状态。请在报销系统里打开这次的报销单查看，再点「重新对账」；也可以转人工。',
-  '未保存·导入前': () => '报销系统里还没有导入发票，也没有保存草稿，发票没有被报销系统占用。',
+  '未保存·导入前': () => '报销系统里还没有导入发票，也还没有写明细，发票没有被报销系统占用。',
   '未保存·已导入未写明细': () => '发票已导入报销系统、明细还没有写，发票已被报销系统占用。只能转人工处理。',
-  '未保存·就绪待保存': () => '明细已写好，收票与明细合计一致，还没有保存。应用不会替你保存；请在报销系统里核对，或转人工。',
+  // Unreachable while the strict per-line match holds: that pair promotes to the hand-over terminal (#241), which
+  // renders HANDOVER_COMPLETED_NOTICE instead of a banner. The entry survives because BUCKET_BANNER is exhaustive
+  // over ReconcileBucket, and because the bucket is still reachable without the match (a reconcile that read a
+  // ready-to-save form it cannot prove line by line), which is the case this sentence is written for.
+  '未保存·就绪待保存': () => '明细已写好，收票与明细合计一致，还没有保存。应用不会替你保存；请在报销系统里逐行核对后自己点「保存」，或转人工。',
   已保存: (billNo) => `报销系统里已有草稿${billNo ? ` ${billNo}` : ''}，但不能证明它与这次确认的明细逐行一致。`,
   不自洽: () => '报销系统里这张单据前后对不上。只能转人工处理。',
 };

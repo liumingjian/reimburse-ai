@@ -1,6 +1,6 @@
 import { Button, InlineNotification, Tag } from '@carbon/react';
 import { CheckmarkFilled, ErrorFilled, Printer } from '@carbon/icons-react';
-import { HUMAN_REVIEW_NOTICE, SAVE_COMPLETED_NOTICE, type TaskSnapshot } from '@baox/contract';
+import { HANDOVER_COMPLETED_NOTICE, HUMAN_REVIEW_NOTICE, type TaskSnapshot } from '@baox/contract';
 import { TASKS_HASH, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
 import { PageHeader } from '../shell/PageHeader';
@@ -9,12 +9,13 @@ import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 import { ReadbackTable } from './ReadbackTable';
 
-// 完成页：草稿号与逐条回读表。只有服务端判定回读全部一致（readback.status = matched）才显示完成态与固定句
-// 「报销草稿已保存。请打开报销系统检查，是否提交由你决定。」（user-interaction-contract.md:70，逐字不改）。
+// 完成页：单据编号与逐条回读表。只有服务端判定回读全部一致（readback.status = matched）才显示完成态与交接固定句
+// HANDOVER_COMPLETED_NOTICE（user-interaction-contract.md「自动写入边界」，逐字不改）。交接时单据还没有保存，
+// 所以单据编号一栏通常是「尚无」；只有员工自己保存过、再对一次账才会读到编号。
 // 严格回读不一致时任务也停在这里，但不算完成：差异行按服务端逐行判定着色并可展开；对账结果是转人工（human_review）时显示固定句，
 // 当前待答 step 是 hand_off 且允许转人工时出现「转人工」，转人工后显示已转人工（终态）。
 
-const MISMATCH_LEAD = '草稿已保存，但严格回读与本地确认不一致。这份草稿不算完成。';
+const MISMATCH_LEAD = '严格回读与本地确认不一致，单据没有交接给你。这次去报销不算完成。';
 
 export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
   const taskId = snapshot.task.taskId;
@@ -43,10 +44,10 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
         }
       />
 
-      {/* 摘要条：草稿号与严格回读结论都来自服务端。 */}
+      {/* 摘要条：单据编号与严格回读结论都来自服务端。 */}
       <div className="app-summary bleed" role="group" aria-label="写入结果">
         <div className="app-summary-field">
-          <span className="app-summary-key">草稿号</span>
+          <span className="app-summary-key">单据编号</span>
           <span className="app-summary-value app-code" data-testid="draft-no">
             {erp.draftNo ?? '尚无'}
           </span>
@@ -82,7 +83,7 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
       <div className="app-notices">
         {matched ? (
           <InlineNotification kind="success" role="status" lowContrast hideCloseButton statusIconDescription="成功">
-            <span data-testid="save-completed">{SAVE_COMPLETED_NOTICE}</span>
+            <span data-testid="handover-completed">{HANDOVER_COMPLETED_NOTICE}</span>
           </InlineNotification>
         ) : mismatched ? (
           <InlineNotification
@@ -91,7 +92,7 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
             lowContrast
             hideCloseButton
             statusIconDescription="错误"
-            title={`回读与本地确认不一致：${readback.summary ?? ''}。这份草稿不算完成，不要直接在报销系统里提交审批。`}
+            title={`回读与本地确认不一致：${readback.summary ?? ''}。这次去报销不算完成，不要直接在报销系统里保存或提交审批。`}
           />
         ) : null}
         {reconcile.humanReview ? (

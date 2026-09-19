@@ -19,7 +19,8 @@ export const LegacyImportReportSchema = z.object({
   homeCity: z.string().nullable(),
   // 个人项目簿 entries imported.
   projects: z.number().int().nonnegative(),
-  // ERP-touched legacy tasks imported as ERP 草稿已交接 / 转人工.
+  // ERP-touched legacy tasks imported as ERP 单据已交接 / 转人工. The stored outcome keeps its legacy name
+  // `draft_handed_over`: an old task that verifiably saved really did hand over a saved draft (ADR-0028).
   handedOver: z.number().int().nonnegative(),
   handedOff: z.number().int().nonnegative(),
   // 发票占用 (invoice occupancy) claims imported.
