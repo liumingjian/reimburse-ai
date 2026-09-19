@@ -349,9 +349,14 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     return fresh;
   }
 
-  // 去报销 and 我已登录，继续: both start one run of the fill job. The lease is taken inside the accepted change, so a
-  // task never runs without it; the job itself releases it on its result.
-  async function startFillJob(taskId: string, token: string, trigger: FillTrigger): Promise<TaskSnapshot> {
+  // 去报销, 我已登录，继续 and 重新去报销: all three start one run of the fill job. The lease is taken inside the accepted
+  // change, so a task never runs without it; the job itself releases it on its result.
+  //
+  // `recovery` is 重新去报销 (ADR-0027) and nothing else. It is the only caller that may start a fill on a task whose
+  // ERP was already attempted, and it earns that by re-checking, against the same view the page read, that the
+  // current 对账 verdict offers the recovery. Attaching the bypass to the caller rather than to the start path is
+  // the point: 去报销 on an attempted task stays refused.
+  async function startFillJob(taskId: string, token: string, trigger: FillTrigger, recovery = false): Promise<TaskSnapshot> {
     const started: { run: FillRun | null } = { run: null };
     const inUse = { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
     const notWaiting = { code: 'not_waiting_login', message: ERP_ACTION_ERRORS.notWaitingLogin };
@@ -359,7 +364,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       const snapshot = await mutate(
         taskId,
         token,
-        async ({ tx, facts, loaded, at, revision }) => {
+        async ({ tx, task, facts, loaded, at, revision }) => {
           if (!erp) return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
           const holder = erp.lease.holder();
           if (holder && holder.taskId !== taskId) return inUse;
@@ -370,8 +375,18 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
             frozen = loaded.erp.frozen;
             digest = loaded.erp.job.confirmation_digest;
           } else {
-            if (loaded.erp.attempted) return { code: 'erp_started', message: ERP_ACTION_ERRORS.erpStarted };
-            if (project(facts).step.kind !== 'choose_action' || facts.confirmation !== 'confirmed' || !loaded.confirmed) return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
+            if (recovery) {
+              // The recovery replaces the two checks below it, one for one: the 对账 verdict stands in for the
+              // 已开始写入 refusal, and 对账 stands in for choose_action as the step this is taken from.
+              if (facts.erp?.phase !== 'unknown') return { code: 'not_reconciling', message: RECONCILE_COPY.notReconciling };
+              const view = reconcileView(loaded.erp, taskId, task.lifecycle, loaded.lines);
+              if (!view?.allowedActions.includes('refill')) return { code: 'action_not_allowed', message: RECONCILE_COPY.notAllowed };
+            } else if (loaded.erp.attempted) {
+              return { code: 'erp_started', message: ERP_ACTION_ERRORS.erpStarted };
+            }
+            // Nothing is re-confirmed: the recovery rebuilds its plan from the same confirmed materials, lines,
+            // projects and 事由, and refuses just as 去报销 does if that confirmation is not there.
+            if ((!recovery && project(facts).step.kind !== 'choose_action') || facts.confirmation !== 'confirmed' || !loaded.confirmed) return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
             const rows = await materialRows(tx, taskId);
             const kinds = new Map(loaded.view.materials.map((material) => [material.materialId, material.kind]));
             const built = buildFillJob({
@@ -396,7 +411,9 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
           started.run = { jobId, accountId, taskId, trigger, frozen: job };
           await tx.insertInto('erp_job').values({ job_id: jobId, task_id: taskId, account_id: accountId, kind: 'fill', trigger, confirmation_digest: digest, plan: JSON.stringify(job), revision, started_at: at }).execute();
         },
-        { loginPause: trigger === 'confirm_login' },
+        // `erpAction` only for the recovery: it is what lets this one action through the two refusals a reconciling,
+        // already-attempted task otherwise gets (phase unknown, and the ADR-0014 freeze).
+        { loginPause: trigger === 'confirm_login', erpAction: recovery },
       );
       if (started.run) erp?.run(started.run);
       return snapshot;
@@ -699,6 +716,13 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     // 我已登录，继续 during the login pause: one more run of the same frozen plan, which probes the login once.
     confirmLogin(taskId: string, token: string): Promise<TaskSnapshot> {
       return startFillJob(taskId, token, 'confirm_login');
+    },
+
+    // 重新去报销 (ADR-0027): the exit out of 未保存·已导入未写明细 while the ERP shows no 单据编号. A new fill job on the
+    // same 报销任务, on a fresh 新增单 — never the old page instance (V-45) — which takes the global ERP lease and
+    // opens its own attempts. The 对账 job row keeps pointing at the fill job it read, so the audit trail stands.
+    refill(taskId: string, token: string): Promise<TaskSnapshot> {
+      return startFillJob(taskId, token, 'start', true);
     },
 
     // Gives up this 去报销 during the login pause: nothing was written, back to write-pending (choose_action).

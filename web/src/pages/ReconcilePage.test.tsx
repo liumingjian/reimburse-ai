@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { App } from '../App';
 import { AppProvider } from '../adapter/context';
 import { AppStore } from '../adapter/store';
-import { HUMAN_REVIEW_NOTICE, RECONCILE_BUCKETS, type ReconcileBucket, type TaskStage } from '@baox/contract';
+import { HUMAN_REVIEW_NOTICE, RECONCILE_BUCKETS, type ReconcileBucket, REFILL_COPY, type TaskStage } from '@baox/contract';
 import { reconcileVerdict } from '../mock/fixtures/erp';
 import { t2Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
@@ -32,16 +32,41 @@ const actionButtons = () =>
     .map((button) => button.textContent);
 
 describe('对账', () => {
-  // 内核 classifyReconciliation：只有三种情况转人工（未保存·已导入未写明细、不自洽、身份不成立或逐行不一致的已保存）。
-  const CASES: ReadonlyArray<readonly [ReconcileBucket, boolean, string, boolean]> = [
-    ['未知', true, '重新对账', false],
-    ['未保存·导入前', true, '重新对账', false],
-    ['未保存·已导入未写明细', true, '转人工', true],
-    ['未保存·就绪待保存', true, '重新对账', false],
-    ['已保存', true, '重新对账', false],
-    ['已保存', false, '转人工', true],
-    ['不自洽', true, '转人工', true],
+  // 内核 classifyReconciliation：只有两种情况转人工（不自洽、身份不成立或逐行不一致的已保存）。
+  // 未保存·已导入未写明细什么都没有落库：建议的处置是原地等待，出路是「重新去报销」和「转人工」。
+  const CASES: ReadonlyArray<readonly [ReconcileBucket, boolean, string, boolean, readonly string[]]> = [
+    ['未知', true, '重新对账', false, ['重新对账', '转人工']],
+    ['未保存·导入前', true, '重新对账', false, ['重新对账', '转人工']],
+    ['未保存·已导入未写明细', true, REFILL_COPY.button, false, [REFILL_COPY.button, '转人工']],
+    ['未保存·就绪待保存', true, '重新对账', false, ['重新对账', '转人工']],
+    ['已保存', true, '重新对账', false, ['重新对账', '转人工']],
+    ['已保存', false, '转人工', true, ['转人工']],
+    ['不自洽', true, '转人工', true, ['转人工']],
   ];
+
+  test('未保存·已导入未写明细：「重新去报销」在吸底栏里，点了之后回到去报销页', async () => {
+    const adapter = createMockAdapter({ seed: null, fault: null, erpStepMs: 5 });
+    const base = t2Snapshot();
+    const snapshot = {
+      ...base,
+      reconcile: { ...base.reconcile, ...reconcileVerdict('未保存·已导入未写明细'), draftNo: null },
+    };
+    const store = new AppStore(adapter, { validate: false });
+    render(
+      <AppProvider store={store}>
+        <ReconcilePage snapshot={snapshot} />
+      </AppProvider>,
+    );
+    const bar = screen.getByRole('region', { name: '处置' });
+    expect(within(bar).getByText(/重新去报销会重开一张单据/)).toBeTruthy();
+    expect(within(bar).getByRole('button', { name: REFILL_COPY.button }).textContent).toBe('重新去报销');
+    expect(screen.queryByRole('button', { name: '重新对账' })).toBeNull();
+  });
+
+  test('服务端没有给出这条出路时，页面不画「重新去报销」', () => {
+    renderVerdict('未知', true);
+    expect(screen.queryByRole('button', { name: REFILL_COPY.button })).toBeNull();
+  });
 
   test('页头没有孤立的「返回任务列表」：回任务列表走顶栏', async () => {
     renderAt('#/task/T2/reconcile');
@@ -54,13 +79,14 @@ describe('对账', () => {
     expect(new Set(CASES.map(([bucket]) => bucket))).toEqual(new Set(RECONCILE_BUCKETS));
   });
 
-  for (const [bucket, consistent, suggested, humanReview] of CASES) {
-    // 建议转人工时只能转人工；建议原地等待时两个都能做（与服务端 reconcileView 的 allowedActions 一致）。
-    const expected = humanReview ? ['转人工'] : ['重新对账', '转人工'];
+  for (const [bucket, consistent, suggested, humanReview, expected] of CASES) {
+    // 页面只渲染服务端允许的处置（与服务端 reconcileView 的 allowedActions 一致）。
     test(`${bucket}${bucket === '已保存' ? (consistent ? '（一致）' : '（逐行不一致）') : ''}：建议「${suggested}」，可做 ${expected.join(' / ')}${humanReview ? '，显示人工核对固定句' : ''}`, () => {
       renderVerdict(bucket, consistent);
       expect(screen.getByTestId('reconcile-bucket').textContent).toBe(bucket);
       expect(actionButtons()).toEqual(expected);
+      // 按钮永远叫「重新去报销」，从不叫「重试」；服务端没给这条出路时页面也不画它。
+      expect(actionButtons().some((label) => label?.includes('重试'))).toBe(false);
       if (humanReview) {
         expect(screen.getByTestId('human-review').textContent).toBe(HUMAN_REVIEW_NOTICE);
         expect(screen.queryByRole('button', { name: '重新对账' })).toBeNull();

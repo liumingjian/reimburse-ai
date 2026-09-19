@@ -143,7 +143,11 @@ export function reconcileVerdict(
   bucket: ReconcileBucket,
   savedConsistent = true,
 ): Pick<Reconcile, 'bucket' | 'action' | 'actionCode' | 'allowedActions' | 'humanReview'> {
-  const handOff = bucket === '未保存·已导入未写明细' || bucket === '不自洽' || (bucket === '已保存' && !savedConsistent);
+  // 未保存·已导入未写明细：什么都没有落库，出路是「重新去报销」（重开一张单据再走一遍）和「转人工」，不是转人工的结果。
+  if (bucket === '未保存·已导入未写明细') {
+    return { bucket, action: RECONCILE_ACTION_LABELS.refill, actionCode: 'refill', allowedActions: ['refill', 'hand_off'], humanReview: false };
+  }
+  const handOff = bucket === '不自洽' || (bucket === '已保存' && !savedConsistent);
   const code: ReconcileActionCode = handOff ? 'hand_off' : 'wait';
   return { bucket, action: RECONCILE_ACTION_LABELS[code], actionCode: code, allowedActions: handOff ? ['hand_off'] : ['wait', 'hand_off'], humanReview: handOff };
 }

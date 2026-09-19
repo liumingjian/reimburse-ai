@@ -22,7 +22,20 @@ const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, imp
 export type FakeInvoice = {
   bytes: Uint8Array; invoiceNumber: string; receiptNumber: string; seller: string; issueDate: string;
   net: string; tax: string; gross: string; category: string;
+  /**
+   * ERP's verbatim refusal for this invoice, or undefined for an invoice it accepts. `重复报销，禁止导入` is the one
+   * the recovery path cannot fix: the invoice is bound to a 历史费用报销单 (a past reimbursement bill), not to the
+   * unsaved one we abandoned, so nothing is imported and ERP says why in the 提示 window.
+   */
+  importRefusal?: string;
 };
+
+/**
+ * The 收票单 (receipt records) ERP already holds, keyed by 收票单, with the row values it holds for each. ADR-0026:
+ * a 收票单 outlives the bill that created it, and it outlives the page instance too, so a recovery run over a second
+ * `createFakeErp` can be given the ledger the first one left behind. Sharing it is what makes re-import a re-import.
+ */
+export type FakeReceiptLedger = Map<string, string[]>;
 export type FakeMasterData = { code: string; name: string; documentStatus?: string; forbidStatus?: string };
 export type FakeErpOptions = {
   origin?: string;
@@ -36,6 +49,8 @@ export type FakeErpOptions = {
   assumeReceiptLink?: boolean;
   today?: string;
   billNo?: string;
+  /** The 收票单 ERP already holds. Defaults to an empty ledger: an ERP that has never seen these invoices. */
+  receiptLedger?: FakeReceiptLedger;
 };
 export type FakeMutation = { kind: 'import' | 'cell' | 'option' | 'header' | 'addRow' | 'save'; detail: string };
 
@@ -140,6 +155,7 @@ export async function createFakeErp(options: FakeErpOptions) {
   const today = options.today ?? '2026/9/15';
   const billNo = options.billNo ?? 'FYBX2026090001';
   const invoicesBySha = new Map(options.invoices.map((invoice) => [sha256(invoice.bytes), invoice]));
+  const receiptLedger: FakeReceiptLedger = options.receiptLedger ?? new Map();
 
   const mutations: FakeMutation[] = [];
   const commands: Array<{ method: string; params: Record<string, any>; sessionId: string | null }> = [];
@@ -333,25 +349,50 @@ export async function createFakeErp(options: FakeErpOptions) {
   function importInvoices() {
     if (!child) return;
     const rows = [...child.doc.document.querySelectorAll('tbody tr')].filter((tr: any) => tr.querySelector('input.ant-checkbox-input')?.checked);
+    const selected = (rows as any[]).map((row) => invoicesBySha.get(row.getAttribute('data-sha256'))!);
+    // An invoice bound to a 历史费用报销单 (a past bill) is refused by name and the whole import is dropped: ERP's own
+    // words, in its own 提示 window, are the only thing that comes back (ADR-0027).
+    const refused = selected.find((invoice) => invoice.importRefusal);
+    if (refused) {
+      show(q('#assistant-window'), false);
+      message(refused.importRefusal!);
+      const dropped = child;
+      setTimeout(() => {
+        if (child === dropped) child = null;
+        emitEvent('Target.detachedFromTarget', { sessionId: dropped.sessionId });
+      }, 0);
+      return;
+    }
     const tbody = grid('receipts').querySelector('tbody');
     const footer = tbody.querySelector('tr.k-footer-template');
+    const rowFor = (receiptNumber: string) => dataRows('receipts').find((tr: any) => textOf(tr, 'receipts', '收票单') === receiptNumber);
+    const appendRow = (values: readonly string[]) => {
+      const tr = main.document.createElement('tr');
+      tr.className = 'k-master-row';
+      tr.innerHTML = values.map((value) => `<td>${escapeHtml(value)}</td>`).join('');
+      tbody.insertBefore(tr, footer);
+      return tr;
+    };
     const imported: string[] = [];
-    for (const row of rows as any[]) {
-      const invoice = invoicesBySha.get(row.getAttribute('data-sha256'))!;
+    for (const invoice of selected) {
       const masked = `${invoice.invoiceNumber.slice(0, 4)}************${invoice.invoiceNumber.slice(-4)}`;
       const values = [invoice.receiptNumber, masked, invoice.seller, invoice.issueDate, invoice.net, invoice.tax, invoice.gross, invoice.category];
+      // A 收票单 ERP already holds is re-bound to the bill being imported into, rather than minted a second time:
+      // that is what「已存在对应的收票单，已进行覆盖」means, and it is why an import that was never saved can be
+      // replayed onto a fresh 新增单 (ADR-0026). The fake shows a bound 收票单 as a row of the 收票信息 grid, so
+      // re-binding puts the record's row back on this bill; the overwrite rule below then rewrites it.
+      const bound = receiptLedger.get(invoice.receiptNumber);
+      if (bound && !rowFor(invoice.receiptNumber)) appendRow(bound);
       // ERP identifies a 收票行 (receipt row) by its 收票单 (receipt number): importing an invoice the bill already
       // holds rewrites that row in place instead of adding a second one (ADR-0026). Because the identity that
       // decides this is the one the row keeps, a rewrite cannot strand a detail row's 收票单号 link.
-      const held = dataRows('receipts').find((tr: any) => textOf(tr, 'receipts', '收票单') === invoice.receiptNumber);
+      const held = rowFor(invoice.receiptNumber);
       if (held) {
         RECEIPT_COLUMNS.forEach((column, index) => setText(held, 'receipts', column, values[index]!));
       } else {
-        const tr = main.document.createElement('tr');
-        tr.className = 'k-master-row';
-        tr.innerHTML = values.map((value) => `<td>${escapeHtml(value)}</td>`).join('');
-        tbody.insertBefore(tr, footer);
+        appendRow(values);
       }
+      receiptLedger.set(invoice.receiptNumber, values);
       imported.push(invoice.receiptNumber);
     }
     updateTotals();

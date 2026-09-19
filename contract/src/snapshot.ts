@@ -697,12 +697,22 @@ export type Readback = z.infer<typeof ReadbackSchema>;
 
 export const RECONCILE_ACTIONS = ['原地等待', '转人工'] as const;
 // 建议处置的代码：页面按代码分支，按 action（文案）显示。
-export const RECONCILE_ACTION_CODES = ['wait', 'hand_off'] as const;
+// 只有两种处置（原地等待、转人工）；代码比处置多一个，因为「原地等待」下有两条出路：
+// wait = 再对一次账（只读），refill = 重新去报销（重开一张单据再走一遍）。两者的处置文案都是原地等待。
+export const RECONCILE_ACTION_CODES = ['wait', 'hand_off', 'refill'] as const;
 export type ReconcileActionCode = (typeof RECONCILE_ACTION_CODES)[number];
 export const RECONCILE_ACTION_LABELS: Readonly<Record<ReconcileActionCode, (typeof RECONCILE_ACTIONS)[number]>> = {
   wait: '原地等待',
   hand_off: '转人工',
+  refill: '原地等待',
 };
+
+// 「重新去报销」这条出路的页面文案。按钮永远叫「重新去报销」，不叫「重试」：它不是把同一次写入再做一遍，
+// 而是重开一张单据从头走一遍。
+export const REFILL_COPY = {
+  button: '重新去报销',
+  consequence: '重新去报销会重开一张单据，把发票再导一次、明细再填一遍，填好后仍然由你自己保存。',
+} as const;
 
 // 对账中断点：内核 classifyReconciliation 的 6 类（erpreconcile.mjs BUCKETS），逐字照抄。
 export const RECONCILE_BUCKETS = ['未知', '未保存·导入前', '未保存·已导入未写明细', '未保存·就绪待保存', '已保存', '不自洽'] as const;
@@ -720,6 +730,8 @@ export const HUMAN_REVIEW_NOTICE = '当前报销已暂停，材料和状态已�
 // action 是建议的处置，allowedActions 是可以做的处置：建议原地等待时也一直可以转人工（两个按钮），
 // 建议转人工时只能转人工（一个按钮）。
 // humanReview 为真时（转人工的结果）页面显示 HUMAN_REVIEW_NOTICE，且不给「重新对账」。
+// actionCode 可以是 refill（未保存·已导入未写明细、且报销系统里还没有单据编号）：建议的处置仍然是原地等待，
+// 出路是「重新去报销」和「转人工」。给了这条出路就不是转人工的结果，humanReview 一定为假。
 // status：pending 等待用户处置；waiting 已重新对账、原地等待；handed_off 已转人工（终态）。
 // rows 是严格回读逐行比对（与 readback.rows 相同）；reasons 是不属于某一行的原因（逐行原因在 rows[].reasons）。
 // 写入中止时报销系统自己的原话（逐字，来自报销系统弹窗与发票助手）和裁剪截图（服务端地址，没有时为 null）。
@@ -745,6 +757,9 @@ export const ReconcileSchema = z.object({
   capture: ErpCaptureSchema.nullable(),
 }).refine((reconcile) => !(reconcile.humanReview && reconcile.allowedActions.includes('wait')), {
   message: 'humanReview 为真时 allowedActions 不能含 wait（转人工之后不再重新对账）',
+  path: ['allowedActions'],
+}).refine((reconcile) => !(reconcile.humanReview && reconcile.allowedActions.includes('refill')), {
+  message: 'humanReview 为真时 allowedActions 不能含 refill（给了重新去报销这条出路，就不是转人工的结果）',
   path: ['allowedActions'],
 });
 export type Reconcile = z.infer<typeof ReconcileSchema>;

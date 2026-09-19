@@ -85,6 +85,7 @@ export const HTTP_ENDPOINTS = {
   cancelErpWrite: action('cancel-erp-write', 'stepToken'),
   reconcile: action('reconcile', 'stepToken'),
   handOff: action('hand-off', 'stepToken'),
+  refill: action('refill', 'stepToken'),
 } as const satisfies Record<keyof AppAdapter, HttpEndpoint>;
 
 // 端点表里出现的动作名（用于核对与 ACTION_NAMES 同步）。

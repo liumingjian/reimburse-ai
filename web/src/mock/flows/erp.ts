@@ -1,6 +1,6 @@
 import { ERP_ACTION_ERRORS, type AppAdapter, type TaskSnapshot } from '@baox/contract';
 import type { MockBus } from '../bus';
-import { ERP_STEP_INDEX, applyAbortAtHandover, applyErpDone, applyReadbackMismatch, erpSteps, handedOffBanner, loginNotDetected, reconcileVerdict } from '../fixtures/erp';
+import { ERP_STEP_INDEX, applyAbortAtHandover, applyErpDone, applyReadbackMismatch, emptyReconcile, erpSteps, handedOffBanner, loginNotDetected, reconcileVerdict } from '../fixtures/erp';
 import { T1_DRAFT_NO } from '../fixtures/tasks';
 
 // ERP 填报（「去报销」即开始：定时推进、登录交接、登录后自动写入）、严格回读与对账（mock 服务端的角色）。
@@ -12,7 +12,7 @@ const DEFAULT_ERP_LOGIN_AUTO_MS = 2500;
 // `?fault=erp-login-missing`：前两次「我已登录，继续」都探测不到登录，第三次才检测到；该故障下服务端不会自己探测到。
 const LOGIN_MISSING_ATTEMPTS = 2;
 
-export type ErpFlow = Pick<AppAdapter, 'startErpWrite' | 'confirmLogin' | 'cancelErpWrite' | 'reconcile' | 'handOff'>;
+export type ErpFlow = Pick<AppAdapter, 'startErpWrite' | 'confirmLogin' | 'cancelErpWrite' | 'reconcile' | 'handOff' | 'refill'>;
 
 export function createErpFlow(bus: MockBus): ErpFlow {
   const { options } = bus;
@@ -151,6 +151,20 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         snapshot.reconcile.status = 'waiting';
         snapshot.reconcile.banner = `已重新对账（第 ${count} 次）：还没有读到可以确认的草稿。你在报销系统中查看后可以再次对账。`;
         snapshot.step = { kind: 'reconcile', stepToken: `tok-${taskId}-reconcile-${count}` };
+        return snapshot;
+      }),
+    // 重新去报销：发票已导入、明细还没写、报销系统里还没有单据编号时的那条出路。重开一张单据，从头再走一遍去报销。
+    refill: async (taskId, stepToken) =>
+      bus.withStep(taskId, stepToken, (snapshot) => {
+        if (snapshot.step.kind !== 'reconcile') return { error: { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling } };
+        if (!snapshot.reconcile.allowedActions.includes('refill')) return { error: { code: 'action_not_allowed', message: ERP_ACTION_ERRORS.notAllowed } };
+        const run = newRun(taskId);
+        snapshot.stage = 'erp';
+        snapshot.erp = { status: 'running', steps: erpSteps(ERP_STEP_INDEX.browser, 'running'), draftNo: null, abortReason: null, loginNotice: null, erpAccount: null };
+        snapshot.reconcile = emptyReconcile();
+        snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-erp-run-${run}` };
+        snapshot.task.updatedAt = bus.now();
+        setTimeout(() => reachLogin(taskId, run), erpStepMs);
         return snapshot;
       }),
     // 转人工：终止后续写入，只在对账结果允许转人工时接受；任务停在原阶段（对账页或回读不一致的完成页）并标记为已转人工（终态）。
