@@ -6,7 +6,7 @@ import { runFillJob } from './erp/executor/job';
 import { runReconcileJob } from './erp/executor/reconcile-job';
 import { createFakeErp, type FakeErp, type FakeErpOptions, type FakeReceiptLedger } from './erp/executor/testing/fake-erp';
 import type { FillExecutor } from './erp/fill-jobs';
-import type { ExecutorChannel, ExecutorEvent, Mutation } from './erp/protocol';
+import type { ExecutorChannel, ExecutorEvent, Mutation, ResultEvent } from './erp/protocol';
 import type { ReconcileExecutor } from './erp/reconcile-job';
 import { COMPATIBILITY, ERP_ORIGIN, FAST_PACE, fakeErpOptions } from './erp/testing/scenario';
 import { handedOver, noFormOpen, scripted, TEST_ERP_ACCOUNT } from './erp/testing/fake-executor';
@@ -52,18 +52,31 @@ function faulty(channel: ExecutorChannel): ExecutorChannel {
   return { emit: emit as ExecutorChannel['emit'] };
 }
 
+// A run that stops before it touches anything (no Chromium, say): a result and no attempt at all.
+let stopBeforeWrite = false;
 const fillExecutor: FillExecutor = async (plan, channel) => {
   fillRuns += 1;
+  if (stopBeforeWrite) {
+    const event: ResultEvent = { type: 'result', status: 'aborted', code: 'chromium_unavailable', message: '报销专用 Chromium 浏览器不可用', billNo: null, capture: null };
+    await channel.emit(event);
+    return event;
+  }
   fake = await createFakeErp(fakeOptions);
   return runFillJob(plan, { browser: fake.browser, blobs: dataDirBlobs(server.dataDir), channel: faulty(channel), pace: FAST_PACE, probeWaitMs: 0 });
 };
-// The reconcile job reads whatever the fill left on the same fake ERP.
-const reconcileExecutor: ReconcileExecutor = async (plan, channel) => runReconcileJob(plan, { browser: fake!.browser, channel, pace: FAST_PACE, probeWaitMs: 0 });
+// True once the ERP browser has been cleaned (what `reset-erp-tabs.ts` does): no 费用报销单 is open any more, and an
+// unsaved one does not outlive its tab.
+let erpTabsClosed = false;
+// The reconcile job reads whatever the fill left on the same fake ERP — unless the browser was cleaned first.
+const reconcileExecutor: ReconcileExecutor = async (plan, channel) =>
+  (erpTabsClosed ? noFormOpen(plan, channel) : runReconcileJob(plan, { browser: fake!.browser, channel, pace: FAST_PACE, probeWaitMs: 0 }));
 
 beforeEach(async () => {
   fake = null;
   fault = null;
   fillRuns = 0;
+  erpTabsClosed = false;
+  stopBeforeWrite = false;
   receiptLedger = new Map();
   server = await createTestServer({ projectCatalog: CATALOG, erpExecutor: fillExecutor, reconcileExecutor, erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY } });
   alice = await server.signIn('alice');
@@ -228,6 +241,57 @@ describe('fault injection at each ERP mutation point', () => {
     expect(await server.db.selectFrom('review_confirmation').select(['digest']).where('task_id', '=', taskId).execute()).toHaveLength(1);
     expect(over.confirmation.status).toBe('confirmed');
     expect(over.lines.map((line) => line.lineId)).toEqual(judged.lines.map((line) => line.lineId));
+  }, 180_000);
+
+  it('对账 with no 费用报销单 open keeps 重新去报销: cleaning the ERP browser is not evidence and is not terminal', async () => {
+    const stopped = await crashAt('fill');
+    const taskId = stopped.task.taskId;
+    // What the abandoned bill left behind stays behind: the 收票单 outlives the tab, the unsaved bill does not.
+    expect(receiptNumbers(fake!)).toEqual([RECEIPT_NUMBER]);
+    erpTabsClosed = true;
+
+    const judged = await reconcile(stopped);
+    expect(judged.reconcile).toMatchObject({
+      bucket: '未知', action: '原地等待', actionCode: 'refill',
+      allowedActions: ['refill', 'wait', 'hand_off'], humanReview: false, draftNo: null,
+    });
+    expect(judged.reconcile.banner).toContain('没有打开任何费用报销单');
+    // 再对一次账 stays open too: the employee may open the bill again and have it read properly.
+    await client.accepted(await client.act(judged, 'reconcile'));
+
+    // And the recovery runs: a fresh 新增单, the same invoice re-imported over its own 收票单, one row and not two.
+    const ready = await settled(taskId);
+    erpTabsClosed = false;
+    fault = null;
+    const started = await client.accepted(await client.act(ready, 'refill'));
+    expect(started).toMatchObject({ stage: 'erp', erp: { status: 'running' } });
+    const over = await settled(taskId);
+    expect(over).toMatchObject({ stage: 'done', erp: { status: 'done', draftNo: null }, readback: { status: 'matched' } });
+    expect(receiptNumbers(fake!)).toEqual([RECEIPT_NUMBER]);
+    expect(fillRuns).toBe(2);
+  }, 180_000);
+
+  it('a 重新去报销 that stops before writing leaves the exits open, and never claims the task can just go again', async () => {
+    const judged = await reconcile(await crashAt('fill'));
+    const taskId = judged.task.taskId;
+    fault = null;
+    stopBeforeWrite = true;
+    await client.accepted(await client.act(judged, 'refill'));
+    const stopped = await settled(taskId);
+    expect(fillRuns).toBe(2);
+
+    // This job wrote nothing, but the import the first one made is still unsettled: the task stays in 对账, which is
+    // the only thing that can settle it. The copy must not offer 去报销, which the ADR-0014 freeze refuses.
+    expect(stopped).toMatchObject({ stage: 'reconcile', step: { kind: 'reconcile' }, erp: { status: 'aborted' } });
+    expect(stopped.erp.abortReason).toContain('报销专用 Chromium 浏览器不可用');
+    expect(stopped.erp.abortReason).not.toContain('可以再去报销');
+    expect(stopped.reconcile.allowedActions).toEqual(['wait', 'hand_off']);
+    await refusedWith(await client.act(stopped, 'start-erp-write'), 400, 'erp_started');
+
+    // And the exits work: 对账 reads the bill the first run left, and offers the recovery again.
+    stopBeforeWrite = false;
+    const again = await reconcile(stopped);
+    expect(again.reconcile).toMatchObject({ bucket: '未保存·已导入未写明细', actionCode: 'refill' });
   }, 180_000);
 
   it('重新去报销 is absent once the readings carry a 单据编号, and 转人工 remains offered', async () => {

@@ -77,6 +77,23 @@ export type FakeErpOptions = {
    * time and cannot say whether the second batch has been recognised.
    */
   assistantRecognitionTicks?: number;
+  /**
+   * How many ERP-page evaluations after 新增 Kendo takes to move `k-state-active` onto the new form's tab panel.
+   * Until then the only active panel is the console's own, which answers with its own form id — the live shape
+   * behind `compatibility_mismatch` on a build that matched (2026-09-19).
+   */
+  formPanelActiveTicks?: number;
+  /**
+   * How many ERP-page evaluations after 发票导入单据 the 处理结果 report needs to finish painting. Until then the
+   * window is on screen carrying nothing but its title; above 2 it also paints its grid a row at a time as it goes.
+   * The live shape of 2026-09-19: at T+90s the window held the word 处理结果 and nothing else, and minutes later
+   * held the complete ten-row all-success report. Default 2: on screen empty, complete one read later.
+   */
+  importReportTicks?: number;
+  /** The window opens and its report never arrives at all: the hang the budget's stall clock has to catch. */
+  importReportStalled?: boolean;
+  /** 新增 is clicked and no form opens — the navigation that reports success while achieving nothing. */
+  newFormClickDead?: boolean;
 };
 export type FakeMutation = { kind: 'import' | 'cell' | 'option' | 'header' | 'addRow' | 'save'; detail: string };
 
@@ -241,6 +258,9 @@ export async function createFakeErp(options: FakeErpOptions) {
   let activePane: string | null = null;
   let uploadBatches = 0;
   let assistantTicks = 0;
+  let mainTicks = 0;
+  let formPanelActiveAt: number | null = null;
+  let pendingReport: { start: number; due: number; summary: string; rows: readonly string[] } | null = null;
   const pendingRecognition: Array<{ due: number; files: string[] }> = [];
   let dropdown: { td: any; tr: any; list: any; span: any } | null = null;
 
@@ -420,18 +440,37 @@ export async function createFakeErp(options: FakeErpOptions) {
    */
   function result(summary: string, rows: readonly string[]) {
     const win = q('#result-window');
-    // The toolbar words and the grid header are part of what a reader of this window actually sees, and the header
-    // carries 序号 / 关键字 / 状态 with no 序号 of its own — the fake keeps them so a judge cannot pass by counting
-    // a header row as an invoice.
-    const text = [
-      '打开 引出全部记录 引出失败记录 （您可以单击字段链接定位到所在位置）',
-      summary,
-      '设置 序号 设置 关键字 设置 状态 设置 问题描述',
-      ...rows.map((row, index) => `${index + 1} ${row}`),
-    ].join(' ');
     win.querySelector('.k-window-message').textContent = '';
     show(win, true);
-    setTimeout(() => { win.querySelector('.k-window-message').textContent = text; }, 0);
+    if (options.importReportStalled) return;
+    const ticks = Math.max(1, options.importReportTicks ?? 2);
+    pendingReport = { start: mainTicks, due: mainTicks + ticks, summary, rows };
+    paintReport();
+  }
+
+  /**
+   * The report as much of it as has been painted by now. The toolbar words and the grid header are part of what a
+   * reader of this window actually sees, and the header carries 序号 / 关键字 / 状态 with no 序号 of its own — the
+   * fake keeps them so a judge cannot pass by counting a header row as an invoice. The summary lands last, which
+   * is why a half-painted grid of nothing but 成功 may not be read as a verdict.
+   */
+  function paintReport() {
+    if (!pendingReport) return;
+    const { start, due, summary, rows } = pendingReport;
+    const done = mainTicks >= due;
+    // A report that takes its time paints its grid a row at a time; the default two-tick one is empty, then whole.
+    const progress = (mainTicks - start) / (due - start);
+    const painted = done ? rows : (options.importReportTicks ?? 0) > 2 ? rows.slice(0, Math.floor(rows.length * progress)) : [];
+    // Live, the window is on screen with NOTHING in it — no toolbar, no header, no summary — until it starts
+    // painting its grid, so nothing here appears before the first row does.
+    const text = painted.length === 0 && !done ? '' : [
+      '打开 引出全部记录 引出失败记录 （您可以单击字段链接定位到所在位置）',
+      ...(done ? [summary] : []),
+      '设置 序号 设置 关键字 设置 状态 设置 问题描述',
+      ...painted.map((row, index) => `${index + 1} ${row}`),
+    ].join(' ');
+    q('#result-window .k-window-message').textContent = text;
+    if (done) pendingReport = null;
   }
 
   function emitEvent(method: string, params: Record<string, unknown>) {
@@ -544,7 +583,12 @@ export async function createFakeErp(options: FakeErpOptions) {
     commitEditor();
     switch (action) {
       case 'open-list': return show(q('#expense-list'), true);
-      case 'new-form': show(q('#expense-list'), false); return show(q('#expense-form'), true);
+      case 'new-form':
+        if (options.newFormClickDead) return undefined;
+        show(q('#expense-list'), false);
+        show(q('#expense-form'), true);
+        formPanelActiveAt = mainTicks + (options.formPanelActiveTicks ?? 0);
+        return syncFormPanel();
       case 'section': return undefined;
       case 'split-arrow': return show(q('a[id$="tbNotFillEntry"]'), true);
       case 'not-fill-entry': show(q('a[id$="tbNotFillEntry"]'), false); return openAssistant();
@@ -682,6 +726,14 @@ export async function createFakeErp(options: FakeErpOptions) {
     refreshAssistant();
   }
 
+  /** Kendo moving `k-state-active` from the console's tab panel onto the newly opened form's, a few reads late. */
+  function syncFormPanel() {
+    if (formPanelActiveAt === null || mainTicks < formPanelActiveAt) return;
+    q('#console-panel').classList.remove('k-state-active');
+    q('#form-panel').classList.add('k-state-active');
+    formPanelActiveAt = null;
+  }
+
   /** Recognition that has not landed yet, because `assistantRecognitionTicks` holds this batch back. */
   function flushRecognition() {
     while (pendingRecognition.length && pendingRecognition[0]!.due <= assistantTicks) recognise(pendingRecognition.shift()!.files);
@@ -702,6 +754,7 @@ export async function createFakeErp(options: FakeErpOptions) {
       if (!sessionId && !targetAlive) throw new Error('CDP 连接已关闭');
       const doc = sessionId ? child!.doc : main;
       if (sessionId) { assistantTicks += 1; flushRecognition(); }
+      else { mainTicks += 1; syncFormPanel(); paintReport(); }
       switch (method) {
         case 'Runtime.evaluate': return doc.evaluate(String(params.expression));
         case 'Input.dispatchMouseEvent':

@@ -8,7 +8,7 @@ import type { Db } from '../db/database';
 import { createTaskService } from '../tasks';
 import { createTestServer, type TestServer } from '../test/harness';
 import { runFillJob } from './executor/job';
-import { captureErpError, importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type WritePage } from './executor/steps';
+import { captureErpError, importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type ImportBudget, type WritePage } from './executor/steps';
 import { createFakeErp, type FakeErp } from './executor/testing/fake-erp';
 import { createErpJobs, serverChannel, type ErpJobs } from './jobs';
 import { createDraftJudge } from './judge';
@@ -63,7 +63,7 @@ const writePage = (fake: FakeErp): WritePage => ({ session: fake.session, pace: 
  * The fill job's own import step over an ERP form that is already open. A whole second fill job cannot reach it:
  * the pre-import preflight refuses a form that is not one blank 费用报销单-新增.
  */
-async function uploadAndImport(page: WritePage, invoices: typeof INVOICES) {
+async function uploadAndImport(page: WritePage, invoices: typeof INVOICES, budget?: ImportBudget) {
   const dir = mkdtempSync(join(tmpdir(), 'baox-reimport-'));
   try {
     const paths = invoices.map((invoice, index) => {
@@ -73,7 +73,7 @@ async function uploadAndImport(page: WritePage, invoices: typeof INVOICES) {
     });
     await openInvoiceAssistant(page, { timeoutMs: 2000 });
     await uploadInvoices(page, paths);
-    return await importInvoices(page);
+    return await importInvoices(page, budget ? { budget } : {});
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -219,6 +219,16 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(fake.mutations).toEqual([]);
   });
 
+  // Live 2026-09-19: `期望 8.2.830.9 / ER_ExpReimbursement，实际 8.2.830.9 / 0 个表单` — the build matched and the
+  // form id read as zero, because the fingerprint was read once, the instant the tab opened, while Kendo still had
+  // `k-state-active` on the console's own panel. The same page answered `["ER_ExpReimbursement"]` when asked again.
+  it('waits for the new tab to become the active panel instead of calling a half-opened tab a version mismatch', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, formPanelActiveTicks: 12 }));
+    const result = await run(fake);
+    expect([result.code, result.message]).toEqual([null, null]);
+    expect(result.status).toBe('handed_over');
+  });
+
   it('ends as write result unknown when the form instance drifts after the fill attempt is acknowledged', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
     const channel = channelFor(async (event, forward) => {
@@ -315,6 +325,16 @@ describe('re-importing an invoice the bill already holds', () => {
 // 「执行成功：10；执行失败：2」 and the 收票网格 went from its total row alone to ten data rows. Before that
 // measurement this step clicked 不生成费用明细 a second time on the assistant's session and every live run died
 // there with `Session with given id not found`.
+describe('opening a new 费用报销单', () => {
+  it('reports the form as opened only when the 费用报销单-新增 tab is actually on screen', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ newFormClickDead: true }));
+    // The wait's result used to be discarded and `{ok:true}` returned regardless, so the run walked on with no
+    // form and failed later, somewhere else, saying something else.
+    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 200 }))
+      .rejects.toMatchObject({ code: 'ERP_NEW_FORM_NOT_OPENED' });
+  });
+});
+
 describe('the 发票导入单据 click', () => {
   const windowText = (fake: FakeErp, id: string) => {
     const win = fake.document.querySelector(id) as any;
@@ -341,6 +361,33 @@ describe('the 发票导入单据 click', () => {
     expect(receiptNumbers(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
     // 处理结果 floats over the form with no 遮罩, so a toolbar click aimed at the form would land on it instead.
     expect(windowText(fake, '#result-window')).toBeNull();
+  });
+
+  // The sixth live round died here. `importInvoices` borrowed `pace.longMs` (90 s), and at T+90s the 处理结果
+  // window held nothing but the word 处理结果 — no toolbar, no summary, no grid; minutes later it held the full
+  // ten-row all-success report. A successful irreversible write was reported to the employee as 结果不确定.
+  //
+  // The proportions are kept and the clock is scaled: `longMs` here is 50 ms standing in for the live 90 s, and
+  // the report takes 30 page reads to paint, which is longer. On the old flat deadline this case is
+  // INVOICE_IMPORT_NOT_ANSWERED; the import's own budget waits for a window that is still painting.
+  it('waits out a 处理结果 that is still painting, rather than the generic slow-ERP deadline', async () => {
+    const [rail, ride] = INVOICES;
+    const fake = await createFakeErp(fakeErpOptions({ importReportTicks: 30 }));
+    const page: WritePage = { session: fake.session, pace: { ...FAST_PACE, longMs: 50 } };
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    const imported = await uploadAndImport(page, [rail!, ride!]);
+    expect(imported.report).toContain('全部执行成功：2');
+    expect(receiptNumbers(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
+  });
+
+  it('gives up on a 处理结果 that has stopped changing, and says which bound it ran out of', async () => {
+    const [rail, ride] = INVOICES;
+    const fake = await createFakeErp(fakeErpOptions({ importReportStalled: true }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    const budget = { appearMs: 2000, stallMs: 30, hardCapMs: 4000 };
+    await expect(uploadAndImport(page, [rail!, ride!], budget))
+      .rejects.toMatchObject({ code: 'INVOICE_IMPORT_NOT_ANSWERED', message: /没有任何变化/ });
   });
 
   it('carries ERP\'s own refusal for the invoices it would not take, and leaves 处理结果 open for the capture', async () => {

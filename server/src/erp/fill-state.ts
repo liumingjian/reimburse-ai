@@ -9,7 +9,7 @@ import type { ErpHandOffTable, ErpJobTable, TaskLifecycle } from '../db/schema';
 import type { ErpFacts, ErpPhase } from '../projection';
 import type { FrozenJob } from './fill-plan';
 import { ExecutorEventSchema, type ApprovedPreview, type ErpAccount, type ExecutorEvent, type Preconditions, type ReadbackEvent, type ResultEvent } from './protocol';
-import type { ReconcileVerdict } from './reconcile';
+import { noFormOpen, type ReconcileVerdict } from './reconcile';
 import { reconcileFromEvents } from './reconcile-job';
 
 // One judged reconcile read-back: the verdict (after the form-instance / target check), the bill number it read, and
@@ -17,7 +17,10 @@ import { reconcileFromEvents } from './reconcile-job';
 // per-line match passed). `handedOver`: the form is filled and ready to save exactly as approved
 // (未保存·就绪待保存 plus the same strict per-line match) — ERP 单据已交接 (bill handed over), the resume path to the
 // same terminal a clean run reaches (ADR-0028).
-export type ReconcileJudgement = { verdict: ReconcileVerdict; billNo: string | null; saved: boolean; handedOver: boolean };
+// `noForm`: 对账 found no 费用报销单 open on the page at all — the employee closed the tab, or the ERP browser was
+// cleaned. It is a normal state, not evidence about this task, and it is told apart from every other 未知 because
+// nothing else can be read once the form is gone.
+export type ReconcileJudgement = { verdict: ReconcileVerdict; billNo: string | null; saved: boolean; handedOver: boolean; noForm: boolean };
 
 // The latest reconcile run on the fill job: running until its result, and the newest judgement of any run.
 export type ReconcileState = { jobId: string; result: ResultEvent | null; judged: ReconcileJudgement | null };
@@ -69,7 +72,7 @@ export function judgeReconcile(events: ExecutorEvent[], preview: ApprovedPreview
   const strictMatch = elsewhere.length === 0 && preview !== null && verdict.action === '原地等待' && derived.readings.taskMatch?.ok === true;
   const saved = strictMatch && verdict.bucket === '已保存';
   const handedOver = strictMatch && verdict.bucket === '未保存·就绪待保存';
-  return { verdict, billNo: read.billNo.readable ? read.billNo.value : null, saved, handedOver };
+  return { verdict, billNo: read.billNo.readable ? read.billNo.value : null, saved, handedOver, noForm: noFormOpen(derived.readings) };
 }
 
 /** The job's phase from its result (none yet = running) and whether its login pause was cancelled. */
@@ -102,6 +105,12 @@ export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
   let result = lastResult(events);
   const cancelled = (await tx.selectFrom('erp_job_cancel').select('cancel_id').where('job_id', '=', job.job_id).executeTakeFirst()) !== undefined;
   let phase = phaseOf(result, cancelled);
+  // A later job that wrote nothing does not settle what an earlier one left behind: once any attempt of this task is
+  // durable, the task's ERP write result stays unknown until 对账 says otherwise (ADR-0016). Without this, a
+  // 重新去报销 that stops before its first attempt (no Chromium, say) would report 「报销系统没有被改动，可以再去
+  // 报销」 while every exit is refused — 去报销 and 作废 by the ADR-0014 freeze, 重新去报销 and 对账 and 转人工 by
+  // the phase — leaving the task with no way out at all.
+  if (phase === 'aborted' && attempt !== undefined) phase = 'unknown';
   const approved = await tx.selectFrom('erp_approved_preview').select('preview').where('job_id', '=', job.job_id).executeTakeFirst();
   const preview = approved ? (JSON.parse(approved.preview) as ApprovedPreview) : null;
   const lastAttempt = await tx.selectFrom('erp_attempt').select('preconditions').where('job_id', '=', job.job_id).orderBy(sql`rowid`, 'desc').executeTakeFirst();
@@ -328,6 +337,12 @@ const BUCKET_BANNER: Readonly<Record<ReconcileBucket, (billNo: string | null) =>
   不自洽: () => '报销系统里这张单据前后对不上。只能转人工处理。',
 };
 
+// 对账 found no 费用报销单 open at all. Said in place of the generic 未知 sentence, which only tells the employee to
+// go open the bill: there may be no bill left to open, and this reading has its own exit.
+const NO_FORM_OPEN_BANNER = '报销系统里现在没有打开任何费用报销单。没有保存过的单据一关就不存在了，也不需要你去清理；'
+  + '这次导入的发票还占在那张单上，重新去报销会重开一张新单再导一次，报销系统会覆盖掉原来的收票记录。'
+  + '如果你自己已经把这次的单据保存过了，请不要重新去报销，改为转人工。';
+
 // Why the latest reconcile run has no read-back, as the page says it.
 function runNotice(result: ResultEvent | null): string | null {
   if (!result || result.status === 'read') return null;
@@ -392,7 +407,16 @@ export function reconcileView(record: ErpRecord, taskId: string, lifecycle: Task
   // is vacuously true and carries no information. A 单据编号 means the employee saved and re-importing would act on
   // a bill that exists, so that reading keeps 转人工. An unreadable 单据编号 cell also reads as null here, and that
   // is the conservative side of the reading only because the bucket itself already required 新增 mode with no bill.
-  const refillable = judged.verdict.bucket === '未保存·已导入未写明细' && judged.billNo === null;
+  // A 对账 that found no 费用报销单 open is the same exit, for the same reason. Closing the tab or cleaning the ERP
+  // browser is a normal act, and an unsaved 费用报销单 does not outlive its tab: with no form on the page there is no
+  // bill to hand anyone, nothing to clean up, and nothing left that the recovery's fresh 新增单 could collide with —
+  // the 收票 records the import left behind are overwritten by the re-import (ADR-0026). The one fact that cannot be
+  // read this way is whether the employee saved before closing, and ADR-0028 already leaves that to them: the gate
+  // stays 「while the ERP shows no 单据编号」, here strengthened to 「no 单据编号 has ever been read for this task」,
+  // and the banner asks them not to press it if they saved. Without this, cleaning the browser would destroy the
+  // evidence the only non-terminal exit depends on and leave 转人工 as the only way out.
+  const noForm = judged.noForm && judged.verdict.bucket === '未知';
+  const refillable = (judged.verdict.bucket === '未保存·已导入未写明细' || noForm) && draftNo === null;
   // Offering the recovery is not a 转人工 outcome, whatever the classifier suggested for the bucket: the disposition
   // is 原地等待 (the code says which of its two exits is suggested) and humanReview is false.
   if (refillable) {
@@ -402,9 +426,10 @@ export function reconcileView(record: ErpRecord, taskId: string, lifecycle: Task
       bucket: judged.verdict.bucket,
       action: RECONCILE_ACTION_LABELS.refill,
       actionCode: 'refill',
-      allowedActions: ['refill', 'hand_off'],
+      // With no form open, 再对一次账 stays on offer: the employee may open the bill again and read it properly.
+      allowedActions: noForm ? ['refill', 'wait', 'hand_off'] : ['refill', 'hand_off'],
       humanReview: false,
-      banner: notice ?? BUCKET_BANNER[judged.verdict.bucket](judged.billNo),
+      banner: notice ?? (noForm ? NO_FORM_OPEN_BANNER : BUCKET_BANNER[judged.verdict.bucket](judged.billNo)),
       reasons: judged.verdict.reasons,
     };
   }

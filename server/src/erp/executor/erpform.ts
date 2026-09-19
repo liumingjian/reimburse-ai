@@ -10,6 +10,7 @@
 // This module never saves.
 
 import { clickAt, evalIn, pressKey, selectAll, typeText, type CdpSession } from './cdp';
+import { headerFieldSnippet, type HeaderField } from './header-locator';
 import { sleep, waitFor, type Pace, DEFAULT_PACE } from './pace';
 
 const SECTIONS = ['基本信息', '付款信息', '明细信息', '收票信息'];
@@ -332,47 +333,12 @@ export async function leaveEdit(session: CdpSession, { label = '明细信息', s
   return { ok: true as const, stillEditing: grid.ok ? grid.rows.some((r) => r.editing) : null };
 }
 
-export type HeaderField = {
-  ok: boolean; reason?: string; id?: string; tag?: string; instances?: number; visibleInstances?: number;
-  focused?: boolean; value: string; x: number; y: number; inView?: boolean;
-};
-
 /**
- * A header field, id `<form-instance UUID>-<key>[-EDITOR]`, found by suffix. Exactly one visible instance is
- * accepted: zero would fall back to a stale hidden form, several would be a guess. `scroll` is for writes only.
+ * A header field, id `<form-instance UUID>-<key>[-EDITOR]`. The rule that finds it is `header-locator.ts`, shared
+ * with the read-only path so the two can no longer disagree about the same node. `scroll` is for writes only.
  */
 export async function headerField(session: CdpSession, key: string, { scroll = true } = {}): Promise<HeaderField> {
-  return evalIn(session, `(() => {
-    const key = ${JSON.stringify(key)};
-    const all = [...document.querySelectorAll('[id]')]
-      .filter((n) => n.id.endsWith('-' + key) || n.id.endsWith('-' + key + '-EDITOR'));
-    if (all.length === 0) return { ok: false, reason: '页面上找不到表头字段 ' + key };
-    const showing = (x) => {
-      const b = x.getBoundingClientRect();
-      const st = getComputedStyle(x);
-      return b.width > 0 && b.height > 0 && st.visibility !== 'hidden' && st.display !== 'none';
-    };
-    const visible = all.filter(showing);
-    if (visible.length === 0) {
-      return { ok: false, reason: '表头字段 ' + key + ' 没有可见实例', instances: all.length, visibleInstances: 0 };
-    }
-    if (visible.length > 1) {
-      return { ok: false, reason: '表头字段 ' + key + ' 有 ' + visible.length + ' 个可见实例，认不出是哪一张单的',
-        instances: all.length, visibleInstances: visible.length };
-    }
-    const hit = visible;
-    const n = hit.find((x) => x.id.endsWith('-EDITOR')) || hit[0];
-    if (${scroll ? 'true' : 'false'}) n.scrollIntoView({ block: 'center', inline: 'nearest' });
-    const input = n.matches('input,textarea') ? n : n.querySelector('input,textarea');
-    const t = input || n;
-    const b = t.getBoundingClientRect();
-    const a = document.activeElement;
-    return { ok: true, id: n.id, tag: t.tagName, instances: all.length, visibleInstances: visible.length,
-      focused: a === t || (n.contains(a) && a !== n),
-      value: (input ? input.value : n.innerText).replace(/\\s+/g, ' ').trim(),
-      x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2),
-      inView: b.left >= 0 && b.right <= innerWidth && b.top >= 0 && b.bottom <= innerHeight };
-  })()`);
+  return evalIn(session, headerFieldSnippet(key, { scroll }));
 }
 
 /** Write a header field, committed with Tab: the purpose must really blur to pass the save check. */

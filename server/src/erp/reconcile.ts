@@ -20,6 +20,49 @@ export const RECEIPTS_COLUMN = '价税合计';
 export const DETAIL_COLUMN = '申请报销金额';
 /** Side evidence: never part of the identity, a mismatch never turns red. */
 export const PAYABLE_COLUMN = '申请付款金额';
+/**
+ * The 明细 columns the ERP refuses 保存 without and that this same grid can be read for
+ * (`docs/research/erp-expense-flow/save-contract.md` 「字段与顺序」: 项目, 费用项目, 发票类型, 费用承担部门 are all
+ * 必填). Only the two the detail grid renders as its own columns are checked; 发票类型 is checked by the strict
+ * per-line match and 费用承担部门 is not in the grid, so a full 必填 proof is the strict match's job, not this one's.
+ */
+export const REQUIRED_DETAIL_COLUMNS = ['项目', '费用项目'] as const;
+
+/** The 必填 cells of the detail grid: readable says whether the columns could be read, blank lists what is empty. */
+export type RequiredCells = { readable: boolean; blank: Array<{ row: number; column: string }>; reason?: string };
+
+/**
+ * Read the 必填 cells off the detail grid. An empty cell is a conclusion ("this row cannot be saved"); a column the
+ * header does not carry is a refusal to conclude, exactly as `sumColumn` treats its own column.
+ */
+export function requiredDetailCells(grid: GridLike): RequiredCells {
+  if (!grid || grid.ok !== true) return { readable: false, blank: [], reason: grid?.reason ?? '读不到明细网格' };
+  const labels = new Set((grid.columns ?? []).map((c) => c.label));
+  const missing = REQUIRED_DETAIL_COLUMNS.filter((column) => !labels.has(column));
+  if (missing.length > 0) {
+    return { readable: false, blank: [], reason: `明细网格的表头里认不出${missing.map((c) => `「${c}」`).join('')}列，判不出必填项填没填` };
+  }
+  const blank: Array<{ row: number; column: string }> = [];
+  for (const [i, row] of (grid.rows ?? []).filter((r) => r.kind === 'data').entries()) {
+    for (const column of REQUIRED_DETAIL_COLUMNS) {
+      if (String(row.values?.[column] ?? '').trim() === '') blank.push({ row: i + 1, column });
+    }
+  }
+  return { readable: true, blank };
+}
+
+/**
+ * The reader's words for "there is no 费用报销单 on the page at all" (`executor/reader.ts` formTabs, and the
+ * `noFormOpen` fake). A page with no form open is a normal state — the employee closed the tab, or the browser was
+ * cleaned — and it is not the same unreadable as two forms open at once, which is why the disposition layer needs to
+ * tell them apart. Pinned by a test that runs the real reader over a zero-tab page.
+ */
+export const NO_FORM_OPEN_REASON = '页面上没有打开的费用报销单';
+
+/** True when 对账 found no 费用报销单 open at all: no reading was taken, and none says anything about the task. */
+export function noFormOpen(readings: ReconcileReadings): boolean {
+  return !readings.formMode?.readable && (readings.formMode?.reason ?? '').startsWith(NO_FORM_OPEN_REASON);
+}
 
 type GridLike = { ok: boolean; reason?: string; columns?: Array<{ label: string }>; rows?: Array<{ kind: string; values?: Record<string, string> }> } | null | undefined;
 
@@ -31,6 +74,8 @@ export type ReconcileReadings = {
   receipts: ColumnSum;
   detail: ColumnSum;
   payable?: { readable: boolean; totalCents: number | null };
+  /** The 必填 cells of the same detail grid: what says whether the ERP would accept 保存 at all. */
+  detailRequired?: RequiredCells;
   taskMatch?: TaskMatch | null;
 };
 export type Identity = { applicable: boolean; receiptsCents: number | null; detailCents: number | null; equal: boolean };
@@ -139,6 +184,25 @@ export function classifyReconciliation(readings: ReconcileReadings): ReconcileVe
       return verdict('未保存·已导入未写明细', '转人工');
     }
     if (receipts.totalCents === detail.totalCents) {
+      // Equal totals are not a saveable bill. On import the ERP auto-creates aggregated 明细 rows that already carry
+      // the full amount with 项目 and 费用项目 empty (measured live: 10 收票 grouped by 发票类型 into 2 rows totalling
+      // the whole 7,335.55), so the two sides agree to the cent while 保存 is refused on 必填
+      // (`save-contract.md`). 就绪待保存 therefore needs evidence that the bill is saveable, not just that two numbers
+      // agree: either the strict per-line match (it compares 项目 and 费用项目 per row), or the 必填 cells of the same
+      // grid. Telling an employee to press 保存 on a bill the ERP will refuse is worse than saying nothing, so a
+      // missing reading fails to 未知 and an empty cell to the honest bucket.
+      if (readings.taskMatch?.ok !== true) {
+        const required = readings.detailRequired;
+        if (!required?.readable) {
+          reasons.push(`明细必填项读不到：${required?.reason ?? '没有原因'}；两边合计相等不足以说明这张单能保存`);
+          return verdict('未知', '原地等待');
+        }
+        if (required.blank.length > 0) {
+          const columns = [...new Set(required.blank.map((cell) => cell.column))].map((column) => `「${column}」`).join('');
+          reasons.push(`明细 ${detail.rowCount} 行里有 ${required.blank.length} 处必填项${columns}是空的：报销系统会拒绝保存，按「还没写明细」处置`);
+          return verdict('未保存·已导入未写明细', '转人工');
+        }
+      }
       reasons.push(`两边都是 ${receipts.totalCents} 分，按分相等，差保存这一下`);
       return verdict('未保存·就绪待保存', '原地等待');
     }
@@ -166,6 +230,7 @@ export function reconcileReadings(readings: Readings, expectedPreview: unknown =
     receipts: sumColumn(receiptsGrid, RECEIPTS_COLUMN),
     detail: sumColumn(detailGrid, DETAIL_COLUMN),
     payable: { readable: payable.readable, totalCents: payable.totalCents },
+    detailRequired: requiredDetailCells(detailGrid),
     taskMatch: expectedPreview ? matchTaskLines(detailGrid, expectedPreview, receiptsGrid) : null,
   };
 }
@@ -192,6 +257,8 @@ export function reconcileRecord({ bucket, action, identity, reasons }: Reconcile
       receipts: cell(readings.receipts),
       detail: cell(readings.detail),
       payable: { readable: !!readings.payable?.readable, totalCents: readings.payable?.totalCents ?? null },
+      // Which 必填 cells were empty is why a bucket says the bill is not saveable; the audit needs it to rebuild that.
+      detailRequired: readings.detailRequired ?? null,
       taskMatch: readings.taskMatch ?? null,
     },
   };

@@ -154,12 +154,23 @@ export async function probeIdentity({
  *     better tripwire anyway: it moves when the front-end resources move, which is when these selectors break;
  *   - the form id attribute is `data-kdformid`, not `data-formid`;
  *   - the console shell carries a form id of its own (`BOS_HtmlConsole`), so the whole document holds several.
- *     Only the active tab's container is asked, where one open 费用报销单 means exactly one id.
+ *     Only the tab panels are asked, where one open 费用报销单 means exactly one id; the shell's own id sits on an
+ *     ancestor of the panels and stays out.
+ *
+ * It asks EVERY active panel, not `querySelector`'s first one. On 2026-09-19 a run died with
+ * `compatibility_mismatch … 期望 8.2.830.9 / ER_ExpReimbursement，实际 8.2.830.9 / 0 个表单`: the build matched and
+ * the form id read as zero, because the first `.k-content.k-state-active` in the document was the CONSOLE's panel —
+ * Kendo had not yet moved the class onto the freshly opened form's tab — and the console's panel holds no form id.
+ * Re-probing the same untouched page minutes later returned `formIds: ["ER_ExpReimbursement"]`. `activePanels` is
+ * reported so a caller that gets no form id can say whether it was looking at a panel at all, and the caller polls:
+ * a fingerprint read the instant a tab opens is a race, not a verdict.
  */
 export const COMPATIBILITY_SNIPPET = `(() => {
   const vis = (n) => { const b = n.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
   const erpBuild = (/\\d+(?:\\.\\d+)+/.exec(String(window.KDResVer || '')) || [null])[0];
-  const scope = document.querySelector('.k-content.k-state-active') || document;
-  const forms = [...scope.querySelectorAll('[data-kdformid]')].filter(vis).map((n) => n.getAttribute('data-kdformid'));
-  return { erpBuild, formIds: [...new Set(forms)] };
+  const panels = [...document.querySelectorAll('.k-content.k-state-active')].filter(vis);
+  const scopes = panels.length ? panels : [document];
+  const forms = scopes.flatMap((scope) => [...scope.querySelectorAll('[data-kdformid]')].filter(vis)
+    .map((n) => n.getAttribute('data-kdformid')));
+  return { erpBuild, formIds: [...new Set(forms)], activePanels: panels.length };
 })()`;

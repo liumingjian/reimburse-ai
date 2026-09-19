@@ -21,7 +21,7 @@ import { checkCatalog } from './catalog';
 import { ExecutorError, type ChromiumPage } from './chromium';
 import { fillApprovedPreview, handOverApprovedPreview, type CurrentReadings } from './draft-flow';
 import { leaveEdit, selectOption, writeCell, writeHeader } from './erpform';
-import { DEFAULT_PACE, type Pace } from './pace';
+import { DEFAULT_PACE, waitFor, type Pace } from './pace';
 import { COMPATIBILITY_SNIPPET, probeIdentity, sameOrigin } from './probe';
 import { pageUrl, protocolReadings, readForm, type FormReadings } from './reader';
 import {
@@ -194,14 +194,30 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
       read: async () => {
         const readings = await readForm(session);
         await step('compatibility', 'running');
-        const probed = await evalIn<{ erpBuild: string | null; formIds: string[] }>(session, COMPATIBILITY_SNIPPET);
-        const formId = probed?.formIds?.length === 1 ? probed.formIds[0]! : null;
-        if (probed?.erpBuild !== plan.compatibility.erpBuild || formId !== plan.compatibility.formId) {
+        // Polled, not read once. The fingerprint is taken moments after a tab opened, and until Kendo has moved
+        // `k-state-active` onto that tab the 费用报销单 is not on any active panel yet — a single read turned that
+        // race into `compatibility_mismatch` on a build that matched (2026-09-19: 实际 8.2.830.9 / 0 个表单), and
+        // the same untouched page answered `["ER_ExpReimbursement"]` when asked again. Only a reading that stays
+        // wrong for the whole window is a real mismatch.
+        //
+        // What is waited for is the expected form id being THERE, not the panels holding exactly one id: the
+        // console's own active panel carries `BOS_TeamWorkMainConsole`, so «exactly one» is answered by a page
+        // that has not opened the form at all. The tripwire is unchanged in what it catches — a moved build or a
+        // 费用报销单 that no longer answers to this form id still stops the run before any write.
+        const expectedFormId = plan.compatibility.formId;
+        const fingerprint = (p: { erpBuild: string | null; formIds: string[] } | null) =>
+          p?.erpBuild === plan.compatibility.erpBuild && p?.formIds?.includes(expectedFormId) === true;
+        const probed = await waitFor(
+          () => evalIn<{ erpBuild: string | null; formIds: string[]; activePanels?: number }>(session, COMPATIBILITY_SNIPPET),
+          fingerprint, Math.min(15_000, pace.longMs), pace.pollMs);
+        if (!fingerprint(probed)) {
+          const seen = probed?.formIds?.length ? probed.formIds.join('、') : `${probed?.formIds?.length ?? 0} 个表单`;
           throw new ExecutorError('compatibility_mismatch',
-            `报销系统的版本与上次核对时不一致，没有继续：期望 ${plan.compatibility.erpBuild} / ${plan.compatibility.formId}，`
-            + `实际 ${probed?.erpBuild ?? '读不到'} / ${formId ?? `${probed?.formIds?.length ?? 0} 个表单`}。报销系统没有被改动。`);
+            `报销系统的版本与上次核对时不一致，没有继续：期望 ${plan.compatibility.erpBuild} / ${expectedFormId}，`
+            + `实际 ${probed?.erpBuild ?? '读不到'} / ${seen}。报销系统没有被改动。`);
         }
-        compatibility = { erpBuild: probed.erpBuild, formId };
+        // Past the check both halves are known to equal the plan's, so the plan's are what is recorded.
+        compatibility = { erpBuild: plan.compatibility.erpBuild, formId: expectedFormId };
         await step('compatibility', 'done');
         currentStep = 'navigate';
         baseline = { url: await pageUrl(session), formInstanceId: readings.formInstanceId ?? '' };

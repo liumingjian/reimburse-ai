@@ -18,14 +18,23 @@
     <span class="kd_SystemMenu" data-action="system-menu">菜单</span>
     <span class="kd-mainconsole-usernametext">{{DISPLAY_NAME}}</span>
   </div>
-  <div class="kd-mainconsole-shortcuts">
-    <span data-action="open-list">我的费用报销</span>
+  <!-- The console's OWN tab panel, and it is `k-state-active` from the start: it is the tab the user lands on.
+       Live 2026-09-19 this is the panel `document.querySelector('.k-content.k-state-active')` returns for a moment
+       after a new form opens, because Kendo has not yet moved the class onto the form's panel. Measured live
+       2026-09-19 it carries a `data-kdformid` of its OWN — `BOS_TeamWorkMainConsole` — so "the active panel holds
+       exactly one form id" is not the same question as "the 费用报销单 is open"; the live run that died on
+       compatibility_mismatch read 实际 8.2.830.9 / 0 个表单 from a panel that had neither. -->
+  <div class="k-content k-state-active" id="console-panel" data-kdformid="BOS_TeamWorkMainConsole">
+    <div class="kd-mainconsole-shortcuts">
+      <span data-action="open-list">我的费用报销</span>
+    </div>
+    <div id="expense-list" style="display:none">
+      <span class="kd-btn" data-action="new-form">新增</span>
+    </div>
   </div>
-  <div id="expense-list" style="display:none">
-    <span class="kd-btn" data-action="new-form">新增</span>
-  </div>
-  <!-- The open form sits in the active tab container; scoping the probe to it excludes the console shell above. -->
-  <div class="k-content k-state-active">
+  <!-- The form's own tab panel. It gains `k-state-active` when Kendo gets round to it; `formPanelActiveTicks`
+       decides how many page evaluations later that is. -->
+  <div class="k-content" id="form-panel">
   <div id="expense-form" data-kdformid="{{FORM_ID}}" style="display:none">
     <div class="form-tabs"><span class="form-tab">费用报销单-新增</span></div>
     <div class="section-bar">
@@ -36,8 +45,12 @@
     </div>
     <div class="form-toolbar"><span class="kd-btn" data-action="save">保存</span></div>
     <div class="header-fields">
-      <div class="kd-field"><label>单据编号</label><input id="{{UUID}}-FBILLNO-EDITOR" readonly value=""></div>
-      <div class="kd-field"><label>事由</label><input id="{{UUID}}-FCAUSA-EDITOR" value=""></div>
+      <!-- One header field is TWO nodes carrying the form prefix: the field wrapper `<uuid>-<key>` and the
+           `<uuid>-<key>-EDITOR` control inside it. Measured live 2026-09-19 on FCAUSA: visibleNodes 2 under the one
+           form instance 9484004c-…. The fixture used to render the EDITOR alone, so a locator that counted nodes
+           instead of form instances passed here and refused every header field on the real page. -->
+      <div class="kd-field"><label>单据编号</label><div id="{{UUID}}-FBILLNO"><input id="{{UUID}}-FBILLNO-EDITOR" readonly value=""></div></div>
+      <div class="kd-field"><label>事由</label><div id="{{UUID}}-FCAUSA"><input id="{{UUID}}-FCAUSA-EDITOR" value=""></div></div>
     </div>
     <div class="detail-toolbar"><a id="{{UUID}}-FEXPENSEENTRY_ENTRYBAR-tbNewList" data-action="new-row">新增行</a></div>
     <div class="kd-grid-panel" data-grid="detail">

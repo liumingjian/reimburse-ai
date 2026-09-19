@@ -188,24 +188,33 @@ describe('erpform write primitives on a fake CDP session', () => {
 });
 
 // headerField's fail-closed rules live in the JS sent into the page, so the expression is run on a fake DOM.
-const fakeNode = (id: string, { visible = true, value = 'X', scrolled }: { visible?: boolean; value?: string; scrolled: string[] }) => ({
+type FakeHeaderNode = { id: string; visible?: boolean; value?: string; tag?: string };
+
+const fakeNode = (
+  { id, visible = true, value = 'X', tag = 'INPUT' }: FakeHeaderNode,
+  { scrolled, all }: { scrolled: string[]; all: FakeHeaderNode[] },
+) => ({
   id,
+  tagName: tag,
+  value,
   innerText: value,
   getBoundingClientRect: () => (visible
     ? { width: 120, height: 22, x: 60, y: 30, left: 0, right: 120, top: 20, bottom: 42 }
     : { width: 0, height: 0, x: 0, y: 0, left: 0, right: 0, top: 0, bottom: 0 }),
-  matches: () => false,
-  querySelector: () => null,
+  matches: (selector: string) => selector === 'input,textarea' && tag === 'INPUT',
+  // A wrapper's nested controls are the other fake nodes whose id starts with its own, as the live DOM nests them.
+  querySelectorAll: () => (tag === 'INPUT' ? [] : all.filter((n) => n.id !== id && n.id.startsWith(id))
+    .map((n) => fakeNode(n, { scrolled, all }))),
   contains: () => false,
   scrollIntoView: () => scrolled.push(id),
 });
 
-async function runHeaderField(nodes: Array<{ id: string; visible?: boolean; value?: string }>, { scroll = true } = {}) {
+async function runHeaderField(nodes: FakeHeaderNode[], { scroll = true, key = 'FBILLNO' } = {}) {
   const probe = fakeSession([null]);
-  await headerField(probe, 'FBILLNO', { scroll });
+  await headerField(probe, key, { scroll });
   const [expression] = expressions(probe);
   const scrolled: string[] = [];
-  const built = nodes.map((n) => fakeNode(n.id, { ...n, scrolled }));
+  const built = nodes.map((n) => fakeNode(n, { scrolled, all: nodes }));
   const ctx = {
     document: { querySelectorAll: () => built, activeElement: null },
     getComputedStyle: (n: { id: string }) => {
@@ -229,6 +238,19 @@ describe('headerField fails closed (issue #36 backlog)', () => {
     const { result } = await runHeaderField([{ id: 'aaa-FBILLNO-EDITOR', value: 'FYBX2025120001' }, { id: 'bbb-FBILLNO-EDITOR', value: 'FYBX2026090007' }]);
     expect(result.ok).toBe(false);
     expect(result.visibleInstances).toBe(2);
+  });
+
+  // Live 2026-09-19, FCAUSA on one open form: a wrapper and an -EDITOR control, two visible nodes under one
+  // form-instance prefix. Counting nodes called that "2 个可见实例" and refused the write, microseconds after the
+  // read path had read the same field successfully.
+  it('accepts the wrapper and the -EDITOR control of ONE form instance as one instance', async () => {
+    const { result } = await runHeaderField([
+      { id: 'aaa-FCAUSA', tag: 'DIV', value: '' },
+      { id: 'aaa-FCAUSA-EDITOR', value: '广州本地用车' },
+    ], { key: 'FCAUSA' });
+    expect(result.reason).toBeUndefined();
+    expect([result.ok, result.visibleInstances, result.visibleNodes]).toEqual([true, 1, 2]);
+    expect([result.id, result.instance, result.value]).toEqual(['aaa-FCAUSA-EDITOR', 'aaa', '广州本地用车']);
   });
 
   it('gives a value only for exactly one visible instance; the read-only probe never scrolls', async () => {

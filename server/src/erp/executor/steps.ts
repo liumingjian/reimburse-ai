@@ -133,7 +133,14 @@ export async function openNewReimbursement(page: WritePage, { timeoutMs = 45_000
     await clickText(page, session, '我的费用报销', { timeoutMs });
     await clickText(page, session, '新增', { timeoutMs });
   }
-  await waitVisibleText(page, session, '费用报销单-新增', timeoutMs);
+  // The result of this wait used to be discarded and `{ok:true}` returned regardless, so a form that never opened
+  // was reported as opened; the run then failed further on, with a message about something else entirely — live
+  // 2026-09-19, as a version mismatch on a matching version. A step reports what it actually achieved.
+  const opened = await waitVisibleText(page, session, '费用报销单-新增', timeoutMs);
+  if (!opened) {
+    throw new ExecutorError('ERP_NEW_FORM_NOT_OPENED',
+      `点过之后 ${Math.round(cap(page, timeoutMs) / 1000)} 秒内没有出现「费用报销单-新增」页签：新的费用报销单没有打开`);
+  }
   return { ok: true, form: '费用报销单-新增' };
 }
 
@@ -327,7 +334,7 @@ const importResponse = `(() => {
   const txt = (n) => String(n.textContent || '').replace(/\\s+/g, ' ').trim();
   const windows = [...document.querySelectorAll('.k-window')].filter(vis).map(txt)
     .filter((t) => t && !t.startsWith('发票无忧助手'));
-  if (windows.length === 0) return { answered: false };
+  if (windows.length === 0) return { answered: false, text: '', rows: 0 };
   const text = windows.join(' | ');
   const report = windows.find((t) => t.includes('处理结果'));
   // Any other dialog is its own complete answer; a null failure count sends it to the refusal branch with ERP's words.
@@ -349,7 +356,9 @@ const importResponse = `(() => {
   // is a complete answer on its own — nothing later in the paint can turn it back into a success. A row that reads
   // 成功 is not: a grid caught half-painted shows the rows it has, and the ones missing may be the failures. So a
   // success verdict waits for the summary line, whose count is complete the moment it exists, in either wording.
-  if (!summary && rowsFailed === 0) return { answered: false };
+  // Not answered yet — but the text so far goes back to the caller anyway: a report that is still painting keeps
+  // changing between polls, and that is the difference between a slow ERP and a stuck one.
+  if (!summary && rowsFailed === 0) return { answered: false, text: text.slice(0, 2000), rows: rowCount };
   return {
     answered: true,
     text: text.slice(0, 2000),
@@ -360,6 +369,39 @@ const importResponse = `(() => {
 })()`;
 
 type ImportResponse = { answered: boolean; text?: string; rows?: number; succeeded?: number | null; failed?: number | null };
+
+export type ImportBudget = { appearMs: number; stallMs: number; hardCapMs: number };
+
+/**
+ * How long 发票导入单据 is given, and it is the import's OWN budget rather than the generic `pace.longMs` every
+ * other slow wait borrows. Borrowing it is what lost the sixth live round: 90 s is a perfectly good bound for a
+ * navigation and far too short for this one click, so an import that had fully succeeded was reported to the
+ * employee as 结果不确定 — on the single irreversible act baox performs.
+ *
+ * MEASURED. Timed live on 2026-09-19 against 金蝶云星空 8.2.830.9, ten invoices (8 普通发票 + 2 铁路电子客票) on a
+ * blank 费用报销单-新增, sampling the 处理结果 window every 300 ms from the click:
+ *     T+0.0s  发票导入单据 clicked
+ *     T+5.5s  处理结果 on screen holding its title and NOTHING else
+ *     T+5.9s  the summary line 「全部执行成功：10」
+ *     T+6.2s  the ten-row grid complete (764 characters of report)
+ *     T+6.5s  importInvoices returns, 处理结果 closed with 退出
+ * and against the round that lost this defect, where the same window still held nothing but the word 处理结果 at
+ * T+90s and the complete ten-row all-success report minutes later. So the same click, same invoice count, same
+ * build, measured 6.5 s once and over 95 s another time: the spread is ERP load, not invoice count, and no single
+ * deadline both covers the slow day and fails fast on a real hang.
+ *
+ * Hence three bounds rather than one, matched to what is on screen:
+ *   - `appearMs`  — nothing at all yet. Measured 5.5 s; the slow round had its title up before T+90s. 120 s is
+ *                   twenty times the measured latency and still well inside the slow round's own evidence.
+ *   - `stallMs`   — the window is up and still changing between polls, so ERP is still working, and it is given
+ *                   more time for as long as that stays true. Only a window that has stopped changing WITHOUT a
+ *                   verdict is a hang — and the slow round shows such a window can sit unchanged for around four
+ *                   minutes and still be alive, so five is the patient answer. Patience is the right bias here:
+ *                   the act is already irreversible, and the failure it prevents is telling an employee 结果不确定
+ *                   about an import that worked.
+ *   - `hardCapMs` — the backstop, so a page that keeps repainting forever cannot hold a job for ever.
+ */
+export const IMPORT_BUDGET: ImportBudget = { appearMs: 120_000, stallMs: 300_000, hardCapMs: 600_000 };
 
 /**
  * THE import mutation, and the only irreversible act baox performs (ADR-0025, ADR-0028): the 发票导入单据 click
@@ -373,19 +415,38 @@ type ImportResponse = { answered: boolean; text?: string; rows?: number; succeed
  * twice in the old code was a collision, not a repetition. V-45 round 4 inferred an in-iframe 是否生成费用明细
  * step from a human run that had not chosen the mode up front; measured on baox's own path, it does not exist.
  */
-export async function importInvoices(page: WritePage, { timeoutMs = paceOf(page).longMs } = {}) {
-  // The budget is the one that is actually waited out. It used to default to 120_000 and then be run through
-  // `cap()`, which clamps to the pace's 90 s — so the caller asked for 120 s, got 90 s, and only the error message
-  // (which computed the clamped number) told the truth. The default is now the pace's own bound, and a caller that
-  // passes a longer one gets it.
-  const assistant = await assistantSession(page, Math.min(timeoutMs, 45_000));
+export async function importInvoices(page: WritePage, { budget = IMPORT_BUDGET }: { budget?: ImportBudget } = {}) {
+  const assistant = await assistantSession(page, Math.min(budget.appearMs, 45_000));
   await clickText(page, assistant, '发票导入单据', { timeoutMs: 15_000 });
   // From here on the assistant's session is dead and everything is read on the ERP page.
-  const answer = await waitFor(() => evalIn<ImportResponse>(page.session, importResponse), (r) => r?.answered === true,
-    timeoutMs, paceOf(page).pollMs);
-  if (!answer?.answered) {
-    throw new ExecutorError('INVOICE_IMPORT_NOT_ANSWERED',
-      `点了「发票导入单据」之后，报销系统在 ${Math.round(timeoutMs / 1000)} 秒内没有给出处理结果`);
+  const pollMs = paceOf(page).pollMs;
+  const started = Date.now();
+  let lastText = '';
+  let lastChange = started;
+  let answer: ImportResponse | null = null;
+  const seconds = (ms: number) => Math.round(ms / 1000);
+  for (;;) {
+    answer = await evalIn<ImportResponse>(page.session, importResponse);
+    if (answer?.answered) break;
+    const now = Date.now();
+    const text = answer?.text ?? '';
+    if (text !== lastText) { lastText = text; lastChange = now; }
+    const waited = now - started;
+    const still = seconds(waited);
+    if (waited >= budget.hardCapMs) {
+      throw new ExecutorError('INVOICE_IMPORT_NOT_ANSWERED',
+        `点了「发票导入单据」之后，报销系统 ${still} 秒（上限 ${seconds(budget.hardCapMs)} 秒）都没有给出完整的处理结果`);
+    }
+    if (!text && waited >= budget.appearMs) {
+      throw new ExecutorError('INVOICE_IMPORT_NOT_ANSWERED',
+        `点了「发票导入单据」之后，报销系统 ${still} 秒（上限 ${seconds(budget.appearMs)} 秒）内没有弹出处理结果窗口`);
+    }
+    if (text && now - lastChange >= budget.stallMs) {
+      throw new ExecutorError('INVOICE_IMPORT_NOT_ANSWERED',
+        `处理结果窗口已经打开 ${still} 秒，但最近 ${seconds(now - lastChange)} 秒（上限 ${seconds(budget.stallMs)} 秒）`
+        + '没有任何变化，也没有给出成功或失败的结论');
+    }
+    await sleep(pollMs);
   }
   // Anything short of 执行失败：0 stops the run, and the window is left open so #32's capture keeps ERP's own words
   // (ADR-0027: the run aborts to 转人工 carrying the verbatim text; 申请解绑 and 删除发票 are never clicked).
