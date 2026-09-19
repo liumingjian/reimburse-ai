@@ -205,13 +205,26 @@ const computerPickerPoint = `(() => {
   return (${pointOf})(painted);
 })()`;
 
-// The entry menu is ready when its document has finished loading and every entry is laid out with a destination.
-// Four entries live (电脑端选取 / 手机端选取 / 扫码枪扫描 / 扫描仪扫描); this asks only that they are all present.
+// The entry menu is ready when its document has finished loading and the ONE entry this step goes on to click,
+// 电脑端选取, is laid out with a destination.
+//
+// It used to ask that of every entry, and that can never be true on the live page: 手机端选取 is the 扫码
+// (scan-the-QR) entry, and it holds no link at all — it expands its QR in place and says
+// 「关闭窗口后，再次打开请重新扫码！」. Measured live 2026-09-19 with all four entries painted and the document
+// complete: accessItemVisible 4, withAnchor 3, verdict false. So the wait ran its full 30s and aborted with
+// INVOICE_ASSISTANT_ENTRY_NOT_READY on a menu that was, to the eye and to the click, entirely ready. The fixture
+// had given 手机端选取 an `href="#mobile"` it does not have, so the fake could never show this.
+//
+// Requiring a destination of an entry nobody clicks was always the wrong question. Ask it of the entry we use.
 const assistantEntryReady = `(() => {
   if (document.readyState !== 'complete') return false;
   const vis = ${visible};
+  const own = (n) => [...n.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent.trim()).join('').trim();
   const items = [...document.querySelectorAll('.accessItem')].filter(vis);
-  return items.length >= 4 && items.every((n) => n.querySelector('a[href]'));
+  if (items.length < 4) return false;
+  const caption = [...document.querySelectorAll('body *')].find((n) => vis(n) && own(n) === '电脑端选取');
+  const picker = caption ? caption.closest('.accessItem') : null;
+  return Boolean(picker && picker.querySelector('a[href]'));
 })()`;
 
 const fileInputCount = (session: CdpSession) =>

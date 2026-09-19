@@ -20,6 +20,26 @@ const SNIPPET = `(() => {
     .filter((n) => vis(n) && own(n) === '上传发票影像')
     .map((n) => ({ tag: n.tagName, cls: String(n.className || '').slice(0, 60) }));
 
+  // Exactly what assistantEntryReady in steps.ts asks for, term by term, so a false verdict can be read
+  // rather than guessed: readyState, the visible .accessItem entries, and whether each carries an a[href].
+  out.entryReady = (() => {
+    const items = [...document.querySelectorAll('.accessItem')];
+    const visible = items.filter(vis);
+    return {
+      ready: document.readyState,
+      accessItemTotal: items.length,
+      accessItemVisible: visible.length,
+      withAnchor: visible.filter((n) => n.querySelector('a[href]')).length,
+      verdict: document.readyState === 'complete' && visible.length >= 4 && visible.every((n) => n.querySelector('a[href]')),
+      entries: visible.slice(0, 6).map((n) => ({
+        cls: String(n.className || '').slice(0, 50),
+        text: String(n.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 20),
+        anchors: n.querySelectorAll('a').length,
+        anchorsWithHref: n.querySelectorAll('a[href]').length,
+      })),
+    };
+  })();
+
   // Every visible node carrying short own-text: the menu of what can be clicked.
   const seen = new Map();
   for (const n of document.querySelectorAll('body *')) {

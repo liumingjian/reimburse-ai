@@ -10,7 +10,9 @@
     /m4-web/fpzs/index      the entry menu: 电脑端选取 / 手机端选取 / 扫码枪扫描 / 扫描仪扫描. Each entry is an <a>
                             wrapping an icon, and its caption is a SIBLING <p>, so the caption is not clickable.
                             The anchor itself measures 76x0 live — inline, wrapping a block <img> (76x74) — which
-                            `data-zero-height` reproduces here. Only 电脑端选取 leads anywhere the app can upload from.
+                            `data-zero-height` reproduces here. Only 电脑端选取 leads anywhere the app can upload from,
+                            and 手机端选取 is not an <a> at all — it expands a QR in place and holds no link, so a
+                            readiness check must not demand a destination of every entry.
     /m4-web/fpzs/kdInvoices the upload view: the 上传发票影像 tab, one hidden `multiple` file input accepting
                             .ofd/.xml/.zip/.pdf/.xls/.xlsx/.png/.jpg/.jpeg/.bmp/.gif/.tif/.tiff, the recognised-row
                             grid, and 发票导入单据. A first visit is covered by a 温馨提示 dialog whose 知道了 button
@@ -26,7 +28,9 @@
     <div class="fpzsHomeGrid">
       <div class="row">
         <div class="accessItem"><a href="/m4-web/fpzs/kdInvoices" data-action="computer-picker" data-zero-height><img alt=""></a><p>电脑端选取</p></div>
-        <div class="accessItem"><a href="#mobile"><img alt=""></a><p>手机端选取</p></div>
+        <!-- 手机端选取 holds no link: it expands its QR in place. Measured live 2026-09-19, and the reason
+             assistantEntryReady must not ask every entry for a destination. -->
+        <div class="accessItem"><img alt=""><p>手机端选取</p><p class="text">关闭窗口后，再次打开请重新扫码！</p></div>
       </div>
       <div class="row">
         <div class="accessItem"><a href="#gun"><img alt=""></a><p>扫码枪扫描</p></div>
