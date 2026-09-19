@@ -338,12 +338,20 @@ export async function createFakeErp(options: FakeErpOptions) {
     const imported: string[] = [];
     for (const row of rows as any[]) {
       const invoice = invoicesBySha.get(row.getAttribute('data-sha256'))!;
-      const tr = main.document.createElement('tr');
-      tr.className = 'k-master-row';
       const masked = `${invoice.invoiceNumber.slice(0, 4)}************${invoice.invoiceNumber.slice(-4)}`;
-      tr.innerHTML = [invoice.receiptNumber, masked, invoice.seller, invoice.issueDate, invoice.net, invoice.tax, invoice.gross, invoice.category]
-        .map((value) => `<td>${escapeHtml(value)}</td>`).join('');
-      tbody.insertBefore(tr, footer);
+      const values = [invoice.receiptNumber, masked, invoice.seller, invoice.issueDate, invoice.net, invoice.tax, invoice.gross, invoice.category];
+      // ERP identifies a 收票行 (receipt row) by its 收票单 (receipt number): importing an invoice the bill already
+      // holds rewrites that row in place instead of adding a second one (ADR-0026). Because the identity that
+      // decides this is the one the row keeps, a rewrite cannot strand a detail row's 收票单号 link.
+      const held = dataRows('receipts').find((tr: any) => textOf(tr, 'receipts', '收票单') === invoice.receiptNumber);
+      if (held) {
+        RECEIPT_COLUMNS.forEach((column, index) => setText(held, 'receipts', column, values[index]!));
+      } else {
+        const tr = main.document.createElement('tr');
+        tr.className = 'k-master-row';
+        tr.innerHTML = values.map((value) => `<td>${escapeHtml(value)}</td>`).join('');
+        tbody.insertBefore(tr, footer);
+      }
       imported.push(invoice.receiptNumber);
     }
     updateTotals();
