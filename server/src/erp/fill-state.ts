@@ -13,8 +13,11 @@ import type { ReconcileVerdict } from './reconcile';
 import { reconcileFromEvents } from './reconcile-job';
 
 // One judged reconcile read-back: the verdict (after the form-instance / target check), the bill number it read, and
-// whether it proves the draft saved exactly as approved (已保存, identity holds, strict per-line match passed).
-export type ReconcileJudgement = { verdict: ReconcileVerdict; billNo: string | null; saved: boolean };
+// the two terminals it can prove. `saved`: the draft saved exactly as approved (已保存, identity holds, strict
+// per-line match passed). `handedOver`: the form is filled and ready to save exactly as approved
+// (未保存·就绪待保存 plus the same strict per-line match) — ERP 单据已交接 (bill handed over), the resume path to the
+// same terminal a clean run reaches (ADR-0028).
+export type ReconcileJudgement = { verdict: ReconcileVerdict; billNo: string | null; saved: boolean; handedOver: boolean };
 
 // The latest reconcile run on the fill job: running until its result, and the newest judgement of any run.
 export type ReconcileState = { jobId: string; result: ResultEvent | null; judged: ReconcileJudgement | null };
@@ -61,8 +64,12 @@ export function judgeReconcile(events: ExecutorEvent[], preview: ApprovedPreview
     if (read.targetId && attempt.targetId && read.targetId !== attempt.targetId) elsewhere.push('报销系统所在的浏览器标签页不是这次写入时的那一个，读到的内容不能说明这次写入的结果');
   }
   const verdict: ReconcileVerdict = elsewhere.length ? { ...derived.verdict, bucket: '未知', action: '原地等待', reasons: [...elsewhere, ...derived.verdict.reasons] } : derived.verdict;
-  const saved = elsewhere.length === 0 && preview !== null && verdict.bucket === '已保存' && verdict.action === '原地等待' && derived.readings.taskMatch?.ok === true;
-  return { verdict, billNo: read.billNo.readable ? read.billNo.value : null, saved };
+  // Both terminals rest on the same strict per-line match (`taskMatch`); only the bucket differs. The classifier is
+  // untouched: it says what the ERP shows, this layer says what that means for the task (ADR-0027).
+  const strictMatch = elsewhere.length === 0 && preview !== null && verdict.action === '原地等待' && derived.readings.taskMatch?.ok === true;
+  const saved = strictMatch && verdict.bucket === '已保存';
+  const handedOver = strictMatch && verdict.bucket === '未保存·就绪待保存';
+  return { verdict, billNo: read.billNo.readable ? read.billNo.value : null, saved, handedOver };
 }
 
 /** The job's phase from its result (none yet = running) and whether its login pause was cancelled. */
@@ -115,6 +122,13 @@ export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
   if (phase === 'unknown' && reconcile?.judged?.saved) {
     phase = 'saved';
     result = { type: 'result', status: 'saved', code: 'reconciled', message: null, billNo: reconcile.judged.billNo, capture: null };
+  }
+  // The resume path to the same terminal a clean run reaches: a reconcile that proves the form is filled, ready to
+  // save, and equal to the approved preview on every row is ERP 单据已交接 (bill handed over), not a breakpoint. Since
+  // nothing was saved there is no 单据编号 (bill number) to report.
+  if (phase === 'unknown' && reconcile?.judged?.handedOver) {
+    phase = 'handed_over';
+    result = { type: 'result', status: 'handed_over', code: 'reconciled', message: null, billNo: null, capture: null };
   }
   // A catalog mismatch sends the task back to project assignment until a new submission answers it.
   let reassign = false;

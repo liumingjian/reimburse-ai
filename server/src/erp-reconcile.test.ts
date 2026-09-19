@@ -162,6 +162,36 @@ describe('fault injection at each ERP mutation point', () => {
     expect(judged.erp.draftNo).toEqual(expect.any(String));
   });
 
+  it('a filled, unsaved form that matches the approved preview line by line reconciles to the hand-over terminal', async () => {
+    const stopped = await crashAt('before_save');
+    expect(stopped.stage).toBe('reconcile');
+    // The resume path: nobody saved, so 对账 reads 未保存·就绪待保存 with the strict per-line match satisfied. That is
+    // ERP 单据已交接 (bill handed over), the same terminal a clean run reaches — not a breakpoint.
+    const judged = await reconcile(stopped);
+    expect(judged).toMatchObject({ stage: 'done', erp: { status: 'done', draftNo: null }, readback: { status: 'matched' } });
+    // Nothing is offered to deal with: the employee never sees a reconcile page for this task.
+    expect(judged.step.kind).not.toBe('reconcile');
+    expect(judged.reconcile).toMatchObject({ status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null });
+    // The read-back rows are the evidence the terminal rests on, and no save was ever recorded.
+    expect(judged.readback.rows.length).toBeGreaterThan(0);
+    expect(fake!.mutations.some((mutation) => mutation.kind === 'save')).toBe(false);
+    // Terminal: the account may start its next 报销任务.
+    expect((await alice.post('/api/tasks', { homeCity: '杭州' })).status).toBe(200);
+  }, 120_000);
+
+  it('the hand-over promotion needs the strict per-line match: a detail row that drifted stays a breakpoint', async () => {
+    const stopped = await crashAt('before_save');
+    // The unsaved form drifts on one detail cell. The amounts are untouched, so 收票 and 明细 still agree to the cent
+    // — only the strict per-line match fails, and that alone must keep the task out of the terminal.
+    driftDetailCell('开始日期', '2026/01/01');
+    const judged = await reconcile(stopped);
+    expect(judged.stage).toBe('reconcile');
+    expect(judged.step.kind).toBe('reconcile');
+    expect(judged.erp.status).not.toBe('done');
+    expect(judged.reconcile).toMatchObject({ action: '转人工', actionCode: 'hand_off', humanReview: true });
+    expect(judged.readback).toMatchObject({ status: 'none', rows: [] });
+  }, 120_000);
+
   it('a form under another instance UUID than the attempt\'s is never judged: 未知', async () => {
     const stopped = await crashAt('before_save');
     fake!.replaceFormInstance();
@@ -243,6 +273,16 @@ describe('crash recovery', () => {
     await first.close().catch(() => undefined);
   });
 });
+
+/** Rewrite one cell of the detail grid's single data row on the fake ERP, leaving the amounts (and so the sums) alone. */
+function driftDetailCell(column: string, text: string) {
+  const panel = fake!.document.querySelector('.kd-grid-panel[data-grid="detail"]')!;
+  const headers = [...panel.querySelectorAll('thead th')].map((th) => (th.textContent ?? '').replace('*', '').trim());
+  const cell = panel.querySelector('tbody tr.k-master-row')!.children[headers.indexOf(column)]!;
+  const inner = cell.querySelector('span, a');
+  if (inner) inner.textContent = text;
+  else cell.textContent = text;
+}
 
 async function refusedWith(response: Response, status: number, code: string) {
   expect(response.status).toBe(status);
