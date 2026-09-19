@@ -61,7 +61,7 @@ export function catalogRefusal(catalog) {
 }
 
 /**
- * What the `erp-off` area records when `erp.status` never left `idle`.
+ * What the `erp-write` area records when `erp.status` never left `idle`.
  *
  * `idle` on its own does not mean the app did nothing, and it has two separate reasons for saying so.
  *
@@ -82,13 +82,14 @@ export function erpIdleFindings({ catalog = null, refusals = [], abortReason = n
     'so the browser-off path under test was never reached. Assign the lines to a project this ERP account really has (QA_PROJECT) to exercise it.';
 
   // A clean abort is the good outcome of this section, not a silence: it says the run stopped before writing.
+  // Which of the two paths it stopped on is read off the reason itself — the driver cannot see the dedicated
+  // Chromium, and naming the wrong path is how a real write came to be reported in browser-off terms.
   const reason = String(abortReason ?? '').replace(/\s+/g, ' ').trim();
   if (reason) {
-    const found = [{ level: 'ok', text: `the ERP write stopped before any change: ${reason.slice(0, 220)}` }];
-    if (!/浏览器|Chrome|9333/.test(reason)) {
-      found.push({ level: 'WARN', text: 'the abort reason does not say the dedicated browser is unavailable' });
-    }
-    return found;
+    const path = /浏览器|Chrome|9333/.test(reason)
+      ? 'the dedicated browser was unavailable'
+      : 'the dedicated browser was available and the run stopped for another reason';
+    return [{ level: 'ok', text: `the ERP write stopped before any change (${path}): ${reason.slice(0, 220)}` }];
   }
 
   const refusal = catalogRefusal(catalog);
@@ -110,13 +111,13 @@ export function erpIdleFindings({ catalog = null, refusals = [], abortReason = n
   return [
     {
       level: 'DEFECT',
-      text: 'with the ERP browser off the write stayed idle: no abort reason, no 报销信息核对 problem and no refusal on the page, so nothing says why it stopped',
+      text: '去报销 left the ERP view idle: no abort reason, no 报销信息核对 problem and no refusal on the page, so nothing says why it stopped',
     },
   ];
 }
 
 /**
- * Whether the `erp-off` poll can stop. A clean abort never changes `erp.status`, so waiting for it to leave
+ * Whether the `erp-write` poll can stop. A clean abort never changes `erp.status`, so waiting for it to leave
  * `idle` burns the whole budget on a state that has already settled; `abortReason` is what actually moves.
  */
 export function erpPollSettled({ status = null, abortReason = null, catalog = null } = {}) {
@@ -149,4 +150,53 @@ export async function waitForChange(read, { from: start, timeout = 30000, interv
     if (value !== from) return { changed: true, from, value, waited: now() - started };
   }
   return { changed: false, from, value, waited: now() - started };
+}
+
+/**
+ * How long the `erp-write` area waits after clicking 去报销.
+ *
+ * It used to be 120 s, chosen for a write that aborts at once because the dedicated browser is off. Measured
+ * live 2026-09-19, a real write — catalog check, form, upload, 发票导入单据 with ten invoices, read-back, fill —
+ * took about 141 s end to end, so the budget expired mid-write, the poll saw `erp.status: 'running'` and the
+ * area called a successful import a defect. The budget is now roughly twice the measured write.
+ */
+export const ERP_WRITE_BUDGET_MS = 300_000;
+
+/**
+ * What the one 去报销 the driver performs actually did, in the words of the path it took.
+ *
+ * `erp-off` was the only area that clicked 去报销, and it described every outcome as if the dedicated Chromium
+ * were off — which it usually is not. The driver cannot see that browser; the snapshot is all it has, so the
+ * path is read off the outcome:
+ *
+ *   `done`         the write ran to the end and the form is waiting for the employee's 保存 (ADR-0028). The
+ *                  browser was plainly available. This is a pass, and the area had no way to say so before.
+ *   `aborted`      only the `unknown` phase reports this (server/src/erp/fill-state.ts): the write may have
+ *                  landed and the app cannot tell. Over an irreversible import that is a defect to report,
+ *                  whatever caused it.
+ *   `waiting_login` the browser is up but nobody is logged in; nothing was written, and the run is paused for
+ *                  a human. Not a defect, and not something the driver can finish.
+ *   `running`      still in flight when the budget ran out. The browser is on and the write is working; the
+ *                  budget expired, not the app. A warning about this run's coverage, never a defect.
+ *   `idle`/null    nothing moved: `erpIdleFindings` reads the clean abort, the catalog refusal or the silence.
+ *
+ * `waitedMs` / `budgetMs` are reported with the `running` case so the next operator can see which of the two
+ * ran out. Returns a list of `{ level, text }`.
+ */
+export function erpWriteFindings({ status = null, abortReason = null, catalog = null, refusals = [], waitedMs = null, budgetMs = ERP_WRITE_BUDGET_MS } = {}) {
+  const reason = String(abortReason ?? '').replace(/\s+/g, ' ').trim();
+  const seconds = (ms) => `${Math.round(Number(ms ?? 0) / 1000)}s`;
+  if (status === 'done') {
+    return [{ level: 'ok', text: '去报销 ran with the ERP browser available and finished: the 费用报销单 is filled and handed over unsaved, for the employee to check and 保存 themselves' }];
+  }
+  if (status === 'aborted') {
+    return [{ level: 'DEFECT', text: `去报销 ended with the write result undetermined (erp.status aborted), so the employee is told to go and look for themselves: ${reason.slice(0, 300) || '(no reason recorded)'}` }];
+  }
+  if (status === 'waiting_login') {
+    return [{ level: 'WARN', text: 'the dedicated browser is open but not logged in, so 去报销 is paused at 登录 and wrote nothing. Log in in that window and run this area again to cover the write.' }];
+  }
+  if (status === 'running') {
+    return [{ level: 'WARN', text: `去报销 was still running when this area's ${seconds(budgetMs)} budget ran out after ${seconds(waitedMs)} — the ERP browser is on and the write is in flight, so this run's outcome is unknown to the driver, not wrong. Check the task page for how it ended.` }];
+  }
+  return erpIdleFindings({ catalog, refusals, abortReason });
 }

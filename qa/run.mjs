@@ -7,7 +7,7 @@ import { chromium, expect } from '@playwright/test';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { erpIdleFindings, erpPollSettled, erpProjectTarget, waitForChange } from './checks.mjs';
+import { ERP_WRITE_BUDGET_MS, erpPollSettled, erpProjectTarget, erpWriteFindings, waitForChange } from './checks.mjs';
 import { qaSelfCheck, qaValue } from './values.mjs';
 
 const BASE = process.env['QA_BASE'] ?? 'http://127.0.0.1:4319';
@@ -150,7 +150,7 @@ async function runAreas({ page, context, files }) {
   await area(page, 'print', () => qaPrint(page, files, state));
   await area(page, 'settings', () => qaSettings(page));
   await area(page, 'admin', () => qaAdmin(page));
-  await area(page, 'erp-off', () => qaErpOff(page, context, state));
+  await area(page, 'erp-write', () => qaErpWrite(page, context, state));
 }
 
 async function qaAuth(page) {
@@ -1030,25 +1030,31 @@ async function qaAdmin(page) {
   await shot(page, 'admin');
 }
 
-async function qaErpOff(page, context, state) {
+// The one area that clicks 去报销, and so the only one that can perform the irreversible 发票导入单据.
+//
+// It was called `erp-off` and written for one path only: the dedicated Chromium switched off, the write aborting
+// at once. It described every outcome in those terms, and when the browser was actually ON — a real write, ten
+// invoices bound, ~141 s — it reported `with the ERP browser off the write ended in status running instead of
+// aborting cleanly`. Two things were wrong: a 120 s budget shorter than a real write, and no vocabulary for the
+// browser-available path. Both now live in `qa/checks.mjs`, where they are pinned by `qa/checks.test.mjs`.
+async function qaErpWrite(page, context, state) {
   const id = state.taskId;
   await page.goto(`${BASE}/#/task/${id}/review`);
   await page.waitForTimeout(2000);
 
   const go = page.getByRole('button', { name: '去报销', exact: true });
   if (!(await visible(go, 8000))) {
-    warn('erp-off', 'no 去报销 button to exercise (the task may not be confirmed)');
+    warn('erp-write', 'no 去报销 button to exercise (the task may not be confirmed)');
     return;
   }
   await go.click();
   await page.waitForTimeout(5000);
 
-  // With the dedicated chromium off the job must abort before touching anything.
-  //
   // `erp.status` is not the whole answer. A 报销信息核对 (catalog check) refusal is mapped to the plain `idle`
   // ERP view on purpose (server/src/erp/fill-state.ts) because its problems belong to the snapshot's `catalog`
   // section — so read that section too, or a correct refusal reads as the app going quiet.
-  const deadline = Date.now() + 120000;
+  const started = Date.now();
+  const deadline = started + ERP_WRITE_BUDGET_MS;
   let status = null;
   let reason = null;
   let catalog = null;
@@ -1062,27 +1068,22 @@ async function qaErpOff(page, context, state) {
     if (erpPollSettled({ status, abortReason: reason, catalog })) break;
     await page.waitForTimeout(3000);
   }
-  await shot(page, 'erp-off');
+  const waitedMs = Date.now() - started;
+  await shot(page, 'erp-write');
 
-  if (status === 'idle' || status === null) {
-    // The write can also be refused before it starts — by 报销信息核对, or by a preflight the ERP browser has
-    // nothing to do with. Both are the server refusing with a reason, which is not a defect; name the refusal
-    // so the next operator does not have to go digging in erp_job_event for it.
-    const refusals = await page.locator('[role=alert]').filter({ hasText: /\S/ }).allInnerTexts().catch(() => []);
-    for (const finding of erpIdleFindings({ catalog, refusals, abortReason: reason })) note(finding.level, 'erp-off', finding.text);
-    return;
+  // The write can also be refused before it starts — by 报销信息核对, or by a preflight the ERP browser has
+  // nothing to do with. Both are the server refusing with a reason, which is not a defect; the refusal is named
+  // so the next operator does not have to go digging in erp_job_event for it.
+  const refusals = await page.locator('[role=alert]').filter({ hasText: /\S/ }).allInnerTexts().catch(() => []);
+  for (const finding of erpWriteFindings({ status, abortReason: reason, catalog, refusals, waitedMs })) {
+    note(finding.level, 'erp-write', finding.text);
   }
 
-  if (status === 'aborted') {
-    ok('erp-off', `the ERP write stopped before any change: ${String(reason).replace(/\s+/g, ' ').slice(0, 220)}`);
-    if (!/浏览器|Chrome|9333/.test(String(reason))) {
-      warn('erp-off', 'the abort reason does not say the dedicated browser is unavailable');
-    }
+  // Whatever stopped the write, the employee has to be able to read it without opening a console.
+  if (String(reason ?? '').trim()) {
     const shown = await page.getByText('写入报销系统已停止', { exact: false }).isVisible().catch(() => false);
     const onReview = await page.getByTestId('erp-abort-reason').isVisible().catch(() => false);
-    if (!shown && !onReview) defect('erp-off', 'the abort reason is not shown anywhere in the UI');
-  } else {
-    defect('erp-off', `with the ERP browser off the write ended in status ${status} instead of aborting cleanly`);
+    if (!shown && !onReview) defect('erp-write', 'the abort reason is not shown anywhere in the UI');
   }
 }
 

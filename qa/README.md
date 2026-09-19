@@ -52,7 +52,7 @@ This fixture does not make local intake ERP-verified. The operator-only ERP sect
 | `QA_PROJECT` | 空（回落到离线号 `P-2307`） | 归属与去报销用的项目号，要填**你这个报销系统账号真有的**项目 |
 | `QA_PROJECT_NAME` | 同 `QA_PROJECT` | 该项目在报销系统里的名称，报销信息核对连名称一起比 |
 | `QA_HEADLESS` | 空 | 置 `1` 则无头运行（冒烟用；平时就该看着它跑） |
-| `QA_SKIP` | 逗号分隔的分区名，跳过不跑。例如 `QA_SKIP=erp-off` 可以跳过去报销那一段。 | 空 |
+| `QA_SKIP` | 逗号分隔的分区名，跳过不跑。例如 `QA_SKIP=erp-write` 可以跳过去报销那一段。 | 空 |
 
 ## 3. 跑一遍
 
@@ -89,10 +89,15 @@ QA_BASE=http://127.0.0.1:4399 QA_MATERIALS=/tmp/baox-qa-mats QA_HEADLESS=1 pnpm 
 1. 退掉那个专用 Chromium（数据目录下 `chromium-profile/` 起的那个窗口），确认 9333 没人监听：
    `lsof -nP -iTCP:9333 -sTCP:LISTEN`；
 2. 起服务端时加 `BAOX_ERP_CHROMIUM=off`，这样服务端不会替你把它重新拉起来；
-3. 照常跑 `qa/run.mjs`，`erp-off` 这一段会点 去报销，然后等快照里的 `erp.status`。
+3. 照常跑 `qa/run.mjs`，`erp-write` 这一段会点 去报销，然后等快照里的 `erp.status`。
 
-期望：`erp.status` 变成 `aborted`，`erp.abortReason` 说得出是浏览器不可用，页面上也能看到这句话，
-任务本身不被改动。驱动会把这三点分别记成 `ok` 或 `DEFECT`。
+期望：`erp.status` 留在 `idle`，`erp.abortReason` 说得出是浏览器不可用，页面上也能看到这句话，
+任务本身不被改动。驱动会把这几点分别记成 `ok` 或 `DEFECT`。
+
+`erp-write` 这一段并不只管「浏览器关着」这一条路：它是整个驱动里唯一会点 去报销 的地方，专用浏览器
+开着的时候，它点的就是一次真写入。写入走到底（`erp.status` 变 `done`，单据填好、交给本人自己按保存）
+记 `ok`；预算用完还在 `running` 记 `WARN`（实测一次真写入约 141 秒，预算 300 秒）；只有 `aborted`
+——也就是写入结果不确定——才是 `DEFECT`。
 
 `erp.status` 一个字段不够看：报销信息核对不通过时，快照里的 `erp.status` 是**故意**留在 `idle` 的
 （`server/src/erp/fill-state.ts`），问题都写在快照的 `catalog` 一节里。驱动两节一起读：看到 `catalog`

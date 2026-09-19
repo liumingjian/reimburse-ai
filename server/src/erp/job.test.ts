@@ -328,7 +328,15 @@ describe('the 发票导入单据 click', () => {
     await openNewReimbursement(page, { timeoutMs: 2000 });
     const imported = await uploadAndImport(page, [rail!, ride!]);
 
-    expect(imported.report).toContain('执行成功：2；执行失败：0');
+    // The wording an all-success import actually gets. 「执行成功：2；执行失败：0」 — what this test used to assert —
+    // is a string the real ERP never emits: with nothing to fail it writes 全部执行成功 and names no 执行失败 at all,
+    // which is precisely why the judge's 执行失败 regex matched nothing live and a 10-of-10 import was reported as
+    // 结果不确定.
+    expect(imported.report).toContain('全部执行成功：2');
+    expect(imported.report).not.toContain('执行失败');
+    // One grid row per invoice, keyed 接收发票 with a 状态 — the per-invoice evidence the verdict is taken from.
+    expect(imported.report).toContain('序号 设置 关键字 设置 状态 设置 问题描述');
+    expect(imported.report).toContain(`1 接收发票 成功 号码为【${rail!.invoiceNumber}】`);
     expect(imported.report).toContain(`生成收票单【${rail!.receiptNumber}】`);
     expect(receiptNumbers(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
     // 处理结果 floats over the form with no 遮罩, so a toolbar click aimed at the form would land on it instead.
@@ -344,6 +352,10 @@ describe('the 发票导入单据 click', () => {
     await openNewReimbursement(page, { timeoutMs: 2000 });
 
     await expect(uploadAndImport(page, [rail!, ride!])).rejects.toMatchObject({ code: 'INVOICE_IMPORT_REFUSED' });
+    // With something to fail, the summary goes back to the two-count wording, and the failed invoice's row
+    // carries a 状态 that is not 成功 — either alone is enough to stop the run.
+    expect(windowText(fake, '#result-window')).toContain('执行成功：1；执行失败：1');
+    expect(windowText(fake, '#result-window')).toContain(`接收发票 失败 号码为【${rail!.invoiceNumber}】`);
     // The refusal is per invoice, not per import: the other one is bound, and that is what re-import has to live with.
     expect(receiptNumbers(fake)).toEqual([ride!.receiptNumber]);
     expect(windowText(fake, '#result-window')).toContain(refusal);

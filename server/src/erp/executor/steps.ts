@@ -301,9 +301,26 @@ export async function uploadInvoices(page: WritePage, paths: string[], { timeout
  * replacing it (`Target.attachedToTarget` fired for no new piaozone target), the 发票无忧助手 window vanished, a
  * 处理结果 window appeared and the 收票网格 went from its total row alone to ten data rows — all in one snapshot.
  *
- * 处理结果 carries the per-invoice verdict ADR-0027 wants the import judged on: 「执行成功：10；执行失败：2」 with a
- * line per invoice — 「…接收成功，生成收票单【SPD…】」, 「…已存在对应的收票单【SPD…】，已进行覆盖！」 (ADR-0026's
- * overwrite, seen live) or a refusal naming the bill that holds the invoice.
+ * 处理结果 carries the per-invoice verdict ADR-0027 wants the import judged on: a grid of
+ * 序号 / 关键字 / 状态 / 问题描述, one row per invoice, keyword 接收发票, 状态 成功 or a failure, and a 问题描述 of
+ * 「…接收成功，生成收票单【SPD…】」, 「…已存在对应的收票单【SPD…】，已进行覆盖！」 (ADR-0026's overwrite, seen live)
+ * or a refusal naming the bill that holds the invoice.
+ *
+ * Above the grid sits a summary line, and it has TWO wordings — this is what the previous version got wrong.
+ * With failures it reads 「执行成功：10；执行失败：2」; with none it reads 「全部执行成功：10」 and never mentions
+ * 执行失败 at all. Measured live 2026-09-19: ten invoices, all bound, 「全部执行成功：10」. Matching only the first
+ * wording and then treating «no counts yet» as «still painting» turned a complete, fully successful report into a
+ * permanent wait, and an irreversible act that went right was reported to the employee as 结果不确定.
+ *
+ * So the verdict is taken from evidence that is present, never from a missing substring:
+ *   - failed    = the rows whose 状态 is not 成功, OR the summary's 执行失败 count — whichever is larger. Either
+ *                 source alone can condemn the import; neither alone can clear it.
+ *   - answered  = a summary line in either wording, or a row that already reads as a failure. A window that is
+ *                 not 处理结果 at all (a plain 提示) has said everything it is going to say, and is answered too.
+ * A failed row is a complete answer on its own: nothing later in the paint turns a refusal back into a success.
+ * A grid of nothing but 成功 is not, because a grid caught half-painted shows the rows it has and the ones still
+ * missing may be the failures — and a Kendo grid may page or virtualise the rest away for good. The summary's
+ * count, by contrast, is complete the moment it exists. Hence: rows condemn, the summary clears.
  */
 const importResponse = `(() => {
   const vis = ${visible};
@@ -312,15 +329,37 @@ const importResponse = `(() => {
     .filter((t) => t && !t.startsWith('发票无忧助手'));
   if (windows.length === 0) return { answered: false };
   const text = windows.join(' | ');
-  const counts = /执行成功：(\\d+)[^\\d]*执行失败：(\\d+)/.exec(text);
-  // 处理结果 paints its title first and its per-invoice grid a moment later. Reading on first sight of the window
-  // gave the text 「处理结果」 and nothing else, which is an answer with its answer missing, so the wait continues
-  // until the summary line is there. Any other dialog (a plain 提示) has said all it is going to say.
-  if (!counts && text.includes('处理结果')) return { answered: false };
-  return { answered: true, text: text.slice(0, 2000), succeeded: counts ? Number(counts[1]) : null, failed: counts ? Number(counts[2]) : null };
+  const report = windows.find((t) => t.includes('处理结果'));
+  // Any other dialog is its own complete answer; a null failure count sends it to the refusal branch with ERP's words.
+  if (!report) return { answered: true, text: text.slice(0, 2000), rows: 0, succeeded: null, failed: null };
+  // A data row reads 「<序号> 接收发票 <状态> <问题描述>」, so the rows are counted by their 关键字 and the good
+  // ones by that 关键字 followed by 成功. Counting, rather than cutting the text into rows, is what makes this
+  // independent of how much whitespace the grid puts between two cells — textContent need not preserve any.
+  // Nothing else in the window carries 接收发票: the header row's 关键字 is the word 关键字, and the toolbar's
+  // 引出失败记录 is not a verdict.
+  const rowCount = (report.match(/接收发票/g) || []).length;
+  const rowsSucceeded = (report.match(/接收发票\\s*成功/g) || []).length;
+  const rowsFailed = rowCount - rowsSucceeded;
+  const all = /全部执行(成功|失败)：(\\d+)/.exec(report);
+  const split = /执行成功：(\\d+)[^\\d]*执行失败：(\\d+)/.exec(report);
+  const summary = all
+    ? { succeeded: all[1] === '成功' ? Number(all[2]) : 0, failed: all[1] === '失败' ? Number(all[2]) : 0 }
+    : split ? { succeeded: Number(split[1]), failed: Number(split[2]) } : null;
+  // 处理结果 paints its title first and its summary and grid a moment later. A row that already reads as a failure
+  // is a complete answer on its own — nothing later in the paint can turn it back into a success. A row that reads
+  // 成功 is not: a grid caught half-painted shows the rows it has, and the ones missing may be the failures. So a
+  // success verdict waits for the summary line, whose count is complete the moment it exists, in either wording.
+  if (!summary && rowsFailed === 0) return { answered: false };
+  return {
+    answered: true,
+    text: text.slice(0, 2000),
+    rows: rowCount,
+    succeeded: summary ? summary.succeeded : rowsSucceeded,
+    failed: Math.max(rowsFailed, summary ? summary.failed : 0),
+  };
 })()`;
 
-type ImportResponse = { answered: boolean; text?: string; succeeded?: number | null; failed?: number | null };
+type ImportResponse = { answered: boolean; text?: string; rows?: number; succeeded?: number | null; failed?: number | null };
 
 /**
  * THE import mutation, and the only irreversible act baox performs (ADR-0025, ADR-0028): the 发票导入单据 click
@@ -334,15 +373,19 @@ type ImportResponse = { answered: boolean; text?: string; succeeded?: number | n
  * twice in the old code was a collision, not a repetition. V-45 round 4 inferred an in-iframe 是否生成费用明细
  * step from a human run that had not chosen the mode up front; measured on baox's own path, it does not exist.
  */
-export async function importInvoices(page: WritePage, { timeoutMs = 120_000 } = {}) {
+export async function importInvoices(page: WritePage, { timeoutMs = paceOf(page).longMs } = {}) {
+  // The budget is the one that is actually waited out. It used to default to 120_000 and then be run through
+  // `cap()`, which clamps to the pace's 90 s — so the caller asked for 120 s, got 90 s, and only the error message
+  // (which computed the clamped number) told the truth. The default is now the pace's own bound, and a caller that
+  // passes a longer one gets it.
   const assistant = await assistantSession(page, Math.min(timeoutMs, 45_000));
   await clickText(page, assistant, '发票导入单据', { timeoutMs: 15_000 });
   // From here on the assistant's session is dead and everything is read on the ERP page.
   const answer = await waitFor(() => evalIn<ImportResponse>(page.session, importResponse), (r) => r?.answered === true,
-    cap(page, timeoutMs), paceOf(page).pollMs);
+    timeoutMs, paceOf(page).pollMs);
   if (!answer?.answered) {
     throw new ExecutorError('INVOICE_IMPORT_NOT_ANSWERED',
-      `点了「发票导入单据」之后，报销系统在 ${Math.round(cap(page, timeoutMs) / 1000)} 秒内没有给出处理结果`);
+      `点了「发票导入单据」之后，报销系统在 ${Math.round(timeoutMs / 1000)} 秒内没有给出处理结果`);
   }
   // Anything short of 执行失败：0 stops the run, and the window is left open so #32's capture keeps ERP's own words
   // (ADR-0027: the run aborts to 转人工 carrying the verbatim text; 申请解绑 and 删除发票 are never clicked).

@@ -407,12 +407,28 @@ export async function createFakeErp(options: FakeErpOptions) {
   }
 
   /**
-   * ERP's 处理结果 window: its answer to 发票导入单据, one line per invoice. 退出 closes it.
+   * ERP's 处理结果 window: its answer to 发票导入单据 — a summary line over a grid of 序号 / 关键字 / 状态 / 问题描述,
+   * one row per invoice. 退出 closes it.
+   *
+   * The summary has two wordings, both measured live, and the fake writes whichever the outcome calls for. With
+   * failures: 「执行成功：10；执行失败：2」. With none: 「全部执行成功：10」 — which names no 执行失败 at all. The fake
+   * used to format both halves always, so the all-success wording never reached the judge and a live import of 10
+   * of 10 was read as «still loading» until the budget ran out.
+   *
    * It opens empty and fills in a moment later — live 2026-09-19 a read on first sight of the window returned the
-   * text 「处理结果」 alone, with no 执行成功/执行失败 summary in it yet.
+   * text 「处理结果」 alone, with no summary in it yet.
    */
-  function result(text: string) {
+  function result(summary: string, rows: readonly string[]) {
     const win = q('#result-window');
+    // The toolbar words and the grid header are part of what a reader of this window actually sees, and the header
+    // carries 序号 / 关键字 / 状态 with no 序号 of its own — the fake keeps them so a judge cannot pass by counting
+    // a header row as an invoice.
+    const text = [
+      '打开 引出全部记录 引出失败记录 （您可以单击字段链接定位到所在位置）',
+      summary,
+      '设置 序号 设置 关键字 设置 状态 设置 问题描述',
+      ...rows.map((row, index) => `${index + 1} ${row}`),
+    ].join(' ');
     win.querySelector('.k-window-message').textContent = '';
     show(win, true);
     setTimeout(() => { win.querySelector('.k-window-message').textContent = text; }, 0);
@@ -481,16 +497,18 @@ export async function createFakeErp(options: FakeErpOptions) {
       }
       // Minting a 收票单 and overwriting one ERP already holds read differently in the report, and the difference
       // is how ADR-0026's overwrite shows up on screen.
-      report.push(`接收发票成功 号码为【${invoice.invoiceNumber}】的发票${bound
+      report.push(`接收发票 成功 号码为【${invoice.invoiceNumber}】的发票${bound
         ? `已存在对应的收票单【${invoice.receiptNumber}】，已进行覆盖！`
         : `接收成功，生成收票单【${invoice.receiptNumber}】`}`);
       receiptLedger.set(invoice.receiptNumber, values);
       imported.push(invoice.receiptNumber);
     }
-    for (const invoice of refused) report.push(`接收发票失败 号码为【${invoice.invoiceNumber}】的发票${invoice.importRefusal}`);
+    for (const invoice of refused) report.push(`接收发票 失败 号码为【${invoice.invoiceNumber}】的发票${invoice.importRefusal}`);
     updateTotals();
     show(q('#assistant-window'), false);
-    result(`执行成功：${accepted.length}；执行失败：${refused.length} ${report.join(' ')}`);
+    result(refused.length === 0
+      ? `全部执行成功：${accepted.length}`
+      : `执行成功：${accepted.length}；执行失败：${refused.length}`, report);
     const closing = child;
     mutate('import', imported.join(','));
     // The iframe target goes away after this click completes, and NOTHING replaces it: the whole answer to the

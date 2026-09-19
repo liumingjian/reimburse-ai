@@ -7,7 +7,7 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { EXAMPLE_REAL_PROJECT, OFFLINE_PROJECT, catalogRefusal, erpIdleFindings, erpPollSettled, erpProjectTarget, waitForChange } from './checks.mjs';
+import { ERP_WRITE_BUDGET_MS, EXAMPLE_REAL_PROJECT, OFFLINE_PROJECT, catalogRefusal, erpIdleFindings, erpPollSettled, erpProjectTarget, erpWriteFindings, waitForChange } from './checks.mjs';
 
 const repo = new URL('..', import.meta.url);
 const read = (path) => readFile(fileURLToPath(new URL(path, repo)), 'utf8');
@@ -169,10 +169,12 @@ test('a clean abort is the good outcome, not a defect: status stays idle and abo
   assert.match(good.text, /停止|stopped before any change/);
 });
 
-test('a clean abort that does not blame the dedicated browser is still ok, but warns', () => {
-  const found = erpIdleFindings({ abortReason: '停止了，原因：发票无忧助手没有建立页面连接' });
-  assert.equal(found.filter((f) => f.level === 'DEFECT').length, 0);
-  assert.ok(found.some((f) => f.level === 'WARN' && /dedicated browser/.test(f.text)));
+test('a clean abort names which of the two paths it stopped on, since the driver cannot see the browser', () => {
+  const off = erpIdleFindings({ abortReason: '停止了，原因：报销专用 Chromium 浏览器不可用' });
+  assert.match(off.find((f) => f.level === 'ok').text, /browser was unavailable/);
+  const on = erpIdleFindings({ abortReason: '停止了，原因：发票无忧助手没有建立页面连接' });
+  assert.equal(on.filter((f) => f.level === 'DEFECT').length, 0);
+  assert.match(on.find((f) => f.level === 'ok').text, /browser was available/);
 });
 
 test('an idle view with no reason of any kind is still the one real defect', () => {
@@ -191,7 +193,60 @@ test('the poll stops as soon as abortReason appears, because status will never m
 test('the driver reads abortReason, not just erp.status', async () => {
   const run = await read('qa/run.mjs');
   assert.match(run, /erpPollSettled\(\{\s*status,\s*abortReason: reason/);
-  assert.match(run, /erpIdleFindings\(\{[^)]*abortReason: reason/);
+  assert.match(run, /erpWriteFindings\(\{[^)]*abortReason: reason/);
+});
+
+// --- D2: the one real 去报销 the driver performs, described in the words of the path it took --------
+//
+// Live 2026-09-19: the dedicated browser was ON, the import bound 10 of 10 invoices and the whole write took
+// about 141 s. The area's budget was 120 s, so the poll ended on `erp.status: 'running'` and the driver logged
+// `[DEFECT] erp-off: with the ERP browser off the write ended in status running instead of aborting cleanly`
+// over a successful write, with the browser on.
+
+test('a write still running when the budget expires is a coverage warning, not a browser-off defect', () => {
+  const found = erpWriteFindings({ status: 'running', waitedMs: 120000, budgetMs: 120000 });
+  assert.equal(found.filter((f) => f.level === 'DEFECT').length, 0, 'a write in flight is not a defect');
+  const warning = found.find((f) => f.level === 'WARN');
+  assert.ok(warning, 'a budget that ran out mid-write has to be said out loud');
+  assert.match(warning.text, /still running/);
+  assert.match(warning.text, /120s/);
+  assert.doesNotMatch(warning.text, /browser off|browser is off/);
+});
+
+test('the completed write — the browser-available path — is reported as the pass it is', () => {
+  const found = erpWriteFindings({ status: 'done' });
+  assert.equal(found.filter((f) => f.level !== 'ok').length, 0);
+  assert.match(found[0].text, /available/);
+  // ADR-0028: baox hands the filled form over; it never clicks 保存.
+  assert.match(found[0].text, /保存/);
+});
+
+test('an undetermined write result stays a defect, because the import cannot be undone', () => {
+  const found = erpWriteFindings({ status: 'aborted', abortReason: '写入报销系统的结果不确定，应用已停止写入，不会重放。原因：INVOICE_IMPORT_NOT_ANSWERED' });
+  assert.equal(found.filter((f) => f.level === 'DEFECT').length, 1);
+  assert.match(found[0].text, /INVOICE_IMPORT_NOT_ANSWERED/);
+});
+
+test('a browser that is up but not logged in pauses the write, and says so', () => {
+  const found = erpWriteFindings({ status: 'waiting_login' });
+  assert.equal(found.filter((f) => f.level === 'DEFECT').length, 0);
+  assert.match(found.find((f) => f.level === 'WARN').text, /登录/);
+});
+
+test('an idle view is still read by erpIdleFindings, unchanged', () => {
+  const reason = '上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：报销专用 Chromium 浏览器不可用';
+  assert.deepEqual(erpWriteFindings({ status: 'idle', abortReason: reason }), erpIdleFindings({ abortReason: reason }));
+  assert.equal(erpWriteFindings({ status: null, catalog: { status: 'matched' } }).filter((f) => f.level === 'DEFECT').length, 1);
+});
+
+test('the budget clears the measured 141s write with room to spare', async () => {
+  assert.ok(ERP_WRITE_BUDGET_MS >= 240000, `the write budget is ${ERP_WRITE_BUDGET_MS}ms, and a real write measured ~141000ms`);
+  const run = await read('qa/run.mjs');
+  assert.match(run, /deadline = started \+ ERP_WRITE_BUDGET_MS/);
+  // The sentence that libelled a successful write. It survives only as history, in a comment: never again as
+  // a verdict the driver reaches.
+  assert.doesNotMatch(run, /defect\([^)]*with the ERP browser off/);
+  assert.doesNotMatch(run, /area\(page, 'erp-off'/);
 });
 
 test('fill-state still reports a clean abort as idle, which is why the above matters', async () => {
