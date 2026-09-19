@@ -33,7 +33,9 @@ export type BlankFormReadings = {
 
 /**
  * Navigate to a new form, verify it is one blank 费用报销单-新增, open the invoice assistant, and only then mark.
- * A failure anywhere before `mark` leaves no mark: nothing was written, so the job may be retried.
+ * Every step here is a read or a navigation, so a failure anywhere leaves the ERP untouched and the job retryable.
+ * `mark` records that the form is prepared; it is not where the write attempt begins — that sits one seam later,
+ * immediately before the 发票导入单据 click (ADR-0025).
  */
 export async function prepareErpWrite<P, R extends BlankFormReadings, M>({ page, navigate, read, openAssistant, mark }: {
   page: P; navigate: (page: P) => Promise<unknown>; read: (page: P) => Promise<R>; openAssistant: (page: P) => Promise<unknown>; mark: () => Promise<M>;

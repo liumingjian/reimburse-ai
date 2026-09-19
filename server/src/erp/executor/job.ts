@@ -26,7 +26,7 @@ import { COMPATIBILITY_SNIPPET, probeIdentity, sameOrigin } from './probe';
 import { pageUrl, protocolReadings, readForm, type FormReadings } from './reader';
 import {
   addDetailRow, captureErpError, invoiceUploadGroups, openInvoiceAssistant, openNewReimbursement,
-  uploadAndImportInvoices, type WritePage,
+  importInvoices, uploadInvoices, type WritePage,
 } from './steps';
 import { prepareErpWrite } from './write-context';
 
@@ -185,7 +185,8 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
       if (moved.length) throw new DriftError(moved);
     };
 
-    // 4. Navigate to one blank new form, check the compatibility fingerprint, open the assistant; then attempt import.
+    // 4. Navigate to one blank new form, check the compatibility fingerprint, open the assistant. Nothing here is a
+    //    mutation, so nothing here starts an attempt.
     await step('navigate', 'running');
     await prepareErpWrite({
       page: write,
@@ -209,13 +210,17 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
       openAssistant: (p) => openInvoiceAssistant(p, { timeoutMs: 90_000 }),
       mark: async () => {
         await step('navigate', 'done');
-        await startAttempt('import', { formMode: 'new', billNo: null, receiptRowCount: plan.invoices.length });
       },
     });
 
-    // 5. Import.
+    // 5. Import. Upload and recognition are free and repeatable (ADR-0025), so the attempt is recorded between them
+    //    and the 发票导入单据 click rather than before the upload. The crash window is unchanged — the row is still
+    //    durable before the one irreversible act — but a failure while uploading no longer marks the task as written
+    //    to, so it stays retryable and stays voidable.
     await step('import', 'running');
-    await uploadAndImportInvoices(write, staged.paths);
+    await uploadInvoices(write, staged.paths);
+    await startAttempt('import', { formMode: 'new', billNo: null, receiptRowCount: plan.invoices.length });
+    await importInvoices(write);
     await step('import', 'done');
 
     await step('readback', 'running');

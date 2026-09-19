@@ -1,5 +1,6 @@
 // The mutating ERP steps over CDP, plus #32's error capture.
-// Origin: 50931a3:kernel/src/erpwrite-cdp.mjs (openNewReimbursement, openInvoiceAssistant, uploadAndImportInvoices,
+// Origin: 50931a3:kernel/src/erpwrite-cdp.mjs (openNewReimbursement, openInvoiceAssistant, uploadAndImportInvoices
+// — split here into uploadInvoices and importInvoices at the ADR-0025 consumption boundary,
 // addDetailRow, closeInvoiceAssistant) and 50931a3:kernel/src/invoice-upload.mjs. The kernel's saveReimbursement has
 // no counterpart here: ADR-0028 leaves the 保存 (save) click to the employee, so this module cannot perform it.
 // Kernel waits are kept as upper bounds; `pace` shortens them on the fake ERP.
@@ -186,9 +187,13 @@ const uploadState = (session: CdpSession) => evalIn<{ processing: boolean; rows:
   return { processing: (document.body?.innerText || '').includes('上传处理中'), rows: rows.map((n) => ({ checked: n.checked })) };
 })()`);
 
-/** THE import mutation: upload, select and import the staged invoice files through the assistant. */
-export async function uploadAndImportInvoices(page: WritePage, paths: string[], { timeoutMs = 210_000 } = {}) {
-  const { session } = page;
+/**
+ * Upload the staged invoice files into the assistant, wait for recognition, and select every recognised row.
+ * Writes nothing and consumes nothing: ADR-0025 puts the consumption boundary at the 发票导入单据 click, which
+ * lives in `importInvoices`. Splitting there is what lets the caller record its attempt between the two, so a
+ * failure while uploading leaves a task that can still be retried and still be voided.
+ */
+export async function uploadInvoices(page: WritePage, paths: string[], { timeoutMs = 210_000 } = {}) {
   if (!Array.isArray(paths) || paths.length === 0) throw new ExecutorError('INVOICE_FILES_REQUIRED', '没有可上传的主要发票文件');
   const pace = paceOf(page);
   const groups = invoiceUploadGroups(paths);
@@ -229,10 +234,20 @@ export async function uploadAndImportInvoices(page: WritePage, paths: string[], 
     selected += 1;
   }
   if (!selected) throw new ExecutorError('INVOICE_SELECTION_EMPTY', '发票助手没有可导入的识别结果');
+  return { ok: true, selectedRows: rows.length };
+}
+
+/**
+ * THE import mutation, and the only irreversible act baox performs (ADR-0025, ADR-0028): the 发票导入单据 click
+ * binds the selected invoices to this 费用报销单 and mints its 收票单. Nothing before it is irreversible, and
+ * nothing may call this without a durable `attempt_started` already recorded.
+ */
+export async function importInvoices(page: WritePage, { timeoutMs = 45_000 } = {}) {
+  const assistant = await assistantSession(page, Math.min(timeoutMs, 45_000));
   await clickText(page, assistant, '发票导入单据', { timeoutMs: 15_000 });
   await clickText(page, assistant, '不生成费用明细', { timeoutMs: 45_000 });
-  await waitText(page, session, '收票信息', 120_000);
-  return { ok: true, selectedRows: rows.length };
+  await waitText(page, page.session, '收票信息', 120_000);
+  return { ok: true };
 }
 
 /** Add one detail row through the toolbar (新增行). Part of the fill mutation. */

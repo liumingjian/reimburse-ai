@@ -8,7 +8,7 @@ import type { Db } from '../db/database';
 import { createTaskService } from '../tasks';
 import { createTestServer, type TestServer } from '../test/harness';
 import { runFillJob } from './executor/job';
-import { openInvoiceAssistant, openNewReimbursement, uploadAndImportInvoices, type WritePage } from './executor/steps';
+import { importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type WritePage } from './executor/steps';
 import { createFakeErp, type FakeErp } from './executor/testing/fake-erp';
 import { createErpJobs, serverChannel, type ErpJobs } from './jobs';
 import { createDraftJudge } from './judge';
@@ -63,7 +63,7 @@ const writePage = (fake: FakeErp): WritePage => ({ session: fake.session, pace: 
  * The fill job's own import step over an ERP form that is already open. A whole second fill job cannot reach it:
  * the pre-import preflight refuses a form that is not one blank 费用报销单-新增.
  */
-async function importInvoices(page: WritePage, invoices: typeof INVOICES) {
+async function uploadAndImport(page: WritePage, invoices: typeof INVOICES) {
   const dir = mkdtempSync(join(tmpdir(), 'baox-reimport-'));
   try {
     const paths = invoices.map((invoice, index) => {
@@ -72,7 +72,8 @@ async function importInvoices(page: WritePage, invoices: typeof INVOICES) {
       return path;
     });
     await openInvoiceAssistant(page, { timeoutMs: 2000 });
-    await uploadAndImportInvoices(page, paths);
+    await uploadInvoices(page, paths);
+    await importInvoices(page);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -120,9 +121,10 @@ describe('fill job through the protocol on the fake ERP', () => {
     const job = run(fake, channel);
     while (heldAt === null) await new Promise((resolve) => setTimeout(resolve, 5));
     await new Promise((resolve) => setTimeout(resolve, 60));
-    // While the acknowledgement is held, nothing is written and no upload happens.
+    // While the acknowledgement is held, the ERP form is untouched. The upload has already run, and is allowed to:
+    // it consumes nothing (ADR-0025). What must not have happened yet is the 发票导入单据 click.
     expect(fake.mutations).toEqual([]);
-    expect(fake.commands.some((c) => c.method === 'DOM.setFileInputFiles')).toBe(false);
+    expect(fake.commands.some((c) => c.method === 'DOM.setFileInputFiles')).toBe(true);
     release();
     expect((await job).status).toBe('handed_over');
     expect(persistedBeforeAck).toBe(true);
@@ -161,6 +163,18 @@ describe('fill job through the protocol on the fake ERP', () => {
     ] });
     expect(await jobs.attempts(`job-${taskId}`)).toEqual([]);
     expect(inputEvents(fake)).toEqual([]);
+  });
+
+  it('starts no attempt when the upload fails: nothing was consumed, so the task stays retryable and voidable', async () => {
+    // The live failure of 2026-09-19: 电脑端选取 was clicked on its caption instead of its anchor, so the assistant
+    // stayed on its entry menu. The attempt used to be recorded when the assistant opened, which marked the task as
+    // written-to over a run that imported nothing and left it unvoidable for good.
+    const fake = await createFakeErp(fakeErpOptions({ assistantStuckOnEntryMenu: true }));
+    const result = await run(fake);
+    expect(result.status).toBe('aborted');
+    expect(result.message).toContain('上传发票影像');
+    expect(await jobs.attempts(`job-${taskId}`)).toEqual([]);
+    expect(fake.mutations).toEqual([]);
   });
 
   it('aborts on a compatibility fingerprint mismatch before any attempt', async () => {
@@ -220,24 +234,24 @@ describe('fill job through the protocol on the fake ERP', () => {
 
 // What ERP does when an invoice the bill already holds is imported again: it rewrites that 收票行 (receipt row),
 // which it keys by its 收票单 (receipt number), instead of adding a second one (ADR-0026). Driven through the fill
-// job's own import step, for the reason `importInvoices` gives.
+// job's own import step, for the reason `uploadAndImport` gives.
 describe('re-importing an invoice the bill already holds', () => {
   it('rewrites its 收票行 in place and appends only the invoice the bill does not hold yet', async () => {
     const [rail, ride] = INVOICES;
     const fake = await createFakeErp(fakeErpOptions());
     const page = writePage(fake);
     await openNewReimbursement(page, { timeoutMs: 2000 });
-    await importInvoices(page, [rail!]);
+    await uploadAndImport(page, [rail!]);
     expect(receiptNumbers(fake)).toEqual([rail!.receiptNumber]);
 
-    await importInvoices(page, [rail!, ride!]);
+    await uploadAndImport(page, [rail!, ride!]);
     expect(receiptNumbers(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
 
     // Rows and totals are what a single import of the same set leaves behind.
     const once = await createFakeErp(fakeErpOptions());
     const oncePage = writePage(once);
     await openNewReimbursement(oncePage, { timeoutMs: 2000 });
-    await importInvoices(oncePage, [rail!, ride!]);
+    await uploadAndImport(oncePage, [rail!, ride!]);
     expect(receiptNumbers(fake)).toEqual(receiptNumbers(once));
     expect(receiptTotal(fake)).toEqual(receiptTotal(once));
 
@@ -255,7 +269,7 @@ describe('re-importing an invoice the bill already holds', () => {
     expect(receiptLinks(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
     const total = receiptTotal(fake);
 
-    await importInvoices(writePage(fake), [rail!, ride!]);
+    await uploadAndImport(writePage(fake), [rail!, ride!]);
     expect(receiptNumbers(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
     expect(receiptLinks(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
     expect(receiptTotal(fake)).toEqual(total);

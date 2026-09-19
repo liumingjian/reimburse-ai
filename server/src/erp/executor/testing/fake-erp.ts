@@ -51,6 +51,8 @@ export type FakeErpOptions = {
   billNo?: string;
   /** The 收票单 ERP already holds. Defaults to an empty ledger: an ERP that has never seen these invoices. */
   receiptLedger?: FakeReceiptLedger;
+  /** 电脑端选取 does nothing, so the assistant never leaves its entry menu and no upload is possible. */
+  assistantStuckOnEntryMenu?: boolean;
 };
 export type FakeMutation = { kind: 'import' | 'cell' | 'option' | 'header' | 'addRow' | 'save'; detail: string };
 
@@ -457,7 +459,7 @@ export async function createFakeErp(options: FakeErpOptions) {
     const doc = child.doc.document;
     const action = el.closest('[data-action]')?.getAttribute('data-action');
     // 电脑端选取 leaves the entry menu for the upload view; that is where the file input and the grid live.
-    if (action === 'computer-picker') {
+    if (action === 'computer-picker' && !options.assistantStuckOnEntryMenu) {
       show(doc.querySelector('.fpzsHome'), false);
       show(doc.querySelector('#assistant-upload'), true);
     }
