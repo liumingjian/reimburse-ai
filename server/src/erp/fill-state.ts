@@ -2,7 +2,7 @@
 // executor events, its cancel, and the task's `erp_attempt` rows. Nothing about the phase is stored. The views below
 // turn the record into the snapshot's `erp`, `readback`, `reconcile` and `catalog` sections.
 
-import { HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, type Catalog, type Erp, type ErpCapture, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
+import { ERP_HANDOVER_STEP_COPY, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, type Catalog, type Erp, type ErpCapture, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
 import { sql } from 'kysely';
 import type { Db } from '../db/database';
 import type { ErpHandOffTable, ErpJobTable, TaskLifecycle } from '../db/schema';
@@ -13,8 +13,11 @@ import type { ReconcileVerdict } from './reconcile';
 import { reconcileFromEvents } from './reconcile-job';
 
 // One judged reconcile read-back: the verdict (after the form-instance / target check), the bill number it read, and
-// whether it proves the draft saved exactly as approved (已保存, identity holds, strict per-line match passed).
-export type ReconcileJudgement = { verdict: ReconcileVerdict; billNo: string | null; saved: boolean };
+// the two terminals it can prove. `saved`: the draft saved exactly as approved (已保存, identity holds, strict
+// per-line match passed). `handedOver`: the form is filled and ready to save exactly as approved
+// (未保存·就绪待保存 plus the same strict per-line match) — ERP 单据已交接 (bill handed over), the resume path to the
+// same terminal a clean run reaches (ADR-0028).
+export type ReconcileJudgement = { verdict: ReconcileVerdict; billNo: string | null; saved: boolean; handedOver: boolean };
 
 // The latest reconcile run on the fill job: running until its result, and the newest judgement of any run.
 export type ReconcileState = { jobId: string; result: ResultEvent | null; judged: ReconcileJudgement | null };
@@ -61,8 +64,12 @@ export function judgeReconcile(events: ExecutorEvent[], preview: ApprovedPreview
     if (read.targetId && attempt.targetId && read.targetId !== attempt.targetId) elsewhere.push('报销系统所在的浏览器标签页不是这次写入时的那一个，读到的内容不能说明这次写入的结果');
   }
   const verdict: ReconcileVerdict = elsewhere.length ? { ...derived.verdict, bucket: '未知', action: '原地等待', reasons: [...elsewhere, ...derived.verdict.reasons] } : derived.verdict;
-  const saved = elsewhere.length === 0 && preview !== null && verdict.bucket === '已保存' && verdict.action === '原地等待' && derived.readings.taskMatch?.ok === true;
-  return { verdict, billNo: read.billNo.readable ? read.billNo.value : null, saved };
+  // Both terminals rest on the same strict per-line match (`taskMatch`); only the bucket differs. The classifier is
+  // untouched: it says what the ERP shows, this layer says what that means for the task (ADR-0027).
+  const strictMatch = elsewhere.length === 0 && preview !== null && verdict.action === '原地等待' && derived.readings.taskMatch?.ok === true;
+  const saved = strictMatch && verdict.bucket === '已保存';
+  const handedOver = strictMatch && verdict.bucket === '未保存·就绪待保存';
+  return { verdict, billNo: read.billNo.readable ? read.billNo.value : null, saved, handedOver };
 }
 
 /** The job's phase from its result (none yet = running) and whether its login pause was cancelled. */
@@ -73,6 +80,8 @@ export function phaseOf(result: ResultEvent | null, cancelled: boolean): ErpPhas
       return cancelled ? 'cancelled' : 'waiting_login';
     case 'catalog_mismatch':
       return 'catalog_mismatch';
+    case 'handed_over':
+      return 'handed_over';
     case 'saved':
       return 'saved';
     case 'unknown':
@@ -109,10 +118,17 @@ export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
     }
   }
   // A reconcile that proves the draft saved exactly as approved (the same strict test a fill's `saved` passed) is
-  // ERP 草稿已交接: done, not a hand-off.
+  // ERP 单据已交接: done, not a hand-off.
   if (phase === 'unknown' && reconcile?.judged?.saved) {
     phase = 'saved';
     result = { type: 'result', status: 'saved', code: 'reconciled', message: null, billNo: reconcile.judged.billNo, capture: null };
+  }
+  // The resume path to the same terminal a clean run reaches: a reconcile that proves the form is filled, ready to
+  // save, and equal to the approved preview on every row is ERP 单据已交接 (bill handed over), not a breakpoint. Since
+  // nothing was saved there is no 单据编号 (bill number) to report.
+  if (phase === 'unknown' && reconcile?.judged?.handedOver) {
+    phase = 'handed_over';
+    result = { type: 'result', status: 'handed_over', code: 'reconciled', message: null, billNo: null, capture: null };
   }
   // A catalog mismatch sends the task back to project assignment until a new submission answers it.
   let reassign = false;
@@ -148,7 +164,9 @@ const DISPLAY_STEPS: ReadonlyArray<{ key: string; title: string; description: st
   { key: 'import', title: '导入发票', description: '在发票助手里选择「不生成费用明细」，导入这次的发票。', from: ['import'] },
   { key: 'receipt', title: '收票回读', description: '逐票回读收票单号、发票号码、不含税金额、税额与价税合计。', from: ['readback'] },
   { key: 'fill', title: '填写明细', description: '按统一业务序号逐行写入明细，每个值写入后从单元格回读。', from: ['fill'] },
-  { key: 'save', title: '保存草稿', description: '只保存一次草稿，不提交审批；保存后逐行严格回读。', from: ['save'] },
+  // `save` is the step name fill jobs emitted before ADR-0028; `handover` is what they emit now. The copy lives in
+  // the contract so this list and the web mock's step list cannot drift apart.
+  { ...ERP_HANDOVER_STEP_COPY, from: ['save', 'handover'] },
 ];
 
 function stepsOf(record: ErpRecord): ErpStep[] {
@@ -163,7 +181,7 @@ function stepsOf(record: ErpRecord): ErpStep[] {
       else if (seen === 'running' && status !== 'failed') status = 'running';
       else if (seen === 'done' && status === 'todo') status = 'done';
     }
-    if (phase === 'saved') status = 'done';
+    if (phase === 'handed_over' || phase === 'saved') status = 'done';
     if (phase === 'waiting_login' && key === 'login') status = 'waiting';
     return { key, title, description, status };
   });
@@ -196,6 +214,9 @@ export function erpView(record: ErpRecord): Erp {
             ? `${CATALOG_QUERY_FAILED_REASON}${reason}`
             : `上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：${reason}`,
       };
+    case 'handed_over':
+      // ERP 单据已交接: nothing was saved, so there is no 单据编号 (bill number) to report.
+      return { ...idle, status: 'done', steps: stepsOf(record), draftNo: null };
     case 'saved':
       return { ...idle, status: 'done', steps: stepsOf(record), draftNo: record.result?.billNo ?? null };
     case 'unknown':
@@ -215,12 +236,15 @@ const centsOf = (amount: string | null | undefined) => {
 };
 
 /**
- * The strict read-back of a saved draft. A `saved` result exists only after the server judged the saved form equal to
- * the approved preview on every row and all nine fields, so each field's ERP side equals its local side. Net and tax
- * come from the approved preview (a rail line's come from ERP's receipt), the receipt number from its bindings.
+ * The strict read-back the terminal rests on. A `handed_over` result exists only after the server judged the filled
+ * form equal to the approved preview on every row and all nine fields, and a `saved` one only after the same
+ * comparison on the saved form, so each field's ERP side equals its local side. At hand-over these rows are the
+ * evidence the employee is asked to trust before they click 保存 (save). Net and tax come from the approved preview
+ * (a rail line's come from ERP's receipt), the receipt number from its bindings.
  */
 export function readbackView(record: ErpRecord, lines: readonly Line[]): Readback {
-  if (record.facts?.phase !== 'saved') return EMPTY_READBACK;
+  const phase = record.facts?.phase;
+  if (phase !== 'handed_over' && phase !== 'saved') return EMPTY_READBACK;
   const previewLine = new Map((record.preview?.lines ?? []).map((line) => [line.lineId, line]));
   const receipt = new Map((record.preview?.receiptBindings ?? []).map((binding) => [binding.voucherMaterialId, binding.receiptNumber]));
   const rows: ReadbackRow[] = lines.map((line) => {
@@ -288,9 +312,18 @@ function reconcileRows(record: ErpRecord, judged: ReconcileJudgement | null, lin
 // The server-side sentence of each 对账中断点.
 const BUCKET_BANNER: Readonly<Record<ReconcileBucket, (billNo: string | null) => string>> = {
   未知: () => '对账没有读清报销系统里这张单据的状态。请在报销系统里打开这次的报销单查看，再点「重新对账」；也可以转人工。',
-  '未保存·导入前': () => '报销系统里还没有导入发票，也没有保存草稿，发票没有被报销系统占用。',
-  '未保存·已导入未写明细': () => '发票已导入报销系统、明细还没有写，发票已被报销系统占用。只能转人工处理。',
-  '未保存·就绪待保存': () => '明细已写好，收票与明细合计一致，还没有保存。应用不会替你保存；请在报销系统里核对，或转人工。',
+  '未保存·导入前': () => '报销系统里还没有导入发票，也还没有写明细，发票没有被报销系统占用。',
+  // Two readings share this bucket. With no 单据编号 nothing was persisted: the invoices are held by the unsaved
+  // bill and the import can be replayed onto a fresh one (ADR-0026, ADR-0027). With one, the employee saved, and
+  // re-importing would act on a bill that exists.
+  '未保存·已导入未写明细': (billNo) => (billNo
+    ? `报销系统里已有单据 ${billNo}，发票已导入、明细还没有写。只能转人工处理。`
+    : '发票已导入报销系统、明细还没有写。占着这些发票的是刚才那张没有保存的单据，不是被报销掉了：重新去报销会重开一张单据再导一次，报销系统会覆盖掉原来的收票记录。那张没保存的单据没有单据编号，关掉也不会留下单据，不需要你去清理。'),
+  // Unreachable while the strict per-line match holds: that pair promotes to the hand-over terminal (#241), which
+  // renders HANDOVER_COMPLETED_NOTICE instead of a banner. The entry survives because BUCKET_BANNER is exhaustive
+  // over ReconcileBucket, and because the bucket is still reachable without the match (a reconcile that read a
+  // ready-to-save form it cannot prove line by line), which is the case this sentence is written for.
+  '未保存·就绪待保存': () => '明细已写好，收票与明细合计一致，还没有保存。应用不会替你保存；请在报销系统里逐行核对后自己点「保存」，或转人工。',
   已保存: (billNo) => `报销系统里已有草稿${billNo ? ` ${billNo}` : ''}，但不能证明它与这次确认的明细逐行一致。`,
   不自洽: () => '报销系统里这张单据前后对不上。只能转人工处理。',
 };
@@ -351,6 +384,28 @@ export function reconcileView(record: ErpRecord, taskId: string, lifecycle: Task
       humanReview: false,
       banner: notice ?? '写入报销系统的结果不确定：应用已停止写入，不会重放。请先在报销系统里查看这张报销单，再点「开始对账」只读核对；也可以直接转人工。',
       reasons: fillReasons,
+    };
+  }
+  // 重新去报销 (ADR-0027): the exit out of an import that was never saved. The gate is observational and lives
+  // here, in the one view that decides allowed actions, because the reading it needs is the one this view already
+  // holds. It is not gated on the attempt log: baox never saves (ADR-0028), so "this job started no save attempt"
+  // is vacuously true and carries no information. A 单据编号 means the employee saved and re-importing would act on
+  // a bill that exists, so that reading keeps 转人工. An unreadable 单据编号 cell also reads as null here, and that
+  // is the conservative side of the reading only because the bucket itself already required 新增 mode with no bill.
+  const refillable = judged.verdict.bucket === '未保存·已导入未写明细' && judged.billNo === null;
+  // Offering the recovery is not a 转人工 outcome, whatever the classifier suggested for the bucket: the disposition
+  // is 原地等待 (the code says which of its two exits is suggested) and humanReview is false.
+  if (refillable) {
+    return {
+      ...base,
+      status: 'pending',
+      bucket: judged.verdict.bucket,
+      action: RECONCILE_ACTION_LABELS.refill,
+      actionCode: 'refill',
+      allowedActions: ['refill', 'hand_off'],
+      humanReview: false,
+      banner: notice ?? BUCKET_BANNER[judged.verdict.bucket](judged.billNo),
+      reasons: judged.verdict.reasons,
     };
   }
   const handOffOnly = judged.verdict.action === '转人工';

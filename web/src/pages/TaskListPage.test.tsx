@@ -22,7 +22,7 @@ function abandonItem(row: HTMLElement): HTMLButtonElement {
 }
 
 describe('任务列表', () => {
-  test('显示三个任务及其阶段徽标（内核 10 阶段名）：材料盘点、对账中、草稿交接', async () => {
+  test('显示三个任务及其阶段徽标（内核 10 阶段名）：材料盘点、对账中、单据交接', async () => {
     renderApp('#/tasks');
     expect(await screen.findByRole('heading', { name: '报销任务' })).toBeTruthy();
 
@@ -37,7 +37,7 @@ describe('任务列表', () => {
     expect(within(t2).getByRole('link', { name: '查看对账' }).getAttribute('href')).toBe('#/task/T2/reconcile');
 
     const t3 = await rowOf('2026-06 北京培训');
-    expect(within(t3).getByText('10/10 草稿交接')).toBeTruthy();
+    expect(within(t3).getByText('10/10 单据交接')).toBeTruthy();
     expect(within(t3).getByText('BX20260702-0088')).toBeTruthy();
 
     expect(screen.getByRole('button', { name: '新建报销任务' })).toBeTruthy();
@@ -46,12 +46,14 @@ describe('任务列表', () => {
     expect(screen.queryByText(/产品研发部/)).toBeNull();
   });
 
-  test('?seed=done 时 T1 显示草稿交接、价税合计与草稿号', async () => {
+  // ADR-0028：交接把填好、未保存的单据交给员工，报销系统还没有生成单据编号，所以这一列是空的。
+  // 有编号的是 T3：那张单据是员工自己保存过的。
+  test('?seed=done 时 T1 显示单据交接与价税合计，单据编号一列为空（交接时还没有保存）', async () => {
     renderApp('#/tasks', 'done');
     const t1 = await rowOf('2026-08 上海出差（产品评审）');
-    expect(within(t1).getByText('10/10 草稿交接')).toBeTruthy();
+    expect(within(t1).getByText('10/10 单据交接')).toBeTruthy();
     expect(within(t1).getByText('3972.59')).toBeTruthy();
-    expect(within(t1).getByText('BX20260911-0173')).toBeTruthy();
+    expect(within(t1).queryByText('BX20260911-0173')).toBeNull();
   });
 
   test('转人工的任务：徽标显示已转人工（服务端给出的列表字段），而不是对账中', async () => {
@@ -65,7 +67,7 @@ describe('任务列表', () => {
     expect(within(row).queryByText('对账中')).toBeNull();
   });
 
-  test('严格回读不一致的任务：停在对账而不是草稿交接，列表给出查看对账入口', async () => {
+  test('严格回读不一致的任务：停在对账而不是单据交接，列表给出查看对账入口', async () => {
     const adapter = createMockAdapter({ seed: 'actions', fault: 'readback-mismatch', erpStepMs: 1, erpLoginAutoMs: 1 });
     const t1 = await adapter.getSnapshot('T1');
     // 去报销：整单确认之后开始写入，服务端自己探测到登录后自动写完。
@@ -76,7 +78,7 @@ describe('任务列表', () => {
     render(<App adapter={adapter} />);
     const row = await rowOf('2026-08 上海出差（产品评审）');
     expect(within(row).getByText('对账中').closest('[data-tone]')?.getAttribute('data-tone')).toBe('warning');
-    expect(within(row).queryByText('10/10 草稿交接')).toBeNull();
+    expect(within(row).queryByText('10/10 单据交接')).toBeNull();
     expect(within(row).getByRole('link', { name: '查看对账' }).getAttribute('href')).toBe('#/task/T1/reconcile');
   });
 
@@ -155,10 +157,10 @@ describe('任务列表', () => {
     expect(screen.queryByText('2026-08 上海出差（产品评审）')).toBeNull();
     expect(screen.getByText('2026-07 深圳客户拜访')).toBeTruthy();
     fireEvent.click(within(filters).getByRole('tab', { name: '全部 3' }));
-    fireEvent.change(screen.getByRole('searchbox', { name: '搜索任务名或草稿号' }), { target: { value: 'BX20260702' } });
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索任务名或单据编号' }), { target: { value: 'BX20260702' } });
     expect(screen.getByText('2026-06 北京培训')).toBeTruthy();
     expect(screen.queryByText('2026-07 深圳客户拜访')).toBeNull();
-    fireEvent.change(screen.getByRole('searchbox', { name: '搜索任务名或草稿号' }), { target: { value: '不存在' } });
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索任务名或单据编号' }), { target: { value: '不存在' } });
     expect(screen.getByText('没有符合条件的任务。')).toBeTruthy();
   });
 
@@ -219,6 +221,6 @@ describe('任务页面骨架', () => {
     const bar = screen.getByRole('region', { name: '任务进度' });
     expect(within(bar).getByText('写入结果待对账。')).toBeTruthy();
     // 10 阶段名只在任务列表徽标上，步骤条不再重复。
-    expect(within(bar).queryByText('9/10 保存报销草稿')).toBeNull();
+    expect(within(bar).queryByText('9/10 填写报销单')).toBeNull();
   });
 });

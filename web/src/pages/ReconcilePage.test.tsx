@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { App } from '../App';
 import { AppProvider } from '../adapter/context';
 import { AppStore } from '../adapter/store';
-import { HUMAN_REVIEW_NOTICE, RECONCILE_BUCKETS, type ReconcileBucket, type TaskStage } from '@baox/contract';
+import { HUMAN_REVIEW_NOTICE, RECONCILE_BUCKETS, type ReconcileBucket, REFILL_COPY, type TaskStage } from '@baox/contract';
 import { reconcileVerdict } from '../mock/fixtures/erp';
 import { t2Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
@@ -15,9 +15,9 @@ function renderAt(hash: string, seed: TaskStage | null = null) {
 }
 
 // 直接渲染对账页：服务端给出的对账判定换成某个 bucket 的判定，页面只渲染允许的处置。
-function renderVerdict(bucket: ReconcileBucket, savedConsistent: boolean) {
+function renderVerdict(bucket: ReconcileBucket, savedConsistent: boolean, billNo: string | null = null) {
   const base = t2Snapshot();
-  const snapshot = { ...base, reconcile: { ...base.reconcile, ...reconcileVerdict(bucket, savedConsistent) } };
+  const snapshot = { ...base, reconcile: { ...base.reconcile, ...reconcileVerdict(bucket, savedConsistent, billNo), draftNo: billNo ?? base.reconcile.draftNo } };
   const store = new AppStore(createMockAdapter({ seed: null, fault: null }), { validate: false });
   render(
     <AppProvider store={store}>
@@ -32,16 +32,51 @@ const actionButtons = () =>
     .map((button) => button.textContent);
 
 describe('对账', () => {
-  // 内核 classifyReconciliation：只有三种情况转人工（未保存·已导入未写明细、不自洽、身份不成立或逐行不一致的已保存）。
-  const CASES: ReadonlyArray<readonly [ReconcileBucket, boolean, string, boolean]> = [
-    ['未知', true, '重新对账', false],
-    ['未保存·导入前', true, '重新对账', false],
-    ['未保存·已导入未写明细', true, '转人工', true],
-    ['未保存·就绪待保存', true, '重新对账', false],
-    ['已保存', true, '重新对账', false],
-    ['已保存', false, '转人工', true],
-    ['不自洽', true, '转人工', true],
+  // 内核 classifyReconciliation：只有两种情况转人工（不自洽、身份不成立或逐行不一致的已保存）。
+  // 未保存·已导入未写明细什么都没有落库：建议的处置是原地等待，出路是「重新去报销」和「转人工」。
+  const CASES: ReadonlyArray<readonly [ReconcileBucket, boolean, string, boolean, readonly string[]]> = [
+    ['未知', true, '重新对账', false, ['重新对账', '转人工']],
+    ['未保存·导入前', true, '重新对账', false, ['重新对账', '转人工']],
+    ['未保存·已导入未写明细', true, REFILL_COPY.button, false, [REFILL_COPY.button, '转人工']],
+    ['未保存·就绪待保存', true, '重新对账', false, ['重新对账', '转人工']],
+    ['已保存', true, '重新对账', false, ['重新对账', '转人工']],
+    ['已保存', false, '转人工', true, ['转人工']],
+    ['不自洽', true, '转人工', true, ['转人工']],
   ];
+
+  test('未保存·已导入未写明细：「重新去报销」在吸底栏里，点了之后回到去报销页', async () => {
+    const adapter = createMockAdapter({ seed: null, fault: null, erpStepMs: 5 });
+    const base = t2Snapshot();
+    const snapshot = {
+      ...base,
+      reconcile: { ...base.reconcile, ...reconcileVerdict('未保存·已导入未写明细'), draftNo: null },
+    };
+    const store = new AppStore(adapter, { validate: false });
+    render(
+      <AppProvider store={store}>
+        <ReconcilePage snapshot={snapshot} />
+      </AppProvider>,
+    );
+    const bar = screen.getByRole('region', { name: '处置' });
+    expect(within(bar).getByText(/重新去报销会重开一张单据/)).toBeTruthy();
+    expect(within(bar).getByRole('button', { name: REFILL_COPY.button }).textContent).toBe('重新去报销');
+    expect(screen.queryByRole('button', { name: '重新对账' })).toBeNull();
+  });
+
+  test('服务端没有给出这条出路时，页面不画「重新去报销」', () => {
+    renderVerdict('未知', true);
+    expect(screen.queryByRole('button', { name: REFILL_COPY.button })).toBeNull();
+  });
+
+  // 「重新去报销」的闸门是读数，不是格子：同一个 bucket，报销系统里一旦读到单据编号就说明员工自己保存过，
+  // 重新导入会动到一张真实存在的单据，出路收回、只剩转人工（服务端 fill-state.ts reconcileView 同此）。
+  test('未保存·已导入未写明细：读到单据编号之后不再给「重新去报销」，只剩转人工', () => {
+    renderVerdict('未保存·已导入未写明细', true, 'BX20260718-0142');
+    expect(screen.getByTestId('reconcile-draft-no').textContent).toBe('BX20260718-0142');
+    expect(screen.queryByRole('button', { name: REFILL_COPY.button })).toBeNull();
+    expect(actionButtons()).toEqual(['转人工']);
+    expect(screen.getByTestId('human-review').textContent).toBe(HUMAN_REVIEW_NOTICE);
+  });
 
   test('页头没有孤立的「返回任务列表」：回任务列表走顶栏', async () => {
     renderAt('#/task/T2/reconcile');
@@ -54,13 +89,14 @@ describe('对账', () => {
     expect(new Set(CASES.map(([bucket]) => bucket))).toEqual(new Set(RECONCILE_BUCKETS));
   });
 
-  for (const [bucket, consistent, suggested, humanReview] of CASES) {
-    // 建议转人工时只能转人工；建议原地等待时两个都能做（与服务端 reconcileView 的 allowedActions 一致）。
-    const expected = humanReview ? ['转人工'] : ['重新对账', '转人工'];
+  for (const [bucket, consistent, suggested, humanReview, expected] of CASES) {
+    // 页面只渲染服务端允许的处置（与服务端 reconcileView 的 allowedActions 一致）。
     test(`${bucket}${bucket === '已保存' ? (consistent ? '（一致）' : '（逐行不一致）') : ''}：建议「${suggested}」，可做 ${expected.join(' / ')}${humanReview ? '，显示人工核对固定句' : ''}`, () => {
       renderVerdict(bucket, consistent);
       expect(screen.getByTestId('reconcile-bucket').textContent).toBe(bucket);
       expect(actionButtons()).toEqual(expected);
+      // 按钮永远叫「重新去报销」，从不叫「重试」；服务端没给这条出路时页面也不画它。
+      expect(actionButtons().some((label) => label?.includes('重试'))).toBe(false);
       if (humanReview) {
         expect(screen.getByTestId('human-review').textContent).toBe(HUMAN_REVIEW_NOTICE);
         expect(screen.queryByRole('button', { name: '重新对账' })).toBeNull();
@@ -87,13 +123,13 @@ describe('对账', () => {
     expect(screen.getByRole('list', { name: 'No.3 原因' }).textContent).toContain('任务第 3 行');
   });
 
-  test('T2：顶部只有一条错误通知（写入结果不确定，副标题是中止原因），没有「当前对账状态」节标题；摘要条显示快照里的草稿号与一致、不一致行数；转人工在吸底栏，固定句写在后果说明里', async () => {
+  test('T2：顶部只有一条错误通知（写入结果不确定，副标题是中止原因），没有「当前对账状态」节标题；摘要条显示快照里的单据编号与一致、不一致行数；转人工在吸底栏，固定句写在后果说明里', async () => {
     renderAt('#/task/T2/reconcile');
     await screen.findByRole('heading', { name: '对账' });
     const alerts = screen.getAllByRole('alert');
     expect(alerts).toHaveLength(1);
     expect(alerts[0]?.textContent).toContain('写入结果不确定');
-    expect(alerts[0]?.textContent).toContain('保存草稿后回读超时，写入结果不确定。');
+    expect(alerts[0]?.textContent).toContain('严格回读时报销系统没有在限定时间内返回结果，写入结果不确定。');
     expect(screen.queryByRole('heading', { name: '当前对账状态' })).toBeNull();
     expect(screen.getByTestId('reconcile-draft-no').textContent).toBe('BX20260718-0142');
     expect(screen.getByTestId('reconcile-banner').textContent).toBe('报销系统中存在草稿 BX20260718-0142，5 行明细中 4 行一致，1 行不一致。');
@@ -110,21 +146,22 @@ describe('对账', () => {
     expect(screen.getByText('已转人工处理，应用不再写入报销系统。')).toBeTruthy();
   });
 
-  test('?seed=reconcile（T1 保存步中止，未知 ⇒ 原地等待）：只有「重新对账」；读到草稿且逐行一致，进入完成页并显示固定句', async () => {
+  test('?seed=reconcile（T1 交接步中止，未知 ⇒ 原地等待）：只有「重新对账」；读到填好、逐行一致的单据即交接完成，完成页显示固定句且没有单据编号', async () => {
     renderAt('#/task/T1/reconcile', 'reconcile');
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
-    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/保存草稿时报销系统没有在限定时间内返回结果/)).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/交接单据时报销系统没有在限定时间内返回结果/)).toBeTruthy();
     expect(screen.queryByRole('heading', { name: '当前对账状态' })).toBeNull();
     expect(screen.getByTestId('reconcile-bucket').textContent).toBe('未知');
-    expect(screen.getByTestId('reconcile-draft-no').textContent).toBe('尚未读到草稿');
+    expect(screen.getByTestId('reconcile-draft-no').textContent).toBe('尚未读到单据编号');
     expect(actionButtons()).toEqual(['重新对账', '转人工']);
     expect(screen.queryByTestId('human-review')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '重新对账' }));
     expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();
     expect(screen.getByText('明细 9/9 一致')).toBeTruthy();
-    expect(screen.getByTestId('save-completed').textContent).toBe('报销草稿已保存。请打开报销系统检查，是否提交由你决定。');
-    expect(screen.getByText(/重新对账：报销系统中已有草稿 BX20260911-0173/)).toBeTruthy();
+    expect(screen.getByTestId('handover-completed').textContent).toBe('报销单已经按你确认的明细填好，还没有保存。请在报销系统里逐行核对，由你自己点「保存」。保存时如果弹出「字段必录提示」或「处理结果」，说明有字段没有真正写进报销系统：回到这里重新去报销这一项，不要手工补填。保存成功后回到这里再对一次账，这是最后一步。');
+    // 交接时单据还没有保存：完成页说「尚无」，而不是端出一个编号。
+    expect(screen.getByTestId('draft-no').textContent).toBe('尚无');
   });
 
   test('服务端也只接受允许的处置：转人工的 bucket 拒绝重新对账，原地等待的 bucket 两种都接受', async () => {

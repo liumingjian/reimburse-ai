@@ -288,5 +288,6 @@ export const ACTION_NAMES = [
   'cancel-erp-write',
   'reconcile',
   'hand-off',
+  'refill',
 ] as const;
 export type ActionName = (typeof ACTION_NAMES)[number];

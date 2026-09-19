@@ -621,7 +621,7 @@ export type ProjectAssignment = z.infer<typeof ProjectAssignmentSchema>;
 
 // 写入报销系统的进度：步骤、标题与说明都由服务端给出，页面按顺序渲染。步骤划分照内核 erp-write 的阶段：
 // 启动浏览器、登录、打开空白报销单（navigate + preflight）、选择不生成费用明细（invoice_assistant）、导入发票（invoice_import）、
-// 收票回读（receipt_readback）、填写明细（preview + fill，逐值写入回读）、保存草稿（save）、严格回读。
+// 收票回读（receipt_readback）、填写明细（preview + fill，逐值写入回读）、交接单据（handover，严格回读通过后交给员工保存）。
 // 登录步处于 waiting 时，当前待答 step 是 erp_login；「我已登录，继续」只是请服务端再探测一次，探测不到就留在原地并给出 loginNotice。
 export const ErpStepSchema = z.object({
   key: z.string().min(1),
@@ -630,6 +630,15 @@ export const ErpStepSchema = z.object({
   status: z.enum(['todo', 'running', 'waiting', 'done', 'failed']),
 });
 export type ErpStep = z.infer<typeof ErpStepSchema>;
+
+// The hand-over step (交接单据, hand over the bill) closes 去报销: baox fills the form, runs the strict read-back and
+// permanently releases the 报销系统 automation control. It never clicks 保存 (ADR-0028). The server's display step
+// list and the web mock's step list both read this constant, so the two cannot drift apart.
+export const ERP_HANDOVER_STEP_COPY = {
+  key: 'handover',
+  title: '交接单据',
+  description: '不点保存、不提交审批：严格回读逐行通过后，把填好的报销单交给你，由你自己点「保存」。',
+} as const;
 
 // 这次写入登录的报销系统账号与账套：按尝试记录、在完成页显示，从不与应用账号比对（ADR-0016）。
 export const ErpAccountViewSchema = z.object({
@@ -688,12 +697,22 @@ export type Readback = z.infer<typeof ReadbackSchema>;
 
 export const RECONCILE_ACTIONS = ['原地等待', '转人工'] as const;
 // 建议处置的代码：页面按代码分支，按 action（文案）显示。
-export const RECONCILE_ACTION_CODES = ['wait', 'hand_off'] as const;
+// 只有两种处置（原地等待、转人工）；代码比处置多一个，因为「原地等待」下有两条出路：
+// wait = 再对一次账（只读），refill = 重新去报销（重开一张单据再走一遍）。两者的处置文案都是原地等待。
+export const RECONCILE_ACTION_CODES = ['wait', 'hand_off', 'refill'] as const;
 export type ReconcileActionCode = (typeof RECONCILE_ACTION_CODES)[number];
 export const RECONCILE_ACTION_LABELS: Readonly<Record<ReconcileActionCode, (typeof RECONCILE_ACTIONS)[number]>> = {
   wait: '原地等待',
   hand_off: '转人工',
+  refill: '原地等待',
 };
+
+// 「重新去报销」这条出路的页面文案。按钮永远叫「重新去报销」，不叫「重试」：它不是把同一次写入再做一遍，
+// 而是重开一张单据从头走一遍。
+export const REFILL_COPY = {
+  button: '重新去报销',
+  consequence: '重新去报销会重开一张单据，把发票再导一次、明细再填一遍，填好后仍然由你自己保存。',
+} as const;
 
 // 对账中断点：内核 classifyReconciliation 的 6 类（erpreconcile.mjs BUCKETS），逐字照抄。
 export const RECONCILE_BUCKETS = ['未知', '未保存·导入前', '未保存·已导入未写明细', '未保存·就绪待保存', '已保存', '不自洽'] as const;
@@ -703,14 +722,16 @@ export type ReconcileBucket = z.infer<typeof ReconcileBucketSchema>;
 // human_review 的固定句（user-interaction-contract.md:64，内核 handed_off_recover）：转人工的对账结果一律显示这句。
 export const HUMAN_REVIEW_NOTICE = '当前报销已暂停，材料和状态已保留。请在报销系统中核对；如无法判断，请联系报销管理员。';
 
-// 写入结果不确定后的对账：一律停在 reconcile 阶段。只有「已保存且逐行一致」才是 done（草稿已交接）；
-// 严格回读不一致的草稿没有被证明与确认过的明细一致，所以也停在对账，由用户决定原地等待还是转人工。
+// 写入结果不确定后的对账：一律停在 reconcile 阶段。只有逐行一致才是 done（ERP 单据已交接）；
+// 严格回读不一致的单据没有被证明与确认过的明细一致，所以也停在对账，由用户决定原地等待还是转人工。
 // bucket 与 action / actionCode 是内核判定（bucket 与处置的对应照内核：未知、未保存·导入前、未保存·就绪待保存、
 // 身份成立的已保存 ⇒ 原地等待；未保存·已导入未写明细、不自洽、身份不成立或逐行不一致的已保存 ⇒ 转人工）。
 // allowedActions 是服务端允许的处置，页面只渲染这些按钮（原地等待 = 重新对账，只读；转人工 = 终止后续写入）。
 // action 是建议的处置，allowedActions 是可以做的处置：建议原地等待时也一直可以转人工（两个按钮），
 // 建议转人工时只能转人工（一个按钮）。
 // humanReview 为真时（转人工的结果）页面显示 HUMAN_REVIEW_NOTICE，且不给「重新对账」。
+// actionCode 可以是 refill（未保存·已导入未写明细、且报销系统里还没有单据编号）：建议的处置仍然是原地等待，
+// 出路是「重新去报销」和「转人工」。给了这条出路就不是转人工的结果，humanReview 一定为假。
 // status：pending 等待用户处置；waiting 已重新对账、原地等待；handed_off 已转人工（终态）。
 // rows 是严格回读逐行比对（与 readback.rows 相同）；reasons 是不属于某一行的原因（逐行原因在 rows[].reasons）。
 // 写入中止时报销系统自己的原话（逐字，来自报销系统弹窗与发票助手）和裁剪截图（服务端地址，没有时为 null）。
@@ -737,11 +758,17 @@ export const ReconcileSchema = z.object({
 }).refine((reconcile) => !(reconcile.humanReview && reconcile.allowedActions.includes('wait')), {
   message: 'humanReview 为真时 allowedActions 不能含 wait（转人工之后不再重新对账）',
   path: ['allowedActions'],
+}).refine((reconcile) => !(reconcile.humanReview && reconcile.allowedActions.includes('refill')), {
+  message: 'humanReview 为真时 allowedActions 不能含 refill（给了重新去报销这条出路，就不是转人工的结果）',
+  path: ['allowedActions'],
 });
 export type Reconcile = z.infer<typeof ReconcileSchema>;
 
-// 完成页的固定句（user-interaction-contract.md:70）：严格回读逐行一致、草稿保存成功时显示，逐字不改。
-export const SAVE_COMPLETED_NOTICE = '报销草稿已保存。请打开报销系统检查，是否提交由你决定。';
+// 完成页的固定句（user-interaction-contract.md:70）：严格回读逐行一致、单据交接给员工时显示，逐字不改。
+// 三件事缺一不可（ADR-0028）：单据还没有被保存、由员工自己点「保存」、保存后回来对账；
+// 保存时报销系统弹出「字段必录提示」或「处理结果」，说明值没有进入报销系统的业务模型，只能重新去报销，不能手工补填。
+export const HANDOVER_COMPLETED_NOTICE =
+  '报销单已经按你确认的明细填好，还没有保存。请在报销系统里逐行核对，由你自己点「保存」。保存时如果弹出「字段必录提示」或「处理结果」，说明有字段没有真正写进报销系统：回到这里重新去报销这一项，不要手工补填。保存成功后回到这里再对一次账，这是最后一步。';
 
 // ---- 报销信息核对与报销材料准备 ----
 

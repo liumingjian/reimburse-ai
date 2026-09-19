@@ -67,7 +67,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
           hideCloseButton
           statusIconDescription="注意"
           title="进行中，请不要关闭专用浏览器窗口。"
-          subtitle="只保存草稿，不提交审批；中途任何不一致都会停下来对账。"
+          subtitle="应用不会替你点保存，也不提交审批；中途任何不一致都会停下来对账。"
         />
       ) : null}
 
@@ -125,7 +125,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
               statusIconDescription="成功"
             >
               <span>
-                草稿 <span className="app-code">{erp.draftNo}</span> 已保存，严格回读：{snapshot.readback.summary}。
+                报销单已填好并交接给你，严格回读：{snapshot.readback.summary}。请到报销系统里核对后自己点「保存」。
               </span>
             </InlineNotification>
             <Button href={taskHash(taskId, 'done')}>查看完成结果</Button>

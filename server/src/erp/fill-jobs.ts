@@ -12,7 +12,11 @@ import { taskJudge, type FrozenJob } from './fill-plan';
 import { writeAttempt, writeEvent } from './jobs';
 import { ExecutorEventSchema, type ErpAccount, type ExecutorChannel, type ExecutorEvent, type FillPlan, type ResultEvent } from './protocol';
 
-export type FillTrigger = 'start' | 'confirm_login';
+// What started this run of the fill job, recorded on `erp_job.trigger` so the audit trail can tell them apart:
+// `start` is 去报销, `confirm_login` is 我已登录，继续, `refill` is 重新去报销 (the recovery after an import that was
+// never saved, ADR-0027). `refill` runs exactly like `start` — a fresh plan on a fresh 新增单 — and differs only in
+// what it is allowed to start from, which `tasks.ts` decides.
+export type FillTrigger = 'start' | 'confirm_login' | 'refill';
 
 // `confirm_login` is the user's 我已登录，继续: the executor probes the login once and never polls for it.
 export type FillExecutor = (plan: FillPlan, channel: ExecutorChannel, options: { trigger: FillTrigger }) => Promise<ResultEvent>;
@@ -31,11 +35,12 @@ export const unavailableExecutor: FillExecutor = async (_plan, channel) => {
 
 /**
  * The server's own guard (ADR-0014: any loss after `attempt_started` is reconcile, never a replay): once an attempt
- * of the job is durable, only `saved` or `unknown` may end it. An executor that believes nothing was written (e.g.
- * its acknowledgement failed after the server persisted the attempt) still ends in `unknown`.
+ * of the job is durable, only a terminal success (`handed_over`, or the legacy `saved`) or `unknown` may end it. An
+ * executor that believes nothing was written (e.g. its acknowledgement failed after the server persisted the attempt)
+ * still ends in `unknown`.
  */
 export async function afterAttempts(tx: Db, jobId: string, event: ResultEvent): Promise<ResultEvent> {
-  if (event.status === 'saved' || event.status === 'unknown') return event;
+  if (event.status === 'handed_over' || event.status === 'saved' || event.status === 'unknown') return event;
   const attempt = await tx.selectFrom('erp_attempt').select('attempt_id').where('job_id', '=', jobId).executeTakeFirst();
   if (!attempt) return event;
   const message = `已开始写入报销系统之后停止，写入结果不确定：${event.message ?? event.code ?? ''}`;

@@ -41,7 +41,7 @@ describe('kernel parity of the fill job', () => {
     });
 
     const strip = (stage: string) => JSON.parse(JSON.stringify(observed[stage] ?? null));
-    for (const stage of ['after_import', 'after_fill', 'before_save', 'after_save']) {
+    for (const stage of ['after_import', 'after_fill', 'before_hand_over']) {
       expect(strip(stage), stage).toEqual(golden.readbacks[stage]);
     }
     expect(previewDigest).toBe(golden.previewDigest);

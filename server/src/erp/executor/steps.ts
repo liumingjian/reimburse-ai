@@ -1,6 +1,7 @@
 // The mutating ERP steps over CDP, plus #32's error capture.
 // Origin: 50931a3:kernel/src/erpwrite-cdp.mjs (openNewReimbursement, openInvoiceAssistant, uploadAndImportInvoices,
-// addDetailRow, saveReimbursement, closeInvoiceAssistant) and 50931a3:kernel/src/invoice-upload.mjs.
+// addDetailRow, closeInvoiceAssistant) and 50931a3:kernel/src/invoice-upload.mjs. The kernel's saveReimbursement has
+// no counterpart here: ADR-0028 leaves the 保存 (save) click to the employee, so this module cannot perform it.
 // Kernel waits are kept as upper bounds; `pace` shortens them on the fake ERP.
 
 import { autoAttach, clickAt, evalIn, screenshot, type CdpSession, type ChildTargets } from './cdp';
@@ -191,12 +192,6 @@ export async function uploadAndImportInvoices(page: WritePage, paths: string[], 
 /** Add one detail row through the toolbar (新增行). Part of the fill mutation. */
 export async function addDetailRow(page: WritePage) {
   await clickCss(page, page.session, 'a[id$="tbNewList"]', '新增明细行');
-  return { ok: true };
-}
-
-/** THE save mutation: one click on 保存. Never retried. */
-export async function saveReimbursement(page: WritePage) {
-  await clickText(page, page.session, '保存', { timeoutMs: 15_000 });
   return { ok: true };
 }
 

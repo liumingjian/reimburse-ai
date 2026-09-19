@@ -1,18 +1,18 @@
 import { ERP_ACTION_ERRORS, type AppAdapter, type TaskSnapshot } from '@baox/contract';
 import type { MockBus } from '../bus';
-import { ERP_STEP_INDEX, applyAbortAtSave, applyErpDone, applyReadbackMismatch, erpSteps, handedOffBanner, loginNotDetected, reconcileVerdict } from '../fixtures/erp';
+import { ERP_STEP_INDEX, applyAbortAtHandover, applyErpDone, applyReadbackMismatch, emptyReconcile, erpSteps, handedOffBanner, loginNotDetected } from '../fixtures/erp';
 import { T1_DRAFT_NO } from '../fixtures/tasks';
 
 // ERP 填报（「去报销」即开始：定时推进、登录交接、登录后自动写入）、严格回读与对账（mock 服务端的角色）。
-// 没有「开始填报」：整单确认之后点「去报销」启动浏览器，检测到登录就自动导入、写入、保存并回读（内核 erp_write_pending 自动执行）。
-// 保存与严格回读的结局按故障决定：erp-write-aborted 在保存步中止（停在对账）；readback-mismatch 停在完成页等待转人工。
+// 没有「开始填报」：整单确认之后点「去报销」启动浏览器，检测到登录就自动导入、写入、回读并交接（内核 erp_write_pending 自动执行）。
+// 严格回读与交接的结局按故障决定：erp-write-aborted 在交接步中止（停在对账）；readback-mismatch 停在完成页等待转人工。
 
 const DEFAULT_ERP_STEP_MS = 300;
 const DEFAULT_ERP_LOGIN_AUTO_MS = 2500;
 // `?fault=erp-login-missing`：前两次「我已登录，继续」都探测不到登录，第三次才检测到；该故障下服务端不会自己探测到。
 const LOGIN_MISSING_ATTEMPTS = 2;
 
-export type ErpFlow = Pick<AppAdapter, 'startErpWrite' | 'confirmLogin' | 'cancelErpWrite' | 'reconcile' | 'handOff'>;
+export type ErpFlow = Pick<AppAdapter, 'startErpWrite' | 'confirmLogin' | 'cancelErpWrite' | 'reconcile' | 'handOff' | 'refill'>;
 
 export function createErpFlow(bus: MockBus): ErpFlow {
   const { options } = bus;
@@ -44,7 +44,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     }, erpLoginAutoMs);
   };
 
-  // 探测到登录：从打开空白报销单开始逐步推进（选择不生成费用明细、导入发票、收票回读、填写明细、保存草稿、严格回读）。
+  // 探测到登录：从打开空白报销单开始逐步推进（选择不生成费用明细、导入发票、收票回读、填写明细、严格回读、交接单据）。
   const loginDetected = (snapshot: TaskSnapshot, run: number) => {
     const taskId = snapshot.task.taskId;
     snapshot.erp.status = 'running';
@@ -54,21 +54,20 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     setTimeout(() => finishErpStep(taskId, run, ERP_STEP_INDEX.navigate), erpStepMs);
   };
 
-  // 第 index 步结束：保存步在 erp-write-aborted 下中止；严格回读按 readback-mismatch 决定一致或停在完成页等待转人工。
+  // 第 index 步结束：严格回读按 readback-mismatch 决定一致或停在完成页等待转人工；交接步在 erp-write-aborted 下中止。
   const finishErpStep = (taskId: string, run: number, index: number) => {
     const current = bus.draft(taskId);
     if (!erpRunLive(current, run, 'running')) return;
     current.task.updatedAt = bus.now();
-    if (index === ERP_STEP_INDEX.save && options.fault === 'erp-write-aborted') {
-      applyAbortAtSave(current);
+    if (index === ERP_STEP_INDEX.readback && options.fault === 'readback-mismatch') {
+      applyReadbackMismatch(current, current.erp.draftNo ?? T1_DRAFT_NO);
       bus.push(current);
       return;
     }
-    if (index === ERP_STEP_INDEX.save) current.erp.draftNo = T1_DRAFT_NO;
-    if (index === ERP_STEP_INDEX.readback) {
-      const draftNo = current.erp.draftNo ?? T1_DRAFT_NO;
-      if (options.fault === 'readback-mismatch') applyReadbackMismatch(current, draftNo);
-      else applyErpDone(current, draftNo);
+    if (index === ERP_STEP_INDEX.handover) {
+      if (options.fault === 'erp-write-aborted') applyAbortAtHandover(current);
+      // 交接：单据填好了但没有保存，所以没有单据编号（服务端 handed_over 同此）。
+      else applyErpDone(current);
       bus.push(current);
       return;
     }
@@ -129,7 +128,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         return snapshot;
       }),
     // 重新对账（原地等待）：只读报销系统再判定一次，只在对账结果允许原地等待时接受。
-    // 保存步中止的任务读到草稿且逐行一致 ⇒ 完成；否则留在原地，结果写进横幅。
+    // 交接步中止的任务读到单据且逐行一致 ⇒ 单据交接完成；否则留在原地，结果写进横幅。
     reconcile: async (taskId, stepToken) =>
       bus.withStep(taskId, stepToken, (snapshot) => {
         if (snapshot.step.kind !== 'reconcile') return { error: { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling } };
@@ -137,22 +136,30 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         const count = (reconcileCounts.get(taskId) ?? 0) + 1;
         reconcileCounts.set(taskId, count);
         snapshot.task.updatedAt = bus.now();
+        // 读到的是一张填好、待员工保存、逐行一致的单据（对账中断点「未保存·就绪待保存」）：这就是单据交接完成，
+        // 不是一个中断点。服务端在 fill-state.ts 里把它提升为 handed_over，对账区随之清空；mock 照做。
         if (snapshot.reconcile.rows.length === 0 && snapshot.lines.length > 0) {
-          applyErpDone(snapshot, T1_DRAFT_NO);
-          snapshot.reconcile = {
-            ...snapshot.reconcile,
-            ...reconcileVerdict('已保存'),
-            status: 'none',
-            allowedActions: [],
-            banner: `重新对账：报销系统中已有草稿 ${T1_DRAFT_NO}，${snapshot.readback.rows.length} 行明细逐行一致。`,
-            draftNo: T1_DRAFT_NO,
-            reasons: [],
-          };
+          applyErpDone(snapshot);
+          snapshot.reconcile = emptyReconcile();
           return snapshot;
         }
         snapshot.reconcile.status = 'waiting';
-        snapshot.reconcile.banner = `已重新对账（第 ${count} 次）：还没有读到可以确认的草稿。你在报销系统中查看后可以再次对账。`;
+        snapshot.reconcile.banner = `已重新对账（第 ${count} 次）：还没有读到可以确认的单据。你在报销系统中查看后可以再次对账。`;
         snapshot.step = { kind: 'reconcile', stepToken: `tok-${taskId}-reconcile-${count}` };
+        return snapshot;
+      }),
+    // 重新去报销：发票已导入、明细还没写、报销系统里还没有单据编号时的那条出路。重开一张单据，从头再走一遍去报销。
+    refill: async (taskId, stepToken) =>
+      bus.withStep(taskId, stepToken, (snapshot) => {
+        if (snapshot.step.kind !== 'reconcile') return { error: { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling } };
+        if (!snapshot.reconcile.allowedActions.includes('refill')) return { error: { code: 'action_not_allowed', message: ERP_ACTION_ERRORS.notAllowed } };
+        const run = newRun(taskId);
+        snapshot.stage = 'erp';
+        snapshot.erp = { status: 'running', steps: erpSteps(ERP_STEP_INDEX.browser, 'running'), draftNo: null, abortReason: null, loginNotice: null, erpAccount: null };
+        snapshot.reconcile = emptyReconcile();
+        snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-erp-run-${run}` };
+        snapshot.task.updatedAt = bus.now();
+        setTimeout(() => reachLogin(taskId, run), erpStepMs);
         return snapshot;
       }),
     // 转人工：终止后续写入，只在对账结果允许转人工时接受；任务停在原阶段（对账页或回读不一致的完成页）并标记为已转人工（终态）。

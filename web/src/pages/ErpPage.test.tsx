@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { App } from '../App';
 import { createMockAdapter, type Fault } from '../mock/mock-adapter';
 
-const STEP_TITLES = ['启动浏览器', '登录', '打开空白报销单', '选择不生成费用明细', '导入发票', '收票回读', '填写明细', '保存草稿', '严格回读'];
+const STEP_TITLES = ['启动浏览器', '登录', '打开空白报销单', '选择不生成费用明细', '导入发票', '收票回读', '填写明细', '严格回读', '交接单据'];
 
 // ?seed=erp：已在整单确认页点了「去报销」，浏览器已启动，登录步在等待。没有「开始填报」。
 function renderErp(fault: Fault | null = null, erpLoginAutoMs = 60_000) {
@@ -18,7 +18,7 @@ const stepItem = (title: string) => within(progress()).getByRole('listitem', { n
 const loginButton = () => screen.findByRole('button', { name: '我已登录，继续' });
 
 async function waitingLogin() {
-  await screen.findByRole('heading', { name: '保存报销草稿' });
+  await screen.findByRole('heading', { name: '填写报销单' });
   return loginButton();
 }
 
@@ -42,7 +42,7 @@ describe('ERP 填报', () => {
     expect(screen.queryByRole('link', { name: '返回确认页' })).toBeNull();
   });
 
-  test('九个步骤（含选择不生成费用明细、收票回读）按顺序可见、没有「开始填报」；登录步有「我已登录，继续」并回传 stepToken；登录后自动写完，完成页显示固定句与逐条回读 9/9 一致', async () => {
+  test('九个步骤（含选择不生成费用明细、收票回读、交接单据）按顺序可见、没有「开始填报」；登录步有「我已登录，继续」并回传 stepToken；登录后自动写完，完成页显示固定句与逐条回读 9/9 一致', async () => {
     const adapter = renderErp();
     const confirmLogin = vi.spyOn(adapter, 'confirmLogin');
     const button = await waitingLogin();
@@ -61,10 +61,11 @@ describe('ERP 填报', () => {
 
     window.location.hash = '#/task/T1/done';
     expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();
-    expect(screen.getByTestId('draft-no').textContent).toBe('BX20260911-0173');
+    // ADR-0028：交接时单据还没有保存，所以完成页没有单据编号。
+    expect(screen.getByTestId('draft-no').textContent).toBe('尚无');
     expect(screen.getByTestId('erp-account').textContent).toBe('林颂宜（lin.songyi）· 账套 安图特科技');
     expect(screen.getByText('明细 9/9 一致')).toBeTruthy();
-    expect(screen.getByTestId('save-completed').textContent).toBe('报销草稿已保存。请打开报销系统检查，是否提交由你决定。');
+    expect(screen.getByTestId('handover-completed').textContent).toBe('报销单已经按你确认的明细填好，还没有保存。请在报销系统里逐行核对，由你自己点「保存」。保存时如果弹出「字段必录提示」或「处理结果」，说明有字段没有真正写进报销系统：回到这里重新去报销这一项，不要手工补填。保存成功后回到这里再对一次账，这是最后一步。');
     expect(screen.queryByTestId('human-review')).toBeNull();
     const table = screen.getByRole('table', { name: '逐条回读' });
     const bodyRows = within(table).getAllByRole('row').filter((row) => row.closest('tbody'));
@@ -95,7 +96,7 @@ describe('ERP 填报', () => {
     const start = vi.spyOn(adapter, 'startErpWrite');
     render(<App adapter={adapter} />);
     fireEvent.click(await screen.findByRole('button', { name: '去报销' }));
-    expect(await screen.findByRole('heading', { name: '保存报销草稿' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: '填写报销单' })).toBeTruthy();
     expect(start).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('button', { name: '开始填报' })).toBeNull();
     expect(await screen.findByRole('link', { name: '查看完成结果' })).toBeTruthy();
@@ -119,15 +120,15 @@ describe('ERP 填报', () => {
     fireEvent.click(await waitingLogin());
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
     expect(window.location.hash).toBe('#/task/T1/reconcile');
-    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/保存草稿时报销系统没有在限定时间内返回结果/)).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/交接单据时报销系统没有在限定时间内返回结果/)).toBeTruthy();
     expect(screen.getByRole('button', { name: '重新对账' })).toBeTruthy();
   });
 
   test('直接打开已中止任务的 ERP 填报页不跳转，保留「进入对账」入口', async () => {
     window.location.hash = '#/task/T1/erp';
     render(<App adapter={createMockAdapter({ seed: 'reconcile', fault: null })} />);
-    expect(await screen.findByRole('heading', { name: '保存报销草稿' })).toBeTruthy();
-    expect(stepItem('保存草稿').textContent).toContain('已中止');
+    expect(await screen.findByRole('heading', { name: '填写报销单' })).toBeTruthy();
+    expect(stepItem('交接单据').textContent).toContain('已中止');
     expect(screen.getByRole('alert').textContent).toContain('写入报销系统已停止');
     expect(screen.getByRole('link', { name: '进入对账' }).getAttribute('href')).toBe('#/task/T1/reconcile');
   });

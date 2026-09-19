@@ -426,6 +426,8 @@ const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
   // 对账 (read-only, 409 `erp_in_use` while another task holds the lease) and 转人工 (terminal).
   reconcile: taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.reconcile(id, stepToken)),
   'hand-off': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.handOff(id, stepToken)),
+  // 重新去报销 (ADR-0027): a new fill job on the same task, offered only by the 对账 verdict that allows it.
+  refill: taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.refill(id, stepToken)),
 };
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {

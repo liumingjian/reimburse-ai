@@ -1,4 +1,5 @@
 import {
+  ERP_HANDOVER_STEP_COPY,
   HUMAN_REVIEW_NOTICE,
   READBACK_FIELD_LABELS,
   RECONCILE_ACTION_LABELS,
@@ -25,11 +26,12 @@ export const ERP_STEP_DEFS: ReadonlyArray<Pick<ErpStep, 'key' | 'title' | 'descr
   { key: 'import', title: '导入发票', description: '按格式分批导入 7 张发票。' },
   { key: 'receipt', title: '收票回读', description: '逐票回读收票单号、发票号码、不含税金额、税额与价税合计。' },
   { key: 'fill', title: '填写明细', description: '按统一业务序号写入 9 行明细，每个值写入后从单元格回读。' },
-  { key: 'save', title: '保存草稿', description: '只保存一次草稿，不提交审批。' },
-  { key: 'readback', title: '严格回读', description: '保存后逐行回读 9 个字段，与确认过的明细比对，任何不一致即停。' },
+  { key: 'readback', title: '严格回读', description: '逐行回读 9 个字段，与确认过的明细比对，任何不一致即停。' },
+  // The hand-over step reads its copy from the contract, so the mock's list and the server's cannot drift apart.
+  ERP_HANDOVER_STEP_COPY,
 ];
 
-export const ERP_STEP_INDEX = { browser: 0, login: 1, navigate: 2, assistant: 3, import: 4, receipt: 5, fill: 6, save: 7, readback: 8 } as const;
+export const ERP_STEP_INDEX = { browser: 0, login: 1, navigate: 2, assistant: 3, import: 4, receipt: 5, fill: 6, readback: 7, handover: 8 } as const;
 
 // 第 active 步处于 status，之前的都已完成，之后的待开始；active 超出范围即全部完成。
 export function erpSteps(active: number, status: ErpStep['status'] = 'running'): ErpStep[] {
@@ -51,7 +53,7 @@ export function loginNotDetected(attempt: number): string {
   return `还没有检测到登录（第 ${attempt} 次检测）。请确认已在专用浏览器窗口里登录本人账号；登录页上显示的上次账号不算已登录。登录后再点一次「我已登录，继续」。`;
 }
 
-export const SAVE_ABORT_REASON = '保存草稿时报销系统没有在限定时间内返回结果，保存是否生效不确定。应用已停止写入，不会重放。';
+export const HANDOVER_ABORT_REASON = '交接单据时报销系统没有在限定时间内返回结果，这次写入是否生效不确定。应用已停止写入，不会重放。';
 export const MISMATCH_ABORT_REASON = '严格回读发现 1 行与本地确认不一致，应用已停止，不会自动改写报销系统里的行。';
 
 // readback-mismatch 故障：No.6（出租车 47.00）的申请报销金额在报销系统里读回 74.00。
@@ -140,14 +142,23 @@ export function emptyReconcile(): Reconcile {
 export function reconcileVerdict(
   bucket: ReconcileBucket,
   savedConsistent = true,
+  billNo: string | null = null,
 ): Pick<Reconcile, 'bucket' | 'action' | 'actionCode' | 'allowedActions' | 'humanReview'> {
-  const handOff = bucket === '未保存·已导入未写明细' || bucket === '不自洽' || (bucket === '已保存' && !savedConsistent);
+  // 未保存·已导入未写明细：什么都没有落库，出路是「重新去报销」（重开一张单据再走一遍）和「转人工」，不是转人工的结果。
+  // 这条出路和服务端（fill-state.ts reconcileView）一样看读数：报销系统里一旦有了单据编号，就说明员工自己保存过，
+  // 重新导入会动到一张真实存在的单据，只能转人工。
+  if (bucket === '未保存·已导入未写明细' && billNo === null) {
+    return { bucket, action: RECONCILE_ACTION_LABELS.refill, actionCode: 'refill', allowedActions: ['refill', 'hand_off'], humanReview: false };
+  }
+  const handOff = bucket === '不自洽' || bucket === '未保存·已导入未写明细' || (bucket === '已保存' && !savedConsistent);
   const code: ReconcileActionCode = handOff ? 'hand_off' : 'wait';
   return { bucket, action: RECONCILE_ACTION_LABELS[code], actionCode: code, allowedActions: handOff ? ['hand_off'] : ['wait', 'hand_off'], humanReview: handOff };
 }
 
-// 写入完成：草稿已保存、严格回读逐行一致，阶段推到 done。
-export function applyErpDone(snapshot: TaskSnapshot, draftNo: string): void {
+// 写入完成：严格回读逐行一致、单据已交接，阶段推到 done。
+// 交接时单据还没有保存，所以没有单据编号（服务端 fill-state.ts 的 handed_over 一样给 null）。只有员工自己保存过、
+// 再对一次账读到「已保存」，才会有编号，那时由调用方把编号传进来。
+export function applyErpDone(snapshot: TaskSnapshot, draftNo: string | null = null): void {
   snapshot.erp = { status: 'done', steps: erpSteps(ERP_STEP_DEFS.length), draftNo, abortReason: null, loginNotice: null, erpAccount: { ...MOCK_ERP_ACCOUNT } };
   snapshot.readback = readbackOf(readbackRows(snapshot.lines));
   snapshot.stage = 'done';
@@ -175,17 +186,17 @@ export function applyReadbackMismatch(snapshot: TaskSnapshot, draftNo: string): 
   snapshot.step = { kind: 'reconcile', stepToken: `tok-${snapshot.task.taskId}-reconcile` };
 }
 
-// 保存步中止：还没读到草稿，保存是否生效不确定（对账中断点「未知」⇒ 原地等待，只能重新对账）。
-export function applyAbortAtSave(snapshot: TaskSnapshot): void {
-  snapshot.erp = { status: 'aborted', steps: erpSteps(ERP_STEP_INDEX.save, 'failed'), draftNo: null, abortReason: SAVE_ABORT_REASON, loginNotice: null, erpAccount: { ...MOCK_ERP_ACCOUNT } };
+// 交接步中止：写入结果未知，还没读到单据（对账中断点「未知」⇒ 原地等待，只能重新对账）。
+export function applyAbortAtHandover(snapshot: TaskSnapshot): void {
+  snapshot.erp = { status: 'aborted', steps: erpSteps(ERP_STEP_INDEX.handover, 'failed'), draftNo: null, abortReason: HANDOVER_ABORT_REASON, loginNotice: null, erpAccount: { ...MOCK_ERP_ACCOUNT } };
   snapshot.readback = emptyReadback();
   snapshot.reconcile = {
     status: 'pending',
     ...reconcileVerdict('未知'),
-    banner: '保存步中止后还没有读到报销系统草稿，保存是否生效尚不确定。可以先在报销系统里查看，再点「重新对账」。',
+    banner: '交接步中止后还没有在报销系统里读到这张单据，写入是否生效尚不确定。可以先在报销系统里查看，再点「重新对账」。',
     draftNo: null,
     rows: [],
-    reasons: ['保存后没有同时读到修改页签、单据编号和严格逐行回读'],
+    reasons: ['没有同时读到修改页签、单据编号和严格逐行回读'],
     capture: null,
   };
   snapshot.stage = 'reconcile';

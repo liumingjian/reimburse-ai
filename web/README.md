@@ -140,7 +140,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 | --- | --- |
 | `test` | Vitest + Testing Library（jsdom）：契约与夹具、HTTP 响应形状、仓库、各页面交互；`src/copy.test.ts` 扫描文案常量、mock 给出的文字与源码中文文案里的内核禁用词 |
 | `test:e2e` | 即根目录 `pnpm test:e2e`：先构建服务端、`dist/` 与 `dist-mock/`，再跑 Playwright 的两个项目（`channel: 'chrome'`，需本机 Google Chrome）。`server` 项目在 `e2e/server/`，每个测试经 `e2e/server/fixture.ts` 启动一个构建好的服务端（临时 `BAOX_DATA_DIR`、空闲端口，托管 `dist/`）；`mock` 项目是其余 spec，经 `file://` 打开 `dist-mock/index.html`，只保留真实服务端难以到达的状态；含从启动登录到完成的全流程（`e2e/journey.spec.ts`，上传 `sample-materials/`）、从待确认项起的流程顺序（`e2e/flow.spec.ts`）、seed × 页面、fault 全矩阵。截图是产物，在 `test-results/`（已 gitignore），不是像素基线 |
-| `check:dist` | 正式构建后检查 `dist/`：不许出现夹具人名、草稿号、`print-sheet.pdf`、`fixtures/`、`sample-materials`、mock 模块名与测试钩子，也不许有 `fixtures/`、`sample-materials/` 目录 |
+| `check:dist` | 正式构建后检查 `dist/`：不许出现夹具人名、单据编号、`print-sheet.pdf`、`fixtures/`、`sample-materials`、mock 模块名与测试钩子，也不许有 `fixtures/`、`sample-materials/` 目录 |
 
 ## 夹具与样式
 
@@ -164,7 +164,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
   `exclude-material` 另外接受两种情形（见 `EXCLUDE_MATERIAL_ERRORS` 注释）：`given_up` 待确认项的发票（连同它的行程单排除），与重复发票阻塞项上的材料（移出本次材料后接着盘点）。
   材料包文件数只看 `packageFiles`（确认上不再另记）。表格列名常量：`CATALOG_MISMATCH_COLUMNS`、`PREPARATION_PROBLEM_COLUMNS`；进度与阻塞文案：`CATALOG_PREPARATION_COPY`。
 - 严格回读（`snapshot.ts`）：`ReadbackRow { no, description, matched, fields: [{ label, local, erp, matched }], reasons[] }`，`fields` 覆盖 `READBACK_FIELD_LABELS` 的 9 个字段，
-  一致与否、原因句都由服务端给出（description 与行级 matched 待服务端 spec 确认）。完成页的固定句是 `SAVE_COMPLETED_NOTICE`。
+  一致与否、原因句都由服务端给出（description 与行级 matched 待服务端 spec 确认）。完成页的固定句是 `HANDOVER_COMPLETED_NOTICE`。
 - 对账（`snapshot.ts` `Reconcile`）：`bucket` 是 `RECONCILE_BUCKETS` 六类之一，`action` / `actionCode` 是内核判定，`allowedActions` 是允许的处置（页面只渲染这些，服务端也只接受这些，
   否则 `action_not_allowed`），`humanReview` 为真时显示 `HUMAN_REVIEW_NOTICE` 且没有重新对账。`reasons` 只放不属于某一行的原因。
 - 阶段名：`stage.ts` 的 `KERNEL_PHASES`、`TASK_STAGE_PHASES`、`TASK_STAGE_LABELS`（「N/10 阶段名」）与 `RECONCILE_STATUS_LABEL`。

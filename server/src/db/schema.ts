@@ -242,7 +242,7 @@ export interface ImportRunTable {
   created_at: string;
 }
 
-// The ERP facts of one imported legacy task. `outcome`: `saved` → draft_handed_over (ERP 草稿已交接), else handed_off
+// The ERP facts of one imported legacy task. `outcome`: `saved` → draft_handed_over (ERP 单据已交接), else handed_off
 // (转人工).
 export interface LegacyTaskTable {
   task_id: string;
@@ -284,7 +284,8 @@ export interface ErpJobTable {
   task_id: string;
   account_id: string;
   kind: 'fill';
-  trigger: 'start' | 'confirm_login';
+  // 去报销 / 我已登录，继续 / 重新去报销 (ADR-0027). See `erp/fill-jobs.ts` FillTrigger.
+  trigger: 'start' | 'confirm_login' | 'refill';
   confirmation_digest: string;
   plan: string;
   revision: number;

@@ -11,7 +11,7 @@ import { readLegacyTree, type LegacyData, type LegacyProblem } from './read';
 //   - 常驻城市 (home city) → a `home_city_setting` row with source `legacy_import`;
 //   - 个人项目簿 (personal book) → `admitted` events of that account's personal book (never the public book);
 //   - each ERP-touched legacy task → a read-only terminal task with `origin = legacy` (lifecycle `handed_off`) plus a
-//     `legacy_task` row (`saved` → ERP 草稿已交接, anything else → 转人工) and its 发票占用 (occupancy) claims.
+//     `legacy_task` row (`saved` → ERP 单据已交接, anything else → 转人工) and its 发票占用 (occupancy) claims.
 // Untouched legacy tasks and identity bindings import nothing. A corrupt tree records a `failed` run and writes
 // nothing else; the owner may retry (after fixing it) or skip. Any later run is refused: re-running is a no-op.
 

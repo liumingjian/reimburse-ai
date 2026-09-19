@@ -540,6 +540,42 @@ const accountApproval222: Migration = {
   },
 };
 
+// #242: 重新去报销 (the recovery out of an import that was never saved) starts a fill job of its own, and the audit
+// trail has to be able to tell that job from the original 去报销 without relying on row order. `erp_job.trigger`
+// therefore gains a third value, `refill`. SQLite cannot widen a CHECK in place, so the table is rebuilt in the
+// documented way: create the new shape, copy every row, drop the old one, rename. Dropping the parent would trip the
+// three children that reference `erp_job` (erp_job_cancel, erp_approved_preview, erp_reconcile_job), so enforcement
+// is suspended across the rebuild and restored after it — `foreign_keys` when this runs outside a transaction,
+// `defer_foreign_keys` when it runs inside one, since each is a no-op in the other case. `legacy_alter_table` keeps
+// the rename from re-parsing a schema that is halfway rebuilt. The append-only triggers go down with the dropped
+// table and are recreated on the new one.
+const refillTrigger242: Migration = {
+  async up(db: Kysely<unknown>) {
+    await sql`PRAGMA foreign_keys = OFF`.execute(db);
+    await sql`PRAGMA defer_foreign_keys = ON`.execute(db);
+    await db.schema
+      .createTable('erp_job_rebuilt')
+      .addColumn('job_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('kind', 'text', (c) => c.notNull().check(sql`kind IN ('fill')`))
+      .addColumn('trigger', 'text', (c) => c.notNull().check(sql`trigger IN ('start', 'confirm_login', 'refill')`))
+      .addColumn('confirmation_digest', 'text', (c) => c.notNull())
+      .addColumn('plan', 'text', (c) => c.notNull())
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('started_at', 'text', (c) => c.notNull())
+      .execute();
+    await sql`INSERT INTO erp_job_rebuilt (job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at)
+              SELECT job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at FROM erp_job`.execute(db);
+    await sql`DROP TABLE erp_job`.execute(db);
+    await sql`PRAGMA legacy_alter_table = ON`.execute(db);
+    await sql`ALTER TABLE erp_job_rebuilt RENAME TO erp_job`.execute(db);
+    await sql`PRAGMA legacy_alter_table = OFF`.execute(db);
+    await appendOnly(db, 'erp_job');
+    await sql`PRAGMA foreign_keys = ON`.execute(db);
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -560,4 +596,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0011_219_project_lifecycle': projectLifecycle219,
   '0012_220_project_edit': projectEdit220,
   '0013_222_account_approval': accountApproval222,
+  '0014_242_refill_trigger': refillTrigger242,
 };

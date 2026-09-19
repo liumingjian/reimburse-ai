@@ -70,7 +70,8 @@ export const PreconditionsSchema = z.object({
 });
 export type Preconditions = z.infer<typeof PreconditionsSchema>;
 
-export const STEPS = ['chromium', 'login', 'catalog', 'compatibility', 'navigate', 'import', 'fill', 'save', 'readback'] as const;
+// `save` is kept for job events recorded before ADR-0028; a fill job now ends at `handover` and never saves.
+export const STEPS = ['chromium', 'login', 'catalog', 'compatibility', 'navigate', 'import', 'fill', 'save', 'handover', 'readback'] as const;
 
 const GridSchema = z.union([
   z.object({ ok: z.literal(true), columns: z.array(z.object({ label: z.string() }).passthrough()), rows: z.array(z.object({ kind: z.enum(['data', 'total']), values: z.record(z.string(), z.string()) }).passthrough()) }).passthrough(),
@@ -86,7 +87,10 @@ export const ReadingsSchema = z.object({
 });
 export type Readings = z.infer<typeof ReadingsSchema>;
 
-export const READBACK_STAGES = ['after_import', 'after_fill', 'before_save', 'after_save', 'reconcile'] as const;
+// The moments a fill job reads the form back. `before_hand_over` is the strict read the hand-over gate makes before
+// it hands the filled, unsaved 单据 (bill) to the employee; it was `before_save` until ADR-0028 took the save away,
+// and there is no read after a save because baox never saves.
+export const READBACK_STAGES = ['after_import', 'after_fill', 'before_hand_over', 'reconcile'] as const;
 export type ReadbackStage = (typeof READBACK_STAGES)[number];
 
 export const ErrorCaptureSchema = z.object({
@@ -96,8 +100,12 @@ export const ErrorCaptureSchema = z.object({
 });
 export type ErrorCapture = z.infer<typeof ErrorCaptureSchema>;
 
+// `handed_over`: ERP 单据已交接 — the form is filled, the strict read-back matched, and baox released the ERP
+// 自动化控制权 (automation control) without saving (ADR-0028). It is a fill job's only success status.
+// `saved`: no longer produced by a fill job, but still a valid stored value — legacy imported tasks really did save,
+// and a 对账 (reconcile) that proves 已保存 synthesises one.
 // `read`: a reconcile job delivered its read-back (the bucket is the server's, not the executor's).
-export const RESULT_STATUSES = ['saved', 'aborted', 'unknown', 'waiting_login', 'catalog_mismatch', 'read'] as const;
+export const RESULT_STATUSES = ['saved', 'handed_over', 'aborted', 'unknown', 'waiting_login', 'catalog_mismatch', 'read'] as const;
 export type ResultStatus = (typeof RESULT_STATUSES)[number];
 
 export const ExecutorEventSchema = z.discriminatedUnion('type', [
