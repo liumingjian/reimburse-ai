@@ -428,10 +428,13 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(fake.mutations).toEqual([]);
   });
 
-  it('stops before the hand-over when the strict read-back fails (no 收票单号 link on detail rows, as research recorded)', async () => {
+  // 「不生成费用明细」 leaves 收票单号 empty on every 费用明细行 — ERP's behaviour, recorded in the research and
+  // reproduced by the fake. It used to fail the read-back and end 13 correctly filled rows as 结果不确定. The owner
+  // decided 2026-09-20 that the totals are what must agree, so an empty link no longer stops the hand-over.
+  it('hands over a filled form whose 收票单号 ERP left empty, because the totals still agree', async () => {
     const fake = await createFakeErp(fakeErpOptions());
     const result = await run(fake);
-    expect(result).toMatchObject({ status: 'unknown', code: 'strict_readback_failed' });
+    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
     expect(fake.mutations.some((m) => m.kind === 'save')).toBe(false);
     expect((await jobs.attempts(`job-${taskId}`)).map((a) => a.action)).toEqual(['import', 'fill']);
   });
@@ -534,9 +537,9 @@ describe('adding a 费用明细行', () => {
 
   it('carries a whole fill through an ERP that paints the row late', async () => {
     const fake = await createFakeErp(fakeErpOptions({ newRowAppearsAfterTicks: 3 }));
-    // The run still stops where it stopped before — at the strict read-back — and no longer at the add.
+    // The whole fill goes through: the late row is waited for rather than turned into a failure.
     const result = await run(fake);
-    expect(result).toMatchObject({ status: 'unknown', code: 'strict_readback_failed' });
+    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
     // Two lines over one placeholder row: exactly one 新增行, and it was waited for rather than assumed.
     expect(fake.mutations.filter((m) => m.kind === 'addRow')).toEqual([{ kind: 'addRow', detail: '2' }]);
   });
@@ -548,7 +551,7 @@ describe('adding a 费用明细行', () => {
   it('waits for the dropdown item it wants to be reachable, not just painted', async () => {
     const fake = await createFakeErp(fakeErpOptions({ optionItemCoverTicks: 3 }));
     const result = await run(fake);
-    expect(result).toMatchObject({ status: 'unknown', code: 'strict_readback_failed' });
+    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
     expect(fake.mutations.filter((m) => m.kind === 'option')).toEqual([
       { kind: 'option', detail: '发票类型=普通发票' }, { kind: 'option', detail: '发票类型=普通发票' },
     ]);
@@ -560,7 +563,7 @@ describe('adding a 费用明细行', () => {
   it('leaves edit mode over a grid that drops its edit row a render late', async () => {
     const fake = await createFakeErp(fakeErpOptions({ editRowLingersTicks: 3 }));
     const result = await run(fake);
-    expect(result).toMatchObject({ status: 'unknown', code: 'strict_readback_failed' });
+    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
   });
 });
 

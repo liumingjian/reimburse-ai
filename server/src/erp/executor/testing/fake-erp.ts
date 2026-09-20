@@ -252,7 +252,9 @@ const BOX = 8;
 const ORIGIN = 4;
 const ZERO = { x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
 const READONLY_COLUMNS = new Set(['收票单号', '申请报销金额', '申请付款金额']);
-const INVOICE_TYPES = ['普通发票', '增值税发票', '其他运输票'];
+// The live 发票类型 list, all six of it, as `selectOption` read it open on 2026-09-20 (V-72). baox writes three
+// of them; the other three are here so that picking the wrong neighbour is a mistake the fake can reproduce.
+const INVOICE_TYPES = ['普通发票', '增值税发票', '机票', '火车票', '其他运输票', '其他'];
 const DETAIL_COLUMNS = ['收票单号', '项目', '费用项目', '发票类型', '开始日期', '结束日期', '住宿/出差地', '出发地', '目的地', '费用金额', '税额', '申请报销金额', '申请付款金额'];
 const RECEIPT_COLUMNS = ['收票单', '发票号码', '销方名称', '开票日期', '不含税金额', '税额', '价税合计', '发票类别'];
 // The recognised-row grid of the 发票助手, as probe-grid.ts measured it live on 2026-09-19.

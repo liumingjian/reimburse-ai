@@ -5,13 +5,13 @@
 // Form actions are injected; `readCurrent` returns raw readings plus the server's strict verdict (`taskMatch`).
 
 import { approvalCovers, erpWritePreviewDigest, fieldPlanOf, type Approval, type ApprovedPreview, type FreshGate } from '../protocol';
+import { validInvoiceTypeSource, writableInvoiceType } from '../invoice-type';
 import { sleep } from './pace';
 
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const MONEY = /^\d+(?:\.\d{1,2})?$/;
 const RECEIPT = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const INVOICE = /^einvoice-20:(\d{20})$/;
-const ERP_INVOICE_TYPES = new Set(['普通发票', '增值税发票']);
 
 export type Problem = { code: string; message: string; [extra: string]: unknown };
 
@@ -35,10 +35,6 @@ const validDate = (value: unknown) => {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 };
 const sameIdentity = (left: any, right: any) => !!left && !!right && left.account === right.account && left.tenant === right.tenant;
-const validInvoiceTypeSource = (value: unknown) => {
-  const source = text(value);
-  return !!source && !/(?:unknown|guess|guessed|inferred|default|fallback|猜|推断|默认)/i.test(source);
-};
 const issue = (problems: Problem[], code: string, message: string, extra: Record<string, unknown> = {}) => { problems.push({ code, message, ...extra }); };
 
 type GridLike = { ok: boolean; reason?: string; columns?: Array<{ label: string }>; rows?: Array<{ kind: string; values?: Record<string, string> }> } | null | undefined;
@@ -82,7 +78,7 @@ export const completePreviewProblems = (preview: ApprovedPreview | null | undefi
   for (const line of preview.lines ?? []) {
     if (!text(line.projectCode) || !text(line.projectName)) issue(problems, 'preview_project_missing', `明细 ${line.lineId} 缺少完整项目`);
     if (!text(line.expenseItemCode) || !text(line.expenseItemName)) issue(problems, 'preview_expense_missing', `明细 ${line.lineId} 缺少完整费用项目`);
-    if (!ERP_INVOICE_TYPES.has(text(line.invoiceType) ?? '') || !validInvoiceTypeSource(line.invoiceTypeSource)) issue(problems, 'preview_invoice_type_missing', `明细 ${line.lineId} 缺少有出处票种`);
+    if (!writableInvoiceType(line.invoiceType) || !validInvoiceTypeSource(line.invoiceTypeSource)) issue(problems, 'preview_invoice_type_missing', `明细 ${line.lineId} 缺少有出处票种`);
     if (!validDate(line.date) || !validDate(line.endDate)) issue(problems, 'preview_date_missing', `明细 ${line.lineId} 缺少有效开始/结束日期`);
     if (cents(line.netAmount) === null || cents(line.taxAmount) === null || cents(line.totalAmount) === null) issue(problems, 'preview_amount_missing', `明细 ${line.lineId} 缺少最终净额、税额或价税合计`);
     if (requiresRoute(line) && (!text(line.routePlan?.origin) || !text(line.routePlan?.destination))) issue(problems, 'preview_route_missing', `明细 ${line.lineId} 缺少起终点结构`);

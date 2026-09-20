@@ -253,15 +253,15 @@ describe('去报销 on a fake executor', () => {
     expect(executor.runs()).toEqual([]);
   });
 
-  // ERP's 发票类型 enum has no 铁路电子客票 entry, so a rail e-ticket writes as 普通发票 and the preflight lets it through.
-  it('writes a 铁路电子客票 line as 普通发票 instead of refusing it', async () => {
+  // ERP's 发票类型 enum has no 铁路电子客票 entry, but it does have 火车票, and that is what a rail e-ticket writes as.
+  it('writes a 铁路电子客票 line as 火车票, the ERP enum entry for it, instead of refusing it', async () => {
     const { task } = await client.createTask('杭州');
     const uploaded = await client.upload(task.taskId, [sample('m07')]);
     await client.accepted(await client.act(uploaded, 'start-inventory'));
     const done = await client.settled(task.taskId);
     const review = await client.accepted(await client.act(done, 'submit-project-assignment', { purpose: '出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
     const ready = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
-    expect(ready.lines.map((line) => line.invoiceType)).toEqual(['普通发票']);
+    expect(ready.lines.map((line) => line.invoiceType)).toEqual(['火车票']);
     await client.accepted(await client.act(ready, 'start-erp-write'));
     await settledErp(task.taskId);
     expect(executor.runs()).toHaveLength(1);

@@ -396,27 +396,40 @@ const details = (rows: Row[] = lines.map((line) => data(detailValues(line)))) =>
   '序号', '项目', '费用项目', '开始日期', '结束日期', '发票类型', '费用金额', '税额', '申请报销金额', '收票单号',
 ), rows.map((row, index) => ({ ...row, values: { 序号: String(index + 1), ...row.values } })));
 
-describe('matchTaskLines (strict per-line reconcile)', () => {
-  it('passes only when four lines match field by field and receipt by receipt; the rail net/tax comes from its receipt', () => {
+// The comparison is per-receipt by identity and per-form by totals. Detail rows are NOT matched one to one with
+// task lines any more (the owner's decision, 2026-09-20): the employee reads the bill before saving it, and what
+// must not drift is the money. Field-by-field exactness is still enforced where the value is written — `writeCell`
+// reads back the very cell it typed into (`erpform.ts`), so a project that resolved to the wrong name fails there.
+describe('matchTaskLines (reconcile: receipts by identity, form by totals)', () => {
+  it('passes when four lines match by receipt identity and by totals; the rail net/tax comes from its receipt', () => {
     const result = matchTaskLines(details(), expected, receipts);
     expect(result.ok, result.reasons.join('; ')).toBe(true);
     expect(result.amountSources[0]).toEqual({ line: 1, net: 'erp_receipt', tax: 'erp_receipt' });
   });
 
-  it('refuses a wrong project, date, expense item or tax even with equal amounts and non-empty fields', () => {
-    const wrong = lines.map((line, index) => data(detailValues(line, index === 0
-      ? { 项目: '别的项目' }
-      : index === 1 ? { 开始日期: '2026-09-09' } : index === 2 ? { 费用项目: '住宿' } : { 税额: '206.03' })));
+  it('refuses money that drifted: one wrong 税额 and the form no longer adds up to the task', () => {
+    const wrong = lines.map((line, index) => data(detailValues(line, index === 3 ? { 税额: '206.03' } : {})));
     const result = matchTaskLines(details(wrong), expected, receipts);
     expect(result.ok).toBe(false);
-    expect(result.reasons.some((reason) => /同时匹配项目、费用项目、日期、金额和收票关联/.test(reason))).toBe(true);
+    expect(result.reasons.some((reason) => /「税额」合计/.test(reason))).toBe(true);
   });
 
-  it('a project name whose suffix equals the project number is not an exact project read-back', () => {
-    const altered = lines.map((line) => ({ ...line, projectName: project }));
-    const result = matchTaskLines(details(altered.map((line) => data(detailValues(line)))), expected, receipts);
+  it('refuses a detail row ERP left without a 发票类型: that is a field the fill failed to write', () => {
+    const blank = lines.map((line, index) => data(detailValues(line, index === 2 ? { 发票类型: '' } : {})));
+    const result = matchTaskLines(details(blank), expected, receipts);
     expect(result.ok).toBe(false);
-    expect(result.reasons.some((reason) => /没有一条同时匹配/.test(reason))).toBe(true);
+    expect(result.reasons.some((reason) => /第 3 行没有发票类型/.test(reason))).toBe(true);
+  });
+
+  // The loosening, stated as a test rather than left implicit: these three rows differ from the preview in
+  // project, date and expense item, and the form still passes because every total agrees. Each of those values was
+  // read back at the moment it was written; the reconcile's job is the money.
+  it('accepts rows whose project, date or expense item differ from the preview, as long as the totals agree', () => {
+    const drifted = lines.map((line, index) => data(detailValues(line, index === 0
+      ? { 项目: '别的项目' }
+      : index === 1 ? { 开始日期: '2026-09-09' } : index === 2 ? { 费用项目: '住宿' } : {})));
+    const result = matchTaskLines(details(drifted), expected, receipts);
+    expect(result.ok, result.reasons.join('; ')).toBe(true);
   });
 
   it('an equal-amount wrong invoice or receipt number cannot stand in for the binding', () => {
@@ -451,8 +464,8 @@ describe('matchTaskLines (strict per-line reconcile)', () => {
     expect(result.reasons.some((reason) => /要求 4 条明细，ERP 实际为 3 条/.test(reason))).toBe(true);
   });
 
-  it('a failed strict match never reports a new form as 就绪待保存; a saved form is handed off', () => {
-    const wrong = details(lines.map((line, index) => data(detailValues(line, index === 0 ? { 项目: '别的项目' } : {}))));
+  it('a failed match never reports a new form as 就绪待保存; a saved form is handed off', () => {
+    const wrong = details(lines.map((line, index) => data(detailValues(line, index === 0 ? { 税额: '206.03' } : {}))));
     const readings = { formMode: { readable: true, value: 'new' as const }, billNo: { readable: true, value: null },
       receiptsGrid: receipts, detailGrid: wrong };
     expect(classifyReconciliation(reconcileReadings(readings, expected))).toMatchObject({ bucket: '不自洽', action: '转人工' });

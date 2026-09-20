@@ -296,9 +296,8 @@ describe('fault injection at each ERP mutation point', () => {
 
   it('重新去报销 is absent once the readings carry a 单据编号, and 转人工 remains offered', async () => {
     const stopped = await crashAt('before_hand_over');
-    // The employee saved the form themselves, and what ERP holds is not what was confirmed line by line.
-    const project = fake!.document.querySelector('.kd-grid-panel[data-grid="detail"] tbody tr.k-master-row')!.children[1]!;
-    project.textContent = '另一个项目';
+    // The employee saved the form themselves, and what ERP holds no longer adds up to what was confirmed.
+    driftDetailCell('税额', '999.99');
     fake!.employeeSaves();
     const judged = await reconcile(stopped);
     expect(judged.reconcile).toMatchObject({ bucket: '已保存', actionCode: 'hand_off', allowedActions: ['hand_off'], humanReview: true });
@@ -374,11 +373,11 @@ describe('fault injection at each ERP mutation point', () => {
     expect((await alice.post('/api/tasks', { homeCity: '杭州' })).status).toBe(200);
   }, 120_000);
 
-  it('the hand-over promotion needs the strict per-line match: a detail row that drifted stays a breakpoint', async () => {
+  it('the hand-over promotion needs the totals to agree: a detail amount that drifted stays a breakpoint', async () => {
     const stopped = await crashAt('before_hand_over');
-    // The unsaved form drifts on one detail cell. The amounts are untouched, so 收票 and 明细 still agree to the cent
-    // — only the strict per-line match fails, and that alone must keep the task out of the terminal.
-    driftDetailCell('开始日期', '2026/01/01');
+    // The unsaved form drifts on one money cell, so the form no longer adds up to the task. Since the owner's
+    // 2026-09-20 decision that is the whole test of a form, and it alone must keep the task out of the terminal.
+    driftDetailCell('税额', '999.99');
     const judged = await reconcile(stopped);
     expect(judged.stage).toBe('reconcile');
     expect(judged.step.kind).toBe('reconcile');
@@ -469,7 +468,7 @@ describe('crash recovery', () => {
   });
 });
 
-/** Rewrite one cell of the detail grid's single data row on the fake ERP, leaving the amounts (and so the sums) alone. */
+/** Rewrite one cell of the detail grid's single data row on the fake ERP. */
 function driftDetailCell(column: string, text: string) {
   const panel = fake!.document.querySelector('.kd-grid-panel[data-grid="detail"]')!;
   const headers = [...panel.querySelectorAll('thead th')].map((th) => (th.textContent ?? '').replace('*', '').trim());
