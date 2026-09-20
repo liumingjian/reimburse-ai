@@ -190,7 +190,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     await step('navigate', 'running');
     await prepareErpWrite({
       page: write,
-      navigate: (p) => openNewReimbursement(p, { timeoutMs: 45_000 }),
+      navigate: (p) => openNewReimbursement(p, { timeoutMs: 45_000, replaceNewForms: plan.replaceAbandonedForm === true }),
       read: async () => {
         const readings = await readForm(session);
         await step('compatibility', 'running');

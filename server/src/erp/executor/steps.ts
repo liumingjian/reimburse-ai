@@ -13,7 +13,7 @@ import { readPane, recognisedTotal, selectRecognisedInvoices } from './invoice-g
 import { dismissNotice } from './notices';
 import { DEFAULT_PACE, sleep, waitFor, type Pace } from './pace';
 import { DETAIL_COLUMN, RECEIPTS_COLUMN } from './reader';
-import { dialogsSnippet, dismissPoint } from './tabs';
+import { CLOSED_MS, CONFIRM_MS, REACH_MS, closeNewFormTabs, dialogsSnippet, dismissPoint, tabActions } from './tabs';
 
 export type WritePage = { session: CdpSession; children?: ChildTargets; pace?: Pace };
 
@@ -134,9 +134,24 @@ async function assistantSession(page: WritePage, timeoutMs = 45_000): Promise<Cd
   return child;
 }
 
-/** Navigate from the current ERP session to one new reimbursement form. Opens a form; writes nothing. */
-export async function openNewReimbursement(page: WritePage, { timeoutMs = 45_000 } = {}) {
+/**
+ * Navigate from the current ERP session to one new reimbursement form. Opens a form; writes nothing.
+ *
+ * An open 新增 tab is reused when there is one, and that is right for 去报销: the preflight after this step refuses
+ * one that is not blank, so an employee's own half-made bill is never written over. 重新去报销 is the exception
+ * (`replaceNewForms`): the 新增 it finds is the unsaved bill it was offered to replace, so that tab is closed first
+ * and a fresh one opened — see `closeNewFormTabs`.
+ */
+export async function openNewReimbursement(page: WritePage, { timeoutMs = 45_000, replaceNewForms = false } = {}) {
   const { session } = page;
+  if (replaceNewForms) {
+    const cleared = await closeNewFormTabs(tabActions(session), { confirmMs: cap(page, CONFIRM_MS), closedMs: cap(page, CLOSED_MS), reachMs: cap(page, REACH_MS) });
+    if (cleared.stuck.length) {
+      throw new ExecutorError('ERP_ABANDONED_FORM_NOT_CLOSED',
+        `上一次没有保存的费用报销单关不掉，没有重新开单：${cleared.stuck.join('；')}。`
+        + '请在报销专用浏览器窗口里关掉这个页签（问是否保存时选「否」），再点重新去报销。报销系统没有被改动。');
+    }
+  }
   const has = (text: string) => waitVisibleText(page, session, text, paceOf(page).settleMs);
   if (await has('费用报销单-新增')) {
     await clickText(page, session, '费用报销单-新增', { timeoutMs });

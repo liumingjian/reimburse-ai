@@ -6,7 +6,7 @@ import { runFillJob } from './erp/executor/job';
 import { runReconcileJob } from './erp/executor/reconcile-job';
 import { createFakeErp, type FakeErp, type FakeErpOptions, type FakeReceiptLedger } from './erp/executor/testing/fake-erp';
 import type { FillExecutor } from './erp/fill-jobs';
-import type { ExecutorChannel, ExecutorEvent, Mutation, ResultEvent } from './erp/protocol';
+import type { ExecutorChannel, ExecutorEvent, FillPlan, Mutation, ResultEvent } from './erp/protocol';
 import type { ReconcileExecutor } from './erp/reconcile-job';
 import { COMPATIBILITY, ERP_ORIGIN, FAST_PACE, fakeErpOptions } from './erp/testing/scenario';
 import { handedOver, noFormOpen, scripted, TEST_ERP_ACCOUNT } from './erp/testing/fake-executor';
@@ -36,6 +36,8 @@ let fakeOptions: FakeErpOptions;
 let fake: FakeErp | null = null;
 let fault: Fault | null = null;
 let fillRuns = 0;
+// Every plan a fill run was handed, in order: what tells 去报销 from 重新去报销 on the executor's side.
+let plans: FillPlan[] = [];
 // The 收票单 (receipt records) ERP holds. A fill run gets a new page instance (V-45: the 发票助手 is usable once per
 // page instance), and this ledger is what outlives it: ADR-0026's finding is precisely that the 收票单 an abandoned
 // unsaved bill created is still there, and that re-importing its invoice overwrites it instead of adding a second.
@@ -56,6 +58,7 @@ function faulty(channel: ExecutorChannel): ExecutorChannel {
 let stopBeforeWrite = false;
 const fillExecutor: FillExecutor = async (plan, channel) => {
   fillRuns += 1;
+  plans.push(plan);
   if (stopBeforeWrite) {
     const event: ResultEvent = { type: 'result', status: 'aborted', code: 'chromium_unavailable', message: '报销专用 Chromium 浏览器不可用', billNo: null, capture: null };
     await channel.emit(event);
@@ -75,6 +78,7 @@ beforeEach(async () => {
   fake = null;
   fault = null;
   fillRuns = 0;
+  plans = [];
   erpTabsClosed = false;
   stopBeforeWrite = false;
   receiptLedger = new Map();
@@ -212,6 +216,9 @@ describe('fault injection at each ERP mutation point', () => {
     expect(over).toMatchObject({ stage: 'done', erp: { status: 'done', draftNo: null }, readback: { status: 'matched' } });
     expect(fillRuns).toBe(2);
     expect(server.erpLease.holder()).toBeNull();
+    // Only the recovery is told to replace an open 新增: live, ERP keeps the abandoned bill's tab, and reusing it
+    // put the re-import on a form that already held its 收票行 (2026-09-21). 去报销 still reuses a blank one.
+    expect(plans.map((plan) => plan.replaceAbandonedForm ?? false)).toEqual([false, true]);
 
     // The second run imported the same invoice into a fresh 新增单. ERP still holds the 收票单 it minted for the bill
     // that was abandoned unsaved, so this import overwrote it rather than minting a second one: N rows, not 2N, and

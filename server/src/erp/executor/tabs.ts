@@ -217,6 +217,31 @@ export async function closeFormTab(actions: TabActions, id: string, { confirmMs 
   };
 }
 
+/**
+ * Close every 费用报销单-新增 tab, and say which would not go. For 重新去报销 (ADR-0027) and nothing else.
+ *
+ * Live 2026-09-21: an import that ERP answered with no window left its unsaved 新增 open, holding the one 收票行 it
+ * had just bound. 对账 judged it 未保存·已导入未写明细 and offered 重新去报销, whose banner promises a fresh bill —
+ * and the recovery clicked the open 新增 tab instead of opening one, found it not blank, and stopped at 打开空白报销单.
+ * It could never have got further while that tab stayed open, so the recovery was an exit in name only.
+ *
+ * Only 新增 tabs are touched. A 修改 or 查看 tab sits on a SAVED bill, and closing it is not this step's business.
+ * Each tab goes through `closeFormTab`, so 是否保存 is answered 否 and never 是: nothing is saved and nothing is
+ * deleted — an unsaved 新增 has no 单据 to delete, and the 收票单 its import minted stays in ERP to be overwritten
+ * by the re-import (ADR-0026).
+ */
+export async function closeNewFormTabs(actions: TabActions, budget: { confirmMs?: number; closedMs?: number; reachMs?: number } = {}) {
+  const leftovers = (await actions.tabs()).filter((tab) => tab.isNew);
+  const closed: string[] = [];
+  const stuck: string[] = [];
+  for (const tab of leftovers) {
+    const outcome = await closeFormTab(actions, tab.id, budget);
+    if (outcome.closed) closed.push(tab.text);
+    else stuck.push(`${tab.text}（${outcome.note}）`);
+  }
+  return { closed, stuck };
+}
+
 /** The live glue: the actions above, performed over a CDP session. Thin on purpose — the policy is above. */
 export function tabActions(session: CdpSession): TabActions {
   return {

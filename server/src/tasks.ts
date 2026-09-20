@@ -413,7 +413,9 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
             digest = loaded.confirmed.digest;
           }
           const jobId = newJobId();
-          const job: FrozenJob = { ...frozen, plan: { ...frozen.plan, jobId } };
+          // The recovery replaces the unsaved bill it was offered over; ERP keeps that bill's tab open, and reusing it
+          // would put the re-import on a form that already holds its 收票行 (live 2026-09-21).
+          const job: FrozenJob = { ...frozen, plan: { ...frozen.plan, jobId, ...(recovery ? { replaceAbandonedForm: true } : {}) } };
           // Taken for this job, not for the task: the run that ends gives back only its own lease.
           if (!erp.lease.acquire({ accountId, taskId, jobId })) return inUse;
           started.run = { jobId, accountId, taskId, trigger, frozen: job };

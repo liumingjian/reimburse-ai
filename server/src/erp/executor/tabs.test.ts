@@ -10,7 +10,7 @@
 // So: a second close request over an unanswered confirm is what jams it, and that is what the fake models.
 import { describe, expect, it } from 'vitest';
 
-import { CONFIRM_MS, closeFormTab, formIdOf, type Point, type Tab, type TabActions } from './tabs';
+import { CONFIRM_MS, closeFormTab, closeNewFormTabs, formIdOf, type Point, type Tab, type TabActions } from './tabs';
 
 const FORM_ID = 'd12769c1-2a2c-40c1-90b2-17140dcf5651';
 const TAB: Tab = { id: `li_${FORM_ID}FMAINTAB_c`, text: '费用报销单-新增', active: true, isNew: true, isForm: true };
@@ -143,5 +143,68 @@ describe('closing a 费用报销单 tab', () => {
     expect(formIdOf(TAB.id)).toBe(FORM_ID);
     expect(formIdOf('li_fdc33383-da2d-4419-88bf-f84240997f64FMAINTAB_c')).toBe('fdc33383-da2d-4419-88bf-f84240997f64');
     expect(formIdOf('something-else')).toBeNull();
+  });
+});
+
+// 重新去报销 (ADR-0027), live 2026-09-21: the recovery reused the unsaved 新增 an import had left open, found its 收票行
+// and stopped at 打开空白报销单. It now closes 新增 tabs first — and only those.
+describe('closing the 新增 tabs a recovery replaces', () => {
+  const tab = (key: string, text: string): Tab => ({
+    id: `li_${key}FMAINTAB_c`, text, active: false, isNew: /-新增$/.test(text), isForm: /^费用报销单-/.test(text),
+  });
+
+  /** A strip of several tabs. Each 新增 raises 是否保存 on close and goes on 否; `stubborn` ones never go. */
+  class Strip implements TabActions {
+    readonly clicks: string[] = [];
+    private readonly confirming = new Set<string>();
+    constructor(public open: Tab[], private readonly stubborn: ReadonlySet<string> = new Set()) {}
+    private at(id: string, part: string) { return { x: this.open.findIndex((t) => t.id === id), y: ['link', 'close', 'no'].indexOf(part), inView: true, onTarget: true, cover: null }; }
+    async tabs() { return [...this.open]; }
+    async tabPoint(id: string, part: 'link' | 'close') { return this.open.some((t) => t.id === id) ? this.at(id, part) : null; }
+    async declinePoint(formId: string | null) {
+      const id = [...this.confirming].find((candidate) => formIdOf(candidate) === formId);
+      return id ? this.at(id, 'no') : null;
+    }
+    async settle() {}
+    async click(point: { x: number; y: number }) {
+      const target = this.open[point.x];
+      if (!target) return;
+      const part = ['link', 'close', 'no'][point.y]!;
+      this.clicks.push(`${part}:${target.text}`);
+      if (part === 'close') this.confirming.add(target.id);
+      if (part === 'no' && !this.stubborn.has(target.id)) {
+        this.confirming.delete(target.id);
+        this.open = this.open.filter((t) => t.id !== target.id);
+      }
+    }
+  }
+
+  it('closes the 新增 with 否 and leaves 我的费用报销 and a saved bill\'s 修改 tab exactly where they were', async () => {
+    const list = tab('list', '我的费用报销');
+    const saved = tab('saved', '费用报销单-修改');
+    const abandoned = tab('abandoned', '费用报销单-新增');
+    const strip = new Strip([list, saved, abandoned]);
+    const result = await closeNewFormTabs(strip, { confirmMs: 200, closedMs: 200, reachMs: 200 });
+    expect(result).toEqual({ closed: ['费用报销单-新增'], stuck: [] });
+    expect(strip.open.map((t) => t.text)).toEqual(['我的费用报销', '费用报销单-修改']);
+    // Nothing aimed at the other two, and 是 is not a click this strip even offers.
+    expect(strip.clicks.every((click) => click.endsWith('费用报销单-新增'))).toBe(true);
+    expect(strip.clicks).toContain('no:费用报销单-新增');
+  });
+
+  it('reports a 新增 that would not close instead of carrying on beside it', async () => {
+    const abandoned = tab('abandoned', '费用报销单-新增');
+    const strip = new Strip([abandoned], new Set([abandoned.id]));
+    const result = await closeNewFormTabs(strip, { confirmMs: 100, closedMs: 100, reachMs: 100 });
+    expect(result.closed).toEqual([]);
+    expect(result.stuck).toHaveLength(1);
+    expect(result.stuck[0]).toMatch(/^费用报销单-新增（.+）$/);
+    expect(strip.open).toHaveLength(1);
+  });
+
+  it('does nothing at all when no 新增 is open', async () => {
+    const strip = new Strip([tab('list', '我的费用报销')]);
+    expect(await closeNewFormTabs(strip, { confirmMs: 50, closedMs: 50, reachMs: 50 })).toEqual({ closed: [], stuck: [] });
+    expect(strip.clicks).toEqual([]);
   });
 });
