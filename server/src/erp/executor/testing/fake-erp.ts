@@ -22,6 +22,9 @@ import type { ChromiumPage } from '../chromium';
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
 
+/** What `data-covered-by` names when ERP's idle prompt is the thing in the way. */
+const IDLE_COVER = '#idle-window .k-window-message';
+
 export type FakeInvoice = {
   bytes: Uint8Array; invoiceNumber: string; receiptNumber: string; seller: string; issueDate: string;
   net: string; tax: string; gross: string; category: string;
@@ -112,6 +115,14 @@ export type FakeErpOptions = {
   importReportStaysOpen?: boolean;
   /** 新增 is clicked and no form opens — the navigation that reports success while achieving nothing. */
   newFormClickDead?: boolean;
+  /**
+   * Raise ERP's own idle-timeout prompt (金蝶提示「系统闲置时间过长」) before the run starts, covering the element
+   * this selector names — the state an unattended run inherits when the session was left sitting. Measured live
+   * 2026-09-20: the prompt's overlay covered the header strip, so every click under it was refused and the run
+   * died at 打开空白报销单. Answering 不退出 is what uncovers it; answering 继续退出 signs the session out, and
+   * the fake really does sign out, so a test cannot pass by clicking the wrong one.
+   */
+  idlePromptCovers?: string;
   /**
    * How many ERP-page evaluations after 新增 the form's own blocking overlay stays over the top bar, so every
    * 区域锚点 (section anchor) answers `elementFromPoint` with that overlay instead of itself.
@@ -397,6 +408,12 @@ export async function createFakeErp(options: FakeErpOptions) {
       return { status: 200, text: async () => JSON.stringify(body) };
     };
     await doc.ready();
+    // Already up when the run starts: nobody was at the machine to answer it.
+    if (loggedIn && options.idlePromptCovers) {
+      const prompt: any = doc.document.querySelector('#idle-window');
+      if (prompt) prompt.style.display = '';
+      doc.document.querySelector(options.idlePromptCovers)?.setAttribute('data-covered-by', IDLE_COVER);
+    }
     if (options.notFillEntryBelowFold) doc.document.querySelector('a[id$="tbNotFillEntry"]')?.setAttribute('data-below-fold', '1240');
     if (options.notFillEntryHitsNeighbour) doc.document.querySelector('a[id$="tbNotFillEntry"]')?.setAttribute('data-covered-by', 'a[id$="tbMergeFillEntry"]');
     return doc;
@@ -811,6 +828,19 @@ const kendoDate = (raw: string) => {
         formPanelActiveAt = mainTicks + (options.formPanelActiveTicks ?? 0);
         return syncFormPanel();
       case 'section': return undefined;
+      // 不退出: ERP keeps the session, the prompt and its overlay go, and what they covered is reachable again.
+      case 'stay-signed-in': {
+        for (const covered of main.document.querySelectorAll(`[data-covered-by="${IDLE_COVER}"]`)) covered.removeAttribute('data-covered-by');
+        return show(q('#idle-window'), false);
+      }
+      // 继续退出 really signs out. The prompt's two buttons sit side by side and read almost the same; a run that
+      // answers with this one has lost the session it was given, and nothing after it can work.
+      case 'sign-out': {
+        show(q('#idle-window'), false);
+        show(q('.kd-mainconsole-shortcuts'), false);
+        show(q('#expense-list'), false);
+        return undefined;
+      }
       case 'split-arrow':
         for (const item of main.document.querySelectorAll('a.kdmenuitem[data-mode]')) show(item, true);
         return undefined;

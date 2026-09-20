@@ -127,6 +127,23 @@ describe('fill job through the protocol on the fake ERP', () => {
   // that lag, a fill that types 费用金额 and 税额 back to back loses one of them and lands on
   // `computed_total_mismatch`; a fill that waits for ERP's own 申请报销金额 to agree with the cells before typing
   // the next one gets both in. The gate is what this asserts — no sleep is involved, only ERP's arithmetic.
+  it('answers ERP\'s idle-timeout prompt with 不退出 and carries on, instead of dying under its overlay', async () => {
+    // The live stop, twice, ten days apart (2026-09-19 and 2026-09-20): ERP had raised 金蝶提示「系统闲置时间过长」
+    // by itself while the session sat, its overlay covered the header strip, and 打开空白报销单 aborted naming a
+    // DIV at x=96 y=61. The hit test was right both times; what was missing was a way to clear what it refused.
+    // Here the prompt covers the very control the navigation clicks first, so without the answer nothing opens.
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, idlePromptCovers: 'span[data-action="open-list"]' }));
+    const result = await run(fake);
+    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    // Answered with the button that KEEPS the session: 继续退出 hides the console shortcuts for good, so a run
+    // that got as far as 交接单据 cannot have clicked it. And the cover is gone because the prompt was answered,
+    // not because something else happened to move it.
+    const style = (selector: string) => String(fake.document.querySelector(selector)?.style?.display ?? '');
+    expect(style('.kd-mainconsole-shortcuts')).not.toBe('none');
+    expect(style('#idle-window')).toBe('none');
+    expect(fake.document.querySelector('span[data-action="open-list"]')?.getAttribute('data-covered-by')).toBeNull();
+  });
+
   it('paces the two money cells against ERP\'s computed column, so a lagging model loses neither', async () => {
     // 40 is measured, not picked: the fake counts its lag in PAGE EVALUATIONS, not milliseconds, and `writeCell`
     // burns a good number of them on its own read-back between the two commits. Below ~20 the window is already

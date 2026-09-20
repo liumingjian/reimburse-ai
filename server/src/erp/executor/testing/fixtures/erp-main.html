@@ -104,6 +104,17 @@
     <span class="k-window-title">提示</span>
     <span class="k-window-message"></span>
   </div>
+  <!-- ERP raises this one BY ITSELF once the session has sat idle, with a `k-overlay` under it that covers the
+       header strip. Measured live 2026-09-20: a `k-widget k-window` titled 金蝶提示, and EXACTLY two buttons.
+       继续退出 signs the session out; 不退出 keeps it. Nobody is at the machine on an unattended run, so it is
+       still up when the next click is attempted, and the hit test refuses every point under the overlay —
+       which is how two runs (2026-09-19, 2026-09-20) both died at 打开空白报销单 naming a DIV at x=96 y=61. -->
+  <div class="k-widget k-window" id="idle-window" style="display:none">
+    <span class="k-window-title">金蝶提示</span>
+    <span class="k-window-message">系统闲置时间过长，即将自动退出，请确认是否退出？</span>
+    <button class="k-button" data-action="sign-out">继续退出</button>
+    <button class="k-button" data-action="stay-signed-in">不退出</button>
+  </div>
 </div>
 </body>
 </html>
