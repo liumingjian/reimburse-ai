@@ -190,6 +190,23 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(sum!.map(asCents)).toEqual(net!.map((amount, index) => asCents(amount) + asCents(tax![index]!)));
   });
 
+  // Live 2026-09-20, on a freshly added 费用明细行 of a real 费用报销单: 项目 (a 选择类 F7 column) reported a bound,
+  // FOCUSED input, and the `111705` typed into it landed nowhere at all — three fresh rows, three failures, while
+  // the same write into a row whose editor had been opened before went in every time. A second click and a second
+  // typing landed it, and the ERP then resolved the code to the project name within a second. The ERP re-renders
+  // the control as it initialises its data source, so the input bound a moment ago is not the one on the page.
+  // This is what stops anyone deleting the retype: with the first run swallowed and no second attempt, the whole
+  // 去报销 stops on the detail row's very first field. Checked both ways — red without the retype, green with it.
+  it('types again when the editor took nothing, so a control the ERP re-rendered does not lose the field', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, firstTypingLostOn: '项目' }));
+    const result = await run(fake);
+    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    // Every detail row carries the project, read off the form rather than off the fixture.
+    const projects = column(fake, 'detail', 1);
+    expect(projects!.length).toBeGreaterThan(0);
+    expect(projects!.filter((shown) => String(shown).trim() !== '')).toEqual(projects);
+  });
+
   // The same rule from the other side: a 费用金额 that never reaches the model leaves 申请报销金额 = 税额 alone,
   // which is live row 2's shape (¥15.56 + ¥0.47 -> ¥0.47). Here the loss is on the FIRST money cell, so the gate
   // refuses before 税额 is typed at all — the next write is exactly what it is there to withhold.

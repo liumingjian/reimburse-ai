@@ -68,6 +68,17 @@ export type FakeErpOptions = {
    * is what every other test wants.
    */
   editorSettleTicks?: number;
+  /**
+   * A column whose editor swallows the FIRST run of typing whole, and takes keys only once the cell has been
+   * clicked into a second time.
+   *
+   * Measured live 2026-09-20 on 项目, a 选择类 (原文 kdbosf7) column, on a freshly added 费用明细行: the cell reports
+   * a bound, focused INPUT, `111705` typed into it leaves the editor EMPTY, a second click and a second typing
+   * lands it, and the ERP resolves the code to the project name within a second. The ERP re-renders the control as
+   * it initialises its data source, so the input that was bound a moment ago is no longer the one on the page.
+   * Unset (the default) is an ERP whose editors take keys the first time, which is what every other test wants.
+   */
+  firstTypingLostOn?: string;
   today?: string;
   billNo?: string;
   /** The 收票单 ERP already holds. Defaults to an empty ledger: an ERP that has never seen these invoices. */
@@ -374,6 +385,8 @@ export async function createFakeErp(options: FakeErpOptions) {
   const receiptLedger: FakeReceiptLedger = options.receiptLedger ?? new Map();
 
   let lastTypedAt = 0;
+  // Cells that have been opened for editing at least once, for `firstTypingLostOn`.
+  const editedOnce = new Set<any>();
   const mutations: FakeMutation[] = [];
   const commands: Array<{ method: string; params: Record<string, any>; sessionId: string | null }> = [];
   const listeners = new Map<string, Set<CdpListener>>();
@@ -385,7 +398,9 @@ export async function createFakeErp(options: FakeErpOptions) {
   let main: FakeDocument = await render();
   let child: { doc: FakeDocument; sessionId: string; targetId: string } | null = null;
   // `before` is the cell's value when the editor opened: a datepicker keeps it when it cannot parse what it holds.
-  let editor: { td: any; tr: any; input: any; column: string; before: string } | null = null;
+  // `swallow`: this editing session's keys go nowhere, because the ERP is still re-rendering the control
+  // (`firstTypingLostOn`). Cleared by a second click into the same cell.
+  let editor: { td: any; tr: any; input: any; column: string; before: string; swallow?: boolean } | null = null;
   let activePane: string | null = null;
   let uploadBatches = 0;
   let assistantTicks = 0;
@@ -603,7 +618,10 @@ const kendoDate = (raw: string) => {
     // The caret lands where the CLICK landed, not at the end of the value: traced live on 结束日期, a click at the
     // centre of the cell put it at offset 8 of `2026/9/20`, so Backspace alone stranded the last character.
     setCaret(input, Math.max(0, current.length - 1));
-    editor = { td, tr, input, column, before: current };
+    // Only the first editing session on a given cell swallows: a second click gets a control that works.
+    const swallow = column === options.firstTypingLostOn && !editedOnce.has(td);
+    editedOnce.add(td);
+    editor = { td, tr, input, column, before: current, swallow };
   }
 
   function pickOption(text: string) {
@@ -836,7 +854,13 @@ const kendoDate = (raw: string) => {
       if (li) return pickOption(String(li.textContent).trim());
       closeDropdown();
     }
-    if (editor && editor.td.contains(el)) { editor.input.focus(); return; }
+    if (editor && editor.td.contains(el)) {
+      // A second click into a cell whose control the ERP was still re-rendering hands over one that works:
+      // measured live 2026-09-20 on 项目, where the click-and-type after a swallowed run landed the code.
+      editor.swallow = false;
+      editor.input.focus();
+      return;
+    }
     const action = el.closest('[data-action]')?.getAttribute('data-action');
     const td = el.closest('.kd-grid-panel[data-grid="detail"] td');
     if (td && !td.parentElement.classList.contains('k-footer-template')) return editCell(td);
@@ -941,6 +965,8 @@ const kendoDate = (raw: string) => {
     if (params.type === 'keyDown' && typeof params.text === 'string') {
       if (active && /^(INPUT|TEXTAREA)$/.test(active.tagName)) {
         lastTypedAt = mainTicks;
+        // The control the ERP is still re-rendering is not the one on the page; the character goes nowhere.
+        if (editor && editor.input === active && editor.swallow) return;
         if (doc.selectAllOn === active) { active.value = params.text; doc.selectAllOn = null; }
         else {
           const at = caretOf(active);

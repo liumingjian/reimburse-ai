@@ -323,7 +323,7 @@ async function holdsValue(at: () => Promise<CellTarget>, ms: number, pollMs: num
 
 export type CellWrite = {
   which?: number; row?: number; column: string; value: string; expect?: Expect; commit?: 'Enter' | 'Tab';
-  clicks?: number; readyMs?: number; settleMs?: number; holdMs?: number; settleFirst?: boolean; pace?: Pace;
+  clicks?: number; readyMs?: number; settleMs?: number; holdMs?: number; typeTries?: number; settleFirst?: boolean; pace?: Pace;
 };
 
 /**
@@ -336,7 +336,7 @@ export type CellWrite = {
  * `computedTotalProblem` in draft-flow.ts checks it row by row.
  */
 export async function writeCell(session: CdpSession, { which = 0, row = 0, column, value, expect = null,
-  commit = 'Enter', clicks = 3, readyMs = 9000, settleMs = 8000, holdMs = 2500, settleFirst = true,
+  commit = 'Enter', clicks = 3, readyMs = 9000, settleMs = 8000, holdMs = 2500, typeTries = 3, settleFirst = true,
   pace = DEFAULT_PACE }: CellWrite) {
   // Wait for the previous cell's recalculation first: a click during it is swallowed or its editor is taken away.
   if (settleFirst) await settleGrid(session, which, { quietMs: pace.quietMs, maxMs: pace.quietMs * 10 });
@@ -373,7 +373,6 @@ export async function writeCell(session: CdpSession, { which = 0, row = 0, colum
   if (!emptied.ok) {
     return { ok: false, column, wrote: String(value), before: before.text, reason: emptied.reason };
   }
-  await typeText(session, String(value));
   // Do not commit on the heels of the last keystroke. Measured live 2026-09-20 on one 费用明细 row: the very same
   // keys, clicks and Enter lost 税额 every time from writeCell and committed every time by hand — the difference
   // was the pause. 税额's Enter closes the WHOLE edit row, so a commit that arrives before Kendo has taken the
@@ -382,9 +381,29 @@ export async function writeCell(session: CdpSession, { which = 0, row = 0, colum
   // and `held` goes into the result so the next failure can be placed without another live round.
   // Nothing to witness when clearing (an empty editor never settles on a non-empty value), nor where the cell
   // exposes no editor value at all — `editValue` is null only when the cell holds no input to read.
-  const held = String(value) === '' || ready.editValue == null
-    ? { ok: true as const, value: String(ready.editValue ?? ''), watched: false }
-    : { ...(await holdsValue(at, holdMs, pace.pollMs)), watched: true };
+  //
+  // And where the witness reports the editor still EMPTY, type again rather than commit into nothing. Measured
+  // live 2026-09-20 on a freshly added 费用明细 row: 项目 (a 选择类 F7 column, 原文 kdbosf7) reports a bound,
+  // focused INPUT, the first `111705` lands nowhere at all, a second click and a second typing lands it, and the
+  // ERP then resolves the code to the project name within a second. The ERP re-renders the F7 as it initialises
+  // its data source, so the input that was bound a moment ago is no longer the one on the page. Only a COMPLETELY
+  // empty editor is retyped: a partial value means the keys are arriving, and typing again would append to it
+  // (measured: two runs into the same F7 leave 「111705111705」).
+  const unwatched = String(value) === '' || ready.editValue == null;
+  let held: { ok: boolean; value: string; watched: boolean } = { ok: true, value: String(ready.editValue ?? ''), watched: false };
+  for (let attempt = 0; attempt < Math.max(1, typeTries); attempt++) {
+    if (attempt > 0) {
+      const again = await cellTarget(session, { which, row, column });
+      if (!again.ok) break;
+      await clickReach(session, again, `「${column}」`);
+      const rebound = await waitFor(at, (c) => c.ok && c.editorBound === true, Math.ceil(readyMs / clicks), pace.pollMs);
+      if (!rebound.ok || rebound.editorBound !== true) break;
+    }
+    await typeText(session, String(value));
+    if (unwatched) break;
+    held = { ...(await holdsValue(at, holdMs, pace.pollMs)), watched: true };
+    if (held.ok || held.value !== '') break;
+  }
   await pressKey(session, commit);
 
   const want = String(value);
