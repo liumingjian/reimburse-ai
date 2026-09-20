@@ -659,7 +659,8 @@ export const ErpSchema = z.object({
 });
 export type Erp = z.infer<typeof ErpSchema>;
 
-// 严格回读逐行比对的 9 个字段，名称与顺序照内核 matchTaskLines（erpreconcile.mjs）：每条明细要在报销系统里唯一匹配这 9 项。
+// 回读逐行呈现的 9 个字段，名称与顺序照内核 matchTaskLines（erpreconcile.mjs）。它们是对账页给人看的那张表；
+// 判定本身不再要求逐行一一对应（2026-09-20 决定：收票按身份绑定，明细看行数与整单三项金额合计）。
 export const READBACK_FIELD_LABELS = ['申请报销金额', '项目', '费用项目', '开始日期', '结束日期', '费用金额', '税额', '收票单号', '发票类型'] as const;
 export const ReadbackFieldLabelSchema = z.enum(READBACK_FIELD_LABELS);
 
