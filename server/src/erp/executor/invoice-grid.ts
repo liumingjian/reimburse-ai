@@ -125,8 +125,9 @@ async function ensureTicked(page: GridPage, assistant: CdpSession, pane: string 
   // One notice, once: a second one would mean the assistant is raising them faster than the run can answer, and
   // that is a stop to report rather than a loop to keep turning. Clearing it buys back the attempt it spent, so
   // the «one permitted retry» above still means one retry of the CLICK, not one fewer because of a popup.
-  let notice = false;
-  for (let attempt = 0; attempt < (notice ? 3 : 2); attempt += 1) {
+  let noticeTried = false;
+  let noticeCleared: string | null = null;
+  for (let attempt = 0; attempt < (noticeCleared ? 3 : 2); attempt += 1) {
     const target = await rowTarget(assistant, key);
     if (!target?.ok) {
       throw new ExecutorError('INVOICE_SELECTION_UNCONFIRMED',
@@ -141,9 +142,19 @@ async function ensureTicked(page: GridPage, assistant: CdpSession, pane: string 
       // The assistant paints its own release announcement over the whole pane (V-62: an `ant-modal-wrap` at
       // z-index 9999 covering (0,0)-(800,530), dismissed by 知道了). Clear a notice that has a NAME, once, and
       // re-measure; anything else in the way is still reported, unclicked, with its cover named.
-      if (!notice && (await dismissNotice(assistant))) { notice = true; continue; }
+      if (!noticeTried) {
+        noticeTried = true;
+        noticeCleared = await dismissNotice(assistant);
+        // Settled like every other click here: the modal's own fade is not this loop's turn of the event loop,
+        // and re-measuring inside it reads the cover that is on its way out.
+        if (noticeCleared) { await sleep(pace.settleMs); continue; }
+      }
+      // What was IN THE WAY, and what was tried to get it out of the way. Without the second half a live refusal
+      // cannot be told apart from a dismissal that silently did nothing — which is exactly the question the
+      // 2026-09-20 runs left open.
       throw new ExecutorError('INVOICE_SELECTION_OBSTRUCTED',
-        `发票助手里${where(pane, key)}的勾选框${obstruction(target)}，${NOTHING_IMPORTED}`);
+        `发票助手里${where(pane, key)}的勾选框${obstruction(target)}`
+        + `（${noticeCleared ? `已消除提示「${noticeCleared}」后仍然如此` : '页面上没有可消除的已知提示'}），${NOTHING_IMPORTED}`);
     }
     // The relocation is the diagnosis: a point already known not to have worked is not clicked a second time.
     if (clickedAt && target.x === clickedAt.x && target.y === clickedAt.y) break;
@@ -163,7 +174,10 @@ async function switchTo(page: GridPage, assistant: CdpSession, label: string) {
   // swallow the switch, and the walk would tick one pane twice and call the other one empty.
   let target = await tabTarget(assistant, label);
   // Same notice, same rule: the announcement covers the tab strip as readily as it covers a row.
-  if (target?.ok && !target.onTarget && (await dismissNotice(assistant))) target = await tabTarget(assistant, label);
+  if (target?.ok && !target.onTarget && (await dismissNotice(assistant))) {
+    await sleep(pace.settleMs);
+    target = await tabTarget(assistant, label);
+  }
   if (!target?.ok || !target.onTarget) {
     throw new ExecutorError('INVOICE_GROUP_SWITCH_FAILED',
       `发票助手里「${label}」这一类发票的页签${target?.ok ? obstruction(target) : `匹配到 ${target?.count ?? 0} 个`}，切不过去，${NOTHING_IMPORTED}`);

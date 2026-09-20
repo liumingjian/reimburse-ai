@@ -11,6 +11,7 @@
 import { autoAttach, connect, evalIn, targets } from '../src/erp/executor/cdp';
 import { cdpPortOf } from '../src/erp/executor/chromium';
 import { sleep } from '../src/erp/executor/pace';
+import { DISMISSALS, dismissalPoint } from '../src/erp/executor/notices';
 
 const NOTICE = '温馨提示';
 const SNIPPET = `(() => {
@@ -63,6 +64,11 @@ try {
   for (let i = 0; i < 40; i += 1) {
     const out = await evalIn<any>(session, SNIPPET).catch((error) => ({ error: String(error) }));
     console.log(`[${i}]`, JSON.stringify(out));
+    // What the PRODUCTION rule makes of this same page, verbatim — a refusal here is the thing to explain.
+    for (const { caption } of DISMISSALS) {
+      const point = await evalIn<any>(session, dismissalPoint(caption)).catch((error) => ({ thrown: String(error).slice(0, 200) }));
+      console.log(`[${i}] rule ${caption}:`, JSON.stringify(point));
+    }
     if (out?.panelCount > 0) break;
     await sleep(1000);
   }
