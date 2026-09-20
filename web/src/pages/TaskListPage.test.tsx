@@ -108,7 +108,7 @@ describe('任务列表', () => {
       expect(within(actions).getByRole('button', { name: '作废' })).toBeTruthy();
       expect(within(row).queryByRole('button', { name: '更多' })).toBeNull();
     }
-    // A completed task with no ERP outcome has only the disabled abandonment action.
+    // A completed task with no ERP outcome has only the abandonment action.
     const t3 = await rowOf('2026-06 北京培训');
     expect(within(t3).queryAllByRole('link')).toHaveLength(0);
     expect(within(t3).getAllByRole('button')).toHaveLength(1);
@@ -132,18 +132,35 @@ describe('任务列表', () => {
     expect(screen.getByText('2026-07 深圳客户拜访')).toBeTruthy();
   });
 
-  test('disabled abandonment exposes the server reason without allowing confirmation', async () => {
+  // ADR-0030：动过报销系统的任务照样能作废，确认框换一段说明：作废只改本机状态，撤不掉那边的单据。
+  test('an ERP-touched task can be voided, and its confirmation says the ERP bill is not undone', async () => {
     renderApp('#/tasks');
     for (const name of ['2026-07 深圳客户拜访', '2026-06 北京培训']) {
       const row = await rowOf(name);
       const item = abandonItem(row);
-      expect(item.disabled).toBe(true);
-      expect(within(row).getByText(ABANDON_TASK_COPY.blockedReason)).toBeTruthy();
-      // 读屏把原因作为这一项的说明读出。
-      expect(document.getElementById(item.getAttribute('aria-describedby') ?? '')?.textContent).toBe(ABANDON_TASK_COPY.blockedReason);
+      expect(item.disabled).toBe(false);
       fireEvent.click(item);
-      expect(screen.queryByRole('dialog')).toBeNull();
+      const dialog = screen.getByRole('dialog', { name: ABANDON_TASK_COPY.dialogTitle });
+      expect(within(dialog).getByText(new RegExp(ABANDON_TASK_COPY.dialogBodyErpTouched.slice(0, 20)))).toBeTruthy();
+      fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
     }
+    // 没动过报销系统的任务用的还是原来那段文案。
+    fireEvent.click(abandonItem(await rowOf('2026-08 上海出差（产品评审）')));
+    const plain = screen.getByRole('dialog', { name: ABANDON_TASK_COPY.dialogTitle });
+    expect(within(plain).getByText(new RegExp(ABANDON_TASK_COPY.dialogBody.slice(0, 20)))).toBeTruthy();
+  });
+
+  // 唯一还挡着作废的状态：这个任务的写入正在跑（?seed=erp 下 T1 停在等待登录）。
+  test('abandonment waits while the ERP job of this very task is in flight, and says so', async () => {
+    renderApp('#/tasks', 'erp');
+    const row = await rowOf('2026-08 上海出差（产品评审）');
+    const item = abandonItem(row);
+    expect(item.disabled).toBe(true);
+    expect(within(row).getByText(ABANDON_TASK_COPY.blockedReason)).toBeTruthy();
+    // 读屏把原因作为这一项的说明读出。
+    expect(document.getElementById(item.getAttribute('aria-describedby') ?? '')?.textContent).toBe(ABANDON_TASK_COPY.blockedReason);
+    fireEvent.click(item);
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   test('工具栏：状态筛选的条数取自这张列表，筛选与搜索只挑行显示', async () => {

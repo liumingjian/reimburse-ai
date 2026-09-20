@@ -65,14 +65,15 @@ test('阶段名用内核 10 阶段：只出现在任务列表徽标上，步骤�
   await expect(page.getByRole('region', { name: '任务进度' })).not.toContainText('/10');
 });
 
-test('作废：T1 确认作废后从任务列表消失；已开始写入报销系统的 T2、T3「作废」不可用并说明原因', async ({ page }, testInfo) => {
+test('作废：T1 确认作废后从任务列表消失；动过报销系统的 T2、T3 也能作废，确认框说明撤不掉那边的单据', async ({ page }, testInfo) => {
   await page.goto(open('', '#/tasks'));
   for (const name of ['2026-07 深圳客户拜访', '2026-06 北京培训']) {
     const row = page.getByRole('row', { name: new RegExp(name) });
-    await expect(row.getByRole('button', { name: '作废' })).toBeDisabled();
-    await row.getByLabel('无法作废的原因').hover();
-    await expect(page.getByRole('tooltip')).toContainText('已开始写入报销系统，不能作废');
+    await expect(row.getByRole('button', { name: '作废' })).toBeEnabled();
+    await row.getByRole('button', { name: '作废' }).click();
+    await expect(page.getByRole('dialog', { name: '作废这个报销任务？' })).toContainText('报销系统里已经产生的费用报销单');
     await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
   }
   await page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByRole('button', { name: '作废' }).click();
   const dialog = page.getByRole('dialog', { name: '作废这个报销任务？' });

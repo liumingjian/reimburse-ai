@@ -151,7 +151,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
       if (!auth.account()) throw new UnauthenticatedError();
       return listNow();
     },
-    // 作废：服务端按任务列表同一个判定（已开始写入报销系统的不能作废）再核一次。
+    // 作废：服务端按任务列表同一个判定（只有正在跑的那一下不能作废）再核一次。
     async abandonTask(taskId) {
       if (!auth.account()) return signedOut();
       const snapshot = bus.all().find((candidate) => candidate.task.taskId === taskId && !hidden.has(taskId) && ownedByCurrent(taskId));

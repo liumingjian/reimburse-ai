@@ -182,7 +182,7 @@ describe('fault injection at each ERP mutation point', () => {
     // 转人工 is the other exit, and it is still terminal.
     const handedOff = await client.accepted(await client.act(judged, 'hand-off'));
     expect(handedOff).toMatchObject({ stage: 'reconcile', step: { kind: 'none' }, reconcile: { status: 'handed_off', bucket: '未保存·已导入未写明细', allowedActions: [], humanReview: true, banner: HUMAN_REVIEW_NOTICE } });
-    expect((await taskList()).tasks[0]).toMatchObject({ stage: 'reconcile', erpOutcome: 'handed_off', abandonable: false });
+    expect((await taskList()).tasks[0]).toMatchObject({ stage: 'reconcile', erpOutcome: 'handed_off', abandonable: true, erpTouched: true });
     await refusedWith(await client.act(handedOff, 'refill'), 400, 'task_closed');
     // 去打印 never needs ERP (stories 57 and 63): 转人工 hands the ERP draft to a person, and that person still
     // wants the paper bundle, so print stays open on a handed-off task.
@@ -398,8 +398,9 @@ describe('fault injection at each ERP mutation point', () => {
     const stopped = await crashAt('import');
     const handedOff = await client.accepted(await client.act(stopped, 'hand-off'));
     expect(handedOff).toMatchObject({ stage: 'reconcile', step: { kind: 'none' }, reconcile: { status: 'handed_off', humanReview: true } });
+    // 转人工 is terminal for the ERP side, not for the task row: it can still be voided out of the list (ADR-0030).
     const voided = await alice.post(`/api/tasks/${stopped.task.taskId}/abandon`, {});
-    expect(voided.status).toBe(400);
+    expect(voided.status).toBe(200);
   });
 
   it('holds the ERP lease while reconcile reads: 409 erp_in_use for another task, the lease is freed on the result', async () => {
@@ -452,7 +453,7 @@ describe('crash recovery', () => {
     expect(back).toMatchObject({ stage: 'reconcile', step: { kind: 'reconcile' }, erp: { status: 'aborted' }, reconcile: { status: 'pending', allowedActions: ['wait', 'hand_off'] } });
     expect(back.erp.abortReason).toContain('不会重放');
     await refusedWith(await again.act(back, 'start-erp-write'), 400, 'erp_started');
-    await refusedWith(await testClient(second.app, owner.account, owner.cookie).post(`/api/tasks/${task.taskId}/abandon`, {}), 400, 'erp_started');
+    // Voiding is open here too (ADR-0030); this test goes on reconciling instead, which is the interesting path.
 
     // Reconcile only reads; the fill job is never run again and no attempt is added.
     await again.accepted(await again.act(back, 'reconcile'));

@@ -302,10 +302,11 @@ function erpOutcomeOf(snapshot: TaskSnapshot): TaskListItem['erpOutcome'] {
   return 'none';
 }
 
-// 能否作废（内核 abandonTask）：一旦开始写入报销系统（含写入结果不确定、已完成），就不能作废。
-function abandonOf(snapshot: TaskSnapshot): Pick<TaskListItem, 'abandonable' | 'abandonBlockedReason'> {
-  const started = snapshot.erp.status !== 'idle' || stageReached(snapshot.stage, 'erp');
-  return started ? { abandonable: false, abandonBlockedReason: ABANDON_TASK_COPY.blockedReason } : { abandonable: true, abandonBlockedReason: null };
+// 能否作废（内核 abandonTask）：任何状态都可以作废（ADR-0030），只有这个任务的写入/对账正在跑时不行。
+function abandonOf(snapshot: TaskSnapshot): Pick<TaskListItem, 'abandonable' | 'abandonBlockedReason' | 'erpTouched'> {
+  const erpTouched = snapshot.erp.status !== 'idle' || stageReached(snapshot.stage, 'erp');
+  const running = snapshot.erp.status === 'running' || snapshot.erp.status === 'waiting_login';
+  return { abandonable: !running, abandonBlockedReason: running ? ABANDON_TASK_COPY.blockedReason : null, erpTouched };
 }
 
 // 任务列表的一行由快照投影而来：mock 服务端负责，页面不做这件事。

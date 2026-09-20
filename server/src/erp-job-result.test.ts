@@ -87,9 +87,8 @@ describe('a 去报销 job that ends without sending a result', () => {
 
     expect(stopped).toMatchObject({ stage: 'reconcile', step: { kind: 'reconcile' }, erp: { status: 'aborted' }, reconcile: { status: 'pending', allowedActions: ['wait', 'hand_off'] } });
     expect(server.erpLease.holder()).toBeNull();
-    // Frozen and not voidable: the invoices stay held until reconcile says otherwise.
+    // The facts are frozen, but the task can still be retired: ADR-0030 voids any state, ERP 写入结果未知 included.
     const voided = await alice.post(`/api/tasks/${stopped.task.taskId}/abandon`, {});
-    expect(voided.status).toBe(400);
-    expect(await voided.json()).toMatchObject({ error: { code: 'erp_started' } });
+    expect(voided.status).toBe(200);
   });
 });

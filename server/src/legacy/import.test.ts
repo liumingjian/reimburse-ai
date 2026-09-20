@@ -102,9 +102,9 @@ describe('first-admin creation imports the legacy tree', () => {
     const legacy = list.tasks.map(({ name, stage, erpOutcome, erpDraftNo, abandonable }) => ({ name, stage, erpOutcome, erpDraftNo, abandonable }));
     expect(legacy.sort((a, b) => a.name.localeCompare(b.name))).toEqual(
       [
-        { name: '旧版任务 四月出差', stage: 'done', erpOutcome: 'none', erpDraftNo: 'BX-2026-0401', abandonable: false },
-        { name: '旧版任务 五月打车', stage: 'reconcile', erpOutcome: 'handed_off', erpDraftNo: null, abandonable: false },
-        { name: '旧版任务 三月填过一半', stage: 'reconcile', erpOutcome: 'handed_off', erpDraftNo: null, abandonable: false },
+        { name: '旧版任务 四月出差', stage: 'done', erpOutcome: 'none', erpDraftNo: 'BX-2026-0401', abandonable: true },
+        { name: '旧版任务 五月打车', stage: 'reconcile', erpOutcome: 'handed_off', erpDraftNo: null, abandonable: true },
+        { name: '旧版任务 三月填过一半', stage: 'reconcile', erpOutcome: 'handed_off', erpDraftNo: null, abandonable: true },
       ].sort((a, b) => a.name.localeCompare(b.name)),
     );
     const claims = await server.db.selectFrom('legacy_claim').select('invoice_key').orderBy('invoice_key').execute();
@@ -117,7 +117,7 @@ describe('first-admin creation imports the legacy tree', () => {
     expect(treeDigest(LEGACY_BAOX_DIR)).toBe(before);
   });
 
-  it('legacy tasks are read-only terminals: snapshot only, no void, no action', async () => {
+  it('legacy tasks are read-only terminals: snapshot only, no action, but they can still be voided', async () => {
     await start(LEGACY_BAOX_DIR);
     const admin = await server.signIn('admin');
     const saved = TaskSnapshotSchema.parse(await (await admin.request(`/api/tasks/${await legacyTaskId(admin, '旧版任务 四月出差')}`)).json());
@@ -125,9 +125,10 @@ describe('first-admin creation imports the legacy tree', () => {
     const handedOff = TaskSnapshotSchema.parse(await (await admin.request(`/api/tasks/${await legacyTaskId(admin, '旧版任务 五月打车')}`)).json());
     expect(handedOff).toMatchObject({ stage: 'reconcile', step: { kind: 'none' }, reconcile: { status: 'handed_off', humanReview: true, allowedActions: [] } });
 
+    // ADR-0030: an imported legacy task is a record, not a sentence. Voiding takes it off the list; its legacy
+    // occupancy lives in `legacy_claim`, which the lifecycle does not touch.
     const voided = await admin.post(`/api/tasks/${saved.task.taskId}/abandon`, {});
-    expect(voided.status).toBe(400);
-    expect(ActionFailureSchema.parse(await voided.json()).error.code).toBe('not_abandonable');
+    expect(voided.status).toBe(200);
     const acted = await api(() => admin).act(handedOff, 'start-inventory');
     expect(acted.status).toBe(400);
     expect(ActionFailureSchema.parse(await acted.json()).error.code).toBe('task_closed');

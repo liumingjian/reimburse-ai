@@ -164,14 +164,18 @@ export const ERP_ACTION_ERRORS = {
 // The web adapter keeps its code and message; every other task-action 409 is stale_step.
 export const ERP_IN_USE_CODE = 'erp_in_use';
 
-// 任务作废（任务之外的生命周期操作，内核 abandon-task）：只允许还没开始写入报销系统的任务；
-// 作废是状态变更不是删除，任务从列表中移除，材料与记录保留在本机，它占用的发票可以在别的任务里使用。
+// 任务作废（任务之外的生命周期操作，内核 abandon-task）：任何状态的任务都可以作废（ADR-0030，2026-09-20 决定），
+// 只有正在跑的那一下除外。作废是状态变更不是删除，任务从列表中移除，材料与记录保留在本机，
+// 它占用的发票可以在别的任务里使用；报销系统里已经产生的单据不会被撤销。
 export const ABANDON_TASK_COPY = {
-  // 已开始写入报销系统（含写入结果不确定）的任务不能作废：它占用的发票要靠只读对账解除（内核 workspace.mjs abandonTask）。
-  blockedReason: '已开始写入报销系统，不能作废：它占用的发票要靠对账解除。',
+  // 唯一挡住作废的状态：这个任务的写入或对账正在跑。它会自己跑完，不需要别的动作来解除。
+  blockedReason: '正在写入报销系统或对账，等这一步跑完再作废。',
   notFound: '没有这个报销任务，列表可能已经变了。',
   dialogTitle: '作废这个报销任务？',
   dialogBody: '作废后任务从列表中移除，材料与记录保留在本机，它占用的发票可以在别的任务里使用。作废不能撤销。',
+  // Shown in place of `dialogBody` for a task that already touched ERP: voiding is local and undoes nothing over there.
+  dialogBodyErpTouched:
+    '这个任务已经写入过报销系统。作废只改本机的状态：报销系统里已经产生的费用报销单和已导入的发票不会被撤销，要你自己去报销系统里处理。作废后任务从列表中移除，材料与记录保留在本机，它占用的发票可以在别的任务里使用。作废不能撤销。',
   confirm: '作废',
 } as const;
 

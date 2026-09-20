@@ -73,7 +73,6 @@ export const ACTION_COPY = {
   notReopenable: '还没有开始材料盘点，不需要重新打开上传。',
   materialNotFound: '这个任务里没有这份材料。',
   alreadyExcluded: '这份材料已经排除。',
-  notAbandonable: '这个报销任务已结束，不能作废。',
   notAnswering: '现在没有可以答复的待确认项。',
   itemNotFound: '这次盘点没有这个待确认项。',
 } as const;
@@ -484,27 +483,27 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     return { homeCity: remembered ? { value: remembered, source: 'remembered' } : null, tasks: items };
   }
 
-  // The one path 任务作废 takes, for the action and for 完全重置 alike. Check and void inside one transaction: a
-  // concurrent 去报销 writes its `erp_job` row in its own transaction, so whichever commits second sees the other and
-  // a task that took the ERP lease in between can no longer be voided (ADR-0007: invoices a job may have consumed are
-  // never released). Throws exactly the refusal the abandon action reports.
+  // The one path 任务作废 takes, for the action and for 完全重置 alike. Any lifecycle and any ERP phase can be voided
+  // (ADR-0030): a task that touched ERP, one already handed off, one whose 对账 came out 不自洽 — all of them leave the
+  // list on request, because a task nobody can retire is a task that blocks the app forever. What voiding does not do
+  // is reach into ERP: bills already there stay there, and the employee deals with them by hand.
+  //
+  // The one refusal left is a job of this very task in flight. Check and void inside one transaction: a concurrent
+  // 去报销 writes its `erp_job` row in its own transaction, so whichever commits second sees the other and a task that
+  // took the ERP lease in between is refused rather than voided out from under a running browser.
   async function voidOne(taskId: string): Promise<void> {
     const holder = erp?.lease.holder() ?? null;
-    const outcome = await db.transaction().execute(async (tx): Promise<'ok' | 'not_found' | 'closed' | 'running' | 'erp_started'> => {
+    const outcome = await db.transaction().execute(async (tx): Promise<'ok' | 'not_found' | 'running'> => {
       const task = await tx.selectFrom('task').selectAll().where('task_id', '=', taskId).where('account_id', '=', accountId).executeTakeFirst();
       if (!task || task.lifecycle === 'voided') return 'not_found';
-      if (task.lifecycle !== 'open') return 'closed';
       const loaded = await load(tx, task);
       const phase = loaded.facts.erp?.phase;
       if (parseRunning(loaded.facts) || phase === 'running' || phase === 'waiting_login' || loaded.facts.erp?.reconciling || holder?.taskId === taskId) return 'running';
-      if (loaded.erp.attempted) return 'erp_started';
       await tx.updateTable('task').set({ lifecycle: 'voided', revision: task.revision + 1, updated_at: now() }).where('task_id', '=', taskId).execute();
       return 'ok';
     });
     if (outcome === 'not_found') throw new ActionRefusedError({ code: 'task_not_found', message: ABANDON_TASK_COPY.notFound }, null, await list());
-    if (outcome === 'closed') throw new ActionRefusedError({ code: 'not_abandonable', message: ACTION_COPY.notAbandonable }, null, await list());
     if (outcome === 'running') throw new StaleStepError(await snapshot(taskId));
-    if (outcome === 'erp_started') throw new ActionRefusedError({ code: 'erp_started', message: ABANDON_TASK_COPY.blockedReason }, null, await list());
     onChange(await snapshot(taskId));
   }
 
@@ -513,13 +512,13 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     list,
 
     // 完全重置 (reset) of this account: its personal book is emptied and its remembered home city forgotten (both as
-    // appended facts), and every open task 任务作废 would accept is voided (facts stay, ADR-0015) and leaves the list.
-    // A task that touched ERP, or one whose job is running or holds the lease, is left exactly as it is: reset is a
-    // bulk abandon and may never release invoices the abandon action itself refuses to release (ADR-0007, story 21).
+    // appended facts), and every task 任务作废 would accept is voided (facts stay, ADR-0015) and leaves the list.
+    // Reset is a bulk abandon, so it clears whatever the abandon action clears — since ADR-0030 that is every
+    // lifecycle, ERP-touched ones included. Only a task with a job in flight is left exactly as it is.
     async resetAll(): Promise<TaskList> {
       await createBookService(db, { scope: 'personal', ownerAccountId: accountId }, accountId).clear();
       if ((await rememberedHomeCity(db, accountId)) !== null) await rememberHomeCity(db, accountId, null, 'reset', now());
-      const open = await db.selectFrom('task').select('task_id').where('account_id', '=', accountId).where('lifecycle', '=', 'open').execute();
+      const open = await db.selectFrom('task').select('task_id').where('account_id', '=', accountId).where('lifecycle', '!=', 'voided').execute();
       for (const { task_id } of open) {
         try {
           await voidOne(task_id);
@@ -941,6 +940,7 @@ export async function parseBacklogOfAllAccounts(db: Db, dataDir: string): Promis
 
 function listItem(task: TaskTable, { facts, legacy, erp }: Loaded): TaskListItem {
   const savedDraftNo = erp.facts?.phase === 'saved' ? (erp.result?.billNo ?? null) : null;
+  const running = parseRunning(facts) || erp.facts?.phase === 'running' || erp.facts?.phase === 'waiting_login' || !!erp.facts?.reconciling;
   return {
     taskId: task.task_id,
     name: task.name,
@@ -950,9 +950,11 @@ function listItem(task: TaskTable, { facts, legacy, erp }: Loaded): TaskListItem
     erpDraftNo: legacy?.bill_no ?? savedDraftNo,
     pendingCount: facts.parse?.openPendingItems ?? 0,
     erpOutcome: legacy?.outcome === 'handed_off' || (task.origin !== 'legacy' && task.lifecycle === 'handed_off') ? 'handed_off' : 'none',
-    // Not voidable once ERP was touched: the task holds its invoices until reconcile says otherwise.
-    abandonable: task.lifecycle === 'open' && !erp.attempted,
-    abandonBlockedReason: task.lifecycle !== 'open' ? ACTION_COPY.notAbandonable : erp.attempted ? ABANDON_TASK_COPY.blockedReason : null,
+    // Voidable in every state (ADR-0030); only a job of this task in flight holds it back, and that clears itself.
+    abandonable: !running,
+    abandonBlockedReason: running ? ABANDON_TASK_COPY.blockedReason : null,
+    // The confirmation has a sharper wording for a task whose bills are already over in ERP.
+    erpTouched: erp.attempted,
     updatedAt: task.updated_at,
   };
 }
