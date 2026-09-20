@@ -112,19 +112,44 @@ describe('fill job through the protocol on the fake ERP', () => {
   it('stops on the row whose 申请报销金额 disagrees with 费用金额 + 税额, instead of writing on past it', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, moneyWritesNotTaken: [{ row: 1, column: '税额' }] }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'unknown', code: 'computed_total_mismatch' });
+    // The refusal now comes from the gate between the two money writes rather than from the witness behind it:
+    // a value that never reaches ERP's model never lets the computed column agree with the cells, so the fill
+    // stops BEFORE typing anything else into that row. Same row, same defect, one step earlier.
+    expect(result).toMatchObject({ type: 'result', status: 'unknown', code: 'money_model_not_settled' });
     expect(String((result as { message?: string }).message)).toContain('明细第 2 行');
     expect(String((result as { message?: string }).message)).toContain('申请报销金额');
     // Both rows' computed column, off the fake form: row 1 adds up, row 2 is exactly its 税额 short.
     expect(column(fake, 'detail', 11)).toEqual(['¥703.00', '¥50.12']);
   });
 
+  // The mechanism behind those two, measured rather than injected (ledger V-59): ERP's model trails the cell, and
+  // the SECOND money write of a row, typed while the first is still in flight, is dropped. With the fake holding
+  // that lag, a fill that types 费用金额 and 税额 back to back loses one of them and lands on
+  // `computed_total_mismatch`; a fill that waits for ERP's own 申请报销金额 to agree with the cells before typing
+  // the next one gets both in. The gate is what this asserts — no sleep is involved, only ERP's arithmetic.
+  it('paces the two money cells against ERP\'s computed column, so a lagging model loses neither', async () => {
+    // 40 is measured, not picked: the fake counts its lag in PAGE EVALUATIONS, not milliseconds, and `writeCell`
+    // burns a good number of them on its own read-back between the two commits. Below ~20 the window is already
+    // over before 税额 is typed and the test proves nothing; at 40 the write is dropped with the gate removed and
+    // survives with it in place — which is the discrimination the test is for. (Checked both ways by hand.)
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, moneyModelLagTicks: 40 }));
+    const result = await run(fake);
+    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    // Both rows add up in ERP's own column: nothing was typed into a cell and lost on the way to the model.
+    // Checked against the form's own 费用金额 and 税额 rather than against numbers copied out of the fixture,
+    // so the assertion still means "ERP agrees with itself" if the fixture amounts ever change.
+    const asCents = (shown: string) => Math.round(Number(String(shown).replace(/[¥,]/g, '')) * 100);
+    const [net, tax, sum] = [9, 10, 11].map((index) => column(fake, 'detail', index));
+    expect(sum!.map(asCents)).toEqual(net!.map((amount, index) => asCents(amount) + asCents(tax![index]!)));
+  });
+
   // The same rule from the other side: a 费用金额 that never reaches the model leaves 申请报销金额 = 税额 alone,
-  // which is live row 2's shape (¥15.56 + ¥0.47 -> ¥0.47).
+  // which is live row 2's shape (¥15.56 + ¥0.47 -> ¥0.47). Here the loss is on the FIRST money cell, so the gate
+  // refuses before 税额 is typed at all — the next write is exactly what it is there to withhold.
   it('catches a 费用金额 that never reached the model just as well as a lost 税额', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, moneyWritesNotTaken: [{ row: 0, column: '费用金额' }] }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'unknown', code: 'computed_total_mismatch' });
+    expect(result).toMatchObject({ type: 'result', status: 'unknown', code: 'money_model_not_settled' });
     expect(String((result as { message?: string }).message)).toContain('明细第 1 行');
   });
 

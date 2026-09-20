@@ -161,6 +161,25 @@ export type FakeErpOptions = {
    */
   moneyWritesNotTaken?: Array<{ row: number; column: '费用金额' | '税额' }>;
   /**
+   * How many ERP-page evaluations a money write takes to reach ERP's MODEL, and — the point of the option — what
+   * happens to a second money write issued into the same row before the first one has arrived: it is dropped.
+   * The cell shows it and reads back as written; ERP's model never takes it, so 申请报销金额 goes on being
+   * computed without it.
+   *
+   * Measured 2026-09-20 by `server/scripts/probe-money.ts` (ledger V-59), 16 trials on an unsaved 新增 bill:
+   * writing the two money cells back to back is correct in 2 of 12 trials, while a 3s gap between them is 4/4,
+   * and the failure is always that the SECOND cell reads back EMPTY. Sampling the row frame by frame gives the
+   * mechanism: after 费用金额 the row still carries stale values at t=11ms and has caught up by t=266ms; after
+   * 税额 the cell reads ¥100.64 at t=2ms while 申请报销金额 is still the net alone, and only by t=258ms does it
+   * become net+tax. ERP's model trails the cell by roughly 260ms, and a write issued inside that window is lost.
+   *
+   * This is the CAUSE of the shape `moneyWritesNotTaken` injects by hand. That option stays: it states an outcome
+   * directly, which is the right tool for a test about the witness. This one reproduces how the outcome arises,
+   * so a fill that paces itself against ERP's own computed column passes and one that types straight through
+   * does not — the fake stops being kinder than the live page.
+   */
+  moneyModelLagTicks?: number;
+  /**
    * How many ERP-page evaluations the freshly opened 发票类型 dropdown's own items sit under a cover — the list
    * painted, its items measurable, and `document.elementFromPoint` at the wanted item still answering the thing
    * on top of it.
@@ -426,6 +445,10 @@ const kendoDate = (raw: string) => {
   // What ERP kept for a cell whose write never reached its model: the cell shows the typed value, the model does
   // not have it. Keyed by the <td>, so it follows the row it belongs to.
   const notTaken = new Map<any, string>();
+  // Money writes ERP has taken into the cell but not yet into its model, keyed by the row: one row settles one
+  // write at a time, which is exactly why the second write inside the window has nowhere to land.
+  const pendingMoney = new Map<any, { td: any; due: number }>();
+  const MONEY_COLUMNS = new Set(['费用金额', '税额']);
   const modelOf = (tr: any, column: string) => {
     const td = cellOf(tr, 'detail', column);
     return notTaken.has(td) ? notTaken.get(td)! : textOf(tr, 'detail', column);
@@ -471,10 +494,19 @@ const kendoDate = (raw: string) => {
     const rowIndex = dataRows('detail').indexOf(tr);
     if ((options.moneyWritesNotTaken ?? []).some((drop) => drop.row === rowIndex && drop.column === column)) notTaken.set(td, '0.00');
     else notTaken.delete(td);
+    // The model lag (V-59). During the window the model keeps what it had; a second money write arriving inside
+    // another one's window is not queued behind it — it is dropped, and the model keeps what it had for good.
+    const lag = options.moneyModelLagTicks ?? 0;
+    if (lag > 0 && MONEY_COLUMNS.has(column)) {
+      const held = notTaken.has(td) ? notTaken.get(td)! : before;
+      const inFlight = pendingMoney.get(tr);
+      notTaken.set(td, held);
+      if (!inFlight || mainTicks >= inFlight.due) pendingMoney.set(tr, { td, due: mainTicks + lag });
+    }
     leaveEditClass(tr);
     mutate('cell', `${column}=${text}`);
     // Linked recalculation: a new 费用金额 clears 税额 (kernel erpform settleGrid note).
-    if (column === '费用金额') setText(tr, 'detail', '税额', '');
+    if (column === '费用金额') { setText(tr, 'detail', '税额', ''); notTaken.delete(cellOf(tr, 'detail', '税额')); }
     recalc(tr);
     if (column === '税额') linkReceipt(tr);
     updateTotals();
@@ -563,6 +595,24 @@ const kendoDate = (raw: string) => {
       pending.tr.classList.remove('k-grid-edit-row');
       lingeringEditRows.splice(lingeringEditRows.indexOf(pending), 1);
     }
+  }
+
+  /** Money writes whose window has elapsed: the model takes the value the cell has been showing all along. */
+  function flushMoneyModel() {
+    let flushed = false;
+    for (const [tr, pending] of [...pendingMoney]) {
+      if (mainTicks < pending.due) continue;
+      pendingMoney.delete(tr);
+      notTaken.delete(pending.td);
+      recalc(tr);
+      // 收票 linking reads ERP's MODEL, not the cells, so it cannot happen at commit time while the value is
+      // still in flight — it happens when the model takes the value, which is here.
+      linkReceipt(tr);
+      flushed = true;
+    }
+    // Only when something actually arrived: `updateTotals` reaches into the detail grid, and this runs on every
+    // page evaluation — including the ones before any 费用报销单 is open, where that grid does not exist yet.
+    if (flushed) updateTotals();
   }
 
   /** A 新增行 whose row ERP has not painted yet. */
@@ -993,7 +1043,7 @@ const kendoDate = (raw: string) => {
       if (!sessionId && !targetAlive) throw new Error('CDP 连接已关闭');
       const doc = sessionId ? child!.doc : main;
       if (sessionId) { assistantTicks += 1; flushRecognition(); }
-      else { mainTicks += 1; syncFormPanel(); clearBlocker(); syncOptionCover(); paintReport(); flushNewRow(); flushEditClass(); syncOptionItemCover(); }
+      else { mainTicks += 1; syncFormPanel(); clearBlocker(); syncOptionCover(); paintReport(); flushNewRow(); flushMoneyModel(); flushEditClass(); syncOptionItemCover(); }
       switch (method) {
         case 'Runtime.evaluate': return doc.evaluate(String(params.expression));
         case 'Input.dispatchMouseEvent':

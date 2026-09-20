@@ -47,10 +47,18 @@ without the second would produce artefacts nobody can remove.
   itself, so ownership survives a lost, moved or rebuilt local store, and so the delete decision can be made by
   looking only at ERP. The local ledger records the same fact for audit, but is never the admission criterion.
   A delete must be judged safe from ERP alone; otherwise a local store that cannot be trusted makes deleting
-  untrustworthy too. **Which field carries the marker is not settled** — the 费用报销单 head has no free-text
-  备注/摘要 field among its 114 (V-60); the candidates are a business-visible field such as `Causa` (事由), an
-  apparently unused one such as `OtherPayBillNumber`, or a new custom field in the `F_BJYC_*` family the account
-  set already uses. This needs the owner and probably their 金蝶 administrator.
+  untrustworthy too.
+
+  **The marker goes in `FCausa` (事由, the bill's purpose text), as a suffix.** V-60 read all 81 head fields:
+  every text field is already spoken for, and 事由 is the only free-text one. A dedicated `F_BJYC_*` custom field
+  would be cleaner and remains the target, but the owner's decision on 2026-09-20 is that adding one is not
+  currently available, so the suffix is what ships. The employee can see it; a bill stating that a program built
+  it is defensible rather than embarrassing.
+
+  **The recogniser reads the marker's content, never its location.** Ownership is decided by matching the marker
+  text, so moving it to a custom field later changes one constant and no logic. The marker must survive being
+  read back verbatim, must not collide with anything a person would type, and must not be derivable by guessing —
+  it names a job, so an unrelated bill cannot accidentally carry one.
 
 - **Deletion goes through one gateway module, and the never-click guards are narrowed rather than relaxed.** The
   existing assertion — no executor module performs a save or delete — stays; it gains exactly one named

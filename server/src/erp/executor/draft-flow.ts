@@ -224,6 +224,25 @@ export const computedTotalProblem = (
   return null;
 };
 
+const MONEY_COLUMNS = new Set(['费用金额', '税额']);
+
+/**
+ * Has ERP taken into its own model what the row's money cells are showing?
+ *
+ * 申请报销金额 is ERP's, computed from the pair; when it equals them, the write has arrived. Measured 2026-09-20
+ * (ledger V-59): after 费用金额 the row is still stale at t=11ms and agrees by t=266ms, and after 税额 the cell
+ * reads the new value at t=2ms while 申请报销金额 is still the net alone until t=258ms. An empty pair is allowed
+ * to agree with an empty total so a row that has had nothing written to it yet is not called unsettled.
+ */
+export const moneyModelSettled = (values: Record<string, string> | undefined): boolean => {
+  const row = values ?? {};
+  const net = cents(row['费用金额']);
+  const tax = cents(row['税额']);
+  const sum = cents(row['申请报销金额']);
+  if (net === null && tax === null) return sum === null || sum === 0;
+  return sum !== null && sum === (net ?? 0) + (tax ?? 0);
+};
+
 export type CurrentReadings = {
   formMode?: { readable?: boolean; value?: string | null };
   billNo?: { readable?: boolean; value?: string | null };
@@ -261,7 +280,7 @@ export type FillResult =
  */
 export async function fillApprovedPreview<P>(page: P, {
   approvedPreview, approval, freshGate, readCurrent, addRow = null, writeDeps = {}, ops = {},
-  witnessReads = 8, witnessDelayMs = 900,
+  witnessReads = 8, witnessDelayMs = 900, settleReads = 12, settleDelayMs = 250,
 }: {
   approvedPreview: ApprovedPreview; approval: Approval | null | undefined; freshGate: FreshGate | null | undefined;
   readCurrent: (expected: ApprovedPreview | null) => Promise<CurrentReadings>;
@@ -269,6 +288,8 @@ export async function fillApprovedPreview<P>(page: P, {
   writeDeps?: unknown; ops?: FormOps<P>;
   /** How many times the computed column is re-read while ERP is still recalculating, and how long between reads. */
   witnessReads?: number; witnessDelayMs?: number;
+  /** The same two knobs for the gate BETWEEN the two money writes of one row; ERP was measured settling in ~260ms. */
+  settleReads?: number; settleDelayMs?: number;
 }): Promise<FillResult> {
   const problems: Problem[] = gateAndApprovalProblems(approvedPreview, freshGate, approval);
   if (problems.length) return fail('preflight', problems);
@@ -330,6 +351,31 @@ export async function fillApprovedPreview<P>(page: P, {
         : await writeCell(page, { which: 0, row: rowIndex, column: field.column, value: String(field.value), expect: { mode: 'equals', value: String(field.readback) } }, writeDeps);
       if (!result || !result.ok) {
         return fail('fill', [{ code: 'field_write_failed', message: (result && result.reason) || `字段 ${field.column} 回读失败`, lineId: line.lineId, column: field.column }], { readings, rowsWritten });
+      }
+      // V-59: ERP's model trails the cell by ~260ms, and a money write issued into the same row inside that
+      // window is DROPPED — the cell shows it, 申请报销金额 goes on being computed without it, and `writeCell`,
+      // which compares the cell it typed into, calls it a success. So the two money cells are not typed back to
+      // back: after each one, wait until ERP's own computed column agrees with what the cells show, then type
+      // the next. The gate is ERP's own arithmetic rather than a sleep, so it is fast when ERP is fast and
+      // patient when it is not, and it does not silently re-break the day the server gets slower.
+      if (MONEY_COLUMNS.has(field.column)) {
+        let settled = false;
+        for (let read = 0; read < Math.max(1, settleReads); read++) {
+          if (read > 0) await sleep(settleDelayMs);
+          readings = await readCurrent(null);
+          settled = moneyModelSettled(dataRows(readings.detailGrid)[rowIndex]?.values);
+          if (settled) break;
+        }
+        if (!settled) {
+          const shown = dataRows(readings.detailGrid)[rowIndex]?.values ?? {};
+          return fail('fill', [{
+            code: 'money_model_not_settled',
+            message: `明细第 ${rowIndex + 1} 行写完「${field.column}」后，报销系统的「申请报销金额」${shown['申请报销金额'] ?? '读不出'}`
+              + ` 一直没有追上「费用金额」${shown['费用金额'] ?? '读不出'} + 「税额」${shown['税额'] ?? '读不出'}；`
+              + '这一行没有继续写下去，以免下一个金额被丢掉',
+            lineId: line.lineId, column: field.column,
+          }], { readings, rowsWritten });
+        }
       }
     }
 
