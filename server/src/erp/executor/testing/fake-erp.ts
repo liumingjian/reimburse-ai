@@ -137,6 +137,13 @@ export type FakeErpOptions = {
   /** The window opens and its report never arrives at all: the hang the budget's stall clock has to catch. */
   importReportStalled?: boolean;
   /**
+   * 发票导入单据 does everything it should — binds the invoices, mints their 收票单, fills the 收票信息 grid — and
+   * opens NO window at all. Measured live 2026-09-21 with one invoice: 收票单 SPD202609160141 on the bill, not a
+   * single `.k-window` on screen, and a judge that only ever looked at windows waited out its whole budget and
+   * told the employee 结果不确定 about an import that had worked.
+   */
+  importReportMissing?: boolean;
+  /**
    * 处理结果 answers 发票导入单据 in full and then refuses to close: its 退出 does nothing, the window keeps
    * floating over the form, and the form's own 事由 control answers `elementFromPoint` with the report's text.
    *
@@ -840,9 +847,11 @@ const kendoDate = (raw: string) => {
     for (const invoice of refused) report.push(`接收发票 失败 号码为【${invoice.invoiceNumber}】的发票${invoice.importRefusal}`);
     updateTotals();
     show(q('#assistant-window'), false);
-    result(refused.length === 0
-      ? `全部执行成功：${accepted.length}`
-      : `执行成功：${accepted.length}；执行失败：${refused.length}`, report);
+    if (!options.importReportMissing) {
+      result(refused.length === 0
+        ? `全部执行成功：${accepted.length}`
+        : `执行成功：${accepted.length}；执行失败：${refused.length}`, report);
+    }
     const closing = child;
     mutate('import', imported.join(','));
     // The iframe target goes away after this click completes, and NOTHING replaces it: the whole answer to the

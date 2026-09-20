@@ -76,7 +76,7 @@ async function uploadAndImport(page: WritePage, invoices: typeof INVOICES, budge
     });
     await openInvoiceAssistant(page, { timeoutMs: 2000 });
     await uploadInvoices(page, paths);
-    return await importInvoices(page, budget ? { budget } : {});
+    return await importInvoices(page, { expectedRows: invoices.length, ...(budget ? { budget } : {}) });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -644,6 +644,32 @@ describe('the 发票导入单据 click', () => {
     const imported = await uploadAndImport(page, [rail!, ride!]);
     expect(imported.report).toContain('全部执行成功：2');
     expect(receiptNumbers(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
+  });
+
+  // Live 2026-09-21, the round this test exists for: one invoice, 发票导入单据 bound it and minted 收票单
+  // SPD202609160141 — and ERP opened no window at all. The judge only ever looked at `.k-window`, so it waited out
+  // the whole 120 s appearance budget and reported 结果不确定 about an import that had fully succeeded, on the one
+  // irreversible act baox performs. The bill's own 收票行 are the other place the answer is written.
+  it('takes the bill\'s own 收票行 as the answer when ERP opens no 处理结果 at all', async () => {
+    const [rail, ride] = INVOICES;
+    const fake = await createFakeErp(fakeErpOptions({ importReportMissing: true }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    const imported = await uploadAndImport(page, [rail!, ride!], { appearMs: 2000, stallMs: 2000, hardCapMs: 4000 });
+    expect(imported).toMatchObject({ ok: true, report: '', reportClosed: true });
+    expect(receiptNumbers(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
+  });
+
+  // A short grid is not an answer: an invoice ERP refused leaves no 收票行, so waiting on the count cannot pass an
+  // import that only half happened. With no window either, the run still ends as 结果不确定 — and says what it saw.
+  it('does not take a short 收票网格 as success: one invoice refused, no window, and it says how many rows landed', async () => {
+    const [rail, ride] = INVOICES;
+    const refusal = '已被费用报销单【FYBX20260911000011】占用';
+    const fake = await createFakeErp(fakeErpOptions({ importReportMissing: true, invoices: [rail!, { ...ride!, importRefusal: refusal }] }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    await expect(uploadAndImport(page, [rail!, ride!], { appearMs: 300, stallMs: 2000, hardCapMs: 4000 }))
+      .rejects.toMatchObject({ code: 'INVOICE_IMPORT_NOT_ANSWERED', message: /收票信息里只有 1 行（这次导入 2 张）/ });
   });
 
   it('gives up on a 处理结果 that has stopped changing, and says which bound it ran out of', async () => {

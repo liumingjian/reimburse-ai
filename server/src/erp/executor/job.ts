@@ -246,8 +246,9 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     }
     await startAttempt('import', { formMode: 'new', billNo: null, receiptRowCount: plan.invoices.length });
     // The import's own answer is read, not discarded: its 处理结果 text is ERP's verbatim verdict on every
-    // invoice, and `reportClosed` says whether the report it opened actually went away.
-    const importResult = await importInvoices(write);
+    // invoice, and `reportClosed` says whether the report it opened actually went away. When ERP opens no window
+    // at all (live 2026-09-21), the count posted here is what lets the bill's own 收票行 answer instead.
+    const importResult = await importInvoices(write, { expectedRows: plan.invoices.length });
     await step('import', 'done');
 
     await step('readback', 'running');

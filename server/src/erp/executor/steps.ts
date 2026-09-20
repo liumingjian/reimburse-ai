@@ -12,7 +12,7 @@ import { HIT_JS, clickReach, reachProblem, type Reach } from './hit';
 import { readPane, recognisedTotal, selectRecognisedInvoices } from './invoice-grid';
 import { dismissNotice } from './notices';
 import { DEFAULT_PACE, sleep, waitFor, type Pace } from './pace';
-import { DETAIL_COLUMN } from './reader';
+import { DETAIL_COLUMN, RECEIPTS_COLUMN } from './reader';
 import { dialogsSnippet, dismissPoint } from './tabs';
 
 export type WritePage = { session: CdpSession; children?: ChildTargets; pace?: Pace };
@@ -418,6 +418,12 @@ export async function uploadInvoices(page: WritePage, paths: string[], { timeout
  * A grid of nothing but 成功 is not, because a grid caught half-painted shows the rows it has and the ones still
  * missing may be the failures — and a Kendo grid may page or virtualise the rest away for good. The summary's
  * count, by contrast, is complete the moment it exists. Hence: rows condemn, the summary clears.
+ *
+ * AND SOMETIMES ERP SAYS NOTHING AT ALL. Measured live 2026-09-21, one invoice: 发票导入单据 bound it, minted
+ * 收票单 SPD202609160141, put its row in 收票信息 — and opened no window whatsoever. The capture taken when the
+ * run gave up shows the form with its one 收票行 and not a single `.k-window` on screen. This reader cannot see
+ * that, because it only ever looks at windows; `importInvoices` therefore watches the 收票网格 alongside it, and
+ * a grid that reached the expected number of rows is an answer of its own.
  */
 const importResponse = `(() => {
   const vis = ${visible};
@@ -494,6 +500,16 @@ export type ImportBudget = { appearMs: number; stallMs: number; hardCapMs: numbe
 export const IMPORT_BUDGET: ImportBudget = { appearMs: 120_000, stallMs: 300_000, hardCapMs: 600_000 };
 
 /**
+ * How many 收票行 (receipt rows) the open bill holds right now, or null when the grid cannot be read at all.
+ * `readGridByColumn` already refuses an ambiguous or misaligned grid, so a number here is a number of real rows.
+ */
+async function receiptRowsNow(page: WritePage): Promise<number | null> {
+  const grid = await readGridByColumn(page.session, RECEIPTS_COLUMN).catch(() => null);
+  if (!grid?.ok) return null;
+  return grid.rows.filter((row) => row.kind === 'data').length;
+}
+
+/**
  * THE import mutation, and the only irreversible act baox performs (ADR-0025, ADR-0028): the 发票导入单据 click
  * binds the selected invoices to this 费用报销单 and mints its 收票单. Nothing before it is irreversible, and
  * nothing may call this without a durable `attempt_started` already recorded.
@@ -505,7 +521,7 @@ export const IMPORT_BUDGET: ImportBudget = { appearMs: 120_000, stallMs: 300_000
  * twice in the old code was a collision, not a repetition. V-45 round 4 inferred an in-iframe 是否生成费用明细
  * step from a human run that had not chosen the mode up front; measured on baox's own path, it does not exist.
  */
-export async function importInvoices(page: WritePage, { budget = IMPORT_BUDGET }: { budget?: ImportBudget } = {}) {
+export async function importInvoices(page: WritePage, { budget = IMPORT_BUDGET, expectedRows = null }: { budget?: ImportBudget; expectedRows?: number | null } = {}) {
   const assistant = await assistantSession(page, Math.min(budget.appearMs, 45_000));
   await clickText(page, assistant, '发票导入单据', { timeoutMs: 15_000 });
   // From here on the assistant's session is dead and everything is read on the ERP page.
@@ -515,12 +531,26 @@ export async function importInvoices(page: WritePage, { budget = IMPORT_BUDGET }
   let lastChange = started;
   let answer: ImportResponse | null = null;
   const seconds = (ms: number) => Math.round(ms / 1000);
+  let receiptRows: number | null = null;
   for (;;) {
     answer = await evalIn<ImportResponse>(page.session, importResponse);
     if (answer?.answered) break;
     const now = Date.now();
     const text = answer?.text ?? '';
     if (text !== lastText) { lastText = text; lastChange = now; }
+    // ERP need not open a window to answer: live 2026-09-21 a one-invoice import bound the invoice, minted its
+    // 收票单 and said nothing. The bill itself is the other place the answer is written, so it is read too —
+    // but only while no window is on screen. A window that is up is the richer verdict (it names the invoices
+    // ERP refused) and it is about to resolve, so it is never raced: the rows would say 成功 a poll before the
+    // summary line that condemns two of them lands. Reaching the FULL expected count is what clears the import:
+    // a refusal leaves its invoice without a row, so a short grid keeps waiting rather than passing.
+    if (!text && expectedRows !== null) {
+      receiptRows = await receiptRowsNow(page);
+      if (receiptRows !== null && receiptRows >= expectedRows) {
+        answer = { answered: true, text: '', rows: receiptRows, succeeded: receiptRows, failed: 0 };
+        break;
+      }
+    }
     const waited = now - started;
     const still = seconds(waited);
     if (waited >= budget.hardCapMs) {
@@ -528,8 +558,11 @@ export async function importInvoices(page: WritePage, { budget = IMPORT_BUDGET }
         `点了「发票导入单据」之后，报销系统 ${still} 秒（上限 ${seconds(budget.hardCapMs)} 秒）都没有给出完整的处理结果`);
     }
     if (!text && waited >= budget.appearMs) {
+      const held = expectedRows === null ? '' : receiptRows === null
+        ? '，收票信息也读不出来'
+        : `，收票信息里只有 ${receiptRows} 行（这次导入 ${expectedRows} 张）`;
       throw new ExecutorError('INVOICE_IMPORT_NOT_ANSWERED',
-        `点了「发票导入单据」之后，报销系统 ${still} 秒（上限 ${seconds(budget.appearMs)} 秒）内没有弹出处理结果窗口`);
+        `点了「发票导入单据」之后，报销系统 ${still} 秒（上限 ${seconds(budget.appearMs)} 秒）内没有弹出处理结果窗口${held}`);
     }
     if (text && now - lastChange >= budget.stallMs) {
       throw new ExecutorError('INVOICE_IMPORT_NOT_ANSWERED',
