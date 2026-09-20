@@ -54,6 +54,70 @@ try {
   await enableFocusEmulation(session);
   await autoAttach(session);
   console.log('before:', JSON.stringify(await readRow(session)));
+
+  // `--orders` asks the narrower question the first run raised: is 税额 unwritable FULL STOP, or only unwritable
+  // after 费用金额 has been written? Same row, cleared before each trial, one variable changed between them.
+  if (process.argv.includes('--orders')) {
+    const clear = async () => {
+      for (const column of [NET, TAX]) {
+        await writeCell(session, { which: 0, row: ROW, column, value: '', expect: { mode: 'equals', value: '' }, settleFirst: true })
+          .catch(() => undefined);
+      }
+      await sleep(1500);
+      return readRow(session);
+    };
+    const put = async (column: string, value: string) => {
+      const done = await writeCell(session, { which: 0, row: ROW, column, value, expect: { mode: 'equals', value }, settleFirst: true })
+        .catch((error: any) => ({ ok: false, reason: String(error?.message ?? error), after: null }));
+      return { column, value, ok: done.ok, reason: (done as any).reason ?? null, readBack: (done as any).after ?? null };
+    };
+    for (const pair of [{ net: '32.18', tax: '0.32' }, { net: '644.95', tax: '58.05' }]) {
+      console.log('TAX ALONE  cleared:', JSON.stringify(await clear()));
+      const taxAlone = await put(TAX, pair.tax);
+      console.log('TAX ALONE  ', JSON.stringify({ ...taxAlone, settled: await readRow(session), after10s: (await watch(session, 10_000)).slice(-1) }));
+
+      console.log('NET THEN TAX cleared:', JSON.stringify(await clear()));
+      const first = await put(NET, pair.net);
+      await sleep(3000);
+      const second = await put(TAX, pair.tax);
+      console.log('NET THEN TAX', JSON.stringify({ first, second, settled: await readRow(session) }));
+    }
+    process.exit(0);
+  }
+
+  // `--taxfirst` tests the one order the fill has never used. Measured 2026-09-20: writing 税额 into a CLEAN row
+  // makes ERP compute 申请报销金额 from it within ~257ms, while writing it straight after 费用金额 leaves the
+  // computed column stuck at the net alone (32.18+0.32 -> 32.18, 644.95+58.05 -> 644.95 — V-59's signature,
+  // reproduced twice in a row). If the recalculation that runs on the LAST commit is the one that counts, then
+  // committing the net last should make it count BOTH.
+  if (process.argv.includes('--taxfirst')) {
+    const clear = async () => {
+      for (const column of [NET, TAX]) {
+        await writeCell(session, { which: 0, row: ROW, column, value: '', expect: { mode: 'equals', value: '' }, settleFirst: true })
+          .catch(() => undefined);
+      }
+      // Long enough that the next trial does not start inside the previous one's recalculation — the mistake that
+      // made the first `--orders` run unreadable (its clear had not taken, and the row was still in edit mode).
+      await sleep(3000);
+      return readRow(session);
+    };
+    const put = async (column: string, value: string) => {
+      const done = await writeCell(session, { which: 0, row: ROW, column, value, expect: { mode: 'equals', value }, settleFirst: true })
+        .catch((error: any) => ({ ok: false, reason: String(error?.message ?? error), after: null }));
+      return { column, value, ok: done.ok, reason: (done as any).reason ?? null, readBack: (done as any).after ?? null };
+    };
+    for (const pair of [{ net: '32.18', tax: '0.32' }, { net: '644.95', tax: '58.05' }, { net: '1677.36', tax: '100.64' }]) {
+      const cleared = await clear();
+      const first = await put(TAX, pair.tax);
+      await sleep(1500);
+      const between = await readRow(session);
+      const second = await put(NET, pair.net);
+      const samples = await watch(session, 8000);
+      console.log('TAX FIRST', JSON.stringify({ pair, cleared, first, between, second, last: samples.slice(-1)[0] ?? null }));
+    }
+    process.exit(0);
+  }
+
   for (const net of NETS) {
     // Reset first, so no trial inherits the one before it — the flaw that made `probe-money.ts`'s tallies
     // unreadable (its 'tax_first 32.18' trial started with 644.95 already in the cell).
