@@ -49,9 +49,30 @@ export const HIT_JS = `(n) => {
   const inView = painted
     && b.top >= 0 && b.bottom <= innerHeight && b.left >= 0 && b.right <= innerWidth;
   if (!inView) return { x, y, inView: false, onTarget: false, cover: null };
-  const top = document.elementFromPoint(x, y);
-  const onTarget = !!top && (top === n || n.contains(top) || top.contains(n));
-  return { x, y, inView: true, onTarget,
+  const reaches = (top) => !!top && (top === n || n.contains(top) || top.contains(n));
+  let px = x, py = y;
+  let top = document.elementFromPoint(px, py);
+  if (!reaches(top)) {
+    // The centre is not the only point on a target. Measured live 2026-09-20: the ERP painted a SECOND 审核 over
+    // the middle of the 收票信息 section anchor (82x30 at x=271) and left it there — three reads apart, the same
+    // cover — while the left fifth of that very anchor was free the whole time. The run stopped on a target it
+    // could have reached, and the other three section anchors beside it were fine. So a covered centre is a
+    // reason to look at the rest of the element's own box, not a reason to give up.
+    //
+    // The contract does not move: a point is only ever returned as on target when the hit test at THAT point
+    // resolves to the target. Nothing is clicked on a guess; the search just stops throwing away the points that
+    // would have worked. Ordered outwards from the centre, so the point picked is the most central free one.
+    const spots = [];
+    for (const fx of [0.5, 0.35, 0.65, 0.2, 0.8]) for (const fy of [0.5, 0.3, 0.7]) spots.push([fx, fy]);
+    for (const [fx, fy] of spots) {
+      const cx = Math.round(b.x + b.width * fx);
+      const cy = Math.round(b.y + b.height * fy);
+      const here = document.elementFromPoint(cx, cy);
+      if (reaches(here)) { px = cx; py = cy; top = here; break; }
+    }
+  }
+  const onTarget = reaches(top);
+  return { x: px, y: py, inView: true, onTarget,
     cover: top && !onTarget ? { tag: String(top.tagName), id: String(top.id || ''),
       cls: String(top.className || '').slice(0, 70),
       text: String(top.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40) } : null };

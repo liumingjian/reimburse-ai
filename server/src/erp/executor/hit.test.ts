@@ -63,4 +63,32 @@ describe('the hit-tested click', () => {
     const below = { getBoundingClientRect: () => rect(900), contains: () => false };
     expect(make(null)(below)).toMatchObject({ inView: false, onTarget: false });
   });
+
+  // Measured live 2026-09-20: the ERP painted a SECOND 审核 over the middle of the 收票信息 section anchor
+  // (82x30 at x=271, y=130) and left it there — three reads apart, the same cover — while the left fifth of that
+  // very anchor was free the whole time. The whole 去报销 stopped on a target it could have reached. This is what
+  // stops anyone going back to measuring the centre alone.
+  it('finds a free point inside a target whose centre is covered, rather than giving up on it', () => {
+    // The live geometry: the cover owns x >= 306 of an anchor running 271..353.
+    const anchorRect = { x: 271, y: 130, left: 271, right: 353, top: 130, bottom: 160, width: 82, height: 30 };
+    const node = { getBoundingClientRect: () => anchorRect, contains: () => false };
+    const cover = { tagName: 'SPAN', id: '', className: 'k-link', textContent: '审核', contains: () => false };
+    const hit = new Function('innerWidth', 'innerHeight', 'document', `return (${HIT_JS})`)(
+      2048, 1035, { elementFromPoint: (x: number) => (x >= 306 ? cover : node) })(node);
+    expect(hit).toMatchObject({ inView: true, onTarget: true, cover: null });
+    // The point it settled on is one the hit test really answered with the anchor.
+    expect(hit.x).toBeLessThan(306);
+    expect(hit.x).toBeGreaterThanOrEqual(271);
+    expect(hit.y).toBeGreaterThanOrEqual(130);
+    expect(hit.y).toBeLessThanOrEqual(160);
+  });
+
+  it('still refuses a target that is covered everywhere, and still names the cover', () => {
+    const rect30 = { x: 0, y: 0, left: 0, right: 80, top: 0, bottom: 30, width: 80, height: 30 };
+    const node = { getBoundingClientRect: () => rect30, contains: () => false };
+    const cover = { tagName: 'DIV', id: 'result-window', className: '', textContent: '处理结果', contains: () => false };
+    const hit = new Function('innerWidth', 'innerHeight', 'document', `return (${HIT_JS})`)(
+      2048, 1035, { elementFromPoint: () => cover })(node);
+    expect(hit).toMatchObject({ onTarget: false, cover: { tag: 'DIV', id: 'result-window' } });
+  });
 });
