@@ -248,6 +248,33 @@ try {
     process.exit(0);
   }
 
+  // `--link` asks the one question V-67 left open. If 税额 is carried by the 收票 linkage, then the 明细 row's
+  // 收票单号 is the field that carries it — and the first thing to know about that field is whether it is ours
+  // to write at all, or ERP's to fill. Its header is the only one in the grid with a `_linkheader` span, which
+  // is what K3Cloud gives a column that navigates to another 单据.
+  //
+  // The test is the least invasive one available: write the EMPTY string into a cell that is already empty. It
+  // changes nothing whichever way it goes, and it separates the two cases cleanly, because `writeCell` reports
+  // «点了「收票单号」之后这一格里没有绑好的编辑控件» for a cell that never binds an editor, and a read-back
+  // verdict for one that does. It also reads the 收票信息 grid below, to see whether this draft has any 收票
+  // rows at all for a linkage to point at.
+  if (process.argv.includes('--link')) {
+    const before = await readRow(session);
+    console.log('detail row:', JSON.stringify(before));
+
+    const receipts = await readGridByColumn(session, '价税合计');
+    console.log('收票信息 grid:', JSON.stringify(receipts.ok
+      ? { rowCount: receipts.rowCount, rows: receipts.rows.slice(0, 5).map((r) => r.values) }
+      : receipts));
+
+    const bind = await writeCell(session, { which: 0, row: ROW, column: RECEIPT, value: '',
+      expect: { mode: 'equals', value: '' }, settleFirst: true })
+      .catch((error: any) => ({ ok: false, reason: String(error?.message ?? error) }));
+    console.log('收票单号 editable?', JSON.stringify(bind));
+    console.log('after:', JSON.stringify(await readRow(session)));
+    process.exit(0);
+  }
+
   for (const net of NETS) {
     // Reset first, so no trial inherits the one before it — the flaw that made `probe-money.ts`'s tallies
     // unreadable (its 'tax_first 32.18' trial started with 644.95 already in the cell).
