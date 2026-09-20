@@ -24,6 +24,7 @@
 import { evalIn, type CdpSession } from './cdp';
 import { ExecutorError } from './chromium';
 import { HIT_JS, clickReach, describeCover, type Cover, type Reach } from './hit';
+import { dismissNotice } from './notices';
 import { DEFAULT_PACE, sleep, waitFor, type Pace } from './pace';
 
 export type GridPage = { pace?: Pace };
@@ -121,7 +122,11 @@ async function ensureTicked(page: GridPage, assistant: CdpSession, pane: string 
     (value) => value?.ok === true && value.checked === true, cap(page, 5000), pace.pollMs);
 
   let clickedAt: { x: number; y: number } | null = null;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  // One notice, once: a second one would mean the assistant is raising them faster than the run can answer, and
+  // that is a stop to report rather than a loop to keep turning. Clearing it buys back the attempt it spent, so
+  // the «one permitted retry» above still means one retry of the CLICK, not one fewer because of a popup.
+  let notice = false;
+  for (let attempt = 0; attempt < (notice ? 3 : 2); attempt += 1) {
     const target = await rowTarget(assistant, key);
     if (!target?.ok) {
       throw new ExecutorError('INVOICE_SELECTION_UNCONFIRMED',
@@ -133,6 +138,10 @@ async function ensureTicked(page: GridPage, assistant: CdpSession, pane: string 
         `发票助手里${where(pane, key)}滚动之后仍然不在可见范围内（y=${target.y}），不在看不见的地方点击，${NOTHING_IMPORTED}`);
     }
     if (!target.onTarget) {
+      // The assistant paints its own release announcement over the whole pane (V-62: an `ant-modal-wrap` at
+      // z-index 9999 covering (0,0)-(800,530), dismissed by 知道了). Clear a notice that has a NAME, once, and
+      // re-measure; anything else in the way is still reported, unclicked, with its cover named.
+      if (!notice && (await dismissNotice(assistant))) { notice = true; continue; }
       throw new ExecutorError('INVOICE_SELECTION_OBSTRUCTED',
         `发票助手里${where(pane, key)}的勾选框${obstruction(target)}，${NOTHING_IMPORTED}`);
     }
@@ -152,7 +161,9 @@ async function switchTo(page: GridPage, assistant: CdpSession, label: string) {
   const pace = paceOf(page);
   // Hit-tested like every other click: an assistant that paints a 温馨提示 over its own tab strip would otherwise
   // swallow the switch, and the walk would tick one pane twice and call the other one empty.
-  const target = await tabTarget(assistant, label);
+  let target = await tabTarget(assistant, label);
+  // Same notice, same rule: the announcement covers the tab strip as readily as it covers a row.
+  if (target?.ok && !target.onTarget && (await dismissNotice(assistant))) target = await tabTarget(assistant, label);
   if (!target?.ok || !target.onTarget) {
     throw new ExecutorError('INVOICE_GROUP_SWITCH_FAILED',
       `发票助手里「${label}」这一类发票的页签${target?.ok ? obstruction(target) : `匹配到 ${target?.count ?? 0} 个`}，切不过去，${NOTHING_IMPORTED}`);

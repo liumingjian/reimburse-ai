@@ -10,6 +10,7 @@ import { ExecutorError } from './chromium';
 import { readGridByColumn, showSection } from './erpform';
 import { HIT_JS, clickReach, reachProblem, type Reach } from './hit';
 import { readPane, recognisedTotal, selectRecognisedInvoices } from './invoice-grid';
+import { dismissNotice } from './notices';
 import { DEFAULT_PACE, sleep, waitFor, type Pace } from './pace';
 import { DETAIL_COLUMN } from './reader';
 import { dialogsSnippet, dismissPoint } from './tabs';
@@ -87,48 +88,6 @@ const cssPoint = (selector: string) => `(() => {
 type Point = Partial<Reach> & { ok: boolean; count?: number };
 const reachable = (point: Point | null | undefined) => point?.ok === true && point.onTarget === true;
 
-// ERP raises this by ITSELF once the session has sat idle, with a `k-overlay` under it that covers the header
-// strip. Measured live 2026-09-20: a `k-widget k-window` titled 金蝶提示 reading 系统闲置时间过长，即将自动退出，
-// 请确认是否退出？, its overlay spanning (0,0)-(412,120) — which is exactly where the main menu is. On an attended
-// run somebody answers it; unattended, nobody does, and from then on every click under the overlay is refused.
-// Two live runs died that way at 打开空白报销单, ten days apart, both naming «(x=96 y=61) 上盖着DIV»: the hit test
-// was right every time, and the run had no way to clear what it correctly refused to click through.
-//
-// The prompt has EXACTLY two buttons, side by side and reading almost the same: 继续退出 signs the session out,
-// 不退出 keeps it. So the answer is found BY ITS CAPTION, inside a window carrying the idle wording, and both
-// halves must match before anything is clicked — never by position, and never «the second button». Nothing on
-// the never-click list is reachable from this window; keeping a session is not a 单据 operation.
-const IDLE_PROMPT = '系统闲置时间过长';
-const STAY_SIGNED_IN = '不退出';
-
-const idlePromptPoint = `(() => {
-  const vis = ${visible};
-  const at = ${pointOf};
-  const txt = (n) => String(n.textContent || '').replace(/\\s+/g, ' ').trim();
-  const windows = [...document.querySelectorAll('.k-window')].filter(vis)
-    .filter((w) => txt(w).includes(${JSON.stringify(IDLE_PROMPT)}));
-  if (windows.length !== 1) return { ok: false, count: windows.length };
-  const buttons = [...windows[0].querySelectorAll('button, a, span')].filter(vis)
-    .filter((b) => txt(b) === ${JSON.stringify(STAY_SIGNED_IN)});
-  if (buttons.length !== 1) return { ok: false, count: buttons.length };
-  return at(buttons[0]);
-})()`;
-
-/**
- * Answer ERP's idle-timeout prompt with 不退出, if it is up and reachable. Says whether it actually clicked.
- *
- * It never throws. A prompt that is not there is the normal case, and a prompt this cannot reach is not this
- * function's refusal to report: the caller is already on its way to reporting one of its own, and all this does
- * is remove a cause of it that has a name.
- */
-async function keepSessionAlive(page: WritePage, session: CdpSession): Promise<boolean> {
-  const point = await evalIn<Point>(session, idlePromptPoint).catch(() => null);
-  if (!reachable(point)) return false;
-  await clickReach(session, point!, `「${STAY_SIGNED_IN}」`, 'CHROMIUM_TARGET_OBSTRUCTED');
-  await sleep(paceOf(page).settleMs);
-  return true;
-}
-
 /**
  * Poll a locator until it finds its node AND that node's point reaches it, then click. This is the only way the
  * toolbar, the menus and the assistant are clicked: the wait's verdict is read, never discarded, and `clickReach`
@@ -136,10 +95,11 @@ async function keepSessionAlive(page: WritePage, session: CdpSession): Promise<b
  */
 async function clickWhere(page: WritePage, session: CdpSession, snippet: string, label: string, notFound: (count: number) => ExecutorError, { timeoutMs = 15_000 } = {}) {
   let point = await waitFor(() => evalIn<Point>(session, snippet), reachable, cap(page, timeoutMs), paceOf(page).pollMs);
-  // One second chance, and only after clearing a cause that can be NAMED. `keepSessionAlive` answers nothing but
-  // ERP's idle prompt, so when the prompt was not what was in the way it clicks nothing, returns false, and the
-  // refusal below stands exactly as it did before — the guard is narrowed by one known case, not relaxed.
-  if (!reachable(point) && (await keepSessionAlive(page, session))) {
+  // One second chance, and only after clearing a cause that can be NAMED. `dismissNotice` answers nothing but the
+  // captions on `notices.ts`'s list, so when the thing in the way was not one of those it clicks nothing, returns
+  // null, and the refusal below stands exactly as it did before — the guard is narrowed by named cases, not relaxed.
+  if (!reachable(point) && (await dismissNotice(session))) {
+    await sleep(paceOf(page).settleMs);
     point = await waitFor(() => evalIn<Point>(session, snippet), reachable, cap(page, timeoutMs), paceOf(page).pollMs);
   }
   if (point?.ok !== true) throw notFound(point?.count ?? 0);
@@ -404,13 +364,12 @@ export async function uploadInvoices(page: WritePage, paths: string[], { timeout
   const onUploadView = await waitFor(() => evalIn<boolean>(assistant, hasOwnText('上传发票影像')), Boolean, cap(page, 30_000), pace.pollMs);
   if (!onUploadView) throw new ExecutorError('INVOICE_UPLOAD_VIEW_NOT_FOUND', '发票助手的电脑端选取页没有打开：找不到「上传发票影像」');
   if (!await fileInputCount(assistant)) throw new ExecutorError('INVOICE_FILE_INPUT_NOT_FOUND', '发票助手的电脑端选取页没有文件上传控件');
-  // A first visit is covered by a 温馨提示 dialog that swallows clicks on the grid behind it. Later visits have none,
-  // so not finding it is normal.
-  const notice = await evalIn<Point>(assistant, textPoint('知道了'));
-  if (reachable(notice)) {
-    await clickReach(assistant, notice, '发票助手的「知道了」');
-    await sleep(paceOf(page).settleMs);
-  }
+  // The 温馨提示 announcement, cleared here if it is already up. This used to be the ONLY place it was answered,
+  // on the belief that it covers a first visit and nothing else — measured live 2026-09-20, that belief is wrong:
+  // the modal was up at ROW SELECTION, after the uploads, and the run died on it with the checkbox unreachable
+  // (V-62). So this is now an early convenience, not the guarantee; `invoice-grid.ts` answers it at the moment it
+  // actually blocks, which is the only moment that can be relied on. Not finding it here stays perfectly normal.
+  if (await dismissNotice(assistant)) await sleep(paceOf(page).settleMs);
   if ((await uploadState(assistant)).total > 0) {
     throw new ExecutorError('INVOICE_ASSISTANT_NOT_EMPTY', '发票助手中已有未归属的发票行，拒绝把它们混入当前任务');
   }

@@ -127,6 +127,17 @@ describe('fill job through the protocol on the fake ERP', () => {
   // that lag, a fill that types 费用金额 and 税额 back to back loses one of them and lands on
   // `computed_total_mismatch`; a fill that waits for ERP's own 申请报销金额 to agree with the cells before typing
   // the next one gets both in. The gate is what this asserts — no sleep is involved, only ERP's arithmetic.
+  it('answers the assistant\'s 温馨提示 where it BLOCKS, not only before the uploads', async () => {
+    // Live 2026-09-20: the announcement was up at ROW SELECTION, after the uploads — an `ant-modal-wrap` at
+    // z-index 9999 over the whole (0,0)-(800,530) assistant viewport — and the fill died with
+    // «「数电票」里的发票 …7691 的勾选框上面盖着DIV「温馨提示…」，点不到它，没有导入任何发票».
+    // The one dismissal the code had sat BEFORE the uploads, on the belief that only a first visit is covered,
+    // so it could not have helped: by the time the modal mattered, that moment had long passed.
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, noticeReturnsAfterUpload: true }));
+    const result = await run(fake);
+    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+  });
+
   it('answers ERP\'s idle-timeout prompt with 不退出 and carries on, instead of dying under its overlay', async () => {
     // The live stop, twice, ten days apart (2026-09-19 and 2026-09-20): ERP had raised 金蝶提示「系统闲置时间过长」
     // by itself while the session sat, its overlay covered the header strip, and 打开空白报销单 aborted naming a

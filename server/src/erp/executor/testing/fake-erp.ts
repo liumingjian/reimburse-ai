@@ -25,6 +25,9 @@ const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, imp
 /** What `data-covered-by` names when ERP's idle prompt is the thing in the way. */
 const IDLE_COVER = '#idle-window .k-window-message';
 
+/** The same, for the assistant's 温馨提示 announcement. */
+const ASSISTANT_NOTICE = '#assistant-notice button';
+
 export type FakeInvoice = {
   bytes: Uint8Array; invoiceNumber: string; receiptNumber: string; seller: string; issueDate: string;
   net: string; tax: string; gross: string; category: string;
@@ -123,6 +126,14 @@ export type FakeErpOptions = {
    * the fake really does sign out, so a test cannot pass by clicking the wrong one.
    */
   idlePromptCovers?: string;
+  /**
+   * Put the assistant's 温馨提示 announcement BACK once the uploads have been recognised, covering the rows the
+   * run is about to tick. Measured live 2026-09-20: the modal («本次更新后，功能增强…知道了») was up at ROW
+   * SELECTION, not only on a first visit, and the run died with the checkbox unreachable — so the one dismissal
+   * that used to sit before the uploads could not have helped. `ant-modal-wrap` at z-index 9999 covered the whole
+   * (0,0)-(800,530) viewport live; here it covers what a run must click, which is the same thing for a hit test.
+   */
+  noticeReturnsAfterUpload?: boolean;
   /**
    * How many ERP-page evaluations after 新增 the form's own blocking overlay stays over the top bar, so every
    * 区域锚点 (section anchor) answers `elementFromPoint` with that overlay instead of itself.
@@ -892,7 +903,10 @@ const kendoDate = (raw: string) => {
       show(doc.querySelector('.fpzsHome'), false);
       show(doc.querySelector('#assistant-upload'), true);
     }
-    if (action === 'notice-ok') show(doc.querySelector('#assistant-notice'), false);
+    if (action === 'notice-ok') {
+      for (const covered of doc.querySelectorAll(`[data-covered-by="${ASSISTANT_NOTICE}"]`)) covered.removeAttribute('data-covered-by');
+      show(doc.querySelector('#assistant-notice'), false);
+    }
     // 发票导入单据 imports in the mode already chosen on the ERP's split-button menu. It asks nothing further:
     // measured live 2026-09-19, no 是否生成费用明细 dialog exists on this path, in the iframe or anywhere else.
     if (action === 'import') importInvoices();
@@ -1058,12 +1072,24 @@ const kendoDate = (raw: string) => {
     while (pendingRecognition.length && pendingRecognition[0]!.due <= assistantTicks) recognise(pendingRecognition.shift()!.files);
   }
 
+  /** The announcement, back over the grid it covers live once the rows it hides are actually there. */
+  function raiseAssistantNotice() {
+    if (!child) return;
+    const doc = child.doc.document;
+    const notice: any = doc.querySelector('#assistant-notice');
+    if (!notice) return;
+    notice.style.display = '';
+    // The checkboxes are what the live modal covered, and what the run must reach next.
+    for (const box of doc.querySelectorAll('input.ant-checkbox-input')) box.setAttribute('data-covered-by', ASSISTANT_NOTICE);
+  }
+
   function setFiles(files: string[]) {
     if (!child) return;
     const delay = options.assistantRecognitionTicks ?? 0;
     if (delay > 0 && uploadBatches > 0) pendingRecognition.push({ due: assistantTicks + delay, files });
     else recognise(files);
     uploadBatches += 1;
+    if (options.noticeReturnsAfterUpload) raiseAssistantNotice();
   }
 
   const session: CdpSession = {
