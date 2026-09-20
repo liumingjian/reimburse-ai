@@ -26,7 +26,7 @@ export const ERP_STEP_DEFS: ReadonlyArray<Pick<ErpStep, 'key' | 'title' | 'descr
   { key: 'import', title: '导入发票', description: '按格式分批导入 7 张发票。' },
   { key: 'receipt', title: '收票回读', description: '逐票回读收票单号、发票号码、不含税金额、税额与价税合计。' },
   { key: 'fill', title: '填写明细', description: '按统一业务序号写入 9 行明细，每个值写入后从单元格回读。' },
-  { key: 'readback', title: '严格回读', description: '逐行回读 9 个字段，与确认过的明细比对，任何不一致即停。' },
+  { key: 'readback', title: '严格回读', description: '回读收票身份与整单金额合计，与确认过的明细比对，不一致即停。' },
   // The hand-over step reads its copy from the contract, so the mock's list and the server's cannot drift apart.
   ERP_HANDOVER_STEP_COPY,
 ];

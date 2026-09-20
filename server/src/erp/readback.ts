@@ -206,10 +206,10 @@ export function matchTaskLines(grid: GridLike, expected: any, receiptsGrid: Grid
   const reasons: string[] = [];
   const amountSources: Array<{ line: number; net: string; tax: string }> = [];
   if (!Array.isArray(expectedLines) || expectedLines.length === 0) {
-    return { ok: false, reasons: ['没有可用于逐行核对的已确认明细预览'], amountSources };
+    return { ok: false, reasons: ['没有可用于核对的已确认明细预览'], amountSources };
   }
-  if (!grid?.ok) return { ok: false, reasons: ['无法逐行核对当前任务明细'], amountSources };
-  if (Array.isArray(expected)) reasons.push('逐行核对必须使用包含来源和 receiptBindings 的 expectedPreview');
+  if (!grid?.ok) return { ok: false, reasons: ['无法读取当前任务明细，不能核对'], amountSources };
+  if (Array.isArray(expected)) reasons.push('核对必须使用包含来源和 receiptBindings 的 expectedPreview');
   if (textOf(expected?.projectSource) !== 'erp_catalog_confirmed' || textOf(expected?.projectsFrom) !== 'project_book') {
     reasons.push('expectedPreview 缺少 erp_catalog_confirmed/project_book 来源证据');
   }

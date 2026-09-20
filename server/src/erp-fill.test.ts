@@ -144,7 +144,7 @@ describe('去报销 on a fake executor', () => {
     executor.queue(readbackMismatch);
     const unknown = await start(await confirmed());
     expect(unknown).toMatchObject({ stage: 'reconcile', step: { kind: 'reconcile' }, erp: { status: 'aborted' }, reconcile: { status: 'pending' } });
-    expect(unknown.erp.abortReason).toContain('金额相等不能代替逐行一致');
+    expect(unknown.erp.abortReason).toContain('「申请报销金额」合计 1000.00 与任务合计 1006.00 不一致');
     expect(unknown.erp.erpAccount).toEqual(TEST_ERP_ACCOUNT);
     expect(server.erpLease.holder()).toBeNull();
 

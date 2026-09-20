@@ -163,7 +163,7 @@ export function classifyReconciliation(readings: ReconcileReadings): ReconcileVe
   // With an expected preview, equal totals and row counts do not prove the task was written right: a failed strict
   // per-line match never reports a new form as ready to save, and a saved form goes to a human.
   if (readings.taskMatch && !readings.taskMatch.ok) {
-    reasons.push(...(readings.taskMatch.reasons ?? ['逐行任务回读未通过']));
+    reasons.push(...(readings.taskMatch.reasons ?? ['任务回读未通过']));
     return verdict(mode === 'modify' && hasBill ? '已保存' : '不自洽', '转人工');
   }
 

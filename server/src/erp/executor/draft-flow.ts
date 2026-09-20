@@ -400,7 +400,7 @@ export async function fillApprovedPreview<P>(page: P, {
   const after = await readCurrent(approvedPreview);
   const afterReceipts = matchReceiptRows(after.receiptsGrid, approvedPreview);
   if (!after.taskMatch?.ok || !afterReceipts.ok) {
-    return fail('fill', [{ code: 'strict_readback_failed', message: '填充后严格逐行回读或收票身份核对未通过',
+    return fail('fill', [{ code: 'strict_readback_failed', message: '填充后合计回读或收票身份核对未通过',
       reasons: [...(after.taskMatch?.reasons ?? []), ...afterReceipts.reasons] }], { readings: after, rowsWritten });
   }
   return { ok: true, phase: 'filled', previewDigest: approvedPreview.previewDigest, formToken: formReadbackToken(readings), rowsWritten, readings: after };

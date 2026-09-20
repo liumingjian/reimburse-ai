@@ -346,7 +346,7 @@ const BUCKET_BANNER: Readonly<Record<ReconcileBucket, (billNo: string | null) =>
   // over ReconcileBucket, and because the bucket is still reachable without the match (a reconcile that read a
   // ready-to-save form it cannot prove line by line), which is the case this sentence is written for.
   '未保存·就绪待保存': () => '明细已写好，收票与明细合计一致，还没有保存。应用不会替你保存；请在报销系统里逐行核对后自己点「保存」，或转人工。',
-  已保存: (billNo) => `报销系统里已有草稿${billNo ? ` ${billNo}` : ''}，但不能证明它与这次确认的明细逐行一致。`,
+  已保存: (billNo) => `报销系统里已有草稿${billNo ? ` ${billNo}` : ''}，但不能证明它的合计与这次确认的明细一致。`,
   不自洽: () => '报销系统里这张单据前后对不上。只能转人工处理。',
 };
 
