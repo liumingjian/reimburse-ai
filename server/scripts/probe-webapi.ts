@@ -95,13 +95,20 @@ try {
   // The operation list answers "is Draft/Save/Delete exposed on this form" without calling any of them.
   const nrd = (info as any)?.Result?.NeedReturnData;
   const ops = Array.isArray(nrd?.Operations) ? nrd.Operations : [];
-  console.log(`operations (${ops.length}):`, JSON.stringify(ops.map((o: any) => (o && typeof o === 'object' ? (o.Id ?? o.Name ?? o.Key ?? Object.keys(o).join('/')) : o))));
-  if (ops[0] && typeof ops[0] === 'object') console.log('operation shape:', JSON.stringify(Object.keys(ops[0])));
+  // K3Cloud names a localised caption as [{Key:'zh-CN', Value:'…'}]; collapse it to plain text.
+  const caption = (n: any): string => (Array.isArray(n) ? n.map((x: any) => x?.Value ?? x?.value ?? x).join('/') : String(n?.Value ?? n ?? ''));
+  console.log(`operations (${ops.length}):`, ops.map((o: any) => `${o?.OperationNumber}「${caption(o?.OperationName)}」`).join(' '));
   // Entity list with captions, so a field key can be named in Chinese before anything is written to it.
   const entrys = Array.isArray(nrd?.Entrys) ? nrd.Entrys : [];
   for (const e of entrys) {
     const name = Array.isArray(e?.Name) ? e.Name.map((n: any) => n?.Value ?? n).join('/') : e?.Name;
-    console.log(`entity ${e?.Id ?? '?'} 「${name ?? '?'}」 keys=${JSON.stringify(Object.keys(e ?? {}))}`);
+    void name;
+    console.log(`entity ${e?.Key ?? e?.Id ?? '?'} 「${name ?? '?'}」 fields=${Array.isArray(e?.Fields) ? e.Fields.length : 0}`);
+    // Only the head is listed by name: the ownership marker has to live on a head field, and naming 114 keys in
+    // Chinese is the whole point of asking the metadata rather than guessing from the English-ish key.
+    if (e?.Key === 'FBillHead' || /单据头/.test(String(name ?? ''))) {
+      for (const f of (e.Fields ?? [])) console.log(`  head ${f?.Key ?? f?.FieldName ?? '?'}「${caption(f?.Name)}」 ${f?.FieldType ?? ''}`);
+    }
   }
 
   // 3. One real bill as an entity, so the head field keys are known by name. Values are never printed.
