@@ -419,11 +419,11 @@ export async function writeCell(session: CdpSession, { which = 0, row = 0, colum
         + `（提交前编辑控件里是「${held.value}」${held.ok ? '' : '，且一直没稳住'}）` };
 }
 
-export type OptionSelect = { which?: number; row?: number; column: string; option: string; readyMs?: number; settleMs?: number; pace?: Pace };
+export type OptionSelect = { which?: number; row?: number; column: string; option: string; readyMs?: number; settleMs?: number; opens?: number; pace?: Pace };
 
 /** Dropdown column (发票类型 invoice type): open, pick the exactly-equal item, read back. */
 export async function selectOption(session: CdpSession, { which = 0, row = 0, column, option,
-  readyMs = 6000, settleMs = 6000, pace = DEFAULT_PACE }: OptionSelect) {
+  readyMs = 6000, settleMs = 6000, opens = 3, pace = DEFAULT_PACE }: OptionSelect) {
   // Poll for the point, do not read it once. Live 2026-09-20 a 去报销 that had just written 项目 and 费用项目 into
   // row 1 stopped here on 「发票类型」的落点（x=629 y=843）上盖着DIV, and a read of that same point a minute later
   // answered the cell itself — an anonymous DIV had been over it for a moment while the row settled. A cell that
@@ -434,7 +434,6 @@ export async function selectOption(session: CdpSession, { which = 0, row = 0, co
   if (!before.ok) return { ...before, ok: false, column };
   const blocked = reachProblem(`「${column}」`, before);
   if (blocked) return { ok: false, column, target: before, reason: blocked };
-  await clickReach(session, before, `「${column}」`);
 
   // Items appear before the editor binds; a pick in that window is dropped silently. Wait on the condition.
   // The items are hit-tested too: the dropdown is painted at the top of the stack, but so is a 处理结果 window,
@@ -451,14 +450,35 @@ export async function selectOption(session: CdpSession, { which = 0, row = 0, co
   // top of it. The cell was already polled; the item was not, so the one read that decided was the earliest one.
   const probe = async () => ({ items: await listItems(), cell: await cellTarget(session, { which, row, column, scroll: false }) });
   const itemReady = (p: { items: Array<Reach & { text: string }>; cell: CellTarget }) => {
-    if (!(p.items.length > 0 && p.cell.ok && p.cell.focused === true)) return false;
+    // The row being in edit is the guard here, not focus on the cell: measured live 2026-09-20, while 发票类型's
+    // list is up the cell reports `focused: false` and no focus tag at all — focus has gone to the list. Requiring
+    // focus on the cell made an open, readable dropdown look like one that had not opened yet.
+    if (!(p.items.length > 0 && p.cell.ok && (p.cell.focused === true || p.cell.editing === true))) return false;
     const wanted = p.items.filter((i) => i.text === option);
     // Zero or several is a refusal, not something waiting will mend: stop and let the caller say which it was.
     return wanted.length !== 1 || wanted[0]!.onTarget === true;
   };
-  const seen = await waitFor(probe, itemReady, readyMs, pace.pollMs);
+  // ONE CLICK DOES NOT OPEN THIS DROPDOWN. Measured live 2026-09-20 on 发票类型 of a freshly added 费用明细行:
+  // the first click puts the cell into edit and leaves the list closed (`aria-expanded="false"`), the second
+  // opens it — six candidates, 普通发票 among them, exactly as this function's own selector reads them — and
+  // every further click toggles it again. A single click therefore found no candidates at all and the whole
+  // 去报销 stopped on 「发票类型」的候选项里没有完全等于「普通发票」的一项, over a list that was never open.
+  //
+  // So the click is repeated only while NOTHING is showing. Never while items are up: that would toggle shut the
+  // very list being waited for.
+  let seen = { items: [] as Array<Reach & { text: string }>, cell: before };
+  for (let attempt = 0; attempt < Math.max(1, opens); attempt++) {
+    const spot = attempt === 0 ? before
+      : await waitFor(() => cellTarget(session, { which, row, column }), (c) => c.ok && c.onTarget === true, readyMs, pace.pollMs);
+    if (!spot.ok) break;
+    const shut = reachProblem(`「${column}」`, spot);
+    if (shut) return { ok: false, column, target: spot, reason: shut };
+    await clickReach(session, spot, `「${column}」`);
+    seen = await waitFor(probe, itemReady, Math.ceil(readyMs / Math.max(1, opens)), pace.pollMs);
+    if (seen.items.length > 0) break;
+  }
   const items = seen.items;
-  const ready = seen.items.length > 0 && seen.cell.ok && seen.cell.focused === true;
+  const ready = seen.items.length > 0 && seen.cell.ok && (seen.cell.focused === true || seen.cell.editing === true);
 
   const hit = items.filter((i) => i.text === option);
   if (hit.length !== 1) {

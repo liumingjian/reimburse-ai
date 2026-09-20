@@ -79,6 +79,15 @@ export type FakeErpOptions = {
    * Unset (the default) is an ERP whose editors take keys the first time, which is what every other test wants.
    */
   firstTypingLostOn?: string;
+  /**
+   * The 发票类型 dropdown needs the cell clicked TWICE before its list is up, and toggles on every click after.
+   *
+   * Measured live 2026-09-20 on a freshly added 费用明细行: the first click put the cell into edit with
+   * `aria-expanded="false"` and no list, the second opened a list of six candidates, the third shut it again.
+   * A single click therefore found no candidates at all and the run stopped over a list that was never open.
+   * False (the default) is an ERP whose dropdown opens on the first click, which is what every other test wants.
+   */
+  dropdownNeedsSecondClick?: boolean;
   today?: string;
   billNo?: string;
   /** The 收票单 ERP already holds. Defaults to an empty ledger: an ERP that has never seen these invoices. */
@@ -387,6 +396,8 @@ export async function createFakeErp(options: FakeErpOptions) {
   let lastTypedAt = 0;
   // Cells that have been opened for editing at least once, for `firstTypingLostOn`.
   const editedOnce = new Set<any>();
+  // Dropdown cells that have been clicked once already, for `dropdownNeedsSecondClick`.
+  const openedDropdownOnce = new Set<any>();
   const mutations: FakeMutation[] = [];
   const commands: Array<{ method: string; params: Record<string, any>; sessionId: string | null }> = [];
   const listeners = new Map<string, Set<CdpListener>>();
@@ -592,6 +603,10 @@ const kendoDate = (raw: string) => {
       const span = td.querySelector('span') ?? td.appendChild(main.document.createElement('span'));
       span.setAttribute('tabindex', '0');
       span.focus();
+      // The first click only puts the cell into edit; the list waits for the next one.
+      // Nothing is registered as an editor here: live, the first click only opens the row for editing, and it is
+      // the LIST that the second click brings. Registering the span would make the commit write through it.
+      if (options.dropdownNeedsSecondClick && !openedDropdownOnce.has(td)) { openedDropdownOnce.add(td); return; }
       const list = main.document.createElement('ul');
       list.className = 'k-list';
       for (const option of INVOICE_TYPES) {

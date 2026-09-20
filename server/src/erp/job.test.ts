@@ -207,6 +207,20 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(projects!.filter((shown) => String(shown).trim() !== '')).toEqual(projects);
   });
 
+  // Live 2026-09-20 on a freshly added 费用明细行: the first click on 发票类型 put the cell into edit with
+  // `aria-expanded="false"` and no list at all; the second opened six candidates — 普通发票 among them, read
+  // perfectly well by this module's own selector — and the third shut it again. One click therefore found NO
+  // candidates and the whole 去报销 stopped on 「发票类型」的候选项里没有完全等于「普通发票」的一项, over a list
+  // that had never opened. This is what stops anyone going back to a single click. Checked both ways.
+  it('opens a dropdown that ignored the first click, instead of refusing over a list that never opened', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, dropdownNeedsSecondClick: true }));
+    const result = await run(fake);
+    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    const types = column(fake, 'detail', 3);
+    expect(types!.length).toBeGreaterThan(0);
+    expect(types!.filter((shown) => String(shown).trim() !== '')).toEqual(types);
+  });
+
   // The same rule from the other side: a 费用金额 that never reaches the model leaves 申请报销金额 = 税额 alone,
   // which is live row 2's shape (¥15.56 + ¥0.47 -> ¥0.47). Here the loss is on the FIRST money cell, so the gate
   // refuses before 税额 is typed at all — the next write is exactly what it is there to withhold.

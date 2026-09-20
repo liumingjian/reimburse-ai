@@ -58,6 +58,37 @@ try {
   await settleGrid(session, 0);
   await look(session, 'step0 before click:');
 
+  // What a 下拉类 column actually offers, exactly as the page spells it — the fill matches candidates by strict
+  // equality, so a trailing space or a different wording is the whole difference between a match and a stop.
+  if (process.argv.includes('--options')) {
+    // Every list on the page, visible or not, plus the cell's own editor state — so "no candidates" can be told
+    // apart from "the list is there and hidden" and from "the control never opened".
+    const LISTS = `(() => {
+      const vis = (n) => { const b = n.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+      const lists = [...document.querySelectorAll('ul[class*=k-list], .k-list-container, .k-animation-container')].map((n) => ({
+        cls: String(n.className || '').slice(0, 50), vis: vis(n),
+        items: [...n.querySelectorAll('li')].map((li) => ({ t: String(li.textContent).trim().slice(0, 20), vis: vis(li) })),
+      }));
+      const tr = document.querySelector('tr.k-grid-edit-row');
+      const td = tr ? [...tr.querySelectorAll('td')].find((c) => c.querySelector('input,textarea,span[tabindex]')) : null;
+      return JSON.stringify({ lists, editingCell: td ? td.innerHTML.replace(/\\s+/g, ' ').slice(0, 220) : null });
+    })()`;
+    if (process.argv.includes('--fresh')) {
+      console.log('addDetailRow:', JSON.stringify(await addDetailRow({ session } as never)));
+    }
+    const grid0 = await readGridByColumn(session, COLUMN);
+    const rowAt = process.argv.includes('--fresh') && grid0.ok ? grid0.rows.filter((r) => r.kind === 'data').length - 1 : ROW;
+    for (const attempt of [1, 2, 3]) {
+      const spot3 = await cellTarget(session, { which: 0, row: rowAt, column: COLUMN });
+      console.log(`click ${attempt} cell:`, JSON.stringify(spot3));
+      if (!spot3.ok) break;
+      await clickAt(session, spot3.x, spot3.y);
+      await sleep(1800);
+      console.log(`  lists after click ${attempt}:`, await evalIn<string>(session, LISTS));
+    }
+    process.exit(0);
+  }
+
   // Two measurements the failure needs and `--real` cannot give: does RE-TYPING rescue an editor that took
   // nothing, and does the F7 cell resolve 「select」 into the project name on its own if simply waited out?
   if (process.argv.includes('--watch')) {
