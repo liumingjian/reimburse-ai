@@ -300,9 +300,30 @@ async function clearEditor(session: CdpSession, at: () => Promise<CellTarget>, r
     : { ok: false, reason: `「${ready.column}」的编辑控件清不空（还剩「${seen}」），不往还有旧值的控件里打字` };
 }
 
+/**
+ * Wait until the bound editor holds a settled value: two consecutive equal, non-empty readings.
+ *
+ * Kendo parses a keystroke into its own model asynchronously, and the commit key reads THAT model, not the DOM
+ * input. Where the commit closes the whole edit row there is no second chance — the row shuts with the cell
+ * empty. Two equal readings rather than one, so a value still being reformatted is not mistaken for a settled one.
+ */
+async function holdsValue(at: () => Promise<CellTarget>, ms: number, pollMs: number) {
+  const deadline = Date.now() + ms;
+  let prev: string | null = null;
+  let seen = '';
+  do {
+    const now = await at();
+    seen = now.ok ? String(now.editValue ?? '') : '';
+    if (seen !== '' && seen === prev) return { ok: true as const, value: seen };
+    prev = seen;
+    await sleep(pollMs);
+  } while (Date.now() < deadline);
+  return { ok: false as const, value: seen };
+}
+
 export type CellWrite = {
   which?: number; row?: number; column: string; value: string; expect?: Expect; commit?: 'Enter' | 'Tab';
-  clicks?: number; readyMs?: number; settleMs?: number; settleFirst?: boolean; pace?: Pace;
+  clicks?: number; readyMs?: number; settleMs?: number; holdMs?: number; settleFirst?: boolean; pace?: Pace;
 };
 
 /**
@@ -315,7 +336,8 @@ export type CellWrite = {
  * `computedTotalProblem` in draft-flow.ts checks it row by row.
  */
 export async function writeCell(session: CdpSession, { which = 0, row = 0, column, value, expect = null,
-  commit = 'Enter', clicks = 3, readyMs = 9000, settleMs = 8000, settleFirst = true, pace = DEFAULT_PACE }: CellWrite) {
+  commit = 'Enter', clicks = 3, readyMs = 9000, settleMs = 8000, holdMs = 2500, settleFirst = true,
+  pace = DEFAULT_PACE }: CellWrite) {
   // Wait for the previous cell's recalculation first: a click during it is swallowed or its editor is taken away.
   if (settleFirst) await settleGrid(session, which, { quietMs: pace.quietMs, maxMs: pace.quietMs * 10 });
   const at = () => cellTarget(session, { which, row, column, scroll: false });
@@ -352,18 +374,30 @@ export async function writeCell(session: CdpSession, { which = 0, row = 0, colum
     return { ok: false, column, wrote: String(value), before: before.text, reason: emptied.reason };
   }
   await typeText(session, String(value));
+  // Do not commit on the heels of the last keystroke. Measured live 2026-09-20 on one 费用明细 row: the very same
+  // keys, clicks and Enter lost 税额 every time from writeCell and committed every time by hand — the difference
+  // was the pause. 税额's Enter closes the WHOLE edit row, so a commit that arrives before Kendo has taken the
+  // last character shuts the row with the cell empty. 费用金额 survives the same race only because its Enter
+  // leaves the row open. An editor that never reports a value is committed anyway (not every editor exposes one),
+  // and `held` goes into the result so the next failure can be placed without another live round.
+  // Nothing to witness when clearing (an empty editor never settles on a non-empty value), nor where the cell
+  // exposes no editor value at all — `editValue` is null only when the cell holds no input to read.
+  const held = String(value) === '' || ready.editValue == null
+    ? { ok: true as const, value: String(ready.editValue ?? ''), watched: false }
+    : { ...(await holdsValue(at, holdMs, pace.pollMs)), watched: true };
   await pressKey(session, commit);
 
   const want = String(value);
   const after = await waitFor(at, (c) => c.ok && c.text !== '' && cellMatches(c.text, want, expect), settleMs, pace.pollMs);
   const matched = after.ok && cellMatches(after.text, want, expect);
-  return { ok: matched, column, wrote: want, expect,
+  return { ok: matched, column, wrote: want, expect, held,
     before: before.text, after: after.ok ? after.text : null,
     editValue: after.ok ? after.editValue : null,
     editing: after.ok ? after.editing : null, matched,
     reason: matched ? undefined
       : `写了「${want}」，「${column}」回读是「${after.ok ? after.text : '读不出'}」，`
-        + `跟预期的「${expect ? expect.value : want}」对不上` };
+        + `跟预期的「${expect ? expect.value : want}」对不上`
+        + `（提交前编辑控件里是「${held.value}」${held.ok ? '' : '，且一直没稳住'}）` };
 }
 
 export type OptionSelect = { which?: number; row?: number; column: string; option: string; readyMs?: number; settleMs?: number; pace?: Pace };

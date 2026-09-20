@@ -56,6 +56,18 @@ export type FakeErpOptions = {
   projects: FakeMasterData[];
   expenseItems: FakeMasterData[];
   assumeReceiptLink?: boolean;
+  /**
+   * How long Kendo needs after the last keystroke before its own model holds the typed value, counted in CDP
+   * COMMANDS rather than milliseconds so the discrimination is deterministic. The scale is small and exact: a
+   * commit pressed straight after the last character is always 2 commands behind it (the character's own keyUp
+   * and the commit key's rawKeyDown), while waiting for the editor to hold its value costs two reads more. So
+   * 3 is the window that tells the two apart, and 1 or 2 tells them apart from nothing. A commit that arrives inside
+   * the window commits what was there BEFORE — measured live 2026-09-20 on 税额, whose Enter closes the whole
+   * edit row, so the row shut with the cell empty and there was no second chance. 费用金额 survives the same
+   * race only because its Enter leaves the row open. 0 (the default) is an ERP that takes every commit, which
+   * is what every other test wants.
+   */
+  editorSettleTicks?: number;
   today?: string;
   billNo?: string;
   /** The 收票单 ERP already holds. Defaults to an empty ledger: an ERP that has never seen these invoices. */
@@ -361,6 +373,7 @@ export async function createFakeErp(options: FakeErpOptions) {
   const invoicesBySha = new Map(options.invoices.map((invoice) => [sha256(invoice.bytes), invoice]));
   const receiptLedger: FakeReceiptLedger = options.receiptLedger ?? new Map();
 
+  let lastTypedAt = 0;
   const mutations: FakeMutation[] = [];
   const commands: Array<{ method: string; params: Record<string, any>; sessionId: string | null }> = [];
   const listeners = new Map<string, Set<CdpListener>>();
@@ -512,6 +525,9 @@ const kendoDate = (raw: string) => {
     if (!editor) return;
     const { td, tr, input, column, before } = editor;
     editor = null;
+    // The commit reads Kendo's model, not the DOM input. Inside the settle window the model still holds `before`.
+    const settle = options.editorSettleTicks ?? 0;
+    if (settle > 0 && mainTicks - lastTypedAt < settle) input.value = before;
     // A date column is not read as text: the datepicker parses what it holds, and what it cannot parse it
     // refuses, keeping its previous value — which is how a typed date silently became today's.
     const text = DATE_COLUMNS.has(column)
@@ -924,6 +940,7 @@ const kendoDate = (raw: string) => {
     }
     if (params.type === 'keyDown' && typeof params.text === 'string') {
       if (active && /^(INPUT|TEXTAREA)$/.test(active.tagName)) {
+        lastTypedAt = mainTicks;
         if (doc.selectAllOn === active) { active.value = params.text; doc.selectAllOn = null; }
         else {
           const at = caretOf(active);

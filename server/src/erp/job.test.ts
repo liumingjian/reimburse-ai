@@ -171,6 +171,25 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(sum!.map(asCents)).toEqual(net!.map((amount, index) => asCents(amount) + asCents(tax![index]!)));
   });
 
+  // Live 2026-09-20, with the owner reporting that BOTH money cells fill by hand on this very form: the fill lost
+  // 税额 every single time while the identical clicks, keys and Enter, typed by hand with a pause before the
+  // commit, took every single time. The difference was never the value, the column or the order — it was that
+  // `writeCell` pressed Enter on the heels of the last keystroke. 税额's Enter closes the WHOLE edit row, so a
+  // commit that arrives before Kendo has taken the last character shuts the row with the cell empty; 费用金额
+  // survives the same race only because its Enter leaves the row open. The fix waits for the editor to hold a
+  // settled value before committing, and this is what stops anyone deleting that wait: with the window open,
+  // an unwitnessed commit loses the cell and the bill goes out short. 3 is measured, not picked: a commit on the
+  // heels of the last character sits exactly 2 CDP commands behind it, and the wait costs two reads more —
+  // checked both ways, the test goes red with the wait taken out and green with it in.
+  it('waits for the editor to hold the value before committing, so a slow-to-parse cell is not lost', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, editorSettleTicks: 3 }));
+    const result = await run(fake);
+    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    const asCents = (shown: string) => Math.round(Number(String(shown).replace(/[¥,]/g, '')) * 100);
+    const [net, tax, sum] = [9, 10, 11].map((index) => column(fake, 'detail', index));
+    expect(sum!.map(asCents)).toEqual(net!.map((amount, index) => asCents(amount) + asCents(tax![index]!)));
+  });
+
   // The same rule from the other side: a 费用金额 that never reaches the model leaves 申请报销金额 = 税额 alone,
   // which is live row 2's shape (¥15.56 + ¥0.47 -> ¥0.47). Here the loss is on the FIRST money cell, so the gate
   // refuses before 税额 is typed at all — the next write is exactly what it is there to withhold.

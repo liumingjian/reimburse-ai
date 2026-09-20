@@ -306,6 +306,10 @@ describe('emptying a pre-filled editor before typing', () => {
     { ok: true, column: '开始日期', text: '2026/9/20', x: 400, y: 850, inView: true, onTarget: true },
     { ok: true, column: '开始日期', text: '', editValue: '2026/9/20', x: 400, y: 850, inView: true, onTarget: true, editing: true, focused: true, editorBound: true },
     { ok: true, column: '开始日期', text: '', editValue: cleared, x: 400, y: 850, inView: true, onTarget: true, editing: true, focused: true, editorBound: true },
+    // Twice over, because the commit is not pressed until the editor has been READ holding the typed value: one
+    // reading could still be a value mid-reformat. This is the datepicker answering that it has taken the date.
+    { ok: true, column: '开始日期', text: '', editValue: '2026/9/6', x: 400, y: 850, inView: true, onTarget: true, editing: true, focused: true, editorBound: true },
+    { ok: true, column: '开始日期', text: '', editValue: '2026/9/6', x: 400, y: 850, inView: true, onTarget: true, editing: true, focused: true, editorBound: true },
     { ok: true, column: '开始日期', text: '2026/9/6', x: 400, y: 850, inView: true, onTarget: true },
   ];
 
