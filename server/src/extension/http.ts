@@ -22,10 +22,14 @@ export function bearer(c: Context): string | undefined {
   return scheme?.toLowerCase() === 'bearer' && value ? value : undefined;
 }
 
-// Mount before `requireAccount`: these two carry no cookie. The exact-origin guard in `app.ts` lets the redemption
+// Mount before `requireAccount`: these carry no cookie. The exact-origin guard in `app.ts` lets the redemption
 // through because the 配对码 in the body is its whole authority, so a page on another origin gains nothing by
 // posting one it does not have.
 export function mountExtensionPairRoutes(app: Hono<AppEnv>, pairings: PairingService, minimumVersion: string = EXTENSION_MINIMUM_VERSION): void {
+  // No rate limit, deliberately. A 配对码 is 8 characters from a 31-letter alphabet (about 8.5e11 codes), good for ten
+  // minutes and for one redemption, and only exists while an employee is pairing; guessing one live code in that window
+  // takes hundreds of billions of requests, far past what this host could answer. A limiter would add state for no
+  // margin that matters. Revisit if codes get shorter or longer-lived.
   app.post(EXTENSION_PAIR_PATH, async (c) => {
     const input = ExtensionPairInputSchema.safeParse(await c.req.json().catch(() => null));
     if (!input.success) throw new AuthRefusal(401, 'pairing_code_invalid', EXTENSION_PAIRING_ERRORS.codeInvalid);
@@ -41,6 +45,13 @@ export function mountExtensionPairRoutes(app: Hono<AppEnv>, pairings: PairingSer
     const found = await pairings.lookup(bearer(c));
     if (!found) return c.json({ error: { code: 'not_paired', message: EXTENSION_PAIRING_ERRORS.notPaired } }, 401);
     return c.json(found);
+  });
+
+  // 撤销配对 from the extension's popup: the same revocation as the settings page's, so the server never keeps a
+  // pairing the employee believes is gone. The bearer token is its whole authority, as for GET.
+  app.delete(EXTENSION_PAIR_PATH, async (c) => {
+    if (!(await pairings.revokeToken(bearer(c)))) return c.json({ error: { code: 'not_paired', message: EXTENSION_PAIRING_ERRORS.notPaired } }, 401);
+    return c.json({ revoked: true });
   });
 }
 

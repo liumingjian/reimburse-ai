@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { ADMIN_ERRORS, AssignProjectLinesInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, EXTENSION_BLOB_PATH, EXTENSION_PAIR_PATH, EXTENSION_PAIRING_ERRORS, FORBIDDEN_CODE, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
+import { ADMIN_ERRORS, AssignProjectLinesInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, EXTENSION_BLOB_PATH, EXTENSION_PAIR_PATH, EXTENSION_PAIRING_ERRORS, FORBIDDEN_CODE, ERP_ACTION_ERRORS, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
 import { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -19,14 +19,14 @@ import { recoverErpJobs } from './erp/recovery';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
-import { createExtensionChannel, realTimer, type ExtensionChannel, type Schedule } from './extension/channel';
+import { createExtensionChannel, EXTENSION_NOT_PAIRED_CODE, EXTENSION_OFFLINE_CODE, realTimer, type ExtensionChannel, type Schedule } from './extension/channel';
 import { mountExtensionDownloadRoute } from './extension/download';
 import { bearer, mountExtensionPairRoutes, mountPairingRoutes } from './extension/http';
-import { createPairingService } from './extension/pairing';
+import { createPairingService, hasPairing } from './extension/pairing';
 import { createLegacyImport, LegacyImportRefusal } from './legacy/import';
 import { unavailableCatalog, type ProjectCatalog } from './catalog/project-catalog';
 import { admitsHost, admitsOrigin, type PublicOrigin } from './public-origin';
-import { ActionRefusedError, createTaskService, parseBacklogOfAllAccounts, StaleStepError, TaskNotFoundError, type TaskService, type UploadedFile } from './tasks';
+import { ActionRefusedError, createTaskService, parseBacklogOfAllAccounts, StaleStepError, TaskNotFoundError, type ErpServiceOptions, type TaskService, type UploadedFile } from './tasks';
 
 // The HTTP app. Wire rules (contract/src/http.ts): success is 200 with the whole new snapshot; failure is
 // `{ error: { code, message } }`; a stale stepToken is 409 `{ error, snapshot }` with the fresh snapshot; SSE pushes
@@ -97,9 +97,19 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   const remote = createRemoteExecutor({ db, schedule, extension: { request: (accountId, method, payload) => extensionChannel.request(accountId, method, payload) } });
   const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor ?? remote.fill, record });
   const reconcileJobs = createReconcileJobs({ db, lease: erpLease, execute: reconcileExecutor ?? remote.reconcile, record });
+  // Story 13: a 去报销 bound for the owner's 浏览器扩展 is refused before any job exists when there is no extension to
+  // run it, saying which is missing. An injected executor (development, e2e, tests) needs no extension. The in-job
+  // `extension_offline` abort stays as the backstop for a socket lost between this check and the dispatch.
+  const extensionReady = async (tx: Db, accountId: string) => {
+    if (extensionChannel.connected(accountId)) return null;
+    return (await hasPairing(tx, accountId))
+      ? { code: EXTENSION_OFFLINE_CODE, message: ERP_ACTION_ERRORS.extensionOffline }
+      : { code: EXTENSION_NOT_PAIRED_CODE, message: ERP_ACTION_ERRORS.extensionNotPaired };
+  };
+  const erpService: ErpServiceOptions = { lease: erpLease, config: erpConfig, run: (job) => fillJobs.run(job), reconcile: (job) => reconcileJobs.run(job), ...(erpExecutor ? {} : { executorReady: extensionReady }) };
   // Every task service is scoped to one account; the parser job gets the owner's service for each task it drives.
   const serviceFor = (accountId: string) =>
-    createTaskService(db, dataDir, accountId, { onChange: (snapshot) => publish(snapshot, accountId), erp: { lease: erpLease, config: erpConfig, run: (job) => fillJobs.run(job), reconcile: (job) => reconcileJobs.run(job) } });
+    createTaskService(db, dataDir, accountId, { onChange: (snapshot) => publish(snapshot, accountId), erp: erpService });
   // A restart ends every ERP job the old process ran: each gets its result before any request is served (a fill with
   // a durable attempt -> reconcile; never a replay). Until this succeeds those jobs still read as `running`, so every
   // mutation of their tasks would get 409 for ever: a failure is retried on the next request and, if it fails again,
@@ -146,11 +156,12 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // The Host predicate is shared with the WebSocket upgrade (`extension/websocket.ts`), which never reaches this
   // middleware; both live in `public-origin.ts` so the two doors cannot drift apart.
   const forbidden = (c: Context) => failure(c, 403, FORBIDDEN_HOST_CODE, publicOrigin ? NOT_THIS_ADDRESS : NOT_LOCAL);
-  // Redeeming a 配对码 is the one write that does not come from this app's page: the extension posts it from its own
-  // `chrome-extension://…` origin (ADR-0019), which the exact-origin check could never admit. It is exempt because
-  // the origin check is a defence for cookie-authorised writes, and this route reads no cookie — the single-use
-  // 配对码 in the body is its whole authority, and a page on another origin has no way to know one. The Host check
-  // still applies to it, so DNS rebinding gains nothing here either.
+  // Redeeming a 配对码, and the extension revoking its own pairing, are the writes that do not come from this app's
+  // page: the extension sends them from its own `chrome-extension://…` origin (ADR-0019), which the exact-origin check
+  // could never admit. That path is exempt because the origin check is a defence for cookie-authorised writes, and
+  // it reads no cookie — the single-use 配对码 in the body, or the pairing token in `Authorization`, is its whole
+  // authority, and a page on another origin has no way to know either. The Host check still applies to it, so DNS
+  // rebinding gains nothing here either.
   app.use('*', async (c, next) => {
     const host = c.req.header('host') ?? new URL(c.req.url).host;
     if (!admitsHost(publicOrigin, host)) return forbidden(c);
@@ -196,9 +207,9 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // pairing outlives every login. The settings page's routes sit behind it like everything else.
   //
   // The pairing view reports whether that account's extension is connected, which only the live channel knows, and
-  // the channel resolves tokens through the pairing service: each needs the other, so the predicate reads the
-  // channel through the binding rather than the value.
-  const pairings = createPairingService(db, now, (accountId) => extensionChannel.connected(accountId));
+  // the channel resolves tokens through the pairing service: each needs the other, so the pairing service reaches
+  // the channel through the binding rather than the value. It also closes the channel's socket when a pairing goes.
+  const pairings = createPairingService(db, now, { connected: (accountId) => extensionChannel.connected(accountId), disconnect: (accountId) => extensionChannel.disconnect(accountId) });
   const extensionChannel = createExtensionChannel({ pairings, now, schedule, onRequest: remote.answer, onLost: remote.lost });
   mountExtensionPairRoutes(app, pairings);
   // The invoice originals of the 去报销 running in the paired extension (#256, ADR-0022), before the gate for the same
@@ -215,7 +226,16 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     return c.body(readFileSync(found.path), 200, { 'Content-Type': servedType(found.mime), 'Cache-Control': 'no-store', 'X-Content-Type-Options': NOSNIFF });
   });
   app.use('/api/*', requireAccount(accounts, secureSession));
-  mountAccountRoutes(app, accounts);
+  // A deactivated account loses its extension the way it loses its sessions: its token stops resolving (`lookup`),
+  // and its open socket closes now rather than at the next `hello`.
+  mountAccountRoutes(app, {
+    ...accounts,
+    update: async (actor, accountId, change) => {
+      const list = await accounts.update(actor, accountId, change);
+      if ('active' in change && !change.active) extensionChannel.disconnect(accountId);
+      return list;
+    },
+  });
   mountPairingRoutes(app, pairings);
   mountExtensionDownloadRoute(app, extensionTemplate, publicOrigin);
 

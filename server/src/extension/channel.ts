@@ -26,6 +26,9 @@ import type { PairingService } from './pairing';
 // - The reported version is checked before anything else the extension says is acted on (ADR-0021). An extension
 //   below the minimum is told what to do about it and disconnected, because half-executing a plan it does not
 //   understand ends in an ERP write of undecidable outcome.
+// - A pairing that goes away takes its socket with it (`disconnect`). The token is checked only at `hello`, so
+//   revoking, replacing or deactivating would otherwise leave the old socket connected — and it would receive the next
+//   `erp.fill` (stories 10 and 12).
 // - When the socket goes, whoever runs work over it hears which account lost it (`onLost`), and nothing else is
 //   decided here. A lost socket interrupts that account's job; whether the job resumes within the reconnection
 //   window or ends — and with it the ERP 自动化控制权 (ERP automation control) the job holds — is the remote
@@ -95,6 +98,11 @@ export type ExtensionChannel = {
   request(accountId: string, method: string, payload: unknown): Promise<unknown>;
   // One-way, fire and forget; false when nothing is connected.
   emit(accountId: string, name: string, payload: unknown): boolean;
+  // This account's pairing is gone: revoked, replaced by a new 配对码, or the account deactivated. Its socket is
+  // refused and closed at once, with the terminal `refused` frame so the extension stops redialling, and it is lost
+  // like any other: a job running over it is interrupted and settled by the reconnection window (ADR-0020). A `hello`
+  // still being checked for this account is refused too.
+  disconnect(accountId: string): void;
   close(): void;
 };
 
@@ -122,11 +130,17 @@ export const realTimer: Schedule = (run, ms) => {
 
 // Why `request` rejected: nothing of that account was connected, or its socket went with the request in flight.
 export const EXTENSION_OFFLINE_CODE = 'extension_offline';
+// Why a 去报销 was refused before it started: this account has no extension paired at all.
+export const EXTENSION_NOT_PAIRED_CODE = 'extension_not_paired';
 export const EXTENSION_CONNECTION_LOST_CODE = 'extension_connection_lost';
 
 export function createExtensionChannel({ pairings, now, minimumVersion = EXTENSION_MINIMUM_VERSION, onRequest, onEvent, onLost, silenceMs = EXTENSION_HEARTBEAT_MS * 3, helloDeadlineMs = EXTENSION_HEARTBEAT_MS, schedule = realTimer }: ExtensionChannelOptions): ExtensionChannel {
   const byAccount = new Map<string, Connection>();
   let nextId = 0;
+  // `disconnect` bumps the generation and notes it per account. A `hello` whose token was looked up before a
+  // disconnect of its account would otherwise register a socket for a pairing that no longer exists.
+  let generation = 0;
+  const disconnectedAt = new Map<string, number>();
 
   const write = (socket: ChannelSocket, message: ChannelMessage) => socket.send(JSON.stringify(message));
 
@@ -134,6 +148,7 @@ export function createExtensionChannel({ pairings, now, minimumVersion = EXTENSI
     write(socket, { type: 'refused', code: reason, message });
     socket.close(code, reason);
   };
+  const refuseNotPaired = (socket: ChannelSocket) => refuse(socket, CHANNEL_CLOSE.notPaired, 'not_paired', EXTENSION_CHANNEL_ERRORS.notPaired);
 
   // Every way a connection ends funnels through here, so "a lost socket is heard about" is one rule in one place.
   function drop(connection: Connection): void {
@@ -181,9 +196,11 @@ export function createExtensionChannel({ pairings, now, minimumVersion = EXTENSI
           if (message.type !== 'hello') return refuse(socket, CHANNEL_CLOSE.badMessage, 'bad_message', EXTENSION_CHANNEL_ERRORS.badMessage);
           const tooOld = extensionVersionRefusal(message.version, minimumVersion);
           if (tooOld) return refuse(socket, CHANNEL_CLOSE.versionTooOld, EXTENSION_VERSION_TOO_OLD_CODE, tooOld);
+          const lookedUpAt = generation;
           const found = await pairings.lookup(message.token);
-          if (!found) return refuse(socket, CHANNEL_CLOSE.notPaired, 'not_paired', EXTENSION_CHANNEL_ERRORS.notPaired);
+          if (!found) return refuseNotPaired(socket);
           await pairings.noteConnection(found.accountId, message.version ?? null);
+          if ((disconnectedAt.get(found.accountId) ?? -1) > lookedUpAt) return refuseNotPaired(socket);
           // One pairing per account means a second socket is the same extension reconnecting over a corpse of a
           // connection the server has not noticed yet. The newer one wins, and the older is lost like any other: a job
           // that ran over it is interrupted, and resumes over this one.
@@ -276,6 +293,15 @@ export function createExtensionChannel({ pairings, now, minimumVersion = EXTENSI
       if (!connection) return false;
       write(connection.socket, { type: 'event', name, payload });
       return true;
+    },
+
+    disconnect(accountId) {
+      generation += 1;
+      disconnectedAt.set(accountId, generation);
+      const connection = byAccount.get(accountId);
+      if (!connection) return;
+      drop(connection);
+      refuseNotPaired(connection.socket);
     },
 
     close() {
