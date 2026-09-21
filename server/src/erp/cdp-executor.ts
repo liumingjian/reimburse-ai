@@ -10,7 +10,9 @@ import type { FillExecutor } from './fill-jobs';
 import type { ReconcileExecutor } from './reconcile-job';
 import type { BlobSource } from '@baox/erp-executor/protocol';
 
-// The v1 executor: in process, on the dedicated Chromium profile under the data directory (ADR-0016).
+// The v1 executor: in process, on the dedicated Chromium profile under the data directory (ADR-0016). Since #246 it is
+// for development, e2e and `pnpm test:erp-live` only (#227): the production entry cannot reach this module, and runs
+// every job in the task owner's 浏览器扩展 instead (`remote-executor.ts`, `production-entry.test.ts`).
 // `BAOX_CHROMIUM_CDP_PORT` (default 9333) picks the CDP port; `BAOX_ERP_CHROMIUM=off` never starts a browser (e2e),
 // so a job then finds none and stops before any attempt.
 
@@ -38,3 +40,6 @@ export function cdpFillExecutor({ dataDir, env = process.env }: { dataDir: strin
     return runFillJob(plan, { browser: cdpBrowser(port, launchError), blobs: dataDirBlobs(dataDir), channel, probeWaitMs: trigger === 'confirm_login' ? 0 : 30_000 });
   };
 }
+
+/** Both CDP executors on the dedicated Chromium under `dataDir`: what the development and e2e entries run ERP jobs on. */
+export const cdpExecutors = (dataDir: string) => ({ erpExecutor: cdpFillExecutor({ dataDir }), reconcileExecutor: cdpReconcileExecutor() });

@@ -26,13 +26,6 @@ export type FillRun = { jobId: string; accountId: string; taskId: string; trigge
 // Appends facts of one task in one accepted revision and publishes the fresh snapshot (the task service's job path).
 export type RecordFacts = (accountId: string, taskId: string, write: (tx: Db) => Promise<void>) => Promise<void>;
 
-/** Used when no executor is configured: every job stops before touching anything. */
-export const unavailableExecutor: FillExecutor = async (_plan, channel) => {
-  const event: ResultEvent = { type: 'result', status: 'aborted', code: 'erp_executor_unavailable', message: '这个应用没有接上报销系统自动化。', billNo: null, capture: null };
-  await channel.emit(event);
-  return event;
-};
-
 /**
  * The server's own guard (ADR-0014: any loss after `attempt_started` is reconcile, never a replay): once an attempt
  * of the job is durable, only a terminal success (`handed_over`, or the legacy `saved`) or `unknown` may end it. An
