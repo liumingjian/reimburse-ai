@@ -12,6 +12,7 @@ import { channelWatch } from './connection';
 import type { DebuggerApi } from './debugger-session';
 import { createErpRunner, type Interruption } from './erp-runner';
 import { dedicatedErpTab, type ErpTab } from './erp-tab';
+import { DETACHED_MID_COMMAND } from './job-link';
 import { fakeChrome, type FakeChromeOptions } from './testing/fake-chrome';
 
 const ERP_ORIGIN = 'http://erp.antute.com.cn';
@@ -401,5 +402,36 @@ describe('an interrupted 去报销 resumes inside the window, or stops without t
     expect(extension.app.said().slice(-4)).toEqual(['attempt_started', EXECUTOR_METHODS.detached, EXECUTOR_METHODS.resume, 'result']);
     expect(extension.events.filter((e) => e.type === 'result')).toHaveLength(1);
     expect(extension.fake.mutations).toEqual([]);
+  });
+
+  // Real Chrome's order (measured in extension/e2e/regression.spec.ts): the cut-off command fails first, and
+  // `onDetach` comes later. The failure alone must already be the detach, or the executor ends the job on Chrome's
+  // English error instead.
+  it.each([
+    ["in Chrome's detach words", {}],
+    ['in other words, with the detach reported after it', { error: 'Internal error' }],
+  ])('treats a command Chrome fails %s as the same detach, and ends the job the designed way', async (_case, cut) => {
+    let armed = false;
+    const extension = await extensionOver({
+      app: {
+        after: (event) => {
+          if (event.type === 'attempt_started') armed = true;
+        },
+      },
+    });
+    extension.chrome.detachDuring('Input.dispatchMouseEvent', { ...cut, when: () => armed });
+
+    const result = await extension.fill();
+
+    expect(extension.interruptions.map((interruption) => interruption.kind)).toEqual(['debugger_detached']);
+    expect(result).toMatchObject({ type: 'result', status: 'aborted', ...DETACHED_MID_COMMAND });
+    expect(extension.app.said().slice(-4)).toEqual(['attempt_started', EXECUTOR_METHODS.detached, EXECUTOR_METHODS.resume, 'result']);
+    expect(extension.events.filter((e) => e.type === 'result')).toEqual([result]);
+    // Nothing in Chrome's words reached the app, and so nothing reaches the employee.
+    expect(JSON.stringify(extension.events)).not.toMatch(/Detached|Internal error/);
+    expect(extension.fake.mutations).toEqual([]);
+    // Re-attached to the same tab once, and the late `onDetach` of the old attachment did not interrupt the new one.
+    const tab = extension.chrome.jobTab()!.id;
+    expect(extension.chrome.attached).toEqual([{ tabId: tab }, { tabId: tab }]);
   });
 });

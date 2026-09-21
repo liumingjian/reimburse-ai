@@ -114,8 +114,9 @@ export function dedicatedErpTab({
       try {
         session = await attachDebuggerSession(api, tabId, { onDetach: (reason) => { for (const listener of detachListeners) listener(reason); } });
       } catch (error) {
+        // Chrome's own reason is English and stays in `cause`; the employee reads only the fixed sentence.
         throw new ExecutorError('ERP_TAB_DEBUGGER_UNAVAILABLE',
-          `浏览器扩展没能接管报销系统标签页：${error instanceof Error ? error.message : String(error)}。如果这个标签页开着开发者工具，请关掉后再试。`, { cause: error });
+          '浏览器扩展没能接管报销系统标签页。如果这个标签页开着开发者工具，请关掉后再试。', { cause: error });
       }
       // Deliberately NOT fatal, unlike `attachChromiumPage` on the dedicated Chromium. There the window is an automation
       // browser buried behind the employee's work nearly all the time, and without focus emulation an occluded page

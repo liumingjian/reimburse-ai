@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page } from '@playwright/test';
 import { jobEnded, test, type App, type Client } from './app';
+import { DETACHED_MID_COMMAND } from '../src/job-link';
 import { detachLikeChrome, type ErpSites } from './harness';
 
 type ErpRecord = { mutations: Array<{ kind: string; detail: string }>; importMode: string | null };
@@ -88,9 +89,10 @@ test('去报销 reaches ERP 单据已交接 through the assistant, with the form
 // still reach hand-over. During the 发票导入单据 click — after `attempt_started` is durable, on the one irreversible act
 // — nobody can know whether the click took effect, so the job must not go on, and the server, holding an attempt,
 // makes it 对账 (reconcile). That is the point where a wrong answer costs the employee a duplicate import, so it is
-// the point this case takes. (Measured 2026-09-21: Chrome fails the in-flight click with "Detached while handling
-// command.", so the executor's own `unknown` result is usually what ends the job rather than the link's `aborted`;
-// either way the server's answer is 对账, and that answer is what this case asserts.)
+// the point this case takes. Chrome fails the in-flight click with "Detached while handling command." BEFORE it raises
+// `onDetach` (measured 2026-09-21); the adapter takes that failure as the detach itself, so the job ends the designed
+// way — resumed, re-observed, then the link's own `debugger_detached_mid_command` — and not on the executor's catch of
+// Chrome's English error. This case asserts both the 对账 and that designed code.
 test('a detach during the 发票导入单据 click ends in 对账, and nothing is imported twice', async ({ erp, app, employee, extension }) => {
   const ready = await readyTask(app, employee, erp);
   // Every onDetach Chrome raises, as the extension hears it.
@@ -117,6 +119,9 @@ test('a detach during the 发票导入单据 click ends in 对账, and nothing i
   expect(await extension.worker.evaluate(() => (self as unknown as { harnessDetaches: string[] }).harnessDetaches)).toEqual(['target_closed']);
   // 对账 is what an attempt on record calls for: without one the server would have ended the job `aborted` in place.
   expect(outcome).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
+  // The designed path ended it, and the employee reads why in Chinese, not Chrome's words.
+  expect(outcome.erp.abortReason).toContain(DETACHED_MID_COMMAND.message);
+  expect(outcome.erp.abortReason).not.toMatch(/Detached|executor_error/);
 
   const page = jobTab(extension.context.pages(), erp);
   // The held click's import lands on the ERP page once let through.

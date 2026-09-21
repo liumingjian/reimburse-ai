@@ -146,6 +146,12 @@ export const ExecutorEventSchema = z.discriminatedUnion('type', [
 ]);
 export type ExecutorEvent = z.infer<typeof ExecutorEventSchema>;
 export type ResultEvent = Extract<ExecutorEvent, { type: 'result' }>;
+/**
+ * A job ended as `aborted` by whoever could not let it go on: the server past its reconnection window, or the
+ * extension's job link. It never picks the disposition — the server turns it into `unknown` (对账) when an attempt is
+ * on record.
+ */
+export const abortedResult = (code: string, message: string): ResultEvent => ({ type: 'result', status: 'aborted', code, message, billNo: null, capture: null });
 export type AttemptStartedEvent = Extract<ExecutorEvent, { type: 'attempt_started' }>;
 export type ReadbackEvent = Extract<ExecutorEvent, { type: 'readback' }>;
 

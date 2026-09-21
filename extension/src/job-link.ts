@@ -1,6 +1,6 @@
 import type { CdpListener, CdpSession } from '@baox/erp-executor/cdp';
 import { observePage } from '@baox/erp-executor/observe';
-import type { ExecutorChannel, ExecutorEvent, ResultEvent } from '@baox/erp-executor/protocol';
+import { abortedResult, type ExecutorChannel, type ExecutorEvent, type ResultEvent } from '@baox/erp-executor/protocol';
 import {
   EXECUTOR_METHODS, JOB_REFUSALS, RECONNECT_WINDOW_MS, ResumeVerdictSchema, wireChannel,
   type JobEventRequest, type PageObservation, type WireRequest,
@@ -74,17 +74,19 @@ const codeOf = (error: unknown) => (error as { code?: unknown } | null)?.code;
 // A request the break cut off: the socket went under it, or the server already counts the job as interrupted.
 const cutOffByBreak = (error: unknown) => codeOf(error) === 'channel_closed' || codeOf(error) === JOB_REFUSALS.resumeRequired;
 
-const DETACHED_MID_COMMAND = '浏览器扩展对报销系统页面的控制在一步操作进行到一半时断开了，这一步有没有生效看不出来，所以没有继续。';
-const READBACK_VERDICT_LOST = '连接恢复了，但中断前送去核对的页面读数没有拿到结论，所以没有继续。';
-const RECORD_MISMATCH = '连接恢复了，但应用记下的进展和浏览器扩展发出的对不上，所以没有继续。';
+/** The job's own end when a detach cut off a command under way (exported for the real-browser suite's assertion). */
+export const DETACHED_MID_COMMAND = {
+  code: 'debugger_detached_mid_command',
+  message: '浏览器扩展对报销系统页面的控制在一步操作进行到一半时断开了，这一步有没有生效看不出来，所以没有继续。',
+} as const;
+const READBACK_VERDICT_LOST = { code: 'readback_verdict_lost', message: '连接恢复了，但中断前送去核对的页面读数没有拿到结论，所以没有继续。' } as const;
+const RECORD_MISMATCH = { code: 'resume_record_mismatch', message: '连接恢复了，但应用记下的进展和浏览器扩展发出的对不上，所以没有继续。' } as const;
 
 export function createJobLink({ jobId, erpOrigin, request, channel, reattach, onInterrupted, windowMs = RECONNECT_WINDOW_MS }: JobLinkPorts): JobLink {
   let state: 'live' | 'interrupted' | 'stopped' = 'live';
   let gate: Promise<void> = Promise.resolve();
   let open = () => {};
   let page: AttachedPage | null = null;
-  // Page sessions Chrome took away; the page is re-attached before it is looked at again.
-  const cutOff = new Set<CdpSession>();
   let pageGone = false;
   let detachNotice = false;
   let channelDown = false;
@@ -93,6 +95,11 @@ export function createJobLink({ jobId, erpOrigin, request, channel, reattach, on
   // A detach cut off a command the executor had under way; whether it took effect cannot be known.
   let killed = false;
   let commands = 0;
+  // The session whose last command failed, until one succeeds on it. Chrome fails a command it cut off before it
+  // reports the detach, and nothing bounds how long before: a detach that arrives after a failure, with no success
+  // in between, is taken as that failure's cause, so it counts as a detach mid-command (`interrupt`). Wrongly taken,
+  // it only ends a job that could have resumed — to 对账 at worst, never a replay.
+  let failedOn: CdpSession | null = null;
   // The job's log as this side knows it: how many events the server answered, the one out now, and the one a break
   // cut off (on record or not — the resume says which).
   let acknowledged = 0;
@@ -115,8 +122,8 @@ export function createJobLink({ jobId, erpOrigin, request, channel, reattach, on
   }
 
   // The `aborted` result, as the next event of the job's log; the server decides what it becomes.
-  async function conclude(code: string, message: string): Promise<void> {
-    own = { type: 'result', status: 'aborted', code, message, billNo: null, capture: null };
+  async function conclude({ code, message }: { code: string; message: string }): Promise<void> {
+    own = abortedResult(code, message);
     try {
       await request(EXECUTOR_METHODS.event, { jobId, event: own } satisfies JobEventRequest);
     } catch {
@@ -132,10 +139,9 @@ export function createJobLink({ jobId, erpOrigin, request, channel, reattach, on
       if (channelDown) return;
       channelDown = true;
     } else {
-      if (page) cutOff.add(page.session);
       pageGone = true;
       detachNotice = true;
-      if (commands > 0) killed = true;
+      if (commands > 0 || (page !== null && failedOn === page.session)) killed = true;
     }
     onInterrupted?.(interruption);
     if (state === 'interrupted') {
@@ -202,10 +208,10 @@ export function createJobLink({ jobId, erpOrigin, request, channel, reattach, on
         // and the job resumes once more.
         if (again) continue;
         const { recorded } = verdict;
-        if (recorded < acknowledged || recorded > acknowledged + (held ? 1 : 0)) return await conclude('resume_record_mismatch', RECORD_MISMATCH);
+        if (recorded < acknowledged || recorded > acknowledged + (held ? 1 : 0)) return await conclude(RECORD_MISMATCH);
         heldOnRecord = held !== null && recorded > acknowledged;
-        if (heldOnRecord && held?.type === 'readback') return await conclude('readback_verdict_lost', READBACK_VERDICT_LOST);
-        if (killed) return await conclude('debugger_detached_mid_command', DETACHED_MID_COMMAND);
+        if (heldOnRecord && held?.type === 'readback') return await conclude(READBACK_VERDICT_LOST);
+        if (killed) return await conclude(DETACHED_MID_COMMAND);
         state = 'live';
         open();
         return;
@@ -222,7 +228,7 @@ export function createJobLink({ jobId, erpOrigin, request, channel, reattach, on
       await pass();
       if (killed) {
         // Cut off after the resume already let the job go on (a command that answered late).
-        await conclude('debugger_detached_mid_command', DETACHED_MID_COMMAND);
+        await conclude(DETACHED_MID_COMMAND);
         throw new JobStopped();
       }
       if (held === event) {
@@ -270,11 +276,13 @@ export function createJobLink({ jobId, erpOrigin, request, channel, reattach, on
           const session = page!.session;
           commands += 1;
           try {
-            return await session.send(method, params, options);
+            const answer = await session.send(method, params, options);
+            if (failedOn === session) failedOn = null;
+            return answer;
           } catch (error) {
-            // Chrome may fail a command it cut off before it reports the detach: give the report a turn to land.
-            await new Promise((resolve) => setTimeout(resolve, 0));
-            if (cutOff.has(session)) killed = true;
+            // A command the adapter recognised as cut off by a detach has already interrupted the job, with this
+            // command still counted; any other failure is held against a detach that may yet be reported.
+            failedOn = session;
             throw error;
           } finally {
             commands -= 1;
