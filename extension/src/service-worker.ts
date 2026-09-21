@@ -1,5 +1,5 @@
 import { EXTENSION_VERSION } from '@baox/contract';
-import { createChannelClient, type ChannelClient, type ChannelStatus, type ClientSocket } from './connection';
+import { channelWatch, createChannelClient, type ChannelClient, type ChannelStatus, type ClientSocket } from './connection';
 import { createErpRunner } from './erp-runner';
 import { dedicatedErpTab } from './erp-tab';
 import { BAOX_ORIGIN } from './origin';
@@ -24,6 +24,13 @@ export type PopupAnswer = { paired: boolean; accountId: string | null; version: 
 
 let client: ChannelClient | null = null;
 let lastStatus: ChannelStatus | null = null;
+// What a running 去报销 hears of the channel: when it went, and when it is back.
+const connection = channelWatch();
+
+function noteStatus(status: ChannelStatus | null): void {
+  lastStatus = status;
+  connection.status(status);
+}
 
 // What the server asks of a connected extension: run a 去报销 in a tab of its own, over `chrome.debugger`. The chrome
 // APIs are passed through lambdas so the executor side never names the `chrome` global.
@@ -45,8 +52,9 @@ const runErpJob = createErpRunner({
       onDetach: chrome.debugger.onDetach,
     },
   }),
-  request: (method, payload) => (client ? client.request(method, payload) : Promise.reject(new Error('和应用的连接断开了。'))),
-  // #257 resumes from here; until then an interruption only ends the job, through the command or request that failed.
+  request: (method, payload) => (client ? client.request(method, payload) : Promise.reject(Object.assign(new Error('和应用的连接断开了。'), { code: 'channel_closed' }))),
+  connection,
+  // The job's link resumes it (`job-link.ts`); this is only the log line.
   onInterrupted: (jobId, { kind, reason }) => console.warn(`[baox] job ${jobId} interrupted: ${kind} (${reason})`),
 });
 
@@ -73,9 +81,7 @@ function connect(pairing: StoredPairing): void {
     token: pairing.token,
     open: (url) => new WebSocket(url) as unknown as ClientSocket,
     onRequest: runErpJob,
-    onStatus: (status) => {
-      lastStatus = status;
-    },
+    onStatus: noteStatus,
   });
 }
 
@@ -98,7 +104,7 @@ async function answer(request: PopupRequest): Promise<PopupAnswer> {
     case 'unpair': {
       client?.stop();
       client = null;
-      lastStatus = null;
+      noteStatus(null);
       await chrome.storage.local.remove(PAIRING_KEY);
       return { ...base, status: null, paired: false, accountId: null };
     }

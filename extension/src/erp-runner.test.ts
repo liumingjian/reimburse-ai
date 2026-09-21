@@ -7,7 +7,9 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION, type ExecutorEvent, type FillPlan, type ReconcilePlan } from '@baox/erp-executor/protocol';
 import { createFakeErp, type FakeErpOptions, type FakeInvoice } from '@baox/erp-executor/testing/fake-erp';
-import { EXECUTOR_METHODS, type FillRequest } from '@baox/erp-executor/wire';
+import { EXECUTOR_METHODS, JOB_REFUSALS, type FillRequest, type PageObservation, type ResumeVerdict } from '@baox/erp-executor/wire';
+import { channelWatch } from './connection';
+import type { DebuggerApi } from './debugger-session';
 import { createErpRunner, type Interruption } from './erp-runner';
 import { dedicatedErpTab, type ErpTab } from './erp-tab';
 import { fakeChrome, type FakeChromeOptions } from './testing/fake-chrome';
@@ -32,38 +34,105 @@ const plan: FillPlan = {
 };
 const reconcilePlan: ReconcilePlan = { protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId: 'reconcile-1', taskId: 'task-1', erpOrigin: ERP_ORIGIN };
 
+// An error as the channel client rejects a request with it.
+const failure = (code: string, message = '和应用的连接断开了。') => Object.assign(new Error(message), { code });
+
+type Hook = (event: ExecutorEvent) => 'drop' | void;
+
+type WireEntry = { method: string; payload: { jobId: string; event?: ExecutorEvent; last?: PageObservation; now?: PageObservation } };
+
 /**
- * The extension's runner over a fake ERP, with the server stubbed as the channel would answer: every attempt is
- * acknowledged and read-backs are refused, so a fill ends right after its import — past the login probe, the
- * 报销信息核对, the navigation and the piaozone child session, which is all the transport there is.
+ * The app at the other end of the channel, as far as one job goes. Like the server it records every `erp.event`,
+ * acknowledges an attempt once it is on record and refuses read-backs, so a fill ends right after its import — past
+ * the login probe, the 报销信息核对, the navigation and the piaozone child session, which is all the transport there
+ * is. Like the server it refuses events with `resume_required` while the job is interrupted, and answers `erp.resume`
+ * with how many events are on record when the two observations agree (or with `verdict`).
+ *
+ * `before` / `after` run around the record of each event; `'drop'` loses the socket there, so the event either never
+ * reached the record or reached it and lost its answer. The socket comes back a moment later, as the client redials.
  */
-async function extensionOver(erp: Partial<FakeErpOptions> = {}, chromeOptions: FakeChromeOptions = {}) {
-  const fake = await createFakeErp({ origin: ERP_ORIGIN, invoices: [INVOICE], projects: PROJECTS, expenseItems: EXPENSE_ITEMS, ...erp });
-  const chrome = fakeChrome(fake.session, chromeOptions);
-  const events: ExecutorEvent[] = [];
-  const requests: Array<{ method: string; jobId: unknown }> = [];
+function appOver(fake: { commands: unknown[] }, { before, after, verdict }: { before?: Hook; after?: Hook; verdict?: ResumeVerdict | Error } = {}) {
+  const connection = channelWatch();
+  const ready = () => connection.status({ state: 'ready', accountId: 'account-1' });
+  ready();
+  const wire: WireEntry[] = [];
+  const log: ExecutorEvent[] = [];
+  const refused: string[] = [];
+  const resumes: Array<{ last: PageObservation; now: PageObservation; commandsAt: number }> = [];
+  let up = true;
+  let interrupted = false;
+  const drop = () => {
+    up = false;
+    interrupted = true;
+    connection.status({ state: 'offline', retryInMs: 5 });
+    setTimeout(() => {
+      up = true;
+      ready();
+    }, 5);
+    return failure('channel_closed');
+  };
+  const request = async (method: string, raw: unknown): Promise<unknown> => {
+    if (!up) throw failure('channel_closed');
+    const payload = raw as WireEntry['payload'];
+    wire.push({ method, payload });
+    if (method === EXECUTOR_METHODS.detached) {
+      interrupted = true;
+      return null;
+    }
+    if (method === EXECUTOR_METHODS.resume) {
+      resumes.push({ last: payload.last!, now: payload.now!, commandsAt: fake.commands.length });
+      if (verdict instanceof Error) throw verdict;
+      const answer = verdict ?? (JSON.stringify(payload.last) === JSON.stringify(payload.now) ? { ok: true, recorded: log.length } : { ok: false, reasons: ['页面变了'] });
+      if (answer.ok) interrupted = false;
+      return answer;
+    }
+    const event = payload.event!;
+    if (interrupted) {
+      refused.push(event.type);
+      throw failure(JOB_REFUSALS.resumeRequired, '要先恢复');
+    }
+    if (before?.(event) === 'drop') throw drop();
+    log.push(event);
+    if (after?.(event) === 'drop') throw drop();
+    if (event.type === 'attempt_started') return { persisted: true };
+    if (event.type === 'readback') return { ok: false, reasons: ['测试里的服务器不判定回读'] };
+    return null;
+  };
+  // What reached the app, in order: an event by its type, anything else by its method.
+  const said = () => wire.map((entry) => entry.payload.event?.type ?? entry.method);
+  return { connection, request, wire, log, refused, resumes, said };
+}
+
+type Over = {
+  erp?: Partial<FakeErpOptions>;
+  chrome?: FakeChromeOptions;
+  app?: Parameters<typeof appOver>[1];
+  // Stands between the adapter and the fake `chrome.debugger`, to cut a command off.
+  debugger?: (api: DebuggerApi) => DebuggerApi;
+};
+
+/** The extension's runner over a fake ERP, with `chrome.*` faked over it and the app as above. */
+async function extensionOver(over: Over = {}) {
+  const fake = await createFakeErp({ origin: ERP_ORIGIN, invoices: [INVOICE], projects: PROJECTS, expenseItems: EXPENSE_ITEMS, ...over.erp });
+  const chrome = fakeChrome(fake.session, over.chrome);
+  const debuggerApi = over.debugger ? over.debugger(chrome.debugger) : chrome.debugger;
+  const app = appOver(fake, over.app);
   const interruptions: Array<{ jobId: string } & Interruption> = [];
   const ports: ErpTab[] = [];
   const run = createErpRunner({
     browser: (erpOrigin, choice) => {
-      const port = dedicatedErpTab({ erpOrigin, choice, tabs: chrome.tabs, windows: chrome.windows, debugger: chrome.debugger, pollMs: 1 });
+      const port = dedicatedErpTab({ erpOrigin, choice, tabs: chrome.tabs, windows: chrome.windows, debugger: debuggerApi, pollMs: 1 });
       ports.push(port);
       return port;
     },
-    request: async (method, payload) => {
-      const { jobId, event } = payload as { jobId: string; event: ExecutorEvent };
-      requests.push({ method, jobId });
-      events.push(event);
-      if (event.type === 'attempt_started') return { persisted: true };
-      if (event.type === 'readback') return { ok: false, reasons: ['测试里的服务器不判定回读'] };
-      return null;
-    },
+    request: app.request,
+    connection: app.connection,
     blobs: { read: async () => INVOICE.bytes },
     pace: FAST_PACE,
     onInterrupted: (jobId, interruption) => interruptions.push({ jobId, ...interruption }),
   });
   return {
-    fake, chrome, events, requests, interruptions, ports,
+    fake, chrome, app, events: app.log, interruptions, ports,
     fill: (trigger: FillRequest['trigger'] = 'start') => run(EXECUTOR_METHODS.fill, { plan, trigger }),
     reconcile: () => run(EXECUTOR_METHODS.reconcile, { plan: reconcilePlan }),
   };
@@ -71,10 +140,13 @@ async function extensionOver(erp: Partial<FakeErpOptions> = {}, chromeOptions: F
 
 const stepsDone = (events: ExecutorEvent[]) => events.flatMap((e) => (e.type === 'step' && e.status === 'done' ? [e.step] : []));
 const inputCount = (fake: { commands: Array<{ method: string }> }) => fake.commands.filter((c) => c.method.startsWith('Input.')).length;
+// A job's log, told apart by what each event says rather than by ids minted per run.
+const journal = (events: ExecutorEvent[]) => events.map((e) => (e.type === 'step' ? `${e.step} ${e.status}` : e.type === 'attempt_started' ? `attempt ${e.action}` : e.type));
+const isStep = (step: string, status: string) => (event: ExecutorEvent) => event.type === 'step' && event.step === step && event.status === status;
 
 describe('a 去报销 run by the extension over chrome.debugger', () => {
   it('opens its own ERP tab, attaches to that tab only, and brings it to the front', async () => {
-    const extension = await extensionOver({}, { employeeTabs: [ENTRY, 'https://example.com/'] });
+    const extension = await extensionOver({ chrome: { employeeTabs: [ENTRY, 'https://example.com/'] } });
     const result = await extension.fill();
 
     expect(result.code).toBe('receipt_readback');
@@ -108,11 +180,11 @@ describe('a 去报销 run by the extension over chrome.debugger', () => {
     expect(extension.fake.mutations.map((m) => m.kind)).toEqual(['import']);
     expect(extension.ports[0]!.focusEmulation()).toEqual({ ok: true });
     // Every event went back as an `erp.event` request for this job.
-    expect(new Set(extension.requests.map((r) => `${r.method} ${r.jobId}`))).toEqual(new Set([`${EXECUTOR_METHODS.event} job-1`]));
+    expect(new Set(extension.app.wire.map((r) => `${r.method} ${r.payload.jobId}`))).toEqual(new Set([`${EXECUTOR_METHODS.event} job-1`]));
   });
 
   it('waits for the employee to log in, then continues in the same tab', async () => {
-    const extension = await extensionOver({ loggedIn: false });
+    const extension = await extensionOver({ erp: { loggedIn: false } });
 
     expect(await extension.fill()).toMatchObject({ status: 'waiting_login', code: 'erp_login' });
     expect(extension.events.some((e) => e.type === 'attempt_started')).toBe(false);
@@ -127,7 +199,7 @@ describe('a 去报销 run by the extension over chrome.debugger', () => {
   });
 
   it('opens a fresh tab for every new 去报销', async () => {
-    const extension = await extensionOver({ projects: [{ code: '39163', name: '别的项目' }] });
+    const extension = await extensionOver({ erp: { projects: [{ code: '39163', name: '别的项目' }] } });
     await extension.fill();
     const first = extension.chrome.jobTab()!.id;
     await extension.fill('start');
@@ -136,7 +208,7 @@ describe('a 去报销 run by the extension over chrome.debugger', () => {
   });
 
   it('stops on a master-data mismatch before anything is written', async () => {
-    const extension = await extensionOver({ projects: [{ code: '39163', name: '别的项目' }] });
+    const extension = await extensionOver({ erp: { projects: [{ code: '39163', name: '别的项目' }] } });
     const result = await extension.fill();
 
     expect(result.status).toBe('catalog_mismatch');
@@ -146,7 +218,7 @@ describe('a 去报销 run by the extension over chrome.debugger', () => {
   });
 
   it('carries on when the tab refuses focus emulation, and keeps the refusal', async () => {
-    const extension = await extensionOver({}, { refuse: { 'Emulation.setFocusEmulationEnabled': "'Emulation.setFocusEmulationEnabled' wasn't found" } });
+    const extension = await extensionOver({ chrome: { refuse: { 'Emulation.setFocusEmulationEnabled': "'Emulation.setFocusEmulationEnabled' wasn't found" } } });
     await extension.fill();
 
     expect(extension.ports[0]!.focusEmulation()).toMatchObject({ ok: false });
@@ -167,34 +239,167 @@ describe('a 去报销 run by the extension over chrome.debugger', () => {
     expect(extension.events.find((e) => e.type === 'readback' && e.stage === 'reconcile')).toMatchObject({ form: { formInstanceId: 'a1b2c3d4e5f6' } });
     expect(inputCount(extension.fake)).toBe(inputsBefore);
   });
+});
 
-  it('reports a debugger detach through the same path as a lost channel, and fails the next command', async () => {
-    const extension = await extensionOver();
-    await extension.fill();
-    // The job's tab, attached again and then cut off by the employee cancelling Chrome's debugger banner.
-    const port = extension.ports[0]!;
-    const [page] = await port.listPages();
-    const { session } = await port.attach(page!);
+// #257, ADR-0020: a reconnect restores the channel, not the page. Each case breaks one run at one point and asserts
+// what the app received and what happened to the page.
+describe('an interrupted 去报销 resumes inside the window, or stops without touching the page', () => {
+  // Between the break and the app's verdict the page is only read: the re-observation, and focus emulation on a
+  // re-attached tab. Nothing clicks, types, or opens a child session.
+  const onlyReadsBetween = (fake: { commands: Array<{ method: string }> }, from: number, to: number) =>
+    fake.commands.slice(from, to).every((c) => c.method === 'Runtime.evaluate' || c.method === 'Emulation.setFocusEmulationEnabled');
 
-    extension.chrome.detach('canceled_by_user');
-
-    expect(extension.interruptions).toEqual([{ jobId: 'job-1', kind: 'debugger_detached', reason: 'canceled_by_user' }]);
-    await expect(session.send('Runtime.evaluate', { expression: '1' })).rejects.toThrow(/canceled_by_user/);
-  });
-
-  it('reports a channel lost under an event through the same path', async () => {
-    const fake = await createFakeErp({ origin: ERP_ORIGIN, invoices: [INVOICE], projects: PROJECTS, expenseItems: EXPENSE_ITEMS });
-    const chrome = fakeChrome(fake.session);
-    const interruptions: Interruption[] = [];
-    const lost = Object.assign(new Error('和应用的连接断开了。'), { code: 'channel_closed' });
-    const run = createErpRunner({
-      browser: (erpOrigin, choice) => dedicatedErpTab({ erpOrigin, choice, tabs: chrome.tabs, windows: chrome.windows, debugger: chrome.debugger, pollMs: 1 }),
-      request: () => Promise.reject(lost),
-      onInterrupted: (_jobId, interruption) => interruptions.push(interruption),
+  it('on a detach, says erp.detached first, re-attaches the same tab, re-observes, resumes, and replays nothing', async () => {
+    const baseline = await extensionOver();
+    const expected = await baseline.fill();
+    let brokeAt = -1;
+    const extension = await extensionOver({
+      app: {
+        after: (event) => {
+          if (!isStep('catalog', 'running')(event)) return;
+          brokeAt = extension.fake.commands.length;
+          extension.chrome.detach('canceled_by_user');
+        },
+      },
     });
 
-    await expect(run(EXECUTOR_METHODS.fill, { plan, trigger: 'start' })).rejects.toBe(lost);
-    expect(interruptions[0]).toEqual({ kind: 'channel_closed', reason: '和应用的连接断开了。' });
-    expect(fake.mutations).toEqual([]);
+    const result = await extension.fill();
+
+    expect(extension.interruptions).toEqual([{ jobId: 'job-1', kind: 'debugger_detached', reason: 'canceled_by_user' }]);
+    // Rule 4: the detach is told before any further event, then the resume, then the job carries on.
+    const said = extension.app.said();
+    const at = said.indexOf(EXECUTOR_METHODS.detached);
+    expect(said.slice(at - 1, at + 3)).toEqual(['step', EXECUTOR_METHODS.detached, EXECUTOR_METHODS.resume, 'step']);
+    // Rule 2: nothing was sent while interrupted (the app never had to refuse), and the page was only read.
+    expect(extension.app.refused).toEqual([]);
+    const [resume] = extension.app.resumes;
+    expect(onlyReadsBetween(extension.fake, brokeAt, resume!.commandsAt)).toBe(true);
+    expect(resume!.last).toMatchObject({ erpAccount: { account: 'luo.liu', tenant: 'tenant-a' }, form: null, assistant: 'closed' });
+    expect(resume!.now).toEqual(resume!.last);
+    // Rule 1: the same log an unbroken run writes, every event sent once.
+    expect(journal(extension.events)).toEqual(journal(baseline.events));
+    expect(extension.app.wire.filter((entry) => entry.method === EXECUTOR_METHODS.event)).toHaveLength(extension.events.length);
+    expect(result).toMatchObject({ status: expected.status, code: expected.code });
+    // The same tab, attached again; no other tab opened.
+    const tab = extension.chrome.jobTab()!.id;
+    expect(extension.chrome.attached).toEqual([{ tabId: tab }, { tabId: tab }]);
+    expect(extension.chrome.tabCount()).toBe(1);
+  });
+
+  it('on a closed channel, sends no erp.detached and counts an attempt on record as acknowledged', async () => {
+    let brokeAt = -1;
+    const extension = await extensionOver({
+      app: {
+        after: (event) => {
+          if (event.type !== 'attempt_started') return;
+          brokeAt = extension.fake.commands.length;
+          return 'drop';
+        },
+      },
+    });
+
+    const result = await extension.fill();
+
+    expect(extension.interruptions).toEqual([{ jobId: 'job-1', kind: 'channel_closed', reason: '和应用的连接断开了。' }]);
+    expect(extension.app.said()).not.toContain(EXECUTOR_METHODS.detached);
+    expect(extension.app.refused).toEqual([]);
+    const [resume] = extension.app.resumes;
+    expect(onlyReadsBetween(extension.fake, brokeAt, resume!.commandsAt)).toBe(true);
+    expect(resume!.last).toMatchObject({ form: { targetId: 'tab-1', formMode: 'new', billNo: null }, assistant: 'open' });
+    // Rule 1: the attempt went out once; its lost answer was the record's, and the import ran after it.
+    expect(extension.app.said().filter((type) => type === 'attempt_started')).toHaveLength(1);
+    expect(extension.fake.mutations.map((m) => m.kind)).toEqual(['import']);
+    expect(result).toMatchObject({ status: 'unknown', code: 'receipt_readback' });
+  });
+
+  it('sends the event the break cut off before it reached the record, once', async () => {
+    let dropped = false;
+    const extension = await extensionOver({
+      app: {
+        before: (event) => {
+          if (event.type !== 'attempt_started' || dropped) return;
+          dropped = true;
+          return 'drop';
+        },
+      },
+    });
+
+    const result = await extension.fill();
+
+    // Twice on the wire, once on record: the first never arrived, so the second is its first time.
+    expect(extension.app.said().filter((type) => type === 'attempt_started')).toHaveLength(2);
+    expect(extension.events.filter((e) => e.type === 'attempt_started')).toHaveLength(1);
+    expect(extension.fake.mutations.map((m) => m.kind)).toEqual(['import']);
+    expect(result).toMatchObject({ status: 'unknown', code: 'receipt_readback' });
+  });
+
+  it.each([
+    ['a refused resume', { ok: false, reasons: ['打开的报销单和中断前不是同一张'] } as ResumeVerdict],
+    ['an unknown job', failure(JOB_REFUSALS.unknownJob, '这次任务不在这个浏览器扩展里运行。')],
+  ])('stops on %s without touching the page again', async (_case, verdict) => {
+    const extension = await extensionOver({ app: { after: (event) => (event.type === 'attempt_started' ? 'drop' : undefined), verdict } });
+
+    await expect(extension.fill()).rejects.toThrow();
+
+    // Rule 3: not one command after the verdict, and nothing sent after the resume.
+    const [resume] = extension.app.resumes;
+    expect(extension.fake.commands).toHaveLength(resume!.commandsAt);
+    expect(extension.app.said().at(-1)).toBe(EXECUTOR_METHODS.resume);
+    expect(extension.fake.mutations).toEqual([]);
+  });
+
+  it('ends the job when a read-back on record lost its verdict, and does not act on it', async () => {
+    const extension = await extensionOver({ app: { after: (event) => (event.type === 'readback' ? 'drop' : undefined) } });
+
+    const result = await extension.fill();
+
+    // Rules 1 and 5: the read-back is not sent again; the job ends on an `aborted` result, the next event on record.
+    expect(result).toMatchObject({ type: 'result', status: 'aborted', code: 'readback_verdict_lost' });
+    expect(journal(extension.events).slice(-2)).toEqual(['readback', 'result']);
+    expect(extension.app.said().filter((type) => type === 'readback')).toHaveLength(1);
+    expect(extension.fake.commands).toHaveLength(extension.app.resumes[0]!.commandsAt);
+  });
+
+  it('does not resume when the job tab is gone, and opens no other', async () => {
+    const extension = await extensionOver({ app: { after: (event) => (isStep('catalog', 'running')(event) ? void extension.chrome.closeJobTab() : undefined) } });
+
+    await expect(extension.fill()).rejects.toThrow();
+
+    expect(extension.app.said()).toContain(EXECUTOR_METHODS.detached);
+    expect(extension.app.said()).not.toContain(EXECUTOR_METHODS.resume);
+    expect(journal(extension.events).at(-1)).toBe('catalog running');
+    expect(extension.chrome.tabCount()).toBe(0);
+    expect(extension.chrome.attached).toHaveLength(1);
+  });
+
+  it('ends the job with an aborted result when the detach cut off a command under way', async () => {
+    let armed = false;
+    const extension = await extensionOver({
+      app: {
+        after: (event) => {
+          if (event.type === 'attempt_started') armed = true;
+        },
+      },
+      // The employee cancels the debugger banner while the import click is on its way.
+      debugger: (api) => ({
+        ...api,
+        async sendCommand(target, method, params) {
+          if (!armed || method !== 'Input.dispatchMouseEvent') return api.sendCommand(target, method, params);
+          armed = false;
+          extension.chrome.detach('canceled_by_user');
+          throw new Error('Detached while handling command.');
+        },
+      }),
+    });
+
+    const result = await extension.fill();
+
+    // Rule 5: resumed on the same page, and still the extension does not carry on or pick a disposition: `aborted`,
+    // which the server makes 对账 because an attempt is on record.
+    expect(extension.app.resumes[0]!.now).toEqual(extension.app.resumes[0]!.last);
+    expect(result).toMatchObject({ type: 'result', status: 'aborted', code: 'debugger_detached_mid_command' });
+    expect(extension.app.said().slice(-4)).toEqual(['attempt_started', EXECUTOR_METHODS.detached, EXECUTOR_METHODS.resume, 'result']);
+    expect(extension.events.filter((e) => e.type === 'result')).toHaveLength(1);
+    expect(extension.fake.mutations).toEqual([]);
   });
 });
