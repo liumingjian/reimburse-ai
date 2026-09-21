@@ -1,4 +1,5 @@
 import { EXTENSION_PAIRING_CODE_LENGTH, EXTENSION_VERSION } from '@baox/contract';
+import { APP_UNREACHABLE } from './messages';
 import type { PopupAnswer } from './service-worker';
 
 // The popup. One field: the 配对码 (pairing code). There is deliberately no server address here — see `origin.ts`.
@@ -9,7 +10,7 @@ const POPUP_COPY = {
   pairing: '正在配对…',
   paired: '已经和你的账号配对，可以去报销了。',
   connecting: '正在连接应用…',
-  offline: '连不上应用。会自动重试；请确认你在公司网络里，应用也开着。',
+  offline: `${APP_UNREACHABLE}会自动重试。`,
   notPaired: '还没有配对。',
   version: '扩展版本',
 } as const;

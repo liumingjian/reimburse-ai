@@ -1,6 +1,6 @@
 import { EXTENSION_PAIR_PATH, EXTENSION_VERSION } from '@baox/contract';
 import { describe, expect, it } from 'vitest';
-import { redeemPairingCode } from './pairing';
+import { redeemPairingCode, revokePairing } from './pairing';
 
 const jsonResponse = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -40,5 +40,27 @@ describe('redeeming the 配对码 the employee typed', () => {
 
     expect(outcome.ok).toBe(false);
     expect(outcome.ok === false && outcome.code).toBe('network_error');
+  });
+});
+
+describe('撤销配对 from the popup', () => {
+  it('revokes on the app with the token being given up, so the pairing does not outlive this browser', async () => {
+    let seen: { url: string; method: string | undefined; authorization: string | null } | null = null;
+    const revoked = await revokePairing({
+      origin: 'http://10.250.0.222',
+      token: 'tok',
+      fetchImpl: async (url, init) => {
+        seen = { url: String(url), method: init?.method, authorization: new Headers(init?.headers).get('authorization') };
+        return jsonResponse(200, { revoked: true });
+      },
+    });
+
+    expect(seen).toEqual({ url: `http://10.250.0.222${EXTENSION_PAIR_PATH}`, method: 'DELETE', authorization: 'Bearer tok' });
+    expect(revoked).toBe(true);
+  });
+
+  it('counts a pairing the app no longer knows as revoked, and an unreachable app as not', async () => {
+    expect(await revokePairing({ origin: 'http://10.250.0.222', token: 'tok', fetchImpl: async () => jsonResponse(401, { error: { code: 'not_paired', message: '' } }) })).toBe(true);
+    expect(await revokePairing({ origin: 'http://10.250.0.222', token: 'tok', fetchImpl: () => Promise.reject(new Error('connect ECONNREFUSED')) })).toBe(false);
   });
 });

@@ -6,6 +6,7 @@ import type { BlobSource, ResultEvent } from '@baox/erp-executor/protocol';
 import { runReconcileJob } from '@baox/erp-executor/reconcile-job';
 import { EXECUTOR_METHODS, FillRequestSchema, ReconcileRequestSchema, type FillRequest, type WireRequest } from '@baox/erp-executor/wire';
 import type { ErpTab, TabChoice } from './erp-tab';
+import { CHANNEL_CLOSED } from './messages';
 import { createJobLink, type AttachedPage, type ChannelWatch, type Interruption, type JobLink } from './job-link';
 
 export type { ChannelWatch, Interruption } from './job-link';
@@ -80,7 +81,7 @@ export function createErpRunner(ports: ErpRunnerPorts): (method: string, payload
       },
     });
     const tab = watched(link, ports.browser(erpOrigin, choice));
-    const unwatch = ports.connection.onClosed(() => link.interrupt({ kind: 'channel_closed', reason: '和应用的连接断开了。' }));
+    const unwatch = ports.connection.onClosed(() => link.interrupt({ kind: 'channel_closed', reason: CHANNEL_CLOSED.message }));
     const browser: ErpTab = {
       ...tab,
       async attach(page) {

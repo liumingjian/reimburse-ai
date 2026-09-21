@@ -3,8 +3,9 @@ import { serverBlobs } from './blobs';
 import { channelWatch, createChannelClient, type ChannelClient, type ChannelStatus, type ClientSocket } from './connection';
 import { createErpRunner } from './erp-runner';
 import { dedicatedErpTab } from './erp-tab';
+import { APP_UNREACHABLE, channelClosed } from './messages';
 import { BAOX_ORIGIN } from './origin';
-import { redeemPairingCode } from './pairing';
+import { redeemPairingCode, revokePairing } from './pairing';
 
 // The MV3 service worker: the only long-lived thing in the extension, and not very long-lived at all. Chrome stops it
 // after 30 seconds of inactivity, so two things keep it up — the channel's heartbeat, which is traffic on an open
@@ -18,6 +19,8 @@ const WAKE_ALARM = 'baox-keep-alive';
 const PAIRING_KEY = 'pairing';
 
 type StoredPairing = { token: string; accountId: string };
+
+const UNPAIR_NOT_REACHED = `这个浏览器已经不再和账号配对，但应用那边没能撤销：${APP_UNREACHABLE}请到应用设置页的「浏览器扩展」一节撤销配对。`;
 
 type PopupRequest = { kind: 'status' } | { kind: 'pair'; code: string } | { kind: 'unpair' };
 
@@ -53,7 +56,7 @@ const runErpJob = createErpRunner({
       onDetach: chrome.debugger.onDetach,
     },
   }),
-  request: (method, payload) => (client ? client.request(method, payload) : Promise.reject(Object.assign(new Error('和应用的连接断开了。'), { code: 'channel_closed' }))),
+  request: (method, payload) => (client ? client.request(method, payload) : Promise.reject(channelClosed())),
   blobs: serverBlobs({ origin: BAOX_ORIGIN, token: async () => (await readPairing())?.token ?? null, fetch: (url, init) => fetch(url, init) }),
   connection,
   // The job's link resumes it (`job-link.ts`); this is only the log line.
@@ -104,11 +107,16 @@ async function answer(request: PopupRequest): Promise<PopupAnswer> {
       return { ...base, status: lastStatus, paired: true, accountId: outcome.accountId };
     }
     case 'unpair': {
+      // 撤销配对 ends the pairing on the app too, not only here: a token left valid there would still be this account's
+      // extension. This browser forgets it either way; if the app could not be reached, the employee is told to finish
+      // the job from the settings page.
+      const pairing = await readPairing();
+      const revoked = pairing ? await revokePairing({ origin: BAOX_ORIGIN, token: pairing.token }) : true;
       client?.stop();
       client = null;
       noteStatus(null);
       await chrome.storage.local.remove(PAIRING_KEY);
-      return { ...base, status: null, paired: false, accountId: null };
+      return { ...base, status: null, paired: false, accountId: null, error: revoked ? null : UNPAIR_NOT_REACHED };
     }
     default: {
       const pairing = await readPairing();
