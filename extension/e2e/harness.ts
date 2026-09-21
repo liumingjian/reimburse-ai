@@ -18,14 +18,15 @@ import { spawnSync } from 'node:child_process';
 import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
-import { extname, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test as base, chromium, type BrowserContext, type Page, type Worker } from '@playwright/test';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { ChannelMessageSchema, EXTENSION_CHANNEL_PATH, EXTENSION_HEARTBEAT_MS, EXTENSION_ORIGIN_PLACEHOLDER, EXTENSION_PAIR_PATH, type ChannelMessage } from '@baox/contract';
+import { ChannelMessageSchema, EXTENSION_CHANNEL_PATH, EXTENSION_HEARTBEAT_MS, EXTENSION_PAIR_PATH, type ChannelMessage } from '@baox/contract';
 import { PROTOCOL_VERSION, type ExecutorEvent, type FillPlan, type ResultEvent } from '@baox/erp-executor/protocol';
 import { answerBillQuery, erpFixtureHtml, fixture, type FakeMasterData } from '@baox/erp-executor/testing/fake-erp';
 import { EXECUTOR_METHODS } from '@baox/erp-executor/wire';
+import { carriesOrigin, stampedManifestProblem, stampOrigin } from '../src/template';
 
 const extensionRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -259,23 +260,17 @@ export function unpackedExtension(origin: string): { dir: string; remove(): void
   const template = buildExtensionTemplate();
   const dir = mkdtempSync(join(tmpdir(), 'baox-extension-'));
   cpSync(template, dir, { recursive: true });
-  // The build leaves an origin-less template (#258); the server stamps the origin in at download time
-  // (`server/src/extension/download.ts`). This applies the same rule to an unpacked copy, without importing the
-  // server, which already depends on this package. The manifest check below fails loudly if the two rules drift.
+  // The build leaves an origin-less template (#258); this stamps an unpacked copy by the same rule the server's
+  // download stamps its zip with (`src/template.ts`).
   for (const name of readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
     const path = join(dir, name);
-    if (!statSync(path).isFile() || !STAMPED_EXTENSIONS.has(extname(name))) continue;
-    writeFileSync(path, readFileSync(path, 'utf8').replaceAll(EXTENSION_ORIGIN_PLACEHOLDER, origin));
+    if (!statSync(path).isFile() || !carriesOrigin(name)) continue;
+    writeFileSync(path, stampOrigin(readFileSync(path, 'utf8'), origin));
   }
-  const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) as { host_permissions?: unknown };
-  if (JSON.stringify(manifest.host_permissions) !== JSON.stringify([`${origin}/*`])) {
-    throw new Error(`stamped extension carries host_permissions ${JSON.stringify(manifest.host_permissions)}, not ${origin}/*`);
-  }
+  const problem = stampedManifestProblem(JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) as { host_permissions?: unknown }, origin);
+  if (problem) throw new Error(problem);
   return { dir, remove: () => rmSync(dir, { recursive: true, force: true }) };
 }
-
-// The template's files that carry the origin; the same set `download.ts` stamps.
-const STAMPED_EXTENSIONS: ReadonlySet<string> = new Set(['.js', '.json', '.html', '.css']);
 
 /** Chromium (Playwright's own build: branded Chrome no longer loads unpacked extensions) with one extension loaded. */
 export async function launchWithExtension(dir: string): Promise<{ context: BrowserContext; worker: Worker; extensionId: string }> {
