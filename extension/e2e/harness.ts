@@ -8,20 +8,20 @@
 // - `fakeBaox`      — a stand-in for the app: the #253 channel envelope and the fill methods, answering the executor's
 //                     events. #259 replaces it with the real server on an ephemeral port once the full run needs the
 //                     server's own judgement;
-// - `unpackedExtension` — the extension, built for one origin, as a directory Chromium can load;
+// - `unpackedExtension` — the extension, stamped for one origin, as a directory Chromium can load;
 // - `launchWithExtension` / `pair` — Chromium with that directory loaded, paired through its own popup.
 //
 // The recorded pages carry no behaviour of their own (the jsdom fake ERP supplies it from outside), so what a real
 // browser can run on them is the read-only half of a 去报销: the login probe and the 报销信息核对 (master-data check).
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, rmSync } from 'node:fs';
+import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test as base, chromium, type BrowserContext, type Worker } from '@playwright/test';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { ChannelMessageSchema, EXTENSION_CHANNEL_PATH, EXTENSION_HEARTBEAT_MS, EXTENSION_PAIR_PATH, type ChannelMessage } from '@baox/contract';
+import { ChannelMessageSchema, EXTENSION_CHANNEL_PATH, EXTENSION_HEARTBEAT_MS, EXTENSION_ORIGIN_PLACEHOLDER, EXTENSION_PAIR_PATH, type ChannelMessage } from '@baox/contract';
 import { PROTOCOL_VERSION, type ExecutorEvent, type FillPlan, type ResultEvent } from '@baox/erp-executor/protocol';
 import { answerBillQuery, erpFixtureHtml, fixture, type FakeMasterData } from '@baox/erp-executor/testing/fake-erp';
 import { EXECUTOR_METHODS } from '@baox/erp-executor/wire';
@@ -173,17 +173,32 @@ export async function fakeBaox({ accountId = 'harness-account' } = {}) {
 }
 
 /**
- * The extension as a directory Chromium can load, speaking to `origin` and nothing else. On this branch that is the
- * build script with `BAOX_PUBLIC_ORIGIN` set; once #258's origin-less template lands it becomes
- * `packageExtension(templateDir, origin)` — this function is the whole of that change.
+ * The extension as a directory Chromium can load, speaking to `origin` and nothing else: the build's origin-less
+ * template, stamped with `origin`. #259 may instead download the zip from the real server, which is what an employee
+ * installs; this function is the whole of that change.
  */
 export function unpackedExtension(origin: string): { dir: string; remove(): void } {
-  const built = spawnSync(process.execPath, ['scripts/build.mjs'], { cwd: extensionRoot, env: { ...process.env, BAOX_PUBLIC_ORIGIN: origin }, encoding: 'utf8' });
+  const built = spawnSync(process.execPath, ['scripts/build.mjs'], { cwd: extensionRoot, encoding: 'utf8' });
   if (built.status !== 0) throw new Error(`extension build failed: ${built.stderr}`);
   const dir = mkdtempSync(join(tmpdir(), 'baox-extension-'));
   cpSync(join(extensionRoot, 'dist'), dir, { recursive: true });
+  // The build leaves an origin-less template (#258); the server stamps the origin in at download time
+  // (`server/src/extension/download.ts`). This applies the same rule to an unpacked copy, without importing the
+  // server, which already depends on this package. The manifest check below fails loudly if the two rules drift.
+  for (const name of readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
+    const path = join(dir, name);
+    if (!statSync(path).isFile() || !STAMPED_EXTENSIONS.has(extname(name))) continue;
+    writeFileSync(path, readFileSync(path, 'utf8').replaceAll(EXTENSION_ORIGIN_PLACEHOLDER, origin));
+  }
+  const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) as { host_permissions?: unknown };
+  if (JSON.stringify(manifest.host_permissions) !== JSON.stringify([`${origin}/*`])) {
+    throw new Error(`stamped extension carries host_permissions ${JSON.stringify(manifest.host_permissions)}, not ${origin}/*`);
+  }
   return { dir, remove: () => rmSync(dir, { recursive: true, force: true }) };
 }
+
+// The template's files that carry the origin; the same set `download.ts` stamps.
+const STAMPED_EXTENSIONS: ReadonlySet<string> = new Set(['.js', '.json', '.html', '.css']);
 
 /** Chromium (Playwright's own build: branded Chrome no longer loads unpacked extensions) with one extension loaded. */
 export async function launchWithExtension(dir: string): Promise<{ context: BrowserContext; worker: Worker; extensionId: string }> {
