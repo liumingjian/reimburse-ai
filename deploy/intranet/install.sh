@@ -7,8 +7,13 @@
 # docs/deployment/intranet-phase-1.md. Everything lands under /opt/tools/baox except the two systemd units.
 #
 # Idempotent: a release already built is not rebuilt, and Node, pnpm and Caddy are downloaded once per version.
-# It never writes into the data directory. A first install therefore starts from an empty database; an upgrade keeps
-# the one there. Nothing is migrated in and nothing legacy is imported.
+# It never writes into the data directory itself. A first install therefore starts from an empty database; an upgrade
+# keeps the one there. Nothing is migrated in and nothing legacy is imported.
+#
+# The first administrator is created here, on the host, before Caddy serves :80 (ADR-0018: the first account created
+# becomes the administrator, and on the VPN anyone could otherwise get there before the maintainer). A first install
+# therefore needs BAOX_ADMIN_USERNAME, the maintainer's username; the installer prints a temporary password for it,
+# which must be changed at the first sign-in.
 #
 # Overrides, all optional: NODE_MIRROR (default npmmirror, as the repo's .npmrc uses), CADDY_DOWNLOAD (default GitHub
 # releases), npm_config_registry and the usual *_proxy variables, all passed through to the build.
@@ -44,6 +49,11 @@ release_id=$(basename "$tarball")
 release_id=${release_id%.tar.gz}
 release_id=${release_id%.tgz}
 [[ $release_id =~ ^[A-Za-z0-9._-]+$ ]] || die "the tarball name must be letters, digits, '.', '_' or '-': $release_id"
+
+# Only read when the database has no administrator yet. Kept to characters that need no quoting inside JSON.
+admin_username=${BAOX_ADMIN_USERNAME:-}
+[[ -z $admin_username || $admin_username =~ ^[A-Za-z0-9._@-]{1,32}$ ]] ||
+  die "BAOX_ADMIN_USERNAME must be 1-32 letters, digits, '.', '_', '@' or '-': $admin_username"
 
 for cmd in curl tar xz sha256sum sha512sum useradd runuser systemctl getconf; do
   command -v "$cmd" >/dev/null || die "missing command: $cmd"
@@ -186,14 +196,39 @@ mv -T "$DEPLOY/current.next" "$DEPLOY/current"
 
 systemctl daemon-reload
 systemctl enable baox.service baox-caddy.service >/dev/null
-log "restarting baox and Caddy"
+log "restarting baox"
 systemctl restart baox.service
-systemctl restart baox-caddy.service
 
 # The same Host a browser sends, or the app's guard answers 403.
 host=${origin#*://}
 session() { curl -fsS --max-time 5 -H "Host: $host" "$1/api/session"; }
 wait_for session "http://127.0.0.1:$BAOX_PORT" || die "baox does not answer on 127.0.0.1:$BAOX_PORT; see journalctl -u baox"
+
+# --- First administrator, before anyone else can reach the app ---------------------------------------------------
+
+# Only 127.0.0.1:4319 answers until Caddy starts below, and only this host can reach it; the request carries the
+# public Host, so it passes the app's exact-origin guard like a browser's. The account is created with a throwaway
+# password nobody sees, and the emergency reset (ADR-0018) then gives it a temporary one that must be changed at the
+# first sign-in: the password the maintainer ends up with never passes through this script's arguments or history.
+if [[ $(session "http://127.0.0.1:$BAOX_PORT") == *'"status":"setup_required"'* ]]; then
+  # An earlier run may have got as far as starting Caddy: nothing may serve :80 while there is no administrator.
+  systemctl stop baox-caddy.service
+  [[ -n $admin_username ]] ||
+    die "the database has no administrator yet; rerun with BAOX_ADMIN_USERNAME=<your username> to create it here. Caddy is stopped, so nobody else can create it meanwhile"
+  log "creating the first administrator, $admin_username"
+  throwaway=$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)
+  setup=$(curl -sS -o /dev/null --max-time 30 -w '%{http_code}' -H "Host: $host" -H 'content-type: application/json' \
+    -d "{\"username\":\"$admin_username\",\"password\":\"$throwaway\"}" "http://127.0.0.1:$BAOX_PORT/api/auth/setup")
+  [[ $setup == 200 ]] || die "creating the first administrator answered $setup; see journalctl -u baox"
+  reset=$(runuser -u baox -- env -i HOME="$DEPLOY/cache/home" BAOX_DATA_DIR="$DEPLOY/data" LANG=C.UTF-8 \
+    "$DEPLOY/runtime/node/bin/node" "$release/server/dist/baox.mjs" admin emergency-reset "$admin_username") ||
+    die "the administrator $admin_username exists but no temporary password was set; run the emergency reset in docs/deployment/intranet-phase-1.md"
+  temporary=$(sed -n 's/^临时密码：//p' <<<"$reset")
+  [[ -n $temporary ]] || die "the emergency reset printed no temporary password: $reset"
+fi
+
+log "restarting Caddy"
+systemctl restart baox-caddy.service
 wait_for session "http://127.0.0.1" || die "Caddy does not reach baox on :80; see journalctl -u baox-caddy"
 upgrade=$(curl -s -o /dev/null --max-time 3 -w '%{http_code}' -H "Host: $host" -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
   -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' http://127.0.0.1/api/extension/channel || true)
@@ -207,3 +242,6 @@ for old in "${releases[@]:$KEEP_RELEASES}"; do
 done
 
 log "baox $release_id is serving $origin: $(session http://127.0.0.1)"
+if [[ -n ${temporary:-} ]]; then
+  log "first administrator: $admin_username, temporary password: $temporary (change it at the first sign-in)"
+fi

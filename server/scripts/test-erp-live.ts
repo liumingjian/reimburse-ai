@@ -64,7 +64,6 @@ if (!readOnly && (!sample.homeCity || !sample.purpose || !sample.project || !Arr
 
 // Only now load the app: a refused run touches nothing.
 const { TaskSnapshotSchema } = await import('@baox/contract');
-const { liveProjectCatalog } = await import('../src/catalog/live-catalog');
 const { databasePath } = await import('../src/data-dir');
 const { openDatabase } = await import('../src/db/database');
 const { cdpFillExecutor } = await import('../src/erp/cdp-executor');
@@ -131,8 +130,8 @@ if (probeToolbar) {
 if (probe.identity.account !== account || probe.identity.tenant !== tenant) refuse(`the logged-in ERP identity is ${probe.identity.account} / ${probe.identity.tenant}, not the dedicated test identity. Nothing was written.`);
 say(`ERP identity ${probe.identity.displayName} (${account}, 账套 ${tenant}) confirmed.`);
 
-// 2. The app on a throwaway data directory, with the live catalog and the real executor.
-const server = await startServer({ dataDir, port: 0, webDist: existsSync(webDist) ? webDist : null, legacyHome: null, projectCatalog: liveProjectCatalog({ browser, origin: erpConfig.origin }), erpExecutor: cdpFillExecutor({ dataDir, env }), erpConfig });
+// 2. The app on a throwaway data directory, with the real executor. (Project numbers are checked by the job itself.)
+const server = await startServer({ dataDir, port: 0, webDist: existsSync(webDist) ? webDist : null, legacyHome: null, erpExecutor: cdpFillExecutor({ dataDir, env }), erpConfig });
 say(`app on ${server.url} (data ${dataDir})`);
 let cookie = '';
 const call = async (path: string, init: RequestInit = {}): Promise<{ status: number; body: any }> => {

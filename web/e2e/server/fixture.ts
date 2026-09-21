@@ -13,7 +13,6 @@ import { AccountListSchema, SessionSchema, STAY_TRIO_CONFIRM_NONE, stayTrioEleme
 const SERVER_ENTRY = fileURLToPath(new URL('../../../server/dist/e2e-main.mjs', import.meta.url));
 const LISTENING = /listening on (http:\/\/\S+)/;
 // The fixture-backed project catalog (the live ERP query adapter is #191's): P-2307 华东客户交付, P-3312 产品调研.
-const PROJECT_CATALOG = fileURLToPath(new URL('../../../server/src/catalog/testing/projects.fixture.json', import.meta.url));
 
 export type ServerApp = { url: string; dataDir: string };
 
@@ -25,7 +24,7 @@ export const test = base.extend<{ serverApp: ServerApp; serverEnv: Record<string
     const dataDir = mkdtempSync(join(tmpdir(), 'baox-e2e-'));
     const child = spawn(process.execPath, [SERVER_ENTRY], {
       // BAOX_HOME points at a directory that does not exist, so first-admin setup never reads the machine's real ~/.baox.
-      env: { ...process.env, BAOX_DATA_DIR: dataDir, BAOX_PORT: '0', BAOX_PROJECT_CATALOG_FIXTURE: PROJECT_CATALOG, BAOX_HOME: join(dataDir, 'no-legacy-baox'), BAOX_ERP_CHROMIUM: 'off', ...serverEnv },
+      env: { ...process.env, BAOX_DATA_DIR: dataDir, BAOX_PORT: '0', BAOX_HOME: join(dataDir, 'no-legacy-baox'), BAOX_ERP_CHROMIUM: 'off', ...serverEnv },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let output = '';
