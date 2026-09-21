@@ -18,6 +18,7 @@ Once the server runs on Linux and serves several people, the invoice originals (
 
 - Every read path for originals carries an owner check.
 - Deployment documentation must specify an encrypted volume and encrypted backups; the protection is operational, so a misconfigured deployment silently loses it.
+- **The protection is a gate on real data, not on running the service.** An instance holding no real 报销任务 (reimbursement task) may run without it; an instance that will hold employees' invoices may not. Stated this way the requirement survives contact with a development deployment instead of being quietly ignored by one — see the deviation below.
 - Content-addressed blob deduplication stays as ADR-0018 requires: blobs may be shared on disk but are reachable only through the owner's tasks.
 
 ## Deployment deviation, phase 1 (2026-09-21)
@@ -36,4 +37,7 @@ LUKS volume was considered and is not a fix — the key would sit on the same un
 exactly the "someone walks off with the disk" threat this ADR names. Real protection needs a passphrase at
 boot or an external key, and that is its own round.
 
-This deviation must be closed before the instance holds real reimbursements.
+The deviation closes when three things are true, and the instance must not hold a real 报销任务 until they
+are: the data directory sits on a volume unlocked by a passphrase or an external key, backups exist and are
+encrypted, and the deployment doc states both. Until then the instance is a development one, whatever it is
+called.
