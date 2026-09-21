@@ -23,7 +23,7 @@ const EMIT_DELAY_MS = 20;
 const DEFAULT_DISCONNECT_AFTER_MS = 300;
 const DEFAULT_RECONNECT_AFTER_MS = 3000;
 export const SERVICE_UNAVAILABLE_CODE = 'service_unavailable';
-export const SERVICE_UNAVAILABLE_MESSAGE = '本地服务没有响应，操作没有送达。请在终端重新执行 baox 后重试。';
+export const SERVICE_UNAVAILABLE_MESSAGE = '连不上报销服务，操作没有送达。请检查网络后重试；如果一直这样，请联系维护者。';
 
 export type StepResult = TaskSnapshot | { error: ActionError };
 
