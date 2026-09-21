@@ -26,7 +26,7 @@ export const ERP_STEP_DEFS: ReadonlyArray<Pick<ErpStep, 'key' | 'title' | 'descr
   { key: 'import', title: '导入发票', description: '按格式分批导入 7 张发票。' },
   { key: 'receipt', title: '收票回读', description: '逐票回读收票单号、发票号码、不含税金额、税额与价税合计。' },
   { key: 'fill', title: '填写明细', description: '按统一业务序号写入 9 行明细，每个值写入后从单元格回读。' },
-  { key: 'readback', title: '严格回读', description: '逐行回读 9 个字段，与确认过的明细比对，任何不一致即停。' },
+  { key: 'readback', title: '严格回读', description: '回读收票身份与整单金额合计，与确认过的明细比对，不一致即停。' },
   // The hand-over step reads its copy from the contract, so the mock's list and the server's cannot drift apart.
   ERP_HANDOVER_STEP_COPY,
 ];
@@ -55,6 +55,8 @@ export function loginNotDetected(attempt: number): string {
 
 export const HANDOVER_ABORT_REASON = '交接单据时报销系统没有在限定时间内返回结果，这次写入是否生效不确定。应用已停止写入，不会重放。';
 export const MISMATCH_ABORT_REASON = '严格回读发现 1 行与本地确认不一致，应用已停止，不会自动改写报销系统里的行。';
+// 写入前就停下的原因（服务端 compatibility_mismatch 一类）：报销系统没有被改动，可以直接再去报销。
+export const BEFORE_WRITE_ABORT_REASON = '报销系统的版本与上次核对时不一致，没有继续。报销系统没有被改动。';
 
 // readback-mismatch 故障：No.6（出租车 47.00）的申请报销金额在报销系统里读回 74.00。
 export const MISMATCH = { no: 6, erp: '74.00' } as const;
@@ -187,6 +189,13 @@ export function applyReadbackMismatch(snapshot: TaskSnapshot, draftNo: string): 
 }
 
 // 交接步中止：写入结果未知，还没读到单据（对账中断点「未知」⇒ 原地等待，只能重新对账）。
+// 写入前就停下：阶段退回「去打印 / 去报销」，状态回到 idle 而 abortReason 有值（见合同 ErpSchema），
+// 所以这不是 aborted。填报页要认得这一种停下，否则用户会被留在一个已经关上的页面上。
+export function applyStopBeforeWrite(snapshot: TaskSnapshot): void {
+  snapshot.stage = 'actions';
+  snapshot.erp = { status: 'idle', steps: erpSteps(ERP_STEP_INDEX.navigate, 'failed'), draftNo: null, abortReason: BEFORE_WRITE_ABORT_REASON, loginNotice: null, erpAccount: { ...MOCK_ERP_ACCOUNT } };
+}
+
 export function applyAbortAtHandover(snapshot: TaskSnapshot): void {
   snapshot.erp = { status: 'aborted', steps: erpSteps(ERP_STEP_INDEX.handover, 'failed'), draftNo: null, abortReason: HANDOVER_ABORT_REASON, loginNotice: null, erpAccount: { ...MOCK_ERP_ACCOUNT } };
   snapshot.readback = emptyReadback();

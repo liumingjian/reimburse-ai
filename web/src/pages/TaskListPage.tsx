@@ -292,7 +292,7 @@ export function TaskListPage({ newTask }: { newTask: boolean }) {
           onCancel={closeAbandon}
         >
           <p>
-            「{abandoning.name}」{ABANDON_TASK_COPY.dialogBody}
+            「{abandoning.name}」{abandoning.erpTouched ? ABANDON_TASK_COPY.dialogBodyErpTouched : ABANDON_TASK_COPY.dialogBody}
           </p>
         </ConfirmDialog>
       ) : null}

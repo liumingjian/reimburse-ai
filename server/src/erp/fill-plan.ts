@@ -9,26 +9,16 @@ import type { Line, MaterialKind } from '@baox/contract';
 import type { Claim } from '../inventory-view';
 import type { ErpConfig } from './config';
 import { isSafeKey } from './executor/catalog';
+import { erpInvoiceTypeOf } from './invoice-type';
 import type { ErpJudge } from './jobs';
 import { createDraftJudge, type DraftJudgeInputs } from './judge';
 import { previewLinesDigest } from './preview';
-import { PROTOCOL_VERSION, type ApprovedPreview, type FillPlan, type Identity, type ReadbackVerdict, type Readings } from './protocol';
+import { PROTOCOL_VERSION, type ApprovedPreview, type FillPlan, type Identity, type ReadbackVerdict } from './protocol';
 import type { ReadbackInvoice } from './readback';
 
-// The ERP 发票类型 enum values the fill can select (kernel ERP_INVOICE_TYPES in preview.ts / readback.ts).
-export const ERP_INVOICE_TYPES: readonly string[] = ['普通发票', '增值税发票'];
+// The ERP 发票类型 enum, the face-kind mapping and the default for an undetermined face kind live in
+// `invoice-type.ts`. Nothing about the type can stop a plan any more, so the preflight below says nothing about it.
 
-// A line's invoice type is the face 票种 the confirmation showed; ERP's 发票类型 is its own enum (recorded in
-// docs/research/erp-expense-flow/deep-dive/11-invoice-type-enum.md: 普通发票、增值税发票、机票、火车票、其他运输票、其他).
-// 专票 → 增值税发票 follows that record's temporary validation, not a confirmed company mapping; `test:erp-live`
-// checks it on a real draft. A 铁路电子客票 would need 火车票, which the strict read-back does not accept yet: no entry,
-// so the preflight refuses it.
-export const ERP_INVOICE_TYPE_OF: Readonly<Record<string, string>> = {
-  增值税专用发票: '增值税发票',
-  增值税发票: '增值税发票',
-  增值税普通发票: '普通发票',
-  普通发票: '普通发票',
-};
 const INVOICE_KEY = /^einvoice-20:(\d{20})$/;
 
 export type PlanMaterial = { materialId: string; kind: MaterialKind | null; fileName: string; sha256: string; mime: string };
@@ -102,8 +92,6 @@ export function buildFillJob(input: FillPlanInput): { ok: true; job: FrozenJob }
     const rail = materials.get(line.voucherMaterialId)?.kind === 'rail_ticket';
     if (!line.projectCode || !line.projectName) problems.push(`${label} 还没有项目`);
     if (!line.expenseItemCode || !line.expenseItemName) problems.push(`${label} 的费用分类「${line.category.label}」没有对应的报销系统费用项目`);
-    const erpType = ERP_INVOICE_TYPE_OF[line.invoiceType];
-    if (!erpType || !ERP_INVOICE_TYPES.includes(erpType)) problems.push(`${label} 的发票类型「${line.invoiceType}」没有对应的报销系统发票类型（可写入：${ERP_INVOICE_TYPES.join('、')}）`);
     if (line.category.code === 'accommodation' && !line.endDate) problems.push(`${label} 是住宿，缺少离店日期`);
     if (!rail && cents(line.netAmount) + cents(line.taxAmount) !== cents(line.grossAmount)) problems.push(`${label} 的不含税金额与税额加起来不等于价税合计`);
     for (const code of [line.projectCode, line.expenseItemCode]) if (code && !isSafeKey(code)) problems.push(`${label} 的编码 ${code} 含有不能安全查询的字符`);
@@ -145,8 +133,8 @@ export function buildFillJob(input: FillPlanInput): { ok: true; job: FrozenJob }
       expenseItemCode: line.expenseItemCode!,
       expenseItemName: line.expenseItemName!,
       expenseItemSource: 'company_rules',
-      invoiceType: ERP_INVOICE_TYPE_OF[line.invoiceType]!,
-      invoiceTypeSource: 'face_type_to_erp_enum',
+      // An undetermined face kind is written as 普通发票 rather than stopping the round (`invoice-type.ts`).
+      ...erpInvoiceTypeOf(line.invoiceType),
       maskedNumber: line.maskedNumber,
       referenceMaterialIds: [...line.referenceMaterialIds],
     };
@@ -199,17 +187,9 @@ export function judgeInputs(base: JudgeBase, identity: Identity | null): DraftJu
   };
 }
 
-// Research (docs/research/erp-expense-flow/deep-exploration.md): in 不生成费用明细 mode ERP left the detail row's
-// 收票单号 empty, while the strict read-back requires that link. Whether ERP links it after the fill is UNVERIFIED;
-// when every detail row lacks it, the refusal says so first, so a live run shows the cause at once.
-export const RECEIPT_LINK_NOTE = '报销明细行的「收票单号」都是空的：「不生成费用明细」模式下报销系统可能不把收票单关联到明细行，而严格回读要求这项关联';
-
-function receiptLinkMissing(readings: Readings): boolean {
-  const grid = readings.detailGrid;
-  if (!grid.ok) return false;
-  const rows = grid.rows.filter((row) => row.kind === 'data');
-  return rows.length > 0 && rows.every((row) => !(row.values['收票单号'] ?? '').trim());
-}
+// An empty 收票单号 on every detail row used to be annotated here, because it failed the read-back and the
+// annotation was the only way a live run showed the cause. The read-back no longer asks for that link
+// (`readback.ts`), so there is nothing to annotate: the reasons a run stops on are now about the money.
 
 /** The server's judge for one fill job: the draft judge over the frozen inputs, scoped to the probed ERP account. */
 export function taskJudge(base: JudgeBase, { onApproved }: { onApproved?: (preview: ApprovedPreview) => Promise<void> } = {}): ErpJudge {
@@ -219,7 +199,6 @@ export function taskJudge(base: JudgeBase, { onApproved }: { onApproved?: (previ
     inner ??= createDraftJudge(judgeInputs(base, account ? { account: account.account, tenant: account.tenant } : null));
     const verdict: ReadbackVerdict = await inner(event, context);
     if (verdict.ok && verdict.preview && onApproved) await onApproved(verdict.preview);
-    if (!verdict.ok && event.stage !== 'after_import' && receiptLinkMissing(event.readings)) return { ok: false, reasons: [RECEIPT_LINK_NOTE, ...verdict.reasons] };
     return verdict;
   };
 }

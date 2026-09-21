@@ -20,18 +20,22 @@ function prepare(): Promise<unknown> {
 const OPTIONS: ReaderOptions = { formats: ['QRCode'], tryHarder: true, maxNumberOfSymbols: 4 };
 
 // Node has no ImageData; zxing reads `{data, width, height}` from one.
+//
+// The shim takes its values through a constructor, and that is the whole point. Declaring them as class fields
+// initialised from the enclosing function's parameters looks equivalent and is not: the class is installed on
+// `globalThis`, so every later call reuses it, and its field initialisers still close over the arguments of the call
+// that created it. Every image after the first in a process then decodes as the first one — silently, with a payload
+// that belongs to another document. Live 2026-09-19 that made six 高德打车 invoices report a seventh one's 二维码 and
+// six spurious 「二维码与票面不一致」.
 type ImageDataLike = { data: Uint8ClampedArray; width: number; height: number; colorSpace: 'srgb' };
+class NodeImageData implements ImageDataLike {
+  readonly colorSpace = 'srgb' as const;
+  constructor(readonly data: Uint8ClampedArray, readonly width: number, readonly height: number) {}
+}
 function imageData(data: Uint8ClampedArray, width: number, height: number): ImageDataLike {
-  const Native = (globalThis as { ImageData?: new (data: Uint8ClampedArray, width: number, height: number) => ImageDataLike }).ImageData;
-  if (Native) return new Native(data, width, height);
-  class NodeImageData {
-    data = data;
-    width = width;
-    height = height;
-    colorSpace = 'srgb' as const;
-  }
-  (globalThis as { ImageData?: unknown }).ImageData = NodeImageData;
-  return new NodeImageData();
+  const global = globalThis as { ImageData?: new (data: Uint8ClampedArray, width: number, height: number) => ImageDataLike };
+  global.ImageData ??= NodeImageData;
+  return new global.ImageData(data, width, height);
 }
 
 export type Raster = { data: Uint8ClampedArray | Uint8Array; width: number; height: number; channels: number };

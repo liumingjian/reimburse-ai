@@ -1,6 +1,6 @@
 import { ERP_ACTION_ERRORS, type AppAdapter, type TaskSnapshot } from '@baox/contract';
 import type { MockBus } from '../bus';
-import { ERP_STEP_INDEX, applyAbortAtHandover, applyErpDone, applyReadbackMismatch, emptyReconcile, erpSteps, handedOffBanner, loginNotDetected } from '../fixtures/erp';
+import { ERP_STEP_INDEX, applyAbortAtHandover, applyErpDone, applyReadbackMismatch, applyStopBeforeWrite, emptyReconcile, erpSteps, handedOffBanner, loginNotDetected } from '../fixtures/erp';
 import { T1_DRAFT_NO } from '../fixtures/tasks';
 
 // ERP 填报（「去报销」即开始：定时推进、登录交接、登录后自动写入）、严格回读与对账（mock 服务端的角色）。
@@ -59,6 +59,14 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     const current = bus.draft(taskId);
     if (!erpRunLive(current, run, 'running')) return;
     current.task.updatedAt = bus.now();
+    // 写入前就停下：报销系统没有被改动，阶段退回整单确认页，这一轮结束。
+    if (index === ERP_STEP_INDEX.navigate && options.fault === 'erp-stopped-before-write') {
+      erpRuns.delete(taskId);
+      applyStopBeforeWrite(current);
+      current.step = { kind: 'choose_action', stepToken: bus.rotateToken(`tok-${taskId}-actions`) };
+      bus.push(current);
+      return;
+    }
     if (index === ERP_STEP_INDEX.readback && options.fault === 'readback-mismatch') {
       applyReadbackMismatch(current, current.erp.draftNo ?? T1_DRAFT_NO);
       bus.push(current);

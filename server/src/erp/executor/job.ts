@@ -21,12 +21,12 @@ import { checkCatalog } from './catalog';
 import { ExecutorError, type ChromiumPage } from './chromium';
 import { fillApprovedPreview, handOverApprovedPreview, type CurrentReadings } from './draft-flow';
 import { leaveEdit, selectOption, writeCell, writeHeader } from './erpform';
-import { DEFAULT_PACE, type Pace } from './pace';
+import { DEFAULT_PACE, waitFor, type Pace } from './pace';
 import { COMPATIBILITY_SNIPPET, probeIdentity, sameOrigin } from './probe';
 import { pageUrl, protocolReadings, readForm, type FormReadings } from './reader';
 import {
-  addDetailRow, captureErpError, invoiceUploadGroups, openInvoiceAssistant, openNewReimbursement,
-  uploadAndImportInvoices, type WritePage,
+  addDetailRow, captureErpError, closeErpDialogs, invoiceUploadGroups, openInvoiceAssistant, openNewReimbursement,
+  importInvoices, uploadInvoices, type WritePage,
 } from './steps';
 import { prepareErpWrite } from './write-context';
 
@@ -185,21 +185,39 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
       if (moved.length) throw new DriftError(moved);
     };
 
-    // 4. Navigate to one blank new form, check the compatibility fingerprint, open the assistant; then attempt import.
+    // 4. Navigate to one blank new form, check the compatibility fingerprint, open the assistant. Nothing here is a
+    //    mutation, so nothing here starts an attempt.
     await step('navigate', 'running');
     await prepareErpWrite({
       page: write,
-      navigate: (p) => openNewReimbursement(p, { timeoutMs: 45_000 }),
+      navigate: (p) => openNewReimbursement(p, { timeoutMs: 45_000, replaceNewForms: plan.replaceAbandonedForm === true }),
       read: async () => {
         const readings = await readForm(session);
         await step('compatibility', 'running');
-        const probed = await evalIn<{ erpBuild: string | null; formIds: string[] }>(session, COMPATIBILITY_SNIPPET);
-        const formId = probed?.formIds?.length === 1 ? probed.formIds[0]! : null;
-        if (probed?.erpBuild !== plan.compatibility.erpBuild || formId !== plan.compatibility.formId) {
+        // Polled, not read once. The fingerprint is taken moments after a tab opened, and until Kendo has moved
+        // `k-state-active` onto that tab the 费用报销单 is not on any active panel yet — a single read turned that
+        // race into `compatibility_mismatch` on a build that matched (2026-09-19: 实际 8.2.830.9 / 0 个表单), and
+        // the same untouched page answered `["ER_ExpReimbursement"]` when asked again. Only a reading that stays
+        // wrong for the whole window is a real mismatch.
+        //
+        // What is waited for is the expected form id being THERE, not the panels holding exactly one id: the
+        // console's own active panel carries `BOS_TeamWorkMainConsole`, so «exactly one» is answered by a page
+        // that has not opened the form at all. The tripwire is unchanged in what it catches — a moved build or a
+        // 费用报销单 that no longer answers to this form id still stops the run before any write.
+        const expectedFormId = plan.compatibility.formId;
+        const fingerprint = (p: { erpBuild: string | null; formIds: string[] } | null) =>
+          p?.erpBuild === plan.compatibility.erpBuild && p?.formIds?.includes(expectedFormId) === true;
+        const probed = await waitFor(
+          () => evalIn<{ erpBuild: string | null; formIds: string[]; activePanels?: number }>(session, COMPATIBILITY_SNIPPET),
+          fingerprint, Math.min(15_000, pace.longMs), pace.pollMs);
+        if (!fingerprint(probed)) {
+          const seen = probed?.formIds?.length ? probed.formIds.join('、') : `${probed?.formIds?.length ?? 0} 个表单`;
           throw new ExecutorError('compatibility_mismatch',
-            `ERP 兼容指纹不符：期望 ${plan.compatibility.erpBuild} / ${plan.compatibility.formId}，实际 ${probed?.erpBuild ?? '读不到'} / ${formId ?? `${probed?.formIds?.length ?? 0} 个表单`}`);
+            `报销系统的版本与上次核对时不一致，没有继续：期望 ${plan.compatibility.erpBuild} / ${expectedFormId}，`
+            + `实际 ${probed?.erpBuild ?? '读不到'} / ${seen}。报销系统没有被改动。`);
         }
-        compatibility = { erpBuild: probed.erpBuild, formId };
+        // Past the check both halves are known to equal the plan's, so the plan's are what is recorded.
+        compatibility = { erpBuild: plan.compatibility.erpBuild, formId: expectedFormId };
         await step('compatibility', 'done');
         currentStep = 'navigate';
         baseline = { url: await pageUrl(session), formInstanceId: readings.formInstanceId ?? '' };
@@ -208,13 +226,29 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
       openAssistant: (p) => openInvoiceAssistant(p, { timeoutMs: 90_000 }),
       mark: async () => {
         await step('navigate', 'done');
-        await startAttempt('import', { formMode: 'new', billNo: null, receiptRowCount: plan.invoices.length });
       },
     });
 
-    // 5. Import.
+    // 5. Import. Upload and recognition are free and repeatable (ADR-0025), so the attempt is recorded between them
+    //    and the 发票导入单据 click rather than before the upload. The crash window is unchanged — the row is still
+    //    durable before the one irreversible act — but a failure while uploading no longer marks the task as written
+    //    to, so it stays retryable and stays voidable.
     await step('import', 'running');
-    await uploadAndImportInvoices(write, staged.paths);
+    await uploadInvoices(write, staged.paths);
+    // An operator brake for live QA, and nothing else. Upload and 勾选 are free and repeatable, but the
+    // 发票导入单据 click that follows is the one irreversible act, and a QA round that wants to verify selection
+    // against the real ERP has no reason to spend it: the invoices get bound to a 费用报销单 that nobody will save.
+    // Unset — which is every real run — this changes nothing. It deliberately throws BEFORE startAttempt, so the
+    // task keeps a clean `aborted` with no attempt row, and stays both retryable and voidable.
+    if (process.env['BAOX_ERP_STOP_BEFORE_IMPORT'] === '1') {
+      throw new ExecutorError('IMPORT_STOPPED_BEFORE_BOUNDARY',
+        '按 BAOX_ERP_STOP_BEFORE_IMPORT 的要求，在「发票导入单据」之前停下了：发票已上传并全部勾选，但没有导入任何发票。');
+    }
+    await startAttempt('import', { formMode: 'new', billNo: null, receiptRowCount: plan.invoices.length });
+    // The import's own answer is read, not discarded: its 处理结果 text is ERP's verbatim verdict on every
+    // invoice, and `reportClosed` says whether the report it opened actually went away. When ERP opens no window
+    // at all (live 2026-09-21), the count posted here is what lets the bill's own 收票行 answer instead.
+    const importResult = await importInvoices(write, { expectedRows: plan.invoices.length });
     await step('import', 'done');
 
     await step('readback', 'running');
@@ -239,15 +273,37 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
       writeHeader: (p: WritePage, key: string, value: string) => writeHeader(p.session, key, value, { pace, settleMs: pace.settleMs }),
       writeCell: (p: WritePage, spec: { which: number; row: number; column: string; value: string; expect: { mode: 'equals'; value: string } | null }) => writeCell(p.session, { ...spec, pace }),
       selectOption: (p: WritePage, spec: { which: number; row: number; column: string; option: string }) => selectOption(p.session, { ...spec, pace }),
-      leaveEdit: (p: WritePage, options: { label: string }) => leaveEdit(p.session, { ...options, settleMs: pace.settleMs }),
+      leaveEdit: (p: WritePage, options: { label: string }) => leaveEdit(p.session, { ...options, settleMs: pace.settleMs, pace }),
     };
 
-    // 6. Fill.
+    // 6. Fill. Its preflight comes FIRST, before the attempt is recorded, and the thing it checks is that nothing
+    //    is floating over the form.
+    //
+    //    An ERP dialog has no 遮罩 (modal backdrop): it floats at z-index 10005 and swallows every click aimed at
+    //    the form beneath it, silently. V-54 measured exactly that — a 处理结果 that survived the import's 退出,
+    //    `elementFromPoint` at the 事由 field answering a SPAN「接收发票」 inside the report, and the fill dying
+    //    4.1 s in on `header_write_failed`. The import itself had fully succeeded: ten invoices bound, judged
+    //    clean, `after_import` passed. Running the check AFTER `attempt_started` is what turned that into
+    //    `status: unknown` — the worst available answer to a write that went right.
+    //
+    //    So the obstruction is cleared and verified here, while a refusal is still a refusal about the FILL and
+    //    the import behind it stands on its own footing. The employee is told what is true: the invoices are
+    //    bound, and a window is in the way. It asks even though the import already closed what it opened: over a
+    //    clear form that costs one read, and trusting the previous step's word about the page is the habit that
+    //    put this whole check on the wrong side of the attempt in the first place.
+    const clear = await closeErpDialogs(write);
+    if (!clear.ok) {
+      return await finish('unknown', 'form_obstructed_before_fill',
+        `发票已经全部导入并绑定到这张费用报销单：收票 ${plan.invoices.length} 行已核对通过，`
+        + `报销系统的原话是「${(importResult.report || '').slice(0, 200)}」。这一步是好的。`
+        + `接下来的「填写费用明细」没有开始，因为报销系统还有窗口盖在表单上，关不掉：${clear.remaining.join(' | ')}。`
+        + '请在报销专用浏览器窗口里关掉它，然后回到这个任务继续。');
+    }
     await startAttempt('fill', { formMode: 'new', billNo: null, detailRowCount: preview.lines.length });
     await step('fill', 'running');
     const filled = await fillApprovedPreview(write, {
       approvedPreview: preview, approval, freshGate, readCurrent: reader('after_fill'),
-      addRow: (p) => addDetailRow(p), ops,
+      addRow: (p) => addDetailRow(p), ops, witnessDelayMs: pace.quietMs,
     });
     if (!filled.ok) return await finish('unknown', filled.problems[0]?.code ?? 'fill_failed', filled.problems.map(problemText).join('；'));
     await step('fill', 'done');

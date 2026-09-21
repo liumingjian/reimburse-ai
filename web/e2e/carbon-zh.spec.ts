@@ -113,15 +113,16 @@ test('原件查看器工具栏：可访问名称与提示都是中文', async ({
   expect(tooltips.sort()).toEqual([...names].sort());
 });
 
-test('弹层打开时也没有英文文案（不可作废提示、作废确认、新建任务、追加材料）', async ({ page }) => {
+test('弹层打开时也没有英文文案（动过报销系统的作废确认、作废确认、新建任务、追加材料）', async ({ page }) => {
   await page.goto(open('', '#/tasks'));
   await expect(page.getByRole('button', { name: '更多', exact: true })).toHaveCount(0);
-  const blocked = page.getByRole('row', { name: /2026-07 深圳客户拜访/ });
-  await expect(blocked.getByRole('button', { name: '作废' })).toBeDisabled();
-  await blocked.getByLabel('无法作废的原因').hover();
-  await expect(page.getByRole('tooltip')).toBeVisible();
-  expect(await englishLeftovers(page), '不可作废提示').toEqual([]);
+  // ADR-0030：动过报销系统的任务也能作废，它的确认框换的是那一段更长的说明。
+  const touched = page.getByRole('row', { name: /2026-07 深圳客户拜访/ });
+  await touched.getByRole('button', { name: '作废' }).click();
+  await expect(page.getByRole('dialog', { name: '作废这个报销任务？' })).toContainText('报销系统里已经产生的费用报销单');
+  expect(await englishLeftovers(page), '动过报销系统的作废确认').toEqual([]);
   await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   const item = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByRole('button', { name: '作废' });
   await expect(item).toBeEnabled();
   await item.click();

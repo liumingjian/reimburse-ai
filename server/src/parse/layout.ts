@@ -18,10 +18,12 @@ export type Candidate = {
   refs: EvidenceRef[];
 };
 
-// What a layout found besides candidates. `conflict` (two sources disagree, #20) and `validation` (a deterministic
-// check failed) become blocking 待确认项; `advisory` only shows in the material's check text.
+// What a layout found besides candidates. `validation` (a deterministic check failed) becomes a blocking 待确认项;
+// `advisory` only shows in the material's check text.
+//
+// There is no longer a `conflict` kind for two sources disagreeing (#20). Its only producer was the 全电发票 QR
+// check, and the QR no longer judges the face (ADR-0017, amended): a disagreement between them is an advisory.
 export type Finding =
-  | { kind: 'conflict'; key: string; values: { source: string; value: string }[] }
   | { kind: 'validation'; code: string; message: string }
   | { kind: 'advisory'; code: string; message: string };
 

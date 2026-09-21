@@ -88,6 +88,31 @@ export async function evalIn<T = any>(session: CdpSession, expression: string, {
   return result?.result?.value as T;
 }
 
+/**
+ * Tell this target it is focused and active, whatever the desktop thinks.
+ *
+ * This CHANGES browser behaviour: the page reports `document.visibilityState === 'visible'` and keeps focus while
+ * its window is buried behind others, so timers, animations and `visibilitychange` handlers see a foreground page
+ * nobody is looking at. It is still the correct default here, because the dedicated Chromium (ADR-0016) IS a
+ * background automation browser: on a real desktop its window is occluded nearly all the time, and an occluded —
+ * hence hidden — page receives no `Input.dispatchMouseEvent` at all. CDP accepts the command, answers ok, and
+ * delivers the click nowhere.
+ *
+ * Measured live 2026-09-19 (V-53): with a `mousedown` listener on the element `document.elementFromPoint` resolved
+ * at the click point, the listener saw nothing; after this command the same click produced
+ * `["down:SPAN…","click:SPAN"]` and the page turned `visible`. Occlusion had silently eaten 登录, the 确认 of
+ * 该帐号已登录在线, the 菜单 and 新增. Every click this executor makes rests on it, so it is enabled on every
+ * session the executor attaches to, the piaozone OOPIF included.
+ */
+export async function enableFocusEmulation(session: CdpSession): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await session.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+    return { ok: true };
+  } catch (error: any) {
+    return { ok: false, error: String(error?.message ?? error) };
+  }
+}
+
 /** A child session on a cross-origin iframe target (the piaozone invoice assistant, 发票无忧助手). */
 export type ChildTargets = {
   list(): Array<Record<string, unknown>>;
@@ -102,6 +127,7 @@ export type ChildTargets = {
 export async function autoAttach(session: CdpSession): Promise<ChildTargets> {
   if (!session.on) throw new Error('CDP session cannot receive events');
   const children = new Map<string, { info: Record<string, any>; sessionId: string }>();
+  const focused = new Set<string>();
   session.on('Target.attachedToTarget', (p: any) => {
     children.set(p.targetInfo.targetId, { info: p.targetInfo, sessionId: p.sessionId });
   });
@@ -132,7 +158,16 @@ export async function autoAttach(session: CdpSession): Promise<ChildTargets> {
             const r = await childSession.send('Runtime.evaluate', { expression: 'location.href', returnByValue: true });
             url = r?.result?.value || url;
           } catch { children.delete(String(child.info.targetId)); continue; }
-          if (match(url)) return childSession;
+          if (match(url)) {
+            // Once per child target. Best-effort here: a frame target that does not implement Emulation must not
+            // kill the assistant path, and the parent page's emulation may already cover its frame tree. The page
+            // target itself is not best-effort — see `attachChromiumPage`.
+            if (!focused.has(child.sessionId)) {
+              focused.add(child.sessionId);
+              await enableFocusEmulation(childSession);
+            }
+            return childSession;
+          }
         }
         await new Promise((resolve) => setTimeout(resolve, interval));
       } while (Date.now() < until);
@@ -163,6 +198,7 @@ const KEYS: Record<string, { windowsVirtualKeyCode: number; code: string; key: s
   Tab: { windowsVirtualKeyCode: 9, code: 'Tab', key: 'Tab' },
   Escape: { windowsVirtualKeyCode: 27, code: 'Escape', key: 'Escape' },
   Backspace: { windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' },
+  Delete: { windowsVirtualKeyCode: 46, code: 'Delete', key: 'Delete' },
   a: { windowsVirtualKeyCode: 65, code: 'KeyA', key: 'a' },
   ArrowDown: { windowsVirtualKeyCode: 40, code: 'ArrowDown', key: 'ArrowDown' },
   ArrowUp: { windowsVirtualKeyCode: 38, code: 'ArrowUp', key: 'ArrowUp' },

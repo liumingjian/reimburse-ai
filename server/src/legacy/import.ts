@@ -173,11 +173,13 @@ export function createLegacyImport(db: Db, legacyHome: string | null, clock: () 
 export type LegacyImportService = ReturnType<typeof createLegacyImport>;
 
 // Imported legacy 发票占用 as occupancy holdings: always handed off (ERP may have consumed the invoices), so they hold
-// against every later claim; `seq` 0 keeps them first even on equal times.
+// against every later claim; `seq` 0 keeps them first even on equal times. A voided legacy task holds nothing, the
+// same rule an app task follows (ADR-0030): voiding is how a hold is released, whatever produced it.
 export async function legacyHoldings(tx: Db): Promise<Holding[]> {
   const rows = await tx
     .selectFrom('legacy_claim')
     .innerJoin('task', 'task.task_id', 'legacy_claim.task_id')
+    .where('task.lifecycle', '!=', 'voided')
     .select(['legacy_claim.task_id', 'legacy_claim.account_id', 'legacy_claim.invoice_key', 'legacy_claim.file_name', 'task.name', 'task.created_at'])
     .orderBy('legacy_claim.task_id')
     .execute();

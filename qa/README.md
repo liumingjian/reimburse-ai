@@ -22,6 +22,16 @@ node server/dist/main.mjs              # 输出 listening on http://127.0.0.1:43
 
 The project-book section enters explicit numbers and names offline, including `P-2307` and `P-3312`, and checks duplicate and unsafe-number feedback. No ERP session or catalog fixture is needed to reach project assignment and whole-list confirmation. The administrator section uses a separate `QA-PUBLIC` number so it does not silently convert a member's personal entry.
 
+`P-2307` 与 `P-3312` **只是离线夹具号**：真报销系统里没有这两个项目，报销信息核对会（正确地）说查不到。
+所以凡是要真打到报销系统的那几段（项目归属之后的报销信息核对、去报销），必须用 `QA_PROJECT` /
+`QA_PROJECT_NAME` 给一个**你这个账号真有的**项目，例如
+`QA_PROJECT=111705 QA_PROJECT_NAME='安徽省农村信用社联合社-开源软件运维人员驻场服务-25-111705'`
+（这是维护者账号的项目簿里真有的一个，换个账号就未必有——驱动不会替你猜，也没有默认值）。
+给了之后，`project-book` 那一段会把它一起录进个人项目簿，`assignment` 把全部明细归到它名下。
+
+不给 `QA_PROJECT` 时驱动照跑，但会在 `erp-project` 记一条 `WARN`，明说这一趟用的是离线夹具号、
+去报销会停在报销信息核对那一步、发票无忧助手根本打不开——那不是应用的缺陷，是这一趟没配项目号。
+
 For later ERP checks against demonstration project numbers, the existing optional catalog fixture remains available:
 
 ```bash
@@ -39,8 +49,10 @@ This fixture does not make local intake ERP-verified. The operator-only ERP sect
 | `QA_OUT` | `/tmp/baox-qa-artifacts` | 截图与 `findings.json` 的落地目录 |
 | `QA_USER` / `QA_PASSWORD` | `admin` / `admin123` | 登录账号 |
 | `QA_HOME_CITY` | `广州` | 新建任务的常驻城市 |
+| `QA_PROJECT` | 空（回落到离线号 `P-2307`） | 归属与去报销用的项目号，要填**你这个报销系统账号真有的**项目 |
+| `QA_PROJECT_NAME` | 同 `QA_PROJECT` | 该项目在报销系统里的名称，报销信息核对连名称一起比 |
 | `QA_HEADLESS` | 空 | 置 `1` 则无头运行（冒烟用；平时就该看着它跑） |
-| `QA_SKIP` | 逗号分隔的分区名，跳过不跑。例如 `QA_SKIP=erp-off` 可以跳过去报销那一段。 | 空 |
+| `QA_SKIP` | 逗号分隔的分区名，跳过不跑。例如 `QA_SKIP=erp-write` 可以跳过去报销那一段。 | 空 |
 
 ## 3. 跑一遍
 
@@ -77,10 +89,36 @@ QA_BASE=http://127.0.0.1:4399 QA_MATERIALS=/tmp/baox-qa-mats QA_HEADLESS=1 pnpm 
 1. 退掉那个专用 Chromium（数据目录下 `chromium-profile/` 起的那个窗口），确认 9333 没人监听：
    `lsof -nP -iTCP:9333 -sTCP:LISTEN`；
 2. 起服务端时加 `BAOX_ERP_CHROMIUM=off`，这样服务端不会替你把它重新拉起来；
-3. 照常跑 `qa/run.mjs`，`erp-off` 这一段会点 去报销，然后等快照里的 `erp.status`。
+3. 照常跑 `qa/run.mjs`，`erp-write` 这一段会点 去报销，然后等快照里的 `erp.status`。
 
-期望：`erp.status` 变成 `aborted`，`erp.abortReason` 说得出是浏览器不可用，页面上也能看到这句话，
-任务本身不被改动。驱动会把这三点分别记成 `ok` 或 `DEFECT`。
+期望：`erp.status` 留在 `idle`，`erp.abortReason` 说得出是浏览器不可用，页面上也能看到这句话，
+任务本身不被改动。驱动会把这几点分别记成 `ok` 或 `DEFECT`。
+
+`erp-write` 这一段并不只管「浏览器关着」这一条路：它是整个驱动里唯一会点 去报销 的地方，专用浏览器
+开着的时候，它点的就是一次真写入。写入走到底（`erp.status` 变 `done`，单据填好、交给本人自己按保存）
+记 `ok`；预算用完还在 `running` 记 `WARN`（实测一次真写入约 141 秒，预算 300 秒）；只有 `aborted`
+——也就是写入结果不确定——才是 `DEFECT`。
+
+`erp.status` 一个字段不够看：报销信息核对不通过时，快照里的 `erp.status` 是**故意**留在 `idle` 的
+（`server/src/erp/fill-state.ts`），问题都写在快照的 `catalog` 一节里。驱动两节一起读：看到 `catalog`
+里有理由充分的拒绝，就照着理由记 `ok`（并另记一条 `WARN` 说这一趟没走到「浏览器关着」那条路），
+**不会**记成 `DEFECT`——**服务端有理由的拒绝不是缺陷**。只有 `idle` 且哪儿都没有拒绝理由，才是缺陷。
+
+一次干净的中止（写入之前就停了）同样**不会**把 `erp.status` 变成 `aborted`：它留在 `idle`，理由写在
+`erp.abortReason` 里，只有「写没写进去说不准」的 `unknown` 才报 `aborted`。盯着 `status` 等，等到的就是这一节
+本来要验的那种情况被记成缺陷。驱动现在读 `abortReason`，一出现就收尾，不再空耗剩下的预算。
+
+## 7. 实机验证勾选时，别把那一次不可逆的点击花掉
+
+```bash
+BAOX_ERP_STOP_BEFORE_IMPORT=1        # 起服务端时设上
+```
+
+上传和勾选是免费且可重复的（ADR-0025），**发票导入单据 那一下不是**：它把发票绑到一张 费用报销单 上，而 QA 跑批
+根本不会去保存那张单。设了这个变量，去报销会在上传、勾选全部完成之后、点 发票导入单据 之前停下，记
+`IMPORT_STOPPED_BEFORE_BOUNDARY`。它**故意**停在 `startAttempt` 之前，所以任务仍是干净的 `aborted`，可重试也可作废。
+
+不设就是原来的行为，员工那边什么都没变。
 
 ## 5. 住宿三件套（`stay-trio` 分区）
 
@@ -110,7 +148,8 @@ QA_BASE=http://127.0.0.1:4399 QA_MATERIALS=/tmp/baox-qa-mats QA_HEADLESS=1 pnpm 
   不会在一项上空转；选择类连环打开新表单的链路也有深度上限。
 - 跑完若还有没解决的项，日志里会列出来，并留下 `pending-stuck` 截图。
 
-不开浏览器也能检一下取值逻辑（同样不在 CI 里）：
+不开浏览器也能检一下取值逻辑（`qa/values.mjs`）与驱动那几处不碰浏览器的判断（`qa/checks.mjs`：
+用哪个项目号、`idle` 的 ERP 视图该怎么读、旋转要等多久）——同样不在 CI 里：
 
 ```bash
 node --test "qa/*.test.mjs"

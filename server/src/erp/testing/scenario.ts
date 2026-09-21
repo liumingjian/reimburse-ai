@@ -11,7 +11,7 @@ import { PROTOCOL_VERSION, type BlobSource, type FillPlan, type ReconcilePlan } 
 export const ERP_ORIGIN = 'http://erp.antute.com.cn';
 export const IDENTITY = { account: 'luo.liu', tenant: 'tenant-a' };
 export const ERP_ACCOUNT = { displayName: '刘明建', ...IDENTITY };
-export const COMPATIBILITY = { erpBuild: '8.2.0.20250701', formId: 'ER_ExpReimbursement' };
+export const COMPATIBILITY = { erpBuild: '8.2.830.9', formId: 'ER_ExpReimbursement' };
 export const PROJECTS = [
   { code: '39163', name: '中国农业发展银行河南省分行-20-2614' },
   { code: '38480', name: '中国农业发展银行河南省分行-20-1961' },

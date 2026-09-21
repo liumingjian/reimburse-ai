@@ -5,7 +5,6 @@ import { dataDirBlobs } from './erp/cdp-executor';
 import { runFillJob } from './erp/executor/job';
 import { createFakeErp, type FakeErp, type FakeErpOptions } from './erp/executor/testing/fake-erp';
 import type { FillExecutor } from './erp/fill-jobs';
-import { RECEIPT_LINK_NOTE } from './erp/fill-plan';
 import { COMPATIBILITY, ERP_ACCOUNT, ERP_ORIGIN, FAST_PACE, fakeErpOptions } from './erp/testing/scenario';
 import { api, sample } from './test/api';
 import { BACKSTOP_MS } from './test/deadlines';
@@ -94,12 +93,34 @@ describe('去报销 with the real executor on the fake ERP', () => {
     expect(fake!.document.querySelector('.form-tab')!.textContent).toBe('费用报销单-新增');
   });
 
-  it('stops before the hand-over when ERP leaves 收票单号 empty on the detail rows (as research recorded): reconcile, saying why', async () => {
-    const ready = await confirmed(false);
+  // V-54, all the way out to what the employee reads. A 处理结果 window that will not close leaves the import
+  // complete and the fill unable to start; `unknown` is the honest protocol answer, because a durable attempt
+  // exists and the 费用报销单 is not finished. What must NOT happen is the employee being told 「结果不确定」 about
+  // ten invoices that are demonstrably bound.
+  it('tells the employee the invoices are bound and a window is in the way, not that the result is uncertain', async () => {
+    const ready = await confirmed(true);
+    fakeOptions = { ...fakeOptions, importReportStaysOpen: true };
     await client.accepted(await client.act(ready, 'start-erp-write'));
     const stopped = await settledErp(ready.task.taskId);
-    expect(stopped).toMatchObject({ stage: 'reconcile', erp: { status: 'aborted' } });
-    expect(stopped.erp.abortReason).toContain(RECEIPT_LINK_NOTE);
+    expect(stopped.erp.status).toBe('aborted');
+    expect(stopped.erp.abortReason).toContain('发票已经全部导入并绑定');
+    expect(stopped.erp.abortReason).toContain('处理结果');
+    expect(stopped.erp.abortReason).not.toContain('结果不确定');
+    // The fill never started, so there is one attempt, not two, and the form was never written to.
+    const attempts = await server.db.selectFrom('erp_attempt').select('action').where('task_id', '=', ready.task.taskId).execute();
+    expect(attempts.map((attempt) => attempt.action)).toEqual(['import']);
+    expect(fake!.mutations.map((mutation) => mutation.kind)).toEqual(['import']);
+  });
+
+  // In 「不生成费用明细」 mode ERP leaves 收票单号 empty on every 费用明细行 (research, and reproduced live on 13
+  // rows). That link was once required, and a wholly correct form ended as 结果不确定 because of it. Since the
+  // owner's 2026-09-20 decision the read-back compares the form's totals, so the same form is handed over.
+  it('hands over a form whose 收票单号 ERP left empty on the detail rows, because the totals agree', async () => {
+    const ready = await confirmed(false);
+    await client.accepted(await client.act(ready, 'start-erp-write'));
+    const done = await settledErp(ready.task.taskId);
+    expect(done.erp.abortReason, JSON.stringify(done.erp)).toBeNull();
+    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done' }, readback: { status: 'matched' } });
     expect(fake!.mutations.some((mutation) => mutation.kind === 'save')).toBe(false);
   });
 });

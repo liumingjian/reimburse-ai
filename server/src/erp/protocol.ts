@@ -35,6 +35,10 @@ export const FillPlanSchema = z.object({
   catalog: z.object({ projects: z.array(CatalogEntrySchema), expenseItems: z.array(CatalogEntrySchema) }),
   invoices: z.array(BlobRefSchema).min(1),
   purpose: z.string().min(1),
+  // Set by 重新去报销 (ADR-0027) and by nothing else: close any 费用报销单-新增 tab still open before opening the
+  // fresh one. 对账 offers that recovery only over a 新增 with no 单据编号, or over no form at all, so the tab it
+  // closes is the unsaved bill the banner already told the employee would be replaced.
+  replaceAbandonedForm: z.boolean().optional(),
 });
 export type FillPlan = z.infer<typeof FillPlanSchema>;
 

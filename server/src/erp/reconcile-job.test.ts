@@ -13,10 +13,21 @@ import { createFakeErp, type FakeErp } from './executor/testing/fake-erp';
 import { createErpJobs } from './jobs';
 import type { ApprovedPreview, ReadbackEvent } from './protocol';
 import { reconcileFromEvents, runReconcile } from './reconcile-job';
-import { driveTo, RECONCILE_STATES } from './testing/reconcile-states';
+import { driveTo, RECONCILE_STATES, type ReconcileState } from './testing/reconcile-states';
 import { FAST_PACE, fakeErpOptions, reconcilePlan, withoutLayout } from './testing/scenario';
 
 const golden = JSON.parse(readFileSync(new URL('./testing/reconcile-parity.golden.json', import.meta.url), 'utf8'));
+
+// ONE STATE DIVERGES FROM THE KERNEL, BY DECISION. In 「不生成费用明细」 mode ERP leaves 收票单号 empty on every
+// 费用明细行; the kernel's strict per-line match could not bind a single row and called the form 不自洽. The owner
+// decided 2026-09-20 that a form is judged on its totals, so the very same reading is now 未保存·就绪待保存 — the
+// bill adds up to the task and is waiting for the employee to save it. The golden file is left as it was: it is a
+// recording of what the kernel did, not a target, and falsifying it would lose the only evidence of the change.
+// The 不自洽 bucket itself is still exercised — by a drifted amount in `erp-reconcile.test.ts` and by a
+// new/modify contradiction in `reconcile.test.ts`.
+const DIVERGES_FROM_KERNEL: Partial<Record<ReconcileState, { bucket: string; action: string; reasons: string[] }>> = {
+  filled_unlinked: { bucket: '未保存·就绪待保存', action: '原地等待', reasons: ['两边都是 75463 分，按分相等，差保存这一下'] },
+};
 
 let server: TestServer;
 let db: Db;
@@ -42,7 +53,8 @@ async function reconcile(fake: FakeErp, expectedPreview: ApprovedPreview | null)
 
 describe('reconcile job on the fake ERP', () => {
   it.each(RECONCILE_STATES)('%s: reads what the kernel reads and yields the kernel bucket', async (state) => {
-    const expected = golden.states[state];
+    const recorded = golden.states[state];
+    const expected = { ...recorded, verdict: { ...recorded.verdict, ...(DIVERGES_FROM_KERNEL[state] ?? {}) } };
     const { fake, preview } = await driveTo(state);
     const { result, events, attempts, reconcile: judged } = await reconcile(fake, preview);
 
@@ -53,7 +65,7 @@ describe('reconcile job on the fake ERP', () => {
     expect(attempts).toEqual([]);
   });
 
-  it('the recorded states cover all six buckets', () => {
+  it('the recorded kernel states cover all six buckets', () => {
     const buckets = new Set(RECONCILE_STATES.map((state) => golden.states[state].verdict.bucket));
     expect([...buckets].sort()).toEqual(['不自洽', '已保存', '未保存·导入前', '未保存·已导入未写明细', '未保存·就绪待保存', '未知'].sort());
   });

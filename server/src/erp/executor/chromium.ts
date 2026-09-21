@@ -2,11 +2,12 @@
 // The v1 executor drives the app's dedicated Chromium profile; the browser brand (Chrome, Edge) is not part of
 // this seam, and there is no fallback to another transport.
 
-import { connect as cdpConnect, evalIn, targets as cdpTargets, type CdpSession, type CdpTarget } from './cdp';
+import { connect as cdpConnect, enableFocusEmulation, evalIn, targets as cdpTargets, type CdpSession, type CdpTarget } from './cdp';
 
 export const CHROMIUM_CDP_REQUIRED = 'CHROMIUM_CDP_REQUIRED';
 export const CHROMIUM_CDP_AMBIGUOUS = 'CHROMIUM_CDP_AMBIGUOUS';
 export const CHROMIUM_CDP_UNAVAILABLE = 'CHROMIUM_CDP_UNAVAILABLE';
+export const CHROMIUM_FOCUS_EMULATION_FAILED = 'CHROMIUM_FOCUS_EMULATION_FAILED';
 export const CHROMIUM_CDP_TRANSPORT = 'chromium-cdp';
 
 const DEFAULT_PORT = 9333;
@@ -110,6 +111,16 @@ export async function attachChromiumPage(page: ChromiumPage, {
     session = await connectFn(target.webSocketDebuggerUrl!, { timeout: 20_000 });
   } catch (error) {
     throw new ExecutorError(CHROMIUM_CDP_UNAVAILABLE, '已找到 ERP 页面，但无法建立 Chromium 自动化连接', { cause: error });
+  }
+  // Focus emulation belongs to attaching, not to any one step: an occluded window delivers no mouse event at all,
+  // and this browser's window is occluded whenever the employee is doing something else (see `enableFocusEmulation`).
+  // A failure here is fatal on purpose — without it every later click may be swallowed in silence, which is the
+  // failure mode this line exists to remove.
+  const focus = await enableFocusEmulation(session);
+  if (!focus.ok) {
+    session.close?.();
+    throw new ExecutorError(CHROMIUM_FOCUS_EMULATION_FAILED,
+      `专用浏览器不接受焦点模拟（Emulation.setFocusEmulationEnabled）：${focus.error ?? '原因未知'}。窗口被遮挡时点击会被静默丢弃，已停下。`);
   }
   return { ...page, automation: 'cdp', cdpPort, cdpTargetId: target.id ?? null, cdpUrl: target.webSocketDebuggerUrl!, session };
 }

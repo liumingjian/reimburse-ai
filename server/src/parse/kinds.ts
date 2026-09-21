@@ -176,7 +176,7 @@ const RAIL_TICKET: KindSpec = {
       grossAmount: totalAmount,
       netAmount: totalAmount,
       taxAmount: '0.00',
-      invoiceType: '铁路电子客票',
+      invoiceType: '火车票',
       maskedNumber: invoiceNumber ? maskNumber(invoiceNumber) : null,
       city: null,
       origin: departStation,
@@ -189,7 +189,11 @@ const RAIL_TICKET: KindSpec = {
   // Kernel invoiceIdentity: a 20-digit number is `einvoice-20` whatever the face; a rail ticket counts for 重复发票
   // and 发票占用 like any 全电发票. (Folios carry no invoice number and stay out.)
   identity: (values) => (/^\d{20}$/.test(values['invoiceNumber'] ?? '') ? `einvoice-20:${values['invoiceNumber']}` : null),
-  erpInvoiceTypes: () => ['铁路电子客票'],
+  // ERP's 发票类型 enum has no 铁路电子客票 entry, but it does have 火车票, and that is what a rail e-ticket is
+  // (docs/research/erp-expense-flow/deep-dive/11-invoice-type-enum.md: 普通发票、增值税发票、机票、火车票、
+  // 其他运输票、其他). It was written as 普通发票 while the strict read-back accepted only two values; the owner
+  // corrected that 2026-09-20 and 火车票 is now one of the three baox writes (`erp/invoice-type.ts`).
+  erpInvoiceTypes: () => ['火车票'],
 };
 
 // 网约车行程单 (ride itinerary, #184): a reference material. It forms no event of its own; its legs split the paired

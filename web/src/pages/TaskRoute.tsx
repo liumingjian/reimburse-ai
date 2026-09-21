@@ -42,8 +42,18 @@ function PageBody({ page, snapshot }: { page: TaskPage; snapshot: TaskSnapshot }
   }
 }
 
-function GuardPage({ snapshot }: { snapshot: TaskSnapshot }) {
+function GuardPage({ snapshot, page }: { snapshot: TaskSnapshot; page: TaskPage }) {
   const target = taskHash(snapshot.task.taskId, STAGE_DEFAULT_PAGE[snapshot.stage]);
+  // 去报销在写入前就停下时，任务退回上一阶段，用户正看着的这一页随之关上。是这一次去报销把人送到这里的，
+  // 所以说出停下的原因，而不是一句「阶段不可跳过」。
+  if (page === 'erp' && snapshot.erp.status !== 'running' && snapshot.erp.abortReason) {
+    return (
+      <>
+        <PageHeader title="这次去报销停下了" lead={snapshot.erp.abortReason} />
+        <Button href={target}>回到当前阶段</Button>
+      </>
+    );
+  }
   // 还没有任何被接收的材料：先去上传。有材料但盘点没开始，则按「阶段不可跳过」处理。
   if (snapshot.materials.length === 0) {
     return (
@@ -106,7 +116,7 @@ export function TaskRoute({ taskId, page }: { taskId: string; page: TaskPage | n
           </Button>
         </div>
       ) : null}
-      {pageAllowed(snapshot.stage, page) ? <PageBody page={page} snapshot={snapshot} /> : <GuardPage snapshot={snapshot} />}
+      {pageAllowed(snapshot.stage, page) ? <PageBody page={page} snapshot={snapshot} /> : <GuardPage snapshot={snapshot} page={page} />}
     </AppShell>
   );
 }

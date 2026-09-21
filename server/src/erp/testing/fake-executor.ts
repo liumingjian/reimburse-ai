@@ -61,7 +61,7 @@ export const abortBeforeAttempt: Script = async (_plan, channel) => {
   await pastCatalog(channel);
   await channel.emit({ type: 'step', step: 'compatibility', status: 'running' });
   await channel.emit({ type: 'step', step: 'compatibility', status: 'failed' });
-  return result(channel, 'aborted', 'compatibility_mismatch', 'ERP 兼容指纹不符：期望 8.2.0.20250701 / ER_ExpReimbursement，实际 8.3.0 / ER_ExpReimbursement');
+  return result(channel, 'aborted', 'compatibility_mismatch', '报销系统的版本与上次核对时不一致，没有继续：期望 8.2.830.9 / ER_ExpReimbursement，实际 8.3.101.2 / ER_ExpReimbursement。报销系统没有被改动。');
 };
 
 /** Imports and fills, then the strict read-back before save fails: ERP 写入结果未知. */
@@ -72,7 +72,7 @@ export const readbackMismatch: Script = async (plan, channel) => {
   await attempt(plan, channel, 'fill', 1, TEST_ERP_ACCOUNT);
   await channel.emit({ type: 'step', step: 'fill', status: 'running' });
   await channel.emit({ type: 'step', step: 'fill', status: 'failed' });
-  return result(channel, 'unknown', 'strict_readback_failed', '任务第 1 行没有一条同时匹配项目、费用项目、日期、金额和收票关联的 ERP 明细；金额相等不能代替逐行一致');
+  return result(channel, 'unknown', 'strict_readback_failed', 'ERP 明细「申请报销金额」合计 1000.00 与任务合计 1006.00 不一致');
 };
 
 /** Imports, fills and hands the filled, unsaved 费用报销单 over: no save attempt and no 单据编号 (ADR-0028). */

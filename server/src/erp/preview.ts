@@ -5,6 +5,7 @@
 
 import { createHash } from 'node:crypto';
 import { gateProblems } from './executor/draft-flow';
+import { validInvoiceTypeSource, writableInvoiceType } from './invoice-type';
 import { erpWritePreviewDigest, fieldPlanOf, type ApprovedPreview, type FreshGate, type PreviewLine, type ReceiptBinding } from './protocol';
 
 const INVOICE_IDENTITY = /^einvoice-20:(\d{20})$/;
@@ -12,7 +13,6 @@ const SAFE_RECEIPT_NUMBER = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const RECEIPT = SAFE_RECEIPT_NUMBER;
 const MONEY = /^\d+(?:\.\d{1,2})?$/;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
-const ERP_INVOICE_TYPES = new Set(['普通发票', '增值税发票']);
 
 type Problem = { code: string; message: string; [extra: string]: unknown };
 
@@ -79,10 +79,6 @@ const normalizeReceiptCheck = (check: any, index: number) => {
   return { index, materialId: text(check?.materialId), identityKey, invoiceNumber: identity?.[1] ?? null, receiptNumber, gross, ok: check?.ok === true };
 };
 const sameText = (left: unknown, right: unknown) => text(left) === text(right);
-const validInvoiceTypeSource = (value: unknown) => {
-  const source = text(value);
-  return !!source && !/(?:unknown|guess|guessed|inferred|default|fallback|猜|推断|默认)/i.test(source);
-};
 const accommodationLine = (raw: any, event: any) => raw?.category === 'accommodation' || event?.category === 'accommodation';
 
 export type PreviewInput = {
@@ -365,7 +361,7 @@ export function buildErpDraftPreview(args: PreviewInput):
     if (requiresRoute(line) && !routePlan) issue(problems, 'route_structure_missing', `明细 ${line.lineId} 缺少可核实的起点和终点；不按空格猜路线`);
     if (routePlan) line.routePlan = routePlan;
     if (!validDate(line.date) || !validDate(line.endDate)) issue(problems, 'date_plan_invalid', `明细 ${line.lineId} 的 ERP 开始/结束日期不可核实`);
-    if (!ERP_INVOICE_TYPES.has(text(line.invoiceType) ?? '') || !text(line.invoiceTypeSource)) issue(problems, 'invoice_type_mapping_missing', `明细 ${line.lineId} 缺少有出处的 ERP 发票类型映射`);
+    if (!writableInvoiceType(line.invoiceType) || !text(line.invoiceTypeSource)) issue(problems, 'invoice_type_mapping_missing', `明细 ${line.lineId} 缺少有出处的 ERP 发票类型映射`);
     const group = linesByMaterial.get(line.voucherMaterialId) ?? [];
     group.push(line);
     linesByMaterial.set(line.voucherMaterialId, group);

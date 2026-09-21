@@ -1,4 +1,4 @@
-import { ABANDON_TASK_COPY, ERP_ACTION_ERRORS, ERP_HANDOVER_STEP_COPY, TaskListSchema, type TaskSnapshot } from '@baox/contract';
+import { ERP_ACTION_ERRORS, ERP_HANDOVER_STEP_COPY, TaskListSchema, type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fixtureCatalog } from './catalog/project-catalog';
 import { abortBeforeAttempt, catalogMismatch, gated, handedOver, loginWall, readbackMismatch, scripted, TEST_ERP_ACCOUNT, type ScriptedExecutor } from './erp/testing/fake-executor';
@@ -140,34 +140,40 @@ describe('去报销 on a fake executor', () => {
     expect((await start(reconfirmed)).stage).toBe('done');
   });
 
-  it('a read-back mismatch after an attempt is ERP 写入结果未知: reconcile, frozen, not voidable', async () => {
+  it('a read-back mismatch after an attempt is ERP 写入结果未知: reconcile, frozen, and still voidable', async () => {
     executor.queue(readbackMismatch);
     const unknown = await start(await confirmed());
     expect(unknown).toMatchObject({ stage: 'reconcile', step: { kind: 'reconcile' }, erp: { status: 'aborted' }, reconcile: { status: 'pending' } });
-    expect(unknown.erp.abortReason).toContain('金额相等不能代替逐行一致');
+    expect(unknown.erp.abortReason).toContain('「申请报销金额」合计 1000.00 与任务合计 1006.00 不一致');
     expect(unknown.erp.erpAccount).toEqual(TEST_ERP_ACCOUNT);
     expect(server.erpLease.holder()).toBeNull();
 
     await refused(await client.act(unknown, 'set-home-city', { homeCity: '上海' }), 400, 'erp_started');
     await refused(await client.act(unknown, 'start-erp-write'), 400, 'erp_started');
-    const voided = await alice.post(`/api/tasks/${unknown.task.taskId}/abandon`, {});
-    expect(voided.status).toBe(400);
-    expect(await voided.json()).toMatchObject({ error: { code: 'erp_started', message: ABANDON_TASK_COPY.blockedReason } });
-    expect((await taskList()).tasks[0]).toMatchObject({ stage: 'reconcile', abandonable: false, abandonBlockedReason: ABANDON_TASK_COPY.blockedReason });
-    // Still the account's one non-terminal task.
+    // The facts are frozen, but the task is not a prisoner of them: ADR-0030 lets any state be voided, and the list
+    // offers it without a reason to the contrary.
+    expect((await taskList()).tasks[0]).toMatchObject({ stage: 'reconcile', abandonable: true, abandonBlockedReason: null, erpTouched: true });
+    // Still the account's one non-terminal task for as long as it is around.
     await refused(await alice.post('/api/tasks', { homeCity: '杭州' }), 400, 'active_task_exists');
+    const voided = await alice.post(`/api/tasks/${unknown.task.taskId}/abandon`, {});
+    expect(voided.status).toBe(200);
+    expect(TaskListSchema.parse(await voided.json()).tasks).toEqual([]);
+    expect((await client.current(unknown.task.taskId)).stage).toBe('voided');
+    // Voiding it releases the account: the next task can start.
+    expect((await alice.post('/api/tasks', { homeCity: '杭州' })).status).toBe(200);
   });
 
-  it('完全重置 never voids a task that touched ERP: it keeps holding its invoices', async () => {
+  it('完全重置 voids a task that touched ERP too, because 任务作废 now accepts it', async () => {
     executor.queue(readbackMismatch);
     const unknown = await start(await confirmed());
     expect(unknown.stage).toBe('reconcile');
 
-    // Reset is a bulk 任务作废 and may not release invoices the abandon action itself refuses to release (story 21).
+    // Reset is a bulk 任务作废: since ADR-0030 that clears every lifecycle, ERP-touched ones included. What it does
+    // not do is reach into ERP; the bill already over there is the employee's to deal with.
     const reset = await alice.post('/api/reset', {});
     expect(reset.status).toBe(200);
-    expect(TaskListSchema.parse(await reset.json()).tasks).toEqual([expect.objectContaining({ taskId: unknown.task.taskId, stage: 'reconcile', abandonable: false })]);
-    expect((await client.current(unknown.task.taskId)).stage).toBe('reconcile');
+    expect(TaskListSchema.parse(await reset.json()).tasks).toEqual([]);
+    expect((await client.current(unknown.task.taskId)).stage).toBe('voided');
   });
 
   it('完全重置 still voids a task that never touched ERP', async () => {
@@ -191,7 +197,7 @@ describe('去报销 on a fake executor', () => {
     expect(done.erp.steps.some((step) => step.title.includes('保存'))).toBe(false);
     expect(server.erpLease.holder()).toBeNull();
 
-    expect((await taskList()).tasks[0]).toMatchObject({ stage: 'done', erpDraftNo: null, abandonable: false });
+    expect((await taskList()).tasks[0]).toMatchObject({ stage: 'done', erpDraftNo: null, abandonable: true, erpTouched: true });
     await refused(await client.act(done, 'set-home-city', { homeCity: '上海' }), 400, 'task_closed');
     // 去打印 never needs ERP (stories 57 and 63), so the paper bundle is still available once the form is handed over.
     expect((await alice.post(`/api/tasks/${done.task.taskId}/actions/generate-print-sheet`, {})).status).toBe(200);
@@ -204,7 +210,7 @@ describe('去报销 on a fake executor', () => {
     executor.queue(abortBeforeAttempt, handedOver());
     const aborted = await start(await confirmed());
     expect(aborted).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, erp: { status: 'idle' }, confirmation: { status: 'confirmed' } });
-    expect(aborted.erp.abortReason).toContain('ERP 兼容指纹不符');
+    expect(aborted.erp.abortReason).toContain('报销系统的版本与上次核对时不一致');
     expect(server.erpLease.holder()).toBeNull();
     expect((await taskList()).tasks[0]).toMatchObject({ abandonable: true });
     // Nothing was written, so the task is still editable.
@@ -237,18 +243,33 @@ describe('去报销 on a fake executor', () => {
     expect(server.erpLease.holder()).toBeNull();
   });
 
+  // A 住宿 line needs its 离店日期, which only the folio carries; the hotel invoice on its own cannot be written.
   it('refuses to start when a confirmed line cannot be written to ERP, before any job', async () => {
     const { task } = await client.createTask('杭州');
-    const uploaded = await client.upload(task.taskId, [sample('m07')]);
+    const uploaded = await client.upload(task.taskId, [sample('m01')]);
     await client.accepted(await client.act(uploaded, 'start-inventory'));
-    const done = await client.settled(task.taskId);
+    const done = await client.withoutStayGaps(await client.settled(task.taskId));
     const review = await client.accepted(await client.act(done, 'submit-project-assignment', { purpose: '出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
     const ready = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
     const response = await client.act(ready, 'start-erp-write');
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: { code: string; message: string } };
     expect(body.error.code).toBe('erp_preflight');
-    expect(body.error.message).toContain('铁路电子客票');
+    expect(body.error.message).toContain('离店日期');
     expect(executor.runs()).toEqual([]);
+  });
+
+  // ERP's 发票类型 enum has no 铁路电子客票 entry, but it does have 火车票, and that is what a rail e-ticket writes as.
+  it('writes a 铁路电子客票 line as 火车票, the ERP enum entry for it, instead of refusing it', async () => {
+    const { task } = await client.createTask('杭州');
+    const uploaded = await client.upload(task.taskId, [sample('m07')]);
+    await client.accepted(await client.act(uploaded, 'start-inventory'));
+    const done = await client.settled(task.taskId);
+    const review = await client.accepted(await client.act(done, 'submit-project-assignment', { purpose: '出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
+    const ready = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
+    expect(ready.lines.map((line) => line.invoiceType)).toEqual(['火车票']);
+    await client.accepted(await client.act(ready, 'start-erp-write'));
+    await settledErp(task.taskId);
+    expect(executor.runs()).toHaveLength(1);
   });
 });

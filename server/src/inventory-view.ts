@@ -14,7 +14,7 @@ import { checkStayTrios, stayVoucherIds, type StayTrio, type TrioVoucher } from 
 // answer key `(kind, materialId, field|segment)`: a re-derived item meets its earlier answer (ADR-0014).
 //
 // Item codes: unrecognised → manual_kind → manual_fill (手工补填, manual fill), ambiguous_layout, parse_failed,
-// validation_failure, qr_conflict, missing_required, duplicate_invoice (重复发票 inside the task),
+// validation_failure, missing_required, duplicate_invoice (重复发票 inside the task),
 // category_city_missing (#188), stay_invoice_missing / stay_folio_missing / stay_screenshot_missing (the 住宿 trio,
 // #213, `stay-trio.ts`); allocation, itinerary_ambiguous and given_up come from #184's transport plan
 // (`allocation.ts`), answered generically (`pending/answers.ts`).
@@ -289,13 +289,6 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
         raised.add(cause);
         add(choice(`validation_failure.${id}.${cause}`, id, `「${m.fileName}」${validationTitle(cause)}`, `${finding.message}票面事实不能修改。${REPLACE_HINT}`, [EXCLUDE]));
       }
-    }
-    if (finding.kind === 'conflict') {
-      const label = fieldLabel(resolved.kind, finding.key);
-      const [face, other] = finding.values;
-      const message = `二维码与票面不一致：${label} 票面 ${face?.value ?? ''}，二维码 ${other?.value ?? ''}`;
-      w.notes.push(message);
-      add(choice(`qr_conflict.${id}.${finding.key}`, id, `「${m.fileName}」${label}与二维码不一致`, `${message}。票面事实不能修改。${REPLACE_HINT}`, [EXCLUDE]));
     }
   }
 

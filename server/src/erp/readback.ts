@@ -2,6 +2,7 @@
 // Origin: 50931a3:kernel/src/erp-write-readback.mjs (buildReceiptReadback) and 50931a3:kernel/src/erpreconcile.mjs
 // (matchTaskLines, the strict per-line comparison). Inputs, codes and messages are kept.
 
+import { validInvoiceTypeSource, writableInvoiceType } from './invoice-type';
 import type { Readings } from './protocol';
 
 const MONEY = /^\d+(?:\.\d{1,2})?$/;
@@ -134,16 +135,10 @@ const RECEIPTS_COLUMN = '价税合计';
 const DETAIL_COLUMN = '申请报销金额';
 const NET_COLUMN = '费用金额';
 const TAX_COLUMN = '税额';
-const PROJECT_COLUMN = '项目';
-const EXPENSE_ITEM_COLUMN = '费用项目';
-const START_DATE_COLUMN = '开始日期';
-const END_DATE_COLUMN = '结束日期';
 const INVOICE_TYPE_COLUMN = '发票类型';
 const RECEIPT_NET_COLUMN = '不含税金额';
 const RECEIPT_NUMBER_COLUMN = '收票单';
 const INVOICE_NUMBER_COLUMN = '发票号码';
-const DETAIL_RECEIPT_NUMBER_COLUMN = '收票单号';
-const ERP_INVOICE_TYPES = new Set(['普通发票', '增值税发票']);
 
 /** Money text -> cents, without floating point; anything unreadable is null (never 0). */
 export function toCents(value: unknown): number | null {
@@ -168,6 +163,7 @@ const dateOf = (value: unknown) => {
 };
 const columnOf = (grid: GridLike, label: string) => grid?.columns?.some((column) => column.label === label) === true;
 const dataRowsOf = (grid: GridLike) => (grid?.ok === true && Array.isArray(grid.rows) ? grid.rows.filter((row) => row.kind === 'data') : []);
+const yuan = (cents: number) => (cents / 100).toFixed(2);
 const sumKnown = (values: Array<number | null>) => (values.every((value) => value !== null) ? (values as number[]).reduce((sum, value) => sum + value, 0) : null);
 const receiptNumberOf = (value: unknown) => {
   const s = textOf(value);
@@ -198,24 +194,22 @@ const projectSourceConfirmed = (line: any, expected: any) => textOf(expected?.pr
   && textOf(line?.projectSource) === 'erp_catalog_confirmed'
   && textOf(line?.projectsFrom) === 'project_book';
 const accommodationLine = (line: any) => textOf(line?.category) === 'accommodation';
-const validInvoiceTypeSource = (value: unknown) => {
-  const source = textOf(value);
-  return !!source && !/(?:unknown|guess|guessed|inferred|default|fallback|猜|推断|默认)/i.test(source);
-};
 
 /**
- * Compare the ERP detail grid line by line with the confirmed preview. No "unique amount wins" fallback:
- * project, expense item, dates, net, tax, receipt link and invoice type must all be equal.
+ * Judge the ERP form against the confirmed preview: the preview's own lines must be complete and sourced, every
+ * 收票 row must be the invoice the preview binds it to, and the detail grid's three money totals must equal the
+ * task's. Detail rows are NOT matched one to one with task lines (the owner's decision, 2026-09-20 — see the
+ * comment at the totals below); the comparison the employee needs is that the bill adds up to what they confirmed.
  */
 export function matchTaskLines(grid: GridLike, expected: any, receiptsGrid: GridLike = null) {
   const expectedLines: any[] | undefined = Array.isArray(expected) ? expected : expected?.lines;
   const reasons: string[] = [];
   const amountSources: Array<{ line: number; net: string; tax: string }> = [];
   if (!Array.isArray(expectedLines) || expectedLines.length === 0) {
-    return { ok: false, reasons: ['没有可用于逐行核对的已确认明细预览'], amountSources };
+    return { ok: false, reasons: ['没有可用于核对的已确认明细预览'], amountSources };
   }
-  if (!grid?.ok) return { ok: false, reasons: ['无法逐行核对当前任务明细'], amountSources };
-  if (Array.isArray(expected)) reasons.push('逐行核对必须使用包含来源和 receiptBindings 的 expectedPreview');
+  if (!grid?.ok) return { ok: false, reasons: ['无法读取当前任务明细，不能核对'], amountSources };
+  if (Array.isArray(expected)) reasons.push('核对必须使用包含来源和 receiptBindings 的 expectedPreview');
   if (textOf(expected?.projectSource) !== 'erp_catalog_confirmed' || textOf(expected?.projectsFrom) !== 'project_book') {
     reasons.push('expectedPreview 缺少 erp_catalog_confirmed/project_book 来源证据');
   }
@@ -253,7 +247,7 @@ export function matchTaskLines(grid: GridLike, expected: any, receiptsGrid: Grid
     if (!expenseItemCode || !expenseItem) reasons.push(`任务第 ${index + 1} 行缺少完整的费用项目编码和名称`);
     if (!date) reasons.push(`任务第 ${index + 1} 行没有有效的费用日期预览`);
     if (!endDate) reasons.push(`任务第 ${index + 1} 行没有有效的结束日期预览`);
-    if (!ERP_INVOICE_TYPES.has(invoiceType)) reasons.push(`任务第 ${index + 1} 行缺少有效 ERP 发票类型枚举`);
+    if (!writableInvoiceType(invoiceType)) reasons.push(`任务第 ${index + 1} 行缺少有效 ERP 发票类型枚举`);
     if (!validInvoiceTypeSource(line?.invoiceTypeSource)) reasons.push(`任务第 ${index + 1} 行缺少发票类型映射出处`);
     return { index, voucherMaterialId, total, net, tax, projectName, expenseItem, date, endDate, invoiceType,
       groupKey: voucherMaterialId || `line-${index + 1}`, targetNet: null as number | null, targetTax: null as number | null };
@@ -352,57 +346,42 @@ export function matchTaskLines(grid: GridLike, expected: any, receiptsGrid: Grid
     item.targetTax = targetTax;
   }
 
-  const detailColumns = [DETAIL_COLUMN, NET_COLUMN, TAX_COLUMN, PROJECT_COLUMN, EXPENSE_ITEM_COLUMN, START_DATE_COLUMN, END_DATE_COLUMN, DETAIL_RECEIPT_NUMBER_COLUMN, INVOICE_TYPE_COLUMN];
-  for (const column of detailColumns) if (!columnOf(grid, column)) reasons.push(`明细网格没有「${column}」列，不能完整逐行核对`);
-  const detailReadable = detailColumns.every((column) => columnOf(grid, column));
-  const usedRows = new Set<number>();
-  const matchedByGroup = new Map<string, Array<{ actualNet: number | null; actualTax: number | null; actualTotal: number | null }>>();
-  for (const item of expectedData) {
-    if (item.total === null || item.targetNet === null || item.targetTax === null) continue;
-    const binding = bindingByGroup.get(item.groupKey);
-    if (!detailReadable || !binding) continue;
-    const candidates = rows.map((row, index) => ({ row, index })).filter(({ row, index }) => {
-      if (usedRows.has(index)) return false;
-      const values = row.values ?? {};
-      return amountOf(values[DETAIL_COLUMN]) === item.total
-        && textOf(values[PROJECT_COLUMN]) === item.projectName
-        && textOf(values[EXPENSE_ITEM_COLUMN]) === item.expenseItem
-        && dateOf(values[START_DATE_COLUMN]) === item.date
-        && dateOf(values[END_DATE_COLUMN]) === item.endDate
-        && amountOf(values[NET_COLUMN]) === item.targetNet
-        && amountOf(values[TAX_COLUMN]) === item.targetTax
-        && receiptNumberOf(values[DETAIL_RECEIPT_NUMBER_COLUMN]) === binding.receiptNumber
-        && textOf(values[INVOICE_TYPE_COLUMN]) === item.invoiceType;
-    });
-    if (candidates.length !== 1) {
-      reasons.push(candidates.length > 1
-        ? `任务第 ${item.index + 1} 行有多条 ERP 明细满足相同字段，无法安全逐行对应`
-        : `任务第 ${item.index + 1} 行没有一条同时匹配项目、费用项目、日期、金额和收票关联的 ERP 明细；金额相等不能代替逐行一致`);
-      continue;
+  // TOTALS, NOT LINE BY LINE (the owner's decision, 2026-09-20). Matching every task line to its own ERP detail
+  // row was the strictest thing this product did, and it is not what the bill needs: the employee reads the form
+  // before saving it, ERP keeps 申请报销金额 = 费用金额 + 税额 on each row by itself, and the one thing that must
+  // not drift is the money. The strictness cost a whole live round — 13 rows filled correctly and all 13 refused,
+  // because in 「不生成费用明细」 mode ERP leaves 收票单号 empty on the detail rows. That is ERP's behaviour, not a
+  // wrong value, and no amount of care on this side would have produced the link the comparison demanded.
+  //
+  // So the detail side is now judged on the three money totals of the whole form and on the row count (checked
+  // above). The receipt side above is untouched: each 收票 row still has to be the invoice the preview says it is.
+  const detailColumns = [DETAIL_COLUMN, NET_COLUMN, TAX_COLUMN];
+  for (const column of detailColumns) if (!columnOf(grid, column)) reasons.push(`明细网格没有「${column}」列，不能核对金额合计`);
+  if (detailColumns.every((column) => columnOf(grid, column))) {
+    const totals = [
+      { label: DETAIL_COLUMN, column: DETAIL_COLUMN, expected: sumKnown(expectedData.map((item) => item.total)) },
+      { label: NET_COLUMN, column: NET_COLUMN, expected: sumKnown(expectedData.map((item) => item.targetNet)) },
+      { label: TAX_COLUMN, column: TAX_COLUMN, expected: sumKnown(expectedData.map((item) => item.targetTax)) },
+    ];
+    for (const { label, column, expected: wanted } of totals) {
+      const actual = sumKnown(rows.map((row) => amountOf(row.values?.[column])));
+      if (actual === null) { reasons.push(`ERP 明细里有读不出的「${label}」，不能核对合计`); continue; }
+      // An expected total that is unknown already drew its own reason above; it is not reported twice here.
+      if (wanted !== null && actual !== wanted) {
+        reasons.push(`ERP 明细「${label}」合计 ${yuan(actual)} 与任务合计 ${yuan(wanted)} 不一致`);
+      }
     }
-    const chosen = candidates[0]!;
-    usedRows.add(chosen.index);
-    const values = chosen.row.values ?? {};
-    const matched = matchedByGroup.get(item.groupKey) ?? [];
-    matched.push({ actualNet: amountOf(values[NET_COLUMN]), actualTax: amountOf(values[TAX_COLUMN]), actualTotal: amountOf(values[DETAIL_COLUMN]) });
-    matchedByGroup.set(item.groupKey, matched);
-  }
-  if (detailReadable) {
-    for (const [index] of rows.entries()) if (!usedRows.has(index)) reasons.push(`ERP 明细第 ${index + 1} 行没有对应的已确认任务明细`);
   }
 
-  // Each receipt conserves net, tax and gross separately; a whole-form total is not enough.
-  for (const [key, receiptGroup] of receiptGroups) {
-    if (!receiptGroup.row) continue;
-    const matched = matchedByGroup.get(key) ?? [];
-    if (matched.length !== receiptGroup.group.items.length) continue;
-    const detailNet = sumKnown(matched.map((line) => line.actualNet));
-    const detailTax = sumKnown(matched.map((line) => line.actualTax));
-    const detailGross = sumKnown(matched.map((line) => line.actualTotal));
-    if (detailNet === null || detailTax === null || detailGross === null) { reasons.push(`任务凭证组 ${key} 的明细金额不可读，不能验证三项守恒`); continue; }
-    if (detailNet !== receiptGroup.actualNet) reasons.push(`任务凭证组 ${key} 的明细不含税金额合计与对应收票不一致`);
-    if (detailTax !== receiptGroup.actualTax) reasons.push(`任务凭证组 ${key} 的明细税额合计与对应收票不一致`);
-    if (detailGross !== receiptGroup.actualGross) reasons.push(`任务凭证组 ${key} 的明细价税合计与对应收票不一致`);
+  // The type is not compared row by row either, but a row with NO 发票类型 is a field the fill failed to write,
+  // and that is worth saying: it is the difference between a bill the employee can save and one they cannot.
+  if (!columnOf(grid, INVOICE_TYPE_COLUMN)) reasons.push(`明细网格没有「${INVOICE_TYPE_COLUMN}」列，不能确认票种已写入`);
+  else {
+    for (const [index, row] of rows.entries()) {
+      const shown = textOf(row.values?.[INVOICE_TYPE_COLUMN]);
+      if (!shown) reasons.push(`ERP 明细第 ${index + 1} 行没有发票类型`);
+      else if (!writableInvoiceType(shown)) reasons.push(`ERP 明细第 ${index + 1} 行的发票类型「${shown}」不是 baox 会写入的票种`);
+    }
   }
 
   return { ok: reasons.length === 0, reasons, amountSources };

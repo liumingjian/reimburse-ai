@@ -6,35 +6,55 @@
   with header cells and `k-footer-template` total rows, the 收票信息 split button and its `tbNotFillEntry` item,
   the `tbNewList` row button, the `.k-window` assistant dialog) and probe.mjs (`kd-mainconsole-usernametext`).
   Only the shapes the executor's selectors read are kept. `data-action` attributes are fake-ERP behaviour hooks;
-  no executor selector reads them. Placeholders: {{UUID}} {{DISPLAY_NAME}} {{BUILD}} {{FORM_ID}} {{TODAY}}.
+  no executor selector reads them. Placeholders: {{UUID}} {{DISPLAY_NAME}} {{FORM_ID}} {{TODAY}}.
+  Verified against the live ERP on 2026-09-19: the form id is on `data-kdformid` (not `data-formid`), the console
+  shell carries one too, and no element states the build.
 -->
 <html>
 <head><title>金蝶云星空</title></head>
 <body>
-<div class="kd-mainconsole">
+<div class="kd-mainconsole" data-kdformid="BOS_HtmlConsole">
   <div class="kd-mainconsole-header">
     <span class="kd_SystemMenu" data-action="system-menu">菜单</span>
     <span class="kd-mainconsole-usernametext">{{DISPLAY_NAME}}</span>
-    <span class="kd-version">V{{BUILD}}</span>
   </div>
-  <div class="kd-mainconsole-shortcuts">
-    <span data-action="open-list">我的费用报销</span>
+  <!-- The console's OWN tab panel, and it is `k-state-active` from the start: it is the tab the user lands on.
+       Live 2026-09-19 this is the panel `document.querySelector('.k-content.k-state-active')` returns for a moment
+       after a new form opens, because Kendo has not yet moved the class onto the form's panel. Measured live
+       2026-09-19 it carries a `data-kdformid` of its OWN — `BOS_TeamWorkMainConsole` — so "the active panel holds
+       exactly one form id" is not the same question as "the 费用报销单 is open"; the live run that died on
+       compatibility_mismatch read 实际 8.2.830.9 / 0 个表单 from a panel that had neither. -->
+  <div class="k-content k-state-active" id="console-panel" data-kdformid="BOS_TeamWorkMainConsole">
+    <div class="kd-mainconsole-shortcuts">
+      <span data-action="open-list">我的费用报销</span>
+    </div>
+    <div id="expense-list" style="display:none">
+      <span class="kd-btn" data-action="new-form">新增</span>
+    </div>
   </div>
-  <div id="expense-list" style="display:none">
-    <span class="kd-btn" data-action="new-form">新增</span>
-  </div>
-  <div id="expense-form" data-formid="{{FORM_ID}}" style="display:none">
+  <!-- The form's own tab panel. It gains `k-state-active` when Kendo gets round to it; `formPanelActiveTicks`
+       decides how many page evaluations later that is. -->
+  <div class="k-content" id="form-panel">
+  <div id="expense-form" data-kdformid="{{FORM_ID}}" style="display:none">
     <div class="form-tabs"><span class="form-tab">费用报销单-新增</span></div>
     <div class="section-bar">
       <span data-action="section">基本信息</span>
       <span data-action="section">付款信息</span>
       <span data-action="section">明细信息</span>
       <span data-action="section">收票信息</span>
+      <!-- The ERP's own blocking overlay while a form opens (`kd-ui-blockingExtention-item`): it covers the top
+           bar, so a section anchor's point answers IT and the navigation click is swallowed. Hidden unless
+           `sectionOverlayTicks` puts it up. -->
+      <div id="form-blocker" class="kd-ui-blockingExtention-item" style="display:none"></div>
     </div>
     <div class="form-toolbar"><span class="kd-btn" data-action="save">保存</span></div>
     <div class="header-fields">
-      <div class="kd-field"><label>单据编号</label><input id="{{UUID}}-FBILLNO-EDITOR" readonly value=""></div>
-      <div class="kd-field"><label>事由</label><input id="{{UUID}}-FCAUSA-EDITOR" value=""></div>
+      <!-- One header field is TWO nodes carrying the form prefix: the field wrapper `<uuid>-<key>` and the
+           `<uuid>-<key>-EDITOR` control inside it. Measured live 2026-09-19 on FCAUSA: visibleNodes 2 under the one
+           form instance 9484004c-…. The fixture used to render the EDITOR alone, so a locator that counted nodes
+           instead of form instances passed here and refused every header field on the real page. -->
+      <div class="kd-field"><label>单据编号</label><div id="{{UUID}}-FBILLNO"><input id="{{UUID}}-FBILLNO-EDITOR" readonly value=""></div></div>
+      <div class="kd-field"><label>事由</label><div id="{{UUID}}-FCAUSA"><input id="{{UUID}}-FCAUSA-EDITOR" value=""></div></div>
     </div>
     <div class="detail-toolbar"><a id="{{UUID}}-FEXPENSEENTRY_ENTRYBAR-tbNewList" data-action="new-row">新增行</a></div>
     <div class="kd-grid-panel" data-grid="detail">
@@ -50,7 +70,12 @@
     </div>
     <div class="receipt-toolbar">
       <div id="{{UUID}}-FRECINVINFO_ENTRYBAR-tbReceiveInv_wrapper"><a class="k-button">选择发票</a><a class="k-button k-split-button-arrow" data-action="split-arrow"><span class="k-icon k-i-arrow-s"></span></a></div>
-      <a id="{{UUID}}-FRECINVINFO_ENTRYBAR-tbNotFillEntry" class="kdmenuitem" data-action="not-fill-entry" style="display:none">不生成费用明细</a>
+      <!-- The 选择发票 split menu holds THREE adjacent items live (measured 2026-09-19); only the last one leaves
+           the 费用明细 grid alone. Their order and captions are the live ones, so a click that lands one item
+           off lands where it lands live. -->
+      <a id="{{UUID}}-FRECINVINFO_ENTRYBAR-tbMergeFillEntry" class="kdmenuitem" data-action="fill-entry" data-mode="合并生成费用明细" style="display:none">合并生成费用明细</a>
+      <a id="{{UUID}}-FRECINVINFO_ENTRYBAR-tbMappingFillEntry" class="kdmenuitem" data-action="fill-entry" data-mode="不合并生成费用明细" style="display:none">不合并生成费用明细</a>
+      <a id="{{UUID}}-FRECINVINFO_ENTRYBAR-tbNotFillEntry" class="kdmenuitem" data-action="fill-entry" data-mode="不生成费用明细" style="display:none">不生成费用明细</a>
     </div>
     <div class="kd-grid-panel" data-grid="receipts">
       <table>
@@ -63,13 +88,32 @@
       </table>
     </div>
   </div>
+  </div>
   <div class="k-window" id="assistant-window" style="display:none">
     <span class="k-window-title">发票无忧助手</span>
     <a aria-label="Close" data-action="close-window">×</a>
   </div>
+  <!-- ERP's answer to 发票导入单据: one line per invoice, with a summary. Measured live 2026-09-19; it floats over
+       the form (z-index 10005, no 遮罩) until 退出 closes it. -->
+  <div class="k-window" id="result-window" style="display:none">
+    <span class="k-window-title">处理结果</span>
+    <span class="kdmenuitem-content" id="Result-BILLMENU_TOOLBAR-tbExit" data-action="close-window">退出</span>
+    <span class="k-window-message"></span>
+  </div>
   <div class="k-window" id="message-window" style="display:none">
     <span class="k-window-title">提示</span>
     <span class="k-window-message"></span>
+  </div>
+  <!-- ERP raises this one BY ITSELF once the session has sat idle, with a `k-overlay` under it that covers the
+       header strip. Measured live 2026-09-20: a `k-widget k-window` titled 金蝶提示, and EXACTLY two buttons.
+       继续退出 signs the session out; 不退出 keeps it. Nobody is at the machine on an unattended run, so it is
+       still up when the next click is attempted, and the hit test refuses every point under the overlay —
+       which is how two runs (2026-09-19, 2026-09-20) both died at 打开空白报销单 naming a DIV at x=96 y=61. -->
+  <div class="k-widget k-window" id="idle-window" style="display:none">
+    <span class="k-window-title">金蝶提示</span>
+    <span class="k-window-message">系统闲置时间过长，即将自动退出，请确认是否退出？</span>
+    <button class="k-button" data-action="sign-out">继续退出</button>
+    <button class="k-button" data-action="stay-signed-in">不退出</button>
   </div>
 </div>
 </body>

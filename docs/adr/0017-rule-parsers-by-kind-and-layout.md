@@ -19,6 +19,10 @@ With no model in the loop, rule parsers and the user are the only producers of �
   - **Evidence.** Evidence refs carry `materialId`, page, text-observation ids and visible text. The OCR score stays on the text observation; candidates carry no confidence.
   - **Segments.** Segment slots are keyed `segments[i].<field>`. A re-parse that changes the segment count makes segment-keyed answers stale.
 - **QR.** On a 全电发票 the QR code is a second evidence source, `rule:vat_invoice/einvoice_qr`, which yields the invoice number, issue date, total including tax, and 专票/普票 (special or ordinary VAT invoice). A mismatch with the face is #20's `conflict`. An undecodable QR is advisory.
+
+  *Amended 2026-09-19.* **The QR judges nothing.** It stays a source — it fills a field the face did not give, and the face wins wherever both speak — but a disagreement between the two is an advisory note and raises no 待确认项. #20's `conflict` finding kind is removed with its only producer; `qr_differs` replaces it.
+
+  Two things decided this. The 二维码 on a 数电票 is not an authority the business treats as one, so a mismatch is not evidence against the face. And the check had just produced six false alarms in a row: `decodeRaster`'s `ImageData` shim installed a class on `globalThis` whose field initialisers closed over the arguments of the call that created it, so every image after the first in a process decoded as the first one. Six 高德打车 invoices reported a seventh one's QR and 「二维码与票面不一致」 each time. That bug is fixed (`qr.test.ts` reads two documents in one process, the shape the parse worker actually runs in), and this amendment stands on its own regardless: the check was costing the user blocking items it could never let them resolve — the only action a QR conflict ever offered was 排除.
 - **Parser outcomes.** A parser returns `recognised | unrecognised | failed{retryable}`. These replace `needs_model_vision` in `50931a3:packages/image-field-extraction`:
   - `unsupported_document` and `insufficient_evidence` become `unrecognised`;
   - `ocr_failed` becomes a retryable `failed`;

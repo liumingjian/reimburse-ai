@@ -1,5 +1,7 @@
 # 去报销 ends at a filled form; the employee clicks 保存
 
+状态（2026-09-20）：本 ADR 对**有人值守**的流程仍然成立；**无人值守**的流程已由 [ADR-0029](0029-baox-drafts-the-bill-and-may-delete-its-own-drafts.md) 取代——那条路径继续走到 暂存，并授权 baox 删除它自己创建的暂存单。下文「baox never clicks 保存」「一次真跑不留下任何要清理的东西」等表述，只在有人值守的路径上读。
+
 Until now the terminal state of 去报销 was a **saved** ERP draft: baox imported, filled, clicked 保存, and
 handed over a 单据编号. The user's decision on 2026-09-19 moves the line one step earlier — **baox never clicks
 保存**. The run ends with a filled, strictly read-back, unsaved 费用报销单, and the employee commits it.

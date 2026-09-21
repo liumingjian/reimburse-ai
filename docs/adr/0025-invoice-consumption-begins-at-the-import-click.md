@@ -41,6 +41,10 @@ propagated.
   consumption boundary, deliberately: giving the irreversible step its own function turns "the rehearsal must
   never call it" into something an oxlint boundary rule and a test can hold, rather than a comment someone
   eventually ignores.
+  *Implemented 2026-09-19* as `uploadInvoices` / `importInvoices`, with `attempt_started` moved into the seam
+  between them. Until then the attempt was recorded when the assistant opened, which is earlier than this ADR
+  asks for: a run that failed while uploading — consuming nothing — was still recorded as having written to the
+  ERP, and the task it belonged to could never be 作废 again. The oxlint boundary rule named here is still to do.
 - **收票占用 is persisted before the import click**, not after it — the same discipline `attempt_started`
   already follows in ADR-0016. If the run dies mid-import the invoice is still recorded as consumed. The error
   direction is conservative: wrongly retiring a free invoice costs one invoice, while wrongly believing a

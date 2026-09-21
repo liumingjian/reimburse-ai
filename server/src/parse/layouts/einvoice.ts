@@ -318,21 +318,26 @@ export const einvoice: Layout = {
       findings.push({ kind: 'validation', code: 'total_not_conserved', message: `不含税金额 ${money(net)} + 税额 ${money(tax)} ≠ 价税合计 ${money(gross)}。` });
     }
 
-    // The QR code: a second source for number, date, 价税合计 and 票种. Undecodable is advisory only.
+    // The QR code: a second source for number, date, 价税合计 and 票种 — and never a judge of the face (ADR-0017,
+    // amended). It fills a field the face did not give, because the face wins wherever both speak. Where the two
+    // disagree, that is a note and nothing else: it raises no 待确认项 and blocks nothing. Undecodable is a note too.
     const qr = doc.codes.map(readQr).find((values) => values !== null) ?? null;
     if (!qr) {
       findings.push({ kind: 'advisory', code: 'qr_unreadable', message: '二维码无法识读，仅作提示：以 PDF 文本层为准' });
     } else {
       const face = new Map(candidates.map((c) => [c.key, c.value]));
       const agreed: string[] = [];
+      const differed: string[] = [];
       for (const [key, value] of Object.entries(qr)) {
         candidates.push({ key, value, source: QR_SOURCE, parserVersion: VERSION, evidence: 'explicit', refs: [] });
         const text = face.get(key);
         if (text === undefined) continue;
-        if (text === value) agreed.push(FIELD_LABELS[key] ?? key);
-        else findings.push({ kind: 'conflict', key, values: [{ source: SOURCE, value: text }, { source: QR_SOURCE, value }] });
+        const label = FIELD_LABELS[key] ?? key;
+        if (text === value) agreed.push(label);
+        else differed.push(`${label} 票面 ${text}，二维码 ${value}`);
       }
-      if (!findings.some((f) => f.kind === 'conflict')) findings.push({ kind: 'advisory', code: 'qr_match', message: `二维码核对一致：${agreed.join('、')}` });
+      if (differed.length > 0) findings.push({ kind: 'advisory', code: 'qr_differs', message: `二维码与票面不一致，仅作提示，以票面为准：${differed.join('；')}` });
+      else findings.push({ kind: 'advisory', code: 'qr_match', message: `二维码核对一致：${agreed.join('、')}` });
     }
 
     return { kindLabel: type ? `全电发票（${type}）` : '全电发票', candidates, findings };
