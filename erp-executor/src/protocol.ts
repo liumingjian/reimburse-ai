@@ -3,7 +3,8 @@
 // The server sends one plan per job; the executor answers with events. Two events wait for a server reply:
 //   - `attempt_started`: the executor must not mutate ERP until the server has persisted the attempt;
 //   - `readback`: the server owns judgement, so it answers each raw read-back with a verdict.
-// The executor imports only this file from outside `executor/`; a lint rule enforces it.
+// This file and the executor ship together in @baox/erp-executor, so a second consumer — the 浏览器扩展 (browser
+// extension) — speaks the protocol without importing the server. A lint rule keeps the package off the server.
 
 import { createHash } from 'node:crypto';
 import { z } from 'zod';

@@ -4,9 +4,9 @@
 // `probe-login.ts` finds no login form to fill; this walks the tab back to a page that has one. Presses no toolbar
 // command and opens no bill.
 //   pnpm --filter @baox/server exec tsx scripts/probe-nav.ts [url]
-import { connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { sleep } from '../src/erp/executor/pace';
+import { connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { sleep } from '@baox/erp-executor/pace';
 
 const target = process.argv[2] ?? 'http://erp.antute.com.cn/k3cloud/html5/index.aspx';
 const WHERE = `JSON.stringify({ url: location.href.slice(0, 110), title: document.title,

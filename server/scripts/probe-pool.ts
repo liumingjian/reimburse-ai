@@ -5,9 +5,9 @@
 // Closes the assistant, closes the spent 费用报销单-新增 tab, opens a fresh form and a fresh assistant, walks to the
 // upload view and counts the rows it finds. Uploads nothing and imports nothing.
 
-import { autoAttach, clickAt, connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { closeInvoiceAssistant, openInvoiceAssistant, openNewReimbursement, type WritePage } from '../src/erp/executor/steps';
+import { autoAttach, clickAt, connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { closeInvoiceAssistant, openInvoiceAssistant, openNewReimbursement, type WritePage } from '@baox/erp-executor/steps';
 
 const VIS = `(n) => { const b = n.getBoundingClientRect(); const s = getComputedStyle(n);
   return b.width > 0 && b.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; }`;

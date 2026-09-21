@@ -1,14 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { blobPath } from '../data-dir';
-import { cdpBrowser, ensureChromium } from './executor/browser';
-import { cdpPortOf } from './executor/chromium';
-import { runFillJob } from './executor/job';
-import { erpEntryOf } from './executor/probe';
-import { runReconcileJob } from './executor/reconcile-job';
+import { cdpBrowser, ensureChromium } from '@baox/erp-executor/browser';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { runFillJob } from '@baox/erp-executor/job';
+import { erpEntryOf } from '@baox/erp-executor/probe';
+import { runReconcileJob } from '@baox/erp-executor/reconcile-job';
 import type { FillExecutor } from './fill-jobs';
 import type { ReconcileExecutor } from './reconcile-job';
-import type { BlobSource } from './protocol';
+import type { BlobSource } from '@baox/erp-executor/protocol';
 
 // The v1 executor: in process, on the dedicated Chromium profile under the data directory (ADR-0016).
 // `BAOX_CHROMIUM_CDP_PORT` (default 9333) picks the CDP port; `BAOX_ERP_CHROMIUM=off` never starts a browser (e2e),

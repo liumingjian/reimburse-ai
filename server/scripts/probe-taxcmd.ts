@@ -15,8 +15,8 @@
 //
 // This script only LOOKS. It clicks nothing, types nothing, saves nothing.
 //   pnpm --filter @baox/server exec tsx scripts/probe-taxcmd.ts
-import { connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
+import { connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
 
 const DUMP = `(() => {
   const vis = (n) => {

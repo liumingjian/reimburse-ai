@@ -10,7 +10,7 @@ import type { Db } from '../db/database';
 import type { ErpLease } from '../erp-lease';
 import { taskJudge, type FrozenJob } from './fill-plan';
 import { writeAttempt, writeEvent } from './jobs';
-import { ExecutorEventSchema, type ErpAccount, type ExecutorChannel, type ExecutorEvent, type FillPlan, type ResultEvent } from './protocol';
+import { ExecutorEventSchema, type ErpAccount, type ExecutorChannel, type ExecutorEvent, type FillPlan, type ResultEvent } from '@baox/erp-executor/protocol';
 
 // What started this run of the fill job, recorded on `erp_job.trigger` so the audit trail can tell them apart:
 // `start` is 去报销, `confirm_login` is 我已登录，继续, `refill` is 重新去报销 (the recovery after an import that was

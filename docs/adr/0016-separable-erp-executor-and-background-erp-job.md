@@ -40,7 +40,7 @@ The new baox local app runs 去报销 (fill ERP) as a long background job: the p
   - The v1 executor stages them in a temp dir for `DOM.setFileInputFiles`. How V2 injects files is left to V2.
 - **Code boundary.**
   - `server/src/erp/`, split into `protocol.ts` (zod plan and event types), `jobs.ts` (persists events), and `executor/`, which a lint rule forbids from importing the rest of `server/`.
-  - It becomes a root package only when the V2 extension becomes its second consumer.
+  - It becomes a root package only when the V2 extension becomes its second consumer. **Done (#248, 2026-09-21):** `executor/`, `protocol.ts` and `invoice-type.ts` are now the root package `erp-executor/` (`@baox/erp-executor`), which `server/` depends on; the lint rule became a package rule and forbids importing the server.
 - **Port scope beyond the old code.**
   - Per-action attempts replace the two-value `erpWriteState`.
   - Grids are always located by header label.

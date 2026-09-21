@@ -4,8 +4,8 @@
 // names the cover so the refusal can be turned into something a headless run can clear.
 //   pnpm --filter @baox/server exec tsx scripts/probe-cover.ts
 // Read-only: what sits on ERP's main-menu landing point. Clicks nothing, writes nothing.
-import { connect, enableFocusEmulation, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
+import { connect, enableFocusEmulation, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
 const erp = (await targets(cdpPortOf())).find((t) => t.type === 'page' && String(t.url).includes('erp.antute.com.cn'));
 if (!erp) { console.error('no ERP page open'); process.exit(1); }
 const session = await connect(erp.webSocketDebuggerUrl!);

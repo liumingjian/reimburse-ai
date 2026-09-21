@@ -7,9 +7,9 @@
 // how to tell which. URLs are printed without their query so K3Cloud's `_cnneptstate_` session state is never logged.
 
 import { erpConfigFromEnv } from '../src/erp/config';
-import { connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf, safeUrl } from '../src/erp/executor/chromium';
-import { COMPATIBILITY_SNIPPET } from '../src/erp/executor/probe';
+import { connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf, safeUrl } from '@baox/erp-executor/chromium';
+import { COMPATIBILITY_SNIPPET } from '@baox/erp-executor/probe';
 
 const config = erpConfigFromEnv();
 const expected = config.compatibility;

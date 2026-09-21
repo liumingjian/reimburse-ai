@@ -14,6 +14,9 @@
 // leaves the detail row's 收票单号 empty, while the strict read-back requires it. With the flag on, committing 税额
 // links the row to the unique receipt with the same net and tax, so the save path can be exercised end to end.
 
+// The server compiles this file from outside the package, and its tsconfig `include` does not reach the ambient
+// jsdom declaration next door, so name it here.
+/// <reference path="./jsdom.d.ts" />
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';

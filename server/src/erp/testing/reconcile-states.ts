@@ -2,10 +2,10 @@
 // and stops it at one point, leaving the form as a crash there would. The kernel golden
 // (reconcile-parity.golden.json) was recorded from the same states.
 
-import { runFillJob } from '../executor/job';
-import { createFakeErp, type FakeErp } from '../executor/testing/fake-erp';
+import { runFillJob } from '@baox/erp-executor/job';
+import { createFakeErp, type FakeErp } from '@baox/erp-executor/testing/fake-erp';
 import { createDraftJudge } from '../judge';
-import type { ApprovedPreview, ExecutorChannel, ExecutorEvent, Mutation, ResultEvent } from '../protocol';
+import type { ApprovedPreview, ExecutorChannel, ExecutorEvent, Mutation, ResultEvent } from '@baox/erp-executor/protocol';
 import { blobSource, FAST_PACE, fakeErpOptions, fillPlan, judgeInputs } from './scenario';
 
 export const RECONCILE_STATES = [

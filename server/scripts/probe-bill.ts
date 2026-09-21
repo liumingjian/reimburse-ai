@@ -17,10 +17,10 @@
 //   tsx scripts/probe-bill.ts ids <id-regex>          the form's own controls by id (制单人, 单据状态, …)
 //   tsx scripts/probe-bill.ts query <fields> <filter> [formId]   ExecuteBillQuery, read-only (ADR-0008)
 //   tsx scripts/probe-bill.ts list-toolbar FYBX...    what the list toolbar offers with that row selected
-import { clickAt, connect, evalIn, targets, type CdpSession } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { sleep, waitFor } from '../src/erp/executor/pace';
-import { queryRows } from '../src/erp/executor/catalog';
+import { clickAt, connect, evalIn, targets, type CdpSession } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { sleep, waitFor } from '@baox/erp-executor/pace';
+import { queryRows } from '@baox/erp-executor/catalog';
 
 const VIS = `(n) => { const b = n.getBoundingClientRect(); const s = getComputedStyle(n); return b.width > 0 && b.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; }`;
 const TXT = `(n) => String(n.textContent || '').replace(/\\s+/g, ' ').trim()`;

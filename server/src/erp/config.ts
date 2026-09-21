@@ -1,5 +1,5 @@
-import { DEFAULT_ERP_ORIGIN } from './executor/probe';
-import type { Compatibility } from './protocol';
+import { DEFAULT_ERP_ORIGIN } from '@baox/erp-executor/probe';
+import type { Compatibility } from '@baox/erp-executor/protocol';
 
 // Where the fill job writes and which ERP build it may write to. The compatibility fingerprint aborts a job before
 // any attempt when ERP was upgraded under us (ADR-0016).

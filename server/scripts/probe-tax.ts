@@ -9,11 +9,11 @@
 // Unlike `probe-money.ts` this resets the row between trials, so no trial inherits the one before it. It writes
 // only 费用金额, never 税额, on an UNSAVED 新增; it saves nothing, imports nothing and deletes nothing.
 //   pnpm --filter @baox/server exec tsx scripts/probe-tax.ts
-import { autoAttach, connect, enableFocusEmulation, evalIn, pressKey, targets, type CdpSession } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { leaveEdit, readGridByColumn, showSection, writeCell } from '../src/erp/executor/erpform';
-import { addDetailRow, openNewReimbursement, type WritePage } from '../src/erp/executor/steps';
-import { sleep } from '../src/erp/executor/pace';
+import { autoAttach, connect, enableFocusEmulation, evalIn, pressKey, targets, type CdpSession } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { leaveEdit, readGridByColumn, showSection, writeCell } from '@baox/erp-executor/erpform';
+import { addDetailRow, openNewReimbursement, type WritePage } from '@baox/erp-executor/steps';
+import { sleep } from '@baox/erp-executor/pace';
 
 const ROW = 0;
 const NET = '费用金额';

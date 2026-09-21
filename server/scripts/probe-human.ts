@@ -11,10 +11,10 @@
 //
 // Writes only into 费用金额/税额 of one row on an UNSAVED 新增. Saves nothing, imports nothing, deletes nothing.
 //   pnpm --filter @baox/server exec tsx scripts/probe-human.ts [--blur]
-import { autoAttach, clickAt, connect, enableFocusEmulation, evalIn, pressKey, selectAll, targets, typeText, type CdpSession } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { cellTarget, readGridByColumn, settleGrid, writeCell } from '../src/erp/executor/erpform';
-import { sleep } from '../src/erp/executor/pace';
+import { autoAttach, clickAt, connect, enableFocusEmulation, evalIn, pressKey, selectAll, targets, typeText, type CdpSession } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { cellTarget, readGridByColumn, settleGrid, writeCell } from '@baox/erp-executor/erpform';
+import { sleep } from '@baox/erp-executor/pace';
 
 const ROW = 0;
 const NET = '费用金额';

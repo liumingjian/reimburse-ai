@@ -8,7 +8,7 @@
 import type { Db } from '../db/database';
 import type { RecordFacts } from './fill-jobs';
 import { writeEvent } from './jobs';
-import type { ResultEvent } from './protocol';
+import type { ResultEvent } from '@baox/erp-executor/protocol';
 
 export const RESTART_CODE = 'server_restart';
 const AFTER_ATTEMPT = '应用在写入报销系统的过程中停止了（重启或崩溃），写入结果不确定。应用不会重放任何写入，请对账。';

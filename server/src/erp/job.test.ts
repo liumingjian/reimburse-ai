@@ -7,13 +7,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../db/database';
 import { createTaskService } from '../tasks';
 import { createTestServer, type TestServer } from '../test/harness';
-import { runFillJob } from './executor/job';
-import { writeHeader } from './executor/erpform';
-import { addDetailRow, captureErpError, importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type ImportBudget, type WritePage } from './executor/steps';
-import { createFakeErp, type FakeErp } from './executor/testing/fake-erp';
+import { runFillJob } from '@baox/erp-executor/job';
+import { writeHeader } from '@baox/erp-executor/erpform';
+import { addDetailRow, captureErpError, importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type ImportBudget, type WritePage } from '@baox/erp-executor/steps';
+import { createFakeErp, type FakeErp } from '@baox/erp-executor/testing/fake-erp';
 import { createErpJobs, serverChannel, type ErpJobs } from './jobs';
 import { createDraftJudge } from './judge';
-import type { ExecutorChannel, ExecutorEvent } from './protocol';
+import type { ExecutorChannel, ExecutorEvent } from '@baox/erp-executor/protocol';
 import { driveTo } from './testing/reconcile-states';
 import { blobSource, FAST_PACE, fakeErpOptions, fillPlan, INVOICES, judgeInputs } from './testing/scenario';
 

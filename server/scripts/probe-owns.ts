@@ -4,10 +4,10 @@
 // aria-expanded="true" while `selectOption`'s `ul[class*=k-list] li` selector found nothing visible — so the
 // list it owns is not the one that selector reaches.
 //   pnpm --filter @baox/server exec tsx scripts/probe-owns.ts
-import { clickAt, connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { cellTarget } from '../src/erp/executor/erpform';
-import { sleep } from '../src/erp/executor/pace';
+import { clickAt, connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { cellTarget } from '@baox/erp-executor/erpform';
+import { sleep } from '@baox/erp-executor/pace';
 
 const COLUMN = '发票类型';
 const ROW = 0;
