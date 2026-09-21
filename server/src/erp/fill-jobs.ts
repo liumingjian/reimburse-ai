@@ -2,7 +2,7 @@
 // protocol, makes every executor event a fact of the task (appended and published in one revision), acknowledges
 // `attempt_started` only once its row is durable, and answers read-backs with the server's judge.
 //
-// The global ERP lease is acquired by the action that starts the run (`tasks.ts`) and released here on every result:
+// The account's ERP lease is acquired by the action that starts the run (`tasks.ts`) and released here on every result:
 // login wait, abort, catalog mismatch, error and done.
 
 import { randomUUID } from 'node:crypto';

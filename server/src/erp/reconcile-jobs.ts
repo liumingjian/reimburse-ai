@@ -2,7 +2,7 @@
 // executor, makes each of its events a fact of the task (one revision + SSE each), and acknowledges its read-back
 // without judging it live: the bucket is derived from the persisted log (`fill-state.ts`).
 //
-// The global ERP lease is acquired by the `reconcile` action (`tasks.ts`) and released here on the result.
+// The account's ERP lease is acquired by the `reconcile` action (`tasks.ts`) and released here on the result.
 
 import type { Db } from '../db/database';
 import type { ErpLease } from '../erp-lease';

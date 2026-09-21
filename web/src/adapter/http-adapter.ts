@@ -183,7 +183,7 @@ export function parseActionResponse(status: number, body: unknown): ActionOutcom
   }
   const failure = ActionFailureSchema.safeParse(body);
   if (status === STALE_STEP_HTTP_STATUS) {
-    // 报销系统正被另一个任务使用（全局 ERP 租约）是唯一保留原错误码的 409：它不是过期凭据，页面就地显示原因。
+    // 报销系统正被另一个任务使用（本账号的 ERP 租约）是唯一保留原错误码的 409：它不是过期凭据，页面就地显示原因。
     if (failure.success && failure.data.error.code === ERP_IN_USE_CODE) return { ok: false, error: failure.data.error, snapshot: failure.data.snapshot ?? null };
     // 过期凭据：不论服务端写的错误码是什么，都按 stale_step 处理；没带快照时由仓库重新拉取。
     const snapshot = failure.success ? (failure.data.snapshot ?? null) : null;
