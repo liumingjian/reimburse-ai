@@ -576,6 +576,29 @@ const refillTrigger242: Migration = {
   },
 };
 
+// #252: 扩展配对 (extension pairing, ADR-0019). One row per 应用账号 — `account_id` is the primary key, so a new
+// 配对码 replacing the old one is a plain row replacement and there can never be two live pairings for an account.
+// The extension holds a random 配对码 and later a random token; only their sha256 is stored, the way a session is.
+// The token index is unique (32 random bytes never collide); the code index is not, so an astronomically unlikely
+// collision between two accounts' ten-minute codes refuses a redemption rather than failing an insert.
+const extensionPairing252: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('extension_pairing')
+      .addColumn('account_id', 'text', (c) => c.primaryKey().references('account.account_id'))
+      .addColumn('code_sha256', 'text')
+      .addColumn('code_expires_at', 'text')
+      .addColumn('token_sha256', 'text')
+      .addColumn('browser', 'text')
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .addColumn('paired_at', 'text')
+      .addColumn('last_connected_at', 'text')
+      .execute();
+    await db.schema.createIndex('extension_pairing_token').unique().on('extension_pairing').column('token_sha256').execute();
+    await db.schema.createIndex('extension_pairing_code').on('extension_pairing').column('code_sha256').execute();
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -597,4 +620,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0012_220_project_edit': projectEdit220,
   '0013_222_account_approval': accountApproval222,
   '0014_242_refill_trigger': refillTrigger242,
+  '0015_252_extension_pairing': extensionPairing252,
 };

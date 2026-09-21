@@ -18,6 +18,9 @@ import {
   type Session,
   type TaskListOutcome,
   type Unsubscribe,
+  ExtensionPairingSchema,
+  type ExtensionPairing,
+  type ExtensionPairingOutcome,
   LegacyImportSchema,
   type LegacyImport,
   type LegacyImportOutcome,
@@ -68,6 +71,13 @@ export type LegacyImportState = {
   readonly error: string | null;
 };
 
+// 扩展配对（ADR-0019）：只在打开设置页时读取；之后由生成配对码 / 撤销配对的结果替换。
+export type ExtensionPairingState = {
+  readonly status: LoadStatus;
+  readonly data: ExtensionPairing | null;
+  readonly error: string | null;
+};
+
 // 管理员页的账号列表：只在打开管理页时读取；之后由账号更新的结果替换。
 export type AccountsState = {
   readonly status: LoadStatus;
@@ -89,6 +99,7 @@ export type AppState = {
   readonly publicBook: ProjectBookState;
   readonly accounts: AccountsState;
   readonly legacyImport: LegacyImportState;
+  readonly extensionPairing: ExtensionPairingState;
   readonly tasks: Readonly<Record<string, TaskEntry>>;
   readonly connection: ConnectionState;
 };
@@ -102,6 +113,7 @@ const INITIAL_STATE: AppState = {
   publicBook: { status: 'idle', data: null, error: null },
   accounts: { status: 'idle', data: null, error: null },
   legacyImport: { status: 'idle', data: null, error: null },
+  extensionPairing: { status: 'idle', data: null, error: null },
   tasks: {},
   connection: 'connected',
 };
@@ -187,7 +199,7 @@ export class AppStore {
     this.subscriptions.clear();
     this.invalidateBookRead('personal');
     this.invalidateBookRead('public');
-    this.setState({ taskList: INITIAL_STATE.taskList, projectBook: INITIAL_STATE.projectBook, publicBook: INITIAL_STATE.publicBook, accounts: INITIAL_STATE.accounts, legacyImport: INITIAL_STATE.legacyImport, tasks: {} });
+    this.setState({ taskList: INITIAL_STATE.taskList, projectBook: INITIAL_STATE.projectBook, publicBook: INITIAL_STATE.publicBook, accounts: INITIAL_STATE.accounts, legacyImport: INITIAL_STATE.legacyImport, extensionPairing: INITIAL_STATE.extensionPairing, tasks: {} });
   }
 
   // 任务列表是请求/响应（没有事件流）。连接类失败时保留 offline 标记（全页横幅）并按退避自动重试；恢复后横幅消失、列表出现。
@@ -307,6 +319,37 @@ export class AppStore {
       this.setState({ accounts: { status: 'error', data: this.state.accounts.data, error: describe(error) } });
       if (isUnauthenticated(error)) this.sessionLost();
     }
+  }
+
+  // 扩展配对：只在设置页用到，第一次用到时读取。
+  async loadExtensionPairing(): Promise<void> {
+    const previous = this.state.extensionPairing;
+    this.setState({ extensionPairing: { status: 'loading', data: previous.data, error: null } });
+    try {
+      const raw = await this.adapter.getExtensionPairing();
+      const data = this.options.validate ? ExtensionPairingSchema.parse(raw) : raw;
+      this.setState({ extensionPairing: { status: 'ready', data, error: null } });
+    } catch (error) {
+      this.setState({ extensionPairing: { status: 'error', data: this.state.extensionPairing.data, error: describe(error) } });
+      if (isUnauthenticated(error)) this.sessionLost();
+    }
+  }
+
+  // 生成配对码 / 撤销配对：结果里的配对情况直接替换当前的。刚生成的那一串只在这一份里出现，
+  // 之后任何一次读取都不会再带上它。
+  async extensionPairingAction(run: (adapter: AppAdapter) => Promise<ExtensionPairingOutcome>): Promise<ExtensionPairingOutcome> {
+    let outcome: ExtensionPairingOutcome;
+    let data: ExtensionPairing | null;
+    try {
+      outcome = await run(this.adapter);
+      const raw = outcome.pairing;
+      data = raw && this.options.validate ? ExtensionPairingSchema.parse(raw) : raw;
+    } catch (error) {
+      return { ok: false, error: { code: 'adapter_error', message: describe(error) }, pairing: null };
+    }
+    if (data) this.setState({ extensionPairing: { status: 'ready', data, error: null } });
+    if (!outcome.ok) this.checkSession(outcome.error);
+    return outcome;
   }
 
   // 旧数据导入：只在设置页用到，第一次用到时读取。

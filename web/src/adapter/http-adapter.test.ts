@@ -24,13 +24,14 @@ import {
 const wire = <T,>(value: T): unknown => JSON.parse(JSON.stringify(value));
 
 describe('端点表', () => {
-  test('动作端点与 ACTION_NAMES 一一对应，任务类路径都在 /api/tasks 下，账号在 /api/session 与 /api/auth 下，项目簿在 /api/project-book 下，旧数据导入在 /api/legacy-import 下', () => {
+  test('动作端点与 ACTION_NAMES 一一对应，任务类路径都在 /api/tasks 下，账号在 /api/session 与 /api/auth 下，项目簿在 /api/project-book 下，旧数据导入在 /api/legacy-import 下，扩展配对在 /api/extension/pairing 下', () => {
     expect([...endpointActionNames()].sort()).toEqual([...ACTION_NAMES].sort());
     const book = new Set(['getProjectBook', 'intakeProject', 'editProject', 'deactivateProject', 'restoreProject', 'deleteProject']);
     const auth = new Set(['setupAdmin', 'register', 'login', 'logout', 'changePassword']);
     const admin = new Set(['listAccounts', 'updateAccount']);
     const publicBook = new Set(['getPublicProjectBook', 'intakePublicProject', 'editPublicProject', 'confirmPublicProjectConversion', 'deactivatePublicProject', 'restorePublicProject', 'deletePublicProject']);
     const legacy = new Set(['getLegacyImport', 'retryLegacyImport', 'skipLegacyImport']);
+    const extension = new Set(['getExtensionPairing', 'createExtensionPairingCode', 'revokeExtensionPairing']);
     for (const [name, endpoint] of Object.entries(HTTP_ENDPOINTS)) {
       const prefix =
         name === 'getSession'
@@ -47,7 +48,9 @@ describe('端点表', () => {
                     ? '/api/public-project-book'
                     : legacy.has(name)
                       ? '/api/legacy-import'
-                      : '/api/tasks';
+                      : extension.has(name)
+                        ? '/api/extension/pairing'
+                        : '/api/tasks';
       expect(endpoint.path.startsWith(prefix), name).toBe(true);
     }
     expect(HTTP_ENDPOINTS.uploadBatch.body).toBe('multipart');

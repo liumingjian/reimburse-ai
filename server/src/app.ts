@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { ADMIN_ERRORS, AssignProjectLinesInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, FORBIDDEN_CODE, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
+import { ADMIN_ERRORS, AssignProjectLinesInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, EXTENSION_PAIR_PATH, FORBIDDEN_CODE, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
 import { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -18,6 +18,8 @@ import { recoverErpJobs } from './erp/recovery';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
+import { mountExtensionPairRoutes, mountPairingRoutes } from './extension/http';
+import { createPairingService } from './extension/pairing';
 import { createLegacyImport, LegacyImportRefusal } from './legacy/import';
 import { unavailableCatalog, type ProjectCatalog } from './catalog/project-catalog';
 import type { PublicOrigin } from './public-origin';
@@ -131,12 +133,17 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   const forbidden = (c: Context) => failure(c, 403, FORBIDDEN_HOST_CODE, publicOrigin ? NOT_THIS_ADDRESS : NOT_LOCAL);
   const admitsHost = (host: string) => (publicOrigin ? host.toLowerCase() === publicOrigin.host : isLocalHost(host));
   const admitsOrigin = (origin: string) => (publicOrigin ? origin === publicOrigin.origin : isLocalOrigin(origin));
+  // Redeeming a 配对码 is the one write that does not come from this app's page: the extension posts it from its own
+  // `chrome-extension://…` origin (ADR-0019), which the exact-origin check could never admit. It is exempt because
+  // the origin check is a defence for cookie-authorised writes, and this route reads no cookie — the single-use
+  // 配对码 in the body is its whole authority, and a page on another origin has no way to know one. The Host check
+  // still applies to it, so DNS rebinding gains nothing here either.
   app.use('*', async (c, next) => {
     const host = c.req.header('host') ?? new URL(c.req.url).host;
     if (!admitsHost(host)) return forbidden(c);
     const origin = c.req.header('origin');
     // `null` is a sandboxed/opaque origin, never this app's own page.
-    if (WRITE_METHODS.has(c.req.method) && origin !== undefined && !admitsOrigin(origin)) return forbidden(c);
+    if (WRITE_METHODS.has(c.req.method) && origin !== undefined && c.req.path !== EXTENSION_PAIR_PATH && !admitsOrigin(origin)) return forbidden(c);
     await next();
   });
 
@@ -172,8 +179,13 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     },
     secureSession,
   );
+  // 扩展配对 (ADR-0019): the extension's own two routes carry no session and are mounted before the gate, because a
+  // pairing outlives every login. The settings page's routes sit behind it like everything else.
+  const pairings = createPairingService(db, now);
+  mountExtensionPairRoutes(app, pairings);
   app.use('/api/*', requireAccount(accounts, secureSession));
   mountAccountRoutes(app, accounts);
+  mountPairingRoutes(app, pairings);
 
   // Legacy import (旧数据导入) as the signed-in account sees it; only the owner of a failed run may retry or skip.
   app.get('/api/legacy-import', async (c) => c.json(await legacy.view(accountOf(c).accountId)));

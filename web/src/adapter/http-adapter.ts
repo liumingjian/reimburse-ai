@@ -24,6 +24,10 @@ import {
   HTTP_ENDPOINTS,
   SNAPSHOT_EVENT,
   STALE_STEP_HTTP_STATUS,
+  ExtensionPairingFailureSchema,
+  ExtensionPairingSchema,
+  type ExtensionPairing,
+  type ExtensionPairingOutcome,
   LegacyImportFailureSchema,
   LegacyImportSchema,
   type LegacyImport,
@@ -167,6 +171,27 @@ export function parseLegacyImportActionResponse(status: number, body: unknown): 
   return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, legacyImport: null };
 }
 
+// 扩展配对：GET 是读接口（401 抛 UnauthenticatedError）。
+export function parseExtensionPairingResponse(status: number, body: unknown): ExtensionPairing {
+  refuseUnauthenticated(status);
+  if (!isSuccess(status)) throw new Error(`配对情况加载失败（HTTP ${status}）`);
+  const parsed = ExtensionPairingSchema.safeParse(body);
+  if (!parsed.success) throw new Error('配对情况的格式与契约不符');
+  return parsed.data;
+}
+
+// 生成配对码 / 撤销配对：成功是新的配对情况（刚生成的那一串只在这一次出现）；失败只有 { error }。
+export function parseExtensionPairingActionResponse(status: number, body: unknown): ExtensionPairingOutcome {
+  if (isSuccess(status)) {
+    const view = ExtensionPairingSchema.safeParse(body);
+    if (view.success) return { ok: true, pairing: view.data };
+    return { ok: false, error: { code: INVALID_RESPONSE_CODE, message: '服务端返回的配对情况格式与契约不符。' }, pairing: null };
+  }
+  const failure = ExtensionPairingFailureSchema.safeParse(body);
+  if (failure.success) return { ok: false, error: failure.data.error, pairing: null };
+  return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, pairing: null };
+}
+
 export function parseSnapshotResponse(status: number, body: unknown): TaskSnapshot {
   refuseUnauthenticated(status);
   if (!isSuccess(status)) throw new Error(`任务快照加载失败（HTTP ${status}）`);
@@ -269,6 +294,15 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     }
     return parseLegacyImportActionResponse(response.status, await readJson(response));
   }
+  async function pairingAction(target: string): Promise<ExtensionPairingOutcome> {
+    let response: Response;
+    try {
+      response = await fetch(target, { method: 'POST', body: JSON.stringify({}), headers: { 'content-type': 'application/json' } });
+    } catch {
+      return { ok: false, error: { code: NETWORK_ERROR_CODE, message: NETWORK_ERROR_MESSAGE }, pairing: null };
+    }
+    return parseExtensionPairingActionResponse(response.status, await readJson(response));
+  }
   const action = (taskId: string, endpoint: { path: string }, payload: Record<string, unknown>) => json(url(endpoint.path, taskId), payload);
 
   return {
@@ -356,6 +390,17 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     },
     retryLegacyImport: () => legacyImportAction(url(E.retryLegacyImport.path)),
     skipLegacyImport: () => legacyImportAction(url(E.skipLegacyImport.path)),
+    async getExtensionPairing() {
+      let response: Response;
+      try {
+        response = await fetch(url(E.getExtensionPairing.path));
+      } catch {
+        throw new ServiceUnavailableError(NETWORK_ERROR_MESSAGE);
+      }
+      return parseExtensionPairingResponse(response.status, await readJson(response));
+    },
+    createExtensionPairingCode: () => pairingAction(url(E.createExtensionPairingCode.path)),
+    revokeExtensionPairing: () => pairingAction(url(E.revokeExtensionPairing.path)),
     async getSnapshot(taskId) {
       const response = await fetch(url(E.getSnapshot.path, taskId));
       return parseSnapshotResponse(response.status, await readJson(response));

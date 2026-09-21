@@ -1,5 +1,6 @@
 import type { ActionError, AssignProjectLinesInput, CreateTaskInput, PlacementSlot, ProjectAssignmentInput } from './actions';
 import type { AccountList, AccountListOutcome, AccountUpdateInput, AuthOutcome, ChangePasswordInput, CredentialsInput, Session } from './auth';
+import type { ExtensionPairing, ExtensionPairingOutcome } from './extension';
 import type { LegacyImport, LegacyImportOutcome } from './legacy-import';
 import type { ProjectBook, ProjectBookEditInput, ProjectBookIntakeInput, ProjectBookLifecycleInput, ProjectBookResult, PublicProjectConversionInput } from './project-book';
 import type { Corners, PendingAnswer, TaskSnapshot } from './snapshot';
@@ -98,6 +99,11 @@ export interface AppAdapter {
   getLegacyImport(): Promise<LegacyImport>;
   retryLegacyImport(): Promise<LegacyImportOutcome>;
   skipLegacyImport(): Promise<LegacyImportOutcome>;
+  // 扩展配对（ADR-0019）：读这个账号的配对情况；生成配对码（同时让原来的配对失效）；撤销配对。
+  // 配对与登录互不影响：撤销配对不会退出登录，退出登录也不会解除配对。
+  getExtensionPairing(): Promise<ExtensionPairing>;
+  createExtensionPairingCode(): Promise<ExtensionPairingOutcome>;
+  revokeExtensionPairing(): Promise<ExtensionPairingOutcome>;
   getSnapshot(taskId: string): Promise<TaskSnapshot>;
   subscribe(taskId: string, onEvent: (event: AdapterEvent) => void): Unsubscribe;
 

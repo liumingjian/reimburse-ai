@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
-import type { AccountsState, AppState, AppStore, BookScope, LegacyImportState, ProjectBookState, SessionState, TaskEntry, TaskListState } from './store';
+import type { AccountsState, AppState, AppStore, BookScope, ExtensionPairingState, LegacyImportState, ProjectBookState, SessionState, TaskEntry, TaskListState } from './store';
 
 // 适配器经 React Context 注入：页面只认 useAppStore()，换适配器不改页面。
 
@@ -72,6 +72,15 @@ export function useLegacyImport(): LegacyImportState {
     if (state.legacyImport.status === 'idle') void store.loadLegacyImport();
   }, [store, state.legacyImport.status]);
   return state.legacyImport;
+}
+
+export function useExtensionPairing(): ExtensionPairingState {
+  const store = useAppStore();
+  const state = useAppState();
+  useEffect(() => {
+    if (state.extensionPairing.status === 'idle') void store.loadExtensionPairing();
+  }, [store, state.extensionPairing.status]);
+  return state.extensionPairing;
 }
 
 export function useTask(taskId: string): TaskEntry {
