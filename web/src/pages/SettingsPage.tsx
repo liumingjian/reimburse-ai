@@ -135,6 +135,11 @@ export const EXTENSION_PAIRING_COPY = {
   independence: '配对与登录互不影响：撤销配对不会退出登录，退出登录也不会解除配对。',
   status: '状态',
   browser: '浏览器',
+  extensionVersion: '扩展版本',
+  connection: '连接',
+  connected: '已连接',
+  disconnected: '没有连接',
+  disconnectedHint: '扩展没有连上这个应用。请打开那台电脑的浏览器，确认扩展还装着、也在公司网络里；连上之后这里会自动变成已连接。',
   pairedAt: '配对时间',
   lastConnectedAt: '最近连接',
   codeExpiresAt: '配对码有效期至',
@@ -200,6 +205,8 @@ function ExtensionPairingSection() {
               ...(view.status === 'paired'
                 ? [
                     { label: EXTENSION_PAIRING_COPY.browser, value: view.browser ?? <span className="app-muted">{EXTENSION_PAIRING_COPY.unknownBrowser}</span> },
+                    { label: EXTENSION_PAIRING_COPY.extensionVersion, value: view.version ?? <span className="app-muted">{EXTENSION_PAIRING_COPY.unknownBrowser}</span> },
+                    { label: EXTENSION_PAIRING_COPY.connection, value: view.connected ? EXTENSION_PAIRING_COPY.connected : EXTENSION_PAIRING_COPY.disconnected },
                     { label: EXTENSION_PAIRING_COPY.pairedAt, value: view.pairedAt ?? '' },
                     { label: EXTENSION_PAIRING_COPY.lastConnectedAt, value: view.lastConnectedAt ?? <span className="app-muted">{EXTENSION_PAIRING_COPY.neverConnected}</span> },
                   ]
@@ -207,6 +214,7 @@ function ExtensionPairingSection() {
               ...(view.status === 'waiting' && view.codeExpiresAt ? [{ label: EXTENSION_PAIRING_COPY.codeExpiresAt, value: view.codeExpiresAt }] : []),
             ]}
           />
+          {view.status === 'paired' && !view.connected ? <p className="app-caption">{EXTENSION_PAIRING_COPY.disconnectedHint}</p> : null}
           {view.code ? (
             <>
               <InlineNotification kind="success" role="status" lowContrast hideCloseButton statusIconDescription="成功" title={EXTENSION_PAIRING_COPY.code} subtitle={view.code} />

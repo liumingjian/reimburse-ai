@@ -7,6 +7,7 @@ import type { FillExecutor } from './erp/fill-jobs';
 import type { ReconcileExecutor } from './erp/reconcile-job';
 import { acquireDataDirLock, databasePath, ensureDataDir } from './data-dir';
 import { openDatabase, type Db } from './db/database';
+import { attachExtensionChannel } from './extension/websocket';
 import { parsePublicOrigin } from './public-origin';
 
 // Startup order: read the public origin, take the data directory, lock it, migrate, then listen.
@@ -48,10 +49,14 @@ export async function startServer({ dataDir, port, webDist = null, projectCatalo
   const { server, info } = await new Promise<{ server: ReturnType<typeof serve>; info: AddressInfo }>((resolve) => {
     const s = serve({ fetch: app.fetch, hostname: HOST, port }, (address) => resolve({ server: s, info: address }));
   });
+  // The 浏览器扩展 channel shares this listening socket: Hono answers the requests, `ws` answers the upgrades
+  // (`extension/websocket.ts`). Attached after listening so nothing can upgrade before the app exists.
+  const detachExtensionChannel = attachExtensionChannel(server, app.extensionChannel);
   return {
     url: `http://${HOST}:${info.port}`,
     port: info.port,
     async close() {
+      detachExtensionChannel();
       // Open SSE streams would keep the server alive forever.
       if ('closeAllConnections' in server) server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));

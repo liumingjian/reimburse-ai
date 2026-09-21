@@ -599,6 +599,14 @@ const extensionPairing252: Migration = {
   },
 };
 
+// #253: the extension reports its version on pairing and on every connect (ADR-0021). Kept on the pairing row rather
+// than derived from the live connection, so the settings page can still say which version paired after a restart.
+const extensionVersion253: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema.alterTable('extension_pairing').addColumn('version', 'text').execute();
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -621,4 +629,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0013_222_account_approval': accountApproval222,
   '0014_242_refill_trigger': refillTrigger242,
   '0015_252_extension_pairing': extensionPairing252,
+  '0016_253_extension_version': extensionVersion253,
 };

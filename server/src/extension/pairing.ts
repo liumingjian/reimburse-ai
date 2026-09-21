@@ -13,13 +13,17 @@ import type { Db } from '../db/database';
 // One row per 应用账号 (the primary key), so "one active pairing per account" is the table's own shape: issuing a new
 // 配对码 replaces the row, which is what makes the previously paired extension's token stop resolving. Revoking
 // deletes the row and touches no session; a logout deletes a session and touches no row.
+//
+// What is stored is what the settings page can still read after a restart: which browser, when it paired, when it
+// last spoke, which version it reported. Whether it is connected *now* is not storable — it is a live socket
+// (`channel.ts`) — so the view asks for it.
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 
 // No look-alike characters (no I, L, O, 0, 1): the employee reads this off the settings page and types it in.
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
-const NOT_PAIRED: ExtensionPairing = { status: 'none', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt: null, code: null };
+const NOT_PAIRED: ExtensionPairing = { status: 'none', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt: null, connected: false, version: null, code: null };
 
 function generatePairingCode(): string {
   return [...randomBytes(EXTENSION_PAIRING_CODE_LENGTH)].map((byte) => CODE_ALPHABET[byte % CODE_ALPHABET.length]).join('');
@@ -32,7 +36,9 @@ const normalise = (code: string) => code.replace(/[^0-9a-zA-Z]/g, '').toUpperCas
 // telling it apart would confirm a guessed code to whoever guessed it.
 const refuseCode = () => new AuthRefusal(401, 'pairing_code_invalid', EXTENSION_PAIRING_ERRORS.codeInvalid);
 
-export function createPairingService(db: Db, clock: Clock) {
+// `isConnected` is the channel's live view (`channel.ts`). It defaults to "nothing is connected" so a server wired
+// without a channel — every test that only exercises pairing — still answers the contract's shape.
+export function createPairingService(db: Db, clock: Clock, isConnected: (accountId: string) => boolean = () => false) {
   const iso = (date: Date) => date.toISOString();
 
   // `code` is the string just issued, carried through this once; every other caller passes nothing and the employee
@@ -51,6 +57,8 @@ export function createPairingService(db: Db, clock: Clock) {
       pairedAt: row.paired_at,
       lastConnectedAt: row.last_connected_at,
       codeExpiresAt: row.code_expires_at,
+      connected: row.token_sha256 ? isConnected(accountId) : false,
+      version: row.version,
       code,
     };
   }
@@ -73,6 +81,7 @@ export function createPairingService(db: Db, clock: Clock) {
             code_expires_at: iso(new Date(now.getTime() + EXTENSION_PAIRING_CODE_TTL_MS)),
             token_sha256: null,
             browser: null,
+            version: null,
             created_at: iso(now),
             paired_at: null,
             last_connected_at: null,
@@ -90,7 +99,7 @@ export function createPairingService(db: Db, clock: Clock) {
 
     // Single use: the update matches only while the code is still on the row and clears it in the same statement, so
     // two extensions racing the same 配对码 cannot both walk away with a token.
-    async redeem(code: string, browser: string | null): Promise<{ token: string; accountId: string }> {
+    async redeem(code: string, browser: string | null, version: string | null): Promise<{ token: string; accountId: string }> {
       const now = clock();
       const codeSha = sha256(normalise(code));
       const row = await db.selectFrom('extension_pairing').selectAll().where('code_sha256', '=', codeSha).executeTakeFirst();
@@ -99,7 +108,7 @@ export function createPairingService(db: Db, clock: Clock) {
       const at = iso(now);
       const updated = await db
         .updateTable('extension_pairing')
-        .set({ code_sha256: null, code_expires_at: null, token_sha256: sha256(token), browser, paired_at: at, last_connected_at: at })
+        .set({ code_sha256: null, code_expires_at: null, token_sha256: sha256(token), browser, version, paired_at: at, last_connected_at: at })
         .where('account_id', '=', row.account_id)
         .where('code_sha256', '=', codeSha)
         .executeTakeFirst();
@@ -122,6 +131,12 @@ export function createPairingService(db: Db, clock: Clock) {
       if (!row || row.active !== 1 || row.approved !== 1) return null;
       await db.updateTable('extension_pairing').set({ last_connected_at: iso(clock()) }).where('token_sha256', '=', tokenSha).execute();
       return { accountId: row.account_id };
+    },
+
+    // The version an extension reports when it opens its channel (ADR-0021). An extension is replaced by unpacking a
+    // new directory over the old one, so the version on the row is only ever as fresh as the last connect.
+    async noteConnection(accountId: string, version: string | null): Promise<void> {
+      await db.updateTable('extension_pairing').set({ version, last_connected_at: iso(clock()) }).where('account_id', '=', accountId).execute();
     },
   };
 }
