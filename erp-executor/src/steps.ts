@@ -6,7 +6,7 @@
 // Kernel waits are kept as upper bounds; `pace` shortens them on the fake ERP.
 
 import { autoAttach, evalIn, screenshot, type CdpSession, type ChildTargets } from './cdp';
-import { ExecutorError } from './chromium';
+import { ExecutorError } from './page';
 import { readGridByColumn, showSection } from './erpform';
 import { HIT_JS, clickReach, reachProblem, type Reach } from './hit';
 import { readPane, recognisedTotal, selectRecognisedInvoices } from './invoice-grid';

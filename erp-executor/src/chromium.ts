@@ -3,6 +3,10 @@
 // this seam, and there is no fallback to another transport.
 
 import { connect as cdpConnect, enableFocusEmulation, evalIn, targets as cdpTargets, type CdpSession, type CdpTarget } from './cdp';
+import { ExecutorError, safeUrl, type ChromiumPage } from './page';
+
+// The shared page vocabulary lives in `page.ts`; it is re-exported so this module's existing importers keep working.
+export { ExecutorError, safeUrl, type ChromiumPage };
 
 export const CHROMIUM_CDP_REQUIRED = 'CHROMIUM_CDP_REQUIRED';
 export const CHROMIUM_CDP_AMBIGUOUS = 'CHROMIUM_CDP_AMBIGUOUS';
@@ -12,20 +16,8 @@ export const CHROMIUM_CDP_TRANSPORT = 'chromium-cdp';
 
 const DEFAULT_PORT = 9333;
 
-export class ExecutorError extends Error {
-  constructor(readonly code: string, message: string, options?: { cause?: unknown }) {
-    super(message, options);
-  }
-}
-
 const originOf = (value: unknown) => { try { return new URL(String(value)).origin; } catch { return null; } };
 const pathOf = (value: unknown) => { try { return new URL(String(value)).pathname; } catch { return null; } };
-
-export type ChromiumPage = {
-  transport: 'default'; automation?: 'cdp'; browserFamily: 'chromium'; tabId?: string | null; index?: number | null;
-  url: string; title?: string | null; active?: boolean; origin?: string | null; pageId?: string; cdpPort?: number;
-  cdpTargetId?: string | null; cdpUrl?: string; session?: CdpSession; [extra: string]: unknown;
-};
 
 const samePage = (target: CdpTarget, page: { url?: string; origin?: string | null }) => {
   const targetOrigin = originOf(target?.url);
@@ -45,11 +37,6 @@ export const cdpPortOf = (env: Env = process.env) => {
 export function chromiumCdpTransport({ env = process.env, platform = process.platform }: { env?: Env; platform?: string } = {}) {
   return { transport: 'default' as const, kind: CHROMIUM_CDP_TRANSPORT, cdpPort: cdpPortOf(env), platform };
 }
-
-/** Drop the query and hash: K3Cloud's `_cnneptstate_` parameter is session state and must not be logged. */
-export const safeUrl = (value: unknown) => {
-  try { const parsed = new URL(String(value)); return parsed.origin + parsed.pathname; } catch { return String(value ?? '').split(/[?#]/, 1)[0]!; }
-};
 
 const pageContext = (target: CdpTarget, port: number): ChromiumPage => ({
   transport: 'default', automation: 'cdp', browserFamily: 'chromium',

@@ -20,7 +20,7 @@
 // `hit.test.ts` keeps `clickAt` out of every other module, so remembering to hit-test is not a call-site duty.
 
 import { clickAt, type CdpSession } from './cdp';
-import { ExecutorError } from './chromium';
+import { ExecutorError } from './page';
 
 /** What was found at the point when the target was not. */
 export type Cover = { tag: string; id: string; cls: string; text: string };

@@ -8,7 +8,8 @@
 //   3. `k3cloudloginInfo` in localStorage survives logout, so it cannot count on its own.
 // An identity therefore needs all three: the console user name, and the stored account and 账套 (account set).
 
-import { ExecutorError, evaluateChromiumPage, listChromiumPages, safeUrl, type ChromiumPage } from './chromium';
+import { evaluateChromiumPage, listChromiumPages } from './chromium';
+import { ExecutorError, safeUrl, type ChromiumPage } from './page';
 
 export const DEFAULT_ERP_ORIGIN = 'http://erp.antute.com.cn';
 export const erpEntryOf = (origin: string) => `${origin}/k3cloud/html5/index.aspx`;

@@ -1,5 +1,7 @@
 import { EXTENSION_VERSION } from '@baox/contract';
 import { createChannelClient, type ChannelClient, type ChannelStatus, type ClientSocket } from './connection';
+import { createErpRunner } from './erp-runner';
+import { dedicatedErpTab } from './erp-tab';
 import { BAOX_ORIGIN } from './origin';
 import { redeemPairingCode } from './pairing';
 
@@ -23,6 +25,31 @@ export type PopupAnswer = { paired: boolean; accountId: string | null; version: 
 let client: ChannelClient | null = null;
 let lastStatus: ChannelStatus | null = null;
 
+// What the server asks of a connected extension: run a 去报销 in a tab of its own, over `chrome.debugger`. The chrome
+// APIs are passed through lambdas so the executor side never names the `chrome` global.
+const runErpJob = createErpRunner({
+  browser: (erpOrigin, choice) => dedicatedErpTab({
+    erpOrigin,
+    choice,
+    tabs: {
+      create: (properties) => chrome.tabs.create(properties),
+      get: (tabId) => chrome.tabs.get(tabId),
+      update: (tabId, properties) => chrome.tabs.update(tabId, properties),
+    },
+    windows: { update: (windowId, properties) => chrome.windows.update(windowId, properties) },
+    debugger: {
+      attach: (target, version) => chrome.debugger.attach(target, version),
+      detach: (target) => chrome.debugger.detach(target),
+      sendCommand: (target, method, params) => chrome.debugger.sendCommand(target, method, params),
+      onEvent: chrome.debugger.onEvent,
+      onDetach: chrome.debugger.onDetach,
+    },
+  }),
+  request: (method, payload) => (client ? client.request(method, payload) : Promise.reject(new Error('和应用的连接断开了。'))),
+  // #257 resumes from here; until then an interruption only ends the job, through the command or request that failed.
+  onInterrupted: (jobId, { kind, reason }) => console.warn(`[baox] job ${jobId} interrupted: ${kind} (${reason})`),
+});
+
 async function readPairing(): Promise<StoredPairing | null> {
   const stored = await chrome.storage.local.get(PAIRING_KEY);
   const value = stored[PAIRING_KEY] as Partial<StoredPairing> | undefined;
@@ -45,6 +72,7 @@ function connect(pairing: StoredPairing): void {
     origin: BAOX_ORIGIN,
     token: pairing.token,
     open: (url) => new WebSocket(url) as unknown as ClientSocket,
+    onRequest: runErpJob,
     onStatus: (status) => {
       lastStatus = status;
     },

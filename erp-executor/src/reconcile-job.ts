@@ -6,7 +6,7 @@
 
 import { ReconcilePlanSchema, type ExecutorChannel, type ResultEvent, type ResultStatus } from './protocol';
 import { evalIn, type CdpSession } from './cdp';
-import type { ChromiumPage } from './chromium';
+import type { ChromiumPage } from './page';
 import type { BrowserPort } from './job';
 import { DEFAULT_PACE, type Pace } from './pace';
 import { probeIdentity, sameOrigin } from './probe';

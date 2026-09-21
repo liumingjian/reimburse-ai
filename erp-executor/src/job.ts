@@ -8,17 +8,13 @@
 // (write result unknown) and goes to reconcile, never to replay. The executor never judges read-backs: it sends
 // them as `readback` and acts on the server's verdict.
 
-import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { extname, join } from 'node:path';
 import {
-  FillPlanSchema, type Approval, type ApprovedPreview, type BlobRef, type BlobSource, type Compatibility, type ErpAccount,
+  FillPlanSchema, type Approval, type ApprovedPreview, type BlobSource, type Compatibility, type ErpAccount,
   type ExecutorChannel, type Mutation, type Preconditions, type ReadbackStage, type ResultEvent, type ResultStatus, type FreshGate,
 } from './protocol';
 import { evalIn, type CdpSession } from './cdp';
 import { checkCatalog } from './catalog';
-import { ExecutorError, type ChromiumPage } from './chromium';
+import { ExecutorError, type ChromiumPage } from './page';
 import { fillApprovedPreview, handOverApprovedPreview, type CurrentReadings } from './draft-flow';
 import { leaveEdit, selectOption, writeCell, writeHeader } from './erpform';
 import { DEFAULT_PACE, waitFor, type Pace } from './pace';
@@ -28,6 +24,7 @@ import {
   addDetailRow, captureErpError, closeErpDialogs, invoiceUploadGroups, openInvoiceAssistant, openNewReimbursement,
   importInvoices, uploadInvoices, type WritePage,
 } from './steps';
+import { discardStagedInvoices, stageInvoices } from './staging';
 import { prepareErpWrite } from './write-context';
 
 /** How the executor reaches Chromium. v1: the dedicated profile over CDP; tests: the fake ERP. */
@@ -54,34 +51,15 @@ class DriftError extends ExecutorError {
   }
 }
 
-const MIME_EXTENSIONS: Record<string, string> = { 'application/pdf': '.pdf', 'image/png': '.png', 'image/jpeg': '.jpg' };
-
 // A draft-flow problem as the result message: its own sentence, then the server's reasons (strict read-back).
 const problemText = (problem: { message: string; [extra: string]: unknown }) =>
   [problem.message, ...(Array.isArray(problem['reasons']) ? (problem['reasons'] as unknown[]).map(String) : [])].join('：');
-
-/** Fetch invoice bytes by content, verify the hash, and stage them for `DOM.setFileInputFiles`. */
-async function stageInvoices(refs: BlobRef[], blobs: BlobSource, root: string) {
-  const dir = await mkdtemp(join(root, 'baox-erp-invoices-'));
-  const paths: string[] = [];
-  for (const [index, ref] of refs.entries()) {
-    const bytes = await blobs.read(ref);
-    const actual = createHash('sha256').update(bytes).digest('hex');
-    if (actual !== ref.sha256) throw new ExecutorError('BLOB_HASH_MISMATCH', `发票文件 ${ref.fileName} 的内容与计划中的 sha256 不一致`);
-    const ext = extname(ref.fileName).toLowerCase() || MIME_EXTENSIONS[ref.mime] || '';
-    const safeBase = ref.fileName.replace(/\.[^.]*$/, '').replace(/[^\p{L}\p{N}_-]+/gu, '_').slice(0, 60) || 'invoice';
-    const path = join(dir, `${String(index + 1).padStart(2, '0')}-${safeBase}${ext}`);
-    await writeFile(path, bytes, { mode: 0o600 });
-    paths.push(path);
-  }
-  return { dir, paths };
-}
 
 export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promise<ResultEvent> {
   const plan = FillPlanSchema.parse(rawPlan);
   const { browser, channel } = ports;
   const pace = ports.pace ?? DEFAULT_PACE;
-  const newId = ports.newId ?? randomUUID;
+  const newId = ports.newId ?? (() => crypto.randomUUID());
   const attached = new Map<string, ChromiumPage & { session: CdpSession }>();
   let write: WritePage | null = null;
   let stagingDir: string | null = null;
@@ -146,7 +124,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     await step('catalog', 'done');
 
     // Invoices by content, staged before any page action; a bad file stops here.
-    const staged = await stageInvoices(plan.invoices, ports.blobs, ports.stagingRoot ?? tmpdir());
+    const staged = await stageInvoices(plan.invoices, ports.blobs, ports.stagingRoot);
     stagingDir = staged.dir;
     invoiceUploadGroups(staged.paths);
 
@@ -240,7 +218,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     // against the real ERP has no reason to spend it: the invoices get bound to a 费用报销单 that nobody will save.
     // Unset — which is every real run — this changes nothing. It deliberately throws BEFORE startAttempt, so the
     // task keeps a clean `aborted` with no attempt row, and stays both retryable and voidable.
-    if (process.env['BAOX_ERP_STOP_BEFORE_IMPORT'] === '1') {
+    if (globalThis.process?.env['BAOX_ERP_STOP_BEFORE_IMPORT'] === '1') {
       throw new ExecutorError('IMPORT_STOPPED_BEFORE_BOUNDARY',
         '按 BAOX_ERP_STOP_BEFORE_IMPORT 的要求，在「发票导入单据」之前停下了：发票已上传并全部勾选，但没有导入任何发票。');
     }
@@ -321,7 +299,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
   } catch (error: any) {
     return await finish(attempted ? 'unknown' : 'aborted', error?.code ?? 'executor_error', error?.message ?? String(error));
   } finally {
-    if (stagingDir) await rm(stagingDir, { recursive: true, force: true });
+    if (stagingDir) await discardStagedInvoices(stagingDir);
     for (const page of attached.values()) { try { page.session.close(); } catch { /* already closed */ } }
   }
 }
