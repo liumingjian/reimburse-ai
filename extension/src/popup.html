@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>报销助手</title>
+    <style>
+      body { font: 14px/1.6 system-ui, sans-serif; margin: 0; padding: 16px; width: 280px; color: #161616; }
+      h1 { font-size: 16px; margin: 0 0 12px; }
+      label { display: block; margin-bottom: 4px; }
+      input { width: 100%; box-sizing: border-box; padding: 6px 8px; font: inherit; letter-spacing: 2px; text-transform: uppercase; }
+      button { margin-top: 12px; padding: 6px 12px; font: inherit; cursor: pointer; }
+      .hint, #version { color: #6f6f6f; font-size: 12px; }
+      #error { color: #da1e28; }
+      [hidden] { display: none; }
+    </style>
+  </head>
+  <body>
+    <h1>报销助手</h1>
+    <p id="status" role="status"></p>
+    <form id="pair-form">
+      <label for="code">配对码</label>
+      <input id="code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" required />
+      <p class="hint">在应用的设置页点“生成配对码”，把那串字符填在这里。</p>
+      <button id="pair" type="submit">配对</button>
+    </form>
+    <button id="unpair" type="button" hidden>撤销配对</button>
+    <p id="error" role="alert"></p>
+    <p id="version"></p>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

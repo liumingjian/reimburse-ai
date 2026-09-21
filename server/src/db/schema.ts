@@ -34,6 +34,24 @@ export interface SessionTable {
   expires_at: string;
 }
 
+// 扩展配对 (extension pairing, ADR-0019), one row per 应用账号: `account_id` is the primary key, which is how "one
+// active pairing per account" is enforced. The extension holds a random code and later a random token; only their
+// sha256 is stored. Mutable: redeeming clears the code and writes the token, and every connection slides
+// `last_connected_at`. Revoking (or issuing a new 配对码) deletes the row.
+export interface ExtensionPairingTable {
+  account_id: string;
+  code_sha256: string | null;
+  code_expires_at: string | null;
+  token_sha256: string | null;
+  // What the extension calls the browser it runs in; shown on the settings page, never acted on.
+  browser: string | null;
+  // The version the extension last reported (ADR-0021), refreshed on every connect. Null until something pairs.
+  version: string | null;
+  created_at: string;
+  paired_at: string | null;
+  last_connected_at: string | null;
+}
+
 // Mutable: `lifecycle` and `revision` (the per-task stepToken counter, ADR-0014).
 export interface TaskTable {
   task_id: string;
@@ -403,6 +421,7 @@ export interface Schema {
   account: AccountTable;
   account_event: AccountEventTable;
   session: SessionTable;
+  extension_pairing: ExtensionPairingTable;
   task: TaskTable;
   upload_batch: UploadBatchTable;
   blob: BlobTable;

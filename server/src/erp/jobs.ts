@@ -7,7 +7,7 @@ import {
   ExecutorEventSchema, FillPlanSchema,
   type AttemptStartedEvent, type ErpAccount, type ExecutorChannel, type ExecutorEvent, type FillPlan,
   type ReadbackEvent, type ReadbackVerdict, type ResultEvent,
-} from './protocol';
+} from '@baox/erp-executor/protocol';
 
 type ErpTables = {
   erp_job_event: { event_id: string; job_id: string; task_id: string; seq: number; type: string; payload: string; created_at: string };

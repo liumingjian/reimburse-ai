@@ -14,11 +14,11 @@
 //
 //   pnpm --filter @baox/server exec tsx scripts/probe-money.ts --dry     # read-only: the plan and what is on screen
 //   pnpm --filter @baox/server exec tsx scripts/probe-money.ts           # writes the two money cells, repeatedly
-import { autoAttach, connect, enableFocusEmulation, targets, type CdpSession } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { readGridByColumn, showSection, writeCell } from '../src/erp/executor/erpform';
-import { addDetailRow, openNewReimbursement, type WritePage } from '../src/erp/executor/steps';
-import { sleep } from '../src/erp/executor/pace';
+import { autoAttach, connect, enableFocusEmulation, targets, type CdpSession } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { readGridByColumn, showSection, writeCell } from '@baox/erp-executor/erpform';
+import { addDetailRow, openNewReimbursement, type WritePage } from '@baox/erp-executor/steps';
+import { sleep } from '@baox/erp-executor/pace';
 
 const dry = process.argv.includes('--dry');
 const ROW = 0;

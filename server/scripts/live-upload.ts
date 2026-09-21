@@ -11,9 +11,9 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { autoAttach, connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { closeInvoiceAssistant, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type WritePage } from '../src/erp/executor/steps';
+import { autoAttach, connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { closeInvoiceAssistant, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type WritePage } from '@baox/erp-executor/steps';
 
 const dataDir = process.env['BAOX_DATA_DIR'] ?? join(process.env['HOME'] ?? '', '.baox-app');
 const db = new DatabaseSync(join(dataDir, 'baox.sqlite'), { readOnly: true });

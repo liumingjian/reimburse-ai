@@ -1,8 +1,8 @@
 // Read the 费用明细 grid of whatever 费用报销单 is on screen, as a table. Reads only; writes nothing.
 //   pnpm --filter @baox/server exec tsx scripts/probe-rows-now.ts
-import { connect, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { readGridByColumn } from '../src/erp/executor/erpform';
+import { connect, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { readGridByColumn } from '@baox/erp-executor/erpform';
 
 const COLUMNS = ['收票单号', '项目', '费用项目', '发票类型', '开始日期', '费用金额', '税额', '申请报销金额', '申请付款金额'];
 

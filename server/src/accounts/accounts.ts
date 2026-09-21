@@ -36,7 +36,7 @@ function toAccount(row: Pick<AccountTable, 'account_id' | 'username' | 'role'>):
   return { accountId: row.account_id, username: row.username ?? row.account_id, role: row.role };
 }
 
-// Readable temporary password for the CLI (no look-alike characters).
+// Readable temporary password for the emergency CLI (no look-alike characters).
 export function generateTemporaryPassword(): string {
   const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
   return [...randomBytes(12)].map((byte) => alphabet[byte % alphabet.length]).join('');
@@ -53,13 +53,25 @@ async function setTemporaryPassword(db: Db, accountId: string, password: string,
   await recordEvent(db, accountId, actorAccountId, actorAccountId === null ? 'cli_reset_password' : 'temporary_password', at);
 }
 
-// `baox admin reset-password <username>`: the local fallback for a locked-out (sole) admin. Access to the machine is
-// the authority, so no session is needed. Returns the temporary password to show, or null for an unknown username.
-export async function resetPasswordLocally(db: Db, username: string, password = generateTemporaryPassword(), now: Clock = () => new Date()): Promise<string | null> {
-  const row = await db.selectFrom('account').select('account_id').where('username', '=', username).executeTakeFirst();
-  if (!row) return null;
-  await setTemporaryPassword(db, row.account_id, password, null, now().toISOString());
-  return password;
+// The emergency CLI (`baox admin emergency-reset <username>`, ADR-0018 as amended by #228 and spec #246 story 42): the
+// way back in for an administrator locked out of their own account. A command line has no session, so "their own" is
+// made unambiguous by refusing unless the target is the only active administrator: a sole administrator locked out is
+// by definition the person at the shell, and with two or more the other one resets you in the web UI. Anything wider
+// would let a shell on a shared host take over another administrator, or any 应用账号 (app account). Access to the
+// machine is the authority, so no session is needed, and the audit record it writes carries no actor.
+export type EmergencyReset = { temporaryPassword: string } | { refused: 'unknown_account' | 'not_admin' | 'not_sole_admin' };
+
+export async function emergencyResetAdminPassword(db: Db, username: string, password = generateTemporaryPassword(), now: Clock = () => new Date()): Promise<EmergencyReset> {
+  return db.transaction().execute(async (tx): Promise<EmergencyReset> => {
+    const row = await tx.selectFrom('account').select(['account_id', 'role', 'active', 'approved']).where('username', '=', username).executeTakeFirst();
+    if (!row) return { refused: 'unknown_account' };
+    if (row.role !== 'admin') return { refused: 'not_admin' };
+    // The same "active administrator" the last-admin guard in `update` counts.
+    const admins = await tx.selectFrom('account').select('account_id').where('role', '=', 'admin').where('active', '=', 1).where('approved', '=', 1).execute();
+    if (admins.length !== 1 || admins[0]?.account_id !== row.account_id) return { refused: 'not_sole_admin' };
+    await setTemporaryPassword(tx, row.account_id, password, null, now().toISOString());
+    return { temporaryPassword: password };
+  });
 }
 
 export function createAccountService(db: Db, clock: Clock) {

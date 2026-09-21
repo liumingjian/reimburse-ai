@@ -51,7 +51,7 @@ import type { ErpLease } from './erp-lease';
 import type { ErpConfig } from './erp/config';
 import { buildFillJob, type FrozenJob } from './erp/fill-plan';
 import { newJobId, type FillRun, type FillTrigger } from './erp/fill-jobs';
-import { PROTOCOL_VERSION } from './erp/protocol';
+import { PROTOCOL_VERSION } from '@baox/erp-executor/protocol';
 import type { ReconcileRun } from './erp/reconcile-jobs';
 import { catalogView, erpView, loadErp, readbackView, reconcileView, type ErpRecord } from './erp/fill-state';
 import { loadPrintFacts, printFileShas, printView, sheetState, type PrintFacts } from './print/facts';
@@ -147,9 +147,14 @@ export type ParseWork = { runId: string; input: ParseInput; preset: ParseOutcome
 // A refusal the parser job expects when the run moved on under it; never shown to anyone.
 const STALE_JOB = { code: 'stale_job', message: 'the inventory run changed under the parser job' } as const;
 
-// What the 去报销 actions need from the app: the global lease, the ERP to write to, and the background job runners
-// (the fill job, and the read-only reconcile job of #192).
-export type ErpServiceOptions = { lease: ErpLease; config: ErpConfig; run: (job: FillRun) => void; reconcile: (job: ReconcileRun) => void };
+// What the 去报销 actions need from the app: the account's ERP lease, the ERP to write to, and the background job runners
+// (the fill job, and the read-only reconcile job of #192). `executorReady` is asked inside the accepted change, before
+// the lease and before any job exists: a refusal means the executor could not be reached (story 13 — no 浏览器扩展
+// paired, or none connected), so the employee is told which and where to fix it instead of watching a job abort.
+export type ErpServiceOptions = {
+  lease: ErpLease; config: ErpConfig; run: (job: FillRun) => void; reconcile: (job: ReconcileRun) => void;
+  executorReady?: (tx: Db, accountId: string) => Promise<Refusal | null>;
+};
 
 export const RECONCILE_COPY = {
   notReconciling: ERP_ACTION_ERRORS.notReconciling,
@@ -373,7 +378,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
         token,
         async ({ tx, task, facts, loaded, at, revision }) => {
           if (!erp) return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
-          const holder = erp.lease.holder();
+          const holder = erp.lease.holder(accountId);
           if (holder && holder.taskId !== taskId) return inUse;
           let frozen: FrozenJob;
           let digest: string;
@@ -412,6 +417,8 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
             frozen = built.job;
             digest = loaded.confirmed.digest;
           }
+          const unreachable = await erp.executorReady?.(tx, accountId);
+          if (unreachable) return unreachable;
           const jobId = newJobId();
           // The recovery replaces the unsaved bill it was offered over; ERP keeps that bill's tab open, and reusing it
           // would put the re-import on a form that already holds its 收票行 (live 2026-09-21).
@@ -494,7 +501,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
   // 去报销 writes its `erp_job` row in its own transaction, so whichever commits second sees the other and a task that
   // took the ERP lease in between is refused rather than voided out from under a running browser.
   async function voidOne(taskId: string): Promise<void> {
-    const holder = erp?.lease.holder() ?? null;
+    const holder = erp?.lease.holder(accountId) ?? null;
     const outcome = await db.transaction().execute(async (tx): Promise<'ok' | 'not_found' | 'running'> => {
       const task = await tx.selectFrom('task').selectAll().where('task_id', '=', taskId).where('account_id', '=', accountId).executeTakeFirst();
       if (!task || task.lifecycle === 'voided') return 'not_found';
@@ -718,7 +725,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     },
 
     // 去报销: starts the fill job on the confirmed lines (stage erp). Refused before any job when a line could never be
-    // written (`erp_preflight`); 409 `erp_in_use` while another task holds the ERP lease.
+    // written (`erp_preflight`); 409 `erp_in_use` while another task of the same 应用账号 holds the ERP lease.
     startErpWrite(taskId: string, token: string): Promise<TaskSnapshot> {
       return startFillJob(taskId, token, 'start');
     },
@@ -729,7 +736,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     },
 
     // 重新去报销 (ADR-0027): the exit out of 未保存·已导入未写明细 while the ERP shows no 单据编号. A new fill job on the
-    // same 报销任务, on a fresh 新增单 — never the old page instance (V-45) — which takes the global ERP lease and
+    // same 报销任务, on a fresh 新增单 — never the old page instance (V-45) — which takes the account's ERP lease and
     // opens its own attempts. The 对账 job row keeps pointing at the fill job it read, and the new job row carries
     // trigger `refill`, so the audit trail tells the recovery from the original 去报销 without reading row order.
     refill(taskId: string, token: string): Promise<TaskSnapshot> {
@@ -762,7 +769,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
             if (!erp) return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
             if (facts.erp?.phase !== 'unknown' || !loaded.erp.job) return { code: 'not_reconciling', message: RECONCILE_COPY.notReconciling };
             if (!reconcileNow(loaded, task)?.allowedActions.includes('wait')) return { code: 'action_not_allowed', message: RECONCILE_COPY.notAllowed };
-            const holder = erp.lease.holder();
+            const holder = erp.lease.holder(accountId);
             if (holder && holder.taskId !== taskId) return { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
             const jobId = newJobId();
             if (!erp.lease.acquire({ accountId, taskId, jobId })) return { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };

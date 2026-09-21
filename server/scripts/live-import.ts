@@ -14,9 +14,9 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { autoAttach, connect, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type WritePage } from '../src/erp/executor/steps';
+import { autoAttach, connect, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type WritePage } from '@baox/erp-executor/steps';
 
 if (process.env['BAOX_ERP_LIVE_IMPORT'] !== '1') {
   console.error('refusing to run: this script crosses the 发票导入单据 consumption boundary. Set BAOX_ERP_LIVE_IMPORT=1.');

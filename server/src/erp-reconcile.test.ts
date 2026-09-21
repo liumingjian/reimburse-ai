@@ -2,11 +2,11 @@ import { HUMAN_REVIEW_NOTICE, OCCUPANCY_COPY, TaskListSchema, type TaskSnapshot 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fixtureCatalog } from './catalog/project-catalog';
 import { dataDirBlobs } from './erp/cdp-executor';
-import { runFillJob } from './erp/executor/job';
-import { runReconcileJob } from './erp/executor/reconcile-job';
-import { createFakeErp, type FakeErp, type FakeErpOptions, type FakeReceiptLedger } from './erp/executor/testing/fake-erp';
+import { runFillJob } from '@baox/erp-executor/job';
+import { runReconcileJob } from '@baox/erp-executor/reconcile-job';
+import { createFakeErp, type FakeErp, type FakeErpOptions, type FakeReceiptLedger } from '@baox/erp-executor/testing/fake-erp';
 import type { FillExecutor } from './erp/fill-jobs';
-import type { ExecutorChannel, ExecutorEvent, FillPlan, Mutation, ResultEvent } from './erp/protocol';
+import type { ExecutorChannel, ExecutorEvent, FillPlan, Mutation, ResultEvent } from '@baox/erp-executor/protocol';
 import type { ReconcileExecutor } from './erp/reconcile-job';
 import { COMPATIBILITY, ERP_ORIGIN, FAST_PACE, fakeErpOptions } from './erp/testing/scenario';
 import { handedOver, noFormOpen, scripted, TEST_ERP_ACCOUNT } from './erp/testing/fake-executor';
@@ -158,7 +158,7 @@ describe('fault injection at each ERP mutation point', () => {
     // Write result unknown: reconcile before any read, offering only 开始对账 and 转人工.
     expect(stopped).toMatchObject({ stage: 'reconcile', step: { kind: 'reconcile' }, erp: { status: 'aborted' }, reconcile: { status: 'pending', bucket: null, allowedActions: ['wait', 'hand_off'] } });
     expect(stopped.erp.abortReason).toContain(`injected fault at ${point}`);
-    expect(server.erpLease.holder()).toBeNull();
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
     const mutationsBefore = fake!.mutations.length;
 
     const judged = await reconcile(stopped);
@@ -167,7 +167,7 @@ describe('fault injection at each ERP mutation point', () => {
     // Read-only: nothing changed in ERP, the fill job never ran again, the lease is free again.
     expect(fake!.mutations.length).toBe(mutationsBefore);
     expect(fillRuns).toBe(1);
-    expect(server.erpLease.holder()).toBeNull();
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
 
   it('已导入未写明细 with no 单据编号 is recoverable: the exits are 重新去报销 and 转人工, and it is not a 转人工 outcome', async () => {
@@ -204,8 +204,8 @@ describe('fault injection at each ERP mutation point', () => {
     expect(receiptNumbers(fake!)).toEqual([RECEIPT_NUMBER]);
     const importedTotal = receiptTotal(fake!);
 
-    // The recovery takes the global ERP lease like any other fill job.
-    server.erpLease.acquire({ accountId: 'someone', taskId: 'another-task', jobId: 'another-job' });
+    // The recovery takes the account's ERP lease like any other fill job.
+    server.erpLease.acquire({ accountId: alice.account.accountId, taskId: 'another-task', jobId: 'another-job' });
     await refusedWith(await client.act(judged, 'refill'), 409, 'erp_in_use');
     server.erpLease.release('another-job');
 
@@ -215,7 +215,7 @@ describe('fault injection at each ERP mutation point', () => {
     const over = await settled(taskId);
     expect(over).toMatchObject({ stage: 'done', erp: { status: 'done', draftNo: null }, readback: { status: 'matched' } });
     expect(fillRuns).toBe(2);
-    expect(server.erpLease.holder()).toBeNull();
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
     // Only the recovery is told to replace an open 新增: live, ERP keeps the abandoned bill's tab, and reusing it
     // put the re-import on a form that already held its 收票行 (2026-09-21). 去报销 still reuses a blank one.
     expect(plans.map((plan) => plan.replaceAbandonedForm ?? false)).toEqual([false, true]);
@@ -410,15 +410,15 @@ describe('fault injection at each ERP mutation point', () => {
     expect(voided.status).toBe(200);
   });
 
-  it('holds the ERP lease while reconcile reads: 409 erp_in_use for another task, the lease is freed on the result', async () => {
+  it("holds the ERP lease while reconcile reads: 409 erp_in_use for another task of the same account, the lease is freed on the result", async () => {
     const stopped = await crashAt('before_hand_over');
-    server.erpLease.acquire({ accountId: 'someone', taskId: 'another-task', jobId: 'another-job' });
+    server.erpLease.acquire({ accountId: alice.account.accountId, taskId: 'another-task', jobId: 'another-job' });
     const blocked = await client.act(stopped, 'reconcile');
     expect(blocked.status).toBe(409);
     expect(((await blocked.json()) as { error: { code: string } }).error.code).toBe('erp_in_use');
     server.erpLease.release('another-job');
     await reconcile(stopped);
-    expect(server.erpLease.holder()).toBeNull();
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
 });
 

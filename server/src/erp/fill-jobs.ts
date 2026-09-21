@@ -2,7 +2,7 @@
 // protocol, makes every executor event a fact of the task (appended and published in one revision), acknowledges
 // `attempt_started` only once its row is durable, and answers read-backs with the server's judge.
 //
-// The global ERP lease is acquired by the action that starts the run (`tasks.ts`) and released here on every result:
+// The account's ERP lease is acquired by the action that starts the run (`tasks.ts`) and released here on every result:
 // login wait, abort, catalog mismatch, error and done.
 
 import { randomUUID } from 'node:crypto';
@@ -10,7 +10,7 @@ import type { Db } from '../db/database';
 import type { ErpLease } from '../erp-lease';
 import { taskJudge, type FrozenJob } from './fill-plan';
 import { writeAttempt, writeEvent } from './jobs';
-import { ExecutorEventSchema, type ErpAccount, type ExecutorChannel, type ExecutorEvent, type FillPlan, type ResultEvent } from './protocol';
+import { ExecutorEventSchema, type ErpAccount, type ExecutorChannel, type ExecutorEvent, type FillPlan, type ResultEvent } from '@baox/erp-executor/protocol';
 
 // What started this run of the fill job, recorded on `erp_job.trigger` so the audit trail can tell them apart:
 // `start` is 去报销, `confirm_login` is 我已登录，继续, `refill` is 重新去报销 (the recovery after an import that was
@@ -25,13 +25,6 @@ export type FillRun = { jobId: string; accountId: string; taskId: string; trigge
 
 // Appends facts of one task in one accepted revision and publishes the fresh snapshot (the task service's job path).
 export type RecordFacts = (accountId: string, taskId: string, write: (tx: Db) => Promise<void>) => Promise<void>;
-
-/** Used when no executor is configured: every job stops before touching anything. */
-export const unavailableExecutor: FillExecutor = async (_plan, channel) => {
-  const event: ResultEvent = { type: 'result', status: 'aborted', code: 'erp_executor_unavailable', message: '这个应用没有接上报销系统自动化。', billNo: null, capture: null };
-  await channel.emit(event);
-  return event;
-};
 
 /**
  * The server's own guard (ADR-0014: any loss after `attempt_started` is reconcile, never a replay): once an attempt

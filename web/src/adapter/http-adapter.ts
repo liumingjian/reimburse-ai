@@ -24,6 +24,10 @@ import {
   HTTP_ENDPOINTS,
   SNAPSHOT_EVENT,
   STALE_STEP_HTTP_STATUS,
+  ExtensionPairingFailureSchema,
+  ExtensionPairingSchema,
+  type ExtensionPairing,
+  type ExtensionPairingOutcome,
   LegacyImportFailureSchema,
   LegacyImportSchema,
   type LegacyImport,
@@ -47,7 +51,7 @@ export type HttpAdapterOptions = {
 
 export const INVALID_RESPONSE_CODE = 'invalid_response';
 export const NETWORK_ERROR_CODE = 'network';
-export const NETWORK_ERROR_MESSAGE = '本地服务没有响应，操作没有送达。请在终端重新执行 baox 后重试。';
+export const NETWORK_ERROR_MESSAGE = '连不上报销服务，操作没有送达。请检查网络后重试；如果一直这样，请联系维护者。';
 
 // 事件流重连间隔：0.5 s 起翻倍，封顶 10 s。
 export function reconnectDelay(attempt: number): number {
@@ -167,6 +171,28 @@ export function parseLegacyImportActionResponse(status: number, body: unknown): 
   return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, legacyImport: null };
 }
 
+// 扩展配对 (extension pairing): the GET is a read (401 throws UnauthenticatedError).
+export function parseExtensionPairingResponse(status: number, body: unknown): ExtensionPairing {
+  refuseUnauthenticated(status);
+  if (!isSuccess(status)) throw new Error(`配对情况加载失败（HTTP ${status}）`);
+  const parsed = ExtensionPairingSchema.safeParse(body);
+  if (!parsed.success) throw new Error('配对情况的格式与契约不符');
+  return parsed.data;
+}
+
+// 生成配对码 / 撤销配对 (issue a pairing code / revoke the pairing): success is the new pairing (a freshly issued code
+// appears in this answer only); failure is { error } alone.
+export function parseExtensionPairingActionResponse(status: number, body: unknown): ExtensionPairingOutcome {
+  if (isSuccess(status)) {
+    const view = ExtensionPairingSchema.safeParse(body);
+    if (view.success) return { ok: true, pairing: view.data };
+    return { ok: false, error: { code: INVALID_RESPONSE_CODE, message: '服务端返回的配对情况格式与契约不符。' }, pairing: null };
+  }
+  const failure = ExtensionPairingFailureSchema.safeParse(body);
+  if (failure.success) return { ok: false, error: failure.data.error, pairing: null };
+  return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, pairing: null };
+}
+
 export function parseSnapshotResponse(status: number, body: unknown): TaskSnapshot {
   refuseUnauthenticated(status);
   if (!isSuccess(status)) throw new Error(`任务快照加载失败（HTTP ${status}）`);
@@ -183,7 +209,8 @@ export function parseActionResponse(status: number, body: unknown): ActionOutcom
   }
   const failure = ActionFailureSchema.safeParse(body);
   if (status === STALE_STEP_HTTP_STATUS) {
-    // 报销系统正被另一个任务使用（全局 ERP 租约）是唯一保留原错误码的 409：它不是过期凭据，页面就地显示原因。
+    // `erp_in_use` (this account's ERP lease is held by another of its tasks) is the one 409 that keeps its own code:
+    // it is not a stale step token, so the page shows the reason where it is.
     if (failure.success && failure.data.error.code === ERP_IN_USE_CODE) return { ok: false, error: failure.data.error, snapshot: failure.data.snapshot ?? null };
     // 过期凭据：不论服务端写的错误码是什么，都按 stale_step 处理；没带快照时由仓库重新拉取。
     const snapshot = failure.success ? (failure.data.snapshot ?? null) : null;
@@ -268,6 +295,15 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
       return { ok: false, error: { code: NETWORK_ERROR_CODE, message: NETWORK_ERROR_MESSAGE }, legacyImport: null };
     }
     return parseLegacyImportActionResponse(response.status, await readJson(response));
+  }
+  async function pairingAction(target: string): Promise<ExtensionPairingOutcome> {
+    let response: Response;
+    try {
+      response = await fetch(target, { method: 'POST', body: JSON.stringify({}), headers: { 'content-type': 'application/json' } });
+    } catch {
+      return { ok: false, error: { code: NETWORK_ERROR_CODE, message: NETWORK_ERROR_MESSAGE }, pairing: null };
+    }
+    return parseExtensionPairingActionResponse(response.status, await readJson(response));
   }
   const action = (taskId: string, endpoint: { path: string }, payload: Record<string, unknown>) => json(url(endpoint.path, taskId), payload);
 
@@ -356,6 +392,17 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     },
     retryLegacyImport: () => legacyImportAction(url(E.retryLegacyImport.path)),
     skipLegacyImport: () => legacyImportAction(url(E.skipLegacyImport.path)),
+    async getExtensionPairing() {
+      let response: Response;
+      try {
+        response = await fetch(url(E.getExtensionPairing.path));
+      } catch {
+        throw new ServiceUnavailableError(NETWORK_ERROR_MESSAGE);
+      }
+      return parseExtensionPairingResponse(response.status, await readJson(response));
+    },
+    createExtensionPairingCode: () => pairingAction(url(E.createExtensionPairingCode.path)),
+    revokeExtensionPairing: () => pairingAction(url(E.revokeExtensionPairing.path)),
     async getSnapshot(taskId) {
       const response = await fetch(url(E.getSnapshot.path, taskId));
       return parseSnapshotResponse(response.status, await readJson(response));

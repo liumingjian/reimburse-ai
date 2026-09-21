@@ -3,8 +3,8 @@
 //
 // A hidden window still holds the last import's verdict, which is how a run that already ended can still be asked
 // what ERP said about each invoice. It reads; it clicks nothing.
-import { connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
+import { connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
 const erp = (await targets(cdpPortOf())).find((t) => t.type === 'page' && String(t.url).includes('erp.antute.com.cn'));
 if (!erp) { console.error('no ERP page open'); process.exit(1); }
 const session = await connect(erp.webSocketDebuggerUrl!);

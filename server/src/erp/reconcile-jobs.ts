@@ -2,23 +2,16 @@
 // executor, makes each of its events a fact of the task (one revision + SSE each), and acknowledges its read-back
 // without judging it live: the bucket is derived from the persisted log (`fill-state.ts`).
 //
-// The global ERP lease is acquired by the `reconcile` action (`tasks.ts`) and released here on the result.
+// The account's ERP lease is acquired by the `reconcile` action (`tasks.ts`) and released here on the result.
 
 import type { Db } from '../db/database';
 import type { ErpLease } from '../erp-lease';
 import { ensureResult, type RecordFacts } from './fill-jobs';
 import { writeEvent } from './jobs';
-import { ExecutorEventSchema, type ExecutorChannel, type ExecutorEvent, type ReconcilePlan, type ResultEvent } from './protocol';
+import { ExecutorEventSchema, type ExecutorChannel, type ExecutorEvent, type ReconcilePlan } from '@baox/erp-executor/protocol';
 import type { ReconcileExecutor } from './reconcile-job';
 
 export type ReconcileRun = { jobId: string; accountId: string; taskId: string; plan: ReconcilePlan };
-
-/** Used when no executor is configured: the reconcile stops at once, nothing was read. */
-export const unavailableReconcileExecutor: ReconcileExecutor = async (_plan, channel) => {
-  const event: ResultEvent = { type: 'result', status: 'aborted', code: 'erp_executor_unavailable', message: '这个应用没有接上报销系统自动化。', billNo: null, capture: null };
-  await channel.emit(event);
-  return event;
-};
 
 export function createReconcileJobs({ db, lease, execute, record }: { db: Db; lease: ErpLease; execute: ReconcileExecutor; record: RecordFacts }) {
   const active = new Set<Promise<void>>();

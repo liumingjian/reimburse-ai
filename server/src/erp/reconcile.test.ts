@@ -3,8 +3,8 @@
 // the executor's readForm (queue fake session, no Input.* event), the sums and the bucket are the server's.
 // The ego-transport refusal case is dropped with the ego adapter (ADR-0016).
 import { describe, expect, it } from 'vitest';
-import { readForm, protocolReadings } from './executor/reader';
-import { fakeSession, inputs } from './executor/testing/fake-session';
+import { readForm, protocolReadings } from '@baox/erp-executor/reader';
+import { fakeSession, inputs } from '@baox/erp-executor/testing/fake-session';
 import { RECONCILE_BUCKETS } from '@baox/contract';
 import { ACTIONS, BUCKETS, classifyReconciliation, noFormOpen, reconcileReadings, requiredDetailCells, sumColumn, toCents, type ReconcileReadings } from './reconcile';
 import { matchTaskLines } from './readback';

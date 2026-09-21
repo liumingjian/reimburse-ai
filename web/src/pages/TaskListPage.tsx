@@ -278,7 +278,7 @@ export function TaskListPage({ newTask }: { newTask: boolean }) {
           <TaskTable tasks={taskList.data.tasks} onAbandon={setAbandoning} />
         )
       ) : (
-        <InlineLoading className="app-loading" iconDescription="正在加载" description={taskList.offline ? '正在等待本地服务恢复，恢复后自动加载…' : '正在加载任务列表…'} />
+        <InlineLoading className="app-loading" iconDescription="正在加载" description={taskList.offline ? '正在等待报销服务恢复，恢复后自动加载…' : '正在加载任务列表…'} />
       )}
       {newTask ? <NewTaskDialog taskList={taskList.data} onClose={closeNewTask} /> : null}
       {abandoning ? (

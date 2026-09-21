@@ -1,9 +1,9 @@
 // Origin: 50931a3:kernel/test/erp-draft-flow.test.mjs (translated to Vitest; inputs and expected outputs kept).
 // The kernel's `linesDigest` (selection.mjs) is `previewLinesDigest`; `approvalCovers` lives in the protocol.
 import { describe, expect, it } from 'vitest';
-import { computedTotalProblem, fillApprovedPreview, formReadbackToken, handOverApprovedPreview, matchReceiptRows } from './executor/draft-flow';
+import { computedTotalProblem, fillApprovedPreview, formReadbackToken, handOverApprovedPreview, matchReceiptRows } from '@baox/erp-executor/draft-flow';
 import { buildErpDraftPreview, previewLinesDigest as linesDigest, routePlanOf } from './preview';
-import { approvalCovers, type ApprovedPreview } from './protocol';
+import { approvalCovers, type ApprovedPreview } from '@baox/erp-executor/protocol';
 
 const identity = { account: 'luo.liu', tenant: 'tenant-a' };
 const projectNames = ['项目一完整名称', '项目二完整名称', '项目二完整名称', '项目三完整名称'];

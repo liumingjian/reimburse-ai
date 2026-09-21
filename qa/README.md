@@ -32,14 +32,6 @@ The project-book section enters explicit numbers and names offline, including `P
 不给 `QA_PROJECT` 时驱动照跑，但会在 `erp-project` 记一条 `WARN`，明说这一趟用的是离线夹具号、
 去报销会停在报销信息核对那一步、发票无忧助手根本打不开——那不是应用的缺陷，是这一趟没配项目号。
 
-For later ERP checks against demonstration project numbers, the existing optional catalog fixture remains available:
-
-```bash
-BAOX_PROJECT_CATALOG_FIXTURE=$PWD/server/src/catalog/testing/projects.fixture.json
-```
-
-This fixture does not make local intake ERP-verified. The operator-only ERP sections retain their existing session and environment requirements.
-
 ## 2. 驱动认的环境变量
 
 | 变量 | 默认值 | 作用 |
@@ -70,7 +62,6 @@ open /tmp/baox-qa-artifacts            # 截图与 findings.json
 ```bash
 mkdir -p /tmp/baox-qa-mats && cp fixtures/generated/m*.pdf /tmp/baox-qa-mats/
 BAOX_DATA_DIR=/tmp/baox-qa-smoke BAOX_PORT=4399 \
-BAOX_PROJECT_CATALOG_FIXTURE=$PWD/server/src/catalog/testing/projects.fixture.json \
 BAOX_ERP_CHROMIUM=off node server/dist/main.mjs &
 # 首次启动要先建管理员：页面上建，或
 curl -s -X POST localhost:4399/api/auth/setup -H 'content-type: application/json' \

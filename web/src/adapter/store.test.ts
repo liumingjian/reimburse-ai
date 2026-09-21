@@ -274,7 +274,7 @@ describe('AppStore', () => {
     const adapter = {
       listTasks: async () => {
         calls += 1;
-        if (calls < 3) throw new ServiceUnavailableError();
+        if (calls < 3) throw new ServiceUnavailableError('offline');
         return { homeCity: null, tasks: [] };
       },
     } as unknown as AppAdapter;

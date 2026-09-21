@@ -10,7 +10,7 @@
     "build": "pnpm -r build",
     "dev": "pnpm --parallel --filter @baox/server --filter @baox/web dev",
     "dev:mock": "pnpm --filter @baox/web dev:mock",
-    "lint": "oxlint -c .oxlintrc.json --deny-warnings server/src",
+    "lint": "oxlint -c .oxlintrc.json --deny-warnings server/src erp-executor/src extension/src",
     "test": "pnpm lint && pnpm -r --workspace-concurrency=1 test",
     "test:private": "pnpm --filter @baox/server test:private",
     "test:erp-live": "pnpm --filter @baox/server test:erp-live",

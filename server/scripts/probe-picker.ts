@@ -1,9 +1,9 @@
-// Read-only: why does `computerPickerPoint` (executor/steps.ts) not find the 电脑端选取 entry on the live
+// Read-only: why does `computerPickerPoint` (erp-executor/src/steps.ts) not find the 电脑端选取 entry on the live
 // 发票无忧助手 (piaozone invoice assistant)? Dumps the caption node, its ancestors and every clickable descendant
 // around it. Clicks nothing, uploads nothing, imports nothing, so it consumes no invoice and creates no 收票占用.
 
-import { connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
+import { connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
 
 const SNIPPET = `(() => {
   const vis = (n) => {

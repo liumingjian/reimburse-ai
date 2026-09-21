@@ -1,0 +1,31 @@
+{
+  "name": "@baox/erp-executor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The ERP executor and the fill protocol, shipped as source: what any CDP client needs to drive 费用报销单 and read it back, with no dependency on the server",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "exports": {
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "browser": {
+    "./src/staging.ts": "./src/staging.browser.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "zod": "4.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "jsdom": "27.4.0",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,7 +1,7 @@
 // Can the 费用报销单 be read — and later written and deleted — through Kingdee's own WebAPI instead of by typing
 // into the Kendo grid? This script answers the READ half. It sends nothing but query services.
 //
-// Why it exists (2026-09-20): `executor/catalog.ts` already calls ExecuteBillQuery from inside the logged-in page
+// Why it exists (2026-09-20): `erp-executor/src/catalog.ts` already calls ExecuteBillQuery from inside the logged-in page
 // with `credentials: 'include'`, so the WebAPI door is demonstrably open for reads. Writes, meanwhile, go through
 // the DOM, which is where every measured defect lives: Kendo editor state, focus, occlusion, and a model that lags
 // the cell by ~250ms. Before proposing that writes move to the API, three facts have to be measured, not assumed:
@@ -14,9 +14,9 @@
 // Audit, Delete or any other mutating stub, and it prints field KEYS and shapes — never amounts, names or payloads.
 //
 //   pnpm --filter @baox/server exec tsx scripts/probe-webapi.ts <单据编号>
-import { connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { READ_ONLY_SNIPPET } from '../src/erp/executor/probe';
+import { connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { READ_ONLY_SNIPPET } from '@baox/erp-executor/probe';
 
 const billNo = process.argv[2] ?? '';
 const FORM = 'ER_ExpReimbursement';

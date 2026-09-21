@@ -1,4 +1,4 @@
-import { ERP_ACTION_ERRORS, ERP_HANDOVER_STEP_COPY, TaskListSchema, type TaskSnapshot } from '@baox/contract';
+import { ERP_HANDOVER_STEP_COPY, TaskListSchema, type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fixtureCatalog } from './catalog/project-catalog';
 import { abortBeforeAttempt, catalogMismatch, gated, handedOver, loginWall, readbackMismatch, scripted, TEST_ERP_ACCOUNT, type ScriptedExecutor } from './erp/testing/fake-executor';
@@ -7,7 +7,7 @@ import { createTestServer, type TestClient, type TestServer } from './test/harne
 
 // Slice 12 (#191): 去报销 (fill ERP) end to end on a fake executor. The job runs in the background; the snapshot is
 // derived from the persisted job facts (ADR-0014/0016): login pause, cancel, catalog mismatch, write result unknown,
-// hand-over. The global ERP lease is held only while a job runs.
+// hand-over. The account's ERP lease is held only while one of its jobs runs (ADR-0019).
 
 const CATALOG = fixtureCatalog([
   { number: 'P-2307', name: '华东客户交付', audited: true, forbidden: false },
@@ -68,7 +68,7 @@ describe('去报销 on a fake executor', () => {
     const waiting = await start(ready);
     expect(waiting).toMatchObject({ stage: 'erp', step: { kind: 'erp_login' }, erp: { status: 'waiting_login', loginNotice: null } });
     expect(waiting.erp.steps.find((step) => step.key === 'login')?.status).toBe('waiting');
-    expect(server.erpLease.holder()).toBeNull();
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
     expect(executor.runs().map((run) => run.trigger)).toEqual(['start']);
     // The plan carries the confirmed lines' projects and the voucher invoices by content.
     expect(executor.runs()[0]!.plan).toMatchObject({ kind: 'fill', taskId: ready.task.taskId, purpose: '上海产品评审出差', catalog: { projects: [{ code: 'P-2307', name: '华东客户交付' }], expenseItems: [{ code: 'FY010001', name: '住宿' }] } });
@@ -129,7 +129,7 @@ describe('去报销 on a fake executor', () => {
     expect(mismatch).toMatchObject({ stage: 'project', step: { kind: 'assign_projects' }, erp: { status: 'idle' }, catalog: { status: 'mismatch' } });
     expect(mismatch.catalog.problems).toEqual([expect.objectContaining({ subject: '项目号 P-2307', resolver: '要你处理' })]);
     expect(mismatch.catalog.problems[0]!.reason).toContain('改过名的项目');
-    expect(server.erpLease.holder()).toBeNull();
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
     expect((await taskList()).tasks[0]).toMatchObject({ abandonable: true });
 
     // Reassigning and resubmitting leaves the mismatch behind: review again, confirm, write again.
@@ -146,7 +146,7 @@ describe('去报销 on a fake executor', () => {
     expect(unknown).toMatchObject({ stage: 'reconcile', step: { kind: 'reconcile' }, erp: { status: 'aborted' }, reconcile: { status: 'pending' } });
     expect(unknown.erp.abortReason).toContain('「申请报销金额」合计 1000.00 与任务合计 1006.00 不一致');
     expect(unknown.erp.erpAccount).toEqual(TEST_ERP_ACCOUNT);
-    expect(server.erpLease.holder()).toBeNull();
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
 
     await refused(await client.act(unknown, 'set-home-city', { homeCity: '上海' }), 400, 'erp_started');
     await refused(await client.act(unknown, 'start-erp-write'), 400, 'erp_started');
@@ -195,7 +195,7 @@ describe('去报销 on a fake executor', () => {
     // same constant, so the two lists cannot drift apart (ADR-0028).
     expect(done.erp.steps.at(-1)).toMatchObject({ ...ERP_HANDOVER_STEP_COPY, status: 'done' });
     expect(done.erp.steps.some((step) => step.title.includes('保存'))).toBe(false);
-    expect(server.erpLease.holder()).toBeNull();
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
 
     expect((await taskList()).tasks[0]).toMatchObject({ stage: 'done', erpDraftNo: null, abandonable: true, erpTouched: true });
     await refused(await client.act(done, 'set-home-city', { homeCity: '上海' }), 400, 'task_closed');
@@ -211,7 +211,7 @@ describe('去报销 on a fake executor', () => {
     const aborted = await start(await confirmed());
     expect(aborted).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, erp: { status: 'idle' }, confirmation: { status: 'confirmed' } });
     expect(aborted.erp.abortReason).toContain('报销系统的版本与上次核对时不一致');
-    expect(server.erpLease.holder()).toBeNull();
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
     expect((await taskList()).tasks[0]).toMatchObject({ abandonable: true });
     // Nothing was written, so the task is still editable.
     expect((await client.act(aborted, 'set-home-city', { homeCity: '杭州' })).status).toBe(200);
@@ -220,27 +220,33 @@ describe('去报销 on a fake executor', () => {
     expect(retried.stage).toBe('done');
   });
 
-  it('holds the global lease while the job runs: 409 stale for this task, 409 erp_in_use for another account', async () => {
+  it("holds only this account's lease while the job runs: 409 stale for this task, another account untouched", async () => {
     const gate = gated(handedOver());
     executor.queue(gate.script);
     const ready = await confirmed();
     const running = await client.accepted(await client.act(ready, 'start-erp-write'));
     await gate.running;
     expect(running).toMatchObject({ stage: 'erp', step: { kind: 'none' }, erp: { status: 'running' } });
-    expect(server.erpLease.holder()).toEqual({ accountId: alice.account.accountId, taskId: ready.task.taskId, jobId: expect.any(String) });
+    expect(server.erpLease.holder(alice.account.accountId)).toEqual({ accountId: alice.account.accountId, taskId: ready.task.taskId, jobId: expect.any(String) });
 
     const current = await client.current(ready.task.taskId);
     expect((await client.act(current, 'set-home-city', { homeCity: '上海' })).status).toBe(409);
 
+    // A colleague filing at the same moment is not queued behind her (ADR-0019): the lease she holds is not consulted
+    // for his account, and his own is free to take.
     const bob = await server.signIn('bob');
     const bobTask = await api(() => bob).createTask('杭州');
-    const blocked = await bob.post(`/api/tasks/${bobTask.task.taskId}/actions/start-erp-write`, { stepToken: bobTask.step.stepToken });
-    expect(blocked.status).toBe(409);
-    expect(await blocked.json()).toMatchObject({ error: { code: 'erp_in_use', message: ERP_ACTION_ERRORS.inUse } });
+    const unblocked = await bob.post(`/api/tasks/${bobTask.task.taskId}/actions/start-erp-write`, { stepToken: bobTask.step.stepToken });
+    expect(((await unblocked.json()) as { error: { code: string } }).error.code).not.toBe('erp_in_use');
+    expect(server.erpLease.acquire({ accountId: bob.account.accountId, taskId: bobTask.task.taskId, jobId: 'bob-job' })).toBe(true);
+    // Two accounts hold it at once, and neither sees the other's holder.
+    expect(server.erpLease.holder(alice.account.accountId)).toMatchObject({ taskId: ready.task.taskId });
+    expect(server.erpLease.holder(bob.account.accountId)).toMatchObject({ taskId: bobTask.task.taskId });
+    server.erpLease.release('bob-job');
 
     gate.release();
     expect((await settledErp(ready.task.taskId)).stage).toBe('done');
-    expect(server.erpLease.holder()).toBeNull();
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
 
   // A 住宿 line needs its 离店日期, which only the folio carries; the hotel invoice on its own cannot be written.

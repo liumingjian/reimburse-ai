@@ -1,8 +1,8 @@
 // Read-only: the geometry and structure of the recognised-invoice rows in the 发票无忧助手, so the row selection in
 // `uploadInvoices` can be matched against reality. Clicks nothing and imports nothing.
 
-import { connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
+import { connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
 
 const SNIPPET = `(() => {
   const vis = (n) => { const b = n.getBoundingClientRect(); const s = getComputedStyle(n);

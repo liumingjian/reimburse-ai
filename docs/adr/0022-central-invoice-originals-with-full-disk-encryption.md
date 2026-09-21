@@ -19,3 +19,21 @@ Once the server runs on Linux and serves several people, the invoice originals (
 - Every read path for originals carries an owner check.
 - Deployment documentation must specify an encrypted volume and encrypted backups; the protection is operational, so a misconfigured deployment silently loses it.
 - Content-addressed blob deduplication stays as ADR-0018 requires: blobs may be shared on disk but are reachable only through the owner's tasks.
+
+## Deployment deviation, phase 1 (2026-09-21)
+
+The decision stands; the first deployment does not meet it, knowingly. The intranet host chosen for the
+browser-extension V1 round (`10.250.0.222`, probed 2026-09-21) carries **no encrypted volume** — plain LVM
+on xfs, no dm-crypt — and has **no backups** at all, encrypted or otherwise. Invoice originals will rest
+unencrypted there.
+
+Two things make this affordable for now and not later: the instance starts from an empty database with no
+real 报销任务 (reimbursement task) in it, and it is reachable only over the company VPN. Neither will hold
+once employees file real invoices on it.
+
+The honest reason is sequencing, not a revised threat model: the core flow comes first. A keyfile-unlocked
+LUKS volume was considered and is not a fix — the key would sit on the same unencrypted disk, which is
+exactly the "someone walks off with the disk" threat this ADR names. Real protection needs a passphrase at
+boot or an external key, and that is its own round.
+
+This deviation must be closed before the instance holds real reimbursements.

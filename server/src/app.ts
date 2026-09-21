@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { ADMIN_ERRORS, AssignProjectLinesInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, FORBIDDEN_CODE, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
+import { ADMIN_ERRORS, AssignProjectLinesInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, EXTENSION_BLOB_PATH, EXTENSION_PAIR_PATH, EXTENSION_PAIRING_ERRORS, FORBIDDEN_CODE, ERP_ACTION_ERRORS, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
 import { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -11,16 +11,22 @@ import { accountOf, mountAccountRoutes, mountAuthRoutes, requireAccount, SESSION
 import type { Db } from './db/database';
 import { createInMemoryErpLease, type ErpLease } from './erp-lease';
 import { DEFAULT_ERP_CONFIG, type ErpConfig } from './erp/config';
-import { createFillJobs, unavailableExecutor, type FillExecutor, type RecordFacts } from './erp/fill-jobs';
+import { createFillJobs, type FillExecutor, type RecordFacts } from './erp/fill-jobs';
 import type { ReconcileExecutor } from './erp/reconcile-job';
-import { createReconcileJobs, unavailableReconcileExecutor } from './erp/reconcile-jobs';
+import { createReconcileJobs } from './erp/reconcile-jobs';
+import { createRemoteExecutor } from './erp/remote-executor';
 import { recoverErpJobs } from './erp/recovery';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
+import { createExtensionChannel, EXTENSION_NOT_PAIRED_CODE, EXTENSION_OFFLINE_CODE, realTimer, type ExtensionChannel, type Schedule } from './extension/channel';
+import { mountExtensionDownloadRoute } from './extension/download';
+import { bearer, mountExtensionPairRoutes, mountPairingRoutes } from './extension/http';
+import { createPairingService, hasPairing } from './extension/pairing';
 import { createLegacyImport, LegacyImportRefusal } from './legacy/import';
 import { unavailableCatalog, type ProjectCatalog } from './catalog/project-catalog';
-import { ActionRefusedError, createTaskService, parseBacklogOfAllAccounts, StaleStepError, TaskNotFoundError, type TaskService, type UploadedFile } from './tasks';
+import { admitsHost, admitsOrigin, type PublicOrigin } from './public-origin';
+import { ActionRefusedError, createTaskService, parseBacklogOfAllAccounts, StaleStepError, TaskNotFoundError, type ErpServiceOptions, type TaskService, type UploadedFile } from './tasks';
 
 // The HTTP app. Wire rules (contract/src/http.ts): success is 200 with the whole new snapshot; failure is
 // `{ error: { code, message } }`; a stale stepToken is 409 `{ error, snapshot }` with the fresh snapshot; SSE pushes
@@ -36,13 +42,14 @@ export type AppOptions = {
   webDist?: string | null;
   // Session expiry reads this clock; tests move it.
   now?: Clock;
-  // The global ERP control lease (ADR-0016): the fill job holds it while it runs. Tests pass theirs to observe it.
+  // The ERP control lease, one partition per 应用账号 (ADR-0016, ADR-0019): the fill job holds its account's while
+  // it runs. Tests pass theirs to observe it.
   erpLease?: ErpLease;
-  // Where 去报销 jobs run: `cdpFillExecutor` on the dedicated Chromium in production, a fake in tests. Without one,
-  // every job stops before touching anything.
+  // Where 去报销 jobs run. Without one (production), in the task owner's paired 浏览器扩展 over its channel
+  // (`erp/remote-executor.ts`); `cdpFillExecutor` on the dedicated Chromium only from the development and e2e entries
+  // and `pnpm test:erp-live`; a fake in tests.
   erpExecutor?: FillExecutor;
-  // Where the read-only 对账 (reconcile) jobs run: `cdpReconcileExecutor` in production, a fake in tests. Without one,
-  // every reconcile stops at once with nothing read.
+  // Where the read-only 对账 (reconcile) jobs run, chosen the same way as `erpExecutor`.
   reconcileExecutor?: ReconcileExecutor;
   // The ERP to write to and the build it may write to (`erp/config.ts`).
   erpConfig?: ErpConfig;
@@ -53,17 +60,26 @@ export type AppOptions = {
   // The legacy `~/.baox` read once when the first admin is created (ADR-0018). null (default) imports nothing;
   // `main.ts` passes `$BAOX_HOME` or `~/.baox`.
   legacyHome?: string | null;
+  // The address colleagues reach the app at (`public-origin.ts`). null (default) admits only 127.0.0.1.
+  publicOrigin?: PublicOrigin | null;
+  // The built extension template (`extension/dist`) the settings page's download is assembled from
+  // (`extension/download.ts`). null (default) answers every download with 503.
+  extensionTemplate?: string | null;
+  // The extension channel's timers: its hello deadline and a job's reconnection window (ADR-0020). Tests fire them by
+  // hand.
+  schedule?: Schedule;
 };
 
 // `close` stops the background jobs (after the material in flight) and releases the parse worker; call it before
-// closing the database.
-export type App = Hono<AppEnv> & { close: () => Promise<void> };
+// closing the database. `extensionChannel` is what `server.ts` hands an upgraded socket to; the app itself never
+// opens one.
+export type App = Hono<AppEnv> & { close: () => Promise<void>; extensionChannel: ExtensionChannel };
 
 type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
 const failure = (c: Context, status: 400 | 401 | 403 | 404 | 409, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor = unavailableExecutor, reconcileExecutor = unavailableReconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null }: AppOptions): App {
+export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor, reconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null, publicOrigin = null, extensionTemplate = null, schedule = realTimer }: AppOptions): App {
   const accounts = createAccountService(db, now);
   const legacy = createLegacyImport(db, legacyHome, now);
   // Keyed by task id; a task's stream only ever opens for its owner.
@@ -76,11 +92,24 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   };
   // The 去报销 jobs write their facts through the owner's task service (one revision per executor event).
   const record: RecordFacts = (accountId, taskId, write) => serviceFor(accountId).erpRecord(taskId, write);
-  const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor, record });
-  const reconcileJobs = createReconcileJobs({ db, lease: erpLease, execute: reconcileExecutor, record });
+  // The extension's executor answers through the channel built further down, so it reaches the channel through the
+  // binding rather than the value.
+  const remote = createRemoteExecutor({ db, schedule, extension: { request: (accountId, method, payload) => extensionChannel.request(accountId, method, payload) } });
+  const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor ?? remote.fill, record });
+  const reconcileJobs = createReconcileJobs({ db, lease: erpLease, execute: reconcileExecutor ?? remote.reconcile, record });
+  // Story 13: a 去报销 bound for the owner's 浏览器扩展 is refused before any job exists when there is no extension to
+  // run it, saying which is missing. An injected executor (development, e2e, tests) needs no extension. The in-job
+  // `extension_offline` abort stays as the backstop for a socket lost between this check and the dispatch.
+  const extensionReady = async (tx: Db, accountId: string) => {
+    if (extensionChannel.connected(accountId)) return null;
+    return (await hasPairing(tx, accountId))
+      ? { code: EXTENSION_OFFLINE_CODE, message: ERP_ACTION_ERRORS.extensionOffline }
+      : { code: EXTENSION_NOT_PAIRED_CODE, message: ERP_ACTION_ERRORS.extensionNotPaired };
+  };
+  const erpService: ErpServiceOptions = { lease: erpLease, config: erpConfig, run: (job) => fillJobs.run(job), reconcile: (job) => reconcileJobs.run(job), ...(erpExecutor ? {} : { executorReady: extensionReady }) };
   // Every task service is scoped to one account; the parser job gets the owner's service for each task it drives.
   const serviceFor = (accountId: string) =>
-    createTaskService(db, dataDir, accountId, { onChange: (snapshot) => publish(snapshot, accountId), erp: { lease: erpLease, config: erpConfig, run: (job) => fillJobs.run(job), reconcile: (job) => reconcileJobs.run(job) } });
+    createTaskService(db, dataDir, accountId, { onChange: (snapshot) => publish(snapshot, accountId), erp: erpService });
   // A restart ends every ERP job the old process ran: each gets its result before any request is served (a fill with
   // a durable attempt -> reconcile; never a replay). Until this succeeds those jobs still read as `running`, so every
   // mutation of their tasks would get 409 for ever: a failure is retried on the next request and, if it fails again,
@@ -117,18 +146,28 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   const batchLimit = bodyLimit({ maxSize: UPLOAD_MAX_FILE_BYTES * UPLOAD_BATCH_MAX_FILES, onError: tooLarge });
   const screenshotLimit = bodyLimit({ maxSize: UPLOAD_MAX_FILE_BYTES * 2, onError: tooLarge });
 
-  // Only this machine may talk to the app (story 82). Binding to 127.0.0.1 is not enough on its own: a page on the
-  // attacker's domain can point that domain at 127.0.0.1 (DNS rebinding) and then drive these routes from the
-  // victim's browser, cookies attached, reaching /api/auth/setup on a fresh install or register at any time. The
-  // rebound request still carries the attacker's name in Host, and a cross-origin write still carries its Origin.
+  // Only the address the app is served at may talk to it (story 82). Neither binding to 127.0.0.1 nor sitting on the
+  // company VPN is enough on its own: a page on the attacker's domain can point that domain at this app's address
+  // (DNS rebinding) and then drive these routes from the victim's browser, cookies attached, reaching
+  // /api/auth/setup on a fresh install or register at any time. The rebound request still carries the attacker's name
+  // in Host, and a cross-origin write still carries its Origin. A configured `publicOrigin` turns both checks from
+  // "loopback" into "exactly this origin": the reverse proxy in front of Node passes the browser's own Host and
+  // Origin through, so the app judges what the browser actually wrote.
+  // The Host predicate is shared with the WebSocket upgrade (`extension/websocket.ts`), which never reaches this
+  // middleware; both live in `public-origin.ts` so the two doors cannot drift apart.
+  const forbidden = (c: Context) => failure(c, 403, FORBIDDEN_HOST_CODE, publicOrigin ? NOT_THIS_ADDRESS : NOT_LOCAL);
+  // Redeeming a 配对码, and the extension revoking its own pairing, are the writes that do not come from this app's
+  // page: the extension sends them from its own `chrome-extension://…` origin (ADR-0019), which the exact-origin check
+  // could never admit. That path is exempt because the origin check is a defence for cookie-authorised writes, and
+  // it reads no cookie — the single-use 配对码 in the body, or the pairing token in `Authorization`, is its whole
+  // authority, and a page on another origin has no way to know either. The Host check still applies to it, so DNS
+  // rebinding gains nothing here either.
   app.use('*', async (c, next) => {
     const host = c.req.header('host') ?? new URL(c.req.url).host;
-    if (!isLocalHost(host)) return c.json({ error: { code: FORBIDDEN_HOST_CODE, message: NOT_LOCAL } }, 403);
+    if (!admitsHost(publicOrigin, host)) return forbidden(c);
     const origin = c.req.header('origin');
     // `null` is a sandboxed/opaque origin, never this app's own page.
-    if (WRITE_METHODS.has(c.req.method) && origin !== undefined && !isLocalOrigin(origin)) {
-      return c.json({ error: { code: FORBIDDEN_HOST_CODE, message: NOT_LOCAL } }, 403);
-    }
+    if (WRITE_METHODS.has(c.req.method) && origin !== undefined && c.req.path !== EXTENSION_PAIR_PATH && !admitsOrigin(publicOrigin, origin)) return forbidden(c);
     await next();
   });
 
@@ -155,12 +194,50 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
 
   // Creating the first admin runs the one-time legacy import into that account (ADR-0018), in the same transaction
   // that creates the account: both land or neither does.
-  mountAuthRoutes(app, {
-    ...accounts,
-    setup: (credentials) => accounts.setup(credentials, (tx, accountId) => legacy.onFirstAdmin(accountId, tx)),
+  const secureSession = publicOrigin?.secure ?? false;
+  mountAuthRoutes(
+    app,
+    {
+      ...accounts,
+      setup: (credentials) => accounts.setup(credentials, (tx, accountId) => legacy.onFirstAdmin(accountId, tx)),
+    },
+    secureSession,
+  );
+  // 扩展配对 (ADR-0019): the extension's own two routes carry no session and are mounted before the gate, because a
+  // pairing outlives every login. The settings page's routes sit behind it like everything else.
+  //
+  // The pairing view reports whether that account's extension is connected, which only the live channel knows, and
+  // the channel resolves tokens through the pairing service: each needs the other, so the pairing service reaches
+  // the channel through the binding rather than the value. It also closes the channel's socket when a pairing goes.
+  const pairings = createPairingService(db, now, { connected: (accountId) => extensionChannel.connected(accountId), disconnect: (accountId) => extensionChannel.disconnect(accountId) });
+  const extensionChannel = createExtensionChannel({ pairings, now, schedule, onRequest: remote.answer, onLost: remote.lost });
+  mountExtensionPairRoutes(app, pairings);
+  // The invoice originals of the 去报销 running in the paired extension (#256, ADR-0022), before the gate for the same
+  // reason: the extension's token is its only credential. Three answers read alike, so nothing can be learnt by
+  // probing: no running job, a sha256 its plan does not name, and another account's original. The task service is
+  // the token's account's, so the owner check every read path carries is made here too, on top of the plan's.
+  app.get(`${EXTENSION_BLOB_PATH}/:sha256`, async (c) => {
+    const paired = await pairings.lookup(bearer(c));
+    if (!paired) return failure(c, 401, 'not_paired', EXTENSION_PAIRING_ERRORS.notPaired);
+    const sha256 = c.req.param('sha256');
+    const job = remote.runningOriginal(paired.accountId, sha256);
+    const found = job ? await serviceFor(paired.accountId).file(job.taskId, sha256) : null;
+    if (!found || !existsSync(found.path)) return failure(c, 404, 'not_found', '没有这个文件。');
+    return c.body(readFileSync(found.path), 200, { 'Content-Type': servedType(found.mime), 'Cache-Control': 'no-store', 'X-Content-Type-Options': NOSNIFF });
   });
-  app.use('/api/*', requireAccount(accounts));
-  mountAccountRoutes(app, accounts);
+  app.use('/api/*', requireAccount(accounts, secureSession));
+  // A deactivated account loses its extension the way it loses its sessions: its token stops resolving (`lookup`),
+  // and its open socket closes now rather than at the next `hello`.
+  mountAccountRoutes(app, {
+    ...accounts,
+    update: async (actor, accountId, change) => {
+      const list = await accounts.update(actor, accountId, change);
+      if ('active' in change && !change.active) extensionChannel.disconnect(accountId);
+      return list;
+    },
+  });
+  mountPairingRoutes(app, pairings);
+  mountExtensionDownloadRoute(app, extensionTemplate, publicOrigin);
 
   // Legacy import (旧数据导入) as the signed-in account sees it; only the owner of a failed run may retry or skip.
   app.get('/api/legacy-import', async (c) => c.json(await legacy.view(accountOf(c).accountId)));
@@ -352,36 +429,16 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
 
   if (webDist) app.get('*', (c) => serveWebFile(c, webDist));
 
-  return Object.assign(app, { close: async () => { await settled(); await parseJobs.close(); await fillJobs.close(); await reconcileJobs.close(); } });
+  return Object.assign(app, { extensionChannel, close: async () => { extensionChannel.close(); await settled(); await parseJobs.close(); await fillJobs.close(); await reconcileJobs.close(); } });
 }
 
 // How many max-size files one 上传批次 may hold before the request itself is refused unread.
 const UPLOAD_BATCH_MAX_FILES = 20;
 
-// Only the loopback names reach the app; anything else is another host's name pointed at this machine.
-const LOCAL_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const WRITE_METHODS: ReadonlySet<string> = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 export const FORBIDDEN_HOST_CODE = 'forbidden_host';
 const NOT_LOCAL = '这个应用只能从本机访问。';
-
-const hostnameOf = (value: string): string | null => {
-  try {
-    return new URL(`http://${value}`).hostname.toLowerCase();
-  } catch {
-    return null;
-  }
-};
-const isLocalHost = (host: string): boolean => {
-  const hostname = hostnameOf(host);
-  return hostname !== null && LOCAL_HOSTS.has(hostname);
-};
-const isLocalOrigin = (origin: string): boolean => {
-  try {
-    return LOCAL_HOSTS.has(new URL(origin).hostname.toLowerCase());
-  } catch {
-    return false;
-  }
-};
+const NOT_THIS_ADDRESS = '这个应用只能从管理员配置的地址访问。';
 
 // Originals are content-addressed and shared between accounts, so what they are served as must never be whatever the
 // uploading browser claimed. Only the three kinds uploads accept are served as themselves; anything else downloads as
@@ -414,7 +471,8 @@ const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
   'answer-pending': taskAction(withToken({ itemId: z.string().min(1), answer: PendingAnswerSchema }), (tasks, id, { itemId, answer, stepToken }) => tasks.answerPending(id, itemId, answer, stepToken)),
   'confirm-review': taskAction(withToken({ digest: z.string().min(1) }), (tasks, id, { digest, stepToken }) => tasks.confirmReview(id, digest, stepToken)),
   'exclude-material': taskAction(withToken({ materialId: z.string().min(1) }), (tasks, id, { materialId, stepToken }) => tasks.excludeMaterial(id, materialId, stepToken)),
-  // 去报销 and its login pause. While another task holds the ERP lease: 409 `erp_in_use`, naming no account or task.
+  // 去报销 and its login pause. While another task of the same 应用账号 holds the ERP lease: 409 `erp_in_use`, naming
+  // no task. Another account's job never refuses this one (ADR-0019).
   'start-erp-write': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.startErpWrite(id, stepToken)),
   'confirm-login': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.confirmLogin(id, stepToken)),
   'cancel-erp-write': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.cancelErpWrite(id, stepToken)),
@@ -423,7 +481,7 @@ const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
   'rotate-placement': taskAction(z.object({ pageId: z.string().min(1), slot: PlacementSlotSchema, rotate: z.boolean() }), (tasks, id, { pageId, slot, rotate }) => tasks.rotatePlacement(id, pageId, slot, rotate)),
   'crop-placement': taskAction(CropInputSchema, (tasks, id, { pageId, slot, corners }) => tasks.cropPlacement(id, pageId, slot, corners)),
   'remove-payment-screenshot': taskAction(z.object({ screenshotId: z.string().min(1) }), (tasks, id, { screenshotId }) => tasks.removePaymentScreenshot(id, screenshotId)),
-  // 对账 (read-only, 409 `erp_in_use` while another task holds the lease) and 转人工 (terminal).
+  // 对账 (read-only, 409 `erp_in_use` while another task of the same 应用账号 holds the lease) and 转人工 (terminal).
   reconcile: taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.reconcile(id, stepToken)),
   'hand-off': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.handOff(id, stepToken)),
   // 重新去报销 (ADR-0027): a new fill job on the same task, offered only by the 对账 verdict that allows it.

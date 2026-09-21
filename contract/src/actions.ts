@@ -152,15 +152,21 @@ export const ERP_ACTION_ERRORS = {
   notWaitingLogin: '现在没有在等待登录。',
   notReconciling: '这个任务现在不在对账中。',
   notAllowed: '当前对账结果不允许这个处置。',
-  // Another task (of any account) holds the ERP lease; names no account or task (ADR-0018). HTTP 409 `erp_in_use`.
+  // Another task of the same 应用账号 (app account) holds that account's ERP lease; names no task (ADR-0019).
+  // HTTP 409 `erp_in_use`. Another account's job never causes this refusal.
   inUse: '报销系统正被另一个任务使用，请稍后再试。',
   // Once an ERP action attempt exists the task's facts are frozen (ADR-0014).
   erpStarted: '已开始写入报销系统，不能再改动；请按对账结果处理。',
   // Checks that need no ERP (invoice identity, ERP invoice type, dates, amounts) failed; nothing was started.
   preflight: (problems: readonly string[]) => `还不能写入报销系统：${problems.join('；')}。`,
+  // 去报销 runs in the employee's own 浏览器扩展 (browser extension, ADR-0019); without one nothing is started (story 13).
+  // `extension_not_paired`: this 应用账号 has no pairing. `extension_offline`: paired, but its extension is not connected.
+  extensionNotPaired: '还没有配对浏览器扩展，所以现在去报销不了。请先到设置页的「浏览器扩展」一节下载安装扩展，用那里生成的配对码完成配对，再来去报销。',
+  extensionOffline: '浏览器扩展现在没有连上应用，所以现在去报销不了。请打开装着扩展的 Chrome 或 Edge，等设置页的「浏览器扩展」一节显示已连接，再来去报销。',
 } as const;
 
-// The one task-action refusal that is HTTP 409 but not stale_step: the global ERP lease is held by another task.
+// The one task-action refusal that is HTTP 409 but not stale_step: this 应用账号's ERP lease is held by another of
+// its own tasks.
 // The web adapter keeps its code and message; every other task-action 409 is stale_step.
 export const ERP_IN_USE_CODE = 'erp_in_use';
 

@@ -81,7 +81,7 @@ test('主要页面没有 Carbon 自带的英文文案', async ({ page }) => {
 
 test('断连时的加载指示（InlineLoading）与不可用的新建按钮没有英文文案', async ({ page }, testInfo) => {
   await page.goto(open('?fault=service-disconnected', '#/tasks'));
-  const waiting = page.locator('.cds--inline-loading').filter({ hasText: '正在等待本地服务恢复' });
+  const waiting = page.locator('.cds--inline-loading').filter({ hasText: '正在等待报销服务恢复' });
   await expect(waiting).toBeVisible();
   await expect(page.getByRole('button', { name: '新建报销任务' })).toBeDisabled();
   await page.screenshot({ path: testInfo.outputPath('tasks-disconnected.png'), fullPage: true });

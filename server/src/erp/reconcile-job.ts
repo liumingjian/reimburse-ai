@@ -4,7 +4,7 @@
 
 import type { Db } from '../db/database';
 import { createErpJobs, serverChannel, type ErpJudge } from './jobs';
-import { ReconcilePlanSchema, type ExecutorChannel, type ExecutorEvent, type ReadbackEvent, type ReconcilePlan, type ResultEvent } from './protocol';
+import { ReconcilePlanSchema, type ExecutorChannel, type ExecutorEvent, type ReadbackEvent, type ReconcilePlan, type ResultEvent } from '@baox/erp-executor/protocol';
 import { classifyReconciliation, reconcileReadings, reconcileRecord } from './reconcile';
 
 export type ReconcileExecutor = (plan: ReconcilePlan, channel: ExecutorChannel) => Promise<ResultEvent>;

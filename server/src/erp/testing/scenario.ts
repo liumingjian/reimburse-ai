@@ -3,10 +3,10 @@
 // Amounts and numbers follow 50931a3:kernel/test/erp-draft-flow.test.mjs.
 
 import { createHash } from 'node:crypto';
-import type { FakeErpOptions, FakeInvoice } from '../executor/testing/fake-erp';
+import type { FakeErpOptions, FakeInvoice } from '@baox/erp-executor/testing/fake-erp';
 import type { DraftJudgeInputs } from '../judge';
 import { previewLinesDigest } from '../preview';
-import { PROTOCOL_VERSION, type BlobSource, type FillPlan, type ReconcilePlan } from '../protocol';
+import { PROTOCOL_VERSION, type BlobSource, type FillPlan, type ReconcilePlan } from '@baox/erp-executor/protocol';
 
 export const ERP_ORIGIN = 'http://erp.antute.com.cn';
 export const IDENTITY = { account: 'luo.liu', tenant: 'tenant-a' };

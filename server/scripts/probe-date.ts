@@ -14,7 +14,7 @@
 // late recalculation. The control is a Kendo datepicker that the ERP opens PRE-FILLED with today, and it ignores
 // select-all, so the typed date was appended to today's and the datepicker parsed the front of the result.
 // Backspace is the only clearing it answers to, and once it is empty Enter and Tab both commit faithfully.
-// The fix that came out of this is `clearEditor` in `src/erp/executor/erpform.ts`.
+// The fix that came out of this is `clearEditor` in `erp-executor/src/erpform.ts`.
 //
 // It opens a 费用报销单-新增 (new expense reimbursement) and types into a detail row, so it is not read-only —
 // but it SAVES NOTHING: no 保存, no 提交, no 删除行, no 发票导入单据, and it touches no existing 单据. An unsaved
@@ -23,12 +23,12 @@
 //
 // Usage on the mac, against the dedicated ERP Chromium on CDP 9333:
 //   pnpm --filter @baox/server exec tsx scripts/probe-date.ts
-import { clickAt, connect, enableFocusEmulation, evalIn, pressKey, selectAll, targets, typeText } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { cellTarget, readGrid, sectionAnchors, showSection, writeCell } from '../src/erp/executor/erpform';
-import { clickReach } from '../src/erp/executor/hit';
-import { DEFAULT_PACE, sleep } from '../src/erp/executor/pace';
-import { addDetailRow, openNewReimbursement, type WritePage } from '../src/erp/executor/steps';
+import { clickAt, connect, enableFocusEmulation, evalIn, pressKey, selectAll, targets, typeText } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { cellTarget, readGrid, sectionAnchors, showSection, writeCell } from '@baox/erp-executor/erpform';
+import { clickReach } from '@baox/erp-executor/hit';
+import { DEFAULT_PACE, sleep } from '@baox/erp-executor/pace';
+import { addDetailRow, openNewReimbursement, type WritePage } from '@baox/erp-executor/steps';
 
 const COLUMN = process.env['PROBE_DATE_COLUMN'] ?? '开始日期';
 const ROW = Number(process.env['PROBE_DATE_ROW'] ?? 0);

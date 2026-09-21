@@ -204,8 +204,8 @@ async function qaTaskList(page, context, state) {
   await page.goto(`${BASE}/#/tasks`);
   await expect(page.getByRole('heading', { name: '报销任务', level: 1 })).toBeVisible({ timeout: 15000 });
 
-  if (await visible(page.getByRole('alert').filter({ hasText: '本地服务未运行' }), 2000)) {
-    defect('task-list', 'the offline banner 本地服务未运行 shows while the server is up');
+  if (await visible(page.getByRole('alert').filter({ hasText: '连不上报销服务' }), 2000)) {
+    defect('task-list', 'the offline banner 连不上报销服务 shows while the server is up');
   }
 
   // Only one unfinished task is allowed, so void whatever a previous run left behind.

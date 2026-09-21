@@ -3,23 +3,23 @@
   "categories": { "correctness": "off" },
   "overrides": [
     {
-      "files": ["server/src/erp/executor/*.ts"],
+      "files": ["erp-executor/src/*.ts"],
       "rules": {
         "no-restricted-imports": ["error", {
           "patterns": [{
-            "group": ["../**", "!../protocol"],
-            "message": "ADR-0016: the ERP executor may import only server/src/erp/executor/** and ../protocol, never the rest of the server."
+            "group": ["@baox/server", "@baox/server/**", "../**"],
+            "message": "ADR-0016: @baox/erp-executor must stay usable without the server, because the browser extension is its second consumer. It may import only its own src and its declared dependencies."
           }]
         }]
       }
     },
     {
-      "files": ["server/src/erp/executor/*/**/*.ts"],
+      "files": ["erp-executor/src/*/**/*.ts"],
       "rules": {
         "no-restricted-imports": ["error", {
           "patterns": [{
-            "group": ["../../**", "!../../protocol"],
-            "message": "ADR-0016: the ERP executor may import only server/src/erp/executor/** and ../protocol, never the rest of the server."
+            "group": ["@baox/server", "@baox/server/**", "../../**"],
+            "message": "ADR-0016: @baox/erp-executor must stay usable without the server, because the browser extension is its second consumer. It may import only its own src and its declared dependencies."
           }]
         }]
       }

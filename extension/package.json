@@ -1,0 +1,35 @@
+{
+  "name": "@baox/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The 浏览器扩展 (browser extension): an MV3 extension that pairs with one 应用账号 by 配对码 and holds the WebSocket channel to the app",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "exports": {
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:browser": "playwright test -c e2e/playwright.config.ts"
+  },
+  "dependencies": {
+    "@baox/contract": "workspace:*",
+    "@baox/erp-executor": "workspace:*"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/chrome": "0.3.0",
+    "@types/node": "24.13.3",
+    "@types/ws": "8.18.1",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3",
+    "ws": "8.21.3"
+  }
+}

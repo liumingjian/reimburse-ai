@@ -64,7 +64,7 @@ describe('a 去报销 job that ends without sending a result', () => {
 
     expect(stopped).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, erp: { status: 'idle' }, confirmation: { status: 'confirmed' } });
     expect(stopped.erp.abortReason).toContain('没有给出结果');
-    expect(server.erpLease.holder()).toBeNull();
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
     // Nothing was written, so the task is still fully editable.
     expect((await client.act(stopped, 'set-home-city', { homeCity: '上海' })).status).toBe(200);
   });
@@ -86,7 +86,7 @@ describe('a 去报销 job that ends without sending a result', () => {
     const stopped = await start(await confirmed());
 
     expect(stopped).toMatchObject({ stage: 'reconcile', step: { kind: 'reconcile' }, erp: { status: 'aborted' }, reconcile: { status: 'pending', allowedActions: ['wait', 'hand_off'] } });
-    expect(server.erpLease.holder()).toBeNull();
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
     // The facts are frozen, but the task can still be retired: ADR-0030 voids any state, ERP 写入结果未知 included.
     const voided = await alice.post(`/api/tasks/${stopped.task.taskId}/abandon`, {});
     expect(voided.status).toBe(200);

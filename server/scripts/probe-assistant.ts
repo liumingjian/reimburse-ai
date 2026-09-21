@@ -2,8 +2,8 @@
 // selectors can be matched against reality. Evaluates one expression; clicks nothing, uploads nothing, imports
 // nothing, so it consumes no invoice and creates no 收票占用.
 
-import { connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
+import { connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
 
 const SNIPPET = `(() => {
   const vis = (n) => {

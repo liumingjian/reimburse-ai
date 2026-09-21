@@ -192,7 +192,7 @@ const RAIL_TICKET: KindSpec = {
   // ERP's 发票类型 enum has no 铁路电子客票 entry, but it does have 火车票, and that is what a rail e-ticket is
   // (docs/research/erp-expense-flow/deep-dive/11-invoice-type-enum.md: 普通发票、增值税发票、机票、火车票、
   // 其他运输票、其他). It was written as 普通发票 while the strict read-back accepted only two values; the owner
-  // corrected that 2026-09-20 and 火车票 is now one of the three baox writes (`erp/invoice-type.ts`).
+  // corrected that 2026-09-20 and 火车票 is now one of the three baox writes (`erp-executor/src/invoice-type.ts`).
   erpInvoiceTypes: () => ['火车票'],
 };
 

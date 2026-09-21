@@ -63,6 +63,13 @@ export const HTTP_ENDPOINTS = {
   getLegacyImport: { method: 'GET', path: '/api/legacy-import', body: 'none', fields: [] },
   retryLegacyImport: { method: 'POST', path: '/api/legacy-import/retry', body: 'json', fields: [] },
   skipLegacyImport: { method: 'POST', path: '/api/legacy-import/skip', body: 'json', fields: [] },
+  // 扩展配对 (extension pairing, ADR-0019): GET answers this account's pairing; issuing a 配对码 (pairing code)
+  // answers the pairing with that code in it (this once only) and voids the old pairing at once; revoking answers
+  // the unpaired pairing. Failures are { error }. The extension's own endpoints (EXTENSION_PAIR_PATH) are not in this
+  // table: they carry no session and no page sends them.
+  getExtensionPairing: { method: 'GET', path: '/api/extension/pairing', body: 'none', fields: [] },
+  createExtensionPairingCode: { method: 'POST', path: '/api/extension/pairing/code', body: 'json', fields: [] },
+  revokeExtensionPairing: { method: 'POST', path: '/api/extension/pairing/revoke', body: 'json', fields: [] },
   getSnapshot: { method: 'GET', path: '/api/tasks/:id', body: 'none', fields: [] },
   subscribe: { method: 'GET', path: '/api/tasks/:id/events', body: 'sse', fields: [] },
   createTask: { method: 'POST', path: '/api/tasks', body: 'json', fields: ['homeCity'] },

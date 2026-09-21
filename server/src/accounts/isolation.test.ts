@@ -2,7 +2,8 @@ import { ERP_ACTION_ERRORS, TaskListSchema, TaskSnapshotSchema } from '@baox/con
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestServer, type TestClient, type TestServer } from '../test/harness';
 
-// Per-account data (ADR-0018): an account sees only its own tasks, admins included; the ERP lease is global.
+// Per-account data (ADR-0018): an account sees only its own tasks, admins included. The ERP 自动化控制权 lease is
+// per 应用账号 (app account) too (ADR-0019): it refuses that account's own second job and nobody else's.
 
 let server: TestServer;
 let admin: TestClient;
@@ -58,23 +59,39 @@ describe('task isolation between accounts', () => {
   });
 });
 
-describe('the global ERP lease', () => {
-  it("gives a second account's start-erp-write 409 while another task holds the lease, naming nobody", async () => {
+describe('the per-account ERP lease', () => {
+  it("leaves another account's start-erp-write alone, and lets both accounts hold the lease at once", async () => {
     const adminTask = await createTask(admin);
     const aliceTask = await createTask(alice);
     expect(server.erpLease.acquire({ accountId: admin.account.accountId, taskId: adminTask.task.taskId, jobId: 'admin-job' })).toBe(true);
 
+    // Alice is refused only by her own task's state, never by the admin's running job: the instance is not a queue.
     const response = await alice.post(`/api/tasks/${aliceTask.task.taskId}/actions/start-erp-write`, { stepToken: aliceTask.step.stepToken });
+    expect(response.status).not.toBe(409);
+    expect((await response.json()) as { error: { code: string } }).toMatchObject({ error: { code: 'not_ready' } });
+
+    // And her account's own lease is free to take while the admin still holds his.
+    expect(server.erpLease.acquire({ accountId: alice.account.accountId, taskId: aliceTask.task.taskId, jobId: 'alice-job' })).toBe(true);
+    expect(server.erpLease.holder(admin.account.accountId)).toMatchObject({ jobId: 'admin-job' });
+    expect(server.erpLease.holder(alice.account.accountId)).toMatchObject({ jobId: 'alice-job' });
+  });
+
+  it("gives start-erp-write 409 while another job of the same account holds the lease, naming no task", async () => {
+    const other = await createTask(alice);
+    // A job of hers that this task knows nothing about: 一个应用账号 owns one active 报销任务 at a time, so the
+    // account's other job is reached through the lease rather than through a second task.
+    expect(server.erpLease.acquire({ accountId: alice.account.accountId, taskId: 'her-other-job-task', jobId: 'alice-job' })).toBe(true);
+
+    const response = await alice.post(`/api/tasks/${other.task.taskId}/actions/start-erp-write`, { stepToken: other.step.stepToken });
     expect(response.status).toBe(409);
     const body = (await response.json()) as { error: { code: string; message: string }; snapshot: unknown };
     expect(body.error).toEqual({ code: 'erp_in_use', message: ERP_ACTION_ERRORS.inUse });
-    expect(TaskSnapshotSchema.parse(body.snapshot).task.taskId).toBe(aliceTask.task.taskId);
-    const text = JSON.stringify(body);
-    // Both tasks carry the same placeholder name, so the holder's id and account are what must not show.
-    for (const leak of [adminTask.task.taskId, admin.account.accountId, 'admin']) expect(text).not.toContain(leak);
+    expect(TaskSnapshotSchema.parse(body.snapshot).task.taskId).toBe(other.task.taskId);
+    // The refusal names no task, not even one of her own.
+    expect(JSON.stringify(body)).not.toContain('her-other-job-task');
 
-    server.erpLease.release('admin-job');
-    const free = await alice.post(`/api/tasks/${aliceTask.task.taskId}/actions/start-erp-write`, { stepToken: aliceTask.step.stepToken });
+    server.erpLease.release('alice-job');
+    const free = await alice.post(`/api/tasks/${other.task.taskId}/actions/start-erp-write`, { stepToken: other.step.stepToken });
     expect(free.status).not.toBe(409);
   });
 });

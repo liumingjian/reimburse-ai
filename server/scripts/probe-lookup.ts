@@ -8,11 +8,11 @@
 //
 // Writes into ONE cell of one row on an UNSAVED 新增. Saves nothing, imports nothing, deletes nothing.
 //   pnpm --filter @baox/server exec tsx scripts/probe-lookup.ts [--column 项目] [--value 111705] [--commit|--real]
-import { autoAttach, clickAt, connect, enableFocusEmulation, evalIn, pressKey, targets, typeText } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { cellTarget, readGridByColumn, settleGrid, writeCell } from '../src/erp/executor/erpform';
-import { addDetailRow } from '../src/erp/executor/steps';
-import { sleep } from '../src/erp/executor/pace';
+import { autoAttach, clickAt, connect, enableFocusEmulation, evalIn, pressKey, targets, typeText } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { cellTarget, readGridByColumn, settleGrid, writeCell } from '@baox/erp-executor/erpform';
+import { addDetailRow } from '@baox/erp-executor/steps';
+import { sleep } from '@baox/erp-executor/pace';
 
 const flag = (name: string, fallback: string) => {
   const at = process.argv.indexOf(`--${name}`);

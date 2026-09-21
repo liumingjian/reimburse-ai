@@ -66,7 +66,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
           lowContrast
           hideCloseButton
           statusIconDescription="注意"
-          title="进行中，请不要关闭专用浏览器窗口。"
+          title="进行中，请不要关闭为这次报销打开的报销系统标签页。"
           subtitle="应用不会替你点保存，也不提交审批；中途任何不一致都会停下来对账。"
         />
       ) : null}
@@ -88,7 +88,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
                     <div className="desc">{item.description}</div>
                     {item.status === 'waiting' && waitingLogin ? (
                       <div className="app-login-prompt">
-                        <p>请在专用浏览器窗口里用本人账号登录报销系统，完成后回到这里。</p>
+                        <p>请在为这次报销打开的报销系统标签页里用本人账号登录，完成后回到这里。</p>
                         {erp.loginNotice ? (
                           <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={erp.loginNotice} />
                         ) : null}
