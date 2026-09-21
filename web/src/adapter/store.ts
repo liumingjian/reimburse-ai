@@ -71,7 +71,8 @@ export type LegacyImportState = {
   readonly error: string | null;
 };
 
-// 扩展配对（ADR-0019）：只在打开设置页时读取；之后由生成配对码 / 撤销配对的结果替换。
+// 扩展配对 (extension pairing, ADR-0019): read when the settings page opens; afterwards replaced by the result of
+// issuing a 配对码 (pairing code) or revoking the pairing.
 export type ExtensionPairingState = {
   readonly status: LoadStatus;
   readonly data: ExtensionPairing | null;
@@ -321,7 +322,7 @@ export class AppStore {
     }
   }
 
-  // 扩展配对：只在设置页用到，第一次用到时读取。
+  // Only the settings page uses the pairing, so it is read the first time that page needs it.
   async loadExtensionPairing(): Promise<void> {
     const previous = this.state.extensionPairing;
     this.setState({ extensionPairing: { status: 'loading', data: previous.data, error: null } });
@@ -335,8 +336,8 @@ export class AppStore {
     }
   }
 
-  // 生成配对码 / 撤销配对：结果里的配对情况直接替换当前的。刚生成的那一串只在这一份里出现，
-  // 之后任何一次读取都不会再带上它。
+  // Issuing a 配对码 or revoking: the pairing in the result replaces the current one. A freshly issued code appears
+  // in this result only; no later read carries it again.
   async extensionPairingAction(run: (adapter: AppAdapter) => Promise<ExtensionPairingOutcome>): Promise<ExtensionPairingOutcome> {
     let outcome: ExtensionPairingOutcome;
     let data: ExtensionPairing | null;

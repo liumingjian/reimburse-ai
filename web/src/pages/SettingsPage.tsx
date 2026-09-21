@@ -12,10 +12,12 @@ import { PageHeader } from '../shell/PageHeader';
 // 「完全重置」请服务端清空当前账号自己的数据；成功后换上服务端给出的任务列表（空的），回到任务列表路由。账号与登录状态保留。
 // 「旧数据导入」显示创建第一个管理员时那一次导入的结果（故事 81）：导进了什么、哪些旧任务没有迁移；
 // 旧数据损坏时逐个文件列出原因，由这个账号修好后重试，或明确跳过。跳过之后导入就此结束。
-// 「浏览器扩展」给出一次性的配对码，扩展拿它换长期凭据；配对之后这里显示配对了哪台浏览器、最近什么时候连过，
-// 也可以撤销。一个账号同时只有一个配对，重新生成配对码即作废原来的那一个。
-// 同一节里给出扩展安装包的下载与 Chrome、Edge 的安装、升级步骤（ADR-0021：开发者模式下加载已解压的扩展，没有自动更新），
-// 并说明去报销时浏览器顶部的调试提示条是正常的、点它的「取消」会让这次去报销停下。
+// 浏览器扩展 (browser extension): issues a one-time 配对码 (pairing code) that the extension exchanges for its long-lived
+// credential; once paired, shows which browser and when it last connected, and offers 撤销配对 (revoke the pairing).
+// An account has one pairing at a time, so issuing a new 配对码 voids the old one. The same section offers the
+// extension download and the Chrome and Edge install and upgrade steps (ADR-0021: loaded unpacked in developer mode,
+// never auto-updated), and explains that the debugging banner during 去报销 is expected, and what its Cancel does:
+// the job resumes in the same tab when nothing was being written, and goes to 对账 (reconciliation) when it was (#257).
 // 版式：表单页，内容限宽，节与节之间用细分隔线。
 
 export const LEGACY_IMPORT_COPY = {
@@ -135,7 +137,7 @@ export const EXTENSION_PAIRING_COPY = {
   title: '浏览器扩展',
   pairingTitle: '配对',
   lead: '去报销时，由你自己浏览器里的扩展打开报销系统并按你确认过的内容填写。先把扩展和这个账号配对，它才知道自己替谁做事。',
-  independence: '配对与登录互不影响：撤销配对不会退出登录，退出登录也不会解除配对。',
+  independence: '配对与登录互不影响：撤销配对不会退出登录，退出登录也不会撤销配对。',
   status: '状态',
   browser: '浏览器',
   extensionVersion: '扩展版本',
@@ -162,8 +164,8 @@ export const EXTENSION_PAIRING_COPY = {
   retryLoad: '重试',
 } as const;
 
-// 写给不知道开发者模式是什么的员工：每一步只做一件事，按钮和开关的名字照浏览器界面上的写。
-// 报销系统写作「报销系统」，不写英文缩写（copy.test.ts）。
+// Written for an employee who has never heard of developer mode: one action per step, and every button and switch
+// named exactly as the browser labels it. The ERP is always 报销系统, never the English abbreviation (copy.test.ts).
 export const EXTENSION_INSTALL_COPY = {
   download: '下载浏览器扩展',
   offeredVersion: (version: string) => `这里提供的扩展版本：${version}`,
@@ -190,10 +192,11 @@ export const EXTENSION_INSTALL_COPY = {
   ],
   bannerTitle: '去报销时浏览器顶部的提示条',
   bannerBody: '去报销时，扩展会新开一个报销系统的标签页，在那里替你填写。这时浏览器顶部会出现一条提示，写着“报销助手”已开始调试此浏览器，或者正在调试此浏览器。这是正常的：扩展正是靠它把内容填进报销系统，提示条会一直显示到这次填写结束。',
-  bannerCancel: '不要点这条提示上的“取消”。点了它，扩展会立刻失去对那个标签页的控制，这次去报销随即停止，不会自己继续。如果不小心点了，请回到应用，按页面上的提示核对报销系统里已经填了什么。',
+  bannerCancel: '不要点这条提示上的“取消”。点了它，扩展会暂时失去对那个标签页的控制：如果当时它没有正在往报销系统里写，它会重新接管同一个标签页，确认页面没变之后接着做下去；如果正写到一半，这一步有没有生效看不出来，这次去报销就停下，转去对账。请回到应用，按页面上的提示处理。',
 } as const;
 
-// 下载、安装与升级步骤、调试提示条的说明。下载是一个普通链接：安装包由服务端按它自己的地址现场生成，页面不经过适配器。
+// The download, the install and upgrade steps, and the debugging banner. The download is a plain link: the server
+// assembles the package for its own address on request, so the page does not go through the adapter.
 function ExtensionInstallGuide({ installedVersion }: { installedVersion: string | null }) {
   const outdated = installedVersion !== null && compareExtensionVersions(installedVersion, EXTENSION_VERSION) < 0;
   return (
@@ -230,7 +233,8 @@ function ExtensionInstallGuide({ installedVersion }: { installedVersion: string 
   );
 }
 
-// 浏览器扩展：生成配对码交给扩展换取长期凭据，页面这边只看得到配对了哪台浏览器、最近什么时候连过，以及撤销它。
+// The pairing panel: the 配对码 goes to the extension, which exchanges it for its credential; this page only ever sees
+// which browser is paired, when it last connected, and the way to revoke it.
 function ExtensionPairingSection() {
   const store = useAppStore();
   const state = useExtensionPairing();
