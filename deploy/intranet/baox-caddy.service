@@ -1,0 +1,37 @@
+# Caddy in front of baox on :80 (docs/deployment/intranet-phase-1.md). install.sh installs this file as
+# /etc/systemd/system/baox-caddy.service; edit it here, not there.
+
+[Unit]
+Description=Caddy reverse proxy for baox
+Documentation=file:///opt/tools/baox/current/docs/deployment/intranet-phase-1.md
+After=network-online.target baox.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+# Not root: the one privilege it needs, binding :80, is granted as a capability.
+User=baox
+Group=baox
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+ExecStart=/opt/tools/baox/bin/caddy run --config /opt/tools/baox/etc/Caddyfile --adapter caddyfile
+# Caddy's own state (its instance id; certificates once a domain exists) stays under the deploy directory.
+Environment=XDG_DATA_HOME=/opt/tools/baox/caddy/data
+Environment=XDG_CONFIG_HOME=/opt/tools/baox/caddy/config
+LimitNOFILE=1048576
+
+MemoryAccounting=yes
+MemoryMax=256M
+MemoryLimit=256M
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=5
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target
