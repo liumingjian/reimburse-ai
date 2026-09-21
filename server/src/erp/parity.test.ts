@@ -5,12 +5,14 @@
 //
 // It runs twice: once with the executor attached to the fake ERP directly, as the server's CDP executor attaches to its
 // Chromium, and once through the browser extension's `chrome.debugger` adapter and dedicated-tab browser, with
-// `chrome.*` faked over the same fake ERP (spec #246, seam 1). Same golden for both: the extension changes the
-// transport under the page logic, and nothing the page logic reads or writes.
+// `chrome.*` faked over the same fake ERP (spec #246, seam 1), putting the invoices into the assistant as bytes built in
+// the page, as the extension does (#256). Same golden for both: the extension changes the transport under the page
+// logic, and nothing the page logic reads or writes.
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTaskService } from '../tasks';
 import { createTestServer, type TestServer } from '../test/harness';
+import { stageInPage, type InvoiceStaging } from '@baox/erp-executor/invoice-files';
 import { runFillJob, type BrowserPort } from '@baox/erp-executor/job';
 import { createFakeErp, type FakeErp } from '@baox/erp-executor/testing/fake-erp';
 import { dedicatedErpTab } from '@baox/extension/erp-tab';
@@ -26,16 +28,17 @@ let server: TestServer;
 beforeEach(async () => { server = await createTestServer(); });
 afterEach(() => server.close());
 
-const directly = (fake: FakeErp): BrowserPort => fake.browser;
-const throughTheExtension = (fake: FakeErp): BrowserPort => {
+type Route = (fake: FakeErp) => { browser: BrowserPort; staging?: InvoiceStaging };
+const directly: Route = (fake) => ({ browser: fake.browser });
+const throughTheExtension: Route = (fake) => {
   const chrome = fakeChrome(fake.session);
-  return dedicatedErpTab({ erpOrigin: ERP_ORIGIN, tabs: chrome.tabs, windows: chrome.windows, debugger: chrome.debugger, pollMs: 1 });
+  return { browser: dedicatedErpTab({ erpOrigin: ERP_ORIGIN, tabs: chrome.tabs, windows: chrome.windows, debugger: chrome.debugger, pollMs: 1 }), staging: stageInPage };
 };
 
 describe.each([
   ['attached directly', directly],
   ['through the extension\'s chrome.debugger adapter', throughTheExtension],
-])('kernel parity of the fill job, %s', (_how, browserOf) => {
+])('kernel parity of the fill job, %s', (_how, routeOf) => {
   it('reads back what the kernel reads back, verdict for verdict, and writes the same ERP mutations', async () => {
     // The golden's task id is fixed; create a task row for the FK and judge with the golden's id in the facts.
     const { account } = await server.signIn('alice');
@@ -53,7 +56,7 @@ describe.each([
     };
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
     const result = await runFillJob(fillPlan(taskId, { jobId: 'job-parity' }), {
-      browser: browserOf(fake), blobs: blobSource(), channel: { emit: emit as ExecutorChannel['emit'] }, pace: FAST_PACE, probeWaitMs: 0,
+      ...routeOf(fake), blobs: blobSource(), channel: { emit: emit as ExecutorChannel['emit'] }, pace: FAST_PACE, probeWaitMs: 0,
     });
 
     const strip = (stage: string) => JSON.parse(JSON.stringify(observed[stage] ?? null));

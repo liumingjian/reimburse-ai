@@ -1,3 +1,4 @@
+import { stageInPage } from '@baox/erp-executor/invoice-files';
 import { runFillJob } from '@baox/erp-executor/job';
 import type { Pace } from '@baox/erp-executor/pace';
 import { ExecutorError } from '@baox/erp-executor/page';
@@ -23,6 +24,7 @@ export type ErpRunnerPorts = {
   /** The job's browser: in the extension, `dedicatedErpTab` for the plan's ERP origin and the tab choice. */
   browser(erpOrigin: string, choice: TabChoice): ErpTab;
   request: WireRequest;
+  /** The invoice originals, from the app (`serverBlobs`). Without one, a fill stops before the page is touched. */
   blobs?: BlobSource;
   pace?: Pace;
   /**
@@ -32,14 +34,12 @@ export type ErpRunnerPorts = {
   onInterrupted?: (jobId: string, interruption: Interruption) => void;
 };
 
-// Invoice bytes are #256's (a blob endpoint and an in-page `DataTransfer`). Until then the browser build stops at
-// staging before it would ask for any, so nothing reaches this.
-const NO_BLOBS: BlobSource = {
-  read: () => Promise.reject(new ExecutorError('INVOICE_BLOBS_UNAVAILABLE', '这个版本的浏览器扩展还拿不到发票原件')),
-};
-
 const choiceFor = (trigger: FillRequest['trigger'], known: number | undefined): TabChoice =>
   ({ reuse: trigger === 'start' ? null : known ?? null, openIfGone: true });
+
+const NO_BLOBS: BlobSource = {
+  read: () => Promise.reject(new ExecutorError('INVOICE_BLOB_UNAVAILABLE', '这个浏览器扩展拿不到发票原件。报销系统没有被改动。')),
+};
 
 export function createErpRunner(ports: ErpRunnerPorts): (method: string, payload: unknown) => Promise<ResultEvent> {
   const tabOfTask = new Map<string, number>();
@@ -66,7 +66,8 @@ export function createErpRunner(ports: ErpRunnerPorts): (method: string, payload
       const { channel, browser } = ready(plan.jobId, plan.erpOrigin, choiceFor(trigger, tabOfTask.get(plan.taskId)));
       try {
         return await runFillJob(plan, {
-          browser, blobs: ports.blobs ?? NO_BLOBS, channel,
+          // Invoices go into the page as bytes: the extension has no local path to give the file input (ADR-0021).
+          browser, blobs: ports.blobs ?? NO_BLOBS, staging: stageInPage, channel,
           ...(ports.pace ? { pace: ports.pace } : {}),
           // As the server's own executor does: 我已登录，继续 probes the login once instead of waiting for it.
           probeWaitMs: trigger === 'confirm_login' ? 0 : 30_000,

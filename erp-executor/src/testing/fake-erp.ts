@@ -4,6 +4,10 @@
 // (docs/research/erp-expense-flow): edit-on-click cells, select-all + typing + Enter/Tab commit, F7 code -> name,
 // the invoice-type dropdown, linked recalculation, the piaozone assistant as a child target, save -> 修改 mode.
 //
+// Invoices reach the assistant's file input by either route the executor has (`invoice-files.ts`): local paths
+// through `DOM.setFileInputFiles`, or `File` objects in a `DataTransfer` assigned inside the page. Both end in the
+// same recognition, keyed by the bytes' sha256.
+//
 // Layout: jsdom has none, so every visible element gets a unique 8x8 box on a 10px grid in DOCUMENT coordinates, in
 // the order it is first measured. Hidden (display:none / visibility:hidden / [hidden]) elements measure 0x0.
 // `data-below-fold` puts a box at an explicit document y instead, so a test can place a control past the bottom of
@@ -283,6 +287,13 @@ const cents = (text: string | null | undefined) => {
 };
 const money = (value: number) => `¥${(value / 100).toFixed(2)}`;
 const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+/** A page-side `File`'s bytes. jsdom's `File` has no `arrayBuffer()`, so this goes through its `FileReader`. */
+const readInPage = (window: any, file: any) => new Promise<Uint8Array>((resolve, reject) => {
+  const reader = new window.FileReader();
+  reader.onload = () => resolve(new Uint8Array(reader.result));
+  reader.onerror = () => reject(reader.error);
+  reader.readAsArrayBuffer(file);
+});
 const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
 /** One jsdom document with fake layout, visible-only innerText, and CDP-style evaluation. */
@@ -460,7 +471,7 @@ export async function createFakeErp(options: FakeErpOptions) {
   let optionItemCoverUntil: number | null = null;
   const lingeringEditRows: Array<{ tr: any; due: number }> = [];
   let pendingReport: { start: number; due: number; summary: string; rows: readonly string[] } | null = null;
-  const pendingRecognition: Array<{ due: number; files: string[] }> = [];
+  const pendingRecognition: Array<{ due: number; files: Uint8Array[] }> = [];
   let dropdown: { td: any; tr: any; list: any; span: any } | null = null;
   /**
    * Which 选择发票 menu item the clicks actually landed on. 合并生成费用明细 / 不合并生成费用明细 make ERP write
@@ -804,6 +815,7 @@ const kendoDate = (raw: string) => {
     show(q('#assistant-window'), true);
     const doc = new FakeDocument(fixture('piaozone-assistant.html'), 'https://www.piaozone.com/pwy-assistant/index.html');
     await doc.ready();
+    acceptFilesInPage(doc);
     child = { doc, sessionId: 'piaozone-session-1', targetId: 'piaozone-1' };
     activePane = null;
     uploadBatches = 0;
@@ -1088,11 +1100,11 @@ const kendoDate = (raw: string) => {
     doc.querySelector('#assistant-selected').textContent = `已选取${uploaded}张发票 所有已选发票已选0份附件`;
   }
 
-  function recognise(files: string[]) {
+  function recognise(files: Uint8Array[]) {
     if (!child) return;
     const doc = child.doc.document;
-    for (const path of files) {
-      const hash = sha256(readFileSync(path));
+    for (const bytes of files) {
+      const hash = sha256(bytes);
       const invoice = invoicesBySha.get(hash);
       if (!invoice || doc.querySelector(`tr[data-sha256="${hash}"]`)) continue; // unknown files are not recognised; duplicates dedupe by number
       // 票种 is what the grid groups by, so the fake groups by the invoice's own 发票类别.
@@ -1173,7 +1185,30 @@ const kendoDate = (raw: string) => {
     for (const box of doc.querySelectorAll('input.ant-checkbox-input')) box.setAttribute('data-covered-by', ASSISTANT_NOTICE);
   }
 
-  function setFiles(files: string[]) {
+  /**
+   * The in-page route. What Chrome supplies natively, jsdom lacks: it has no `DataTransfer`, and its `files` setter
+   * takes only a FileList of its own making. So the fake supplies both — a `DataTransfer` whose `files` is the list of
+   * files added, and a file input that holds whatever list it is given. The assistant's part is its own: on `change`
+   * it uploads what the input holds, which is where the bytes are read back and recognised.
+   */
+  function acceptFilesInPage(doc: FakeDocument) {
+    const { window } = doc;
+    window.DataTransfer = class {
+      private readonly added: any[] = [];
+      readonly items = { add: (file: any) => { this.added.push(file); } };
+      get files() { return Object.assign([...this.added], { item: (index: number) => this.added[index] ?? null }); }
+    };
+    const input = doc.document.querySelector('input[type=file]');
+    let held: any[] = [];
+    Object.defineProperty(input, 'files', { configurable: true, get: () => held, set: (files: any[]) => { held = files; } });
+    input.addEventListener('change', () => {
+      const batch = [...held];
+      void Promise.all(batch.map((file) => readInPage(window, file))).then((files) => { if (child?.doc === doc) setFiles(files); });
+    });
+  }
+
+  /** One upload batch reaching the assistant, by either route. */
+  function setFiles(files: Uint8Array[]) {
     if (!child) return;
     const delay = options.assistantRecognitionTicks ?? 0;
     if (delay > 0 && uploadBatches > 0) pendingRecognition.push({ due: assistantTicks + delay, files });
@@ -1202,7 +1237,7 @@ const kendoDate = (raw: string) => {
         case 'Target.setAutoAttach': autoAttach = true; return {};
         case 'DOM.getDocument': return { root: { nodeId: 1 } };
         case 'DOM.querySelector': return { nodeId: doc.document.querySelector(params.selector) ? 2 : 0 };
-        case 'DOM.setFileInputFiles': setFiles(params.files as string[]); return {};
+        case 'DOM.setFileInputFiles': setFiles((params.files as string[]).map((path) => readFileSync(path))); return {};
         case 'Page.captureScreenshot': return { data: Buffer.from(`fake-screenshot ${JSON.stringify(params.clip ?? null)}`).toString('base64') };
         default: return {};
       }

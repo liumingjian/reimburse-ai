@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { ADMIN_ERRORS, AssignProjectLinesInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, EXTENSION_PAIR_PATH, FORBIDDEN_CODE, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
+import { ADMIN_ERRORS, AssignProjectLinesInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, EXTENSION_BLOB_PATH, EXTENSION_PAIR_PATH, EXTENSION_PAIRING_ERRORS, FORBIDDEN_CODE, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
 import { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -21,7 +21,7 @@ import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
 import { createExtensionChannel, realTimer, type ExtensionChannel, type Schedule } from './extension/channel';
 import { mountExtensionDownloadRoute } from './extension/download';
-import { mountExtensionPairRoutes, mountPairingRoutes } from './extension/http';
+import { bearer, mountExtensionPairRoutes, mountPairingRoutes } from './extension/http';
 import { createPairingService } from './extension/pairing';
 import { createLegacyImport, LegacyImportRefusal } from './legacy/import';
 import { unavailableCatalog, type ProjectCatalog } from './catalog/project-catalog';
@@ -201,6 +201,19 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   const pairings = createPairingService(db, now, (accountId) => extensionChannel.connected(accountId));
   const extensionChannel = createExtensionChannel({ pairings, now, schedule, onRequest: remote.answer, onLost: remote.lost });
   mountExtensionPairRoutes(app, pairings);
+  // The invoice originals of the 去报销 running in the paired extension (#256, ADR-0022), before the gate for the same
+  // reason: the extension's token is its only credential. Three answers read alike, so nothing can be learnt by
+  // probing: no running job, a sha256 its plan does not name, and another account's original. The task service is
+  // the token's account's, so the owner check every read path carries is made here too, on top of the plan's.
+  app.get(`${EXTENSION_BLOB_PATH}/:sha256`, async (c) => {
+    const paired = await pairings.lookup(bearer(c));
+    if (!paired) return failure(c, 401, 'not_paired', EXTENSION_PAIRING_ERRORS.notPaired);
+    const sha256 = c.req.param('sha256');
+    const job = remote.runningOriginal(paired.accountId, sha256);
+    const found = job ? await serviceFor(paired.accountId).file(job.taskId, sha256) : null;
+    if (!found || !existsSync(found.path)) return failure(c, 404, 'not_found', '没有这个文件。');
+    return c.body(readFileSync(found.path), 200, { 'Content-Type': servedType(found.mime), 'Cache-Control': 'no-store', 'X-Content-Type-Options': NOSNIFF });
+  });
   app.use('/api/*', requireAccount(accounts, secureSession));
   mountAccountRoutes(app, accounts);
   mountPairingRoutes(app, pairings);

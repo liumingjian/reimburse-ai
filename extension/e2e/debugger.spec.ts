@@ -1,7 +1,10 @@
 // #255 in a real Chromium: the extension opens its own ERP tab, attaches `chrome.debugger` to it alone, brings it to
 // the front, and the executor's login probe and 报销信息核对 (master-data check) pass over it. The run then stops at
-// invoice staging, before any attempt, because putting invoices into the assistant is #256's. #259 adds the full run
-// and the mid-run detach to this same harness.
+// fetching the invoices, before any attempt: the stand-in app serves no originals. #259 adds the full run and the
+// mid-run detach to this same harness.
+import { createHash } from 'node:crypto';
+import type { CdpSession } from '@baox/erp-executor/cdp';
+import { putFilesInPage } from '@baox/erp-executor/invoice-files';
 import type { ExecutorEvent } from '@baox/erp-executor/protocol';
 import { expect } from '@playwright/test';
 import { fillPlan, test } from './harness';
@@ -42,7 +45,7 @@ test('the login probe and the master-data check pass in a tab of the job\'s own,
 
   expect(stepsDone(baox.events)).toEqual(['chromium', 'login', 'catalog']);
   expect(baox.events.some((e) => e.type === 'attempt_started')).toBe(false);
-  expect(result).toMatchObject({ type: 'result', status: 'aborted', code: 'INVOICE_STAGING_UNAVAILABLE' });
+  expect(result).toMatchObject({ type: 'result', status: 'aborted', code: 'INVOICE_BLOB_UNAVAILABLE' });
 
   expect(seen.during).toBeDefined();
   const { attached, active, visibility } = seen.during!;
@@ -95,4 +98,40 @@ test('chrome.debugger accepts Emulation.setFocusEmulationEnabled on a foreground
   }, erp.entry);
 
   expect(answer).toBe('accepted');
+});
+
+// #256's mechanism in a real Chromium: `putFilesInPage`, sent over `chrome.debugger`, builds the files in the assistant
+// page and assigns them to its hidden `multiple` input, and the page's own `change` handler reads back exactly the bytes
+// handed in. Whether the LIVE assistant then recognises them is #250's question 2, which this cannot answer: the
+// recorded page carries no behaviour of its own.
+test('files built in the page over chrome.debugger reach the hidden file input\'s change handler intact', async ({ erp, extension }) => {
+  const page = await extension.context.newPage();
+  await page.goto(`${erp.assistantOrigin}/m4-web/fpzs/kdInvoices`);
+  await page.evaluate(() => {
+    const input = document.querySelector<HTMLInputElement>('input[type=file]')!;
+    const hex = (buffer: ArrayBuffer) => [...new Uint8Array(buffer)].map((b) => b.toString(16).padStart(2, '0')).join('');
+    (window as unknown as { seen: Promise<unknown> }).seen = new Promise((resolve) => {
+      input.addEventListener('change', async () => {
+        resolve(await Promise.all([...(input.files ?? [])].map(async (file) => ({ name: file.name, type: file.type, sha256: hex(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())) }))));
+      }, { once: true });
+    });
+  });
+  const tabId = await extension.worker.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url: `${url}/*` });
+    await chrome.debugger.attach({ tabId: tab!.id! }, '1.3');
+    return tab!.id!;
+  }, erp.assistantOrigin);
+  const session: CdpSession = {
+    send: (method, params = {}) => extension.worker.evaluate(({ tabId, method, params }) => chrome.debugger.sendCommand({ tabId }, method, params), { tabId, method, params }),
+    close: () => undefined,
+  };
+  const files = [
+    { name: '01-铁路电子客票.pdf', mime: 'application/pdf', bytes: new TextEncoder().encode('%PDF-1.4\n% rail\n%%EOF\n') },
+    { name: '02-网约车发票.pdf', mime: 'application/pdf', bytes: new Uint8Array(70_000).map((_, i) => (i * 7) % 256) },
+  ];
+
+  await putFilesInPage(session, files);
+
+  const seen = await page.evaluate(() => (window as unknown as { seen: Promise<unknown> }).seen);
+  expect(seen).toEqual(files.map((file) => ({ name: file.name, type: file.mime, sha256: createHash('sha256').update(file.bytes).digest('hex') })));
 });

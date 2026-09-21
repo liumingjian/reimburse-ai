@@ -12,6 +12,8 @@
 // - Routing. The job runs in the extension of the account that owns the task, and only that account's socket may
 //   speak for it. Another account's job reads exactly like no job at all.
 // - Order. A job's events are handed to its channel one at a time, in the order they arrived.
+// - Originals. While a fill runs, its extension may fetch the invoices its plan names, and nothing else
+//   (`runningOriginal`, served by the blob route in `app.ts`).
 // - Interruption (ADR-0020). A lost socket and a `chrome.debugger` detach are one event: the job is *interrupted*,
 //   takes no events, and keeps its lease. Within `RECONNECT_WINDOW_MS` the extension may resume it by `jobId` with
 //   what it re-observed; the server judges that page against the one the job left (`reobservationProblems`) and
@@ -43,6 +45,8 @@ export type RemoteExecutor = {
   answer: ChannelRequestHandler;
   // The channel's `onLost`: that account's socket went, so its job is interrupted.
   lost: (accountId: string) => void;
+  // The task whose running fill, in this account's extension, names this invoice original; null for anything else.
+  runningOriginal: (accountId: string, sha256: string) => { taskId: string } | null;
 };
 
 // `live` takes events. `interrupted` takes only `erp.resume`, until the window closes. `resuming` is a resume being
@@ -51,6 +55,9 @@ type JobState = 'live' | 'interrupted' | 'resuming' | 'ended';
 
 type Running = {
   accountId: string;
+  taskId: string;
+  // The originals the plan names (a fill's invoices; none for 对账): all its extension may fetch.
+  originals: ReadonlySet<string>;
   channel: ExecutorChannel;
   state: JobState;
   // The last event handed to the channel, so the next one waits for it.
@@ -115,11 +122,12 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer }: { 
     }, RECONNECT_WINDOW_MS);
   }
 
-  async function run(plan: { jobId: string; taskId: string }, channel: ExecutorChannel, method: string, payload: FillRequest | ReconcileRequest): Promise<ResultEvent> {
+  async function run(plan: { jobId: string; taskId: string; invoices?: Array<{ sha256: string }> }, channel: ExecutorChannel, method: string, payload: FillRequest | ReconcileRequest): Promise<ResultEvent> {
     const { account_id: accountId } = await db.selectFrom('task').select('account_id').where('task_id', '=', plan.taskId).executeTakeFirstOrThrow();
+    const originals = new Set((plan.invoices ?? []).map((invoice) => invoice.sha256));
     let job!: Running;
     const outcome = new Promise<ResultEvent>((finish, fail) => {
-      job = { accountId, channel, state: 'live', tail: Promise.resolve(), cancelWindow: null, finish, fail };
+      job = { accountId, taskId: plan.taskId, originals, channel, state: 'live', tail: Promise.resolve(), cancelWindow: null, finish, fail };
     });
     running.set(plan.jobId, job);
     extension.request(accountId, method, payload).then(
@@ -221,6 +229,14 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer }: { 
     },
     lost(accountId) {
       for (const job of running.values()) if (job.accountId === accountId) interrupt(job);
+    },
+    runningOriginal(accountId, sha256) {
+      // A job serves its originals to its own account until it has ended. An interrupted job has not ended: it may
+      // still need its invoices when it resumes.
+      for (const job of running.values()) {
+        if (job.state !== 'ended' && job.accountId === accountId && job.originals.has(sha256)) return { taskId: job.taskId };
+      }
+      return null;
     },
   };
 }
