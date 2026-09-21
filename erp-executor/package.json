@@ -13,6 +13,9 @@
       "default": "./src/*.ts"
     }
   },
+  "browser": {
+    "./src/staging.ts": "./src/staging.browser.ts"
+  },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"

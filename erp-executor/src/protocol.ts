@@ -6,7 +6,7 @@
 // This file and the executor ship together in @baox/erp-executor, so a second consumer — the 浏览器扩展 (browser
 // extension) — speaks the protocol without importing the server. A lint rule keeps the package off the server.
 
-import { createHash } from 'node:crypto';
+import { sha256Hex } from './sha256';
 import { z } from 'zod';
 
 export const PROTOCOL_VERSION = 1;
@@ -306,7 +306,7 @@ const previewShape = (preview: any) => ({
 
 /** Stable fingerprint of the complete expected write/readback contract. */
 export const erpWritePreviewDigest = (preview: unknown): string =>
-  createHash('sha256').update(JSON.stringify(previewShape(preview))).digest('hex').slice(0, 32);
+  sha256Hex(JSON.stringify(previewShape(preview))).slice(0, 32);
 
 /** Whether an approval covers exactly this preview; one changed field voids it. Origin: 50931a3:kernel/src/erpwrite.mjs. */
 export const approvalCovers = (approval: { digest?: string; preview?: unknown } | null | undefined, preview: unknown): boolean =>

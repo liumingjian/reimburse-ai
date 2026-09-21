@@ -21,9 +21,11 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import type { CdpListener, CdpSession } from '../cdp';
-import type { ChromiumPage } from '../chromium';
+import type { ChromiumPage } from '../page';
 
-const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
+/** A recorded fixture's text, placeholders and all. */
+export const fixture = (name: 'erp-main.html' | 'erp-login.html' | 'piaozone-assistant.html') =>
+  readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
 
 /** What `data-covered-by` names when ERP's idle prompt is the thing in the way. */
 const IDLE_COVER = '#idle-window .k-window-message';
@@ -394,6 +396,29 @@ class FakeDocument {
 
 export type FakeErp = Awaited<ReturnType<typeof createFakeErp>>;
 
+/**
+ * The ERP page the fake renders, placeholders filled: the main console when logged in, the login page otherwise.
+ * Shared with the extension's real-browser harness, which serves the same page over HTTP.
+ */
+export function erpFixtureHtml(loggedIn: boolean, values: { uuid: string; displayName: string; erpBuild: string; formId: string; today: string }) {
+  return fixture(loggedIn ? 'erp-main.html' : 'erp-login.html')
+    .replaceAll('{{UUID}}', values.uuid).replaceAll('{{DISPLAY_NAME}}', escapeHtml(values.displayName))
+    .replaceAll('{{BUILD}}', values.erpBuild).replaceAll('{{FORM_ID}}', values.formId).replaceAll('{{TODAY}}', values.today);
+}
+
+/**
+ * Kingdee's ExecuteBillQuery answered from the fake's master data: the JSON body ERP returns for a request body the
+ * catalog check sends. Shared with the real-browser harness, which serves it at the same path.
+ */
+export function answerBillQuery(requestBody: string, data: { projects: FakeMasterData[]; expenseItems: FakeMasterData[] }): unknown {
+  const payload = JSON.parse(JSON.parse(requestBody).parameters[0]);
+  const source = payload.FormId === 'BD_Expense' ? data.expenseItems : payload.FormId === 'BJYC_ProJect' ? data.projects : null;
+  const codes = [...String(payload.FilterString).matchAll(/'([^']*)'/g)].map((m) => m[1]);
+  return source === null
+    ? [[{ Result: { ResponseStatus: { Errors: [{ Message: `未知业务对象 ${payload.FormId}` }] } } }]]
+    : source.filter((row) => codes.includes(row.code)).map((row) => [row.code, row.name, row.documentStatus ?? 'C', row.forbidStatus ?? 'A']);
+}
+
 export async function createFakeErp(options: FakeErpOptions) {
   const origin = options.origin ?? 'http://erp.antute.com.cn';
   const url = `${origin}/k3cloud/html5/index.aspx`;
@@ -451,9 +476,7 @@ export async function createFakeErp(options: FakeErpOptions) {
   }
 
   async function render() {
-    const html = (loggedIn ? fixture('erp-main.html') : fixture('erp-login.html'))
-      .replaceAll('{{UUID}}', formUuid).replaceAll('{{DISPLAY_NAME}}', escapeHtml(account.displayName))
-      .replaceAll('{{BUILD}}', erpBuild).replaceAll('{{FORM_ID}}', formId).replaceAll('{{TODAY}}', today);
+    const html = erpFixtureHtml(loggedIn, { uuid: formUuid, displayName: account.displayName, erpBuild, formId, today });
     const doc = new FakeDocument(html, url);
     // K3Cloud states its front-end resource version nowhere in the DOM, only on this global, which is where the
     // compatibility fingerprint reads it. jsdom runs no inline script, so the fake sets it directly.
@@ -461,12 +484,7 @@ export async function createFakeErp(options: FakeErpOptions) {
     // localStorage keeps the last account even on the login page (probe.mjs fact 4).
     doc.window.localStorage.setItem('k3cloudloginInfo', JSON.stringify({ user: account.account, acc: account.tenant }));
     doc.window.fetch = async (_input: string, init: { body: string }) => {
-      const payload = JSON.parse(JSON.parse(init.body).parameters[0]);
-      const source = payload.FormId === 'BD_Expense' ? options.expenseItems : payload.FormId === 'BJYC_ProJect' ? options.projects : null;
-      const codes = [...String(payload.FilterString).matchAll(/'([^']*)'/g)].map((m) => m[1]);
-      const body = source === null
-        ? [[{ Result: { ResponseStatus: { Errors: [{ Message: `未知业务对象 ${payload.FormId}` }] } } }]]
-        : source.filter((row) => codes.includes(row.code)).map((row) => [row.code, row.name, row.documentStatus ?? 'C', row.forbidStatus ?? 'A']);
+      const body = answerBillQuery(init.body, options);
       return { status: 200, text: async () => JSON.stringify(body) };
     };
     await doc.ready();

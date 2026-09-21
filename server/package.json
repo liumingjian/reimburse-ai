@@ -40,6 +40,7 @@
     "zxing-wasm": "3.1.4"
   },
   "devDependencies": {
+    "@baox/extension": "workspace:*",
     "@baox/fixtures": "workspace:*",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "24.13.3",

@@ -22,7 +22,7 @@
 // same identity. A relocation is diagnosis, so a row gets at most one; a loop would be denial.
 
 import { evalIn, type CdpSession } from './cdp';
-import { ExecutorError } from './chromium';
+import { ExecutorError } from './page';
 import { HIT_JS, clickReach, describeCover, type Cover, type Reach } from './hit';
 import { dismissNotice } from './notices';
 import { DEFAULT_PACE, sleep, waitFor, type Pace } from './pace';
