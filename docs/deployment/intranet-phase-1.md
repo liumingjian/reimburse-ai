@@ -10,7 +10,7 @@ carries its own reasons in comments: [`install.sh`](../../deploy/intranet/instal
 Every command below is run by the maintainer, from the mac mini or on the host over ssh. The host facts were measured
 read-only on 2026-09-21: Kylin Linux Advanced Server V10 (Sword), 8 cores, 14 GiB RAM with 7.1 GiB in use by MySQL, an
 Oracle client, Grafana and docker; ports 80 and 443 free; outbound internet working; no caddy, no nginx; Node v20.19.5
-only under `/root/.nvm`.
+only under `/root/.nvm`. Kylin's system glibc is 2.28 and its GCC is 7.3, so the native build runtime below is required.
 
 ## Not protected in phase 1
 
@@ -39,10 +39,96 @@ and its closing condition binds this instance: **the gaps must be closed before 
 | `/opt/tools/baox/data/` | baox, 0700 | `BAOX_DATA_DIR`: `baox.sqlite` and the invoice originals |
 | `/opt/tools/baox/runtime/node` | root | Node at the version in `.nvmrc`, for baox only |
 | `/opt/tools/baox/runtime/pnpm-<version>/` | root | pnpm at the version in `package.json` `packageManager`, for the build |
+| `/opt/tools/baox/runtime/gcc-12.5.0/` | root | Isolated C++20 compiler and runtime used only by baox |
 | `/opt/tools/baox/bin/caddy` | root | Caddy, one static binary, version pinned in `install.sh` |
 | `/opt/tools/baox/etc/Caddyfile` | root | Installed from `deploy/intranet/Caddyfile` |
 | `/opt/tools/baox/cache/` | baox | pnpm store and the build's home directory |
-| `/etc/systemd/system/baox.service`, `baox-caddy.service` | root | The two units; nothing else is written outside `/opt/tools/baox` |
+| `/home/baox/.local/` | baox | Private uv, managed Python, and the build virtual environment |
+| `/etc/systemd/system/baox.service`, `baox-caddy.service` | root | The two units |
+
+## Native build runtime
+
+The deployment does not replace Kylin's compiler, loader, `libstdc++`, or `libgcc`. Create `/home/baox` as `baox:baox`
+with mode `0750`; its `.bashrc` is mode `0640` and contains the host proxy exports plus
+`export PATH="/home/baox/.local/bin:$PATH"`. Because the account has a nologin shell, every noninteractive command uses
+an explicit clean environment instead of relying on `.bashrc`.
+
+On a fresh host, create that account and its private build home before running `install.sh`:
+
+```bash
+if ! id -u baox >/dev/null 2>&1; then
+  useradd --system --user-group --home-dir /home/baox --create-home --shell /sbin/nologin baox
+fi
+install -d -o baox -g baox -m 0750 /home/baox /home/baox/.local /home/baox/.local/bin /home/baox/.cache
+test -e /home/baox/.bashrc || install -o baox -g baox -m 0640 /dev/null /home/baox/.bashrc
+printf '%s\n' 'export HTTP_PROXY="http://192.168.2.201:7890"' 'export HTTPS_PROXY="http://192.168.2.201:7890"' \
+  'export PATH="/home/baox/.local/bin:$PATH"' >> /home/baox/.bashrc
+chown baox:baox /home/baox/.bashrc
+chmod 0640 /home/baox/.bashrc
+```
+
+Install uv in `/home/baox/.local/bin`, then provision the Python node-gyp uses:
+
+```bash
+proxy=http://192.168.2.201:7890
+cd /home/baox
+runuser -u baox -- env -i HOME=/home/baox PATH=/home/baox/.local/bin:/usr/local/bin:/usr/bin:/bin \
+  HTTP_PROXY="$proxy" HTTPS_PROXY="$proxy" UV_CACHE_DIR=/home/baox/.cache/uv \
+  UV_PYTHON_INSTALL_DIR=/home/baox/.local/share/uv/python \
+  uv python install 3.12
+runuser -u baox -- env -i HOME=/home/baox PATH=/home/baox/.local/bin:/usr/local/bin:/usr/bin:/bin \
+  HTTP_PROXY="$proxy" HTTPS_PROXY="$proxy" UV_CACHE_DIR=/home/baox/.cache/uv \
+  UV_PYTHON_INSTALL_DIR=/home/baox/.local/share/uv/python \
+  uv venv --python 3.12 /home/baox/.local/share/baox-build-venv
+```
+
+Use GNU GCC 12.5.0, built under `/opt/tools/baox/runtime/gcc-12.5.0` with `--disable-bootstrap`, only C and C++,
+`--disable-multilib`, and `make -j2`. Verify `gcc-12.5.0.tar.xz` with its GNU signature and this official SHA-512 before
+extracting it:
+
+```text
+c76020e4c844b53485502cb8a4e295221c9d37487d66c9f4559031fb14c85de20602e6387310005386cb0ef25e55067d2cfef141423bb445f3b77e7456a23533
+```
+
+The source signature is `gcc-12.5.0.tar.xz.sig` from
+`https://gcc.gnu.org/pub/gcc/releases/gcc-12.5.0/`; verify it with GNU's `gnu-keyring.gpg` using `gpgv`. Install only
+the `gmp-devel`, `mpfr-devel`, `libmpc-devel`, and `isl-devel` build inputs after reviewing the dnf transaction; do not
+upgrade or replace GCC, glibc, `libstdc++`, or `libgcc`. When the host cannot fetch a release asset, transfer a
+locally signature-verified copy and repeat the host-side `gpgv` and SHA-512 checks.
+
+With the verified tarball, signature, and keyring under `/opt/tools/baox/runtime/src/gcc-12.5.0/`, build as root:
+
+```bash
+runtime=/opt/tools/baox/runtime
+source_dir=$runtime/src/gcc-12.5.0
+source_tree=$source_dir/gcc-12.5.0
+build_dir=$runtime/build/gcc-12.5.0
+prefix=$runtime/gcc-12.5.0
+
+gpgv --keyring "$source_dir/gnu-keyring.gpg" "$source_dir/gcc-12.5.0.tar.xz.sig" "$source_dir/gcc-12.5.0.tar.xz"
+printf '%s  %s\n' \
+  c76020e4c844b53485502cb8a4e295221c9d37487d66c9f4559031fb14c85de20602e6387310005386cb0ef25e55067d2cfef141423bb445f3b77e7456a23533 \
+  "$source_dir/gcc-12.5.0.tar.xz" | sha512sum -c --strict
+tar -xJf "$source_dir/gcc-12.5.0.tar.xz" -C "$source_dir"
+mkdir -p "$build_dir"
+cd "$build_dir"
+MAKEINFO=true "$source_tree/configure" --prefix="$prefix" --disable-bootstrap \
+  --enable-languages=c,c++ --disable-multilib --disable-nls --disable-libsanitizer \
+  --with-gmp=/usr --with-mpfr=/usr --with-mpc=/usr --with-isl=/usr
+make -j2
+make install
+chown -R root:root "$prefix"
+chmod -R a+rX "$prefix"
+LD_LIBRARY_PATH="$prefix/lib64" "$prefix/bin/g++" -dumpfullversion -dumpversion
+printf 'int main() { return 0; }\n' | runuser -u baox -- \
+  env LD_LIBRARY_PATH="$prefix/lib64" "$prefix/bin/g++" -std=c++20 -x c++ -fsyntax-only -
+```
+
+`install.sh` compiles `better-sqlite3` from source with this compiler, embeds a runtime search path to its `lib64`, and moves only
+that release's incompatible upstream prebuild aside. `baox.service` also sets the same `LD_LIBRARY_PATH` for baox alone;
+there is no host-wide loader configuration or `ldconfig` change. `make install` follows root's umask, so the explicit
+ownership and `a+rX` mode keep root as the only writer while allowing the `baox` service account to read and traverse
+the isolated compiler runtime.
 
 ## First install
 
@@ -61,14 +147,20 @@ and its closing condition binds this instance: **the gaps must be closed before 
    ```bash
    ssh root@10.250.0.222
    sha=<the same 12 characters>
-   tar -xzf "/tmp/baox-$sha.tar.gz" -C /tmp deploy/intranet/install.sh
-   BAOX_ADMIN_USERNAME=<your username> bash /tmp/deploy/intranet/install.sh "/tmp/baox-$sha.tar.gz"
+   launcher=$(mktemp -d /tmp/baox-installer.XXXXXX)
+   chmod 700 "$launcher"
+   tar -xzf "/tmp/baox-$sha.tar.gz" -C "$launcher"
+   BAOX_ADMIN_USERNAME=<your username> \
+   BAOX_BUILD_PYTHON=/home/baox/.local/share/baox-build-venv/bin/python \
+   HTTP_PROXY=http://192.168.2.201:7890 HTTPS_PROXY=http://192.168.2.201:7890 \
+   bash "$launcher/deploy/intranet/install.sh" "/tmp/baox-$sha.tar.gz"
    ```
 
-   The build compiles `better-sqlite3`, so the host needs `python3`, `make` and `g++` (`dnf install -y python3 make
-   gcc-c++`); the installer stops and says so when one is missing. It creates the `baox` system user, downloads Node, pnpm and Caddy (checksums verified), builds the release as
-   `baox`, installs the units, starts both services and probes them. The build downloads every dependency and takes
-   several minutes; it runs outside the memory cap, so start it when the databases are not busy.
+   The installer verifies the private Python, GCC 12.2 or newer, a C++20 probe, the source-built SQLite binding's
+   runtime search path, and an in-memory SQLite query before it builds the app. It creates the `baox` system user, downloads Node,
+   pnpm and Caddy (checksums verified), builds the release as `baox`, installs the units, starts both services and
+   probes them. The build downloads every dependency and takes several minutes; it runs outside the memory cap, so
+   start it when the databases are not busy.
 
    On a new database the first account created becomes the administrator (ADR-0018), so the installer creates yours
    **on the host, before Caddy serves port 80**: until then only `127.0.0.1:4319` answers, and nobody on the VPN can
@@ -109,7 +201,7 @@ re-downloads the extension and pairs again, because the old zips carry the old o
 When the only administrator is locked out (#247), on the host:
 
 ```bash
-runuser -u baox -- env BAOX_DATA_DIR=/opt/tools/baox/data \
+runuser -u baox -- env BAOX_DATA_DIR=/opt/tools/baox/data LD_LIBRARY_PATH=/opt/tools/baox/runtime/gcc-12.5.0/lib64 \
   /opt/tools/baox/runtime/node/bin/node /opt/tools/baox/current/server/dist/baox.mjs admin emergency-reset <username>
 ```
 
@@ -195,6 +287,24 @@ is needed.
 | `journalctl -u baox` shows `already used by another baox server` | A second baox process holds `data/server.lock`; stop it |
 | Downloads are slow or fail | Set `NODE_MIRROR`, `CADDY_DOWNLOAD` or `npm_config_registry` for the `install.sh` run (see its header) |
 
-## 维护者备注
+## Deployment verification
 
-（此处留给维护者用中文记录部署时的实际情况：日期、提交号、遇到的问题。）
+- On 2026-09-21, release `baox-fdcb4384553c-native-gcc-fix` was deployed from production source commit
+  `fdcb4384553c5fe98e05fe066dcc4e8fd1dd42fa`. Archive
+  `baox-fdcb4384553c-native-gcc-fix.tar.gz` has SHA-256
+  `a44f72c365f97711cf354f159400dc439ee342a71aaea15ed1724b5f92ff3d82`.
+- The build runtime is uv 0.12.17, Python 3.12.14 in
+  `/home/baox/.local/share/baox-build-venv`, and isolated GCC 12.5.0. Installing the GCC build prerequisites only
+  updated `gmp` from `6.2.0-1.ky10` to `6.2.0-2.ky10`; system GCC, glibc, `libstdc++`, and `libgcc` were not replaced.
+- The archived installer initially sent loopback probes through the proxy. An installer-only overlay
+  `5ee0949430eba52ebab4b9006588250f21cc6cfc8a566ba4e038c8d0a7a0a3c0` was applied to the existing release, adding
+  `--noproxy '*'` to local session, setup, and WebSocket curl calls. Future upgrades must use source containing this fix.
+- Verified: both systemd units are active and enabled; 4319 binds only to `127.0.0.1`; MemoryHigh is 1536 MiB,
+  MemoryMax/MemoryLimit are 2 GiB, and OOMScoreAdjust is 500. The HTTP session is signed out, the WebSocket upgrade is
+  101, anonymous extension download is 401, and the extension manifest parses. `better_sqlite3` uses the source
+  binding, its upstream prebuild is disabled, its ELF runtime search path targets isolated GCC, and an in-memory SQLite
+  query passes.
+- The initial administrator was not signed in, its temporary password was not changed, and no ERP or manual browser QA
+  was performed.
+- The user reported that basic manual QA passed on 2026-09-22. That report covers only "功能基本ok" and does not attest
+  to specific ERP actions.

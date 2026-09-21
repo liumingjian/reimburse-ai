@@ -57,8 +57,9 @@
           <button id="s7">⑦ 探针二：注入 DataTransfer</button>
           <span class="hint">
             先选发票文件（第一次建议只选 PDF，且优先用仓库里的合成样张
-            <code>fixtures/generated/m05-caocao-invoice.pdf</code>，它的发票号码是编造的，助手一定会拒收，
-            而拒收同样证明字节进了控件）。注入之后探针立刻进入<b>只读阶段</b>。
+            <code>fixtures/generated/m05-caocao-invoice.pdf</code>，它的发票号码是编造的，助手可能接受或拒收；
+            以 <code>assigned</code> 和助手的上传完成回调/回读为准。即使识别出合成样张，也绝不勾选或点「发票导入单据」。
+            注入之后探针立刻进入<b>只读阶段</b>。
           </span>
         </li>
         <li>
@@ -76,6 +77,7 @@
       <h2>观察结果</h2>
       <p class="hint">把下面这段整块复制，贴进 <code>docs/research/spike-250-chrome-debugger-and-datatransfer.md</code> 的「实际观察」一节。</p>
       <button id="copy">复制观察结果</button>
+      <button id="download">下载观察结果</button>
       <span id="copied" class="ok" hidden>已复制</span>
       <pre id="summary"></pre>
     </section>
@@ -83,6 +85,7 @@
     <section>
       <h2>运行日志</h2>
       <button id="copy-log">复制完整日志</button>
+      <button id="download-log">下载完整日志</button>
       <pre id="log"></pre>
     </section>
 

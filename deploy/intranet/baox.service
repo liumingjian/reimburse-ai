@@ -23,6 +23,8 @@ Environment=BAOX_PUBLIC_ORIGIN=http://10.250.0.222
 # Node binds 127.0.0.1:4319; only Caddy on :80 is reachable from the VPN.
 Environment=BAOX_PORT=4319
 Environment=BAOX_DATA_DIR=/opt/tools/baox/data
+# The source-built better-sqlite3 binding needs the isolated GCC runtime. This affects only baox, not the host loader.
+Environment=LD_LIBRARY_PATH=/opt/tools/baox/runtime/gcc-12.5.0/lib64
 # The legacy `~/.baox` import (ADR-0015) runs once, when the first administrator is created. This path never exists,
 # so this instance imports nothing and starts from an empty database.
 Environment=BAOX_HOME=/opt/tools/baox/no-legacy-import

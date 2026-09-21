@@ -116,7 +116,7 @@ step('s3', async () => {
 
 step('s4', async () => {
   requireTab();
-  await clickText('收票信息');
+  await clickWhere(page.formSectionPoint('收票信息'), '「收票信息」区域锚点');
   await sleep(2_500);
   await clickWhere(page.cssPoint(page.SPLIT_ARROW), '选择发票下拉按钮');
   await sleep(1_200);
@@ -344,6 +344,20 @@ function summarise() {
   ].filter((line) => line !== '').join('\n');
 }
 
+function downloadText(kind, contents) {
+  const timestamp = new Date().toISOString().replace(/[^0-9TZ]/g, '');
+  const blob = new Blob([contents], { type: 'text/plain;charset=utf-8' });
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = href;
+  link.download = `baox-spike-250-${kind}-${timestamp}.txt`;
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 0);
+}
+
 $('copy').addEventListener('click', async () => {
   await navigator.clipboard.writeText(summarise());
   $('copied').hidden = false;
@@ -351,5 +365,7 @@ $('copy').addEventListener('click', async () => {
 });
 
 $('copy-log').addEventListener('click', () => navigator.clipboard.writeText(logLines.join('\n')));
+$('download').addEventListener('click', () => downloadText('observations', summarise()));
+$('download-log').addEventListener('click', () => downloadText('log', logLines.join('\n')));
 
 render();

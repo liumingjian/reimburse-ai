@@ -1,10 +1,16 @@
-# The extension fills through a hybrid of content script and chrome.debugger, and ships unpacked
+# The extension fills through chrome.debugger and ships unpacked
+
+**Status: amended for browser-extension V1 on 2026-09-21 after live spike #250 passed.**
+The original content-script/debugger hybrid below is superseded for V1.
+[Measured results](../research/spike-250-chrome-debugger-and-datatransfer.md#run-2-both-probes-passed)
+show route B reaching the cross-origin invoice assistant and a byte-built `DataTransfer` triggering recognition.
+One synthetic PDF was tested on Chrome/macOS, with manual draft-opening assistance; this is not an end-to-end acceptance claim.
 
 How the extension actually drives the 金蝶 K3Cloud (Kingdee K3Cloud) page, which browsers that limits us to, how it reaches employees' machines, and what the distribution channel costs. These are one decision because the technique forces the `debugger` permission and the channel determines what that permission costs. Decided in [#225](https://github.com/liumingjian/reimburse-ai/issues/225).
 
 ## Decisions
 
-- **File upload goes through the content script.** Build `File` objects from bytes the server sends, assemble a `DataTransfer`, assign `input.files`. No local path is involved.
+- **File upload goes through `chrome.debugger` and `Runtime.evaluate`.** Build `File` objects from bytes the server sends, assemble a `DataTransfer`, assign `input.files`, and dispatch `input` and `change`. No local path or upload content script is required. Reach the assistant through `Target.setAutoAttach {flatten:true}` and `{tabId, sessionId}` (route B).
 - **The detail grid goes through `chrome.debugger`**, using `Input.dispatchKeyEvent` to produce genuine trusted events.
 - **Chrome and Edge only.** Written into scope, not left implicit.
 - **Distribution is load-unpacked in developer mode.** Employees use personal machines; Chrome is not under enterprise policy.
@@ -14,7 +20,8 @@ How the extension actually drives the 金蝶 K3Cloud (Kingdee K3Cloud) page, whi
 ## Considered Options
 
 - **A debugger-free extension.** Rejected on measured evidence: Kendo controls ignore programmatic assignment — writing `value` and dispatching `input`/`change` leaves the control's internal state stale — and a synthesized Meta+A select-all demonstrably failed, leaving concatenation artefacts (`客户支持客户支持`, `0.0018.25`). Non-`isTrusted` events are not reliable on the detail grid.
-- **Everything through `chrome.debugger`.** Rejected: uploads would need `DOM.setFileInputFiles`, which accepts local paths only. With the originals on the server, the extension has no path to give it. The `DataTransfer` route has already been demonstrated working on this exact page.
+- **Everything through `chrome.debugger`.** Originally rejected because `DOM.setFileInputFiles` requires local paths. Selected for V1 after spike #250 showed that `Runtime.evaluate` can build a `DataTransfer` from bytes and trigger recognition. The earlier rejection incorrectly assumed that debugger uploads required local paths.
+- **Content-script/debugger hybrid.** Previously selected; superseded for V1 because the measured debugger route handles both upload and trusted input without a second transport.
 - **Firefox and Safari support.** Rejected: `chrome.debugger` is Chromium-only with no equivalent, and K3Cloud is in practice only seriously tested on Chromium. Supporting Firefox would be a second executor, not an adaptation.
 - **Chrome Web Store, unlisted.** A reasonable default that needs no IT involvement, but it was not chosen: with personal, unmanaged machines there is no IT to involve either way, and store review adds a gate for a permission (`debugger`) that attracts scrutiny.
 - **Enterprise force-install.** Not available: the machines are not managed, which also removes any policy that could silence the debugger banner.

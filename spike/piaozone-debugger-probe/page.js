@@ -43,6 +43,32 @@ export const textPoint = (text) => `(() => {
   return at(nodes[0]);
 })()`;
 
+// The native accessibility tree calls these form-navigation entries tabs. Prefer an authored tab role whenever the
+// ERP exposes one. The recorded ERP DOM has not exposed that attribute, so its live-proven fallback is the top
+// navigation band used by the executor. This is a layout discriminator, not a semantic claim: ambiguous matches
+// still fail closed and identify which strategy was available in the run log.
+export const formSectionPoint = (text) => `(() => {
+  const vis = ${VIS};
+  const at = ${POINT_OF};
+  const wanted = ${JSON.stringify(String(text))};
+  const leaves = [...document.querySelectorAll('body *')].filter((n) => {
+    if (!vis(n) || n.children.length !== 0) return false;
+    return String(n.textContent || '').replace(/\\s+/g, ' ').trim() === wanted;
+  });
+  const tabs = [...new Set(leaves.map((n) => n.closest('[role="tab"]')).filter((n) => n && vis(n)))];
+  // sectionAnchors in erp-executor measured the navigation strip within this viewport band on the live ERP.
+  // Requiring the whole leaf to fit prevents an offscreen body heading from qualifying after the form scrolls.
+  const topNavigation = leaves.filter((n) => {
+    const b = n.getBoundingClientRect();
+    return b.top >= 0 && b.bottom <= 260;
+  });
+  const detail = { roleTabCount: tabs.length, topNavigationCount: topNavigation.length };
+  if (tabs.length === 1) return { ...at(tabs[0]), strategy: 'role-tab', ...detail };
+  if (tabs.length > 1) return { ok: false, count: tabs.length, strategy: 'role-tab', ...detail };
+  if (topNavigation.length !== 1) return { ok: false, count: topNavigation.length, strategy: 'top-navigation-band', ...detail };
+  return { ...at(topNavigation[0]), strategy: 'top-navigation-band', ...detail };
+})()`;
+
 export const cssPoint = (selector) => `(() => {
   const vis = ${VIS};
   const at = ${POINT_OF};
