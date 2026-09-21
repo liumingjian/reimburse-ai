@@ -96,7 +96,8 @@ Both were rejected in favour of plain HTTP on the intranet, with guardrails:
 - The `Secure` cookie flag follows the scheme: set under https, absent under http.
 - The server refuses to start when the origin is http and the host is not a private address, so the
   plaintext deployment cannot accidentally be exposed to the internet.
-- The firewall admits intranet ranges only. Employees off the intranet wait for the domain phase.
+- Access control is the company VPN, not a host firewall: employees reach the host only while the
+  VPN is up, and `firewalld` on it is deliberately left inactive.
 - Accepted risk, to be written into the deployment doc: app passwords, pairing tokens and invoice
   originals travel in clear on the LAN. This is not below the company's existing posture — the ERP
   itself is served over plain `http://erp.antute.com.cn` (public IP 1.119.199.76).
@@ -106,13 +107,28 @@ and web sessions reset.
 
 The target host is fixed: `10.250.0.222`, reached by ssh from the maintainer's mac mini, deployed
 under `/opt/tools/baox`. So phase 1's origin is `http://10.250.0.222`, which the extension bakes in,
-and which is what the exact-origin guard admits. The address is in 10/8, i.e. private, so the
-refuse-to-start rule above passes for this deployment and would still catch a public one.
+and which is what the exact-origin guard admits. Employees reach the host by that address only, over
+the company VPN. The address is in 10/8, i.e. private, so the refuse-to-start rule above passes for
+this deployment and would still catch a public one. The host's own interface is `192.168.1.222/24`;
+`10.250.0.222` is how the VPN presents it, and it is the address that matters here because it is the
+one baked into every extension.
 
-Data move: copy the existing data directory (SQLite plus originals) as-is; no format conversion and
-no migration script. 发票占用 must carry over, or invoices already reimbursed lose their protection
-against a second reimbursement. Deployment doc: stop the service, copy the directory, confirm it
-sits on an encrypted volume (ADR-0022), then start.
+**No data move.** The instance starts from an empty database: the product is still pre-launch, and no
+real 报销任务 exists to carry over. 发票占用 therefore has no history to preserve, and the legacy
+import path (ADR-0015) is not exercised by this deployment.
+
+The host as probed on 2026-09-21: Kylin Linux Advanced Server V10 (Sword), 8 cores, 14 GiB with
+7.1 GiB already in use by MySQL, an Oracle client, Grafana and docker. baox runs beside them under a
+dedicated `baox` system user with its own Node (root's nvm install is not visible to a service user),
+with a memory cap so that it cannot starve the databases sharing the box. Caddy is a single binary
+under the deploy directory; ports 80 and 443 were free, and the host has outbound internet.
+
+**Two deliberate deviations from ADR-0022**, accepted for phase 1 and recorded there:
+
+- The host carries no encrypted volume — plain LVM on xfs, no dm-crypt anywhere — so invoice
+  originals rest unencrypted.
+- There are no backups yet. Both are deferred until the core flow works, and both are gaps rather
+  than oversights.
 
 ## Distribution
 
