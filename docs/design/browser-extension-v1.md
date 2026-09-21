@@ -104,6 +104,11 @@ Both were rejected in favour of plain HTTP on the intranet, with guardrails:
 Moving to a domain later is handled as an upgrade: employees re-download the extension and re-pair,
 and web sessions reset.
 
+The target host is fixed: `10.250.0.222`, reached by ssh from the maintainer's mac mini, deployed
+under `/opt/tools/baox`. So phase 1's origin is `http://10.250.0.222`, which the extension bakes in,
+and which is what the exact-origin guard admits. The address is in 10/8, i.e. private, so the
+refuse-to-start rule above passes for this deployment and would still catch a public one.
+
 Data move: copy the existing data directory (SQLite plus originals) as-is; no format conversion and
 no migration script. 发票占用 must carry over, or invoices already reimbursed lose their protection
 against a second reimbursement. Deployment doc: stop the service, copy the directory, confirm it
