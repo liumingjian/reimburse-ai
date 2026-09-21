@@ -19,7 +19,7 @@ import { recoverErpJobs } from './erp/recovery';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
-import { createExtensionChannel, type ExtensionChannel } from './extension/channel';
+import { createExtensionChannel, realTimer, type ExtensionChannel, type Schedule } from './extension/channel';
 import { mountExtensionDownloadRoute } from './extension/download';
 import { mountExtensionPairRoutes, mountPairingRoutes } from './extension/http';
 import { createPairingService } from './extension/pairing';
@@ -65,6 +65,9 @@ export type AppOptions = {
   // The built extension template (`extension/dist`) the settings page's download is assembled from
   // (`extension/download.ts`). null (default) answers every download with 503.
   extensionTemplate?: string | null;
+  // The extension channel's timers: its hello deadline and a job's reconnection window (ADR-0020). Tests fire them by
+  // hand.
+  schedule?: Schedule;
 };
 
 // `close` stops the background jobs (after the material in flight) and releases the parse worker; call it before
@@ -76,7 +79,7 @@ type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
 const failure = (c: Context, status: 400 | 401 | 403 | 404 | 409, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor, reconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null, publicOrigin = null, extensionTemplate = null }: AppOptions): App {
+export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor, reconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null, publicOrigin = null, extensionTemplate = null, schedule = realTimer }: AppOptions): App {
   const accounts = createAccountService(db, now);
   const legacy = createLegacyImport(db, legacyHome, now);
   // Keyed by task id; a task's stream only ever opens for its owner.
@@ -91,7 +94,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   const record: RecordFacts = (accountId, taskId, write) => serviceFor(accountId).erpRecord(taskId, write);
   // The extension's executor answers through the channel built further down, so it reaches the channel through the
   // binding rather than the value.
-  const remote = createRemoteExecutor({ db, extension: { request: (accountId, method, payload) => extensionChannel.request(accountId, method, payload) } });
+  const remote = createRemoteExecutor({ db, schedule, extension: { request: (accountId, method, payload) => extensionChannel.request(accountId, method, payload) } });
   const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor ?? remote.fill, record });
   const reconcileJobs = createReconcileJobs({ db, lease: erpLease, execute: reconcileExecutor ?? remote.reconcile, record });
   // Every task service is scoped to one account; the parser job gets the owner's service for each task it drives.
@@ -196,7 +199,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // the channel resolves tokens through the pairing service: each needs the other, so the predicate reads the
   // channel through the binding rather than the value.
   const pairings = createPairingService(db, now, (accountId) => extensionChannel.connected(accountId));
-  const extensionChannel = createExtensionChannel({ pairings, lease: erpLease, now, onRequest: remote.answer });
+  const extensionChannel = createExtensionChannel({ pairings, now, schedule, onRequest: remote.answer, onLost: remote.lost });
   mountExtensionPairRoutes(app, pairings);
   app.use('/api/*', requireAccount(accounts, secureSession));
   mountAccountRoutes(app, accounts);

@@ -7,6 +7,8 @@
 //   server -> extension  `erp.fill`       {plan, trigger}   answered with the job's `result` event
 //   server -> extension  `erp.reconcile`  {plan}            answered with the job's `result` event
 //   extension -> server  `erp.event`      {jobId, event}    answered with what `ExecutorChannel.emit` resolves to
+//   extension -> server  `erp.detached`   {jobId}           the `chrome.debugger` lost the page: interrupts the job
+//   extension -> server  `erp.resume`     {jobId, last, now}  answered with a `ResumeVerdict`
 //
 // Every executor event is a request, not a one-way `event`: the executor awaits each emit, and a reply per event keeps
 // the job log in order and lets a failed write reach the executor. Two replies carry weight — the durable-attempt ack
@@ -15,11 +17,15 @@
 
 import { z } from 'zod';
 import {
-  ExecutorEventSchema, FillPlanSchema, ReconcilePlanSchema,
+  ErpAccountSchema, ExecutorEventSchema, FillPlanSchema, ReconcilePlanSchema,
   type Approval, type ApprovedPreview, type AttemptAck, type ExecutorChannel, type ExecutorEvent, type FreshGate, type ReadbackVerdict, type ResultEvent,
 } from './protocol';
 
-export const EXECUTOR_METHODS = { fill: 'erp.fill', reconcile: 'erp.reconcile', event: 'erp.event' } as const;
+export const EXECUTOR_METHODS = { fill: 'erp.fill', reconcile: 'erp.reconcile', event: 'erp.event', detached: 'erp.detached', resume: 'erp.resume' } as const;
+
+// Why the server refused a job request. `unknown_job` reads the same for a job that ended, one that never existed and
+// another account's; the other two tell an interrupted job's extension what it must do next.
+export const JOB_REFUSALS = { unknownJob: 'unknown_job', resumeRequired: 'resume_required', notInterrupted: 'job_not_interrupted' } as const;
 
 // What started a fill run (the server's `FillTrigger`); `confirm_login` probes the login once and never waits for it.
 export const FILL_TRIGGERS = ['start', 'confirm_login', 'refill'] as const;
@@ -67,3 +73,45 @@ export function wireChannel(jobId: string, request: WireRequest): ExecutorChanne
   };
   return { emit: emit as ExecutorChannel['emit'] };
 }
+
+// Reconnection (ADR-0020: a reconnect restores the channel, not the page). A job is *interrupted* when its extension's
+// socket goes or its `chrome.debugger` detaches (`erp.detached`) — one event, one rule. For this long afterwards the
+// extension may resume it by `jobId`; past it, the server ends the job itself.
+export const RECONNECT_WINDOW_MS = 120_000;
+
+// The 发票助手 (invoice assistant) as the extension finds it. It is one-shot — once closed it never reopens — so its
+// state is part of what "the same page" means, and `unrecognised` is never a page anyone may carry on from.
+export const ASSISTANT_STATES = ['closed', 'open', 'unrecognised'] as const;
+
+/** What the extension sees of the ERP page, read without touching it. */
+export const PageObservationSchema = z.object({
+  // Who is logged in; null when nobody is, or it could not be read.
+  erpAccount: ErpAccountSchema.nullable(),
+  // The one 费用报销单 open; null when none is.
+  form: z.object({ targetId: z.string(), formInstanceId: z.string(), formMode: z.enum(['new', 'modify']), billNo: z.string().nullable() }).nullable(),
+  assistant: z.enum(ASSISTANT_STATES),
+});
+export type PageObservation = z.infer<typeof PageObservationSchema>;
+
+/**
+ * `erp.resume`: sent once the extension is back (a fresh `hello` → `ready`, or the debugger re-attached) and has
+ * re-observed the page, before it does anything else. `last` is the page as it saw it right before the interruption,
+ * `now` as it sees it after; the server judges the two against each other and against the job's record.
+ */
+export const ResumeRequestSchema = z.object({ jobId: z.string().min(1), last: PageObservationSchema, now: PageObservationSchema });
+export type ResumeRequest = z.infer<typeof ResumeRequestSchema>;
+
+/**
+ * The server's answer to `erp.resume`. `ok: true` carries how many of the job's events are on record: the extension
+ * sends none of those again (nothing is ever replayed) and carries on from the next. An `attempt_started` among them
+ * counts as acknowledged, because durable is what the acknowledgement means; a `readback` among them lost its
+ * verdict, so the executor must not act on it and ends the job instead. `ok: false` means the page is not the one the
+ * job left: the server has already ended the job, and the extension stops without touching the page.
+ */
+export const ResumeVerdictSchema = z.union([
+  z.object({ ok: z.literal(true), recorded: z.number().int().nonnegative() }),
+  z.object({ ok: z.literal(false), reasons: z.array(z.string()) }),
+]);
+export type ResumeVerdict = z.infer<typeof ResumeVerdictSchema>;
+
+export const JobRefSchema = z.object({ jobId: z.string().min(1) });

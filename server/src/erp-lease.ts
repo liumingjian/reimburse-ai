@@ -13,10 +13,10 @@
 // In memory on purpose: one server process owns the data directory (data-dir lock), and a restart ends every job it
 // was running, so a lease never needs to outlive the process. There is no heartbeat for the same reason.
 //
-// ADR-0019 also ends an account's lease when that account's paired 浏览器扩展 (browser extension) loses its
-// connection: the holder of the other side of a running job is that browser, so a lost connection is a job that
-// cannot continue. `releaseAccount` is that rule, and it drops one account's entry and touches no other. The channel
-// calls it (`extension/channel.ts`); nothing else has reason to.
+// A job run in the paired 浏览器扩展 (browser extension) keeps its lease across a lost connection: inside the
+// reconnection window the job is interrupted, not over, and a second 去报销 of the same account must not start while
+// the first may still resume (ADR-0020). It gives the lease back when it ends, like every job — resumed and finished,
+// or past the window (`erp/remote-executor.ts`).
 
 export type LeaseHolder = { accountId: string; taskId: string; jobId: string };
 
@@ -29,9 +29,6 @@ export interface ErpLease {
   release(jobId: string): void;
   // 转人工 (hand off) and other task-level ends: gives up whatever this task still holds, whichever job took it.
   releaseTask(taskId: string): void;
-  // ADR-0019: this account's paired extension lost its connection, so whatever job it was driving is over. Unlike
-  // `release`, it does not matter which job holds it — nothing can carry on without the browser.
-  releaseAccount(accountId: string): void;
 }
 
 export type InMemoryErpLease = ErpLease;
@@ -54,9 +51,6 @@ export function createInMemoryErpLease(): ErpLease {
     },
     releaseTask(taskId) {
       forget((held) => held.taskId === taskId);
-    },
-    releaseAccount(accountId) {
-      byAccount.delete(accountId);
     },
   };
 }

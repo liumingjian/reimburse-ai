@@ -147,22 +147,27 @@ describe('the 浏览器扩展 channel', () => {
     expect(extension.heard[0]).toMatchObject({ type: 'refused', code: 'bad_message' });
   });
 
-  it("ends that account's ERP 自动化控制权 when the connection goes, and no other account's (ADR-0019)", async () => {
+  it("tells whoever runs work over it that the account's connection went, and no other account's", async () => {
     const bob = await server.signIn('bob');
+    const lost: string[] = [];
+    const channel = createExtensionChannel({ pairings: createPairingService(server.db, server.clock.now), now: server.clock.now, onLost: (accountId) => lost.push(accountId) });
     const aliceToken = await pair(alice);
-    const bobToken = await pair(bob);
-    const aliceExtension = fakeExtension();
-    const bobExtension = fakeExtension();
+    const aliceExtension = fakeExtension(channel);
+    const bobExtension = fakeExtension(channel);
     await aliceExtension.say({ type: 'hello', token: aliceToken, version: EXTENSION_VERSION });
-    await bobExtension.say({ type: 'hello', token: bobToken, version: EXTENSION_VERSION });
+    await bobExtension.say({ type: 'hello', token: await pair(bob), version: EXTENSION_VERSION });
+    // The lease is the job's, not the socket's (ADR-0020): the channel leaves it alone.
     server.erpLease.acquire({ accountId: alice.account.accountId, taskId: 't-a', jobId: 'j-a' });
-    server.erpLease.acquire({ accountId: bob.account.accountId, taskId: 't-b', jobId: 'j-b' });
 
     aliceExtension.disconnect();
+    // The same extension dialling again over a socket the server never saw close: the older one is lost too.
+    await fakeExtension(channel).say({ type: 'hello', token: aliceToken, version: EXTENSION_VERSION });
+    await fakeExtension(channel).say({ type: 'hello', token: aliceToken, version: EXTENSION_VERSION });
 
-    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
-    expect(server.erpLease.holder(bob.account.accountId)).toMatchObject({ jobId: 'j-b' });
-    expect(server.app.extensionChannel.connected(bob.account.accountId)).toBe(true);
+    expect(lost).toEqual([alice.account.accountId, alice.account.accountId]);
+    expect(server.erpLease.holder(alice.account.accountId)).toMatchObject({ jobId: 'j-a' });
+    expect(channel.connected(bob.account.accountId)).toBe(true);
+    channel.close();
   });
 
   it('tells the settings page whether the extension is listening right now', async () => {
@@ -233,7 +238,7 @@ describe('a socket that never says who it is', () => {
 
   // The same channel the app wires, over the same database, with only the timer swapped.
   const channelWith = (timers: ReturnType<typeof manualTimers>) =>
-    createExtensionChannel({ pairings: createPairingService(server.db, server.clock.now), lease: server.erpLease, now: server.clock.now, schedule: timers.schedule });
+    createExtensionChannel({ pairings: createPairingService(server.db, server.clock.now), now: server.clock.now, schedule: timers.schedule });
 
   it('is closed once the hello deadline passes, having been told nothing', () => {
     const timers = manualTimers();
