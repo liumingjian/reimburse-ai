@@ -5,8 +5,8 @@ import { databasePath } from './data-dir';
 import { createTestServer, TEST_PASSWORD, tempDataDir, type TestServer } from './test/harness';
 
 // #228 (spec #246, phase 0): `baox admin emergency-reset <username>`, the emergency way back in for a locked-out
-// administrator, replaces the unconditional `baox admin reset-password <username>`. A shell on the host may reset an
-// administrator account and nothing else; a colleague's password is reset by an administrator in the web UI
+// administrator, replaces the unconditional `baox admin reset-password <username>`. A shell on the host may reset the
+// sole active administrator's account and nothing else; anyone else's password is reset by an administrator in the web UI
 // (ADR-0018). The command runs against the data directory's database file while the server may be running, prints a
 // temporary password that must be changed at next login, and writes an audit record.
 
@@ -45,6 +45,32 @@ it('resets a locked-out administrator to a printed temporary password that must 
 
   // The reset leaves a trace. Nobody has a session to act from, so the audit record names no actor.
   expect(await events(admin.account.accountId)).toContainEqual(expect.objectContaining({ action: 'cli_reset_password', actor_account_id: null }));
+});
+
+// Story 42: a shell resets only an administrator's own account. With no session to say whose that is, the command
+// acts only on the sole active administrator; with two, neither can take the other over from the shell.
+it('refuses to reset an administrator while another active administrator exists, and leaves both untouched', async () => {
+  const admin = await server.signIn('admin');
+  const bob = await server.signIn('bob');
+  expect((await admin.post(`/api/admin/accounts/${bob.account.accountId}`, { role: 'admin' })).status).toBe(200);
+
+  for (const username of ['admin', 'bob']) {
+    expect(await cli('admin', 'emergency-reset', username)).toMatchObject({ code: 1, err: expect.stringContaining('另一位管理员') });
+  }
+
+  for (const username of ['admin', 'bob']) {
+    const unchanged = await login(username, TEST_PASSWORD);
+    expect(unchanged.status).toBe(200);
+    expect(SessionSchema.parse(await unchanged.json())).toMatchObject({ status: 'signed_in' });
+  }
+  for (const accountId of [admin.account.accountId, bob.account.accountId]) {
+    expect(await events(accountId)).not.toContainEqual(expect.objectContaining({ action: 'cli_reset_password' }));
+  }
+
+  // Once bob is deactivated, admin is the only active administrator again, and the shell may unlock them.
+  expect((await admin.post(`/api/admin/accounts/${bob.account.accountId}`, { active: false })).status).toBe(200);
+  expect((await cli('admin', 'emergency-reset', 'admin')).code).toBe(0);
+  expect((await cli('admin', 'emergency-reset', 'bob')).code).toBe(1);
 });
 
 it('refuses a target that is not an administrator, and leaves that account untouched', async () => {
