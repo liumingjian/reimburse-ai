@@ -18,6 +18,7 @@ import { recoverErpJobs } from './erp/recovery';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
+import { createExtensionChannel, type ExtensionChannel } from './extension/channel';
 import { mountExtensionPairRoutes, mountPairingRoutes } from './extension/http';
 import { createPairingService } from './extension/pairing';
 import { createLegacyImport, LegacyImportRefusal } from './legacy/import';
@@ -62,8 +63,9 @@ export type AppOptions = {
 };
 
 // `close` stops the background jobs (after the material in flight) and releases the parse worker; call it before
-// closing the database.
-export type App = Hono<AppEnv> & { close: () => Promise<void> };
+// closing the database. `extensionChannel` is what `server.ts` hands an upgraded socket to; the app itself never
+// opens one.
+export type App = Hono<AppEnv> & { close: () => Promise<void>; extensionChannel: ExtensionChannel };
 
 type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
@@ -181,7 +183,12 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   );
   // 扩展配对 (ADR-0019): the extension's own two routes carry no session and are mounted before the gate, because a
   // pairing outlives every login. The settings page's routes sit behind it like everything else.
-  const pairings = createPairingService(db, now);
+  //
+  // The pairing view reports whether that account's extension is connected, which only the live channel knows, and
+  // the channel resolves tokens through the pairing service: each needs the other, so the predicate reads the
+  // channel through the binding rather than the value.
+  const pairings = createPairingService(db, now, (accountId) => extensionChannel.connected(accountId));
+  const extensionChannel = createExtensionChannel({ pairings, lease: erpLease, now });
   mountExtensionPairRoutes(app, pairings);
   app.use('/api/*', requireAccount(accounts, secureSession));
   mountAccountRoutes(app, accounts);
@@ -377,7 +384,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
 
   if (webDist) app.get('*', (c) => serveWebFile(c, webDist));
 
-  return Object.assign(app, { close: async () => { await settled(); await parseJobs.close(); await fillJobs.close(); await reconcileJobs.close(); } });
+  return Object.assign(app, { extensionChannel, close: async () => { extensionChannel.close(); await settled(); await parseJobs.close(); await fillJobs.close(); await reconcileJobs.close(); } });
 }
 
 // How many max-size files one 上传批次 may hold before the request itself is refused unread.

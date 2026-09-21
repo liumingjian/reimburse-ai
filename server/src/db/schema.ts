@@ -45,6 +45,8 @@ export interface ExtensionPairingTable {
   token_sha256: string | null;
   // What the extension calls the browser it runs in; shown on the settings page, never acted on.
   browser: string | null;
+  // The version the extension last reported (ADR-0021), refreshed on every connect. Null until something pairs.
+  version: string | null;
   created_at: string;
   paired_at: string | null;
   last_connected_at: string | null;

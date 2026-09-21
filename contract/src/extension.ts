@@ -17,11 +17,49 @@ export const EXTENSION_PAIR_PATH = '/api/extension/pair';
 export const EXTENSION_PAIRING_CODE_LENGTH = 8;
 export const EXTENSION_PAIRING_CODE_TTL_MS = 10 * 60 * 1000;
 
+// ---------------------------------------------------------------------------
+// Version negotiation (ADR-0021)
+// ---------------------------------------------------------------------------
+
+// The single source of truth for what the 浏览器扩展 is, and for what the server will still talk to.
+//
+// `EXTENSION_VERSION` is what the built extension declares in its `manifest.json`: `extension/scripts/manifest.mjs`
+// reads this very line out of this file, and `extension/src/manifest.test.ts` pins that the two agree, so the zip the
+// settings page serves (#258) can never carry a version other than this one. `EXTENSION_MINIMUM_VERSION` is what the
+// server refuses to go below. Both live here, one above the other, because a build that ships a version the server
+// then rejects is the one failure this arrangement has to make impossible.
+//
+// ADR-0021 chose refusal over best-effort compatibility: the fill protocol hands down one whole plan, and an old
+// extension executing half of it leaves a write of undecidable outcome behind. Refusing costs a day.
+export const EXTENSION_VERSION = '1.0.0';
+export const EXTENSION_MINIMUM_VERSION = '1.0.0';
+
+// Dotted numbers only, the shape `manifest.json` allows. Returns <0, 0 or >0 like any comparator; a missing part
+// counts as 0, so `1.2` and `1.2.0` are the same version.
+export function compareExtensionVersions(left: string, right: string): number {
+  const parts = (value: string) => value.split('.').map((piece) => Number.parseInt(piece, 10) || 0);
+  const a = parts(left);
+  const b = parts(right);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const difference = (a[index] ?? 0) - (b[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+export const ExtensionVersionSchema = z
+  .string()
+  .trim()
+  .max(32)
+  .regex(/^\d+(\.\d+){0,3}$/);
+
 // `browser`: what the extension calls the browser it runs in, shown back to the employee so they can tell which
-// browser is paired. The server stores it verbatim and never acts on it.
+// browser is paired. The server stores it verbatim and never acts on it. `version` is the extension's own version,
+// reported here and again on every connect (ADR-0021); below the minimum it is refused at both.
 export const ExtensionPairInputSchema = z.object({
   code: z.string().min(1).max(64),
   browser: z.string().trim().min(1).max(80).nullish(),
+  version: ExtensionVersionSchema.nullish(),
 });
 export type ExtensionPairInput = z.infer<typeof ExtensionPairInputSchema>;
 
@@ -41,6 +79,11 @@ export const ExtensionPairingSchema = z.object({
   pairedAt: z.string().nullable(),
   lastConnectedAt: z.string().nullable(),
   codeExpiresAt: z.string().nullable(),
+  // Whether that extension's channel is open right now. `lastConnectedAt` says when it last spoke; this says whether
+  // it is listening, which is what an employee about to click 去报销 needs to know.
+  connected: z.boolean(),
+  // The version the paired extension last reported, or null when nothing has paired yet.
+  version: z.string().nullable(),
   // The freshly issued 配对码, and only in the answer to issuing one: the server keeps nothing but its sha256, so it
   // can never be shown a second time.
   code: z.string().nullable(),
@@ -54,6 +97,18 @@ export const ExtensionPairingFailureSchema = z.object({
 // 生成配对码 / 撤销配对的结果：服务端处理了就是新的配对情况；请求本身失败才是 !ok。
 export type ExtensionPairingOutcome = { ok: true; pairing: ExtensionPairing } | { ok: false; error: ActionError; pairing: ExtensionPairing | null };
 
+// The one refusal both halves of version negotiation give (ADR-0021): the 配对 request and the channel's first
+// message answer with the same sentence, so an employee who hits it twice reads it once.
+export const EXTENSION_VERSION_TOO_OLD_CODE = 'version_too_old';
+
+// Null when the reported version is good enough; the sentence to show otherwise. An extension that reports no version
+// at all is by construction older than the first one that did, so it is refused too.
+export function extensionVersionRefusal(reported: string | null | undefined, minimum: string): string | null {
+  if (reported && compareExtensionVersions(reported, minimum) >= 0) return null;
+  const which = reported ? `你装的是 ${reported} 版。` : '你装的这一版太旧，连版本号都报不上来。';
+  return `这台服务器要求浏览器扩展 ${minimum} 或更新的版本，所以没有连上。${which}请回到设置页重新下载扩展包，解压后覆盖原来的目录，到浏览器的扩展页点一次“重新加载”，然后重新配对。`;
+}
+
 export const EXTENSION_PAIRING_ERRORS = {
   codeInvalid: '配对码不对，或者已经过期、已经用过。请在设置页重新生成一个。',
   notPaired: '这个浏览器扩展的配对已经失效，请在设置页重新生成配对码。',
@@ -64,3 +119,84 @@ export const EXTENSION_PAIRING_STATUS_LABELS: Readonly<Record<(typeof EXTENSION_
   waiting: '配对码已生成，等待扩展填入',
   paired: '已配对',
 };
+
+// ---------------------------------------------------------------------------
+// The channel (ADR-0019, ADR-0020)
+// ---------------------------------------------------------------------------
+
+// The extension opens this; the server never reaches into the employee's browser. The pairing credential travels in
+// the first message, never in the URL, because a URL is written into proxy and browser logs and a long-lived
+// credential must not be.
+export const EXTENSION_CHANNEL_PATH = '/api/extension/channel';
+
+// How often the extension sends a `ping`. MV3 stops a service worker that has been idle for 30 seconds, and traffic
+// on the socket counts as activity, so this stays comfortably below that.
+export const EXTENSION_HEARTBEAT_MS = 15_000;
+
+// Both sides speak one envelope, and either may be the one asking.
+//
+// `request` carries a correlation id that the matching `response` echoes, because the fill protocol is
+// request/response in both directions rather than a one-way event stream: the extension's `attempt_started` waits for
+// the server to answer that the attempt is durable, and its `readback` waits for the server's verdict. Ids are unique
+// per sender, so the two directions never collide over one.
+//
+// `event` is the one-way half, for what nobody waits on. `method` and `name` are left open here and given meaning by
+// the fill protocol; this package pins the envelope only.
+export const ChannelHelloSchema = z.object({
+  type: z.literal('hello'),
+  token: z.string().min(1),
+  version: ExtensionVersionSchema.nullish(),
+});
+export type ChannelHello = z.infer<typeof ChannelHelloSchema>;
+
+export const ChannelReadySchema = z.object({
+  type: z.literal('ready'),
+  accountId: z.string().min(1),
+  heartbeatMs: z.number().int().positive(),
+});
+export type ChannelReady = z.infer<typeof ChannelReadySchema>;
+
+// Sent, and then the socket is closed. The extension shows `message` as it stands.
+export const ChannelRefusedSchema = z.object({
+  type: z.literal('refused'),
+  code: z.string().min(1),
+  message: z.string().min(1),
+});
+export type ChannelRefused = z.infer<typeof ChannelRefusedSchema>;
+
+export const ChannelRequestSchema = z.object({
+  type: z.literal('request'),
+  id: z.string().min(1).max(64),
+  method: z.string().min(1).max(64),
+  payload: z.unknown(),
+});
+export type ChannelRequest = z.infer<typeof ChannelRequestSchema>;
+
+export const ChannelResponseSchema = z.union([
+  z.object({ type: z.literal('response'), id: z.string().min(1).max(64), ok: z.literal(true), payload: z.unknown() }),
+  z.object({ type: z.literal('response'), id: z.string().min(1).max(64), ok: z.literal(false), error: z.object({ code: z.string().min(1), message: z.string().min(1) }) }),
+]);
+export type ChannelResponse = z.infer<typeof ChannelResponseSchema>;
+
+export const ChannelEventSchema = z.object({
+  type: z.literal('event'),
+  name: z.string().min(1).max(64),
+  payload: z.unknown(),
+});
+export type ChannelEvent = z.infer<typeof ChannelEventSchema>;
+
+export const ChannelMessageSchema = z.union([ChannelHelloSchema, ChannelReadySchema, ChannelRefusedSchema, ChannelRequestSchema, ChannelResponseSchema, ChannelEventSchema]);
+export type ChannelMessage = z.infer<typeof ChannelMessageSchema>;
+
+// The heartbeat is a `request` like any other, so one correlation mechanism covers everything: an unanswered ping is
+// a wedged channel, which a silent socket on its own does not tell you.
+export const CHANNEL_PING_METHOD = 'ping';
+
+// Close codes, in the private 4000-4999 range. The extension tells them apart to decide whether reconnecting could
+// ever help (for these three it cannot) and what to tell the employee.
+export const CHANNEL_CLOSE = { notPaired: 4001, versionTooOld: 4002, badMessage: 4003 } as const;
+
+export const EXTENSION_CHANNEL_ERRORS = {
+  notPaired: EXTENSION_PAIRING_ERRORS.notPaired,
+  badMessage: '这个浏览器扩展发来的内容看不懂，连接已经断开。请更新扩展后重试。',
+} as const;

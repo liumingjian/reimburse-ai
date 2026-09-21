@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { EXTENSION_PAIRING_CODE_TTL_MS, EXTENSION_PAIR_PATH, ExtensionIdentitySchema, ExtensionPairingSchema, ExtensionTokenSchema, type ExtensionPairing } from '@baox/contract';
+import { EXTENSION_PAIRING_CODE_TTL_MS, EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionIdentitySchema, ExtensionPairingSchema, ExtensionTokenSchema, type ExtensionPairing } from '@baox/contract';
 import { createTestServer, TEST_PASSWORD, type TestClient, type TestServer } from '../test/harness';
 
 // The HTTP seam (spec #246 Testing Decisions): 扩展配对 (extension pairing, ADR-0019) driven through `app.request()`,
@@ -30,8 +30,9 @@ const view = (client: TestClient) => client.request(PAIRING).then(parse);
 const issue = (client: TestClient) => client.post(`${PAIRING}/code`, {}).then(parse);
 const revoke = (client: TestClient) => client.post(`${PAIRING}/revoke`, {}).then(parse);
 
+// Every real extension reports its version (ADR-0021); `channel.test.ts` covers what happens when it is too old.
 const redeem = (code: string, browser?: string) =>
-  server.app.request(EXTENSION_PAIR_PATH, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code, ...(browser === undefined ? {} : { browser }) }) });
+  server.app.request(EXTENSION_PAIR_PATH, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code, version: EXTENSION_VERSION, ...(browser === undefined ? {} : { browser }) }) });
 const whoami = (token: string) => server.app.request(EXTENSION_PAIR_PATH, { headers: { authorization: `Bearer ${token}` } });
 
 const codeOf = (pairing: ExtensionPairing): string => {
@@ -153,7 +154,7 @@ describe('扩展配对 at the address colleagues reach the app at', () => {
     const issued = ExtensionPairingSchema.parse(await (await intranet.app.request(`${INTRANET}${PAIRING}/code`, { method: 'POST', headers: { ...json, origin: INTRANET, cookie }, body: '{}' })).json());
     const code = issued.code ?? '';
 
-    const fromExtension = await intranet.app.request(`${INTRANET}${EXTENSION_PAIR_PATH}`, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code }) });
+    const fromExtension = await intranet.app.request(`${INTRANET}${EXTENSION_PAIR_PATH}`, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code, version: EXTENSION_VERSION }) });
     expect(fromExtension.status).toBe(200);
 
     // The exemption is this one route, not the guard going soft: another origin's write is still refused.
@@ -162,7 +163,7 @@ describe('扩展配对 at the address colleagues reach the app at', () => {
     expect(await errorOf(write)).toBe('forbidden_host');
 
     // And the Host check still covers the redemption: a rebound name reaches it no more than anything else.
-    const rebound = await intranet.app.request(`http://evil.example.com${EXTENSION_PAIR_PATH}`, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code }) });
+    const rebound = await intranet.app.request(`http://evil.example.com${EXTENSION_PAIR_PATH}`, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code, version: EXTENSION_VERSION }) });
     expect(rebound.status).toBe(403);
     expect(await errorOf(rebound)).toBe('forbidden_host');
   });

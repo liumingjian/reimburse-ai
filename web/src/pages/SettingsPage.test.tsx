@@ -79,11 +79,13 @@ describe('设置页：浏览器扩展', () => {
     expect(within(extensionPanel()).getByText('把这串字符填进扩展里。它只显示这一次，10 分钟内有效，用过就失效。')).toBeTruthy();
   });
 
-  test('已配对时列出是哪台浏览器与最近一次连接；撤销要先确认，而且不会退出登录', async () => {
+  test('已配对时列出是哪台浏览器、扩展有没有连着与最近一次连接；撤销要先确认，而且不会退出登录', async () => {
     renderPairing(true);
     await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.paired);
     expect(within(extensionPanel()).getByText('Chrome 142 · Windows 11')).toBeTruthy();
     expect(within(extensionPanel()).getByText('2026-02-03T14:20:00Z')).toBeTruthy();
+    // 配对了还不够：能不能去报销要看扩展这会儿连没连上。
+    expect(within(extensionPanel()).getByText('已连接')).toBeTruthy();
 
     fireEvent.click(within(extensionPanel()).getByRole('button', { name: '撤销配对' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确定撤销' }));
