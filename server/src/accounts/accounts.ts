@@ -36,7 +36,7 @@ function toAccount(row: Pick<AccountTable, 'account_id' | 'username' | 'role'>):
   return { accountId: row.account_id, username: row.username ?? row.account_id, role: row.role };
 }
 
-// Readable temporary password for the CLI (no look-alike characters).
+// Readable temporary password for the emergency CLI (no look-alike characters).
 export function generateTemporaryPassword(): string {
   const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
   return [...randomBytes(12)].map((byte) => alphabet[byte % alphabet.length]).join('');
@@ -53,13 +53,18 @@ async function setTemporaryPassword(db: Db, accountId: string, password: string,
   await recordEvent(db, accountId, actorAccountId, actorAccountId === null ? 'cli_reset_password' : 'temporary_password', at);
 }
 
-// `baox admin reset-password <username>`: the local fallback for a locked-out (sole) admin. Access to the machine is
-// the authority, so no session is needed. Returns the temporary password to show, or null for an unknown username.
-export async function resetPasswordLocally(db: Db, username: string, password = generateTemporaryPassword(), now: Clock = () => new Date()): Promise<string | null> {
-  const row = await db.selectFrom('account').select('account_id').where('username', '=', username).executeTakeFirst();
-  if (!row) return null;
+// The emergency CLI (`baox admin emergency-reset <username>`, ADR-0018 as amended by #228): the way back in for a
+// locked-out administrator. It resets an administrator account only, so that a shell on a shared host is not a way to
+// take over an arbitrary 应用账号 (app account); a colleague's password is reset by an administrator in the web UI.
+// Access to the machine is the authority, so no session is needed, and the audit record it writes carries no actor.
+export type EmergencyReset = { temporaryPassword: string } | { refused: 'unknown_account' | 'not_admin' };
+
+export async function emergencyResetAdminPassword(db: Db, username: string, password = generateTemporaryPassword(), now: Clock = () => new Date()): Promise<EmergencyReset> {
+  const row = await db.selectFrom('account').select(['account_id', 'role']).where('username', '=', username).executeTakeFirst();
+  if (!row) return { refused: 'unknown_account' };
+  if (row.role !== 'admin') return { refused: 'not_admin' };
   await setTemporaryPassword(db, row.account_id, password, null, now().toISOString());
-  return password;
+  return { temporaryPassword: password };
 }
 
 export function createAccountService(db: Db, clock: Clock) {

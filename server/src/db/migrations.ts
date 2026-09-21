@@ -308,7 +308,7 @@ const pendingAnswers187: Migration = {
 };
 
 // 管理员 (admin) tools (#194):
-// - account.must_change_password: set by a temporary password (admin or `baox admin reset-password`), cleared by a change.
+// - account.must_change_password: set by a temporary password (admin or `baox admin emergency-reset`), cleared by a change.
 // - account_event: append-only audit of account changes (role, deactivation, passwords); who did it, to whom, when.
 const admin194: Migration = {
   async up(db: Kysely<unknown>) {

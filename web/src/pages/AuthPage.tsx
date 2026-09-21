@@ -144,7 +144,7 @@ export function AuthPage({ session }: { session: Session }) {
   );
 }
 
-// 修改密码 (#194): an admin set a temporary password (or the local `baox admin reset-password` did). Until the user
+// 修改密码 (#194): an admin set a temporary password (or the emergency `baox admin emergency-reset` did). Until the user
 // replaces it, the server answers every other endpoint 403, so this form is all the gate shows.
 export const CHANGE_PASSWORD_COPY = {
   title: '修改密码',
