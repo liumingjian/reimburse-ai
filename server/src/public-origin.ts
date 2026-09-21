@@ -57,3 +57,32 @@ function isPrivateAddress(hostname: string): boolean {
   const [first = 0, second = 0] = octets;
   return first === 10 || first === 127 || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168);
 }
+
+// Who may talk to the app, judged from what the browser wrote. With a public origin configured, exactly that origin;
+// without one, only the loopback names, since anything else is another host's name pointed at this machine (DNS
+// rebinding). Two doors use these: the Hono guard in `app.ts`, and the WebSocket upgrade in `extension/websocket.ts`,
+// which never reaches Hono. They share this code so neither can quietly admit what the other refuses.
+const LOCAL_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
+const hostnameOf = (value: string): string | null => {
+  try {
+    return new URL(`http://${value}`).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+};
+
+export function admitsHost(served: PublicOrigin | null, host: string): boolean {
+  if (served) return host.toLowerCase() === served.host;
+  const hostname = hostnameOf(host);
+  return hostname !== null && LOCAL_HOSTS.has(hostname);
+}
+
+export function admitsOrigin(served: PublicOrigin | null, origin: string): boolean {
+  if (served) return origin === served.origin;
+  try {
+    return LOCAL_HOSTS.has(new URL(origin).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}

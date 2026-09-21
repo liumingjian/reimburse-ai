@@ -2,6 +2,7 @@ import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { EXTENSION_CHANNEL_PATH } from '@baox/contract';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { admitsHost, type PublicOrigin } from '../public-origin';
 import type { ExtensionChannel } from './channel';
 
 // Structural, so both what `@hono/node-server` returns and a bare `http.Server` fit without a cast.
@@ -14,19 +15,25 @@ export type UpgradeHost = {
 // request into the `ChannelSocket` that `channel.ts` speaks to, and nothing else.
 //
 // `noServer: true` because Hono answers the HTTP requests and this answers the upgrades; one listening socket, two
-// protocols. The path is checked here rather than in the route table for the same reason — an upgrade never reaches
-// Hono.
+// protocols. Because an upgrade never reaches Hono, it never meets the Host guard in `app.ts` either, so the same
+// predicate (`admitsHost`, `public-origin.ts`) is applied here, before the handshake: a name rebound onto this
+// machine gets a 403 at this door exactly as it does at the other one (story 32).
 //
-// Nothing is authorised at this point. The 配对凭据 arrives in the first message (`channel.ts`), so the upgrade
-// itself carries no credential to check: an unpaired socket is admitted, says something that is not a valid `hello`
-// or resolves to no pairing, and is closed. It reads nothing and writes nothing in between.
-export function attachExtensionChannel(server: UpgradeHost, channel: ExtensionChannel): () => void {
+// There is deliberately no Origin check. The extension connects from its own `chrome-extension://…` origin, which the
+// exact-origin check could never admit — the same reasoning as the 配对码 redemption in `app.ts` — and the channel
+// reads no cookie: the 配对凭据 in the first frame (`channel.ts`) is its whole authority.
+export function attachExtensionChannel(server: UpgradeHost, channel: ExtensionChannel, publicOrigin: PublicOrigin | null): () => void {
   const sockets = new WebSocketServer({ noServer: true });
 
   const upgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     // `request.url` is a path here, never absolute; the base only makes it parseable.
     if (new URL(request.url ?? '/', 'http://localhost').pathname !== EXTENSION_CHANNEL_PATH) {
       socket.destroy();
+      return;
+    }
+    // HTTP/1.1 requires Host, so a request without one is refused like a foreign one.
+    if (!admitsHost(publicOrigin, request.headers.host ?? '')) {
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
     sockets.handleUpgrade(request, socket, head, (ws: WebSocket) => {

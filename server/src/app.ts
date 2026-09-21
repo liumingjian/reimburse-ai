@@ -23,7 +23,7 @@ import { mountExtensionPairRoutes, mountPairingRoutes } from './extension/http';
 import { createPairingService } from './extension/pairing';
 import { createLegacyImport, LegacyImportRefusal } from './legacy/import';
 import { unavailableCatalog, type ProjectCatalog } from './catalog/project-catalog';
-import type { PublicOrigin } from './public-origin';
+import { admitsHost, admitsOrigin, type PublicOrigin } from './public-origin';
 import { ActionRefusedError, createTaskService, parseBacklogOfAllAccounts, StaleStepError, TaskNotFoundError, type TaskService, type UploadedFile } from './tasks';
 
 // The HTTP app. Wire rules (contract/src/http.ts): success is 200 with the whole new snapshot; failure is
@@ -132,9 +132,9 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // in Host, and a cross-origin write still carries its Origin. A configured `publicOrigin` turns both checks from
   // "loopback" into "exactly this origin": the reverse proxy in front of Node passes the browser's own Host and
   // Origin through, so the app judges what the browser actually wrote.
+  // The Host predicate is shared with the WebSocket upgrade (`extension/websocket.ts`), which never reaches this
+  // middleware; both live in `public-origin.ts` so the two doors cannot drift apart.
   const forbidden = (c: Context) => failure(c, 403, FORBIDDEN_HOST_CODE, publicOrigin ? NOT_THIS_ADDRESS : NOT_LOCAL);
-  const admitsHost = (host: string) => (publicOrigin ? host.toLowerCase() === publicOrigin.host : isLocalHost(host));
-  const admitsOrigin = (origin: string) => (publicOrigin ? origin === publicOrigin.origin : isLocalOrigin(origin));
   // Redeeming a 配对码 is the one write that does not come from this app's page: the extension posts it from its own
   // `chrome-extension://…` origin (ADR-0019), which the exact-origin check could never admit. It is exempt because
   // the origin check is a defence for cookie-authorised writes, and this route reads no cookie — the single-use
@@ -142,10 +142,10 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // still applies to it, so DNS rebinding gains nothing here either.
   app.use('*', async (c, next) => {
     const host = c.req.header('host') ?? new URL(c.req.url).host;
-    if (!admitsHost(host)) return forbidden(c);
+    if (!admitsHost(publicOrigin, host)) return forbidden(c);
     const origin = c.req.header('origin');
     // `null` is a sandboxed/opaque origin, never this app's own page.
-    if (WRITE_METHODS.has(c.req.method) && origin !== undefined && c.req.path !== EXTENSION_PAIR_PATH && !admitsOrigin(origin)) return forbidden(c);
+    if (WRITE_METHODS.has(c.req.method) && origin !== undefined && c.req.path !== EXTENSION_PAIR_PATH && !admitsOrigin(publicOrigin, origin)) return forbidden(c);
     await next();
   });
 
@@ -390,32 +390,10 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
 // How many max-size files one 上传批次 may hold before the request itself is refused unread.
 const UPLOAD_BATCH_MAX_FILES = 20;
 
-// With no public origin configured only the loopback names reach the app; anything else is another host's name
-// pointed at this machine.
-const LOCAL_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const WRITE_METHODS: ReadonlySet<string> = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 export const FORBIDDEN_HOST_CODE = 'forbidden_host';
 const NOT_LOCAL = '这个应用只能从本机访问。';
 const NOT_THIS_ADDRESS = '这个应用只能从管理员配置的地址访问。';
-
-const hostnameOf = (value: string): string | null => {
-  try {
-    return new URL(`http://${value}`).hostname.toLowerCase();
-  } catch {
-    return null;
-  }
-};
-const isLocalHost = (host: string): boolean => {
-  const hostname = hostnameOf(host);
-  return hostname !== null && LOCAL_HOSTS.has(hostname);
-};
-const isLocalOrigin = (origin: string): boolean => {
-  try {
-    return LOCAL_HOSTS.has(new URL(origin).hostname.toLowerCase());
-  } catch {
-    return false;
-  }
-};
 
 // Originals are content-addressed and shared between accounts, so what they are served as must never be whatever the
 // uploading browser claimed. Only the three kinds uploads accept are served as themselves; anything else downloads as
