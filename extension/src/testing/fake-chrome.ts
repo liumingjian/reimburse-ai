@@ -106,11 +106,18 @@ export function fakeChrome(page: CdpSession, { employeeTabs = [], refuse = {} }:
     attached,
     focusedWindows,
     /** The tab the job opened, once it has. */
-    jobTab: () => (backed === null ? null : { ...tabs.get(backed)! }),
+    jobTab: () => (backed === null || !tabs.has(backed) ? null : { ...tabs.get(backed)! }),
+    /** Every tab that exists now. */
+    tabCount: () => tabs.size,
     /** Chrome detaching the debugger, as the "Cancel" on its banner does. */
     detach(reason = 'canceled_by_user') {
       if (backed === null || !attachedTabs.delete(backed)) return;
       for (const listener of onDetach.all()) listener({ tabId: backed }, reason);
+    },
+    /** The employee closing the job's tab: it is gone, and Chrome detaches the debugger from it. */
+    closeJobTab() {
+      if (backed === null || !tabs.delete(backed)) return;
+      if (attachedTabs.delete(backed)) for (const listener of onDetach.all()) listener({ tabId: backed }, 'target_closed');
     },
   };
 }

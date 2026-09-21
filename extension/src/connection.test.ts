@@ -1,6 +1,6 @@
 import { EXTENSION_CHANNEL_PATH, EXTENSION_HEARTBEAT_MS, EXTENSION_VERSION, type ChannelMessage } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { channelUrl, createChannelClient, type ChannelStatus, type ClientSocket } from './connection';
+import { channelUrl, channelWatch, createChannelClient, type ChannelStatus, type ClientSocket } from './connection';
 
 // A fake server on the other end of the socket: it records what the extension says and can say anything back.
 function fakeServer() {
@@ -140,5 +140,36 @@ describe('the extension opens the channel and holds it', () => {
 
   it('follows the scheme the app is served over', () => {
     expect(channelUrl('https://baox.example.com')).toBe(`wss://baox.example.com${EXTENSION_CHANNEL_PATH}`);
+  });
+});
+
+describe('what a running 去报销 hears of the channel', () => {
+  it('hears a ready socket go, and waits for the next one to be ready', async () => {
+    const server = fakeServer();
+    const watch = channelWatch();
+    let closed = 0;
+    watch.onClosed(() => {
+      closed += 1;
+    });
+    const client = createChannelClient({ origin: 'http://10.250.0.222', token: 't', open: server.open, onStatus: watch.status });
+    server.accept();
+    server.reply({ type: 'ready', accountId: 'a1', heartbeatMs: EXTENSION_HEARTBEAT_MS });
+    await watch.ready();
+
+    server.drop();
+    expect(closed).toBe(1);
+    let back = false;
+    const waiting = watch.ready().then(() => {
+      back = true;
+    });
+    await flush();
+    expect(back).toBe(false);
+
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    server.accept();
+    server.reply({ type: 'ready', accountId: 'a1', heartbeatMs: EXTENSION_HEARTBEAT_MS });
+    await waiting;
+    expect(closed).toBe(1);
+    client.stop();
   });
 });

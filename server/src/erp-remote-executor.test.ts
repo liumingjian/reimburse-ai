@@ -1,12 +1,17 @@
-import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionPairingSchema, ExtensionTokenSchema, type TaskSnapshot } from '@baox/contract';
+import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionPairingSchema, ExtensionTokenSchema, type ChannelMessage, type TaskSnapshot } from '@baox/contract';
 import { stageInPage } from '@baox/erp-executor/invoice-files';
 import { runFillJob } from '@baox/erp-executor/job';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, ResultEvent } from '@baox/erp-executor/protocol';
 import { createFakeErp, type FakeErp, type FakeErpOptions } from '@baox/erp-executor/testing/fake-erp';
 import { EXECUTOR_METHODS, RECONNECT_WINDOW_MS, type PageObservation } from '@baox/erp-executor/wire';
+import { serverBlobs } from '@baox/extension/blobs';
+import { channelWatch, createChannelClient, type ClientSocket } from '@baox/extension/connection';
+import type { DebuggerApi } from '@baox/extension/debugger-session';
+import { createErpRunner } from '@baox/extension/erp-runner';
+import { dedicatedErpTab } from '@baox/extension/erp-tab';
+import { fakeChrome } from '@baox/extension/testing/fake-chrome';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fixtureCatalog } from './catalog/project-catalog';
-import { serverBlobs } from '@baox/extension/blobs';
 import { catalogMismatch, loginWall, noFormOpen, TEST_ERP_ACCOUNT, uncertainSave } from './erp/testing/fake-executor';
 import { fakeExtension, type FakeExtension, type FillRunner, type ReconcileRunner } from './erp/testing/fake-extension';
 import { COMPATIBILITY, ERP_ACCOUNT, ERP_ORIGIN, FAST_PACE, fakeErpOptions } from './erp/testing/scenario';
@@ -471,5 +476,156 @@ describe('an interrupted 去报销', () => {
       expect(stopped.erp.abortReason).toContain('报销系统没有被改动，可以再去报销');
       expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
     });
+  });
+});
+
+// #257's extension side against this server: the real channel client, runner, job link and `chrome.debugger` adapter
+// on the app's real channel, over `chrome.*` faked on the fake ERP. Only the socket is a stand-in. `cut` sees every
+// frame the app sends; answering true drops the socket instead of delivering it, as a Wi-Fi blip would, and the client
+// redials on its own. `delivered` sees every frame the extension sends, once the app has it.
+type Hooks = {
+  cut?: (message: ChannelMessage, sent: ChannelMessage[]) => boolean;
+  delivered?: (message: ChannelMessage, detach: () => void) => void;
+  debuggerApi?: (api: DebuggerApi, detach: () => void, asked: () => string[]) => DebuggerApi;
+};
+
+describe('the real 浏览器扩展 across an interruption', () => {
+  async function realExtension(token: string, { cut, delivered, debuggerApi }: Hooks = {}) {
+    fake = await createFakeErp(fakeOptions);
+    const chrome = fakeChrome(fake.session);
+    const sent: ChannelMessage[] = [];
+    const connection = channelWatch();
+    const open = (): ClientSocket => {
+      let gone = false;
+      const socket: ClientSocket = { send: () => undefined, close: () => undefined, onopen: null, onmessage: null, onclose: null, onerror: null };
+      const drop = () => {
+        if (gone) return;
+        gone = true;
+        session.closed();
+        socket.onclose?.({ code: 1006, reason: '' });
+      };
+      const session = server.app.extensionChannel.open({
+        send: (data) => {
+          if (gone) return;
+          if (cut?.(JSON.parse(data) as ChannelMessage, sent)) return drop();
+          socket.onmessage?.({ data });
+        },
+        close: drop,
+      });
+      socket.send = (data) => {
+        if (gone) return;
+        const message = JSON.parse(data) as ChannelMessage;
+        sent.push(message);
+        void session.message(data);
+        delivered?.(message, detach);
+      };
+      socket.close = drop;
+      queueMicrotask(() => socket.onopen?.());
+      return socket;
+    };
+    const detach = () => chrome.detach('canceled_by_user');
+    // What the extension asked of the app, by method; an event by its type.
+    const asked = () => sent.flatMap((message) => (message.type === 'request' && message.method !== 'ping'
+      ? [message.method === EXECUTOR_METHODS.event ? (message.payload as { event: ExecutorEvent }).event.type : message.method] : []));
+    const api = debuggerApi ? debuggerApi(chrome.debugger, detach, asked) : chrome.debugger;
+    const run = createErpRunner({
+      browser: (erpOrigin, choice) => dedicatedErpTab({ erpOrigin, choice, tabs: chrome.tabs, windows: chrome.windows, debugger: api, pollMs: 1 }),
+      request: (method, payload) => extension.request(method, payload),
+      connection,
+      // As the real extension fetches them: from the app's owner-checked blob route, with the pairing token (#256).
+      blobs: serverBlobs({ origin: 'http://localhost', token: async () => token, fetch: async (url, init) => server.app.request(url, init) }),
+      pace: FAST_PACE,
+    });
+    const extension = createChannelClient({ origin: 'http://127.0.0.1:4319', token, open, onRequest: run, onStatus: connection.status });
+    await connection.ready();
+    return { chrome, asked, stop: () => extension.stop() };
+  }
+
+  // The request id of the first `erp.event` carrying `type`: the frame whose answer a test loses.
+  const idOf = (sent: ChannelMessage[], type: ExecutorEvent['type']) => sent.flatMap((message) =>
+    (message.type === 'request' && message.method === EXECUTOR_METHODS.event && (message.payload as { event: ExecutorEvent }).event.type === type ? [message.id] : []))[0];
+
+  const onceEach = async (taskId: string) => {
+    const logged = (await journal(taskId)).map((event) => JSON.stringify(event));
+    return new Set(logged).size === logged.length;
+  };
+
+  it('resumes after the socket drops under the import attempt’s answer, and hands the form over with nothing replayed', async () => {
+    const token = await pair(alice);
+    const ready = await confirmed();
+    let cutOnce = false;
+    const extension = await realExtension(token, {
+      cut: (message, sent) => {
+        if (cutOnce || message.type !== 'response' || message.id !== idOf(sent, 'attempt_started')) return false;
+        cutOnce = true;
+        return true;
+      },
+    });
+
+    const done = await start(ready);
+
+    expect(cutOnce).toBe(true);
+    expect(done.erp.abortReason, JSON.stringify(done.erp)).toBeNull();
+    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done' }, readback: { status: 'matched' } });
+    expect(extension.asked()).not.toContain(EXECUTOR_METHODS.detached);
+    expect(extension.asked().filter((method) => method === EXECUTOR_METHODS.resume)).toHaveLength(1);
+    // One attempt per action went out, the one whose answer was lost included; nothing is on record twice.
+    expect(extension.asked().filter((type) => type === 'attempt_started')).toHaveLength(2);
+    expect(await attemptsOf(ready.task.taskId)).toEqual([{ action: 'import' }, { action: 'fill' }]);
+    expect(await onceEach(ready.task.taskId)).toBe(true);
+    expect(fake!.mutations.filter((mutation) => mutation.kind === 'import')).toHaveLength(1);
+    expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(0);
+    extension.stop();
+  });
+
+  it('resumes after the debugger banner is cancelled between commands, in the same tab', async () => {
+    const token = await pair(alice);
+    const ready = await confirmed();
+    const extension = await realExtension(token, {
+      // Cancelled while the executor waits for the app to take `step navigate running`: no command is under way.
+      delivered: (message, detach) => {
+        const event = message.type === 'request' && message.method === EXECUTOR_METHODS.event ? (message.payload as { event: ExecutorEvent }).event : null;
+        if (event?.type === 'step' && event.step === 'navigate' && event.status === 'running') detach();
+      },
+    });
+
+    const done = await start(ready);
+
+    expect(done.erp.abortReason, JSON.stringify(done.erp)).toBeNull();
+    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done' } });
+    const asked = extension.asked();
+    expect(asked.indexOf(EXECUTOR_METHODS.detached)).toBeLessThan(asked.indexOf(EXECUTOR_METHODS.resume));
+    expect(await onceEach(ready.task.taskId)).toBe(true);
+    const tab = extension.chrome.jobTab()!.id;
+    expect(extension.chrome.attached).toEqual([{ tabId: tab }, { tabId: tab }]);
+    extension.stop();
+  });
+
+  it('goes to 对账 when the banner is cancelled under the import click, having resumed without carrying on', async () => {
+    const token = await pair(alice);
+    const ready = await confirmed();
+    const extension = await realExtension(token, {
+      debuggerApi: (api, detach, asked) => {
+        let armed = true;
+        return {
+          ...api,
+          async sendCommand(target, method, params) {
+            if (!armed || method !== 'Input.dispatchMouseEvent' || !asked().includes('attempt_started')) return api.sendCommand(target, method, params);
+            armed = false;
+            detach();
+            throw new Error('Detached while handling command.');
+          },
+        };
+      },
+    });
+
+    const stopped = await start(ready);
+
+    expect(extension.asked().slice(-3)).toEqual([EXECUTOR_METHODS.detached, EXECUTOR_METHODS.resume, 'result']);
+    expect(stopped).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
+    expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'unknown', code: 'debugger_detached_mid_command' }]);
+    expect(await attemptsOf(ready.task.taskId)).toEqual([{ action: 'import' }]);
+    expect(fake!.mutations).toEqual([]);
+    extension.stop();
   });
 });

@@ -215,3 +215,26 @@ export function createChannelClient({ origin, token, open, version = EXTENSION_V
     },
   };
 }
+
+/**
+ * A channel's status as a running ERP job needs it (`ChannelWatch` in `job-link.ts`): fed every status the client
+ * announces (null: no client at all), it tells when the socket that was `ready` went, and when one is `ready` again.
+ */
+export function channelWatch() {
+  let ready = false;
+  const closed = new Set<() => void>();
+  const waiting: Array<() => void> = [];
+  return {
+    status(status: ChannelStatus | null): void {
+      const now = status?.state === 'ready';
+      if (ready && !now) for (const listener of [...closed]) listener();
+      ready = now;
+      if (ready) for (const resolve of waiting.splice(0)) resolve();
+    },
+    onClosed(listener: () => void): () => void {
+      closed.add(listener);
+      return () => void closed.delete(listener);
+    },
+    ready: (): Promise<void> => (ready ? Promise.resolve() : new Promise((resolve) => void waiting.push(resolve))),
+  };
+}
