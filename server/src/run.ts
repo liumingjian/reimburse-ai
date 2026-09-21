@@ -25,6 +25,9 @@ import { startServer } from './server';
 const DEFAULT_PORT = 4319;
 // src/run.ts (dev, via tsx) and dist/main.mjs (built) both sit two levels below the repo root.
 const WEB_DIST = fileURLToPath(new URL('../../web/dist', import.meta.url));
+// The extension template `pnpm build` leaves beside it; the download is assembled from it per request, so a template
+// built after the server started is picked up without a restart.
+const EXTENSION_TEMPLATE = fileURLToPath(new URL('../../extension/dist', import.meta.url));
 
 // Only e2e passes these: the real CDP executors drive a browser, which a test run has no business doing.
 export type RunOverrides = { erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor };
@@ -45,6 +48,7 @@ export async function run({ erpExecutor, reconcileExecutor }: RunOverrides = {})
       reconcileExecutor: reconcileExecutor ?? cdpReconcileExecutor(),
       erpConfig,
       publicOrigin: process.env['BAOX_PUBLIC_ORIGIN'] ?? null,
+      extensionTemplate: EXTENSION_TEMPLATE,
     });
     console.log(`baox server listening on ${server.url} (data ${dataDir})`);
     const stop = () => void server.close().then(() => process.exit(0));

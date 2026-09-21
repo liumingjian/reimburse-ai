@@ -29,11 +29,13 @@ export type StartOptions = {
   // `BAOX_PUBLIC_ORIGIN` as written, e.g. `http://10.250.0.222`; absent or empty serves 127.0.0.1 only. An origin
   // this refuses (`public-origin.ts`) stops the server before it listens.
   publicOrigin?: string | null;
+  // The built extension template (`extension/dist`) the settings page's download is assembled from; null serves none.
+  extensionTemplate?: string | null;
 };
 
 export type RunningServer = { url: string; port: number; close: () => Promise<void> };
 
-export async function startServer({ dataDir, port, webDist = null, projectCatalog, legacyHome = null, erpExecutor, reconcileExecutor, erpConfig, publicOrigin = null }: StartOptions): Promise<RunningServer> {
+export async function startServer({ dataDir, port, webDist = null, projectCatalog, legacyHome = null, erpExecutor, reconcileExecutor, erpConfig, publicOrigin = null, extensionTemplate = null }: StartOptions): Promise<RunningServer> {
   // First, so a misconfigured address never gets as far as the data directory lock.
   const served = publicOrigin ? parsePublicOrigin(publicOrigin) : null;
   ensureDataDir(dataDir);
@@ -45,7 +47,7 @@ export async function startServer({ dataDir, port, webDist = null, projectCatalo
     release();
     throw error;
   }
-  const app = createApp({ db, dataDir, webDist, legacyHome, publicOrigin: served, ...(projectCatalog ? { projectCatalog } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(erpConfig ? { erpConfig } : {}) });
+  const app = createApp({ db, dataDir, webDist, legacyHome, publicOrigin: served, extensionTemplate, ...(projectCatalog ? { projectCatalog } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(erpConfig ? { erpConfig } : {}) });
   const { server, info } = await new Promise<{ server: ReturnType<typeof serve>; info: AddressInfo }>((resolve) => {
     const s = serve({ fetch: app.fetch, hostname: HOST, port }, (address) => resolve({ server: s, info: address }));
   });

@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { Button, InlineNotification } from '@carbon/react';
 import { useAppStore, useExtensionPairing, useLegacyImport } from '../adapter/context';
-import { EXTENSION_PAIRING_STATUS_LABELS, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY, type LegacyImportReport } from '@baox/contract';
+import { compareExtensionVersions, EXTENSION_DOWNLOAD_PATH, EXTENSION_PAIRING_STATUS_LABELS, EXTENSION_VERSION, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY, type LegacyImportReport } from '@baox/contract';
 import { TASKS_HASH, navigate } from '../router';
 import { ConfirmDialog } from '../shell/Dialog';
 import { AppShell } from '../shell/AppShell';
@@ -14,6 +14,8 @@ import { PageHeader } from '../shell/PageHeader';
 // 旧数据损坏时逐个文件列出原因，由这个账号修好后重试，或明确跳过。跳过之后导入就此结束。
 // 「浏览器扩展」给出一次性的配对码，扩展拿它换长期凭据；配对之后这里显示配对了哪台浏览器、最近什么时候连过，
 // 也可以撤销。一个账号同时只有一个配对，重新生成配对码即作废原来的那一个。
+// 同一节里给出扩展安装包的下载与 Chrome、Edge 的安装、升级步骤（ADR-0021：开发者模式下加载已解压的扩展，没有自动更新），
+// 并说明去报销时浏览器顶部的调试提示条是正常的、点它的「取消」会让这次去报销停下。
 // 版式：表单页，内容限宽，节与节之间用细分隔线。
 
 export const LEGACY_IMPORT_COPY = {
@@ -131,6 +133,7 @@ function LegacyImportSection() {
 
 export const EXTENSION_PAIRING_COPY = {
   title: '浏览器扩展',
+  pairingTitle: '配对',
   lead: '去报销时，由你自己浏览器里的扩展打开报销系统并按你确认过的内容填写。先把扩展和这个账号配对，它才知道自己替谁做事。',
   independence: '配对与登录互不影响：撤销配对不会退出登录，退出登录也不会解除配对。',
   status: '状态',
@@ -159,6 +162,74 @@ export const EXTENSION_PAIRING_COPY = {
   retryLoad: '重试',
 } as const;
 
+// 写给不知道开发者模式是什么的员工：每一步只做一件事，按钮和开关的名字照浏览器界面上的写。
+// 报销系统写作「报销系统」，不写英文缩写（copy.test.ts）。
+export const EXTENSION_INSTALL_COPY = {
+  download: '下载浏览器扩展',
+  offeredVersion: (version: string) => `这里提供的扩展版本：${version}`,
+  outdated: (installed: string, offered: string) => `你装的扩展是 ${installed} 版，这里提供的是 ${offered} 版。请按下面“升级扩展”的步骤换成新版本。`,
+  installTitle: '安装扩展',
+  installLead: '扩展只能装在 Chrome 或 Edge 里。它不经过应用商店，而是由你把下载的安装包解压，再交给浏览器加载。照下面的步骤一步步做就行。',
+  installSteps: [
+    '点击上面的“下载浏览器扩展”，浏览器会下载一个名为 baox-extension.zip 的压缩包。',
+    '在“文档”这类不会随手清理的地方新建一个文件夹，例如“报销助手扩展”，把压缩包里的全部文件解压到这个文件夹里。打开它，应该能直接看到 manifest.json 等几个文件。以后不要删除或移动这个文件夹，浏览器每次启动都要从这里读取扩展。',
+    '打开浏览器的扩展管理页：Chrome 在地址栏输入 chrome://extensions 后按回车；Edge 输入 edge://extensions 后按回车。',
+    '打开开发者模式：Chrome 的开关在页面右上角，叫“开发者模式”；Edge 的开关在页面左侧，叫“开发人员模式”（窗口较窄时先点左上角的菜单按钮才能看到）。开发者模式只是允许加载不来自应用商店的扩展，不会改动浏览器的其他设置。',
+    '点击页面上出现的“加载已解压的扩展程序”（Edge 里叫“加载解压缩的扩展”），选中第 2 步的那个文件夹，再点“选择文件夹”。',
+    '页面上出现“报销助手”，就装好了。点击浏览器右上角拼图形状的扩展按钮，把“报销助手”固定到工具栏，以后更容易找到。',
+    '点击工具栏上的“报销助手”，填入下方生成的配对码。',
+  ],
+  startupNote: '以后浏览器启动时，可能会提示关闭开发者模式下的扩展。直接关掉这条提示即可，不要选择停用扩展，否则去报销时扩展不在。',
+  upgradeTitle: '升级扩展',
+  upgradeLead: '扩展不会自动更新。应用升级之后，扩展可能提示版本太旧、连不上，这时按下面的步骤换成新版本。',
+  upgradeSteps: [
+    '点击上面的“下载浏览器扩展”，下载新的压缩包。',
+    '打开安装时建的那个文件夹，删掉里面原有的全部文件，再把新压缩包里的全部文件解压进去。请用原来的文件夹，换一个新文件夹会让浏览器里出现两个扩展。',
+    '打开扩展管理页（Chrome 是 chrome://extensions，Edge 是 edge://extensions），在“报销助手”上点击刷新形状的“重新加载”按钮。',
+    '看一眼“报销助手”上显示的版本号，和这里提供的版本一致就升级好了。如果扩展提示需要重新配对，就在下方重新生成配对码。',
+  ],
+  bannerTitle: '去报销时浏览器顶部的提示条',
+  bannerBody: '去报销时，扩展会新开一个报销系统的标签页，在那里替你填写。这时浏览器顶部会出现一条提示，写着“报销助手”已开始调试此浏览器，或者正在调试此浏览器。这是正常的：扩展正是靠它把内容填进报销系统，提示条会一直显示到这次填写结束。',
+  bannerCancel: '不要点这条提示上的“取消”。点了它，扩展会立刻失去对那个标签页的控制，这次去报销随即停止，不会自己继续。如果不小心点了，请回到应用，按页面上的提示核对报销系统里已经填了什么。',
+} as const;
+
+// 下载、安装与升级步骤、调试提示条的说明。下载是一个普通链接：安装包由服务端按它自己的地址现场生成，页面不经过适配器。
+function ExtensionInstallGuide({ installedVersion }: { installedVersion: string | null }) {
+  const outdated = installedVersion !== null && compareExtensionVersions(installedVersion, EXTENSION_VERSION) < 0;
+  return (
+    <>
+      <div className="app-btn-row">
+        {/* 服务端回 Content-Disposition: attachment，浏览器就地下载，页面不会跳走。 */}
+        <Button kind="primary" href={EXTENSION_DOWNLOAD_PATH}>
+          {EXTENSION_INSTALL_COPY.download}
+        </Button>
+      </div>
+      <p className="app-caption">{EXTENSION_INSTALL_COPY.offeredVersion(EXTENSION_VERSION)}</p>
+      {outdated ? (
+        <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={EXTENSION_INSTALL_COPY.outdated(installedVersion, EXTENSION_VERSION)} />
+      ) : null}
+      <h3 className="app-subhead">{EXTENSION_INSTALL_COPY.installTitle}</h3>
+      <p>{EXTENSION_INSTALL_COPY.installLead}</p>
+      <ol className="app-guide-steps" aria-label={EXTENSION_INSTALL_COPY.installTitle}>
+        {EXTENSION_INSTALL_COPY.installSteps.map((step) => (
+          <li key={step}>{step}</li>
+        ))}
+      </ol>
+      <p className="app-caption">{EXTENSION_INSTALL_COPY.startupNote}</p>
+      <h3 className="app-subhead">{EXTENSION_INSTALL_COPY.upgradeTitle}</h3>
+      <p>{EXTENSION_INSTALL_COPY.upgradeLead}</p>
+      <ol className="app-guide-steps" aria-label={EXTENSION_INSTALL_COPY.upgradeTitle}>
+        {EXTENSION_INSTALL_COPY.upgradeSteps.map((step) => (
+          <li key={step}>{step}</li>
+        ))}
+      </ol>
+      <h3 className="app-subhead">{EXTENSION_INSTALL_COPY.bannerTitle}</h3>
+      <p>{EXTENSION_INSTALL_COPY.bannerBody}</p>
+      <p>{EXTENSION_INSTALL_COPY.bannerCancel}</p>
+    </>
+  );
+}
+
 // 浏览器扩展：生成配对码交给扩展换取长期凭据，页面这边只看得到配对了哪台浏览器、最近什么时候连过，以及撤销它。
 function ExtensionPairingSection() {
   const store = useAppStore();
@@ -185,6 +256,8 @@ function ExtensionPairingSection() {
       <h2 className="app-section-title">{EXTENSION_PAIRING_COPY.title}</h2>
       <p>{EXTENSION_PAIRING_COPY.lead}</p>
       <p>{EXTENSION_PAIRING_COPY.independence}</p>
+      <ExtensionInstallGuide installedVersion={view?.status === 'paired' ? view.version : null} />
+      <h3 className="app-subhead">{EXTENSION_PAIRING_COPY.pairingTitle}</h3>
       {state.status === 'error' ? (
         <div className="app-empty">
           <p>{EXTENSION_PAIRING_COPY.loadFailed}</p>

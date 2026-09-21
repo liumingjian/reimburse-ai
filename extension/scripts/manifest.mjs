@@ -5,14 +5,25 @@
 //   the source rather than imported because this script is plain node and `@baox/contract` ships as TypeScript;
 //   `src/manifest.test.ts` pins that what this reads is what the contract exports, so the two cannot drift.
 // - `host_permissions` must be the origin baked into the build, or the extension would be allowed to reach an
-//   address its code never talks to, or not allowed to reach the one it does.
+//   address its code never talks to, or not allowed to reach the one it does. The build writes
+//   `EXTENSION_ORIGIN_PLACEHOLDER` (read from the contract the same way), and the server swaps in its own origin when
+//   it serves the zip.
 
 const VERSION_PATTERN = /^export const EXTENSION_VERSION = '([^']+)';$/m;
+const PLACEHOLDER_PATTERN = /^export const EXTENSION_ORIGIN_PLACEHOLDER = '([^']+)';$/m;
+
+function readConstant(contractSource, pattern, name) {
+  const found = pattern.exec(contractSource);
+  if (!found) throw new Error(`contract/src/extension.ts no longer declares ${name} on one line`);
+  return found[1];
+}
 
 export function readExtensionVersion(contractSource) {
-  const found = VERSION_PATTERN.exec(contractSource);
-  if (!found) throw new Error('contract/src/extension.ts no longer declares EXTENSION_VERSION on one line');
-  return found[1];
+  return readConstant(contractSource, VERSION_PATTERN, 'EXTENSION_VERSION');
+}
+
+export function readOriginPlaceholder(contractSource) {
+  return readConstant(contractSource, PLACEHOLDER_PATTERN, 'EXTENSION_ORIGIN_PLACEHOLDER');
 }
 
 export function manifestFor(version, origin) {
