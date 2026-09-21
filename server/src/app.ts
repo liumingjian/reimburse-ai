@@ -36,7 +36,8 @@ export type AppOptions = {
   webDist?: string | null;
   // Session expiry reads this clock; tests move it.
   now?: Clock;
-  // The global ERP control lease (ADR-0016): the fill job holds it while it runs. Tests pass theirs to observe it.
+  // The ERP control lease, one partition per 应用账号 (ADR-0016, ADR-0019): the fill job holds its account's while
+  // it runs. Tests pass theirs to observe it.
   erpLease?: ErpLease;
   // Where 去报销 jobs run: `cdpFillExecutor` on the dedicated Chromium in production, a fake in tests. Without one,
   // every job stops before touching anything.
@@ -414,7 +415,8 @@ const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
   'answer-pending': taskAction(withToken({ itemId: z.string().min(1), answer: PendingAnswerSchema }), (tasks, id, { itemId, answer, stepToken }) => tasks.answerPending(id, itemId, answer, stepToken)),
   'confirm-review': taskAction(withToken({ digest: z.string().min(1) }), (tasks, id, { digest, stepToken }) => tasks.confirmReview(id, digest, stepToken)),
   'exclude-material': taskAction(withToken({ materialId: z.string().min(1) }), (tasks, id, { materialId, stepToken }) => tasks.excludeMaterial(id, materialId, stepToken)),
-  // 去报销 and its login pause. While another task holds the ERP lease: 409 `erp_in_use`, naming no account or task.
+  // 去报销 and its login pause. While another task of the same 应用账号 holds the ERP lease: 409 `erp_in_use`, naming
+  // no task. Another account's job never refuses this one (ADR-0019).
   'start-erp-write': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.startErpWrite(id, stepToken)),
   'confirm-login': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.confirmLogin(id, stepToken)),
   'cancel-erp-write': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.cancelErpWrite(id, stepToken)),
@@ -423,7 +425,7 @@ const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
   'rotate-placement': taskAction(z.object({ pageId: z.string().min(1), slot: PlacementSlotSchema, rotate: z.boolean() }), (tasks, id, { pageId, slot, rotate }) => tasks.rotatePlacement(id, pageId, slot, rotate)),
   'crop-placement': taskAction(CropInputSchema, (tasks, id, { pageId, slot, corners }) => tasks.cropPlacement(id, pageId, slot, corners)),
   'remove-payment-screenshot': taskAction(z.object({ screenshotId: z.string().min(1) }), (tasks, id, { screenshotId }) => tasks.removePaymentScreenshot(id, screenshotId)),
-  // 对账 (read-only, 409 `erp_in_use` while another task holds the lease) and 转人工 (terminal).
+  // 对账 (read-only, 409 `erp_in_use` while another task of the same 应用账号 holds the lease) and 转人工 (terminal).
   reconcile: taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.reconcile(id, stepToken)),
   'hand-off': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.handOff(id, stepToken)),
   // 重新去报销 (ADR-0027): a new fill job on the same task, offered only by the 对账 verdict that allows it.
