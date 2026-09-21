@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../db/database';
 import { createTaskService } from '../tasks';
 import { createTestServer, type TestServer } from '../test/harness';
+import { stageInPage } from '@baox/erp-executor/invoice-files';
 import { runFillJob } from '@baox/erp-executor/job';
 import { writeHeader } from '@baox/erp-executor/erpform';
 import { addDetailRow, captureErpError, importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type ImportBudget, type WritePage } from '@baox/erp-executor/steps';
@@ -453,6 +454,34 @@ describe('fill job through the protocol on the fake ERP', () => {
 // What ERP does when an invoice the bill already holds is imported again: it rewrites that 收票行 (receipt row),
 // which it keys by its 收票单 (receipt number), instead of adding a second one (ADR-0026). Driven through the fill
 // job's own import step, for the reason `uploadAndImport` gives.
+// The browser extension's route (#256): no local path, so the invoices go into the assistant's file input as `File`
+// objects in a `DataTransfer` built inside the page. Same recognition, same upload/import split (ADR-0025).
+describe('invoices put into the page as bytes', () => {
+  const inPage = (fake: FakeErp) =>
+    runFillJob(fillPlan(taskId), { browser: fake.browser, blobs: blobSource(), staging: stageInPage, channel: channelFor(), pace: FAST_PACE, probeWaitMs: 0 });
+  const builtInThePage = (fake: FakeErp) =>
+    fake.commands.filter((c) => c.sessionId !== null && c.method === 'Runtime.evaluate' && String(c.params['expression']).includes('new DataTransfer()'));
+
+  it('are recognised by the assistant and imported, with no path handed to the page', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
+    const result = await inPage(fake);
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'handed_over' });
+    expect(receiptNumbers(fake)).toEqual(expect.arrayContaining(INVOICES.map((invoice) => invoice.receiptNumber)));
+    expect(fake.commands.filter((c) => c.method === 'DOM.setFileInputFiles')).toEqual([]);
+    // Both invoices are PDFs: one batch, one assignment.
+    expect(builtInThePage(fake)).toHaveLength(1);
+  });
+
+  it('start no attempt when the assistant recognises none of them: an upload consumes nothing', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ invoices: [] }));
+    const result = await inPage(fake);
+    expect(result).toMatchObject({ status: 'aborted', code: 'INVOICE_SELECTION_EMPTY' });
+    expect(builtInThePage(fake)).toHaveLength(1);
+    expect(await jobs.attempts(`job-${taskId}`)).toEqual([]);
+    expect(fake.mutations).toEqual([]);
+  });
+});
+
 describe('re-importing an invoice the bill already holds', () => {
   it('rewrites its 收票行 in place and appends only the invoice the bill does not hold yet', async () => {
     const [rail, ride] = INVOICES;

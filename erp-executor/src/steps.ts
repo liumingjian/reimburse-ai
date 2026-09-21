@@ -10,6 +10,7 @@ import { ExecutorError } from './page';
 import { readGridByColumn, showSection } from './erpform';
 import { HIT_JS, clickReach, reachProblem, type Reach } from './hit';
 import { readPane, recognisedTotal, selectRecognisedInvoices } from './invoice-grid';
+import type { PutInvoiceFiles } from './invoice-files';
 import { dismissNotice } from './notices';
 import { DEFAULT_PACE, sleep, waitFor, type Pace } from './pace';
 import { DETAIL_COLUMN, RECEIPTS_COLUMN } from './reader';
@@ -278,7 +279,8 @@ export async function openInvoiceAssistant(page: WritePage, { timeoutMs = 90_000
   };
 }
 
-const fileInput = async (session: CdpSession, files: string[]) => {
+/** The local-path route (`invoice-files.ts`): the node executor's staged files, set on the input by path. */
+export const setFileInputPaths = async (session: CdpSession, files: string[]) => {
   await session.send('DOM.enable');
   const { root } = await session.send('DOM.getDocument', { depth: -1, pierce: true });
   const { nodeId } = await session.send('DOM.querySelector', { nodeId: root.nodeId, selector: 'input[type=file]' });
@@ -352,12 +354,14 @@ const uploadState = async (session: CdpSession) => ({
 });
 
 /**
- * Upload the staged invoice files into the assistant, wait for recognition, and select every recognised row.
+ * Upload the staged invoice files into the assistant, wait for recognition, and select every recognised row. `files`
+ * are the staged names (`StagedInvoices.names`) and `put` the route they take into the file input: local paths
+ * unless told otherwise.
  * Writes nothing and consumes nothing: ADR-0025 puts the consumption boundary at the 发票导入单据 click, which
  * lives in `importInvoices`. Splitting there is what lets the caller record its attempt between the two, so a
  * failure while uploading leaves a task that can still be retried and still be voided.
  */
-export async function uploadInvoices(page: WritePage, paths: string[], { timeoutMs = 210_000 } = {}) {
+export async function uploadInvoices(page: WritePage, paths: string[], { timeoutMs = 210_000, put = setFileInputPaths }: { timeoutMs?: number; put?: PutInvoiceFiles } = {}) {
   if (!Array.isArray(paths) || paths.length === 0) throw new ExecutorError('INVOICE_FILES_REQUIRED', '没有可上传的主要发票文件');
   const pace = paceOf(page);
   const groups = invoiceUploadGroups(paths);
@@ -371,8 +375,8 @@ export async function uploadInvoices(page: WritePage, paths: string[], { timeout
   const entryReady = await waitFor(() => evalIn<boolean>(assistant, assistantEntryReady), Boolean, cap(page, 30_000), pace.pollMs);
   if (!entryReady) throw new ExecutorError('INVOICE_ASSISTANT_ENTRY_NOT_READY', '发票助手的入口页没有就绪');
   await sleep(pace.settleMs * 8);
-  // 电脑端选取, then the app sets the files itself from its own staging directory: no employee ever picks a file,
-  // and no OS file chooser is ever opened (the input is hidden, which `DOM.setFileInputFiles` does not care about).
+  // 电脑端选取, then the app sets the files itself (`put`): no employee ever picks a file,
+  // and no OS file chooser is ever opened (the input is hidden, which neither route cares about).
   await clickPoint(page, assistant, computerPickerPoint, '发票助手的「电脑端选取」入口', { timeoutMs: 15_000 });
   // 上传发票影像 names the upload view itself. The old code waited for it on the entry menu, where it has never
   // existed: the text was right, its page was not.
@@ -390,7 +394,7 @@ export async function uploadInvoices(page: WritePage, paths: string[], { timeout
   }
   for (const files of groups) {
     const before = (await uploadState(assistant)).total;
-    await fileInput(assistant, files);
+    await put(assistant, files);
     // Recognition of this batch is this count rising by the size of the batch. A batch that recognises fewer rows
     // than it was given is not stopped here — the identity-keyed count in `selectRecognisedInvoices` is the real
     // gate, and it can say which invoices are missing, where a count can only say how many.

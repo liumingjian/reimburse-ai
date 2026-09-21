@@ -12,6 +12,8 @@
 // - Routing. The job runs in the extension of the account that owns the task, and only that account's socket may
 //   speak for it. Another account's job reads exactly like no job at all.
 // - Order. A job's events are handed to its channel one at a time, in the order they arrived.
+// - Originals. While a fill runs, its extension may fetch the invoices its plan names, and nothing else
+//   (`runningOriginal`, served by the blob route in `app.ts`).
 // - Loss. When the channel goes, the job ends with the channel's own error code as a `result` (see `channelLost`),
 //   after any event already in flight has landed. Nothing is re-sent: nothing is ever replayed.
 
@@ -30,10 +32,15 @@ export type RemoteExecutor = {
   reconcile: ReconcileExecutor;
   // The channel's `onRequest`: the extension's `erp.event` requests.
   answer: ChannelRequestHandler;
+  // The task whose running fill, in this account's extension, names this invoice original; null for anything else.
+  runningOriginal: (accountId: string, sha256: string) => { taskId: string } | null;
 };
 
 type Running = {
   accountId: string;
+  taskId: string;
+  // The originals the plan names (a fill's invoices; none for 对账): all its extension may fetch.
+  originals: ReadonlySet<string>;
   channel: ExecutorChannel;
   // False once the job has ended on this side; a late event is refused rather than recorded after the result.
   open: boolean;
@@ -57,9 +64,10 @@ const emitAny = (channel: ExecutorChannel, event: ExecutorEvent): Promise<unknow
 export function createRemoteExecutor({ db, extension }: { db: Db; extension: Pick<ExtensionChannel, 'request'> }): RemoteExecutor {
   const running = new Map<string, Running>();
 
-  async function run(plan: { jobId: string; taskId: string }, channel: ExecutorChannel, method: string, payload: FillRequest | ReconcileRequest): Promise<ResultEvent> {
+  async function run(plan: { jobId: string; taskId: string; invoices?: Array<{ sha256: string }> }, channel: ExecutorChannel, method: string, payload: FillRequest | ReconcileRequest): Promise<ResultEvent> {
     const { account_id: accountId } = await db.selectFrom('task').select('account_id').where('task_id', '=', plan.taskId).executeTakeFirstOrThrow();
-    const job: Running = { accountId, channel, open: true, tail: Promise.resolve() };
+    const originals = new Set((plan.invoices ?? []).map((invoice) => invoice.sha256));
+    const job: Running = { accountId, taskId: plan.taskId, originals, channel, open: true, tail: Promise.resolve() };
     running.set(plan.jobId, job);
     try {
       return resultOf(await extension.request(accountId, method, payload));
@@ -89,6 +97,14 @@ export function createRemoteExecutor({ db, extension }: { db: Db; extension: Pic
       const reply = job.tail.then(() => emitAny(job.channel, event));
       job.tail = reply.catch(() => undefined);
       return reply;
+    },
+    runningOriginal(accountId, sha256) {
+      // A job serves its originals to its own account until it has ended. An interrupted job has not ended: it may
+      // still need its invoices when it resumes.
+      for (const job of running.values()) {
+        if (job.open && job.accountId === accountId && job.originals.has(sha256)) return { taskId: job.taskId };
+      }
+      return null;
     },
   };
 }

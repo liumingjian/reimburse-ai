@@ -1,4 +1,5 @@
 import { EXTENSION_VERSION } from '@baox/contract';
+import { serverBlobs } from './blobs';
 import { createChannelClient, type ChannelClient, type ChannelStatus, type ClientSocket } from './connection';
 import { createErpRunner } from './erp-runner';
 import { dedicatedErpTab } from './erp-tab';
@@ -46,6 +47,7 @@ const runErpJob = createErpRunner({
     },
   }),
   request: (method, payload) => (client ? client.request(method, payload) : Promise.reject(new Error('和应用的连接断开了。'))),
+  blobs: serverBlobs({ origin: BAOX_ORIGIN, token: async () => (await readPairing())?.token ?? null, fetch: (url, init) => fetch(url, init) }),
   // #257 resumes from here; until then an interruption only ends the job, through the command or request that failed.
   onInterrupted: (jobId, { kind, reason }) => console.warn(`[baox] job ${jobId} interrupted: ${kind} (${reason})`),
 });

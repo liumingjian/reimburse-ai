@@ -1,11 +1,12 @@
 import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionPairingSchema, ExtensionTokenSchema, type TaskSnapshot } from '@baox/contract';
+import { stageInPage } from '@baox/erp-executor/invoice-files';
 import { runFillJob } from '@baox/erp-executor/job';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, ResultEvent } from '@baox/erp-executor/protocol';
 import { createFakeErp, type FakeErp, type FakeErpOptions } from '@baox/erp-executor/testing/fake-erp';
 import { EXECUTOR_METHODS } from '@baox/erp-executor/wire';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fixtureCatalog } from './catalog/project-catalog';
-import { dataDirBlobs } from './erp/cdp-executor';
+import { serverBlobs } from '@baox/extension/blobs';
 import { catalogMismatch, loginWall, noFormOpen, TEST_ERP_ACCOUNT, uncertainSave } from './erp/testing/fake-executor';
 import { fakeExtension, type FakeExtension, type FillRunner, type ReconcileRunner } from './erp/testing/fake-extension';
 import { COMPATIBILITY, ERP_ACCOUNT, ERP_ORIGIN, FAST_PACE, fakeErpOptions } from './erp/testing/scenario';
@@ -51,11 +52,12 @@ async function connected(token: string, runners: { fill?: FillRunner; reconcile?
   return extension;
 }
 
-// The in-process executor on the fake ERP, run inside the extension. The invoice bytes come from the data directory
-// here; the real extension fetches them over HTTP (#256).
-const realExecutor: FillRunner = async (plan, channel) => {
+// The executor on the fake ERP, run inside the extension as the extension runs it: the invoices fetched from the app's
+// blob route with the extension's token, and put into the assistant as bytes built in the page (#256).
+const realExecutor = (token: string): FillRunner => async (plan, channel) => {
   fake = await createFakeErp(fakeOptions);
-  return runFillJob(plan, { browser: fake.browser, blobs: dataDirBlobs(server.dataDir), channel, pace: FAST_PACE, probeWaitMs: 0 });
+  const blobs = serverBlobs({ origin: 'http://localhost', token: async () => token, fetch: async (url, init) => server.app.request(url, init) });
+  return runFillJob(plan, { browser: fake.browser, blobs, staging: stageInPage, channel, pace: FAST_PACE, probeWaitMs: 0 });
 };
 
 // Hotel e-invoice + folio on P-2307, confirmed; the fake ERP knows the invoice by its bytes and face amounts.
@@ -121,7 +123,8 @@ describe('去报销 in the paired 浏览器扩展', () => {
         return reply;
       }) as ExecutorChannel['emit'],
     });
-    const extension = await connected(await pair(alice), { fill: (plan, channel, trigger) => realExecutor(plan, watched(channel), trigger) });
+    const token = await pair(alice);
+    const extension = await connected(token, { fill: (plan, channel, trigger) => realExecutor(token)(plan, watched(channel), trigger) });
     const ready = await confirmed();
 
     const done = await start(ready);
@@ -224,7 +227,7 @@ describe('去报销 in the paired 浏览器扩展', () => {
     expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'unknown', code: 'extension_connection_lost' }]);
 
     // The extension comes back: nothing is re-sent to it.
-    const back = await connected(token, { fill: realExecutor });
+    const back = await connected(token, { fill: realExecutor(token) });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(back.asked()).toEqual([]);
     expect(extension.asked()).toHaveLength(1);

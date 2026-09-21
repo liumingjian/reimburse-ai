@@ -17,7 +17,7 @@ import type { PairingService } from './pairing';
 
 const PAIRING_PATH = HTTP_ENDPOINTS.getExtensionPairing.path;
 
-function bearer(c: Context): string | undefined {
+export function bearer(c: Context): string | undefined {
   const [scheme, value] = (c.req.header('authorization') ?? '').split(' ');
   return scheme?.toLowerCase() === 'bearer' && value ? value : undefined;
 }

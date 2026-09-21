@@ -24,7 +24,8 @@ import {
   addDetailRow, captureErpError, closeErpDialogs, invoiceUploadGroups, openInvoiceAssistant, openNewReimbursement,
   importInvoices, uploadInvoices, type WritePage,
 } from './steps';
-import { discardStagedInvoices, stageInvoices } from './staging';
+import type { InvoiceStaging, StagedInvoices } from './invoice-files';
+import { stageInvoices } from './staging';
 import { prepareErpWrite } from './write-context';
 
 /** How the executor reaches Chromium. v1: the dedicated profile over CDP; tests: the fake ERP. */
@@ -37,7 +38,13 @@ export type ExecutorPorts = {
   browser: BrowserPort;
   blobs: BlobSource;
   channel: ExecutorChannel;
-  /** Parent directory for the per-job staging directory (default: the OS temp dir). */
+  /**
+   * How the invoices reach the assistant's file input (`invoice-files.ts`). Default by build: local paths in node,
+   * bytes built in the page in the extension's bundle. The extension passes `stageInPage` explicitly, so it takes the
+   * same route under node tests as in the browser.
+   */
+  staging?: InvoiceStaging;
+  /** Parent directory for the local-path route's per-job staging directory (default: the OS temp dir). */
   stagingRoot?: string;
   pace?: Pace;
   /** How long the login probe waits for a slow ERP first screen. */
@@ -62,7 +69,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
   const newId = ports.newId ?? (() => crypto.randomUUID());
   const attached = new Map<string, ChromiumPage & { session: CdpSession }>();
   let write: WritePage | null = null;
-  let stagingDir: string | null = null;
+  let staged: StagedInvoices | null = null;
   let attempted = false;
   let erpAccount: ErpAccount | null = null;
   let compatibility: Compatibility | null = null;
@@ -123,10 +130,9 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     }
     await step('catalog', 'done');
 
-    // Invoices by content, staged before any page action; a bad file stops here.
-    const staged = await stageInvoices(plan.invoices, ports.blobs, ports.stagingRoot);
-    stagingDir = staged.dir;
-    invoiceUploadGroups(staged.paths);
+    // Invoices by content, fetched and verified before any page action; a bad file stops here.
+    staged = await (ports.staging ?? stageInvoices)(plan.invoices, ports.blobs, ports.stagingRoot);
+    invoiceUploadGroups(staged.names);
 
     // Preconditions of the next mutation, and the drift guard against the baseline taken after navigation.
     let baseline: { url: string; formInstanceId: string } | null = null;
@@ -212,7 +218,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     //    durable before the one irreversible act — but a failure while uploading no longer marks the task as written
     //    to, so it stays retryable and stays voidable.
     await step('import', 'running');
-    await uploadInvoices(write, staged.paths);
+    await uploadInvoices(write, staged.names, { put: staged.put });
     // An operator brake for live QA, and nothing else. Upload and 勾选 are free and repeatable, but the
     // 发票导入单据 click that follows is the one irreversible act, and a QA round that wants to verify selection
     // against the real ERP has no reason to spend it: the invoices get bound to a 费用报销单 that nobody will save.
@@ -299,7 +305,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
   } catch (error: any) {
     return await finish(attempted ? 'unknown' : 'aborted', error?.code ?? 'executor_error', error?.message ?? String(error));
   } finally {
-    if (stagingDir) await discardStagedInvoices(stagingDir);
+    if (staged) await staged.discard();
     for (const page of attached.values()) { try { page.session.close(); } catch { /* already closed */ } }
   }
 }

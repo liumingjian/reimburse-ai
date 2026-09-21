@@ -17,6 +17,13 @@ export const EXTENSION_PAIR_PATH = '/api/extension/pair';
 export const EXTENSION_PAIRING_CODE_LENGTH = 8;
 export const EXTENSION_PAIRING_CODE_TTL_MS = 10 * 60 * 1000;
 
+// Where the extension fetches an invoice original (#256): `GET <EXTENSION_BLOB_PATH>/<sha256>` with its token in
+// `Authorization: Bearer`. It answers only for the originals named in the plan of the 去报销 running in that
+// 应用账号's extension right now (ADR-0022), so a stolen token cannot walk the employee's archive. A plain GET: the
+// exact-origin write check never applies to it, the Host check does.
+export const EXTENSION_BLOB_PATH = '/api/extension/blobs';
+export const extensionBlobPath = (sha256: string): string => `${EXTENSION_BLOB_PATH}/${sha256}`;
+
 // ---------------------------------------------------------------------------
 // Version negotiation (ADR-0021)
 // ---------------------------------------------------------------------------
