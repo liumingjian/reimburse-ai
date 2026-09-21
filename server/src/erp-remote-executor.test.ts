@@ -2,7 +2,7 @@ import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionPairingSchema, Extensi
 import { runFillJob } from '@baox/erp-executor/job';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, ResultEvent } from '@baox/erp-executor/protocol';
 import { createFakeErp, type FakeErp, type FakeErpOptions } from '@baox/erp-executor/testing/fake-erp';
-import { EXECUTOR_METHODS } from '@baox/erp-executor/wire';
+import { EXECUTOR_METHODS, RECONNECT_WINDOW_MS, type PageObservation } from '@baox/erp-executor/wire';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fixtureCatalog } from './catalog/project-catalog';
 import { dataDirBlobs } from './erp/cdp-executor';
@@ -25,10 +25,32 @@ let server: TestServer;
 let alice: TestClient;
 let fakeOptions: FakeErpOptions;
 let fake: FakeErp | null = null;
+let timers: ReturnType<typeof manualTimers>;
+
+// The channel's timers, fired by hand: the reconnection window closes when a test says so, not 120 seconds later.
+function manualTimers() {
+  const due = new Set<{ run: () => void; ms: number }>();
+  return {
+    schedule: (run: () => void, ms: number) => {
+      const entry = { run, ms };
+      due.add(entry);
+      return () => void due.delete(entry);
+    },
+    pending: (ms: number) => [...due].filter((entry) => entry.ms === ms).length,
+    elapse(ms: number) {
+      for (const entry of [...due]) {
+        if (entry.ms !== ms) continue;
+        due.delete(entry);
+        entry.run();
+      }
+    },
+  };
+}
 
 beforeEach(async () => {
   fake = null;
-  server = await createTestServer({ projectCatalog: CATALOG, erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY } });
+  timers = manualTimers();
+  server = await createTestServer({ projectCatalog: CATALOG, erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, schedule: timers.schedule });
   alice = await server.signIn('alice');
   expect((await alice.post('/api/project-book/intake', { number: 'P-2307', name: '华东客户交付' })).status).toBe(200);
 });
@@ -96,10 +118,25 @@ async function start(snapshot: TaskSnapshot): Promise<TaskSnapshot> {
   return settled(snapshot.task.taskId);
 }
 
+// Waits until the running job is interrupted: its reconnection window is open.
+async function interrupted(): Promise<void> {
+  const deadline = Date.now() + BACKSTOP_MS;
+  while (timers.pending(RECONNECT_WINDOW_MS) === 0) {
+    if (Date.now() > deadline) throw new Error('no job was interrupted');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+const windowCloses = () => timers.elapse(RECONNECT_WINDOW_MS);
+
 const journal = async (taskId: string) =>
   (await server.db.selectFrom('erp_job_event').select(['type', 'payload']).where('task_id', '=', taskId).orderBy('created_at').orderBy('seq').execute()).map((row) => JSON.parse(row.payload) as ExecutorEvent);
 const resultsOf = async (taskId: string) => (await journal(taskId)).filter((event): event is ResultEvent => event.type === 'result');
 const attemptsOf = async (taskId: string) => server.db.selectFrom('erp_attempt').select('action').where('task_id', '=', taskId).execute();
+
+// The page the jobs below were on when they were interrupted, as the extension re-observes it: the form and identity
+// `attemptStarted` records, the 发票助手 open.
+const PAGE: PageObservation = { erpAccount: TEST_ERP_ACCOUNT, form: { targetId: 'erp-page-1', formInstanceId: 'form-1', formMode: 'new', billNo: null }, assistant: 'open' };
 
 const attemptStarted = (plan: FillPlan): Extract<ExecutorEvent, { type: 'attempt_started' }> => ({
   type: 'attempt_started', attemptId: `${plan.jobId}.import`, action: 'import',
@@ -178,58 +215,6 @@ describe('去报销 in the paired 浏览器扩展', () => {
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
 
-  it('ends a job whose channel went before any attempt as aborted, with the channel loss as its code', async () => {
-    const token = await pair(alice);
-    const extension: FakeExtension = await connected(token, {
-      fill: async (_plan, channel) => {
-        await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
-        extension.disconnect();
-        await channel.emit({ type: 'step', step: 'chromium', status: 'done' });
-        throw new Error('unreachable: the channel is gone');
-      },
-    });
-    const ready = await confirmed();
-
-    await start(ready);
-
-    expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_connection_lost' }]);
-    expect(await attemptsOf(ready.task.taskId)).toEqual([]);
-    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
-  });
-
-  it('goes to 对账 when the channel drops while an attempt is being recorded, and never mutates or replays', async () => {
-    const token = await pair(alice);
-    let mutated = false;
-    const extension: FakeExtension = await connected(token, {
-      fill: async (plan, channel) => {
-        await channel.emit({ type: 'step', step: 'import', status: 'running' });
-        const ack = channel.emit(attemptStarted(plan));
-        // The socket goes with the attempt in flight: the server may make it durable, but no ack reaches the executor.
-        extension.disconnect();
-        await ack;
-        mutated = true;
-        throw new Error('unreachable: an unacknowledged attempt is never followed by a write');
-      },
-    });
-    const ready = await confirmed();
-
-    const stopped = await start(ready);
-
-    expect(mutated).toBe(false);
-    expect(stopped).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
-    expect(await attemptsOf(ready.task.taskId)).toEqual([{ action: 'import' }]);
-    // The result follows the attempt on record, and the server's guard made it 写入结果未知.
-    const log = await journal(ready.task.taskId);
-    expect(log.map((event) => event.type).slice(-2)).toEqual(['attempt_started', 'result']);
-    expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'unknown', code: 'extension_connection_lost' }]);
-
-    // The extension comes back: nothing is re-sent to it.
-    const back = await connected(token, { fill: realExecutor });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(back.asked()).toEqual([]);
-    expect(extension.asked()).toHaveLength(1);
-  });
-
   it("refuses another account's extension speaking for a running job", async () => {
     let release!: () => void;
     let entered!: (jobId: string) => void;
@@ -258,5 +243,248 @@ describe('去报销 in the paired 浏览器扩展', () => {
     expect(await journal(ready.task.taskId)).toEqual([]);
     release();
     await settled(ready.task.taskId);
+  });
+});
+
+// #257, ADR-0020: a reconnect restores the channel, not the page. A lost socket or a detached debugger interrupts the
+// job; within the window the extension resumes it by `jobId` with what it re-observed, and past it the server decides
+// the job's end by whether an attempt is on record.
+describe('an interrupted 去报销', () => {
+  // A fill that sends one step, then loses its socket; the job it ran in is handed to the test.
+  function droppedAfterOneStep(token: string) {
+    let started!: (plan: FillPlan) => void;
+    const plan = new Promise<FillPlan>((resolve) => {
+      started = resolve;
+    });
+    const extension = fakeExtension(server.app.extensionChannel, token, {
+      fill: async (fillPlan, channel) => {
+        started(fillPlan);
+        await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
+        extension.disconnect();
+        await channel.emit({ type: 'step', step: 'chromium', status: 'done' });
+        throw new Error('unreachable: the channel is gone');
+      },
+    });
+    return { extension, plan };
+  }
+
+  it('resumes by jobId inside the window, over the new socket, and carries the job to its end', async () => {
+    const token = await pair(alice);
+    const { extension, plan } = droppedAfterOneStep(token);
+    await extension.connect();
+    const ready = await confirmed();
+    await client.accepted(await client.act(ready, 'start-erp-write'));
+    const { jobId } = await plan;
+    await interrupted();
+
+    const back = await connected(token, {});
+    expect(await back.resume(jobId, PAGE, PAGE)).toEqual({ ok: true, recorded: 1 });
+    const wire = back.channel(jobId);
+    await wire.emit({ type: 'step', step: 'chromium', status: 'done' });
+    await wire.emit({ type: 'waiting_login', hint: '请登录报销系统' });
+    await wire.emit({ type: 'result', status: 'waiting_login', code: 'erp_login', message: '请登录报销系统', billNo: null, capture: null });
+    const paused = await settled(ready.task.taskId);
+
+    expect(paused.erp.status).toBe('waiting_login');
+    expect((await journal(ready.task.taskId)).map((event) => event.type)).toEqual(['step', 'step', 'waiting_login', 'result']);
+    // The plan went down once, to the first socket; the window closed with the resume.
+    expect(back.asked()).toEqual([]);
+    expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(0);
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
+  });
+
+  it('holds the lease through the window, then aborts in place past it and says plainly that nothing was written', async () => {
+    const token = await pair(alice);
+    const { extension, plan } = droppedAfterOneStep(token);
+    await extension.connect();
+    const ready = await confirmed();
+    await client.accepted(await client.act(ready, 'start-erp-write'));
+    const { jobId } = await plan;
+    await interrupted();
+
+    // Mid-window the job still holds its account's lease, so the account's other 去报销 cannot start. That other job
+    // is staged on the lease: one account owns one active task (#249).
+    const other = { accountId: alice.account.accountId, taskId: 'her-other-task', jobId: 'her-other-job' };
+    expect(server.erpLease.holder(alice.account.accountId)).toMatchObject({ jobId });
+    expect(server.erpLease.acquire(other)).toBe(false);
+    expect((await client.current(ready.task.taskId)).erp.status).toBe('running');
+
+    windowCloses();
+    const stopped = await settled(ready.task.taskId);
+
+    expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_reconnect_expired' }]);
+    expect(await attemptsOf(ready.task.taskId)).toEqual([]);
+    expect(stopped.erp.status).toBe('idle');
+    expect(stopped.erp.abortReason).toBe('上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：浏览器扩展和报销系统页面之间的连接中断了，两分钟内没有恢复。');
+    expect(server.erpLease.acquire(other)).toBe(true);
+    server.erpLease.release(other.jobId);
+    // Too late to resume: the job reads like no job at all.
+    const late = await connected(token, {});
+    await expect(late.resume(jobId, PAGE, PAGE)).rejects.toMatchObject({ code: 'unknown_job' });
+  });
+
+  it('goes to 对账 past the window when an attempt is on record, and never mutates or replays', async () => {
+    const token = await pair(alice);
+    let mutated = false;
+    const extension: FakeExtension = await connected(token, {
+      fill: async (plan, channel) => {
+        await channel.emit({ type: 'step', step: 'import', status: 'running' });
+        const ack = channel.emit(attemptStarted(plan));
+        // The socket goes with the attempt in flight: the server may make it durable, but no ack reaches the executor.
+        extension.disconnect();
+        await ack;
+        mutated = true;
+        throw new Error('unreachable: an unacknowledged attempt is never followed by a write');
+      },
+    });
+    const ready = await confirmed();
+    await client.accepted(await client.act(ready, 'start-erp-write'));
+    await interrupted();
+
+    windowCloses();
+    const stopped = await settled(ready.task.taskId);
+
+    expect(mutated).toBe(false);
+    expect(stopped).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
+    expect(await attemptsOf(ready.task.taskId)).toEqual([{ action: 'import' }]);
+    // The result follows the attempt on record, and the server's guard made it 写入结果未知.
+    expect((await journal(ready.task.taskId)).map((event) => event.type)).toEqual(['step', 'attempt_started', 'result']);
+    expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'unknown', code: 'extension_reconnect_expired' }]);
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
+
+    // The extension comes back: nothing is re-sent to it.
+    const back = await connected(token, { fill: realExecutor });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(back.asked()).toEqual([]);
+    expect(extension.asked()).toHaveLength(1);
+  });
+
+  it('takes nothing from a resumed extension before its re-observation, and ends the job when the page is not the one it left', async () => {
+    const token = await pair(alice);
+    const { extension, plan } = droppedAfterOneStep(token);
+    await extension.connect();
+    const ready = await confirmed();
+    await client.accepted(await client.act(ready, 'start-erp-write'));
+    const { jobId } = await plan;
+    await interrupted();
+    const back = await connected(token, {});
+
+    // Acting first: refused, and nothing lands on the record.
+    await expect(back.channel(jobId).emit({ type: 'step', step: 'navigate', status: 'running' })).rejects.toMatchObject({ code: 'resume_required' });
+    expect(await journal(ready.task.taskId)).toHaveLength(1);
+
+    // The 发票助手 was closed during the gap: it is one-shot, so the stream coming back says nothing about the page.
+    const verdict = await back.resume(jobId, PAGE, { ...PAGE, assistant: 'closed' });
+    const stopped = await settled(ready.task.taskId);
+
+    expect(verdict).toEqual({ ok: false, reasons: ['发票助手的状态和中断前不一样'] });
+    expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'aborted', code: 'reobservation_mismatch' }]);
+    expect(stopped.erp.abortReason).toContain('报销系统没有被改动，可以再去报销');
+    await expect(back.channel(jobId).emit({ type: 'step', step: 'navigate', status: 'running' })).rejects.toMatchObject({ code: 'unknown_job' });
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
+  });
+
+  it('sends a job whose re-observed form is not the attempted one to 对账', async () => {
+    const token = await pair(alice);
+    const extension: FakeExtension = await connected(token, {
+      fill: async (plan, channel) => {
+        await channel.emit(attemptStarted(plan));
+        extension.disconnect();
+        throw new Error('the channel is gone');
+      },
+    });
+    const ready = await confirmed();
+    await client.accepted(await client.act(ready, 'start-erp-write'));
+    await interrupted();
+    const [attempt] = await server.db.selectFrom('erp_attempt').select('job_id').where('task_id', '=', ready.task.taskId).execute();
+
+    // Consistent before and after, but not the form the attempt was made on.
+    const elsewhere: PageObservation = { ...PAGE, form: { ...PAGE.form!, formInstanceId: 'form-2' } };
+    const back = await connected(token, {});
+    const verdict = await back.resume(attempt!.job_id, elsewhere, elsewhere);
+    const stopped = await settled(ready.task.taskId);
+
+    expect(verdict).toEqual({ ok: false, reasons: ['打开的报销单不是这次写入的那一张'] });
+    expect(stopped).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
+    expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'unknown', code: 'reobservation_mismatch' }]);
+  });
+
+  it('replays nothing across a resume: every event is on record once, and the plan is never asked again', async () => {
+    const token = await pair(alice);
+    let jobPlan!: FillPlan;
+    const extension: FakeExtension = await connected(token, {
+      fill: async (plan, channel) => {
+        jobPlan = plan;
+        await channel.emit({ type: 'step', step: 'import', status: 'running' });
+        const ack = channel.emit(attemptStarted(plan));
+        extension.disconnect();
+        await ack;
+        throw new Error('unreachable: the ack went with the socket');
+      },
+    });
+    const ready = await confirmed();
+    await client.accepted(await client.act(ready, 'start-erp-write'));
+    await interrupted();
+
+    const back = await connected(token, {});
+    const verdict = await back.resume(jobPlan.jobId, PAGE, PAGE);
+    // The attempt whose ack was lost is on record, and so counts as acknowledged: the extension does not send it again.
+    expect(verdict).toEqual({ ok: true, recorded: 2 });
+    const wire = back.channel(jobPlan.jobId);
+    // An extension that re-sent it anyway gets no second acknowledgement, so it could never write twice.
+    await expect(wire.emit(attemptStarted(jobPlan))).rejects.toBeDefined();
+    await wire.emit({ type: 'step', step: 'import', status: 'done' });
+    await wire.emit({ type: 'result', status: 'aborted', code: 'test_stop', message: '测试到此为止', billNo: null, capture: null });
+    await settled(ready.task.taskId);
+
+    expect((await journal(ready.task.taskId)).map((event) => event.type)).toEqual(['step', 'attempt_started', 'step', 'result']);
+    expect(await attemptsOf(ready.task.taskId)).toEqual([{ action: 'import' }]);
+    expect(extension.asked().map((asked) => asked.method)).toEqual([EXECUTOR_METHODS.fill]);
+    expect(back.asked()).toEqual([]);
+  });
+
+  describe('a chrome.debugger detach is the same event as a disconnect', () => {
+    it('resumes on the same socket once the page is re-observed', async () => {
+      const token = await pair(alice);
+      const extension: FakeExtension = await connected(token, {
+        fill: async (plan, channel) => {
+          await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
+          await extension.detached(plan.jobId);
+          await expect(channel.emit({ type: 'step', step: 'chromium', status: 'done' })).rejects.toMatchObject({ code: 'resume_required' });
+          expect(await extension.resume(plan.jobId, PAGE, PAGE)).toEqual({ ok: true, recorded: 1 });
+          return loginWall(plan, channel);
+        },
+      });
+      const ready = await confirmed();
+
+      const paused = await start(ready);
+
+      expect(paused.erp.status).toBe('waiting_login');
+      expect((await journal(ready.task.taskId)).map((event) => event.type)).toEqual(['step', ...extension.sent().slice(2).map((event) => event.type)]);
+      expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(0);
+    });
+
+    it('ends past the window exactly as a lost socket does, and ignores the executor’s late answer', async () => {
+      const token = await pair(alice);
+      const extension: FakeExtension = await connected(token, {
+        fill: async (plan, channel) => {
+          await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
+          await extension.detached(plan.jobId);
+          // The executor's own run fails with the page gone; that answer describes nothing the server may act on.
+          throw new Error('Debugger is not attached to the tab');
+        },
+      });
+      const ready = await confirmed();
+      await client.accepted(await client.act(ready, 'start-erp-write'));
+      await interrupted();
+      expect(server.erpLease.holder(alice.account.accountId)).not.toBeNull();
+
+      windowCloses();
+      const stopped = await settled(ready.task.taskId);
+
+      expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_reconnect_expired' }]);
+      expect(stopped.erp.abortReason).toContain('报销系统没有被改动，可以再去报销');
+      expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
+    });
   });
 });

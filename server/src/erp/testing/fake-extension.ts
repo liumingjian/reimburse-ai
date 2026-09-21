@@ -3,10 +3,15 @@
 // without a socket or a port, and runs whatever executor a test hands it on its side of the wire, exactly where the
 // extension's `chrome.debugger` executor (#255) will run: the plan arrives as `erp.fill` / `erp.reconcile`, and every
 // event goes back through `wireChannel`, the mapping the real extension uses.
+//
+// Reconnection (ADR-0020) is driven the way the real extension must drive it: a disconnected fake is gone for good,
+// and the extension coming back is a fresh fake on the same credential that says `hello` again, then `resume`s the job
+// by id with what it re-observed, and only then carries on over `channel(jobId)`. A `chrome.debugger` detach is
+// `detached(jobId)` on a socket that stays up.
 
 import { EXTENSION_VERSION, type ChannelMessage } from '@baox/contract';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, ReconcilePlan, ResultEvent } from '@baox/erp-executor/protocol';
-import { EXECUTOR_METHODS, FillRequestSchema, JobEventRequestSchema, ReconcileRequestSchema, wireChannel, type FillRequest } from '@baox/erp-executor/wire';
+import { EXECUTOR_METHODS, FillRequestSchema, JobEventRequestSchema, ReconcileRequestSchema, ResumeVerdictSchema, wireChannel, type FillRequest, type PageObservation, type ResumeVerdict } from '@baox/erp-executor/wire';
 import type { ExtensionChannel } from '../../extension/channel';
 
 export type FillRunner = (plan: FillPlan, channel: ExecutorChannel, trigger: FillRequest['trigger']) => Promise<ResultEvent>;
@@ -23,6 +28,12 @@ export type FakeExtension = {
   sent(): ExecutorEvent[];
   // A raw request to the server, as the extension would make one.
   request(method: string, payload: unknown): Promise<unknown>;
+  // The debugger lost the job's page (`erp.detached`); the socket stays up.
+  detached(jobId: string): Promise<unknown>;
+  // `erp.resume`: the page as it was right before the interruption, and as it is now.
+  resume(jobId: string, last: PageObservation, now: PageObservation): Promise<ResumeVerdict>;
+  // The job's event stream from this extension, for carrying on after a resume.
+  channel(jobId: string): ExecutorChannel;
 };
 
 class FakeRequestFailed extends Error {
@@ -115,5 +126,8 @@ export function fakeExtension(channel: ExtensionChannel, token: string, runners:
     asked: () => asked,
     sent: () => sent,
     request,
+    detached: (jobId) => request(EXECUTOR_METHODS.detached, { jobId }),
+    resume: async (jobId, last, now) => ResumeVerdictSchema.parse(await request(EXECUTOR_METHODS.resume, { jobId, last, now })),
+    channel: (jobId) => wireChannel(jobId, request),
   };
 }

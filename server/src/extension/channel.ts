@@ -10,7 +10,6 @@ import {
   type ChannelMessage,
 } from '@baox/contract';
 import type { Clock } from '../accounts/accounts';
-import type { ErpLease } from '../erp-lease';
 import type { PairingService } from './pairing';
 
 // The 浏览器扩展 (browser extension) channel: one open socket per 应用账号 (app account), opened by the extension and
@@ -27,9 +26,10 @@ import type { PairingService } from './pairing';
 // - The reported version is checked before anything else the extension says is acted on (ADR-0021). An extension
 //   below the minimum is told what to do about it and disconnected, because half-executing a plan it does not
 //   understand ends in an ERP write of undecidable outcome.
-// - When the socket goes, that account's ERP 自动化控制权 (ERP automation control) goes with it (ADR-0019). The
-//   holder of the other side of a running job *is* this socket, so a lost socket is a job that can no longer
-//   continue. Exactly one account's entry is dropped; no other account is touched.
+// - When the socket goes, whoever runs work over it hears which account lost it (`onLost`), and nothing else is
+//   decided here. A lost socket interrupts that account's job; whether the job resumes within the reconnection
+//   window or ends — and with it the ERP 自动化控制权 (ERP automation control) the job holds — is the remote
+//   executor's decision (ADR-0020), because only it knows whether a job was running and what was on record.
 
 // A socket as this module needs it. Everything real is on the other side of `ws` (`websocket.ts`), so a test drives
 // the channel with a fake extension client and never opens a port.
@@ -61,15 +61,19 @@ export class ExtensionChannelError extends Error {
   }
 }
 
+// The timer seam: runs `run` after `ms` and returns what cancels it. Tests pass one they fire by hand.
+export type Schedule = (run: () => void, ms: number) => () => void;
+
 export type ExtensionChannelOptions = {
   pairings: PairingService;
-  // ADR-0019: the lease this channel's loss ends, one account's entry at a time.
-  lease: ErpLease;
   now: Clock;
   // What this server still talks to. Injected so a test can pin refusal without inventing a fictional release.
   minimumVersion?: string;
   onRequest?: ChannelRequestHandler;
   onEvent?: ChannelEventHandler;
+  // This account's connection is gone: dropped, gone silent, or replaced by a newer socket of the same extension.
+  // Called before the requests still waiting on it are rejected.
+  onLost?: (accountId: string) => void;
   // A socket that has said nothing for this long is gone, whatever TCP still believes. Three missed heartbeats.
   silenceMs?: number;
   // How long a fresh socket has to say `hello`. The silence sweep only sees sockets that already said who they are,
@@ -78,8 +82,7 @@ export type ExtensionChannelOptions = {
   // One heartbeat interval: an honest extension sends `hello` the moment the socket opens, so it needs one round
   // trip, and fifteen seconds covers any VPN. One that somehow misses it is closed without a refusal and redials.
   helloDeadlineMs?: number;
-  // The timer seam: runs `run` after `ms` and returns what cancels it. Tests pass one they fire by hand.
-  schedule?: (run: () => void, ms: number) => () => void;
+  schedule?: Schedule;
 };
 
 export type ExtensionChannel = {
@@ -111,7 +114,7 @@ const GOING_AWAY = 1001;
 // slow redials instead of giving up.
 const POLICY_VIOLATION = 1008;
 
-const realTimer = (run: () => void, ms: number) => {
+export const realTimer: Schedule = (run, ms) => {
   const timer = setTimeout(run, ms);
   timer.unref?.();
   return () => clearTimeout(timer);
@@ -121,7 +124,7 @@ const realTimer = (run: () => void, ms: number) => {
 export const EXTENSION_OFFLINE_CODE = 'extension_offline';
 export const EXTENSION_CONNECTION_LOST_CODE = 'extension_connection_lost';
 
-export function createExtensionChannel({ pairings, lease, now, minimumVersion = EXTENSION_MINIMUM_VERSION, onRequest, onEvent, silenceMs = EXTENSION_HEARTBEAT_MS * 3, helloDeadlineMs = EXTENSION_HEARTBEAT_MS, schedule = realTimer }: ExtensionChannelOptions): ExtensionChannel {
+export function createExtensionChannel({ pairings, now, minimumVersion = EXTENSION_MINIMUM_VERSION, onRequest, onEvent, onLost, silenceMs = EXTENSION_HEARTBEAT_MS * 3, helloDeadlineMs = EXTENSION_HEARTBEAT_MS, schedule = realTimer }: ExtensionChannelOptions): ExtensionChannel {
   const byAccount = new Map<string, Connection>();
   let nextId = 0;
 
@@ -132,14 +135,13 @@ export function createExtensionChannel({ pairings, lease, now, minimumVersion = 
     socket.close(code, reason);
   };
 
-  // Every way a connection ends funnels through here, so "the lease follows the socket" is one rule in one place.
+  // Every way a connection ends funnels through here, so "a lost socket is heard about" is one rule in one place.
   function drop(connection: Connection): void {
     if (connection.gone) return;
     connection.gone = true;
     if (byAccount.get(connection.accountId) === connection) {
       byAccount.delete(connection.accountId);
-      // ADR-0019. Only this account's entry; `release`/`releaseTask` are for jobs that ended on their own terms.
-      lease.releaseAccount(connection.accountId);
+      onLost?.(connection.accountId);
     }
     const lost = new ExtensionChannelError(EXTENSION_CONNECTION_LOST_CODE, '浏览器扩展的连接断开了。');
     for (const pending of connection.pending.values()) pending.reject(lost);
@@ -147,8 +149,7 @@ export function createExtensionChannel({ pairings, lease, now, minimumVersion = 
   }
 
   // A socket that stopped answering still looks open to TCP for minutes. The extension sends a ping every
-  // EXTENSION_HEARTBEAT_MS; three missed ones is gone, and gone means the lease is released rather than held by a
-  // browser nobody is driving.
+  // EXTENSION_HEARTBEAT_MS; three missed ones is gone, and gone interrupts whatever job ran over it.
   const sweep = setInterval(() => {
     const deadline = now().getTime() - silenceMs;
     for (const connection of [...byAccount.values()]) {
@@ -184,13 +185,14 @@ export function createExtensionChannel({ pairings, lease, now, minimumVersion = 
           if (!found) return refuse(socket, CHANNEL_CLOSE.notPaired, 'not_paired', EXTENSION_CHANNEL_ERRORS.notPaired);
           await pairings.noteConnection(found.accountId, message.version ?? null);
           // One pairing per account means a second socket is the same extension reconnecting over a corpse of a
-          // connection the server has not noticed yet. The newer one wins; the older is dropped without ending the
-          // lease, because the account is still connected.
+          // connection the server has not noticed yet. The newer one wins, and the older is lost like any other: a job
+          // that ran over it is interrupted, and resumes over this one.
           const previous = byAccount.get(found.accountId);
           connection = { accountId: found.accountId, socket, pending: new Map(), lastSeen: now().getTime(), gone: false };
           byAccount.set(found.accountId, connection);
           if (previous) {
             previous.gone = true;
+            onLost?.(found.accountId);
             for (const pending of previous.pending.values()) pending.reject(new ExtensionChannelError(EXTENSION_CONNECTION_LOST_CODE, '浏览器扩展的连接断开了。'));
             previous.pending.clear();
             previous.socket.close(GOING_AWAY, 'replaced');
