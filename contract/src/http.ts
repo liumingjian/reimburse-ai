@@ -63,6 +63,12 @@ export const HTTP_ENDPOINTS = {
   getLegacyImport: { method: 'GET', path: '/api/legacy-import', body: 'none', fields: [] },
   retryLegacyImport: { method: 'POST', path: '/api/legacy-import/retry', body: 'json', fields: [] },
   skipLegacyImport: { method: 'POST', path: '/api/legacy-import/skip', body: 'json', fields: [] },
+  // 扩展配对（ADR-0019）：GET 返回这个账号的配对情况；生成配对码返回的配对情况里带着那一串 code（只此一次），
+  // 并让原来的配对立即失效；撤销配对返回没有配对的配对情况。失败给 { error }。
+  // 扩展自己用的那一对端点（EXTENSION_PAIR_PATH）不在这张表里：它不带会话，也不是页面发的。
+  getExtensionPairing: { method: 'GET', path: '/api/extension/pairing', body: 'none', fields: [] },
+  createExtensionPairingCode: { method: 'POST', path: '/api/extension/pairing/code', body: 'json', fields: [] },
+  revokeExtensionPairing: { method: 'POST', path: '/api/extension/pairing/revoke', body: 'json', fields: [] },
   getSnapshot: { method: 'GET', path: '/api/tasks/:id', body: 'none', fields: [] },
   subscribe: { method: 'GET', path: '/api/tasks/:id/events', body: 'sse', fields: [] },
   createTask: { method: 'POST', path: '/api/tasks', body: 'json', fields: ['homeCity'] },

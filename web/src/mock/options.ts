@@ -49,6 +49,8 @@ export type MockOptions = {
   duplicateHit?: boolean;
   // `?legacy=failed|imported|absent`：设置页的旧数据导入面板摆出那一次导入的结果（不给则「没有运行过」）。
   legacy?: LegacyOption;
+  // `?extension=paired`：设置页的浏览器扩展一节摆出已经配对的样子（mock 里没有真的扩展，配不上）。
+  extensionPaired?: boolean;
   storage?: MockStorage;
   // `?location=unavailable`：mock 位置 Adapter 取不到网络位置，第一次新建任务时常驻城市没有默认值。不是故障场景。
   locationUnavailable?: boolean;
@@ -115,6 +117,11 @@ export function readMockOptions(search: string): MockOptions {
   if (legacy !== null) {
     if ((LEGACY_OPTIONS as readonly string[]).includes(legacy)) options.legacy = legacy as LegacyOption;
     else console.warn(`未知的 legacy「${legacy}」，可用值：${LEGACY_OPTIONS.join(', ')}`);
+  }
+  const extension = params.get('extension');
+  if (extension !== null) {
+    if (extension === 'paired') options.extensionPaired = true;
+    else console.warn(`未知的 extension「${extension}」，可用值：paired`);
   }
   const auth = params.get('auth');
   if (auth !== null) {
