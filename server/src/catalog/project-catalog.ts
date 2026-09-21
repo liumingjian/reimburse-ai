@@ -1,14 +1,13 @@
-import { readFileSync } from 'node:fs';
-
 // The project catalog port (ADR-0008): a read-only "does this project number exist and may it be referenced" check
 // against ERP's own query service (`ExecuteBillQuery` on the `BJYC_ProJect` form, fields FNumber, FName,
 // FDocumentStatus, FForbidStatus), run in the user's logged-in ERP session. It checks, it never syncs: only the
 // numbers asked about are looked up, and the book stores only those.
 // Ported from 50931a3:kernel/src/erpcatalog.mjs `verifyProject` (verdicts) and projectintake.mjs (retries).
 //
-// The live adapter (`live-catalog.ts`) queries inside the logged-in ERP tab of the dedicated Chromium; `main.ts` wires
-// it. `createApp` defaults to `unavailableCatalog()` (every lookup answers not_logged_in). Tests and the e2e server use
-// `fixtureCatalog`.
+// The live adapter (`live-catalog.ts`) queries inside the logged-in ERP tab of the dedicated Chromium. No server entry
+// wires a catalog any more: project numbers are checked against the ERP inside each 去报销 job (`checkCatalog` in the
+// executor). `createApp` keeps its `projectCatalog` option as a test seam, and
+// defaults to `unavailableCatalog()` (every lookup answers not_logged_in); tests use `fixtureCatalog`.
 
 // Project numbers go into an ERP filter string, so only characters that cannot change its meaning pass.
 const SAFE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -59,12 +58,4 @@ export function fixtureCatalog(rows: readonly CatalogRow[], { unavailable = fals
       current = [...next];
     },
   };
-}
-
-// `BAOX_PROJECT_CATALOG_FIXTURE=<json file of CatalogRow[]>` makes the server use the fake (e2e only). Without it the
-// server uses `fallback`: `main.ts` passes the live ERP adapter (`live-catalog.ts`).
-export function catalogFromEnv(env: NodeJS.ProcessEnv = process.env, fallback: () => ProjectCatalog = unavailableCatalog): ProjectCatalog {
-  const file = env['BAOX_PROJECT_CATALOG_FIXTURE'];
-  if (!file) return fallback();
-  return fixtureCatalog(JSON.parse(readFileSync(file, 'utf8')) as CatalogRow[]);
 }

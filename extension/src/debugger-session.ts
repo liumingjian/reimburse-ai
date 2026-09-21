@@ -51,9 +51,20 @@ export async function reachChild(_api: DebuggerApi, tabId: number, child: ChildT
   return { tabId, sessionId: child.sessionId };
 }
 
+// What an employee may read when a command fails for a reason of the debugger's own. The executor carries an error's
+// message into its result, which the task page shows, so Chrome's English stays in `cause`, for logs.
+const DEBUGGER_GONE = '浏览器扩展对报销系统标签页的控制已经断开。';
+const PAGE_TIMED_OUT = '报销系统标签页没有及时响应。';
+
+// Chrome's words for a command that failed because the debugger went: the one in flight when it was taken away, or one
+// sent after that but before `onDetach` reached this side. Real Chrome fails the in-flight command BEFORE it raises
+// `onDetach` (measured 2026-09-21 on Playwright's Chromium, extension/e2e/regression.spec.ts), so this, not the
+// event, is the first sign of a detach in the middle of a command.
+const DETACHED_BY_CHROME = /Detached while handling command|Debugger is not attached/i;
+
 const withTimeout = <T>(promise: Promise<T>, ms: number, method: string): Promise<T> =>
   new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`CDP ${method} 超时`)), ms);
+    const timer = setTimeout(() => reject(new Error(PAGE_TIMED_OUT, { cause: new Error(`${method} timed out after ${ms} ms`) })), ms);
     promise.then(
       (value) => { clearTimeout(timer); resolve(value); },
       (error: unknown) => { clearTimeout(timer); reject(error instanceof Error ? error : new Error(String(error))); },
@@ -62,7 +73,10 @@ const withTimeout = <T>(promise: Promise<T>, ms: number, method: string): Promis
 
 /**
  * Attach the debugger to one tab and speak `CdpSession` over it. `close()` detaches. `onDetach` hears Chrome taking
- * the debugger away (the banner's Cancel, the tab closing), never the session's own `close()`.
+ * the debugger away (the banner's Cancel, the tab closing), never the session's own `close()` — once per session,
+ * whichever reaches this side first: Chrome's `onDetach` event, or a command failing in Chrome's detach words. A
+ * command cut off that way is reported as a detach BEFORE its failure reaches the caller, so the caller knows the
+ * command was cut off rather than refused.
  */
 export async function attachDebuggerSession(api: DebuggerApi, tabId: number, { onDetach: detachedByChrome }: { onDetach?: (reason: string) => void } = {}): Promise<CdpSession> {
   const root: Debuggee = { tabId };
@@ -87,11 +101,18 @@ export async function attachDebuggerSession(api: DebuggerApi, tabId: number, { o
       try { listener(p, sessionId); } catch { /* a listener must not break event delivery, as in cdp.ts */ }
     }
   };
-  const onDetach = (source: Debuggee, reason: string) => {
-    if (source.tabId !== tabId) return;
+  const lostTo = (reason: string) => {
+    if (detached) return;
     detached = reason;
     stopListening();
     detachedByChrome?.(reason);
+  };
+  // Listening starts before `attach`, so nothing is missed, but a detach raised before this attach completed is a
+  // previous attachment's, reported late: Chrome fails a cut-off command before it raises `onDetach`. A detach during
+  // the attach itself still shows, as the attach or the first command failing.
+  let live = false;
+  const onDetach = (source: Debuggee, reason: string) => {
+    if (live && source.tabId === tabId) lostTo(reason);
   };
   const stopListening = () => {
     api.onEvent.removeListener(onEvent);
@@ -106,10 +127,11 @@ export async function attachDebuggerSession(api: DebuggerApi, tabId: number, { o
     stopListening();
     throw error;
   }
+  live = true;
 
   return {
     async send(method, params = {}, { timeout = DEFAULT_TIMEOUT_MS, sessionId = null } = {}) {
-      if (detached) throw new Error(`调试器已从报销系统标签页断开（${detached}）`);
+      if (detached) throw new Error(DEBUGGER_GONE, { cause: new Error(`detached: ${detached}`) });
       let target = root;
       if (sessionId) {
         const child = children.get(sessionId);
@@ -117,7 +139,13 @@ export async function attachDebuggerSession(api: DebuggerApi, tabId: number, { o
         if (!child) throw new Error(`No session with given id: ${sessionId}`);
         target = await reachChild(api, tabId, child);
       }
-      return withTimeout(api.sendCommand(target, method, params), timeout, method);
+      try {
+        return await withTimeout(api.sendCommand(target, method, params), timeout, method);
+      } catch (error) {
+        if (!(error instanceof Error) || !DETACHED_BY_CHROME.test(error.message)) throw error;
+        lostTo(error.message);
+        throw new Error(DEBUGGER_GONE, { cause: error });
+      }
     },
     on(method, listener) {
       if (!listeners.has(method)) listeners.set(method, new Set());

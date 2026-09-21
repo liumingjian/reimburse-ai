@@ -101,10 +101,10 @@ describe('ERP 填报', () => {
     expect(screen.getByTestId('readback-erp-total').textContent).toBe('3972.59');
   });
 
-  test('写入进行中：「不要关闭专用浏览器窗口」是页头下方的 warning 通知，排在步骤清单之前；未开始的步骤编号照常显示', async () => {
+  test('写入进行中：「不要关闭报销系统标签页」是页头下方的 warning 通知，排在步骤清单之前；未开始的步骤编号照常显示', async () => {
     renderErp();
     await waitingLogin();
-    const notice = screen.getByText('进行中，请不要关闭专用浏览器窗口。');
+    const notice = screen.getByText('进行中，请不要关闭为这次报销打开的报销系统标签页。');
     expect(notice.closest('[role="status"]')).toBeTruthy();
     expect(notice.compareDocumentPosition(progress()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(stepItem('导入发票').textContent).toContain('5');

@@ -159,6 +159,10 @@ export const ERP_ACTION_ERRORS = {
   erpStarted: '已开始写入报销系统，不能再改动；请按对账结果处理。',
   // Checks that need no ERP (invoice identity, ERP invoice type, dates, amounts) failed; nothing was started.
   preflight: (problems: readonly string[]) => `还不能写入报销系统：${problems.join('；')}。`,
+  // 去报销 runs in the employee's own 浏览器扩展 (browser extension, ADR-0019); without one nothing is started (story 13).
+  // `extension_not_paired`: this 应用账号 has no pairing. `extension_offline`: paired, but its extension is not connected.
+  extensionNotPaired: '还没有配对浏览器扩展，所以现在去报销不了。请先到设置页的「浏览器扩展」一节下载安装扩展，用那里生成的配对码完成配对，再来去报销。',
+  extensionOffline: '浏览器扩展现在没有连上应用，所以现在去报销不了。请打开装着扩展的 Chrome 或 Edge，等设置页的「浏览器扩展」一节显示已连接，再来去报销。',
 } as const;
 
 // The one task-action refusal that is HTTP 409 but not stale_step: this 应用账号's ERP lease is held by another of

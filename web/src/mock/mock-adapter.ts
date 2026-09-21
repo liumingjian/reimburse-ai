@@ -65,7 +65,7 @@ export function installMockHooks(target: Window, adapter: MockAdapter): void {
 const READ_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['getSession', 'listTasks', 'getSnapshot', 'subscribe', 'getProjectBook', 'getPublicProjectBook', 'listAccounts', 'getLegacyImport', 'getExtensionPairing']);
 // 旧数据导入的重试 / 跳过带回新的导入结果。
 const LEGACY_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['retryLegacyImport', 'skipLegacyImport']);
-// 生成配对码 / 撤销配对带回新的配对情况。
+// Issuing a 配对码 (pairing code) and revoking the pairing answer with the new pairing.
 const PAIRING_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['createExtensionPairingCode', 'revokeExtensionPairing']);
 // 作废与重置的失败形状带 taskList 而不是 snapshot；账号动作只有 error；项目簿维护动作带 book。
 const LIST_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['abandonTask', 'resetAll']);

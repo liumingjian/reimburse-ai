@@ -98,7 +98,7 @@ export type ExtensionToken = z.infer<typeof ExtensionTokenSchema>;
 export const ExtensionIdentitySchema = z.object({ accountId: z.string().min(1) });
 export type ExtensionIdentity = z.infer<typeof ExtensionIdentitySchema>;
 
-// none 没有配对；waiting 配对码已生成、还没有扩展用过；paired 已配对。
+// none: no pairing; waiting: a 配对码 (pairing code) is issued and no extension has used it yet; paired: paired.
 export const EXTENSION_PAIRING_STATUSES = ['none', 'waiting', 'paired'] as const;
 
 export const ExtensionPairingSchema = z.object({
@@ -122,7 +122,8 @@ export const ExtensionPairingFailureSchema = z.object({
   error: z.object({ code: z.string().min(1), message: z.string().min(1) }),
 });
 
-// 生成配对码 / 撤销配对的结果：服务端处理了就是新的配对情况；请求本身失败才是 !ok。
+// The result of issuing a 配对码 or revoking the pairing: the new pairing when the server handled it; !ok only when
+// the request itself failed.
 export type ExtensionPairingOutcome = { ok: true; pairing: ExtensionPairing } | { ok: false; error: ActionError; pairing: ExtensionPairing | null };
 
 // The one refusal both halves of version negotiation give (ADR-0021): the 配对 request and the channel's first

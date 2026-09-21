@@ -12,7 +12,9 @@ import type { Db } from '../db/database';
 //
 // One row per 应用账号 (the primary key), so "one active pairing per account" is the table's own shape: issuing a new
 // 配对码 replaces the row, which is what makes the previously paired extension's token stop resolving. Revoking
-// deletes the row and touches no session; a logout deletes a session and touches no row.
+// deletes the row and touches no session; a logout deletes a session and touches no row. Both also close the old
+// extension's live socket (`live.disconnect`): the token is checked only when a socket opens, so a row deleted under
+// an open socket would otherwise leave that extension receiving this account's next 去报销.
 //
 // What is stored is what the settings page can still read after a restart: which browser, when it paired, when it
 // last spoke, which version it reported. Whether it is connected *now* is not storable — it is a live socket
@@ -36,9 +38,20 @@ const normalise = (code: string) => code.replace(/[^0-9a-zA-Z]/g, '').toUpperCas
 // telling it apart would confirm a guessed code to whoever guessed it.
 const refuseCode = () => new AuthRefusal(401, 'pairing_code_invalid', EXTENSION_PAIRING_ERRORS.codeInvalid);
 
-// `isConnected` is the channel's live view (`channel.ts`). It defaults to "nothing is connected" so a server wired
-// without a channel — every test that only exercises pairing — still answers the contract's shape.
-export function createPairingService(db: Db, clock: Clock, isConnected: (accountId: string) => boolean = () => false) {
+// Whether this 应用账号 has a redeemed pairing (a 配对码 issued but not yet used is none). Takes the handle to read
+// through, so the 去报销 refusal (`app.ts`) can ask inside the transaction it is already in.
+export async function hasPairing(db: Db, accountId: string): Promise<boolean> {
+  const row = await db.selectFrom('extension_pairing').select('token_sha256').where('account_id', '=', accountId).executeTakeFirst();
+  return !!row?.token_sha256;
+}
+
+// What the pairing service needs of the live channel (`channel.ts`): whether an account's extension is connected, and
+// closing its socket when the pairing goes. It defaults to "nothing is connected" so a server wired without a channel —
+// every test that only exercises pairing — still answers the contract's shape.
+export type LivePairings = { connected(accountId: string): boolean; disconnect(accountId: string): void };
+const NO_CHANNEL: LivePairings = { connected: () => false, disconnect: () => undefined };
+
+export function createPairingService(db: Db, clock: Clock, live: LivePairings = NO_CHANNEL) {
   const iso = (date: Date) => date.toISOString();
 
   // `code` is the string just issued, carried through this once; every other caller passes nothing and the employee
@@ -57,7 +70,7 @@ export function createPairingService(db: Db, clock: Clock, isConnected: (account
       pairedAt: row.paired_at,
       lastConnectedAt: row.last_connected_at,
       codeExpiresAt: row.code_expires_at,
-      connected: row.token_sha256 ? isConnected(accountId) : false,
+      connected: row.token_sha256 ? live.connected(accountId) : false,
       version: row.version,
       code,
     };
@@ -88,13 +101,28 @@ export function createPairingService(db: Db, clock: Clock, isConnected: (account
           })
           .execute();
       });
+      live.disconnect(accountId);
       return view(accountId, code);
     },
 
-    // 撤销配对: the extension's token stops resolving at once. The account's web session is untouched.
+    // 撤销配对 (revoke the pairing): the extension's token stops resolving and its socket closes, at once. The
+    // account's web session is untouched.
     async revoke(accountId: string): Promise<ExtensionPairing> {
       await db.deleteFrom('extension_pairing').where('account_id', '=', accountId).execute();
+      live.disconnect(accountId);
       return NOT_PAIRED;
+    },
+
+    // 撤销配对 from the extension's own popup, authorised by the token it holds. It works for a deactivated account
+    // too, whose token no longer resolves in `lookup`: the extension is giving the pairing up, not using it. False
+    // when the token names no pairing (already revoked or replaced).
+    async revokeToken(token: string | undefined): Promise<boolean> {
+      if (!token) return false;
+      const row = await db.selectFrom('extension_pairing').select('account_id').where('token_sha256', '=', sha256(token)).executeTakeFirst();
+      if (!row) return false;
+      await db.deleteFrom('extension_pairing').where('account_id', '=', row.account_id).where('token_sha256', '=', sha256(token)).execute();
+      live.disconnect(row.account_id);
+      return true;
     },
 
     // Single use: the update matches only while the code is still on the row and clears it in the same statement, so

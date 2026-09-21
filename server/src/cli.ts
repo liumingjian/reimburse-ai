@@ -4,15 +4,22 @@ import { databasePath } from './data-dir';
 import { openDatabase } from './db/database';
 
 // The local `baox` command line (ADR-0018 as amended by #228). One command only: `baox admin emergency-reset
-// <username>`, which unlocks a locked-out administrator and nothing else — see `emergencyResetAdminPassword` for why
-// it is that narrow. It writes the data directory's database directly, so it needs no session and no running server;
+// <username>`, which unlocks the sole active administrator and nothing else — see `emergencyResetAdminPassword` for
+// why it is that narrow. It writes the data directory's database directly, so it needs no session and no running server;
 // a running server sees the change on its next request.
 
 export type CliIo = { dataDir: string; out: (line: string) => void; err: (line: string) => void };
 
 const USAGE = '用法：baox admin emergency-reset <管理员用户名>';
 
-// Exit codes: 0 done, 1 refused (no database, unknown username, the target is not an administrator), 2 usage error.
+const REFUSALS: Record<'unknown_account' | 'not_admin' | 'not_sole_admin', (username: string) => string> = {
+  unknown_account: (username) => `没有用户名为 ${username} 的账号。`,
+  not_admin: (username) => `${username} 不是管理员账号。这个命令只能重置管理员账号；其他账号的密码请由管理员在网页里重置。`,
+  not_sole_admin: (username) => `还有别的管理员账号可以用，所以这个命令不重置 ${username}：它只在只剩一个能用的管理员时才管用。请另一位管理员在网页的账号管理里给 ${username} 设置临时密码。`,
+};
+
+// Exit codes: 0 done, 1 refused (no database, unknown username, the target is not the only active administrator),
+// 2 usage error.
 export async function runCli(argv: readonly string[], { dataDir, out, err }: CliIo): Promise<number> {
   const [group, command, username, ...rest] = argv;
   if (group !== 'admin' || command !== 'emergency-reset' || !username || rest.length > 0) {
@@ -28,7 +35,7 @@ export async function runCli(argv: readonly string[], { dataDir, out, err }: Cli
   try {
     const outcome = await emergencyResetAdminPassword(db, username);
     if ('refused' in outcome) {
-      err(outcome.refused === 'unknown_account' ? `没有用户名为 ${username} 的账号。` : `${username} 不是管理员账号。这个命令只能重置管理员账号；其他账号的密码请由管理员在网页里重置。`);
+      err(REFUSALS[outcome.refused](username));
       return 1;
     }
     out(`已重置管理员账号 ${username} 的密码，它的所有登录已退出，这次重置已记入审计。`);

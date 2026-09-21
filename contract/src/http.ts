@@ -63,9 +63,10 @@ export const HTTP_ENDPOINTS = {
   getLegacyImport: { method: 'GET', path: '/api/legacy-import', body: 'none', fields: [] },
   retryLegacyImport: { method: 'POST', path: '/api/legacy-import/retry', body: 'json', fields: [] },
   skipLegacyImport: { method: 'POST', path: '/api/legacy-import/skip', body: 'json', fields: [] },
-  // 扩展配对（ADR-0019）：GET 返回这个账号的配对情况；生成配对码返回的配对情况里带着那一串 code（只此一次），
-  // 并让原来的配对立即失效；撤销配对返回没有配对的配对情况。失败给 { error }。
-  // 扩展自己用的那一对端点（EXTENSION_PAIR_PATH）不在这张表里：它不带会话，也不是页面发的。
+  // 扩展配对 (extension pairing, ADR-0019): GET answers this account's pairing; issuing a 配对码 (pairing code)
+  // answers the pairing with that code in it (this once only) and voids the old pairing at once; revoking answers
+  // the unpaired pairing. Failures are { error }. The extension's own endpoints (EXTENSION_PAIR_PATH) are not in this
+  // table: they carry no session and no page sends them.
   getExtensionPairing: { method: 'GET', path: '/api/extension/pairing', body: 'none', fields: [] },
   createExtensionPairingCode: { method: 'POST', path: '/api/extension/pairing/code', body: 'json', fields: [] },
   revokeExtensionPairing: { method: 'POST', path: '/api/extension/pairing/revoke', body: 'json', fields: [] },

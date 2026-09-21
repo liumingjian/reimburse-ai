@@ -24,8 +24,6 @@ import { buildExtensionTemplate, launchWithExtension, PAGE, pair, serveErpSites,
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const LISTENING = /listening on (http:\/\/\S+)/;
-// P-2307 华东客户交付 among others; the same fixture catalog `web/e2e/server` runs on.
-const PROJECT_CATALOG = join(repoRoot, 'server/src/catalog/testing/projects.fixture.json');
 const PASSWORD = 'harness-password';
 
 async function freePort(): Promise<number> {
@@ -59,7 +57,6 @@ export async function startApp({ erpOrigin }: { erpOrigin: string }) {
       BAOX_DATA_DIR: dataDir, BAOX_PORT: String(port), BAOX_PUBLIC_ORIGIN: origin,
       // A directory that does not exist, so first-admin setup never reads the machine's real ~/.baox.
       BAOX_HOME: join(dataDir, 'no-legacy-baox'),
-      BAOX_PROJECT_CATALOG_FIXTURE: PROJECT_CATALOG,
       BAOX_ERP_ORIGIN: erpOrigin, BAOX_ERP_BUILD: PAGE.erpBuild, BAOX_ERP_FORM_ID: PAGE.formId,
     },
     stdio: ['ignore', 'pipe', 'pipe'],

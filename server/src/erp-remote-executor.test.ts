@@ -1,4 +1,4 @@
-import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionPairingSchema, ExtensionTokenSchema, type ChannelMessage, type TaskSnapshot } from '@baox/contract';
+import { ERP_ACTION_ERRORS, EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionPairingSchema, ExtensionTokenSchema, type ChannelMessage, type TaskSnapshot } from '@baox/contract';
 import { stageInPage } from '@baox/erp-executor/invoice-files';
 import { runFillJob } from '@baox/erp-executor/job';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, ResultEvent } from '@baox/erp-executor/protocol';
@@ -10,7 +10,7 @@ import type { DebuggerApi } from '@baox/extension/debugger-session';
 import { createErpRunner } from '@baox/extension/erp-runner';
 import { dedicatedErpTab } from '@baox/extension/erp-tab';
 import { fakeChrome } from '@baox/extension/testing/fake-chrome';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fixtureCatalog } from './catalog/project-catalog';
 import { catalogMismatch, loginWall, noFormOpen, TEST_ERP_ACCOUNT, uncertainSave } from './erp/testing/fake-executor';
 import { fakeExtension, type FakeExtension, type FillRunner, type ReconcileRunner } from './erp/testing/fake-extension';
@@ -194,8 +194,29 @@ describe('去报销 in the paired 浏览器扩展', () => {
     expect(judged).toMatchObject({ stage: 'reconcile', reconcile: { bucket: '未知' } });
   });
 
-  it('stops before anything is written when the owner has no extension connected', async () => {
+  // Story 13: said before starting, with no job created, and the two causes told apart.
+  it.each([
+    ['no extension is paired', false, 'extension_not_paired', ERP_ACTION_ERRORS.extensionNotPaired],
+    ['the paired extension is not connected', true, 'extension_offline', ERP_ACTION_ERRORS.extensionOffline],
+  ])('refuses 去报销 before any job exists when %s, and points at the settings page', async (_case, paired, code, message) => {
+    if (paired) await pair(alice);
     const ready = await confirmed();
+
+    const refused = await client.act(ready, 'start-erp-write');
+
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ error: { code, message } });
+    expect(message).toContain('设置页');
+    expect(await server.db.selectFrom('erp_job').select('job_id').where('task_id', '=', ready.task.taskId).execute()).toEqual([]);
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
+    expect((await client.current(ready.task.taskId)).erp.status).toBe('idle');
+  });
+
+  it('still stops before anything is written when the socket goes between the check and the dispatch', async () => {
+    await pair(alice);
+    const ready = await confirmed();
+    // The check sees a connection; by the time the plan is sent, there is none.
+    vi.spyOn(server.app.extensionChannel, 'connected').mockReturnValue(true);
 
     const stopped = await start(ready);
 

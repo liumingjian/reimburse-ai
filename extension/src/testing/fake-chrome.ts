@@ -22,6 +22,18 @@ const listenerSet = <T>(): Listener<T> & { all(): T[] } => {
 // Every event the fake ERP raises is a `Target.*` event of the page's own (root) session.
 const ROOT_EVENTS = ['Target.attachedToTarget', 'Target.targetInfoChanged', 'Target.detachedFromTarget'];
 
+/** How `detachDuring` cuts a command off. */
+export type CutOff = {
+  /** `chrome.debugger.onDetach`'s reason: the banner's Cancel by default. */
+  reason?: string;
+  /** What the cut-off command fails with; Chrome's own words by default. */
+  error?: string;
+  /** How long after the failure `onDetach` is raised. */
+  lagMs?: number;
+  /** Which call of the method is cut off: the first for which this holds. */
+  when?: () => boolean;
+};
+
 export type FakeChromeOptions = {
   /** URLs of tabs the employee already has open, e.g. their own ERP tab. */
   employeeTabs?: string[];
@@ -42,6 +54,9 @@ export function fakeChrome(page: CdpSession, { employeeTabs = [], refuse = {} }:
   const focusedWindows: number[] = [];
   const onEvent = listenerSet<(source: Debuggee, method: string, params?: object) => void>();
   const onDetach = listenerSet<(source: Debuggee, reason: string) => void>();
+  let cutting: (Required<CutOff> & { method: string }) | null = null;
+  // The `onDetach` of a cut-off command, not yet raised.
+  let pendingDetach: (() => void) | null = null;
 
   for (const method of ROOT_EVENTS) {
     page.on!(method, (params) => {
@@ -52,6 +67,8 @@ export function fakeChrome(page: CdpSession, { employeeTabs = [], refuse = {} }:
 
   const debuggerApi: DebuggerApi = {
     async attach(target) {
+      // Chrome reports the old attachment's detach before it lets the tab be attached again.
+      pendingDetach?.();
       if (target.tabId === undefined || !tabs.has(target.tabId)) throw new Error(`No tab with given id ${target.tabId}.`);
       if (attachedTabs.has(target.tabId)) throw new Error(`Another debugger is already attached to the tab with id: ${target.tabId}.`);
       attachedTabs.add(target.tabId);
@@ -63,6 +80,20 @@ export function fakeChrome(page: CdpSession, { employeeTabs = [], refuse = {} }:
     async sendCommand(target, method, params = {}) {
       if (target.tabId === undefined || !attachedTabs.has(target.tabId)) throw new Error(`Debugger is not attached to the tab with id: ${target.tabId}.`);
       if (target.tabId !== backed) throw new Error(`tab ${target.tabId} is not the fake ERP's tab`);
+      if (cutting && method === cutting.method && cutting.when()) {
+        const { reason, error, lagMs } = cutting;
+        const tabId = target.tabId;
+        cutting = null;
+        attachedTabs.delete(tabId);
+        const raise = () => {
+          if (pendingDetach !== raise) return;
+          pendingDetach = null;
+          for (const listener of onDetach.all()) listener({ tabId }, reason);
+        };
+        pendingDetach = raise;
+        setTimeout(raise, lagMs);
+        throw new Error(error);
+      }
       if (refuse[method]) throw new Error(refuse[method]);
       return page.send(method, params, { sessionId: target.sessionId ?? null });
     },
@@ -109,6 +140,14 @@ export function fakeChrome(page: CdpSession, { employeeTabs = [], refuse = {} }:
     jobTab: () => (backed === null || !tabs.has(backed) ? null : { ...tabs.get(backed)! }),
     /** Every tab that exists now. */
     tabCount: () => tabs.size,
+    /**
+     * Chrome detaching the debugger in the middle of the next `method` command, in the order real Chrome reports it
+     * (measured on Chromium, extension/e2e/regression.spec.ts): the command fails first, and `onDetach` follows later —
+     * well after one turn of the event loop.
+     */
+    detachDuring(method: string, { reason = 'canceled_by_user', error = 'Detached while handling command.', lagMs = 20, when = () => true }: CutOff = {}) {
+      cutting = { method, reason, error, lagMs, when };
+    },
     /** Chrome detaching the debugger, as the "Cancel" on its banner does. */
     detach(reason = 'canceled_by_user') {
       if (backed === null || !attachedTabs.delete(backed)) return;

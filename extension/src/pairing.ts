@@ -1,8 +1,10 @@
 import { EXTENSION_PAIRING_ERRORS, EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionPairingFailureSchema, ExtensionTokenSchema } from '@baox/contract';
+import { APP_UNREACHABLE } from './messages';
 
-// Redeeming the 配对码 (pairing code) the employee typed into the popup. This is the only moment the extension talks
-// HTTP to the app rather than over the channel, and the only thing it ever sends without a credential: the 配对码 is
-// the credential, once.
+// Redeeming the 配对码 (pairing code) the employee typed into the popup, and 撤销配对 (revoking the pairing) from it.
+// Besides fetching invoice originals (`blobs.ts`), these are the only times the extension talks HTTP to the app rather
+// than over the channel. Redeeming is the only thing it ever sends without a credential: the 配对码 is the credential,
+// once.
 //
 // The address is not a parameter of the conversation. It is baked into the build (`origin.ts`) and the popup has no
 // field for it, so no one can be talked into pointing their extension at someone else's server.
@@ -18,7 +20,7 @@ export type RedeemOptions = {
   fetchImpl?: typeof fetch;
 };
 
-const NETWORK_REFUSAL = { ok: false as const, code: 'network_error', message: '连不上应用。请确认你在公司网络里，应用也开着，然后再试一次。' };
+const NETWORK_REFUSAL = { ok: false as const, code: 'network_error', message: `${APP_UNREACHABLE}然后再点一次配对。` };
 
 export async function redeemPairingCode({ origin, code, browser = null, version = EXTENSION_VERSION, fetchImpl = fetch }: RedeemOptions): Promise<PairingOutcome> {
   let response: Response;
@@ -42,4 +44,20 @@ export async function redeemPairingCode({ origin, code, browser = null, version 
   const failure = ExtensionPairingFailureSchema.safeParse(body);
   if (failure.success) return { ok: false, code: failure.data.error.code, message: failure.data.error.message };
   return { ok: false, code: `http_${response.status}`, message: EXTENSION_PAIRING_ERRORS.codeInvalid };
+}
+
+export type RevokeOptions = { origin: string; token: string; fetchImpl?: typeof fetch };
+
+/**
+ * 撤销配对 on the app, with the token being given up as its authority, so the pairing ends on the server and not only
+ * in this browser. True when the app no longer holds it: revoked now, or already gone (401). False when the app could
+ * not be reached or answered anything else; the pairing may then still be valid there.
+ */
+export async function revokePairing({ origin, token, fetchImpl = fetch }: RevokeOptions): Promise<boolean> {
+  try {
+    const response = await fetchImpl(`${origin}${EXTENSION_PAIR_PATH}`, { method: 'DELETE', headers: { authorization: `Bearer ${token}` } });
+    return response.ok || response.status === 401;
+  } catch {
+    return false;
+  }
 }

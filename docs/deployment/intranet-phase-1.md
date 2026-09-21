@@ -56,27 +56,30 @@ and its closing condition binds this instance: **the gaps must be closed before 
 
    Only committed files are deployed. Done when the tarball is in the host's `/tmp`.
 
-2. **On the host, as root, run the installer from the tarball itself.**
+2. **On the host, as root, run the installer from the tarball itself**, naming the administrator account it creates.
 
    ```bash
    ssh root@10.250.0.222
    sha=<the same 12 characters>
    tar -xzf "/tmp/baox-$sha.tar.gz" -C /tmp deploy/intranet/install.sh
-   bash /tmp/deploy/intranet/install.sh "/tmp/baox-$sha.tar.gz"
+   BAOX_ADMIN_USERNAME=<your username> bash /tmp/deploy/intranet/install.sh "/tmp/baox-$sha.tar.gz"
    ```
 
    The build compiles `better-sqlite3`, so the host needs `python3`, `make` and `g++` (`dnf install -y python3 make
    gcc-c++`); the installer stops and says so when one is missing. It creates the `baox` system user, downloads Node, pnpm and Caddy (checksums verified), builds the release as
    `baox`, installs the units, starts both services and probes them. The build downloads every dependency and takes
-   several minutes; it runs outside the memory cap, so start it when the databases are not busy. Done when the last line
-   reads `baox <name> is serving http://10.250.0.222: {"status":"setup_required",...}`. Any other ending names the
-   check that failed.
+   several minutes; it runs outside the memory cap, so start it when the databases are not busy.
 
-3. **Create the administrator at once.** On a new database the first account created becomes the administrator, and
-   anyone on the VPN can reach the page. From the mac, on the VPN, open `http://10.250.0.222` and set up the admin
-   account. Done when the settings page shows you as administrator. If someone else got there first: `systemctl stop
-   baox`, empty `/opt/tools/baox/data`, `systemctl start baox`, and repeat. Nothing real is lost, since phase 1 holds
-   no real data.
+   On a new database the first account created becomes the administrator (ADR-0018), so the installer creates yours
+   **on the host, before Caddy serves port 80**: until then only `127.0.0.1:4319` answers, and nobody on the VPN can
+   reach the setup page first. Without `BAOX_ADMIN_USERNAME` a first install stops there, with Caddy stopped; rerun it
+   with the variable set. Done when the last two lines read `baox <name> is serving http://10.250.0.222:
+   {"status":"signed_out",...}` and `first administrator: <your username>, temporary password: <…>`. Any other ending
+   names the check that failed.
+
+3. **Sign in as the administrator.** From the mac, on the VPN, open `http://10.250.0.222`, sign in with the username
+   and the temporary password from step 2, and set your own password when asked. Done when the settings page shows you
+   as administrator.
 
 4. **Walk one colleague's path end to end.** Register a second account, approve it as admin, sign in as it, download
    the extension from the settings page, load it unpacked in Chrome or Edge, and pair it. Done when the settings page
@@ -84,9 +87,10 @@ and its closing condition binds this instance: **the gaps must be closed before 
 
 ## Upgrade
 
-Repeat steps 1 and 2 of the first install with the new commit. `install.sh` builds the new release beside the running
-one, switches `current`, and restarts both services; the database is kept and the app applies its own schema
-migrations on start. A running 去报销 (go reimburse) job loses its channel on restart and meets the 120-second
+Repeat steps 1 and 2 of the first install with the new commit; `BAOX_ADMIN_USERNAME` may be left out, since it is
+read only while the database has no administrator. `install.sh` builds the new release beside the running one,
+switches `current`, and restarts both services; the database is kept and the app applies its own schema migrations on
+start. A running 去报销 (go reimburse) job loses its channel on restart and meets the 120-second
 reconnect window (ADR-0020), so upgrade when nobody is filing.
 
 When the release changes the extension, employees re-download it from the settings page and reload it in the browser
@@ -110,8 +114,12 @@ runuser -u baox -- env BAOX_DATA_DIR=/opt/tools/baox/data \
 ```
 
 It prints a 临时密码 (temporary password) that must be changed at the next sign-in. It works while the service runs,
-touches administrators only, and is audited. Run it as `baox`, never as root: the database runs in WAL mode, and a
-`-wal` or `-shm` file that root creates beside it is one the service cannot open.
+and is audited. It resets only the **only active administrator** (ADR-0018): a shell has no session to say whose
+account it is at, and a sole administrator locked out is by definition the one at the shell. With two or more
+administrators it refuses, and the other administrator sets a temporary password in the web UI instead. Run it as
+`baox`, never as root: the database runs in WAL mode, and a `-wal` or `-shm` file that root creates beside it is one
+the service cannot open. `install.sh` runs this same command once, to hand the first administrator a temporary
+password.
 
 ## Reference
 
@@ -169,21 +177,14 @@ on every start; they are not a data move.
 
 ### Project catalog on this host
 
-The production bundle still contains `@baox/erp-executor/browser`, which can spawn Chromium, because `server/src/run.ts`
-builds a live project catalog over `cdpBrowser(cdpPortOf())`. On this host, which has no Chromium, that is inert:
+The server holds no project catalog of its own. The check that matters, 报销信息核对 (claim details check) of project
+numbers and expense items against the ERP, runs inside each 去报销 job (`checkCatalog` in `erp-executor/src/job.ts`),
+in the employee's own logged-in ERP tab through the extension. A mismatch shows on the task as usual.
 
-- `createApp` receives the catalog and never reads it (`server/src/app.ts`: project-book intake no longer queries it),
-  so no request ever calls its `lookup`. Nothing in the production path calls `ensureChromium`, so nothing spawns a
-  browser.
-- The check that matters, 报销信息核对 (claim details check) of project numbers and expense items against the ERP,
-  runs inside each 去报销 job (`checkCatalog` in `erp-executor/src/job.ts`), in the employee's own logged-in ERP tab
-  through the extension. A mismatch shows on the task as usual; 去报销 is unaffected.
-- The only startup effect is `cdpPortOf()` validating `BAOX_CHROMIUM_CDP_PORT`. Leave it unset; an invalid value stops
-  the server.
-- `BAOX_ERP_CHROMIUM=off` is read only by the CDP executor, which the production entry never bundles
-  (`server/src/production-entry.test.ts`). Setting it changes nothing here.
-
-No setting is needed. Removing the dead wiring belongs to the #246 code review, not this deployment.
+The production bundle cannot start a browser: nothing it imports reaches `@baox/erp-executor/browser`
+(`server/src/production-entry.test.ts`). `BAOX_CHROMIUM_CDP_PORT`, `BAOX_CHROME` and `BAOX_ERP_CHROMIUM` are read only
+by the CDP executor, which the production entry never bundles, so none of them is read or validated here. No setting
+is needed.
 
 ### Troubleshooting
 

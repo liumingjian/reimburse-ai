@@ -267,3 +267,105 @@ describe('a socket that never says who it is', () => {
     channel.close();
   });
 });
+
+describe('a pairing that goes away takes its live socket with it', () => {
+  // Stories 10 and 12: whichever way the pairing ends, the old extension is refused for good — the terminal `refused`
+  // frame, not a close it would redial after — and the next 去报销 of the account is never sent to it.
+  async function connectedExtension() {
+    const token = await pair(alice);
+    const extension = fakeExtension();
+    await extension.say({ type: 'hello', token, version: EXTENSION_VERSION });
+    expect(server.app.extensionChannel.connected(alice.account.accountId)).toBe(true);
+    return { token, extension };
+  }
+
+  function expectCutOff(extension: ReturnType<typeof fakeExtension>, accountId: string) {
+    expect(extension.heard.at(-1)).toMatchObject({ type: 'refused', code: 'not_paired' });
+    expect(extension.closedWith()).toEqual({ code: CHANNEL_CLOSE.notPaired, reason: 'not_paired' });
+    expect(server.app.extensionChannel.connected(accountId)).toBe(false);
+  }
+
+  async function expectNoFillReaches(extension: ReturnType<typeof fakeExtension>, accountId: string) {
+    const heard = extension.heard.length;
+    await expect(server.app.extensionChannel.request(accountId, 'erp.fill', {})).rejects.toMatchObject({ code: 'extension_offline' });
+    expect(extension.heard).toHaveLength(heard);
+  }
+
+  it('on 撤销配对 in the settings page', async () => {
+    const { extension } = await connectedExtension();
+
+    expect((await alice.post(`${PAIRING}/revoke`, {})).status).toBe(200);
+
+    expectCutOff(extension, alice.account.accountId);
+    await expectNoFillReaches(extension, alice.account.accountId);
+  });
+
+  it('on a new 配对码, before the new extension has even paired', async () => {
+    const { extension } = await connectedExtension();
+
+    expect((await alice.post(`${PAIRING}/code`, {})).status).toBe(200);
+
+    expectCutOff(extension, alice.account.accountId);
+    await expectNoFillReaches(extension, alice.account.accountId);
+  });
+
+  it('on the account being deactivated', async () => {
+    const bob = await server.signIn('bob');
+    const token = await pair(bob);
+    const extension = fakeExtension();
+    await extension.say({ type: 'hello', token, version: EXTENSION_VERSION });
+
+    expect((await alice.post(`/api/admin/accounts/${bob.account.accountId}`, { active: false })).status).toBe(200);
+
+    expectCutOff(extension, bob.account.accountId);
+    await expectNoFillReaches(extension, bob.account.accountId);
+  });
+
+  it('on 撤销配对 in the extension popup, authorised by its own token', async () => {
+    const { token, extension } = await connectedExtension();
+    const revokeWith = (bearer: string) =>
+      server.app.request(EXTENSION_PAIR_PATH, { method: 'DELETE', headers: { authorization: `Bearer ${bearer}`, origin: EXTENSION_ORIGIN } });
+
+    expect((await revokeWith('not-a-token')).status).toBe(401);
+    expect(server.app.extensionChannel.connected(alice.account.accountId)).toBe(true);
+
+    expect((await revokeWith(token)).status).toBe(200);
+
+    expectCutOff(extension, alice.account.accountId);
+    expect(await view(alice)).toMatchObject({ status: 'none' });
+    await expectNoFillReaches(extension, alice.account.accountId);
+    // Gone for good: the token answers nothing any more, and a second revocation finds nothing to revoke.
+    expect((await server.app.request(EXTENSION_PAIR_PATH, { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);
+    expect((await revokeWith(token)).status).toBe(401);
+  });
+
+  it('refuses a hello whose token was checked just before the pairing went', async () => {
+    const token = await pair(alice);
+    const pairings = createPairingService(server.db, server.clock.now);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const channel = createExtensionChannel({
+      pairings: {
+        ...pairings,
+        lookup: async (value) => {
+          const found = await pairings.lookup(value);
+          await held;
+          return found;
+        },
+      },
+      now: server.clock.now,
+    });
+    const extension = fakeExtension(channel);
+
+    const hello = extension.say({ type: 'hello', token, version: EXTENSION_VERSION });
+    channel.disconnect(alice.account.accountId);
+    release();
+    await hello;
+
+    expect(extension.heard).toEqual([expect.objectContaining({ type: 'refused', code: 'not_paired' })]);
+    expect(channel.connected(alice.account.accountId)).toBe(false);
+    channel.close();
+  });
+});

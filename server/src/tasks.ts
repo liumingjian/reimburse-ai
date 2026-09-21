@@ -148,8 +148,13 @@ export type ParseWork = { runId: string; input: ParseInput; preset: ParseOutcome
 const STALE_JOB = { code: 'stale_job', message: 'the inventory run changed under the parser job' } as const;
 
 // What the 去报销 actions need from the app: the account's ERP lease, the ERP to write to, and the background job runners
-// (the fill job, and the read-only reconcile job of #192).
-export type ErpServiceOptions = { lease: ErpLease; config: ErpConfig; run: (job: FillRun) => void; reconcile: (job: ReconcileRun) => void };
+// (the fill job, and the read-only reconcile job of #192). `executorReady` is asked inside the accepted change, before
+// the lease and before any job exists: a refusal means the executor could not be reached (story 13 — no 浏览器扩展
+// paired, or none connected), so the employee is told which and where to fix it instead of watching a job abort.
+export type ErpServiceOptions = {
+  lease: ErpLease; config: ErpConfig; run: (job: FillRun) => void; reconcile: (job: ReconcileRun) => void;
+  executorReady?: (tx: Db, accountId: string) => Promise<Refusal | null>;
+};
 
 export const RECONCILE_COPY = {
   notReconciling: ERP_ACTION_ERRORS.notReconciling,
@@ -412,6 +417,8 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
             frozen = built.job;
             digest = loaded.confirmed.digest;
           }
+          const unreachable = await erp.executorReady?.(tx, accountId);
+          if (unreachable) return unreachable;
           const jobId = newJobId();
           // The recovery replaces the unsaved bill it was offered over; ERP keeps that bill's tab open, and reusing it
           // would put the re-import on a form that already holds its 收票行 (live 2026-09-21).

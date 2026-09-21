@@ -1,7 +1,6 @@
 import type { AddressInfo } from 'node:net';
 import { serve } from '@hono/node-server';
 import { createApp } from './app';
-import type { ProjectCatalog } from './catalog/project-catalog';
 import type { ErpConfig } from './erp/config';
 import type { FillExecutor } from './erp/fill-jobs';
 import type { ReconcileExecutor } from './erp/reconcile-job';
@@ -20,7 +19,6 @@ export type StartOptions = {
   // 0 picks a free port (tests and e2e).
   port: number;
   webDist?: string | null;
-  projectCatalog?: ProjectCatalog;
   // The legacy `~/.baox` to import on first-admin creation; null or absent imports nothing.
   legacyHome?: string | null;
   erpExecutor?: FillExecutor;
@@ -35,7 +33,7 @@ export type StartOptions = {
 
 export type RunningServer = { url: string; port: number; close: () => Promise<void> };
 
-export async function startServer({ dataDir, port, webDist = null, projectCatalog, legacyHome = null, erpExecutor, reconcileExecutor, erpConfig, publicOrigin = null, extensionTemplate = null }: StartOptions): Promise<RunningServer> {
+export async function startServer({ dataDir, port, webDist = null, legacyHome = null, erpExecutor, reconcileExecutor, erpConfig, publicOrigin = null, extensionTemplate = null }: StartOptions): Promise<RunningServer> {
   // First, so a misconfigured address never gets as far as the data directory lock.
   const served = publicOrigin ? parsePublicOrigin(publicOrigin) : null;
   ensureDataDir(dataDir);
@@ -47,7 +45,7 @@ export async function startServer({ dataDir, port, webDist = null, projectCatalo
     release();
     throw error;
   }
-  const app = createApp({ db, dataDir, webDist, legacyHome, publicOrigin: served, extensionTemplate, ...(projectCatalog ? { projectCatalog } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(erpConfig ? { erpConfig } : {}) });
+  const app = createApp({ db, dataDir, webDist, legacyHome, publicOrigin: served, extensionTemplate, ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(erpConfig ? { erpConfig } : {}) });
   const { server, info } = await new Promise<{ server: ReturnType<typeof serve>; info: AddressInfo }>((resolve) => {
     const s = serve({ fetch: app.fetch, hostname: HOST, port }, (address) => resolve({ server: s, info: address }));
   });

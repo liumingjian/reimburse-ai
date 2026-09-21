@@ -171,7 +171,7 @@ export function parseLegacyImportActionResponse(status: number, body: unknown): 
   return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, legacyImport: null };
 }
 
-// 扩展配对：GET 是读接口（401 抛 UnauthenticatedError）。
+// 扩展配对 (extension pairing): the GET is a read (401 throws UnauthenticatedError).
 export function parseExtensionPairingResponse(status: number, body: unknown): ExtensionPairing {
   refuseUnauthenticated(status);
   if (!isSuccess(status)) throw new Error(`配对情况加载失败（HTTP ${status}）`);
@@ -180,7 +180,8 @@ export function parseExtensionPairingResponse(status: number, body: unknown): Ex
   return parsed.data;
 }
 
-// 生成配对码 / 撤销配对：成功是新的配对情况（刚生成的那一串只在这一次出现）；失败只有 { error }。
+// 生成配对码 / 撤销配对 (issue a pairing code / revoke the pairing): success is the new pairing (a freshly issued code
+// appears in this answer only); failure is { error } alone.
 export function parseExtensionPairingActionResponse(status: number, body: unknown): ExtensionPairingOutcome {
   if (isSuccess(status)) {
     const view = ExtensionPairingSchema.safeParse(body);
@@ -208,7 +209,8 @@ export function parseActionResponse(status: number, body: unknown): ActionOutcom
   }
   const failure = ActionFailureSchema.safeParse(body);
   if (status === STALE_STEP_HTTP_STATUS) {
-    // 报销系统正被另一个任务使用（本账号的 ERP 租约）是唯一保留原错误码的 409：它不是过期凭据，页面就地显示原因。
+    // `erp_in_use` (this account's ERP lease is held by another of its tasks) is the one 409 that keeps its own code:
+    // it is not a stale step token, so the page shows the reason where it is.
     if (failure.success && failure.data.error.code === ERP_IN_USE_CODE) return { ok: false, error: failure.data.error, snapshot: failure.data.snapshot ?? null };
     // 过期凭据：不论服务端写的错误码是什么，都按 stale_step 处理；没带快照时由仓库重新拉取。
     const snapshot = failure.success ? (failure.data.snapshot ?? null) : null;

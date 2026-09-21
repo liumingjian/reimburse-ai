@@ -1,4 +1,5 @@
 import { CHANNEL_PING_METHOD, ChannelMessageSchema, EXTENSION_CHANNEL_PATH, EXTENSION_HEARTBEAT_MS, EXTENSION_VERSION, type ChannelMessage } from '@baox/contract';
+import { CHANNEL_CLOSED } from './messages';
 
 // The extension's side of the channel. It dials; the server never dials it, because a browser on an employee's
 // machine has no address a server could reach.
@@ -179,7 +180,7 @@ export function createChannelClient({ origin, token, open, version = EXTENSION_V
       if (socket !== dialled) return;
       socket = null;
       stopTimers();
-      failPending(new RequestFailed('channel_closed', '和应用的连接断开了。'));
+      failPending(new RequestFailed(CHANNEL_CLOSED.code, CHANNEL_CLOSED.message));
       scheduleReconnect();
     };
     dialled.onerror = () => dialled.close();
@@ -188,7 +189,7 @@ export function createChannelClient({ origin, token, open, version = EXTENSION_V
   function request(method: string, payload: unknown): Promise<unknown> {
     if (!socket || current.state !== 'ready') {
       // `ping` is the exception: it is sent from inside the heartbeat, which only runs on a ready socket.
-      if (!(socket && method === CHANNEL_PING_METHOD)) return Promise.reject(new RequestFailed('channel_closed', '和应用的连接断开了。'));
+      if (!(socket && method === CHANNEL_PING_METHOD)) return Promise.reject(new RequestFailed(CHANNEL_CLOSED.code, CHANNEL_CLOSED.message));
     }
     nextId += 1;
     const id = `e${nextId}`;
@@ -209,7 +210,7 @@ export function createChannelClient({ origin, token, open, version = EXTENSION_V
       if (retry !== null) clearTimeout(retry);
       retry = null;
       stopTimers();
-      failPending(new RequestFailed('channel_closed', '和应用的连接断开了。'));
+      failPending(new RequestFailed(CHANNEL_CLOSED.code, CHANNEL_CLOSED.message));
       socket?.close();
       socket = null;
     },

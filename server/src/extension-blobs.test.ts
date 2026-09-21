@@ -139,7 +139,7 @@ describe('the extension\'s invoice originals', () => {
     await job.finish();
   });
 
-  it('refuses without a token, with a wrong one, and with a revoked one, even while the job runs', async () => {
+  it('refuses without a token and with a wrong one, even while the job runs', async () => {
     const token = await pair(alice);
     const job = await running(token);
     const invoice = job.plan.invoices[0]!.sha256;
@@ -148,8 +148,6 @@ describe('the extension\'s invoice originals', () => {
     expect((await fetchBlob(invoice, 'not-a-token')).status).toBe(401);
     // A session cookie is not the extension's credential.
     expect((await alice.request(extensionBlobPath(invoice))).status).toBe(401);
-    expect((await alice.post('/api/extension/pairing/revoke', {})).status).toBe(200);
-    expect((await fetchBlob(invoice, token)).status).toBe(401);
     await job.finish();
   });
 
@@ -190,6 +188,22 @@ describe('the extension\'s invoice originals across an interruption', () => {
     timers.elapse(RECONNECT_WINDOW_MS);
 
     expect((await fetchBlob(invoice, token)).status).toBe(404);
+    await job.finish();
+  });
+
+  it('refuses a revoked token at once, and the job its socket carried ends by the window', async () => {
+    const token = await pair(alice);
+    const job = await running(token);
+    const invoice = job.plan.invoices[0]!.sha256;
+
+    expect((await alice.post('/api/extension/pairing/revoke', {})).status).toBe(200);
+
+    // Revoking closed the socket, so the job is interrupted like any lost connection; the token serves nothing.
+    expect(server.app.extensionChannel.connected(alice.account.accountId)).toBe(false);
+    expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(1);
+    expect((await fetchBlob(invoice, token)).status).toBe(401);
+
+    timers.elapse(RECONNECT_WINDOW_MS);
     await job.finish();
   });
 });

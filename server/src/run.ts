@@ -1,12 +1,8 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { liveProjectCatalog } from './catalog/live-catalog';
-import { catalogFromEnv } from './catalog/project-catalog';
 import { resolveDataDir } from './data-dir';
 import { erpConfigFromEnv } from './erp/config';
 import type { FillExecutor } from './erp/fill-jobs';
-import { cdpBrowser } from '@baox/erp-executor/browser';
-import { cdpPortOf } from '@baox/erp-executor/chromium';
 import type { ReconcileExecutor } from './erp/reconcile-job';
 import { resolveLegacyHome } from './legacy/read';
 import { startServer } from './server';
@@ -14,14 +10,14 @@ import { startServer } from './server';
 // Starting the server, shared by the production entry (`main.ts`), the development one (`dev-main.ts`) and the e2e-only
 // one (`e2e-main.ts`).
 // `BAOX_DATA_DIR` overrides `~/.baox-app/` (dev and tests only); `BAOX_PORT` overrides 4319 (0 = any free port).
-// `BAOX_PROJECT_CATALOG_FIXTURE` swaps in the fixture project catalog (e2e only); otherwise project numbers are
-// checked live in the logged-in ERP tab of the dedicated Chromium. Serves `web/dist` same-origin when it has been
-// built. The `listening on` line is what e2e waits for.
+// Serves `web/dist` same-origin when it has been built. The `listening on` line is what e2e waits for.
 // `BAOX_HOME` overrides the legacy `~/.baox`, read (never written) once when the first admin is created.
 // `BAOX_PUBLIC_ORIGIN` is the address colleagues reach the app at through the reverse proxy, e.g.
 // `http://10.250.0.222`; unset serves 127.0.0.1 only (`public-origin.ts`).
-// ERP: `BAOX_ERP_ORIGIN`, `BAOX_ERP_BUILD`, `BAOX_ERP_FORM_ID` (`erp/config.ts`), `BAOX_CHROMIUM_CDP_PORT` (9333, the
-// live catalog and the CDP executor), `BAOX_CHROME` and `BAOX_ERP_CHROMIUM=off` (the CDP executor only).
+// ERP: `BAOX_ERP_ORIGIN`, `BAOX_ERP_BUILD`, `BAOX_ERP_FORM_ID` (`erp/config.ts`); `BAOX_CHROMIUM_CDP_PORT`,
+// `BAOX_CHROME` and `BAOX_ERP_CHROMIUM=off` are read by the CDP executor only (`erp/cdp-executor.ts`), so they mean
+// nothing to the production entry. Project numbers are checked against the ERP inside each 去报销 job, in the
+// employee's own ERP tab (`checkCatalog`); the server holds no live catalog.
 const DEFAULT_PORT = 4319;
 // src/run.ts (dev, via tsx) and dist/main.mjs (built) both sit two levels below the repo root.
 const WEB_DIST = fileURLToPath(new URL('../../web/dist', import.meta.url));
@@ -39,12 +35,10 @@ export async function run({ erpExecutor, reconcileExecutor }: RunOverrides = {})
   const port = Number(process.env['BAOX_PORT'] ?? DEFAULT_PORT);
   try {
     const erpConfig = erpConfigFromEnv();
-    const projectCatalog = catalogFromEnv(process.env, () => liveProjectCatalog({ browser: cdpBrowser(cdpPortOf()), origin: erpConfig.origin }));
     const server = await startServer({
       dataDir,
       port,
       webDist: existsSync(WEB_DIST) ? WEB_DIST : null,
-      projectCatalog,
       legacyHome: resolveLegacyHome(),
       ...(erpExecutor ? { erpExecutor } : {}),
       ...(reconcileExecutor ? { reconcileExecutor } : {}),

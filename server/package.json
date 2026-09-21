@@ -23,6 +23,7 @@
   "dependencies": {
     "@baox/contract": "workspace:*",
     "@baox/erp-executor": "workspace:*",
+    "@baox/extension": "workspace:*",
     "@cantoo/pdf-lib": "2.9.2",
     "@gutenye/ocr-models": "1.4.2",
     "@hono/node-server": "2.1.1",
@@ -40,7 +41,6 @@
     "zxing-wasm": "3.1.4"
   },
   "devDependencies": {
-    "@baox/extension": "workspace:*",
     "@baox/fixtures": "workspace:*",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "24.13.3",

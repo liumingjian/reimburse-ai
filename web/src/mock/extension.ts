@@ -1,16 +1,17 @@
 import { EXTENSION_PAIRING_CODE_TTL_MS, EXTENSION_VERSION, type ExtensionPairing, type ExtensionPairingOutcome } from '@baox/contract';
 import type { MockOptions } from './options';
 
-// 扩展配对（mock 服务端角色）：mock 里没有真的浏览器扩展，所以 `?extension=paired` 直接摆出已经配对的样子，
-// 不给则还没有配对。生成配对码会让原来的配对失效（与服务端同一条规则），撤销配对回到没有配对。
+// 扩展配对 (extension pairing) as the mock server plays it. There is no real 浏览器扩展 (browser extension) in the
+// mock, so `?extension=paired` starts out paired and anything else starts unpaired. Issuing a 配对码 (pairing code)
+// voids the old pairing (the server's rule), and revoking returns to no pairing.
 
 const PAIRED_AT = '2026-02-01T09:05:00Z';
 const LAST_CONNECTED_AT = '2026-02-03T14:20:00Z';
-// 固定的一串，e2e 照它断言；真服务端每次随机生成。
+// A fixed code for e2e to assert on; the real server generates a random one each time.
 const MOCK_CODE = 'K7MQ2PXD';
 
 const NONE: ExtensionPairing = { status: 'none', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt: null, connected: false, version: null, code: null };
-// mock 里配对了就当扩展连着：没有真的扩展可连，页面要显示的也正是配对之后的常态。
+// Paired counts as connected in the mock: there is no extension to connect, and connected is the normal paired state.
 const PAIRED: ExtensionPairing = { status: 'paired', browser: 'Chrome 142 · Windows 11', pairedAt: PAIRED_AT, lastConnectedAt: LAST_CONNECTED_AT, codeExpiresAt: null, connected: true, version: EXTENSION_VERSION, code: null };
 
 export type ExtensionPairingFlow = {
@@ -23,7 +24,7 @@ export function createExtensionPairingFlow(options: MockOptions): ExtensionPairi
   let current: ExtensionPairing = options.extensionPaired ? PAIRED : NONE;
   return {
     getExtensionPairing: async () => current,
-    // 那一串只在生成它的这一次出现；之后读配对情况再也带不出来，和服务端一样。
+    // The code appears only in the answer that issued it; no later read returns it, as on the server.
     async createExtensionPairingCode() {
       const codeExpiresAt = new Date(Date.now() + EXTENSION_PAIRING_CODE_TTL_MS).toISOString();
       current = { status: 'waiting', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt, connected: false, version: null, code: null };

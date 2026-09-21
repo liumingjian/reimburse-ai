@@ -26,7 +26,7 @@ import type { Db } from '../db/database';
 import { EXTENSION_CONNECTION_LOST_CODE, EXTENSION_OFFLINE_CODE, ExtensionChannelError, realTimer, type ChannelRequestHandler, type ExtensionChannel, type Schedule } from '../extension/channel';
 import type { FillExecutor } from './fill-jobs';
 import type { ReconcileExecutor } from './reconcile-job';
-import type { ExecutorChannel, ExecutorEvent, Preconditions, ResultEvent } from '@baox/erp-executor/protocol';
+import { abortedResult, type ExecutorChannel, type ExecutorEvent, type Preconditions, type ResultEvent } from '@baox/erp-executor/protocol';
 import {
   EXECUTOR_METHODS, JOB_REFUSALS, JobEventRequestSchema, JobRefSchema, RECONNECT_WINDOW_MS, ResumeRequestSchema, resultOf,
   type FillRequest, type PageObservation, type ReconcileRequest, type ResumeRequest, type ResumeVerdict,
@@ -81,6 +81,11 @@ type AttemptOnRecord = { preconditions: Preconditions; account: string; tenant: 
  * ADR-0020's re-observation, judged here because the server owns judgement: the page after the interruption must be
  * the page before it — the same 费用报销单, the same ERP identity, the 发票助手 in the same recognisable state — and,
  * once an attempt is on record, the form and identity that attempt was made on. Any problem at all ends the job.
+ *
+ * Before any attempt, `last` is the extension's own word, and that is deliberate. The server cannot observe a page,
+ * and before an attempt nothing has been written, so a wrong `last` can only let a job continue — whose next write is
+ * still guarded by the attempt-time precondition check. Once an attempt exists, the page is also held against what
+ * the server recorded with it, which the extension cannot rewrite.
  */
 function reobservationProblems({ last, now }: Pick<ResumeRequest, 'last' | 'now'>, attempt: AttemptOnRecord | null): string[] {
   const problems: string[] = [];
@@ -104,7 +109,7 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer }: { 
     job.state = 'ended';
     try {
       await job.tail;
-      const event: ResultEvent = { type: 'result', status: 'aborted', code, message, billNo: null, capture: null };
+      const event = abortedResult(code, message);
       await job.channel.emit(event);
       job.finish(event);
     } catch (error) {
