@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { compareExtensionVersions, EXTENSION_MINIMUM_VERSION, EXTENSION_VERSION } from '@baox/contract';
+import { compareExtensionVersions, EXTENSION_MINIMUM_VERSION, EXTENSION_ORIGIN_PLACEHOLDER, EXTENSION_VERSION } from '@baox/contract';
 import { describe, expect, it } from 'vitest';
-import { manifestFor, readExtensionVersion } from '../scripts/manifest.mjs';
+import { manifestFor, readExtensionVersion, readOriginPlaceholder } from '../scripts/manifest.mjs';
 
 const contractSource = readFileSync(fileURLToPath(new URL('../../contract/src/extension.ts', import.meta.url)), 'utf8');
 
@@ -24,6 +24,11 @@ describe('the version the extension ships with is the version the server enforce
     expect(manifest.host_permissions).toEqual(['http://10.250.0.222/*']);
     expect(manifest.permissions).toContain('debugger');
     expect(manifest.manifest_version).toBe(3);
+  });
+
+  // The server finds the place to put its origin by this string, so the build must write the one the server looks for.
+  it('builds with the origin placeholder the server fills in', () => {
+    expect(readOriginPlaceholder(contractSource)).toBe(EXTENSION_ORIGIN_PLACEHOLDER);
   });
 
   it('says so instead of guessing when the contract stops declaring a version', () => {

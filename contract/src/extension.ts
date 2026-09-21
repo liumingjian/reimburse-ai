@@ -31,8 +31,29 @@ export const EXTENSION_PAIRING_CODE_TTL_MS = 10 * 60 * 1000;
 //
 // ADR-0021 chose refusal over best-effort compatibility: the fill protocol hands down one whole plan, and an old
 // extension executing half of it leaves a write of undecidable outcome behind. Refusing costs a day.
+//
+// Releasing a changed extension: bump EXTENSION_VERSION here and rebuild; employees get it from the settings page.
+// Raise EXTENSION_MINIMUM_VERSION as well when the change is one an older extension must not be allowed to run.
 export const EXTENSION_VERSION = '1.0.0';
 export const EXTENSION_MINIMUM_VERSION = '1.0.0';
+
+// ---------------------------------------------------------------------------
+// Distribution (ADR-0021: load-unpacked in developer mode, Chrome and Edge only)
+// ---------------------------------------------------------------------------
+
+// Where the settings page downloads the extension from. Behind the session gate like the rest of the page.
+export const EXTENSION_DOWNLOAD_PATH = '/api/extension/download';
+export const EXTENSION_DOWNLOAD_FILENAME = 'baox-extension.zip';
+
+// What `extension/scripts/build.mjs` bakes in wherever the app's origin belongs, including `host_permissions`. The
+// build is a template: the server swaps this for its own origin every time it serves the zip
+// (`server/src/extension/download.ts`). `.invalid` never resolves, so a template loaded by hand talks to nobody rather
+// than to the wrong server.
+export const EXTENSION_ORIGIN_PLACEHOLDER = 'http://baox-public-origin.invalid';
+
+export const EXTENSION_DOWNLOAD_ERRORS = {
+  unavailable: '这台服务器上还没有可以下载的浏览器扩展安装包，请联系管理员。',
+} as const;
 
 // Dotted numbers only, the shape `manifest.json` allows. Returns <0, 0 or >0 like any comparator; a missing part
 // counts as 0, so `1.2` and `1.2.0` are the same version.

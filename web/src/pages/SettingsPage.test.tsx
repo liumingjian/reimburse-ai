@@ -1,14 +1,17 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
-import { EXTENSION_PAIRING_STATUS_LABELS, LEGACY_IMPORT_ERRORS, LEGACY_IMPORT_STATUS_LABELS } from '@baox/contract';
+import { EXTENSION_DOWNLOAD_PATH, EXTENSION_PAIRING_STATUS_LABELS, EXTENSION_VERSION, LEGACY_IMPORT_ERRORS, LEGACY_IMPORT_STATUS_LABELS } from '@baox/contract';
 import { App } from '../App';
 import { createMockAdapter } from '../mock/mock-adapter';
 import type { LegacyOption } from '../mock/options';
+import { EXTENSION_INSTALL_COPY } from './SettingsPage';
 
 // 设置页的旧数据导入面板（故事 81）：损坏的旧数据要说清楚坏在哪个文件，并且能重试或明确跳过。
 // 服务端的接口一直都在（#195），这里补的是它的界面。
 // 设置页的浏览器扩展一节（#252）：员工在这里拿到配对码、看到配对了哪台浏览器与最近一次连接，并可以撤销配对。
 // 配对码换长期凭据发生在扩展那一侧（服务端的 HTTP 缝里另有覆盖），这里只覆盖页面看得见的部分。
+// 同一节还要让员工自己装上扩展（#258）：下载安装包，照着 Chrome、Edge 的步骤加载、升级，并事先知道调试提示条是怎么回事。
+// 安装包里带的地址与版本由服务端的 HTTP 缝检查（server/src/extension/download.test.ts）。
 
 function renderSettings(legacy?: LegacyOption) {
   window.location.hash = '#/settings';
@@ -93,5 +96,45 @@ describe('设置页：浏览器扩展', () => {
     expect(await within(extensionPanel()).findByText(EXTENSION_PAIRING_STATUS_LABELS.none)).toBeTruthy();
     // 撤销配对不是退出登录：设置页照旧，没有回到登录门。
     expect(panel()).toBeTruthy();
+  });
+});
+
+describe('设置页：浏览器扩展的下载、安装与升级', () => {
+  test('从这一节下载安装包，并照着步骤在 Chrome 或 Edge 里加载、升级', async () => {
+    renderPairing();
+    await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.none);
+    const section = within(extensionPanel());
+
+    expect(section.getByRole('link', { name: EXTENSION_INSTALL_COPY.download }).getAttribute('href')).toBe(EXTENSION_DOWNLOAD_PATH);
+    expect(section.getByText(`这里提供的扩展版本：${EXTENSION_VERSION}`)).toBeTruthy();
+
+    // 两个浏览器的扩展管理页、开发者模式开关和加载按钮各叫什么，都照界面写出来。
+    const install = section.getByRole('list', { name: '安装扩展' }).textContent ?? '';
+    for (const words of ['chrome://extensions', 'edge://extensions', '开发者模式', '开发人员模式', '加载已解压的扩展程序', '加载解压缩的扩展', '配对码']) expect(install).toContain(words);
+    const upgrade = section.getByRole('list', { name: '升级扩展' }).textContent ?? '';
+    for (const words of ['下载浏览器扩展', '原来的文件夹', '重新加载']) expect(upgrade).toContain(words);
+  });
+
+  test('事先说明调试提示条是正常的，点它的取消会让这次去报销停下', async () => {
+    renderPairing();
+    await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.none);
+    const section = within(extensionPanel());
+    expect(section.getByText(/已开始调试此浏览器.*这是正常的/)).toBeTruthy();
+    expect(section.getByText(/不要点这条提示上的“取消”.*这次去报销随即停止/)).toBeTruthy();
+  });
+
+  test('配对的扩展比这里提供的旧时，提醒按升级步骤换新', async () => {
+    window.location.hash = '#/settings';
+    const adapter = createMockAdapter({ seed: 'actions', fault: null, extensionPaired: true });
+    const paired = await adapter.getExtensionPairing();
+    render(<App adapter={{ ...adapter, getExtensionPairing: async () => ({ ...paired, version: '0.9.0' }) }} />);
+    await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.paired);
+    expect(within(extensionPanel()).getByText(EXTENSION_INSTALL_COPY.outdated('0.9.0', EXTENSION_VERSION))).toBeTruthy();
+  });
+
+  test('配对的扩展已是这一版时不提醒升级', async () => {
+    renderPairing(true);
+    await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.paired);
+    expect(within(extensionPanel()).queryByText(/请按下面“升级扩展”的步骤/)).toBeNull();
   });
 });

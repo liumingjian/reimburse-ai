@@ -1166,6 +1166,16 @@ $doc-frame-block: var(--app-doc-frame-block);
   }
 }
 
+// 设置页浏览器扩展一节的安装与升级步骤：带编号，一步一行。
+.app-guide-steps {
+  display: grid;
+  gap: $spacing-03;
+  margin: 0;
+  padding-inline-start: $spacing-06;
+  color: $text-secondary;
+  list-style: decimal;
+}
+
 .app-startup {
   display: grid;
   gap: $spacing-05;

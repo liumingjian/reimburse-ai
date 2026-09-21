@@ -19,6 +19,7 @@ import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
 import { createExtensionChannel, type ExtensionChannel } from './extension/channel';
+import { mountExtensionDownloadRoute } from './extension/download';
 import { mountExtensionPairRoutes, mountPairingRoutes } from './extension/http';
 import { createPairingService } from './extension/pairing';
 import { createLegacyImport, LegacyImportRefusal } from './legacy/import';
@@ -60,6 +61,9 @@ export type AppOptions = {
   legacyHome?: string | null;
   // The address colleagues reach the app at (`public-origin.ts`). null (default) admits only 127.0.0.1.
   publicOrigin?: PublicOrigin | null;
+  // The built extension template (`extension/dist`) the settings page's download is assembled from
+  // (`extension/download.ts`). null (default) answers every download with 503.
+  extensionTemplate?: string | null;
 };
 
 // `close` stops the background jobs (after the material in flight) and releases the parse worker; call it before
@@ -71,7 +75,7 @@ type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
 const failure = (c: Context, status: 400 | 401 | 403 | 404 | 409, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor = unavailableExecutor, reconcileExecutor = unavailableReconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null, publicOrigin = null }: AppOptions): App {
+export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor = unavailableExecutor, reconcileExecutor = unavailableReconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null, publicOrigin = null, extensionTemplate = null }: AppOptions): App {
   const accounts = createAccountService(db, now);
   const legacy = createLegacyImport(db, legacyHome, now);
   // Keyed by task id; a task's stream only ever opens for its owner.
@@ -193,6 +197,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   app.use('/api/*', requireAccount(accounts, secureSession));
   mountAccountRoutes(app, accounts);
   mountPairingRoutes(app, pairings);
+  mountExtensionDownloadRoute(app, extensionTemplate, publicOrigin);
 
   // Legacy import (旧数据导入) as the signed-in account sees it; only the owner of a failed run may retry or skip.
   app.get('/api/legacy-import', async (c) => c.json(await legacy.view(accountOf(c).accountId)));
