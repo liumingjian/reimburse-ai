@@ -12,7 +12,7 @@
   },
   "scripts": {
     "baox": "tsx src/cli-main.ts",
-    "dev": "tsx watch src/main.ts",
+    "dev": "tsx watch src/dev-main.ts",
     "build": "node scripts/build.mjs",
     "start": "node dist/main.mjs",
     "test": "vitest run",

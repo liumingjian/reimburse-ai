@@ -11,9 +11,10 @@ import { accountOf, mountAccountRoutes, mountAuthRoutes, requireAccount, SESSION
 import type { Db } from './db/database';
 import { createInMemoryErpLease, type ErpLease } from './erp-lease';
 import { DEFAULT_ERP_CONFIG, type ErpConfig } from './erp/config';
-import { createFillJobs, unavailableExecutor, type FillExecutor, type RecordFacts } from './erp/fill-jobs';
+import { createFillJobs, type FillExecutor, type RecordFacts } from './erp/fill-jobs';
 import type { ReconcileExecutor } from './erp/reconcile-job';
-import { createReconcileJobs, unavailableReconcileExecutor } from './erp/reconcile-jobs';
+import { createReconcileJobs } from './erp/reconcile-jobs';
+import { createRemoteExecutor } from './erp/remote-executor';
 import { recoverErpJobs } from './erp/recovery';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
@@ -44,11 +45,11 @@ export type AppOptions = {
   // The ERP control lease, one partition per 应用账号 (ADR-0016, ADR-0019): the fill job holds its account's while
   // it runs. Tests pass theirs to observe it.
   erpLease?: ErpLease;
-  // Where 去报销 jobs run: `cdpFillExecutor` on the dedicated Chromium in production, a fake in tests. Without one,
-  // every job stops before touching anything.
+  // Where 去报销 jobs run. Without one (production), in the task owner's paired 浏览器扩展 over its channel
+  // (`erp/remote-executor.ts`); `cdpFillExecutor` on the dedicated Chromium only from the development and e2e entries
+  // and `pnpm test:erp-live`; a fake in tests.
   erpExecutor?: FillExecutor;
-  // Where the read-only 对账 (reconcile) jobs run: `cdpReconcileExecutor` in production, a fake in tests. Without one,
-  // every reconcile stops at once with nothing read.
+  // Where the read-only 对账 (reconcile) jobs run, chosen the same way as `erpExecutor`.
   reconcileExecutor?: ReconcileExecutor;
   // The ERP to write to and the build it may write to (`erp/config.ts`).
   erpConfig?: ErpConfig;
@@ -75,7 +76,7 @@ type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
 const failure = (c: Context, status: 400 | 401 | 403 | 404 | 409, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor = unavailableExecutor, reconcileExecutor = unavailableReconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null, publicOrigin = null, extensionTemplate = null }: AppOptions): App {
+export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor, reconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null, publicOrigin = null, extensionTemplate = null }: AppOptions): App {
   const accounts = createAccountService(db, now);
   const legacy = createLegacyImport(db, legacyHome, now);
   // Keyed by task id; a task's stream only ever opens for its owner.
@@ -88,8 +89,11 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   };
   // The 去报销 jobs write their facts through the owner's task service (one revision per executor event).
   const record: RecordFacts = (accountId, taskId, write) => serviceFor(accountId).erpRecord(taskId, write);
-  const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor, record });
-  const reconcileJobs = createReconcileJobs({ db, lease: erpLease, execute: reconcileExecutor, record });
+  // The extension's executor answers through the channel built further down, so it reaches the channel through the
+  // binding rather than the value.
+  const remote = createRemoteExecutor({ db, extension: { request: (accountId, method, payload) => extensionChannel.request(accountId, method, payload) } });
+  const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor ?? remote.fill, record });
+  const reconcileJobs = createReconcileJobs({ db, lease: erpLease, execute: reconcileExecutor ?? remote.reconcile, record });
   // Every task service is scoped to one account; the parser job gets the owner's service for each task it drives.
   const serviceFor = (accountId: string) =>
     createTaskService(db, dataDir, accountId, { onChange: (snapshot) => publish(snapshot, accountId), erp: { lease: erpLease, config: erpConfig, run: (job) => fillJobs.run(job), reconcile: (job) => reconcileJobs.run(job) } });
@@ -192,7 +196,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // the channel resolves tokens through the pairing service: each needs the other, so the predicate reads the
   // channel through the binding rather than the value.
   const pairings = createPairingService(db, now, (accountId) => extensionChannel.connected(accountId));
-  const extensionChannel = createExtensionChannel({ pairings, lease: erpLease, now });
+  const extensionChannel = createExtensionChannel({ pairings, lease: erpLease, now, onRequest: remote.answer });
   mountExtensionPairRoutes(app, pairings);
   app.use('/api/*', requireAccount(accounts, secureSession));
   mountAccountRoutes(app, accounts);
