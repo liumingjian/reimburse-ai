@@ -35,7 +35,7 @@ for (const [width, height] of [
   [1440, 900],
   [1100, 800],
 ] as const) {
-  test(`${width}px：未开始步骤的标题比说明醒目，编号在圆里；「不要关闭专用浏览器窗口」是步骤清单之前的通知`, async ({ page }, testInfo) => {
+  test(`${width}px：未开始步骤的标题比说明醒目，编号在圆里；「不要关闭报销系统标签页」是步骤清单之前的通知`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height });
     await page.goto(open('?seed=erp', '#/task/T1/erp'));
     await expect(stepItem(page, '登录')).toContainText('等待你操作');
@@ -54,7 +54,7 @@ for (const [width, height] of [
     expect(Math.abs(num.width - icon.width)).toBeLessThan(1);
     expect(Math.abs(num.height - icon.height)).toBeLessThan(1);
 
-    const notice = page.getByRole('status').filter({ hasText: '进行中，请不要关闭专用浏览器窗口。' });
+    const notice = page.getByRole('status').filter({ hasText: '进行中，请不要关闭为这次报销打开的报销系统标签页。' });
     await expect(notice).toBeVisible();
     const noticeBox = await notice.boundingBox();
     const headBox = await page.getByRole('heading', { name: '保存报销草稿', level: 1 }).boundingBox();
