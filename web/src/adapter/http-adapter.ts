@@ -47,7 +47,7 @@ export type HttpAdapterOptions = {
 
 export const INVALID_RESPONSE_CODE = 'invalid_response';
 export const NETWORK_ERROR_CODE = 'network';
-export const NETWORK_ERROR_MESSAGE = '本地服务没有响应，操作没有送达。请在终端重新执行 baox 后重试。';
+export const NETWORK_ERROR_MESSAGE = '连不上报销服务，操作没有送达。请检查网络后重试；如果一直这样，请联系维护者。';
 
 // 事件流重连间隔：0.5 s 起翻倍，封顶 10 s。
 export function reconnectDelay(attempt: number): number {

@@ -20,6 +20,7 @@ import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
 import { createLegacyImport, LegacyImportRefusal } from './legacy/import';
 import { unavailableCatalog, type ProjectCatalog } from './catalog/project-catalog';
+import type { PublicOrigin } from './public-origin';
 import { ActionRefusedError, createTaskService, parseBacklogOfAllAccounts, StaleStepError, TaskNotFoundError, type TaskService, type UploadedFile } from './tasks';
 
 // The HTTP app. Wire rules (contract/src/http.ts): success is 200 with the whole new snapshot; failure is
@@ -54,6 +55,8 @@ export type AppOptions = {
   // The legacy `~/.baox` read once when the first admin is created (ADR-0018). null (default) imports nothing;
   // `main.ts` passes `$BAOX_HOME` or `~/.baox`.
   legacyHome?: string | null;
+  // The address colleagues reach the app at (`public-origin.ts`). null (default) admits only 127.0.0.1.
+  publicOrigin?: PublicOrigin | null;
 };
 
 // `close` stops the background jobs (after the material in flight) and releases the parse worker; call it before
@@ -64,7 +67,7 @@ type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
 const failure = (c: Context, status: 400 | 401 | 403 | 404 | 409, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor = unavailableExecutor, reconcileExecutor = unavailableReconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null }: AppOptions): App {
+export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor = unavailableExecutor, reconcileExecutor = unavailableReconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null, publicOrigin = null }: AppOptions): App {
   const accounts = createAccountService(db, now);
   const legacy = createLegacyImport(db, legacyHome, now);
   // Keyed by task id; a task's stream only ever opens for its owner.
@@ -118,18 +121,22 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   const batchLimit = bodyLimit({ maxSize: UPLOAD_MAX_FILE_BYTES * UPLOAD_BATCH_MAX_FILES, onError: tooLarge });
   const screenshotLimit = bodyLimit({ maxSize: UPLOAD_MAX_FILE_BYTES * 2, onError: tooLarge });
 
-  // Only this machine may talk to the app (story 82). Binding to 127.0.0.1 is not enough on its own: a page on the
-  // attacker's domain can point that domain at 127.0.0.1 (DNS rebinding) and then drive these routes from the
-  // victim's browser, cookies attached, reaching /api/auth/setup on a fresh install or register at any time. The
-  // rebound request still carries the attacker's name in Host, and a cross-origin write still carries its Origin.
+  // Only the address the app is served at may talk to it (story 82). Neither binding to 127.0.0.1 nor sitting on the
+  // company VPN is enough on its own: a page on the attacker's domain can point that domain at this app's address
+  // (DNS rebinding) and then drive these routes from the victim's browser, cookies attached, reaching
+  // /api/auth/setup on a fresh install or register at any time. The rebound request still carries the attacker's name
+  // in Host, and a cross-origin write still carries its Origin. A configured `publicOrigin` turns both checks from
+  // "loopback" into "exactly this origin": the reverse proxy in front of Node passes the browser's own Host and
+  // Origin through, so the app judges what the browser actually wrote.
+  const forbidden = (c: Context) => failure(c, 403, FORBIDDEN_HOST_CODE, publicOrigin ? NOT_THIS_ADDRESS : NOT_LOCAL);
+  const admitsHost = (host: string) => (publicOrigin ? host.toLowerCase() === publicOrigin.host : isLocalHost(host));
+  const admitsOrigin = (origin: string) => (publicOrigin ? origin === publicOrigin.origin : isLocalOrigin(origin));
   app.use('*', async (c, next) => {
     const host = c.req.header('host') ?? new URL(c.req.url).host;
-    if (!isLocalHost(host)) return c.json({ error: { code: FORBIDDEN_HOST_CODE, message: NOT_LOCAL } }, 403);
+    if (!admitsHost(host)) return forbidden(c);
     const origin = c.req.header('origin');
     // `null` is a sandboxed/opaque origin, never this app's own page.
-    if (WRITE_METHODS.has(c.req.method) && origin !== undefined && !isLocalOrigin(origin)) {
-      return c.json({ error: { code: FORBIDDEN_HOST_CODE, message: NOT_LOCAL } }, 403);
-    }
+    if (WRITE_METHODS.has(c.req.method) && origin !== undefined && !admitsOrigin(origin)) return forbidden(c);
     await next();
   });
 
@@ -156,11 +163,16 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
 
   // Creating the first admin runs the one-time legacy import into that account (ADR-0018), in the same transaction
   // that creates the account: both land or neither does.
-  mountAuthRoutes(app, {
-    ...accounts,
-    setup: (credentials) => accounts.setup(credentials, (tx, accountId) => legacy.onFirstAdmin(accountId, tx)),
-  });
-  app.use('/api/*', requireAccount(accounts));
+  const secureSession = publicOrigin?.secure ?? false;
+  mountAuthRoutes(
+    app,
+    {
+      ...accounts,
+      setup: (credentials) => accounts.setup(credentials, (tx, accountId) => legacy.onFirstAdmin(accountId, tx)),
+    },
+    secureSession,
+  );
+  app.use('/api/*', requireAccount(accounts, secureSession));
   mountAccountRoutes(app, accounts);
 
   // Legacy import (旧数据导入) as the signed-in account sees it; only the owner of a failed run may retry or skip.
@@ -359,11 +371,13 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
 // How many max-size files one 上传批次 may hold before the request itself is refused unread.
 const UPLOAD_BATCH_MAX_FILES = 20;
 
-// Only the loopback names reach the app; anything else is another host's name pointed at this machine.
+// With no public origin configured only the loopback names reach the app; anything else is another host's name
+// pointed at this machine.
 const LOCAL_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const WRITE_METHODS: ReadonlySet<string> = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 export const FORBIDDEN_HOST_CODE = 'forbidden_host';
 const NOT_LOCAL = '这个应用只能从本机访问。';
+const NOT_THIS_ADDRESS = '这个应用只能从管理员配置的地址访问。';
 
 const hostnameOf = (value: string): string | null => {
   try {

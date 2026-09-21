@@ -26,16 +26,17 @@ export function accountOf(c: Context<AppEnv>): Account {
   return c.get('account');
 }
 
-// HttpOnly + SameSite=Strict; no Secure flag because the server binds 127.0.0.1 over plain HTTP (ADR-0018).
-function putCookie(c: Context, token: string) {
-  setCookie(c, SESSION_COOKIE, token, { httpOnly: true, sameSite: 'Strict', path: '/', maxAge: Math.floor(SESSION_TTL_MS / 1000) });
+// HttpOnly + SameSite=Strict. `Secure` follows the scheme the app is served under (`secureSession`): set under https,
+// absent under http, because a browser drops a Secure cookie sent over plain HTTP and nobody could stay signed in.
+function putCookie(c: Context, token: string, secure: boolean) {
+  setCookie(c, SESSION_COOKIE, token, { httpOnly: true, sameSite: 'Strict', path: '/', maxAge: Math.floor(SESSION_TTL_MS / 1000), ...(secure ? { secure: true } : {}) });
 }
 
 const unauthenticated = (c: Context) => c.json({ error: { code: UNAUTHENTICATED_CODE, message: AUTH_ERRORS.unauthenticated } }, 401);
 
 const sessionOf = (account: Account, mustChangePassword: boolean): Session => ({ status: mustChangePassword ? 'password_change_required' : 'signed_in', account });
 
-export function requireAccount(accounts: AccountService): MiddlewareHandler<AppEnv> {
+export function requireAccount(accounts: AccountService, secureSession: boolean): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const token = getCookie(c, SESSION_COOKIE);
     const found = await accounts.lookup(token);
@@ -43,7 +44,7 @@ export function requireAccount(accounts: AccountService): MiddlewareHandler<AppE
       if (token) deleteCookie(c, SESSION_COOKIE, { path: '/' });
       return unauthenticated(c);
     }
-    if (found.renewed && token) putCookie(c, token);
+    if (found.renewed && token) putCookie(c, token, secureSession);
     if (found.mustChangePassword && c.req.path !== CHANGE_PASSWORD_PATH) {
       return c.json({ error: { code: PASSWORD_CHANGE_REQUIRED_CODE, message: ADMIN_ERRORS.passwordChangeRequired } }, 403);
     }
@@ -54,9 +55,9 @@ export function requireAccount(accounts: AccountService): MiddlewareHandler<AppE
 
 const invalid = (c: Context, message: string | undefined) => c.json({ error: { code: 'invalid_input', message: message ?? '请求无效。' } }, 400);
 
-export function mountAuthRoutes(app: Hono<AppEnv>, accounts: AccountService): void {
+export function mountAuthRoutes(app: Hono<AppEnv>, accounts: AccountService, secureSession: boolean): void {
   const signedIn = (c: Context, result: SignedIn) => {
-    putCookie(c, result.token);
+    putCookie(c, result.token, secureSession);
     return c.json(sessionOf(result.account, result.mustChangePassword));
   };
 

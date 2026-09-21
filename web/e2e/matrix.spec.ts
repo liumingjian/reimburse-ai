@@ -38,7 +38,7 @@ const SEEDS: readonly Seed[] = [
 // 最后两个是 em-dash U+2014 与 en-dash U+2013。
 const FORBIDDEN = ['undefined', 'NaN', '[object', String.fromCharCode(0x2014), String.fromCharCode(0x2013)];
 
-const BANNER = '本地服务未运行，请在终端重新执行 baox';
+const BANNER = '连不上报销服务，请检查网络后重试；如果一直这样，请联系维护者';
 
 function expectedHeading(stage: TaskStage, page: TaskPage): string {
   if (pageAllowed(stage, page)) return PAGE_COPY[page].title;

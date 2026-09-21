@@ -4,7 +4,7 @@ import { expect, test, type Page } from '@playwright/test';
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 
-const BANNER = '本地服务未运行，请在终端重新执行 baox';
+const BANNER = '连不上报销服务，请检查网络后重试；如果一直这样，请联系维护者';
 const STALE = '任务已在别处推进';
 
 const banner = (page: Page) => page.getByRole('alert').filter({ hasText: BANNER });

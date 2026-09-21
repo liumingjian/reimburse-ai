@@ -8,6 +8,7 @@ import { createApp, type App } from '../app';
 import { ensureDataDir } from '../data-dir';
 import { openDatabase, type Db } from '../db/database';
 import { createInMemoryErpLease, type InMemoryErpLease } from '../erp-lease';
+import { parsePublicOrigin } from '../public-origin';
 import type { ParseExecutor } from '../parse/executor';
 import type { ProjectCatalog } from '../catalog/project-catalog';
 import type { ErpConfig } from '../erp/config';
@@ -73,12 +74,14 @@ export function testClient(app: Hono<AppEnv>, account: Account, cookie: string):
 // build the plan targets (the fake ERP's, when running the real executor on it).
 // `reconcileExecutor`: where 对账 jobs run (e.g. `runReconcileJob` on a fake ERP). `database` + `dataDir`: a file
 // database and data directory shared with an earlier server, to test a restart (default `:memory:` + a fresh dir).
-export async function createTestServer({ parser, projectCatalog, legacyHome = null, erpExecutor, reconcileExecutor, erpConfig, database = ':memory:', dataDir = tempDataDir() }: { parser?: ParseExecutor; projectCatalog?: ProjectCatalog; legacyHome?: string | null; erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor; erpConfig?: ErpConfig; database?: string; dataDir?: string } = {}): Promise<TestServer> {
+// `publicOrigin`: the address colleagues reach the app at (e.g. `http://10.250.0.222`); without it only 127.0.0.1 is
+// admitted, which is what every test but the deployment ones wants.
+export async function createTestServer({ parser, projectCatalog, legacyHome = null, erpExecutor, reconcileExecutor, erpConfig, publicOrigin, database = ':memory:', dataDir = tempDataDir() }: { parser?: ParseExecutor; projectCatalog?: ProjectCatalog; legacyHome?: string | null; erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor; erpConfig?: ErpConfig; publicOrigin?: string; database?: string; dataDir?: string } = {}): Promise<TestServer> {
   const db = await openDatabase(database);
   let offset = 0;
   const clock: TestClock = { now: () => new Date(Date.now() + offset), advance: (ms) => void (offset += ms) };
   const erpLease = createInMemoryErpLease();
-  const app = createApp({ db, dataDir, now: clock.now, erpLease, legacyHome, ...(parser ? { parser } : {}), ...(projectCatalog ? { projectCatalog } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(erpConfig ? { erpConfig } : {}) });
+  const app = createApp({ db, dataDir, now: clock.now, erpLease, legacyHome, publicOrigin: publicOrigin ? parsePublicOrigin(publicOrigin) : null, ...(parser ? { parser } : {}), ...(projectCatalog ? { projectCatalog } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(erpConfig ? { erpConfig } : {}) });
   let accounts = 0;
   let administrator: TestClient | null = null;
 

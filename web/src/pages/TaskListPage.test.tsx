@@ -89,7 +89,7 @@ describe('任务列表', () => {
     expect(screen.queryByText('2026-08 上海出差（产品评审）')).toBeNull();
     // 断开期间不能新建；等待恢复以加载指示呈现。
     expect((screen.getByRole('button', { name: '新建报销任务' }) as HTMLButtonElement).disabled).toBe(true);
-    expect(await screen.findByText('正在等待本地服务恢复，恢复后自动加载…')).toBeTruthy();
+    expect(await screen.findByText('正在等待报销服务恢复，恢复后自动加载…')).toBeTruthy();
     expect(await screen.findByText('2026-08 上海出差（产品评审）', {}, { timeout: 4000 })).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
     expect((screen.getByRole('button', { name: '新建报销任务' }) as HTMLButtonElement).disabled).toBe(false);

@@ -18,6 +18,8 @@ import { startServer } from './server';
 // checked live in the logged-in ERP tab of the dedicated Chromium. Serves `web/dist` same-origin when it has been
 // built. The `listening on` line is what e2e waits for.
 // `BAOX_HOME` overrides the legacy `~/.baox`, read (never written) once when the first admin is created.
+// `BAOX_PUBLIC_ORIGIN` is the address colleagues reach the app at through the reverse proxy, e.g.
+// `http://10.250.0.222`; unset serves 127.0.0.1 only (`public-origin.ts`).
 // ERP: `BAOX_ERP_ORIGIN`, `BAOX_ERP_BUILD`, `BAOX_ERP_FORM_ID` (`erp/config.ts`), `BAOX_CHROMIUM_CDP_PORT` (9333),
 // `BAOX_CHROME` (browser binary), `BAOX_ERP_CHROMIUM=off` (never start the dedicated browser).
 const DEFAULT_PORT = 4319;
@@ -42,6 +44,7 @@ export async function run({ erpExecutor, reconcileExecutor }: RunOverrides = {})
       erpExecutor: erpExecutor ?? cdpFillExecutor({ dataDir }),
       reconcileExecutor: reconcileExecutor ?? cdpReconcileExecutor(),
       erpConfig,
+      publicOrigin: process.env['BAOX_PUBLIC_ORIGIN'] ?? null,
     });
     console.log(`baox server listening on ${server.url} (data ${dataDir})`);
     const stop = () => void server.close().then(() => process.exit(0));

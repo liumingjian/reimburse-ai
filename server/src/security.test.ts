@@ -2,11 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { writeBlob } from './data-dir';
 import { api, sample } from './test/api';
-import { createTestServer, TEST_PASSWORD, type TestClient, type TestServer } from './test/harness';
+import { createTestServer, tempDataDir, TEST_PASSWORD, type TestClient, type TestServer } from './test/harness';
+import { PublicOriginRefusal } from './public-origin';
+import { startServer } from './server';
 
 // Regressions for the security findings of the #198 review. Each one is a way in that the code allowed before:
 // a stored content type that runs as this origin, a page on another domain driving the app through DNS rebinding,
 // two setups both becoming admin, and a password change that left the old sessions open.
+// The last two describes are the intranet deployment (#251): the same defences, now around a configured address
+// instead of 127.0.0.1.
 
 let server: TestServer;
 let alice: TestClient;
@@ -83,6 +87,69 @@ describe('only this machine may talk to the app', () => {
 
     const same = await server.app.request('http://127.0.0.1:4319/api/auth/setup', { method: 'POST', headers: { ...json, origin: 'http://127.0.0.1:4319' }, body });
     expect(same.status).toBe(200);
+  });
+});
+
+describe('the app served to colleagues at a configured address', () => {
+  // Phase 1 (docs/design/browser-extension-v1.md): Caddy on :80 in front of Node, which still binds 127.0.0.1.
+  const INTRANET = 'http://10.250.0.222';
+  const setupAt = (at: TestServer, origin: string, username: string) =>
+    at.app.request(`${origin}/api/auth/setup`, { method: 'POST', headers: { ...json, origin }, body: JSON.stringify({ username, password: TEST_PASSWORD }) });
+
+  let intranet: TestServer;
+  beforeEach(async () => {
+    intranet = await createTestServer({ publicOrigin: INTRANET });
+  });
+  afterEach(() => intranet.close());
+
+  it('answers for the configured address and refuses any other name pointed at this machine (DNS rebinding)', async () => {
+    expect((await intranet.app.request(`${INTRANET}/api/session`)).status).toBe(200);
+
+    const rebound = await intranet.app.request('http://evil.example.com/api/session');
+    expect(rebound.status).toBe(403);
+    expect(((await rebound.json()) as { error: { code: string } }).error.code).toBe('forbidden_host');
+    // The check is the configured address, not "anything that is not the attacker's": loopback is another address now.
+    expect((await intranet.app.request('http://127.0.0.1:4319/api/session')).status).toBe(403);
+  });
+
+  it('refuses a cross-origin write even when Host is the configured address', async () => {
+    const cross = await intranet.app.request(`${INTRANET}/api/auth/setup`, { method: 'POST', headers: { ...json, origin: 'http://evil.example.com' }, body: JSON.stringify({ username: 'mallory', password: TEST_PASSWORD }) });
+    expect(cross.status).toBe(403);
+    // Nothing was created: the instance still has no admin.
+    expect(await intranet.db.selectFrom('account').select('account_id').execute()).toEqual([]);
+
+    expect((await setupAt(intranet, INTRANET, 'alice')).status).toBe(200);
+  });
+
+  it('marks the session cookie Secure under https and leaves it unmarked under http, from the address alone', async () => {
+    const overHttp = await setupAt(intranet, INTRANET, 'alice');
+    expect(overHttp.status).toBe(200);
+    // A Secure cookie sent over plain HTTP is dropped, and nobody on the intranet could stay signed in.
+    expect(overHttp.headers.get('set-cookie')).not.toContain('Secure');
+
+    const https = await createTestServer({ publicOrigin: 'https://baox.example.com' });
+    try {
+      const overHttps = await setupAt(https, 'https://baox.example.com', 'alice');
+      expect(overHttps.status).toBe(200);
+      expect(overHttps.headers.get('set-cookie')).toContain('Secure');
+    } finally {
+      await https.close();
+    }
+  });
+});
+
+describe('starting the server at a configured address', () => {
+  it('refuses to start when plaintext would reach a public address, and starts for a private one', async () => {
+    await expect(startServer({ dataDir: tempDataDir(), port: 0, publicOrigin: 'http://203.0.113.9' })).rejects.toBeInstanceOf(PublicOriginRefusal);
+
+    const intranet = await startServer({ dataDir: tempDataDir(), port: 0, publicOrigin: 'http://10.250.0.222' });
+    // Node keeps binding 127.0.0.1; the configured address is where the reverse proxy sends colleagues.
+    expect(intranet.url.startsWith('http://127.0.0.1:')).toBe(true);
+    await intranet.close();
+
+    // Over https a public address is exactly what a domain deployment looks like.
+    const secure = await startServer({ dataDir: tempDataDir(), port: 0, publicOrigin: 'https://baox.example.com' });
+    await secure.close();
   });
 });
 
