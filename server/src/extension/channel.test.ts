@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   CHANNEL_CLOSE,
   CHANNEL_PING_METHOD,
+  EXTENSION_HEARTBEAT_MS,
   EXTENSION_MINIMUM_VERSION,
   EXTENSION_PAIR_PATH,
   EXTENSION_VERSION,
@@ -11,7 +12,8 @@ import {
   type ExtensionPairing,
 } from '@baox/contract';
 import { createTestServer, type TestClient, type TestServer } from '../test/harness';
-import type { ChannelSocket } from './channel';
+import { createExtensionChannel, type ChannelSocket, type ExtensionChannel } from './channel';
+import { createPairingService } from './pairing';
 
 // The channel seam (spec #246 Testing Decisions): a fake extension client against the real channel the app wires up,
 // with a real database behind it. No port is opened — `websocket.ts` is the only thing that knows about sockets, and
@@ -44,7 +46,7 @@ async function pair(client: TestClient): Promise<string> {
 }
 
 // The extension's end of the wire, minus the wire.
-function fakeExtension() {
+function fakeExtension(channel: ExtensionChannel = server.app.extensionChannel) {
   const heard: ChannelMessage[] = [];
   let closedWith: { code: number; reason: string } | null = null;
   const socket: ChannelSocket = {
@@ -53,7 +55,7 @@ function fakeExtension() {
       closedWith = { code, reason };
     },
   };
-  const session = server.app.extensionChannel.open(socket);
+  const session = channel.open(socket);
   return {
     heard,
     closedWith: () => closedWith,
@@ -206,5 +208,57 @@ describe('版本协商 at the HTTP seam', () => {
 
     expect(refused.status).toBe(403);
     expect(((await refused.json()) as { error: { code: string } }).error.code).toBe('version_too_old');
+  });
+});
+
+describe('a socket that never says who it is', () => {
+  // A scheduler fired by hand, so the deadline is exercised without waiting for it.
+  function manualTimers() {
+    const due: Array<{ run: () => void; ms: number }> = [];
+    return {
+      due,
+      schedule: (run: () => void, ms: number) => {
+        const entry = { run, ms };
+        due.push(entry);
+        return () => {
+          const at = due.indexOf(entry);
+          if (at >= 0) due.splice(at, 1);
+        };
+      },
+      elapse: () => {
+        for (const entry of due.splice(0)) entry.run();
+      },
+    };
+  }
+
+  // The same channel the app wires, over the same database, with only the timer swapped.
+  const channelWith = (timers: ReturnType<typeof manualTimers>) =>
+    createExtensionChannel({ pairings: createPairingService(server.db, server.clock.now), lease: server.erpLease, now: server.clock.now, schedule: timers.schedule });
+
+  it('is closed once the hello deadline passes, having been told nothing', () => {
+    const timers = manualTimers();
+    const channel = channelWith(timers);
+    const extension = fakeExtension(channel);
+
+    expect(timers.due.map((entry) => entry.ms)).toEqual([EXTENSION_HEARTBEAT_MS]);
+    timers.elapse();
+
+    expect(extension.closedWith()).toEqual({ code: 1008, reason: 'hello_timeout' });
+    expect(extension.heard).toEqual([]);
+    channel.close();
+  });
+
+  it('leaves a socket that said a valid hello in time alone', async () => {
+    const token = await pair(alice);
+    const timers = manualTimers();
+    const channel = channelWith(timers);
+    const extension = fakeExtension(channel);
+
+    await extension.say({ type: 'hello', token, version: EXTENSION_VERSION });
+    timers.elapse();
+
+    expect(extension.closedWith()).toBeNull();
+    expect(channel.connected(alice.account.accountId)).toBe(true);
+    channel.close();
   });
 });

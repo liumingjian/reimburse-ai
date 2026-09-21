@@ -72,6 +72,14 @@ export type ExtensionChannelOptions = {
   onEvent?: ChannelEventHandler;
   // A socket that has said nothing for this long is gone, whatever TCP still believes. Three missed heartbeats.
   silenceMs?: number;
+  // How long a fresh socket has to say `hello`. The silence sweep only sees sockets that already said who they are,
+  // so without this a socket that upgrades and then says nothing would be held open for ever — and anything that can
+  // reach the host could hold as many as it liked, on a box memory-capped because it shares with the databases.
+  // One heartbeat interval: an honest extension sends `hello` the moment the socket opens, so it needs one round
+  // trip, and fifteen seconds covers any VPN. One that somehow misses it is closed without a refusal and redials.
+  helloDeadlineMs?: number;
+  // The timer seam: runs `run` after `ms` and returns what cancels it. Tests pass one they fire by hand.
+  schedule?: (run: () => void, ms: number) => () => void;
 };
 
 export type ExtensionChannel = {
@@ -99,11 +107,20 @@ type Connection = {
 
 // 1001 'going away': closed for a reason that is not the extension's doing, so it may reconnect.
 const GOING_AWAY = 1001;
+// 1008 'policy violation': the socket never said who it was. No `refused` frame, so an extension that was merely
+// slow redials instead of giving up.
+const POLICY_VIOLATION = 1008;
+
+const realTimer = (run: () => void, ms: number) => {
+  const timer = setTimeout(run, ms);
+  timer.unref?.();
+  return () => clearTimeout(timer);
+};
 
 const OFFLINE_CODE = 'extension_offline';
 const LOST_CODE = 'extension_connection_lost';
 
-export function createExtensionChannel({ pairings, lease, now, minimumVersion = EXTENSION_MINIMUM_VERSION, onRequest, onEvent, silenceMs = EXTENSION_HEARTBEAT_MS * 3 }: ExtensionChannelOptions): ExtensionChannel {
+export function createExtensionChannel({ pairings, lease, now, minimumVersion = EXTENSION_MINIMUM_VERSION, onRequest, onEvent, silenceMs = EXTENSION_HEARTBEAT_MS * 3, helloDeadlineMs = EXTENSION_HEARTBEAT_MS, schedule = realTimer }: ExtensionChannelOptions): ExtensionChannel {
   const byAccount = new Map<string, Connection>();
   let nextId = 0;
 
@@ -144,6 +161,16 @@ export function createExtensionChannel({ pairings, lease, now, minimumVersion = 
   return {
     open(socket) {
       let connection: Connection | null = null;
+      // Cancelled by the first frame, whatever it is: anything but a valid `hello` is refused and closed on the spot,
+      // so the deadline only ever catches a socket that says nothing at all.
+      let cancelDeadline: (() => void) | null = schedule(() => {
+        cancelDeadline = null;
+        socket.close(POLICY_VIOLATION, 'hello_timeout');
+      }, helloDeadlineMs);
+      const stopDeadline = () => {
+        cancelDeadline?.();
+        cancelDeadline = null;
+      };
 
       async function handle(message: ChannelMessage): Promise<void> {
         if (connection === null) {
@@ -207,6 +234,7 @@ export function createExtensionChannel({ pairings, lease, now, minimumVersion = 
 
       return {
         async message(raw) {
+          stopDeadline();
           const parsed = ChannelMessageSchema.safeParse(((): unknown => {
             try {
               return JSON.parse(raw) as unknown;
@@ -221,6 +249,7 @@ export function createExtensionChannel({ pairings, lease, now, minimumVersion = 
           await handle(parsed.data);
         },
         closed() {
+          stopDeadline();
           if (connection) drop(connection);
         },
       };

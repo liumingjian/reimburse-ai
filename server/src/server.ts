@@ -51,7 +51,7 @@ export async function startServer({ dataDir, port, webDist = null, projectCatalo
   });
   // The 浏览器扩展 channel shares this listening socket: Hono answers the requests, `ws` answers the upgrades
   // (`extension/websocket.ts`). Attached after listening so nothing can upgrade before the app exists.
-  const detachExtensionChannel = attachExtensionChannel(server, app.extensionChannel);
+  const detachExtensionChannel = attachExtensionChannel(server, app.extensionChannel, served);
   return {
     url: `http://${HOST}:${info.port}`,
     port: info.port,
