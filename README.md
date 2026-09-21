@@ -16,3 +16,7 @@ pnpm test:e2e     # Playwright：mock 与真实服务端两个项目
 ```
 
 Agent 相关的约定见 [AGENTS.md](AGENTS.md)，那是唯一的真源。
+
+## 部署
+
+内网主机（第一阶段，`http://10.250.0.222`）的部署与升级步骤见 [docs/deployment/intranet-phase-1.md](docs/deployment/intranet-phase-1.md)。
