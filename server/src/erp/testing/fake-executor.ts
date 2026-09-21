@@ -5,7 +5,7 @@
 
 import type { FillExecutor } from '../fill-jobs';
 import type { ReconcileExecutor } from '../reconcile-job';
-import type { ErpAccount, ExecutorChannel, FillPlan, Mutation, ResultEvent, ResultStatus } from '../protocol';
+import type { ErpAccount, ExecutorChannel, FillPlan, Mutation, ResultEvent, ResultStatus } from '@baox/erp-executor/protocol';
 
 export type Script = (plan: FillPlan, channel: ExecutorChannel) => Promise<ResultEvent>;
 

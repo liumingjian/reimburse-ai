@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createFakeErp } from '../erp/executor/testing/fake-erp';
+import { createFakeErp } from '@baox/erp-executor/testing/fake-erp';
 import { ERP_ORIGIN, fakeErpOptions } from '../erp/testing/scenario';
 import { liveProjectCatalog } from './live-catalog';
 

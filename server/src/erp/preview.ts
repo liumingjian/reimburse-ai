@@ -4,9 +4,9 @@
 // It reads no files, opens no browser and never saves.
 
 import { createHash } from 'node:crypto';
-import { gateProblems } from './executor/draft-flow';
-import { validInvoiceTypeSource, writableInvoiceType } from './invoice-type';
-import { erpWritePreviewDigest, fieldPlanOf, type ApprovedPreview, type FreshGate, type PreviewLine, type ReceiptBinding } from './protocol';
+import { gateProblems } from '@baox/erp-executor/draft-flow';
+import { validInvoiceTypeSource, writableInvoiceType } from '@baox/erp-executor/invoice-type';
+import { erpWritePreviewDigest, fieldPlanOf, type ApprovedPreview, type FreshGate, type PreviewLine, type ReceiptBinding } from '@baox/erp-executor/protocol';
 
 const INVOICE_IDENTITY = /^einvoice-20:(\d{20})$/;
 const SAFE_RECEIPT_NUMBER = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;

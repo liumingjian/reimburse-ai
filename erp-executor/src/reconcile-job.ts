@@ -4,7 +4,7 @@
 // readReconciliation (collection half); the judgement is the server's (server/src/erp/reconcile.ts).
 // The lazily rendered detail grid is not opened: opening it is a page side effect, and reconcile changes nothing.
 
-import { ReconcilePlanSchema, type ExecutorChannel, type ResultEvent, type ResultStatus } from '../protocol';
+import { ReconcilePlanSchema, type ExecutorChannel, type ResultEvent, type ResultStatus } from './protocol';
 import { evalIn, type CdpSession } from './cdp';
 import type { ChromiumPage } from './chromium';
 import type { BrowserPort } from './job';

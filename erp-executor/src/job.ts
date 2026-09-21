@@ -15,7 +15,7 @@ import { extname, join } from 'node:path';
 import {
   FillPlanSchema, type Approval, type ApprovedPreview, type BlobRef, type BlobSource, type Compatibility, type ErpAccount,
   type ExecutorChannel, type Mutation, type Preconditions, type ReadbackStage, type ResultEvent, type ResultStatus, type FreshGate,
-} from '../protocol';
+} from './protocol';
 import { evalIn, type CdpSession } from './cdp';
 import { checkCatalog } from './catalog';
 import { ExecutorError, type ChromiumPage } from './chromium';

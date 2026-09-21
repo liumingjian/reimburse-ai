@@ -3,8 +3,8 @@
 //
 // It exists because `reset-erp-tabs.ts` once reported a tab closed that was still there, and the first thing that
 // question needs is the strip as the page has it, not as a text filter summarised it.
-import { connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
+import { connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
 
 const VIS = `(n) => { const b = n.getBoundingClientRect(); const s = getComputedStyle(n); return b.width > 0 && b.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; }`;
 

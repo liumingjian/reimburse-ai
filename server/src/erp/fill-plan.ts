@@ -8,12 +8,12 @@
 import type { Line, MaterialKind } from '@baox/contract';
 import type { Claim } from '../inventory-view';
 import type { ErpConfig } from './config';
-import { isSafeKey } from './executor/catalog';
-import { erpInvoiceTypeOf } from './invoice-type';
+import { isSafeKey } from '@baox/erp-executor/catalog';
+import { erpInvoiceTypeOf } from '@baox/erp-executor/invoice-type';
 import type { ErpJudge } from './jobs';
 import { createDraftJudge, type DraftJudgeInputs } from './judge';
 import { previewLinesDigest } from './preview';
-import { PROTOCOL_VERSION, type ApprovedPreview, type FillPlan, type Identity, type ReadbackVerdict } from './protocol';
+import { PROTOCOL_VERSION, type ApprovedPreview, type FillPlan, type Identity, type ReadbackVerdict } from '@baox/erp-executor/protocol';
 import type { ReadbackInvoice } from './readback';
 
 // The ERP 发票类型 enum, the face-kind mapping and the default for an undetermined face kind live in

@@ -4,9 +4,9 @@
 // this exists so an unattended QA round can recover a session that lapsed mid-round. Credentials come from
 // ~/.baox-erp-live.env; the password never reaches stdout. Presses no toolbar command and opens no bill.
 //   set -a; . ~/.baox-erp-live.env; set +a; pnpm --filter @baox/server exec tsx scripts/probe-login.ts
-import { connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { sleep } from '../src/erp/executor/pace';
+import { connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { sleep } from '@baox/erp-executor/pace';
 
 const account = process.env['BAOX_ERP_TEST_ACCOUNT']?.trim() ?? '';
 const password = process.env['BAOX_ERP_TEST_PASSWORD']?.trim() ?? '';

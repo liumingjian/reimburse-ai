@@ -51,7 +51,7 @@ import type { ErpLease } from './erp-lease';
 import type { ErpConfig } from './erp/config';
 import { buildFillJob, type FrozenJob } from './erp/fill-plan';
 import { newJobId, type FillRun, type FillTrigger } from './erp/fill-jobs';
-import { PROTOCOL_VERSION } from './erp/protocol';
+import { PROTOCOL_VERSION } from '@baox/erp-executor/protocol';
 import type { ReconcileRun } from './erp/reconcile-jobs';
 import { catalogView, erpView, loadErp, readbackView, reconcileView, type ErpRecord } from './erp/fill-state';
 import { loadPrintFacts, printFileShas, printView, sheetState, type PrintFacts } from './print/facts';

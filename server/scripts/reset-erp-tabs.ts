@@ -4,17 +4,17 @@
 // save; 是 is never clicked, and no 单据 is deleted.
 //
 // The how — the measured shape of the strip, the 是否保存 bar, and the order the two have to be answered in —
-// lives in `src/erp/executor/tabs.ts`, where `tabs.test.ts` drives it. This file is the CLI: connect, clear the
+// lives in `erp-executor/src/tabs.ts`, where `tabs.test.ts` drives it. This file is the CLI: connect, clear the
 // dialogs, close each form tab, report what was VERIFIED and set an exit code.
 //
 // 修改 and 查看 tabs are closed under the same discipline. They matter more, not less: a 修改 tab sits on a REAL
 // saved 费用报销单, one stray click away from a 保存 this program is never allowed to make. Closing it writes
 // nothing, and the bill is left exactly as the employee saved it.
-import { clickAt, connect, enableFocusEmulation, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { closeInvoiceAssistant, type WritePage } from '../src/erp/executor/steps';
-import { sleep } from '../src/erp/executor/pace';
-import { closeFormTab, dialogsSnippet, dismissPoint, tabActions, tabsSnippet, type Point, type Tab } from '../src/erp/executor/tabs';
+import { clickAt, connect, enableFocusEmulation, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { closeInvoiceAssistant, type WritePage } from '@baox/erp-executor/steps';
+import { sleep } from '@baox/erp-executor/pace';
+import { closeFormTab, dialogsSnippet, dismissPoint, tabActions, tabsSnippet, type Point, type Tab } from '@baox/erp-executor/tabs';
 
 const erp = (await targets(cdpPortOf())).find((t) => t.type === 'page' && String(t.url).includes('erp.antute.com.cn'));
 if (!erp) { console.error('no ERP page open'); process.exit(1); }

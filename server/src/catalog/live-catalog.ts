@@ -1,8 +1,8 @@
-import { PROJECT_FORM, queryRows } from '../erp/executor/catalog';
-import { evalIn, type CdpSession } from '../erp/executor/cdp';
-import type { ChromiumPage } from '../erp/executor/chromium';
-import type { BrowserPort } from '../erp/executor/job';
-import { probeIdentity, sameOrigin } from '../erp/executor/probe';
+import { PROJECT_FORM, queryRows } from '@baox/erp-executor/catalog';
+import { evalIn, type CdpSession } from '@baox/erp-executor/cdp';
+import type { ChromiumPage } from '@baox/erp-executor/chromium';
+import type { BrowserPort } from '@baox/erp-executor/job';
+import { probeIdentity, sameOrigin } from '@baox/erp-executor/probe';
 import { isSafeProjectNumber, UNAVAILABLE_MESSAGE, verdictOf, type CatalogLookup, type ProjectCatalog } from './project-catalog';
 
 // The live project catalog (ADR-0008): Kingdee's own read-only query service `ExecuteBillQuery` on `BJYC_ProJect`

@@ -1,9 +1,9 @@
 // Throwaway read-only probe: why does `probeIdentity` read no user name on a hand-logged-in ERP console?
 // It evaluates read expressions only; it never navigates, clicks or calls a business service.
 // Identity strings are masked here: the probe reports structure, not the person or the account.
-import { connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf, safeUrl } from '../src/erp/executor/chromium';
-import { READ_ONLY_SNIPPET, identityFromObservation } from '../src/erp/executor/probe';
+import { connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf, safeUrl } from '@baox/erp-executor/chromium';
+import { READ_ONLY_SNIPPET, identityFromObservation } from '@baox/erp-executor/probe';
 
 const SNIPPET = `(() => {
   const mask = (v) => { if (v === null || v === undefined) return null; const s = String(v); if (!s.length) return '<empty>'; return s.length <= 2 ? '*'.repeat(s.length) : s[0] + '*'.repeat(Math.max(1, s.length - 2)) + s[s.length - 1]; };

@@ -2,7 +2,7 @@
 // `linesDigest` (50931a3:kernel/src/selection.mjs) is the same function as `previewLinesDigest`.
 import { describe, expect, it } from 'vitest';
 import { buildErpWritePreview, previewLinesDigest as linesDigest } from './preview';
-import { approvalCovers, erpWritePreviewDigest, erpWritePreviewDigest as writePreviewDigest } from './protocol';
+import { approvalCovers, erpWritePreviewDigest, erpWritePreviewDigest as writePreviewDigest } from '@baox/erp-executor/protocol';
 
 const identity = { account: 'luo.liu', tenant: 'tenant-a' };
 const projectNames: Record<string, string> = {

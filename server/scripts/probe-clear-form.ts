@@ -5,9 +5,9 @@
 // nothing, and presses no toolbar command — the only interaction is a navigation and, if the ERP asks whether to
 // leave, accepting that prompt.
 //   pnpm --filter @baox/server exec tsx scripts/probe-clear-form.ts
-import { connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { sleep } from '../src/erp/executor/pace';
+import { connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { sleep } from '@baox/erp-executor/pace';
 
 // What the page is showing: the ERP's own header caption, and whether a 费用明细 grid is present at all.
 const STATE = `(() => {

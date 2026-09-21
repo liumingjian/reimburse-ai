@@ -10,8 +10,8 @@
 // upload, so each run costs a fresh 费用报销单-新增 tab plus `reset-erp-tabs.ts`.
 //
 // Invoice numbers (发票号码) are masked: the probe reports structure, not the documents.
-import { connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
+import { connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
 
 const SNIPPET = `(() => {
   const vis = (n) => { const b = n.getBoundingClientRect(); const s = getComputedStyle(n);

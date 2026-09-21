@@ -5,7 +5,7 @@
 
 import type { ErpJudge } from './jobs';
 import { buildErpDraftPreview, type PreviewInput } from './preview';
-import type { ApprovedPreview, FreshGate, ReadbackVerdict } from './protocol';
+import type { ApprovedPreview, FreshGate, ReadbackVerdict } from '@baox/erp-executor/protocol';
 import { buildReceiptReadback, judgeReadings, type ReadbackInvoice } from './readback';
 
 export type DraftJudgeInputs = Omit<PreviewInput, 'receiptCheck' | 'receiptReadback' | 'freshGate'> & { invoices: ReadbackInvoice[] };

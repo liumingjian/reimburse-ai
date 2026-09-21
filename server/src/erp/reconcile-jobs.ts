@@ -8,7 +8,7 @@ import type { Db } from '../db/database';
 import type { ErpLease } from '../erp-lease';
 import { ensureResult, type RecordFacts } from './fill-jobs';
 import { writeEvent } from './jobs';
-import { ExecutorEventSchema, type ExecutorChannel, type ExecutorEvent, type ReconcilePlan, type ResultEvent } from './protocol';
+import { ExecutorEventSchema, type ExecutorChannel, type ExecutorEvent, type ReconcilePlan, type ResultEvent } from '@baox/erp-executor/protocol';
 import type { ReconcileExecutor } from './reconcile-job';
 
 export type ReconcileRun = { jobId: string; accountId: string; taskId: string; plan: ReconcilePlan };

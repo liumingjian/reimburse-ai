@@ -4,8 +4,8 @@
 // formReadbackToken, completePreviewProblems). It never creates an approval.
 // Form actions are injected; `readCurrent` returns raw readings plus the server's strict verdict (`taskMatch`).
 
-import { approvalCovers, erpWritePreviewDigest, fieldPlanOf, type Approval, type ApprovedPreview, type FreshGate } from '../protocol';
-import { validInvoiceTypeSource, writableInvoiceType } from '../invoice-type';
+import { approvalCovers, erpWritePreviewDigest, fieldPlanOf, type Approval, type ApprovedPreview, type FreshGate } from './protocol';
+import { validInvoiceTypeSource, writableInvoiceType } from './invoice-type';
 import { sleep } from './pace';
 
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;

@@ -6,11 +6,11 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTaskService } from '../tasks';
 import { createTestServer, type TestServer } from '../test/harness';
-import { runFillJob } from './executor/job';
-import { createFakeErp } from './executor/testing/fake-erp';
+import { runFillJob } from '@baox/erp-executor/job';
+import { createFakeErp } from '@baox/erp-executor/testing/fake-erp';
 import { createErpJobs, serverChannel } from './jobs';
 import { createDraftJudge } from './judge';
-import type { ExecutorChannel, ExecutorEvent } from './protocol';
+import type { ExecutorChannel, ExecutorEvent } from '@baox/erp-executor/protocol';
 import { blobSource, FAST_PACE, fakeErpOptions, fillPlan, judgeInputs, withoutLayout } from './testing/scenario';
 
 const golden = JSON.parse(readFileSync(new URL('./testing/kernel-parity.golden.json', import.meta.url), 'utf8'));

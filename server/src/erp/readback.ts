@@ -2,8 +2,8 @@
 // Origin: 50931a3:kernel/src/erp-write-readback.mjs (buildReceiptReadback) and 50931a3:kernel/src/erpreconcile.mjs
 // (matchTaskLines, the strict per-line comparison). Inputs, codes and messages are kept.
 
-import { validInvoiceTypeSource, writableInvoiceType } from './invoice-type';
-import type { Readings } from './protocol';
+import { validInvoiceTypeSource, writableInvoiceType } from '@baox/erp-executor/invoice-type';
+import type { Readings } from '@baox/erp-executor/protocol';
 
 const MONEY = /^\d+(?:\.\d{1,2})?$/;
 const SAFE_RECEIPT = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;

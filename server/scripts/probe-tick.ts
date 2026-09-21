@@ -10,8 +10,8 @@
 // unticks. It never touches 发票导入单据, 继续采集, 保存, 提交, 审核, 下推, 付款, 删除发票, 申请解绑 or 清空列表.
 //
 // Pass `--dry` to print the plan — which row, which switcher — and exit without clicking anything.
-import { clickAt, connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
+import { clickAt, connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
 
 const dry = process.argv.includes('--dry');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

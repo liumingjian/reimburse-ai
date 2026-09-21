@@ -8,7 +8,7 @@ import type { Db } from '../db/database';
 import type { ErpHandOffTable, ErpJobTable, TaskLifecycle } from '../db/schema';
 import type { ErpFacts, ErpPhase } from '../projection';
 import type { FrozenJob } from './fill-plan';
-import { ExecutorEventSchema, type ApprovedPreview, type ErpAccount, type ExecutorEvent, type Preconditions, type ReadbackEvent, type ResultEvent } from './protocol';
+import { ExecutorEventSchema, type ApprovedPreview, type ErpAccount, type ExecutorEvent, type Preconditions, type ReadbackEvent, type ResultEvent } from '@baox/erp-executor/protocol';
 import { noFormOpen, type ReconcileVerdict } from './reconcile';
 import { reconcileFromEvents } from './reconcile-job';
 
@@ -198,14 +198,14 @@ function stepsOf(record: ErpRecord): ErpStep[] {
   return steps;
 }
 
-// The executor's code for "报销信息核对 could not read the catalog" (`executor/job.ts`). Nothing was written and
+// The executor's code for "报销信息核对 could not read the catalog" (`erp-executor/src/job.ts`). Nothing was written and
 // nothing about the claim is wrong, so it gets its own sentence rather than the generic abort one.
 const CATALOG_QUERY_FAILED = 'catalog_query_failed';
 const CATALOG_QUERY_FAILED_REASON = '没能在报销系统里查到项目与费用项目，报销信息核对没有做完。报销系统没有被改动，明细也不用改：等报销系统能正常查询后再去报销。原因：';
 
 /**
  * The executor's code for 「发票全部导入成功，但表单上盖着关不掉的窗口，费用明细没有开始填」
- * (`executor/job.ts`). The phase is `unknown` because a durable attempt exists (ADR-0016) and the 费用报销单 is
+ * (`erp-executor/src/job.ts`). The phase is `unknown` because a durable attempt exists (ADR-0016) and the 费用报销单 is
  * not finished — but the import itself is NOT in doubt: it was judged on 处理结果 and confirmed by the
  * `after_import` read-back before this stop. Telling that employee 「写入报销系统的结果不确定」 would be false
  * about the part that is certain and useless about the part that is not, so this code keeps the executor's own

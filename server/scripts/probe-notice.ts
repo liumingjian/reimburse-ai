@@ -8,10 +8,10 @@
 // The assistant only exists while a run has it open, so this WAITS for the piaozone target to appear rather than
 // requiring one. It clicks nothing, uploads nothing and imports nothing.
 //   pnpm --filter @baox/server exec tsx scripts/probe-notice.ts [waitSeconds]
-import { autoAttach, connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { sleep } from '../src/erp/executor/pace';
-import { DISMISSALS, dismissalPoint } from '../src/erp/executor/notices';
+import { autoAttach, connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { sleep } from '@baox/erp-executor/pace';
+import { DISMISSALS, dismissalPoint } from '@baox/erp-executor/notices';
 
 const NOTICE = '温馨提示';
 const SNIPPET = `(() => {

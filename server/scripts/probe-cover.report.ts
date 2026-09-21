@@ -1,7 +1,7 @@
 // Measure why the 收票信息 section anchor was unreachable: window size, the anchor's rect, and what sits on it.
 //   pnpm --filter @baox/server exec tsx scripts/probe-cover.report.ts
-import { connect, evalIn, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
+import { connect, evalIn, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
 
 const SNIPPET = `(() => {
   const vis = (n) => { const b = n.getBoundingClientRect(); return b.width > 0 && b.height > 0; };

@@ -6,7 +6,7 @@
 // Every reading carries its own `readable`: "empty" is a conclusion, "unreadable" is a refusal to conclude.
 
 import { RECONCILE_ACTIONS, RECONCILE_BUCKETS, type ReconcileBucket } from '@baox/contract';
-import type { Readings } from './protocol';
+import type { Readings } from '@baox/erp-executor/protocol';
 import { matchTaskLines, toCents } from './readback';
 
 export { toCents };
@@ -52,7 +52,7 @@ export function requiredDetailCells(grid: GridLike): RequiredCells {
 }
 
 /**
- * The reader's words for "there is no 费用报销单 on the page at all" (`executor/reader.ts` formTabs, and the
+ * The reader's words for "there is no 费用报销单 on the page at all" (`erp-executor/src/reader.ts` formTabs, and the
  * `noFormOpen` fake). A page with no form open is a normal state — the employee closed the tab, or the browser was
  * cleaned — and it is not the same unreadable as two forms open at once, which is why the disposition layer needs to
  * tell them apart. Pinned by a test that runs the real reader over a zero-tab page.

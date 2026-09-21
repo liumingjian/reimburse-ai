@@ -2,7 +2,7 @@
 // (do not merge, generate expense details), actually produces in the 费用明细 grid.
 //
 // Why it exists: baox imports with 不生成费用明细, and that mode leaves 收票单号 empty on every detail row, while
-// the strict read-back keys detail rows BY 收票单号 (`src/erp/executor/draft-flow.ts` detailRowsForFill,
+// the strict read-back keys detail rows BY 收票单号 (`erp-executor/src/draft-flow.ts` detailRowsForFill,
 // matchReceiptRows). 不合并生成费用明细 has never been measured. This script measures it and prints the grids; it
 // changes no product behaviour and decides nothing.
 //
@@ -14,11 +14,11 @@
 //   pnpm --filter @baox/server exec tsx scripts/probe-import-mode.ts
 // It wants a tab strip with no 费用报销单 tab on it (run scripts/reset-erp-tabs.ts first).
 
-import { autoAttach, connect, enableFocusEmulation, targets } from '../src/erp/executor/cdp';
-import { cdpPortOf } from '../src/erp/executor/chromium';
-import { readGridByColumn } from '../src/erp/executor/erpform';
-import { importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type WritePage } from '../src/erp/executor/steps';
-import { DETAIL_COLUMN, RECEIPTS_COLUMN, readForm } from '../src/erp/executor/reader';
+import { autoAttach, connect, enableFocusEmulation, targets } from '@baox/erp-executor/cdp';
+import { cdpPortOf } from '@baox/erp-executor/chromium';
+import { readGridByColumn } from '@baox/erp-executor/erpform';
+import { importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type WritePage } from '@baox/erp-executor/steps';
+import { DETAIL_COLUMN, RECEIPTS_COLUMN, readForm } from '@baox/erp-executor/reader';
 
 const MODE_ID = process.env['PROBE_IMPORT_MODE'] ?? 'tbMappingFillEntry';
 

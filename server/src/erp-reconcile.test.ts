@@ -2,11 +2,11 @@ import { HUMAN_REVIEW_NOTICE, OCCUPANCY_COPY, TaskListSchema, type TaskSnapshot 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fixtureCatalog } from './catalog/project-catalog';
 import { dataDirBlobs } from './erp/cdp-executor';
-import { runFillJob } from './erp/executor/job';
-import { runReconcileJob } from './erp/executor/reconcile-job';
-import { createFakeErp, type FakeErp, type FakeErpOptions, type FakeReceiptLedger } from './erp/executor/testing/fake-erp';
+import { runFillJob } from '@baox/erp-executor/job';
+import { runReconcileJob } from '@baox/erp-executor/reconcile-job';
+import { createFakeErp, type FakeErp, type FakeErpOptions, type FakeReceiptLedger } from '@baox/erp-executor/testing/fake-erp';
 import type { FillExecutor } from './erp/fill-jobs';
-import type { ExecutorChannel, ExecutorEvent, FillPlan, Mutation, ResultEvent } from './erp/protocol';
+import type { ExecutorChannel, ExecutorEvent, FillPlan, Mutation, ResultEvent } from '@baox/erp-executor/protocol';
 import type { ReconcileExecutor } from './erp/reconcile-job';
 import { COMPATIBILITY, ERP_ORIGIN, FAST_PACE, fakeErpOptions } from './erp/testing/scenario';
 import { handedOver, noFormOpen, scripted, TEST_ERP_ACCOUNT } from './erp/testing/fake-executor';
