@@ -182,6 +182,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   const { lines } = snapshot;
 
   const [purpose, setPurpose] = useState(assignment.purpose ?? '');
+  const [purposeTouched, setPurposeTouched] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
   const [query, setQuery] = useState('');
@@ -219,6 +220,8 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   // 提交按钮只看表单是否填完（每条明细都已归属、事由非空）：这是 #105 要求的输入校验，不是业务判定；
   // 项目能否用、归属是否成立仍由服务端在提交时判定。
   const complete = assignedCount === lines.length && lines.length > 0 && purpose.trim().length > 0;
+  const unchanged = submitted && purpose.trim() === assignment.purpose && assignment.working.length === assignment.assignments.length && assignment.working.every((item) =>
+    assignment.assignments.some((saved) => saved.lineId === item.lineId && saved.projectNumber === item.projectNumber && saved.projectSource === item.projectSource));
 
   const toggle = (lineIds: readonly string[], on: boolean) => {
     setLastAssigned(null);
@@ -270,6 +273,12 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   const cancelConflict = useCallback(() => setConflict(null), []);
 
   const submit = async () => {
+    setPurposeTouched(true);
+    if (!purpose.trim()) return;
+    if (unchanged) {
+      navigate(taskHash(taskId, 'review'));
+      return;
+    }
     const projects: Record<string, string> = {};
     for (const item of assignment.working) projects[item.lineId] = item.projectNumber;
     const outcome = await run((adapter) => adapter.submitProjectAssignment(taskId, { purpose: purpose.trim(), projects }, snapshot.step.stepToken));
@@ -324,13 +333,17 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
           <TextInput
             id="purpose"
             className="app-purpose"
-            labelText="报销事由"
+            labelText="报销事由（必填）"
+            aria-label="报销事由"
+            invalid={purposeTouched && !purpose.trim()}
+            invalidText="请填写报销事由，不能只输入空格。"
             value={purpose}
             maxLength={PURPOSE_MAX_LENGTH}
             required
             disabled={locked}
             placeholder="如：上海产品评审出差"
-            onChange={(event) => setPurpose(event.target.value)}
+            onChange={(event) => { setPurpose(event.target.value); setPurposeTouched(true); }}
+            onBlur={() => setPurposeTouched(true)}
           />
           {/* 常驻城市在新建任务时确认，这里只读；做成带标签的只读字段，与报销事由上下对齐。 */}
           <TextInput id="home-city" className="app-home-city" labelText="常驻城市" value={assignment.homeCity ?? '未确认'} readOnly />
@@ -537,7 +550,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
         caption={!locked && !complete ? PROJECT_ASSIGNMENT_ERRORS.incomplete : null}
         actions={
           <Button disabled={!canAct || busy || !complete || conflict !== null} onClick={() => void submit()}>
-            确认项目归属
+            {unchanged ? '继续' : '确认项目归属'}
           </Button>
         }
         error={error}

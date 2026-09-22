@@ -26,6 +26,8 @@ export const TaskListItemSchema = z.object({
   stage: TaskStageSchema,
   period: TaskPeriodSchema.nullable(),
   grossTotal: AmountSchema.nullable(),
+  // Derived from the current detail and confirmation facts; older clients may omit it.
+  summaryStatus: z.enum(['unavailable', 'pending', 'confirmed']).optional(),
   erpDraftNo: z.string().min(1).nullable(),
   pendingCount: z.number().int().nonnegative(),
   erpOutcome: TaskErpOutcomeSchema,
