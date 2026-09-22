@@ -31,7 +31,7 @@ const selection = () => screen.getByTestId('assign-selection').textContent;
 const assignTo = (number: string) => fireEvent.click(target(number));
 const pick = (no: number) => fireEvent.click(screen.getByRole('checkbox', { name: `选择明细 No.${no}` }));
 const projectOf = (no: number) => screen.getByTestId(`project-of-${no}`).textContent;
-const submitButton = () => screen.getByRole('button', { name: '确认项目归属' }) as HTMLButtonElement;
+const submitButton = () => screen.getByRole('button', { name: /^(确认项目归属|继续)$/ }) as HTMLButtonElement;
 const summary = () => screen.getByTestId('assign-summary').textContent;
 const purpose = () => screen.getByLabelText('报销事由');
 const settled = async (no: number, text: string) => waitFor(() => expect(projectOf(no)).toBe(text));

@@ -55,11 +55,11 @@ test('界面上不出现内核禁用词（ERP、候选等）', async ({ page }) 
 test('阶段名用内核 10 阶段：只出现在任务列表徽标上，步骤条不重复', async ({ page }) => {
   await page.goto(open('?seed=project', '#/tasks'));
   await expect(page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByText('6/10 项目归属')).toBeVisible();
-  await expect(page.getByRole('row', { name: /2026-06 北京培训/ }).getByText('10/10 草稿交接')).toBeVisible();
+  await expect(page.getByRole('row', { name: /2026-06 北京培训/ }).getByText('10/10 单据交接')).toBeVisible();
   await page.goto(open('?seed=review', '#/tasks'));
   await expect(page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByText('8/10 报销材料准备')).toBeVisible();
   await page.goto(open('?seed=erp', '#/tasks'));
-  await expect(page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByText('9/10 保存报销草稿')).toBeVisible();
+  await expect(page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByText('9/10 填写报销单')).toBeVisible();
   await page.goto(open('?seed=review', '#/task/T1/review'));
   await expect(page.getByRole('list', { name: '流程阶段' })).toBeVisible();
   await expect(page.getByRole('region', { name: '任务进度' })).not.toContainText('/10');
@@ -94,6 +94,7 @@ test('完全重置：设置页二次确认后只清空当前账号的数据，�
   await page.goto(open('', '#/tasks'));
   await page.getByRole('navigation', { name: '全局' }).getByRole('link', { name: '设置' }).click();
   await expect(page).toHaveURL(/#\/settings$/);
+  await page.getByText('高级设置', { exact: true }).click();
   await page.getByRole('button', { name: '完全重置' }).click();
   const resetConfirm = page.getByRole('dialog', { name: '清空你的全部数据？' }).getByRole('button', { name: '清空并重置' });
   // 危险弹层：确认按钮是 Carbon 的 $button-danger-primary（#da1e28）。

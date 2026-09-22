@@ -168,6 +168,7 @@ function ChoiceForm({ item, fileName, onSubmit, onScreenshot, state }: FormProps
   const resolved = item.status === 'resolved';
   const chosen = fieldAnswer(item.answer)[PENDING_CHOICE_KEY];
   const manual = item.choices.some((choice) => choice.key === 'manual');
+  const excludes = item.choices.some((choice) => choice.key === 'exclude');
   return (
     <div>
       {!resolved && isStayScreenshotItem(item) ? <ScreenshotUpload fileName={fileName} onScreenshot={onScreenshot} state={state} /> : null}
@@ -187,9 +188,11 @@ function ChoiceForm({ item, fileName, onSubmit, onScreenshot, state }: FormProps
         {resolved ? <Resolved /> : null}
         <ServerError state={state} />
       </div>
-      <p className="app-caption app-choice-note">
-        {manual ? '排除后该材料不进入明细，也不上传报销系统；自行手工处理表示你会在报销系统里另行补录，应用同样不碰它。' : '排除后该材料不进入明细，也不进材料包。'}
-      </p>
+      {excludes ? (
+        <p className="app-caption app-choice-note">
+          {manual ? '排除后该材料不进入明细，也不上传报销系统；自行手工处理表示你会在报销系统里另行补录，应用同样不碰它。' : '排除后该材料不进入明细，也不进材料包。'}
+        </p>
+      ) : null}
     </div>
   );
 }

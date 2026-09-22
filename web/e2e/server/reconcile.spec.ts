@@ -41,7 +41,7 @@ async function confirmedTask(page: Page): Promise<string> {
   return taskId;
 }
 
-test('写入结果不确定：进入对账，只给开始对账与转人工；只读对账后转人工，任务结束', async ({ page }) => {
+test('写入结果不确定：进入对账；只读对账后可以重新去报销或转人工', async ({ page }) => {
   await signIn(page);
   const taskId = await confirmedTask(page);
   await page.goto(`/#/task/${taskId}/review`);
@@ -52,7 +52,7 @@ test('写入结果不确定：进入对账，只给开始对账与转人工；�
   await expect(page.getByRole('heading', { name: '对账' })).toBeVisible();
   await expect(page.getByRole('alert')).toContainText('写入结果不确定');
   // ERP's own words, verbatim, and the cropped screenshot.
-  await expect(page.getByTestId('erp-text')).toHaveText('保存超时：服务器繁忙，请稍后重试。');
+  await expect(page.getByTestId('erp-text')).toHaveText('保存未完成：报销系统没有返回处理结果。');
   const shot = page.getByRole('img', { name: '报销系统截图' });
   await expect(shot).toBeVisible();
   expect(await shot.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
@@ -61,7 +61,7 @@ test('写入结果不确定：进入对账，只给开始对账与转人工；�
 
   await bar.getByRole('button', { name: '开始对账' }).click();
   await expect(page.getByTestId('reconcile-bucket')).toHaveText('未知');
-  await expect(bar.getByRole('button')).toHaveText(['重新对账', '转人工']);
+  await expect(bar.getByRole('button')).toHaveText(['重新对账', '重新去报销', '转人工']);
 
   await bar.getByRole('button', { name: '转人工' }).click();
   await expect(page.getByTestId('reconcile-status')).toHaveText('已转人工');
@@ -70,7 +70,7 @@ test('写入结果不确定：进入对账，只给开始对账与转人工；�
 
   expect(await snapshotOf(page, taskId)).toMatchObject({ stage: 'reconcile', step: { kind: 'none' }, reconcile: { status: 'handed_off' } });
   const list = TaskListSchema.parse(await (await page.request.get('/api/tasks')).json());
-  expect(list.tasks.find((task) => task.taskId === taskId)).toMatchObject({ erpOutcome: 'handed_off', abandonable: false });
+  expect(list.tasks.find((task) => task.taskId === taskId)).toMatchObject({ erpOutcome: 'handed_off', abandonable: true });
   // 转人工 is terminal: the account may start its next task.
   expect((await page.request.post('/api/tasks', { data: { homeCity: '杭州' } })).ok()).toBe(true);
 });

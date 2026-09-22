@@ -20,6 +20,7 @@ import {
   CONFIRMATION_NO_COLUMN,
   CONFIRMATION_TABLE_COLUMNS,
   PREPARATION_PROBLEM_COLUMNS,
+  PROJECT_DEADLINE_WARNING_COPY,
   type Line,
   type TaskSnapshot,
   STAGE_DEFAULT_PAGE,
@@ -28,10 +29,12 @@ import { formatDateTime } from '../format';
 import { navigate, taskHash } from '../router';
 import { ActionBar } from '../shell/ActionBar';
 import { ActionError } from '../shell/ActionError';
+import { ConfirmDialog } from '../shell/Dialog';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
 import { useReopenUpload } from '../shell/useReopenUpload';
 import { PAGE_COPY, REVIEW_ORDER_NOTE } from './page-copy';
+import { DeadlineWarningList } from './DeadlineWarningList';
 
 // 整单明细确认页：Skill 的唯一一次整单确认（preparation_confirmation），在项目归属、报销信息核对与材料准备之后。
 // 表格形状照内核 preparationConfirmationTable（next.mjs:513-559）：No. 加 13 列，按服务端给出的 lines[] 顺序（内核分类排序）逐行列出，
@@ -40,8 +43,8 @@ import { PAGE_COPY, REVIEW_ORDER_NOTE } from './page-copy';
 // 只能确认，不在表内修改：有不对的地方回到对应步骤修改。确认绑定项目归属，改派项目会使确认失效（提示由服务端给出）。
 // 提交项目归属后服务端自动做报销信息核对与材料准备（进度照内核话术）：核对不匹配时显示不匹配表，唯一处置是回到项目归属改派；
 // 材料包有缺项时显示缺项表，「确认」不可用，可排除服务端标明的相关材料。
-// 「确认整单明细」带快照里的摘要与 stepToken；确认后在摘要条下方、表格上方出现并列的「去打印」「去报销」（首屏内，不进吸底栏）：
-// 去打印只是进入打印稿页；去报销请服务端启动专用浏览器，登录后自动写入，没有「开始填报」。
+// The server starts 去报销 after confirmation. The paired extension opens the task's ERP tab; filling ends at an
+// attended handoff, where the employee saves and submits the form.
 // 「追加材料」先二次确认，再请服务端使确认失效并回到上传页。支付截图在打印稿页补充，不在这里。
 
 // 常驻城市：到第一次写入报销系统之前都可以改；改了会重新划分本地与外地市内交通，确认随之失效（服务端判定）。
@@ -172,21 +175,30 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const catalogMismatch = catalog.status === 'mismatch';
   const preparationBlocked = preparation.status === 'blocked';
   const erpStarted = erp.status !== 'idle';
-  const erpDone = erp.status === 'done';
+  const erpDone = erp.outcome === 'filled' || erp.outcome === 'saved';
   const purpose = snapshot.projectAssignment.purpose;
   const packageFiles = preparation.packageFiles;
+  const deadlineWarnings = snapshot.projectAssignment.deadlineWarnings;
 
   const confirmAction = useAction(taskId);
   const claimAction = useAction(taskId);
   const excludeAction = useAction(taskId);
   const reopen = useReopenUpload(snapshot, () => navigate(taskHash(taskId, 'upload')));
   const confirming = confirmAction.busy;
+  const [deadlineConfirmation, setDeadlineConfirmation] = useState(false);
   // 「确认」只在服务端给出 confirm_review 且材料包就绪时可用；有缺项或核对不匹配时不可用。
   const confirmDisabled = confirming || snapshot.lines.length === 0 || step.kind !== 'confirm_review' || preparation.status !== 'ready' || catalogMismatch;
   const exclude = (materialId: string) => excludeAction.run((adapter) => adapter.excludeMaterial(taskId, materialId, step.stepToken));
 
-  const confirm = () => confirmAction.run((adapter) => adapter.confirmReview(taskId, confirmation.digest ?? '', step.stepToken));
-  // 去报销：请服务端开始 ERP 写入（启动浏览器；登录后自动写入），成功后进入 ERP 填报页看进度。
+  const confirm = async (acceptDeadlineWarnings = false) => {
+    const outcome = await confirmAction.run((adapter) => adapter.confirmReview(taskId, confirmation.digest ?? '', step.stepToken, acceptDeadlineWarnings));
+    if (outcome.ok) setDeadlineConfirmation(false);
+  };
+  const requestConfirm = () => {
+    confirmAction.clearError();
+    if (deadlineWarnings.length > 0) setDeadlineConfirmation(true);
+    else void confirm();
+  };
   const claim = async () => {
     const outcome = await claimAction.run((adapter) => adapter.startErpWrite(taskId, step.stepToken));
     if (outcome.ok) navigate(taskHash(taskId, 'erp'));
@@ -209,6 +221,13 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
       {confirmation.status === 'invalidated' && confirmation.notice ? (
         <InlineNotification className="app-notice-block" kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={confirmation.notice} />
+      ) : null}
+
+      {!confirmed && deadlineWarnings.length > 0 ? (
+        <InlineNotification kind="warning" role="alert" lowContrast hideCloseButton statusIconDescription="注意" title={PROJECT_DEADLINE_WARNING_COPY.title}>
+          <p>{PROJECT_DEADLINE_WARNING_COPY.notice}</p>
+          <DeadlineWarningList warnings={deadlineWarnings} />
+        </InlineNotification>
       ) : null}
 
       {/* 摘要条：数字全部来自快照（服务端给出的条数、张数与价税合计），页面不计算。材料包清单默认收起。 */}
@@ -262,7 +281,6 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
       </div>
 
       {confirmed ? (
-        // 确认后下一步就在眼前：两栏入口紧跟摘要条，排在整单明细表之前。
         <section className="app-block app-review-done" aria-label="整单确认">
           <InlineNotification
             kind="success"
@@ -283,7 +301,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
             <div className="app-action-card">
               <h3>去报销</h3>
               <p>
-                启动专用浏览器，你登录报销系统后自动导入发票、写入 {confirmation.lineCount} 行明细并严格回读，中途不再确认。应用不会替你点保存，填好的报销单交给你自己保存。
+                已配对的浏览器扩展会为这次报销打开报销系统标签页。你登录后，应用自动导入发票、写入 {confirmation.lineCount} 行明细并严格回读。完成时只表示单据已填好并交接给你；请你在报销系统里核对、保存并提交。
                 {erpDone ? '已交接，去完成页查看回读结果。' : ''}
               </p>
               {erpDone ? (
@@ -295,7 +313,6 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
                   去报销
                 </Button>
               )}
-              {/* 上一次去报销在写入前就停下了（服务端给出原因）：报销系统没有被改动，可以直接再去报销。 */}
               {!erpStarted && erp.abortReason ? (
                 <p className="app-caption" role="status" data-testid="erp-abort-reason">
                   {erp.abortReason}
@@ -468,7 +485,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
                   <Button kind="ghost" size="md" href={taskHash(taskId, 'pending')}>
                     回到待确认项
                   </Button>
-                  <Button kind="primary" size="md" disabled={confirmDisabled} onClick={() => void confirm()}>
+                  <Button kind="primary" size="md" disabled={confirmDisabled} onClick={requestConfirm}>
                     确认整单明细
                   </Button>
                 </>
@@ -477,6 +494,23 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
           }
           error={confirmAction.error}
         />
+      ) : null}
+
+      {deadlineConfirmation ? (
+        <ConfirmDialog
+          title={PROJECT_DEADLINE_WARNING_COPY.title}
+          confirmLabel={PROJECT_DEADLINE_WARNING_COPY.continue}
+          busy={confirmAction.busy}
+          error={confirmAction.error}
+          onConfirm={() => void confirm(true)}
+          onCancel={() => {
+            confirmAction.clearError();
+            setDeadlineConfirmation(false);
+          }}
+        >
+          <p>{PROJECT_DEADLINE_WARNING_COPY.notice}</p>
+          <DeadlineWarningList warnings={deadlineWarnings} />
+        </ConfirmDialog>
       ) : null}
 
       {reopen.dialog}

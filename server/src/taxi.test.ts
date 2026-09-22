@@ -57,7 +57,7 @@ describe('taxi_receipt kind hooks', () => {
     expect(spec.identity?.(values)).toBe('vat-legacy:131002325021:04213377');
     expect(spec.check?.(values)).toBeNull();
     expect(spec.check?.({ ...values, invoiceNumber: '0421337' })).toMatch(/8 位/);
-    expect(spec.erpInvoiceTypes?.(values)).toEqual(['普通发票']);
+    expect(spec.faceInvoiceType?.(values)).toBe('普通发票');
   });
 
   it('derives local vs out-of-town from its city, and blocks without one', () => {

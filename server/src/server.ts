@@ -26,7 +26,7 @@ export type StartOptions = {
   reconcileExecutor?: ReconcileExecutor;
   parser?: ParseExecutor;
   erpConfig?: ErpConfig;
-  // `BAOX_PUBLIC_ORIGIN` as written, e.g. `http://10.250.0.222`; absent or empty serves 127.0.0.1 only. An origin
+  // `BAOX_PUBLIC_ORIGIN` as written, e.g. `http://10.250.0.222:8888`; absent or empty serves 127.0.0.1 only. An origin
   // this refuses (`public-origin.ts`) stops the server before it listens.
   publicOrigin?: string | null;
   // The built extension template (`extension/dist`) the settings page's download is assembled from; null serves none.

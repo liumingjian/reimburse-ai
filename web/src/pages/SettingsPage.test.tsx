@@ -24,9 +24,20 @@ function renderSettings(legacy?: LegacyOption) {
 
 const panel = () => screen.getByRole('region', { name: '旧数据导入' });
 
-function renderPairing(paired = false) {
+type PairingOptions = { paired?: boolean; connected?: boolean; origin?: string };
+
+function renderPairing({ paired = false, connected = true, origin }: PairingOptions = {}) {
   window.location.hash = '#/settings';
-  render(<App adapter={createMockAdapter({ seed: 'actions', fault: null, ...(paired ? { extensionPaired: true } : {}) })} />);
+  render(
+    <App
+      adapter={createMockAdapter({
+        seed: 'actions',
+        fault: null,
+        ...(paired ? { extensionPaired: true, extensionConnected: connected } : {}),
+        ...(origin ? { extensionOrigin: origin } : {}),
+      })}
+    />,
+  );
 }
 
 function renderTutorial() {
@@ -82,8 +93,9 @@ describe('设置页：浏览器扩展', () => {
     renderPairing();
     await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.none);
     expect(within(extensionPanel()).getByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
-    expect(within(extensionPanel()).getByText(EXTENSION_PAIRING_COPY.firstTimeLead)).toBeTruthy();
-    expect(within(extensionPanel()).queryByText(EXTENSION_PAIRING_COPY.disconnectedHint)).toBeNull();
+    expect(within(extensionPanel()).getByText(EXTENSION_PAIRING_COPY.firstTimeLead('http://10.250.0.222:8888'))).toBeTruthy();
+    expect(within(extensionPanel()).getByText('http://10.250.0.222:8888')).toBeTruthy();
+    expect(within(extensionPanel()).queryByText(EXTENSION_PAIRING_COPY.migrationTitle)).toBeNull();
     expect(within(extensionPanel()).queryByRole('button', { name: '撤销配对' })).toBeNull();
     expect(within(extensionPanel()).queryByRole('button', { name: '重新生成配对码' })).toBeNull();
 
@@ -94,7 +106,7 @@ describe('设置页：浏览器扩展', () => {
   });
 
   test('已配对时列出是哪台浏览器、扩展有没有连着与最近一次连接；撤销要先确认，而且不会退出登录', async () => {
-    renderPairing(true);
+    renderPairing({ paired: true });
     await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.paired);
     expect(within(extensionPanel()).getByText('Chrome 142 · Windows 11')).toBeTruthy();
     expect(within(extensionPanel()).getByText('2026-02-03T14:20:00Z')).toBeTruthy();
@@ -107,6 +119,25 @@ describe('设置页：浏览器扩展', () => {
     expect(await within(extensionPanel()).findByText(EXTENSION_PAIRING_STATUS_LABELS.none)).toBeTruthy();
     // 撤销配对 is not a logout: the settings page stays, with no return to the sign-in gate.
     expect(panel()).toBeTruthy();
+  });
+
+  test('已配对但没有连接时，按当前应用地址引导下载、替换、重新加载和重新配对', async () => {
+    const origin = 'https://baox.example.com:9443';
+    renderPairing({ paired: true, connected: false, origin });
+
+    await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.paired);
+    const section = within(extensionPanel());
+    expect(section.getByText(origin)).toBeTruthy();
+    expect(section.getByText(EXTENSION_PAIRING_COPY.disconnectedLead(origin))).toBeTruthy();
+    expect(section.getByText(EXTENSION_PAIRING_COPY.migrationLead(origin))).toBeTruthy();
+    const steps = section.getByRole('list', { name: EXTENSION_PAIRING_COPY.migrationTitle });
+    expect(within(steps).getByText(EXTENSION_PAIRING_COPY.migrationDownload(origin))).toBeTruthy();
+    expect(within(steps).getByText(EXTENSION_PAIRING_COPY.migrationReplace)).toBeTruthy();
+    expect(within(steps).getByText(EXTENSION_PAIRING_COPY.migrationPair)).toBeTruthy();
+    expect(within(steps).getByText(EXTENSION_PAIRING_COPY.migrationVerify)).toBeTruthy();
+    expect(section.getByText(EXTENSION_PAIRING_COPY.migrationOldPair(origin))).toBeTruthy();
+    expect(section.getByRole('link', { name: EXTENSION_PAIRING_COPY.download }).getAttribute('href')).toBe(EXTENSION_DOWNLOAD_PATH);
+    expect(section.getByRole('button', { name: EXTENSION_PAIRING_COPY.reconnect })).toBeTruthy();
   });
 
   test('重置藏在高级设置里，第一次连接时不会和恢复操作混在一起', async () => {
@@ -158,7 +189,7 @@ describe('设置页：浏览器扩展的下载、安装与升级', () => {
   });
 
   test('配对的扩展已是这一版时不提醒升级', async () => {
-    renderPairing(true);
+    renderPairing({ paired: true });
     await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.paired);
     expect(within(extensionPanel()).queryByText(/请按下面“升级扩展”的步骤/)).toBeNull();
   });

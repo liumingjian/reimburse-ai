@@ -4,6 +4,7 @@ import { Add } from '@carbon/icons-react';
 import {
   PROJECT_ASSIGNMENT_ERRORS,
   PROJECT_CONFLICT_COPY,
+  PROJECT_DEADLINE_WARNING_COPY,
   PURPOSE_MAX_LENGTH,
   PROJECT_BOOK_COPY,
   PROJECT_RESELECT_COPY,
@@ -25,6 +26,7 @@ import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 import { ProjectBookPanel } from './ProjectBookPanel';
+import { DeadlineWarningList } from './DeadlineWarningList';
 import { LodgingPreview } from './LodgingPreview';
 
 // 当前 step 是这些时服务端接受「归入」与提交项目归属：进入项目归属时（含报销信息核对不匹配后的改派），材料包缺项时，
@@ -184,10 +186,12 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   const { lines } = snapshot;
 
   const [purpose, setPurpose] = useState(assignment.purpose ?? '');
+  const [purposeTouched, setPurposeTouched] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
   const [query, setQuery] = useState('');
   const [conflict, setConflict] = useState<Conflict | null>(null);
+  const [deadlineConfirmation, setDeadlineConfirmation] = useState(false);
   const [adding, setAdding] = useState(false);
   // What the last assignment did, shown in the selection bar until lines are ticked again.
   const [lastAssigned, setLastAssigned] = useState<string | null>(null);
@@ -221,6 +225,8 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   // 提交按钮只看表单是否填完（每条明细都已归属、事由非空）：这是 #105 要求的输入校验，不是业务判定；
   // 项目能否用、归属是否成立仍由服务端在提交时判定。
   const complete = assignedCount === lines.length && lines.length > 0 && purpose.trim().length > 0;
+  const unchanged = submitted && purpose.trim() === assignment.purpose && assignment.working.length === assignment.assignments.length && assignment.working.every((item) =>
+    assignment.assignments.some((saved) => saved.lineId === item.lineId && saved.projectNumber === item.projectNumber && saved.projectSource === item.projectSource));
 
   const toggle = (lineIds: readonly string[], on: boolean) => {
     setLastAssigned(null);
@@ -271,11 +277,27 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
 
   const cancelConflict = useCallback(() => setConflict(null), []);
 
-  const submit = async () => {
+  const submit = async (acceptDeadlineWarnings = false) => {
+    setPurposeTouched(true);
+    if (!purpose.trim()) return;
+    if (unchanged) {
+      navigate(taskHash(taskId, 'review'));
+      return;
+    }
     const projects: Record<string, string> = {};
     for (const item of assignment.working) projects[item.lineId] = item.projectNumber;
-    const outcome = await run((adapter) => adapter.submitProjectAssignment(taskId, { purpose: purpose.trim(), projects }, snapshot.step.stepToken));
-    if (outcome.ok) navigate(taskHash(taskId, 'review'));
+    const outcome = await run((adapter) => adapter.submitProjectAssignment(taskId, { purpose: purpose.trim(), projects, acceptDeadlineWarnings }, snapshot.step.stepToken));
+    if (outcome.ok) {
+      setDeadlineConfirmation(false);
+      navigate(taskHash(taskId, 'review'));
+    }
+  };
+
+  const requestSubmit = () => {
+    clearError();
+    if (unchanged) void submit();
+    else if (assignment.deadlineWarnings.length > 0) setDeadlineConfirmation(true);
+    else void submit();
   };
 
   const submittedText = preparationBlocked
@@ -326,13 +348,17 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
           <TextInput
             id="purpose"
             className="app-purpose"
-            labelText="报销事由"
+            labelText="报销事由（必填）"
+            aria-label="报销事由"
+            invalid={purposeTouched && !purpose.trim()}
+            invalidText="请填写报销事由，不能只输入空格。"
             value={purpose}
             maxLength={PURPOSE_MAX_LENGTH}
             required
             disabled={locked}
             placeholder="如：上海产品评审出差"
-            onChange={(event) => setPurpose(event.target.value)}
+            onChange={(event) => { setPurpose(event.target.value); setPurposeTouched(true); }}
+            onBlur={() => setPurposeTouched(true)}
           />
           {/* 常驻城市在新建任务时确认，这里只读；做成带标签的只读字段，与报销事由上下对齐。 */}
           <TextInput id="home-city" className="app-home-city" labelText="常驻城市" value={assignment.homeCity ?? '未确认'} readOnly />
@@ -366,6 +392,13 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
             </Button>
           ) : null}
         </div>
+      ) : null}
+
+      {assignment.deadlineWarnings.length > 0 ? (
+        <InlineNotification kind="warning" role="alert" lowContrast hideCloseButton statusIconDescription="注意" title={PROJECT_DEADLINE_WARNING_COPY.title}>
+          <p>{PROJECT_DEADLINE_WARNING_COPY.notice}</p>
+          <DeadlineWarningList warnings={assignment.deadlineWarnings} />
+        </InlineNotification>
       ) : null}
 
       {/* #194: projects removed or deactivated before submission. The server already took these lines out of the
@@ -539,8 +572,8 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
         }
         caption={!locked && !complete ? PROJECT_ASSIGNMENT_ERRORS.incomplete : null}
         actions={
-          <Button disabled={!canAct || busy || !complete || conflict !== null} onClick={() => void submit()}>
-            确认项目归属
+          <Button disabled={!canAct || busy || !complete || conflict !== null} onClick={requestSubmit}>
+            {unchanged ? '继续' : '确认项目归属'}
           </Button>
         }
         error={error}
@@ -559,6 +592,23 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
           <p>
             要归入 {conflict.project.number} {conflict.project.name}。「只处理未归属」只给还没有项目的明细归入；「确认覆盖」把已勾选的明细全部改为这个项目。
           </p>
+        </ConfirmDialog>
+      ) : null}
+
+      {deadlineConfirmation ? (
+        <ConfirmDialog
+          title={PROJECT_DEADLINE_WARNING_COPY.title}
+          confirmLabel={PROJECT_DEADLINE_WARNING_COPY.continue}
+          busy={busy}
+          error={error}
+          onConfirm={() => void submit(true)}
+          onCancel={() => {
+            clearError();
+            setDeadlineConfirmation(false);
+          }}
+        >
+          <p>{PROJECT_DEADLINE_WARNING_COPY.notice}</p>
+          <DeadlineWarningList warnings={assignment.deadlineWarnings} />
         </ConfirmDialog>
       ) : null}
 

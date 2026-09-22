@@ -38,13 +38,13 @@ async function inventoried(files: readonly Upload[] = [hotel, rail], homeCity = 
 
 async function book(path: string, body: unknown = {}) {
   if (path !== 'intake') throw new Error(`unsupported project-book action: ${path}`);
-  const input = body as { number?: string; name?: string };
+  const input = body as { number?: string; name?: string; deadlineOn?: string | null };
   const names: Readonly<Record<string, string>> = {
     'P-2307': '华东客户交付',
     'P-3312': '产品调研',
     'P-9001': '已停用项目',
   };
-  const response = await alice.post('/api/project-book/intake', { number: input.number ?? '', name: input.name ?? names[input.number ?? ''] ?? '本地项目' });
+  const response = await alice.post('/api/project-book/intake', { number: input.number ?? '', name: input.name ?? names[input.number ?? ''] ?? '本地项目', ...(input.deadlineOn === undefined ? {} : { deadlineOn: input.deadlineOn }) });
   expect(response.status).toBe(200);
   return ProjectBookResultSchema.parse(await response.json());
 }
@@ -146,6 +146,83 @@ describe('the submitted selection is pinned', () => {
     ]);
     expect(after.lines.map((line) => line.projectCode)).toEqual(['P-2307', 'P-2307']);
     expect(after.projectAssignment.projects).toEqual(expect.arrayContaining([{ number: 'PUBLIC-NEW', name: '后加公共项目', source: 'public' }]));
+  });
+});
+
+describe('project deadline advisories', () => {
+  it('has no advisory when the selected project has no deadline', async () => {
+    await book('intake', { number: 'P-2307' });
+    const start = await inventoried([sample('m08')]);
+    const projects = Object.fromEntries(start.lines.map((line) => [line.lineId, 'P-2307']));
+
+    const review = await client.accepted(await client.act(start, 'submit-project-assignment', { purpose: '返程车票', projects }));
+    expect(review.projectAssignment.deadlineWarnings).toEqual([]);
+    const actions = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
+    expect(actions).toMatchObject({ task: { taskId: start.task.taskId }, stage: 'actions', confirmation: { status: 'confirmed' } });
+  });
+
+  it('requires explicit continuation for an expense after the project deadline at assignment and confirmation', async () => {
+    await book('intake', { number: 'P-2307', deadlineOn: '2026-08-10' });
+    const start = await inventoried([sample('m08')]);
+    const line = start.lines[0];
+    if (!line) throw new Error('expected one rail line');
+    const assigned = await client.accepted(await client.act(start, 'assign-project-lines', { lineIds: [line.lineId], projectNumber: 'P-2307', onlyUnassigned: false }));
+    const projects = { [line.lineId]: 'P-2307' };
+    expect(assigned.projectAssignment.deadlineWarnings).toEqual([
+      expect.objectContaining({ lineId: line.lineId, lineNo: line.no, projectNumber: 'P-2307', deadlineOn: '2026-08-10', kind: 'after_deadline' }),
+    ]);
+
+    await refused(await client.act(assigned, 'submit-project-assignment', { purpose: '返程车票', projects }), 'deadline_confirmation_required');
+    const review = await client.accepted(await client.act(assigned, 'submit-project-assignment', { purpose: '返程车票', projects, acceptDeadlineWarnings: true }));
+    expect(review).toMatchObject({ task: { taskId: start.task.taskId }, stage: 'review', projectAssignment: { deadlineWarnings: [expect.objectContaining({ kind: 'after_deadline' })] } });
+
+    await refused(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }), 'deadline_confirmation_required');
+    const actions = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest, acceptDeadlineWarnings: true }));
+    expect(actions).toMatchObject({ task: { taskId: start.task.taskId }, stage: 'actions', confirmation: { status: 'confirmed' } });
+  });
+
+  it('warns when a stay crosses the project deadline without splitting the task', async () => {
+    await book('intake', { number: 'P-2307', deadlineOn: '2026-08-10' });
+    const start = await inventoried([sample('m01'), sample('m02')]);
+    const line = start.lines[0];
+    if (!line) throw new Error('expected one stay line');
+    const assigned = await client.accepted(await client.act(start, 'assign-project-lines', { lineIds: [line.lineId], projectNumber: 'P-2307', onlyUnassigned: false }));
+    const projects = { [line.lineId]: 'P-2307' };
+    expect(assigned.projectAssignment.deadlineWarnings).toEqual([
+      expect.objectContaining({ lineId: line.lineId, lineNo: line.no, deadlineOn: '2026-08-10', kind: 'stay_crosses_deadline' }),
+    ]);
+
+    await refused(await client.act(assigned, 'submit-project-assignment', { purpose: '住宿', projects }), 'deadline_confirmation_required');
+    const review = await client.accepted(await client.act(assigned, 'submit-project-assignment', { purpose: '住宿', projects, acceptDeadlineWarnings: true }));
+    expect(review).toMatchObject({ task: { taskId: start.task.taskId }, stage: 'review', lines: [expect.objectContaining({ lineId: line.lineId, date: '2026-08-09', endDate: '2026-08-22' })] });
+    expect(review.task.taskId).toBe(start.task.taskId);
+  });
+
+  it('allows a pre-cutoff expense to be submitted later', async () => {
+    await book('intake', { number: 'P-2307', deadlineOn: '2026-08-09' });
+    const start = await inventoried([sample('m07')]);
+    const line = start.lines[0];
+    if (!line) throw new Error('expected one rail line');
+    const projects = { [line.lineId]: 'P-2307' };
+
+    const review = await client.accepted(await client.act(start, 'submit-project-assignment', { purpose: '去程车票', projects }));
+    expect(review.projectAssignment.deadlineWarnings).toEqual([]);
+    const actions = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
+    expect(actions).toMatchObject({ task: { taskId: start.task.taskId }, stage: 'actions', confirmation: { status: 'confirmed' } });
+  });
+
+  it('does not let a deadline acknowledgement bypass a project that is no longer eligible', async () => {
+    await book('intake', { number: 'P-2307', deadlineOn: '2026-08-10' });
+    await book('intake', { number: 'P-3312' });
+    expect((await alice.post('/api/project-book/deactivate', { number: 'P-2307' })).status).toBe(200);
+    const start = await inventoried([sample('m08')]);
+    const line = start.lines[0];
+    if (!line) throw new Error('expected one rail line');
+
+    await refused(
+      await client.act(start, 'submit-project-assignment', { purpose: '返程车票', projects: { [line.lineId]: 'P-2307' }, acceptDeadlineWarnings: true }),
+      'project_not_allowed',
+    );
   });
 });
 

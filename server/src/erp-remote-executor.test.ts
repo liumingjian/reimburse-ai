@@ -221,6 +221,7 @@ describe('去报销 in the paired 浏览器扩展', () => {
     const stopped = await start(ready);
 
     expect(stopped.erp.abortReason).toContain('浏览器扩展');
+    expect(stopped.erp).toMatchObject({ status: 'idle', externalWait: 'extension_connection', outcome: 'none', allowedActions: ['refresh'] });
     expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_offline' }]);
     expect(await attemptsOf(ready.task.taskId)).toEqual([]);
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
