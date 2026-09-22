@@ -1,4 +1,4 @@
-// The address colleagues reach the app at (`BAOX_PUBLIC_ORIGIN`, phase 1 `http://10.250.0.222`). Unset keeps the
+// The address colleagues reach the app at (`BAOX_PUBLIC_ORIGIN`, phase 1 `http://10.250.0.222:8888`). Unset keeps the
 // 127.0.0.1-only deployment. Node binds 127.0.0.1 either way: the browser arrives through the reverse proxy in front
 // of it, which passes the browser's own Host and Origin through, so the app still judges both.
 
@@ -42,6 +42,12 @@ export function parsePublicOrigin(value: string): PublicOrigin {
     throw new PublicOriginRefusal(`Public origin ${written} would serve plaintext to a public address; use https, or a private address`);
   }
   return { origin: url.origin, host: url.host, secure };
+}
+
+// The public configuration wins when it exists. A loopback-only run has no configured public address, so its request
+// URL is also the address used to stamp the extension package.
+export function activeOrigin(publicOrigin: PublicOrigin | null, requestUrl: string): string {
+  return publicOrigin?.origin ?? new URL(requestUrl).origin;
 }
 
 // A name is not an address: nothing here can tell where it resolves, so plain http is refused for one.

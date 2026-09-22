@@ -49,6 +49,26 @@ test('paired settings shows connection facts and relevant recovery actions at bo
   }
 });
 
+test('a disconnected extension gets the active-origin migration path for the default and an override', async ({ page }, testInfo) => {
+  for (const [name, origin] of [
+    ['default', 'http://10.250.0.222:8888'],
+    ['override', 'https://baox.example.com:9443'],
+  ] as const) {
+    const extension = await openSettings(page, DESKTOP_VIEWPORTS[0], `?extension=disconnected&extensionOrigin=${encodeURIComponent(origin)}`);
+    await expect(extension.getByRole('heading', { name: '扩展暂时没有连接' })).toBeVisible();
+    await expect(extension.getByText(origin, { exact: true })).toBeVisible();
+    await expect(extension.getByText(`应用地址变更后，旧扩展不会连接到 ${origin}。`)).toBeVisible();
+    const steps = extension.getByRole('list', { name: '改用当前地址的扩展' });
+    await expect(steps.getByText(`在 ${origin} 下载新的浏览器扩展并解压。`)).toBeVisible();
+    await expect(steps.getByText('在 Chrome 或 Edge 的扩展页移除旧扩展，或用新解压目录替换后点“重新加载”。')).toBeVisible();
+    await expect(steps.getByText('回到这里生成新的配对码，并在新扩展中输入。')).toBeVisible();
+    await expect(steps.getByText('看到“已连接”后再去报销。')).toBeVisible();
+    await expect(extension.getByText(`旧地址的配对不表示已连接到 ${origin}。`)).toBeVisible();
+    await expect(extension.getByRole('link', { name: '下载浏览器扩展' })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`settings-origin-migration-${name}.png`), fullPage: true });
+  }
+});
+
 test('tutorial opens in a separate tab and remains readable at both desktop widths', async ({ page }, testInfo) => {
   for (const viewport of DESKTOP_VIEWPORTS) {
     const extension = await openSettings(page, viewport);

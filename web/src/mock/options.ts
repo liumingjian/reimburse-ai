@@ -26,6 +26,8 @@ export type AuthOption = (typeof AUTH_OPTIONS)[number];
 export const LEGACY_OPTIONS = ['failed', 'imported', 'absent'] as const;
 export type LegacyOption = (typeof LEGACY_OPTIONS)[number];
 
+export const EXTENSION_OPTIONS = ['paired', 'disconnected'] as const;
+
 // mock 的「持久存储」：浏览器里是 localStorage（刷新后仍在），按账号分键；测试可以注入替身。
 export type MockStorage = {
   getItem(key: string): string | null;
@@ -51,8 +53,11 @@ export type MockOptions = {
   duplicateHit?: boolean;
   // `?legacy=failed|imported|absent`：设置页的旧数据导入面板摆出那一次导入的结果（不给则「没有运行过」）。
   legacy?: LegacyOption;
-  // `?extension=paired`：设置页的浏览器扩展一节摆出已经配对的样子（mock 里没有真的扩展，配不上）。
+  // `?extension=paired|disconnected` sets the browser extension panel to its paired or disconnected state.
   extensionPaired?: boolean;
+  extensionConnected?: boolean;
+  // `?extensionOrigin=<origin>` sets the active application address for extension download and pairing.
+  extensionOrigin?: string;
   storage?: MockStorage;
   // `?location=unavailable`：mock 位置 Adapter 取不到网络位置，第一次新建任务时常驻城市没有默认值。不是故障场景。
   locationUnavailable?: boolean;
@@ -128,7 +133,20 @@ export function readMockOptions(search: string): MockOptions {
   const extension = params.get('extension');
   if (extension !== null) {
     if (extension === 'paired') options.extensionPaired = true;
-    else console.warn(`未知的 extension「${extension}」，可用值：paired`);
+    else if (extension === 'disconnected') {
+      options.extensionPaired = true;
+      options.extensionConnected = false;
+    } else console.warn(`未知的 extension「${extension}」，可用值：${EXTENSION_OPTIONS.join(', ')}`);
+  }
+  const extensionOrigin = params.get('extensionOrigin');
+  if (extensionOrigin !== null) {
+    try {
+      const origin = new URL(extensionOrigin).origin;
+      if (origin === extensionOrigin && (origin.startsWith('http://') || origin.startsWith('https://'))) options.extensionOrigin = origin;
+      else console.warn(`未知的 extensionOrigin「${extensionOrigin}」，请写成 http://host[:port] 或 https://host[:port]`);
+    } catch {
+      console.warn(`未知的 extensionOrigin「${extensionOrigin}」，请写成 http://host[:port] 或 https://host[:port]`);
+    }
   }
   const auth = params.get('auth');
   if (auth !== null) {
