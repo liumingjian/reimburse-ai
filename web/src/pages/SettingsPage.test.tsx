@@ -1,10 +1,10 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
-import { EXTENSION_DOWNLOAD_PATH, EXTENSION_PAIRING_STATUS_LABELS, EXTENSION_VERSION, LEGACY_IMPORT_ERRORS, LEGACY_IMPORT_STATUS_LABELS } from '@baox/contract';
+import { EXTENSION_DOWNLOAD_PATH, EXTENSION_PAIRING_STATUS_LABELS, EXTENSION_VERSION, LEGACY_IMPORT_ERRORS, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY } from '@baox/contract';
 import { App } from '../App';
 import { createMockAdapter } from '../mock/mock-adapter';
 import type { LegacyOption } from '../mock/options';
-import { EXTENSION_INSTALL_COPY } from './SettingsPage';
+import { EXTENSION_INSTALL_COPY, EXTENSION_PAIRING_COPY } from './SettingsPage';
 
 // 设置页的旧数据导入面板（故事 81）：损坏的旧数据要说清楚坏在哪个文件，并且能重试或明确跳过。
 // 服务端的接口一直都在（#195），这里补的是它的界面。
@@ -27,6 +27,11 @@ const panel = () => screen.getByRole('region', { name: '旧数据导入' });
 function renderPairing(paired = false) {
   window.location.hash = '#/settings';
   render(<App adapter={createMockAdapter({ seed: 'actions', fault: null, ...(paired ? { extensionPaired: true } : {}) })} />);
+}
+
+function renderTutorial() {
+  window.location.hash = '#/settings/tutorial';
+  render(<App adapter={createMockAdapter({ seed: 'actions', fault: null })} />);
 }
 
 const extensionPanel = () => screen.getByRole('region', { name: '浏览器扩展' });
@@ -73,10 +78,14 @@ describe('设置页：旧数据导入', () => {
 });
 
 describe('设置页：浏览器扩展', () => {
-  test('还没有配对时给出生成配对码；生成后把那一串显示出来，并说明只显示这一次', async () => {
+  test('还没有配对时给出第一次连接指导；生成后把那一串显示出来，并说明只显示这一次', async () => {
     renderPairing();
     await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.none);
+    expect(within(extensionPanel()).getByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
+    expect(within(extensionPanel()).getByText(EXTENSION_PAIRING_COPY.firstTimeLead)).toBeTruthy();
+    expect(within(extensionPanel()).queryByText(EXTENSION_PAIRING_COPY.disconnectedHint)).toBeNull();
     expect(within(extensionPanel()).queryByRole('button', { name: '撤销配对' })).toBeNull();
+    expect(within(extensionPanel()).queryByRole('button', { name: '重新生成配对码' })).toBeNull();
 
     fireEvent.click(within(extensionPanel()).getByRole('button', { name: '生成配对码' }));
     expect(await within(extensionPanel()).findByText('K7MQ2PXD')).toBeTruthy();
@@ -99,31 +108,44 @@ describe('设置页：浏览器扩展', () => {
     // 撤销配对 is not a logout: the settings page stays, with no return to the sign-in gate.
     expect(panel()).toBeTruthy();
   });
+
+  test('重置藏在高级设置里，第一次连接时不会和恢复操作混在一起', async () => {
+    renderPairing();
+    await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.none);
+    const advanced = screen.getByText('高级设置').closest('details');
+    expect(advanced?.open).toBe(false);
+    expect(screen.getByRole('button', { name: RESET_COPY.button })).toBeTruthy();
+
+    fireEvent.click(screen.getByText('高级设置'));
+    expect(await screen.findByRole('region', { name: RESET_COPY.title })).toBeTruthy();
+    expect(advanced?.open).toBe(true);
+    expect(screen.getByRole('button', { name: RESET_COPY.button })).toBeTruthy();
+  });
 });
 
 describe('设置页：浏览器扩展的下载、安装与升级', () => {
-  test('从这一节下载安装包，并照着步骤在 Chrome 或 Edge 里加载、升级', async () => {
+  test('常规设置只保留下载入口和独立教程入口', async () => {
     renderPairing();
     await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.none);
     const section = within(extensionPanel());
 
     expect(section.getByRole('link', { name: EXTENSION_INSTALL_COPY.download }).getAttribute('href')).toBe(EXTENSION_DOWNLOAD_PATH);
-    expect(section.getByText(`这里提供的扩展版本：${EXTENSION_VERSION}`)).toBeTruthy();
-
-    // Each browser's extensions page, developer-mode switch and load button, named as that browser labels them.
-    const install = section.getByRole('list', { name: '安装扩展' }).textContent ?? '';
-    for (const words of ['chrome://extensions', 'edge://extensions', '开发者模式', '开发人员模式', '加载已解压的扩展程序', '加载解压缩的扩展', '配对码']) expect(install).toContain(words);
-    const upgrade = section.getByRole('list', { name: '升级扩展' }).textContent ?? '';
-    for (const words of ['下载浏览器扩展', '原来的文件夹', '重新加载']) expect(upgrade).toContain(words);
+    const tutorial = section.getByRole('link', { name: EXTENSION_PAIRING_COPY.tutorial });
+    expect(tutorial.getAttribute('href')).toBe('#/settings/tutorial');
+    expect(tutorial.getAttribute('target')).toBe('_blank');
+    expect(section.queryByRole('list', { name: '安装扩展' })).toBeNull();
   });
 
-  test('事先说明调试提示条是正常的，以及点它的取消之后会怎样', async () => {
-    renderPairing();
-    await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.none);
-    const section = within(extensionPanel());
-    expect(section.getByText(/已开始调试此浏览器.*这是正常的/)).toBeTruthy();
+  test('独立教程显示图示、安装步骤和调试提示条说明', async () => {
+    renderTutorial();
+    expect(await screen.findByRole('heading', { level: 1, name: '浏览器扩展安装教程' })).toBeTruthy();
+    expect(screen.getByRole('img', { name: '浏览器扩展安装示意图' })).toBeTruthy();
+    expect(screen.getByText(EXTENSION_INSTALL_COPY.offeredVersion(EXTENSION_VERSION))).toBeTruthy();
+    const install = screen.getByRole('list', { name: '安装步骤' }).textContent ?? '';
+    for (const words of ['chrome://extensions', 'edge://extensions', '开发者模式', '开发人员模式', '加载已解压的扩展程序', '加载解压缩的扩展', '配对码']) expect(install).toContain(words);
+    expect(screen.getByRole('region', { name: '去报销时浏览器顶部的提示条' })).toBeTruthy();
     // #257: a Cancel between two steps resumes in the same tab; one in the middle of a write goes to 对账.
-    expect(section.getByText(/不要点这条提示上的“取消”.*同一个标签页.*接着做下去.*转去对账/)).toBeTruthy();
+    expect(screen.getByText(/不要点这条提示上的“取消”.*同一个标签页.*接着做下去.*转去对账/)).toBeTruthy();
   });
 
   test('配对的扩展比这里提供的旧时，提醒按升级步骤换新', async () => {

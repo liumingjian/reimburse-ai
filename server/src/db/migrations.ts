@@ -616,6 +616,14 @@ const directoryIntake280: Migration = {
   },
 };
 
+// #273: project-book entries gain an optional advisory deadline. It is separate from the legacy ERP expiry field;
+// existing events remain null so migration never fabricates a date or changes historical selectability.
+const projectDeadline273: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema.alterTable('project_book_event').addColumn('deadline_on', 'text').execute();
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -640,4 +648,6 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0015_252_extension_pairing': extensionPairing252,
   '0016_253_extension_version': extensionVersion253,
   '0017_280_directory_intake': directoryIntake280,
+  // Added after the already-integrated #280 migration so existing databases never need a landed migration rewritten.
+  '0018_273_project_deadline': projectDeadline273,
 };

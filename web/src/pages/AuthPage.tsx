@@ -154,12 +154,13 @@ export const CHANGE_PASSWORD_COPY = {
   submit: '修改密码',
 } as const;
 
-export function ChangePasswordPage() {
+export function ChangePasswordPage({ required = true }: { required?: boolean }) {
   const store = useAppStore();
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [changed, setChanged] = useState(false);
   useEffect(() => {
     document.title = `baox · ${CHANGE_PASSWORD_COPY.title}`;
   }, []);
@@ -173,27 +174,35 @@ export function ChangePasswordPage() {
       return;
     }
     setError(null);
+    setChanged(false);
     setBusy(true);
     const outcome = await store.auth((adapter) => adapter.changePassword(parsed.data));
     setBusy(false);
-    if (!outcome.ok) setError(outcome.error.message);
+    if (!outcome.ok) setError(`密码修改失败：${outcome.error.message}`);
+    else {
+      setCurrent('');
+      setNext('');
+      setChanged(true);
+    }
   };
 
   return (
-    <AppShell nav="tasks">
+    <AppShell nav={required ? 'tasks' : 'settings'}>
       <section className="app-form-page app-startup" aria-labelledby="change-password-title">
         <h1 className="app-page-title" id="change-password-title">
           {CHANGE_PASSWORD_COPY.title}
         </h1>
-        <p className="app-lead">{CHANGE_PASSWORD_COPY.lead}</p>
+        <p className="app-lead">{required ? CHANGE_PASSWORD_COPY.lead : '验证当前密码后，修改你自己的应用登录密码。'}</p>
+        {changed ? <p role="status">密码已修改。下次登录请使用新密码。</p> : null}
         <form className="app-form" onSubmit={(event) => void submit(event)} noValidate>
-          <TextInput id="current-password" type="password" labelText={CHANGE_PASSWORD_COPY.current} autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} />
+          <TextInput id="current-password" type="password" labelText={required ? CHANGE_PASSWORD_COPY.current : '当前密码'} autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} />
           <TextInput id="new-password" type="password" labelText={CHANGE_PASSWORD_COPY.next} autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} />
           <div className="app-btn-row">
             <Button type="submit" disabled={busy}>
               {CHANGE_PASSWORD_COPY.submit}
             </Button>
             <ActionError message={error} />
+            {!required ? <Button kind="secondary" href="#/settings">返回设置</Button> : null}
           </div>
         </form>
       </section>
