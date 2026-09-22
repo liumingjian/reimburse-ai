@@ -1,6 +1,7 @@
 import { resolveDataDir } from './data-dir';
 import { cdpExecutors } from './erp/cdp-executor';
 import { catalogMismatch, loginWall, noFormOpen, scripted, uncertainSave, type Script } from './erp/testing/fake-executor';
+import { invoiceVariantFixtureParser } from './parse/testing/invoice-variants';
 import { run, type RunOverrides } from './run';
 
 // The e2e-only entry, built into `dist/e2e-main.mjs` only when `BAOX_BUILD_E2E=1` (the root `test:e2e` script sets it).
@@ -15,6 +16,7 @@ import { run, type RunOverrides } from './run';
 const SCRIPTS: Readonly<Record<string, Script>> = { uncertain_save: uncertainSave, login_wall: loginWall, catalog_mismatch: catalogMismatch };
 
 const script = SCRIPTS[process.env['BAOX_ERP_FAKE'] ?? ''];
+const parser = process.env['BAOX_PARSE_FIXTURE'] === 'invoice-variants' ? invoiceVariantFixtureParser() : undefined;
 // A reconcile job only ever reads, so the same stand-in serves every fake: it finds no open form.
-const executors: RunOverrides = script ? { erpExecutor: scripted(script), reconcileExecutor: noFormOpen } : cdpExecutors(resolveDataDir());
+const executors: RunOverrides = { ...(script ? { erpExecutor: scripted(script), reconcileExecutor: noFormOpen } : cdpExecutors(resolveDataDir())), ...(parser ? { parser } : {}) };
 await run(executors);
