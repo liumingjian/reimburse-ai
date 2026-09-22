@@ -523,6 +523,29 @@ $gutter: $spacing-06;
   }
 }
 
+.app-material-variants {
+  margin-block-start: $spacing-03;
+  color: $text-secondary;
+  @include type.type-style('helper-text-01');
+
+  summary {
+    cursor: pointer;
+  }
+
+  ul {
+    margin: $spacing-02 0 0;
+    padding-inline-start: $spacing-05;
+  }
+
+  li + li {
+    margin-block-start: $spacing-02;
+  }
+
+  .app-caption {
+    display: block;
+  }
+}
+
 .app-ungrouped {
   margin-block-start: $spacing-07;
 
@@ -1126,17 +1149,39 @@ $doc-frame-block: var(--app-doc-frame-block);
 // ---------- 个人项目簿 ----------
 
 .app-book-intake {
-  max-inline-size: 45rem;
+  max-inline-size: 72rem;
   margin-block-end: $spacing-06;
 }
 
 .app-book-form {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(9rem, 12rem) minmax(18rem, 1fr) minmax(10rem, 13rem) auto;
   align-items: flex-end;
   gap: $spacing-04;
 
   > .cds--form-item {
-    flex: 1;
+    min-inline-size: 0;
+  }
+}
+
+.app-project-book-name {
+  min-inline-size: 20rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 56rem) {
+  .app-book-form {
+    grid-template-columns: minmax(8rem, 0.7fr) minmax(14rem, 1.3fr);
+
+    > .cds--btn {
+      grid-column: 1 / -1;
+      justify-self: start;
+    }
+  }
+
+  .app-project-book-name {
+    min-inline-size: 14rem;
   }
 }
 
@@ -1568,11 +1613,28 @@ $doc-frame-block: var(--app-doc-frame-block);
 
 .app-print-pages {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(17.5rem, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: $spacing-06;
-  margin: 0;
+  margin: 0 auto;
   padding: 0;
   list-style: none;
+}
+
+.app-print-scroll {
+  overflow-x: auto;
+}
+
+.app-print-toolbar {
+  position: sticky;
+  inset-block-start: calc(3rem + var(--app-stepbar-h, 0px));
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: $spacing-03;
+  padding-block: $spacing-03;
+  background: $background;
+  border-block-end: 1px solid $border-subtle-01;
 }
 
 .app-page-card {

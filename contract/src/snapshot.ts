@@ -106,6 +106,20 @@ export const MATERIAL_ROLE_LABELS: Readonly<Record<MaterialRole, string>> = {
   excluded: '已排除',
 };
 
+// A retained source that supports the same invoice as its parent material. The parent is the canonical material for
+// the reimbursement flow; variants remain independently inspectable and are never deleted by the projection.
+export const MaterialVariantSchema = z.object({
+  materialId: IdSchema,
+  fileName: z.string().min(1),
+  relativePath: z.string().min(1),
+  contentHash: z.string().min(1),
+  size: z.number().int().nonnegative(),
+  mediaType: z.enum(['pdf', 'image']),
+  originalUrl: UrlSchema.nullable(),
+  previewUrl: UrlSchema.nullable(),
+});
+export type MaterialVariant = z.infer<typeof MaterialVariantSchema>;
+
 export const MaterialSchema = z.object({
   materialId: IdSchema,
   batchId: IdSchema,
@@ -132,6 +146,8 @@ export const MaterialSchema = z.object({
   pendingItemIds: z.array(IdSchema),
   originalUrl: UrlSchema.nullable(),
   previewUrl: UrlSchema.nullable(),
+  // Alternate originals of this invoice. The server chooses the canonical material; clients only render this list.
+  variants: z.array(MaterialVariantSchema),
   fields: z.array(FieldCandidateSchema),
 });
 export type Material = z.infer<typeof MaterialSchema>;
@@ -567,6 +583,8 @@ export const ProjectOptionSchema = z.object({
   number: z.string().min(1),
   name: z.string().min(1),
   source: ProjectSourceSchema,
+  // Advisory project-book fact. It is omitted for projects without a deadline to preserve older snapshot fixtures.
+  deadlineOn: DateSchema.nullable().optional(),
 });
 export type ProjectOption = z.infer<typeof ProjectOptionSchema>;
 

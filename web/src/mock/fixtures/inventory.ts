@@ -565,6 +565,7 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
       pendingItemIds,
       originalUrl: source ? `${FIXTURE_URL_BASE}${source.file}` : null,
       previewUrl: source ? `${FIXTURE_URL_BASE}${source.file}` : null,
+      variants: [],
       fields: p.fields.map((f) => ({ ...f })),
     };
   });

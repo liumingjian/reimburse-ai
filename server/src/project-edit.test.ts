@@ -22,13 +22,21 @@ afterEach(() => server.close());
 
 const asBob = api(() => bob);
 
-async function intake(client: TestClient, path: '/api/project-book/intake' | '/api/public-project-book/intake', input: { number: string; name: string }) {
+async function intake(
+  client: TestClient,
+  path: '/api/project-book/intake' | '/api/public-project-book/intake',
+  input: { number: string; name: string; deadlineOn?: string | null },
+) {
   const response = await client.post(path, input);
   expect(response.status).toBe(200);
   return ProjectBookResultSchema.parse(await response.json());
 }
 
-async function edit(client: TestClient, path: '/api/project-book/edit' | '/api/public-project-book/edit', input: { originalNumber: string; number: string; name: string }) {
+async function edit(
+  client: TestClient,
+  path: '/api/project-book/edit' | '/api/public-project-book/edit',
+  input: { originalNumber: string; number: string; name: string; deadlineOn?: string | null },
+) {
   const response = await client.post(path, input);
   expect(response.status).toBe(200);
   return ProjectBookResultSchema.parse(await response.json());
@@ -43,7 +51,7 @@ async function inventoried(): Promise<TaskSnapshot> {
 
 describe('project-book edits', () => {
   it('renumbers a personal entry as an append-only fact, refreshes new choices, and leaves a submitted pin intact', async () => {
-    await intake(bob, '/api/project-book/intake', { number: 'PERSONAL-OLD', name: '原个人名称' });
+    await intake(bob, '/api/project-book/intake', { number: 'PERSONAL-OLD', name: '原个人名称', deadlineOn: '2026-12-31' });
     const start = await inventoried();
     const projects = Object.fromEntries(start.lines.map((line) => [line.lineId, 'PERSONAL-OLD']));
     const submitted = await asBob.accepted(await asBob.act(start, 'submit-project-assignment', { purpose: '杭州出差', projects }));
@@ -58,7 +66,7 @@ describe('project-book edits', () => {
     });
 
     const refreshed = await asBob.current(start.task.taskId);
-    expect(refreshed.projectAssignment.projects).toEqual([{ number: 'PERSONAL-NEW', name: '更正后的名称', source: 'personal' }]);
+    expect(refreshed.projectAssignment.projects).toEqual([{ number: 'PERSONAL-NEW', name: '更正后的名称', source: 'personal', deadlineOn: '2026-12-31' }]);
     expect(refreshed.projectAssignment.assignments.map((item) => [item.projectNumber, item.projectName, item.projectSource])).toEqual(
       start.lines.map(() => ['PERSONAL-OLD', '原个人名称', 'personal']),
     );
@@ -125,7 +133,7 @@ describe('project-book edits', () => {
     const first = await createTestServer({ database, dataDir });
     const owner = await first.signIn('restart-owner');
     try {
-      await intake(owner, '/api/project-book/intake', { number: 'RESTART-OLD', name: '重启前名称' });
+      await intake(owner, '/api/project-book/intake', { number: 'RESTART-OLD', name: '重启前名称', deadlineOn: '2026-12-31' });
       expect((await edit(owner, '/api/project-book/edit', { originalNumber: 'RESTART-OLD', number: 'RESTART-NEW', name: '重启后名称' })).status).toBe('edited');
       await first.app.close();
       await first.db.destroy();
@@ -133,7 +141,7 @@ describe('project-book edits', () => {
       const second = await createTestServer({ database, dataDir });
       try {
         const restored = ProjectBookSchema.parse(await (await testClient(second.app, owner.account, owner.cookie).request('/api/project-book')).json());
-        expect(restored.projects).toEqual([expect.objectContaining({ number: 'RESTART-NEW', name: '重启后名称', selectable: true, lastCheckedAt: null })]);
+        expect(restored.projects).toEqual([expect.objectContaining({ number: 'RESTART-NEW', name: '重启后名称', deadlineOn: '2026-12-31', selectable: true, lastCheckedAt: null })]);
       } finally {
         await second.close();
       }
@@ -143,5 +151,100 @@ describe('project-book edits', () => {
       await first.app.close().catch(() => undefined);
       await first.db.destroy().catch(() => undefined);
     }
+  });
+});
+
+describe('project-book deadlines', () => {
+  it('supports unset, update, and clear without changing the entry status or append-only history', async () => {
+    const unset = await intake(bob, '/api/project-book/intake', { number: 'DEADLINE-EMPTY', name: '未设置截止日期' });
+    expect(unset.book.projects[0]).toMatchObject({ number: 'DEADLINE-EMPTY', statusLabel: '可选', selectable: true });
+    expect(unset.book.projects[0]?.deadlineOn ?? null).toBeNull();
+
+    const set = await edit(bob, '/api/project-book/edit', {
+      originalNumber: 'DEADLINE-EMPTY',
+      number: 'DEADLINE-EMPTY',
+      name: '已设置截止日期',
+      deadlineOn: '2026-12-31',
+    });
+    expect(set.book.projects[0]).toMatchObject({ number: 'DEADLINE-EMPTY', name: '已设置截止日期', deadlineOn: '2026-12-31', statusLabel: '可选', selectable: true });
+
+    const cleared = await edit(bob, '/api/project-book/edit', {
+      originalNumber: 'DEADLINE-EMPTY',
+      number: 'DEADLINE-EMPTY',
+      name: '清除截止日期',
+      deadlineOn: null,
+    });
+    expect(cleared.book.projects[0]).toMatchObject({ number: 'DEADLINE-EMPTY', name: '清除截止日期', statusLabel: '可选', selectable: true });
+    expect(cleared.book.projects[0]?.deadlineOn ?? null).toBeNull();
+
+    expect(
+      await server.db
+        .selectFrom('project_book_event')
+        .select(['action', 'maintenance_action', 'number', 'name', 'deadline_on'])
+        .where('owner_account_id', '=', bob.account.accountId)
+        .where('number', '=', 'DEADLINE-EMPTY')
+        .orderBy('seq')
+        .execute(),
+    ).toEqual([
+      { action: 'admitted', maintenance_action: null, number: 'DEADLINE-EMPTY', name: '未设置截止日期', deadline_on: null },
+      { action: 'checked', maintenance_action: 'edited', number: 'DEADLINE-EMPTY', name: '已设置截止日期', deadline_on: '2026-12-31' },
+      { action: 'checked', maintenance_action: 'edited', number: 'DEADLINE-EMPTY', name: '清除截止日期', deadline_on: null },
+    ]);
+  });
+
+  it('lets administrators maintain public deadlines while members can read but cannot edit them', async () => {
+    const added = await intake(admin, '/api/public-project-book/intake', { number: 'PUBLIC-DEADLINE', name: '公共截止日期', deadlineOn: '2026-11-30' });
+    expect(added.book.projects[0]).toMatchObject({ number: 'PUBLIC-DEADLINE', deadlineOn: '2026-11-30', selectable: true });
+
+    const forbidden = await bob.post('/api/public-project-book/edit', {
+      originalNumber: 'PUBLIC-DEADLINE',
+      number: 'PUBLIC-DEADLINE',
+      name: '成员不应修改',
+      deadlineOn: '2027-01-01',
+    });
+    expect(forbidden.status).toBe(403);
+
+    const visible = ProjectBookSchema.parse(await (await bob.request('/api/public-project-book')).json());
+    expect(visible.projects).toEqual([expect.objectContaining({ number: 'PUBLIC-DEADLINE', name: '公共截止日期', deadlineOn: '2026-11-30' })]);
+    const changed = await edit(admin, '/api/public-project-book/edit', {
+      originalNumber: 'PUBLIC-DEADLINE',
+      number: 'PUBLIC-DEADLINE',
+      name: '公共截止日期',
+      deadlineOn: '2027-01-01',
+    });
+    expect(changed.book.projects[0]).toMatchObject({ number: 'PUBLIC-DEADLINE', deadlineOn: '2027-01-01', selectable: true });
+  });
+
+  it('keeps deadline facts separate from legacy expiry and ERP validity', async () => {
+    const at = '2026-01-01T00:00:00Z';
+    await server.db
+      .insertInto('project_book_event')
+      .values([
+        {
+          event_id: 'legacy-expired-with-deadline', seq: 1, scope: 'personal', owner_account_id: bob.account.accountId,
+          number: 'LEGACY-EXPIRED', action: 'admitted', name: '已过期项目', verdict: 'confirmed', expires_on: '2000-01-01',
+          deadline_on: '2099-12-31', admission_source: null, maintenance_action: null, previous_number: null,
+          actor_account_id: bob.account.accountId, created_at: at,
+        },
+        {
+          event_id: 'legacy-invalid-with-deadline', seq: 2, scope: 'personal', owner_account_id: bob.account.accountId,
+          number: 'LEGACY-INVALID', action: 'admitted', name: 'ERP 无效项目', verdict: 'unusable', expires_on: null,
+          deadline_on: '2099-12-31', admission_source: null, maintenance_action: null, previous_number: null,
+          actor_account_id: bob.account.accountId, created_at: at,
+        },
+        {
+          event_id: 'legacy-invalid-check', seq: 3, scope: 'personal', owner_account_id: bob.account.accountId,
+          number: 'LEGACY-INVALID', action: 'checked', name: null, verdict: 'unusable', expires_on: null,
+          deadline_on: null, admission_source: null, maintenance_action: null, previous_number: null,
+          actor_account_id: bob.account.accountId, created_at: at,
+        },
+      ])
+      .execute();
+
+    const book = ProjectBookSchema.parse(await (await bob.request('/api/project-book')).json());
+    expect(book.projects).toEqual([
+      expect.objectContaining({ number: 'LEGACY-EXPIRED', deadlineOn: '2099-12-31', selectable: false, statusLabel: '已过期' }),
+      expect.objectContaining({ number: 'LEGACY-INVALID', deadlineOn: '2099-12-31', selectable: false, statusLabel: '复检未通过' }),
+    ]);
   });
 });

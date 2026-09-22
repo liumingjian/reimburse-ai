@@ -7,8 +7,9 @@ describe('hash 路由', () => {
     expect(parseHash('#/tasks/new')).toEqual({ kind: 'new' });
   });
 
-  test('设置页的安装教程使用独立路由', () => {
+  test('设置页的密码修改与安装教程使用独立路由', () => {
     expect(parseHash('#/settings')).toEqual({ kind: 'settings' });
+    expect(parseHash('#/settings/password')).toEqual({ kind: 'password' });
     expect(parseHash('#/settings/tutorial')).toEqual({ kind: 'settingsTutorial' });
   });
 

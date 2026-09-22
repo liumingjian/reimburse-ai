@@ -87,6 +87,7 @@ export function uploadedMaterial(input: { materialId: string; batchId: string; f
     pendingItemIds: [],
     originalUrl: null,
     previewUrl: null,
+    variants: [],
     fields: [],
   };
 }

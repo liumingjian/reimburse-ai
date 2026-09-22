@@ -68,10 +68,10 @@ export function createProjectBook(
   const allowListFor = (accountId: string): ProjectOption[] => {
     const personal = annotated(accountId)
       .filter((project) => project.selectable)
-      .map((project): ProjectOption => ({ number: project.number, name: project.name ?? project.number, source: 'personal' }));
+      .map((project): ProjectOption => ({ number: project.number, name: project.name ?? project.number, source: 'personal', ...(project.deadlineOn == null ? {} : { deadlineOn: project.deadlineOn }) }));
     const shared = publicAnnotated()
       .filter((project) => project.selectable)
-      .map((project): ProjectOption => ({ number: project.number, name: project.name ?? project.number, source: 'public' }));
+      .map((project): ProjectOption => ({ number: project.number, name: project.name ?? project.number, source: 'public', ...(project.deadlineOn == null ? {} : { deadlineOn: project.deadlineOn }) }));
     return [...personal, ...shared];
   };
   const allowList = (taskId?: string): ProjectOption[] => {
@@ -181,7 +181,7 @@ export function createProjectBook(
 
       state.personalByAccount.set(account.accountId, [
         ...personal,
-        { number, name, expiresOn: null, lastCheckedAt: null, lastVerdict: 'local', active: true },
+        { number, name, expiresOn: null, deadlineOn: input.deadlineOn === undefined || input.deadlineOn === null || input.deadlineOn === '' ? null : input.deadlineOn, lastCheckedAt: null, lastVerdict: 'local', active: true },
       ]);
       refreshAccountTasks(account.accountId);
       return done('admitted', PROJECT_BOOK_NOTES.admitted(number, name), account.accountId);
@@ -203,7 +203,8 @@ export function createProjectBook(
       if (number !== originalNumber && state.publicProjects.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.editPublicReserved(number), account.accountId);
 
       const existing = personal[index]!;
-      state.personalByAccount.set(account.accountId, personal.map((project, projectIndex) => (projectIndex === index ? { ...existing, number, name } : project)));
+      const deadlineOn = input.deadlineOn === undefined ? existing.deadlineOn ?? null : input.deadlineOn === null || input.deadlineOn === '' ? null : input.deadlineOn;
+      state.personalByAccount.set(account.accountId, personal.map((project, projectIndex) => (projectIndex === index ? { ...existing, number, name, deadlineOn } : project)));
       refreshAccountTasks(account.accountId);
       return done('edited', PROJECT_BOOK_NOTES.edited(originalNumber, number, name), account.accountId);
     },

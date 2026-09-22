@@ -1055,7 +1055,7 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
     task: { taskId: task.task_id, name: task.name, period: taskPeriod(lines), homeCity, createdAt: task.created_at, updatedAt: task.updated_at },
     stage,
     batches: batchViews,
-    materials: view.materials,
+    materials: view.materials.map((material) => materialWithSourceUrls(task.task_id, material)),
     inventory: { ...view.inventory, versionId: facts.versionNo > 0 ? `v${facts.versionNo}` : null },
     events: view.events,
     pendingItems: view.pendingItems,
@@ -1076,5 +1076,15 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
         ? { status: 'handed_off', bucket: legacy.reconcile_bucket as ReconcileBucket | null, action: '转人工', actionCode: null, allowedActions: [], humanReview: true, banner: HUMAN_REVIEW_NOTICE, draftNo: legacy.bill_no, rows: [], reasons: [], capture: null }
         : (reconcileView(erp, task.task_id, task.lifecycle, lines) ?? { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [], capture: null }),
     step,
+  };
+}
+
+function materialWithSourceUrls(taskId: string, material: InventoryView['materials'][number]): InventoryView['materials'][number] {
+  const sourceUrl = (contentHash: string) => `/api/tasks/${encodeURIComponent(taskId)}/files/${encodeURIComponent(contentHash)}`;
+  return {
+    ...material,
+    originalUrl: sourceUrl(material.contentHash),
+    previewUrl: sourceUrl(material.contentHash),
+    variants: material.variants.map((variant) => ({ ...variant, originalUrl: sourceUrl(variant.contentHash), previewUrl: sourceUrl(variant.contentHash) })),
   };
 }

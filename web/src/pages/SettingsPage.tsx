@@ -3,7 +3,7 @@ import { Button, InlineNotification } from '@carbon/react';
 import { Download, Launch } from '@carbon/icons-react';
 import { useAppStore, useExtensionPairing, useLegacyImport } from '../adapter/context';
 import { compareExtensionVersions, EXTENSION_DOWNLOAD_PATH, EXTENSION_PAIRING_STATUS_LABELS, EXTENSION_VERSION, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY, type LegacyImportReport } from '@baox/contract';
-import { SETTINGS_TUTORIAL_HASH, TASKS_HASH, navigate } from '../router';
+import { SETTINGS_PASSWORD_HASH, SETTINGS_TUTORIAL_HASH, TASKS_HASH, navigate } from '../router';
 import { ConfirmDialog } from '../shell/Dialog';
 import { AppShell } from '../shell/AppShell';
 import { FieldGroup } from '../shell/FieldGroup';
@@ -357,7 +357,7 @@ export function SettingsPage() {
   return (
     <AppShell nav="settings">
       <div className="app-form-page">
-        <PageHeader title="设置" lead="先连接浏览器扩展，再回到报销任务开始去报销。" />
+        <PageHeader title="设置" lead="先连接浏览器扩展，再回到报销任务开始去报销。" actions={<Button kind="secondary" href={SETTINGS_PASSWORD_HASH}>修改密码</Button>} />
         <ExtensionPairingSection />
         <LegacyImportSection />
         <details className="app-settings-advanced">
