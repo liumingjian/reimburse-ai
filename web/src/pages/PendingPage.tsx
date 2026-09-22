@@ -21,7 +21,7 @@ import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
-import { DocViewer } from './DocViewer';
+import { LodgingPreview } from './LodgingPreview';
 import { DuplicateBlockers } from './DuplicateBlockers';
 import { PAGE_COPY } from './page-copy';
 
@@ -414,7 +414,7 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
       {selected ? (
         <section className="app-pending-detail" aria-label="待确认项详情">
           <div className="app-review-split">
-            <DocViewer key={selected.itemId} material={material} />
+            <LodgingPreview key={selected.itemId} snapshot={snapshot} materialId={selected.materialId} />
             <div className="app-detail-side">
               <div className="app-detail-head">
                 <h2 className="app-section-title">{selected.title}</h2>
