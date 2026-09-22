@@ -29,6 +29,9 @@ export const UPLOAD_REJECT_MESSAGES: Readonly<Record<UploadRejectCode, string>> 
 export const UploadFileResultSchema = z.object({
   fileId: IdSchema,
   fileName: z.string().min(1),
+  // Relative source provenance. A single-file selection uses the file name; a directory selection keeps its nested
+  // folders (for example `travel/2026-08/hotel/invoice.pdf`).
+  relativePath: z.string().min(1),
   size: z.number().int().nonnegative(),
   status: z.enum(['accepted', 'rejected']),
   // 已接收的文件有内容哈希（sha256 十六进制），页面显示前 8 位作为身份；被拒绝的为 null。
@@ -107,6 +110,8 @@ export const MaterialSchema = z.object({
   materialId: IdSchema,
   batchId: IdSchema,
   fileName: z.string().min(1),
+  // Relative source provenance, retained independently of the display file name.
+  relativePath: z.string().min(1),
   contentHash: z.string().min(1),
   size: z.number().int().nonnegative(),
   // 材料种类; null before inventory and while unrecognised (manual fill sets it, #187).

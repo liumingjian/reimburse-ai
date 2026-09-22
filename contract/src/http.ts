@@ -73,7 +73,7 @@ export const HTTP_ENDPOINTS = {
   getSnapshot: { method: 'GET', path: '/api/tasks/:id', body: 'none', fields: [] },
   subscribe: { method: 'GET', path: '/api/tasks/:id/events', body: 'sse', fields: [] },
   createTask: { method: 'POST', path: '/api/tasks', body: 'json', fields: ['homeCity'] },
-  uploadBatch: { method: 'POST', path: '/api/tasks/:id/batches', body: 'multipart', fields: ['files'] },
+  uploadBatch: { method: 'POST', path: '/api/tasks/:id/batches', body: 'multipart', fields: ['files', 'sourcePaths'] },
   addPaymentScreenshot: { method: 'POST', path: '/api/tasks/:id/payment-screenshots', body: 'multipart', fields: ['voucherMaterialId', 'file'] },
   startInventory: action('start-inventory', 'stepToken'),
   answerPendingItem: action('answer-pending', 'itemId', 'answer', 'stepToken'),

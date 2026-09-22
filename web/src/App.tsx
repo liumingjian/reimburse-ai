@@ -9,6 +9,7 @@ import { AdminPage, ADMIN_COPY } from './pages/AdminPage';
 import { AuthPage, AuthPending, ChangePasswordPage } from './pages/AuthPage';
 import { ProjectBookPage } from './pages/ProjectBookPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ExtensionTutorialPage } from './pages/ExtensionTutorialPage';
 import { TaskListPage } from './pages/TaskListPage';
 import { PAGE_COPY, TaskRoute } from './pages/TaskRoute';
 import { navigate, useRoute, type Route } from './router';
@@ -29,6 +30,8 @@ function titleOf(route: Route): string {
       return '设置';
     case 'password':
       return '修改密码';
+    case 'settingsTutorial':
+      return '浏览器扩展安装教程';
     case 'admin':
       return ADMIN_COPY.title;
     case 'task':
@@ -59,6 +62,8 @@ function Routes() {
       return <SettingsPage />;
     case 'password':
       return <ChangePasswordPage required={false} />;
+    case 'settingsTutorial':
+      return <ExtensionTutorialPage />;
     case 'admin':
       return <AdminPage />;
     case 'task':

@@ -41,7 +41,7 @@ import type { ParseInput } from './parse/material';
 import { EXCLUDE_CHOICE, judgeAnswer, type Verdict } from './pending/answers';
 import { EDIT_COPY, EDIT_PREFIX, judgeEdit } from './pending/edits';
 import { inventoried, isNonTerminal, parseRunning, project, stepToken, type TaskFacts } from './projection';
-import { rejectByShape, rejectReason, storedMime } from './upload-rules';
+import { relativeSourcePath, rejectByShape, rejectReason, sourceFileName, storedMime } from './upload-rules';
 import { assignmentOf, checkAssign, checkSubmit, linesDigest, type Assignment, type AssignmentFact, type PinnedProject } from './assignment';
 import { bookOptions, createBookService, type BookOption } from './books';
 import { COMPANY_RULES, pinnedCompanyRules, putRuleSet, validHomeCity, type CompanyRules } from './rules/company-rules';
@@ -61,7 +61,7 @@ import { PrintRefusal, type PrintCommit, type PrintState } from './print/service
 // 报销任务 (reimbursement task) facts, the actions that append them, and the snapshot projected from them.
 // Every accepted change goes through `mutate`: stepToken check, refusal, revision bump, then `onChange` (SSE).
 
-export type UploadedFile = { fileName: string; mime: string; bytes: Uint8Array };
+export type UploadedFile = { fileName: string; mime: string; bytes: Uint8Array; relativePath?: string | null };
 
 // Contract times are ISO 8601 to the second.
 const now = () => `${new Date().toISOString().slice(0, 19)}Z`;
@@ -178,6 +178,7 @@ const viewMaterial = (row: MaterialRow): ViewMaterial => ({
   materialId: row.material_id,
   batchId: row.batch_id,
   fileName: row.file_name,
+  relativePath: row.source_path ?? row.file_name,
   contentHash: row.blob_sha256,
   size: row.size,
   mediaType: mediaTypeOf(row),
@@ -566,12 +567,15 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     // One 上传批次 (upload batch). Each file is accepted or rejected with a reason code; accepted bytes land on disk
     // (content-addressed) before any row refers to them. A batch that adds a material forms a new inventory version.
     async upload(taskId: string, files: readonly UploadedFile[]): Promise<TaskSnapshot> {
-      const judged = files.map((file) => ({ ...file, shape: rejectByShape(file.fileName, file.mime, file.bytes.byteLength), sha256: createHash('sha256').update(file.bytes).digest('hex') }));
+      const judged = files.map((file) => {
+        const fileName = sourceFileName(file.fileName);
+        return { ...file, fileName, relativePath: relativeSourcePath(fileName, file.relativePath), shape: rejectByShape(fileName, file.mime, file.bytes.byteLength), sha256: createHash('sha256').update(file.bytes).digest('hex') };
+      });
       for (const file of judged) if (file.shape === null) writeBlob(dataDir, file.bytes);
       return mutate(taskId, null, async ({ tx, at }) => {
         const known = new Map<string, string>();
-        for (const row of await tx.selectFrom('material').select(['blob_sha256', 'file_name']).where('task_id', '=', taskId).orderBy(sql`rowid`).execute()) {
-          if (!known.has(row.blob_sha256)) known.set(row.blob_sha256, row.file_name);
+        for (const row of await tx.selectFrom('material').select(['blob_sha256', 'file_name', 'source_path']).where('task_id', '=', taskId).orderBy(sql`rowid`).execute()) {
+          if (!known.has(row.blob_sha256)) known.set(row.blob_sha256, row.source_path ?? row.file_name);
         }
         const last = await tx.selectFrom('upload_batch').select((eb) => eb.fn.max('no').as('no')).where('task_id', '=', taskId).executeTakeFirst();
         const batchId = randomUUID();
@@ -582,15 +586,15 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
           if (code) {
             await tx
               .insertInto('upload_rejection')
-              .values({ rejection_id: randomUUID(), task_id: taskId, account_id: accountId, batch_id: batchId, batch_seq: seq, file_name: file.fileName, size: file.bytes.byteLength, reason_code: code, reason: rejectReason(code, duplicateOf), created_at: at })
+              .values({ rejection_id: randomUUID(), task_id: taskId, account_id: accountId, batch_id: batchId, batch_seq: seq, file_name: file.fileName, source_path: file.relativePath, size: file.bytes.byteLength, reason_code: code, reason: rejectReason(code, duplicateOf), created_at: at })
               .execute();
             continue;
           }
-          known.set(file.sha256, file.fileName);
+          known.set(file.sha256, file.relativePath);
           await tx.insertInto('blob').values({ sha256: file.sha256, size: file.bytes.byteLength, mime: storedMime(file.fileName, file.mime), created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
           await tx
             .insertInto('material')
-            .values({ material_id: randomUUID(), task_id: taskId, account_id: accountId, batch_id: batchId, blob_sha256: file.sha256, file_name: file.fileName, created_at: at, batch_seq: seq })
+            .values({ material_id: randomUUID(), task_id: taskId, account_id: accountId, batch_id: batchId, blob_sha256: file.sha256, file_name: file.fileName, source_path: file.relativePath, created_at: at, batch_seq: seq })
             .execute();
         }
       });
@@ -975,13 +979,13 @@ function batchFiles(batchId: string, materials: readonly MaterialRow[], rejectio
     entries.push({
       // Materials from before 0002_180 have no position; they keep insertion order after any positioned file.
       order: row.batch_seq ?? 1e9 + row.row_no,
-      file: { fileId: row.material_id, fileName: row.file_name, size: row.size, status: 'accepted', contentHash: row.blob_sha256, reasonCode: null, reason: null, materialId: row.material_id },
+      file: { fileId: row.material_id, fileName: row.file_name, relativePath: row.source_path ?? row.file_name, size: row.size, status: 'accepted', contentHash: row.blob_sha256, reasonCode: null, reason: null, materialId: row.material_id },
     });
   }
   for (const row of rejections.filter((r) => r.batch_id === batchId)) {
     entries.push({
       order: row.batch_seq,
-      file: { fileId: row.rejection_id, fileName: row.file_name, size: row.size, status: 'rejected', contentHash: null, reasonCode: row.reason_code, reason: row.reason, materialId: null },
+      file: { fileId: row.rejection_id, fileName: row.file_name, relativePath: row.source_path ?? row.file_name, size: row.size, status: 'rejected', contentHash: null, reasonCode: row.reason_code, reason: row.reason, materialId: null },
     });
   }
   return entries.sort((a, b) => a.order - b.order).map((entry) => entry.file);
