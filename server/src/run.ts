@@ -16,7 +16,8 @@ import { startServer } from './server';
 // `BAOX_PUBLIC_ORIGIN` is the address colleagues reach the app at through the reverse proxy, e.g.
 // `http://10.250.0.222`; unset serves 127.0.0.1 only (`public-origin.ts`).
 // `BAOX_MAINTENANCE_TOKEN_FILE` is the root/baox-owned host-local credential that enables the Unix maintenance
-// control socket; production requires it, while development and existing releases may leave it unset.
+// control socket; `BAOX_MAINTENANCE_SOCKET_PATH` is reserved for an isolated recovery rehearsal. Production uses the
+// data-directory default, while development and existing releases may leave the credential unset.
 // ERP: `BAOX_ERP_ORIGIN`, `BAOX_ERP_BUILD`, `BAOX_ERP_FORM_ID` (`erp/config.ts`); `BAOX_CHROMIUM_CDP_PORT`,
 // `BAOX_CHROME` and `BAOX_ERP_CHROMIUM=off` are read by the CDP executor only (`erp/cdp-executor.ts`), so they mean
 // nothing to the production entry. Project numbers are checked against the ERP inside each 去报销 job, in the
@@ -39,6 +40,7 @@ export async function run({ erpExecutor, reconcileExecutor }: RunOverrides = {})
   try {
     const erpConfig = erpConfigFromEnv();
     const maintenanceTokenFile = process.env['BAOX_MAINTENANCE_TOKEN_FILE'];
+    const maintenanceSocketPath = process.env['BAOX_MAINTENANCE_SOCKET_PATH'];
     const server = await startServer({
       dataDir,
       port,
@@ -49,7 +51,10 @@ export async function run({ erpExecutor, reconcileExecutor }: RunOverrides = {})
       erpConfig,
       publicOrigin: process.env['BAOX_PUBLIC_ORIGIN'] ?? null,
       extensionTemplate: EXTENSION_TEMPLATE,
-      ...(maintenanceTokenFile ? { maintenanceToken: readMaintenanceToken(maintenanceTokenFile) } : {}),
+      ...(maintenanceTokenFile ? {
+        maintenanceToken: readMaintenanceToken(maintenanceTokenFile),
+        ...(maintenanceSocketPath ? { maintenanceSocketPath } : {}),
+      } : {}),
     });
     console.log(`baox server listening on ${server.url} (data ${dataDir})`);
     const stop = () => void server.close().then(() => process.exit(0));

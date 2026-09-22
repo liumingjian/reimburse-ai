@@ -4,11 +4,20 @@
 // target's isolated Node runtime. It intentionally has no project imports.
 const { createHash, randomBytes } = require('node:crypto');
 const { spawn } = require('node:child_process');
+const http = require('node:http');
+const net = require('node:net');
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const SCHEMA = 1;
+const SNAPSHOT_OPERATION = 'recovery-snapshot';
+const CANDIDATE_OPERATION = 'candidate-prepare';
+const SNAPSHOT_SCHEMA = 1;
+const SNAPSHOT_RETENTION = 3;
+const MAX_SNAPSHOT_RETENTION = 20;
+const SNAPSHOT_MARGIN_BYTES = 64 * 1024 * 1024;
 const ALLOWED_BUILD_ENV = new Set([
   'HTTP_PROXY',
   'HTTPS_PROXY',
@@ -18,11 +27,13 @@ const ALLOWED_BUILD_ENV = new Set([
   'CADDY_DOWNLOAD',
 ]);
 
-main().catch((error) => {
-  const code = error instanceof CandidateFailure ? error.code : 'internal-error';
-  process.stdout.write(JSON.stringify({ state: 'failed', code }) + '\n');
-  process.exitCode = 1;
-});
+if (process.env.BAOX_COORDINATOR_LIBRARY !== '1') {
+  main().catch((error) => {
+    const code = error instanceof CandidateFailure ? error.code : 'internal-error';
+    process.stdout.write(JSON.stringify({ state: 'failed', code }) + '\n');
+    process.exitCode = 1;
+  });
+}
 
 async function main() {
   // `node -e <source> receive` has no script filename in argv, whereas the
@@ -39,6 +50,10 @@ async function main() {
   }
   if (mode === 'worker') {
     await worker(request);
+    return;
+  }
+  if (mode === 'snapshot') {
+    writeResult(await snapshot(request));
     return;
   }
   throw new Error('unsupported coordinator mode');
@@ -69,11 +84,27 @@ function validateRequest(request) {
     if (typeof request[name] !== 'string' || !path.isAbsolute(request[name])) throw new Error('invalid target path');
   }
   if (request.inspect === true) return;
+  if (request.kind === 'snapshot') {
+    validateSnapshotRequest(request);
+    return;
+  }
   if (!request.source || typeof request.source !== 'object') throw new Error('invalid source');
   if (!/^[0-9a-f]{40}$/i.test(request.source.commit)) throw new Error('invalid source commit');
   if (!/^[0-9a-f]{64}$/i.test(request.source.archiveSha256)) throw new Error('invalid archive checksum');
   if (request.source.artifactOrigin !== 'direct' && request.source.artifactOrigin !== 'relay') throw new Error('invalid artifact origin');
   if (!/^[a-f0-9]{12}-[a-f0-9]{12}$/i.test(request.candidateId)) throw new Error('invalid candidate id');
+}
+
+function validateSnapshotRequest(request) {
+  for (const name of ['dataDir', 'maintenanceWrapper']) {
+    if (typeof request[name] !== 'string' || !path.isAbsolute(request[name])) throw new Error('invalid snapshot path');
+  }
+  if (!/^[a-f0-9]{12}-[a-f0-9]{12}$/i.test(request.candidateId)) throw new Error('invalid candidate id');
+  if (typeof request.snapshotId !== 'string' || !/^snapshot-[a-f0-9-]{29,80}$/i.test(request.snapshotId)) throw new Error('invalid snapshot id');
+  if (request.completion !== 'reopen' && request.completion !== 'hold') throw new Error('invalid snapshot completion');
+  if (request.retention !== undefined && (!Number.isSafeInteger(request.retention) || request.retention < 1 || request.retention > MAX_SNAPSHOT_RETENTION)) {
+    throw new Error('invalid snapshot retention');
+  }
 }
 
 function targetPaths(request) {
@@ -95,6 +126,8 @@ function targetPaths(request) {
     workerStartGate: path.join(candidate, 'worker-start'),
     log: path.join(candidate, 'worker.log'),
     recoveryConfig: path.join(candidate, 'recovery-config'),
+    snapshotRoot: path.join(request.deployRoot, 'recovery-snapshots'),
+    releaseRoot: path.join(request.deployRoot, 'releases'),
   };
 }
 
@@ -284,6 +317,103 @@ async function acquire(request, paths) {
   return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'lock-transition-raced' } };
 }
 
+async function snapshot(request) {
+  if (request.completion === 'hold') return { state: 'failed', code: 'held-snapshot-requires-library-caller' };
+  const paths = targetPaths(request);
+  const lock = await acquireSnapshot(request, paths);
+  if (lock.kind === 'busy' || lock.kind === 'reconcile-needed' || lock.kind === 'verified' || lock.kind === 'held') return lock.result;
+  if (lock.kind === 'in-progress') return waitForSnapshotTerminal(request, paths);
+  return runSnapshotLifecycle(request, paths, lock.lease, { completion: request.completion });
+}
+
+async function acquireSnapshot(request, paths) {
+  await fs.mkdir(paths.maintenance, { recursive: true, mode: 0o700 });
+  if (await hasOutstandingClaim(paths)) {
+    return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'stale-lock-claim-needs-recovery' } };
+  }
+
+  const freshLease = await createLease(request, paths);
+  if (freshLease) return reconcileSnapshotLock(request, paths, freshLease);
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const owner = await readJson(path.join(paths.lock, 'owner.json'));
+    const journal = await readJson(paths.journal);
+    const inspected = lockInspection(owner);
+    if (inspected.state === 'unknown-owner') {
+      return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'lock-owner-not-durable' } };
+    }
+    if (inspected.state === 'active') {
+      if (isJournalFor(journal, request)) return { kind: 'in-progress' };
+      return { kind: 'busy', result: { state: 'busy', operation: owner.operation, candidateId: owner.candidateId } };
+    }
+    if (isSnapshotHeldJournal(journal)) {
+      return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'held-snapshot-requires-cutover-continuation' } };
+    }
+    const lease = await claimInactiveLock(request, paths, owner);
+    if (lease) return reconcileSnapshotLock(request, paths, lease);
+  }
+  return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'lock-transition-raced' } };
+}
+
+async function reconcileSnapshotLock(request, paths, lease) {
+  const journal = await readJson(paths.journal);
+  if (!journal) return { kind: 'acquired', lease };
+  if (!isJournalFor(journal, request)) {
+    if (isTerminalCandidateJournal(journal)) return { kind: 'acquired', lease };
+    await release(paths, lease);
+    return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'lock-without-matching-journal' } };
+  }
+  if (journal.phase === 'reopened' && await snapshotManifestMatches(paths, journal)) {
+    const gate = await observeGate(request);
+    await release(paths, lease);
+    if (isOpenGate(gate)) return { kind: 'verified', result: verifiedSnapshotResult(journal, paths) };
+    return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'snapshot-reopened-journal-with-closed-gate' } };
+  }
+  if (isTerminalJournal(journal)) return { kind: 'acquired', lease };
+  const gate = await observeGate(request);
+  const barrierMayBeClosed = !isDefinitelyOpenGate(gate);
+  let publicBarrier = 'not-required';
+  if (barrierMayBeClosed) {
+    try {
+      await systemctl('stop', 'baox-caddy.service');
+      publicBarrier = 'stopped';
+    } catch {
+      publicBarrier = 'unconfirmed';
+    }
+  }
+  await writeJournal(request, paths, lease, 'recovery-required', {
+    failure: journal.phase === 'admission-intent' ? 'snapshot-admission-outcome-uncertain' : 'snapshot-interrupted-requires-reconciliation',
+    admission: gate || { state: 'unavailable', barrier: 'unknown' },
+    ...(barrierMayBeClosed ? { publicBarrier } : {}),
+  }).catch(() => undefined);
+  await release(paths, lease);
+  return {
+    kind: 'reconcile-needed',
+    result: { state: 'reconcile-needed', code: barrierMayBeClosed ? 'snapshot-interrupted-with-maintenance-barrier' : 'snapshot-interrupted-before-admission-confirmed' },
+  };
+}
+
+async function waitForSnapshotTerminal(request, paths) {
+  for (;;) {
+    const journal = await readJson(paths.journal);
+    if (!isJournalFor(journal, request)) return { state: 'reconcile-needed', code: 'journal-changed' };
+    if (journal.phase === 'reopened' && await snapshotManifestMatches(paths, journal)) return verifiedSnapshotResult(journal, paths);
+    if (journal.phase === 'snapshot-verified-held' && await snapshotManifestMatches(paths, journal)) return heldSnapshotResult(journal, paths);
+    if (journal.phase === 'recovery-required') return { state: 'reconcile-needed', code: journal.failure || 'snapshot-recovery-required' };
+    await delay(100);
+  }
+}
+
+function isSnapshotHeldJournal(journal) {
+  return Boolean(journal && journal.schema === SCHEMA && journal.operation === SNAPSHOT_OPERATION
+    && journal.phase === 'snapshot-verified-held');
+}
+
+function isTerminalJournal(journal) {
+  return isTerminalCandidateJournal(journal) || Boolean(journal && journal.schema === SCHEMA && journal.operation === SNAPSHOT_OPERATION
+    && (journal.phase === 'reopened' || journal.phase === 'failed' || journal.phase === 'refused'));
+}
+
 async function reconcileOwnedLock(request, paths, lease) {
   const journal = await readJson(paths.journal);
   if (!journal) return { kind: 'acquired', lease, resumeStaged: false };
@@ -386,7 +516,7 @@ async function hasOutstandingClaim(paths) {
 }
 
 function isTerminalCandidateJournal(journal) {
-  return Boolean(journal && journal.schema === SCHEMA && journal.operation === 'candidate-prepare'
+  return Boolean(journal && journal.schema === SCHEMA && journal.operation === CANDIDATE_OPERATION
     && (journal.phase === 'prepared' || journal.phase === 'failed'));
 }
 
@@ -411,6 +541,949 @@ function recoveryResult(request) {
     candidateId: request.candidateId,
     action: 'preserve-candidate-and-run-recovery-before-another-prepare',
   };
+}
+
+/**
+ * Creates a recovery image while the caller owns the shared deployment lease.
+ * A cutover coordinator can call this with `completion: 'hold'` and keep that
+ * lease through its own switch; the standalone operator uses `reopen`.
+ */
+async function runSnapshotLifecycle(request, paths, lease, { completion }) {
+  let admissionIntent = false;
+  let barrierClosed = false;
+  let proxyStopped = false;
+  let serviceStopped = false;
+  let original = null;
+  let snapshot = null;
+  try {
+    original = await verifySnapshotOriginal(request, paths);
+    const preflight = await preflightSnapshot(request, paths, original);
+    snapshot = snapshotPaths(paths, request.snapshotId);
+    await writeJournal(request, paths, lease, 'preflight', {
+      preflight,
+      original: snapshotOriginalSummary(original),
+      snapshot: { id: request.snapshotId, manifest: snapshot.manifest },
+    });
+
+    // The gate call can persist a closed boundary even when the SSH command
+    // loses its response. This checkpoint makes that ambiguity recoverable.
+    await writeJournal(request, paths, lease, 'admission-intent', {});
+    admissionIntent = true;
+    const admission = await admitAndDrain(request);
+    if (admission.kind === 'refused') {
+      if (!isDefinitelyOpenGate(admission.status)) throw new CandidateFailure('maintenance-gate-refused-with-closed-barrier');
+      await writeJournal(request, paths, lease, 'refused', { gate: admission.status });
+      await release(paths, lease);
+      return { state: 'refused', code: admission.code, gate: admission.status };
+    }
+    barrierClosed = true;
+    await writeJournal(request, paths, lease, 'admitted', { gate: admission.status });
+
+    await systemctl('stop', 'baox-caddy.service');
+    proxyStopped = true;
+    await writeJournal(request, paths, lease, 'proxy-stopped', {});
+
+    await systemctl('stop', 'baox.service');
+    serviceStopped = true;
+    await writeJournal(request, paths, lease, 'service-stopped', {});
+
+    const inventory = await collectDataInventory(request.dataDir);
+    const capacity = await capacityForSnapshot(paths.snapshotRoot, inventory.bytes);
+    if (!capacity.ok) throw new CandidateFailure('insufficient-capacity-after-drain');
+    await writeJournal(request, paths, lease, 'snapshot-copying', { inventory: inventorySummary(inventory), capacity });
+    const recovery = await createSnapshotCopy(request, paths, lease, snapshot, inventory, original);
+    const archive = await verifySnapshotArchive(snapshot.data, inventory);
+    await writeJournal(request, paths, lease, 'snapshot-copied', { archive, recovery: recoverySummary(recovery) });
+
+    await writeJournal(request, paths, lease, 'rehearsal-started', {});
+    const rehearsal = await rehearseSnapshot(snapshot, inventory, original);
+    const archiveAfterRehearsal = await verifySnapshotArchive(snapshot.data, inventory);
+    const manifest = await writeSnapshotManifest(request, paths, lease, snapshot, original, inventory, recovery, archiveAfterRehearsal, rehearsal);
+    await publishSnapshot(snapshot);
+    await writeJournal(request, paths, lease, 'rehearsal-verified', { manifest: snapshot.manifest, manifestSha256: await hashFile(snapshot.manifest) });
+
+    await systemctl('start', 'baox.service');
+    serviceStopped = false;
+    await waitForHttp(original.loopback);
+    await writeJournal(request, paths, lease, 'original-verified', {});
+
+    const retention = await pruneVerifiedSnapshots(paths, request);
+    await writeJournal(request, paths, lease, 'retention-pruned', { retention });
+
+    if (completion === 'hold') {
+      await writeJournal(request, paths, lease, 'snapshot-verified-held', { manifest: snapshot.manifest, retention });
+      return { state: 'held', snapshotId: request.snapshotId, manifest: snapshot.manifest, completion: 'hold' };
+    }
+
+    await writeJournal(request, paths, lease, 'reopening', {});
+    const reopened = await commandGate(request, 'reopen');
+    if (!isOpenGate(reopened)) throw new CandidateFailure('maintenance-gate-did-not-reopen');
+    barrierClosed = false;
+    await systemctl('start', 'baox-caddy.service');
+    proxyStopped = false;
+    await waitForHttp(original.public);
+    await writeJournal(request, paths, lease, 'reopened', { manifest: snapshot.manifest, retention, gate: reopened, verifiedAt: new Date().toISOString() });
+    await release(paths, lease);
+    return { state: 'verified', snapshotId: request.snapshotId, manifest: snapshot.manifest, completion: 'reopen' };
+  } catch (error) {
+    const failure = error instanceof CandidateFailure ? error.code : 'snapshot-failed';
+    const observedGate = admissionIntent ? await observeGate(request) : null;
+    const barrierMayBeClosed = barrierClosed || (admissionIntent && !isDefinitelyOpenGate(observedGate));
+    if (barrierMayBeClosed && !proxyStopped) {
+      try {
+        await systemctl('stop', 'baox-caddy.service');
+        proxyStopped = true;
+      } catch {
+        // The journal records an unconfirmed public barrier and leaves recovery
+        // closed rather than deciding that an interrupted admission was open.
+      }
+    }
+    const restored = barrierMayBeClosed && serviceStopped ? await restoreOriginalService(original).catch(() => false) : false;
+    const phase = barrierMayBeClosed ? 'recovery-required' : 'failed';
+    await writeJournal(request, paths, lease, phase, {
+      failure,
+      ...(admissionIntent ? { admission: observedGate || { state: 'unavailable', barrier: 'unknown' } } : {}),
+      ...(barrierMayBeClosed ? { publicBarrier: proxyStopped ? 'stopped' : 'unconfirmed' } : {}),
+      ...(restored ? { originalService: 'restored-with-public-barrier' } : {}),
+    }).catch(() => undefined);
+    // A normal snapshot never reopens from an error path. The proxy remains
+    // stopped whenever admission completed, even if the original service was restored.
+    if (completion !== 'hold') await release(paths, lease).catch(() => undefined);
+    return { state: 'failed', code: failure, ...(barrierMayBeClosed ? { recoveryRequired: true } : {}) };
+  }
+}
+
+async function admitAndDrain(request) {
+  let status = await commandGate(request, 'admit');
+  if (status.state === 'refused') return { kind: 'refused', code: status.reason || 'maintenance-admission-refused', status };
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    if (isAdmittedGate(status)) return { kind: 'admitted', status };
+    if (status.state !== 'admitting' || status.barrier !== true || status.activeWrites === 'unknown' || status.activeErpAttempt === 'unknown') {
+      throw new CandidateFailure('maintenance-gate-did-not-admit');
+    }
+    await delay(250);
+    status = await commandGate(request, 'status');
+    if (status.state === 'refused') return { kind: 'refused', code: status.reason || 'maintenance-admission-refused', status };
+  }
+  throw new CandidateFailure('maintenance-drain-timeout');
+}
+
+async function restoreOriginalService(original) {
+  if (!original) return false;
+  await systemctl('start', 'baox.service');
+  await waitForHttp(original.loopback);
+  return true;
+}
+
+async function observeGate(request) {
+  try {
+    return await commandGate(request, 'status');
+  } catch {
+    return null;
+  }
+}
+
+async function verifySnapshotOriginal(request, paths) {
+  const candidate = await readPreparedCandidate(paths, request.candidateId);
+  const recovery = candidate.recovery;
+  const current = await fs.readlink(path.join(request.deployRoot, 'current')).catch(() => null);
+  if (!current || current !== recovery.activeRelease) throw new CandidateFailure('original-release-changed');
+
+  const expectedConfiguration = new Map([
+    ['caddyfile', path.join(request.deployRoot, 'etc', 'Caddyfile')],
+    ['baox-service', path.join(request.systemdDir, 'baox.service')],
+    ['baox-caddy-service', path.join(request.systemdDir, 'baox-caddy.service')],
+  ]);
+  const configuration = [];
+  for (const entry of recovery.activeConfiguration) {
+    if (!entry || typeof entry !== 'object' || typeof entry.name !== 'string' || typeof entry.source !== 'string' || typeof entry.sha256 !== 'string') {
+      throw new CandidateFailure('candidate-recovery-configuration-invalid');
+    }
+    const stat = await fs.lstat(entry.source).catch(() => null);
+    if (!stat || !stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0) throw new CandidateFailure('original-configuration-protection-invalid');
+    if (expectedConfiguration.get(entry.name) !== entry.source || !path.isAbsolute(entry.source) || !/^[a-f0-9]{64}$/i.test(entry.sha256)
+      || await hashFile(entry.source).catch(() => null) !== entry.sha256) {
+      throw new CandidateFailure('original-configuration-changed');
+    }
+    configuration.push({ name: entry.name, source: entry.source, sha256: entry.sha256, mode: stat.mode & 0o777, owner: { uid: stat.uid, gid: stat.gid } });
+  }
+  if (configuration.length !== expectedConfiguration.size || new Set(configuration.map((entry) => entry.name)).size !== expectedConfiguration.size) {
+    throw new CandidateFailure('candidate-recovery-configuration-incomplete');
+  }
+  const service = configuration.find((entry) => entry.name === 'baox-service');
+  if (!service || service.source !== path.join(request.systemdDir, 'baox.service')) throw new CandidateFailure('candidate-recovery-service-missing');
+  const environment = parseServiceEnvironment(await fs.readFile(service.source, 'utf8'));
+  if (path.resolve(environment.BAOX_DATA_DIR || '') !== path.resolve(request.dataDir)) throw new CandidateFailure('service-data-directory-mismatch');
+  const port = parsePort(environment.BAOX_PORT);
+  const origin = parseOrigin(environment.BAOX_PUBLIC_ORIGIN);
+  if (port === null || origin === null) throw new CandidateFailure('service-runtime-configuration-invalid');
+
+  const executable = path.join(request.deployRoot, 'current', 'server', 'dist', 'main.mjs');
+  const node = path.join(request.deployRoot, 'runtime', 'node', 'bin', 'node');
+  if (!await isRegularFile(executable) || !await isExecutable(node)) throw new CandidateFailure('original-runtime-missing');
+  const runtimeReference = await fs.readlink(path.join(request.deployRoot, 'runtime', 'node')).catch(() => null);
+  if (recovery.runtimeReferences && typeof recovery.runtimeReferences === 'object'
+    && typeof recovery.runtimeReferences.node === 'string' && recovery.runtimeReferences.node !== runtimeReference) {
+    throw new CandidateFailure('original-runtime-changed');
+  }
+  const host = origin.host;
+  const publicPort = origin.port ? Number.parseInt(origin.port, 10) : origin.protocol === 'https:' ? 443 : 80;
+  return {
+    release: current,
+    executable: { path: executable, sha256: await hashFile(executable) },
+    runtime: { nodePath: node, reference: runtimeReference, sha256: await hashFile(node), version: await commandOutput(node, ['--version']) },
+    configuration,
+    serviceEnvironment: environment,
+    loopback: { port, host },
+    public: { port: publicPort, host },
+  };
+}
+
+function snapshotOriginalSummary(original) {
+  return {
+    release: original.release,
+    executable: { sha256: original.executable.sha256 },
+    runtime: { reference: original.runtime.reference, sha256: original.runtime.sha256, version: original.runtime.version },
+    configuration: original.configuration.map((entry) => ({ name: entry.name, sha256: entry.sha256, mode: entry.mode, owner: entry.owner })),
+  };
+}
+
+async function readPreparedCandidate(paths, candidateId) {
+  const candidate = path.join(paths.maintenance, '..', 'candidates', candidateId);
+  const [manifest, marker] = await Promise.all([
+    readJson(path.join(candidate, 'manifest.json')),
+    fs.readFile(path.join(candidate, '.prepared'), 'utf8').catch(() => null),
+  ]);
+  if (!manifest || manifest.schema !== SCHEMA || manifest.candidateId !== candidateId || !manifest.source
+    || typeof manifest.source.archiveSha256 !== 'string' || marker?.trim() !== manifest.source.archiveSha256
+    || !manifest.recovery || typeof manifest.recovery !== 'object' || !Array.isArray(manifest.recovery.activeConfiguration)
+    || typeof manifest.recovery.activeRelease !== 'string') {
+    throw new CandidateFailure('candidate-not-prepared');
+  }
+  return manifest;
+}
+
+async function preflightSnapshot(request, paths, original) {
+  const storage = await prepareExternalSnapshotStorage(request.dataDir, paths.snapshotRoot);
+  const inventory = await collectDataInventory(request.dataDir);
+  const capacity = await capacityForSnapshot(storage.snapshotRoot, inventory.bytes);
+  if (!capacity.ok) throw new CandidateFailure('insufficient-capacity');
+  const snapshots = await listVerifiedSnapshots(storage.snapshotRoot);
+  const pairs = await listManagedRecoveryPairs(paths, snapshots);
+  const currentReleaseId = await currentManagedReleaseId(request, paths);
+  return {
+    storage: { location: 'verified-external' },
+    capacity,
+    inventory: inventorySummary(inventory),
+    retention: retentionPlan(pairs, currentReleaseId, snapshotRetention(request), request.snapshotId),
+  };
+}
+
+async function prepareExternalSnapshotStorage(dataDir, snapshotRoot) {
+  const dataPhysical = await realDirectory(dataDir, 'snapshot-data-directory-invalid');
+  const configuredRoot = path.resolve(snapshotRoot);
+  const parent = path.dirname(configuredRoot);
+  const parentPhysical = await realDirectory(parent, 'snapshot-parent-directory-invalid');
+  let rootStat = await fs.lstat(configuredRoot).catch((error) => {
+    if (error && error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (rootStat?.isSymbolicLink()) throw new CandidateFailure('snapshot-location-symlink');
+  if (rootStat && !rootStat.isDirectory()) throw new CandidateFailure('snapshot-location-invalid');
+
+  // `recovery-snapshots` is a direct child of the deployment root. Resolve its
+  // existing parent before creating it, so a parent symlink cannot turn an
+  // apparently external path into a directory inside the live data root.
+  const projectedRoot = path.join(parentPhysical, path.basename(configuredRoot));
+  if (pathsOverlap(dataPhysical, projectedRoot)) throw new CandidateFailure('snapshot-location-recursive');
+  if (!rootStat) {
+    await fs.mkdir(configuredRoot, { mode: 0o700 });
+    rootStat = await fs.lstat(configuredRoot);
+  }
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new CandidateFailure('snapshot-location-invalid');
+  const snapshotPhysical = await fs.realpath(configuredRoot);
+  if (pathsOverlap(dataPhysical, snapshotPhysical)) throw new CandidateFailure('snapshot-location-recursive');
+  return { dataRoot: dataPhysical, snapshotRoot: snapshotPhysical };
+}
+
+async function realDirectory(directory, failure) {
+  try {
+    if (!(await fs.stat(directory)).isDirectory()) throw new CandidateFailure(failure);
+    return await fs.realpath(directory);
+  } catch (error) {
+    if (error instanceof CandidateFailure) throw error;
+    throw new CandidateFailure(failure);
+  }
+}
+
+function pathsOverlap(left, right) {
+  const a = path.resolve(left);
+  const b = path.resolve(right);
+  return a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep);
+}
+
+function snapshotRetention(request) {
+  return request.retention === undefined ? SNAPSHOT_RETENTION : request.retention;
+}
+
+function parseServiceEnvironment(content) {
+  const values = {};
+  for (const line of content.split(/\r?\n/u)) {
+    if (!line.startsWith('Environment=')) continue;
+    const value = line.slice('Environment='.length);
+    const separator = value.indexOf('=');
+    if (separator <= 0) continue;
+    const key = value.slice(0, separator);
+    const setting = value.slice(separator + 1);
+    if (/^[A-Z][A-Z0-9_]*$/u.test(key) && setting && !/[\r\n\0]/u.test(setting)) values[key] = setting;
+  }
+  return values;
+}
+
+function parsePort(value) {
+  if (!/^\d+$/u.test(value || '')) return null;
+  const port = Number.parseInt(value, 10);
+  return port >= 1 && port <= 65_535 ? port : null;
+}
+
+function parseOrigin(value) {
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = new URL(value);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && !parsed.username && !parsed.password
+      && parsed.pathname === '/' && !parsed.search && !parsed.hash && parsed.hostname ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function collectDataInventory(root) {
+  const files = [];
+  const excluded = ['server.lock', 'maintenance-gate.sock', 'files/tmp/**'];
+  await visit('', root);
+  files.sort((left, right) => left.path.localeCompare(right.path));
+  return { files, bytes: files.reduce((total, entry) => total + entry.size, 0), excluded };
+
+  async function visit(relative, directory) {
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const childRelative = relative ? `${relative}/${entry.name}` : entry.name;
+      const child = path.join(directory, entry.name);
+      if (isSnapshotTransient(childRelative)) continue;
+      if (entry.isDirectory()) {
+        await visit(childRelative, child);
+        continue;
+      }
+      if (!entry.isFile()) throw new CandidateFailure('unsupported-data-entry');
+      const stat = await fs.stat(child);
+      files.push({ path: childRelative, size: stat.size, sha256: await hashFile(child), mode: stat.mode & 0o777 });
+    }
+  }
+}
+
+function isSnapshotTransient(relative) {
+  return relative === 'server.lock' || relative === 'maintenance-gate.sock'
+    || relative === 'files/tmp' || relative.startsWith('files/tmp/');
+}
+
+function inventorySummary(inventory) {
+  return { files: inventory.files.length, bytes: inventory.bytes, excluded: inventory.excluded };
+}
+
+async function capacityForSnapshot(snapshotRoot, bytes) {
+  let filesystem;
+  try {
+    filesystem = await fs.statfs(snapshotRoot);
+  } catch {
+    throw new CandidateFailure('snapshot-storage-unavailable');
+  }
+  const availableBytes = Number(filesystem.bavail) * Number(filesystem.bsize);
+  // A complete external image and an independent restore rehearsal coexist. The
+  // margin leaves room for manifests, journal updates, and filesystem metadata.
+  const requiredBytes = bytes * 2 + SNAPSHOT_MARGIN_BYTES;
+  return { availableBytes, requiredBytes, ok: Number.isSafeInteger(availableBytes) && Number.isSafeInteger(requiredBytes) && availableBytes >= requiredBytes };
+}
+
+function snapshotPaths(paths, snapshotId) {
+  const root = path.join(paths.snapshotRoot, snapshotId);
+  return {
+    root,
+    staging: `${root}.staging`,
+    data: path.join(`${root}.staging`, 'data'),
+    recovery: path.join(`${root}.staging`, 'recovery'),
+    manifest: path.join(root, 'manifest.json'),
+    stagingManifest: path.join(`${root}.staging`, 'manifest.json'),
+    rehearsal: path.join(paths.snapshotRoot, `${snapshotId}.rehearsal`),
+  };
+}
+
+async function createSnapshotCopy(request, paths, lease, snapshot, inventory, original) {
+  if (await pathExists(snapshot.root) || await pathExists(snapshot.staging)) throw new CandidateFailure('snapshot-id-already-exists');
+  await fs.mkdir(snapshot.data, { recursive: true, mode: 0o700 });
+  const recovery = await captureSnapshotRecovery(snapshot, original);
+  await requireLease(paths, lease);
+  await copyInventory(request.dataDir, snapshot.data, inventory, paths, lease);
+  await fsyncDirectory(snapshot.data);
+  await fsyncDirectory(snapshot.staging);
+  return recovery;
+}
+
+async function captureSnapshotRecovery(snapshot, original) {
+  const configurationRoot = path.join(snapshot.recovery, 'configuration');
+  await fs.mkdir(configurationRoot, { recursive: true, mode: 0o700 });
+  const configuration = [];
+  for (const entry of original.configuration) {
+    if (!/^[a-z][a-z0-9-]{0,63}$/u.test(entry.name)) throw new CandidateFailure('invalid-recovery-configuration-name');
+    const destination = path.join(configurationRoot, entry.name);
+    await fs.copyFile(entry.source, destination, fsSync.constants.COPYFILE_EXCL);
+    await fs.chmod(destination, 0o600);
+    const handle = await fs.open(destination, 'r');
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    const copiedSha256 = await hashFile(destination);
+    if (copiedSha256 !== entry.sha256) throw new CandidateFailure('recovery-configuration-copy-verification-failed');
+    configuration.push({
+      name: entry.name,
+      path: `recovery/configuration/${entry.name}`,
+      sha256: copiedSha256,
+      mode: entry.mode,
+      owner: entry.owner,
+    });
+  }
+  await fsyncDirectory(configurationRoot);
+
+  const runtimeState = {
+    schema: SNAPSHOT_SCHEMA,
+    currentReference: original.release,
+    executable: { sha256: original.executable.sha256 },
+    runtime: { reference: original.runtime.reference, sha256: original.runtime.sha256, version: original.runtime.version },
+  };
+  const runtimeStatePath = path.join(snapshot.recovery, 'runtime-state.json');
+  await writeAtomic(runtimeStatePath, JSON.stringify(runtimeState, null, 2) + '\n', 0o600);
+  await fsyncDirectory(snapshot.recovery);
+  return {
+    configuration,
+    runtimeState: { path: 'recovery/runtime-state.json', sha256: await hashFile(runtimeStatePath) },
+  };
+}
+
+async function copyInventory(sourceRoot, destinationRoot, inventory, paths = null, lease = null) {
+  for (const entry of inventory.files) {
+    if (paths && lease) await requireLease(paths, lease);
+    const source = safeSnapshotChild(sourceRoot, entry.path);
+    const destination = safeSnapshotChild(destinationRoot, entry.path);
+    await fs.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
+    await fs.copyFile(source, destination, fsSync.constants.COPYFILE_EXCL);
+    await fs.chmod(destination, entry.mode || 0o600);
+    const handle = await fs.open(destination, 'r');
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    if (await hashFile(destination) !== entry.sha256) throw new CandidateFailure('snapshot-copy-verification-failed');
+  }
+}
+
+async function verifySnapshotArchive(dataRoot, expected) {
+  const actual = await collectDataInventory(dataRoot);
+  if (actual.files.length !== expected.files.length || actual.bytes !== expected.bytes) throw new CandidateFailure('snapshot-archive-verification-failed');
+  for (let index = 0; index < expected.files.length; index += 1) {
+    const source = expected.files[index];
+    const copied = actual.files[index];
+    if (!copied || copied.path !== source.path || copied.size !== source.size || copied.mode !== source.mode || copied.sha256 !== source.sha256) {
+      throw new CandidateFailure('snapshot-archive-verification-failed');
+    }
+  }
+  return {
+    result: 'ok',
+    files: expected.files.length,
+    bytes: expected.bytes,
+    sha256: inventoryDigest(expected),
+    verifiedAt: new Date().toISOString(),
+  };
+}
+
+function inventoryDigest(inventory) {
+  const hash = createHash('sha256');
+  for (const entry of inventory.files) hash.update(`${entry.path}\0${entry.size}\0${entry.mode}\0${entry.sha256}\n`);
+  return hash.digest('hex');
+}
+
+function recoverySummary(recovery) {
+  return {
+    configuration: recovery.configuration.map((entry) => ({ name: entry.name, path: entry.path, sha256: entry.sha256, mode: entry.mode, owner: entry.owner })),
+    runtimeState: recovery.runtimeState,
+  };
+}
+
+function safeSnapshotChild(root, relative) {
+  if (!relative || path.isAbsolute(relative) || relative.split('/').some((segment) => segment === '..' || segment === '')) {
+    throw new CandidateFailure('invalid-snapshot-inventory');
+  }
+  const result = path.resolve(root, relative);
+  const expectedRoot = path.resolve(root);
+  if (!result.startsWith(expectedRoot + path.sep)) throw new CandidateFailure('invalid-snapshot-inventory');
+  return result;
+}
+
+async function pathExists(file) {
+  return fs.access(file).then(() => true).catch(() => false);
+}
+
+async function verifySnapshotDatabase(dataDir, original) {
+  const database = path.join(dataDir, 'baox.sqlite');
+  if (!await isRegularFile(database)) throw new CandidateFailure('snapshot-database-missing');
+  let Sqlite;
+  try {
+    Sqlite = require(path.join(path.dirname(path.dirname(original.executable.path)), 'node_modules', 'better-sqlite3'));
+  } catch {
+    throw new CandidateFailure('snapshot-sqlite-runtime-unavailable');
+  }
+  let sqlite = null;
+  try {
+    sqlite = new Sqlite(database, { readonly: true, fileMustExist: true });
+    const rows = sqlite.prepare('PRAGMA integrity_check').all();
+    if (!rows.length || !rows.every((row) => Object.values(row).includes('ok'))) throw new CandidateFailure('snapshot-database-integrity-failed');
+  } catch (error) {
+    if (error instanceof CandidateFailure) throw error;
+    throw new CandidateFailure('snapshot-database-integrity-failed');
+  } finally {
+    sqlite?.close();
+  }
+  return { result: 'ok', checkedAt: new Date().toISOString() };
+}
+
+async function rehearseSnapshot(snapshot, inventory, original) {
+  const data = path.join(snapshot.rehearsal, 'data');
+  const tokenFile = path.join(snapshot.rehearsal, 'etc', 'maintenance-gate.token');
+  const controlDirectory = path.join(os.tmpdir(), `baox-snapshot-${randomBytes(12).toString('hex')}`);
+  const socket = path.join(controlDirectory, 'gate.sock');
+  let child = null;
+  try {
+    await fs.mkdir(data, { recursive: true, mode: 0o700 });
+    await copyInventory(snapshot.data, data, inventory);
+    const restoredArchive = await verifySnapshotArchive(data, inventory);
+    const databaseBefore = await committedDatabaseEvidence(data);
+    const database = await verifySnapshotDatabase(data, original);
+    await fs.mkdir(path.dirname(tokenFile), { recursive: true, mode: 0o700 });
+    await writeAtomic(tokenFile, randomBytes(48).toString('base64url') + '\n', 0o600);
+    await fs.mkdir(controlDirectory, { mode: 0o700 });
+    child = spawn(original.runtime.nodePath, [original.executable.path], {
+      cwd: path.dirname(original.executable.path),
+      env: rehearsalEnvironment(data, tokenFile, socket, original.serviceEnvironment),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const port = await waitForRehearsalPort(child);
+    await waitForHttp({ port, host: null });
+    await waitForRehearsalGate(socket, tokenFile);
+    const reopened = await localGateCommand(socket, tokenFile, 'reopen');
+    if (!isOpenGate(reopened)) throw new CandidateFailure('snapshot-rehearsal-gate-did-not-reopen');
+    const admitted = await localGateCommand(socket, tokenFile, 'admit');
+    if (!isAdmittedGate(admitted)) throw new CandidateFailure('snapshot-rehearsal-gate-did-not-admit');
+    const reopenedAgain = await localGateCommand(socket, tokenFile, 'reopen');
+    if (!isOpenGate(reopenedAgain)) throw new CandidateFailure('snapshot-rehearsal-gate-write-round-trip-failed');
+    await stopChild(child);
+    child = null;
+    return {
+      state: 'verified',
+      originalExecutable: { sha256: original.executable.sha256 },
+      runtime: { reference: original.runtime.reference, sha256: original.runtime.sha256, version: original.runtime.version },
+      archive: restoredArchive,
+      database: { ...database, committedFiles: databaseBefore.files },
+      isolatedGate: { durableWrites: ['reopen', 'admit', 'reopen'], finalState: reopenedAgain.state },
+      isolatedData: 'removed-after-verification',
+    };
+  } catch (error) {
+    throw error instanceof CandidateFailure ? error : new CandidateFailure('snapshot-rehearsal-failed');
+  } finally {
+    if (child) await stopChild(child).catch(() => undefined);
+    await fs.rm(controlDirectory, { recursive: true, force: true });
+    await fs.rm(snapshot.rehearsal, { recursive: true, force: true });
+  }
+}
+
+function rehearsalEnvironment(dataDir, tokenFile, socket, serviceEnvironment) {
+  const environment = { ...process.env };
+  for (const key of Object.keys(environment)) {
+    if (key.startsWith('BAOX_')) delete environment[key];
+  }
+  return {
+    ...environment,
+    HOME: path.join(path.dirname(dataDir), 'home'),
+    LANG: 'C.UTF-8',
+    BAOX_DATA_DIR: dataDir,
+    BAOX_PORT: '0',
+    BAOX_HOME: path.join(path.dirname(dataDir), 'no-legacy-import'),
+    BAOX_MAINTENANCE_TOKEN_FILE: tokenFile,
+    BAOX_MAINTENANCE_SOCKET_PATH: socket,
+    ...(serviceEnvironment.LD_LIBRARY_PATH ? { LD_LIBRARY_PATH: serviceEnvironment.LD_LIBRARY_PATH } : {}),
+  };
+}
+
+async function committedDatabaseEvidence(dataDir) {
+  const files = [];
+  for (const name of ['baox.sqlite', 'baox.sqlite-wal']) {
+    const file = path.join(dataDir, name);
+    const stat = await fs.lstat(file).catch(() => null);
+    if (!stat) {
+      if (name === 'baox.sqlite') throw new CandidateFailure('snapshot-database-missing');
+      continue;
+    }
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new CandidateFailure('snapshot-database-entry-invalid');
+    files.push({ name, size: stat.size, sha256: await hashFile(file) });
+  }
+  return { files };
+}
+
+async function waitForRehearsalGate(socket, tokenFile) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    try {
+      const status = await localGateCommand(socket, tokenFile, 'status');
+      if (isGateResponse(status)) return status;
+    } catch {
+      // The server has bound HTTP before the local control socket in some starts.
+    }
+    await delay(250);
+  }
+  throw new CandidateFailure('snapshot-rehearsal-gate-unavailable');
+}
+
+async function localGateCommand(socket, tokenFile, command) {
+  const token = (await fs.readFile(tokenFile, 'utf8')).trim();
+  if (!/^[A-Za-z0-9_-]{32,}$/u.test(token)) throw new CandidateFailure('snapshot-rehearsal-gate-token-invalid');
+  const response = await new Promise((resolve, reject) => {
+    const client = net.createConnection(socket);
+    let buffer = '';
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      client.destroy();
+      reject(error);
+    };
+    const timer = setTimeout(() => fail(new CandidateFailure('snapshot-rehearsal-gate-unavailable')), 5_000);
+    client.once('error', () => fail(new CandidateFailure('snapshot-rehearsal-gate-unavailable')));
+    client.once('connect', () => client.write(JSON.stringify({ version: 1, command, token }) + '\n'));
+    client.on('data', (chunk) => {
+      buffer += chunk.toString('utf8');
+      const newline = buffer.indexOf('\n');
+      if (newline < 0) return;
+      let parsed;
+      try {
+        parsed = JSON.parse(buffer.slice(0, newline));
+      } catch {
+        fail(new CandidateFailure('snapshot-rehearsal-gate-incompatible'));
+        return;
+      }
+      if (!isGateResponse(parsed)) {
+        fail(new CandidateFailure('snapshot-rehearsal-gate-incompatible'));
+        return;
+      }
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        client.end();
+        resolve(parsed);
+      }
+    });
+  });
+  return response;
+}
+
+function waitForRehearsalPort(child) {
+  return new Promise((resolve, reject) => {
+    let output = '';
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    };
+    const timer = setTimeout(() => fail(new CandidateFailure('snapshot-rehearsal-start-timeout')), 30_000);
+    child.once('error', () => fail(new CandidateFailure('snapshot-rehearsal-failed')));
+    child.once('close', () => fail(new CandidateFailure('snapshot-rehearsal-failed')));
+    child.stdout.on('data', (chunk) => {
+      output += chunk.toString('utf8');
+      const match = /baox server listening on http:\/\/127\.0\.0\.1:(\d+)/u.exec(output);
+      if (!match || settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(Number.parseInt(match[1], 10));
+    });
+    child.stderr.resume();
+  });
+}
+
+async function stopChild(child) {
+  if (child.exitCode !== null) return;
+  child.kill('SIGTERM');
+  await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+    }, 10_000);
+    child.once('close', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+async function writeSnapshotManifest(request, paths, lease, snapshot, original, inventory, recovery, archive, rehearsal) {
+  const manifest = {
+    schema: SNAPSHOT_SCHEMA,
+    kind: SNAPSHOT_OPERATION,
+    snapshotId: request.snapshotId,
+    candidateId: request.candidateId,
+    createdAt: new Date().toISOString(),
+    original: snapshotOriginalSummary(original),
+    recovery: recoverySummary(recovery),
+    excluded: inventory.excluded,
+    inventory: { bytes: inventory.bytes, files: inventory.files, sha256: archive.sha256 },
+    archive,
+    database: rehearsal.database,
+    rehearsal,
+  };
+  await writeCandidateFile(paths, lease, snapshot.stagingManifest, JSON.stringify(manifest, null, 2) + '\n', 0o600);
+  return manifest;
+}
+
+async function publishSnapshot(snapshot) {
+  await fs.rename(snapshot.staging, snapshot.root);
+  await fsyncDirectory(path.dirname(snapshot.root));
+}
+
+async function waitForHttp({ port, host }) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const status = await httpStatus(port, host);
+    if (status !== null && status >= 200 && status < 500) return;
+    await delay(250);
+  }
+  throw new CandidateFailure('service-verification-failed');
+}
+
+function httpStatus(port, host) {
+  return new Promise((resolve) => {
+    const request = http.get({ hostname: '127.0.0.1', port, path: '/api/session', headers: host ? { host } : {}, timeout: 2_000 }, (response) => {
+      response.resume();
+      resolve(response.statusCode || null);
+    });
+    request.once('timeout', () => request.destroy());
+    request.once('error', () => resolve(null));
+  });
+}
+
+async function commandGate(request, command) {
+  const result = await runCommand(request.maintenanceWrapper, [command]);
+  if (result.code !== 0) throw new CandidateFailure(result.code === 65 ? 'maintenance-gate-incompatible' : 'maintenance-gate-unavailable');
+  const lines = result.stdout.trim().split(/\r?\n/u).filter(Boolean);
+  let response;
+  try {
+    response = JSON.parse(lines.at(-1) || '');
+  } catch {
+    throw new CandidateFailure('maintenance-gate-incompatible');
+  }
+  if (!isGateResponse(response)) throw new CandidateFailure('maintenance-gate-incompatible');
+  return response;
+}
+
+function isGateResponse(value) {
+  return Boolean(value && typeof value === 'object' && value.version === 1
+    && ['open', 'admitting', 'admitted', 'refused', 'unknown'].includes(value.state)
+    && typeof value.barrier === 'boolean'
+    && (value.activeWrites === 'unknown' || (Number.isSafeInteger(value.activeWrites) && value.activeWrites >= 0))
+    && (value.activeErpAttempt === 'unknown' || typeof value.activeErpAttempt === 'boolean')
+    && (value.reason === undefined || typeof value.reason === 'string'));
+}
+
+function isAdmittedGate(status) {
+  return status.state === 'admitted' && status.barrier === true && status.activeWrites === 0 && status.activeErpAttempt === false;
+}
+
+function isOpenGate(status) {
+  // New work can begin immediately after reopening. It does not invalidate the
+  // verified transition back to an open admission boundary.
+  return status.state === 'open' && status.barrier === false;
+}
+
+function isDefinitelyOpenGate(status) {
+  return Boolean(status && status.barrier === false && (status.state === 'open' || status.state === 'refused'));
+}
+
+async function systemctl(action, unit) {
+  const result = await runCommand('systemctl', [action, unit]);
+  if (result.code !== 0) throw new CandidateFailure('service-command-failed');
+}
+
+function runCommand(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { env: { ...process.env, ...(options.env || {}) }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const stdout = [];
+    child.stdout.on('data', (chunk) => stdout.push(chunk));
+    child.stderr.resume();
+    child.once('error', reject);
+    child.once('close', (code) => resolve({ code, stdout: Buffer.concat(stdout).toString('utf8') }));
+  });
+}
+
+async function listVerifiedSnapshots(snapshotRoot) {
+  const entries = await fs.readdir(snapshotRoot, { withFileTypes: true }).catch(() => []);
+  const snapshots = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^snapshot-[a-f0-9-]{29,80}$/i.test(entry.name)) continue;
+    const manifest = await readJson(path.join(snapshotRoot, entry.name, 'manifest.json'));
+    if (!isVerifiedSnapshotManifest(manifest, entry.name)) continue;
+    snapshots.push({ id: entry.name, manifest, timestamp: Date.parse(manifest.createdAt) || 0 });
+  }
+  snapshots.sort((left, right) => right.timestamp - left.timestamp || right.id.localeCompare(left.id));
+  return snapshots;
+}
+
+function isVerifiedSnapshotManifest(manifest, snapshotId) {
+  return Boolean(manifest && manifest.schema === SNAPSHOT_SCHEMA && manifest.kind === SNAPSHOT_OPERATION
+    && manifest.snapshotId === snapshotId && typeof manifest.candidateId === 'string'
+    && typeof manifest.createdAt === 'string' && manifest.original && typeof manifest.original.release === 'string'
+    && manifest.inventory && Array.isArray(manifest.inventory.files)
+    && manifest.archive && manifest.archive.result === 'ok'
+    && manifest.database && manifest.database.result === 'ok'
+    && manifest.rehearsal && manifest.rehearsal.state === 'verified');
+}
+
+async function listManagedRecoveryPairs(paths, snapshots) {
+  const snapshotById = new Map(snapshots.map((snapshot) => [snapshot.id, snapshot]));
+  const entries = await fs.readdir(paths.releaseRoot, { withFileTypes: true }).catch(() => []);
+  const pairs = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.isSymbolicLink() || !safeReleaseId(entry.name)) continue;
+    const release = path.join(paths.releaseRoot, entry.name);
+    const manifest = await readJson(path.join(release, 'recovery.json'));
+    if (!isManagedRecoveryManifest(manifest, entry.name)) continue;
+    const snapshot = snapshotById.get(manifest.snapshotId);
+    if (!snapshot || snapshot.manifest.candidateId !== manifest.candidateId) continue;
+    pairs.push({
+      release: { id: entry.name, path: release, manifest },
+      snapshot,
+      timestamp: Date.parse(manifest.completedAt) || snapshot.timestamp,
+    });
+  }
+  pairs.sort((left, right) => right.timestamp - left.timestamp || right.release.id.localeCompare(left.release.id));
+  return pairs;
+}
+
+function isManagedRecoveryManifest(manifest, releaseId) {
+  return Boolean(manifest && manifest.schema === SNAPSHOT_SCHEMA && manifest.kind === 'managed-release-recovery'
+    && manifest.releaseId === releaseId && typeof manifest.candidateId === 'string'
+    && /^[a-f0-9]{12}-[a-f0-9]{12}$/i.test(manifest.candidateId)
+    && typeof manifest.snapshotId === 'string' && /^snapshot-[a-f0-9-]{29,80}$/i.test(manifest.snapshotId)
+    && typeof manifest.completedAt === 'string' && Number.isFinite(Date.parse(manifest.completedAt)));
+}
+
+function safeReleaseId(value) {
+  return typeof value === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}$/u.test(value);
+}
+
+async function currentManagedReleaseId(request, paths) {
+  const current = await fs.readlink(path.join(request.deployRoot, 'current')).catch(() => null);
+  if (typeof current !== 'string' || !/^releases\/[a-z0-9][a-z0-9._-]{0,127}$/u.test(current)) return null;
+  const releaseId = current.slice('releases/'.length);
+  const release = path.join(paths.releaseRoot, releaseId);
+  const stat = await fs.lstat(release).catch(() => null);
+  if (!stat || !stat.isDirectory() || stat.isSymbolicLink()) return null;
+  return releaseId;
+}
+
+function retentionPlan(pairs, currentReleaseId, retention, currentSnapshotId) {
+  const retainedReleaseIds = new Set(pairs.slice(0, retention).map((pair) => pair.release.id));
+  if (currentReleaseId && pairs.some((pair) => pair.release.id === currentReleaseId)) retainedReleaseIds.add(currentReleaseId);
+  const recoverable = pairs.find((pair) => pair.release.id !== currentReleaseId) || null;
+  if (recoverable) retainedReleaseIds.add(recoverable.release.id);
+  const retainedPairs = pairs.filter((pair) => retainedReleaseIds.has(pair.release.id));
+  const deletePairs = pairs.filter((pair) => !retainedReleaseIds.has(pair.release.id));
+  return {
+    retention,
+    currentReleaseId,
+    mostRecentRecoverableReleaseId: recoverable?.release.id || null,
+    protectedSnapshotId: currentSnapshotId,
+    retainedPairs: retainedPairs.map(pairSummary),
+    deletePairs: deletePairs.map(pairSummary),
+  };
+}
+
+function pairSummary(pair) {
+  return { releaseId: pair.release.id, snapshotId: pair.snapshot.id };
+}
+
+async function pruneVerifiedSnapshots(paths, request) {
+  const snapshots = await listVerifiedSnapshots(paths.snapshotRoot);
+  const pairs = await listManagedRecoveryPairs(paths, snapshots);
+  const currentReleaseId = await currentManagedReleaseId(request, paths);
+  const plan = retentionPlan(pairs, currentReleaseId, snapshotRetention(request), request.snapshotId);
+  const deleted = [];
+  const warnings = [];
+  for (const pair of plan.deletePairs) {
+    try {
+      await retireManagedRecoveryPair(paths, pair);
+      deleted.push(pair);
+    } catch {
+      warnings.push(pair);
+    }
+  }
+  return { ...plan, deleted, warnings };
+}
+
+async function retireManagedRecoveryPair(paths, pair) {
+  if (!safeReleaseId(pair.releaseId) || !/^snapshot-[a-f0-9-]{29,80}$/i.test(pair.snapshotId)) {
+    throw new CandidateFailure('invalid-retention-pair');
+  }
+  const release = path.join(paths.releaseRoot, pair.releaseId);
+  const snapshot = path.join(paths.snapshotRoot, pair.snapshotId);
+  const [releaseStat, snapshotStat, releaseManifest, snapshotManifest] = await Promise.all([
+    fs.lstat(release),
+    fs.lstat(snapshot),
+    readJson(path.join(release, 'recovery.json')),
+    readJson(path.join(snapshot, 'manifest.json')),
+  ]);
+  if (!releaseStat.isDirectory() || releaseStat.isSymbolicLink() || !snapshotStat.isDirectory() || snapshotStat.isSymbolicLink()
+    || !isManagedRecoveryManifest(releaseManifest, pair.releaseId) || releaseManifest.snapshotId !== pair.snapshotId
+    || !isVerifiedSnapshotManifest(snapshotManifest, pair.snapshotId) || snapshotManifest.candidateId !== releaseManifest.candidateId) {
+    throw new CandidateFailure('retention-pair-no-longer-verifiable');
+  }
+  const nonce = randomBytes(8).toString('hex');
+  const retiredRelease = path.join(paths.releaseRoot, `${pair.releaseId}.retired-${nonce}`);
+  const retiredSnapshot = path.join(paths.snapshotRoot, `${pair.snapshotId}.retired-${nonce}`);
+  await fs.rename(release, retiredRelease);
+  await fsyncDirectory(paths.releaseRoot);
+  try {
+    await fs.rename(snapshot, retiredSnapshot);
+    await fsyncDirectory(paths.snapshotRoot);
+  } catch (error) {
+    await fs.rename(retiredRelease, release).catch(() => undefined);
+    await fsyncDirectory(paths.releaseRoot).catch(() => undefined);
+    throw error;
+  }
+  await fs.rm(retiredRelease, { recursive: true, force: true });
+  await fsyncDirectory(paths.releaseRoot);
+  await fs.rm(retiredSnapshot, { recursive: true, force: true });
+  await fsyncDirectory(paths.snapshotRoot);
+}
+
+async function snapshotManifestMatches(paths, journal) {
+  if (!journal || typeof journal.snapshotId !== 'string') return false;
+  const manifest = await readJson(path.join(paths.snapshotRoot, journal.snapshotId, 'manifest.json'));
+  return isVerifiedSnapshotManifest(manifest, journal.snapshotId) && manifest.candidateId === journal.candidateId;
+}
+
+function verifiedSnapshotResult(journal, paths) {
+  return { state: 'verified', snapshotId: journal.snapshotId, manifest: path.join(paths.snapshotRoot, journal.snapshotId, 'manifest.json'), completion: 'reopen' };
+}
+
+function heldSnapshotResult(journal, paths) {
+  return { state: 'held', snapshotId: journal.snapshotId, manifest: path.join(paths.snapshotRoot, journal.snapshotId, 'manifest.json'), completion: 'hold' };
 }
 
 async function verifyBaseReadiness(request) {
@@ -640,9 +1713,10 @@ async function writeJournal(request, paths, lease, phase, extra) {
   const existing = await readJson(paths.journal);
   const journal = {
     schema: SCHEMA,
-    operation: 'candidate-prepare',
+    operation: operationFor(request),
     candidateId: request.candidateId,
-    source: request.source,
+    ...(request.source ? { source: request.source } : {}),
+    ...(isSnapshotRequest(request) ? { snapshotId: request.snapshotId, completion: request.completion } : {}),
     phase,
     updatedAt: new Date().toISOString(),
     ...(isJournalFor(existing, request) ? existing : {}),
@@ -658,7 +1732,7 @@ async function writeOwner(paths, request, pid, startIdentity, lease, replace = f
   if (replace) await requireLease(paths, lease);
   const owner = {
     schema: SCHEMA,
-    operation: 'candidate-prepare',
+    operation: operationFor(request),
     candidateId: request.candidateId,
     pid,
     startIdentity,
@@ -765,9 +1839,21 @@ async function waitForProcessIdentity(pid) {
 }
 
 function isJournalFor(journal, request) {
-  return Boolean(journal && journal.schema === SCHEMA && journal.operation === 'candidate-prepare'
+  if (isSnapshotRequest(request)) {
+    return Boolean(journal && journal.schema === SCHEMA && journal.operation === SNAPSHOT_OPERATION
+      && journal.candidateId === request.candidateId && journal.snapshotId === request.snapshotId);
+  }
+  return Boolean(journal && journal.schema === SCHEMA && journal.operation === CANDIDATE_OPERATION
     && journal.candidateId === request.candidateId && journal.source && journal.source.commit === request.source.commit
     && journal.source.archiveSha256 === request.source.archiveSha256);
+}
+
+function isSnapshotRequest(request) {
+  return Boolean(request && request.kind === 'snapshot');
+}
+
+function operationFor(request) {
+  return isSnapshotRequest(request) ? SNAPSHOT_OPERATION : CANDIDATE_OPERATION;
 }
 
 async function preparedManifestMatches(paths, request) {
@@ -924,3 +2010,12 @@ class CandidateFailure extends Error {
     this.issues = issues;
   }
 }
+
+module.exports = {
+  runSnapshotLifecycle,
+  snapshotPaths,
+  targetPaths,
+  collectDataInventory,
+  capacityForSnapshot,
+  CandidateFailure,
+};
