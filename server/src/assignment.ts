@@ -69,6 +69,13 @@ export function assignmentOf(lines: readonly Line[], facts: readonly AssignmentF
     usage.set(project.number, entry);
   }
 
+  const projectView = (project: PinnedProject) => ({
+    number: project.number,
+    name: project.name,
+    source: project.source,
+    ...(project.deadlineOn === undefined ? {} : { deadlineOn: project.deadlineOn }),
+  });
+
   return {
     submitted,
     working,
@@ -81,7 +88,7 @@ export function assignmentOf(lines: readonly Line[], facts: readonly AssignmentF
       reselect: inLineOrder(dropped),
       usage: [...usage.values()].map(({ cents: total, ...entry }) => ({ ...entry, grossTotal: yuan(total) })),
       grossTotal: yuan(lines.reduce((sum, line) => sum + cents(line.grossAmount), 0)),
-      projects: options.map((option) => ({ number: option.number, name: option.name, source: option.source })),
+      projects: options.map(projectView),
       submittedAt: submitted?.submittedAt ?? null,
     },
   };

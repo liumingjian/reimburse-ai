@@ -1113,17 +1113,39 @@ $doc-frame-block: var(--app-doc-frame-block);
 // ---------- 个人项目簿 ----------
 
 .app-book-intake {
-  max-inline-size: 45rem;
+  max-inline-size: 72rem;
   margin-block-end: $spacing-06;
 }
 
 .app-book-form {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(9rem, 12rem) minmax(18rem, 1fr) minmax(10rem, 13rem) auto;
   align-items: flex-end;
   gap: $spacing-04;
 
   > .cds--form-item {
-    flex: 1;
+    min-inline-size: 0;
+  }
+}
+
+.app-project-book-name {
+  min-inline-size: 20rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 56rem) {
+  .app-book-form {
+    grid-template-columns: minmax(8rem, 0.7fr) minmax(14rem, 1.3fr);
+
+    > .cds--btn {
+      grid-column: 1 / -1;
+      justify-self: start;
+    }
+  }
+
+  .app-project-book-name {
+    min-inline-size: 14rem;
   }
 }
 

@@ -33,7 +33,7 @@ export function createPublicBook(auth: MockAuth, state: MockBookState, refreshAl
         return done('conversion_required', PROJECT_BOOK_NOTES.conversionRequired(number), null, false);
       }
 
-      state.publicProjects = [...state.publicProjects, { number, name, expiresOn: null, lastCheckedAt: null, lastVerdict: 'local', active: true }];
+      state.publicProjects = [...state.publicProjects, { number, name, expiresOn: null, deadlineOn: input.deadlineOn === undefined || input.deadlineOn === null || input.deadlineOn === '' ? null : input.deadlineOn, lastCheckedAt: null, lastVerdict: 'local', active: true }];
       refreshAllTasks();
       return done('admitted', PROJECT_BOOK_NOTES.admitted(number, name));
     },
@@ -93,7 +93,8 @@ export function createPublicBook(auth: MockAuth, state: MockBookState, refreshAl
       }
 
       const existing = state.publicProjects[index]!;
-      state.publicProjects = state.publicProjects.map((project, projectIndex) => (projectIndex === index ? { ...existing, number, name } : project));
+      const deadlineOn = input.deadlineOn === undefined ? existing.deadlineOn ?? null : input.deadlineOn === null || input.deadlineOn === '' ? null : input.deadlineOn;
+      state.publicProjects = state.publicProjects.map((project, projectIndex) => (projectIndex === index ? { ...existing, number, name, deadlineOn } : project));
       refreshAllTasks();
       return done('edited', PROJECT_BOOK_NOTES.edited(originalNumber, number, name).replace('个人项目簿', '公共项目簿'));
     },
@@ -114,17 +115,19 @@ export function createPublicBook(auth: MockAuth, state: MockBookState, refreshAl
         const originalNumber = input.originalNumber.trim();
         const existing = state.publicProjects.find((project) => project.number === originalNumber);
         if (!existing) return done('rejected', PROJECT_BOOK_NOTES.editMissing(originalNumber));
-        if (number === originalNumber || existing.name !== input.originalName || existing.active !== input.originalActive) return done('rejected', PROJECT_BOOK_NOTES.conversionStale, null, false);
+        if (number === originalNumber || existing.name !== input.originalName || existing.active !== input.originalActive || (input.originalDeadlineOn !== undefined && (input.originalDeadlineOn ?? null) !== (existing.deadlineOn ?? null))) return done('rejected', PROJECT_BOOK_NOTES.conversionStale, null, false);
         if (state.publicProjects.some((project) => project.number === number)) return done('rejected', PROJECT_BOOK_NOTES.editDuplicate(number));
       }
 
       const personalMatches = [...state.personalByAccount.entries()].filter(([, projects]) => projects.some((project) => project.number === number));
       if (personalMatches.length === 0) return done('rejected', PROJECT_BOOK_NOTES.conversionStale, null, false);
       if (input.operation === 'intake') {
-        state.publicProjects = [...state.publicProjects, { number, name, expiresOn: null, lastCheckedAt: null, lastVerdict: 'local', active: true }];
+        state.publicProjects = [...state.publicProjects, { number, name, expiresOn: null, deadlineOn: input.deadlineOn === undefined || input.deadlineOn === null || input.deadlineOn === '' ? null : input.deadlineOn, lastCheckedAt: null, lastVerdict: 'local', active: true }];
       } else {
         const originalNumber = input.originalNumber.trim();
-        state.publicProjects = state.publicProjects.map((project) => (project.number === originalNumber ? { ...project, number, name } : project));
+        const existing = state.publicProjects.find((project) => project.number === originalNumber);
+        const deadlineOn = input.deadlineOn === undefined ? existing?.deadlineOn ?? null : input.deadlineOn === null || input.deadlineOn === '' ? null : input.deadlineOn;
+        state.publicProjects = state.publicProjects.map((project) => (project.number === originalNumber ? { ...project, number, name, deadlineOn } : project));
       }
       for (const [accountId, projects] of personalMatches) state.personalByAccount.set(accountId, projects.filter((project) => project.number !== number));
       refreshAllTasks();

@@ -209,6 +209,9 @@ export interface ProjectBookEventTable {
   name: string | null;
   verdict: string | null;
   expires_on: string | null;
+  // Nullable advisory cutoff introduced after the legacy ERP expiry fact. Undefined is accepted by the TypeScript
+  // row type so tests and databases created before the migration can still construct historical event rows.
+  deadline_on?: string | null;
   // Null preserves the meaning of facts written before offline intake. `manual` marks a locally entered name that has
   // never been represented as a successful ERP catalog check.
   admission_source: 'manual' | null;

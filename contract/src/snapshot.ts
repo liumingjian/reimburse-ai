@@ -562,6 +562,8 @@ export const ProjectOptionSchema = z.object({
   number: z.string().min(1),
   name: z.string().min(1),
   source: ProjectSourceSchema,
+  // Advisory project-book fact. It is omitted for projects without a deadline to preserve older snapshot fixtures.
+  deadlineOn: DateSchema.nullable().optional(),
 });
 export type ProjectOption = z.infer<typeof ProjectOptionSchema>;
 

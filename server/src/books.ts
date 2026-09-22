@@ -18,13 +18,14 @@ export type BookEntry = {
   number: string;
   name: string | null;
   expiresOn: string | null;
+  deadlineOn: string | null;
   lastCheckedAt: string | null;
   verdict: LegacyVerdict | null;
   admissionSource: 'manual' | 'legacy';
   deactivated: boolean;
 };
 
-export type BookOption = { number: string; name: string; source: ProjectSource };
+export type BookOption = { number: string; name: string; source: ProjectSource; deadlineOn?: string };
 
 type BookDb = Db | Transaction<Schema>;
 
@@ -66,6 +67,7 @@ export function annotate(entry: BookEntry, today: string): ProjectBookEntry {
     number: entry.number,
     name: entry.name,
     expiresOn: entry.expiresOn,
+    ...(entry.deadlineOn === null ? {} : { deadlineOn: entry.deadlineOn }),
     lastCheckedAt: entry.lastCheckedAt,
     active: !entry.deactivated,
     selectable: reasons.length === 0,
@@ -102,7 +104,7 @@ function applyEvent(book: Map<string, BookEntry>, event: ProjectBookEventTable, 
     const entry = book.get(previousNumber);
     if (!entry) return;
     book.delete(previousNumber);
-    book.set(event.number, { ...entry, number: event.number, name: event.name ?? entry.name });
+    book.set(event.number, { ...entry, number: event.number, name: event.name ?? entry.name, deadlineOn: event.deadline_on ?? null });
     return;
   }
   if (event.maintenance_action === 'deactivated') {
@@ -127,6 +129,7 @@ function applyEvent(book: Map<string, BookEntry>, event: ProjectBookEventTable, 
       number: event.number,
       name: event.name,
       expiresOn: event.expires_on,
+      deadlineOn: event.deadline_on ?? null,
       lastCheckedAt: manual ? null : event.created_at,
       verdict: manual ? null : 'confirmed',
       admissionSource: manual ? 'manual' : 'legacy',
@@ -145,6 +148,14 @@ function applyEvent(book: Map<string, BookEntry>, event: ProjectBookEventTable, 
   }
 }
 
+type NormalizedProjectBookEvent = Omit<ProjectBookEventTable, 'deadline_on'> & { deadline_on: string | null };
+type ProjectBookEventWithOptionalDeadline = Omit<ProjectBookEventTable, 'deadline_on'> & { deadline_on?: string | null | undefined };
+
+function normalizeEvent(event: ProjectBookEventWithOptionalDeadline): NormalizedProjectBookEvent {
+  // Older fixtures and databases predate the nullable deadline column. Fold both representations identically.
+  return { ...event, deadline_on: event.deadline_on ?? null };
+}
+
 const scoped = (db: BookDb, ref: BookRef) => {
   const query = db.selectFrom('project_book_event').selectAll().where('scope', '=', ref.scope);
   return ref.scope === 'personal' ? query.where('owner_account_id', '=', ref.ownerAccountId) : query.where('owner_account_id', 'is', null);
@@ -153,7 +164,7 @@ const scoped = (db: BookDb, ref: BookRef) => {
 export async function readBook(db: BookDb, ref: BookRef): Promise<BookEntry[]> {
   const events = await scoped(db, ref).orderBy('seq').execute();
   const book = new Map<string, BookEntry>();
-  for (const event of events) applyEvent(book, event, ref.scope);
+  for (const event of events) applyEvent(book, normalizeEvent(event), ref.scope);
   return [...book.values()];
 }
 
@@ -164,7 +175,7 @@ async function personalBooks(db: BookDb): Promise<Map<string, BookEntry[]>> {
     if (!event.owner_account_id) continue;
     const book = folded.get(event.owner_account_id) ?? new Map<string, BookEntry>();
     folded.set(event.owner_account_id, book);
-    applyEvent(book, event, 'personal');
+    applyEvent(book, normalizeEvent(event), 'personal');
   }
   return new Map([...folded].map(([accountId, book]) => [accountId, [...book.values()]]));
 }
@@ -178,10 +189,10 @@ export async function bookOptions(db: BookDb, accountId: string, now: Date): Pro
   const personal = (await readBook(db, { scope: 'personal', ownerAccountId: accountId }))
     .filter((entry) => !reservedByPublic.has(entry.number))
     .filter((entry) => annotate(entry, today).selectable)
-    .map((entry): BookOption => ({ number: entry.number, name: entry.name ?? entry.number, source: 'personal' }));
+    .map((entry): BookOption => ({ number: entry.number, name: entry.name ?? entry.number, source: 'personal', ...(entry.deadlineOn === null ? {} : { deadlineOn: entry.deadlineOn }) }));
   const publicOptions = publicEntries
     .filter((entry) => annotate(entry, today).selectable)
-    .map((entry): BookOption => ({ number: entry.number, name: entry.name ?? entry.number, source: 'public' }));
+    .map((entry): BookOption => ({ number: entry.number, name: entry.name ?? entry.number, source: 'public', ...(entry.deadlineOn === null ? {} : { deadlineOn: entry.deadlineOn }) }));
   return [...personal, ...publicOptions];
 }
 
@@ -192,6 +203,7 @@ type Append = {
   admissionSource?: 'manual';
   maintenanceAction?: MaintenanceAction;
   previousNumber?: string | null;
+  deadlineOn?: string | null;
 };
 
 const bookMutationTail = new WeakMap<object, Promise<void>>();
@@ -232,6 +244,7 @@ async function append(tx: BookDb, ref: BookRef, actorAccountId: string, at: stri
         name: event.name ?? null,
         verdict: null,
         expires_on: null,
+        deadline_on: event.deadlineOn ?? null,
         admission_source: event.admissionSource ?? null,
         maintenance_action: event.maintenanceAction ?? null,
         previous_number: event.previousNumber ?? null,
@@ -277,6 +290,7 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
     async intake(input: ProjectBookIntakeInput): Promise<ProjectBookResult> {
       const number = input.number.trim();
       const name = input.name.trim();
+      const deadlineOn = input.deadlineOn === undefined || input.deadlineOn === null || input.deadlineOn === '' ? null : input.deadlineOn;
       if (number === '') return result('rejected', PROJECT_BOOK_NOTES.numberRequired);
       if (!isSafeProjectNumber(number)) return result('rejected', PROJECT_BOOK_NOTES.unsafe(number), 'unsafe');
       if (name === '') return result('rejected', PROJECT_BOOK_NOTES.nameRequired);
@@ -293,7 +307,7 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
           if (matchingPersonalOwners(books, number).length > 0) return 'personal_collision';
         }
 
-        await append(tx, ref, actorAccountId, at(), [{ number, name, action: 'admitted', admissionSource: 'manual' }]);
+        await append(tx, ref, actorAccountId, at(), [{ number, name, action: 'admitted', admissionSource: 'manual', deadlineOn }]);
         return 'admitted';
       });
 
@@ -315,7 +329,8 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
 
       const decision = await serializeBookMutation(db, async (tx): Promise<EditDecision> => {
         const current = await readBook(tx, ref);
-        if (!current.some((entry) => entry.number === originalNumber)) return 'missing';
+        const existing = current.find((entry) => entry.number === originalNumber);
+        if (!existing) return 'missing';
         if (number !== originalNumber && current.some((entry) => entry.number === number)) return 'duplicate';
 
         // A name-only correction preserves a legacy cross-scope collision. A changed identity must meet the same
@@ -329,7 +344,8 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
           if (matchingPersonalOwners(books, number).length > 0) return 'personal_collision';
         }
 
-        await append(tx, ref, actorAccountId, at(), [{ number, name, action: 'checked', maintenanceAction: 'edited', previousNumber: originalNumber }]);
+        const deadlineOn = input.deadlineOn === undefined ? existing.deadlineOn : input.deadlineOn === null || input.deadlineOn === '' ? null : input.deadlineOn;
+        await append(tx, ref, actorAccountId, at(), [{ number, name, action: 'checked', maintenanceAction: 'edited', previousNumber: originalNumber, deadlineOn }]);
         return 'edited';
       });
 
@@ -345,6 +361,7 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
       if (ref.scope !== 'public') return result('rejected', PROJECT_BOOK_NOTES.conversionStale);
       const number = input.number.trim();
       const name = input.name.trim();
+      const requestedDeadline = input.deadlineOn === undefined || input.deadlineOn === null || input.deadlineOn === '' ? null : input.deadlineOn;
       if (number === '') return result('rejected', PROJECT_BOOK_NOTES.numberRequired);
       if (!isSafeProjectNumber(number)) return result('rejected', PROJECT_BOOK_NOTES.unsafe(number), 'unsafe');
       if (name === '') return result('rejected', PROJECT_BOOK_NOTES.nameRequired);
@@ -355,14 +372,15 @@ export function createBookService(db: Db, ref: BookRef, actorAccountId: string, 
 
         if (input.operation === 'intake') {
           if (current.some((entry) => entry.number === number)) return 'duplicate';
-          publicEvents = [{ number, name, action: 'admitted', admissionSource: 'manual' }];
+          publicEvents = [{ number, name, action: 'admitted', admissionSource: 'manual', deadlineOn: requestedDeadline }];
         } else {
           const originalNumber = input.originalNumber.trim();
           const entry = current.find((candidate) => candidate.number === originalNumber);
           if (!entry) return 'missing';
-          if (number === originalNumber || entry.name !== input.originalName || !entry.deactivated !== input.originalActive) return 'stale';
+          if (number === originalNumber || entry.name !== input.originalName || !entry.deactivated !== input.originalActive || (input.originalDeadlineOn !== undefined && (input.originalDeadlineOn ?? null) !== entry.deadlineOn)) return 'stale';
           if (current.some((candidate) => candidate.number === number)) return 'duplicate';
-          publicEvents = [{ number, name, action: 'checked', maintenanceAction: 'edited', previousNumber: originalNumber }];
+          const deadlineOn = input.deadlineOn === undefined ? entry.deadlineOn : input.deadlineOn === null || input.deadlineOn === '' ? null : input.deadlineOn;
+          publicEvents = [{ number, name, action: 'checked', maintenanceAction: 'edited', previousNumber: originalNumber, deadlineOn }];
         }
 
         const owners = matchingPersonalOwners(await personalBooks(tx), number);
