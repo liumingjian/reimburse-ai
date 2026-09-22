@@ -1,6 +1,8 @@
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { NativeProfile } from './profile.js';
 
@@ -10,12 +12,19 @@ export type BootstrapAsset = Readonly<{
   url: string;
 }>;
 
+export type UvAttestation = Readonly<{
+  repository: string;
+  signerWorkflow: string;
+  sourceCommit: string;
+  sourceRef: string;
+}>;
+
 export type BootstrapArtifacts = Readonly<{
   gcc: BootstrapAsset & Readonly<{ sha512: string; version: string }>;
   gccSignature: BootstrapAsset & Readonly<{ signerFingerprint: string }>;
   gnuKeyring: BootstrapAsset;
-  uv: BootstrapAsset & Readonly<{ version: string; extractionDirectory: string }>;
-  pythonVersion: string;
+  uv: BootstrapAsset & Readonly<{ version: string; extractionDirectory: string; attestation: UvAttestation }>;
+  python: BootstrapAsset & Readonly<{ version: string; cacheFileName: string; catalogSourceCommit: string }>;
 }>;
 
 export const BOOTSTRAP_ARTIFACTS: BootstrapArtifacts = {
@@ -43,8 +52,21 @@ export const BOOTSTRAP_ARTIFACTS: BootstrapArtifacts = {
     extractionDirectory: 'uv-x86_64-unknown-linux-gnu',
     sha256: 'fa82fd8dde8e8eefdecada6aa0889666556cfceb690d06e0c3bca49eb3070a63',
     url: 'https://github.com/astral-sh/uv/releases/download/0.12.17/uv-x86_64-unknown-linux-gnu.tar.gz',
+    attestation: {
+      repository: 'astral-sh/uv',
+      signerWorkflow: 'astral-sh/uv/.github/workflows/release.yml',
+      sourceCommit: '635500036e1705961315e86447f0fab0a8ddb309',
+      sourceRef: 'refs/heads/main',
+    },
   },
-  pythonVersion: '3.12.14',
+  python: {
+    fileName: 'cpython-3.12.14-20260901-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz',
+    version: '3.12.14',
+    cacheFileName: '72748da13-cpython-3.12.14-20260901-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz',
+    catalogSourceCommit: '635500036e1705961315e86447f0fab0a8ddb309',
+    sha256: '72748da13197c1fb161e3afeef20a6a385ff24f2165e6e2758e47008e7faba4c',
+    url: 'https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.12.14%2B20260901-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz',
+  },
 } as const;
 
 export type BootstrapSource = Readonly<{
@@ -57,6 +79,11 @@ export type LocalBootstrapArtifact = Readonly<{
   localPath: string;
   sha256: string;
 }>;
+
+export type BootstrapProvenanceVerifier = (
+  source: BootstrapSource,
+  relayArtifacts: readonly LocalBootstrapArtifact[] | undefined,
+) => Promise<void>;
 
 export type BootstrapTransactionItem = Readonly<{
   action: string;
@@ -121,6 +148,36 @@ export async function resolveRelayArtifacts(directory: string, artifacts: Bootst
   return resolved;
 }
 
+/**
+ * Authenticate the uv release bytes before an apply. The target repeats the
+ * digest checks, so proxy and relay transfer cannot weaken this provenance.
+ */
+export const verifyBootstrapProvenance: BootstrapProvenanceVerifier = async (source, relayArtifacts) => {
+  validateBootstrapProxy(source.proxy);
+  if (source.kind === 'relay') {
+    const uv = relayArtifacts?.find((artifact) => artifact.fileName === BOOTSTRAP_ARTIFACTS.uv.fileName);
+    if (!uv) throw new BootstrapInputError('中继来源缺少 uv 工件，无法验证发布来源。');
+    await verifyUvReleaseProvenance(uv.localPath, BOOTSTRAP_ARTIFACTS);
+    return;
+  }
+
+  const directory = await mkdtemp(join(tmpdir(), 'baox-uv-provenance-'));
+  const localPath = join(directory, BOOTSTRAP_ARTIFACTS.uv.fileName);
+  try {
+    await runCommand(
+      'curl',
+      [
+        '--fail', '--location', '--silent', '--show-error', '--retry', '3', '--proto', '=https', '--tlsv1.2',
+        '--proxy', source.proxy, '--output', localPath, BOOTSTRAP_ARTIFACTS.uv.url,
+      ],
+      '无法通过指定代理获取 uv 发布工件以验证来源。',
+    );
+    await verifyUvReleaseProvenance(localPath, BOOTSTRAP_ARTIFACTS);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+};
+
 export function bootstrapArtifactDirectory(profile: NativeProfile): string {
   return `${profile.deployRoot}/operator-artifacts`;
 }
@@ -183,7 +240,11 @@ UV_FILE=${q(artifacts.uv.fileName)}
 UV_URL=${q(artifacts.uv.url)}
 UV_SHA256=${q(artifacts.uv.sha256)}
 UV_DIRECTORY=${q(artifacts.uv.extractionDirectory)}
-PYTHON_VERSION=${q(artifacts.pythonVersion)}
+PYTHON_VERSION=${q(artifacts.python.version)}
+PYTHON_FILE=${q(artifacts.python.fileName)}
+PYTHON_URL=${q(artifacts.python.url)}
+PYTHON_SHA256=${q(artifacts.python.sha256)}
+PYTHON_CACHE_FILE=${q(artifacts.python.cacheFileName)}
 BAOX_USER=baox
 NO_PROXY_VALUE=127.0.0.1,localhost
 RUNTIME=$DEPLOY_ROOT/runtime
@@ -192,6 +253,7 @@ GCC_LIBDIR=$GCC_PREFIX/lib64
 UV_BIN=$SERVICE_HOME/.local/bin/uv
 UV_CACHE_DIR=$SERVICE_HOME/.cache/uv
 UV_PYTHON_INSTALL_DIR=$SERVICE_HOME/.local/share/uv/python
+UV_PYTHON_CACHE_DIR=$SERVICE_HOME/.cache/uv/python-builds
 BUILD_VENV=$SERVICE_HOME/.local/share/baox-build-venv
 
 die() {
@@ -237,18 +299,22 @@ phase = sys.argv[1]
 expected_digest = sys.argv[2]
 requested = ['gmp-devel', 'mpfr-devel', 'libmpc-devel', 'isl-devel']
 protected_prefixes = ('gcc', 'glibc', 'libstdc++', 'libgcc')
-action_names = {
-    dnf_transaction.PKG_DOWNGRADE: 'downgrade',
-    dnf_transaction.PKG_DOWNGRADED: 'downgraded',
-    dnf_transaction.PKG_INSTALL: 'install',
-    dnf_transaction.PKG_OBSOLETE: 'obsolete',
-    dnf_transaction.PKG_OBSOLETED: 'obsoleted',
-    dnf_transaction.PKG_REINSTALL: 'reinstall',
-    dnf_transaction.PKG_REINSTALLED: 'reinstalled',
-    dnf_transaction.PKG_REMOVE: 'remove',
-    dnf_transaction.PKG_UPGRADE: 'upgrade',
-    dnf_transaction.PKG_UPGRADED: 'upgraded',
-}
+action_names = {}
+for constant, name in (
+    ('PKG_DOWNGRADE', 'downgrade'),
+    ('PKG_DOWNGRADED', 'downgraded'),
+    ('PKG_ERASE', 'remove'),
+    ('PKG_INSTALL', 'install'),
+    ('PKG_OBSOLETE', 'obsolete'),
+    ('PKG_OBSOLETED', 'obsoleted'),
+    ('PKG_REINSTALL', 'reinstall'),
+    ('PKG_REINSTALLED', 'reinstalled'),
+    ('PKG_UPGRADE', 'upgrade'),
+    ('PKG_UPGRADED', 'upgraded'),
+):
+    value = getattr(dnf_transaction, constant, None)
+    if value is not None:
+        action_names[value] = name
 
 def is_protected(name):
     return any(name == prefix or name.startswith(prefix + '-') for prefix in protected_prefixes)
@@ -322,12 +388,14 @@ obtain_assets() {
     copy_relay_asset "$GCC_SIGNATURE_SHA256" "$GCC_SIGNATURE_FILE"
     copy_relay_asset "$GNU_KEYRING_SHA256" "$GNU_KEYRING_FILE"
     copy_relay_asset "$UV_SHA256" "$UV_FILE"
+    copy_relay_asset "$PYTHON_SHA256" "$PYTHON_FILE"
     return
   fi
   download_asset "$GCC_URL" "$GCC_FILE"
   download_asset "$GCC_SIGNATURE_URL" "$GCC_SIGNATURE_FILE"
   download_asset "$GNU_KEYRING_URL" "$GNU_KEYRING_FILE"
   download_asset "$UV_URL" "$UV_FILE"
+  download_asset "$PYTHON_URL" "$PYTHON_FILE"
 }
 
 check_sha256() {
@@ -348,6 +416,7 @@ verify_assets() {
   check_sha256 "$GCC_SIGNATURE_SHA256" "$GCC_SIGNATURE_FILE"
   check_sha256 "$GNU_KEYRING_SHA256" "$GNU_KEYRING_FILE"
   check_sha256 "$UV_SHA256" "$UV_FILE"
+  check_sha256 "$PYTHON_SHA256" "$PYTHON_FILE"
   gpg_status=$(gpgv --status-fd 1 --keyring "$WORK/$GNU_KEYRING_FILE" "$WORK/$GCC_SIGNATURE_FILE" "$WORK/$GCC_FILE" 2>/dev/null) || die 'GCC detached signature verification failed'
   printf '%s\n' "$gpg_status" | grep -F "[GNUPG:] VALIDSIG $GCC_SIGNER_FINGERPRINT " >/dev/null || die 'GCC signature did not use the pinned signer fingerprint'
 }
@@ -356,7 +425,7 @@ ensure_account() {
   if ! id -u "$BAOX_USER" >/dev/null 2>&1; then
     useradd --system --user-group --home-dir "$SERVICE_HOME" --create-home --shell /sbin/nologin "$BAOX_USER"
   fi
-  install -d -o "$BAOX_USER" -g "$BAOX_USER" -m 0750 "$SERVICE_HOME" "$SERVICE_HOME/.local" "$SERVICE_HOME/.local/bin" "$SERVICE_HOME/.local/share" "$SERVICE_HOME/.cache"
+  install -d -o "$BAOX_USER" -g "$BAOX_USER" -m 0750 "$SERVICE_HOME" "$SERVICE_HOME/.local" "$SERVICE_HOME/.local/bin" "$SERVICE_HOME/.local/share" "$SERVICE_HOME/.cache" "$UV_PYTHON_CACHE_DIR"
 }
 
 write_build_environment() {
@@ -381,6 +450,7 @@ as_baox() {
     NO_PROXY="$NO_PROXY_VALUE" \
     UV_CACHE_DIR="$UV_CACHE_DIR" \
     UV_PYTHON_INSTALL_DIR="$UV_PYTHON_INSTALL_DIR" \
+    UV_PYTHON_CACHE_DIR="$UV_PYTHON_CACHE_DIR" \
     CC="$GCC_PREFIX/bin/gcc" \
     CXX="$GCC_PREFIX/bin/g++" \
     LD_LIBRARY_PATH="$GCC_LIBDIR" \
@@ -410,7 +480,8 @@ install_uv_and_python() {
   tar -xzf "$WORK/$UV_FILE" -C "$WORK"
   [ -x "$WORK/$UV_DIRECTORY/uv" ] || die 'verified uv archive contains no uv executable'
   install -o "$BAOX_USER" -g "$BAOX_USER" -m 0755 "$WORK/$UV_DIRECTORY/uv" "$UV_BIN"
-  as_baox "$UV_BIN" python install "$PYTHON_VERSION"
+  install -o "$BAOX_USER" -g "$BAOX_USER" -m 0644 "$WORK/$PYTHON_FILE" "$UV_PYTHON_CACHE_DIR/$PYTHON_CACHE_FILE"
+  as_baox "$UV_BIN" --offline python install "$PYTHON_VERSION"
   if [ -x "$BUILD_VENV/bin/python" ]; then
     existing_python=$($BUILD_VENV/bin/python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
     [ "$existing_python" = "$PYTHON_VERSION" ] || rm -rf "$BUILD_VENV"
@@ -509,7 +580,41 @@ emit_applied
 }
 
 function bootstrapAssets(artifacts: BootstrapArtifacts): readonly BootstrapAsset[] {
-  return [artifacts.gcc, artifacts.gccSignature, artifacts.gnuKeyring, artifacts.uv];
+  return [artifacts.gcc, artifacts.gccSignature, artifacts.gnuKeyring, artifacts.uv, artifacts.python];
+}
+
+async function verifyUvReleaseProvenance(localPath: string, artifacts: BootstrapArtifacts): Promise<void> {
+  const sha256 = await sha256File(localPath);
+  if (sha256 !== artifacts.uv.sha256) {
+    throw new BootstrapInputError('uv 工件 SHA-256 与固定发布值不匹配。');
+  }
+  const attestation = artifacts.uv.attestation;
+  await runCommand(
+    'gh',
+    [
+      'attestation', 'verify', localPath,
+      '--repo', attestation.repository,
+      '--signer-workflow', attestation.signerWorkflow,
+      '--source-digest', attestation.sourceCommit,
+      '--source-ref', attestation.sourceRef,
+      '--deny-self-hosted-runners',
+    ],
+    'uv 发布工件没有通过固定 GitHub 证明策略验证。',
+  );
+}
+
+function runCommand(command: string, arguments_: readonly string[], failure: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, arguments_, { stdio: ['ignore', 'ignore', 'ignore'] });
+    child.on('error', () => reject(new BootstrapInputError(failure)));
+    child.on('close', (exitCode) => {
+      if (exitCode === 0) {
+        resolve();
+        return;
+      }
+      reject(new BootstrapInputError(failure));
+    });
+  });
 }
 
 function sha256File(path: string): Promise<string> {

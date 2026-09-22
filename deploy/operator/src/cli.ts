@@ -4,8 +4,11 @@ import { NATIVE_PROFILE } from './profile.js';
 import {
   resolveRelayArtifacts,
   validateBootstrapProxy,
+  verifyBootstrapProvenance,
+  type BootstrapProvenanceVerifier,
   type BootstrapResponse,
   type BootstrapSource,
+  type LocalBootstrapArtifact,
 } from './bootstrap.js';
 import type { DoctorReport, GateStatus, HostResult, HostStatus, HostTransport } from './host.js';
 import { redact, redactValue } from './redact.js';
@@ -21,6 +24,7 @@ export type OperatorDependencies = {
   source: SourceRepository;
   host: HostTransport;
   candidate?: CandidateTransport;
+  bootstrapProvenance?: BootstrapProvenanceVerifier;
 };
 
 const USAGE = [
@@ -176,10 +180,13 @@ async function bootstrapPreview(args: readonly string[], dependencies: OperatorD
 async function bootstrapApply(args: readonly string[], dependencies: OperatorDependencies, io: CliIo, json: boolean): Promise<number> {
   const options = parseBootstrapOptions(args, true);
   if (options === null) return usage(io);
+  const provenance = dependencies.bootstrapProvenance ?? verifyBootstrapProvenance;
+  let artifacts: readonly LocalBootstrapArtifact[] | undefined;
   if (options.relayDirectory) {
-    const artifacts = await resolveRelayArtifacts(options.relayDirectory);
-    for (const artifact of artifacts) await dependencies.host.uploadArtifact(artifact);
+    artifacts = await resolveRelayArtifacts(options.relayDirectory);
   }
+  await provenance(options.source, artifacts);
+  if (artifacts) for (const artifact of artifacts) await dependencies.host.uploadArtifact(artifact);
   const response = bootstrapValue(
     await dependencies.host.execute({ kind: 'bootstrap-apply', source: options.source, confirmationDigest: options.confirmationDigest }),
     'bootstrap-apply',

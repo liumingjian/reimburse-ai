@@ -1,5 +1,9 @@
 # Deployment, phase 1: the intranet host
 
+> Historical phase-1 record: the manual native-runtime commands below are retained as deployment evidence. Use
+> [native bootstrap](native-bootstrap.zh-CN.md) for all new prerequisite work; do not run the manual account, Python,
+> compiler, or dnf steps as a routine upgrade path. `install.sh` remains only for first adoption or a controlled repair.
+
 How baox runs on `10.250.0.222` for the browser-extension V1 round (spec #246, ticket #260). The design and its
 reasons are in [browser-extension-v1.md](../design/browser-extension-v1.md#deployment-phase-1-intranet-no-domain); this
 document is the procedure. The files it installs live in [`deploy/intranet/`](../../deploy/intranet/), and each one
@@ -50,6 +54,9 @@ and its closing condition binds this instance: **the gaps must be closed before 
 | `/etc/systemd/system/baox.service`, `baox-caddy.service` | root | The two units |
 
 ## Native build runtime
+
+> Superseded procedure: follow [native bootstrap](native-bootstrap.zh-CN.md) instead of the manual commands in this
+> section. The transcript remains so that the original phase-1 deployment can be audited.
 
 The deployment does not replace Kylin's compiler, loader, `libstdc++`, or `libgcc`. Create `/home/baox` as `baox:baox`
 with mode `0750`; its `.bashrc` is mode `0640` and contains the host proxy exports plus
