@@ -8,6 +8,7 @@ import { runOperatorCli } from './cli.js';
 import type { CandidateTransport } from './candidate.js';
 import type { DoctorReport, GateStatus } from './host.js';
 import { createSourceRepository } from './source.js';
+import type { SnapshotTransport } from './snapshot.js';
 import { ControllableTarget } from './testing/controllable-target.js';
 
 const repositories: string[] = [];
@@ -217,6 +218,67 @@ it('refuses candidate preparation before source selection or target coordination
   expect(err).toEqual([]);
   expect(prepares).toBe(0);
   expect(target.commands).toEqual([{ kind: 'gate-status' }]);
+});
+
+it('starts a recovery snapshot only from an open maintenance gate and forwards explicit retention', async () => {
+  const repository = committedRepository();
+  const target = new ControllableTarget({ gate: openGate() });
+  const requests: Array<{ candidateId: string; retention?: number }> = [];
+  const snapshot: SnapshotTransport = {
+    async snapshot(request) {
+      requests.push(request);
+      return { state: 'verified', snapshotId: `snapshot-${request.candidateId}-0123456789abcdef`, manifest: '/opt/tools/baox/recovery-snapshots/manifest.json', completion: 'reopen' };
+    },
+  };
+  const out: string[] = [];
+  const err: string[] = [];
+  const candidateId = '0123456789ab-cdef01234567';
+
+  const code = await runOperatorCli(
+    ['snapshot', candidateId, '--retain', '1', '--json'],
+    { source: createSourceRepository(repository), host: target, snapshot },
+    { out: (line) => out.push(line), err: (line) => err.push(line) },
+  );
+
+  expect(code).toBe(0);
+  expect(err).toEqual([]);
+  expect(requests).toEqual([{ candidateId, retention: 1 }]);
+  expect(target.commands).toEqual([{ kind: 'gate-status' }]);
+  expect(JSON.parse(out.join('\n'))).toMatchObject({
+    command: 'snapshot',
+    candidateId,
+    retention: 1,
+    maintenanceGate: openGate(),
+    snapshot: { state: 'verified', completion: 'reopen' },
+  });
+});
+
+it('refuses a recovery snapshot while the maintenance barrier is already closed', async () => {
+  const repository = committedRepository();
+  const target = new ControllableTarget({
+    gate: { kind: 'available', response: { version: 1, state: 'admitted', barrier: true, activeWrites: 0, activeErpAttempt: false } },
+  });
+  let calls = 0;
+  const snapshot: SnapshotTransport = {
+    async snapshot() {
+      calls += 1;
+      return { state: 'failed', code: 'should-not-run' };
+    },
+  };
+  const out: string[] = [];
+  const err: string[] = [];
+
+  const code = await runOperatorCli(
+    ['snapshot', '0123456789ab-cdef01234567', '--json'],
+    { source: createSourceRepository(repository), host: target, snapshot },
+    { out: (line) => out.push(line), err: (line) => err.push(line) },
+  );
+
+  expect(code).toBe(1);
+  expect(err).toEqual([]);
+  expect(calls).toBe(0);
+  expect(target.commands).toEqual([{ kind: 'gate-status' }]);
+  expect(JSON.parse(out.join('\n'))).toMatchObject({ command: 'snapshot', refusal: expect.stringContaining('开放状态') });
 });
 
 it('rejects a ref that does not name a committed source revision', async () => {

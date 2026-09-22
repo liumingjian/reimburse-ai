@@ -317,6 +317,59 @@ async function acquire(request, paths) {
   return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'lock-transition-raced' } };
 }
 
+/**
+ * Acquires the shared deployment lease for a lifecycle that owns its own
+ * journal protocol. It never claims through an incomplete or corrupt journal.
+ */
+async function acquireDeploymentLease(request, paths) {
+  await fs.mkdir(paths.maintenance, { recursive: true, mode: 0o700 });
+  if (await hasOutstandingClaim(paths)) {
+    return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'stale-lock-claim-needs-recovery' } };
+  }
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (!await hasReusableDeploymentJournal(paths)) {
+      return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'deployment-journal-needs-reconciliation' } };
+    }
+    const freshLease = await createLease(request, paths);
+    if (freshLease) return confirmReusableDeploymentLease(paths, freshLease);
+
+    const owner = await readJson(path.join(paths.lock, 'owner.json'));
+    const inspected = lockInspection(owner);
+    if (inspected.state === 'unknown-owner') {
+      return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'lock-owner-not-durable' } };
+    }
+    if (inspected.state === 'active') {
+      return { kind: 'busy', result: { state: 'busy', operation: owner.operation, candidateId: owner.candidateId } };
+    }
+    const lease = await claimInactiveLock(request, paths, owner);
+    if (lease) return confirmReusableDeploymentLease(paths, lease);
+  }
+  return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'lock-transition-raced' } };
+}
+
+async function confirmReusableDeploymentLease(paths, lease) {
+  if (await hasReusableDeploymentJournal(paths)) return { kind: 'acquired', lease };
+  await release(paths, lease).catch(() => undefined);
+  return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'deployment-journal-needs-reconciliation' } };
+}
+
+async function hasReusableDeploymentJournal(paths) {
+  let contents;
+  try {
+    contents = await fs.readFile(paths.journal, 'utf8');
+  } catch (error) {
+    return Boolean(error && error.code === 'ENOENT');
+  }
+  let journal;
+  try {
+    journal = JSON.parse(contents);
+  } catch {
+    return false;
+  }
+  return isTerminalJournal(journal);
+}
+
 async function snapshot(request) {
   if (request.completion === 'hold') return { state: 'failed', code: 'held-snapshot-requires-library-caller' };
   const paths = targetPaths(request);
@@ -359,7 +412,7 @@ async function reconcileSnapshotLock(request, paths, lease) {
   const journal = await readJson(paths.journal);
   if (!journal) return { kind: 'acquired', lease };
   if (!isJournalFor(journal, request)) {
-    if (isTerminalCandidateJournal(journal)) return { kind: 'acquired', lease };
+    if (isTerminalJournal(journal)) return { kind: 'acquired', lease };
     await release(paths, lease);
     return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'lock-without-matching-journal' } };
   }
@@ -418,7 +471,7 @@ async function reconcileOwnedLock(request, paths, lease) {
   const journal = await readJson(paths.journal);
   if (!journal) return { kind: 'acquired', lease, resumeStaged: false };
   if (!isJournalFor(journal, request)) {
-    if (isTerminalCandidateJournal(journal)) return { kind: 'acquired', lease, resumeStaged: false };
+    if (isTerminalJournal(journal)) return { kind: 'acquired', lease, resumeStaged: false };
     await release(paths, lease);
     return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'lock-without-matching-journal' } };
   }
@@ -600,7 +653,8 @@ async function runSnapshotLifecycle(request, paths, lease, { completion }) {
     const archiveAfterRehearsal = await verifySnapshotArchive(snapshot.data, inventory);
     const manifest = await writeSnapshotManifest(request, paths, lease, snapshot, original, inventory, recovery, archiveAfterRehearsal, rehearsal);
     await publishSnapshot(snapshot);
-    await writeJournal(request, paths, lease, 'rehearsal-verified', { manifest: snapshot.manifest, manifestSha256: await hashFile(snapshot.manifest) });
+    const recoveryPair = await recordManagedRecoveryPair(paths, lease, { candidateId: request.candidateId, snapshotId: request.snapshotId });
+    await writeJournal(request, paths, lease, 'rehearsal-verified', { manifest: snapshot.manifest, manifestSha256: await hashFile(snapshot.manifest), recoveryPair });
 
     await systemctl('start', 'baox.service');
     serviceStopped = false;
@@ -608,11 +662,12 @@ async function runSnapshotLifecycle(request, paths, lease, { completion }) {
     await writeJournal(request, paths, lease, 'original-verified', {});
 
     const retention = await pruneVerifiedSnapshots(paths, request);
-    await writeJournal(request, paths, lease, 'retention-pruned', { retention });
+    await writeJournal(request, paths, lease, 'retention-pruned', { retention, recoveryPair });
 
     if (completion === 'hold') {
-      await writeJournal(request, paths, lease, 'snapshot-verified-held', { manifest: snapshot.manifest, retention });
-      return { state: 'held', snapshotId: request.snapshotId, manifest: snapshot.manifest, completion: 'hold' };
+      if (recoveryPair.state !== 'recorded') throw new CandidateFailure('snapshot-original-release-not-managed');
+      await writeJournal(request, paths, lease, 'snapshot-verified-held', { manifest: snapshot.manifest, retention, recoveryPair });
+      return { state: 'held', snapshotId: request.snapshotId, manifest: snapshot.manifest, completion: 'hold', recoveryPair };
     }
 
     await writeJournal(request, paths, lease, 'reopening', {});
@@ -859,12 +914,17 @@ function parseOrigin(value) {
 
 async function collectDataInventory(root) {
   const files = [];
+  const directories = [];
   const excluded = ['server.lock', 'maintenance-gate.sock', 'files/tmp/**'];
   await visit('', root);
   files.sort((left, right) => left.path.localeCompare(right.path));
-  return { files, bytes: files.reduce((total, entry) => total + entry.size, 0), excluded };
+  directories.sort((left, right) => left.path.localeCompare(right.path));
+  return { files, directories, bytes: files.reduce((total, entry) => total + entry.size, 0), excluded };
 
   async function visit(relative, directory) {
+    const directoryStat = await fs.lstat(directory).catch(() => null);
+    if (!directoryStat || !directoryStat.isDirectory() || directoryStat.isSymbolicLink()) throw new CandidateFailure('unsupported-data-entry');
+    directories.push({ path: relative || '.', mode: directoryStat.mode & 0o777, owner: { uid: directoryStat.uid, gid: directoryStat.gid } });
     const entries = await fs.readdir(directory, { withFileTypes: true });
     entries.sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
@@ -875,9 +935,15 @@ async function collectDataInventory(root) {
         await visit(childRelative, child);
         continue;
       }
-      if (!entry.isFile()) throw new CandidateFailure('unsupported-data-entry');
-      const stat = await fs.stat(child);
-      files.push({ path: childRelative, size: stat.size, sha256: await hashFile(child), mode: stat.mode & 0o777 });
+      const stat = await fs.lstat(child).catch(() => null);
+      if (!entry.isFile() || !stat || !stat.isFile() || stat.isSymbolicLink()) throw new CandidateFailure('unsupported-data-entry');
+      files.push({
+        path: childRelative,
+        size: stat.size,
+        sha256: await hashFile(child),
+        mode: stat.mode & 0o777,
+        owner: { uid: stat.uid, gid: stat.gid },
+      });
     }
   }
 }
@@ -888,7 +954,7 @@ function isSnapshotTransient(relative) {
 }
 
 function inventorySummary(inventory) {
-  return { files: inventory.files.length, bytes: inventory.bytes, excluded: inventory.excluded };
+  return { files: inventory.files.length, directories: inventory.directories.length, bytes: inventory.bytes, excluded: inventory.excluded };
 }
 
 async function capacityForSnapshot(snapshotRoot, bytes) {
@@ -921,7 +987,7 @@ function snapshotPaths(paths, snapshotId) {
 async function createSnapshotCopy(request, paths, lease, snapshot, inventory, original) {
   if (await pathExists(snapshot.root) || await pathExists(snapshot.staging)) throw new CandidateFailure('snapshot-id-already-exists');
   await fs.mkdir(snapshot.data, { recursive: true, mode: 0o700 });
-  const recovery = await captureSnapshotRecovery(snapshot, original);
+  const recovery = await captureSnapshotRecovery(snapshot, original, inventory);
   await requireLease(paths, lease);
   await copyInventory(request.dataDir, snapshot.data, inventory, paths, lease);
   await fsyncDirectory(snapshot.data);
@@ -929,7 +995,7 @@ async function createSnapshotCopy(request, paths, lease, snapshot, inventory, or
   return recovery;
 }
 
-async function captureSnapshotRecovery(snapshot, original) {
+async function captureSnapshotRecovery(snapshot, original, inventory) {
   const configurationRoot = path.join(snapshot.recovery, 'configuration');
   await fs.mkdir(configurationRoot, { recursive: true, mode: 0o700 });
   const configuration = [];
@@ -964,21 +1030,31 @@ async function captureSnapshotRecovery(snapshot, original) {
   };
   const runtimeStatePath = path.join(snapshot.recovery, 'runtime-state.json');
   await writeAtomic(runtimeStatePath, JSON.stringify(runtimeState, null, 2) + '\n', 0o600);
+  const dataMetadataPath = path.join(snapshot.recovery, 'data-metadata.json');
+  const dataMetadata = {
+    schema: SNAPSHOT_SCHEMA,
+    root: inventory.directories.find((entry) => entry.path === '.') || null,
+    directories: inventory.directories,
+    files: inventory.files.map((entry) => ({ path: entry.path, mode: entry.mode, owner: entry.owner })),
+  };
+  if (!dataMetadata.root) throw new CandidateFailure('snapshot-data-metadata-incomplete');
+  await writeAtomic(dataMetadataPath, JSON.stringify(dataMetadata, null, 2) + '\n', 0o600);
   await fsyncDirectory(snapshot.recovery);
   return {
     configuration,
     runtimeState: { path: 'recovery/runtime-state.json', sha256: await hashFile(runtimeStatePath) },
+    dataMetadata: { path: 'recovery/data-metadata.json', sha256: await hashFile(dataMetadataPath) },
   };
 }
 
 async function copyInventory(sourceRoot, destinationRoot, inventory, paths = null, lease = null) {
+  await preparePrivateSnapshotDirectories(destinationRoot, inventory, paths, lease);
   for (const entry of inventory.files) {
     if (paths && lease) await requireLease(paths, lease);
     const source = safeSnapshotChild(sourceRoot, entry.path);
     const destination = safeSnapshotChild(destinationRoot, entry.path);
-    await fs.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
     await fs.copyFile(source, destination, fsSync.constants.COPYFILE_EXCL);
-    await fs.chmod(destination, entry.mode || 0o600);
+    await fs.chmod(destination, 0o600);
     const handle = await fs.open(destination, 'r');
     try {
       await handle.sync();
@@ -989,15 +1065,121 @@ async function copyInventory(sourceRoot, destinationRoot, inventory, paths = nul
   }
 }
 
+/**
+ * Restores a complete snapshot into an empty destination and reapplies the
+ * source data-directory ownership and modes after the private archive copy.
+ */
+async function restoreSnapshotData(snapshot, inventory, destinationRoot, paths = null, lease = null) {
+  if (!path.isAbsolute(destinationRoot)) throw new CandidateFailure('restore-destination-invalid');
+  const metadata = await readSnapshotDataMetadata(snapshot.recovery);
+  if (!dataMetadataMatchesInventory(metadata, inventory)) throw new CandidateFailure('snapshot-data-metadata-incomplete');
+  let existing = null;
+  try {
+    existing = await fs.readdir(destinationRoot);
+  } catch (error) {
+    if (!error || error.code !== 'ENOENT') throw error;
+  }
+  if (existing && existing.length > 0) throw new CandidateFailure('restore-destination-not-empty');
+  await copyInventory(snapshot.data, destinationRoot, inventory, paths, lease);
+  await applyRestoredDataMetadata(destinationRoot, metadata, paths, lease);
+  const restored = await collectDataInventory(destinationRoot);
+  if (inventoryDigest(restored) !== inventoryDigest(inventory)) throw new CandidateFailure('restored-data-metadata-verification-failed');
+}
+
+async function readSnapshotDataMetadata(recoveryRoot) {
+  const metadata = await readJson(path.join(recoveryRoot, 'data-metadata.json'));
+  if (!isDataMetadata(metadata)) throw new CandidateFailure('snapshot-data-metadata-invalid');
+  return metadata;
+}
+
+async function applyRestoredDataMetadata(destinationRoot, metadata, paths = null, lease = null) {
+  for (const entry of [...metadata.directories].sort((left, right) => left.path.split('/').length - right.path.split('/').length || left.path.localeCompare(right.path))) {
+    if (paths && lease) await requireLease(paths, lease);
+    const target = safeSnapshotDirectory(destinationRoot, entry.path);
+    const stat = await fs.lstat(target).catch(() => null);
+    if (!stat || !stat.isDirectory() || stat.isSymbolicLink()) throw new CandidateFailure('restored-data-entry-invalid');
+    await fs.chown(target, entry.owner.uid, entry.owner.gid);
+    await fs.chmod(target, entry.mode);
+  }
+  for (const entry of metadata.files) {
+    if (paths && lease) await requireLease(paths, lease);
+    const target = safeSnapshotChild(destinationRoot, entry.path);
+    const stat = await fs.lstat(target).catch(() => null);
+    if (!stat || !stat.isFile() || stat.isSymbolicLink()) throw new CandidateFailure('restored-data-entry-invalid');
+    await fs.chown(target, entry.owner.uid, entry.owner.gid);
+    await fs.chmod(target, entry.mode);
+  }
+}
+
+function isDataMetadata(metadata) {
+  return Boolean(metadata && metadata.schema === SNAPSHOT_SCHEMA && isDataDirectoryMetadata(metadata.root, true)
+    && Array.isArray(metadata.directories) && metadata.directories.filter((entry) => entry?.path === '.').length === 1
+    && metadata.directories.every((entry) => isDataDirectoryMetadata(entry, entry?.path === '.'))
+    && Array.isArray(metadata.files) && metadata.files.every((entry) => isDataFileMetadata(entry)));
+}
+
+function isDataDirectoryMetadata(entry, isRoot) {
+  return Boolean(entry && isDataMetadataPath(entry.path, isRoot) && validMode(entry.mode) && validDataOwner(entry.owner));
+}
+
+function isDataFileMetadata(entry) {
+  return Boolean(entry && isDataMetadataPath(entry.path, false) && validMode(entry.mode) && validDataOwner(entry.owner));
+}
+
+function isDataMetadataPath(value, isRoot) {
+  if (isRoot) return value === '.';
+  return typeof value === 'string' && value.length > 0 && !path.isAbsolute(value)
+    && !value.split('/').some((segment) => segment === '' || segment === '.' || segment === '..');
+}
+
+function validMode(value) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= 0o777;
+}
+
+function validDataOwner(owner) {
+  return Boolean(owner && Number.isSafeInteger(owner.uid) && owner.uid >= 0 && Number.isSafeInteger(owner.gid) && owner.gid >= 0);
+}
+
+function dataMetadataMatchesInventory(metadata, inventory) {
+  if (!isDataMetadata(metadata) || !Array.isArray(inventory.directories) || metadata.directories.length !== inventory.directories.length || metadata.files.length !== inventory.files.length) {
+    return false;
+  }
+  const directories = new Map(metadata.directories.map((entry) => [entry.path, entry]));
+  const files = new Map(metadata.files.map((entry) => [entry.path, entry]));
+  return sameDataMetadata(metadata.root, directories.get('.'))
+    && inventory.directories.every((entry) => sameDataMetadata(directories.get(entry.path), entry))
+    && inventory.files.every((entry) => sameDataMetadata(files.get(entry.path), entry));
+}
+
+function sameDataMetadata(left, right) {
+  return Boolean(left && right && left.mode === right.mode && left.owner?.uid === right.owner?.uid && left.owner?.gid === right.owner?.gid);
+}
+
+async function preparePrivateSnapshotDirectories(destinationRoot, inventory, paths = null, lease = null) {
+  const directories = [...inventory.directories].sort((left, right) => left.path.split('/').length - right.path.split('/').length || left.path.localeCompare(right.path));
+  for (const entry of directories) {
+    if (paths && lease) await requireLease(paths, lease);
+    const directory = safeSnapshotDirectory(destinationRoot, entry.path);
+    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+    await fs.chmod(directory, 0o700);
+  }
+}
+
 async function verifySnapshotArchive(dataRoot, expected) {
   const actual = await collectDataInventory(dataRoot);
-  if (actual.files.length !== expected.files.length || actual.bytes !== expected.bytes) throw new CandidateFailure('snapshot-archive-verification-failed');
+  if (actual.files.length !== expected.files.length || actual.directories.length !== expected.directories.length || actual.bytes !== expected.bytes) {
+    throw new CandidateFailure('snapshot-archive-verification-failed');
+  }
   for (let index = 0; index < expected.files.length; index += 1) {
     const source = expected.files[index];
     const copied = actual.files[index];
-    if (!copied || copied.path !== source.path || copied.size !== source.size || copied.mode !== source.mode || copied.sha256 !== source.sha256) {
+    if (!copied || copied.path !== source.path || copied.size !== source.size || copied.mode !== 0o600 || copied.sha256 !== source.sha256) {
       throw new CandidateFailure('snapshot-archive-verification-failed');
     }
+  }
+  for (let index = 0; index < expected.directories.length; index += 1) {
+    const copied = actual.directories[index];
+    if (!copied || copied.path !== expected.directories[index].path || copied.mode !== 0o700) throw new CandidateFailure('snapshot-archive-verification-failed');
   }
   return {
     result: 'ok',
@@ -1010,7 +1192,8 @@ async function verifySnapshotArchive(dataRoot, expected) {
 
 function inventoryDigest(inventory) {
   const hash = createHash('sha256');
-  for (const entry of inventory.files) hash.update(`${entry.path}\0${entry.size}\0${entry.mode}\0${entry.sha256}\n`);
+  for (const entry of inventory.directories) hash.update(`directory\0${entry.path}\0${entry.mode}\0${entry.owner.uid}\0${entry.owner.gid}\n`);
+  for (const entry of inventory.files) hash.update(`file\0${entry.path}\0${entry.size}\0${entry.mode}\0${entry.owner.uid}\0${entry.owner.gid}\0${entry.sha256}\n`);
   return hash.digest('hex');
 }
 
@@ -1018,6 +1201,7 @@ function recoverySummary(recovery) {
   return {
     configuration: recovery.configuration.map((entry) => ({ name: entry.name, path: entry.path, sha256: entry.sha256, mode: entry.mode, owner: entry.owner })),
     runtimeState: recovery.runtimeState,
+    dataMetadata: recovery.dataMetadata,
   };
 }
 
@@ -1029,6 +1213,11 @@ function safeSnapshotChild(root, relative) {
   const expectedRoot = path.resolve(root);
   if (!result.startsWith(expectedRoot + path.sep)) throw new CandidateFailure('invalid-snapshot-inventory');
   return result;
+}
+
+function safeSnapshotDirectory(root, relative) {
+  if (relative === '.') return path.resolve(root);
+  return safeSnapshotChild(root, relative);
 }
 
 async function pathExists(file) {
@@ -1065,8 +1254,7 @@ async function rehearseSnapshot(snapshot, inventory, original) {
   const socket = path.join(controlDirectory, 'gate.sock');
   let child = null;
   try {
-    await fs.mkdir(data, { recursive: true, mode: 0o700 });
-    await copyInventory(snapshot.data, data, inventory);
+    await restoreSnapshotData(snapshot, inventory, data);
     const restoredArchive = await verifySnapshotArchive(data, inventory);
     const databaseBefore = await committedDatabaseEvidence(data);
     const database = await verifySnapshotDatabase(data, original);
@@ -1244,7 +1432,7 @@ async function writeSnapshotManifest(request, paths, lease, snapshot, original, 
     original: snapshotOriginalSummary(original),
     recovery: recoverySummary(recovery),
     excluded: inventory.excluded,
-    inventory: { bytes: inventory.bytes, files: inventory.files, sha256: archive.sha256 },
+    inventory: { bytes: inventory.bytes, directories: inventory.directories, files: inventory.files, sha256: archive.sha256 },
     archive,
     database: rehearsal.database,
     rehearsal,
@@ -1349,6 +1537,9 @@ function isVerifiedSnapshotManifest(manifest, snapshotId) {
     && manifest.snapshotId === snapshotId && typeof manifest.candidateId === 'string'
     && typeof manifest.createdAt === 'string' && manifest.original && typeof manifest.original.release === 'string'
     && manifest.inventory && Array.isArray(manifest.inventory.files)
+    && Array.isArray(manifest.inventory.directories)
+    && manifest.recovery && manifest.recovery.dataMetadata && typeof manifest.recovery.dataMetadata.path === 'string'
+    && typeof manifest.recovery.dataMetadata.sha256 === 'string'
     && manifest.archive && manifest.archive.result === 'ok'
     && manifest.database && manifest.database.result === 'ok'
     && manifest.rehearsal && manifest.rehearsal.state === 'verified');
@@ -1364,7 +1555,7 @@ async function listManagedRecoveryPairs(paths, snapshots) {
     const manifest = await readJson(path.join(release, 'recovery.json'));
     if (!isManagedRecoveryManifest(manifest, entry.name)) continue;
     const snapshot = snapshotById.get(manifest.snapshotId);
-    if (!snapshot || snapshot.manifest.candidateId !== manifest.candidateId) continue;
+    if (!snapshot || snapshot.manifest.candidateId !== manifest.candidateId || snapshot.manifest.original.release !== manifest.originalRelease) continue;
     pairs.push({
       release: { id: entry.name, path: release, manifest },
       snapshot,
@@ -1380,6 +1571,7 @@ function isManagedRecoveryManifest(manifest, releaseId) {
     && manifest.releaseId === releaseId && typeof manifest.candidateId === 'string'
     && /^[a-f0-9]{12}-[a-f0-9]{12}$/i.test(manifest.candidateId)
     && typeof manifest.snapshotId === 'string' && /^snapshot-[a-f0-9-]{29,80}$/i.test(manifest.snapshotId)
+    && manifest.originalRelease === `releases/${releaseId}`
     && typeof manifest.completedAt === 'string' && Number.isFinite(Date.parse(manifest.completedAt)));
 }
 
@@ -1395,6 +1587,57 @@ async function currentManagedReleaseId(request, paths) {
   const stat = await fs.lstat(release).catch(() => null);
   if (!stat || !stat.isDirectory() || stat.isSymbolicLink()) return null;
   return releaseId;
+}
+
+/**
+ * Records the release that the verified snapshot can restore. A snapshot made
+ * before promoting candidate B always belongs to the original release A.
+ */
+async function recordManagedRecoveryPair(paths, lease, { candidateId, snapshotId }) {
+  await requireLease(paths, lease);
+  const snapshot = await readJson(path.join(paths.snapshotRoot, snapshotId, 'manifest.json'));
+  if (!isVerifiedSnapshotManifest(snapshot, snapshotId) || snapshot.candidateId !== candidateId) {
+    throw new CandidateFailure('snapshot-recovery-pair-not-verifiable');
+  }
+  const releaseId = managedReleaseIdFromReference(snapshot.original.release);
+  if (!releaseId) return { state: 'unmanaged-original-release', originalRelease: snapshot.original.release };
+  const release = path.join(paths.releaseRoot, releaseId);
+  const stat = await fs.lstat(release).catch(() => null);
+  if (!stat || !stat.isDirectory() || stat.isSymbolicLink()) {
+    return { state: 'unmanaged-original-release', originalRelease: snapshot.original.release };
+  }
+  const record = {
+    schema: SNAPSHOT_SCHEMA,
+    kind: 'managed-release-recovery',
+    releaseId,
+    originalRelease: snapshot.original.release,
+    candidateId,
+    snapshotId,
+    completedAt: new Date().toISOString(),
+  };
+  const destination = path.join(release, 'recovery.json');
+  const destinationStat = await fs.lstat(destination).catch((error) => {
+    if (error && error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (destinationStat && (!destinationStat.isFile() || destinationStat.isSymbolicLink())) {
+    throw new CandidateFailure('snapshot-recovery-pair-invalid');
+  }
+  const existing = await readJson(destination);
+  if (destinationStat && !existing) throw new CandidateFailure('snapshot-recovery-pair-invalid');
+  if (existing && (!isManagedRecoveryManifest(existing, releaseId) || existing.originalRelease !== snapshot.original.release)) {
+    throw new CandidateFailure('snapshot-recovery-pair-invalid');
+  }
+  if (!existing || existing.snapshotId !== snapshotId || existing.candidateId !== candidateId) {
+    await writeAtomic(destination, JSON.stringify(record, null, 2) + '\n', 0o600);
+  }
+  await requireLease(paths, lease);
+  return { state: 'recorded', releaseId, snapshotId };
+}
+
+function managedReleaseIdFromReference(reference) {
+  if (typeof reference !== 'string' || !/^releases\/[a-z0-9][a-z0-9._-]{0,127}$/u.test(reference)) return null;
+  return reference.slice('releases/'.length);
 }
 
 function retentionPlan(pairs, currentReleaseId, retention, currentSnapshotId) {
@@ -1450,7 +1693,8 @@ async function retireManagedRecoveryPair(paths, pair) {
   ]);
   if (!releaseStat.isDirectory() || releaseStat.isSymbolicLink() || !snapshotStat.isDirectory() || snapshotStat.isSymbolicLink()
     || !isManagedRecoveryManifest(releaseManifest, pair.releaseId) || releaseManifest.snapshotId !== pair.snapshotId
-    || !isVerifiedSnapshotManifest(snapshotManifest, pair.snapshotId) || snapshotManifest.candidateId !== releaseManifest.candidateId) {
+    || !isVerifiedSnapshotManifest(snapshotManifest, pair.snapshotId) || snapshotManifest.candidateId !== releaseManifest.candidateId
+    || snapshotManifest.original.release !== releaseManifest.originalRelease) {
     throw new CandidateFailure('retention-pair-no-longer-verifiable');
   }
   const nonce = randomBytes(8).toString('hex');
@@ -1483,7 +1727,13 @@ function verifiedSnapshotResult(journal, paths) {
 }
 
 function heldSnapshotResult(journal, paths) {
-  return { state: 'held', snapshotId: journal.snapshotId, manifest: path.join(paths.snapshotRoot, journal.snapshotId, 'manifest.json'), completion: 'hold' };
+  return {
+    state: 'held',
+    snapshotId: journal.snapshotId,
+    manifest: path.join(paths.snapshotRoot, journal.snapshotId, 'manifest.json'),
+    completion: 'hold',
+    ...(journal.recoveryPair ? { recoveryPair: journal.recoveryPair } : {}),
+  };
 }
 
 async function verifyBaseReadiness(request) {
@@ -1853,6 +2103,9 @@ function isSnapshotRequest(request) {
 }
 
 function operationFor(request) {
+  if (request && request.externalLock === true && typeof request.operation === 'string' && /^[a-z][a-z0-9-]{0,63}$/u.test(request.operation)) {
+    return request.operation;
+  }
   return isSnapshotRequest(request) ? SNAPSHOT_OPERATION : CANDIDATE_OPERATION;
 }
 
@@ -2012,10 +2265,14 @@ class CandidateFailure extends Error {
 }
 
 module.exports = {
+  acquireDeploymentLease,
   runSnapshotLifecycle,
+  recordManagedRecoveryPair,
+  restoreSnapshotData,
   snapshotPaths,
   targetPaths,
   collectDataInventory,
   capacityForSnapshot,
+  requireLease,
   CandidateFailure,
 };

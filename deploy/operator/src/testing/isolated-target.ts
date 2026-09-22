@@ -96,13 +96,13 @@ export class LocalTargetRunner {
     }
 
     let disconnectTimer: NodeJS.Timeout | undefined;
-    if (this.disconnectNextReceive && remoteCommand.includes(' receive')) {
+    if (this.disconnectNextReceive && remoteCommand.includes('receive')) {
       this.disconnectNextReceive = false;
       disconnectTimer = setInterval(() => {
         if (existsSync(join(this.barrier, 'started'))) child.kill('SIGKILL');
       }, 10);
     }
-    if (this.disconnectNextSnapshot && remoteCommand.includes(' -- snapshot')) {
+    if (this.disconnectNextSnapshot && remoteCommand.includes('snapshot')) {
       this.disconnectNextSnapshot = false;
       disconnectTimer = setInterval(() => {
         if (existsSync(join(this.barrier, 'snapshot-stop-started'))) child.kill('SIGKILL');

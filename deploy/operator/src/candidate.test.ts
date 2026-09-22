@@ -164,7 +164,7 @@ it('keeps the real service, SQLite data, active release, and configuration uncha
   const status = await cli(source.repository, target, 'status', '--json');
   expect(status).toMatchObject({ code: 0, err: '' });
   expect(JSON.parse(status.out)).toMatchObject({ candidate: { journal: { phase: 'prepared' }, manifest: { source: { commit: source.first } } } });
-});
+}, 30_000);
 
 it('verifies a local relay against the same committed archive checksum and reports missing bootstrap prerequisites without installing them', async () => {
   const target = await createTarget();

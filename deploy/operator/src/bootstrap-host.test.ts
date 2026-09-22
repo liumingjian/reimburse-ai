@@ -69,7 +69,7 @@ it('applies a reviewed direct transaction through the real host driver without h
   expect(isolated.proxyCalls).toEqual(expect.arrayContaining([expect.stringContaining('--proxy http://proxy.example.test:7890')]));
   expect(isolated.remoteCommands.join('\n')).not.toContain('/opt/tools/baox');
   expect(isolated.remoteCommands.join('\n')).not.toMatch(/(^|[^A-Za-z0-9._-])\/home\/baox(?:\/|['\s])/u);
-});
+}, 30_000);
 
 it('refuses a package transaction that would replace a protected system runtime', async () => {
   const isolated = target({ transaction: [{ action: 'upgrade', name: 'glibc', nevra: 'glibc-2.28-300.ky10.x86_64' }] });

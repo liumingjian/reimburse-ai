@@ -42,6 +42,18 @@ it('creates a complete external recovery snapshot, rehearses its isolated reopen
   expect(archivedPaths).toContain('baox.sqlite');
   expect(archivedPaths).toContain(relative(target.dataDir, blob));
   expect(readFileSync(join(result.manifest, '..', 'data', relative(target.dataDir, blob)))).toEqual(readFileSync(blob));
+  const dataMetadata = JSON.parse(readFileSync(join(result.manifest, '..', 'recovery', 'data-metadata.json'), 'utf8')) as DataMetadata;
+  const sourceData = statSync(target.dataDir);
+  const sourceBlob = statSync(blob);
+  const blobRelative = relative(target.dataDir, blob);
+  expect(manifest.recovery.dataMetadata).toMatchObject({ path: 'recovery/data-metadata.json' });
+  expect(dataMetadata.root).toEqual({ path: '.', mode: sourceData.mode & 0o777, owner: { uid: sourceData.uid, gid: sourceData.gid } });
+  expect(dataMetadata.directories).toEqual(expect.arrayContaining([
+    expect.objectContaining({ path: 'files' }),
+  ]));
+  expect(dataMetadata.files).toEqual(expect.arrayContaining([
+    { path: blobRelative, mode: sourceBlob.mode & 0o777, owner: { uid: sourceBlob.uid, gid: sourceBlob.gid } },
+  ]));
   expect(manifest.recovery.configuration).toHaveLength(3);
   expect(manifest.recovery.configuration.map((entry) => entry.path)).toEqual([
     'recovery/configuration/caddyfile',
@@ -49,8 +61,11 @@ it('creates a complete external recovery snapshot, rehearses its isolated reopen
     'recovery/configuration/baox-caddy-service',
   ]);
   expect(statSync(result.manifest).mode & 0o777).toBe(0o600);
+  expect(statSync(join(result.manifest, '..', 'data')).mode & 0o777).toBe(0o700);
+  expect(statSync(join(result.manifest, '..', 'data', blobRelative)).mode & 0o777).toBe(0o600);
   expect(statSync(join(result.manifest, '..', 'recovery')).mode & 0o777).toBe(0o700);
   expect(statSync(join(result.manifest, '..', 'recovery', 'runtime-state.json')).mode & 0o777).toBe(0o600);
+  expect(statSync(join(result.manifest, '..', 'recovery', 'data-metadata.json')).mode & 0o777).toBe(0o600);
   expect(JSON.stringify(manifest)).not.toContain('candidate-test-maintenance-token');
   for (const entry of manifest.recovery.configuration) {
     expect(statSync(join(result.manifest, '..', entry.path)).mode & 0o777).toBe(0o600);
@@ -103,44 +118,53 @@ it('refuses insufficient external capacity before maintenance admission or reten
   });
 }, 90_000);
 
-it('retains the current and most recent recoverable managed release pairs when retention is one', async () => {
+it('pairs each snapshot with its original release and retains current plus recoverable releases across A to B to C', async () => {
   const target = await createTarget();
-  const currentReleaseId = installManagedCurrentRelease(target, 'release-current');
-  const candidateId = await prepareCandidate(target);
-  const currentSnapshotId = managedSnapshotId(candidateId, '0000000000000001');
-  const recoverableSnapshotId = managedSnapshotId(candidateId, '0000000000000002');
-  const obsoleteSnapshotId = managedSnapshotId(candidateId, '0000000000000003');
-  seedManagedRecoveryPair(target, {
-    releaseId: currentReleaseId,
-    candidateId,
-    snapshotId: currentSnapshotId,
-    completedAt: '2026-01-03T00:00:00.000Z',
-  });
-  seedManagedRecoveryPair(target, {
-    releaseId: 'release-recoverable',
-    candidateId,
-    snapshotId: recoverableSnapshotId,
-    completedAt: '2026-01-02T00:00:00.000Z',
-  });
-  seedManagedRecoveryPair(target, {
-    releaseId: 'release-obsolete',
-    candidateId,
-    snapshotId: obsoleteSnapshotId,
-    completedAt: '2026-01-01T00:00:00.000Z',
+  const releaseA = installManagedCurrentRelease(target, 'release-a');
+  const candidateB = await prepareCandidate(target, 'b');
+  const snapshotA = await new SshSnapshotTransport({ profile: target.profile, runner: target.runner.run }).snapshot({ candidateId: candidateB, retention: 1 });
+  if (snapshotA.state !== 'verified') throw new Error(`A snapshot did not verify: ${JSON.stringify(snapshotA)}`);
+  expect((JSON.parse(readFileSync(snapshotA.manifest, 'utf8')) as RecoveryManifest).original.release).toBe(`releases/${releaseA}`);
+  expect(readManagedRecoveryPair(target, releaseA)).toMatchObject({
+    releaseId: releaseA,
+    originalRelease: `releases/${releaseA}`,
+    candidateId: candidateB,
+    snapshotId: snapshotA.snapshotId,
   });
 
-  const result = await new SshSnapshotTransport({ profile: target.profile, runner: target.runner.run }).snapshot({ candidateId, retention: 1 });
+  installManagedCurrentRelease(target, candidateB);
+  const candidateC = await prepareCandidate(target, 'c');
+  const snapshotB = await new SshSnapshotTransport({ profile: target.profile, runner: target.runner.run }).snapshot({ candidateId: candidateC, retention: 1 });
+  if (snapshotB.state !== 'verified') throw new Error(`B snapshot did not verify: ${JSON.stringify(snapshotB)}`);
+  expect((JSON.parse(readFileSync(snapshotB.manifest, 'utf8')) as RecoveryManifest).original.release).toBe(`releases/${candidateB}`);
+  expect(readManagedRecoveryPair(target, candidateB)).toMatchObject({
+    releaseId: candidateB,
+    originalRelease: `releases/${candidateB}`,
+    candidateId: candidateC,
+    snapshotId: snapshotB.snapshotId,
+  });
 
-  expect(result).toMatchObject({ state: 'verified', completion: 'reopen' });
+  installManagedCurrentRelease(target, candidateC);
+  const candidateD = await prepareCandidate(target, 'd');
+  const snapshotC = await new SshSnapshotTransport({ profile: target.profile, runner: target.runner.run }).snapshot({ candidateId: candidateD, retention: 1 });
+  if (snapshotC.state !== 'verified') throw new Error(`C snapshot did not verify: ${JSON.stringify(snapshotC)}`);
+  expect(readManagedRecoveryPair(target, candidateC)).toMatchObject({
+    releaseId: candidateC,
+    originalRelease: `releases/${candidateC}`,
+    candidateId: candidateD,
+    snapshotId: snapshotC.snapshotId,
+  });
+
   const releaseRoot = join(target.profile.deployRoot, 'releases');
   const snapshotRoot = join(target.profile.deployRoot, 'recovery-snapshots');
-  expect(existsSync(join(releaseRoot, currentReleaseId))).toBe(true);
-  expect(existsSync(join(snapshotRoot, currentSnapshotId))).toBe(true);
-  expect(existsSync(join(releaseRoot, 'release-recoverable'))).toBe(true);
-  expect(existsSync(join(snapshotRoot, recoverableSnapshotId))).toBe(true);
-  expect(existsSync(join(releaseRoot, 'release-obsolete'))).toBe(false);
-  expect(existsSync(join(snapshotRoot, obsoleteSnapshotId))).toBe(false);
-}, 90_000);
+  expect(readlinkSync(target.current)).toBe(`releases/${candidateC}`);
+  expect(existsSync(join(releaseRoot, candidateC))).toBe(true);
+  expect(existsSync(join(snapshotRoot, snapshotC.snapshotId))).toBe(true);
+  expect(existsSync(join(releaseRoot, candidateB))).toBe(true);
+  expect(existsSync(join(snapshotRoot, snapshotB.snapshotId))).toBe(true);
+  expect(existsSync(join(releaseRoot, releaseA))).toBe(false);
+  expect(existsSync(join(snapshotRoot, snapshotA.snapshotId))).toBe(false);
+}, 120_000);
 
 it('keeps public access closed and requires reconciliation after the coordinator dies during admission', async () => {
   const target = await createTarget();
@@ -181,13 +205,13 @@ async function createTarget(options: Parameters<typeof createSnapshotIsolatedTar
   return target;
 }
 
-async function prepareCandidate(target: SnapshotIsolatedTarget): Promise<string> {
+async function prepareCandidate(target: SnapshotIsolatedTarget, marker = 'source'): Promise<string> {
   const repository = mkdtempSync(join(tmpdir(), 'baox-snapshot-source-'));
   cleanup.push(() => rmSync(repository, { recursive: true, force: true }));
   git(repository, ['init', '--quiet']);
   git(repository, ['config', 'user.name', 'snapshot test']);
   git(repository, ['config', 'user.email', 'snapshot@example.test']);
-  writeCandidateSource(repository);
+  writeCandidateSource(repository, marker);
   git(repository, ['add', '.']);
   git(repository, ['commit', '--quiet', '-m', 'snapshot source']);
   git(repository, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
@@ -202,10 +226,11 @@ async function prepareCandidate(target: SnapshotIsolatedTarget): Promise<string>
   return prepared.candidateId;
 }
 
-function writeCandidateSource(repository: string): void {
+function writeCandidateSource(repository: string, marker: string): void {
   mkdirSync(join(repository, 'deploy', 'intranet'), { recursive: true });
   writeFileSync(join(repository, '.nvmrc'), process.versions.node);
   writeFileSync(join(repository, 'package.json'), JSON.stringify({ packageManager: 'pnpm@10.17.1', name: 'snapshot-source' }) + '\n');
+  writeFileSync(join(repository, 'snapshot-marker.txt'), `${marker}\n`);
   writeFileSync(join(repository, 'deploy', 'intranet', 'Caddyfile'), 'http://10.250.0.222 {\n  respond "candidate"\n}\n');
   writeFileSync(join(repository, 'deploy', 'intranet', 'baox.service'), '[Service]\nEnvironment=BAOX_PUBLIC_ORIGIN=http://10.250.0.222\n');
   writeFileSync(join(repository, 'deploy', 'intranet', 'baox-caddy.service'), '[Service]\n');
@@ -227,36 +252,8 @@ function installManagedCurrentRelease(target: SnapshotIsolatedTarget, releaseId:
   return releaseId;
 }
 
-function seedManagedRecoveryPair(target: SnapshotIsolatedTarget, pair: {
-  releaseId: string;
-  candidateId: string;
-  snapshotId: string;
-  completedAt: string;
-}): void {
-  const release = join(target.profile.deployRoot, 'releases', pair.releaseId);
-  const snapshot = join(target.profile.deployRoot, 'recovery-snapshots', pair.snapshotId);
-  mkdirSync(release, { recursive: true });
-  mkdirSync(snapshot, { recursive: true });
-  writeFileSync(join(release, 'recovery.json'), JSON.stringify({
-    schema: 1,
-    kind: 'managed-release-recovery',
-    releaseId: pair.releaseId,
-    candidateId: pair.candidateId,
-    snapshotId: pair.snapshotId,
-    completedAt: pair.completedAt,
-  }, null, 2) + '\n');
-  writeFileSync(join(snapshot, 'manifest.json'), JSON.stringify({
-    schema: 1,
-    kind: 'recovery-snapshot',
-    snapshotId: pair.snapshotId,
-    candidateId: pair.candidateId,
-    createdAt: pair.completedAt,
-    original: { release: `releases/${pair.releaseId}` },
-    inventory: { files: [] },
-    archive: { result: 'ok' },
-    database: { result: 'ok' },
-    rehearsal: { state: 'verified' },
-  }, null, 2) + '\n');
+function readManagedRecoveryPair(target: SnapshotIsolatedTarget, releaseId: string): ManagedRecoveryPair {
+  return JSON.parse(readFileSync(join(target.profile.deployRoot, 'releases', releaseId, 'recovery.json'), 'utf8')) as ManagedRecoveryPair;
 }
 
 function managedSnapshotId(candidateId: string, suffix: string): string {
@@ -271,7 +268,23 @@ async function waitForCondition(condition: () => boolean): Promise<void> {
   throw new Error('timed out waiting for the interrupted snapshot command');
 }
 
+type Ownership = { uid: number; gid: number };
+
+type DataMetadata = {
+  root: { path: '.'; mode: number; owner: Ownership };
+  directories: Array<{ path: string; mode: number; owner: Ownership }>;
+  files: Array<{ path: string; mode: number; owner: Ownership }>;
+};
+
+type ManagedRecoveryPair = {
+  releaseId: string;
+  originalRelease: string;
+  candidateId: string;
+  snapshotId: string;
+};
+
 type RecoveryManifest = {
+  original: { release: string };
   inventory: { files: Array<{ path: string }> };
-  recovery: { configuration: Array<{ path: string }> };
+  recovery: { configuration: Array<{ path: string }>; dataMetadata: { path: string; sha256: string } };
 };

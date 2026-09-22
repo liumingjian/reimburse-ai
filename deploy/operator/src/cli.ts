@@ -14,6 +14,7 @@ import type { DoctorReport, GateStatus, HostResult, HostStatus, HostTransport } 
 import { redact, redactValue } from './redact.js';
 import type { SourcePlan, SourceRepository } from './source.js';
 import { SourceSelectionError } from './source.js';
+import type { SnapshotResult, SnapshotTransport } from './snapshot.js';
 
 export type CliIo = {
   out: (line: string) => void;
@@ -24,12 +25,13 @@ export type OperatorDependencies = {
   source: SourceRepository;
   host: HostTransport;
   candidate?: CandidateTransport;
+  snapshot?: SnapshotTransport;
   bootstrapProvenance?: BootstrapProvenanceVerifier;
 };
 
 const USAGE = [
   '用法：baox-operator <命令> [选项]',
-  '命令：plan [Git 引用]、status、doctor、logs [--lines N]、prepare [Git 引用] [--relay 归档]、deploy --dry-run [Git 引用]、bootstrap-preview --proxy URL [--relay 目录]、bootstrap-apply --confirm 摘要 --proxy URL [--relay 目录]',
+  '命令：plan [Git 引用]、status、doctor、logs [--lines N]、prepare [Git 引用] [--relay 归档]、snapshot 候选标识 [--retain N]、deploy --dry-run [Git 引用]、bootstrap-preview --proxy URL [--relay 目录]、bootstrap-apply --confirm 摘要 --proxy URL [--relay 目录]',
 ].join('\n');
 
 export async function runOperatorCli(argv: readonly string[], dependencies: OperatorDependencies, io: CliIo): Promise<number> {
@@ -47,6 +49,8 @@ export async function runOperatorCli(argv: readonly string[], dependencies: Oper
         return await logs(rest, dependencies, io, json);
       case 'prepare':
         return await prepare(rest, dependencies, io, json);
+      case 'snapshot':
+        return await snapshot(rest, dependencies, io, json);
       case 'deploy':
         return await deployDryRun(rest, dependencies, io, json);
       case 'bootstrap-preview':
@@ -135,6 +139,26 @@ async function prepare(args: readonly string[], dependencies: OperatorDependenci
     [...planLines(source.plan), ...prepareLines(result, artifactOrigin)],
   );
   return success ? 0 : 1;
+}
+
+async function snapshot(args: readonly string[], dependencies: OperatorDependencies, io: CliIo, json: boolean): Promise<number> {
+  const options = parseSnapshot(args);
+  if (!options) return usage(io);
+  if (!dependencies.snapshot) throw new Error('当前操作环境没有恢复快照驱动。');
+  const gate = gateValue(await dependencies.host.execute({ kind: 'gate-status' }));
+  if (!gateAllowsSnapshot(gate)) {
+    const refusal = snapshotGateRefusal(gate);
+    emit(io, json, { command: 'snapshot', candidateId: options.candidateId, profile: publicProfile(), maintenanceGate: gate, refusal }, [refusal]);
+    return 1;
+  }
+  const result = await dependencies.snapshot.snapshot(options);
+  emit(
+    io,
+    json,
+    { command: 'snapshot', candidateId: options.candidateId, ...(options.retention === undefined ? {} : { retention: options.retention }), profile: publicProfile(), maintenanceGate: gate, snapshot: result },
+    snapshotLines(result),
+  );
+  return result.state === 'verified' ? 0 : 1;
 }
 
 async function deployDryRun(args: readonly string[], dependencies: OperatorDependencies, io: CliIo, json: boolean): Promise<number> {
@@ -245,6 +269,26 @@ function parsePrepare(args: readonly string[]): { ref?: string; relay?: string }
   return { ...(ref ? { ref } : {}), ...(relay ? { relay } : {}) };
 }
 
+function parseSnapshot(args: readonly string[]): { candidateId: string; retention?: number } | null {
+  let candidateId: string | undefined;
+  let retention: number | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === '--retain') {
+      const value = args[++index];
+      if (retention !== undefined || !value || !/^\d+$/u.test(value)) return null;
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 20) return null;
+      retention = parsed;
+      continue;
+    }
+    if (!argument || argument.startsWith('-') || candidateId) return null;
+    candidateId = argument;
+  }
+  if (!candidateId || !/^[a-f0-9]{12}-[a-f0-9]{12}$/iu.test(candidateId)) return null;
+  return { candidateId, ...(retention === undefined ? {} : { retention }) };
+}
+
 type BootstrapOptions = Readonly<{
   source: BootstrapSource;
   relayDirectory?: string;
@@ -318,6 +362,11 @@ function gateAllowsRoutineDeployment(gate: GateStatus): boolean {
   return gate.kind === 'available' && gate.response.state !== 'unknown';
 }
 
+function gateAllowsSnapshot(gate: GateStatus): boolean {
+  return gate.kind === 'available' && gate.response.state === 'open' && gate.response.barrier === false
+    && gate.response.activeWrites !== 'unknown' && gate.response.activeErpAttempt !== 'unknown';
+}
+
 function gateRefusal(gate: GateStatus): string {
   if (gate.kind === 'missing-gate') {
     return '拒绝常规部署：主机没有维护闸门。首次启用必须由维护人员执行单独、明确的受控变更，不能以检查后停止服务的方式切换。';
@@ -325,6 +374,11 @@ function gateRefusal(gate: GateStatus): string {
   if (gate.kind === 'incompatible-gate') return '拒绝常规部署：维护闸门协议不兼容，无法安全判断写入状态。';
   if (gate.kind === 'unavailable-gate') return '拒绝常规部署：维护闸门不可用，无法安全判断写入状态。';
   return '拒绝常规部署：维护闸门报告未知写入状态。';
+}
+
+function snapshotGateRefusal(gate: GateStatus): string {
+  if (gate.kind !== 'available') return gateRefusal(gate).replace('常规部署', '恢复快照');
+  return '拒绝恢复快照：维护闸门没有处于已验证的开放状态。';
 }
 
 function routinePrerequisiteRefusal(report: DoctorReport): string | null {
@@ -399,6 +453,21 @@ function prepareLines(result: CandidatePreparation, artifactOrigin: CandidateArt
       return [`候选 ${result.candidateId} 的构建在不确定状态中止，已保留且不会自动重建。请先执行恢复操作。`];
     case 'reconcile-needed':
       return [`目标部署锁需要人工核对：${result.code}。为避免重复操作，命令没有改写它。`];
+  }
+}
+
+function snapshotLines(result: SnapshotResult): string[] {
+  switch (result.state) {
+    case 'verified':
+      return [`恢复快照已验证：${result.snapshotId}`, `清单：${result.manifest}`];
+    case 'busy':
+      return [`目标部署锁由 ${result.operation} 持有，候选 ${result.candidateId} 正在协调。`];
+    case 'refused':
+      return [`恢复快照被维护闸门拒绝：${result.code}`];
+    case 'failed':
+      return [`恢复快照失败：${result.code}${result.recoveryRequired ? '；服务已保留在维护屏障后，需先恢复。' : ''}`];
+    case 'reconcile-needed':
+      return [`恢复快照需要人工核对：${result.code}。命令没有重复不确定的维护操作。`];
   }
 }
 

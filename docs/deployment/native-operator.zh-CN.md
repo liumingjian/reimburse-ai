@@ -1,10 +1,10 @@
 # 原生运维命令行
 
-状态：#263 的只读基线，加上 #264 的受控原生依赖引导和 #266 的 candidate (候选) 准备。它只操作固定内网主机
+状态：#263 的只读基线，加上 #264 的受控原生依赖引导、#266 的 candidate (候选) 准备和 #267 的 recovery snapshot (恢复快照)。它只操作固定内网主机
 `10.250.0.222`，不支持多主机配置。
 
 `@baox/operator` 是维护人员在本机运行的 SSH 命令行。它不推送或合并 Git 状态。只有显式确认的 native bootstrap
-(原生依赖引导) 和 `prepare` 候选准备可以写入目标；它们不会停止服务、改写数据、切换发布或打开公网访问。
+(原生依赖引导)、`prepare` 候选准备和单独的恢复快照可以写入目标。恢复快照会在维护窗口内停止服务并暂时关闭公网访问，但不会切换发布版本。
 
 ## 命令
 
@@ -17,6 +17,7 @@ pnpm --filter @baox/operator operator -- doctor
 pnpm --filter @baox/operator operator -- logs --lines 200
 pnpm --filter @baox/operator operator -- deploy --dry-run
 pnpm --filter @baox/operator operator -- prepare [Git 引用] [--relay /本地/source.tar]
+pnpm --filter @baox/operator operator -- snapshot <候选标识> [--retain N]
 pnpm --filter @baox/operator operator -- bootstrap-preview --proxy http://192.168.2.201:7890
 pnpm --filter @baox/operator operator -- bootstrap-apply --confirm <确认摘要> --proxy http://192.168.2.201:7890
 ```
@@ -41,6 +42,10 @@ Node、隔离 GCC、构建 Python、pnpm、Caddy、`baox` 服务账号、受控�
 目标主机先取得共享的 `/opt/tools/baox/maintenance/deployment.lock`，再写入 `/opt/tools/baox/maintenance/deployment-journal.json`。锁所有者包含随机代次、进程号和进程起始身份；失联的旧进程不能删除新所有者的锁。准备过程在 `/opt/tools/baox/candidates/<提交前缀>-<归档前缀>/` 解包、构建并校验输出。SSH 中断后，后续同一候选会读取 journal：已经完整校验的归档可以继续构建；构建开始后中断则保留候选并返回恢复要求，不会自动重复不确定的构建。
 
 成功的清单记录提交 SHA、归档 SHA、目标重新校验的 SHA、运行时版本、构建环境文件的 SHA 与键名，以及当前发布、Node 运行时引用和 Caddy/systemd 配置的恢复副本与哈希。环境变量值、令牌和其他机密不会写进清单、归档、日志或 journal。准备不会改动 `current`、共享运行时引用、服务、反向代理或数据目录，也不开放访问或切换版本。
+
+`snapshot <候选标识> [--retain N]` 只在维护闸门已验证为开放、没有屏障且写入状态可知时开始。目标先持久记录准入意图，再关闭准入、排空写入、停止 Caddy 和原服务。它把完整数据目录（包括 SQLite 已提交 WAL 与原始文件）以及原发布、运行时和配置恢复信息写入 `/opt/tools/baox/recovery-snapshots/` 的私有目录；数据文件和目录的原始所有者与模式保存在私有恢复元数据中。随后它在独立的数据、端口、令牌和 socket 路径上启动原可执行文件，校验 SQLite 并验证隔离闸门重新开放、关闭和重新开放。只有原服务和公网探测均通过后才重新开放生产闸门；此命令不会切换版本。
+
+`--retain` 默认是 3，范围为 1 到 20。每个已验证快照与它拍摄时的原发布关联：在 A 切换到 B 前创建的快照恢复 A，不声称恢复 B。清理只处理固定发布目录中有匹配恢复记录和匹配已验证快照的发布对；即使保留数为 1，也保留当前发布和最近一个不同的可恢复发布对。容量预检在关闭准入之前完成，清理只会在新快照已验证后进行。
 
 候选准备只报告缺失的 Node、隔离 GCC、构建 Python、pnpm、Caddy、服务账号和受限构建环境，不会安装或修复它们。bootstrap（初始化）是单独的显式操作。`status` 只读取协调状态和 journal；即使发现异常锁或 journal，也不会改写它们。
 

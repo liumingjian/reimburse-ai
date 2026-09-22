@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { productionSshRunner, remoteShellCommand, type SshRunner } from './host.js';
+import { createCoordinatorInvocation } from './coordinator-transport.js';
+import { productionSshRunner, type SshRunner } from './host.js';
 import { NATIVE_PROFILE, type NativeProfile } from './profile.js';
 
 export type SnapshotRequest = Readonly<{
@@ -23,15 +24,18 @@ export interface SnapshotTransport {
 export type SshSnapshotTransportOptions = {
   runner?: SshRunner;
   profile?: NativeProfile;
+  coordinatorSource?: () => string;
 };
 
 export class SshSnapshotTransport implements SnapshotTransport {
   private readonly runner: SshRunner;
   private readonly profile: NativeProfile;
+  private readonly coordinatorSource: () => string;
 
   constructor(options: SshSnapshotTransportOptions = {}) {
     this.runner = options.runner ?? productionSshRunner;
     this.profile = options.profile ?? NATIVE_PROFILE;
+    this.coordinatorSource = options.coordinatorSource ?? readCoordinatorSource;
   }
 
   async snapshot(request: SnapshotRequest): Promise<SnapshotResult> {
@@ -41,9 +45,11 @@ export class SshSnapshotTransport implements SnapshotTransport {
     if (request.retention !== undefined && (!Number.isSafeInteger(request.retention) || request.retention < 1 || request.retention > 20)) {
       throw new Error('恢复快照保留数量必须介于 1 和 20 之间。');
     }
-    const result = await this.runner(
-      this.profile,
-      remoteShellCommand(coordinatorCommand(this.profile, {
+    const invocation = createCoordinatorInvocation({
+      nodePath: `${this.profile.deployRoot}/runtime/node/bin/node`,
+      mode: 'snapshot',
+      coordinatorSource: this.coordinatorSource(),
+      request: {
         schema: 1,
         kind: 'snapshot',
         deployRoot: this.profile.deployRoot,
@@ -56,18 +62,15 @@ export class SshSnapshotTransport implements SnapshotTransport {
         snapshotId,
         completion: 'reopen',
         ...(request.retention === undefined ? {} : { retention: request.retention }),
-      })),
-    );
+      },
+    });
+    const result = await this.runner(this.profile, invocation.remoteCommand, invocation.input);
     return snapshotResult(result.stdout, result.exitCode);
   }
 }
 
-function coordinatorCommand(profile: NativeProfile, request: Record<string, unknown>): string {
-  const source = readFileSync(new URL('./candidate-coordinator.cjs', import.meta.url), 'utf8');
-  return [
-    'set -eu',
-    `exec env BAOX_COORDINATOR_SOURCE_BASE64=${shellQuote(Buffer.from(source).toString('base64'))} BAOX_CANDIDATE_REQUEST_BASE64=${shellQuote(Buffer.from(JSON.stringify(request)).toString('base64'))} ${shellQuote(`${profile.deployRoot}/runtime/node/bin/node`)} -e ${shellQuote(source)} -- snapshot`,
-  ].join('\n');
+function readCoordinatorSource(): string {
+  return readFileSync(new URL('./candidate-coordinator.cjs', import.meta.url), 'utf8');
 }
 
 function snapshotResult(stdout: string, exitCode: number | null): SnapshotResult {
@@ -100,8 +103,4 @@ function isSnapshotResult(value: unknown): value is SnapshotResult {
 function validSnapshotReference(record: Record<string, unknown>): boolean {
   return typeof record.snapshotId === 'string' && /^snapshot-[a-f0-9-]{29,80}$/iu.test(record.snapshotId)
     && typeof record.manifest === 'string' && record.manifest.startsWith('/');
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
 }
