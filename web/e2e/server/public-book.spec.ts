@@ -5,7 +5,7 @@ import { ProjectBookSchema, TaskSnapshotSchema, type TaskSnapshot } from '@baox/
 import type { Locator, Page } from '@playwright/test';
 import { answerStayGaps, expect, signIn, test } from './fixture';
 
-// Slice 14b (#194) on the real server: the admin adds a 公共项目簿 (public project book) entry on the 管理 page; a user
+// Slice 14b (#194) on the real server: the admin adds a 公共项目簿 (public project book) entry in the project book; a user
 // assigns a line to it; the admin deactivates it before the user submits, which forces a re-select; the submission
 // pins the public source.
 
@@ -37,11 +37,12 @@ test('管理员添加公共项目，用户把明细归入它；提交前停用�
   const user = await userContext.newPage();
   await signIn(user, '张三');
 
-  // The admin adds P-2307 to the public book on the 管理 page.
-  await page.goto('/#/admin');
-  await expect(page.getByRole('heading', { name: '管理', level: 1 })).toBeVisible();
-  await expect(page.getByTestId('account-row-张三')).toContainText('用户');
-  const book = page.getByRole('region', { name: '公共项目簿', exact: true }).filter({ has: page.getByLabel('项目名称', { exact: true }) });
+  // The admin adds P-2307 to the public project book.
+  await page.goto('/#/projects');
+  await page.getByRole('button', { name: '公共项目簿', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '公共项目簿', level: 1 })).toBeVisible();
+  await expect(page.getByTestId('account-row-张三')).toHaveCount(0);
+  const book = page.getByRole('region', { name: '公共项目簿维护', exact: true });
   await intakePublic(book, 'P-2307');
   await expect(book.getByTestId('book-message')).toContainText('已加入公共项目簿');
   // A second public project stays selectable after the deactivation below.
@@ -56,7 +57,7 @@ test('管理员添加公共项目，用户把明细归入它；提交前停用�
   await dialog.getByRole('button', { name: '创建并上传材料' }).click();
   await expect(user).toHaveURL(/#\/task\/[^/]+\/upload$/);
   const taskId = /#\/task\/([^/]+)\//.exec(user.url())?.[1] ?? '';
-  await user.locator('input[type=file]').setInputFiles({ name: hotelInvoice.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, hotelInvoice.file)) });
+  await user.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles({ name: hotelInvoice.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, hotelInvoice.file)) });
   await expect(user.getByText(hotelInvoice.fileName, { exact: true })).toBeVisible();
   await user.getByRole('button', { name: '开始材料盘点' }).click();
   // #213: the 住宿 invoice comes alone, so inventory asks for its 结账单 and 支付截图; answered with 确认没有, since this
@@ -103,11 +104,13 @@ test('public projects are read-only for members and retain lifecycle changes aft
   const memberContext = await browser.newContext({ baseURL: serverApp.url });
   const member = await memberContext.newPage();
   await signIn(member, '成员');
-  await page.goto('/#/admin');
-  const publicBook = page.getByRole('region', { name: '公共项目簿', exact: true }).filter({ has: page.getByLabel('项目名称', { exact: true }) });
+  await page.goto('/#/projects');
+  await page.getByRole('button', { name: '公共项目簿', exact: true }).click();
+  const publicBook = page.getByRole('region', { name: '公共项目簿维护', exact: true });
   await intakePublic(publicBook, 'OFFLINE-101', '2026-12-31');
 
   await member.goto('/#/projects');
+  await member.getByRole('button', { name: '公共项目簿', exact: true }).click();
   const readOnly = member.getByRole('table', { name: '公共项目簿' });
   await expect(readOnly.getByTestId('book-row-OFFLINE-101')).toContainText('产品调研');
   await expect(readOnly.getByTestId('book-row-OFFLINE-101')).toContainText('2026-12-31');
@@ -115,12 +118,15 @@ test('public projects are read-only for members and retain lifecycle changes aft
   await page.getByTestId('book-row-OFFLINE-101').getByRole('button', { name: '停用项目 OFFLINE-101' }).click();
   await expect(publicBook.getByTestId('book-row-OFFLINE-101')).toContainText('已停用');
   await member.reload();
+  await member.getByRole('button', { name: '公共项目簿', exact: true }).click();
   await expect(readOnly.getByTestId('book-row-OFFLINE-101')).toContainText('已停用');
 
   await page.reload();
+  await page.getByRole('button', { name: '公共项目簿', exact: true }).click();
   await page.getByTestId('book-row-OFFLINE-101').getByRole('button', { name: '恢复项目 OFFLINE-101' }).click();
   await expect(publicBook.getByTestId('book-row-OFFLINE-101')).toContainText('可选');
   await member.reload();
+  await member.getByRole('button', { name: '公共项目簿', exact: true }).click();
   await expect(readOnly.getByTestId('book-row-OFFLINE-101')).toContainText('可选');
   await memberContext.close();
 });
@@ -138,8 +144,9 @@ test('public conversion is explicit, cancellable, and shared across personal own
     expect(result.ok()).toBe(true);
   }
   const ownBook = async (member: Page) => ProjectBookSchema.parse(await (await member.request.get('/api/project-book')).json());
-  await page.goto('/#/admin');
-  const publicBook = page.getByRole('region', { name: '公共项目簿', exact: true }).filter({ has: page.getByLabel('项目名称', { exact: true }) });
+  await page.goto('/#/projects');
+  await page.getByRole('button', { name: '公共项目簿', exact: true }).click();
+  const publicBook = page.getByRole('region', { name: '公共项目簿维护', exact: true });
   await publicBook.getByLabel('项目号', { exact: true }).fill('CONVERT-101');
   await publicBook.getByLabel('项目名称', { exact: true }).fill('公共维护名称');
   await publicBook.getByRole('button', { name: '加入项目', exact: true }).click();
@@ -159,6 +166,7 @@ test('public conversion is explicit, cancellable, and shared across personal own
   for (const member of [first, second]) {
     expect((await ownBook(member)).projects.some((project) => project.number === 'CONVERT-101' && project.selectable)).toBe(false);
     await member.goto('/#/projects');
+    await member.getByRole('button', { name: '公共项目簿', exact: true }).click();
     await expect(member.getByRole('table', { name: '公共项目簿' }).getByTestId('book-row-CONVERT-101')).toContainText('公共维护名称');
   }
   await firstContext.close();
@@ -173,7 +181,8 @@ test('renumber conversion preserves an inactive public project and edit values a
   await member.request.post('/api/project-book/intake', { data: { number: 'RENUMBER-TARGET', name: '个人项目' } });
   await page.request.post('/api/public-project-book/intake', { data: { number: 'PUBLIC-OLD', name: '原公共名称' } });
   await page.request.post('/api/public-project-book/deactivate', { data: { number: 'PUBLIC-OLD' } });
-  await page.goto('/#/admin');
+  await page.goto('/#/projects');
+  await page.getByRole('button', { name: '公共项目簿', exact: true }).click();
   await page.getByRole('button', { name: '编辑 PUBLIC-OLD', exact: true }).click();
   const edit = page.getByRole('dialog', { name: '编辑项目', exact: true });
   await edit.getByLabel('项目号', { exact: true }).fill('RENUMBER-TARGET');
@@ -192,6 +201,7 @@ test('renumber conversion preserves an inactive public project and edit values a
   await expect(page.getByTestId('book-row-PUBLIC-OLD')).toHaveCount(0);
   await expect(page.getByTestId('book-row-RENUMBER-TARGET')).toContainText('已停用');
   await page.reload();
+  await page.getByRole('button', { name: '公共项目簿', exact: true }).click();
   await expect(page.getByTestId('book-row-RENUMBER-TARGET')).toContainText('修正公共名称');
   const personal = ProjectBookSchema.parse(await (await member.request.get('/api/project-book')).json());
   expect(personal.projects.some((project) => project.number === 'RENUMBER-TARGET' && project.selectable)).toBe(false);

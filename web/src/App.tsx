@@ -1,7 +1,7 @@
 import { useEffect, useMemo, type ReactNode } from 'react';
 import { merge as mergeCarbonFlags } from '@carbon/feature-flags';
 import { FeatureFlags } from '@carbon/react';
-import { type AppAdapter, PROJECT_BOOK_COPY } from '@baox/contract';
+import { type AppAdapter } from '@baox/contract';
 import { AppProvider, useSession } from './adapter/context';
 import { AppStore } from './adapter/store';
 import { VALIDATE_SNAPSHOTS } from './env';
@@ -25,7 +25,7 @@ function titleOf(route: Route): string {
     case 'new':
       return '新建报销任务';
     case 'projects':
-      return PROJECT_BOOK_COPY.title;
+      return '项目簿';
     case 'settings':
       return '设置';
     case 'password':

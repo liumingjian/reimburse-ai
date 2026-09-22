@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MOCK_ACCOUNT, MOCK_PASSWORD } from '../mock/auth';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { App } from '../App';
 import { createMockAdapter } from '../mock/mock-adapter';
@@ -54,16 +55,25 @@ describe('project book lifecycle controls', () => {
   test('keeps the member public view read-only while the administrator can deactivate and restore a public entry', async () => {
     const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
     await adapter.intakePublicProject({ number: 'PUBLIC-LIFE', name: '公共生命周期项目' });
+    await adapter.register({ username: 'book-member', password: 'member-password' });
+    await adapter.login({ username: MOCK_ACCOUNT.username, password: MOCK_PASSWORD });
+    const memberAccount = (await adapter.listAccounts()).accounts.find((account) => account.username === 'book-member')!;
+    await adapter.updateAccount(memberAccount.accountId, { approved: true });
+    await adapter.login({ username: 'book-member', password: 'member-password' });
     window.location.hash = '#/projects';
     render(<App adapter={adapter} />);
 
+    fireEvent.click(await screen.findByRole('button', { name: '公共项目簿' }));
     const publicTable = await screen.findByRole('table', { name: '公共项目簿' });
     expect(within(publicTable).getByTestId('book-row-PUBLIC-LIFE')).toBeTruthy();
     expect(within(publicTable).queryByRole('button')).toBeNull();
 
-    window.location.hash = '#/admin';
-    window.dispatchEvent(new HashChangeEvent('hashchange'));
-    await screen.findByRole('heading', { name: '管理', level: 1 });
+    window.location.hash = '#/projects';
+    cleanup();
+    await adapter.login({ username: MOCK_ACCOUNT.username, password: MOCK_PASSWORD });
+    render(<App adapter={adapter} />);
+    await screen.findByRole('heading', { name: '个人项目簿', level: 1 });
+    fireEvent.click(screen.getByRole('button', { name: '公共项目簿' }));
     expect(await screen.findByTestId('book-row-PUBLIC-LIFE')).toBeTruthy();
 
     expect(within(screen.getByTestId('book-row-PUBLIC-LIFE')).getAllByRole('button')).toHaveLength(3);
@@ -116,8 +126,9 @@ test.each([true, false])('public deletion confirms or cancels for active=%s', as
   const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
   await adapter.intakePublicProject({ number: 'PUBLIC-DELETE', name: '待删除公共项目' });
   if (!active) await adapter.deactivatePublicProject({ number: 'PUBLIC-DELETE' });
-  window.location.hash = '#/admin';
+  window.location.hash = '#/projects';
   render(<App adapter={adapter} />);
+  fireEvent.click(await screen.findByRole('button', { name: '公共项目簿' }));
   const row = await screen.findByTestId('book-row-PUBLIC-DELETE');
   expect(within(row).getAllByRole('button')).toHaveLength(3);
   fireEvent.click(lifecycleItem('PUBLIC-DELETE', '删除项目 PUBLIC-DELETE'));

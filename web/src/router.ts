@@ -17,13 +17,13 @@ export type Route =
 
 export const TASKS_HASH = '#/tasks';
 export const NEW_TASK_HASH = '#/tasks/new';
-// 个人项目簿：任务之外的全局页面，随时可进。
+// Project books are available outside a task at any time.
 export const PROJECTS_HASH = '#/projects';
 // 设置（完全重置）：全局页面。
 export const SETTINGS_HASH = '#/settings';
 export const SETTINGS_PASSWORD_HASH = '#/settings/password';
 export const SETTINGS_TUTORIAL_HASH = '#/settings/tutorial';
-// 管理（账号管理与公共项目簿）：只对管理员显示入口（#194）。
+// Account administration has a separate administrator-only entry; project books use PROJECTS_HASH.
 export const ADMIN_HASH = '#/admin';
 
 export function taskHash(taskId: string, page: TaskPage): string {

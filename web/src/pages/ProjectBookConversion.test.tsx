@@ -30,9 +30,10 @@ describe('公共项目转换', () => {
   test('prompts before public intake, cancels without writing, confirms the explicit conversion, and refreshes the personal-book cache', async () => {
     renderApp('#/projects');
     await screen.findByTestId('book-row-P-2307');
-    window.location.hash = '#/admin';
+    window.location.hash = '#/projects';
     window.dispatchEvent(new HashChangeEvent('hashchange'));
-    await screen.findByRole('heading', { name: '管理', level: 1 });
+    await screen.findByRole('heading', { name: '个人项目簿', level: 1 });
+    fireEvent.click(screen.getByRole('button', { name: '公共项目簿' }));
     const numberInput = screen.getByLabelText('项目号') as HTMLInputElement;
     const nameInput = screen.getByLabelText('项目名称') as HTMLInputElement;
     fireEvent.change(numberInput, { target: { value: 'P-2307' } });
@@ -55,6 +56,7 @@ describe('公共项目转换', () => {
 
     window.location.hash = '#/projects';
     window.dispatchEvent(new HashChangeEvent('hashchange'));
+    fireEvent.click(screen.getByRole('button', { name: '个人项目簿' }));
     const personalTable = await screen.findByRole('table', { name: '个人项目簿' });
     await waitFor(() => expect(within(personalTable).queryByTestId('book-row-P-2307')).toBeNull());
   });
@@ -63,9 +65,10 @@ describe('公共项目转换', () => {
     const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
     await adapter.intakeProject({ number: 'EDIT-CONVERT', name: '个人目标项目' });
     await adapter.intakePublicProject({ number: 'PUBLIC-OLD', name: '公共原项目' });
-    window.location.hash = '#/admin';
+    window.location.hash = '#/projects';
     render(<App adapter={adapter} />);
 
+    fireEvent.click(await screen.findByRole('button', { name: '公共项目簿' }));
     await screen.findByTestId('book-row-PUBLIC-OLD');
     fireEvent.click(screen.getByRole('button', { name: '编辑 PUBLIC-OLD' }));
     fireEvent.change(editInput('项目号'), { target: { value: 'EDIT-CONVERT' } });
