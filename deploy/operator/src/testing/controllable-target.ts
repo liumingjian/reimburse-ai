@@ -98,6 +98,7 @@ function appliedResponse(): BootstrapResponse {
       gccVersion: '12.5.0',
       pythonVersion: '3.12.14',
       uvVersion: '0.12.17',
+      pnpmVersion: '10.17.1',
       buildEnvironmentSha256: 'b'.repeat(64),
     },
   };

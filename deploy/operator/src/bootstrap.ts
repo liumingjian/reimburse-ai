@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, createPublicKey, verify as verifySignature } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { NativeProfile } from './profile.js';
@@ -19,12 +19,21 @@ export type UvAttestation = Readonly<{
   sourceRef: string;
 }>;
 
+export type PnpmRegistryArtifact = BootstrapAsset & Readonly<{
+  version: string;
+  integrity: string;
+  signerKeyId: string;
+  signerPublicKey: string;
+  signature: string;
+}>;
+
 export type BootstrapArtifacts = Readonly<{
   gcc: BootstrapAsset & Readonly<{ sha512: string; version: string }>;
   gccSignature: BootstrapAsset & Readonly<{ signerFingerprint: string }>;
   gnuKeyring: BootstrapAsset;
   uv: BootstrapAsset & Readonly<{ version: string; extractionDirectory: string; attestation: UvAttestation }>;
   python: BootstrapAsset & Readonly<{ version: string; cacheFileName: string; catalogSourceCommit: string }>;
+  pnpm: PnpmRegistryArtifact;
 }>;
 
 export const BOOTSTRAP_ARTIFACTS: BootstrapArtifacts = {
@@ -67,6 +76,16 @@ export const BOOTSTRAP_ARTIFACTS: BootstrapArtifacts = {
     sha256: '72748da13197c1fb161e3afeef20a6a385ff24f2165e6e2758e47008e7faba4c',
     url: 'https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.12.14%2B20260901-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz',
   },
+  pnpm: {
+    fileName: 'pnpm-10.17.1.tgz',
+    version: '10.17.1',
+    sha256: 'a1e0133f6801c13039ae41309e5e5a7d1058a3a1e1edd020a4944a83c5368d04',
+    integrity: 'sha512-F8Vg/KSGeulHOjiZrYSogzSRTzeb5G1FXL+S5c9LOdNJhdRS0lg7rxmWf6dstcF7yeJFUp0LmHRXIapyAOyveg==',
+    signerKeyId: 'SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U',
+    signerPublicKey: 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEY6Ya7W++7aUPzvMTrezH6Ycx3c+HOKYCcNGybJZSCJq/fd7Qa8uuAKtdIkUQtQiEKERhAmE5lMMJhP8OkDOa2g==',
+    signature: 'MEUCIGL5mD8e7q2srMLSfBaQURvV9FTwi5VFWgy5f9hBhglOAiEAqMbYycQ5j+6SAveEYpWN7uOXz9b8q3plcIVNT0XMBKc=',
+    url: 'https://registry.npmjs.org/pnpm/-/pnpm-10.17.1.tgz',
+  },
 } as const;
 
 export type BootstrapSource = Readonly<{
@@ -102,6 +121,7 @@ export type BootstrapReadiness = Readonly<{
   gccVersion: string;
   pythonVersion: string;
   uvVersion: string;
+  pnpmVersion: string;
   buildEnvironmentSha256: string;
 }>;
 
@@ -149,30 +169,43 @@ export async function resolveRelayArtifacts(directory: string, artifacts: Bootst
 }
 
 /**
- * Authenticate the uv release bytes before an apply. The target repeats the
- * digest checks, so proxy and relay transfer cannot weaken this provenance.
+ * Authenticate release bytes before an apply. The target repeats the digest
+ * and signature checks, so proxy and relay transfer cannot weaken provenance.
  */
 export const verifyBootstrapProvenance: BootstrapProvenanceVerifier = async (source, relayArtifacts) => {
   validateBootstrapProxy(source.proxy);
   if (source.kind === 'relay') {
     const uv = relayArtifacts?.find((artifact) => artifact.fileName === BOOTSTRAP_ARTIFACTS.uv.fileName);
+    const pnpm = relayArtifacts?.find((artifact) => artifact.fileName === BOOTSTRAP_ARTIFACTS.pnpm.fileName);
     if (!uv) throw new BootstrapInputError('中继来源缺少 uv 工件，无法验证发布来源。');
+    if (!pnpm) throw new BootstrapInputError('中继来源缺少 pnpm 工件，无法验证发布来源。');
     await verifyUvReleaseProvenance(uv.localPath, BOOTSTRAP_ARTIFACTS);
+    await verifyPnpmRegistryProvenance(pnpm.localPath, BOOTSTRAP_ARTIFACTS.pnpm);
     return;
   }
 
-  const directory = await mkdtemp(join(tmpdir(), 'baox-uv-provenance-'));
-  const localPath = join(directory, BOOTSTRAP_ARTIFACTS.uv.fileName);
+  const directory = await mkdtemp(join(tmpdir(), 'baox-bootstrap-provenance-'));
+  const uvPath = join(directory, BOOTSTRAP_ARTIFACTS.uv.fileName);
+  const pnpmPath = join(directory, BOOTSTRAP_ARTIFACTS.pnpm.fileName);
   try {
     await runCommand(
       'curl',
       [
         '--fail', '--location', '--silent', '--show-error', '--retry', '3', '--proto', '=https', '--tlsv1.2',
-        '--proxy', source.proxy, '--output', localPath, BOOTSTRAP_ARTIFACTS.uv.url,
+        '--proxy', source.proxy, '--output', uvPath, BOOTSTRAP_ARTIFACTS.uv.url,
       ],
       '无法通过指定代理获取 uv 发布工件以验证来源。',
     );
-    await verifyUvReleaseProvenance(localPath, BOOTSTRAP_ARTIFACTS);
+    await runCommand(
+      'curl',
+      [
+        '--fail', '--location', '--silent', '--show-error', '--retry', '3', '--proto', '=https', '--tlsv1.2',
+        '--proxy', source.proxy, '--output', pnpmPath, BOOTSTRAP_ARTIFACTS.pnpm.url,
+      ],
+      '无法通过指定代理获取 pnpm 发布工件以验证来源。',
+    );
+    await verifyUvReleaseProvenance(uvPath, BOOTSTRAP_ARTIFACTS);
+    await verifyPnpmRegistryProvenance(pnpmPath, BOOTSTRAP_ARTIFACTS.pnpm);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -245,11 +278,21 @@ PYTHON_FILE=${q(artifacts.python.fileName)}
 PYTHON_URL=${q(artifacts.python.url)}
 PYTHON_SHA256=${q(artifacts.python.sha256)}
 PYTHON_CACHE_FILE=${q(artifacts.python.cacheFileName)}
+PNPM_VERSION=${q(artifacts.pnpm.version)}
+PNPM_FILE=${q(artifacts.pnpm.fileName)}
+PNPM_URL=${q(artifacts.pnpm.url)}
+PNPM_SHA256=${q(artifacts.pnpm.sha256)}
+PNPM_INTEGRITY=${q(artifacts.pnpm.integrity)}
+PNPM_SIGNER_PUBLIC_KEY=${q(artifacts.pnpm.signerPublicKey)}
+PNPM_SIGNATURE=${q(artifacts.pnpm.signature)}
 BAOX_USER=baox
 NO_PROXY_VALUE=127.0.0.1,localhost
 RUNTIME=$DEPLOY_ROOT/runtime
+NODE_BIN=$RUNTIME/node/bin/node
 GCC_PREFIX=$RUNTIME/gcc-$GCC_VERSION
 GCC_LIBDIR=$GCC_PREFIX/lib64
+PNPM_PREFIX=$RUNTIME/pnpm-$PNPM_VERSION
+PNPM_BIN=$PNPM_PREFIX/bin/pnpm
 UV_BIN=$SERVICE_HOME/.local/bin/uv
 UV_CACHE_DIR=$SERVICE_HOME/.cache/uv
 UV_PYTHON_INSTALL_DIR=$SERVICE_HOME/.local/share/uv/python
@@ -359,7 +402,7 @@ assert_account_layout() {
 }
 
 preflight_host_tools() {
-  for command_name in make gcc g++ tar curl gpgv sha256sum sha512sum useradd runuser install chown chmod getent mktemp awk grep python3; do
+  for command_name in make gcc g++ tar curl gpgv openssl sha256sum sha512sum useradd runuser install chown chmod find getent mktemp awk grep python3; do
     command -v "$command_name" >/dev/null 2>&1 || emit_refusal_from_transaction "required bootstrap command is unavailable: $command_name"
   done
   make --version >/dev/null 2>&1 || emit_refusal_from_transaction 'the bootstrap host make command is unusable'
@@ -375,6 +418,14 @@ path_exists() {
 
 active_release_exists() {
   path_exists "$DEPLOY_ROOT/current"
+}
+
+pnpm_runtime_is_protected() {
+  [ -d "$PNPM_PREFIX" ] && [ -x "$PNPM_BIN" ] || return 1
+  [ "$(stat -c '%u' "$PNPM_PREFIX" 2>/dev/null || true)" = 0 ] || return 1
+  [ "$(stat -c '%u' "$PNPM_BIN" 2>/dev/null || true)" = 0 ] || return 1
+  unprotected_pnpm_path=$(find "$PNPM_PREFIX" \( ! -user root -o -perm /022 \) -print -quit 2>/dev/null || true)
+  [ -z "$unprotected_pnpm_path" ]
 }
 
 refuse_active_runtime_replacement() {
@@ -408,6 +459,11 @@ assert_active_runtime_stable() {
   fi
   if [ "$venv_current" != "$PYTHON_VERSION" ] && [ -d "$UV_PYTHON_INSTALL_DIR" ]; then
     emit_refusal_from_transaction 'bootstrap will not modify an existing uv Python runtime while an active release exists; stage and adopt a new runtime through a separate maintenance action'
+  fi
+  pnpm_current=''
+  if [ -x "$PNPM_BIN" ]; then pnpm_current=$(as_baox "$PNPM_BIN" --version 2>/dev/null || true); fi
+  if path_exists "$PNPM_PREFIX" && { [ "$pnpm_current" != "$PNPM_VERSION" ] || ! pnpm_runtime_is_protected; }; then
+    emit_refusal_from_transaction 'bootstrap will not replace the isolated pnpm runtime while an active release exists; stage and adopt a new runtime through a separate maintenance action'
   fi
 }
 
@@ -515,6 +571,7 @@ obtain_assets() {
     copy_relay_asset "$GNU_KEYRING_SHA256" "$GNU_KEYRING_FILE"
     copy_relay_asset "$UV_SHA256" "$UV_FILE"
     copy_relay_asset "$PYTHON_SHA256" "$PYTHON_FILE"
+    copy_relay_asset "$PNPM_SHA256" "$PNPM_FILE"
     return
   fi
   download_asset "$GCC_URL" "$GCC_FILE"
@@ -522,6 +579,7 @@ obtain_assets() {
   download_asset "$GNU_KEYRING_URL" "$GNU_KEYRING_FILE"
   download_asset "$UV_URL" "$UV_FILE"
   download_asset "$PYTHON_URL" "$PYTHON_FILE"
+  download_asset "$PNPM_URL" "$PNPM_FILE"
 }
 
 check_sha256() {
@@ -543,8 +601,16 @@ verify_assets() {
   check_sha256 "$GNU_KEYRING_SHA256" "$GNU_KEYRING_FILE"
   check_sha256 "$UV_SHA256" "$UV_FILE"
   check_sha256 "$PYTHON_SHA256" "$PYTHON_FILE"
+  check_sha256 "$PNPM_SHA256" "$PNPM_FILE"
   gpg_status=$(gpgv --status-fd 1 --keyring "$WORK/$GNU_KEYRING_FILE" "$WORK/$GCC_SIGNATURE_FILE" "$WORK/$GCC_FILE" 2>/dev/null) || die 'GCC detached signature verification failed'
   printf '%s\n' "$gpg_status" | grep -F "[GNUPG:] VALIDSIG $GCC_SIGNER_FINGERPRINT " >/dev/null || die 'GCC signature did not use the pinned signer fingerprint'
+  pnpm_integrity="sha512-$(openssl dgst -sha512 -binary "$WORK/$PNPM_FILE" | openssl base64 -A)"
+  [ "$pnpm_integrity" = "$PNPM_INTEGRITY" ] || die 'pnpm registry integrity verification failed'
+  printf '%s' "$PNPM_SIGNER_PUBLIC_KEY" | openssl base64 -d -A > "$WORK/pnpm-registry-key.der" || die 'pnpm registry signing key is invalid'
+  openssl pkey -pubin -inform DER -in "$WORK/pnpm-registry-key.der" -out "$WORK/pnpm-registry-key.pem" >/dev/null 2>&1 || die 'pnpm registry signing key is invalid'
+  printf '%s' "$PNPM_SIGNATURE" | openssl base64 -d -A > "$WORK/pnpm-registry-signature.der" || die 'pnpm registry signature is invalid'
+  printf '%s' "pnpm@$PNPM_VERSION:$PNPM_INTEGRITY" > "$WORK/pnpm-registry-payload"
+  openssl dgst -sha256 -verify "$WORK/pnpm-registry-key.pem" -signature "$WORK/pnpm-registry-signature.der" "$WORK/pnpm-registry-payload" >/dev/null 2>&1 || die 'pnpm registry signature verification failed'
 }
 
 ensure_account() {
@@ -585,6 +651,11 @@ as_baox() {
     CXX="$GCC_PREFIX/bin/g++" \
     LD_LIBRARY_PATH="$GCC_LIBDIR" \
     "$@"
+}
+
+verify_node_runtime() {
+  [ -x "$NODE_BIN" ] || emit_refusal_from_transaction 'the isolated Node runtime is unavailable; provision the approved Node prerequisite before bootstrap'
+  as_baox "$NODE_BIN" --version >/dev/null 2>&1 || emit_refusal_from_transaction 'the isolated Node runtime cannot run as baox; correct that prerequisite before bootstrap'
 }
 
 install_gcc() {
@@ -659,6 +730,40 @@ install_uv_and_python() {
   fi
 }
 
+install_pnpm() {
+  require_deployment_lock
+  pnpm_current=''
+  if [ -x "$PNPM_BIN" ]; then pnpm_current=$(as_baox "$PNPM_BIN" --version 2>/dev/null || true); fi
+  if [ "$pnpm_current" = "$PNPM_VERSION" ] && pnpm_runtime_is_protected; then
+    return
+  fi
+  refuse_active_runtime_replacement "$PNPM_PREFIX" 'the isolated pnpm runtime'
+  pnpm_archive=$WORK/pnpm-archive
+  pnpm_stage=$WORK/pnpm-runtime
+  require_deployment_lock
+  rm -rf "$pnpm_archive" "$pnpm_stage"
+  install -d -o root -g root -m 0755 "$pnpm_archive" "$pnpm_stage/bin" "$pnpm_stage/lib/node_modules"
+  tar -xzf "$WORK/$PNPM_FILE" -C "$pnpm_archive"
+  [ -f "$pnpm_archive/package/bin/pnpm.cjs" ] || die 'verified pnpm archive contains no pnpm entrypoint'
+  mv "$pnpm_archive/package" "$pnpm_stage/lib/node_modules/pnpm"
+  cat > "$pnpm_stage/bin/pnpm" <<EOF
+#!/bin/sh
+exec "$NODE_BIN" "$PNPM_PREFIX/lib/node_modules/pnpm/bin/pnpm.cjs" "\$@"
+EOF
+  chmod 0755 "$pnpm_stage/bin/pnpm"
+  require_deployment_lock
+  rm -rf "$PNPM_PREFIX"
+  require_deployment_lock
+  mv "$pnpm_stage" "$PNPM_PREFIX"
+  require_deployment_lock
+  chown -R root:root "$PNPM_PREFIX"
+  require_deployment_lock
+  chmod -R go-w "$PNPM_PREFIX"
+  require_deployment_lock
+  chmod -R a+rX "$PNPM_PREFIX"
+  pnpm_runtime_is_protected || die 'isolated pnpm runtime is not root-owned and protected'
+}
+
 verify_readiness() {
   require_deployment_lock
   gcc_version=$(as_baox "$GCC_PREFIX/bin/g++" -dumpfullversion -dumpversion 2>/dev/null) || die 'isolated GCC cannot run as baox'
@@ -667,6 +772,9 @@ verify_readiness() {
   [ "$python_version" = "$PYTHON_VERSION" ] || die "build Python version is $python_version, expected $PYTHON_VERSION"
   uv_version=$(as_baox "$UV_BIN" --version | awk '{print $2}') || die 'uv cannot run as baox'
   [ "$uv_version" = "$UV_VERSION" ] || die "uv version is $uv_version, expected $UV_VERSION"
+  pnpm_version=$(as_baox "$PNPM_BIN" --version) || die 'pnpm cannot run as baox'
+  [ "$pnpm_version" = "$PNPM_VERSION" ] || die "pnpm version is $pnpm_version, expected $PNPM_VERSION"
+  pnpm_runtime_is_protected || die 'isolated pnpm runtime is not root-owned and protected'
   grep -Fqx "HTTP_PROXY=$PROXY" "$BUILD_ENV" || die 'build environment lacks HTTP_PROXY'
   grep -Fqx "HTTPS_PROXY=$PROXY" "$BUILD_ENV" || die 'build environment lacks HTTPS_PROXY'
   grep -Fqx "NO_PROXY=$NO_PROXY_VALUE" "$BUILD_ENV" || die 'build environment lacks NO_PROXY'
@@ -676,7 +784,7 @@ verify_readiness() {
 }
 
 emit_applied() {
-  python3 - "$TRANSACTION_RESULT" "$gcc_version" "$python_version" "$uv_version" "$build_environment_sha256" <<'PY'
+  python3 - "$TRANSACTION_RESULT" "$gcc_version" "$python_version" "$uv_version" "$pnpm_version" "$build_environment_sha256" <<'PY'
 import json
 import sys
 
@@ -700,7 +808,8 @@ print(json.dumps({
         'gccVersion': sys.argv[2],
         'pythonVersion': sys.argv[3],
         'uvVersion': sys.argv[4],
-        'buildEnvironmentSha256': sys.argv[5],
+        'pnpmVersion': sys.argv[5],
+        'buildEnvironmentSha256': sys.argv[6],
     },
 }, sort_keys=True, separators=(',', ':')))
 PY
@@ -734,6 +843,8 @@ assert_active_runtime_stable
 obtain_assets
 verify_assets
 require_deployment_lock
+ensure_account
+verify_node_runtime
 if dnf_phase apply > "$TRANSACTION_RESULT"; then
   :
 else
@@ -744,17 +855,17 @@ else
   fi
   exit "$dnf_status"
 fi
-ensure_account
 write_build_environment
 install_gcc
 install_uv_and_python
+install_pnpm
 verify_readiness
 emit_applied
 `;
 }
 
 function bootstrapAssets(artifacts: BootstrapArtifacts): readonly BootstrapAsset[] {
-  return [artifacts.gcc, artifacts.gccSignature, artifacts.gnuKeyring, artifacts.uv, artifacts.python];
+  return [artifacts.gcc, artifacts.gccSignature, artifacts.gnuKeyring, artifacts.uv, artifacts.python, artifacts.pnpm];
 }
 
 async function verifyUvReleaseProvenance(localPath: string, artifacts: BootstrapArtifacts): Promise<void> {
@@ -775,6 +886,28 @@ async function verifyUvReleaseProvenance(localPath: string, artifacts: Bootstrap
     ],
     'uv 发布工件没有通过固定 GitHub 证明策略验证。',
   );
+}
+
+export async function verifyPnpmRegistryProvenance(localPath: string, pnpm: PnpmRegistryArtifact = BOOTSTRAP_ARTIFACTS.pnpm): Promise<void> {
+  const bytes = await readFile(localPath);
+  if (createHash('sha256').update(bytes).digest('hex') !== pnpm.sha256) {
+    throw new BootstrapInputError('pnpm 工件 SHA-256 与固定发布值不匹配。');
+  }
+  if (`sha512-${createHash('sha512').update(bytes).digest('base64')}` !== pnpm.integrity) {
+    throw new BootstrapInputError('pnpm 工件完整性与固定 npm registry 值不匹配。');
+  }
+
+  try {
+    const signer = createPublicKey({ key: Buffer.from(pnpm.signerPublicKey, 'base64'), format: 'der', type: 'spki' });
+    // npm registry signatures cover this canonical package and integrity value.
+    const payload = Buffer.from(`pnpm@${pnpm.version}:${pnpm.integrity}`, 'utf8');
+    if (!verifySignature('sha256', payload, signer, Buffer.from(pnpm.signature, 'base64'))) {
+      throw new BootstrapInputError('pnpm 发布工件没有通过固定 npm registry 签名验证。');
+    }
+  } catch (error) {
+    if (error instanceof BootstrapInputError) throw error;
+    throw new BootstrapInputError('pnpm registry 签名密钥无效。');
+  }
 }
 
 function runCommand(command: string, arguments_: readonly string[], failure: string): Promise<void> {
@@ -841,6 +974,7 @@ function isBootstrapReadiness(value: unknown): value is BootstrapReadiness {
     && typeof record['gccVersion'] === 'string'
     && typeof record['pythonVersion'] === 'string'
     && typeof record['uvVersion'] === 'string'
+    && typeof record['pnpmVersion'] === 'string'
     && typeof record['buildEnvironmentSha256'] === 'string'
     && /^[a-f0-9]{64}$/u.test(record['buildEnvironmentSha256']);
 }

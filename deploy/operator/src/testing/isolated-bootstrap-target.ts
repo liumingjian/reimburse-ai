@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign as signPayload } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -162,6 +162,7 @@ export class IsolatedBootstrapTarget {
       BAOX_TEST_GCC_PREFIX: join(this.profile.deployRoot, 'runtime', `gcc-${this.artifacts.gcc.version}`),
       BAOX_TEST_GCC_SIGNER: this.artifacts.gccSignature.signerFingerprint,
       BAOX_TEST_GPG_MARKER: this.gpgMarker,
+      BAOX_TEST_PNPM_PREFIX: join(this.profile.deployRoot, 'runtime', `pnpm-${this.artifacts.pnpm.version}`),
       BAOX_TEST_PLAN: this.planPath,
       BAOX_TEST_PROXY_LOG: this.proxyLog,
       BAOX_TEST_SERVICE_HOME: this.profile.serviceHome,
@@ -171,7 +172,7 @@ export class IsolatedBootstrapTarget {
       BAOX_TEST_FENCE_BOOTSTRAP_LOCK: this.options.fenceBootstrapLock ? '1' : '',
     }));
     chmodSync(tool, 0o755);
-    for (const name of ['id', 'getent', 'useradd', 'runuser', 'sha256sum', 'sha512sum', 'gpgv', 'curl', 'tar', 'make', 'gcc', 'g++', 'install', 'chown', 'chmod', 'stat', 'python3']) {
+    for (const name of ['id', 'getent', 'useradd', 'runuser', 'sha256sum', 'sha512sum', 'gpgv', 'curl', 'tar', 'make', 'gcc', 'g++', 'install', 'chown', 'chmod', 'find', 'openssl', 'stat', 'python3']) {
       symlinkSync('tool', join(this.fakeBin, name));
     }
   }
@@ -192,6 +193,12 @@ function fixtureArtifacts(directory: string): BootstrapArtifacts {
   const keyring = fixtureAsset(directory, 'gnu-keyring.gpg', 'gnu keyring');
   const uv = fixtureAsset(directory, 'uv-x86_64-unknown-linux-gnu.tar.gz', 'uv archive');
   const python = fixtureAsset(directory, 'cpython-3.12.14-20260901-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz', 'python archive');
+  const pnpm = fixtureAsset(directory, 'pnpm-10.17.1.tgz', 'pnpm archive');
+  const integrity = `sha512-${hashFileBase64(join(directory, pnpm.fileName), 'sha512')}`;
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const signerPublicKey = Buffer.from(publicKey.export({ format: 'der', type: 'spki' })).toString('base64');
+  const signerKeyId = `test:${createHash('sha256').update(Buffer.from(signerPublicKey, 'base64')).digest('hex')}`;
+  const pnpmSignature = signPayload('sha256', Buffer.from(`pnpm@10.17.1:${integrity}`, 'utf8'), privateKey).toString('base64');
   return {
     gcc: { ...gcc, version: '12.5.0', sha512: hashFile(join(directory, gcc.fileName), 'sha512') },
     gccSignature: { ...signature, signerFingerprint: '7F74F97C103468EE5D750B583AB00996FC26A641' },
@@ -213,6 +220,14 @@ function fixtureArtifacts(directory: string): BootstrapArtifacts {
       cacheFileName: 'test-python-cache.tar.gz',
       catalogSourceCommit: '0000000000000000000000000000000000000000',
     },
+    pnpm: {
+      ...pnpm,
+      version: '10.17.1',
+      integrity,
+      signerKeyId,
+      signerPublicKey,
+      signature: pnpmSignature,
+    },
   };
 }
 
@@ -223,11 +238,15 @@ function fixtureAsset(directory: string, fileName: string, contents: string): { 
 }
 
 function artifactList(artifacts: BootstrapArtifacts): readonly { fileName: string; sha256: string }[] {
-  return [artifacts.gcc, artifacts.gccSignature, artifacts.gnuKeyring, artifacts.uv, artifacts.python];
+  return [artifacts.gcc, artifacts.gccSignature, artifacts.gnuKeyring, artifacts.uv, artifacts.python, artifacts.pnpm];
 }
 
 function hashFile(path: string, algorithm: 'sha256' | 'sha512'): string {
   return createHash(algorithm).update(readFileSync(path)).digest('hex');
+}
+
+function hashFileBase64(path: string, algorithm: 'sha512'): string {
+  return createHash(algorithm).update(readFileSync(path)).digest('base64');
 }
 
 function linuxStartIdentity(pid: number): string {
@@ -277,6 +296,16 @@ case "$name" in
     [ "$1" = '-c' ] || exit 2
     format=$2
     path=$3
+    case "$path" in
+      "$BAOX_TEST_PNPM_PREFIX"|"$BAOX_TEST_PNPM_PREFIX"/*)
+        case "$format" in
+          %a) printf '755\n' ;;
+          %u) printf '0\n' ;;
+          *) exit 2 ;;
+        esac
+        exit 0
+        ;;
+    esac
     if /usr/bin/stat -c "$format" "$path" >/dev/null 2>&1; then exec /usr/bin/stat -c "$format" "$path"; fi
     case "$format" in
       %a) exec /usr/bin/stat -f '%Lp' "$path" ;;
@@ -298,6 +327,12 @@ case "$name" in
   gpgv)
     : > "$BAOX_TEST_GPG_MARKER"
     printf '[GNUPG:] VALIDSIG %s test-signature\n' "$BAOX_TEST_GCC_SIGNER"
+    ;;
+  find)
+    exit 0
+    ;;
+  openssl)
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin exec openssl "$@"
     ;;
   curl)
     arguments=$*
@@ -348,6 +383,16 @@ fi
 exit 2
 EOF
         /bin/chmod 0755 "$destination/uv-test/uv"
+        ;;
+      pnpm-*)
+        mkdir -p "$destination/package/bin"
+        cat > "$destination/package/bin/pnpm.cjs" <<'EOF'
+if (process.argv[2] === '--version') {
+  process.stdout.write('10.17.1\n');
+  process.exit(0);
+}
+process.exit(2);
+EOF
         ;;
     esac
     ;;
