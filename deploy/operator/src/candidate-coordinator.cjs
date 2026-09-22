@@ -2289,22 +2289,23 @@ async function pathExists(file) {
 async function verifySnapshotDatabase(dataDir, original) {
   const database = path.join(dataDir, 'baox.sqlite');
   if (!await isRegularFile(database)) throw new CandidateFailure('snapshot-database-missing');
-  let Sqlite;
+  // Native addons must load with the original service's Node and loader
+  // environment. Changing LD_LIBRARY_PATH inside this process is too late.
+  const modulePath = path.join(path.dirname(path.dirname(original.executable.path)), 'node_modules', 'better-sqlite3');
+  const script = `const Sqlite = require(process.argv[1]);
+const db = new Sqlite(process.argv[2], { readonly: true, fileMustExist: true });
+try { process.stdout.write(JSON.stringify(db.prepare('PRAGMA integrity_check').all())); }
+finally { db.close(); }`;
+  const result = await runCommand(original.runtime.nodePath, ['-e', script, modulePath, database], {
+    env: original.serviceEnvironment.LD_LIBRARY_PATH ? { LD_LIBRARY_PATH: original.serviceEnvironment.LD_LIBRARY_PATH } : {},
+  });
   try {
-    Sqlite = require(path.join(path.dirname(path.dirname(original.executable.path)), 'node_modules', 'better-sqlite3'));
+    const rows = JSON.parse(result.stdout);
+    if (result.code !== 0 || !Array.isArray(rows) || !rows.length || !rows.every((row) => Object.values(row).includes('ok'))) {
+      throw new CandidateFailure('snapshot-database-integrity-failed');
+    }
   } catch {
-    throw new CandidateFailure('snapshot-sqlite-runtime-unavailable');
-  }
-  let sqlite = null;
-  try {
-    sqlite = new Sqlite(database, { readonly: true, fileMustExist: true });
-    const rows = sqlite.prepare('PRAGMA integrity_check').all();
-    if (!rows.length || !rows.every((row) => Object.values(row).includes('ok'))) throw new CandidateFailure('snapshot-database-integrity-failed');
-  } catch (error) {
-    if (error instanceof CandidateFailure) throw error;
     throw new CandidateFailure('snapshot-database-integrity-failed');
-  } finally {
-    sqlite?.close();
   }
   return { result: 'ok', checkedAt: new Date().toISOString() };
 }
