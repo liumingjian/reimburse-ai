@@ -64,4 +64,19 @@ Node、隔离 GCC、构建 Python、pnpm、Caddy、`baox` 服务账号、受控�
 
 所有命令都支持 `--json`。日志和错误输出会遮盖 password、token、secret、credential、cookie 和 authorization 值，以及中文的“临时密码”与“密码”值。这个版本不创建本地凭据文件。后续若必须保留临时管理员凭据，文件必须由创建者用 `0600` 模式写入，且不得进入归档、日志、计划、清单或 journal。
 
-真实主机验证仅覆盖 `status`、`doctor` 和 `deploy --dry-run`，均为只读操作；没有执行 bootstrap、候选准备、恢复快照或发布切换。原生 Kylin 引导和完整原生构建仍待受控维护窗口验证。
+## 已初始化主机的发布
+
+2026-09-22 已在 `10.250.0.222` 完成原生依赖初始化、首次维护闸门接入，以及提交 `8340387` 的正式发布。
+初始化复用了 uv 管理的 Python 3.12.14 和构建虚拟环境；系统 Python 仅供系统 DNF 查询使用。
+Kylin 上的 SQLite 原生模块已通过隔离 GCC 编译，恢复快照通过原服务的独立恢复演练。发布后的
+`doctor` 返回健康，访问入口为 <http://10.250.0.222>。
+
+PR #269 合并前，在包含此运维工具的分支中执行：
+
+```bash
+pnpm --filter @baox/operator operator deploy codex/implement-spec-262
+```
+
+合并并更新本地 `origin/main` 后，可省略 Git 引用。常规发布会自动准备候选、创建并演练恢复快照、切换版本及验证入口，无需重复初始化。
+首次接入前的完整备份保留在 `/opt/tools/baox/initialization/backup-before-gate-37660bd-r3`；
+后续发布快照保留在 `/opt/tools/baox/recovery-snapshots/`。
