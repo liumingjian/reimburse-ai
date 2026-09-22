@@ -14,6 +14,7 @@ import type { DoctorReport, GateStatus, HostResult, HostStatus, HostTransport } 
 import { redact, redactValue } from './redact.js';
 import type { SourcePlan, SourceRepository } from './source.js';
 import { SourceSelectionError } from './source.js';
+import type { CutoverResult, CutoverTransport } from './cutover.js';
 import type { SnapshotResult, SnapshotTransport } from './snapshot.js';
 
 export type CliIo = {
@@ -26,12 +27,13 @@ export type OperatorDependencies = {
   host: HostTransport;
   candidate?: CandidateTransport;
   snapshot?: SnapshotTransport;
+  cutover?: CutoverTransport;
   bootstrapProvenance?: BootstrapProvenanceVerifier;
 };
 
 const USAGE = [
   '用法：baox-operator <命令> [选项]',
-  '命令：plan [Git 引用]、status、doctor、logs [--lines N]、prepare [Git 引用] [--relay 归档]、snapshot 候选标识 [--retain N]、deploy --dry-run [Git 引用]、bootstrap-preview --proxy URL [--relay 目录]、bootstrap-apply --confirm 摘要 --proxy URL [--relay 目录]',
+  '命令：plan [Git 引用]、status、doctor、logs [--lines N]、prepare [Git 引用] [--relay 归档]、snapshot 候选标识 [--retain N]、deploy [Git 引用] [--retain N]、deploy --candidate 候选标识 [--retain N]、deploy --dry-run [Git 引用]、bootstrap-preview --proxy URL [--relay 目录]、bootstrap-apply --confirm 摘要 --proxy URL [--relay 目录]',
 ].join('\n');
 
 export async function runOperatorCli(argv: readonly string[], dependencies: OperatorDependencies, io: CliIo): Promise<number> {
@@ -52,7 +54,7 @@ export async function runOperatorCli(argv: readonly string[], dependencies: Oper
       case 'snapshot':
         return await snapshot(rest, dependencies, io, json);
       case 'deploy':
-        return await deployDryRun(rest, dependencies, io, json);
+        return await deploy(rest, dependencies, io, json);
       case 'bootstrap-preview':
         return await bootstrapPreview(rest, dependencies, io, json);
       case 'bootstrap-apply':
@@ -161,6 +163,11 @@ async function snapshot(args: readonly string[], dependencies: OperatorDependenc
   return result.state === 'verified' ? 0 : 1;
 }
 
+async function deploy(args: readonly string[], dependencies: OperatorDependencies, io: CliIo, json: boolean): Promise<number> {
+  if (args.includes('--dry-run')) return deployDryRun(args, dependencies, io, json);
+  return deployPreparedCandidate(args, dependencies, io, json);
+}
+
 async function deployDryRun(args: readonly string[], dependencies: OperatorDependencies, io: CliIo, json: boolean): Promise<number> {
   const sourceRef = parseDryRun(args);
   if (sourceRef === null) return usage(io);
@@ -185,6 +192,116 @@ async function deployDryRun(args: readonly string[], dependencies: OperatorDepen
     [...planLines(source), ...(allowed ? ['只读预检通过。候选准备和切换由后续运维命令完成。'] : refusal ? [refusal] : [])],
   );
   return allowed ? 0 : 1;
+}
+
+async function deployPreparedCandidate(args: readonly string[], dependencies: OperatorDependencies, io: CliIo, json: boolean): Promise<number> {
+  const options = parseDeploy(args);
+  if (!options) return usage(io);
+  if (!dependencies.candidate || !dependencies.cutover) throw new Error('当前操作环境没有发布切换驱动。');
+
+  // A source archive is local and immutable. Its deterministic candidate ID
+  // lets a default deploy discover an interrupted cutover before it prepares
+  // or uploads anything to the target.
+  let source: Awaited<ReturnType<SourceRepository['archive']>> | undefined;
+  let selectedCandidateId: string;
+  if (options.candidateId) {
+    selectedCandidateId = options.candidateId;
+  } else {
+    source = await dependencies.source.archive(options.ref);
+    selectedCandidateId = `${source.plan.commit.slice(0, 12)}-${source.plan.archiveSha256.slice(0, 12)}`;
+  }
+
+  // An interrupted cutover deliberately leaves the service and gate closed.
+  // Its matching journal is therefore the only path that can bypass fresh
+  // readiness/open-gate preflight and reach token-fenced reconciliation.
+  let inspection: CandidateInspection | null = null;
+  let inspectionFailure: unknown;
+  try {
+    inspection = await dependencies.candidate.inspect();
+  } catch (error) {
+    inspectionFailure = error;
+  }
+  if (inspection && isCutoverReconciliationJournal(inspection, selectedCandidateId)) {
+    const result = await dependencies.cutover.cutover({ candidateId: selectedCandidateId, ...(options.retention === undefined ? {} : { retention: options.retention }) });
+    emit(
+      io,
+      json,
+      {
+        command: 'deploy',
+        ...(source ? { source: source.plan, artifactOrigin: 'direct' } : { candidateId: selectedCandidateId }),
+        ...(options.retention === undefined ? {} : { retention: options.retention }),
+        reconciliation: true,
+        profile: publicProfile(),
+        cutover: result,
+      },
+      [...(source ? planLines(source.plan) : []), ...cutoverLines(result)],
+    );
+    return result.state === 'verified' ? 0 : 1;
+  }
+
+  // The fresh path is refused before any target-side candidate mutation.
+  // The coordinator owns the later admission and reopening window.
+  const [doctorResult, gateResult] = await Promise.all([
+    dependencies.host.execute({ kind: 'doctor' }),
+    dependencies.host.execute({ kind: 'gate-status' }),
+  ]);
+  const report = doctorValue(doctorResult);
+  const gate = gateValue(gateResult);
+  const prerequisiteRefusal = routinePrerequisiteRefusal(report);
+  const gateReady = gateAllowsSnapshot(gate);
+  if (prerequisiteRefusal || !gateReady) {
+    const refusal = prerequisiteRefusal ?? snapshotGateRefusal(gate).replace('恢复快照', '常规部署');
+    emit(
+      io,
+      json,
+      { command: 'deploy', profile: publicProfile(), runtime: report, maintenanceGate: gate, refusal },
+      [refusal],
+    );
+    return 1;
+  }
+  if (inspectionFailure) {
+    throw new Error('候选协调状态检查无法完成，无法确认是否存在需要恢复的发布。');
+  }
+
+  let preparation: CandidatePreparation | undefined;
+  if (source) {
+    preparation = await dependencies.candidate.prepare({ source, artifact: source.archive, artifactOrigin: 'direct' });
+    if (preparation.state !== 'prepared') {
+      emit(
+        io,
+        json,
+        {
+          command: 'deploy',
+          source: source.plan,
+          artifactOrigin: 'direct',
+          candidate: preparation,
+          profile: publicProfile(),
+          runtime: report,
+          maintenanceGate: gate,
+        },
+        [...planLines(source.plan), ...prepareLines(preparation, 'direct')],
+      );
+      return 1;
+    }
+    if (preparation.candidateId !== selectedCandidateId) throw new Error('候选准备返回的标识与已锁定归档不一致。');
+  }
+
+  const result = await dependencies.cutover.cutover({ candidateId: selectedCandidateId, ...(options.retention === undefined ? {} : { retention: options.retention }) });
+  emit(
+    io,
+    json,
+    {
+      command: 'deploy',
+      ...(source ? { source: source.plan, artifactOrigin: 'direct', candidate: preparation } : { candidateId: selectedCandidateId }),
+      ...(options.retention === undefined ? {} : { retention: options.retention }),
+      profile: publicProfile(),
+      runtime: report,
+      maintenanceGate: gate,
+      cutover: result,
+    },
+    [...(source ? [...planLines(source.plan), ...prepareLines(preparation as CandidatePreparation, 'direct')] : []), ...cutoverLines(result)],
+  );
+  return result.state === 'verified' ? 0 : 1;
 }
 
 async function bootstrapPreview(args: readonly string[], dependencies: OperatorDependencies, io: CliIo, json: boolean): Promise<number> {
@@ -287,6 +404,36 @@ function parseSnapshot(args: readonly string[]): { candidateId: string; retentio
   }
   if (!candidateId || !/^[a-f0-9]{12}-[a-f0-9]{12}$/iu.test(candidateId)) return null;
   return { candidateId, ...(retention === undefined ? {} : { retention }) };
+}
+
+function parseDeploy(args: readonly string[]): { candidateId?: string; ref?: string; retention?: number } | null {
+  let candidateId: string | undefined;
+  let ref: string | undefined;
+  let retention: number | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === '--candidate') {
+      const value = args[++index];
+      if (!value || candidateId || ref || !/^[a-f0-9]{12}-[a-f0-9]{12}$/iu.test(value)) return null;
+      candidateId = value;
+      continue;
+    }
+    if (argument === '--retain') {
+      const value = args[++index];
+      if (retention !== undefined || !value || !/^\d+$/u.test(value)) return null;
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 20) return null;
+      retention = parsed;
+      continue;
+    }
+    if (!argument || argument.startsWith('-') || ref || candidateId) return null;
+    ref = argument;
+  }
+  return {
+    ...(candidateId === undefined ? {} : { candidateId }),
+    ...(ref === undefined ? {} : { ref }),
+    ...(retention === undefined ? {} : { retention }),
+  };
 }
 
 type BootstrapOptions = Readonly<{
@@ -423,6 +570,13 @@ async function candidateStatus(candidate: CandidateTransport | undefined): Promi
   }
 }
 
+function isCutoverReconciliationJournal(inspection: CandidateInspection, candidateId: string): boolean {
+  const journal = inspection.journal;
+  if (!journal || journal.candidateId !== candidateId || typeof journal.operation !== 'string' || typeof journal.phase !== 'string') return false;
+  if (journal.operation === 'cutover') return true;
+  return journal.operation === 'recovery-snapshot' && !['reopened', 'failed', 'refused'].includes(journal.phase);
+}
+
 function doctorLines(host: HostStatus, report: DoctorReport, gate: GateStatus, healthy: boolean): string[] {
   return [
     ...statusLines(host, gate),
@@ -468,6 +622,27 @@ function snapshotLines(result: SnapshotResult): string[] {
       return [`恢复快照失败：${result.code}${result.recoveryRequired ? '；服务已保留在维护屏障后，需先恢复。' : ''}`];
     case 'reconcile-needed':
       return [`恢复快照需要人工核对：${result.code}。命令没有重复不确定的维护操作。`];
+  }
+}
+
+function cutoverLines(result: CutoverResult): string[] {
+  switch (result.state) {
+    case 'verified':
+      return [`已验证并切换到发布：${result.release}`, `恢复快照：${result.snapshotId}`, `清单：${result.manifest}`];
+    case 'restored':
+      return [`候选切换未通过，已验证恢复原发布：${result.code}`, `恢复快照：${result.snapshotId}`];
+    case 'busy':
+      return [`目标部署锁由 ${result.operation} 持有，候选 ${result.candidateId} 未被重复切换。`];
+    case 'refused':
+      return [`发布切换被维护闸门拒绝：${result.code}`];
+    case 'failed':
+      return [`发布切换失败：${result.code}`];
+    case 'recovery-required':
+      return [`发布切换保持维护屏障：${result.code}`, result.action];
+    case 'post-access-handoff':
+      return [`发布切换已越过开放边界，不能自动覆盖数据：${result.code}`, result.action];
+    case 'reconcile-needed':
+      return [`发布切换需要人工核对：${result.code}。命令没有重复不确定的维护操作。`];
   }
 }
 

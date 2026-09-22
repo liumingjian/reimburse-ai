@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { startServer, type RunningServer } from '../../../../server/src/server.js';
@@ -39,7 +39,9 @@ export type ManagedServiceController = {
   restartProxy: () => void;
   failNextStart: (service: 'baox' | 'proxy') => void;
   failProxyVerification: () => void;
+  serveWrongSessionUntilReopen: () => void;
   clearProxyVerificationFailure: () => void;
+  refuseNextAdmission: () => void;
   commands: () => string[];
 };
 
@@ -66,6 +68,8 @@ type SystemctlValues = {
   publicPort: number;
   publicHost: string;
   proxy: string;
+  runtimeRoot: string;
+  mutationScript: string;
 };
 
 /**
@@ -76,10 +80,20 @@ type SystemctlValues = {
 export class LocalTargetRunner {
   disconnectNextReceive = false;
   disconnectNextSnapshot = false;
+  disconnectNextCutoverTransportOnly = false;
+  interruptNextCutoverAtPhase: string | null = null;
 
   constructor(private readonly fakeBin: string, private readonly barrier: string, private readonly environment: NodeJS.ProcessEnv = {}) {}
 
-  readonly run: SshRunner = async (_profile, remoteCommand, input) => new Promise<SshResult>((resolve, reject) => {
+  setSnapshotAvailableBytes(bytes: number | undefined): void {
+    if (bytes === undefined) {
+      delete this.environment.BAOX_TEST_SNAPSHOT_AVAILABLE_BYTES;
+      return;
+    }
+    this.environment.BAOX_TEST_SNAPSHOT_AVAILABLE_BYTES = String(bytes);
+  }
+
+  readonly run: SshRunner = async (profile, remoteCommand, input) => new Promise<SshResult>((resolve, reject) => {
     const child = spawn('sh', ['-c', remoteCommand], {
       env: { ...process.env, ...this.environment, PATH: `${this.fakeBin}:${process.env.PATH ?? ''}` },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -96,6 +110,7 @@ export class LocalTargetRunner {
     }
 
     let disconnectTimer: NodeJS.Timeout | undefined;
+    let transportDisconnected = false;
     if (this.disconnectNextReceive && remoteCommand.includes('receive')) {
       this.disconnectNextReceive = false;
       disconnectTimer = setInterval(() => {
@@ -108,10 +123,38 @@ export class LocalTargetRunner {
         if (existsSync(join(this.barrier, 'snapshot-stop-started'))) child.kill('SIGKILL');
       }, 10);
     }
+    if (this.disconnectNextCutoverTransportOnly && remoteCommand.includes('cutover')) {
+      this.disconnectNextCutoverTransportOnly = false;
+      const journal = join(profile.deployRoot, 'maintenance', 'deployment-journal.json');
+      disconnectTimer = setInterval(() => {
+        try {
+          const value = JSON.parse(readFileSync(journal, 'utf8')) as { operation?: string };
+          if (value.operation !== 'recovery-snapshot' && value.operation !== 'cutover') return;
+          transportDisconnected = true;
+          clearInterval(disconnectTimer);
+          resolve({ stdout: '', exitCode: 255 });
+        } catch {
+          // The coordinator has not passed its first durable checkpoint yet.
+        }
+      }, 10);
+    }
+    if (this.interruptNextCutoverAtPhase && remoteCommand.includes('cutover')) {
+      const phase = this.interruptNextCutoverAtPhase;
+      this.interruptNextCutoverAtPhase = null;
+      const journal = join(profile.deployRoot, 'maintenance', 'deployment-journal.json');
+      disconnectTimer = setInterval(() => {
+        try {
+          const value = JSON.parse(readFileSync(journal, 'utf8')) as { operation?: string; phase?: string };
+          if (value.operation === 'cutover' && value.phase === phase) child.kill('SIGKILL');
+        } catch {
+          // The coordinator has not reached the requested durable phase yet.
+        }
+      }, 10);
+    }
     child.on('error', reject);
     child.on('close', (exitCode) => {
       if (disconnectTimer) clearInterval(disconnectTimer);
-      resolve({ stdout: Buffer.concat(stdout).toString('utf8'), exitCode });
+      if (!transportDisconnected) resolve({ stdout: Buffer.concat(stdout).toString('utf8'), exitCode });
     });
   });
 }
@@ -120,6 +163,7 @@ export async function createIsolatedTarget({ holdBuild = false, buildEnvironment
   const root = mkdtempSync(join(tmpdir(), 'baox-candidate-target-'));
   const deployRoot = join(root, 'deploy');
   const dataDir = join(deployRoot, 'data');
+  const serviceHome = join(root, 'home', 'baox');
   const systemdDir = join(root, 'systemd');
   const fakeBin = join(root, 'fake-bin');
   const barrier = join(root, 'barrier');
@@ -128,10 +172,13 @@ export async function createIsolatedTarget({ holdBuild = false, buildEnvironment
   if (holdBuild) writeFileSync(join(barrier, 'hold'), 'hold\n');
   if (fenceOldWorker) writeFileSync(join(barrier, 'fence-old-worker'), 'enabled\n');
 
-  mkdirSync(join(deployRoot, 'runtime', 'node', 'bin'), { recursive: true });
-  symlinkSync(process.execPath, join(deployRoot, 'runtime', 'node', 'bin', 'node'));
+  mkdirSync(join(deployRoot, 'runtime', 'node-test', 'bin'), { recursive: true });
+  symlinkSync(process.execPath, join(deployRoot, 'runtime', 'node-test', 'bin', 'node'));
+  mkdirSync(join(deployRoot, 'runtime', 'node-mutated', 'bin'), { recursive: true });
+  symlinkSync(process.execPath, join(deployRoot, 'runtime', 'node-mutated', 'bin', 'node'));
+  symlinkSync('node-test', join(deployRoot, 'runtime', 'node'));
   mkdirSync(join(deployRoot, 'runtime', 'pnpm-10.17.1', 'bin'), { recursive: true });
-  writeExecutable(join(deployRoot, 'runtime', 'pnpm-10.17.1', 'bin', 'pnpm'), pnpmScript(barrier));
+  writeExecutable(join(deployRoot, 'runtime', 'pnpm-10.17.1', 'bin', 'pnpm'), pnpmScript(barrier, repositoryRootPath()));
   mkdirSync(join(deployRoot, 'runtime', 'gcc-12.5.0', 'bin'), { recursive: true });
   mkdirSync(join(deployRoot, 'runtime', 'gcc-12.5.0', 'lib64'), { recursive: true });
   writeExecutable(join(deployRoot, 'runtime', 'gcc-12.5.0', 'bin', 'g++'), '#!/bin/sh\nprintf "12.5.0\\n"\n');
@@ -151,13 +198,12 @@ export async function createIsolatedTarget({ holdBuild = false, buildEnvironment
   writeFileSync(join(systemdDir, 'baox-caddy.service'), '[Service]\nExecStart=/opt/tools/baox/bin/caddy\n');
   mkdirSync(join(deployRoot, 'releases', 'active'), { recursive: true });
   symlinkSync('releases/active', join(deployRoot, 'current'));
-  mkdirSync(join(deployRoot, 'cache', 'home'), { recursive: true });
-  mkdirSync(join(deployRoot, 'cache', 'pnpm-home'), { recursive: true });
-  mkdirSync(join(deployRoot, 'cache', 'pnpm-store'), { recursive: true });
-  writeExecutable(join(fakeBin, 'id'), '#!/bin/sh\nif [ "$1" = baox ]; then exit 0; fi\nexec /usr/bin/id "$@"\n');
-  writeExecutable(join(fakeBin, 'getent'), '#!/bin/sh\nif [ "$1" = passwd ] && [ "$2" = baox ]; then printf "baox:x:998:998::/home/baox:/sbin/nologin\\n"; exit 0; fi\nexit 2\n');
+  mkdirSync(join(serviceHome, '.local', 'share'), { recursive: true });
+  mkdirSync(join(serviceHome, '.cache'), { recursive: true });
+  writeExecutable(join(fakeBin, 'id'), '#!/bin/sh\nif [ "$1" = baox ] || { [ "$1" = -u ] && [ "$2" = baox ]; }; then exit 0; fi\nexec /usr/bin/id "$@"\n');
+  writeExecutable(join(fakeBin, 'getent'), `#!/bin/sh\nif [ "$1" = passwd ] && [ "$2" = baox ]; then printf '%s\\n' ${shellQuote(`baox:x:998:998::${serviceHome}:/sbin/nologin`)}; exit 0; fi\nexit 2\n`);
   writeExecutable(join(fakeBin, 'stat'), '#!/bin/sh\n[ "$1" = -c ] || exit 2\ncase "$2" in\n  %a) /usr/bin/stat -f "%Lp" "$3" ;;\n  %u) printf "0\\n" ;;\n  *) exit 2 ;;\nesac\n');
-  writeExecutable(join(fakeBin, 'chown'), '#!/bin/sh\nexit 0\n');
+  writeExecutable(join(fakeBin, 'chown'), `#!/bin/sh\nprintf '%s\\n' "$*" >> ${shellQuote(join(barrier, 'chown.log'))}\nexit 0\n`);
   writeExecutable(join(fakeBin, 'runuser'), '#!/bin/sh\n[ "$1" = -u ] || exit 2\nshift 2\n[ "$1" = -- ] && shift\nexec "$@"\n');
 
   const token = 'candidate-test-maintenance-token-0123456789';
@@ -167,7 +213,17 @@ export async function createIsolatedTarget({ holdBuild = false, buildEnvironment
   const socket = join(dataDir, 'maintenance-gate.sock');
   const server = await startServer({ dataDir, port: 0, maintenanceToken: token, maintenanceSocketPath: socket });
   writeBlob(dataDir, Buffer.from('real original file\n'));
-  writeExecutable(join(deployRoot, 'bin', 'baox-maintenance-gate'), maintenanceWrapperScript(join(deployRoot, 'runtime', 'node', 'bin', 'node'), socket, tokenFile));
+  writeExecutable(
+    join(deployRoot, 'bin', 'baox-maintenance-gate'),
+    maintenanceWrapperScript(
+      join(deployRoot, 'runtime', 'node', 'bin', 'node'),
+      socket,
+      tokenFile,
+      join(barrier, 'post-reopen-gate-status-failure'),
+      join(barrier, 'next-admission-refused'),
+      join(barrier, 'fail-proxy-verification'),
+    ),
+  );
 
   const runnerEnvironment: NodeJS.ProcessEnv = {};
   if (snapshotAvailableBytes !== undefined) {
@@ -182,6 +238,7 @@ export async function createIsolatedTarget({ holdBuild = false, buildEnvironment
     host: 'isolated.test',
     deployRoot,
     dataDir,
+    serviceHome,
     systemdDir,
     buildEnvironment: join(deployRoot, 'etc', 'build.env'),
     buildPython: testPython,
@@ -242,6 +299,8 @@ export async function createSnapshotIsolatedTarget(options: IsolatedTargetOption
 
   const proxy = join(base.root, 'proxy.mjs');
   writeFileSync(proxy, proxyScript());
+  const mutationScript = join(base.root, 'candidate-mutation.cjs');
+  writeFileSync(mutationScript, candidateMutationScript());
   const state = {
     servicePid: join(base.barrier, 'baox.pid'),
     proxyPid: join(base.barrier, 'caddy.pid'),
@@ -251,6 +310,7 @@ export async function createSnapshotIsolatedTarget(options: IsolatedTargetOption
     failServiceStart: join(base.barrier, 'fail-baox-start'),
     failProxyStart: join(base.barrier, 'fail-proxy-start'),
     failProxyVerification: join(base.barrier, 'fail-proxy-verification'),
+    admitRefusal: join(base.barrier, 'next-admission-refused'),
   };
   writeExecutable(join(fakeBin, 'systemctl'), systemctlScript({
     barrier: base.barrier,
@@ -262,6 +322,8 @@ export async function createSnapshotIsolatedTarget(options: IsolatedTargetOption
     publicPort,
     publicHost,
     proxy,
+    runtimeRoot: join(deployRoot, 'runtime'),
+    mutationScript,
     ...state,
   }));
 
@@ -280,10 +342,12 @@ export async function createSnapshotIsolatedTarget(options: IsolatedTargetOption
     stopProxy: () => run('stop', 'baox-caddy.service'),
     restartProxy: () => run('restart', 'baox-caddy.service'),
     failNextStart: (service) => writeFileSync(service === 'baox' ? state.failServiceStart : state.failProxyStart, 'fail\n'),
-    failProxyVerification: () => writeFileSync(state.failProxyVerification, 'fail\n'),
+    failProxyVerification: () => writeFileSync(state.failProxyVerification, 'once\n'),
+    serveWrongSessionUntilReopen: () => writeFileSync(state.failProxyVerification, 'wrong-session-until-reopen\n'),
     clearProxyVerificationFailure: () => {
       if (existsSync(state.failProxyVerification)) unlinkSync(state.failProxyVerification);
     },
+    refuseNextAdmission: () => writeFileSync(state.admitRefusal, 'once\n'),
     commands: () => existsSync(state.commands) ? readFileSync(state.commands, 'utf8').trim().split('\n').filter(Boolean) : [],
   };
 
@@ -369,6 +433,20 @@ start_baox() {
   alive "${'$'}file" && return 0
   rm -f "${'$'}file"
   if [ -f ${quote(values.failServiceStart)} ]; then rm -f ${quote(values.failServiceStart)}; exit 1; fi
+  if [ -f ${quote(values.current)}/.baox-test-mutate-before-failure ]; then
+    ${quote(values.node)} ${quote(values.mutationScript)} ${quote(values.dataDir)}
+    cp ${quote(join(dirname(values.current), 'etc', 'Caddyfile'))} "${'$'}barrier/candidate-caddyfile-before-failure"
+    touch "${'$'}barrier/candidate-mutation-applied"
+  fi
+  if [ -f ${quote(values.current)}/.baox-test-mutate-runtime-before-failure ]; then
+    rm -f ${quote(join(values.runtimeRoot, 'node'))}
+    ln -s node-mutated ${quote(join(values.runtimeRoot, 'node'))}
+  fi
+  if [ -f ${quote(values.current)}/.baox-test-fail-recovery-start ]; then
+    touch ${quote(values.failServiceStart)}
+    exit 1
+  fi
+  if [ -f ${quote(values.current)}/.baox-test-fail-start ]; then exit 1; fi
   BAOX_DATA_DIR=${quote(values.dataDir)} BAOX_PORT=${quote(values.servicePort)} BAOX_PUBLIC_ORIGIN=${quote(`http://${values.publicHost}`)} BAOX_MAINTENANCE_TOKEN_FILE=${quote(values.tokenFile)} BAOX_HOME=${quote(join(String(values.barrier), 'no-legacy-import'))} ${quote(values.node)} ${quote(join(String(values.current), 'server', 'dist', 'main.mjs'))} >>${quote(values.serviceLog)} 2>&1 &
   printf '%s\\n' "${'$'}!" > "${'$'}file"
 }
@@ -377,6 +455,9 @@ start_proxy() {
   alive "${'$'}file" && return 0
   rm -f "${'$'}file"
   if [ -f ${quote(values.failProxyStart)} ]; then rm -f ${quote(values.failProxyStart)}; exit 1; fi
+  if [ -f ${quote(values.current)}/.baox-test-mutate-after-reopen ]; then
+    ${quote(values.node)} ${quote(values.mutationScript)} ${quote(values.dataDir)} post-access ${quote(values.barrier)}
+  fi
   BAOX_PROXY_PORT=${quote(values.publicPort)} BAOX_UPSTREAM_PORT=${quote(values.servicePort)} BAOX_PUBLIC_HOST=${quote(values.publicHost)} BAOX_PROXY_FAILURE_FILE=${quote(values.failProxyVerification)} ${quote(values.node)} ${quote(values.proxy)} >>${quote(values.proxyLog)} 2>&1 &
   printf '%s\\n' "${'$'}!" > "${'$'}file"
 }
@@ -400,13 +481,25 @@ esac
 
 function proxyScript(): string {
   return `import http from 'node:http';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 const port = Number(process.env.BAOX_PROXY_PORT);
 const upstreamPort = Number(process.env.BAOX_UPSTREAM_PORT);
 const host = process.env.BAOX_PUBLIC_HOST;
 const failure = process.env.BAOX_PROXY_FAILURE_FILE;
 const server = http.createServer((request, response) => {
-  if (failure && existsSync(failure)) { response.statusCode = 503; response.end('maintenance'); return; }
+  if (failure && existsSync(failure)) {
+    const mode = readFileSync(failure, 'utf8').trim();
+    if (mode === 'once') unlinkSync(failure);
+    if (mode === 'wrong-session-until-reopen') {
+      response.statusCode = 404;
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ error: { code: 'not_found' } }));
+      return;
+    }
+    response.statusCode = 503;
+    response.end('maintenance');
+    return;
+  }
   const upstream = http.request({ hostname: '127.0.0.1', port: upstreamPort, path: request.url, method: request.method, headers: { ...request.headers, host } }, (upstreamResponse) => {
     response.writeHead(upstreamResponse.statusCode || 502, upstreamResponse.headers);
     upstreamResponse.pipe(response);
@@ -416,6 +509,41 @@ const server = http.createServer((request, response) => {
 });
 server.listen(port, '127.0.0.1');
 process.once('SIGTERM', () => server.close(() => process.exit(0)));
+`;
+}
+
+function candidateMutationScript(): string {
+  const betterSqlite = join(repositoryRootPath(), 'server', 'node_modules', 'better-sqlite3');
+  return `const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+const Database = require(${JSON.stringify(betterSqlite)});
+const dataDir = process.argv[2];
+const mode = process.argv[3] || 'pre-access';
+const barrier = process.argv[4] || null;
+const database = new Database(path.join(dataDir, 'baox.sqlite'));
+if (mode === 'post-access') {
+  const gate = database.prepare("SELECT state FROM maintenance_gate WHERE gate_id = 'main'").get();
+  if (!gate || gate.state !== 'open' || (barrier && fs.existsSync(path.join(barrier, 'post-reopen-mutation-applied')))) {
+    database.close();
+    process.exit(0);
+  }
+  database.exec('CREATE TABLE IF NOT EXISTS cutover_test_post_access_mutation (value TEXT NOT NULL)');
+  database.prepare('INSERT INTO cutover_test_post_access_mutation (value) VALUES (?)').run('candidate-post-access-mutation');
+} else {
+  database.exec('CREATE TABLE cutover_test_mutation (value TEXT NOT NULL)');
+  database.prepare('INSERT INTO cutover_test_mutation (value) VALUES (?)').run('candidate-pre-access-mutation');
+}
+database.close();
+const bytes = Buffer.from(mode === 'post-access' ? 'candidate post-access blob mutation\\n' : 'candidate pre-access blob mutation\\n');
+const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+const directory = path.join(dataDir, 'files', 'sha256', digest.slice(0, 2));
+fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+fs.writeFileSync(path.join(directory, digest), bytes, { mode: 0o600 });
+if (mode === 'post-access' && barrier) {
+  fs.writeFileSync(path.join(barrier, 'post-reopen-mutation-applied'), 'applied\\n');
+  fs.writeFileSync(path.join(barrier, 'post-reopen-gate-status-failure'), 'once\\n');
+}
 `;
 }
 
@@ -431,7 +559,7 @@ fs.statfs = async (...args) => {
 `;
 }
 
-function pnpmScript(barrier: string): string {
+function pnpmScript(barrier: string, candidateRuntimeSource: string): string {
   return `#!/bin/sh
 if [ "$1" = --version ]; then printf '10.17.1\\n'; exit 0; fi
 if [ "$1" = install ]; then
@@ -465,6 +593,15 @@ NODE
   exit 0
 fi
 if [ "$1" = build ]; then
+  if [ -f .baox-test-use-real-server ]; then
+    rm -rf server/dist web/dist extension/dist server/node_modules
+    mkdir -p server web/dist extension/dist
+    cp -R ${shellQuote(join(candidateRuntimeSource, 'server', 'dist'))} server/dist
+    ln -s ${shellQuote(join(candidateRuntimeSource, 'server', 'node_modules'))} server/node_modules
+    printf '<html>candidate</html>' > web/dist/index.html
+    printf '{"manifest_version":3}' > extension/dist/manifest.json
+    exit 0
+  fi
   mkdir -p server/dist web/dist extension/dist
   printf 'main' > server/dist/main.mjs
   printf 'cli' > server/dist/baox.mjs
@@ -476,11 +613,27 @@ exit 2
 `;
 }
 
-function maintenanceWrapperScript(node: string, socket: string, tokenFile: string): string {
+function maintenanceWrapperScript(
+  node: string,
+  socket: string,
+  tokenFile: string,
+  statusFailureFile: string,
+  admissionRefusalFile: string,
+  proxyVerificationFile: string,
+): string {
   return `#!/bin/sh
 set -eu
 case "${'$'}{1:-}" in status|admit|reopen) ;; *) exit 64;; esac
 [ "${'$'}#" -eq 1 ] || exit 64
+if [ "${'$'}1" = status ] && [ -f ${shellQuote(statusFailureFile)} ]; then rm -f ${shellQuote(statusFailureFile)}; exit 69; fi
+if [ "${'$'}1" = admit ] && [ -f ${shellQuote(admissionRefusalFile)} ]; then
+  rm -f ${shellQuote(admissionRefusalFile)}
+  printf '%s\\n' '{"version":1,"state":"refused","barrier":false,"activeWrites":0,"activeErpAttempt":true,"reason":"active_erp_attempt"}'
+  exit 0
+fi
+if [ "${'$'}1" = reopen ] && [ -f ${shellQuote(proxyVerificationFile)} ] && [ "$(cat ${shellQuote(proxyVerificationFile)})" = wrong-session-until-reopen ]; then
+  rm -f ${shellQuote(proxyVerificationFile)}
+fi
 exec ${shellQuote(node)} - "${'$'}1" ${shellQuote(socket)} ${shellQuote(tokenFile)} <<'NODE'
 const fs = require('node:fs');
 const net = require('node:net');

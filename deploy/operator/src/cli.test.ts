@@ -9,6 +9,7 @@ import type { CandidateTransport } from './candidate.js';
 import type { DoctorReport, GateStatus } from './host.js';
 import { createSourceRepository } from './source.js';
 import type { SnapshotTransport } from './snapshot.js';
+import type { CutoverTransport } from './cutover.js';
 import { ControllableTarget } from './testing/controllable-target.js';
 
 const repositories: string[] = [];
@@ -279,6 +280,125 @@ it('refuses a recovery snapshot while the maintenance barrier is already closed'
   expect(calls).toBe(0);
   expect(target.commands).toEqual([{ kind: 'gate-status' }]);
   expect(JSON.parse(out.join('\n'))).toMatchObject({ command: 'snapshot', refusal: expect.stringContaining('开放状态') });
+});
+
+it('reconciles a matching cutover journal through the CLI while the gate is closed and services are unavailable', async () => {
+  const repository = committedRepository();
+  const candidateId = '0123456789ab-cdef01234567';
+  const target = new ControllableTarget({
+    gate: { kind: 'available', response: { version: 1, state: 'admitted', barrier: true, activeWrites: 0, activeErpAttempt: false } },
+    status: { currentRelease: '/opt/tools/baox/releases/original', baoxService: 'inactive', caddyService: 'inactive', dataDirectory: 'present', availableKib: 4_000_000 },
+  });
+  let prepares = 0;
+  let cutovers = 0;
+  const candidate: CandidateTransport = {
+    async prepare() {
+      prepares += 1;
+      return { state: 'prepared', candidateId, manifest: '/opt/tools/baox/candidates/manifest.json' };
+    },
+    async inspect() {
+      return { state: 'inspection', lock: { state: 'inactive' }, journal: { schema: 1, operation: 'cutover', candidateId, phase: 'candidate-switched' }, manifest: null };
+    },
+  };
+  const cutover: CutoverTransport = {
+    async cutover(request) {
+      cutovers += 1;
+      expect(request).toEqual({ candidateId });
+      return { state: 'verified', candidateId, release: `releases/${candidateId}`, snapshotId: `snapshot-${candidateId}-0123456789abcdef`, manifest: '/opt/tools/baox/recovery-snapshots/manifest.json' };
+    },
+  };
+  const out: string[] = [];
+  const err: string[] = [];
+
+  const code = await runOperatorCli(
+    ['deploy', '--candidate', candidateId, '--json'],
+    { source: createSourceRepository(repository), host: target, candidate, cutover },
+    { out: (line) => out.push(line), err: (line) => err.push(line) },
+  );
+
+  expect(code).toBe(0);
+  expect(err).toEqual([]);
+  expect(prepares).toBe(0);
+  expect(cutovers).toBe(1);
+  expect(target.commands).toEqual([]);
+  expect(JSON.parse(out.join('\n'))).toMatchObject({ command: 'deploy', reconciliation: true, cutover: { state: 'verified', candidateId } });
+});
+
+it('reconciles a default deploy source before candidate preparation when its cutover journal is outstanding', async () => {
+  const repository = committedRepository();
+  const source = await createSourceRepository(repository).archive();
+  const candidateId = `${source.plan.commit.slice(0, 12)}-${source.plan.archiveSha256.slice(0, 12)}`;
+  const target = new ControllableTarget({
+    gate: { kind: 'available', response: { version: 1, state: 'admitted', barrier: true, activeWrites: 0, activeErpAttempt: false } },
+  });
+  let prepares = 0;
+  const candidate: CandidateTransport = {
+    async prepare() {
+      prepares += 1;
+      return { state: 'failed', code: 'should-not-prepare' };
+    },
+    async inspect() {
+      return { state: 'inspection', lock: { state: 'inactive' }, journal: { schema: 1, operation: 'recovery-snapshot', candidateId, phase: 'snapshot-verified-held' }, manifest: null };
+    },
+  };
+  const cutover: CutoverTransport = {
+    async cutover(request) {
+      expect(request).toEqual({ candidateId });
+      return { state: 'verified', candidateId, release: `releases/${candidateId}`, snapshotId: `snapshot-${candidateId}-0123456789abcdef`, manifest: '/opt/tools/baox/recovery-snapshots/manifest.json' };
+    },
+  };
+  const out: string[] = [];
+  const err: string[] = [];
+
+  const code = await runOperatorCli(
+    ['deploy', 'origin/main', '--json'],
+    { source: createSourceRepository(repository), host: target, candidate, cutover },
+    { out: (line) => out.push(line), err: (line) => err.push(line) },
+  );
+
+  expect(code).toBe(0);
+  expect(err).toEqual([]);
+  expect(prepares).toBe(0);
+  expect(target.commands).toEqual([]);
+  expect(JSON.parse(out.join('\n'))).toMatchObject({ command: 'deploy', source: { ref: 'origin/main' }, reconciliation: true });
+});
+
+it('refuses a fresh deploy while the maintenance gate is already closed without preparing a candidate', async () => {
+  const repository = committedRepository();
+  const target = new ControllableTarget({
+    gate: { kind: 'available', response: { version: 1, state: 'admitted', barrier: true, activeWrites: 0, activeErpAttempt: false } },
+  });
+  let prepares = 0;
+  let cutovers = 0;
+  const candidate: CandidateTransport = {
+    async prepare() {
+      prepares += 1;
+      return { state: 'prepared', candidateId: '0123456789ab-cdef01234567', manifest: '/opt/tools/baox/candidates/manifest.json' };
+    },
+    async inspect() {
+      return { state: 'inspection', lock: { state: 'inactive' }, journal: null, manifest: null };
+    },
+  };
+  const cutover: CutoverTransport = {
+    async cutover() {
+      cutovers += 1;
+      return { state: 'failed', code: 'should-not-cutover' };
+    },
+  };
+  const out: string[] = [];
+  const err: string[] = [];
+
+  const code = await runOperatorCli(
+    ['deploy', '--candidate', '0123456789ab-cdef01234567', '--json'],
+    { source: createSourceRepository(repository), host: target, candidate, cutover },
+    { out: (line) => out.push(line), err: (line) => err.push(line) },
+  );
+
+  expect(code).toBe(1);
+  expect(err).toEqual([]);
+  expect(prepares).toBe(0);
+  expect(cutovers).toBe(0);
+  expect(target.commands).toEqual([{ kind: 'doctor' }, { kind: 'gate-status' }]);
 });
 
 it('rejects a ref that does not name a committed source revision', async () => {

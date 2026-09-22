@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, expect, it } from 'vitest';
@@ -220,6 +220,30 @@ it('prepares a real candidate through the CLI when the coordinator source exceed
   expect(commands[0]).not.toContain('streamed coordinator source');
   expect(JSON.parse(out.join('\n'))).toMatchObject({ candidate: { state: 'prepared' } });
   expect(readFileSync(join(target.profile.deployRoot, 'maintenance', 'candidate-coordinator.cjs'), 'utf8')).toBe(coordinator);
+}, REAL_SUBPROCESS_TIMEOUT_MS);
+
+it('gives baox traversal to the build source without exposing candidate metadata or using a deploy-root cache', async () => {
+  const target = await createTarget();
+  const source = createRepository();
+
+  const prepared = await cli(source.repository, target, 'prepare', source.first, '--json');
+
+  expect(prepared.code).toBe(0);
+  const candidateId = (JSON.parse(prepared.out) as { candidate: { candidateId: string } }).candidate.candidateId;
+  const candidates = join(target.profile.deployRoot, 'candidates');
+  const candidate = join(candidates, candidateId);
+  expect(statSync(candidates).mode & 0o777).toBe(0o710);
+  expect(statSync(candidate).mode & 0o777).toBe(0o710);
+  expect(statSync(join(candidate, 'source')).mode & 0o777).toBe(0o700);
+  expect(statSync(join(candidate, 'request.json')).mode & 0o777).toBe(0o600);
+  expect(statSync(join(candidate, 'source.tar')).mode & 0o777).toBe(0o600);
+  expect(statSync(join(candidate, 'recovery-config')).mode & 0o777).toBe(0o700);
+  expect(readFileSync(join(target.barrier, 'chown.log'), 'utf8')).toEqual(expect.stringContaining(`root:baox ${candidates}`));
+  expect(readFileSync(join(target.barrier, 'chown.log'), 'utf8')).toEqual(expect.stringContaining(`root:baox ${candidate}`));
+  expect(readFileSync(join(target.barrier, 'chown.log'), 'utf8')).toEqual(expect.stringContaining(`-R baox:baox ${join(candidate, 'source')}`));
+  expect(existsSync(join(target.profile.serviceHome, '.local', 'share', 'baox-pnpm'))).toBe(true);
+  expect(existsSync(join(target.profile.serviceHome, '.cache', 'baox-build', 'pnpm-store'))).toBe(true);
+  expect(existsSync(join(target.profile.deployRoot, 'cache'))).toBe(false);
 }, REAL_SUBPROCESS_TIMEOUT_MS);
 
 it('reports the same malformed controlled build environment in doctor and prepare', async () => {

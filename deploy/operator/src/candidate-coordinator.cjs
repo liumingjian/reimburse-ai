@@ -14,6 +14,7 @@ const path = require('node:path');
 const SCHEMA = 1;
 const SNAPSHOT_OPERATION = 'recovery-snapshot';
 const CANDIDATE_OPERATION = 'candidate-prepare';
+const CUTOVER_OPERATION = 'cutover';
 const SNAPSHOT_SCHEMA = 1;
 const SNAPSHOT_RETENTION = 3;
 const MAX_SNAPSHOT_RETENTION = 20;
@@ -60,6 +61,10 @@ async function main() {
     writeResult(await snapshot(request));
     return;
   }
+  if (mode === 'cutover') {
+    writeResult(await cutover(request));
+    return;
+  }
   throw new Error('unsupported coordinator mode');
 }
 
@@ -87,7 +92,7 @@ function validateRequest(request) {
   for (const name of ['deployRoot', 'serviceHome', 'systemdDir', 'buildEnvironment', 'buildPython']) {
     if (typeof request[name] !== 'string' || !path.isAbsolute(request[name])) throw new Error('invalid target path');
   }
-  if (request.externalLock === true) {
+  if (request.externalLock === true && request.kind !== 'cutover') {
     if (typeof request.operation !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/u.test(request.operation)) throw new Error('invalid external lock operation');
     if (typeof request.candidateId !== 'string' || !/^[a-zA-Z0-9._-]{1,128}$/u.test(request.candidateId)) throw new Error('invalid external lock identity');
     if (typeof request.bootstrapScript !== 'string' || !request.bootstrapScript || Buffer.byteLength(request.bootstrapScript, 'utf8') > 256 * 1024) {
@@ -98,6 +103,10 @@ function validateRequest(request) {
   if (request.inspect === true) return;
   if (request.kind === 'snapshot') {
     validateSnapshotRequest(request);
+    return;
+  }
+  if (request.kind === 'cutover') {
+    validateCutoverRequest(request);
     return;
   }
   if (!request.source || typeof request.source !== 'object') throw new Error('invalid source');
@@ -119,15 +128,22 @@ function validateSnapshotRequest(request) {
   }
 }
 
+function validateCutoverRequest(request) {
+  validateSnapshotRequest({ ...request, kind: 'snapshot', completion: 'hold' });
+  if (request.externalLock !== true || request.operation !== CUTOVER_OPERATION) throw new Error('invalid cutover lease');
+}
+
 function targetPaths(request) {
   const maintenance = path.join(request.deployRoot, 'maintenance');
   const candidateId = typeof request.candidateId === 'string' ? request.candidateId : 'inspection';
-  const candidate = path.join(request.deployRoot, 'candidates', candidateId);
+  const candidateRoot = path.join(request.deployRoot, 'candidates');
+  const candidate = path.join(candidateRoot, candidateId);
   return {
     maintenance,
     lock: path.join(maintenance, 'deployment.lock'),
     journal: path.join(maintenance, 'deployment-journal.json'),
     coordinator: path.join(maintenance, 'candidate-coordinator.cjs'),
+    candidateRoot,
     candidate,
     request: path.join(candidate, 'request.json'),
     archive: path.join(candidate, 'source.tar'),
@@ -157,8 +173,7 @@ async function receive(request) {
   const lease = lock.lease;
 
   await requireLease(paths, lease);
-  await fs.mkdir(paths.candidate, { recursive: true, mode: 0o700 });
-  await fsyncDirectory(path.dirname(paths.candidate));
+  await prepareCandidateBuildPaths(paths, lease);
   await writeCoordinator(request, paths, lease);
   await writeCandidateFile(paths, lease, paths.request, JSON.stringify(request) + '\n', 0o600);
 
@@ -299,7 +314,12 @@ async function inspect(request) {
   if (journal && typeof journal.candidateId === 'string' && /^[a-f0-9]{12}-[a-f0-9]{12}$/i.test(journal.candidateId)) {
     manifest = await readJson(path.join(request.deployRoot, 'candidates', journal.candidateId, 'manifest.json'));
   }
-  return { state: 'inspection', lock, journal: journal && journal.schema === SCHEMA && journal.operation === 'candidate-prepare' ? journal : null, manifest };
+  return {
+    state: 'inspection',
+    lock,
+    journal: journal && journal.schema === SCHEMA && [CANDIDATE_OPERATION, SNAPSHOT_OPERATION, CUTOVER_OPERATION].includes(journal.operation) ? journal : null,
+    manifest,
+  };
 }
 
 async function acquire(request, paths) {
@@ -391,6 +411,661 @@ async function snapshot(request) {
   return runSnapshotLifecycle(request, paths, lock.lease, { completion: request.completion });
 }
 
+/**
+ * Finishes a prepared release while retaining one lease from a newly rehearsed
+ * snapshot through the candidate check and the public-access boundary.
+ */
+async function cutover(request) {
+  const paths = targetPaths(request);
+  const lock = await acquireCutover(request, paths);
+  if (lock.kind === 'busy' || lock.kind === 'reconcile-needed' || lock.kind === 'verified'
+    || lock.kind === 'restored' || lock.kind === 'recovery-required' || lock.kind === 'post-access-handoff') return lock.result;
+
+  if (lock.kind === 'resume-public') return resumePublicAccess(request, paths, lock.lease, lock.journal);
+  if (lock.kind === 'recover-pre-access') return restoreCutoverBeforeAccess(request, paths, lock.lease, lock.journal, 'interrupted-cutover');
+  if (lock.kind === 'resume-held') return continueCutover(request, paths, lock.lease, lock.held);
+
+  const snapshotRequest = snapshotRequestForCutover(request);
+  const held = await runSnapshotLifecycle(snapshotRequest, paths, lock.lease, { completion: 'hold' });
+  if (held.state === 'held') return continueCutover(request, paths, lock.lease, held);
+  if (held.state === 'refused') {
+    await writeJournal(request, paths, lock.lease, 'refused', { gate: held.gate, failure: held.code });
+    await release(paths, lock.lease);
+    return { state: 'refused', code: held.code };
+  }
+  const code = held.code || 'snapshot-failed';
+  const phase = held.recoveryRequired ? 'recovery-required' : 'failed';
+  await writeJournal(request, paths, lock.lease, phase, { failure: code, snapshotId: request.snapshotId }).catch(() => undefined);
+  await release(paths, lock.lease).catch(() => undefined);
+  return held.recoveryRequired
+    ? recoveryRequiredResult(request, code)
+    : { state: 'failed', code };
+}
+
+function snapshotRequestForCutover(request) {
+  const { externalLock, operation, ...snapshot } = request;
+  return { ...snapshot, kind: 'snapshot', completion: 'hold' };
+}
+
+async function acquireCutover(request, paths) {
+  await fs.mkdir(paths.maintenance, { recursive: true, mode: 0o700 });
+  if (await hasOutstandingClaim(paths)) {
+    return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'stale-lock-claim-needs-recovery' } };
+  }
+  const freshLease = await createLease(request, paths);
+  if (freshLease) return reconcileCutoverLease(request, paths, freshLease);
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const owner = await readJson(path.join(paths.lock, 'owner.json'));
+    const inspected = lockInspection(owner);
+    if (inspected.state === 'unknown-owner') {
+      return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'lock-owner-not-durable' } };
+    }
+    if (inspected.state === 'active') {
+      return { kind: 'busy', result: { state: 'busy', operation: owner.operation, candidateId: owner.candidateId } };
+    }
+    const lease = await claimInactiveLock(request, paths, owner);
+    if (lease) return reconcileCutoverLease(request, paths, lease);
+  }
+  return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'lock-transition-raced' } };
+}
+
+async function reconcileCutoverLease(request, paths, lease) {
+  const journal = await readJson(paths.journal);
+  if (!journal || isTerminalJournal(journal) && !isCutoverJournalFor(journal, request)) return { kind: 'acquired', lease };
+  if (isCutoverJournalFor(journal, request)) {
+    if (journal.phase === 'completed') {
+      const completed = await completedCutoverResult(request, paths, journal);
+      await release(paths, lease);
+      return completed ? { kind: 'verified', result: completed } : { kind: 'post-access-handoff', result: postAccessResult(request, 'completed-cutover-needs-verification') };
+    }
+    if (journal.phase === 'restored') {
+      await release(paths, lease);
+      return { kind: 'restored', result: restoredResult(request, journal.snapshotId, journal.failure || 'candidate-not-verified') };
+    }
+    if (journal.phase === 'refused' || journal.phase === 'failed') {
+      // Cutover writes these terminal phases only before a held snapshot can
+      // reach candidate activation. A fresh attempt is safe only when the
+      // durable maintenance barrier is observably open now. Any admitted or
+      // uncertain path is recorded as recovery-required instead.
+      const gate = await observeGate(request);
+      if (isOpenGate(gate)) return { kind: 'acquired', lease };
+      await release(paths, lease);
+      return {
+        kind: 'reconcile-needed',
+        result: {
+          state: 'reconcile-needed',
+          code: journal.phase === 'refused'
+            ? 'cutover-refusal-needs-open-gate'
+            : 'cutover-pre-admission-failure-needs-open-gate',
+        },
+      };
+    }
+    if (journal.phase === 'recovery-required') {
+      await release(paths, lease);
+      return { kind: 'recovery-required', result: recoveryRequiredResult(request, journal.failure || 'cutover-recovery-required') };
+    }
+    if (journal.phase === 'public-access-intent' || journal.phase === 'reopening' || journal.phase === 'post-access-handoff') {
+      return { kind: 'resume-public', lease, journal };
+    }
+    return { kind: 'recover-pre-access', lease, journal };
+  }
+  if (isSnapshotHeldJournal(journal) && journal.candidateId === request.candidateId && typeof journal.snapshotId === 'string' && typeof journal.manifest === 'string') {
+    return {
+      kind: 'resume-held',
+      lease,
+      held: { state: 'held', snapshotId: journal.snapshotId, manifest: journal.manifest, completion: 'hold', recoveryPair: journal.recoveryPair },
+    };
+  }
+  if (journal && journal.schema === SCHEMA && journal.operation === SNAPSHOT_OPERATION && journal.candidateId === request.candidateId) {
+    await writeJournal(request, paths, lease, 'recovery-required', { failure: 'snapshot-interrupted-before-held-cutover' }).catch(() => undefined);
+    await release(paths, lease).catch(() => undefined);
+    return { kind: 'recovery-required', result: recoveryRequiredResult(request, 'snapshot-interrupted-before-held-cutover') };
+  }
+  await release(paths, lease);
+  return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'cutover-journal-not-recognized' } };
+}
+
+async function continueCutover(request, paths, lease, held) {
+  if (!held || held.state !== 'held' || held.completion !== 'hold' || !isRecoveryPair(held.recoveryPair)) {
+    await writeJournal(request, paths, lease, 'recovery-required', { failure: 'held-snapshot-not-verifiable' }).catch(() => undefined);
+    await release(paths, lease).catch(() => undefined);
+    return recoveryRequiredResult(request, 'held-snapshot-not-verifiable');
+  }
+  const snapshot = await readPublishedSnapshot(paths, held.snapshotId, request.candidateId);
+  if (!snapshot) {
+    await writeJournal(request, paths, lease, 'recovery-required', { failure: 'held-snapshot-not-verifiable' }).catch(() => undefined);
+    await release(paths, lease).catch(() => undefined);
+    return recoveryRequiredResult(request, 'held-snapshot-not-verifiable');
+  }
+
+  try {
+    const candidate = await verifyCutoverCandidate(request, paths, snapshot.manifest);
+    await writeJournal(request, paths, lease, 'snapshot-held', {
+      snapshotId: held.snapshotId,
+      manifest: snapshot.manifestPath,
+      recoveryPair: held.recoveryPair,
+    });
+    await systemctl('stop', 'baox.service');
+    await writeJournal(request, paths, lease, 'candidate-service-stopped', { snapshotId: held.snapshotId });
+    await promoteCandidate(request, paths, lease, candidate);
+    await activateCandidate(request, paths, lease, candidate, snapshot.manifest, held.snapshotId);
+    await writeJournal(request, paths, lease, 'candidate-verified', {
+      snapshotId: held.snapshotId,
+      release: candidate.releaseReference,
+      executableSha256: candidate.executableSha256,
+    });
+
+    // Once this record is durable, recovery must never replace data or private
+    // runtime/configuration state, even if the reopen response is lost.
+    await writeJournal(request, paths, lease, 'public-access-intent', {
+      snapshotId: held.snapshotId,
+      release: candidate.releaseReference,
+      access: 'candidate',
+    });
+    return reopenCandidate(request, paths, lease, candidate, held.snapshotId);
+  } catch (error) {
+    const code = failureCode(error, 'candidate-cutover-failed');
+    return restoreCutoverBeforeAccess(request, paths, lease, { snapshotId: held.snapshotId, failure: code }, code);
+  }
+}
+
+async function resumePublicAccess(request, paths, lease, journal) {
+  const snapshotId = typeof journal.snapshotId === 'string' ? journal.snapshotId : request.snapshotId;
+  try {
+    if (journal.access === 'restored-original') {
+      const snapshot = await readPublishedSnapshot(paths, snapshotId, request.candidateId);
+      if (!snapshot) throw new CandidateFailure('cutover-snapshot-not-verifiable');
+      const original = await snapshotOriginalState(request, snapshot.manifest, snapshot.root);
+      await verifyRestoredOriginal(request, paths, snapshot, original);
+      return reopenRestoredOriginal(request, paths, lease, original, snapshotId, journal.failure || 'candidate-not-verified');
+    }
+    const candidate = await verifyActiveCutoverCandidate(request, paths);
+    return reopenCandidate(request, paths, lease, candidate, snapshotId);
+  } catch (error) {
+    const code = failureCode(error, 'public-access-reconciliation-failed');
+    await writeJournal(request, paths, lease, 'post-access-handoff', { snapshotId, failure: code }).catch(() => undefined);
+    await release(paths, lease).catch(() => undefined);
+    return postAccessResult(request, code);
+  }
+}
+
+async function reopenCandidate(request, paths, lease, candidate, snapshotId) {
+  try {
+    await writeJournal(request, paths, lease, 'reopening', { snapshotId, release: candidate.releaseReference });
+    const gate = await commandGate(request, 'reopen');
+    if (!isOpenGate(gate)) throw new CandidateFailure('maintenance-gate-did-not-reopen');
+    await systemctl('start', 'baox-caddy.service');
+    await waitForHttp(candidate.public);
+    const observed = await commandGate(request, 'status');
+    if (!isOpenGate(observed)) throw new CandidateFailure('maintenance-gate-not-open-after-candidate-verification');
+    await writeJournal(request, paths, lease, 'completed', {
+      snapshotId,
+      manifest: path.join(paths.snapshotRoot, snapshotId, 'manifest.json'),
+      release: candidate.releaseReference,
+      gate: observed,
+      verifiedAt: new Date().toISOString(),
+    });
+    await release(paths, lease);
+    return { state: 'verified', candidateId: request.candidateId, release: candidate.releaseReference, snapshotId, manifest: path.join(paths.snapshotRoot, snapshotId, 'manifest.json') };
+  } catch (error) {
+    const code = failureCode(error, 'public-access-reopen-failed');
+    await writeJournal(request, paths, lease, 'post-access-handoff', { snapshotId, failure: code }).catch(() => undefined);
+    await release(paths, lease).catch(() => undefined);
+    return postAccessResult(request, code);
+  }
+}
+
+async function restoreCutoverBeforeAccess(request, paths, lease, journal, failure) {
+  const snapshotId = typeof journal.snapshotId === 'string' ? journal.snapshotId : request.snapshotId;
+  try {
+    const snapshot = await readPublishedSnapshot(paths, snapshotId, request.candidateId);
+    if (!snapshot) throw new CandidateFailure('cutover-snapshot-not-verifiable');
+    await writeJournal(request, paths, lease, 'restoring', { snapshotId, failure });
+    await systemctl('stop', 'baox-caddy.service');
+    await systemctl('stop', 'baox.service');
+    const original = await restoreOriginalOperatingSet(request, paths, lease, snapshot);
+    await systemctl('daemon-reload');
+    await systemctl('start', 'baox.service');
+    await waitForHttp(original.loopback);
+    await verifyRestoredOriginal(request, paths, snapshot, original);
+    await writeJournal(request, paths, lease, 'original-restored', { snapshotId, failure, release: original.release });
+    await writeJournal(request, paths, lease, 'public-access-intent', {
+      snapshotId,
+      release: original.release,
+      access: 'restored-original',
+      failure,
+    });
+    return reopenRestoredOriginal(request, paths, lease, original, snapshotId, failure);
+  } catch (error) {
+    const code = failureCode(error, 'prior-state-recovery-failed');
+    await writeJournal(request, paths, lease, 'recovery-required', { snapshotId, failure: code }).catch(() => undefined);
+    await release(paths, lease).catch(() => undefined);
+    return recoveryRequiredResult(request, code);
+  }
+}
+
+async function reopenRestoredOriginal(request, paths, lease, original, snapshotId, failure) {
+  try {
+    await writeJournal(request, paths, lease, 'reopening', { snapshotId, release: original.release, access: 'restored-original' });
+    const gate = await commandGate(request, 'reopen');
+    if (!isOpenGate(gate)) throw new CandidateFailure('maintenance-gate-did-not-reopen');
+    await systemctl('start', 'baox-caddy.service');
+    await waitForHttp(original.public);
+    const observed = await commandGate(request, 'status');
+    if (!isOpenGate(observed)) throw new CandidateFailure('maintenance-gate-not-open-after-original-restoration');
+    await writeJournal(request, paths, lease, 'restored', { snapshotId, failure, release: original.release, gate: observed, verifiedAt: new Date().toISOString() });
+    await release(paths, lease);
+    return restoredResult(request, snapshotId, failure);
+  } catch (error) {
+    const code = failureCode(error, 'restored-original-reopen-failed');
+    await writeJournal(request, paths, lease, 'post-access-handoff', { snapshotId, failure: code }).catch(() => undefined);
+    await release(paths, lease).catch(() => undefined);
+    return postAccessResult(request, code);
+  }
+}
+
+function recoveryRequiredResult(request, code) {
+  return {
+    state: 'recovery-required',
+    candidateId: request.candidateId,
+    code,
+    action: '维护屏障保持关闭。请先核对恢复快照、原发布和数据目录，确认后再执行受控恢复。',
+  };
+}
+
+function postAccessResult(request, code) {
+  return {
+    state: 'post-access-handoff',
+    candidateId: request.candidateId,
+    code,
+    action: '已持久记录开放访问意图。命令不会自动覆盖数据；请核对闸门、反向代理和当前发布后再继续。',
+  };
+}
+
+function restoredResult(request, snapshotId, code) {
+  return { state: 'restored', candidateId: request.candidateId, snapshotId, code };
+}
+
+function failureCode(error, fallback) {
+  return error instanceof CandidateFailure ? error.code : fallback;
+}
+
+function isRecoveryPair(value) {
+  return Boolean(value && value.state === 'recorded' && typeof value.releaseId === 'string' && typeof value.snapshotId === 'string');
+}
+
+async function readPublishedSnapshot(paths, snapshotId, candidateId) {
+  if (typeof snapshotId !== 'string' || !/^snapshot-[a-f0-9-]{29,80}$/i.test(snapshotId)) return null;
+  const root = path.join(paths.snapshotRoot, snapshotId);
+  const manifestPath = path.join(root, 'manifest.json');
+  const manifest = await readJson(manifestPath);
+  if (!isVerifiedSnapshotManifest(manifest, snapshotId) || manifest.candidateId !== candidateId) return null;
+  return {
+    root,
+    data: path.join(root, 'data'),
+    recovery: path.join(root, 'recovery'),
+    manifestPath,
+    manifest,
+  };
+}
+
+async function completedCutoverResult(request, paths, journal) {
+  const release = `releases/${request.candidateId}`;
+  const [current, gate, snapshot] = await Promise.all([
+    fs.readlink(path.join(request.deployRoot, 'current')).catch(() => null),
+    observeGate(request),
+    readPublishedSnapshot(paths, journal.snapshotId, request.candidateId),
+  ]);
+  if (current !== release || !isOpenGate(gate) || !snapshot) return null;
+  return { state: 'verified', candidateId: request.candidateId, release, snapshotId: journal.snapshotId, manifest: snapshot.manifestPath };
+}
+
+function cutoverConfigurationTargets(request) {
+  return new Map([
+    ['caddyfile', path.join(request.deployRoot, 'etc', 'Caddyfile')],
+    ['baox-service', path.join(request.systemdDir, 'baox.service')],
+    ['baox-caddy-service', path.join(request.systemdDir, 'baox-caddy.service')],
+  ]);
+}
+
+function candidateConfigurationSources(root) {
+  return new Map([
+    ['caddyfile', path.join(root, 'deploy', 'intranet', 'Caddyfile')],
+    ['baox-service', path.join(root, 'deploy', 'intranet', 'baox.service')],
+    ['baox-caddy-service', path.join(root, 'deploy', 'intranet', 'baox-caddy.service')],
+  ]);
+}
+
+async function verifyCutoverCandidate(request, paths, snapshotManifest) {
+  const manifest = await readPreparedCandidate(paths, request.candidateId);
+  const source = await candidateReleaseSource(paths, request.candidateId);
+  if (!source) throw new CandidateFailure('candidate-source-missing');
+  const current = await fs.readlink(path.join(request.deployRoot, 'current')).catch(() => null);
+  if (current === `releases/${request.candidateId}`) throw new CandidateFailure('candidate-already-current');
+  const expected = candidateConfigurationSources(source);
+  const advertised = new Map();
+  if (!Array.isArray(manifest.candidateConfiguration)) throw new CandidateFailure('candidate-configuration-incomplete');
+  for (const entry of manifest.candidateConfiguration) {
+    if (!entry || typeof entry.name !== 'string' || typeof entry.sha256 !== 'string' || advertised.has(entry.name)) {
+      throw new CandidateFailure('candidate-configuration-invalid');
+    }
+    advertised.set(entry.name, entry.sha256);
+  }
+  for (const [name, file] of expected) {
+    const stat = await fs.lstat(file).catch(() => null);
+    if (!stat || !stat.isFile() || stat.isSymbolicLink() || !/^[a-f0-9]{64}$/i.test(advertised.get(name) || '')
+      || await hashFile(file).catch(() => null) !== advertised.get(name)) {
+      throw new CandidateFailure('candidate-configuration-invalid');
+    }
+  }
+  if (advertised.size !== expected.size) throw new CandidateFailure('candidate-configuration-incomplete');
+  const executable = path.join(source, 'server', 'dist', 'main.mjs');
+  if (!await isRegularFile(executable)) throw new CandidateFailure('candidate-build-output-missing');
+  const service = await serviceConfiguration(fileForConfiguration(expected, 'baox-service'));
+  const original = await snapshotOriginalState(request, snapshotManifest, path.join(paths.snapshotRoot, snapshotManifest.snapshotId));
+  return {
+    source,
+    manifest,
+    executableSha256: await hashFile(executable),
+    configuration: expected,
+    loopback: service.loopback,
+    public: service.public,
+    original,
+    releaseReference: `releases/${request.candidateId}`,
+  };
+}
+
+async function verifyActiveCutoverCandidate(request, paths) {
+  const releaseReference = `releases/${request.candidateId}`;
+  const current = await fs.readlink(path.join(request.deployRoot, 'current')).catch(() => null);
+  if (current !== releaseReference) throw new CandidateFailure('candidate-release-not-current');
+  const source = path.join(paths.releaseRoot, request.candidateId);
+  const stat = await fs.lstat(source).catch(() => null);
+  if (!stat || !stat.isDirectory() || stat.isSymbolicLink()) throw new CandidateFailure('candidate-release-missing');
+  const executable = path.join(source, 'server', 'dist', 'main.mjs');
+  if (!await isRegularFile(executable)) throw new CandidateFailure('candidate-build-output-missing');
+  const service = await serviceConfiguration(path.join(request.systemdDir, 'baox.service'));
+  return {
+    source,
+    executableSha256: await hashFile(executable),
+    loopback: service.loopback,
+    public: service.public,
+    releaseReference,
+  };
+}
+
+async function candidateReleaseSource(paths, candidateId) {
+  const source = path.join(paths.candidate, 'source');
+  const sourceStat = await fs.lstat(source).catch(() => null);
+  if (sourceStat && sourceStat.isDirectory() && !sourceStat.isSymbolicLink()) return source;
+  const release = path.join(paths.releaseRoot, candidateId);
+  const releaseStat = await fs.lstat(release).catch(() => null);
+  return releaseStat && releaseStat.isDirectory() && !releaseStat.isSymbolicLink() ? release : null;
+}
+
+async function prepareCandidateBuildPaths(paths, lease) {
+  await requireLease(paths, lease);
+  await ensureBaoxTraversalDirectory(paths.candidateRoot, 0o710, 'candidate-root-permissions-invalid');
+  await requireLease(paths, lease);
+  await ensureBaoxTraversalDirectory(paths.candidate, 0o710, 'candidate-build-permissions-invalid');
+  await fsyncDirectory(path.dirname(paths.candidateRoot));
+  await fsyncDirectory(paths.candidateRoot);
+}
+
+async function prepareReleaseTraversal(paths, lease) {
+  await requireLease(paths, lease);
+  await ensureBaoxTraversalDirectory(paths.releaseRoot, 0o750, 'release-root-permissions-invalid');
+  await fsyncDirectory(path.dirname(paths.releaseRoot));
+}
+
+// Root retains candidate metadata while baox can traverse only the known source
+// path it owns. The release parent needs group read/traverse for the service to
+// follow current into a promoted baox-owned release.
+async function ensureBaoxTraversalDirectory(directory, mode, failure) {
+  await fs.mkdir(directory, { recursive: true, mode });
+  const before = await fs.lstat(directory).catch(() => null);
+  if (!before || !before.isDirectory() || before.isSymbolicLink()) throw new CandidateFailure(failure);
+  const ownership = await runCommand('chown', ['root:baox', directory]);
+  if (ownership.code !== 0) throw new CandidateFailure(failure);
+  await fs.chmod(directory, mode);
+  const verified = await fs.lstat(directory).catch(() => null);
+  if (!verified || !verified.isDirectory() || verified.isSymbolicLink() || (verified.mode & 0o777) !== mode) {
+    throw new CandidateFailure(failure);
+  }
+}
+
+function fileForConfiguration(configuration, name) {
+  const file = configuration.get(name);
+  if (!file) throw new CandidateFailure('candidate-configuration-incomplete');
+  return file;
+}
+
+async function serviceConfiguration(serviceFile) {
+  const environment = parseServiceEnvironment(await fs.readFile(serviceFile, 'utf8'));
+  const port = parsePort(environment.BAOX_PORT);
+  const origin = parseOrigin(environment.BAOX_PUBLIC_ORIGIN);
+  if (port === null || origin === null) throw new CandidateFailure('service-runtime-configuration-invalid');
+  const publicPort = origin.port ? Number.parseInt(origin.port, 10) : origin.protocol === 'https:' ? 443 : 80;
+  return { environment, loopback: { port, host: origin.host }, public: { port: publicPort, host: origin.host } };
+}
+
+async function promoteCandidate(request, paths, lease, candidate) {
+  const release = path.join(paths.releaseRoot, request.candidateId);
+  await prepareReleaseTraversal(paths, lease);
+  const source = path.join(paths.candidate, 'source');
+  const sourceStat = await fs.lstat(source).catch(() => null);
+  const releaseStat = await fs.lstat(release).catch(() => null);
+  if (releaseStat) {
+    if (!releaseStat.isDirectory() || releaseStat.isSymbolicLink() || sourceStat) throw new CandidateFailure('candidate-release-conflict');
+  } else {
+    if (!sourceStat || !sourceStat.isDirectory() || sourceStat.isSymbolicLink()) throw new CandidateFailure('candidate-source-missing');
+    await writeJournal(request, paths, lease, 'promotion-intent', { release: candidate.releaseReference });
+    await fs.rename(source, release);
+    await fsyncDirectory(paths.releaseRoot);
+    await fsyncDirectory(paths.candidate);
+  }
+  candidate.source = release;
+  candidate.configuration = candidateConfigurationSources(release);
+  const executable = path.join(release, 'server', 'dist', 'main.mjs');
+  if (!await isRegularFile(executable) || await hashFile(executable) !== candidate.executableSha256) throw new CandidateFailure('candidate-release-verification-failed');
+  await writeJournal(request, paths, lease, 'candidate-promoted', { release: candidate.releaseReference });
+}
+
+async function activateCandidate(request, paths, lease, candidate, snapshotManifest, snapshotId) {
+  await applyCandidateConfiguration(request, paths, lease, candidate.configuration, snapshotManifest);
+  await validateCandidateProxyConfiguration(request);
+  await replaceSymlink(path.join(request.deployRoot, 'current'), candidate.releaseReference);
+  await systemctl('daemon-reload');
+  await writeJournal(request, paths, lease, 'candidate-switched', { snapshotId, release: candidate.releaseReference });
+  await systemctl('start', 'baox.service');
+  await waitForHttp(candidate.loopback);
+  const active = await verifyActiveCutoverCandidate(request, paths);
+  if (active.executableSha256 !== candidate.executableSha256) throw new CandidateFailure('candidate-runtime-verification-failed');
+  await requireAdmittedCandidateGate(request);
+  await verifyCandidateProxyWhileAdmitted(request, active);
+  await requireAdmittedCandidateGate(request);
+}
+
+async function validateCandidateProxyConfiguration(request) {
+  const caddy = path.join(request.deployRoot, 'bin', 'caddy');
+  const configuration = path.join(request.deployRoot, 'etc', 'Caddyfile');
+  const result = await runCommand(caddy, ['validate', '--config', configuration, '--adapter', 'caddyfile']);
+  if (result.code !== 0) throw new CandidateFailure('candidate-proxy-configuration-invalid');
+}
+
+async function requireAdmittedCandidateGate(request) {
+  const gate = await commandGate(request, 'status');
+  if (!isAdmittedGate(gate)) throw new CandidateFailure('maintenance-gate-not-held-during-candidate-verification');
+}
+
+async function verifyCandidateProxyWhileAdmitted(request, candidate) {
+  let started = false;
+  try {
+    await systemctl('start', 'baox-caddy.service');
+    started = true;
+    await waitForHttp(candidate.public);
+    await requireAdmittedCandidateGate(request);
+  } finally {
+    if (started) await systemctl('stop', 'baox-caddy.service');
+  }
+}
+
+async function applyCandidateConfiguration(request, paths, lease, configuration, snapshotManifest) {
+  const original = await snapshotOriginalState(request, snapshotManifest, path.join(paths.snapshotRoot, snapshotManifest.snapshotId));
+  const targets = cutoverConfigurationTargets(request);
+  for (const entry of original.configuration) {
+    await requireLease(paths, lease);
+    const source = fileForConfiguration(configuration, entry.name);
+    const contents = await fs.readFile(source);
+    const destination = targets.get(entry.name);
+    if (!destination) throw new CandidateFailure('candidate-configuration-incomplete');
+    await writeAtomic(destination, contents, entry.mode);
+    await fs.chown(destination, entry.owner.uid, entry.owner.gid);
+    await fs.chmod(destination, entry.mode);
+  }
+  await fsyncDirectory(path.dirname(fileForConfiguration(targets, 'caddyfile')));
+  await fsyncDirectory(request.systemdDir);
+}
+
+async function restoreOriginalOperatingSet(request, paths, lease, snapshot) {
+  const original = await snapshotOriginalState(request, snapshot.manifest, snapshot.root);
+  await restoreSnapshotConfiguration(request, paths, lease, snapshot, original);
+  await restoreSnapshotRuntime(request, paths, lease, original);
+  await replaceLiveData(request, paths, lease, snapshot, snapshot.manifest.inventory);
+  await verifyRestoredDataSnapshot(request.dataDir, snapshot.manifest.inventory);
+  await replaceSymlink(path.join(request.deployRoot, 'current'), original.release);
+  await fsyncDirectory(request.deployRoot);
+  return original;
+}
+
+async function snapshotOriginalState(request, manifest, snapshotRoot) {
+  if (!manifest || !manifest.original || !safeManagedReleaseReference(manifest.original.release)
+    || !manifest.recovery || !Array.isArray(manifest.recovery.configuration)) {
+    throw new CandidateFailure('snapshot-recovery-metadata-invalid');
+  }
+  const configuration = [];
+  const targets = cutoverConfigurationTargets(request);
+  for (const entry of manifest.recovery.configuration) {
+    if (!entry || typeof entry.name !== 'string' || typeof entry.path !== 'string' || typeof entry.sha256 !== 'string'
+      || !validMode(entry.mode) || !validDataOwner(entry.owner) || !targets.has(entry.name)
+      || entry.path !== `recovery/configuration/${entry.name}`) {
+      throw new CandidateFailure('snapshot-recovery-configuration-invalid');
+    }
+    const copy = safeSnapshotChild(snapshotRoot, entry.path);
+    if (!await isRegularFile(copy) || await hashFile(copy) !== entry.sha256) throw new CandidateFailure('snapshot-recovery-configuration-invalid');
+    configuration.push({ ...entry, source: targets.get(entry.name) });
+  }
+  if (configuration.length !== targets.size || new Set(configuration.map((entry) => entry.name)).size !== targets.size) {
+    throw new CandidateFailure('snapshot-recovery-configuration-incomplete');
+  }
+  const runtimeState = await readJson(safeSnapshotChild(snapshotRoot, manifest.recovery.runtimeState?.path || ''));
+  if (!runtimeState || runtimeState.schema !== SNAPSHOT_SCHEMA || runtimeState.currentReference !== manifest.original.release
+    || !runtimeState.runtime || runtimeState.runtime.reference !== manifest.original.runtime?.reference
+    || runtimeState.runtime.sha256 !== manifest.original.runtime?.sha256 || runtimeState.runtime.version !== manifest.original.runtime?.version
+    || await hashFile(safeSnapshotChild(snapshotRoot, manifest.recovery.runtimeState.path)) !== manifest.recovery.runtimeState.sha256) {
+    throw new CandidateFailure('snapshot-recovery-runtime-invalid');
+  }
+  const service = await serviceConfiguration(fileForConfiguration(new Map(configuration.map((entry) => [entry.name, safeSnapshotChild(snapshotRoot, entry.path)])), 'baox-service'));
+  return {
+    release: manifest.original.release,
+    configuration,
+    runtime: runtimeState.runtime,
+    executable: manifest.original.executable,
+    loopback: service.loopback,
+    public: service.public,
+  };
+}
+
+function safeManagedReleaseReference(reference) {
+  return typeof reference === 'string' && /^releases\/[a-z0-9][a-z0-9._-]{0,127}$/u.test(reference);
+}
+
+async function restoreSnapshotConfiguration(request, paths, lease, snapshot, original) {
+  for (const entry of original.configuration) {
+    await requireLease(paths, lease);
+    const source = safeSnapshotChild(snapshot.root, entry.path);
+    const contents = await fs.readFile(source);
+    if (await hashFile(source) !== entry.sha256) throw new CandidateFailure('snapshot-recovery-configuration-invalid');
+    await writeAtomic(entry.source, contents, entry.mode);
+    await fs.chown(entry.source, entry.owner.uid, entry.owner.gid);
+    await fs.chmod(entry.source, entry.mode);
+  }
+  await fsyncDirectory(path.dirname(path.join(request.deployRoot, 'etc', 'Caddyfile')));
+  await fsyncDirectory(request.systemdDir);
+}
+
+async function restoreSnapshotRuntime(request, paths, lease, original) {
+  await requireLease(paths, lease);
+  const nodeLink = path.join(request.deployRoot, 'runtime', 'node');
+  const expected = original.runtime.reference;
+  if (expected !== null && typeof expected !== 'string') throw new CandidateFailure('snapshot-recovery-runtime-invalid');
+  const current = await fs.readlink(nodeLink).catch(() => null);
+  if (expected !== current) {
+    if (typeof expected !== 'string' || !safeRelativeRuntimeReference(expected)) throw new CandidateFailure('snapshot-recovery-runtime-invalid');
+    await replaceSymlink(nodeLink, expected);
+  }
+  const node = path.join(nodeLink, 'bin', 'node');
+  if (!await isExecutable(node) || await hashFile(node) !== original.runtime.sha256 || await commandOutput(node, ['--version']) !== original.runtime.version) {
+    throw new CandidateFailure('snapshot-recovery-runtime-verification-failed');
+  }
+  await fsyncDirectory(path.dirname(nodeLink));
+}
+
+function safeRelativeRuntimeReference(reference) {
+  return !path.isAbsolute(reference) && !reference.split('/').some((segment) => segment === '' || segment === '.' || segment === '..');
+}
+
+async function replaceLiveData(request, paths, lease, snapshot, inventory) {
+  await requireLease(paths, lease);
+  const data = request.dataDir;
+  const stat = await fs.lstat(data).catch(() => null);
+  if (!stat || !stat.isDirectory() || stat.isSymbolicLink()) throw new CandidateFailure('restore-live-data-invalid');
+  const retired = `${data}.cutover-retired-${randomBytes(8).toString('hex')}`;
+  await fs.rename(data, retired);
+  await fsyncDirectory(path.dirname(data));
+  try {
+    await restoreSnapshotData(snapshot, inventory, data, paths, lease);
+    await fsyncDirectory(path.dirname(data));
+    await fs.rm(retired, { recursive: true, force: true });
+    await fsyncDirectory(path.dirname(data));
+  } catch (error) {
+    throw error instanceof CandidateFailure ? error : new CandidateFailure('snapshot-data-restoration-failed');
+  }
+}
+
+async function verifyRestoredOriginal(request, paths, snapshot, original) {
+  const current = await fs.readlink(path.join(request.deployRoot, 'current')).catch(() => null);
+  if (current !== original.release) throw new CandidateFailure('restored-release-verification-failed');
+  for (const entry of original.configuration) {
+    if (!await isRegularFile(entry.source) || await hashFile(entry.source) !== entry.sha256) throw new CandidateFailure('restored-configuration-verification-failed');
+    const stat = await fs.stat(entry.source);
+    if ((stat.mode & 0o777) !== entry.mode || stat.uid !== entry.owner.uid || stat.gid !== entry.owner.gid) {
+      throw new CandidateFailure('restored-configuration-metadata-verification-failed');
+    }
+  }
+  // restoreOriginalOperatingSet verifies the byte-for-byte inventory before
+  // starting the recovered service. Opening SQLite can legitimately recreate
+  // WAL state under the still-closed maintenance barrier, so checking that
+  // transient state after startup would reject a correctly restored image.
+  const executable = path.join(request.deployRoot, 'current', 'server', 'dist', 'main.mjs');
+  if (!await isRegularFile(executable) || await hashFile(executable) !== original.executable.sha256) throw new CandidateFailure('restored-release-verification-failed');
+  void paths;
+}
+
+async function verifyRestoredDataSnapshot(dataDir, expected) {
+  const inventory = await collectDataInventory(dataDir);
+  if (inventoryDigest(inventory) !== inventoryDigest(expected)) throw new CandidateFailure('restored-data-verification-failed');
+}
+
+async function replaceSymlink(destination, target) {
+  if (typeof target !== 'string' || !target || target.includes('\0')) throw new CandidateFailure('invalid-symlink-target');
+  const temporary = `${destination}.tmp-${process.pid}-${randomBytes(8).toString('hex')}`;
+  await fs.symlink(target, temporary);
+  await fs.rename(temporary, destination);
+  await fsyncDirectory(path.dirname(destination));
+}
+
 async function acquireSnapshot(request, paths) {
   await fs.mkdir(paths.maintenance, { recursive: true, mode: 0o700 });
   if (await hasOutstandingClaim(paths)) {
@@ -476,7 +1151,13 @@ function isSnapshotHeldJournal(journal) {
 
 function isTerminalJournal(journal) {
   return isTerminalCandidateJournal(journal) || Boolean(journal && journal.schema === SCHEMA && journal.operation === SNAPSHOT_OPERATION
-    && (journal.phase === 'reopened' || journal.phase === 'failed' || journal.phase === 'refused'));
+    && (journal.phase === 'reopened' || journal.phase === 'failed' || journal.phase === 'refused'))
+    || isTerminalCutoverJournal(journal);
+}
+
+function isTerminalCutoverJournal(journal) {
+  return Boolean(journal && journal.schema === SCHEMA && journal.operation === CUTOVER_OPERATION
+    && (journal.phase === 'completed' || journal.phase === 'restored' || journal.phase === 'refused' || journal.phase === 'failed'));
 }
 
 // Bootstrap runs inside the generic deployment lease. The child owns the
@@ -1526,22 +2207,46 @@ async function publishSnapshot(snapshot) {
 
 async function waitForHttp({ port, host }) {
   for (let attempt = 0; attempt < 120; attempt += 1) {
-    const status = await httpStatus(port, host);
-    if (status !== null && status >= 200 && status < 500) return;
+    if (await httpSession(port, host)) return;
     await delay(250);
   }
   throw new CandidateFailure('service-verification-failed');
 }
 
-function httpStatus(port, host) {
+function httpSession(port, host) {
   return new Promise((resolve) => {
     const request = http.get({ hostname: '127.0.0.1', port, path: '/api/session', headers: host ? { host } : {}, timeout: 2_000 }, (response) => {
-      response.resume();
-      resolve(response.statusCode || null);
+      const chunks = [];
+      let bytes = 0;
+      response.on('data', (chunk) => {
+        bytes += chunk.length;
+        if (bytes <= 16 * 1024) chunks.push(chunk);
+      });
+      response.once('end', () => {
+        if (response.statusCode !== 200 || bytes > 16 * 1024) return resolve(false);
+        try {
+          resolve(isSessionResponse(JSON.parse(Buffer.concat(chunks).toString('utf8'))));
+        } catch {
+          resolve(false);
+        }
+      });
+      response.once('aborted', () => resolve(false));
+      response.once('error', () => resolve(false));
+      response.once('close', () => resolve(false));
     });
-    request.once('timeout', () => request.destroy());
-    request.once('error', () => resolve(null));
+    request.once('timeout', () => {
+      request.destroy();
+      resolve(false);
+    });
+    request.once('error', () => resolve(false));
   });
+}
+
+function isSessionResponse(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!['setup_required', 'signed_out', 'signed_in', 'password_change_required'].includes(value.status)) return false;
+  if (!Object.hasOwn(value, 'account')) return false;
+  return value.account === null || (typeof value.account === 'object' && !Array.isArray(value.account));
 }
 
 async function commandGate(request, command) {
@@ -1582,7 +2287,7 @@ function isDefinitelyOpenGate(status) {
 }
 
 async function systemctl(action, unit) {
-  const result = await runCommand('systemctl', [action, unit]);
+  const result = await runCommand('systemctl', unit ? [action, unit] : [action]);
   if (result.code !== 0) throw new CandidateFailure('service-command-failed');
 }
 
@@ -1947,11 +2652,13 @@ async function buildCandidate(request, paths, source, explicitEnvironment, lease
   const runtime = path.join(request.deployRoot, 'runtime');
   const gcc = path.join(runtime, 'gcc-12.5.0');
   const pnpm = path.join(runtime, 'pnpm-' + source.pnpmVersion, 'bin', 'pnpm');
+  const cacheRoot = path.join(request.serviceHome, '.cache', 'baox-build');
+  const pnpmHome = path.join(request.serviceHome, '.local', 'share', 'baox-pnpm');
   const env = {
-    HOME: path.join(request.deployRoot, 'cache', 'home'),
+    HOME: request.serviceHome,
     PATH: path.join(runtime, 'node', 'bin') + ':' + path.join(runtime, 'pnpm-' + source.pnpmVersion, 'bin') + ':/usr/local/bin:/usr/bin:/bin',
-    PNPM_HOME: path.join(request.deployRoot, 'cache', 'pnpm-home'),
-    npm_config_store_dir: path.join(request.deployRoot, 'cache', 'pnpm-store'),
+    PNPM_HOME: pnpmHome,
+    npm_config_store_dir: path.join(cacheRoot, 'pnpm-store'),
     npm_config_python: request.buildPython,
     CC: path.join(gcc, 'bin', 'gcc'),
     CXX: path.join(gcc, 'bin', 'g++'),
@@ -1962,6 +2669,8 @@ async function buildCandidate(request, paths, source, explicitEnvironment, lease
   };
   await requireLease(paths, lease);
   await runLogged('chown', ['-R', 'baox:baox', paths.source], paths.candidate, {}, paths.log);
+  await requireLease(paths, lease);
+  await runAsBaox('/bin/mkdir', ['-p', pnpmHome, env.npm_config_store_dir], paths.source, { HOME: env.HOME, PATH: env.PATH }, paths.log);
   await requireLease(paths, lease);
   await runAsBaox(pnpm, ['install', '--frozen-lockfile'], paths.source, env, paths.log);
   await requireLease(paths, lease);
@@ -2087,7 +2796,7 @@ async function writeJournal(request, paths, lease, phase, extra) {
     operation: operationFor(request),
     candidateId: request.candidateId,
     ...(request.source ? { source: request.source } : {}),
-    ...(isSnapshotRequest(request) ? { snapshotId: request.snapshotId, completion: request.completion } : {}),
+    ...(isSnapshotRequest(request) || isCutoverRequest(request) ? { snapshotId: request.snapshotId, ...(isSnapshotRequest(request) ? { completion: request.completion } : {}) } : {}),
     phase,
     updatedAt: new Date().toISOString(),
     ...(isJournalFor(existing, request) ? existing : {}),
@@ -2112,13 +2821,6 @@ async function writeOwner(paths, request, pid, startIdentity, lease, replace = f
   };
   await writeAtomic(path.join(paths.lock, 'owner.json'), JSON.stringify(owner) + '\n', 0o600);
   if (replace) await requireLease(paths, lease);
-}
-
-function operationFor(request) {
-  if (request && request.externalLock === true && typeof request.operation === 'string' && /^[a-z][a-z0-9-]{0,63}$/u.test(request.operation)) {
-    return request.operation;
-  }
-  return isSnapshotRequest(request) ? SNAPSHOT_OPERATION : CANDIDATE_OPERATION;
 }
 
 async function release(paths, lease) {
@@ -2221,6 +2923,9 @@ function isJournalFor(journal, request) {
     return Boolean(journal && journal.schema === SCHEMA && journal.operation === SNAPSHOT_OPERATION
       && journal.candidateId === request.candidateId && journal.snapshotId === request.snapshotId);
   }
+  if (isCutoverRequest(request)) {
+    return isCutoverJournalFor(journal, request);
+  }
   return Boolean(journal && journal.schema === SCHEMA && journal.operation === CANDIDATE_OPERATION
     && journal.candidateId === request.candidateId && journal.source && journal.source.commit === request.source.commit
     && journal.source.archiveSha256 === request.source.archiveSha256);
@@ -2230,10 +2935,20 @@ function isSnapshotRequest(request) {
   return Boolean(request && request.kind === 'snapshot');
 }
 
+function isCutoverRequest(request) {
+  return Boolean(request && request.kind === 'cutover');
+}
+
+function isCutoverJournalFor(journal, request) {
+  return Boolean(journal && journal.schema === SCHEMA && journal.operation === CUTOVER_OPERATION
+    && journal.candidateId === request.candidateId);
+}
+
 function operationFor(request) {
   if (request && request.externalLock === true && typeof request.operation === 'string' && /^[a-z][a-z0-9-]{0,63}$/u.test(request.operation)) {
     return request.operation;
   }
+  if (isCutoverRequest(request)) return CUTOVER_OPERATION;
   return isSnapshotRequest(request) ? SNAPSHOT_OPERATION : CANDIDATE_OPERATION;
 }
 
