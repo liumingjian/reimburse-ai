@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream, readFileSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
 import type { Readable } from 'node:stream';
 import {
   BOOTSTRAP_ARTIFACTS,
@@ -15,7 +15,7 @@ import {
   type BootstrapSource,
   type LocalBootstrapArtifact,
 } from './bootstrap.js';
-import { createCoordinatorInvocation } from './coordinator-transport.js';
+import { createCoordinatorInvocation, readCoordinatorSource } from './coordinator-transport.js';
 import { NATIVE_PROFILE, type NativeProfile } from './profile.js';
 
 export type HostCommand =
@@ -227,10 +227,6 @@ export class SshHostTransport implements HostTransport {
     if (response) return response;
     throw new Error(`bootstrap 无法完成。SSH 命令退出码为 ${result.exitCode ?? '未知'}。`);
   }
-}
-
-function readCoordinatorSource(): string {
-  return readFileSync(new URL('./candidate-coordinator.cjs', import.meta.url), 'utf8');
 }
 
 function parseBootstrapLockRefusal(output: string, plan: BootstrapResponse['plan']): BootstrapResponse | undefined {

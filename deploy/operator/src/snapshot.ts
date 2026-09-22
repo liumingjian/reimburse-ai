@@ -1,6 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { createCoordinatorInvocation } from './coordinator-transport.js';
+import { createCoordinatorInvocation, parseCoordinatorResponse, readCoordinatorSource } from './coordinator-transport.js';
 import { productionSshRunner, type SshRunner } from './host.js';
 import { NATIVE_PROFILE, type NativeProfile } from './profile.js';
 
@@ -70,25 +69,13 @@ export class SshSnapshotTransport implements SnapshotTransport {
   }
 }
 
-function readCoordinatorSource(): string {
-  return readFileSync(new URL('./candidate-coordinator.cjs', import.meta.url), 'utf8');
-}
-
 function snapshotResult(stdout: string, exitCode: number | null): SnapshotResult {
-  const parsed = lastJson(stdout);
-  if (!isSnapshotResult(parsed)) throw new Error(`恢复快照无法完成。SSH 命令退出码为 ${exitCode ?? '未知'}。`);
-  if (exitCode !== 0 && parsed.state !== 'failed') throw new Error(`恢复快照无法完成。SSH 命令退出码为 ${exitCode ?? '未知'}。`);
-  return parsed;
-}
-
-function lastJson(stdout: string): unknown {
-  const line = stdout.trim().split(/\r?\n/u).filter(Boolean).at(-1);
-  if (!line) return null;
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
+  return parseCoordinatorResponse({ stdout, exitCode }, {
+    isResponse: isSnapshotResult,
+    malformedMessage: (code) => `恢复快照无法完成。SSH 命令退出码为 ${code ?? '未知'}。`,
+    exitMessage: (code) => `恢复快照无法完成。SSH 命令退出码为 ${code ?? '未知'}。`,
+    allowsNonzeroExit: (response) => response.state === 'failed',
+  });
 }
 
 function isSnapshotResult(value: unknown): value is SnapshotResult {

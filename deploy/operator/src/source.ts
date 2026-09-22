@@ -35,24 +35,32 @@ export function createSourceRepository(cwd: string): SourceRepository {
 
 async function planSource(cwd: string, requestedRef = 'origin/main'): Promise<SourcePlan> {
   const selected = await selectSource(cwd, requestedRef);
-  const archive = await runGit(cwd, ['archive', '--format=tar', selected.commit]);
+  const archive = await runGit(selected.root, ['archive', '--format=tar', selected.commit]);
   return sourcePlan(requestedRef, selected.commit, archive, selected.status);
 }
 
 async function archiveSource(cwd: string, requestedRef = 'origin/main'): Promise<SourceArchive> {
   const selected = await selectSource(cwd, requestedRef);
-  const archive = await runGit(cwd, ['archive', '--format=tar', selected.commit]);
+  const archive = await runGit(selected.root, ['archive', '--format=tar', selected.commit]);
   return { plan: sourcePlan(requestedRef, selected.commit, archive, selected.status), archive };
 }
 
-async function selectSource(cwd: string, requestedRef: string): Promise<{ commit: string; status: Buffer }> {
+async function selectSource(cwd: string, requestedRef: string): Promise<{ root: string; commit: string; status: Buffer }> {
   if (!requestedRef || requestedRef.startsWith('-') || requestedRef.includes('\0')) {
     throw new SourceSelectionError('源代码引用必须是一个已提交的 Git 引用。');
   }
 
+  let root: string;
+  try {
+    root = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).toString('utf8').trim();
+  } catch {
+    throw new SourceSelectionError('无法定位 Git 工作区根目录。');
+  }
+  if (!root) throw new SourceSelectionError('无法定位 Git 工作区根目录。');
+
   let commit: string;
   try {
-    commit = (await runGit(cwd, ['rev-parse', '--verify', '--quiet', `${requestedRef}^{commit}`])).toString('utf8').trim();
+    commit = (await runGit(root, ['rev-parse', '--verify', '--quiet', `${requestedRef}^{commit}`])).toString('utf8').trim();
   } catch {
     throw new SourceSelectionError(`无法把 ${requestedRef} 解析为已提交的 Git 引用。`);
   }
@@ -61,10 +69,10 @@ async function selectSource(cwd: string, requestedRef: string): Promise<{ commit
   }
 
   const [status] = await Promise.all([
-    runGit(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
+    runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
   ]);
 
-  return { commit, status };
+  return { root, commit, status };
 }
 
 function sourcePlan(requestedRef: string, commit: string, archive: Buffer, status: Buffer): SourcePlan {

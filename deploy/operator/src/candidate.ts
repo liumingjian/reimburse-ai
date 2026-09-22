@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { createCoordinatorInvocation } from './coordinator-transport.js';
+import { createCoordinatorInvocation, parseCoordinatorResponse, readCoordinatorSource } from './coordinator-transport.js';
 import { productionSshRunner, type SshRunner } from './host.js';
 import { NATIVE_PROFILE, type NativeProfile } from './profile.js';
 import type { SourceArchive } from './source.js';
@@ -95,15 +94,13 @@ export class SshCandidateTransport implements CandidateTransport {
       },
     });
     const result = await this.runner(this.profile, invocation.remoteCommand, invocation.input);
-    if (result.exitCode !== 0) throw new Error('候选状态检查无法完成。');
-    const parsed = lastJson(result.stdout);
-    if (!isInspection(parsed)) throw new Error('候选状态检查返回了不兼容的响应。');
-    return parsed;
+    return parseCoordinatorResponse(result, {
+      isResponse: isInspection,
+      malformedMessage: () => '候选状态检查返回了不兼容的响应。',
+      exitMessage: () => '候选状态检查无法完成。',
+      rejectNonzeroBeforeParsing: true,
+    });
   }
-}
-
-function readCoordinatorSource(): string {
-  return readFileSync(new URL('./candidate-coordinator.cjs', import.meta.url), 'utf8');
 }
 
 function candidateId(commit: string, archiveSha256: string): string {
@@ -111,25 +108,13 @@ function candidateId(commit: string, archiveSha256: string): string {
 }
 
 function preparationResult(stdout: string, exitCode: number | null): CandidatePreparation {
-  const parsed = lastJson(stdout);
-  if (!isPreparation(parsed)) {
-    throw new Error(`候选准备无法完成。SSH 命令退出码为 ${exitCode ?? '未知'}。`);
-  }
-  if (exitCode !== 0 && parsed.state !== 'failed') {
-    throw new Error(`候选准备无法完成。SSH 命令退出码为 ${exitCode ?? '未知'}。`);
-  }
-  return parsed;
-}
-
-function lastJson(stdout: string): unknown {
-  const lines = stdout.trim().split(/\r?\n/u).filter(Boolean);
-  const value = lines.at(-1);
-  if (!value) return null;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
+  const result = { stdout, exitCode };
+  return parseCoordinatorResponse(result, {
+    isResponse: isPreparation,
+    malformedMessage: (code) => `候选准备无法完成。SSH 命令退出码为 ${code ?? '未知'}。`,
+    exitMessage: (code) => `候选准备无法完成。SSH 命令退出码为 ${code ?? '未知'}。`,
+    allowsNonzeroExit: (response) => response.state === 'failed',
+  });
 }
 
 function isPreparation(value: unknown): value is CandidatePreparation {

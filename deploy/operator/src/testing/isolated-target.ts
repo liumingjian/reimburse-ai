@@ -38,11 +38,11 @@ export type ManagedServiceController = {
   stopProxy: () => void;
   restartProxy: () => void;
   failNextStart: (service: 'baox' | 'proxy') => void;
-  failProxyVerification: () => void;
-  serveWrongSessionUntilReopen: () => void;
-  clearProxyVerificationFailure: () => void;
+  failLoopbackProbeVerification: () => void;
+  serveWrongLoopbackSession: () => void;
   refuseNextAdmission: () => void;
   commands: () => string[];
+  loopbackProbeStarts: () => number;
 };
 
 export type SnapshotIsolatedTarget = Omit<IsolatedTarget, 'server' | 'close'> & {
@@ -82,6 +82,7 @@ export class LocalTargetRunner {
   disconnectNextSnapshot = false;
   disconnectNextCutoverTransportOnly = false;
   interruptNextCutoverAtPhase: string | null = null;
+  interruptNextCutoverAfterPrivateProbeStart = false;
 
   constructor(private readonly fakeBin: string, private readonly barrier: string, private readonly environment: NodeJS.ProcessEnv = {}) {}
 
@@ -148,6 +149,20 @@ export class LocalTargetRunner {
           if (value.operation === 'cutover' && value.phase === phase) child.kill('SIGKILL');
         } catch {
           // The coordinator has not reached the requested durable phase yet.
+        }
+      }, 10);
+    }
+    if (this.interruptNextCutoverAfterPrivateProbeStart && remoteCommand.includes('cutover')) {
+      this.interruptNextCutoverAfterPrivateProbeStart = false;
+      const journal = join(profile.deployRoot, 'maintenance', 'deployment-journal.json');
+      const probeStarted = join(this.barrier, 'loopback-proxy-probe-started');
+      disconnectTimer = setInterval(() => {
+        try {
+          const value = JSON.parse(readFileSync(journal, 'utf8')) as { operation?: string; phase?: string };
+          if (value.operation !== 'cutover' || value.phase !== 'candidate-proxy-probe-started' || !existsSync(probeStarted)) return;
+          child.kill('SIGKILL');
+        } catch {
+          // The coordinator has not reached the durable private-probe checkpoint yet.
         }
       }, 10);
     }
@@ -310,8 +325,19 @@ export async function createSnapshotIsolatedTarget(options: IsolatedTargetOption
     failServiceStart: join(base.barrier, 'fail-baox-start'),
     failProxyStart: join(base.barrier, 'fail-proxy-start'),
     failProxyVerification: join(base.barrier, 'fail-proxy-verification'),
+    loopbackProbeVerification: join(base.barrier, 'fail-loopback-proxy-probe'),
     admitRefusal: join(base.barrier, 'next-admission-refused'),
+    loopbackProbeStarted: join(base.barrier, 'loopback-proxy-probe-started'),
   };
+  writeExecutable(join(deployRoot, 'bin', 'caddy'), caddyProbeScript({
+    node: join(deployRoot, 'runtime', 'node', 'bin', 'node'),
+    proxy,
+    servicePort,
+    publicPort,
+    publicHost,
+    proxyVerificationFile: state.loopbackProbeVerification,
+    probeStarted: state.loopbackProbeStarted,
+  }));
   writeExecutable(join(fakeBin, 'systemctl'), systemctlScript({
     barrier: base.barrier,
     node: join(deployRoot, 'runtime', 'node', 'bin', 'node'),
@@ -342,13 +368,11 @@ export async function createSnapshotIsolatedTarget(options: IsolatedTargetOption
     stopProxy: () => run('stop', 'baox-caddy.service'),
     restartProxy: () => run('restart', 'baox-caddy.service'),
     failNextStart: (service) => writeFileSync(service === 'baox' ? state.failServiceStart : state.failProxyStart, 'fail\n'),
-    failProxyVerification: () => writeFileSync(state.failProxyVerification, 'once\n'),
-    serveWrongSessionUntilReopen: () => writeFileSync(state.failProxyVerification, 'wrong-session-until-reopen\n'),
-    clearProxyVerificationFailure: () => {
-      if (existsSync(state.failProxyVerification)) unlinkSync(state.failProxyVerification);
-    },
+    failLoopbackProbeVerification: () => writeFileSync(state.loopbackProbeVerification, 'once\n'),
+    serveWrongLoopbackSession: () => writeFileSync(state.loopbackProbeVerification, 'wrong-session-until-reopen\n'),
     refuseNextAdmission: () => writeFileSync(state.admitRefusal, 'once\n'),
     commands: () => existsSync(state.commands) ? readFileSync(state.commands, 'utf8').trim().split('\n').filter(Boolean) : [],
+    loopbackProbeStarts: () => existsSync(state.loopbackProbeStarted) ? readFileSync(state.loopbackProbeStarted, 'utf8').trim().split('\n').filter(Boolean).length : 0,
   };
 
   controller.startService();
@@ -476,6 +500,65 @@ case "${'$'}action" in
   daemon-reload|enable) exit 0 ;;
   *) exit 2 ;;
 esac
+`;
+}
+
+function caddyProbeScript(values: {
+  node: string;
+  proxy: string;
+  servicePort: number;
+  publicPort: number;
+  publicHost: string;
+  proxyVerificationFile: string;
+  probeStarted: string;
+}): string {
+  const adapted = JSON.stringify({
+    apps: {
+      http: {
+        servers: {
+          srv0: {
+            listen: [`:${values.publicPort}`],
+            routes: [{ handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: `127.0.0.1:${values.servicePort}` }] }] }],
+          },
+        },
+      },
+    },
+  });
+  return `#!/bin/sh
+set -eu
+case "${'$'}{1:-}" in
+  version) printf 'v2.10.2\\n'; exit 0 ;;
+  validate) exit 0 ;;
+  adapt) printf '%s\\n' ${shellQuote(adapted)}; exit 0 ;;
+  run) ;;
+  *) exit 2 ;;
+esac
+shift
+configuration=''
+while [ "${'$'}#" -gt 0 ]; do
+  case "${'$'}1" in
+    --config) configuration="${'$'}2"; shift 2 ;;
+    --adapter) exit 2 ;;
+    *) shift ;;
+  esac
+done
+[ -n "${'$'}configuration" ] || exit 2
+port=$(${shellQuote(values.node)} - "${'$'}configuration" <<'NODE'
+const fs = require('node:fs');
+const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const servers = config && config.apps && config.apps.http && config.apps.http.servers;
+if (!config || !config.admin || config.admin.disabled !== true || !config.storage || config.storage.module !== 'file_system' || typeof config.storage.root !== 'string') process.exit(2);
+if (!servers || Object.keys(config.apps).some((name) => name !== 'http')) process.exit(2);
+const server = Object.values(servers)[0];
+if (!server || !server.automatic_https || server.automatic_https.disable !== true) process.exit(2);
+const listen = Array.isArray(server.listen) ? server.listen[0] : null;
+const match = typeof listen === 'string' && /^127\\.0\\.0\\.1:(\\d+)$/.exec(listen);
+if (!match) process.exit(2);
+process.stdout.write(match[1]);
+NODE
+)
+printf 'started\\n' >> ${shellQuote(values.probeStarted)}
+exec env BAOX_PROXY_PORT="${'$'}port" BAOX_UPSTREAM_PORT=${shellQuote(String(values.servicePort))} BAOX_PUBLIC_HOST=${shellQuote(values.publicHost)} BAOX_PROXY_FAILURE_FILE=${shellQuote(values.proxyVerificationFile)} ${shellQuote(values.node)} ${shellQuote(values.proxy)}
 `;
 }
 

@@ -39,7 +39,8 @@ const USAGE = [
 export async function runOperatorCli(argv: readonly string[], dependencies: OperatorDependencies, io: CliIo): Promise<number> {
   try {
     const { argumentsWithoutJson, json } = extractJson(argv);
-    const [command, ...rest] = argumentsWithoutJson;
+    const normalizedArguments = argumentsWithoutJson[0] === '--' ? argumentsWithoutJson.slice(1) : argumentsWithoutJson;
+    const [command, ...rest] = normalizedArguments;
     switch (command) {
       case 'plan':
         return await plan(rest, dependencies, io, json);
@@ -124,8 +125,8 @@ async function prepare(args: readonly string[], dependencies: OperatorDependenci
   if (!parsed) return usage(io);
   if (!dependencies.candidate) throw new Error('当前操作环境没有候选准备驱动。');
   const gate = gateValue(await dependencies.host.execute({ kind: 'gate-status' }));
-  if (!gateAllowsRoutineDeployment(gate)) {
-    const refusal = gateRefusal(gate);
+  if (!gateAllowsSnapshot(gate)) {
+    const refusal = preparationGateRefusal(gate);
     emit(io, json, { command: 'prepare', profile: publicProfile(), maintenanceGate: gate, refusal }, [refusal]);
     return 1;
   }
@@ -526,6 +527,11 @@ function gateRefusal(gate: GateStatus): string {
 function snapshotGateRefusal(gate: GateStatus): string {
   if (gate.kind !== 'available') return gateRefusal(gate).replace('常规部署', '恢复快照');
   return '拒绝恢复快照：维护闸门没有处于已验证的开放状态。';
+}
+
+function preparationGateRefusal(gate: GateStatus): string {
+  if (gate.kind !== 'available') return gateRefusal(gate).replace('常规部署', '候选准备');
+  return '拒绝候选准备：维护闸门没有处于已验证的开放状态。';
 }
 
 function routinePrerequisiteRefusal(report: DoctorReport): string | null {

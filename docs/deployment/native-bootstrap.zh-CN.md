@@ -8,7 +8,7 @@ Python 和构建虚拟环境，以及固定版本的 pnpm；不会替换系统 G
 先在维护人员本机确认 GitHub CLI 可以查询公开证明，再从仓库根目录运行预览：
 
 ```bash
-pnpm --filter @baox/operator operator -- bootstrap-preview --proxy http://192.168.2.201:7890
+pnpm --filter @baox/operator operator bootstrap-preview --proxy http://192.168.2.201:7890
 ```
 
 预览会让主机解析实际的 dnf 事务，列出每个包，并输出确认摘要。只允许四个构建输入
@@ -18,7 +18,7 @@ pnpm --filter @baox/operator operator -- bootstrap-preview --proxy http://192.16
 人工复核包名、NEVRA 和摘要后，使用预览给出的完整摘要执行：
 
 ```bash
-pnpm --filter @baox/operator operator -- \
+pnpm --filter @baox/operator operator \
   bootstrap-apply --confirm <64-hex-确认摘要> --proxy http://192.168.2.201:7890
 ```
 
@@ -34,10 +34,10 @@ pnpm --filter @baox/operator operator -- \
 每个文件，随后才会执行 dnf 事务。
 
 ```bash
-pnpm --filter @baox/operator operator -- \
+pnpm --filter @baox/operator operator \
   bootstrap-preview --proxy http://192.168.2.201:7890 --relay /secure/baox-bootstrap
 
-pnpm --filter @baox/operator operator -- \
+pnpm --filter @baox/operator operator \
   bootstrap-apply --confirm <64-hex-确认摘要> \
   --proxy http://192.168.2.201:7890 --relay /secure/baox-bootstrap
 ```

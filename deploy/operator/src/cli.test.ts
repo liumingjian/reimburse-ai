@@ -72,6 +72,17 @@ it('locks origin/main to a committed archive and reports excluded local changes 
   expect(target.commands).toEqual([]);
 });
 
+it('accepts pnpm\'s leading argument separator at the CLI boundary', async () => {
+  const repository = committedRepository();
+  const target = new ControllableTarget({ gate: openGate() });
+
+  const result = await cli(repository, target, '--', 'plan', '--json');
+
+  expect(result).toMatchObject({ code: 0, err: '' });
+  expect(JSON.parse(result.out)).toMatchObject({ command: 'plan' });
+  expect(target.commands).toEqual([]);
+});
+
 it('runs status, doctor, and logs through the same injected CLI target without a production target override', async () => {
   const repository = committedRepository();
   const target = new ControllableTarget({ gate: openGate(), logs: 'baox started' });
@@ -216,6 +227,36 @@ it('refuses candidate preparation before source selection or target coordination
 
   expect(code).toBe(1);
   expect(out.join('\n')).toContain('首次启用');
+  expect(err).toEqual([]);
+  expect(prepares).toBe(0);
+  expect(target.commands).toEqual([{ kind: 'gate-status' }]);
+});
+
+it('refuses candidate preparation while the maintenance barrier is admitted before reading an archive or touching a candidate', async () => {
+  const target = new ControllableTarget({
+    gate: { kind: 'available', response: { version: 1, state: 'admitted', barrier: true, activeWrites: 0, activeErpAttempt: false } },
+  });
+  let prepares = 0;
+  const candidate: CandidateTransport = {
+    async prepare() {
+      prepares += 1;
+      return { state: 'prepared', candidateId: 'candidate', manifest: '/tmp/manifest.json' };
+    },
+    async inspect() {
+      return { state: 'inspection', lock: { state: 'inactive' }, journal: null, manifest: null };
+    },
+  };
+  const source = {
+    plan: async () => { throw new Error('source plan must not run'); },
+    archive: async () => { throw new Error('source archive must not run'); },
+  };
+  const out: string[] = [];
+  const err: string[] = [];
+
+  const code = await runOperatorCli(['prepare', '--json'], { source, host: target, candidate }, { out: (line) => out.push(line), err: (line) => err.push(line) });
+
+  expect(code).toBe(1);
+  expect(out.join('\n')).toContain('开放状态');
   expect(err).toEqual([]);
   expect(prepares).toBe(0);
   expect(target.commands).toEqual([{ kind: 'gate-status' }]);

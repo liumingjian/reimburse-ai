@@ -68,7 +68,7 @@ it('restores data, configuration, runtime reference, and original release when c
 
   const result = await cli(target, source, 'deploy', '--candidate', prepared, '--json');
 
-  expect(result.code).toBe(1);
+  expect(result.code, `${result.out}\n${result.err}`).toBe(1);
   const output = JSON.parse(result.out) as { cutover: { state: string; snapshotId: string; code: string } };
   expect(output.cutover).toMatchObject({ state: 'restored', code: 'service-command-failed' });
   expect(readlinkSync(target.current)).toBe(`releases/${releaseA}`);
@@ -95,26 +95,29 @@ it('restores data, configuration, runtime reference, and original release when c
   });
 }, 120_000);
 
-it('restores the original release when candidate proxy verification cannot start before reopening', async () => {
+it('restores the original release when the private candidate proxy probe cannot verify before reopening', async () => {
   const target = await createTarget();
   const releaseA = installManagedCurrentRelease(target, 'release-a');
   const source = candidateRepository(target, 'candidate-proxy-start-failure');
   const prepared = await prepareCandidate(target, source);
   const originalCaddyfile = readFileSync(target.activeConfiguration[0]!);
   const commandsBefore = target.controller.commands().length;
-  target.controller.failNextStart('proxy');
+  target.controller.failLoopbackProbeVerification();
 
   const result = await cli(target, source, 'deploy', '--candidate', prepared, '--json');
 
-  expect(result.code).toBe(1);
-  expect(JSON.parse(result.out)).toMatchObject({ cutover: { state: 'restored', code: 'service-command-failed' } });
+  expect(result.code, `${result.out}\n${result.err}`).toBe(1);
+  expect(JSON.parse(result.out)).toMatchObject({ cutover: { state: 'restored', code: 'candidate-proxy-verification-failed' } });
   expect(readlinkSync(target.current)).toBe(`releases/${releaseA}`);
   expect(readFileSync(target.activeConfiguration[0]!)).toEqual(originalCaddyfile);
   const commands = target.controller.commands().slice(commandsBefore);
   const candidateStart = commands.indexOf('start baox.service');
-  const proxyProbe = commands.indexOf('start baox-caddy.service');
   expect(candidateStart).toBeGreaterThan(-1);
-  expect(proxyProbe).toBeGreaterThan(candidateStart);
+  expect(target.controller.loopbackProbeStarts()).toBeGreaterThan(0);
+  expect(commands.slice(0, commands.lastIndexOf('start baox-caddy.service'))).not.toContain('start baox-caddy.service');
+  const probeParent = join(target.profile.deployRoot, 'proxy-probes');
+  expect(statSync(probeParent).mode & 0o777).toBe(0o710);
+  expect(readFileSync(join(target.barrier, 'chown.log'), 'utf8')).toContain(`root:baox ${probeParent}`);
   expect((await fetch(`${target.controller.publicUrl}/api/session`)).status).toBeLessThan(500);
   await expect(new SshHostTransport({ profile: target.profile, runner: target.runner.run }).execute({ kind: 'gate-status' })).resolves.toMatchObject({
     kind: 'gate-status', value: { kind: 'available', response: { state: 'open', barrier: false } },
@@ -126,12 +129,12 @@ it('restores the original release when a reachable candidate proxy returns a non
   const releaseA = installManagedCurrentRelease(target, 'release-a');
   const source = candidateRepository(target, 'candidate-wrong-proxy-session');
   const prepared = await prepareCandidate(target, source);
-  target.controller.serveWrongSessionUntilReopen();
+  target.controller.serveWrongLoopbackSession();
 
   const result = await cli(target, source, 'deploy', '--candidate', prepared, '--json');
 
   expect(result.code).toBe(1);
-  expect(JSON.parse(result.out)).toMatchObject({ cutover: { state: 'restored', code: 'service-verification-failed' } });
+  expect(JSON.parse(result.out)).toMatchObject({ cutover: { state: 'restored', code: 'candidate-proxy-verification-failed' } });
   expect(readlinkSync(target.current)).toBe(`releases/${releaseA}`);
   const response = await fetch(`${target.controller.publicUrl}/api/session`);
   expect(response.status).toBe(200);
@@ -248,6 +251,47 @@ it('reconciles an interrupted pre-access switch through the CLI without taking a
   expect(readlinkSync(target.current)).toBe(`releases/${releaseA}`);
   expect(verifiedSnapshots(target)).toHaveLength(snapshotsBeforeReconciliation);
   expect((await fetch(`${target.controller.publicUrl}/api/session`)).status).toBeLessThan(500);
+}, 120_000);
+
+it('never starts the public proxy when the coordinator dies after starting the private candidate probe, then restores before access', async () => {
+  const target = await createTarget();
+  const releaseA = installManagedCurrentRelease(target, 'release-a');
+  const source = candidateRepository(target, 'candidate-interrupted-private-probe');
+  const prepared = await prepareCandidate(target, source);
+  const commandsBefore = target.controller.commands().length;
+  target.runner.interruptNextCutoverAfterPrivateProbeStart = true;
+
+  const interrupted = await cli(target, source, 'deploy', '--candidate', prepared, '--json');
+
+  expect(interrupted.code).toBe(3);
+  await waitFor(() => {
+    const journal = join(target.profile.deployRoot, 'maintenance', 'deployment-journal.json');
+    return existsSync(journal) && (JSON.parse(readFileSync(journal, 'utf8')) as { phase?: string }).phase === 'candidate-proxy-probe-started';
+  });
+  expect(target.controller.loopbackProbeStarts()).toBeGreaterThan(0);
+  const interruptedCommands = target.controller.commands().slice(commandsBefore);
+  expect(interruptedCommands).not.toContain('start baox-caddy.service');
+  const probeParent = join(target.profile.deployRoot, 'proxy-probes');
+  const [probeToken] = readdirSync(probeParent);
+  expect(statSync(probeParent).mode & 0o777).toBe(0o710);
+  expect(statSync(join(probeParent, probeToken!)).mode & 0o777).toBe(0o710);
+  expect(statSync(join(probeParent, probeToken!, 'owner.json')).mode & 0o777).toBe(0o600);
+  expect(statSync(join(probeParent, probeToken!, 'caddy.json')).mode & 0o777).toBe(0o640);
+  expect(statSync(join(probeParent, probeToken!, 'start-gate')).mode & 0o777).toBe(0o600);
+  expect(JSON.parse(readFileSync(join(probeParent, probeToken!, 'owner.json'), 'utf8'))).toMatchObject({ state: 'running' });
+  const ownership = readFileSync(join(target.barrier, 'chown.log'), 'utf8');
+  expect(ownership).toContain(`root:baox ${probeParent}`);
+  expect(ownership).toContain(`root:baox ${join(probeParent, probeToken!, 'caddy.json')}`);
+  expect(ownership).toContain(`root:root ${join(probeParent, probeToken!, 'owner.json')}`);
+  expect(ownership).toContain(`root:root ${join(probeParent, probeToken!, 'start-gate')}`);
+  await expect(fetch(`${target.controller.publicUrl}/api/session`)).rejects.toThrow();
+
+  const reconciled = await cli(target, source, 'deploy', '--candidate', prepared, '--json');
+
+  expect(reconciled.code, `${reconciled.out}\n${reconciled.err}`).toBe(1);
+  expect(JSON.parse(reconciled.out)).toMatchObject({ reconciliation: true, cutover: { state: 'restored', candidateId: prepared } });
+  expect(readlinkSync(target.current)).toBe(`releases/${releaseA}`);
+  expect((await fetch(`${target.controller.publicUrl}/api/session`)).status).toBe(200);
 }, 120_000);
 
 it('hands post-access uncertainty to an operator without restoring post-reopen SQLite or blob writes', async () => {

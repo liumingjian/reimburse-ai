@@ -154,6 +154,7 @@ function targetPaths(request) {
     workerStartGate: path.join(candidate, 'worker-start'),
     log: path.join(candidate, 'worker.log'),
     recoveryConfig: path.join(candidate, 'recovery-config'),
+    proxyProbeRoot: path.join(request.deployRoot, 'proxy-probes'),
     snapshotRoot: path.join(request.deployRoot, 'recovery-snapshots'),
     releaseRoot: path.join(request.deployRoot, 'releases'),
   };
@@ -538,6 +539,14 @@ async function continueCutover(request, paths, lease, held) {
     await release(paths, lease).catch(() => undefined);
     return recoveryRequiredResult(request, 'held-snapshot-not-verifiable');
   }
+  try {
+    await recoverCandidateProxyProbes(paths);
+  } catch (error) {
+    const code = failureCode(error, 'candidate-proxy-probe-recovery-required');
+    await writeJournal(request, paths, lease, 'recovery-required', { failure: code }).catch(() => undefined);
+    await release(paths, lease).catch(() => undefined);
+    return recoveryRequiredResult(request, code);
+  }
 
   try {
     const candidate = await verifyCutoverCandidate(request, paths, snapshot.manifest);
@@ -619,6 +628,7 @@ async function reopenCandidate(request, paths, lease, candidate, snapshotId) {
 async function restoreCutoverBeforeAccess(request, paths, lease, journal, failure) {
   const snapshotId = typeof journal.snapshotId === 'string' ? journal.snapshotId : request.snapshotId;
   try {
+    await recoverCandidateProxyProbes(paths);
     const snapshot = await readPublishedSnapshot(paths, snapshotId, request.candidateId);
     if (!snapshot) throw new CandidateFailure('cutover-snapshot-not-verifiable');
     await writeJournal(request, paths, lease, 'restoring', { snapshotId, failure });
@@ -883,7 +893,7 @@ async function activateCandidate(request, paths, lease, candidate, snapshotManif
   const active = await verifyActiveCutoverCandidate(request, paths);
   if (active.executableSha256 !== candidate.executableSha256) throw new CandidateFailure('candidate-runtime-verification-failed');
   await requireAdmittedCandidateGate(request);
-  await verifyCandidateProxyWhileAdmitted(request, active);
+  await verifyCandidateProxyWhileAdmitted(request, paths, lease, active, snapshotId);
   await requireAdmittedCandidateGate(request);
 }
 
@@ -899,16 +909,309 @@ async function requireAdmittedCandidateGate(request) {
   if (!isAdmittedGate(gate)) throw new CandidateFailure('maintenance-gate-not-held-during-candidate-verification');
 }
 
-async function verifyCandidateProxyWhileAdmitted(request, candidate) {
-  let started = false;
+async function verifyCandidateProxyWhileAdmitted(request, paths, lease, candidate, snapshotId) {
+  const probe = await startCandidateProxyProbe(request, paths, lease);
   try {
-    await systemctl('start', 'baox-caddy.service');
-    started = true;
-    await waitForHttp(candidate.public);
+    await writeJournal(request, paths, lease, 'candidate-proxy-probe-started', {
+      snapshotId,
+      probe: { portCount: probe.ports.length, pid: probe.owner.pid, startIdentity: probe.owner.startIdentity },
+    });
+    await waitForCandidateProxyProbe(probe, candidate.public.host);
     await requireAdmittedCandidateGate(request);
   } finally {
-    if (started) await systemctl('stop', 'baox-caddy.service');
+    await stopCandidateProxyProbe(paths, probe);
   }
+}
+
+async function startCandidateProxyProbe(request, paths, lease) {
+  await recoverCandidateProxyProbes(paths);
+  await requireLease(paths, lease);
+  await ensureBaoxTraversalDirectory(paths.proxyProbeRoot, 0o710, 'candidate-proxy-probe-parent-permissions-invalid');
+  const root = path.join(paths.proxyProbeRoot, lease.token);
+  const existing = await fs.lstat(root).catch(() => null);
+  if (existing) throw new CandidateFailure('candidate-proxy-probe-path-conflict');
+  let child;
+  let childStartIdentity = null;
+  try {
+    await fs.mkdir(root, { mode: 0o710 });
+    await ensureBaoxTraversalDirectory(root, 0o710, 'candidate-proxy-probe-path-permissions-invalid');
+    const runtime = {
+      config: path.join(root, 'config'),
+      data: path.join(root, 'data'),
+      cache: path.join(root, 'cache'),
+      storage: path.join(root, 'storage'),
+    };
+    for (const directory of Object.values(runtime)) await fs.mkdir(directory, { mode: 0o700 });
+
+    const caddy = path.join(request.deployRoot, 'bin', 'caddy');
+    const configuration = path.join(request.deployRoot, 'etc', 'Caddyfile');
+    const adapted = await runCommand(caddy, ['adapt', '--config', configuration, '--adapter', 'caddyfile']);
+    if (adapted.code !== 0) throw new CandidateFailure('candidate-proxy-configuration-invalid');
+    const privateConfiguration = await loopbackCaddyConfiguration(adapted.stdout, runtime.storage);
+    const configurationPath = path.join(root, 'caddy.json');
+    await writeAtomic(configurationPath, JSON.stringify(privateConfiguration.config) + '\n', 0o640);
+    const configurationOwnership = await runCommand('chown', ['root:baox', configurationPath]);
+    if (configurationOwnership.code !== 0) throw new CandidateFailure('candidate-proxy-probe-permissions-invalid');
+    await fs.chmod(configurationPath, 0o640);
+    await fsyncDirectory(root);
+
+    for (const directory of Object.values(runtime)) {
+      const ownership = await runCommand('chown', ['-R', 'baox:baox', directory]);
+      if (ownership.code !== 0) throw new CandidateFailure('candidate-proxy-probe-permissions-invalid');
+      await fsyncDirectory(directory);
+    }
+    const coordinatorStartIdentity = await waitForProcessIdentity(process.pid);
+    const ownerPath = path.join(root, 'owner.json');
+    const starting = {
+      schema: SCHEMA,
+      state: 'starting',
+      leaseToken: lease.token,
+      coordinatorPid: process.pid,
+      coordinatorStartIdentity,
+    };
+    await writeAtomic(ownerPath, JSON.stringify(starting) + '\n', 0o600);
+    const ownerOwnership = await runCommand('chown', ['root:root', ownerPath]);
+    if (ownerOwnership.code !== 0) throw new CandidateFailure('candidate-proxy-probe-permissions-invalid');
+    await fs.chmod(ownerPath, 0o600);
+    await fsyncDirectory(root);
+    const startGate = path.join(root, 'start-gate');
+    child = await startDetachedProbe(request, runtime, caddy, configurationPath, coordinatorStartIdentity, startGate);
+    childStartIdentity = await waitForProcessIdentity(child.pid);
+    const owner = {
+      ...starting,
+      state: 'running',
+      pid: child.pid,
+      startIdentity: childStartIdentity,
+    };
+    await writeAtomic(ownerPath, JSON.stringify(owner) + '\n', 0o600);
+    const runningOwnerOwnership = await runCommand('chown', ['root:root', ownerPath]);
+    if (runningOwnerOwnership.code !== 0) throw new CandidateFailure('candidate-proxy-probe-permissions-invalid');
+    await fs.chmod(ownerPath, 0o600);
+    await fsyncDirectory(root);
+    await writeAtomic(startGate, `${lease.token}\n`, 0o600);
+    const gateOwnership = await runCommand('chown', ['root:root', startGate]);
+    if (gateOwnership.code !== 0) throw new CandidateFailure('candidate-proxy-probe-permissions-invalid');
+    await fs.chmod(startGate, 0o600);
+    await fsyncDirectory(root);
+    return { root, ownerPath, owner, ports: privateConfiguration.ports };
+  } catch (error) {
+    // The supervisor cannot launch Caddy until the root-owned start gate is
+    // created after this PID has a durable start identity. Before that point,
+    // cleanup removes the gate path and never signals an unfenced PID.
+    if (childStartIdentity && child && Number.isSafeInteger(child.pid) && child.pid > 0) {
+      await terminateProbeProcess(child.pid, childStartIdentity).catch(() => undefined);
+    }
+    await fs.rm(root, { recursive: true, force: true }).catch(() => undefined);
+    await fsyncDirectory(paths.proxyProbeRoot);
+    throw error instanceof CandidateFailure ? error : new CandidateFailure('candidate-proxy-probe-start-failed');
+  }
+}
+
+async function loopbackCaddyConfiguration(stdout, storage) {
+  let config;
+  try {
+    config = JSON.parse(stdout);
+  } catch {
+    throw new CandidateFailure('candidate-proxy-configuration-invalid');
+  }
+  if (!config || typeof config !== 'object' || Array.isArray(config) || !config.apps || typeof config.apps !== 'object' || Array.isArray(config.apps)) {
+    throw new CandidateFailure('candidate-proxy-configuration-invalid');
+  }
+  for (const name of Object.keys(config.apps)) {
+    if (name !== 'http') throw new CandidateFailure('candidate-proxy-probe-unsupported-app');
+  }
+  const servers = config.apps.http && config.apps.http.servers;
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers) || Object.keys(servers).length === 0) {
+    throw new CandidateFailure('candidate-proxy-configuration-invalid');
+  }
+  const ports = [];
+  for (const name of Object.keys(servers).sort()) {
+    const server = servers[name];
+    if (!server || typeof server !== 'object' || Array.isArray(server)) throw new CandidateFailure('candidate-proxy-configuration-invalid');
+    const port = await allocateLoopbackPort();
+    server.listen = [`127.0.0.1:${port}`];
+    server.automatic_https = { disable: true };
+    ports.push(port);
+  }
+  config.admin = { disabled: true };
+  config.storage = { module: 'file_system', root: storage };
+  return { config, ports };
+}
+
+function allocateLoopbackPort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = address && typeof address === 'object' ? address.port : null;
+      server.close((error) => error ? reject(error) : resolve(port));
+    });
+  }).then((port) => {
+    if (!Number.isSafeInteger(port) || port < 1024 || port > 65_535) throw new CandidateFailure('candidate-proxy-probe-port-unavailable');
+    return port;
+  });
+}
+
+async function startDetachedProbe(request, runtime, caddy, configuration, coordinatorStartIdentity, startGate) {
+  const args = [
+    '-u', 'baox', '--', 'env', '-i',
+    `HOME=${request.serviceHome}`,
+    `XDG_CONFIG_HOME=${runtime.config}`,
+    `XDG_DATA_HOME=${runtime.data}`,
+    `XDG_CACHE_HOME=${runtime.cache}`,
+    'PATH=/usr/local/bin:/usr/bin:/bin',
+    '/bin/sh', '-c', probeSupervisorScript(), '--',
+    String(process.pid), coordinatorStartIdentity, caddy, configuration, startGate,
+  ];
+  return new Promise((resolve, reject) => {
+    const child = spawn('runuser', args, { detached: true, stdio: 'ignore' });
+    child.once('error', reject);
+    child.once('spawn', () => {
+      child.unref();
+      resolve(child);
+    });
+  });
+}
+
+function probeSupervisorScript() {
+  return `set -eu
+parent_pid="${'$'}1"
+parent_identity="${'$'}2"
+caddy="${'$'}3"
+configuration="${'$'}4"
+start_gate="${'$'}5"
+parent_is_current() {
+  case "${'$'}parent_identity" in
+    linux:*)
+      [ -r "/proc/${'$'}parent_pid/stat" ] || return 1
+      start="$(awk '{print ${'$'}22}' "/proc/${'$'}parent_pid/stat")"
+      [ "linux:${'$'}start" = "${'$'}parent_identity" ]
+      ;;
+    *) kill -0 "${'$'}parent_pid" 2>/dev/null ;;
+  esac
+}
+attempt=0
+while [ ! -f "${'$'}start_gate" ]; do
+  parent_is_current || exit 0
+  attempt=$((attempt + 1))
+  [ "${'$'}attempt" -lt 600 ] || exit 0
+  sleep 0.05
+done
+parent_is_current || exit 0
+"${'$'}caddy" run --config "${'$'}configuration" &
+caddy_pid="${'$'}!"
+cleanup() {
+  kill -TERM "${'$'}caddy_pid" 2>/dev/null || true
+  wait "${'$'}caddy_pid" 2>/dev/null || true
+}
+trap cleanup EXIT HUP INT TERM
+while kill -0 "${'$'}caddy_pid" 2>/dev/null; do
+  parent_is_current || exit 0
+  sleep 0.1
+done
+wait "${'$'}caddy_pid"
+`;
+}
+
+async function waitForCandidateProxyProbe(probe, host) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    if (!probeProcessMatches(probe.owner)) throw new CandidateFailure('candidate-proxy-probe-stopped');
+    for (const port of probe.ports) {
+      const outcome = await httpSessionOutcome(port, host);
+      if (outcome === 'ready') return;
+      if (outcome === 'invalid') throw new CandidateFailure('candidate-proxy-verification-failed');
+    }
+    await delay(250);
+  }
+  throw new CandidateFailure('candidate-proxy-verification-failed');
+}
+
+async function stopCandidateProxyProbe(paths, probe) {
+  const owner = await readJson(probe.ownerPath);
+  if (!sameProbeOwner(owner, probe.owner)) throw new CandidateFailure('candidate-proxy-probe-owner-lost');
+  await terminateProbeProcess(probe.owner.pid, probe.owner.startIdentity);
+  await fs.rm(probe.root, { recursive: true, force: true });
+  await fsyncDirectory(paths.proxyProbeRoot);
+}
+
+async function recoverCandidateProxyProbes(paths) {
+  const entries = await fs.readdir(paths.proxyProbeRoot, { withFileTypes: true }).catch((error) => {
+    if (error && error.code === 'ENOENT') return [];
+    throw error;
+  });
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.isSymbolicLink() || !isLeaseToken(entry.name)) throw new CandidateFailure('candidate-proxy-probe-recovery-required');
+    const root = path.join(paths.proxyProbeRoot, entry.name);
+    const owner = await readJson(path.join(root, 'owner.json'));
+    if (!validProbeOwner(owner)) throw new CandidateFailure('candidate-proxy-probe-recovery-required');
+    if (probeCoordinatorMatches(owner)) throw new CandidateFailure('candidate-proxy-probe-still-active');
+    if (owner.state === 'running') await terminateProbeProcess(owner.pid, owner.startIdentity);
+    else await delay(250);
+    await fs.rm(root, { recursive: true, force: true });
+    await fsyncDirectory(paths.proxyProbeRoot);
+  }
+}
+
+function validProbeOwner(owner) {
+  if (!owner || typeof owner !== 'object' || owner.schema !== SCHEMA || !isLeaseToken(owner.leaseToken)
+    || !Number.isSafeInteger(owner.coordinatorPid) || owner.coordinatorPid < 1
+    || typeof owner.coordinatorStartIdentity !== 'string' || !owner.coordinatorStartIdentity
+    || !['starting', 'running'].includes(owner.state)) return false;
+  if (owner.state === 'starting') return true;
+  return Number.isSafeInteger(owner.pid) && owner.pid > 0 && typeof owner.startIdentity === 'string' && owner.startIdentity;
+}
+
+function sameProbeOwner(left, right) {
+  return validProbeOwner(left) && validProbeOwner(right) && left.state === 'running' && right.state === 'running'
+    && left.leaseToken === right.leaseToken && left.pid === right.pid && left.startIdentity === right.startIdentity;
+}
+
+function probeCoordinatorMatches(owner) {
+  return processMatchesIdentity(owner.coordinatorPid, owner.coordinatorStartIdentity);
+}
+
+function probeProcessMatches(owner) {
+  return processMatchesIdentity(owner.pid, owner.startIdentity);
+}
+
+function processMatchesIdentity(pid, identity) {
+  if (!Number.isSafeInteger(pid) || pid < 1 || typeof identity !== 'string') return false;
+  if (processStartIdentity(pid) !== identity) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function terminateProbeProcess(pid, identity) {
+  if (!identity || !processMatchesIdentity(pid, identity)) return;
+  try {
+    process.kill(-pid, 'SIGTERM');
+  } catch {
+    try { process.kill(pid, 'SIGTERM'); } catch { return; }
+  }
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    if (!probeProcessStillAlive(pid, identity)) return;
+    await delay(25);
+  }
+  if (!probeProcessStillAlive(pid, identity)) return;
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch {
+    try { process.kill(pid, 'SIGKILL'); } catch { return; }
+  }
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (!probeProcessStillAlive(pid, identity)) return;
+    await delay(25);
+  }
+  throw new CandidateFailure('candidate-proxy-probe-cleanup-failed');
+}
+
+function probeProcessStillAlive(pid, identity) {
+  return Boolean(identity) && processMatchesIdentity(pid, identity);
 }
 
 async function applyCandidateConfiguration(request, paths, lease, configuration, snapshotManifest) {
@@ -2213,8 +2516,18 @@ async function waitForHttp({ port, host }) {
   throw new CandidateFailure('service-verification-failed');
 }
 
-function httpSession(port, host) {
+async function httpSession(port, host) {
+  return (await httpSessionOutcome(port, host)) === 'ready';
+}
+
+function httpSessionOutcome(port, host) {
   return new Promise((resolve) => {
+    let settled = false;
+    const settle = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
     const request = http.get({ hostname: '127.0.0.1', port, path: '/api/session', headers: host ? { host } : {}, timeout: 2_000 }, (response) => {
       const chunks = [];
       let bytes = 0;
@@ -2223,22 +2536,22 @@ function httpSession(port, host) {
         if (bytes <= 16 * 1024) chunks.push(chunk);
       });
       response.once('end', () => {
-        if (response.statusCode !== 200 || bytes > 16 * 1024) return resolve(false);
+        if (response.statusCode !== 200 || bytes > 16 * 1024) return settle('invalid');
         try {
-          resolve(isSessionResponse(JSON.parse(Buffer.concat(chunks).toString('utf8'))));
+          settle(isSessionResponse(JSON.parse(Buffer.concat(chunks).toString('utf8'))) ? 'ready' : 'invalid');
         } catch {
-          resolve(false);
+          settle('invalid');
         }
       });
-      response.once('aborted', () => resolve(false));
-      response.once('error', () => resolve(false));
-      response.once('close', () => resolve(false));
+      response.once('aborted', () => settle('pending'));
+      response.once('error', () => settle('pending'));
+      response.once('close', () => settle('pending'));
     });
     request.once('timeout', () => {
       request.destroy();
-      resolve(false);
+      settle('pending');
     });
-    request.once('error', () => resolve(false));
+    request.once('error', () => settle('pending'));
   });
 }
 

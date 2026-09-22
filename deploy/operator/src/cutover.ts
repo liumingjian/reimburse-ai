@@ -1,6 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { createCoordinatorInvocation } from './coordinator-transport.js';
+import { createCoordinatorInvocation, parseCoordinatorResponse, readCoordinatorSource } from './coordinator-transport.js';
 import { productionSshRunner, type SshRunner } from './host.js';
 import { NATIVE_PROFILE, type NativeProfile } from './profile.js';
 
@@ -75,25 +74,13 @@ export class SshCutoverTransport implements CutoverTransport {
   }
 }
 
-function readCoordinatorSource(): string {
-  return readFileSync(new URL('./candidate-coordinator.cjs', import.meta.url), 'utf8');
-}
-
 function cutoverResult(stdout: string, exitCode: number | null): CutoverResult {
-  const parsed = lastJson(stdout);
-  if (!isCutoverResult(parsed)) throw new Error(`发布切换无法完成。SSH 命令退出码为 ${exitCode ?? '未知'}。`);
-  if (exitCode !== 0 && parsed.state !== 'failed') throw new Error(`发布切换无法完成。SSH 命令退出码为 ${exitCode ?? '未知'}。`);
-  return parsed;
-}
-
-function lastJson(stdout: string): unknown {
-  const line = stdout.trim().split(/\r?\n/u).filter(Boolean).at(-1);
-  if (!line) return null;
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
+  return parseCoordinatorResponse({ stdout, exitCode }, {
+    isResponse: isCutoverResult,
+    malformedMessage: (code) => `发布切换无法完成。SSH 命令退出码为 ${code ?? '未知'}。`,
+    exitMessage: (code) => `发布切换无法完成。SSH 命令退出码为 ${code ?? '未知'}。`,
+    allowsNonzeroExit: (response) => response.state === 'failed',
+  });
 }
 
 function isCutoverResult(value: unknown): value is CutoverResult {

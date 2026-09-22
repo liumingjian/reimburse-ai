@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 
 export const LINUX_MAX_ARG_STRLEN = 128 * 1024;
@@ -16,6 +17,19 @@ export type CoordinatorInvocationOptions = Readonly<{
   coordinatorSource: string;
   request: unknown;
   archive?: CoordinatorArchive;
+}>;
+
+export type CoordinatorCommandResult = Readonly<{
+  stdout: string;
+  exitCode: number | null;
+}>;
+
+export type CoordinatorResponseOptions<T> = Readonly<{
+  isResponse: (value: unknown) => value is T;
+  malformedMessage: (exitCode: number | null) => string;
+  exitMessage: (exitCode: number | null) => string;
+  allowsNonzeroExit?: (response: T) => boolean;
+  rejectNonzeroBeforeParsing?: boolean;
 }>;
 
 const FRAME_MAGIC = 'BCO1';
@@ -90,6 +104,27 @@ export function createCoordinatorInvocation(options: CoordinatorInvocationOption
   };
 }
 
+/** Reads the target-side implementation once, without putting it in argv or env. */
+export function readCoordinatorSource(): string {
+  return readFileSync(new URL('./candidate-coordinator.cjs', import.meta.url), 'utf8');
+}
+
+/**
+ * Extracts the final coordinator JSON record while preserving each operation's
+ * response schema and user-facing failure semantics.
+ */
+export function parseCoordinatorResponse<T>(result: CoordinatorCommandResult, options: CoordinatorResponseOptions<T>): T {
+  if (result.exitCode !== 0 && options.rejectNonzeroBeforeParsing) {
+    throw new Error(options.exitMessage(result.exitCode));
+  }
+  const parsed = lastJson(result.stdout);
+  if (!options.isResponse(parsed)) throw new Error(options.malformedMessage(result.exitCode));
+  if (result.exitCode !== 0 && !options.allowsNonzeroExit?.(parsed)) {
+    throw new Error(options.exitMessage(result.exitCode));
+  }
+  return parsed;
+}
+
 export function coordinatorLoaderCommand(nodePath: string, mode: string): string {
   return `set -eu\nexec ${shellQuote(nodePath)} -e ${shellQuote(COORDINATOR_LOADER)} -- ${shellQuote(mode)}`;
 }
@@ -112,6 +147,16 @@ async function* frame(source: Buffer, request: Buffer, archive: CoordinatorArchi
   yield request;
   if (!archive) return;
   for await (const chunk of archive) yield Buffer.from(chunk);
+}
+
+function lastJson(stdout: string): unknown {
+  const line = stdout.trim().split(/\r?\n/u).filter(Boolean).at(-1);
+  if (!line) return null;
+  try {
+    return JSON.parse(line);
+  } catch {
+    return null;
+  }
 }
 
 function shellQuote(value: string): string {
