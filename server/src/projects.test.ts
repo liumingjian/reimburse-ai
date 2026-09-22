@@ -181,6 +181,27 @@ describe('project deadline advisories', () => {
     expect(actions).toMatchObject({ task: { taskId: start.task.taskId }, stage: 'actions', confirmation: { status: 'confirmed' } });
   });
 
+  it('does not revive a cleared current deadline from the submitted selection', async () => {
+    await book('intake', { number: 'P-2307', deadlineOn: '2026-08-10' });
+    const start = await inventoried([sample('m08')]);
+    const line = start.lines[0];
+    if (!line) throw new Error('expected one rail line');
+    const projects = { [line.lineId]: 'P-2307' };
+    const review = await client.accepted(await client.act(start, 'submit-project-assignment', { purpose: '返程车票', projects, acceptDeadlineWarnings: true }));
+    expect(review.projectAssignment.deadlineWarnings).toHaveLength(1);
+
+    const cleared = await alice.post('/api/project-book/edit', { originalNumber: 'P-2307', number: 'P-2307', name: '华东客户交付', deadlineOn: null });
+    expect(cleared.status).toBe(200);
+    const clearedProject = ProjectBookResultSchema.parse(await cleared.json()).book.projects[0];
+    expect(clearedProject).toMatchObject({ number: 'P-2307' });
+    expect(clearedProject?.deadlineOn ?? null).toBeNull();
+
+    const current = await client.current(start.task.taskId);
+    expect(current.projectAssignment.deadlineWarnings).toEqual([]);
+    const actions = await client.accepted(await client.act(current, 'confirm-review', { digest: current.confirmation.digest }));
+    expect(actions).toMatchObject({ stage: 'actions', confirmation: { status: 'confirmed' } });
+  });
+
   it('warns when a stay crosses the project deadline without splitting the task', async () => {
     await book('intake', { number: 'P-2307', deadlineOn: '2026-08-10' });
     const start = await inventoried([sample('m01'), sample('m02')]);

@@ -97,7 +97,7 @@ test('新建报销任务、上传一份 PDF，材料列在上传批次里，刷�
   await dialog.getByRole('button', { name: '创建并上传材料' }).click();
   await expect(page).toHaveURL(/#\/task\/[^/]+\/upload$/);
 
-  await page.locator('input[type=file]').setInputFiles({
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles({
     name: hotelInvoice.fileName,
     mimeType: 'application/pdf',
     buffer: readFileSync(join(GENERATED_DIR, hotelInvoice.file)),

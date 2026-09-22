@@ -11,7 +11,7 @@ import {
 } from '@baox/contract';
 import { HOME_CITY, SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, confirmationDigest, projectAssignmentOpen, projectAssignmentSubmitted, withLineProjects, withProjectUsage } from './projects';
 import { T2_ROWS, applyAbortAtHandover, applyErpDone, emptyReadback, emptyReconcile, erpWaitingLogin, idleErp, readbackOf, reconcileVerdict } from './erp';
-import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult, openPendingItemCount, withInventoryProjection } from './inventory';
+import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult, openPendingItemCount, withInventoryProjection, withLodgingEvidenceProjection } from './inventory';
 import { catalogMatched, catalogPending, catalogRunning, packageFilesOf, preparationPending } from './preparation';
 
 // 夹具：三个虚构的报销任务。人物与数字沿用原型（林颂宜、上海出差、9 条明细合计 3972.59）。
@@ -152,6 +152,7 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     pendingItems: [],
     blockers: [],
     lines: [],
+    lodgingEvidence: [],
     confirmation: { status: 'unconfirmed', confirmedAt: null, digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null, notice: null },
     paymentScreenshots: [],
     printSheet: { status: 'not_generated', fileName: null, url: null, pages: [], notices: [] },
@@ -223,7 +224,7 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
   if (stage === 'erp') snapshot.erp = erpWaitingLogin();
   if (stage === 'done') applyErpDone(snapshot);
   if (stage === 'reconcile') applyAbortAtHandover(snapshot);
-  return withProjectUsage(withInventoryProjection(snapshot));
+  return withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot)));
 }
 
 // T2：对账中（ERP 写入结果不确定后的停顿状态，不是失败）。
@@ -274,7 +275,7 @@ export function t2Snapshot(): TaskSnapshot {
     reasons: [],
     capture: null,
   };
-  return withProjectUsage(withInventoryProjection(snapshot));
+  return withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot)));
 }
 
 // T3：已完成，而且员工自己保存过，单据编号是这么来的。演示里唯一一条真的有编号的已完成任务：
@@ -316,7 +317,7 @@ export function t3Snapshot(): TaskSnapshot {
     erpAccount: null,
   };
   snapshot.readback = { status: 'matched', rows: [], summary: '明细 4/4 一致', localTotal: '2318.50', erpTotal: '2318.50' };
-  return withProjectUsage(withInventoryProjection(snapshot));
+  return withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot)));
 }
 
 // 任务列表层面的 ERP 结局：已转人工优先。严格回读不一致的草稿现在停在对账（不是完成），列表按「对账中」显示它，

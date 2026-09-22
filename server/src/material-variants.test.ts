@@ -94,4 +94,28 @@ describe('cross-format invoice variants', () => {
     expect(blocked.events).toEqual([]);
     expect(blocked.lines).toEqual([]);
   });
+
+  it('keeps the earliest retained variant claim when a later PDF becomes canonical', async () => {
+    const { task: aliceTask } = await client.createTask();
+    const photo = await client.upload(aliceTask.taskId, [source('variant-match.jpg', 'm09')]);
+    await client.accepted(await client.act(photo, 'start-inventory'));
+    await client.settled(aliceTask.taskId);
+
+    const bob = await server.signIn('bob');
+    const bobs = api(() => bob);
+    const { task: bobTask } = await bobs.createTask();
+    const bobUpload = await bobs.upload(bobTask.taskId, [source('variant-match.pdf', 'm07')]);
+    await bobs.accepted(await bobs.act(bobUpload, 'start-inventory'));
+    const initiallyBlocked = await bobs.settled(bobTask.taskId);
+    expect(initiallyBlocked.blockers).toEqual([expect.objectContaining({ kind: 'duplicate_across_tasks', fileName: 'variant-match.pdf' })]);
+
+    const laterPdf = await client.upload(aliceTask.taskId, [source('variant-match.pdf', 'm07')]);
+    await client.accepted(await client.act(laterPdf, 'start-inventory'));
+    const canonical = await client.settled(aliceTask.taskId);
+    expect(canonical.materials).toEqual([expect.objectContaining({ fileName: 'variant-match.pdf' })]);
+    expect(canonical.blockers).toEqual([]);
+
+    const stillBlocked = await bobs.current(bobTask.taskId);
+    expect(stillBlocked.blockers).toEqual([expect.objectContaining({ kind: 'duplicate_across_tasks', fileName: 'variant-match.pdf' })]);
+  });
 });

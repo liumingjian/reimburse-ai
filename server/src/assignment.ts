@@ -38,7 +38,9 @@ function deadlineWarningsOf(lines: readonly Line[], selection: Readonly<Record<s
     const selected = selection[line.lineId];
     if (!selected) return [];
     const current = options.find((option) => option.source === selected.source && option.number === selected.number) ?? options.find((option) => option.number === selected.number);
-    const deadlineOn = current?.deadlineOn ?? selected.deadlineOn;
+    // A saved current-book entry can deliberately clear its deadline. Only a project that no longer exists in the
+    // current book falls back to the deadline pinned with the submitted selection.
+    const deadlineOn = current === undefined ? selected.deadlineOn : current.deadlineOn;
     if (!deadlineOn) return [];
     const warning = { lineId: line.lineId, lineNo: line.no, projectNumber: selected.number, projectName: selected.name, deadlineOn };
     if (line.endDate !== null && line.date <= deadlineOn && line.endDate > deadlineOn) return [{ ...warning, kind: 'stay_crosses_deadline' as const }];

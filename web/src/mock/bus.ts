@@ -9,7 +9,7 @@ import {
   type ProjectOption,
   type TaskSnapshot,
 } from '@baox/contract';
-import { withInventoryProjection } from './fixtures/inventory';
+import { withInventoryProjection, withLodgingEvidenceProjection } from './fixtures/inventory';
 import { PROJECT_BOOK, withProjectUsage } from './fixtures/projects';
 import type { MockOptions } from './options';
 
@@ -89,7 +89,7 @@ export function createBus(options: MockOptions): MockBus {
 
   const put = (snapshot: TaskSnapshot, advanceRevision = false) => {
     const next = advanceRevision ? { ...snapshot, revision: snapshot.revision + 1 } : snapshot;
-    snapshots.set(next.task.taskId, TaskSnapshotSchema.parse(withProjectUsage(withInventoryProjection(next))));
+    snapshots.set(next.task.taskId, TaskSnapshotSchema.parse(withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(next)))));
   };
 
   // 断开期间事件流不送达（恢复后页面会重新拉取快照）。

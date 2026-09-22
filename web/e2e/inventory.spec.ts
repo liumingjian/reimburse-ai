@@ -19,7 +19,7 @@ const FIXTURE_FILES = [
 ];
 
 async function uploadFixtureNames(page: Page) {
-  await page.locator('input[type=file]').setInputFiles(
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles(
     FIXTURE_FILES.map((name) => ({ name, mimeType: name.endsWith('.jpg') ? 'image/jpeg' : 'application/pdf', buffer: Buffer.from(`fixture ${name}`) })),
   );
 }

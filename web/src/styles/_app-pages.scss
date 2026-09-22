@@ -1257,13 +1257,6 @@ $doc-frame-block: var(--app-doc-frame-block);
   }
 }
 
-.app-extension-eyebrow,
-.app-tutorial-kicker {
-  margin: 0;
-  color: $text-secondary;
-  @include type.type-style('label-01');
-}
-
 .app-extension-state-mark {
   flex: none;
   inline-size: $spacing-05;
@@ -1298,7 +1291,7 @@ $doc-frame-block: var(--app-doc-frame-block);
     @include type.type-style('heading-compact-02');
   }
 
-  > p:not(.app-extension-eyebrow) {
+  > p {
     color: $text-secondary;
   }
 }
@@ -1699,6 +1692,8 @@ $doc-frame-block: var(--app-doc-frame-block);
 
 .app-crop-panel {
   margin-block: $spacing-05 $spacing-06;
+  // Keep the top crop handles below the global header, step bar, and sticky preview toolbar when the editor opens.
+  scroll-margin-block-start: calc(6rem + var(--app-stepbar-h, 0px));
   padding: $spacing-05;
   background: $layer-01;
   border: 1px solid $border-subtle-01;

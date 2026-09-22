@@ -9,6 +9,7 @@ import {
   HOME_CITY_ERRORS,
   PENDING_ANSWER_ERRORS,
   PENDING_CHOICE_KEY,
+  projectLodgingEvidence,
   PROJECT_ASSIGNMENT_ERRORS,
   HUMAN_REVIEW_NOTICE,
   REOPEN_UPLOAD_ERRORS,
@@ -1065,17 +1066,19 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
     versionId: versionOf.get(batch.batch_id) ?? null,
     files: batchFiles(batch.batch_id, materials, rejections),
   }));
+  const snapshotMaterials = view.materials.map((material) => materialWithSourceUrls(task.task_id, material));
   return {
     revision: task.revision,
     task: { taskId: task.task_id, name: task.name, period: taskPeriod(lines), homeCity, createdAt: task.created_at, updatedAt: task.updated_at },
     stage,
     batches: batchViews,
-    materials: view.materials.map((material) => materialWithSourceUrls(task.task_id, material)),
+    materials: snapshotMaterials,
     inventory: { ...view.inventory, versionId: facts.versionNo > 0 ? `v${facts.versionNo}` : null },
     events: view.events,
     pendingItems: view.pendingItems,
     blockers,
     lines,
+    lodgingEvidence: projectLodgingEvidence({ materials: snapshotMaterials, lines }),
     confirmation: confirmationView(digest, confirmed, facts.lastReopenRevision, lines) satisfies Confirmation,
     ...printView(task.task_id, task.name, print, sheetState(print, facts.confirmation, confirmed?.revision ?? null), view.trios),
     projectAssignment: assignment?.view ?? { status: 'not_started', purpose: null, homeCity, assignments: [], working: [], reselect: [], usage: [], grossTotal: '0.00', projects: [], deadlineWarnings: [], submittedAt: null },

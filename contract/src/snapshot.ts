@@ -970,6 +970,42 @@ export const TaskInfoSchema = z.object({
 });
 export type TaskInfo = z.infer<typeof TaskInfoSchema>;
 
+// Lodging evidence is projected with the task snapshot. Pages may choose a preview and report an actual preview
+// failure, but they do not re-derive material associations or field agreement from the raw materials.
+export const LODGING_EVIDENCE_STATES = ['associated', 'missing', 'unlinked'] as const;
+export const LodgingEvidenceStateSchema = z.enum(LODGING_EVIDENCE_STATES);
+export type LodgingEvidenceState = z.infer<typeof LodgingEvidenceStateSchema>;
+
+export const LodgingEvidenceValueSchema = z.object({
+  value: z.string().min(1),
+  materialId: IdSchema,
+  // Most values retain a parser source; location can be the server-recorded candidate line.
+  source: z.string().min(1),
+  evidence: EvidenceStateSchema,
+});
+export type LodgingEvidenceValue = z.infer<typeof LodgingEvidenceValueSchema>;
+
+export const LodgingPreviewSchema = z.object({
+  materialId: IdSchema,
+  available: z.boolean(),
+});
+export type LodgingPreview = z.infer<typeof LodgingPreviewSchema>;
+
+export const LodgingEvidenceProjectionSchema = z.object({
+  materialId: IdSchema,
+  defaultMaterialId: IdSchema.nullable(),
+  previews: z.array(LodgingPreviewSchema),
+  state: LodgingEvidenceStateSchema,
+  fields: z.object({
+    location: LodgingEvidenceValueSchema.nullable(),
+    hotelName: LodgingEvidenceValueSchema.nullable(),
+    checkIn: LodgingEvidenceValueSchema.nullable(),
+    checkOut: LodgingEvidenceValueSchema.nullable(),
+    amount: LodgingEvidenceValueSchema.nullable(),
+  }),
+});
+export type LodgingEvidenceProjection = z.infer<typeof LodgingEvidenceProjectionSchema>;
+
 export const TaskSnapshotSchema = z.object({
   // Monotonic per-task snapshot version. Clients use it to order whole snapshots received through HTTP and SSE;
   // `stepToken` remains an opaque command capability.
@@ -984,6 +1020,7 @@ export const TaskSnapshotSchema = z.object({
   // 整批停的阻塞项（跨任务重复发票）；没有为空数组。
   blockers: z.array(BlockerSchema),
   lines: z.array(LineSchema),
+  lodgingEvidence: z.array(LodgingEvidenceProjectionSchema),
   confirmation: ConfirmationSchema,
   paymentScreenshots: z.array(PaymentScreenshotSchema),
   printSheet: PrintSheetSchema,
