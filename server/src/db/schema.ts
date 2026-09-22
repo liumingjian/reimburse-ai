@@ -91,6 +91,8 @@ export interface MaterialTable {
   batch_id: string;
   blob_sha256: string;
   file_name: string;
+  // Relative path supplied by a directory picker; null on material rows written before #280.
+  source_path: string | null;
   created_at: string;
   // Position within the batch (0002_180); null for materials uploaded before it.
   batch_seq: number | null;
@@ -103,6 +105,8 @@ export interface UploadRejectionTable {
   batch_id: string;
   batch_seq: number;
   file_name: string;
+  // Relative path supplied by a directory picker; null on rejection rows written before #280.
+  source_path: string | null;
   size: number;
   reason_code: 'unsupported_type' | 'too_large' | 'heic' | 'duplicate_content';
   reason: string;

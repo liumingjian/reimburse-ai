@@ -333,10 +333,16 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   app.post('/api/tasks/:id/batches', batchLimit, async (c) => {
     const body = await c.req.parseBody({ all: true });
     const entries = ([] as unknown[]).concat(body['files'] ?? []);
+    // `webkitRelativePath` is browser-local metadata and is not carried by multipart's filename. The adapter sends
+    // one sourcePaths field per file in the same order, preserving nested directory provenance without accepting an
+    // absolute path from the client.
+    const sourcePaths = ([] as unknown[]).concat(body['sourcePaths'] ?? []).map((path) => (typeof path === 'string' ? path : null));
     const files: UploadedFile[] = [];
+    let fileIndex = 0;
     for (const entry of entries) {
       if (!(entry instanceof File)) continue;
-      files.push({ fileName: entry.name, mime: entry.type || 'application/octet-stream', bytes: new Uint8Array(await entry.arrayBuffer()) });
+      files.push({ fileName: entry.name, relativePath: sourcePaths[fileIndex] ?? entry.name, mime: entry.type || 'application/octet-stream', bytes: new Uint8Array(await entry.arrayBuffer()) });
+      fileIndex += 1;
     }
     if (files.length === 0) return failure(c, 400, 'no_files', '没有收到文件。');
     return c.json(await tasksOf(c).upload(c.req.param('id'), files));
