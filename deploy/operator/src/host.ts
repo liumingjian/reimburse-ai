@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import type { Readable } from 'node:stream';
 import { NATIVE_PROFILE, type NativeProfile } from './profile.js';
 
 export type HostCommand =
@@ -51,7 +52,12 @@ export interface HostTransport {
 
 export type SshResult = { stdout: string; exitCode: number | null };
 
-export type SshRunner = (profile: NativeProfile, remoteCommand: string) => Promise<SshResult>;
+/**
+ * The optional input stream lets a target driver send an immutable local artifact
+ * through the fixed SSH profile. Production callers never expose this as a CLI
+ * target override; tests use it to run the same driver against an isolated host.
+ */
+export type SshRunner = (profile: NativeProfile, remoteCommand: string, input?: Readable) => Promise<SshResult>;
 
 export type SshHostTransportOptions = {
   runner?: SshRunner;
@@ -63,7 +69,7 @@ export class SshHostTransport implements HostTransport {
   private readonly profile: NativeProfile;
 
   constructor(options: SshHostTransportOptions = {}) {
-    this.runner = options.runner ?? runSsh;
+    this.runner = options.runner ?? productionSshRunner;
     this.profile = options.profile ?? NATIVE_PROFILE;
   }
 
@@ -88,7 +94,8 @@ export class SshHostTransport implements HostTransport {
 
   private async gateStatus(): Promise<GateStatus> {
     const result = await this.runner(this.profile, remoteShellCommand(`${this.profile.maintenanceWrapper} status`));
-    if (result.exitCode === 69 || result.exitCode === 127) return { kind: 'missing-gate' };
+    if (result.exitCode === 127) return { kind: 'missing-gate' };
+    if (result.exitCode === 69) return { kind: 'unavailable-gate' };
     if (result.exitCode === 65) return { kind: 'incompatible-gate' };
     if (result.exitCode !== 0) return { kind: 'unavailable-gate' };
 
@@ -206,7 +213,7 @@ export function remoteShellCommand(script: string): string {
   return `sh -c ${shellQuote(script)}`;
 }
 
-function runSsh(profile: NativeProfile, remoteCommand: string): Promise<SshResult> {
+export function productionSshRunner(profile: NativeProfile, remoteCommand: string, input?: Readable): Promise<SshResult> {
   return new Promise((resolve, reject) => {
     const child = spawn('ssh', [
       '-T',
@@ -214,12 +221,23 @@ function runSsh(profile: NativeProfile, remoteCommand: string): Promise<SshResul
       '-o', 'ConnectTimeout=10',
       `${profile.sshUser}@${profile.host}`,
       remoteCommand,
-    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    ], { stdio: ['pipe', 'pipe', 'pipe'] });
     const stdout: Buffer[] = [];
     child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
     child.stderr.resume();
     child.on('error', reject);
     child.on('close', (exitCode) => resolve({ stdout: Buffer.concat(stdout).toString('utf8'), exitCode }));
+    // A target may finish before consuming an archive when its deployment lock is
+    // held. EPIPE is expected in that case; the SSH exit status remains decisive.
+    child.stdin.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'EPIPE') reject(error);
+    });
+    if (input) {
+      input.on('error', reject);
+      input.pipe(child.stdin);
+    } else {
+      child.stdin.end();
+    }
   });
 }
 

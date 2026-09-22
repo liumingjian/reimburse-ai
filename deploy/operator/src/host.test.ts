@@ -33,7 +33,7 @@ it('passes an isolated profile only to an injected test runner', async () => {
     },
   });
 
-  await target.execute({ kind: 'gate-status' });
+  await expect(target.execute({ kind: 'gate-status' })).resolves.toEqual({ kind: 'gate-status', value: { kind: 'unavailable-gate' } });
 
   expect(seenProfile).toEqual(profile);
 });

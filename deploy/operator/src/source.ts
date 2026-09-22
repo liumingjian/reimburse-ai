@@ -14,17 +14,38 @@ export type SourcePlan = {
   excludedWorkingTreeChanges: readonly DirtyChange[];
 };
 
+export type SourceArchive = {
+  plan: SourcePlan;
+  archive: Buffer;
+};
+
 export type SourceRepository = {
   plan: (ref?: string) => Promise<SourcePlan>;
+  archive: (ref?: string) => Promise<SourceArchive>;
 };
 
 export class SourceSelectionError extends Error {}
 
 export function createSourceRepository(cwd: string): SourceRepository {
-  return { plan: (ref) => planSource(cwd, ref) };
+  return {
+    plan: (ref) => planSource(cwd, ref),
+    archive: (ref) => archiveSource(cwd, ref),
+  };
 }
 
 async function planSource(cwd: string, requestedRef = 'origin/main'): Promise<SourcePlan> {
+  const selected = await selectSource(cwd, requestedRef);
+  const archive = await runGit(cwd, ['archive', '--format=tar', selected.commit]);
+  return sourcePlan(requestedRef, selected.commit, archive, selected.status);
+}
+
+async function archiveSource(cwd: string, requestedRef = 'origin/main'): Promise<SourceArchive> {
+  const selected = await selectSource(cwd, requestedRef);
+  const archive = await runGit(cwd, ['archive', '--format=tar', selected.commit]);
+  return { plan: sourcePlan(requestedRef, selected.commit, archive, selected.status), archive };
+}
+
+async function selectSource(cwd: string, requestedRef: string): Promise<{ commit: string; status: Buffer }> {
   if (!requestedRef || requestedRef.startsWith('-') || requestedRef.includes('\0')) {
     throw new SourceSelectionError('源代码引用必须是一个已提交的 Git 引用。');
   }
@@ -39,11 +60,14 @@ async function planSource(cwd: string, requestedRef = 'origin/main'): Promise<So
     throw new SourceSelectionError(`无法把 ${requestedRef} 解析为已提交的 Git 引用。`);
   }
 
-  const [archive, status] = await Promise.all([
-    runGit(cwd, ['archive', '--format=tar', commit]),
+  const [status] = await Promise.all([
     runGit(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
   ]);
 
+  return { commit, status };
+}
+
+function sourcePlan(requestedRef: string, commit: string, archive: Buffer, status: Buffer): SourcePlan {
   return {
     ref: requestedRef,
     commit,
