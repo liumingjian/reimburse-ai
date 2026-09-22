@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -11,6 +12,7 @@ import { createSnapshotIsolatedTarget, type SnapshotIsolatedTarget } from './tes
 import { blobPath, writeBlob } from '../../../server/src/data-dir.js';
 
 const cleanup: Array<() => Promise<void> | void> = [];
+const require = createRequire(import.meta.url);
 
 afterEach(async () => {
   for (const remove of cleanup.splice(0).reverse()) await remove();
@@ -199,6 +201,40 @@ it('keeps public access closed and requires reconciliation after the coordinator
   });
 }, 90_000);
 
+it('keeps a cutover caller lease after a held snapshot admission is refused', async () => {
+  const target = await createTarget();
+  const candidateId = await prepareCandidate(target);
+  const refusalWrapper = join(target.root, 'refuse-maintenance-gate');
+  writeFileSync(refusalWrapper, [
+    '#!/bin/sh',
+    'printf \'%s\\n\' \'{"version":1,"state":"refused","barrier":false,"activeWrites":0,"activeErpAttempt":false,"reason":"test-refusal"}\'',
+  ].join('\n'), { mode: 0o755 });
+  const request = {
+    schema: 1,
+    kind: 'snapshot',
+    deployRoot: target.profile.deployRoot,
+    dataDir: target.profile.dataDir,
+    systemdDir: target.profile.systemdDir,
+    buildEnvironment: target.profile.buildEnvironment,
+    buildPython: target.profile.buildPython,
+    maintenanceWrapper: refusalWrapper,
+    candidateId,
+    snapshotId: managedSnapshotId(candidateId, '0000000000000020'),
+    completion: 'hold',
+    retention: 1,
+  };
+  const coordinator = coordinatorLibrary();
+  const paths = coordinator.targetPaths(request);
+  const lock = await coordinator.acquireDeploymentLease({ ...request, externalLock: true, operation: 'cutover' }, paths);
+  if (lock.kind !== 'acquired' || !lock.lease) throw new Error(`cutover lease did not acquire: ${JSON.stringify(lock)}`);
+
+  const result = await coordinator.runSnapshotLifecycle(request, paths, lock.lease, { completion: 'hold' });
+
+  expect(result).toMatchObject({ state: 'refused', code: 'test-refusal' });
+  await expect(coordinator.requireLease(paths, lock.lease)).resolves.toBeUndefined();
+  expect(target.controller.commands()).not.toContain('stop baox-caddy.service');
+}, 90_000);
+
 async function createTarget(options: Parameters<typeof createSnapshotIsolatedTarget>[0] = {}): Promise<SnapshotIsolatedTarget> {
   const target = await createSnapshotIsolatedTarget(options);
   cleanup.push(() => target.close());
@@ -256,6 +292,19 @@ function readManagedRecoveryPair(target: SnapshotIsolatedTarget, releaseId: stri
   return JSON.parse(readFileSync(join(target.profile.deployRoot, 'releases', releaseId, 'recovery.json'), 'utf8')) as ManagedRecoveryPair;
 }
 
+function coordinatorLibrary(): CoordinatorLibrary {
+  const coordinatorPath = require.resolve('./candidate-coordinator.cjs');
+  const previous = process.env.BAOX_COORDINATOR_LIBRARY;
+  process.env.BAOX_COORDINATOR_LIBRARY = '1';
+  delete require.cache[coordinatorPath];
+  try {
+    return require('./candidate-coordinator.cjs') as CoordinatorLibrary;
+  } finally {
+    if (previous === undefined) delete process.env.BAOX_COORDINATOR_LIBRARY;
+    else process.env.BAOX_COORDINATOR_LIBRARY = previous;
+  }
+}
+
 function managedSnapshotId(candidateId: string, suffix: string): string {
   return `snapshot-${candidateId}-${suffix}`;
 }
@@ -287,4 +336,19 @@ type RecoveryManifest = {
   original: { release: string };
   inventory: { files: Array<{ path: string }> };
   recovery: { configuration: Array<{ path: string }>; dataMetadata: { path: string; sha256: string } };
+};
+
+type CoordinatorRequest = {
+  candidateId: string;
+};
+
+type CoordinatorPaths = Record<string, string>;
+
+type CoordinatorLease = { token: string };
+
+type CoordinatorLibrary = {
+  targetPaths: (request: CoordinatorRequest) => CoordinatorPaths;
+  acquireDeploymentLease: (request: CoordinatorRequest & { externalLock: true; operation: string }, paths: CoordinatorPaths) => Promise<{ kind: string; lease?: CoordinatorLease }>;
+  runSnapshotLifecycle: (request: CoordinatorRequest, paths: CoordinatorPaths, lease: CoordinatorLease, options: { completion: 'hold' }) => Promise<unknown>;
+  requireLease: (paths: CoordinatorPaths, lease: CoordinatorLease) => Promise<void>;
 };

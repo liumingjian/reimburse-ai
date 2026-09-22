@@ -626,7 +626,7 @@ async function runSnapshotLifecycle(request, paths, lease, { completion }) {
     if (admission.kind === 'refused') {
       if (!isDefinitelyOpenGate(admission.status)) throw new CandidateFailure('maintenance-gate-refused-with-closed-barrier');
       await writeJournal(request, paths, lease, 'refused', { gate: admission.status });
-      await release(paths, lease);
+      if (completion !== 'hold') await release(paths, lease);
       return { state: 'refused', code: admission.code, gate: admission.status };
     }
     barrierClosed = true;
