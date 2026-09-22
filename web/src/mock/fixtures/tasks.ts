@@ -66,11 +66,12 @@ export function mediaTypeOf(fileName: string): Material['mediaType'] {
 }
 
 // 刚接收、还没盘点的材料：角色与类别未定，盘点票（#102）再填字段与校验。
-export function uploadedMaterial(input: { materialId: string; batchId: string; fileName: string; size: number; contentHash: string }): Material {
+export function uploadedMaterial(input: { materialId: string; batchId: string; fileName: string; relativePath?: string; size: number; contentHash: string }): Material {
   return {
     materialId: input.materialId,
     batchId: input.batchId,
     fileName: input.fileName,
+    relativePath: input.relativePath ?? input.fileName,
     contentHash: input.contentHash,
     size: input.size,
     kind: null,
@@ -94,6 +95,7 @@ function t1Batch(): UploadBatch {
   const files: UploadFileResult[] = T1_FILES.map(([id, fileName, size]) => ({
     fileId: `f-${id}`,
     fileName,
+    relativePath: fileName,
     size,
     status: 'accepted',
     contentHash: fixtureHash(id),

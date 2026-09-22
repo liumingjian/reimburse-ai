@@ -49,6 +49,11 @@ export type HttpAdapterOptions = {
   baseUrl?: string;
 };
 
+function relativePathOf(file: File): string {
+  const selected = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+  return selected || file.name;
+}
+
 export const INVALID_RESPONSE_CODE = 'invalid_response';
 export const NETWORK_ERROR_CODE = 'network';
 export const NETWORK_ERROR_MESSAGE = '连不上报销服务，操作没有送达。请检查网络后重试；如果一直这样，请联系维护者。';
@@ -451,7 +456,10 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     createTask: (input) => json(url(E.createTask.path), input),
     uploadBatch(taskId, files) {
       const form = new FormData();
-      for (const file of files) form.append('files', file, file.name);
+      for (const file of files) {
+        form.append('files', file, file.name);
+        form.append('sourcePaths', relativePathOf(file));
+      }
       return post(url(E.uploadBatch.path, taskId), form);
     },
     addPaymentScreenshot(taskId, voucherMaterialId, file) {

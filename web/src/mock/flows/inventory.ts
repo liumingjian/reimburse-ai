@@ -15,6 +15,11 @@ export type InventoryFlow = Pick<AppAdapter, 'uploadBatch' | 'startInventory' | 
   excludeDuplicate: AppAdapter['excludeMaterial'];
 };
 
+function relativePathOf(file: File): string {
+  const selected = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+  return selected || file.name;
+}
+
 // 移出本次材料的材料：不参与盘点、不关联明细，也不进入材料包。
 function removedMaterial(material: Material): Material {
   return {
@@ -142,13 +147,13 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
           verdict = { status: 'rejected', reasonCode: 'duplicate_content', reason: duplicateReason(existing) };
         }
         if (verdict.status === 'rejected') {
-          batch.files.push({ fileId, fileName: file.name, size: file.size, status: 'rejected', contentHash: null, reasonCode: verdict.reasonCode, reason: verdict.reason, materialId: null });
+          batch.files.push({ fileId, fileName: file.name, relativePath: relativePathOf(file), size: file.size, status: 'rejected', contentHash: null, reasonCode: verdict.reasonCode, reason: verdict.reason, materialId: null });
           continue;
         }
         const materialId = `m-${fileId}`;
         known.set(verdict.contentHash, file.name);
-        snapshot.materials.push(uploadedMaterial({ materialId, batchId, fileName: file.name, size: file.size, contentHash: verdict.contentHash }));
-        batch.files.push({ fileId, fileName: file.name, size: file.size, status: 'accepted', contentHash: verdict.contentHash, reasonCode: null, reason: null, materialId });
+        snapshot.materials.push(uploadedMaterial({ materialId, batchId, fileName: file.name, relativePath: relativePathOf(file), size: file.size, contentHash: verdict.contentHash }));
+        batch.files.push({ fileId, fileName: file.name, relativePath: relativePathOf(file), size: file.size, status: 'accepted', contentHash: verdict.contentHash, reasonCode: null, reason: null, materialId });
       }
       snapshot.batches.push(batch);
       snapshot.task.updatedAt = batch.uploadedAt;

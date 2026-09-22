@@ -1,6 +1,6 @@
 import { useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
 import { Button, InlineNotification, ProgressBar, Tag } from '@carbon/react';
-import { Add, Document, DocumentPdf, Image as ImageIcon } from '@carbon/icons-react';
+import { Add, Document, DocumentPdf, FolderOpen, Image as ImageIcon } from '@carbon/icons-react';
 import { UPLOAD_ACCEPT_ATTRIBUTE, UPLOAD_ACCEPTED_EXTENSIONS, type TaskSnapshot, type UploadBatch, type UploadFileResult } from '@baox/contract';
 import { formatBytes, hashPrefix } from '../format';
 import { navigate, taskHash } from '../router';
@@ -50,6 +50,7 @@ function UploadPictogram() {
 // Its name comes from a visually hidden prompt; the visible copy is aria-hidden so the name stays short.
 function Dropzone({ busyCount, disabled, compact, onFiles }: { busyCount: number; disabled: boolean; compact: boolean; onFiles: (files: File[]) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const directoryInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
   const pick = (list: FileList | null) => {
@@ -147,6 +148,26 @@ function Dropzone({ busyCount, disabled, compact, onFiles }: { busyCount: number
           event.target.value = '';
         }}
       />
+      <div className="app-upload-directory-action">
+        <Button kind="ghost" size="sm" renderIcon={FolderOpen} disabled={disabled} onClick={() => directoryInputRef.current?.click()}>
+          选择文件夹
+        </Button>
+        <input
+          ref={directoryInputRef}
+          type="file"
+          multiple
+          accept={UPLOAD_ACCEPT_ATTRIBUTE}
+          aria-label="选择文件夹"
+          className="cds--visually-hidden"
+          tabIndex={-1}
+          disabled={disabled}
+          {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+          onChange={(event) => {
+            pick(event.target.files);
+            event.target.value = '';
+          }}
+        />
+      </div>
       <p className="cds--form__helper-text">{UPLOAD_NEXT_STEP}</p>
       <p className="cds--form__helper-text">{UPLOAD_ORIGINALS_NOTE}</p>
     </div>
@@ -181,6 +202,12 @@ function FileRow({ file, index }: { file: UploadFileResult; index: number }) {
       <span className="app-file-name" title={digest ? `内容哈希 ${digest}` : undefined}>
         {file.fileName}
       </span>
+      {file.relativePath !== file.fileName ? (
+        <span className="app-file-source">
+          <span>来源：</span>
+          <span>{file.relativePath}</span>
+        </span>
+      ) : null}
       {rejected ? (
         <>
           <Tag type="red" size="sm">

@@ -219,6 +219,12 @@ $gutter: $spacing-06;
   margin-block-start: $spacing-03;
 }
 
+.app-upload-directory-action {
+  display: flex;
+  justify-content: center;
+  margin-block: $spacing-03 $spacing-01;
+}
+
 .app-file-list {
   margin: 0;
   padding: 0;
@@ -246,6 +252,13 @@ $gutter: $spacing-06;
   .app-file-name {
     flex: 1;
     min-inline-size: 0;
+  }
+
+  .app-file-source {
+    flex: 1;
+    min-inline-size: 0;
+    color: $text-secondary;
+    overflow-wrap: anywhere;
   }
 }
 

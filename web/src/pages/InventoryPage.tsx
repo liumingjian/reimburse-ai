@@ -117,6 +117,12 @@ function MaterialTable({ label, materials, note }: { label: string; materials: r
           <TableRow key={material.materialId} {...rowProps(material.status)}>
             <TableCell>
               <span className="app-file-name">{material.fileName}</span>
+              {material.relativePath !== material.fileName ? (
+                <div className="app-caption">
+                  <span>来源：</span>
+                  <span>{material.relativePath}</span>
+                </div>
+              ) : null}
               <div className="app-caption">{MATERIAL_ROLE_LABELS[material.role]}</div>
             </TableCell>
             <TableCell>

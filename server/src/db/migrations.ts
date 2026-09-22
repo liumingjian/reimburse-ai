@@ -607,6 +607,15 @@ const extensionVersion253: Migration = {
   },
 };
 
+// #280: retain the relative source path for every selected input. Existing single-file uploads have no path fact and
+// are projected with their file name, so migrating them does not invent directory provenance.
+const directoryIntake280: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema.alterTable('material').addColumn('source_path', 'text').execute();
+    await db.schema.alterTable('upload_rejection').addColumn('source_path', 'text').execute();
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -630,4 +639,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0014_242_refill_trigger': refillTrigger242,
   '0015_252_extension_pairing': extensionPairing252,
   '0016_253_extension_version': extensionVersion253,
+  '0017_280_directory_intake': directoryIntake280,
 };

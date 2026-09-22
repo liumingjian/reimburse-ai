@@ -23,6 +23,7 @@ export type ViewMaterial = {
   materialId: string;
   batchId: string;
   fileName: string;
+  relativePath: string;
   contentHash: string;
   size: number;
   mediaType: 'pdf' | 'image';
@@ -578,6 +579,7 @@ function baseMaterial(m: ViewMaterial): Material {
     materialId: m.materialId,
     batchId: m.batchId,
     fileName: m.fileName,
+    relativePath: m.relativePath,
     contentHash: m.contentHash,
     size: m.size,
     kind: null,
