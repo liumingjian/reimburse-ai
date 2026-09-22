@@ -1,0 +1,25 @@
+{
+  "name": "@baox/operator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The local SSH operator CLI for the fixed baox intranet host",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "bin": {
+    "baox-operator": "dist/baox-operator.mjs"
+  },
+  "scripts": {
+    "operator": "tsx src/cli-main.ts",
+    "build": "node scripts/build.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3"
+  }
+}

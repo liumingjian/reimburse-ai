@@ -6,6 +6,7 @@ import type { FillExecutor } from './erp/fill-jobs';
 import type { ReconcileExecutor } from './erp/reconcile-job';
 import type { ParseExecutor } from './parse/executor';
 import { resolveLegacyHome } from './legacy/read';
+import { readMaintenanceToken } from './maintenance-control';
 import { startServer } from './server';
 
 // Starting the server, shared by the production entry (`main.ts`), the development one (`dev-main.ts`) and the e2e-only
@@ -15,6 +16,9 @@ import { startServer } from './server';
 // `BAOX_HOME` overrides the legacy `~/.baox`, read (never written) once when the first admin is created.
 // `BAOX_PUBLIC_ORIGIN` is the address colleagues reach the app at through the reverse proxy, e.g.
 // `http://10.250.0.222:8888`; unset serves 127.0.0.1 only (`public-origin.ts`).
+// `BAOX_MAINTENANCE_TOKEN_FILE` is the root/baox-owned host-local credential that enables the Unix maintenance
+// control socket; `BAOX_MAINTENANCE_SOCKET_PATH` is reserved for an isolated recovery rehearsal. Production uses the
+// data-directory default, while development and existing releases may leave the credential unset.
 // ERP: `BAOX_ERP_ORIGIN`, `BAOX_ERP_BUILD`, `BAOX_ERP_FORM_ID` (`erp/config.ts`); `BAOX_CHROMIUM_CDP_PORT`,
 // `BAOX_CHROME` and `BAOX_ERP_CHROMIUM=off` are read by the CDP executor only (`erp/cdp-executor.ts`), so they mean
 // nothing to the production entry. Project numbers are checked against the ERP inside each 去报销 job, in the
@@ -36,6 +40,8 @@ export async function run({ erpExecutor, reconcileExecutor, parser }: RunOverrid
   const port = Number(process.env['BAOX_PORT'] ?? DEFAULT_PORT);
   try {
     const erpConfig = erpConfigFromEnv();
+    const maintenanceTokenFile = process.env['BAOX_MAINTENANCE_TOKEN_FILE'];
+    const maintenanceSocketPath = process.env['BAOX_MAINTENANCE_SOCKET_PATH'];
     const server = await startServer({
       dataDir,
       port,
@@ -47,6 +53,10 @@ export async function run({ erpExecutor, reconcileExecutor, parser }: RunOverrid
       erpConfig,
       publicOrigin: process.env['BAOX_PUBLIC_ORIGIN'] ?? null,
       extensionTemplate: EXTENSION_TEMPLATE,
+      ...(maintenanceTokenFile ? {
+        maintenanceToken: readMaintenanceToken(maintenanceTokenFile),
+        ...(maintenanceSocketPath ? { maintenanceSocketPath } : {}),
+      } : {}),
     });
     console.log(`baox server listening on ${server.url} (data ${dataDir})`);
     const stop = () => void server.close().then(() => process.exit(0));

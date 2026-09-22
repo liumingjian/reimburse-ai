@@ -23,6 +23,9 @@ Environment=BAOX_PUBLIC_ORIGIN=http://10.250.0.222:8888
 # Node binds 127.0.0.1:4319; only Caddy on the external port is reachable from the VPN.
 Environment=BAOX_PORT=4319
 Environment=BAOX_DATA_DIR=/opt/tools/baox/data
+# The local maintenance socket accepts its credential only from this root/baox-owned file. It is never an HTTP
+# endpoint or a command argument; `/opt/tools/baox/bin/baox-maintenance-gate` reads the same file when root operates it.
+Environment=BAOX_MAINTENANCE_TOKEN_FILE=/opt/tools/baox/etc/maintenance-gate.token
 # The source-built better-sqlite3 binding needs the isolated GCC runtime. This affects only baox, not the host loader.
 Environment=LD_LIBRARY_PATH=/opt/tools/baox/runtime/gcc-12.5.0/lib64
 # The legacy `~/.baox` import (ADR-0015) runs once, when the first administrator is created. This path never exists,

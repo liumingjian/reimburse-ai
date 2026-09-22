@@ -85,6 +85,7 @@ export async function createTestServer({ parser, projectCatalog, legacyHome = nu
   const clock: TestClock = { now: () => new Date(Date.now() + offset), advance: (ms) => void (offset += ms) };
   const erpLease = createInMemoryErpLease();
   const app = createApp({ db, dataDir, now: clock.now, erpLease, legacyHome, publicOrigin: publicOrigin ? parsePublicOrigin(publicOrigin) : null, extensionTemplate, ...(parser ? { parser } : {}), ...(projectCatalog ? { projectCatalog } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(erpConfig ? { erpConfig } : {}), ...(schedule ? { schedule } : {}) });
+  await app.ready;
   let accounts = 0;
   let administrator: TestClient | null = null;
 

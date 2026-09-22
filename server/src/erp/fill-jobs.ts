@@ -8,6 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/database';
 import type { ErpLease } from '../erp-lease';
+import type { MaintenanceLease } from '../maintenance';
 import { taskJudge, type FrozenJob } from './fill-plan';
 import { writeAttempt, writeEvent } from './jobs';
 import { ExecutorEventSchema, type ErpAccount, type ExecutorChannel, type ExecutorEvent, type FillPlan, type ResultEvent } from '@baox/erp-executor/protocol';
@@ -21,7 +22,7 @@ export type FillTrigger = 'start' | 'confirm_login' | 'refill';
 // `confirm_login` is the user's 我已登录，继续: the executor probes the login once and never polls for it.
 export type FillExecutor = (plan: FillPlan, channel: ExecutorChannel, options: { trigger: FillTrigger }) => Promise<ResultEvent>;
 
-export type FillRun = { jobId: string; accountId: string; taskId: string; trigger: FillTrigger; frozen: FrozenJob };
+export type FillRun = { jobId: string; accountId: string; taskId: string; trigger: FillTrigger; frozen: FrozenJob; maintenance?: MaintenanceLease };
 
 // Appends facts of one task in one accepted revision and publishes the fresh snapshot (the task service's job path).
 export type RecordFacts = (accountId: string, taskId: string, write: (tx: Db) => Promise<void>) => Promise<void>;
@@ -72,7 +73,7 @@ export async function ensureResult(db: Db, jobId: string, taskId: string, kind: 
 export function createFillJobs({ db, lease, execute, record }: { db: Db; lease: ErpLease; execute: FillExecutor; record: RecordFacts }) {
   const active = new Set<Promise<void>>();
 
-  async function drive({ jobId, accountId, taskId, trigger, frozen }: FillRun): Promise<void> {
+  async function drive({ jobId, accountId, taskId, trigger, frozen, maintenance }: FillRun): Promise<void> {
     const at = () => new Date().toISOString();
     const append = (write: (tx: Db) => Promise<void>) => record(accountId, taskId, write);
     let erpAccount: ErpAccount | null = null;
@@ -126,8 +127,10 @@ export function createFillJobs({ db, lease, execute, record }: { db: Db; lease: 
     } finally {
       lease.release(jobId);
       // A job without a result row stays phase `running` for ever and every mutation of its task gets 409. Whatever
-      // went wrong -- the executor returned without a result, or recording one threw -- give it one now.
+      // went wrong -- the executor returned without a result, or recording one threw -- give it one now. Keep the
+      // maintenance lease through this direct fallback write, because it does not use the normal task-service path.
       if (!finished) await ensureResult(db, jobId, taskId, 'fill').catch((error: unknown) => console.error(`ERP job ${jobId} could not be closed`, error));
+      maintenance?.release();
     }
   }
 

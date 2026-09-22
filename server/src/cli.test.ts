@@ -1,14 +1,14 @@
 import { SessionSchema } from '@baox/contract';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { runCli } from './cli';
-import { databasePath } from './data-dir';
+import { acquireDataDirLock, databasePath } from './data-dir';
 import { createTestServer, TEST_PASSWORD, tempDataDir, type TestServer } from './test/harness';
 
 // #228 (spec #246, phase 0): `baox admin emergency-reset <username>`, the emergency way back in for a locked-out
 // administrator, replaces the unconditional `baox admin reset-password <username>`. A shell on the host may reset the
 // sole active administrator's account and nothing else; anyone else's password is reset by an administrator in the web UI
-// (ADR-0018). The command runs against the data directory's database file while the server may be running, prints a
-// temporary password that must be changed at next login, and writes an audit record.
+// (ADR-0018). The command runs only while it holds the data directory offline lock, prints a temporary password that
+// must be changed at next login, and writes an audit record.
 
 let server: TestServer;
 let dataDir: string;
@@ -45,6 +45,28 @@ it('resets a locked-out administrator to a printed temporary password that must 
 
   // The reset leaves a trace. Nobody has a session to act from, so the audit record names no actor.
   expect(await events(admin.account.accountId)).toContainEqual(expect.objectContaining({ action: 'cli_reset_password', actor_account_id: null }));
+});
+
+it('refuses the direct database write while a server holds the data directory lock', async () => {
+  const admin = await server.signIn('admin');
+  const release = acquireDataDirLock(dataDir);
+  try {
+    expect(await cli('admin', 'emergency-reset', 'admin')).toMatchObject({ code: 1, err: expect.stringContaining('应用正在运行') });
+  } finally {
+    release();
+  }
+  expect((await login('admin', TEST_PASSWORD)).status).toBe(200);
+  expect(await events(admin.account.accountId)).not.toContainEqual(expect.objectContaining({ action: 'cli_reset_password' }));
+});
+
+it.each(['closed', 'corrupt'] as const)('refuses the direct database write when the durable gate is %s', async (state) => {
+  const admin = await server.signIn('admin');
+  const before = await server.db.selectFrom('account').select('password_hash').where('account_id', '=', admin.account.accountId).executeTakeFirstOrThrow();
+  await server.db.updateTable('maintenance_gate').set({ state }).where('gate_id', '=', 'main').execute();
+
+  expect(await cli('admin', 'emergency-reset', 'admin')).toMatchObject({ code: 1, err: expect.stringContaining('维护状态') });
+  expect(await server.db.selectFrom('account').select('password_hash').where('account_id', '=', admin.account.accountId).executeTakeFirstOrThrow()).toEqual(before);
+  expect(await events(admin.account.accountId)).not.toContainEqual(expect.objectContaining({ action: 'cli_reset_password' }));
 });
 
 // Story 42: a shell resets only an administrator's own account. With no session to say whose that is, the command

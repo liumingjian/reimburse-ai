@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { EXTENSION_PAIRING_CODE_LENGTH, EXTENSION_PAIRING_CODE_TTL_MS, EXTENSION_PAIRING_ERRORS, type ExtensionPairingState } from '@baox/contract';
 import { AuthRefusal, type Clock } from '../accounts/accounts';
 import type { Db } from '../db/database';
+import type { MaintenanceWriteAdmission } from '../maintenance';
 
 // 扩展配对 (extension pairing, ADR-0019): one 浏览器扩展 (browser extension) bound to one 应用账号 (app account).
 // The settings page issues a 配对码 (pairing code); the extension exchanges it once for a long-lived token.
@@ -51,8 +52,21 @@ export async function hasPairing(db: Db, accountId: string): Promise<boolean> {
 export type LivePairings = { connected(accountId: string): boolean; disconnect(accountId: string): void };
 const NO_CHANNEL: LivePairings = { connected: () => false, disconnect: () => undefined };
 
-export function createPairingService(db: Db, clock: Clock, live: LivePairings = NO_CHANNEL) {
+export function createPairingService(db: Db, clock: Clock, live: LivePairings = NO_CHANNEL, acquireWrite: MaintenanceWriteAdmission = () => ({ release: () => undefined })) {
   const iso = (date: Date) => date.toISOString();
+
+  // Pairing reads normally update liveness or remove an expired code. They remain reads when maintenance has admitted:
+  // the stale status is less harmful than allowing a GET or WebSocket hello to cross the durable write boundary.
+  async function optionalWrite(write: () => Promise<unknown>): Promise<boolean> {
+    const maintenance = acquireWrite();
+    if (!maintenance) return false;
+    try {
+      await write();
+      return true;
+    } finally {
+      maintenance.release();
+    }
+  }
 
   // `code` is the string just issued, carried through this once; every other caller passes nothing and the employee
   // sees no code, because there is none to show.
@@ -61,7 +75,7 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
     if (!row) return NOT_PAIRED;
     if (!row.token_sha256 && (row.code_expires_at === null || Date.parse(row.code_expires_at) <= clock().getTime())) {
       // Nobody used it in time; drop it rather than leave the page saying an extension is expected.
-      await db.deleteFrom('extension_pairing').where('account_id', '=', accountId).execute();
+      await optionalWrite(() => db.deleteFrom('extension_pairing').where('account_id', '=', accountId).execute());
       return NOT_PAIRED;
     }
     return {
@@ -157,14 +171,14 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
         .where('extension_pairing.token_sha256', '=', tokenSha)
         .executeTakeFirst();
       if (!row || row.active !== 1 || row.approved !== 1) return null;
-      await db.updateTable('extension_pairing').set({ last_connected_at: iso(clock()) }).where('token_sha256', '=', tokenSha).execute();
+      await optionalWrite(() => db.updateTable('extension_pairing').set({ last_connected_at: iso(clock()) }).where('token_sha256', '=', tokenSha).execute());
       return { accountId: row.account_id };
     },
 
     // The version an extension reports when it opens its channel (ADR-0021). An extension is replaced by unpacking a
     // new directory over the old one, so the version on the row is only ever as fresh as the last connect.
     async noteConnection(accountId: string, version: string | null): Promise<void> {
-      await db.updateTable('extension_pairing').set({ version, last_connected_at: iso(clock()) }).where('account_id', '=', accountId).execute();
+      await optionalWrite(() => db.updateTable('extension_pairing').set({ version, last_connected_at: iso(clock()) }).where('account_id', '=', accountId).execute());
     },
   };
 }

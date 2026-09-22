@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { ADMIN_ERRORS, AUTH_ERRORS, type Account, type AccountList, type AccountUpdateInput, type ChangePasswordInput, type CredentialsInput } from '@baox/contract';
 import type { Db } from '../db/database';
 import type { AccountEventAction, AccountTable } from '../db/schema';
+import type { MaintenanceWriteAdmission } from '../maintenance';
 import { hashPassword, verifyPassword } from './password';
 
 // App accounts (应用账号) and their server-side sessions (ADR-0018). The first account is an approved admin; later
@@ -74,7 +75,7 @@ export async function emergencyResetAdminPassword(db: Db, username: string, pass
   });
 }
 
-export function createAccountService(db: Db, clock: Clock) {
+export function createAccountService(db: Db, clock: Clock, acquireWrite: MaintenanceWriteAdmission = () => ({ release: () => undefined })) {
   const iso = (date: Date) => date.toISOString();
 
   async function hasAccounts(): Promise<boolean> {
@@ -249,16 +250,33 @@ export function createAccountService(db: Db, clock: Clock) {
       if (!row) return null;
       const expiresAt = Date.parse(row.expires_at);
       if (expiresAt <= now.getTime() || row.active !== 1 || row.approved !== 1) {
-        await db.deleteFrom('session').where('token_sha256', '=', row.token_sha256).execute();
+        // A GET and SSE heartbeat normally clean expired sessions. Once maintenance has closed the write boundary,
+        // authentication may still deny the token, but this optional housekeeping write must wait for reopening.
+        const maintenance = acquireWrite();
+        if (maintenance) {
+          try {
+            await db.deleteFrom('session').where('token_sha256', '=', row.token_sha256).execute();
+          } finally {
+            maintenance.release();
+          }
+        }
         return null;
       }
       const renewed = expiresAt - now.getTime() < SESSION_TTL_MS - RENEW_AFTER_MS;
       if (renewed) {
-        await db
-          .updateTable('session')
-          .set({ expires_at: iso(new Date(now.getTime() + SESSION_TTL_MS)) })
-          .where('token_sha256', '=', row.token_sha256)
-          .execute();
+        // Sliding the expiry is optional: returning the existing authenticated session avoids turning a read into a
+        // maintenance bypass. `renewed` remains false, so the HTTP layer does not send a longer-lived cookie either.
+        const maintenance = acquireWrite();
+        if (!maintenance) return { account: toAccount(row), renewed: false, mustChangePassword: row.must_change_password === 1 };
+        try {
+          await db
+            .updateTable('session')
+            .set({ expires_at: iso(new Date(now.getTime() + SESSION_TTL_MS)) })
+            .where('token_sha256', '=', row.token_sha256)
+            .execute();
+        } finally {
+          maintenance.release();
+        }
       }
       return { account: toAccount(row), renewed, mustChangePassword: row.must_change_password === 1 };
     },

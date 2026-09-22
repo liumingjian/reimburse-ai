@@ -400,7 +400,16 @@ export interface ErpHandOffTable {
   created_at: string;
 }
 
+// One durable maintenance barrier for this data directory. The migration creates its sole row; a missing or invalid
+// value is intentionally treated as unknown by `maintenance.ts`.
+export interface MaintenanceGateTable {
+  gate_id: string;
+  state: string;
+  updated_at: string;
+}
+
 export interface Schema {
+  maintenance_gate: MaintenanceGateTable;
   print_setting: PrintSettingTable;
   payment_screenshot: PaymentScreenshotTable;
   payment_screenshot_removal: PaymentScreenshotRemovalTable;
