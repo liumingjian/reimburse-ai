@@ -104,7 +104,40 @@ it('refuses a dry-run routine deployment when the target lacks the maintenance g
 
   expect(result.code).toBe(1);
   expect(result.out).toContain('首次启用');
-  expect(target.commands).toEqual([{ kind: 'gate-status' }]);
+  expect(target.commands).toEqual([{ kind: 'doctor' }, { kind: 'gate-status' }]);
+});
+
+it('does not upload or invoke a host bootstrap action without an explicit reviewed digest', async () => {
+  const repository = committedRepository();
+  const target = new ControllableTarget({ gate: openGate() });
+
+  const result = await cli(repository, target, 'bootstrap-apply', '--proxy', 'http://proxy.example.test:7890');
+
+  expect(result.code).toBe(2);
+  expect(target.commands).toEqual([]);
+  expect(target.uploads).toEqual([]);
+});
+
+it('presents a bootstrap transaction digest and sends an explicit confirmation to the host', async () => {
+  const repository = committedRepository();
+  const target = new ControllableTarget({ gate: openGate() });
+
+  const preview = await cli(repository, target, 'bootstrap-preview', '--proxy', 'http://proxy.example.test:7890', '--json');
+
+  expect(preview.code).toBe(0);
+  expect(JSON.parse(preview.out)).toMatchObject({ command: 'bootstrap-preview', response: { state: 'preview', plan: { transactionDigest: 'a'.repeat(64) } } });
+  expect(target.commands).toEqual([{ kind: 'bootstrap-preview', source: { kind: 'proxy', proxy: 'http://proxy.example.test:7890' } }]);
+
+  target.clearCommands();
+  const applied = await cli(repository, target, 'bootstrap-apply', '--confirm', 'a'.repeat(64), '--proxy', 'http://proxy.example.test:7890', '--json');
+
+  expect(applied.code).toBe(0);
+  expect(JSON.parse(applied.out)).toMatchObject({ command: 'bootstrap-apply', response: { state: 'applied' } });
+  expect(target.commands).toEqual([{
+    kind: 'bootstrap-apply',
+    source: { kind: 'proxy', proxy: 'http://proxy.example.test:7890' },
+    confirmationDigest: 'a'.repeat(64),
+  }]);
 });
 
 it('refuses candidate preparation before source selection or target coordination when the maintenance gate is absent', async () => {

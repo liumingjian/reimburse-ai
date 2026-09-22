@@ -1,6 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import type { CandidateArtifactOrigin, CandidateInspection, CandidatePreparation, CandidateTransport } from './candidate.js';
 import { NATIVE_PROFILE } from './profile.js';
+import {
+  resolveRelayArtifacts,
+  validateBootstrapProxy,
+  type BootstrapResponse,
+  type BootstrapSource,
+} from './bootstrap.js';
 import type { DoctorReport, GateStatus, HostResult, HostStatus, HostTransport } from './host.js';
 import { redact, redactValue } from './redact.js';
 import type { SourcePlan, SourceRepository } from './source.js';
@@ -19,7 +25,7 @@ export type OperatorDependencies = {
 
 const USAGE = [
   '用法：baox-operator <命令> [选项]',
-  '命令：plan [Git 引用]、status、doctor、logs [--lines N]、prepare [Git 引用] [--relay 归档]、deploy --dry-run [Git 引用]',
+  '命令：plan [Git 引用]、status、doctor、logs [--lines N]、prepare [Git 引用] [--relay 归档]、deploy --dry-run [Git 引用]、bootstrap-preview --proxy URL [--relay 目录]、bootstrap-apply --confirm 摘要 --proxy URL [--relay 目录]',
 ].join('\n');
 
 export async function runOperatorCli(argv: readonly string[], dependencies: OperatorDependencies, io: CliIo): Promise<number> {
@@ -39,6 +45,10 @@ export async function runOperatorCli(argv: readonly string[], dependencies: Oper
         return await prepare(rest, dependencies, io, json);
       case 'deploy':
         return await deployDryRun(rest, dependencies, io, json);
+      case 'bootstrap-preview':
+        return await bootstrapPreview(rest, dependencies, io, json);
+      case 'bootstrap-apply':
+        return await bootstrapApply(rest, dependencies, io, json);
       default:
         io.err(USAGE);
         return 2;
@@ -81,6 +91,10 @@ async function doctor(args: readonly string[], dependencies: OperatorDependencie
     && report.nodeVersion !== null
     && report.gccVersion !== null
     && report.buildPython !== null
+    && report.pnpmVersion !== null
+    && report.caddyVersion !== null
+    && report.serviceAccount === 'ready'
+    && report.issues.length === 0
     && report.maintenanceWrapper === 'present'
     && gateAllowsRoutineDeployment(gate);
   emit(io, json, { command: 'doctor', healthy, profile: publicProfile(), host, runtime: report, maintenanceGate: gate }, doctorLines(host, report, gate, healthy));
@@ -123,16 +137,60 @@ async function deployDryRun(args: readonly string[], dependencies: OperatorDepen
   const sourceRef = parseDryRun(args);
   if (sourceRef === null) return usage(io);
   const source = await dependencies.source.plan(sourceRef ?? undefined);
+  const report = doctorValue(await dependencies.host.execute({ kind: 'doctor' }));
   const gate = gateValue(await dependencies.host.execute({ kind: 'gate-status' }));
-  const allowed = gateAllowsRoutineDeployment(gate);
-  const refusal = allowed ? null : gateRefusal(gate);
+  const bootstrapRefusal = routinePrerequisiteRefusal(report);
+  const allowed = gateAllowsRoutineDeployment(gate) && bootstrapRefusal === null;
+  const refusal = !gateAllowsRoutineDeployment(gate) ? gateRefusal(gate) : bootstrapRefusal;
   emit(
     io,
     json,
-    { command: 'deploy', dryRun: true, source, profile: publicProfile(), maintenanceGate: gate, ...(refusal ? { refusal } : {}) },
+    {
+      command: 'deploy',
+      dryRun: true,
+      source,
+      profile: publicProfile(),
+      runtime: report,
+      maintenanceGate: gate,
+      ...(refusal ? { refusal } : {}),
+    },
     [...planLines(source), ...(allowed ? ['只读预检通过。候选准备和切换由后续运维命令完成。'] : refusal ? [refusal] : [])],
   );
   return allowed ? 0 : 1;
+}
+
+async function bootstrapPreview(args: readonly string[], dependencies: OperatorDependencies, io: CliIo, json: boolean): Promise<number> {
+  const options = parseBootstrapOptions(args, false);
+  if (options === null) return usage(io);
+  if (options.relayDirectory) await resolveRelayArtifacts(options.relayDirectory);
+  const response = bootstrapValue(await dependencies.host.execute({ kind: 'bootstrap-preview', source: options.source }), 'bootstrap-preview');
+  emit(
+    io,
+    json,
+    { command: 'bootstrap-preview', artifactSource: options.source.kind, response },
+    bootstrapLines(response),
+  );
+  return response.state === 'preview' ? 0 : 1;
+}
+
+async function bootstrapApply(args: readonly string[], dependencies: OperatorDependencies, io: CliIo, json: boolean): Promise<number> {
+  const options = parseBootstrapOptions(args, true);
+  if (options === null) return usage(io);
+  if (options.relayDirectory) {
+    const artifacts = await resolveRelayArtifacts(options.relayDirectory);
+    for (const artifact of artifacts) await dependencies.host.uploadArtifact(artifact);
+  }
+  const response = bootstrapValue(
+    await dependencies.host.execute({ kind: 'bootstrap-apply', source: options.source, confirmationDigest: options.confirmationDigest }),
+    'bootstrap-apply',
+  );
+  emit(
+    io,
+    json,
+    { command: 'bootstrap-apply', artifactSource: options.source.kind, response },
+    bootstrapLines(response),
+  );
+  return response.state === 'applied' ? 0 : 1;
 }
 
 function extractJson(argv: readonly string[]): { argumentsWithoutJson: string[]; json: boolean } {
@@ -180,6 +238,50 @@ function parsePrepare(args: readonly string[]): { ref?: string; relay?: string }
   return { ...(ref ? { ref } : {}), ...(relay ? { relay } : {}) };
 }
 
+type BootstrapOptions = Readonly<{
+  source: BootstrapSource;
+  relayDirectory?: string;
+  confirmationDigest: string;
+}>;
+
+function parseBootstrapOptions(args: readonly string[], requiresConfirmation: boolean): BootstrapOptions | null {
+  let proxy: string | undefined;
+  let relayDirectory: string | undefined;
+  let confirmationDigest: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const option = args[index];
+    const value = args[index + 1];
+    if ((option === '--proxy' || option === '--relay' || option === '--confirm') && value !== undefined) {
+      index += 1;
+      if (option === '--proxy' && proxy === undefined) {
+        proxy = value;
+        continue;
+      }
+      if (option === '--relay' && relayDirectory === undefined) {
+        relayDirectory = value;
+        continue;
+      }
+      if (option === '--confirm' && confirmationDigest === undefined) {
+        confirmationDigest = value;
+        continue;
+      }
+    }
+    return null;
+  }
+  if (!proxy || (requiresConfirmation && (!confirmationDigest || !/^[a-f0-9]{64}$/u.test(confirmationDigest)))) return null;
+  if (!requiresConfirmation && confirmationDigest !== undefined) return null;
+  try {
+    validateBootstrapProxy(proxy);
+  } catch {
+    return null;
+  }
+  return {
+    source: { kind: relayDirectory ? 'relay' : 'proxy', proxy },
+    ...(relayDirectory ? { relayDirectory } : {}),
+    confirmationDigest: confirmationDigest ?? '',
+  };
+}
+
 function statusValue(result: HostResult): HostStatus {
   if (result.kind !== 'status') throw new Error('状态检查返回了不匹配的响应。');
   return result.value;
@@ -200,6 +302,11 @@ function gateValue(result: HostResult): GateStatus {
   return result.value;
 }
 
+function bootstrapValue(result: HostResult, command: 'bootstrap-preview' | 'bootstrap-apply'): BootstrapResponse {
+  if (result.kind !== command) throw new Error('bootstrap 命令返回了不匹配的响应。');
+  return result.value;
+}
+
 function gateAllowsRoutineDeployment(gate: GateStatus): boolean {
   return gate.kind === 'available' && gate.response.state !== 'unknown';
 }
@@ -211,6 +318,13 @@ function gateRefusal(gate: GateStatus): string {
   if (gate.kind === 'incompatible-gate') return '拒绝常规部署：维护闸门协议不兼容，无法安全判断写入状态。';
   if (gate.kind === 'unavailable-gate') return '拒绝常规部署：维护闸门不可用，无法安全判断写入状态。';
   return '拒绝常规部署：维护闸门报告未知写入状态。';
+}
+
+function routinePrerequisiteRefusal(report: DoctorReport): string | null {
+  if (report.serviceAccount !== 'ready') return '拒绝常规部署：baox 服务账号未准备好。请先执行单独的 bootstrap。';
+  if (report.issues.length > 0) return `拒绝常规部署：${report.issues.map((issue) => issue.message).join(' ')}`;
+  if (report.gccVersion === null || report.buildPython === null) return '拒绝常规部署：隔离编译环境未准备好。请先执行单独的 bootstrap。';
+  return null;
 }
 
 function publicProfile() {
@@ -254,7 +368,11 @@ function doctorLines(host: HostStatus, report: DoctorReport, gate: GateStatus, h
     `Node：${report.nodeVersion ?? '未找到'}`,
     `GCC：${report.gccVersion ?? '未找到'}`,
     `构建 Python：${report.buildPython ?? '未找到'}`,
+    `pnpm：${report.pnpmVersion ?? '未找到'}`,
+    `Caddy：${report.caddyVersion ?? '未找到'}`,
+    `baox 服务账号：${report.serviceAccount}`,
     `维护闸门包装器：${report.maintenanceWrapper}`,
+    ...report.issues.map((issue) => issue.message),
     healthy ? '诊断通过。' : gateAllowsRoutineDeployment(gate) ? '诊断未通过。' : gateRefusal(gate),
   ];
 }
@@ -275,6 +393,21 @@ function prepareLines(result: CandidatePreparation, artifactOrigin: CandidateArt
     case 'reconcile-needed':
       return [`目标部署锁需要人工核对：${result.code}。为避免重复操作，命令没有改写它。`];
   }
+}
+
+function bootstrapLines(response: BootstrapResponse): string[] {
+  const transaction = response.plan.transaction;
+  const rows = transaction.length === 0
+    ? ['系统软件包事务：无变更。']
+    : ['系统软件包事务：', ...transaction.map((item) => `  ${item.action} ${item.nevra}`)];
+  if (response.state === 'preview') {
+    return [...rows, `确认摘要：${response.plan.transactionDigest}`, '复核后使用 bootstrap-apply --confirm <确认摘要> 执行。'];
+  }
+  if (response.state === 'applied') {
+    return [...rows, `已完成 bootstrap：GCC ${response.readiness.gccVersion}，Python ${response.readiness.pythonVersion}，uv ${response.readiness.uvVersion}。`];
+  }
+  const reason = 'reason' in response ? response.reason : '主机没有返回可执行的 bootstrap 结果。';
+  return [...rows, `拒绝 bootstrap：${reason}`];
 }
 
 function emit(io: CliIo, json: boolean, value: unknown, lines: readonly string[]): void {
