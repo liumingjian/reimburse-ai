@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Installs or upgrades baox on the phase-1 intranet host. Run it as root on the host:
-#
-#   bash install.sh /tmp/baox-<commit>.tar.gz
+# Retired direct installer. It exits before inspecting inputs or changing the host. Use the explicit native bootstrap
+# and the maintenance admission lifecycle instead. The unreachable body remains as an archival record of the phase-1
+# procedure.
 #
 # The tarball is `git archive` of the commit to deploy; its name, minus .tar.gz, names the release. The walkthrough is
 # docs/deployment/intranet-phase-1.md. Everything lands under /opt/tools/baox except the two systemd units.
 #
-# Idempotent: a release already built is not rebuilt, and Node, pnpm and Caddy are downloaded once per version.
-# It never writes into the data directory itself. A first install therefore starts from an empty database; an upgrade
-# keeps the one there. Nothing is migrated in and nothing legacy is imported.
+# Idempotent for first adoption and controlled repair: a release already built is not rebuilt, and Node, pnpm and
+# Caddy are downloaded once per version. It never writes into the data directory itself. A first install therefore
+# starts from an empty database; a controlled repair keeps the one there. Nothing is migrated in and nothing legacy is
+# imported.
 #
 # The first administrator is created here, on the host, before Caddy serves :80 (ADR-0018: the first account created
 # becomes the administrator, and on the VPN anyone could otherwise get there before the maintainer). A first install
@@ -20,6 +21,9 @@
 # *_proxy variables, all passed through to the build. The native compiler is the isolated GCC named below; see the
 # deployment walkthrough for how it is provisioned and verified.
 set -euo pipefail
+
+printf '%s\n' 'install.sh is retired and makes no host changes. Use the explicit native bootstrap and maintenance lifecycle.' >&2
+exit 64
 
 DEPLOY=/opt/tools/baox
 CADDY_VERSION=2.10.2
@@ -167,6 +171,21 @@ if [[ ! -x $caddy_bin ]]; then
 fi
 ln -sfn "caddy-$CADDY_VERSION" "$DEPLOY/bin/caddy"
 
+# The server and the root-invoked local wrapper share this credential over the Unix socket. Keep it across releases: a
+# changed token would make a newly started server and the installed wrapper disagree during a recovery boundary.
+maintenance_token=$DEPLOY/etc/maintenance-gate.token
+if [[ ! -e $maintenance_token ]]; then
+  log "creating the local maintenance control credential"
+  (umask 0077; "$DEPLOY/runtime/node/bin/node" -e "process.stdout.write(require('node:crypto').randomBytes(48).toString('base64url') + '\\n')" >"$maintenance_token")
+fi
+[[ -f $maintenance_token && ! -L $maintenance_token ]] || die "maintenance control credential is not a regular file: $maintenance_token"
+chown root:baox "$maintenance_token"
+chmod 0640 "$maintenance_token"
+"$DEPLOY/runtime/node/bin/node" -e "const token = require('node:fs').readFileSync(process.argv[1], 'utf8').trim(); process.exit(/^[A-Za-z0-9_-]{32,}$/.test(token) ? 0 : 1)" "$maintenance_token" ||
+  die "maintenance control credential is invalid: $maintenance_token"
+runuser -u baox -- "$DEPLOY/runtime/node/bin/node" -e "require('node:fs').readFileSync(process.argv[1], 'utf8')" "$maintenance_token" ||
+  die "baox cannot read the maintenance control credential: $maintenance_token"
+
 # --- Build, as baox ----------------------------------------------------------------------------------------------
 
 # A clean environment: root's (nvm's PATH, npm prefix) must not leak into the build.
@@ -238,6 +257,7 @@ runuser -u baox -- env -i HOME="$DEPLOY/cache/home" "$caddy_bin" validate --conf
   die "Caddyfile does not validate: $caddy_bin validate --config $source_dir/Caddyfile --adapter caddyfile"
 
 install -o root -g root -m 0644 "$source_dir/Caddyfile" "$DEPLOY/etc/Caddyfile"
+install -o root -g root -m 0755 "$source_dir/baox-maintenance-gate" "$DEPLOY/bin/baox-maintenance-gate"
 install -o root -g root -m 0644 "$source_dir/baox.service" /etc/systemd/system/baox.service
 install -o root -g root -m 0644 "$source_dir/baox-caddy.service" /etc/systemd/system/baox-caddy.service
 
@@ -278,11 +298,16 @@ if [[ $(session "http://127.0.0.1:$BAOX_PORT") == *'"status":"setup_required"'* 
   setup=$(curl --noproxy '*' -sS -o /dev/null --max-time 30 -w '%{http_code}' -H "Host: $host" -H 'content-type: application/json' \
     -d "{\"username\":\"$admin_username\",\"password\":\"$throwaway\"}" "http://127.0.0.1:$BAOX_PORT/api/auth/setup")
   [[ $setup == 200 ]] || die "creating the first administrator answered $setup; see journalctl -u baox"
+  # The emergency command is deliberately an offline database writer. Caddy is already stopped above, so taking baox
+  # down here creates no public setup window and lets the command take the data-directory lock atomically.
+  systemctl stop baox.service
   reset=$(runuser -u baox -- env -i HOME="$DEPLOY/cache/home" BAOX_DATA_DIR="$DEPLOY/data" LANG=C.UTF-8 LD_LIBRARY_PATH="$GCC_LIBDIR" \
     "$DEPLOY/runtime/node/bin/node" "$release/server/dist/baox.mjs" admin emergency-reset "$admin_username") ||
     die "the administrator $admin_username exists but no temporary password was set; run the emergency reset in docs/deployment/intranet-phase-1.md"
   temporary=$(sed -n 's/^临时密码：//p' <<<"$reset")
   [[ -n $temporary ]] || die "the emergency reset printed no temporary password: $reset"
+  systemctl start baox.service
+  wait_for session "http://127.0.0.1:$BAOX_PORT" || die "baox did not return after first administrator recovery; see journalctl -u baox"
 fi
 
 log "restarting Caddy"

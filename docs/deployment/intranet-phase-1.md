@@ -1,5 +1,9 @@
 # Deployment, phase 1: the intranet host
 
+> Historical phase-1 record: the manual native-runtime commands below are retained as deployment evidence. Use
+> [native bootstrap](native-bootstrap.zh-CN.md) for all new prerequisite work; do not run the manual account, Python,
+> compiler, or dnf steps as a routine upgrade path. `install.sh` is retired and exits before it changes the host.
+
 How baox runs on `10.250.0.222` for the browser-extension V1 round (spec #246, ticket #260). The design and its
 reasons are in [browser-extension-v1.md](../design/browser-extension-v1.md#deployment-phase-1-intranet-no-domain); this
 document is the procedure. The files it installs live in [`deploy/intranet/`](../../deploy/intranet/), and each one
@@ -37,16 +41,22 @@ and its closing condition binds this instance: **the gaps must be closed before 
 | `/opt/tools/baox/current` | root (symlink) | The running release, `releases/<name>` |
 | `/opt/tools/baox/releases/<name>/` | baox | One built source tree per deployed tarball; the last 3 are kept |
 | `/opt/tools/baox/data/` | baox, 0700 | `BAOX_DATA_DIR`: `baox.sqlite` and the invoice originals |
+| `/opt/tools/baox/data/maintenance-gate.sock` | baox, 0600 | Local-only maintenance controller socket; never exposed over HTTP |
 | `/opt/tools/baox/runtime/node` | root | Node at the version in `.nvmrc`, for baox only |
 | `/opt/tools/baox/runtime/pnpm-<version>/` | root | pnpm at the version in `package.json` `packageManager`, for the build |
 | `/opt/tools/baox/runtime/gcc-12.5.0/` | root | Isolated C++20 compiler and runtime used only by baox |
 | `/opt/tools/baox/bin/caddy` | root | Caddy, one static binary, version pinned in `install.sh` |
+| `/opt/tools/baox/bin/baox-maintenance-gate` | root | Root-invoked local controller for maintenance admission |
 | `/opt/tools/baox/etc/Caddyfile` | root | Installed from `deploy/intranet/Caddyfile` |
+| `/opt/tools/baox/etc/maintenance-gate.token` | root:baox, 0640 | Credential shared only by the service and local controller |
 | `/opt/tools/baox/cache/` | baox | pnpm store and the build's home directory |
 | `/home/baox/.local/` | baox | Private uv, managed Python, and the build virtual environment |
 | `/etc/systemd/system/baox.service`, `baox-caddy.service` | root | The two units |
 
 ## Native build runtime
+
+> Superseded procedure: follow [native bootstrap](native-bootstrap.zh-CN.md) instead of the manual commands in this
+> section. The transcript remains so that the original phase-1 deployment can be audited.
 
 The deployment does not replace Kylin's compiler, loader, `libstdc++`, or `libgcc`. Create `/home/baox` as `baox:baox`
 with mode `0750`; its `.bashrc` is mode `0640` and contains the host proxy exports plus
@@ -132,6 +142,10 @@ the isolated compiler runtime.
 
 ## First install
 
+> Retired procedure: `install.sh` now exits with code 64 before it reads a tarball or contacts the host. Do not use
+> these historical steps for first adoption. The replacement must combine confirmed native bootstrap with the
+> maintenance lifecycle.
+
 1. **On the mac, pack the commit to deploy.** Name the tarball after the commit; the name becomes the release name.
 
    ```bash
@@ -179,15 +193,13 @@ the isolated compiler runtime.
 
 ## Upgrade
 
-Repeat steps 1 and 2 of the first install with the new commit; `BAOX_ADMIN_USERNAME` may be left out, since it is
-read only while the database has no administrator. `install.sh` builds the new release beside the running one,
-switches `current`, and restarts both services; the database is kept and the app applies its own schema migrations on
-start. A running 去报销 (go reimburse) job loses its channel on restart and meets the 120-second
-reconnect window (ADR-0020), so upgrade when nobody is filing.
+`install.sh` is retired and exits before it switches a release or restarts a service. Use the maintenance admission
+lifecycle and candidate/recovery tooling for routine changes; it preserves the durable barrier before any release or
+public-proxy transition. `BAOX_ADMIN_USERNAME` is retained here only as part of the historical record.
 
 When the release changes the extension, employees re-download it from the settings page and reload it in the browser
 (the settings page carries the Chinese walkthrough); the server refuses extensions older than
-`EXTENSION_MINIMUM_VERSION`. Running the installer again with the same tarball rebuilds nothing and only restarts.
+`EXTENSION_MINIMUM_VERSION`. A controlled repair with the same tarball rebuilds nothing and only restarts.
 
 **Rollback** is `ln -sfn releases/<older> /opt/tools/baox/current && systemctl restart baox`. It is safe only if the
 newer release added no schema migration: the database is never migrated backwards, and there is no backup to return to.
@@ -195,6 +207,26 @@ newer release added no schema migration: the database is never migrated backward
 **Moving to a domain** is an upgrade too, edited in the repo: the domain's site and the redirect in the `Caddyfile`
 (the commented block there shows where), and `BAOX_PUBLIC_ORIGIN` in `baox.service`, in one commit. Every employee then
 re-downloads the extension and pairs again, because the old zips carry the old origin, and every web session resets.
+
+## Maintenance admission
+
+The installed controller is local to the host and accepts no target or credential argument:
+
+```bash
+/opt/tools/baox/bin/baox-maintenance-gate status
+/opt/tools/baox/bin/baox-maintenance-gate admit
+/opt/tools/baox/bin/baox-maintenance-gate reopen
+```
+
+Each command prints one token-free JSON status line with `state`, `barrier`, `activeWrites`, and
+`activeErpAttempt`. `admit` refuses while an ERP action attempt is active and leaves the running service untouched.
+Otherwise it closes all application data and file writes, including parser, ERP, session housekeeping, and pairing
+liveness updates initiated from GET or WebSocket traffic. It reports `admitting` until existing writes drain and
+`admitted` afterwards. Do not stop the service until it reports `admitted`, `barrier: true`, and `activeWrites: 0`.
+The durable barrier survives a restart; `unknown` is unsafe and cannot be reopened through the controller. Only
+`reopen` after verified recovery or candidate verification returns an admitted barrier to `open`. A controller exit
+of `69` means the socket or credential is unavailable; `65` means a malformed or incompatible protocol response.
+Both are unsafe to proceed past.
 
 ## Emergency admin recovery
 
@@ -205,13 +237,14 @@ runuser -u baox -- env BAOX_DATA_DIR=/opt/tools/baox/data LD_LIBRARY_PATH=/opt/t
   /opt/tools/baox/runtime/node/bin/node /opt/tools/baox/current/server/dist/baox.mjs admin emergency-reset <username>
 ```
 
-It prints a 临时密码 (temporary password) that must be changed at the next sign-in. It works while the service runs,
-and is audited. It resets only the **only active administrator** (ADR-0018): a shell has no session to say whose
-account it is at, and a sole administrator locked out is by definition the one at the shell. With two or more
-administrators it refuses, and the other administrator sets a temporary password in the web UI instead. Run it as
-`baox`, never as root: the database runs in WAL mode, and a `-wal` or `-shm` file that root creates beside it is one
-the service cannot open. `install.sh` runs this same command once, to hand the first administrator a temporary
-password.
+Stop `baox.service` first. The command takes the same data-directory lock as the server and refuses while the
+service is running, or while the durable maintenance state is closed or unknown. It prints a 临时密码 (temporary
+password) that must be changed at the next sign-in, and is audited. It resets only the **only active administrator**
+(ADR-0018): a shell has no session to say whose account it is at, and a sole administrator locked out is by definition
+the one at the shell. With two or more administrators it refuses, and the other administrator sets a temporary
+password in the web UI instead. Run it as `baox`, never as root: the database runs in WAL mode, and a `-wal` or
+`-shm` file that root creates beside it is one the service cannot open. `install.sh` stops baox before it runs this
+same command once, to hand the first administrator a temporary password.
 
 ## Reference
 
@@ -283,9 +316,9 @@ is needed.
 | Symptom | Cause |
 |---|---|
 | Every page answers 403 `forbidden_host` | The browser's address differs from `BAOX_PUBLIC_ORIGIN`, or something between rewrote `Host` |
-| Extension download answers 503 | No extension template at `current/extension/dist`; rerun `install.sh`, which checks the build left it |
+| Extension download answers 503 | No extension template at `current/extension/dist`; inspect the candidate build validation. The retired installer cannot repair it. |
 | `journalctl -u baox` shows `already used by another baox server` | A second baox process holds `data/server.lock`; stop it |
-| Downloads are slow or fail | Set `NODE_MIRROR`, `CADDY_DOWNLOAD` or `npm_config_registry` for the `install.sh` run (see its header) |
+| Downloads are slow or fail | Repair the approved build environment before candidate preparation; the retired installer does not download artifacts. |
 
 ## Deployment verification
 

@@ -1,4 +1,5 @@
 import type { ParseBacklogEntry, TaskService } from '../tasks';
+import type { MaintenanceLease } from '../maintenance';
 import type { ParseExecutor } from './executor';
 
 // The 盘点 (inventory) parser job: after start-inventory, parse the run's materials in the background, PDFs first,
@@ -9,7 +10,12 @@ import type { ParseExecutor } from './executor';
 
 export type ParseJobs = ReturnType<typeof createParseJobs>;
 
-export function createParseJobs(serviceFor: (accountId: string) => TaskService, backlog: () => Promise<ParseBacklogEntry[]>, executor: ParseExecutor) {
+export function createParseJobs(
+  serviceFor: (accountId: string) => TaskService,
+  backlog: () => Promise<ParseBacklogEntry[]>,
+  executor: ParseExecutor,
+  acquireBackground: () => MaintenanceLease | null = () => ({ release: () => undefined }),
+) {
   // Per task: running, and whether another pass was requested meanwhile (a start-inventory racing the last lap).
   const running = new Map<string, { again: boolean; done: Promise<void> }>();
   let closed = false;
@@ -18,11 +24,19 @@ export function createParseJobs(serviceFor: (accountId: string) => TaskService, 
   async function drain(accountId: string, taskId: string): Promise<void> {
     const tasks = serviceFor(accountId);
     while (!closed) {
-      const next = await tasks.nextToParse(taskId);
-      if (!next) return;
-      const outcome = await executor.parse(next.input);
-      if (closed) return;
-      if (!(await tasks.recordParse(taskId, next.runId, next.input.materialId, outcome))) return;
+      // One material is one background write unit. An in-flight material drains, while the next one needs a fresh
+      // admission and remains pending until the operator explicitly reopens the gate.
+      const maintenance = acquireBackground();
+      if (!maintenance) return;
+      try {
+        const next = await tasks.nextToParse(taskId);
+        if (!next) return;
+        const outcome = await executor.parse(next.input);
+        if (closed) return;
+        if (!(await tasks.recordParse(taskId, next.runId, next.input.materialId, outcome))) return;
+      } finally {
+        maintenance.release();
+      }
     }
   }
 

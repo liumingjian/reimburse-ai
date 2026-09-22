@@ -25,6 +25,13 @@ async function unfinished(db: Db, table: 'erp_job' | 'erp_reconcile_job') {
     .execute();
 }
 
+// A closed maintenance boundary must not be mistaken for permission to settle a crashed job during replacement
+// startup. The caller can inspect this read-only before deciding whether recovery has to become durable `unknown`.
+export async function hasUnfinishedErpJobs(db: Db): Promise<boolean> {
+  const [fill, reconcile] = await Promise.all([unfinished(db, 'erp_job'), unfinished(db, 'erp_reconcile_job')]);
+  return fill.length > 0 || reconcile.length > 0;
+}
+
 export async function recoverErpJobs(db: Db, record: RecordFacts): Promise<number> {
   const at = new Date().toISOString();
   let recovered = 0;
