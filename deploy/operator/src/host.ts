@@ -1,12 +1,29 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import type { Readable } from 'node:stream';
+import {
+  BOOTSTRAP_ARTIFACTS,
+  bootstrapArtifactDirectory,
+  bootstrapArtifactForName,
+  bootstrapArtifactName,
+  bootstrapScript,
+  parseBootstrapResponse,
+  validateBootstrapProxy,
+  type BootstrapArtifacts,
+  type BootstrapResponse,
+  type BootstrapSource,
+  type LocalBootstrapArtifact,
+} from './bootstrap.js';
 import { NATIVE_PROFILE, type NativeProfile } from './profile.js';
 
 export type HostCommand =
   | { kind: 'status' }
   | { kind: 'doctor' }
   | { kind: 'logs'; lines: number }
-  | { kind: 'gate-status' };
+  | { kind: 'gate-status' }
+  | { kind: 'bootstrap-preview'; source: BootstrapSource }
+  | { kind: 'bootstrap-apply'; source: BootstrapSource; confirmationDigest: string };
 
 export type HostStatus = {
   currentRelease: string | null;
@@ -20,8 +37,17 @@ export type DoctorReport = {
   nodeVersion: string | null;
   gccVersion: string | null;
   buildPython: string | null;
+  pnpmVersion: string | null;
+  caddyVersion: string | null;
+  serviceAccount: 'ready' | 'missing' | 'mismatched' | 'unknown';
   maintenanceWrapper: 'present' | 'missing' | 'unknown';
+  issues: readonly DoctorIssue[];
 };
+
+export type DoctorIssue = Readonly<{
+  code: string;
+  message: string;
+}>;
 
 export type GateState = 'open' | 'admitting' | 'admitted' | 'refused' | 'unknown';
 
@@ -44,10 +70,18 @@ export type HostResult =
   | { kind: 'status'; value: HostStatus }
   | { kind: 'doctor'; value: DoctorReport }
   | { kind: 'logs'; value: string }
-  | { kind: 'gate-status'; value: GateStatus };
+  | { kind: 'gate-status'; value: GateStatus }
+  | { kind: 'bootstrap-preview'; value: BootstrapResponse }
+  | { kind: 'bootstrap-apply'; value: BootstrapResponse };
+
+export type TargetArtifactHandle = Readonly<{
+  fileName: string;
+  sha256: string;
+}>;
 
 export interface HostTransport {
   execute(command: HostCommand): Promise<HostResult>;
+  uploadArtifact(artifact: LocalBootstrapArtifact): Promise<TargetArtifactHandle>;
 }
 
 export type SshResult = { stdout: string; exitCode: number | null };
@@ -59,17 +93,25 @@ export type SshResult = { stdout: string; exitCode: number | null };
  */
 export type SshRunner = (profile: NativeProfile, remoteCommand: string, input?: Readable) => Promise<SshResult>;
 
+export type ArtifactUploader = (profile: NativeProfile, localPath: string, targetPath: string) => Promise<void>;
+
 export type SshHostTransportOptions = {
   runner?: SshRunner;
+  artifactUploader?: ArtifactUploader;
+  bootstrapArtifacts?: BootstrapArtifacts;
   profile?: NativeProfile;
 };
 
 export class SshHostTransport implements HostTransport {
   private readonly runner: SshRunner;
+  private readonly artifactUploader: ArtifactUploader;
+  private readonly bootstrapArtifacts: BootstrapArtifacts;
   private readonly profile: NativeProfile;
 
   constructor(options: SshHostTransportOptions = {}) {
     this.runner = options.runner ?? productionSshRunner;
+    this.artifactUploader = options.artifactUploader ?? uploadWithScp;
+    this.bootstrapArtifacts = options.bootstrapArtifacts ?? BOOTSTRAP_ARTIFACTS;
     this.profile = options.profile ?? NATIVE_PROFILE;
   }
 
@@ -83,7 +125,31 @@ export class SshHostTransport implements HostTransport {
         return { kind: 'logs', value: (await this.requireSuccess(logScript(command.lines), '日志收集')).stdout };
       case 'gate-status':
         return { kind: 'gate-status', value: await this.gateStatus() };
+      case 'bootstrap-preview':
+        return { kind: 'bootstrap-preview', value: await this.bootstrap({ mode: 'preview', source: command.source }) };
+      case 'bootstrap-apply':
+        return {
+          kind: 'bootstrap-apply',
+          value: await this.bootstrap({ mode: 'apply', source: command.source, confirmationDigest: command.confirmationDigest }),
+        };
     }
+  }
+
+  async uploadArtifact(artifact: LocalBootstrapArtifact): Promise<TargetArtifactHandle> {
+    const fileName = bootstrapArtifactName(artifact.fileName);
+    const expected = bootstrapArtifactForName(fileName, this.bootstrapArtifacts);
+    if (!expected || artifact.sha256 !== expected.sha256) throw new Error(`不允许上传未固定的 bootstrap 工件：${fileName}。`);
+    if (await sha256File(artifact.localPath) !== artifact.sha256) throw new Error(`本机 bootstrap 工件校验失败：${fileName}。`);
+
+    const directory = bootstrapArtifactDirectory(this.profile);
+    const targetPath = `${directory}/${artifact.sha256}`;
+    await this.requireSuccess(`install -d -o root -g root -m 0700 ${shellQuote(directory)}`, 'bootstrap 工件目录准备');
+    await this.artifactUploader(this.profile, artifact.localPath, targetPath);
+    await this.requireSuccess(
+      `printf '%s  %s\\n' ${shellQuote(artifact.sha256)} ${shellQuote(targetPath)} | sha256sum --strict --check --status -`,
+      `bootstrap 工件主机校验 (${fileName})`,
+    );
+    return { fileName, sha256: artifact.sha256 };
   }
 
   private async requireSuccess(script: string, label: string): Promise<SshResult> {
@@ -100,6 +166,19 @@ export class SshHostTransport implements HostTransport {
     if (result.exitCode !== 0) return { kind: 'unavailable-gate' };
 
     return parseGateStatus(result.stdout);
+  }
+
+  private async bootstrap(request: Readonly<{ mode: 'preview' | 'apply'; source: BootstrapSource; confirmationDigest?: string }>): Promise<BootstrapResponse> {
+    validateBootstrapProxy(request.source.proxy);
+    const result = await this.runner(this.profile, remoteShellCommand(bootstrapScript(this.profile, request, this.bootstrapArtifacts)));
+    let response: BootstrapResponse | undefined;
+    try {
+      response = parseBootstrapResponse(result.stdout);
+    } catch {
+      // An unexpected target failure is reported with the SSH status below.
+    }
+    if (response) return response;
+    throw new Error(`bootstrap 无法完成。SSH 命令退出码为 ${result.exitCode ?? '未知'}。`);
   }
 }
 
@@ -128,6 +207,10 @@ printf '\\n'
 function doctorScript(profile: NativeProfile): string {
   return `
 set -u
+issues=''
+append_issue() {
+  if [ -z "$issues" ]; then issues=$1; else issues="$issues,$1"; fi
+}
 printf 'node_version='
 ${profile.deployRoot}/runtime/node/bin/node --version 2>/dev/null || true
 printf '\\n'
@@ -137,9 +220,34 @@ printf '\\n'
 printf 'build_python='
 ${profile.buildPython} --version 2>/dev/null || true
 printf '\\n'
+printf 'pnpm_version='
+pnpm_bin=$(find ${profile.deployRoot}/runtime -type f -path '*/bin/pnpm' -print -quit 2>/dev/null || true)
+if [ -n "$pnpm_bin" ]; then "$pnpm_bin" --version 2>/dev/null || true; fi
+printf '\\n'
+printf 'caddy_version='
+${profile.deployRoot}/bin/caddy version 2>/dev/null | awk '{print $1}' || true
+printf '\\n'
+printf 'service_account='
+if ! id -u baox >/dev/null 2>&1; then
+  printf missing
+elif ! command -v getent >/dev/null 2>&1; then
+  printf unknown
+else
+  account_home=$(getent passwd baox | awk -F: '{print $6}')
+  if [ "$account_home" = ${profile.serviceHome} ]; then printf ready; else printf mismatched; fi
+fi
+printf '\\n'
 printf 'maintenance_wrapper='
 if [ -x ${profile.maintenanceWrapper} ]; then printf present; else printf missing; fi
 printf '\\n'
+if [ ! -x ${profile.deployRoot}/runtime/node/bin/node ]; then append_issue missing-node; fi
+if [ ! -x ${profile.deployRoot}/runtime/gcc-12.5.0/bin/g++ ]; then append_issue missing-isolated-gcc; fi
+if [ ! -x ${profile.serviceHome}/.local/share/baox-build-venv/bin/python ]; then append_issue missing-build-python; fi
+if [ -z "$pnpm_bin" ]; then append_issue missing-pnpm; fi
+if [ ! -x ${profile.deployRoot}/bin/caddy ]; then append_issue missing-caddy; fi
+if ! id -u baox >/dev/null 2>&1; then append_issue service-account-missing; fi
+if [ -f ${profile.buildEnvironment} ]; then :; else append_issue missing-build-environment; fi
+printf 'issues=%s\\n' "$issues"
 `;
 }
 
@@ -164,12 +272,35 @@ function parseStatus(result: SshResult): HostStatus {
 function parseDoctor(result: SshResult): DoctorReport {
   const values = keyValue(result.stdout);
   const wrapper = values['maintenance_wrapper'];
+  const serviceAccount = values['service_account'];
   return {
     nodeVersion: values['node_version'] || null,
     gccVersion: values['gcc_version'] || null,
     buildPython: values['build_python'] || null,
+    pnpmVersion: values['pnpm_version'] || null,
+    caddyVersion: values['caddy_version'] || null,
+    serviceAccount: serviceAccount === 'ready' || serviceAccount === 'missing' || serviceAccount === 'mismatched' ? serviceAccount : 'unknown',
     maintenanceWrapper: wrapper === 'present' || wrapper === 'missing' ? wrapper : 'unknown',
+    issues: parseDoctorIssues(values['issues']),
   };
+}
+
+function parseDoctorIssues(value: string | undefined): readonly DoctorIssue[] {
+  if (!value) return [];
+  return value.split(',').filter(Boolean).map((code) => ({ code, message: doctorIssueMessage(code) }));
+}
+
+function doctorIssueMessage(code: string): string {
+  const messages: Readonly<Record<string, string>> = {
+    'missing-node': '缺少 baox 专用 Node 运行时。',
+    'missing-isolated-gcc': '缺少隔离 GCC 运行时。请先执行 bootstrap。',
+    'missing-build-python': '缺少 baox 构建 Python 虚拟环境。请先执行 bootstrap。',
+    'missing-pnpm': '缺少 baox 专用 pnpm。',
+    'missing-caddy': '缺少 baox 专用 Caddy。',
+    'service-account-missing': '缺少 baox 服务账号。请先执行 bootstrap。',
+    'missing-build-environment': '缺少受控构建环境。请先执行 bootstrap。',
+  };
+  return messages[code] ?? `主机报告了未知的准备条件问题：${code}。`;
 }
 
 function keyValue(output: string): Record<string, string> {
@@ -238,6 +369,40 @@ export function productionSshRunner(profile: NativeProfile, remoteCommand: strin
     } else {
       child.stdin.end();
     }
+  });
+}
+
+function uploadWithScp(profile: NativeProfile, localPath: string, targetPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('scp', [
+      '-q',
+      '-o', 'BatchMode=yes',
+      '-o', 'ConnectTimeout=10',
+      localPath,
+      `${profile.sshUser}@${profile.host}:${targetPath}`,
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    const stderr: Buffer[] = [];
+    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+    child.on('error', reject);
+    child.on('close', (exitCode) => {
+      if (exitCode === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(Buffer.concat(stderr).toString('utf8').trim() || `scp exited ${exitCode ?? 'without a status'}`));
+    });
+  });
+}
+
+function sha256File(path: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256');
+    const stream = createReadStream(path);
+    stream.on('data', (chunk: string | Buffer) => {
+      hash.update(chunk);
+    });
+    stream.on('error', reject);
+    stream.on('end', () => resolve(hash.digest('hex')));
   });
 }
 

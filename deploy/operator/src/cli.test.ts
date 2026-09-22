@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { runOperatorCli } from './cli.js';
 import type { CandidateTransport } from './candidate.js';
-import type { GateStatus } from './host.js';
+import type { DoctorReport, GateStatus } from './host.js';
 import { createSourceRepository } from './source.js';
 import { ControllableTarget } from './testing/controllable-target.js';
 
@@ -36,7 +36,11 @@ function git(cwd: string, args: string[]): string {
 async function cli(repository: string, target: ControllableTarget, ...argv: string[]) {
   const out: string[] = [];
   const err: string[] = [];
-  const code = await runOperatorCli(argv, { source: createSourceRepository(repository), host: target }, { out: (line) => out.push(line), err: (line) => err.push(line) });
+  const code = await runOperatorCli(
+    argv,
+    { source: createSourceRepository(repository), host: target, bootstrapProvenance: async () => undefined },
+    { out: (line) => out.push(line), err: (line) => err.push(line) },
+  );
   return { code, out: out.join('\n'), err: err.join('\n') };
 }
 
@@ -104,7 +108,90 @@ it('refuses a dry-run routine deployment when the target lacks the maintenance g
 
   expect(result.code).toBe(1);
   expect(result.out).toContain('首次启用');
-  expect(target.commands).toEqual([{ kind: 'gate-status' }]);
+  expect(target.commands).toEqual([{ kind: 'doctor' }, { kind: 'gate-status' }]);
+});
+
+it('refuses a dry-run routine deployment when isolated prerequisites are missing without attempting bootstrap', async () => {
+  const repository = committedRepository();
+  const doctor: DoctorReport = {
+    nodeVersion: 'v24.13.0',
+    gccVersion: null,
+    buildPython: null,
+    pnpmVersion: '10.17.1',
+    caddyVersion: 'v2.10.2',
+    serviceAccount: 'ready',
+    maintenanceWrapper: 'present',
+    issues: [{ code: 'missing-isolated-gcc', message: '缺少隔离 GCC 运行时。请先执行 bootstrap。' }],
+  };
+  const target = new ControllableTarget({ gate: openGate(), doctor });
+
+  const result = await cli(repository, target, 'deploy', '--dry-run', '--json');
+
+  expect(result.code).toBe(1);
+  expect(result.out).toContain('缺少隔离 GCC');
+  expect(target.commands).toEqual([{ kind: 'doctor' }, { kind: 'gate-status' }]);
+  expect(target.uploads).toEqual([]);
+});
+
+it('does not upload or invoke a host bootstrap action without an explicit reviewed digest', async () => {
+  const repository = committedRepository();
+  const target = new ControllableTarget({ gate: openGate() });
+
+  const result = await cli(repository, target, 'bootstrap-apply', '--proxy', 'http://proxy.example.test:7890');
+
+  expect(result.code).toBe(2);
+  expect(target.commands).toEqual([]);
+  expect(target.uploads).toEqual([]);
+});
+
+it('requires operator-side provenance before it invokes the target bootstrap action', async () => {
+  const repository = committedRepository();
+  const target = new ControllableTarget({ gate: openGate() });
+  const out: string[] = [];
+  const err: string[] = [];
+  let provenanceCalls = 0;
+
+  const code = await runOperatorCli(
+    ['bootstrap-apply', '--confirm', 'a'.repeat(64), '--proxy', 'http://proxy.example.test:7890'],
+    {
+      source: createSourceRepository(repository),
+      host: target,
+      bootstrapProvenance: async () => {
+        provenanceCalls += 1;
+        throw new Error('test provenance rejection');
+      },
+    },
+    { out: (line) => out.push(line), err: (line) => err.push(line) },
+  );
+
+  expect(code).toBe(3);
+  expect(provenanceCalls).toBe(1);
+  expect(out).toEqual([]);
+  expect(err.join('\n')).toContain('test provenance rejection');
+  expect(target.commands).toEqual([]);
+  expect(target.uploads).toEqual([]);
+});
+
+it('presents a bootstrap transaction digest and sends an explicit confirmation to the host', async () => {
+  const repository = committedRepository();
+  const target = new ControllableTarget({ gate: openGate() });
+
+  const preview = await cli(repository, target, 'bootstrap-preview', '--proxy', 'http://proxy.example.test:7890', '--json');
+
+  expect(preview.code).toBe(0);
+  expect(JSON.parse(preview.out)).toMatchObject({ command: 'bootstrap-preview', response: { state: 'preview', plan: { transactionDigest: 'a'.repeat(64) } } });
+  expect(target.commands).toEqual([{ kind: 'bootstrap-preview', source: { kind: 'proxy', proxy: 'http://proxy.example.test:7890' } }]);
+
+  target.clearCommands();
+  const applied = await cli(repository, target, 'bootstrap-apply', '--confirm', 'a'.repeat(64), '--proxy', 'http://proxy.example.test:7890', '--json');
+
+  expect(applied.code).toBe(0);
+  expect(JSON.parse(applied.out)).toMatchObject({ command: 'bootstrap-apply', response: { state: 'applied' } });
+  expect(target.commands).toEqual([{
+    kind: 'bootstrap-apply',
+    source: { kind: 'proxy', proxy: 'http://proxy.example.test:7890' },
+    confirmationDigest: 'a'.repeat(64),
+  }]);
 });
 
 it('refuses candidate preparation before source selection or target coordination when the maintenance gate is absent', async () => {

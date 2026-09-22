@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Installs baox for first adoption or performs a controlled repair on the phase-1 intranet host. Routine upgrades use
-# the maintenance admission lifecycle; this script switches and restarts services directly. Run it as root on the host:
-#
-#   bash install.sh /tmp/baox-<commit>.tar.gz
+# Retired direct installer. It exits before inspecting inputs or changing the host. Use the explicit native bootstrap
+# and the maintenance admission lifecycle instead. The unreachable body remains as an archival record of the phase-1
+# procedure.
 #
 # The tarball is `git archive` of the commit to deploy; its name, minus .tar.gz, names the release. The walkthrough is
 # docs/deployment/intranet-phase-1.md. Everything lands under /opt/tools/baox except the two systemd units.
@@ -22,6 +21,9 @@
 # *_proxy variables, all passed through to the build. The native compiler is the isolated GCC named below; see the
 # deployment walkthrough for how it is provisioned and verified.
 set -euo pipefail
+
+printf '%s\n' 'install.sh is retired and makes no host changes. Use the explicit native bootstrap and maintenance lifecycle.' >&2
+exit 64
 
 DEPLOY=/opt/tools/baox
 CADDY_VERSION=2.10.2
