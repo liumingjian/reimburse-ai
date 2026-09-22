@@ -376,6 +376,8 @@ export const LineSchema = z.object({
   expenseItemCode: z.string().nullable(),
   expenseItemName: z.string().nullable(),
   invoiceType: z.string().min(1),
+  // The evidence behind the ERP enum value, distinct from the material's parsed 发票票种.
+  invoiceTypeSource: z.string().min(1),
   referenceMaterialIds: z.array(IdSchema),
   grossAmount: AmountSchema,
   netAmount: AmountSchema,
