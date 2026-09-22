@@ -55,7 +55,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   return (
     <>
-      <PageHeader title={copy.title} lead={copy.lead} />
+      <PageHeader title={copy.title} lead={copy.lead} actions={snapshot.confirmation.status === 'confirmed' ? <Button kind="secondary" href={taskHash(taskId, 'print')}>去打印</Button> : undefined} />
 
       {/* 写入进行中：页头下方、步骤清单之前一条低对比 warning 通知。 */}
       {writing ? (

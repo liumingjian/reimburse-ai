@@ -28,10 +28,10 @@ async function act(page: Page, snapshot: TaskSnapshot, name: string, body: Recor
   return TaskSnapshotSchema.parse(await response.json());
 }
 
-async function confirmedTask(page: Page): Promise<string> {
+async function confirmedTask(page: Page, materials = samples): Promise<string> {
   const created = TaskSnapshotSchema.parse(await (await page.request.post('/api/tasks', { data: { homeCity: '杭州' } })).json());
   const taskId = created.task.taskId;
-  for (const sample of samples) {
+  for (const sample of materials) {
     const mimeType = sample.file.endsWith('.jpg') ? 'image/jpeg' : 'application/pdf';
     const uploaded = await page.request.post(`/api/tasks/${taskId}/batches`, { multipart: { files: { name: sample.fileName, mimeType, buffer: readFileSync(join(GENERATED_DIR, sample.file)) } } });
     expect(uploaded.ok()).toBe(true);
@@ -50,6 +50,44 @@ async function confirmedTask(page: Page): Promise<string> {
 async function expectLoaded(image: Locator) {
   await expect.poll(() => image.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
 }
+
+test.describe('confirmed print and ERP navigation', () => {
+  test.use({ serverEnv: { BAOX_ERP_FAKE: 'login_wall' } });
+
+  test('readable preview controls and both routes retain the same confirmation', async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
+    await signIn(page);
+    const taskId = await confirmedTask(page, samples.filter((sample) => sample.file.endsWith('.pdf')));
+    const before = await snapshotOf(page, taskId);
+    await page.goto(`/#/task/${taskId}/print`);
+    const image = page.locator('.app-page-image').first();
+    await expectLoaded(image);
+    for (const [width, height] of [[1366, 768], [1920, 1080]]) {
+      await page.setViewportSize({ width: width!, height: height! });
+      const toolbar = page.getByRole('toolbar', { name: '打印稿查看' });
+      await expect(toolbar).toBeInViewport();
+      const box = await image.boundingBox();
+      expect(box?.width).toBeGreaterThan(700);
+      const list = await page.getByRole('list', { name: '打印稿页面' }).boundingBox();
+      expect(Math.abs((list!.x + list!.width / 2) - width! / 2)).toBeLessThan(40);
+      await page.screenshot({ path: testInfo.outputPath(`print-${width}.png`) });
+    }
+    const toolbar = page.getByRole('toolbar', { name: '打印稿查看' });
+    await toolbar.getByRole('button', { name: '放大', exact: true }).click();
+    await expect(toolbar.getByRole('status')).toHaveText('125%');
+    await toolbar.getByRole('button', { name: '适应窗口', exact: true }).click();
+    await expect(toolbar.getByRole('status')).toHaveText('100%');
+    expect((await snapshotOf(page, taskId)).confirmation).toEqual(before.confirmation);
+    await page.getByRole('button', { name: '去报销', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`#/task/${taskId}/erp$`));
+    await expect.poll(async () => (await snapshotOf(page, taskId)).erp.status).toBe('waiting_login');
+    await page.getByRole('link', { name: '去打印', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`#/task/${taskId}/print$`));
+    await page.getByRole('link', { name: '查看填报进度', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`#/task/${taskId}/erp$`));
+    expect((await snapshotOf(page, taskId)).confirmation).toEqual(before.confirmation);
+  });
+});
 
 test('去打印：生成合并打印稿，旋转、四角裁剪、补充支付截图，下载 PDF；整单明细确认不变', async ({ page }, testInfo) => {
   test.setTimeout(240_000);
