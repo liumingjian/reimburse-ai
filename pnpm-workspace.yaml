@@ -5,6 +5,7 @@ packages:
   - extension
   - contract
   - fixtures
+  - deploy/operator
 
 # Native addons whose install script must run (pnpm 10 skips dependency build scripts unless listed).
 onlyBuiltDependencies:
