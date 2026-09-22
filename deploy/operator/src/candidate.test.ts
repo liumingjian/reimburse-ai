@@ -318,3 +318,26 @@ it('reports an unavailable coordinator without rewriting a journal when status i
   expect(JSON.parse(out.join('\n'))).toMatchObject({ candidate: { state: 'unavailable' } });
   expect(readFileSync(journal, 'utf8')).toBe(sentinel);
 }, REAL_SUBPROCESS_TIMEOUT_MS);
+
+it('repairs an incompatible SQLite prebuild only inside the candidate using the controlled native toolchain', async () => {
+  const target = await createTarget();
+  const source = createRepository();
+  const currentBefore = readlinkSync(target.current);
+  const dataBefore = snapshotDirectory(target.dataDir);
+  writeFileSync(join(target.barrier, 'force-native-sqlite'), 'enabled\n');
+
+  const result = await cli(source.repository, target, 'prepare', '--json');
+
+  expect(result.code, `${result.out}\n${result.err}`).toBe(0);
+  const candidateId = readdirSync(join(target.profile.deployRoot, 'candidates'))[0]!;
+  const addon = join(target.profile.deployRoot, 'candidates', candidateId, 'source', 'server', 'node_modules', 'better-sqlite3');
+  expect(readFileSync(join(addon, 'prebuilds', `${process.platform}-${process.arch}.node.upstream-disabled`), 'utf8'))
+    .toBe('incompatible upstream native binary');
+  expect(JSON.parse(readFileSync(join(addon, 'native-build-evidence.json'), 'utf8'))).toEqual({
+    args: ['rebuild', '--release', '--jobs=2', `--nodedir=${join(target.profile.deployRoot, 'runtime', 'node')}`],
+    python: target.profile.buildPython,
+    compiler: join(target.profile.deployRoot, 'runtime', 'gcc-12.5.0', 'bin', 'g++'),
+  });
+  expect(readlinkSync(target.current)).toBe(currentBefore);
+  expect(snapshotDirectory(target.dataDir)).toEqual(dataBefore);
+}, REAL_SUBPROCESS_TIMEOUT_MS);

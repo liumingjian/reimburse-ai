@@ -644,6 +644,26 @@ fs.statfs = async (...args) => {
 
 function pnpmScript(barrier: string, candidateRuntimeSource: string): string {
   return `#!/bin/sh
+native_fixture() {
+  if [ ! -f ${shellQuote(join(barrier, 'force-native-sqlite'))} ]; then return; fi
+  node <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const original = path.dirname(require.resolve('better-sqlite3/package.json', { paths: [${JSON.stringify(join(candidateRuntimeSource, 'server'))}] }));
+const modules = path.join(process.cwd(), 'server', 'node_modules');
+fs.unlinkSync(modules);
+fs.mkdirSync(modules);
+const target = path.join(modules, 'better-sqlite3');
+fs.cpSync(original, target, { recursive: true, dereference: true });
+const prebuild = path.join(target, 'prebuilds', process.platform + '-' + process.arch + '.node');
+const good = fs.readFileSync(prebuild);
+fs.writeFileSync(path.join(target, 'fixture-native.node'), good);
+fs.writeFileSync(prebuild, 'incompatible upstream native binary');
+const gyp = path.resolve(process.cwd(), '../../..', 'runtime/pnpm-10.17.1/lib/node_modules/pnpm/dist/node_modules/node-gyp/bin/node-gyp.js');
+fs.mkdirSync(path.dirname(gyp), { recursive: true });
+fs.writeFileSync(gyp, "const fs=require('node:fs');fs.mkdirSync('build/Release',{recursive:true});fs.copyFileSync('fixture-native.node','build/Release/better_sqlite3.node');fs.writeFileSync('native-build-evidence.json',JSON.stringify({args:process.argv.slice(2),python:process.env.npm_config_python,compiler:process.env.CXX}));");
+NODE
+}
 if [ "$1" = --version ]; then printf '10.17.1\\n'; exit 0; fi
 if [ "$1" = install ]; then
   printf install >> '${join(barrier, 'counter')}'
@@ -681,11 +701,14 @@ if [ "$1" = build ]; then
     mkdir -p server web/dist extension/dist
     cp -R ${shellQuote(join(candidateRuntimeSource, 'server', 'dist'))} server/dist
     ln -s ${shellQuote(join(candidateRuntimeSource, 'server', 'node_modules'))} server/node_modules
+    native_fixture
     printf '<html>candidate</html>' > web/dist/index.html
     printf '{"manifest_version":3}' > extension/dist/manifest.json
     exit 0
   fi
   mkdir -p server/dist web/dist extension/dist
+  ln -s ${shellQuote(join(candidateRuntimeSource, 'server', 'node_modules'))} server/node_modules
+  native_fixture
   printf 'main' > server/dist/main.mjs
   printf 'cli' > server/dist/baox.mjs
   printf '<html></html>' > web/dist/index.html

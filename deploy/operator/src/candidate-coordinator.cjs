@@ -2989,6 +2989,8 @@ async function buildCandidate(request, paths, source, explicitEnvironment, lease
   await requireLease(paths, lease);
   await runAsBaox(pnpm, ['build'], paths.source, env, paths.log);
   await requireLease(paths, lease);
+  await ensureCandidateSqlite(request, paths, env, lease);
+  await requireLease(paths, lease);
   for (const file of [
     path.join(paths.source, 'server', 'dist', 'main.mjs'),
     path.join(paths.source, 'server', 'dist', 'baox.mjs'),
@@ -3006,6 +3008,36 @@ async function buildCandidate(request, paths, source, explicitEnvironment, lease
 async function runAsBaox(program, args, cwd, env, log) {
   const assignments = Object.entries(env).map(([key, value]) => key + '=' + value);
   await runLogged('runuser', ['-u', 'baox', '--', 'env', '-i', ...assignments, program, ...args], cwd, {}, log);
+}
+
+async function ensureCandidateSqlite(request, paths, env, lease) {
+  const runtime = path.join(request.deployRoot, 'runtime');
+  const node = path.join(runtime, 'node', 'bin', 'node');
+  const server = path.join(paths.source, 'server');
+  const smoke = 'const Database = require("better-sqlite3"); const db = new Database(":memory:"); if (db.prepare("SELECT 1 AS ready").get().ready !== 1) process.exit(1); db.close();';
+  try {
+    await runAsBaox(node, ['-e', smoke], server, env, paths.log);
+    return;
+  } catch {
+    await requireLease(paths, lease);
+  }
+  // Some upstream prebuilds require a newer glibc than the fixed Kylin host.
+  // Restrict the repair to this candidate; never modify a shared or active addon.
+  const resolved = await commandOutputAsBaox(node, ['-e', `process.stdout.write(require.resolve('better-sqlite3/package.json', { paths: [${JSON.stringify(server)}] }));`], env);
+  const sourceRoot = await fs.realpath(paths.source);
+  const packageRoot = resolved ? await fs.realpath(path.dirname(resolved)) : '';
+  if (!packageRoot.startsWith(sourceRoot + path.sep)) throw new CandidateFailure('candidate-sqlite-package-outside-source');
+  const source = await readJson(path.join(paths.source, 'package.json'));
+  const pnpmVersion = /^pnpm@([0-9.]+)$/u.exec(source && source.packageManager || '')?.[1];
+  if (!pnpmVersion) throw new CandidateFailure('invalid-runtime-pins');
+  const gyp = path.join(runtime, 'pnpm-' + pnpmVersion, 'lib', 'node_modules', 'pnpm', 'dist', 'node_modules', 'node-gyp', 'bin', 'node-gyp.js');
+  if (!await isRegularFile(gyp)) throw new CandidateFailure('candidate-native-build-tool-missing');
+  const prebuild = path.join(packageRoot, 'prebuilds', `${process.platform}-${process.arch}.node`);
+  if (await isRegularFile(prebuild)) await fs.rename(prebuild, prebuild + '.upstream-disabled');
+  await requireLease(paths, lease);
+  await runAsBaox(node, [gyp, 'rebuild', '--release', '--jobs=2', '--nodedir=' + path.join(runtime, 'node')], packageRoot, env, paths.log);
+  await requireLease(paths, lease);
+  await runAsBaox(node, ['-e', smoke], server, env, paths.log);
 }
 
 async function captureRecoveryConfiguration(request, paths, lease) {
