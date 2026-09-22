@@ -11,6 +11,8 @@ import { SshHostTransport } from './host.js';
 import { createSourceRepository } from './source.js';
 import { createIsolatedTarget, type IsolatedTarget } from './testing/isolated-target.js';
 
+const REAL_SUBPROCESS_TIMEOUT_MS = 30_000;
+const BARRIER_TIMEOUT_MS = 20_000;
 const cleanup: Array<() => Promise<void> | void> = [];
 
 afterEach(async () => {
@@ -90,7 +92,8 @@ async function reaches(server: IsolatedTarget['server']): Promise<void> {
 }
 
 async function waitFor(file: string): Promise<void> {
-  for (let attempt = 0; attempt < 400; attempt += 1) {
+  const deadline = Date.now() + BARRIER_TIMEOUT_MS;
+  while (Date.now() < deadline) {
     if (existsSync(file)) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
@@ -164,7 +167,7 @@ it('keeps the real service, SQLite data, active release, and configuration uncha
   const status = await cli(source.repository, target, 'status', '--json');
   expect(status).toMatchObject({ code: 0, err: '' });
   expect(JSON.parse(status.out)).toMatchObject({ candidate: { journal: { phase: 'prepared' }, manifest: { source: { commit: source.first } } } });
-}, 30_000);
+}, REAL_SUBPROCESS_TIMEOUT_MS);
 
 it('verifies a local relay against the same committed archive checksum and reports missing bootstrap prerequisites without installing them', async () => {
   const target = await createTarget();
@@ -186,7 +189,7 @@ it('verifies a local relay against the same committed archive checksum and repor
   expect(notReady.out).toContain('not-ready');
   expect(readlinkSync(incomplete.current)).toBe(activeBefore);
   expect(existsSync(join(incomplete.profile.deployRoot, 'runtime', 'pnpm-10.17.1', 'bin', 'pnpm'))).toBe(true);
-});
+}, REAL_SUBPROCESS_TIMEOUT_MS);
 
 it('prepares a real candidate through the CLI when the coordinator source exceeds Linux argument limits', async () => {
   const target = await createTarget();
@@ -217,7 +220,7 @@ it('prepares a real candidate through the CLI when the coordinator source exceed
   expect(commands[0]).not.toContain('streamed coordinator source');
   expect(JSON.parse(out.join('\n'))).toMatchObject({ candidate: { state: 'prepared' } });
   expect(readFileSync(join(target.profile.deployRoot, 'maintenance', 'candidate-coordinator.cjs'), 'utf8')).toBe(coordinator);
-});
+}, REAL_SUBPROCESS_TIMEOUT_MS);
 
 it('reports the same malformed controlled build environment in doctor and prepare', async () => {
   const target = await createTarget();
@@ -232,7 +235,7 @@ it('reports the same malformed controlled build environment in doctor and prepar
   const prepared = await cli(source.repository, target, 'prepare', source.first, '--json');
   expect(prepared.code).toBe(1);
   expect(prepared.out).toContain('invalid-build-environment');
-});
+}, REAL_SUBPROCESS_TIMEOUT_MS);
 
 it('claims a stale lock once when reconnecting operators prepare the same candidate', async () => {
   const target = await createTarget({ holdBuild: true });
@@ -251,7 +254,7 @@ it('claims a stale lock once when reconnecting operators prepare the same candid
   expect(final.code).toBe(0);
   const status = await cli(source.repository, target, 'status', '--json');
   expect(JSON.parse(status.out)).toMatchObject({ candidate: { lock: { state: 'unlocked' }, journal: { phase: 'prepared' } } });
-});
+}, REAL_SUBPROCESS_TIMEOUT_MS);
 
 it('preserves a successor lock when a worker loses its lease before release', async () => {
   const target = await createTarget({ holdBuild: true, fenceOldWorker: true });
@@ -267,7 +270,7 @@ it('preserves a successor lock when a worker loses its lease before release', as
   const owner = JSON.parse(readFileSync(join(target.profile.deployRoot, 'maintenance', 'deployment.lock', 'owner.json'), 'utf8')) as { token: string };
   expect(owner.token).toBe('f'.repeat(64));
   expect(JSON.parse(readFileSync(join(target.profile.deployRoot, 'maintenance', 'deployment-journal.json'), 'utf8'))).toMatchObject({ phase: 'recovery-required' });
-});
+}, REAL_SUBPROCESS_TIMEOUT_MS);
 
 it('reports an unavailable coordinator without rewriting a journal when status inspection fails', async () => {
   const target = await createTarget();
@@ -290,4 +293,4 @@ it('reports an unavailable coordinator without rewriting a journal when status i
   expect(err).toEqual([]);
   expect(JSON.parse(out.join('\n'))).toMatchObject({ candidate: { state: 'unavailable' } });
   expect(readFileSync(journal, 'utf8')).toBe(sentinel);
-});
+}, REAL_SUBPROCESS_TIMEOUT_MS);

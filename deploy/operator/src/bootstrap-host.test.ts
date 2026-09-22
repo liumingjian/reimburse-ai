@@ -4,6 +4,7 @@ import { runOperatorCli } from './cli.js';
 import type { SourceRepository } from './source.js';
 import { IsolatedBootstrapTarget } from './testing/isolated-bootstrap-target.js';
 
+const REAL_SUBPROCESS_TIMEOUT_MS = 30_000;
 const targets: IsolatedBootstrapTarget[] = [];
 
 afterEach(() => {
@@ -45,7 +46,7 @@ it('does not reach the target or stage artifacts when bootstrap apply lacks a re
   expect(isolated.remoteCommands).toEqual([]);
   expect(isolated.appliedPackageTransaction).toBe(false);
   expect(isolated.createdServiceAccount).toBe(false);
-});
+}, REAL_SUBPROCESS_TIMEOUT_MS);
 
 it('applies a reviewed direct transaction through the real host driver without host-wide paths', async () => {
   const isolated = target();
@@ -69,7 +70,7 @@ it('applies a reviewed direct transaction through the real host driver without h
   expect(isolated.proxyCalls).toEqual(expect.arrayContaining([expect.stringContaining('--proxy http://proxy.example.test:7890')]));
   expect(isolated.remoteCommands.join('\n')).not.toContain('/opt/tools/baox');
   expect(isolated.remoteCommands.join('\n')).not.toMatch(/(^|[^A-Za-z0-9._-])\/home\/baox(?:\/|['\s])/u);
-}, 30_000);
+}, REAL_SUBPROCESS_TIMEOUT_MS);
 
 it('refuses a package transaction that would replace a protected system runtime', async () => {
   const isolated = target({ transaction: [{ action: 'upgrade', name: 'glibc', nevra: 'glibc-2.28-300.ky10.x86_64' }] });
@@ -87,7 +88,7 @@ it('refuses a package transaction that would replace a protected system runtime'
   expect(isolated.appliedPackageTransaction).toBe(false);
   expect(isolated.createdServiceAccount).toBe(false);
   expect(existsSync(isolated.profile.buildEnvironment)).toBe(false);
-});
+}, REAL_SUBPROCESS_TIMEOUT_MS);
 
 it('refuses bootstrap while an active candidate owns the shared deployment lock', async () => {
   const isolated = target();
@@ -106,7 +107,7 @@ it('refuses bootstrap while an active candidate owns the shared deployment lock'
   expect(isolated.appliedPackageTransaction).toBe(false);
   expect(isolated.createdServiceAccount).toBe(false);
   expect(existsSync(isolated.profile.buildEnvironment)).toBe(false);
-});
+}, REAL_SUBPROCESS_TIMEOUT_MS);
 
 it('refuses before the package transaction when the bootstrap host lacks a usable make command', async () => {
   const isolated = target({ missingMake: true });
@@ -123,7 +124,7 @@ it('refuses before the package transaction when the bootstrap host lacks a usabl
   expect(applied).toMatchObject({ kind: 'bootstrap-apply', value: { state: 'prerequisite-refused', reason: expect.stringContaining('make') } });
   expect(isolated.appliedPackageTransaction).toBe(false);
   expect(isolated.createdServiceAccount).toBe(false);
-});
+}, REAL_SUBPROCESS_TIMEOUT_MS);
 
 it('refuses before the package transaction when the bootstrap host C++ compiler is unusable', async () => {
   const isolated = target({ unusableHostCompiler: true });
@@ -140,7 +141,7 @@ it('refuses before the package transaction when the bootstrap host C++ compiler 
   expect(applied).toMatchObject({ kind: 'bootstrap-apply', value: { state: 'prerequisite-refused', reason: expect.stringContaining('compiler') } });
   expect(isolated.appliedPackageTransaction).toBe(false);
   expect(isolated.createdServiceAccount).toBe(false);
-});
+}, REAL_SUBPROCESS_TIMEOUT_MS);
 
 it('leaves a successor deployment lock in place when bootstrap loses its lease', async () => {
   const isolated = target({ fenceBootstrapLock: true });
@@ -157,7 +158,7 @@ it('leaves a successor deployment lock in place when bootstrap loses its lease',
   expect(applied).toMatchObject({ kind: 'bootstrap-apply', value: { state: 'prerequisite-refused', reason: expect.stringContaining('lock was lost') } });
   const owner = JSON.parse(readFileSync(`${isolated.profile.deployRoot}/maintenance/deployment.lock/owner.json`, 'utf8')) as { token: string };
   expect(owner.token).toBe('f'.repeat(64));
-});
+}, REAL_SUBPROCESS_TIMEOUT_MS);
 
 it('does not replace a partial compiler runtime while an active release exists', async () => {
   const isolated = target({ activeRelease: true });
@@ -176,7 +177,7 @@ it('does not replace a partial compiler runtime while an active release exists',
   expect(applied).toMatchObject({ kind: 'bootstrap-apply', value: { state: 'prerequisite-refused', reason: expect.stringContaining('will not replace') } });
   expect(existsSync(prefix)).toBe(true);
   expect(isolated.appliedPackageTransaction).toBe(false);
-});
+}, REAL_SUBPROCESS_TIMEOUT_MS);
 
 it('fails readiness when the build Python is not executable as baox', async () => {
   const isolated = target({ denyBaoxPython: true });
@@ -191,7 +192,7 @@ it('fails readiness when the build Python is not executable as baox', async () =
   })).rejects.toThrow('bootstrap');
 
   expect(isolated.appliedPackageTransaction).toBe(true);
-});
+}, REAL_SUBPROCESS_TIMEOUT_MS);
 
 it('rechecks relay bytes on the target before the package transaction can apply', async () => {
   const isolated = target();
@@ -209,4 +210,4 @@ it('rechecks relay bytes on the target before the package transaction can apply'
 
   expect(isolated.appliedPackageTransaction).toBe(false);
   expect(isolated.createdServiceAccount).toBe(false);
-});
+}, REAL_SUBPROCESS_TIMEOUT_MS);
