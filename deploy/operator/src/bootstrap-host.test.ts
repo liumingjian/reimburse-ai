@@ -20,6 +20,9 @@ const unusedSource: SourceRepository = {
   plan: async () => {
     throw new Error('bootstrap does not select application source');
   },
+  archive: async () => {
+    throw new Error('bootstrap does not archive application source');
+  },
 };
 
 async function cli(host: IsolatedBootstrapTarget, ...argv: string[]) {

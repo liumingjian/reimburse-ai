@@ -64,5 +64,5 @@ uv 摘要，且主机始终自行拒绝错误摘要。
 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`。引导以 `runuser -u baox env -i` 完成编译器和 Python 的
 就绪探测，包含 C++20 编译探测。
 
-旧的 `deploy/intranet/install.sh` 是首次采用或受控修复的历史路径，不能作为常规升级入口。常规发布、候选
+旧的 `deploy/intranet/install.sh` 已停用，执行时会在读取输入或改写主机前以状态码 `64` 退出。常规发布、候选
 构建和切换必须先通过维护闸门和各自的预检；它们不得借由引导路径安装或升级原生系统运行时。

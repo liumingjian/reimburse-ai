@@ -2,7 +2,7 @@
 
 > Historical phase-1 record: the manual native-runtime commands below are retained as deployment evidence. Use
 > [native bootstrap](native-bootstrap.zh-CN.md) for all new prerequisite work; do not run the manual account, Python,
-> compiler, or dnf steps as a routine upgrade path. `install.sh` remains only for first adoption or a controlled repair.
+> compiler, or dnf steps as a routine upgrade path. `install.sh` is retired and exits before it changes the host.
 
 How baox runs on `10.250.0.222` for the browser-extension V1 round (spec #246, ticket #260). The design and its
 reasons are in [browser-extension-v1.md](../design/browser-extension-v1.md#deployment-phase-1-intranet-no-domain); this
@@ -142,6 +142,10 @@ the isolated compiler runtime.
 
 ## First install
 
+> Retired procedure: `install.sh` now exits with code 64 before it reads a tarball or contacts the host. Do not use
+> these historical steps for first adoption. The replacement must combine confirmed native bootstrap with the
+> maintenance lifecycle.
+
 1. **On the mac, pack the commit to deploy.** Name the tarball after the commit; the name becomes the release name.
 
    ```bash
@@ -189,10 +193,9 @@ the isolated compiler runtime.
 
 ## Upgrade
 
-`install.sh` is a first-adoption and controlled-repair tool. It switches the release and restarts services directly,
-so it is not the routine upgrade path for a host that may have reimbursement work in flight. Use the maintenance
-admission lifecycle and candidate/recovery tooling for routine changes; it preserves the durable barrier before any
-release or public-proxy transition. `BAOX_ADMIN_USERNAME` is read only while the database has no administrator.
+`install.sh` is retired and exits before it switches a release or restarts a service. Use the maintenance admission
+lifecycle and candidate/recovery tooling for routine changes; it preserves the durable barrier before any release or
+public-proxy transition. `BAOX_ADMIN_USERNAME` is retained here only as part of the historical record.
 
 When the release changes the extension, employees re-download it from the settings page and reload it in the browser
 (the settings page carries the Chinese walkthrough); the server refuses extensions older than
@@ -313,9 +316,9 @@ is needed.
 | Symptom | Cause |
 |---|---|
 | Every page answers 403 `forbidden_host` | The browser's address differs from `BAOX_PUBLIC_ORIGIN`, or something between rewrote `Host` |
-| Extension download answers 503 | No extension template at `current/extension/dist`; rerun `install.sh`, which checks the build left it |
+| Extension download answers 503 | No extension template at `current/extension/dist`; inspect the candidate build validation. The retired installer cannot repair it. |
 | `journalctl -u baox` shows `already used by another baox server` | A second baox process holds `data/server.lock`; stop it |
-| Downloads are slow or fail | Set `NODE_MIRROR`, `CADDY_DOWNLOAD` or `npm_config_registry` for the `install.sh` run (see its header) |
+| Downloads are slow or fail | Repair the approved build environment before candidate preparation; the retired installer does not download artifacts. |
 
 ## Deployment verification
 
