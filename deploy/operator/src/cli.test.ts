@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { runOperatorCli } from './cli.js';
+import type { CandidateTransport } from './candidate.js';
 import type { GateStatus } from './host.js';
 import { createSourceRepository } from './source.js';
 import { ControllableTarget } from './testing/controllable-target.js';
@@ -103,6 +104,31 @@ it('refuses a dry-run routine deployment when the target lacks the maintenance g
 
   expect(result.code).toBe(1);
   expect(result.out).toContain('首次启用');
+  expect(target.commands).toEqual([{ kind: 'gate-status' }]);
+});
+
+it('refuses candidate preparation before source selection or target coordination when the maintenance gate is absent', async () => {
+  const repository = committedRepository();
+  const target = new ControllableTarget({ gate: { kind: 'missing-gate' } });
+  let prepares = 0;
+  const candidate: CandidateTransport = {
+    async prepare() {
+      prepares += 1;
+      return { state: 'prepared', candidateId: 'candidate', manifest: '/tmp/manifest.json' };
+    },
+    async inspect() {
+      return { state: 'inspection', lock: { state: 'inactive' }, journal: null, manifest: null };
+    },
+  };
+  const out: string[] = [];
+  const err: string[] = [];
+
+  const code = await runOperatorCli(['prepare', '--json'], { source: createSourceRepository(repository), host: target, candidate }, { out: (line) => out.push(line), err: (line) => err.push(line) });
+
+  expect(code).toBe(1);
+  expect(out.join('\n')).toContain('首次启用');
+  expect(err).toEqual([]);
+  expect(prepares).toBe(0);
   expect(target.commands).toEqual([{ kind: 'gate-status' }]);
 });
 

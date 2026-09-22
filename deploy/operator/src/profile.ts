@@ -3,6 +3,9 @@ export type NativeProfile = Readonly<{
   sshUser: string;
   deployRoot: string;
   dataDir: string;
+  systemdDir: string;
+  buildEnvironment: string;
+  buildPython: string;
   maintenanceWrapper: string;
   maintenanceSocket: string;
 }>;
@@ -12,6 +15,9 @@ export const NATIVE_PROFILE: NativeProfile = {
   sshUser: 'root',
   deployRoot: '/opt/tools/baox',
   dataDir: '/opt/tools/baox/data',
+  systemdDir: '/etc/systemd/system',
+  buildEnvironment: '/opt/tools/baox/etc/build.env',
+  buildPython: '/home/baox/.local/share/baox-build-venv/bin/python',
   maintenanceWrapper: '/opt/tools/baox/bin/baox-maintenance-gate',
   maintenanceSocket: '/opt/tools/baox/data/maintenance-gate.sock',
 } as const;

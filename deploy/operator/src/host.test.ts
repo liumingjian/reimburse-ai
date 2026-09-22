@@ -33,7 +33,25 @@ it('passes an isolated profile only to an injected test runner', async () => {
     },
   });
 
-  await target.execute({ kind: 'gate-status' });
+  await expect(target.execute({ kind: 'gate-status' })).resolves.toEqual({ kind: 'gate-status', value: { kind: 'unavailable-gate' } });
 
   expect(seenProfile).toEqual(profile);
+});
+
+it('uses the injected build Python path in the doctor probe', async () => {
+  const profile = { ...NATIVE_PROFILE, buildPython: '/tmp/isolated/build-python' };
+  let command = '';
+  const target = new SshHostTransport({
+    profile,
+    runner: async (_profile, remoteCommand) => {
+      command = remoteCommand;
+      return {
+        exitCode: 0,
+        stdout: ['node_version=v24.0.0', 'gcc_version=12.5.0', 'build_python=Python 3.12.0', 'maintenance_wrapper=present', ''].join('\n'),
+      };
+    },
+  });
+
+  await expect(target.execute({ kind: 'doctor' })).resolves.toMatchObject({ kind: 'doctor', value: { buildPython: 'Python 3.12.0' } });
+  expect(command).toContain('/tmp/isolated/build-python');
 });
