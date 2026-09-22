@@ -10,3 +10,4 @@ export * from './legacy-import';
 export * from './extension';
 export * from './http';
 export * from './adapter';
+export * from './lodging-evidence';

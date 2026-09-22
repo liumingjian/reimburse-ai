@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { pairHotelStays } from './hotel-stay';
+import { lodgingEvidence } from '@baox/contract';
 import { api, byFileName, fieldValues, sample } from './test/api';
 import { createTestServer, type TestClient, type TestServer } from './test/harness';
 
@@ -29,6 +30,35 @@ describe('a hotel invoice with its 全季 folio', () => {
     const folio = byFileName(snapshot, sample('m02').name);
     expect(folio).toMatchObject({ kind: 'hotel_folio', layout: 'labelled', kindLabel: '酒店结账单', categoryLabel: '住宿', role: 'reference', status: 'ok', linkedMaterialIds: [invoice.materialId] });
     expect(invoice).toMatchObject({ role: 'primary_voucher', status: 'ok', linkedMaterialIds: [folio.materialId] });
+    const evidence = lodgingEvidence(snapshot, invoice.materialId);
+    expect(evidence).toMatchObject({ state: 'associated', defaultMaterial: { materialId: folio.materialId }, fields: { checkIn: { value: '2026-08-09', materialId: folio.materialId }, checkOut: { value: '2026-08-22', materialId: folio.materialId }, amount: { value: '3640.00', materialId: invoice.materialId } } });
+    expect(evidence?.fields.hotelName).toMatchObject({ source: 'rule:hotel_folio/labelled', evidence: 'explicit' });
+    expect(lodgingEvidence(snapshot, invoice.materialId, [folio.materialId])?.state).toBe('preview_failure');
+    expect(lodgingEvidence({ ...snapshot, materials: snapshot.materials.map((material) => ({ ...material, fields: material.fields.filter((field) => field.key !== 'hotelName') })) }, invoice.materialId)?.fields.hotelName).toBeNull();
+    const conflictingFolio = {
+      ...folio,
+      materialId: `${folio.materialId}-conflict`,
+      linkedMaterialIds: [invoice.materialId],
+      fields: folio.fields.map((field) => field.key === 'checkIn' ? { ...field, value: '2026-08-10' } : field.key === 'folioTotal' ? { ...field, value: '3600.00' } : field),
+    };
+    const conflictingEvidence = {
+      ...snapshot,
+      materials: [...snapshot.materials.map((material) => material.materialId === invoice.materialId ? { ...material, linkedMaterialIds: [...material.linkedMaterialIds, conflictingFolio.materialId] } : material), conflictingFolio],
+      lines: snapshot.lines.map((line) => ({ ...line, referenceMaterialIds: [...line.referenceMaterialIds, conflictingFolio.materialId] })),
+    };
+    expect(lodgingEvidence(conflictingEvidence, invoice.materialId)?.fields.checkIn).toBeNull();
+    expect(lodgingEvidence(conflictingEvidence, invoice.materialId)?.fields.amount).toBeNull();
+    const unlinked = { ...snapshot, lines: [], materials: snapshot.materials.map((material) => ({ ...material, linkedMaterialIds: [] })) };
+    expect(lodgingEvidence(unlinked, invoice.materialId)?.state).toBe('unlinked');
+    expect(lodgingEvidence({ ...unlinked, materials: [unlinked.materials.find((material) => material.materialId === invoice.materialId)!] }, invoice.materialId)?.state).toBe('missing');
+    const otherInvoice = { ...invoice, materialId: `${invoice.materialId}-other`, linkedMaterialIds: [folio.materialId] };
+    const folioForOtherInvoice = { ...folio, linkedMaterialIds: [otherInvoice.materialId] };
+    const otherStay = {
+      ...snapshot,
+      materials: [{ ...invoice, linkedMaterialIds: [] }, folioForOtherInvoice, otherInvoice],
+      lines: snapshot.lines.map((line) => ({ ...line, voucherMaterialId: otherInvoice.materialId, referenceMaterialIds: [folioForOtherInvoice.materialId] })),
+    };
+    expect(lodgingEvidence(otherStay, invoice.materialId)?.state).toBe('missing');
 
     expect(snapshot.events).toEqual([
       expect.objectContaining({ voucherMaterialId: invoice.materialId, referenceMaterialIds: [folio.materialId], date: '2026-08-09', endDate: '2026-08-22', grossAmount: '3640.00', evidenceNote: expect.stringContaining('13 晚') }),

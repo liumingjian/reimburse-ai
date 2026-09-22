@@ -14,6 +14,7 @@ import {
   type StepKind,
   type TaskSnapshot,
   pageAllowed,
+  lodgingEvidence,
 } from '@baox/contract';
 import { navigate, taskHash } from '../router';
 import { ActionBar } from '../shell/ActionBar';
@@ -24,6 +25,7 @@ import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 import { ProjectBookPanel } from './ProjectBookPanel';
+import { LodgingPreview } from './LodgingPreview';
 
 // 当前 step 是这些时服务端接受「归入」与提交项目归属：进入项目归属时（含报销信息核对不匹配后的改派），材料包缺项时，
 // 以及整单确认前后、ERP 写入开始之前的改派。页面只据此决定按钮是否可用；动作是否成立由服务端判定。
@@ -445,6 +447,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
                           <LineRow
                             key={line.lineId}
                             line={line}
+                            snapshot={snapshot}
                             project={current[line.lineId] ?? null}
                             checked={selected.has(line.lineId)}
                             disabled={locked}
@@ -572,17 +575,21 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
 // 路线（没有路线的如住宿显示说明）与脱敏票号、当前归属、价税合计。
 function LineRow({
   line,
+  snapshot,
   project,
   checked,
   disabled,
   onToggle,
 }: {
   line: Line;
+  snapshot: TaskSnapshot;
   project: ProjectLineAssignment | null;
   checked: boolean;
   disabled: boolean;
   onToggle: () => void;
 }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const lodging = lodgingEvidence(snapshot, line.voucherMaterialId);
   const dates = line.endDate && line.endDate !== line.date ? `${line.date} 至 ${line.endDate}` : line.date;
   return (
     <TableRow className={checked ? 'app-row-selected' : ''} data-testid={`line-card-${line.no}`}>
@@ -592,10 +599,11 @@ function LineRow({
           <span className="app-muted">No.{line.no}</span>
         </span>
       </TableCell>
-      <TableCell className="app-nowrap">{dates}</TableCell>
-      <TableCell>{line.city ?? line.category.label}</TableCell>
+      <TableCell className="app-nowrap">{lodging ? <><div>入住：{lodging.fields.checkIn?.value ?? '未提供'}</div><div>离店：{lodging.fields.checkOut?.value ?? '未提供'}</div></> : dates}</TableCell>
+      <TableCell>{lodging ? lodging.fields.location?.value ?? '住宿地未提供' : line.city ?? line.category.label}</TableCell>
       <TableCell className="app-wrap">
-        {line.route ?? line.description}
+        {lodging ? lodging.fields.hotelName?.value ?? '酒店名称未提供' : line.route ?? line.description}
+        {lodging ? <><Button kind="ghost" size="sm" onClick={() => setPreviewOpen(true)}>查看住宿材料 No.{line.no}</Button>{previewOpen ? <ConfirmDialog title={`住宿材料 No.${line.no}`} confirmLabel="关闭预览" single wide onConfirm={() => setPreviewOpen(false)} onCancel={() => setPreviewOpen(false)}><LodgingPreview snapshot={snapshot} materialId={line.voucherMaterialId} /></ConfirmDialog> : null}</> : null}
         {line.maskedNumber ? <div className="app-caption app-code">{line.maskedNumber}</div> : null}
       </TableCell>
       <TableCell data-testid={`project-of-${line.no}`}>
