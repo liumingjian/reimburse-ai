@@ -13,7 +13,7 @@ import { startServer } from './server';
 // Serves `web/dist` same-origin when it has been built. The `listening on` line is what e2e waits for.
 // `BAOX_HOME` overrides the legacy `~/.baox`, read (never written) once when the first admin is created.
 // `BAOX_PUBLIC_ORIGIN` is the address colleagues reach the app at through the reverse proxy, e.g.
-// `http://10.250.0.222`; unset serves 127.0.0.1 only (`public-origin.ts`).
+// `http://10.250.0.222:8888`; unset serves 127.0.0.1 only (`public-origin.ts`).
 // ERP: `BAOX_ERP_ORIGIN`, `BAOX_ERP_BUILD`, `BAOX_ERP_FORM_ID` (`erp/config.ts`); `BAOX_CHROMIUM_CDP_PORT`,
 // `BAOX_CHROME` and `BAOX_ERP_CHROMIUM=off` are read by the CDP executor only (`erp/cdp-executor.ts`), so they mean
 // nothing to the production entry. Project numbers are checked against the ERP inside each 去报销 job, in the
