@@ -44,6 +44,12 @@ export function parsePublicOrigin(value: string): PublicOrigin {
   return { origin: url.origin, host: url.host, secure };
 }
 
+// The public configuration wins when it exists. A loopback-only run has no configured public address, so its request
+// URL is also the address used to stamp the extension package.
+export function activeOrigin(publicOrigin: PublicOrigin | null, requestUrl: string): string {
+  return publicOrigin?.origin ?? new URL(requestUrl).origin;
+}
+
 // A name is not an address: nothing here can tell where it resolves, so plain http is refused for one.
 function isPrivateAddress(hostname: string): boolean {
   if (hostname === 'localhost') return true;

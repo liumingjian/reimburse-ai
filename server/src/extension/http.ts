@@ -1,7 +1,8 @@
-import { EXTENSION_MINIMUM_VERSION, EXTENSION_PAIRING_ERRORS, EXTENSION_PAIR_PATH, EXTENSION_VERSION_TOO_OLD_CODE, ExtensionPairInputSchema, extensionVersionRefusal, HTTP_ENDPOINTS } from '@baox/contract';
+import { EXTENSION_MINIMUM_VERSION, EXTENSION_PAIRING_ERRORS, EXTENSION_PAIR_PATH, EXTENSION_VERSION_TOO_OLD_CODE, ExtensionPairInputSchema, extensionVersionRefusal, HTTP_ENDPOINTS, type ExtensionPairingState } from '@baox/contract';
 import type { Context, Hono } from 'hono';
 import { AuthRefusal } from '../accounts/accounts';
 import { accountOf, type AppEnv } from '../accounts/http';
+import { activeOrigin, type PublicOrigin } from '../public-origin';
 import type { PairingService } from './pairing';
 
 // 扩展配对 over HTTP, in two halves that never share a credential.
@@ -55,9 +56,11 @@ export function mountExtensionPairRoutes(app: Hono<AppEnv>, pairings: PairingSer
   });
 }
 
-// Mount after `requireAccount`: the settings page's view of its own account's pairing.
-export function mountPairingRoutes(app: Hono<AppEnv>, pairings: PairingService): void {
-  app.get(PAIRING_PATH, async (c) => c.json(await pairings.view(accountOf(c).accountId)));
-  app.post(HTTP_ENDPOINTS.createExtensionPairingCode.path, async (c) => c.json(await pairings.issue(accountOf(c).accountId)));
-  app.post(HTTP_ENDPOINTS.revokeExtensionPairing.path, async (c) => c.json(await pairings.revoke(accountOf(c).accountId)));
+// Mount after `requireAccount`: the settings page's view of its own account's pairing. The application origin comes
+// from the parsed deployment configuration, which is also what extension/download.ts uses when it stamps a package.
+export function mountPairingRoutes(app: Hono<AppEnv>, pairings: PairingService, publicOrigin: PublicOrigin | null): void {
+  const view = (c: Context, pairing: ExtensionPairingState) => ({ ...pairing, activeOrigin: activeOrigin(publicOrigin, c.req.url) });
+  app.get(PAIRING_PATH, async (c) => c.json(view(c, await pairings.view(accountOf(c).accountId))));
+  app.post(HTTP_ENDPOINTS.createExtensionPairingCode.path, async (c) => c.json(view(c, await pairings.issue(accountOf(c).accountId))));
+  app.post(HTTP_ENDPOINTS.revokeExtensionPairing.path, async (c) => c.json(view(c, await pairings.revoke(accountOf(c).accountId))));
 }

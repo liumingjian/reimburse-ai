@@ -15,10 +15,10 @@
 # therefore needs BAOX_ADMIN_USERNAME, the maintainer's username; the installer prints a temporary password for it,
 # which must be changed at the first sign-in.
 #
-# Overrides, all optional: NODE_MIRROR (default npmmirror, as the repo's .npmrc uses), CADDY_DOWNLOAD (default GitHub
-# releases), BAOX_BUILD_PYTHON (an absolute Python 3.8+ executable for node-gyp), npm_config_registry and the usual
-# *_proxy variables, all passed through to the build. The native compiler is the isolated GCC named below; see the
-# deployment walkthrough for how it is provisioned and verified.
+# Overrides, all optional: BAOX_PUBLIC_ORIGIN (the complete external origin), NODE_MIRROR (default npmmirror, as the
+# repo's .npmrc uses), CADDY_DOWNLOAD (default GitHub releases), BAOX_BUILD_PYTHON (an absolute Python 3.8+ executable
+# for node-gyp), npm_config_registry and the usual *_proxy variables, all passed through to the build. The native
+# compiler is the isolated GCC named below; see the deployment walkthrough for how it is provisioned and verified.
 set -euo pipefail
 
 DEPLOY=/opt/tools/baox

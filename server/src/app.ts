@@ -236,7 +236,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
       return list;
     },
   });
-  mountPairingRoutes(app, pairings);
+  mountPairingRoutes(app, pairings, publicOrigin);
   mountExtensionDownloadRoute(app, extensionTemplate, publicOrigin);
 
   // Legacy import (旧数据导入) as the signed-in account sees it; only the owner of a failed run may retry or skip.

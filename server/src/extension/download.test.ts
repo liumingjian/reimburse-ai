@@ -15,7 +15,7 @@ import { createTestServer, TEST_PASSWORD, type TestServer } from '../test/harnes
 // directory, exactly as `pnpm build` runs it into `extension/dist`.
 
 const BUILD_SCRIPT = fileURLToPath(new URL('../../../extension/scripts/build.mjs', import.meta.url));
-const INTRANET = 'http://10.250.0.222';
+const INTRANET = 'http://10.250.0.222:8888';
 const json = { 'content-type': 'application/json' };
 
 type Manifest = { version: string; host_permissions: string[] };

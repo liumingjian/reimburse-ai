@@ -138,7 +138,7 @@ describe('扩展配对 (extension pairing)', () => {
 describe('扩展配对 at the address colleagues reach the app at', () => {
   // Phase 1 (docs/design/browser-extension-v1.md): the exact-origin guard of #251 is live, and the extension is the
   // one caller that is not the app's own page.
-  const INTRANET = 'http://10.250.0.222';
+  const INTRANET = 'http://10.250.0.222:8888';
   let intranet: TestServer;
   let cookie: string;
 
@@ -149,6 +149,23 @@ describe('扩展配对 at the address colleagues reach the app at', () => {
     cookie = (setup.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
   });
   afterEach(() => intranet.close());
+
+  it.each(['http://10.250.0.222:8888', 'https://baox.example.com:9443'])('returns the configured active origin %s in the settings pairing view', async (origin) => {
+    const configured = await createTestServer({ publicOrigin: origin });
+    try {
+      const setup = await configured.app.request(`${origin}/api/auth/setup`, { method: 'POST', headers: { ...json, origin }, body: JSON.stringify({ username: 'alice', password: TEST_PASSWORD }) });
+      expect(setup.status).toBe(200);
+      const configuredCookie = (setup.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+
+      const initial = ExtensionPairingSchema.parse(await (await configured.app.request(`${origin}${PAIRING}`, { headers: { cookie: configuredCookie } })).json());
+      const issued = ExtensionPairingSchema.parse(await (await configured.app.request(`${origin}${PAIRING}/code`, { method: 'POST', headers: { ...json, origin, cookie: configuredCookie }, body: '{}' })).json());
+
+      expect(initial.activeOrigin).toBe(origin);
+      expect(issued.activeOrigin).toBe(origin);
+    } finally {
+      await configured.close();
+    }
+  });
 
   it('admits the extension\'s redemption from its own origin while still refusing every other cross-origin write', async () => {
     const issued = ExtensionPairingSchema.parse(await (await intranet.app.request(`${INTRANET}${PAIRING}/code`, { method: 'POST', headers: { ...json, origin: INTRANET, cookie }, body: '{}' })).json());
