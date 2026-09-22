@@ -1,3 +1,4 @@
+import { MOCK_ACCOUNT, MOCK_PASSWORD } from '../mock/auth';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { App } from '../App';
@@ -53,8 +54,14 @@ describe('项目簿编辑', () => {
   test('keeps public rows read-only for members and lets an administrator edit the same public record', async () => {
     const member = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
     await member.intakePublicProject({ number: 'PUBLIC-EDIT', name: '共享原名称' });
+    await member.register({ username: 'book-member', password: 'member-password' });
+    await member.login({ username: MOCK_ACCOUNT.username, password: MOCK_PASSWORD });
+    const memberAccount = (await member.listAccounts()).accounts.find((account) => account.username === 'book-member')!;
+    await member.updateAccount(memberAccount.accountId, { approved: true });
+    await member.login({ username: 'book-member', password: 'member-password' });
     window.location.hash = '#/projects';
     render(<App adapter={member} />);
+    fireEvent.click(await screen.findByRole('button', { name: '公共项目簿' }));
     expect(await screen.findByTestId('book-row-PUBLIC-EDIT')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '编辑 PUBLIC-EDIT' })).toBeNull();
 
@@ -62,9 +69,10 @@ describe('项目簿编辑', () => {
 
     const admin = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
     await admin.intakePublicProject({ number: 'PUBLIC-EDIT', name: '共享原名称' });
-    window.location.hash = '#/admin';
+    window.location.hash = '#/projects';
     render(<App adapter={admin} />);
-    await screen.findByRole('heading', { name: '管理', level: 1 });
+    await screen.findByRole('heading', { name: '个人项目簿', level: 1 });
+    fireEvent.click(screen.getByRole('button', { name: '公共项目簿' }));
     await screen.findByTestId('book-row-PUBLIC-EDIT');
     const publicTable = screen.getByRole('table', { name: '公共项目簿' });
     fireEvent.click(within(publicTable).getByRole('button', { name: '编辑 PUBLIC-EDIT' }));

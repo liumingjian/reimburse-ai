@@ -23,7 +23,7 @@ export const PROJECTS_HASH = '#/projects';
 export const SETTINGS_HASH = '#/settings';
 export const SETTINGS_PASSWORD_HASH = '#/settings/password';
 export const SETTINGS_TUTORIAL_HASH = '#/settings/tutorial';
-// 管理（账号管理与公共项目簿）：只对管理员显示入口（#194）。
+// Account administration has a separate administrator-only entry; project books use PROJECTS_HASH.
 export const ADMIN_HASH = '#/admin';
 
 export function taskHash(taskId: string, page: TaskPage): string {

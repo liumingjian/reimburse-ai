@@ -17,11 +17,11 @@ type Props = {
   children: ReactNode;
 };
 
-// 「管理」只对管理员显示（#194）。
+// Account management is visible only to administrators (#194).
 const NAV_ITEMS: readonly { key: Nav; label: string; href: string; adminOnly?: true }[] = [
   { key: 'tasks', label: '报销任务', href: TASKS_HASH },
-  { key: 'projects', label: '个人项目簿', href: PROJECTS_HASH },
-  { key: 'admin', label: '管理', href: ADMIN_HASH, adminOnly: true },
+  { key: 'projects', label: '项目簿', href: PROJECTS_HASH },
+  { key: 'admin', label: '账号管理', href: ADMIN_HASH, adminOnly: true },
   { key: 'settings', label: '设置', href: SETTINGS_HASH },
 ];
 

@@ -26,4 +26,16 @@ describe('administrator account approval', () => {
     expect(await screen.findByText(ADMIN_COPY.approvalDone('张三'))).toBeTruthy();
     expect(within(row).getByRole('button', { name: ADMIN_COPY.promote })).toBeTruthy();
   });
+
+  test('keeps public project maintenance outside account management', async () => {
+    const adapter = createMockAdapter({ seed: null, fault: null });
+    await adapter.intakePublicProject({ number: 'PUBLIC-ONLY', name: '公共项目' });
+    window.location.hash = '#/admin';
+    render(<App adapter={adapter} />);
+
+    expect(await screen.findByRole('heading', { name: ADMIN_COPY.title, level: 1 })).toBeTruthy();
+    expect(await screen.findByRole('table', { name: ADMIN_COPY.accountsTitle })).toBeTruthy();
+    expect(screen.queryByRole('table', { name: '公共项目簿' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '加入项目' })).toBeNull();
+  });
 });

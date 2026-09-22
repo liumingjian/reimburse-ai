@@ -7,8 +7,8 @@ import type { BookScope } from '../adapter/store';
 import { type AppAdapter, type ProjectBookEditInput, type ProjectBookOutcome, type PublicProjectConversionInput, PROJECT_BOOK_ACCEPTED_STATUSES, PROJECT_BOOK_COPY, PUBLIC_PROJECT_BOOK_COPY, type ProjectBookEntry } from '@baox/contract';
 import { ConfirmDialog } from '../shell/Dialog';
 
-// The same table presents both scopes. Personal intake is available wherever the personal panel appears; the public
-// panel becomes editable only on the administrator surface, while the project page always shows its read-only view.
+// The same table presents both scopes. Personal intake belongs to its owner; public maintenance controls are shown
+// only to administrators. The server independently checks the caller's permission for every mutation.
 
 type Message = { ok: boolean; text: string };
 type ConversionPrompt = { input: PublicProjectConversionInput; editEntry: ProjectBookEntry | null };

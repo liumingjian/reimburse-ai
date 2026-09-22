@@ -1,20 +1,19 @@
 import { useState } from 'react';
 import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextInput } from '@carbon/react';
-import { AUTH_ERRORS, PASSWORD_MIN_LENGTH, PUBLIC_PROJECT_BOOK_COPY, type AccountListOutcome, type AccountUpdateInput, type AdminAccount, type AppAdapter } from '@baox/contract';
+import { AUTH_ERRORS, PASSWORD_MIN_LENGTH, type AccountListOutcome, type AccountUpdateInput, type AdminAccount, type AppAdapter } from '@baox/contract';
 import { useAccounts, useAppStore, useSession } from '../adapter/context';
 import { ActionError } from '../shell/ActionError';
 import { AppShell } from '../shell/AppShell';
 import { ConfirmDialog } from '../shell/Dialog';
 import { PageHeader } from '../shell/PageHeader';
 import { StatusTag } from '../shell/StatusTag';
-import { ProjectBookPanel } from './ProjectBookPanel';
 
 // The #/admin page (管理页, #194, ADR-0018) is visible only to administrators. It manages approval, roles,
-// activation, and temporary passwords; accounts are deactivated rather than deleted. The public book panel follows.
+// activation, and temporary passwords; accounts are deactivated rather than deleted.
 // The server decides whether each action is valid, such as preserving the last active administrator.
 export const ADMIN_COPY = {
-  title: '管理',
-  lead: '管理这台电脑上的应用账号和所有人共用的公共项目簿。新注册账号要先批准；账号只停用、不删除，停用账号的任务与记录都会保留。',
+  title: '账号管理',
+  lead: '管理应用账号。新注册账号要先批准；账号只停用、不删除，停用账号的任务与记录都会保留。项目资料请到项目簿维护。',
   accountsTitle: '应用账号',
   onlyAdmins: '只有管理员可以打开这个页面。',
   loading: '正在读取账号…',
@@ -48,11 +47,6 @@ export function AdminPage() {
       {account?.role === 'admin' ? (
         <>
           <AccountsSection myId={account.accountId} />
-          <section className="app-block" aria-label={PUBLIC_PROJECT_BOOK_COPY.title}>
-            <h2 className="app-section-title">{PUBLIC_PROJECT_BOOK_COPY.title}</h2>
-            <p className="app-lead">{PUBLIC_PROJECT_BOOK_COPY.lead}</p>
-            <ProjectBookPanel scope="public" primaryIntake={false} canMaintain />
-          </section>
         </>
       ) : (
         <p className="app-empty">{ADMIN_COPY.onlyAdmins}</p>
