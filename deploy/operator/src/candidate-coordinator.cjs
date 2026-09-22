@@ -2940,7 +2940,7 @@ function nativeEnvironment(request, buildEnvironment, gccLib) {
 
 function commandOutputAsBaox(command, args, environment) {
   const assignments = Object.entries(environment).map(([key, value]) => key + '=' + value);
-  return commandOutput('runuser', ['-u', 'baox', '--', 'env', '-i', ...assignments, command, ...args]);
+  return commandOutput('runuser', ['-u', 'baox', '--', 'env', '-i', ...assignments, '/bin/sh', '-c', 'cd "$HOME" && exec "$@"', 'sh', command, ...args]);
 }
 
 async function readSourceMetadata(source) {

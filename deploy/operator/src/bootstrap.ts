@@ -655,7 +655,7 @@ as_baox() {
     CC="$GCC_PREFIX/bin/gcc" \
     CXX="$GCC_PREFIX/bin/g++" \
     LD_LIBRARY_PATH="$GCC_LIBDIR" \
-    "$@"
+    /bin/sh -c 'cd "$HOME" && exec "$@"' sh "$@"
 }
 
 verify_node_runtime() {

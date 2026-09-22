@@ -367,7 +367,7 @@ as_baox() {
     HTTPS_PROXY="$BUILD_HTTPS_PROXY" \
     NO_PROXY="$BUILD_NO_PROXY" \
     LD_LIBRARY_PATH="$GCC_LIBDIR" \
-    "$@"
+    /bin/sh -c 'cd "$HOME" && exec "$@"' sh "$@"
 }
 node_version=''
 gcc_version=''

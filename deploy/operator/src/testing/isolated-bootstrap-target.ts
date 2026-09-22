@@ -387,6 +387,7 @@ EOF
       pnpm-*)
         mkdir -p "$destination/package/bin"
         cat > "$destination/package/bin/pnpm.cjs" <<'EOF'
+if (process.cwd() !== require('node:fs').realpathSync(process.env.HOME)) process.exit(13);
 if (process.argv[2] === '--version') {
   process.stdout.write('10.17.1\n');
   process.exit(0);
