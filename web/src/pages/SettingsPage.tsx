@@ -359,6 +359,7 @@ export function SettingsPage() {
     <AppShell nav="settings">
       <div className="app-form-page">
         <PageHeader title="设置" lead="本机数据的维护。" />
+        <Button kind="secondary" href="#/settings/password">修改密码</Button>
         <LegacyImportSection />
         <ExtensionPairingSection />
         <section className="app-form-section" aria-label={RESET_COPY.title}>

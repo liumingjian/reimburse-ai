@@ -9,6 +9,7 @@ export type Route =
   | { kind: 'new' }
   | { kind: 'projects' }
   | { kind: 'settings' }
+  | { kind: 'password' }
   | { kind: 'admin' }
   | { kind: 'task'; taskId: string; page: TaskPage | null }
   | { kind: 'redirect'; to: string };
@@ -34,6 +35,7 @@ export function parseHash(hash: string): Route {
   if (head === 'tasks' && second === 'new' && parts.length === 2) return { kind: 'new' };
   if (head === 'projects' && parts.length === 1) return { kind: 'projects' };
   if (head === 'settings' && parts.length === 1) return { kind: 'settings' };
+  if (head === 'settings' && second === 'password' && parts.length === 2) return { kind: 'password' };
   if (head === 'admin' && parts.length === 1) return { kind: 'admin' };
   if (head === 'task' && second && parts.length === 2) return { kind: 'task', taskId: second, page: null };
   if (head === 'task' && second && third && parts.length === 3 && isTaskPage(third)) {
