@@ -9,15 +9,15 @@ import type { Line, MaterialKind } from '@baox/contract';
 import type { Claim } from '../inventory-view';
 import type { ErpConfig } from './config';
 import { isSafeKey } from '@baox/erp-executor/catalog';
-import { erpInvoiceTypeOf } from '@baox/erp-executor/invoice-type';
+import { validInvoiceTypeSource, writableInvoiceType } from '@baox/erp-executor/invoice-type';
 import type { ErpJudge } from './jobs';
 import { createDraftJudge, type DraftJudgeInputs } from './judge';
 import { previewLinesDigest } from './preview';
 import { PROTOCOL_VERSION, type ApprovedPreview, type FillPlan, type Identity, type ReadbackVerdict } from '@baox/erp-executor/protocol';
 import type { ReadbackInvoice } from './readback';
 
-// The ERP 发票类型 enum, the face-kind mapping and the default for an undetermined face kind live in
-// `invoice-type.ts`. Nothing about the type can stop a plan any more, so the preflight below says nothing about it.
+// The confirmed line already carries its ERP 发票类型 and its evidence. This module must never remap a face kind or
+// choose a fallback while freezing the job.
 
 const INVOICE_KEY = /^einvoice-20:(\d{20})$/;
 
@@ -94,6 +94,7 @@ export function buildFillJob(input: FillPlanInput): { ok: true; job: FrozenJob }
     if (!line.expenseItemCode || !line.expenseItemName) problems.push(`${label} 的费用分类「${line.category.label}」没有对应的报销系统费用项目`);
     if (line.category.code === 'accommodation' && !line.endDate) problems.push(`${label} 是住宿，缺少离店日期`);
     if (!rail && cents(line.netAmount) + cents(line.taxAmount) !== cents(line.grossAmount)) problems.push(`${label} 的不含税金额与税额加起来不等于价税合计`);
+    if (!writableInvoiceType(line.invoiceType) || !validInvoiceTypeSource(line.invoiceTypeSource)) problems.push(`${label} 缺少已确认的报销系统发票类型`);
     for (const code of [line.projectCode, line.expenseItemCode]) if (code && !isSafeKey(code)) problems.push(`${label} 的编码 ${code} 含有不能安全查询的字符`);
     if (!vouchers.includes(line.voucherMaterialId)) vouchers.push(line.voucherMaterialId);
   }
@@ -133,8 +134,8 @@ export function buildFillJob(input: FillPlanInput): { ok: true; job: FrozenJob }
       expenseItemCode: line.expenseItemCode!,
       expenseItemName: line.expenseItemName!,
       expenseItemSource: 'company_rules',
-      // An undetermined face kind is written as 普通发票 rather than stopping the round (`invoice-type.ts`).
-      ...erpInvoiceTypeOf(line.invoiceType),
+      invoiceType: line.invoiceType,
+      invoiceTypeSource: line.invoiceTypeSource,
       maskedNumber: line.maskedNumber,
       referenceMaterialIds: [...line.referenceMaterialIds],
     };

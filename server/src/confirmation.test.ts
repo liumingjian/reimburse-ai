@@ -1,6 +1,8 @@
 import { PROJECT_CHANGED_NOTICE, TaskListSchema, type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fixtureCatalog } from './catalog/project-catalog';
+import { confirmationDigest } from './confirmation';
+import { COMPANY_RULES } from './rules/company-rules';
 import { api, sample } from './test/api';
 import { createTestServer, type TestClient, type TestServer } from './test/harness';
 
@@ -78,6 +80,28 @@ describe('confirmation status', () => {
 
     const reverted = await client.accepted(await client.act(edited, 'answer-pending', { itemId: edit, answer: { value: line.description } }));
     expect(reverted).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, confirmation: { status: 'confirmed', digest: done.confirmation.digest, confirmedAt: done.confirmation.confirmedAt } });
+  });
+
+  it('includes the explicit ERP invoice-type choice and its source in the detail digest', async () => {
+    const review = await submitted();
+    const [line] = review.lines;
+    if (!line) throw new Error('expected a line');
+    const input = (lines: typeof review.lines) => ({
+      lines,
+      purpose: PURPOSE,
+      selection: {},
+      selectable: new Set<string>(),
+      rules: COMPANY_RULES,
+      catalogHash: 'fixture-catalog',
+      homeCity: '杭州',
+    });
+
+    const selected = { ...line, invoiceType: '其他运输票', invoiceTypeSource: 'employee_choice' };
+    const anotherChoice = { ...selected, invoiceType: '其他' };
+    const mappedSource = { ...selected, invoiceTypeSource: 'face_type_to_erp_enum' };
+
+    expect(confirmationDigest(input([selected])).detail).not.toBe(confirmationDigest(input([anotherChoice])).detail);
+    expect(confirmationDigest(input([selected])).detail).not.toBe(confirmationDigest(input([mappedSource])).detail);
   });
 
   it('covers the purpose and the home city', async () => {

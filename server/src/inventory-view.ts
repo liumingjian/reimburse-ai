@@ -1,4 +1,5 @@
 import { MATERIAL_KINDS, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type InventoryPhase, type Line, type Material, type MaterialKind, type PendingField, type PendingItem } from '@baox/contract';
+import { erpInvoiceTypeOf, ERP_INVOICE_TYPES, type ResolvedErpInvoiceType } from '@baox/erp-executor/invoice-type';
 import type { ParseOutcome, Recognised } from './parse/dispatch';
 import { planTransport, type PlannedLine } from './allocation';
 import { pairHotelStays } from './hotel-stay';
@@ -92,12 +93,12 @@ const VALIDATION_TITLES: Readonly<Record<string, string>> = {
 };
 const validationTitle = (code: string) => VALIDATION_TITLES[code.split('.')[0] ?? code] ?? '金额核对不通过';
 
-// Line-level edits every kind with an event offers: the description is wording, the ERP invoice type a choice.
+// Line-level edits only change presentation wording. ERP invoice type is settled as a pending item below.
 const DESCRIPTION = 'description';
-const ERP_INVOICE_TYPE = 'erpInvoiceType';
 
 type Values = Record<string, string>;
 type Resolved = Omit<Recognised, 'outcome' | 'layout' | 'parserVersion'> & { layout: string | null; parserVersion: string | null };
+type ResolvedLineDraft = EventDraft & { invoiceType: string; invoiceTypeSource: string };
 
 type Worked = {
   m: ViewMaterial;
@@ -470,6 +471,38 @@ export function inventoryView(
     w.notes.push('重复发票');
   }
 
+  // A face 票种 and ERP 发票类型 are separate facts. Known face kinds map automatically; an unknown one creates the
+  // single normal choice item that records the employee's confirmed ERP enum value.
+  const invoiceTypes = new Map<string, ResolvedErpInvoiceType>();
+  for (const w of includedWorked) {
+    const spec = w.resolved ? KINDS[w.resolved.kind] : null;
+    if (!spec || w.reference || spec.role !== 'primary_voucher' || w.items.some(isOpen)) continue;
+    const faceType = spec.faceInvoiceType?.(w.values) ?? null;
+    let resolution = erpInvoiceTypeOf(faceType);
+    if (resolution.kind === 'choice_required') {
+      const item = settle(
+        choice(
+          `erp_invoice_type.${w.m.materialId}`,
+          w.m.materialId,
+          `为「${w.m.fileName}」选择报销系统发票类型`,
+          faceType
+            ? `票面票种「${faceType}」不能确定报销系统发票类型。请按原件选择；这项选择不会改写票面票种。`
+            : '没有读到票面票种，不能确定报销系统发票类型。请按原件选择；这项选择不会改写票面票种。',
+          ERP_INVOICE_TYPES.map((value) => ({ key: value, label: value })),
+        ),
+        answers,
+      );
+      answerables.set(item.itemId, { item });
+      w.items.push(item);
+      resolution = erpInvoiceTypeOf(faceType, chosen(item));
+      if (resolution.kind === 'choice_required') {
+        w.notes.push('待选择报销系统发票类型');
+        continue;
+      }
+    }
+    invoiceTypes.set(w.m.materialId, resolution);
+  }
+
   // Invoice ↔ itinerary pairing, per-leg lines and allocation items (#184), over the resolved included materials.
   const transport = planTransport(
     includedWorked.flatMap((w) =>
@@ -496,23 +529,23 @@ export function inventoryView(
   }
 
   const views = new Map<string, Material>();
-  const drafts: ({ material: ViewMaterial } & PlannedLine)[] = [];
+  const drafts: ({ material: ViewMaterial } & Omit<PlannedLine, 'draft'> & { draft: ResolvedLineDraft })[] = [];
   const pendingItems: PendingItem[] = [];
   const folios: TrioVoucher[] = [];
   for (const w of includedWorked) {
     const { m, resolved } = w;
     const spec = resolved ? KINDS[resolved.kind] : null;
-    if (spec && !w.items.some(isOpen) && !w.reference && spec.role === 'primary_voucher') {
+    const invoiceType = invoiceTypes.get(m.materialId);
+    if (spec && invoiceType && !w.items.some(isOpen) && !w.reference && spec.role === 'primary_voucher') {
       // A paired ride-hailing invoice forms one line per itinerary leg (#184); any other voucher its kind's single event.
       const planned = transport.lines.get(m.materialId);
       const single = planned ? null : spec.event(w.values);
       const candidates: PlannedLine[] = planned ?? (single ? [{ draft: single, leg: null, referenceMaterialIds: [], evidenceNote: single.evidenceNote ?? null }] : []);
       const categorised = candidates.map((line) => ({ line, derived: deriveCategory(line.draft.category, line.draft.city ?? null, homeCity, rules) }));
       if (categorised.every(({ derived }) => 'category' in derived)) {
-        const allowedTypes = spec.erpInvoiceTypes?.(w.values);
         for (const { line, derived } of categorised) {
           if (!('category' in derived)) continue;
-          const draft = lineEdits(m.materialId, allowedTypes ?? [line.draft.invoiceType], { ...line.draft, category: derived.category }, answers, editables);
+          const draft = lineEdits(m.materialId, { ...line.draft, category: derived.category, invoiceType: invoiceType.invoiceType, invoiceTypeSource: invoiceType.invoiceTypeSource }, answers, editables);
           drafts.push({ material: m, ...line, draft });
         }
       } else {
@@ -615,6 +648,7 @@ export function inventoryView(
       expenseItemCode: null,
       expenseItemName: null,
       invoiceType: draft.invoiceType,
+      invoiceTypeSource: draft.invoiceTypeSource,
       referenceMaterialIds,
       grossAmount: draft.grossAmount,
       netAmount: draft.netAmount,
@@ -654,16 +688,13 @@ export function inventoryView(
   return { materials: materialViews, pendingItems, events: done ? events : [], lines: done ? lines : [], inventory, waiting, openPendingItems, answerables, editables, claims, trios: trio.trios };
 }
 
-// The line-level edits: a presentation value over the description (checks never read it), and the ERP invoice type
-// among the allowed values.
-function lineEdits(materialId: string, allowedTypes: readonly string[], draft: EventDraft, answers: StoredAnswers, editables: Map<string, Editable>): EventDraft {
+// The line-level edit is a presentation value over the description; checks never read it.
+function lineEdits(materialId: string, draft: ResolvedLineDraft, answers: StoredAnswers, editables: Map<string, Editable>): ResolvedLineDraft {
   const description: Editable = { address: editAddress(materialId, DESCRIPTION), materialId, field: DESCRIPTION, label: '明细描述', editClass: 'presentation', format: 'text', allowed: null };
-  const invoiceType: Editable = { address: editAddress(materialId, ERP_INVOICE_TYPE), materialId, field: ERP_INVOICE_TYPE, label: '报销系统发票类型', editClass: 'choice', format: 'text', allowed: allowedTypes };
-  for (const editable of [description, invoiceType]) editables.set(editable.address, editable);
+  editables.set(description.address, description);
   return {
     ...draft,
     description: editedValue(description, answers.get(description.address)) ?? draft.description,
-    invoiceType: editedValue(invoiceType, answers.get(invoiceType.address)) ?? draft.invoiceType,
   };
 }
 

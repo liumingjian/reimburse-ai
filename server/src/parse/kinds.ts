@@ -18,7 +18,6 @@ export type EventDraft = {
   grossAmount: string;
   netAmount: string;
   taxAmount: string;
-  invoiceType: string;
   maskedNumber: string | null;
   // Trip facts, when the material carries them (rail ticket face, itinerary leg); null/absent otherwise.
   // `city` is the 费用发生城市 (expense city): city transport is split into local / out-of-town against the task's home
@@ -46,9 +45,8 @@ export type KindSpec = {
   // The 发票身份 (invoice identity) behind 重复发票 and 发票占用 (occupancy), e.g. `einvoice-20:<number>`; null when
   // the values carry none. Kinds without an identity never count as duplicates.
   identity?: (values: Readonly<Record<string, string>>) => string | null;
-  // The ERP 发票类型 (ERP invoice type) values the company rules allow for these values (a `choice` edit).
-  // Defaults to the one the event draft derived.
-  erpInvoiceTypes?: (values: Readonly<Record<string, string>>) => string[];
+  // The parsed face 票种. `inventory-view.ts` resolves this independently into the confirmed ERP 发票类型.
+  faceInvoiceType?: (values: Readonly<Record<string, string>>) => string | null;
 };
 
 const toCents = (value: string | undefined): number | null => (value !== undefined && /^-?\d+\.\d{2}$/.test(value) ? Math.round(Number(value) * 100) : null);
@@ -139,8 +137,6 @@ export function maskNumber(number: string): string {
   return number.length <= 8 ? number : `${number.slice(0, 4)}${'*'.repeat(number.length - 8)}${number.slice(-4)}`;
 }
 
-const INVOICE_TYPES: Readonly<Record<string, string>> = { 专票: '增值税专用发票', 普票: '增值税普通发票' };
-
 const noEvent = () => null;
 const noCategory = () => null;
 
@@ -176,7 +172,6 @@ const RAIL_TICKET: KindSpec = {
       grossAmount: totalAmount,
       netAmount: totalAmount,
       taxAmount: '0.00',
-      invoiceType: '火车票',
       maskedNumber: invoiceNumber ? maskNumber(invoiceNumber) : null,
       city: null,
       origin: departStation,
@@ -189,11 +184,7 @@ const RAIL_TICKET: KindSpec = {
   // Kernel invoiceIdentity: a 20-digit number is `einvoice-20` whatever the face; a rail ticket counts for 重复发票
   // and 发票占用 like any 全电发票. (Folios carry no invoice number and stay out.)
   identity: (values) => (/^\d{20}$/.test(values['invoiceNumber'] ?? '') ? `einvoice-20:${values['invoiceNumber']}` : null),
-  // ERP's 发票类型 enum has no 铁路电子客票 entry, but it does have 火车票, and that is what a rail e-ticket is
-  // (docs/research/erp-expense-flow/deep-dive/11-invoice-type-enum.md: 普通发票、增值税发票、机票、火车票、
-  // 其他运输票、其他). It was written as 普通发票 while the strict read-back accepted only two values; the owner
-  // corrected that 2026-09-20 and 火车票 is now one of the three baox writes (`erp-executor/src/invoice-type.ts`).
-  erpInvoiceTypes: () => ['火车票'],
+  faceInvoiceType: () => '铁路电子客票',
 };
 
 // 网约车行程单 (ride itinerary, #184): a reference material. It forms no event of its own; its legs split the paired
@@ -232,7 +223,6 @@ export const KINDS: Readonly<Record<MaterialKind, KindSpec>> = {
         grossAmount: totalAmount,
         netAmount,
         taxAmount,
-        invoiceType: INVOICE_TYPES[invoiceType ?? ''] ?? '增值税发票',
         maskedNumber: invoiceNumber ? maskNumber(invoiceNumber) : null,
       };
     },
@@ -248,8 +238,7 @@ export const KINDS: Readonly<Record<MaterialKind, KindSpec>> = {
     },
     // Kernel invoiceIdentity (parse.mjs:319): a 全电发票 is identified by its 20-digit number.
     identity: (values) => (/^\d{20}$/.test(values['invoiceNumber'] ?? '') ? `einvoice-20:${values['invoiceNumber']}` : null),
-    // The face 票种 decides the ERP invoice type; no company rule allows another one yet (#188 pins the rules).
-    erpInvoiceTypes: (values) => [INVOICE_TYPES[values['invoiceType'] ?? ''] ?? '增值税发票'],
+    faceInvoiceType: (values) => values['invoiceType'] ?? null,
   },
   rail_ticket: RAIL_TICKET,
   ride_itinerary: RIDE_ITINERARY,
@@ -276,7 +265,6 @@ export const KINDS: Readonly<Record<MaterialKind, KindSpec>> = {
         grossAmount: totalAmount,
         netAmount: totalAmount,
         taxAmount: '0.00',
-        invoiceType: '普通发票',
         maskedNumber: invoiceNumber ? maskNumber(invoiceNumber) : null,
         city: city || null,
       };
@@ -290,7 +278,7 @@ export const KINDS: Readonly<Record<MaterialKind, KindSpec>> = {
     // Kernel invoiceIdentity (parse.mjs:318): a pre-全电 invoice is identified by 发票代码 + 8-digit 发票号码.
     identity: ({ invoiceCode, invoiceNumber }) =>
       /^(?:\d{10}|\d{12})$/.test(invoiceCode ?? '') && /^\d{8}$/.test(invoiceNumber ?? '') ? `vat-legacy:${invoiceCode}:${invoiceNumber}` : null,
-    erpInvoiceTypes: () => ['普通发票'],
+    faceInvoiceType: () => '普通发票',
   },
 };
 
