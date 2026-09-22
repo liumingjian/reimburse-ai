@@ -66,7 +66,7 @@ test('全流程 QA：弹层创建任务，上传 sample-materials 的 11 份材�
   await expect(page).toHaveURL(/#\/task\/T4\/upload$/);
   await expect(page.getByText(/^\d{4}-\d{2}-\d{2} 新建报销$/)).toBeVisible();
 
-  await page.locator('input[type=file]').setInputFiles(files);
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles(files);
   await expect(page.getByRole('heading', { name: /^上传批次 #1$/ })).toHaveText('上传批次 #1');
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/inventory$/);
@@ -78,5 +78,5 @@ test('全流程 QA：弹层创建任务，上传 sample-materials 的 11 份材�
   await jump(page, '#/tasks');
   const row = page.getByRole('row').filter({ has: page.getByRole('cell', { name: '2026-08 上海出差', exact: true }) });
   await expect(row).toBeVisible();
-  await expect(row.getByText('2026-08-09 至 2026-08-22')).toBeVisible();
+  await expect(row.getByText('暂无可用日期', { exact: true })).toBeVisible();
 });

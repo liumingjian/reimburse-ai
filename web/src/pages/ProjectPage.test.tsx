@@ -31,7 +31,7 @@ const selection = () => screen.getByTestId('assign-selection').textContent;
 const assignTo = (number: string) => fireEvent.click(target(number));
 const pick = (no: number) => fireEvent.click(screen.getByRole('checkbox', { name: `选择明细 No.${no}` }));
 const projectOf = (no: number) => screen.getByTestId(`project-of-${no}`).textContent;
-const submitButton = () => screen.getByRole('button', { name: '确认项目归属' }) as HTMLButtonElement;
+const submitButton = () => screen.getByRole('button', { name: /^(确认项目归属|继续)$/ }) as HTMLButtonElement;
 const summary = () => screen.getByTestId('assign-summary').textContent;
 const purpose = () => screen.getByLabelText('报销事由');
 const settled = async (no: number, text: string) => waitFor(() => expect(projectOf(no)).toBe(text));
@@ -113,7 +113,8 @@ describe('项目归属（工作台：勾选明细，点右侧项目归入）', (
     expect(within(groups[1]!).getByText('2 条')).toBeTruthy();
     expect(within(groups[2]!).getByText('1 条')).toBeTruthy();
     const hotel = screen.getByTestId('line-card-9');
-    expect(hotel.textContent).toContain('2026-08-09 至 2026-08-22');
+    expect(hotel.textContent).toContain('入住：2026-08-09');
+    expect(hotel.textContent).toContain('离店：2026-08-22');
     expect(hotel.textContent).toContain('上海');
     expect(hotel.textContent).toContain('2631************7734');
     const rail = screen.getByTestId('line-card-7');

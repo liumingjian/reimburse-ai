@@ -18,7 +18,7 @@ async function intake(page: Page, number: string, name = number === 'P-6021' ? '
 test('offline intake preserves names and retains input on duplicate or unsafe numbers', async ({ page }, testInfo) => {
   await page.goto(open('?fault=erp-login-missing', '#/projects'));
   await expect(h1(page, '个人项目簿')).toBeVisible();
-  await expect(book(page).getByRole('columnheader')).toHaveText(['项目号', '名称', '状态', '']);
+  await expect(book(page).getByRole('columnheader')).toHaveText(['项目号', '名称', '截止日期', '状态', '']);
   await intake(page, 'LOCAL-5108', '本地维护项目');
   await expect(row(page, 'LOCAL-5108')).toContainText('本地维护项目');
   await expect(row(page, 'LOCAL-5108')).toContainText('可选');
@@ -80,10 +80,10 @@ test('?book=empty：从待确认项走到项目归属时被引导进维护入口
   await expect(page).toHaveURL(/#\/task\/T1\/review$/);
 });
 
-test('入口：顶栏常驻「个人项目簿」；项目归属页「归入项目」面板里点「新增项目」就地录入，勾选的明细保持勾选，新项目可直接归入', async ({ page }) => {
+test('入口：顶栏常驻「项目簿」；项目归属页「归入项目」面板里点「新增项目」就地录入，勾选的明细保持勾选，新项目可直接归入', async ({ page }) => {
   await page.goto(open('?seed=project', '#/task/T1/project'));
   await expect(h1(page, '项目归属')).toBeVisible();
-  await expect(page.getByRole('navigation', { name: '全局' }).getByRole('link', { name: '个人项目簿' })).toHaveAttribute('href', '#/projects');
+  await expect(page.getByRole('navigation', { name: '全局' }).getByRole('link', { name: '项目簿' })).toHaveAttribute('href', '#/projects');
   await page.getByRole('checkbox', { name: '选择明细 No.3' }).locator('xpath=following-sibling::label[1]').click();
   await page.getByRole('checkbox', { name: '选择明细 No.4' }).locator('xpath=following-sibling::label[1]').click();
   const panel = page.getByRole('complementary', { name: '归入项目' });

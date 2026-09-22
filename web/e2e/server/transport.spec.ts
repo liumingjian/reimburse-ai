@@ -42,7 +42,7 @@ async function inventory(page: Page, files: Upload[]): Promise<string> {
   await dialog.getByRole('button', { name: '创建并上传材料' }).click();
   await expect(page).toHaveURL(/#\/task\/[^/]+\/upload$/);
   const taskId = /#\/task\/([^/]+)\//.exec(page.url())?.[1] ?? '';
-  await page.locator('input[type=file]').setInputFiles(files);
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles(files);
   const batch = page.locator('section', { has: page.getByRole('heading', { name: /^上传批次 #1$/ }) });
   for (const file of files) await expect(batch.getByText(file.name, { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '开始材料盘点' }).click();

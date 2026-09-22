@@ -71,6 +71,22 @@ async function priorVersionFixture(migration: string): Promise<string> {
 }
 
 describe('migrations on an existing database', () => {
+  it('upgrades the deployed maintenance schema without reopening its admitted barrier', async () => {
+    await priorVersionFixture('0017_265_maintenance_gate');
+    const prior = new Database(databasePath(dataDir));
+    prior.prepare("UPDATE maintenance_gate SET state = 'admitted' WHERE gate_id = 'main'").run();
+    prior.close();
+    const db = await openDatabase(databasePath(dataDir));
+    try {
+      expect(await db.selectFrom('maintenance_gate').select('state').where('gate_id', '=', 'main').executeTakeFirstOrThrow()).toEqual({ state: 'admitted' });
+      expect(await db.selectFrom('material').select('source_path').where('material_id', '=', 'old-material').executeTakeFirstOrThrow()).toEqual({ source_path: null });
+      expect(await db.selectFrom('project_book_event').select('deadline_on').execute()).toEqual(expect.arrayContaining([{ deadline_on: null }]));
+      expect(backups()).toHaveLength(1);
+    } finally {
+      await db.destroy();
+    }
+  });
+
   it('backs up with VACUUM INTO before migrating 0001 → latest, and keeps the old facts readable', async () => {
     await priorVersionFixture('0001_initial');
 

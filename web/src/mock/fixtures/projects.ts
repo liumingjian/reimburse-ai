@@ -1,4 +1,4 @@
-import { isRealDate, type ProjectBookEntry, type Line, type ProjectAssignment, type ProjectOption, type Step, type TaskSnapshot } from '@baox/contract';
+import { isRealDate, type ProjectBookEntry, type Line, type ProjectAssignment, type ProjectDeadlineWarning, type ProjectLineAssignment, type ProjectOption, type Step, type TaskSnapshot } from '@baox/contract';
 
 // 个人项目簿夹具：虚构的项目号与名称，以及 mock「报销系统项目目录」。
 // 可选判定、状态标签与说明照内核 projects.mjs annotateProjects 移植（「ERP」写作「报销系统」），由 mock 服务端给出。
@@ -15,6 +15,7 @@ export type StoredProject = {
   number: string;
   name: string | null;
   expiresOn: string | null;
+  deadlineOn?: string | null;
   lastCheckedAt: string | null;
   lastVerdict: string;
   // Older mock fixtures did not persist this field. Missing means active so they retain their previous meaning.
@@ -95,6 +96,7 @@ export function annotateProject(project: StoredProject, today: string): ProjectB
     number: project.number,
     name: project.name,
     expiresOn: project.expiresOn,
+    ...(project.deadlineOn == null ? {} : { deadlineOn: project.deadlineOn }),
     lastCheckedAt: project.lastCheckedAt,
     active: project.active !== false,
     selectable: reasons.length === 0,
@@ -105,7 +107,7 @@ export function annotateProject(project: StoredProject, today: string): ProjectB
 
 // 项目归属页的允许列表（随任务快照给出）：只含可选项目（内核 selectableProjects），不可选的不出现在选择区。
 export function allowListOf(entries: readonly ProjectBookEntry[]): ProjectOption[] {
-  return entries.filter((entry) => entry.selectable).map((entry) => ({ number: entry.number, name: entry.name ?? entry.number, source: 'personal' as const }));
+  return entries.filter((entry) => entry.selectable).map((entry) => ({ number: entry.number, name: entry.name ?? entry.number, source: 'personal' as const, ...(entry.deadlineOn == null ? {} : { deadlineOn: entry.deadlineOn }) }));
 }
 
 // 默认项目簿对应的允许列表（夹具快照构建时用；mock 服务端运行时按当前项目簿重新给出）。
@@ -126,6 +128,20 @@ export function projectSource(number: string, projects: readonly ProjectOption[]
 
 function toAssignments(projects: Readonly<Record<string, string>>, allowList: readonly ProjectOption[]): ProjectAssignment['assignments'] {
   return Object.entries(projects).map(([lineId, projectNumber]) => ({ lineId, projectNumber, projectName: projectName(projectNumber, allowList), projectSource: projectSource(projectNumber, allowList) }));
+}
+
+export function deadlineWarningsOf(lines: readonly Line[], assignments: readonly ProjectLineAssignment[], projects: readonly ProjectOption[]): ProjectDeadlineWarning[] {
+  const byLine = new Map(assignments.map((assignment) => [assignment.lineId, assignment]));
+  return lines.flatMap<ProjectDeadlineWarning>((line) => {
+    const assignment = byLine.get(line.lineId);
+    if (!assignment) return [];
+    const project = projects.find((candidate) => candidate.source === assignment.projectSource && candidate.number === assignment.projectNumber) ?? projects.find((candidate) => candidate.number === assignment.projectNumber);
+    if (!project?.deadlineOn) return [];
+    const warning = { lineId: line.lineId, lineNo: line.no, projectNumber: assignment.projectNumber, projectName: assignment.projectName, deadlineOn: project.deadlineOn };
+    if (line.endDate !== null && line.date <= project.deadlineOn && line.endDate > project.deadlineOn) return [{ ...warning, kind: 'stay_crosses_deadline' }];
+    if (line.date > project.deadlineOn) return [{ ...warning, kind: 'after_deadline' }];
+    return [];
+  });
 }
 
 // 服务端投影「本次已归入」：working 按明细顺序排好，逐个项目数条数、按分加总价税合计；
@@ -156,6 +172,7 @@ export function withProjectUsage(snapshot: TaskSnapshot): TaskSnapshot {
       grossTotal: (entry.cents / 100).toFixed(2),
       selectable: allowed.has(entry.number),
     })),
+    deadlineWarnings: deadlineWarningsOf(snapshot.lines, working, assignment.projects),
   };
   return snapshot;
 }
@@ -196,6 +213,7 @@ export function projectAssignmentOpen(homeCity: string, assignments: Readonly<Re
     usage: [],
     grossTotal: '0.00',
     projects: allowList.map((project) => ({ ...project })),
+    deadlineWarnings: [],
     submittedAt: null,
   };
 }
@@ -225,6 +243,7 @@ export function projectAssignmentSubmitted(input: {
     usage: [],
     grossTotal: '0.00',
     projects: allowList.map((project) => ({ ...project })),
+    deadlineWarnings: [],
     submittedAt: input.submittedAt,
   };
 }

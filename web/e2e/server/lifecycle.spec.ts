@@ -34,7 +34,7 @@ test('两个上传批次逐一命中四种拒绝原因，排除一份材料后�
   await createTask(page);
   const taskId = /#\/task\/([^/]+)\//.exec(page.url())?.[1] ?? '';
 
-  await page.locator('input[type=file]').setInputFiles([
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles([
     hotel,
     { name: '备注.txt', mimeType: 'text/plain', buffer: Buffer.from('not a receipt') },
     { name: 'IMG_4871.HEIC', mimeType: 'image/heic', buffer: Buffer.from('heic bytes') },
@@ -45,7 +45,7 @@ test('两个上传批次逐一命中四种拒绝原因，排除一份材料后�
   await expect(row(first, 'IMG_4871.HEIC').getByText('HEIC 不支持，请在 iPhone 相册导出为 JPG')).toBeVisible();
 
   await page.getByRole('button', { name: '追加下一批' }).click();
-  await page.locator('input[type=file]').setInputFiles([
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles([
     amap,
     { name: '扫描件.pdf', mimeType: 'application/pdf', buffer: Buffer.alloc(20 * 1024 * 1024 + 1) },
     { ...hotel, name: '全季酒店_发票（副本）.pdf' },

@@ -10,8 +10,8 @@ import {
   ABANDON_TASK_COPY,
 } from '@baox/contract';
 import { HOME_CITY, SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, confirmationDigest, projectAssignmentOpen, projectAssignmentSubmitted, withLineProjects, withProjectUsage } from './projects';
-import { T2_ROWS, applyAbortAtHandover, applyErpDone, emptyReadback, emptyReconcile, erpWaitingLogin, readbackOf, reconcileVerdict } from './erp';
-import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult, openPendingItemCount, withInventoryProjection } from './inventory';
+import { T2_ROWS, applyAbortAtHandover, applyErpDone, emptyReadback, emptyReconcile, erpWaitingLogin, idleErp, readbackOf, reconcileVerdict } from './erp';
+import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult, openPendingItemCount, withInventoryProjection, withLodgingEvidenceProjection } from './inventory';
 import { catalogMatched, catalogPending, catalogRunning, packageFilesOf, preparationPending } from './preparation';
 
 // 夹具：三个虚构的报销任务。人物与数字沿用原型（林颂宜、上海出差、9 条明细合计 3972.59）。
@@ -66,11 +66,12 @@ export function mediaTypeOf(fileName: string): Material['mediaType'] {
 }
 
 // 刚接收、还没盘点的材料：角色与类别未定，盘点票（#102）再填字段与校验。
-export function uploadedMaterial(input: { materialId: string; batchId: string; fileName: string; size: number; contentHash: string }): Material {
+export function uploadedMaterial(input: { materialId: string; batchId: string; fileName: string; relativePath?: string; size: number; contentHash: string }): Material {
   return {
     materialId: input.materialId,
     batchId: input.batchId,
     fileName: input.fileName,
+    relativePath: input.relativePath ?? input.fileName,
     contentHash: input.contentHash,
     size: input.size,
     kind: null,
@@ -86,6 +87,7 @@ export function uploadedMaterial(input: { materialId: string; batchId: string; f
     pendingItemIds: [],
     originalUrl: null,
     previewUrl: null,
+    variants: [],
     fields: [],
   };
 }
@@ -94,6 +96,7 @@ function t1Batch(): UploadBatch {
   const files: UploadFileResult[] = T1_FILES.map(([id, fileName, size]) => ({
     fileId: `f-${id}`,
     fileName,
+    relativePath: fileName,
     size,
     status: 'accepted',
     contentHash: fixtureHash(id),
@@ -149,13 +152,14 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     pendingItems: [],
     blockers: [],
     lines: [],
+    lodgingEvidence: [],
     confirmation: { status: 'unconfirmed', confirmedAt: null, digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null, notice: null },
     paymentScreenshots: [],
     printSheet: { status: 'not_generated', fileName: null, url: null, pages: [], notices: [] },
-    projectAssignment: { status: 'not_started', purpose: null, homeCity: task.homeCity, assignments: [], working: [], reselect: [], usage: [], grossTotal: '0.00', projects: [], submittedAt: null },
+    projectAssignment: { status: 'not_started', purpose: null, homeCity: task.homeCity, assignments: [], working: [], reselect: [], usage: [], grossTotal: '0.00', projects: [], deadlineWarnings: [], submittedAt: null },
     catalog: catalogPending(),
     preparation: preparationPending(),
-    erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null, erpAccount: null },
+    erp: idleErp(),
     readback: emptyReadback(),
     reconcile: emptyReconcile(),
     step: { kind: STEP_BY_STAGE[stage], stepToken: `tok-${task.taskId}-${stage}` },
@@ -220,7 +224,7 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
   if (stage === 'erp') snapshot.erp = erpWaitingLogin();
   if (stage === 'done') applyErpDone(snapshot);
   if (stage === 'reconcile') applyAbortAtHandover(snapshot);
-  return withProjectUsage(withInventoryProjection(snapshot));
+  return withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot)));
 }
 
 // T2：对账中（ERP 写入结果不确定后的停顿状态，不是失败）。
@@ -248,7 +252,18 @@ export function t2Snapshot(): TaskSnapshot {
   };
   snapshot.catalog = catalogMatched();
   snapshot.preparation = { status: 'ready', problems: [], packageFiles: [] };
-  snapshot.erp = { status: 'aborted', steps: [], draftNo: T2_DRAFT_NO, abortReason: '严格回读时报销系统没有在限定时间内返回结果，写入结果不确定。', loginNotice: null, erpAccount: null };
+  snapshot.erp = {
+    status: 'aborted',
+    steps: [],
+    currentStage: 'handover',
+    externalWait: 'none',
+    outcome: 'none',
+    allowedActions: ['refresh'],
+    draftNo: T2_DRAFT_NO,
+    abortReason: '严格回读时没有读到报销系统的结果，写入结果不确定。',
+    loginNotice: null,
+    erpAccount: null,
+  };
   snapshot.readback = readbackOf(T2_ROWS);
   // 已保存但严格逐行不一致 ⇒ 转人工（human_review），只允许转人工。
   snapshot.reconcile = {
@@ -260,7 +275,7 @@ export function t2Snapshot(): TaskSnapshot {
     reasons: [],
     capture: null,
   };
-  return withProjectUsage(withInventoryProjection(snapshot));
+  return withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot)));
 }
 
 // T3：已完成，而且员工自己保存过，单据编号是这么来的。演示里唯一一条真的有编号的已完成任务：
@@ -289,9 +304,20 @@ export function t3Snapshot(): TaskSnapshot {
   };
   snapshot.catalog = catalogMatched();
   snapshot.preparation = { status: 'ready', problems: [], packageFiles: [] };
-  snapshot.erp = { status: 'done', steps: [], draftNo: T3_DRAFT_NO, abortReason: null, loginNotice: null, erpAccount: null };
+  snapshot.erp = {
+    status: 'done',
+    steps: [],
+    currentStage: 'handover',
+    externalWait: 'none',
+    outcome: 'saved',
+    allowedActions: ['refresh'],
+    draftNo: T3_DRAFT_NO,
+    abortReason: null,
+    loginNotice: null,
+    erpAccount: null,
+  };
   snapshot.readback = { status: 'matched', rows: [], summary: '明细 4/4 一致', localTotal: '2318.50', erpTotal: '2318.50' };
-  return withProjectUsage(withInventoryProjection(snapshot));
+  return withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot)));
 }
 
 // 任务列表层面的 ERP 结局：已转人工优先。严格回读不一致的草稿现在停在对账（不是完成），列表按「对账中」显示它，
@@ -312,12 +338,14 @@ function abandonOf(snapshot: TaskSnapshot): Pick<TaskListItem, 'abandonable' | '
 // 任务列表的一行由快照投影而来：mock 服务端负责，页面不做这件事。
 export function toListItem(snapshot: TaskSnapshot): TaskListItem {
   const draftNo = snapshot.erp.draftNo ?? snapshot.reconcile.draftNo;
+  const summaryStatus = snapshot.lines.length === 0 ? 'unavailable' : snapshot.confirmation.status === 'confirmed' ? 'confirmed' : 'pending';
   return {
     taskId: snapshot.task.taskId,
     name: snapshot.task.name,
     stage: snapshot.stage,
-    period: snapshot.task.period,
+    period: summaryStatus === 'unavailable' ? null : snapshot.task.period,
     grossTotal: snapshot.confirmation.status === 'confirmed' ? snapshot.confirmation.grossTotal : null,
+    summaryStatus,
     erpDraftNo: draftNo,
     pendingCount: openPendingItemCount(snapshot.pendingItems),
     erpOutcome: erpOutcomeOf(snapshot),

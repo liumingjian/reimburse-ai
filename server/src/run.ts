@@ -4,6 +4,7 @@ import { resolveDataDir } from './data-dir';
 import { erpConfigFromEnv } from './erp/config';
 import type { FillExecutor } from './erp/fill-jobs';
 import type { ReconcileExecutor } from './erp/reconcile-job';
+import type { ParseExecutor } from './parse/executor';
 import { resolveLegacyHome } from './legacy/read';
 import { readMaintenanceToken } from './maintenance-control';
 import { startServer } from './server';
@@ -14,7 +15,7 @@ import { startServer } from './server';
 // Serves `web/dist` same-origin when it has been built. The `listening on` line is what e2e waits for.
 // `BAOX_HOME` overrides the legacy `~/.baox`, read (never written) once when the first admin is created.
 // `BAOX_PUBLIC_ORIGIN` is the address colleagues reach the app at through the reverse proxy, e.g.
-// `http://10.250.0.222`; unset serves 127.0.0.1 only (`public-origin.ts`).
+// `http://10.250.0.222:8888`; unset serves 127.0.0.1 only (`public-origin.ts`).
 // `BAOX_MAINTENANCE_TOKEN_FILE` is the root/baox-owned host-local credential that enables the Unix maintenance
 // control socket; `BAOX_MAINTENANCE_SOCKET_PATH` is reserved for an isolated recovery rehearsal. Production uses the
 // data-directory default, while development and existing releases may leave the credential unset.
@@ -32,9 +33,9 @@ const EXTENSION_TEMPLATE = fileURLToPath(new URL('../../extension/dist', import.
 // Where ERP jobs run. Absent, they run in each task owner's paired 浏览器扩展 (`erp/remote-executor.ts`), which is the
 // only choice the production entry has: the CDP executor is passed in by the development and e2e entries alone, so it
 // never reaches a bundle users run (`production-entry.test.ts`).
-export type RunOverrides = { erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor };
+export type RunOverrides = { erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor; parser?: ParseExecutor };
 
-export async function run({ erpExecutor, reconcileExecutor }: RunOverrides = {}): Promise<void> {
+export async function run({ erpExecutor, reconcileExecutor, parser }: RunOverrides = {}): Promise<void> {
   const dataDir = resolveDataDir();
   const port = Number(process.env['BAOX_PORT'] ?? DEFAULT_PORT);
   try {
@@ -48,6 +49,7 @@ export async function run({ erpExecutor, reconcileExecutor }: RunOverrides = {})
       legacyHome: resolveLegacyHome(),
       ...(erpExecutor ? { erpExecutor } : {}),
       ...(reconcileExecutor ? { reconcileExecutor } : {}),
+      ...(parser ? { parser } : {}),
       erpConfig,
       publicOrigin: process.env['BAOX_PUBLIC_ORIGIN'] ?? null,
       extensionTemplate: EXTENSION_TEMPLATE,

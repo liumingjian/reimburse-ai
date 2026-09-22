@@ -5,7 +5,7 @@ import { ActionError } from '../shell/ActionError';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
-import { taskHash } from '../router';
+import { navigate, taskHash } from '../router';
 import { CropEditor, formatCorners } from './CropEditor';
 import { PAGE_COPY } from './page-copy';
 
@@ -77,6 +77,7 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const { busy, run, errorAt } = useAction(taskId);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [receipt, setReceipt] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
   const requested = useRef(false);
   const cropPanel = useRef<HTMLElement>(null);
 
@@ -111,6 +112,11 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const removeScreenshot = (page: PrintSheetPage, screenshot: PaymentScreenshot) =>
     run((adapter) => adapter.removePaymentScreenshot(taskId, screenshot.screenshotId), `shot-${page.pageId}`);
 
+  const fillErp = async () => {
+    const outcome = await run((adapter) => adapter.startErpWrite(taskId, snapshot.step.stepToken), 'erp');
+    if (outcome.ok) navigate(taskHash(taskId, 'erp'));
+  };
+
   const submitCrop = async (target: Editing, corners: Corners) => {
     const outcome = await run((adapter) => adapter.cropPlacement(taskId, target.pageId, target.slot, corners), 'crop');
     if (!outcome.ok) return;
@@ -130,6 +136,12 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
         lead={copy.lead}
         actions={
           <>
+            {snapshot.erp.status === 'idle' ? (
+              <Button kind="secondary" disabled={busy} onClick={() => void fillErp()}>去报销</Button>
+            ) : (
+              <Button kind="secondary" href={taskHash(taskId, 'erp')}>查看填报进度</Button>
+            )}
+            <ActionError message={errorAt('erp')} />
             {generated && sheet.url ? (
               <Button href={sheet.url} {...({ download: sheet.fileName ?? true } as object)}>
                 下载打印稿 PDF
@@ -141,6 +153,14 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
           </>
         }
       />
+
+      <p className="app-caption">去报销会自动填写已确认的明细，完成后请在报销系统中自行保存并提交。</p>
+      <div className="app-print-toolbar" role="toolbar" aria-label="打印稿查看">
+        <Button kind="ghost" size="sm" onClick={() => setZoom(1)}>适应窗口</Button>
+        <Button kind="ghost" size="sm" disabled={zoom <= 0.5} onClick={() => setZoom((value) => Math.max(0.5, value - 0.25))}>缩小</Button>
+        <Button kind="ghost" size="sm" disabled={zoom >= 2} onClick={() => setZoom((value) => Math.min(2, value + 0.25))}>放大</Button>
+        <span role="status" aria-label="预览缩放">{Math.round(zoom * 100)}%</span>
+      </div>
 
       {sheet.status === 'stale' ? (
         <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title="材料变更后旧打印稿已作废，正在按新的确认数据重新生成。" />
@@ -196,65 +216,67 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
             />
             <p className="app-caption">旋转与裁剪只保存为打印设置，不改原件，也不影响整单明细确认。</p>
           </div>
-          <ol className="app-print-pages" aria-label="打印稿页面">
-            {sheet.pages.map((page, index) => (
-              <li key={page.pageId} className="app-page-card" aria-label={page.header}>
-                <div className="page-hdr">{page.header}</div>
-                <img className="app-page-image" src={page.imageUrl} alt={`第 ${index + 1} 页页图`} data-testid={`page-image-${page.pageId}`} />
-                <ul className="app-placements">
-                  {SLOTS.map((slot) => {
-                    const placement = page[slot];
-                    if (!placement) return null;
-                    const rotateLabel = placement.rotate ? '改为竖放' : '旋转 90°';
-                    return (
-                      <li key={slot}>
-                        <div className="app-placement-name">
-                          <span className="app-caption">{SLOT_LABEL[slot]}</span>
-                          <span className="app-file-name">{placement.fileName}</span>
-                        </div>
-                        <FieldGroup
-                          fields={[
-                            { label: '放置', value: placement.rotate ? '旋转 90° 放置' : '竖放' },
-                            ...(placement.croppable ? [{ label: '裁剪', value: placement.cropAdjusted ? '已手动微调裁剪' : '已自动裁边矫正' }] : []),
-                          ]}
-                        />
-                        <div className="app-btn-row">
-                          <Button kind="ghost" size="sm" disabled={busy} aria-label={`${rotateLabel}：${placement.fileName}`} onClick={() => void rotate(page, slot, placement)}>
-                            {rotateLabel}
-                          </Button>
-                          {placement.croppable && placement.corners && placement.imageUrl ? (
-                            <Button
-                              kind="ghost"
-                              size="sm"
-                              disabled={busy}
-                              aria-label={`调整四角：${placement.fileName}`}
-                              onClick={() => {
-                                setReceipt(null);
-                                setEditing({ pageId: page.pageId, slot });
-                              }}
-                            >
-                              调整四角
+          <div className="app-print-scroll">
+            <ol className="app-print-pages" aria-label="打印稿页面" style={{ width: `${52 * zoom}rem`, maxWidth: zoom === 1 ? '100%' : undefined }}>
+              {sheet.pages.map((page, index) => (
+                <li key={page.pageId} className="app-page-card" aria-label={page.header}>
+                  <div className="page-hdr">{page.header}</div>
+                  <img className="app-page-image" src={page.imageUrl} alt={`第 ${index + 1} 页页图`} data-testid={`page-image-${page.pageId}`} />
+                  <ul className="app-placements">
+                    {SLOTS.map((slot) => {
+                      const placement = page[slot];
+                      if (!placement) return null;
+                      const rotateLabel = placement.rotate ? '改为竖放' : '旋转 90°';
+                      return (
+                        <li key={slot}>
+                          <div className="app-placement-name">
+                            <span className="app-caption">{SLOT_LABEL[slot]}</span>
+                            <span className="app-file-name">{placement.fileName}</span>
+                          </div>
+                          <FieldGroup
+                            fields={[
+                              { label: '放置', value: placement.rotate ? '旋转 90° 放置' : '竖放' },
+                              ...(placement.croppable ? [{ label: '裁剪', value: placement.cropAdjusted ? '已手动微调裁剪' : '已自动裁边矫正' }] : []),
+                            ]}
+                          />
+                          <div className="app-btn-row">
+                            <Button kind="ghost" size="sm" disabled={busy} aria-label={`${rotateLabel}：${placement.fileName}`} onClick={() => void rotate(page, slot, placement)}>
+                              {rotateLabel}
                             </Button>
-                          ) : null}
-                          <ActionError message={errorAt(`${page.pageId}-${slot}`)} />
-                        </div>
-                      </li>
-                    );
-                  })}
-                  {page.acceptsPaymentScreenshot && page.top ? (
-                    <ScreenshotControl
-                      page={page}
-                      screenshot={snapshot.paymentScreenshots.find((shot) => shot.screenshotId === page.screenshotId) ?? null}
-                      busy={busy}
-                      error={errorAt(`shot-${page.pageId}`)}
-                      onAdd={(file) => void addScreenshot(page, page.top?.materialId ?? '', file)}
-                      onRemove={(shot) => void removeScreenshot(page, shot)}
-                    />
-                  ) : null}
-                </ul>
-              </li>
-            ))}
-          </ol>
+                            {placement.croppable && placement.corners && placement.imageUrl ? (
+                              <Button
+                                kind="ghost"
+                                size="sm"
+                                disabled={busy}
+                                aria-label={`调整四角：${placement.fileName}`}
+                                onClick={() => {
+                                  setReceipt(null);
+                                  setEditing({ pageId: page.pageId, slot });
+                                }}
+                              >
+                                调整四角
+                              </Button>
+                            ) : null}
+                            <ActionError message={errorAt(`${page.pageId}-${slot}`)} />
+                          </div>
+                        </li>
+                      );
+                    })}
+                    {page.acceptsPaymentScreenshot && page.top ? (
+                      <ScreenshotControl
+                        page={page}
+                        screenshot={snapshot.paymentScreenshots.find((shot) => shot.screenshotId === page.screenshotId) ?? null}
+                        busy={busy}
+                        error={errorAt(`shot-${page.pageId}`)}
+                        onAdd={(file) => void addScreenshot(page, page.top?.materialId ?? '', file)}
+                        onRemove={(shot) => void removeScreenshot(page, shot)}
+                      />
+                    ) : null}
+                  </ul>
+                </li>
+              ))}
+            </ol>
+          </div>
         </>
       ) : (
         <section className="app-block">

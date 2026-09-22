@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { ADMIN_ERRORS, AssignProjectLinesInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, EXTENSION_BLOB_PATH, EXTENSION_PAIR_PATH, EXTENSION_PAIRING_ERRORS, FORBIDDEN_CODE, ERP_ACTION_ERRORS, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
+import { ADMIN_ERRORS, AssignProjectLinesInputSchema, ConfirmReviewInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, EXTENSION_BLOB_PATH, EXTENSION_PAIR_PATH, EXTENSION_PAIRING_ERRORS, FORBIDDEN_CODE, ERP_ACTION_ERRORS, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
 import { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -293,7 +293,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
       return list;
     },
   });
-  mountPairingRoutes(app, pairings);
+  mountPairingRoutes(app, pairings, publicOrigin);
   mountExtensionDownloadRoute(app, extensionTemplate, publicOrigin);
 
   // Legacy import (旧数据导入) as the signed-in account sees it; only the owner of a failed run may retry or skip.
@@ -390,10 +390,16 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   app.post('/api/tasks/:id/batches', batchLimit, async (c) => {
     const body = await c.req.parseBody({ all: true });
     const entries = ([] as unknown[]).concat(body['files'] ?? []);
+    // `webkitRelativePath` is browser-local metadata and is not carried by multipart's filename. The adapter sends
+    // one sourcePaths field per file in the same order, preserving nested directory provenance without accepting an
+    // absolute path from the client.
+    const sourcePaths = ([] as unknown[]).concat(body['sourcePaths'] ?? []).map((path) => (typeof path === 'string' ? path : null));
     const files: UploadedFile[] = [];
+    let fileIndex = 0;
     for (const entry of entries) {
       if (!(entry instanceof File)) continue;
-      files.push({ fileName: entry.name, mime: entry.type || 'application/octet-stream', bytes: new Uint8Array(await entry.arrayBuffer()) });
+      files.push({ fileName: entry.name, relativePath: sourcePaths[fileIndex] ?? entry.name, mime: entry.type || 'application/octet-stream', bytes: new Uint8Array(await entry.arrayBuffer()) });
+      fileIndex += 1;
     }
     if (files.length === 0) return failure(c, 400, 'no_files', '没有收到文件。');
     return c.json(await tasksOf(c).upload(c.req.param('id'), files));
@@ -537,7 +543,7 @@ const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
   'set-home-city': taskAction(withToken(SetHomeCityInputSchema.shape), (tasks, id, { stepToken, homeCity }) => tasks.setHomeCity(id, homeCity, stepToken)),
   // A 待确认项 answer, or a field edit addressed `edit.<materialId>.<field>` with the answer `{ value }`.
   'answer-pending': taskAction(withToken({ itemId: z.string().min(1), answer: PendingAnswerSchema }), (tasks, id, { itemId, answer, stepToken }) => tasks.answerPending(id, itemId, answer, stepToken)),
-  'confirm-review': taskAction(withToken({ digest: z.string().min(1) }), (tasks, id, { digest, stepToken }) => tasks.confirmReview(id, digest, stepToken)),
+  'confirm-review': taskAction(withToken(ConfirmReviewInputSchema.shape), (tasks, id, { digest, acceptDeadlineWarnings, stepToken }) => tasks.confirmReview(id, digest, stepToken, acceptDeadlineWarnings)),
   'exclude-material': taskAction(withToken({ materialId: z.string().min(1) }), (tasks, id, { materialId, stepToken }) => tasks.excludeMaterial(id, materialId, stepToken)),
   // 去报销 and its login pause. While another task of the same 应用账号 holds the ERP lease: 409 `erp_in_use`, naming
   // no task. Another account's job never refuses this one (ADR-0019).

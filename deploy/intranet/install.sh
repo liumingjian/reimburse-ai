@@ -11,15 +11,15 @@
 # starts from an empty database; a controlled repair keeps the one there. Nothing is migrated in and nothing legacy is
 # imported.
 #
-# The first administrator is created here, on the host, before Caddy serves :80 (ADR-0018: the first account created
+# The first administrator is created here, on the host, before Caddy serves the external port (ADR-0018: the first account created
 # becomes the administrator, and on the VPN anyone could otherwise get there before the maintainer). A first install
 # therefore needs BAOX_ADMIN_USERNAME, the maintainer's username; the installer prints a temporary password for it,
 # which must be changed at the first sign-in.
 #
-# Overrides, all optional: NODE_MIRROR (default npmmirror, as the repo's .npmrc uses), CADDY_DOWNLOAD (default GitHub
-# releases), BAOX_BUILD_PYTHON (an absolute Python 3.8+ executable for node-gyp), npm_config_registry and the usual
-# *_proxy variables, all passed through to the build. The native compiler is the isolated GCC named below; see the
-# deployment walkthrough for how it is provisioned and verified.
+# Overrides, all optional: BAOX_PUBLIC_ORIGIN (the complete external origin), NODE_MIRROR (default npmmirror, as the
+# repo's .npmrc uses), CADDY_DOWNLOAD (default GitHub releases), BAOX_BUILD_PYTHON (an absolute Python 3.8+ executable
+# for node-gyp), npm_config_registry and the usual *_proxy variables, all passed through to the build. The native
+# compiler is the isolated GCC named below; see the deployment walkthrough for how it is provisioned and verified.
 set -euo pipefail
 
 printf '%s\n' 'install.sh is retired and makes no host changes. Use the explicit native bootstrap and maintenance lifecycle.' >&2
@@ -246,19 +246,27 @@ touch "$release/.built"
 # --- Configuration ------------------------------------------------------------------------------------------------
 
 source_dir=$release/deploy/intranet
-origin=$(sed -n 's/^Environment=BAOX_PUBLIC_ORIGIN=//p' "$source_dir/baox.service")
-# The first site block of the Caddyfile: a line that starts with neither whitespace, '#' nor '{', and opens a block.
-site=$(awk '/^[^#[:space:]{].*\{$/ { print $1; exit }' "$source_dir/Caddyfile")
-[[ -n $origin && $origin == "$site" ]] || die "BAOX_PUBLIC_ORIGIN ($origin) and the Caddyfile site ($site) must be identical"
+rendered=$scratch/config
+"$DEPLOY/runtime/node/bin/node" "$source_dir/render-config.mjs" "$rendered"
+mapfile -t addresses < "$rendered/origin.txt"
+origin=${addresses[0]}
+proxy_probe=${addresses[1]}
+proxy_connect=${addresses[2]}
+if [[ -f /etc/systemd/system/baox.service ]]; then
+  installed_origin=$(sed -n 's/^Environment=BAOX_PUBLIC_ORIGIN=//p' /etc/systemd/system/baox.service)
+  if [[ -n $installed_origin && $installed_origin != "$origin" && -z ${BAOX_PUBLIC_ORIGIN:-} ]]; then
+    die "existing origin $installed_origin differs from the new default $origin; set BAOX_PUBLIC_ORIGIN explicitly to retain it or approve an origin migration"
+  fi
+fi
 legacy_home=$(sed -n 's/^Environment=BAOX_HOME=//p' "$source_dir/baox.service")
 [[ -n $legacy_home && ! -e $legacy_home ]] || die "BAOX_HOME ($legacy_home) must name a path that does not exist, so nothing legacy is imported"
 
-runuser -u baox -- env -i HOME="$DEPLOY/cache/home" "$caddy_bin" validate --config "$source_dir/Caddyfile" --adapter caddyfile >/dev/null 2>&1 ||
-  die "Caddyfile does not validate: $caddy_bin validate --config $source_dir/Caddyfile --adapter caddyfile"
+runuser -u baox -- env -i HOME="$DEPLOY/cache/home" "$caddy_bin" validate --config "$rendered/Caddyfile" --adapter caddyfile >/dev/null 2>&1 ||
+  die "Caddyfile does not validate: $caddy_bin validate --config $rendered/Caddyfile --adapter caddyfile"
 
-install -o root -g root -m 0644 "$source_dir/Caddyfile" "$DEPLOY/etc/Caddyfile"
+install -o root -g root -m 0644 "$rendered/Caddyfile" "$DEPLOY/etc/Caddyfile"
 install -o root -g root -m 0755 "$source_dir/baox-maintenance-gate" "$DEPLOY/bin/baox-maintenance-gate"
-install -o root -g root -m 0644 "$source_dir/baox.service" /etc/systemd/system/baox.service
+install -o root -g root -m 0644 "$rendered/baox.service" /etc/systemd/system/baox.service
 install -o root -g root -m 0644 "$source_dir/baox-caddy.service" /etc/systemd/system/baox-caddy.service
 
 if [[ -e $DEPLOY/data/baox.sqlite ]]; then
@@ -279,7 +287,7 @@ systemctl restart baox.service
 
 # The same Host a browser sends, or the app's guard answers 403.
 host=${origin#*://}
-session() { curl --noproxy '*' -fsS --max-time 5 -H "Host: $host" "$1/api/session"; }
+session() { curl --noproxy '*' --connect-to "$proxy_connect" -fsS --max-time 5 -H "Host: $host" "$1/api/session"; }
 wait_for session "http://127.0.0.1:$BAOX_PORT" || die "baox does not answer on 127.0.0.1:$BAOX_PORT; see journalctl -u baox"
 
 # --- First administrator, before anyone else can reach the app ---------------------------------------------------
@@ -289,7 +297,7 @@ wait_for session "http://127.0.0.1:$BAOX_PORT" || die "baox does not answer on 1
 # password nobody sees, and the emergency reset (ADR-0018) then gives it a temporary one that must be changed at the
 # first sign-in: the password the maintainer ends up with never passes through this script's arguments or history.
 if [[ $(session "http://127.0.0.1:$BAOX_PORT") == *'"status":"setup_required"'* ]]; then
-  # An earlier run may have got as far as starting Caddy: nothing may serve :80 while there is no administrator.
+  # An earlier run may have got as far as starting Caddy: nothing may serve the external port while there is no administrator.
   systemctl stop baox-caddy.service
   [[ -n $admin_username ]] ||
     die "the database has no administrator yet; rerun with BAOX_ADMIN_USERNAME=<your username> to create it here. Caddy is stopped, so nobody else can create it meanwhile"
@@ -312,9 +320,9 @@ fi
 
 log "restarting Caddy"
 systemctl restart baox-caddy.service
-wait_for session "http://127.0.0.1" || die "Caddy does not reach baox on :80; see journalctl -u baox-caddy"
-upgrade=$(curl --noproxy '*' -s -o /dev/null --max-time 3 -w '%{http_code}' -H "Host: $host" -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
-  -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' http://127.0.0.1/api/extension/channel || true)
+wait_for session "$proxy_probe" || die "Caddy does not reach baox on $proxy_probe; see journalctl -u baox-caddy"
+upgrade=$(curl --noproxy '*' --connect-to "$proxy_connect" -s -o /dev/null --max-time 3 -w '%{http_code}' -H "Host: $host" -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+  -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "$proxy_probe/api/extension/channel" || true)
 [[ $upgrade == 101 ]] || die "the extension channel upgrade through Caddy answered $upgrade, not 101"
 
 # --- Old releases -------------------------------------------------------------------------------------------------
@@ -324,7 +332,7 @@ for old in "${releases[@]:$KEEP_RELEASES}"; do
   if [[ $old != "$release_id" ]]; then rm -rf "${DEPLOY:?}/releases/$old"; fi
 done
 
-log "baox $release_id is serving $origin: $(session http://127.0.0.1)"
+log "baox $release_id is serving $origin: $(session "$proxy_probe")"
 if [[ -n ${temporary:-} ]]; then
   log "first administrator: $admin_username, temporary password: $temporary (change it at the first sign-in)"
 fi

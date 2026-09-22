@@ -4,6 +4,7 @@ import { createApp } from './app';
 import type { ErpConfig } from './erp/config';
 import type { FillExecutor } from './erp/fill-jobs';
 import type { ReconcileExecutor } from './erp/reconcile-job';
+import type { ParseExecutor } from './parse/executor';
 import { acquireDataDirLock, databasePath, ensureDataDir } from './data-dir';
 import { openDatabase, type Db } from './db/database';
 import { attachExtensionChannel } from './extension/websocket';
@@ -24,8 +25,9 @@ export type StartOptions = {
   legacyHome?: string | null;
   erpExecutor?: FillExecutor;
   reconcileExecutor?: ReconcileExecutor;
+  parser?: ParseExecutor;
   erpConfig?: ErpConfig;
-  // `BAOX_PUBLIC_ORIGIN` as written, e.g. `http://10.250.0.222`; absent or empty serves 127.0.0.1 only. An origin
+  // `BAOX_PUBLIC_ORIGIN` as written, e.g. `http://10.250.0.222:8888`; absent or empty serves 127.0.0.1 only. An origin
   // this refuses (`public-origin.ts`) stops the server before it listens.
   publicOrigin?: string | null;
   // The built extension template (`extension/dist`) the settings page's download is assembled from; null serves none.
@@ -38,7 +40,7 @@ export type StartOptions = {
 
 export type RunningServer = { url: string; port: number; maintenanceSocketPath: string | null; close: () => Promise<void> };
 
-export async function startServer({ dataDir, port, webDist = null, legacyHome = null, erpExecutor, reconcileExecutor, erpConfig, publicOrigin = null, extensionTemplate = null, maintenanceToken = null, maintenanceSocketPath = null }: StartOptions): Promise<RunningServer> {
+export async function startServer({ dataDir, port, webDist = null, legacyHome = null, erpExecutor, reconcileExecutor, parser, erpConfig, publicOrigin = null, extensionTemplate = null, maintenanceToken = null, maintenanceSocketPath = null }: StartOptions): Promise<RunningServer> {
   // First, so a misconfigured address never gets as far as the data directory lock.
   const served = publicOrigin ? parsePublicOrigin(publicOrigin) : null;
   ensureDataDir(dataDir);
@@ -50,7 +52,7 @@ export async function startServer({ dataDir, port, webDist = null, legacyHome = 
     release();
     throw error;
   }
-  const app = createApp({ db, dataDir, webDist, legacyHome, publicOrigin: served, extensionTemplate, ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(erpConfig ? { erpConfig } : {}) });
+  const app = createApp({ db, dataDir, webDist, legacyHome, publicOrigin: served, extensionTemplate, ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(parser ? { parser } : {}), ...(erpConfig ? { erpConfig } : {}) });
   let control: MaintenanceControl | null = null;
   let server: ReturnType<typeof serve> | null = null;
   let info: AddressInfo | null = null;

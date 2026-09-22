@@ -1,22 +1,21 @@
 import { useEffect, useRef, type ComponentType } from 'react';
 import { Button, InlineNotification } from '@carbon/react';
-import { CheckmarkFilled, ErrorFilled, InProgress, WarningAltFilled } from '@carbon/icons-react';
-import { type ErpStep, type TaskSnapshot, STAGE_DEFAULT_PAGE } from '@baox/contract';
+import { CheckmarkFilled, ErrorFilled, InProgress, Renew, WarningAltFilled } from '@carbon/icons-react';
+import { ERP_EXTERNAL_WAIT_COPY, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE, type ErpStep, type TaskSnapshot, STAGE_DEFAULT_PAGE } from '@baox/contract';
+import { useAppStore } from '../adapter/context';
 import { navigate, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 
-// ERP 填报页：按服务端给出的步骤顺序显示进度。写入由整单确认页的「去报销」启动，这里没有「开始填报」：
-// 检测到登录后服务端自动导入、写入、保存并回读（内核 erp_write_pending 自动执行，交互契约不追加保存确认）。
-// 页面只做一件事：「我已登录，继续」（回传当前 stepToken），它只是请服务端再探测一次；登录是否成立、何时往下走由服务端决定。
-// 版式：竖排步骤清单，每步一个状态图标加状态文字（颜色只是第二通道）；等待登录的一步里嵌登录说明与按钮，Carbon 的进度指示放不下，手写。
+// The page renders the server's recorded ERP read state. Refresh reads that state only; it never dispatches another
+// fill. The employee can only confirm a detected login or cancel while those actions are allowed by the server.
 
 const STATUS_LABEL: Readonly<Record<ErpStep['status'], string>> = {
   todo: '',
   running: '进行中',
-  waiting: '等待你操作',
+  waiting: '等待你登录',
   done: '完成',
   failed: '已中止',
 };
@@ -33,10 +32,10 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const taskId = snapshot.task.taskId;
   const copy = PAGE_COPY.erp;
   const { erp, step, stage } = snapshot;
+  const store = useAppStore();
   const { busy, error, run } = useAction(taskId);
 
-  // 写入在本页停下时跟随服务端给出的阶段换页（替换历史记录）：保存步中止 → 对账页，严格回读不一致 → 完成页。
-  // 这只是按服务端阶段跟随路由，不是页面自己判定；直接打开一个已经停下的任务的本页不跳转，底部链接作为后备入口保留。
+  // Follow the server-selected task stage after a terminal result. This component does not infer a result from steps.
   const previousStatus = useRef(erp.status);
   useEffect(() => {
     const was = previousStatus.current;
@@ -45,19 +44,33 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
   }, [erp.status, stage, taskId]);
 
   const confirmLogin = () => run((adapter) => adapter.confirmLogin(taskId, step.stepToken));
-  // 登录等待时放弃这次去报销：报销系统没有被改动，回到整单确认页，之后可以再去报销。
   const cancel = async () => {
     const outcome = await run((adapter) => adapter.cancelErpWrite(taskId, step.stepToken));
     if (outcome.ok) navigate(taskHash(taskId, 'review'));
   };
-  const waitingLogin = step.kind === 'erp_login';
+  const waitingLogin = erp.externalWait === 'employee_login' && erp.allowedActions.includes('confirm_login');
+  const canCancel = erp.allowedActions.includes('cancel');
+  const canRefresh = erp.allowedActions.includes('refresh');
   const writing = erp.status !== 'idle' && erp.status !== 'done' && erp.status !== 'aborted';
+  const completedNotice = erp.outcome === 'filled' ? HANDOVER_COMPLETED_NOTICE : erp.outcome === 'saved' ? ERP_SAVED_OUTCOME_NOTICE : null;
 
   return (
     <>
-      <PageHeader title={copy.title} lead={copy.lead} />
+      <PageHeader
+        title={copy.title}
+        lead={copy.lead}
+        actions={
+          <>
+            {canRefresh ? (
+              <Button kind="secondary" renderIcon={Renew} onClick={() => void store.refreshTask(taskId)}>
+                刷新状态
+              </Button>
+            ) : null}
+            {snapshot.confirmation.status === 'confirmed' ? <Button kind="secondary" href={taskHash(taskId, 'print')}>去打印</Button> : null}
+          </>
+        }
+      />
 
-      {/* 写入进行中：页头下方、步骤清单之前一条低对比 warning 通知。 */}
       {writing ? (
         <InlineNotification
           className="app-erp-writing"
@@ -66,8 +79,8 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
           lowContrast
           hideCloseButton
           statusIconDescription="注意"
-          title="进行中，请不要关闭为这次报销打开的报销系统标签页。"
-          subtitle="应用不会替你点保存，也不提交审批；中途任何不一致都会停下来对账。"
+          title={erp.externalWait === 'none' ? '正在根据已记录的状态显示进度。' : ERP_EXTERNAL_WAIT_COPY[erp.externalWait]}
+          subtitle="应用不会替你点保存或提交审批；刷新状态只会读取已经记录的进度。"
         />
       ) : null}
 
@@ -96,9 +109,11 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
                           <Button disabled={busy} onClick={() => void confirmLogin()}>
                             我已登录，继续
                           </Button>
-                          <Button kind="ghost" disabled={busy} onClick={() => void cancel()}>
-                            取消去报销
-                          </Button>
+                          {canCancel ? (
+                            <Button kind="ghost" disabled={busy} onClick={() => void cancel()}>
+                              取消去报销
+                            </Button>
+                          ) : null}
                           <span className="app-caption">应用检测到登录后才会往下走；取消不会改动报销系统。</span>
                         </div>
                       </div>
@@ -117,17 +132,17 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
           <p className="app-caption">还没有开始。整单明细确认后，在确认页点「去报销」。</p>
         ) : erp.status === 'done' ? (
           <>
-            <InlineNotification
-              kind="success"
-              role="status"
-              lowContrast
-              hideCloseButton
-              statusIconDescription="成功"
-            >
-              <span>
-                报销单已填好并交接给你，严格回读：{snapshot.readback.summary}。请到报销系统里核对后自己点「保存」。
-              </span>
-            </InlineNotification>
+            {completedNotice ? (
+              <InlineNotification
+                kind="success"
+                role="status"
+                lowContrast
+                hideCloseButton
+                statusIconDescription="成功"
+              >
+                <span data-testid={erp.outcome === 'saved' ? 'saved-outcome' : 'handover-completed'}>{completedNotice}</span>
+              </InlineNotification>
+            ) : null}
             <Button href={taskHash(taskId, 'done')}>查看完成结果</Button>
           </>
         ) : erp.status === 'aborted' ? (

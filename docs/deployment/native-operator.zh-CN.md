@@ -71,12 +71,12 @@ Node、隔离 GCC、构建 Python、pnpm、Caddy、`baox` 服务账号、受控�
 Kylin 上的 SQLite 原生模块已通过隔离 GCC 编译，恢复快照通过原服务的独立恢复演练。发布后的
 `doctor` 返回健康，访问入口为 <http://10.250.0.222>。
 
-PR #269 合并前，在包含此运维工具的分支中执行：
+更新本地 `origin/main` 后，在仓库根目录执行：
 
 ```bash
-pnpm --filter @baox/operator operator deploy codex/implement-spec-262
+pnpm --filter @baox/operator operator deploy
 ```
 
-合并并更新本地 `origin/main` 后，可省略 Git 引用。常规发布会自动准备候选、创建并演练恢复快照、切换版本及验证入口，无需重复初始化。
+常规发布会自动准备候选、创建并演练恢复快照、切换版本及验证入口，无需重复初始化。发布沿用主机已安装的访问地址；新配置的 8888 默认端口不会自动迁移现有浏览器扩展的连接地址。
 首次接入前的完整备份保留在 `/opt/tools/baox/initialization/backup-before-gate-37660bd-r3`；
 后续发布快照保留在 `/opt/tools/baox/recovery-snapshots/`。

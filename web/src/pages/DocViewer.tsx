@@ -7,15 +7,15 @@ import type { Material } from '@baox/contract';
 // 原件在「一屏高度减去顶栏、步骤条和页头」的框内等比缩放，栏宽跟着缩放后的原件走；没有预览时占位保持同样的版面位置。
 // 图片原件带查看工具栏（适应窗口、放大、缩小、旋转 90°）。查看状态只在本组件里：不写服务端，与打印稿的旋转、裁剪无关。
 // 父组件按待确认项 key 重建本组件，切换待确认项时缩放与旋转自然重置。
-export function DocViewer({ material }: { material: Material | undefined }) {
+export function DocViewer({ material, onPreviewError }: { material: Material | undefined; onPreviewError?: () => void }) {
   return (
     <div className="app-viewer" data-testid="doc-viewer">
-      <DocPreview material={material} />
+      <DocPreview material={material} {...(onPreviewError ? { onPreviewError } : {})} />
     </div>
   );
 }
 
-function DocPreview({ material }: { material: Material | undefined }) {
+function DocPreview({ material, onPreviewError }: { material: Material | undefined; onPreviewError?: () => void }) {
   if (!material || !material.previewUrl) {
     return (
       <div className={`app-doc-preview is-boxed is-placeholder is-${material?.shape ?? 'portrait'}`} data-testid="preview">
@@ -24,12 +24,12 @@ function DocPreview({ material }: { material: Material | undefined }) {
     );
   }
   if (material.mediaType === 'image') {
-    return <ImageViewer src={material.previewUrl} alt={`${material.fileName} 原件`} />;
+    return <ImageViewer src={material.previewUrl} alt={`${material.fileName} 原件`} {...(onPreviewError ? { onPreviewError } : {})} />;
   }
   // PDF 用浏览器自带的预览（自带缩放），不显示图片工具栏。
   return (
     <div className={`app-doc-preview is-boxed is-${material.shape}`}>
-      <iframe src={material.previewUrl} title={`${material.fileName} 原件`} data-testid="preview" />
+      <iframe src={material.previewUrl} title={`${material.fileName} 原件`} data-testid="preview" onError={onPreviewError} />
     </div>
   );
 }
@@ -41,7 +41,7 @@ type Rotation = 0 | 90 | 180 | 270;
 
 type Size = { width: number; height: number };
 
-function ImageViewer({ src, alt }: { src: string; alt: string }) {
+function ImageViewer({ src, alt, onPreviewError }: { src: string; alt: string; onPreviewError?: () => void }) {
   const [step, setStep] = useState(FIT_STEP);
   const [rotation, setRotation] = useState<Rotation>(0);
   const [natural, setNatural] = useState<Size | null>(null);
@@ -137,6 +137,7 @@ function ImageViewer({ src, alt }: { src: string; alt: string }) {
         <div className="app-doc-canvas" style={canvas ? { inlineSize: canvas.width, blockSize: canvas.height } : undefined}>
           <img
             src={src}
+            onError={onPreviewError}
             alt={alt}
             data-testid="preview"
             draggable={false}

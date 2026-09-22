@@ -16,6 +16,34 @@ read-only on 2026-09-21: Kylin Linux Advanced Server V10 (Sword), 8 cores, 14 Gi
 Oracle client, Grafana and docker; ports 80 and 443 free; outbound internet working; no caddy, no nginx; Node v20.19.5
 only under `/root/.nvm`. Kylin's system glibc is 2.28 and its GCC is 7.3, so the native build runtime below is required.
 
+
+## External address for new configurations (#270 / #271)
+
+Spec #270 supersedes ticket #260's port-80 default. New configurations use
+`http://10.250.0.222:8888`; the server behind the proxy still listens on `127.0.0.1:4319`.
+The host observations below describe the earlier rollout and are not evidence that port 8888 is available.
+This change does not install or migrate a running deployment, and ticket #260 remains unchanged.
+
+`render-config.mjs` renders the service and Caddy configuration together. The default comes
+from the service template; `BAOX_PUBLIC_ORIGIN` overrides the complete external origin, including the port.
+The renderer uses the server's origin validator. To inspect both files locally without installing anything:
+
+```sh
+node deploy/intranet/render-config.mjs /tmp/baox-default-config
+BAOX_PUBLIC_ORIGIN=http://10.250.0.222:9999 node deploy/intranet/render-config.mjs /tmp/baox-override-config
+```
+
+Routine native operator releases render the candidate with the installed service origin, preserving existing
+extension packages and pairings. The 8888 default applies to new configurations. The retired installer cannot
+perform an origin migration; changing an existing origin is a separate controlled maintenance operation.
+
+An origin change requires a deliberate employee migration: open the new application address, download its
+extension package, remove the old extension or replace its unpacked directory and reload it, then generate a new
+pairing code and pair again. Check that settings shows the new active address and a connected extension before
+starting ERP filling. A pairing made for the old address is not proof of a connection to the new one.
+Keep the previous release and origin configuration available until the migration is verified. Do not infer that
+existing employees have migrated from a successful service health probe.
+
 ## Not protected in phase 1
 
 This instance is fit for trying the core flow with made-up data only. Three things are knowingly missing:
@@ -47,7 +75,7 @@ and its closing condition binds this instance: **the gaps must be closed before 
 | `/opt/tools/baox/runtime/gcc-12.5.0/` | root | Isolated C++20 compiler and runtime used only by baox |
 | `/opt/tools/baox/bin/caddy` | root | Caddy, one static binary, version pinned in `install.sh` |
 | `/opt/tools/baox/bin/baox-maintenance-gate` | root | Root-invoked local controller for maintenance admission |
-| `/opt/tools/baox/etc/Caddyfile` | root | Installed from `deploy/intranet/Caddyfile` |
+| `/opt/tools/baox/etc/Caddyfile` | root | Rendered from `deploy/intranet/Caddyfile` |
 | `/opt/tools/baox/etc/maintenance-gate.token` | root:baox, 0640 | Credential shared only by the service and local controller |
 | `/opt/tools/baox/cache/` | baox | pnpm store and the build's home directory |
 | `/home/baox/.local/` | baox | Private uv, managed Python, and the build virtual environment |
@@ -177,15 +205,16 @@ the isolated compiler runtime.
    start it when the databases are not busy.
 
    On a new database the first account created becomes the administrator (ADR-0018), so the installer creates yours
-   **on the host, before Caddy serves port 80**: until then only `127.0.0.1:4319` answers, and nobody on the VPN can
+   **on the host, before Caddy serves the configured external address**: until then only `127.0.0.1:4319` answers,
+   and nobody on the VPN can
    reach the setup page first. Without `BAOX_ADMIN_USERNAME` a first install stops there, with Caddy stopped; rerun it
-   with the variable set. Done when the last two lines read `baox <name> is serving http://10.250.0.222:
+   with the variable set. Done when the last two lines read `baox <name> is serving <effective origin>:
    {"status":"signed_out",...}` and `first administrator: <your username>, temporary password: <…>`. Any other ending
    names the check that failed.
 
-3. **Sign in as the administrator.** From the mac, on the VPN, open `http://10.250.0.222`, sign in with the username
-   and the temporary password from step 2, and set your own password when asked. Done when the settings page shows you
-   as administrator.
+3. **Sign in as the administrator.** From the mac, on the VPN, open the effective origin printed by the installer
+   (the default is `http://10.250.0.222:8888`), sign in with the username and the temporary password from step 2, and
+   set your own password when asked. Done when the settings page shows you as administrator.
 
 4. **Walk one colleague's path end to end.** Register a second account, approve it as admin, sign in as it, download
    the extension from the settings page, load it unpacked in Chrome or Edge, and pair it. Done when the settings page
@@ -197,6 +226,9 @@ the isolated compiler runtime.
 lifecycle and candidate/recovery tooling for routine changes; it preserves the durable barrier before any release or
 public-proxy transition. `BAOX_ADMIN_USERNAME` is retained here only as part of the historical record.
 
+For an existing deployment whose origin differs from the new default, follow the migration in
+[External address for new configurations](#external-address-for-new-configurations-270--271). Routine operator releases retain the installed origin.
+
 When the release changes the extension, employees re-download it from the settings page and reload it in the browser
 (the settings page carries the Chinese walkthrough); the server refuses extensions older than
 `EXTENSION_MINIMUM_VERSION`. A controlled repair with the same tarball rebuilds nothing and only restarts.
@@ -204,9 +236,9 @@ When the release changes the extension, employees re-download it from the settin
 **Rollback** is `ln -sfn releases/<older> /opt/tools/baox/current && systemctl restart baox`. It is safe only if the
 newer release added no schema migration: the database is never migrated backwards, and there is no backup to return to.
 
-**Moving to a domain** is an upgrade too, edited in the repo: the domain's site and the redirect in the `Caddyfile`
-(the commented block there shows where), and `BAOX_PUBLIC_ORIGIN` in `baox.service`, in one commit. Every employee then
-re-downloads the extension and pairs again, because the old zips carry the old origin, and every web session resets.
+**Moving to a domain** is an upgrade too. Render `BAOX_PUBLIC_ORIGIN` with the new domain during controlled origin migration, and
+commit the domain redirect in the Caddy template. Every employee then re-downloads the extension and pairs again,
+because the old packages carry the old origin, and every web session resets.
 
 ## Maintenance admission
 
@@ -250,18 +282,19 @@ same command once, to hand the first administrator a temporary password.
 
 ### Origin
 
-`BAOX_PUBLIC_ORIGIN=http://10.250.0.222`, set in `baox.service`, is the deployment's most expensive constant. The app
-admits exactly that string as `Origin` and its host part as `Host` (`server/src/public-origin.ts`), and every extension
-zip is stamped with it at download. A spelling the browser never writes, such as `http://10.250.0.222:80`, stops the
-server at start. Another address, such as the host's own `192.168.1.222`, starts cleanly and is worse: every request
-through the VPN address answers 403, and every zip downloaded meanwhile carries an address employees cannot reach, so
-each one must be reinstalled. The Caddyfile's site address must be the same string; `install.sh` refuses to install
-the two when they differ.
+The rendered `BAOX_PUBLIC_ORIGIN` defaults to `http://10.250.0.222:8888`. The app admits exactly that string as
+`Origin` and its host part as `Host` (`server/src/public-origin.ts`), and every extension package is stamped with it at
+download. A spelling the browser never writes, such as `http://10.250.0.222:80`, stops the server at start. Another
+address, such as the host's own `192.168.1.222`, starts cleanly and is worse: every request through the VPN address
+answers 403, and every package downloaded meanwhile carries an address employees cannot reach, so each one must be
+reinstalled. `render-config.mjs` resolves the default or explicit override once and renders the service and Caddy
+configuration with the same origin.
 
 ### Reverse proxy
 
-Caddy listens on `:80` and forwards to Node on `127.0.0.1:4319`. It passes the browser's own `Host` and `Origin`
-through unchanged, which is Caddy's default, and it carries the extension's WebSocket upgrade on
+Caddy listens on the configured external origin, `http://10.250.0.222:8888` by default, and forwards to Node on
+`127.0.0.1:4319`. It passes the browser's own `Host` and `Origin` through unchanged, which is Caddy's default, and
+it carries the extension's WebSocket upgrade on
 `/api/extension/channel`, which meets the same `Host` check in the app. It runs as `baox` with only
 `CAP_NET_BIND_SERVICE`, with its admin API off; a Caddyfile change takes `systemctl restart baox-caddy`.
 
@@ -274,10 +307,10 @@ host's Node is root's and older than the `>=24 <25` the repo requires.
 
 ### Access path
 
-Employees reach `http://10.250.0.222` only while connected to the company VPN; `10.250.0.222` is how the VPN presents
-the host, whose own interface is `192.168.1.222/24`. The VPN is the access boundary. `firewalld` stays inactive on
-purpose and there is no host firewall rule to write. Port 4319 is bound to 127.0.0.1 and is never reachable from the
-network.
+Employees reach `http://10.250.0.222:8888` by default only while connected to the company VPN; `10.250.0.222` is how
+the VPN presents the host, whose own interface is `192.168.1.222/24`. The VPN is the access boundary. `firewalld`
+stays inactive on purpose and there is no host firewall rule to write. Port 4319 is bound to 127.0.0.1 and is never
+reachable from the network.
 
 ### Memory cap
 

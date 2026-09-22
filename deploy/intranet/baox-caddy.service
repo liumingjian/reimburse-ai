@@ -1,4 +1,4 @@
-# Caddy in front of baox on :80 (docs/deployment/intranet-phase-1.md). install.sh installs this file as
+# Caddy in front of baox on the configured external port (docs/deployment/intranet-phase-1.md). install.sh installs this file as
 # /etc/systemd/system/baox-caddy.service; edit it here, not there.
 
 [Unit]
@@ -9,7 +9,7 @@ Wants=network-online.target
 
 [Service]
 Type=notify
-# Not root: the one privilege it needs, binding :80, is granted as a capability.
+# Not root: CAP_NET_BIND_SERVICE permits an explicit privileged-port override without granting the Caddy process root.
 User=baox
 Group=baox
 AmbientCapabilities=CAP_NET_BIND_SERVICE

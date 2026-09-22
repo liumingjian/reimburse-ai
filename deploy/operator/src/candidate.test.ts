@@ -341,3 +341,25 @@ it('repairs an incompatible SQLite prebuild only inside the candidate using the 
   expect(readlinkSync(target.current)).toBe(currentBefore);
   expect(snapshotDirectory(target.dataDir)).toEqual(dataBefore);
 }, REAL_SUBPROCESS_TIMEOUT_MS);
+
+it('retains the installed origin when new candidate templates default to port 8888', async () => {
+  const target = await createTarget();
+  const source = createRepository();
+  const templates = join(source.repository, 'deploy', 'intranet');
+  for (const file of ['render-config.mjs', 'Caddyfile', 'baox.service']) {
+    writeFileSync(join(templates, file), readFileSync(new URL('../../intranet/' + file, import.meta.url)));
+  }
+  mkdirSync(join(source.repository, 'server', 'src'), { recursive: true });
+  writeFileSync(join(source.repository, 'server', 'src', 'public-origin.ts'), readFileSync(new URL('../../../server/src/public-origin.ts', import.meta.url)));
+  const service = join(target.profile.systemdDir, 'baox.service');
+  writeFileSync(service, readFileSync(service, 'utf8') + 'Environment=BAOX_PUBLIC_ORIGIN=http://10.250.0.222\n');
+  git(source.repository, ['add', '.']);
+  git(source.repository, ['commit', '--quiet', '-m', 'new default origin']);
+  const prepared = await cli(source.repository, target, 'prepare', 'HEAD', '--json');
+  expect(prepared.code, prepared.out + prepared.err).toBe(0);
+  const result = JSON.parse(prepared.out) as { candidate: { manifest: string } };
+  const built = join(result.candidate.manifest, '..', 'source', 'deploy', 'intranet');
+  expect(readFileSync(join(built, 'baox.service'), 'utf8')).toContain('Environment=BAOX_PUBLIC_ORIGIN=http://10.250.0.222\n');
+  expect(readFileSync(join(built, 'Caddyfile'), 'utf8')).toContain('http://10.250.0.222 {');
+  expect(readFileSync(service, 'utf8')).toContain('Environment=BAOX_PUBLIC_ORIGIN=http://10.250.0.222\n');
+}, REAL_SUBPROCESS_TIMEOUT_MS);

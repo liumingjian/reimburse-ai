@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { App } from '../App';
 import { AppProvider } from '../adapter/context';
 import { AppStore } from '../adapter/store';
-import { HUMAN_REVIEW_NOTICE, RECONCILE_BUCKETS, type ReconcileBucket, REFILL_COPY, type TaskStage } from '@baox/contract';
+import { HANDOVER_COMPLETED_NOTICE, HUMAN_REVIEW_NOTICE, RECONCILE_BUCKETS, type ReconcileBucket, REFILL_COPY, type TaskStage } from '@baox/contract';
 import { reconcileVerdict } from '../mock/fixtures/erp';
 import { t2Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
@@ -129,7 +129,7 @@ describe('对账', () => {
     const alerts = screen.getAllByRole('alert');
     expect(alerts).toHaveLength(1);
     expect(alerts[0]?.textContent).toContain('写入结果不确定');
-    expect(alerts[0]?.textContent).toContain('严格回读时报销系统没有在限定时间内返回结果，写入结果不确定。');
+    expect(alerts[0]?.textContent).toContain('严格回读时没有读到报销系统的结果，写入结果不确定。');
     expect(screen.queryByRole('heading', { name: '当前对账状态' })).toBeNull();
     expect(screen.getByTestId('reconcile-draft-no').textContent).toBe('BX20260718-0142');
     expect(screen.getByTestId('reconcile-banner').textContent).toBe('报销系统中存在草稿 BX20260718-0142，5 行明细中 4 行一致，1 行不一致。');
@@ -149,7 +149,7 @@ describe('对账', () => {
   test('?seed=reconcile（T1 交接步中止，未知 ⇒ 原地等待）：只有「重新对账」；读到填好、逐行一致的单据即交接完成，完成页显示固定句且没有单据编号', async () => {
     renderAt('#/task/T1/reconcile', 'reconcile');
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
-    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/交接单据时报销系统没有在限定时间内返回结果/)).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/交接单据时没有读到报销系统的结果/)).toBeTruthy();
     expect(screen.queryByRole('heading', { name: '当前对账状态' })).toBeNull();
     expect(screen.getByTestId('reconcile-bucket').textContent).toBe('未知');
     expect(screen.getByTestId('reconcile-draft-no').textContent).toBe('尚未读到单据编号');
@@ -159,7 +159,7 @@ describe('对账', () => {
     fireEvent.click(screen.getByRole('button', { name: '重新对账' }));
     expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();
     expect(screen.getByText('明细 9/9 一致')).toBeTruthy();
-    expect(screen.getByTestId('handover-completed').textContent).toBe('报销单已经按你确认的明细填好，还没有保存。请在报销系统里逐行核对，由你自己点「保存」。保存时如果弹出「字段必录提示」或「处理结果」，说明有字段没有真正写进报销系统：回到这里重新去报销这一项，不要手工补填。保存成功后回到这里再对一次账，这是最后一步。');
+    expect(screen.getByTestId('handover-completed').textContent).toBe(HANDOVER_COMPLETED_NOTICE);
     // 交接时单据还没有保存：完成页说「尚无」，而不是端出一个编号。
     expect(screen.getByTestId('draft-no').textContent).toBe('尚无');
   });

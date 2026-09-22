@@ -3002,6 +3002,17 @@ async function buildCandidate(request, paths, source, explicitEnvironment, lease
   }
   const candidateCaddyfile = path.join(paths.source, 'deploy', 'intranet', 'Caddyfile');
   if (!await isRegularFile(candidateCaddyfile)) throw new CandidateFailure('candidate-caddyfile-missing');
+  const renderer = path.join(paths.source, 'deploy', 'intranet', 'render-config.mjs');
+  if (await isRegularFile(renderer)) {
+    // Routine releases retain the installed origin. A new template default must
+    // not invalidate employee extension packages and pairings during an upgrade.
+    const active = parseServiceEnvironment(await fs.readFile(path.join(request.systemdDir, 'baox.service'), 'utf8'));
+    const origin = parseOrigin(active.BAOX_PUBLIC_ORIGIN);
+    if (!origin) throw new CandidateFailure('active-public-origin-invalid');
+    await runAsBaox(path.join(runtime, 'node', 'bin', 'node'), [renderer, path.dirname(renderer)], paths.source,
+      { ...env, BAOX_PUBLIC_ORIGIN: origin.origin }, paths.log);
+    await requireLease(paths, lease);
+  }
   await runAsBaox(path.join(request.deployRoot, 'bin', 'caddy'), ['validate', '--config', candidateCaddyfile, '--adapter', 'caddyfile'], paths.source, { HOME: env.HOME }, paths.log);
   await requireLease(paths, lease);
 }

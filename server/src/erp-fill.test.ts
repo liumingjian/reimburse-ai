@@ -66,13 +66,31 @@ describe('去报销 on a fake executor', () => {
   it('pauses for login: stage erp, step erp_login, no attempt, lease released; confirm-login re-probes once', async () => {
     const ready = await confirmed();
     const waiting = await start(ready);
-    expect(waiting).toMatchObject({ stage: 'erp', step: { kind: 'erp_login' }, erp: { status: 'waiting_login', loginNotice: null } });
+    expect(waiting).toMatchObject({
+      stage: 'erp',
+      step: { kind: 'erp_login' },
+      erp: {
+        status: 'waiting_login',
+        currentStage: 'login',
+        externalWait: 'employee_login',
+        outcome: 'none',
+        allowedActions: ['refresh', 'confirm_login', 'cancel'],
+        loginNotice: null,
+      },
+    });
     expect(waiting.erp.steps.find((step) => step.key === 'login')?.status).toBe('waiting');
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
     expect(executor.runs().map((run) => run.trigger)).toEqual(['start']);
     // The plan carries the confirmed lines' projects and the voucher invoices by content.
     expect(executor.runs()[0]!.plan).toMatchObject({ kind: 'fill', taskId: ready.task.taskId, purpose: '上海产品评审出差', catalog: { projects: [{ code: 'P-2307', name: '华东客户交付' }], expenseItems: [{ code: 'FY010001', name: '住宿' }] } });
     expect(executor.runs()[0]!.plan.invoices).toHaveLength(1);
+
+    // Re-reading a recorded login wait cannot dispatch another fill, import, write, or save.
+    const refreshed = await client.current(waiting.task.taskId);
+    const refreshedAgain = await client.current(waiting.task.taskId);
+    expect(refreshed.erp).toMatchObject({ currentStage: 'login', externalWait: 'employee_login', outcome: 'none', allowedActions: ['refresh', 'confirm_login', 'cancel'] });
+    expect(refreshedAgain.erp).toEqual(refreshed.erp);
+    expect(executor.runs()).toHaveLength(1);
 
     // Still not logged in: stays, with a notice.
     const again = await client.accepted(await client.act(waiting, 'confirm-login'));
@@ -84,7 +102,7 @@ describe('去报销 on a fake executor', () => {
     executor.queue(handedOver());
     await client.accepted(await client.act(still, 'confirm-login'));
     const done = await settledErp(still.task.taskId);
-    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', draftNo: null } });
+    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', currentStage: 'handover', externalWait: 'none', outcome: 'filled', allowedActions: ['refresh'], draftNo: null } });
   });
 
   it('cancel-erp-write returns to write-pending and the task can start again', async () => {
@@ -187,7 +205,7 @@ describe('去报销 on a fake executor', () => {
     executor.queue(handedOver());
     const done = await start(await confirmed());
     // Nothing was saved, so there is no 单据编号 to report — the read-back rows are the whole of the evidence.
-    expect(done).toMatchObject({ stage: 'done', step: { kind: 'none' }, erp: { status: 'done', draftNo: null, erpAccount: TEST_ERP_ACCOUNT }, readback: { status: 'matched' } });
+    expect(done).toMatchObject({ stage: 'done', step: { kind: 'none' }, erp: { status: 'done', currentStage: 'handover', externalWait: 'none', outcome: 'filled', allowedActions: ['refresh'], draftNo: null, erpAccount: TEST_ERP_ACCOUNT }, readback: { status: 'matched' } });
     expect(done.readback.rows).toHaveLength(done.lines.length);
     expect(done.readback.rows.every((row) => row.matched)).toBe(true);
     expect(done.erp.steps.every((step) => step.status === 'done')).toBe(true);
@@ -226,10 +244,13 @@ describe('去报销 on a fake executor', () => {
     const ready = await confirmed();
     const running = await client.accepted(await client.act(ready, 'start-erp-write'));
     await gate.running;
-    expect(running).toMatchObject({ stage: 'erp', step: { kind: 'none' }, erp: { status: 'running' } });
+    expect(running).toMatchObject({ stage: 'erp', step: { kind: 'none' }, erp: { status: 'running', currentStage: 'chromium', externalWait: 'erp_response', outcome: 'none', allowedActions: ['refresh'] } });
     expect(server.erpLease.holder(alice.account.accountId)).toEqual({ accountId: alice.account.accountId, taskId: ready.task.taskId, jobId: expect.any(String) });
 
     const current = await client.current(ready.task.taskId);
+    const reread = await client.current(ready.task.taskId);
+    expect(reread.erp).toEqual(current.erp);
+    expect(executor.runs()).toHaveLength(1);
     expect((await client.act(current, 'set-home-city', { homeCity: '上海' })).status).toBe(409);
 
     // A colleague filing at the same moment is not queued behind her (ADR-0019): the lease she holds is not consulted

@@ -180,11 +180,17 @@ export function createAccountService(db: Db, clock: Clock, acquireWrite: Mainten
       const row = await db.selectFrom('account').selectAll().where('account_id', '=', accountId).executeTakeFirst();
       if (!row?.password_hash || !(await verifyPassword(input.currentPassword, row.password_hash))) throw new AuthRefusal(400, 'wrong_password', ADMIN_ERRORS.wrongPassword);
       if (input.newPassword === input.currentPassword) throw new AuthRefusal(400, 'same_password', ADMIN_ERRORS.samePassword);
-      await db.updateTable('account').set({ password_hash: await hashPassword(input.newPassword), must_change_password: 0 }).where('account_id', '=', accountId).execute();
-      let drop = db.deleteFrom('session').where('account_id', '=', accountId);
-      if (keepToken) drop = drop.where('token_sha256', '!=', sha256(keepToken));
-      await drop.execute();
-      await recordEvent(db, accountId, accountId, 'password_changed', iso(clock()));
+      const passwordHash = await hashPassword(input.newPassword);
+      await db.transaction().execute(async (tx) => {
+        // Keep a concurrent password change from accepting credentials that are no longer current.
+        const changed = await tx.updateTable('account').set({ password_hash: passwordHash, must_change_password: 0 })
+          .where('account_id', '=', accountId).where('password_hash', '=', row.password_hash).executeTakeFirst();
+        if (changed.numUpdatedRows !== 1n) throw new AuthRefusal(400, 'wrong_password', ADMIN_ERRORS.wrongPassword);
+        let drop = tx.deleteFrom('session').where('account_id', '=', accountId);
+        if (keepToken) drop = drop.where('token_sha256', '!=', sha256(keepToken));
+        await drop.execute();
+        await recordEvent(tx, accountId, accountId, 'password_changed', iso(clock()));
+      });
     },
 
     // One admin change to another account (or oneself). Refuses anything that would leave no active admin.

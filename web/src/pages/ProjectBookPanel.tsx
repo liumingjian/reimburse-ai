@@ -7,8 +7,8 @@ import type { BookScope } from '../adapter/store';
 import { type AppAdapter, type ProjectBookEditInput, type ProjectBookOutcome, type PublicProjectConversionInput, PROJECT_BOOK_ACCEPTED_STATUSES, PROJECT_BOOK_COPY, PUBLIC_PROJECT_BOOK_COPY, type ProjectBookEntry } from '@baox/contract';
 import { ConfirmDialog } from '../shell/Dialog';
 
-// The same table presents both scopes. Personal intake is available wherever the personal panel appears; the public
-// panel becomes editable only on the administrator surface, while the project page always shows its read-only view.
+// The same table presents both scopes. Personal intake belongs to its owner; public maintenance controls are shown
+// only to administrators. The server independently checks the caller's permission for every mutation.
 
 type Message = { ok: boolean; text: string };
 type ConversionPrompt = { input: PublicProjectConversionInput; editEntry: ProjectBookEntry | null };
@@ -16,7 +16,7 @@ type ConversionPrompt = { input: PublicProjectConversionInput; editEntry: Projec
 type BookOps = {
   title: string;
   empty: string;
-  intake: (adapter: AppAdapter, input: { number: string; name: string }) => Promise<ProjectBookOutcome>;
+  intake: (adapter: AppAdapter, input: { number: string; name: string; deadlineOn?: string | null }) => Promise<ProjectBookOutcome>;
   edit: (adapter: AppAdapter, input: ProjectBookEditInput) => Promise<ProjectBookOutcome>;
   deactivate: (adapter: AppAdapter, input: { number: string }) => Promise<ProjectBookOutcome>;
   delete: (adapter: AppAdapter, input: { number: string }) => Promise<ProjectBookOutcome>;
@@ -63,6 +63,7 @@ export function ProjectBookPanel({
   const ops = OPS[scope];
   const [number, setNumber] = useState('');
   const [name, setName] = useState('');
+  const [deadlineOn, setDeadlineOn] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
   const [deleting, setDeleting] = useState<ProjectBookEntry | null>(null);
@@ -70,6 +71,7 @@ export function ProjectBookPanel({
   const [editing, setEditing] = useState<ProjectBookEntry | null>(null);
   const [editNumber, setEditNumber] = useState('');
   const [editName, setEditName] = useState('');
+  const [editDeadlineOn, setEditDeadlineOn] = useState('');
   const [editError, setEditError] = useState<string | null>(null);
   const [conversion, setConversion] = useState<ConversionPrompt | null>(null);
   const [conversionError, setConversionError] = useState<string | null>(null);
@@ -79,14 +81,14 @@ export function ProjectBookPanel({
   const run = async () => {
     setBusy(true);
     setMessage(null);
-    const outcome = await store.projectBookAction((adapter) => ops.intake(adapter, { number, name }), scope);
+    const outcome = await store.projectBookAction((adapter) => ops.intake(adapter, { number, name, deadlineOn: deadlineOn || null }), scope);
     setBusy(false);
     if (!outcome.ok) {
       setMessage({ ok: false, text: outcome.error.message });
       return;
     }
     if (scope === 'public' && outcome.result.status === 'conversion_required') {
-      setConversion({ input: { operation: 'intake', number, name }, editEntry: null });
+      setConversion({ input: { operation: 'intake', number, name, deadlineOn: deadlineOn || null }, editEntry: null });
       setConversionError(null);
       return;
     }
@@ -94,6 +96,7 @@ export function ProjectBookPanel({
     if (outcome.result.status === 'admitted') {
       setNumber('');
       setName('');
+      setDeadlineOn('');
     }
   };
 
@@ -101,6 +104,7 @@ export function ProjectBookPanel({
     setEditing(project);
     setEditNumber(project.number);
     setEditName(project.name ?? '');
+    setEditDeadlineOn(project.deadlineOn ?? '');
     setEditError(null);
   };
 
@@ -118,7 +122,7 @@ export function ProjectBookPanel({
     if (!editing) return;
     setBusy(true);
     setEditError(null);
-    const outcome = await store.projectBookAction((adapter) => ops.edit(adapter, { originalNumber: editing.number, number: editNumber, name: editName }), scope);
+    const outcome = await store.projectBookAction((adapter) => ops.edit(adapter, { originalNumber: editing.number, number: editNumber, name: editName, deadlineOn: editDeadlineOn || null }), scope);
     setBusy(false);
     if (!outcome.ok) {
       setEditError(outcome.error.message);
@@ -132,8 +136,10 @@ export function ProjectBookPanel({
           originalNumber: editing.number,
           originalName: editing.name,
           originalActive: editing.active,
+          originalDeadlineOn: editing.deadlineOn ?? null,
           number: editNumber,
           name: editName,
+          deadlineOn: editDeadlineOn || null,
         },
         editEntry: editing,
       });
@@ -156,6 +162,7 @@ export function ProjectBookPanel({
     setEditing(pending.editEntry);
     setEditNumber(pending.input.number);
     setEditName(pending.input.name);
+    setEditDeadlineOn(pending.input.deadlineOn ?? '');
   };
 
   const confirmConversion = async () => {
@@ -176,6 +183,7 @@ export function ProjectBookPanel({
     if (conversion.input.operation === 'intake') {
       setNumber('');
       setName('');
+      setDeadlineOn('');
     }
     setConversion(null);
   };
@@ -243,6 +251,14 @@ export function ProjectBookPanel({
               value={name}
               onChange={(event) => setName(event.target.value)}
             />
+            <TextInput
+              id={scope === 'personal' ? 'project-deadline' : 'public-project-deadline'}
+              type="date"
+              labelText={PROJECT_BOOK_COPY.deadlineLabel}
+              helperText={PROJECT_BOOK_COPY.deadlineHint}
+              value={deadlineOn}
+              onChange={(event) => setDeadlineOn(event.target.value)}
+            />
             <Button type="submit" size="md" kind={primaryIntake ? 'primary' : 'secondary'} renderIcon={Add} disabled={busy || number.trim() === '' || name.trim() === ''}>
               {PROJECT_BOOK_COPY.intake}
             </Button>
@@ -282,6 +298,7 @@ export function ProjectBookPanel({
                 <TableRow>
                   <TableHeader className="app-sticky-start">项目号</TableHeader>
                   <TableHeader>名称</TableHeader>
+                  <TableHeader>{PROJECT_BOOK_COPY.deadlineLabel}</TableHeader>
                   <TableHeader>状态</TableHeader>
                   {canMaintain ? <TableHeader className="app-sticky-end" aria-label="操作" /> : null}
                 </TableRow>
@@ -301,7 +318,7 @@ export function ProjectBookPanel({
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={canMaintain ? 4 : 3} className="app-muted">
+                    <TableCell colSpan={canMaintain ? 5 : 4} className="app-muted">
                       {ops.empty}
                     </TableCell>
                   </TableRow>
@@ -351,6 +368,14 @@ export function ProjectBookPanel({
               value={editName}
               onChange={(event) => setEditName(event.target.value)}
             />
+            <TextInput
+              id={scope === 'personal' ? 'edit-project-deadline' : 'edit-public-project-deadline'}
+              type="date"
+              labelText={PROJECT_BOOK_COPY.deadlineLabel}
+              helperText={PROJECT_BOOK_COPY.deadlineHint}
+              value={editDeadlineOn}
+              onChange={(event) => setEditDeadlineOn(event.target.value)}
+            />
           </div>
         </ConfirmDialog>
       ) : null}
@@ -391,7 +416,8 @@ function BookRow({
       <TableCell className="app-sticky-start app-nowrap">
         <span className="app-code">{project.number}</span>
       </TableCell>
-      <TableCell>{project.name ?? PROJECT_BOOK_COPY.noName}</TableCell>
+      <TableCell className="app-project-book-name">{project.name ?? PROJECT_BOOK_COPY.noName}</TableCell>
+      <TableCell className="app-nowrap">{project.deadlineOn ?? PROJECT_BOOK_COPY.deadlineUnset}</TableCell>
       <TableCell>
         <StatusTag tone={project.selectable ? 'success' : 'warning'}>{project.statusLabel}</StatusTag>
         {project.statusNote ? <div className="app-caption">{project.statusNote}</div> : null}

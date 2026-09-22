@@ -1,5 +1,5 @@
 import {
-  ERP_HANDOVER_STEP_COPY,
+  ERP_PROGRESS_STEPS,
   HUMAN_REVIEW_NOTICE,
   READBACK_FIELD_LABELS,
   RECONCILE_ACTION_LABELS,
@@ -15,23 +15,15 @@ import {
   type TaskSnapshot,
 } from '@baox/contract';
 
-// 写入报销系统、严格回读与对账的夹具（mock 服务端的角色）。步骤划分照内核 erp-write 的阶段（next.mjs erp_write_pending）。
-// 故障：readback-mismatch 让 No.6 的申请报销金额在报销系统里读回 74.00；erp-write-aborted 在保存步中止。
+// Mock execution reuses the contract's factual stage list. Its timers only advance the simulated server; no duration
+// or percentage is presented as ERP progress.
+export const ERP_STEP_DEFS: ReadonlyArray<Pick<ErpStep, 'key' | 'title' | 'description'>> = ERP_PROGRESS_STEPS;
 
-export const ERP_STEP_DEFS: ReadonlyArray<Pick<ErpStep, 'key' | 'title' | 'description'>> = [
-  { key: 'browser', title: '启动浏览器', description: '打开专用浏览器窗口，使用独立的用户数据目录，不碰你日常的浏览器。' },
-  { key: 'login', title: '登录', description: '在该窗口用本人账号登录报销系统。应用不会替你输入账号密码。' },
-  { key: 'navigate', title: '打开空白报销单', description: '打开费用报销单新增页，确认是唯一一张空白单据。' },
-  { key: 'assistant', title: '选择不生成费用明细', description: '打开发票助手，选择「不生成费用明细」；明细由确认过的数据逐行写入。' },
-  { key: 'import', title: '导入发票', description: '按格式分批导入 7 张发票。' },
-  { key: 'receipt', title: '收票回读', description: '逐票回读收票单号、发票号码、不含税金额、税额与价税合计。' },
-  { key: 'fill', title: '填写明细', description: '按统一业务序号写入 9 行明细，每个值写入后从单元格回读。' },
-  { key: 'readback', title: '严格回读', description: '回读收票身份与整单金额合计，与确认过的明细比对，不一致即停。' },
-  // The hand-over step reads its copy from the contract, so the mock's list and the server's cannot drift apart.
-  ERP_HANDOVER_STEP_COPY,
-];
+export const ERP_STEP_INDEX = { chromium: 0, login: 1, catalog: 2, navigate: 3, import: 4, receipt: 5, fill: 6, handover: 7 } as const;
 
-export const ERP_STEP_INDEX = { browser: 0, login: 1, navigate: 2, assistant: 3, import: 4, receipt: 5, fill: 6, readback: 7, handover: 8 } as const;
+export function erpStageAt(active: number): Erp['currentStage'] {
+  return (ERP_PROGRESS_STEPS[active]?.key ?? null) as Erp['currentStage'];
+}
 
 // 第 active 步处于 status，之前的都已完成，之后的待开始；active 超出范围即全部完成。
 export function erpSteps(active: number, status: ErpStep['status'] = 'running'): ErpStep[] {
@@ -41,19 +33,52 @@ export function erpSteps(active: number, status: ErpStep['status'] = 'running'):
   }));
 }
 
+export function idleErp(): Erp {
+  return {
+    status: 'idle',
+    steps: [],
+    currentStage: null,
+    externalWait: 'none',
+    outcome: 'none',
+    allowedActions: [],
+    draftNo: null,
+    abortReason: null,
+    loginNotice: null,
+    erpAccount: null,
+  };
+}
+
+export function erpRunning(active: number = ERP_STEP_INDEX.chromium): Erp {
+  return {
+    ...idleErp(),
+    status: 'running',
+    steps: erpSteps(active),
+    currentStage: erpStageAt(active),
+    externalWait: 'erp_response',
+    allowedActions: ['refresh'],
+  };
+}
+
 // 「去报销」之后浏览器已启动、登录步等待（`?seed=erp` 的状态）。
 export function erpWaitingLogin(): Erp {
-  return { status: 'waiting_login', steps: erpSteps(ERP_STEP_INDEX.login, 'waiting'), draftNo: null, abortReason: null, loginNotice: null, erpAccount: null };
+  return {
+    ...erpRunning(ERP_STEP_INDEX.login),
+    status: 'waiting_login',
+    steps: erpSteps(ERP_STEP_INDEX.login, 'waiting'),
+    currentStage: 'login',
+    externalWait: 'employee_login',
+    allowedActions: ['refresh', 'confirm_login', 'cancel'],
+  };
 }
 
 // 写入时登录的报销系统账号与账套（虚构）：按尝试记录，完成页显示，从不与应用账号比对。
 export const MOCK_ERP_ACCOUNT = { displayName: '林颂宜', account: 'lin.songyi', tenant: '安图特科技' } as const;
 
 export function loginNotDetected(attempt: number): string {
-  return `还没有检测到登录（第 ${attempt} 次检测）。请确认已在专用浏览器窗口里登录本人账号；登录页上显示的上次账号不算已登录。登录后再点一次「我已登录，继续」。`;
+  return `还没有检测到登录（第 ${attempt} 次检测）。请确认已在为这次报销打开的报销系统标签页里登录本人账号；登录页上显示的上次账号不算已登录。登录后再点一次「我已登录，继续」。`;
 }
 
-export const HANDOVER_ABORT_REASON = '交接单据时报销系统没有在限定时间内返回结果，这次写入是否生效不确定。应用已停止写入，不会重放。';
+export const HANDOVER_ABORT_REASON = '交接单据时没有读到报销系统的结果，这次写入是否生效不确定。应用已停止写入，不会重放。';
 export const MISMATCH_ABORT_REASON = '严格回读发现 1 行与本地确认不一致，应用已停止，不会自动改写报销系统里的行。';
 // 写入前就停下的原因（服务端 compatibility_mismatch 一类）：报销系统没有被改动，可以直接再去报销。
 export const BEFORE_WRITE_ABORT_REASON = '报销系统的版本与上次核对时不一致，没有继续。报销系统没有被改动。';
@@ -161,7 +186,18 @@ export function reconcileVerdict(
 // 交接时单据还没有保存，所以没有单据编号（服务端 fill-state.ts 的 handed_over 一样给 null）。只有员工自己保存过、
 // 再对一次账读到「已保存」，才会有编号，那时由调用方把编号传进来。
 export function applyErpDone(snapshot: TaskSnapshot, draftNo: string | null = null): void {
-  snapshot.erp = { status: 'done', steps: erpSteps(ERP_STEP_DEFS.length), draftNo, abortReason: null, loginNotice: null, erpAccount: { ...MOCK_ERP_ACCOUNT } };
+  snapshot.erp = {
+    ...erpRunning(ERP_STEP_INDEX.handover),
+    status: 'done',
+    steps: erpSteps(ERP_STEP_DEFS.length),
+    currentStage: 'handover',
+    externalWait: 'none',
+    outcome: draftNo === null ? 'filled' : 'saved',
+    draftNo,
+    abortReason: null,
+    allowedActions: ['refresh'],
+    erpAccount: { ...MOCK_ERP_ACCOUNT },
+  };
   snapshot.readback = readbackOf(readbackRows(snapshot.lines));
   snapshot.stage = 'done';
   snapshot.step = { kind: 'none', stepToken: `tok-${snapshot.task.taskId}-done` };
@@ -173,7 +209,18 @@ export function applyErpDone(snapshot: TaskSnapshot, draftNo: string | null = nu
 export function applyReadbackMismatch(snapshot: TaskSnapshot, draftNo: string): void {
   const readback = readbackOf(readbackRows(snapshot.lines, MISMATCH));
   const bad = readback.rows.filter((row) => !row.matched);
-  snapshot.erp = { status: 'aborted', steps: erpSteps(ERP_STEP_INDEX.readback, 'failed'), draftNo, abortReason: MISMATCH_ABORT_REASON, loginNotice: null, erpAccount: { ...MOCK_ERP_ACCOUNT } };
+  snapshot.erp = {
+    ...erpRunning(ERP_STEP_INDEX.handover),
+    status: 'aborted',
+    steps: erpSteps(ERP_STEP_INDEX.handover, 'failed'),
+    currentStage: 'handover',
+    externalWait: 'none',
+    outcome: 'none',
+    draftNo,
+    abortReason: MISMATCH_ABORT_REASON,
+    allowedActions: ['refresh'],
+    erpAccount: { ...MOCK_ERP_ACCOUNT },
+  };
   snapshot.readback = readback;
   snapshot.reconcile = {
     status: 'pending',
@@ -193,11 +240,28 @@ export function applyReadbackMismatch(snapshot: TaskSnapshot, draftNo: string): 
 // 所以这不是 aborted。填报页要认得这一种停下，否则用户会被留在一个已经关上的页面上。
 export function applyStopBeforeWrite(snapshot: TaskSnapshot): void {
   snapshot.stage = 'actions';
-  snapshot.erp = { status: 'idle', steps: erpSteps(ERP_STEP_INDEX.navigate, 'failed'), draftNo: null, abortReason: BEFORE_WRITE_ABORT_REASON, loginNotice: null, erpAccount: { ...MOCK_ERP_ACCOUNT } };
+  snapshot.erp = {
+    ...idleErp(),
+    steps: erpSteps(ERP_STEP_INDEX.navigate, 'failed'),
+    currentStage: 'navigate',
+    abortReason: BEFORE_WRITE_ABORT_REASON,
+    allowedActions: ['refresh'],
+    erpAccount: { ...MOCK_ERP_ACCOUNT },
+  };
 }
 
 export function applyAbortAtHandover(snapshot: TaskSnapshot): void {
-  snapshot.erp = { status: 'aborted', steps: erpSteps(ERP_STEP_INDEX.handover, 'failed'), draftNo: null, abortReason: HANDOVER_ABORT_REASON, loginNotice: null, erpAccount: { ...MOCK_ERP_ACCOUNT } };
+  snapshot.erp = {
+    ...erpRunning(ERP_STEP_INDEX.handover),
+    status: 'aborted',
+    steps: erpSteps(ERP_STEP_INDEX.handover, 'failed'),
+    currentStage: 'handover',
+    externalWait: 'none',
+    outcome: 'none',
+    abortReason: HANDOVER_ABORT_REASON,
+    allowedActions: ['refresh'],
+    erpAccount: { ...MOCK_ERP_ACCOUNT },
+  };
   snapshot.readback = emptyReadback();
   snapshot.reconcile = {
     status: 'pending',

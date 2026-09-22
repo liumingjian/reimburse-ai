@@ -20,7 +20,7 @@ test('上传一张全电发票、开始材料盘点，解析完成后看到它�
   await expect(page).toHaveURL(/#\/task\/[^/]+\/upload$/);
   const taskId = /#\/task\/([^/]+)\//.exec(page.url())?.[1] ?? '';
 
-  await page.locator('input[type=file]').setInputFiles({ name: hotelInvoice.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, hotelInvoice.file)) });
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles({ name: hotelInvoice.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, hotelInvoice.file)) });
   const batch = page.locator('section', { has: page.getByRole('heading', { name: /^上传批次 #1$/ }) });
   await expect(batch.getByText(hotelInvoice.fileName, { exact: true })).toBeVisible();
 

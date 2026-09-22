@@ -198,9 +198,9 @@ test('分岔入口：?seed=actions 下去打印进入打印稿预览，去报销
   await jump(page, '#/task/T1/review');
   await claimButton(page).click();
   await expect(page).toHaveURL(/#\/task\/T1\/erp$/);
-  await expect(page.getByRole('heading', { name: '保存报销草稿' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '填写报销单' })).toBeVisible();
   await expect(page.getByRole('button', { name: '开始填报' })).toHaveCount(0);
-  await expect(page.getByRole('region', { name: '填报进度' }).getByRole('listitem', { name: '登录', exact: true })).toContainText('等待你操作');
+  await expect(page.getByRole('region', { name: '填报进度' }).getByRole('listitem', { name: '登录', exact: true })).toContainText('等待你登录');
   // 步骤条里「去打印 / 去报销」已经可进入。
   const actionsStep = page.getByRole('list', { name: '流程阶段' }).getByRole('button', { name: /^去打印 \/ 去报销/ });
   await expect(actionsStep).toBeVisible();
@@ -249,7 +249,7 @@ test('失效流程：追加材料先二次确认，取消不变；继续则确�
   await expect(page.getByRole('status')).toContainText(INVALIDATED);
   await expect(page.getByTestId('dropzone')).toBeVisible();
 
-  await page.locator('input[type=file]').setInputFiles({ name: '地铁_发票.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 metro') });
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles({ name: '地铁_发票.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 metro') });
   await expect(page.getByRole('heading', { name: '上传批次 #2' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('review-invalidated-upload.png'), fullPage: true });
 

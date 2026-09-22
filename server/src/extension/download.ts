@@ -4,7 +4,7 @@ import { EXTENSION_DOWNLOAD_ERRORS, EXTENSION_DOWNLOAD_FILENAME, EXTENSION_DOWNL
 import { carriesOrigin, stampedManifestProblem, stampOrigin } from '@baox/extension/template';
 import type { Hono } from 'hono';
 import type { AppEnv } from '../accounts/http';
-import type { PublicOrigin } from '../public-origin';
+import { activeOrigin, type PublicOrigin } from '../public-origin';
 import { zip } from './zip';
 
 // The 浏览器扩展 (browser extension) as the settings page hands it out (ADR-0021: load-unpacked, so the employee
@@ -44,7 +44,7 @@ export function packageExtension(templateDir: string, origin: string): Buffer<Ar
 export function mountExtensionDownloadRoute(app: Hono<AppEnv>, templateDir: string | null, publicOrigin: PublicOrigin | null): void {
   app.get(EXTENSION_DOWNLOAD_PATH, (c) => {
     // Without a configured address only loopback names pass the Host check, so the request's own origin is one.
-    const origin = publicOrigin?.origin ?? new URL(c.req.url).origin;
+    const origin = activeOrigin(publicOrigin, c.req.url);
     let bytes: Buffer<ArrayBuffer>;
     try {
       if (!templateDir) throw new ExtensionTemplateUnusable('no extension template configured');

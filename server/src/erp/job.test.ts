@@ -9,6 +9,7 @@ import { createTaskService } from '../tasks';
 import { createTestServer, type TestServer } from '../test/harness';
 import { stageInPage } from '@baox/erp-executor/invoice-files';
 import { runFillJob } from '@baox/erp-executor/job';
+import { erpInvoiceTypeOf, ERP_INVOICE_TYPES } from '@baox/erp-executor/invoice-type';
 import { writeHeader } from '@baox/erp-executor/erpform';
 import { addDetailRow, captureErpError, importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type ImportBudget, type WritePage } from '@baox/erp-executor/steps';
 import { createFakeErp, type FakeErp } from '@baox/erp-executor/testing/fake-erp';
@@ -35,8 +36,8 @@ afterEach(() => server.close());
 type Wrap = (event: ExecutorEvent, forward: () => Promise<any>) => Promise<any>;
 
 /** The real server channel, optionally wrapped so a test can act between persistence and acknowledgement. */
-function channelFor(wrap: Wrap = (_event, forward) => forward()): ExecutorChannel {
-  const inner = serverChannel({ jobs, jobId: `job-${taskId}`, taskId, judge: createDraftJudge(judgeInputs(taskId)) });
+function channelFor(wrap: Wrap = (_event, forward) => forward(), inputs = judgeInputs(taskId), jobId = `job-${taskId}`): ExecutorChannel {
+  const inner = serverChannel({ jobs, jobId, taskId, judge: createDraftJudge(inputs) });
   const emit = (event: ExecutorEvent) => wrap(event, () => (inner.emit as (e: ExecutorEvent) => Promise<any>)(event));
   return { emit: emit as ExecutorChannel['emit'] };
 }
@@ -104,6 +105,23 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(events.filter((e) => e.type === 'readback').map((e) => (e as { stage: string }).stage)).toEqual(['after_import', 'after_fill', 'before_hand_over']);
     expect(events.at(-1)).toMatchObject({ type: 'result', status: 'handed_over' });
     expect(fake.mutations.map((m) => m.kind).filter((k, i, all) => all.indexOf(k) === i)).toEqual(['import', 'header', 'cell', 'option', 'addRow']);
+  });
+
+  it('writes every confirmed ERP invoice type through the simulated ERP dropdown and reads it back', async () => {
+    for (const [index, invoiceType] of ERP_INVOICE_TYPES.entries()) {
+      const inputs = judgeInputs(taskId);
+      const selected = erpInvoiceTypeOf('定额发票', invoiceType);
+      if (selected.kind !== 'resolved') throw new Error(`expected ${invoiceType} to be a resolved employee choice`);
+      for (const line of [...(inputs.built.lineItems ?? []), ...(inputs.lines ?? [])]) {
+        line.invoiceType = selected.invoiceType;
+        line.invoiceTypeSource = selected.invoiceTypeSource;
+      }
+      const jobId = `job-${taskId}-invoice-type-${index}`;
+      const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
+      const result = await run(fake, channelFor(undefined, inputs, jobId), fillPlan(taskId, { jobId }));
+      expect(result, `${invoiceType}: ${JSON.stringify(result)}`).toMatchObject({ type: 'result', status: 'handed_over' });
+      expect(column(fake, 'detail', 3)).toEqual([invoiceType, invoiceType]);
+    }
   });
 
   // A write is not verified by reading back the cell it was typed into. Live 2026-09-20 three of eleven rows read

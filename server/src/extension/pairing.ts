@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { EXTENSION_PAIRING_CODE_LENGTH, EXTENSION_PAIRING_CODE_TTL_MS, EXTENSION_PAIRING_ERRORS, type ExtensionPairing } from '@baox/contract';
+import { EXTENSION_PAIRING_CODE_LENGTH, EXTENSION_PAIRING_CODE_TTL_MS, EXTENSION_PAIRING_ERRORS, type ExtensionPairingState } from '@baox/contract';
 import { AuthRefusal, type Clock } from '../accounts/accounts';
 import type { Db } from '../db/database';
 import type { MaintenanceWriteAdmission } from '../maintenance';
@@ -26,7 +26,7 @@ const sha256 = (value: string) => createHash('sha256').update(value).digest('hex
 // No look-alike characters (no I, L, O, 0, 1): the employee reads this off the settings page and types it in.
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
-const NOT_PAIRED: ExtensionPairing = { status: 'none', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt: null, connected: false, version: null, code: null };
+const NOT_PAIRED: ExtensionPairingState = { status: 'none', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt: null, connected: false, version: null, code: null };
 
 function generatePairingCode(): string {
   return [...randomBytes(EXTENSION_PAIRING_CODE_LENGTH)].map((byte) => CODE_ALPHABET[byte % CODE_ALPHABET.length]).join('');
@@ -70,7 +70,7 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
 
   // `code` is the string just issued, carried through this once; every other caller passes nothing and the employee
   // sees no code, because there is none to show.
-  async function view(accountId: string, code: string | null = null): Promise<ExtensionPairing> {
+  async function view(accountId: string, code: string | null = null): Promise<ExtensionPairingState> {
     const row = await db.selectFrom('extension_pairing').selectAll().where('account_id', '=', accountId).executeTakeFirst();
     if (!row) return NOT_PAIRED;
     if (!row.token_sha256 && (row.code_expires_at === null || Date.parse(row.code_expires_at) <= clock().getTime())) {
@@ -95,7 +95,7 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
 
     // Issuing is also how a pairing is replaced: the previous row goes first, so an extension paired a moment ago
     // stops being this account's extension before the new 配对码 is even readable.
-    async issue(accountId: string): Promise<ExtensionPairing> {
+    async issue(accountId: string): Promise<ExtensionPairingState> {
       const code = generatePairingCode();
       const now = clock();
       await db.transaction().execute(async (tx) => {
@@ -121,7 +121,7 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
 
     // 撤销配对 (revoke the pairing): the extension's token stops resolving and its socket closes, at once. The
     // account's web session is untouched.
-    async revoke(accountId: string): Promise<ExtensionPairing> {
+    async revoke(accountId: string): Promise<ExtensionPairingState> {
       await db.deleteFrom('extension_pairing').where('account_id', '=', accountId).execute();
       live.disconnect(accountId);
       return NOT_PAIRED;

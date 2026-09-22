@@ -17,7 +17,7 @@ const selection = (page: Page) => page.getByTestId('assign-selection');
 const pick = (page: Page, no: number) => page.getByRole('checkbox', { name: `选择明细 No.${no}` }).locator('xpath=following-sibling::label[1]').click();
 const assignTo = (page: Page, number: string) => target(page, number).click();
 const projectOf = (page: Page, no: number) => page.getByTestId(`project-of-${no}`);
-const submit = (page: Page) => page.getByRole('button', { name: '确认项目归属' });
+const submit = (page: Page) => page.getByRole('button', { name: /^(确认项目归属|继续)$/ });
 const conflictDialog = (page: Page) => page.getByRole('dialog', { name: '2 条明细已有其他项目归属，请确认是否覆盖' });
 
 async function jump(page: Page, hash: string) {
@@ -103,7 +103,8 @@ test('面板列表：只列可选项目，本次已用的在前并带条数与�
 test('按类别全选：勾选「外地市内交通」组标题一次归入 P-2307，该组全部已归入，本次已归入的条数与金额随之变化', async ({ page }, testInfo) => {
   await page.goto(open('?seed=project', '#/task/T1/project'));
   await expect(page.getByRole('region', { name: '外地市内交通' })).toContainText('6 条');
-  await expect(page.getByTestId('line-card-9')).toContainText('2026-08-09 至 2026-08-22');
+  await expect(page.getByTestId('line-card-9')).toContainText('入住：2026-08-09');
+  await expect(page.getByTestId('line-card-9')).toContainText('离店：2026-08-22');
   await expect(page.getByTestId('line-card-7')).toContainText('杭州东 → 上海虹桥');
 
   await page.getByRole('checkbox', { name: '选择外地市内交通' }).locator('xpath=following-sibling::label[1]').click();
@@ -180,9 +181,12 @@ test('提交：未归属或事由为空时不可用；提交后自动核对报�
   // 回到项目归属：已提交，ERP 写入开始前仍可改派，有整单确认入口。
   await jump(page, '#/task/T1/project');
   await expect(page.getByText(/项目归属已提交/)).toBeVisible();
-  await expect(submit(page)).toBeEnabled();
-  await page.getByRole('link', { name: '去整单明细确认' }).click();
+  await expect(page.getByRole('button', { name: '继续' })).toBeEnabled();
+  await page.getByLabel('报销事由').fill('上海产品评审出差（补）');
+  await expect(page.getByRole('button', { name: '确认项目归属' })).toBeEnabled();
+  await page.getByRole('button', { name: '确认项目归属' }).click();
   await expect(page).toHaveURL(/#\/task\/T1\/review$/);
+  await expect(page.getByTestId('review-purpose')).toContainText('上海产品评审出差（补）');
 });
 
 test('deactivating a submitted project preserves its snapshot and prevents new assignments', async ({ page }, testInfo) => {
@@ -217,7 +221,36 @@ test('ERP 写入开始后只读：明细不能勾选，面板里的项目都不�
   await expect(targets(page).first()).toBeVisible();
   for (const button of await targets(page).all()) await expect(button).toBeDisabled();
   await expect(panel(page).getByRole('button', { name: '新增项目' })).toBeDisabled();
-  await expect(submit(page)).toBeDisabled();
+  await expect(page.getByRole('button', { name: '继续' })).toBeDisabled();
+});
+
+test('项目截止日期提醒要求在归属和整单确认时明确继续', async ({ page }) => {
+  await page.goto(open('?seed=project&deadline=warning', '#/task/T1/project'));
+  await page.getByRole('checkbox', { name: '全选当前明细' }).locator('xpath=following-sibling::label[1]').click();
+  await assignTo(page, 'P-2307');
+  await page.getByLabel('报销事由').fill('上海产品评审出差');
+
+  const warning = page.getByRole('alert').filter({ hasText: '项目截止日期提醒' });
+  await expect(warning).toContainText('费用发生日');
+  await expect(warning).toContainText('住宿期间');
+
+  await submit(page).click();
+  const assignmentDialog = page.getByRole('dialog', { name: '项目截止日期提醒' });
+  await expect(assignmentDialog).toContainText('费用发生日');
+  await expect(assignmentDialog).toContainText('住宿期间');
+  await assignmentDialog.getByRole('button', { name: '取消' }).click();
+  await expect(page.getByRole('heading', { name: '项目归属' })).toBeVisible();
+
+  await submit(page).click();
+  await assignmentDialog.getByRole('button', { name: '仍然继续' }).click();
+  await expect(page).toHaveURL(/#\/task\/T1\/review$/);
+  await expect(page.getByRole('button', { name: '确认整单明细' })).toBeEnabled();
+
+  await page.getByRole('button', { name: '确认整单明细' }).click();
+  const reviewDialog = page.getByRole('dialog', { name: '项目截止日期提醒' });
+  await expect(reviewDialog).toContainText('住宿期间');
+  await reviewDialog.getByRole('button', { name: '仍然继续' }).click();
+  await expect(page.getByRole('link', { name: '去打印' })).toBeVisible();
 });
 
 // 选择栏一行放全选、筛选与状态文字，筛选宽度按内容；1440 与 1100 下「归入项目」面板都在明细表右侧，页面与明细区都不横向滚动。
