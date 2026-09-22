@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { afterEach, expect, it } from 'vitest';
 import { SshCandidateTransport } from './candidate.js';
 import { runOperatorCli } from './cli.js';
+import { LINUX_MAX_ARG_STRLEN } from './coordinator-transport.js';
 import { SshHostTransport } from './host.js';
 import { createSourceRepository } from './source.js';
 import { createIsolatedTarget, type IsolatedTarget } from './testing/isolated-target.js';
@@ -185,6 +186,37 @@ it('verifies a local relay against the same committed archive checksum and repor
   expect(notReady.out).toContain('not-ready');
   expect(readlinkSync(incomplete.current)).toBe(activeBefore);
   expect(existsSync(join(incomplete.profile.deployRoot, 'runtime', 'pnpm-10.17.1', 'bin', 'pnpm'))).toBe(true);
+});
+
+it('prepares a real candidate through the CLI when the coordinator source exceeds Linux argument limits', async () => {
+  const target = await createTarget();
+  const source = createRepository();
+  const coordinator = `${readFileSync(new URL('./candidate-coordinator.cjs', import.meta.url), 'utf8')}\n/*${'streamed coordinator source '.repeat(6_000)}*/\n`;
+  const commands: string[] = [];
+  const out: string[] = [];
+  const err: string[] = [];
+
+  expect(Buffer.byteLength(coordinator)).toBeGreaterThan(LINUX_MAX_ARG_STRLEN);
+  const code = await runOperatorCli(['prepare', source.first, '--json'], {
+    source: createSourceRepository(source.repository),
+    host: new SshHostTransport({ profile: target.profile, runner: target.runner.run }),
+    candidate: new SshCandidateTransport({
+      profile: target.profile,
+      runner: async (profile, remoteCommand, input) => {
+        commands.push(remoteCommand);
+        return target.runner.run(profile, remoteCommand, input);
+      },
+      coordinatorSource: () => coordinator,
+    }),
+  }, { out: (line) => out.push(line), err: (line) => err.push(line) });
+
+  expect(code).toBe(0);
+  expect(err).toEqual([]);
+  expect(commands).toHaveLength(1);
+  expect(commands.every((command) => Buffer.byteLength(command) < LINUX_MAX_ARG_STRLEN)).toBe(true);
+  expect(commands[0]).not.toContain('streamed coordinator source');
+  expect(JSON.parse(out.join('\n'))).toMatchObject({ candidate: { state: 'prepared' } });
+  expect(readFileSync(join(target.profile.deployRoot, 'maintenance', 'candidate-coordinator.cjs'), 'utf8')).toBe(coordinator);
 });
 
 it('claims a stale lock once when reconnecting operators prepare the same candidate', async () => {

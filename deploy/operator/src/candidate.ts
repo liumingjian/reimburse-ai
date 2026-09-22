@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { Readable } from 'node:stream';
-import { productionSshRunner, remoteShellCommand, type SshRunner } from './host.js';
+import { createCoordinatorInvocation } from './coordinator-transport.js';
+import { productionSshRunner, type SshRunner } from './host.js';
 import { NATIVE_PROFILE, type NativeProfile } from './profile.js';
 import type { SourceArchive } from './source.js';
 
@@ -36,24 +36,29 @@ export interface CandidateTransport {
 export type SshCandidateTransportOptions = {
   runner?: SshRunner;
   profile?: NativeProfile;
+  coordinatorSource?: () => string;
 };
 
 export class SshCandidateTransport implements CandidateTransport {
   private readonly runner: SshRunner;
   private readonly profile: NativeProfile;
+  private readonly coordinatorSource: () => string;
 
   constructor(options: SshCandidateTransportOptions = {}) {
     this.runner = options.runner ?? productionSshRunner;
     this.profile = options.profile ?? NATIVE_PROFILE;
+    this.coordinatorSource = options.coordinatorSource ?? readCoordinatorSource;
   }
 
   async prepare(request: CandidatePrepareRequest): Promise<CandidatePreparation> {
     if (sha256(request.artifact) !== request.source.plan.archiveSha256) {
       throw new Error('候选归档的 SHA-256 与已提交 Git 归档不一致。');
     }
-    const result = await this.runner(
-      this.profile,
-      remoteShellCommand(coordinatorCommand(this.profile, 'receive', {
+    const invocation = createCoordinatorInvocation({
+      nodePath: `${this.profile.deployRoot}/runtime/node/bin/node`,
+      mode: 'receive',
+      coordinatorSource: this.coordinatorSource(),
+      request: {
         schema: 1,
         deployRoot: this.profile.deployRoot,
         systemdDir: this.profile.systemdDir,
@@ -66,24 +71,28 @@ export class SshCandidateTransport implements CandidateTransport {
           archiveSha256: request.source.plan.archiveSha256,
           artifactOrigin: request.artifactOrigin,
         },
-      }, true)),
-      Readable.from([request.artifact]),
-    );
+      },
+      archive: [request.artifact],
+    });
+    const result = await this.runner(this.profile, invocation.remoteCommand, invocation.input);
     return preparationResult(result.stdout, result.exitCode);
   }
 
   async inspect(): Promise<CandidateInspection> {
-    const result = await this.runner(
-      this.profile,
-      remoteShellCommand(coordinatorCommand(this.profile, 'report', {
+    const invocation = createCoordinatorInvocation({
+      nodePath: `${this.profile.deployRoot}/runtime/node/bin/node`,
+      mode: 'report',
+      coordinatorSource: this.coordinatorSource(),
+      request: {
         schema: 1,
         inspect: true,
         deployRoot: this.profile.deployRoot,
         systemdDir: this.profile.systemdDir,
         buildEnvironment: this.profile.buildEnvironment,
         buildPython: this.profile.buildPython,
-      }, false)),
-    );
+      },
+    });
+    const result = await this.runner(this.profile, invocation.remoteCommand, invocation.input);
     if (result.exitCode !== 0) throw new Error('候选状态检查无法完成。');
     const parsed = lastJson(result.stdout);
     if (!isInspection(parsed)) throw new Error('候选状态检查返回了不兼容的响应。');
@@ -91,19 +100,7 @@ export class SshCandidateTransport implements CandidateTransport {
   }
 }
 
-function coordinatorCommand(profile: NativeProfile, mode: 'receive' | 'report', request: Record<string, unknown>, includeSource: boolean): string {
-  const coordinator = coordinatorSource();
-  const requestBase64 = Buffer.from(JSON.stringify(request)).toString('base64');
-  const sourceEnvironment = includeSource
-    ? `BAOX_COORDINATOR_SOURCE_BASE64=${shellQuote(Buffer.from(coordinator).toString('base64'))} `
-    : '';
-  return [
-    'set -eu',
-    `exec env ${sourceEnvironment}BAOX_CANDIDATE_REQUEST_BASE64=${shellQuote(requestBase64)} ${shellQuote(`${profile.deployRoot}/runtime/node/bin/node`)} -e ${shellQuote(coordinator)} -- ${mode}`,
-  ].join('\n');
-}
-
-function coordinatorSource(): string {
+function readCoordinatorSource(): string {
   return readFileSync(new URL('./candidate-coordinator.cjs', import.meta.url), 'utf8');
 }
 
@@ -160,8 +157,4 @@ function stringArray(value: unknown): value is string[] {
 
 function sha256(value: Buffer): string {
   return createHash('sha256').update(value).digest('hex');
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
 }

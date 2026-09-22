@@ -45,11 +45,17 @@ async function main() {
 }
 
 function readRequest() {
-  const encoded = process.env.BAOX_CANDIDATE_REQUEST_BASE64;
-  if (!encoded) throw new Error('missing request');
+  const inMemory = globalThis.__BAOX_COORDINATOR_REQUEST;
+  if (inMemory !== undefined) {
+    validateRequest(inMemory);
+    return inMemory;
+  }
+
+  const requestFile = process.env.BAOX_CANDIDATE_REQUEST_FILE;
+  if (typeof requestFile !== 'string' || !path.isAbsolute(requestFile)) throw new Error('missing request');
   let request;
   try {
-    request = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+    request = JSON.parse(fsSync.readFileSync(requestFile, 'utf8'));
   } catch {
     throw new Error('invalid request');
   }
@@ -157,7 +163,7 @@ async function startAndWait(request, paths, lease) {
       detached: true,
       stdio: ['ignore', logFd, logFd],
       env: {
-        BAOX_CANDIDATE_REQUEST_BASE64: Buffer.from(JSON.stringify(request)).toString('base64'),
+        BAOX_CANDIDATE_REQUEST_FILE: paths.request,
         BAOX_CANDIDATE_START_GATE: paths.workerStartGate,
         BAOX_CANDIDATE_LOCK_TOKEN: lease.token,
         PATH: process.env.PATH || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
@@ -622,9 +628,9 @@ function validBuildValue(key, value) {
 }
 
 async function writeCoordinator(request, paths, lease) {
-  const encoded = process.env.BAOX_COORDINATOR_SOURCE_BASE64;
-  if (!encoded) throw new CandidateFailure('missing-coordinator-source');
-  const source = Buffer.from(encoded, 'base64');
+  const inMemory = globalThis.__BAOX_COORDINATOR_SOURCE;
+  if (typeof inMemory !== 'string') throw new CandidateFailure('missing-coordinator-source');
+  const source = Buffer.from(inMemory, 'utf8');
   if (!source.length || source.length > 1_000_000) throw new CandidateFailure('invalid-coordinator-source');
   await writeCandidateFile(paths, lease, paths.coordinator, source, 0o700);
 }
