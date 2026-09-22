@@ -155,6 +155,8 @@ export async function createIsolatedTarget({ holdBuild = false, buildEnvironment
   mkdirSync(join(deployRoot, 'cache', 'pnpm-home'), { recursive: true });
   mkdirSync(join(deployRoot, 'cache', 'pnpm-store'), { recursive: true });
   writeExecutable(join(fakeBin, 'id'), '#!/bin/sh\nif [ "$1" = baox ]; then exit 0; fi\nexec /usr/bin/id "$@"\n');
+  writeExecutable(join(fakeBin, 'getent'), '#!/bin/sh\nif [ "$1" = passwd ] && [ "$2" = baox ]; then printf "baox:x:998:998::/home/baox:/sbin/nologin\\n"; exit 0; fi\nexit 2\n');
+  writeExecutable(join(fakeBin, 'stat'), '#!/bin/sh\n[ "$1" = -c ] || exit 2\ncase "$2" in\n  %a) /usr/bin/stat -f "%Lp" "$3" ;;\n  %u) printf "0\\n" ;;\n  *) exit 2 ;;\nesac\n');
   writeExecutable(join(fakeBin, 'chown'), '#!/bin/sh\nexit 0\n');
   writeExecutable(join(fakeBin, 'runuser'), '#!/bin/sh\n[ "$1" = -u ] || exit 2\nshift 2\n[ "$1" = -- ] && shift\nexec "$@"\n');
 

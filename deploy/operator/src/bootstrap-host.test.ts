@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { afterEach, expect, it } from 'vitest';
 import { runOperatorCli } from './cli.js';
 import type { SourceRepository } from './source.js';
@@ -87,6 +87,110 @@ it('refuses a package transaction that would replace a protected system runtime'
   expect(isolated.appliedPackageTransaction).toBe(false);
   expect(isolated.createdServiceAccount).toBe(false);
   expect(existsSync(isolated.profile.buildEnvironment)).toBe(false);
+});
+
+it('refuses bootstrap while an active candidate owns the shared deployment lock', async () => {
+  const isolated = target();
+  const preview = await isolated.host.execute({ kind: 'bootstrap-preview', source: { kind: 'proxy', proxy: 'http://proxy.example.test:7890' } });
+  expect(preview.kind).toBe('bootstrap-preview');
+  if (preview.kind !== 'bootstrap-preview') throw new Error('unexpected bootstrap preview response');
+  isolated.holdDeploymentLock();
+
+  const applied = await isolated.host.execute({
+    kind: 'bootstrap-apply',
+    source: { kind: 'proxy', proxy: 'http://proxy.example.test:7890' },
+    confirmationDigest: preview.value.plan.transactionDigest,
+  });
+
+  expect(applied).toMatchObject({ kind: 'bootstrap-apply', value: { state: 'prerequisite-refused' } });
+  expect(isolated.appliedPackageTransaction).toBe(false);
+  expect(isolated.createdServiceAccount).toBe(false);
+  expect(existsSync(isolated.profile.buildEnvironment)).toBe(false);
+});
+
+it('refuses before the package transaction when the bootstrap host lacks a usable make command', async () => {
+  const isolated = target({ missingMake: true });
+  const preview = await isolated.host.execute({ kind: 'bootstrap-preview', source: { kind: 'proxy', proxy: 'http://proxy.example.test:7890' } });
+  expect(preview.kind).toBe('bootstrap-preview');
+  if (preview.kind !== 'bootstrap-preview') throw new Error('unexpected bootstrap preview response');
+
+  const applied = await isolated.host.execute({
+    kind: 'bootstrap-apply',
+    source: { kind: 'proxy', proxy: 'http://proxy.example.test:7890' },
+    confirmationDigest: preview.value.plan.transactionDigest,
+  });
+
+  expect(applied).toMatchObject({ kind: 'bootstrap-apply', value: { state: 'prerequisite-refused', reason: expect.stringContaining('make') } });
+  expect(isolated.appliedPackageTransaction).toBe(false);
+  expect(isolated.createdServiceAccount).toBe(false);
+});
+
+it('refuses before the package transaction when the bootstrap host C++ compiler is unusable', async () => {
+  const isolated = target({ unusableHostCompiler: true });
+  const preview = await isolated.host.execute({ kind: 'bootstrap-preview', source: { kind: 'proxy', proxy: 'http://proxy.example.test:7890' } });
+  expect(preview.kind).toBe('bootstrap-preview');
+  if (preview.kind !== 'bootstrap-preview') throw new Error('unexpected bootstrap preview response');
+
+  const applied = await isolated.host.execute({
+    kind: 'bootstrap-apply',
+    source: { kind: 'proxy', proxy: 'http://proxy.example.test:7890' },
+    confirmationDigest: preview.value.plan.transactionDigest,
+  });
+
+  expect(applied).toMatchObject({ kind: 'bootstrap-apply', value: { state: 'prerequisite-refused', reason: expect.stringContaining('compiler') } });
+  expect(isolated.appliedPackageTransaction).toBe(false);
+  expect(isolated.createdServiceAccount).toBe(false);
+});
+
+it('leaves a successor deployment lock in place when bootstrap loses its lease', async () => {
+  const isolated = target({ fenceBootstrapLock: true });
+  const preview = await isolated.host.execute({ kind: 'bootstrap-preview', source: { kind: 'proxy', proxy: 'http://proxy.example.test:7890' } });
+  expect(preview.kind).toBe('bootstrap-preview');
+  if (preview.kind !== 'bootstrap-preview') throw new Error('unexpected bootstrap preview response');
+
+  const applied = await isolated.host.execute({
+    kind: 'bootstrap-apply',
+    source: { kind: 'proxy', proxy: 'http://proxy.example.test:7890' },
+    confirmationDigest: preview.value.plan.transactionDigest,
+  });
+
+  expect(applied).toMatchObject({ kind: 'bootstrap-apply', value: { state: 'prerequisite-refused', reason: expect.stringContaining('lock was lost') } });
+  const owner = JSON.parse(readFileSync(`${isolated.profile.deployRoot}/maintenance/deployment.lock/owner.json`, 'utf8')) as { token: string };
+  expect(owner.token).toBe('f'.repeat(64));
+});
+
+it('does not replace a partial compiler runtime while an active release exists', async () => {
+  const isolated = target({ activeRelease: true });
+  const prefix = `${isolated.profile.deployRoot}/runtime/gcc-12.5.0`;
+  mkdirSync(prefix, { recursive: true });
+  const preview = await isolated.host.execute({ kind: 'bootstrap-preview', source: { kind: 'proxy', proxy: 'http://proxy.example.test:7890' } });
+  expect(preview.kind).toBe('bootstrap-preview');
+  if (preview.kind !== 'bootstrap-preview') throw new Error('unexpected bootstrap preview response');
+
+  const applied = await isolated.host.execute({
+    kind: 'bootstrap-apply',
+    source: { kind: 'proxy', proxy: 'http://proxy.example.test:7890' },
+    confirmationDigest: preview.value.plan.transactionDigest,
+  });
+
+  expect(applied).toMatchObject({ kind: 'bootstrap-apply', value: { state: 'prerequisite-refused', reason: expect.stringContaining('will not replace') } });
+  expect(existsSync(prefix)).toBe(true);
+  expect(isolated.appliedPackageTransaction).toBe(false);
+});
+
+it('fails readiness when the build Python is not executable as baox', async () => {
+  const isolated = target({ denyBaoxPython: true });
+  const preview = await isolated.host.execute({ kind: 'bootstrap-preview', source: { kind: 'proxy', proxy: 'http://proxy.example.test:7890' } });
+  expect(preview.kind).toBe('bootstrap-preview');
+  if (preview.kind !== 'bootstrap-preview') throw new Error('unexpected bootstrap preview response');
+
+  await expect(isolated.host.execute({
+    kind: 'bootstrap-apply',
+    source: { kind: 'proxy', proxy: 'http://proxy.example.test:7890' },
+    confirmationDigest: preview.value.plan.transactionDigest,
+  })).rejects.toThrow('bootstrap');
+
+  expect(isolated.appliedPackageTransaction).toBe(true);
 });
 
 it('rechecks relay bytes on the target before the package transaction can apply', async () => {

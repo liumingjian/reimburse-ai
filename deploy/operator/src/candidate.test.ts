@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, expect, it } from 'vitest';
@@ -217,6 +217,21 @@ it('prepares a real candidate through the CLI when the coordinator source exceed
   expect(commands[0]).not.toContain('streamed coordinator source');
   expect(JSON.parse(out.join('\n'))).toMatchObject({ candidate: { state: 'prepared' } });
   expect(readFileSync(join(target.profile.deployRoot, 'maintenance', 'candidate-coordinator.cjs'), 'utf8')).toBe(coordinator);
+});
+
+it('reports the same malformed controlled build environment in doctor and prepare', async () => {
+  const target = await createTarget();
+  const source = createRepository();
+  writeFileSync(target.profile.buildEnvironment, 'HTTP_PROXY=http://proxy.test:8080\nHTTPS_PROXY=http://proxy.test:8443\nNO_PROXY=127.0.0.1,localhost\nUNAPPROVED=value\n');
+  chmodSync(target.profile.buildEnvironment, 0o600);
+  const host = new SshHostTransport({ profile: target.profile, runner: target.runner.run });
+
+  const doctor = await host.execute({ kind: 'doctor' });
+  expect(doctor).toMatchObject({ kind: 'doctor', value: { issues: expect.arrayContaining([expect.objectContaining({ code: 'invalid-build-environment' })]) } });
+
+  const prepared = await cli(source.repository, target, 'prepare', source.first, '--json');
+  expect(prepared.code).toBe(1);
+  expect(prepared.out).toContain('invalid-build-environment');
 });
 
 it('claims a stale lock once when reconnecting operators prepare the same candidate', async () => {

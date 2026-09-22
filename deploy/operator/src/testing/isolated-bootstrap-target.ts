@@ -1,14 +1,20 @@
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import type { Readable } from 'node:stream';
 import type { BootstrapArtifacts, BootstrapTransactionItem, LocalBootstrapArtifact } from '../bootstrap.js';
 import { SshHostTransport } from '../host.js';
 import { NATIVE_PROFILE, type NativeProfile } from '../profile.js';
 
 type IsolatedBootstrapTargetOptions = Readonly<{
   transaction?: readonly BootstrapTransactionItem[];
+  missingMake?: boolean;
+  unusableHostCompiler?: boolean;
+  denyBaoxPython?: boolean;
+  activeRelease?: boolean;
+  fenceBootstrapLock?: boolean;
 }>;
 
 /** Runs the production host script in a temporary filesystem, never on the real host. */
@@ -26,8 +32,10 @@ export class IsolatedBootstrapTarget {
   private readonly gpgMarker: string;
   private readonly proxyLog: string;
   private readonly planPath: string;
+  private readonly options: IsolatedBootstrapTargetOptions;
 
   constructor(options: IsolatedBootstrapTargetOptions = {}) {
+    this.options = options;
     this.root = mkdtempSync(join(tmpdir(), 'baox-isolated-bootstrap-'));
     this.artifactSource = join(this.root, 'artifact-source');
     this.fakeBin = join(this.root, 'bin');
@@ -45,17 +53,24 @@ export class IsolatedBootstrapTarget {
       dataDir: join(this.root, 'data'),
       serviceHome: join(this.root, 'home', 'baox'),
       buildEnvironment: join(this.root, 'deploy', 'etc', 'build.env'),
+      buildPython: join(this.root, 'home', 'baox', '.local', 'share', 'baox-build-venv', 'bin', 'python'),
       systemdDir: join(this.root, 'systemd'),
       maintenanceWrapper: join(this.root, 'deploy', 'bin', 'baox-maintenance-gate'),
       maintenanceSocket: join(this.root, 'data', 'maintenance-gate.sock'),
     };
     this.artifacts = fixtureArtifacts(this.artifactSource);
     writeFileSync(this.planPath, JSON.stringify(options.transaction ?? defaultTransaction()));
+    mkdirSync(join(this.profile.deployRoot, 'runtime', 'node', 'bin'), { recursive: true });
+    symlinkSync(process.execPath, join(this.profile.deployRoot, 'runtime', 'node', 'bin', 'node'));
+    if (options.activeRelease) {
+      mkdirSync(join(this.profile.deployRoot, 'releases', 'active'), { recursive: true });
+      symlinkSync('releases/active', join(this.profile.deployRoot, 'current'));
+    }
     this.writeTools();
     this.host = new SshHostTransport({
       profile: this.profile,
       bootstrapArtifacts: this.artifacts,
-      runner: async (_profile, remoteCommand) => this.run(remoteCommand),
+      runner: async (_profile, remoteCommand, input) => this.run(remoteCommand, input),
       artifactUploader: async (_profile, localPath, targetPath) => {
         mkdirSync(dirname(targetPath), { recursive: true });
         copyFileSync(localPath, targetPath);
@@ -95,33 +110,68 @@ export class IsolatedBootstrapTarget {
     return join(this.profile.deployRoot, 'operator-artifacts', sha256);
   }
 
-  private run(remoteCommand: string): { stdout: string; exitCode: number | null } {
+  holdDeploymentLock(): void {
+    const maintenance = join(this.profile.deployRoot, 'maintenance');
+    const lock = join(maintenance, 'deployment.lock');
+    mkdirSync(lock, { recursive: true, mode: 0o700 });
+    const startIdentity = process.platform === 'linux' ? linuxStartIdentity(process.pid) : `nonlinux:${process.pid}`;
+    writeFileSync(join(lock, 'owner.json'), JSON.stringify({
+      schema: 1,
+      operation: 'candidate-prepare',
+      candidateId: 'active-candidate',
+      pid: process.pid,
+      startIdentity,
+      token: 'a'.repeat(64),
+      createdAt: 'test',
+    }) + '\n', { mode: 0o600 });
+  }
+
+  private run(remoteCommand: string, input?: Readable): Promise<{ stdout: string; exitCode: number | null }> {
     this.remoteCommands.push(remoteCommand);
-    const result = spawnSync('sh', ['-c', remoteCommand], {
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        PATH: `${this.fakeBin}:${process.env.PATH ?? ''}`,
-        BAOX_TEST_ACCOUNT: this.accountMarker,
-        BAOX_TEST_ARTIFACTS: this.artifactSource,
-        BAOX_TEST_DNF_MARKER: this.dnfMarker,
-        BAOX_TEST_GCC_PREFIX: join(this.profile.deployRoot, 'runtime', `gcc-${this.artifacts.gcc.version}`),
-        BAOX_TEST_GCC_SIGNER: this.artifacts.gccSignature.signerFingerprint,
-        BAOX_TEST_GPG_MARKER: this.gpgMarker,
-        BAOX_TEST_PLAN: this.planPath,
-        BAOX_TEST_PROXY_LOG: this.proxyLog,
-        BAOX_TEST_SERVICE_HOME: this.profile.serviceHome,
-      },
+    return new Promise((resolve, reject) => {
+      const child = spawn('sh', ['-c', remoteCommand], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          PATH: `${this.fakeBin}:${process.env.PATH ?? ''}`,
+        },
+      });
+      const stdout: Buffer[] = [];
+      child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.resume();
+      child.on('error', reject);
+      child.on('close', (exitCode) => resolve({ stdout: Buffer.concat(stdout).toString('utf8'), exitCode }));
+      child.stdin.on('error', (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'EPIPE') reject(error);
+      });
+      if (input) {
+        input.on('error', reject);
+        input.pipe(child.stdin);
+      } else {
+        child.stdin.end();
+      }
     });
-    if (result.error) throw result.error;
-    return { stdout: result.stdout ?? '', exitCode: result.status };
   }
 
   private writeTools(): void {
     const tool = join(this.fakeBin, 'tool');
-    writeFileSync(tool, fakeToolScript());
+    writeFileSync(tool, fakeToolScript({
+      BAOX_TEST_ACCOUNT: this.accountMarker,
+      BAOX_TEST_ARTIFACTS: this.artifactSource,
+      BAOX_TEST_DNF_MARKER: this.dnfMarker,
+      BAOX_TEST_GCC_PREFIX: join(this.profile.deployRoot, 'runtime', `gcc-${this.artifacts.gcc.version}`),
+      BAOX_TEST_GCC_SIGNER: this.artifacts.gccSignature.signerFingerprint,
+      BAOX_TEST_GPG_MARKER: this.gpgMarker,
+      BAOX_TEST_PLAN: this.planPath,
+      BAOX_TEST_PROXY_LOG: this.proxyLog,
+      BAOX_TEST_SERVICE_HOME: this.profile.serviceHome,
+      BAOX_TEST_MISSING_MAKE: this.options.missingMake ? '1' : '',
+      BAOX_TEST_UNUSABLE_HOST_COMPILER: this.options.unusableHostCompiler ? '1' : '',
+      BAOX_TEST_DENY_BAOX_PYTHON: this.options.denyBaoxPython ? '1' : '',
+      BAOX_TEST_FENCE_BOOTSTRAP_LOCK: this.options.fenceBootstrapLock ? '1' : '',
+    }));
     chmodSync(tool, 0o755);
-    for (const name of ['id', 'getent', 'useradd', 'runuser', 'sha256sum', 'sha512sum', 'gpgv', 'curl', 'tar', 'make', 'install', 'chown', 'chmod', 'python3']) {
+    for (const name of ['id', 'getent', 'useradd', 'runuser', 'sha256sum', 'sha512sum', 'gpgv', 'curl', 'tar', 'make', 'gcc', 'g++', 'install', 'chown', 'chmod', 'stat', 'python3']) {
       symlinkSync('tool', join(this.fakeBin, name));
     }
   }
@@ -180,8 +230,17 @@ function hashFile(path: string, algorithm: 'sha256' | 'sha512'): string {
   return createHash(algorithm).update(readFileSync(path)).digest('hex');
 }
 
-function fakeToolScript(): string {
+function linuxStartIdentity(pid: number): string {
+  const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+  const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/u);
+  const start = fields[19];
+  if (!start || !/^\d+$/u.test(start)) throw new Error('test process lacks a Linux start identity');
+  return `linux:${start}`;
+}
+
+function fakeToolScript(environment: Readonly<Record<string, string>>): string {
   return String.raw`#!/bin/sh
+${Object.entries(environment).map(([name, value]) => `export ${name}=${shellQuote(value)}`).join('\n')}
 name=$(basename "$0")
 case "$name" in
   id)
@@ -207,7 +266,23 @@ case "$name" in
     [ "$1" = '-u' ] || exit 2
     shift 2
     [ "$1" = '--' ] && shift
+    if [ -n "$BAOX_TEST_DENY_BAOX_PYTHON" ]; then
+      for argument in "$@"; do
+        case "$argument" in */baox-build-venv/bin/python) exit 126 ;; esac
+      done
+    fi
     exec "$@"
+    ;;
+  stat)
+    [ "$1" = '-c' ] || exit 2
+    format=$2
+    path=$3
+    if /usr/bin/stat -c "$format" "$path" >/dev/null 2>&1; then exec /usr/bin/stat -c "$format" "$path"; fi
+    case "$format" in
+      %a) exec /usr/bin/stat -f '%Lp' "$path" ;;
+      %u) exec /usr/bin/stat -f '%u' "$path" ;;
+      *) exit 2 ;;
+    esac
     ;;
   sha256sum|sha512sum)
     case "$name" in sha256sum) algorithm=256 ;; *) algorithm=512 ;; esac
@@ -276,7 +351,27 @@ EOF
         ;;
     esac
     ;;
+  gcc|g++)
+    [ -z "$BAOX_TEST_UNUSABLE_HOST_COMPILER" ] || exit 126
+    cat >/dev/null
+    ;;
   make)
+    [ -z "$BAOX_TEST_MISSING_MAKE" ] || exit 126
+    if [ -n "$BAOX_TEST_FENCE_BOOTSTRAP_LOCK" ] && [ "$1" != install ]; then
+      deploy_root=$(dirname "$(dirname "$BAOX_TEST_GCC_PREFIX")")
+      lock="$deploy_root/maintenance/deployment.lock"
+      claim="$lock.test-claim-$$"
+      if [ -r "/proc/$$/stat" ]; then
+        start=$(awk '{print $22}' "/proc/$$/stat")
+        identity="linux:$start"
+      else
+        identity="nonlinux:$$"
+      fi
+      mv "$lock" "$claim"
+      mkdir "$lock"
+      printf '{"schema":1,"operation":"candidate-prepare","candidateId":"successor","pid":%s,"startIdentity":"%s","token":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","createdAt":"test"}\n' "$$" "$identity" > "$lock/owner.json"
+      rm -rf "$claim"
+    fi
     if [ "$1" = install ]; then
       mkdir -p "$BAOX_TEST_GCC_PREFIX/bin" "$BAOX_TEST_GCC_PREFIX/lib64"
       cat > "$BAOX_TEST_GCC_PREFIX/bin/g++" <<'EOF'
@@ -358,4 +453,8 @@ PY
   *) exit 2 ;;
 esac
 `;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }

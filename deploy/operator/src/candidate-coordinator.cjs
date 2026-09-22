@@ -44,6 +44,10 @@ async function main() {
     writeResult(await inspect(request));
     return;
   }
+  if (mode === 'external-bootstrap') {
+    await externalBootstrap(request);
+    return;
+  }
   if (mode === 'receive') {
     writeResult(await receive(request));
     return;
@@ -80,8 +84,16 @@ function readRequest() {
 
 function validateRequest(request) {
   if (!request || typeof request !== 'object' || request.schema !== SCHEMA) throw new Error('invalid request schema');
-  for (const name of ['deployRoot', 'systemdDir', 'buildEnvironment', 'buildPython']) {
+  for (const name of ['deployRoot', 'serviceHome', 'systemdDir', 'buildEnvironment', 'buildPython']) {
     if (typeof request[name] !== 'string' || !path.isAbsolute(request[name])) throw new Error('invalid target path');
+  }
+  if (request.externalLock === true) {
+    if (typeof request.operation !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/u.test(request.operation)) throw new Error('invalid external lock operation');
+    if (typeof request.candidateId !== 'string' || !/^[a-zA-Z0-9._-]{1,128}$/u.test(request.candidateId)) throw new Error('invalid external lock identity');
+    if (typeof request.bootstrapScript !== 'string' || !request.bootstrapScript || Buffer.byteLength(request.bootstrapScript, 'utf8') > 256 * 1024) {
+      throw new Error('invalid external bootstrap script');
+    }
+    return;
   }
   if (request.inspect === true) return;
   if (request.kind === 'snapshot') {
@@ -465,6 +477,72 @@ function isSnapshotHeldJournal(journal) {
 function isTerminalJournal(journal) {
   return isTerminalCandidateJournal(journal) || Boolean(journal && journal.schema === SCHEMA && journal.operation === SNAPSHOT_OPERATION
     && (journal.phase === 'reopened' || journal.phase === 'failed' || journal.phase === 'refused'));
+}
+
+// Bootstrap runs inside the generic deployment lease. The child owns the
+// recorded lease while it applies the reviewed transaction.
+async function externalBootstrap(request) {
+  const paths = targetPaths(request);
+  const acquired = await acquireDeploymentLease(request, paths);
+  if (acquired.kind !== 'acquired') {
+    writeResult(acquired.result);
+    return;
+  }
+  const lease = acquired.lease;
+
+  let child;
+  let childExit;
+  try {
+    child = spawn('/bin/sh', ['-s'], {
+      env: bootstrapChildEnvironment(paths, lease),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    childExit = waitForChild(child);
+    child.stdin.on('error', () => undefined);
+    child.stdout.pipe(process.stdout, { end: false });
+    child.stderr.pipe(process.stderr, { end: false });
+    child.stdin.end(bootstrapChildScript(request.bootstrapScript));
+
+    const identity = await waitForProcessIdentity(child.pid);
+    await writeOwner(paths, request, child.pid, identity, lease, true);
+    await writeCandidateFile(paths, lease, path.join(paths.lock, 'bootstrap-start'), 'ready\n', 0o600);
+
+    const exitCode = await childExit;
+    if (!await release(paths, lease)) throw new CandidateFailure('deployment-lock-lost');
+    if (exitCode !== 0) process.exitCode = exitCode;
+  } catch (error) {
+    if (child && child.exitCode === null) child.kill('SIGTERM');
+    if (childExit) await childExit.catch(() => undefined);
+    await release(paths, lease).catch(() => undefined);
+    throw error;
+  }
+}
+
+function bootstrapChildEnvironment(paths, lease) {
+  return {
+    HOME: '/root',
+    PATH: process.env.PATH || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+    BAOX_BOOTSTRAP_LOCK_TOKEN: lease.token,
+    BAOX_BOOTSTRAP_LOCK_PATH: paths.lock,
+  };
+}
+
+function bootstrapChildScript(script) {
+  return `set -eu
+attempt=0
+while [ ! -f "$BAOX_BOOTSTRAP_LOCK_PATH/bootstrap-start" ]; do
+  attempt=$((attempt + 1))
+  [ "$attempt" -lt 50 ] || exit 75
+  sleep 0.1
+done
+${script}`;
+}
+
+function waitForChild(child) {
+  return new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code) => resolve(code === null ? 1 : code));
+  });
 }
 
 async function reconcileOwnedLock(request, paths, lease) {
@@ -1743,6 +1821,7 @@ async function verifyBaseReadiness(request) {
   const gccLib = path.join(request.deployRoot, 'runtime', 'gcc-12.5.0', 'lib64');
   const python = request.buildPython;
   const caddy = path.join(request.deployRoot, 'bin', 'caddy');
+  const executable = new Map();
   for (const [code, file] of [
     ['missing-node-runtime', node],
     ['missing-gcc-runtime', gcc],
@@ -1750,17 +1829,46 @@ async function verifyBaseReadiness(request) {
     ['missing-build-python', python],
     ['missing-caddy-runtime', caddy],
   ]) {
-    if (!await isExecutable(file)) issues.push(code);
+    const available = await isExecutable(file);
+    executable.set(file, available);
+    if (!available) issues.push(code);
   }
-  if (!await commandSucceeds('id', ['baox'])) issues.push('missing-service-account');
-  const buildEnvironment = await readBuildEnvironment(request.buildEnvironment).catch(() => ({ ok: false, issues: ['invalid-build-environment'] }));
+  const account = await serviceAccountState(request.serviceHome);
+  if (account === 'missing') issues.push('missing-service-account');
+  if (account === 'mismatched') issues.push('service-account-home-mismatch');
+  if (account === 'unknown') issues.push('service-account-home-unverified');
+  const buildEnvironment = await readBuildEnvironment(request.buildEnvironment).catch((error) => ({
+    ok: false,
+    issues: [error && error.code === 'ENOENT' ? 'missing-build-environment' : 'invalid-build-environment'],
+  }));
   issues.push(...buildEnvironment.issues);
+  const runtime = { node: null, gcc: null, buildPython: null, caddy: null };
+  const canProbeAsBaox = account === 'ready' && buildEnvironment.ok;
+  if (canProbeAsBaox) {
+    const environment = nativeEnvironment(request, buildEnvironment.environment, gccLib);
+    const [nodeVersion, gccVersion, pythonVersion, caddyVersion] = await Promise.all([
+      commandOutputAsBaox(node, ['--version'], environment),
+      commandOutputAsBaox(gcc, ['-dumpfullversion', '-dumpversion'], environment),
+      commandOutputAsBaox(python, ['--version'], environment),
+      commandOutputAsBaox(caddy, ['version'], environment),
+    ]);
+    runtime.node = nodeVersion;
+    runtime.gcc = gccVersion;
+    runtime.buildPython = pythonVersion;
+    runtime.caddy = caddyVersion;
+    if (executable.get(node) && !nodeVersion) issues.push('unusable-node-runtime');
+    if (executable.get(gcc) && !gccVersion) issues.push('unusable-gcc-runtime');
+    if (executable.get(python) && !pythonVersion) issues.push('unusable-build-python');
+    if (executable.get(caddy) && !caddyVersion) issues.push('unusable-caddy-runtime');
+  }
   return {
     ok: issues.length === 0,
     issues: unique(issues),
     environment: buildEnvironment.environment || {},
+    runtime,
+    canProbeAsBaox,
     public: {
-      runtime: { node: null, pnpm: null, gcc: null, buildPython: null, caddy: null },
+      runtime: { node: runtime.node, pnpm: null, gcc: runtime.gcc, buildPython: runtime.buildPython, caddy: runtime.caddy },
       buildEnvironment: buildEnvironment.public || null,
     },
   };
@@ -1769,39 +1877,52 @@ async function verifyBaseReadiness(request) {
 async function verifyCandidateReadiness(request, source) {
   const base = await verifyBaseReadiness(request);
   const issues = [...base.issues];
-  const node = path.join(request.deployRoot, 'runtime', 'node', 'bin', 'node');
-  const gcc = path.join(request.deployRoot, 'runtime', 'gcc-12.5.0', 'bin', 'g++');
-  const python = request.buildPython;
-  const caddy = path.join(request.deployRoot, 'bin', 'caddy');
   const pnpm = path.join(request.deployRoot, 'runtime', 'pnpm-' + source.pnpmVersion, 'bin', 'pnpm');
-  if (!await isExecutable(pnpm)) issues.push('missing-pnpm-runtime');
-  const [nodeVersion, gccVersion, pythonVersion, caddyVersion, pnpmVersion] = await Promise.all([
-    commandOutput(node, ['--version']),
-    commandOutput(gcc, ['-dumpfullversion', '-dumpversion'], { LD_LIBRARY_PATH: path.join(request.deployRoot, 'runtime', 'gcc-12.5.0', 'lib64') }),
-    commandOutput(python, ['--version']),
-    commandOutput(caddy, ['version']),
-    commandOutput(pnpm, ['--version']),
-  ]);
-  if (normalizeVersion(nodeVersion) !== normalizeVersion(source.nodeVersion)) issues.push('node-version-mismatch');
-  if (normalizeVersion(pnpmVersion) !== normalizeVersion(source.pnpmVersion)) issues.push('pnpm-version-mismatch');
-  if (!gccVersion) issues.push('unusable-gcc-runtime');
-  if (!pythonVersion) issues.push('unusable-build-python');
-  if (!caddyVersion) issues.push('unusable-caddy-runtime');
+  const pnpmExists = await isExecutable(pnpm);
+  if (!pnpmExists) issues.push('missing-pnpm-runtime');
+  const pnpmVersion = base.canProbeAsBaox
+    ? await commandOutputAsBaox(pnpm, ['--version'], nativeEnvironment(request, base.environment, path.join(request.deployRoot, 'runtime', 'gcc-12.5.0', 'lib64')))
+    : null;
+  if (pnpmExists && !pnpmVersion) issues.push('unusable-pnpm-runtime');
+  if (base.runtime.node && normalizeVersion(base.runtime.node) !== normalizeVersion(source.nodeVersion)) issues.push('node-version-mismatch');
+  if (pnpmVersion && normalizeVersion(pnpmVersion) !== normalizeVersion(source.pnpmVersion)) issues.push('pnpm-version-mismatch');
   return {
     ok: unique(issues).length === 0,
     issues: unique(issues),
     environment: base.environment,
     public: {
       runtime: {
-        node: nodeVersion || null,
+        node: base.runtime.node || null,
         pnpm: pnpmVersion || null,
-        gcc: gccVersion || null,
-        buildPython: pythonVersion || null,
-        caddy: caddyVersion || null,
+        gcc: base.runtime.gcc || null,
+        buildPython: base.runtime.buildPython || null,
+        caddy: base.runtime.caddy || null,
       },
       buildEnvironment: base.public.buildEnvironment,
     },
   };
+}
+
+async function serviceAccountState(serviceHome) {
+  if (!await commandSucceeds('id', ['baox'])) return 'missing';
+  const entry = await commandOutput('getent', ['passwd', 'baox']);
+  if (!entry) return 'unknown';
+  const fields = entry.split('\n')[0].split(':');
+  return fields.length >= 7 && fields[0] === 'baox' && fields[5] === serviceHome ? 'ready' : 'mismatched';
+}
+
+function nativeEnvironment(request, buildEnvironment, gccLib) {
+  return {
+    HOME: request.serviceHome,
+    PATH: request.serviceHome + '/.local/bin:/usr/local/bin:/usr/bin:/bin',
+    LD_LIBRARY_PATH: gccLib,
+    ...buildEnvironment,
+  };
+}
+
+function commandOutputAsBaox(command, args, environment) {
+  const assignments = Object.entries(environment).map(([key, value]) => key + '=' + value);
+  return commandOutput('runuser', ['-u', 'baox', '--', 'env', '-i', ...assignments, command, ...args]);
 }
 
 async function readSourceMetadata(source) {
@@ -1991,6 +2112,13 @@ async function writeOwner(paths, request, pid, startIdentity, lease, replace = f
   };
   await writeAtomic(path.join(paths.lock, 'owner.json'), JSON.stringify(owner) + '\n', 0o600);
   if (replace) await requireLease(paths, lease);
+}
+
+function operationFor(request) {
+  if (request && request.externalLock === true && typeof request.operation === 'string' && /^[a-z][a-z0-9-]{0,63}$/u.test(request.operation)) {
+    return request.operation;
+  }
+  return isSnapshotRequest(request) ? SNAPSHOT_OPERATION : CANDIDATE_OPERATION;
 }
 
 async function release(paths, lease) {

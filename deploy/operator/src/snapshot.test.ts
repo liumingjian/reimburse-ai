@@ -214,6 +214,7 @@ it('keeps a cutover caller lease after a held snapshot admission is refused', as
     kind: 'snapshot',
     deployRoot: target.profile.deployRoot,
     dataDir: target.profile.dataDir,
+    serviceHome: target.profile.serviceHome,
     systemdDir: target.profile.systemdDir,
     buildEnvironment: target.profile.buildEnvironment,
     buildPython: target.profile.buildPython,

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { createReadStream, readFileSync } from 'node:fs';
 import type { Readable } from 'node:stream';
 import {
   BOOTSTRAP_ARTIFACTS,
@@ -15,6 +15,7 @@ import {
   type BootstrapSource,
   type LocalBootstrapArtifact,
 } from './bootstrap.js';
+import { createCoordinatorInvocation } from './coordinator-transport.js';
 import { NATIVE_PROFILE, type NativeProfile } from './profile.js';
 
 export type HostCommand =
@@ -170,6 +171,52 @@ export class SshHostTransport implements HostTransport {
 
   private async bootstrap(request: Readonly<{ mode: 'preview' | 'apply'; source: BootstrapSource; confirmationDigest?: string }>): Promise<BootstrapResponse> {
     validateBootstrapProxy(request.source.proxy);
+    if (request.mode === 'preview') return this.runBootstrapScript(request);
+
+    // Recalculate the reviewed transaction before acquiring the mutable target
+    // lease. A preview has no coordinator side effects.
+    const preview = await this.runBootstrapScript({ mode: 'preview', source: request.source });
+    if (preview.state !== 'preview') return preview;
+    if (preview.plan.transactionDigest !== request.confirmationDigest) {
+      return {
+        version: 1,
+        state: 'confirmation-mismatch',
+        plan: preview.plan,
+        reason: '当前包事务与已审阅的 preview 不一致。',
+      };
+    }
+
+    const invocation = createCoordinatorInvocation({
+      nodePath: `${this.profile.deployRoot}/runtime/node/bin/node`,
+      mode: 'external-bootstrap',
+      coordinatorSource: readCoordinatorSource(),
+      request: {
+        schema: 1,
+        externalLock: true,
+        operation: 'bootstrap',
+        candidateId: 'native-bootstrap',
+        deployRoot: this.profile.deployRoot,
+        serviceHome: this.profile.serviceHome,
+        systemdDir: this.profile.systemdDir,
+        buildEnvironment: this.profile.buildEnvironment,
+        buildPython: this.profile.buildPython,
+        bootstrapScript: bootstrapScript(this.profile, request, this.bootstrapArtifacts),
+      },
+    });
+    const result = await this.runner(this.profile, invocation.remoteCommand, invocation.input);
+    let response: BootstrapResponse | undefined;
+    try {
+      response = parseBootstrapResponse(result.stdout);
+    } catch {
+      // An unexpected target failure is reported with the SSH status below.
+    }
+    if (response) return response;
+    const lockRefusal = parseBootstrapLockRefusal(result.stdout, preview.plan);
+    if (lockRefusal) return lockRefusal;
+    throw new Error(`bootstrap 无法完成。SSH 命令退出码为 ${result.exitCode ?? '未知'}。`);
+  }
+
+  private async runBootstrapScript(request: Readonly<{ mode: 'preview' | 'apply'; source: BootstrapSource; confirmationDigest?: string }>): Promise<BootstrapResponse> {
     const result = await this.runner(this.profile, remoteShellCommand(bootstrapScript(this.profile, request, this.bootstrapArtifacts)));
     let response: BootstrapResponse | undefined;
     try {
@@ -180,6 +227,39 @@ export class SshHostTransport implements HostTransport {
     if (response) return response;
     throw new Error(`bootstrap 无法完成。SSH 命令退出码为 ${result.exitCode ?? '未知'}。`);
   }
+}
+
+function readCoordinatorSource(): string {
+  return readFileSync(new URL('./candidate-coordinator.cjs', import.meta.url), 'utf8');
+}
+
+function parseBootstrapLockRefusal(output: string, plan: BootstrapResponse['plan']): BootstrapResponse | undefined {
+  for (const line of output.split(/\r?\n/u).map((value) => value.trim()).filter(Boolean).reverse()) {
+    try {
+      const value: unknown = JSON.parse(line);
+      if (!value || typeof value !== 'object') continue;
+      const record = value as Record<string, unknown>;
+      if (record.state === 'busy' && typeof record.operation === 'string' && typeof record.candidateId === 'string') {
+        return {
+          version: 1,
+          state: 'prerequisite-refused',
+          plan,
+          reason: `共享部署锁正由 ${record.operation} (${record.candidateId}) 持有。`,
+        };
+      }
+      if (record.state === 'reconcile-needed' && typeof record.code === 'string') {
+        return {
+          version: 1,
+          state: 'prerequisite-refused',
+          plan,
+          reason: `共享部署锁需要恢复：${record.code}。`,
+        };
+      }
+    } catch {
+      // Child tool output may precede the coordinator result.
+    }
+  }
+  return undefined;
 }
 
 function statusScript(profile: NativeProfile): string {
@@ -208,45 +288,122 @@ function doctorScript(profile: NativeProfile): string {
   return `
 set -u
 issues=''
+SERVICE_HOME=${shellQuote(profile.serviceHome)}
+BUILD_ENV=${shellQuote(profile.buildEnvironment)}
+GCC_LIBDIR=${shellQuote(`${profile.deployRoot}/runtime/gcc-12.5.0/lib64`)}
 append_issue() {
   if [ -z "$issues" ]; then issues=$1; else issues="$issues,$1"; fi
 }
-printf 'node_version='
-${profile.deployRoot}/runtime/node/bin/node --version 2>/dev/null || true
-printf '\\n'
-printf 'gcc_version='
-LD_LIBRARY_PATH=${profile.deployRoot}/runtime/gcc-12.5.0/lib64 ${profile.deployRoot}/runtime/gcc-12.5.0/bin/g++ -dumpfullversion -dumpversion 2>/dev/null || true
-printf '\\n'
-printf 'build_python='
-${profile.buildPython} --version 2>/dev/null || true
-printf '\\n'
-printf 'pnpm_version='
-pnpm_bin=$(find ${profile.deployRoot}/runtime -type f -path '*/bin/pnpm' -print -quit 2>/dev/null || true)
-if [ -n "$pnpm_bin" ]; then "$pnpm_bin" --version 2>/dev/null || true; fi
-printf '\\n'
-printf 'caddy_version='
-${profile.deployRoot}/bin/caddy version 2>/dev/null | awk '{print $1}' || true
-printf '\\n'
-printf 'service_account='
+valid_build_value() {
+  key=$1
+  value=$2
+  python3 - "$key" "$value" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+key, value = sys.argv[1:]
+if not value or any(character.isspace() for character in value) or '@' in value:
+    raise SystemExit(1)
+if key == 'NO_PROXY':
+    raise SystemExit(0 if value == '127.0.0.1,localhost' else 1)
+try:
+    parsed = urlsplit(value)
+    _ = parsed.port
+except ValueError:
+    raise SystemExit(1)
+if parsed.username or parsed.password or not parsed.hostname:
+    raise SystemExit(1)
+if key in {'HTTP_PROXY', 'HTTPS_PROXY'}:
+    raise SystemExit(0 if parsed.scheme in {'http', 'https'} else 1)
+if key in {'npm_config_registry', 'NODE_MIRROR', 'CADDY_DOWNLOAD'}:
+    raise SystemExit(0 if parsed.scheme == 'https' else 1)
+raise SystemExit(1)
+PY
+}
+validate_build_environment() {
+  build_environment_ready=0
+  BUILD_HTTP_PROXY=''
+  BUILD_HTTPS_PROXY=''
+  BUILD_NO_PROXY=''
+  if [ ! -f "$BUILD_ENV" ]; then append_issue missing-build-environment; return; fi
+  mode=$(stat -c '%a' "$BUILD_ENV" 2>/dev/null || true)
+  [ "$mode" = 600 ] || { append_issue invalid-build-environment-permissions; return; }
+  owner=$(stat -c '%u' "$BUILD_ENV" 2>/dev/null || true)
+  [ "$owner" = 0 ] || { append_issue invalid-build-environment-owner; return; }
+  seen=' '
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    case "$line" in *=*) ;; *) append_issue invalid-build-environment; return ;; esac
+    key=${'$'}{line%%=*}
+    value=${'$'}{line#*=}
+    case " $seen" in *" $key "*) append_issue invalid-build-environment; return ;; esac
+    valid_build_value "$key" "$value" || { append_issue invalid-build-environment; return; }
+    seen="$seen$key "
+    case "$key" in
+      HTTP_PROXY) BUILD_HTTP_PROXY=$value ;;
+      HTTPS_PROXY) BUILD_HTTPS_PROXY=$value ;;
+      NO_PROXY) BUILD_NO_PROXY=$value ;;
+    esac
+  done < "$BUILD_ENV"
+  [ -n "$BUILD_HTTP_PROXY" ] && [ -n "$BUILD_HTTPS_PROXY" ] && [ -n "$BUILD_NO_PROXY" ] || { append_issue missing-build-environment-value; return; }
+  build_environment_ready=1
+}
+service_account=unknown
 if ! id -u baox >/dev/null 2>&1; then
-  printf missing
+  service_account=missing
 elif ! command -v getent >/dev/null 2>&1; then
-  printf unknown
+  service_account=unknown
 else
-  account_home=$(getent passwd baox | awk -F: '{print $6}')
-  if [ "$account_home" = ${profile.serviceHome} ]; then printf ready; else printf mismatched; fi
+  account_entry=$(getent passwd baox 2>/dev/null || true)
+  if [ -z "$account_entry" ]; then
+    service_account=unknown
+  else
+    account_home=$(printf '%s\n' "$account_entry" | awk -F: '{print $6}')
+    if [ "$account_home" = "$SERVICE_HOME" ]; then service_account=ready; else service_account=mismatched; fi
+  fi
 fi
+validate_build_environment
+as_baox() {
+  runuser -u baox -- env -i \
+    HOME="$SERVICE_HOME" \
+    PATH="$SERVICE_HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" \
+    HTTP_PROXY="$BUILD_HTTP_PROXY" \
+    HTTPS_PROXY="$BUILD_HTTPS_PROXY" \
+    NO_PROXY="$BUILD_NO_PROXY" \
+    LD_LIBRARY_PATH="$GCC_LIBDIR" \
+    "$@"
+}
+node_version=''
+gcc_version=''
+build_python=''
+pnpm_version=''
+caddy_version=''
+pnpm_bin=$(find ${shellQuote(`${profile.deployRoot}/runtime`)} -type f -path '*/bin/pnpm' -print -quit 2>/dev/null || true)
+if [ "$service_account" = ready ] && [ "$build_environment_ready" = 1 ]; then
+  node_version=$(as_baox ${shellQuote(`${profile.deployRoot}/runtime/node/bin/node`)} --version 2>/dev/null || true)
+  gcc_version=$(as_baox ${shellQuote(`${profile.deployRoot}/runtime/gcc-12.5.0/bin/g++`)} -dumpfullversion -dumpversion 2>/dev/null || true)
+  build_python=$(as_baox ${shellQuote(profile.buildPython)} --version 2>/dev/null || true)
+  if [ -n "$pnpm_bin" ]; then pnpm_version=$(as_baox "$pnpm_bin" --version 2>/dev/null || true); fi
+  caddy_version=$(as_baox ${shellQuote(`${profile.deployRoot}/bin/caddy`)} version 2>/dev/null | awk '{print $1}' || true)
+fi
+printf 'node_version=%s\\n' "$node_version"
+printf 'gcc_version=%s\\n' "$gcc_version"
+printf 'build_python=%s\\n' "$build_python"
+printf 'pnpm_version=%s\\n' "$pnpm_version"
+printf 'caddy_version=%s\\n' "$caddy_version"
+printf 'service_account=%s\\n' "$service_account"
 printf '\\n'
 printf 'maintenance_wrapper='
 if [ -x ${profile.maintenanceWrapper} ]; then printf present; else printf missing; fi
 printf '\\n'
-if [ ! -x ${profile.deployRoot}/runtime/node/bin/node ]; then append_issue missing-node; fi
-if [ ! -x ${profile.deployRoot}/runtime/gcc-12.5.0/bin/g++ ]; then append_issue missing-isolated-gcc; fi
-if [ ! -x ${profile.serviceHome}/.local/share/baox-build-venv/bin/python ]; then append_issue missing-build-python; fi
-if [ -z "$pnpm_bin" ]; then append_issue missing-pnpm; fi
-if [ ! -x ${profile.deployRoot}/bin/caddy ]; then append_issue missing-caddy; fi
-if ! id -u baox >/dev/null 2>&1; then append_issue service-account-missing; fi
-if [ -f ${profile.buildEnvironment} ]; then :; else append_issue missing-build-environment; fi
+if [ ! -x ${shellQuote(`${profile.deployRoot}/runtime/node/bin/node`)} ]; then append_issue missing-node-runtime; elif [ "$service_account" = ready ] && [ "$build_environment_ready" = 1 ] && [ -z "$node_version" ]; then append_issue unusable-node-runtime; fi
+if [ ! -x ${shellQuote(`${profile.deployRoot}/runtime/gcc-12.5.0/bin/g++`)} ]; then append_issue missing-gcc-runtime; elif [ "$service_account" = ready ] && [ "$build_environment_ready" = 1 ] && [ -z "$gcc_version" ]; then append_issue unusable-gcc-runtime; fi
+if [ ! -x ${shellQuote(profile.buildPython)} ]; then append_issue missing-build-python; elif [ "$service_account" = ready ] && [ "$build_environment_ready" = 1 ] && [ -z "$build_python" ]; then append_issue unusable-build-python; fi
+if [ -z "$pnpm_bin" ]; then append_issue missing-pnpm-runtime; elif [ "$service_account" = ready ] && [ "$build_environment_ready" = 1 ] && [ -z "$pnpm_version" ]; then append_issue unusable-pnpm-runtime; fi
+if [ ! -x ${shellQuote(`${profile.deployRoot}/bin/caddy`)} ]; then append_issue missing-caddy-runtime; elif [ "$service_account" = ready ] && [ "$build_environment_ready" = 1 ] && [ -z "$caddy_version" ]; then append_issue unusable-caddy-runtime; fi
+if [ "$service_account" = missing ]; then append_issue missing-service-account; fi
+if [ "$service_account" = mismatched ]; then append_issue service-account-home-mismatch; fi
+if [ "$service_account" = unknown ]; then append_issue service-account-home-unverified; fi
 printf 'issues=%s\\n' "$issues"
 `;
 }
@@ -292,13 +449,24 @@ function parseDoctorIssues(value: string | undefined): readonly DoctorIssue[] {
 
 function doctorIssueMessage(code: string): string {
   const messages: Readonly<Record<string, string>> = {
-    'missing-node': '缺少 baox 专用 Node 运行时。',
-    'missing-isolated-gcc': '缺少隔离 GCC 运行时。请先执行 bootstrap。',
+    'missing-node-runtime': '缺少 baox 专用 Node 运行时。',
+    'unusable-node-runtime': 'baox 服务账号无法运行 Node 运行时。',
+    'missing-gcc-runtime': '缺少隔离 GCC 运行时。请先执行 bootstrap。',
+    'unusable-gcc-runtime': 'baox 服务账号无法运行隔离 GCC。',
     'missing-build-python': '缺少 baox 构建 Python 虚拟环境。请先执行 bootstrap。',
-    'missing-pnpm': '缺少 baox 专用 pnpm。',
-    'missing-caddy': '缺少 baox 专用 Caddy。',
-    'service-account-missing': '缺少 baox 服务账号。请先执行 bootstrap。',
+    'unusable-build-python': 'baox 服务账号无法运行构建 Python。',
+    'missing-pnpm-runtime': '缺少 baox 专用 pnpm。',
+    'unusable-pnpm-runtime': 'baox 服务账号无法运行 pnpm。',
+    'missing-caddy-runtime': '缺少 baox 专用 Caddy。',
+    'unusable-caddy-runtime': 'baox 服务账号无法运行 Caddy。',
+    'missing-service-account': '缺少 baox 服务账号。请先执行 bootstrap。',
+    'service-account-home-mismatch': 'baox 服务账号 home 与受控布局不一致。',
+    'service-account-home-unverified': '无法验证 baox 服务账号 home。',
     'missing-build-environment': '缺少受控构建环境。请先执行 bootstrap。',
+    'invalid-build-environment-permissions': '受控构建环境权限必须是 root 所有的 0600。',
+    'invalid-build-environment-owner': '受控构建环境必须由 root 所有。',
+    'invalid-build-environment': '受控构建环境的键或值不符合受控格式。',
+    'missing-build-environment-value': '受控构建环境缺少必需代理值。',
   };
   return messages[code] ?? `主机报告了未知的准备条件问题：${code}。`;
 }

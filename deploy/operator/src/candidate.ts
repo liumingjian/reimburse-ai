@@ -61,6 +61,7 @@ export class SshCandidateTransport implements CandidateTransport {
       request: {
         schema: 1,
         deployRoot: this.profile.deployRoot,
+        serviceHome: this.profile.serviceHome,
         systemdDir: this.profile.systemdDir,
         buildEnvironment: this.profile.buildEnvironment,
         buildPython: this.profile.buildPython,
@@ -87,6 +88,7 @@ export class SshCandidateTransport implements CandidateTransport {
         schema: 1,
         inspect: true,
         deployRoot: this.profile.deployRoot,
+        serviceHome: this.profile.serviceHome,
         systemdDir: this.profile.systemdDir,
         buildEnvironment: this.profile.buildEnvironment,
         buildPython: this.profile.buildPython,

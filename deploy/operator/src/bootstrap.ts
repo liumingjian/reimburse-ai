@@ -255,6 +255,9 @@ UV_CACHE_DIR=$SERVICE_HOME/.cache/uv
 UV_PYTHON_INSTALL_DIR=$SERVICE_HOME/.local/share/uv/python
 UV_PYTHON_CACHE_DIR=$SERVICE_HOME/.cache/uv/python-builds
 BUILD_VENV=$SERVICE_HOME/.local/share/baox-build-venv
+BOOTSTRAP_LOCK_TOKEN=${'$'}{BAOX_BOOTSTRAP_LOCK_TOKEN:-}
+BOOTSTRAP_LOCK_PATH=${'$'}{BAOX_BOOTSTRAP_LOCK_PATH:-}
+TRANSACTION_RESULT=''
 
 die() {
   printf 'bootstrap: %s\n' "$*" >&2
@@ -264,6 +267,76 @@ die() {
 emit_refusal() {
   printf '{"version":1,"state":"prerequisite-refused","plan":{"transaction":[],"transactionDigest":"0000000000000000000000000000000000000000000000000000000000000000","protectedActions":[]},"reason":"%s"}\n' "$1"
   exit 0
+}
+
+emit_refusal_from_transaction() {
+  reason=$1
+  if [ ! -f "$TRANSACTION_RESULT" ]; then
+    emit_refusal "$reason"
+  fi
+  python3 - "$TRANSACTION_RESULT" "$reason" <<'PY'
+import json
+import sys
+
+path, reason = sys.argv[1:]
+for line in reversed(open(path, encoding='utf-8').read().splitlines()):
+    try:
+        response = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if isinstance(response, dict) and response.get('version') == 1 and response.get('state') == 'confirmed':
+        response['state'] = 'prerequisite-refused'
+        response['reason'] = reason
+        print(json.dumps(response, sort_keys=True, separators=(',', ':')))
+        sys.exit(0)
+raise SystemExit('bootstrap transaction confirmation is unavailable')
+PY
+  exit 0
+}
+
+require_deployment_lock() {
+  [ -n "$BOOTSTRAP_LOCK_TOKEN" ] && [ -n "$BOOTSTRAP_LOCK_PATH" ] || emit_refusal_from_transaction 'the bootstrap deployment lock is not held'
+  if python3 - "$BOOTSTRAP_LOCK_PATH" "$BOOTSTRAP_LOCK_TOKEN" "$$" <<'PY'
+import json
+import os
+import re
+import sys
+
+lock_path, token, shell_pid = sys.argv[1:]
+if not re.fullmatch(r'[a-f0-9]{64}', token):
+    raise SystemExit(1)
+try:
+    owner = json.load(open(os.path.join(lock_path, 'owner.json'), encoding='utf-8'))
+except (OSError, ValueError):
+    raise SystemExit(1)
+if not isinstance(owner, dict) or owner.get('schema') != 1:
+    raise SystemExit(1)
+if owner.get('operation') != 'bootstrap' or owner.get('candidateId') != 'native-bootstrap':
+    raise SystemExit(1)
+if owner.get('token') != token or owner.get('pid') != int(shell_pid):
+    raise SystemExit(1)
+if sys.platform.startswith('linux'):
+    try:
+        fields = open('/proc/' + shell_pid + '/stat', encoding='utf-8').read().rsplit(')', 1)[1].split()
+        identity = 'linux:' + fields[19]
+    except (OSError, IndexError):
+        raise SystemExit(1)
+else:
+    identity = 'nonlinux:' + shell_pid
+raise SystemExit(0 if owner.get('startIdentity') == identity else 1)
+PY
+  then
+    :
+  else
+    emit_refusal_from_transaction 'the bootstrap deployment lock was lost'
+  fi
+}
+
+cleanup() {
+  cleanup_status=$?
+  trap - EXIT HUP INT TERM
+  rm -rf "$WORK"
+  exit "$cleanup_status"
 }
 
 require_root() {
@@ -282,6 +355,59 @@ assert_account_layout() {
   if id -u "$BAOX_USER" >/dev/null 2>&1; then
     account_home=$(getent passwd "$BAOX_USER" | awk -F: '{print $6}')
     [ "$account_home" = "$SERVICE_HOME" ] || emit_refusal 'baox already exists with a different home; correct that account manually before bootstrap'
+  fi
+}
+
+preflight_host_tools() {
+  for command_name in make gcc g++ tar curl gpgv sha256sum sha512sum useradd runuser install chown chmod getent mktemp awk grep python3; do
+    command -v "$command_name" >/dev/null 2>&1 || emit_refusal_from_transaction "required bootstrap command is unavailable: $command_name"
+  done
+  make --version >/dev/null 2>&1 || emit_refusal_from_transaction 'the bootstrap host make command is unusable'
+  printf 'int main(void) { return 0; }\n' | gcc -x c -fsyntax-only - >/dev/null 2>&1 ||
+    emit_refusal_from_transaction 'the bootstrap host C compiler is unusable'
+  printf 'int main() { return 0; }\n' | g++ -x c++ -std=c++11 -fsyntax-only - >/dev/null 2>&1 ||
+    emit_refusal_from_transaction 'the bootstrap host C++ compiler is unusable'
+}
+
+path_exists() {
+  [ -e "$1" ] || [ -L "$1" ]
+}
+
+active_release_exists() {
+  path_exists "$DEPLOY_ROOT/current"
+}
+
+refuse_active_runtime_replacement() {
+  path_to_replace=$1
+  runtime_label=$2
+  if active_release_exists && path_exists "$path_to_replace"; then
+    emit_refusal_from_transaction "bootstrap will not replace $runtime_label while an active release exists; stage and adopt a new runtime through a separate maintenance action"
+  fi
+}
+
+assert_active_runtime_stable() {
+  active_release_exists || return 0
+  gcc_current=''
+  if [ -x "$GCC_PREFIX/bin/g++" ]; then
+    gcc_current=$(LD_LIBRARY_PATH="$GCC_LIBDIR" "$GCC_PREFIX/bin/g++" -dumpfullversion -dumpversion 2>/dev/null || true)
+  fi
+  if [ "$gcc_current" != "$GCC_VERSION" ] && path_exists "$GCC_PREFIX"; then
+    emit_refusal_from_transaction 'bootstrap will not replace the isolated GCC runtime while an active release exists; stage and adopt a new runtime through a separate maintenance action'
+  fi
+  uv_current=''
+  if [ -x "$UV_BIN" ]; then uv_current=$($UV_BIN --version 2>/dev/null | awk '{print $2}' || true); fi
+  if [ "$uv_current" != "$UV_VERSION" ] && path_exists "$UV_BIN"; then
+    emit_refusal_from_transaction 'bootstrap will not replace the uv executable while an active release exists; stage and adopt a new runtime through a separate maintenance action'
+  fi
+  venv_current=''
+  if [ -x "$BUILD_VENV/bin/python" ]; then
+    venv_current=$($BUILD_VENV/bin/python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null || true)
+  fi
+  if [ "$venv_current" != "$PYTHON_VERSION" ] && path_exists "$BUILD_VENV"; then
+    emit_refusal_from_transaction 'bootstrap will not replace the build Python virtual environment while an active release exists; stage and adopt a new runtime through a separate maintenance action'
+  fi
+  if [ "$venv_current" != "$PYTHON_VERSION" ] && [ -d "$UV_PYTHON_INSTALL_DIR" ]; then
+    emit_refusal_from_transaction 'bootstrap will not modify an existing uv Python runtime while an active release exists; stage and adopt a new runtime through a separate maintenance action'
   fi
 }
 
@@ -422,13 +548,17 @@ verify_assets() {
 }
 
 ensure_account() {
+  require_deployment_lock
   if ! id -u "$BAOX_USER" >/dev/null 2>&1; then
+    require_deployment_lock
     useradd --system --user-group --home-dir "$SERVICE_HOME" --create-home --shell /sbin/nologin "$BAOX_USER"
   fi
+  require_deployment_lock
   install -d -o "$BAOX_USER" -g "$BAOX_USER" -m 0750 "$SERVICE_HOME" "$SERVICE_HOME/.local" "$SERVICE_HOME/.local/bin" "$SERVICE_HOME/.local/share" "$SERVICE_HOME/.cache" "$UV_PYTHON_CACHE_DIR"
 }
 
 write_build_environment() {
+  require_deployment_lock
   install -d -o root -g root -m 0755 "$(dirname "$BUILD_ENV")"
   temporary_environment=$(mktemp "$(dirname "$BUILD_ENV")/.build.env.XXXXXX")
   umask 077
@@ -458,9 +588,12 @@ as_baox() {
 }
 
 install_gcc() {
-  if [ -x "$GCC_PREFIX/bin/g++" ] && [ "$(LD_LIBRARY_PATH="$GCC_LIBDIR" "$GCC_PREFIX/bin/g++" -dumpfullversion -dumpversion 2>/dev/null || true)" = "$GCC_VERSION" ]; then
+  require_deployment_lock
+  if [ -x "$GCC_PREFIX/bin/g++" ] && [ "$(as_baox "$GCC_PREFIX/bin/g++" -dumpfullversion -dumpversion 2>/dev/null || true)" = "$GCC_VERSION" ]; then
     return
   fi
+  refuse_active_runtime_replacement "$GCC_PREFIX" 'the isolated GCC runtime'
+  require_deployment_lock
   rm -rf "$GCC_PREFIX"
   tar -xJf "$WORK/$GCC_FILE" -C "$WORK"
   mkdir -p "$WORK/gcc-build"
@@ -470,33 +603,69 @@ install_gcc() {
       --enable-languages=c,c++ --disable-multilib --disable-nls --disable-libsanitizer \
       --with-gmp=/usr --with-mpfr=/usr --with-mpc=/usr --with-isl=/usr
     make -j2
+  )
+  require_deployment_lock
+  (
+    cd "$WORK/gcc-build"
     make install
   )
+  require_deployment_lock
   chown -R root:root "$GCC_PREFIX"
+  require_deployment_lock
   chmod -R a+rX "$GCC_PREFIX"
 }
 
 install_uv_and_python() {
+  require_deployment_lock
   tar -xzf "$WORK/$UV_FILE" -C "$WORK"
   [ -x "$WORK/$UV_DIRECTORY/uv" ] || die 'verified uv archive contains no uv executable'
-  install -o "$BAOX_USER" -g "$BAOX_USER" -m 0755 "$WORK/$UV_DIRECTORY/uv" "$UV_BIN"
-  install -o "$BAOX_USER" -g "$BAOX_USER" -m 0644 "$WORK/$PYTHON_FILE" "$UV_PYTHON_CACHE_DIR/$PYTHON_CACHE_FILE"
-  as_baox "$UV_BIN" --offline python install "$PYTHON_VERSION"
-  if [ -x "$BUILD_VENV/bin/python" ]; then
-    existing_python=$($BUILD_VENV/bin/python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
-    [ "$existing_python" = "$PYTHON_VERSION" ] || rm -rf "$BUILD_VENV"
+  existing_uv_version=''
+  if [ -x "$UV_BIN" ]; then
+    existing_uv_version=$(as_baox "$UV_BIN" --version 2>/dev/null | awk '{print $2}' || true)
   fi
-  if [ ! -x "$BUILD_VENV/bin/python" ]; then
+  if [ "$existing_uv_version" != "$UV_VERSION" ]; then
+    refuse_active_runtime_replacement "$UV_BIN" 'the uv executable'
+    require_deployment_lock
+    install -o "$BAOX_USER" -g "$BAOX_USER" -m 0755 "$WORK/$UV_DIRECTORY/uv" "$UV_BIN"
+  fi
+
+  existing_python=''
+  if [ -x "$BUILD_VENV/bin/python" ]; then
+    existing_python=$(as_baox "$BUILD_VENV/bin/python" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null || true)
+  fi
+  if [ "$existing_python" != "$PYTHON_VERSION" ]; then
+    refuse_active_runtime_replacement "$BUILD_VENV" 'the build Python virtual environment'
+    if active_release_exists && [ -d "$UV_PYTHON_INSTALL_DIR" ]; then
+      emit_refusal_from_transaction 'bootstrap will not modify an existing uv Python runtime while an active release exists; stage and adopt a new runtime through a separate maintenance action'
+    fi
+    python_cache=$UV_PYTHON_CACHE_DIR/$PYTHON_CACHE_FILE
+    python_cache_sha=''
+    if [ -f "$python_cache" ]; then python_cache_sha=$(sha256sum "$python_cache" | awk '{print $1}' || true); fi
+    if [ "$python_cache_sha" != "$PYTHON_SHA256" ]; then
+      require_deployment_lock
+      temporary_python_cache=$UV_PYTHON_CACHE_DIR/.bootstrap-python-cache.$$
+      install -o "$BAOX_USER" -g "$BAOX_USER" -m 0644 "$WORK/$PYTHON_FILE" "$temporary_python_cache"
+      require_deployment_lock
+      mv "$temporary_python_cache" "$python_cache"
+    fi
+    require_deployment_lock
+    as_baox "$UV_BIN" --offline python install "$PYTHON_VERSION"
+    if path_exists "$BUILD_VENV"; then
+      require_deployment_lock
+      rm -rf "$BUILD_VENV"
+    fi
+    require_deployment_lock
     as_baox "$UV_BIN" venv --python "$PYTHON_VERSION" "$BUILD_VENV"
   fi
 }
 
 verify_readiness() {
-  gcc_version=$(LD_LIBRARY_PATH="$GCC_LIBDIR" "$GCC_PREFIX/bin/g++" -dumpfullversion -dumpversion 2>/dev/null) || die 'isolated GCC cannot run'
+  require_deployment_lock
+  gcc_version=$(as_baox "$GCC_PREFIX/bin/g++" -dumpfullversion -dumpversion 2>/dev/null) || die 'isolated GCC cannot run as baox'
   [ "$gcc_version" = "$GCC_VERSION" ] || die "isolated GCC version is $gcc_version, expected $GCC_VERSION"
-  python_version=$($BUILD_VENV/bin/python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))') || die 'build virtual environment cannot run Python'
+  python_version=$(as_baox "$BUILD_VENV/bin/python" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))') || die 'build virtual environment cannot run Python as baox'
   [ "$python_version" = "$PYTHON_VERSION" ] || die "build Python version is $python_version, expected $PYTHON_VERSION"
-  uv_version=$($UV_BIN --version | awk '{print $2}') || die 'uv cannot run'
+  uv_version=$(as_baox "$UV_BIN" --version | awk '{print $2}') || die 'uv cannot run as baox'
   [ "$uv_version" = "$UV_VERSION" ] || die "uv version is $uv_version, expected $UV_VERSION"
   grep -Fqx "HTTP_PROXY=$PROXY" "$BUILD_ENV" || die 'build environment lacks HTTP_PROXY'
   grep -Fqx "HTTPS_PROXY=$PROXY" "$BUILD_ENV" || die 'build environment lacks HTTPS_PROXY'
@@ -547,7 +716,9 @@ fi
 
 WORK=$(mktemp -d /tmp/baox-bootstrap.XXXXXX)
 TRANSACTION_RESULT=$WORK/transaction.json
-trap 'rm -rf "$WORK"' EXIT HUP INT TERM
+trap cleanup EXIT HUP INT TERM
+require_deployment_lock
+assert_account_layout
 if dnf_phase check > "$TRANSACTION_RESULT"; then
   :
 else
@@ -558,8 +729,11 @@ else
   fi
   exit "$dnf_status"
 fi
+preflight_host_tools
+assert_active_runtime_stable
 obtain_assets
 verify_assets
+require_deployment_lock
 if dnf_phase apply > "$TRANSACTION_RESULT"; then
   :
 else

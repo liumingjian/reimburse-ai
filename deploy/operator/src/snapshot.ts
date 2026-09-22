@@ -54,6 +54,7 @@ export class SshSnapshotTransport implements SnapshotTransport {
         kind: 'snapshot',
         deployRoot: this.profile.deployRoot,
         dataDir: this.profile.dataDir,
+        serviceHome: this.profile.serviceHome,
         systemdDir: this.profile.systemdDir,
         buildEnvironment: this.profile.buildEnvironment,
         buildPython: this.profile.buildPython,
