@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { Button, InlineNotification } from '@carbon/react';
-import { useAppStore, useTask } from '../adapter/context';
+import { useAppState, useAppStore, useTask } from '../adapter/context';
 import { STAGE_DEFAULT_PAGE, pageAllowed, type TaskPage, type TaskSnapshot } from '@baox/contract';
-import { TASKS_HASH, navigate, taskHash } from '../router';
+import { TASKS_HASH, extensionSettingsHash, navigate, taskHash } from '../router';
 import { AppShell } from '../shell/AppShell';
 import { PageHeader } from '../shell/PageHeader';
 import { StepBar } from '../shell/StepBar';
@@ -71,7 +71,20 @@ function GuardPage({ snapshot, page }: { snapshot: TaskSnapshot; page: TaskPage 
   );
 }
 
-export function TaskRoute({ taskId, page }: { taskId: string; page: TaskPage | null }) {
+function ExtensionReturnNotice({ taskId, page }: { taskId: string; page: TaskPage }) {
+  const store = useAppStore();
+  const pairing = useAppState().extensionPairing;
+  useEffect(() => { void store.loadExtensionPairing(); }, [store]);
+  const connected = pairing.data?.status === 'paired' && pairing.data.connected;
+  return (
+    <section aria-label="扩展连接检查">
+      <p role="status">{pairing.status === 'loading' ? '正在检查扩展连接…' : pairing.status === 'error' ? '暂时无法读取扩展连接状态，请到设置重试。' : connected ? '扩展已连接。可以点击去报销开始自动填写。' : '扩展尚未连接。请到设置完成连接，再点击去报销。'}</p>
+      {!connected ? <Button kind="tertiary" href={extensionSettingsHash(taskId, page)}>设置浏览器扩展</Button> : null}
+    </section>
+  );
+}
+
+export function TaskRoute({ taskId, page, fromExtensionSetup }: { taskId: string; page: TaskPage | null; fromExtensionSetup?: boolean }) {
   const store = useAppStore();
   const entry = useTask(taskId);
   const snapshot = entry.snapshot;
@@ -116,6 +129,7 @@ export function TaskRoute({ taskId, page }: { taskId: string; page: TaskPage | n
           </Button>
         </div>
       ) : null}
+      {fromExtensionSetup ? <ExtensionReturnNotice taskId={taskId} page={page} /> : null}
       {pageAllowed(snapshot.stage, page) ? <PageBody page={page} snapshot={snapshot} /> : <GuardPage snapshot={snapshot} page={page} />}
     </AppShell>
   );

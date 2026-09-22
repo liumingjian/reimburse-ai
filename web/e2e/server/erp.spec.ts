@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
-import { TaskListSchema, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
+import { ERP_ACTION_ERRORS, TaskListSchema, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Page } from '@playwright/test';
 import { answerStayGaps, expect, signIn, test } from './fixture';
 
@@ -45,6 +45,35 @@ async function confirmedTask(page: Page): Promise<string> {
   return taskId;
 }
 
+test('浏览器扩展不可用时，设置页返回原报销任务并保留选择', async ({ page }) => {
+  await signIn(page);
+  const taskId = await confirmedTask(page);
+  const before = await snapshotOf(page, taskId);
+  let starts = 0;
+  await page.route(`**/api/tasks/${taskId}/actions/start-erp-write`, async (route) => {
+    starts += 1;
+    await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'extension_not_paired', message: ERP_ACTION_ERRORS.extensionNotPaired } }) });
+  });
+
+  await page.goto(`/#/task/${taskId}/review`);
+  await page.getByRole('button', { name: '去报销', exact: true }).click();
+
+  const returnTo = `#/task/${taskId}/review`;
+  await expect(page).toHaveURL(new RegExp(`/#/settings\\?returnTo=${encodeURIComponent(returnTo)}$`));
+  await page.getByRole('link', { name: '返回报销任务' }).click();
+
+  await expect(page).toHaveURL(new RegExp(`/#/task/${taskId}/review\\?extensionSetup=1$`));
+  await expect(page.getByRole('region', { name: '扩展连接检查' })).toContainText('扩展尚未连接');
+  await expect(page.getByRole('link', { name: '设置浏览器扩展' })).toBeVisible();
+  await expect(page.getByTestId('review-purpose')).toContainText(before.projectAssignment.purpose ?? '');
+
+  const after = await snapshotOf(page, taskId);
+  expect(after.projectAssignment).toEqual(before.projectAssignment);
+  expect(after.confirmation).toEqual(before.confirmation);
+  expect(after.erp).toEqual(before.erp);
+  expect(starts).toBe(1);
+});
+
 test.describe('ERP 还停在登录页', () => {
   test.use({ serverEnv: { BAOX_ERP_FAKE: 'login_wall' } });
 
@@ -75,6 +104,8 @@ test.describe('ERP 还停在登录页', () => {
     await page.getByRole('button', { name: '取消去报销' }).click();
     await expect(page).toHaveURL(new RegExp(`#/task/${taskId}/review$`));
     expect(await snapshotOf(page, taskId)).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, erp: { status: 'idle' }, confirmation: { status: 'confirmed' } });
+    const afterCancel = TaskListSchema.parse(await (await page.request.get('/api/tasks')).json());
+    expect(afterCancel.tasks.find((task) => task.taskId === taskId)).toMatchObject({ abandonable: true });
     // 去报销 is on offer again, because nothing about the claim changed.
     await expect(page.getByRole('button', { name: '去报销', exact: true })).toBeEnabled();
   });

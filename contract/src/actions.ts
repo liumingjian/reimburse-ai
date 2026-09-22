@@ -138,7 +138,14 @@ export const CONFIRM_REVIEW_ERRORS = {
   digestMismatch: '整单明细已更新，请重新核对后再确认。',
   notReady: '现在不需要确认整单明细：还没有提交项目归属，或已经确认过。',
   noLines: '还没有明细，不能确认。',
+  deadlineConfirmationRequired: '所选项目有截止日期提醒。请明确选择“仍然继续”后再确认。',
 } as const;
+
+export const ConfirmReviewInputSchema = z.object({
+  digest: z.string().min(1),
+  acceptDeadlineWarnings: z.boolean().optional().default(false),
+});
+export type ConfirmReviewInput = z.infer<typeof ConfirmReviewInputSchema>;
 
 // 追加材料（确认后）：任务回到上传阶段接收新批次；已有的整单明细确认失效，已生成的打印稿作废。
 export const REOPEN_UPLOAD_ERRORS = {
@@ -210,6 +217,15 @@ export const PROJECT_ASSIGNMENT_ERRORS = {
   // 「归入」动作：新的归属只能用当前可选项目（已删除或失效的项目，已归入的明细可以沿用，但不能再归入新的明细）。
   projectNotSelectable: (number: string) => `项目 ${number} 不在当前本人项目簿可选集合中，不能归入新的明细；要用它请先在维护页重新核验`,
   noLinesSelected: '请先勾选要归入的明细',
+  deadlineConfirmationRequired: '所选项目有截止日期提醒。请明确选择“仍然继续”后再提交。',
+} as const;
+
+export const PROJECT_DEADLINE_WARNING_COPY = {
+  title: '项目截止日期提醒',
+  notice: '以下费用与所选项目的截止日期不一致。项目仍可继续使用；请明确确认后继续，系统不会拆分报销任务。',
+  afterDeadline: (lineNo: number, projectNumber: string, deadlineOn: string) => `明细 No.${lineNo} 的费用发生日在项目 ${projectNumber} 的截止日期 ${deadlineOn} 之后。`,
+  stayCrossesDeadline: (lineNo: number, projectNumber: string, deadlineOn: string) => `明细 No.${lineNo} 的住宿期间跨过项目 ${projectNumber} 的截止日期 ${deadlineOn}。`,
+  continue: '仍然继续',
 } as const;
 
 // 「归入」：把勾选的明细归入某个可选项目，只改本次正在编辑的归属（working），不是提交。
@@ -233,8 +249,9 @@ export const ProjectAssignmentInputSchema = z.object({
   purpose: z.string().trim().min(1, PROJECT_ASSIGNMENT_ERRORS.purpose).max(PURPOSE_MAX_LENGTH, PROJECT_ASSIGNMENT_ERRORS.purpose),
   // lineId → 项目号
   projects: z.record(IdSchema, z.string().min(1)),
+  acceptDeadlineWarnings: z.boolean().optional().default(false),
 });
-export type ProjectAssignmentInput = z.infer<typeof ProjectAssignmentInputSchema>;
+export type ProjectAssignmentInput = z.input<typeof ProjectAssignmentInputSchema>;
 
 // 修改当前任务的常驻城市（set-home-city，带 stepToken）：第一次写入报销系统之前都可以改；改后按新城市重新推导费用类别、
 // 整单确认随之失效，并成为这个账号新建任务时的默认值（ADR-0014 经 ADR-0016 修订）。

@@ -1,4 +1,4 @@
-import { isRealDate, type ProjectBookEntry, type Line, type ProjectAssignment, type ProjectOption, type Step, type TaskSnapshot } from '@baox/contract';
+import { isRealDate, type ProjectBookEntry, type Line, type ProjectAssignment, type ProjectDeadlineWarning, type ProjectLineAssignment, type ProjectOption, type Step, type TaskSnapshot } from '@baox/contract';
 
 // 个人项目簿夹具：虚构的项目号与名称，以及 mock「报销系统项目目录」。
 // 可选判定、状态标签与说明照内核 projects.mjs annotateProjects 移植（「ERP」写作「报销系统」），由 mock 服务端给出。
@@ -130,6 +130,20 @@ function toAssignments(projects: Readonly<Record<string, string>>, allowList: re
   return Object.entries(projects).map(([lineId, projectNumber]) => ({ lineId, projectNumber, projectName: projectName(projectNumber, allowList), projectSource: projectSource(projectNumber, allowList) }));
 }
 
+export function deadlineWarningsOf(lines: readonly Line[], assignments: readonly ProjectLineAssignment[], projects: readonly ProjectOption[]): ProjectDeadlineWarning[] {
+  const byLine = new Map(assignments.map((assignment) => [assignment.lineId, assignment]));
+  return lines.flatMap<ProjectDeadlineWarning>((line) => {
+    const assignment = byLine.get(line.lineId);
+    if (!assignment) return [];
+    const project = projects.find((candidate) => candidate.source === assignment.projectSource && candidate.number === assignment.projectNumber) ?? projects.find((candidate) => candidate.number === assignment.projectNumber);
+    if (!project?.deadlineOn) return [];
+    const warning = { lineId: line.lineId, lineNo: line.no, projectNumber: assignment.projectNumber, projectName: assignment.projectName, deadlineOn: project.deadlineOn };
+    if (line.endDate !== null && line.date <= project.deadlineOn && line.endDate > project.deadlineOn) return [{ ...warning, kind: 'stay_crosses_deadline' }];
+    if (line.date > project.deadlineOn) return [{ ...warning, kind: 'after_deadline' }];
+    return [];
+  });
+}
+
 // 服务端投影「本次已归入」：working 按明细顺序排好，逐个项目数条数、按分加总价税合计；
 // 不在允许列表里的项目（已删除或失效）标为不可选，已归入的明细可以沿用，但不能再归入新的明细。每份存进去的快照都经过这里。
 export function withProjectUsage(snapshot: TaskSnapshot): TaskSnapshot {
@@ -158,6 +172,7 @@ export function withProjectUsage(snapshot: TaskSnapshot): TaskSnapshot {
       grossTotal: (entry.cents / 100).toFixed(2),
       selectable: allowed.has(entry.number),
     })),
+    deadlineWarnings: deadlineWarningsOf(snapshot.lines, working, assignment.projects),
   };
   return snapshot;
 }
@@ -198,6 +213,7 @@ export function projectAssignmentOpen(homeCity: string, assignments: Readonly<Re
     usage: [],
     grossTotal: '0.00',
     projects: allowList.map((project) => ({ ...project })),
+    deadlineWarnings: [],
     submittedAt: null,
   };
 }
@@ -227,6 +243,7 @@ export function projectAssignmentSubmitted(input: {
     usage: [],
     grossTotal: '0.00',
     projects: allowList.map((project) => ({ ...project })),
+    deadlineWarnings: [],
     submittedAt: input.submittedAt,
   };
 }

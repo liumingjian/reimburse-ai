@@ -20,6 +20,7 @@ import {
   CONFIRMATION_NO_COLUMN,
   CONFIRMATION_TABLE_COLUMNS,
   PREPARATION_PROBLEM_COLUMNS,
+  PROJECT_DEADLINE_WARNING_COPY,
   type Line,
   type TaskSnapshot,
   STAGE_DEFAULT_PAGE,
@@ -28,10 +29,12 @@ import { formatDateTime } from '../format';
 import { navigate, taskHash } from '../router';
 import { ActionBar } from '../shell/ActionBar';
 import { ActionError } from '../shell/ActionError';
+import { ConfirmDialog } from '../shell/Dialog';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
 import { useReopenUpload } from '../shell/useReopenUpload';
 import { PAGE_COPY, REVIEW_ORDER_NOTE } from './page-copy';
+import { DeadlineWarningList } from './DeadlineWarningList';
 
 // 整单明细确认页：Skill 的唯一一次整单确认（preparation_confirmation），在项目归属、报销信息核对与材料准备之后。
 // 表格形状照内核 preparationConfirmationTable（next.mjs:513-559）：No. 加 13 列，按服务端给出的 lines[] 顺序（内核分类排序）逐行列出，
@@ -175,17 +178,27 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const erpDone = erp.outcome === 'filled' || erp.outcome === 'saved';
   const purpose = snapshot.projectAssignment.purpose;
   const packageFiles = preparation.packageFiles;
+  const deadlineWarnings = snapshot.projectAssignment.deadlineWarnings;
 
   const confirmAction = useAction(taskId);
   const claimAction = useAction(taskId);
   const excludeAction = useAction(taskId);
   const reopen = useReopenUpload(snapshot, () => navigate(taskHash(taskId, 'upload')));
   const confirming = confirmAction.busy;
+  const [deadlineConfirmation, setDeadlineConfirmation] = useState(false);
   // 「确认」只在服务端给出 confirm_review 且材料包就绪时可用；有缺项或核对不匹配时不可用。
   const confirmDisabled = confirming || snapshot.lines.length === 0 || step.kind !== 'confirm_review' || preparation.status !== 'ready' || catalogMismatch;
   const exclude = (materialId: string) => excludeAction.run((adapter) => adapter.excludeMaterial(taskId, materialId, step.stepToken));
 
-  const confirm = () => confirmAction.run((adapter) => adapter.confirmReview(taskId, confirmation.digest ?? '', step.stepToken));
+  const confirm = async (acceptDeadlineWarnings = false) => {
+    const outcome = await confirmAction.run((adapter) => adapter.confirmReview(taskId, confirmation.digest ?? '', step.stepToken, acceptDeadlineWarnings));
+    if (outcome.ok) setDeadlineConfirmation(false);
+  };
+  const requestConfirm = () => {
+    confirmAction.clearError();
+    if (deadlineWarnings.length > 0) setDeadlineConfirmation(true);
+    else void confirm();
+  };
   const claim = async () => {
     const outcome = await claimAction.run((adapter) => adapter.startErpWrite(taskId, step.stepToken));
     if (outcome.ok) navigate(taskHash(taskId, 'erp'));
@@ -208,6 +221,13 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
       {confirmation.status === 'invalidated' && confirmation.notice ? (
         <InlineNotification className="app-notice-block" kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={confirmation.notice} />
+      ) : null}
+
+      {!confirmed && deadlineWarnings.length > 0 ? (
+        <InlineNotification kind="warning" role="alert" lowContrast hideCloseButton statusIconDescription="注意" title={PROJECT_DEADLINE_WARNING_COPY.title}>
+          <p>{PROJECT_DEADLINE_WARNING_COPY.notice}</p>
+          <DeadlineWarningList warnings={deadlineWarnings} />
+        </InlineNotification>
       ) : null}
 
       {/* 摘要条：数字全部来自快照（服务端给出的条数、张数与价税合计），页面不计算。材料包清单默认收起。 */}
@@ -465,7 +485,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
                   <Button kind="ghost" size="md" href={taskHash(taskId, 'pending')}>
                     回到待确认项
                   </Button>
-                  <Button kind="primary" size="md" disabled={confirmDisabled} onClick={() => void confirm()}>
+                  <Button kind="primary" size="md" disabled={confirmDisabled} onClick={requestConfirm}>
                     确认整单明细
                   </Button>
                 </>
@@ -474,6 +494,23 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
           }
           error={confirmAction.error}
         />
+      ) : null}
+
+      {deadlineConfirmation ? (
+        <ConfirmDialog
+          title={PROJECT_DEADLINE_WARNING_COPY.title}
+          confirmLabel={PROJECT_DEADLINE_WARNING_COPY.continue}
+          busy={confirmAction.busy}
+          error={confirmAction.error}
+          onConfirm={() => void confirm(true)}
+          onCancel={() => {
+            confirmAction.clearError();
+            setDeadlineConfirmation(false);
+          }}
+        >
+          <p>{PROJECT_DEADLINE_WARNING_COPY.notice}</p>
+          <DeadlineWarningList warnings={deadlineWarnings} />
+        </ConfirmDialog>
       ) : null}
 
       {reopen.dialog}
