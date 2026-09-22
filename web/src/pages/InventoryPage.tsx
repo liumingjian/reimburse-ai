@@ -124,6 +124,25 @@ function MaterialTable({ label, materials, note }: { label: string; materials: r
                 </div>
               ) : null}
               <div className="app-caption">{MATERIAL_ROLE_LABELS[material.role]}</div>
+              {material.variants.length > 0 ? (
+                <details className="app-material-variants">
+                  <summary>已合并 {material.variants.length} 个版本</summary>
+                  <ul>
+                    {material.variants.map((variant) => (
+                      <li key={variant.materialId}>
+                        {variant.originalUrl ? (
+                          <a href={variant.originalUrl} target="_blank" rel="noreferrer">
+                            查看「{variant.fileName}」原件
+                          </a>
+                        ) : (
+                          <span>「{variant.fileName}」原件</span>
+                        )}
+                        {variant.relativePath !== variant.fileName ? <span className="app-caption">来源：{variant.relativePath}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
             </TableCell>
             <TableCell>
               {material.kindLabel}
