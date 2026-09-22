@@ -23,7 +23,7 @@ const KEY_TEXT: Readonly<Record<TaskStage, string>> = {
   review: '确认后即可去打印、去报销',
   actions: '整单明细已确认',
   erp: '我已登录，继续',
-  done: 'BX20260911-0173',
+  done: '尚无',
   reconcile: '写入结果不确定',
   // A voided T1 has no materials yet; its only page is upload.
   voided: '把材料拖到这里',
@@ -58,7 +58,7 @@ async function shot(page: Page, testInfo: TestInfo) {
 
 const pdf = (name: string) => ({ name, mimeType: 'application/pdf', buffer: Buffer.from(`%PDF-1.4 ${name}`) });
 
-// ?seed=erp：已点「去报销」、浏览器等待登录（没有「开始填报」）；登录后自动写入。
+// The ERP seed is waiting for the employee to log in to the task's ERP tab.
 async function startErp(page: Page, fault: Fault) {
   await page.goto(open(`?seed=erp&fault=${fault}`, '#/task/T1/erp'));
   await page.getByRole('button', { name: '我已登录，继续' }).click();
@@ -68,10 +68,10 @@ async function startErp(page: Page, fault: Fault) {
 const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = {
   'duplicate-upload': async (page) => {
     await page.goto(open('?fault=duplicate-upload', '#/task/T1/upload'));
-    await page.locator('input[type=file]').setInputFiles([pdf('铁路电子客票_0809.pdf')]);
+    await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles([pdf('铁路电子客票_0809.pdf')]);
     await expect(page.getByRole('heading', { name: /^上传批次 #1$/ })).toBeVisible();
     await page.getByRole('button', { name: '追加下一批' }).click();
-    await page.locator('input[type=file]').setInputFiles([pdf('铁路电子客票_0822.pdf'), pdf('餐饮_发票.pdf')]);
+    await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles([pdf('铁路电子客票_0822.pdf'), pdf('餐饮_发票.pdf')]);
     await expect(page.getByText(/^内容重复/)).toBeVisible();
     await expect(page.getByRole('heading', { name: '上传批次 #2' })).toBeVisible();
   },
@@ -88,7 +88,7 @@ const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = 
   'erp-write-aborted': async (page) => {
     await startErp(page, 'erp-write-aborted');
     await expect(page).toHaveURL(/#\/task\/T1\/reconcile$/);
-    await expect(page.getByRole('region', { name: '中止原因' })).toContainText('交接单据时报销系统没有在限定时间内返回结果');
+    await expect(page.getByRole('region', { name: '中止原因' })).toContainText('交接单据时没有读到报销系统的结果');
   },
   // 写入前就停下：阶段退回 actions，填报页当场关上，守卫页说出原因；回到整单确认页可以直接再去报销。
   'erp-stopped-before-write': async (page) => {

@@ -42,8 +42,8 @@ async function pastCatalog(channel: ExecutorChannel) {
 export const loginWall: Script = async (_plan, channel) => {
   await reachLogin(channel);
   await channel.emit({ type: 'step', step: 'login', status: 'done' });
-  await channel.emit({ type: 'waiting_login', hint: '请在报销专用 Chromium 浏览器中登录' });
-  return result(channel, 'waiting_login', 'erp_login', '请在报销专用 Chromium 浏览器中登录');
+  await channel.emit({ type: 'waiting_login', hint: '请在为这次报销打开的报销系统标签页中登录' });
+  return result(channel, 'waiting_login', 'erp_login', '请在为这次报销打开的报销系统标签页中登录');
 };
 
 /** 报销信息核对 finds the first project renamed in ERP: aborts before import. */
@@ -90,7 +90,7 @@ export const handedOver = (erpAccount = TEST_ERP_ACCOUNT): Script => async (plan
 
 // A 1×1 PNG: stands in for the cropped screenshot of ERP's error dialog.
 export const TINY_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-export const UNCERTAIN_SAVE_ERP_TEXT = '保存超时：服务器繁忙，请稍后重试。';
+export const UNCERTAIN_SAVE_ERP_TEXT = '保存未完成：报销系统没有返回处理结果。';
 
 /** Imports and fills, then the save times out with an ERP dialog: ERP 写入结果未知, with ERP's own text and a screenshot. */
 export const uncertainSave: Script = async (plan, channel) => {
@@ -102,7 +102,7 @@ export const uncertainSave: Script = async (plan, channel) => {
   await attempt(plan, channel, 'save', 2, TEST_ERP_ACCOUNT);
   await channel.emit({ type: 'step', step: 'save', status: 'running' });
   await channel.emit({ type: 'step', step: 'save', status: 'failed' });
-  const event: ResultEvent = { type: 'result', status: 'unknown', code: 'save_timeout', message: '保存草稿后报销系统没有在限定时间内返回结果', billNo: null, capture: { erpText: [UNCERTAIN_SAVE_ERP_TEXT], screenshot: TINY_PNG } };
+  const event: ResultEvent = { type: 'result', status: 'unknown', code: 'save_result_unknown', message: '保存后没有读到报销系统的结果', billNo: null, capture: { erpText: [UNCERTAIN_SAVE_ERP_TEXT], screenshot: TINY_PNG } };
   await channel.emit(event);
   return event;
 };

@@ -55,13 +55,22 @@ test.describe('ERP 还停在登录页', () => {
     await page.getByRole('button', { name: '去报销', exact: true }).click();
 
     await expect(page).toHaveURL(new RegExp(`#/task/${taskId}/erp$`));
-    await expect(page.getByRole('heading', { name: '保存报销草稿' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '填写报销单' })).toBeVisible();
     await expect.poll(async () => (await snapshotOf(page, taskId)).step.kind).toBe('erp_login');
     const paused = await snapshotOf(page, taskId);
-    expect(paused).toMatchObject({ stage: 'erp', erp: { status: 'waiting_login' } });
-    // Nothing was written, so the task is still voidable: the pause happens before any ERP action attempt.
+    expect(paused).toMatchObject({
+      stage: 'erp',
+      erp: {
+        status: 'waiting_login',
+        currentStage: 'login',
+        externalWait: 'employee_login',
+        outcome: 'none',
+        allowedActions: ['refresh', 'confirm_login', 'cancel'],
+      },
+    });
+    // The active ERP lease keeps cancellation unavailable while the employee login is pending.
     const list = TaskListSchema.parse(await (await page.request.get('/api/tasks')).json());
-    expect(list.tasks.find((task) => task.taskId === taskId)).toMatchObject({ abandonable: true });
+    expect(list.tasks.find((task) => task.taskId === taskId)).toMatchObject({ abandonable: false });
 
     await page.getByRole('button', { name: '取消去报销' }).click();
     await expect(page).toHaveURL(new RegExp(`#/task/${taskId}/review$`));
