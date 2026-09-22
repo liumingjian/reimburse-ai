@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# The root-invoked, host-local client for baox's maintenance socket. It accepts exactly one command and reads its
+# credential from a root/baox-owned file; neither the token nor an overridable target appears in operator arguments.
+set -euo pipefail
+
+readonly DEPLOY=/opt/tools/baox
+readonly NODE="$DEPLOY/runtime/node/bin/node"
+readonly SOCKET="$DEPLOY/data/maintenance-gate.sock"
+readonly TOKEN_FILE="$DEPLOY/etc/maintenance-gate.token"
+
+command=${1:-}
+case "$command" in
+  status|admit|reopen) ;;
+  *)
+    printf 'usage: baox-maintenance-gate {status|admit|reopen}\n' >&2
+    exit 64
+    ;;
+esac
+[[ $# -eq 1 ]] || {
+  printf 'usage: baox-maintenance-gate {status|admit|reopen}\n' >&2
+  exit 64
+}
+[[ -x $NODE && -f $TOKEN_FILE && ! -L $TOKEN_FILE ]] || exit 69
+
+exec "$NODE" - "$command" "$SOCKET" "$TOKEN_FILE" <<'NODE'
+const fs = require('node:fs');
+const net = require('node:net');
+
+const [command, socketPath, tokenPath] = process.argv.slice(2);
+let token;
+try {
+  token = fs.readFileSync(tokenPath, 'utf8').trim();
+} catch {
+  process.exit(69);
+}
+if (!/^[A-Za-z0-9_-]{32,}$/.test(token)) process.exit(65);
+
+const states = new Set(['open', 'admitting', 'admitted', 'refused', 'unknown']);
+const client = net.createConnection(socketPath);
+let buffer = '';
+let finished = false;
+
+const fail = (code) => {
+  if (finished) return;
+  finished = true;
+  client.destroy();
+  process.exit(code);
+};
+
+const done = (value) => {
+  if (finished) return;
+  const valid = value
+    && value.version === 1
+    && states.has(value.state)
+    && typeof value.barrier === 'boolean'
+    && (typeof value.activeWrites === 'number' || value.activeWrites === 'unknown')
+    && (typeof value.activeErpAttempt === 'boolean' || value.activeErpAttempt === 'unknown')
+    && (value.reason === undefined || typeof value.reason === 'string');
+  if (!valid) return fail(65);
+  finished = true;
+  const response = {
+    version: value.version,
+    state: value.state,
+    barrier: value.barrier,
+    activeWrites: value.activeWrites,
+    activeErpAttempt: value.activeErpAttempt,
+    ...(value.reason === undefined ? {} : { reason: value.reason }),
+  };
+  process.stdout.write(`${JSON.stringify(response)}\n`);
+  client.end();
+};
+
+client.setTimeout(5_000, () => fail(69));
+client.once('error', () => fail(69));
+client.on('connect', () => client.write(`${JSON.stringify({ version: 1, command, token })}\n`));
+client.on('data', (chunk) => {
+  buffer += chunk.toString('utf8');
+  if (Buffer.byteLength(buffer) > 4096) return fail(65);
+  const newline = buffer.indexOf('\n');
+  if (newline < 0) return;
+  try {
+    done(JSON.parse(buffer.slice(0, newline)));
+  } catch {
+    fail(65);
+  }
+});
+client.once('end', () => {
+  if (!finished) fail(65);
+});
+NODE

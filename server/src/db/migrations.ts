@@ -607,6 +607,21 @@ const extensionVersion253: Migration = {
   },
 };
 
+// #265: the maintenance barrier has one durable row. `state` deliberately has no SQL CHECK: a damaged or manually
+// altered value must reach the server as an unknown state and close the gate, rather than being normalised by SQLite.
+const maintenanceGate265: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('maintenance_gate')
+      .addColumn('gate_id', 'text', (c) => c.primaryKey())
+      .addColumn('state', 'text', (c) => c.notNull())
+      .addColumn('updated_at', 'text', (c) => c.notNull())
+      .execute();
+    // A row is created with the table, so a later missing row is never mistaken for a fresh installation and opened.
+    await sql`INSERT INTO maintenance_gate (gate_id, state, updated_at) VALUES ('main', 'open', ${new Date().toISOString()})`.execute(db);
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -630,4 +645,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0014_242_refill_trigger': refillTrigger242,
   '0015_252_extension_pairing': extensionPairing252,
   '0016_253_extension_version': extensionVersion253,
+  '0017_265_maintenance_gate': maintenanceGate265,
 };

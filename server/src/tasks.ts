@@ -48,6 +48,7 @@ import { COMPANY_RULES, pinnedCompanyRules, putRuleSet, validHomeCity, type Comp
 import { rememberedHomeCity, rememberHomeCity } from './settings';
 import { confirmationDigest, confirmationStatus, confirmationView, type ConfirmationDigest, type ConfirmationFact } from './confirmation';
 import type { ErpLease } from './erp-lease';
+import type { MaintenanceLease } from './maintenance';
 import type { ErpConfig } from './erp/config';
 import { buildFillJob, type FrozenJob } from './erp/fill-plan';
 import { newJobId, type FillRun, type FillTrigger } from './erp/fill-jobs';
@@ -154,6 +155,9 @@ const STALE_JOB = { code: 'stale_job', message: 'the inventory run changed under
 export type ErpServiceOptions = {
   lease: ErpLease; config: ErpConfig; run: (job: FillRun) => void; reconcile: (job: ReconcileRun) => void;
   executorReady?: (tx: Db, accountId: string) => Promise<Refusal | null>;
+  // Acquired beside the durable job row, before the runner can start. This closes the admission race with a new job.
+  acquireErp?: () => MaintenanceLease | null;
+  acquireBackground?: () => MaintenanceLease | null;
 };
 
 export const RECONCILE_COPY = {
@@ -423,9 +427,14 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
           // The recovery replaces the unsaved bill it was offered over; ERP keeps that bill's tab open, and reusing it
           // would put the re-import on a form that already holds its 收票行 (live 2026-09-21).
           const job: FrozenJob = { ...frozen, plan: { ...frozen.plan, jobId, ...(recovery ? { replaceAbandonedForm: true } : {}) } };
+          const maintenance = erp.acquireErp ? erp.acquireErp() : { release: () => undefined };
+          if (!maintenance) return { code: 'maintenance_in_progress', message: '系统正在维护，暂时不能开始报销系统操作。' };
           // Taken for this job, not for the task: the run that ends gives back only its own lease.
-          if (!erp.lease.acquire({ accountId, taskId, jobId })) return inUse;
-          started.run = { jobId, accountId, taskId, trigger, frozen: job };
+          if (!erp.lease.acquire({ accountId, taskId, jobId })) {
+            maintenance.release();
+            return inUse;
+          }
+          started.run = { jobId, accountId, taskId, trigger, frozen: job, maintenance };
           await tx.insertInto('erp_job').values({ job_id: jobId, task_id: taskId, account_id: accountId, kind: 'fill', trigger, confirmation_digest: digest, plan: JSON.stringify(job), revision, started_at: at }).execute();
         },
         // `erpAction` only for the recovery: it is what lets this one action through the two refusals a reconciling,
@@ -436,7 +445,10 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       return snapshot;
     } catch (error) {
       // The change was not stored after the lease was taken: give back this job's lease (never a later job's).
-      if (started.run) erp?.lease.release(started.run.jobId);
+      if (started.run) {
+        erp?.lease.release(started.run.jobId);
+        started.run.maintenance?.release();
+      }
       throw error;
     }
   }
@@ -772,8 +784,13 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
             const holder = erp.lease.holder(accountId);
             if (holder && holder.taskId !== taskId) return { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
             const jobId = newJobId();
-            if (!erp.lease.acquire({ accountId, taskId, jobId })) return { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
-            started.run = { jobId, accountId, taskId, plan: { protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId, taskId, erpOrigin: loaded.erp.frozen?.plan.erpOrigin ?? erp.config.origin } };
+            const maintenance = erp.acquireBackground ? erp.acquireBackground() : { release: () => undefined };
+            if (!maintenance) return { code: 'maintenance_in_progress', message: '系统正在维护，暂时不能开始对账。' };
+            if (!erp.lease.acquire({ accountId, taskId, jobId })) {
+              maintenance.release();
+              return { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
+            }
+            started.run = { jobId, accountId, taskId, plan: { protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId, taskId, erpOrigin: loaded.erp.frozen?.plan.erpOrigin ?? erp.config.origin }, maintenance };
             await tx.insertInto('erp_reconcile_job').values({ job_id: jobId, fill_job_id: loaded.erp.job.job_id, task_id: taskId, account_id: accountId, revision, started_at: at }).execute();
           },
           { erpAction: true },
@@ -781,7 +798,10 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
         if (started.run) erp?.reconcile(started.run);
         return snapshot;
       } catch (error) {
-        if (started.run) erp?.lease.release(started.run.jobId);
+        if (started.run) {
+          erp?.lease.release(started.run.jobId);
+          started.run.maintenance?.release();
+        }
         throw error;
       }
     },
