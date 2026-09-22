@@ -42,7 +42,7 @@ describe('个人项目簿 #/projects', () => {
 
     expect(await screen.findByRole('heading', { name: '个人项目簿', level: 1 })).toBeTruthy();
     expect(screen.getByText('录入项目号和项目名称后，可在新的项目归属中选择。提交去报销前仍会核对项目。')).toBeTruthy();
-    expect(within(personalTable()).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['项目号', '名称', '状态', '']);
+    expect(within(personalTable()).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['项目号', '名称', '截止日期', '状态', '']);
     expect(await within(publicTable()).findByTestId('book-row-PUB-100')).toBeTruthy();
     expect(within(publicTable()).getByText('全员共享项目')).toBeTruthy();
     expect(screen.queryByLabelText('公共项目号')).toBeNull();

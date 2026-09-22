@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { App } from '../App';
-import { UPLOAD_MAX_FILE_BYTES } from '@baox/contract';
+import { UPLOAD_MAX_FILE_BYTES, type ActionOutcome, type AppAdapter, type UploadTransferProgress } from '@baox/contract';
 import { createMockAdapter } from '../mock/mock-adapter';
 import type { Fault } from '../mock/options';
 import { UPLOAD_NEXT_STEP, UPLOAD_ORIGINALS_NOTE, UPLOAD_PROMPT, UPLOAD_TITLE } from './UploadPage';
@@ -9,6 +9,43 @@ import { UPLOAD_NEXT_STEP, UPLOAD_ORIGINALS_NOTE, UPLOAD_PROMPT, UPLOAD_TITLE } 
 function renderUpload(fault: Fault | null = null) {
   window.location.hash = '#/task/T1/upload';
   return render(<App adapter={createMockAdapter({ seed: null, fault })} />);
+}
+
+function renderControlledUpload() {
+  const original = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 60_000 });
+  let report: ((progress: UploadTransferProgress) => void) | null = null;
+  let resolve: ((outcome: ActionOutcome) => void) | null = null;
+  let pending: { taskId: string; files: readonly File[] } | null = null;
+  const adapter: AppAdapter = {
+    ...original,
+    uploadBatch(taskId, files, onProgress) {
+      report = onProgress ?? null;
+      pending = { taskId, files };
+      return new Promise<ActionOutcome>((complete) => {
+        resolve = complete;
+      });
+    },
+  };
+  window.location.hash = '#/task/T1/upload';
+  render(<App adapter={adapter} />);
+  return {
+    get ready() {
+      return report !== null && resolve !== null && pending !== null;
+    },
+    async emit(progress: UploadTransferProgress) {
+      const callback = report;
+      if (!callback) throw new Error('上传进度回调尚未准备好');
+      await act(async () => callback(progress));
+    },
+    async accept() {
+      const complete = resolve;
+      const upload = pending;
+      if (!complete || !upload) throw new Error('受控上传尚未准备好');
+      await act(async () => {
+        complete(await original.uploadBatch(upload.taskId, upload.files));
+      });
+    },
+  };
 }
 
 function pdf(name: string, body = '%PDF-1.4 fixture') {
@@ -62,6 +99,34 @@ describe('上传材料', () => {
     expect(opened).toBe(1);
     fireEvent.keyDown(zone, { key: 'Enter', code: 'Enter', keyCode: 13 });
     expect(opened).toBe(2);
+  });
+
+  test('已知字节、未知总量和服务端确认分开显示；接收后由员工开始盘点', async () => {
+    const control = renderControlledUpload();
+    await screen.findByRole('button', { name: UPLOAD_PROMPT });
+    chooseFiles([pdf('受控传输.pdf')]);
+    await waitFor(() => expect(control.ready).toBe(true));
+
+    await control.emit({ phase: 'transferring', loadedBytes: 2048, totalBytes: 8192 });
+    expect(screen.getByRole('status').textContent).toBe('正在传输 1 份文件：2 KB / 8 KB');
+    expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('2048');
+
+    await control.emit({ phase: 'transferring', loadedBytes: 2048, totalBytes: null });
+    expect(screen.getByRole('status').textContent).toBe('正在传输 1 份文件，暂时无法计算总进度…');
+    expect(screen.queryByText(/\d+%/)).toBeNull();
+
+    await control.emit({ phase: 'awaiting_acceptance' });
+    expect(screen.getByRole('status').textContent).toBe('文件已传输，正在等待服务端确认接收结果…');
+
+    await control.accept();
+    await batchPanel('上传批次 #1');
+    expect(window.location.hash).toBe('#/task/T1/upload');
+    expect(screen.getByRole('button', { name: '开始材料盘点' })).toBeTruthy();
+    expect(screen.queryByText(/^正在盘点：/)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '开始材料盘点' }));
+    await waitFor(() => expect(window.location.hash).toBe('#/task/T1/inventory'));
+    expect(await screen.findByText(/^正在盘点：/)).toBeTruthy();
   });
 
   test('逐文件显示接收与拒绝：类型不支持、超过 20MB、HEIC、内容重复', async () => {

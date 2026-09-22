@@ -29,6 +29,9 @@ export const UPLOAD_REJECT_MESSAGES: Readonly<Record<UploadRejectCode, string>> 
 export const UploadFileResultSchema = z.object({
   fileId: IdSchema,
   fileName: z.string().min(1),
+  // Relative source provenance. A single-file selection uses the file name; a directory selection keeps its nested
+  // folders (for example `travel/2026-08/hotel/invoice.pdf`).
+  relativePath: z.string().min(1),
   size: z.number().int().nonnegative(),
   status: z.enum(['accepted', 'rejected']),
   // 已接收的文件有内容哈希（sha256 十六进制），页面显示前 8 位作为身份；被拒绝的为 null。
@@ -103,10 +106,26 @@ export const MATERIAL_ROLE_LABELS: Readonly<Record<MaterialRole, string>> = {
   excluded: '已排除',
 };
 
+// A retained source that supports the same invoice as its parent material. The parent is the canonical material for
+// the reimbursement flow; variants remain independently inspectable and are never deleted by the projection.
+export const MaterialVariantSchema = z.object({
+  materialId: IdSchema,
+  fileName: z.string().min(1),
+  relativePath: z.string().min(1),
+  contentHash: z.string().min(1),
+  size: z.number().int().nonnegative(),
+  mediaType: z.enum(['pdf', 'image']),
+  originalUrl: UrlSchema.nullable(),
+  previewUrl: UrlSchema.nullable(),
+});
+export type MaterialVariant = z.infer<typeof MaterialVariantSchema>;
+
 export const MaterialSchema = z.object({
   materialId: IdSchema,
   batchId: IdSchema,
   fileName: z.string().min(1),
+  // Relative source provenance, retained independently of the display file name.
+  relativePath: z.string().min(1),
   contentHash: z.string().min(1),
   size: z.number().int().nonnegative(),
   // 材料种类; null before inventory and while unrecognised (manual fill sets it, #187).
@@ -127,6 +146,8 @@ export const MaterialSchema = z.object({
   pendingItemIds: z.array(IdSchema),
   originalUrl: UrlSchema.nullable(),
   previewUrl: UrlSchema.nullable(),
+  // Alternate originals of this invoice. The server chooses the canonical material; clients only render this list.
+  variants: z.array(MaterialVariantSchema),
   fields: z.array(FieldCandidateSchema),
 });
 export type Material = z.infer<typeof MaterialSchema>;
@@ -562,6 +583,8 @@ export const ProjectOptionSchema = z.object({
   number: z.string().min(1),
   name: z.string().min(1),
   source: ProjectSourceSchema,
+  // Advisory project-book fact. It is omitted for projects without a deadline to preserve older snapshot fixtures.
+  deadlineOn: DateSchema.nullable().optional(),
 });
 export type ProjectOption = z.infer<typeof ProjectOptionSchema>;
 
@@ -591,6 +614,17 @@ export const ProjectLineAssignmentSchema = z.object({
 });
 export type ProjectLineAssignment = z.infer<typeof ProjectLineAssignmentSchema>;
 
+export const PROJECT_DEADLINE_WARNING_KINDS = ['after_deadline', 'stay_crosses_deadline'] as const;
+export const ProjectDeadlineWarningSchema = z.object({
+  lineId: IdSchema,
+  lineNo: z.number().int().positive(),
+  projectNumber: z.string().min(1),
+  projectName: z.string().min(1),
+  deadlineOn: DateSchema,
+  kind: z.enum(PROJECT_DEADLINE_WARNING_KINDS),
+});
+export type ProjectDeadlineWarning = z.infer<typeof ProjectDeadlineWarningSchema>;
+
 export const ProjectAssignmentSchema = z.object({
   status: z.enum(PROJECT_ASSIGNMENT_STATUSES),
   // 报销事由，至多 100 个字；未填为 null。
@@ -613,6 +647,7 @@ export const ProjectAssignmentSchema = z.object({
   reselect: z.array(ProjectLineAssignmentSchema),
   // 允许列表（只含可选项目），打开页面时整份给出；搜索只缩小显示，不缩小允许列表。
   projects: z.array(ProjectOptionSchema),
+  deadlineWarnings: z.array(ProjectDeadlineWarningSchema),
   submittedAt: DateTimeSchema.nullable(),
 });
 export type ProjectAssignment = z.infer<typeof ProjectAssignmentSchema>;

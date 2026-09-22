@@ -109,10 +109,10 @@ export interface AppAdapter {
   subscribe(taskId: string, onEvent: (event: AdapterEvent) => void): Unsubscribe;
 
   createTask(input: CreateTaskInput): Promise<ActionOutcome>;
-  uploadBatch(taskId: string, files: readonly File[]): Promise<ActionOutcome>;
+  uploadBatch(taskId: string, files: readonly File[], onProgress?: (progress: UploadTransferProgress) => void): Promise<ActionOutcome>;
   startInventory(taskId: string, stepToken: string): Promise<ActionOutcome>;
   answerPendingItem(taskId: string, itemId: string, answer: PendingAnswer, stepToken: string): Promise<ActionOutcome>;
-  confirmReview(taskId: string, digest: string, stepToken: string): Promise<ActionOutcome>;
+  confirmReview(taskId: string, digest: string, stepToken: string, acceptDeadlineWarnings?: boolean): Promise<ActionOutcome>;
   // 确认后追加材料：先经页面二次确认，再请服务端使整单明细确认失效并回到上传阶段。
   reopenUpload(taskId: string, stepToken: string): Promise<ActionOutcome>;
   // 支付截图只进打印稿，不带 stepToken、不改变确认状态。
@@ -139,3 +139,9 @@ export interface AppAdapter {
   // 重新去报销：发票已导入、明细还没写、报销系统里还没有单据编号时的那条出路。重开一张单据，从头走一遍去报销。
   refill(taskId: string, stepToken: string): Promise<ActionOutcome>;
 }
+
+// Ephemeral transport measurements. Acceptance and recognition come from the returned or reloaded task snapshot,
+// never from a completed byte counter.
+export type UploadTransferProgress =
+  | { phase: 'transferring'; loadedBytes: number; totalBytes: number | null }
+  | { phase: 'awaiting_acceptance' };

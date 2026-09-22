@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { PROJECT_ASSIGNMENT_ERRORS, type Line, type ProjectAssignment, type ProjectUsage } from '@baox/contract';
+import { PROJECT_ASSIGNMENT_ERRORS, type Line, type ProjectAssignment, type ProjectDeadlineWarning, type ProjectUsage } from '@baox/contract';
 import type { BookOption } from './books';
 
 // 项目归属 (project assignment) as a pure fold over its facts: `assign-project-lines` edits the working draft,
@@ -28,8 +28,24 @@ export type Assignment = {
   working: ReadonlyMap<string, PinnedProject>;
 };
 
+type SubmissionCheck = { selection: Record<string, PinnedProject>; deadlineWarnings: ProjectDeadlineWarning[] };
+
 const cents = (amount: string) => Math.round(Number(amount) * 100);
 const yuan = (value: number) => (value / 100).toFixed(2);
+
+function deadlineWarningsOf(lines: readonly Line[], selection: Readonly<Record<string, PinnedProject>>, options: readonly BookOption[]): ProjectDeadlineWarning[] {
+  return lines.flatMap<ProjectDeadlineWarning>((line) => {
+    const selected = selection[line.lineId];
+    if (!selected) return [];
+    const current = options.find((option) => option.source === selected.source && option.number === selected.number) ?? options.find((option) => option.number === selected.number);
+    const deadlineOn = current?.deadlineOn ?? selected.deadlineOn;
+    if (!deadlineOn) return [];
+    const warning = { lineId: line.lineId, lineNo: line.no, projectNumber: selected.number, projectName: selected.name, deadlineOn };
+    if (line.endDate !== null && line.date <= deadlineOn && line.endDate > deadlineOn) return [{ ...warning, kind: 'stay_crosses_deadline' as const }];
+    if (line.date > deadlineOn) return [{ ...warning, kind: 'after_deadline' as const }];
+    return [];
+  });
+}
 
 export function assignmentOf(lines: readonly Line[], facts: readonly AssignmentFact[], options: readonly BookOption[], homeCity: string, entered: boolean): Assignment {
   const ordered = [...facts].sort((a, b) => a.revision - b.revision);
@@ -69,6 +85,13 @@ export function assignmentOf(lines: readonly Line[], facts: readonly AssignmentF
     usage.set(project.number, entry);
   }
 
+  const projectView = (project: PinnedProject) => ({
+    number: project.number,
+    name: project.name,
+    source: project.source,
+    ...(project.deadlineOn === undefined ? {} : { deadlineOn: project.deadlineOn }),
+  });
+
   return {
     submitted,
     working,
@@ -81,7 +104,8 @@ export function assignmentOf(lines: readonly Line[], facts: readonly AssignmentF
       reselect: inLineOrder(dropped),
       usage: [...usage.values()].map(({ cents: total, ...entry }) => ({ ...entry, grossTotal: yuan(total) })),
       grossTotal: yuan(lines.reduce((sum, line) => sum + cents(line.grossAmount), 0)),
-      projects: options.map((option) => ({ number: option.number, name: option.name, source: option.source })),
+      projects: options.map(projectView),
+      deadlineWarnings: deadlineWarningsOf(lines, Object.fromEntries(working), options),
       submittedAt: submitted?.submittedAt ?? null,
     },
   };
@@ -99,7 +123,7 @@ export function checkAssign(lines: readonly Line[], lineIds: readonly string[], 
 
 // Submit: every line needs a project, and each project must be selectable now, or be the very project the standing
 // submission already pinned on that line (kernel `canKeepPrevious`): a later book edit neither breaks nor changes it.
-export function checkSubmit(lines: readonly Line[], projects: Readonly<Record<string, string>>, options: readonly BookOption[], standing: SubmitFact | null): { selection: Record<string, PinnedProject> } | Refusal {
+export function checkSubmit(lines: readonly Line[], projects: Readonly<Record<string, string>>, options: readonly BookOption[], standing: SubmitFact | null): SubmissionCheck | Refusal {
   const known = new Set(lines.map((line) => line.lineId));
   const unknown = Object.keys(projects).find((lineId) => !known.has(lineId));
   if (unknown) return { code: 'unknown_line', message: PROJECT_ASSIGNMENT_ERRORS.unknownLine(unknown) };
@@ -114,5 +138,5 @@ export function checkSubmit(lines: readonly Line[], projects: Readonly<Record<st
     // A kept project keeps its pinned name and source even when the book now says otherwise.
     selection[line.lineId] = kept?.number === number ? kept : pinned;
   }
-  return { selection };
+  return { selection, deadlineWarnings: deadlineWarningsOf(lines, selection, options) };
 }

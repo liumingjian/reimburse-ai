@@ -23,6 +23,7 @@ export type ViewMaterial = {
   materialId: string;
   batchId: string;
   fileName: string;
+  relativePath: string;
   contentHash: string;
   size: number;
   mediaType: 'pdf' | 'image';
@@ -122,6 +123,93 @@ const pendingField = (slot: Slot): PendingField => ({ key: slot.key, label: slot
 const nonEmpty = (values: Readonly<Record<string, string>>): Values => Object.fromEntries(Object.entries(values).filter(([, value]) => value !== ''));
 
 const isOpen = (item: PendingItem) => item.status === 'open';
+
+const pairKey = (left: string, right: string) => [left, right].sort().join(':');
+
+function invoiceIdentity(w: Worked): string | null {
+  return w.resolved && !w.reference ? KINDS[w.resolved.kind].identity?.(w.values) ?? null : null;
+}
+
+// A variant must carry every required face fact before it can stand in for another original. Optional facts may be
+// absent on one rendition, but any fact both renditions read must agree.
+function hasCompleteInvoiceContents(w: Worked): boolean {
+  if (!w.resolved || w.reference || w.items.some(isOpen)) return false;
+  return KINDS[w.resolved.kind].slots.filter((slot) => slot.required).every((slot) => (w.values[slot.key] ?? '') !== '');
+}
+
+function invoiceContentsAgree(left: Worked, right: Worked): boolean {
+  if (!left.resolved || !right.resolved || left.resolved.kind !== right.resolved.kind) return false;
+  if (!hasCompleteInvoiceContents(left) || !hasCompleteInvoiceContents(right)) return false;
+  const keys = new Set([...Object.keys(left.values), ...Object.keys(right.values)]);
+  for (const key of keys) {
+    const leftValue = left.values[key];
+    const rightValue = right.values[key];
+    if (leftValue !== undefined && rightValue !== undefined && leftValue !== rightValue) return false;
+  }
+  return true;
+}
+
+type VariantPlan = { included: Worked[]; mergedMaterialIds: ReadonlySet<string>; variantsByCanonical: ReadonlyMap<string, Worked[]>; crossFormatConflicts: ReadonlySet<string> };
+
+function planInvoiceVariants(worked: readonly Worked[], answers: StoredAnswers, answerables: Map<string, Answerable>): VariantPlan {
+  const byIdentity = new Map<string, Worked[]>();
+  for (const w of worked) {
+    const key = invoiceIdentity(w);
+    if (!key) continue;
+    const group = byIdentity.get(key);
+    if (group) group.push(w);
+    else byIdentity.set(key, [w]);
+  }
+
+  const merged = new Set<string>();
+  const variantsByCanonical = new Map<string, Worked[]>();
+  const crossFormatConflicts = new Set<string>();
+  const addConflict = (target: Worked, other: Worked, identity: string) => {
+    const pair = pairKey(target.m.materialId, other.m.materialId);
+    if (crossFormatConflicts.has(pair)) return;
+    crossFormatConflicts.add(pair);
+    const contentRead = hasCompleteInvoiceContents(target) && hasCompleteInvoiceContents(other);
+    const title = contentRead ? '票面内容不一致' : '票面内容无法确认一致';
+    const why = contentRead
+      ? `两份材料的发票身份相同（${identity}），但票面内容不一致。系统没有把它们合并，请对照原件后排除其中一份；${REPLACE_HINT}`
+      : `两份材料的发票身份相同（${identity}），但至少一份没有完整读到票面内容。系统没有把它们合并，请补齐或对照原件后排除其中一份；${REPLACE_HINT}`;
+    for (const [current, counterpart] of [
+      [target, other],
+      [other, target],
+    ] as const) {
+      const item = settle(choice(`cross_format_conflict.${current.m.materialId}.${counterpart.m.materialId}`, current.m.materialId, `「${current.m.fileName}」与「${counterpart.m.fileName}」${title}`, why, [EXCLUDE]), answers);
+      answerables.set(item.itemId, { item });
+      current.items.push(item);
+      current.notes.push(title);
+    }
+  };
+
+  for (const [identity, group] of byIdentity) {
+    const ordered = [...group].sort((left, right) => left.m.uploadSeq - right.m.uploadSeq);
+    const pdfs = ordered.filter((w) => w.m.mediaType === 'pdf');
+    const images = ordered.filter((w) => w.m.mediaType === 'image');
+    const unmatched: Worked[] = [];
+    for (const image of images) {
+      const canonical = pdfs.find((pdf) => invoiceContentsAgree(pdf, image));
+      if (canonical) {
+        merged.add(image.m.materialId);
+        const variants = variantsByCanonical.get(canonical.m.materialId);
+        if (variants) variants.push(image);
+        else variantsByCanonical.set(canonical.m.materialId, [image]);
+      } else {
+        unmatched.push(image);
+      }
+    }
+    for (const image of unmatched) if (pdfs[0]) addConflict(image, pdfs[0], identity);
+  }
+
+  return { included: worked.filter((w) => !merged.has(w.m.materialId)), mergedMaterialIds: merged, variantsByCanonical, crossFormatConflicts };
+}
+
+function variantView(w: Worked): Material['variants'][number] {
+  const { m } = w;
+  return { materialId: m.materialId, fileName: m.fileName, relativePath: m.relativePath, contentHash: m.contentHash, size: m.size, mediaType: m.mediaType, originalUrl: null, previewUrl: null };
+}
 
 // The layout's own source first; a second source (QR) only fills what the face lacks.
 function valuesOf(resolved: Resolved): Values {
@@ -350,12 +438,15 @@ export function inventoryView(
     worked.push(work(m, outcome, answers, answerables, editables));
   }
 
+  const variantPlan = planInvoiceVariants(worked, answers, answerables);
+  const includedWorked = variantPlan.included;
+
   // 重复发票 inside the task: the earlier upload holds the identity; each later one must go (exclusion), be replaced
   // (a new upload and run) or have its identity corrected (a correctable invoice number).
   const claims: Claim[] = [];
   const holder = new Map<string, Worked>();
-  for (const w of worked) {
-    const key = w.resolved && !w.reference ? KINDS[w.resolved.kind].identity?.(w.values) : null;
+  for (const w of includedWorked) {
+    const key = invoiceIdentity(w);
     if (!key) continue;
     const first = holder.get(key);
     if (!first) {
@@ -363,6 +454,7 @@ export function inventoryView(
       claims.push({ key, materialId: w.m.materialId, fileName: w.m.fileName, at: w.m.uploadedAt, seq: w.m.uploadSeq });
       continue;
     }
+    if (variantPlan.crossFormatConflicts.has(pairKey(first.m.materialId, w.m.materialId))) continue;
     const item = settle(
       choice(
         `duplicate_invoice.${w.m.materialId}`,
@@ -380,12 +472,12 @@ export function inventoryView(
 
   // Invoice ↔ itinerary pairing, per-leg lines and allocation items (#184), over the resolved included materials.
   const transport = planTransport(
-    worked.flatMap((w) =>
+    includedWorked.flatMap((w) =>
       w.resolved && !w.reference ? [{ materialId: w.m.materialId, fileName: w.m.fileName, kind: w.resolved.kind, layout: w.resolved.layout ?? '', values: w.values, ok: !w.items.some(isOpen) }] : [],
     ),
     allocationAnswers(answers),
   );
-  for (const w of worked) {
+  for (const w of includedWorked) {
     for (const item of transport.items.get(w.m.materialId) ?? []) {
       // Stored per-leg amounts were already offered to `allocate`; an allocation item still derived despite them stays
       // open. Only a give-up (or a choice) settles here, leaving its blocking given_up item.
@@ -407,7 +499,7 @@ export function inventoryView(
   const drafts: ({ material: ViewMaterial } & PlannedLine)[] = [];
   const pendingItems: PendingItem[] = [];
   const folios: TrioVoucher[] = [];
-  for (const w of worked) {
+  for (const w of includedWorked) {
     const { m, resolved } = w;
     const spec = resolved ? KINDS[resolved.kind] : null;
     if (spec && !w.items.some(isOpen) && !w.reference && spec.role === 'primary_voucher') {
@@ -460,7 +552,7 @@ export function inventoryView(
 
   // The 住宿 invoices are the vouchers the print stage will compose as 住宿 pages, chosen by the same rule.
   const stayIds = stayVoucherIds(ordered.map(({ material, draft }) => ({ voucherMaterialId: material.materialId, category: draft.category })));
-  const stayInvoices: TrioVoucher[] = worked.flatMap((w) => (stayIds.has(w.m.materialId) ? [{ materialId: w.m.materialId, fileName: w.m.fileName, values: w.values }] : []));
+  const stayInvoices: TrioVoucher[] = includedWorked.flatMap((w) => (stayIds.has(w.m.materialId) ? [{ materialId: w.m.materialId, fileName: w.m.fileName, values: w.values }] : []));
 
   // Pairing: a hotel invoice and its folio form one stay (`hotel-stay.ts`).
   const stays = new Map(pairHotelStays(stayInvoices, folios).map((stay) => [stay.invoiceId, stay]));
@@ -473,22 +565,24 @@ export function inventoryView(
     pendingItems.push(...items);
   }
 
-  const materialViews = materials.map((m): Material => {
+  const materialViews = materials.flatMap((m): Material[] => {
+    if (variantPlan.mergedMaterialIds.has(m.materialId)) return [];
     const outcome = results?.outcomes.get(m.materialId);
     const recognised = outcome?.outcome === 'recognised' ? outcome : null;
     if (m.excluded) {
       const identity = recognised ? { kind: recognised.kind, layout: recognised.layout, kindLabel: recognised.kindLabel } : {};
-      return { ...baseMaterial(m), ...identity, role: 'excluded', status: 'excluded', checkText: INVENTORY_COPY.excludedCheck };
+      return [{ ...baseMaterial(m), ...identity, role: 'excluded', status: 'excluded', checkText: INVENTORY_COPY.excludedCheck }];
     }
     const view = views.get(m.materialId) ?? baseMaterial(m);
     // A trio item sits on a material that is otherwise clean: it keeps its role, but is pending while the item is open.
     const trioItems = trio.items.get(m.materialId) ?? [];
-    return {
+    return [{
       ...view,
+      variants: (variantPlan.variantsByCanonical.get(m.materialId) ?? []).map(variantView),
       status: trioItems.some(isOpen) ? 'pending' : view.status,
       pendingItemIds: [...view.pendingItemIds, ...trioItems.map((item) => item.itemId)],
       linkedMaterialIds: linked.get(m.materialId) ?? view.linkedMaterialIds,
-    };
+    }];
   });
 
   const invoiceNo = new Map([...new Set(drafts.map((d) => d.material.materialId))].map((id, index) => [id, index + 1]));
@@ -578,6 +672,7 @@ function baseMaterial(m: ViewMaterial): Material {
     materialId: m.materialId,
     batchId: m.batchId,
     fileName: m.fileName,
+    relativePath: m.relativePath,
     contentHash: m.contentHash,
     size: m.size,
     kind: null,
@@ -593,6 +688,7 @@ function baseMaterial(m: ViewMaterial): Material {
     pendingItemIds: [],
     originalUrl: null,
     previewUrl: null,
+    variants: [],
     fields: [],
   };
 }

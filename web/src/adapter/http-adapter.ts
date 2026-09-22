@@ -21,6 +21,7 @@ import {
   type Session,
   type TaskListOutcome,
   type Unsubscribe,
+  type UploadTransferProgress,
   HTTP_ENDPOINTS,
   SNAPSHOT_EVENT,
   STALE_STEP_HTTP_STATUS,
@@ -48,6 +49,11 @@ import {
 export type HttpAdapterOptions = {
   baseUrl?: string;
 };
+
+function relativePathOf(file: File): string {
+  const selected = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+  return selected || file.name;
+}
 
 export const INVALID_RESPONSE_CODE = 'invalid_response';
 export const NETWORK_ERROR_CODE = 'network';
@@ -449,10 +455,49 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
       };
     },
     createTask: (input) => json(url(E.createTask.path), input),
-    uploadBatch(taskId, files) {
+    uploadBatch(taskId, files, onProgress) {
       const form = new FormData();
-      for (const file of files) form.append('files', file, file.name);
-      return post(url(E.uploadBatch.path, taskId), form);
+      for (const file of files) {
+        form.append('files', file, file.name);
+        form.append('sourcePaths', relativePathOf(file));
+      }
+      if (!onProgress || typeof XMLHttpRequest === 'undefined') return post(url(E.uploadBatch.path, taskId), form);
+      return new Promise<ActionOutcome>((resolve) => {
+        const request = new XMLHttpRequest();
+        let finished = false;
+        const finish = (outcome: ActionOutcome) => {
+          if (finished) return;
+          finished = true;
+          resolve(outcome);
+        };
+        const interrupted = () => finish({ ok: false, error: { code: 'upload_interrupted', message: '上传连接中断，接收结果尚未确认。请先查看任务中已记录的材料，再重新选择未接收的文件。' }, snapshot: null });
+        const report = (progress: UploadTransferProgress) => {
+          if (!finished) onProgress(progress);
+        };
+        request.upload.onprogress = (event) => report({ phase: 'transferring', loadedBytes: event.loaded, totalBytes: event.lengthComputable && event.total > 0 ? event.total : null });
+        request.upload.onload = () => report({ phase: 'awaiting_acceptance' });
+        request.upload.onerror = interrupted;
+        request.upload.onabort = interrupted;
+        request.upload.ontimeout = interrupted;
+        request.onload = () => {
+          if (request.status === 0) interrupted();
+          else finish(parseActionResponse(request.status, request.response));
+        };
+        request.onerror = interrupted;
+        request.onabort = interrupted;
+        request.ontimeout = interrupted;
+        try {
+          request.open('POST', url(E.uploadBatch.path, taskId));
+          request.responseType = 'json';
+          // Before the browser measures a chunk, the only fact is that a transfer was requested.
+          report({ phase: 'transferring', loadedBytes: 0, totalBytes: null });
+          request.send(form);
+        } catch {
+          // `open` and `send` can fail before an XHR error event is dispatched. The server may still have received
+          // some bytes in the latter case, so use the same uncertain-receipt result as an asynchronous interruption.
+          interrupted();
+        }
+      });
     },
     addPaymentScreenshot(taskId, voucherMaterialId, file) {
       const form = new FormData();
@@ -462,7 +507,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     },
     startInventory: (taskId, stepToken) => action(taskId, E.startInventory, { stepToken }),
     answerPendingItem: (taskId, itemId, answer, stepToken) => action(taskId, E.answerPendingItem, { itemId, answer, stepToken }),
-    confirmReview: (taskId, digest, stepToken) => action(taskId, E.confirmReview, { digest, stepToken }),
+    confirmReview: (taskId, digest, stepToken, acceptDeadlineWarnings = false) => action(taskId, E.confirmReview, { digest, acceptDeadlineWarnings, stepToken }),
     reopenUpload: (taskId, stepToken) => action(taskId, E.reopenUpload, { stepToken }),
     removePaymentScreenshot: (taskId, screenshotId) => action(taskId, E.removePaymentScreenshot, { screenshotId }),
     generatePrintSheet: (taskId) => action(taskId, E.generatePrintSheet, {}),

@@ -25,6 +25,23 @@ export function rejectByShape(fileName: string, mime: string, size: number): Upl
 
 const EXTENSION_MIME: Readonly<Record<string, string>> = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' };
 
+// Browser directory pickers provide `webkitRelativePath`, while single-file pickers only provide a name. Keep the
+// path as display provenance, but never allow an absolute path or a parent-directory segment into the task facts.
+export function sourceFileName(fileName: string): string {
+  const normalized = fileName.replaceAll('\\', '/');
+  return normalized.slice(normalized.lastIndexOf('/') + 1) || '未命名文件';
+}
+
+export function relativeSourcePath(fileName: string, relativePath?: string | null): string {
+  const fallback = sourceFileName(fileName);
+  const raw = (relativePath ?? '').replaceAll('\\', '/');
+  if (!raw || raw.startsWith('/') || /^[A-Za-z]:\//.test(raw) || raw.includes('\u0000')) return fallback;
+  const parts = raw.split('/').filter((part) => part !== '' && part !== '.');
+  if (parts.length === 0 || parts.some((part) => part === '..')) return fallback;
+  const leaf = parts.at(-1);
+  return leaf ? parts.join('/') : fallback;
+}
+
 // The content type a stored original is kept and served under. Never the type the uploading browser claimed: blobs are
 // content-addressed and shared between accounts (the first upload's type would win for everyone), and the file is
 // served back from this origin, so a claimed `text/html` or `image/svg+xml` would be stored XSS. Derived from the

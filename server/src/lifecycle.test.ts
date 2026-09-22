@@ -123,6 +123,24 @@ describe('upload batches', () => {
     expect(snapshot.materials).toEqual([]);
     expect(snapshot.step.kind).toBe('upload_materials');
   });
+
+  it('records transfer results before recognition, and rereading the task does not replay either operation', async () => {
+    const { task } = await createTask();
+    const transferred = await upload(task.taskId, [{ name: 'transfer.pdf', bytes: pdf('controlled transfer') }]);
+
+    expect(transferred).toMatchObject({
+      stage: 'upload',
+      batches: [{ no: 1, files: [{ fileName: 'transfer.pdf', status: 'accepted' }] }],
+      inventory: { status: 'not_started', versionId: 'v1' },
+      step: { kind: 'start_inventory' },
+    });
+    const revisited = await current(task.taskId);
+    expect(revisited).toEqual(transferred);
+    expect((await current(task.taskId)).revision).toBe(transferred.revision);
+
+    const started = await accepted(await act(revisited, 'start-inventory'));
+    expect(started).toMatchObject({ stage: 'inventory', inventory: { status: 'running' }, batches: [{ no: 1 }] });
+  });
 });
 
 describe('actions', () => {

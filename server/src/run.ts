@@ -4,6 +4,7 @@ import { resolveDataDir } from './data-dir';
 import { erpConfigFromEnv } from './erp/config';
 import type { FillExecutor } from './erp/fill-jobs';
 import type { ReconcileExecutor } from './erp/reconcile-job';
+import type { ParseExecutor } from './parse/executor';
 import { resolveLegacyHome } from './legacy/read';
 import { startServer } from './server';
 
@@ -28,9 +29,9 @@ const EXTENSION_TEMPLATE = fileURLToPath(new URL('../../extension/dist', import.
 // Where ERP jobs run. Absent, they run in each task owner's paired 浏览器扩展 (`erp/remote-executor.ts`), which is the
 // only choice the production entry has: the CDP executor is passed in by the development and e2e entries alone, so it
 // never reaches a bundle users run (`production-entry.test.ts`).
-export type RunOverrides = { erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor };
+export type RunOverrides = { erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor; parser?: ParseExecutor };
 
-export async function run({ erpExecutor, reconcileExecutor }: RunOverrides = {}): Promise<void> {
+export async function run({ erpExecutor, reconcileExecutor, parser }: RunOverrides = {}): Promise<void> {
   const dataDir = resolveDataDir();
   const port = Number(process.env['BAOX_PORT'] ?? DEFAULT_PORT);
   try {
@@ -42,6 +43,7 @@ export async function run({ erpExecutor, reconcileExecutor }: RunOverrides = {})
       legacyHome: resolveLegacyHome(),
       ...(erpExecutor ? { erpExecutor } : {}),
       ...(reconcileExecutor ? { reconcileExecutor } : {}),
+      ...(parser ? { parser } : {}),
       erpConfig,
       publicOrigin: process.env['BAOX_PUBLIC_ORIGIN'] ?? null,
       extensionTemplate: EXTENSION_TEMPLATE,
