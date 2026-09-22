@@ -523,6 +523,29 @@ $gutter: $spacing-06;
   }
 }
 
+.app-material-variants {
+  margin-block-start: $spacing-03;
+  color: $text-secondary;
+  @include type.type-style('helper-text-01');
+
+  summary {
+    cursor: pointer;
+  }
+
+  ul {
+    margin: $spacing-02 0 0;
+    padding-inline-start: $spacing-05;
+  }
+
+  li + li {
+    margin-block-start: $spacing-02;
+  }
+
+  .app-caption {
+    display: block;
+  }
+}
+
 .app-ungrouped {
   margin-block-start: $spacing-07;
 
