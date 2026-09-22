@@ -135,7 +135,7 @@ printf 'gcc_version='
 LD_LIBRARY_PATH=${profile.deployRoot}/runtime/gcc-12.5.0/lib64 ${profile.deployRoot}/runtime/gcc-12.5.0/bin/g++ -dumpfullversion -dumpversion 2>/dev/null || true
 printf '\\n'
 printf 'build_python='
-/home/baox/.local/share/baox-build-venv/bin/python --version 2>/dev/null || true
+${profile.buildPython} --version 2>/dev/null || true
 printf '\\n'
 printf 'maintenance_wrapper='
 if [ -x ${profile.maintenanceWrapper} ]; then printf present; else printf missing; fi

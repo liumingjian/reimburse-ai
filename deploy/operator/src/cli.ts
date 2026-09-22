@@ -62,7 +62,7 @@ async function status(args: readonly string[], dependencies: OperatorDependencie
   const [hostResult, gateResult, candidate] = await Promise.all([
     dependencies.host.execute({ kind: 'status' }),
     dependencies.host.execute({ kind: 'gate-status' }),
-    dependencies.candidate?.inspect() ?? Promise.resolve(null),
+    candidateStatus(dependencies.candidate),
   ]);
   const host = statusValue(hostResult);
   const gate = gateValue(gateResult);
@@ -226,15 +226,26 @@ function planLines(source: SourcePlan): string[] {
   ];
 }
 
-function statusLines(host: HostStatus, gate: GateStatus, candidate: CandidateInspection | null = null): string[] {
+function statusLines(host: HostStatus, gate: GateStatus, candidate: CandidateInspection | CandidateUnavailable | null = null): string[] {
   return [
     `当前发布：${host.currentRelease ?? '未找到'}`,
     `baox 服务：${host.baoxService}`,
     `Caddy 服务：${host.caddyService}`,
     `数据目录：${host.dataDirectory}`,
     `维护闸门：${gate.kind}`,
-    ...(candidate ? [`部署协调：${candidate.lock.state}`] : []),
+    ...(candidate ? [`部署协调：${candidate.state === 'unavailable' ? '不可用' : candidate.lock.state === 'unlocked' ? '空闲' : candidate.lock.state}`] : []),
   ];
+}
+
+type CandidateUnavailable = { state: 'unavailable' };
+
+async function candidateStatus(candidate: CandidateTransport | undefined): Promise<CandidateInspection | CandidateUnavailable | null> {
+  if (!candidate) return null;
+  try {
+    return await candidate.inspect();
+  } catch {
+    return { state: 'unavailable' };
+  }
 }
 
 function doctorLines(host: HostStatus, report: DoctorReport, gate: GateStatus, healthy: boolean): string[] {

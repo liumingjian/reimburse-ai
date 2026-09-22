@@ -17,7 +17,7 @@ export type CandidatePreparation =
 
 export type CandidateInspection = {
   state: 'inspection';
-  lock: { state: 'active' | 'inactive' | 'unknown-owner'; owner?: { operation: string; candidateId: string; pid: number } };
+  lock: { state: 'active' | 'inactive' | 'unknown-owner' | 'unlocked'; owner?: { operation: string; candidateId: string; pid: number } };
   journal: Record<string, unknown> | null;
   manifest: Record<string, unknown> | null;
 };
@@ -149,7 +149,7 @@ function isInspection(value: unknown): value is CandidateInspection {
   const record = value as Record<string, unknown>;
   if (record.state !== 'inspection' || !record.lock || typeof record.lock !== 'object') return false;
   const lock = record.lock as Record<string, unknown>;
-  return (lock.state === 'active' || lock.state === 'inactive' || lock.state === 'unknown-owner')
+  return (lock.state === 'active' || lock.state === 'inactive' || lock.state === 'unknown-owner' || lock.state === 'unlocked')
     && (record.journal === null || typeof record.journal === 'object')
     && (record.manifest === null || typeof record.manifest === 'object');
 }

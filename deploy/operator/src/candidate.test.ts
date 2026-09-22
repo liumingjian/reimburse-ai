@@ -1,16 +1,14 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, expect, it } from 'vitest';
-import { startServer, type RunningServer } from '../../../server/src/server.js';
-import { writeBlob } from '../../../server/src/data-dir.js';
 import { SshCandidateTransport } from './candidate.js';
 import { runOperatorCli } from './cli.js';
-import { SshHostTransport, type SshResult, type SshRunner } from './host.js';
-import { NATIVE_PROFILE, type NativeProfile } from './profile.js';
+import { SshHostTransport } from './host.js';
 import { createSourceRepository } from './source.js';
+import { createIsolatedTarget, type IsolatedTarget } from './testing/isolated-target.js';
 
 const cleanup: Array<() => Promise<void> | void> = [];
 
@@ -18,147 +16,10 @@ afterEach(async () => {
   for (const remove of cleanup.splice(0).reverse()) await remove();
 });
 
-type IsolatedTarget = {
-  root: string;
-  dataDir: string;
-  profile: NativeProfile;
-  runner: LocalTargetRunner;
-  barrier: string;
-  server: RunningServer;
-  current: string;
-  activeConfiguration: string[];
-};
-
-class LocalTargetRunner {
-  disconnectNextReceive = false;
-
-  constructor(private readonly fakeBin: string, private readonly barrier: string) {}
-
-  readonly run: SshRunner = async (_profile, remoteCommand, input) => new Promise<SshResult>((resolve, reject) => {
-    const child = spawn('sh', ['-c', remoteCommand], {
-      env: { ...process.env, PATH: `${this.fakeBin}:${process.env.PATH ?? ''}` },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    const stdout: Buffer[] = [];
-    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.resume();
-    child.stdin.on('error', () => undefined);
-    if (input) {
-      input.on('error', reject);
-      input.pipe(child.stdin);
-    } else {
-      child.stdin.end();
-    }
-
-    let disconnectTimer: NodeJS.Timeout | undefined;
-    if (this.disconnectNextReceive && remoteCommand.includes(' receive')) {
-      this.disconnectNextReceive = false;
-      disconnectTimer = setInterval(() => {
-        if (existsSync(join(this.barrier, 'started'))) child.kill('SIGKILL');
-      }, 10);
-    }
-    child.on('error', reject);
-    child.on('close', (exitCode) => {
-      if (disconnectTimer) clearInterval(disconnectTimer);
-      resolve({ stdout: Buffer.concat(stdout).toString('utf8'), exitCode });
-    });
-  });
-}
-
-async function createTarget({ holdBuild = false, buildEnvironment = true }: { holdBuild?: boolean; buildEnvironment?: boolean } = {}): Promise<IsolatedTarget> {
-  const root = mkdtempSync(join(tmpdir(), 'baox-candidate-target-'));
-  cleanup.push(() => rmSync(root, { recursive: true, force: true }));
-  const deployRoot = join(root, 'deploy');
-  const dataDir = join(deployRoot, 'data');
-  const systemdDir = join(root, 'systemd');
-  const fakeBin = join(root, 'fake-bin');
-  const barrier = join(root, 'barrier');
-  mkdirSync(fakeBin, { recursive: true });
-  mkdirSync(barrier, { recursive: true });
-  if (holdBuild) writeFileSync(join(barrier, 'hold'), 'hold\n');
-
-  mkdirSync(join(deployRoot, 'runtime', 'node', 'bin'), { recursive: true });
-  symlinkSync(process.execPath, join(deployRoot, 'runtime', 'node', 'bin', 'node'));
-  mkdirSync(join(deployRoot, 'runtime', 'pnpm-10.17.1', 'bin'), { recursive: true });
-  writeExecutable(join(deployRoot, 'runtime', 'pnpm-10.17.1', 'bin', 'pnpm'), pnpmScript(barrier));
-  mkdirSync(join(deployRoot, 'runtime', 'gcc-12.5.0', 'bin'), { recursive: true });
-  mkdirSync(join(deployRoot, 'runtime', 'gcc-12.5.0', 'lib64'), { recursive: true });
-  writeExecutable(join(deployRoot, 'runtime', 'gcc-12.5.0', 'bin', 'g++'), '#!/bin/sh\nprintf "12.5.0\\n"\n');
-  mkdirSync(join(deployRoot, 'bin'), { recursive: true });
-  writeExecutable(join(deployRoot, 'bin', 'caddy'), '#!/bin/sh\nif [ "$1" = version ]; then printf "v2.10.2\\n"; fi\nexit 0\n');
-  const testPython = join(fakeBin, 'python');
-  writeExecutable(testPython, '#!/bin/sh\nprintf "Python 3.12.14\\n"\n');
-  mkdirSync(join(deployRoot, 'etc'), { recursive: true });
-  if (buildEnvironment) {
-    const buildEnv = join(deployRoot, 'etc', 'build.env');
-    writeFileSync(buildEnv, 'HTTP_PROXY=http://proxy.test:8080\nHTTPS_PROXY=http://proxy.test:8443\nNO_PROXY=127.0.0.1,localhost\nnpm_config_registry=https://registry.test/npm\n');
-    chmodSync(buildEnv, 0o600);
-  }
-  writeFileSync(join(deployRoot, 'etc', 'Caddyfile'), 'http://10.250.0.222 {\n  respond "active"\n}\n');
-  mkdirSync(systemdDir, { recursive: true });
-  writeFileSync(join(systemdDir, 'baox.service'), '[Service]\nExecStart=/opt/tools/baox/current/server/dist/main.mjs\n');
-  writeFileSync(join(systemdDir, 'baox-caddy.service'), '[Service]\nExecStart=/opt/tools/baox/bin/caddy\n');
-  mkdirSync(join(deployRoot, 'releases', 'active'), { recursive: true });
-  symlinkSync('releases/active', join(deployRoot, 'current'));
-  mkdirSync(join(deployRoot, 'cache', 'home'), { recursive: true });
-  mkdirSync(join(deployRoot, 'cache', 'pnpm-home'), { recursive: true });
-  mkdirSync(join(deployRoot, 'cache', 'pnpm-store'), { recursive: true });
-  writeExecutable(join(fakeBin, 'id'), '#!/bin/sh\nif [ "$1" = baox ]; then exit 0; fi\nexec /usr/bin/id "$@"\n');
-  writeExecutable(join(fakeBin, 'chown'), '#!/bin/sh\nexit 0\n');
-  writeExecutable(join(fakeBin, 'runuser'), '#!/bin/sh\n[ "$1" = -u ] || exit 2\nshift 2\n[ "$1" = -- ] && shift\nexec "$@"\n');
-  writeExecutable(join(deployRoot, 'bin', 'baox-maintenance-gate'), '#!/bin/sh\nif [ "$1" = status ]; then printf \'{"version":1,"state":"open","barrier":false,"activeWrites":0,"activeErpAttempt":false}\\n\'; exit 0; fi\nexit 65\n');
-
-  const server = await startServer({ dataDir, port: 0 });
-  cleanup.push(() => server.close());
-  writeBlob(dataDir, Buffer.from('real original file\n'));
-  const runner = new LocalTargetRunner(fakeBin, barrier);
-  const profile = {
-    ...NATIVE_PROFILE,
-    host: 'isolated.test',
-    deployRoot,
-    dataDir,
-    systemdDir,
-    buildEnvironment: join(deployRoot, 'etc', 'build.env'),
-    buildPython: testPython,
-    maintenanceWrapper: join(deployRoot, 'bin', 'baox-maintenance-gate'),
-    maintenanceSocket: join(dataDir, 'maintenance-gate.sock'),
-  };
-  return {
-    root,
-    dataDir,
-    profile,
-    runner,
-    barrier,
-    server,
-    current: join(deployRoot, 'current'),
-    activeConfiguration: [join(deployRoot, 'etc', 'Caddyfile'), join(systemdDir, 'baox.service'), join(systemdDir, 'baox-caddy.service')],
-  };
-}
-
-function pnpmScript(barrier: string): string {
-  return `#!/bin/sh
-if [ "$1" = --version ]; then printf '10.17.1\\n'; exit 0; fi
-if [ "$1" = install ]; then
-  printf install >> '${join(barrier, 'counter')}'
-  touch '${join(barrier, 'started')}'
-  while [ -f '${join(barrier, 'hold')}' ]; do sleep 0.02; done
-  exit 0
-fi
-if [ "$1" = build ]; then
-  mkdir -p server/dist web/dist extension/dist
-  printf 'main' > server/dist/main.mjs
-  printf 'cli' > server/dist/baox.mjs
-  printf '<html></html>' > web/dist/index.html
-  printf '{"manifest_version":3}' > extension/dist/manifest.json
-  exit 0
-fi
-exit 2
-`;
-}
-
-function writeExecutable(file: string, content: string): void {
-  writeFileSync(file, content, { mode: 0o755 });
-  chmodSync(file, 0o755);
+async function createTarget(options: Parameters<typeof createIsolatedTarget>[0] = {}): Promise<IsolatedTarget> {
+  const target = await createIsolatedTarget(options);
+  cleanup.push(() => target.close());
+  return target;
 }
 
 function createRepository(): { repository: string; first: string; second: string } {
@@ -222,7 +83,7 @@ function sha256(value: Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-async function reaches(server: RunningServer): Promise<void> {
+async function reaches(server: IsolatedTarget['server']): Promise<void> {
   const response = await fetch(`${server.url}/api/session`);
   expect(response.status).toBeLessThan(500);
 }
@@ -235,6 +96,31 @@ async function waitFor(file: string): Promise<void> {
   throw new Error(`timed out waiting for ${file}`);
 }
 
+function writeStaleReceivingState(target: IsolatedTarget, source: { repository: string; first: string }): void {
+  const archiveSha256 = sha256(execFileSync('git', ['archive', '--format=tar', source.first], { cwd: source.repository }));
+  const candidateId = `${source.first.slice(0, 12)}-${archiveSha256.slice(0, 12)}`;
+  const maintenance = join(target.profile.deployRoot, 'maintenance');
+  const lock = join(maintenance, 'deployment.lock');
+  mkdirSync(lock, { recursive: true, mode: 0o700 });
+  writeFileSync(join(lock, 'owner.json'), JSON.stringify({
+    schema: 1,
+    operation: 'candidate-prepare',
+    candidateId,
+    pid: 999_999,
+    startIdentity: process.platform === 'linux' ? 'linux:1' : 'nonlinux:999999',
+    token: 'a'.repeat(64),
+    createdAt: '2000-01-01T00:00:00.000Z',
+  }) + '\n', { mode: 0o600 });
+  writeFileSync(join(maintenance, 'deployment-journal.json'), JSON.stringify({
+    schema: 1,
+    operation: 'candidate-prepare',
+    candidateId,
+    source: { ref: source.first, commit: source.first, archiveSha256, artifactOrigin: 'direct' },
+    phase: 'receiving',
+    updatedAt: '2000-01-01T00:00:00.000Z',
+  }) + '\n', { mode: 0o600 });
+}
+
 it('keeps the real service, SQLite data, active release, and configuration unchanged while a disconnected prepare reconciles under one target lock', async () => {
   const target = await createTarget({ holdBuild: true });
   const source = createRepository();
@@ -242,6 +128,10 @@ it('keeps the real service, SQLite data, active release, and configuration uncha
   const currentBefore = readlinkSync(target.current);
   const configurationBefore = target.activeConfiguration.map((file) => sha256(readFileSync(file)));
   await reaches(target.server);
+  await expect(new SshHostTransport({ profile: target.profile, runner: target.runner.run }).execute({ kind: 'gate-status' })).resolves.toMatchObject({
+    kind: 'gate-status',
+    value: { kind: 'available', response: { version: 1, state: 'open', barrier: false, activeWrites: 0, activeErpAttempt: false } },
+  });
 
   target.runner.disconnectNextReceive = true;
   const interrupted = cli(source.repository, target, 'prepare', '--json');
@@ -295,4 +185,62 @@ it('verifies a local relay against the same committed archive checksum and repor
   expect(notReady.out).toContain('not-ready');
   expect(readlinkSync(incomplete.current)).toBe(activeBefore);
   expect(existsSync(join(incomplete.profile.deployRoot, 'runtime', 'pnpm-10.17.1', 'bin', 'pnpm'))).toBe(true);
+});
+
+it('claims a stale lock once when reconnecting operators prepare the same candidate', async () => {
+  const target = await createTarget({ holdBuild: true });
+  const source = createRepository();
+  writeStaleReceivingState(target, source);
+
+  const first = cli(source.repository, target, 'prepare', source.first, '--json');
+  const second = cli(source.repository, target, 'prepare', source.first, '--json');
+  await waitFor(join(target.barrier, 'started'));
+  unlinkSync(join(target.barrier, 'hold'));
+  const results = await Promise.all([first, second]);
+
+  expect(readFileSync(join(target.barrier, 'counter'), 'utf8')).toBe('install');
+  expect(results.some((result) => result.code === 0)).toBe(true);
+  const final = await cli(source.repository, target, 'prepare', source.first, '--json');
+  expect(final.code).toBe(0);
+  const status = await cli(source.repository, target, 'status', '--json');
+  expect(JSON.parse(status.out)).toMatchObject({ candidate: { lock: { state: 'unlocked' }, journal: { phase: 'prepared' } } });
+});
+
+it('preserves a successor lock when a worker loses its lease before release', async () => {
+  const target = await createTarget({ holdBuild: true, fenceOldWorker: true });
+  const source = createRepository();
+
+  const preparation = cli(source.repository, target, 'prepare', source.first, '--json');
+  await waitFor(join(target.barrier, 'started'));
+  unlinkSync(join(target.barrier, 'hold'));
+  const result = await preparation;
+
+  expect(result.code).toBe(1);
+  expect(JSON.parse(result.out)).toMatchObject({ candidate: { state: 'recovery-required' } });
+  const owner = JSON.parse(readFileSync(join(target.profile.deployRoot, 'maintenance', 'deployment.lock', 'owner.json'), 'utf8')) as { token: string };
+  expect(owner.token).toBe('f'.repeat(64));
+  expect(JSON.parse(readFileSync(join(target.profile.deployRoot, 'maintenance', 'deployment-journal.json'), 'utf8'))).toMatchObject({ phase: 'recovery-required' });
+});
+
+it('reports an unavailable coordinator without rewriting a journal when status inspection fails', async () => {
+  const target = await createTarget();
+  const source = createRepository();
+  const maintenance = join(target.profile.deployRoot, 'maintenance');
+  mkdirSync(maintenance, { recursive: true, mode: 0o700 });
+  const journal = join(maintenance, 'deployment-journal.json');
+  const sentinel = '{"preserve":"read-only-status"}\n';
+  writeFileSync(journal, sentinel, { mode: 0o600 });
+  const out: string[] = [];
+  const err: string[] = [];
+
+  const code = await runOperatorCli(['status', '--json'], {
+    source: createSourceRepository(source.repository),
+    host: new SshHostTransport({ profile: target.profile, runner: target.runner.run }),
+    candidate: new SshCandidateTransport({ profile: { ...target.profile, buildPython: 'relative-path-is-invalid' }, runner: target.runner.run }),
+  }, { out: (line) => out.push(line), err: (line) => err.push(line) });
+
+  expect(code).toBe(0);
+  expect(err).toEqual([]);
+  expect(JSON.parse(out.join('\n'))).toMatchObject({ candidate: { state: 'unavailable' } });
+  expect(readFileSync(journal, 'utf8')).toBe(sentinel);
 });

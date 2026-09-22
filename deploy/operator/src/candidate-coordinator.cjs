@@ -18,12 +18,8 @@ const ALLOWED_BUILD_ENV = new Set([
   'CADDY_DOWNLOAD',
 ]);
 
-main().catch(async (error) => {
-  const request = tryRequest();
+main().catch((error) => {
   const code = error instanceof CandidateFailure ? error.code : 'internal-error';
-  if (request) {
-    await fail(request, code).catch(() => undefined);
-  }
   process.stdout.write(JSON.stringify({ state: 'failed', code }) + '\n');
   process.exitCode = 1;
 });
@@ -59,14 +55,6 @@ function readRequest() {
   }
   validateRequest(request);
   return request;
-}
-
-function tryRequest() {
-  try {
-    return readRequest();
-  } catch {
-    return null;
-  }
 }
 
 function validateRequest(request) {
@@ -115,48 +103,52 @@ async function receive(request) {
     process.stdin.resume();
     return waitForTerminal(request, paths);
   }
+  const lease = lock.lease;
 
+  await requireLease(paths, lease);
   await fs.mkdir(paths.candidate, { recursive: true, mode: 0o700 });
   await fsyncDirectory(path.dirname(paths.candidate));
-  await writeCoordinator(request, paths);
-  await writeAtomic(paths.request, JSON.stringify(request) + '\n', 0o600);
+  await writeCoordinator(request, paths, lease);
+  await writeCandidateFile(paths, lease, paths.request, JSON.stringify(request) + '\n', 0o600);
 
   if (lock.resumeStaged) {
-    return startAndWait(request, paths);
+    return startAndWait(request, paths, lease);
   }
 
   const readiness = await verifyBaseReadiness(request);
   if (!readiness.ok) {
-    await writeJournal(request, paths, 'failed', { readinessIssues: readiness.issues });
-    await release(paths);
+    await writeJournal(request, paths, lease, 'failed', { readinessIssues: readiness.issues });
+    await release(paths, lease);
     return { state: 'not-ready', issues: readiness.issues };
   }
 
-  await writeJournal(request, paths, 'receiving', { readiness: readiness.public });
+  await writeJournal(request, paths, lease, 'receiving', { readiness: readiness.public });
   const received = await receiveArchive(paths.partialArchive);
+  await requireLease(paths, lease);
   if (received.sha256 !== request.source.archiveSha256) {
     await removeIfPresent(paths.partialArchive);
-    await writeJournal(request, paths, 'failed', { failure: 'archive-checksum-mismatch' });
-    await release(paths);
+    await writeJournal(request, paths, lease, 'failed', { failure: 'archive-checksum-mismatch' });
+    await release(paths, lease);
     return { state: 'failed', code: 'archive-checksum-mismatch' };
   }
   await fs.rename(paths.partialArchive, paths.archive);
   await fsyncDirectory(paths.candidate);
-  await writeJournal(request, paths, 'staged', { archiveBytes: received.bytes, verifiedArchiveSha256: received.sha256 });
-  return startAndWait(request, paths);
+  await writeJournal(request, paths, lease, 'staged', { archiveBytes: received.bytes, verifiedArchiveSha256: received.sha256 });
+  return startAndWait(request, paths, lease);
 }
 
-async function startAndWait(request, paths) {
+async function startAndWait(request, paths, lease) {
   const sourceMatches = await hashFile(paths.archive).catch(() => null);
   if (sourceMatches !== request.source.archiveSha256) {
-    await writeJournal(request, paths, 'recovery-required', { failure: 'staged-archive-not-verifiable' });
-    await release(paths);
+    await writeJournal(request, paths, lease, 'recovery-required', { failure: 'staged-archive-not-verifiable' });
+    await release(paths, lease);
     return recoveryResult(request);
   }
 
   // Mark build activity before spawning. A crash in this narrow window is
   // deliberately conservative: a later prepare will not repeat an uncertain build.
-  await writeJournal(request, paths, 'building', { worker: null });
+  await writeJournal(request, paths, lease, 'building', { worker: null });
+  await requireLease(paths, lease);
   await removeIfPresent(paths.workerStartGate);
   const logFd = fsSync.openSync(paths.log, 'a', 0o600);
   let child;
@@ -167,6 +159,7 @@ async function startAndWait(request, paths) {
       env: {
         BAOX_CANDIDATE_REQUEST_BASE64: Buffer.from(JSON.stringify(request)).toString('base64'),
         BAOX_CANDIDATE_START_GATE: paths.workerStartGate,
+        BAOX_CANDIDATE_LOCK_TOKEN: lease.token,
         PATH: process.env.PATH || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
       },
     });
@@ -175,11 +168,11 @@ async function startAndWait(request, paths) {
   }
   child.unref();
   const identity = await waitForProcessIdentity(child.pid);
-  await writeOwner(paths, request, child.pid, identity);
-  await writeJournal(request, paths, 'building', { worker: { pid: child.pid, startIdentity: identity } });
+  await writeOwner(paths, request, child.pid, identity, lease, true);
+  await writeJournal(request, paths, lease, 'building', { worker: { pid: child.pid, startIdentity: identity } });
   // The detached worker waits for this fsync-backed gate. It cannot finish and
   // remove the lock while this receiver is still publishing its durable owner.
-  await writeAtomic(paths.workerStartGate, 'ready\n', 0o600);
+  await writeCandidateFile(paths, lease, paths.workerStartGate, 'ready\n', 0o600);
   return waitForTerminal(request, paths);
 }
 
@@ -189,28 +182,32 @@ async function worker(request) {
   // lock untouched. A later coordinator observes the dead owner and records the
   // conservative recovery-required result; this orphan must never remove a newer lock.
   if (!await waitForStartGate(process.env.BAOX_CANDIDATE_START_GATE)) return;
+  const lease = leaseFromEnvironment();
+  await requireLease(paths, lease);
   const journal = await readJson(paths.journal);
   if (!isJournalFor(journal, request) || journal.phase !== 'building') return;
   const identity = await waitForProcessIdentity(process.pid);
-  await writeOwner(paths, request, process.pid, identity);
+  await writeOwner(paths, request, process.pid, identity, lease, true);
 
   try {
-    await writeJournal(request, paths, 'extracting', { worker: { pid: process.pid, startIdentity: identity } });
+    await writeJournal(request, paths, lease, 'extracting', { worker: { pid: process.pid, startIdentity: identity } });
     const archiveHash = await hashFile(paths.archive);
     if (archiveHash !== request.source.archiveSha256) throw new CandidateFailure('archive-checksum-mismatch');
+    await requireLease(paths, lease);
     await removeIfPresent(paths.source);
     await fs.mkdir(paths.source, { recursive: true, mode: 0o700 });
     await runLogged('tar', ['-xf', paths.archive, '-C', paths.source, '--no-same-owner'], paths.candidate, {}, paths.log);
+    await requireLease(paths, lease);
 
     const sourceInfo = await readSourceMetadata(paths.source);
     const readiness = await verifyCandidateReadiness(request, sourceInfo);
     if (!readiness.ok) throw new CandidateFailure('missing-prerequisites', readiness.issues);
-    await writeJournal(request, paths, 'building', {
+    await writeJournal(request, paths, lease, 'building', {
       worker: { pid: process.pid, startIdentity: identity },
       readiness: readiness.public,
     });
-    await buildCandidate(request, paths, sourceInfo, readiness.environment);
-    const recovery = await captureRecoveryConfiguration(request, paths);
+    await buildCandidate(request, paths, sourceInfo, readiness.environment, lease);
+    const recovery = await captureRecoveryConfiguration(request, paths, lease);
     const manifest = {
       schema: SCHEMA,
       candidateId: request.candidateId,
@@ -227,22 +224,26 @@ async function worker(request) {
       recovery,
       candidateConfiguration: await candidateConfiguration(paths.source),
     };
-    await writeAtomic(paths.manifest, JSON.stringify(manifest, null, 2) + '\n', 0o600);
-    await writeAtomic(paths.prepared, manifest.source.archiveSha256 + '\n', 0o600);
-    await writeJournal(request, paths, 'prepared', { manifestSha256: await hashFile(paths.manifest) });
-    await release(paths);
+    await writeCandidateFile(paths, lease, paths.manifest, JSON.stringify(manifest, null, 2) + '\n', 0o600);
+    await writeCandidateFile(paths, lease, paths.prepared, manifest.source.archiveSha256 + '\n', 0o600);
+    await writeJournal(request, paths, lease, 'prepared', { manifestSha256: await hashFile(paths.manifest) });
+    await release(paths, lease);
   } catch (error) {
     const failure = error instanceof CandidateFailure ? error.code : 'build-failed';
     const issues = error instanceof CandidateFailure ? error.issues : undefined;
-    await writeJournal(request, paths, 'failed', { failure, ...(issues ? { readinessIssues: issues } : {}) }).catch(() => undefined);
-    await release(paths).catch(() => undefined);
+    await writeJournal(request, paths, lease, 'failed', { failure, ...(issues ? { readinessIssues: issues } : {}) }).catch(() => undefined);
+    await release(paths, lease).catch(() => undefined);
   }
 }
 
 async function inspect(request) {
   const paths = targetPaths(request);
-  const [journal, owner] = await Promise.all([readJson(paths.journal), readJson(path.join(paths.lock, 'owner.json'))]);
-  const lock = lockInspection(owner);
+  const [journal, owner, lockExists] = await Promise.all([
+    readJson(paths.journal),
+    readJson(path.join(paths.lock, 'owner.json')),
+    fs.access(paths.lock).then(() => true).catch(() => false),
+  ]);
+  const lock = lockExists ? lockInspection(owner) : { state: 'unlocked' };
   let manifest = null;
   if (journal && typeof journal.candidateId === 'string' && /^[a-f0-9]{12}-[a-f0-9]{12}$/i.test(journal.candidateId)) {
     manifest = await readJson(path.join(request.deployRoot, 'candidates', journal.candidateId, 'manifest.json'));
@@ -252,56 +253,135 @@ async function inspect(request) {
 
 async function acquire(request, paths) {
   await fs.mkdir(paths.maintenance, { recursive: true, mode: 0o700 });
-  try {
-    await fs.mkdir(paths.lock, { mode: 0o700 });
-    await fsyncDirectory(paths.maintenance);
-    const identity = await waitForProcessIdentity(process.pid);
-    await writeOwner(paths, request, process.pid, identity);
-    return { kind: 'acquired', resumeStaged: false };
-  } catch (error) {
-    if (!error || error.code !== 'EEXIST') throw error;
+  if (await hasOutstandingClaim(paths)) {
+    return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'stale-lock-claim-needs-recovery' } };
   }
 
-  const owner = await readJson(path.join(paths.lock, 'owner.json'));
+  const freshLease = await createLease(request, paths);
+  if (freshLease) return reconcileOwnedLock(request, paths, freshLease);
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const owner = await readJson(path.join(paths.lock, 'owner.json'));
+    const journal = await readJson(paths.journal);
+    const inspected = lockInspection(owner);
+    if (inspected.state === 'unknown-owner') {
+      return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'lock-owner-not-durable' } };
+    }
+    if (inspected.state === 'active') {
+      if (isJournalFor(journal, request) && journal.candidateId === request.candidateId) return { kind: 'in-progress' };
+      return { kind: 'busy', result: { state: 'busy', operation: owner.operation, candidateId: owner.candidateId } };
+    }
+
+    const lease = await claimInactiveLock(request, paths, owner);
+    if (lease) return reconcileOwnedLock(request, paths, lease);
+  }
+  return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'lock-transition-raced' } };
+}
+
+async function reconcileOwnedLock(request, paths, lease) {
   const journal = await readJson(paths.journal);
-  const inspected = lockInspection(owner);
-  if (inspected.state === 'unknown-owner') {
-    return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'lock-owner-not-durable' } };
-  }
-  if (inspected.state === 'active') {
-    if (isJournalFor(journal, request) && journal.candidateId === request.candidateId) return { kind: 'in-progress' };
-    return { kind: 'busy', result: { state: 'busy', operation: owner.operation, candidateId: owner.candidateId } };
-  }
-
+  if (!journal) return { kind: 'acquired', lease, resumeStaged: false };
   if (!isJournalFor(journal, request)) {
+    if (isTerminalCandidateJournal(journal)) return { kind: 'acquired', lease, resumeStaged: false };
+    await release(paths, lease);
     return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'lock-without-matching-journal' } };
   }
   if (journal.phase === 'prepared' && await preparedManifestMatches(paths, request)) {
-    await release(paths);
+    await release(paths, lease);
     return { kind: 'prepared', result: preparedResult(request, paths) };
   }
   if (journal.phase === 'receiving') {
+    await requireLease(paths, lease);
     await removeIfPresent(paths.partialArchive);
-    await writeJournal(request, paths, 'interrupted-before-verification', {});
-    await release(paths);
-    return acquire(request, paths);
+    await writeJournal(request, paths, lease, 'interrupted-before-verification', {});
+    return { kind: 'acquired', lease, resumeStaged: false };
   }
   if (journal.phase === 'staged' && await hashFile(paths.archive).catch(() => null) === request.source.archiveSha256) {
-    const identity = await waitForProcessIdentity(process.pid);
-    await writeOwner(paths, request, process.pid, identity);
-    return { kind: 'acquired', resumeStaged: true };
+    return { kind: 'acquired', lease, resumeStaged: true };
   }
   if (journal.phase === 'building' || journal.phase === 'extracting') {
-    await writeJournal(request, paths, 'recovery-required', { failure: 'worker-stopped-during-build' });
-    await release(paths);
+    await writeJournal(request, paths, lease, 'recovery-required', { failure: 'worker-stopped-during-build' });
+    await release(paths, lease);
     return { kind: 'recovery-required', result: recoveryResult(request) };
   }
   if (journal.phase === 'recovery-required') {
-    await release(paths);
+    await release(paths, lease);
     return { kind: 'recovery-required', result: recoveryResult(request) };
   }
-  await release(paths);
+  if (journal.phase === 'failed') return { kind: 'acquired', lease, resumeStaged: false };
+  await release(paths, lease);
   return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'unrecognized-journal-phase' } };
+}
+
+async function createLease(request, paths) {
+  try {
+    await fs.mkdir(paths.lock, { mode: 0o700 });
+  } catch (error) {
+    if (error && error.code === 'EEXIST') return null;
+    throw error;
+  }
+  await fsyncDirectory(paths.maintenance);
+  const lease = newLease();
+  const identity = await waitForProcessIdentity(process.pid);
+  await writeOwner(paths, request, process.pid, identity, lease);
+  return lease;
+}
+
+async function claimInactiveLock(request, paths, owner) {
+  const claimed = `${paths.lock}.claim-${owner.token.slice(0, 16)}-${randomBytes(8).toString('hex')}`;
+  try {
+    await fs.rename(paths.lock, claimed);
+  } catch (error) {
+    if (error && (error.code === 'ENOENT' || error.code === 'EEXIST')) return null;
+    throw error;
+  }
+  await fsyncDirectory(paths.maintenance);
+  const claimedOwner = await readJson(path.join(claimed, 'owner.json'));
+  if (!sameOwner(claimedOwner, owner)) {
+    await restoreClaim(paths, claimed);
+    return null;
+  }
+
+  try {
+    await fs.mkdir(paths.lock, { mode: 0o700 });
+  } catch (error) {
+    if (error && error.code === 'EEXIST') {
+      await discardClaim(paths, claimed);
+      return null;
+    }
+    throw error;
+  }
+  await fsyncDirectory(paths.maintenance);
+  const lease = newLease();
+  const identity = await waitForProcessIdentity(process.pid);
+  await writeOwner(paths, request, process.pid, identity, lease);
+  await discardClaim(paths, claimed);
+  return lease;
+}
+
+async function restoreClaim(paths, claimed) {
+  try {
+    await fs.rename(claimed, paths.lock);
+    await fsyncDirectory(paths.maintenance);
+  } catch (error) {
+    if (!error || (error.code !== 'EEXIST' && error.code !== 'ENOTEMPTY')) throw error;
+  }
+}
+
+async function discardClaim(paths, claimed) {
+  await fs.rm(claimed, { recursive: true, force: true });
+  await fsyncDirectory(paths.maintenance);
+}
+
+async function hasOutstandingClaim(paths) {
+  const prefix = `${path.basename(paths.lock)}.claim-`;
+  const entries = await fs.readdir(paths.maintenance).catch(() => []);
+  return entries.some((entry) => entry.startsWith(prefix));
+}
+
+function isTerminalCandidateJournal(journal) {
+  return Boolean(journal && journal.schema === SCHEMA && journal.operation === 'candidate-prepare'
+    && (journal.phase === 'prepared' || journal.phase === 'failed'));
 }
 
 async function waitForTerminal(request, paths) {
@@ -413,7 +493,7 @@ async function readSourceMetadata(source) {
   return { nodeVersion, pnpmVersion: match[1] };
 }
 
-async function buildCandidate(request, paths, source, explicitEnvironment) {
+async function buildCandidate(request, paths, source, explicitEnvironment, lease) {
   const runtime = path.join(request.deployRoot, 'runtime');
   const gcc = path.join(runtime, 'gcc-12.5.0');
   const pnpm = path.join(runtime, 'pnpm-' + source.pnpmVersion, 'bin', 'pnpm');
@@ -430,9 +510,13 @@ async function buildCandidate(request, paths, source, explicitEnvironment) {
     LANG: 'C.UTF-8',
     ...explicitEnvironment,
   };
+  await requireLease(paths, lease);
   await runLogged('chown', ['-R', 'baox:baox', paths.source], paths.candidate, {}, paths.log);
+  await requireLease(paths, lease);
   await runAsBaox(pnpm, ['install', '--frozen-lockfile'], paths.source, env, paths.log);
+  await requireLease(paths, lease);
   await runAsBaox(pnpm, ['build'], paths.source, env, paths.log);
+  await requireLease(paths, lease);
   for (const file of [
     path.join(paths.source, 'server', 'dist', 'main.mjs'),
     path.join(paths.source, 'server', 'dist', 'baox.mjs'),
@@ -444,6 +528,7 @@ async function buildCandidate(request, paths, source, explicitEnvironment) {
   const candidateCaddyfile = path.join(paths.source, 'deploy', 'intranet', 'Caddyfile');
   if (!await isRegularFile(candidateCaddyfile)) throw new CandidateFailure('candidate-caddyfile-missing');
   await runAsBaox(path.join(request.deployRoot, 'bin', 'caddy'), ['validate', '--config', candidateCaddyfile, '--adapter', 'caddyfile'], paths.source, { HOME: env.HOME }, paths.log);
+  await requireLease(paths, lease);
 }
 
 async function runAsBaox(program, args, cwd, env, log) {
@@ -451,7 +536,8 @@ async function runAsBaox(program, args, cwd, env, log) {
   await runLogged('runuser', ['-u', 'baox', '--', 'env', '-i', ...assignments, program, ...args], cwd, {}, log);
 }
 
-async function captureRecoveryConfiguration(request, paths) {
+async function captureRecoveryConfiguration(request, paths, lease) {
+  await requireLease(paths, lease);
   await fs.mkdir(paths.recoveryConfig, { recursive: true, mode: 0o700 });
   const active = [
     ['caddyfile', path.join(request.deployRoot, 'etc', 'Caddyfile')],
@@ -462,7 +548,7 @@ async function captureRecoveryConfiguration(request, paths) {
   for (const [name, source] of active) {
     if (!await isRegularFile(source)) throw new CandidateFailure('missing-active-configuration');
     const copy = path.join(paths.recoveryConfig, name);
-    await writeAtomic(copy, await fs.readFile(source), 0o600);
+    await writeCandidateFile(paths, lease, copy, await fs.readFile(source), 0o600);
     configuration.push({ name, source, copy: path.relative(paths.candidate, copy), sha256: await hashFile(source) });
   }
   const nodeRuntime = path.join(request.deployRoot, 'runtime', 'node');
@@ -491,7 +577,7 @@ async function candidateConfiguration(source) {
 
 async function readBuildEnvironment(file) {
   const stat = await fs.stat(file);
-  if (!stat.isFile() || (stat.mode & 0o077) !== 0) return { ok: false, issues: ['invalid-build-environment-permissions'] };
+  if (!stat.isFile() || (stat.mode & 0o777) !== 0o600) return { ok: false, issues: ['invalid-build-environment-permissions'] };
   if (process.platform === 'linux' && stat.uid !== 0) return { ok: false, issues: ['invalid-build-environment-owner'] };
   const content = await fs.readFile(file, 'utf8');
   const environment = {};
@@ -535,15 +621,16 @@ function validBuildValue(key, value) {
   }
 }
 
-async function writeCoordinator(request, paths) {
+async function writeCoordinator(request, paths, lease) {
   const encoded = process.env.BAOX_COORDINATOR_SOURCE_BASE64;
   if (!encoded) throw new CandidateFailure('missing-coordinator-source');
   const source = Buffer.from(encoded, 'base64');
   if (!source.length || source.length > 1_000_000) throw new CandidateFailure('invalid-coordinator-source');
-  await writeAtomic(paths.coordinator, source, 0o700);
+  await writeCandidateFile(paths, lease, paths.coordinator, source, 0o700);
 }
 
-async function writeJournal(request, paths, phase, extra) {
+async function writeJournal(request, paths, lease, phase, extra) {
+  await requireLease(paths, lease);
   const existing = await readJson(paths.journal);
   const journal = {
     schema: SCHEMA,
@@ -558,23 +645,42 @@ async function writeJournal(request, paths, phase, extra) {
   journal.phase = phase;
   journal.updatedAt = new Date().toISOString();
   await writeAtomic(paths.journal, JSON.stringify(journal, null, 2) + '\n', 0o600);
+  await requireLease(paths, lease);
 }
 
-async function writeOwner(paths, request, pid, startIdentity) {
+async function writeOwner(paths, request, pid, startIdentity, lease, replace = false) {
+  if (replace) await requireLease(paths, lease);
   const owner = {
     schema: SCHEMA,
     operation: 'candidate-prepare',
     candidateId: request.candidateId,
     pid,
     startIdentity,
+    token: lease.token,
     createdAt: new Date().toISOString(),
   };
   await writeAtomic(path.join(paths.lock, 'owner.json'), JSON.stringify(owner) + '\n', 0o600);
+  if (replace) await requireLease(paths, lease);
 }
 
-async function release(paths) {
-  await fs.rm(paths.lock, { recursive: true, force: true });
+async function release(paths, lease) {
+  if (!await hasLease(paths, lease)) return false;
+  const retired = `${paths.lock}.retired-${lease.token.slice(0, 16)}-${randomBytes(8).toString('hex')}`;
+  try {
+    await fs.rename(paths.lock, retired);
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return false;
+    throw error;
+  }
   await fsyncDirectory(paths.maintenance);
+  const owner = await readJson(path.join(retired, 'owner.json'));
+  if (!ownerHasLease(owner, lease)) {
+    await restoreClaim(paths, retired);
+    return false;
+  }
+  await fs.rm(retired, { recursive: true, force: true });
+  await fsyncDirectory(paths.maintenance);
+  return true;
 }
 
 function lockInspection(owner) {
@@ -593,9 +699,42 @@ function lockInspection(owner) {
 function validOwner(owner) {
   if (!owner || typeof owner !== 'object') return false;
   if (!Number.isSafeInteger(owner.pid) || owner.pid < 1 || typeof owner.startIdentity !== 'string' || !owner.startIdentity) return false;
-  if (owner.operation !== 'candidate-prepare' || !/^[a-f0-9]{12}-[a-f0-9]{12}$/i.test(owner.candidateId || '')) return false;
+  if (typeof owner.operation !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/u.test(owner.operation)) return false;
+  if (typeof owner.candidateId !== 'string' || !/^[a-zA-Z0-9._-]{1,128}$/u.test(owner.candidateId)) return false;
+  if (!isLeaseToken(owner.token)) return false;
   if (process.platform === 'linux' && !/^linux:[0-9]+$/u.test(owner.startIdentity)) return false;
   return true;
+}
+
+function newLease() {
+  return { token: randomBytes(32).toString('hex') };
+}
+
+function leaseFromEnvironment() {
+  const token = process.env.BAOX_CANDIDATE_LOCK_TOKEN;
+  if (!isLeaseToken(token)) throw new CandidateFailure('invalid-worker-lock-token');
+  return { token };
+}
+
+function isLeaseToken(value) {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
+}
+
+function ownerHasLease(owner, lease) {
+  return validOwner(owner) && lease && owner.token === lease.token;
+}
+
+function sameOwner(left, right) {
+  return validOwner(left) && validOwner(right) && left.token === right.token
+    && left.pid === right.pid && left.startIdentity === right.startIdentity;
+}
+
+async function hasLease(paths, lease) {
+  return ownerHasLease(await readJson(path.join(paths.lock, 'owner.json')), lease);
+}
+
+async function requireLease(paths, lease) {
+  if (!await hasLease(paths, lease)) throw new CandidateFailure('deployment-lock-lost');
 }
 
 function processStartIdentity(pid) {
@@ -650,7 +789,6 @@ async function receiveArchive(destination) {
 }
 
 async function writeAtomic(file, contents, mode) {
-  await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   const temporary = file + '.tmp-' + process.pid + '-' + randomBytes(8).toString('hex');
   const handle = await fs.open(temporary, 'wx', mode);
   try {
@@ -661,6 +799,12 @@ async function writeAtomic(file, contents, mode) {
   }
   await fs.rename(temporary, file);
   await fsyncDirectory(path.dirname(file));
+}
+
+async function writeCandidateFile(paths, lease, file, contents, mode) {
+  await requireLease(paths, lease);
+  await writeAtomic(file, contents, mode);
+  await requireLease(paths, lease);
 }
 
 async function fsyncDirectory(directory) {
@@ -765,11 +909,6 @@ async function waitForStartGate(gate) {
 
 function writeResult(value) {
   process.stdout.write(JSON.stringify(value) + '\n');
-}
-
-async function fail(request, code) {
-  const paths = targetPaths(request);
-  await writeJournal(request, paths, 'failed', { failure: code });
 }
 
 class CandidateFailure extends Error {
