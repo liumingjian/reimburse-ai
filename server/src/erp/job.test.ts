@@ -200,6 +200,14 @@ describe('fill job through the protocol on the fake ERP', () => {
   // an unwitnessed commit loses the cell and the bill goes out short. 3 is measured, not picked: a commit on the
   // heels of the last character sits exactly 2 CDP commands behind it, and the wait costs two reads more —
   // checked both ways, the test goes red with the wait taken out and green with it in.
+  it('hands over only after a retained tax editor blurs and the full readback agrees', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, taxEditorRemainsOpen: true }));
+    const result = await run(fake);
+    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(fake.mutations.some(mutation => mutation.kind === 'save')).toBe(false);
+    expect(fake.document.querySelectorAll('.k-grid-edit-row input')).toHaveLength(0);
+  }, 60_000);
+
   it('waits for the editor to hold the value before committing, so a slow-to-parse cell is not lost', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, editorSettleTicks: 3 }));
     const result = await run(fake);

@@ -41,8 +41,8 @@ export const extensionBlobPath = (sha256: string): string => `${EXTENSION_BLOB_P
 //
 // Releasing a changed extension: bump EXTENSION_VERSION here and rebuild; employees get it from the settings page.
 // Raise EXTENSION_MINIMUM_VERSION as well when the change is one an older extension must not be allowed to run.
-export const EXTENSION_VERSION = '1.0.0';
-export const EXTENSION_MINIMUM_VERSION = '1.0.0';
+export const EXTENSION_VERSION = '1.0.1';
+export const EXTENSION_MINIMUM_VERSION = '1.0.1';
 
 // ---------------------------------------------------------------------------
 // Distribution (ADR-0021: load-unpacked in developer mode, Chrome and Edge only)

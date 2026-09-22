@@ -77,6 +77,8 @@ export type FakeErpOptions = {
    * is what every other test wants.
    */
   editorSettleTicks?: number;
+  /** Keep the tax editor focused after Enter while ERP has already recalculated the row. */
+  taxEditorRemainsOpen?: boolean;
   /**
    * A column whose editor swallows the FIRST run of typing whole, and takes keys only once the cell has been
    * clicked into a second time.
@@ -1051,7 +1053,13 @@ const kendoDate = (raw: string) => {
       return;
     }
     if (params.key === 'Enter' || params.key === 'Tab') {
-      if (editor && active === editor.input) return commitEditor();
+      if (editor && active === editor.input) {
+        const keepOpen = options.taxEditorRemainsOpen && params.key === 'Enter' && editor.column === '税额';
+        const td = editor.td;
+        commitEditor();
+        if (keepOpen) editCell(td);
+        return;
+      }
       if (active && String(active.id).endsWith('-EDITOR')) { active.blur(); mutate('header', `${String(active.id).split('-').slice(-2, -1)[0]}=${active.value}`); }
       return;
     }

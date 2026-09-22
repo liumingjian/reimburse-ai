@@ -407,7 +407,16 @@ export async function writeCell(session: CdpSession, { which = 0, row = 0, colum
   await pressKey(session, commit);
 
   const want = String(value);
-  const after = await waitFor(at, (c) => c.ok && c.text !== '' && cellMatches(c.text, want, expect), settleMs, pace.pollMs);
+  let after = await waitFor(at, (c) => c.ok && c.text !== '' && cellMatches(c.text, want, expect), settleMs, pace.pollMs);
+  // A numeric editor can remain focused after Enter even after ERP computes the
+  // row total. Blur that same editor once, without typing again, then require
+  // committed cell text as before. An input value alone never proves success.
+  if (commit === 'Enter' && (column === '税额' || column === '费用金额')
+    && after.ok && after.text === '' && after.editorBound === true && after.focused === true
+    && after.editValue != null && cellMatches(after.editValue, want, expect)) {
+    await pressKey(session, 'Tab');
+    after = await waitFor(at, (c) => c.ok && c.text !== '' && cellMatches(c.text, want, expect), settleMs, pace.pollMs);
+  }
   const matched = after.ok && cellMatches(after.text, want, expect);
   return { ok: matched, column, wrote: want, expect, held,
     before: before.text, after: after.ok ? after.text : null,

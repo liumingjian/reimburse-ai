@@ -336,3 +336,37 @@ describe('emptying a pre-filled editor before typing', () => {
     expect(inputs(s).some((c) => c.params.text === '6'), 'no character of the new date was typed').toBe(false);
   });
 });
+
+it.each([['2.48', true], ['', false], ['9.99', false]] as const)('finishes a numeric editor after Enter and checks committed text %s', async (displayed, expected) => {
+  // The failed live capture still showed a focused tax input and the correct computed row total.
+  // Reproduce that editor state; only a real blur exposes the committed cell text.
+  let editing = false;
+  let typed = '';
+  let committed = false;
+  const sent: { method: string; params: Record<string, any> }[] = [];
+  const session = {
+    sent,
+    async send(method: string, params: Record<string, any> = {}) {
+      sent.push({ method, params });
+      if (method === 'Input.dispatchMouseEvent' && params.type === 'mousePressed') editing = true;
+      if (method === 'Input.dispatchKeyEvent' && params.type === 'keyDown' && params.text) typed += params.text;
+      if (method === 'Input.dispatchKeyEvent' && params.type === 'rawKeyDown' && params.key === 'Tab') {
+        committed = true;
+        editing = false;
+      }
+      if (method === 'Runtime.evaluate') return { result: { value: {
+        ok: true, column: '税额', text: committed ? displayed : '', x: 700, y: 420,
+        inView: true, onTarget: true, editing, focused: editing, editorBound: editing,
+        editValue: editing ? typed : null,
+      } } };
+      return {};
+    },
+    close() {},
+  };
+  const result = await writeCell(session, { column: '税额', value: '2.48', settleFirst: false,
+    readyMs: 0, settleMs: 0, holdMs: 10, pace: { pollMs: 1, quietMs: 1, settleMs: 0, longMs: 10 } });
+  expect(result.ok, result.reason).toBe(expected);
+  expect(result.after).toBe(displayed);
+  expect(sent.filter(c => c.method === 'Input.dispatchKeyEvent' && c.params.type === 'rawKeyDown' && c.params.key === 'Tab')).toHaveLength(1);
+  expect(typed).toBe('2.48');
+});
