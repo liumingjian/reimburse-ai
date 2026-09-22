@@ -15,6 +15,7 @@ export type StoredProject = {
   number: string;
   name: string | null;
   expiresOn: string | null;
+  deadlineOn?: string | null;
   lastCheckedAt: string | null;
   lastVerdict: string;
   // Older mock fixtures did not persist this field. Missing means active so they retain their previous meaning.
@@ -95,6 +96,7 @@ export function annotateProject(project: StoredProject, today: string): ProjectB
     number: project.number,
     name: project.name,
     expiresOn: project.expiresOn,
+    ...(project.deadlineOn == null ? {} : { deadlineOn: project.deadlineOn }),
     lastCheckedAt: project.lastCheckedAt,
     active: project.active !== false,
     selectable: reasons.length === 0,
@@ -105,7 +107,7 @@ export function annotateProject(project: StoredProject, today: string): ProjectB
 
 // 项目归属页的允许列表（随任务快照给出）：只含可选项目（内核 selectableProjects），不可选的不出现在选择区。
 export function allowListOf(entries: readonly ProjectBookEntry[]): ProjectOption[] {
-  return entries.filter((entry) => entry.selectable).map((entry) => ({ number: entry.number, name: entry.name ?? entry.number, source: 'personal' as const }));
+  return entries.filter((entry) => entry.selectable).map((entry) => ({ number: entry.number, name: entry.name ?? entry.number, source: 'personal' as const, ...(entry.deadlineOn == null ? {} : { deadlineOn: entry.deadlineOn }) }));
 }
 
 // 默认项目簿对应的允许列表（夹具快照构建时用；mock 服务端运行时按当前项目簿重新给出）。

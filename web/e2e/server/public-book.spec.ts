@@ -22,9 +22,10 @@ async function assignAllTo(page: Page, number: string) {
   await target.click();
 }
 
-async function intakePublic(book: Locator, number: string) {
+async function intakePublic(book: Locator, number: string, deadline?: string) {
   await book.getByLabel('项目号').fill(number);
   await book.getByLabel('项目名称').fill(number === 'P-2307' ? '华东客户交付' : '产品调研');
+  if (deadline) await book.getByLabel('截止日期', { exact: true }).fill(deadline);
   await book.getByRole('button', { name: '加入项目', exact: true }).click();
   await expect(book.getByTestId(`book-row-${number}`)).toContainText('可选');
 }
@@ -104,11 +105,12 @@ test('public projects are read-only for members and retain lifecycle changes aft
   await signIn(member, '成员');
   await page.goto('/#/admin');
   const publicBook = page.getByRole('region', { name: '公共项目簿', exact: true }).filter({ has: page.getByLabel('项目名称', { exact: true }) });
-  await intakePublic(publicBook, 'OFFLINE-101');
+  await intakePublic(publicBook, 'OFFLINE-101', '2026-12-31');
 
   await member.goto('/#/projects');
   const readOnly = member.getByRole('table', { name: '公共项目簿' });
   await expect(readOnly.getByTestId('book-row-OFFLINE-101')).toContainText('产品调研');
+  await expect(readOnly.getByTestId('book-row-OFFLINE-101')).toContainText('2026-12-31');
   await expect(readOnly.getByRole('button')).toHaveCount(0);
   await page.getByTestId('book-row-OFFLINE-101').getByRole('button', { name: '停用项目 OFFLINE-101' }).click();
   await expect(publicBook.getByTestId('book-row-OFFLINE-101')).toContainText('已停用');

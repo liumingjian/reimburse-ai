@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ActionErrorSchema } from './actions';
-import { DateTimeSchema } from './primitives';
+import { DateSchema, DateTimeSchema } from './primitives';
 
 // Project books (项目簿) are owned by an application account or shared publicly. New entries are local preparation
 // records: entering one makes it available for project assignment (项目归属), but does not claim ERP verification.
@@ -10,6 +10,9 @@ export const ProjectBookEntrySchema = z.object({
   number: z.string().min(1),
   name: z.string().min(1).nullable(),
   expiresOn: z.string().min(1).nullable(),
+  // Optional in the wire shape so old clients and imported fixtures remain readable. New server responses include it
+  // when a project has an advisory deadline; absence has the same meaning as null.
+  deadlineOn: DateSchema.nullable().optional(),
   // Local intake deliberately returns null. A timestamp here is only a legacy catalog-check record.
   lastCheckedAt: DateTimeSchema.nullable(),
   // Lifecycle state is independent from ERP availability. An active legacy entry can still be unselectable when its
@@ -30,6 +33,8 @@ export type ProjectBook = z.infer<typeof ProjectBookSchema>;
 export const ProjectBookIntakeInputSchema = z.object({
   number: z.string(),
   name: z.string(),
+  // Empty string is accepted for native date inputs and normalized to a cleared deadline by the service.
+  deadlineOn: z.union([DateSchema, z.literal('')]).nullable().optional(),
 });
 export type ProjectBookIntakeInput = z.infer<typeof ProjectBookIntakeInputSchema>;
 
@@ -39,6 +44,8 @@ export const ProjectBookEditInputSchema = z.object({
   originalNumber: z.string(),
   number: z.string(),
   name: z.string(),
+  // Omitted by older callers: the service preserves the current value. Null or an empty string clears it.
+  deadlineOn: z.union([DateSchema, z.literal('')]).nullable().optional(),
 });
 export type ProjectBookEditInput = z.infer<typeof ProjectBookEditInputSchema>;
 
@@ -50,6 +57,7 @@ export const PublicProjectConversionInputSchema = z.discriminatedUnion('operatio
     operation: z.literal('edit'),
     originalName: z.string().nullable(),
     originalActive: z.boolean(),
+    originalDeadlineOn: DateSchema.nullable().optional(),
   }),
 ]);
 export type PublicProjectConversionInput = z.infer<typeof PublicProjectConversionInputSchema>;
@@ -115,6 +123,9 @@ export const PROJECT_BOOK_COPY = {
   lead: '录入项目号和项目名称后，可在新的项目归属中选择。提交去报销前仍会核对项目。',
   numberLabel: '项目号',
   nameLabel: '项目名称',
+  deadlineLabel: '截止日期',
+  deadlineHint: '可选；不填写表示未设置',
+  deadlineUnset: '未设置',
   intake: '加入项目',
   edit: '编辑项目',
   save: '保存',
