@@ -458,6 +458,7 @@ EOF
     exec /bin/chmod "$@"
     ;;
   python3)
+    if [ "$1" = '-c' ] && [ "$2" = 'import dnf' ]; then exit 0; fi
     if [ "$1" = '-' ] && { [ "$2" = preview ] || [ "$2" = check ] || [ "$2" = apply ]; }; then
       phase=$2
       expected=$3

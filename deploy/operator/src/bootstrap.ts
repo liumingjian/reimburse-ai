@@ -468,7 +468,12 @@ assert_active_runtime_stable() {
 }
 
 dnf_phase() {
-  python3 - "$1" "$EXPECTED_DIGEST" <<'PY'
+  dnf_python=python3
+  if ! "$dnf_python" -c 'import dnf' >/dev/null 2>&1; then
+    dnf_python=/usr/bin/python3
+    "$dnf_python" -c 'import dnf' >/dev/null 2>&1 || die 'the system Python cannot load dnf'
+  fi
+  "$dnf_python" - "$1" "$EXPECTED_DIGEST" <<'PY'
 import hashlib
 import json
 import logging
