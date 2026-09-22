@@ -6,17 +6,18 @@
 
 import type { Db } from '../db/database';
 import type { ErpLease } from '../erp-lease';
+import type { MaintenanceLease } from '../maintenance';
 import { ensureResult, type RecordFacts } from './fill-jobs';
 import { writeEvent } from './jobs';
 import { ExecutorEventSchema, type ExecutorChannel, type ExecutorEvent, type ReconcilePlan } from '@baox/erp-executor/protocol';
 import type { ReconcileExecutor } from './reconcile-job';
 
-export type ReconcileRun = { jobId: string; accountId: string; taskId: string; plan: ReconcilePlan };
+export type ReconcileRun = { jobId: string; accountId: string; taskId: string; plan: ReconcilePlan; maintenance?: MaintenanceLease };
 
 export function createReconcileJobs({ db, lease, execute, record }: { db: Db; lease: ErpLease; execute: ReconcileExecutor; record: RecordFacts }) {
   const active = new Set<Promise<void>>();
 
-  async function drive({ jobId, accountId, taskId, plan }: ReconcileRun): Promise<void> {
+  async function drive({ jobId, accountId, taskId, plan, maintenance }: ReconcileRun): Promise<void> {
     const at = () => new Date().toISOString();
     let finished = false;
     const emit = async (raw: ExecutorEvent) => {
@@ -41,7 +42,9 @@ export function createReconcileJobs({ db, lease, execute, record }: { db: Db; le
     } finally {
       lease.release(jobId);
       // Never leave the run without a result: the task would stay 对账中 and refuse every mutation until a restart.
+      // The maintenance lease covers this fallback direct write as well as the normal channel writes above.
       if (!finished) await ensureResult(db, jobId, taskId, 'reconcile').catch((error: unknown) => console.error(`ERP reconcile job ${jobId} could not be closed`, error));
+      maintenance?.release();
     }
   }
 

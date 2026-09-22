@@ -15,7 +15,7 @@ import { createFillJobs, type FillExecutor, type RecordFacts } from './erp/fill-
 import type { ReconcileExecutor } from './erp/reconcile-job';
 import { createReconcileJobs } from './erp/reconcile-jobs';
 import { createRemoteExecutor } from './erp/remote-executor';
-import { recoverErpJobs } from './erp/recovery';
+import { hasUnfinishedErpJobs, recoverErpJobs } from './erp/recovery';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
@@ -26,6 +26,7 @@ import { createPairingService, hasPairing } from './extension/pairing';
 import { createLegacyImport, LegacyImportRefusal } from './legacy/import';
 import { unavailableCatalog, type ProjectCatalog } from './catalog/project-catalog';
 import { admitsHost, admitsOrigin, type PublicOrigin } from './public-origin';
+import { createMaintenanceGate, MAINTENANCE_WRITE_CODE, MAINTENANCE_WRITE_MESSAGE, type MaintenanceGate } from './maintenance';
 import { ActionRefusedError, createTaskService, parseBacklogOfAllAccounts, StaleStepError, TaskNotFoundError, type ErpServiceOptions, type TaskService, type UploadedFile } from './tasks';
 
 // The HTTP app. Wire rules (contract/src/http.ts): success is 200 with the whole new snapshot; failure is
@@ -73,14 +74,17 @@ export type AppOptions = {
 // `close` stops the background jobs (after the material in flight) and releases the parse worker; call it before
 // closing the database. `extensionChannel` is what `server.ts` hands an upgraded socket to; the app itself never
 // opens one.
-export type App = Hono<AppEnv> & { close: () => Promise<void>; extensionChannel: ExtensionChannel };
+export type App = Hono<AppEnv> & { close: () => Promise<void>; extensionChannel: ExtensionChannel; maintenance: MaintenanceGate; ready: Promise<void> };
 
 type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
-const failure = (c: Context, status: 400 | 401 | 403 | 404 | 409, code: string, message: string) => c.json({ error: { code, message } }, status);
+const failure = (c: Context, status: 400 | 401 | 403 | 404 | 409 | 503, code: string, message: string) => c.json({ error: { code, message } }, status);
 
 export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor, reconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null, publicOrigin = null, extensionTemplate = null, schedule = realTimer }: AppOptions): App {
-  const accounts = createAccountService(db, now);
+  const maintenance = createMaintenanceGate(db);
+  // Session lookups usually write a sliding expiry or remove an expired row. Give those narrow housekeeping writes
+  // their own admission so a read route cannot cross an admitted maintenance boundary.
+  const accounts = createAccountService(db, now, () => maintenance.enter('background'));
   const legacy = createLegacyImport(db, legacyHome, now);
   // Keyed by task id; a task's stream only ever opens for its owner.
   const listeners = new Map<string, Set<SnapshotListener>>();
@@ -106,38 +110,75 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
       ? { code: EXTENSION_OFFLINE_CODE, message: ERP_ACTION_ERRORS.extensionOffline }
       : { code: EXTENSION_NOT_PAIRED_CODE, message: ERP_ACTION_ERRORS.extensionNotPaired };
   };
-  const erpService: ErpServiceOptions = { lease: erpLease, config: erpConfig, run: (job) => fillJobs.run(job), reconcile: (job) => reconcileJobs.run(job), ...(erpExecutor ? {} : { executorReady: extensionReady }) };
+  const erpService: ErpServiceOptions = {
+    lease: erpLease,
+    config: erpConfig,
+    run: (job) => fillJobs.run(job),
+    reconcile: (job) => reconcileJobs.run(job),
+    acquireErp: () => maintenance.enter('erp'),
+    acquireBackground: () => maintenance.enter('background'),
+    ...(erpExecutor ? {} : { executorReady: extensionReady }),
+  };
   // Every task service is scoped to one account; the parser job gets the owner's service for each task it drives.
   const serviceFor = (accountId: string) =>
     createTaskService(db, dataDir, accountId, { onChange: (snapshot) => publish(snapshot, accountId), erp: erpService });
   // A restart ends every ERP job the old process ran: each gets its result before any request is served (a fill with
-  // a durable attempt -> reconcile; never a replay). Until this succeeds those jobs still read as `running`, so every
-  // mutation of their tasks would get 409 for ever: a failure is retried on the next request and, if it fails again,
-  // answered as an error rather than served on top of stuck jobs.
-  let recovery: Promise<unknown> | null = recoverErpJobs(db, record);
-  // The middleware reports the failure; this only keeps node from seeing an unhandled rejection.
-  recovery.catch(() => undefined);
+  // a durable attempt -> reconcile; never a replay). Recovery itself is a background write and therefore runs only
+  // while the durable barrier is open. A closed barrier with unfinished jobs becomes durable `unknown`, rather than
+  // silently settling work during a maintenance window.
+  let recovery: Promise<void> | null = null;
+  let recoveryError: unknown = null;
   const settled = () => (recovery ?? Promise.resolve()).catch(() => undefined);
-  async function ensureRecovered(): Promise<unknown> {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      recovery ??= recoverErpJobs(db, record);
-      try {
-        await recovery;
-        return null;
-      } catch (error) {
-        console.error('ERP job recovery failed', error);
-        // Dropped so the next attempt runs it again; it only ever closes jobs that still have no result.
-        recovery = null;
-        if (attempt === 1) return error;
-      }
+
+  async function recoverWhileOpen(): Promise<void> {
+    const admission = maintenance.enter('background');
+    if (!admission) throw new Error('ERP job recovery is blocked by the maintenance barrier');
+    try {
+      await recoverErpJobs(db, record);
+    } finally {
+      admission.release();
     }
-    return null;
+  }
+
+  async function ensureRecovered(): Promise<unknown> {
+    if (!recovery) return recoveryError;
+    try {
+      await recovery;
+      return recoveryError;
+    } catch (error) {
+      return recoveryError ?? error;
+    }
   }
   const tasksOf = (c: Context<AppEnv>) => serviceFor(accountOf(c).accountId);
-  const parseJobs = createParseJobs(serviceFor, () => parseBacklogOfAllAccounts(db, dataDir), parser ?? workerExecutor());
+  const parseJobs = createParseJobs(serviceFor, () => parseBacklogOfAllAccounts(db, dataDir), parser ?? workerExecutor(), () => maintenance.enter('background'));
   jobs = parseJobs;
-  // A restart mid-job picks up every account's backlog again: what is left is derived from the facts.
-  parseJobs.resumeAll();
+  maintenance.onOpen(() => parseJobs.resumeAll());
+  // Startup recovery runs before the server accepts requests. A failed recovery leaves the durable gate unusable
+  // instead of letting a later request decide that uncertain ERP state is safe.
+  const ready = (async () => {
+    await maintenance.ready;
+    if (maintenance.status().state !== 'open') {
+      // A clean admitted barrier is allowed to restart for inspection, but it never resumes parser or ERP work. A
+      // crashed job under that barrier cannot be settled without breaking the window, so make reopening fail closed.
+      if (maintenance.status().state === 'admitted' && (await hasUnfinishedErpJobs(db))) {
+        recoveryError = new Error('ERP job recovery is blocked by an admitted maintenance barrier');
+        console.error('ERP job recovery failed', recoveryError);
+        await maintenance.failClosed();
+      }
+      return;
+    }
+    recovery = recoverWhileOpen();
+    try {
+      await recovery;
+    } catch (error) {
+      recoveryError = error;
+      console.error('ERP job recovery failed', error);
+      await maintenance.failClosed();
+      return;
+    }
+    // A restart mid-job picks up every account's parser backlog after the ERP recovery boundary is known.
+    parseJobs.resumeAll();
+  })();
 
   const app = new Hono<AppEnv>();
 
@@ -168,7 +209,18 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     const origin = c.req.header('origin');
     // `null` is a sandboxed/opaque origin, never this app's own page.
     if (WRITE_METHODS.has(c.req.method) && origin !== undefined && c.req.path !== EXTENSION_PAIR_PATH && !admitsOrigin(publicOrigin, origin)) return forbidden(c);
-    await next();
+    // This also holds GET routes until recovery has either completed or made the gate fail closed. Some reads have
+    // narrowly admitted housekeeping writes (session and pairing liveness), so they cannot begin while startup work
+    // is still deciding the durable boundary.
+    await ready;
+    if (!WRITE_METHODS.has(c.req.method)) return next();
+    const admission = maintenance.enter('http');
+    if (!admission) return failure(c, 503, MAINTENANCE_WRITE_CODE, MAINTENANCE_WRITE_MESSAGE);
+    try {
+      await next();
+    } finally {
+      admission.release();
+    }
   });
 
   app.use('/api/*', async (c, next) => {
@@ -209,7 +261,12 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // The pairing view reports whether that account's extension is connected, which only the live channel knows, and
   // the channel resolves tokens through the pairing service: each needs the other, so the pairing service reaches
   // the channel through the binding rather than the value. It also closes the channel's socket when a pairing goes.
-  const pairings = createPairingService(db, now, { connected: (accountId) => extensionChannel.connected(accountId), disconnect: (accountId) => extensionChannel.disconnect(accountId) });
+  const pairings = createPairingService(
+    db,
+    now,
+    { connected: (accountId) => extensionChannel.connected(accountId), disconnect: (accountId) => extensionChannel.disconnect(accountId) },
+    () => maintenance.enter('background'),
+  );
   const extensionChannel = createExtensionChannel({ pairings, now, schedule, onRequest: remote.answer, onLost: remote.lost });
   mountExtensionPairRoutes(app, pairings);
   // The invoice originals of the 去报销 running in the paired extension (#256, ADR-0022), before the gate for the same
@@ -429,7 +486,18 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
 
   if (webDist) app.get('*', (c) => serveWebFile(c, webDist));
 
-  return Object.assign(app, { extensionChannel, close: async () => { extensionChannel.close(); await settled(); await parseJobs.close(); await fillJobs.close(); await reconcileJobs.close(); } });
+  return Object.assign(app, {
+    extensionChannel,
+    maintenance,
+    ready,
+    close: async () => {
+      extensionChannel.close();
+      await settled();
+      await parseJobs.close();
+      await fillJobs.close();
+      await reconcileJobs.close();
+    },
+  });
 }
 
 // How many max-size files one 上传批次 may hold before the request itself is refused unread.
