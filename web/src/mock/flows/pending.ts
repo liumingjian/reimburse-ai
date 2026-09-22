@@ -13,7 +13,7 @@ import {
 import type { MockBus } from '../bus';
 import { applyPendingAnswer, buildLines, excludeGivenUpVoucher, openPendingItemCount } from '../fixtures/inventory';
 import { catalogPending, preparationPending } from '../fixtures/preparation';
-import { projectAssignmentOpen, projectEntryStep } from '../fixtures/projects';
+import { deadlineWarningsOf, projectAssignmentOpen, projectEntryStep } from '../fixtures/projects';
 
 // 待确认项答复与整单明细确认（mock 服务端的角色），以及 e2e 用的「别处推进」钩子。
 
@@ -118,13 +118,16 @@ export function createPendingFlow(bus: MockBus): PendingFlow {
         return snapshot;
       }),
     // 确认整单明细：摘要必须是快照里的那一份；确认后进入「去打印 / 去报销」阶段。
-    confirmReview: async (taskId, digest, stepToken) =>
+    confirmReview: async (taskId, digest, stepToken, acceptDeadlineWarnings = false) =>
       bus.withStep(taskId, stepToken, (snapshot) => {
         if (snapshot.lines.length === 0) return { error: { code: 'no_lines', message: CONFIRM_REVIEW_ERRORS.noLines } };
         if (snapshot.step.kind !== 'confirm_review' || snapshot.confirmation.digest === null) {
           return { error: { code: 'digest_mismatch', message: CONFIRM_REVIEW_ERRORS.digestMismatch } };
         }
         if (snapshot.confirmation.digest !== digest) return { error: { code: 'digest_mismatch', message: CONFIRM_REVIEW_ERRORS.digestMismatch } };
+        if (deadlineWarningsOf(snapshot.lines, snapshot.projectAssignment.assignments, snapshot.projectAssignment.projects).length > 0 && !acceptDeadlineWarnings) {
+          return { error: { code: 'deadline_confirmation_required', message: CONFIRM_REVIEW_ERRORS.deadlineConfirmationRequired } };
+        }
         applyConfirm(snapshot, bus.now());
         return snapshot;
       }),

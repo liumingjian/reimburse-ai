@@ -39,6 +39,8 @@ export type MockOptions = {
   auth?: AuthOption;
   // `?book=empty`：个人项目簿初始为空；走到项目归属时先进入维护入口，第一次录入成功后回到项目归属。
   bookEmpty?: boolean;
+  // `?deadline=warning` gives P-2307 a deadline for the isolated browser acceptance scenario.
+  deadlineWarning?: boolean;
   // `?catalog=mismatch`：报销信息核对把项目 P-2307 判为不匹配（报销系统里已被禁用）；把用到它的明细改派到别的项目后重新提交即通过。
   catalogMismatch?: boolean;
   // `?preparation=blocked`：材料包缺项（曹操出行行程单与明细对不上）；排除这份行程单后重新准备即通过。
@@ -92,6 +94,11 @@ export function readMockOptions(search: string): MockOptions {
   if (book !== null) {
     if (book === 'empty') options.bookEmpty = true;
     else console.warn(`未知的 book「${book}」，可用值：empty`);
+  }
+  const deadline = params.get('deadline');
+  if (deadline !== null) {
+    if (deadline === 'warning') options.deadlineWarning = true;
+    else console.warn(`未知的 deadline「${deadline}」，可用值：warning`);
   }
   const catalog = params.get('catalog');
   if (catalog !== null) {

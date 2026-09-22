@@ -220,6 +220,35 @@ test('ERP 写入开始后只读：明细不能勾选，面板里的项目都不�
   await expect(submit(page)).toBeDisabled();
 });
 
+test('项目截止日期提醒要求在归属和整单确认时明确继续', async ({ page }) => {
+  await page.goto(open('?seed=project&deadline=warning', '#/task/T1/project'));
+  await page.getByRole('checkbox', { name: '全选当前明细' }).locator('xpath=following-sibling::label[1]').click();
+  await assignTo(page, 'P-2307');
+  await page.getByLabel('报销事由').fill('上海产品评审出差');
+
+  const warning = page.getByRole('alert').filter({ hasText: '项目截止日期提醒' });
+  await expect(warning).toContainText('费用发生日');
+  await expect(warning).toContainText('住宿期间');
+
+  await submit(page).click();
+  const assignmentDialog = page.getByRole('dialog', { name: '项目截止日期提醒' });
+  await expect(assignmentDialog).toContainText('费用发生日');
+  await expect(assignmentDialog).toContainText('住宿期间');
+  await assignmentDialog.getByRole('button', { name: '取消' }).click();
+  await expect(page.getByRole('heading', { name: '项目归属' })).toBeVisible();
+
+  await submit(page).click();
+  await assignmentDialog.getByRole('button', { name: '仍然继续' }).click();
+  await expect(page).toHaveURL(/#\/task\/T1\/review$/);
+  await expect(page.getByRole('button', { name: '确认整单明细' })).toBeEnabled();
+
+  await page.getByRole('button', { name: '确认整单明细' }).click();
+  const reviewDialog = page.getByRole('dialog', { name: '项目截止日期提醒' });
+  await expect(reviewDialog).toContainText('住宿期间');
+  await reviewDialog.getByRole('button', { name: '仍然继续' }).click();
+  await expect(page.getByRole('link', { name: '去打印' })).toBeVisible();
+});
+
 // 选择栏一行放全选、筛选与状态文字，筛选宽度按内容；1440 与 1100 下「归入项目」面板都在明细表右侧，页面与明细区都不横向滚动。
 for (const width of [1440, 1100]) {
   test(`${width} 下工具栏一行、筛选按内容宽；页面与明细区不横向滚动`, async ({ page }) => {
