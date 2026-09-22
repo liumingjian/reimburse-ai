@@ -28,6 +28,8 @@ function titleOf(route: Route): string {
       return PROJECT_BOOK_COPY.title;
     case 'settings':
       return '设置';
+    case 'password':
+      return '修改密码';
     case 'settingsTutorial':
       return '浏览器扩展安装教程';
     case 'admin':
@@ -58,6 +60,8 @@ function Routes() {
       return <ProjectBookPage />;
     case 'settings':
       return <SettingsPage />;
+    case 'password':
+      return <ChangePasswordPage required={false} />;
     case 'settingsTutorial':
       return <ExtensionTutorialPage />;
     case 'admin':
