@@ -470,7 +470,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     },
     startInventory: (taskId, stepToken) => action(taskId, E.startInventory, { stepToken }),
     answerPendingItem: (taskId, itemId, answer, stepToken) => action(taskId, E.answerPendingItem, { itemId, answer, stepToken }),
-    confirmReview: (taskId, digest, stepToken) => action(taskId, E.confirmReview, { digest, stepToken }),
+    confirmReview: (taskId, digest, stepToken, acceptDeadlineWarnings = false) => action(taskId, E.confirmReview, { digest, acceptDeadlineWarnings, stepToken }),
     reopenUpload: (taskId, stepToken) => action(taskId, E.reopenUpload, { stepToken }),
     removePaymentScreenshot: (taskId, screenshotId) => action(taskId, E.removePaymentScreenshot, { screenshotId }),
     generatePrintSheet: (taskId) => action(taskId, E.generatePrintSheet, {}),
