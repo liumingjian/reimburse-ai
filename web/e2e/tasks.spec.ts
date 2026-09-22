@@ -11,7 +11,9 @@ test('任务列表显示三个任务及其阶段徽标', async ({ page }, testIn
 
   const t1 = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ });
   await expect(t1.getByText('3/10 材料盘点')).toBeVisible();
-  await expect(t1.getByText('未确认')).toBeVisible();
+  await expect(t1.getByText('暂无可用日期')).toBeVisible();
+  await expect(t1.getByText('暂无可用金额')).toBeVisible();
+  await expect(t1.getByRole('link', { name: '继续', exact: true })).toHaveClass(/cds--btn--primary/);
 
   const t2 = page.getByRole('row', { name: /2026-07 深圳客户拜访/ });
   await expect(t2.getByText('对账中')).toBeVisible();
@@ -21,9 +23,43 @@ test('任务列表显示三个任务及其阶段徽标', async ({ page }, testIn
   await expect(t3.getByText('10/10 单据交接')).toBeVisible();
   await expect(t3.getByText('2318.50')).toBeVisible();
 
+  await expect(page.getByRole('button', { name: '新建报销任务' })).toHaveClass(/cds--btn--tertiary/);
   await expect(page.getByRole('banner').getByText('林颂宜', { exact: true })).toBeVisible();
   await expect(page.getByText(/部门|产品研发部/)).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('tasks.png'), fullPage: true });
+});
+
+test('任务摘要分别说明待确认和已确认的日期与金额', async ({ page }) => {
+  await page.goto(open('?seed=review', '#/tasks'));
+  const pending = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ });
+  await expect(pending.getByText('2026-08-09 至 2026-08-22')).toBeVisible();
+  await expect(pending.getByText('待确认', { exact: true })).toBeVisible();
+  await expect(pending.getByText('待整单确认', { exact: true })).toBeVisible();
+
+  await page.goto(open('?seed=actions', '#/tasks'));
+  const confirmed = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ });
+  await expect(confirmed.getByText('2026-08-09 至 2026-08-22')).toBeVisible();
+  await expect(confirmed.getByText('已确认', { exact: true })).toHaveCount(2);
+  await expect(confirmed.getByText('3972.59')).toBeVisible();
+});
+
+test('没有任务时，新建报销任务紧跟说明并打开新建弹层', async ({ page }) => {
+  await page.goto(open('', '#/tasks'));
+  for (const name of ['2026-08 上海出差（产品评审）', '2026-07 深圳客户拜访', '2026-06 北京培训']) {
+    const row = page.getByRole('row', { name: new RegExp(name) });
+    await row.getByRole('button', { name: '作废' }).click();
+    await page.getByRole('dialog', { name: '作废这个报销任务？' }).getByRole('button', { name: '作废', exact: true }).click();
+    await expect(row).toHaveCount(0);
+  }
+
+  const empty = page.locator('.app-empty').filter({ has: page.getByRole('heading', { name: '还没有报销任务' }) });
+  await expect(empty).toBeVisible();
+  const create = empty.getByRole('button', { name: '新建报销任务' });
+  await expect(create).toHaveClass(/cds--btn--primary/);
+  await expect(page.locator('.app-page-head').getByRole('button', { name: '新建报销任务' })).toHaveCount(0);
+  await create.click();
+  await expect(page).toHaveURL(/#\/tasks\/new$/);
+  await expect(page.getByRole('dialog', { name: '新建报销任务' })).toBeVisible();
 });
 
 test('作废确认是危险弹层：确认按钮是红色 danger 按钮，文案仍是「作废」', async ({ page }, testInfo) => {

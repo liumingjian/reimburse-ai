@@ -1,10 +1,10 @@
 import { ERP_ACTION_ERRORS, type AppAdapter, type TaskSnapshot } from '@baox/contract';
 import type { MockBus } from '../bus';
-import { ERP_STEP_INDEX, applyAbortAtHandover, applyErpDone, applyReadbackMismatch, applyStopBeforeWrite, emptyReconcile, erpSteps, handedOffBanner, loginNotDetected } from '../fixtures/erp';
+import { ERP_STEP_INDEX, applyAbortAtHandover, applyErpDone, applyReadbackMismatch, applyStopBeforeWrite, emptyReconcile, erpRunning, erpStageAt, erpSteps, handedOffBanner, idleErp, loginNotDetected } from '../fixtures/erp';
 import { T1_DRAFT_NO } from '../fixtures/tasks';
 
-// ERP 填报（「去报销」即开始：定时推进、登录交接、登录后自动写入）、严格回读与对账（mock 服务端的角色）。
-// 没有「开始填报」：整单确认之后点「去报销」启动浏览器，检测到登录就自动导入、写入、回读并交接（内核 erp_write_pending 自动执行）。
+// The mock simulates the server-owned ERP fill, strict read-back, and reconciliation states.
+// Confirming a claim opens its task-specific ERP tab; once login is detected, the simulated fill advances automatically.
 // 严格回读与交接的结局按故障决定：erp-write-aborted 在交接步中止（停在对账）；readback-mismatch 停在完成页等待转人工。
 
 const DEFAULT_ERP_STEP_MS = 300;
@@ -33,6 +33,10 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     if (!erpRunLive(current, run, 'running')) return;
     current.erp.status = 'waiting_login';
     current.erp.steps = erpSteps(ERP_STEP_INDEX.login, 'waiting');
+    current.erp.currentStage = 'login';
+    current.erp.externalWait = 'employee_login';
+    current.erp.outcome = 'none';
+    current.erp.allowedActions = ['refresh', 'confirm_login', 'cancel'];
     current.step = { kind: 'erp_login', stepToken: `tok-${taskId}-erp-login-${run}-1` };
     bus.push(current);
     if (options.fault === 'erp-login-missing') return;
@@ -49,9 +53,13 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     const taskId = snapshot.task.taskId;
     snapshot.erp.status = 'running';
     snapshot.erp.loginNotice = null;
-    snapshot.erp.steps = erpSteps(ERP_STEP_INDEX.navigate, 'running');
+    snapshot.erp.steps = erpSteps(ERP_STEP_INDEX.catalog, 'running');
+    snapshot.erp.currentStage = 'catalog';
+    snapshot.erp.externalWait = 'erp_response';
+    snapshot.erp.outcome = 'none';
+    snapshot.erp.allowedActions = ['refresh'];
     snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-erp-write-${run}` };
-    setTimeout(() => finishErpStep(taskId, run, ERP_STEP_INDEX.navigate), erpStepMs);
+    setTimeout(() => finishErpStep(taskId, run, ERP_STEP_INDEX.catalog), erpStepMs);
   };
 
   // 第 index 步结束：严格回读按 readback-mismatch 决定一致或停在完成页等待转人工；交接步在 erp-write-aborted 下中止。
@@ -67,19 +75,19 @@ export function createErpFlow(bus: MockBus): ErpFlow {
       bus.push(current);
       return;
     }
-    if (index === ERP_STEP_INDEX.readback && options.fault === 'readback-mismatch') {
-      applyReadbackMismatch(current, current.erp.draftNo ?? T1_DRAFT_NO);
-      bus.push(current);
-      return;
-    }
     if (index === ERP_STEP_INDEX.handover) {
-      if (options.fault === 'erp-write-aborted') applyAbortAtHandover(current);
+      if (options.fault === 'readback-mismatch') applyReadbackMismatch(current, current.erp.draftNo ?? T1_DRAFT_NO);
+      else if (options.fault === 'erp-write-aborted') applyAbortAtHandover(current);
       // 交接：单据填好了但没有保存，所以没有单据编号（服务端 handed_over 同此）。
       else applyErpDone(current);
       bus.push(current);
       return;
     }
     current.erp.steps = erpSteps(index + 1, 'running');
+    current.erp.currentStage = erpStageAt(index + 1);
+    current.erp.externalWait = 'erp_response';
+    current.erp.outcome = 'none';
+    current.erp.allowedActions = ['refresh'];
     bus.push(current);
     setTimeout(() => finishErpStep(taskId, run, index + 1), erpStepMs);
   };
@@ -93,7 +101,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
   };
 
   return {
-    // 去报销：整单确认之后才接受（choose_action）。阶段推到 erp，第一步「启动浏览器」进行中，随后登录步等待；
+    // A confirmed claim enters the ERP stage, opens its ERP tab, then waits for employee login.
     // 写入进行中没有待答 step（none）。检测到登录后自动写入，不再有「开始填报」这道确认。
     startErpWrite: async (taskId, stepToken) =>
       bus.withStep(taskId, stepToken, (snapshot) => {
@@ -102,7 +110,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         }
         const run = newRun(taskId);
         snapshot.stage = 'erp';
-        snapshot.erp = { status: 'running', steps: erpSteps(ERP_STEP_INDEX.browser, 'running'), draftNo: null, abortReason: null, loginNotice: null, erpAccount: null };
+        snapshot.erp = erpRunning(ERP_STEP_INDEX.chromium);
         snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-erp-run-${run}` };
         snapshot.task.updatedAt = bus.now();
         setTimeout(() => reachLogin(taskId, run), erpStepMs);
@@ -130,7 +138,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         if (snapshot.step.kind !== 'erp_login') return { error: { code: 'not_waiting_login', message: ERP_ACTION_ERRORS.notWaitingLogin } };
         erpRuns.delete(taskId);
         snapshot.stage = 'actions';
-        snapshot.erp = { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null, erpAccount: null };
+        snapshot.erp = idleErp();
         snapshot.step = { kind: 'choose_action', stepToken: bus.rotateToken(`tok-${taskId}-actions`) };
         snapshot.task.updatedAt = bus.now();
         return snapshot;
@@ -163,7 +171,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         if (!snapshot.reconcile.allowedActions.includes('refill')) return { error: { code: 'action_not_allowed', message: ERP_ACTION_ERRORS.notAllowed } };
         const run = newRun(taskId);
         snapshot.stage = 'erp';
-        snapshot.erp = { status: 'running', steps: erpSteps(ERP_STEP_INDEX.browser, 'running'), draftNo: null, abortReason: null, loginNotice: null, erpAccount: null };
+        snapshot.erp = erpRunning(ERP_STEP_INDEX.chromium);
         snapshot.reconcile = emptyReconcile();
         snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-erp-run-${run}` };
         snapshot.task.updatedAt = bus.now();

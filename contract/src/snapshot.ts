@@ -376,6 +376,8 @@ export const LineSchema = z.object({
   expenseItemCode: z.string().nullable(),
   expenseItemName: z.string().nullable(),
   invoiceType: z.string().min(1),
+  // The evidence behind the ERP enum value, distinct from the material's parsed 发票票种.
+  invoiceTypeSource: z.string().min(1),
   referenceMaterialIds: z.array(IdSchema),
   grossAmount: AmountSchema,
   netAmount: AmountSchema,
@@ -614,6 +616,17 @@ export const ProjectLineAssignmentSchema = z.object({
 });
 export type ProjectLineAssignment = z.infer<typeof ProjectLineAssignmentSchema>;
 
+export const PROJECT_DEADLINE_WARNING_KINDS = ['after_deadline', 'stay_crosses_deadline'] as const;
+export const ProjectDeadlineWarningSchema = z.object({
+  lineId: IdSchema,
+  lineNo: z.number().int().positive(),
+  projectNumber: z.string().min(1),
+  projectName: z.string().min(1),
+  deadlineOn: DateSchema,
+  kind: z.enum(PROJECT_DEADLINE_WARNING_KINDS),
+});
+export type ProjectDeadlineWarning = z.infer<typeof ProjectDeadlineWarningSchema>;
+
 export const ProjectAssignmentSchema = z.object({
   status: z.enum(PROJECT_ASSIGNMENT_STATUSES),
   // 报销事由，至多 100 个字；未填为 null。
@@ -636,16 +649,58 @@ export const ProjectAssignmentSchema = z.object({
   reselect: z.array(ProjectLineAssignmentSchema),
   // 允许列表（只含可选项目），打开页面时整份给出；搜索只缩小显示，不缩小允许列表。
   projects: z.array(ProjectOptionSchema),
+  deadlineWarnings: z.array(ProjectDeadlineWarningSchema),
   submittedAt: DateTimeSchema.nullable(),
 });
 export type ProjectAssignment = z.infer<typeof ProjectAssignmentSchema>;
 
 // ---- ERP 填报、回读、对账 ----
 
-// 写入报销系统的进度：步骤、标题与说明都由服务端给出，页面按顺序渲染。步骤划分照内核 erp-write 的阶段：
-// 启动浏览器、登录、打开空白报销单（navigate + preflight）、选择不生成费用明细（invoice_assistant）、导入发票（invoice_import）、
-// 收票回读（receipt_readback）、填写明细（preview + fill，逐值写入回读）、交接单据（handover，严格回读通过后交给员工保存）。
-// 登录步处于 waiting 时，当前待答 step 是 erp_login；「我已登录，继续」只是请服务端再探测一次，探测不到就留在原地并给出 loginNotice。
+// The ERP progress copy is part of the API: the server derives each state from recorded executor facts and the mock
+// reuses the same list. The paired browser extension opens one ERP tab for this reimbursement; the employee logs in
+// there, then the app fills and strictly reads the form back before handing it over.
+export const ERP_PROGRESS_STAGE_KEYS = ['chromium', 'login', 'catalog', 'navigate', 'import', 'receipt', 'fill', 'handover'] as const;
+export const ErpProgressStageSchema = z.enum(ERP_PROGRESS_STAGE_KEYS);
+export type ErpProgressStage = z.infer<typeof ErpProgressStageSchema>;
+
+export const ERP_EXTERNAL_WAITS = ['none', 'employee_login', 'extension_connection', 'erp_response'] as const;
+export const ErpExternalWaitSchema = z.enum(ERP_EXTERNAL_WAITS);
+export type ErpExternalWait = z.infer<typeof ErpExternalWaitSchema>;
+
+export const ERP_OUTCOMES = ['none', 'filled', 'saved'] as const;
+export const ErpOutcomeSchema = z.enum(ERP_OUTCOMES);
+export type ErpOutcome = z.infer<typeof ErpOutcomeSchema>;
+
+// These are commands over the recorded state. `refresh` only reads the latest snapshot; it never reruns a fill job.
+export const ERP_ALLOWED_ACTIONS = ['refresh', 'confirm_login', 'cancel'] as const;
+export const ErpAllowedActionSchema = z.enum(ERP_ALLOWED_ACTIONS);
+export type ErpAllowedAction = z.infer<typeof ErpAllowedActionSchema>;
+
+// The hand-over step (交接单据, hand over the bill) closes 去报销: baox fills the form, runs the strict read-back and
+// releases automation control. It never clicks 保存 or submits the claim (ADR-0028).
+export const ERP_HANDOVER_STEP_COPY = {
+  key: 'handover',
+  title: '交接单据',
+  description: '不点保存、不提交审批：严格回读逐行通过后，把填好的报销单交给你，由你自己点「保存」并按流程提交。',
+} as const;
+
+export const ERP_PROGRESS_STEPS = [
+  { key: 'chromium', title: '打开报销系统标签页', description: '通过已配对的浏览器扩展，打开这次报销专用的报销系统标签页。' },
+  { key: 'login', title: '登录', description: '在为这次报销打开的报销系统标签页里使用本人账号登录。应用不会替你输入账号或密码。' },
+  { key: 'catalog', title: '报销信息核对', description: '只读核对项目与费用项目：在报销系统里存在、名称一致、已审核且未禁用。' },
+  { key: 'navigate', title: '打开空白报销单', description: '打开费用报销单新增页，核对报销系统版本，确认是唯一一张空白单据。' },
+  { key: 'import', title: '导入发票', description: '在发票助手里选择「不生成费用明细」，导入这次的发票。' },
+  { key: 'receipt', title: '收票回读', description: '逐票回读收票单号、发票号码、不含税金额、税额与价税合计。' },
+  { key: 'fill', title: '填写明细', description: '按统一业务序号逐行写入明细，每个值写入后从单元格回读。' },
+  ERP_HANDOVER_STEP_COPY,
+] as const;
+
+export const ERP_EXTERNAL_WAIT_COPY: Readonly<Record<Exclude<ErpExternalWait, 'none'>, string>> = {
+  employee_login: '等待你在报销系统标签页登录。',
+  extension_connection: '浏览器扩展没有连接。连接恢复后，刷新状态只会读取已经记录的进度。',
+  erp_response: '正在等待报销系统返回结果。',
+};
+
 export const ErpStepSchema = z.object({
   key: z.string().min(1),
   title: z.string().min(1),
@@ -653,15 +708,6 @@ export const ErpStepSchema = z.object({
   status: z.enum(['todo', 'running', 'waiting', 'done', 'failed']),
 });
 export type ErpStep = z.infer<typeof ErpStepSchema>;
-
-// The hand-over step (交接单据, hand over the bill) closes 去报销: baox fills the form, runs the strict read-back and
-// permanently releases the 报销系统 automation control. It never clicks 保存 (ADR-0028). The server's display step
-// list and the web mock's step list both read this constant, so the two cannot drift apart.
-export const ERP_HANDOVER_STEP_COPY = {
-  key: 'handover',
-  title: '交接单据',
-  description: '不点保存、不提交审批：严格回读逐行通过后，把填好的报销单交给你，由你自己点「保存」。',
-} as const;
 
 // 这次写入登录的报销系统账号与账套：按尝试记录、在完成页显示，从不与应用账号比对（ADR-0016）。
 export const ErpAccountViewSchema = z.object({
@@ -675,6 +721,10 @@ export type ErpAccountView = z.infer<typeof ErpAccountViewSchema>;
 export const ErpSchema = z.object({
   status: z.enum(['idle', 'running', 'waiting_login', 'aborted', 'done']),
   steps: z.array(ErpStepSchema),
+  currentStage: ErpProgressStageSchema.nullable(),
+  externalWait: ErpExternalWaitSchema,
+  outcome: ErpOutcomeSchema,
+  allowedActions: z.array(ErpAllowedActionSchema),
   draftNo: z.string().nullable(),
   abortReason: z.string().nullable(),
   loginNotice: z.string().nullable(),
@@ -788,11 +838,13 @@ export const ReconcileSchema = z.object({
 });
 export type Reconcile = z.infer<typeof ReconcileSchema>;
 
-// 完成页的固定句（user-interaction-contract.md:70）：严格回读逐行一致、单据交接给员工时显示，逐字不改。
-// 三件事缺一不可（ADR-0028）：单据还没有被保存、由员工自己点「保存」、保存后回来对账；
-// 保存时报销系统弹出「字段必录提示」或「处理结果」，说明值没有进入报销系统的业务模型，只能重新去报销，不能手工补填。
+// The filled outcome means the form was strictly read back and handed to the employee. Saving, submission, approval,
+// and payment remain facts of the ERP system, not consequences of filling the form (ADR-0028).
 export const HANDOVER_COMPLETED_NOTICE =
-  '报销单已经按你确认的明细填好，还没有保存。请在报销系统里逐行核对，由你自己点「保存」。保存时如果弹出「字段必录提示」或「处理结果」，说明有字段没有真正写进报销系统：回到这里重新去报销这一项，不要手工补填。保存成功后回到这里再对一次账，这是最后一步。';
+  '报销单已经按你确认的明细填好，还没有保存或提交。请在报销系统里逐行核对，由你自己点「保存」并按流程提交。保存时如果弹出「字段必录提示」或「处理结果」，说明有字段没有真正写进报销系统：回到这里重新去报销这一项，不要手工补填。保存后回到这里再对一次账。应用只确认已填好，不代表已保存、已提交、已审批或已付款。';
+
+export const ERP_SAVED_OUTCOME_NOTICE =
+  '已从报销系统读到这张单据已保存。应用没有读到提交、审批或付款事实。';
 
 // ---- 报销信息核对与报销材料准备 ----
 

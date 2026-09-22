@@ -194,13 +194,36 @@ describe('edit classes', () => {
     expect(byFileName(done, sample('m01').name).fields.find((f) => f.key === 'itemName')?.value).toBe('*住宿服务*住宿费');
   });
 
-  it('choice: only a value the rules allow', async () => {
+  it('maps a known face kind and asks once for an explicit ERP type when the face kind is unknown', async () => {
+    const known = await inventoried(['m01']);
+    expect(known.lines[0]).toMatchObject({ invoiceType: '增值税发票', invoiceTypeSource: 'face_type_to_erp_enum' });
+
+    await server.close();
+    const uncertain = {
+      ...einvoice,
+      parse(doc: Parameters<typeof einvoice.parse>[0]) {
+        const parsed = einvoice.parse(doc);
+        return { ...parsed, candidates: parsed.candidates.map((candidate) => (candidate.key === 'invoiceType' ? { ...candidate, value: '定额发票' } : candidate)) };
+      },
+    };
+    server = await createTestServer({ parser: inlineExecutor([uncertain]) });
+    signedIn = await server.signIn();
+
     const start = await inventoried(['m01']);
-    const id = byFileName(start, sample('m01').name).materialId;
-    const failure = await refused(await answer(start, `edit.${id}.erpInvoiceType`, { value: '增值税普通发票' }), 'choice_not_allowed');
-    expect(failure.error.message).toContain('增值税专用发票');
-    const done = await answered(start, `edit.${id}.erpInvoiceType`, { value: '增值税专用发票' });
-    expect(done.lines[0]?.invoiceType).toBe('增值税专用发票');
+    const material = byFileName(start, sample('m01').name);
+    const id = material.materialId;
+    const typeItemId = `erp_invoice_type.${id}`;
+    const typeItem = item(start, typeItemId);
+    expect(typeItem).toMatchObject({ kind: 'choice', status: 'open' });
+    expect(typeItem.choices.map((choice) => choice.key)).toEqual(['普通发票', '增值税发票', '机票', '火车票', '其他运输票', '其他']);
+    expect(material.fields.find((field) => field.key === 'invoiceType')?.value).toBe('定额发票');
+    expect(start.lines).toEqual([]);
+
+    await refused(await answer(start, typeItemId, { choice: '未列出' }), 'invalid_answer');
+    const done = await answered(start, typeItemId, { choice: '其他运输票' });
+    expect(done.lines[0]).toMatchObject({ invoiceType: '其他运输票', invoiceTypeSource: 'employee_choice' });
+    expect(byFileName(done, sample('m01').name).fields.find((field) => field.key === 'invoiceType')?.value).toBe('定额发票');
+    await refused(await answer(done, typeItemId, { choice: '其他' }), 'item_not_open');
   });
 
   it('an unknown field is refused', async () => {

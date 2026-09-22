@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   ALLOCATION_ERRORS,
-  ERP_HANDOVER_STEP_COPY,
+  ERP_PROGRESS_STEPS,
   ErpStepSchema,
   PENDING_ANSWER_ERRORS,
   PendingAnswerSchema,
@@ -30,9 +30,8 @@ describe('契约 schema', () => {
     expect(() => TaskSnapshotSchema.parse(t3Snapshot())).not.toThrow();
   });
 
-  // 交接步（handover）的文案只有契约一份：服务端的 DISPLAY_STEPS 与这里的 ERP_STEP_DEFS 都读它，改一处两边一起动。
-  test('mock 的写入步骤清单以契约里的交接步收尾，文案与服务端同源', () => {
-    expect(ERP_STEP_DEFS.at(-1)).toEqual(ERP_HANDOVER_STEP_COPY);
+  test('mock 的写入步骤清单与契约同源', () => {
+    expect(ERP_STEP_DEFS).toEqual(ERP_PROGRESS_STEPS);
     expect(ERP_STEP_INDEX.handover).toBe(ERP_STEP_DEFS.length - 1);
     expect(ERP_STEP_DEFS.some((step) => step.title.includes('保存'))).toBe(false);
     for (const step of erpSteps(ERP_STEP_DEFS.length)) expect(() => ErpStepSchema.parse(step)).not.toThrow();

@@ -338,8 +338,8 @@ const EVENTS: readonly EventTemplate[] = [
   { voucher: 'm03', refs: ['m04'], category: CATEGORY.remote_city_transport, summary: '高德 · 漕河泾 → 静安寺', evidenceNote: null, date: '2026-08-10', endDate: null, city: '上海', origin: '漕河泾', destination: '静安寺', gross: '20.85', net: '20.24', tax: '0.61', invoiceType: '普通发票' },
   { voucher: 'm03', refs: ['m04'], category: CATEGORY.remote_city_transport, summary: '高德 · 静安寺 → 张江', evidenceNote: null, date: '2026-08-12', endDate: null, city: '上海', origin: '静安寺', destination: '张江', gross: '21.65', net: '21.02', tax: '0.63', invoiceType: '普通发票' },
   { voucher: 'm05', refs: ['m06'], category: CATEGORY.remote_city_transport, summary: '曹操 · 浦东机场 → 张江', evidenceNote: '打车发票与行程单配对：1 段行程 38.40 与发票一致', date: '2026-08-11', endDate: null, city: '上海', origin: '浦东机场', destination: '张江', gross: '38.40', net: '37.28', tax: '1.12', invoiceType: '普通发票' },
-  { voucher: 'm07', refs: [], category: CATEGORY.long_distance, summary: 'G7522 杭州东 → 上海虹桥', evidenceNote: '一张铁路电子客票就是一次费用；无需参考材料', date: '2026-08-09', endDate: null, city: null, origin: '杭州东', destination: '上海虹桥', gross: '73.00', net: '73.00', tax: '0.00', invoiceType: '普通发票' },
-  { voucher: 'm08', refs: [], category: CATEGORY.long_distance, summary: 'G7539 上海虹桥 → 杭州东', evidenceNote: '一张铁路电子客票就是一次费用；无需参考材料', date: '2026-08-22', endDate: null, city: null, origin: '上海虹桥', destination: '杭州东', gross: '73.00', net: '73.00', tax: '0.00', invoiceType: '普通发票' },
+  { voucher: 'm07', refs: [], category: CATEGORY.long_distance, summary: 'G7522 杭州东 → 上海虹桥', evidenceNote: '一张铁路电子客票就是一次费用；无需参考材料', date: '2026-08-09', endDate: null, city: null, origin: '杭州东', destination: '上海虹桥', gross: '73.00', net: '73.00', tax: '0.00', invoiceType: '火车票' },
+  { voucher: 'm08', refs: [], category: CATEGORY.long_distance, summary: 'G7539 上海虹桥 → 杭州东', evidenceNote: '一张铁路电子客票就是一次费用；无需参考材料', date: '2026-08-22', endDate: null, city: null, origin: '上海虹桥', destination: '杭州东', gross: '73.00', net: '73.00', tax: '0.00', invoiceType: '火车票' },
   { voucher: 'm09', refs: [], category: CATEGORY.remote_city_transport, summary: '出租车（上海）', evidenceNote: '纸质车票无参考材料；起点与终点待补填', date: '2026-08-15', endDate: null, city: '上海', origin: null, destination: null, gross: '32.00', net: '32.00', tax: '0.00', invoiceType: '普通发票' },
   { voucher: 'm10', refs: [], category: CATEGORY.remote_city_transport, summary: '出租车（上海）', evidenceNote: '纸质车票无参考材料；下车时间待修正，起点与终点待补填', date: '2026-08-19', endDate: null, city: '上海', origin: null, destination: null, gross: '47.00', net: '47.00', tax: '0.00', invoiceType: '普通发票' },
 ];
@@ -798,6 +798,7 @@ export function buildLines(result: InventoryResult): Line[] {
       expenseItemCode: expense?.code ?? null,
       expenseItemName: expense?.name ?? null,
       invoiceType: facts.invoiceType,
+      invoiceTypeSource: 'fixture_mapping',
       referenceMaterialIds: event.referenceMaterialIds,
       grossAmount: event.grossAmount,
       netAmount: facts.net,

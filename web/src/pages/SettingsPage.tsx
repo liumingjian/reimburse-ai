@@ -139,29 +139,36 @@ function LegacyImportSection() {
 
 export const EXTENSION_PAIRING_COPY = {
   title: '浏览器扩展',
-  lead: '先连接浏览器扩展，去报销时才能让它在你自己的浏览器里操作。',
+  lead: '浏览器扩展只连接当前应用地址。先下载当前地址提供的扩展，再生成配对码。',
   pairingTitle: '配对',
   independence: '配对与登录互不影响：撤销配对不会退出登录，退出登录也不会撤销配对。',
   firstTimeTitle: '第一次连接',
-  firstTimeLead: '还没有连接过浏览器扩展。先生成配对码，再在 Chrome 或 Edge 里的报销助手中输入。',
+  firstTimeLead: (origin: string) => `还没有连接过浏览器扩展。先从 ${origin} 下载报销助手，再生成配对码，在 Chrome 或 Edge 里输入。`,
   firstTimeAction: '生成配对码',
   waitingTitle: '在扩展里输入配对码',
-  waitingLead: '打开 Chrome 或 Edge 里的报销助手，把下面这串配对码填进去。填好后这里会自动显示已连接。',
+  waitingLead: (origin: string) => `打开从 ${origin} 下载的 Chrome 或 Edge 报销助手，把下面这串配对码填进去。填好后这里会自动显示已连接。`,
   connectedTitle: '扩展已连接，可以开始去报销',
-  connectedLead: '保持这台浏览器打开，回到报销任务后点击去报销。扩展会在你自己的浏览器里完成填写。',
+  connectedLead: (origin: string) => `扩展已连接到 ${origin}。保持这台浏览器打开，回到报销任务后点击去报销。`,
   disconnectedTitle: '扩展暂时没有连接',
-  disconnectedLead: '打开已经配对的 Chrome 或 Edge，确认报销助手还在运行。也可以重新生成配对码，在另一台浏览器上连接。',
+  disconnectedLead: (origin: string) => `这台扩展没有连接到 ${origin}。请确认当前地址的扩展仍在运行，或按下面步骤换成当前地址的扩展并重新配对。`,
   next: '下一步',
   reconnect: '重新生成配对码',
   tutorial: '打开安装教程',
   download: '下载浏览器扩展',
+  activeOrigin: '当前应用地址',
+  migrationTitle: '改用当前地址的扩展',
+  migrationLead: (origin: string) => `应用地址变更后，旧扩展不会连接到 ${origin}。`,
+  migrationDownload: (origin: string) => `在 ${origin} 下载新的浏览器扩展并解压。`,
+  migrationReplace: '在 Chrome 或 Edge 的扩展页移除旧扩展，或用新解压目录替换后点“重新加载”。',
+  migrationPair: '回到这里生成新的配对码，并在新扩展中输入。',
+  migrationVerify: '看到“已连接”后再去报销。',
+  migrationOldPair: (origin: string) => `旧地址的配对不表示已连接到 ${origin}。`,
   status: '状态',
   browser: '浏览器',
   extensionVersion: '扩展版本',
   connection: '连接',
   connected: '已连接',
   disconnected: '没有连接',
-  disconnectedHint: '扩展没有连上这个应用。请打开那台电脑的浏览器，确认扩展还装着、也在公司网络里；连上之后这里会自动变成已连接。',
   pairedAt: '配对时间',
   lastConnectedAt: '最近连接',
   codeExpiresAt: '配对码有效期至',
@@ -203,6 +210,7 @@ function ExtensionPairingSection() {
   };
 
   const view = state.data;
+  const activeOrigin = view?.activeOrigin ?? '';
   const nextTitle = view?.status === 'paired'
     ? view.connected
       ? EXTENSION_PAIRING_COPY.connectedTitle
@@ -212,11 +220,11 @@ function ExtensionPairingSection() {
       : EXTENSION_PAIRING_COPY.firstTimeTitle;
   const nextLead = view?.status === 'paired'
     ? view.connected
-      ? EXTENSION_PAIRING_COPY.connectedLead
-      : EXTENSION_PAIRING_COPY.disconnectedLead
+      ? EXTENSION_PAIRING_COPY.connectedLead(activeOrigin)
+      : EXTENSION_PAIRING_COPY.disconnectedLead(activeOrigin)
     : view?.status === 'waiting'
-      ? EXTENSION_PAIRING_COPY.waitingLead
-      : EXTENSION_PAIRING_COPY.firstTimeLead;
+      ? EXTENSION_PAIRING_COPY.waitingLead(activeOrigin)
+      : EXTENSION_PAIRING_COPY.firstTimeLead(activeOrigin);
   return (
     <section className="app-form-section" aria-label={EXTENSION_PAIRING_COPY.title}>
       <h2 className="app-section-title">{EXTENSION_PAIRING_COPY.title}</h2>
@@ -245,6 +253,7 @@ function ExtensionPairingSection() {
             </div>
             <FieldGroup
               fields={[
+                { label: EXTENSION_PAIRING_COPY.activeOrigin, value: view.activeOrigin },
                 ...(view.status === 'paired'
                   ? [
                       { label: EXTENSION_PAIRING_COPY.browser, value: view.browser ?? <span className="app-muted">{EXTENSION_PAIRING_COPY.unknownBrowser}</span> },
@@ -269,7 +278,18 @@ function ExtensionPairingSection() {
               <p className="app-caption">{EXTENSION_PAIRING_COPY.codeHint}</p>
             </>
           ) : null}
-          {view.status === 'paired' && !view.connected ? <p className="app-caption">{EXTENSION_PAIRING_COPY.disconnectedHint}</p> : null}
+          {view.status === 'paired' && !view.connected ? (
+            <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={EXTENSION_PAIRING_COPY.migrationTitle}>
+              <p>{EXTENSION_PAIRING_COPY.migrationLead(view.activeOrigin)}</p>
+              <ol aria-label={EXTENSION_PAIRING_COPY.migrationTitle}>
+                <li>{EXTENSION_PAIRING_COPY.migrationDownload(view.activeOrigin)}</li>
+                <li>{EXTENSION_PAIRING_COPY.migrationReplace}</li>
+                <li>{EXTENSION_PAIRING_COPY.migrationPair}</li>
+                <li>{EXTENSION_PAIRING_COPY.migrationVerify}</li>
+              </ol>
+              <p>{EXTENSION_PAIRING_COPY.migrationOldPair(view.activeOrigin)}</p>
+            </InlineNotification>
+          ) : null}
           {view.status === 'paired' && view.version !== null && compareExtensionVersions(view.version, EXTENSION_VERSION) < 0 ? (
             <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={EXTENSION_INSTALL_COPY.outdated(view.version, EXTENSION_VERSION)} />
           ) : null}
@@ -282,12 +302,8 @@ function ExtensionPairingSection() {
               <Button kind="tertiary" disabled={busy !== null} onClick={() => void act('issue')}>
                 {EXTENSION_PAIRING_COPY.reissue}
               </Button>
-            ) : !view.connected ? (
-              <Button kind="primary" disabled={busy !== null} onClick={() => void act('issue')}>
-                {EXTENSION_PAIRING_COPY.reconnect}
-              </Button>
             ) : null}
-            {view.status !== 'paired' ? (
+            {view.status !== 'paired' || !view.connected ? (
               <Button kind="secondary" href={EXTENSION_DOWNLOAD_PATH} renderIcon={Download}>
                 {EXTENSION_PAIRING_COPY.download}
               </Button>
@@ -295,11 +311,18 @@ function ExtensionPairingSection() {
             <Button kind="ghost" href={SETTINGS_TUTORIAL_HASH} target="_blank" rel="noreferrer" renderIcon={Launch}>
               {EXTENSION_PAIRING_COPY.tutorial}
             </Button>
+            {view.status === 'paired' && !view.connected ? (
+              <Button kind="primary" disabled={busy !== null} onClick={() => void act('issue')}>
+                {EXTENSION_PAIRING_COPY.reconnect}
+              </Button>
+            ) : null}
             {view.status === 'paired' ? (
               <>
-                <Button kind="tertiary" disabled={busy !== null} onClick={() => void act('issue')}>
-                  {EXTENSION_PAIRING_COPY.reissue}
-                </Button>
+                {view.connected ? (
+                  <Button kind="tertiary" disabled={busy !== null} onClick={() => void act('issue')}>
+                    {EXTENSION_PAIRING_COPY.reissue}
+                  </Button>
+                ) : null}
                 <Button kind="danger--tertiary" disabled={busy !== null} onClick={() => setConfirming(true)}>
                   {EXTENSION_PAIRING_COPY.revoke}
                 </Button>
@@ -331,7 +354,7 @@ function ExtensionPairingSection() {
   );
 }
 
-export function SettingsPage() {
+export function SettingsPage({ returnTo }: { returnTo?: string }) {
   const store = useAppStore();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -358,6 +381,12 @@ export function SettingsPage() {
     <AppShell nav="settings">
       <div className="app-form-page">
         <PageHeader title="设置" lead="先连接浏览器扩展，再回到报销任务开始去报销。" actions={<Button kind="secondary" href={SETTINGS_PASSWORD_HASH}>修改密码</Button>} />
+        {returnTo ? (
+          <section aria-label="返回报销任务">
+            <p>任务选择已保留。连接完成后或暂时不连接，都可以返回原任务；返回不会自动开始填报。</p>
+            <Button kind="secondary" href={`${returnTo}?extensionSetup=1`}>返回报销任务</Button>
+          </section>
+        ) : null}
         <ExtensionPairingSection />
         <LegacyImportSection />
         <details className="app-settings-advanced">

@@ -2,13 +2,13 @@ import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
+import { HANDOVER_COMPLETED_NOTICE } from '@baox/contract';
 
 // spec #109 Testing Decisions：一条从登录到完成的全流程，用 dist-mock/sample-materials/ 的 11 份示例材料，其余都是 mock 默认值。
 // 登录应用账号 → 新建任务 → 上传 → 盘点 → 待确认项 → 项目归属 → 报销信息核对与材料准备（自动）→ 整单确认
 // → 打印稿 → 去报销（写入报销系统）→ 完成。整条路径在同一个文档里走（只改 hash），mock 的内存状态一路保留。
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const SAMPLES_DIR = fileURLToPath(new URL('../dist-mock/sample-materials/', import.meta.url));
-const SAVE_COMPLETED = '报销草稿已保存。请打开报销系统检查，是否提交由你决定。';
 
 const h1 = (page: Page, name: string) => page.getByRole('heading', { name, level: 1 });
 
@@ -37,7 +37,7 @@ test('全流程：从登录一路走到完成，上传 sample-materials 的 11 �
   await expect(page).toHaveURL(/#\/task\/T4\/upload$/);
 
   // 3. 上传示例材料并盘点。
-  await page.locator('input[type=file]').setInputFiles(files);
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles(files);
   await expect(page.getByRole('heading', { name: /^上传批次 #1$/ })).toHaveText('上传批次 #1');
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/inventory$/);
@@ -82,18 +82,18 @@ test('全流程：从登录一路走到完成，上传 sample-materials 的 11 �
   await expect(page.getByRole('list', { name: '打印稿页面' }).locator('.page-hdr').first()).toHaveText('No.1-3 · 08-10 · 外地市内交通 · 69.19');
   await page.getByRole('list', { name: '流程阶段' }).getByRole('button', { name: /^整单明细确认/ }).click();
 
-  // 8. 去报销：写入报销系统，登录后自动写入、保存草稿、严格回读。
+  // 8. 去报销：登录后自动写入并严格回读，最后把填好的单据交接给员工。
   await page.getByRole('button', { name: '去报销', exact: true }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/erp$/);
   await page.getByRole('button', { name: '我已登录，继续' }).click();
   await expect(page.getByRole('link', { name: '查看完成结果' })).toBeVisible({ timeout: 20_000 });
 
-  // 9. 完成：固定句逐字显示，任务列表里是 10/10 草稿交接。
+  // 9. 完成：固定句逐字显示，任务列表里是 10/10 单据交接。
   await page.getByRole('link', { name: '查看完成结果' }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/done$/);
-  await expect(page.getByTestId('save-completed')).toHaveText(SAVE_COMPLETED);
+  await expect(page.getByTestId('handover-completed')).toHaveText(HANDOVER_COMPLETED_NOTICE);
   await page.screenshot({ path: testInfo.outputPath('journey-done.png'), fullPage: true });
   await jump(page, '#/tasks');
   const row = page.getByRole('row').filter({ has: page.getByRole('cell', { name: '2026-08 上海出差', exact: true }) });
-  await expect(row.getByText('10/10 草稿交接')).toBeVisible();
+  await expect(row.getByText('10/10 单据交接')).toBeVisible();
 });

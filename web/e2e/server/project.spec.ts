@@ -25,7 +25,7 @@ test('添加项目、全部明细归入、填写报销事由并提交', async ({
   await expect(page).toHaveURL(/#\/task\/[^/]+\/upload$/);
   const taskId = /#\/task\/([^/]+)\//.exec(page.url())?.[1] ?? '';
 
-  await page.locator('input[type=file]').setInputFiles({ name: hotelInvoice.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, hotelInvoice.file)) });
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles({ name: hotelInvoice.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, hotelInvoice.file)) });
   await expect(page.getByText(hotelInvoice.fileName, { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   // #213: the 住宿 invoice comes alone, so inventory asks for its 结账单 and 支付截图 and holds the material at 待确认;
@@ -55,6 +55,11 @@ test('添加项目、全部明细归入、填写报销事由并提交', async ({
 
   // Submit is refused (disabled) until the purpose is filled.
   await expect(page.getByRole('button', { name: '确认项目归属' })).toBeDisabled();
+  await expect(page.getByText('报销事由（必填）', { exact: true })).toBeVisible();
+  await page.getByLabel('报销事由', { exact: true }).fill('   ');
+  await page.getByLabel('报销事由', { exact: true }).blur();
+  await expect(page.getByText('请填写报销事由，不能只输入空格。', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '确认项目归属' })).toBeDisabled();
   await page.getByLabel('报销事由').fill('上海产品评审出差');
   await page.getByRole('button', { name: '确认项目归属' }).click();
   await expect(page).toHaveURL(/#\/task\/[^/]+\/review$/);
@@ -62,6 +67,10 @@ test('添加项目、全部明细归入、填写报销事由并提交', async ({
   const submitted = await snapshotOf(page, taskId);
   expect(submitted).toMatchObject({ stage: 'review', projectAssignment: { status: 'submitted', purpose: '上海产品评审出差' } });
   expect(submitted.lines.map((line) => [line.projectCode, line.projectName, line.expenseItemCode])).toEqual([['P-2307', '华东客户交付', 'FY010001']]);
+  await page.goto(`/#/task/${taskId}/project`);
+  await page.getByRole('button', { name: '继续', exact: true }).click();
+  await expect(page).toHaveURL(/#\/task\/[^/]+\/review$/);
+  expect((await snapshotOf(page, taskId)).step.stepToken).toBe(submitted.step.stepToken);
 });
 
 test('personal project editing can be cancelled and a saved renumber survives reload', async ({ page }) => {

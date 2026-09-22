@@ -2,7 +2,7 @@
 // executor events, its cancel, and the task's `erp_attempt` rows. Nothing about the phase is stored. The views below
 // turn the record into the snapshot's `erp`, `readback`, `reconcile` and `catalog` sections.
 
-import { ERP_HANDOVER_STEP_COPY, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, type Catalog, type Erp, type ErpCapture, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
+import { ERP_PROGRESS_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, type Catalog, type Erp, type ErpCapture, type ErpProgressStage, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
 import { sql } from 'kysely';
 import type { Db } from '../db/database';
 import type { ErpHandOffTable, ErpJobTable, TaskLifecycle } from '../db/schema';
@@ -11,6 +11,7 @@ import type { FrozenJob } from './fill-plan';
 import { ExecutorEventSchema, type ApprovedPreview, type ErpAccount, type ExecutorEvent, type Preconditions, type ReadbackEvent, type ResultEvent } from '@baox/erp-executor/protocol';
 import { noFormOpen, type ReconcileVerdict } from './reconcile';
 import { reconcileFromEvents } from './reconcile-job';
+import { EXTENSION_CONNECTION_LOST_CODE, EXTENSION_OFFLINE_CODE } from '../extension/channel';
 
 // One judged reconcile read-back: the verdict (after the form-instance / target check), the bill number it read, and
 // the two terminals it can prove. `saved`: the draft saved exactly as approved (已保存, identity holds, strict
@@ -163,20 +164,21 @@ export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
 
 // ---- views ----
 
-// The progress list of the ERP page. Executor steps map onto these; `compatibility` belongs to opening the form, and
-// the executor's `readback` step is the receipt read-back after import.
-const DISPLAY_STEPS: ReadonlyArray<{ key: string; title: string; description: string; from: readonly string[] }> = [
-  { key: 'chromium', title: '启动浏览器', description: '打开报销专用浏览器窗口（独立的用户数据目录，不碰你日常用的浏览器）。', from: ['chromium'] },
-  { key: 'login', title: '登录', description: '在专用浏览器窗口里用本人账号登录报销系统。应用不会替你输入账号密码。', from: ['login'] },
-  { key: 'catalog', title: '报销信息核对', description: '只读核对项目与费用项目：在报销系统里存在、名称一致、已审核且未禁用。', from: ['catalog'] },
-  { key: 'navigate', title: '打开空白报销单', description: '打开费用报销单新增页，核对报销系统版本，确认是唯一一张空白单据。', from: ['navigate', 'compatibility'] },
-  { key: 'import', title: '导入发票', description: '在发票助手里选择「不生成费用明细」，导入这次的发票。', from: ['import'] },
-  { key: 'receipt', title: '收票回读', description: '逐票回读收票单号、发票号码、不含税金额、税额与价税合计。', from: ['readback'] },
-  { key: 'fill', title: '填写明细', description: '按统一业务序号逐行写入明细，每个值写入后从单元格回读。', from: ['fill'] },
-  // `save` is the step name fill jobs emitted before ADR-0028; `handover` is what they emit now. The copy lives in
-  // the contract so this list and the web mock's step list cannot drift apart.
-  { ...ERP_HANDOVER_STEP_COPY, from: ['save', 'handover'] },
-];
+// Executor events are only interpreted here. The client receives the resulting stage and never infers progress from
+// event names or event order.
+const DISPLAY_EVENT_STEPS: Readonly<Record<ErpProgressStage, readonly string[]>> = {
+  chromium: ['chromium'],
+  login: ['login'],
+  catalog: ['catalog'],
+  navigate: ['navigate', 'compatibility'],
+  import: ['import'],
+  receipt: ['readback'],
+  fill: ['fill'],
+  handover: ['save', 'handover'],
+};
+
+const DISPLAY_STEPS: ReadonlyArray<{ key: ErpProgressStage; title: string; description: string; from: readonly string[] }> =
+  ERP_PROGRESS_STEPS.map((step) => ({ ...step, from: DISPLAY_EVENT_STEPS[step.key] }));
 
 function stepsOf(record: ErpRecord): ErpStep[] {
   const phase = record.facts?.phase;
@@ -198,6 +200,36 @@ function stepsOf(record: ErpRecord): ErpStep[] {
   return steps;
 }
 
+function currentStageOf(steps: readonly ErpStep[]): Erp['currentStage'] {
+  const active = steps.find((step) => step.status === 'waiting' || step.status === 'running' || step.status === 'failed');
+  if (active) return active.key as ErpProgressStage;
+  const complete = [...steps].reverse().find((step) => step.status === 'done');
+  return complete ? complete.key as ErpProgressStage : null;
+}
+
+const EXTENSION_WAIT_CODES = new Set([EXTENSION_OFFLINE_CODE, EXTENSION_CONNECTION_LOST_CODE, 'extension_reconnect_expired']);
+
+function externalWaitOf(record: ErpRecord): Erp['externalWait'] {
+  if (record.facts?.phase === 'waiting_login') return 'employee_login';
+  if (record.facts?.phase === 'running') return 'erp_response';
+  return record.result?.code && EXTENSION_WAIT_CODES.has(record.result.code) ? 'extension_connection' : 'none';
+}
+
+function allowedActionsOf(record: ErpRecord): Erp['allowedActions'] {
+  switch (record.facts?.phase) {
+    case 'waiting_login':
+      return ['refresh', 'confirm_login', 'cancel'];
+    case 'running':
+    case 'aborted':
+    case 'unknown':
+    case 'handed_over':
+    case 'saved':
+      return ['refresh'];
+    default:
+      return [];
+  }
+}
+
 // The executor's code for "报销信息核对 could not read the catalog" (`erp-executor/src/job.ts`). Nothing was written and
 // nothing about the claim is wrong, so it gets its own sentence rather than the generic abort one.
 const CATALOG_QUERY_FAILED = 'catalog_query_failed';
@@ -213,33 +245,51 @@ const CATALOG_QUERY_FAILED_REASON = '没能在报销系统里查到项目与费�
  */
 const FORM_OBSTRUCTED_BEFORE_FILL = 'form_obstructed_before_fill';
 
-const LOGIN_NOT_DETECTED = '还没有检测到登录。请在报销专用浏览器窗口里登录报销系统（登录页上显示的上次账号不算已登录），完成后再点一次「我已登录，继续」。';
+const LOGIN_NOT_DETECTED = '还没有检测到登录。请在为这次报销打开的报销系统标签页里登录本人账号（登录页上显示的上次账号不算已登录），完成后再点一次「我已登录，继续」。';
 
 export function erpView(record: ErpRecord): Erp {
-  const idle: Erp = { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null, erpAccount: record.erpAccount };
+  const idle: Erp = {
+    status: 'idle',
+    steps: [],
+    currentStage: null,
+    externalWait: 'none',
+    outcome: 'none',
+    allowedActions: [],
+    draftNo: null,
+    abortReason: null,
+    loginNotice: null,
+    erpAccount: record.erpAccount,
+  };
   const facts = record.facts;
   if (!facts) return idle;
+  const steps = stepsOf(record);
+  const readState = {
+    steps,
+    currentStage: currentStageOf(steps),
+    externalWait: externalWaitOf(record),
+    allowedActions: allowedActionsOf(record),
+  };
   const reason = record.result?.message ?? record.result?.code ?? '';
   switch (facts.phase) {
     case 'running':
-      return { ...idle, status: 'running', steps: stepsOf(record) };
+      return { ...idle, ...readState, status: 'running' };
     case 'waiting_login':
-      return { ...idle, status: 'waiting_login', steps: stepsOf(record), loginNotice: facts.trigger === 'confirm_login' ? LOGIN_NOT_DETECTED : null };
+      return { ...idle, ...readState, status: 'waiting_login', loginNotice: facts.trigger === 'confirm_login' ? LOGIN_NOT_DETECTED : null };
     case 'aborted':
       return {
         ...idle,
+        ...readState,
         abortReason:
           record.result?.code === CATALOG_QUERY_FAILED
             ? `${CATALOG_QUERY_FAILED_REASON}${reason}`
             : `上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：${reason}`,
       };
     case 'handed_over':
-      // ERP 单据已交接: nothing was saved, so there is no 单据编号 (bill number) to report.
-      return { ...idle, status: 'done', steps: stepsOf(record), draftNo: null };
+      return { ...idle, ...readState, status: 'done', outcome: 'filled', draftNo: null };
     case 'saved':
-      return { ...idle, status: 'done', steps: stepsOf(record), draftNo: record.result?.billNo ?? null };
+      return { ...idle, ...readState, status: 'done', outcome: 'saved', draftNo: record.result?.billNo ?? null };
     case 'unknown':
-      return { ...idle, status: 'aborted', steps: stepsOf(record), draftNo: record.result?.billNo ?? null,
+      return { ...idle, ...readState, status: 'aborted', draftNo: record.result?.billNo ?? null,
         abortReason: record.result?.code === FORM_OBSTRUCTED_BEFORE_FILL
           ? reason
           : `写入报销系统的结果不确定，应用已停止写入，不会重放。原因：${reason}` };
@@ -359,7 +409,7 @@ const NO_FORM_OPEN_BANNER = '报销系统里现在没有打开任何费用报销
 // Why the latest reconcile run has no read-back, as the page says it.
 function runNotice(result: ResultEvent | null): string | null {
   if (!result || result.status === 'read') return null;
-  if (result.status === 'waiting_login') return '对账前请先在报销专用浏览器窗口里登录报销系统，然后再对账。';
+  if (result.status === 'waiting_login') return '对账前请先在为这次报销打开的报销系统标签页里登录，然后再对账。';
   return `这次对账没有读到报销系统，可以再对账一次。原因：${result.message ?? result.code ?? ''}`;
 }
 

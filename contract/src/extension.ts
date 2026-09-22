@@ -101,7 +101,9 @@ export type ExtensionIdentity = z.infer<typeof ExtensionIdentitySchema>;
 // none: no pairing; waiting: a 配对码 (pairing code) is issued and no extension has used it yet; paired: paired.
 export const EXTENSION_PAIRING_STATUSES = ['none', 'waiting', 'paired'] as const;
 
-export const ExtensionPairingSchema = z.object({
+// The pairing service owns this state. It deliberately does not carry the application origin, because the origin is
+// deployment configuration rather than a per-account pairing fact.
+export const ExtensionPairingStateSchema = z.object({
   status: z.enum(EXTENSION_PAIRING_STATUSES),
   browser: z.string().nullable(),
   pairedAt: z.string().nullable(),
@@ -115,6 +117,14 @@ export const ExtensionPairingSchema = z.object({
   // The freshly issued 配对码, and only in the answer to issuing one: the server keeps nothing but its sha256, so it
   // can never be shown a second time.
   code: z.string().nullable(),
+});
+export type ExtensionPairingState = z.infer<typeof ExtensionPairingStateSchema>;
+
+// The settings page receives the pairing state plus the address the running server admits and stamps into the
+// extension package. Keeping this in the HTTP view prevents a persisted pairing from carrying a stale deployment
+// origin after an operator changes the address.
+export const ExtensionPairingSchema = ExtensionPairingStateSchema.extend({
+  activeOrigin: z.string().url(),
 });
 export type ExtensionPairing = z.infer<typeof ExtensionPairingSchema>;
 

@@ -11,7 +11,7 @@ import {
 import type { MockBus } from '../bus';
 import { excludeReferenceMaterial } from '../fixtures/inventory';
 import { catalogMatched, catalogProblems, catalogRunning, packageFilesOf, preparationPending, preparationProblems } from '../fixtures/preparation';
-import { assignWorking, confirmationDigest, projectAssignmentSubmitted, withLineProjects } from '../fixtures/projects';
+import { assignWorking, confirmationDigest, deadlineWarningsOf, projectAssignmentSubmitted, withLineProjects } from '../fixtures/projects';
 
 // 项目归属提交，以及其后服务端自动执行的报销信息核对（catalog）与报销材料准备（preparation）（mock 服务端的角色）。
 // 顺序照 Skill：project_unassigned → catalog_unverified / catalog_mismatch → preparation_package_pending / preparation_blocked
@@ -131,7 +131,7 @@ export function createProjectFlow(bus: MockBus): ProjectFlow {
         }
         const parsed = ProjectAssignmentInputSchema.safeParse(input);
         if (!parsed.success) return { error: { code: 'invalid_purpose', message: PROJECT_ASSIGNMENT_ERRORS.purpose } };
-        const { purpose, projects } = parsed.data;
+        const { purpose, projects, acceptDeadlineWarnings } = parsed.data;
         const lineIds = new Set(snapshot.lines.map((line) => line.lineId));
         const unknown = Object.keys(projects).find((lineId) => !lineIds.has(lineId));
         if (unknown) return { error: { code: 'unknown_line', message: PROJECT_ASSIGNMENT_ERRORS.unknownLine(unknown) } };
@@ -144,15 +144,19 @@ export function createProjectFlow(bus: MockBus): ProjectFlow {
           if (allowed.size === 0) return { error: { code: 'project_book_empty', message: PROJECT_ASSIGNMENT_ERRORS.bookEmpty } };
           return { error: { code: 'project_not_allowed', message: PROJECT_ASSIGNMENT_ERRORS.projectNotAllowed(line.no, number) } };
         }
-        const at = bus.now();
-        snapshot.projectAssignment = projectAssignmentSubmitted({
+        const nextAssignment = projectAssignmentSubmitted({
           purpose,
           homeCity: snapshot.task.homeCity,
           projects,
-          submittedAt: at,
+          submittedAt: snapshot.task.updatedAt,
           allowList: snapshot.projectAssignment.projects,
           previous: snapshot.projectAssignment.assignments,
         });
+        if (deadlineWarningsOf(snapshot.lines, nextAssignment.assignments, nextAssignment.projects).length > 0 && !acceptDeadlineWarnings) {
+          return { error: { code: 'deadline_confirmation_required', message: PROJECT_ASSIGNMENT_ERRORS.deadlineConfirmationRequired } };
+        }
+        const at = bus.now();
+        snapshot.projectAssignment = { ...nextAssignment, submittedAt: at };
         snapshot.lines = withLineProjects(snapshot.lines, snapshot.projectAssignment);
         snapshot.task.updatedAt = at;
         const digest = confirmationDigest(taskId, snapshot.inventory.versionId, snapshot.projectAssignment);

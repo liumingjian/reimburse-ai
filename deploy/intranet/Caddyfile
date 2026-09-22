@@ -1,8 +1,9 @@
 # Caddy in front of baox, phase 1: plain HTTP on the intranet host (docs/deployment/intranet-phase-1.md).
 #
-# The site address below must equal BAOX_PUBLIC_ORIGIN in baox.service, character for character; install.sh refuses
-# to install the pair when they differ. The app's exact-origin guard (server/src/public-origin.ts) judges the
-# browser's own Host and Origin against that origin, so this proxy passes both through untouched. Caddy's
+# The site address below is the default BAOX_PUBLIC_ORIGIN in baox.service. render-config.mjs validates that the
+# templates agree, then install.sh installs its rendered pair. The app's exact-origin guard
+# (server/src/public-origin.ts) judges the browser's own Host and Origin against that origin, so this proxy passes
+# both through untouched. Caddy's
 # reverse_proxy already does: it forwards the incoming Host as-is and never rewrites Origin. Never add
 # `header_up Host ...` here, or every request, the extension's WebSocket upgrade included, is refused with 403.
 
@@ -14,21 +15,21 @@
 	persist_config off
 }
 
-http://10.250.0.222 {
+http://10.250.0.222:8888 {
 	# Node binds 127.0.0.1:4319 only. reverse_proxy also carries the WebSocket upgrade on /api/extension/channel
 	# (Host passed through as above, so the upgrade meets the same guard), and flushes the SSE task streams at once.
 	reverse_proxy 127.0.0.1:4319
 }
 
-# Adding a domain later is an upgrade (see the doc). Add the domain's site, turn the IP site into a redirect, and set
-# BAOX_PUBLIC_ORIGIN in baox.service to the new origin in the same change: the guard admits exactly one origin, so the
-# IP site cannot keep serving the app. Caddy obtains the certificate itself; a name resolvable only on the intranet
+# Adding a domain later is an upgrade (see the doc). Set BAOX_PUBLIC_ORIGIN for install.sh to the new origin and turn
+# the IP site into a redirect in these templates: the guard admits exactly one origin, so the IP site cannot keep
+# serving the app. Caddy obtains the certificate itself; a name resolvable only on the intranet
 # needs the ACME DNS challenge instead of the default HTTP one.
 #
 # https://baox.example.com {
 # 	reverse_proxy 127.0.0.1:4319
 # }
 #
-# http://10.250.0.222 {
+# http://10.250.0.222:8888 {
 # 	redir https://baox.example.com{uri} permanent
 # }
