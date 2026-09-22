@@ -1,4 +1,4 @@
-import { PROJECT_CHANGED_NOTICE, type TaskSnapshot } from '@baox/contract';
+import { PROJECT_CHANGED_NOTICE, TaskListSchema, type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fixtureCatalog } from './catalog/project-catalog';
 import { api, sample } from './test/api';
@@ -48,6 +48,23 @@ async function refused(response: Response, code: string) {
 }
 
 describe('confirmation status', () => {
+  it('lists unavailable, pending and confirmed summaries from the same detail facts', async () => {
+    const { task } = await client.createTask('杭州');
+    const listed = async () => TaskListSchema.parse(await (await alice.request('/api/tasks')).json()).tasks.find((item) => item.taskId === task.taskId);
+    expect(await listed()).toMatchObject({ summaryStatus: 'unavailable', period: null, grossTotal: null });
+    const uploaded = await client.upload(task.taskId, [sample('m01'), sample('m07')]);
+    await client.accepted(await client.act(uploaded, 'start-inventory'));
+    const inventoried = await client.withoutStayGaps(await client.settled(task.taskId));
+    const review = await submit(inventoried, PURPOSE);
+    expect(review.task.period).not.toBeNull();
+    expect(await listed()).toMatchObject({ summaryStatus: 'pending', period: review.task.period, grossTotal: null });
+    const done = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
+    expect(await listed()).toMatchObject({ summaryStatus: 'confirmed', period: done.task.period, grossTotal: done.confirmation.grossTotal });
+    const edited = await submit(done, '修改后的事由');
+    expect(edited.confirmation.status).toBe('invalidated');
+    expect(await listed()).toMatchObject({ summaryStatus: 'pending', period: edited.task.period, grossTotal: null });
+  });
+
   it('an edit after confirmation invalidates it; reverting the edit restores it', async () => {
     const done = await confirmed();
     const [line] = done.lines;

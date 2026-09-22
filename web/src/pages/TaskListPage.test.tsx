@@ -28,8 +28,11 @@ describe('任务列表', () => {
 
     const t1 = await rowOf('2026-08 上海出差（产品评审）');
     expect(within(t1).getByText('3/10 材料盘点')).toBeTruthy();
-    expect(within(t1).getByText('未确认')).toBeTruthy();
-    expect(within(t1).getByRole('link', { name: '继续' }).getAttribute('href')).toBe('#/task/T1/upload');
+    expect(within(t1).getByText('暂无可用日期')).toBeTruthy();
+    expect(within(t1).getByText('暂无可用金额')).toBeTruthy();
+    const continueTask = within(t1).getByRole('link', { name: '继续' });
+    expect(continueTask.getAttribute('href')).toBe('#/task/T1/upload');
+    expect(continueTask.classList.contains('cds--btn--primary')).toBe(true);
 
     const t2 = await rowOf('2026-07 深圳客户拜访');
     expect(within(t2).getByText('对账中')).toBeTruthy();
@@ -40,7 +43,7 @@ describe('任务列表', () => {
     expect(within(t3).getByText('10/10 单据交接')).toBeTruthy();
     expect(within(t3).getByText('BX20260702-0088')).toBeTruthy();
 
-    expect(screen.getByRole('button', { name: '新建报销任务' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '新建报销任务' }).classList.contains('cds--btn--tertiary')).toBe(true);
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByText('林颂宜')).toBeTruthy();
     expect(screen.queryByText(/产品研发部/)).toBeNull();

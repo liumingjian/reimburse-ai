@@ -951,15 +951,23 @@ export async function parseBacklogOfAllAccounts(db: Db, dataDir: string): Promis
   return entries;
 }
 
-function listItem(task: TaskTable, { facts, legacy, erp }: Loaded): TaskListItem {
+function taskPeriod(lines: readonly Line[]): TaskListItem['period'] {
+  const dates = lines.flatMap((line) => [line.date, line.endDate ?? line.date]).filter((date): date is string => !!date).sort();
+  const start = dates[0];
+  const end = dates.at(-1);
+  return start && end ? { start, end } : null;
+}
+
+function listItem(task: TaskTable, { facts, legacy, erp, lines, digest, confirmed }: Loaded): TaskListItem {
   const savedDraftNo = erp.facts?.phase === 'saved' ? (erp.result?.billNo ?? null) : null;
   const running = parseRunning(facts) || erp.facts?.phase === 'running' || erp.facts?.phase === 'waiting_login' || !!erp.facts?.reconciling;
   return {
     taskId: task.task_id,
     name: task.name,
     stage: project(facts).stage,
-    period: null,
-    grossTotal: null,
+    period: taskPeriod(lines),
+    grossTotal: facts.confirmation === 'confirmed' ? confirmationView(digest, confirmed, facts.lastReopenRevision, lines).grossTotal : null,
+    summaryStatus: lines.length === 0 ? 'unavailable' : facts.confirmation === 'confirmed' ? 'confirmed' : 'pending',
     erpDraftNo: legacy?.bill_no ?? savedDraftNo,
     pendingCount: facts.parse?.openPendingItems ?? 0,
     erpOutcome: legacy?.outcome === 'handed_off' || (task.origin !== 'legacy' && task.lifecycle === 'handed_off') ? 'handed_off' : 'none',
@@ -1044,7 +1052,7 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
   }));
   return {
     revision: task.revision,
-    task: { taskId: task.task_id, name: task.name, period: null, homeCity, createdAt: task.created_at, updatedAt: task.updated_at },
+    task: { taskId: task.task_id, name: task.name, period: taskPeriod(lines), homeCity, createdAt: task.created_at, updatedAt: task.updated_at },
     stage,
     batches: batchViews,
     materials: view.materials.map((material) => materialWithSourceUrls(task.task_id, material)),

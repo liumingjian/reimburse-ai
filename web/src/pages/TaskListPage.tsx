@@ -29,7 +29,7 @@ import { StatusTag } from '../shell/StatusTag';
 import { NewTaskDialog } from './NewTaskDialog';
 
 export const TASK_LIST_COPY = {
-  lead: '每次出差一个任务，材料、确认数据与打印设置都存在任务目录里。',
+  lead: '在同一个任务里整理本次报销材料，确认后可打印或自动填写报销系统。',
   tableTitle: '全部任务',
   toolbar: '任务表工具栏',
   search: '搜索任务名或单据编号',
@@ -103,6 +103,7 @@ function TaskRow({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: Ta
   const href = taskHash(task.taskId, STAGE_DEFAULT_PAGE[task.stage]);
   const label = continueLabel(task);
   const status = statusOf(task);
+  const summaryStatus = task.summaryStatus ?? (task.grossTotal !== null ? 'confirmed' : task.period ? 'pending' : 'unavailable');
   const onRowClick = (event: MouseEvent<HTMLTableRowElement>) => {
     if (!label) return;
     if ((event.target as HTMLElement).closest('a, button, .cds--popover-container')) return;
@@ -114,20 +115,29 @@ function TaskRow({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: Ta
       <TableCell className="app-sticky-start app-nowrap">
         <span className="app-task-name">{task.name}</span>
       </TableCell>
-      <TableCell className="app-nowrap">{formatPeriod(task.period)}</TableCell>
+      <TableCell className="app-nowrap">
+        {summaryStatus === 'unavailable' || !task.period ? (
+          '暂无可用日期'
+        ) : (
+          <>
+            {formatPeriod(task.period)}
+            <span className="app-caption"> {summaryStatus === 'confirmed' ? '已确认' : '待确认'}</span>
+          </>
+        )}
+      </TableCell>
       <TableCell>
         <StatusTag tone={status.tone}>{status.label}</StatusTag>
       </TableCell>
       <TableCell>
         <Progress task={task} status={status} />
       </TableCell>
-      <TableCell className="app-num">{task.grossTotal ?? <span className="app-muted">未确认</span>}</TableCell>
+      <TableCell className="app-num">{task.grossTotal !== null ? <>{task.grossTotal}<span className="app-caption"> 已确认</span></> : <span className="app-muted">{summaryStatus === 'pending' ? '待整单确认' : '暂无可用金额'}</span>}</TableCell>
       <TableCell className="app-nowrap">{task.erpDraftNo ? <span className="app-code">{task.erpDraftNo}</span> : <span className="app-muted">尚无</span>}</TableCell>
       <TableCell className="app-nowrap app-muted">{formatDateTime(task.updatedAt)}</TableCell>
       <TableCell className="app-sticky-end app-task-actions">
         <div className="app-row-actions">
           {label ? (
-            <Button kind="ghost" size="sm" href={href}>
+            <Button kind={status.key === 'active' || status.key === 'reconcile' ? 'primary' : 'ghost'} size="sm" href={href}>
               {label}
             </Button>
           ) : null}
@@ -255,7 +265,7 @@ export function TaskListPage({ newTask }: { newTask: boolean }) {
         lead={TASK_LIST_COPY.lead}
         actions={
           // 本地服务断开时不能新建：按钮不可用，恢复后自动可用。
-          <Button renderIcon={Add} disabled={taskList.offline} onClick={() => navigate(NEW_TASK_HASH)}>
+          taskList.data?.tasks.length === 0 ? undefined : <Button kind="tertiary" renderIcon={Add} disabled={taskList.offline} onClick={() => navigate(NEW_TASK_HASH)}>
             新建报销任务
           </Button>
         }
@@ -273,6 +283,7 @@ export function TaskListPage({ newTask }: { newTask: boolean }) {
           <div className="app-empty">
             <h2>还没有报销任务</h2>
             <p>新建一个任务，然后把这次出差的材料拖进来。</p>
+            <Button renderIcon={Add} disabled={taskList.offline} onClick={() => navigate(NEW_TASK_HASH)}>新建报销任务</Button>
           </div>
         ) : (
           <TaskTable tasks={taskList.data.tasks} onAbandon={setAbandoning} />

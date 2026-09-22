@@ -315,12 +315,14 @@ function abandonOf(snapshot: TaskSnapshot): Pick<TaskListItem, 'abandonable' | '
 // 任务列表的一行由快照投影而来：mock 服务端负责，页面不做这件事。
 export function toListItem(snapshot: TaskSnapshot): TaskListItem {
   const draftNo = snapshot.erp.draftNo ?? snapshot.reconcile.draftNo;
+  const summaryStatus = snapshot.lines.length === 0 ? 'unavailable' : snapshot.confirmation.status === 'confirmed' ? 'confirmed' : 'pending';
   return {
     taskId: snapshot.task.taskId,
     name: snapshot.task.name,
     stage: snapshot.stage,
-    period: snapshot.task.period,
+    period: summaryStatus === 'unavailable' ? null : snapshot.task.period,
     grossTotal: snapshot.confirmation.status === 'confirmed' ? snapshot.confirmation.grossTotal : null,
+    summaryStatus,
     erpDraftNo: draftNo,
     pendingCount: openPendingItemCount(snapshot.pendingItems),
     erpOutcome: erpOutcomeOf(snapshot),
