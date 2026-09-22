@@ -17,7 +17,7 @@ export type Route =
 
 export const TASKS_HASH = '#/tasks';
 export const NEW_TASK_HASH = '#/tasks/new';
-// 个人项目簿：任务之外的全局页面，随时可进。
+// Project books are available outside a task at any time.
 export const PROJECTS_HASH = '#/projects';
 // 设置（完全重置）：全局页面。
 export const SETTINGS_HASH = '#/settings';

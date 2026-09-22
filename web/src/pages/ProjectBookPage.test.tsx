@@ -41,6 +41,7 @@ describe('项目簿 #/projects', () => {
     render(<App adapter={adapter} />);
 
     expect(await screen.findByRole('heading', { name: '个人项目簿', level: 1 })).toBeTruthy();
+    expect(document.title).toBe('baox · 项目簿');
     expect(screen.getByText('录入项目号和项目名称后，可在新的项目归属中选择。提交去报销前仍会核对项目。')).toBeTruthy();
     expect(within(personalTable()).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['项目号', '名称', '截止日期', '状态', '']);
     expect(screen.queryByRole('table', { name: '公共项目簿' })).toBeNull();
