@@ -1084,7 +1084,20 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
     // Nothing is prepared before the confirmation any more.
     preparation: { status: digest ? 'ready' : 'pending', problems: [], packageFiles: [] },
     // An imported legacy task shows only its stored ERP facts: the saved draft's number, or the 转人工 bucket.
-    erp: legacy ? { status: legacy.outcome === 'draft_handed_over' ? 'done' : 'idle', steps: [], draftNo: legacy.bill_no, abortReason: null, loginNotice: null, erpAccount: null } : erpView(erp),
+    erp: legacy
+      ? {
+          status: legacy.outcome === 'draft_handed_over' ? 'done' : 'idle',
+          steps: [],
+          currentStage: legacy.outcome === 'draft_handed_over' ? 'handover' : null,
+          externalWait: 'none',
+          outcome: legacy.outcome === 'draft_handed_over' ? 'saved' : 'none',
+          allowedActions: legacy.outcome === 'draft_handed_over' ? ['refresh'] : [],
+          draftNo: legacy.bill_no,
+          abortReason: null,
+          loginNotice: null,
+          erpAccount: null,
+        }
+      : erpView(erp),
     readback: readbackView(erp, lines),
     reconcile:
       legacy?.outcome === 'handed_off'

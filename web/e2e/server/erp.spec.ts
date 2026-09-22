@@ -87,8 +87,17 @@ test.describe('ERP 还停在登录页', () => {
     await expect(page.getByRole('heading', { name: '填写报销单' })).toBeVisible();
     await expect.poll(async () => (await snapshotOf(page, taskId)).step.kind).toBe('erp_login');
     const paused = await snapshotOf(page, taskId);
-    expect(paused).toMatchObject({ stage: 'erp', erp: { status: 'waiting_login' } });
-    // A live login-wait job blocks voiding until the employee cancels it.
+    expect(paused).toMatchObject({
+      stage: 'erp',
+      erp: {
+        status: 'waiting_login',
+        currentStage: 'login',
+        externalWait: 'employee_login',
+        outcome: 'none',
+        allowedActions: ['refresh', 'confirm_login', 'cancel'],
+      },
+    });
+    // The active ERP lease keeps cancellation unavailable while the employee login is pending.
     const list = TaskListSchema.parse(await (await page.request.get('/api/tasks')).json());
     expect(list.tasks.find((task) => task.taskId === taskId)).toMatchObject({ abandonable: false });
 
