@@ -331,7 +331,7 @@ function ExtensionPairingSection() {
   );
 }
 
-export function SettingsPage() {
+export function SettingsPage({ returnTo }: { returnTo?: string }) {
   const store = useAppStore();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -358,6 +358,12 @@ export function SettingsPage() {
     <AppShell nav="settings">
       <div className="app-form-page">
         <PageHeader title="设置" lead="先连接浏览器扩展，再回到报销任务开始去报销。" actions={<Button kind="secondary" href={SETTINGS_PASSWORD_HASH}>修改密码</Button>} />
+        {returnTo ? (
+          <section aria-label="返回报销任务">
+            <p>任务选择已保留。连接完成后或暂时不连接，都可以返回原任务；返回不会自动开始填报。</p>
+            <Button kind="secondary" href={`${returnTo}?extensionSetup=1`}>返回报销任务</Button>
+          </section>
+        ) : null}
         <ExtensionPairingSection />
         <LegacyImportSection />
         <details className="app-settings-advanced">

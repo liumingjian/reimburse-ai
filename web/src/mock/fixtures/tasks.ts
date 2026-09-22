@@ -155,7 +155,7 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     confirmation: { status: 'unconfirmed', confirmedAt: null, digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null, notice: null },
     paymentScreenshots: [],
     printSheet: { status: 'not_generated', fileName: null, url: null, pages: [], notices: [] },
-    projectAssignment: { status: 'not_started', purpose: null, homeCity: task.homeCity, assignments: [], working: [], reselect: [], usage: [], grossTotal: '0.00', projects: [], submittedAt: null },
+    projectAssignment: { status: 'not_started', purpose: null, homeCity: task.homeCity, assignments: [], working: [], reselect: [], usage: [], grossTotal: '0.00', projects: [], deadlineWarnings: [], submittedAt: null },
     catalog: catalogPending(),
     preparation: preparationPending(),
     erp: { status: 'idle', steps: [], draftNo: null, abortReason: null, loginNotice: null, erpAccount: null },
@@ -315,12 +315,14 @@ function abandonOf(snapshot: TaskSnapshot): Pick<TaskListItem, 'abandonable' | '
 // 任务列表的一行由快照投影而来：mock 服务端负责，页面不做这件事。
 export function toListItem(snapshot: TaskSnapshot): TaskListItem {
   const draftNo = snapshot.erp.draftNo ?? snapshot.reconcile.draftNo;
+  const summaryStatus = snapshot.lines.length === 0 ? 'unavailable' : snapshot.confirmation.status === 'confirmed' ? 'confirmed' : 'pending';
   return {
     taskId: snapshot.task.taskId,
     name: snapshot.task.name,
     stage: snapshot.stage,
-    period: snapshot.task.period,
+    period: summaryStatus === 'unavailable' ? null : snapshot.task.period,
     grossTotal: snapshot.confirmation.status === 'confirmed' ? snapshot.confirmation.grossTotal : null,
+    summaryStatus,
     erpDraftNo: draftNo,
     pendingCount: openPendingItemCount(snapshot.pendingItems),
     erpOutcome: erpOutcomeOf(snapshot),

@@ -614,6 +614,17 @@ export const ProjectLineAssignmentSchema = z.object({
 });
 export type ProjectLineAssignment = z.infer<typeof ProjectLineAssignmentSchema>;
 
+export const PROJECT_DEADLINE_WARNING_KINDS = ['after_deadline', 'stay_crosses_deadline'] as const;
+export const ProjectDeadlineWarningSchema = z.object({
+  lineId: IdSchema,
+  lineNo: z.number().int().positive(),
+  projectNumber: z.string().min(1),
+  projectName: z.string().min(1),
+  deadlineOn: DateSchema,
+  kind: z.enum(PROJECT_DEADLINE_WARNING_KINDS),
+});
+export type ProjectDeadlineWarning = z.infer<typeof ProjectDeadlineWarningSchema>;
+
 export const ProjectAssignmentSchema = z.object({
   status: z.enum(PROJECT_ASSIGNMENT_STATUSES),
   // 报销事由，至多 100 个字；未填为 null。
@@ -636,6 +647,7 @@ export const ProjectAssignmentSchema = z.object({
   reselect: z.array(ProjectLineAssignmentSchema),
   // 允许列表（只含可选项目），打开页面时整份给出；搜索只缩小显示，不缩小允许列表。
   projects: z.array(ProjectOptionSchema),
+  deadlineWarnings: z.array(ProjectDeadlineWarningSchema),
   submittedAt: DateTimeSchema.nullable(),
 });
 export type ProjectAssignment = z.infer<typeof ProjectAssignmentSchema>;

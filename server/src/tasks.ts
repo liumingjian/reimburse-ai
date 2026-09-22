@@ -621,11 +621,23 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     },
 
     // 整单明细确认: stores `{digest, confirmedAt}` for exactly the digest the user saw; any other digest is refused.
-    async confirmReview(taskId: string, digest: string, token: string): Promise<TaskSnapshot> {
+    async confirmReview(taskId: string, digest: string, token: string, acceptDeadlineWarnings = false): Promise<TaskSnapshot> {
       return mutate(taskId, token, async ({ tx, facts, loaded, at, revision }) => {
         if (project(facts).step.kind !== 'confirm_review' || !loaded.digest) return { code: 'not_ready', message: CONFIRM_REVIEW_ERRORS.notReady };
         if (loaded.lines.length === 0) return { code: 'no_lines', message: CONFIRM_REVIEW_ERRORS.noLines };
         if (digest !== loaded.digest.digest) return { code: 'digest_mismatch', message: CONFIRM_REVIEW_ERRORS.digestMismatch };
+        const standing = loaded.assignment?.submitted;
+        if (!standing) return { code: 'not_ready', message: CONFIRM_REVIEW_ERRORS.notReady };
+        const checked = checkSubmit(
+          loaded.lines,
+          Object.fromEntries(Object.entries(standing.selection).map(([lineId, selected]) => [lineId, selected.number])),
+          await bookOptions(tx, accountId, new Date()),
+          standing,
+        );
+        if ('code' in checked) return checked;
+        if (checked.deadlineWarnings.length > 0 && !acceptDeadlineWarnings) {
+          return { code: 'deadline_confirmation_required', message: CONFIRM_REVIEW_ERRORS.deadlineConfirmationRequired };
+        }
         const { digest: current, detail, project: projectDigest } = loaded.digest;
         await tx
           .insertInto('review_confirmation')
@@ -718,6 +730,9 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
         const lines = loaded.view.lines;
         const checked = checkSubmit(lines, input.projects, await bookOptions(tx, accountId, new Date()), loaded.assignment.submitted);
         if ('code' in checked) return checked;
+        if (checked.deadlineWarnings.length > 0 && !input.acceptDeadlineWarnings) {
+          return { code: 'deadline_confirmation_required', message: PROJECT_ASSIGNMENT_ERRORS.deadlineConfirmationRequired };
+        }
         const used = new Map(Object.values(checked.selection).map((p) => [`${p.source}:${p.number}`, p] as const));
         const catalog = [...used.values()].sort((a, b) => (a.number < b.number ? -1 : a.number > b.number ? 1 : 0));
         const catalogHash = await putRuleSet(tx, 'project_catalog', { projects: catalog }, at);
@@ -951,15 +966,23 @@ export async function parseBacklogOfAllAccounts(db: Db, dataDir: string): Promis
   return entries;
 }
 
-function listItem(task: TaskTable, { facts, legacy, erp }: Loaded): TaskListItem {
+function taskPeriod(lines: readonly Line[]): TaskListItem['period'] {
+  const dates = lines.flatMap((line) => [line.date, line.endDate ?? line.date]).filter((date): date is string => !!date).sort();
+  const start = dates[0];
+  const end = dates.at(-1);
+  return start && end ? { start, end } : null;
+}
+
+function listItem(task: TaskTable, { facts, legacy, erp, lines, digest, confirmed }: Loaded): TaskListItem {
   const savedDraftNo = erp.facts?.phase === 'saved' ? (erp.result?.billNo ?? null) : null;
   const running = parseRunning(facts) || erp.facts?.phase === 'running' || erp.facts?.phase === 'waiting_login' || !!erp.facts?.reconciling;
   return {
     taskId: task.task_id,
     name: task.name,
     stage: project(facts).stage,
-    period: null,
-    grossTotal: null,
+    period: taskPeriod(lines),
+    grossTotal: facts.confirmation === 'confirmed' ? confirmationView(digest, confirmed, facts.lastReopenRevision, lines).grossTotal : null,
+    summaryStatus: lines.length === 0 ? 'unavailable' : facts.confirmation === 'confirmed' ? 'confirmed' : 'pending',
     erpDraftNo: legacy?.bill_no ?? savedDraftNo,
     pendingCount: facts.parse?.openPendingItems ?? 0,
     erpOutcome: legacy?.outcome === 'handed_off' || (task.origin !== 'legacy' && task.lifecycle === 'handed_off') ? 'handed_off' : 'none',
@@ -1044,7 +1067,7 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
   }));
   return {
     revision: task.revision,
-    task: { taskId: task.task_id, name: task.name, period: null, homeCity, createdAt: task.created_at, updatedAt: task.updated_at },
+    task: { taskId: task.task_id, name: task.name, period: taskPeriod(lines), homeCity, createdAt: task.created_at, updatedAt: task.updated_at },
     stage,
     batches: batchViews,
     materials: view.materials.map((material) => materialWithSourceUrls(task.task_id, material)),
@@ -1055,7 +1078,7 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
     lines,
     confirmation: confirmationView(digest, confirmed, facts.lastReopenRevision, lines) satisfies Confirmation,
     ...printView(task.task_id, task.name, print, sheetState(print, facts.confirmation, confirmed?.revision ?? null), view.trios),
-    projectAssignment: assignment?.view ?? { status: 'not_started', purpose: null, homeCity, assignments: [], working: [], reselect: [], usage: [], grossTotal: '0.00', projects: [], submittedAt: null },
+    projectAssignment: assignment?.view ?? { status: 'not_started', purpose: null, homeCity, assignments: [], working: [], reselect: [], usage: [], grossTotal: '0.00', projects: [], deadlineWarnings: [], submittedAt: null },
     // The catalog check lives in the ERP job (ADR-0014); a mismatch it found shows here until the next submission.
     catalog: catalogView(erp) ?? { status: 'pending', problems: [] },
     // Nothing is prepared before the confirmation any more.
