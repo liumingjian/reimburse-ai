@@ -11,7 +11,7 @@ const pdf = (name: string, body = `%PDF-1.4 ${name}`): Upload => ({ name, mimeTy
 const png = (name: string, body = `png ${name}`): Upload => ({ name, mimeType: 'image/png', buffer: Buffer.from(body) });
 
 async function choose(page: Page, files: Upload[]) {
-  await page.locator('input[type=file]').setInputFiles(files);
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles(files);
 }
 
 const batch = (page: Page, no: number) => page.locator('section', { has: page.getByRole('heading', { name: new RegExp(`^上传批次 #${no}$`) }) });
@@ -71,7 +71,8 @@ for (const width of [1440, 1100]) {
     await expect(title).toBeVisible();
     await expect(zone.getByText('点击选择文件', { exact: true })).toBeVisible();
     for (const format of ['PDF', 'JPG', 'PNG', '单个 ≤ 20MB']) await expect(zone.getByText(format, { exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: '选择文件' })).toHaveCount(0);
+    await expect(page.getByLabel('拖入文件，或点击选择', { exact: true })).toHaveCount(1);
+    await expect(page.locator('button').filter({ hasText: '选择文件夹' })).toBeVisible();
     const zoneBox = await zone.boundingBox();
     const titleBox = await title.boundingBox();
     if (!zoneBox || !titleBox) throw new Error('拖放区或主文案不可见');

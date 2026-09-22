@@ -140,7 +140,6 @@ function LegacyImportSection() {
 export const EXTENSION_PAIRING_COPY = {
   title: '浏览器扩展',
   lead: '浏览器扩展只连接当前应用地址。先下载当前地址提供的扩展，再生成配对码。',
-  pairingTitle: '配对',
   independence: '配对与登录互不影响：撤销配对不会退出登录，退出登录也不会撤销配对。',
   firstTimeTitle: '第一次连接',
   firstTimeLead: (origin: string) => `还没有连接过浏览器扩展。先从 ${origin} 下载报销助手，再生成配对码，在 Chrome 或 Edge 里输入。`,
@@ -151,7 +150,6 @@ export const EXTENSION_PAIRING_COPY = {
   connectedLead: (origin: string) => `扩展已连接到 ${origin}。保持这台浏览器打开，回到报销任务后点击去报销。`,
   disconnectedTitle: '扩展暂时没有连接',
   disconnectedLead: (origin: string) => `这台扩展没有连接到 ${origin}。请确认当前地址的扩展仍在运行，或按下面步骤换成当前地址的扩展并重新配对。`,
-  next: '下一步',
   reconnect: '重新生成配对码',
   tutorial: '打开安装教程',
   download: '下载浏览器扩展',
@@ -211,20 +209,13 @@ function ExtensionPairingSection() {
 
   const view = state.data;
   const activeOrigin = view?.activeOrigin ?? '';
-  const nextTitle = view?.status === 'paired'
+  const next = view?.status === 'paired'
     ? view.connected
-      ? EXTENSION_PAIRING_COPY.connectedTitle
-      : EXTENSION_PAIRING_COPY.disconnectedTitle
+      ? { title: EXTENSION_PAIRING_COPY.connectedTitle, lead: EXTENSION_PAIRING_COPY.connectedLead(activeOrigin) }
+      : { title: EXTENSION_PAIRING_COPY.disconnectedTitle, lead: EXTENSION_PAIRING_COPY.disconnectedLead(activeOrigin) }
     : view?.status === 'waiting'
-      ? EXTENSION_PAIRING_COPY.waitingTitle
-      : EXTENSION_PAIRING_COPY.firstTimeTitle;
-  const nextLead = view?.status === 'paired'
-    ? view.connected
-      ? EXTENSION_PAIRING_COPY.connectedLead(activeOrigin)
-      : EXTENSION_PAIRING_COPY.disconnectedLead(activeOrigin)
-    : view?.status === 'waiting'
-      ? EXTENSION_PAIRING_COPY.waitingLead(activeOrigin)
-      : EXTENSION_PAIRING_COPY.firstTimeLead(activeOrigin);
+      ? { title: EXTENSION_PAIRING_COPY.waitingTitle, lead: EXTENSION_PAIRING_COPY.waitingLead(activeOrigin) }
+      : { title: EXTENSION_PAIRING_COPY.firstTimeTitle, lead: EXTENSION_PAIRING_COPY.firstTimeLead(activeOrigin) };
   return (
     <section className="app-form-section" aria-label={EXTENSION_PAIRING_COPY.title}>
       <h2 className="app-section-title">{EXTENSION_PAIRING_COPY.title}</h2>
@@ -246,7 +237,6 @@ function ExtensionPairingSection() {
           <div className="app-extension-state">
             <div className="app-extension-state-heading">
               <div>
-                <p className="app-extension-eyebrow">{EXTENSION_PAIRING_COPY.pairingTitle}</p>
                 <h3>{EXTENSION_PAIRING_STATUS_LABELS[view.status]}</h3>
               </div>
               <span className={`app-extension-state-mark app-extension-state-mark-${view.status}`} aria-hidden="true" />
@@ -268,9 +258,8 @@ function ExtensionPairingSection() {
             />
           </div>
           <div className="app-extension-next">
-            <p className="app-extension-eyebrow">{EXTENSION_PAIRING_COPY.next}</p>
-            <h3>{nextTitle}</h3>
-            <p>{nextLead}</p>
+            <h3>{next.title}</h3>
+            <p>{next.lead}</p>
           </div>
           {view.code ? (
             <>

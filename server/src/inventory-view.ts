@@ -452,7 +452,11 @@ export function inventoryView(
     const first = holder.get(key);
     if (!first) {
       holder.set(key, w);
-      claims.push({ key, materialId: w.m.materialId, fileName: w.m.fileName, at: w.m.uploadedAt, seq: w.m.uploadSeq });
+      // A later PDF can become the canonical display material for an earlier photo. It must not move the task's
+      // occupancy claim forward: retain the earliest included variant's chronology while reporting the canonical PDF.
+      const retained = [w, ...(variantPlan.variantsByCanonical.get(w.m.materialId) ?? [])]
+        .sort((left, right) => left.m.uploadedAt.localeCompare(right.m.uploadedAt) || left.m.uploadSeq - right.m.uploadSeq)[0]!;
+      claims.push({ key, materialId: w.m.materialId, fileName: w.m.fileName, at: retained.m.uploadedAt, seq: retained.m.uploadSeq });
       continue;
     }
     if (variantPlan.crossFormatConflicts.has(pairKey(first.m.materialId, w.m.materialId))) continue;

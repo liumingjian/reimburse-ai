@@ -2,6 +2,7 @@ import {
   PENDING_CHOICE_KEY,
   fieldAnswer,
   isAllocationAnswer,
+  projectLodgingEvidence,
   type Blocker,
   type BlockerTask,
   type ExpenseCategory,
@@ -862,5 +863,11 @@ export function withInventoryProjection(snapshot: TaskSnapshot): TaskSnapshot {
     openPendingItemCount: openPendingItemCount(pendingItems),
   };
   inventory.ungroupedMaterialIds = materials.filter((material) => !grouped.has(material.materialId)).map((material) => material.materialId);
+  return snapshot;
+}
+
+// Mock snapshots use the same pure contract projection as the server. Pages receive this finished snapshot fact.
+export function withLodgingEvidenceProjection(snapshot: TaskSnapshot): TaskSnapshot {
+  snapshot.lodgingEvidence = projectLodgingEvidence(snapshot);
   return snapshot;
 }

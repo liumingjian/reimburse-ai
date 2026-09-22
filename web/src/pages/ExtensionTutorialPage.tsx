@@ -107,7 +107,8 @@ function BrowserIllustration() {
             </div>
             <div>
               <strong>报销助手</strong>
-              <span>已加载 · 等待配对</span>
+              <span>状态：已加载</span>
+              <span>配对：等待配对</span>
             </div>
             <CheckmarkFilled size={20} aria-hidden="true" />
           </div>
@@ -138,10 +139,9 @@ export function ExtensionTutorialPage() {
   return (
     <AppShell nav="settings">
       <div className="app-form-page app-tutorial-page">
-        <PageHeader title={EXTENSION_TUTORIAL_COPY.title} lead={EXTENSION_TUTORIAL_COPY.lead} actions={<Button kind="ghost" href={SETTINGS_HASH}>{EXTENSION_TUTORIAL_COPY.back}</Button>} />
+        <PageHeader title={EXTENSION_TUTORIAL_COPY.title} lead={EXTENSION_TUTORIAL_COPY.lead} />
         <section className="app-form-section app-tutorial-intro" aria-label={EXTENSION_TUTORIAL_COPY.install}>
           <div>
-            <p className="app-tutorial-kicker">Chrome / Edge</p>
             <h2 className="app-section-title">{EXTENSION_TUTORIAL_COPY.install}</h2>
             <p>{EXTENSION_TUTORIAL_COPY.installLead}</p>
           </div>
@@ -175,6 +175,9 @@ export function ExtensionTutorialPage() {
           <p>{EXTENSION_TUTORIAL_COPY.bannerBody}</p>
           <p>{EXTENSION_TUTORIAL_COPY.bannerCancel}</p>
         </section>
+        <div className="app-btn-row">
+          <Button kind="ghost" href={SETTINGS_HASH}>{EXTENSION_TUTORIAL_COPY.back}</Button>
+        </div>
       </div>
     </AppShell>
   );

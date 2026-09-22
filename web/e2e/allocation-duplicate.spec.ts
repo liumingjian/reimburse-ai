@@ -101,7 +101,7 @@ test('?allocation=1：选「这张票我认不出」照内核留下阻塞项；�
 
 test('?duplicate=1：上传后整批停，显示重复发票表与命中的任务名；「移出」重复的那份后接着形成待确认项，明细少一行', async ({ page }, testInfo) => {
   await page.goto(open('?duplicate=1', '#/task/T1/upload'));
-  await page.locator('input[type=file]').setInputFiles(
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles(
     FIXTURE_FILES.map((name) => ({ name, mimeType: name.endsWith('.jpg') ? 'image/jpeg' : 'application/pdf', buffer: Buffer.from(`fixture ${name}`) })),
   );
   await expect(page.getByRole('heading', { name: '上传批次 #1' })).toBeVisible();

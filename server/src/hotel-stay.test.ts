@@ -30,10 +30,10 @@ describe('a hotel invoice with its 全季 folio', () => {
     const folio = byFileName(snapshot, sample('m02').name);
     expect(folio).toMatchObject({ kind: 'hotel_folio', layout: 'labelled', kindLabel: '酒店结账单', categoryLabel: '住宿', role: 'reference', status: 'ok', linkedMaterialIds: [invoice.materialId] });
     expect(invoice).toMatchObject({ role: 'primary_voucher', status: 'ok', linkedMaterialIds: [folio.materialId] });
-    const evidence = lodgingEvidence(snapshot, invoice.materialId);
-    expect(evidence).toMatchObject({ state: 'associated', defaultMaterial: { materialId: folio.materialId }, fields: { checkIn: { value: '2026-08-09', materialId: folio.materialId }, checkOut: { value: '2026-08-22', materialId: folio.materialId }, amount: { value: '3640.00', materialId: invoice.materialId } } });
+    const evidence = snapshot.lodgingEvidence.find((candidate) => candidate.materialId === invoice.materialId);
+    expect(evidence).toMatchObject({ state: 'associated', defaultMaterialId: folio.materialId, fields: { checkIn: { value: '2026-08-09', materialId: folio.materialId }, checkOut: { value: '2026-08-22', materialId: folio.materialId }, amount: { value: '3640.00', materialId: invoice.materialId } } });
     expect(evidence?.fields.hotelName).toMatchObject({ source: 'rule:hotel_folio/labelled', evidence: 'explicit' });
-    expect(lodgingEvidence(snapshot, invoice.materialId, [folio.materialId])?.state).toBe('preview_failure');
+    expect(evidence?.previews).toEqual(expect.arrayContaining([{ materialId: folio.materialId, available: true }]));
     expect(lodgingEvidence({ ...snapshot, materials: snapshot.materials.map((material) => ({ ...material, fields: material.fields.filter((field) => field.key !== 'hotelName') })) }, invoice.materialId)?.fields.hotelName).toBeNull();
     const conflictingFolio = {
       ...folio,
@@ -69,6 +69,25 @@ describe('a hotel invoice with its 全季 folio', () => {
     expect(snapshot.pendingItems.filter((item) => item.status === 'open')).toEqual([]);
     expect(snapshot.inventory.ungroupedMaterialIds).toEqual([]);
     expect(snapshot.inventory.summary).toMatchObject({ materialCount: 2, okCount: 2, voucherCount: 1, referenceCount: 1 });
+  });
+});
+
+describe('an unlinked hotel folio', () => {
+  it('keeps its own preview and original in the server lodging projection', async () => {
+    const { task } = await client.createTask();
+    const uploaded = await client.upload(task.taskId, [sample('m02')]);
+    await client.accepted(await client.act(uploaded, 'start-inventory'));
+    const snapshot = await client.settled(task.taskId);
+    const folio = byFileName(snapshot, sample('m02').name);
+    const evidence = snapshot.lodgingEvidence.find((candidate) => candidate.materialId === folio.materialId);
+
+    expect(evidence).toMatchObject({
+      state: 'unlinked',
+      defaultMaterialId: folio.materialId,
+      previews: [{ materialId: folio.materialId, available: true }],
+    });
+    expect(folio.originalUrl).toMatch(/^\/api\/tasks\/[^/]+\/files\//);
+    expect((await signedIn.request(folio.originalUrl!)).status).toBe(200);
   });
 });
 

@@ -20,7 +20,7 @@ test('上传一张出租车票照片、开始材料盘点，识别完成后看�
   await expect(page).toHaveURL(/#\/task\/[^/]+\/upload$/);
   const taskId = /#\/task\/([^/]+)\//.exec(page.url())?.[1] ?? '';
 
-  await page.locator('input[type=file]').setInputFiles({ name: taxiPhoto.fileName, mimeType: 'image/jpeg', buffer: readFileSync(join(GENERATED_DIR, taxiPhoto.file)) });
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles({ name: taxiPhoto.fileName, mimeType: 'image/jpeg', buffer: readFileSync(join(GENERATED_DIR, taxiPhoto.file)) });
   const batch = page.locator('section', { has: page.getByRole('heading', { name: /^上传批次 #1$/ }) });
   await expect(batch.getByText(taxiPhoto.fileName, { exact: true })).toBeVisible();
 

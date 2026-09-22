@@ -15,7 +15,6 @@ import {
   type StepKind,
   type TaskSnapshot,
   pageAllowed,
-  lodgingEvidence,
 } from '@baox/contract';
 import { navigate, taskHash } from '../router';
 import { ActionBar } from '../shell/ActionBar';
@@ -639,7 +638,7 @@ function LineRow({
   onToggle: () => void;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
-  const lodging = lodgingEvidence(snapshot, line.voucherMaterialId);
+  const lodging = snapshot.lodgingEvidence.find((evidence) => evidence.materialId === line.voucherMaterialId);
   const dates = line.endDate && line.endDate !== line.date ? `${line.date} 至 ${line.endDate}` : line.date;
   return (
     <TableRow className={checked ? 'app-row-selected' : ''} data-testid={`line-card-${line.no}`}>

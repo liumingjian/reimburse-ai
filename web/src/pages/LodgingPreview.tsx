@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@carbon/react';
-import { lodgingEvidence, type TaskSnapshot } from '@baox/contract';
+import { type TaskSnapshot } from '@baox/contract';
 import { taskHash } from '../router';
 import { DocViewer } from './DocViewer';
 
@@ -8,9 +8,13 @@ export function LodgingPreview({ snapshot, materialId }: { snapshot: TaskSnapsho
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [failed, setFailed] = useState<string[]>([]);
   const [retry, setRetry] = useState(0);
-  const evidence = lodgingEvidence(snapshot, materialId, failed);
-  const choices = evidence?.previews ?? [];
-  const selectedPreview = choices.find((preview) => preview.material.materialId === selectedId) ?? choices.find((preview) => preview.material.materialId === evidence?.defaultMaterial?.materialId);
+  const evidence = snapshot.lodgingEvidence.find((candidate) => candidate.materialId === materialId);
+  const materials = new Map(snapshot.materials.map((material) => [material.materialId, material]));
+  const choices = (evidence?.previews ?? []).flatMap((preview) => {
+    const material = materials.get(preview.materialId);
+    return material ? [{ ...preview, material }] : [];
+  });
+  const selectedPreview = choices.find((preview) => preview.material.materialId === selectedId) ?? choices.find((preview) => preview.material.materialId === evidence?.defaultMaterialId);
   const selected = selectedPreview?.material;
   const selectedMaterialId = selected?.materialId;
   const previewUrl = selected?.previewUrl;
@@ -27,7 +31,7 @@ export function LodgingPreview({ snapshot, materialId }: { snapshot: TaskSnapsho
     return () => controller.abort();
   }, [previewUrl, selectedMaterialId, retry]);
   if (!evidence) return <DocViewer material={snapshot.materials.find((material) => material.materialId === materialId)} />;
-  const previewFailed = selectedPreview?.status === 'unavailable';
+  const previewFailed = selectedPreview ? !selectedPreview.available || failed.includes(selectedPreview.material.materialId) : false;
   return (
     <section aria-label="住宿材料预览">
       <div className="app-btn-row">

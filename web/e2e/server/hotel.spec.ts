@@ -41,7 +41,7 @@ async function inventory(page: Page, files: readonly Upload[]): Promise<TaskSnap
   await expect(page).toHaveURL(/#\/task\/[^/]+\/upload$/);
   const taskId = /#\/task\/([^/]+)\//.exec(page.url())?.[1] ?? '';
 
-  await page.locator('input[type=file]').setInputFiles(files.map((file) => ({ name: file.name, mimeType: 'application/pdf', buffer: file.buffer })));
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles(files.map((file) => ({ name: file.name, mimeType: 'application/pdf', buffer: file.buffer })));
   const batch = page.locator('section', { has: page.getByRole('heading', { name: /^上传批次 #1$/ }) });
   for (const file of files) await expect(batch.getByText(file.name, { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '开始材料盘点' }).click();

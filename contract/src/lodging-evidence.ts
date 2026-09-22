@@ -1,4 +1,4 @@
-import type { FieldCandidate, Material, TaskSnapshot } from './snapshot';
+import type { FieldCandidate, LodgingEvidenceProjection, Material, TaskSnapshot } from './snapshot';
 
 export type LodgingValue = { value: string; materialId: string; source: string; evidence: FieldCandidate['evidence'] };
 export type LodgingEvidence = {
@@ -6,8 +6,8 @@ export type LodgingEvidence = {
   bills: Material[];
   unlinkedBills: Material[];
   defaultMaterial: Material | null;
-  previews: { material: Material; status: 'available' | 'unavailable' }[];
-  state: 'associated' | 'missing' | 'unlinked' | 'preview_failure';
+  previews: { material: Material; available: boolean }[];
+  state: 'associated' | 'missing' | 'unlinked';
   fields: { location: LodgingValue | null; hotelName: LodgingValue | null; checkIn: LodgingValue | null; checkOut: LodgingValue | null; amount: LodgingValue | null };
 };
 
@@ -34,8 +34,8 @@ function hasRecordedFolioAssociation(snapshot: Pick<TaskSnapshot, 'materials' | 
     || snapshot.lines.some((line) => line.referenceMaterialIds.includes(folio.materialId));
 }
 
-// Reads recorded associations only. Preview failures never classify or associate a material.
-export function lodgingEvidence(snapshot: Pick<TaskSnapshot, 'materials' | 'lines'>, materialId: string, failedPreviewIds: readonly string[] = []): LodgingEvidence | null {
+// Reads recorded associations only. Runtime preview failures belong to the browser and never alter this projection.
+export function lodgingEvidence(snapshot: Pick<TaskSnapshot, 'materials' | 'lines'>, materialId: string): LodgingEvidence | null {
   const selected = snapshot.materials.find((material) => material.materialId === materialId);
   if (!selected) return null;
   const relatedInvoices = snapshot.materials.filter((material) => material.kind === 'vat_invoice' && (
@@ -55,10 +55,12 @@ export function lodgingEvidence(snapshot: Pick<TaskSnapshot, 'materials' | 'line
   ));
   const unlinkedBills = snapshot.materials.filter((material) => material.kind === 'hotel_folio' && material.role !== 'excluded' && !hasRecordedFolioAssociation(snapshot, material));
   const defaultMaterial = bills[0] ?? invoice ?? selected;
-  const previews = [...bills, ...(invoice ? [invoice] : [])].map((material) => ({ material, status: !material.previewUrl || failedPreviewIds.includes(material.materialId) ? 'unavailable' as const : 'available' as const }));
+  const previewMaterials = [...bills, ...(invoice ? [invoice] : []), selected];
+  const previews = [...new Map(previewMaterials.map((material) => [material.materialId, material])).values()]
+    .map((material) => ({ material, available: material.previewUrl !== null }));
   return {
     invoice, bills, unlinkedBills, defaultMaterial, previews,
-    state: !bills.length ? (unlinkedBills.length ? 'unlinked' : 'missing') : (!defaultMaterial.previewUrl || failedPreviewIds.includes(defaultMaterial.materialId) ? 'preview_failure' : 'associated'),
+    state: !bills.length ? (unlinkedBills.length ? 'unlinked' : 'missing') : 'associated',
     fields: {
       location: resolvedField([...bills, ...(invoice ? [invoice] : [])], 'city', line?.city ? { value: line.city, materialId: line.voucherMaterialId, source: 'recorded_line', evidence: 'derived' } : null),
       hotelName: resolvedField(bills, 'hotelName'),
@@ -70,4 +72,19 @@ export function lodgingEvidence(snapshot: Pick<TaskSnapshot, 'materials' | 'line
       ]),
     },
   };
+}
+
+// This is the server/mock boundary for the lodging presentation. The browser consumes it as a snapshot fact.
+export function projectLodgingEvidence(snapshot: Pick<TaskSnapshot, 'materials' | 'lines'>): LodgingEvidenceProjection[] {
+  return snapshot.materials.flatMap((material) => {
+    const evidence = lodgingEvidence(snapshot, material.materialId);
+    if (!evidence) return [];
+    return [{
+      materialId: material.materialId,
+      defaultMaterialId: evidence.defaultMaterial?.materialId ?? null,
+      previews: evidence.previews.map((preview) => ({ materialId: preview.material.materialId, available: preview.available })),
+      state: evidence.state,
+      fields: evidence.fields,
+    }];
+  });
 }
