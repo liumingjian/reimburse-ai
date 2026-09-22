@@ -59,7 +59,7 @@ function Routes() {
     case 'projects':
       return <ProjectBookPage />;
     case 'settings':
-      return <SettingsPage />;
+      return <SettingsPage {...(route.returnTo ? { returnTo: route.returnTo } : {})} />;
     case 'password':
       return <ChangePasswordPage required={false} />;
     case 'settingsTutorial':
@@ -67,7 +67,7 @@ function Routes() {
     case 'admin':
       return <AdminPage />;
     case 'task':
-      return <TaskRoute key={route.taskId} taskId={route.taskId} page={route.page} />;
+      return <TaskRoute key={route.taskId} taskId={route.taskId} page={route.page} fromExtensionSetup={route.fromExtensionSetup ?? false} />;
     case 'redirect':
       return null;
   }
