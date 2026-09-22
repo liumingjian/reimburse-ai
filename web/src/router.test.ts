@@ -7,6 +7,11 @@ describe('hash 路由', () => {
     expect(parseHash('#/tasks/new')).toEqual({ kind: 'new' });
   });
 
+  test('设置页的安装教程使用独立路由', () => {
+    expect(parseHash('#/settings')).toEqual({ kind: 'settings' });
+    expect(parseHash('#/settings/tutorial')).toEqual({ kind: 'settingsTutorial' });
+  });
+
   test('#/task/:id/<页面> 解析出任务与页面；不带页面时页面为空', () => {
     expect(parseHash('#/task/T1/upload')).toEqual({ kind: 'task', taskId: 'T1', page: 'upload' });
     expect(parseHash('#/task/T2/reconcile')).toEqual({ kind: 'task', taskId: 'T2', page: 'reconcile' });

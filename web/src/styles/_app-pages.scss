@@ -1189,6 +1189,312 @@ $doc-frame-block: var(--app-doc-frame-block);
   list-style: decimal;
 }
 
+// Settings keeps the extension state and the next action together. The long installation guide lives on its own
+// tutorial route, so this block stays useful at common desktop heights and remains readable when it wraps.
+.app-extension-state {
+  display: grid;
+  gap: $spacing-05;
+  inline-size: 100%;
+  padding-block: $spacing-05;
+  border-block: 1px solid $border-subtle-01;
+}
+
+.app-extension-state-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: $spacing-05;
+
+  h3 {
+    margin: $spacing-02 0 0;
+    color: $text-primary;
+    @include type.type-style('heading-compact-02');
+  }
+}
+
+.app-extension-eyebrow,
+.app-tutorial-kicker {
+  margin: 0;
+  color: $text-secondary;
+  @include type.type-style('label-01');
+}
+
+.app-extension-state-mark {
+  flex: none;
+  inline-size: $spacing-05;
+  block-size: $spacing-05;
+  margin-block-start: $spacing-02;
+  border-radius: 50%;
+  background: $support-warning;
+  box-shadow: 0 0 0 4px $layer-accent;
+
+  &-paired {
+    background: $support-success;
+  }
+
+  &-waiting {
+    background: $support-info;
+  }
+}
+
+.app-extension-next {
+  display: grid;
+  gap: $spacing-03;
+  inline-size: 100%;
+  padding-block-end: $spacing-02;
+
+  h3,
+  p {
+    margin: 0;
+  }
+
+  h3 {
+    color: $text-primary;
+    @include type.type-style('heading-compact-02');
+  }
+
+  > p:not(.app-extension-eyebrow) {
+    color: $text-secondary;
+  }
+}
+
+.app-settings-advanced {
+  margin-block-start: $spacing-06;
+  border-block: 1px solid $border-subtle-01;
+
+  > summary {
+    display: flex;
+    align-items: center;
+    min-block-size: 3rem;
+    cursor: pointer;
+    color: $text-primary;
+    @include type.type-style('heading-compact-01');
+  }
+
+  > .app-form-section {
+    padding-block-end: $spacing-06;
+  }
+}
+
+// The tutorial is intentionally a normal document flow. It can grow beyond the viewport and use the browser's
+// regular page scroll on smaller displays.
+.app-tutorial-page {
+  max-inline-size: 64rem;
+}
+
+.app-tutorial-intro {
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 26rem);
+  align-items: center;
+
+  > .app-btn-row {
+    grid-column: 1 / -1;
+  }
+
+  h2 {
+    margin-block-start: $spacing-02;
+  }
+}
+
+.app-tutorial-hero-art {
+  min-inline-size: 0;
+}
+
+.app-tutorial-download-note {
+  display: grid;
+  gap: $spacing-02;
+
+  p {
+    margin: 0;
+  }
+}
+
+.app-tutorial-browser {
+  overflow: hidden;
+  border: 1px solid $border-strong-01;
+  background: $layer-01;
+  box-shadow: 8px 8px 0 $layer-accent;
+}
+
+.app-tutorial-browser-bar {
+  display: flex;
+  align-items: center;
+  gap: $spacing-02;
+  min-block-size: 2.5rem;
+  padding: $spacing-03;
+  background: $layer-02;
+  border-block-end: 1px solid $border-subtle-01;
+
+  > span {
+    inline-size: $spacing-03;
+    block-size: $spacing-03;
+    border-radius: 50%;
+    background: $icon-secondary;
+  }
+}
+
+.app-tutorial-address {
+  flex: 1;
+  min-inline-size: 0;
+  margin-inline-start: $spacing-03;
+  padding: $spacing-02 $spacing-03;
+  overflow: hidden;
+  background: $field-01;
+  color: $text-secondary;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  @include type.type-style('label-01');
+}
+
+.app-tutorial-browser-body {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  min-block-size: 12rem;
+}
+
+.app-tutorial-browser-sidebar {
+  display: grid;
+  align-content: start;
+  gap: $spacing-04;
+  padding: $spacing-05 $spacing-04;
+  background: $layer-02;
+
+  > div {
+    block-size: $spacing-03;
+    background: $border-subtle-01;
+
+    &:first-child {
+      inline-size: 80%;
+      background: $interactive;
+    }
+
+    &:nth-child(2) {
+      inline-size: 60%;
+    }
+
+    &:last-child {
+      inline-size: 72%;
+    }
+  }
+}
+
+.app-tutorial-extension-card {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: $spacing-04;
+  min-inline-size: 0;
+  margin: $spacing-05;
+  padding: $spacing-05;
+  border: 1px solid $border-subtle-01;
+  background: $layer-01;
+
+  > div:nth-child(2) {
+    display: grid;
+    min-inline-size: 0;
+    gap: $spacing-02;
+
+    span {
+      overflow: hidden;
+      color: $text-secondary;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      @include type.type-style('label-01');
+    }
+  }
+
+  > svg {
+    flex: none;
+    fill: $support-success;
+  }
+}
+
+.app-tutorial-extension-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  inline-size: 3rem;
+  block-size: 3rem;
+  background: $interactive;
+  color: $icon-on-color;
+
+  svg {
+    fill: currentColor;
+  }
+}
+
+.app-tutorial-steps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: $spacing-06;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-tutorial-step {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  gap: $spacing-05;
+  min-inline-size: 0;
+  padding-block-start: $spacing-05;
+  border-block-start: 1px solid $border-subtle-01;
+
+  h2,
+  p {
+    margin: 0;
+  }
+
+  h2 {
+    color: $text-primary;
+    @include type.type-style('heading-compact-01');
+  }
+
+  > div:last-child > p:last-child {
+    margin-block-start: $spacing-03;
+    color: $text-secondary;
+  }
+}
+
+.app-tutorial-step-art {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: $spacing-03;
+  min-block-size: 6rem;
+  padding: $spacing-03;
+  background: $layer-accent;
+  color: $interactive;
+
+  svg {
+    fill: currentColor;
+  }
+
+  span {
+    color: $text-primary;
+    @include type.type-style('label-01');
+  }
+}
+
+.app-tutorial-step-number {
+  margin-block-end: $spacing-02 !important;
+  color: $text-secondary;
+  @include type.type-style('label-01');
+}
+
+@media (max-width: 45rem) {
+  .app-tutorial-intro {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-tutorial-intro > .app-btn-row {
+    grid-column: auto;
+  }
+
+  .app-tutorial-steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .app-startup {
   display: grid;
   gap: $spacing-05;
