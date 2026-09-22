@@ -250,3 +250,120 @@ describe('事件流 GET /api/tasks/:id/events（SSE event: snapshot）', () => {
     expect([0, 1, 2, 3, 4, 5, 6].map(reconnectDelay)).toEqual([500, 1000, 2000, 4000, 8000, 10000, 10000]);
   });
 });
+
+type TransferEvent = { loaded: number; total: number; lengthComputable: boolean };
+
+class ControlledUploadRequest {
+  static latest: ControlledUploadRequest | null = null;
+  static throwOnSend = false;
+
+  method = '';
+  target = '';
+  responseType = '';
+  status = 0;
+  response: unknown = null;
+  sent: unknown = null;
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onabort: (() => void) | null = null;
+  ontimeout: (() => void) | null = null;
+  upload: {
+    onprogress: ((event: TransferEvent) => void) | null;
+    onload: (() => void) | null;
+    onerror: (() => void) | null;
+    onabort: (() => void) | null;
+    ontimeout: (() => void) | null;
+  } = { onprogress: null, onload: null, onerror: null, onabort: null, ontimeout: null };
+
+  constructor() {
+    ControlledUploadRequest.latest = this;
+  }
+
+  open(method: string, target: string) {
+    this.method = method;
+    this.target = target;
+  }
+
+  send(body: unknown) {
+    this.sent = body;
+    if (ControlledUploadRequest.throwOnSend) throw new Error('socket closed before send returned');
+  }
+
+  progress(event: TransferEvent) {
+    this.upload.onprogress?.(event);
+  }
+
+  uploadComplete() {
+    this.upload.onload?.();
+  }
+
+  uploadFailed() {
+    this.upload.onerror?.();
+  }
+
+  respond(status: number, response: unknown) {
+    this.status = status;
+    this.response = response;
+    this.onload?.();
+  }
+
+  static reset() {
+    ControlledUploadRequest.latest = null;
+    ControlledUploadRequest.throwOnSend = false;
+  }
+}
+
+describe('上传传输进度', () => {
+  test('把受控字节事件和服务端确认分别交给调用方', async () => {
+    vi.stubGlobal('XMLHttpRequest', ControlledUploadRequest);
+    try {
+      const progress: Array<{ phase: string; loadedBytes?: number; totalBytes?: number | null }> = [];
+      const adapter = createHttpAdapter({ baseUrl: 'http://local' });
+      const result = adapter.uploadBatch('T1', [new File(['invoice'], 'trip/发票.pdf', { type: 'application/pdf' })], (event) => progress.push(event));
+      const request = ControlledUploadRequest.latest;
+      if (!request) throw new Error('受控上传请求没有创建');
+
+      expect([request.method, request.target, request.responseType]).toEqual(['POST', 'http://local/api/tasks/T1/batches', 'json']);
+      expect(request.sent).toBeInstanceOf(FormData);
+      expect((request.sent as FormData).getAll('sourcePaths')).toEqual(['trip/发票.pdf']);
+      expect(progress).toEqual([{ phase: 'transferring', loadedBytes: 0, totalBytes: null }]);
+
+      request.progress({ loaded: 2048, total: 8192, lengthComputable: true });
+      request.progress({ loaded: 2048, total: 0, lengthComputable: false });
+      request.uploadComplete();
+      expect(progress).toEqual([
+        { phase: 'transferring', loadedBytes: 0, totalBytes: null },
+        { phase: 'transferring', loadedBytes: 2048, totalBytes: 8192 },
+        { phase: 'transferring', loadedBytes: 2048, totalBytes: null },
+        { phase: 'awaiting_acceptance' },
+      ]);
+
+      request.respond(200, t1Snapshot('upload'));
+      expect(await result).toMatchObject({ ok: true, snapshot: { stage: 'upload', batches: [] } });
+    } finally {
+      vi.unstubAllGlobals();
+      ControlledUploadRequest.reset();
+    }
+  });
+
+  test('上传中断或同步发送失败时不猜测服务端没有收到文件', async () => {
+    vi.stubGlobal('XMLHttpRequest', ControlledUploadRequest);
+    try {
+      const adapter = createHttpAdapter({ baseUrl: 'http://local' });
+      const interrupted = adapter.uploadBatch('T1', [new File(['invoice'], 'a.pdf', { type: 'application/pdf' })], () => {});
+      ControlledUploadRequest.latest?.uploadFailed();
+      await expect(interrupted).resolves.toEqual({
+        ok: false,
+        error: { code: 'upload_interrupted', message: '上传连接中断，接收结果尚未确认。请先查看任务中已记录的材料，再重新选择未接收的文件。' },
+        snapshot: null,
+      });
+
+      ControlledUploadRequest.throwOnSend = true;
+      const synchronousFailure = adapter.uploadBatch('T1', [new File(['invoice'], 'b.pdf', { type: 'application/pdf' })], () => {});
+      await expect(synchronousFailure).resolves.toMatchObject({ ok: false, error: { code: 'upload_interrupted' }, snapshot: null });
+    } finally {
+      vi.unstubAllGlobals();
+      ControlledUploadRequest.reset();
+    }
+  });
+});

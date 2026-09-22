@@ -1,7 +1,7 @@
 import { useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
 import { Button, InlineNotification, ProgressBar, Tag } from '@carbon/react';
 import { Add, Document, DocumentPdf, FolderOpen, Image as ImageIcon } from '@carbon/icons-react';
-import { UPLOAD_ACCEPT_ATTRIBUTE, UPLOAD_ACCEPTED_EXTENSIONS, type TaskSnapshot, type UploadBatch, type UploadFileResult } from '@baox/contract';
+import { UPLOAD_ACCEPT_ATTRIBUTE, UPLOAD_ACCEPTED_EXTENSIONS, type TaskSnapshot, type UploadBatch, type UploadFileResult, type UploadTransferProgress } from '@baox/contract';
 import { formatBytes, hashPrefix } from '../format';
 import { navigate, taskHash } from '../router';
 import { ActionBar } from '../shell/ActionBar';
@@ -48,7 +48,7 @@ function UploadPictogram() {
 // Handwritten because Carbon's FileUploaderDropContainer only takes a string label. Like Carbon's, the zone answers
 // Enter and Space itself; it is a div with the button role so it can hold the pictogram, tags and progress bar.
 // Its name comes from a visually hidden prompt; the visible copy is aria-hidden so the name stays short.
-function Dropzone({ busyCount, disabled, compact, onFiles }: { busyCount: number; disabled: boolean; compact: boolean; onFiles: (files: File[]) => void }) {
+function Dropzone({ busyCount, progress, disabled, compact, onFiles }: { busyCount: number; progress: UploadTransferProgress | null; disabled: boolean; compact: boolean; onFiles: (files: File[]) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const directoryInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -71,7 +71,8 @@ function Dropzone({ busyCount, disabled, compact, onFiles }: { busyCount: number
     if (!disabled) pick(event.dataTransfer.files);
   };
 
-  const busyText = `正在接收 ${busyCount} 份文件…`;
+  const measured = progress?.phase === 'transferring' && progress.totalBytes !== null ? progress : null;
+  const busyText = progress?.phase === 'awaiting_acceptance' ? '文件已传输，正在等待服务端确认接收结果…' : measured ? `正在传输 ${busyCount} 份文件：${formatBytes(measured.loadedBytes)} / ${formatBytes(measured.totalBytes!)}` : `正在传输 ${busyCount} 份文件，暂时无法计算总进度…`;
   const className = ['app-dropzone', compact && 'is-compact', dragOver && 'is-dragover'].filter(Boolean).join(' ');
   return (
     <div>
@@ -100,7 +101,7 @@ function Dropzone({ busyCount, disabled, compact, onFiles }: { busyCount: number
             <span className="app-dropzone-title" role="status">
               {busyText}
             </span>
-            <ProgressBar className="app-dropzone-progress" label={busyText} hideLabel size="small" />
+            <ProgressBar className="app-dropzone-progress" label={busyText} hideLabel size="small" {...(measured ? { value: measured.loadedBytes, max: measured.totalBytes! } : {})} />
           </span>
         ) : (
           <>
@@ -252,6 +253,7 @@ export function UploadPage({ snapshot }: { snapshot: TaskSnapshot }) {
   // 因追加材料回到上传阶段的任务，一进来就打开追加区。
   const [appending, setAppending] = useState(invalidated && snapshot.stage === 'upload');
   const [busyCount, setBusyCount] = useState(0);
+  const [progress, setProgress] = useState<UploadTransferProgress | null>(null);
   const { busy: acting, error, run } = useAction(taskId);
   const reopen = useReopenUpload(snapshot, () => setAppending(true));
   const copy = PAGE_COPY.upload;
@@ -268,8 +270,10 @@ export function UploadPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   const upload = async (files: File[]) => {
     setBusyCount(files.length);
-    const outcome = await run((adapter) => adapter.uploadBatch(taskId, files));
+    setProgress(null);
+    const outcome = await run((adapter) => adapter.uploadBatch(taskId, files, setProgress));
     setBusyCount(0);
+    setProgress(null);
     if (outcome.ok) setAppending(false);
   };
 
@@ -297,7 +301,7 @@ export function UploadPage({ snapshot }: { snapshot: TaskSnapshot }) {
               </Button>
             </div>
           ) : null}
-          <Dropzone busyCount={busyCount} disabled={busy} compact={hasBatches} onFiles={(files) => void upload(files)} />
+          <Dropzone busyCount={busyCount} progress={progress} disabled={busy} compact={hasBatches} onFiles={(files) => void upload(files)} />
           {error ? (
             <p className="app-action-error app-block-note" role="alert">
               {error}

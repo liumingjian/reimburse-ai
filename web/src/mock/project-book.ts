@@ -13,9 +13,10 @@ export type MockBookState = {
 };
 
 export function createMockBookState(options: MockOptions, fixtureAccountId: string): MockBookState {
+  const initial = INITIAL_BOOK.map((project) => (options.deadlineWarning && project.number === 'P-2307' ? { ...project, deadlineOn: '2026-08-10' } : { ...project }));
   return {
     personalByAccount: new Map(
-      options.bookEmpty ? [] : [[fixtureAccountId, INITIAL_BOOK.map((project) => ({ ...project }))]],
+      options.bookEmpty ? [] : [[fixtureAccountId, initial]],
     ),
     publicProjects: [],
   };

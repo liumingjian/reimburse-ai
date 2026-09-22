@@ -1,7 +1,15 @@
 import { describe, expect, test } from 'vitest';
-import { parseHash, taskHash } from './router';
+import { extensionSettingsHash, parseHash, taskHash } from './router';
 
 describe('hash 路由', () => {
+  test('extension setup preserves only a valid local task destination', () => {
+    expect(parseHash(extensionSettingsHash('task with spaces', 'review'))).toEqual({ kind: 'settings', returnTo: '#/task/task%20with%20spaces/review' });
+    expect(parseHash('#/task/T1/review?extensionSetup=1')).toEqual({ kind: 'task', taskId: 'T1', page: 'review', fromExtensionSetup: true });
+    for (const returnTo of ['https://example.com', '//example.com', '#/admin', '#/task/T1/unknown', '#/task/%/review', '#/task/T1/review?next=elsewhere']) {
+      expect(parseHash(`#/settings?${new URLSearchParams({ returnTo })}`)).toEqual({ kind: 'settings' });
+    }
+    expect(parseHash('#/task/%/review')).toEqual({ kind: 'redirect', to: '#/tasks' });
+  });
   test('#/tasks 是任务列表，#/tasks/new 是任务列表上打开的新建任务弹层', () => {
     expect(parseHash('#/tasks')).toEqual({ kind: 'tasks' });
     expect(parseHash('#/tasks/new')).toEqual({ kind: 'new' });

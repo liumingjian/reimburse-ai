@@ -117,7 +117,8 @@ describe('整单明细确认', () => {
     fireEvent.click(print);
     expect(await screen.findByRole('heading', { name: '打印稿预览' })).toBeTruthy();
     window.location.hash = '#/task/T1/review';
-    fireEvent.click(await screen.findByRole('button', { name: '去报销' }));
+    await screen.findByRole('heading', { name: '整单明细确认' });
+    fireEvent.click(screen.getByRole('button', { name: '去报销' }));
     expect(await screen.findByRole('heading', { name: '填写报销单' })).toBeTruthy();
     expect(window.location.hash).toBe('#/task/T1/erp');
     expect(screen.queryByRole('button', { name: '开始填报' })).toBeNull();
