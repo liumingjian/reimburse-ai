@@ -18,6 +18,10 @@ machine. See `docs/agents/private-corpus.md`.
 Before merging any branch (to `main` or to a spec's integration branch), check it against
 `docs/agents/merge-conditions.md`; the first condition is e2e green on main.
 
+### Manual QA on the Mac
+
+When the maintainer asks for QA on the Mac, launch the dev-mode instance (`qa/dev.sh` through rexec) and push each fix into it. See `qa/README.md` §1a.
+
 ### Domain docs
 
 This repo uses the single-context domain documentation layout. See `docs/agents/domain.md`.
