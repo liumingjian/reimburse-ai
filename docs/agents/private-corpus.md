@@ -43,3 +43,17 @@ report.
 
 Expectation sidecars carry real values, so they belong in the corpus directory next to the materials — never in the
 repository, and never in an issue, a commit message or a test receipt.
+
+## Turning a private misread into a committed case
+
+A misread found here becomes a regression case in `server/src/parse/snapshots/` without committing the file:
+
+```sh
+pnpm --filter @baox/server exec tsx scripts/probe-parse.ts \
+  --capture src/parse/snapshots/<case> --redact <map.json> <file>
+```
+
+`<map.json>` is a flat `{"<as printed>": "<replacement>"}` map of every personal or real value on the face; a value
+drawn across several text runs needs a replacement of the same length. The probe refuses to write a snapshot in which a
+mapped value is still readable. Keep `<map.json>` out of the repository, then write `<case>.expected.json` by hand
+(same rule as above: from the document, with the redacted values). `server/src/parse/snapshots.test.ts` runs every case.

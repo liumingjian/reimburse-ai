@@ -5,6 +5,8 @@ import type { ParseOutcome } from './dispatch';
 import type { Layout } from './layout';
 import { LAYOUTS } from './layouts';
 import { parseMaterial, type ParseInput } from './material';
+import type { DocReaders } from './readers';
+import { productionReaders } from './readers-production';
 
 // Where parsing runs. The server uses one `worker_thread` for all tasks (ADR-0017), so HTTP stays responsive; it is
 // started on demand and released after `idleMs` without work, which also releases OCR (#186) when a job ends.
@@ -16,8 +18,8 @@ export interface ParseExecutor {
   close(): Promise<void>;
 }
 
-export function inlineExecutor(layouts: readonly Layout[] = LAYOUTS): ParseExecutor {
-  return { parse: (input) => parseMaterial(input, layouts), close: async () => {} };
+export function inlineExecutor(layouts: readonly Layout[] = LAYOUTS, readers: DocReaders = productionReaders): ParseExecutor {
+  return { parse: (input) => parseMaterial(input, readers, layouts), close: async () => {} };
 }
 
 // The built server ships `dist/parse-worker.mjs` next to `dist/main.mjs`. From source (tests, `pnpm dev`) the TS entry

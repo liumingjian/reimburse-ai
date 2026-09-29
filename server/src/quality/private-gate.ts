@@ -118,6 +118,12 @@ async function evaluate(root: string, parse: CorpusParser, required: Readonly<Re
   return { groups, ignored, unreadableExpectations };
 }
 
+// The real recognition over the production readers, loaded only when the gate actually runs against a corpus.
+async function productionParser(): Promise<CorpusParser> {
+  const [{ parseMaterial }, { productionReaders }] = await Promise.all([import('../parse/material'), import('../parse/readers-production')]);
+  return (input) => parseMaterial(input, productionReaders);
+}
+
 const pct = (share: number) => `${(share * 100).toFixed(1)}%`;
 
 // Returns the exit code: 0 when every row meets its threshold (or the corpus is not configured), 1 otherwise.
@@ -132,7 +138,7 @@ export async function runPrivateGate(root: string | undefined, options: GateOpti
     out('test:private: BAOX_PRIVATE_CORPUS is not a directory.');
     return 1;
   }
-  const parse = options.parse ?? (await import('../parse/material')).parseMaterial;
+  const parse = options.parse ?? (await productionParser());
   const required = options.required ?? REQUIRED_EXPECTATIONS;
   const { groups, ignored, unreadableExpectations } = await evaluate(root, parse, required);
 
