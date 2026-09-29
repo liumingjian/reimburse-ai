@@ -40,8 +40,18 @@ it('runs default deploy from committed origin/main through a fresh held snapshot
   expect(existsSync(join(target.dataDir, 'files', 'sha256', originalBlob.slice(0, 2), originalBlob))).toBe(true);
   const manifest = JSON.parse(readFileSync(output.cutover.manifest, 'utf8')) as { original: { release: string }; rehearsal: { state: string } };
   expect(manifest).toMatchObject({ original: { release: `releases/${releaseA}` }, rehearsal: { state: 'verified' } });
-  const journal = JSON.parse(readFileSync(join(target.profile.deployRoot, 'maintenance', 'deployment-journal.json'), 'utf8')) as { operation: string; phase: string };
+  const journal = JSON.parse(readFileSync(join(target.profile.deployRoot, 'maintenance', 'deployment-journal.json'), 'utf8')) as { operation: string; phase: string; phaseTimings: Array<{ phase: string; durationMs: number; failed?: boolean }> };
   expect(journal).toEqual(expect.objectContaining({ operation: 'cutover', phase: 'completed' }));
+  // One journal entry covers the whole deploy: the candidate build phases are
+  // carried over from its manifest ahead of the cutover's own phases.
+  expect(journal.phaseTimings.map((timing) => timing.phase)).toEqual([
+    'upload', 'extract', 'install', 'build', 'native', 'config', 'snapshot', 'cutover', 'verify', 'reopen',
+  ]);
+  for (const timing of journal.phaseTimings) {
+    expect(timing.durationMs).toBeGreaterThanOrEqual(0);
+    expect(timing.failed).toBeUndefined();
+  }
+  expect((JSON.parse(result.out) as { phaseTimings: unknown }).phaseTimings).toEqual(journal.phaseTimings);
 
   const commands = target.controller.commands().slice(commandsBefore);
   const candidateStart = commands.lastIndexOf('start baox.service');

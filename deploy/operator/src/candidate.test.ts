@@ -153,9 +153,12 @@ it('keeps the real service, SQLite data, active release, and configuration uncha
   unlinkSync(join(target.barrier, 'hold'));
   const prepared = await resumed;
   expect(prepared.code).toBe(0);
-  const output = JSON.parse(prepared.out) as { candidate: { state: string; manifest: string }; source: { commit: string; archiveSha256: string } };
+  const output = JSON.parse(prepared.out) as { candidate: { state: string; manifest: string; phaseTimings: unknown }; source: { commit: string; archiveSha256: string } };
   expect(output.candidate.state).toBe('prepared');
-  const manifest = JSON.parse(readFileSync(output.candidate.manifest, 'utf8')) as { source: { commit: string; archiveSha256: string; verifiedArchiveSha256: string; artifactOrigin: string }; recovery: { activeRelease: string; activeConfiguration: unknown[] } };
+  const manifest = JSON.parse(readFileSync(output.candidate.manifest, 'utf8')) as { source: { commit: string; archiveSha256: string; verifiedArchiveSha256: string; artifactOrigin: string }; recovery: { activeRelease: string; activeConfiguration: unknown[] }; phaseTimings: Array<{ phase: string }> };
+  // The upload was timed by the disconnected receiver; the build phases by the detached worker.
+  expect(manifest.phaseTimings.map((timing) => timing.phase)).toEqual(['upload', 'extract', 'install', 'build', 'native', 'config']);
+  expect(output.candidate.phaseTimings).toEqual(manifest.phaseTimings);
   expect(manifest.source).toMatchObject({ commit: source.first, archiveSha256: output.source.archiveSha256, verifiedArchiveSha256: output.source.archiveSha256, artifactOrigin: 'direct' });
   expect(manifest.recovery.activeRelease).toBe('releases/active');
   expect(manifest.recovery.activeConfiguration).toHaveLength(3);
