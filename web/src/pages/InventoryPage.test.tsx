@@ -1,12 +1,12 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { App } from '../App';
-import { BLOCKER_TABLE_COLUMNS, type TaskStage } from '@baox/contract';
+import { BLOCKER_TABLE_COLUMNS } from '@baox/contract';
 import { t1Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
-import type { Fault, MockOptions } from '../mock/options';
+import type { Fault, MockOptions, SeedStage } from '../mock/options';
 
-function renderAt(hash: string, seed: TaskStage | null, fault: Fault | null = null, extra: Partial<MockOptions> = {}) {
+function renderAt(hash: string, seed: SeedStage | null, fault: Fault | null = null, extra: Partial<MockOptions> = {}) {
   window.location.hash = hash;
   // 60ms per phase: long enough to see the progress state, short enough not to slow the suite.
   const adapter = createMockAdapter({ ...extra, seed, fault, inventoryPhaseMs: 60 });
@@ -194,8 +194,9 @@ describe('材料盘点', () => {
     expect(await screen.findByRole('heading', { name: '材料盘点' })).toBeTruthy();
     expect(screen.getByLabelText('盘点进度')).toBeTruthy();
     expect(screen.getByRole('status').textContent).toMatch(/^正在盘点：/);
-    expect(screen.getByText('核对材料内容哈希')).toBeTruthy();
-    expect(screen.getByText('划分费用事件与待确认项')).toBeTruthy();
+    // The server's phases: the PDFs, then the photos (the batch has two).
+    expect(screen.getByText('读取 PDF 文本层与二维码')).toBeTruthy();
+    expect(screen.getByText('读取照片票面')).toBeTruthy();
 
     expect(await screen.findByRole('link', { name: '处理 4 个待确认项' })).toBeTruthy();
     expect(screen.queryByLabelText('盘点进度')).toBeNull();

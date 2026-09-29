@@ -1,9 +1,10 @@
 // @vitest-environment node
 // HTTP 适配器只做响应形状测试：给定这段 JSON（或这个 Response），适配器接受还是拒绝。不模拟服务端，不 mock fetch。
 import { describe, expect, test, vi } from 'vitest';
-import { ACTION_NAMES, ERP_ACTION_ERRORS, STALE_STEP_CODE, HTTP_ENDPOINTS, endpointActionNames, TASK_STAGES } from '@baox/contract';
+import { ACTION_NAMES, ERP_ACTION_ERRORS, STALE_STEP_CODE, HTTP_ENDPOINTS, endpointActionNames } from '@baox/contract';
 import { INITIAL_BOOK, MOCK_TODAY, annotateProject } from '../mock/fixtures/projects';
 import { t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from '../mock/fixtures/tasks';
+import { SEED_STAGES } from '../mock/options';
 import {
   createHttpAdapter,
   INVALID_RESPONSE_CODE,
@@ -168,7 +169,7 @@ describe('作废与重置 POST /api/tasks/:id/abandon、/api/reset', () => {
 
 describe('任务快照 GET /api/tasks/:id', () => {
   test('每个阶段的快照 JSON 都被接受', () => {
-    for (const stage of TASK_STAGES) expect(parseSnapshotResponse(200, wire(t1Snapshot(stage))).stage).toBe(stage);
+    for (const stage of SEED_STAGES) expect(parseSnapshotResponse(200, wire(t1Snapshot(stage))).stage).toBe(stage);
     expect(parseSnapshotResponse(200, wire(t2Snapshot())).reconcile.rows.length).toBeGreaterThan(0);
   });
 

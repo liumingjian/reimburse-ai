@@ -79,13 +79,22 @@ export function loginNotDetected(attempt: number): string {
   return `还没有检测到登录（第 ${attempt} 次检测）。请确认已在为这次报销打开的报销系统标签页里登录本人账号；登录页上显示的上次账号不算已登录。登录后再点一次「我已登录，继续」。`;
 }
 
-export const HANDOVER_ABORT_REASON = '交接单据时没有读到报销系统的结果，这次写入是否生效不确定。应用已停止写入，不会重放。';
-export const MISMATCH_ABORT_REASON = '严格回读发现 1 行与本地确认不一致，应用已停止，不会自动改写报销系统里的行。';
-// 停下时写入作业给出的原因（服务端 reconcile.reasons 取作业结果的 message），对账前显示在对账页。
-export const HANDOVER_STOP_REASON = '交接单据时没有读到报销系统的结果';
-export const MISMATCH_STOP_REASON = '严格回读时 No.6 的申请报销金额与本地确认不一致';
-// 写入前就停下的原因（服务端 compatibility_mismatch 一类）：报销系统没有被改动，可以直接再去报销。
-export const BEFORE_WRITE_ABORT_REASON = '报销系统的版本与上次核对时不一致，没有继续。报销系统没有被改动。';
+// Why the write job stopped (the job result's message; the server shows it as reconcile.reasons before the first
+// reconciliation), and the abort reason the server words around it (server/src/task-snapshot/erp.ts erpView).
+// The handover stop is the save whose result was never read back; the read-back stop is the strict read-back's total
+// check (server/src/erp/readback.ts, which says ERP where employee copy says reimbursement system (报销系统)), here
+// for T1's No.6 read back as 74.00 instead of 47.00.
+export const HANDOVER_STOP_REASON = '保存后没有读到报销系统的结果';
+export const MISMATCH_STOP_REASON = '报销系统明细「申请报销金额」合计 3999.59 与任务合计 3972.59 不一致';
+const uncertainAbortReason = (reason: string) => `写入报销系统的结果不确定，应用已停止写入，不会重放。原因：${reason}`;
+export const HANDOVER_ABORT_REASON = uncertainAbortReason(HANDOVER_STOP_REASON);
+export const MISMATCH_ABORT_REASON = uncertainAbortReason(MISMATCH_STOP_REASON);
+// What the ERP page said when the save went unanswered (captured with the stop, shown on the reconcile page).
+export const HANDOVER_PAGE_TEXT = '保存未完成：报销系统没有返回处理结果。';
+// A stop before anything was written (compatibility_mismatch, worded as the executor does): the ERP was not changed,
+// and 去报销 (claim) can simply be started again.
+export const BEFORE_WRITE_STOP_REASON = '报销系统的版本与上次核对时不一致，没有继续：期望 8.2.830.9 / ER_ExpReimbursement，实际 8.3.101.2 / ER_ExpReimbursement。报销系统没有被改动。';
+export const BEFORE_WRITE_ABORT_REASON = `上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：${BEFORE_WRITE_STOP_REASON}`;
 
 // readback-mismatch 故障：No.6（出租车 47.00）的申请报销金额在报销系统里读回 74.00。
 export const MISMATCH = { no: 6, erp: '74.00' } as const;
@@ -169,14 +178,14 @@ export function emptyReconcile(): Reconcile {
 
 // 对账判定（内核 classifyReconciliation 的对应）：bucket 决定建议的处置；「已保存」还要看收票与明细合计是否相等、
 // 严格逐行是否一致。action 是建议，allowedActions 是能做的：建议原地等待时也一直可以转人工（服务端
-// fill-state.ts reconcileView 同此），建议转人工时只能转人工（human_review，不再给「重新对账」）。
+// task-snapshot/erp.ts reconcileView 同此），建议转人工时只能转人工（human_review，不再给「重新对账」）。
 export function reconcileVerdict(
   bucket: ReconcileBucket,
   savedConsistent = true,
   billNo: string | null = null,
 ): Pick<Reconcile, 'bucket' | 'action' | 'actionCode' | 'allowedActions' | 'humanReview'> {
   // 未保存·已导入未写明细：什么都没有落库，出路是「重新去报销」（重开一张单据再走一遍）和「转人工」，不是转人工的结果。
-  // 这条出路和服务端（fill-state.ts reconcileView）一样看读数：报销系统里一旦有了单据编号，就说明员工自己保存过，
+  // 这条出路和服务端（task-snapshot/erp.ts reconcileView）一样看读数：报销系统里一旦有了单据编号，就说明员工自己保存过，
   // 重新导入会动到一张真实存在的单据，只能转人工。
   if (bucket === '未保存·已导入未写明细' && billNo === null) {
     return { bucket, action: RECONCILE_ACTION_LABELS.refill, actionCode: 'refill', allowedActions: ['refill', 'hand_off'], humanReview: false };
@@ -241,7 +250,7 @@ export function unjudgedReconcile(reasons: readonly string[]): Reconcile {
 }
 
 // 写入在 stage 这一步停下、结果不确定：停在对账，等第一次对账。
-function applyUncertainStop(snapshot: TaskSnapshot, stage: 'fill' | 'handover', abortReason: string, reason: string): void {
+function applyUncertainStop(snapshot: TaskSnapshot, stage: 'fill' | 'handover', abortReason: string, reason: string, capture: Reconcile['capture'] = null): void {
   snapshot.erp = {
     ...erpRunning(ERP_STEP_INDEX[stage]),
     status: 'aborted',
@@ -254,7 +263,7 @@ function applyUncertainStop(snapshot: TaskSnapshot, stage: 'fill' | 'handover', 
     erpAccount: { ...MOCK_ERP_ACCOUNT },
   };
   snapshot.readback = emptyReadback();
-  snapshot.reconcile = unjudgedReconcile([reason]);
+  snapshot.reconcile = { ...unjudgedReconcile([reason]), capture };
   snapshot.stage = 'reconcile';
   snapshot.step = { kind: 'reconcile', stepToken: `tok-${snapshot.task.taskId}-reconcile` };
 }
@@ -280,7 +289,8 @@ export function applyStopBeforeWrite(snapshot: TaskSnapshot): void {
 
 // 交接步中止（`?fault=erp-write-aborted`）：写入结果未知，停在对账等第一次对账。
 export function applyAbortAtHandover(snapshot: TaskSnapshot): void {
-  applyUncertainStop(snapshot, 'handover', HANDOVER_ABORT_REASON, HANDOVER_STOP_REASON);
+  // The mock has no ERP screenshot to serve, only the captured text.
+  applyUncertainStop(snapshot, 'handover', HANDOVER_ABORT_REASON, HANDOVER_STOP_REASON, { erpText: [HANDOVER_PAGE_TEXT], screenshotUrl: null });
 }
 
 // T2（对账中）：原型 §1.10 的五行，No.3 的申请报销金额不一致（182.00 / 128.00）；合计 1264.00。

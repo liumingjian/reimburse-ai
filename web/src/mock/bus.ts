@@ -48,8 +48,6 @@ export type MockBus = {
   // 读任务列表前调用：service-disconnected 下触发断连；断开期间返回 false。
   listReachable(): boolean;
   isConnected(): boolean;
-  // 名称仍由服务端生成的任务（经 createTask 新建的）：盘点结束时按材料日期与城市改名。夹具任务的名称是既定的，不改。
-  readonly autoNamed: Set<string>;
   // The task owner's project options are added to its assignment snapshot. The mock project-book service supplies the
   // list; until it is wired, the bus uses the default fixture list.
   projectAllowList(taskId: string): ProjectOption[];
@@ -164,7 +162,6 @@ export function createBus(options: MockOptions): MockBus {
       return connected;
     },
     isConnected: () => connected,
-    autoNamed: new Set<string>(),
     projectAllowList: (taskId) => allowListSource(taskId),
     useProjectAllowList(source) {
       allowListSource = source;

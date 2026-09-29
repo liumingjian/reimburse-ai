@@ -17,34 +17,34 @@ import { deadlineWarningsOf, projectAssignmentOpen, projectEntryStep } from '../
 
 // 待确认项答复与整单明细确认（mock 服务端的角色），以及 e2e 用的「别处推进」钩子。
 
-// 待确认项状态变化后的阶段与 step：还有未处理项 → pending / answer_pending；
-// 都处理完 → 形成候选明细，进入项目归属（project / assign_projects）。整单确认在项目归属之后（摘要绑定项目）。
+// Stage and step after the pending items (待确认项) change: open items left → pending / answer_pending; none left →
+// project assignment (project / assign_projects). The review comes after project assignment (its digest binds the
+// projects). As on the server, the candidate lines follow the expense events from the end of the inventory on, also
+// while items are still open.
 export function settlePending(snapshot: TaskSnapshot, allowList: readonly ProjectOption[]): void {
   const taskId = snapshot.task.taskId;
-  // 明细重新形成：报销信息核对与材料包都要在下次提交项目归属后重来。
+  // The lines are formed again: the catalog check and the preparation start over after the next submission.
   snapshot.catalog = catalogPending();
   snapshot.preparation = preparationPending();
+  const lines = buildLines({ materials: snapshot.materials, events: snapshot.events, pendingItems: snapshot.pendingItems });
+  snapshot.lines = lines;
   const open = openPendingItemCount(snapshot.pendingItems);
   if (open > 0) {
     snapshot.stage = 'pending';
-    snapshot.lines = [];
     snapshot.step = { kind: 'answer_pending', stepToken: `tok-${taskId}-pending-${snapshot.pendingItems.length - open}` };
     return;
   }
-  const lines = buildLines({ materials: snapshot.materials, events: snapshot.events, pendingItems: snapshot.pendingItems });
-  snapshot.lines = lines;
-  const invoices = new Set(lines.map((line) => line.voucherMaterialId)).size;
-  const cents = lines.reduce((sum, line) => sum + Math.round(Number(line.grossAmount) * 100), 0);
-  // 旧确认因材料变更失效的，保持 invalidated 与提示，直到用户重新确认；否则是尚未确认。
-  // 摘要要等项目归属提交、报销信息核对与材料准备都完成后才有（见 flows/project.ts）。
+  // An earlier confirmation invalidated by a material change stays `invalidated`, with its notice, until the user
+  // confirms again; otherwise it is unconfirmed. The digest, and the line / invoice / total counts that go with it,
+  // only exist once the project assignment is submitted (flows/project.ts), as on the server.
   snapshot.confirmation = {
     ...snapshot.confirmation,
     status: snapshot.confirmation.status === 'invalidated' ? 'invalidated' : 'unconfirmed',
     confirmedAt: null,
     digest: null,
-    lineCount: lines.length,
-    invoiceCount: invoices,
-    grossTotal: lines.length > 0 ? (cents / 100).toFixed(2) : null,
+    lineCount: 0,
+    invoiceCount: 0,
+    grossTotal: null,
   };
   // 进入项目归属：服务端随快照给出当前个人项目簿的允许列表。重新盘点后回到这里时，保留仍存在的明细的归属，但要重新提交。
   const assignment = snapshot.projectAssignment;
