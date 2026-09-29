@@ -13,6 +13,10 @@ The five canonical triage roles use their default label names. See `docs/agents/
 Parser accuracy on real materials is gated by `pnpm test:private` against a corpus that lives only on the maintainer's
 machine. See `docs/agents/private-corpus.md`.
 
+### Manual QA on the Mac
+
+When the maintainer asks for QA on the Mac, launch the dev-mode instance (`qa/dev.sh` through rexec) and push each fix into it. See `qa/README.md` §1a.
+
 ### Domain docs
 
 This repo uses the single-context domain documentation layout. See `docs/agents/domain.md`.
