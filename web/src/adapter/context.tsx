@@ -5,7 +5,7 @@ import type { AccountsState, AppState, AppStore, BookScope, ExtensionPairingStat
 // 适配器经 React Context 注入：页面只认 useAppStore()，换适配器不改页面。
 
 const StoreContext = createContext<AppStore | null>(null);
-// The page bridge to the 浏览器扩展 is injected the same way; without one, nothing ever answers.
+// The page bridge to the 浏览器扩展 (browser extension) is injected the same way; without one, nothing ever answers.
 const BridgeContext = createContext<ExtensionBridge>(SILENT_EXTENSION_BRIDGE);
 
 export function AppProvider({ store, bridge = SILENT_EXTENSION_BRIDGE, children }: { store: AppStore; bridge?: ExtensionBridge; children: ReactNode }) {

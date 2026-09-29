@@ -83,7 +83,8 @@ function AuthGate({ children }: { children: ReactNode }) {
   return <AuthPending error={session.status === 'error' ? session.error : null} />;
 }
 
-// `bridge`: how pages reach the 浏览器扩展 (`adapter/extension-bridge.ts`). Left out, no extension ever answers.
+// `bridge`: how pages reach the 浏览器扩展 (browser extension), see `adapter/extension-bridge.ts`. Left out, no
+// extension ever answers.
 export function App({ adapter, bridge }: { adapter: AppAdapter; bridge?: ExtensionBridge }) {
   const store = useMemo(() => new AppStore(adapter, { validate: VALIDATE_SNAPSHOTS }), [adapter]);
   // Carbon 弹层默认用两个写着英文「Focus sentinel」的隐藏元素兜住焦点；打开这个开关改用不带哨兵元素的焦点循环。

@@ -64,8 +64,7 @@ export function createSwitchDialog({ windows, pageUrl }: SwitchDialogOptions): S
     return new Promise((settle) => {
       const question: Question = { id, windowId: null, settle };
       open = question;
-      // Named by username where the app gave one; the account id is what is left otherwise, still better than nothing.
-      const url = `${pageUrl}?${new URLSearchParams({ id, account: current.username ?? current.accountId }).toString()}`;
+      const url = `${pageUrl}?${new URLSearchParams({ id, account: current.name }).toString()}`;
       windows.create({ url, type: 'popup', width: 440, height: 300, focused: true }).then(
         (created) => {
           if (open === question) question.windowId = created.id ?? null;

@@ -62,16 +62,17 @@ export async function revokePairing({ origin, token, fetchImpl = fetch }: Revoke
   }
 }
 
-/** paired carries the account's username when the app gave one, to name it by (#292). */
-export type PairingCheck = { state: 'paired'; username: string | null } | { state: 'not_paired' } | { state: 'unknown' };
+/** paired carries the account's username, to name it by (#292). */
+export type PairingCheck = { state: 'paired'; username: string } | { state: 'not_paired' } | { state: 'unknown' };
 
 export type CheckOptions = { origin: string; token: string; fetchImpl?: typeof fetch; timeoutMs?: number };
 
 /**
  * Whether the app still honours `token`: 'not_paired' when it answers 401 (revoked from the settings page, replaced by
  * a newer 配对码, or the account deactivated), 'unknown' when it cannot be reached within `timeoutMs` or answers
- * anything else. The stored pairing alone cannot tell a revoked token from a live one; this is how the page bridge
- * avoids announcing a pairing the app no longer has.
+ * anything else, including a 200 that is not an identity. The stored pairing alone cannot tell a revoked token from a
+ * live one; this is how the extension avoids announcing a pairing the app no longer has. The app marks every answer
+ * as a connection (最近连接 (last connected) on the settings page), so ask only when nothing else settles it.
  */
 export async function checkPairing({ origin, token, fetchImpl = fetch, timeoutMs = 800 }: CheckOptions): Promise<PairingCheck> {
   try {
@@ -79,7 +80,7 @@ export async function checkPairing({ origin, token, fetchImpl = fetch, timeoutMs
     if (response.status === 401) return { state: 'not_paired' };
     if (!response.ok) return { state: 'unknown' };
     const identity = ExtensionIdentitySchema.safeParse(await response.json().catch(() => null));
-    return { state: 'paired', username: identity.success ? identity.data.username : null };
+    return identity.success ? { state: 'paired', username: identity.data.username } : { state: 'unknown' };
   } catch {
     return { state: 'unknown' };
   }

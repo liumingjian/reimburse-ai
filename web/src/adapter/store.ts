@@ -336,6 +336,17 @@ export class AppStore {
     }
   }
 
+  // After the extension redeemed a 配对码 (pairing code) on its own: reads the pairing again until the server sees the
+  // extension connected, at most `polls` reads `intervalMs` apart. Redeeming returns before the extension's channel is
+  // up, and the page has no push for it.
+  async awaitExtensionConnected(polls = 10, intervalMs = 500): Promise<void> {
+    for (let poll = 0; poll < polls; poll += 1) {
+      if (poll > 0) await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      await this.loadExtensionPairing();
+      if (this.state.extensionPairing.data?.connected) return;
+    }
+  }
+
   // Issuing a 配对码 or revoking: the pairing in the result replaces the current one. A freshly issued code appears
   // in this result only; no later read carries it again.
   async extensionPairingAction(run: (adapter: AppAdapter) => Promise<ExtensionPairingOutcome>): Promise<ExtensionPairingOutcome> {

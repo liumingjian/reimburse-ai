@@ -1,4 +1,4 @@
-import { EXTENSION_BRIDGE_NAMESPACE, ExtensionBridgeExtensionMessageSchema, type ExtensionBridgeExtensionMessage, type ExtensionBridgePageMessage, type ExtensionPairOutcome, type ExtensionSwitchOutcome } from '@baox/contract';
+import { bridgeMessage, ExtensionBridgeExtensionMessageSchema, type ExtensionBridgeExtensionMessage, type ExtensionBridgePageMessage, type ExtensionPairOutcome, type ExtensionSwitchOutcome } from '@baox/contract';
 
 // The page's half of the page bridge (#287): the 浏览器扩展 (browser extension) runs a content script on this origin
 // and answers `window.postMessage` messages in the protocol `@baox/contract` defines. Pages reach the extension only
@@ -41,10 +41,10 @@ export const EXTENSION_SWITCH_TIMEOUT_MS = 180_000;
 /** A bridge nothing ever answers: the mock mode, and pages rendered without a bridge. */
 export const SILENT_EXTENSION_BRIDGE: ExtensionBridge = { probe: async () => null, switchTo: async () => null, pair: async () => null };
 
-/** The slice of `window` the bridge uses. */
-export type BridgeWindow = Pick<Window, 'addEventListener' | 'removeEventListener' | 'postMessage' | 'location'>;
+/** The slice of this page's own `window` the page's half of the bridge uses. */
+export type PageWindow = Pick<Window, 'addEventListener' | 'removeEventListener' | 'postMessage' | 'location'>;
 
-export type WindowBridgeOptions = { window?: BridgeWindow; timeoutMs?: number; pairTimeoutMs?: number; switchTimeoutMs?: number };
+export type WindowBridgeOptions = { window?: PageWindow; timeoutMs?: number; pairTimeoutMs?: number; switchTimeoutMs?: number };
 
 /** The real bridge, over `window.postMessage`. */
 export function createWindowBridge({
@@ -79,8 +79,8 @@ export function createWindowBridge({
   return {
     // Any presence counts, including the one the content script announces when it loads: the answer to "who are you"
     // is the same either way.
-    probe: () => request({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'probe' }, (answer) => (answer.kind === 'presence' ? { version: answer.version, paired: answer.paired, accountId: answer.accountId } : null)),
-    switchTo: (accountId) => request({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'switch', accountId }, (answer) => (answer.kind === 'switch_outcome' ? answer.outcome : null), switchTimeoutMs),
-    pair: (code, accountId) => request({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair', code, accountId }, (answer) => (answer.kind === 'pair_outcome' ? answer.outcome : null), pairTimeoutMs),
+    probe: () => request(bridgeMessage({ kind: 'probe' }), (answer) => (answer.kind === 'presence' ? { version: answer.version, paired: answer.paired, accountId: answer.accountId } : null)),
+    switchTo: (accountId) => request(bridgeMessage({ kind: 'switch', accountId }), (answer) => (answer.kind === 'switch_outcome' ? answer.outcome : null), switchTimeoutMs),
+    pair: (code, accountId) => request(bridgeMessage({ kind: 'pair', code, accountId }), (answer) => (answer.kind === 'pair_outcome' ? answer.outcome : null), pairTimeoutMs),
   };
 }

@@ -40,6 +40,15 @@ export function extensionSetupStep(probe: ExtensionProbe, accountId: string | nu
 }
 
 /**
+ * Whether this account still has to be paired in this browser: no extension answered, or it answered unpaired or
+ * acting for another account. Settings offers the manual 配对码 flow for these; the tutorial shows the install steps
+ * or, for an extension already installed, points back to settings.
+ */
+export function awaitsPairing(step: ExtensionSetupStep): step is Extract<ExtensionSetupStep, { kind: 'notInstalled' | 'notPairedHere' | 'pairedElsewhere' }> {
+  return step.kind === 'notInstalled' || step.kind === 'notPairedHere' || step.kind === 'pairedElsewhere';
+}
+
+/**
  * The setup step for the signed-in account, probing the extension on mount. `reprobe` asks again: after anything that
  * changes the pairing (issuing a 配对码 voids the old one, 撤销配对 ends it), so the page never shows a stale step.
  */
@@ -65,7 +74,7 @@ export function useExtensionSetup(): { step: ExtensionSetupStep; reprobe: () => 
   return { step: extensionSetupStep(probe, session.data?.account?.accountId ?? null, pairing.data), reprobe };
 }
 
-// One-click 扩展配对 (#291): where the automatic pairing got to. idle: not attempted (or not wanted, or the extension
+// One-click 扩展配对 (extension pairing) (#291): where the automatic pairing got to. idle: not attempted (or not wanted, or the extension
 // never answered whether it may switch accounts). confirming: the extension acting for another 应用账号 is asking the
 // employee whether to switch (#292). pairing: a 配对码 is being issued and handed over. paired: the extension redeemed
 // it. silent: nothing answered the pair request, so the issued code is the employee's to type, as without the bridge.
@@ -79,11 +88,6 @@ export type AutoPair =
   | { status: 'silent' }
   | { status: 'declined' }
   | { status: 'failed'; message: string };
-
-// Reading the pairing again until the server sees the extension connected: redeeming returns before the extension's
-// channel is up, and the page has no push for it.
-const CONNECTED_POLLS = 10;
-const CONNECTED_POLL_MS = 500;
 
 /**
  * Pairs the extension in this browser without the employee typing anything: when the first step settled on is
@@ -141,11 +145,7 @@ export function useAutoPair(step: ExtensionSetupStep, reprobe: () => void): Auto
           setState({ status: 'declined' });
           return;
         case 'paired':
-          for (let poll = 0; poll < CONNECTED_POLLS; poll += 1) {
-            if (poll > 0) await new Promise((resolve) => setTimeout(resolve, CONNECTED_POLL_MS));
-            await store.loadExtensionPairing();
-            if (store.getState().extensionPairing.data?.connected) break;
-          }
+          await store.awaitExtensionConnected();
           setState({ status: 'paired' });
           reprobe();
           return;

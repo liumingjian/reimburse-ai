@@ -80,7 +80,7 @@ function connect(pairing: StoredPairing): void {
   });
 }
 
-// Asked before one-click pairing moves this extension to another 应用账号 (#292), in a window the extension owns.
+// Asked before one-click pairing moves this extension to another 应用账号 (app account) (#292), in a window the extension owns.
 const switchDialog = createSwitchDialog({
   windows: {
     create: async (options) => (await chrome.windows.create(options)) ?? {},

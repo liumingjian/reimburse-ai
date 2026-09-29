@@ -8,8 +8,8 @@ import { ConfirmDialog } from '../shell/Dialog';
 import { AppShell } from '../shell/AppShell';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
-import { EXTENSION_INSTALL_COPY } from './ExtensionTutorialPage';
-import { useAutoPair, useExtensionSetup } from './extension-setup';
+import { EXTENSION_INSTALL_COPY, UpgradeSteps } from './ExtensionTutorialPage';
+import { awaitsPairing, useAutoPair, useExtensionSetup } from './extension-setup';
 
 export { EXTENSION_INSTALL_COPY } from './ExtensionTutorialPage';
 
@@ -182,7 +182,7 @@ export const EXTENSION_PAIRING_COPY = {
   revokeConfirm: '确定撤销',
   revokeDialogTitle: '撤销配对',
   revokeDialogBody: '撤销之后，那个浏览器里的扩展不能再替你去报销，要重新配对才行。你在这里仍然是登录状态。',
-  checking: '正在检测这台浏览器里的报销助手…',
+  checking: EXTENSION_INSTALL_COPY.checking,
   outdatedTitle: EXTENSION_INSTALL_COPY.tooOldTitle,
   outdatedLead: EXTENSION_INSTALL_COPY.tooOld,
   pairedHereReconnecting: '这台浏览器里的扩展已经和这个账号配对，正在重新连上应用。稍等片刻后刷新这一页。',
@@ -229,7 +229,7 @@ function ExtensionPairingSection() {
 
   const view = state.data;
   const activeOrigin = view?.activeOrigin ?? '';
-  const guided = (step.kind === 'notInstalled' || step.kind === 'notPairedHere' || step.kind === 'pairedElsewhere') && autoPair.status !== 'pairing' && autoPair.status !== 'confirming';
+  const guided = awaitsPairing(step) && autoPair.status !== 'pairing' && autoPair.status !== 'confirming';
   const next = view?.status === 'paired'
     ? view.connected
       ? { title: EXTENSION_PAIRING_COPY.connectedTitle, lead: EXTENSION_PAIRING_COPY.connectedLead(activeOrigin) }
@@ -302,15 +302,7 @@ function ExtensionPairingSection() {
           {step.kind === 'outdated' ? (
             <div className="app-extension-next">
               <h3>{EXTENSION_PAIRING_COPY.outdatedTitle}</h3>
-              <p>{EXTENSION_PAIRING_COPY.outdatedLead(step.installed, step.minimum)}</p>
-              <ol className="app-guide-steps" aria-label={EXTENSION_INSTALL_COPY.upgradeTitle}>
-                {EXTENSION_INSTALL_COPY.upgradeSteps.map((line) => <li key={line}>{line}</li>)}
-              </ol>
-              <div className="app-btn-row">
-                <Button kind="primary" href={EXTENSION_DOWNLOAD_PATH} renderIcon={Download}>
-                  {EXTENSION_PAIRING_COPY.download}
-                </Button>
-              </div>
+              <UpgradeSteps lead={EXTENSION_PAIRING_COPY.outdatedLead(step.installed, step.minimum)} download />
             </div>
           ) : null}
           {step.kind === 'pairedHere' ? (

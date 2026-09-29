@@ -4,12 +4,13 @@ import { EXTENSION_DOWNLOAD_PATH, EXTENSION_VERSION } from '@baox/contract';
 import { AppShell } from '../shell/AppShell';
 import { PageHeader } from '../shell/PageHeader';
 import { SETTINGS_HASH } from '../router';
-import { useExtensionSetup } from './extension-setup';
+import { awaitsPairing, useExtensionSetup } from './extension-setup';
 
 // The longer onboarding guide lives on its own route so the routine settings view can answer one question quickly:
 // what state is this account's extension in, and what should the employee do next? The guide itself follows the same
-// step (`extension-setup.ts`): the upgrade steps alone for an extension that is too old, and no install steps for one
-// already paired to this account.
+// step (`extension-setup.ts`): the install steps only when no extension answered, the upgrade steps alone for one that
+// is too old, a pointer back to settings (which pairs on its own) for one installed but not paired to this account, and
+// no install steps for one already paired to it.
 export const EXTENSION_INSTALL_COPY = {
   download: '下载浏览器扩展',
   offeredVersion: (version: string) => `这里提供的扩展版本：${version}`,
@@ -38,12 +39,13 @@ export const EXTENSION_INSTALL_COPY = {
   ],
   bannerTitle: '去报销时浏览器顶部的提示条',
   bannerBody: '去报销时，扩展会新开一个报销系统的标签页，在那里替你填写。这时浏览器顶部会出现一条提示，写着“报销助手”已开始调试此浏览器，或者正在调试此浏览器。这是正常的：扩展正是靠它把内容填进报销系统，提示条会一直显示到这次填写结束。',
+  checking: '正在检测这台浏览器里的报销助手…',
   bannerCancel: '不要点这条提示上的“取消”。点了它，扩展会暂时失去对那个标签页的控制：如果当时它没有正在往报销系统里写，它会重新接管同一个标签页，确认页面没变之后接着做下去；如果正写到一半，这一步有没有生效看不出来，这次去报销就停下，转去对账。请回到应用，按页面上的提示处理。',
 } as const;
 
 export const EXTENSION_TUTORIAL_COPY = {
   title: '浏览器扩展安装教程',
-  lead: '跟着下面的图示把扩展装好，再回到设置页生成配对码。教程会在单独的浏览器标签页打开，设置页里的状态不会丢。',
+  lead: '跟着下面的图示把扩展装好，再回到设置页配对。教程会在单独的浏览器标签页打开，设置页里的状态不会丢。',
   back: '返回设置',
   download: EXTENSION_INSTALL_COPY.download,
   install: EXTENSION_INSTALL_COPY.installTitle,
@@ -56,7 +58,11 @@ export const EXTENSION_TUTORIAL_COPY = {
   bannerCancel: EXTENSION_INSTALL_COPY.bannerCancel,
   stepsTitle: '安装步骤',
   pairedHere: '这台浏览器里的报销助手已经和这个账号配对，不需要再安装。',
-  checking: '正在检测这台浏览器里的报销助手…',
+  checking: EXTENSION_INSTALL_COPY.checking,
+  pairOnSettingsTitle: '回到设置页完成配对',
+  pairOnSettings: '这台浏览器里已经装好报销助手，不用再安装。回到设置页，页面会自动和扩展配对，不用手动输入配对码。',
+  pairOnSettingsSwitch: '这台浏览器里已经装好报销助手，它现在替另一个账号报销。回到设置页，扩展会弹出窗口问你要不要换成这个账号，确认后自动配对。',
+  pairOnSettingsAction: '回到设置页配对',
   stepOne: {
     title: '下载并解压',
     label: '下载',
@@ -144,7 +150,7 @@ function TutorialStep({ index, step }: { index: number; step: (typeof TUTORIAL_S
 
 export function ExtensionTutorialPage() {
   const { step } = useExtensionSetup();
-  const install = step.kind === 'notInstalled' || step.kind === 'notPairedHere' || step.kind === 'pairedElsewhere';
+  const install = step.kind === 'notInstalled';
   return (
     <AppShell nav="settings">
       <div className="app-form-page app-tutorial-page">
@@ -158,6 +164,7 @@ export function ExtensionTutorialPage() {
           <InlineNotification kind="success" role="status" lowContrast hideCloseButton statusIconDescription="成功" title={EXTENSION_TUTORIAL_COPY.pairedHere} />
         ) : null}
         {install ? <InstallSections /> : null}
+        {awaitsPairing(step) && !install ? <PairOnSettingsSection switching={step.kind === 'pairedElsewhere'} /> : null}
         {step.kind === 'outdated' ? <UpgradeSection lead={EXTENSION_INSTALL_COPY.tooOld(step.installed, step.minimum)} download /> : null}
         {install ? <UpgradeSection lead={EXTENSION_TUTORIAL_COPY.upgradeLead} download={false} /> : null}
         {step.kind === 'pairedHere' || install ? <BannerSection /> : null}
@@ -199,10 +206,35 @@ function InstallSections() {
   );
 }
 
+// Installed but not paired to this account: the only step left is pairing, and the settings page does it by itself
+// (`useAutoPair`), asking through the extension first when it acts for another account.
+function PairOnSettingsSection({ switching }: { switching: boolean }) {
+  return (
+    <section className="app-form-section" aria-label={EXTENSION_TUTORIAL_COPY.pairOnSettingsTitle}>
+      <h2 className="app-section-title">{EXTENSION_TUTORIAL_COPY.pairOnSettingsTitle}</h2>
+      <p>{switching ? EXTENSION_TUTORIAL_COPY.pairOnSettingsSwitch : EXTENSION_TUTORIAL_COPY.pairOnSettings}</p>
+      <div className="app-btn-row">
+        <Button kind="primary" href={SETTINGS_HASH}>
+          {EXTENSION_TUTORIAL_COPY.pairOnSettingsAction}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 function UpgradeSection({ lead, download }: { lead: string; download: boolean }) {
   return (
     <section className="app-form-section" aria-label={EXTENSION_TUTORIAL_COPY.upgrade}>
       <h2 className="app-section-title">{EXTENSION_TUTORIAL_COPY.upgrade}</h2>
+      <UpgradeSteps lead={lead} download={download} />
+    </section>
+  );
+}
+
+/** The upgrade steps with their lead, and the download they start from when it is not already on the page. */
+export function UpgradeSteps({ lead, download }: { lead: string; download: boolean }) {
+  return (
+    <>
       <p>{lead}</p>
       {download ? (
         <div className="app-btn-row">
@@ -214,7 +246,7 @@ function UpgradeSection({ lead, download }: { lead: string; download: boolean })
       <ol className="app-guide-steps" aria-label={EXTENSION_TUTORIAL_COPY.upgrade}>
         {EXTENSION_INSTALL_COPY.upgradeSteps.map((line) => <li key={line}>{line}</li>)}
       </ol>
-    </section>
+    </>
   );
 }
 

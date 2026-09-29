@@ -1,6 +1,6 @@
 import { EXTENSION_BRIDGE_NAMESPACE, EXTENSION_PAIR_PATH, EXTENSION_VERSION, extensionVersionRefusal } from '@baox/contract';
 import { describe, expect, it } from 'vitest';
-import { bridgeRequestFrom, relayPageBridge, type BridgeMessageEvent, type BridgeRequest, type BridgeWindow } from './bridge';
+import { bridgeRequestFrom, relayPageBridge, type BridgeMessageEvent, type BridgeRequest, type RelayWindow } from './bridge';
 import type { ChannelStatus } from './connection';
 import { APP_UNREACHABLE } from './messages';
 import { createPairingRequests, type ConfirmSwitch, type CurrentAccount, type PairingChannel, type StoredPairing } from './pairing-requests';
@@ -18,7 +18,7 @@ const jsonResponse = (status: number, body: unknown) => new Response(JSON.string
 function fakeWindow() {
   const listeners: ((event: BridgeMessageEvent) => void)[] = [];
   const posted: { message: unknown; targetOrigin: string }[] = [];
-  const window: BridgeWindow = {
+  const window: RelayWindow = {
     addEventListener: (_type, listener) => void listeners.push(listener),
     postMessage: (message, targetOrigin) => void posted.push({ message, targetOrigin }),
   };
@@ -26,10 +26,14 @@ function fakeWindow() {
   return { window, posted, dispatch };
 }
 
+// `report` plays the channel's socket: what the app last told it (`ready`, or a `refused` frame on 撤销配对).
 function fakeChannel(initial: ChannelStatus | null = null, started: StoredPairing[] = []) {
   let running = false;
   let status = initial;
-  const channel: PairingChannel = {
+  const channel: PairingChannel & { report(next: ChannelStatus): void } = {
+    report: (next) => {
+      status = next;
+    },
     start: (pairing) => {
       started.push(pairing);
       running = true;
@@ -48,7 +52,7 @@ function fakeChannel(initial: ChannelStatus | null = null, started: StoredPairin
 type Setup = { pairing?: StoredPairing; status?: ChannelStatus; app?: (url: string, init?: RequestInit) => Response | Promise<Response>; confirmSwitch?: ConfirmSwitch };
 
 // The content script wired to the service worker's answer, as `content-script.ts` and `service-worker.ts` wire them.
-function extensionOnPage({ pairing, status, app = () => jsonResponse(200, { accountId: pairing?.accountId }), confirmSwitch }: Setup = {}) {
+function extensionOnPage({ pairing, status, app = () => jsonResponse(200, { accountId: pairing?.accountId, username: 'alice' }), confirmSwitch }: Setup = {}) {
   const items = new Map<string, unknown>(pairing ? [['pairing', pairing]] : []);
   const started: StoredPairing[] = [];
   const channel = fakeChannel(status ?? null, started);
@@ -85,7 +89,7 @@ describe('the page bridge', () => {
       pairing: { token: 'tok', accountId: 'a1' },
       app: (url, init) => {
         seen.push({ url, authorization: new Headers(init?.headers).get('authorization') });
-        return jsonResponse(200, { accountId: 'a1' });
+        return jsonResponse(200, { accountId: 'a1', username: 'alice' });
       },
     });
 
@@ -129,8 +133,7 @@ describe('the page bridge', () => {
     let revoked = false;
     const { dispatch, posted } = extensionOnPage({
       pairing: { token: 'tok', accountId: 'a1' },
-      status: { state: 'ready', accountId: 'a1' },
-      app: () => (revoked ? jsonResponse(401, { error: { code: 'not_paired', message: '...' } }) : jsonResponse(200, { accountId: 'a1' })),
+      app: () => (revoked ? jsonResponse(401, { error: { code: 'not_paired', message: '...' } }) : jsonResponse(200, { accountId: 'a1', username: 'alice' })),
     });
 
     dispatch({});
@@ -143,6 +146,49 @@ describe('the page bridge', () => {
       expect.objectContaining({ paired: true, accountId: 'a1' }),
       expect.objectContaining({ paired: false, accountId: null }),
     ]);
+  });
+
+  // The same criterion over a live channel: the app refuses the socket as it revokes, and that refusal is the answer.
+  it('reads as unpaired once a connected pairing is revoked, from the channel refusal alone', async () => {
+    let asked = 0;
+    const { dispatch, posted, channel } = extensionOnPage({
+      pairing: { token: 'tok', accountId: 'a1' },
+      status: { state: 'ready', accountId: 'a1' },
+      app: () => {
+        asked += 1;
+        return jsonResponse(200, { accountId: 'a1', username: 'alice' });
+      },
+    });
+
+    dispatch({});
+    await settle();
+    channel.report({ state: 'refused', code: 'not_paired', message: '...' });
+    dispatch({});
+    await settle();
+
+    expect(posted.map((post) => post.message)).toEqual([
+      expect.objectContaining({ paired: true, accountId: 'a1' }),
+      expect.objectContaining({ paired: false, accountId: null }),
+    ]);
+    expect(asked).toBe(0);
+  });
+
+  // Every answer the app gives the token moves 最近连接 (last connected) on the settings page, so opening that page must
+  // not ask it when the channel already says the pairing is live.
+  it('trusts a ready channel without asking the app', async () => {
+    let asked = 0;
+    const { dispatch, posted } = extensionOnPage({
+      pairing: { token: 'tok', accountId: 'a1' },
+      status: { state: 'ready', accountId: 'a1' },
+      app: () => {
+        asked += 1;
+        return jsonResponse(401, { error: { code: 'not_paired', message: '...' } });
+      },
+    });
+    dispatch({});
+    await settle();
+    expect(posted.map((post) => post.message)).toEqual([expect.objectContaining({ paired: true, accountId: 'a1' })]);
+    expect(asked).toBe(0);
   });
 
   it('reads as unpaired when the channel was refused for a pairing that is gone, without asking the app', async () => {
@@ -306,7 +352,7 @@ describe('switching accounts through the page bridge', () => {
 
     dispatch(switchRequest());
     await settle();
-    expect(asked).toEqual([{ accountId: 'a2', username: 'bob' }]);
+    expect(asked).toEqual([{ accountId: 'a2', name: 'bob' }]);
     expect(posted.map((post) => post.message)).toEqual([switchOutcome('accepted')]);
     expect(redeemed).toEqual([]);
 
@@ -325,7 +371,7 @@ describe('switching accounts through the page bridge', () => {
     dispatch(switchRequest());
     await settle();
 
-    expect(asked).toEqual([{ accountId: 'a2', username: 'bob' }]);
+    expect(asked).toEqual([{ accountId: 'a2', name: 'bob' }]);
     expect(posted.map((post) => post.message)).toEqual([switchOutcome('declined')]);
     expect(redeemed).toEqual([]);
     expect(items.get('pairing')).toEqual(COLLEAGUE);
@@ -339,7 +385,7 @@ describe('switching accounts through the page bridge', () => {
     dispatch(pairRequest());
     await settle();
 
-    expect(asked).toEqual([{ accountId: 'a2', username: 'bob' }]);
+    expect(asked).toEqual([{ accountId: 'a2', name: 'bob' }]);
     expect(posted.map((post) => post.message)).toEqual([pairOutcome({ status: 'declined' })]);
     expect(redeemed).toEqual([]);
     expect(items.get('pairing')).toEqual(COLLEAGUE);
@@ -365,6 +411,23 @@ describe('switching accounts through the page bridge', () => {
     await settle();
     expect(asked).toEqual([]);
     expect(posted.map((post) => post.message)).toEqual([switchOutcome('accepted')]);
+  });
+
+  it('names the account by its id when the app cannot be reached to give its username', async () => {
+    const asked: CurrentAccount[] = [];
+    const { dispatch } = extensionOnPage({
+      pairing: COLLEAGUE,
+      confirmSwitch: async (current) => {
+        asked.push(current);
+        return false;
+      },
+      app: () => {
+        throw new TypeError('fetch failed');
+      },
+    });
+    dispatch(switchRequest());
+    await settle();
+    expect(asked).toEqual([{ accountId: 'a2', name: 'a2' }]);
   });
 
   it('does not ask when unpaired or already acting for the same account', async () => {

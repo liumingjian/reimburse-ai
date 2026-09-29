@@ -29,7 +29,7 @@ describe('the switch question', () => {
     const { windows, created, removed } = fakeWindows();
     const dialog = createSwitchDialog({ windows, pageUrl: PAGE });
 
-    const answer = dialog.confirm({ accountId: 'a2', username: 'bob' });
+    const answer = dialog.confirm({ accountId: 'a2', name: 'bob' });
     await settle();
     expect(created).toHaveLength(1);
     expect(created[0]?.startsWith(`${PAGE}?`)).toBe(true);
@@ -40,16 +40,9 @@ describe('the switch question', () => {
     expect(removed).toEqual([1]);
   });
 
-  it('names the account by its id when the app gave no username', async () => {
-    const { windows, created } = fakeWindows();
-    void createSwitchDialog({ windows, pageUrl: PAGE }).confirm({ accountId: 'a2', username: null });
-    await settle();
-    expect(new URLSearchParams(created[0]?.split('?')[1]).get('account')).toBe('a2');
-  });
-
   it('reads a closed window as no', async () => {
     const { windows, close } = fakeWindows();
-    const answer = createSwitchDialog({ windows, pageUrl: PAGE }).confirm({ accountId: 'a2', username: 'bob' });
+    const answer = createSwitchDialog({ windows, pageUrl: PAGE }).confirm({ accountId: 'a2', name: 'bob' });
     await settle();
     close(1);
     await expect(answer).resolves.toBe(false);
@@ -59,7 +52,7 @@ describe('the switch question', () => {
     const { windows, created } = fakeWindows();
     const dialog = createSwitchDialog({ windows, pageUrl: PAGE });
     let settled: boolean | null = null;
-    void dialog.confirm({ accountId: 'a2', username: 'bob' }).then((value) => (settled = value));
+    void dialog.confirm({ accountId: 'a2', name: 'bob' }).then((value) => (settled = value));
     await settle();
     const id = idOf(created[0] ?? '');
 
@@ -74,9 +67,9 @@ describe('the switch question', () => {
   it('declines a question still open when a newer one is asked', async () => {
     const { windows, created, removed } = fakeWindows();
     const dialog = createSwitchDialog({ windows, pageUrl: PAGE });
-    const first = dialog.confirm({ accountId: 'a2', username: 'bob' });
+    const first = dialog.confirm({ accountId: 'a2', name: 'bob' });
     await settle();
-    const second = dialog.confirm({ accountId: 'a2', username: 'bob' });
+    const second = dialog.confirm({ accountId: 'a2', name: 'bob' });
     await expect(first).resolves.toBe(false);
     expect(removed).toEqual([1]);
     await settle();

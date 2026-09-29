@@ -1,5 +1,5 @@
 import {
-  EXTENSION_BRIDGE_NAMESPACE,
+  bridgeMessage,
   EXTENSION_VERSION,
   type ExtensionBridgeExtensionMessage,
   type ExtensionBridgePageMessage,
@@ -9,7 +9,7 @@ import {
 } from '@baox/contract';
 import type { ChannelStatus } from './connection';
 import { APP_UNREACHABLE } from './messages';
-import { checkPairing, redeemPairingCode, revokePairing, type PairingCheck, type PairingOutcome } from './pairing';
+import { checkPairing, redeemPairingCode, revokePairing, type PairingOutcome } from './pairing';
 
 // What the popup asks the service worker about the pairing: pair with a 配对码 (pairing code), 撤销配对 (revoke the
 // pairing), and status. The service worker only wires `chrome` into this; storage, the network and the channel are
@@ -48,8 +48,11 @@ export type PairingChannel = {
   status(): ChannelStatus | null;
 };
 
-/** The account the extension acts for now, as the switch confirmation names it: by username when the app gave one. */
-export type CurrentAccount = { accountId: string; username: string | null };
+/**
+ * The account the extension acts for now, as the switch confirmation names it: by the username the app gave, or by
+ * its id when the app could not be reached to ask.
+ */
+export type CurrentAccount = { accountId: string; name: string };
 
 /**
  * Asks the employee, in UI the extension owns, whether to stop acting for `current` and pair with the account signed
@@ -121,28 +124,38 @@ export function createPairingRequests({ origin, storage, channel, browser, confi
     return { ...base(), paired: pairing !== null, accountId: pairing?.accountId ?? null };
   }
 
-  // Whether the app still honours the stored pairing. A pairing revoked from the settings page stays in storage (the
-  // extension is only told over the channel, and only if the channel is up), so the stored token is not enough to
-  // announce the extension as paired. The channel's refusal settles it without a request; otherwise the app is
-  // asked, and an app that cannot be reached leaves the stored pairing standing.
-  async function appPairing(pairing: StoredPairing): Promise<PairingCheck> {
+  // The channel's own word on the stored pairing, when it has one: `ready` means the app accepted this token, a
+  // `not_paired` refusal that it no longer does. Anything else (no client, connecting, offline) says nothing.
+  function channelSays(pairing: StoredPairing): 'paired' | 'not_paired' | null {
     const current = channel.status();
-    if (current?.state === 'refused' && current.code === 'not_paired') return { state: 'not_paired' };
-    return checkPairing({ origin, token: pairing.token, fetchImpl });
+    if (current?.state === 'ready' && current.accountId === pairing.accountId) return 'paired';
+    if (current?.state === 'refused' && current.code === 'not_paired') return 'not_paired';
+    return null;
   }
 
-  const stillPaired = async (pairing: StoredPairing): Promise<boolean> => (await appPairing(pairing)).state !== 'not_paired';
+  // Whether the app still honours the stored pairing. A pairing revoked from the settings page stays in storage (the
+  // app tells the extension only over the channel, by refusing it), so the stored token alone is not enough to
+  // announce the extension as paired. The channel settles it when it can. Only otherwise is the app asked, because
+  // every answer counts there as a connection and would move 最近连接 (last connected) on a mere page visit. An app
+  // that cannot be reached leaves the stored pairing standing.
+  async function stillPaired(pairing: StoredPairing): Promise<boolean> {
+    const said = channelSays(pairing);
+    if (said !== null) return said === 'paired';
+    return (await checkPairing({ origin, token: pairing.token, fetchImpl })).state !== 'not_paired';
+  }
 
   /**
    * Whether pairing with `accountId` may go ahead: at once when nothing would be lost (unpaired, a pairing the app no
-   * longer honours, or already acting for `accountId`); otherwise only if the employee agrees to switch.
+   * longer honours, or already acting for `accountId`); otherwise only if the employee agrees to switch. The app is
+   * asked even over a ready channel, for the username the question names the account by.
    */
   async function mayPairWith(accountId: string): Promise<boolean> {
     const pairing = await readPairing();
     if (!pairing || pairing.accountId === accountId) return true;
-    const check = await appPairing(pairing);
+    if (channelSays(pairing) === 'not_paired') return true;
+    const check = await checkPairing({ origin, token: pairing.token, fetchImpl });
     if (check.state === 'not_paired') return true;
-    return confirmSwitch({ accountId: pairing.accountId, username: check.state === 'paired' ? check.username : null });
+    return confirmSwitch({ accountId: pairing.accountId, name: check.state === 'paired' ? check.username : pairing.accountId });
   }
 
   /** What the extension announces to the baox page: its version, and the 应用账号 it is paired to, if the app agrees. */
@@ -151,7 +164,7 @@ export function createPairingRequests({ origin, storage, channel, browser, confi
     const paired = pairing !== null && (await stillPaired(pairing));
     // A page visit is as good a time as the popup's to bring the connection back.
     if (pairing && paired && !channel.running()) channel.start(pairing);
-    return { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'presence', version: EXTENSION_VERSION, paired, accountId: paired ? pairing.accountId : null };
+    return bridgeMessage({ kind: 'presence', version: EXTENSION_VERSION, paired, accountId: paired ? pairing.accountId : null });
   }
 
   /**
@@ -163,7 +176,7 @@ export function createPairingRequests({ origin, storage, channel, browser, confi
     const from = (await readPairing())?.accountId ?? null;
     const accepted = await mayPairWith(accountId);
     agreed = accepted && from !== null && from !== accountId ? { from, to: accountId } : null;
-    return { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'switch_outcome', outcome: accepted ? 'accepted' : 'declined' };
+    return bridgeMessage({ kind: 'switch_outcome', outcome: accepted ? 'accepted' : 'declined' });
   }
 
   /**
@@ -176,13 +189,12 @@ export function createPairingRequests({ origin, storage, channel, browser, confi
     const from = (await readPairing())?.accountId ?? null;
     const covered = agreed !== null && agreed.from === from && agreed.to === accountId;
     agreed = null;
-    if (!covered && !(await mayPairWith(accountId))) return { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair_outcome', outcome: { status: 'declined' } };
+    if (!covered && !(await mayPairWith(accountId))) return bridgeMessage({ kind: 'pair_outcome', outcome: { status: 'declined' } });
     const outcome = await redeem(code);
-    return {
-      namespace: EXTENSION_BRIDGE_NAMESPACE,
+    return bridgeMessage({
       kind: 'pair_outcome',
       outcome: outcome.ok ? { status: 'paired', accountId: outcome.accountId } : { status: 'failed', code: outcome.code, message: outcome.message },
-    };
+    });
   }
 
   /** Answers a message from the baox page, relayed by the content script. */

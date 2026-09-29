@@ -333,6 +333,27 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
     expect(screen.queryByRole('list', { name: '安装步骤' })).toBeNull();
     expect(screen.queryByRole('list', { name: '升级扩展' })).toBeNull();
   });
+
+  test('独立教程：扩展装好了但没和这个账号配对，只说回设置页配对，不给安装和升级步骤', async () => {
+    const cases: { presence: ExtensionPresence; lead: string }[] = [
+      { presence: { version: EXTENSION_VERSION, paired: false, accountId: null }, lead: EXTENSION_TUTORIAL_COPY.pairOnSettings },
+      { presence: { version: EXTENSION_VERSION, paired: true, accountId: 'someone-else' }, lead: EXTENSION_TUTORIAL_COPY.pairOnSettingsSwitch },
+    ];
+    for (const { presence, lead } of cases) {
+      const bridge = fakeBridge(() => presence);
+      renderWithExtension(bridge, { hash: '#/settings/tutorial' });
+      const step = within(await screen.findByRole('region', { name: EXTENSION_TUTORIAL_COPY.pairOnSettingsTitle }));
+      expect(step.getByText(lead)).toBeTruthy();
+      expect(step.getByRole('link', { name: EXTENSION_TUTORIAL_COPY.pairOnSettingsAction }).getAttribute('href')).toBe('#/settings');
+      expect(screen.queryByRole('list', { name: '安装步骤' })).toBeNull();
+      expect(screen.queryByRole('list', { name: '升级扩展' })).toBeNull();
+      expect(screen.queryByRole('link', { name: EXTENSION_INSTALL_COPY.download })).toBeNull();
+      // The tutorial only points the way; pairing, and any switch question, happen on the settings page.
+      expect(bridge.codes).toEqual([]);
+      expect(bridge.switches).toEqual([]);
+      cleanup();
+    }
+  });
 });
 
 // #291: an extension that answers but is not paired to this account is handed a freshly issued 配对码 and redeems it;

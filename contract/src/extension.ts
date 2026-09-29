@@ -244,6 +244,13 @@ export type ExtensionBridgePageMessage = z.infer<typeof ExtensionBridgePageMessa
 export const ExtensionBridgeExtensionMessageSchema = z.discriminatedUnion('kind', [ExtensionBridgePresenceSchema, ExtensionBridgeSwitchOutcomeSchema, ExtensionBridgePairOutcomeSchema]);
 export type ExtensionBridgeExtensionMessage = z.infer<typeof ExtensionBridgeExtensionMessageSchema>;
 
+type BridgeMessageBody<M> = M extends unknown ? Omit<M, 'namespace'> : never;
+
+/** A bridge message from its `kind` and fields, with the namespace every message carries. Both sides build theirs here. */
+export function bridgeMessage<T extends BridgeMessageBody<ExtensionBridgePageMessage | ExtensionBridgeExtensionMessage>>(body: T): T & { namespace: typeof EXTENSION_BRIDGE_NAMESPACE } {
+  return { namespace: EXTENSION_BRIDGE_NAMESPACE, ...body };
+}
+
 // ---------------------------------------------------------------------------
 // The channel (ADR-0019, ADR-0020)
 // ---------------------------------------------------------------------------

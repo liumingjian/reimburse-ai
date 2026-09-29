@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { CREATE_TASK_ERRORS, CreateTaskInputSchema, PENDING_ANSWER_ERRORS, isRealDate, validatePendingAnswer } from './actions';
 import { STAGE_DEFAULT_PAGE, pageAllowed, stageReached } from './stage';
 import { UrlSchema } from './primitives';
-import { EXTENSION_BRIDGE_NAMESPACE, ExtensionBridgeExtensionMessageSchema, ExtensionBridgePageMessageSchema, extensionVersionRefusal } from './extension';
+import { EXTENSION_BRIDGE_NAMESPACE, bridgeMessage, ExtensionBridgeExtensionMessageSchema, ExtensionBridgePageMessageSchema, extensionVersionRefusal } from './extension';
 import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS, ERP_HANDOVER_STEP_COPY, ERP_PROGRESS_STEPS, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE } from './snapshot';
 import { KERNEL_PHASES } from './stage';
 
@@ -133,6 +133,12 @@ describe('page bridge messages', () => {
     expect(ExtensionBridgeExtensionMessageSchema.safeParse(presence).success).toBe(true);
     expect(ExtensionBridgeExtensionMessageSchema.safeParse({ ...presence, namespace: 'someone-else' }).success).toBe(false);
     expect(ExtensionBridgeExtensionMessageSchema.safeParse({ kind: 'presence', version: '1.1.0', paired: false, accountId: null }).success).toBe(false);
+  });
+
+  test('bridgeMessage adds the namespace tag, so what it builds parses', () => {
+    expect(bridgeMessage({ kind: 'probe' })).toEqual({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'probe' });
+    expect(ExtensionBridgePageMessageSchema.safeParse(bridgeMessage({ kind: 'pair', code: 'K7MQ2PXD', accountId: 'a1' })).success).toBe(true);
+    expect(ExtensionBridgeExtensionMessageSchema.safeParse(bridgeMessage({ kind: 'switch_outcome', outcome: 'accepted' })).success).toBe(true);
   });
 
   test('page and extension messages do not parse as each other', () => {
