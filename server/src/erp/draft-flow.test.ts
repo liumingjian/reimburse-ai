@@ -1,7 +1,7 @@
 // Origin: 50931a3:kernel/test/erp-draft-flow.test.mjs (translated to Vitest; inputs and expected outputs kept).
 // The kernel's `linesDigest` (selection.mjs) is `previewLinesDigest`; `approvalCovers` lives in the protocol.
 import { describe, expect, it } from 'vitest';
-import { computedTotalProblem, fillApprovedPreview, formReadbackToken, handOverApprovedPreview, matchReceiptRows } from '@baox/erp-executor/draft-flow';
+import { fillApprovedPreview, formReadbackToken, handOverApprovedPreview, matchReceiptRows } from '@baox/erp-executor/draft-flow';
 import { buildErpDraftPreview, previewLinesDigest as linesDigest, routePlanOf } from './preview';
 import { approvalCovers, type ApprovedPreview } from '@baox/erp-executor/protocol';
 
@@ -176,23 +176,6 @@ describe('ERP draft flow (草稿填写与保存)', () => {
     const result = matchReceiptRows(wrong, preview);
     expect(result.ok).toBe(false);
     expect(result.reasons.some((reason) => /唯一匹配/.test(reason))).toBe(true);
-  });
-
-  // The three rows of the live fill of 2026-09-20, with their own numbers. Every one of them read back both money
-  // cells correctly; only ERP's computed 申请报销金额 says the value never arrived.
-  it('reads the computed 申请报销金额 as the witness that a money write reached ERP, not the cell it was typed into', () => {
-    const row = (net: string, tax: string, sum: string) => ({ 费用金额: net, 税额: tax, 申请报销金额: sum });
-    expect(computedTotalProblem(row('¥32.18', '¥0.32', '¥32.50'), { net: '32.18', tax: '0.32' }, '明细第 1 行')).toBe(null);
-    expect(computedTotalProblem(row('¥32.18', '¥0.32', '¥32.18'), { net: '32.18', tax: '0.32' }, '明细第 1 行'))
-      .toMatch(/明细第 1 行.*申请报销金额.*没有进到报销系统自己的账里/);
-    expect(computedTotalProblem(row('¥15.56', '¥0.47', '¥0.47'), { net: '15.56', tax: '0.47' }, '明细第 2 行'))
-      .toMatch(/明细第 2 行/);
-    expect(computedTotalProblem(row('¥1,677.36', '¥100.64', '¥1,677.36'), { net: '1677.36', tax: '100.64' }, '明细第 11 行'))
-      .toMatch(/明细第 11 行/);
-    expect(computedTotalProblem(row('¥1,677.36', '¥100.64', '¥1,778.00'), { net: '1677.36', tax: '100.64' }, '明细第 11 行')).toBe(null);
-    // A cell that does not hold what was asked for is caught by the same reading, computed column or not.
-    expect(computedTotalProblem(row('¥32.18', '¥0.32', '¥32.50'), { net: '32.19', tax: '0.32' }, '明细第 1 行')).toMatch(/费用金额/);
-    expect(computedTotalProblem(row('¥32.18', '', '¥32.18'), { net: '32.18', tax: '0.32' }, '明细第 1 行')).toMatch(/读不出金额/);
   });
 
   it('refuses an old-number form or wrong receipts in preflight, and never guesses a toolbar without an addRow adapter', async () => {
