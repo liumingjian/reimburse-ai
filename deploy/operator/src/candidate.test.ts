@@ -412,15 +412,19 @@ function reuseMarkers(timings: PreparedManifest['phaseTimings']) {
   return Object.fromEntries(timings.map(({ phase, reused, rebuilt }) => [phase, { reused, rebuilt }]));
 }
 
-it('reuses the running release\'s node_modules, native module and unchanged package builds, and installs fresh on a lockfile change', async () => {
-  const target = await createTarget();
+function workspaceRepository(): { repository: string; first: string } {
   const repository = mkdtempSync(join(tmpdir(), 'baox-candidate-workspace-'));
   cleanup.push(() => rmSync(repository, { recursive: true, force: true }));
   git(repository, ['init', '--quiet']);
   git(repository, ['config', 'user.name', 'candidate test']);
   git(repository, ['config', 'user.email', 'candidate@example.test']);
   writeWorkspaceSource(repository);
-  const first = commitAll(repository, 'first');
+  return { repository, first: commitAll(repository, 'first') };
+}
+
+it('reuses the running release\'s node_modules, native module and unchanged package builds, and installs fresh on a lockfile change', async () => {
+  const target = await createTarget();
+  const { repository, first } = workspaceRepository();
   const builds = () => readFileSync(join(target.barrier, 'builds'), 'utf8').trim().split('\n');
 
   const running = await prepareCandidate(repository, target, first);
@@ -457,4 +461,65 @@ it('reuses the running release\'s node_modules, native module and unchanged pack
   expect(reuseMarkers(lockfile.manifest.phaseTimings)).toMatchObject({ install: { reused: undefined }, build: { rebuilt: undefined }, native: { reused: undefined } });
   expect(statSync(join(lockfile.source, 'node_modules', '.installed-in')).ino).not.toBe(statSync(join(release, 'node_modules', '.installed-in')).ino);
   expect(snapshotDirectory(release)).toEqual(releaseBefore);
+}, REAL_SUBPROCESS_TIMEOUT_MS);
+
+it('repairs the native module in a private copy when reused node_modules fail the smoke test, leaving the running release byte-identical', async () => {
+  const target = await createTarget();
+  writeFileSync(join(target.barrier, 'force-native-sqlite'), 'enabled\n');
+  const { repository, first } = workspaceRepository();
+  const running = await prepareCandidate(repository, target, first);
+  const release = promote(target, running.manifest.candidateId);
+  const releaseAddon = join(release, 'server', 'node_modules', 'better-sqlite3');
+  expect(existsSync(join(releaseAddon, 'native-build-evidence.json'))).toBe(true);
+  // The running release's addon stops loading, so the candidate that links it must rebuild.
+  writeFileSync(join(releaseAddon, 'build', 'Release', 'better_sqlite3.node'), 'broken native module');
+  const releaseBefore = snapshotDirectory(release);
+
+  writeFileSync(join(repository, 'web', 'src', 'index.ts'), "export const name = 'web, changed';\n");
+  const webOnly = await prepareCandidate(repository, target, commitAll(repository, 'web only'));
+
+  expect(reuseMarkers(webOnly.manifest.phaseTimings)).toMatchObject({ install: { reused: true }, native: { reused: undefined } });
+  const candidateAddon = join(webOnly.source, 'server', 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node');
+  expect(readFileSync(candidateAddon, 'utf8')).not.toBe('broken native module');
+  expect(statSync(candidateAddon).ino).not.toBe(statSync(join(releaseAddon, 'build', 'Release', 'better_sqlite3.node')).ino);
+  expect(snapshotDirectory(release)).toEqual(releaseBefore);
+}, REAL_SUBPROCESS_TIMEOUT_MS);
+
+it('installs fresh when reusing node_modules fails, even when the half-made copy cannot be removed', async () => {
+  const target = await createTarget();
+  cleanup.push(() => { execFileSync('chmod', ['-R', 'u+w', target.profile.deployRoot]); });
+  const { repository, first } = workspaceRepository();
+  const running = await prepareCandidate(repository, target, first);
+  const release = promote(target, running.manifest.candidateId);
+  // The root node_modules links fine but leaves a directory rm cannot empty;
+  // web/node_modules then fails to copy (a FIFO is not a supported entry).
+  const readonly = join(release, 'node_modules', 'readonly');
+  mkdirSync(readonly);
+  writeFileSync(join(readonly, 'file'), 'kept');
+  chmodSync(readonly, 0o555);
+  mkdirSync(join(release, 'web', 'node_modules'));
+  execFileSync('mkfifo', [join(release, 'web', 'node_modules', 'pipe')]);
+  const releaseBefore = snapshotDirectory(release);
+
+  writeFileSync(join(repository, 'web', 'src', 'index.ts'), "export const name = 'web, changed';\n");
+  const webOnly = await prepareCandidate(repository, target, commitAll(repository, 'web only'));
+
+  expect(readFileSync(join(target.barrier, 'counter'), 'utf8')).toBe('installinstall');
+  expect(reuseMarkers(webOnly.manifest.phaseTimings)).toMatchObject({ install: { reused: undefined }, build: { rebuilt: ['@baox/web'] } });
+  expect(existsSync(join(webOnly.source, 'node_modules', 'readonly'))).toBe(false);
+  expect(existsSync(join(webOnly.source, 'web', 'node_modules'))).toBe(false);
+  expect(statSync(join(webOnly.source, 'node_modules', '.installed-in')).ino).not.toBe(statSync(join(release, 'node_modules', '.installed-in')).ino);
+  expect(snapshotDirectory(release)).toEqual(releaseBefore);
+}, REAL_SUBPROCESS_TIMEOUT_MS);
+
+it('keeps package builds when only docs-only root files change', async () => {
+  const target = await createTarget();
+  const { repository, first } = workspaceRepository();
+  const running = await prepareCandidate(repository, target, first);
+  promote(target, running.manifest.candidateId);
+
+  writeFileSync(join(repository, 'README.md'), '# docs only\n');
+  const docsOnly = await prepareCandidate(repository, target, commitAll(repository, 'docs only'));
+
+  expect(reuseMarkers(docsOnly.manifest.phaseTimings)).toMatchObject({ install: { reused: true }, build: { reused: true, rebuilt: [] } });
 }, REAL_SUBPROCESS_TIMEOUT_MS);
