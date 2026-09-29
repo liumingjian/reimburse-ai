@@ -456,7 +456,7 @@ it('ends a fresh deploy with the phase table from the verified cutover journal',
       return { state: 'inspection', lock: { state: 'inactive' }, journal: null, manifest: null };
     },
   };
-  const phaseTimings = [timing('install', 90_000), timing('build', 60_500), timing('snapshot', 4_000), timing('cutover', 1_200), timing('verify', 3_000)];
+  const phaseTimings = [{ ...timing('install', 90_000), reused: true }, { ...timing('build', 60_500), rebuilt: ['@baox/web'] }, timing('snapshot', 4_000), timing('cutover', 1_200), timing('verify', 3_000)];
   const cutover: CutoverTransport = {
     async cutover() {
       return {
@@ -481,8 +481,8 @@ it('ends a fresh deploy with the phase table from the verified cutover journal',
   expect(human.code).toBe(0);
   const table = human.out.slice(human.out.indexOf('阶段耗时：'));
   expect(table).toHaveLength(phaseTimings.length + 2);
-  expect(table[1]).toMatch(/^ {2}install（安装依赖）\s+90\.0 s$/u);
-  expect(table[2]).toMatch(/^ {2}build（构建软件包）\s+60\.5 s$/u);
+  expect(table[1]).toMatch(/^ {2}install（安装依赖）\s+90\.0 s（沿用运行中版本）$/u);
+  expect(table[2]).toMatch(/^ {2}build（构建软件包）\s+60\.5 s（仅构建 @baox\/web）$/u);
   expect(table.at(-1)).toMatch(/^ {2}合计\s+158\.7 s$/u);
   expect(JSON.parse(json.out.join('\n'))).toMatchObject({ command: 'deploy', phaseTimings });
 });

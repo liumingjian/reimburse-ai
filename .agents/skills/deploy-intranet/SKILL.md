@@ -97,6 +97,7 @@ Write the report in the user's language.
 
 Put the phase table right before the closing `result:` or `needs input:` line in every report. Build it from the
 top-level `phaseTimings` of the deploy JSON: one row per entry in order (`phase`, `durationMs` as seconds with one
-decimal, marked failed when `failed` is true), then a total row. The host's deployment journal holds the same list.
+decimal, marked failed when `failed` is true, marked "reused" when `reused` is true, and naming the packages in
+`rebuilt` when present), then a total row. The host's deployment journal holds the same list.
 When `phaseTimings` is empty (neither a verified cutover nor a fresh candidate build), write "no phase timings
 recorded" instead of a table.
