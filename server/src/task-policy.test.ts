@@ -42,11 +42,11 @@ describe('taskPolicy: stage and step', () => {
     ['the login pause cancelled: back to the actions', { ...confirmed, erp: job('cancelled') }, 'actions', 'choose_action'],
     ['aborted before any write: back to the actions', { ...confirmed, erp: job('aborted') }, 'actions', 'choose_action'],
     ['a catalog mismatch sends the task back to assignment', { ...confirmed, erp: job('catalog_mismatch', { reassign: true }) }, 'project', 'assign_projects'],
-    ['ERP 单据已交接 (handed over): done', { ...confirmed, erp: job('handed_over') }, 'done', 'none'],
+    ['ERP bill handed over (单据已交接): done', { ...confirmed, erp: job('handed_over') }, 'done', 'none'],
     ['a reconcile proved the save: done', { ...confirmed, erp: job('saved') }, 'done', 'none'],
     ['ERP 写入结果未知: reconcile', { ...confirmed, erp: job('unknown') }, 'reconcile', 'reconcile'],
     ['a reconcile job running on it', { ...confirmed, erp: job('unknown', { reconciling: true }) }, 'reconcile', 'none'],
-    ['转人工 (handed off)', { ...confirmed, lifecycle: 'handed_off', erp: job('unknown') }, 'reconcile', 'none'],
+    ['handed off to a human (转人工)', { ...confirmed, lifecycle: 'handed_off', erp: job('unknown') }, 'reconcile', 'none'],
     // #195 legacy import
     ['a legacy task whose draft was saved', { lifecycle: 'handed_off', origin: 'legacy', legacyOutcome: 'draft_handed_over' }, 'done', 'none'],
     ['a legacy task handed off', { lifecycle: 'handed_off', origin: 'legacy', legacyOutcome: 'handed_off' }, 'reconcile', 'none'],
@@ -75,8 +75,11 @@ const closed = { code: 'task_closed', message: ACTION_COPY.taskClosed };
 const erpStarted = { code: 'erp_started', message: ERP_ACTION_ERRORS.erpStarted };
 const notAllowed = { code: 'action_not_allowed', message: ERP_ACTION_ERRORS.notAllowed };
 const inUse = { code: 'erp_in_use', message: ERP_ACTION_ERRORS.inUse };
-// The ERP record beside the facts: the same latest job, plus what only the record knows (the attempt, the 对账 verdict).
-const record = (patch: Partial<TaskFacts>, extra: Partial<ErpRecord> = {}): ErpRecord => ({ ...NO_ERP, facts: patch.erp ?? null, ...extra });
+// The ERP record beside the facts: what only the record knows (the attempt, the 对账 verdict, the fill's result). The
+// phase is the facts' (`TaskFacts.erp`); the policy never reads the record's copy, so these records leave it null.
+const record = (extra: Partial<ErpRecord> = {}): ErpRecord => ({ ...NO_ERP, ...extra });
+const notReady = { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
+const notReconciling = { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling };
 
 describe('taskPolicy: admit', () => {
   it.each<[string, Partial<TaskFacts>, boolean, ActionName, string | null, Admission]>([
@@ -136,7 +139,7 @@ describe('taskPolicy: admit', () => {
     ['assign with pending items open', { ...run, parse: { waiting: 0, openPendingItems: 1, blockers: [] } }, false, 'assign_project_lines', TOKEN, { code: 'not_ready', message: PROJECT_ASSIGNMENT_ERRORS.notReady }],
     ['submit while the book needs maintaining', { ...clean, project: { lineCount: 2, selectableCount: 0, workingCount: 0, submitted: false } }, false, 'submit_project_assignment', TOKEN, { code: 'not_ready', message: PROJECT_ASSIGNMENT_ERRORS.notReady }],
   ])('%s', (_name, patch, erpAttempted, action, token, admission) => {
-    expect(taskPolicy(facts(patch), record(patch, { attempted: erpAttempted })).admit(action, token)).toEqual(admission);
+    expect(taskPolicy(facts(patch), record({ attempted: erpAttempted })).admit(action, token)).toEqual(admission);
   });
 });
 
@@ -178,7 +181,7 @@ describe('taskPolicy: allowed actions by ERP phase', () => {
     ['an imported legacy task: only 作废', { lifecycle: 'handed_off', origin: 'legacy', legacyOutcome: 'draft_handed_over' }, {}, ['void_task']],
     ['the parser job running: nothing, not even 作废', { ...run, parse: { waiting: 1, openPendingItems: 0, blockers: [] } }, {}, []],
   ])('%s', (_name, patch, erp, allowed) => {
-    const policy = taskPolicy(facts(patch), record(patch, erp));
+    const policy = taskPolicy(facts(patch), record(erp));
     expect([...policy.allowedActions].sort()).toEqual([...allowed].sort());
     // The set is exactly what admit answers 'ok' to on the current token.
     for (const action of TASK_ACTIONS) expect(policy.admit(action, TOKEN) === 'ok', action).toBe(allowed.includes(action));
@@ -197,19 +200,51 @@ describe('taskPolicy: ERP actions refused by phase and verdict', () => {
     ['重新对账 after a 转人工 verdict', unknown, { attempted: true, ...judged('不自洽', '转人工') }, 'reconcile', notAllowed],
     ['重新去报销 once a 单据编号 was read', unknown, { attempted: true, ...judged('未保存·已导入未写明细', '转人工', { billNo: 'BX-1' }) }, 'refill', notAllowed],
     ['重新去报销 on offer', unknown, { attempted: true, ...judged('未保存·已导入未写明细', '转人工') }, 'refill', 'ok'],
-    // The account's one ERP lease (ADR-0019): another task's job holds it. 409, before the action's own precondition.
+    // The account's one ERP lease (ADR-0019): another task's job holds it. 409; a fill start is refused for it before
+    // its own precondition, a 对账 only once its verdict allows it (the order the API has always answered in).
     ['去报销 while a job of another task holds the ERP lease', { ...confirmed, erpLease: 'other' }, {}, 'start_erp_write', inUse],
     ['去报销 at the wrong step while the lease is elsewhere: still in use', { ...submitted, erpLease: 'other' }, {}, 'start_erp_write', inUse],
+    ['我已登录，继续 without a login pause while the lease is elsewhere: in use', { ...confirmed, erpLease: 'other' }, {}, 'confirm_login', inUse],
+    ['重新去报销 not on offer while the lease is elsewhere: in use', { ...unknown, erpLease: 'other' }, { attempted: true, ...judged('不自洽', '转人工') }, 'refill', inUse],
     ['对账 while a job of another task holds the ERP lease', { ...unknown, erpLease: 'other' }, { attempted: true }, 'reconcile', inUse],
+    ['对账 on a known write result while the lease is elsewhere: not reconciling', { ...confirmed, erp: job('aborted'), erpLease: 'other' }, {}, 'reconcile', notReconciling],
+    ['重新对账 after a 转人工 verdict while the lease is elsewhere: not allowed', { ...unknown, erpLease: 'other' }, { attempted: true, ...judged('不自洽', '转人工') }, 'reconcile', notAllowed],
+    // No ERP configured on this server: the actions that take the lease say not_ready before anything else about ERP.
+    ['去报销 without an ERP, the lease elsewhere', { ...confirmed, erpConfigured: false, erpLease: 'other' }, {}, 'start_erp_write', notReady],
+    ['我已登录，继续 without an ERP', { ...confirmed, erp: job('waiting_login'), erpConfigured: false }, {}, 'confirm_login', notReady],
+    ['重新去报销 without an ERP, not on offer', { ...unknown, erpConfigured: false }, { attempted: true, ...judged('不自洽', '转人工') }, 'refill', notReady],
+    ['对账 without an ERP, on a known write result', { ...confirmed, erp: job('aborted'), erpConfigured: false }, {}, 'reconcile', notReady],
+    ['转人工 needs no ERP', { ...unknown, erpConfigured: false }, { attempted: true }, 'hand_off', 'ok'],
+    ['cancelling the login pause needs no ERP', { ...confirmed, erp: job('waiting_login'), erpConfigured: false }, {}, 'cancel_erp_write', 'ok'],
     ['转人工 takes no lease', { ...unknown, erpLease: 'other' }, { attempted: true }, 'hand_off', 'ok'],
     ['the lease held by a job of this task does not refuse 去报销 here', { ...confirmed, erpLease: 'own' }, {}, 'start_erp_write', 'ok'],
     ['重新去报销 on offer, but the confirmation is gone', { ...unknown, confirmation: 'invalidated' }, { attempted: true, ...judged('未保存·已导入未写明细', '转人工') }, 'refill', { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady }],
   ])('%s', (_name, patch, erp, action, admission) => {
-    expect(taskPolicy(facts(patch), record(patch, erp)).admit(action, TOKEN)).toEqual(admission);
+    expect(taskPolicy(facts(patch), record(erp)).admit(action, TOKEN)).toEqual(admission);
   });
 });
 
-// 任务作废 (ADR-0030): any lifecycle and any ERP phase; only a job of this very task in flight holds it back.
+// A refusal of the request's own input (修改常驻城市's invalid city) ranks after the gate and before the action's own
+// precondition, where the task service has always checked it.
+describe('taskPolicy: request input refusals', () => {
+  const invalidCity = { code: 'invalid_home_city', message: HOME_CITY_ERRORS.invalid };
+  const frozen = { ...confirmed, erp: job('aborted') };
+  it.each<[string, Partial<TaskFacts>, boolean, string | null, Admission]>([
+    ['an invalid city on an open task', confirmed, false, TOKEN, invalidCity],
+    ['an invalid city on a frozen task: invalid before locked', frozen, true, TOKEN, invalidCity],
+    ['a stale token still beats it', frozen, true, 't.6', 'stale'],
+    ['a closed task still beats it', { ...confirmed, lifecycle: 'voided' }, false, TOKEN, closed],
+    ['a write result unknown still beats it', { ...confirmed, erp: job('unknown') }, true, TOKEN, erpStarted],
+  ])('%s', (_name, patch, attempted, token, admission) => {
+    expect(taskPolicy(facts(patch), record({ attempted })).admit('set_home_city', token, invalidCity)).toEqual(admission);
+  });
+
+  it('no request refusal leaves the precondition to answer', () => {
+    expect(taskPolicy(facts({ ...confirmed, erp: job('aborted') }), record({ attempted: true })).admit('set_home_city', TOKEN, null)).toEqual({ code: 'home_city_locked', message: HOME_CITY_ERRORS.locked });
+  });
+});
+
+// Voiding the task (任务作废, ADR-0030): any lifecycle and any ERP phase; only a job of this very task in flight holds it back.
 describe('taskPolicy: void', () => {
   it.each<[string, Partial<TaskFacts>, Partial<ErpRecord>, Admission]>([
     ['a new task', {}, {}, 'ok'],
@@ -226,6 +261,6 @@ describe('taskPolicy: void', () => {
     ['a job of another task holds the ERP lease', { ...confirmed, erpLease: 'other' }, {}, 'ok'],
     ['voided already', { lifecycle: 'voided' }, {}, closed],
   ])('%s', (_name, patch, erp, admission) => {
-    expect(taskPolicy(facts(patch), record(patch, erp)).admit('void_task', null)).toEqual(admission);
+    expect(taskPolicy(facts(patch), record(erp)).admit('void_task', null)).toEqual(admission);
   });
 });

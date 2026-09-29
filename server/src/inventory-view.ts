@@ -1,4 +1,4 @@
-import { MATERIAL_KINDS, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type InventoryPhase, type Line, type Material, type MaterialKind, type PendingField, type PendingItem } from '@baox/contract';
+import { MATERIAL_KINDS, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type Line, type Material, type MaterialKind, type PendingField, type PendingItem } from '@baox/contract';
 import { erpInvoiceTypeOf, ERP_INVOICE_TYPES, type ResolvedErpInvoiceType } from '@baox/erp-executor/invoice-type';
 import type { ParseOutcome, Recognised } from './parse/dispatch';
 import { planTransport, type PlannedLine } from './allocation';
@@ -48,7 +48,8 @@ export type InventoryView = {
   pendingItems: PendingItem[];
   events: ExpenseEvent[];
   lines: Line[];
-  inventory: Inventory;
+  // Where the run stands; the snapshot's `inventory` section is worded from it (`task-snapshot/inventory.ts`).
+  progress: RunProgress;
   // Included materials of the run still waiting for a parser outcome; > 0 means the job is running.
   waiting: number;
   openPendingItems: number;
@@ -59,6 +60,18 @@ export type InventoryView = {
   claims: Claim[];
   // The 住宿 trio of every stay, once the run has finished (`stay-trio.ts`); the print stage reads recorded absences here.
   trios: StayTrio[];
+};
+
+// The run's progress: not started, parsing (included materials still waiting, per medium), or done. Materials merged
+// into a variant are not in `materials` and are not counted anywhere. `ungroupedMaterialIds`: once done, the materials
+// no expense event groups that need a look (excluded, pending, or not a primary voucher).
+export type RunProgress = {
+  status: Inventory['status'];
+  waitingBy: { pdf: number; image: number };
+  // An included image is among the materials, so the photo phase is shown.
+  hasImages: boolean;
+  finishedAt: string | null;
+  ungroupedMaterialIds: string[];
 };
 
 // The task's 常驻城市 and pinned company rules: categories are derived from them (ADR-0006).
@@ -73,8 +86,6 @@ export const INVENTORY_COPY = {
   referenceCheck: '作为参考材料，不形成明细',
   manualCheck: '手工补填',
 } as const;
-
-const PHASES = { pdf: '读取 PDF 文本层与二维码', photo: '读取照片票面' } as const;
 
 const REPLACE_HINT = '换原件请在上传页追加材料后重新盘点。';
 const MANUAL_FILL = 'manual_fill';
@@ -654,35 +665,16 @@ export function inventoryView(
   });
 
   const openPendingItems = pendingItems.filter(isOpen).length;
-  const included = materialViews.filter((v) => v.status !== 'excluded');
   const grouped = new Set(events.flatMap((e) => [e.voucherMaterialId, ...e.referenceMaterialIds]));
-  const phase = (key: keyof typeof PHASES, status: InventoryPhase['status']): InventoryPhase => ({ key, label: PHASES[key], status });
-  const hasImages = materials.some((m) => !m.excluded && m.mediaType === 'image');
-  const phases = !results
-    ? []
-    : [
-        phase('pdf', waitingBy.pdf > 0 ? 'running' : 'done'),
-        ...(hasImages ? [phase('photo', waitingBy.pdf > 0 ? 'todo' : waitingBy.image > 0 ? 'running' : 'done')] : []),
-      ];
   const done = results !== null && waiting === 0;
-  const inventory: Inventory = {
+  const progress: RunProgress = {
     status: !results ? 'not_started' : done ? 'done' : 'running',
-    versionId: null,
-    phases,
+    waitingBy,
+    hasImages: materials.some((m) => !m.excluded && m.mediaType === 'image'),
     finishedAt: done ? (results?.finishedAt ?? results?.startedAt ?? null) : null,
-    summary: done
-      ? {
-          materialCount: included.length,
-          okCount: included.filter((v) => v.status === 'ok').length,
-          pendingMaterialCount: included.filter((v) => v.status === 'pending').length,
-          voucherCount: included.filter((v) => v.role === 'primary_voucher').length,
-          referenceCount: included.filter((v) => v.role === 'reference').length,
-          openPendingItemCount: openPendingItems,
-        }
-      : null,
     ungroupedMaterialIds: done ? materialViews.filter((v) => !grouped.has(v.materialId) && (v.status === 'excluded' || v.status === 'pending' || v.role !== 'primary_voucher')).map((v) => v.materialId) : [],
   };
-  return { materials: materialViews, pendingItems, events: done ? events : [], lines: done ? lines : [], inventory, waiting, openPendingItems, answerables, editables, claims, trios: trio.trios };
+  return { materials: materialViews, pendingItems, events: done ? events : [], lines: done ? lines : [], progress, waiting, openPendingItems, answerables, editables, claims, trios: trio.trios };
 }
 
 // The line-level edit is a presentation value over the description; checks never read it.

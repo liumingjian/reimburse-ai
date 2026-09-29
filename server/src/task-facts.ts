@@ -15,7 +15,7 @@ import { confirmationDigest, confirmationStatus, type ConfirmationDigest, type C
 import { loadErp, type ErpRecord } from './erp/fill-state';
 import { loadPrintFacts, type PrintFacts } from './print/facts';
 
-// Loading 任务事实 (task facts): every read that builds what the task service decides on and projects from. Reads
+// Loading task facts (任务事实): every read that builds what the task service decides on and projects from. Reads
 // only, no decisions: `task-policy.ts` turns `LoadedTask.facts` into stage, step and write admission, and `tasks.ts` acts on the rest.
 
 type Tx = Db;
@@ -91,8 +91,8 @@ export async function loadFacts(tx: Tx, task: TaskTable, materials?: readonly Ma
   facts.parse = { ...facts.parse, openPendingItems: 0, blockers };
   facts.project = null;
   facts.confirmation = confirmationStatus(null, loaded.confirmed, facts.lastReopenRevision);
-  const summary = view.inventory.summary ? { ...view.inventory.summary, openPendingItemCount: 0 } : null;
-  return { ...loaded, facts, assignment: null, lines: [], digest: null, view: { ...view, pendingItems: [], events: [], lines: [], openPendingItems: 0, inventory: { ...view.inventory, summary } } };
+  // The run's progress stays as it was (the snapshot's summary then counts no open pending item).
+  return { ...loaded, facts, assignment: null, lines: [], digest: null, view: { ...view, pendingItems: [], events: [], lines: [], openPendingItems: 0 } };
 }
 
 // Facts plus the inventory view of the current run (materials, pending items, events, lines), with the stored answers

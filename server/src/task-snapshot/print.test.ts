@@ -1,8 +1,9 @@
 import { STAY_TRIO_COPY } from '@baox/contract';
 import { describe, expect, it } from 'vitest';
 import type { StayTrio } from '../stay-trio';
-import { printView, type PrintFacts, type StoredPage } from './facts';
-import { unrecordedScreenshotNotice } from './layout';
+import type { PrintFacts, StoredPage } from '../print/facts';
+import { unrecordedScreenshotNotice } from '../print/layout';
+import { printView } from './print';
 
 // The missing-screenshot notice on a generated sheet (#213). The inventory's 住宿 trio record decides it where there
 // is one; a 住宿 page without a record (a task inventoried before the trio check) still gets a notice.

@@ -1,4 +1,4 @@
-import { TaskListSchema } from '@baox/contract';
+import { TASK_ACTIONS, TaskListSchema } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loginWall } from './erp/testing/fake-executor';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
@@ -13,20 +13,13 @@ beforeEach(async () => {
 afterEach(() => server.close());
 
 describe('allowed actions in the snapshot', () => {
-  it('confirmed: 去报销 and the changes before it are on offer, and the task can be voided', async () => {
+  it('confirmed: 去报销 is on offer, in contract order, and the task can be voided', async () => {
     const scene = await scenario(server).at('actions');
-    expect(scene.reached.allowedActions).toEqual([
-      'upload',
-      'reopen_upload',
-      'exclude_material',
-      'answer_pending',
-      'set_home_city',
-      'assign_project_lines',
-      'submit_project_assignment',
-      'start_erp_write',
-      'print',
-      'void_task',
-    ]);
+    const allowed = scene.reached.allowedActions;
+    // The full set per state is the policy table's (`task-policy.test.ts`); this checks the snapshot carries it.
+    expect(allowed).toEqual(expect.arrayContaining(['start_erp_write', 'print', 'void_task']));
+    expect(allowed).not.toContain('confirm_review');
+    expect(allowed).toEqual(TASK_ACTIONS.filter((action) => allowed.includes(action)));
   });
 
   it('the login pause offers only its own two writes; the list will not void a task mid-write', async () => {

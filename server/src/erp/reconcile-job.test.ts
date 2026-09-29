@@ -1,4 +1,4 @@
-// The server's end of 对账 (reconcile): the read-only job driven through the protocol on the fake ERP, with the
+// The server's end of reconcile (对账): the read-only job driven through the protocol on the fake ERP, with the
 // real server channel persisting its events on SQLite `:memory:` and the server classifying what was read. The job's
 // own behaviour (read-only, login wall) is tested in erp-executor/src/reconcile-job.test.ts. Parity: for each
 // recorded draft state (@baox/erp-executor/testing/reconcile-states) the job reads what the kernel reads and lands in the kernel's bucket; the golden

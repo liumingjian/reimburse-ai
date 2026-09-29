@@ -118,9 +118,11 @@ export const STAGE_DEFAULT_PAGE: Readonly<Record<TaskStage, TaskPage>> = {
   voided: 'upload',
 };
 
-// 报销任务上的写动作（task actions）：服务端 taskPolicy 按任务事实判定此刻哪些被接受，快照的 allowedActions
-// 就是这张表里此刻会被接受的那些（输入本身的校验除外，如哪份材料、哪个待确认项）。页面的按钮只看它，不自己推规则。
-// void_task 是任务作废（ADR-0030）：任何状态都可以，只有这个任务自己的写入、对账或盘点正在跑时不行。
+// The writes a reimbursement task (报销任务) accepts. The server's taskPolicy decides from the task's facts which of them
+// are admitted right now; the snapshot's `allowedActions` lists exactly those (checks of the request input itself, such
+// as which material or which pending item, are not part of it). Page buttons read that list and derive no rule of their
+// own. `void_task` is voiding the task (任务作废, ADR-0030): allowed in every state, except while a write, a
+// reconcile (对账) or an inventory run of this very task is in flight.
 export const TASK_ACTIONS = [
   'upload',
   'start_inventory',

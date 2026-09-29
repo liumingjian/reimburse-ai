@@ -67,7 +67,7 @@ export function catalogRefusal(catalog) {
  *
  * A clean abort — the job stopped BEFORE writing anything — also reports `status: 'idle'`, and carries its
  * explanation in `erp.abortReason`; only the `unknown` phase, where the write may have landed, reports
- * `status: 'aborted'` (server/src/erp/fill-state.ts:210-224). Watching `status` alone therefore misses exactly
+ * `status: 'aborted'` (server/src/task-snapshot/erp.ts, `erpView`). Watching `status` alone therefore misses exactly
  * the case this section exists to check, which is how a correct abort was recorded as a defect.
  *
  * A catalog mismatch is likewise mapped to the plain `idle` view on purpose, because its problems belong to
@@ -132,7 +132,7 @@ const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /**
  * Poll `read` until its value differs from the one it started at, or the budget runs out.
  *
- * Used for the print page's rotate check: `imageUrl` is content-addressed (server/src/print/facts.ts), so a
+ * Used for the print page's rotate check: `imageUrl` is content-addressed (server/src/task-snapshot/print.ts), so a
  * finished re-render cannot fail to change the `src` — but the re-render itself takes seconds, measured at
  * about seven against the live app. A fixed sleep shorter than that reports a working feature as broken.
  *
@@ -171,7 +171,7 @@ export const ERP_WRITE_BUDGET_MS = 300_000;
  *
  *   `done`         the write ran to the end and the form is waiting for the employee's 保存 (ADR-0028). The
  *                  browser was plainly available. This is a pass, and the area had no way to say so before.
- *   `aborted`      only the `unknown` phase reports this (server/src/erp/fill-state.ts): the write may have
+ *   `aborted`      only the `unknown` phase reports this (server/src/task-snapshot/erp.ts): the write may have
  *                  landed and the app cannot tell. Over an irreversible import that is a defect to report,
  *                  whatever caused it.
  *   `waiting_login` the browser is up but nobody is logged in; nothing was written, and the run is paused for

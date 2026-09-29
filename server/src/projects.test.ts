@@ -269,6 +269,8 @@ describe('home city', () => {
       .values({ attempt_id: 'a1', job_id: 'j1', task_id: start.task.taskId, action: 'import', preconditions: '{}', expected_postconditions: '{}', erp_build: 'b', form_id: 'f', erp_account: 'x', erp_tenant: 't', erp_display_name: 'n', started_at: '2026-09-15T00:00:00Z' })
       .execute();
     await refused(await client.act(start, 'set-home-city', { homeCity: '上海' }), 'home_city_locked');
+    // An invalid city is named before the lock, as it always was.
+    await refused(await client.act(start, 'set-home-city', { homeCity: '这是一个超过二十个字的城市名称用来测试长度限制吗' }), 'invalid_home_city');
     expect((await client.current(start.task.taskId)).task.homeCity).toBe('杭州');
   });
 

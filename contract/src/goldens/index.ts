@@ -13,7 +13,7 @@ import review from './review.json';
 import upload from './upload.json';
 import voided from './voided.json';
 
-// Golden snapshots (@baox/contract/goldens): what the server's snapshot projection (server/src/task-snapshot.ts)
+// Golden snapshots (@baox/contract/goldens): what the server's snapshot projection (server/src/task-snapshot/)
 // answers for a task the scenario builder drove to each GOLDEN_SCENARIOS entry. The web mock is checked against them.
 // Recorded, never hand-edited; per-run values (ids, digests, timestamps) are replaced as server/src/test/goldens.ts
 // describes. Re-record after an intended projection change:

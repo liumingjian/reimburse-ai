@@ -4,7 +4,7 @@ The rules a change is reviewed against. The `/code-review` Standards axis reads 
 
 ## Every QA-bug fix ships a regression test
 
-A QA bug is one the maintainer reported from 手动 QA (manual QA) on a running build. Its fix includes a test that goes
+A QA bug is one the maintainer reported from manual QA (手动 QA) on a running build. Its fix includes a test that goes
 _red_ on the bug without the fix and green with it, at one of the four levels below. Pick the level by the bug class; a
 bug that spans two classes gets the test at the level that owns the rule the fix changed.
 
@@ -15,7 +15,7 @@ tested only through the scenario builder, an ERP page bug tested only against a 
 |---|---|---|
 | A task in the wrong stage or step, stuck, a button or action offered or refused wrongly, a write admitted or refused wrongly | taskPolicy table | a row in `server/src/task-policy.test.ts` |
 | Wrong behaviour of a task action across the server: what an action stores, returns or leaves behind, given a task at some stage (including a scripted ERP outcome) | Scenario builder | a server test starting from `scenario(server).at(<stage>, …)` |
-| An invoice or other 报销材料 (reimbursement material) read wrong: a field missing or wrong, the wrong layout, the wrong outcome | Recognition snapshot case | `server/src/parse/snapshots/<case>.doc.json` + `<case>.expected.json` |
+| An invoice or other reimbursement material (报销材料) read wrong: a field missing or wrong, the wrong layout, the wrong outcome | Recognition snapshot case | `server/src/parse/snapshots/<case>.doc.json` + `<case>.expected.json` |
 | The ERP executor wrong on an ERP page: a selector, a page flow, a field written or read back wrong | Recorded-ERP executor test | an `erp-executor/src/*.test.ts` test against `createFakeErp` |
 
 ### taskPolicy table
@@ -34,15 +34,9 @@ reachable one plus `run(<action>)`.
 
 ### Recognition snapshot case
 
-Capture the document the material produced and redact every personal or real value:
-
-```sh
-pnpm --filter @baox/server exec tsx scripts/probe-parse.ts \
-  --capture src/parse/snapshots/<case> --redact <map.json> <file>
-```
-
-Write `<case>.expected.json` by hand from the document, never from the parser's output; its `about` names the issue.
-`server/src/parse/snapshots.test.ts` runs every case with no pdfjs and no OCR. Redaction and expectation rules:
+Capture the document the material produced, redacted, as a case in `server/src/parse/snapshots/`, and write its
+expectation by hand; its `about` names the issue. `server/src/parse/snapshots.test.ts` runs every case with no pdfjs
+and no OCR. The capture command, the redaction rules and how to write the expectation are in
 `docs/agents/private-corpus.md`.
 
 ### Recorded-ERP executor test
