@@ -22,7 +22,8 @@ class ExtensionTemplateUnusable extends Error {}
 
 // The installable extension for `origin`. Refuses rather than serve something the employee would install in vain: a
 // template that is missing, one from another build than this server's (its version is not EXTENSION_VERSION, so the
-// server may refuse it on connect), or one whose `host_permissions` did not come out as exactly this origin.
+// server may refuse it on connect), or one whose `host_permissions` or content-script `matches` did not come out as
+// exactly this origin.
 export function packageExtension(templateDir: string, origin: string): Buffer<ArrayBuffer> {
   if (!existsSync(join(templateDir, 'manifest.json'))) throw new ExtensionTemplateUnusable(`no extension template at ${templateDir}; run the extension build`);
   const entries = filesUnder(templateDir).map((name) => {
@@ -31,7 +32,7 @@ export function packageExtension(templateDir: string, origin: string): Buffer<Ar
     return { name, data: Buffer.from(stampOrigin(bytes.toString('utf8'), origin), 'utf8') };
   });
   const manifestEntry = entries.find((entry) => entry.name === 'manifest.json');
-  const manifest = JSON.parse(Buffer.from(manifestEntry?.data ?? '').toString('utf8')) as { version?: unknown; host_permissions?: unknown };
+  const manifest = JSON.parse(Buffer.from(manifestEntry?.data ?? '').toString('utf8')) as { version?: unknown; host_permissions?: unknown; content_scripts?: unknown };
   if (manifest.version !== EXTENSION_VERSION) {
     throw new ExtensionTemplateUnusable(`extension template is version ${String(manifest.version)}, this server ships ${EXTENSION_VERSION}; rebuild the extension`);
   }

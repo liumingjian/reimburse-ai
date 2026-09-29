@@ -160,19 +160,20 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
 
     // The 应用账号 an extension acts for, or null when the pairing is gone (revoked, replaced) or the account can no
     // longer act at all. A deactivated or unapproved account loses its extension the way it loses its sessions.
-    // Every answer marks the connection: the settings page has no other sign that the pairing is alive.
-    async lookup(token: string | undefined): Promise<{ accountId: string } | null> {
+    // Every answer marks the connection: the settings page has no other sign that the pairing is alive. The username is
+    // how the extension names the account when asking before it switches to another one (#292).
+    async lookup(token: string | undefined): Promise<{ accountId: string; username: string } | null> {
       if (!token) return null;
       const tokenSha = sha256(token);
       const row = await db
         .selectFrom('extension_pairing')
         .innerJoin('account', 'account.account_id', 'extension_pairing.account_id')
-        .select(['extension_pairing.account_id', 'account.active', 'account.approved'])
+        .select(['extension_pairing.account_id', 'account.username', 'account.active', 'account.approved'])
         .where('extension_pairing.token_sha256', '=', tokenSha)
         .executeTakeFirst();
       if (!row || row.active !== 1 || row.approved !== 1) return null;
       await optionalWrite(() => db.updateTable('extension_pairing').set({ last_connected_at: iso(clock()) }).where('token_sha256', '=', tokenSha).execute());
-      return { accountId: row.account_id };
+      return { accountId: row.account_id, username: row.username ?? row.account_id };
     },
 
     // The version an extension reports when it opens its channel (ADR-0021). An extension is replaced by unpacking a

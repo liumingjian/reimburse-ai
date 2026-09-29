@@ -1,12 +1,23 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
+import { SILENT_EXTENSION_BRIDGE, type ExtensionBridge } from './extension-bridge';
 import type { AccountsState, AppState, AppStore, BookScope, ExtensionPairingState, LegacyImportState, ProjectBookState, SessionState, TaskEntry, TaskListState } from './store';
 
 // 适配器经 React Context 注入：页面只认 useAppStore()，换适配器不改页面。
 
 const StoreContext = createContext<AppStore | null>(null);
+// The page bridge to the 浏览器扩展 (browser extension) is injected the same way; without one, nothing ever answers.
+const BridgeContext = createContext<ExtensionBridge>(SILENT_EXTENSION_BRIDGE);
 
-export function AppProvider({ store, children }: { store: AppStore; children: ReactNode }) {
-  return <StoreContext.Provider value={store}>{children}</StoreContext.Provider>;
+export function AppProvider({ store, bridge = SILENT_EXTENSION_BRIDGE, children }: { store: AppStore; bridge?: ExtensionBridge; children: ReactNode }) {
+  return (
+    <StoreContext.Provider value={store}>
+      <BridgeContext.Provider value={bridge}>{children}</BridgeContext.Provider>
+    </StoreContext.Provider>
+  );
+}
+
+export function useExtensionBridge(): ExtensionBridge {
+  return useContext(BridgeContext);
 }
 
 export function useAppStore(): AppStore {

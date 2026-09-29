@@ -41,7 +41,7 @@ export const extensionBlobPath = (sha256: string): string => `${EXTENSION_BLOB_P
 //
 // Releasing a changed extension: bump EXTENSION_VERSION here and rebuild; employees get it from the settings page.
 // Raise EXTENSION_MINIMUM_VERSION as well when the change is one an older extension must not be allowed to run.
-export const EXTENSION_VERSION = '1.0.1';
+export const EXTENSION_VERSION = '1.1.0';
 export const EXTENSION_MINIMUM_VERSION = '1.0.1';
 
 // ---------------------------------------------------------------------------
@@ -95,7 +95,9 @@ export type ExtensionPairInput = z.infer<typeof ExtensionPairInputSchema>;
 export const ExtensionTokenSchema = z.object({ token: z.string().min(1), accountId: z.string().min(1) });
 export type ExtensionToken = z.infer<typeof ExtensionTokenSchema>;
 
-export const ExtensionIdentitySchema = z.object({ accountId: z.string().min(1) });
+// What the app answers an extension that asks with its token (GET EXTENSION_PAIR_PATH). `username` is how the
+// extension names the account it acts for when it asks the employee before switching to another one (#292).
+export const ExtensionIdentitySchema = z.object({ accountId: z.string().min(1), username: z.string().min(1) });
 export type ExtensionIdentity = z.infer<typeof ExtensionIdentitySchema>;
 
 // none: no pairing; waiting: a 配对码 (pairing code) is issued and no extension has used it yet; paired: paired.
@@ -137,7 +139,8 @@ export const ExtensionPairingFailureSchema = z.object({
 export type ExtensionPairingOutcome = { ok: true; pairing: ExtensionPairing } | { ok: false; error: ActionError; pairing: ExtensionPairing | null };
 
 // The one refusal both halves of version negotiation give (ADR-0021): the 配对 request and the channel's first
-// message answer with the same sentence, so an employee who hits it twice reads it once.
+// message answer with the same sentence, so an employee who hits it twice reads it once. Overwriting the same unpacked
+// directory keeps the extension ID and its stored pairing (ADR-0021), so the sentence never asks to pair again.
 export const EXTENSION_VERSION_TOO_OLD_CODE = 'version_too_old';
 
 // Null when the reported version is good enough; the sentence to show otherwise. An extension that reports no version
@@ -145,7 +148,7 @@ export const EXTENSION_VERSION_TOO_OLD_CODE = 'version_too_old';
 export function extensionVersionRefusal(reported: string | null | undefined, minimum: string): string | null {
   if (reported && compareExtensionVersions(reported, minimum) >= 0) return null;
   const which = reported ? `你装的是 ${reported} 版。` : '你装的这一版太旧，连版本号都报不上来。';
-  return `这台服务器要求浏览器扩展 ${minimum} 或更新的版本，所以没有连上。${which}请回到设置页重新下载扩展包，解压后覆盖原来的目录，到浏览器的扩展页点一次“重新加载”，然后重新配对。`;
+  return `这台服务器要求浏览器扩展 ${minimum} 或更新的版本，所以没有连上。${which}请回到设置页重新下载扩展包，解压后覆盖原来的目录，到浏览器的扩展页点一次“重新加载”。`;
 }
 
 export const EXTENSION_PAIRING_ERRORS = {
@@ -158,6 +161,95 @@ export const EXTENSION_PAIRING_STATUS_LABELS: Readonly<Record<(typeof EXTENSION_
   waiting: '配对码已生成，等待扩展填入',
   paired: '已配对',
 };
+
+// ---------------------------------------------------------------------------
+// The page bridge (#287)
+// ---------------------------------------------------------------------------
+
+// The baox page and the 浏览器扩展 talk directly through `window.postMessage`: the extension's content script runs on
+// the one origin stamped into its build (the same origin as `host_permissions`, so it costs no permission prompt) and
+// relays between the page and the service worker. Both sides parse every incoming message with the schemas below, so
+// a message either is one of these or is ignored.
+//
+// Every message carries EXTENSION_BRIDGE_NAMESPACE, so unrelated `postMessage` traffic on the page never parses. The
+// content script also checks that a message came from its own window and from the stamped origin; the page checks the
+// same of the answers.
+//
+// Adding a message: add its schema to the page or extension union. The page's bridge module and the extension's relay
+// both dispatch on `kind`, so a kind one side does not know is ignored there rather than misread.
+export const EXTENSION_BRIDGE_NAMESPACE = 'baox-extension-bridge';
+
+const BridgeNamespaceSchema = z.literal(EXTENSION_BRIDGE_NAMESPACE);
+
+// Page -> extension: "who are you?". Answered with a presence.
+export const ExtensionBridgeProbeSchema = z.object({ namespace: BridgeNamespaceSchema, kind: z.literal('probe') });
+export type ExtensionBridgeProbe = z.infer<typeof ExtensionBridgeProbeSchema>;
+
+// Extension -> page: installed, which version, and whether it is paired and to which 应用账号. Sent when the content
+// script loads and in answer to every probe. `paired` is what the app would accept right now, so a pairing revoked from
+// the settings page reads as unpaired at the next presence even while the token is still stored in the extension.
+export const ExtensionBridgePresenceSchema = z.object({
+  namespace: BridgeNamespaceSchema,
+  kind: z.literal('presence'),
+  version: ExtensionVersionSchema,
+  paired: z.boolean(),
+  accountId: z.string().min(1).nullable(),
+});
+export type ExtensionBridgePresence = z.infer<typeof ExtensionBridgePresenceSchema>;
+
+// Page -> extension: "may you switch to the signed-in 应用账号 `accountId`?" (#292). Sent before a 配对码 is issued
+// whenever the extension says it acts for another account, because issuing one already ends the signed-in account's
+// own earlier pairing on the server, so a refused switch must come before it. The extension asks the employee in a
+// window of its own, naming the account it acts for now; the page never renders that question and cannot answer it.
+// Answered with a switch outcome.
+export const ExtensionBridgeSwitchRequestSchema = z.object({ namespace: BridgeNamespaceSchema, kind: z.literal('switch'), accountId: z.string().min(1) });
+export type ExtensionBridgeSwitchRequest = z.infer<typeof ExtensionBridgeSwitchRequestSchema>;
+
+// accepted: the employee agreed, or there was nothing to agree to (the extension is unpaired, or already acts for
+// `accountId`); the next pair request for `accountId` is redeemed without asking again. declined: the employee kept
+// the other account, or closed the window; nothing changed.
+export const ExtensionSwitchOutcomeSchema = z.enum(['accepted', 'declined']);
+export type ExtensionSwitchOutcome = z.infer<typeof ExtensionSwitchOutcomeSchema>;
+
+// Extension -> page: the answer to a switch request.
+export const ExtensionBridgeSwitchOutcomeSchema = z.object({ namespace: BridgeNamespaceSchema, kind: z.literal('switch_outcome'), outcome: ExtensionSwitchOutcomeSchema });
+export type ExtensionBridgeSwitchOutcome = z.infer<typeof ExtensionBridgeSwitchOutcomeSchema>;
+
+// Page -> extension: "redeem this 配对码 (pairing code), issued for `accountId`". The page issues the code through the
+// existing endpoint only when the extension is present and not paired to the signed-in 应用账号 (#291), or after an
+// accepted switch request when it acts for another one (#292); the extension redeems it through the same path as a
+// code typed into its popup. `accountId` lets the extension see a switch before redeeming: a switch no accepted switch
+// request covers is asked about first. Answered with a pair outcome.
+export const ExtensionBridgePairRequestSchema = z.object({ namespace: BridgeNamespaceSchema, kind: z.literal('pair'), code: z.string().min(1).max(64), accountId: z.string().min(1) });
+export type ExtensionBridgePairRequest = z.infer<typeof ExtensionBridgePairRequestSchema>;
+
+// How a pair request ended. paired: the extension now acts for `accountId`. failed: redeeming was refused or could not
+// be done, with the same `code` and `message` the popup's redeem gets (version_too_old, network_error, the server's
+// own refusals), so the page shows the reason the popup would. declined: the employee refused to switch the extension
+// away from another 应用账号 (#292); nothing was redeemed.
+export const ExtensionPairOutcomeSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('paired'), accountId: z.string().min(1) }),
+  z.object({ status: z.literal('failed'), code: z.string().min(1), message: z.string().min(1) }),
+  z.object({ status: z.literal('declined') }),
+]);
+export type ExtensionPairOutcome = z.infer<typeof ExtensionPairOutcomeSchema>;
+
+// Extension -> page: the answer to a pair request.
+export const ExtensionBridgePairOutcomeSchema = z.object({ namespace: BridgeNamespaceSchema, kind: z.literal('pair_outcome'), outcome: ExtensionPairOutcomeSchema });
+export type ExtensionBridgePairOutcome = z.infer<typeof ExtensionBridgePairOutcomeSchema>;
+
+export const ExtensionBridgePageMessageSchema = z.discriminatedUnion('kind', [ExtensionBridgeProbeSchema, ExtensionBridgeSwitchRequestSchema, ExtensionBridgePairRequestSchema]);
+export type ExtensionBridgePageMessage = z.infer<typeof ExtensionBridgePageMessageSchema>;
+
+export const ExtensionBridgeExtensionMessageSchema = z.discriminatedUnion('kind', [ExtensionBridgePresenceSchema, ExtensionBridgeSwitchOutcomeSchema, ExtensionBridgePairOutcomeSchema]);
+export type ExtensionBridgeExtensionMessage = z.infer<typeof ExtensionBridgeExtensionMessageSchema>;
+
+type BridgeMessageBody<M> = M extends unknown ? Omit<M, 'namespace'> : never;
+
+/** A bridge message from its `kind` and fields, with the namespace every message carries. Both sides build theirs here. */
+export function bridgeMessage<T extends BridgeMessageBody<ExtensionBridgePageMessage | ExtensionBridgeExtensionMessage>>(body: T): T & { namespace: typeof EXTENSION_BRIDGE_NAMESPACE } {
+  return { namespace: EXTENSION_BRIDGE_NAMESPACE, ...body };
+}
 
 // ---------------------------------------------------------------------------
 // The channel (ADR-0019, ADR-0020)

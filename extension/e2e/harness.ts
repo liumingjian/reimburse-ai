@@ -267,7 +267,7 @@ export function unpackedExtension(origin: string): { dir: string; remove(): void
     if (!statSync(path).isFile() || !carriesOrigin(name)) continue;
     writeFileSync(path, stampOrigin(readFileSync(path, 'utf8'), origin));
   }
-  const problem = stampedManifestProblem(JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) as { host_permissions?: unknown }, origin);
+  const problem = stampedManifestProblem(JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) as { host_permissions?: unknown; content_scripts?: unknown }, origin);
   if (problem) throw new Error(problem);
   return { dir, remove: () => rmSync(dir, { recursive: true, force: true }) };
 }

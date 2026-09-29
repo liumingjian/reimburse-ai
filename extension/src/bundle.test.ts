@@ -22,3 +22,16 @@ describe('the service worker bundle', () => {
     expect(result.outputFiles[0]!.text).not.toMatch(/from\s*["']node:|import\(["']node:/);
   });
 });
+
+// The manifest loads the content script as a classic script, which cannot `import` anything.
+describe('the content script bundle', () => {
+  it('is one self-contained script with no module syntax', async () => {
+    const result = await build({
+      entryPoints: [fileURLToPath(new URL('./content-script.ts', import.meta.url))], bundle: true, write: false, format: 'iife', platform: 'browser', target: 'chrome116', logLevel: 'silent',
+      define: { __BAOX_ORIGIN__: JSON.stringify('http://127.0.0.1:4319') },
+    });
+    const text = result.outputFiles[0]!.text;
+    expect(text).not.toMatch(/^\s*(import|export)\s/m);
+    expect(text).toContain('http://127.0.0.1:4319');
+  });
+});

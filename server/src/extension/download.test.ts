@@ -18,7 +18,7 @@ const BUILD_SCRIPT = fileURLToPath(new URL('../../../extension/scripts/build.mjs
 const INTRANET = 'http://10.250.0.222:8888';
 const json = { 'content-type': 'application/json' };
 
-type Manifest = { version: string; host_permissions: string[] };
+type Manifest = { version: string; host_permissions: string[]; content_scripts: { matches: string[]; js: string[] }[] };
 
 let workDir: string;
 let template: string;
@@ -77,10 +77,14 @@ describe('the extension download on the settings page', () => {
     const { files, manifest } = await download(await intranetDownload(template));
 
     // The files sit at the top of the zip, so the folder it unpacks to is the one to load.
-    expect([...files.keys()]).toEqual(expect.arrayContaining(['manifest.json', 'service-worker.js', 'popup.js', 'popup.html']));
+    expect([...files.keys()]).toEqual(expect.arrayContaining(['manifest.json', 'service-worker.js', 'popup.js', 'popup.html', 'switch.js', 'switch.html']));
     // The guard compares origins as literal strings: `http://10.250.0.222:80` would be a different address to it.
     expect(manifest.host_permissions).toEqual([`${INTRANET}/*`]);
+    // The page bridge (#290) runs on the app's own pages and nowhere else.
+    expect(manifest.content_scripts.map((script) => script.matches)).toEqual([[`${INTRANET}/*`]]);
+    expect(files.has(manifest.content_scripts[0]?.js[0] ?? '')).toBe(true);
     expect(files.get('service-worker.js')).toContain(JSON.stringify(INTRANET));
+    expect(files.get('content-script.js')).toContain(JSON.stringify(INTRANET));
     for (const [name, text] of files) {
       expect(text, name).not.toContain(EXTENSION_ORIGIN_PLACEHOLDER);
       expect(text, name).not.toContain('10.250.0.222:80');
@@ -116,6 +120,16 @@ describe('the extension download on the settings page', () => {
     const refused = await intranetDownload(stale);
     expect(refused.status).toBe(503);
     expect(((await refused.json()) as { error: { message: string } }).error.message).toBe(EXTENSION_DOWNLOAD_ERRORS.unavailable);
+  });
+
+  it('refuses a template whose content script would run on pages other than the app', async () => {
+    const wide = join(workDir, 'wide');
+    cpSync(template, wide, { recursive: true });
+    const manifestPath = join(wide, 'manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Manifest;
+    writeFileSync(manifestPath, JSON.stringify({ ...manifest, content_scripts: manifest.content_scripts.map((script) => ({ ...script, matches: ['<all_urls>'] })) }));
+
+    expect((await intranetDownload(wide)).status).toBe(503);
   });
 
   it('says the package is not available when the extension was never built', async () => {

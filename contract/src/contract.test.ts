@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { CREATE_TASK_ERRORS, CreateTaskInputSchema, PENDING_ANSWER_ERRORS, isRealDate, validatePendingAnswer } from './actions';
 import { STAGE_DEFAULT_PAGE, pageAllowed, stageReached } from './stage';
 import { UrlSchema } from './primitives';
+import { EXTENSION_BRIDGE_NAMESPACE, bridgeMessage, ExtensionBridgeExtensionMessageSchema, ExtensionBridgePageMessageSchema, extensionVersionRefusal } from './extension';
 import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS, ERP_HANDOVER_STEP_COPY, ERP_PROGRESS_STEPS, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE } from './snapshot';
 import { KERNEL_PHASES } from './stage';
 
@@ -111,5 +112,68 @@ describe('交接文案', () => {
   test('已保存结果只陈述报销系统实际读到的保存事实', () => {
     expect(ERP_SAVED_OUTCOME_NOTICE).toContain('已保存');
     expect(ERP_SAVED_OUTCOME_NOTICE).toContain('没有读到提交、审批或付款事实');
+  });
+});
+
+// ADR-0021: overwriting the same unpacked directory keeps the stored pairing, so an upgrade is download, overwrite, reload.
+describe('扩展版本太旧的拒绝文案', () => {
+  test('只说下载、覆盖原来的目录、重新加载，不再要求重新配对', () => {
+    for (const reported of ['0.9.0', null]) {
+      const refusal = extensionVersionRefusal(reported, '2.0.0') ?? '';
+      for (const step of ['重新下载扩展包', '覆盖原来的目录', '“重新加载”']) expect(refusal).toContain(step);
+      expect(refusal).not.toContain('配对');
+    }
+  });
+});
+
+// #290: the page and the extension ignore everything on the page's message bus that is not tagged as theirs.
+describe('page bridge messages', () => {
+  test('a presence parses only with the namespace tag', () => {
+    const presence = { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'presence', version: '1.1.0', paired: true, accountId: 'a1' };
+    expect(ExtensionBridgeExtensionMessageSchema.safeParse(presence).success).toBe(true);
+    expect(ExtensionBridgeExtensionMessageSchema.safeParse({ ...presence, namespace: 'someone-else' }).success).toBe(false);
+    expect(ExtensionBridgeExtensionMessageSchema.safeParse({ kind: 'presence', version: '1.1.0', paired: false, accountId: null }).success).toBe(false);
+  });
+
+  test('bridgeMessage adds the namespace tag, so what it builds parses', () => {
+    expect(bridgeMessage({ kind: 'probe' })).toEqual({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'probe' });
+    expect(ExtensionBridgePageMessageSchema.safeParse(bridgeMessage({ kind: 'pair', code: 'K7MQ2PXD', accountId: 'a1' })).success).toBe(true);
+    expect(ExtensionBridgeExtensionMessageSchema.safeParse(bridgeMessage({ kind: 'switch_outcome', outcome: 'accepted' })).success).toBe(true);
+  });
+
+  test('page and extension messages do not parse as each other', () => {
+    const probe = { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'probe' };
+    expect(ExtensionBridgePageMessageSchema.safeParse(probe).success).toBe(true);
+    expect(ExtensionBridgeExtensionMessageSchema.safeParse(probe).success).toBe(false);
+    const pair = { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair', code: 'K7MQ2PXD', accountId: 'a1' };
+    expect(ExtensionBridgePageMessageSchema.safeParse(pair).success).toBe(true);
+    expect(ExtensionBridgeExtensionMessageSchema.safeParse(pair).success).toBe(false);
+    const change = { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'switch', accountId: 'a1' };
+    expect(ExtensionBridgePageMessageSchema.safeParse(change).success).toBe(true);
+    expect(ExtensionBridgeExtensionMessageSchema.safeParse(change).success).toBe(false);
+  });
+
+  // #292: the extension can only tell a switch of accounts before redeeming if the page says whom the code is for.
+  test('a pair request names the account the code was issued for', () => {
+    expect(ExtensionBridgePageMessageSchema.safeParse({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair', code: 'K7MQ2PXD' }).success).toBe(false);
+    expect(ExtensionBridgePageMessageSchema.safeParse({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'switch' }).success).toBe(false);
+  });
+
+  test('a switch outcome is accepted or declined', () => {
+    const outcome = (value: unknown) => ExtensionBridgeExtensionMessageSchema.safeParse({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'switch_outcome', outcome: value }).success;
+    expect(outcome('accepted')).toBe(true);
+    expect(outcome('declined')).toBe(true);
+    expect(outcome('maybe')).toBe(false);
+  });
+
+  // #291: a failed pairing carries the code and message the popup's redeem gets, so the page can show the same reason.
+  test('a pair outcome is paired with the account, failed with a code and message, or declined', () => {
+    const outcome = (value: unknown) => ExtensionBridgeExtensionMessageSchema.safeParse({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair_outcome', outcome: value }).success;
+    expect(outcome({ status: 'paired', accountId: 'a1' })).toBe(true);
+    expect(outcome({ status: 'failed', code: 'version_too_old', message: '请升级' })).toBe(true);
+    expect(outcome({ status: 'declined' })).toBe(true);
+    expect(outcome({ status: 'failed', message: '请升级' })).toBe(false);
+    expect(outcome({ status: 'paired' })).toBe(false);
+    expect(outcome({ status: 'somewhere-else' })).toBe(false);
   });
 });

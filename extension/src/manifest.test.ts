@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { compareExtensionVersions, EXTENSION_MINIMUM_VERSION, EXTENSION_ORIGIN_PLACEHOLDER, EXTENSION_VERSION } from '@baox/contract';
 import { describe, expect, it } from 'vitest';
 import { manifestFor, readExtensionVersion, readOriginPlaceholder } from '../scripts/manifest.mjs';
+import { stampedManifestProblem } from './template';
 
 const contractSource = readFileSync(fileURLToPath(new URL('../../contract/src/extension.ts', import.meta.url)), 'utf8');
 
@@ -24,6 +25,20 @@ describe('the version the extension ships with is the version the server enforce
     expect(manifest.host_permissions).toEqual(['http://10.250.0.222/*']);
     expect(manifest.permissions).toContain('debugger');
     expect(manifest.manifest_version).toBe(3);
+  });
+
+  // #290: the page bridge runs on the app's own pages and nowhere else, inside host_permissions so no prompt appears.
+  it('runs its content script on exactly the origin the build talks to', () => {
+    const manifest = manifestFor(EXTENSION_VERSION, 'http://10.250.0.222');
+    expect(manifest.content_scripts).toEqual([expect.objectContaining({ matches: ['http://10.250.0.222/*'], js: ['content-script.js'] })]);
+    expect(stampedManifestProblem(manifest, 'http://10.250.0.222')).toBeNull();
+  });
+
+  it('is not an extension for an origin its content script does not match', () => {
+    const manifest = manifestFor(EXTENSION_VERSION, 'http://10.250.0.222');
+    const elsewhere = { ...manifest, content_scripts: [{ ...manifest.content_scripts[0], matches: ['<all_urls>'] }] };
+    expect(stampedManifestProblem(elsewhere, 'http://10.250.0.222')).toMatch(/content scripts/);
+    expect(stampedManifestProblem({ ...manifest, content_scripts: [] }, 'http://10.250.0.222')).toMatch(/content scripts/);
   });
 
   // The server finds the place to put its origin by this string, so the build must write the one the server looks for.

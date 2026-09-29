@@ -1,15 +1,21 @@
-import { Button } from '@carbon/react';
+import { Button, InlineNotification } from '@carbon/react';
 import { CheckmarkFilled, Download, Extensions, SettingsAdjust } from '@carbon/icons-react';
 import { EXTENSION_DOWNLOAD_PATH, EXTENSION_VERSION } from '@baox/contract';
 import { AppShell } from '../shell/AppShell';
 import { PageHeader } from '../shell/PageHeader';
 import { SETTINGS_HASH } from '../router';
+import { awaitsPairing, useExtensionSetup } from './extension-setup';
 
 // The longer onboarding guide lives on its own route so the routine settings view can answer one question quickly:
-// what state is this account's extension in, and what should the employee do next?
+// what state is this account's extension in, and what should the employee do next? The guide itself follows the same
+// step (`extension-setup.ts`): the install steps only when no extension answered, the upgrade steps alone for one that
+// is too old, a pointer back to settings (which pairs on its own) for one installed but not paired to this account, and
+// no install steps for one already paired to it.
 export const EXTENSION_INSTALL_COPY = {
   download: '下载浏览器扩展',
   offeredVersion: (version: string) => `这里提供的扩展版本：${version}`,
+  tooOldTitle: '先升级扩展',
+  tooOld: (installed: string, minimum: string) => `你装的扩展是 ${installed} 版，这个应用需要 ${minimum} 或更新的版本。按下面的步骤换成新版本，不用重新配对。`,
   outdated: (installed: string, offered: string) => `你装的扩展是 ${installed} 版，这里提供的是 ${offered} 版。请按下面“升级扩展”的步骤换成新版本。`,
   installTitle: '安装扩展',
   installLead: '扩展只能装在 Chrome 或 Edge 里。它不经过应用商店，而是由你把下载的安装包解压，再交给浏览器加载。照下面的步骤一步步做就行。',
@@ -29,16 +35,17 @@ export const EXTENSION_INSTALL_COPY = {
     '点击上面的“下载浏览器扩展”，下载新的压缩包。',
     '打开安装时建的那个文件夹，删掉里面原有的全部文件，再把新压缩包里的全部文件解压进去。请用原来的文件夹，换一个新文件夹会让浏览器里出现两个扩展。',
     '打开扩展管理页（Chrome 是 chrome://extensions，Edge 是 edge://extensions），在“报销助手”上点击刷新形状的“重新加载”按钮。',
-    '看一眼“报销助手”上显示的版本号，和这里提供的版本一致就升级好了。如果扩展提示需要重新配对，就在下方重新生成配对码。',
+    '看一眼“报销助手”上显示的版本号，和这里提供的版本一致就升级好了。',
   ],
   bannerTitle: '去报销时浏览器顶部的提示条',
   bannerBody: '去报销时，扩展会新开一个报销系统的标签页，在那里替你填写。这时浏览器顶部会出现一条提示，写着“报销助手”已开始调试此浏览器，或者正在调试此浏览器。这是正常的：扩展正是靠它把内容填进报销系统，提示条会一直显示到这次填写结束。',
+  checking: '正在检测这台浏览器里的报销助手…',
   bannerCancel: '不要点这条提示上的“取消”。点了它，扩展会暂时失去对那个标签页的控制：如果当时它没有正在往报销系统里写，它会重新接管同一个标签页，确认页面没变之后接着做下去；如果正写到一半，这一步有没有生效看不出来，这次去报销就停下，转去对账。请回到应用，按页面上的提示处理。',
 } as const;
 
 export const EXTENSION_TUTORIAL_COPY = {
   title: '浏览器扩展安装教程',
-  lead: '跟着下面的图示把扩展装好，再回到设置页生成配对码。教程会在单独的浏览器标签页打开，设置页里的状态不会丢。',
+  lead: '跟着下面的图示把扩展装好，再回到设置页配对。教程会在单独的浏览器标签页打开，设置页里的状态不会丢。',
   back: '返回设置',
   download: EXTENSION_INSTALL_COPY.download,
   install: EXTENSION_INSTALL_COPY.installTitle,
@@ -50,6 +57,12 @@ export const EXTENSION_TUTORIAL_COPY = {
   bannerBody: EXTENSION_INSTALL_COPY.bannerBody,
   bannerCancel: EXTENSION_INSTALL_COPY.bannerCancel,
   stepsTitle: '安装步骤',
+  pairedHere: '这台浏览器里的报销助手已经和这个账号配对，不需要再安装。',
+  checking: EXTENSION_INSTALL_COPY.checking,
+  pairOnSettingsTitle: '回到设置页完成配对',
+  pairOnSettings: '这台浏览器里已经装好报销助手，不用再安装。回到设置页，页面会自动和扩展配对，不用手动输入配对码。',
+  pairOnSettingsSwitch: '这台浏览器里已经装好报销助手，它现在替另一个账号报销。回到设置页，扩展会弹出窗口问你要不要换成这个账号，确认后自动配对。',
+  pairOnSettingsAction: '回到设置页配对',
   stepOne: {
     title: '下载并解压',
     label: '下载',
@@ -136,49 +149,113 @@ function TutorialStep({ index, step }: { index: number; step: (typeof TUTORIAL_S
 }
 
 export function ExtensionTutorialPage() {
+  const { step } = useExtensionSetup();
+  const install = step.kind === 'notInstalled';
   return (
     <AppShell nav="settings">
       <div className="app-form-page app-tutorial-page">
         <PageHeader title={EXTENSION_TUTORIAL_COPY.title} lead={EXTENSION_TUTORIAL_COPY.lead} />
-        <section className="app-form-section app-tutorial-intro" aria-label={EXTENSION_TUTORIAL_COPY.install}>
-          <div>
-            <h2 className="app-section-title">{EXTENSION_TUTORIAL_COPY.install}</h2>
-            <p>{EXTENSION_TUTORIAL_COPY.installLead}</p>
-          </div>
-          <BrowserIllustration />
-          <div className="app-btn-row">
-            <Button kind="primary" href={EXTENSION_DOWNLOAD_PATH} renderIcon={Download}>
-              {EXTENSION_TUTORIAL_COPY.download}
-            </Button>
-            <div className="app-tutorial-download-note">
-              <p className="app-caption">{EXTENSION_INSTALL_COPY.offeredVersion(EXTENSION_VERSION)}</p>
-              <p className="app-caption">下载后使用原来的文件夹，后续升级时也会用到。</p>
-            </div>
-          </div>
-        </section>
-        <section className="app-form-section" aria-label={EXTENSION_TUTORIAL_COPY.stepsTitle}>
-          <h2 className="app-section-title">{EXTENSION_TUTORIAL_COPY.stepsTitle}</h2>
-          <ol className="app-tutorial-steps" aria-label={EXTENSION_TUTORIAL_COPY.stepsTitle}>
-            {TUTORIAL_STEPS.map((step, index) => <TutorialStep key={step.title} index={index} step={step} />)}
-          </ol>
-          <p className="app-caption">{EXTENSION_TUTORIAL_COPY.startup}</p>
-        </section>
-        <section className="app-form-section" aria-label={EXTENSION_TUTORIAL_COPY.upgrade}>
-          <h2 className="app-section-title">{EXTENSION_TUTORIAL_COPY.upgrade}</h2>
-          <p>{EXTENSION_TUTORIAL_COPY.upgradeLead}</p>
-          <ol className="app-guide-steps" aria-label={EXTENSION_TUTORIAL_COPY.upgrade}>
-            {EXTENSION_INSTALL_COPY.upgradeSteps.map((step) => <li key={step}>{step}</li>)}
-          </ol>
-        </section>
-        <section className="app-form-section" aria-label={EXTENSION_TUTORIAL_COPY.banner}>
-          <h2 className="app-section-title">{EXTENSION_TUTORIAL_COPY.banner}</h2>
-          <p>{EXTENSION_TUTORIAL_COPY.bannerBody}</p>
-          <p>{EXTENSION_TUTORIAL_COPY.bannerCancel}</p>
-        </section>
+        {step.kind === 'checking' ? (
+          <p className="app-loading" role="status">
+            {EXTENSION_TUTORIAL_COPY.checking}
+          </p>
+        ) : null}
+        {step.kind === 'pairedHere' ? (
+          <InlineNotification kind="success" role="status" lowContrast hideCloseButton statusIconDescription="成功" title={EXTENSION_TUTORIAL_COPY.pairedHere} />
+        ) : null}
+        {install ? <InstallSections /> : null}
+        {awaitsPairing(step) && !install ? <PairOnSettingsSection switching={step.kind === 'pairedElsewhere'} /> : null}
+        {step.kind === 'outdated' ? <UpgradeSection lead={EXTENSION_INSTALL_COPY.tooOld(step.installed, step.minimum)} download /> : null}
+        {install ? <UpgradeSection lead={EXTENSION_TUTORIAL_COPY.upgradeLead} download={false} /> : null}
+        {step.kind === 'pairedHere' || install ? <BannerSection /> : null}
         <div className="app-btn-row">
           <Button kind="ghost" href={SETTINGS_HASH}>{EXTENSION_TUTORIAL_COPY.back}</Button>
         </div>
       </div>
     </AppShell>
+  );
+}
+
+function InstallSections() {
+  return (
+    <>
+      <section className="app-form-section app-tutorial-intro" aria-label={EXTENSION_TUTORIAL_COPY.install}>
+        <div>
+          <h2 className="app-section-title">{EXTENSION_TUTORIAL_COPY.install}</h2>
+          <p>{EXTENSION_TUTORIAL_COPY.installLead}</p>
+        </div>
+        <BrowserIllustration />
+        <div className="app-btn-row">
+          <Button kind="primary" href={EXTENSION_DOWNLOAD_PATH} renderIcon={Download}>
+            {EXTENSION_TUTORIAL_COPY.download}
+          </Button>
+          <div className="app-tutorial-download-note">
+            <p className="app-caption">{EXTENSION_INSTALL_COPY.offeredVersion(EXTENSION_VERSION)}</p>
+            <p className="app-caption">下载后使用原来的文件夹，后续升级时也会用到。</p>
+          </div>
+        </div>
+      </section>
+      <section className="app-form-section" aria-label={EXTENSION_TUTORIAL_COPY.stepsTitle}>
+        <h2 className="app-section-title">{EXTENSION_TUTORIAL_COPY.stepsTitle}</h2>
+        <ol className="app-tutorial-steps" aria-label={EXTENSION_TUTORIAL_COPY.stepsTitle}>
+          {TUTORIAL_STEPS.map((step, index) => <TutorialStep key={step.title} index={index} step={step} />)}
+        </ol>
+        <p className="app-caption">{EXTENSION_TUTORIAL_COPY.startup}</p>
+      </section>
+    </>
+  );
+}
+
+// Installed but not paired to this account: the only step left is pairing, and the settings page does it by itself
+// (`useAutoPair`), asking through the extension first when it acts for another account.
+function PairOnSettingsSection({ switching }: { switching: boolean }) {
+  return (
+    <section className="app-form-section" aria-label={EXTENSION_TUTORIAL_COPY.pairOnSettingsTitle}>
+      <h2 className="app-section-title">{EXTENSION_TUTORIAL_COPY.pairOnSettingsTitle}</h2>
+      <p>{switching ? EXTENSION_TUTORIAL_COPY.pairOnSettingsSwitch : EXTENSION_TUTORIAL_COPY.pairOnSettings}</p>
+      <div className="app-btn-row">
+        <Button kind="primary" href={SETTINGS_HASH}>
+          {EXTENSION_TUTORIAL_COPY.pairOnSettingsAction}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function UpgradeSection({ lead, download }: { lead: string; download: boolean }) {
+  return (
+    <section className="app-form-section" aria-label={EXTENSION_TUTORIAL_COPY.upgrade}>
+      <h2 className="app-section-title">{EXTENSION_TUTORIAL_COPY.upgrade}</h2>
+      <UpgradeSteps lead={lead} download={download} />
+    </section>
+  );
+}
+
+/** The upgrade steps with their lead, and the download they start from when it is not already on the page. */
+export function UpgradeSteps({ lead, download }: { lead: string; download: boolean }) {
+  return (
+    <>
+      <p>{lead}</p>
+      {download ? (
+        <div className="app-btn-row">
+          <Button kind="primary" href={EXTENSION_DOWNLOAD_PATH} renderIcon={Download}>
+            {EXTENSION_TUTORIAL_COPY.download}
+          </Button>
+        </div>
+      ) : null}
+      <ol className="app-guide-steps" aria-label={EXTENSION_TUTORIAL_COPY.upgrade}>
+        {EXTENSION_INSTALL_COPY.upgradeSteps.map((line) => <li key={line}>{line}</li>)}
+      </ol>
+    </>
+  );
+}
+
+function BannerSection() {
+  return (
+    <section className="app-form-section" aria-label={EXTENSION_TUTORIAL_COPY.banner}>
+      <h2 className="app-section-title">{EXTENSION_TUTORIAL_COPY.banner}</h2>
+      <p>{EXTENSION_TUTORIAL_COPY.bannerBody}</p>
+      <p>{EXTENSION_TUTORIAL_COPY.bannerCancel}</p>
+    </section>
   );
 }
