@@ -1,16 +1,16 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { App } from '../App';
-import { ALLOCATION_ERRORS, PENDING_ANSWER_ERRORS, STALE_STEP_NOTICE, STAY_TRIO_COPY, type TaskStage } from '@baox/contract';
+import { ALLOCATION_ERRORS, PENDING_ANSWER_ERRORS, STALE_STEP_NOTICE, STAY_TRIO_COPY } from '@baox/contract';
 import { ALLOCATION_GIVE_UP_NOTE, GIVEN_UP_TITLE, givenUpNote } from '../mock/fixtures/inventory';
 import { t1Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
-import type { Fault, MockOptions } from '../mock/options';
+import type { Fault, MockOptions, SeedStage } from '../mock/options';
 import { AppProvider } from '../adapter/context';
 import { AppStore } from '../adapter/store';
 import { PendingPage } from './PendingPage';
 
-function renderPending(seed: TaskStage = 'pending', fault: Fault | null = null, extra: Partial<MockOptions> = {}) {
+function renderPending(seed: SeedStage = 'pending', fault: Fault | null = null, extra: Partial<MockOptions> = {}) {
   window.location.hash = '#/task/T1/pending';
   const adapter = createMockAdapter({ ...extra, seed, fault, inventoryPhaseMs: 5 });
   render(<App adapter={adapter} />);
@@ -139,7 +139,9 @@ describe('待确认项', () => {
     expect(snapshot.materials.find((material) => material.materialId === 'm11')?.status).toBe('excluded');
     expect(snapshot.materials.find((material) => material.materialId === 'm01')?.status).toBe('ok');
     expect(snapshot.lines).toHaveLength(9);
-    expect(snapshot.confirmation.grossTotal).toBe('3972.59');
+    // The review's total only comes with its digest (after project assignment); here the lines carry it.
+    expect(snapshot.confirmation.grossTotal).toBeNull();
+    expect(snapshot.lines.reduce((sum, line) => sum + Math.round(Number(line.grossAmount) * 100), 0)).toBe(397259);
 
     // 进入项目归属不再被守卫拦住；整单确认页还不能进（项目归属未完成）。
     fireEvent.click(link);
@@ -382,7 +384,9 @@ describe('逐段分摊与阻塞项', () => {
     expect(snapshot.materials.filter((material) => material.status === 'excluded').map((material) => material.materialId)).toEqual(['m03', 'm04', 'm11']);
     expect(snapshot.stage).toBe('project');
     expect(snapshot.lines).toHaveLength(6);
-    expect(snapshot.confirmation.grossTotal).toBe('3903.40');
+    // The review's total only comes with its digest (after project assignment); here the lines carry it.
+    expect(snapshot.confirmation.grossTotal).toBeNull();
+    expect(snapshot.lines.reduce((sum, line) => sum + Math.round(Number(line.grossAmount) * 100), 0)).toBe(390340);
     expect(screen.getByText(ALLOCATION_GIVE_UP_NOTE)).toBeTruthy();
   });
 

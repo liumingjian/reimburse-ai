@@ -1,6 +1,7 @@
 import { ERP_ACTION_ERRORS, type AppAdapter, type TaskSnapshot } from '@baox/contract';
 import type { MockBus } from '../bus';
 import { ERP_STEP_INDEX, applyAbortAtHandover, applyErpDone, applyReadbackMismatch, applyReadbackStop, applyStopBeforeWrite, emptyReconcile, erpRunning, erpStageAt, erpSteps, handedOffBanner, idleErp, loginNotDetected } from '../fixtures/erp';
+import { catalogMismatch } from '../fixtures/preparation';
 import { T1_DRAFT_NO } from '../fixtures/tasks';
 
 // The mock simulates the server-owned ERP fill, strict read-back, and reconciliation states.
@@ -68,6 +69,19 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     const current = bus.draft(taskId);
     if (!erpRunLive(current, run, 'running')) return;
     current.task.updatedAt = bus.now();
+    // `?fault=catalog-mismatch`: the catalog step finds a project renamed in the ERP. Nothing was imported; like the
+    // server, the job ends, the ERP view is idle again and the task goes back to project assignment (项目归属) with the
+    // catalog problems. The confirmation stands until the assignment changes.
+    const mismatch = index === ERP_STEP_INDEX.catalog && options.fault === 'catalog-mismatch' ? catalogMismatch(current.projectAssignment) : null;
+    if (mismatch) {
+      erpRuns.delete(taskId);
+      current.catalog = mismatch;
+      current.erp = idleErp();
+      current.stage = 'project';
+      current.step = { kind: 'assign_projects', stepToken: bus.rotateToken(`tok-${taskId}-catalog-mismatch`) };
+      bus.push(current);
+      return;
+    }
     // 写入前就停下：报销系统没有被改动，阶段退回整单确认页，这一轮结束。
     if (index === ERP_STEP_INDEX.navigate && options.fault === 'erp-stopped-before-write') {
       erpRuns.delete(taskId);

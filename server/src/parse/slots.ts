@@ -1,8 +1,14 @@
 import type { ExpenseCategory, MaterialKind } from '@baox/contract';
 
-// Recognition slots (ADR-0017): per 材料种类 (material kind), what a layout of that kind extracts and what the
+// Recognition slots (ADR-0017): per material kind (材料种类), what a layout of that kind extracts and what the
 // manual-fill form asks for. Recognition imports only this; what a recognised material means downstream (event
-// dating, identity, 费用类别 (expense category)) is kind policy (`../kind-policy.ts`).
+// dating, identity, which expense category (费用类别) a line gets) is kind policy (`../kind-policy.ts`).
+//
+// One exception, owned here on purpose: the v1 item map (`CATEGORIES`, `itemParts`, `vatItemCategory`), which reads an
+// e-invoice item name as an expense category. The e-invoice layout recognises a fully-digitalised VAT e-invoice
+// (全电发票) only when one of its items maps to a category, so recognition needs the map, and recognition may not
+// import kind policy. Kind policy and the other downstream modules import it from here rather than through a
+// re-export.
 
 export type SlotFormat = 'text' | 'date' | 'money';
 export type Slot = { key: string; label: string; required: boolean; format: SlotFormat };

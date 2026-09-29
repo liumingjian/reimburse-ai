@@ -146,6 +146,7 @@ try {
   const session = recordingSession(tab.session, { allowKeys: flow.allowKeys });
   const result = await flow.run({ session, pace: DEFAULT_PACE });
   session.stop();
+  await flow.leave?.({ session, pace: DEFAULT_PACE });
   const steps: RecordedStep[] = session.steps;
   await discard();
   tab.session.close();

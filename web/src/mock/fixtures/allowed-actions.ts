@@ -1,10 +1,13 @@
 import { TASK_ACTIONS, type StepKind, type TaskAction, type TaskSnapshot } from '@baox/contract';
 
-// 服务端投影：快照的 allowedActions（服务端由 taskPolicy 判定，server/src/task-policy.ts）。mock 没有任务事实，
-// 只能按它自己的流程写下的 step、ERP 状态与对账处置推出来。与服务端逐项对照的是 ../parity.test.ts（#316）。
-// mock 每次存快照前都调用一次（bus.put），夹具出口也调用一次，保证按钮与快照里的其余字段同步。
+// Server projection: the snapshot's allowedActions (on the server, taskPolicy decides them: server/src/task-policy.ts).
+// The mock has no task facts, so it derives them from what its own flows wrote: the step, the ERP status and the
+// reconcile disposition. ../parity.test.ts (#316) compares the result with the server's goldens in every scenario it
+// drives; states no golden covers (duplicate blockers, given-up items, T2/T3) rest on this table alone.
+// The mock calls it before storing any snapshot (bus.put) and at the fixture exits, so the buttons stay in step with
+// the rest of the snapshot.
 
-// 写入报销系统之前、盘点结束之后都接受的改动。
+// Changes accepted after the inventory and before anything is written to the ERP.
 const CHANGES: readonly TaskAction[] = ['upload', 'reopen_upload', 'exclude_material', 'answer_pending', 'set_home_city'];
 const ASSIGNING: readonly TaskAction[] = [...CHANGES, 'assign_project_lines', 'submit_project_assignment'];
 
@@ -19,7 +22,7 @@ const STEP_ACTIONS: Readonly<Record<StepKind, readonly TaskAction[]>> = {
   confirm_review: [...ASSIGNING, 'confirm_review'],
   choose_action: [...ASSIGNING, 'start_erp_write'],
   erp_login: ['confirm_login', 'cancel_erp_write'],
-  // 对账与完成页上的处置照对账判定给出（wait 即重新对账）。
+  // On the reconcile and done pages the dispositions follow the reconcile verdict (wait = reconcile again).
   reconcile: [],
   hand_off: [],
 };
@@ -29,11 +32,11 @@ const RECONCILE_WRITES = { wait: 'reconcile', hand_off: 'hand_off', refill: 'ref
 export function allowedActionsOf(snapshot: TaskSnapshot): TaskAction[] {
   const { stage, step, erp, reconcile } = snapshot;
   if (stage === 'voided') return [];
-  // 这个任务自己的写入或盘点正在跑：只有登录暂停时的两个动作（它们在 erp_login 里）。
+  // This task's own write or inventory is running: only the two login-pause actions (listed under erp_login).
   const running = erp.status === 'running' || erp.status === 'waiting_login' || snapshot.inventory.status === 'running';
   const allowed = new Set<TaskAction>(STEP_ACTIONS[step.kind]);
   if (step.kind === 'reconcile' || step.kind === 'hand_off') for (const code of reconcile.allowedActions) allowed.add(RECONCILE_WRITES[code]);
-  // 跨任务重复发票停住整批：没有 step，出路是排除那份材料。
+  // A cross-task duplicate invoice stops the whole batch: no step, the way out is excluding that material.
   if (stage === 'inventory' && step.kind === 'none' && snapshot.blockers.length > 0) for (const action of CHANGES) allowed.add(action);
   if (!running) {
     allowed.add('print');

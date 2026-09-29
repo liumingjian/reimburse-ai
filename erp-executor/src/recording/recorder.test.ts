@@ -82,6 +82,44 @@ describe('recordingSession', () => {
     expect(erp.mutations).toEqual([]);
   });
 
+  // The fake ERP draws the assistant as its own target with no <iframe> element on the page, so a stub page answers
+  // the hit test the way live Chrome does over the out-of-process frame: the <iframe> element, with no text.
+  it('refuses a press on the page that lands on a frame element, which the guard cannot see into', async () => {
+    const sent: Array<{ method: string; sessionId?: string }> = [];
+    const hit = { tag: 'iframe', id: '', controlId: '', text: '', controlText: '' };
+    const live = {
+      send: async (method: string, params: Record<string, unknown> = {}, options: { sessionId?: string } = {}) => {
+        sent.push({ method, ...(options.sessionId ? { sessionId: options.sessionId } : {}) });
+        return method === 'Runtime.evaluate' && String(params['expression']).includes('elementFromPoint') ? { result: { value: JSON.stringify(hit) } } : { result: { value: true } };
+      },
+      close: () => {},
+    };
+    const session = recordingSession(live);
+    session.stop();
+    await expect(session.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 10, y: 10 })).rejects.toMatchObject({ code: 'RECORDING_REFUSED' });
+    expect(sent.filter((s) => s.method === 'Input.dispatchMouseEvent')).toEqual([]);
+    // Inside the frame's own session the same element answers nothing special: that press is guarded there.
+    await session.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 10, y: 10 }, { sessionId: 'child-1' });
+    expect(sent.filter((s) => s.method === 'Input.dispatchMouseEvent')).toEqual([{ method: 'Input.dispatchMouseEvent', sessionId: 'child-1' }]);
+  });
+
+  it('fails the capture when an attached child frame cannot be read, rather than recording the page without it', async () => {
+    const erp = await fake();
+    let failChild = false;
+    const live = {
+      ...erp.session,
+      send: (method: string, params: Record<string, unknown> = {}, options: { sessionId?: string; timeout?: number } = {}) =>
+        failChild && options.sessionId && method === 'Runtime.evaluate' ? Promise.reject(new Error('target closed')) : erp.session.send(method, params, options),
+    };
+    const session = recordingSession(live);
+    const page = { session, pace: FAST_PACE };
+    await openNewReimbursement(page);
+    await openInvoiceAssistant(page);
+    await openUploadView(page);
+    failChild = true;
+    await expect(session.snapshot('upload-view')).rejects.toThrow(/child frame .* could not be captured: target closed/);
+  });
+
   it.each([
     [{ tag: 'span', id: '', controlId: 'x-FRECINVINFO_ENTRYBAR-tbImportBill', text: '', controlText: '' }, true],
     [{ tag: 'span', id: '', controlId: '', text: '发票导入单据', controlText: '发票导入单据' }, true],
@@ -155,6 +193,21 @@ describe('redactor', () => {
     const target = { tag: 'span', id: '', controlId: 'u-FLIST', text: '某人的差旅 3 天', controlText: '' };
     expect(redactor({ secrets }).click(page(target.text, { 'data-rowid': '0' }), target).text).toBe('＊＊＊＊＊＊＊＊');
     expect(redactor({ secrets }).click(page(target.text, {}), target).text).toBe('某人的差旅 0 天');
+  });
+
+  it("reads a click's manifest text off the redacted page, so a masked descendant stays masked", () => {
+    const node = (t: string, a: Record<string, string>, ...c: Array<CapturedNode | string>): CapturedNode => ({ t, a, b: [0, 0, 1, 1], c });
+    const body = node('div', {}, node('li', { [CLICK_MARK]: '' }, '打开 ', node('span', { class: 'ui-poplistedit-displayname' }, '某某部门')));
+    const page: CapturedPage = { url: '', title: '', readyState: 'complete', viewport: { width: 1, height: 1, devicePixelRatio: 1 }, resVer: null, loginInfo: null, count: 3, pruned: 0, frames: [], body };
+    const target = { tag: 'li', id: '', controlId: '', text: '打开 某某部门', controlText: '' };
+    expect(redactor({ secrets }).click(page, target).text).toBe('打开 ＊＊＊＊');
+  });
+
+  it('keeps a link path whole: it names a page of the site, not a value', () => {
+    const body: CapturedNode = { t: 'a', a: { href: '/k3cloud/html5/dform.aspx', title: 'No. 42' }, b: [0, 0, 1, 1], c: ['7 天'] };
+    const html = redactor({ secrets }).page({ url: '', title: '', readyState: 'complete', viewport: { width: 1, height: 1, devicePixelRatio: 1 }, resVer: null, loginInfo: null, body, frames: [], count: 1, pruned: 0 }, 'h').html;
+    expect(html).toContain('href="/k3cloud/html5/dform.aspx" title="No. 00"');
+    expect(html).toContain('>0 天</a>');
   });
 
   it('names a leaked secret without repeating it', () => {

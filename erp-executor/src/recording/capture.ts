@@ -43,7 +43,7 @@ export type CapturedPage = {
 
 /**
  * Attributes a recording keeps. Everything else (inline style, src, event handlers) is dropped. `href` is kept as its
- * path alone (or its scheme, for `javascript:` and the like): the executor finds the assistant's 电脑端选取 entry as
+ * path alone (or its scheme, for `javascript:` and the like): the executor finds the assistant's pick-from-computer (电脑端选取) entry as
  * the one `a[href]` in its item, and a query string may carry a session token.
  */
 export const KEPT_ATTRIBUTE = /^(id|class|type|name|role|readonly|disabled|checked|placeholder|title|for|href|colspan|rowspan|tabindex|contenteditable|aria-[a-z]+|data-[a-z0-9-]+)$/;

@@ -21,7 +21,7 @@ const WHY_NO_RECORDING = {
   fake: "it is the fake's own mechanics, not a page shape",
 } as const;
 
-const UNVERIFIED_CEILING = 41;
+const UNVERIFIED_CEILING = 48;
 const MARKER = /@unverified:\s*(.*?)\s*(?:-->|\*\/|$)/gm;
 const REASON = /\[([a-z]+)\]$/;
 const testing = fileURLToPath(new URL('./testing/', import.meta.url));

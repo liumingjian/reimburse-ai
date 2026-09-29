@@ -5,7 +5,7 @@ import { RECONNECT_WINDOW_MS } from '@baox/erp-executor/wire';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loginWall } from './erp/testing/fake-executor';
 import { fakeExtension, type FakeExtension } from './erp/testing/fake-extension';
-import { COMPATIBILITY, ERP_ORIGIN } from './erp/testing/scenario';
+import { COMPATIBILITY, ERP_ORIGIN } from '@baox/erp-executor/testing/scenario';
 import { api, sample } from './test/api';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';

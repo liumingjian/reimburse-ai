@@ -3072,12 +3072,15 @@ async function buildCandidate(request, paths, source, explicitEnvironment, lease
  *   dependency key matches: lockfile, workspace file, `.npmrc` and the pinned
  *   runtimes. Any change installs fresh.
  * - a workspace package's `dist` when its build key matches: the dependency key,
- *   the repository's root files, and the trees of the package and of its
- *   workspace dependencies. This assumes a package build reads nothing else and
- *   writes only `<package>/dist`.
+ *   the repository's root files (docs-only ones excluded), and the trees of the
+ *   package and of its workspace dependencies. This assumes a package build
+ *   reads nothing else and writes only `<package>/dist`.
  * The keys come from the running release's root-owned candidate manifest
- * (`buildInputs`). The release itself is only read, as baox, so rollback to it
- * is unaffected. Anything unexpected falls back to the full install and build.
+ * (`buildInputs`). Reused `node_modules` files are hardlinks to the release's
+ * files (see COPY_TREE_SCRIPT), so the candidate must never write into an
+ * existing file under `node_modules`: the native repair copies its package
+ * first (detachFromRelease). Anything unexpected, including a failed cleanup of
+ * a half-made reuse, falls back to the full install and build.
  */
 const BUILD_INPUTS_SCHEMA = 1;
 const FULL_BUILD_SCRIPT = 'pnpm -r build';
@@ -3172,9 +3175,13 @@ function workspaceClosure(workspace, name) {
   return [...seen].sort();
 }
 
+// Root files no build reads: editing them must not rebuild every package.
+const DOCS_ONLY_ROOT_FILE = /^(?:.*\.md|LICEN[CS]E(?:\..*)?)$/iu;
+
 async function hashRootFiles(source) {
   const hash = createHash('sha256');
   for (const name of (await fs.readdir(source)).sort()) {
+    if (DOCS_ONLY_ROOT_FILE.test(name)) continue;
     const file = path.join(source, name);
     if (await isRegularFile(file)) hash.update(`${name}\0${await hashFile(file)}\n`);
   }
@@ -3234,8 +3241,32 @@ async function reuseDependencies(request, paths, env, lease, plan) {
   } catch {
     // A lost lease throws here; any other failure falls back to a fresh install.
     await requireLease(paths, lease);
-    await runAsBaox('/bin/rm', ['-rf', ...copies.map(([, to]) => to)], paths.source, env, paths.log);
+    await discardTrees(paths, env, copies.map(([, to]) => to));
     return false;
+  }
+}
+
+/**
+ * Removes a half-made reuse so the full path starts clean. If `rm` fails, the
+ * trees are moved out of the source into the candidate's `discarded/`
+ * directory instead (same filesystem, so a rename), which the candidate's own
+ * cleanup removes later. Only when neither works does the phase fail.
+ */
+async function discardTrees(paths, env, targets) {
+  try {
+    await runAsBaox('/bin/rm', ['-rf', ...targets], paths.source, env, paths.log);
+    return;
+  } catch {
+    // Fall through to moving what is left aside.
+  }
+  const discarded = path.join(paths.candidate, 'discarded');
+  await fs.mkdir(discarded, { recursive: true, mode: 0o700 });
+  for (const target of targets) {
+    if (!await fs.lstat(target).catch(() => null)) continue;
+    const aside = path.join(discarded, `${Date.now()}-${randomBytes(4).toString('hex')}`);
+    await fs.rename(target, aside).catch(() => {
+      throw new CandidateFailure('candidate-reuse-cleanup-failed');
+    });
   }
 }
 
@@ -3261,7 +3292,7 @@ async function carryOverBuilds(request, paths, env, lease, plan) {
       await copyTreeAsBaox(request, paths, env, 'copy', from, to);
     } catch {
       await requireLease(paths, lease);
-      await runAsBaox('/bin/rm', ['-rf', to], paths.source, env, paths.log);
+      await discardTrees(paths, env, [to]);
       rebuild.push(name);
     }
   }
@@ -3270,8 +3301,10 @@ async function carryOverBuilds(request, paths, env, lease, plan) {
 
 // Runs as baox, so it can only link or read what the service account already
 // owns. Files are hardlinked ('link', like pnpm's own store import) or copied;
-// directories and symlinks are always recreated, so the candidate never writes
-// into the release's directories.
+// directories and symlinks are always recreated. So creating, removing or
+// renaming entries in the candidate never touches the release, but a linked
+// file IS the release's file: writing into it in place changes both. Only the
+// native repair would do that, and it copies its package first.
 const COPY_TREE_SCRIPT = `
 const fs = require('node:fs');
 const path = require('node:path');
@@ -3324,6 +3357,8 @@ async function ensureCandidateSqlite(request, paths, env, lease) {
   if (!pnpmVersion) throw new CandidateFailure('invalid-runtime-pins');
   const gyp = path.join(runtime, 'pnpm-' + pnpmVersion, 'lib', 'node_modules', 'pnpm', 'dist', 'node_modules', 'node-gyp', 'bin', 'node-gyp.js');
   if (!await isRegularFile(gyp)) throw new CandidateFailure('candidate-native-build-tool-missing');
+  await requireLease(paths, lease);
+  await detachFromRelease(request, paths, env, packageRoot);
   const prebuild = path.join(packageRoot, 'prebuilds', `${process.platform}-${process.arch}.node`);
   if (await isRegularFile(prebuild)) await fs.rename(prebuild, prebuild + '.upstream-disabled');
   await requireLease(paths, lease);
@@ -3331,6 +3366,25 @@ async function ensureCandidateSqlite(request, paths, env, lease) {
   await requireLease(paths, lease);
   await runAsBaox(node, ['-e', smoke], server, env, paths.log);
   return 'rebuilt';
+}
+
+/**
+ * Replaces a candidate package directory with a plain copy of itself, so a
+ * rebuild inside it writes only new inodes. The directory may hold hardlinks
+ * into the running release (reused `node_modules`); node-gyp overwrites
+ * `build/Release/*.node` in place, which would otherwise corrupt the release.
+ */
+async function detachFromRelease(request, paths, env, packageRoot) {
+  const linked = packageRoot + '.linked-' + randomBytes(4).toString('hex');
+  await fs.rename(packageRoot, linked);
+  try {
+    await copyTreeAsBaox(request, paths, env, 'copy', linked, packageRoot);
+  } catch (error) {
+    await runAsBaox('/bin/rm', ['-rf', packageRoot], paths.source, env, paths.log).catch(() => undefined);
+    await fs.rename(linked, packageRoot).catch(() => undefined);
+    throw error;
+  }
+  await discardTrees(paths, env, [linked]);
 }
 
 async function captureRecoveryConfiguration(request, paths, lease) {

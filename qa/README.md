@@ -27,11 +27,22 @@ plus Vite, on the same persistent `~/.baox-qa`, so a fix reaches the open page w
 tasks survive. Run from the worktree root:
 
 ```bash
-rexec --detach 'qa/dev.sh up'     # prints the job ID; first run in a fresh checkout installs dependencies
-rexec --wait <ID>                 # prints: dev-mode QA instance ready: http://127.0.0.1:5173/
+rexec 'qa/dev.sh up'              # blocks until ready, prints: dev-mode QA instance ready: http://127.0.0.1:5173/
 rexec 'qa/dev.sh sync'            # after each fix: pushes the changed files, lists them
 rexec 'qa/dev.sh down'            # when the maintainer is done
 ```
+
+`up` returns as soon as the page answers: the instance runs in a process group of its own with its output in log files,
+so the rexec job ends and does not hold the workspace. The first `up` in a fresh checkout installs dependencies, which
+can take minutes; give that Bash call a long timeout, or split it as `rexec --detach 'qa/dev.sh up'` then
+`rexec --wait <ID>`.
+
+**The dev instance drives the ERP differently from production.** `dev-main.ts` sends ERP write (去报销) jobs through
+the CDP executor into a dedicated Chromium it launches itself (`BAOX_ERP_CHROMIUM`). The production build (`main.ts`,
+§1 above, and the intranet deploy) sends them to the paired browser extension (浏览器扩展) in the employee's own browser.
+The fill steps are the same executor code, but pairing, the extension's confirmation prompts, the employee browser's
+session and cookies, and the extension transport are not exercised in dev mode. QA of those goes through the
+production-build launch in §1 with the extension loaded and paired.
 
 - Hand the maintainer the Vite URL (`:5173`). The server's own `:4319` also serves `web/dist` when one was built, and that copy is stale.
 - A pushed web file hot-reloads the page; a pushed server file restarts only the server (`tsx watch`), which re-opens the
@@ -114,7 +125,7 @@ QA_BASE=http://127.0.0.1:4399 QA_MATERIALS=/tmp/baox-qa-mats QA_HEADLESS=1 pnpm 
 ——也就是写入结果不确定——才是 `DEFECT`。
 
 `erp.status` 一个字段不够看：报销信息核对不通过时，快照里的 `erp.status` 是**故意**留在 `idle` 的
-（`server/src/erp/fill-state.ts`），问题都写在快照的 `catalog` 一节里。驱动两节一起读：看到 `catalog`
+（`server/src/task-snapshot/erp.ts`），问题都写在快照的 `catalog` 一节里。驱动两节一起读：看到 `catalog`
 里有理由充分的拒绝，就照着理由记 `ok`（并另记一条 `WARN` 说这一趟没走到「浏览器关着」那条路），
 **不会**记成 `DEFECT`——**服务端有理由的拒绝不是缺陷**。只有 `idle` 且哪儿都没有拒绝理由，才是缺陷。
 

@@ -1,13 +1,11 @@
 import type { ExpenseCategory, MaterialKind, MaterialRole } from '@baox/contract';
-import { toCents } from './money-date';
+import { slotCents } from './money-date';
 import { CATEGORIES, itemParts, SLOTS, vatItemCategory, type Slot } from './parse/slots';
 
-// Kind policy for 材料种类 (material kinds, ADR-0017): the role a kind's materials take, how a material joins 费用事件
-// (expense events), its 发票身份 (invoice identity) and 费用类别 (expense category). Its slot schema (what a layout
-// extracts) is recognition's (`parse/slots.ts`). v1 kinds are fixed; #184–#186 fill the `event` of the kinds they
-// bring layouts for.
-
-export { CATEGORIES, vatItemCategory };
+// Kind policy for material kinds (材料种类, ADR-0017): the role a kind's materials take, how a material joins expense
+// events (费用事件), its invoice identity (发票身份) and expense category (费用类别). Its slot schema (what a layout
+// extracts) and the item map it reads categories through (`vatItemCategory`) are recognition's (`parse/slots.ts`).
+// v1 kinds are fixed; #184–#186 fill the `event` of the kinds they bring layouts for.
 
 // One candidate line's worth of facts, resolved from a material's candidates. Pairing with reference materials
 // (itineraries, folios) and per-leg splitting are the kinds' job in #184/#185.
@@ -138,7 +136,7 @@ export const KINDS: Readonly<Record<MaterialKind, KindSpec>> = {
       const number = values['invoiceNumber'];
       if (number && !/^\d{20}$/.test(number)) return '发票号码应为 20 位数字。';
       const [net, tax, total] = [values['netAmount'], values['taxAmount'], values['totalAmount']];
-      const [n, t, g] = [toCents(net), toCents(tax), toCents(total)];
+      const [n, t, g] = [slotCents(net), slotCents(tax), slotCents(total)];
       if (n !== null && t !== null && g !== null && n + t !== g) {
         return `不含税金额 ${net} 加税额 ${tax} 与价税合计 ${total} 对不上。系统不会倒算或调整任何金额，请对照原件重新填写。`;
       }

@@ -1,6 +1,6 @@
 // Leave the unsaved 费用报销单 behind, so 对账 (reconcile) sees no form and can offer 重新去报销.
 //
-// An unsaved 费用报销单 does not outlive its tab (see `fill-state.ts`): navigating away discards a draft that was
+// An unsaved 费用报销单 does not outlive its tab (see `task-snapshot/erp.ts`): navigating away discards a draft that was
 // never saved, which is the same normal act as closing the browser. Saves nothing, imports nothing, deletes
 // nothing, and presses no toolbar command — the only interaction is a navigation and, if the ERP asks whether to
 // leave, accepting that prompt.

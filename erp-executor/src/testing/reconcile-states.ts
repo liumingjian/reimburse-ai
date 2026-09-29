@@ -14,7 +14,7 @@ export const RECONCILE_STATES = [
   'blank_form_no_detail_row', // same, with the blank detail row removed
   'imported', // stopped before fill: receipts imported, no detail written
   'filled', // the fill job ran to its hand-over: detail rows linked to receipts, nothing saved
-  'filled_unlinked', // fill done but 收票单号 left empty (research default); the strict read-back fails
+  'filled_unlinked', // fill done but receipt number (收票单号) left empty, as ERP leaves it; the strict read-back tolerates that (ADR-0023)
   'saved', // the fill job handed over and then the employee clicked 保存 (save) themselves (ADR-0028)
 ] as const;
 export type ReconcileState = (typeof RECONCILE_STATES)[number];

@@ -1,5 +1,5 @@
 {
-  "about": "@baox/fixtures m02: a hotel 结账单 (folio) on a PDF text layer; a reference material, no invoice identity. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "about": "@baox/fixtures m02: a hotel folio (结账单) on a PDF text layer; a reference material, no invoice identity. @baox/fixtures is synthetic, so the capture is unredacted.",
   "outcome": "recognised",
   "layout": "hotel_folio/labelled",
   "missing": [],

@@ -1,7 +1,7 @@
 {
   "flow": "detail-row",
   "name": "detail-row",
-  "description": "A new 费用报销单 and the 费用明细行 it opens with: 发票类型 opened and set to 普通发票 (the value the row already has), and edit left through the 明细信息 anchor. The form the strict read-back reads, with one 费用明细行 and no 收票行. Nothing is typed or saved; the 新增单 is discarded with its tab.",
+  "description": "A new expense claim (费用报销单) and the expense detail row (费用明细行) it opens with: invoice type (发票类型) opened and set to 普通发票 (the value the row already has), and edit left through the detail information (明细信息) anchor. The form the strict read-back reads, with one 费用明细行 and no 收票行. Nothing is typed or saved; the 新增单 is discarded with its tab.",
   "command": "pnpm --filter @baox/erp-executor probe detail-row --record detail-row",
   "recordedAt": "2026-09-29",
   "erpBuild": "8.2.830.9",

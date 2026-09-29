@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { api } from './test/api';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
+import { bookChange, INVENTORIED } from './test/project-book';
 
 let server: ScenarioServer;
 let admin: TestClient;
@@ -17,14 +18,7 @@ afterEach(() => server.close());
 
 const asBob = api(() => bob);
 
-async function intake(client: TestClient, path: '/api/project-book/intake' | '/api/public-project-book/intake', input: { number: string; name: string }) {
-  const response = await client.post(path, input);
-  expect(response.status).toBe(200);
-  return ProjectBookResultSchema.parse(await response.json());
-}
-
-// Hotel e-invoice + rail ticket inventoried (住宿 trio answered 确认没有), with the project book exactly as the test left it.
-const INVENTORIED = { materials: ['m01', 'm07'], projectBook: 'as_is' } as const;
+const intake = (client: TestClient, path: '/api/project-book/intake' | '/api/public-project-book/intake', input: { number: string; name: string }) => bookChange(client, path, input);
 
 describe('offline public intake', () => {
   it('is administrator-only, while every signed-in member can read the complete public book', async () => {

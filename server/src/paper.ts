@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 
 // Paper geometry on photos, shared by the OCR adapter (`parse/ocr.ts`) and the print sheet (`print/straighten.ts`):
-// `opencv-js` finds the paper's four corners (透视矫正, perspective correction) and warps it flat. Coordinates are
+// `opencv-js` finds the paper's four corners and warps it flat (perspective correction, 透视矫正). Coordinates are
 // photo pixels, EXIF orientation applied, y down.
 
 // The paper must cover this share of the photo for the corner search to count; otherwise the photo is read as is.

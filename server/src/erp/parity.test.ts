@@ -20,7 +20,8 @@ import { fakeChrome } from '@baox/extension/testing/fake-chrome';
 import { createErpJobs, serverChannel } from './jobs';
 import { createDraftJudge } from './judge';
 import type { ExecutorChannel, ExecutorEvent } from '@baox/erp-executor/protocol';
-import { blobSource, ERP_ORIGIN, FAST_PACE, fakeErpOptions, fillPlan, judgeInputs, withoutLayout } from './testing/scenario';
+import { blobSource, ERP_ORIGIN, FAST_PACE, fakeErpOptions, fillPlan, withoutLayout } from '@baox/erp-executor/testing/scenario';
+import { judgeInputs } from './testing/judge-inputs';
 
 const golden = JSON.parse(readFileSync(new URL('./testing/kernel-parity.golden.json', import.meta.url), 'utf8'));
 

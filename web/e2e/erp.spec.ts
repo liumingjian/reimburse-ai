@@ -100,7 +100,7 @@ test('readback-mismatch：严格回读停下后自动进入对账页；开始对
   await startAndLogin(page, '?seed=erp&fault=readback-mismatch');
   await expect(page).toHaveURL(/#\/task\/T1\/reconcile$/);
   await expect(page.getByRole('heading', { name: '对账', exact: true })).toBeVisible();
-  await expect(page.getByRole('region', { name: '中止原因' })).toContainText('严格回读发现 1 行与本地确认不一致');
+  await expect(page.getByRole('region', { name: '中止原因' })).toContainText('合计 3999.59 与任务合计 3972.59 不一致');
   await expect(page.getByTestId('reconcile-bucket')).toHaveText('尚未判定');
   await expect(page.getByRole('region', { name: '处置' }).getByRole('button')).toHaveText(['开始对账', '转人工']);
   await page.getByRole('button', { name: '开始对账' }).click();
@@ -129,7 +129,7 @@ test('readback-mismatch：严格回读停下后自动进入对账页；开始对
 test('erp-write-aborted：交接时没有读到结果后自动进入对账（还没对过账：开始对账或转人工），开始对账读到填好的单据并回读一致后完成', async ({ page }, testInfo) => {
   await startAndLogin(page, '?seed=erp&fault=erp-write-aborted');
   await expect(page).toHaveURL(/#\/task\/T1\/reconcile$/);
-  await expect(page.getByRole('region', { name: '中止原因' })).toContainText('交接单据时没有读到报销系统的结果');
+  await expect(page.getByRole('region', { name: '中止原因' })).toContainText('保存后没有读到报销系统的结果');
   await expect(page.getByTestId('reconcile-bucket')).toHaveText('尚未判定');
   // 还没对过账：先对账，也可以直接转人工（与服务端一致）。
   await expect(page.getByRole('region', { name: '处置' }).getByRole('button')).toHaveText(['开始对账', '转人工']);

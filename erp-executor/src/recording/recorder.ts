@@ -27,6 +27,9 @@ export type RecordedStep = { name: string; page: CapturedPage; child?: CapturedP
  */
 export const CONSUMPTION_BOUNDARY = /保存|暂存|提交|审核|导入|删除|作废|tbSave|tbSubmit|tbAudit|tbImport|tbDelete|tbCancel/i;
 
+/** Elements a press on the page would pass into another document through (`ClickTarget.tag` is lower-case). */
+const FRAME_TAGS: ReadonlySet<string> = new Set(['iframe', 'frame']);
+
 /** Why a press at this target would cross the consumption boundary, or null when it does not. */
 export function crossesBoundary(target: ClickTarget | null): string | null {
   if (!target) return null;
@@ -63,9 +66,12 @@ export function recordingSession(live: CdpSession, { allowKeys = false }: { allo
   const capture = async (): Promise<Pick<RecordedStep, 'page' | 'child'>> => {
     const page = await read(live);
     const frames: CapturedPage[] = [];
+    // A child frame that cannot be read fails the capture: dropping it would record the page without the frame the
+    // flow is working in, and the replay would serve a page that never existed.
     for (const sessionId of children) {
-      const frame = await read(inChild(sessionId)).catch(() => null);
-      if (frame) frames.push(frame);
+      frames.push(await read(inChild(sessionId)).catch((error: unknown) => {
+        throw new Error(`the child frame ${sessionId} could not be captured: ${error instanceof Error ? error.message : String(error)}`);
+      }));
     }
     if (frames.length > 1) throw new Error(`${frames.length} child frames are attached; a recorded page holds one`);
     return frames[0] ? { page, child: frames[0] } : { page };
@@ -91,6 +97,10 @@ export function recordingSession(live: CdpSession, { allowKeys = false }: { allo
         try {
           const crossing = crossesBoundary(target);
           if (crossing) refuse(`点击 ${crossing}`);
+          // A press on the page that lands on a frame element goes into the frame, where this guard cannot see what
+          // it hits (Chrome routes it into the out-of-process frame). A flow presses inside a frame through the
+          // frame's own session, which is marked and guarded there.
+          if (!options.sessionId && target && FRAME_TAGS.has(target.tag)) refuse(`从页面点进框架（${target.tag}）`);
           if (recording) {
             const click = target ? { click: { ...target, ...(options.sessionId ? { frame: 'child' as const } : {}) } } : {};
             steps.push({ name: `page-${steps.length + 1}`, ...(await capture()), ...click });

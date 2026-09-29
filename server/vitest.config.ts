@@ -21,7 +21,6 @@ const OCR_TESTS = [
   'src/parse/executor.test.ts',
   'src/parse/readers-production.test.ts',
   'src/print.test.ts',
-  'src/taxi.test.ts',
   'src/test/parse-presets.test.ts',
 ];
 

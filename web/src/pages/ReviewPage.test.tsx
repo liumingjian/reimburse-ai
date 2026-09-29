@@ -1,12 +1,18 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { App } from '../App';
-import { EXCLUDE_MATERIAL_ERRORS, STALE_STEP_NOTICE, CATALOG_PREPARATION_COPY, PROJECT_CHANGED_NOTICE, REVIEW_INVALIDATED_NOTICE, type TaskStage } from '@baox/contract';
+import { EXCLUDE_MATERIAL_ERRORS, STALE_STEP_NOTICE, CATALOG_PREPARATION_COPY, PROJECT_CHANGED_NOTICE, REVIEW_INVALIDATED_NOTICE } from '@baox/contract';
+import type { SeedStage } from '../mock/options';
+import { AppProvider } from '../adapter/context';
+import { AppStore } from '../adapter/store';
+import { withAllowedActions } from '../mock/fixtures/allowed-actions';
+import { t1Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
+import { ReviewPage } from './ReviewPage';
 
-function renderReview(seed: TaskStage = 'review', autoStepMs = 5) {
+function renderReview(seed: SeedStage = 'review') {
   window.location.hash = '#/task/T1/review';
-  const adapter = createMockAdapter({ seed, fault: null, inventoryPhaseMs: 5, autoStepMs, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+  const adapter = createMockAdapter({ seed, fault: null, inventoryPhaseMs: 5, erpStepMs: 5, erpLoginAutoMs: 60_000 });
   render(<App adapter={adapter} />);
   return adapter;
 }
@@ -29,7 +35,7 @@ const REMOTE = '外地市内交通';
 const HEADERS = ['No.', '发票', '项目号', '起始日期', '结束日期', '住宿地/城市', '出发点', '目的地', '费用分类', '费用项目', '发票类型', '费用金额', '税额', '总额'];
 
 describe('整单明细确认', () => {
-  test('?seed=review：No. 加 13 列，按费用分类排序（外地市内交通、长途交通、住宿排最后），无组、无合计行；整页没有「参考材料」，文件名只出现在材料包清单一节；只能「确认」', async () => {
+  test('?seed=review：No. 加 13 列，按费用分类排序（外地市内交通、长途交通、住宿排最后），无组、无合计行；整页没有「参考材料」与文件名；只能「确认」', async () => {
     renderReview();
     expect(await screen.findByRole('heading', { name: '整单明细确认' })).toBeTruthy();
     expect(within(table()).getAllByRole('columnheader').map((th) => th.textContent)).toEqual(HEADERS);
@@ -47,22 +53,12 @@ describe('整单明细确认', () => {
     // 13 列表格里没有文件名、参考材料与合计行。
     expect(table().textContent ?? '').not.toMatch(/\.pdf|\.jpg|\.png|参考材料|同上|合计 ·/);
     expect(screen.queryByTestId('gross-total')).toBeNull();
-    // 整页没有「参考材料」四个字；文件名只在「材料包」一节（#114 要求的材料包文件清单）里出现，别处没有。
+    // 整页没有「参考材料」四个字，也没有文件名：服务端不给材料包文件清单（preparation.packageFiles 为空），页面就不列。
     expect(document.body.textContent ?? '').not.toContain('参考材料');
-    // 标题下只有一句话，较长的解释在「说明」里；材料包清单默认收起，点开才看文件。
+    // 标题下只有一句话，较长的解释在「说明」里。
     expect(screen.getByText('唯一一次整单确认，项目归属一并生效。')).toBeTruthy();
-    const packageSection = screen.getByRole('region', { name: '材料包' });
-    const packageDetails = packageSection.querySelector('details');
-    expect(packageDetails?.open).toBe(false);
-    fireEvent.click(within(packageSection).getByText('材料包 13 份文件'));
-    expect(packageDetails?.open).toBe(true);
-    const outside = (document.body.textContent ?? '').replace(packageSection.textContent ?? '', '');
-    expect(outside).not.toMatch(/\.pdf|\.jpg|\.png/);
-    expect(screen.getByTestId('package-files').textContent).toBe('核对材料已生成，共 13 份文件。');
-    const files = within(screen.getByRole('list', { name: '材料包文件' })).getAllByRole('listitem');
-    expect(files).toHaveLength(13);
-    expect(files[0]?.textContent).toBe('发票 invoices/全季酒店_发票.pdf');
-    expect(files.map((item) => item.textContent)).toContain('证明材料 evidence/曹操出行_行程单.pdf');
+    expect(screen.queryByRole('region', { name: '材料包' })).toBeNull();
+    expect(document.body.textContent ?? '').not.toMatch(/\.pdf|\.jpg|\.png/);
     expect(screen.queryByRole('table', { name: '不匹配项' })).toBeNull();
     expect(screen.queryByRole('table', { name: '准备缺项' })).toBeNull();
     // 项目归属在确认之前已完成，随确认一起生效；支付截图不在这里补充。
@@ -189,33 +185,41 @@ describe('整单明细确认', () => {
     expect(after.stage).toBe('actions');
   });
 
-  test('?seed=catalog：确认页先显示报销信息核对与材料准备的进度（内核话术），完成后才能确认，并出现材料包文件清单', async () => {
-    renderReview('catalog', 300);
-    expect(await screen.findByText(CATALOG_PREPARATION_COPY.catalogRunning)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: '确认整单明细' })).toBeNull();
+  test('提交项目归属后直接进入整单确认（同服务端：报销信息核对在去报销的作业里做，没有核对与材料准备的等待），确认立即可用', async () => {
+    const adapter = createMockAdapter({ seed: 'actions', fault: null });
+    const before = await adapter.getSnapshot('T1');
+    const projects = Object.fromEntries(before.projectAssignment.assignments.map((item) => [item.lineId, item.projectNumber]));
+    const nine = before.lines.find((line) => line.no === 9);
+    if (nine) projects[nine.lineId] = 'P-1180';
+    const outcome = await adapter.submitProjectAssignment('T1', { purpose: before.projectAssignment.purpose ?? '', projects }, before.step.stepToken);
+    if (!outcome.ok) throw new Error(outcome.error.message);
+    expect(outcome.snapshot).toMatchObject({ stage: 'review', step: { kind: 'confirm_review' }, catalog: { status: 'pending', problems: [] }, preparation: { status: 'ready', problems: [], packageFiles: [] } });
+    expect(outcome.snapshot.confirmation).toMatchObject({ status: 'invalidated', notice: PROJECT_CHANGED_NOTICE, lineCount: 9, grossTotal: '3972.59' });
+
+    window.location.hash = '#/task/T1/review';
+    render(<App adapter={adapter} />);
+    expect(await screen.findByRole('heading', { name: '整单明细确认' })).toBeTruthy();
+    await waitFor(() => expect((checkbox() as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByText(CATALOG_PREPARATION_COPY.catalogRunning)).toBeNull();
+    expect(screen.queryByText(CATALOG_PREPARATION_COPY.preparationRunning)).toBeNull();
     expect(screen.queryByTestId('package-files')).toBeNull();
-    expect(await screen.findByText(CATALOG_PREPARATION_COPY.preparationRunning)).toBeTruthy();
-    expect(await screen.findByRole('button', { name: '确认整单明细' })).toBeTruthy();
-    expect((checkbox() as HTMLButtonElement).disabled).toBe(false);
-    expect(screen.getByTestId('package-files').textContent).toBe('核对材料已生成，共 13 份文件。');
   });
 
-  test('?catalog=mismatch：不匹配表（列照内核）阻塞确认；回到项目归属把 No.7-9 改派出 P-2307 后重新核对通过', async () => {
-    window.location.hash = '#/task/T1/review';
-    const adapter = createMockAdapter({ seed: 'catalog', fault: null, autoStepMs: 5, catalogMismatch: true });
-    render(<App adapter={adapter} />);
-    const mismatch = await screen.findByRole('table', { name: '不匹配项' });
-    expect(within(mismatch).getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['序号', '材料/明细', '参考材料', '待处理问题', '处理人']);
-    const row = within(mismatch).getAllByRole('row').find((candidate) => candidate.closest('tbody'));
-    expect(cells(row)).toEqual(['1', '项目号 P-2307', '', '项目 P-2307「华东客户交付」在报销系统里已被禁用，不能引用', '要你处理']);
-    expect(screen.getByText(CATALOG_PREPARATION_COPY.catalogMismatch)).toBeTruthy();
-    expect((checkbox() as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.queryByTestId('package-files')).toBeNull();
-    expect((await adapter.getSnapshot('T1')).step.kind).toBe('assign_projects');
+  test('?fault=catalog-mismatch：去报销的作业在报销信息核对停下，回到项目归属并显示问题；把 No.7-9 改派出 P-2307 后重新提交回到整单确认', async () => {
+    const adapter = createMockAdapter({ seed: 'actions', fault: 'catalog-mismatch', erpStepMs: 5, erpLoginAutoMs: 5 });
+    const before = await adapter.getSnapshot('T1');
+    expect((await adapter.startErpWrite('T1', before.step.stepToken)).ok).toBe(true);
+    await waitFor(async () => expect((await adapter.getSnapshot('T1')).stage).toBe('project'));
+    const stopped = await adapter.getSnapshot('T1');
+    expect(stopped).toMatchObject({ step: { kind: 'assign_projects' }, erp: { status: 'idle', steps: [] }, confirmation: { status: 'confirmed' } });
+    expect(stopped.catalog.problems).toEqual([
+      { subject: '项目号 P-2307', reference: null, reason: '项目 P-2307 在报销系统里的名称是「改过名的项目」，与本地的「华东客户交付」不一致', resolver: '要你处理' },
+    ]);
 
-    fireEvent.click(screen.getByRole('link', { name: '回到项目归属改派' }));
+    window.location.hash = '#/task/T1/project';
+    render(<App adapter={adapter} />);
     expect(await screen.findByRole('heading', { name: '项目归属' })).toBeTruthy();
-    expect(screen.getAllByRole('alert').map((node) => node.textContent).join('')).toContain('P-2307');
+    expect(screen.getAllByRole('alert').map((node) => node.textContent).join('')).toContain('改过名的项目');
     for (const no of [7, 8, 9]) fireEvent.click(screen.getByRole('checkbox', { name: `选择明细 No.${no}` }));
     assignViaPicker('P-1180');
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确认覆盖' }));
@@ -224,42 +228,41 @@ describe('整单明细确认', () => {
 
     expect(await screen.findByRole('heading', { name: '整单明细确认' })).toBeTruthy();
     await waitFor(() => expect((checkbox() as HTMLButtonElement).disabled).toBe(false));
-    expect(screen.queryByRole('table', { name: '不匹配项' })).toBeNull();
     const snapshot = await adapter.getSnapshot('T1');
-    expect(snapshot.catalog.status).toBe('matched');
-    expect(snapshot.preparation.status).toBe('ready');
+    expect(snapshot.catalog).toEqual({ status: 'pending', problems: [] });
+    expect(snapshot.confirmation.status).toBe('invalidated');
   });
 
-  test('?preparation=blocked：缺项表（序号 | 准备缺项 | 关联材料/明细 | 处理人），确认不可用；排除相关材料后重新准备，确认恢复可用', async () => {
-    window.location.hash = '#/task/T1/review';
-    const adapter = createMockAdapter({ seed: 'preparation', fault: null, autoStepMs: 5, preparationBlocked: true });
-    render(<App adapter={adapter} />);
-    const problems = await screen.findByRole('table', { name: '准备缺项' });
+  // Contract states no server path produces today (the catalog is checked in the ERP job, the preparation has no
+  // problems or package files): the page still renders them, from a hand-built snapshot.
+  test('契约里还有、服务端现在不给的状态（确认页上的不匹配表、材料包缺项表、材料包文件清单）：页面照样渲染，确认不可用', () => {
+    const base = t1Snapshot('review');
+    const snapshot = withAllowedActions({
+      ...base,
+      catalog: { status: 'mismatch', problems: [{ subject: '项目号 P-2307', reference: null, reason: '项目 P-2307 已停用', resolver: '要你处理' }] },
+      preparation: {
+        status: 'blocked',
+        problems: [{ problemId: 'prep-m06', missing: '明细 No.4 的出发点与行程单不一致', subject: '曹操出行_行程单.pdf', resolver: '要你处理', excludableMaterialId: 'm06' }],
+        packageFiles: [{ path: 'invoices/全季酒店_发票.pdf', kindLabel: '发票' }],
+      },
+    });
+    const store = new AppStore(createMockAdapter({ seed: null, fault: null }), { validate: false });
+    render(
+      <AppProvider store={store}>
+        <ReviewPage snapshot={snapshot} />
+      </AppProvider>,
+    );
+    const mismatch = screen.getByRole('table', { name: '不匹配项' });
+    expect(within(mismatch).getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['序号', '材料/明细', '参考材料', '待处理问题', '处理人']);
+    expect(screen.getByText(CATALOG_PREPARATION_COPY.catalogMismatch)).toBeTruthy();
+    const problems = screen.getByRole('table', { name: '准备缺项' });
     expect(within(problems).getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['序号', '准备缺项', '关联材料/明细', '处理人']);
-    const row = within(problems).getAllByRole('row').find((candidate) => candidate.closest('tbody'));
-    expect(cells(row)[0]).toBe('1');
-    expect(cells(row)[1]).toContain('明细 No.4 的出发点与行程单不一致');
-    expect(cells(row).slice(2)).toEqual(['曹操出行_行程单.pdf', '要你处理']);
     expect(screen.getByText(CATALOG_PREPARATION_COPY.preparationBlocked)).toBeTruthy();
+    expect(screen.getByTestId('package-files').textContent).toBe('核对材料已生成，共 1 份文件。');
     expect((checkbox() as HTMLButtonElement).disabled).toBe(true);
-    // 有缺项也生成材料包，供核对。
-    expect(screen.getByTestId('package-files').textContent).toBe('核对材料已生成，共 13 份文件。');
-    expect((await adapter.getSnapshot('T1')).step.kind).toBe('resolve_preparation');
-
-    fireEvent.click(screen.getByRole('button', { name: '排除 曹操出行_行程单.pdf' }));
-    await waitFor(() => expect((checkbox() as HTMLButtonElement).disabled).toBe(false));
-    expect(screen.queryByRole('table', { name: '准备缺项' })).toBeNull();
-    expect(screen.getByTestId('package-files').textContent).toBe('核对材料已生成，共 12 份文件。');
-    const snapshot = await adapter.getSnapshot('T1');
-    expect(snapshot.materials.find((material) => material.materialId === 'm06')?.role).toBe('excluded');
-    expect(snapshot.lines.find((line) => line.no === 4)?.referenceMaterialIds).toEqual([]);
-    expect(snapshot.step.kind).toBe('confirm_review');
-
-    fireEvent.click(checkbox());
-    expect(await screen.findByRole('link', { name: '去打印' })).toBeTruthy();
   });
 
-  test('排除材料只在材料包缺项时、且只对服务端标明可排除的材料接受', async () => {
+  test('没有需要排除材料来处理的事项时，排除材料被拒绝', async () => {
     const adapter = createMockAdapter({ seed: 'review', fault: null });
     const review = await adapter.getSnapshot('T1');
     const outcome = await adapter.excludeMaterial('T1', 'm06', review.step.stepToken);

@@ -1,5 +1,5 @@
 {
-  "about": "#200: the 发票号码 label and its digits are separate text runs. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "about": "#200: the invoice number (发票号码) label and its digits are separate text runs. @baox/fixtures is synthetic, so the capture is unredacted.",
   "outcome": "recognised",
   "layout": "vat_invoice/einvoice",
   "missing": [],

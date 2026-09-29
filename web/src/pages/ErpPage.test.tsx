@@ -165,7 +165,7 @@ describe('ERP 填报', () => {
     fireEvent.click(await waitingLogin());
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
     expect(window.location.hash).toBe('#/task/T1/reconcile');
-    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/交接单据时没有读到报销系统的结果/)).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/保存后没有读到报销系统的结果/)).toBeTruthy();
     expect(screen.getByRole('button', { name: '开始对账' })).toBeTruthy();
   });
 
@@ -186,7 +186,7 @@ describe('ERP 填报', () => {
     fireEvent.click(await waitingLogin());
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
     expect(window.location.hash).toBe('#/task/T1/reconcile');
-    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/严格回读发现 1 行与本地确认不一致/)).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/合计 3999.59 与任务合计 3972.59 不一致/)).toBeTruthy();
     expect(screen.getByTestId('reconcile-bucket').textContent).toBe('尚未判定');
     fireEvent.click(screen.getByRole('button', { name: '开始对账' }));
     expect(await screen.findByTestId('readback-6')).toBeTruthy();

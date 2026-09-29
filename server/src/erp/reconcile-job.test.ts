@@ -1,4 +1,4 @@
-// The server's end of 对账 (reconcile): the read-only job driven through the protocol on the fake ERP, with the
+// The server's end of reconcile (对账): the read-only job driven through the protocol on the fake ERP, with the
 // real server channel persisting its events on SQLite `:memory:` and the server classifying what was read. The job's
 // own behaviour (read-only, login wall) is tested in erp-executor/src/reconcile-job.test.ts. Parity: for each
 // recorded draft state (@baox/erp-executor/testing/reconcile-states) the job reads what the kernel reads and lands in the kernel's bucket; the golden
@@ -15,7 +15,7 @@ import { createErpJobs } from './jobs';
 import type { ApprovedPreview, ReadbackEvent } from '@baox/erp-executor/protocol';
 import { reconcileFromEvents, runReconcile } from './reconcile-job';
 import { driveTo, RECONCILE_STATES, type ReconcileState } from '@baox/erp-executor/testing/reconcile-states';
-import { FAST_PACE, fakeErpOptions, reconcilePlan, withoutLayout } from './testing/scenario';
+import { FAST_PACE, fakeErpOptions, reconcilePlan, withoutLayout } from '@baox/erp-executor/testing/scenario';
 
 const golden = JSON.parse(readFileSync(new URL('./testing/reconcile-parity.golden.json', import.meta.url), 'utf8'));
 

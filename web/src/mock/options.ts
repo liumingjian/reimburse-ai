@@ -1,5 +1,10 @@
 import { TASK_STAGES, type TaskStage } from '@baox/contract';
 
+// Stages a task can be seeded at. The server never projects `catalog` or `preparation` (it checks the catalog inside
+// the ERP job), so the mock has no snapshot for them either.
+export type SeedStage = Exclude<TaskStage, 'catalog' | 'preparation'>;
+export const SEED_STAGES: readonly SeedStage[] = TASK_STAGES.filter((stage): stage is SeedStage => stage !== 'catalog' && stage !== 'preparation');
+
 // mock 模式的查询参数：`?seed=<阶段>` 直接打开某阶段的快照，`?fault=<场景>` 注入一种故障，
 // `?location=unavailable` 让位置 Adapter 取不到网络位置。
 
@@ -7,6 +12,8 @@ export const FAULTS = [
   'duplicate-upload',
   'unsupported-material',
   'erp-login-missing',
+  // The ERP job's catalog step finds P-2307 renamed in the ERP: the task goes back to project assignment (项目归属).
+  'catalog-mismatch',
   'erp-write-aborted',
   'erp-stopped-before-write',
   'readback-mismatch',
@@ -16,7 +23,7 @@ export type Fault = (typeof FAULTS)[number];
 
 // 票面上用过的别名：`?seed=assign` 与 `?seed=project` 相同（阶段枚举里叫 project）；
 // `?seed=print` 是 actions 阶段（打印稿预览不是阶段），且打印稿已经生成。
-const SEED_ALIASES: Readonly<Record<string, TaskStage>> = { assign: 'project', print: 'actions' };
+const SEED_ALIASES: Readonly<Record<string, SeedStage>> = { assign: 'project', print: 'actions' };
 
 // `?auth=`：打开时的登录状态（不给则夹具账号已登录）。setup 还没有任何账号，只能创建管理员；signed-out 有夹具账号但没登录。
 export const AUTH_OPTIONS = ['setup', 'signed-out'] as const;
@@ -36,17 +43,13 @@ export type MockStorage = {
 };
 
 export type MockOptions = {
-  seed: TaskStage | null;
+  seed: SeedStage | null;
   fault: Fault | null;
   auth?: AuthOption;
   // `?book=empty`：个人项目簿初始为空；走到项目归属时先进入维护入口，第一次录入成功后回到项目归属。
   bookEmpty?: boolean;
   // `?deadline=warning` gives P-2307 a deadline for the isolated browser acceptance scenario.
   deadlineWarning?: boolean;
-  // `?catalog=mismatch`：报销信息核对把项目 P-2307 判为不匹配（报销系统里已被禁用）；把用到它的明细改派到别的项目后重新提交即通过。
-  catalogMismatch?: boolean;
-  // `?preparation=blocked`：材料包缺项（曹操出行行程单与明细对不上）；排除这份行程单后重新准备即通过。
-  preparationBlocked?: boolean;
   // `?allocation=1`：盘点时高德合并发票的行程单三段合计 69.10 和票面价税合计 69.19 对不上，多出一个逐段分摊待确认项（mock 服务端按分判定守恒）。
   allocationRequired?: boolean;
   // `?duplicate=1`：盘点时跨任务查重命中（铁路电子客票_0809.pdf 已在已完成的任务 T3 里），整批停。
@@ -65,8 +68,6 @@ export type MockOptions = {
   printSheet?: boolean;
   // 盘点每个阶段的推进间隔（毫秒）；测试可以调小。
   inventoryPhaseMs?: number;
-  // 提交项目归属后，报销信息核对 → 材料准备 → 整单确认每步的推进间隔（毫秒，默认 600）；测试可以调小。
-  autoStepMs?: number;
   // ERP 填报每一步的推进间隔（毫秒，默认 300）；正常场景下服务端自动探测到登录的延迟（默认 2500）。
   erpStepMs?: number;
   erpLoginAutoMs?: number;
@@ -82,8 +83,8 @@ export function readMockOptions(search: string): MockOptions {
   const options: MockOptions = { seed: null, fault: null };
   if (seed !== null) {
     const stage = SEED_ALIASES[seed] ?? seed;
-    if (isStage(stage)) options.seed = stage;
-    else console.warn(`未知的 seed「${seed}」，可用值：${[...TASK_STAGES, ...Object.keys(SEED_ALIASES)].join(', ')}`);
+    if (isSeedStage(stage)) options.seed = stage;
+    else console.warn(`未知的 seed「${seed}」，可用值：${[...SEED_STAGES, ...Object.keys(SEED_ALIASES)].join(', ')}`);
     if (seed === 'print') options.printSheet = true;
   }
   if (fault !== null) {
@@ -104,16 +105,6 @@ export function readMockOptions(search: string): MockOptions {
   if (deadline !== null) {
     if (deadline === 'warning') options.deadlineWarning = true;
     else console.warn(`未知的 deadline「${deadline}」，可用值：warning`);
-  }
-  const catalog = params.get('catalog');
-  if (catalog !== null) {
-    if (catalog === 'mismatch') options.catalogMismatch = true;
-    else console.warn(`未知的 catalog「${catalog}」，可用值：mismatch`);
-  }
-  const preparation = params.get('preparation');
-  if (preparation !== null) {
-    if (preparation === 'blocked') options.preparationBlocked = true;
-    else console.warn(`未知的 preparation「${preparation}」，可用值：blocked`);
   }
   const allocation = params.get('allocation');
   if (allocation !== null) {
@@ -156,8 +147,8 @@ export function readMockOptions(search: string): MockOptions {
   return options;
 }
 
-function isStage(value: string): value is TaskStage {
-  return (TASK_STAGES as readonly string[]).includes(value);
+function isSeedStage(value: string): value is SeedStage {
+  return (SEED_STAGES as readonly string[]).includes(value);
 }
 
 function isFault(value: string): value is Fault {

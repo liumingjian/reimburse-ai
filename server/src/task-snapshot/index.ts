@@ -1,27 +1,19 @@
-import {
-  ABANDON_TASK_COPY,
-  HUMAN_REVIEW_NOTICE,
-  TASK_ACTIONS,
-  projectLodgingEvidence,
-  type Confirmation,
-  type Line,
-  type ReconcileBucket,
-  type TaskListItem,
-  type TaskSnapshot,
-  type UploadBatch,
-  type UploadFileResult,
-} from '@baox/contract';
+import { ABANDON_TASK_COPY, TASK_ACTIONS, projectLodgingEvidence, type Confirmation, type Line, type TaskListItem, type TaskSnapshot, type UploadBatch, type UploadFileResult } from '@baox/contract';
+import type { TaskTable, UploadBatchTable, UploadRejectionTable } from '../db/schema';
+import type { InventoryView } from '../inventory-view';
+import { sheetState } from '../print/facts';
+import type { LoadedTask, MaterialRow } from '../task-facts';
+import { taskPolicy } from '../task-policy';
 import { confirmationView } from './confirmation';
-import type { TaskTable, UploadBatchTable, UploadRejectionTable } from './db/schema';
-import { catalogView, erpView, readbackView, reconcileView } from './erp/fill-state';
-import type { InventoryView } from './inventory-view';
-import { printView, sheetState } from './print/facts';
-import type { LoadedTask, MaterialRow } from './task-facts';
-import { taskPolicy } from './task-policy';
+import { catalogView, erpView, legacyErpView, legacyReconcileView, readbackView, reconcileView } from './erp';
+import { inventorySection } from './inventory';
+import { printView } from './print';
 
-// The snapshot projection: a 报销任务 (reimbursement task)'s loaded facts (`task-facts.ts`) -> the contract's
-// TaskSnapshot and TaskListItem. Pure: no reads, no writes. A snapshot field change touches this module and
-// @baox/contract only. The web mock's goldens (@baox/contract/goldens) are recorded from it by `snapshot-goldens.test.ts`.
+// The snapshot projection: a reimbursement task (报销任务)'s loaded facts (`task-facts.ts`) -> the contract's
+// TaskSnapshot and TaskListItem. Pure: no reads, no writes. A snapshot field change touches this directory and
+// @baox/contract only: every section is worded here (`erp.ts`, `confirmation.ts`, `print.ts`, `inventory.ts`) from the
+// facts and records the other modules derive. The web mock's goldens (@baox/contract/goldens) are recorded from it by
+// `snapshot-goldens.test.ts`.
 
 function taskPeriod(lines: readonly Line[]): TaskListItem['period'] {
   const dates = lines.flatMap((line) => [line.date, line.endDate ?? line.date]).filter((date): date is string => !!date).sort();
@@ -91,7 +83,7 @@ export function projectSnapshot(task: TaskTable, { facts, view, homeCity, assign
     stage,
     batches: batchViews,
     materials: snapshotMaterials,
-    inventory: { ...view.inventory, versionId: facts.versionNo > 0 ? `v${facts.versionNo}` : null },
+    inventory: inventorySection(view, facts.versionNo),
     events: view.events,
     pendingItems: view.pendingItems,
     blockers,
@@ -105,25 +97,11 @@ export function projectSnapshot(task: TaskTable, { facts, view, homeCity, assign
     // Nothing is prepared before the confirmation any more.
     preparation: { status: digest ? 'ready' : 'pending', problems: [], packageFiles: [] },
     // An imported legacy task shows only its stored ERP facts: the saved draft's number, or the 转人工 bucket.
-    erp: legacy
-      ? {
-          status: legacy.outcome === 'draft_handed_over' ? 'done' : 'idle',
-          steps: [],
-          currentStage: legacy.outcome === 'draft_handed_over' ? 'handover' : null,
-          externalWait: 'none',
-          outcome: legacy.outcome === 'draft_handed_over' ? 'saved' : 'none',
-          allowedActions: legacy.outcome === 'draft_handed_over' ? ['refresh'] : [],
-          draftNo: legacy.bill_no,
-          abortReason: null,
-          loginNotice: null,
-          erpAccount: null,
-        }
-      : erpView(erp),
+    erp: legacy ? legacyErpView(legacy) : erpView(erp),
     readback: readbackView(erp, lines),
     reconcile:
-      legacy?.outcome === 'handed_off'
-        ? { status: 'handed_off', bucket: legacy.reconcile_bucket as ReconcileBucket | null, action: '转人工', actionCode: null, allowedActions: [], humanReview: true, banner: HUMAN_REVIEW_NOTICE, draftNo: legacy.bill_no, rows: [], reasons: [], capture: null }
-        : (reconcileView(erp, task.task_id, task.lifecycle, lines) ?? { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [], capture: null }),
+      (legacy ? legacyReconcileView(legacy) : null) ??
+      reconcileView(erp, task.task_id, task.lifecycle, lines) ?? { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [], capture: null },
     step,
     // In contract order, so equal policies give equal snapshots.
     allowedActions: TASK_ACTIONS.filter((action) => allowedActions.has(action)),

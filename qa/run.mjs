@@ -878,7 +878,7 @@ async function qaPrint(page, files, state) {
   if (await visible(reminder, 3000)) ok('print', `reminders: ${(await reminder.innerText()).replace(/\s+/g, ' ')}`);
 
   // Rotate: the server must re-render, so the image src has to change. `imageUrl` is content-addressed
-  // (server/src/print/facts.ts), so a finished re-render cannot leave the src alone — but the re-render takes
+  // (server/src/task-snapshot/print.ts), so a finished re-render cannot leave the src alone — but the re-render takes
   // seconds, measured at about seven against the live app. Poll for the change instead of sleeping a fixed
   // span shorter than the work: an unchanged src is only a defect once the whole budget is spent.
   const rotate = page.getByRole('button', { name: /^(旋转 90°|改为竖放)：/ }).first();
@@ -1051,7 +1051,7 @@ async function qaErpWrite(page, context, state) {
   await page.waitForTimeout(5000);
 
   // `erp.status` is not the whole answer. A 报销信息核对 (catalog check) refusal is mapped to the plain `idle`
-  // ERP view on purpose (server/src/erp/fill-state.ts) because its problems belong to the snapshot's `catalog`
+  // ERP view on purpose (server/src/task-snapshot/erp.ts) because its problems belong to the snapshot's `catalog`
   // section — so read that section too, or a correct refusal reads as the app going quiet.
   const started = Date.now();
   const deadline = started + ERP_WRITE_BUDGET_MS;

@@ -696,6 +696,7 @@ NODE
   if [ -f pnpm-workspace.yaml ]; then
     mkdir -p node_modules
     printf '%s\\n' "$PWD" > node_modules/.installed-in
+    [ -e server/node_modules ] || ln -s ${shellQuote(join(candidateRuntimeSource, 'server', 'node_modules'))} server/node_modules
   fi
   exit 0
 fi
