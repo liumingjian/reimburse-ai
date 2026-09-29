@@ -1,4 +1,5 @@
-import { cents, compact, joinedRows, matchSpan, matchWidestSpan, money, spans, type JoinedRow, type ParseDoc, type RowSpan, type TextObservation } from '../doc';
+import { cents, money } from '../../money-date';
+import { compact, joinedRows, matchSpan, matchWidestSpan, spans, type JoinedRow, type ParseDoc, type RowSpan, type TextObservation } from '../doc';
 import { ruleSource, type Candidate, type EvidenceRef, type Layout } from '../layout';
 
 // `rail_ticket/12306`: the 铁路电子客票 (rail e-ticket) face from the PDF text layer. Ported from the rail rules of

@@ -1,6 +1,6 @@
 import { STAY_TRIO_COPY, type Corners, type PaymentScreenshot, type Placement, type PrintSheet } from '@baox/contract';
 import type { Db } from '../db/database';
-import { CATEGORIES } from '../parse/kinds';
+import { CATEGORIES } from '../kind-policy';
 import type { StayTrio } from '../stay-trio';
 import { droppedMaterialsNotice, extraPagesNotice, unrecordedScreenshotNotice } from './layout';
 

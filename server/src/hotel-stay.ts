@@ -1,4 +1,4 @@
-import { daysBetween } from './parse/doc';
+import { daysBetween } from './money-date';
 
 // Hotel stays (#185): a 住宿 (accommodation) invoice and a 酒店结账单 (hotel folio) prove one continuous stay, so they
 // form one expense event dated from the folio's check-in to its check-out (kernel `events.mjs` single_stay). The

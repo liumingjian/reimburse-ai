@@ -4,7 +4,7 @@
 //
 // The app validates manual fill twice — in the page and again on the server — with the patterns in
 // `contract/src/actions.ts` (`validatePendingAnswer`) and the per-kind `check()` in
-// `server/src/parse/kinds.ts`. Those are the source of truth; the copies below exist only so this file
+// `server/src/kind-policy.ts`. Those are the source of truth; the copies below exist only so this file
 // stays browser-free, and `values.test.mjs` fails if the two drift apart.
 export const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 export const AMOUNT_PATTERN = /^(?:0|[1-9]\d*)\.\d{2}$/;
@@ -28,7 +28,7 @@ const NET_LABEL = /不含税/;
 const TAX_LABEL = /税额/;
 
 // Cents of a `12.34`-shaped amount; null when it is not one. Mirrors `toCents` in
-// `server/src/parse/kinds.ts`, which is what decides whether the amounts conserve.
+// `server/src/money-date.ts`, which is what decides whether the amounts conserve.
 export function toCents(amount) {
   if (typeof amount !== 'string' || !AMOUNT_PATTERN.test(amount)) return null;
   const [yuan, fen] = amount.split('.');
@@ -76,7 +76,7 @@ const invoiceNumber20 = (seed) => (seed ? `2544${seededDigits(seed, 16)}` : INVO
 const INVOICE_CODE_12 = '144031539110';
 
 // 项目名称 (item name, 原文 项目名称) on a 全电发票 is a 税收分类 in `*类别*说明` form, and the app reads the
-// 费用类别 (expense category, 原文 费用类别) out of it (`vatItemCategory` in server/src/parse/kinds.ts). A free-text
+// 费用类别 (expense category, 原文 费用类别) out of it (`vatItemCategory` in server/src/parse/slots.ts). A free-text
 // marker leaves the invoice uncategorised, so it forms no 费用事件 and never reaches the 整单明细 — the stand-in
 // therefore keeps the real shape of a passenger-transport item row.
 // A recognised face the app already read is a ride-hailing invoice, so the transport class is the truthful
@@ -128,7 +128,7 @@ export function qaValue({ key = '', label = '', format = undefined, city = '广�
 }
 
 // What the driver can tell about its own submission before the server sees it, mirroring the per-kind
-// `check()` of `server/src/parse/kinds.ts`. `values` is the material's known values merged with what the
+// `check()` of `server/src/kind-policy.ts`. `values` is the material's known values merged with what the
 // driver just typed. Returns null when the driver has no reason to expect a refusal — which is what turns
 // a refusal into a real defect rather than the driver's own fault.
 export function qaSelfCheck(values = {}, kind = undefined) {

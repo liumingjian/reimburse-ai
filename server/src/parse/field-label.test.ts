@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fieldLabel } from './kinds';
+import { fieldLabel } from './slots';
 
 // Candidate keys shown to people: slot labels, and per-leg itinerary fields (`segments[i].<field>`, 0-based) as 第 N 段….
 describe('fieldLabel', () => {

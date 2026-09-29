@@ -1,6 +1,6 @@
 import type { MaterialKind, PendingItem } from '@baox/contract';
-import { cents, money } from './parse/doc';
-import { CATEGORIES, KINDS, vatItemCategory, type EventDraft } from './parse/kinds';
+import { CATEGORIES, KINDS, vatItemCategory, type EventDraft } from './kind-policy';
+import { cents, money } from './money-date';
 
 // 逐段分摊 (per-leg allocation) and the ride-hailing invoice ↔ itinerary pairing, ported from 50931a3:kernel/src/events.mjs
 // (`linkEvidence`, `conservingSegments`, `splitTax`, `buildEvents`). Two rules:

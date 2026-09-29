@@ -1,6 +1,6 @@
 import { STAY_TRIO_CONFIRM_NONE, STAY_TRIO_COPY, stayTrioItemId, type PendingItem, type StayTrioElement } from '@baox/contract';
 import type { Stay, StayVoucher } from './hotel-stay';
-import { CATEGORIES } from './parse/kinds';
+import { CATEGORIES } from './kind-policy';
 import { chosen, EXCLUDE, settle, type StoredAnswers } from './pending/answers';
 
 // The 住宿 (accommodation) trio check at 盘点 (inventory), #213. 住宿 reimbursement takes a 发票 (invoice), a 结账单

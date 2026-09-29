@@ -1,4 +1,5 @@
-import { cents, compact, joinedRows, matchSpan, money, rows, type JoinedRow, type ParseDoc, type TextObservation } from '../doc';
+import { cents, money } from '../../money-date';
+import { compact, joinedRows, matchSpan, rows, type JoinedRow, type ParseDoc, type TextObservation } from '../doc';
 import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout } from '../layout';
 
 // `ride_itinerary/amap`: the 高德行程单 (Amap ride itinerary), a reference material listing each ride leg. PDF and image

@@ -1,6 +1,6 @@
 import { PDFDocument, degrees, rgb } from '@cantoo/pdf-lib';
 import { renderPageAsImage } from 'unpdf';
-import { straightenedJpeg, type PaperCorners } from '../parse/ocr';
+import { straightenedJpeg, type PaperCorners } from './straighten';
 import { openPdf } from '../parse/pdf';
 import { A4, HEADER_BOX, SEPARATOR_X, SEPARATOR_Y, place, type Box, type Size } from './layout';
 
