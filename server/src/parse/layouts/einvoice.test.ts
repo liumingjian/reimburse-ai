@@ -7,6 +7,7 @@ import { compact, joinedRows, matchSpan, type ParseDoc, type TextObservation } f
 import { dispatch } from '../dispatch';
 import { parseMaterial } from '../material';
 import { pdfDoc } from '../pdf';
+import { productionReaders } from '../readers-production';
 import { einvoice, QR_SOURCE, readQr } from './einvoice';
 import { LAYOUTS } from '.';
 
@@ -18,7 +19,7 @@ const AMAP_QR = '01,32,,26312000000101557402,69.19,20260813,,A1B2C3D4';
 
 describe('vat_invoice/einvoice', () => {
   it('recognises m01 and fills every required slot', async () => {
-    const outcome = await parseMaterial({ materialId: 'm01', fileName: '全季酒店_发票.pdf', mediaType: 'pdf', bytes: fixture('m01-hotel-invoice.pdf') });
+    const outcome = await parseMaterial({ materialId: 'm01', fileName: '全季酒店_发票.pdf', mediaType: 'pdf', bytes: fixture('m01-hotel-invoice.pdf') }, productionReaders);
     expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'vat_invoice', layout: 'einvoice', parserVersion: einvoice.version, kindLabel: '全电发票（专票）', missing: [] });
   });
 

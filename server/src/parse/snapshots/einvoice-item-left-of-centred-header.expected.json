@@ -1,0 +1,16 @@
+{
+  "about": "#199: on real 全电发票 faces the 项目名称 column header is centred over a wide column, while the item cell and the 合计 label sit left-aligned at the column border, left of the header; 8 of 10 real faces lost 项目名称, 不含税金额 and 税额. Captured from the @baox/fixtures r207 reproduction; invoice number, seller name and seller tax id redacted.",
+  "outcome": "recognised",
+  "layout": "vat_invoice/einvoice",
+  "facts": {
+    "invoiceNumber": "26312000000104400017",
+    "issueDate": "2026-08-18",
+    "invoiceType": "普票",
+    "sellerName": "示例出行科技(深圳)有限公司",
+    "sellerTaxId": "91440000XXXXXXXX0G",
+    "itemName": "*交通运输服务*客运服务费",
+    "netAmount": "31.55",
+    "taxAmount": "0.95",
+    "totalAmount": "32.50"
+  }
+}

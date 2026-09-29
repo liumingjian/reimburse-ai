@@ -7,6 +7,7 @@ import { dispatch, type Recognised } from '../dispatch';
 import type { ParseDoc, TextObservation } from '../doc';
 import { parseMaterial } from '../material';
 import { pdfDoc } from '../pdf';
+import { productionReaders } from '../readers-production';
 import { LAYOUTS } from '.';
 import { labelled } from './labelled';
 
@@ -57,7 +58,7 @@ const STAY = (checkIn: string | null, checkOut: string | null) =>
 
 describe('hotel_folio/labelled on the PDF text layer', () => {
   it('recognises m02 as a folio, a reference material with its stay dates and no invoice identity', async () => {
-    const outcome = await parseMaterial({ materialId: 'm02', fileName: '全季酒店_结账单.pdf', mediaType: 'pdf', bytes: fixture('m02-hotel-folio.pdf') });
+    const outcome = await parseMaterial({ materialId: 'm02', fileName: '全季酒店_结账单.pdf', mediaType: 'pdf', bytes: fixture('m02-hotel-folio.pdf') }, productionReaders);
     expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'hotel_folio', layout: 'labelled', parserVersion: labelled.version, kindLabel: '酒店结账单', missing: [], findings: [] });
     if (outcome.outcome !== 'recognised') return;
     expect(KINDS.hotel_folio.role).toBe('reference');
@@ -233,7 +234,7 @@ describe('hotel_folio/labelled date shapes', () => {
 
 describe('hotel_folio/labelled on the r210 photo', () => {
   it('reads the stay dates of a photographed folio whose labels and values are separate boxes', async () => {
-    const outcome = await parseMaterial({ materialId: 'r210', fileName: 'IMG_5120.jpg', mediaType: 'image', bytes: fixture('r210-hotel-folio-photo.jpg') });
+    const outcome = await parseMaterial({ materialId: 'r210', fileName: 'IMG_5120.jpg', mediaType: 'image', bytes: fixture('r210-hotel-folio-photo.jpg') }, productionReaders);
     expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'hotel_folio', layout: 'labelled', missing: [], findings: [] });
     if (outcome.outcome !== 'recognised') return;
     // Printed as 2026/08/09 and 2026年08月22日.
