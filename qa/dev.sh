@@ -9,7 +9,7 @@
 #   qa/dev.sh status   print whether it runs, and where
 #   qa/dev.sh down     stop it
 #
-# Agents run it through rexec from the worktree root: `rexec --detach 'qa/dev.sh up'` then `rexec --wait <ID>`, and
+# Agents run it through rexec from the worktree root: `rexec 'qa/dev.sh up'` (blocks until ready), and
 # `rexec 'qa/dev.sh sync'` after each fix. The instance runs from its own copy of the tree ($STATE/src, kept by
 # qa/mirror.mjs), never from the rexec workspace, and in a process group of its own, so the rexec job ends and frees
 # the workspace. `rexec --cancel` cannot reach it for the same reason; only `down` stops it.
