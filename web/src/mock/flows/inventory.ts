@@ -1,6 +1,6 @@
 import { EXCLUDE_MATERIAL_ERRORS, REOPEN_UPLOAD_ERRORS, type AppAdapter, REVIEW_INVALIDATED_NOTICE, type Material, type TaskSnapshot } from '@baox/contract';
 import type { MockBus } from '../bus';
-import { duplicateBlockers, inventoryResult } from '../fixtures/inventory';
+import { duplicateBlockers, inventoryPhases, inventoryResult } from '../fixtures/inventory';
 import { catalogPending, preparationPending } from '../fixtures/preparation';
 import { T3_ID, inventoryNotStarted, uploadedMaterial } from '../fixtures/tasks';
 import { duplicateReason, judgeFile } from '../upload';
@@ -32,12 +32,10 @@ function removedMaterial(material: Material): Material {
   };
 }
 
-// 服务端给任务命名（盘点结束时，每轮盘点都重算）。规则：
-// - 费用期间 = 所有费用事件的最早日期至最晚日期（有 endDate 的取 endDate，如住宿离店日）；没有费用事件就不动名称与期间。
-// - 名称只改服务端生成的占位名称（rename = true，经 createTask 新建的任务）：
-//   `<期间开始的年月 YYYY-MM> <城市>出差`，城市取费用事件里出现次数最多的城市（相同次数取先出现的）；
-//   没有任何事件带城市时为 `<YYYY-MM> 报销`。T1 的示例材料得到 `2026-08 上海出差`、期间 2026-08-09 至 2026-08-22。
-export function nameFromEvents(snapshot: TaskSnapshot, rename: boolean): void {
+// The expense period (费用期间) the server derives when an inventory ends: the earliest to the latest date of all expense
+// events (endDate where there is one, e.g. a stay's check-out). No events, no change. The server never renames a
+// task: a new task keeps its placeholder name (`<creation date> 新建报销`).
+export function periodFromEvents(snapshot: TaskSnapshot): void {
   const events = snapshot.events;
   if (events.length === 0) return;
   const starts = events.map((event) => event.date).sort();
@@ -45,12 +43,6 @@ export function nameFromEvents(snapshot: TaskSnapshot, rename: boolean): void {
   const start = starts[0] ?? '';
   const end = ends[ends.length - 1] ?? start;
   snapshot.task.period = { start, end };
-  if (!rename) return;
-  const counts = new Map<string, number>();
-  for (const event of events) if (event.city) counts.set(event.city, (counts.get(event.city) ?? 0) + 1);
-  let city: string | null = null;
-  for (const [candidate, count] of counts) if (city === null || count > (counts.get(city) ?? 0)) city = candidate;
-  snapshot.task.name = city ? `${start.slice(0, 7)} ${city}出差` : `${start.slice(0, 7)} 报销`;
 }
 
 export function createInventoryFlow(bus: MockBus): InventoryFlow {
@@ -84,7 +76,7 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
     }
     snapshot.events = result.events;
     snapshot.pendingItems = result.pendingItems;
-    nameFromEvents(snapshot, bus.autoNamed.has(snapshot.task.taskId));
+    periodFromEvents(snapshot);
     settlePending(snapshot, bus.projectAllowList(snapshot.task.taskId));
   };
 
@@ -101,7 +93,7 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
       snapshot.confirmation = { ...snapshot.confirmation, status: 'invalidated', confirmedAt: null, notice: REVIEW_INVALIDATED_NOTICE };
     }
     if (snapshot.printSheet.status === 'generated') snapshot.printSheet.status = 'stale';
-    // 旧材料包作废；报销信息核对与材料准备在重新盘点、再次提交项目归属后重来。
+    // No digest any more: the catalog check and the preparation start over after the next inventory and submission.
     snapshot.catalog = catalogPending();
     snapshot.preparation = preparationPending();
     snapshot.blockers = [];
@@ -151,11 +143,15 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
           batch.files.push({ fileId, fileName: file.name, relativePath: relativePathOf(file), size: file.size, status: 'rejected', contentHash: null, reasonCode: verdict.reasonCode, reason: verdict.reason, materialId: null });
           continue;
         }
-        const materialId = `m-${fileId}`;
+        // The server's material id is the accepted file's id.
+        const materialId = fileId;
         known.set(verdict.contentHash, file.name);
         snapshot.materials.push(uploadedMaterial({ materialId, batchId, fileName: file.name, relativePath: relativePathOf(file), size: file.size, contentHash: verdict.contentHash }));
         batch.files.push({ fileId, fileName: file.name, relativePath: relativePathOf(file), size: file.size, status: 'accepted', contentHash: verdict.contentHash, reasonCode: null, reason: null, materialId });
       }
+      // A batch opens the next inventory version (the server numbers them v1, v2, ...).
+      batch.versionId = `v${batch.no}`;
+      if (snapshot.inventory.status === 'not_started') snapshot.inventory.versionId = batch.versionId;
       snapshot.batches.push(batch);
       snapshot.task.updatedAt = batch.uploadedAt;
       // 盘点之后再追加批次：材料变了，旧确认失效，任务回到上传阶段（服务端兜底，即使页面没有先走 reopenUpload）。
@@ -172,7 +168,7 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
         for (const batch of snapshot.batches) batch.versionId = versionId;
         snapshot.stage = 'inventory';
         snapshot.task.updatedAt = bus.now();
-        snapshot.inventory = { ...inventoryNotStarted(), status: 'running', versionId };
+        snapshot.inventory = { ...inventoryNotStarted(), status: 'running', versionId, phases: inventoryPhases(snapshot.materials, 'todo') };
         snapshot.blockers = [];
         const first = snapshot.inventory.phases[0];
         if (first) first.status = 'running';

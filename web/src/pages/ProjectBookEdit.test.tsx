@@ -8,7 +8,7 @@ type Extra = Omit<MockOptions, 'seed' | 'fault'>;
 
 function renderApp(hash: string, extra: Extra = {}) {
   window.location.hash = hash;
-  const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, autoStepMs: 5, ...extra });
+  const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, ...extra });
   render(<App adapter={adapter} />);
   return adapter;
 }
@@ -52,7 +52,7 @@ describe('项目簿编辑', () => {
   });
 
   test('keeps public rows read-only for members and lets an administrator edit the same public record', async () => {
-    const member = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
+    const member = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5 });
     await member.intakePublicProject({ number: 'PUBLIC-EDIT', name: '共享原名称' });
     await member.register({ username: 'book-member', password: 'member-password' });
     await member.login({ username: MOCK_ACCOUNT.username, password: MOCK_PASSWORD });
@@ -67,7 +67,7 @@ describe('项目簿编辑', () => {
 
     cleanup();
 
-    const admin = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
+    const admin = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5 });
     await admin.intakePublicProject({ number: 'PUBLIC-EDIT', name: '共享原名称' });
     window.location.hash = '#/projects';
     render(<App adapter={admin} />);

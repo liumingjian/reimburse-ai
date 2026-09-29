@@ -6,7 +6,7 @@ import { createMockAdapter } from '../mock/mock-adapter';
 
 function renderApp(hash: string) {
   window.location.hash = hash;
-  const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
+  const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5 });
   render(<App adapter={adapter} />);
   return adapter;
 }
@@ -36,7 +36,7 @@ describe('project book lifecycle controls', () => {
   });
 
   test('updates mock assignment availability without discarding a draft permanently', async () => {
-    const adapter = createMockAdapter({ seed: 'project', fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
+    const adapter = createMockAdapter({ seed: 'project', fault: null, inventoryPhaseMs: 5 });
     const before = await adapter.getSnapshot('T1');
     expect(before.projectAssignment.working.some((entry) => entry.projectNumber === 'P-2307')).toBe(true);
 
@@ -53,7 +53,7 @@ describe('project book lifecycle controls', () => {
   });
 
   test('keeps the member public view read-only while the administrator can deactivate and restore a public entry', async () => {
-    const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
+    const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5 });
     await adapter.intakePublicProject({ number: 'PUBLIC-LIFE', name: '公共生命周期项目' });
     await adapter.register({ username: 'book-member', password: 'member-password' });
     await adapter.login({ username: MOCK_ACCOUNT.username, password: MOCK_PASSWORD });
@@ -90,7 +90,7 @@ describe('project book lifecycle controls', () => {
 
 
 test.each([true, false])('personal deletion confirms or cancels for active=%s', async (active) => {
-  const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
+  const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5 });
   if (!active) await adapter.deactivateProject({ number: 'P-2307' });
   window.location.hash = '#/projects';
   render(<App adapter={adapter} />);
@@ -123,7 +123,7 @@ test('failed deletion keeps the project and dialog available for retry', async (
 });
 
 test.each([true, false])('public deletion confirms or cancels for active=%s', async (active) => {
-  const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
+  const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5 });
   await adapter.intakePublicProject({ number: 'PUBLIC-DELETE', name: '待删除公共项目' });
   if (!active) await adapter.deactivatePublicProject({ number: 'PUBLIC-DELETE' });
   window.location.hash = '#/projects';

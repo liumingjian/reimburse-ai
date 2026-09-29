@@ -57,7 +57,7 @@ test('?location=unavailable：常驻城市没有默认值，提示直接填写�
   await expect(dialog(page).getByText('上次确认的常驻城市（按你的账号记住），可直接修改。')).toBeVisible();
 });
 
-test('全流程 QA：弹层创建任务，上传 sample-materials 的 11 份材料，盘点后 4 个待确认项，任务改名为 2026-08 上海出差', async ({ page }, testInfo) => {
+test('全流程 QA：弹层创建任务，上传 sample-materials 的 11 份材料，盘点后 4 个待确认项，任务名称保持占位（同服务端）并有费用期间', async ({ page }, testInfo) => {
   const files = readdirSync(SAMPLES_DIR).map((name) => join(SAMPLES_DIR, name));
   expect(files).toHaveLength(11);
 
@@ -71,12 +71,15 @@ test('全流程 QA：弹层创建任务，上传 sample-materials 的 11 份材�
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/inventory$/);
   await expect(page.getByRole('link', { name: '处理 4 个待确认项' })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText('2026-08 上海出差', { exact: true }).first()).toBeVisible();
+  // The server never renames a task; the placeholder name stays.
+  await expect(page.getByText(/^\d{4}-\d{2}-\d{2} 新建报销$/).first()).toBeVisible();
   await expect(page.getByText('未识别版式')).toHaveCount(1);
   await page.screenshot({ path: testInfo.outputPath('full-flow-inventory.png'), fullPage: true });
 
   await jump(page, '#/tasks');
-  const row = page.getByRole('row').filter({ has: page.getByRole('cell', { name: '2026-08 上海出差', exact: true }) });
+  const row = page.getByRole('row').filter({ has: page.getByRole('cell', { name: /^\d{4}-\d{2}-\d{2} 新建报销$/ }) });
   await expect(row).toBeVisible();
-  await expect(row.getByText('暂无可用日期', { exact: true })).toBeVisible();
+  // As on the server, the candidate lines exist from the end of the inventory on, so the list has the period.
+  await expect(row).toContainText('2026-08-09');
+  await expect(row.getByText('暂无可用日期', { exact: true })).toHaveCount(0);
 });

@@ -163,8 +163,9 @@ export function withProjectUsage(snapshot: TaskSnapshot): TaskSnapshot {
   snapshot.projectAssignment = {
     ...assignment,
     working,
-    // 整单合计：全部明细，不只 working 里的那些。
-    grossTotal: (snapshot.lines.reduce((sum, line) => sum + Math.round(Number(line.grossAmount) * 100), 0) / 100).toFixed(2),
+    // 整单合计：全部明细，不只 working 里的那些。Like the server, 0.00 until project assignment opens.
+    grossTotal:
+      assignment.status === 'not_started' ? '0.00' : (snapshot.lines.reduce((sum, line) => sum + Math.round(Number(line.grossAmount) * 100), 0) / 100).toFixed(2),
     usage: [...usage.values()].map((entry) => ({
       number: entry.number,
       name: entry.name,
@@ -204,7 +205,7 @@ export function confirmationDigest(taskId: string, versionId: string | null, ass
 export function projectAssignmentOpen(homeCity: string, assignments: Readonly<Record<string, string>> = {}, allowList: readonly ProjectOption[] = PROJECT_BOOK): ProjectAssignment {
   const recorded = toAssignments(assignments, allowList);
   return {
-    status: Object.keys(assignments).length > 0 ? 'pending' : 'not_started',
+    status: 'pending',
     purpose: null,
     homeCity,
     assignments: recorded,

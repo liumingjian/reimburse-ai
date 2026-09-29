@@ -1,15 +1,15 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { App } from '../App';
-import type { TaskStage } from '@baox/contract';
+import type { SeedStage } from '../mock/options';
 import { MOCK_ACCOUNT, MOCK_PASSWORD } from '../mock/auth';
 import { createMockAdapter, type MockOptions } from '../mock/mock-adapter';
 
 type Extra = Omit<MockOptions, 'seed' | 'fault'>;
 
-function renderApp(hash: string, extra: Extra = {}, seed: TaskStage | null = null) {
+function renderApp(hash: string, extra: Extra = {}, seed: SeedStage | null = null) {
   window.location.hash = hash;
-  const adapter = createMockAdapter({ seed, fault: null, inventoryPhaseMs: 5, autoStepMs: 5, ...extra });
+  const adapter = createMockAdapter({ seed, fault: null, inventoryPhaseMs: 5, ...extra });
   render(<App adapter={adapter} />);
   return adapter;
 }
@@ -31,7 +31,7 @@ const bookRows = () => within(personalTable()).queryAllByTestId(/^book-row-/);
 
 describe('项目簿 #/projects', () => {
   test('separates personal and public project work from account administration', async () => {
-    const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
+    const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5 });
     // Initialize the seeded personal book before asserting the public collision.
     await adapter.getProjectBook();
     const collision = await adapter.intakePublicProject({ number: 'P-2307', name: '不应公开' });

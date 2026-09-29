@@ -3,14 +3,15 @@ import { describe, expect, test } from 'vitest';
 import { App } from '../App';
 import { AppProvider } from '../adapter/context';
 import { AppStore } from '../adapter/store';
-import { HANDOVER_COMPLETED_NOTICE, HUMAN_REVIEW_NOTICE, RECONCILE_BUCKETS, type ReconcileBucket, REFILL_COPY, type TaskStage } from '@baox/contract';
+import { HANDOVER_COMPLETED_NOTICE, HUMAN_REVIEW_NOTICE, RECONCILE_BUCKETS, type ReconcileBucket, REFILL_COPY } from '@baox/contract';
+import type { SeedStage } from '../mock/options';
 import { reconcileVerdict } from '../mock/fixtures/erp';
 import { withAllowedActions } from '../mock/fixtures/allowed-actions';
 import { t2Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
 import { ReconcilePage } from './ReconcilePage';
 
-function renderAt(hash: string, seed: TaskStage | null = null) {
+function renderAt(hash: string, seed: SeedStage | null = null) {
   window.location.hash = hash;
   render(<App adapter={createMockAdapter({ seed, fault: null, erpStepMs: 5 })} />);
 }
@@ -150,7 +151,7 @@ describe('对账', () => {
   test('?seed=reconcile（T1 交接步中止，还没对过账）：「开始对账」与「转人工」；读到填好、逐行一致的单据即交接完成，完成页显示固定句且没有单据编号', async () => {
     renderAt('#/task/T1/reconcile', 'reconcile');
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
-    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/交接单据时没有读到报销系统的结果/)).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/保存后没有读到报销系统的结果/)).toBeTruthy();
     expect(screen.queryByRole('heading', { name: '当前对账状态' })).toBeNull();
     // 还没对过账：对账中断点尚未判定，也没有建议的处置（服务端 reconcileView 同此）。
     expect(screen.getByTestId('reconcile-bucket').textContent).toBe('尚未判定');
