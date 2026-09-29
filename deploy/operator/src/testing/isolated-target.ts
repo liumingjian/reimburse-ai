@@ -693,9 +693,29 @@ value.failure = 'test-successor-owns-lock';
 fs.writeFileSync(journal, JSON.stringify(value, null, 2) + '\\n');
 NODE
   fi
+  if [ -f pnpm-workspace.yaml ]; then
+    mkdir -p node_modules
+    printf '%s\\n' "$PWD" > node_modules/.installed-in
+  fi
+  exit 0
+fi
+if [ "$1" = --filter ]; then
+  while [ "$1" = --filter ]; do
+    package=\${2#@baox/}
+    printf 'build:%s\\n' "$package" >> '${join(barrier, 'builds')}'
+    mkdir -p "$package/dist"
+    case "$package" in
+      server) printf 'main rebuilt' > server/dist/main.mjs; printf 'cli rebuilt' > server/dist/baox.mjs ;;
+      web) printf '<html>rebuilt</html>' > web/dist/index.html ;;
+      extension) printf '{"manifest_version":3,"rebuilt":true}' > extension/dist/manifest.json ;;
+    esac
+    shift 2
+  done
+  [ "$1 $2" = 'run build' ] || exit 2
   exit 0
 fi
 if [ "$1" = build ]; then
+  printf 'build:all\\n' >> '${join(barrier, 'builds')}'
   if [ -f .baox-test-use-real-server ]; then
     rm -rf server/dist web/dist extension/dist server/node_modules
     mkdir -p server web/dist extension/dist
@@ -707,7 +727,7 @@ if [ "$1" = build ]; then
     exit 0
   fi
   mkdir -p server/dist web/dist extension/dist
-  ln -s ${shellQuote(join(candidateRuntimeSource, 'server', 'node_modules'))} server/node_modules
+  ln -sfn ${shellQuote(join(candidateRuntimeSource, 'server', 'node_modules'))} server/node_modules
   native_fixture
   printf 'main' > server/dist/main.mjs
   printf 'cli' > server/dist/baox.mjs

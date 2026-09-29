@@ -276,7 +276,8 @@ async function worker(request) {
       worker: { pid: process.pid, startIdentity: identity },
       readiness: readiness.public,
     });
-    await buildCandidate(request, paths, sourceInfo, readiness.environment, lease);
+    const plan = await incrementalBuildPlan(request, paths, readiness.public.runtime);
+    await buildCandidate(request, paths, sourceInfo, readiness.environment, lease, plan);
     const recovery = await captureRecoveryConfiguration(request, paths, lease);
     const manifest = {
       schema: SCHEMA,
@@ -293,6 +294,7 @@ async function worker(request) {
       buildEnvironment: readiness.public.buildEnvironment,
       recovery,
       candidateConfiguration: await candidateConfiguration(paths.source),
+      ...(plan.inputs ? { buildInputs: plan.inputs } : {}),
       phaseTimings: phaseTimingsOf(await readJson(paths.journal)),
     };
     await writeCandidateFile(paths, lease, paths.manifest, JSON.stringify(manifest, null, 2) + '\n', 0o600);
@@ -2986,7 +2988,7 @@ async function readSourceMetadata(source) {
   return { nodeVersion, pnpmVersion: match[1] };
 }
 
-async function buildCandidate(request, paths, source, explicitEnvironment, lease) {
+async function buildCandidate(request, paths, source, explicitEnvironment, lease, plan) {
   const runtime = path.join(request.deployRoot, 'runtime');
   const gcc = path.join(runtime, 'gcc-12.5.0');
   const pnpm = path.join(runtime, 'pnpm-' + source.pnpmVersion, 'bin', 'pnpm');
@@ -3005,18 +3007,36 @@ async function buildCandidate(request, paths, source, explicitEnvironment, lease
     LANG: 'C.UTF-8',
     ...explicitEnvironment,
   };
-  await timePhase(request, paths, lease, 'install', async () => {
+  const dependenciesReused = await timePhase(request, paths, lease, 'install', async (note) => {
     await requireLease(paths, lease);
     await runLogged('chown', ['-R', 'baox:baox', paths.source], paths.candidate, {}, paths.log);
     await requireLease(paths, lease);
     await runAsBaox('/bin/mkdir', ['-p', pnpmHome, env.npm_config_store_dir], paths.source, { HOME: env.HOME, PATH: env.PATH }, paths.log);
     await requireLease(paths, lease);
+    if (await reuseDependencies(request, paths, env, lease, plan)) {
+      note.reused = true;
+      return true;
+    }
     await runAsBaox(pnpm, ['install', '--frozen-lockfile'], paths.source, env, paths.log);
+    return false;
   });
   await requireLease(paths, lease);
-  await timePhase(request, paths, lease, 'build', () => runAsBaox(pnpm, ['build'], paths.source, env, paths.log));
+  await timePhase(request, paths, lease, 'build', async (note) => {
+    const rebuild = await carryOverBuilds(request, paths, env, lease, plan);
+    if (rebuild === null) return runAsBaox(pnpm, ['build'], paths.source, env, paths.log);
+    note.rebuilt = rebuild;
+    if (rebuild.length === 0) {
+      note.reused = true;
+      return undefined;
+    }
+    await requireLease(paths, lease);
+    return runAsBaox(pnpm, [...rebuild.flatMap((name) => ['--filter', name]), 'run', 'build'], paths.source, env, paths.log);
+  });
   await requireLease(paths, lease);
-  await timePhase(request, paths, lease, 'native', () => ensureCandidateSqlite(request, paths, env, lease));
+  await timePhase(request, paths, lease, 'native', async (note) => {
+    const native = await ensureCandidateSqlite(request, paths, env, lease);
+    if (dependenciesReused && native === 'ready') note.reused = true;
+  });
   await requireLease(paths, lease);
   for (const file of [
     path.join(paths.source, 'server', 'dist', 'main.mjs'),
@@ -3045,6 +3065,238 @@ async function buildCandidate(request, paths, source, explicitEnvironment, lease
   await requireLease(paths, lease);
 }
 
+/**
+ * Incremental candidate builds. A candidate reuses what the running release
+ * built when the inputs are unchanged:
+ * - every `node_modules` (and the compiled better-sqlite3 inside) when the
+ *   dependency key matches: lockfile, workspace file, `.npmrc` and the pinned
+ *   runtimes. Any change installs fresh.
+ * - a workspace package's `dist` when its build key matches: the dependency key,
+ *   the repository's root files, and the trees of the package and of its
+ *   workspace dependencies. This assumes a package build reads nothing else and
+ *   writes only `<package>/dist`.
+ * The keys come from the running release's root-owned candidate manifest
+ * (`buildInputs`). The release itself is only read, as baox, so rollback to it
+ * is unaffected. Anything unexpected falls back to the full install and build.
+ */
+const BUILD_INPUTS_SCHEMA = 1;
+const FULL_BUILD_SCRIPT = 'pnpm -r build';
+
+async function incrementalBuildPlan(request, paths, runtime) {
+  const inputs = await buildInputs(paths.source, runtime).catch(() => null);
+  if (!inputs) return { inputs: null, previous: null, incremental: false, directories: [] };
+  return { ...inputs, previous: await runningReleaseBuild(request, paths) };
+}
+
+async function buildInputs(source, runtime) {
+  const lockfile = path.join(source, 'pnpm-lock.yaml');
+  const workspaceFile = path.join(source, 'pnpm-workspace.yaml');
+  if (!await isRegularFile(lockfile) || !await isRegularFile(workspaceFile)) return null;
+  const directories = workspacePackageDirectories(await fs.readFile(workspaceFile, 'utf8'));
+  if (!directories) return null;
+  const npmrc = path.join(source, '.npmrc');
+  const dependencies = sha256(Buffer.from(JSON.stringify({
+    lockfile: await hashFile(lockfile),
+    workspace: await hashFile(workspaceFile),
+    npmrc: await isRegularFile(npmrc) ? await hashFile(npmrc) : null,
+    node: runtime.node,
+    pnpm: runtime.pnpm,
+    gcc: runtime.gcc,
+    buildPython: runtime.buildPython,
+  })));
+  const root = await hashRootFiles(source);
+  const workspace = new Map();
+  for (const directory of directories) {
+    const manifest = await readJson(path.join(source, directory, 'package.json'));
+    if (!manifest || typeof manifest.name !== 'string' || workspace.has(manifest.name)) return null;
+    const dependencyNames = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']
+      .flatMap((field) => Object.entries(manifest[field] || {}))
+      .filter(([, version]) => typeof version === 'string' && version.startsWith('workspace:'))
+      .map(([name]) => name);
+    workspace.set(manifest.name, {
+      directory,
+      builds: Boolean(manifest.scripts && typeof manifest.scripts.build === 'string'),
+      dependencyNames,
+      tree: await hashTree(path.join(source, directory)),
+    });
+  }
+  const packages = {};
+  for (const [name, entry] of workspace) {
+    if (!entry.builds) continue;
+    const closure = workspaceClosure(workspace, name);
+    if (!closure) return null;
+    packages[name] = {
+      directory: entry.directory,
+      key: sha256(Buffer.from(JSON.stringify({ dependencies, root, trees: closure.map((member) => [member, workspace.get(member).tree]) }))),
+    };
+  }
+  const rootManifest = await readJson(path.join(source, 'package.json'));
+  return {
+    inputs: { schema: BUILD_INPUTS_SCHEMA, dependencies, packages },
+    // Only the root script that builds every package can be replaced by per-package builds.
+    incremental: Boolean(rootManifest && rootManifest.scripts && rootManifest.scripts.build === FULL_BUILD_SCRIPT),
+    directories: ['.', ...directories],
+  };
+}
+
+// Reads the plain `packages:` list of pnpm-workspace.yaml. Globs or any other
+// shape return null, which disables reuse rather than guessing.
+function workspacePackageDirectories(content) {
+  const directories = [];
+  let inPackages = false;
+  for (const line of content.split('\n')) {
+    if (!inPackages) {
+      if (/^packages:\s*$/u.test(line)) inPackages = true;
+      continue;
+    }
+    if (/^\S/u.test(line)) break;
+    if (line.trim() === '' || line.trim().startsWith('#')) continue;
+    const match = /^\s+-\s+(['"]?)([A-Za-z0-9._/-]+)\1\s*$/u.exec(line);
+    if (!match || match[2].split('/').some((segment) => segment === '' || segment === '.' || segment === '..')) return null;
+    directories.push(match[2]);
+  }
+  return directories.length > 0 ? directories : null;
+}
+
+function workspaceClosure(workspace, name) {
+  const seen = new Set();
+  const pending = [name];
+  while (pending.length > 0) {
+    const next = pending.pop();
+    if (seen.has(next)) continue;
+    const entry = workspace.get(next);
+    if (!entry) return null;
+    seen.add(next);
+    pending.push(...entry.dependencyNames);
+  }
+  return [...seen].sort();
+}
+
+async function hashRootFiles(source) {
+  const hash = createHash('sha256');
+  for (const name of (await fs.readdir(source)).sort()) {
+    const file = path.join(source, name);
+    if (await isRegularFile(file)) hash.update(`${name}\0${await hashFile(file)}\n`);
+  }
+  return hash.digest('hex');
+}
+
+async function hashTree(root) {
+  const hash = createHash('sha256');
+  const visit = async (directory, relative) => {
+    for (const name of (await fs.readdir(directory)).sort()) {
+      if (name === 'node_modules') continue;
+      const file = path.join(directory, name);
+      const entry = relative ? relative + '/' + name : name;
+      const stat = await fs.lstat(file);
+      if (stat.isSymbolicLink()) hash.update(`${entry}\0link\0${await fs.readlink(file)}\n`);
+      else if (stat.isDirectory()) {
+        hash.update(`${entry}\0dir\n`);
+        await visit(file, entry);
+      } else if (stat.isFile()) hash.update(`${entry}\0file\0${stat.mode & 0o111 ? 'x' : '-'}\0${await hashFile(file)}\n`);
+      else throw new CandidateFailure('candidate-source-entry-unsupported');
+    }
+  };
+  await visit(root, '');
+  return hash.digest('hex');
+}
+
+async function runningReleaseBuild(request, paths) {
+  const releaseId = await currentManagedReleaseId(request, paths);
+  if (!releaseId || releaseId === request.candidateId || !/^[a-f0-9]{12}-[a-f0-9]{12}$/iu.test(releaseId)) return null;
+  const manifest = await readPreparedCandidate(paths, releaseId).catch(() => null);
+  if (!manifest || !isBuildInputs(manifest.buildInputs)) return null;
+  return { releaseId, root: path.join(paths.releaseRoot, releaseId), inputs: manifest.buildInputs };
+}
+
+function isBuildInputs(value) {
+  return Boolean(value && value.schema === BUILD_INPUTS_SCHEMA && typeof value.dependencies === 'string'
+    && value.packages && typeof value.packages === 'object'
+    && Object.values(value.packages).every((entry) => entry && typeof entry.directory === 'string' && typeof entry.key === 'string'));
+}
+
+/** Hardlinks the running release's `node_modules` trees into the candidate. */
+async function reuseDependencies(request, paths, env, lease, plan) {
+  const previous = plan.previous;
+  if (!plan.inputs || !previous || previous.inputs.dependencies !== plan.inputs.dependencies) return false;
+  const copies = [];
+  for (const directory of plan.directories) {
+    const from = path.join(previous.root, directory, 'node_modules');
+    if (await fs.lstat(from).catch(() => null)) copies.push([from, path.join(paths.source, directory, 'node_modules')]);
+  }
+  if (!copies.some(([from]) => from === path.join(previous.root, 'node_modules'))) return false;
+  try {
+    for (const [from, to] of copies) {
+      await requireLease(paths, lease);
+      await copyTreeAsBaox(request, paths, env, 'link', from, to);
+    }
+    return true;
+  } catch {
+    // A lost lease throws here; any other failure falls back to a fresh install.
+    await requireLease(paths, lease);
+    await runAsBaox('/bin/rm', ['-rf', ...copies.map(([, to]) => to)], paths.source, env, paths.log);
+    return false;
+  }
+}
+
+/**
+ * Copies the `dist` of every package whose build key matches the running
+ * release's, and returns the names still to build. Null means a full build.
+ */
+async function carryOverBuilds(request, paths, env, lease, plan) {
+  const previous = plan.previous;
+  if (!plan.inputs || !plan.incremental || !previous) return null;
+  const rebuild = [];
+  for (const [name, entry] of Object.entries(plan.inputs.packages)) {
+    const before = previous.inputs.packages[name];
+    const from = path.join(previous.root, entry.directory, 'dist');
+    const to = path.join(paths.source, entry.directory, 'dist');
+    const fromStat = await fs.lstat(from).catch(() => null);
+    if (!before || before.key !== entry.key || before.directory !== entry.directory || !fromStat || !fromStat.isDirectory()) {
+      rebuild.push(name);
+      continue;
+    }
+    try {
+      await requireLease(paths, lease);
+      await copyTreeAsBaox(request, paths, env, 'copy', from, to);
+    } catch {
+      await requireLease(paths, lease);
+      await runAsBaox('/bin/rm', ['-rf', to], paths.source, env, paths.log);
+      rebuild.push(name);
+    }
+  }
+  return rebuild.length === Object.keys(plan.inputs.packages).length ? null : rebuild.sort();
+}
+
+// Runs as baox, so it can only link or read what the service account already
+// owns. Files are hardlinked ('link', like pnpm's own store import) or copied;
+// directories and symlinks are always recreated, so the candidate never writes
+// into the release's directories.
+const COPY_TREE_SCRIPT = `
+const fs = require('node:fs');
+const path = require('node:path');
+const [mode, from, to] = process.argv.slice(1);
+const copy = (source, target) => {
+  const stat = fs.lstatSync(source);
+  if (stat.isSymbolicLink()) return fs.symlinkSync(fs.readlinkSync(source), target);
+  if (stat.isDirectory()) {
+    fs.mkdirSync(target);
+    for (const name of fs.readdirSync(source)) copy(path.join(source, name), path.join(target, name));
+    return fs.chmodSync(target, stat.mode & 0o7777);
+  }
+  if (!stat.isFile()) throw new Error('unsupported entry ' + source);
+  if (mode === 'link') return fs.linkSync(source, target);
+  fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL);
+  fs.chmodSync(target, stat.mode & 0o7777);
+};
+copy(from, to);
+`;
+
+async function copyTreeAsBaox(request, paths, env, mode, from, to) {
+  const node = path.join(request.deployRoot, 'runtime', 'node', 'bin', 'node');
+  await runAsBaox(node, ['-e', COPY_TREE_SCRIPT, mode, from, to], paths.source, env, paths.log);
+}
+
 async function runAsBaox(program, args, cwd, env, log) {
   const assignments = Object.entries(env).map(([key, value]) => key + '=' + value);
   await runLogged('runuser', ['-u', 'baox', '--', 'env', '-i', ...assignments, program, ...args], cwd, {}, log);
@@ -3057,7 +3309,7 @@ async function ensureCandidateSqlite(request, paths, env, lease) {
   const smoke = 'const Database = require("better-sqlite3"); const db = new Database(":memory:"); if (db.prepare("SELECT 1 AS ready").get().ready !== 1) process.exit(1); db.close();';
   try {
     await runAsBaox(node, ['-e', smoke], server, env, paths.log);
-    return;
+    return 'ready';
   } catch {
     await requireLease(paths, lease);
   }
@@ -3078,6 +3330,7 @@ async function ensureCandidateSqlite(request, paths, env, lease) {
   await runAsBaox(node, [gyp, 'rebuild', '--release', '--jobs=2', '--nodedir=' + path.join(runtime, 'node')], packageRoot, env, paths.log);
   await requireLease(paths, lease);
   await runAsBaox(node, ['-e', smoke], server, env, paths.log);
+  return 'rebuilt';
 }
 
 async function captureRecoveryConfiguration(request, paths, lease) {
@@ -3196,25 +3449,35 @@ async function writeJournal(request, paths, lease, phase, extra) {
 
 /**
  * Deploy phase timings live on the journal as `phaseTimings`, in completion
- * order: `{ phase, startedAt, durationMs, failed? }`. They only measure; no
- * recovery decision reads them. A candidate's build phases are copied into its
- * manifest so the cutover journal can list the whole deploy.
+ * order: `{ phase, startedAt, durationMs, failed?, reused?, rebuilt? }`. They
+ * only measure; no recovery decision reads them. A candidate's build phases are
+ * copied into its manifest so the cutover journal can list the whole deploy.
+ * The action gets a `note` object: `note.reused = true` says the phase carried
+ * the running release's output over, `note.rebuilt` lists the only packages built.
  */
 async function timePhase(request, paths, lease, phase, action) {
   const startedAt = new Date();
+  const note = {};
   let result;
   try {
-    result = await action();
+    result = await action(note);
   } catch (error) {
-    await recordPhaseTiming(request, paths, lease, phaseTiming(phase, startedAt, true)).catch(() => undefined);
+    await recordPhaseTiming(request, paths, lease, phaseTiming(phase, startedAt, note, true)).catch(() => undefined);
     throw error;
   }
-  await recordPhaseTiming(request, paths, lease, phaseTiming(phase, startedAt));
+  await recordPhaseTiming(request, paths, lease, phaseTiming(phase, startedAt, note));
   return result;
 }
 
-function phaseTiming(phase, startedAt, failed = false) {
-  return { phase, startedAt: startedAt.toISOString(), durationMs: Date.now() - startedAt.getTime(), ...(failed ? { failed: true } : {}) };
+function phaseTiming(phase, startedAt, note = {}, failed = false) {
+  return {
+    phase,
+    startedAt: startedAt.toISOString(),
+    durationMs: Date.now() - startedAt.getTime(),
+    ...(failed ? { failed: true } : {}),
+    ...(note.reused ? { reused: true } : {}),
+    ...(Array.isArray(note.rebuilt) ? { rebuilt: note.rebuilt } : {}),
+  };
 }
 
 async function recordPhaseTiming(request, paths, lease, entry) {
