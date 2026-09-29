@@ -118,6 +118,31 @@ export const STAGE_DEFAULT_PAGE: Readonly<Record<TaskStage, TaskPage>> = {
   voided: 'upload',
 };
 
+// 报销任务上的写动作（task actions）：服务端 taskPolicy 按任务事实判定此刻哪些被接受，快照的 allowedActions
+// 就是这张表里此刻会被接受的那些（输入本身的校验除外，如哪份材料、哪个待确认项）。页面的按钮只看它，不自己推规则。
+// void_task 是任务作废（ADR-0030）：任何状态都可以，只有这个任务自己的写入、对账或盘点正在跑时不行。
+export const TASK_ACTIONS = [
+  'upload',
+  'start_inventory',
+  'reopen_upload',
+  'exclude_material',
+  'answer_pending',
+  'set_home_city',
+  'assign_project_lines',
+  'submit_project_assignment',
+  'confirm_review',
+  'start_erp_write',
+  'confirm_login',
+  'cancel_erp_write',
+  'reconcile',
+  'hand_off',
+  'refill',
+  'print',
+  'void_task',
+] as const;
+export const TaskActionSchema = z.enum(TASK_ACTIONS);
+export type TaskAction = z.infer<typeof TaskActionSchema>;
+
 // 进入某页面至少要到达的阶段；done 与 reconcile 两页只对处于该阶段的任务开放。
 // 项目归属在待确认项处理完后开放；整单确认页在项目归属提交后（报销信息核对起）开放；
 // 打印稿在整单确认之后开放；ERP 填报在「去报销」之后开放（去报销把阶段推到 erp）。
@@ -133,9 +158,29 @@ const PAGE_REQUIRED_STAGE: Readonly<Record<TaskPage, TaskStage>> = {
   reconcile: 'reconcile',
 };
 
-export function pageAllowed(stage: TaskStage, page: TaskPage): boolean {
+// The actions each page hosts. A page whose action the server admits right now is always open, so the page gate and
+// the page's buttons cannot disagree. Print is not listed: its adjustments pass the gate from the first upload on,
+// while the print page opens with the confirmation (stage actions) and stays open after the write, by stage alone.
+const PAGE_ACTIONS: Readonly<Record<TaskPage, readonly TaskAction[]>> = {
+  upload: ['upload', 'start_inventory'],
+  inventory: [],
+  pending: ['answer_pending'],
+  project: ['assign_project_lines', 'submit_project_assignment'],
+  review: ['confirm_review'],
+  print: [],
+  erp: ['confirm_login', 'cancel_erp_write'],
+  done: [],
+  // 转人工 is not listed: it is also taken from the done page (a strict read-back mismatch), so it names no one page.
+  reconcile: ['reconcile', 'refill'],
+};
+
+// The page gate over the snapshot's own answers: the page hosts an admitted action, or the task's stage reached the
+// page (a page stays readable once its actions are spent).
+export function pageAllowed(task: { stage: TaskStage; allowedActions: readonly TaskAction[] }, page: TaskPage): boolean {
+  const { stage, allowedActions } = task;
   // A voided task keeps only its upload page, read-only.
   if (stage === 'voided') return page === 'upload';
+  if (PAGE_ACTIONS[page].some((action) => allowedActions.includes(action))) return true;
   if (page === 'done' || page === 'reconcile') return stage === page;
   return stageReached(stage, PAGE_REQUIRED_STAGE[page]);
 }

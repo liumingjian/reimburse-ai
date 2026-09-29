@@ -6,7 +6,7 @@ import { ERP_PROGRESS_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCI
 import { sql } from 'kysely';
 import type { Db } from '../db/database';
 import type { ErpHandOffTable, ErpJobTable, TaskLifecycle } from '../db/schema';
-import type { ErpFacts, ErpPhase } from '../task-policy';
+import { erpActionsOf, reconcileActionsOf, type ErpFacts, type ErpPhase } from '../task-policy';
 import type { FrozenJob } from './fill-plan';
 import { ExecutorEventSchema, type ApprovedPreview, type ErpAccount, type ExecutorEvent, type Preconditions, type ReadbackEvent, type ResultEvent } from '@baox/erp-executor/protocol';
 import { noFormOpen, type ReconcileVerdict } from './reconcile';
@@ -215,21 +215,6 @@ function externalWaitOf(record: ErpRecord): Erp['externalWait'] {
   return record.result?.code && EXTENSION_WAIT_CODES.has(record.result.code) ? 'extension_connection' : 'none';
 }
 
-function allowedActionsOf(record: ErpRecord): Erp['allowedActions'] {
-  switch (record.facts?.phase) {
-    case 'waiting_login':
-      return ['refresh', 'confirm_login', 'cancel'];
-    case 'running':
-    case 'aborted':
-    case 'unknown':
-    case 'handed_over':
-    case 'saved':
-      return ['refresh'];
-    default:
-      return [];
-  }
-}
-
 // The executor's code for "报销信息核对 could not read the catalog" (`erp-executor/src/job.ts`). Nothing was written and
 // nothing about the claim is wrong, so it gets its own sentence rather than the generic abort one.
 const CATALOG_QUERY_FAILED = 'catalog_query_failed';
@@ -267,7 +252,7 @@ export function erpView(record: ErpRecord): Erp {
     steps,
     currentStage: currentStageOf(steps),
     externalWait: externalWaitOf(record),
-    allowedActions: allowedActionsOf(record),
+    allowedActions: erpActionsOf(facts.phase),
   };
   const reason = record.result?.message ?? record.result?.code ?? '';
   switch (facts.phase) {
@@ -421,8 +406,8 @@ function captureOf(record: ErpRecord, taskId: string): ErpCapture | null {
 }
 
 /**
- * 对账 (reconcile) after ERP 写入结果未知, and the terminal 转人工. Before any read and after a 原地等待 verdict the user
- * may reconcile (read-only) again or hand off; a 转人工 verdict (incl. 已导入未写明细) allows only the hand-off.
+ * 对账 (reconcile) after ERP 写入结果未知, and the terminal 转人工. The dispositions on offer are the task policy's
+ * (`reconcileActionsOf`); this view only words them.
  */
 export function reconcileView(record: ErpRecord, taskId: string, lifecycle: TaskLifecycle, lines: readonly Line[] = []): Reconcile | null {
   const judged = record.reconcile?.judged ?? null;
@@ -451,6 +436,7 @@ export function reconcileView(record: ErpRecord, taskId: string, lifecycle: Task
     return { ...base, status: 'pending', bucket: judged?.verdict.bucket ?? null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: '正在只读核对报销系统里的这张报销单，不会写入。', reasons: judged?.verdict.reasons ?? fillReasons };
   }
   const notice = runNotice(record.reconcile?.result ?? null);
+  const allowedActions = reconcileActionsOf(record);
   if (!judged) {
     return {
       ...base,
@@ -458,39 +444,25 @@ export function reconcileView(record: ErpRecord, taskId: string, lifecycle: Task
       bucket: null,
       action: null,
       actionCode: null,
-      allowedActions: ['wait', 'hand_off'],
+      allowedActions,
       humanReview: false,
       banner: notice ?? '写入报销系统的结果不确定：应用已停止写入，不会重放。请先在报销系统里查看这张报销单，再点「开始对账」只读核对；也可以直接转人工。',
       reasons: fillReasons,
     };
   }
-  // 重新去报销 (ADR-0027): the exit out of an import that was never saved. The gate is observational and lives
-  // here, in the one view that decides allowed actions, because the reading it needs is the one this view already
-  // holds. It is not gated on the attempt log: baox never saves (ADR-0028), so "this job started no save attempt"
-  // is vacuously true and carries no information. A 单据编号 means the employee saved and re-importing would act on
-  // a bill that exists, so that reading keeps 转人工. An unreadable 单据编号 cell also reads as null here, and that
-  // is the conservative side of the reading only because the bucket itself already required 新增 mode with no bill.
-  // A 对账 that found no 费用报销单 open is the same exit, for the same reason. Closing the tab or cleaning the ERP
-  // browser is a normal act, and an unsaved 费用报销单 does not outlive its tab: with no form on the page there is no
-  // bill to hand anyone, nothing to clean up, and nothing left that the recovery's fresh 新增单 could collide with —
-  // the 收票 records the import left behind are overwritten by the re-import (ADR-0026). The one fact that cannot be
-  // read this way is whether the employee saved before closing, and ADR-0028 already leaves that to them: the gate
-  // stays 「while the ERP shows no 单据编号」, here strengthened to 「no 单据编号 has ever been read for this task」,
-  // and the banner asks them not to press it if they saved. Without this, cleaning the browser would destroy the
-  // evidence the only non-terminal exit depends on and leave 转人工 as the only way out.
+  // 重新去报销 (ADR-0027): the exit out of an import that was never saved, when the policy offers it (see
+  // `reconcileActionsOf` for when and why).
   const noForm = judged.noForm && judged.verdict.bucket === '未知';
-  const refillable = (judged.verdict.bucket === '未保存·已导入未写明细' || noForm) && draftNo === null;
   // Offering the recovery is not a 转人工 outcome, whatever the classifier suggested for the bucket: the disposition
   // is 原地等待 (the code says which of its two exits is suggested) and humanReview is false.
-  if (refillable) {
+  if (allowedActions.includes('refill')) {
     return {
       ...base,
       status: 'pending',
       bucket: judged.verdict.bucket,
       action: RECONCILE_ACTION_LABELS.refill,
       actionCode: 'refill',
-      // With no form open, 再对一次账 stays on offer: the employee may open the bill again and read it properly.
-      allowedActions: noForm ? ['refill', 'wait', 'hand_off'] : ['refill', 'hand_off'],
+      allowedActions,
       humanReview: false,
       banner: notice ?? (noForm ? NO_FORM_OPEN_BANNER : BUCKET_BANNER[judged.verdict.bucket](judged.billNo)),
       reasons: judged.verdict.reasons,
@@ -503,7 +475,7 @@ export function reconcileView(record: ErpRecord, taskId: string, lifecycle: Task
     bucket: judged.verdict.bucket,
     action: judged.verdict.action,
     actionCode: handOffOnly ? 'hand_off' : 'wait',
-    allowedActions: handOffOnly ? ['hand_off'] : ['wait', 'hand_off'],
+    allowedActions,
     humanReview: handOffOnly,
     banner: notice ?? BUCKET_BANNER[judged.verdict.bucket](judged.billNo),
     reasons: judged.verdict.reasons,

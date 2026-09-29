@@ -21,7 +21,7 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
   const matched = readback.status === 'matched';
   const mismatched = readback.status === 'mismatched';
   const handedOff = reconcile.status === 'handed_off';
-  const canHandOff = step.kind === 'hand_off' && reconcile.allowedActions.includes('hand_off');
+  const canHandOff = snapshot.allowedActions.includes('hand_off');
   const { busy, error, run } = useAction(taskId);
   const completedNotice = erp.outcome === 'filled' ? HANDOVER_COMPLETED_NOTICE : erp.outcome === 'saved' ? ERP_SAVED_OUTCOME_NOTICE : null;
 

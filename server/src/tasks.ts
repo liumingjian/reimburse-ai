@@ -5,17 +5,15 @@ import {
   CONFIRM_REVIEW_ERRORS,
   CREATE_TASK_ERRORS,
   ERP_ACTION_ERRORS,
-  ERP_IN_USE_CODE,
   HOME_CITY_ERRORS,
   PENDING_ANSWER_ERRORS,
   PENDING_CHOICE_KEY,
   projectLodgingEvidence,
   PROJECT_ASSIGNMENT_ERRORS,
   HUMAN_REVIEW_NOTICE,
-  REOPEN_UPLOAD_ERRORS,
+  TASK_ACTIONS,
   fieldAnswer,
   type ActionError,
-  type Reconcile,
   type ReconcileBucket,
   type AssignProjectLinesInput,
   type Confirmation,
@@ -39,7 +37,7 @@ import type { ParseOutcome } from './parse/dispatch';
 import type { ParseInput } from './parse/material';
 import { EXCLUDE_CHOICE, judgeAnswer, type Verdict } from './pending/answers';
 import { EDIT_COPY, EDIT_PREFIX, judgeEdit } from './pending/edits';
-import { ACTION_COPY, STALE_JOB, isNonTerminal, parseRunning, stepToken, taskPolicy, type ActionName, type Refusal, type TaskFacts, type TaskPolicy } from './task-policy';
+import { ACTION_COPY, ERP_IN_USE, STALE_JOB, isNonTerminal, parseRunning, stepToken, taskPolicy, type ActionName, type Refusal, type TaskFacts } from './task-policy';
 import { loadFacts, materialRows, uploadHistory, type LoadedTask, type MaterialRow } from './task-facts';
 import { relativeSourcePath, rejectByShape, rejectReason, sourceFileName, storedMime } from './upload-rules';
 import { checkAssign, checkSubmit, linesDigest } from './assignment';
@@ -94,13 +92,7 @@ export class ActionRefusedError extends Error {
 }
 
 type Tx = Db;
-type Context = { tx: Tx; task: TaskTable; facts: TaskFacts; policy: TaskPolicy; loaded: LoadedTask; view: InventoryView; at: string; revision: number };
-
-// The 对账 (reconcile) verdict as the page read it, or null when the task is not reconciling. 重新对账, 转人工 and
-// 重新去报销 are each gated on it, and its four inputs always travel together as the loaded task and its row.
-function reconcileNow(loaded: LoadedTask, task: TaskTable): Reconcile | null {
-  return reconcileView(loaded.erp, task.task_id, task.lifecycle, loaded.lines);
-}
+type Context = { tx: Tx; task: TaskTable; facts: TaskFacts; loaded: LoadedTask; view: InventoryView; at: string; revision: number };
 
 // The next material the parser job should parse. `preset` is an outcome decided without parsing (original missing).
 export type ParseWork = { runId: string; input: ParseInput; preset: ParseOutcome | null };
@@ -116,11 +108,6 @@ export type ErpServiceOptions = {
   acquireErp?: () => MaintenanceLease | null;
   acquireBackground?: () => MaintenanceLease | null;
 };
-
-export const RECONCILE_COPY = {
-  notReconciling: ERP_ACTION_ERRORS.notReconciling,
-  notAllowed: ERP_ACTION_ERRORS.notAllowed,
-} as const;
 
 export type TaskServiceOptions = { onChange?: (snapshot: TaskSnapshot) => void; erp?: ErpServiceOptions };
 
@@ -138,6 +125,12 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     return row;
   }
 
+  // Who holds this account's ERP lease, as a fact for the task policy (`TaskFacts.erpLease`).
+  function leaseOf(taskId: string): 'own' | 'other' | null {
+    const holder = erp?.lease.holder(accountId);
+    return holder ? (holder.taskId === taskId ? 'own' : 'other') : null;
+  }
+
   async function snapshot(taskId: string): Promise<TaskSnapshot> {
     const task = await taskRow(db, taskId);
     const { batches, rejections } = await uploadHistory(db, taskId);
@@ -153,13 +146,13 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       const task = await taskRow(tx, taskId);
       const loaded = await loadFacts(tx, task);
       const { facts, view } = loaded;
-      const policy = taskPolicy(facts, loaded.erp);
+      const policy = taskPolicy({ ...facts, erpLease: leaseOf(taskId) }, loaded.erp);
       const admission = policy.admit(action, token);
       if (admission === 'stale') return { kind: 'stale' };
       if (admission !== 'ok') return { kind: 'refused', ...admission };
       const at = now();
       const revision = task.revision + 1;
-      const refusal = await apply({ tx, task, facts, policy, loaded, view, at, revision });
+      const refusal = await apply({ tx, task, facts, loaded, view, at, revision });
       if (refusal) return { kind: 'refused', ...refusal };
       await tx.updateTable('task').set({ revision, updated_at: at }).where('task_id', '=', taskId).execute();
       return { kind: 'ok' };
@@ -174,47 +167,30 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
   // 去报销, 我已登录，继续 and 重新去报销: all three start one run of the fill job. The lease is taken inside the accepted
   // change, so a task never runs without it; the job itself releases it on its result.
   //
-  // The `refill` trigger is 重新去报销 (ADR-0027) and nothing else. It is the only trigger that may start a fill on a
-  // task whose ERP was already attempted, and it earns that by re-checking, against the same view the page read,
-  // that the current 对账 verdict offers the recovery. The bypass hangs off this one trigger value and nothing else:
-  // `start` (去报销) on an attempted task stays refused, and `confirm_login` never reaches the branch at all.
+  // Where each trigger may be taken from (choose_action; the login pause; the 对账 verdict offering 重新去报销, ADR-0027)
+  // is the task policy's to say, like any other admission: by the time `apply` runs, the trigger was admitted.
   async function startFillJob(taskId: string, token: string, trigger: FillTrigger): Promise<TaskSnapshot> {
     const recovery = trigger === 'refill';
     const started: { run: FillRun | null } = { run: null };
-    const inUse = { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
-    const notWaiting = { code: 'not_waiting_login', message: ERP_ACTION_ERRORS.notWaitingLogin };
     try {
-      // Only `refill` passes the two refusals a reconciling, already-attempted task otherwise gets (phase unknown, and
-      // the ADR-0014 freeze): it is an ERP action in the policy.
       const action = trigger === 'start' ? 'start_erp_write' : trigger;
       const snapshot = await mutate(
         taskId,
         token,
         action,
-        async ({ tx, task, facts, policy, loaded, at, revision }) => {
+        async ({ tx, facts, loaded, at, revision }) => {
           if (!erp) return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
-          const holder = erp.lease.holder(accountId);
-          if (holder && holder.taskId !== taskId) return inUse;
           let frozen: FrozenJob;
           let digest: string;
           if (trigger === 'confirm_login') {
-            if (facts.erp?.phase !== 'waiting_login' || !loaded.erp.frozen || !loaded.erp.job) return notWaiting;
+            // The paused job's own plan, replayed as it was frozen.
+            if (!loaded.erp.frozen || !loaded.erp.job) return { code: 'not_waiting_login', message: ERP_ACTION_ERRORS.notWaitingLogin };
             frozen = loaded.erp.frozen;
             digest = loaded.erp.job.confirmation_digest;
           } else {
-            // Where this start is taken from. The recovery's two checks replace 去报销's two, one for one: the 对账
-            // verdict stands in for the 已开始写入 refusal, and 对账 stands in for choose_action as the step it is
-            // taken from. This is the whole of the bypass; everything below holds for both.
-            if (recovery) {
-              if (facts.erp?.phase !== 'unknown') return { code: 'not_reconciling', message: RECONCILE_COPY.notReconciling };
-              if (!reconcileNow(loaded, task)?.allowedActions.includes('refill')) return { code: 'action_not_allowed', message: RECONCILE_COPY.notAllowed };
-            } else {
-              if (loaded.erp.attempted) return { code: 'erp_started', message: ERP_ACTION_ERRORS.erpStarted };
-              if (policy.step.kind !== 'choose_action') return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
-            }
-            // Nothing is re-confirmed: the recovery rebuilds its plan from the same confirmed materials, lines,
-            // projects and 事由, and refuses just as 去报销 does if that confirmation is not there.
-            if (facts.confirmation !== 'confirmed' || !loaded.confirmed) return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
+            // The plan is built from the confirmed materials, lines, projects and 事由; 重新去报销 rebuilds it from the
+            // same confirmation 去报销 used.
+            if (!loaded.confirmed) return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
             const rows = await materialRows(tx, taskId);
             const kinds = new Map(loaded.view.materials.map((material) => [material.materialId, material.kind]));
             const built = buildFillJob({
@@ -243,7 +219,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
           // Taken for this job, not for the task: the run that ends gives back only its own lease.
           if (!erp.lease.acquire({ accountId, taskId, jobId })) {
             maintenance.release();
-            return inUse;
+            return ERP_IN_USE;
           }
           started.run = { jobId, accountId, taskId, trigger, frozen: job, maintenance };
           await tx.insertInto('erp_job').values({ job_id: jobId, task_id: taskId, account_id: accountId, kind: 'fill', trigger, confirmation_digest: digest, plan: JSON.stringify(job), revision, started_at: at }).execute();
@@ -266,11 +242,12 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
   // between turns the commit into a 409 stale_step with the fresh snapshot.
   async function printChange(taskId: string, prepare: (state: PrintState) => Promise<PrintCommit | null>): Promise<TaskSnapshot> {
     const task = await taskRow(db, taskId);
-    // 去打印 needs no ERP, so it survives 转人工 and ERP 单据已交接 (stories 57 and 63): the paper bundle is still
-    // wanted after the draft is filed. Only a voided task and an imported legacy one have nothing to print.
-    if (task.lifecycle === 'voided' || task.origin === 'legacy') throw new ActionRefusedError({ code: 'task_closed', message: ACTION_COPY.taskClosed }, await snapshot(taskId));
     const rows = await materialRows(db, taskId);
     const loaded = await loadFacts(db, task, rows);
+    // Asked before composing anything, so a closed task (voided, legacy) is refused without work. A job in flight is
+    // left to the commit below, which asks again on whatever revision it lands (a no-op adjustment never commits).
+    const admission = taskPolicy(loaded.facts, loaded.erp).admit('print', null);
+    if (admission !== 'ok' && admission !== 'stale') throw new ActionRefusedError({ code: admission.code, message: admission.message }, await snapshot(taskId));
     const state: PrintState = {
       taskId,
       accountId,
@@ -312,17 +289,20 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
   // list on request, because a task nobody can retire is a task that blocks the app forever. What voiding does not do
   // is reach into ERP: bills already there stay there, and the employee deals with them by hand.
   //
-  // The one refusal left is a job of this very task in flight. Check and void inside one transaction: a concurrent
-  // 去报销 writes its `erp_job` row in its own transaction, so whichever commits second sees the other and a task that
-  // took the ERP lease in between is refused rather than voided out from under a running browser.
+  // The one refusal left is a job of this very task in flight; the task policy decides it (`void_task`), with the ERP
+  // lease as one more fact. Check and void inside one transaction: a concurrent 去报销 writes its `erp_job` row in its
+  // own transaction, so whichever commits second sees the other and a task that took the ERP lease in between is
+  // refused rather than voided out from under a running browser.
   async function voidOne(taskId: string): Promise<void> {
-    const holder = erp?.lease.holder(accountId) ?? null;
+    const erpLease = leaseOf(taskId);
     const outcome = await db.transaction().execute(async (tx): Promise<'ok' | 'not_found' | 'running'> => {
       const task = await tx.selectFrom('task').selectAll().where('task_id', '=', taskId).where('account_id', '=', accountId).executeTakeFirst();
-      if (!task || task.lifecycle === 'voided') return 'not_found';
+      if (!task) return 'not_found';
       const loaded = await loadFacts(tx, task);
-      const phase = loaded.facts.erp?.phase;
-      if (parseRunning(loaded.facts) || phase === 'running' || phase === 'waiting_login' || loaded.facts.erp?.reconciling || holder?.taskId === taskId) return 'running';
+      const admission = taskPolicy({ ...loaded.facts, erpLease }, loaded.erp).admit('void_task', null);
+      // Refused only when voided already: to the list, that task is gone.
+      if (admission === 'stale') return 'running';
+      if (admission !== 'ok') return 'not_found';
       await tx.updateTable('task').set({ lifecycle: 'voided', revision: task.revision + 1, updated_at: now() }).where('task_id', '=', taskId).execute();
       return 'ok';
     });
@@ -426,8 +406,6 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     // After a confirmation this voids it for good (`confirmationStatus`); refused once ERP was touched.
     async reopenUpload(taskId: string, token: string): Promise<TaskSnapshot> {
       return mutate(taskId, token, 'reopen_upload', async ({ tx, at, revision }) => {
-        const attempt = await tx.selectFrom('erp_attempt').select('attempt_id').where('task_id', '=', taskId).executeTakeFirst();
-        if (attempt) return { code: 'erp_started', message: REOPEN_UPLOAD_ERRORS.erpStarted };
         await tx.insertInto('upload_reopen').values({ reopen_id: randomUUID(), task_id: taskId, account_id: accountId, revision, reopened_at: at }).execute();
       });
     },
@@ -513,8 +491,6 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       return mutate(taskId, token, 'set_home_city', async ({ tx, at, revision }) => {
         const homeCity = validHomeCity(requested);
         if (!homeCity) return { code: 'invalid_home_city', message: HOME_CITY_ERRORS.invalid };
-        const attempt = await tx.selectFrom('erp_attempt').select('attempt_id').where('task_id', '=', taskId).executeTakeFirst();
-        if (attempt) return { code: 'home_city_locked', message: HOME_CITY_ERRORS.locked };
         await tx.insertInto('task_home_city').values({ change_id: randomUUID(), task_id: taskId, account_id: accountId, home_city: homeCity, revision, created_at: at }).execute();
         await rememberHomeCity(tx, accountId, homeCity, 'task_edit', at);
       });
@@ -576,7 +552,8 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     // Gives up this 去报销 during the login pause: nothing was written, back to write-pending (choose_action).
     async cancelErpWrite(taskId: string, token: string): Promise<TaskSnapshot> {
       return mutate(taskId, token, 'cancel_erp_write', async ({ tx, facts, at, revision }) => {
-        if (facts.erp?.phase !== 'waiting_login') return { code: 'not_waiting_login', message: ERP_ACTION_ERRORS.notWaitingLogin };
+        // Admitted only in the login pause, so the paused job is there.
+        if (!facts.erp) return { code: 'not_waiting_login', message: ERP_ACTION_ERRORS.notWaitingLogin };
         await tx.insertInto('erp_job_cancel').values({ cancel_id: randomUUID(), job_id: facts.erp.jobId, task_id: taskId, account_id: accountId, revision, created_at: at }).execute();
       });
     },
@@ -591,18 +568,16 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
           taskId,
           token,
           'reconcile',
-          async ({ tx, task, facts, loaded, at, revision }) => {
+          async ({ tx, loaded, at, revision }) => {
             if (!erp) return { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
-            if (facts.erp?.phase !== 'unknown' || !loaded.erp.job) return { code: 'not_reconciling', message: RECONCILE_COPY.notReconciling };
-            if (!reconcileNow(loaded, task)?.allowedActions.includes('wait')) return { code: 'action_not_allowed', message: RECONCILE_COPY.notAllowed };
-            const holder = erp.lease.holder(accountId);
-            if (holder && holder.taskId !== taskId) return { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
+            // Admitted only while the write result is unknown, so the fill job it reads is there.
+            if (!loaded.erp.job) return { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling };
             const jobId = newJobId();
             const maintenance = erp.acquireBackground ? erp.acquireBackground() : { release: () => undefined };
             if (!maintenance) return { code: 'maintenance_in_progress', message: '系统正在维护，暂时不能开始对账。' };
             if (!erp.lease.acquire({ accountId, taskId, jobId })) {
               maintenance.release();
-              return { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
+              return ERP_IN_USE;
             }
             started.run = { jobId, accountId, taskId, plan: { protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId, taskId, erpOrigin: loaded.erp.frozen?.plan.erpOrigin ?? erp.config.origin }, maintenance };
             await tx.insertInto('erp_reconcile_job').values({ job_id: jobId, fill_job_id: loaded.erp.job.job_id, task_id: taskId, account_id: accountId, revision, started_at: at }).execute();
@@ -626,11 +601,10 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
         taskId,
         token,
         'hand_off',
-        async ({ tx, task, facts, loaded, at, revision }) => {
-          if (facts.erp?.phase !== 'unknown') return { code: 'not_reconciling', message: RECONCILE_COPY.notReconciling };
-          const view = reconcileNow(loaded, task);
-          if (!view?.allowedActions.includes('hand_off')) return { code: 'action_not_allowed', message: RECONCILE_COPY.notAllowed };
-          await tx.insertInto('erp_hand_off').values({ hand_off_id: randomUUID(), task_id: taskId, account_id: accountId, fill_job_id: loaded.erp.job?.job_id ?? null, bucket: view.bucket, revision, created_at: at }).execute();
+        async ({ tx, loaded, at, revision }) => {
+          // The bucket the hand-off was made on: the latest 对账 verdict, none before the first read.
+          const bucket = loaded.erp.reconcile?.judged?.verdict.bucket ?? null;
+          await tx.insertInto('erp_hand_off').values({ hand_off_id: randomUUID(), task_id: taskId, account_id: accountId, fill_job_id: loaded.erp.job?.job_id ?? null, bucket, revision, created_at: at }).execute();
           await tx.updateTable('task').set({ lifecycle: 'handed_off' }).where('task_id', '=', taskId).execute();
         },
       );
@@ -689,7 +663,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     },
 
     // 任务作废 (void task): a lifecycle change, not a deletion. Returns the task list without the task.
-    // Refused once an ERP action attempt exists: its invoices stay held until reconcile releases them (ADR-0007).
+    // Any lifecycle and any ERP phase (ADR-0030); refused only while a job of this task is in flight (`voidOne`).
     async voidTask(taskId: string): Promise<TaskList> {
       await voidOne(taskId);
       return list();
@@ -789,20 +763,21 @@ function taskPeriod(lines: readonly Line[]): TaskListItem['period'] {
 
 function listItem(task: TaskTable, { facts, legacy, erp, lines, digest, confirmed }: LoadedTask): TaskListItem {
   const savedDraftNo = erp.facts?.phase === 'saved' ? (erp.result?.billNo ?? null) : null;
-  const running = parseRunning(facts) || erp.facts?.phase === 'running' || erp.facts?.phase === 'waiting_login' || !!erp.facts?.reconciling;
+  const policy = taskPolicy(facts, erp);
+  // Voidable in every state (ADR-0030); only a job of this task in flight holds it back, and that clears itself.
+  const voidable = policy.allowedActions.has('void_task');
   return {
     taskId: task.task_id,
     name: task.name,
-    stage: taskPolicy(facts, erp).stage,
+    stage: policy.stage,
     period: taskPeriod(lines),
     grossTotal: facts.confirmation === 'confirmed' ? confirmationView(digest, confirmed, facts.lastReopenRevision, lines).grossTotal : null,
     summaryStatus: lines.length === 0 ? 'unavailable' : facts.confirmation === 'confirmed' ? 'confirmed' : 'pending',
     erpDraftNo: legacy?.bill_no ?? savedDraftNo,
     pendingCount: facts.parse?.openPendingItems ?? 0,
     erpOutcome: legacy?.outcome === 'handed_off' || (task.origin !== 'legacy' && task.lifecycle === 'handed_off') ? 'handed_off' : 'none',
-    // Voidable in every state (ADR-0030); only a job of this task in flight holds it back, and that clears itself.
-    abandonable: !running,
-    abandonBlockedReason: running ? ABANDON_TASK_COPY.blockedReason : null,
+    abandonable: voidable,
+    abandonBlockedReason: voidable ? null : ABANDON_TASK_COPY.blockedReason,
     // The confirmation has a sharper wording for a task whose bills are already over in ERP.
     erpTouched: erp.attempted,
     updatedAt: task.updated_at,
@@ -829,7 +804,7 @@ function batchFiles(batchId: string, materials: readonly MaterialRow[], rejectio
 }
 
 function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, legacy, lines, digest, confirmed, erp, print }: LoadedTask, batches: readonly UploadBatchTable[], rejections: readonly UploadRejectionTable[], materials: readonly MaterialRow[]): TaskSnapshot {
-  const { stage, step, blockers } = taskPolicy(facts, erp);
+  const { stage, step, blockers, allowedActions } = taskPolicy(facts, erp);
   // A batch that added a material formed the next inventory version.
   const versionOf = new Map<string, string>();
   for (const batch of batches) if (materials.some((m) => m.batch_id === batch.batch_id)) versionOf.set(batch.batch_id, `v${versionOf.size + 1}`);
@@ -881,6 +856,8 @@ function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, l
         ? { status: 'handed_off', bucket: legacy.reconcile_bucket as ReconcileBucket | null, action: '转人工', actionCode: null, allowedActions: [], humanReview: true, banner: HUMAN_REVIEW_NOTICE, draftNo: legacy.bill_no, rows: [], reasons: [], capture: null }
         : (reconcileView(erp, task.task_id, task.lifecycle, lines) ?? { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [], capture: null }),
     step,
+    // In contract order, so equal policies give equal snapshots.
+    allowedActions: TASK_ACTIONS.filter((action) => allowedActions.has(action)),
   };
 }
 
