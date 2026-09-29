@@ -1,0 +1,44 @@
+# Testing: inner loop and full gate
+
+Two commands, for two moments. Both run on the Mac through `rexec`, from the repo (or worktree) root.
+
+## Inner loop: `pnpm test:changed <file>...`
+
+Run after every edit. It runs only the tests related to the files you pass
+(`tools/test-changed.mjs`):
+
+- vitest `related` in each workspace package that owns a changed file or depends on one. A change to a package's own
+  config (`package.json`, `tsconfig*.json`, `vite(st).config.*`) runs that package's whole suite.
+- Playwright on the `web/e2e` specs whose imports reach a changed file (a changed spec, `e2e/server/fixture.ts`,
+  `@baox/contract`, …), after building only what those specs need.
+
+Compute the file list on the agent server, where git works, and pass it in. The Mac workspace has no usable history:
+`.git` is not synced by default, and a worktree's `.git` file points at a path that exists only on the server, so
+`--base <ref>` and Playwright's own `--only-changed` fail there.
+
+```bash
+rexec "set -o pipefail; pnpm test:changed $(git diff --name-only $(git merge-base HEAD origin/main); git ls-files -o --exclude-standard) 2>&1 | tail -40"
+```
+
+The `$(...)` expands on the server before rexec sends the command. Flags: `--no-e2e`, `--no-build` (reuse the existing
+`server/dist`, `web/dist`, `web/dist-mock`), `--dry-run` (print what would run).
+
+Its reach is the module graph: a spec that drives the built app without importing the changed file is not selected, and
+neither is a test that reads a data file (a PDF fixture) without importing it. When the change is covered by a journey,
+name the spec: `pnpm test:e2e e2e/server/erp.spec.ts` (building takes most of that run).
+
+## Full gate: before merge
+
+Once, when the change is done:
+
+```bash
+rexec --detach 'set -o pipefail; pnpm typecheck && pnpm test 2>&1 | tail -40'
+rexec --detach 'set -o pipefail; pnpm test:e2e 2>&1 | tail -40'
+```
+
+`pnpm test` is lint plus every package's unit suite, packages in parallel. Server tests that run the real OCR are the
+`server-ocr` vitest project (`server/vitest.config.ts`), one file at a time, so they cannot starve the web suite's
+timing tests; a new server test that parses an image for real goes on its `OCR_TESTS` list.
+
+`deploy/operator`'s `src/source.test.ts` archives the committed repository, so it needs a real git checkout: it fails
+in a rexec workspace synced from a worktree.
