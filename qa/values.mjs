@@ -76,8 +76,9 @@ const invoiceNumber20 = (seed) => (seed ? `2544${seededDigits(seed, 16)}` : INVO
 const INVOICE_CODE_12 = '144031539110';
 
 // The item name (项目名称) on a fully digital e-invoice (全电发票) is a tax classification (税收分类) in `*类别*说明`
-// form, and the app reads the expense category (费用类别) out of it (`vatItemCategory` in server/src/parse/slots.ts). A free-text
-// marker leaves the invoice uncategorised, so it forms no 费用事件 and never reaches the 整单明细 — the stand-in
+// form, and the app reads the expense category (费用类别) out of it (`vatItemCategory` in server/src/parse/slots.ts).
+// A free-text marker leaves the invoice uncategorised, so it forms no expense event (费用事件) and never reaches the
+// whole-list details (整单明细) — the stand-in
 // therefore keeps the real shape of a passenger-transport item row.
 // A recognised face the app already read is a ride-hailing invoice, so the transport class is the truthful
 // shape there. A file nothing could recognise tells the driver nothing at all: the accommodation class is no
