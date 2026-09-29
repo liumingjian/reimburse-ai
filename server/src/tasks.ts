@@ -8,29 +8,21 @@ import {
   HOME_CITY_ERRORS,
   PENDING_ANSWER_ERRORS,
   PENDING_CHOICE_KEY,
-  projectLodgingEvidence,
   PROJECT_ASSIGNMENT_ERRORS,
-  HUMAN_REVIEW_NOTICE,
-  TASK_ACTIONS,
   fieldAnswer,
   type ActionError,
-  type ReconcileBucket,
   type AssignProjectLinesInput,
-  type Confirmation,
   type Corners,
-  type Line,
   type PlacementSlot,
   type PendingAnswer,
   type ProjectAssignmentInput,
   type TaskList,
   type TaskListItem,
   type TaskSnapshot,
-  type UploadBatch,
-  type UploadFileResult,
 } from '@baox/contract';
 import { sql } from 'kysely';
 import type { Db } from './db/database';
-import type { TaskTable, UploadBatchTable, UploadRejectionTable } from './db/schema';
+import type { TaskTable } from './db/schema';
 import { blobPath, writeBlob } from './data-dir';
 import type { InventoryView } from './inventory-view';
 import type { ParseOutcome } from './parse/dispatch';
@@ -38,13 +30,13 @@ import type { ParseInput } from './parse/material';
 import { EXCLUDE_CHOICE, judgeAnswer, type Verdict } from './pending/answers';
 import { EDIT_COPY, EDIT_PREFIX, judgeEdit } from './pending/edits';
 import { ACTION_COPY, ERP_IN_USE, STALE_JOB, isNonTerminal, parseRunning, stepToken, taskPolicy, type ActionName, type Refusal, type TaskFacts } from './task-policy';
-import { loadFacts, materialRows, uploadHistory, type LoadedTask, type MaterialRow } from './task-facts';
+import { loadFacts, materialRows, uploadHistory, type LoadedTask } from './task-facts';
+import { projectListItem, projectSnapshot } from './task-snapshot';
 import { relativeSourcePath, rejectByShape, rejectReason, sourceFileName, storedMime } from './upload-rules';
 import { checkAssign, checkSubmit, linesDigest } from './assignment';
 import { bookOptions, createBookService } from './books';
 import { COMPANY_RULES, putRuleSet, validHomeCity } from './rules/company-rules';
 import { rememberedHomeCity, rememberHomeCity } from './settings';
-import { confirmationView } from './confirmation';
 import type { ErpLease } from './erp-lease';
 import type { MaintenanceLease } from './maintenance';
 import type { ErpConfig } from './erp/config';
@@ -52,14 +44,14 @@ import { buildFillJob, type FrozenJob } from './erp/fill-plan';
 import { newJobId, type FillRun, type FillTrigger } from './erp/fill-jobs';
 import { PROTOCOL_VERSION } from '@baox/erp-executor/protocol';
 import type { ReconcileRun } from './erp/reconcile-jobs';
-import { catalogView, erpView, loadErp, readbackView, reconcileView } from './erp/fill-state';
-import { printFileShas, printView, sheetState } from './print/facts';
+import { loadErp } from './erp/fill-state';
+import { printFileShas } from './print/facts';
 import * as printActions from './print/service';
 import { PrintRefusal, type PrintCommit, type PrintState } from './print/service';
 
-// 报销任务 (reimbursement task) actions that append facts, and the snapshot projected from them. The facts themselves
-// are read by `task-facts.ts`. Every accepted change goes through `mutate`: stepToken check, refusal, revision bump,
-// then `onChange` (SSE).
+// 报销任务 (reimbursement task) actions that append facts. The facts are read by `task-facts.ts` and projected into
+// the contract snapshot by `task-snapshot.ts`. Every accepted change goes through `mutate`: stepToken check, refusal,
+// revision bump, then `onChange` (SSE).
 
 export type UploadedFile = { fileName: string; mime: string; bytes: Uint8Array; relativePath?: string | null };
 
@@ -279,7 +271,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     // 任务作废 (void task) removes the task from the list; its facts stay on disk.
     const tasks = await db.selectFrom('task').selectAll().where('account_id', '=', accountId).where('lifecycle', '!=', 'voided').orderBy('updated_at', 'desc').execute();
     const items: TaskListItem[] = [];
-    for (const task of tasks) items.push(listItem(task, await loadFacts(db, task)));
+    for (const task of tasks) items.push(projectListItem(task, await loadFacts(db, task)));
     const remembered = await rememberedHomeCity(db, accountId);
     return { homeCity: remembered ? { value: remembered, source: 'remembered' } : null, tasks: items };
   }
@@ -752,121 +744,4 @@ export async function parseBacklogOfAllAccounts(db: Db, dataDir: string): Promis
     for (const taskId of await createTaskService(db, dataDir, accountId).parseBacklog()) entries.push({ accountId, taskId });
   }
   return entries;
-}
-
-function taskPeriod(lines: readonly Line[]): TaskListItem['period'] {
-  const dates = lines.flatMap((line) => [line.date, line.endDate ?? line.date]).filter((date): date is string => !!date).sort();
-  const start = dates[0];
-  const end = dates.at(-1);
-  return start && end ? { start, end } : null;
-}
-
-function listItem(task: TaskTable, { facts, legacy, erp, lines, digest, confirmed }: LoadedTask): TaskListItem {
-  const savedDraftNo = erp.facts?.phase === 'saved' ? (erp.result?.billNo ?? null) : null;
-  const policy = taskPolicy(facts, erp);
-  // Voidable in every state (ADR-0030); only a job of this task in flight holds it back, and that clears itself.
-  const voidable = policy.allowedActions.has('void_task');
-  return {
-    taskId: task.task_id,
-    name: task.name,
-    stage: policy.stage,
-    period: taskPeriod(lines),
-    grossTotal: facts.confirmation === 'confirmed' ? confirmationView(digest, confirmed, facts.lastReopenRevision, lines).grossTotal : null,
-    summaryStatus: lines.length === 0 ? 'unavailable' : facts.confirmation === 'confirmed' ? 'confirmed' : 'pending',
-    erpDraftNo: legacy?.bill_no ?? savedDraftNo,
-    pendingCount: facts.parse?.openPendingItems ?? 0,
-    erpOutcome: legacy?.outcome === 'handed_off' || (task.origin !== 'legacy' && task.lifecycle === 'handed_off') ? 'handed_off' : 'none',
-    abandonable: voidable,
-    abandonBlockedReason: voidable ? null : ABANDON_TASK_COPY.blockedReason,
-    // The confirmation has a sharper wording for a task whose bills are already over in ERP.
-    erpTouched: erp.attempted,
-    updatedAt: task.updated_at,
-  };
-}
-
-// Files of a batch in upload order: accepted materials and rejections interleaved by their position in the batch.
-function batchFiles(batchId: string, materials: readonly MaterialRow[], rejections: readonly UploadRejectionTable[]): UploadFileResult[] {
-  const entries: { order: number; file: UploadFileResult }[] = [];
-  for (const row of materials.filter((m) => m.batch_id === batchId)) {
-    entries.push({
-      // Materials from before 0002_180 have no position; they keep insertion order after any positioned file.
-      order: row.batch_seq ?? 1e9 + row.row_no,
-      file: { fileId: row.material_id, fileName: row.file_name, relativePath: row.source_path ?? row.file_name, size: row.size, status: 'accepted', contentHash: row.blob_sha256, reasonCode: null, reason: null, materialId: row.material_id },
-    });
-  }
-  for (const row of rejections.filter((r) => r.batch_id === batchId)) {
-    entries.push({
-      order: row.batch_seq,
-      file: { fileId: row.rejection_id, fileName: row.file_name, relativePath: row.source_path ?? row.file_name, size: row.size, status: 'rejected', contentHash: null, reasonCode: row.reason_code, reason: row.reason, materialId: null },
-    });
-  }
-  return entries.sort((a, b) => a.order - b.order).map((entry) => entry.file);
-}
-
-function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, legacy, lines, digest, confirmed, erp, print }: LoadedTask, batches: readonly UploadBatchTable[], rejections: readonly UploadRejectionTable[], materials: readonly MaterialRow[]): TaskSnapshot {
-  const { stage, step, blockers, allowedActions } = taskPolicy(facts, erp);
-  // A batch that added a material formed the next inventory version.
-  const versionOf = new Map<string, string>();
-  for (const batch of batches) if (materials.some((m) => m.batch_id === batch.batch_id)) versionOf.set(batch.batch_id, `v${versionOf.size + 1}`);
-  const batchViews: UploadBatch[] = batches.map((batch) => ({
-    batchId: batch.batch_id,
-    no: batch.no,
-    uploadedAt: batch.uploaded_at,
-    versionId: versionOf.get(batch.batch_id) ?? null,
-    files: batchFiles(batch.batch_id, materials, rejections),
-  }));
-  const snapshotMaterials = view.materials.map((material) => materialWithSourceUrls(task.task_id, material));
-  return {
-    revision: task.revision,
-    task: { taskId: task.task_id, name: task.name, period: taskPeriod(lines), homeCity, createdAt: task.created_at, updatedAt: task.updated_at },
-    stage,
-    batches: batchViews,
-    materials: snapshotMaterials,
-    inventory: { ...view.inventory, versionId: facts.versionNo > 0 ? `v${facts.versionNo}` : null },
-    events: view.events,
-    pendingItems: view.pendingItems,
-    blockers,
-    lines,
-    lodgingEvidence: projectLodgingEvidence({ materials: snapshotMaterials, lines }),
-    confirmation: confirmationView(digest, confirmed, facts.lastReopenRevision, lines) satisfies Confirmation,
-    ...printView(task.task_id, task.name, print, sheetState(print, facts.confirmation, confirmed?.revision ?? null), view.trios),
-    projectAssignment: assignment?.view ?? { status: 'not_started', purpose: null, homeCity, assignments: [], working: [], reselect: [], usage: [], grossTotal: '0.00', projects: [], deadlineWarnings: [], submittedAt: null },
-    // The catalog check lives in the ERP job (ADR-0014); a mismatch it found shows here until the next submission.
-    catalog: catalogView(erp) ?? { status: 'pending', problems: [] },
-    // Nothing is prepared before the confirmation any more.
-    preparation: { status: digest ? 'ready' : 'pending', problems: [], packageFiles: [] },
-    // An imported legacy task shows only its stored ERP facts: the saved draft's number, or the 转人工 bucket.
-    erp: legacy
-      ? {
-          status: legacy.outcome === 'draft_handed_over' ? 'done' : 'idle',
-          steps: [],
-          currentStage: legacy.outcome === 'draft_handed_over' ? 'handover' : null,
-          externalWait: 'none',
-          outcome: legacy.outcome === 'draft_handed_over' ? 'saved' : 'none',
-          allowedActions: legacy.outcome === 'draft_handed_over' ? ['refresh'] : [],
-          draftNo: legacy.bill_no,
-          abortReason: null,
-          loginNotice: null,
-          erpAccount: null,
-        }
-      : erpView(erp),
-    readback: readbackView(erp, lines),
-    reconcile:
-      legacy?.outcome === 'handed_off'
-        ? { status: 'handed_off', bucket: legacy.reconcile_bucket as ReconcileBucket | null, action: '转人工', actionCode: null, allowedActions: [], humanReview: true, banner: HUMAN_REVIEW_NOTICE, draftNo: legacy.bill_no, rows: [], reasons: [], capture: null }
-        : (reconcileView(erp, task.task_id, task.lifecycle, lines) ?? { status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null, draftNo: null, rows: [], reasons: [], capture: null }),
-    step,
-    // In contract order, so equal policies give equal snapshots.
-    allowedActions: TASK_ACTIONS.filter((action) => allowedActions.has(action)),
-  };
-}
-
-function materialWithSourceUrls(taskId: string, material: InventoryView['materials'][number]): InventoryView['materials'][number] {
-  const sourceUrl = (contentHash: string) => `/api/tasks/${encodeURIComponent(taskId)}/files/${encodeURIComponent(contentHash)}`;
-  return {
-    ...material,
-    originalUrl: sourceUrl(material.contentHash),
-    previewUrl: sourceUrl(material.contentHash),
-    variants: material.variants.map((variant) => ({ ...variant, originalUrl: sourceUrl(variant.contentHash), previewUrl: sourceUrl(variant.contentHash) })),
-  };
 }

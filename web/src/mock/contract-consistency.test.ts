@@ -15,6 +15,7 @@ import {
   UploadBatchSchema,
   validatePendingAnswer,
 } from '@baox/contract';
+import { GOLDEN_SCENARIOS, GOLDENS } from '@baox/contract/goldens';
 import { ERP_STEP_DEFS, ERP_STEP_INDEX, erpSteps } from './fixtures/erp';
 import { INITIAL_BOOK, MOCK_TODAY, annotateProject, confirmationDigest } from './fixtures/projects';
 import { t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from './fixtures/tasks';
@@ -22,6 +23,13 @@ import { createMockAdapter } from './mock-adapter';
 import { FAULTS, readMockOptions } from './options';
 
 describe('契约 schema', () => {
+  // The server records the goldens (server/src/snapshot-goldens.test.ts); here only that the mock can load them.
+  test('服务端录制的黄金快照能被 mock 载入', () => {
+    expect(Object.keys(GOLDENS)).toEqual([...GOLDEN_SCENARIOS]);
+    expect(GOLDENS['choose-action'].step.kind).toBe('choose_action');
+    expect(GOLDENS.voided.stage).toBe('voided');
+  });
+
   test('每个阶段的 T1 夹具、T2 与 T3 夹具都通过快照 schema', () => {
     for (const stage of TASK_STAGES) {
       expect(() => TaskSnapshotSchema.parse(t1Snapshot(stage)), stage).not.toThrow();

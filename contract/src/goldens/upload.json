@@ -1,0 +1,188 @@
+{
+  "revision": 2,
+  "task": {
+    "taskId": "00000000-0000-4000-8000-000000000001",
+    "name": "2026-09-29 新建报销",
+    "period": null,
+    "homeCity": "杭州",
+    "createdAt": "2000-01-01T00:00:00Z",
+    "updatedAt": "2000-01-01T00:00:00Z"
+  },
+  "stage": "upload",
+  "batches": [
+    {
+      "batchId": "00000000-0000-4000-8000-000000000002",
+      "no": 1,
+      "uploadedAt": "2000-01-01T00:00:00Z",
+      "versionId": "v1",
+      "files": [
+        {
+          "fileId": "00000000-0000-4000-8000-000000000003",
+          "fileName": "全季酒店_发票.pdf",
+          "relativePath": "全季酒店_发票.pdf",
+          "size": 51680,
+          "status": "accepted",
+          "contentHash": "b2a31fda65ebb26fdf5421748e72c31592163c46d588560e522d8c69d04d6818",
+          "reasonCode": null,
+          "reason": null,
+          "materialId": "00000000-0000-4000-8000-000000000003"
+        },
+        {
+          "fileId": "00000000-0000-4000-8000-000000000004",
+          "fileName": "全季酒店_结账单.pdf",
+          "relativePath": "全季酒店_结账单.pdf",
+          "size": 55422,
+          "status": "accepted",
+          "contentHash": "6b6637a217bb9eac26e911a2b458caf67d10499b1b19fedd02848d204bbf64d3",
+          "reasonCode": null,
+          "reason": null,
+          "materialId": "00000000-0000-4000-8000-000000000004"
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "materialId": "00000000-0000-4000-8000-000000000003",
+      "batchId": "00000000-0000-4000-8000-000000000002",
+      "fileName": "全季酒店_发票.pdf",
+      "relativePath": "全季酒店_发票.pdf",
+      "contentHash": "b2a31fda65ebb26fdf5421748e72c31592163c46d588560e522d8c69d04d6818",
+      "size": 51680,
+      "kind": null,
+      "layout": null,
+      "kindLabel": "待盘点",
+      "categoryLabel": null,
+      "role": "uploaded",
+      "shape": "portrait",
+      "mediaType": "pdf",
+      "status": "uploaded",
+      "checkText": "",
+      "linkedMaterialIds": [],
+      "pendingItemIds": [],
+      "originalUrl": "/api/tasks/00000000-0000-4000-8000-000000000001/files/b2a31fda65ebb26fdf5421748e72c31592163c46d588560e522d8c69d04d6818",
+      "previewUrl": "/api/tasks/00000000-0000-4000-8000-000000000001/files/b2a31fda65ebb26fdf5421748e72c31592163c46d588560e522d8c69d04d6818",
+      "variants": [],
+      "fields": []
+    },
+    {
+      "materialId": "00000000-0000-4000-8000-000000000004",
+      "batchId": "00000000-0000-4000-8000-000000000002",
+      "fileName": "全季酒店_结账单.pdf",
+      "relativePath": "全季酒店_结账单.pdf",
+      "contentHash": "6b6637a217bb9eac26e911a2b458caf67d10499b1b19fedd02848d204bbf64d3",
+      "size": 55422,
+      "kind": null,
+      "layout": null,
+      "kindLabel": "待盘点",
+      "categoryLabel": null,
+      "role": "uploaded",
+      "shape": "portrait",
+      "mediaType": "pdf",
+      "status": "uploaded",
+      "checkText": "",
+      "linkedMaterialIds": [],
+      "pendingItemIds": [],
+      "originalUrl": "/api/tasks/00000000-0000-4000-8000-000000000001/files/6b6637a217bb9eac26e911a2b458caf67d10499b1b19fedd02848d204bbf64d3",
+      "previewUrl": "/api/tasks/00000000-0000-4000-8000-000000000001/files/6b6637a217bb9eac26e911a2b458caf67d10499b1b19fedd02848d204bbf64d3",
+      "variants": [],
+      "fields": []
+    }
+  ],
+  "inventory": {
+    "status": "not_started",
+    "versionId": "v1",
+    "phases": [],
+    "finishedAt": null,
+    "summary": null,
+    "ungroupedMaterialIds": []
+  },
+  "events": [],
+  "pendingItems": [],
+  "blockers": [],
+  "lines": [],
+  "lodgingEvidence": [],
+  "confirmation": {
+    "status": "unconfirmed",
+    "confirmedAt": null,
+    "digest": null,
+    "lineCount": 0,
+    "invoiceCount": 0,
+    "grossTotal": null,
+    "notice": null
+  },
+  "paymentScreenshots": [],
+  "printSheet": {
+    "status": "not_generated",
+    "fileName": null,
+    "url": null,
+    "pages": [],
+    "notices": []
+  },
+  "projectAssignment": {
+    "status": "not_started",
+    "purpose": null,
+    "homeCity": "杭州",
+    "assignments": [],
+    "working": [],
+    "reselect": [],
+    "usage": [],
+    "grossTotal": "0.00",
+    "projects": [],
+    "deadlineWarnings": [],
+    "submittedAt": null
+  },
+  "catalog": {
+    "status": "pending",
+    "problems": []
+  },
+  "preparation": {
+    "status": "pending",
+    "problems": [],
+    "packageFiles": []
+  },
+  "erp": {
+    "status": "idle",
+    "steps": [],
+    "currentStage": null,
+    "externalWait": "none",
+    "outcome": "none",
+    "allowedActions": [],
+    "draftNo": null,
+    "abortReason": null,
+    "loginNotice": null,
+    "erpAccount": null
+  },
+  "readback": {
+    "status": "none",
+    "rows": [],
+    "summary": null,
+    "localTotal": null,
+    "erpTotal": null
+  },
+  "reconcile": {
+    "status": "none",
+    "bucket": null,
+    "action": null,
+    "actionCode": null,
+    "allowedActions": [],
+    "humanReview": false,
+    "banner": null,
+    "draftNo": null,
+    "rows": [],
+    "reasons": [],
+    "capture": null
+  },
+  "step": {
+    "kind": "start_inventory",
+    "stepToken": "00000000-0000-4000-8000-000000000001.2"
+  },
+  "allowedActions": [
+    "upload",
+    "start_inventory",
+    "exclude_material",
+    "set_home_city",
+    "print",
+    "void_task"
+  ]
+}
