@@ -18,6 +18,10 @@ Inner loop: `pnpm test:changed <changed files>` after each edit. Full gate (`pnp
 Parser accuracy on real materials is gated by `pnpm test:private` against a corpus that lives only on the maintainer's
 machine. See `docs/agents/private-corpus.md`.
 
+### Coding standards
+
+Reviewing a change (`/code-review` Standards axis) or fixing a QA-reported bug: see `docs/agents/coding-standards.md`.
+
 ### Merge conditions
 
 Before merging any branch (to `main` or to a spec's integration branch), check it against
