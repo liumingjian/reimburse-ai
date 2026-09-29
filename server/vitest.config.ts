@@ -19,9 +19,10 @@ const OCR_TESTS = [
   'src/hotel-stay.test.ts',
   'src/legacy/import.test.ts',
   'src/parse/executor.test.ts',
-  'src/parse/layouts/labelled.test.ts',
+  'src/parse/readers-production.test.ts',
   'src/print.test.ts',
   'src/taxi.test.ts',
+  'src/test/parse-presets.test.ts',
 ];
 
 export default defineConfig({
