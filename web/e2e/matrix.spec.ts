@@ -41,7 +41,8 @@ const FORBIDDEN = ['undefined', 'NaN', '[object', String.fromCharCode(0x2014), S
 const BANNER = '连不上报销服务，请检查网络后重试；如果一直这样，请联系维护者';
 
 function expectedHeading(stage: TaskStage, page: TaskPage): string {
-  if (pageAllowed(stage, page)) return PAGE_COPY[page].title;
+  // A seed's admitted actions never open a page its stage keeps closed, so the stage alone decides here.
+  if (pageAllowed({ stage, allowedActions: [] }, page)) return PAGE_COPY[page].title;
   // seed=upload 的 T1 还没有任何材料；其余阶段有材料但还没到这一步。
   // A voided T1 also has no materials.
   return stage === 'upload' || stage === 'voided' ? '还没有上传材料' : '还不能进入这一步';

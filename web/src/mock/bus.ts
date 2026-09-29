@@ -10,11 +10,12 @@ import {
   type TaskSnapshot,
 } from '@baox/contract';
 import { withInventoryProjection, withLodgingEvidenceProjection } from './fixtures/inventory';
+import { withAllowedActions } from './fixtures/allowed-actions';
 import { PROJECT_BOOK, withProjectUsage } from './fixtures/projects';
 import type { MockOptions } from './options';
 
 // mock 服务端的公共底座：内存里的快照仓库、事件总线、服务断连模拟、stepToken 核对与 mock 时钟。
-// 各业务流程（./flows/*）只经过这里读写快照：每份存进去的快照都带上服务端投影（盘点计数、「本次已归入」的条数与金额），
+// 各业务流程（./flows/*）只经过这里读写快照：每份存进去的快照都带上服务端投影（盘点计数、「本次已归入」的条数与金额、此刻接受的动作），
 // 并过 schema 校验（失败即抛出）。
 
 const EMIT_DELAY_MS = 20;
@@ -89,7 +90,7 @@ export function createBus(options: MockOptions): MockBus {
 
   const put = (snapshot: TaskSnapshot, advanceRevision = false) => {
     const next = advanceRevision ? { ...snapshot, revision: snapshot.revision + 1 } : snapshot;
-    snapshots.set(next.task.taskId, TaskSnapshotSchema.parse(withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(next)))));
+    snapshots.set(next.task.taskId, TaskSnapshotSchema.parse(withAllowedActions(withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(next))))));
   };
 
   // 断开期间事件流不送达（恢复后页面会重新拉取快照）。

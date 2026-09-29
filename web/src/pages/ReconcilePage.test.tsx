@@ -5,6 +5,7 @@ import { AppProvider } from '../adapter/context';
 import { AppStore } from '../adapter/store';
 import { HANDOVER_COMPLETED_NOTICE, HUMAN_REVIEW_NOTICE, RECONCILE_BUCKETS, type ReconcileBucket, REFILL_COPY, type TaskStage } from '@baox/contract';
 import { reconcileVerdict } from '../mock/fixtures/erp';
+import { withAllowedActions } from '../mock/fixtures/allowed-actions';
 import { t2Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
 import { ReconcilePage } from './ReconcilePage';
@@ -17,7 +18,7 @@ function renderAt(hash: string, seed: TaskStage | null = null) {
 // 直接渲染对账页：服务端给出的对账判定换成某个 bucket 的判定，页面只渲染允许的处置。
 function renderVerdict(bucket: ReconcileBucket, savedConsistent: boolean, billNo: string | null = null) {
   const base = t2Snapshot();
-  const snapshot = { ...base, reconcile: { ...base.reconcile, ...reconcileVerdict(bucket, savedConsistent, billNo), draftNo: billNo ?? base.reconcile.draftNo } };
+  const snapshot = withAllowedActions({ ...base, reconcile: { ...base.reconcile, ...reconcileVerdict(bucket, savedConsistent, billNo), draftNo: billNo ?? base.reconcile.draftNo } });
   const store = new AppStore(createMockAdapter({ seed: null, fault: null }), { validate: false });
   render(
     <AppProvider store={store}>
@@ -47,10 +48,10 @@ describe('对账', () => {
   test('未保存·已导入未写明细：「重新去报销」在吸底栏里，点了之后回到去报销页', async () => {
     const adapter = createMockAdapter({ seed: null, fault: null, erpStepMs: 5 });
     const base = t2Snapshot();
-    const snapshot = {
+    const snapshot = withAllowedActions({
       ...base,
       reconcile: { ...base.reconcile, ...reconcileVerdict('未保存·已导入未写明细'), draftNo: null },
-    };
+    });
     const store = new AppStore(adapter, { validate: false });
     render(
       <AppProvider store={store}>

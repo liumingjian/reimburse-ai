@@ -130,7 +130,7 @@ export function TaskRoute({ taskId, page, fromExtensionSetup }: { taskId: string
         </div>
       ) : null}
       {fromExtensionSetup ? <ExtensionReturnNotice taskId={taskId} page={page} /> : null}
-      {pageAllowed(snapshot.stage, page) ? <PageBody page={page} snapshot={snapshot} /> : <GuardPage snapshot={snapshot} page={page} />}
+      {pageAllowed(snapshot, page) ? <PageBody page={page} snapshot={snapshot} /> : <GuardPage snapshot={snapshot} page={page} />}
     </AppShell>
   );
 }

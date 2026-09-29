@@ -1,7 +1,7 @@
 // Pure schema tests that depend on the contract alone. Fixture-snapshot and mock-behaviour consistency tests live in web/src/mock/contract-consistency.test.ts.
 import { describe, expect, test } from 'vitest';
 import { CREATE_TASK_ERRORS, CreateTaskInputSchema, PENDING_ANSWER_ERRORS, isRealDate, validatePendingAnswer } from './actions';
-import { STAGE_DEFAULT_PAGE, pageAllowed, stageReached } from './stage';
+import { STAGE_DEFAULT_PAGE, pageAllowed, stageReached, type TaskStage } from './stage';
 import { UrlSchema } from './primitives';
 import { EXTENSION_BRIDGE_NAMESPACE, bridgeMessage, ExtensionBridgeExtensionMessageSchema, ExtensionBridgePageMessageSchema, extensionVersionRefusal } from './extension';
 import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS, ERP_HANDOVER_STEP_COPY, ERP_PROGRESS_STEPS, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE } from './snapshot';
@@ -66,23 +66,34 @@ describe('地址字段', () => {
 });
 
 describe('报销任务阶段', () => {
+  // A task at `stage` with no action admitted: the gate falls back to the stage alone.
+  const at = (stage: TaskStage) => ({ stage, allowedActions: [] });
+
   test('页面守卫：阶段不可跳过；项目归属在整单确认之前，打印稿在确认之后，ERP 填报在去报销之后', () => {
     expect(stageReached('review', 'inventory')).toBe(true);
     expect(stageReached('upload', 'inventory')).toBe(false);
-    expect(pageAllowed('upload', 'inventory')).toBe(false);
-    expect(pageAllowed('pending', 'project')).toBe(false);
-    expect(pageAllowed('project', 'project')).toBe(true);
-    expect(pageAllowed('project', 'review')).toBe(false);
-    expect(pageAllowed('catalog', 'review')).toBe(true);
-    expect(pageAllowed('review', 'print')).toBe(false);
-    expect(pageAllowed('actions', 'print')).toBe(true);
-    expect(pageAllowed('actions', 'project')).toBe(true);
-    expect(pageAllowed('actions', 'erp')).toBe(false);
-    expect(pageAllowed('erp', 'erp')).toBe(true);
-    expect(pageAllowed('reconcile', 'reconcile')).toBe(true);
-    expect(pageAllowed('done', 'reconcile')).toBe(false);
+    expect(pageAllowed(at('upload'), 'inventory')).toBe(false);
+    expect(pageAllowed(at('pending'), 'project')).toBe(false);
+    expect(pageAllowed(at('project'), 'project')).toBe(true);
+    expect(pageAllowed(at('project'), 'review')).toBe(false);
+    expect(pageAllowed(at('catalog'), 'review')).toBe(true);
+    expect(pageAllowed(at('review'), 'print')).toBe(false);
+    expect(pageAllowed(at('actions'), 'print')).toBe(true);
+    expect(pageAllowed(at('actions'), 'project')).toBe(true);
+    expect(pageAllowed(at('actions'), 'erp')).toBe(false);
+    expect(pageAllowed(at('erp'), 'erp')).toBe(true);
+    expect(pageAllowed(at('reconcile'), 'reconcile')).toBe(true);
+    expect(pageAllowed(at('done'), 'reconcile')).toBe(false);
     expect(STAGE_DEFAULT_PAGE.catalog).toBe('review');
     expect(STAGE_DEFAULT_PAGE.preparation).toBe('review');
+  });
+
+  test('页面守卫：页面上的动作被服务端接受时，页面一定开放；作废的任务只留上传页', () => {
+    expect(pageAllowed({ stage: 'erp', allowedActions: [] }, 'reconcile')).toBe(false);
+    expect(pageAllowed({ stage: 'erp', allowedActions: ['reconcile'] }, 'reconcile')).toBe(true);
+    expect(pageAllowed({ stage: 'review', allowedActions: ['confirm_review'] }, 'review')).toBe(true);
+    expect(pageAllowed({ stage: 'voided', allowedActions: ['confirm_review'] }, 'review')).toBe(false);
+    expect(pageAllowed({ stage: 'voided', allowedActions: [] }, 'upload')).toBe(true);
   });
 });
 

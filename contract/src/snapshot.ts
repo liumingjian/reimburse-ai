@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { AmountSchema, DateSchema, DateTimeSchema, IdSchema, StepTokenSchema, UrlSchema } from './primitives';
-import { TaskStageSchema } from './stage';
+import { TaskActionSchema, TaskStageSchema } from './stage';
 import { TaskPeriodSchema } from './task-list';
 
 // 接口二：单任务完整快照。前端只渲染这里的值，不保存第二份业务状态，不计算、不判定。
@@ -1031,5 +1031,8 @@ export const TaskSnapshotSchema = z.object({
   readback: ReadbackSchema,
   reconcile: ReconcileSchema,
   step: StepSchema,
+  // The writes the server's task policy admits right now, on this snapshot's stepToken (TASK_ACTIONS). Buttons and the
+  // page gate read this list; they do not re-derive a rule from stage, step or the ERP phase.
+  allowedActions: z.array(TaskActionSchema),
 });
 export type TaskSnapshot = z.infer<typeof TaskSnapshotSchema>;

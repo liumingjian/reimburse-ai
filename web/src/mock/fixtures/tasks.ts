@@ -12,6 +12,7 @@ import {
 import { HOME_CITY, SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, confirmationDigest, projectAssignmentOpen, projectAssignmentSubmitted, withLineProjects, withProjectUsage } from './projects';
 import { T2_ROWS, applyAbortAtHandover, applyErpDone, emptyReadback, emptyReconcile, erpWaitingLogin, idleErp, readbackOf, reconcileVerdict } from './erp';
 import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult, openPendingItemCount, withInventoryProjection, withLodgingEvidenceProjection } from './inventory';
+import { allowedActionsOf, withAllowedActions } from './allowed-actions';
 import { catalogMatched, catalogPending, catalogRunning, packageFilesOf, preparationPending } from './preparation';
 
 // 夹具：三个虚构的报销任务。人物与数字沿用原型（林颂宜、上海出差、9 条明细合计 3972.59）。
@@ -163,6 +164,7 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     readback: emptyReadback(),
     reconcile: emptyReconcile(),
     step: { kind: STEP_BY_STAGE[stage], stepToken: `tok-${task.taskId}-${stage}` },
+    allowedActions: [],
   };
 }
 
@@ -224,7 +226,7 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
   if (stage === 'erp') snapshot.erp = erpWaitingLogin();
   if (stage === 'done') applyErpDone(snapshot);
   if (stage === 'reconcile') applyAbortAtHandover(snapshot);
-  return withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot)));
+  return withAllowedActions(withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot))));
 }
 
 // T2：对账中（ERP 写入结果不确定后的停顿状态，不是失败）。
@@ -275,7 +277,7 @@ export function t2Snapshot(): TaskSnapshot {
     reasons: [],
     capture: null,
   };
-  return withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot)));
+  return withAllowedActions(withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot))));
 }
 
 // T3：已完成，而且员工自己保存过，单据编号是这么来的。演示里唯一一条真的有编号的已完成任务：
@@ -317,7 +319,7 @@ export function t3Snapshot(): TaskSnapshot {
     erpAccount: null,
   };
   snapshot.readback = { status: 'matched', rows: [], summary: '明细 4/4 一致', localTotal: '2318.50', erpTotal: '2318.50' };
-  return withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot)));
+  return withAllowedActions(withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot))));
 }
 
 // 任务列表层面的 ERP 结局：已转人工优先。严格回读不一致的草稿现在停在对账（不是完成），列表按「对账中」显示它，
@@ -331,8 +333,8 @@ function erpOutcomeOf(snapshot: TaskSnapshot): TaskListItem['erpOutcome'] {
 // 能否作废（内核 abandonTask）：任何状态都可以作废（ADR-0030），只有这个任务的写入/对账正在跑时不行。
 function abandonOf(snapshot: TaskSnapshot): Pick<TaskListItem, 'abandonable' | 'abandonBlockedReason' | 'erpTouched'> {
   const erpTouched = snapshot.erp.status !== 'idle' || stageReached(snapshot.stage, 'erp');
-  const running = snapshot.erp.status === 'running' || snapshot.erp.status === 'waiting_login';
-  return { abandonable: !running, abandonBlockedReason: running ? ABANDON_TASK_COPY.blockedReason : null, erpTouched };
+  const abandonable = allowedActionsOf(snapshot).includes('void_task');
+  return { abandonable, abandonBlockedReason: abandonable ? null : ABANDON_TASK_COPY.blockedReason, erpTouched };
 }
 
 // 任务列表的一行由快照投影而来：mock 服务端负责，页面不做这件事。

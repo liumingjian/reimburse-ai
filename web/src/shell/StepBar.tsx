@@ -102,12 +102,12 @@ export function StepBar({ snapshot, page }: { snapshot: TaskSnapshot; page: Task
   }
 
   // 守卫页（阶段不可跳过）不算「当前」：被拦下的那一步不能显示成正在进行（currentIndex = -1）。
-  const activeStage = pageAllowed(stage, page) ? ACTIVE_ENTRY[page] : null;
+  const activeStage = pageAllowed(snapshot, page) ? ACTIVE_ENTRY[page] : null;
   const openCount = snapshot.inventory.summary?.openPendingItemCount ?? 0;
   const steps = STEP_ENTRIES.map((entry) => {
     // 能否进入跟随页面守卫（待确认项页在盘点完成后就能进；整单确认页在项目归属提交后就能进）；
     // 「去打印 / 去报销」按阶段先后（确认之后）。
-    const reached = entry.stage === 'actions' ? stageReached(stage, 'actions') : pageAllowed(stage, entry.page);
+    const reached = entry.stage === 'actions' ? stageReached(stage, 'actions') : pageAllowed(snapshot, entry.page);
     const active = entry.stage === activeStage;
     const done = !active && (stageRank(stage) > stageRank(entry.stage) || stage === 'done');
     const count = entry.stage === 'pending' && stageReached(stage, 'inventory') ? openCount : 0;
@@ -115,7 +115,7 @@ export function StepBar({ snapshot, page }: { snapshot: TaskSnapshot; page: Task
   });
   const currentIndex = steps.findIndex((step) => step.active);
   // 守卫页的正文已经说明了「阶段不可跳过」，这里不再重复。
-  const guarded = !pageAllowed(stage, page);
+  const guarded = !pageAllowed(snapshot, page);
 
   const onChange = (index: number) => {
     const step = steps[index];

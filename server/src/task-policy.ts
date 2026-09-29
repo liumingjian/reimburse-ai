@@ -1,11 +1,26 @@
-import { CONFIRM_REVIEW_ERRORS, ERP_ACTION_ERRORS, PROJECT_ASSIGNMENT_ERRORS, type Blocker, type Step, type TaskStage } from '@baox/contract';
+import {
+  CONFIRM_REVIEW_ERRORS,
+  ERP_ACTION_ERRORS,
+  ERP_IN_USE_CODE,
+  HOME_CITY_ERRORS,
+  PROJECT_ASSIGNMENT_ERRORS,
+  REOPEN_UPLOAD_ERRORS,
+  TASK_ACTIONS,
+  type Blocker,
+  type Erp,
+  type Reconcile,
+  type Step,
+  type TaskAction,
+  type TaskStage,
+} from '@baox/contract';
 import type { TaskLifecycle, TaskOrigin } from './db/schema';
 import type { ErpRecord } from './erp/fill-state';
 
-// The task policy: the one owner of task-state rules. Pure: loaded 任务事实 (task facts, `task-facts.ts`) in,
-// `{stage, step, blockers}` and the write admission of every action out. No stage is ever stored (ADR-0014), so a
-// "wrong stage", "stuck" or "why was this refused" bug is a row in `task-policy.test.ts`, not a database fixture.
-// The ERP phase and allowed-action rules (erp/fill-state.ts) and the void gate (tasks.ts `voidOne`) are not here yet.
+// The task policy: the one owner of task-state rules. Pure: loaded 任务事实 (task facts, `task-facts.ts`) and the ERP
+// record in; `{stage, step, blockers}`, the write admission of every action, and the set of actions admitted right now
+// out. That covers the ERP phase and 对账 (reconcile) verdict rules, the 重新去报销 (refill) path and 任务作废 (void
+// task). No stage is ever stored (ADR-0014), so a "wrong stage", "stuck", "why was this refused" or "this button
+// should not be here" bug is a row in `task-policy.test.ts`, not a database fixture.
 
 export type TaskFacts = {
   taskId: string;
@@ -34,6 +49,12 @@ export type TaskFacts = {
   confirmation: 'unconfirmed' | 'confirmed' | 'invalidated';
   // 去报销 (#191): the latest fill job of the task (`erp/fill-state.ts`); absent or null before the first one.
   erp?: ErpFacts | null;
+  // Who holds the account's in-memory ERP lease (`erp-lease.ts`, ADR-0019) as the task service read it: a job of this
+  // task, or of another task of the same account. `loadFacts` cannot see the lease; the task service sets this for
+  // the writes it guards and the task list and snapshot leave it unset, so their allowed actions do not flicker with
+  // it. Two rules read it: 任务作废 treats `own` as a job in flight (the window between a job taking the lease and its
+  // row becoming visible), and the actions that take the lease are refused `erp_in_use` on `other`.
+  erpLease?: 'own' | 'other' | null;
 };
 
 // The phase of a task's latest fill job, derived from its result (none yet = running) and a cancel of its login pause.
@@ -67,27 +88,10 @@ export const ACTION_COPY = {
 
 export type Refusal = { code: string; message: string };
 
-// Every write the task service accepts, by name. `job` is the ERP job's own write and the book-change revision bump;
-// `record_parse` is the parser job's.
-export type ActionName =
-  | 'upload'
-  | 'start_inventory'
-  | 'reopen_upload'
-  | 'confirm_review'
-  | 'exclude_material'
-  | 'answer_pending'
-  | 'set_home_city'
-  | 'assign_project_lines'
-  | 'submit_project_assignment'
-  | 'start_erp_write'
-  | 'confirm_login'
-  | 'refill'
-  | 'cancel_erp_write'
-  | 'reconcile'
-  | 'hand_off'
-  | 'print'
-  | 'job'
-  | 'record_parse';
+// Every write the task service accepts, by name: the contract's task actions (the ones a page can ask for, listed in
+// the snapshot's `allowedActions`), plus the jobs' own writes. `job` is the ERP job's write and the book-change
+// revision bump; `record_parse` is the parser job's.
+export type ActionName = TaskAction | 'job' | 'record_parse';
 
 // 'stale' is the HTTP 409 of ADR-0014 (a stale stepToken, or any foreign write while a job runs); a Refusal is a 400.
 export type Admission = 'ok' | 'stale' | Refusal;
@@ -95,7 +99,11 @@ export type Admission = 'ok' | 'stale' | Refusal;
 export type Projection = { stage: TaskStage; step: Step; blockers: Blocker[] };
 
 export type TaskPolicy = Projection & {
-  // `stepToken` null: the action carries none (upload, the jobs' writes, print, which commits on the revision it read).
+  // The task actions `admit` answers 'ok' right now on the current stepToken. Input checks that need the request
+  // (which material, which pending item, which project) are the action's own and are not part of this.
+  allowedActions: ReadonlySet<TaskAction>;
+  // `stepToken` null: the action carries none (upload, the jobs' writes, print, which commits on the revision it read,
+  // and 任务作废, which is a list action).
   admit(action: ActionName, stepToken: string | null): Admission;
 };
 
@@ -104,21 +112,32 @@ export type TaskPolicy = Projection & {
 // pause. `erpAction`: accepted after an ERP action attempt (reconcile, hand-off, the refill of ADR-0027).
 // `printOnly`: a 去打印 adjustment. Print never touches ERP (stories 57 and 63), so it stays open after 转人工 and
 // after the draft was handed over; it still stops at 任务作废, at an imported legacy task, and while a job runs.
+// `voids`: 任务作废 (ADR-0030). Every lifecycle and every ERP phase can be voided; the one refusal left is a job of
+// this very task in flight, which clears itself.
 // `ownsFreeze`: this action refuses a frozen task itself, with a reason of its own (修改常驻城市 says the home city is
 // locked, 追加材料 says why it cannot reopen). The central freeze would otherwise answer first and replace those with
 // the generic one.
-// `ready`: the action's own precondition on the task's facts, checked once the gate let it through.
+// `takesLease`: the action starts a job that needs the account's ERP lease (a fill or a 对账 job); while another task's
+// job holds it the answer is `erp_in_use` (HTTP 409, naming no task), before the action's own precondition.
+// `ready`: the action's own precondition on the task's facts and ERP record, checked once the gate let it through.
 type Traits = {
   job?: boolean;
   loginPause?: boolean;
   erpAction?: boolean;
   printOnly?: boolean;
+  voids?: boolean;
   ownsFreeze?: boolean;
-  ready?: (facts: TaskFacts, step: Step['kind']) => Refusal | null;
+  takesLease?: boolean;
+  ready?: (facts: TaskFacts, step: Step['kind'], erp: ErpRecord | null) => Refusal | null;
 };
 
 const TASK_CLOSED: Refusal = { code: 'task_closed', message: ACTION_COPY.taskClosed };
 const ERP_STARTED: Refusal = { code: 'erp_started', message: ERP_ACTION_ERRORS.erpStarted };
+const ERP_NOT_READY: Refusal = { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
+const NOT_WAITING_LOGIN: Refusal = { code: 'not_waiting_login', message: ERP_ACTION_ERRORS.notWaitingLogin };
+const NOT_RECONCILING: Refusal = { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling };
+const NOT_ALLOWED: Refusal = { code: 'action_not_allowed', message: ERP_ACTION_ERRORS.notAllowed };
+export const ERP_IN_USE: Refusal = { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
 // A refusal the parser job expects when the run moved on under it; never shown to anyone.
 export const STALE_JOB: Refusal = { code: 'stale_job', message: 'the inventory run changed under the parser job' };
 
@@ -131,26 +150,49 @@ const atStep =
 // invalidates the confirmation). The freeze stops every change once a fill job made an ERP action attempt.
 const assigning = atStep(['assign_projects', 'confirm_review', 'choose_action'], { code: 'not_ready', message: PROJECT_ASSIGNMENT_ERRORS.notReady });
 
-// The 去报销 actions (start, confirm_login, refill, cancel, reconcile, hand-off) still check their ERP phase and 对账
-// verdict inside their own change, against the loaded ERP record: the ERP allowed-action rules are not folded in yet.
+const waitingLogin = (facts: TaskFacts): Refusal | null => (facts.erp?.phase === 'waiting_login' ? null : NOT_WAITING_LOGIN);
+
+// A 对账 disposition: the fill's write result is unknown, and the current verdict offers `offer`.
+const offered =
+  (offer: Reconcile['allowedActions'][number]) =>
+  (facts: TaskFacts, _step: Step['kind'], erp: ErpRecord | null): Refusal | null => {
+    if (facts.erp?.phase !== 'unknown') return NOT_RECONCILING;
+    return erp && reconcileActionsOf(erp).includes(offer) ? null : NOT_ALLOWED;
+  };
+
 const ACTIONS: Record<ActionName, Traits> = {
   upload: {},
   start_inventory: { ready: atStep(['start_inventory'], { code: 'not_ready', message: ACTION_COPY.notReadyToStart }) },
-  reopen_upload: { ownsFreeze: true, ready: (facts) => (inventoried(facts) ? null : { code: 'not_ready', message: ACTION_COPY.notReopenable }) },
+  reopen_upload: {
+    ownsFreeze: true,
+    ready: (facts, _step, erp) => {
+      if (!inventoried(facts)) return { code: 'not_ready', message: ACTION_COPY.notReopenable };
+      return erp?.attempted ? { code: 'erp_started', message: REOPEN_UPLOAD_ERRORS.erpStarted } : null;
+    },
+  },
   confirm_review: { ready: atStep(['confirm_review'], { code: 'not_ready', message: CONFIRM_REVIEW_ERRORS.notReady }) },
   exclude_material: {},
   // A batch stopped by 发票占用 has no pending items to answer; excluding the held material is the way out.
   answer_pending: { ready: (facts) => (facts.parse && facts.parse.blockers.length === 0 ? null : { code: 'not_ready', message: ACTION_COPY.notAnswering }) },
-  set_home_city: { ownsFreeze: true },
+  set_home_city: { ownsFreeze: true, ready: (_facts, _step, erp) => (erp?.attempted ? { code: 'home_city_locked', message: HOME_CITY_ERRORS.locked } : null) },
   assign_project_lines: { ready: assigning },
   submit_project_assignment: { ready: assigning },
-  start_erp_write: {},
-  confirm_login: { loginPause: true },
-  refill: { erpAction: true },
-  cancel_erp_write: { loginPause: true },
-  reconcile: { erpAction: true },
-  hand_off: { erpAction: true },
+  // 去报销 is taken from choose_action on a confirmed task; a task with an attempt already stopped at the freeze.
+  start_erp_write: { takesLease: true, ready: (facts, step) => (step === 'choose_action' && facts.confirmation === 'confirmed' ? null : ERP_NOT_READY) },
+  confirm_login: { loginPause: true, takesLease: true, ready: waitingLogin },
+  cancel_erp_write: { loginPause: true, ready: waitingLogin },
+  // 重新去报销 (ADR-0027) is an ERP action like 对账, so it passes the phase-unknown and freeze refusals 去报销 gets;
+  // it earns that by the 对账 verdict offering it, which stands in for choose_action as the step it is taken from.
+  // Nothing is re-confirmed: it rebuilds its plan from the same confirmation, and refuses as 去报销 does without one.
+  refill: {
+    erpAction: true,
+    takesLease: true,
+    ready: (facts, step, erp) => offered('refill')(facts, step, erp) ?? (facts.confirmation === 'confirmed' ? null : ERP_NOT_READY),
+  },
+  reconcile: { erpAction: true, takesLease: true, ready: offered('wait') },
+  hand_off: { erpAction: true, ready: offered('hand_off') },
   print: { printOnly: true },
+  void_task: { voids: true },
   job: { job: true },
   record_parse: { job: true, ready: (facts) => (parseRunning(facts) ? null : STALE_JOB) },
 };
@@ -173,25 +215,82 @@ export function parseRunning(facts: TaskFacts): boolean {
   return inventoried(facts) && (facts.parse?.waiting ?? 0) > 0;
 }
 
-// `erp` is the task's loaded ERP record; only its ADR-0014 freeze flag (`attempted`) is read here. null = no ERP yet.
+// A job of this task is in flight: the parser job, a fill job (or its login pause, unless the action is one the
+// pause waits for), or a 对账 job. It ends by itself; until then only the job's own writes pass.
+function jobInFlight(facts: TaskFacts, loginPause: boolean): boolean {
+  const phase = facts.erp?.phase;
+  return parseRunning(facts) || phase === 'running' || !!facts.erp?.reconciling || (phase === 'waiting_login' && !loginPause);
+}
+
+// The ERP page's own commands for the phase of the latest fill job. `refresh` only reads; confirm_login and cancel
+// are the two writes the login pause waits for (their admission is `confirm_login` / `cancel_erp_write`).
+export function erpActionsOf(phase: ErpPhase | null | undefined): Erp['allowedActions'] {
+  switch (phase) {
+    case 'waiting_login':
+      return ['refresh', 'confirm_login', 'cancel'];
+    case 'running':
+    case 'aborted':
+    case 'unknown':
+    case 'handed_over':
+    case 'saved':
+      return ['refresh'];
+    default:
+      return [];
+  }
+}
+
+// The dispositions the current 对账 verdict offers on a fill whose write result is unknown (#192, ADR-0027):
+// wait = 再对一次账 (read-only), hand_off = 转人工, refill = 重新去报销. Empty in any other phase and while a 对账 job
+// runs. Before any read and after a 原地等待 verdict both wait and hand_off; a 转人工 verdict only hand_off.
+//
+// 重新去报销 is the exit out of an import that was never saved: 未保存·已导入未写明细 with no 单据编号 (bill number) ever
+// read for this task. It is not gated on the attempt log: baox never saves (ADR-0028), so "this job started no save
+// attempt" is vacuously true and carries no information. A 单据编号 means the employee saved and re-importing would
+// act on a bill that exists, so that reading keeps 转人工. An unreadable 单据编号 cell also reads as null here, and that
+// is the conservative side of the reading only because the bucket itself already required 新增 mode with no bill.
+// A 对账 that found no 费用报销单 open is the same exit, for the same reason. Closing the tab or cleaning the ERP
+// browser is a normal act, and an unsaved 费用报销单 does not outlive its tab: with no form on the page there is no
+// bill to hand anyone, nothing to clean up, and nothing left that the recovery's fresh 新增单 could collide with —
+// the 收票 records the import left behind are overwritten by the re-import (ADR-0026). The one fact that cannot be
+// read this way is whether the employee saved before closing, and ADR-0028 already leaves that to them: the gate
+// stays 「while the ERP shows no 单据编号」, here strengthened to 「no 单据编号 has ever been read for this task」,
+// and the banner asks them not to press it if they saved. Without this, cleaning the browser would destroy the
+// evidence the only non-terminal exit depends on and leave 转人工 as the only way out. With no form open,
+// 再对一次账 stays on offer: the employee may open the bill again and read it properly.
+export function reconcileActionsOf(erp: ErpRecord): Reconcile['allowedActions'] {
+  if (erp.facts?.phase !== 'unknown' || erp.facts.reconciling) return [];
+  const judged = erp.reconcile?.judged ?? null;
+  if (!judged) return ['wait', 'hand_off'];
+  const draftNo = judged.billNo ?? erp.result?.billNo ?? null;
+  const noForm = judged.noForm && judged.verdict.bucket === '未知';
+  if ((judged.verdict.bucket === '未保存·已导入未写明细' || noForm) && draftNo === null) return noForm ? ['refill', 'wait', 'hand_off'] : ['refill', 'hand_off'];
+  return judged.verdict.action === '转人工' ? ['hand_off'] : ['wait', 'hand_off'];
+}
+
+// `erp` is the task's loaded ERP record: its ADR-0014 freeze flag (`attempted`) and its 对账 verdict. null = no ERP yet.
 export function taskPolicy(facts: TaskFacts, erp: ErpRecord | null): TaskPolicy {
   const projection = project(facts);
-  return { ...projection, admit: (action, token) => admit(facts, erp?.attempted ?? false, projection.step.kind, action, token) };
+  const step = projection.step.kind;
+  return {
+    ...projection,
+    allowedActions: new Set(TASK_ACTIONS.filter((action) => admit(facts, erp, step, action, null) === 'ok')),
+    admit: (action, token) => admit(facts, erp, step, action, token),
+  };
 }
 
 // The mutation gate, in the order its answers take precedence. A stale token beats everything; a closed task beats a
 // running job; the action's own precondition comes last, so it never masks the gate's reason.
-function admit(facts: TaskFacts, attempted: boolean, step: Step['kind'], action: ActionName, token: string | null): Admission {
-  const { job = false, loginPause = false, erpAction = false, printOnly = false, ownsFreeze = false, ready } = ACTIONS[action];
+function admit(facts: TaskFacts, erp: ErpRecord | null, step: Step['kind'], action: ActionName, token: string | null): Admission {
+  const { job = false, loginPause = false, erpAction = false, printOnly = false, voids = false, ownsFreeze = false, takesLease = false, ready } = ACTIONS[action];
   if (token !== null && token !== stepToken(facts.taskId, facts.revision)) return 'stale';
   // A print adjustment outlives the ERP write: only a voided task and an imported legacy one (which has no
-  // materials at all) are out of reach.
-  if (printOnly ? facts.lifecycle === 'voided' || facts.origin === 'legacy' : facts.lifecycle !== 'open') return TASK_CLOSED;
+  // materials at all) are out of reach. Voiding reaches every task that is not voided already.
+  const closed = printOnly ? facts.lifecycle === 'voided' || facts.origin === 'legacy' : voids ? facts.lifecycle === 'voided' : facts.lifecycle !== 'open';
+  if (closed) return TASK_CLOSED;
   if (!job) {
-    if (parseRunning(facts)) return 'stale';
-    const phase = facts.erp?.phase;
-    if (phase === 'running' || facts.erp?.reconciling || (phase === 'waiting_login' && !loginPause)) return 'stale';
-    if (!printOnly) {
+    if (jobInFlight(facts, loginPause)) return 'stale';
+    if (!printOnly && !voids) {
+      const phase = facts.erp?.phase;
       if (phase === 'handed_over' || phase === 'saved') return TASK_CLOSED;
       if (phase === 'unknown' && !erpAction) return ERP_STARTED;
       // ADR-0014: a task's materials freeze at its first ERP action attempt. The phase checks above catch the shapes
@@ -199,10 +298,14 @@ function admit(facts: TaskFacts, attempted: boolean, step: Step['kind'], action:
       // rather than left to upload, exclude, answer-pending and assign to each remember separately. ERP actions
       // and the jobs' own writes are what may still move a frozen task; print never changes facts; and an action
       // with a better reason of its own (`ownsFreeze`) gets to give it.
-      if (attempted && !erpAction && !ownsFreeze) return ERP_STARTED;
+      if (erp?.attempted && !erpAction && !ownsFreeze) return ERP_STARTED;
     }
+    // The account's one ERP (ADR-0019): another task's job has it now. Come back later, whatever this task's state.
+    if (takesLease && facts.erpLease === 'other') return ERP_IN_USE;
+    // Voiding under a job of this very task that took the lease: the job is in flight even if its row is not visible.
+    if (voids && facts.erpLease === 'own') return 'stale';
   }
-  return ready?.(facts, step) ?? 'ok';
+  return ready?.(facts, step, erp) ?? 'ok';
 }
 
 function project(facts: TaskFacts): Projection {

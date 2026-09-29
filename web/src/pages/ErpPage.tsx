@@ -48,8 +48,9 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
     const outcome = await run((adapter) => adapter.cancelErpWrite(taskId, step.stepToken));
     if (outcome.ok) navigate(taskHash(taskId, 'review'));
   };
-  const waitingLogin = erp.externalWait === 'employee_login' && erp.allowedActions.includes('confirm_login');
-  const canCancel = erp.allowedActions.includes('cancel');
+  // The two writes of the login pause are the task policy's to allow (snapshot.allowedActions); refresh only reads.
+  const waitingLogin = erp.externalWait === 'employee_login' && snapshot.allowedActions.includes('confirm_login');
+  const canCancel = snapshot.allowedActions.includes('cancel_erp_write');
   const canRefresh = erp.allowedActions.includes('refresh');
   const writing = erp.status !== 'idle' && erp.status !== 'done' && erp.status !== 'aborted';
   const completedNotice = erp.outcome === 'filled' ? HANDOVER_COMPLETED_NOTICE : erp.outcome === 'saved' ? ERP_SAVED_OUTCOME_NOTICE : null;

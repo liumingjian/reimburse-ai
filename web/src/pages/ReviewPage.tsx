@@ -186,8 +186,8 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const reopen = useReopenUpload(snapshot, () => navigate(taskHash(taskId, 'upload')));
   const confirming = confirmAction.busy;
   const [deadlineConfirmation, setDeadlineConfirmation] = useState(false);
-  // 「确认」只在服务端给出 confirm_review 且材料包就绪时可用；有缺项或核对不匹配时不可用。
-  const confirmDisabled = confirming || snapshot.lines.length === 0 || step.kind !== 'confirm_review' || preparation.status !== 'ready' || catalogMismatch;
+  // 「确认」只在服务端此刻接受 confirm_review（snapshot.allowedActions）且材料包就绪时可用；有缺项或核对不匹配时不可用。
+  const confirmDisabled = confirming || snapshot.lines.length === 0 || !snapshot.allowedActions.includes('confirm_review') || preparation.status !== 'ready' || catalogMismatch;
   const exclude = (materialId: string) => excludeAction.run((adapter) => adapter.excludeMaterial(taskId, materialId, step.stepToken));
 
   const confirm = async (acceptDeadlineWarnings = false) => {
