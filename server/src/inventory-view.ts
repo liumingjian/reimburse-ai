@@ -2,6 +2,7 @@ import { MATERIAL_KINDS, fieldAnswer, isAllocationAnswer, type ExpenseEvent, typ
 import { erpInvoiceTypeOf, ERP_INVOICE_TYPES, type ResolvedErpInvoiceType } from '@baox/erp-executor/invoice-type';
 import type { ParseOutcome, Recognised } from './parse/dispatch';
 import { planTransport, type PlannedLine } from './allocation';
+import { factsOf, isDerivedSource } from './parse/facts';
 import { pairHotelStays } from './hotel-stay';
 import { fieldLabel, KINDS, slotOf, type EventDraft, type Slot } from './parse/kinds';
 import { chosen, EXCLUDE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
@@ -212,15 +213,6 @@ function variantView(w: Worked): Material['variants'][number] {
   return { materialId: m.materialId, fileName: m.fileName, relativePath: m.relativePath, contentHash: m.contentHash, size: m.size, mediaType: m.mediaType, originalUrl: null, previewUrl: null };
 }
 
-// The layout's own source first; a second source (QR) only fills what the face lacks.
-function valuesOf(resolved: Resolved): Values {
-  const values: Values = {};
-  const primary = resolved.layout ? `rule:${resolved.kind}/${resolved.layout}` : 'user';
-  for (const c of resolved.candidates) if (c.source === primary && c.value !== '') values[c.key] ??= c.value;
-  for (const c of resolved.candidates) if (c.value !== '') values[c.key] ??= c.value;
-  return values;
-}
-
 // Per invoice materialId, the per-leg totals stored on its `allocation.<materialId>` item. `allocate` (allocation.ts)
 // adopts them only when they conserve to the cent — the same `conservingLegs` rule `judgeAnswer` applies on submit.
 function allocationAnswers(answers: StoredAnswers): Map<string, string[]> {
@@ -344,13 +336,13 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
   const id = m.materialId;
   const spec = KINDS[resolved.kind];
   w.kindLabel = resolved.kindLabel;
-  const values = valuesOf(resolved);
-  const sourceOf = new Map<string, { source: string; parserVersion: string | null; evidence: FieldCandidate['evidence'] }>();
-  for (const c of resolved.candidates) if (!sourceOf.has(c.key) || c.source === `rule:${resolved.kind}/${resolved.layout}`) sourceOf.set(c.key, { source: c.source, parserVersion: c.source === 'user' ? null : c.parserVersion, evidence: c.evidence });
+  // Which candidate is the read value is recognition's call (`factsOf`); from here on `sourceOf` only records edits.
+  const facts = factsOf(resolved);
+  const values: Values = facts.values;
+  const sourceOf = new Map(Object.entries(facts.sources));
   // A face fact from a PDF text layer or QR is locked; OCR (photos), manual values and gaps are correctable. A value
   // a layout derives from other face facts (e.g. 离店日期 from 入住日期 + 天数) is a reading, not printed: correctable.
-  const derived = (key: string) => /^rule:[^/]+\/[^.]+\./.test(sourceOf.get(key)?.source ?? '');
-  const classOf = (key: string) => (values[key] === undefined || sourceOf.get(key)?.source === 'user' || m.mediaType === 'image' || derived(key) ? 'fact_correctable' : 'fact_locked');
+  const classOf = (key: string) => (values[key] === undefined || sourceOf.get(key) === 'user' || m.mediaType === 'image' || isDerivedSource(sourceOf.get(key) ?? '') ? 'fact_correctable' : 'fact_locked');
   const withValue = (key: string, value: string) => spec.check?.({ ...values, [key]: value }) ?? null;
 
   // Slot edits: corrections of correctable facts become `user` values before anything is checked or derived.
@@ -360,7 +352,7 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
     const edited = editedValue(editable, answers.get(editable.address));
     if (edited !== null) {
       values[slot.key] = edited;
-      sourceOf.set(slot.key, { source: 'user', parserVersion: null, evidence: 'explicit' });
+      sourceOf.set(slot.key, 'user');
     }
   }
 
@@ -392,7 +384,7 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
     if (filled.status === 'resolved') {
       for (const [key, value] of Object.entries(nonEmpty(fieldAnswer(filled.answer)))) {
         values[key] = value;
-        sourceOf.set(key, { source: 'user', parserVersion: null, evidence: 'explicit' });
+        sourceOf.set(key, 'user');
       }
       // Filled in: the gap is gone, so it is no longer what the 校验 column has to say.
     } else {
@@ -404,7 +396,7 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
   // Every source's candidates stay visible (text layer and QR side by side); a `user` value replaces the candidates of
   // its key, since it is what counts now.
   const label = (key: string) => fieldLabel(resolved.kind, key);
-  const byUser = [...sourceOf].filter(([, origin]) => origin.source === 'user').map(([key]) => key);
+  const byUser = [...sourceOf].filter(([, source]) => source === 'user').map(([key]) => key);
   w.fields = [
     ...resolved.candidates
       .filter((c) => c.source !== 'user' && !byUser.includes(c.key))
