@@ -15,15 +15,23 @@ import {
   UploadBatchSchema,
   validatePendingAnswer,
 } from '@baox/contract';
+import { GOLDEN_SCENARIOS, GOLDENS } from '@baox/contract/goldens';
 import { ERP_STEP_DEFS, ERP_STEP_INDEX, erpSteps } from './fixtures/erp';
 import { INITIAL_BOOK, MOCK_TODAY, annotateProject, confirmationDigest } from './fixtures/projects';
 import { t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from './fixtures/tasks';
 import { createMockAdapter } from './mock-adapter';
-import { FAULTS, readMockOptions } from './options';
+import { FAULTS, SEED_STAGES, readMockOptions } from './options';
 
 describe('契约 schema', () => {
+  // The server records the goldens (server/src/snapshot-goldens.test.ts); here only that the mock can load them.
+  test('服务端录制的黄金快照能被 mock 载入', () => {
+    expect(Object.keys(GOLDENS)).toEqual([...GOLDEN_SCENARIOS]);
+    expect(GOLDENS['choose-action'].step.kind).toBe('choose_action');
+    expect(GOLDENS.voided.stage).toBe('voided');
+  });
+
   test('每个阶段的 T1 夹具、T2 与 T3 夹具都通过快照 schema', () => {
-    for (const stage of TASK_STAGES) {
+    for (const stage of SEED_STAGES) {
       expect(() => TaskSnapshotSchema.parse(t1Snapshot(stage)), stage).not.toThrow();
     }
     expect(() => TaskSnapshotSchema.parse(t2Snapshot())).not.toThrow();
@@ -74,9 +82,11 @@ describe('契约 schema', () => {
       ['p1', 'form', 'open'],
       ['p2', 'form', 'open'],
       ['p3', 'choice', 'open'],
+      ['stay_screenshot_missing.m01', 'choice', 'open'],
     ]);
     expect(inventory.materials.every((material) => material.originalUrl?.startsWith('fixtures/'))).toBe(true);
-    expect(inventory.lines).toHaveLength(0);
+    // As on the server, the candidate lines follow the expense events as soon as the inventory is done.
+    expect(inventory.lines.map((line) => line.no)).toEqual(inventory.events.map((event) => event.no));
 
     const review = t1Snapshot('review');
     expect(review.pendingItems.every((item) => item.status === 'resolved')).toBe(true);
@@ -99,11 +109,10 @@ describe('契约 schema', () => {
     // 费用事件与候选明细共用同一个序号。
     expect(review.events.map((event) => [event.no, event.grossAmount])).toEqual(review.lines.map((line) => [line.no, line.grossAmount]));
     expect(review.confirmation).toMatchObject({ status: 'unconfirmed', lineCount: 9, invoiceCount: 7, grossTotal: '3972.59' });
-    // 材料包：7 张发票 + 3 份参考材料 + detail.json、detail.md、manifest.json，共 13 份；报销信息核对已通过。
-    expect(review.catalog).toEqual({ status: 'matched', problems: [] });
-    expect(review.preparation.status).toBe('ready');
-    expect(review.preparation.packageFiles).toHaveLength(13);
-    expect(review.preparation.packageFiles.slice(-3).map((file) => file.path)).toEqual(['detail.json', 'detail.md', 'manifest.json']);
+    // As on the server: the catalog is checked inside the ERP job (still pending here), and the preparation is ready
+    // without problems or package files once the digest exists.
+    expect(review.catalog).toEqual({ status: 'pending', problems: [] });
+    expect(review.preparation).toEqual({ status: 'ready', problems: [], packageFiles: [] });
     // 确认表字段：发票短标签按主要发票 materialId 编号（不跟随行序）；项目号在提交后写入；费用项目为虚构编码。
     expect(review.lines.map((line) => line.invoiceLabel)).toEqual(['发票2', '发票2', '发票2', '发票3', '发票6', '发票7', '发票4', '发票5', '发票1']);
     expect(review.lines.map((line) => line.projectCode)).toEqual(['P-3312', 'P-3312', 'P-3312', 'P-3312', 'P-3312', 'P-3312', 'P-2307', 'P-2307', 'P-2307']);
@@ -144,13 +153,11 @@ describe('契约 schema', () => {
     expect(t1Snapshot('project').lines.every((line) => line.projectCode === null && line.projectName === null)).toBe(true);
     expect(t1Snapshot('project').preparation).toEqual({ status: 'pending', problems: [], packageFiles: [] });
     expect(t1Snapshot('project').catalog.status).toBe('pending');
-    expect(t1Snapshot('catalog').catalog.status).toBe('running');
-    expect(t1Snapshot('preparation').catalog.status).toBe('matched');
-    expect(t1Snapshot('preparation').preparation.status).toBe('pending');
+    expect(t1Snapshot('project').confirmation).toMatchObject({ digest: null, lineCount: 0, invoiceCount: 0, grossTotal: null });
     expect(review.confirmation.digest).toMatch(/^digest-t1-v1-[0-9a-f]{8}$/);
     expect(t1Snapshot('actions').confirmation.status).toBe('confirmed');
     expect(t1Snapshot('actions').step.kind).toBe('choose_action');
-    expect(t1Snapshot('pending', true).pendingItems).toHaveLength(4);
+    expect(t1Snapshot('pending', true).pendingItems).toHaveLength(5);
   });
 
   test('流程顺序照 Skill：项目归属在整单确认之前；整单确认的摘要绑定项目归属与事由；没有「开始填报」这一步', () => {
@@ -159,12 +166,6 @@ describe('契约 schema', () => {
     expect(project.step.kind).toBe('assign_projects');
     expect(project.projectAssignment.status).toBe('pending');
     expect(project.confirmation.digest).toBeNull();
-    for (const stage of ['catalog', 'preparation'] as const) {
-      const snapshot = t1Snapshot(stage);
-      expect(snapshot.projectAssignment.status, stage).toBe('submitted');
-      expect(snapshot.confirmation.digest, stage).toBeNull();
-      expect(snapshot.step.kind, stage).toBe('none');
-    }
 
     const review = t1Snapshot('review');
     expect(review.confirmation.digest).toBe(confirmationDigest('T1', 'v1', review.projectAssignment));
@@ -184,10 +185,10 @@ describe('契约 schema', () => {
   });
 
   test('逐段分摊与处理人：?allocation=1 的各阶段夹具通过 schema；待确认项都带处理人；答复为 amounts 或 giveUp', () => {
-    for (const stage of TASK_STAGES) {
+    for (const stage of SEED_STAGES) {
       expect(() => TaskSnapshotSchema.parse(t1Snapshot(stage, false, true)), stage).not.toThrow();
     }
-    expect(t1Snapshot('pending').pendingItems.map((item) => item.resolver)).toEqual(['要你处理', '要你处理', '要你处理']);
+    expect(t1Snapshot('pending').pendingItems.map((item) => item.resolver)).toEqual(['要你处理', '要你处理', '要你处理', '要你处理']);
     expect(t1Snapshot('pending').blockers).toEqual([]);
     const pending = t1Snapshot('pending', false, true);
     expect(pending.pendingItems.map((item) => [item.itemId, item.kind])).toEqual([
@@ -195,6 +196,7 @@ describe('契约 schema', () => {
       ['p2', 'form'],
       ['p3', 'form'],
       ['p4', 'choice'],
+      ['stay_screenshot_missing.m01', 'choice'],
     ]);
     const allocation = pending.pendingItems[0]?.allocation;
     expect(allocation?.total).toBe('69.19');
@@ -227,10 +229,15 @@ describe('契约 schema', () => {
     const outcome = await adapter.answerPendingItem('T1', 'p1', { amounts: ['30.00', '20.00', '19.19'] }, before.step.stepToken);
     expect(outcome.ok).toBe(true);
     let snapshot = await adapter.getSnapshot('T1');
-    const answers = [{ origin: '张江高科', destination: '漕河泾开发区' }, { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' }, { choice: 'exclude' }];
-    for (const [index, answer] of answers.entries()) {
+    const answers = [
+      ['p2', { origin: '张江高科', destination: '漕河泾开发区' }],
+      ['p3', { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' }],
+      ['p4', { choice: 'exclude' }],
+      ['stay_screenshot_missing.m01', { choice: 'confirm_none' }],
+    ] as const;
+    for (const [itemId, answer] of answers) {
       snapshot = await adapter.getSnapshot('T1');
-      expect((await adapter.answerPendingItem('T1', `p${index + 2}`, answer, snapshot.step.stepToken)).ok).toBe(true);
+      expect((await adapter.answerPendingItem('T1', itemId, answer, snapshot.step.stepToken)).ok).toBe(true);
     }
     snapshot = await adapter.getSnapshot('T1');
     const amap = snapshot.lines.slice(0, 3);
@@ -239,7 +246,9 @@ describe('契约 schema', () => {
       ['20.00', '19.42', '0.58'],
       ['19.19', '18.64', '0.55'],
     ]);
-    expect(snapshot.confirmation.grossTotal).toBe('3972.59');
+    // The review's total only comes with its digest (after project assignment); here the lines carry it.
+    expect(snapshot.confirmation.grossTotal).toBeNull();
+    expect(snapshot.lines.reduce((sum, line) => sum + Math.round(Number(line.grossAmount) * 100), 0)).toBe(397259);
   });
 
   test('金额与日期格式不对的快照被拒绝', () => {
@@ -263,17 +272,18 @@ describe('报销任务阶段', () => {
     // 票面写的 ?seed=assign 是 project 的别名。
     expect(readMockOptions('?seed=assign')).toEqual({ seed: 'project', fault: null });
     expect(readMockOptions('?seed=project')).toEqual({ seed: 'project', fault: null });
-    expect(readMockOptions('?seed=catalog')).toEqual({ seed: 'catalog', fault: null });
+    // The server never projects the catalog / preparation stages, so they are no seeds.
+    expect(readMockOptions('?seed=catalog')).toEqual({ seed: null, fault: null });
+    expect(readMockOptions('?seed=preparation')).toEqual({ seed: null, fault: null });
     // ?seed=print：actions 阶段，且打印稿已经生成（打印稿预览不是阶段）。
     expect(readMockOptions('?seed=print')).toEqual({ seed: 'actions', fault: null, printSheet: true });
-    expect(FAULTS).toHaveLength(7);
+    expect(FAULTS).toHaveLength(8);
     // ?book=empty：个人项目簿初始为空。
     expect(readMockOptions('?seed=pending&book=empty')).toEqual({ seed: 'pending', fault: null, bookEmpty: true });
     expect(readMockOptions('?book=nope')).toEqual({ seed: null, fault: null });
-    // ?catalog=mismatch / ?preparation=blocked：报销信息核对不匹配、材料包缺项。
-    expect(readMockOptions('?seed=catalog&catalog=mismatch')).toEqual({ seed: 'catalog', fault: null, catalogMismatch: true });
-    expect(readMockOptions('?seed=preparation&preparation=blocked')).toEqual({ seed: 'preparation', fault: null, preparationBlocked: true });
-    expect(readMockOptions('?catalog=nope&preparation=nope')).toEqual({ seed: null, fault: null });
+    // A catalog mismatch is an ERP-job outcome (?fault=catalog-mismatch); the old ?catalog= / ?preparation= are gone.
+    expect(readMockOptions('?seed=actions&fault=catalog-mismatch')).toEqual({ seed: 'actions', fault: 'catalog-mismatch' });
+    expect(readMockOptions('?catalog=mismatch&preparation=blocked')).toEqual({ seed: null, fault: null });
     // ?allocation=1 / ?duplicate=1：逐段分摊、跨任务重复发票。
     expect(readMockOptions('?seed=pending&allocation=1')).toEqual({ seed: 'pending', fault: null, allocationRequired: true });
     expect(readMockOptions('?duplicate=1')).toEqual({ seed: null, fault: null, duplicateHit: true });

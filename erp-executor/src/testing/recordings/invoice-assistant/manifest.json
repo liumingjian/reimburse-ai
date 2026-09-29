@@ -1,0 +1,271 @@
+{
+  "flow": "invoice-assistant",
+  "name": "invoice-assistant",
+  "description": "A new 费用报销单, receipt information (收票信息) -> pick invoices (选择发票) ▾ -> no expense details (不生成费用明细), which opens the invoice assistant (发票无忧助手) on its entry menu, then pick from computer (电脑端选取) up to its empty upload view. Nothing is uploaded, ticked or imported; the assistant is closed and the 新增单 discarded with its tab.",
+  "command": "pnpm --filter @baox/erp-executor probe invoice-assistant --record invoice-assistant",
+  "recordedAt": "2026-09-29",
+  "erpBuild": "8.2.830.9",
+  "result": {
+    "mode": "不生成费用明细",
+    "menuItemIds": [
+      "00af000c-0000-0e00-000b-0fd000000b00-FRECINVINFO_ENTRYBAR-tbMergeFillEntry",
+      "00af000c-0000-0e00-000b-0fd000000b00-FRECINVINFO_ENTRYBAR-tbMappingFillEntry",
+      "00af000c-0000-0e00-000b-0fd000000b00-FRECINVINFO_ENTRYBAR-tbNotFillEntry"
+    ],
+    "recognised": 0
+  },
+  "loggedOut": {
+    "name": "login",
+    "file": "login.html",
+    "url": "http://erp.antute.com.cn/k3cloud/html5/index.aspx",
+    "title": "金蝶云星空",
+    "viewport": {
+      "width": 2048,
+      "height": 937,
+      "devicePixelRatio": 2
+    },
+    "resVer": "?ver=8.2.830.9",
+    "loginInfo": null,
+    "frames": [],
+    "count": 101,
+    "pruned": 97
+  },
+  "pages": [
+    {
+      "name": "page-1",
+      "file": "01-page-1.html",
+      "url": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+      "title": "金蝶云星空",
+      "viewport": {
+        "width": 2048,
+        "height": 937,
+        "devicePixelRatio": 2
+      },
+      "resVer": "?ver=8.2.830.9",
+      "loginInfo": {
+        "user": "{{ACCOUNT}}",
+        "lan": "＊",
+        "acc": "{{TENANT}}",
+        "ver": "＊"
+      },
+      "frames": [],
+      "count": 397,
+      "pruned": 1389,
+      "click": {
+        "tag": "span",
+        "id": "",
+        "controlId": "BOS_MainSystemMenuCard-0050569440d09ae611e381858f0dd8c0_c",
+        "text": "我的费用报销"
+      }
+    },
+    {
+      "name": "page-2",
+      "file": "02-page-2.html",
+      "url": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+      "title": "金蝶云星空",
+      "viewport": {
+        "width": 2048,
+        "height": 937,
+        "devicePixelRatio": 2
+      },
+      "resVer": "?ver=8.2.830.9",
+      "loginInfo": {
+        "user": "{{ACCOUNT}}",
+        "lan": "＊",
+        "acc": "{{TENANT}}",
+        "ver": "＊"
+      },
+      "frames": [],
+      "count": 508,
+      "pruned": 1982,
+      "click": {
+        "tag": "span",
+        "id": "862a1402-aadc-464a-b826-8efb228364ef-BILLMENU_TOOLBAR-tbSNew",
+        "controlId": "862a1402-aadc-464a-b826-8efb228364ef-BILLMENU_TOOLBAR-tbSNew",
+        "text": "新增"
+      }
+    },
+    {
+      "name": "page-3",
+      "file": "03-page-3.html",
+      "url": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+      "title": "金蝶云星空",
+      "viewport": {
+        "width": 2048,
+        "height": 937,
+        "devicePixelRatio": 2
+      },
+      "resVer": "?ver=8.2.830.9",
+      "loginInfo": {
+        "user": "{{ACCOUNT}}",
+        "lan": "＊",
+        "acc": "{{TENANT}}",
+        "ver": "＊"
+      },
+      "frames": [],
+      "count": 1450,
+      "pruned": 3526,
+      "click": {
+        "tag": "span",
+        "id": "",
+        "controlId": "li_80af774c-1589-4e18-922b-4fd144504b51-FTAB_P2-KDBILLDASHBOARANCHORPOINT_c",
+        "text": "收票信息"
+      }
+    },
+    {
+      "name": "page-4",
+      "file": "04-page-4.html",
+      "url": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+      "title": "金蝶云星空",
+      "viewport": {
+        "width": 2048,
+        "height": 937,
+        "devicePixelRatio": 2
+      },
+      "resVer": "?ver=8.2.830.9",
+      "loginInfo": {
+        "user": "{{ACCOUNT}}",
+        "lan": "＊",
+        "acc": "{{TENANT}}",
+        "ver": "＊"
+      },
+      "frames": [],
+      "count": 1346,
+      "pruned": 3636,
+      "click": {
+        "tag": "span",
+        "id": "",
+        "controlId": "",
+        "text": ""
+      }
+    },
+    {
+      "name": "page-5",
+      "file": "05-page-5.html",
+      "url": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+      "title": "金蝶云星空",
+      "viewport": {
+        "width": 2048,
+        "height": 937,
+        "devicePixelRatio": 2
+      },
+      "resVer": "?ver=8.2.830.9",
+      "loginInfo": {
+        "user": "{{ACCOUNT}}",
+        "lan": "＊",
+        "acc": "{{TENANT}}",
+        "ver": "＊"
+      },
+      "frames": [],
+      "count": 1346,
+      "pruned": 3636,
+      "click": {
+        "tag": "span",
+        "id": "80af774c-1589-4e18-922b-4fd144504b51-FRECINVINFO_ENTRYBAR-tbNotFillEntry",
+        "controlId": "80af774c-1589-4e18-922b-4fd144504b51-FRECINVINFO_ENTRYBAR-tbNotFillEntry",
+        "text": "不生成费用明细"
+      }
+    },
+    {
+      "name": "page-6",
+      "file": "06-page-6.html",
+      "url": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+      "title": "金蝶云星空",
+      "viewport": {
+        "width": 2048,
+        "height": 937,
+        "devicePixelRatio": 2
+      },
+      "resVer": "?ver=8.2.830.9",
+      "loginInfo": {
+        "user": "{{ACCOUNT}}",
+        "lan": "＊",
+        "acc": "{{TENANT}}",
+        "ver": "＊"
+      },
+      "frames": [
+        {
+          "path": "iframe#9e79dc7c-f7f2-4109-983e-d9530c4e91e2-FCROSSFORM-FCROSSFORM",
+          "src": "https://www.piaozone.com/m4-web/fpzs/index",
+          "box": [
+            624,
+            213,
+            800,
+            530
+          ]
+        }
+      ],
+      "count": 1363,
+      "pruned": 3646,
+      "child": {
+        "file": "06-page-6.child.html",
+        "url": "https://www.piaozone.com/m4-web/fpzs/index",
+        "title": "发票助手",
+        "viewport": {
+          "width": 800,
+          "height": 530,
+          "devicePixelRatio": 2
+        },
+        "resVer": null,
+        "loginInfo": null,
+        "frames": [],
+        "count": 64,
+        "pruned": 2
+      },
+      "click": {
+        "tag": "img",
+        "id": "",
+        "controlId": "",
+        "text": "",
+        "frame": "child"
+      }
+    },
+    {
+      "name": "upload-view",
+      "file": "07-upload-view.html",
+      "url": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+      "title": "金蝶云星空",
+      "viewport": {
+        "width": 2048,
+        "height": 937,
+        "devicePixelRatio": 2
+      },
+      "resVer": "?ver=8.2.830.9",
+      "loginInfo": {
+        "user": "{{ACCOUNT}}",
+        "lan": "＊",
+        "acc": "{{TENANT}}",
+        "ver": "＊"
+      },
+      "frames": [
+        {
+          "path": "iframe#9e79dc7c-f7f2-4109-983e-d9530c4e91e2-FCROSSFORM-FCROSSFORM",
+          "src": "https://www.piaozone.com/m4-web/fpzs/index",
+          "box": [
+            624,
+            213,
+            800,
+            530
+          ]
+        }
+      ],
+      "count": 1363,
+      "pruned": 3646,
+      "child": {
+        "file": "07-upload-view.child.html",
+        "url": "https://www.piaozone.com/m4-web/fpzs/kdInvoices",
+        "title": "发票助手",
+        "viewport": {
+          "width": 800,
+          "height": 530,
+          "devicePixelRatio": 2
+        },
+        "resVer": null,
+        "loginInfo": null,
+        "frames": [],
+        "count": 64,
+        "pruned": 57
+      }
+    }
+  ]
+}

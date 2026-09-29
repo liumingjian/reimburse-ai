@@ -38,6 +38,7 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
+import { signInSnippet } from '@baox/erp-executor/recording/sign-in';
 
 function refuse(message: string): never {
   console.error(`test:erp-live refused: ${message}`);
@@ -217,36 +218,6 @@ async function report(): Promise<void> {
   }
 }
 
-// Fills the ERP login form in the dedicated Chromium and waits for the console. Harness only: in the product the
-// employee logs in themselves, and that login IS the ERP authorisation (ADR-0016). The form is plain HTML — the Kendo
-// controls that ignore programmatic assignment live on the bill, not here — so a native-setter write plus input/change
-// is enough. The password is never logged, and never leaves this process except into the page it authenticates.
-function loginScript(user: string, secret: string): string {
-  return `(() => {
-    const seen = (el) => !!el && (() => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; })();
-    // Measured on 金蝶云星空 8.2.0.20250701: the login page carries #user (account) and #password, plus a second
-    // visible #CAuser for certificate login that must not be mistaken for the account box. Ids first, shape as fallback.
-    const byId = (id) => { const el = document.getElementById(id); return seen(el) ? el : null; };
-    const secretBox = byId('password') || [...document.querySelectorAll('input[type=password]')].filter(seen)[0];
-    if (!secretBox) return { ok: false, why: 'no visible password input' };
-    const userBox = byId('user') || [...document.querySelectorAll('input')].filter((el) => el !== secretBox && seen(el) && !/^(checkbox|radio|hidden|submit|button|file)$/i.test(el.type))[0];
-    if (!userBox) return { ok: false, why: 'no visible account input' };
-    const put = (el, value) => {
-      el.focus();
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, value);
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    };
-    put(userBox, ${JSON.stringify(user)});
-    put(secretBox, ${JSON.stringify(secret)});
-    const button = [...document.querySelectorAll('button, a, input[type=submit], div[role=button]')].filter(seen)
-      .find((el) => ((el.innerText || el.value || '').trim() === '登录'));
-    if (!button) return { ok: false, why: 'no visible 登录 button' };
-    button.click();
-    return { ok: true };
-  })()`;
-}
-
 async function signIn(fillMs = 60_000, settleMs = 90_000): Promise<Awaited<ReturnType<typeof probeNow>>> {
   // `document.readyState` reaches 'complete' well before Kendo has laid the login form out, so a single attempt
   // fires into an empty page and reports "no visible password input". Keep trying until the form is really there.
@@ -255,7 +226,7 @@ async function signIn(fillMs = 60_000, settleMs = 90_000): Promise<Awaited<Retur
   let lastWhy = 'no ERP tab';
   while (!submitted && Date.now() < fillDeadline) {
     for (const page of (await browser.listPages()).filter((page) => sameOrigin(page.url, erpConfig.origin))) {
-      const outcome = await evaluateChromiumPage<{ ok: boolean; why?: string }>(page as never, loginScript(account!, password), { timeoutMs: 10_000 }).catch(() => null);
+      const outcome = await evaluateChromiumPage<{ ok: boolean; why?: string }>(page as never, signInSnippet(account!, password), { timeoutMs: 10_000 }).catch(() => null);
       if (outcome?.ok) { submitted = true; break; }
       if (outcome?.why) lastWhy = outcome.why;
     }

@@ -1,6 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// 报销信息核对与材料包缺项（内核 catalog_unverified / catalog_mismatch / preparation_package_pending / preparation_blocked）。
+// 报销信息核对与材料准备（内核 catalog_unverified / catalog_mismatch / preparation_package_pending / preparation_blocked），
+// as the server does them: the catalog is checked inside the ERP job (去报销), so submitting the project assignment goes
+// straight to the review, and a catalog mismatch sends the task back to project assignment from the ERP job. The
+// preparation has no problems or package files to show.
 // 直接用 file:// 打开 mock 构建产物（pnpm build:mock）。
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
@@ -9,16 +12,6 @@ const CATALOG_RUNNING = '正在核对报销系统中的项目和费用项目，�
 const PREPARATION_RUNNING = '材料已经整理完成，正在生成本次报销的核对材料。';
 
 const confirmButton = (page: Page) => page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认整单明细', exact: true });
-const packageFiles = (page: Page) => page.getByRole('list', { name: '材料包文件' }).getByRole('listitem');
-
-// 材料包清单默认收起；收起时点开（重新准备后可能重新挂载成收起状态）。
-async function openPackage(page: Page) {
-  const details = page.getByRole('region', { name: '材料包' }).locator('details');
-  if (!(await details.evaluate((element) => (element as HTMLDetailsElement).open))) {
-    await page.getByRole('region', { name: '材料包' }).getByText(/^材料包 \d+ 份文件$/).click();
-  }
-  await expect(page.getByRole('list', { name: '材料包文件' })).toBeVisible();
-}
 
 async function reassign(page: Page, nos: readonly number[], project: string) {
   for (const no of nos) await page.getByRole('checkbox', { name: `选择明细 No.${no}` }).locator('xpath=following-sibling::label[1]').click();
@@ -27,63 +20,42 @@ async function reassign(page: Page, nos: readonly number[], project: string) {
   await page.getByRole('button', { name: '确认项目归属' }).click();
 }
 
-test('正常路径：提交项目归属后自动经过报销信息核对与材料准备，进入整单确认，确认页有材料包文件清单', async ({ page }, testInfo) => {
+test('正常路径：提交项目归属后直接进入整单确认，没有核对与材料准备的等待，确认立即可用', async ({ page }, testInfo) => {
   await page.goto(open('?seed=actions', '#/task/T1/project'));
   await expect(page.getByRole('heading', { name: '项目归属' })).toBeVisible();
   await reassign(page, [9], 'P-1180 内部培训');
   await expect(page).toHaveURL(/#\/task\/T1\/review$/);
-  await expect(page.getByText(CATALOG_RUNNING)).toBeVisible();
-  await expect(page.getByText(PREPARATION_RUNNING)).toBeVisible();
   await expect(confirmButton(page)).toBeEnabled();
-  await expect(page.getByTestId('package-files')).toHaveText('核对材料已生成，共 13 份文件。');
-  await openPackage(page);
-  await expect(packageFiles(page)).toHaveCount(13);
-  await expect(packageFiles(page).first()).toHaveText('发票 invoices/全季酒店_发票.pdf');
-  await expect(packageFiles(page).last()).toHaveText('材料清单 manifest.json');
-  await page.screenshot({ path: testInfo.outputPath('review-package-files.png'), fullPage: true });
+  await expect(page.getByText(CATALOG_RUNNING)).toHaveCount(0);
+  await expect(page.getByText(PREPARATION_RUNNING)).toHaveCount(0);
+  await expect(page.getByTestId('confirm-row-9').locator('td').nth(2)).toHaveText('P-1180 / 内部培训');
+  await page.screenshot({ path: testInfo.outputPath('review-after-submit.png'), fullPage: true });
 });
 
-test('?catalog=mismatch：显示不匹配表并阻塞确认；回到项目归属改派后重新核对通过', async ({ page }, testInfo) => {
-  await page.goto(open('?seed=catalog&catalog=mismatch', '#/task/T1/review'));
-  const mismatch = page.getByRole('table', { name: '不匹配项' });
-  await expect(mismatch).toBeVisible();
-  await expect(mismatch.locator('thead th')).toHaveText(['序号', '材料/明细', '参考材料', '待处理问题', '处理人']);
-  await expect(mismatch.locator('tbody tr td')).toHaveText(['1', '项目号 P-2307', '', '项目 P-2307「华东客户交付」在报销系统里已被禁用，不能引用', '要你处理']);
-  await expect(confirmButton(page)).toBeDisabled();
-  await expect(page.getByTestId('package-files')).toHaveCount(0);
+test('?fault=catalog-mismatch：去报销时报销信息核对发现项目改了名，导入之前停下，回到项目归属；改派后重新提交回到整单确认', async ({ page }, testInfo) => {
+  await page.goto(open('?seed=actions&fault=catalog-mismatch', '#/task/T1/review'));
+  await page.getByRole('button', { name: '去报销', exact: true }).click();
+  // The job stops at its catalog step; the ERP page closes and points back to the task's current stage.
+  await page.getByRole('link', { name: '回到当前阶段' }).click();
+  await expect(page).toHaveURL(/#\/task\/T1\/project$/);
+  await expect(page.getByRole('alert').filter({ hasText: '项目 P-2307 在报销系统里的名称是「改过名的项目」' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('catalog-mismatch.png'), fullPage: true });
 
-  await page.getByRole('link', { name: '回到项目归属改派' }).click();
-  await expect(page).toHaveURL(/#\/task\/T1\/project$/);
-  await expect(page.getByRole('alert').filter({ hasText: 'P-2307' })).toBeVisible();
   await reassign(page, [7, 8, 9], 'P-1180 内部培训');
-
   await expect(page).toHaveURL(/#\/task\/T1\/review$/);
   await expect(confirmButton(page)).toBeEnabled();
-  await expect(mismatch).toHaveCount(0);
+  await expect(page.getByRole('table', { name: '不匹配项' })).toHaveCount(0);
   await expect(page.getByTestId('confirm-row-9').locator('td').nth(2)).toHaveText('P-1180 / 内部培训');
   await confirmButton(page).click();
   await expect(page.getByRole('link', { name: '去打印', exact: true })).toBeVisible();
 });
 
-test('?preparation=blocked：显示缺项表，确认按钮不可用；排除相关材料后恢复可用', async ({ page }, testInfo) => {
-  await page.goto(open('?seed=preparation&preparation=blocked', '#/task/T1/review'));
-  const problems = page.getByRole('table', { name: '准备缺项' });
-  await expect(problems).toBeVisible();
-  await expect(problems.locator('thead th')).toHaveText(['序号', '准备缺项', '关联材料/明细', '处理人']);
-  const cells = problems.locator('tbody tr td');
-  await expect(cells.nth(1)).toContainText('明细 No.4 的出发点与行程单不一致');
-  await expect(cells.nth(2)).toHaveText('曹操出行_行程单.pdf');
-  await expect(cells.nth(3)).toHaveText('要你处理');
-  await expect(confirmButton(page)).toBeDisabled();
-  await expect(page.getByTestId('package-files')).toHaveText('核对材料已生成，共 13 份文件。');
-  await page.screenshot({ path: testInfo.outputPath('preparation-blocked.png'), fullPage: true });
-
-  await page.getByRole('button', { name: '排除 曹操出行_行程单.pdf' }).click();
+test('材料准备：服务端不给准备缺项，也不给材料包文件清单；整单确认页没有这两节，确认可用', async ({ page }, testInfo) => {
+  await page.goto(open('?seed=review', '#/task/T1/review'));
+  await expect(page.getByRole('heading', { name: '整单明细确认' })).toBeVisible();
+  await expect(page.getByRole('table', { name: '准备缺项' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: '材料包' })).toHaveCount(0);
+  await expect(page.getByTestId('package-files')).toHaveCount(0);
   await expect(confirmButton(page)).toBeEnabled();
-  await expect(problems).toHaveCount(0);
-  await expect(page.getByTestId('package-files')).toHaveText('核对材料已生成，共 12 份文件。');
-  await openPackage(page);
-  await expect(packageFiles(page)).toHaveCount(12);
-  await expect(packageFiles(page).filter({ hasText: '曹操出行_行程单.pdf' })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('review-no-package.png'), fullPage: true });
 });

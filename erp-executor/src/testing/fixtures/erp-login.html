@@ -1,12 +1,13 @@
 <!doctype html>
 <!--
-  Recorded DOM fixture: the K3Cloud 8.2.0 login page. It shares its URL with the main console (probe.mjs fact 1);
+  Hand-written DOM fixture (not a recording; every block carries an @unverified marker, see ../../unverified.test.ts): the K3Cloud 8.2.0 login page. It shares its URL with the main console (probe.mjs fact 1);
   the signature is a visible password input plus a visible 登录 button. localStorage still holds the last account
   after logout (fact 4); the fake ERP keeps it. Placeholder: {{BUILD}}.
 -->
 <html>
 <head><title>金蝶云星空</title></head>
 <body>
+<!-- @unverified: the login page: an unnamed password input and a 登录 button (recordings/new-form/login.html is the live page, with #user and #password) [fake] -->
 <div class="kd-login">
   <span class="kd-version">V{{BUILD}}</span>
   <input type="text" name="username">

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { AmountSchema, DateSchema, DateTimeSchema, IdSchema, StepTokenSchema, UrlSchema } from './primitives';
-import { TaskStageSchema } from './stage';
+import { TaskActionSchema, TaskStageSchema } from './stage';
 import { TaskPeriodSchema } from './task-list';
 
 // 接口二：单任务完整快照。前端只渲染这里的值，不保存第二份业务状态，不计算、不判定。
@@ -796,6 +796,10 @@ export type ReconcileBucket = z.infer<typeof ReconcileBucketSchema>;
 // human_review 的固定句（user-interaction-contract.md:64，内核 handed_off_recover）：转人工的对账结果一律显示这句。
 export const HUMAN_REVIEW_NOTICE = '当前报销已暂停，材料和状态已保留。请在报销系统中核对；如无法判断，请联系报销管理员。';
 
+// The reconcile banner while the ERP write result is unknown and no reconcile (对账) has judged the breakpoint yet.
+// Shared by the server and the web mock.
+export const RECONCILE_UNJUDGED_BANNER = '写入报销系统的结果不确定：应用已停止写入，不会重放。请先在报销系统里查看这张报销单，再点「开始对账」只读核对；也可以直接转人工。';
+
 // 写入结果不确定后的对账：一律停在 reconcile 阶段。只有逐行一致才是 done（ERP 单据已交接）；
 // 严格回读不一致的单据没有被证明与确认过的明细一致，所以也停在对账，由用户决定原地等待还是转人工。
 // bucket 与 action / actionCode 是内核判定（bucket 与处置的对应照内核：未知、未保存·导入前、未保存·就绪待保存、
@@ -1031,5 +1035,8 @@ export const TaskSnapshotSchema = z.object({
   readback: ReadbackSchema,
   reconcile: ReconcileSchema,
   step: StepSchema,
+  // The writes the server's task policy admits right now, on this snapshot's stepToken (TASK_ACTIONS). Buttons and the
+  // page gate read this list; they do not re-derive a rule from stage, step or the ERP phase.
+  allowedActions: z.array(TaskActionSchema),
 });
 export type TaskSnapshot = z.infer<typeof TaskSnapshotSchema>;

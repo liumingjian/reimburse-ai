@@ -1,0 +1,22 @@
+{
+  "about": "#200: the invoice number (发票号码) label and its digits are separate text runs. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "vat_invoice/einvoice",
+  "missing": [],
+  "findings": [
+    "qr_unreadable"
+  ],
+  "facts": {
+    "invoiceNumber": "26312000000098127801",
+    "issueDate": "2026-08-20",
+    "invoiceType": "专票",
+    "buyerName": "某某科技（上海）有限公司",
+    "buyerTaxId": "91310000XXXXXXXX0A",
+    "sellerName": "上海某某酒店管理有限公司",
+    "sellerTaxId": "91310000YYYYYYYY0B",
+    "itemName": "*住宿服务*住宿费",
+    "netAmount": "528.30",
+    "taxAmount": "31.70",
+    "totalAmount": "560.00"
+  }
+}

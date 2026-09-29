@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  Recorded DOM fixture: K3Cloud 8.2.0 (金蝶云星空 H5) main console with the 费用报销单 expense form.
+  Hand-written DOM fixture (not a recording). A block a recording backs says which one (../../recorded-erp.test.ts runs the same executor reads on both); every other block carries an @unverified marker, see ../../unverified.test.ts: K3Cloud 8.2.0 (金蝶云星空 H5) main console with the 费用报销单 expense form.
   Reconstructed from the read-only observations in docs/research/erp-expense-flow/ (exploration.md,
   deep-exploration.md, save-contract.md: ids `<form-instance UUID>-<field key>[-EDITOR]`, `.kd-grid-panel` grids
   with header cells and `k-footer-template` total rows, the 收票信息 split button and its `tbNotFillEntry` item,
@@ -14,6 +14,7 @@
 <head><title>金蝶云星空</title></head>
 <body>
 <div class="kd-mainconsole" data-kdformid="BOS_HtmlConsole">
+  <!-- The console header: .kd_SystemMenu and span.kd-mainconsole-usernametext, as recordings/new-form shows them. -->
   <div class="kd-mainconsole-header">
     <span class="kd_SystemMenu" data-action="system-menu">菜单</span>
     <span class="kd-mainconsole-usernametext">{{DISPLAY_NAME}}</span>
@@ -25,6 +26,8 @@
        exactly one form id" is not the same question as "the 费用报销单 is open"; the live run that died on
        compatibility_mismatch read 实际 8.2.830.9 / 0 个表单 from a panel that had neither. -->
   <div class="k-content k-state-active" id="console-panel" data-kdformid="BOS_TeamWorkMainConsole">
+    <!-- A 我的费用报销 shortcut on the console, then 新增 on the list: the path recordings/new-form took, where the console
+         lists 我的费用报销 as a recent function (a console that never used it goes 菜单 -> 员工服务 first). -->
     <div class="kd-mainconsole-shortcuts">
       <span data-action="open-list">我的费用报销</span>
     </div>
@@ -36,7 +39,10 @@
        decides how many page evaluations later that is. -->
   <div class="k-content" id="form-panel">
   <div id="expense-form" data-kdformid="{{FORM_ID}}" style="display:none">
+    <!-- The form tab caption 费用报销单-新增 as a visible leaf, which is how openNewReimbursement finds it on
+         recordings/new-form too. Live it sits on the Kendo tab strip, which this fixture does not draw. -->
     <div class="form-tabs"><span class="form-tab">费用报销单-新增</span></div>
+    <!-- The section anchors 基本信息 / 付款信息 / 明细信息 / 收票信息, all on recordings/new-form. -->
     <div class="section-bar">
       <span data-action="section">基本信息</span>
       <span data-action="section">付款信息</span>
@@ -45,9 +51,12 @@
       <!-- The ERP's own blocking overlay while a form opens (`kd-ui-blockingExtention-item`): it covers the top
            bar, so a section anchor's point answers IT and the navigation click is swallowed. Hidden unless
            `sectionOverlayTicks` puts it up. -->
+      <!-- @unverified: the form's blocking overlay kd-ui-blockingExtention-item over the section anchors [transient] -->
       <div id="form-blocker" class="kd-ui-blockingExtention-item" style="display:none"></div>
     </div>
+    <!-- The form toolbar with 保存 (on recordings/new-form; only the employee presses it, ADR-0028). -->
     <div class="form-toolbar"><span class="kd-btn" data-action="save">保存</span></div>
+    <!-- Header fields as <uuid>-<key> wrapper plus <uuid>-<key>-EDITOR input, read by the same rule on recordings/new-form. -->
     <div class="header-fields">
       <!-- One header field is TWO nodes carrying the form prefix: the field wrapper `<uuid>-<key>` and the
            `<uuid>-<key>-EDITOR` control inside it. Measured live 2026-09-19 on FCAUSA: visibleNodes 2 under the one
@@ -56,7 +65,12 @@
       <div class="kd-field"><label>单据编号</label><div id="{{UUID}}-FBILLNO"><input id="{{UUID}}-FBILLNO-EDITOR" readonly value=""></div></div>
       <div class="kd-field"><label>事由</label><div id="{{UUID}}-FCAUSA"><input id="{{UUID}}-FCAUSA-EDITOR" value=""></div></div>
     </div>
+    <!-- The 费用明细 toolbar's 新增行: live it is <uuid>-FENTITY_ENTRYBAR-tbNewList (recordings/new-form), which
+         a[id$="tbNewList"] finds all the same. -->
+    <!-- @unverified: a click on 新增行 adds a row; recording it (#309) left the grid at its one row for 15 s [unseen] -->
     <div class="detail-toolbar"><a id="{{UUID}}-FEXPENSEENTRY_ENTRYBAR-tbNewList" data-action="new-row">新增行</a></div>
+    <!-- The 费用明细 grid as one table under .kd-grid-panel, header cells as <th>, a k-footer-template total row, and
+         one blank row on a new form: read the same way on recordings/new-form and recordings/detail-row. -->
     <div class="kd-grid-panel" data-grid="detail">
       <table>
         <thead>
@@ -68,6 +82,8 @@
         </tbody>
       </table>
     </div>
+    <!-- The 选择发票 split button and its three FillEntry menu items, as openInvoiceAssistant walks them on
+         recordings/invoice-assistant. -->
     <div class="receipt-toolbar">
       <div id="{{UUID}}-FRECINVINFO_ENTRYBAR-tbReceiveInv_wrapper"><a class="k-button">选择发票</a><a class="k-button k-split-button-arrow" data-action="split-arrow"><span class="k-icon k-i-arrow-s"></span></a></div>
       <!-- The 选择发票 split menu holds THREE adjacent items live (measured 2026-09-19); only the last one leaves
@@ -77,6 +93,7 @@
       <a id="{{UUID}}-FRECINVINFO_ENTRYBAR-tbMappingFillEntry" class="kdmenuitem" data-action="fill-entry" data-mode="不合并生成费用明细" style="display:none">不合并生成费用明细</a>
       <a id="{{UUID}}-FRECINVINFO_ENTRYBAR-tbNotFillEntry" class="kdmenuitem" data-action="fill-entry" data-mode="不生成费用明细" style="display:none">不生成费用明细</a>
     </div>
+    <!-- The 收票信息 grid as one table under .kd-grid-panel (recordings/new-form). -->
     <div class="kd-grid-panel" data-grid="receipts">
       <table>
         <thead>
@@ -89,17 +106,20 @@
     </div>
   </div>
   </div>
+  <!-- The assistant window: a .k-window titled 发票无忧助手 with a Close anchor (recordings/invoice-assistant). -->
   <div class="k-window" id="assistant-window" style="display:none">
     <span class="k-window-title">发票无忧助手</span>
     <a aria-label="Close" data-action="close-window">×</a>
   </div>
   <!-- ERP's answer to 发票导入单据: one line per invoice, with a summary. Measured live 2026-09-19; it floats over
        the form (z-index 10005, no 遮罩) until 退出 closes it. -->
+  <!-- @unverified: the 处理结果 window and its tbExit 退出 [import] -->
   <div class="k-window" id="result-window" style="display:none">
     <span class="k-window-title">处理结果</span>
     <span class="kdmenuitem-content" id="Result-BILLMENU_TOOLBAR-tbExit" data-action="close-window">退出</span>
     <span class="k-window-message"></span>
   </div>
+  <!-- @unverified: the 提示 message window [save] -->
   <div class="k-window" id="message-window" style="display:none">
     <span class="k-window-title">提示</span>
     <span class="k-window-message"></span>
@@ -109,6 +129,7 @@
        继续退出 signs the session out; 不退出 keeps it. Nobody is at the machine on an unattended run, so it is
        still up when the next click is attempted, and the hit test refuses every point under the overlay —
        which is how two runs (2026-09-19, 2026-09-20) both died at 打开空白报销单 naming a DIV at x=96 y=61. -->
+  <!-- @unverified: the idle prompt 金蝶提示 with 继续退出 / 不退出 [transient] -->
   <div class="k-widget k-window" id="idle-window" style="display:none">
     <span class="k-window-title">金蝶提示</span>
     <span class="k-window-message">系统闲置时间过长，即将自动退出，请确认是否退出？</span>

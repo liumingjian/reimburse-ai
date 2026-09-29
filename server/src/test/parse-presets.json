@@ -1,0 +1,1838 @@
+{
+  "m01-hotel-invoice.pdf": {
+    "sha256": "b2a31fda65ebb26fdf5421748e72c31592163c46d588560e522d8c69d04d6818",
+    "outcome": {
+      "outcome": "recognised",
+      "kind": "vat_invoice",
+      "layout": "einvoice",
+      "parserVersion": "3",
+      "kindLabel": "全电发票（专票）",
+      "candidates": [
+        {
+          "key": "invoiceNumber",
+          "value": "26312000000098127734",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.2"
+              ],
+              "text": "发票号码：26312000000098127734"
+            }
+          ]
+        },
+        {
+          "key": "issueDate",
+          "value": "2026-08-22",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.3"
+              ],
+              "text": "开票日期：2026年08月22日"
+            }
+          ]
+        },
+        {
+          "key": "invoiceType",
+          "value": "专票",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.1"
+              ],
+              "text": "电 子 发 票 （ 增 值 税 专 用 发 票 ）"
+            }
+          ]
+        },
+        {
+          "key": "buyerName",
+          "value": "某某科技（上海）有限公司",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.5"
+              ],
+              "text": "名称：某某科技（上海）有限公司"
+            }
+          ]
+        },
+        {
+          "key": "buyerTaxId",
+          "value": "91310000XXXXXXXX0A",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.8"
+              ],
+              "text": "91310000XXXXXXXX0A"
+            }
+          ]
+        },
+        {
+          "key": "sellerName",
+          "value": "上海某某酒店管理有限公司",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.10"
+              ],
+              "text": "名称：上海某某酒店管理有限公司"
+            }
+          ]
+        },
+        {
+          "key": "sellerTaxId",
+          "value": "91310000YYYYYYYY0B",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.13"
+              ],
+              "text": "91310000YYYYYYYY0B"
+            }
+          ]
+        },
+        {
+          "key": "itemName",
+          "value": "*住宿服务*住宿费",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.21"
+              ],
+              "text": "*住宿服务*住宿费"
+            }
+          ]
+        },
+        {
+          "key": "netAmount",
+          "value": "3433.96",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.29"
+              ],
+              "text": "¥3433.96"
+            }
+          ]
+        },
+        {
+          "key": "taxAmount",
+          "value": "206.04",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.30"
+              ],
+              "text": "¥206.04"
+            }
+          ]
+        },
+        {
+          "key": "totalAmount",
+          "value": "3640.00",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.34"
+              ],
+              "text": "¥3640.00"
+            }
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "kind": "advisory",
+          "code": "qr_unreadable",
+          "message": "二维码无法识读，仅作提示：以 PDF 文本层为准"
+        }
+      ],
+      "missing": []
+    }
+  },
+  "m02-hotel-folio.pdf": {
+    "sha256": "6b6637a217bb9eac26e911a2b458caf67d10499b1b19fedd02848d204bbf64d3",
+    "outcome": {
+      "outcome": "recognised",
+      "kind": "hotel_folio",
+      "layout": "labelled",
+      "parserVersion": "1",
+      "kindLabel": "酒店结账单",
+      "candidates": [
+        {
+          "key": "hotelName",
+          "value": "全季酒店（上海某某店）",
+          "source": "rule:hotel_folio/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.2"
+              ],
+              "text": "全季酒店（上海某某店）"
+            }
+          ]
+        },
+        {
+          "key": "guestName",
+          "value": "林颂宜",
+          "source": "rule:hotel_folio/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.3"
+              ],
+              "text": "入住人：林颂宜"
+            }
+          ]
+        },
+        {
+          "key": "roomNumber",
+          "value": "1208",
+          "source": "rule:hotel_folio/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.4"
+              ],
+              "text": "房号：1208"
+            }
+          ]
+        },
+        {
+          "key": "checkIn",
+          "value": "2026-08-09",
+          "source": "rule:hotel_folio/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.5"
+              ],
+              "text": "入住日期：2026-08-09"
+            }
+          ]
+        },
+        {
+          "key": "checkOut",
+          "value": "2026-08-22",
+          "source": "rule:hotel_folio/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.6"
+              ],
+              "text": "离店日期：2026-08-22"
+            }
+          ]
+        },
+        {
+          "key": "nights",
+          "value": "13",
+          "source": "rule:hotel_folio/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.7"
+              ],
+              "text": "天数：13"
+            }
+          ]
+        },
+        {
+          "key": "roomRate",
+          "value": "280.00",
+          "source": "rule:hotel_folio/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.8"
+              ],
+              "text": "房价：280.00 / 晚"
+            }
+          ]
+        },
+        {
+          "key": "folioTotal",
+          "value": "3640.00",
+          "source": "rule:hotel_folio/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.51",
+                "p1.52"
+              ],
+              "text": "消费合计 3640.00"
+            }
+          ]
+        },
+        {
+          "key": "paidAmount",
+          "value": "3640.00",
+          "source": "rule:hotel_folio/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.53",
+                "p1.54"
+              ],
+              "text": "已付款（预授权结算） 3640.00"
+            }
+          ]
+        }
+      ],
+      "findings": [],
+      "missing": []
+    }
+  },
+  "m03-amap-invoice.pdf": {
+    "sha256": "122157395438ad6c11345970108ffab8270bd5c1270ec905922c70ce19a3ee64",
+    "outcome": {
+      "outcome": "recognised",
+      "kind": "vat_invoice",
+      "layout": "einvoice",
+      "parserVersion": "3",
+      "kindLabel": "全电发票（普票）",
+      "candidates": [
+        {
+          "key": "invoiceNumber",
+          "value": "26312000000101557402",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.2"
+              ],
+              "text": "发票号码：26312000000101557402"
+            }
+          ]
+        },
+        {
+          "key": "issueDate",
+          "value": "2026-08-13",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.3"
+              ],
+              "text": "开票日期：2026年08月13日"
+            }
+          ]
+        },
+        {
+          "key": "invoiceType",
+          "value": "普票",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.1"
+              ],
+              "text": "电 子 发 票 （ 普 通 发 票 ）"
+            }
+          ]
+        },
+        {
+          "key": "buyerName",
+          "value": "某某科技（上海）有限公司",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.5"
+              ],
+              "text": "名称：某某科技（上海）有限公司"
+            }
+          ]
+        },
+        {
+          "key": "buyerTaxId",
+          "value": "91310000XXXXXXXX0A",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.8"
+              ],
+              "text": "91310000XXXXXXXX0A"
+            }
+          ]
+        },
+        {
+          "key": "sellerName",
+          "value": "某某网约车科技（上海）有限公司",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.10"
+              ],
+              "text": "名称：某某网约车科技（上海）有限公司"
+            }
+          ]
+        },
+        {
+          "key": "sellerTaxId",
+          "value": "91310000ZZZZZZZZ0C",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.13"
+              ],
+              "text": "91310000ZZZZZZZZ0C"
+            }
+          ]
+        },
+        {
+          "key": "itemName",
+          "value": "*运输服务*客运服务费",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.21"
+              ],
+              "text": "*运输服务*客运服务费"
+            }
+          ]
+        },
+        {
+          "key": "netAmount",
+          "value": "67.18",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.28"
+              ],
+              "text": "¥67.18"
+            }
+          ]
+        },
+        {
+          "key": "taxAmount",
+          "value": "2.01",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.29"
+              ],
+              "text": "¥2.01"
+            }
+          ]
+        },
+        {
+          "key": "totalAmount",
+          "value": "69.19",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.33"
+              ],
+              "text": "¥69.19"
+            }
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "kind": "advisory",
+          "code": "qr_unreadable",
+          "message": "二维码无法识读，仅作提示：以 PDF 文本层为准"
+        }
+      ],
+      "missing": []
+    }
+  },
+  "m04-amap-itinerary.pdf": {
+    "sha256": "5a3a4bab6464d25d64690337872474014d4afd05c71319a61cfcf4c40d72e148",
+    "outcome": {
+      "outcome": "recognised",
+      "kind": "ride_itinerary",
+      "layout": "amap",
+      "parserVersion": "4",
+      "kindLabel": "高德行程单",
+      "candidates": [
+        {
+          "key": "applyDate",
+          "value": "2026-08-13",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.3"
+              ],
+              "text": "申请日期：2026-08-13"
+            }
+          ]
+        },
+        {
+          "key": "segmentCount",
+          "value": "3",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.5"
+              ],
+              "text": "共计3单行程，合计69.19元"
+            }
+          ]
+        },
+        {
+          "key": "itineraryTotal",
+          "value": "69.19",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.5"
+              ],
+              "text": "共计3单行程，合计69.19元"
+            }
+          ]
+        },
+        {
+          "key": "segments[0].date",
+          "value": "2026-08-10",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.15"
+              ],
+              "text": "2026-08-10 08:52"
+            }
+          ]
+        },
+        {
+          "key": "segments[0].time",
+          "value": "08:52",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.15"
+              ],
+              "text": "2026-08-10 08:52"
+            }
+          ]
+        },
+        {
+          "key": "segments[0].carType",
+          "value": "经济型",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.14"
+              ],
+              "text": "经济型"
+            }
+          ]
+        },
+        {
+          "key": "segments[0].city",
+          "value": "上海市",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.16"
+              ],
+              "text": "上海市"
+            }
+          ]
+        },
+        {
+          "key": "segments[0].origin",
+          "value": "虹桥枢纽",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.17"
+              ],
+              "text": "虹桥枢纽"
+            }
+          ]
+        },
+        {
+          "key": "segments[0].destination",
+          "value": "漕河泾",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.18"
+              ],
+              "text": "漕河泾"
+            }
+          ]
+        },
+        {
+          "key": "segments[0].amount",
+          "value": "26.69",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.19"
+              ],
+              "text": "26.69"
+            }
+          ]
+        },
+        {
+          "key": "segments[1].date",
+          "value": "2026-08-10",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.22"
+              ],
+              "text": "2026-08-10 18:20"
+            }
+          ]
+        },
+        {
+          "key": "segments[1].time",
+          "value": "18:20",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.22"
+              ],
+              "text": "2026-08-10 18:20"
+            }
+          ]
+        },
+        {
+          "key": "segments[1].carType",
+          "value": "经济型",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.21"
+              ],
+              "text": "经济型"
+            }
+          ]
+        },
+        {
+          "key": "segments[1].city",
+          "value": "上海市",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.23"
+              ],
+              "text": "上海市"
+            }
+          ]
+        },
+        {
+          "key": "segments[1].origin",
+          "value": "漕河泾",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.24"
+              ],
+              "text": "漕河泾"
+            }
+          ]
+        },
+        {
+          "key": "segments[1].destination",
+          "value": "静安寺",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.25"
+              ],
+              "text": "静安寺"
+            }
+          ]
+        },
+        {
+          "key": "segments[1].amount",
+          "value": "20.85",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.26"
+              ],
+              "text": "20.85"
+            }
+          ]
+        },
+        {
+          "key": "segments[2].date",
+          "value": "2026-08-12",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.29"
+              ],
+              "text": "2026-08-12 09:15"
+            }
+          ]
+        },
+        {
+          "key": "segments[2].time",
+          "value": "09:15",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.29"
+              ],
+              "text": "2026-08-12 09:15"
+            }
+          ]
+        },
+        {
+          "key": "segments[2].carType",
+          "value": "经济型",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.28"
+              ],
+              "text": "经济型"
+            }
+          ]
+        },
+        {
+          "key": "segments[2].city",
+          "value": "上海市",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.30"
+              ],
+              "text": "上海市"
+            }
+          ]
+        },
+        {
+          "key": "segments[2].origin",
+          "value": "静安寺",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.31"
+              ],
+              "text": "静安寺"
+            }
+          ]
+        },
+        {
+          "key": "segments[2].destination",
+          "value": "张江",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.32"
+              ],
+              "text": "张江"
+            }
+          ]
+        },
+        {
+          "key": "segments[2].amount",
+          "value": "21.65",
+          "source": "rule:ride_itinerary/amap",
+          "parserVersion": "4",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.33"
+              ],
+              "text": "21.65"
+            }
+          ]
+        }
+      ],
+      "findings": [],
+      "missing": []
+    }
+  },
+  "m05-caocao-invoice.pdf": {
+    "sha256": "d15304fbd914c1185945d9bfb3a23789a467d13297c8337e0ea8895b5954b584",
+    "outcome": {
+      "outcome": "recognised",
+      "kind": "vat_invoice",
+      "layout": "einvoice",
+      "parserVersion": "3",
+      "kindLabel": "全电发票（普票）",
+      "candidates": [
+        {
+          "key": "invoiceNumber",
+          "value": "26312000000099830115",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.2"
+              ],
+              "text": "发票号码：26312000000099830115"
+            }
+          ]
+        },
+        {
+          "key": "issueDate",
+          "value": "2026-08-11",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.3"
+              ],
+              "text": "开票日期：2026年08月11日"
+            }
+          ]
+        },
+        {
+          "key": "invoiceType",
+          "value": "普票",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.1"
+              ],
+              "text": "电 子 发 票 （ 普 通 发 票 ）"
+            }
+          ]
+        },
+        {
+          "key": "buyerName",
+          "value": "某某科技（上海）有限公司",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.5"
+              ],
+              "text": "名称：某某科技（上海）有限公司"
+            }
+          ]
+        },
+        {
+          "key": "buyerTaxId",
+          "value": "91310000XXXXXXXX0A",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.8"
+              ],
+              "text": "91310000XXXXXXXX0A"
+            }
+          ]
+        },
+        {
+          "key": "sellerName",
+          "value": "某某出行科技（上海）有限公司",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.10"
+              ],
+              "text": "名称：某某出行科技（上海）有限公司"
+            }
+          ]
+        },
+        {
+          "key": "sellerTaxId",
+          "value": "91310000WWWWWWWW0D",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.13"
+              ],
+              "text": "91310000WWWWWWWW0D"
+            }
+          ]
+        },
+        {
+          "key": "itemName",
+          "value": "*运输服务*客运服务费",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.21"
+              ],
+              "text": "*运输服务*客运服务费"
+            }
+          ]
+        },
+        {
+          "key": "netAmount",
+          "value": "37.28",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.33"
+              ],
+              "text": "¥37.28"
+            }
+          ]
+        },
+        {
+          "key": "taxAmount",
+          "value": "1.12",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.34"
+              ],
+              "text": "¥1.12"
+            }
+          ]
+        },
+        {
+          "key": "totalAmount",
+          "value": "38.40",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.38"
+              ],
+              "text": "¥38.40"
+            }
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "kind": "advisory",
+          "code": "qr_unreadable",
+          "message": "二维码无法识读，仅作提示：以 PDF 文本层为准"
+        }
+      ],
+      "missing": []
+    }
+  },
+  "m06-caocao-itinerary.pdf": {
+    "sha256": "27d823555ed0243e348077601156d31266de345b773aaa03670ab97492b24566",
+    "outcome": {
+      "outcome": "unrecognised",
+      "reason": "no_layout"
+    }
+  },
+  "m07-rail-0809.pdf": {
+    "sha256": "c6993ec83bb2ccc75316822c2b73edef74ac2c90f69def657fcede6bf5d51629",
+    "outcome": {
+      "outcome": "recognised",
+      "kind": "rail_ticket",
+      "layout": "12306",
+      "parserVersion": "2",
+      "kindLabel": "铁路电子客票",
+      "candidates": [
+        {
+          "key": "invoiceNumber",
+          "value": "26312000000102200731",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.2"
+              ],
+              "text": "发票号码：26312000000102200731"
+            }
+          ]
+        },
+        {
+          "key": "issueDate",
+          "value": "2026-08-09",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.3"
+              ],
+              "text": "开票日期：2026年08月09日"
+            }
+          ]
+        },
+        {
+          "key": "trainNumber",
+          "value": "G7522",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.4",
+                "p1.5",
+                "p1.6"
+              ],
+              "text": "杭州东 G7522 上海虹桥"
+            }
+          ]
+        },
+        {
+          "key": "departStation",
+          "value": "杭州东",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.4",
+                "p1.5",
+                "p1.6"
+              ],
+              "text": "杭州东 G7522 上海虹桥"
+            }
+          ]
+        },
+        {
+          "key": "arriveStation",
+          "value": "上海虹桥",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.4",
+                "p1.5",
+                "p1.6"
+              ],
+              "text": "杭州东 G7522 上海虹桥"
+            }
+          ]
+        },
+        {
+          "key": "travelDate",
+          "value": "2026-08-09",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.7"
+              ],
+              "text": "乘车日期：2026年08月09日"
+            }
+          ]
+        },
+        {
+          "key": "departTime",
+          "value": "08:30",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.8"
+              ],
+              "text": "开车时间：08:30"
+            }
+          ]
+        },
+        {
+          "key": "seatClass",
+          "value": "二等座",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.9"
+              ],
+              "text": "席别：二等座"
+            }
+          ]
+        },
+        {
+          "key": "passengerName",
+          "value": "林颂宜",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.11"
+              ],
+              "text": "乘车人：林颂宜"
+            }
+          ]
+        },
+        {
+          "key": "totalAmount",
+          "value": "73.00",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.13"
+              ],
+              "text": "票价：¥73.00"
+            }
+          ]
+        }
+      ],
+      "findings": [],
+      "missing": []
+    }
+  },
+  "m08-rail-0822.pdf": {
+    "sha256": "3dfe9a65ccb4038cc52214cf65abcb339fd3056d562697e958f107a27c0be480",
+    "outcome": {
+      "outcome": "recognised",
+      "kind": "rail_ticket",
+      "layout": "12306",
+      "parserVersion": "2",
+      "kindLabel": "铁路电子客票",
+      "candidates": [
+        {
+          "key": "invoiceNumber",
+          "value": "26312000000102200744",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.2"
+              ],
+              "text": "发票号码：26312000000102200744"
+            }
+          ]
+        },
+        {
+          "key": "issueDate",
+          "value": "2026-08-22",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.3"
+              ],
+              "text": "开票日期：2026年08月22日"
+            }
+          ]
+        },
+        {
+          "key": "trainNumber",
+          "value": "G7539",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.4",
+                "p1.5",
+                "p1.6"
+              ],
+              "text": "上海虹桥 G7539 杭州东"
+            }
+          ]
+        },
+        {
+          "key": "departStation",
+          "value": "上海虹桥",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.4",
+                "p1.5",
+                "p1.6"
+              ],
+              "text": "上海虹桥 G7539 杭州东"
+            }
+          ]
+        },
+        {
+          "key": "arriveStation",
+          "value": "杭州东",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.4",
+                "p1.5",
+                "p1.6"
+              ],
+              "text": "上海虹桥 G7539 杭州东"
+            }
+          ]
+        },
+        {
+          "key": "travelDate",
+          "value": "2026-08-22",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.7"
+              ],
+              "text": "乘车日期：2026年08月22日"
+            }
+          ]
+        },
+        {
+          "key": "departTime",
+          "value": "18:05",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.8"
+              ],
+              "text": "开车时间：18:05"
+            }
+          ]
+        },
+        {
+          "key": "seatClass",
+          "value": "二等座",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.9"
+              ],
+              "text": "席别：二等座"
+            }
+          ]
+        },
+        {
+          "key": "passengerName",
+          "value": "林颂宜",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.11"
+              ],
+              "text": "乘车人：林颂宜"
+            }
+          ]
+        },
+        {
+          "key": "totalAmount",
+          "value": "73.00",
+          "source": "rule:rail_ticket/12306",
+          "parserVersion": "2",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.13"
+              ],
+              "text": "票价：¥73.00"
+            }
+          ]
+        }
+      ],
+      "findings": [],
+      "missing": []
+    }
+  },
+  "m09-taxi-photo.jpg": {
+    "sha256": "9af9d3f0142fb8a4663a9ff524b83f5892fea3edaa7f26fd821c6d2cf56f82ab",
+    "outcome": {
+      "outcome": "recognised",
+      "kind": "taxi_receipt",
+      "layout": "machine_printed",
+      "parserVersion": "1",
+      "kindLabel": "出租车车费发票（照片）",
+      "candidates": [
+        {
+          "key": "invoiceCode",
+          "value": "131002325021",
+          "source": "rule:taxi_receipt/machine_printed",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.3"
+              ],
+              "text": "131002325021"
+            }
+          ]
+        },
+        {
+          "key": "invoiceNumber",
+          "value": "04213377",
+          "source": "rule:taxi_receipt/machine_printed",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.5"
+              ],
+              "text": "04213377"
+            }
+          ]
+        },
+        {
+          "key": "plate",
+          "value": "沪BX0000",
+          "source": "rule:taxi_receipt/machine_printed",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.7"
+              ],
+              "text": "沪BX0000"
+            }
+          ]
+        },
+        {
+          "key": "travelDate",
+          "value": "2026-08-15",
+          "source": "rule:taxi_receipt/machine_printed.year_from_suffix",
+          "parserVersion": "1",
+          "evidence": "derived",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.9"
+              ],
+              "text": "26-08-15"
+            }
+          ]
+        },
+        {
+          "key": "boardTime",
+          "value": "09:06",
+          "source": "rule:taxi_receipt/machine_printed",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.11"
+              ],
+              "text": "09:06"
+            }
+          ]
+        },
+        {
+          "key": "alightTime",
+          "value": "09:31",
+          "source": "rule:taxi_receipt/machine_printed",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.13"
+              ],
+              "text": "09:31"
+            }
+          ]
+        },
+        {
+          "key": "distance",
+          "value": "8.6 km",
+          "source": "rule:taxi_receipt/machine_printed",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.17"
+              ],
+              "text": "8.6km"
+            }
+          ]
+        },
+        {
+          "key": "totalAmount",
+          "value": "32.00",
+          "source": "rule:taxi_receipt/machine_printed",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.21"
+              ],
+              "text": "￥32.00"
+            }
+          ]
+        },
+        {
+          "key": "city",
+          "value": "上海",
+          "source": "rule:taxi_receipt/machine_printed.city_from_code_region",
+          "parserVersion": "1",
+          "evidence": "derived",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.3"
+              ],
+              "text": "131002325021"
+            }
+          ]
+        }
+      ],
+      "findings": [],
+      "missing": []
+    }
+  },
+  "m10-taxi-photo.jpg": {
+    "sha256": "6aaed8d88544d574b6f36ef63152bd2cbdffbb8c9a03e6af21eebecfc37484a4",
+    "outcome": {
+      "outcome": "recognised",
+      "kind": "taxi_receipt",
+      "layout": "machine_printed",
+      "parserVersion": "1",
+      "kindLabel": "出租车车费发票（照片）",
+      "candidates": [
+        {
+          "key": "invoiceCode",
+          "value": "131002325021",
+          "source": "rule:taxi_receipt/machine_printed",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.3"
+              ],
+              "text": "131002325021"
+            }
+          ]
+        },
+        {
+          "key": "invoiceNumber",
+          "value": "04219052",
+          "source": "rule:taxi_receipt/machine_printed",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.5"
+              ],
+              "text": "04219052"
+            }
+          ]
+        },
+        {
+          "key": "plate",
+          "value": "沪BX0001",
+          "source": "rule:taxi_receipt/machine_printed",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.7"
+              ],
+              "text": "沪BX0001"
+            }
+          ]
+        },
+        {
+          "key": "travelDate",
+          "value": "2026-08-19",
+          "source": "rule:taxi_receipt/machine_printed.year_from_suffix",
+          "parserVersion": "1",
+          "evidence": "derived",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.9"
+              ],
+              "text": "26-08-19"
+            }
+          ]
+        },
+        {
+          "key": "boardTime",
+          "value": "18:42",
+          "source": "rule:taxi_receipt/machine_printed",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.11"
+              ],
+              "text": "18:42"
+            }
+          ]
+        },
+        {
+          "key": "alightTime",
+          "value": "19:06",
+          "source": "rule:taxi_receipt/machine_printed",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.13"
+              ],
+              "text": "19:06"
+            }
+          ]
+        },
+        {
+          "key": "distance",
+          "value": "12.3 km",
+          "source": "rule:taxi_receipt/machine_printed",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.17"
+              ],
+              "text": "12.3km"
+            }
+          ]
+        },
+        {
+          "key": "totalAmount",
+          "value": "47.00",
+          "source": "rule:taxi_receipt/machine_printed",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.21"
+              ],
+              "text": "￥47.00"
+            }
+          ]
+        },
+        {
+          "key": "city",
+          "value": "上海",
+          "source": "rule:taxi_receipt/machine_printed.city_from_code_region",
+          "parserVersion": "1",
+          "evidence": "derived",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.3"
+              ],
+              "text": "131002325021"
+            }
+          ]
+        }
+      ],
+      "findings": [],
+      "missing": []
+    }
+  },
+  "m11-other-invoice.pdf": {
+    "sha256": "2fe58bb4dfb5f936028c498a27b1ee87fb48428353d2c0ec7f1609b220455a78",
+    "outcome": {
+      "outcome": "unrecognised",
+      "reason": "no_layout"
+    }
+  }
+}

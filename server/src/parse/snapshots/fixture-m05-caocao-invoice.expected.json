@@ -1,0 +1,22 @@
+{
+  "about": "@baox/fixtures m05: a ride-hailing fully-digitalised VAT e-invoice (全电发票), ordinary invoice (普票), from another platform. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "vat_invoice/einvoice",
+  "missing": [],
+  "findings": [
+    "qr_unreadable"
+  ],
+  "facts": {
+    "invoiceNumber": "26312000000099830115",
+    "issueDate": "2026-08-11",
+    "invoiceType": "普票",
+    "buyerName": "某某科技（上海）有限公司",
+    "buyerTaxId": "91310000XXXXXXXX0A",
+    "sellerName": "某某出行科技（上海）有限公司",
+    "sellerTaxId": "91310000WWWWWWWW0D",
+    "itemName": "*运输服务*客运服务费",
+    "netAmount": "37.28",
+    "taxAmount": "1.12",
+    "totalAmount": "38.40"
+  }
+}

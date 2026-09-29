@@ -20,6 +20,40 @@ node server/dist/main.mjs              # 输出 listening on http://127.0.0.1:43
 用 `BAOX_DATA_DIR` 指一个**专给 QA 用的数据目录**：驱动会作废遗留的未完成任务，别指着日常数据。
 第一次启动后在页面上创建管理员 `admin / admin123`（或用下面的 `QA_USER` / `QA_PASSWORD` 换成你自己的）。
 
+### 1a. Dev mode for the maintainer's QA→fix loop (agents, through rexec)
+
+When the maintainer asks for QA on the Mac, start this instead of the production build above: server under `tsx watch`
+plus Vite, on the same persistent `~/.baox-qa`, so a fix reaches the open page without a rebuild and the maintainer's
+tasks survive. Run from the worktree root:
+
+```bash
+rexec 'qa/dev.sh up'              # blocks until ready, prints: dev-mode QA instance ready: http://127.0.0.1:5173/
+rexec 'qa/dev.sh sync'            # after each fix: pushes the changed files, lists them
+rexec 'qa/dev.sh down'            # when the maintainer is done
+```
+
+`up` returns as soon as the page answers: the instance runs in a process group of its own with its output in log files,
+so the rexec job ends and does not hold the workspace. The first `up` in a fresh checkout installs dependencies, which
+can take minutes; give that Bash call a long timeout, or split it as `rexec --detach 'qa/dev.sh up'` then
+`rexec --wait <ID>`.
+
+**The dev instance drives the ERP differently from production.** `dev-main.ts` sends ERP write (去报销) jobs through
+the CDP executor into a dedicated Chromium it launches itself (`BAOX_ERP_CHROMIUM`). The production build (`main.ts`,
+§1 above, and the intranet deploy) sends them to the paired browser extension (浏览器扩展) in the employee's own browser.
+The fill steps are the same executor code, but pairing, the extension's confirmation prompts, the employee browser's
+session and cookies, and the extension transport are not exercised in dev mode. QA of those goes through the
+production-build launch in §1 with the extension loaded and paired.
+
+- Hand the maintainer the Vite URL (`:5173`). The server's own `:4319` also serves `web/dist` when one was built, and that copy is stale.
+- A pushed web file hot-reloads the page; a pushed server file restarts only the server (`tsx watch`), which re-opens the
+  same data directory. A changed `package.json` or lockfile makes `sync` reinstall and restart the whole instance.
+- `rexec` alone does not update the instance: it runs from its own copy of the tree (`~/.baox-qa-dev/src`), because the
+  Mac's rsync re-stamps every synced file and the watchers would restart everything on each call. `qa/dev.sh sync` copies
+  only files whose bytes changed.
+- Logs: `~/.baox-qa-dev/server.log`, `~/.baox-qa-dev/web.log`; `qa/dev.sh status` says what runs. The instance is not a
+  rexec job, so `rexec --cancel` cannot stop it; `qa/dev.sh down` does, and `up` replaces whichever instance is running.
+- Server env passes through at `up`, e.g. `rexec --detach 'BAOX_ERP_STOP_BEFORE_IMPORT=1 qa/dev.sh up'`. Overrides are listed at the top of `qa/dev.sh`.
+
 The project-book section enters explicit numbers and names offline, including `P-2307` and `P-3312`, and checks duplicate and unsafe-number feedback. No ERP session or catalog fixture is needed to reach project assignment and whole-list confirmation. The administrator section uses a separate `QA-PUBLIC` number so it does not silently convert a member's personal entry.
 
 `P-2307` 与 `P-3312` **只是离线夹具号**：真报销系统里没有这两个项目，报销信息核对会（正确地）说查不到。
@@ -91,7 +125,7 @@ QA_BASE=http://127.0.0.1:4399 QA_MATERIALS=/tmp/baox-qa-mats QA_HEADLESS=1 pnpm 
 ——也就是写入结果不确定——才是 `DEFECT`。
 
 `erp.status` 一个字段不够看：报销信息核对不通过时，快照里的 `erp.status` 是**故意**留在 `idle` 的
-（`server/src/erp/fill-state.ts`），问题都写在快照的 `catalog` 一节里。驱动两节一起读：看到 `catalog`
+（`server/src/task-snapshot/erp.ts`），问题都写在快照的 `catalog` 一节里。驱动两节一起读：看到 `catalog`
 里有理由充分的拒绝，就照着理由记 `ok`（并另记一条 `WARN` 说这一趟没走到「浏览器关着」那条路），
 **不会**记成 `DEFECT`——**服务端有理由的拒绝不是缺陷**。只有 `idle` 且哪儿都没有拒绝理由，才是缺陷。
 
@@ -127,7 +161,7 @@ BAOX_ERP_STOP_BEFORE_IMPORT=1        # 起服务端时设上
   从 `GET /api/tasks/:id` 的 `pendingItems[].fields[].format` 读到），读不到才退回按标签猜。
   金额一律是两位小数、非负、无千分位、且不为 `0.00`，就是应用自己那套校验
   （`contract/src/actions.ts`）收得下的形状。
-- 金额还要**自己对得上**：`不含税金额 + 税额 = 价税合计`（`server/src/parse/kinds.ts`）。驱动先从快照里
+- 金额还要**自己对得上**：`不含税金额 + 税额 = 价税合计`（`server/src/kind-policy.ts`）。驱动先从快照里
   拿这份材料已经读到的价税合计，再按它拆出另外两项；价税合计本身也缺的时候，三项一起用同一个替身金额
   拆。服务端不会倒算（ADR-0017），所以填进去的数必须本来就守恒。
 - 发票号码按材料 id 生成，两份材料不会拿到同一个号——否则应用会（正确地）说它们是同一张发票。

@@ -1,0 +1,14 @@
+{
+  "about": "#202: the counts agree but leg 1 has no readable amount, so the leg block is refused and named. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "ride_itinerary/amap",
+  "missing": [],
+  "findings": [
+    "segment_field_unreadable.1.amount"
+  ],
+  "facts": {
+    "applyDate": "2026-08-13",
+    "segmentCount": "1",
+    "itineraryTotal": "32.50"
+  }
+}

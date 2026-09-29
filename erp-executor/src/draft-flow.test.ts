@@ -63,6 +63,22 @@ describe('computedTotalProblem — does ERP agree with the plan', () => {
     expect(computedTotalProblem(row('', '', ''), planned, '明细第 1 行')).toContain('读不出金额');
   });
 
+  // The three rows of the live fill of 2026-09-20, with their own numbers. Every one of them read back both money
+  // cells correctly; only ERP's computed 申请报销金额 says the value never arrived.
+  it('reads the computed 申请报销金额 as the witness that a money write reached ERP, not the cell it was typed into', () => {
+    expect(computedTotalProblem(row('¥32.18', '¥0.32', '¥32.50'), { net: '32.18', tax: '0.32' }, '明细第 1 行')).toBe(null);
+    expect(computedTotalProblem(row('¥32.18', '¥0.32', '¥32.18'), { net: '32.18', tax: '0.32' }, '明细第 1 行'))
+      .toMatch(/明细第 1 行.*申请报销金额.*没有进到报销系统自己的账里/);
+    expect(computedTotalProblem(row('¥15.56', '¥0.47', '¥0.47'), { net: '15.56', tax: '0.47' }, '明细第 2 行'))
+      .toMatch(/明细第 2 行/);
+    expect(computedTotalProblem(row('¥1,677.36', '¥100.64', '¥1,677.36'), { net: '1677.36', tax: '100.64' }, '明细第 11 行'))
+      .toMatch(/明细第 11 行/);
+    expect(computedTotalProblem(row('¥1,677.36', '¥100.64', '¥1,778.00'), { net: '1677.36', tax: '100.64' }, '明细第 11 行')).toBe(null);
+    // A cell that does not hold what was asked for is caught by the same reading, computed column or not.
+    expect(computedTotalProblem(row('¥32.18', '¥0.32', '¥32.50'), { net: '32.19', tax: '0.32' }, '明细第 1 行')).toMatch(/费用金额/);
+    expect(computedTotalProblem(row('¥32.18', '', '¥32.18'), { net: '32.18', tax: '0.32' }, '明细第 1 行')).toMatch(/读不出金额/);
+  });
+
   it('says so when ERP computed nothing at all', () => {
     const problem = computedTotalProblem(row('¥1,677.36', '¥100.64', ''), planned, '明细第 1 行');
     expect(problem).toContain('没有算出这一行的金额');

@@ -3,11 +3,12 @@ import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import type { InferenceSession as Session, Tensor as TensorType } from 'onnxruntime-node';
+import { decode, loadCv, ordered, paperQuad, rectCorners, warp, type Cv, type Mat, type Point } from '../paper';
 import { normalise, type TextObservation } from './doc';
 
 // The OCR adapter (ADR-0017, #186): a photo in, positioned 文字观测 (text observations) out, all in this process.
 // 1. `sharp` decodes the photo (EXIF orientation applied).
-// 2. `opencv-js` finds the paper's four corners and warps it flat (透视矫正, perspective correction).
+// 2. `opencv-js` finds the paper's four corners and warps it flat (透视矫正, perspective correction; `../paper.ts`).
 // 3. `onnxruntime-node` runs RapidOCR's PP-OCRv4 detection and recognition models on the flattened paper.
 // Everything loads lazily on the first image and lives until the parse worker ends (released after its idle timeout),
 // so a job with PDFs only never loads OCR. Coordinates follow the PDF convention of `doc.ts` (lower-left, y up) in
@@ -29,12 +30,6 @@ const DET_BOX_THRESHOLD = 0.6;
 const DET_UNCLIP_RATIO = 1.6;
 const REC_HEIGHT = 48;
 const REC_MIN_WIDTH = 320;
-// The paper must cover this share of the photo for the corner search to count; otherwise the photo is read as is.
-const MIN_PAPER_SHARE = 0.12;
-
-type Cv = typeof import('@techstark/opencv-js');
-type Mat = InstanceType<Cv['Mat']>;
-type Point = { x: number; y: number };
 
 type Engine = { cv: Cv; det: Session; rec: Session; keys: string[]; Tensor: typeof TensorType };
 
@@ -79,24 +74,6 @@ export async function ocrImage(bytes: Uint8Array): Promise<TextObservation[]> {
   }
 }
 
-// The emscripten Module finishes compiling its wasm asynchronously. It is a thenable that resolves to itself, so it
-// must never be handed to `resolve()` or `await` as is (that recurses forever): wait on its `then`, drop `then`, and
-// hand it over wrapped.
-// Loaded with `require`, never `await import()`: a loader that re-exports the CommonJS `then` on the ES namespace
-// (vitest does) makes the awaited import itself recurse forever. The print sheet (#190) loads it in the main process.
-async function loadCv(): Promise<Cv> {
-  const module = createRequire(import.meta.url)('@techstark/opencv-js') as { Mat?: unknown; then?: (ready: (value: unknown) => void) => void };
-  if (typeof module.Mat === 'function' || typeof module.then !== 'function') return module as unknown as Cv;
-  const ready = await new Promise<{ cv: Cv }>((resolve) => {
-    module.then?.((value) => {
-      const cv = value as { then?: unknown };
-      delete cv.then;
-      resolve({ cv: cv as unknown as Cv });
-    });
-  });
-  return ready.cv;
-}
-
 async function verified(dir: string, model: { file: string; sha256: string }): Promise<Buffer> {
   const bytes = await readFile(join(dir, model.file));
   const digest = createHash('sha256').update(bytes).digest('hex');
@@ -132,148 +109,11 @@ function ocrEngine(): Promise<Engine> {
   return engine;
 }
 
-async function decode(cv: Cv, bytes: Uint8Array): Promise<Mat> {
-  const { default: sharp } = await import('sharp');
-  const { data, info } = await sharp(bytes).rotate().removeAlpha().toColourspace('srgb').raw().toBuffer({ resolveWithObject: true });
-  const mat = new cv.Mat(info.height, info.width, cv.CV_8UC3);
-  mat.data.set(data);
-  return mat;
-}
-
-const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
-
-// Top-left, top-right, bottom-right, bottom-left.
-function ordered(points: readonly Point[]): [Point, Point, Point, Point] {
-  const bySum = [...points].sort((a, b) => a.x + a.y - (b.x + b.y));
-  const byDiff = [...points].sort((a, b) => a.y - a.x - (b.y - b.x));
-  return [bySum[0] as Point, byDiff[0] as Point, bySum[bySum.length - 1] as Point, byDiff[byDiff.length - 1] as Point];
-}
-
-function warp(cv: Cv, src: Mat, corners: [Point, Point, Point, Point]): Mat {
-  const [tl, tr, br, bl] = corners;
-  const width = Math.max(1, Math.round(Math.max(distance(tl, tr), distance(bl, br))));
-  const height = Math.max(1, Math.round(Math.max(distance(tl, bl), distance(tr, br))));
-  const from = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
-  const to = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, width, 0, width, height, 0, height]);
-  const matrix = cv.getPerspectiveTransform(from, to);
-  const out = new cv.Mat();
-  cv.warpPerspective(src, out, matrix, new cv.Size(width, height), cv.INTER_CUBIC, cv.BORDER_REPLICATE, new cv.Scalar());
-  from.delete();
-  to.delete();
-  matrix.delete();
-  return out;
-}
-
-function pointsOf(mat: Mat): Point[] {
-  const out: Point[] = [];
-  for (let i = 0; i < mat.rows; i += 1) out.push({ x: mat.data32S[i * 2] ?? 0, y: mat.data32S[i * 2 + 1] ?? 0 });
-  return out;
-}
-
-// The four corners of a rotated rectangle given by centre, size and angle (degrees).
-function rectCorners(rect: { center: Point; size: { width: number; height: number }; angle: number }): Point[] {
-  const angle = (rect.angle * Math.PI) / 180;
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
-  const w = rect.size.width / 2;
-  const h = rect.size.height / 2;
-  return [
-    [-w, -h],
-    [w, -h],
-    [w, h],
-    [-w, h],
-  ].map(([dx = 0, dy = 0]) => ({ x: rect.center.x + dx * cos - dy * sin, y: rect.center.y + dx * sin + dy * cos }));
-}
-
 // 透视矫正: the paper is the largest bright region; its outline, reduced to four corners, is warped to a rectangle.
 // Null when no paper-sized quadrilateral stands out (e.g. a flat scan): the photo is then read as is.
 function flattenPaper(cv: Cv, photo: Mat): Mat | null {
   const quad = paperQuad(cv, photo);
   return quad ? warp(cv, photo, quad) : null;
-}
-
-// ---- The print sheet's side (#190): the same corner search and warp, without the OCR models ----
-
-let cvOnly: Promise<Cv> | null = null;
-const printCv = (): Promise<Cv> => (cvOnly ??= loadCv());
-
-// Four corners in photo pixels (EXIF orientation applied; top-left, top-right, bottom-right, bottom-left).
-export type PaperCorners = [[number, number], [number, number], [number, number], [number, number]];
-
-// The photo's size and the paper's detected corners; null corners when no paper stands out.
-export async function paperCorners(bytes: Uint8Array): Promise<{ width: number; height: number; corners: PaperCorners | null }> {
-  const cv = await printCv();
-  const photo = await decode(cv, bytes);
-  try {
-    const quad = paperQuad(cv, photo);
-    const corners = quad ? (quad.map((p) => [Math.round(p.x), Math.round(p.y)]) as PaperCorners) : null;
-    return { width: photo.cols, height: photo.rows, corners };
-  } finally {
-    photo.delete();
-  }
-}
-
-// The paper inside `corners`, warped flat, as JPEG: what the print sheet embeds for a photo.
-export async function straightenedJpeg(bytes: Uint8Array, corners: PaperCorners): Promise<{ bytes: Uint8Array; width: number; height: number }> {
-  const cv = await printCv();
-  const photo = await decode(cv, bytes);
-  const flat = warp(
-    cv,
-    photo,
-    corners.map(([x, y]) => ({ x, y })) as [Point, Point, Point, Point],
-  );
-  try {
-    const { default: sharp } = await import('sharp');
-    const jpeg = await sharp(Buffer.from(flat.data), { raw: { width: flat.cols, height: flat.rows, channels: 3 } }).jpeg({ quality: 90 }).toBuffer();
-    return { bytes: new Uint8Array(jpeg), width: flat.cols, height: flat.rows };
-  } finally {
-    flat.delete();
-    photo.delete();
-  }
-}
-
-function paperQuad(cv: Cv, photo: Mat): [Point, Point, Point, Point] | null {
-  const gray = new cv.Mat();
-  const binary = new cv.Mat();
-  const contours = new cv.MatVector();
-  const hierarchy = new cv.Mat();
-  try {
-    cv.cvtColor(photo, gray, cv.COLOR_RGB2GRAY);
-    cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
-    cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-    const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(9, 9));
-    cv.morphologyEx(binary, binary, cv.MORPH_CLOSE, kernel);
-    kernel.delete();
-    cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-    let best: Mat | null = null;
-    let bestArea = 0;
-    for (let i = 0; i < contours.size(); i += 1) {
-      const contour = contours.get(i);
-      const area = cv.contourArea(contour);
-      if (area > bestArea) {
-        best?.delete();
-        best = contour;
-        bestArea = area;
-      } else contour.delete();
-    }
-    if (!best) return null;
-    const paper = best;
-    try {
-      if (bestArea < MIN_PAPER_SHARE * photo.rows * photo.cols) return null;
-      const approx = new cv.Mat();
-      cv.approxPolyDP(paper, approx, 0.02 * cv.arcLength(paper, true), true);
-      const quad = approx.rows === 4 && cv.isContourConvex(approx) ? pointsOf(approx) : rectCorners(cv.minAreaRect(paper));
-      approx.delete();
-      return ordered(quad);
-    } finally {
-      paper.delete();
-    }
-  } finally {
-    gray.delete();
-    binary.delete();
-    contours.delete();
-    hierarchy.delete();
-  }
 }
 
 type Box = { corners: [Point, Point, Point, Point] };

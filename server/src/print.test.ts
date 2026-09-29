@@ -4,38 +4,26 @@ import { PDFDocument } from '@cantoo/pdf-lib';
 import { GENERATED_DIR } from '@baox/fixtures';
 import { type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { fixtureCatalog } from './catalog/project-catalog';
 import { blobPath } from './data-dir';
-import { api, sample } from './test/api';
-import { createTestServer, type TestClient, type TestServer } from './test/harness';
+import { api, byFileName, sample } from './test/api';
+import { presetParser } from './test/parse-presets';
+import type { TestClient } from './test/harness';
+import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // Slice 11 (#190): 去打印 (print). One merged A4 PDF, one page per 主要报销凭证 (primary voucher), built from the
 // confirmed lines; rotate, 4-corner crop and 支付截图 (payment screenshots) are print settings only.
 
-const CATALOG = fixtureCatalog([{ number: 'P-2307', name: '华东客户交付', audited: true, forbidden: false }]);
-
-let server: TestServer;
+let server: ScenarioServer;
 let alice: TestClient;
 beforeEach(async () => {
-  server = await createTestServer({ projectCatalog: CATALOG });
+  server = await scenarioServer();
   alice = await server.signIn('alice');
-  expect((await alice.post('/api/project-book/intake', { number: 'P-2307', name: '华东客户交付' })).status).toBe(200);
 });
 afterEach(() => server.close());
 const client = api(() => alice);
 
 // Inventoried, every line on P-2307, confirmed: stage actions / choose_action.
-async function confirmed(prefixes: readonly string[]): Promise<TaskSnapshot> {
-  const { task } = await client.createTask('杭州');
-  const uploaded = await client.upload(task.taskId, prefixes.map(sample));
-  await client.accepted(await client.act(uploaded, 'start-inventory'));
-  const done = await client.withoutStayGaps(await client.settled(task.taskId, 120_000));
-  expect(done.pendingItems.filter((item) => item.status === 'open')).toEqual([]);
-  const review = await client.accepted(await client.act(done, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
-  const confirmedTask = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
-  expect(confirmedTask).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, confirmation: { status: 'confirmed' } });
-  return confirmedTask;
-}
+const atActions = async (materials: readonly string[]) => (await scenario(server, alice).at('actions', { materials })).reached;
 
 // Print actions carry no stepToken.
 function print(snapshot: TaskSnapshot, name: string, body: Record<string, unknown> = {}): Promise<Response> {
@@ -54,7 +42,7 @@ describe('generate-print-sheet', () => {
   it('one A4 page per primary voucher, in 统一业务序号 order, with the fixture print page headers', async () => {
     // Every fixture print page (fixtures/scripts/data.mjs PRINT_PAGES) except pg2: the 曹操 itinerary (m06) has no v1
     // layout, so its invoice (m05) cannot form a line on the real server. The numbers after it shift down by one.
-    const task = await confirmed(['m01', 'm02', 'm03', 'm04', 'm07', 'm08', 'm09', 'm10']);
+    const task = await atActions(['m01', 'm02', 'm03', 'm04', 'm07', 'm08', 'm09', 'm10']);
     expect(task.printSheet.status).toBe('not_generated');
 
     const generated = await client.accepted(await print(task, 'generate-print-sheet'));
@@ -107,7 +95,7 @@ describe('generate-print-sheet', () => {
   }, 240_000);
 
   it('re-hashes every original before composing: a changed blob fails the generation', async () => {
-    const task = await confirmed(['m01', 'm02']);
+    const task = await atActions(['m01', 'm02']);
     const folio = task.materials.find((material) => material.fileName === sample('m02').name);
     if (!folio) throw new Error('no folio');
     writeFileSync(blobPath(server.dataDir, folio.contentHash), 'not the folio that was uploaded');
@@ -125,7 +113,7 @@ describe('generate-print-sheet', () => {
 
 describe('the sheet follows the confirmation', () => {
   it('a confirmation invalidation marks the sheet stale; after a re-confirmation it must be generated again', async () => {
-    const task = await confirmed(['m01', 'm02']);
+    const task = await atActions(['m01', 'm02']);
     const generated = await client.accepted(await print(task, 'generate-print-sheet'));
     expect(generated.printSheet.status).toBe('generated');
 
@@ -152,7 +140,7 @@ describe('the sheet follows the confirmation', () => {
 
 describe('print settings', () => {
   it('rotate, crop and a payment screenshot re-render the sheet and leave the confirmation alone', async () => {
-    const task = await confirmed(['m01', 'm02', 'm09']);
+    const task = await atActions(['m01', 'm02', 'm09']);
     const generated = await client.accepted(await print(task, 'generate-print-sheet'));
     expect(generated.printSheet.pages.map((page) => page.header)).toEqual(['No.1 · 08-15 · 外地市内交通 · 32.00', 'No.2 · 08-09 · 住宿 · 3640.00']);
     const [taxi, hotel] = generated.printSheet.pages;
@@ -213,6 +201,35 @@ function screenshot(snapshot: TaskSnapshot, voucherMaterialId: string, file: Fil
   form.append('file', file);
   return alice.request(`/api/tasks/${snapshot.task.taskId}/payment-screenshots`, { method: 'POST', body: form });
 }
+
+// #312: the medium is what recognition sniffs from the bytes at upload, not what the name or MIME declares. A taxi
+// photo saved as `.pdf` is listed and printed as the image it is, and does not jump the PDFs-first parse order.
+describe('a material mislabelled as a PDF', () => {
+  const photoAsPdf = () => ({ ...sample('m09'), name: '出租车票.pdf', type: 'application/pdf' });
+
+  it('is listed and printed as an image', async () => {
+    const { reached: task } = await scenario(server, alice).at('actions', { materials: ['m01', 'm02', photoAsPdf()] });
+    expect(byFileName(task, '出租车票.pdf').mediaType).toBe('image');
+
+    const generated = await client.accepted(await print(task, 'generate-print-sheet'));
+    const taxi = generated.printSheet.pages.find((page) => page.header.includes('外地市内交通'));
+    // An image placement: a straightened photo with its detected paper corners, which a PDF page never has.
+    expect(taxi?.top?.corners).toBeTruthy();
+    await download(generated.printSheet.url!);
+  });
+
+  it('is parsed after the real PDFs, in upload order', async () => {
+    const presets = presetParser();
+    const order: string[] = [];
+    await server.close();
+    server = await scenarioServer({ parser: { ...presets, parse: (input) => (order.push(input.fileName), presets.parse(input)) } });
+    alice = await server.signIn('alice');
+
+    await scenario(server, alice).at('project', { materials: [photoAsPdf(), 'm07'] });
+
+    expect(order).toEqual(['铁路电子客票_0809.pdf', '出租车票.pdf']);
+  });
+});
 
 async function refused(response: Response, code: string): Promise<void> {
   expect(response.status).toBe(400);

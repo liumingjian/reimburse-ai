@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createFakeErp } from '@baox/erp-executor/testing/fake-erp';
-import { ERP_ORIGIN, fakeErpOptions } from '../erp/testing/scenario';
+import { ERP_ORIGIN, fakeErpOptions } from '@baox/erp-executor/testing/scenario';
 import { liveProjectCatalog } from './live-catalog';
 
 // The live project catalog on the fake ERP: `ExecuteBillQuery` on `BJYC_ProJect` inside the logged-in tab, read only.

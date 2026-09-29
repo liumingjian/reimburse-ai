@@ -1,0 +1,22 @@
+{
+  "about": "#208: the item name (项目名称) wraps onto a second line and reads as the whole name. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "vat_invoice/einvoice",
+  "missing": [],
+  "findings": [
+    "qr_unreadable"
+  ],
+  "facts": {
+    "invoiceNumber": "26312000000104412947",
+    "issueDate": "2026-08-19",
+    "invoiceType": "普票",
+    "buyerName": "某某科技（上海）有限公司",
+    "buyerTaxId": "91310000XXXXXXXX0A",
+    "sellerName": "某某出行科技（广州）有限公司",
+    "sellerTaxId": "91440000TTTTTTTT0G",
+    "itemName": "*交通运输服务*客运服务费（含高速费、停车费、预约调度费）",
+    "netAmount": "46.60",
+    "taxAmount": "1.40",
+    "totalAmount": "48.00"
+  }
+}

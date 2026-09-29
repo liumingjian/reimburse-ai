@@ -68,7 +68,7 @@ test('409：别处已确认整单，这边再点确认得到最新快照与提�
 
 test('409：待确认项答复凭据过期，答复没被采用，页面留在原处并提示', async ({ page }) => {
   await page.goto(open('?seed=pending', '#/task/T1/pending'));
-  await expect(page.getByText('还剩 3 个')).toBeVisible();
+  await expect(page.getByText('还剩 4 个')).toBeVisible();
   await advanceElsewhere(page, 'T1');
   const detail = page.getByLabel('待确认项详情');
   await detail.getByLabel(/^起点/).fill('静安寺');
@@ -76,7 +76,7 @@ test('409：待确认项答复凭据过期，答复没被采用，页面留在�
   await detail.getByRole('button', { name: '保存并标记已处理' }).click();
   await expect(staleNotice(page)).toBeVisible();
   await expect(page).toHaveURL(/#\/task\/T1\/pending$/);
-  await expect(page.getByText('还剩 3 个')).toBeVisible();
+  await expect(page.getByText('还剩 4 个')).toBeVisible();
   // Carbon 输入框自带空的 role="alert" 字数提示，只看有文字的。
   await expect(detail.getByRole('alert').filter({ hasText: /\S/ })).toHaveCount(0);
 });

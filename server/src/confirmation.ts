@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { DETAIL_CHANGED_NOTICE, PROJECT_CHANGED_NOTICE, REVIEW_INVALIDATED_NOTICE, type Confirmation, type Line } from '@baox/contract';
+import type { Confirmation, Line } from '@baox/contract';
 import type { PinnedProject } from './assignment';
 import { contentHash, type CompanyRules } from './rules/company-rules';
 
@@ -10,6 +10,7 @@ import { contentHash, type CompanyRules } from './rules/company-rules';
 // The digest covers everything that reaches ERP or the print sheet: the lines as listed (with project, expense item,
 // presentation values), the standing project submission and purpose, the pinned company rules and project catalog,
 // and the task's home city. #190 (print) and #191 (ERP) act on `snapshot.lines` only while the status is `confirmed`.
+// The snapshot's `confirmation` section is worded in `task-snapshot/confirmation.ts`.
 
 // What a confirmation is made over. `lines` are the lines as the snapshot lists them (after `enrichLines`).
 export type ConfirmationInput = {
@@ -51,25 +52,4 @@ export function confirmationStatus(current: ConfirmationDigest | null, latest: C
   if (!latest) return 'unconfirmed';
   if (lastReopenRevision !== null && lastReopenRevision > latest.revision) return 'invalidated';
   return current?.digest === latest.digest ? 'confirmed' : 'invalidated';
-}
-
-const cents = (amount: string) => Math.round(Number(amount) * 100);
-
-export function confirmationView(current: ConfirmationDigest | null, latest: ConfirmationFact | null, lastReopenRevision: number | null, lines: readonly Line[]): Confirmation {
-  const status = confirmationStatus(current, latest, lastReopenRevision);
-  const counted = current !== null && lines.length > 0;
-  let notice: string | null = null;
-  if (status === 'invalidated' && latest) {
-    if (!current) notice = REVIEW_INVALIDATED_NOTICE;
-    else notice = current.detail === latest.detail ? PROJECT_CHANGED_NOTICE : DETAIL_CHANGED_NOTICE;
-  }
-  return {
-    status,
-    confirmedAt: status === 'confirmed' ? (latest?.confirmedAt ?? null) : null,
-    digest: current?.digest ?? null,
-    lineCount: counted ? lines.length : 0,
-    invoiceCount: counted ? new Set(lines.map((line) => line.voucherMaterialId)).size : 0,
-    grossTotal: counted ? (lines.reduce((sum, line) => sum + cents(line.grossAmount), 0) / 100).toFixed(2) : null,
-    notice,
-  };
 }

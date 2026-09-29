@@ -11,7 +11,7 @@ import { ReadbackTable } from './ReadbackTable';
 // 对账页：写入中止后停在这里。页面只说一件事：顶部一条错误通知（写入结果不确定，副标题是中止原因）；
 // 事实（单据编号、对账中断点、处置状态、建议处置、对账结果句）放进摘要条；逐行比对照旧；
 // 唯一要做的处置放在吸底操作栏里，左边写后果（含人工核对固定句），右边放按钮。
-// 处置只渲染服务端允许的那些（reconcile.allowedActions）：原地等待有两条出路，wait = 重新对账（只读报销系统再判定一次）、
+// 处置只渲染服务端此刻接受的那些（snapshot.allowedActions 里的 reconcile、refill、hand_off）：原地等待有两条出路，wait = 重新对账（只读报销系统再判定一次）、
 // refill = 重新去报销（重开一张单据从头走一遍）；转人工 = 终止后续写入。
 // 建议的那个（reconcile.actionCode）是主按钮，后果说明也按它写：建议原地等待时通常两个按钮都在，但主张的是先去看再对账。
 // 结论和一致、不一致的行数全部来自服务端（reconcile.banner），页面不自己数行、不重试写入、不改报销系统。
@@ -28,11 +28,11 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
   const copy = PAGE_COPY.reconcile;
   const { erp, reconcile, step } = snapshot;
   const handedOff = reconcile.status === 'handed_off';
-  const canAct = step.kind === 'reconcile';
-  const allowWait = reconcile.allowedActions.includes('wait');
-  const allowHandOff = reconcile.allowedActions.includes('hand_off');
+  // 处置按钮只看服务端 taskPolicy 此刻接受的动作（snapshot.allowedActions）：对账作业在跑、已转人工时一个也没有。
+  const allowWait = snapshot.allowedActions.includes('reconcile');
+  const allowHandOff = snapshot.allowedActions.includes('hand_off');
   // 重新去报销：发票已导入、明细还没写、报销系统里还没有单据编号时服务端给出的出路。页面只照服务端说的渲染。
-  const allowRefill = reconcile.allowedActions.includes('refill');
+  const allowRefill = snapshot.allowedActions.includes('refill');
   // 建议的处置：两个按钮都在时，它是主按钮，后果说明也按它写。
   const suggestHandOff = reconcile.actionCode === 'hand_off';
   const { busy, error, run } = useAction(taskId);
@@ -146,17 +146,17 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
           actions={
             <>
               {allowWait ? (
-                <Button kind={suggestHandOff ? 'secondary' : 'primary'} size="md" renderIcon={Renew} disabled={busy || !canAct} onClick={() => void act((adapter) => adapter.reconcile(taskId, step.stepToken))}>
+                <Button kind={suggestHandOff ? 'secondary' : 'primary'} size="md" renderIcon={Renew} disabled={busy} onClick={() => void act((adapter) => adapter.reconcile(taskId, step.stepToken))}>
                   {reconcile.bucket === null ? '开始对账' : '重新对账'}
                 </Button>
               ) : null}
               {allowRefill ? (
-                <Button kind="primary" size="md" renderIcon={Renew} disabled={busy || !canAct} onClick={() => void act((adapter) => adapter.refill(taskId, step.stepToken))}>
+                <Button kind="primary" size="md" renderIcon={Renew} disabled={busy} onClick={() => void act((adapter) => adapter.refill(taskId, step.stepToken))}>
                   {REFILL_COPY.button}
                 </Button>
               ) : null}
               {allowHandOff ? (
-                <Button kind={suggestHandOff ? 'primary' : 'secondary'} size="md" disabled={busy || !canAct} onClick={() => void act((adapter) => adapter.handOff(taskId, step.stepToken))}>
+                <Button kind={suggestHandOff ? 'primary' : 'secondary'} size="md" disabled={busy} onClick={() => void act((adapter) => adapter.handOff(taskId, step.stepToken))}>
                   转人工
                 </Button>
               ) : null}

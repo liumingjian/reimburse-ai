@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { KINDS } from '../parse/kinds';
+import { KINDS } from '../kind-policy';
 import { bookFileKey, homeCityKey, legacyInvoiceKey } from './keys';
 
 // Parity with the legacy kernel's three identity derivations. Inputs and expected outputs are translated from

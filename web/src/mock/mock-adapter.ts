@@ -14,6 +14,7 @@ import {
   type TaskListOutcome,
   ABANDON_TASK_COPY,
   CREATE_TASK_ERRORS,
+  EXCLUDE_MATERIAL_ERRORS,
   CreateTaskInputSchema,
   HOME_CITY_ERRORS,
   type ActionError,
@@ -41,7 +42,7 @@ export { FAULTS, readMockOptions, type Fault, type MockOptions, type MockStorage
 
 // 浏览器内 mock 适配器：实现与 HTTP 适配器相同的接口，用内存里的快照回答一切。只经 main.tsx 的动态 import 进入 mock 构建。
 // 本文件只做组装：公共底座（快照仓库、事件总线、断连模拟）在 ./bus.ts，各业务流程在 ./flows/：
-// inventory（上传批次、材料盘点、追加材料）、pending（待确认项、整单明细确认）、project（项目归属，其后的报销信息核对与材料准备）、
+// inventory（上传批次、材料盘点、追加材料）、pending（待确认项、整单明细确认）、project（项目归属）、
 // print（打印稿、支付截图）、erp（去报销后的 ERP 填报、对账）。
 
 // 只在 mock 构建里挂到 window 上的测试钩子（e2e 用）：模拟「另一个窗口推进了任务」，而这边的事件流还没送到。
@@ -110,14 +111,19 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const inventory = createInventoryFlow(bus);
   const pending = createPendingFlow(bus);
   const project = createProjectFlow(bus);
-  // `?seed=catalog` / `?seed=preparation`：自动步骤接着走完，进入整单确认。
-  project.resumeAutoSteps(T1_ID);
-  // 作废的任务与完全重置前的任务不再出现在列表里（内核作废是状态变更，工作区保留；快照留在内存里，免得定时器扑空）。
-  const hidden = new Set<string>();
+  // 任务作废是状态变更（服务端 lifecycle voided）：快照留着，阶段变为 voided，不再接受任何动作；作废的任务不再出现在列表里。
+  // 完全重置就是把这个账号能作废的任务都作废（正在跑的那一下留在列表里，同服务端）。
+  const voidTask = (taskId: string) => {
+    const snapshot = bus.draft(taskId);
+    snapshot.stage = 'voided';
+    snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-voided` };
+    snapshot.task.updatedAt = bus.now();
+    bus.commit(snapshot);
+  };
   const listNow = (): TaskList => {
     const tasks = bus
       .all()
-      .filter((snapshot) => !hidden.has(snapshot.task.taskId) && ownedByCurrent(snapshot.task.taskId))
+      .filter((snapshot) => snapshot.stage !== 'voided' && ownedByCurrent(snapshot.task.taskId))
       .map(toListItem)
       .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
     return TaskListSchema.parse({ homeCity: homeCityDefault(), tasks });
@@ -158,17 +164,17 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     // 作废：服务端按任务列表同一个判定（只有正在跑的那一下不能作废）再核一次。
     async abandonTask(taskId) {
       if (!auth.account()) return signedOut();
-      const snapshot = bus.all().find((candidate) => candidate.task.taskId === taskId && !hidden.has(taskId) && ownedByCurrent(taskId));
+      const snapshot = bus.all().find((candidate) => candidate.task.taskId === taskId && candidate.stage !== 'voided' && ownedByCurrent(taskId));
       if (!snapshot) return listResult({ code: 'task_not_found', message: ABANDON_TASK_COPY.notFound });
       const item = toListItem(snapshot);
       if (!item.abandonable) return listResult({ code: 'not_abandonable', message: item.abandonBlockedReason ?? ABANDON_TASK_COPY.blockedReason });
-      hidden.add(taskId);
+      voidTask(taskId);
       return listResult(null);
     },
-    // 完全重置：只清空当前账号的任务、项目簿与常驻城市；账号与登录状态保留。
+    // 完全重置：只清空当前账号的任务（作废）、项目簿与常驻城市；账号与登录状态保留。
     async resetAll() {
       if (!auth.account()) return signedOut();
-      for (const snapshot of bus.all()) if (ownedByCurrent(snapshot.task.taskId)) hidden.add(snapshot.task.taskId);
+      for (const snapshot of bus.all()) if (ownedByCurrent(snapshot.task.taskId) && snapshot.stage !== 'voided' && toListItem(snapshot).abandonable) voidTask(snapshot.task.taskId);
       book.reset();
       auth.forgetCity();
       return listResult(null);
@@ -179,13 +185,14 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     deactivateProject: book.deactivateProject,
     restoreProject: book.restoreProject,
     deleteProject: book.deleteProject,
-    // 作废或重置掉的任务不再能打开（深链接也一样）：和不存在的任务同样报错。
+    // 作废的任务仍能读到快照（阶段 voided，同服务端）；别的账号的任务和不存在的任务一样报错。
     async getSnapshot(taskId) {
-      if (hidden.has(taskId) || !ownedByCurrent(taskId)) throw new Error(`任务 ${taskId} 不存在`);
+      if (!ownedByCurrent(taskId)) throw new Error(`任务 ${taskId} 不存在`);
       return bus.draft(taskId);
     },
     subscribe: (taskId, onEvent) => bus.subscribe(taskId, onEvent),
-    // 新建任务：服务端校验常驻城市，生成占位名称（`<创建日期> 新建报销`，费用期间为空），盘点结束后再按材料改名（见 flows/inventory.ts）。
+    // New task: the server checks the home city (常驻城市) and names the task with a placeholder (`<creation date> 新建报销`,
+    // no expense period yet). The name stays; the inventory only fills in the period (flows/inventory.ts).
     // 这次确认的常驻城市成为任务的城市快照，并记为这个账号的常驻城市（之后的默认值 source = remembered，刷新后仍在）。
     // 没登录时拒绝。
     async createTask(input) {
@@ -199,7 +206,6 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
       const at = bus.now();
       owners.set(taskId, account.accountId);
       auth.rememberCity(homeCity);
-      bus.autoNamed.add(taskId);
       return bus.commit(emptySnapshot({ taskId, name: `${at.slice(0, 10)} 新建报销`, period: null, homeCity, createdAt: at, updatedAt: at }, 'upload'), false);
     },
     uploadBatch: inventory.uploadBatch,
@@ -209,14 +215,15 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     confirmReview: pending.confirmReview,
     assignProjectLines: project.assignProjectLines,
     submitProjectAssignment: project.submitProjectAssignment,
-    // 排除材料按当前处境分派（见 EXCLUDE_MATERIAL_ERRORS 的三种情形）：重复发票、认不出的合并发票、材料包缺项。
+    // Excluding a material is dispatched by situation: a cross-task duplicate invoice, or an unrecognised bundled
+    // invoice (given_up). Nothing else is waiting on an exclusion (the server has no preparation problems to resolve).
     async excludeMaterial(taskId, materialId, stepToken) {
       const current = bus.draft(taskId);
       if (current.blockers.some((blocker) => blocker.materialId === materialId)) return inventory.excludeDuplicate(taskId, materialId, stepToken);
       if (current.pendingItems.some((item) => item.kind === 'given_up' && item.status === 'open' && item.materialId === materialId)) {
         return pending.excludeGivenUp(taskId, materialId, stepToken);
       }
-      return project.excludeMaterial(taskId, materialId, stepToken);
+      return bus.withStep(taskId, stepToken, () => ({ error: { code: 'not_ready', message: EXCLUDE_MATERIAL_ERRORS.notReady } }));
     },
     // 修改当前任务的常驻城市：ERP 写入开始前可改，并记为这个账号的常驻城市（mock 不重新推导类别）。
     async setTaskHomeCity(taskId, homeCity, stepToken) {

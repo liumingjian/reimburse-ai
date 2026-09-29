@@ -1,12 +1,18 @@
-// One two-invoice fill scenario shared by the protocol job tests and the kernel parity golden:
-// a rail e-ticket (net/tax known only from the ERP receipt) and a ride-hailing invoice with a structured route.
-// Amounts and numbers follow 50931a3:kernel/test/erp-draft-flow.test.mjs.
+// One two-invoice fill scenario shared by the executor's job tests, the server's orchestration tests and the kernel
+// parity golden: a rail e-ticket (net/tax known only from the ERP receipt) and a ride-hailing invoice with a
+// structured route. Amounts and numbers follow 50931a3:kernel/test/erp-draft-flow.test.mjs.
+//
+// Only the ERP side lives here. The server-side facts its judge turns into the approved preview (`judgeInputs`)
+// stay in server/src/erp/testing/judge-inputs.ts; `approvedPreview` below is what that judge approves for them, pinned
+// by server/src/erp/job.test.ts so the two cannot drift apart.
 
 import { createHash } from 'node:crypto';
-import type { FakeErpOptions, FakeInvoice } from '@baox/erp-executor/testing/fake-erp';
-import type { DraftJudgeInputs } from '../judge';
-import { previewLinesDigest } from '../preview';
-import { PROTOCOL_VERSION, type BlobSource, type FillPlan, type ReconcilePlan } from '@baox/erp-executor/protocol';
+import { readFileSync } from 'node:fs';
+import type { FakeErpOptions, FakeInvoice } from './fake-erp';
+import {
+  erpWritePreviewDigest, fieldPlanOf, PROTOCOL_VERSION,
+  type ApprovedPreview, type BlobSource, type FillPlan, type FreshGate, type PreviewLine, type ReconcilePlan,
+} from '../protocol';
 
 export const ERP_ORIGIN = 'http://erp.antute.com.cn';
 export const IDENTITY = { account: 'luo.liu', tenant: 'tenant-a' };
@@ -54,44 +60,24 @@ export const reconcilePlan = (taskId: string, overrides: Partial<ReconcilePlan> 
   protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId: `reconcile-${taskId}`, taskId, erpOrigin: ERP_ORIGIN, ...overrides,
 });
 
-/** The server-side facts the judge turns into the approved preview (kernel shapes). */
-export const judgeInputs = (taskId: string): DraftJudgeInputs => {
-  const events = [
-    { eventId: 'ev-1', voucherMaterialId: 'm-rail', kind: 'rail_eticket' },
-    { eventId: 'ev-2', voucherMaterialId: 'm-ride', kind: 'passenger_transport' },
-  ];
-  const built = {
-    versionId: 'v-1', events,
-    lineItems: [
-      { lineId: 'ev-1', eventId: 'ev-1', voucherMaterialId: 'm-rail', kind: 'rail_eticket', date: '2026-08-22', city: null,
-        route: '合肥南 → 广州南', netAmount: null, taxAmount: null, totalAmount: '703.00', category: 'long_distance',
-        invoiceType: '普通发票', invoiceTypeSource: 'fixture_mapping' },
-      { lineId: 'ev-2', eventId: 'ev-2', voucherMaterialId: 'm-ride', kind: 'passenger_transport', date: '2026-08-27', city: '广州',
-        route: '番禺广场地铁站D口 → 傍西酒堂', netAmount: '50.12', taxAmount: '1.51', totalAmount: '51.63', category: 'local_city_transport',
-        invoiceType: '普通发票', invoiceTypeSource: 'fixture_mapping' },
-    ],
-  };
-  const codes = [['39163', 'FY010003', '长途交通'], ['38480', 'FY008001', '本地市内交通']] as const;
-  const lines = built.lineItems.map((line, index) => ({
-    ...line, projectCode: codes[index]![0], projectSource: 'erp_catalog_confirmed', projectsFrom: 'project_book',
-    expenseItemCode: codes[index]![1], expenseItemName: codes[index]![2],
-  }));
-  const digest = previewLinesDigest(built);
-  return {
-    task: { taskId, currentVersionId: built.versionId, identity: IDENTITY, homeCity: '合肥' },
-    built, lines,
-    selection: {
-      versionId: built.versionId, linesDigest: digest, identity: IDENTITY, homeCity: '合肥', purpose: '客户支持',
-      projects: Object.fromEntries(lines.map((line) => [line.lineId, line.projectCode])),
-      projectSource: 'erp_catalog_confirmed', projectsFrom: 'project_book',
-    },
-    catalog: {
-      versionId: built.versionId, linesDigest: digest, identity: IDENTITY,
-      projects: Object.fromEntries(PROJECTS.map((p) => [p.code, { ...p, verdict: 'confirmed' }])),
-    },
-    expenseItems: Object.fromEntries(EXPENSE_ITEMS.map((e) => [e.code, { ...e, verdict: 'confirmed' }])),
-    invoices: INVOICES.map((invoice) => ({ materialId: invoice.materialId, identity: { key: `einvoice-20:${invoice.invoiceNumber}`, number: invoice.invoiceNumber } })),
-  };
+/**
+ * The preview the server's judge approves after this scenario's import, for `taskId`. Recorded from
+ * `createDraftJudge(judgeInputs(taskId))` without its derived field plan and digest, which are recomputed here after
+ * `editLine` has changed each line, as the server would have built them from different facts.
+ */
+export function approvedPreview(taskId: string, editLine: (line: PreviewLine) => PreviewLine = (line) => line): ApprovedPreview {
+  const recorded: ApprovedPreview = JSON.parse(readFileSync(new URL('./fixtures/approved-preview.json', import.meta.url), 'utf8'));
+  const { fieldPlan: _plan, previewDigest: _digest, ...rest } = recorded;
+  const preview: ApprovedPreview = { ...rest, taskId, lines: rest.lines.map(editLine) };
+  preview.fieldPlan = fieldPlanOf(preview);
+  preview.previewDigest = erpWritePreviewDigest(preview);
+  return preview;
+}
+
+/** The fresh gate the server sends with an approved preview: this task, this version, this identity. */
+export const freshGateOf = (preview: ApprovedPreview): FreshGate => {
+  const scope = { taskId: preview.taskId, versionId: preview.versionId, identity: preview.identity };
+  return { status: 'matched', fresh: true, ...scope, scope };
 };
 
 /** Test pace: the fake ERP answers at once, so waits only need to be long enough to fail. */

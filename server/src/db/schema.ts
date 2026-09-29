@@ -81,6 +81,9 @@ export interface BlobTable {
   sha256: string;
   size: number;
   mime: string;
+  // The medium recognition sniffed from the bytes at upload (`parse/media.ts` `mediumOf`, #312): pdf, image, ofd or
+  // unsupported. null on blobs stored before #312 and on composed print files, which are never materials.
+  medium: string | null;
   created_at: string;
 }
 

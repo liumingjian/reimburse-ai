@@ -108,7 +108,7 @@ test('材料盘点与上传材料的下一步在吸底栏里，页头没有操�
   await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toBeVisible();
   await expect(pageHead(page).getByRole('link')).toHaveCount(0);
   await expect(pageHead(page).getByRole('button')).toHaveCount(0);
-  await expect(page.getByRole('region', { name: '下一步' }).getByRole('link', { name: '处理 3 个待确认项' })).toBeVisible();
+  await expect(page.getByRole('region', { name: '下一步' }).getByRole('link', { name: '处理 4 个待确认项' })).toBeVisible();
 
   // The upload page's next step needs at least one upload batch: a brand-new task shows only the drop zone
   // (see upload.spec.ts), so this uses the inventory seed, whose T1 already has batch #1.
@@ -149,7 +149,7 @@ test('步骤页最多一个主按钮', async ({ page }) => {
   for (const [query, hash, expected] of [
     ['?seed=upload', '#/task/T1/upload', []],
     ['?seed=inventory', '#/task/T1/upload', ['开始材料盘点']],
-    ['?seed=inventory', '#/task/T1/inventory', ['处理 3 个待确认项']],
+    ['?seed=inventory', '#/task/T1/inventory', ['处理 4 个待确认项']],
     ['?seed=project', '#/task/T1/project', []],
     ['?seed=review', '#/task/T1/review', null],
   ] as const) {

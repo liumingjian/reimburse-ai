@@ -19,7 +19,7 @@ async function jump(page: Page, hash: string) {
   }, hash);
 }
 
-test('确认：?seed=review 是 No. 加内核 13 列，按费用分类排序；整页没有「参考材料」，文件名只在材料包清单一节；点「确认」后才出现并列的去打印与去报销', async ({ page }, testInfo) => {
+test('确认：?seed=review 是 No. 加内核 13 列，按费用分类排序；整页没有「参考材料」与文件名；点「确认」后才出现并列的去打印与去报销', async ({ page }, testInfo) => {
   await page.goto(open('?seed=review', '#/task/T1/review'));
   await expect(page.getByRole('heading', { name: '整单明细确认' })).toBeVisible();
   await expect(table(page).locator('thead th')).toHaveText(['No.', '发票', '项目号', '起始日期', '结束日期', '住宿地/城市', '出发点', '目的地', '费用分类', '费用项目', '发票类型', '费用金额', '税额', '总额']);
@@ -43,15 +43,11 @@ test('确认：?seed=review 是 No. 加内核 13 列，按费用分类排序；�
   // 13 列表格里没有文件名、参考材料文字与合计行。
   const text = await table(page).innerText();
   expect(text).not.toMatch(/\.pdf|\.jpg|\.png|参考材料|合计 ·/);
-  // 整页（主区）没有「参考材料」；文件名只在「材料包」一节（#114 的材料包文件清单），别的区域一个都没有。
+  // 整页（主区）没有「参考材料」，也没有文件名：服务端不给材料包文件清单，确认页就没有「材料包」一节。
   const main = page.locator('main');
   expect(await main.innerText()).not.toContain('参考材料');
-  // 材料包清单默认收起，点开再核对。
-  await page.getByRole('region', { name: '材料包' }).getByText('材料包 13 份文件').click();
-  const packageText = await page.getByRole('region', { name: '材料包' }).innerText();
-  expect((await main.innerText()).replace(packageText, '')).not.toMatch(/\.pdf|\.jpg|\.png/);
-  await expect(page.getByTestId('package-files')).toHaveText('核对材料已生成，共 13 份文件。');
-  await expect(page.getByRole('list', { name: '材料包文件' }).getByRole('listitem')).toHaveCount(13);
+  await expect(page.getByRole('region', { name: '材料包' })).toHaveCount(0);
+  expect(await main.innerText()).not.toMatch(/\.pdf|\.jpg|\.png/);
   await expect(page.getByTestId('review-purpose')).toContainText('上海产品评审出差');
   // 支付截图入口在打印稿页，不在确认页。
   await expect(page.getByRole('button', { name: /补充支付截图/ })).toHaveCount(0);
@@ -103,15 +99,13 @@ test('吸底栏与首屏：主按钮是「确认整单明细」、往回走的�
   await page.screenshot({ path: testInfo.outputPath('review-1440-after-confirm.png') });
 });
 
-test('版式：No. 固定在左、总额固定在右，中间横向滚动；同分类重复值变淡但仍在；操作栏吸底；材料包默认收起', async ({ page }) => {
+test('版式：No. 固定在左、总额固定在右，中间横向滚动；同分类重复值变淡但仍在；操作栏吸底；没有材料包一节', async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 700 });
   await page.goto(open('?seed=review', '#/task/T1/review'));
   await expect(page.getByRole('heading', { name: '整单明细确认' })).toBeVisible();
 
-  const packages = page.getByRole('region', { name: '材料包' });
-  await expect(packages.getByRole('list', { name: '材料包文件' })).toBeHidden();
-  await packages.getByText('材料包 13 份文件').click();
-  await expect(packages.getByRole('list', { name: '材料包文件' }).getByRole('listitem')).toHaveCount(13);
+  // The server lists no package files, so there is no collapsed package section to open.
+  await expect(page.getByRole('region', { name: '材料包' })).toHaveCount(0);
 
   // 吸底操作栏：页面比视口高时贴在视口底边。
   const bar = page.getByRole('region', { name: '整单确认' });

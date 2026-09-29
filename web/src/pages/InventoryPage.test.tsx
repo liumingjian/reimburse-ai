@@ -1,12 +1,12 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { App } from '../App';
-import { BLOCKER_TABLE_COLUMNS, type TaskStage } from '@baox/contract';
+import { BLOCKER_TABLE_COLUMNS } from '@baox/contract';
 import { t1Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
-import type { Fault, MockOptions } from '../mock/options';
+import type { Fault, MockOptions, SeedStage } from '../mock/options';
 
-function renderAt(hash: string, seed: TaskStage | null, fault: Fault | null = null, extra: Partial<MockOptions> = {}) {
+function renderAt(hash: string, seed: SeedStage | null, fault: Fault | null = null, extra: Partial<MockOptions> = {}) {
   window.location.hash = hash;
   // 60ms per phase: long enough to see the progress state, short enough not to slow the suite.
   const adapter = createMockAdapter({ ...extra, seed, fault, inventoryPhaseMs: 60 });
@@ -47,7 +47,7 @@ describe('材料盘点', () => {
     expect(await screen.findByRole('heading', { name: '材料盘点' })).toBeTruthy();
     // The next step sits in the sticky action bar; the page header carries no action (#141).
     const next = screen.getByRole('region', { name: '下一步' });
-    expect(within(next).getByRole('link', { name: '处理 3 个待确认项' }).getAttribute('href')).toBe('#/task/T1/pending');
+    expect(within(next).getByRole('link', { name: '处理 4 个待确认项' }).getAttribute('href')).toBe('#/task/T1/pending');
     // Summary bar under the title (same as whole-claim review); values match the server summary in the mock snapshot.
     const served = t1Snapshot('inventory').inventory;
     const counts = served.summary!;
@@ -60,7 +60,7 @@ describe('材料盘点', () => {
       盘点版本: served.versionId,
       盘点时间: '2026-09-11 14:20',
     });
-    expect(summaryFields()).toMatchObject({ 材料: '11 份', 通过: '8 份', 需处理: '3 份', 盘点版本: 'v1' });
+    expect(summaryFields()).toMatchObject({ 材料: '11 份', 通过: '7 份', 需处理: '4 份', 盘点版本: 'v1' });
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     expect(screen.queryByText(/份需要你处理/)).toBeNull();
     // Only exceptions are marked: passed materials carry no 通过 tag.
@@ -112,8 +112,10 @@ describe('材料盘点', () => {
     expect(within(materials).getByText('主要报销凭证')).toBeTruthy();
     expect(within(materials).getByText('参考材料')).toBeTruthy();
 
-    // A single-event group does not list its own event line.
-    fireEvent.click(screen.getByRole('button', { name: '费用事件 No.9' }));
+    // A single-event group does not list its own event line. The hotel invoice still waits for its 支付截图
+    // (the 住宿 trio item), so its group opens by default.
+    expect(screen.getByRole('button', { name: '费用事件 No.9' }).getAttribute('aria-expanded')).toBe('true');
+    expect(cellsOf('费用事件 No.9')[5]).toBe('待确认');
     const hotel = screen.getByRole('row', { name: '费用事件 No.9' });
     expect(within(hotel).queryByRole('list')).toBeNull();
     expect(within(hotel).getByText('住宿发票 3640.00 = 结账单消费合计 3640.00；13 天 = 08-09 入住至 08-22 离店')).toBeTruthy();
@@ -158,7 +160,7 @@ describe('材料盘点', () => {
 
   test('材料行四列、状态列只放标签；每个「待确认」标签都带警示图标；页头与摘要条不拼中点串', async () => {
     renderAt('#/task/T1/inventory', 'inventory', 'unsupported-material');
-    await screen.findByRole('link', { name: '处理 4 个待确认项' });
+    await screen.findByRole('link', { name: '处理 5 个待确认项' });
     fireEvent.click(screen.getByRole('button', { name: '全部展开' }));
 
     const materialRows = screen
@@ -192,21 +194,22 @@ describe('材料盘点', () => {
     expect(await screen.findByRole('heading', { name: '材料盘点' })).toBeTruthy();
     expect(screen.getByLabelText('盘点进度')).toBeTruthy();
     expect(screen.getByRole('status').textContent).toMatch(/^正在盘点：/);
-    expect(screen.getByText('核对材料内容哈希')).toBeTruthy();
-    expect(screen.getByText('划分费用事件与待确认项')).toBeTruthy();
+    // The server's phases: the PDFs, then the photos (the batch has two).
+    expect(screen.getByText('读取 PDF 文本层与二维码')).toBeTruthy();
+    expect(screen.getByText('读取照片票面')).toBeTruthy();
 
-    expect(await screen.findByRole('link', { name: '处理 3 个待确认项' })).toBeTruthy();
+    expect(await screen.findByRole('link', { name: '处理 4 个待确认项' })).toBeTruthy();
     expect(screen.queryByLabelText('盘点进度')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '费用事件 No.1-3' }));
     expect(screen.getByText('打车发票与行程单配对：26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeTruthy();
     // The step bar shows the pending item count.
-    expect(within(screen.getByRole('list', { name: '流程阶段' })).getByText('3 项待处理')).toBeTruthy();
+    expect(within(screen.getByRole('list', { name: '流程阶段' })).getByText('4 项待处理')).toBeTruthy();
   });
 
-  test('?fault=unsupported-material：曹操行程单成为不支持的版式，待确认项变成 4 个', async () => {
+  test('?fault=unsupported-material：曹操行程单成为不支持的版式，待确认项变成 5 个', async () => {
     renderAt('#/task/T1/inventory', 'inventory', 'unsupported-material');
-    expect(await screen.findByRole('link', { name: '处理 4 个待确认项' })).toBeTruthy();
-    expect(summaryFields()).toMatchObject({ 材料: '11 份', 需处理: '4 份' });
+    expect(await screen.findByRole('link', { name: '处理 5 个待确认项' })).toBeTruthy();
+    expect(summaryFields()).toMatchObject({ 材料: '11 份', 需处理: '5 份' });
     const rest = screen.getByLabelText('未归入费用事件');
     expect(within(rest).getByText('曹操出行_行程单.pdf')).toBeTruthy();
     expect(within(rest).getAllByText('未识别版式')).toHaveLength(2);

@@ -1,21 +1,22 @@
-import { ProjectBookResultSchema, ProjectBookSchema, type PublicProjectConversionInput, type TaskSnapshot } from '@baox/contract';
+import { ProjectBookSchema, type PublicProjectConversionInput } from '@baox/contract';
 import { sql } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { databasePath } from './data-dir';
-import { api, sample } from './test/api';
-import { createTestServer, tempDataDir, testClient, type TestClient, type TestServer } from './test/harness';
+import { createTestServer, tempDataDir, testClient, type TestClient } from './test/harness';
+import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
+import { bookChange, INVENTORIED } from './test/project-book';
 
 // Conversion stays at the authenticated HTTP seam: private books are only observed through their owners' public
 // results, while the administrator receives no account or task details from a collision prompt.
 
-let server: TestServer;
+let server: ScenarioServer;
 let admin: TestClient;
 let bob: TestClient;
 let alice: TestClient;
 let carol: TestClient;
 
 beforeEach(async () => {
-  server = await createTestServer();
+  server = await scenarioServer();
   admin = await server.signIn('admin');
   bob = await server.signIn('bob');
   alice = await server.signIn('alice');
@@ -23,11 +24,7 @@ beforeEach(async () => {
 });
 afterEach(() => server.close());
 
-async function change(client: TestClient, path: string, body: unknown) {
-  const response = await client.post(path, body);
-  expect(response.status).toBe(200);
-  return ProjectBookResultSchema.parse(await response.json());
-}
+const change = bookChange;
 
 const intake = (client: TestClient, scope: 'personal' | 'public', input: { number: string; name: string }) =>
   change(client, scope === 'personal' ? '/api/project-book/intake' : '/api/public-project-book/intake', input);
@@ -37,30 +34,23 @@ const edit = (client: TestClient, scope: 'personal' | 'public', input: { origina
 
 const confirm = (client: TestClient, input: PublicProjectConversionInput) => change(client, '/api/public-project-book/convert', input);
 
-async function inventoried(client: TestClient, materialIds: readonly string[] = ['m01', 'm07']): Promise<{ api: ReturnType<typeof api>; snapshot: TaskSnapshot }> {
-  const clientApi = api(() => client);
-  const { task } = await clientApi.createTask('杭州');
-  const uploaded = await clientApi.upload(task.taskId, materialIds.map((materialId) => sample(materialId)));
-  await clientApi.accepted(await clientApi.act(uploaded, 'start-inventory'));
-  return { api: clientApi, snapshot: await clientApi.withoutStayGaps(await clientApi.settled(task.taskId)) };
-}
+// A task inventoried up to project assignment, with the owner's project book as the test entered it.
+const atProject = (client: TestClient, materials: readonly string[] = INVENTORIED.materials) => scenario(server, client).at('project', { ...INVENTORIED, materials });
 
 describe('public project conversion', () => {
   it('prompts without writes, then atomically converts active and inactive personal entries while refreshing drafts and preserving submitted pins', async () => {
     for (const client of [bob, alice, carol]) await intake(client, 'personal', { number: 'CONVERT-1', name: `${client.account.username} 的个人项目` });
     await change(carol, '/api/project-book/deactivate', { number: 'CONVERT-1' });
 
-    const bobTask = await inventoried(bob);
-    const bobProjects = Object.fromEntries(bobTask.snapshot.lines.map((line) => [line.lineId, 'CONVERT-1']));
-    const submitted = await bobTask.api.accepted(await bobTask.api.act(bobTask.snapshot, 'submit-project-assignment', { purpose: '杭州出差', projects: bobProjects }));
+    const bobTask = await atProject(bob);
+    const bobProjects = Object.fromEntries(bobTask.reached.lines.map((line) => [line.lineId, 'CONVERT-1']));
+    const submitted = await bobTask.accept('submit-project-assignment', { purpose: '杭州出差', projects: bobProjects });
     expect(submitted.projectAssignment.assignments.every((assignment) => assignment.projectSource === 'personal' && assignment.projectName === 'bob 的个人项目')).toBe(true);
 
-    const aliceTask = await inventoried(alice, ['m03', 'm04']);
-    const firstLine = aliceTask.snapshot.lines[0];
+    const aliceTask = await atProject(alice, ['m03', 'm04']);
+    const firstLine = aliceTask.reached.lines[0];
     if (!firstLine) throw new Error('expected an inventoried line');
-    const drafted = await aliceTask.api.accepted(
-      await aliceTask.api.act(aliceTask.snapshot, 'assign-project-lines', { lineIds: [firstLine.lineId], projectNumber: 'CONVERT-1', onlyUnassigned: false }),
-    );
+    const drafted = await aliceTask.accept('assign-project-lines', { lineIds: [firstLine.lineId], projectNumber: 'CONVERT-1', onlyUnassigned: false });
     expect(drafted.projectAssignment.working).toEqual([expect.objectContaining({ lineId: firstLine.lineId, projectNumber: 'CONVERT-1', projectSource: 'personal' })]);
 
     const prompted = await intake(admin, 'public', { number: 'CONVERT-1', name: '全员共享项目' });
@@ -78,16 +68,17 @@ describe('public project conversion', () => {
     for (const client of [bob, alice, carol]) {
       expect(ProjectBookSchema.parse(await (await client.request('/api/project-book')).json()).projects).toEqual([]);
     }
+    // The per-owner conversion facts are not exposed: every personal book is empty either way, carol's inactive one too.
     const convertedOwners = await server.db.selectFrom('project_book_event').select('owner_account_id').where('maintenance_action', '=', 'converted').where('number', '=', 'CONVERT-1').execute();
     expect(new Set(convertedOwners.map(({ owner_account_id }) => owner_account_id))).toEqual(new Set([alice.account.accountId, bob.account.accountId, carol.account.accountId]));
 
-    const afterSubmitted = await bobTask.api.current(bobTask.snapshot.task.taskId);
+    const afterSubmitted = await bobTask.snapshot();
     expect(afterSubmitted.projectAssignment.projects).toEqual([{ number: 'CONVERT-1', name: '全员共享项目', source: 'public' }]);
     expect(afterSubmitted.projectAssignment.assignments).toEqual(
       submitted.projectAssignment.assignments.map((assignment) => expect.objectContaining({ ...assignment, projectSource: 'personal', projectName: 'bob 的个人项目' })),
     );
 
-    const afterDraft = await aliceTask.api.current(aliceTask.snapshot.task.taskId);
+    const afterDraft = await aliceTask.snapshot();
     expect(afterDraft.projectAssignment.projects).toEqual([{ number: 'CONVERT-1', name: '全员共享项目', source: 'public' }]);
     expect(afterDraft.projectAssignment.working).toEqual([]);
     expect(afterDraft.projectAssignment.reselect).toEqual([

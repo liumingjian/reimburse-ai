@@ -1,7 +1,9 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, relative, sep } from 'node:path';
 import type { ParseOutcome } from '../parse/dispatch';
+import { factsOf, type Facts } from '../parse/facts';
 import type { ParseInput } from '../parse/material';
+import { storedMime } from '../upload-rules';
 
 // Slice 16 (#196): parser quality gates on the private sample corpus, which lives only on the maintainer's mac
 // (`BAOX_PRIVATE_CORPUS`). Replaces #14's model-quality metrics for the rule parsers (ADR-0017).
@@ -61,12 +63,12 @@ type Tally = { hit: number; total: number };
 type Group = { files: number; recognised: number; declared: number; otherLayout: number; unrecognised: number; ambiguous: number; failed: number; fields: Map<string, Tally> };
 const emptyGroup = (): Group => ({ files: 0, recognised: 0, declared: 0, otherLayout: 0, unrecognised: 0, ambiguous: 0, failed: 0, fields: new Map() });
 
-// A field is right when the layout produced it (directly or by a derivation) and every such candidate equals the
-// expected value: a conflicting second candidate is not a correct read.
-function fieldRight(outcome: Extract<ParseOutcome, { outcome: 'recognised' }>, key: string, expected: string): boolean {
-  const primary = `rule:${outcome.kind}/${outcome.layout}`;
-  const mine = outcome.candidates.filter((c) => c.key === key && (c.source === primary || c.source.startsWith(`${primary}.`)));
-  return mine.length > 0 && mine.every((c) => c.value === expected);
+// A field is right when the layout itself read it (`factsOf` origin `face` or `derived`), the value equals the expected
+// one, and the layout does not also read it another way: a conflicting read is not a correct read. A value only a
+// second source (the e-invoice QR code) supplied does not count: the inventory view shows it, but the gate measures the
+// layout's rules, and a face rule that stopped reading a field the QR carries would otherwise still pass.
+function fieldRight(facts: Facts, key: string, expected: string): boolean {
+  return facts.values[key] === expected && (facts.origins[key] === 'face' || facts.origins[key] === 'derived') && !facts.conflicts.includes(key);
 }
 
 async function evaluate(root: string, parse: CorpusParser, required: Readonly<Record<string, readonly string[]>>) {
@@ -85,8 +87,10 @@ async function evaluate(root: string, parse: CorpusParser, required: Readonly<Re
     const group = groups.get(id) ?? emptyGroup();
     groups.set(id, group);
     group.files += 1;
-    // The file name goes to the parser (some layouts may look at it) but never into the report.
-    const outcome = await parse({ materialId: 'private', fileName: parts[parts.length - 1] ?? '', mediaType: medium, bytes: new Uint8Array(readFileSync(path)) });
+    // The file name goes to the parser (some layouts may look at it) but never into the report. The MIME is the one an
+    // upload stores; recognition sniffs the medium from the bytes either way.
+    const fileName = parts[parts.length - 1] ?? '';
+    const outcome = await parse({ materialId: 'private', fileName, mime: storedMime(fileName, ''), bytes: new Uint8Array(readFileSync(path)) });
     if (outcome.outcome === 'recognised') {
       if (`${outcome.kind}/${outcome.layout}` !== layoutId) {
         group.otherLayout += 1;
@@ -103,11 +107,12 @@ async function evaluate(root: string, parse: CorpusParser, required: Readonly<Re
         continue;
       }
       if ((required[layoutId] ?? []).every((key) => (expected[key] ?? '') !== '')) group.declared += 1;
+      const facts = factsOf(outcome);
       for (const [key, value] of Object.entries(expected)) {
         const tally = group.fields.get(key) ?? { hit: 0, total: 0 };
         group.fields.set(key, tally);
         tally.total += 1;
-        if (fieldRight(outcome, key, String(value))) tally.hit += 1;
+        if (fieldRight(facts, key, String(value))) tally.hit += 1;
       }
     } else if (outcome.outcome === 'unrecognised') {
       if (layoutId === 'unrecognised') group.recognised += 1;
@@ -116,6 +121,12 @@ async function evaluate(root: string, parse: CorpusParser, required: Readonly<Re
     else group.failed += 1;
   }
   return { groups, ignored, unreadableExpectations };
+}
+
+// The real recognition over the production readers, loaded only when the gate actually runs against a corpus.
+async function productionParser(): Promise<CorpusParser> {
+  const [{ parseMaterial }, { productionReaders }] = await Promise.all([import('../parse/material'), import('../parse/readers-production')]);
+  return (input) => parseMaterial(input, productionReaders);
 }
 
 const pct = (share: number) => `${(share * 100).toFixed(1)}%`;
@@ -132,7 +143,7 @@ export async function runPrivateGate(root: string | undefined, options: GateOpti
     out('test:private: BAOX_PRIVATE_CORPUS is not a directory.');
     return 1;
   }
-  const parse = options.parse ?? (await import('../parse/material')).parseMaterial;
+  const parse = options.parse ?? (await productionParser());
   const required = options.required ?? REQUIRED_EXPECTATIONS;
   const { groups, ignored, unreadableExpectations } = await evaluate(root, parse, required);
 

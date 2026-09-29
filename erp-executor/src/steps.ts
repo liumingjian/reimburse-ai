@@ -365,6 +365,32 @@ export async function uploadInvoices(page: WritePage, paths: string[], { timeout
   if (!Array.isArray(paths) || paths.length === 0) throw new ExecutorError('INVOICE_FILES_REQUIRED', '没有可上传的主要发票文件');
   const pace = paceOf(page);
   const groups = invoiceUploadGroups(paths);
+  const assistant = await openUploadView(page, { timeoutMs });
+  for (const files of groups) {
+    const before = (await uploadState(assistant)).total;
+    await put(assistant, files);
+    // Recognition of this batch is this count rising by the size of the batch. A batch that recognises fewer rows
+    // than it was given is not stopped here — the identity-keyed count in `selectRecognisedInvoices` is the real
+    // gate, and it can say which invoices are missing, where a count can only say how many.
+    const state = await waitFor(() => uploadState(assistant), (value) => value.total >= before + files.length && !value.processing, cap(page, 90_000), pace.pollMs);
+    if (state.total <= before) throw new ExecutorError('INVOICE_SELECTION_EMPTY', '发票助手没有返回可勾选的识别结果');
+    if ((await readPane(assistant)).rows.some((row) => row.checked)) {
+      throw new ExecutorError('INVOICE_SELECTION_PRESELECTED', '发票助手返回了预先勾选的识别结果，拒绝继续导入');
+    }
+  }
+  // One file is one invoice is one 收票行 all through this repo (`job.ts` posts receiptRowCount = plan.invoices.length
+  // as the import postcondition), so the number of staged paths is how many rows must end up ticked.
+  const selection = await selectRecognisedInvoices(page, assistant, paths.length);
+  return { ok: true, selectedRows: selection.selected, panes: selection.panes };
+}
+
+/**
+ * From the assistant's entry menu to its empty upload view (电脑端选取), with no row left over from an earlier run.
+ * Returns the assistant's session. Uploads nothing; `uploadInvoices` goes on from here, and the `invoice-assistant`
+ * recording (recording/flows.ts) stops here.
+ */
+export async function openUploadView(page: WritePage, { timeoutMs = 210_000 }: { timeoutMs?: number } = {}): Promise<CdpSession> {
+  const pace = paceOf(page);
   const assistant = await assistantSession(page, Math.min(timeoutMs, 45_000));
   // The entry menu must be more than painted before it is clicked. 电脑端选取 is a plain `<a href>`, so a click that
   // lands before the assistant's own router has taken it over performs a full page load of /fpzs/kdInvoices — and
@@ -392,22 +418,7 @@ export async function uploadInvoices(page: WritePage, paths: string[], { timeout
   if ((await uploadState(assistant)).total > 0) {
     throw new ExecutorError('INVOICE_ASSISTANT_NOT_EMPTY', '发票助手中已有未归属的发票行，拒绝把它们混入当前任务');
   }
-  for (const files of groups) {
-    const before = (await uploadState(assistant)).total;
-    await put(assistant, files);
-    // Recognition of this batch is this count rising by the size of the batch. A batch that recognises fewer rows
-    // than it was given is not stopped here — the identity-keyed count in `selectRecognisedInvoices` is the real
-    // gate, and it can say which invoices are missing, where a count can only say how many.
-    const state = await waitFor(() => uploadState(assistant), (value) => value.total >= before + files.length && !value.processing, cap(page, 90_000), pace.pollMs);
-    if (state.total <= before) throw new ExecutorError('INVOICE_SELECTION_EMPTY', '发票助手没有返回可勾选的识别结果');
-    if ((await readPane(assistant)).rows.some((row) => row.checked)) {
-      throw new ExecutorError('INVOICE_SELECTION_PRESELECTED', '发票助手返回了预先勾选的识别结果，拒绝继续导入');
-    }
-  }
-  // One file is one invoice is one 收票行 all through this repo (`job.ts` posts receiptRowCount = plan.invoices.length
-  // as the import postcondition), so the number of staged paths is how many rows must end up ticked.
-  const selection = await selectRecognisedInvoices(page, assistant, paths.length);
-  return { ok: true, selectedRows: selection.selected, panes: selection.panes };
+  return assistant;
 }
 
 /**

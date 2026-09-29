@@ -11,6 +11,7 @@ import {
   type LocalBootstrapArtifact,
 } from './bootstrap.js';
 import type { DoctorReport, GateStatus, HostResult, HostStatus, HostTransport } from './host.js';
+import { phaseTimingLines, type PhaseTiming } from './phase-timings.js';
 import { redact, redactValue } from './redact.js';
 import type { SourcePlan, SourceRepository } from './source.js';
 import { SourceSelectionError } from './source.js';
@@ -139,7 +140,7 @@ async function prepare(args: readonly string[], dependencies: OperatorDependenci
     io,
     json,
     { command: 'prepare', source: source.plan, artifactOrigin, candidate: result, profile: publicProfile(), maintenanceGate: gate },
-    [...planLines(source.plan), ...prepareLines(result, artifactOrigin)],
+    [...planLines(source.plan), ...prepareLines(result, artifactOrigin), ...phaseTimingLines(deployPhaseTimings(result))],
   );
   return success ? 0 : 1;
 }
@@ -224,6 +225,7 @@ async function deployPreparedCandidate(args: readonly string[], dependencies: Op
   }
   if (inspection && isCutoverReconciliationJournal(inspection, selectedCandidateId)) {
     const result = await dependencies.cutover.cutover({ candidateId: selectedCandidateId, ...(options.retention === undefined ? {} : { retention: options.retention }) });
+    const phaseTimings = deployPhaseTimings(undefined, result);
     emit(
       io,
       json,
@@ -234,8 +236,9 @@ async function deployPreparedCandidate(args: readonly string[], dependencies: Op
         reconciliation: true,
         profile: publicProfile(),
         cutover: result,
+        phaseTimings,
       },
-      [...(source ? planLines(source.plan) : []), ...cutoverLines(result)],
+      [...(source ? planLines(source.plan) : []), ...cutoverLines(result), ...phaseTimingLines(phaseTimings)],
     );
     return result.state === 'verified' ? 0 : 1;
   }
@@ -288,6 +291,7 @@ async function deployPreparedCandidate(args: readonly string[], dependencies: Op
   }
 
   const result = await dependencies.cutover.cutover({ candidateId: selectedCandidateId, ...(options.retention === undefined ? {} : { retention: options.retention }) });
+  const phaseTimings = deployPhaseTimings(preparation, result);
   emit(
     io,
     json,
@@ -299,8 +303,13 @@ async function deployPreparedCandidate(args: readonly string[], dependencies: Op
       runtime: report,
       maintenanceGate: gate,
       cutover: result,
+      phaseTimings,
     },
-    [...(source ? [...planLines(source.plan), ...prepareLines(preparation as CandidatePreparation, 'direct')] : []), ...cutoverLines(result)],
+    [
+      ...(source ? [...planLines(source.plan), ...prepareLines(preparation as CandidatePreparation, 'direct')] : []),
+      ...cutoverLines(result),
+      ...phaseTimingLines(phaseTimings),
+    ],
   );
   return result.state === 'verified' ? 0 : 1;
 }
@@ -596,6 +605,15 @@ function doctorLines(host: HostStatus, report: DoctorReport, gate: GateStatus, h
     ...report.issues.map((issue) => issue.message),
     healthy ? '诊断通过。' : gateAllowsRoutineDeployment(gate) ? '诊断未通过。' : gateRefusal(gate),
   ];
+}
+
+/**
+ * A verified cutover's journal already carries the candidate's build phases, so
+ * it is the whole deploy; otherwise the candidate's own phases are all there is.
+ */
+function deployPhaseTimings(preparation?: CandidatePreparation, cutover?: CutoverResult): PhaseTiming[] {
+  if (cutover?.state === 'verified' && cutover.phaseTimings) return cutover.phaseTimings;
+  return preparation?.state === 'prepared' ? preparation.phaseTimings ?? [] : [];
 }
 
 function prepareLines(result: CandidatePreparation, artifactOrigin: CandidateArtifactOrigin): string[] {

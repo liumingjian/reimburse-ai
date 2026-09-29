@@ -41,9 +41,9 @@ test('全流程：从登录一路走到完成，上传 sample-materials 的 11 �
   await expect(page.getByRole('heading', { name: /^上传批次 #1$/ })).toHaveText('上传批次 #1');
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/inventory$/);
-  await expect(page.getByRole('link', { name: '处理 3 个待确认项' })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText('2026-08 上海出差', { exact: true }).first()).toBeVisible();
-  await page.getByRole('link', { name: '处理 3 个待确认项' }).click();
+  await expect(page.getByRole('link', { name: '处理 4 个待确认项' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/^\d{4}-\d{2}-\d{2} 新建报销$/).first()).toBeVisible();
+  await page.getByRole('link', { name: '处理 4 个待确认项' }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/pending$/);
 
   // 4. 待确认项。
@@ -57,6 +57,7 @@ test('全流程：从登录一路走到完成，上传 sample-materials 的 11 �
   await detail.getByLabel('终点 *').fill('虹桥枢纽');
   await detail.getByRole('button', { name: '保存并标记已处理' }).click();
   await detail.getByRole('button', { name: '排除此材料' }).click();
+  await detail.getByRole('button', { name: '确认没有支付截图' }).click();
   await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
 
   // 5. 项目归属（项目簿用夹具默认值）与报销事由。
@@ -68,11 +69,11 @@ test('全流程：从登录一路走到完成，上传 sample-materials 的 11 �
   await expect(page.getByTestId('assign-summary')).toHaveText('已归属9 / 9 条整单合计3972.59 元');
   await page.getByRole('button', { name: '确认项目归属' }).click();
 
-  // 6. 报销信息核对、材料准备自动完成后，唯一一次整单确认。
+  // 6. 唯一一次整单确认，提交项目归属后直接进入（报销信息在去报销的作业里核对；没有材料包文件清单）。
   await expect(page).toHaveURL(/#\/task\/T4\/review$/);
   const confirm = page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认整单明细', exact: true });
   await expect(confirm).toBeEnabled({ timeout: 15_000 });
-  await expect(page.getByTestId('package-files')).toHaveText('核对材料已生成，共 13 份文件。');
+  await expect(page.getByTestId('package-files')).toHaveCount(0);
   await expect(page.getByRole('table', { name: '整单明细' }).locator('tbody tr')).toHaveCount(9);
   await confirm.click();
 
@@ -94,6 +95,6 @@ test('全流程：从登录一路走到完成，上传 sample-materials 的 11 �
   await expect(page.getByTestId('handover-completed')).toHaveText(HANDOVER_COMPLETED_NOTICE);
   await page.screenshot({ path: testInfo.outputPath('journey-done.png'), fullPage: true });
   await jump(page, '#/tasks');
-  const row = page.getByRole('row').filter({ has: page.getByRole('cell', { name: '2026-08 上海出差', exact: true }) });
+  const row = page.getByRole('row').filter({ has: page.getByRole('cell', { name: /^\d{4}-\d{2}-\d{2} 新建报销$/ }) });
   await expect(row.getByText('10/10 单据交接')).toBeVisible();
 });

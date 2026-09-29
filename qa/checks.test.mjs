@@ -100,10 +100,10 @@ test('catalogRefusal only speaks for a mismatch', () => {
 });
 
 test('the idle mapping this rests on is still in the server', async () => {
-  const fillState = await read('server/src/erp/fill-state.ts');
+  const erpView = await read('server/src/task-snapshot/erp.ts');
   // `catalog_mismatch` falls through to the `idle` view on purpose; if that ever changes, the erp-off
   // area is reading the wrong section and this test should be the first to say so.
-  assert.match(fillState, /catalog mismatch \(its problems are in the catalog section\)/);
+  assert.match(erpView, /catalog mismatch \(its problems are in the catalog section\)/);
 });
 
 // --- F3: the rotate check must outlast a real re-render ---------------------------------------------
@@ -249,12 +249,12 @@ test('the budget clears the measured 141s write with room to spare', async () =>
   assert.doesNotMatch(run, /area\(page, 'erp-off'/);
 });
 
-test('fill-state still reports a clean abort as idle, which is why the above matters', async () => {
-  const fillState = await read('server/src/erp/fill-state.ts');
-  // `case 'handed_over':` appears in an earlier switch too, so anchor on the aborted case and read forward.
-  const from = fillState.indexOf("case 'aborted':");
-  assert.ok(from > 0, 'fill-state no longer has an aborted phase');
-  const aborted = fillState.slice(from, fillState.indexOf("case 'handed_over':", from));
+test('the ERP view still reports a clean abort as idle, which is why the above matters', async () => {
+  const erpView = await read('server/src/task-snapshot/erp.ts');
+  // Anchor on the aborted case of `erpView` and read forward to the next case.
+  const from = erpView.indexOf("case 'aborted':");
+  assert.ok(from > 0, 'the ERP view no longer has an aborted phase');
+  const aborted = erpView.slice(from, erpView.indexOf("case 'handed_over':", from));
   assert.ok(aborted.includes('abortReason'), 'the aborted phase no longer sets abortReason');
   assert.ok(!/status: 'aborted'/.test(aborted), 'the aborted phase now sets status too — the driver can be simplified');
 });

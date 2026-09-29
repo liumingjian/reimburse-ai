@@ -9,7 +9,7 @@ afterEach(() => cleanup());
 
 function renderApp(hash: string, extra: Extra = {}) {
   window.location.hash = hash;
-  const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, autoStepMs: 5, ...extra });
+  const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, ...extra });
   render(<App adapter={adapter} />);
   return adapter;
 }
@@ -62,7 +62,7 @@ describe('公共项目转换', () => {
   });
 
   test('returns a public renumber conversion cancellation to the edit form with its proposed values', async () => {
-    const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
+    const adapter = createMockAdapter({ seed: null, fault: null, inventoryPhaseMs: 5 });
     await adapter.intakeProject({ number: 'EDIT-CONVERT', name: '个人目标项目' });
     await adapter.intakePublicProject({ number: 'PUBLIC-OLD', name: '公共原项目' });
     window.location.hash = '#/projects';

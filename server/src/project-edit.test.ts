@@ -1,19 +1,21 @@
-import { ProjectBookResultSchema, ProjectBookSchema, type TaskSnapshot } from '@baox/contract';
+import { ProjectBookSchema } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { databasePath } from './data-dir';
-import { api, sample } from './test/api';
-import { createTestServer, tempDataDir, testClient, type TestClient, type TestServer } from './test/harness';
+import { api } from './test/api';
+import { createTestServer, tempDataDir, testClient, type TestClient } from './test/harness';
+import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
+import { bookChange, INVENTORIED } from './test/project-book';
 
 // Project edits run through the same authenticated HTTP seam as intake. These checks keep the original identity,
 // scoped collision rules, append-only facts, and assignment refresh observable without depending on lifecycle #219.
 
-let server: TestServer;
+let server: ScenarioServer;
 let admin: TestClient;
 let bob: TestClient;
 let alice: TestClient;
 
 beforeEach(async () => {
-  server = await createTestServer();
+  server = await scenarioServer();
   admin = await server.signIn('admin');
   bob = await server.signIn('bob');
   alice = await server.signIn('alice');
@@ -22,37 +24,13 @@ afterEach(() => server.close());
 
 const asBob = api(() => bob);
 
-async function intake(
-  client: TestClient,
-  path: '/api/project-book/intake' | '/api/public-project-book/intake',
-  input: { number: string; name: string; deadlineOn?: string | null },
-) {
-  const response = await client.post(path, input);
-  expect(response.status).toBe(200);
-  return ProjectBookResultSchema.parse(await response.json());
-}
-
-async function edit(
-  client: TestClient,
-  path: '/api/project-book/edit' | '/api/public-project-book/edit',
-  input: { originalNumber: string; number: string; name: string; deadlineOn?: string | null },
-) {
-  const response = await client.post(path, input);
-  expect(response.status).toBe(200);
-  return ProjectBookResultSchema.parse(await response.json());
-}
-
-async function inventoried(): Promise<TaskSnapshot> {
-  const { task } = await asBob.createTask('杭州');
-  const uploaded = await asBob.upload(task.taskId, [sample('m01'), sample('m07')]);
-  await asBob.accepted(await asBob.act(uploaded, 'start-inventory'));
-  return asBob.withoutStayGaps(await asBob.settled(task.taskId));
-}
+const intake = (client: TestClient, path: '/api/project-book/intake' | '/api/public-project-book/intake', input: { number: string; name: string; deadlineOn?: string | null }) => bookChange(client, path, input);
+const edit = (client: TestClient, path: '/api/project-book/edit' | '/api/public-project-book/edit', input: { originalNumber: string; number: string; name: string; deadlineOn?: string | null }) => bookChange(client, path, input);
 
 describe('project-book edits', () => {
   it('renumbers a personal entry as an append-only fact, refreshes new choices, and leaves a submitted pin intact', async () => {
     await intake(bob, '/api/project-book/intake', { number: 'PERSONAL-OLD', name: '原个人名称', deadlineOn: '2026-12-31' });
-    const start = await inventoried();
+    const start = (await scenario(server, bob).at('project', INVENTORIED)).reached;
     const projects = Object.fromEntries(start.lines.map((line) => [line.lineId, 'PERSONAL-OLD']));
     const submitted = await asBob.accepted(await asBob.act(start, 'submit-project-assignment', { purpose: '杭州出差', projects }));
     expect(submitted.projectAssignment.assignments.map((item) => [item.projectNumber, item.projectName, item.projectSource])).toEqual(

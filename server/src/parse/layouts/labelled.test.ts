@@ -1,12 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { GENERATED_DIR } from '@baox/fixtures';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { KINDS } from '../../kind-policy';
 import { dispatch, type Recognised } from '../dispatch';
 import type { ParseDoc, TextObservation } from '../doc';
-import { KINDS } from '../kinds';
-import { parseMaterial } from '../material';
-import { pdfDoc } from '../pdf';
+import { caseDoc } from '../testing/snapshot-cases';
 import { LAYOUTS } from '.';
 import { labelled } from './labelled';
 
@@ -14,9 +10,17 @@ import { labelled } from './labelled';
 // invoice identity whose stay dates are candidates) and the folio half of 50931a3:kernel/test/events.test.mjs
 // ('住宿：入住日期来自结账单…'), on the real text layer of @baox/fixtures m02. #212: recognition is on the folio's own
 // labels, not a chain name, and a photo's values are read by position from their labels (r210 and the synthetic docs).
+// m02 and r210 are read from their snapshot cases (`../snapshots/fixture-*`, which also score their values): no pdfjs,
+// no OCR.
 
-const fixture = (file: string) => new Uint8Array(readFileSync(join(GENERATED_DIR, file)));
-const folioDoc = () => pdfDoc(fixture('m02-hotel-folio.pdf'));
+vi.mock('unpdf', () => {
+  throw new Error('a layout test loaded pdfjs: read the document from a snapshot case');
+});
+vi.mock('../ocr', () => {
+  throw new Error('a layout test loaded OCR: read the document from a snapshot case');
+});
+
+const folioDoc = () => caseDoc('fixture-m02-hotel-folio');
 const SOURCE = 'rule:hotel_folio/labelled';
 
 function recognised(doc: ParseDoc): Recognised {
@@ -56,22 +60,11 @@ const STAY = (checkIn: string | null, checkOut: string | null) =>
   ] as const;
 
 describe('hotel_folio/labelled on the PDF text layer', () => {
-  it('recognises m02 as a folio, a reference material with its stay dates and no invoice identity', async () => {
-    const outcome = await parseMaterial({ materialId: 'm02', fileName: '全季酒店_结账单.pdf', mediaType: 'pdf', bytes: fixture('m02-hotel-folio.pdf') });
-    expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'hotel_folio', layout: 'labelled', parserVersion: labelled.version, kindLabel: '酒店结账单', missing: [], findings: [] });
-    if (outcome.outcome !== 'recognised') return;
+  // Every value m02 reads as is scored by its snapshot case (`fixture-m02-hotel-folio`).
+  it('recognises m02 as a folio, a reference material with its stay dates and no invoice identity', () => {
+    const outcome = recognised(folioDoc());
+    expect(outcome).toMatchObject({ kind: 'hotel_folio', layout: 'labelled', parserVersion: labelled.version, kindLabel: '酒店结账单', missing: [], findings: [] });
     expect(KINDS.hotel_folio.role).toBe('reference');
-    expect(values(outcome)).toEqual({
-      hotelName: '全季酒店（上海某某店）',
-      guestName: '林颂宜',
-      roomNumber: '1208',
-      checkIn: '2026-08-09',
-      checkOut: '2026-08-22',
-      nights: '13',
-      roomRate: '280.00',
-      folioTotal: '3640.00',
-      paidAmount: '3640.00',
-    });
     // Not an invoice: no invoice number, so it never takes part in 发票占用 (invoice occupancy) or duplicates.
     expect(outcome.candidates.some((c) => c.key === 'invoiceNumber')).toBe(false);
     for (const c of outcome.candidates) expect(c).toMatchObject({ source: SOURCE, evidence: 'explicit', parserVersion: labelled.version });
@@ -80,37 +73,37 @@ describe('hotel_folio/labelled on the PDF text layer', () => {
     expect(KINDS.hotel_folio.event(values(outcome))).toBeNull();
   });
 
-  it('does not recognise the hotel invoice (m01), and the e-invoice layout does not recognise the folio', async () => {
-    expect(labelled.recognise(await pdfDoc(fixture('m01-hotel-invoice.pdf')))).toBe(false);
-    expect(recognised(await folioDoc()).layout).toBe('labelled');
+  it('does not recognise the hotel invoice (m01), and the e-invoice layout does not recognise the folio', () => {
+    expect(labelled.recognise(caseDoc('fixture-m01-hotel-invoice'))).toBe(false);
+    expect(recognised(folioDoc()).layout).toBe('labelled');
   });
 
-  it('recognises a folio of any chain: no chain name takes part in recognition', async () => {
-    const other = recognised(edit(await folioDoc(), '全季酒店(上海某某店)', '汉庭酒店(上海某某店)'));
+  it('recognises a folio of any chain: no chain name takes part in recognition', () => {
+    const other = recognised(edit(folioDoc(), '全季酒店(上海某某店)', '汉庭酒店(上海某某店)'));
     expect(values(other)).toMatchObject({ hotelName: '汉庭酒店(上海某某店)', checkIn: '2026-08-09', checkOut: '2026-08-22' });
-    const unnamed = recognised(edit(await folioDoc(), '全季酒店(上海某某店)', null));
+    const unnamed = recognised(edit(folioDoc(), '全季酒店(上海某某店)', null));
     expect(unnamed.missing).toEqual([]);
     expect(values(unnamed)).not.toHaveProperty('hotelName');
   });
 
-  it('never derives a check-out date from the check-in date and the night count', async () => {
-    const outcome = recognised(edit(await folioDoc(), '离店日期:2026-08-22', '离店日期:'));
+  it('never derives a check-out date from the check-in date and the night count', () => {
+    const outcome = recognised(edit(folioDoc(), '离店日期:2026-08-22', '离店日期:'));
     expect(outcome.missing).toEqual(['checkOut']);
     expect(outcome.candidates.some((c) => c.key === 'checkOut')).toBe(false);
   });
 
-  it('flags dates that disagree with the night count, and charges that do not add up to the total', async () => {
-    const nights = recognised(edit(await folioDoc(), '天数:13', '天数:12'));
+  it('flags dates that disagree with the night count, and charges that do not add up to the total', () => {
+    const nights = recognised(edit(folioDoc(), '天数:13', '天数:12'));
     expect(nights.findings).toEqual([expect.objectContaining({ kind: 'validation', code: 'nights_mismatch' })]);
 
-    const doc = await folioDoc();
+    const doc = folioDoc();
     const total = recognised({ ...doc, observations: doc.observations.map((o) => (o.id === 'p1.52' ? { ...o, text: '3641.00', raw: '3641.00' } : o)) });
     expect(total.findings).toEqual([expect.objectContaining({ kind: 'validation', code: 'charges_not_conserved' })]);
   });
 });
 
 describe('hotel_folio/labelled recognition anchors', () => {
-  it('needs the 结账单 title and every accommodation label', async () => {
+  it('needs the 结账单 title and every accommodation label', () => {
     expect(recognised(photo(STAY('2026-08-09', '2026-08-22'))).layout).toBe('labelled');
     for (const label of ['入住日期', '离店日期', '房号', '消费合计']) {
       const doc = photo(STAY('2026-08-09', '2026-08-22').filter(([l]) => l !== label));
@@ -120,15 +113,15 @@ describe('hotel_folio/labelled recognition anchors', () => {
     expect(dispatch({ ...untitled, observations: untitled.observations.filter((o) => o.text !== '结账单') }, LAYOUTS)).toEqual({ outcome: 'unrecognised', reason: 'no_layout' });
   });
 
-  it('leaves a 结账单 without accommodation labels unrecognised: the title alone never recognises', async () => {
+  it('leaves a 结账单 without accommodation labels unrecognised: the title alone never recognises', () => {
     const restaurant = photo([
       ['桌号', 'A12'],
       ['人数', '4'],
       ['合计', '386.00'],
     ]);
     expect(dispatch(restaurant, LAYOUTS)).toEqual({ outcome: 'unrecognised', reason: 'no_layout' });
-    const stripped = (await folioDoc()).observations.filter((o) => !/^(入住日期|离店日期|房号|消费合计)/.test(o.text));
-    expect(dispatch({ ...(await folioDoc()), observations: stripped }, LAYOUTS)).toEqual({ outcome: 'unrecognised', reason: 'no_layout' });
+    const stripped = folioDoc().observations.filter((o) => !/^(入住日期|离店日期|房号|消费合计)/.test(o.text));
+    expect(dispatch({ ...folioDoc(), observations: stripped }, LAYOUTS)).toEqual({ outcome: 'unrecognised', reason: 'no_layout' });
   });
 
   it('anchors on the label itself, not on a longer word that starts with it', () => {
@@ -232,12 +225,11 @@ describe('hotel_folio/labelled date shapes', () => {
 });
 
 describe('hotel_folio/labelled on the r210 photo', () => {
-  it('reads the stay dates of a photographed folio whose labels and values are separate boxes', async () => {
-    const outcome = await parseMaterial({ materialId: 'r210', fileName: 'IMG_5120.jpg', mediaType: 'image', bytes: fixture('r210-hotel-folio-photo.jpg') });
-    expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'hotel_folio', layout: 'labelled', missing: [], findings: [] });
-    if (outcome.outcome !== 'recognised') return;
-    // Printed as 2026/08/09 and 2026年08月22日.
-    expect(values(outcome)).toMatchObject({ checkIn: '2026-08-09', checkOut: '2026-08-22', folioTotal: '3640.00', roomNumber: '0816' });
+  // The OCR boxes of the photo as captured (`fixture-r210-hotel-folio-photo`, whose case scores the values: printed as
+  // 2026/08/09 and 2026年08月22日). Here: each value's evidence is its label's box and its own.
+  it('reads the stay dates of a photographed folio whose labels and values are separate boxes', () => {
+    const outcome = recognised(caseDoc('fixture-r210-hotel-folio-photo'));
+    expect(outcome).toMatchObject({ kind: 'hotel_folio', layout: 'labelled', missing: [], findings: [] });
     for (const key of ['checkIn', 'checkOut', 'folioTotal']) expect(outcome.candidates.find((c) => c.key === key)?.refs[0]?.observationIds).toHaveLength(2);
-  }, 120_000);
+  });
 });

@@ -1,9 +1,11 @@
-import { MATERIAL_KINDS, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type InventoryPhase, type Line, type Material, type MaterialKind, type PendingField, type PendingItem } from '@baox/contract';
+import { MATERIAL_KINDS, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type Line, type Material, type MaterialKind, type PendingField, type PendingItem } from '@baox/contract';
 import { erpInvoiceTypeOf, ERP_INVOICE_TYPES, type ResolvedErpInvoiceType } from '@baox/erp-executor/invoice-type';
 import type { ParseOutcome, Recognised } from './parse/dispatch';
 import { planTransport, type PlannedLine } from './allocation';
+import { factsOf, isDerivedSource } from './parse/facts';
 import { pairHotelStays } from './hotel-stay';
-import { fieldLabel, KINDS, slotOf, type EventDraft, type Slot } from './parse/kinds';
+import { KINDS, type EventDraft } from './kind-policy';
+import { fieldLabel, slotOf, type Slot } from './parse/slots';
 import { chosen, EXCLUDE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
 import { editAddress, editedValue, type Editable } from './pending/edits';
 import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/company-rules';
@@ -46,7 +48,8 @@ export type InventoryView = {
   pendingItems: PendingItem[];
   events: ExpenseEvent[];
   lines: Line[];
-  inventory: Inventory;
+  // Where the run stands; the snapshot's `inventory` section is worded from it (`task-snapshot/inventory.ts`).
+  progress: RunProgress;
   // Included materials of the run still waiting for a parser outcome; > 0 means the job is running.
   waiting: number;
   openPendingItems: number;
@@ -57,6 +60,18 @@ export type InventoryView = {
   claims: Claim[];
   // The 住宿 trio of every stay, once the run has finished (`stay-trio.ts`); the print stage reads recorded absences here.
   trios: StayTrio[];
+};
+
+// The run's progress: not started, parsing (included materials still waiting, per medium), or done. Materials merged
+// into a variant are not in `materials` and are not counted anywhere. `ungroupedMaterialIds`: once done, the materials
+// no expense event groups that need a look (excluded, pending, or not a primary voucher).
+export type RunProgress = {
+  status: Inventory['status'];
+  waitingBy: { pdf: number; image: number };
+  // An included image is among the materials, so the photo phase is shown.
+  hasImages: boolean;
+  finishedAt: string | null;
+  ungroupedMaterialIds: string[];
 };
 
 // The task's 常驻城市 and pinned company rules: categories are derived from them (ADR-0006).
@@ -71,8 +86,6 @@ export const INVENTORY_COPY = {
   referenceCheck: '作为参考材料，不形成明细',
   manualCheck: '手工补填',
 } as const;
-
-const PHASES = { pdf: '读取 PDF 文本层与二维码', photo: '读取照片票面' } as const;
 
 const REPLACE_HINT = '换原件请在上传页追加材料后重新盘点。';
 const MANUAL_FILL = 'manual_fill';
@@ -212,15 +225,6 @@ function variantView(w: Worked): Material['variants'][number] {
   return { materialId: m.materialId, fileName: m.fileName, relativePath: m.relativePath, contentHash: m.contentHash, size: m.size, mediaType: m.mediaType, originalUrl: null, previewUrl: null };
 }
 
-// The layout's own source first; a second source (QR) only fills what the face lacks.
-function valuesOf(resolved: Resolved): Values {
-  const values: Values = {};
-  const primary = resolved.layout ? `rule:${resolved.kind}/${resolved.layout}` : 'user';
-  for (const c of resolved.candidates) if (c.source === primary && c.value !== '') values[c.key] ??= c.value;
-  for (const c of resolved.candidates) if (c.value !== '') values[c.key] ??= c.value;
-  return values;
-}
-
 // Per invoice materialId, the per-leg totals stored on its `allocation.<materialId>` item. `allocate` (allocation.ts)
 // adopts them only when they conserve to the cent — the same `conservingLegs` rule `judgeAnswer` applies on submit.
 function allocationAnswers(answers: StoredAnswers): Map<string, string[]> {
@@ -344,13 +348,13 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
   const id = m.materialId;
   const spec = KINDS[resolved.kind];
   w.kindLabel = resolved.kindLabel;
-  const values = valuesOf(resolved);
-  const sourceOf = new Map<string, { source: string; parserVersion: string | null; evidence: FieldCandidate['evidence'] }>();
-  for (const c of resolved.candidates) if (!sourceOf.has(c.key) || c.source === `rule:${resolved.kind}/${resolved.layout}`) sourceOf.set(c.key, { source: c.source, parserVersion: c.source === 'user' ? null : c.parserVersion, evidence: c.evidence });
+  // Which candidate is the read value is recognition's call (`factsOf`); from here on `sourceOf` only records edits.
+  const facts = factsOf(resolved);
+  const values: Values = facts.values;
+  const sourceOf = new Map(Object.entries(facts.sources));
   // A face fact from a PDF text layer or QR is locked; OCR (photos), manual values and gaps are correctable. A value
   // a layout derives from other face facts (e.g. 离店日期 from 入住日期 + 天数) is a reading, not printed: correctable.
-  const derived = (key: string) => /^rule:[^/]+\/[^.]+\./.test(sourceOf.get(key)?.source ?? '');
-  const classOf = (key: string) => (values[key] === undefined || sourceOf.get(key)?.source === 'user' || m.mediaType === 'image' || derived(key) ? 'fact_correctable' : 'fact_locked');
+  const classOf = (key: string) => (values[key] === undefined || sourceOf.get(key) === 'user' || m.mediaType === 'image' || isDerivedSource(sourceOf.get(key) ?? '') ? 'fact_correctable' : 'fact_locked');
   const withValue = (key: string, value: string) => spec.check?.({ ...values, [key]: value }) ?? null;
 
   // Slot edits: corrections of correctable facts become `user` values before anything is checked or derived.
@@ -360,7 +364,7 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
     const edited = editedValue(editable, answers.get(editable.address));
     if (edited !== null) {
       values[slot.key] = edited;
-      sourceOf.set(slot.key, { source: 'user', parserVersion: null, evidence: 'explicit' });
+      sourceOf.set(slot.key, 'user');
     }
   }
 
@@ -392,7 +396,7 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
     if (filled.status === 'resolved') {
       for (const [key, value] of Object.entries(nonEmpty(fieldAnswer(filled.answer)))) {
         values[key] = value;
-        sourceOf.set(key, { source: 'user', parserVersion: null, evidence: 'explicit' });
+        sourceOf.set(key, 'user');
       }
       // Filled in: the gap is gone, so it is no longer what the 校验 column has to say.
     } else {
@@ -404,7 +408,7 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
   // Every source's candidates stay visible (text layer and QR side by side); a `user` value replaces the candidates of
   // its key, since it is what counts now.
   const label = (key: string) => fieldLabel(resolved.kind, key);
-  const byUser = [...sourceOf].filter(([, origin]) => origin.source === 'user').map(([key]) => key);
+  const byUser = [...sourceOf].filter(([, source]) => source === 'user').map(([key]) => key);
   w.fields = [
     ...resolved.candidates
       .filter((c) => c.source !== 'user' && !byUser.includes(c.key))
@@ -661,35 +665,16 @@ export function inventoryView(
   });
 
   const openPendingItems = pendingItems.filter(isOpen).length;
-  const included = materialViews.filter((v) => v.status !== 'excluded');
   const grouped = new Set(events.flatMap((e) => [e.voucherMaterialId, ...e.referenceMaterialIds]));
-  const phase = (key: keyof typeof PHASES, status: InventoryPhase['status']): InventoryPhase => ({ key, label: PHASES[key], status });
-  const hasImages = materials.some((m) => !m.excluded && m.mediaType === 'image');
-  const phases = !results
-    ? []
-    : [
-        phase('pdf', waitingBy.pdf > 0 ? 'running' : 'done'),
-        ...(hasImages ? [phase('photo', waitingBy.pdf > 0 ? 'todo' : waitingBy.image > 0 ? 'running' : 'done')] : []),
-      ];
   const done = results !== null && waiting === 0;
-  const inventory: Inventory = {
+  const progress: RunProgress = {
     status: !results ? 'not_started' : done ? 'done' : 'running',
-    versionId: null,
-    phases,
+    waitingBy,
+    hasImages: materials.some((m) => !m.excluded && m.mediaType === 'image'),
     finishedAt: done ? (results?.finishedAt ?? results?.startedAt ?? null) : null,
-    summary: done
-      ? {
-          materialCount: included.length,
-          okCount: included.filter((v) => v.status === 'ok').length,
-          pendingMaterialCount: included.filter((v) => v.status === 'pending').length,
-          voucherCount: included.filter((v) => v.role === 'primary_voucher').length,
-          referenceCount: included.filter((v) => v.role === 'reference').length,
-          openPendingItemCount: openPendingItems,
-        }
-      : null,
     ungroupedMaterialIds: done ? materialViews.filter((v) => !grouped.has(v.materialId) && (v.status === 'excluded' || v.status === 'pending' || v.role !== 'primary_voucher')).map((v) => v.materialId) : [],
   };
-  return { materials: materialViews, pendingItems, events: done ? events : [], lines: done ? lines : [], inventory, waiting, openPendingItems, answerables, editables, claims, trios: trio.trios };
+  return { materials: materialViews, pendingItems, events: done ? events : [], lines: done ? lines : [], progress, waiting, openPendingItems, answerables, editables, claims, trios: trio.trios };
 }
 
 // The line-level edit is a presentation value over the description; checks never read it.

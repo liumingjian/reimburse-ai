@@ -1,0 +1,16 @@
+{
+  "about": "#212: a photographed folio as OCR returned it (every label and value its own box; dates printed 2026/08/09 and 2026年08月22日). @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "hotel_folio/labelled",
+  "missing": [],
+  "findings": [],
+  "facts": {
+    "hotelName": "某某悦居酒店（上海某某店）",
+    "guestName": "林颂宜",
+    "roomNumber": "0816",
+    "checkIn": "2026-08-09",
+    "checkOut": "2026-08-22",
+    "nights": "13",
+    "folioTotal": "3640.00"
+  }
+}

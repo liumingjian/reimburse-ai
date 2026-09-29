@@ -1,0 +1,19 @@
+{
+  "about": "@baox/fixtures m08: the return rail e-ticket (铁路电子客票). @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "rail_ticket/12306",
+  "missing": [],
+  "findings": [],
+  "facts": {
+    "invoiceNumber": "26312000000102200744",
+    "issueDate": "2026-08-22",
+    "trainNumber": "G7539",
+    "departStation": "上海虹桥",
+    "arriveStation": "杭州东",
+    "travelDate": "2026-08-22",
+    "departTime": "18:05",
+    "seatClass": "二等座",
+    "passengerName": "林颂宜",
+    "totalAmount": "73.00"
+  }
+}

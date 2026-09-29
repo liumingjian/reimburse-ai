@@ -1,9 +1,9 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
-import { STAGE_DEFAULT_PAGE, TASK_PAGES, TASK_STAGES, pageAllowed, type TaskPage, type TaskStage } from '@baox/contract';
-import { FAULTS, type Fault } from '../src/mock/options';
+import { STAGE_DEFAULT_PAGE, TASK_PAGES, pageAllowed, type TaskPage, type TaskStage } from '@baox/contract';
+import { FAULTS, SEED_STAGES, type Fault, type SeedStage } from '../src/mock/options';
 import { PAGE_COPY } from '../src/pages/page-copy';
 
-// 全矩阵（#107）：每个 seed（阶段枚举 + assign / print 别名）× 每个任务页面、每个 fault × 每个 seed 的默认页、每个 fault 的场景。
+// 全矩阵（#107）：每个 seed（可作 seed 的阶段 + assign / print 别名）× 每个任务页面、每个 fault × 每个 seed 的默认页、每个 fault 的场景。
 // 每个用例断言关键可见文字，且页面里没有 undefined / NaN / [object / 长短破折号；截图作为产物存进 test-results/（不是基线）。
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
@@ -11,15 +11,13 @@ const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 type Seed = { seed: string; stage: TaskStage; page: TaskPage; key: string };
 
 // 各 seed 默认页上一定出现的文字。
-// catalog / preparation 是自动步骤，几百毫秒后就进入整单确认；它们的默认页（整单确认页）上一直可见的是报销事由。
-const KEY_TEXT: Readonly<Record<TaskStage, string>> = {
+// The server never projects the catalog / preparation stages, so they are no seeds (SEED_STAGES).
+const KEY_TEXT: Readonly<Record<SeedStage, string>> = {
   upload: '把材料拖到这里',
   inventory: '盘点版本',
-  pending: '还剩 3 个',
+  pending: '还剩 4 个',
   // 吸底栏用字段组：标签「已归属」与值分开，这里认值。
   project: '2 / 9 条',
-  catalog: '上海产品评审出差',
-  preparation: '上海产品评审出差',
   review: '确认后即可去打印、去报销',
   actions: '整单明细已确认',
   erp: '我已登录，继续',
@@ -30,7 +28,7 @@ const KEY_TEXT: Readonly<Record<TaskStage, string>> = {
 };
 
 const SEEDS: readonly Seed[] = [
-  ...TASK_STAGES.map((stage) => ({ seed: stage, stage, page: STAGE_DEFAULT_PAGE[stage], key: KEY_TEXT[stage] })),
+  ...SEED_STAGES.map((stage) => ({ seed: stage, stage, page: STAGE_DEFAULT_PAGE[stage], key: KEY_TEXT[stage] })),
   { seed: 'assign', stage: 'project', page: 'project', key: KEY_TEXT.project },
   { seed: 'print', stage: 'actions', page: 'print', key: 'No.1-3 · 08-10 · 外地市内交通 · 69.19' },
 ];
@@ -41,7 +39,8 @@ const FORBIDDEN = ['undefined', 'NaN', '[object', String.fromCharCode(0x2014), S
 const BANNER = '连不上报销服务，请检查网络后重试；如果一直这样，请联系维护者';
 
 function expectedHeading(stage: TaskStage, page: TaskPage): string {
-  if (pageAllowed(stage, page)) return PAGE_COPY[page].title;
+  // A seed's admitted actions never open a page its stage keeps closed, so the stage alone decides here.
+  if (pageAllowed({ stage, allowedActions: [] }, page)) return PAGE_COPY[page].title;
   // seed=upload 的 T1 还没有任何材料；其余阶段有材料但还没到这一步。
   // A voided T1 also has no materials.
   return stage === 'upload' || stage === 'voided' ? '还没有上传材料' : '还不能进入这一步';
@@ -77,7 +76,7 @@ const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = 
   },
   'unsupported-material': async (page) => {
     await page.goto(open('?seed=pending&fault=unsupported-material', '#/task/T1/pending'));
-    await expect(page.getByText('还剩 4 个')).toBeVisible();
+    await expect(page.getByText('还剩 5 个')).toBeVisible();
     await expect(page.getByLabel('待确认项清单').getByRole('button', { name: /曹操出行_行程单\.pdf/ })).toBeVisible();
   },
   'erp-login-missing': async (page) => {
@@ -85,10 +84,18 @@ const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = 
     await expect(page.getByText(/还没有检测到登录（第 1 次检测）/)).toBeVisible();
     await expect(page.getByRole('button', { name: '我已登录，继续' })).toBeEnabled();
   },
+  // The catalog is checked inside the ERP job: a renamed project stops it before anything is imported, and the task
+  // is back at project assignment (项目归属) with the problem shown.
+  'catalog-mismatch': async (page) => {
+    await startErp(page, 'catalog-mismatch');
+    await page.getByRole('link', { name: '回到当前阶段' }).click();
+    await expect(page).toHaveURL(/#\/task\/T1\/project$/);
+    await expect(page.getByRole('alert').filter({ hasText: '改过名的项目' })).toBeVisible();
+  },
   'erp-write-aborted': async (page) => {
     await startErp(page, 'erp-write-aborted');
     await expect(page).toHaveURL(/#\/task\/T1\/reconcile$/);
-    await expect(page.getByRole('region', { name: '中止原因' })).toContainText('交接单据时没有读到报销系统的结果');
+    await expect(page.getByRole('region', { name: '中止原因' })).toContainText('保存后没有读到报销系统的结果');
   },
   // 写入前就停下：阶段退回 actions，填报页当场关上，守卫页说出原因；回到整单确认页可以直接再去报销。
   'erp-stopped-before-write': async (page) => {
@@ -101,8 +108,9 @@ const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = 
   },
   'readback-mismatch': async (page) => {
     await startErp(page, 'readback-mismatch');
-    // 已保存但逐行不一致 ⇒ 停在对账，只能转人工。
+    // 严格回读停下 ⇒ 停在对账；开始对账读到已保存但逐行不一致的草稿 ⇒ 只能转人工。
     await expect(page).toHaveURL(/#\/task\/T1\/reconcile$/);
+    await page.getByRole('button', { name: '开始对账' }).click();
     await expect(page.getByTestId('readback-6')).toContainText('不一致');
     await expect(page.getByTestId('readback-6')).toContainText('74.00');
     await expect(page.getByRole('button', { name: '转人工' })).toBeVisible();

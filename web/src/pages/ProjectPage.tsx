@@ -12,7 +12,6 @@ import {
   type Line,
   type ProjectLineAssignment,
   type ProjectSource,
-  type StepKind,
   type TaskSnapshot,
   pageAllowed,
 } from '@baox/contract';
@@ -28,9 +27,6 @@ import { ProjectBookPanel } from './ProjectBookPanel';
 import { DeadlineWarningList } from './DeadlineWarningList';
 import { LodgingPreview } from './LodgingPreview';
 
-// 当前 step 是这些时服务端接受「归入」与提交项目归属：进入项目归属时（含报销信息核对不匹配后的改派），材料包缺项时，
-// 以及整单确认前后、ERP 写入开始之前的改派。页面只据此决定按钮是否可用；动作是否成立由服务端判定。
-const SUBMIT_STEP_KINDS: ReadonlySet<StepKind> = new Set<StepKind>(['assign_projects', 'resolve_preparation', 'confirm_review', 'choose_action']);
 
 // 项目归属页：待确认项处理完之后、整单确认之前（Skill 的 project_unassigned → select-task），两条路径都要经过。
 // 提交后服务端自动做报销信息核对与材料准备，再进入整单确认；确认绑定项目归属，确认后在这里改派会使确认失效。
@@ -177,7 +173,8 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
   const submitted = assignment.status === 'submitted';
   // ERP 写入开始后项目归属不能再改；此前随时可以改派（改派使整单确认失效）。
   const locked = snapshot.erp.status !== 'idle';
-  const canAct = SUBMIT_STEP_KINDS.has(snapshot.step.kind) && !locked;
+  // 「归入」与提交是否可用只看服务端此刻接受的动作（snapshot.allowedActions），页面不自己推 step 与冻结规则。
+  const canAct = snapshot.allowedActions.includes('submit_project_assignment');
   // 报销信息核对不匹配时，处置就是在本页改派后重新提交；材料包缺项在整单明细确认页处理。
   const catalogMismatch = snapshot.catalog.status === 'mismatch';
   const preparationBlocked = snapshot.preparation.status === 'blocked';
@@ -385,7 +382,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
             statusIconDescription={preparationBlocked ? '注意' : '成功'}
             title={submittedText}
           />
-          {pageAllowed(snapshot.stage, 'review') ? (
+          {pageAllowed(snapshot, 'review') ? (
             <Button kind="tertiary" size="sm" href={taskHash(taskId, 'review')}>
               去整单明细确认
             </Button>

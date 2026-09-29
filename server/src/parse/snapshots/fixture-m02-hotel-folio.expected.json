@@ -1,0 +1,18 @@
+{
+  "about": "@baox/fixtures m02: a hotel folio (结账单) on a PDF text layer; a reference material, no invoice identity. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "hotel_folio/labelled",
+  "missing": [],
+  "findings": [],
+  "facts": {
+    "hotelName": "全季酒店（上海某某店）",
+    "guestName": "林颂宜",
+    "roomNumber": "1208",
+    "checkIn": "2026-08-09",
+    "checkOut": "2026-08-22",
+    "nights": "13",
+    "roomRate": "280.00",
+    "folioTotal": "3640.00",
+    "paidAmount": "3640.00"
+  }
+}

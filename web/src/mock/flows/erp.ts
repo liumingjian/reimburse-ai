@@ -1,11 +1,13 @@
 import { ERP_ACTION_ERRORS, type AppAdapter, type TaskSnapshot } from '@baox/contract';
 import type { MockBus } from '../bus';
-import { ERP_STEP_INDEX, applyAbortAtHandover, applyErpDone, applyReadbackMismatch, applyStopBeforeWrite, emptyReconcile, erpRunning, erpStageAt, erpSteps, handedOffBanner, idleErp, loginNotDetected } from '../fixtures/erp';
+import { ERP_STEP_INDEX, applyAbortAtHandover, applyErpDone, applyReadbackMismatch, applyReadbackStop, applyStopBeforeWrite, emptyReconcile, erpRunning, erpStageAt, erpSteps, handedOffBanner, idleErp, loginNotDetected } from '../fixtures/erp';
+import { catalogMismatch } from '../fixtures/preparation';
 import { T1_DRAFT_NO } from '../fixtures/tasks';
 
 // The mock simulates the server-owned ERP fill, strict read-back, and reconciliation states.
 // Confirming a claim opens its task-specific ERP tab; once login is detected, the simulated fill advances automatically.
-// 严格回读与交接的结局按故障决定：erp-write-aborted 在交接步中止（停在对账）；readback-mismatch 停在完成页等待转人工。
+// 写入的结局按故障决定：erp-stopped-before-write 在打开报销单时停下（退回去报销前）；readback-mismatch 在填写明细后的
+// 严格回读停下、erp-write-aborted 在交接步中止，两者都停在对账，等第一次对账（readback-mismatch 对账后读到逐行不一致的草稿，只能转人工）。
 
 const DEFAULT_ERP_STEP_MS = 300;
 const DEFAULT_ERP_LOGIN_AUTO_MS = 2500;
@@ -62,11 +64,24 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     setTimeout(() => finishErpStep(taskId, run, ERP_STEP_INDEX.catalog), erpStepMs);
   };
 
-  // 第 index 步结束：严格回读按 readback-mismatch 决定一致或停在完成页等待转人工；交接步在 erp-write-aborted 下中止。
+  // 第 index 步结束：填写明细后的严格回读在 readback-mismatch 下停下；交接步在 erp-write-aborted 下中止。
   const finishErpStep = (taskId: string, run: number, index: number) => {
     const current = bus.draft(taskId);
     if (!erpRunLive(current, run, 'running')) return;
     current.task.updatedAt = bus.now();
+    // `?fault=catalog-mismatch`: the catalog step finds a project renamed in the ERP. Nothing was imported; like the
+    // server, the job ends, the ERP view is idle again and the task goes back to project assignment (项目归属) with the
+    // catalog problems. The confirmation stands until the assignment changes.
+    const mismatch = index === ERP_STEP_INDEX.catalog && options.fault === 'catalog-mismatch' ? catalogMismatch(current.projectAssignment) : null;
+    if (mismatch) {
+      erpRuns.delete(taskId);
+      current.catalog = mismatch;
+      current.erp = idleErp();
+      current.stage = 'project';
+      current.step = { kind: 'assign_projects', stepToken: bus.rotateToken(`tok-${taskId}-catalog-mismatch`) };
+      bus.push(current);
+      return;
+    }
     // 写入前就停下：报销系统没有被改动，阶段退回整单确认页，这一轮结束。
     if (index === ERP_STEP_INDEX.navigate && options.fault === 'erp-stopped-before-write') {
       erpRuns.delete(taskId);
@@ -75,9 +90,14 @@ export function createErpFlow(bus: MockBus): ErpFlow {
       bus.push(current);
       return;
     }
+    if (index === ERP_STEP_INDEX.fill && options.fault === 'readback-mismatch') {
+      erpRuns.delete(taskId);
+      applyReadbackStop(current);
+      bus.push(current);
+      return;
+    }
     if (index === ERP_STEP_INDEX.handover) {
-      if (options.fault === 'readback-mismatch') applyReadbackMismatch(current, current.erp.draftNo ?? T1_DRAFT_NO);
-      else if (options.fault === 'erp-write-aborted') applyAbortAtHandover(current);
+      if (options.fault === 'erp-write-aborted') applyAbortAtHandover(current);
       // 交接：单据填好了但没有保存，所以没有单据编号（服务端 handed_over 同此）。
       else applyErpDone(current);
       bus.push(current);
@@ -143,7 +163,8 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         snapshot.task.updatedAt = bus.now();
         return snapshot;
       }),
-    // 重新对账（原地等待）：只读报销系统再判定一次，只在对账结果允许原地等待时接受。
+    // 开始对账 / 重新对账（原地等待）：只读报销系统再判定一次，只在对账结果允许原地等待时接受。
+    // readback-mismatch 下第一次对账读到员工保存过、逐行不一致的草稿 ⇒ 只能转人工；
     // 交接步中止的任务读到单据且逐行一致 ⇒ 单据交接完成；否则留在原地，结果写进横幅。
     reconcile: async (taskId, stepToken) =>
       bus.withStep(taskId, stepToken, (snapshot) => {
@@ -152,6 +173,10 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         const count = (reconcileCounts.get(taskId) ?? 0) + 1;
         reconcileCounts.set(taskId, count);
         snapshot.task.updatedAt = bus.now();
+        if (options.fault === 'readback-mismatch' && snapshot.reconcile.bucket === null) {
+          applyReadbackMismatch(snapshot, snapshot.erp.draftNo ?? T1_DRAFT_NO);
+          return snapshot;
+        }
         // 读到的是一张填好、待员工保存、逐行一致的单据（对账中断点「未保存·就绪待保存」）：这就是单据交接完成，
         // 不是一个中断点。服务端在 fill-state.ts 里把它提升为 handed_over，对账区随之清空；mock 照做。
         if (snapshot.reconcile.rows.length === 0 && snapshot.lines.length > 0) {

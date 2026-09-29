@@ -1,0 +1,19 @@
+{
+  "about": "#204: a rail ticket whose labels are apart from their values and whose trip row is split into runs. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "rail_ticket/12306",
+  "missing": [],
+  "findings": [],
+  "facts": {
+    "invoiceNumber": "26312000000102200758",
+    "issueDate": "2026-08-23",
+    "trainNumber": "G1376",
+    "departStation": "广州南",
+    "arriveStation": "长沙南",
+    "travelDate": "2026-08-23",
+    "departTime": "09:12",
+    "seatClass": "二等座",
+    "passengerName": "林颂宜",
+    "totalAmount": "314.50"
+  }
+}

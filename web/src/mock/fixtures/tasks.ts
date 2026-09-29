@@ -11,8 +11,10 @@ import {
 } from '@baox/contract';
 import { HOME_CITY, SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, confirmationDigest, projectAssignmentOpen, projectAssignmentSubmitted, withLineProjects, withProjectUsage } from './projects';
 import { T2_ROWS, applyAbortAtHandover, applyErpDone, emptyReadback, emptyReconcile, erpWaitingLogin, idleErp, readbackOf, reconcileVerdict } from './erp';
-import { INVENTORY_PHASES, SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryResult, openPendingItemCount, withInventoryProjection, withLodgingEvidenceProjection } from './inventory';
-import { catalogMatched, catalogPending, catalogRunning, packageFilesOf, preparationPending } from './preparation';
+import { SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryPhases, inventoryResult, openPendingItemCount, withInventoryProjection, withLodgingEvidenceProjection } from './inventory';
+import { allowedActionsOf, withAllowedActions } from './allowed-actions';
+import { catalogPending, preparationPending, preparationReady } from './preparation';
+import type { SeedStage } from '../options';
 
 // 夹具：三个虚构的报销任务。人物与数字沿用原型（林颂宜、上海出差、9 条明细合计 3972.59）。
 // 材料盘点结果、费用事件、待确认项与候选明细见 ./inventory.ts；本文件按阶段把它们装进快照。
@@ -133,11 +135,11 @@ const STEP_BY_STAGE: Readonly<Record<TaskStage, TaskSnapshot['step']['kind']>> =
 export const T1_INVENTORY_FINISHED_AT = '2026-09-11T14:20:00';
 
 export function inventoryNotStarted(): Inventory {
-  return { status: 'not_started', versionId: null, phases: INVENTORY_PHASES.map((phase) => ({ ...phase, status: 'todo' })), finishedAt: null, summary: null, ungroupedMaterialIds: [] };
+  return { status: 'not_started', versionId: null, phases: [], finishedAt: null, summary: null, ungroupedMaterialIds: [] };
 }
 
-export function inventoryDone(versionId: string, finishedAt: string): Inventory {
-  return { status: 'done', versionId, phases: INVENTORY_PHASES.map((phase) => ({ ...phase, status: 'done' })), finishedAt, summary: null, ungroupedMaterialIds: [] };
+export function inventoryDone(versionId: string, finishedAt: string, materials: readonly Material[] = []): Inventory {
+  return { status: 'done', versionId, phases: inventoryPhases(materials, 'done'), finishedAt, summary: null, ungroupedMaterialIds: [] };
 }
 
 export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): TaskSnapshot {
@@ -163,12 +165,13 @@ export function emptySnapshot(task: TaskSnapshot['task'], stage: TaskStage): Tas
     readback: emptyReadback(),
     reconcile: emptyReconcile(),
     step: { kind: STEP_BY_STAGE[stage], stepToken: `tok-${task.taskId}-${stage}` },
+    allowedActions: [],
   };
 }
 
 // T1：进行中的任务，`?seed=` 决定它停在哪个阶段；unsupportedFault 对应 `?fault=unsupported-material`（曹操行程单变成不支持的版式），
 // allocationRequired 对应 `?allocation=1`（高德合并发票需要逐段分摊；project 起按原件金额答复，明细与默认相同）。
-export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false, allocationRequired = false): TaskSnapshot {
+export function t1Snapshot(stage: SeedStage = 'upload', unsupportedFault = false, allocationRequired = false): TaskSnapshot {
   const snapshot = emptySnapshot(
     {
       taskId: T1_ID,
@@ -183,7 +186,7 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
   if (stageReached(stage, 'inventory')) {
     const batch = t1Batch();
     snapshot.batches = [batch];
-    snapshot.inventory = inventoryDone('v1', T1_INVENTORY_FINISHED_AT);
+    snapshot.inventory = inventoryDone('v1', T1_INVENTORY_FINISHED_AT, t1Materials(batch));
     const result = inventoryResult(t1Materials(batch), unsupportedFault, allocationRequired);
     if (stageReached(stage, 'project')) {
       // 待确认项都已按原型的既定答复处理，候选明细随之形成（No. 按内核分类排序）。
@@ -192,30 +195,29 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
         const answer = material ? SEED_ANSWERS[material.materialId] : undefined;
         if (answer) applyPendingAnswer(result, item, answer);
       }
-      snapshot.lines = buildLines(result);
     }
+    // As on the server, the candidate lines follow the expense events from the end of the inventory on.
+    snapshot.lines = buildLines(result);
     snapshot.materials = result.materials;
     snapshot.events = result.events;
     snapshot.pendingItems = result.pendingItems;
     // 盘点已结束、还有待确认项：当前待答 step 就是答复待确认项。
     if (stage === 'inventory' && result.pendingItems.some((item) => item.status === 'open')) snapshot.step = { kind: 'answer_pending', stepToken: `tok-${T1_ID}-inventory` };
   }
-  // 进入项目归属时服务端给出个人项目簿允许列表：project 阶段预置两条归属（演示冲突处理）；
-  // 提交之后（报销信息核对起）9 条都已归属，整单确认的摘要绑定这份归属。
+  // Entering project assignment (项目归属), the server hands over the personal project book's allow list; the project
+  // seed has two lines preassigned (to show conflict handling). From the review on, all 9 lines are assigned
+  // (submitted), and the review digest binds that assignment.
   if (stage === 'project') snapshot.projectAssignment = projectAssignmentOpen(HOME_CITY, SEED_ASSIGNMENTS);
-  if (stageReached(stage, 'catalog')) {
+  if (stageReached(stage, 'review')) {
     snapshot.projectAssignment = projectAssignmentSubmitted({ purpose: T1_PURPOSE, homeCity: HOME_CITY, projects: T1_DONE_ASSIGNMENTS, submittedAt: '2026-09-11T14:28:00' });
     snapshot.lines = withLineProjects(snapshot.lines, snapshot.projectAssignment);
   }
-  // catalog：报销信息核对进行中；preparation：核对已通过，材料包生成中；review 起材料包就绪（T1 共 13 份文件）。
-  if (stage === 'catalog') snapshot.catalog = catalogRunning();
-  if (stageReached(stage, 'preparation')) snapshot.catalog = catalogMatched();
   if (stageReached(stage, 'review')) {
     // 整单确认的摘要与它的条数、张数、合计一起出现：服务端在还没有可确认的一份时把它们留空
     // （confirmationView 的 `counted`）。mock 早早填上合计，就掩盖了归属页读错来源的毛病。
     snapshot.confirmation = { ...snapshot.confirmation, lineCount: 9, invoiceCount: 7, grossTotal: T1_GROSS_TOTAL };
     snapshot.confirmation.digest = confirmationDigest(T1_ID, 'v1', snapshot.projectAssignment);
-    snapshot.preparation = { status: 'ready', problems: [], packageFiles: packageFilesOf(snapshot.lines, snapshot.materials) };
+    snapshot.preparation = preparationReady();
   }
   if (stageReached(stage, 'actions')) snapshot.confirmation = { ...snapshot.confirmation, status: 'confirmed', confirmedAt: '2026-09-11T14:32:00' };
   // erp：「去报销」之后浏览器已启动，等待登录（检测到登录即自动写入）。done：回读 9/9 一致、单据已交接；
@@ -224,7 +226,7 @@ export function t1Snapshot(stage: TaskStage = 'upload', unsupportedFault = false
   if (stage === 'erp') snapshot.erp = erpWaitingLogin();
   if (stage === 'done') applyErpDone(snapshot);
   if (stage === 'reconcile') applyAbortAtHandover(snapshot);
-  return withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot)));
+  return withAllowedActions(withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot))));
 }
 
 // T2：对账中（ERP 写入结果不确定后的停顿状态，不是失败）。
@@ -250,8 +252,7 @@ export function t2Snapshot(): TaskSnapshot {
     grossTotal: '1264.00',
     notice: null,
   };
-  snapshot.catalog = catalogMatched();
-  snapshot.preparation = { status: 'ready', problems: [], packageFiles: [] };
+  snapshot.preparation = preparationReady();
   snapshot.erp = {
     status: 'aborted',
     steps: [],
@@ -275,7 +276,7 @@ export function t2Snapshot(): TaskSnapshot {
     reasons: [],
     capture: null,
   };
-  return withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot)));
+  return withAllowedActions(withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot))));
 }
 
 // T3：已完成，而且员工自己保存过，单据编号是这么来的。演示里唯一一条真的有编号的已完成任务：
@@ -302,8 +303,7 @@ export function t3Snapshot(): TaskSnapshot {
     grossTotal: '2318.50',
     notice: null,
   };
-  snapshot.catalog = catalogMatched();
-  snapshot.preparation = { status: 'ready', problems: [], packageFiles: [] };
+  snapshot.preparation = preparationReady();
   snapshot.erp = {
     status: 'done',
     steps: [],
@@ -317,7 +317,7 @@ export function t3Snapshot(): TaskSnapshot {
     erpAccount: null,
   };
   snapshot.readback = { status: 'matched', rows: [], summary: '明细 4/4 一致', localTotal: '2318.50', erpTotal: '2318.50' };
-  return withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot)));
+  return withAllowedActions(withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot))));
 }
 
 // 任务列表层面的 ERP 结局：已转人工优先。严格回读不一致的草稿现在停在对账（不是完成），列表按「对账中」显示它，
@@ -331,8 +331,8 @@ function erpOutcomeOf(snapshot: TaskSnapshot): TaskListItem['erpOutcome'] {
 // 能否作废（内核 abandonTask）：任何状态都可以作废（ADR-0030），只有这个任务的写入/对账正在跑时不行。
 function abandonOf(snapshot: TaskSnapshot): Pick<TaskListItem, 'abandonable' | 'abandonBlockedReason' | 'erpTouched'> {
   const erpTouched = snapshot.erp.status !== 'idle' || stageReached(snapshot.stage, 'erp');
-  const running = snapshot.erp.status === 'running' || snapshot.erp.status === 'waiting_login';
-  return { abandonable: !running, abandonBlockedReason: running ? ABANDON_TASK_COPY.blockedReason : null, erpTouched };
+  const abandonable = allowedActionsOf(snapshot).includes('void_task');
+  return { abandonable, abandonBlockedReason: abandonable ? null : ABANDON_TASK_COPY.blockedReason, erpTouched };
 }
 
 // 任务列表的一行由快照投影而来：mock 服务端负责，页面不做这件事。

@@ -1,12 +1,13 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { App } from '../App';
-import { PROJECT_ASSIGNMENT_ERRORS, type AppAdapter, type TaskStage } from '@baox/contract';
+import { PROJECT_ASSIGNMENT_ERRORS, type AppAdapter } from '@baox/contract';
+import type { SeedStage } from '../mock/options';
 import { createMockAdapter } from '../mock/mock-adapter';
 
-function renderProject(seed: TaskStage = 'project', prepare?: (adapter: AppAdapter) => Promise<unknown>) {
+function renderProject(seed: SeedStage = 'project', prepare?: (adapter: AppAdapter) => Promise<unknown>) {
   window.location.hash = '#/task/T1/project';
-  const adapter = createMockAdapter({ seed, fault: null, inventoryPhaseMs: 5, autoStepMs: 5 });
+  const adapter = createMockAdapter({ seed, fault: null, inventoryPhaseMs: 5 });
   const ready = (prepare ? prepare(adapter) : Promise.resolve()).then(() => render(<App adapter={adapter} />));
   return { adapter, ready };
 }

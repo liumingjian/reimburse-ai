@@ -2,43 +2,21 @@ import type { ParseDoc } from './doc';
 import { dispatch, type ParseOutcome } from './dispatch';
 import type { Layout } from './layout';
 import { LAYOUTS } from './layouts';
-import { ocrImage } from './ocr';
-import { pdfDoc } from './pdf';
-import { decodeImageFile } from './qr';
+import { readDoc } from './media';
+import { OcrFailedError, reasonOf, UnreadableDocumentError, type DocReaders } from './readers';
 
-// One material in, one parser outcome out: build the document model for the medium, then dispatch. Runs inside the
-// parse worker (`worker.ts`), or inline for tests.
+// One material in, one parser outcome out: read the document model through the reader of the material's sniffed
+// medium (`media.ts`), then dispatch. Runs inside the parse worker (`worker.ts`), or inline for tests.
 
-export type ParseInput = { materialId: string; fileName: string; mediaType: 'pdf' | 'image'; bytes: Uint8Array };
+// `mime` is the type the original was stored under; recognition decides the medium itself, from the bytes.
+export type ParseInput = { materialId: string; fileName: string; mime: string; bytes: Uint8Array };
 
-// OCR could not run on a photo (a runtime or model fault, not the photo's content): a re-run may succeed (ADR-0017).
-class OcrFailedError extends Error {
-  override name = 'OcrFailedError';
-}
-
-// A photo: text observations from the in-process OCR (`ocr.ts`, loaded on the first image), plus its QR codes.
-async function imageDoc(bytes: Uint8Array): Promise<ParseDoc> {
-  const [observations, codes] = await Promise.all([
-    ocrImage(bytes).catch((error: unknown) => {
-      throw new OcrFailedError(reasonOf(error));
-    }),
-    decodeImageFile(bytes).catch(() => []),
-  ]);
-  return { mediaType: 'image', pageCount: 1, observations, codes };
-}
-
-// pdfjs's exceptions for a file that is not a readable PDF (corrupt, encrypted, not really a PDF). Nothing a re-run
-// would change, and nothing a layout could read: unrecognised. Any other error is a parser fault: failed.
-const UNREADABLE_PDF = new Set(['InvalidPDFException', 'PasswordException', 'FormatError', 'MissingPDFException']);
-
-const reasonOf = (error: unknown) => (error instanceof Error ? `${error.name}: ${error.message}` : String(error));
-
-export async function parseMaterial(input: ParseInput, layouts: readonly Layout[] = LAYOUTS): Promise<ParseOutcome> {
+export async function parseMaterial(input: ParseInput, readers: DocReaders, layouts: readonly Layout[] = LAYOUTS): Promise<ParseOutcome> {
   let doc: ParseDoc;
   try {
-    doc = input.mediaType === 'pdf' ? await pdfDoc(input.bytes) : await imageDoc(input.bytes);
+    doc = await readDoc(input, readers);
   } catch (error) {
-    if (error instanceof Error && UNREADABLE_PDF.has(error.name)) return { outcome: 'unrecognised', reason: 'unreadable_document' };
+    if (error instanceof UnreadableDocumentError) return { outcome: 'unrecognised', reason: 'unreadable_document' };
     return { outcome: 'failed', retryable: error instanceof OcrFailedError, reason: reasonOf(error) };
   }
   try {

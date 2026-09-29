@@ -1,5 +1,6 @@
 import { ActionFailureSchema, TaskListSchema, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { api, type Upload } from './test/api';
 import { createTestServer, type TestClient, type TestServer } from './test/harness';
 
 // Slice 02 (#180): upload batches, 材料盘点 (material inventory) and the task lifecycle, through `app.request()`.
@@ -12,32 +13,13 @@ beforeEach(async () => {
 });
 afterEach(() => server.close());
 
+// Synthetic PDF bytes: the real parser reads them as unrecognised.
 const pdf = (text: string) => Buffer.from(`%PDF-1.4\n% ${text}\n%%EOF\n`);
 
-async function createTask(homeCity = '杭州', as = client) {
-  const response = await as.post('/api/tasks', { homeCity });
-  expect(response.status).toBe(200);
-  return TaskSnapshotSchema.parse(await response.json());
-}
-
-type Upload = { name: string; bytes: Buffer | Uint8Array; type?: string };
-
-async function upload(taskId: string, files: readonly Upload[]) {
-  const form = new FormData();
-  for (const file of files) form.append('files', new File([file.bytes], file.name, { type: file.type ?? 'application/pdf' }));
-  const response = await client.request(`/api/tasks/${taskId}/batches`, { method: 'POST', body: form });
-  expect(response.status).toBe(200);
-  return TaskSnapshotSchema.parse(await response.json());
-}
-
-function act(snapshot: TaskSnapshot, name: string, body: Record<string, unknown> = {}, stepToken = snapshot.step.stepToken) {
-  return client.post(`/api/tasks/${snapshot.task.taskId}/actions/${name}`, { ...body, stepToken });
-}
-
-async function accepted(response: Response) {
-  expect(response.status).toBe(200);
-  return TaskSnapshotSchema.parse(await response.json());
-}
+const http = api(() => client);
+const createTask = (homeCity = '杭州', as = client) => api(() => as).createTask(homeCity);
+const upload = (taskId: string, files: readonly Upload[]) => http.upload(taskId, files);
+const { act, accepted, current, settled } = http;
 
 describe('stepToken', () => {
   it('a stale stepToken on exclude-material gets 409 whose body carries the fresh snapshot, and nothing changes', async () => {
@@ -59,20 +41,6 @@ async function stale(response: Response, fresh: TaskSnapshot) {
   const failure = ActionFailureSchema.parse(await response.json());
   expect(failure.error.code).toBe('stale_step');
   expect(failure.snapshot).toEqual(fresh);
-}
-
-async function current(taskId: string) {
-  return TaskSnapshotSchema.parse(await (await client.request(`/api/tasks/${taskId}`)).json());
-}
-
-// Waits for the background parser job (#183) to finish the current inventory run.
-async function settled(taskId: string) {
-  for (let attempt = 0; attempt < 1000; attempt += 1) {
-    const snapshot = await current(taskId);
-    if (snapshot.inventory.status === 'done') return snapshot;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error('inventory did not settle');
 }
 
 async function taskList(as = client) {

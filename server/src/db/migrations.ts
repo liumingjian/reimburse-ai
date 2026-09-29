@@ -618,6 +618,15 @@ const directoryIntake280: Migration = {
 
 // #273: project-book entries gain an optional advisory deadline. It is separate from the legacy ERP expiry field;
 // existing events remain null so migration never fabricates a date or changes historical selectability.
+// #312: a material's medium (PDF or image) is what recognition sniffs from its bytes, recorded once at upload so the
+// material list, print and the parse order go by the same medium parsing reads. Nullable: blobs are append-only, so the
+// ones stored before this migration keep null and are classified by their declared name and MIME (`parse/media.ts`).
+const blobMedium312: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema.alterTable('blob').addColumn('medium', 'text').execute();
+  },
+};
+
 const projectDeadline273: Migration = {
   async up(db: Kysely<unknown>) {
     await db.schema.alterTable('project_book_event').addColumn('deadline_on', 'text').execute();
@@ -666,4 +675,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0017_280_directory_intake': directoryIntake280,
   // Added after the already-integrated #280 migration so existing databases never need a landed migration rewritten.
   '0018_273_project_deadline': projectDeadline273,
+  '0019_312_blob_medium': blobMedium312,
 };

@@ -10,11 +10,12 @@ import {
   type TaskSnapshot,
 } from '@baox/contract';
 import { withInventoryProjection, withLodgingEvidenceProjection } from './fixtures/inventory';
+import { withAllowedActions } from './fixtures/allowed-actions';
 import { PROJECT_BOOK, withProjectUsage } from './fixtures/projects';
 import type { MockOptions } from './options';
 
 // mock 服务端的公共底座：内存里的快照仓库、事件总线、服务断连模拟、stepToken 核对与 mock 时钟。
-// 各业务流程（./flows/*）只经过这里读写快照：每份存进去的快照都带上服务端投影（盘点计数、「本次已归入」的条数与金额），
+// 各业务流程（./flows/*）只经过这里读写快照：每份存进去的快照都带上服务端投影（盘点计数、「本次已归入」的条数与金额、此刻接受的动作），
 // 并过 schema 校验（失败即抛出）。
 
 const EMIT_DELAY_MS = 20;
@@ -47,8 +48,6 @@ export type MockBus = {
   // 读任务列表前调用：service-disconnected 下触发断连；断开期间返回 false。
   listReachable(): boolean;
   isConnected(): boolean;
-  // 名称仍由服务端生成的任务（经 createTask 新建的）：盘点结束时按材料日期与城市改名。夹具任务的名称是既定的，不改。
-  readonly autoNamed: Set<string>;
   // The task owner's project options are added to its assignment snapshot. The mock project-book service supplies the
   // list; until it is wired, the bus uses the default fixture list.
   projectAllowList(taskId: string): ProjectOption[];
@@ -89,7 +88,7 @@ export function createBus(options: MockOptions): MockBus {
 
   const put = (snapshot: TaskSnapshot, advanceRevision = false) => {
     const next = advanceRevision ? { ...snapshot, revision: snapshot.revision + 1 } : snapshot;
-    snapshots.set(next.task.taskId, TaskSnapshotSchema.parse(withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(next)))));
+    snapshots.set(next.task.taskId, TaskSnapshotSchema.parse(withAllowedActions(withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(next))))));
   };
 
   // 断开期间事件流不送达（恢复后页面会重新拉取快照）。
@@ -163,7 +162,6 @@ export function createBus(options: MockOptions): MockBus {
       return connected;
     },
     isConnected: () => connected,
-    autoNamed: new Set<string>(),
     projectAllowList: (taskId) => allowListSource(taskId),
     useProjectAllowList(source) {
       allowListSource = source;

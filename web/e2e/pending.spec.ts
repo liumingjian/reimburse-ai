@@ -14,8 +14,8 @@ const save = (page: Page) => detail(page).getByRole('button', { name: '保存并
 test('左右分栏：原件预览随选中项切换，夹具文件能从 dist-mock/fixtures 打开', async ({ page }, testInfo) => {
   await page.goto(open('?seed=pending', '#/task/T1/pending'));
   await expect(page.getByRole('heading', { name: '待确认项' })).toBeVisible();
-  await expect(page.getByText('对照原件补填或作出选择。还剩 3 个。')).toBeVisible();
-  await expect(list(page).getByRole('button')).toHaveCount(3);
+  await expect(page.getByText('对照原件补填或作出选择。还剩 4 个。')).toBeVisible();
+  await expect(list(page).getByRole('button')).toHaveCount(4);
 
   const photo = detail(page).getByRole('img', { name: 'IMG_4871.jpg 原件' });
   await expect(photo).toHaveAttribute('src', 'fixtures/m09-taxi-photo.jpg');
@@ -160,7 +160,7 @@ test('保存一项后：该行变淡并带「已处理」标签，页面上不�
   await detail(page).getByLabel('起点 *').fill('张江高科');
   await detail(page).getByLabel('终点 *').fill('漕河泾开发区');
   await save(page).click();
-  await expect(page.getByText('还剩 2 个')).toBeVisible();
+  await expect(page.getByText('还剩 3 个')).toBeVisible();
   await expect(item(page, '补填起点与终点').getByText('已处理', { exact: true })).toBeVisible();
   await expect(item(page, '下车时间不合法').getByText('已处理', { exact: true })).toHaveCount(0);
   expect(await titleColor('补填起点与终点')).not.toBe(openColor);
@@ -179,7 +179,7 @@ test('表单校验：必填与 HH:MM 格式阻止非法值', async ({ page }) =>
   await detail(page).getByLabel('终点 *').fill('虹桥枢纽');
   await save(page).click();
   await expect(detail(page).getByRole('alert').filter({ hasText: /\S/ })).toHaveText('格式应为 HH:MM，且小时 00-23、分钟 00-59。');
-  await expect(page.getByText('还剩 3 个')).toBeVisible();
+  await expect(page.getByText('还剩 4 个')).toBeVisible();
 });
 
 test('补填与排除：全部处理完显示没有待确认项了，并能进入整单明细确认', async ({ page }, testInfo) => {
@@ -189,7 +189,7 @@ test('补填与排除：全部处理完显示没有待确认项了，并能进�
   await save(page).click();
   await expect(detail(page).getByRole('heading', { name: '下车时间不合法，并补填起点与终点' })).toBeVisible();
   await expect(item(page, '补填起点与终点')).toContainText('已处理');
-  await expect(page.getByText('还剩 2 个')).toBeVisible();
+  await expect(page.getByText('还剩 3 个')).toBeVisible();
 
   await detail(page).getByLabel('下车时间 *').fill('19:06');
   await detail(page).getByLabel('起点 *').fill('静安寺');
@@ -198,6 +198,9 @@ test('补填与排除：全部处理完显示没有待确认项了，并能进�
   await expect(detail(page).getByRole('heading', { name: '不支持的材料类型' })).toBeVisible();
 
   await detail(page).getByRole('button', { name: '排除此材料' }).click();
+  // 住宿发票还没有支付截图（#213）：确认没有。
+  await expect(detail(page).getByRole('heading', { name: '住宿发票「全季酒店_发票.pdf」缺少支付截图' })).toBeVisible();
+  await detail(page).getByRole('button', { name: '确认没有支付截图' }).click();
   await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('pending-empty.png'), fullPage: true });
   // 待确认项之后是项目归属（整单确认在项目归属之后）。
@@ -213,7 +216,7 @@ test('自行手工处理同样推进', async ({ page }) => {
   await page.goto(open('?seed=pending', '#/task/T1/pending'));
   await item(page, '不支持的材料类型').click();
   await detail(page).getByRole('button', { name: '自行手工处理' }).click();
-  await expect(page.getByText('还剩 2 个')).toBeVisible();
+  await expect(page.getByText('还剩 3 个')).toBeVisible();
   await expect(item(page, '不支持的材料类型')).toContainText('已处理');
 });
 
@@ -225,9 +228,9 @@ test('?seed=review：待确认项页直接是空状态', async ({ page }) => {
 
 test('?fault=unsupported-material：多出的不支持材料也能排除', async ({ page }) => {
   await page.goto(open('?seed=pending&fault=unsupported-material', '#/task/T1/pending'));
-  await expect(page.getByText('还剩 4 个')).toBeVisible();
+  await expect(page.getByText('还剩 5 个')).toBeVisible();
   await itemByFile(page, '曹操出行_行程单').click();
   await expect(detail(page).locator('iframe[title="曹操出行_行程单.pdf 原件"]')).toHaveAttribute('src', 'fixtures/m06-caocao-itinerary.pdf');
   await detail(page).getByRole('button', { name: '排除此材料' }).click();
-  await expect(page.getByText('还剩 3 个')).toBeVisible();
+  await expect(page.getByText('还剩 4 个')).toBeVisible();
 });

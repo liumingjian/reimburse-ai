@@ -1,33 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { KINDS } from './parse/kinds';
+import { KINDS } from './kind-policy';
 import { COMPANY_RULES, deriveCategory } from './rules/company-rules';
-import { api, byFileName, fieldValues, sample } from './test/api';
-import { createTestServer, type TestClient, type TestServer } from './test/harness';
+import { byFileName, fieldValues, sample } from './test/api';
+import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
-// Slice 07 (#186): 出租车车费发票 (taxi receipt) photos, straightened and read by the in-process OCR, through the real
-// parse worker_thread and the `taxi_receipt/machine_printed` layout.
+// Slice 07 (#186): taxi receipt (出租车车费发票) photos and the `taxi_receipt/machine_printed` layout, through
+// `app.request()`. The photos replay their preset parse outcomes (what the in-process OCR read from them, re-checked
+// against the real parser by test/parse-presets.test.ts), so the test waits on no OCR.
 
-let server: TestServer;
-let signedIn: TestClient;
+let server: ScenarioServer;
 beforeEach(async () => {
-  server = await createTestServer();
-  signedIn = await server.signIn();
+  server = await scenarioServer();
 });
 afterEach(() => server.close());
-const client = api(() => signedIn);
 
 const TAXI = 'rule:taxi_receipt/machine_printed';
 
-async function inventoried(prefixes: readonly string[]) {
-  const { task } = await client.createTask();
-  const uploaded = await client.upload(task.taskId, prefixes.map(sample));
-  await client.accepted(await client.act(uploaded, 'start-inventory'));
-  return client.settled(task.taskId, 120_000);
-}
-
 describe('the taxi_receipt/machine_printed layout on generated photos', () => {
   it('reads amount, date and invoice code from m09 and m10', async () => {
-    const snapshot = await inventoried(['m09', 'm10']);
+    const { reached: snapshot } = await scenario(server).at('project', { materials: ['m09', 'm10'] });
 
     const m09 = byFileName(snapshot, sample('m09').name);
     expect(m09).toMatchObject({ kind: 'taxi_receipt', layout: 'machine_printed', role: 'primary_voucher', status: 'ok' });
@@ -46,7 +37,7 @@ describe('the taxi_receipt/machine_printed layout on generated photos', () => {
     // Every candidate on a photo is OCR'd, so every one is correctable.
     expect(m09.fields.length).toBeGreaterThan(0);
     expect(m09.fields.every((field) => field.editClass === 'fact_correctable')).toBe(true);
-  }, 180_000);
+  });
 });
 
 describe('taxi_receipt kind hooks', () => {
