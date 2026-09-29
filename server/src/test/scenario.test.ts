@@ -20,7 +20,8 @@ describe('scenario builder', () => {
   });
 
   it("keeps a scene's ERP scripts to its own task, even when the scene stopped before fill ERP (去报销)", async () => {
-    const early = await scenario(server).at('review', { erp: loginWall });
+    // Another invoice than the later scene's default one: a second task may not hold the same invoice (invoice occupancy, 发票占用).
+    const early = await scenario(server).at('review', { materials: ['m07'], erp: loginWall });
     const later = await scenario(server).at('done');
     expect(later.reached.stage).toBe('done');
 
