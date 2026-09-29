@@ -1,31 +1,32 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { inlineExecutor, type ParseExecutor } from './parse/executor';
-import { api, byFileName, sample, type Upload } from './test/api';
-import { createTestServer, type TestClient, type TestServer } from './test/harness';
+import { api, byFileName, sample } from './test/api';
+import type { TestClient, TestServerOptions } from './test/harness';
+import { presetParser } from './test/parse-presets';
+import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // Slice 05 (#184) through `app.request()`: rail e-tickets, a ride-hailing invoice paired with its 高德 itinerary, and
 // 逐段分摊 (per-leg allocation) — one candidate line per leg when the itinerary conserves to the cent, an allocation
-// 待确认项 when it does not.
+// 待确认项 when it does not. Samples replay their preset parse outcomes; the r2xx regression fixtures parse for real.
 
-let server: TestServer;
+let server: ScenarioServer;
 let signedIn: TestClient;
-beforeEach(async () => {
-  server = await createTestServer({ parser: inlineExecutor() });
+async function boot(options: TestServerOptions = {}) {
+  server = await scenarioServer(options);
   signedIn = await server.signIn();
-});
+}
+beforeEach(() => boot());
 afterEach(() => server.close());
 const client = api(() => signedIn);
 
-async function inventoried(files: readonly Upload[]) {
-  const { task } = await client.createTask();
-  const uploaded = await client.upload(task.taskId, files);
-  await client.accepted(await client.act(uploaded, 'start-inventory'));
-  return client.settled(task.taskId);
+async function rebooted(options: TestServerOptions) {
+  await server.close();
+  await boot(options);
 }
 
-// The real parser, except that one leg amount of the 高德 itinerary reads differently: its legs no longer conserve.
+// The preset parser, except that one leg amount of the 高德 itinerary reads differently: its legs no longer conserve.
 function skewedItinerary(key: string, value: string): ParseExecutor {
-  const inner = inlineExecutor();
+  const inner = presetParser();
   return {
     close: inner.close,
     async parse(input) {
@@ -38,7 +39,7 @@ function skewedItinerary(key: string, value: string): ParseExecutor {
 
 describe('rail e-tickets', () => {
   it('m07 and m08 each form one long-distance line: travel date, route, net = fare, tax 0', async () => {
-    const snapshot = await inventoried([sample('m07'), sample('m08')]);
+    const { reached: snapshot } = await scenario(server, signedIn).at('project', { materials: ['m07', 'm08'] });
     const [outbound, back] = [byFileName(snapshot, sample('m07').name), byFileName(snapshot, sample('m08').name)];
     expect(outbound).toMatchObject({ kind: 'rail_ticket', layout: '12306', kindLabel: '铁路电子客票', categoryLabel: '长途交通', role: 'primary_voucher', status: 'ok' });
     expect(snapshot.pendingItems).toEqual([]);
@@ -52,7 +53,7 @@ describe('rail e-tickets', () => {
 
 describe('ride-hailing invoice + 高德 itinerary', () => {
   it('a conserving itinerary gives one line per leg; net and tax split by the invoice ratio and conserve', async () => {
-    const snapshot = await inventoried([sample('m03'), sample('m04')]);
+    const { reached: snapshot } = await scenario(server, signedIn).at('project', { materials: ['m03', 'm04'] });
     const invoice = byFileName(snapshot, sample('m03').name);
     const itinerary = byFileName(snapshot, sample('m04').name);
     expect(itinerary).toMatchObject({ kind: 'ride_itinerary', layout: 'amap', kindLabel: '高德行程单', role: 'reference', status: 'ok', linkedMaterialIds: [invoice.materialId] });
@@ -80,10 +81,8 @@ describe('ride-hailing invoice + 高德 itinerary', () => {
   });
 
   it('legs that do not conserve raise one allocation 待确认项 and form no line for that invoice', async () => {
-    await server.close();
-    server = await createTestServer({ parser: skewedItinerary('segments[2].amount', '21.66') });
-    signedIn = await server.signIn();
-    const snapshot = await inventoried([sample('m03'), sample('m04'), sample('m07')]);
+    await rebooted({ parser: skewedItinerary('segments[2].amount', '21.66') });
+    const { reached: snapshot } = await scenario(server, signedIn).at('pending', { materials: ['m03', 'm04', 'm07'] });
     const invoice = byFileName(snapshot, sample('m03').name);
     const itinerary = byFileName(snapshot, sample('m04').name);
 
@@ -120,10 +119,8 @@ describe('ride-hailing invoice + 高德 itinerary', () => {
 
   describe('answering the allocation item (#187 answers into the #184 split)', () => {
     async function skewed() {
-      await server.close();
-      server = await createTestServer({ parser: skewedItinerary('segments[2].amount', '21.66') });
-      signedIn = await server.signIn();
-      const snapshot = await inventoried([sample('m03'), sample('m04')]);
+      await rebooted({ parser: skewedItinerary('segments[2].amount', '21.66') });
+      const { reached: snapshot } = await scenario(server, signedIn).at('pending', { materials: ['m03', 'm04'] });
       return { snapshot, invoice: byFileName(snapshot, sample('m03').name), itinerary: byFileName(snapshot, sample('m04').name) };
     }
 
@@ -136,7 +133,7 @@ describe('ride-hailing invoice + 高德 itinerary', () => {
       expect(wrong.status).toBe(400);
       expect(((await wrong.json()) as { error: { code: string } }).error.code).toBe('allocation_not_conserved');
 
-      const fresh = await client.settled(snapshot.task.taskId);
+      const fresh = await client.current(snapshot.task.taskId);
       const done = await client.accepted(await client.act(fresh, 'answer-pending', { itemId, answer: { amounts: ['30.00', '20.00', '19.19'] } }));
       expect(done.pendingItems).toEqual([]);
       expect(done.lines.map((l) => [l.lineId, l.grossAmount])).toEqual([
@@ -178,7 +175,8 @@ describe('ride-hailing invoice + 高德 itinerary', () => {
   // no city at all. The itinerary's two legs sit in two cities, so the same invoice must also split into one 本地 and
   // one 外地 line rather than blocking on the ambiguity.
   it('a *交通运输服务* invoice pairs too, and legs in two cities give one 本地 and one 外地 line', async () => {
-    const snapshot = await inventoried([sample('r206'), sample('r209')]);
+    await rebooted({ parser: inlineExecutor() });
+    const { reached: snapshot } = await scenario(server, signedIn).at('project', { materials: ['r206', 'r209'] });
     const invoice = byFileName(snapshot, sample('r206').name);
     const itinerary = byFileName(snapshot, sample('r209').name);
     expect(invoice).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', role: 'primary_voucher', status: 'ok', categoryLabel: '市内交通', linkedMaterialIds: [itinerary.materialId] });
@@ -198,15 +196,13 @@ describe('ride-hailing invoice + 高德 itinerary', () => {
   });
 
   it('an invoice without an itinerary has no expense city and waits on category_city_missing; an itinerary without its invoice links nothing', async () => {
-    const alone = await inventoried([sample('m03')]);
+    const { reached: alone } = await scenario(server, signedIn).at('pending', { materials: ['m03'] });
     const invoice = byFileName(alone, sample('m03').name);
     expect(alone.pendingItems.map((item) => item.itemId)).toEqual([`category_city_missing.${invoice.materialId}`]);
     expect(alone.lines).toEqual([]);
 
-    await server.close();
-    server = await createTestServer({ parser: inlineExecutor() });
-    signedIn = await server.signIn();
-    const orphan = await inventoried([sample('m04'), sample('m05')]);
+    await rebooted({});
+    const { reached: orphan } = await scenario(server, signedIn).at('pending', { materials: ['m04', 'm05'] });
     const itinerary = byFileName(orphan, sample('m04').name);
     expect(itinerary).toMatchObject({ role: 'reference', status: 'ok', linkedMaterialIds: [], checkText: expect.stringContaining('没有对上') });
     const m05 = byFileName(orphan, sample('m05').name);

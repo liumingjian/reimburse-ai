@@ -1,22 +1,21 @@
-import { PROJECT_BOOK_NOTES, ProjectBookResultSchema, ProjectBookSchema, type TaskSnapshot } from '@baox/contract';
+import { PROJECT_BOOK_NOTES, ProjectBookResultSchema, ProjectBookSchema } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { api, sample } from './test/api';
-import { createTestServer, type TestClient, type TestServer } from './test/harness';
+import { api } from './test/api';
+import type { TestClient } from './test/harness';
+import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
-let server: TestServer;
+let server: ScenarioServer;
 let admin: TestClient;
 let bob: TestClient;
 
 beforeEach(async () => {
-  server = await createTestServer();
+  server = await scenarioServer();
   admin = await server.signIn('admin');
   bob = await server.signIn('bob');
 });
 afterEach(() => server.close());
 
 const asBob = api(() => bob);
-const hotel = sample('m01');
-const rail = sample('m07');
 
 async function intake(client: TestClient, path: '/api/project-book/intake' | '/api/public-project-book/intake', input: { number: string; name: string }) {
   const response = await client.post(path, input);
@@ -24,12 +23,8 @@ async function intake(client: TestClient, path: '/api/project-book/intake' | '/a
   return ProjectBookResultSchema.parse(await response.json());
 }
 
-async function inventoried(): Promise<TaskSnapshot> {
-  const { task } = await asBob.createTask('杭州');
-  const uploaded = await asBob.upload(task.taskId, [hotel, rail]);
-  await asBob.accepted(await asBob.act(uploaded, 'start-inventory'));
-  return asBob.withoutStayGaps(await asBob.settled(task.taskId));
-}
+// Hotel e-invoice + rail ticket inventoried (住宿 trio answered 确认没有), with the project book exactly as the test left it.
+const INVENTORIED = { materials: ['m01', 'm07'], projectBook: 'as_is' } as const;
 
 describe('offline public intake', () => {
   it('is administrator-only, while every signed-in member can read the complete public book', async () => {
@@ -80,7 +75,7 @@ describe('offline public intake', () => {
 
 describe('public availability', () => {
   it('refreshes an open member task so the newly admitted public entry is assignable', async () => {
-    const start = await inventoried();
+    const start = (await scenario(server, bob).at('project', INVENTORIED)).reached;
     expect(start.step.kind).toBe('maintain_project_book');
 
     await intake(admin, '/api/public-project-book/intake', { number: 'PUB-OPEN', name: '打开任务也可用' });
@@ -107,7 +102,7 @@ describe('public availability', () => {
       ])
       .execute();
 
-    const start = await inventoried();
+    const start = (await scenario(server, bob).at('project', INVENTORIED)).reached;
     expect(start.projectAssignment.projects).toEqual([{ number: 'LEGACY-1', name: '旧公共名称', source: 'public' }]);
     expect(await server.db.selectFrom('project_book_event').select(['scope', 'number']).where('number', '=', 'LEGACY-1').orderBy('seq').execute()).toEqual([
       { scope: 'personal', number: 'LEGACY-1' },
@@ -117,7 +112,7 @@ describe('public availability', () => {
 
   it('does not silently reinterpret a personal draft as public when a legacy collision becomes visible', async () => {
     await intake(bob, '/api/project-book/intake', { number: 'PIVOT-1', name: '个人草稿名称' });
-    const start = await inventoried();
+    const start = (await scenario(server, bob).at('project', INVENTORIED)).reached;
     const lineId = start.lines[0]?.lineId;
     if (!lineId) throw new Error('expected an inventoried line');
     await asBob.accepted(await asBob.act(start, 'assign-project-lines', { lineIds: [lineId], projectNumber: 'PIVOT-1', onlyUnassigned: false }));

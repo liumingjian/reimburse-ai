@@ -1,4 +1,4 @@
-import { ERP_ACTION_ERRORS, EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionPairingSchema, ExtensionTokenSchema, type ChannelMessage, type TaskSnapshot } from '@baox/contract';
+import { ERP_ACTION_ERRORS, EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionPairingSchema, ExtensionTokenSchema, type ChannelMessage } from '@baox/contract';
 import { stageInPage } from '@baox/erp-executor/invoice-files';
 import { runFillJob } from '@baox/erp-executor/job';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, ResultEvent } from '@baox/erp-executor/protocol';
@@ -11,24 +11,24 @@ import { createErpRunner } from '@baox/extension/erp-runner';
 import { dedicatedErpTab } from '@baox/extension/erp-tab';
 import { fakeChrome } from '@baox/extension/testing/fake-chrome';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fixtureCatalog } from './catalog/project-catalog';
 import { catalogMismatch, loginWall, noFormOpen, TEST_ERP_ACCOUNT, uncertainSave } from './erp/testing/fake-executor';
 import { fakeExtension, type FakeExtension, type FillRunner, type ReconcileRunner } from './erp/testing/fake-extension';
-import { COMPATIBILITY, ERP_ACCOUNT, ERP_ORIGIN, FAST_PACE, fakeErpOptions } from './erp/testing/scenario';
-import { api, sample } from './test/api';
+import { COMPATIBILITY, ERP_ACCOUNT, ERP_ORIGIN, FAST_PACE } from './erp/testing/scenario';
 import { BACKSTOP_MS } from './test/deadlines';
-import { createTestServer, type TestClient, type TestServer } from './test/harness';
+import type { TestClient } from './test/harness';
+import { scenario, scenarioServer, type Scene, type ScenarioServer } from './test/scenario';
+import { fakeErpFor, SCENE_RECEIPT_NUMBER } from './test/scene-erp';
 import { manualTimers } from './test/timers';
 
 // #254: the server drives an executor in the 应用账号's paired 浏览器扩展 over its channel (spec #246 seam 2). No
 // executor is passed to the app, so every job goes to the extension, as in production; a fake extension client runs the
 // executor on its side of the wire. The judgement, the attempt discipline and the lease stay the server's.
+// The job's event journal (erp_job_event), its 动作尝试 (erp_attempt) and erp_job rows are read from the database: the
+// snapshot shows the job's outcome, not the record these tests are about.
 
-const CATALOG = fixtureCatalog([{ number: 'P-2307', name: '华东客户交付', audited: true, forbidden: false }]);
-const RECEIPT_NUMBER = 'SPD202609150001';
 const EXTENSION_ORIGIN = 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih';
 
-let server: TestServer;
+let server: ScenarioServer;
 let alice: TestClient;
 let fakeOptions: FakeErpOptions;
 let fake: FakeErp | null = null;
@@ -38,12 +38,10 @@ let timers: ReturnType<typeof manualTimers>;
 beforeEach(async () => {
   fake = null;
   timers = manualTimers();
-  server = await createTestServer({ projectCatalog: CATALOG, erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, schedule: timers.schedule });
+  server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, schedule: timers.schedule });
   alice = await server.signIn('alice');
-  expect((await alice.post('/api/project-book/intake', { number: 'P-2307', name: '华东客户交付' })).status).toBe(200);
 });
 afterEach(() => server.close());
-const client = api(() => alice);
 
 async function pair(owner: TestClient): Promise<string> {
   const issued = ExtensionPairingSchema.parse(await (await owner.post('/api/extension/pairing/code', {})).json());
@@ -69,42 +67,11 @@ const realExecutor = (token: string): FillRunner => async (plan, channel) => {
   return runFillJob(plan, { browser: fake.browser, blobs, staging: stageInPage, channel, pace: FAST_PACE, probeWaitMs: 0 });
 };
 
-// Hotel e-invoice + folio on P-2307, confirmed; the fake ERP knows the invoice by its bytes and face amounts.
-async function confirmed(): Promise<TaskSnapshot> {
-  const invoice = sample('m01');
-  const { task } = await client.createTask('杭州');
-  const uploaded = await client.upload(task.taskId, [invoice, sample('m02')]);
-  await client.accepted(await client.act(uploaded, 'start-inventory'));
-  const done = await client.withoutStayGaps(await client.settled(task.taskId));
-  const review = await client.accepted(await client.act(done, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
-  const ready = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
-  const [line] = ready.lines;
-  if (!line) throw new Error('expected one line');
-  const face = Object.fromEntries(ready.materials.find((m) => m.materialId === line.voucherMaterialId)!.fields.map((field) => [field.key, field.value]));
-  fakeOptions = fakeErpOptions({
-    invoices: [{ bytes: new Uint8Array(invoice.bytes), invoiceNumber: face['invoiceNumber']!, receiptNumber: RECEIPT_NUMBER, seller: face['sellerName'] ?? '全季酒店', issueDate: face['issueDate'] ?? line.date, net: line.netAmount, tax: line.taxAmount, gross: line.grossAmount, category: '全电普通发票' }],
-    projects: [{ code: 'P-2307', name: '华东客户交付' }],
-    expenseItems: [{ code: 'FY010001', name: '住宿' }],
-    assumeReceiptLink: true,
-  });
-  return ready;
-}
-
-// Waits until no ERP job of the task runs.
-async function settled(taskId: string): Promise<TaskSnapshot> {
-  const deadline = Date.now() + BACKSTOP_MS;
-  for (;;) {
-    const snapshot = await client.current(taskId);
-    if (snapshot.erp.status !== 'running' && snapshot.step.kind !== 'none') return snapshot;
-    if (snapshot.stage !== 'erp' && snapshot.stage !== 'reconcile') return snapshot;
-    if (Date.now() > deadline) throw new Error('ERP job still running');
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-}
-
-async function start(snapshot: TaskSnapshot): Promise<TaskSnapshot> {
-  await client.accepted(await client.act(snapshot, 'start-erp-write'));
-  return settled(snapshot.task.taskId);
+// The default scene at 去报销 (hotel e-invoice + folio on P-2307, confirmed), on a fake ERP that knows its invoice.
+async function actionsOnFakeErp(): Promise<Scene> {
+  const scene = await scenario(server, alice).at('actions');
+  fakeOptions = fakeErpFor(scene.reached, { assumeReceiptLink: true });
+  return scene;
 }
 
 // Waits until the running job is interrupted: its reconnection window is open.
@@ -149,15 +116,15 @@ describe('去报销 in the paired 浏览器扩展', () => {
     });
     const token = await pair(alice);
     const extension = await connected(token, { fill: (plan, channel, trigger) => realExecutor(token)(plan, watched(channel), trigger) });
-    const ready = await confirmed();
+    const scene = await actionsOnFakeErp();
 
-    const done = await start(ready);
+    const done = await scene.run('start-erp-write');
 
     expect(done.erp.abortReason, JSON.stringify(done.erp)).toBeNull();
     expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', erpAccount: ERP_ACCOUNT }, readback: { status: 'matched' } });
-    expect(extension.asked()).toEqual([{ method: EXECUTOR_METHODS.fill, payload: { trigger: 'start', plan: expect.objectContaining({ kind: 'fill', taskId: ready.task.taskId }) } }]);
+    expect(extension.asked()).toEqual([{ method: EXECUTOR_METHODS.fill, payload: { trigger: 'start', plan: expect.objectContaining({ kind: 'fill', taskId: scene.task.taskId }) } }]);
     // Every event the extension sent is on the job's record, in the order sent; the verdicts it acted on were the server's.
-    expect((await journal(ready.task.taskId)).map((event) => event.type)).toEqual(extension.sent().map((event) => event.type));
+    expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(extension.sent().map((event) => event.type));
     expect(new Set(extension.sent().map((event) => event.type))).toEqual(new Set(['step', 'attempt_started', 'readback', 'result']));
     // `attempt_started` was durable before its ack reached the extension, and the ack came before that action's write.
     expect(acks).toEqual([
@@ -172,23 +139,22 @@ describe('去报销 in the paired 浏览器扩展', () => {
     ['stops on a 报销信息核对 mismatch', catalogMismatch, 'catalog_mismatch', 'catalog_mismatch'],
   ] as const)('%s with the event the extension sent', async (_name, script, event, status) => {
     const extension = await connected(await pair(alice), { fill: (plan, channel) => script(plan, channel) });
-    const ready = await confirmed();
+    const scene = await actionsOnFakeErp();
 
-    await start(ready);
+    await scene.run('start-erp-write');
 
     expect(extension.sent().map((sent) => sent.type)).toContain(event);
-    expect((await journal(ready.task.taskId)).map((logged) => logged.type)).toEqual(extension.sent().map((sent) => sent.type));
-    expect((await resultsOf(ready.task.taskId)).map((result) => result.status)).toEqual([status]);
-    expect(await attemptsOf(ready.task.taskId)).toEqual([]);
+    expect((await journal(scene.task.taskId)).map((logged) => logged.type)).toEqual(extension.sent().map((sent) => sent.type));
+    expect((await resultsOf(scene.task.taskId)).map((result) => result.status)).toEqual([status]);
+    expect(await attemptsOf(scene.task.taskId)).toEqual([]);
   });
 
   it('runs the read-only 对账 in the extension too', async () => {
     const extension = await connected(await pair(alice), { fill: (plan, channel) => uncertainSave(plan, channel), reconcile: noFormOpen });
-    const unknown = await start(await confirmed());
-    expect(unknown).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
+    const scene = await actionsOnFakeErp();
+    expect(await scene.run('start-erp-write')).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
 
-    await client.accepted(await client.act(unknown, 'reconcile'));
-    const judged = await settled(unknown.task.taskId);
+    const judged = await scene.run('reconcile');
 
     expect(extension.asked().map((asked) => asked.method)).toEqual([EXECUTOR_METHODS.fill, EXECUTOR_METHODS.reconcile]);
     expect(judged).toMatchObject({ stage: 'reconcile', reconcile: { bucket: '未知' } });
@@ -200,30 +166,30 @@ describe('去报销 in the paired 浏览器扩展', () => {
     ['the paired extension is not connected', true, 'extension_offline', ERP_ACTION_ERRORS.extensionOffline],
   ])('refuses 去报销 before any job exists when %s, and points at the settings page', async (_case, paired, code, message) => {
     if (paired) await pair(alice);
-    const ready = await confirmed();
+    const scene = await actionsOnFakeErp();
 
-    const refused = await client.act(ready, 'start-erp-write');
+    const refused = await scene.act('start-erp-write');
 
     expect(refused.status).toBe(400);
     expect(await refused.json()).toMatchObject({ error: { code, message } });
     expect(message).toContain('设置页');
-    expect(await server.db.selectFrom('erp_job').select('job_id').where('task_id', '=', ready.task.taskId).execute()).toEqual([]);
+    expect(await server.db.selectFrom('erp_job').select('job_id').where('task_id', '=', scene.task.taskId).execute()).toEqual([]);
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
-    expect((await client.current(ready.task.taskId)).erp.status).toBe('idle');
+    expect((await scene.snapshot()).erp.status).toBe('idle');
   });
 
   it('still stops before anything is written when the socket goes between the check and the dispatch', async () => {
     await pair(alice);
-    const ready = await confirmed();
+    const scene = await actionsOnFakeErp();
     // The check sees a connection; by the time the plan is sent, there is none.
     vi.spyOn(server.app.extensionChannel, 'connected').mockReturnValue(true);
 
-    const stopped = await start(ready);
+    const stopped = await scene.run('start-erp-write');
 
     expect(stopped.erp.abortReason).toContain('浏览器扩展');
     expect(stopped.erp).toMatchObject({ status: 'idle', externalWait: 'extension_connection', outcome: 'none', allowedActions: ['refresh'] });
-    expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_offline' }]);
-    expect(await attemptsOf(ready.task.taskId)).toEqual([]);
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_offline' }]);
+    expect(await attemptsOf(scene.task.taskId)).toEqual([]);
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
 
@@ -245,16 +211,16 @@ describe('去报销 in the paired 浏览器扩展', () => {
     });
     const bob = await server.signIn('bob');
     const mallory = await connected(await pair(bob), {});
-    const ready = await confirmed();
-    await client.accepted(await client.act(ready, 'start-erp-write'));
+    const scene = await actionsOnFakeErp();
+    await scene.accept('start-erp-write');
     const jobId = await running;
 
     const spoken = mallory.request(EXECUTOR_METHODS.event, { jobId, event: { type: 'step', step: 'chromium', status: 'running' } });
 
     await expect(spoken).rejects.toMatchObject({ code: 'unknown_job' });
-    expect(await journal(ready.task.taskId)).toEqual([]);
+    expect(await journal(scene.task.taskId)).toEqual([]);
     release();
-    await settled(ready.task.taskId);
+    await scene.settled();
   });
 });
 
@@ -284,8 +250,8 @@ describe('an interrupted 去报销', () => {
     const token = await pair(alice);
     const { extension, plan } = droppedAfterOneStep(token);
     await extension.connect();
-    const ready = await confirmed();
-    await client.accepted(await client.act(ready, 'start-erp-write'));
+    const scene = await actionsOnFakeErp();
+    await scene.accept('start-erp-write');
     const { jobId } = await plan;
     await interrupted();
 
@@ -295,10 +261,10 @@ describe('an interrupted 去报销', () => {
     await wire.emit({ type: 'step', step: 'chromium', status: 'done' });
     await wire.emit({ type: 'waiting_login', hint: '请登录报销系统' });
     await wire.emit({ type: 'result', status: 'waiting_login', code: 'erp_login', message: '请登录报销系统', billNo: null, capture: null });
-    const paused = await settled(ready.task.taskId);
+    const paused = await scene.settled();
 
     expect(paused.erp.status).toBe('waiting_login');
-    expect((await journal(ready.task.taskId)).map((event) => event.type)).toEqual(['step', 'step', 'waiting_login', 'result']);
+    expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(['step', 'step', 'waiting_login', 'result']);
     // The plan went down once, to the first socket; the window closed with the resume.
     expect(back.asked()).toEqual([]);
     expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(0);
@@ -309,8 +275,8 @@ describe('an interrupted 去报销', () => {
     const token = await pair(alice);
     const { extension, plan } = droppedAfterOneStep(token);
     await extension.connect();
-    const ready = await confirmed();
-    await client.accepted(await client.act(ready, 'start-erp-write'));
+    const scene = await actionsOnFakeErp();
+    await scene.accept('start-erp-write');
     const { jobId } = await plan;
     await interrupted();
 
@@ -319,13 +285,13 @@ describe('an interrupted 去报销', () => {
     const other = { accountId: alice.account.accountId, taskId: 'her-other-task', jobId: 'her-other-job' };
     expect(server.erpLease.holder(alice.account.accountId)).toMatchObject({ jobId });
     expect(server.erpLease.acquire(other)).toBe(false);
-    expect((await client.current(ready.task.taskId)).erp.status).toBe('running');
+    expect((await scene.snapshot()).erp.status).toBe('running');
 
     windowCloses();
-    const stopped = await settled(ready.task.taskId);
+    const stopped = await scene.settled();
 
-    expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_reconnect_expired' }]);
-    expect(await attemptsOf(ready.task.taskId)).toEqual([]);
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_reconnect_expired' }]);
+    expect(await attemptsOf(scene.task.taskId)).toEqual([]);
     expect(stopped.erp.status).toBe('idle');
     expect(stopped.erp.abortReason).toBe('上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：浏览器扩展和报销系统页面之间的连接中断了，两分钟内没有恢复。');
     expect(server.erpLease.acquire(other)).toBe(true);
@@ -349,19 +315,19 @@ describe('an interrupted 去报销', () => {
         throw new Error('unreachable: an unacknowledged attempt is never followed by a write');
       },
     });
-    const ready = await confirmed();
-    await client.accepted(await client.act(ready, 'start-erp-write'));
+    const scene = await actionsOnFakeErp();
+    await scene.accept('start-erp-write');
     await interrupted();
 
     windowCloses();
-    const stopped = await settled(ready.task.taskId);
+    const stopped = await scene.settled();
 
     expect(mutated).toBe(false);
     expect(stopped).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
-    expect(await attemptsOf(ready.task.taskId)).toEqual([{ action: 'import' }]);
+    expect(await attemptsOf(scene.task.taskId)).toEqual([{ action: 'import' }]);
     // The result follows the attempt on record, and the server's guard made it 写入结果未知.
-    expect((await journal(ready.task.taskId)).map((event) => event.type)).toEqual(['step', 'attempt_started', 'result']);
-    expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'unknown', code: 'extension_reconnect_expired' }]);
+    expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(['step', 'attempt_started', 'result']);
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'unknown', code: 'extension_reconnect_expired' }]);
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
 
     // The extension comes back: nothing is re-sent to it.
@@ -375,22 +341,22 @@ describe('an interrupted 去报销', () => {
     const token = await pair(alice);
     const { extension, plan } = droppedAfterOneStep(token);
     await extension.connect();
-    const ready = await confirmed();
-    await client.accepted(await client.act(ready, 'start-erp-write'));
+    const scene = await actionsOnFakeErp();
+    await scene.accept('start-erp-write');
     const { jobId } = await plan;
     await interrupted();
     const back = await connected(token, {});
 
     // Acting first: refused, and nothing lands on the record.
     await expect(back.channel(jobId).emit({ type: 'step', step: 'navigate', status: 'running' })).rejects.toMatchObject({ code: 'resume_required' });
-    expect(await journal(ready.task.taskId)).toHaveLength(1);
+    expect(await journal(scene.task.taskId)).toHaveLength(1);
 
     // The 发票助手 was closed during the gap: it is one-shot, so the stream coming back says nothing about the page.
     const verdict = await back.resume(jobId, PAGE, { ...PAGE, assistant: 'closed' });
-    const stopped = await settled(ready.task.taskId);
+    const stopped = await scene.settled();
 
     expect(verdict).toEqual({ ok: false, reasons: ['发票助手的状态和中断前不一样'] });
-    expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'aborted', code: 'reobservation_mismatch' }]);
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'reobservation_mismatch' }]);
     expect(stopped.erp.abortReason).toContain('报销系统没有被改动，可以再去报销');
     await expect(back.channel(jobId).emit({ type: 'step', step: 'navigate', status: 'running' })).rejects.toMatchObject({ code: 'unknown_job' });
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
@@ -405,20 +371,20 @@ describe('an interrupted 去报销', () => {
         throw new Error('the channel is gone');
       },
     });
-    const ready = await confirmed();
-    await client.accepted(await client.act(ready, 'start-erp-write'));
+    const scene = await actionsOnFakeErp();
+    await scene.accept('start-erp-write');
     await interrupted();
-    const [attempt] = await server.db.selectFrom('erp_attempt').select('job_id').where('task_id', '=', ready.task.taskId).execute();
+    const [attempt] = await server.db.selectFrom('erp_attempt').select('job_id').where('task_id', '=', scene.task.taskId).execute();
 
     // Consistent before and after, but not the form the attempt was made on.
     const elsewhere: PageObservation = { ...PAGE, form: { ...PAGE.form!, formInstanceId: 'form-2' } };
     const back = await connected(token, {});
     const verdict = await back.resume(attempt!.job_id, elsewhere, elsewhere);
-    const stopped = await settled(ready.task.taskId);
+    const stopped = await scene.settled();
 
     expect(verdict).toEqual({ ok: false, reasons: ['打开的报销单不是这次写入的那一张'] });
     expect(stopped).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
-    expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'unknown', code: 'reobservation_mismatch' }]);
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'unknown', code: 'reobservation_mismatch' }]);
   });
 
   it('replays nothing across a resume: every event is on record once, and the plan is never asked again', async () => {
@@ -434,8 +400,8 @@ describe('an interrupted 去报销', () => {
         throw new Error('unreachable: the ack went with the socket');
       },
     });
-    const ready = await confirmed();
-    await client.accepted(await client.act(ready, 'start-erp-write'));
+    const scene = await actionsOnFakeErp();
+    await scene.accept('start-erp-write');
     await interrupted();
 
     const back = await connected(token, {});
@@ -447,10 +413,10 @@ describe('an interrupted 去报销', () => {
     await expect(wire.emit(attemptStarted(jobPlan))).rejects.toBeDefined();
     await wire.emit({ type: 'step', step: 'import', status: 'done' });
     await wire.emit({ type: 'result', status: 'aborted', code: 'test_stop', message: '测试到此为止', billNo: null, capture: null });
-    await settled(ready.task.taskId);
+    await scene.settled();
 
-    expect((await journal(ready.task.taskId)).map((event) => event.type)).toEqual(['step', 'attempt_started', 'step', 'result']);
-    expect(await attemptsOf(ready.task.taskId)).toEqual([{ action: 'import' }]);
+    expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(['step', 'attempt_started', 'step', 'result']);
+    expect(await attemptsOf(scene.task.taskId)).toEqual([{ action: 'import' }]);
     expect(extension.asked().map((asked) => asked.method)).toEqual([EXECUTOR_METHODS.fill]);
     expect(back.asked()).toEqual([]);
   });
@@ -467,12 +433,12 @@ describe('an interrupted 去报销', () => {
           return loginWall(plan, channel);
         },
       });
-      const ready = await confirmed();
+      const scene = await actionsOnFakeErp();
 
-      const paused = await start(ready);
+      const paused = await scene.run('start-erp-write');
 
       expect(paused.erp.status).toBe('waiting_login');
-      expect((await journal(ready.task.taskId)).map((event) => event.type)).toEqual(['step', ...extension.sent().slice(2).map((event) => event.type)]);
+      expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(['step', ...extension.sent().slice(2).map((event) => event.type)]);
       expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(0);
     });
 
@@ -486,15 +452,15 @@ describe('an interrupted 去报销', () => {
           throw new Error('Debugger is not attached to the tab');
         },
       });
-      const ready = await confirmed();
-      await client.accepted(await client.act(ready, 'start-erp-write'));
+      const scene = await actionsOnFakeErp();
+      await scene.accept('start-erp-write');
       await interrupted();
       expect(server.erpLease.holder(alice.account.accountId)).not.toBeNull();
 
       windowCloses();
-      const stopped = await settled(ready.task.taskId);
+      const stopped = await scene.settled();
 
-      expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_reconnect_expired' }]);
+      expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_reconnect_expired' }]);
       expect(stopped.erp.abortReason).toContain('报销系统没有被改动，可以再去报销');
       expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
     });
@@ -574,7 +540,7 @@ describe('the real 浏览器扩展 across an interruption', () => {
 
   it('resumes after the socket drops under the import attempt’s answer, and hands the form over with nothing replayed', async () => {
     const token = await pair(alice);
-    const ready = await confirmed();
+    const scene = await actionsOnFakeErp();
     let cutOnce = false;
     const extension = await realExtension(token, {
       cut: (message, sent) => {
@@ -584,7 +550,7 @@ describe('the real 浏览器扩展 across an interruption', () => {
       },
     });
 
-    const done = await start(ready);
+    const done = await scene.run('start-erp-write');
 
     expect(cutOnce).toBe(true);
     expect(done.erp.abortReason, JSON.stringify(done.erp)).toBeNull();
@@ -593,8 +559,8 @@ describe('the real 浏览器扩展 across an interruption', () => {
     expect(extension.asked().filter((method) => method === EXECUTOR_METHODS.resume)).toHaveLength(1);
     // One attempt per action went out, the one whose answer was lost included; nothing is on record twice.
     expect(extension.asked().filter((type) => type === 'attempt_started')).toHaveLength(2);
-    expect(await attemptsOf(ready.task.taskId)).toEqual([{ action: 'import' }, { action: 'fill' }]);
-    expect(await onceEach(ready.task.taskId)).toBe(true);
+    expect(await attemptsOf(scene.task.taskId)).toEqual([{ action: 'import' }, { action: 'fill' }]);
+    expect(await onceEach(scene.task.taskId)).toBe(true);
     expect(fake!.mutations.filter((mutation) => mutation.kind === 'import')).toHaveLength(1);
     expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(0);
     extension.stop();
@@ -602,7 +568,7 @@ describe('the real 浏览器扩展 across an interruption', () => {
 
   it('resumes after the debugger banner is cancelled between commands, in the same tab', async () => {
     const token = await pair(alice);
-    const ready = await confirmed();
+    const scene = await actionsOnFakeErp();
     const extension = await realExtension(token, {
       // Cancelled while the executor waits for the app to take `step navigate running`: no command is under way.
       delivered: (message, detach) => {
@@ -611,13 +577,13 @@ describe('the real 浏览器扩展 across an interruption', () => {
       },
     });
 
-    const done = await start(ready);
+    const done = await scene.run('start-erp-write');
 
     expect(done.erp.abortReason, JSON.stringify(done.erp)).toBeNull();
     expect(done).toMatchObject({ stage: 'done', erp: { status: 'done' } });
     const asked = extension.asked();
     expect(asked.indexOf(EXECUTOR_METHODS.detached)).toBeLessThan(asked.indexOf(EXECUTOR_METHODS.resume));
-    expect(await onceEach(ready.task.taskId)).toBe(true);
+    expect(await onceEach(scene.task.taskId)).toBe(true);
     const tab = extension.chrome.jobTab()!.id;
     expect(extension.chrome.attached).toEqual([{ tabId: tab }, { tabId: tab }]);
     extension.stop();
@@ -625,7 +591,7 @@ describe('the real 浏览器扩展 across an interruption', () => {
 
   it('goes to 对账 when the banner is cancelled under the import click, having resumed without carrying on', async () => {
     const token = await pair(alice);
-    const ready = await confirmed();
+    const scene = await actionsOnFakeErp();
     const extension = await realExtension(token, {
       debuggerApi: (api, detach, asked) => {
         let armed = true;
@@ -641,12 +607,12 @@ describe('the real 浏览器扩展 across an interruption', () => {
       },
     });
 
-    const stopped = await start(ready);
+    const stopped = await scene.run('start-erp-write');
 
     expect(extension.asked().slice(-3)).toEqual([EXECUTOR_METHODS.detached, EXECUTOR_METHODS.resume, 'result']);
     expect(stopped).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
-    expect(await resultsOf(ready.task.taskId)).toMatchObject([{ status: 'unknown', code: 'debugger_detached_mid_command' }]);
-    expect(await attemptsOf(ready.task.taskId)).toEqual([{ action: 'import' }]);
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'unknown', code: 'debugger_detached_mid_command' }]);
+    expect(await attemptsOf(scene.task.taskId)).toEqual([{ action: 'import' }]);
     expect(fake!.mutations).toEqual([]);
     extension.stop();
   });

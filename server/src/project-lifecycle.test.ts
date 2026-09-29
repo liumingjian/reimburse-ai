@@ -1,22 +1,22 @@
-import { ProjectBookResultSchema, ProjectBookSchema, type TaskSnapshot } from '@baox/contract';
+import { ProjectBookResultSchema, ProjectBookSchema } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fixtureCatalog } from './catalog/project-catalog';
 import { databasePath } from './data-dir';
-import { inlineExecutor } from './parse/executor';
-import { api, sample } from './test/api';
-import { createTestServer, tempDataDir, testClient, type TestClient, type TestServer } from './test/harness';
+import { api } from './test/api';
+import { createTestServer, tempDataDir, testClient, type TestClient } from './test/harness';
+import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // Lifecycle facts use the same authenticated HTTP boundary as intake. The fixture starts with an administrator and a
 // regular member so public authorization is exercised without exposing another member's data.
 
-let server: TestServer;
+let server: ScenarioServer;
 let admin: TestClient;
 let member: TestClient;
 
 const CATALOG = fixtureCatalog([{ number: 'TASK-LIFE', name: '任务生命周期项目', audited: true, forbidden: false }]);
 
 beforeEach(async () => {
-  server = await createTestServer({ projectCatalog: CATALOG, parser: inlineExecutor() });
+  server = await scenarioServer({ projectCatalog: CATALOG });
   admin = await server.signIn('admin');
   member = await server.signIn('member');
 });
@@ -33,12 +33,8 @@ async function book(client: TestClient, path: string, input: { number: string; n
 
 const memberApi = api(() => member);
 
-async function inventoried(): Promise<TaskSnapshot> {
-  const { task } = await memberApi.createTask('杭州');
-  const uploaded = await memberApi.upload(task.taskId, [sample('m01'), sample('m07')]);
-  await memberApi.accepted(await memberApi.act(uploaded, 'start-inventory'));
-  return memberApi.withoutStayGaps(await memberApi.settled(task.taskId));
-}
+// Hotel e-invoice + rail ticket inventoried (住宿 trio answered 确认没有), with the project book exactly as the test left it.
+const INVENTORIED = { materials: ['m01', 'm07'], projectBook: 'as_is' } as const;
 
 describe('personal project lifecycle', () => {
   it('keeps the entry, rejects duplicate intake, and appends distinct deactivation and restoration facts', async () => {
@@ -104,7 +100,7 @@ describe('personal project lifecycle', () => {
 
   it.each(['deactivate', 'delete'] as const)('refreshes open assignment work, refuses fresh inactive assignments, and preserves submitted pins after %s', async (action) => {
     await book(member, '/api/project-book/intake', { number: 'TASK-LIFE', name: '任务生命周期项目' });
-    const start = await inventoried();
+    const start = (await scenario(server, member).at('project', INVENTORIED)).reached;
     const [first] = start.lines;
     if (!first) throw new Error('expected an inventoried line');
 
@@ -246,7 +242,7 @@ describe('public project deletion', () => {
 
   it.each([false, true])('refreshes member task options and preserves submitted history (submitted=%s)', async (submitted) => {
     await book(admin, '/api/public-project-book/intake', { number: 'TASK-LIFE', name: '公共历史名称' });
-    const start = await inventoried();
+    const start = (await scenario(server, member).at('project', INVENTORIED)).reached;
     const first = start.lines[0]!;
     const drafted = await memberApi.accepted(await memberApi.act(start, 'assign-project-lines', { lineIds: [first.lineId], projectNumber: 'TASK-LIFE', onlyUnassigned: false }));
     if (submitted) await memberApi.accepted(await memberApi.act(drafted, 'submit-project-assignment', { purpose: '杭州出差', projects: Object.fromEntries(drafted.lines.map((line) => [line.lineId, 'TASK-LIFE'])) }));
