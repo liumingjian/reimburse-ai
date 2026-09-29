@@ -3,6 +3,10 @@
 // - vitest `related` in every workspace package that owns a changed file or depends on one (workspace:* deps,
 //   transitively). vitest follows each package's module graph, so a change in contract/src reaches web and server.
 //   A change to a package's own config (package.json, tsconfig, vite/vitest config) runs that package's whole suite.
+// - A change to a repository-root file (lockfile, pnpm-workspace.yaml, root package.json/tsconfig, .oxlintrc.json,
+//   .npmrc, .nvmrc, …) can affect every package, so it runs every package's whole suite and every e2e spec. Root docs
+//   (*.md, LICENSE) and files outside every package and the root (docs/, qa/, tools/, …) select nothing; they are
+//   listed as not covered, and a run that selects nothing says so instead of reporting PASS.
 // - Playwright on the web/e2e specs whose import graph reaches a changed file (the `--only-changed` rule), after
 //   building only what those specs need: dist-mock for the mock project, server + web dist for the server project.
 //
@@ -23,6 +27,10 @@ const E2E = join(WEB, 'e2e');
 const E2E_SERVER = join(E2E, 'server');
 const CONFIG_FILE = /^(package\.json|tsconfig(\..+)?\.json|vite(st)?\.config\.[cm]?[jt]s)$/;
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.mjs', '.js'];
+const ROOT_DOCS = /^(.*\.md|LICEN[CS]E(\..*)?|\.gitignore)$/i;
+
+// A file directly in the repository root that is not documentation: it may configure every package.
+const isRootConfig = (file) => dirname(file) === ROOT && !ROOT_DOCS.test(relative(ROOT, file));
 
 function parseArgs(argv) {
   const options = { base: null, e2e: true, build: true, dryRun: false, files: [] };
@@ -102,6 +110,10 @@ function vitestPlan(files, packages) {
       queue.push(...packages.filter((other) => other.workspaceDeps.includes(pkg.name)));
     }
   };
+  if (files.some(isRootConfig)) {
+    for (const pkg of packages) if (pkg.vitest) select(pkg, true);
+    return [...selected.values()];
+  }
   for (const file of files) {
     const owner = ownerOf(file, packages);
     if (owner) addWithDependents(owner, relative(owner.dir, file).split(sep).length === 1 && CONFIG_FILE.test(relative(owner.dir, file)));
@@ -140,7 +152,7 @@ function specFiles(dir) {
 
 function affectedSpecs(files, packages) {
   const all = specFiles(E2E);
-  if (files.some((file) => file === join(WEB, 'playwright.config.ts'))) return all;
+  if (files.some((file) => file === join(WEB, 'playwright.config.ts') || isRootConfig(file))) return all;
   const changed = new Set(files);
   return all.filter((spec) => {
     const seen = new Set();
@@ -190,9 +202,12 @@ function main() {
     else if (run('pnpm', ['exec', 'playwright', 'test', ...specs], WEB) !== 0) failures.push('playwright');
   }
 
+  const uncovered = files.filter((file) => !ownerOf(file, packages) && !isRootConfig(file)).map((file) => relative(ROOT, file));
+  if (uncovered.length > 0) console.log(`\ntest:changed: not covered by any package suite: ${uncovered.join(', ')}`);
+  const verdict = failures.length > 0 ? `FAIL: ${failures.join(', ')}` : plan.length === 0 && specs.length === 0 ? 'NOTHING RUN' : 'PASS';
   console.log(
     `\ntest:changed: ${files.length} file(s); vitest in ${plan.map(({ pkg, full }) => (full ? `${pkg.name} (full)` : pkg.name)).join(', ') || 'none'}; ` +
-      `${specs.length} e2e spec(s)${options.e2e ? '' : ' (--no-e2e)'}. ${failures.length === 0 ? 'PASS' : `FAIL: ${failures.join(', ')}`}`,
+      `${specs.length} e2e spec(s)${options.e2e ? '' : ' (--no-e2e)'}. ${verdict}`,
   );
   return failures.length === 0 ? 0 : 1;
 }
