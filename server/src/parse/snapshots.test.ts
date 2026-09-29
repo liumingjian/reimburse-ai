@@ -2,7 +2,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
-import type { ParseOutcome, Recognised } from './dispatch';
+import type { ParseOutcome } from './dispatch';
+import { factsOf, type Facts } from './facts';
 import { parseMaterial } from './material';
 import { parseDocSnapshot, snapshotReaders } from './snapshot';
 
@@ -32,12 +33,10 @@ const DIR = fileURLToPath(new URL('./snapshots', import.meta.url));
 const files = readdirSync(DIR);
 const cases = files.filter((file) => file.endsWith('.doc.json')).map((file) => file.slice(0, -'.doc.json'.length)).sort();
 
-// A fact is read when the layout produced it (directly or by a derivation) and every such candidate equals it: a
-// conflicting second candidate is not a correct read. The private-corpus gate scores the same way.
-function factOf(outcome: Recognised, key: string): string | undefined {
-  const own = `rule:${outcome.kind}/${outcome.layout}`;
-  const values = new Set(outcome.candidates.filter((c) => c.key === key && (c.source === own || c.source.startsWith(`${own}.`))).map((c) => c.value));
-  return values.size === 1 ? [...values][0] : values.size === 0 ? undefined : `<conflict: ${[...values].join(' | ')}>`;
+// A fact is read when `factsOf` (the inventory view's and the private gate's rule, #311) picks that value and the layout
+// does not also read the key another way: a conflicting read is not a correct read.
+function factOf(facts: Facts, key: string): string | undefined {
+  return facts.conflicts.includes(key) ? `<conflict on ${key}>` : facts.values[key];
 }
 
 describe('recognition snapshot cases', () => {
@@ -54,7 +53,8 @@ describe('recognition snapshot cases', () => {
     expect(outcome.outcome).toBe(expected.outcome);
     if (outcome.outcome !== 'recognised') return;
     expect(`${outcome.kind}/${outcome.layout}`).toBe(expected.layout);
+    const read = factsOf(outcome);
     const facts = expected.facts ?? {};
-    expect(Object.fromEntries(Object.keys(facts).map((key) => [key, factOf(outcome, key)]))).toEqual(facts);
+    expect(Object.fromEntries(Object.keys(facts).map((key) => [key, factOf(read, key)]))).toEqual(facts);
   });
 });
