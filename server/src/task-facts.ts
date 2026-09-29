@@ -6,7 +6,7 @@ import { legacyHoldings } from './legacy/import';
 import { inventoryView, type InventoryView, type ViewMaterial } from './inventory-view';
 import { occupancyBlockers, type Holding } from './occupancy-ledger';
 import type { ParseOutcome } from './parse/dispatch';
-import { inventoried, type TaskFacts } from './projection';
+import { inventoried, type TaskFacts } from './task-policy';
 import { assignmentOf, type Assignment, type AssignmentFact, type PinnedProject } from './assignment';
 import { bookOptions, type BookOption } from './books';
 import { pinnedCompanyRules, type CompanyRules } from './rules/company-rules';
@@ -15,7 +15,7 @@ import { loadErp, type ErpRecord } from './erp/fill-state';
 import { loadPrintFacts, type PrintFacts } from './print/facts';
 
 // Loading 任务事实 (task facts): every read that builds what the task service decides on and projects from. Reads
-// only, no decisions: `projection.ts` turns `LoadedTask.facts` into stage and step, and `tasks.ts` acts on the rest.
+// only, no decisions: `task-policy.ts` turns `LoadedTask.facts` into stage, step and write admission, and `tasks.ts` acts on the rest.
 
 type Tx = Db;
 
@@ -108,6 +108,7 @@ async function loadOwnFacts(tx: Tx, task: TaskTable, materials?: readonly Materi
     taskId: task.task_id,
     revision: task.revision,
     lifecycle: task.lifecycle,
+    origin: task.origin ?? 'app',
     versionNo: new Set(rows.map((row) => row.batch_id)).size,
     includedMaterialCount: rows.filter((row) => !row.excluded).length,
     lastRun: run ? { versionNo: run.version_no, revision: run.revision } : null,

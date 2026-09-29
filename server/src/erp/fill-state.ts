@@ -6,7 +6,7 @@ import { ERP_PROGRESS_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCI
 import { sql } from 'kysely';
 import type { Db } from '../db/database';
 import type { ErpHandOffTable, ErpJobTable, TaskLifecycle } from '../db/schema';
-import type { ErpFacts, ErpPhase } from '../projection';
+import type { ErpFacts, ErpPhase } from '../task-policy';
 import type { FrozenJob } from './fill-plan';
 import { ExecutorEventSchema, type ApprovedPreview, type ErpAccount, type ExecutorEvent, type Preconditions, type ReadbackEvent, type ResultEvent } from '@baox/erp-executor/protocol';
 import { noFormOpen, type ReconcileVerdict } from './reconcile';
