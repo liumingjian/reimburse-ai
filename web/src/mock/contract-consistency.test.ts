@@ -82,6 +82,7 @@ describe('契约 schema', () => {
       ['p1', 'form', 'open'],
       ['p2', 'form', 'open'],
       ['p3', 'choice', 'open'],
+      ['stay_screenshot_missing.m01', 'choice', 'open'],
     ]);
     expect(inventory.materials.every((material) => material.originalUrl?.startsWith('fixtures/'))).toBe(true);
     expect(inventory.lines).toHaveLength(0);
@@ -158,7 +159,7 @@ describe('契约 schema', () => {
     expect(review.confirmation.digest).toMatch(/^digest-t1-v1-[0-9a-f]{8}$/);
     expect(t1Snapshot('actions').confirmation.status).toBe('confirmed');
     expect(t1Snapshot('actions').step.kind).toBe('choose_action');
-    expect(t1Snapshot('pending', true).pendingItems).toHaveLength(4);
+    expect(t1Snapshot('pending', true).pendingItems).toHaveLength(5);
   });
 
   test('流程顺序照 Skill：项目归属在整单确认之前；整单确认的摘要绑定项目归属与事由；没有「开始填报」这一步', () => {
@@ -195,7 +196,7 @@ describe('契约 schema', () => {
     for (const stage of TASK_STAGES) {
       expect(() => TaskSnapshotSchema.parse(t1Snapshot(stage, false, true)), stage).not.toThrow();
     }
-    expect(t1Snapshot('pending').pendingItems.map((item) => item.resolver)).toEqual(['要你处理', '要你处理', '要你处理']);
+    expect(t1Snapshot('pending').pendingItems.map((item) => item.resolver)).toEqual(['要你处理', '要你处理', '要你处理', '要你处理']);
     expect(t1Snapshot('pending').blockers).toEqual([]);
     const pending = t1Snapshot('pending', false, true);
     expect(pending.pendingItems.map((item) => [item.itemId, item.kind])).toEqual([
@@ -203,6 +204,7 @@ describe('契约 schema', () => {
       ['p2', 'form'],
       ['p3', 'form'],
       ['p4', 'choice'],
+      ['stay_screenshot_missing.m01', 'choice'],
     ]);
     const allocation = pending.pendingItems[0]?.allocation;
     expect(allocation?.total).toBe('69.19');
@@ -235,10 +237,15 @@ describe('契约 schema', () => {
     const outcome = await adapter.answerPendingItem('T1', 'p1', { amounts: ['30.00', '20.00', '19.19'] }, before.step.stepToken);
     expect(outcome.ok).toBe(true);
     let snapshot = await adapter.getSnapshot('T1');
-    const answers = [{ origin: '张江高科', destination: '漕河泾开发区' }, { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' }, { choice: 'exclude' }];
-    for (const [index, answer] of answers.entries()) {
+    const answers = [
+      ['p2', { origin: '张江高科', destination: '漕河泾开发区' }],
+      ['p3', { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' }],
+      ['p4', { choice: 'exclude' }],
+      ['stay_screenshot_missing.m01', { choice: 'confirm_none' }],
+    ] as const;
+    for (const [itemId, answer] of answers) {
       snapshot = await adapter.getSnapshot('T1');
-      expect((await adapter.answerPendingItem('T1', `p${index + 2}`, answer, snapshot.step.stepToken)).ok).toBe(true);
+      expect((await adapter.answerPendingItem('T1', itemId, answer, snapshot.step.stepToken)).ok).toBe(true);
     }
     snapshot = await adapter.getSnapshot('T1');
     const amap = snapshot.lines.slice(0, 3);

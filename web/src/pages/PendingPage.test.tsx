@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { App } from '../App';
-import { ALLOCATION_ERRORS, PENDING_ANSWER_ERRORS, STALE_STEP_NOTICE, STAY_TRIO_COPY, type PendingItem, type TaskStage } from '@baox/contract';
+import { ALLOCATION_ERRORS, PENDING_ANSWER_ERRORS, STALE_STEP_NOTICE, STAY_TRIO_COPY, type TaskStage } from '@baox/contract';
 import { ALLOCATION_GIVE_UP_NOTE, GIVEN_UP_TITLE, givenUpNote } from '../mock/fixtures/inventory';
 import { t1Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
@@ -33,11 +33,16 @@ describe('待确认项', () => {
   test('左侧列出全部待确认项，右侧显示选中项的原件预览与字段；切换选中项预览随之切换', async () => {
     renderPending();
     expect(await screen.findByRole('heading', { name: '待确认项' })).toBeTruthy();
-    expect(screen.getByText('对照原件补填或作出选择。还剩 3 个。')).toBeTruthy();
+    expect(screen.getByText('对照原件补填或作出选择。还剩 4 个。')).toBeTruthy();
     expect(list()).toBeTruthy();
     const buttons = within(screen.getByLabelText('待确认项清单')).getAllByRole('button');
     // 每行只放图标、标题与文件名；契约里的处理人不显示。
-    expect(buttons.map((button) => button.textContent)).toEqual(['补填起点与终点IMG_4871.jpg', '下车时间不合法，并补填起点与终点IMG_4906.jpg', '不支持的材料类型餐饮_发票.pdf']);
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      '补填起点与终点IMG_4871.jpg',
+      '下车时间不合法，并补填起点与终点IMG_4906.jpg',
+      '不支持的材料类型餐饮_发票.pdf',
+      '住宿发票「全季酒店_发票.pdf」缺少支付截图',
+    ]);
 
     // 默认选中第一个：出租车照片用 img 预览，显示读出的字段，但不显示字段来源。
     expect(within(detail()).getByRole('heading', { name: '补填起点与终点' })).toBeTruthy();
@@ -90,7 +95,7 @@ describe('待确认项', () => {
     fill('终点 *', '漕河泾开发区');
     fireEvent.click(within(detail()).getByRole('button', { name: '保存并标记已处理' }));
     expect(await within(detail()).findByRole('heading', { name: '下车时间不合法，并补填起点与终点' })).toBeTruthy();
-    expect(screen.getByText('对照原件补填或作出选择。还剩 2 个。')).toBeTruthy();
+    expect(screen.getByText('对照原件补填或作出选择。还剩 3 个。')).toBeTruthy();
     // 已处理行带绿色「已处理」标签；未处理的行没有。
     expect(within(itemButton('补填起点与终点')).getByText('已处理')).toBeTruthy();
     expect(within(itemButton('下车时间不合法')).queryByText('已处理')).toBeNull();
@@ -110,8 +115,12 @@ describe('待确认项', () => {
     expect(await within(detail()).findByRole('heading', { name: '不支持的材料类型' })).toBeTruthy();
 
     fireEvent.click(within(detail()).getByRole('button', { name: '排除此材料' }));
+    expect(await within(detail()).findByRole('heading', { name: STAY_TRIO_COPY.screenshot.title('全季酒店_发票.pdf') })).toBeTruthy();
+
+    // 住宿发票缺支付截图：确认没有，住宿发票照常进入明细。
+    fireEvent.click(within(detail()).getByRole('button', { name: STAY_TRIO_COPY.screenshot.confirmNone }));
     expect(await screen.findByRole('heading', { name: '没有待确认项了' })).toBeTruthy();
-    expect(screen.getByText('本次盘点的 3 个待确认项都已处理。')).toBeTruthy();
+    expect(screen.getByText('本次盘点的 4 个待确认项都已处理。')).toBeTruthy();
     const link = screen.getByRole('link', { name: '进入项目归属' });
     expect(link.getAttribute('href')).toBe('#/task/T1/project');
 
@@ -123,10 +132,12 @@ describe('待确认项', () => {
       { origin: '张江高科', destination: '漕河泾开发区' },
       { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' },
       { choice: 'exclude' },
+      { choice: 'confirm_none' },
     ]);
     const taxi = snapshot.materials.find((material) => material.materialId === 'm09');
     expect(taxi?.fields.find((candidate) => candidate.key === 'origin')).toMatchObject({ value: '张江高科', source: 'user', evidence: 'explicit' });
     expect(snapshot.materials.find((material) => material.materialId === 'm11')?.status).toBe('excluded');
+    expect(snapshot.materials.find((material) => material.materialId === 'm01')?.status).toBe('ok');
     expect(snapshot.lines).toHaveLength(9);
     expect(snapshot.confirmation.grossTotal).toBe('3972.59');
 
@@ -142,7 +153,7 @@ describe('待确认项', () => {
     await screen.findByRole('heading', { name: '待确认项' });
     fireEvent.click(itemButton('不支持的材料类型'));
     fireEvent.click(within(detail()).getByRole('button', { name: '自行手工处理' }));
-    await screen.findByText('对照原件补填或作出选择。还剩 2 个。');
+    await screen.findByText('对照原件补填或作出选择。还剩 3 个。');
     expect(itemButton('不支持的材料类型').textContent).toContain('已处理');
     // 回看已处理的选择：已选项是选中样式（aria-pressed），不是主按钮。
     fireEvent.click(itemButton('不支持的材料类型'));
@@ -162,7 +173,7 @@ describe('待确认项', () => {
     fill('终点 *', '漕河泾开发区');
     fireEvent.click(within(detail()).getByRole('button', { name: '保存并标记已处理' }));
     expect(await screen.findByText(STALE_STEP_NOTICE)).toBeTruthy();
-    await screen.findByText('对照原件补填或作出选择。还剩 2 个。');
+    await screen.findByText('对照原件补填或作出选择。还剩 3 个。');
     // p1 没有被采用（旧凭据的答复被忽略）。
     const after = await adapter.getSnapshot('T1');
     expect(after.pendingItems.find((item) => item.itemId === 'p1')?.status).toBe('open');
@@ -178,12 +189,12 @@ describe('待确认项', () => {
   test('?fault=unsupported-material 多出一个不支持的材料类型待确认项', async () => {
     renderPending('pending', 'unsupported-material');
     await screen.findByRole('heading', { name: '待确认项' });
-    expect(screen.getByText('对照原件补填或作出选择。还剩 4 个。')).toBeTruthy();
+    expect(screen.getByText('对照原件补填或作出选择。还剩 5 个。')).toBeTruthy();
     const buttons = within(screen.getByLabelText('待确认项清单')).getAllByRole('button');
     expect(buttons.some((button) => button.textContent === '不支持的材料类型曹操出行_行程单.pdf')).toBe(true);
     fireEvent.click(itemByFile('曹操出行_行程单'));
     fireEvent.click(within(detail()).getByRole('button', { name: '排除此材料' }));
-    await screen.findByText('对照原件补填或作出选择。还剩 3 个。');
+    await screen.findByText('对照原件补填或作出选择。还剩 4 个。');
   });
 });
 
@@ -266,7 +277,7 @@ describe('原件查看器', () => {
     });
     render(<App adapter={spied} />);
     await screen.findByRole('heading', { name: '待确认项' });
-    await screen.findByText('对照原件补填或作出选择。还剩 3 个。');
+    await screen.findByText('对照原件补填或作出选择。还剩 4 个。');
     calls.length = 0;
 
     for (const name of ['放大', '放大', '缩小', '旋转 90°', '适应窗口']) fireEvent.click(tool(name));
@@ -287,9 +298,9 @@ describe('逐段分摊与阻塞项', () => {
 
   test('?allocation=1：不守恒时显示服务端给的错误，守恒后通过', async () => {
     const adapter = renderPending('pending', null, { allocationRequired: true });
-    await screen.findByText('对照原件补填或作出选择。还剩 4 个。');
+    await screen.findByText('对照原件补填或作出选择。还剩 5 个。');
     const buttons = within(list()).getAllByRole('button');
-    expect(buttons).toHaveLength(4);
+    expect(buttons).toHaveLength(5);
     for (const button of buttons) expect(button.textContent).not.toContain('要你处理');
 
     expect(within(detail()).getByRole('heading', { name: ALLOCATION_TITLE })).toBeTruthy();
@@ -311,7 +322,7 @@ describe('逐段分摊与阻塞项', () => {
 
   test('逐段金额格式不对或没填时就地报错，不提交到服务端', async () => {
     const adapter = renderPending('pending', null, { allocationRequired: true });
-    await screen.findByText('对照原件补填或作出选择。还剩 4 个。');
+    await screen.findByText('对照原件补填或作出选择。还剩 5 个。');
     fireEvent.change(segmentInput(2), { target: { value: '20.8' } });
     fireEvent.change(segmentInput(3), { target: { value: '' } });
     submitAmounts();
@@ -322,7 +333,7 @@ describe('逐段分摊与阻塞项', () => {
 
   test('「这张票我认不出」照内核留下阻塞项：什么都不悄悄移走；这一项不能答复，排除这张发票连同行程单后才继续', async () => {
     const adapter = renderPending('pending', null, { allocationRequired: true });
-    await screen.findByText('对照原件补填或作出选择。还剩 4 个。');
+    await screen.findByText('对照原件补填或作出选择。还剩 5 个。');
     expect(within(detail()).getByTestId('give-up-note').textContent).toBe(ALLOCATION_GIVE_UP_NOTE);
     fireEvent.click(within(detail()).getByRole('button', { name: '这张票我认不出' }));
     expect(await within(detail()).findByRole('heading', { name: '补填起点与终点' })).toBeTruthy();
@@ -340,17 +351,23 @@ describe('逐段分摊与阻塞项', () => {
       ['p2', 'form', 'open'],
       ['p3', 'form', 'open'],
       ['p4', 'choice', 'open'],
+      ['stay_screenshot_missing.m01', 'choice', 'open'],
       ['p5', 'given_up', 'open'],
     ]);
     // 服务端不接受直接答复这一项。
     const refused = await adapter.answerPendingItem('T1', 'p5', { choice: 'exclude' }, snapshot.step.stepToken);
     expect(refused).toMatchObject({ ok: false, error: { message: PENDING_ANSWER_ERRORS.notAnswerable } });
 
-    // 其余三项处理完，仍停在待确认项：还剩 1 个，进不了项目归属。
-    const answers = [{ origin: '张江高科', destination: '漕河泾开发区' }, { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' }, { choice: 'exclude' }];
-    for (const [index, answer] of answers.entries()) {
+    // 其余四项处理完，仍停在待确认项：还剩 1 个，进不了项目归属。
+    const answers = [
+      ['p2', { origin: '张江高科', destination: '漕河泾开发区' }],
+      ['p3', { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' }],
+      ['p4', { choice: 'exclude' }],
+      ['stay_screenshot_missing.m01', { choice: 'confirm_none' }],
+    ] as const;
+    for (const [itemId, answer] of answers) {
       snapshot = await adapter.getSnapshot('T1');
-      const outcome = await adapter.answerPendingItem('T1', `p${index + 2}`, answer, snapshot.step.stepToken);
+      const outcome = await adapter.answerPendingItem('T1', itemId, answer, snapshot.step.stepToken);
       expect(outcome.ok).toBe(true);
     }
     expect((await adapter.getSnapshot('T1')).stage).toBe('pending');
@@ -407,41 +424,24 @@ describe('逐段分摊与阻塞项', () => {
   });
 
   // #213: a 住宿 invoice missing its 支付截图 is answered by uploading the screenshot right here, or by 确认没有.
-  test('住宿发票缺少支付截图：在待确认项里直接上传支付截图，也可以确认没有', async () => {
-    const snapshot = t1Snapshot('pending');
-    const invoice = snapshot.materials.find((material) => material.materialId === 'm01');
-    if (!invoice) throw new Error('夹具里没有住宿发票');
-    const trio: PendingItem = {
-      itemId: 'stay_screenshot_missing.m01',
-      materialId: 'm01',
-      title: STAY_TRIO_COPY.screenshot.title(invoice.fileName),
-      why: STAY_TRIO_COPY.screenshot.why('3640.00'),
-      kind: 'choice',
-      resolver: '要你处理',
-      fields: [],
-      choices: [
-        { key: 'confirm_none', label: STAY_TRIO_COPY.screenshot.confirmNone },
-        { key: 'exclude', label: '排除这份材料' },
-      ],
-      allocation: null,
-      status: 'open',
-      answer: null,
-    };
-    const adapter = createMockAdapter({ seed: 'pending', fault: null });
-    const add = vi.spyOn(adapter, 'addPaymentScreenshot').mockImplementation(async (taskId) => ({ ok: true, snapshot: await adapter.getSnapshot(taskId) }));
-    const store = new AppStore(adapter, { validate: true });
-    render(
-      <AppProvider store={store}>
-        <PendingPage snapshot={{ ...snapshot, pendingItems: [trio, ...snapshot.pendingItems] }} />
-      </AppProvider>,
-    );
-    expect(within(detail()).getByRole('heading', { name: trio.title })).toBeTruthy();
+  // The mock raises the item at inventory like the server does (T1 has no screenshot).
+  test('住宿发票缺少支付截图：在待确认项里直接上传支付截图，这一项随之消失', async () => {
+    const adapter = renderPending();
+    await screen.findByRole('heading', { name: '待确认项' });
+    const title = STAY_TRIO_COPY.screenshot.title('全季酒店_发票.pdf');
+    fireEvent.click(itemButton(title));
+    expect(within(detail()).getByRole('heading', { name: title })).toBeTruthy();
     expect(within(detail()).getByText(STAY_TRIO_COPY.screenshot.why('3640.00'))).toBeTruthy();
     expect(within(detail()).getByRole('button', { name: STAY_TRIO_COPY.screenshot.confirmNone })).toBeTruthy();
     expect(within(detail()).getByRole('button', { name: STAY_TRIO_COPY.screenshot.upload })).toBeTruthy();
 
+    const add = vi.spyOn(adapter, 'addPaymentScreenshot');
     const file = new File([new Uint8Array([137, 80, 78, 71])], 'IMG_5011.png', { type: 'image/png' });
-    fireEvent.change(within(detail()).getByLabelText(STAY_TRIO_COPY.screenshot.inputLabel(invoice.fileName)), { target: { files: [file] } });
+    fireEvent.change(within(detail()).getByLabelText(STAY_TRIO_COPY.screenshot.inputLabel('全季酒店_发票.pdf')), { target: { files: [file] } });
     await waitFor(() => expect(add).toHaveBeenCalledWith('T1', 'm01', file));
+    await screen.findByText('对照原件补填或作出选择。还剩 3 个。');
+    const snapshot = await adapter.getSnapshot('T1');
+    expect(snapshot.pendingItems.some((item) => item.itemId === 'stay_screenshot_missing.m01')).toBe(false);
+    expect(snapshot.paymentScreenshots.map((shot) => [shot.voucherMaterialId, shot.fileName])).toEqual([['m01', 'IMG_5011.png']]);
   });
 });

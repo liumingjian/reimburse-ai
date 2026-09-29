@@ -29,7 +29,8 @@ const FIXTURE_FILES = [
   '餐饮_发票.pdf',
 ];
 
-async function answerTaxis(page: Page) {
+// 两张出租车票补填、不支持的餐饮发票排除、住宿发票确认没有支付截图（#213）。
+async function answerTheRest(page: Page) {
   await item(page, '补填起点与终点').click();
   await detail(page).getByLabel('起点 *').fill('张江高科');
   await detail(page).getByLabel('终点 *').fill('漕河泾开发区');
@@ -41,13 +42,15 @@ async function answerTaxis(page: Page) {
   await save(page).click();
   await expect(detail(page).getByRole('heading', { name: '不支持的材料类型' })).toBeVisible();
   await detail(page).getByRole('button', { name: '排除此材料' }).click();
+  await expect(detail(page).getByRole('heading', { name: '住宿发票「全季酒店_发票.pdf」缺少支付截图' })).toBeVisible();
+  await detail(page).getByRole('button', { name: '确认没有支付截图' }).click();
 }
 
 test('?allocation=1：出现逐段分摊待确认项；不守恒显示服务端错误，守恒后通过；不显示处理人', async ({ page }, testInfo) => {
   await page.goto(open('?seed=pending&allocation=1', '#/task/T1/pending'));
-  await expect(page.getByText('还剩 4 个')).toBeVisible();
+  await expect(page.getByText('还剩 5 个')).toBeVisible();
   const buttons = list(page).getByRole('button');
-  await expect(buttons).toHaveCount(4);
+  await expect(buttons).toHaveCount(5);
   // 清单行不再重复处理人（说明文字里服务端给的「要你处理的事项」照常显示）。
   await expect(list(page)).not.toContainText('要你处理');
 
@@ -57,17 +60,17 @@ test('?allocation=1：出现逐段分摊待确认项；不守恒显示服务端�
   await expect(detail(page).getByRole('alert').filter({ hasText: /\S/ })).toHaveText(
     '各段加起来是 69.10 元，和票面价税合计 69.19 元对不上。请对照行程单重新填写，不会平均、不会按比例，也不会把差额加到任何一段上。',
   );
-  await expect(page.getByText('还剩 4 个')).toBeVisible();
+  await expect(page.getByText('还剩 5 个')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('allocation-not-conserved.png'), fullPage: true });
 
   await segment(page, 3).fill('21.65');
   await detail(page).getByRole('button', { name: '提交逐段金额' }).click();
   await expect(detail(page).getByRole('heading', { name: '补填起点与终点' })).toBeVisible();
   await expect(item(page, ALLOCATION)).toContainText('已处理');
-  await expect(page.getByText('还剩 3 个')).toBeVisible();
+  await expect(page.getByText('还剩 4 个')).toBeVisible();
 
   // 继续处理完，明细与默认相同（9 行）。
-  await answerTaxis(page);
+  await answerTheRest(page);
   await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
   await page.getByRole('link', { name: '进入项目归属' }).click();
   await expect(page.getByRole('checkbox', { name: /^选择明细 No\.\d+$/ })).toHaveCount(9);
@@ -84,8 +87,8 @@ test('?allocation=1：选「这张票我认不出」照内核留下阻塞项；�
   await item(page, ALLOCATION).click();
   await expect(detail(page).getByTestId('give-up-note')).toContainText('你选了「这张票我认不出」。');
 
-  // 其余三项处理完仍然拦着：还剩 1 个，没有「进入项目归属」。
-  await answerTaxis(page);
+  // 其余四项处理完仍然拦着：还剩 1 个，没有「进入项目归属」。
+  await answerTheRest(page);
   await expect(page.getByText('还剩 1 个')).toBeVisible();
   await expect(page.getByRole('link', { name: '进入项目归属' })).toHaveCount(0);
   await item(page, GIVEN_UP).click();
@@ -128,8 +131,8 @@ test('?duplicate=1：上传后整批停，显示重复发票表与命中的任�
   // 出路照内核「把文件移出」：移出后阻塞解除，接着划分费用事件与待确认项。
   await page.getByRole('button', { name: '移出 铁路电子客票_0809.pdf' }).click();
   await expect(page.getByRole('table', { name: '重复发票' })).toHaveCount(0);
-  await expect(page.getByText('还剩 3 个')).toBeVisible();
-  await answerTaxis(page);
+  await expect(page.getByText('还剩 4 个')).toBeVisible();
+  await answerTheRest(page);
   await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
   await page.getByRole('link', { name: '进入项目归属' }).click();
   await expect(page.getByRole('checkbox', { name: /^选择明细 No\.\d+$/ })).toHaveCount(8);

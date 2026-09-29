@@ -1,7 +1,7 @@
 import { TASK_ACTIONS, type StepKind, type TaskAction, type TaskSnapshot } from '@baox/contract';
 
 // 服务端投影：快照的 allowedActions（服务端由 taskPolicy 判定，server/src/task-policy.ts）。mock 没有任务事实，
-// 只能按它自己的流程写下的 step、ERP 状态与对账处置推出来。逐项对照服务端是 mock 与服务端对照测试（#316）的事。
+// 只能按它自己的流程写下的 step、ERP 状态与对账处置推出来。与服务端逐项对照的是 ../parity.test.ts（#316）。
 // mock 每次存快照前都调用一次（bus.put），夹具出口也调用一次，保证按钮与快照里的其余字段同步。
 
 // 写入报销系统之前、盘点结束之后都接受的改动。

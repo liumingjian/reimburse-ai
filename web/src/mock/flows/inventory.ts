@@ -68,6 +68,7 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
       snapshot.materials.filter((material) => !removed.has(material.materialId)),
       options.fault === 'unsupported-material',
       options.allocationRequired === true,
+      new Set(snapshot.paymentScreenshots.map((shot) => shot.voucherMaterialId)),
     );
     const fresh = new Map(result.materials.map((material) => [material.materialId, material]));
     snapshot.materials = snapshot.materials.map((material) => fresh.get(material.materialId) ?? removedMaterial(material));

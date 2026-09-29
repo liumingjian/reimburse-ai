@@ -94,11 +94,16 @@ test('?seed=done 直接打开完成页：固定句逐字一致', async ({ page }
   await expectDone(page);
 });
 
-// 已保存但逐行不一致的草稿停在对账，不是完成：done 只留给「已保存且逐行一致」（服务端同此）。
-test('readback-mismatch：严格回读停下后自动进入对账页，差异行高亮、只能转人工；No.6 展开后显示对不上的字段与原因；转人工后任务列表显示已转人工', async ({ page }, testInfo) => {
+// 严格回读停下：结果不确定，先停在对账等第一次对账（服务端同此）。对账读到已保存但逐行不一致的草稿，仍停在对账，
+// 不是完成：done 只留给「已保存且逐行一致」（服务端同此）。
+test('readback-mismatch：严格回读停下后自动进入对账页；开始对账后差异行高亮、只能转人工；No.6 展开后显示对不上的字段与原因；转人工后任务列表显示已转人工', async ({ page }, testInfo) => {
   await startAndLogin(page, '?seed=erp&fault=readback-mismatch');
   await expect(page).toHaveURL(/#\/task\/T1\/reconcile$/);
   await expect(page.getByRole('heading', { name: '对账', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: '中止原因' })).toContainText('严格回读发现 1 行与本地确认不一致');
+  await expect(page.getByTestId('reconcile-bucket')).toHaveText('尚未判定');
+  await expect(page.getByRole('region', { name: '处置' }).getByRole('button')).toHaveText(['开始对账', '转人工']);
+  await page.getByRole('button', { name: '开始对账' }).click();
   await expect(page.getByTestId('reconcile-draft-no')).toHaveText('BX20260911-0173');
   await expect(page.getByTestId('reconcile-bucket')).toHaveText('已保存');
   await expect(bodyRows(page, '逐行比对')).toHaveCount(9);
@@ -121,16 +126,16 @@ test('readback-mismatch：严格回读停下后自动进入对账页，差异行
   await expect(page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByText('已转人工')).toBeVisible();
 });
 
-test('erp-write-aborted：交接时没有读到结果后自动进入对账（未知 ⇒ 原地等待，只有重新对账），重新对账读到填好的单据并回读一致后完成', async ({ page }, testInfo) => {
+test('erp-write-aborted：交接时没有读到结果后自动进入对账（还没对过账：开始对账或转人工），开始对账读到填好的单据并回读一致后完成', async ({ page }, testInfo) => {
   await startAndLogin(page, '?seed=erp&fault=erp-write-aborted');
   await expect(page).toHaveURL(/#\/task\/T1\/reconcile$/);
   await expect(page.getByRole('region', { name: '中止原因' })).toContainText('交接单据时没有读到报销系统的结果');
-  await expect(page.getByTestId('reconcile-bucket')).toHaveText('未知');
-  // 建议原地等待，但转人工一直可以做（与服务端一致）。
-  await expect(page.getByRole('region', { name: '处置' }).getByRole('button')).toHaveText(['重新对账', '转人工']);
+  await expect(page.getByTestId('reconcile-bucket')).toHaveText('尚未判定');
+  // 还没对过账：先对账，也可以直接转人工（与服务端一致）。
+  await expect(page.getByRole('region', { name: '处置' }).getByRole('button')).toHaveText(['开始对账', '转人工']);
   await expect(page.getByTestId('human-review')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('reconcile-aborted.png'), fullPage: true });
-  await page.getByRole('button', { name: '重新对账' }).click();
+  await page.getByRole('button', { name: '开始对账' }).click();
   await expectDone(page);
 });
 
@@ -172,8 +177,8 @@ test('对账页直接打开：T2（已保存、逐行不一致 ⇒ 转人工）�
 
   await page.goto(open('?seed=reconcile', '#/task/T1/reconcile'));
   await expect(page.getByRole('region', { name: '中止原因' })).toBeVisible();
-  // 未知 ⇒ 建议原地等待，但也能直接转人工。
-  await expect(page.getByRole('region', { name: '处置' }).getByRole('button')).toHaveText(['重新对账', '转人工']);
+  // 还没对过账：先对账，也能直接转人工。
+  await expect(page.getByRole('region', { name: '处置' }).getByRole('button')).toHaveText(['开始对账', '转人工']);
 
   await page.goto(open('?seed=reconcile', '#/task/T1/erp'));
   await expect(stepItem(page, '交接单据')).toContainText('已中止');

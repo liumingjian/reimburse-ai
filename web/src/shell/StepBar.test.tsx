@@ -47,7 +47,7 @@ describe('任务步骤条', () => {
   test('盘点后待确认项旁边是待处理数量', async () => {
     renderApp('#/task/T1/inventory', 'inventory');
     const stages = await screen.findByRole('list', { name: '流程阶段' });
-    expect(within(stages).getByText('3 项待处理')).toBeTruthy();
+    expect(within(stages).getByText('4 项待处理')).toBeTruthy();
   });
 
   test('点未到的步骤在步骤条里给出一次说明，不跳页', async () => {

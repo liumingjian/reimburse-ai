@@ -166,7 +166,7 @@ describe('ERP 填报', () => {
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
     expect(window.location.hash).toBe('#/task/T1/reconcile');
     expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/交接单据时没有读到报销系统的结果/)).toBeTruthy();
-    expect(screen.getByRole('button', { name: '重新对账' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '开始对账' })).toBeTruthy();
   });
 
   test('直接打开已中止任务的 ERP 填报页不跳转，保留「进入对账」入口', async () => {
@@ -178,14 +178,18 @@ describe('ERP 填报', () => {
     expect(screen.getByRole('link', { name: '进入对账' }).getAttribute('href')).toBe('#/task/T1/reconcile');
   });
 
-  // 已保存但逐行不一致的草稿没有被证明与确认过的明细一致，所以停在对账而不是完成：done 只留给「已保存且逐行一致」，
-  // 服务端也从不把它投影成 done。
-  test('readback-mismatch：写入停下后进入对账页，差异行高亮、显示人工核对固定句；只能转人工（带 stepToken），任务列表也显示已转人工', async () => {
+  // 严格回读不一致：写入停下、结果不确定，先停在对账等第一次对账（服务端同此）。对账读到已保存但逐行不一致的草稿，
+  // 它没有被证明与确认过的明细一致，所以仍停在对账而不是完成：done 只留给「已保存且逐行一致」，服务端也从不把它投影成 done。
+  test('readback-mismatch：写入停下后进入对账页；开始对账后差异行高亮、显示人工核对固定句；只能转人工（带 stepToken），任务列表也显示已转人工', async () => {
     const adapter = renderErp('readback-mismatch');
     const handOff = vi.spyOn(adapter, 'handOff');
     fireEvent.click(await waitingLogin());
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
     expect(window.location.hash).toBe('#/task/T1/reconcile');
+    expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/严格回读发现 1 行与本地确认不一致/)).toBeTruthy();
+    expect(screen.getByTestId('reconcile-bucket').textContent).toBe('尚未判定');
+    fireEvent.click(screen.getByRole('button', { name: '开始对账' }));
+    expect(await screen.findByTestId('readback-6')).toBeTruthy();
     expect(screen.getByTestId('reconcile-draft-no').textContent).toBe('BX20260911-0173');
     expect(screen.getByTestId('reconcile-bucket').textContent).toBe('已保存');
     const bad = screen.getByTestId('readback-6');
