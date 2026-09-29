@@ -14,6 +14,7 @@
 // runs in the profile's own ERP tab, and every unsaved 新增 tab there is closed before and after it, answering 否
 // to 是否保存 (tabs.ts `closeNewFormTabs`, the product's own 重新去报销 path).
 // The recording session refuses keys, uploads and any press on a save / submit / import control (recorder.ts).
+// A page with a child frame (the 发票无忧助手) is written as NN-<step>.html plus NN-<step>.child.html.
 //
 // Optional: BAOX_ERP_ORIGIN, BAOX_CHROMIUM_CDP_PORT (9333), --out <dir> (default src/testing/recordings/<name>).
 
@@ -144,6 +145,7 @@ try {
 
   const session = recordingSession(tab.session, { allowKeys: flow.allowKeys });
   const result = await flow.run({ session, pace: DEFAULT_PACE });
+  session.stop();
   const steps: RecordedStep[] = session.steps;
   await discard();
   tab.session.close();
@@ -160,8 +162,18 @@ data-rec-box is the live element box (x,y,width,height); data-rec-click marks wh
   const page = (step: RecordedStep | { name: string; page: CapturedPage }, file: string) => {
     const { html, facts } = redact.page(step.page, header(step.name));
     files.push([file, html]);
-    const click = 'click' in step && step.click ? { click: { tag: step.click.tag, id: redact.identity(step.click.id), controlId: redact.identity(step.click.controlId), text: redact.text(step.click.text) } } : {};
-    return { name: step.name, file, ...facts, ...click };
+    let child = {};
+    if ('child' in step && step.child) {
+      const childFile = file.replace(/\.html$/, '.child.html');
+      const frame = redact.page(step.child, header(`${step.name}, its child frame`));
+      files.push([childFile, frame.html]);
+      child = { child: { file: childFile, ...frame.facts } };
+    }
+    const click = 'click' in step && step.click ? { click: {
+      ...redact.click(step.click.frame === 'child' && step.child ? step.child : step.page, step.click),
+      ...(step.click.frame ? { frame: step.click.frame } : {}),
+    } } : {};
+    return { name: step.name, file, ...facts, ...child, ...click };
   };
   const manifest = {
     flow: flowName, name, description: flow.description, command, recordedAt: new Date().toISOString().slice(0, 10),

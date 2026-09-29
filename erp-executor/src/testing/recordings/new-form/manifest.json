@@ -49,7 +49,7 @@
         "ver": "＊"
       },
       "frames": [],
-      "count": 319,
+      "count": 409,
       "pruned": 1389,
       "click": {
         "tag": "span",
@@ -76,12 +76,12 @@
         "ver": "＊"
       },
       "frames": [],
-      "count": 330,
+      "count": 420,
       "pruned": 1786,
       "click": {
         "tag": "span",
-        "id": "7d065807-f08b-4b50-a706-227839aea069-BILLMENU_TOOLBAR-tbSNew",
-        "controlId": "7d065807-f08b-4b50-a706-227839aea069-BILLMENU_TOOLBAR-tbSNew",
+        "id": "1fc087ef-669b-4ee7-a5c5-4fc03acb3685-BILLMENU_TOOLBAR-tbSNew",
+        "controlId": "1fc087ef-669b-4ee7-a5c5-4fc03acb3685-BILLMENU_TOOLBAR-tbSNew",
         "text": "新增"
       }
     },
@@ -103,8 +103,8 @@
         "ver": "＊"
       },
       "frames": [],
-      "count": 1259,
-      "pruned": 3173
+      "count": 1474,
+      "pruned": 3053
     }
   ]
 }

@@ -1,16 +1,18 @@
 // Recorded ERP pages (./recordings/<name>/), as `probe <flow> --record <name>` wrote them (recording/cli.ts): a
 // manifest, the logged-out login page, and the pages the flow passed through in order. Each page but the last carries
-// `data-rec-click` on the element the next click landed on live; the fake ERP moves to the next page when a click
-// lands there, and nowhere else. Placeholders ({{DISPLAY_NAME}} {{ACCOUNT}} {{TENANT}}) are filled from the fake's
-// account.
+// `data-rec-click` on the element the next click landed on live (in its child frame when `click.frame` says so); the
+// fake ERP moves to the next page when a click lands there (or on a wrapper that shows nothing else), and nowhere else. Placeholders ({{DISPLAY_NAME}}
+// {{ACCOUNT}} {{TENANT}}) are filled from the fake's account.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import type { RecordedPageFacts } from '../recording/redact';
 
 export type RecordedPage = RecordedPageFacts & {
   name: string; file: string;
-  /** What the click that left this page landed on, live. */
-  click?: { tag: string; id: string; controlId: string; text: string };
+  /** The child frame on this page (the 发票无忧助手), recorded beside it as `<file>.child.html`. */
+  child?: RecordedPageFacts & { file: string };
+  /** What the click that left this page landed on, live, and whether it landed in the child frame. */
+  click?: { tag: string; id: string; controlId: string; text: string; frame?: 'child' };
 };
 
 export type RecordingManifest = {
@@ -18,7 +20,7 @@ export type RecordingManifest = {
   result: Record<string, unknown>; loggedOut: RecordedPage; pages: RecordedPage[];
 };
 
-export type Recording = { manifest: RecordingManifest; html(page: RecordedPage): string };
+export type Recording = { manifest: RecordingManifest; html(page: { file: string }): string };
 
 const root = new URL('./recordings/', import.meta.url);
 

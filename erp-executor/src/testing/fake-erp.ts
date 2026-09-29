@@ -64,7 +64,8 @@ export type FakeErpOptions = {
   /**
    * Serve a recording (./recordings/<name>, see recordings.ts) instead of the hand-written fixtures: its login page
    * while logged out, and its pages in order while logged in, moving on when a click lands where the live click
-   * did. None of the hand-written behaviour below applies to a recorded page; the build is the recorded one.
+   * did; a page's recorded child frame (the 发票无忧助手) is the child target. Keys are ignored. None of the
+   * hand-written behaviour below applies to a recorded page; the build is the recorded one.
    */
   recording?: string;
   account?: { displayName: string; account: string; tenant: string };
@@ -73,7 +74,7 @@ export type FakeErpOptions = {
   invoices: FakeInvoice[];
   projects: FakeMasterData[];
   expenseItems: FakeMasterData[];
-  /** @unverified: ERP links a detail row to its 收票单 once 税额 is committed (research says it leaves 收票单号 empty) */
+  /** @unverified: ERP links a detail row to its 收票单 once 税额 is committed (research says it leaves 收票单号 empty) [import] */
   assumeReceiptLink?: boolean;
   /**
    * How long Kendo needs after the last keystroke before its own model holds the typed value, counted in CDP
@@ -85,12 +86,12 @@ export type FakeErpOptions = {
    * edit row, so the row shut with the cell empty and there was no second chance. 费用金额 survives the same
    * race only because its Enter leaves the row open. 0 (the default) is an ERP that takes every commit, which
    * is what every other test wants.
-   * @unverified: Kendo's model trails the last keystroke, so a commit inside the window commits the old value
+   * @unverified: Kendo's model trails the last keystroke, so a commit inside the window commits the old value [typing]
    */
   editorSettleTicks?: number;
   /**
    * Keep the tax editor focused after Enter while ERP has already recalculated the row.
-   * @unverified: the 税额 editor keeps focus after Enter while ERP has already recalculated the row
+   * @unverified: the 税额 editor keeps focus after Enter while ERP has already recalculated the row [typing]
    */
   taxEditorRemainsOpen?: boolean;
   /**
@@ -102,7 +103,7 @@ export type FakeErpOptions = {
    * lands it, and the ERP resolves the code to the project name within a second. The ERP re-renders the control as
    * it initialises its data source, so the input that was bound a moment ago is no longer the one on the page.
    * Unset (the default) is an ERP whose editors take keys the first time, which is what every other test wants.
-   * @unverified: a selection-type (选择类) F7 column swallows the first typing while the control re-renders
+   * @unverified: a selection-type (选择类) F7 column swallows the first typing while the control re-renders [typing]
    */
   firstTypingLostOn?: string;
   /**
@@ -112,7 +113,7 @@ export type FakeErpOptions = {
    * `aria-expanded="false"` and no list, the second opened a list of six candidates, the third shut it again.
    * A single click therefore found no candidates at all and the run stopped over a list that was never open.
    * False (the default) is an ERP whose dropdown opens on the first click, which is what every other test wants.
-   * @unverified: the 发票类型 dropdown opens on the second click and toggles after
+   * @unverified: the 发票类型 dropdown opens on the second click and toggles after [transient]
    */
   dropdownNeedsSecondClick?: boolean;
   today?: string;
@@ -121,51 +122,51 @@ export type FakeErpOptions = {
   receiptLedger?: FakeReceiptLedger;
   /**
    * Pick from computer (电脑端选取) does nothing, so the assistant never leaves its entry menu and no upload is possible.
-   * @unverified: the assistant's 电脑端选取 can do nothing and leave it on its entry menu
+   * @unverified: the assistant's 电脑端选取 can do nothing and leave it on its entry menu [transient]
    */
   assistantStuckOnEntryMenu?: boolean;
   /**
    * The 不生成费用明细 menu item opens past the bottom of the viewport, where a real mouse event reaches nothing.
    * Live on 2026-09-19 the 收票信息 anchor had not finished scrolling, so the item landed at y=941 in a viewport
    * 908 high; the click was lost and the run died on INVOICE_ASSISTANT_NOT_FOUND 90s later.
-   * @unverified: the 不生成费用明细 item can open below the viewport
+   * @unverified: the 不生成费用明细 item can open below the viewport [transient]
    */
   notFillEntryBelowFold?: boolean;
   /**
    * The 不生成费用明细 item is measured correctly and the mouse event lands on its NEIGHBOUR 合并生成费用明细
    * instead — the shape V-53 proved possible on this page, where a mis-delivered click is silent. ERP then imports
    * in merge mode and writes the 费用明细 rows itself, which is D2's observed shape.
-   * @unverified: a click aimed at 不生成费用明细 can land on 合并生成费用明细
+   * @unverified: a click aimed at 不生成费用明细 can land on 合并生成费用明细 [transient]
    */
   notFillEntryHitsNeighbour?: boolean;
   /**
    * Clicking an invoice kind (票种) tab does nothing: the pane never changes, so rows in the other 票种 stay out of reach.
-   * @unverified: a click on the assistant's 票种 tab can leave the pane unchanged
+   * @unverified: a click on the assistant's 票种 tab can leave the pane unchanged [upload]
    */
   assistantPaneSwitchDead?: boolean;
   /**
    * Invoice numbers (发票号码) whose checkbox refuses to toggle — a click that lands and still leaves the row unticked.
-   * @unverified: an assistant row's checkbox can take a click and stay unticked
+   * @unverified: an assistant row's checkbox can take a click and stay unticked [upload]
    */
   assistantDeadTickNumbers?: string[];
   /**
    * The 发票号码 whose tick point is painted over: `document.elementFromPoint` there answers the overlay `<img>`,
    * exactly as it did live on 2026-09-19 for the row sitting at the bottom edge of the 800x530 iframe viewport.
-   * @unverified: an overlay <img> paints over the tick point of the row at the assistant iframe's bottom edge
+   * @unverified: an overlay <img> paints over the tick point of the row at the assistant iframe's bottom edge [unseen]
    */
   assistantCoveredTickNumbers?: string[];
   /**
    * Recognition of every upload batch after the first lands this many assistant evaluations later, and lands in
    * its own 票种 pane. The first batch's rows stay on screen throughout, so `rows.length > 0` is true the whole
    * time and cannot say whether the second batch has been recognised.
-   * @unverified: the assistant recognises every batch after the first later, in its own 票种 pane
+   * @unverified: the assistant recognises every batch after the first later, in its own 票种 pane [upload]
    */
   assistantRecognitionTicks?: number;
   /**
    * How many ERP-page evaluations after 新增 Kendo takes to move `k-state-active` onto the new form's tab panel.
    * Until then the only active panel is the console's own, which answers with its own form id — the live shape
    * behind `compatibility_mismatch` on a build that matched (2026-09-19).
-   * @unverified: Kendo moves k-state-active onto the new form panel a few reads after 新增
+   * @unverified: Kendo moves k-state-active onto the new form panel a few reads after 新增 [transient]
    */
   formPanelActiveTicks?: number;
   /**
@@ -173,12 +174,12 @@ export type FakeErpOptions = {
    * window is on screen carrying nothing but its title; above 2 it also paints its grid a row at a time as it goes.
    * The live shape of 2026-09-19: at T+90s the window held the word 处理结果 and nothing else, and minutes later
    * held the complete ten-row all-success report. Default 2: on screen empty, complete one read later.
-   * @unverified: 处理结果 opens empty and paints its report later, row by row
+   * @unverified: 处理结果 opens empty and paints its report later, row by row [import]
    */
   importReportTicks?: number;
   /**
    * The window opens and its report never arrives at all: the hang the budget's stall clock has to catch.
-   * @unverified: the import result window (处理结果) can open and never paint its report
+   * @unverified: the import result window (处理结果) can open and never paint its report [import]
    */
   importReportStalled?: boolean;
   /**
@@ -186,7 +187,7 @@ export type FakeErpOptions = {
    * opens NO window at all. Measured live 2026-09-21 with one invoice: 收票单 SPD202609160141 on the bill, not a
    * single `.k-window` on screen, and a judge that only ever looked at windows waited out its whole budget and
    * told the employee 结果不确定 about an import that had worked.
-   * @unverified: 发票导入单据 can succeed with no window at all
+   * @unverified: 发票导入单据 can succeed with no window at all [import]
    */
   importReportMissing?: boolean;
   /**
@@ -199,12 +200,12 @@ export type FakeErpOptions = {
    * the form (rect 257,168 768x529), `elementFromPoint(371, 334)` — the centre of 事由, whose locator was
    * perfectly correct — answered a SPAN「接收发票」 inside the report, and `activeElement` was that cell. A fully
    * successful irreversible import was reported to the employee as 结果不确定.
-   * @unverified: 处理结果 can survive its 退出 and float over 事由
+   * @unverified: 处理结果 can survive its 退出 and float over 事由 [import]
    */
   importReportStaysOpen?: boolean;
   /**
    * New (新增) is clicked and no form opens — the navigation that reports success while achieving nothing.
-   * @unverified: a click on 新增 can land and open no form
+   * @unverified: a click on 新增 can land and open no form [transient]
    */
   newFormClickDead?: boolean;
   /**
@@ -213,7 +214,7 @@ export type FakeErpOptions = {
    * 2026-09-20: the prompt's overlay covered the header strip, so every click under it was refused and the run
    * died at 打开空白报销单. Answering 不退出 is what uncovers it; answering 继续退出 signs the session out, and
    * the fake really does sign out, so a test cannot pass by clicking the wrong one.
-   * @unverified: ERP's idle prompt (金蝶提示) and its overlay cover the header strip until 不退出
+   * @unverified: ERP's idle prompt (金蝶提示) and its overlay cover the header strip until 不退出 [transient]
    */
   idlePromptCovers?: string;
   /**
@@ -222,7 +223,7 @@ export type FakeErpOptions = {
    * SELECTION, not only on a first visit, and the run died with the checkbox unreachable — so the one dismissal
    * that used to sit before the uploads could not have helped. `ant-modal-wrap` at z-index 9999 covered the whole
    * (0,0)-(800,530) viewport live; here it covers what a run must click, which is the same thing for a hit test.
-   * @unverified: the assistant's 温馨提示 comes back over the rows after the uploads are recognised
+   * @unverified: the assistant's 温馨提示 comes back over the rows after the uploads are recognised [upload]
    */
   noticeReturnsAfterUpload?: boolean;
   /**
@@ -233,7 +234,7 @@ export type FakeErpOptions = {
    * 收票信息 anchor at (312, 145), hit-tested to an anonymous DIV and the run stopped before writing anything.
    * A form that is still opening is BUSY, not stuck, so this is outwaited rather than refused — the same overlay
    * `tabs.ts` already outwaits on the tab strip.
-   * @unverified: the form's blocking overlay covers the section anchors while it opens
+   * @unverified: the form's blocking overlay covers the section anchors while it opens [transient]
    */
   sectionOverlayTicks?: number;
   /**
@@ -243,7 +244,7 @@ export type FakeErpOptions = {
    * 「发票类型」的落点（x=629 y=843）上盖着DIV — and a read of that very point a minute later answered the cell
    * itself (`SPAN.kd-grid-cellspan「普通发票」`, 569,826 120x34). The cover was momentary; `selectOption` read the
    * point once and refused.
-   * @unverified: an anonymous DIV sits over the 发票类型 cell for a few reads
+   * @unverified: an anonymous DIV sits over the 发票类型 cell for a few reads [transient]
    */
   invoiceTypeCoverTicks?: number;
   /**
@@ -253,14 +254,14 @@ export type FakeErpOptions = {
    * 新增行 and stopped on `add_row_not_observed` — while the row WAS on the form a moment later. The click was
    * never lost; the read was too early. ERP adds the row through its own re-render, and `addDetailRow` returned
    * `{ok:true}` the instant the click was dispatched.
-   * @unverified: ERP paints a new 费用明细行 a few reads after 新增行
+   * @unverified: ERP paints a new 费用明细行 a few reads after 新增行 [unseen]
    */
   newRowAppearsAfterTicks?: number;
   /**
    * How many ERP-page evaluations a committed row keeps its `k-grid-edit-row` class — the grid still reporting
    * the row as being edited for a render or two after the value has been taken. `leaveEdit` reads that state
    * once, and `draft-flow.ts` turns `stillEditing: true` into `leave_edit_failed`.
-   * @unverified: a committed row keeps k-grid-edit-row for a few reads
+   * @unverified: a committed row keeps k-grid-edit-row for a few reads [transient]
    */
   editRowLingersTicks?: number;
   /**
@@ -275,7 +276,7 @@ export type FakeErpOptions = {
    * 116.52 short and nothing in the fill noticed, because `writeCell` compares the cell it typed into. The
    * MECHANISM is not modelled here (it has not been measured: the ERP host was unreachable for this round) —
    * only the outcome ERP was observed to produce, so the fake stops being kinder than the live page.
-   * @unverified: a money write can land in the cell and never reach ERP's model
+   * @unverified: a money write can land in the cell and never reach ERP's model [typing]
    */
   moneyWritesNotTaken?: Array<{ row: number; column: '费用金额' | '税额' }>;
   /**
@@ -295,7 +296,7 @@ export type FakeErpOptions = {
    * directly, which is the right tool for a test about the witness. This one reproduces how the outcome arises,
    * so a fill that paces itself against ERP's own computed column passes and one that types straight through
    * does not — the fake stops being kinder than the live page.
-   * @unverified: ERP's model trails a money cell by ~260ms and drops a second write inside that window
+   * @unverified: ERP's model trails a money cell by ~260ms and drops a second write inside that window [typing]
    */
   moneyModelLagTicks?: number;
   /**
@@ -306,7 +307,7 @@ export type FakeErpOptions = {
    * Measured live 2026-09-20: a 去报销 wrote five 费用明细行 in full, opened 发票类型 on the sixth and stopped on
    * 「发票类型」候选项「普通发票」的落点（x=629 y=697）上盖着DIV. The cell's own point is polled since the last
    * round; the ITEM's was read exactly once, out of the same probe that had just waited for the list to appear.
-   * @unverified: the open 发票类型 list's items sit under a cover for a few reads
+   * @unverified: the open 发票类型 list's items sit under a cover for a few reads [transient]
    */
   optionItemCoverTicks?: number;
 };
@@ -320,18 +321,21 @@ const ZERO = { x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, heigh
 const READONLY_COLUMNS = new Set(['收票单号', '申请报销金额', '申请付款金额']);
 // The live 发票类型 list, all six of it, as `selectOption` read it open on 2026-09-20 (V-72). baox writes three
 // of them; the other three are here so that picking the wrong neighbour is a mistake the fake can reproduce.
-// @unverified: the six 发票类型 options, in this order
+// recordings/detail-row shows the same six in the same order (recorded-erp.test.ts).
 const INVOICE_TYPES = ['普通发票', '增值税发票', '机票', '火车票', '其他运输票', '其他'];
-// @unverified: the 费用明细 grid's columns and their order
+// 13 of the live grid's 21 columns (recordings/detail-row), in the fake's own order: columns align by label, never by
+// position, and recorded-erp.test.ts checks every one of these is a live column.
 const DETAIL_COLUMNS = ['收票单号', '项目', '费用项目', '发票类型', '开始日期', '结束日期', '住宿/出差地', '出发地', '目的地', '费用金额', '税额', '申请报销金额', '申请付款金额'];
-// @unverified: the 收票信息 grid's columns and their order
+// The live grid's header is recorded (8 of its 15 columns are here; live says 销售方名称 for 销方名称, which nothing
+// reads and the kernel goldens pin), its filled rows are not.
+// @unverified: 收票信息 rows as the fake fills them after 发票导入单据 [import]
 const RECEIPT_COLUMNS = ['收票单', '发票号码', '销方名称', '开票日期', '不含税金额', '税额', '价税合计', '发票类别'];
 // The recognised-row grid of the 发票助手, as probe-grid.ts measured it live on 2026-09-19.
-// @unverified: the assistant's recognised-row grid columns
+// @unverified: the assistant's recognised-row grid columns [upload]
 const ASSISTANT_COLUMNS = ['', '销方名称', '发票号码', '价税合计', '税额', '开票日期', '发票信息', '操作'];
 // Rows are laid out down a page taller than the viewport, so the later ones are out of reach until something
 // scrolls them in — live, rows 0-4 of 10 were inside the 530-high iframe viewport and rows 6-9 were not.
-// @unverified: the assistant rows' layout: 250px apart, later rows past the 530px iframe viewport
+// @unverified: the assistant rows' layout: 250px apart, later rows past the 530px iframe viewport [upload]
 const ASSISTANT_ROW_TOP = 300;
 const ASSISTANT_ROW_STEP = 250;
 
@@ -364,7 +368,7 @@ const recordedEmpty = (el: any) => {
   return !width || !height;
 };
 
-// @unverified: hand-written pages sit on a fake 10px grid, not on live boxes (recorded pages keep live visibility only)
+// @unverified: hand-written pages sit on a fake 10px grid, not on live boxes (recorded pages keep live visibility only) [fake]
 /** One jsdom document with fake layout, visible-only innerText, and CDP-style evaluation. */
 class FakeDocument {
   readonly window: any;
@@ -490,7 +494,7 @@ export function erpFixtureHtml(loggedIn: boolean, values: { uuid: string; displa
  * Kingdee's ExecuteBillQuery answered from the fake's master data: the JSON body ERP returns for a request body the
  * catalog check sends. Shared with the real-browser harness, which serves it at the same path.
  */
-// @unverified: ExecuteBillQuery request and answer shape for 项目 / 费用项目 lookups
+// @unverified: ExecuteBillQuery request and answer shape for 项目 / 费用项目 lookups [fake]
 export function answerBillQuery(requestBody: string, data: { projects: FakeMasterData[]; expenseItems: FakeMasterData[] }): unknown {
   const payload = JSON.parse(JSON.parse(requestBody).parameters[0]);
   const source = payload.FormId === 'BD_Expense' ? data.expenseItems : payload.FormId === 'BJYC_ProJect' ? data.projects : null;
@@ -526,8 +530,8 @@ export async function createFakeErp(options: FakeErpOptions) {
   let formUuid = 'a1b2c3d4e5f6';
   const recorded = options.recording ? loadRecording(options.recording) : null;
   let recordedStep = 0;
-  let main: FakeDocument = await render();
   let child: { doc: FakeDocument; sessionId: string; targetId: string } | null = null;
+  let main: FakeDocument = await render();
   // `before` is the cell's value when the editor opened: a datepicker keeps it when it cannot parse what it holds.
   // `swallow`: this editing session's keys go nowhere, because the ERP is still re-rendering the control
   // (`firstTypingLostOn`). Cleared by a second click into the same cell.
@@ -569,17 +573,54 @@ export async function createFakeErp(options: FakeErpOptions) {
     const loginInfo = loginInfoOf(page, account);
     if (loginInfo) doc.window.localStorage.setItem('k3cloudloginInfo', loginInfo);
     await doc.ready();
+    await showRecordedChild(page);
     return doc;
   }
 
   /**
-   * A click on a recorded page: the next page when it lands where the live click did (the marked element or inside
-   * it), nothing otherwise. A click on a container around the mark lands elsewhere: live, it would have hit whatever
-   * of the container is at that point, not the mark.
+   * The recorded page's child frame (the 发票无忧助手) as the fake's child target: announced when it first appears,
+   * kept under the same session when the next page still has it (live, the iframe navigates in place), and
+   * detached when a page no longer has it.
    */
-  async function replayClick(el: any) {
-    const mark = main.document.querySelector(`[${CLICK_MARK}]`);
-    if (!loggedIn || !mark || !(mark === el || mark.contains(el))) return;
+  async function showRecordedChild(page: RecordedPage) {
+    if (!page.child) {
+      if (child) {
+        const { sessionId } = child;
+        child = null;
+        emitEvent('Target.detachedFromTarget', { sessionId });
+      }
+      return;
+    }
+    const doc = new FakeDocument(fillIdentity(recorded!.html(page.child), account), page.child.url);
+    await doc.ready();
+    const appearing = !child;
+    child = { doc, sessionId: child?.sessionId ?? 'piaozone-session-1', targetId: child?.targetId ?? 'piaozone-1' };
+    if (appearing && autoAttach) announceChild();
+  }
+
+  /** `Target.attachedToTarget` for the child, after the command that caused it has returned (as CDP does). */
+  function announceChild() {
+    if (!child) return;
+    const { sessionId, targetId, doc } = child;
+    setTimeout(() => {
+      emitEvent('Target.attachedToTarget', { sessionId, targetInfo: { targetId, type: 'iframe', url: 'about:blank' } });
+      emitEvent('Target.targetInfoChanged', { targetInfo: { targetId, type: 'iframe', url: doc.window.location.href } });
+    }, 0);
+  }
+
+  /**
+   * A click on a recorded page, on the page itself or in its child frame: the next page when it lands where the
+   * live click did, nothing otherwise. Where it landed live is the marked element, anything inside it, or a wrapper
+   * that shows nothing else (the cell around a cell's text, the arrow around its icon): the executor aims at the
+   * control, live hit-testing answered its innermost element.
+   */
+  async function replayClick(doc: FakeDocument, el: any) {
+    const page = recordedPage();
+    const inChild = page?.click?.frame === 'child';
+    if (!loggedIn || !page?.click || inChild !== (doc !== main)) return;
+    const mark = doc.document.querySelector(`[${CLICK_MARK}]`);
+    const wrapper = el.contains(mark) && String(el.textContent).trim() === String(mark?.textContent).trim();
+    if (!mark || !(mark === el || mark.contains(el) || wrapper)) return;
     recordedStep += 1;
     main = await render();
   }
@@ -591,9 +632,11 @@ export async function createFakeErp(options: FakeErpOptions) {
     const doc = new FakeDocument(html, url);
     // K3Cloud states its front-end resource version nowhere in the DOM, only on this global, which is where the
     // compatibility fingerprint reads it. jsdom runs no inline script, so the fake sets it directly.
-    // @unverified: KDResVer is `?ver=<build>` and k3cloudloginInfo is {user, acc} on the hand-written pages (recordings/new-form records the live ones)
+    // `?ver=<build>` and {user, acc} are what the recordings show logged in (recorded-erp.test.ts).
     (doc.window as unknown as { KDResVer: string }).KDResVer = `?ver=${erpBuild}`;
-    // localStorage keeps the last account even on the login page (probe.mjs fact 4).
+    // localStorage keeps the last account even on the login page (probe.mjs fact 4). The recorder's login page comes
+    // from a browser context with no history, so it cannot show this.
+    // @unverified: k3cloudloginInfo survives logout onto the login page [unseen]
     doc.window.localStorage.setItem('k3cloudloginInfo', JSON.stringify({ user: account.account, acc: account.tenant }));
     doc.window.fetch = async (_input: string, init: { body: string }) => {
       const body = answerBillQuery(init.body, options);
@@ -663,7 +706,7 @@ const kendoDate = (raw: string) => {
     return notTaken.has(td) ? notTaken.get(td)! : textOf(tr, 'detail', column);
   };
 
-  // @unverified: 申请报销金额 = 费用金额 + 税额, recalculated when either is committed
+  // @unverified: 申请报销金额 = 费用金额 + 税额, recalculated when either is committed [typing]
   function recalc(tr: any) {
     const net = cents(modelOf(tr, '费用金额'));
     const tax = cents(modelOf(tr, '税额')) ?? 0;
@@ -690,7 +733,7 @@ const kendoDate = (raw: string) => {
     if (hits.length === 1) setText(tr, 'detail', '收票单号', textOf(hits[0], 'receipts', '收票单'));
   }
 
-  // @unverified: cell editing: select-all + typing + Enter/Tab commit, F7 code resolved to its name on commit
+  // @unverified: cell editing: select-all + typing + Enter/Tab commit, F7 code resolved to its name on commit [typing]
   function commitEditor() {
     if (!editor) return;
     const { td, tr, input, column, before } = editor;
@@ -933,7 +976,7 @@ const kendoDate = (raw: string) => {
     }
   }
 
-  // @unverified: 发票导入单据: 收票单 minted per invoice, 收票信息 rows filled, 重复报销 refusals in 提示
+  // @unverified: 发票导入单据: 收票单 minted per invoice, 收票信息 rows filled, 重复报销 refusals in 提示 [import]
   function importInvoices() {
     if (!child) return;
     const rows = [...child.doc.document.querySelectorAll('tbody tr')].filter((tr: any) => tr.querySelector('input.ant-checkbox-input')?.checked);
@@ -999,7 +1042,7 @@ const kendoDate = (raw: string) => {
     }, 0);
   }
 
-  // @unverified: 保存 turns the form to 费用报销单-修改 and refuses an empty 事由 with 事由不能为空，保存失败
+  // @unverified: 保存 turns the form to 费用报销单-修改 and refuses an empty 事由 with 事由不能为空，保存失败 [save]
   function save() {
     commitEditor();
     closeDropdown();
@@ -1031,7 +1074,7 @@ const kendoDate = (raw: string) => {
     commitEditor();
     switch (action) {
       case 'open-list': return show(q('#expense-list'), true);
-      // @unverified: clicking 新增 reveals the form in the same document; live opens it through 菜单 -> 员工服务 -> 我的费用报销 -> 新增 (recordings/new-form)
+      // @unverified: clicking 新增 reveals the form in the same document, where live adds a tab panel (recordings/new-form) [fake]
       case 'new-form':
         if (options.newFormClickDead) return undefined;
         show(q('#expense-list'), false);
@@ -1051,7 +1094,7 @@ const kendoDate = (raw: string) => {
       }
       // 继续退出 really signs out. The prompt's two buttons sit side by side and read almost the same; a run that
       // answers with this one has lost the session it was given, and nothing after it can work.
-      // @unverified: 继续退出 on the idle prompt signs the session out
+      // @unverified: 继续退出 on the idle prompt signs the session out [transient]
       case 'sign-out': {
         show(q('#idle-window'), false);
         show(q('.kd-mainconsole-shortcuts'), false);
@@ -1213,7 +1256,7 @@ const kendoDate = (raw: string) => {
     doc.querySelector('#assistant-selected').textContent = `已选取${uploaded}张发票 所有已选发票已选0份附件`;
   }
 
-  // @unverified: the assistant recognises an upload by its bytes and groups rows into one pane per 票种
+  // @unverified: the assistant recognises an upload by its bytes and groups rows into one pane per 票种 [upload]
   function recognise(files: Uint8Array[]) {
     if (!child) return;
     const doc = child.doc.document;
@@ -1344,11 +1387,15 @@ const kendoDate = (raw: string) => {
         case 'Input.dispatchMouseEvent':
           if (params.type === 'mousePressed') {
             const el = doc.elementAt(Number(params.x), Number(params.y));
-            if (el) { if (doc === main) await (recorded ? replayClick(el) : clickMain(el)); else clickAssistant(el); }
+            if (el) { if (recorded) await replayClick(doc, el); else if (doc === main) await clickMain(el); else clickAssistant(el); }
           }
           return {};
-        case 'Input.dispatchKeyEvent': key(doc, params); return {};
-        case 'Target.setAutoAttach': autoAttach = true; return {};
+        case 'Input.dispatchKeyEvent': if (!recorded) key(doc, params); return {};
+        case 'Target.setAutoAttach':
+          // Children that are already there are announced too, as Chromium does.
+          if (!autoAttach && recorded) announceChild();
+          autoAttach = true;
+          return {};
         case 'DOM.getDocument': return { root: { nodeId: 1 } };
         case 'DOM.querySelector': return { nodeId: doc.document.querySelector(params.selector) ? 2 : 0 };
         case 'DOM.setFileInputFiles': setFiles((params.files as string[]).map((path) => readFileSync(path))); return {};
