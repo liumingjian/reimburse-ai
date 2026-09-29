@@ -77,7 +77,7 @@ describe('the extension download on the settings page', () => {
     const { files, manifest } = await download(await intranetDownload(template));
 
     // The files sit at the top of the zip, so the folder it unpacks to is the one to load.
-    expect([...files.keys()]).toEqual(expect.arrayContaining(['manifest.json', 'service-worker.js', 'popup.js', 'popup.html']));
+    expect([...files.keys()]).toEqual(expect.arrayContaining(['manifest.json', 'service-worker.js', 'popup.js', 'popup.html', 'switch.js', 'switch.html']));
     // The guard compares origins as literal strings: `http://10.250.0.222:80` would be a different address to it.
     expect(manifest.host_permissions).toEqual([`${INTRANET}/*`]);
     // The page bridge (#290) runs on the app's own pages and nowhere else.

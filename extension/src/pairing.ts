@@ -1,4 +1,4 @@
-import { EXTENSION_PAIRING_ERRORS, EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionPairingFailureSchema, ExtensionTokenSchema } from '@baox/contract';
+import { EXTENSION_PAIRING_ERRORS, EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionIdentitySchema, ExtensionPairingFailureSchema, ExtensionTokenSchema } from '@baox/contract';
 import { APP_UNREACHABLE } from './messages';
 
 // Redeeming the 配对码 (pairing code) the employee typed into the popup, and 撤销配对 (revoking the pairing) from it.
@@ -62,7 +62,8 @@ export async function revokePairing({ origin, token, fetchImpl = fetch }: Revoke
   }
 }
 
-export type PairingCheck = 'paired' | 'not_paired' | 'unknown';
+/** paired carries the account's username when the app gave one, to name it by (#292). */
+export type PairingCheck = { state: 'paired'; username: string | null } | { state: 'not_paired' } | { state: 'unknown' };
 
 export type CheckOptions = { origin: string; token: string; fetchImpl?: typeof fetch; timeoutMs?: number };
 
@@ -75,9 +76,11 @@ export type CheckOptions = { origin: string; token: string; fetchImpl?: typeof f
 export async function checkPairing({ origin, token, fetchImpl = fetch, timeoutMs = 800 }: CheckOptions): Promise<PairingCheck> {
   try {
     const response = await fetchImpl(`${origin}${EXTENSION_PAIR_PATH}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status === 401) return 'not_paired';
-    return response.ok ? 'paired' : 'unknown';
+    if (response.status === 401) return { state: 'not_paired' };
+    if (!response.ok) return { state: 'unknown' };
+    const identity = ExtensionIdentitySchema.safeParse(await response.json().catch(() => null));
+    return { state: 'paired', username: identity.success ? identity.data.username : null };
   } catch {
-    return 'unknown';
+    return { state: 'unknown' };
   }
 }

@@ -58,7 +58,8 @@ describe('扩展配对 (extension pairing)', () => {
     const paired = ExtensionTokenSchema.parse(await redeemed.json());
     expect(paired.accountId).toBe(alice.account.accountId);
     // The token is what routes ERP work afterwards, and it names the same 应用账号 without a session anywhere near it.
-    expect(ExtensionIdentitySchema.parse(await (await whoami(paired.token)).json()).accountId).toBe(alice.account.accountId);
+    // The username is how the extension names this account before switching away from it (#292).
+    expect(ExtensionIdentitySchema.parse(await (await whoami(paired.token)).json())).toEqual({ accountId: alice.account.accountId, username: 'alice' });
 
     // Single use: the code the employee read is spent, and reading it again pairs nothing.
     const again = await redeem(codeOf(issued));

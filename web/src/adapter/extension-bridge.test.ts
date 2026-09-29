@@ -44,8 +44,8 @@ describe('the page bridge, from the page', () => {
   // #291: the pair outcome is the answer, not the presence the content script may announce meanwhile.
   test('hands over a 配对码 and resolves with the pair outcome that answers it', async () => {
     const posted = vi.spyOn(window, 'postMessage');
-    const pairing = createWindowBridge({ pairTimeoutMs: 1_000 }).pair('K7MQ2PXD');
-    expect(posted).toHaveBeenCalledWith({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair', code: 'K7MQ2PXD' }, window.location.origin);
+    const pairing = createWindowBridge({ pairTimeoutMs: 1_000 }).pair('K7MQ2PXD', 'A1');
+    expect(posted).toHaveBeenCalledWith({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair', code: 'K7MQ2PXD', accountId: 'A1' }, window.location.origin);
     posted.mockRestore();
 
     answer(presence);
@@ -55,9 +55,31 @@ describe('the page bridge, from the page', () => {
 
   test('reads a pair request nobody answers as no extension', async () => {
     vi.useFakeTimers();
-    const pairing = createWindowBridge({ pairTimeoutMs: 1_000 }).pair('K7MQ2PXD');
+    const pairing = createWindowBridge({ pairTimeoutMs: 1_000 }).pair('K7MQ2PXD', 'A1');
     answer({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair_outcome', outcome: { status: 'paired', accountId: 'A1' } }, { origin: 'https://evil.example' });
     vi.advanceTimersByTime(1_000);
     await expect(pairing).resolves.toBeNull();
+  });
+
+  // #292: the answer to a switch request waits on a person, so it is the switch outcome, however long it takes.
+  test('asks whether the extension may switch accounts and resolves with the switch outcome', async () => {
+    vi.useFakeTimers();
+    const posted = vi.spyOn(window, 'postMessage');
+    const switching = createWindowBridge({ pairTimeoutMs: 1_000 }).switchTo('A1');
+    expect(posted).toHaveBeenCalledWith({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'switch', accountId: 'A1' }, window.location.origin);
+    posted.mockRestore();
+
+    vi.advanceTimersByTime(60_000);
+    answer(presence);
+    answer({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair_outcome', outcome: { status: 'declined' } });
+    answer({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'switch_outcome', outcome: 'declined' });
+    await expect(switching).resolves.toBe('declined');
+  });
+
+  test('reads a switch request nobody answers as no extension', async () => {
+    vi.useFakeTimers();
+    const switching = createWindowBridge({ switchTimeoutMs: 1_000 }).switchTo('A1');
+    vi.advanceTimersByTime(1_000);
+    await expect(switching).resolves.toBeNull();
   });
 });

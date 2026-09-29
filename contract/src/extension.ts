@@ -95,7 +95,9 @@ export type ExtensionPairInput = z.infer<typeof ExtensionPairInputSchema>;
 export const ExtensionTokenSchema = z.object({ token: z.string().min(1), accountId: z.string().min(1) });
 export type ExtensionToken = z.infer<typeof ExtensionTokenSchema>;
 
-export const ExtensionIdentitySchema = z.object({ accountId: z.string().min(1) });
+// What the app answers an extension that asks with its token (GET EXTENSION_PAIR_PATH). `username` is how the
+// extension names the account it acts for when it asks the employee before switching to another one (#292).
+export const ExtensionIdentitySchema = z.object({ accountId: z.string().min(1), username: z.string().min(1) });
 export type ExtensionIdentity = z.infer<typeof ExtensionIdentitySchema>;
 
 // none: no pairing; waiting: a 配对码 (pairing code) is issued and no extension has used it yet; paired: paired.
@@ -195,19 +197,40 @@ export const ExtensionBridgePresenceSchema = z.object({
 });
 export type ExtensionBridgePresence = z.infer<typeof ExtensionBridgePresenceSchema>;
 
-// Page -> extension: "redeem this 配对码 (pairing code)". The page issues the code through the existing endpoint only
-// when the extension is present and not paired to the signed-in 应用账号 (#291); the extension redeems it through the
-// same path as a code typed into its popup. Answered with a pair outcome.
-export const ExtensionBridgePairRequestSchema = z.object({ namespace: BridgeNamespaceSchema, kind: z.literal('pair'), code: z.string().min(1).max(64) });
+// Page -> extension: "may you switch to the signed-in 应用账号 `accountId`?" (#292). Sent before a 配对码 is issued
+// whenever the extension says it acts for another account, because issuing one already ends the signed-in account's
+// own earlier pairing on the server, so a refused switch must come before it. The extension asks the employee in a
+// window of its own, naming the account it acts for now; the page never renders that question and cannot answer it.
+// Answered with a switch outcome.
+export const ExtensionBridgeSwitchRequestSchema = z.object({ namespace: BridgeNamespaceSchema, kind: z.literal('switch'), accountId: z.string().min(1) });
+export type ExtensionBridgeSwitchRequest = z.infer<typeof ExtensionBridgeSwitchRequestSchema>;
+
+// accepted: the employee agreed, or there was nothing to agree to (the extension is unpaired, or already acts for
+// `accountId`); the next pair request for `accountId` is redeemed without asking again. declined: the employee kept
+// the other account, or closed the window; nothing changed.
+export const ExtensionSwitchOutcomeSchema = z.enum(['accepted', 'declined']);
+export type ExtensionSwitchOutcome = z.infer<typeof ExtensionSwitchOutcomeSchema>;
+
+// Extension -> page: the answer to a switch request.
+export const ExtensionBridgeSwitchOutcomeSchema = z.object({ namespace: BridgeNamespaceSchema, kind: z.literal('switch_outcome'), outcome: ExtensionSwitchOutcomeSchema });
+export type ExtensionBridgeSwitchOutcome = z.infer<typeof ExtensionBridgeSwitchOutcomeSchema>;
+
+// Page -> extension: "redeem this 配对码 (pairing code), issued for `accountId`". The page issues the code through the
+// existing endpoint only when the extension is present and not paired to the signed-in 应用账号 (#291), or after an
+// accepted switch request when it acts for another one (#292); the extension redeems it through the same path as a
+// code typed into its popup. `accountId` lets the extension see a switch before redeeming: a switch no accepted switch
+// request covers is asked about first. Answered with a pair outcome.
+export const ExtensionBridgePairRequestSchema = z.object({ namespace: BridgeNamespaceSchema, kind: z.literal('pair'), code: z.string().min(1).max(64), accountId: z.string().min(1) });
 export type ExtensionBridgePairRequest = z.infer<typeof ExtensionBridgePairRequestSchema>;
 
 // How a pair request ended. paired: the extension now acts for `accountId`. failed: redeeming was refused or could not
 // be done, with the same `code` and `message` the popup's redeem gets (version_too_old, network_error, the server's
-// own refusals), so the page shows the reason the popup would. #292 adds declined (the employee refused to switch the
-// extension away from another 应用账号) as a third member here.
+// own refusals), so the page shows the reason the popup would. declined: the employee refused to switch the extension
+// away from another 应用账号 (#292); nothing was redeemed.
 export const ExtensionPairOutcomeSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('paired'), accountId: z.string().min(1) }),
   z.object({ status: z.literal('failed'), code: z.string().min(1), message: z.string().min(1) }),
+  z.object({ status: z.literal('declined') }),
 ]);
 export type ExtensionPairOutcome = z.infer<typeof ExtensionPairOutcomeSchema>;
 
@@ -215,10 +238,10 @@ export type ExtensionPairOutcome = z.infer<typeof ExtensionPairOutcomeSchema>;
 export const ExtensionBridgePairOutcomeSchema = z.object({ namespace: BridgeNamespaceSchema, kind: z.literal('pair_outcome'), outcome: ExtensionPairOutcomeSchema });
 export type ExtensionBridgePairOutcome = z.infer<typeof ExtensionBridgePairOutcomeSchema>;
 
-export const ExtensionBridgePageMessageSchema = z.discriminatedUnion('kind', [ExtensionBridgeProbeSchema, ExtensionBridgePairRequestSchema]);
+export const ExtensionBridgePageMessageSchema = z.discriminatedUnion('kind', [ExtensionBridgeProbeSchema, ExtensionBridgeSwitchRequestSchema, ExtensionBridgePairRequestSchema]);
 export type ExtensionBridgePageMessage = z.infer<typeof ExtensionBridgePageMessageSchema>;
 
-export const ExtensionBridgeExtensionMessageSchema = z.discriminatedUnion('kind', [ExtensionBridgePresenceSchema, ExtensionBridgePairOutcomeSchema]);
+export const ExtensionBridgeExtensionMessageSchema = z.discriminatedUnion('kind', [ExtensionBridgePresenceSchema, ExtensionBridgeSwitchOutcomeSchema, ExtensionBridgePairOutcomeSchema]);
 export type ExtensionBridgeExtensionMessage = z.infer<typeof ExtensionBridgeExtensionMessageSchema>;
 
 // ---------------------------------------------------------------------------

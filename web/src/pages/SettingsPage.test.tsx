@@ -1,6 +1,6 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
-import { EXTENSION_DOWNLOAD_PATH, EXTENSION_MINIMUM_VERSION, EXTENSION_PAIRING_STATUS_LABELS, EXTENSION_VERSION, LEGACY_IMPORT_ERRORS, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY, type AppAdapter, type ExtensionPairOutcome } from '@baox/contract';
+import { EXTENSION_DOWNLOAD_PATH, EXTENSION_MINIMUM_VERSION, EXTENSION_PAIRING_STATUS_LABELS, EXTENSION_VERSION, LEGACY_IMPORT_ERRORS, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY, type AppAdapter, type ExtensionPairOutcome, type ExtensionSwitchOutcome } from '@baox/contract';
 import { App } from '../App';
 import type { ExtensionBridge, ExtensionPresence } from '../adapter/extension-bridge';
 import { MOCK_ACCOUNT } from '../mock/auth';
@@ -209,15 +209,25 @@ describe('设置页：浏览器扩展的下载、安装与升级', () => {
   });
 });
 
-// Answers every probe with what `presence` returns at that moment, and every pair request with what `pair` returns;
-// null is silence. Records the 配对码 handed over.
-function fakeBridge(presence: () => ExtensionPresence | null, pair: (code: string) => ExtensionPairOutcome | null = () => null): ExtensionBridge & { probes: () => number; codes: string[] } {
+// Answers every probe with what `presence` returns at that moment, every switch request with what `switchTo` resolves
+// to, and every pair request with what `pair` returns; null is silence. Records the 配对码 handed over and the
+// accounts a switch was asked for.
+function fakeBridge(
+  presence: () => ExtensionPresence | null,
+  pair: (code: string) => ExtensionPairOutcome | null = () => null,
+  switchTo: () => Promise<ExtensionSwitchOutcome | null> = async () => null,
+): ExtensionBridge & { probes: () => number; codes: string[]; switches: string[] } {
   let probes = 0;
   const codes: string[] = [];
+  const switches: string[] = [];
   return {
     probe: async () => {
       probes += 1;
       return presence();
+    },
+    switchTo: async (accountId) => {
+      switches.push(accountId);
+      return switchTo();
     },
     pair: async (code) => {
       codes.push(code);
@@ -225,7 +235,17 @@ function fakeBridge(presence: () => ExtensionPresence | null, pair: (code: strin
     },
     probes: () => probes,
     codes,
+    switches,
   };
+}
+
+// After a one-click pairing the page renders once more with the step from before it (the manual flow, now beside the
+// server's 已连接) until the re-probe answers, so wait for the connection-only view rather than for its title.
+async function settledPairedHere(section: ReturnType<typeof within>) {
+  await waitFor(() => {
+    expect(section.getByText(EXTENSION_PAIRING_COPY.connectedTitle)).toBeTruthy();
+    expect(section.queryByRole('link', { name: EXTENSION_PAIRING_COPY.tutorial })).toBeNull();
+  });
 }
 
 // #290: the page asks the extension in this browser who it is (a fake bridge here; the real one is
@@ -271,12 +291,13 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
     expect(section.getByRole('button', { name: '撤销配对' })).toBeTruthy();
   });
 
-  test('扩展配对的是另一个账号：仍走手动配对码，不自动生成', async () => {
+  test('扩展配对的是另一个账号、也没回答能不能换：走手动配对码，不自动生成', async () => {
     const bridge = fakeBridge(() => ({ version: EXTENSION_VERSION, paired: true, accountId: 'someone-else' }));
     renderWithExtension(bridge);
     const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
     expect(await section.findByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
     expect(section.getByRole('button', { name: '生成配对码' })).toBeTruthy();
+    expect(bridge.switches).toEqual([MOCK_ACCOUNT.accountId]);
     expect(bridge.codes).toEqual([]);
     expect(section.getByText(EXTENSION_PAIRING_STATUS_LABELS.none)).toBeTruthy();
   });
@@ -322,8 +343,9 @@ describe('设置页：扩展应答但没有配对时一键配对', () => {
   const mine: ExtensionPresence = { version: EXTENSION_VERSION, paired: true, accountId: MOCK_ACCOUNT.accountId };
 
   type Redeem = (code: string) => ExtensionPairOutcome | null;
+  type Before = { presence?: ExtensionPresence; switchTo?: () => Promise<ExtensionSwitchOutcome | null> };
 
-  async function renderAutoPair(redeem: Redeem, hash = '#/settings') {
+  async function renderAutoPair(redeem: Redeem, hash = '#/settings', { presence = unpaired, switchTo }: Before = {}) {
     const pairedView = await createMockAdapter({ seed: 'actions', fault: null, extensionPaired: true }).getExtensionPairing();
     const adapter = createMockAdapter({ seed: 'actions', fault: null });
     let redeemed = false;
@@ -337,12 +359,13 @@ describe('设置页：扩展应答但没有配对时一键配对', () => {
       },
     };
     const bridge = fakeBridge(
-      () => (redeemed ? mine : unpaired),
+      () => (redeemed ? mine : presence),
       (code) => {
         const outcome = redeem(code);
         redeemed = outcome?.status === 'paired';
         return outcome;
       },
+      switchTo,
     );
     window.location.hash = hash;
     render(<App adapter={server} bridge={bridge} />);
@@ -351,9 +374,10 @@ describe('设置页：扩展应答但没有配对时一键配对', () => {
 
   test('没有配对：自动生成配对码交给扩展，到已连接，不用输入', async () => {
     const { bridge, issued, section } = await renderAutoPair(() => ({ status: 'paired', accountId: MOCK_ACCOUNT.accountId }));
-    expect(await section.findByText(EXTENSION_PAIRING_COPY.connectedTitle)).toBeTruthy();
+    await settledPairedHere(section);
     expect(section.getByText('已连接')).toBeTruthy();
     expect(bridge.codes).toEqual(['K7MQ2PXD']);
+    expect(bridge.switches).toEqual([]);
     expect(issued).toHaveLength(1);
     expect(section.queryByText('K7MQ2PXD')).toBeNull();
     expect(section.queryByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeNull();
@@ -394,5 +418,68 @@ describe('设置页：扩展应答但没有配对时一键配对', () => {
     const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
     expect(await section.findByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
     expect(issued).toBe(0);
+  });
+});
+
+// #292: an extension acting for another 应用账号 asks the employee, in a window of its own, before it switches. The
+// page asks it first and issues a 配对码 only after a yes, because issuing one ends this account's earlier pairing.
+describe('设置页：扩展在替另一个账号报销时，先由扩展问员工要不要换', () => {
+  const colleague: ExtensionPresence = { version: EXTENSION_VERSION, paired: true, accountId: 'someone-else' };
+  const mine: ExtensionPresence = { version: EXTENSION_VERSION, paired: true, accountId: MOCK_ACCOUNT.accountId };
+
+  function renderSwitch(switchTo: () => Promise<ExtensionSwitchOutcome | null>) {
+    const pairedView = createMockAdapter({ seed: 'actions', fault: null, extensionPaired: true }).getExtensionPairing();
+    const adapter = createMockAdapter({ seed: 'actions', fault: null });
+    let redeemed = false;
+    const issued: number[] = [];
+    const server: AppAdapter = {
+      ...adapter,
+      getExtensionPairing: async () => (redeemed ? pairedView : adapter.getExtensionPairing()),
+      createExtensionPairingCode: async () => {
+        issued.push(1);
+        return adapter.createExtensionPairingCode();
+      },
+    };
+    const bridge = fakeBridge(
+      () => (redeemed ? mine : colleague),
+      () => {
+        redeemed = true;
+        return { status: 'paired', accountId: MOCK_ACCOUNT.accountId };
+      },
+      switchTo,
+    );
+    window.location.hash = '#/settings';
+    render(<App adapter={server} bridge={bridge} />);
+    return { bridge, issued };
+  }
+
+  test('员工同意换：配对码只在同意之后生成，交给扩展，到已连接', async () => {
+    const { bridge, issued } = renderSwitch(async () => 'accepted');
+    const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
+    await settledPairedHere(section);
+    expect(section.getByText('已连接')).toBeTruthy();
+    expect(bridge.switches).toEqual([MOCK_ACCOUNT.accountId]);
+    expect(bridge.codes).toEqual(['K7MQ2PXD']);
+    expect(issued).toHaveLength(1);
+  });
+
+  test('员工不同意：不生成配对码，说明扩展仍在替另一个账号报销，手动流程还在', async () => {
+    const { bridge, issued } = renderSwitch(async () => 'declined');
+    const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
+    expect(await section.findByText(EXTENSION_PAIRING_COPY.autoPairDeclinedTitle)).toBeTruthy();
+    expect(section.getByText(EXTENSION_PAIRING_COPY.autoPairDeclined)).toBeTruthy();
+    expect(section.getByRole('button', { name: '生成配对码' })).toBeTruthy();
+    expect(section.getByText(EXTENSION_PAIRING_STATUS_LABELS.none)).toBeTruthy();
+    expect(bridge.codes).toEqual([]);
+    expect(issued).toHaveLength(0);
+  });
+
+  test('员工还在看扩展的问题：页面等着，不生成配对码', async () => {
+    const { bridge, issued } = renderSwitch(() => new Promise(() => undefined));
+    const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
+    expect(await section.findByText(EXTENSION_PAIRING_COPY.autoPairConfirming)).toBeTruthy();
+    expect(section.queryByRole('button', { name: '生成配对码' })).toBeNull();
+    expect(bridge.codes).toEqual([]);
+    expect(issued).toHaveLength(0);
   });
 });

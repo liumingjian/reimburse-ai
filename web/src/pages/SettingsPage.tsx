@@ -189,6 +189,9 @@ export const EXTENSION_PAIRING_COPY = {
   autoPairing: '正在和这台浏览器里的扩展配对…',
   autoPairFailed: '扩展没能自动完成配对',
   autoPairSilent: '这台浏览器里的扩展没有应答。请打开扩展，把下面的配对码填进去。',
+  autoPairConfirming: '这台浏览器里的扩展正在替另一个账号报销。请在扩展弹出的窗口里确认，要不要换成这个账号。',
+  autoPairDeclinedTitle: '扩展仍在替另一个账号报销',
+  autoPairDeclined: '你在扩展的窗口里选了保留原来的账号，这台浏览器没有任何改动。以后要换成这个账号，刷新这一页再确认一次就行。',
   loading: '正在读取配对情况…',
   loadFailed: '配对情况加载失败',
   retryLoad: '重试',
@@ -198,8 +201,9 @@ export const EXTENSION_PAIRING_COPY = {
 // server's pairing read is the only authority for whether a browser is paired and connected. What the extension in
 // this browser says over the page bridge (`extension-setup.ts`) decides only which step to show: the full install
 // and manual 配对码 flow, the upgrade steps alone, or no tutorial at all once this browser is paired to this account.
-// An extension that answers but is not paired to this account is paired on the spot (`useAutoPair`, #291); the manual
-// flow stays for when it does not answer or the pairing fails.
+// An extension that answers but is not paired to this account is paired on the spot (`useAutoPair`, #291), after the
+// extension has asked the employee when it acts for another account (#292); the manual flow stays for when it does not
+// answer, the switch is declined, or the pairing fails.
 function ExtensionPairingSection() {
   const store = useAppStore();
   const state = useExtensionPairing();
@@ -225,7 +229,7 @@ function ExtensionPairingSection() {
 
   const view = state.data;
   const activeOrigin = view?.activeOrigin ?? '';
-  const guided = (step.kind === 'notInstalled' || step.kind === 'notPairedHere' || step.kind === 'pairedElsewhere') && autoPair.status !== 'pairing';
+  const guided = (step.kind === 'notInstalled' || step.kind === 'notPairedHere' || step.kind === 'pairedElsewhere') && autoPair.status !== 'pairing' && autoPair.status !== 'confirming';
   const next = view?.status === 'paired'
     ? view.connected
       ? { title: EXTENSION_PAIRING_COPY.connectedTitle, lead: EXTENSION_PAIRING_COPY.connectedLead(activeOrigin) }
@@ -279,10 +283,18 @@ function ExtensionPairingSection() {
               {EXTENSION_PAIRING_COPY.checking}
             </p>
           ) : null}
+          {autoPair.status === 'confirming' ? (
+            <p className="app-loading" role="status">
+              {EXTENSION_PAIRING_COPY.autoPairConfirming}
+            </p>
+          ) : null}
           {autoPair.status === 'pairing' ? (
             <p className="app-loading" role="status">
               {EXTENSION_PAIRING_COPY.autoPairing}
             </p>
+          ) : null}
+          {guided && autoPair.status === 'declined' ? (
+            <InlineNotification kind="info" role="status" lowContrast hideCloseButton statusIconDescription="提示" title={EXTENSION_PAIRING_COPY.autoPairDeclinedTitle} subtitle={EXTENSION_PAIRING_COPY.autoPairDeclined} />
           ) : null}
           {guided && autoPair.status === 'failed' ? (
             <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={EXTENSION_PAIRING_COPY.autoPairFailed} subtitle={autoPair.message} />

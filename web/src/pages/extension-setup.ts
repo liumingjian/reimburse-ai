@@ -12,8 +12,9 @@ import type { ExtensionPresence } from '../adapter/extension-bridge';
 // - outdated: an extension answered with a version below EXTENSION_MINIMUM_VERSION. Only the upgrade steps.
 // - notPairedHere: installed and new enough, and unpaired (or paired to this account while the server says otherwise).
 //   The settings page issues a 配对码 and hands it to the extension (`useAutoPair`, #291).
-// - pairedElsewhere: installed and new enough, but acting for another 应用账号. The manual flow, as for notInstalled,
-//   until #292 lets the extension confirm the switch; one-click pairing must not void a colleague's pairing silently.
+// - pairedElsewhere: installed and new enough, but acting for another 应用账号. The extension asks the employee
+//   before switching (`useAutoPair`, #292); declined or unanswered, the manual flow as for notInstalled. One-click
+//   pairing must not void a colleague's pairing silently.
 // - pairedHere: the extension says it acts for this account and the server agrees. No tutorial, just the connection.
 
 export type ExtensionProbe = { status: 'probing' } | { status: 'answered'; presence: ExtensionPresence | null };
@@ -64,11 +65,20 @@ export function useExtensionSetup(): { step: ExtensionSetupStep; reprobe: () => 
   return { step: extensionSetupStep(probe, session.data?.account?.accountId ?? null, pairing.data), reprobe };
 }
 
-// One-click 扩展配对 (#291): where the automatic pairing got to. idle: not attempted (or not wanted). pairing: a 配对码 is
-// being issued and handed over. paired: the extension redeemed it. silent: nothing answered, so the issued code is the
-// employee's to type, as without the bridge. failed: issuing or redeeming failed, with the reason the popup would show.
-// #292 adds declined (the employee kept the extension with another 应用账号).
-export type AutoPair = { status: 'idle' } | { status: 'pairing' } | { status: 'paired' } | { status: 'silent' } | { status: 'failed'; message: string };
+// One-click 扩展配对 (#291): where the automatic pairing got to. idle: not attempted (or not wanted, or the extension
+// never answered whether it may switch accounts). confirming: the extension acting for another 应用账号 is asking the
+// employee whether to switch (#292). pairing: a 配对码 is being issued and handed over. paired: the extension redeemed
+// it. silent: nothing answered the pair request, so the issued code is the employee's to type, as without the bridge.
+// declined: the employee kept the extension with the other account. failed: issuing or redeeming failed, with the
+// reason the popup would show.
+export type AutoPair =
+  | { status: 'idle' }
+  | { status: 'confirming' }
+  | { status: 'pairing' }
+  | { status: 'paired' }
+  | { status: 'silent' }
+  | { status: 'declined' }
+  | { status: 'failed'; message: string };
 
 // Reading the pairing again until the server sees the extension connected: redeeming returns before the extension's
 // channel is up, and the page has no push for it.
@@ -78,24 +88,36 @@ const CONNECTED_POLL_MS = 500;
 /**
  * Pairs the extension in this browser without the employee typing anything: when the first step settled on is
  * notPairedHere, issues a 配对码 through the existing endpoint, hands it over the bridge, and on success reloads the
- * pairing and re-probes until the page reaches 已连接. Decided once per page visit, on the first step after the probe
- * and the pairing read are both in, so a later 撤销配对 or a failed attempt never issues codes behind the employee's back.
+ * pairing and re-probes until the page reaches 已连接. On pairedElsewhere the extension first asks the employee whether
+ * to switch accounts (#292), and the code is issued only once they agree: issuing one already ends this account's
+ * earlier pairing, so a refused switch leaves everything as it was. Decided once per page visit, on the first step
+ * after the probe and the pairing read are both in, so a later 撤销配对 or a failed attempt never issues codes behind
+ * the employee's back.
  */
 export function useAutoPair(step: ExtensionSetupStep, reprobe: () => void): AutoPair {
   const store = useAppStore();
   const bridge = useExtensionBridge();
   const pairing = useExtensionPairing();
+  const accountId = useSession().data?.account?.accountId ?? null;
   const [state, setState] = useState<AutoPair>({ status: 'idle' });
   const decided = useRef(false);
   const loaded = pairing.data !== null;
 
   useEffect(() => {
-    if (decided.current || step.kind === 'checking' || !loaded) return;
+    if (decided.current || step.kind === 'checking' || !loaded || accountId === null) return;
     decided.current = true;
-    // #292 adds pairedElsewhere here, once the extension asks before switching accounts.
-    if (step.kind !== 'notPairedHere') return;
-    setState({ status: 'pairing' });
+    if (step.kind !== 'notPairedHere' && step.kind !== 'pairedElsewhere') return;
+    const switching = step.kind === 'pairedElsewhere';
+    setState({ status: switching ? 'confirming' : 'pairing' });
     void (async () => {
+      if (switching) {
+        const answer = await bridge.switchTo(accountId);
+        if (answer !== 'accepted') {
+          setState({ status: answer === 'declined' ? 'declined' : 'idle' });
+          return;
+        }
+        setState({ status: 'pairing' });
+      }
       const issued = await store.extensionPairingAction((adapter) => adapter.createExtensionPairingCode());
       if (!issued.ok) {
         setState({ status: 'failed', message: issued.error.message });
@@ -106,7 +128,7 @@ export function useAutoPair(step: ExtensionSetupStep, reprobe: () => void): Auto
         setState({ status: 'idle' });
         return;
       }
-      const outcome = await bridge.pair(code);
+      const outcome = await bridge.pair(code, accountId);
       if (!outcome) {
         setState({ status: 'silent' });
         return;
@@ -114,6 +136,9 @@ export function useAutoPair(step: ExtensionSetupStep, reprobe: () => void): Auto
       switch (outcome.status) {
         case 'failed':
           setState({ status: 'failed', message: outcome.message });
+          return;
+        case 'declined':
+          setState({ status: 'declined' });
           return;
         case 'paired':
           for (let poll = 0; poll < CONNECTED_POLLS; poll += 1) {
@@ -126,7 +151,7 @@ export function useAutoPair(step: ExtensionSetupStep, reprobe: () => void): Auto
           return;
       }
     })();
-  }, [step.kind, loaded, store, bridge, reprobe]);
+  }, [step.kind, loaded, accountId, store, bridge, reprobe]);
 
   return state;
 }

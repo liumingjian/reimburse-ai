@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { bridgeRequestFrom, relayPageBridge, type BridgeMessageEvent, type BridgeRequest, type BridgeWindow } from './bridge';
 import type { ChannelStatus } from './connection';
 import { APP_UNREACHABLE } from './messages';
-import { createPairingRequests, type PairingChannel, type StoredPairing } from './pairing-requests';
+import { createPairingRequests, type ConfirmSwitch, type CurrentAccount, type PairingChannel, type StoredPairing } from './pairing-requests';
 
 // The page bridge (#290) at its protocol: what the baox page posts, and what it is answered. The page's window and
 // the runtime hop between content script and service worker are faked; everything behind them is the real thing.
@@ -45,12 +45,13 @@ function fakeChannel(initial: ChannelStatus | null = null, started: StoredPairin
   return channel;
 }
 
-type Setup = { pairing?: StoredPairing; status?: ChannelStatus; app?: (url: string, init?: RequestInit) => Response | Promise<Response> };
+type Setup = { pairing?: StoredPairing; status?: ChannelStatus; app?: (url: string, init?: RequestInit) => Response | Promise<Response>; confirmSwitch?: ConfirmSwitch };
 
 // The content script wired to the service worker's answer, as `content-script.ts` and `service-worker.ts` wire them.
-function extensionOnPage({ pairing, status, app = () => jsonResponse(200, { accountId: pairing?.accountId }) }: Setup = {}) {
+function extensionOnPage({ pairing, status, app = () => jsonResponse(200, { accountId: pairing?.accountId }), confirmSwitch }: Setup = {}) {
   const items = new Map<string, unknown>(pairing ? [['pairing', pairing]] : []);
   const started: StoredPairing[] = [];
+  const channel = fakeChannel(status ?? null, started);
   const requests = createPairingRequests({
     origin: ORIGIN,
     storage: {
@@ -58,8 +59,9 @@ function extensionOnPage({ pairing, status, app = () => jsonResponse(200, { acco
       set: async (values) => void Object.entries(values).forEach(([key, value]) => items.set(key, value)),
       remove: async (key) => void items.delete(key),
     },
-    channel: fakeChannel(status ?? null, started),
+    channel,
     browser: () => 'Chrome 142 Windows',
+    ...(confirmSwitch ? { confirmSwitch } : {}),
     fetchImpl: async (url, init) => app(String(url), init),
   });
   const page = fakeWindow();
@@ -68,10 +70,13 @@ function extensionOnPage({ pairing, status, app = () => jsonResponse(200, { acco
     return message ? requests.bridge(message) : undefined;
   };
   const relay = relayPageBridge({ window: page.window, origin: ORIGIN, ask: worker });
-  return { ...page, relay, items, started };
+  return { ...page, relay, items, started, channel };
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+// A few turns of the event loop: a request can read more than one response body before it answers.
+const settle = async () => {
+  for (let turn = 0; turn < 5; turn += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+};
 
 describe('the page bridge', () => {
   it('answers a probe from the baox page with the version and the account it is paired to', async () => {
@@ -186,7 +191,7 @@ describe('what the service worker takes as a page bridge request', () => {
 
 // #291: the page hands the extension a 配对码 it just issued, and the extension redeems it as the popup would.
 describe('pairing through the page bridge', () => {
-  const pairRequest = (code = 'K7MQ2PXD') => ({ data: { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair', code } });
+  const pairRequest = (code = 'K7MQ2PXD', accountId = 'a1') => ({ data: { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair', code, accountId } });
   const outcomeOf = (outcome: unknown) => ({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair_outcome', outcome });
   const refusal = (status: number, code: string, message: string) => () => jsonResponse(status, { error: { code, message } });
 
@@ -250,7 +255,7 @@ describe('pairing through the page bridge', () => {
     dispatch({ ...pairRequest(), origin: 'https://evil.example' });
     dispatch({ ...pairRequest(), source: {} });
     dispatch({ ...pairRequest(), source: null });
-    dispatch({ data: { kind: 'pair', code: 'K7MQ2PXD' } });
+    dispatch({ data: { kind: 'pair', code: 'K7MQ2PXD', accountId: 'a1' } });
     await settle();
 
     expect(asked).toBe(0);
@@ -259,6 +264,127 @@ describe('pairing through the page bridge', () => {
   });
 
   it('never lets the page reach the popup\'s requests through a pair request', () => {
-    expect(bridgeRequestFrom({ kind: 'pair', code: 'K7MQ2PXD' }, { tab: { id: 1 }, url: PAGE_URL }, ORIGIN)).toBeNull();
+    expect(bridgeRequestFrom({ kind: 'pair', code: 'K7MQ2PXD', accountId: 'a1' }, { tab: { id: 1 }, url: PAGE_URL }, ORIGIN)).toBeNull();
+  });
+});
+
+// #292: an extension acting for another 应用账号 asks the employee before it switches. The page asks first (a switch
+// request, before it issues a 配对码, since issuing one already ends the signed-in account's earlier pairing), and
+// the pair request that follows an agreed switch is not asked about again.
+describe('switching accounts through the page bridge', () => {
+  const COLLEAGUE: StoredPairing = { token: 'tok-bob', accountId: 'a2' };
+  const switchRequest = (accountId = 'a1') => ({ data: { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'switch', accountId } });
+  const pairRequest = (accountId = 'a1') => ({ data: { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair', code: 'K7MQ2PXD', accountId } });
+  const switchOutcome = (outcome: string) => ({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'switch_outcome', outcome });
+  const pairOutcome = (outcome: unknown) => ({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair_outcome', outcome });
+
+  // Bob (a2) is paired in this browser and the app still honours him (unless `revoked`); a 配对码 redeems to alice
+  // (a1). The employee answers the questions in `answers` order.
+  function colleagueOnThisBrowser(answers: boolean[], { revoked = false } = {}) {
+    const asked: CurrentAccount[] = [];
+    const redeemed: string[] = [];
+    const extension = extensionOnPage({
+      pairing: COLLEAGUE,
+      status: { state: 'ready', accountId: 'a2' },
+      confirmSwitch: async (current) => {
+        asked.push(current);
+        return answers[asked.length - 1] ?? false;
+      },
+      app: (_url, init) => {
+        if (init?.method === 'POST') {
+          redeemed.push(String(init.body));
+          return jsonResponse(200, { token: 'tok-alice', accountId: 'a1' });
+        }
+        return revoked ? jsonResponse(401, { error: { code: 'not_paired', message: '...' } }) : jsonResponse(200, { accountId: 'a2', username: 'bob' });
+      },
+    });
+    return { ...extension, asked, redeemed };
+  }
+
+  it('asks, naming the account it acts for, and on yes redeems the next code without asking again', async () => {
+    const { dispatch, posted, items, started, asked, redeemed } = colleagueOnThisBrowser([true]);
+
+    dispatch(switchRequest());
+    await settle();
+    expect(asked).toEqual([{ accountId: 'a2', username: 'bob' }]);
+    expect(posted.map((post) => post.message)).toEqual([switchOutcome('accepted')]);
+    expect(redeemed).toEqual([]);
+
+    dispatch(pairRequest());
+    await settle();
+    expect(asked).toHaveLength(1);
+    expect(redeemed).toHaveLength(1);
+    expect(items.get('pairing')).toEqual({ token: 'tok-alice', accountId: 'a1' });
+    expect(started).toEqual([{ token: 'tok-alice', accountId: 'a1' }]);
+    expect(posted.map((post) => post.message)[1]).toEqual(pairOutcome({ status: 'paired', accountId: 'a1' }));
+  });
+
+  it('on no, answers declined and keeps the old pairing and its connection', async () => {
+    const { dispatch, posted, items, started, channel, asked, redeemed } = colleagueOnThisBrowser([false]);
+
+    dispatch(switchRequest());
+    await settle();
+
+    expect(asked).toEqual([{ accountId: 'a2', username: 'bob' }]);
+    expect(posted.map((post) => post.message)).toEqual([switchOutcome('declined')]);
+    expect(redeemed).toEqual([]);
+    expect(items.get('pairing')).toEqual(COLLEAGUE);
+    expect(started).toEqual([]);
+    expect(channel.status()).toEqual({ state: 'ready', accountId: 'a2' });
+  });
+
+  it('asks before redeeming a pair request no agreed switch covers, and on no redeems nothing', async () => {
+    const { dispatch, posted, items, started, asked, redeemed } = colleagueOnThisBrowser([false]);
+
+    dispatch(pairRequest());
+    await settle();
+
+    expect(asked).toEqual([{ accountId: 'a2', username: 'bob' }]);
+    expect(posted.map((post) => post.message)).toEqual([pairOutcome({ status: 'declined' })]);
+    expect(redeemed).toEqual([]);
+    expect(items.get('pairing')).toEqual(COLLEAGUE);
+    expect(started).toEqual([]);
+  });
+
+  it('an agreed switch covers a pair request for that account only', async () => {
+    const { dispatch, posted, asked, redeemed } = colleagueOnThisBrowser([true, false]);
+
+    dispatch(switchRequest('a1'));
+    await settle();
+    dispatch(pairRequest('a3'));
+    await settle();
+
+    expect(asked).toHaveLength(2);
+    expect(posted.map((post) => post.message)).toEqual([switchOutcome('accepted'), pairOutcome({ status: 'declined' })]);
+    expect(redeemed).toEqual([]);
+  });
+
+  it('does not ask when the stored pairing is one the app no longer honours', async () => {
+    const { dispatch, posted, asked } = colleagueOnThisBrowser([false], { revoked: true });
+    dispatch(switchRequest());
+    await settle();
+    expect(asked).toEqual([]);
+    expect(posted.map((post) => post.message)).toEqual([switchOutcome('accepted')]);
+  });
+
+  it('does not ask when unpaired or already acting for the same account', async () => {
+    for (const pairing of [undefined, { token: 'tok-old', accountId: 'a1' }]) {
+      const asked: CurrentAccount[] = [];
+      const { dispatch, posted, items } = extensionOnPage({
+        ...(pairing ? { pairing } : {}),
+        confirmSwitch: async (current) => {
+          asked.push(current);
+          return false;
+        },
+        app: () => jsonResponse(200, { token: 'tok-new', accountId: 'a1' }),
+      });
+      dispatch(switchRequest());
+      await settle();
+      dispatch(pairRequest());
+      await settle();
+      expect(asked).toEqual([]);
+      expect(posted.map((post) => post.message)).toEqual([switchOutcome('accepted'), pairOutcome({ status: 'paired', accountId: 'a1' })]);
+      expect(items.get('pairing')).toEqual({ token: 'tok-new', accountId: 'a1' });
+    }
   });
 });

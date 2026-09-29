@@ -1,4 +1,4 @@
-import { EXTENSION_BRIDGE_NAMESPACE, ExtensionBridgeExtensionMessageSchema, type ExtensionBridgeExtensionMessage, type ExtensionBridgePageMessage, type ExtensionPairOutcome } from '@baox/contract';
+import { EXTENSION_BRIDGE_NAMESPACE, ExtensionBridgeExtensionMessageSchema, type ExtensionBridgeExtensionMessage, type ExtensionBridgePageMessage, type ExtensionPairOutcome, type ExtensionSwitchOutcome } from '@baox/contract';
 
 // The page's half of the page bridge (#287): the 浏览器扩展 (browser extension) runs a content script on this origin
 // and answers `window.postMessage` messages in the protocol `@baox/contract` defines. Pages reach the extension only
@@ -15,30 +15,44 @@ export type ExtensionBridge = {
   /** Asks the extension who it is. Null when nothing answers in time: not installed, or no bridge at all. */
   probe(): Promise<ExtensionPresence | null>;
   /**
-   * Hands the extension a freshly issued 配对码 (pairing code) to redeem (#291). Null when nothing answers in time; the
-   * code is then still the employee's to type into the popup.
+   * Asks the extension, acting for another 应用账号, whether it may switch to `accountId` (#292). The extension asks
+   * the employee in a window of its own; this only carries the answer. Null when nothing answers in time.
    */
-  pair(code: string): Promise<ExtensionPairOutcome | null>;
+  switchTo(accountId: string): Promise<ExtensionSwitchOutcome | null>;
+  /**
+   * Hands the extension a 配对码 (pairing code) freshly issued for `accountId` to redeem (#291). Null when nothing
+   * answers in time; the code is then still the employee's to type into the popup.
+   */
+  pair(code: string, accountId: string): Promise<ExtensionPairOutcome | null>;
 };
 
 // Long enough for the extension to wake its service worker and confirm its pairing with the app (which it gives
 // 800 ms), short enough that an employee without the extension is not kept waiting for the install steps.
 export const EXTENSION_PROBE_TIMEOUT_MS = 1_500;
 
-// Redeeming is one request from the extension to the app, which answers at once or not at all. #292 lengthens this:
-// with a confirmation up, the answer waits on the employee.
+// Redeeming is one request from the extension to the app, which answers at once or not at all. The page never sends
+// a pair request the extension would still have to ask about: a switch of accounts is agreed through `switchTo` first.
 export const EXTENSION_PAIR_TIMEOUT_MS = 10_000;
 
+// A switch request is answered by a person reading the extension's question, so the page waits as long as someone
+// might plausibly take to read it and decide. Past that, the page falls back to the manual flow.
+export const EXTENSION_SWITCH_TIMEOUT_MS = 180_000;
+
 /** A bridge nothing ever answers: the mock mode, and pages rendered without a bridge. */
-export const SILENT_EXTENSION_BRIDGE: ExtensionBridge = { probe: async () => null, pair: async () => null };
+export const SILENT_EXTENSION_BRIDGE: ExtensionBridge = { probe: async () => null, switchTo: async () => null, pair: async () => null };
 
 /** The slice of `window` the bridge uses. */
 export type BridgeWindow = Pick<Window, 'addEventListener' | 'removeEventListener' | 'postMessage' | 'location'>;
 
-export type WindowBridgeOptions = { window?: BridgeWindow; timeoutMs?: number; pairTimeoutMs?: number };
+export type WindowBridgeOptions = { window?: BridgeWindow; timeoutMs?: number; pairTimeoutMs?: number; switchTimeoutMs?: number };
 
 /** The real bridge, over `window.postMessage`. */
-export function createWindowBridge({ window: target = window, timeoutMs = EXTENSION_PROBE_TIMEOUT_MS, pairTimeoutMs = EXTENSION_PAIR_TIMEOUT_MS }: WindowBridgeOptions = {}): ExtensionBridge {
+export function createWindowBridge({
+  window: target = window,
+  timeoutMs = EXTENSION_PROBE_TIMEOUT_MS,
+  pairTimeoutMs = EXTENSION_PAIR_TIMEOUT_MS,
+  switchTimeoutMs = EXTENSION_SWITCH_TIMEOUT_MS,
+}: WindowBridgeOptions = {}): ExtensionBridge {
   const origin = target.location.origin;
 
   // Posts `message` and resolves with the first answer `pick` accepts, or null at the timeout. Only messages from this
@@ -66,6 +80,7 @@ export function createWindowBridge({ window: target = window, timeoutMs = EXTENS
     // Any presence counts, including the one the content script announces when it loads: the answer to "who are you"
     // is the same either way.
     probe: () => request({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'probe' }, (answer) => (answer.kind === 'presence' ? { version: answer.version, paired: answer.paired, accountId: answer.accountId } : null)),
-    pair: (code) => request({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair', code }, (answer) => (answer.kind === 'pair_outcome' ? answer.outcome : null), pairTimeoutMs),
+    switchTo: (accountId) => request({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'switch', accountId }, (answer) => (answer.kind === 'switch_outcome' ? answer.outcome : null), switchTimeoutMs),
+    pair: (code, accountId) => request({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair', code, accountId }, (answer) => (answer.kind === 'pair_outcome' ? answer.outcome : null), pairTimeoutMs),
   };
 }

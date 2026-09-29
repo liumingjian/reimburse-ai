@@ -7,6 +7,7 @@ import { dedicatedErpTab } from './erp-tab';
 import { channelClosed } from './messages';
 import { BAOX_ORIGIN } from './origin';
 import { createPairingRequests, type PopupAnswer, type PopupRequest, type StoredPairing } from './pairing-requests';
+import { createSwitchDialog, SWITCH_PAGE } from './switch-dialog';
 
 // The MV3 service worker: the only long-lived thing in the extension, and not very long-lived at all. Chrome stops it
 // after 30 seconds of inactivity, so two things keep it up — the channel's heartbeat, which is traffic on an open
@@ -16,7 +17,8 @@ import { createPairingRequests, type PopupAnswer, type PopupRequest, type Stored
 // Everything the popup can ask for goes through `chrome.runtime.sendMessage`, because the popup is a separate page
 // with its own lifetime and must not hold the connection itself. What it asks is answered by `pairing-requests.ts`;
 // this file only wires `chrome` into it. The baox page asks through the content script (the page bridge, `bridge.ts`),
-// over the same runtime messaging, and is answered from a narrower set.
+// over the same runtime messaging, and is answered from a narrower set. The switch question's window
+// (`switch-dialog.ts`) answers over it too.
 
 const WAKE_ALARM = 'baox-keep-alive';
 
@@ -78,6 +80,16 @@ function connect(pairing: StoredPairing): void {
   });
 }
 
+// Asked before one-click pairing moves this extension to another 应用账号 (#292), in a window the extension owns.
+const switchDialog = createSwitchDialog({
+  windows: {
+    create: async (options) => (await chrome.windows.create(options)) ?? {},
+    remove: (windowId) => chrome.windows.remove(windowId),
+    onRemoved: chrome.windows.onRemoved,
+  },
+  pageUrl: chrome.runtime.getURL(SWITCH_PAGE),
+});
+
 const pairingRequests = createPairingRequests({
   origin: BAOX_ORIGIN,
   storage: {
@@ -96,6 +108,7 @@ const pairingRequests = createPairingRequests({
     status: () => lastStatus,
   },
   browser: describeBrowser,
+  confirmSwitch: switchDialog.confirm,
 });
 
 chrome.runtime.onStartup.addListener(() => void pairingRequests.start());
@@ -108,7 +121,13 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === WAKE_ALARM && !client) void pairingRequests.start();
 });
 
-chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse: (answer: PopupAnswer | ExtensionBridgeExtensionMessage) => void) => {
+chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse: (answer: PopupAnswer | ExtensionBridgeExtensionMessage | null) => void) => {
+  // The switch question's own page, recognised by its URL before anything else: it is opened in a tab-like window,
+  // so it would otherwise pass for a content script.
+  if (switchDialog.answer(message, sender.url)) {
+    sendResponse(null);
+    return false;
+  }
   // A content script speaks for a web page, so it gets the page bridge's answers and nothing of the popup's.
   if (fromContentScript(sender)) {
     const request = bridgeRequestFrom(message, sender, BAOX_ORIGIN);

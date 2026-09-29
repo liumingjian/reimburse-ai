@@ -30,7 +30,7 @@ rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
 
 await build({
-  entryPoints: [join(root, 'src', 'service-worker.ts'), join(root, 'src', 'popup.ts')],
+  entryPoints: [join(root, 'src', 'service-worker.ts'), join(root, 'src', 'popup.ts'), join(root, 'src', 'switch.ts')],
   outdir: dist,
   bundle: true,
   format: 'esm',
@@ -54,6 +54,7 @@ await build({
 });
 
 copyFileSync(join(root, 'src', 'popup.html'), join(dist, 'popup.html'));
+copyFileSync(join(root, 'src', 'switch.html'), join(dist, 'switch.html'));
 writeFileSync(join(dist, 'manifest.json'), `${JSON.stringify(manifestFor(version, placeholder), null, 2)}\n`);
 
 console.log(`extension ${version} template built -> ${dist}`);

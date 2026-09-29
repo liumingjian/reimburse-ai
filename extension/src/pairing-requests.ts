@@ -1,7 +1,15 @@
-import { EXTENSION_BRIDGE_NAMESPACE, EXTENSION_VERSION, type ExtensionBridgeExtensionMessage, type ExtensionBridgePageMessage, type ExtensionBridgePairOutcome, type ExtensionBridgePresence } from '@baox/contract';
+import {
+  EXTENSION_BRIDGE_NAMESPACE,
+  EXTENSION_VERSION,
+  type ExtensionBridgeExtensionMessage,
+  type ExtensionBridgePageMessage,
+  type ExtensionBridgePairOutcome,
+  type ExtensionBridgePresence,
+  type ExtensionBridgeSwitchOutcome,
+} from '@baox/contract';
 import type { ChannelStatus } from './connection';
 import { APP_UNREACHABLE } from './messages';
-import { checkPairing, redeemPairingCode, revokePairing, type PairingOutcome } from './pairing';
+import { checkPairing, redeemPairingCode, revokePairing, type PairingCheck, type PairingOutcome } from './pairing';
 
 // What the popup asks the service worker about the pairing: pair with a 配对码 (pairing code), 撤销配对 (revoke the
 // pairing), and status. The service worker only wires `chrome` into this; storage, the network and the channel are
@@ -40,19 +48,36 @@ export type PairingChannel = {
   status(): ChannelStatus | null;
 };
 
+/** The account the extension acts for now, as the switch confirmation names it: by username when the app gave one. */
+export type CurrentAccount = { accountId: string; username: string | null };
+
+/**
+ * Asks the employee, in UI the extension owns, whether to stop acting for `current` and pair with the account signed
+ * in on the baox page (#292). Resolves true when they agree; false when they refuse or close the question.
+ */
+export type ConfirmSwitch = (current: CurrentAccount) => Promise<boolean>;
+
 export type PairingRequestsOptions = {
   origin: string;
   storage: PairingStorage;
   channel: PairingChannel;
   /** What the settings page shows next to 浏览器, sent when redeeming. */
   browser: () => string | null;
+  /** The service worker opens a window of the extension's own (`switch-dialog.ts`). Without one, every switch is refused. */
+  confirmSwitch?: ConfirmSwitch;
   // Injected so the test does not need a network; the service worker passes the global.
   fetchImpl?: typeof fetch;
 };
 
 export type PairingRequests = ReturnType<typeof createPairingRequests>;
 
-export function createPairingRequests({ origin, storage, channel, browser, fetchImpl = fetch }: PairingRequestsOptions) {
+const declineEverySwitch: ConfirmSwitch = async () => false;
+
+export function createPairingRequests({ origin, storage, channel, browser, confirmSwitch = declineEverySwitch, fetchImpl = fetch }: PairingRequestsOptions) {
+  // The switch the employee last agreed to, from one account to another (#292). The page asks before it issues the
+  // 配对码, because issuing it already ends the signed-in account's earlier pairing on the server; the pair request
+  // that follows then redeems without asking a second time. Used up by that one pair request.
+  let agreed: { from: string; to: string } | null = null;
   const base = () => ({ version: EXTENSION_VERSION, status: channel.status(), error: null as string | null });
 
   async function readPairing(): Promise<StoredPairing | null> {
@@ -100,10 +125,24 @@ export function createPairingRequests({ origin, storage, channel, browser, fetch
   // extension is only told over the channel, and only if the channel is up), so the stored token is not enough to
   // announce the extension as paired. The channel's refusal settles it without a request; otherwise the app is
   // asked, and an app that cannot be reached leaves the stored pairing standing.
-  async function stillPaired(pairing: StoredPairing): Promise<boolean> {
+  async function appPairing(pairing: StoredPairing): Promise<PairingCheck> {
     const current = channel.status();
-    if (current?.state === 'refused' && current.code === 'not_paired') return false;
-    return (await checkPairing({ origin, token: pairing.token, fetchImpl })) !== 'not_paired';
+    if (current?.state === 'refused' && current.code === 'not_paired') return { state: 'not_paired' };
+    return checkPairing({ origin, token: pairing.token, fetchImpl });
+  }
+
+  const stillPaired = async (pairing: StoredPairing): Promise<boolean> => (await appPairing(pairing)).state !== 'not_paired';
+
+  /**
+   * Whether pairing with `accountId` may go ahead: at once when nothing would be lost (unpaired, a pairing the app no
+   * longer honours, or already acting for `accountId`); otherwise only if the employee agrees to switch.
+   */
+  async function mayPairWith(accountId: string): Promise<boolean> {
+    const pairing = await readPairing();
+    if (!pairing || pairing.accountId === accountId) return true;
+    const check = await appPairing(pairing);
+    if (check.state === 'not_paired') return true;
+    return confirmSwitch({ accountId: pairing.accountId, username: check.state === 'paired' ? check.username : null });
   }
 
   /** What the extension announces to the baox page: its version, and the 应用账号 it is paired to, if the app agrees. */
@@ -116,12 +155,28 @@ export function createPairingRequests({ origin, storage, channel, browser, fetch
   }
 
   /**
-   * Redeems a 配对码 the baox page handed over (#291), the same way as one typed into the popup, and answers with the
-   * outcome; a failure keeps the redeem's code and message, so the page shows what the popup would.
+   * Answers the baox page's "may you switch to `accountId`?" (#292), asked before it issues a 配对码. Asks the employee
+   * only when the extension acts for another account the app still honours; an agreed switch is remembered for the
+   * pair request that follows.
    */
-  async function pairFromPage(code: string): Promise<ExtensionBridgePairOutcome> {
-    // #292 goes here: when the extension is paired to a different 应用账号, ask the employee before redeeming, and
-    // answer declined without redeeming if they refuse.
+  async function switchFromPage(accountId: string): Promise<ExtensionBridgeSwitchOutcome> {
+    const from = (await readPairing())?.accountId ?? null;
+    const accepted = await mayPairWith(accountId);
+    agreed = accepted && from !== null && from !== accountId ? { from, to: accountId } : null;
+    return { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'switch_outcome', outcome: accepted ? 'accepted' : 'declined' };
+  }
+
+  /**
+   * Redeems a 配对码 the baox page handed over (#291), the same way as one typed into the popup, and answers with the
+   * outcome; a failure keeps the redeem's code and message, so the page shows what the popup would. A switch away from
+   * another account is redeemed only when the employee agreed to it: through the switch request just before (and is
+   * not asked again), or, when none covers it, by being asked now (#292). Refused, nothing is redeemed.
+   */
+  async function pairFromPage(code: string, accountId: string): Promise<ExtensionBridgePairOutcome> {
+    const from = (await readPairing())?.accountId ?? null;
+    const covered = agreed !== null && agreed.from === from && agreed.to === accountId;
+    agreed = null;
+    if (!covered && !(await mayPairWith(accountId))) return { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair_outcome', outcome: { status: 'declined' } };
     const outcome = await redeem(code);
     return {
       namespace: EXTENSION_BRIDGE_NAMESPACE,
@@ -135,8 +190,10 @@ export function createPairingRequests({ origin, storage, channel, browser, fetch
     switch (message.kind) {
       case 'probe':
         return presence();
+      case 'switch':
+        return switchFromPage(message.accountId);
       case 'pair':
-        return pairFromPage(message.code);
+        return pairFromPage(message.code, message.accountId);
     }
   }
 
