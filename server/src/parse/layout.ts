@@ -8,7 +8,7 @@ import type { ParseDoc } from './doc';
 export type EvidenceRef = { page: number; observationIds: string[]; text: string };
 
 export type Candidate = {
-  // A slot key of the kind (`kinds.ts`); segment slots are keyed `segments[i].<field>`.
+  // A slot key of the kind (`slots.ts`); segment slots are keyed `segments[i].<field>`.
   key: string;
   value: string;
   // `rule:<kind>/<layout>` (see `ruleSource`), optionally `.<derivation>` for a derived value.

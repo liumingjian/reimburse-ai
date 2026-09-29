@@ -16,7 +16,7 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 // Every slot the app can ask a user to fill, read from the kind schemas so a new slot is covered the day
 // it is added: `{ key: 'totalAmount', label: '价税合计', required: true, format: 'money' },`.
 async function slots() {
-  const source = await read('server/src/parse/kinds.ts');
+  const source = await read('server/src/parse/slots.ts');
   const found = [...source.matchAll(/\{ key: '([^']+)', label: '([^']+)', required: (?:true|false), format: '([^']+)' \}/g)];
   return found.map(([, key, label, format]) => ({ key, label, format }));
 }
@@ -75,7 +75,7 @@ const amountsOf = (total) =>
   Object.fromEntries(VAT_AMOUNTS.map((key) => [key, qaValue({ key, label: key, format: 'money', kind: 'vat_invoice', total })]));
 
 test('the copied conservation check still matches the server', async () => {
-  const kinds = await read('server/src/parse/kinds.ts');
+  const kinds = await read('server/src/kind-policy.ts');
   assert.ok(kinds.includes('系统不会倒算或调整任何金额'), 'the conservation check moved or changed its wording');
   assert.ok(kinds.includes("if (n !== null && t !== null && g !== null && n + t !== g)"), 'the conservation check changed shape');
 });
@@ -133,7 +133,7 @@ test('the self-check names the rule a refusal would cite instead of clearing the
 });
 
 test('the stand-in 项目名称 is one the app can read a 费用类别 out of', async () => {
-  const kinds = await read('server/src/parse/kinds.ts');
+  const kinds = await read('server/src/parse/slots.ts');
   for (const kind of [undefined, 'vat_invoice']) {
     const itemName = qaValue({ key: 'itemName', label: '项目名称', kind });
     const [, taxClass] = /^\*([^*]+)\*(.+)$/.exec(itemName) ?? [];

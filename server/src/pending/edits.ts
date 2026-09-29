@@ -1,5 +1,5 @@
 import { PENDING_ANSWER_ERRORS, fieldAnswer, validatePendingAnswer, type EditClass, type PendingAnswer } from '@baox/contract';
-import type { SlotFormat } from '../parse/kinds';
+import type { SlotFormat } from '../parse/slots';
 import type { Verdict } from './answers';
 
 // Field edits by edit class (ADR-0017), submitted through `answer-pending` with the item id `edit.<materialId>.<field>`

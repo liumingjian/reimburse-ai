@@ -1,4 +1,5 @@
-import { cents, compact, money, type ParseDoc, type TextObservation } from '../doc';
+import { cents, money } from '../../money-date';
+import { compact, type ParseDoc, type TextObservation } from '../doc';
 import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout } from '../layout';
 
 // `taxi_receipt/machine_printed`: the paper 出租汽车发票 (taxi receipt) strip printed by the meter, read from a photo

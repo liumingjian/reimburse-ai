@@ -1,7 +1,7 @@
 import type { MaterialKind } from '@baox/contract';
 import type { ParseDoc } from './doc';
-import { KINDS } from './kinds';
 import { layoutId, type Candidate, type Finding, type Layout } from './layout';
+import { SLOTS } from './slots';
 
 // Hard-anchor dispatch (ADR-0017): exactly one recognising layout parses; none → unrecognised; several → ambiguous,
 // which the inventory view turns into a blocking 待确认项. First match never wins.
@@ -58,6 +58,6 @@ function parseWith(layout: Layout, doc: ParseDoc): Recognised {
     kindLabel: result.kindLabel,
     candidates: result.candidates,
     findings: result.findings,
-    missing: KINDS[layout.kind].slots.filter((slot) => slot.required && !filled.has(slot.key)).map((slot) => slot.key),
+    missing: SLOTS[layout.kind].filter((slot) => slot.required && !filled.has(slot.key)).map((slot) => slot.key),
   };
 }

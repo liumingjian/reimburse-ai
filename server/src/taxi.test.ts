@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { KINDS } from './parse/kinds';
+import { KINDS } from './kind-policy';
 import { COMPANY_RULES, deriveCategory } from './rules/company-rules';
 import { api, byFileName, fieldValues, sample } from './test/api';
 import { createTestServer, type TestClient, type TestServer } from './test/harness';

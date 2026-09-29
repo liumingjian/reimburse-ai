@@ -1,6 +1,7 @@
-import { cents, compact, joinedRows, matchSpan, money, spans, spansAt, type JoinedRow, type ParseDoc, type TextObservation } from '../doc';
-import { vatItemCategory } from '../kinds';
+import { cents, money } from '../../money-date';
+import { compact, joinedRows, matchSpan, spans, spansAt, type JoinedRow, type ParseDoc, type TextObservation } from '../doc';
 import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout } from '../layout';
+import { vatItemCategory } from '../slots';
 
 // `vat_invoice/einvoice`: the 全电发票 (fully digital e-invoice) face, from the PDF text layer (or, with #186, OCR),
 // with the QR code as a second evidence source `rule:vat_invoice/einvoice_qr` (ADR-0017).

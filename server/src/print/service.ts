@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { PAYMENT_SCREENSHOT_ERRORS, PRINT_ACTION_ERRORS, STAY_TRIO_COPY, type Corners, type Line, type Material, type PlacementSlot } from '@baox/contract';
 import { blobPath, writeBlob } from '../data-dir';
 import type { Db } from '../db/database';
-import { paperCorners, type PaperCorners } from '../parse/ocr';
+import { paperCorners, type PaperCorners } from './straighten';
 import { composeSheet, isJpegOrPng, pdfContent, photoContent, renderPages, screenshotContent, type Content, type Drawn } from './compose';
 import { sheetState, type PrintFacts, type PrintSetting, type Screenshot, type StoredPage, type StoredPlacement } from './facts';
 import { storedMime } from '../upload-rules';

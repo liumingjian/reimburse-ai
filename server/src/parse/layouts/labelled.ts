@@ -1,4 +1,5 @@
-import { cents, compact, daysBetween, money, rows, type ParseDoc, type TextObservation } from '../doc';
+import { cents, daysBetween, money } from '../../money-date';
+import { compact, rows, type ParseDoc, type TextObservation } from '../doc';
 import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout } from '../layout';
 
 // `hotel_folio/labelled`: a hotel 结账单 (folio) of any chain, read through the field labels every folio prints, from a
