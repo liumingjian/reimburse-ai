@@ -1,15 +1,10 @@
-// The server's half of the two-invoice fill scenario. The ERP side (invoices, catalog, plans, the fake ERP's
-// options) lives next to the fake ERP in @baox/erp-executor/testing/scenario and is re-exported here; what stays is
-// the task facts the server's judge turns into the approved preview.
+// The server's half of the two-invoice fill scenario: the task facts the server's judge turns into the approved
+// preview. The ERP side (invoices, catalog, plans, the fake ERP's options) lives next to the fake ERP; import it from
+// @baox/erp-executor/testing/scenario.
 
 import type { DraftJudgeInputs } from '../judge';
 import { previewLinesDigest } from '../preview';
 import { EXPENSE_ITEMS, IDENTITY, INVOICES, PROJECTS } from '@baox/erp-executor/testing/scenario';
-
-export {
-  blobSource, COMPATIBILITY, ERP_ACCOUNT, ERP_ORIGIN, EXPENSE_ITEMS, FAST_PACE, fakeErpOptions, fillPlan, IDENTITY, INVOICES,
-  PROJECTS, reconcilePlan, withoutLayout,
-} from '@baox/erp-executor/testing/scenario';
 
 /** The server-side facts the judge turns into the approved preview (kernel shapes). */
 export const judgeInputs = (taskId: string): DraftJudgeInputs => {

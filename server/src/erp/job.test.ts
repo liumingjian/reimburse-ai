@@ -8,11 +8,11 @@ import { createTaskService } from '../tasks';
 import { createTestServer, type TestServer } from '../test/harness';
 import { runFillJob } from '@baox/erp-executor/job';
 import { createFakeErp, type FakeErp } from '@baox/erp-executor/testing/fake-erp';
-import { approvedPreview, freshGateOf } from '@baox/erp-executor/testing/scenario';
+import { approvedPreview, blobSource, FAST_PACE, fakeErpOptions, fillPlan, freshGateOf } from '@baox/erp-executor/testing/scenario';
 import { createErpJobs, serverChannel, type ErpJobs } from './jobs';
 import { createDraftJudge } from './judge';
 import type { ExecutorChannel, ExecutorEvent } from '@baox/erp-executor/protocol';
-import { blobSource, FAST_PACE, fakeErpOptions, fillPlan, judgeInputs } from './testing/scenario';
+import { judgeInputs } from './testing/judge-inputs';
 
 let server: TestServer;
 let db: Db;

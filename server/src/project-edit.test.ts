@@ -1,9 +1,10 @@
-import { ProjectBookResultSchema, ProjectBookSchema } from '@baox/contract';
+import { ProjectBookSchema } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { databasePath } from './data-dir';
 import { api } from './test/api';
 import { createTestServer, tempDataDir, testClient, type TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
+import { bookChange, INVENTORIED } from './test/project-book';
 
 // Project edits run through the same authenticated HTTP seam as intake. These checks keep the original identity,
 // scoped collision rules, append-only facts, and assignment refresh observable without depending on lifecycle #219.
@@ -23,28 +24,8 @@ afterEach(() => server.close());
 
 const asBob = api(() => bob);
 
-async function intake(
-  client: TestClient,
-  path: '/api/project-book/intake' | '/api/public-project-book/intake',
-  input: { number: string; name: string; deadlineOn?: string | null },
-) {
-  const response = await client.post(path, input);
-  expect(response.status).toBe(200);
-  return ProjectBookResultSchema.parse(await response.json());
-}
-
-async function edit(
-  client: TestClient,
-  path: '/api/project-book/edit' | '/api/public-project-book/edit',
-  input: { originalNumber: string; number: string; name: string; deadlineOn?: string | null },
-) {
-  const response = await client.post(path, input);
-  expect(response.status).toBe(200);
-  return ProjectBookResultSchema.parse(await response.json());
-}
-
-// Hotel e-invoice + rail ticket inventoried (住宿 trio answered 确认没有), with the project book exactly as the test left it.
-const INVENTORIED = { materials: ['m01', 'm07'], projectBook: 'as_is' } as const;
+const intake = (client: TestClient, path: '/api/project-book/intake' | '/api/public-project-book/intake', input: { number: string; name: string; deadlineOn?: string | null }) => bookChange(client, path, input);
+const edit = (client: TestClient, path: '/api/project-book/edit' | '/api/public-project-book/edit', input: { originalNumber: string; number: string; name: string; deadlineOn?: string | null }) => bookChange(client, path, input);
 
 describe('project-book edits', () => {
   it('renumbers a personal entry as an append-only fact, refreshes new choices, and leaves a submitted pin intact', async () => {

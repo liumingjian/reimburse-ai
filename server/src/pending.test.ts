@@ -8,7 +8,7 @@ import type { TestClient, TestServerOptions } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // Slice 08 (#187): 待确认项 (pending items) answered through `answer-pending`, edit classes, 重复发票 (duplicate
-// invoices) inside a task, and cross-task 发票占用 (invoice occupancy), all through `app.request()`. Samples replay
+// invoices) inside a task, and cross-task invoice occupancy (发票占用), all through `app.request()`. Samples replay
 // their preset parse outcomes unless a test swaps in a (real, altered-layout) parser.
 
 let server: ScenarioServer;
@@ -273,7 +273,7 @@ describe('重复发票 (duplicate invoices) inside the task', () => {
   });
 });
 
-describe('cross-task 发票占用 (invoice occupancy)', () => {
+describe('cross-task invoice occupancy (发票占用)', () => {
   it("an invoice held by another account's non-terminal task blocks this task until excluded, naming nobody", async () => {
     const alice = await inventory('project', ['m01']);
     const bob = await server.signIn('bob');

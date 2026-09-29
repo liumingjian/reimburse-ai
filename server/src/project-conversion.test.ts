@@ -1,9 +1,10 @@
-import { ProjectBookResultSchema, ProjectBookSchema, type PublicProjectConversionInput } from '@baox/contract';
+import { ProjectBookSchema, type PublicProjectConversionInput } from '@baox/contract';
 import { sql } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { databasePath } from './data-dir';
 import { createTestServer, tempDataDir, testClient, type TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
+import { bookChange, INVENTORIED } from './test/project-book';
 
 // Conversion stays at the authenticated HTTP seam: private books are only observed through their owners' public
 // results, while the administrator receives no account or task details from a collision prompt.
@@ -23,11 +24,7 @@ beforeEach(async () => {
 });
 afterEach(() => server.close());
 
-async function change(client: TestClient, path: string, body: unknown) {
-  const response = await client.post(path, body);
-  expect(response.status).toBe(200);
-  return ProjectBookResultSchema.parse(await response.json());
-}
+const change = bookChange;
 
 const intake = (client: TestClient, scope: 'personal' | 'public', input: { number: string; name: string }) =>
   change(client, scope === 'personal' ? '/api/project-book/intake' : '/api/public-project-book/intake', input);
@@ -38,7 +35,7 @@ const edit = (client: TestClient, scope: 'personal' | 'public', input: { origina
 const confirm = (client: TestClient, input: PublicProjectConversionInput) => change(client, '/api/public-project-book/convert', input);
 
 // A task inventoried up to project assignment, with the owner's project book as the test entered it.
-const atProject = (client: TestClient, materials: readonly string[] = ['m01', 'm07']) => scenario(server, client).at('project', { materials, projectBook: 'as_is' });
+const atProject = (client: TestClient, materials: readonly string[] = INVENTORIED.materials) => scenario(server, client).at('project', { ...INVENTORIED, materials });
 
 describe('public project conversion', () => {
   it('prompts without writes, then atomically converts active and inactive personal entries while refreshing drafts and preserving submitted pins', async () => {

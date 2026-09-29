@@ -1,4 +1,4 @@
-// The 对账 (reconcile) job's own behaviour on the fake ERP: it only reads. Each recorded draft state
+// The reconcile (对账) job's own behaviour on the fake ERP: it only reads. Each recorded draft state
 // (testing/reconcile-states.ts) is read through a stubbed server end; what the server makes of the reading is
 // tested in server/src/erp/reconcile-job.test.ts.
 import { describe, expect, it } from 'vitest';

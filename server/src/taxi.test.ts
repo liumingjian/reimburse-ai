@@ -4,7 +4,7 @@ import { COMPANY_RULES, deriveCategory } from './rules/company-rules';
 import { byFileName, fieldValues, sample } from './test/api';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
-// Slice 07 (#186): 出租车车费发票 (taxi receipt) photos and the `taxi_receipt/machine_printed` layout, through
+// Slice 07 (#186): taxi receipt (出租车车费发票) photos and the `taxi_receipt/machine_printed` layout, through
 // `app.request()`. The photos replay their preset parse outcomes (what the in-process OCR read from them, re-checked
 // against the real parser by test/parse-presets.test.ts), so the test waits on no OCR.
 

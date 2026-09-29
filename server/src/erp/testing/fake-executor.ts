@@ -134,19 +134,31 @@ export function gated(script: Script) {
   return { script: wrapped, running, release: () => release() };
 }
 
-export type ScriptedExecutor = FillExecutor & { queue: (...scripts: Script[]) => void; runs: () => Array<{ plan: FillPlan; trigger: string }> };
+export type ScriptedExecutor = FillExecutor & {
+  // Replaces the scripts every task plays, including those a task had queued for itself.
+  queue: (...scripts: Script[]) => void;
+  // Replaces the scripts one task plays; other tasks keep playing the shared queue.
+  queueFor: (taskId: string, ...scripts: Script[]) => void;
+  runs: () => Array<{ plan: FillPlan; trigger: string }>;
+};
 
-/** Plays one queued script per job run; the last script repeats. */
+/** Plays one queued script per job run (the task's own queue if it has one); the last script repeats. */
 export function scripted(...initial: Script[]): ScriptedExecutor {
   let queue = [...initial];
+  const perTask = new Map<string, Script[]>();
   const runs: Array<{ plan: FillPlan; trigger: string }> = [];
   const executor = (async (plan, channel, { trigger }) => {
     runs.push({ plan, trigger });
-    const script = queue.length > 1 ? queue.shift()! : queue[0];
+    const scripts = perTask.get(plan.taskId) ?? queue;
+    const script = scripts.length > 1 ? scripts.shift()! : scripts[0];
     if (!script) throw new Error('scripted executor: no script queued');
     return script(plan, channel);
   }) as ScriptedExecutor;
-  executor.queue = (...scripts) => { queue = [...scripts]; };
+  executor.queue = (...scripts) => {
+    queue = [...scripts];
+    perTask.clear();
+  };
+  executor.queueFor = (taskId, ...scripts) => { perTask.set(taskId, [...scripts]); };
   executor.runs = () => runs;
   return executor;
 }

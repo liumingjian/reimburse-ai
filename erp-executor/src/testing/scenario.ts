@@ -3,7 +3,7 @@
 // structured route. Amounts and numbers follow 50931a3:kernel/test/erp-draft-flow.test.mjs.
 //
 // Only the ERP side lives here. The server-side facts its judge turns into the approved preview (`judgeInputs`)
-// stay in server/src/erp/testing/scenario.ts; `approvedPreview` below is what that judge approves for them, pinned
+// stay in server/src/erp/testing/judge-inputs.ts; `approvedPreview` below is what that judge approves for them, pinned
 // by server/src/erp/job.test.ts so the two cannot drift apart.
 
 import { createHash } from 'node:crypto';

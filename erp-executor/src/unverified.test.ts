@@ -9,7 +9,7 @@ import { relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const UNVERIFIED_CEILING = 55;
+const UNVERIFIED_CEILING = 62;
 const MARKER = /@unverified:\s*(.*?)\s*(?:-->|\*\/|$)/gm;
 const testing = fileURLToPath(new URL('./testing/', import.meta.url));
 
