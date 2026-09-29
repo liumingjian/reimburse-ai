@@ -4,8 +4,9 @@
 
 import { describe, expect, it } from 'vitest';
 import { clickAt, evalIn, pressKey } from '../cdp';
+import { openInvoiceAssistant, openNewReimbursement, openUploadView } from '../steps';
 import { createFakeErp } from '../testing/fake-erp';
-import { ERP_ACCOUNT } from '../testing/scenario';
+import { ERP_ACCOUNT, FAST_PACE } from '../testing/scenario';
 import { CAPTURE_SNIPPET, CLICK_MARK, type CapturedNode, type CapturedPage } from './capture';
 import { findLeaks, redactor } from './redact';
 import { crossesBoundary, recordingSession } from './recorder';
@@ -47,6 +48,38 @@ describe('recordingSession', () => {
     const erp = await fake();
     await expect(pressKey(recordingSession(erp.session), 'Enter')).rejects.toMatchObject({ code: 'RECORDING_REFUSED' });
     await expect(recordingSession(erp.session, { allowKeys: true }).send('DOM.setFileInputFiles', { files: [] })).rejects.toMatchObject({ code: 'RECORDING_REFUSED' });
+  });
+
+  it('captures the assistant frame with every page, marks a click inside it, and stops capturing on stop()', async () => {
+    const erp = await fake();
+    const session = recordingSession(erp.session);
+    const page = { session, pace: FAST_PACE };
+    await openNewReimbursement(page);
+    await openInvoiceAssistant(page);
+    const assistant = await openUploadView(page);
+    await session.snapshot('upload-view');
+    const inFrame = session.steps.filter((step) => step.click?.frame === 'child');
+    expect(inFrame.length).toBeGreaterThan(0);
+    expect(inFrame[0]!.child?.url).toBe('https://www.piaozone.com/pwy-assistant/index.html');
+    expect(session.steps.at(-1)).toMatchObject({ name: 'upload-view', child: { title: '发票助手' } });
+    expect(erp.assistantDocument?.querySelector(`[${CLICK_MARK}]`)).toBeNull();
+    session.stop();
+    const count = session.steps.length;
+    const at = await evalIn<{ x: number; y: number }>(assistant, centreOf('.ant-tabs'));
+    await clickAt(assistant, at.x, at.y);
+    expect(session.steps).toHaveLength(count);
+  });
+
+  it('refuses 发票导入单据 inside the assistant frame, so nothing is imported', async () => {
+    const erp = await fake();
+    const session = recordingSession(erp.session);
+    const page = { session, pace: FAST_PACE };
+    await openNewReimbursement(page);
+    await openInvoiceAssistant(page);
+    const assistant = await openUploadView(page);
+    const at = await evalIn<{ x: number; y: number }>(assistant, centreOf('[data-action="import"]'));
+    await expect(clickAt(assistant, at.x, at.y)).rejects.toMatchObject({ code: 'RECORDING_REFUSED' });
+    expect(erp.mutations).toEqual([]);
   });
 
   it.each([
@@ -101,6 +134,27 @@ describe('redactor', () => {
     expect(html).not.toMatch(/某某部门|某某团队/);
     expect(html).toContain('>0000/0/00</span>');
     expect(html).toContain('>普通发票</span>');
+  });
+
+  it("masks a list form's bill rows, its saved filter schemes and the main menu's category titles", () => {
+    const node = (t: string, a: Record<string, string>, ...c: Array<CapturedNode | string>): CapturedNode => ({ t, a, b: [0, 0, 10, 10], c });
+    const body = node('div', {},
+      node('div', { id: 'u-FLIST', class: 'kd-kdgrid-base' }, node('th', {}, '事由'), node('span', { 'data-field': 'FCAUSA', 'data-rowid': '3' }, '某人的差旅')),
+      node('div', { class: 'SchemeItemControlTemplate' }, '报销打印(某人共享)'),
+      node('ul', { class: 'kd-tabsnewsyle-list ', title: '某公司内部文档' }));
+    const html = redactor({ secrets }).page({ url: '', title: '', readyState: 'complete', viewport: { width: 1, height: 1, devicePixelRatio: 1 }, resVer: null, loginInfo: null, body, frames: [], count: 5, pruned: 0 }, 'h').html;
+    expect(html).not.toMatch(/某人|某公司/);
+    expect(html).toContain('>事由</th>');
+    // A masked node keeps the attributes selectors read, whole.
+    expect(html).toContain('data-field="FCAUSA" data-rowid="3"');
+  });
+
+  it('masks the text of a click that landed under a mask rule, in the manifest as on the page', () => {
+    const page = (text: string, a: Record<string, string>): CapturedPage => ({ url: '', title: '', readyState: 'complete', viewport: { width: 1, height: 1, devicePixelRatio: 1 }, resVer: null, loginInfo: null, count: 2, pruned: 0, frames: [],
+      body: { t: 'div', a: { id: 'u-FLIST' }, b: [0, 0, 1, 1], c: [{ t: 'span', a: { [CLICK_MARK]: '', ...a }, b: [0, 0, 1, 1], c: [text] }] } });
+    const target = { tag: 'span', id: '', controlId: 'u-FLIST', text: '某人的差旅 3 天', controlText: '' };
+    expect(redactor({ secrets }).click(page(target.text, { 'data-rowid': '0' }), target).text).toBe('＊＊＊＊＊＊＊＊');
+    expect(redactor({ secrets }).click(page(target.text, {}), target).text).toBe('某人的差旅 0 天');
   });
 
   it('names a leaked secret without repeating it', () => {

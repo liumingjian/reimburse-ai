@@ -41,8 +41,12 @@ export type CapturedPage = {
   pruned: number;
 };
 
-/** Attributes a recording keeps. Everything else (inline style, href, src, event handlers) is dropped. */
-export const KEPT_ATTRIBUTE = /^(id|class|type|name|role|readonly|disabled|checked|placeholder|title|for|colspan|rowspan|tabindex|contenteditable|aria-[a-z]+|data-[a-z0-9-]+)$/;
+/**
+ * Attributes a recording keeps. Everything else (inline style, src, event handlers) is dropped. `href` is kept as its
+ * path alone (or its scheme, for `javascript:` and the like): the executor finds the assistant's 电脑端选取 entry as
+ * the one `a[href]` in its item, and a query string may carry a session token.
+ */
+export const KEPT_ATTRIBUTE = /^(id|class|type|name|role|readonly|disabled|checked|placeholder|title|for|href|colspan|rowspan|tabindex|contenteditable|aria-[a-z]+|data-[a-z0-9-]+)$/;
 
 /** The mark `markClickTarget` puts on the element a click is about to land on, for the replay to find. */
 export const CLICK_MARK = 'data-rec-click';
@@ -55,6 +59,7 @@ export const CAPTURE_SNIPPET = `(() => {
   const SKIP = new Set(['SCRIPT', 'STYLE', 'LINK', 'META', 'NOSCRIPT', 'TEMPLATE', 'BASE']);
   const KEEP = ${KEPT_ATTRIBUTE.toString()};
   const safe = (value) => { try { const u = new URL(String(value), location.href); return u.origin + u.pathname; } catch { return ''; } };
+  const pathOnly = (value) => { try { const u = new URL(String(value), location.href); return /^https?:$/.test(u.protocol) ? u.pathname : u.protocol; } catch { return ''; } };
   const box = (el) => { const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height].map(Math.round); };
   const pathOf = (el) => {
     const parts = [];
@@ -74,7 +79,7 @@ export const CAPTURE_SNIPPET = `(() => {
     count += 1;
     const tag = node.tagName.toLowerCase();
     const a = {};
-    for (const attr of node.attributes) if (KEEP.test(attr.name) && attr.value.length <= 200) a[attr.name] = attr.value;
+    for (const attr of node.attributes) if (KEEP.test(attr.name) && attr.value.length <= 200) a[attr.name] = attr.name === 'href' ? pathOnly(attr.value) : attr.value;
     if (tag === 'input' || tag === 'textarea') {
       a.value = String(node.value ?? '');
       if (node.type === 'checkbox' || node.type === 'radio') { if (node.checked) a.checked = ''; else delete a.checked; }

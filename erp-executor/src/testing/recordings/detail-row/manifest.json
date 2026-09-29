@@ -1,0 +1,232 @@
+{
+  "flow": "detail-row",
+  "name": "detail-row",
+  "description": "A new 费用报销单 and the 费用明细行 it opens with: 发票类型 opened and set to 普通发票 (the value the row already has), and edit left through the 明细信息 anchor. The form the strict read-back reads, with one 费用明细行 and no 收票行. Nothing is typed or saved; the 新增单 is discarded with its tab.",
+  "command": "pnpm --filter @baox/erp-executor probe detail-row --record detail-row",
+  "recordedAt": "2026-09-29",
+  "erpBuild": "8.2.830.9",
+  "result": {
+    "invoiceTypes": [
+      "普通发票",
+      "增值税发票",
+      "机票",
+      "火车票",
+      "其他运输票",
+      "其他"
+    ],
+    "detailColumns": [
+      "序号",
+      "销售合同",
+      "项目",
+      "开始日期",
+      "结束日期",
+      "天数",
+      "住宿/出差地",
+      "出发地",
+      "目的地",
+      "事由",
+      "费用金额",
+      "费用项目",
+      "税额",
+      "申请报销金额",
+      "申请付款金额",
+      "发票类型",
+      "费用承担部门",
+      "已生成发票",
+      "收票单号",
+      "部门属性",
+      "是否研发人员"
+    ],
+    "receiptColumns": [
+      "序号",
+      "收票单",
+      "发票代码",
+      "发票号码",
+      "销售方名称",
+      "开票日期",
+      "不含税金额",
+      "税额",
+      "价税合计",
+      "发票状态",
+      "是否勾选",
+      "是否勾选认证",
+      "查验状态",
+      "发票是否有修改",
+      "发票类别"
+    ]
+  },
+  "loggedOut": {
+    "name": "login",
+    "file": "login.html",
+    "url": "http://erp.antute.com.cn/k3cloud/html5/index.aspx",
+    "title": "金蝶云星空",
+    "viewport": {
+      "width": 2048,
+      "height": 937,
+      "devicePixelRatio": 2
+    },
+    "resVer": "?ver=8.2.830.9",
+    "loginInfo": null,
+    "frames": [],
+    "count": 101,
+    "pruned": 97
+  },
+  "pages": [
+    {
+      "name": "page-1",
+      "file": "01-page-1.html",
+      "url": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+      "title": "金蝶云星空",
+      "viewport": {
+        "width": 2048,
+        "height": 937,
+        "devicePixelRatio": 2
+      },
+      "resVer": "?ver=8.2.830.9",
+      "loginInfo": {
+        "user": "{{ACCOUNT}}",
+        "lan": "＊",
+        "acc": "{{TENANT}}",
+        "ver": "＊"
+      },
+      "frames": [],
+      "count": 403,
+      "pruned": 1389,
+      "click": {
+        "tag": "span",
+        "id": "",
+        "controlId": "BOS_MainSystemMenuCard-0050569440d09ae611e381858f0dd8c0_c",
+        "text": "我的费用报销"
+      }
+    },
+    {
+      "name": "page-2",
+      "file": "02-page-2.html",
+      "url": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+      "title": "金蝶云星空",
+      "viewport": {
+        "width": 2048,
+        "height": 937,
+        "devicePixelRatio": 2
+      },
+      "resVer": "?ver=8.2.830.9",
+      "loginInfo": {
+        "user": "{{ACCOUNT}}",
+        "lan": "＊",
+        "acc": "{{TENANT}}",
+        "ver": "＊"
+      },
+      "frames": [],
+      "count": 414,
+      "pruned": 1786,
+      "click": {
+        "tag": "span",
+        "id": "501e6489-dc83-49aa-867a-594e7fc7be1e-BILLMENU_TOOLBAR-tbSNew",
+        "controlId": "501e6489-dc83-49aa-867a-594e7fc7be1e-BILLMENU_TOOLBAR-tbSNew",
+        "text": "新增"
+      }
+    },
+    {
+      "name": "page-3",
+      "file": "03-page-3.html",
+      "url": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+      "title": "金蝶云星空",
+      "viewport": {
+        "width": 2048,
+        "height": 937,
+        "devicePixelRatio": 2
+      },
+      "resVer": "?ver=8.2.830.9",
+      "loginInfo": {
+        "user": "{{ACCOUNT}}",
+        "lan": "＊",
+        "acc": "{{TENANT}}",
+        "ver": "＊"
+      },
+      "frames": [],
+      "count": 1347,
+      "pruned": 3174,
+      "click": {
+        "tag": "span",
+        "id": "",
+        "controlId": "356700d6-00b3-410b-a835-e1f939699f53-FENTITY-c",
+        "text": "普通发票"
+      }
+    },
+    {
+      "name": "page-4",
+      "file": "04-page-4.html",
+      "url": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+      "title": "金蝶云星空",
+      "viewport": {
+        "width": 2048,
+        "height": 937,
+        "devicePixelRatio": 2
+      },
+      "resVer": "?ver=8.2.830.9",
+      "loginInfo": {
+        "user": "{{ACCOUNT}}",
+        "lan": "＊",
+        "acc": "{{TENANT}}",
+        "ver": "＊"
+      },
+      "frames": [],
+      "count": 1376,
+      "pruned": 3177,
+      "click": {
+        "tag": "li",
+        "id": "a68c4e46-93e0-4531-8b21-45be688b02f7",
+        "controlId": "a68c4e46-93e0-4531-8b21-45be688b02f7",
+        "text": "普通发票"
+      }
+    },
+    {
+      "name": "page-5",
+      "file": "05-page-5.html",
+      "url": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+      "title": "金蝶云星空",
+      "viewport": {
+        "width": 2048,
+        "height": 937,
+        "devicePixelRatio": 2
+      },
+      "resVer": "?ver=8.2.830.9",
+      "loginInfo": {
+        "user": "{{ACCOUNT}}",
+        "lan": "＊",
+        "acc": "{{TENANT}}",
+        "ver": "＊"
+      },
+      "frames": [],
+      "count": 1356,
+      "pruned": 3197,
+      "click": {
+        "tag": "span",
+        "id": "",
+        "controlId": "li_356700d6-00b3-410b-a835-e1f939699f53-FTAB_P0-KDBILLDASHBOARANCHORPOINT_c",
+        "text": "明细信息"
+      }
+    },
+    {
+      "name": "detail-row",
+      "file": "06-detail-row.html",
+      "url": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+      "title": "金蝶云星空",
+      "viewport": {
+        "width": 2048,
+        "height": 937,
+        "devicePixelRatio": 2
+      },
+      "resVer": "?ver=8.2.830.9",
+      "loginInfo": {
+        "user": "{{ACCOUNT}}",
+        "lan": "＊",
+        "acc": "{{TENANT}}",
+        "ver": "＊"
+      },
+      "frames": [],
+      "count": 1343,
+      "pruned": 3179
+    }
+  ]
+}
