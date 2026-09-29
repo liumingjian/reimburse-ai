@@ -1,5 +1,5 @@
 {
-  "about": "#205: leg 1's 上车时间 wraps onto a second line; amounts printed as 26.69元 / ¥42.50. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "about": "#205: leg 1's pick-up time (上车时间) wraps onto a second line; amounts printed as 26.69元 / ¥42.50. @baox/fixtures is synthetic, so the capture is unredacted.",
   "outcome": "recognised",
   "layout": "ride_itinerary/amap",
   "missing": [],

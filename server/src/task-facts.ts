@@ -6,7 +6,7 @@ import { legacyHoldings } from './legacy/import';
 import { inventoryView, type InventoryView, type ViewMaterial } from './inventory-view';
 import { occupancyBlockers, type Holding } from './occupancy-ledger';
 import type { ParseOutcome } from './parse/dispatch';
-import { declaredMedium } from './parse/media';
+import { materialMedium } from './parse/media';
 import { inventoried, type TaskFacts } from './task-policy';
 import { assignmentOf, type Assignment, type AssignmentFact, type PinnedProject } from './assignment';
 import { bookOptions, type BookOption } from './books';
@@ -20,8 +20,8 @@ import { loadPrintFacts, type PrintFacts } from './print/facts';
 
 type Tx = Db;
 
-// `medium` is the medium the upload declared, as recognition reads a name and MIME (`parse/media.ts`): what the
-// material list and print go by. Parsing sniffs the bytes instead.
+// `medium` is the medium recognition sniffed from the bytes at upload (`parse/media.ts` `materialMedium`): what the
+// material list, print and the PDFs-first parse order go by, and what the parser reads the material as.
 export type MaterialRow = MaterialTable & { size: number; mime: string; row_no: number; excluded: number; medium: 'pdf' | 'image' };
 
 export type LoadedTask = {
@@ -66,11 +66,11 @@ export async function materialRows(tx: Tx, taskId: string): Promise<MaterialRow[
     .innerJoin('blob', 'blob.sha256', 'material.blob_sha256')
     .leftJoin('material_exclusion', 'material_exclusion.material_id', 'material.material_id')
     .selectAll('material')
-    .select(['blob.size', 'blob.mime', sql<number>`material.rowid`.as('row_no'), sql<number>`material_exclusion.exclusion_id IS NOT NULL`.as('excluded')])
+    .select(['blob.size', 'blob.mime', 'blob.medium as sniffed', sql<number>`material.rowid`.as('row_no'), sql<number>`material_exclusion.exclusion_id IS NOT NULL`.as('excluded')])
     .where('material.task_id', '=', taskId)
     .orderBy(sql`material.rowid`)
     .execute();
-  return rows.map((row) => ({ ...row, medium: declaredMedium({ fileName: row.file_name, mime: row.mime }) }));
+  return rows.map(({ sniffed, ...row }) => ({ ...row, medium: materialMedium({ fileName: row.file_name, mime: row.mime, sniffed }) }));
 }
 
 // The upload batches and rejected files the snapshot lists next to the materials.

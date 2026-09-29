@@ -27,6 +27,7 @@ import { blobPath, writeBlob } from './data-dir';
 import type { InventoryView } from './inventory-view';
 import type { ParseOutcome } from './parse/dispatch';
 import type { ParseInput } from './parse/material';
+import { mediumOf } from './parse/media';
 import { EXCLUDE_CHOICE, judgeAnswer, type Verdict } from './pending/answers';
 import { EDIT_COPY, EDIT_PREFIX, judgeEdit } from './pending/edits';
 import { ACTION_COPY, ERP_IN_USE, STALE_JOB, isNonTerminal, parseRunning, stepToken, taskPolicy, type ActionName, type Refusal, type TaskFacts } from './task-policy';
@@ -377,7 +378,9 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
             continue;
           }
           known.set(file.sha256, file.relativePath);
-          await tx.insertInto('blob').values({ sha256: file.sha256, size: file.bytes.byteLength, mime: storedMime(file.fileName, file.mime), created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
+          const mime = storedMime(file.fileName, file.mime);
+          // The medium is recognition's to sniff (#312); the material list, print and the parse order read it back.
+          await tx.insertInto('blob').values({ sha256: file.sha256, size: file.bytes.byteLength, mime, medium: mediumOf({ fileName: file.fileName, mime, bytes: file.bytes }), created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
           await tx
             .insertInto('material')
             .values({ material_id: randomUUID(), task_id: taskId, account_id: accountId, batch_id: batchId, blob_sha256: file.sha256, file_name: file.fileName, source_path: file.relativePath, created_at: at, batch_seq: seq })

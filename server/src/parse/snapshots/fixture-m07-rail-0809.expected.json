@@ -1,5 +1,5 @@
 {
-  "about": "@baox/fixtures m07: a 铁路电子客票 (rail e-ticket); no net amount or tax on the face. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "about": "@baox/fixtures m07: a rail e-ticket (铁路电子客票); no net amount or tax on the face. @baox/fixtures is synthetic, so the capture is unredacted.",
   "outcome": "recognised",
   "layout": "rail_ticket/12306",
   "missing": [],

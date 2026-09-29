@@ -1,5 +1,5 @@
 {
-  "about": "#208: the 项目名称 wraps onto a second line and reads as the whole name. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "about": "#208: the item name (项目名称) wraps onto a second line and reads as the whole name. @baox/fixtures is synthetic, so the capture is unredacted.",
   "outcome": "recognised",
   "layout": "vat_invoice/einvoice",
   "missing": [],

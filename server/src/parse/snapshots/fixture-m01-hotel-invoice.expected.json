@@ -1,5 +1,5 @@
 {
-  "about": "@baox/fixtures m01: a 全电发票 (fully digitised e-invoice) 专票 for a hotel stay, every required slot on the face. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "about": "@baox/fixtures m01: a fully-digitalised VAT e-invoice (全电发票), special invoice (专票), for a hotel stay, every required slot on the face. @baox/fixtures is synthetic, so the capture is unredacted.",
   "outcome": "recognised",
   "layout": "vat_invoice/einvoice",
   "missing": [],

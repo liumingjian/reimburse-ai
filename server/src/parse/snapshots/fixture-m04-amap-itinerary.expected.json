@@ -1,5 +1,5 @@
 {
-  "about": "@baox/fixtures m04: a 高德 (Amap) 行程单 (ride itinerary) with three legs, keyed segments[i].<field>. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "about": "@baox/fixtures m04: an Amap (高德) ride itinerary (行程单) with three legs, keyed segments[i].<field>. @baox/fixtures is synthetic, so the capture is unredacted.",
   "outcome": "recognised",
   "layout": "ride_itinerary/amap",
   "missing": [],

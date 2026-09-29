@@ -5,7 +5,8 @@ import { GENERATED_DIR } from '@baox/fixtures';
 import { type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { blobPath } from './data-dir';
-import { api, sample } from './test/api';
+import { api, byFileName, sample } from './test/api';
+import { presetParser } from './test/parse-presets';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
@@ -200,6 +201,35 @@ function screenshot(snapshot: TaskSnapshot, voucherMaterialId: string, file: Fil
   form.append('file', file);
   return alice.request(`/api/tasks/${snapshot.task.taskId}/payment-screenshots`, { method: 'POST', body: form });
 }
+
+// #312: the medium is what recognition sniffs from the bytes at upload, not what the name or MIME declares. A taxi
+// photo saved as `.pdf` is listed and printed as the image it is, and does not jump the PDFs-first parse order.
+describe('a material mislabelled as a PDF', () => {
+  const photoAsPdf = () => ({ ...sample('m09'), name: '出租车票.pdf', type: 'application/pdf' });
+
+  it('is listed and printed as an image', async () => {
+    const { reached: task } = await scenario(server, alice).at('actions', { materials: ['m01', 'm02', photoAsPdf()] });
+    expect(byFileName(task, '出租车票.pdf').mediaType).toBe('image');
+
+    const generated = await client.accepted(await print(task, 'generate-print-sheet'));
+    const taxi = generated.printSheet.pages.find((page) => page.header.includes('外地市内交通'));
+    // An image placement: a straightened photo with its detected paper corners, which a PDF page never has.
+    expect(taxi?.top?.corners).toBeTruthy();
+    await download(generated.printSheet.url!);
+  });
+
+  it('is parsed after the real PDFs, in upload order', async () => {
+    const presets = presetParser();
+    const order: string[] = [];
+    await server.close();
+    server = await scenarioServer({ parser: { ...presets, parse: (input) => (order.push(input.fileName), presets.parse(input)) } });
+    alice = await server.signIn('alice');
+
+    await scenario(server, alice).at('project', { materials: [photoAsPdf(), 'm07'] });
+
+    expect(order).toEqual(['铁路电子客票_0809.pdf', '出租车票.pdf']);
+  });
+});
 
 async function refused(response: Response, code: string): Promise<void> {
   expect(response.status).toBe(400);

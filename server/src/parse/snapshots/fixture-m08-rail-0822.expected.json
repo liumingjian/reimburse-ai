@@ -1,5 +1,5 @@
 {
-  "about": "@baox/fixtures m08: the return 铁路电子客票. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "about": "@baox/fixtures m08: the return rail e-ticket (铁路电子客票). @baox/fixtures is synthetic, so the capture is unredacted.",
   "outcome": "recognised",
   "layout": "rail_ticket/12306",
   "missing": [],
