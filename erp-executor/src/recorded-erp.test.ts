@@ -14,7 +14,7 @@ import { leaveEdit, readGridByColumn, sectionAnchors, selectOption, type Grid } 
 import { headerFieldSnippet, type HeaderField } from './header-locator';
 import { readPanes, recognisedTotal } from './invoice-grid';
 import { COMPATIBILITY_SNIPPET, probeIdentity } from './probe';
-import { STRUCTURAL } from './recording/redact';
+import { structuralAttribute } from './recording/redact';
 import { DETAIL_COLUMN, RECEIPTS_COLUMN, protocolReadings, readForm } from './reader';
 import { addDetailRow, openInvoiceAssistant, openNewReimbursement, openUploadView, type WritePage } from './steps';
 import { tabActions } from './tabs';
@@ -220,7 +220,7 @@ describe('the 发票无忧助手 recording (invoice-assistant)', () => {
 
 describe('committed recordings', () => {
   // Structure keeps its digits (ids, spans, the live boxes); values do not. The ERP build is the one value kept.
-  const structural = (name: string) => STRUCTURAL.has(name) || name === 'data-rec-box';
+  const structural = (name: string) => structuralAttribute(name) || name === 'data-rec-box';
   it.each(recordingNames())('%s holds no value digit and no fake identity', (name) => {
     const { manifest, html } = loadRecording(name);
     const files = [manifest.loggedOut, ...manifest.pages].flatMap((p) => (p.child ? [p, p.child] : [p]));

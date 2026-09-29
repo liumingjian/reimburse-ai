@@ -1,12 +1,12 @@
 // Turns a captured live page into a committable fixture: redacted HTML the fake ERP serves, plus the page facts that
 // live outside the DOM. Redaction keeps structure and drops values:
-//   - the ERP identity (display name (显示名), account, tenant (账套)) becomes a placeholder the fake fills in: {{DISPLAY_NAME}} {{ACCOUNT}}
-//     {{TENANT}}, wherever it appears (text, attributes, input values, localStorage);
+//   - the ERP identity (display name (显示名), account, tenant (账套)) becomes a placeholder the fake fills in:
+//     {{DISPLAY_NAME}} {{ACCOUNT}} {{TENANT}}, wherever it appears (text, attributes, input values, localStorage);
 //   - every digit in text and in value-like attributes becomes `0`, so dates, amounts, bill numbers and phone
 //     numbers keep their shape and lose their value. `STRUCTURAL` attributes (ids, classes, the attributes that
-//     refer to ids, data-field and friends) are kept whole, masked subtree or not, because they are what the
-//     executor's selectors read (a form instance's UUID is what groups a header field's nodes); the ERP build is kept
-//     verbatim (it is the compatibility fingerprint);
+//     refer to ids, data-field and friends) and link paths are kept whole, masked subtree or not, because they are
+//     what the executor's selectors read (a form instance's UUID is what groups a header field's nodes); the ERP build
+//     is kept verbatim (it is the compatibility fingerprint);
 //   - every non-empty input value is masked whole: an editor holds data, never UI vocabulary;
 //   - text under a node a mask rule names is masked whole: `K3CLOUD_MASKS` for the value displays every K3Cloud page
 //     has, plus the flow's own `mask` (lists, widgets that show other people's work);
@@ -68,6 +68,12 @@ export const STRUCTURAL: ReadonlySet<string> = new Set([
   'data-kdformid', 'data-field', 'data-rowid', 'data-uid', 'data-kdid', 'data-arg', 'data-index', 'data-offset-index',
   'aria-activedescendant', 'aria-controls', 'aria-owns', 'aria-describedby', 'aria-labelledby',
 ]);
+/**
+ * Kept whole like `STRUCTURAL`: a link's path. The capture already cut every `href` down to its path (or its scheme),
+ * so what is left names a page of the site (`/k3cloud/html5/dform.aspx`), not a value, and zeroing its digits would
+ * make the replay's links point nowhere the live page does.
+ */
+export const structuralAttribute = (name: string): boolean => STRUCTURAL.has(name) || name === 'href';
 const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
 const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
 const escape = (s: string) => s.replace(/[&<>"]/g, (c) => ESCAPES[c]!);
@@ -107,16 +113,25 @@ export function redactor({ secrets, keep = [], mask: flowMask = [] }: RedactOpti
   };
 
   const attribute = (name: string, raw: string) => {
-    if (STRUCTURAL.has(name)) return identity(raw);
+    if (structuralAttribute(name)) return identity(raw);
     if (name === 'value') return value(raw);
     return text(raw);
   };
 
   const maskedText = (s: string) => (s.trim() ? MASK.repeat(Math.min([...s.trim()].length, 8)) : s);
 
+  /** Whether a node's text and value attributes are masked whole: under a masked ancestor, or named by a mask rule. */
+  const hidden = (node: CapturedNode, ancestors: readonly CapturedNode[], masked: boolean) => masked || mask.some((rule) => rule(node, ancestors));
+
+  /** A node's text as the page's HTML shows it after redaction: masked subtrees masked, the rest as `text`. */
+  const redactedText = (node: CapturedNode, ancestors: CapturedNode[], masked: boolean): string => {
+    const hide = hidden(node, ancestors, masked);
+    return node.c.map((child) => (typeof child === 'string' ? (hide ? maskedText(child) : text(child)) : redactedText(child, [...ancestors, node], hide))).join('');
+  };
+
   function html(node: CapturedNode, ancestors: CapturedNode[] = [], masked = false): string {
-    const hide = masked || mask.some((rule) => rule(node, ancestors));
-    const attrs = Object.entries(node.a).map(([name, raw]) => ` ${name}="${escape(hide && !STRUCTURAL.has(name) ? maskedText(raw) : attribute(name, raw))}"`).join('');
+    const hide = hidden(node, ancestors, masked);
+    const attrs = Object.entries(node.a).map(([name, raw]) => ` ${name}="${escape(hide && !structuralAttribute(name) ? maskedText(raw) : attribute(name, raw))}"`).join('');
     const style = node.s ? ` style="${node.s}"` : '';
     const open = `<${node.t}${attrs} data-rec-box="${node.b.join(',')}"${style}>`;
     if (VOID.has(node.t)) return open;
@@ -143,22 +158,26 @@ export function redactor({ secrets, keep = [], mask: flowMask = [] }: RedactOpti
     };
   }
 
-  /** Is the node that carries the click mark, or one of its ancestors, masked? */
-  function clickMasked(node: CapturedNode, ancestors: CapturedNode[] = [], masked = false): boolean | null {
-    const hide = masked || mask.some((rule) => rule(node, ancestors));
-    if (CLICK_MARK in node.a) return hide;
+  /** The text of the node that carries the click mark, redacted exactly as `html` redacts it; null without a mark. */
+  function markedText(node: CapturedNode, ancestors: CapturedNode[] = [], masked = false): string | null {
+    if (CLICK_MARK in node.a) return redactedText(node, ancestors, masked);
+    const hide = hidden(node, ancestors, masked);
     for (const child of node.c) {
       if (typeof child === 'string') continue;
-      const found = clickMasked(child, [...ancestors, node], hide);
+      const found = markedText(child, [...ancestors, node], hide);
       if (found !== null) return found;
     }
     return null;
   }
 
-  /** Where a click landed, for the manifest: its text redacted as the page it landed on redacts it. */
+  /**
+   * Where a click landed, for the manifest. Its text is read off the redacted page, not off the live `innerText`,
+   * which also carries the text of masked descendants; without a mark on the page it is masked whole.
+   */
   function click(captured: CapturedPage, target: ClickTarget) {
-    const hide = clickMasked(captured.body) ?? false;
-    return { tag: target.tag, id: identity(target.id), controlId: identity(target.controlId), text: hide ? maskedText(target.text) : text(target.text) };
+    const marked = markedText(captured.body);
+    const clickText = marked === null ? maskedText(target.text) : marked.replace(/\s+/g, ' ').trim().slice(0, 60);
+    return { tag: target.tag, id: identity(target.id), controlId: identity(target.controlId), text: clickText };
   }
 
   return { text, value, identity, page, click };

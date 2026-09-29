@@ -1,7 +1,7 @@
 {
   "flow": "invoice-assistant",
   "name": "invoice-assistant",
-  "description": "A new 费用报销单, 收票信息 -> 选择发票 ▾ -> 不生成费用明细, which opens the 发票无忧助手 (invoice assistant) on its entry menu, then 电脑端选取 up to its empty upload view. Nothing is uploaded, ticked or imported; the assistant is closed and the 新增单 discarded with its tab.",
+  "description": "A new 费用报销单, receipt information (收票信息) -> pick invoices (选择发票) ▾ -> no expense details (不生成费用明细), which opens the invoice assistant (发票无忧助手) on its entry menu, then pick from computer (电脑端选取) up to its empty upload view. Nothing is uploaded, ticked or imported; the assistant is closed and the 新增单 discarded with its tab.",
   "command": "pnpm --filter @baox/erp-executor probe invoice-assistant --record invoice-assistant",
   "recordedAt": "2026-09-29",
   "erpBuild": "8.2.830.9",

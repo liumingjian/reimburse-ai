@@ -5,9 +5,10 @@
 // Adding a flow: give it the smallest `allowKeys` it needs, name what it ends on in `run`, and list in `mask` any
 // part of its pages that shows data rather than UI (other people's work, lists of bills).
 //
-// What no flow can record, because reaching it crosses the boundary: recognised rows in the 发票无忧助手 (they need
-// a real invoice uploaded to a third party), the 收票信息 rows and the 处理结果 (import result) window (they need
-// 发票导入单据), and 已保存 / the 提示 that refuses a save (they need 保存). The fake ERP's hand-written pages keep
+// What no flow can record, because reaching it crosses the boundary: recognised rows in the invoice assistant
+// (发票无忧助手; they need a real invoice uploaded to a third party), the receipt information (收票信息) rows and the
+// import result (处理结果) window (they need 发票导入单据, import into the bill), and saved (已保存) / the notice (提示)
+// that refuses a save (they need 保存, save). The fake ERP's hand-written pages keep
 // those, each under an `@unverified` marker that says so.
 
 import { evalIn } from '../cdp';
@@ -35,6 +36,8 @@ export type Flow = {
   closeTabs: readonly RegExp[];
   /** Drive the page, then `snapshot` the page the flow ends on. What it returns is written into the manifest. */
   run(page: { session: RecordingSession; pace: Pace }): Promise<Record<string, unknown>>;
+  /** What the flow does after its last page, once the recorder stopped capturing (closing a window it opened). */
+  leave?(page: { session: RecordingSession; pace: Pace }): Promise<void>;
 };
 
 /** A new form whose compatibility fingerprint has settled: the start of every flow. */
@@ -50,7 +53,7 @@ const closeTabs = [/^我的费用报销$/];
 
 export const FLOWS: Readonly<Record<string, Flow>> = {
   'new-form': {
-    description: 'The logged-in console (login fingerprint), then 我的费用报销 -> 新增 up to an open, empty 费用报销单-新增 whose compatibility fingerprint has settled. Nothing is typed or saved; the 新增单 is discarded with its tab.',
+    description: 'The logged-in console (login fingerprint), then my expense claims (我的费用报销) -> new (新增) up to an open, empty 费用报销单-新增 whose compatibility fingerprint has settled. Nothing is typed or saved; the 新增单 is discarded with its tab.',
     allowKeys: false,
     mask: [],
     closeTabs,
@@ -61,7 +64,7 @@ export const FLOWS: Readonly<Record<string, Flow>> = {
     },
   },
   'detail-row': {
-    description: 'A new 费用报销单 and the 费用明细行 it opens with: 发票类型 opened and set to 普通发票 (the value the row already has), and edit left through the 明细信息 anchor. The form the strict read-back reads, with one 费用明细行 and no 收票行. Nothing is typed or saved; the 新增单 is discarded with its tab.',
+    description: 'A new expense claim (费用报销单) and the expense detail row (费用明细行) it opens with: invoice type (发票类型) opened and set to 普通发票 (the value the row already has), and edit left through the detail information (明细信息) anchor. The form the strict read-back reads, with one 费用明细行 and no 收票行. Nothing is typed or saved; the 新增单 is discarded with its tab.',
     allowKeys: false,
     mask: [],
     closeTabs,
@@ -82,7 +85,7 @@ export const FLOWS: Readonly<Record<string, Flow>> = {
     },
   },
   'invoice-assistant': {
-    description: 'A new 费用报销单, 收票信息 -> 选择发票 ▾ -> 不生成费用明细, which opens the 发票无忧助手 (invoice assistant) on its entry menu, then 电脑端选取 up to its empty upload view. Nothing is uploaded, ticked or imported; the assistant is closed and the 新增单 discarded with its tab.',
+    description: 'A new 费用报销单, receipt information (收票信息) -> pick invoices (选择发票) ▾ -> no expense details (不生成费用明细), which opens the invoice assistant (发票无忧助手) on its entry menu, then pick from computer (电脑端选取) up to its empty upload view. Nothing is uploaded, ticked or imported; the assistant is closed and the 新增单 discarded with its tab.',
     allowKeys: false,
     mask: [],
     closeTabs,
@@ -93,10 +96,11 @@ export const FLOWS: Readonly<Record<string, Flow>> = {
       const assistant = await openUploadView(page);
       const recognised = await recognisedTotal(assistant);
       await session.snapshot('upload-view');
-      session.stop();
+      return { mode: opened.mode, menuItemIds: opened.menuItemIds, recognised };
+    },
+    async leave(page) {
       const closed = await closeInvoiceAssistant(page);
       if (!closed.ok) throw new Error('the assistant would not close');
-      return { mode: opened.mode, menuItemIds: opened.menuItemIds, recognised };
     },
   },
 };
