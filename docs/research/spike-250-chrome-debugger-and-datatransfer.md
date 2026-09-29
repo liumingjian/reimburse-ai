@@ -53,7 +53,8 @@ and must never be imported. Assignment, dispatched events, and the assistant res
 ## What was built
 
 `spike/piaozone-debugger-probe/` — an unpacked MV3 extension, deliberately outside the pnpm workspace and
-deliberately throwaway. Plain JavaScript with no build step or dependencies. Four focused locator regression tests cover the
+deliberately throwaway. It has since been removed from the tree; recover it with
+`git show e3863ec:spike/piaozone-debugger-probe/<file>` (or `git checkout e3863ec -- spike/`) to rerun the rehearsal. Plain JavaScript with no build step or dependencies. Four focused locator regression tests cover the
 ambiguity found in Run 1; they do not replace the live ERP measurements.
 
 | File | What it is |
