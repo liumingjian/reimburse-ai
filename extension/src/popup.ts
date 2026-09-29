@@ -1,6 +1,6 @@
 import { EXTENSION_PAIRING_CODE_LENGTH, EXTENSION_VERSION } from '@baox/contract';
 import { APP_UNREACHABLE } from './messages';
-import type { PopupAnswer } from './service-worker';
+import type { PopupAnswer } from './pairing-requests';
 
 // The popup. One field: the 配对码 (pairing code). There is deliberately no server address here — see `origin.ts`.
 
