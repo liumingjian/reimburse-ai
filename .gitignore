@@ -13,11 +13,19 @@
 node_modules/
 __pycache__/
 dist/
-/.claude/
 release/
 .codex-out/
 .playwright-cli
-/.agents/
+
+# Agent dirs hold locally installed skills (skills-lock.json); only repo-owned skills are tracked.
+/.claude/*
+!/.claude/skills/
+/.claude/skills/*
+!/.claude/skills/deploy-intranet
+/.agents/*
+!/.agents/skills/
+/.agents/skills/*
+!/.agents/skills/deploy-intranet/
 
 # Local reimbursement materials
 /resources/
