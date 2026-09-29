@@ -1,0 +1,22 @@
+{
+  "about": "#206: a 交通运输服务 item row; 发票号码 and 开票日期 share one baseline. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "vat_invoice/einvoice",
+  "missing": [],
+  "findings": [
+    "qr_unreadable"
+  ],
+  "facts": {
+    "invoiceNumber": "26312000000104412906",
+    "issueDate": "2026-08-17",
+    "invoiceType": "普票",
+    "buyerName": "某某科技（上海）有限公司",
+    "buyerTaxId": "91310000XXXXXXXX0A",
+    "sellerName": "某某出行科技（广州）有限公司",
+    "sellerTaxId": "91440000TTTTTTTT0G",
+    "itemName": "*交通运输服务*客运服务费",
+    "netAmount": "26.69",
+    "taxAmount": "0.80",
+    "totalAmount": "27.49"
+  }
+}

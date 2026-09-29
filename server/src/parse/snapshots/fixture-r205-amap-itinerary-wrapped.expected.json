@@ -1,0 +1,26 @@
+{
+  "about": "#205: leg 1's 上车时间 wraps onto a second line; amounts printed as 26.69元 / ¥42.50. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "ride_itinerary/amap",
+  "missing": [],
+  "findings": [],
+  "facts": {
+    "applyDate": "2026-08-13",
+    "segmentCount": "2",
+    "itineraryTotal": "69.19",
+    "segments[0].date": "2026-08-10",
+    "segments[0].time": "08:52",
+    "segments[0].carType": "经济型",
+    "segments[0].city": "上海市",
+    "segments[0].origin": "虹桥枢纽",
+    "segments[0].destination": "漕河泾",
+    "segments[0].amount": "26.69",
+    "segments[1].date": "2026-08-12",
+    "segments[1].time": "09:15",
+    "segments[1].carType": "经济型",
+    "segments[1].city": "上海市",
+    "segments[1].origin": "静安寺",
+    "segments[1].destination": "张江",
+    "segments[1].amount": "42.50"
+  }
+}

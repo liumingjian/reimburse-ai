@@ -1,0 +1,19 @@
+{
+  "about": "@baox/fixtures m07: a 铁路电子客票 (rail e-ticket); no net amount or tax on the face. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "rail_ticket/12306",
+  "missing": [],
+  "findings": [],
+  "facts": {
+    "invoiceNumber": "26312000000102200731",
+    "issueDate": "2026-08-09",
+    "trainNumber": "G7522",
+    "departStation": "杭州东",
+    "arriveStation": "上海虹桥",
+    "travelDate": "2026-08-09",
+    "departTime": "08:30",
+    "seatClass": "二等座",
+    "passengerName": "林颂宜",
+    "totalAmount": "73.00"
+  }
+}

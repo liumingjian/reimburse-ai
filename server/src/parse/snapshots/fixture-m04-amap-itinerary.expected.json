@@ -1,0 +1,33 @@
+{
+  "about": "@baox/fixtures m04: a 高德 (Amap) 行程单 (ride itinerary) with three legs, keyed segments[i].<field>. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "ride_itinerary/amap",
+  "missing": [],
+  "findings": [],
+  "facts": {
+    "applyDate": "2026-08-13",
+    "segmentCount": "3",
+    "itineraryTotal": "69.19",
+    "segments[0].date": "2026-08-10",
+    "segments[0].time": "08:52",
+    "segments[0].carType": "经济型",
+    "segments[0].city": "上海市",
+    "segments[0].origin": "虹桥枢纽",
+    "segments[0].destination": "漕河泾",
+    "segments[0].amount": "26.69",
+    "segments[1].date": "2026-08-10",
+    "segments[1].time": "18:20",
+    "segments[1].carType": "经济型",
+    "segments[1].city": "上海市",
+    "segments[1].origin": "漕河泾",
+    "segments[1].destination": "静安寺",
+    "segments[1].amount": "20.85",
+    "segments[2].date": "2026-08-12",
+    "segments[2].time": "09:15",
+    "segments[2].carType": "经济型",
+    "segments[2].city": "上海市",
+    "segments[2].origin": "静安寺",
+    "segments[2].destination": "张江",
+    "segments[2].amount": "21.65"
+  }
+}
