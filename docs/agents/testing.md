@@ -11,6 +11,10 @@ Run after every edit. It runs only the tests related to the files you pass
   config (`package.json`, `tsconfig*.json`, `vite(st).config.*`) runs that package's whole suite.
 - Playwright on the `web/e2e` specs whose imports reach a changed file (a changed spec, `e2e/server/fixture.ts`,
   `@baox/contract`, …), after building only what those specs need.
+- A changed repository-root file (`pnpm-lock.yaml`, `pnpm-workspace.yaml`, root `package.json`/`tsconfig*.json`,
+  `.oxlintrc.json`, `.npmrc`, …) runs every package's whole suite and every e2e spec. Root docs (`*.md`) and files
+  outside every package (`docs/`, `qa/`, `tools/`) select nothing: they are listed as "not covered", and a run that
+  selected nothing ends in `NOTHING RUN`, not `PASS`.
 
 Compute the file list on the agent server, where git works, and pass it in. The Mac workspace has no usable history:
 `.git` is not synced by default, and a worktree's `.git` file points at a path that exists only on the server, so
