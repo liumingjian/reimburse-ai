@@ -34,22 +34,26 @@ export const SCENARIO_PROJECTS = [
 ] as const;
 
 export type ScenarioServer = TestServer & {
-  // The scripted fill executor, or null when the test brought its own `erpExecutor`.
+  // The scripted fill executor, or null when the test brought its own `erpExecutor` (or 'extension').
   erp: ScriptedExecutor | null;
   // The preset parser, or null when the test brought its own `parser` (real parsing is opt-in: `inlineExecutor()`).
   presets: PresetParser | null;
 };
 
 // `createTestServer` with the scenario defaults: preset parsing, a catalog that knows SCENARIO_PROJECTS, and a scripted
-// fill executor that hands the form over. Any option overrides its default.
-export async function scenarioServer(options: TestServerOptions = {}): Promise<ScenarioServer> {
+// fill executor that hands the form over. Any option overrides its default; `erpExecutor: 'extension'` keeps the
+// production wiring, where 去报销 runs in the account's paired browser extension (a `fakeExtension` in tests).
+export type ScenarioServerOptions = Omit<TestServerOptions, 'erpExecutor'> & { erpExecutor?: TestServerOptions['erpExecutor'] | 'extension' };
+
+export async function scenarioServer(options: ScenarioServerOptions = {}): Promise<ScenarioServer> {
   const presets = options.parser ? null : presetParser();
   const erp = options.erpExecutor ? null : scripted(handedOver());
+  const { erpExecutor, ...rest } = options;
   const server = await createTestServer({
     projectCatalog: fixtureCatalog(SCENARIO_PROJECTS.map((project) => ({ ...project, audited: true, forbidden: false }))),
-    ...options,
+    ...rest,
     parser: options.parser ?? presets!,
-    erpExecutor: options.erpExecutor ?? erp!,
+    ...(erpExecutor === 'extension' ? {} : { erpExecutor: erpExecutor ?? erp! }),
   });
   return { ...server, erp, presets };
 }
@@ -68,6 +72,9 @@ export type ScenarioOptions = {
   // 确认没有 before the inventory rung is checked, so `at('pending')` stops on the other open items. 'open': left for
   // the test. Default: 'open' for at('inventory' | 'pending'), 'answered' for the later stages (which need them closed).
   stayTrio?: 'answered' | 'open';
+  // 'as_is': leave the account's project book as the test left it (no SCENARIO_PROJECTS, no `projects` number), for a
+  // test about the book itself. A rung past `project` then needs the assigned numbers already in the book.
+  projectBook?: 'scenario' | 'as_is';
 };
 
 export type Refusal = { status: number; code: string };
@@ -129,7 +136,7 @@ export function scenario(server: ScenarioServer, client?: TestClient) {
       const assign = options.projects ?? SCENARIO_PROJECTS[0].number;
       const projectOf = typeof assign === 'string' ? () => assign : assign;
       // Before the task exists, as an employee would have: the project page then asks to assign, not to fill the book.
-      await enterProjects(owner, typeof assign === 'string' ? [assign] : []);
+      if (options.projectBook !== 'as_is') await enterProjects(owner, typeof assign === 'string' ? [assign] : []);
 
       const { task } = await http.createTask(options.homeCity ?? '杭州');
       const uploads = (options.materials ?? DEFAULT_MATERIALS).map((material) => (typeof material === 'string' ? sample(material) : material));

@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EXCLUDE_CHOICE } from './pending/answers';
 import { invoiceVariantFixtureParser } from './parse/testing/invoice-variants';
 import { api, byFileName, sample, type Upload } from './test/api';
-import { createTestServer, type TestClient, type TestServer } from './test/harness';
+import type { TestClient } from './test/harness';
+import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
-let server: TestServer;
+let server: ScenarioServer;
 let signedIn: TestClient;
 beforeEach(async () => {
-  server = await createTestServer({ parser: invoiceVariantFixtureParser() });
+  server = await scenarioServer({ parser: invoiceVariantFixtureParser() });
   signedIn = await server.signIn('alice');
 });
 afterEach(() => server.close());
@@ -20,16 +21,9 @@ function source(name: string, prefix: string): Upload {
 const matchingVariants = () => [source('variant-match.pdf', 'm07'), source('variant-match.jpg', 'm09')];
 const conflictingVariants = () => [source('variant-conflict.pdf', 'm07'), source('variant-conflict.jpg', 'm09')];
 
-async function inventoried(files: readonly Upload[]) {
-  const { task } = await client.createTask();
-  const uploaded = await client.upload(task.taskId, files);
-  await client.accepted(await client.act(uploaded, 'start-inventory'));
-  return client.settled(task.taskId);
-}
-
 describe('cross-format invoice variants', () => {
   it('groups a matching PDF and photo under the PDF while retaining both originals', async () => {
-    const snapshot = await inventoried(matchingVariants());
+    const { reached: snapshot } = await scenario(server, signedIn).at('project', { materials: matchingVariants() });
 
     expect(snapshot.batches[0]?.files.map((file) => [file.fileName, file.status])).toEqual([
       ['variant-match.pdf', 'accepted'],
@@ -50,7 +44,7 @@ describe('cross-format invoice variants', () => {
   });
 
   it('keeps cross-format disagreements separate and requires an explicit exclusion', async () => {
-    const snapshot = await inventoried(conflictingVariants());
+    const { reached: snapshot } = await scenario(server, signedIn).at('pending', { materials: conflictingVariants() });
 
     const pdf = byFileName(snapshot, 'variant-conflict.pdf');
     const photo = byFileName(snapshot, 'variant-conflict.jpg');
@@ -77,15 +71,10 @@ describe('cross-format invoice variants', () => {
   });
 
   it('uses the preferred PDF claim for cross-task occupancy', async () => {
-    const holder = await inventoried(matchingVariants());
+    const { reached: holder } = await scenario(server, signedIn).at('project', { materials: matchingVariants() });
     expect(holder.materials).toHaveLength(1);
 
-    const bob = await server.signIn('bob');
-    const bobs = api(() => bob);
-    const { task } = await bobs.createTask();
-    const uploaded = await bobs.upload(task.taskId, [source('variant-match.pdf', 'm07')]);
-    await bobs.accepted(await bobs.act(uploaded, 'start-inventory'));
-    const blocked = await bobs.settled(task.taskId);
+    const { reached: blocked } = await scenario(server, await server.signIn('bob')).at('inventory', { materials: [source('variant-match.pdf', 'm07')] });
 
     expect(blocked.blockers).toEqual([
       expect.objectContaining({ kind: 'duplicate_across_tasks', fileName: 'variant-match.pdf', resolver: '要你处理' }),
@@ -96,26 +85,18 @@ describe('cross-format invoice variants', () => {
   });
 
   it('keeps the earliest retained variant claim when a later PDF becomes canonical', async () => {
-    const { task: aliceTask } = await client.createTask();
-    const photo = await client.upload(aliceTask.taskId, [source('variant-match.jpg', 'm09')]);
-    await client.accepted(await client.act(photo, 'start-inventory'));
-    await client.settled(aliceTask.taskId);
+    const alice = await scenario(server, signedIn).at('project', { materials: [source('variant-match.jpg', 'm09')] });
 
-    const bob = await server.signIn('bob');
-    const bobs = api(() => bob);
-    const { task: bobTask } = await bobs.createTask();
-    const bobUpload = await bobs.upload(bobTask.taskId, [source('variant-match.pdf', 'm07')]);
-    await bobs.accepted(await bobs.act(bobUpload, 'start-inventory'));
-    const initiallyBlocked = await bobs.settled(bobTask.taskId);
-    expect(initiallyBlocked.blockers).toEqual([expect.objectContaining({ kind: 'duplicate_across_tasks', fileName: 'variant-match.pdf' })]);
+    const bob = await scenario(server, await server.signIn('bob')).at('inventory', { materials: [source('variant-match.pdf', 'm07')] });
+    expect(bob.reached.blockers).toEqual([expect.objectContaining({ kind: 'duplicate_across_tasks', fileName: 'variant-match.pdf' })]);
 
-    const laterPdf = await client.upload(aliceTask.taskId, [source('variant-match.pdf', 'm07')]);
+    const laterPdf = await client.upload(alice.task.taskId, [source('variant-match.pdf', 'm07')]);
     await client.accepted(await client.act(laterPdf, 'start-inventory'));
-    const canonical = await client.settled(aliceTask.taskId);
+    const canonical = await alice.settled();
     expect(canonical.materials).toEqual([expect.objectContaining({ fileName: 'variant-match.pdf' })]);
     expect(canonical.blockers).toEqual([]);
 
-    const stillBlocked = await bobs.current(bobTask.taskId);
+    const stillBlocked = await bob.snapshot();
     expect(stillBlocked.blockers).toEqual([expect.objectContaining({ kind: 'duplicate_across_tasks', fileName: 'variant-match.pdf' })]);
   });
 });

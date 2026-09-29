@@ -3,11 +3,11 @@ import { join } from 'node:path';
 import { GENERATED_DIR } from '@baox/fixtures';
 import { STAY_TRIO_COPY, type PendingItem, type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { fixtureCatalog } from './catalog/project-catalog';
 import { pairHotelStays } from './hotel-stay';
 import { checkStayTrios, type TrioVoucher } from './stay-trio';
 import { api, byFileName, sample } from './test/api';
-import { createTestServer, type TestClient, type TestServer } from './test/harness';
+import { type TestClient } from './test/harness';
+import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // #213: the 住宿 (accommodation) trio — 发票 (invoice), 结账单 (hotel folio), 支付截图 (payment screenshot) — is checked
 // at 盘点 (inventory), where a missing element can still be fetched, and the print stage reads what was recorded there.
@@ -68,26 +68,16 @@ describe('checkStayTrios', () => {
   });
 });
 
-const CATALOG = fixtureCatalog([{ number: 'P-2307', name: '华东客户交付', audited: true, forbidden: false }]);
-
-let server: TestServer;
+let server: ScenarioServer;
 let alice: TestClient;
 beforeEach(async () => {
-  server = await createTestServer({ projectCatalog: CATALOG });
+  server = await scenarioServer();
   alice = await server.signIn('alice');
-  expect((await alice.post('/api/project-book/intake', { number: 'P-2307', name: '华东客户交付' })).status).toBe(200);
 });
 afterEach(() => server.close());
 const client = api(() => alice);
 
 const png = () => new File([readFileSync(join(GENERATED_DIR, 'print-pg1.png'))], 'IMG_5011.png', { type: 'image/png' });
-
-async function inventoried(prefixes: readonly string[]): Promise<TaskSnapshot> {
-  const { task } = await client.createTask('杭州');
-  const uploaded = await client.upload(task.taskId, prefixes.map(sample));
-  await client.accepted(await client.act(uploaded, 'start-inventory'));
-  return client.settled(task.taskId);
-}
 
 function screenshot(snapshot: TaskSnapshot, voucherMaterialId: string): Promise<Response> {
   const form = new FormData();
@@ -97,11 +87,6 @@ function screenshot(snapshot: TaskSnapshot, voucherMaterialId: string): Promise<
 }
 
 const answer = async (snapshot: TaskSnapshot, itemId: string, choice: string) => client.accepted(await client.act(snapshot, 'answer-pending', { itemId, answer: { choice } }));
-
-async function confirm(snapshot: TaskSnapshot): Promise<TaskSnapshot> {
-  const review = await client.accepted(await client.act(snapshot, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(snapshot.lines.map((line) => [line.lineId, 'P-2307'])) }));
-  return client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
-}
 
 async function refused(response: Response, code: string): Promise<string> {
   expect(response.status).toBe(400);
@@ -114,7 +99,7 @@ const openIds = (snapshot: TaskSnapshot) => snapshot.pendingItems.filter((item) 
 
 describe('the 住宿 trio at inventory', () => {
   it('invoice and folio without a screenshot: the queue names the screenshot; attaching one at inventory resolves it', async () => {
-    const start = await inventoried(['m01', 'm02']);
+    const start = (await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] })).reached;
     const invoice = byFileName(start, sample('m01').name);
     expect(openIds(start)).toEqual([`stay_screenshot_missing.${invoice.materialId}`]);
     expect(start.pendingItems[0]).toMatchObject({ title: STAY_TRIO_COPY.screenshot.title(invoice.fileName), materialId: invoice.materialId });
@@ -133,7 +118,7 @@ describe('the 住宿 trio at inventory', () => {
   });
 
   it('the complete trio raises no item', async () => {
-    const start = await inventoried(['m01', 'm02']);
+    const start = (await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] })).reached;
     const invoice = byFileName(start, sample('m01').name);
     const supplied = await client.accepted(await screenshot(start, invoice.materialId));
     // Re-derived from scratch by a later read: still nothing.
@@ -143,7 +128,7 @@ describe('the 住宿 trio at inventory', () => {
   });
 
   it('an invoice without its folio: the queue names the 结账单; 确认没有 lets the list proceed with the absence recorded', async () => {
-    const start = await inventoried(['m01']);
+    const start = (await scenario(server, alice).at('pending', { materials: ['m01'] })).reached;
     const invoice = byFileName(start, sample('m01').name);
     const supplied = await client.accepted(await screenshot(start, invoice.materialId));
     expect(openIds(supplied)).toEqual([`stay_folio_missing.${invoice.materialId}`]);
@@ -157,7 +142,7 @@ describe('the 住宿 trio at inventory', () => {
   });
 
   it('a folio without an invoice: the queue names the 住宿发票 on the folio', async () => {
-    const start = await inventoried(['m02']);
+    const start = (await scenario(server, alice).at('pending', { materials: ['m02'] })).reached;
     const folio = byFileName(start, sample('m02').name);
     expect(openIds(start)).toEqual([`stay_invoice_missing.${folio.materialId}`]);
     expect(start.pendingItems[0]).toMatchObject({ materialId: folio.materialId, title: STAY_TRIO_COPY.invoice.title(folio.fileName) });
@@ -170,26 +155,26 @@ describe('the 住宿 trio at inventory', () => {
   });
 
   it('supplying the missing folio by upload and a new inventory resolves its item', async () => {
-    const start = await inventoried(['m01']);
-    const invoice = byFileName(start, sample('m01').name);
-    const reopened = await client.accepted(await client.act(start, 'reopen-upload'));
-    const uploaded = await client.upload(reopened.task.taskId, [sample('m02')]);
-    await client.accepted(await client.act(uploaded, 'start-inventory'));
-    const again = await client.settled(reopened.task.taskId);
+    const scene = await scenario(server, alice).at('pending', { materials: ['m01'] });
+    const invoice = byFileName(scene.reached, sample('m01').name);
+    await scene.accept('reopen-upload');
+    await client.upload(scene.task.taskId, [sample('m02')]);
+    const again = await scene.run('start-inventory');
     expect(openIds(again)).toEqual([`stay_screenshot_missing.${invoice.materialId}`]);
   });
 
   it('a voucher that is not a 住宿 invoice still takes a screenshot only on a generated sheet', async () => {
-    const start = await inventoried(['m07']);
+    const start = (await scenario(server, alice).at('project', { materials: ['m07'] })).reached;
     await refused(await screenshot(start, byFileName(start, sample('m07').name).materialId), 'print_not_generated');
   });
 });
 
 describe('the print stage reads the absence recorded at inventory', () => {
   it('a confirmed absence is the print notice; a screenshot added at print clears it and can be removed again', async () => {
-    const start = await inventoried(['m01', 'm02']);
-    const invoice = byFileName(start, sample('m01').name);
-    const ready = await confirm(await answer(start, `stay_screenshot_missing.${invoice.materialId}`, 'confirm_none'));
+    // Reaching `actions` answers the missing screenshot with 确认没有.
+    const ready = (await scenario(server, alice).at('actions', { materials: ['m01', 'm02'] })).reached;
+    const invoice = byFileName(ready, sample('m01').name);
+    expect(ready.pendingItems).toEqual([expect.objectContaining({ itemId: `stay_screenshot_missing.${invoice.materialId}`, status: 'resolved', answer: { choice: 'confirm_none' } })]);
     const generated = await client.accepted(await alice.post(`/api/tasks/${ready.task.taskId}/actions/generate-print-sheet`, {}));
     expect(generated.printSheet.notices).toEqual([STAY_TRIO_COPY.printNotice('No.1', '住宿')]);
 
@@ -201,9 +186,11 @@ describe('the print stage reads the absence recorded at inventory', () => {
   }, 120_000);
 
   it('a screenshot supplied at inventory raises no print notice, and cannot be removed from a confirmed list', async () => {
-    const start = await inventoried(['m01', 'm02']);
-    const invoice = byFileName(start, sample('m01').name);
-    const ready = await confirm(await client.accepted(await screenshot(start, invoice.materialId)));
+    const scene = await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] });
+    const invoice = byFileName(scene.reached, sample('m01').name);
+    const supplied = await client.accepted(await screenshot(scene.reached, invoice.materialId));
+    const review = await scene.accept('submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(supplied.lines.map((line) => [line.lineId, 'P-2307'])) });
+    const ready = await scene.accept('confirm-review', { digest: review.confirmation.digest });
     const generated = await client.accepted(await alice.post(`/api/tasks/${ready.task.taskId}/actions/generate-print-sheet`, {}));
     expect(generated.printSheet.pages[0]?.screenshotId).toBe(generated.paymentScreenshots[0]?.screenshotId);
     expect(generated.printSheet.notices).toEqual([]);

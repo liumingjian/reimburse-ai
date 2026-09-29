@@ -6,16 +6,18 @@ import { LAYOUTS } from './parse/layouts';
 import { rail12306 } from './parse/layouts/rail12306';
 import { api, byFileName, fieldValues, sample, type Upload } from './test/api';
 import { createApp } from './app';
-import { createTestServer, testClient, type TestClient, type TestServer } from './test/harness';
+import { testClient, type TestClient } from './test/harness';
 import { withQr } from './test/qr-pdf';
+import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // Slice 04 (#183): the background parser job after start-inventory, and the `vat_invoice/einvoice` layout, through
-// `app.request()`. Unless a test swaps it, parsing runs in the real parse worker_thread.
+// `app.request()`. Samples (m01–m11) replay their preset parse outcomes, which test/parse-presets.test.ts holds to
+// the real parser; a test on regression fixtures (r*) or altered bytes parses for real with `useParser`.
 
-let server: TestServer;
+let server: ScenarioServer;
 let signedIn: TestClient;
 beforeEach(async () => {
-  server = await createTestServer();
+  server = await scenarioServer();
   signedIn = await server.signIn();
 });
 afterEach(() => server.close());
@@ -23,7 +25,7 @@ const client = api(() => signedIn);
 
 async function useParser(parser: ParseExecutor) {
   await server.close();
-  server = await createTestServer({ parser });
+  server = await scenarioServer({ parser });
   signedIn = await server.signIn();
 }
 
@@ -31,18 +33,15 @@ const EINVOICE = 'rule:vat_invoice/einvoice';
 const RAIL = 'rule:rail_ticket/12306';
 const ITINERARY = 'rule:ride_itinerary/amap';
 
-async function inventoriedFiles(files: readonly Upload[]) {
-  const { task } = await client.createTask();
-  const uploaded = await client.upload(task.taskId, files);
-  await client.accepted(await client.act(uploaded, 'start-inventory'));
-  // These tests are about reading materials, not the 住宿 trio (#213): its items are answered with 确认没有.
-  return client.withoutStayGaps(await client.settled(task.taskId));
-}
-const inventoried = (prefixes: readonly string[]) => inventoriedFiles(prefixes.map(sample));
+// The inventoried snapshot of a task with `materials`. These tests are about reading materials, not the 住宿 trio
+// (#213): its items are answered with 确认没有.
+const inventory = async (stage: 'inventory' | 'pending' | 'project', materials: ReadonlyArray<string | Upload>) =>
+  (await scenario(server, signedIn).at(stage, { materials, stayTrio: 'answered' })).reached;
 
 describe('the vat_invoice/einvoice layout on @baox/fixtures', () => {
   it('parses m01, m03, m05 and r201 into their face fields; m06 and m11 stay unrecognised', async () => {
-    const snapshot = await inventoried(['m01', 'm03', 'm05', 'm06', 'm11', 'r201']);
+    await useParser(inlineExecutor());
+    const snapshot = await inventory('pending', ['m01', 'm03', 'm05', 'm06', 'm11', 'r201']);
 
     const hotel = byFileName(snapshot, sample('m01').name);
     expect(hotel).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', role: 'primary_voucher', status: 'ok' });
@@ -112,10 +111,11 @@ describe('an e-invoice whose text runs are split', () => {
   // #200: real PDF generators draw a label and its value as separate text runs, and letter-spaced titles glyph by
   // glyph. Both fixtures carry the same face as any other e-invoice, so both must parse the same way.
   it('parses r01 (发票号码 label apart from its digits) and r02 (letter-spaced title) into their face fields', async () => {
-    const snapshot = await inventoried(['r01', 'r02']);
+    await useParser(inlineExecutor());
+    const snapshot = await inventory('project', ['r01', 'r02']);
 
     const splitNumber = byFileName(snapshot, sample('r01').name);
-    // Its only items are the 住宿 trio's (#213), answered by `inventoried`.
+    // Its only items are the 住宿 trio's (#213), answered by `inventory`.
     expect(splitNumber).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（专票）', role: 'primary_voucher', status: 'ok' });
     expect(fieldValues(splitNumber, EINVOICE)).toEqual({
       invoiceNumber: '26312000000098127801',
@@ -160,7 +160,8 @@ describe('a 铁路电子客票 face whose text runs are split', () => {
   // are separate runs, and the trip row carries a fourth cell (the seat). Both real tickets of the QA corpus were
   // recognised and then dropped into manual fill because no anchor had one observation to itself.
   it('parses r204 into its face fields and reaches ok, raising no missing-field 待确认项', async () => {
-    const snapshot = await inventoried(['r204']);
+    await useParser(inlineExecutor());
+    const snapshot = await inventory('project', ['r204']);
 
     const rail = byFileName(snapshot, sample('r204').name);
     expect(rail).toMatchObject({ kind: 'rail_ticket', layout: '12306', kindLabel: '铁路电子客票', categoryLabel: '长途交通', role: 'primary_voucher', status: 'ok', pendingItemIds: [] });
@@ -190,7 +191,8 @@ describe('an itinerary drawn cell by cell', () => {
   // the `HH:MM`, its amounts carry a unit (`26.69元`) or a currency mark (`¥42.50`), and its `共计N单行程` summary is
   // several text runs. The legs must still read, so the trip and its invoice form 费用事件 (expense events).
   it('parses r205 into its legs, and with the m03 invoice forms one expense event per leg', async () => {
-    const snapshot = await inventoried(['m03', 'r205']);
+    await useParser(inlineExecutor());
+    const snapshot = await inventory('project', ['m03', 'r205']);
 
     const invoice = byFileName(snapshot, sample('m03').name);
     const itinerary = byFileName(snapshot, sample('r205').name);
@@ -237,7 +239,8 @@ describe('a whole trip uploaded in one go', () => {
   // This is that guard at the highest seam: the split-run fixtures uploaded together the way a trip arrives —
   // invoices, an itinerary and a rail ticket — must produce 费用事件 (expense events), not a queue of 待确认项.
   it('parses every material, forms an expense event per voucher and per leg, and moves past 待确认项', async () => {
-    const snapshot = await inventoried(['r01', 'r02', 'm03', 'r205', 'r204']);
+    await useParser(inlineExecutor());
+    const snapshot = await inventory('project', ['r01', 'r02', 'm03', 'r205', 'r204']);
 
     const splitNumber = byFileName(snapshot, sample('r01').name);
     const spacedTitle = byFileName(snapshot, sample('r02').name);
@@ -246,7 +249,7 @@ describe('a whole trip uploaded in one go', () => {
     const rail = byFileName(snapshot, sample('r204').name);
 
     for (const invoice of [splitNumber, spacedTitle]) {
-      // Their only items are the 住宿 trio's (#213), answered by `inventoried`.
+      // Their only items are the 住宿 trio's (#213), answered by `inventory`.
       expect(invoice).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', categoryLabel: '住宿', role: 'primary_voucher', status: 'ok' });
     }
     expect(rideInvoice).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', categoryLabel: '市内交通', role: 'primary_voucher', status: 'ok', pendingItemIds: [], linkedMaterialIds: [itinerary.materialId] });
@@ -275,7 +278,7 @@ describe('a whole trip uploaded in one go', () => {
       openPendingItemCount: 0,
     });
     expect(snapshot.inventory.ungroupedMaterialIds).toEqual([]);
-    // The only items are the 住宿 trio's (#213), answered by `inventoried`.
+    // The only items are the 住宿 trio's (#213), answered by `inventory`.
     expect(snapshot.pendingItems.filter((item) => !item.itemId.startsWith('stay_'))).toEqual([]);
 
     // Nothing left to answer, so the task leaves 待确认项 behind and goes on to 项目归属.
@@ -285,8 +288,9 @@ describe('a whole trip uploaded in one go', () => {
 
 describe('the e-invoice QR code, a second evidence source', () => {
   it('a QR that disagrees with the text layer is noted and blocks nothing: the face is the value', async () => {
+    await useParser(inlineExecutor());
     const amap = sample('m03');
-    const snapshot = await inventoriedFiles([{ ...amap, bytes: await withQr(amap.bytes, '01,32,,26312000000101557402,96.19,20260813,,A1B2C3D4') }]);
+    const snapshot = await inventory('pending', [{ ...amap, bytes: await withQr(amap.bytes, '01,32,,26312000000101557402,96.19,20260813,,A1B2C3D4') }]);
 
     const material = byFileName(snapshot, amap.name);
     // `pending` here is the missing expense city below, not the QR: an agreeing QR leaves the material in exactly
@@ -304,8 +308,9 @@ describe('the e-invoice QR code, a second evidence source', () => {
   });
 
   it('a QR that agrees is noted in the check text and blocks nothing', async () => {
+    await useParser(inlineExecutor());
     const amap = sample('m03');
-    const snapshot = await inventoriedFiles([{ ...amap, bytes: await withQr(amap.bytes, '01,32,,26312000000101557402,69.19,20260813,,A1B2C3D4') }]);
+    const snapshot = await inventory('pending', [{ ...amap, bytes: await withQr(amap.bytes, '01,32,,26312000000101557402,69.19,20260813,,A1B2C3D4') }]);
     const material = byFileName(snapshot, amap.name);
     expect(material).toMatchObject({ checkText: expect.stringContaining('二维码核对一致') });
     // The QR raises nothing; the only item is the missing expense city of a ride-hailing invoice alone (#188).
@@ -314,7 +319,7 @@ describe('the e-invoice QR code, a second evidence source', () => {
 
   it('an undecodable QR is advisory: the invoice is ok, raises no 待确认项 and forms its candidate line', async () => {
     // The fixture's QR box is a placeholder, so no code decodes.
-    const snapshot = await inventoried(['m01']);
+    const { reached: snapshot } = await scenario(server, signedIn).at('project', { materials: ['m01'], projectBook: 'as_is' });
     const hotel = byFileName(snapshot, sample('m01').name);
     expect(hotel).toMatchObject({ status: 'ok', role: 'primary_voucher', categoryLabel: '住宿', checkText: expect.stringContaining('二维码无法识读') });
     expect(snapshot.pendingItems.filter((item) => !item.itemId.startsWith('stay_'))).toEqual([]);
@@ -339,7 +344,7 @@ describe('the e-invoice QR code, a second evidence source', () => {
 describe('dispatch on hard anchors', () => {
   it('several matching layouts raise a blocking 待确认项 instead of first-match-wins', async () => {
     await useParser(inlineExecutor([...LAYOUTS, { ...einvoice, name: 'einvoice_copy', label: '全电发票（另一版式）' }]));
-    const snapshot = await inventoried(['m01']);
+    const snapshot = await inventory('pending', ['m01']);
 
     const hotel = byFileName(snapshot, sample('m01').name);
     expect(hotel).toMatchObject({ kind: null, layout: null, status: 'pending', fields: [] });
@@ -406,7 +411,7 @@ describe('the background parser job', () => {
 
   it('publishes per-material progress: each outcome bumps the revision and lands in the snapshot', async () => {
     // Not a hotel invoice: the 住宿 trio's answers would add revisions of their own.
-    const snapshot = await inventoried(['m07', 'm03']);
+    const snapshot = await inventory('pending', ['m07', 'm03']);
     // Created (1), uploaded (2), started (3), then one fact per material.
     expect(snapshot.step.stepToken).toBe(`${snapshot.task.taskId}.5`);
     expect(snapshot.inventory.phases).toEqual([expect.objectContaining({ key: 'pdf', status: 'done' })]);

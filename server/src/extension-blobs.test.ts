@@ -1,31 +1,28 @@
 import { createHash } from 'node:crypto';
-import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionPairingSchema, ExtensionTokenSchema, extensionBlobPath, type TaskSnapshot } from '@baox/contract';
+import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionPairingSchema, ExtensionTokenSchema, extensionBlobPath } from '@baox/contract';
 import type { FillPlan } from '@baox/erp-executor/protocol';
 import { RECONNECT_WINDOW_MS } from '@baox/erp-executor/wire';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { fixtureCatalog } from './catalog/project-catalog';
 import { loginWall } from './erp/testing/fake-executor';
 import { fakeExtension, type FakeExtension } from './erp/testing/fake-extension';
 import { COMPATIBILITY, ERP_ORIGIN } from './erp/testing/scenario';
 import { api, sample } from './test/api';
-import { BACKSTOP_MS } from './test/deadlines';
-import { createTestServer, type TestClient, type TestServer } from './test/harness';
+import type { TestClient } from './test/harness';
+import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 import { manualTimers } from './test/timers';
 
 // #256 at seam 3: the route the extension fetches invoice originals from. It is authorised by the pairing token, not a
 // session, and serves only the originals named in the plan of the 去报销 running in that 应用账号's extension
 // (user story 25: a compromised extension must not be able to walk the employee's archive).
 
-const CATALOG = fixtureCatalog([{ number: 'P-2307', name: '华东客户交付', audited: true, forbidden: false }]);
 const EXTENSION_ORIGIN = 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih';
 const sha = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 
-let server: TestServer;
+let server: ScenarioServer;
 let alice: TestClient;
 beforeEach(async () => {
-  server = await createTestServer({ projectCatalog: CATALOG, erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY } });
+  server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY } });
   alice = await server.signIn('alice');
-  expect((await alice.post('/api/project-book/intake', { number: 'P-2307', name: '华东客户交付' })).status).toBe(200);
 });
 afterEach(() => server.close());
 const client = api(() => alice);
@@ -44,17 +41,10 @@ async function pair(owner: TestClient): Promise<string> {
 const fetchBlob = (sha256: string, token: string | null) =>
   server.app.request(extensionBlobPath(sha256), { headers: { origin: EXTENSION_ORIGIN, ...(token ? { authorization: `Bearer ${token}` } : {}) } });
 
-// A hotel invoice with its folio, confirmed: the plan names the invoice, not the folio.
-async function confirmed(): Promise<TaskSnapshot> {
-  const { task } = await client.createTask('杭州');
-  const uploaded = await client.upload(task.taskId, [sample('m01'), sample('m02')]);
-  await client.accepted(await client.act(uploaded, 'start-inventory'));
-  const done = await client.withoutStayGaps(await client.settled(task.taskId));
-  const review = await client.accepted(await client.act(done, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
-  return client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
-}
-
-/** A 去报销 held open in alice's extension until `finish` is called, so the test can fetch while it runs. */
+/**
+ * A 去报销 held open in alice's extension until `finish` is called, so the test can fetch while it runs. The task is
+ * the scenario default, a hotel invoice with its folio, confirmed: the plan names the invoice, not the folio.
+ */
 async function running(token: string): Promise<{ plan: FillPlan; taskId: string; extension: FakeExtension; finish(): Promise<void> }> {
   let finish!: () => void;
   const gate = new Promise<void>((resolve) => { finish = resolve; });
@@ -68,19 +58,14 @@ async function running(token: string): Promise<{ plan: FillPlan; taskId: string;
     },
   });
   await extension.connect();
-  const ready = await confirmed();
-  await client.accepted(await client.act(ready, 'start-erp-write'));
+  const scene = await scenario(server, alice).at('actions');
+  await scene.accept('start-erp-write');
   const plan = await planned;
-  const taskId = ready.task.taskId;
   return {
-    plan, taskId, extension,
+    plan, taskId: scene.task.taskId, extension,
     async finish() {
       finish();
-      const deadline = Date.now() + BACKSTOP_MS;
-      while ((await client.current(taskId)).erp.status === 'running') {
-        if (Date.now() > deadline) throw new Error('ERP job still running');
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      await scene.settled();
     },
   };
 }
@@ -169,9 +154,8 @@ describe('the extension\'s invoice originals across an interruption', () => {
   beforeEach(async () => {
     await server.close();
     timers = manualTimers();
-    server = await createTestServer({ projectCatalog: CATALOG, erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, schedule: timers.schedule });
+    server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, schedule: timers.schedule });
     alice = await server.signIn('alice');
-    expect((await alice.post('/api/project-book/intake', { number: 'P-2307', name: '华东客户交付' })).status).toBe(200);
   });
 
   it('keeps serving an interrupted job\'s invoices, and stops once the window has closed', async () => {

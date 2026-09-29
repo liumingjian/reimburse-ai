@@ -1,19 +1,20 @@
-import { ProjectBookResultSchema, ProjectBookSchema, type TaskSnapshot } from '@baox/contract';
+import { ProjectBookResultSchema, ProjectBookSchema } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { databasePath } from './data-dir';
-import { api, sample } from './test/api';
-import { createTestServer, tempDataDir, testClient, type TestClient, type TestServer } from './test/harness';
+import { api } from './test/api';
+import { createTestServer, tempDataDir, testClient, type TestClient } from './test/harness';
+import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // Project edits run through the same authenticated HTTP seam as intake. These checks keep the original identity,
 // scoped collision rules, append-only facts, and assignment refresh observable without depending on lifecycle #219.
 
-let server: TestServer;
+let server: ScenarioServer;
 let admin: TestClient;
 let bob: TestClient;
 let alice: TestClient;
 
 beforeEach(async () => {
-  server = await createTestServer();
+  server = await scenarioServer();
   admin = await server.signIn('admin');
   bob = await server.signIn('bob');
   alice = await server.signIn('alice');
@@ -42,17 +43,13 @@ async function edit(
   return ProjectBookResultSchema.parse(await response.json());
 }
 
-async function inventoried(): Promise<TaskSnapshot> {
-  const { task } = await asBob.createTask('杭州');
-  const uploaded = await asBob.upload(task.taskId, [sample('m01'), sample('m07')]);
-  await asBob.accepted(await asBob.act(uploaded, 'start-inventory'));
-  return asBob.withoutStayGaps(await asBob.settled(task.taskId));
-}
+// Hotel e-invoice + rail ticket inventoried (住宿 trio answered 确认没有), with the project book exactly as the test left it.
+const INVENTORIED = { materials: ['m01', 'm07'], projectBook: 'as_is' } as const;
 
 describe('project-book edits', () => {
   it('renumbers a personal entry as an append-only fact, refreshes new choices, and leaves a submitted pin intact', async () => {
     await intake(bob, '/api/project-book/intake', { number: 'PERSONAL-OLD', name: '原个人名称', deadlineOn: '2026-12-31' });
-    const start = await inventoried();
+    const start = (await scenario(server, bob).at('project', INVENTORIED)).reached;
     const projects = Object.fromEntries(start.lines.map((line) => [line.lineId, 'PERSONAL-OLD']));
     const submitted = await asBob.accepted(await asBob.act(start, 'submit-project-assignment', { purpose: '杭州出差', projects }));
     expect(submitted.projectAssignment.assignments.map((item) => [item.projectNumber, item.projectName, item.projectSource])).toEqual(

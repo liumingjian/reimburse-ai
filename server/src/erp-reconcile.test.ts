@@ -1,4 +1,4 @@
-import { HUMAN_REVIEW_NOTICE, OCCUPANCY_COPY, TaskListSchema, type TaskSnapshot } from '@baox/contract';
+import { HUMAN_REVIEW_NOTICE, OCCUPANCY_COPY, TaskListSchema } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { dataDirBlobs } from './erp/cdp-executor';
 import { runFillJob } from '@baox/erp-executor/job';
@@ -7,11 +7,12 @@ import { createFakeErp, type FakeErp, type FakeErpOptions, type FakeReceiptLedge
 import type { FillExecutor } from './erp/fill-jobs';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, Mutation, ResultEvent } from '@baox/erp-executor/protocol';
 import type { ReconcileExecutor } from './erp/reconcile-job';
-import { COMPATIBILITY, ERP_ORIGIN, FAST_PACE, fakeErpOptions } from './erp/testing/scenario';
+import { COMPATIBILITY, ERP_ORIGIN, FAST_PACE } from './erp/testing/scenario';
 import { handedOver, noFormOpen, scripted, TEST_ERP_ACCOUNT } from './erp/testing/fake-executor';
-import { api, sample } from './test/api';
+import { api } from './test/api';
 import { tempDataDir, testClient, type TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer, type Scene } from './test/scenario';
+import { fakeErpFor, SCENE_RECEIPT_NUMBER } from './test/scene-erp';
 import { join } from 'node:path';
 
 // Slice 13 (#192): any loss after `attempt_started` lands in reconcile, never in a replay. Faults are injected into
@@ -21,7 +22,6 @@ import { join } from 'node:path';
 // Every task is the scenario builder's default (hotel e-invoice + folio, confirmed on P-2307); the fake ERP knows the
 // invoice by its bytes and by the face values the task read from it.
 
-const RECEIPT_NUMBER = 'SPD202609150001';
 // ERP's verbatim refusal of an invoice bound to a 历史费用报销单 (a past reimbursement bill).
 const DUPLICATE_REFUSAL = '重复报销，禁止导入：该发票已被历史费用报销单占用。';
 
@@ -57,20 +57,6 @@ function faulty(channel: ExecutorChannel): ExecutorChannel {
   return { emit: emit as ExecutorChannel['emit'] };
 }
 
-// The fake ERP's view of the task's one invoice: its bytes, and the face values and amounts the task confirmed.
-function fakeErpFor(task: TaskSnapshot): FakeErpOptions {
-  const [line] = task.lines;
-  if (!line) throw new Error('expected one line');
-  const face = Object.fromEntries(task.materials.find((m) => m.materialId === line.voucherMaterialId)!.fields.map((field) => [field.key, field.value]));
-  return fakeErpOptions({
-    invoices: [{ bytes: new Uint8Array(sample('m01').bytes), invoiceNumber: face['invoiceNumber']!, receiptNumber: RECEIPT_NUMBER, seller: face['sellerName'] ?? '全季酒店', issueDate: face['issueDate'] ?? line.date, net: line.netAmount, tax: line.taxAmount, gross: line.grossAmount, category: '全电普通发票', ...(importRefusal ? { importRefusal } : {}) }],
-    projects: [{ code: 'P-2307', name: '华东客户交付' }],
-    expenseItems: [{ code: 'FY010001', name: '住宿' }],
-    assumeReceiptLink: true,
-    receiptLedger,
-  });
-}
-
 // A run that stops before it touches anything (no Chromium, say): a result and no attempt at all.
 let stopBeforeWrite = false;
 const fillExecutor: FillExecutor = async (plan, channel) => {
@@ -81,7 +67,7 @@ const fillExecutor: FillExecutor = async (plan, channel) => {
     await channel.emit(event);
     return event;
   }
-  fakeOptions ??= fakeErpFor(await api(() => alice).current(plan.taskId));
+  fakeOptions ??= fakeErpFor(await api(() => alice).current(plan.taskId), { assumeReceiptLink: true, receiptLedger, ...(importRefusal ? { invoice: { importRefusal } } : {}) });
   fake = await createFakeErp(fakeOptions);
   return runFillJob(plan, { browser: fake.browser, blobs: dataDirBlobs(server.dataDir), channel: faulty(channel), pace: FAST_PACE, probeWaitMs: 0 });
 };
@@ -182,7 +168,7 @@ describe('fault injection at each ERP mutation point', () => {
     const taskId = scene.task.taskId;
     const [firstJob] = await jobIds(taskId);
     // What the abandoned bill left in ERP: one 收票行 per invoice, and the total of those rows.
-    expect(receiptNumbers(fake!)).toEqual([RECEIPT_NUMBER]);
+    expect(receiptNumbers(fake!)).toEqual([SCENE_RECEIPT_NUMBER]);
     const importedTotal = receiptTotal(fake!);
 
     // The recovery takes the account's ERP lease like any other fill job.
@@ -204,7 +190,7 @@ describe('fault injection at each ERP mutation point', () => {
     // The second run imported the same invoice into a fresh 新增单. ERP still holds the 收票单 it minted for the bill
     // that was abandoned unsaved, so this import overwrote it rather than minting a second one: N rows, not 2N, and
     // the grid's total is the one invoice's, not twice it.
-    expect(receiptNumbers(fake!)).toEqual([RECEIPT_NUMBER]);
+    expect(receiptNumbers(fake!)).toEqual([SCENE_RECEIPT_NUMBER]);
     expect(receiptTotal(fake!)).toBe(importedTotal);
     expect(fake!.mutations.some((mutation) => mutation.kind === 'save')).toBe(false);
     // The app's own duplicate gate did not block the re-import: the occupancy belongs to this same 报销任务.
@@ -234,7 +220,7 @@ describe('fault injection at each ERP mutation point', () => {
   it('对账 with no 费用报销单 open keeps 重新去报销: cleaning the ERP browser is not evidence and is not terminal', async () => {
     const scene = await crashedAt('fill');
     // What the abandoned bill left behind stays behind: the 收票单 outlives the tab, the unsaved bill does not.
-    expect(receiptNumbers(fake!)).toEqual([RECEIPT_NUMBER]);
+    expect(receiptNumbers(fake!)).toEqual([SCENE_RECEIPT_NUMBER]);
     erpTabsClosed = true;
 
     const judged = await scene.run('reconcile');
@@ -253,7 +239,7 @@ describe('fault injection at each ERP mutation point', () => {
     expect(started).toMatchObject({ stage: 'erp', erp: { status: 'running' } });
     const over = await scene.settled();
     expect(over).toMatchObject({ stage: 'done', erp: { status: 'done', draftNo: null }, readback: { status: 'matched' } });
-    expect(receiptNumbers(fake!)).toEqual([RECEIPT_NUMBER]);
+    expect(receiptNumbers(fake!)).toEqual([SCENE_RECEIPT_NUMBER]);
     expect(fillRuns).toBe(2);
   });
 

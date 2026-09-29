@@ -1,10 +1,9 @@
 import { lstatSync, rmSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { join } from 'node:path';
-import { EXTENSION_PAIRING_CODE_TTL_MS, EXTENSION_PAIR_PATH, EXTENSION_VERSION, type TaskSnapshot } from '@baox/contract';
+import { EXTENSION_PAIRING_CODE_TTL_MS, EXTENSION_PAIR_PATH, EXTENSION_VERSION } from '@baox/contract';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SESSION_TTL_MS } from './accounts/accounts';
-import { fixtureCatalog } from './catalog/project-catalog';
 import { databasePath } from './data-dir';
 import type { FillExecutor } from './erp/fill-jobs';
 import { TEST_ERP_ACCOUNT } from './erp/testing/fake-executor';
@@ -13,11 +12,11 @@ import { maintenanceSocketPath, startMaintenanceControl, type MaintenanceControl
 import { inlineExecutor, type ParseExecutor } from './parse/executor';
 import { startServer } from './server';
 import { api, sample } from './test/api';
-import { createTestServer, tempDataDir, type TestClient, type TestServer } from './test/harness';
+import { createTestServer, tempDataDir, type TestServer } from './test/harness';
+import { scenario, scenarioServer } from './test/scenario';
 import { openDatabase } from './db/database';
 
 const TOKEN = 'test_maintenance_gate_token_0123456789';
-const CATALOG = fixtureCatalog([{ number: 'P-2307', name: '华东客户交付', audited: true, forbidden: false }]);
 
 type Command = 'status' | 'admit' | 'reopen';
 type ControlResponse = {
@@ -102,20 +101,6 @@ function gatedParser(): { executor: ParseExecutor; entered: Promise<void>; relea
   };
 }
 
-async function confirmed(client: ReturnType<typeof api>): Promise<TaskSnapshot> {
-  const { task } = await client.createTask('杭州');
-  const uploaded = await client.upload(task.taskId, [sample('m01'), sample('m02')]);
-  await client.accepted(await client.act(uploaded, 'start-inventory'));
-  const done = await client.withoutStayGaps(await client.settled(task.taskId));
-  const review = await client.accepted(
-    await client.act(done, 'submit-project-assignment', {
-      purpose: '上海产品评审出差',
-      projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])),
-    }),
-  );
-  return client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
-}
-
 describe('maintenance admission', () => {
   it('refuses an active ERP action attempt without cancelling its reimbursement task', async () => {
     let release = () => {};
@@ -152,14 +137,13 @@ describe('maintenance admission', () => {
     };
 
     try {
-      server = await createTestServer({ parser: inlineExecutor(), projectCatalog: CATALOG, erpExecutor: executor });
+      const scenarios = await scenarioServer({ erpExecutor: executor });
+      server = scenarios;
       const alice = await server.signIn('alice');
-      expect((await alice.post('/api/project-book/intake', { number: 'P-2307', name: '华东客户交付' })).status).toBe(200);
       control = await startMaintenanceControl({ gate: server.app.maintenance, path: maintenanceSocketPath(server.dataDir), token: TOKEN });
-      const client = api(() => alice);
-      const snapshot = await confirmed(client);
+      const scene = await scenario(scenarios, alice).at('actions');
 
-      expect((await client.act(snapshot, 'start-erp-write')).status).toBe(200);
+      await scene.accept('start-erp-write');
       await attempted;
       expect(await operator(control.path, 'admit')).toMatchObject({
         version: MAINTENANCE_GATE_VERSION,
@@ -169,11 +153,11 @@ describe('maintenance admission', () => {
         activeErpAttempt: true,
         reason: 'active_erp_attempt',
       });
-      expect((await client.current(snapshot.task.taskId)).erp.status).toBe('running');
+      expect((await scene.snapshot()).erp.status).toBe('running');
       expect((await alice.request('/api/tasks')).status).toBe(200);
 
       release();
-      await eventually(() => client.current(snapshot.task.taskId), (latest) => latest.erp.status !== 'running', 'ERP job completion');
+      await scene.settled();
       expect(await operator(control.path, 'status')).toMatchObject({ state: 'open', barrier: false, activeWrites: 0, activeErpAttempt: false });
     } finally {
       release();

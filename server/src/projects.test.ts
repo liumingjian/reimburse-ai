@@ -2,8 +2,9 @@ import { ProjectBookResultSchema, ProjectBookSchema, TaskListSchema, type TaskSn
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fixtureCatalog, type ProjectCatalog } from './catalog/project-catalog';
 import { databasePath } from './data-dir';
-import { api, sample, type Upload } from './test/api';
-import { createTestServer, tempDataDir, testClient, type TestClient, type TestServer } from './test/harness';
+import { api } from './test/api';
+import { createTestServer, tempDataDir, testClient, type TestClient } from './test/harness';
+import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // Personal project intake, home city, and project assignment through `app.request()`. Project-book intake is local:
 // the catalog seam remains for ERP pre-submit behavior, but this test never relies on it for admission.
@@ -14,26 +15,20 @@ const CATALOG = fixtureCatalog([
   { number: 'P-9001', name: '已停用项目', audited: true, forbidden: true },
 ]);
 
-let server: TestServer;
+let server: ScenarioServer;
 let alice: TestClient;
 async function boot(projectCatalog: ProjectCatalog = CATALOG) {
-  server = await createTestServer({ projectCatalog });
+  server = await scenarioServer({ projectCatalog });
   alice = await server.signIn('alice');
 }
 beforeEach(() => boot());
 afterEach(() => server.close());
 const client = api(() => alice);
 
-// The hotel e-invoice plus a rail ticket, so the task has two lines. (A byte-different copy of the same invoice is a
-// 重复发票 since #187 and blocks the inventory.)
-const hotel = sample('m01');
-const rail = sample('m07');
-
-async function inventoried(files: readonly Upload[] = [hotel, rail], homeCity = '杭州'): Promise<TaskSnapshot> {
-  const { task } = await client.createTask(homeCity);
-  const uploaded = await client.upload(task.taskId, files);
-  await client.accepted(await client.act(uploaded, 'start-inventory'));
-  return client.withoutStayGaps(await client.settled(task.taskId));
+// A task inventoried up to `stage` (the hotel e-invoice plus a rail ticket by default, so it has two lines), with the
+// project book as the test entered it: these tests are about the book, so the builder's own projects stay out of it.
+async function taskAt(stage: 'project' | 'pending' = 'project', materials: readonly string[] = ['m01', 'm07'], homeCity = '杭州'): Promise<TaskSnapshot> {
+  return (await scenario(server, alice).at(stage, { materials, homeCity, projectBook: 'as_is', stayTrio: 'answered' })).reached;
 }
 
 async function book(path: string, body: unknown = {}) {
@@ -58,7 +53,7 @@ async function refused(response: Response, code: string) {
 describe('submit-project-assignment', () => {
   it('is refused until every line has a project and the purpose is filled', async () => {
     await book('intake', { number: 'P-2307' });
-    const start = await client.current((await inventoried()).task.taskId);
+    const start = await client.current((await taskAt()).task.taskId);
     expect(start).toMatchObject({ stage: 'project', step: { kind: 'assign_projects' } });
     const [first, second] = start.lines;
     if (!first || !second) throw new Error('expected two lines');
@@ -81,7 +76,7 @@ describe('submit-project-assignment', () => {
 
   it('refuses a project that is not selectable in the book, and a line that does not exist', async () => {
     await book('intake', { number: 'P-2307' });
-    const start = await inventoried();
+    const start = await taskAt();
     const lineIds = start.lines.map((line) => line.lineId);
     await refused(await client.act(start, 'assign-project-lines', { lineIds, projectNumber: 'P-3312', onlyUnassigned: false }), 'project_not_selectable');
     await refused(await client.act(start, 'submit-project-assignment', { purpose: '出差', projects: Object.fromEntries(lineIds.map((id) => [id, 'P-3312'])) }), 'project_not_allowed');
@@ -90,7 +85,7 @@ describe('submit-project-assignment', () => {
 
   it('assign with onlyUnassigned keeps lines that already have a project; without it, it overwrites', async () => {
     for (const number of ['P-2307', 'P-3312']) await book('intake', { number });
-    const start = await inventoried();
+    const start = await taskAt();
     const [first, second] = start.lines.map((line) => line.lineId);
     const a = await client.accepted(await client.act(start, 'assign-project-lines', { lineIds: [first], projectNumber: 'P-2307', onlyUnassigned: false }));
     const b = await client.accepted(await client.act(a, 'assign-project-lines', { lineIds: [first, second], projectNumber: 'P-3312', onlyUnassigned: true }));
@@ -108,7 +103,7 @@ describe('submit-project-assignment', () => {
   // whole list, and the workbench showed the unit with no amount.
   it('the assignment view carries the whole-list total from the moment the workbench opens', async () => {
     for (const number of ['P-2307']) await book('intake', { number });
-    const start = await inventoried();
+    const start = await taskAt();
     const total = start.lines.reduce((sum, line) => sum + Math.round(Number(line.grossAmount) * 100), 0);
     expect(start.confirmation.grossTotal).toBeNull();
     expect(start.projectAssignment.grossTotal).toBe((total / 100).toFixed(2));
@@ -119,7 +114,7 @@ describe('submit-project-assignment', () => {
   });
 
   it('an empty book sends a clean inventory to maintain_project_book; the first intake moves it to assign_projects', async () => {
-    const start = await inventoried();
+    const start = await taskAt();
     expect(start).toMatchObject({ stage: 'project', step: { kind: 'maintain_project_book' } });
     await book('intake', { number: 'P-2307' });
     const after = await client.current(start.task.taskId);
@@ -132,7 +127,7 @@ describe('submit-project-assignment', () => {
 describe('the submitted selection is pinned', () => {
   it('the submitted selection retains the locally entered name when the public book later changes', async () => {
     await book('intake', { number: 'P-2307', name: '本地输入的名称' });
-    const start = await inventoried();
+    const start = await taskAt();
     const projects = Object.fromEntries(start.lines.map((line) => [line.lineId, 'P-2307']));
     await client.accepted(await client.act(start, 'submit-project-assignment', { purpose: '杭州出差', projects }));
 
@@ -152,7 +147,7 @@ describe('the submitted selection is pinned', () => {
 describe('project deadline advisories', () => {
   it('has no advisory when the selected project has no deadline', async () => {
     await book('intake', { number: 'P-2307' });
-    const start = await inventoried([sample('m08')]);
+    const start = await taskAt('project', ['m08']);
     const projects = Object.fromEntries(start.lines.map((line) => [line.lineId, 'P-2307']));
 
     const review = await client.accepted(await client.act(start, 'submit-project-assignment', { purpose: '返程车票', projects }));
@@ -163,7 +158,7 @@ describe('project deadline advisories', () => {
 
   it('requires explicit continuation for an expense after the project deadline at assignment and confirmation', async () => {
     await book('intake', { number: 'P-2307', deadlineOn: '2026-08-10' });
-    const start = await inventoried([sample('m08')]);
+    const start = await taskAt('project', ['m08']);
     const line = start.lines[0];
     if (!line) throw new Error('expected one rail line');
     const assigned = await client.accepted(await client.act(start, 'assign-project-lines', { lineIds: [line.lineId], projectNumber: 'P-2307', onlyUnassigned: false }));
@@ -183,7 +178,7 @@ describe('project deadline advisories', () => {
 
   it('does not revive a cleared current deadline from the submitted selection', async () => {
     await book('intake', { number: 'P-2307', deadlineOn: '2026-08-10' });
-    const start = await inventoried([sample('m08')]);
+    const start = await taskAt('project', ['m08']);
     const line = start.lines[0];
     if (!line) throw new Error('expected one rail line');
     const projects = { [line.lineId]: 'P-2307' };
@@ -204,7 +199,7 @@ describe('project deadline advisories', () => {
 
   it('warns when a stay crosses the project deadline without splitting the task', async () => {
     await book('intake', { number: 'P-2307', deadlineOn: '2026-08-10' });
-    const start = await inventoried([sample('m01'), sample('m02')]);
+    const start = await taskAt('project', ['m01', 'm02']);
     const line = start.lines[0];
     if (!line) throw new Error('expected one stay line');
     const assigned = await client.accepted(await client.act(start, 'assign-project-lines', { lineIds: [line.lineId], projectNumber: 'P-2307', onlyUnassigned: false }));
@@ -221,7 +216,7 @@ describe('project deadline advisories', () => {
 
   it('allows a pre-cutoff expense to be submitted later', async () => {
     await book('intake', { number: 'P-2307', deadlineOn: '2026-08-09' });
-    const start = await inventoried([sample('m07')]);
+    const start = await taskAt('project', ['m07']);
     const line = start.lines[0];
     if (!line) throw new Error('expected one rail line');
     const projects = { [line.lineId]: 'P-2307' };
@@ -236,7 +231,7 @@ describe('project deadline advisories', () => {
     await book('intake', { number: 'P-2307', deadlineOn: '2026-08-10' });
     await book('intake', { number: 'P-3312' });
     expect((await alice.post('/api/project-book/deactivate', { number: 'P-2307' })).status).toBe(200);
-    const start = await inventoried([sample('m08')]);
+    const start = await taskAt('project', ['m08']);
     const line = start.lines[0];
     if (!line) throw new Error('expected one rail line');
 
@@ -250,7 +245,7 @@ describe('project deadline advisories', () => {
 describe('home city', () => {
   it('is snapshotted per task, remembered per account as the next default, and editable on the current task', async () => {
     expect(TaskListSchema.parse(await (await alice.request('/api/tasks')).json()).homeCity).toBeNull();
-    const start = await inventoried([hotel], '杭州');
+    const start = await taskAt('project', ['m01'], '杭州');
     expect(start.task.homeCity).toBe('杭州');
     expect(TaskListSchema.parse(await (await alice.request('/api/tasks')).json()).homeCity).toEqual({ value: '杭州', source: 'remembered' });
 
@@ -266,7 +261,9 @@ describe('home city', () => {
   });
 
   it('editing it after an ERP action attempt is refused', async () => {
-    const start = await inventoried([hotel]);
+    const start = await taskAt('project', ['m01']);
+    // Seeded: a bare attempt row, with no fill job behind it, pins the refusal to the erp_attempt check itself rather
+    // than to whatever the ERP phase gate says about a real job.
     await server.db
       .insertInto('erp_attempt')
       .values({ attempt_id: 'a1', job_id: 'j1', task_id: start.task.taskId, action: 'import', preconditions: '{}', expected_postconditions: '{}', erp_build: 'b', form_id: 'f', erp_account: 'x', erp_tenant: 't', erp_display_name: 'n', started_at: '2026-09-15T00:00:00Z' })
@@ -276,7 +273,7 @@ describe('home city', () => {
   });
 
   it('re-derives city transport categories: an invoice with no expense city blocks instead of borrowing the home city', async () => {
-    const snapshot = await inventoried([sample('m03')]);
+    const snapshot = await taskAt('pending', ['m03']);
     expect(snapshot.lines).toEqual([]);
     expect(snapshot.pendingItems).toEqual([expect.objectContaining({ itemId: `category_city_missing.${snapshot.materials[0]?.materialId}`, kind: 'choice' })]);
     expect(snapshot.stage).toBe('pending');
@@ -331,7 +328,7 @@ describe('the personal book', () => {
 
   it('is per account, and resetAll clears this account’s book and home city only', async () => {
     await book('intake', { number: 'P-2307' });
-    await inventoried([hotel], '杭州');
+    await taskAt('project', ['m01'], '杭州');
     const bob = await server.signIn('bob');
     await bob.post('/api/project-book/intake', { number: 'P-3312', name: '产品调研' });
     expect(ProjectBookSchema.parse(await (await bob.request('/api/project-book')).json()).projects.map((p) => p.number)).toEqual(['P-3312']);
