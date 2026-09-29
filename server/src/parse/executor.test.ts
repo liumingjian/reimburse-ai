@@ -13,7 +13,7 @@ afterEach(async () => {
 
 const input = (prefix: string, materialId: string) => {
   const file = sample(prefix);
-  return { materialId, fileName: file.name, mediaType: file.name.endsWith('.pdf') ? ('pdf' as const) : ('image' as const), bytes: new Uint8Array(file.bytes) };
+  return { materialId, fileName: file.name, mime: file.name.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg', bytes: new Uint8Array(file.bytes) };
 };
 
 async function until(condition: () => boolean, timeoutMs = 10_000) {

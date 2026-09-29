@@ -27,9 +27,8 @@ const label = (arg: string) => (/^[0-9a-f]{64}$/.test(arg) ? arg.slice(0, 8) : a
 
 function input(arg: string): ParseInput {
   const bytes = new Uint8Array(readFileSync(pathOf(arg)));
-  // By magic bytes, not by name: stored originals have none.
-  const mediaType = new TextDecoder().decode(bytes.subarray(0, 5)) === '%PDF-' ? 'pdf' : 'image';
-  return { materialId: label(arg).slice(0, 8), fileName: arg.split('/').pop() ?? arg, mediaType, bytes };
+  // No MIME: recognition sniffs the medium from the bytes, and stored originals have no extension either.
+  return { materialId: label(arg).slice(0, 8), fileName: arg.split('/').pop() ?? arg, mime: '', bytes };
 }
 
 function summary(arg: string, outcome: Awaited<ReturnType<typeof parseMaterial>>) {

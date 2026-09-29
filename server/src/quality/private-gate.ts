@@ -3,6 +3,7 @@ import { extname, join, relative, sep } from 'node:path';
 import type { ParseOutcome } from '../parse/dispatch';
 import { factsOf, type Facts } from '../parse/facts';
 import type { ParseInput } from '../parse/material';
+import { storedMime } from '../upload-rules';
 
 // Slice 16 (#196): parser quality gates on the private sample corpus, which lives only on the maintainer's mac
 // (`BAOX_PRIVATE_CORPUS`). Replaces #14's model-quality metrics for the rule parsers (ADR-0017).
@@ -84,8 +85,10 @@ async function evaluate(root: string, parse: CorpusParser, required: Readonly<Re
     const group = groups.get(id) ?? emptyGroup();
     groups.set(id, group);
     group.files += 1;
-    // The file name goes to the parser (some layouts may look at it) but never into the report.
-    const outcome = await parse({ materialId: 'private', fileName: parts[parts.length - 1] ?? '', mediaType: medium, bytes: new Uint8Array(readFileSync(path)) });
+    // The file name goes to the parser (some layouts may look at it) but never into the report. The MIME is the one an
+    // upload stores; recognition sniffs the medium from the bytes either way.
+    const fileName = parts[parts.length - 1] ?? '';
+    const outcome = await parse({ materialId: 'private', fileName, mime: storedMime(fileName, ''), bytes: new Uint8Array(readFileSync(path)) });
     if (outcome.outcome === 'recognised') {
       if (`${outcome.kind}/${outcome.layout}` !== layoutId) {
         group.otherLayout += 1;
