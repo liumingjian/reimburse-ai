@@ -13,6 +13,11 @@ The five canonical triage roles use their default label names. See `docs/agents/
 Parser accuracy on real materials is gated by `pnpm test:private` against a corpus that lives only on the maintainer's
 machine. See `docs/agents/private-corpus.md`.
 
+### Merge conditions
+
+Before merging any branch (to `main` or to a spec's integration branch), check it against
+`docs/agents/merge-conditions.md`; the first condition is e2e green on main.
+
 ### Domain docs
 
 This repo uses the single-context domain documentation layout. See `docs/agents/domain.md`.
