@@ -122,7 +122,7 @@ export type TaskPolicy = Projection & {
 // pause. `erpAction`: accepted after an ERP action attempt (reconcile, hand-off, the refill of ADR-0027).
 // `printOnly`: a 去打印 adjustment. Print never touches ERP (stories 57 and 63), so it stays open after 转人工 and
 // after the draft was handed over; it still stops at 任务作废, at an imported legacy task, and while a job runs.
-// `voids`: 任务作废 (ADR-0030). Every lifecycle and every ERP phase can be voided; the one refusal left is a job of
+// `voids`: voiding the task (任务作废, ADR-0030). Every lifecycle and every ERP phase can be voided; the one refusal left is a job of
 // this very task in flight, which clears itself.
 // `ownsFreeze`: this action refuses a frozen task itself, with a reason of its own (修改常驻城市 says the home city is
 // locked, 追加材料 says why it cannot reopen). The central freeze would otherwise answer first and replace those with

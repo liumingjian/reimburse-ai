@@ -250,8 +250,8 @@ function captureOf(record: ErpRecord, taskId: string): ErpCapture | null {
 }
 
 /**
- * 对账 (reconcile) after ERP 写入结果未知, and the terminal 转人工. The dispositions on offer are the task policy's
- * (`reconcileActionsOf`); this view only words them.
+ * Reconcile (对账) after the ERP write result is unknown (写入结果未知), and the terminal hand-off (转人工). The
+ * dispositions on offer are the task policy's (`reconcileActionsOf`); this view only words them.
  */
 export function reconcileView(record: ErpRecord, taskId: string, lifecycle: TaskLifecycle, lines: readonly Line[] = []): Reconcile | null {
   const { judged, draftNo, noForm } = reconcileReading(record);

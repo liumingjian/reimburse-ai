@@ -6,7 +6,7 @@ import type { InventoryView } from '../inventory-view';
 
 const PHASES = { pdf: '读取 PDF 文本层与二维码', photo: '读取照片票面' } as const;
 
-// `versionNo`: the current 盘点版本 (inventory version); 0 = nothing uploaded yet.
+// `versionNo`: the current inventory version (盘点版本); 0 = nothing uploaded yet.
 export function inventorySection({ progress, materials, openPendingItems }: InventoryView, versionNo: number): Inventory {
   const { status, waitingBy } = progress;
   const phase = (key: keyof typeof PHASES, phaseStatus: InventoryPhase['status']): InventoryPhase => ({ key, label: PHASES[key], status: phaseStatus });

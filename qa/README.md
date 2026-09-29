@@ -37,7 +37,7 @@ so the rexec job ends and does not hold the workspace. The first `up` in a fresh
 can take minutes; give that Bash call a long timeout, or split it as `rexec --detach 'qa/dev.sh up'` then
 `rexec --wait <ID>`.
 
-**The dev instance drives the ERP differently from production.** `dev-main.ts` sends 去报销 (ERP write) jobs through
+**The dev instance drives the ERP differently from production.** `dev-main.ts` sends ERP write (去报销) jobs through
 the CDP executor into a dedicated Chromium it launches itself (`BAOX_ERP_CHROMIUM`). The production build (`main.ts`,
 §1 above, and the intranet deploy) sends them to the paired browser extension (浏览器扩展) in the employee's own browser.
 The fill steps are the same executor code, but pairing, the extension's confirmation prompts, the employee browser's
