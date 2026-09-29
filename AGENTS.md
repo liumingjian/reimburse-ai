@@ -8,6 +8,11 @@ Issues are tracked in this repository's GitHub Issues via the `gh` CLI. See `doc
 
 The five canonical triage roles use their default label names. See `docs/agents/triage-labels.md`.
 
+### Testing
+
+Inner loop: `pnpm test:changed <changed files>` after each edit. Full gate (`pnpm typecheck`, `pnpm test`,
+`pnpm test:e2e`) once, before merge. Both run on the Mac. See `docs/agents/testing.md`.
+
 ### Private corpus
 
 Parser accuracy on real materials is gated by `pnpm test:private` against a corpus that lives only on the maintainer's
