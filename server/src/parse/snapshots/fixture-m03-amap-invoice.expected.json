@@ -1,5 +1,5 @@
 {
-  "about": "@baox/fixtures m03: a ride-hailing 全电发票 普票. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "about": "@baox/fixtures m03: a ride-hailing fully-digitalised VAT e-invoice (全电发票), ordinary invoice (普票). @baox/fixtures is synthetic, so the capture is unredacted.",
   "outcome": "recognised",
   "layout": "vat_invoice/einvoice",
   "missing": [],

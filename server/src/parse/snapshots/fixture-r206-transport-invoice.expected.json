@@ -1,5 +1,5 @@
 {
-  "about": "#206: a 交通运输服务 item row; 发票号码 and 开票日期 share one baseline. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "about": "#206: a transport service (交通运输服务) item row; the invoice number (发票号码) and issue date (开票日期) share one baseline. @baox/fixtures is synthetic, so the capture is unredacted.",
   "outcome": "recognised",
   "layout": "vat_invoice/einvoice",
   "missing": [],

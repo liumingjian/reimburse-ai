@@ -1,5 +1,5 @@
 import { STAY_TRIO_COPY, type PaymentScreenshot, type Placement, type PrintSheet } from '@baox/contract';
-import { CATEGORIES } from '../kind-policy';
+import { CATEGORIES } from '../parse/slots';
 import type { PrintFacts, SheetState, StoredPage, StoredPlacement } from '../print/facts';
 import { droppedMaterialsNotice, extraPagesNotice, unrecordedScreenshotNotice } from '../print/layout';
 import type { StayTrio } from '../stay-trio';

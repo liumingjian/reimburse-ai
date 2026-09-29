@@ -27,7 +27,7 @@ const TIME_LABEL = /时间/;
 const NET_LABEL = /不含税/;
 const TAX_LABEL = /税额/;
 
-// Cents of a `12.34`-shaped amount; null when it is not one. Mirrors `toCents` in
+// Cents of a `12.34`-shaped amount; null when it is not one. Mirrors `slotCents` in
 // `server/src/money-date.ts`, which is what decides whether the amounts conserve.
 export function toCents(amount) {
   if (typeof amount !== 'string' || !AMOUNT_PATTERN.test(amount)) return null;

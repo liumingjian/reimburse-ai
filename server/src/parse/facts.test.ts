@@ -15,12 +15,14 @@ describe('factsOf', () => {
     const facts = factsOf({ kind: 'vat_invoice', layout: 'einvoice', candidates: [c('totalAmount', '99.00', QR), c('totalAmount', '32.50', FACE)] });
     expect(facts.values).toEqual({ totalAmount: '32.50' });
     expect(facts.sources).toEqual({ totalAmount: FACE });
+    expect(facts.origins).toEqual({ totalAmount: 'face' });
   });
 
   it('lets the QR fill what the face lacks, and skips empty values', () => {
     const facts = factsOf({ kind: 'vat_invoice', layout: 'einvoice', candidates: [c('issueDate', '', FACE), c('issueDate', '2026-08-18', QR), c('invoiceNumber', '1', FACE)] });
     expect(facts.values).toEqual({ issueDate: '2026-08-18', invoiceNumber: '1' });
     expect(facts.sources.issueDate).toBe(QR);
+    expect(facts.origins).toEqual({ issueDate: 'other', invoiceNumber: 'face' });
   });
 
   it('prefers the face over a derivation, and a derivation over a second source', () => {
@@ -31,6 +33,7 @@ describe('factsOf', () => {
     });
     expect(facts.values).toEqual({ city: '北京', travelDate: '2026-01-02' });
     expect(facts.sources.travelDate).toBe(DERIVED);
+    expect(facts.origins).toEqual({ city: 'derived', travelDate: 'derived' });
   });
 
   it('reports a key the layout reads two ways as a conflict, the face value still winning', () => {
@@ -46,6 +49,6 @@ describe('factsOf', () => {
 
   it('takes a manual fill (no layout) in candidate order', () => {
     const facts = factsOf({ kind: 'vat_invoice', layout: null, candidates: [c('totalAmount', '10.00', 'user'), c('invoiceNumber', '7', 'user')] });
-    expect(facts).toEqual({ values: { totalAmount: '10.00', invoiceNumber: '7' }, sources: { totalAmount: 'user', invoiceNumber: 'user' }, conflicts: [] });
+    expect(facts).toEqual({ values: { totalAmount: '10.00', invoiceNumber: '7' }, sources: { totalAmount: 'user', invoiceNumber: 'user' }, origins: { totalAmount: 'other', invoiceNumber: 'other' }, conflicts: [] });
   });
 });

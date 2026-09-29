@@ -14,9 +14,10 @@ import { parseDocSnapshot, snapshotReaders } from './snapshot';
 // `<case>.expected.json`, written from the document itself and never from the parser's output:
 //   { "about": "<what went wrong, with the issue>", "outcome": "recognised" | "unrecognised" | "ambiguous" | "failed",
 //     "layout": "<kind>/<layout>" (recognised only), "facts": { "<slot key>": "<value as the layout emits it>" },
-//     "missing": [<slot key>, ...], "findings": [<finding code>, ...] (both optional, recognised only) }
-// `facts` names the keys that matter; leg fields are `segments[0].amount` and so on. `missing` and `findings`, when
-// given, are the whole list in the order the layout emits them.
+//     "missing": [<slot key>, ...], "findings": [<finding code>, ...] (recognised only) }
+// All three are the whole of what the layout reads, not a selection: `facts` is every key it reads (leg fields are
+// `segments[0].amount` and so on), and `missing` and `findings` are the whole list in the order the layout emits them.
+// An absent `missing` or `findings` means none, so a spurious extra slot or a new finding fails the case.
 //
 // `fixture-<file>` cases are the @baox/fixtures files, captured unredacted (the fixtures are synthetic); the layout
 // tests edit these documents through `testing/snapshot-cases.ts` instead of reading the PDFs with pdfjs.
@@ -58,10 +59,9 @@ describe('recognition snapshot cases', () => {
     expect(outcome.outcome).toBe(expected.outcome);
     if (outcome.outcome !== 'recognised') return;
     expect(`${outcome.kind}/${outcome.layout}`).toBe(expected.layout);
-    if (expected.missing) expect(outcome.missing).toEqual(expected.missing);
-    if (expected.findings) expect(outcome.findings.map((finding) => finding.code)).toEqual(expected.findings);
+    expect(outcome.missing).toEqual(expected.missing ?? []);
+    expect(outcome.findings.map((finding) => finding.code)).toEqual(expected.findings ?? []);
     const read = factsOf(outcome);
-    const facts = expected.facts ?? {};
-    expect(Object.fromEntries(Object.keys(facts).map((key) => [key, factOf(read, key)]))).toEqual(facts);
+    expect(Object.fromEntries(Object.keys(read.values).map((key) => [key, factOf(read, key)]))).toEqual(expected.facts ?? {});
   });
 });

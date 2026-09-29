@@ -1,5 +1,5 @@
 {
-  "about": "#201: an unrelated fee row bundled beside a v1 service row; totals come from the 合计 row over both. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "about": "#201: an unrelated fee row bundled beside a v1 service row; totals come from the total (合计) row over both. @baox/fixtures is synthetic, so the capture is unredacted.",
   "outcome": "recognised",
   "layout": "vat_invoice/einvoice",
   "missing": [],

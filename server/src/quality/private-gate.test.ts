@@ -109,8 +109,9 @@ describe('pnpm test:private (#196)', () => {
     expect(code).toBe(1);
   });
 
-  // #311: the gate scores the value `factsOf` reads, the one the inventory view shows — not its own pick of candidates.
-  it('scores the read value: the face over the QR, the QR filling a gap, and a layout reading a key two ways as wrong', async () => {
+  // #311: the gate scores the value `factsOf` reads, the one the inventory view shows — not its own pick of candidates —
+  // but only when the layout itself supplied it (docs/agents/private-corpus.md: the score is the layout's read).
+  it('scores the layout\'s read: the face over the QR, a QR-only value as unread, and a layout reading a key two ways as wrong', async () => {
     const qr = 'rule:vat_invoice/einvoice_qr';
     put(
       'vat_invoice/einvoice/a.pdf',
@@ -131,7 +132,8 @@ describe('pnpm test:private (#196)', () => {
     const { report } = await run(root);
 
     expect(report).toMatch(/vat_invoice\/einvoice\s+pdf\s+totalAmount\s+1\/1\s+100\.0%/);
-    expect(report).toMatch(/vat_invoice\/einvoice\s+pdf\s+issueDate\s+1\/1\s+100\.0%/);
+    // The QR filled issueDate where the face read nothing: shown in the UI, but not a read of the face rules.
+    expect(report).toMatch(/vat_invoice\/einvoice\s+pdf\s+issueDate\s+0\/1\s+0\.0%/);
     expect(report).toMatch(/vat_invoice\/einvoice\s+pdf\s+sellerName\s+0\/1\s+0\.0%/);
   });
 

@@ -24,7 +24,14 @@ prints one skip line and exits 0, so CI and every other machine stay unaffected.
 ## What it gates
 
 Per layout and medium: the share of files recognised by that layout, the share of files whose sidecar declares every
-key `REQUIRED_EXPECTATIONS` asks that layout for, and per expected key the share read exactly right. The middle row
+key `REQUIRED_EXPECTATIONS` asks that layout for, and per expected key the share read exactly right.
+
+"Read" means the layout's own read: the value `factsOf` (`server/src/parse/facts.ts`) picks, counted only when the
+face or a derivation of the layout supplied it. A value that only a second source, such as the QR code of a
+fully-digitalised VAT e-invoice (全电发票), filled in is shown in the app but scores as unread. So a face-rule
+regression on a field the QR also carries still fails the gate.
+
+The middle row
 (`(expectations)`) exists because the gate scores only what a sidecar declares: #199 shipped with 8 of 10 real 全电发票
 faces whose item table went unread while every scored field was green, because no sidecar named 项目名称, 不含税金额
 or 税额. Adding a sample means writing its required keys down, or the gate fails.

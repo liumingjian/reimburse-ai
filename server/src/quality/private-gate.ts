@@ -63,10 +63,12 @@ type Tally = { hit: number; total: number };
 type Group = { files: number; recognised: number; declared: number; otherLayout: number; unrecognised: number; ambiguous: number; failed: number; fields: Map<string, Tally> };
 const emptyGroup = (): Group => ({ files: 0, recognised: 0, declared: 0, otherLayout: 0, unrecognised: 0, ambiguous: 0, failed: 0, fields: new Map() });
 
-// A field is right when the value recognition reads for it (`factsOf`, the same value the inventory view shows) equals
-// the expected one and the layout does not also read it another way: a conflicting read is not a correct read.
+// A field is right when the layout itself read it (`factsOf` origin `face` or `derived`), the value equals the expected
+// one, and the layout does not also read it another way: a conflicting read is not a correct read. A value only a
+// second source (the e-invoice QR code) supplied does not count: the inventory view shows it, but the gate measures the
+// layout's rules, and a face rule that stopped reading a field the QR carries would otherwise still pass.
 function fieldRight(facts: Facts, key: string, expected: string): boolean {
-  return facts.values[key] === expected && !facts.conflicts.includes(key);
+  return facts.values[key] === expected && (facts.origins[key] === 'face' || facts.origins[key] === 'derived') && !facts.conflicts.includes(key);
 }
 
 async function evaluate(root: string, parse: CorpusParser, required: Readonly<Record<string, readonly string[]>>) {
