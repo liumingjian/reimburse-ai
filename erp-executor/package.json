@@ -17,6 +17,7 @@
     "./src/staging.ts": "./src/staging.browser.ts"
   },
   "scripts": {
+    "probe": "tsx src/recording/cli.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -26,6 +27,7 @@
   "devDependencies": {
     "@types/node": "24.13.3",
     "jsdom": "27.4.0",
+    "tsx": "4.23.13",
     "typescript": "5.9.3"
   }
 }

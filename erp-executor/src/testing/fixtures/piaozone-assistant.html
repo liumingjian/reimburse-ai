@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  Recorded DOM fixture: the piaozone invoice assistant (发票无忧助手), a cross-origin iframe and its own CDP target
+  Hand-written DOM fixture (not a recording; every block carries an @unverified marker, see ../../unverified.test.ts): the piaozone invoice assistant (发票无忧助手), a cross-origin iframe and its own CDP target
   (verification-ledger V-45). Rows are Ant Design table rows with `input.ant-checkbox-input`; the "是否生成费用明细"
   choice lives inside this iframe, not in an ERP `.k-window` (save-contract.md, 2026-09-06).
   `data-action` attributes are fake-ERP behaviour hooks only.
@@ -24,6 +24,7 @@
 <head><title>发票助手</title></head>
 <body>
 <div id="root">
+  <!-- @unverified: the assistant entry menu: 电脑端选取 anchor wrapping an image, captions as sibling <p> -->
   <div class="fpzsHome">
     <div class="fpzsHomeGrid">
       <div class="row">
@@ -40,11 +41,13 @@
     <div class="footer"><span class="choosed">所有已选发票</span><span class="controlConfig">发票合规性要求</span></div>
   </div>
   <div class="pwy-assistant" id="assistant-upload" style="display:none">
+    <!-- @unverified: the 温馨提示 notice and its 知道了 button -->
     <div class="notice" id="assistant-notice">
       <span>温馨提示</span>
       <p>原【上传单张发票】按钮和【上传含多张发票的PDF】按钮合二为一，统一使用【上传发票】按钮上传即可。</p>
       <button data-action="notice-ok">知道了</button>
     </div>
+    <!-- @unverified: the upload view: 上传发票影像 tab and one hidden multiple file input -->
     <div class="toolbar"><span>上传发票影像</span><span>上传附件影像</span><span>企业收到的发票</span></div>
     <input type="file" multiple accept=".ofd,.xml,.zip,.pdf,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.gif,.tif,.tiff" style="display:none">
     <!-- The grid groups its recognised rows by 票种 (invoice kind) into an antd tab strip, one pane per 票种,
@@ -52,6 +55,7 @@
          `数电票 10` and `数电票（铁路电子客票） 2` for the 12 invoices of one task. The fake ERP fills the strip
          and the panes from the uploaded invoices' 票种; only the current pane's `<tbody>` is displayed, and a
          tick SURVIVES a switch, because the tick lives on the row's own checkbox and switching only hides it. -->
+    <!-- @unverified: the recognised rows: an antd tab strip per 票种 over an ant-table with input.ant-checkbox-input ticks -->
     <div class="ant-tabs"><div class="ant-tabs-nav" id="assistant-tabs"></div></div>
     <table class="ant-table">
       <thead><tr><th><input type="checkbox" class="ant-checkbox-input"></th><th>销方名称</th><th>发票号码</th><th>价税合计</th><th>税额</th><th>开票日期</th><th>发票信息</th><th>操作</th></tr></thead>
@@ -61,6 +65,7 @@
     <img id="assistant-overlay" alt="">
     <!-- 已选取N张发票 counts what was uploaded into the assistant, NOT what is ticked: measured live it read
          「已选取12张发票」 unchanged through a tick, an untick and two tab switches. It is not a selection witness. -->
+    <!-- @unverified: the footer: 已选取N张发票 and the 发票导入单据 button -->
     <div class="footer"><span id="assistant-selected">已选取0张发票 所有已选发票已选0份附件</span><button data-action="import">发票导入单据</button></div>
   </div>
 </div>
