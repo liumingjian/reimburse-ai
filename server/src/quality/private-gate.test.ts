@@ -31,10 +31,11 @@ function expectFields(relativePath: string, fields: Record<string, string>) {
 
 // The fake reads what to return from the file content, so each sample decides its own outcome.
 const fakeParser: CorpusParser = async (input: ParseInput): Promise<ParseOutcome> => {
-  const spec = JSON.parse(new TextDecoder().decode(input.bytes)) as { kind?: string; layout?: string; values?: Record<string, string>; outcome?: string };
+  const spec = JSON.parse(new TextDecoder().decode(input.bytes)) as { kind?: string; layout?: string; values?: Record<string, string>; extra?: { key: string; value: string; source: string }[]; outcome?: string };
   if (spec.outcome === 'unrecognised') return { outcome: 'unrecognised', reason: 'no_layout' };
   const kind = spec.kind as 'vat_invoice';
   const source = `rule:${spec.kind}/${spec.layout}`;
+  const extra = (spec.extra ?? []).map((c) => ({ ...c, parserVersion: '1', evidence: 'ok' as never, refs: [] }));
   return {
     outcome: 'recognised',
     kind,
@@ -43,7 +44,7 @@ const fakeParser: CorpusParser = async (input: ParseInput): Promise<ParseOutcome
     kindLabel: 'x',
     findings: [],
     missing: [],
-    candidates: Object.entries(spec.values ?? {}).map(([key, value]) => ({ key, value, source, parserVersion: '1', evidence: 'ok' as never, refs: [] })),
+    candidates: [...Object.entries(spec.values ?? {}).map(([key, value]) => ({ key, value, source, parserVersion: '1', evidence: 'ok' as never, refs: [] })), ...extra],
   };
 };
 
@@ -106,6 +107,32 @@ describe('pnpm test:private (#196)', () => {
     expect(report).toMatch(/vat_invoice\/einvoice\s+pdf\s+\(expectations\)\s+1\/2\s+50\.0%\s+>= 100\.0%\s+FAIL/);
     expect(report).toMatch(/vat_invoice\/einvoice\s+pdf\s+totalAmount\s+2\/2\s+100\.0%\s+>= 100\.0%\s+ok/);
     expect(code).toBe(1);
+  });
+
+  // #311: the gate scores the value `factsOf` reads, the one the inventory view shows — not its own pick of candidates.
+  it('scores the read value: the face over the QR, the QR filling a gap, and a layout reading a key two ways as wrong', async () => {
+    const qr = 'rule:vat_invoice/einvoice_qr';
+    put(
+      'vat_invoice/einvoice/a.pdf',
+      JSON.stringify({
+        kind: 'vat_invoice',
+        layout: 'einvoice',
+        values: { totalAmount: '32.50' },
+        extra: [
+          { key: 'totalAmount', value: '99.00', source: qr },
+          { key: 'issueDate', value: '2026-08-18', source: qr },
+          { key: 'sellerName', value: 'A', source: 'rule:vat_invoice/einvoice' },
+          { key: 'sellerName', value: 'B', source: 'rule:vat_invoice/einvoice.derived' },
+        ],
+      }),
+    );
+    expectFields('vat_invoice/einvoice/a.pdf', { totalAmount: '32.50', issueDate: '2026-08-18', sellerName: 'A' });
+
+    const { report } = await run(root);
+
+    expect(report).toMatch(/vat_invoice\/einvoice\s+pdf\s+totalAmount\s+1\/1\s+100\.0%/);
+    expect(report).toMatch(/vat_invoice\/einvoice\s+pdf\s+issueDate\s+1\/1\s+100\.0%/);
+    expect(report).toMatch(/vat_invoice\/einvoice\s+pdf\s+sellerName\s+0\/1\s+0\.0%/);
   });
 
   it('requires the item table fields of a 全电发票 to be written down', () => {

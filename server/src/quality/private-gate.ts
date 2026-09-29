@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, relative, sep } from 'node:path';
 import type { ParseOutcome } from '../parse/dispatch';
+import { factsOf, type Facts } from '../parse/facts';
 import type { ParseInput } from '../parse/material';
 
 // Slice 16 (#196): parser quality gates on the private sample corpus, which lives only on the maintainer's mac
@@ -61,12 +62,10 @@ type Tally = { hit: number; total: number };
 type Group = { files: number; recognised: number; declared: number; otherLayout: number; unrecognised: number; ambiguous: number; failed: number; fields: Map<string, Tally> };
 const emptyGroup = (): Group => ({ files: 0, recognised: 0, declared: 0, otherLayout: 0, unrecognised: 0, ambiguous: 0, failed: 0, fields: new Map() });
 
-// A field is right when the layout produced it (directly or by a derivation) and every such candidate equals the
-// expected value: a conflicting second candidate is not a correct read.
-function fieldRight(outcome: Extract<ParseOutcome, { outcome: 'recognised' }>, key: string, expected: string): boolean {
-  const primary = `rule:${outcome.kind}/${outcome.layout}`;
-  const mine = outcome.candidates.filter((c) => c.key === key && (c.source === primary || c.source.startsWith(`${primary}.`)));
-  return mine.length > 0 && mine.every((c) => c.value === expected);
+// A field is right when the value recognition reads for it (`factsOf`, the same value the inventory view shows) equals
+// the expected one and the layout does not also read it another way: a conflicting read is not a correct read.
+function fieldRight(facts: Facts, key: string, expected: string): boolean {
+  return facts.values[key] === expected && !facts.conflicts.includes(key);
 }
 
 async function evaluate(root: string, parse: CorpusParser, required: Readonly<Record<string, readonly string[]>>) {
@@ -103,11 +102,12 @@ async function evaluate(root: string, parse: CorpusParser, required: Readonly<Re
         continue;
       }
       if ((required[layoutId] ?? []).every((key) => (expected[key] ?? '') !== '')) group.declared += 1;
+      const facts = factsOf(outcome);
       for (const [key, value] of Object.entries(expected)) {
         const tally = group.fields.get(key) ?? { hit: 0, total: 0 };
         group.fields.set(key, tally);
         tally.total += 1;
-        if (fieldRight(outcome, key, String(value))) tally.hit += 1;
+        if (fieldRight(facts, key, String(value))) tally.hit += 1;
       }
     } else if (outcome.outcome === 'unrecognised') {
       if (layoutId === 'unrecognised') group.recognised += 1;
