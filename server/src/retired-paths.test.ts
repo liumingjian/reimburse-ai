@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const self = fileURLToPath(import.meta.url);
 
 const RETIRED_DIRS = ['kernel', 'skills', 'scripts', 'packages'];
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'dist-mock', 'test-results', 'playwright-report', '.claude', '.agents', 'resources', 'release']);
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'dist-mock', 'test-results', 'playwright-report', '.claude', '.agents', 'resources']);
 const TEXT = new Set(['.ts', '.tsx', '.mts', '.mjs', '.js', '.cjs', '.json', '.md', '.yaml', '.yml', '.css', '.html', '.sh', '']);
 const SKIP_FILES = new Set(['pnpm-lock.yaml', 'skills-lock.json']);
 

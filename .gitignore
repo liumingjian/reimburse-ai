@@ -11,9 +11,7 @@
 .env.*
 !.env.example
 node_modules/
-__pycache__/
 dist/
-release/
 .codex-out/
 .playwright-cli
 
