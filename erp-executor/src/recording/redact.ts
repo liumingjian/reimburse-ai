@@ -1,17 +1,19 @@
 // Turns a captured live page into a committable fixture: redacted HTML the fake ERP serves, plus the page facts that
 // live outside the DOM. Redaction keeps structure and drops values:
-//   - the ERP identity (显示名, account, 账套) becomes a placeholder the fake fills in: {{DISPLAY_NAME}} {{ACCOUNT}}
+//   - the ERP identity (display name (显示名), account, tenant (账套)) becomes a placeholder the fake fills in: {{DISPLAY_NAME}} {{ACCOUNT}}
 //     {{TENANT}}, wherever it appears (text, attributes, input values, localStorage);
 //   - every digit in text and in value-like attributes becomes `0`, so dates, amounts, bill numbers and phone
-//     numbers keep their shape and lose their value. Ids and classes keep their digits (a form instance's UUID is
-//     what groups a header field's nodes); the ERP build is kept verbatim (it is the compatibility fingerprint);
+//     numbers keep their shape and lose their value. `STRUCTURAL` attributes (ids, classes, the attributes that
+//     refer to ids, data-field and friends) are kept whole, masked subtree or not, because they are what the
+//     executor's selectors read (a form instance's UUID is what groups a header field's nodes); the ERP build is kept
+//     verbatim (it is the compatibility fingerprint);
 //   - every non-empty input value is masked whole: an editor holds data, never UI vocabulary;
 //   - text under a node a mask rule names is masked whole: `K3CLOUD_MASKS` for the value displays every K3Cloud page
 //     has, plus the flow's own `mask` (lists, widgets that show other people's work);
 //   - e-mail addresses are replaced.
 // `findLeaks` is the last line: the recorder refuses to write anything that still contains a secret.
 
-import type { CapturedNode, CapturedPage } from './capture';
+import { CLICK_MARK, type CapturedNode, type CapturedPage, type ClickTarget } from './capture';
 
 export type Secrets = { displayName?: string | undefined; account?: string | undefined; tenant?: string | undefined; password?: string | undefined };
 
@@ -35,8 +37,17 @@ const gridValue: MaskRule = (node, ancestors) => hasClass('kd-grid-cellspan')(no
  * showed the employee's team there), a grid cell shows its value in `span.kd-grid-cellspan` (a new 费用明细行's
  * 费用承担部门 is the same team), and the 数据中心 (data centre) name sits on the console's header button and in
  * the login page's data-centre picker.
+ *
+ * And, found in the #309 recordings: a list form (我的费用报销) shows the account's bills as rows of its `<uuid>-FLIST`
+ * grid, every value cell carrying `data-rowid`, and its quick filter shows saved 方案 (filter schemes) by name, one of
+ * which was named after the colleague who shared it. The console's main menu titles each category's (hidden) list
+ * with the category name, and a customer's own category is named after the customer.
  */
-export const K3CLOUD_MASKS: readonly MaskRule[] = [hasClass('ui-poplistedit-displayname'), gridValue, hasClass('kd_top_k3cloud_datacenter'), hasId('datacenter_ct')];
+const listRow: MaskRule = (node, ancestors) => 'data-rowid' in node.a && ancestors.some((a) => /-FLIST$/.test(a.a['id'] ?? ''));
+export const K3CLOUD_MASKS: readonly MaskRule[] = [
+  hasClass('ui-poplistedit-displayname'), gridValue, hasClass('kd_top_k3cloud_datacenter'), hasId('datacenter_ct'),
+  listRow, hasClass('SchemeItemControlTemplate'), hasClass('SelectedSchemeItemControlTemplate'), hasClass('kd-tabsnewsyle-list'),
+];
 
 export type RedactOptions = { secrets: Secrets; keep?: readonly string[]; mask?: readonly MaskRule[] };
 
@@ -47,8 +58,16 @@ export type RecordedPageFacts = {
 
 const PLACEHOLDERS = [['displayName', '{{DISPLAY_NAME}}'], ['account', '{{ACCOUNT}}'], ['tenant', '{{TENANT}}']] as const;
 const MASK = '＊';
-/** Attributes that name structure, not values: their digits are kept (a form instance's UUID, a column span). */
-const STRUCTURAL = new Set(['id', 'class', 'for', 'data-kdformid', 'colspan', 'rowspan', 'tabindex']);
+/**
+ * Attributes that name structure, not values, kept whole (identities swapped, nothing else): element ids and the
+ * attributes that refer to them, a grid cell's field key and row index, Kendo's element uids, spans and tab order.
+ * The replay sees the selectors the live page offers, and one UUID reads the same in every attribute that carries it.
+ */
+export const STRUCTURAL: ReadonlySet<string> = new Set([
+  'id', 'class', 'for', 'colspan', 'rowspan', 'tabindex',
+  'data-kdformid', 'data-field', 'data-rowid', 'data-uid', 'data-kdid', 'data-arg', 'data-index', 'data-offset-index',
+  'aria-activedescendant', 'aria-controls', 'aria-owns', 'aria-describedby', 'aria-labelledby',
+]);
 const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
 const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
 const escape = (s: string) => s.replace(/[&<>"]/g, (c) => ESCAPES[c]!);
@@ -97,7 +116,7 @@ export function redactor({ secrets, keep = [], mask: flowMask = [] }: RedactOpti
 
   function html(node: CapturedNode, ancestors: CapturedNode[] = [], masked = false): string {
     const hide = masked || mask.some((rule) => rule(node, ancestors));
-    const attrs = Object.entries(node.a).map(([name, raw]) => ` ${name}="${escape(hide && name !== 'id' && name !== 'class' ? maskedText(raw) : attribute(name, raw))}"`).join('');
+    const attrs = Object.entries(node.a).map(([name, raw]) => ` ${name}="${escape(hide && !STRUCTURAL.has(name) ? maskedText(raw) : attribute(name, raw))}"`).join('');
     const style = node.s ? ` style="${node.s}"` : '';
     const open = `<${node.t}${attrs} data-rec-box="${node.b.join(',')}"${style}>`;
     if (VOID.has(node.t)) return open;
@@ -124,7 +143,25 @@ export function redactor({ secrets, keep = [], mask: flowMask = [] }: RedactOpti
     };
   }
 
-  return { text, value, identity, page };
+  /** Is the node that carries the click mark, or one of its ancestors, masked? */
+  function clickMasked(node: CapturedNode, ancestors: CapturedNode[] = [], masked = false): boolean | null {
+    const hide = masked || mask.some((rule) => rule(node, ancestors));
+    if (CLICK_MARK in node.a) return hide;
+    for (const child of node.c) {
+      if (typeof child === 'string') continue;
+      const found = clickMasked(child, [...ancestors, node], hide);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+
+  /** Where a click landed, for the manifest: its text redacted as the page it landed on redacts it. */
+  function click(captured: CapturedPage, target: ClickTarget) {
+    const hide = clickMasked(captured.body) ?? false;
+    return { tag: target.tag, id: identity(target.id), controlId: identity(target.controlId), text: hide ? maskedText(target.text) : text(target.text) };
+  }
+
+  return { text, value, identity, page, click };
 }
 
 /** Which secrets `output` still contains, by name only: the values themselves are never reported. */
