@@ -1,71 +1,35 @@
-import { ERP_HANDOVER_STEP_COPY, TaskListSchema, type TaskSnapshot } from '@baox/contract';
+import { ERP_HANDOVER_STEP_COPY, TaskListSchema } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { fixtureCatalog } from './catalog/project-catalog';
-import { abortBeforeAttempt, catalogMismatch, gated, handedOver, loginWall, readbackMismatch, scripted, TEST_ERP_ACCOUNT, type ScriptedExecutor } from './erp/testing/fake-executor';
+import type { ResultEvent } from '@baox/erp-executor/protocol';
+import { abortBeforeAttempt, catalogMismatch, gated, handedOver, loginWall, readbackMismatch, TEST_ERP_ACCOUNT, type Script, type ScriptedExecutor } from './erp/testing/fake-executor';
 import { api, sample } from './test/api';
-import { createTestServer, type TestClient, type TestServer } from './test/harness';
+import type { TestClient } from './test/harness';
+import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // Slice 12 (#191): 去报销 (fill ERP) end to end on a fake executor. The job runs in the background; the snapshot is
 // derived from the persisted job facts (ADR-0014/0016): login pause, cancel, catalog mismatch, write result unknown,
-// hand-over. The account's ERP lease is held only while one of its jobs runs (ADR-0019).
+// hand-over. The account's ERP lease is held only while one of its jobs runs (ADR-0019). Every task starts from the
+// scenario builder's default: the 全季 hotel invoice + folio, one accommodation line confirmed on P-2307.
 
-const CATALOG = fixtureCatalog([
-  { number: 'P-2307', name: '华东客户交付', audited: true, forbidden: false },
-  { number: 'P-3312', name: '产品调研', audited: true, forbidden: false },
-]);
-
-let server: TestServer;
-let alice: TestClient;
+let server: ScenarioServer;
 let executor: ScriptedExecutor;
 beforeEach(async () => {
-  executor = scripted(loginWall);
-  server = await createTestServer({ projectCatalog: CATALOG, erpExecutor: executor });
-  alice = await server.signIn('alice');
-  for (const number of ['P-2307', 'P-3312']) expect((await alice.post('/api/project-book/intake', { number, name: number === 'P-2307' ? '华东客户交付' : '产品调研' })).status).toBe(200);
+  server = await scenarioServer();
+  executor = server.erp!;
 });
 afterEach(() => server.close());
-const client = api(() => alice);
-
-// Hotel e-invoice + its 全季 folio: one accommodation line, confirmed on P-2307 → actions / choose_action.
-async function confirmed(): Promise<TaskSnapshot> {
-  const { task } = await client.createTask('杭州');
-  const uploaded = await client.upload(task.taskId, [sample('m01'), sample('m02')]);
-  await client.accepted(await client.act(uploaded, 'start-inventory'));
-  const done = await client.withoutStayGaps(await client.settled(task.taskId));
-  expect(done.lines.length).toBeGreaterThan(0);
-  const review = await client.accepted(await client.act(done, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
-  const ready = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
-  expect(ready).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' } });
-  return ready;
-}
-
-// Waits until the background ERP job stopped running.
-async function settledErp(taskId: string, timeoutMs = 10_000): Promise<TaskSnapshot> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const snapshot = await client.current(taskId);
-    if (snapshot.erp.status !== 'running') return snapshot;
-    if (Date.now() > deadline) throw new Error('ERP job still running');
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
-
-async function start(snapshot: TaskSnapshot): Promise<TaskSnapshot> {
-  await client.accepted(await client.act(snapshot, 'start-erp-write'));
-  return settledErp(snapshot.task.taskId);
-}
 
 async function refused(response: Response, status: number, code: string) {
   expect(response.status).toBe(status);
   expect(((await response.json()) as { error: { code: string } }).error.code).toBe(code);
 }
 
-const taskList = async () => TaskListSchema.parse(await (await alice.request('/api/tasks')).json());
+const taskList = async (client: TestClient) => TaskListSchema.parse(await (await client.request('/api/tasks')).json());
 
 describe('去报销 on a fake executor', () => {
   it('pauses for login: stage erp, step erp_login, no attempt, lease released; confirm-login re-probes once', async () => {
-    const ready = await confirmed();
-    const waiting = await start(ready);
+    const scene = await scenario(server).at('erp', { erp: loginWall });
+    const waiting = scene.reached;
     expect(waiting).toMatchObject({
       stage: 'erp',
       step: { kind: 'erp_login' },
@@ -79,46 +43,48 @@ describe('去报销 on a fake executor', () => {
       },
     });
     expect(waiting.erp.steps.find((step) => step.key === 'login')?.status).toBe('waiting');
-    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
+    expect(server.erpLease.holder(scene.client.account.accountId)).toBeNull();
     expect(executor.runs().map((run) => run.trigger)).toEqual(['start']);
     // The plan carries the confirmed lines' projects and the voucher invoices by content.
-    expect(executor.runs()[0]!.plan).toMatchObject({ kind: 'fill', taskId: ready.task.taskId, purpose: '上海产品评审出差', catalog: { projects: [{ code: 'P-2307', name: '华东客户交付' }], expenseItems: [{ code: 'FY010001', name: '住宿' }] } });
+    expect(executor.runs()[0]!.plan).toMatchObject({ kind: 'fill', taskId: scene.task.taskId, purpose: '上海产品评审出差', catalog: { projects: [{ code: 'P-2307', name: '华东客户交付' }], expenseItems: [{ code: 'FY010001', name: '住宿' }] } });
     expect(executor.runs()[0]!.plan.invoices).toHaveLength(1);
 
     // Re-reading a recorded login wait cannot dispatch another fill, import, write, or save.
-    const refreshed = await client.current(waiting.task.taskId);
-    const refreshedAgain = await client.current(waiting.task.taskId);
+    const refreshed = await scene.snapshot();
+    const refreshedAgain = await scene.snapshot();
     expect(refreshed.erp).toMatchObject({ currentStage: 'login', externalWait: 'employee_login', outcome: 'none', allowedActions: ['refresh', 'confirm_login', 'cancel'] });
     expect(refreshedAgain.erp).toEqual(refreshed.erp);
     expect(executor.runs()).toHaveLength(1);
 
     // Still not logged in: stays, with a notice.
-    const again = await client.accepted(await client.act(waiting, 'confirm-login'));
-    const still = await settledErp(again.task.taskId);
+    await scene.accept('confirm-login');
+    const still = await scene.settled();
     expect(still).toMatchObject({ stage: 'erp', step: { kind: 'erp_login' }, erp: { status: 'waiting_login' } });
     expect(still.erp.loginNotice).toEqual(expect.any(String));
     expect(executor.runs().map((run) => run.trigger)).toEqual(['start', 'confirm_login']);
 
     executor.queue(handedOver());
-    await client.accepted(await client.act(still, 'confirm-login'));
-    const done = await settledErp(still.task.taskId);
+    await scene.accept('confirm-login');
+    const done = await scene.settled();
     expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', currentStage: 'handover', externalWait: 'none', outcome: 'filled', allowedActions: ['refresh'], draftNo: null } });
   });
 
   it('cancel-erp-write returns to write-pending and the task can start again', async () => {
-    const waiting = await start(await confirmed());
-    const cancelled = await client.accepted(await client.act(waiting, 'cancel-erp-write'));
+    const scene = await scenario(server).at('erp', { erp: loginWall });
+    const cancelled = await scene.accept('cancel-erp-write');
     expect(cancelled).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, erp: { status: 'idle', abortReason: null }, confirmation: { status: 'confirmed' } });
-    await refused(await client.act(cancelled, 'cancel-erp-write'), 400, 'not_waiting_login');
-    await refused(await client.act(cancelled, 'confirm-login'), 400, 'not_waiting_login');
+    expect(await scene.refused('cancel-erp-write')).toEqual({ status: 400, code: 'not_waiting_login' });
+    expect(await scene.refused('confirm-login')).toEqual({ status: 400, code: 'not_waiting_login' });
 
     executor.queue(handedOver());
-    expect((await start(cancelled)).stage).toBe('done');
+    await scene.accept('start-erp-write');
+    expect((await scene.settled()).stage).toBe('done');
   });
 
   it('answers every mutation other than confirm-login / cancel-erp-write with 409 during the login pause', async () => {
-    const waiting = await start(await confirmed());
-    const id = waiting.task.taskId;
+    const scene = await scenario(server).at('erp', { erp: loginWall });
+    const waiting = scene.reached;
+    const id = scene.task.taskId;
     const line = waiting.lines[0]!;
     const mutations: Array<[string, Record<string, unknown>]> = [
       ['start-inventory', {}],
@@ -132,78 +98,79 @@ describe('去报销 on a fake executor', () => {
       ['start-erp-write', {}],
     ];
     for (const [name, body] of mutations) {
-      const response = await client.act(waiting, name, body);
+      const response = await scene.act(name, body, waiting.step.stepToken);
       expect(response.status, name).toBe(409);
     }
-    expect((await client.uploadRaw(id, [sample('m03')])).status).toBe(409);
-    expect((await alice.post(`/api/tasks/${id}/abandon`, {})).status).toBe(409);
+    expect((await api(() => scene.client).uploadRaw(id, [sample('m03')])).status).toBe(409);
+    expect((await scene.client.post(`/api/tasks/${id}/abandon`, {})).status).toBe(409);
     // Nothing changed: the same step still stands.
-    expect((await client.current(id)).step.stepToken).toBe(waiting.step.stepToken);
+    expect((await scene.snapshot()).step.stepToken).toBe(waiting.step.stepToken);
   });
 
   it('a catalog mismatch aborts before import, with no attempt, and returns to project assignment', async () => {
+    const scene = await scenario(server).at('actions');
     executor.queue(catalogMismatch);
-    const mismatch = await start(await confirmed());
+    await scene.accept('start-erp-write');
+    const mismatch = await scene.settled();
     expect(mismatch).toMatchObject({ stage: 'project', step: { kind: 'assign_projects' }, erp: { status: 'idle' }, catalog: { status: 'mismatch' } });
     expect(mismatch.catalog.problems).toEqual([expect.objectContaining({ subject: '项目号 P-2307', resolver: '要你处理' })]);
     expect(mismatch.catalog.problems[0]!.reason).toContain('改过名的项目');
-    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
-    expect((await taskList()).tasks[0]).toMatchObject({ abandonable: true });
+    expect(server.erpLease.holder(scene.client.account.accountId)).toBeNull();
+    expect((await taskList(scene.client)).tasks[0]).toMatchObject({ abandonable: true });
 
     // Reassigning and resubmitting leaves the mismatch behind: review again, confirm, write again.
-    const resubmitted = await client.accepted(await client.act(mismatch, 'submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(mismatch.lines.map((line) => [line.lineId, 'P-3312'])) }));
+    const resubmitted = await scene.accept('submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(mismatch.lines.map((line) => [line.lineId, 'P-3312'])) });
     expect(resubmitted).toMatchObject({ stage: 'review', step: { kind: 'confirm_review' }, catalog: { status: 'pending' } });
-    const reconfirmed = await client.accepted(await client.act(resubmitted, 'confirm-review', { digest: resubmitted.confirmation.digest }));
+    await scene.accept('confirm-review', { digest: resubmitted.confirmation.digest });
     executor.queue(handedOver());
-    expect((await start(reconfirmed)).stage).toBe('done');
+    await scene.accept('start-erp-write');
+    expect((await scene.settled()).stage).toBe('done');
   });
 
   it('a read-back mismatch after an attempt is ERP 写入结果未知: reconcile, frozen, and still voidable', async () => {
-    executor.queue(readbackMismatch);
-    const unknown = await start(await confirmed());
+    const scene = await scenario(server).at('reconcile', { erp: readbackMismatch });
+    const unknown = scene.reached;
     expect(unknown).toMatchObject({ stage: 'reconcile', step: { kind: 'reconcile' }, erp: { status: 'aborted' }, reconcile: { status: 'pending' } });
     expect(unknown.erp.abortReason).toContain('「申请报销金额」合计 1000.00 与任务合计 1006.00 不一致');
     expect(unknown.erp.erpAccount).toEqual(TEST_ERP_ACCOUNT);
-    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
+    expect(server.erpLease.holder(scene.client.account.accountId)).toBeNull();
 
-    await refused(await client.act(unknown, 'set-home-city', { homeCity: '上海' }), 400, 'erp_started');
-    await refused(await client.act(unknown, 'start-erp-write'), 400, 'erp_started');
+    expect(await scene.refused('set-home-city', { homeCity: '上海' })).toEqual({ status: 400, code: 'erp_started' });
+    expect(await scene.refused('start-erp-write')).toEqual({ status: 400, code: 'erp_started' });
     // The facts are frozen, but the task is not a prisoner of them: ADR-0030 lets any state be voided, and the list
     // offers it without a reason to the contrary.
-    expect((await taskList()).tasks[0]).toMatchObject({ stage: 'reconcile', abandonable: true, abandonBlockedReason: null, erpTouched: true });
+    expect((await taskList(scene.client)).tasks[0]).toMatchObject({ stage: 'reconcile', abandonable: true, abandonBlockedReason: null, erpTouched: true });
     // Still the account's one non-terminal task for as long as it is around.
-    await refused(await alice.post('/api/tasks', { homeCity: '杭州' }), 400, 'active_task_exists');
-    const voided = await alice.post(`/api/tasks/${unknown.task.taskId}/abandon`, {});
+    await refused(await scene.client.post('/api/tasks', { homeCity: '杭州' }), 400, 'active_task_exists');
+    const voided = await scene.client.post(`/api/tasks/${scene.task.taskId}/abandon`, {});
     expect(voided.status).toBe(200);
     expect(TaskListSchema.parse(await voided.json()).tasks).toEqual([]);
-    expect((await client.current(unknown.task.taskId)).stage).toBe('voided');
+    expect((await scene.snapshot()).stage).toBe('voided');
     // Voiding it releases the account: the next task can start.
-    expect((await alice.post('/api/tasks', { homeCity: '杭州' })).status).toBe(200);
+    expect((await scene.client.post('/api/tasks', { homeCity: '杭州' })).status).toBe(200);
   });
 
   it('完全重置 voids a task that touched ERP too, because 任务作废 now accepts it', async () => {
-    executor.queue(readbackMismatch);
-    const unknown = await start(await confirmed());
-    expect(unknown.stage).toBe('reconcile');
+    const scene = await scenario(server).at('reconcile', { erp: readbackMismatch });
 
     // Reset is a bulk 任务作废: since ADR-0030 that clears every lifecycle, ERP-touched ones included. What it does
     // not do is reach into ERP; the bill already over there is the employee's to deal with.
-    const reset = await alice.post('/api/reset', {});
+    const reset = await scene.client.post('/api/reset', {});
     expect(reset.status).toBe(200);
     expect(TaskListSchema.parse(await reset.json()).tasks).toEqual([]);
-    expect((await client.current(unknown.task.taskId)).stage).toBe('voided');
+    expect((await scene.snapshot()).stage).toBe('voided');
   });
 
   it('完全重置 still voids a task that never touched ERP', async () => {
-    const ready = await confirmed();
-    const reset = await alice.post('/api/reset', {});
+    const scene = await scenario(server).at('actions');
+    const reset = await scene.client.post('/api/reset', {});
     expect(TaskListSchema.parse(await reset.json()).tasks).toEqual([]);
-    expect((await client.current(ready.task.taskId)).stage).toBe('voided');
+    expect((await scene.snapshot()).stage).toBe('voided');
   });
 
   it('a filled, unsaved form that passed the strict read-back is done (ERP 单据已交接), a terminal', async () => {
-    executor.queue(handedOver());
-    const done = await start(await confirmed());
+    const scene = await scenario(server).at('done', { erp: handedOver() });
+    const done = scene.reached;
     // Nothing was saved, so there is no 单据编号 to report — the read-back rows are the whole of the evidence.
     expect(done).toMatchObject({ stage: 'done', step: { kind: 'none' }, erp: { status: 'done', currentStage: 'handover', externalWait: 'none', outcome: 'filled', allowedActions: ['refresh'], draftNo: null, erpAccount: TEST_ERP_ACCOUNT }, readback: { status: 'matched' } });
     expect(done.readback.rows).toHaveLength(done.lines.length);
@@ -213,45 +180,48 @@ describe('去报销 on a fake executor', () => {
     // same constant, so the two lists cannot drift apart (ADR-0028).
     expect(done.erp.steps.at(-1)).toMatchObject({ ...ERP_HANDOVER_STEP_COPY, status: 'done' });
     expect(done.erp.steps.some((step) => step.title.includes('保存'))).toBe(false);
-    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
+    expect(server.erpLease.holder(scene.client.account.accountId)).toBeNull();
 
-    expect((await taskList()).tasks[0]).toMatchObject({ stage: 'done', erpDraftNo: null, abandonable: true, erpTouched: true });
-    await refused(await client.act(done, 'set-home-city', { homeCity: '上海' }), 400, 'task_closed');
+    expect((await taskList(scene.client)).tasks[0]).toMatchObject({ stage: 'done', erpDraftNo: null, abandonable: true, erpTouched: true });
+    expect(await scene.refused('set-home-city', { homeCity: '上海' })).toEqual({ status: 400, code: 'task_closed' });
     // 去打印 never needs ERP (stories 57 and 63), so the paper bundle is still available once the form is handed over.
-    expect((await alice.post(`/api/tasks/${done.task.taskId}/actions/generate-print-sheet`, {})).status).toBe(200);
-    expect((await client.current(done.task.taskId)).printSheet.status).toBe('generated');
+    expect((await scene.client.post(`/api/tasks/${scene.task.taskId}/actions/generate-print-sheet`, {})).status).toBe(200);
+    expect((await scene.snapshot()).printSheet.status).toBe('generated');
     // The hand-over is terminal: the account may start the next task.
-    expect((await alice.post('/api/tasks', { homeCity: '杭州' })).status).toBe(200);
-  }, 120_000);
+    expect((await scene.client.post('/api/tasks', { homeCity: '杭州' })).status).toBe(200);
+  });
 
   it('a failure before the first attempt_started returns to write-pending and allows retry', async () => {
+    const scene = await scenario(server).at('actions');
     executor.queue(abortBeforeAttempt, handedOver());
-    const aborted = await start(await confirmed());
+    await scene.accept('start-erp-write');
+    const aborted = await scene.settled();
     expect(aborted).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, erp: { status: 'idle' }, confirmation: { status: 'confirmed' } });
     expect(aborted.erp.abortReason).toContain('报销系统的版本与上次核对时不一致');
-    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
-    expect((await taskList()).tasks[0]).toMatchObject({ abandonable: true });
+    expect(server.erpLease.holder(scene.client.account.accountId)).toBeNull();
+    expect((await taskList(scene.client)).tasks[0]).toMatchObject({ abandonable: true });
     // Nothing was written, so the task is still editable.
-    expect((await client.act(aborted, 'set-home-city', { homeCity: '杭州' })).status).toBe(200);
+    expect((await scene.act('set-home-city', { homeCity: '杭州' })).status).toBe(200);
 
-    const retried = await start(await client.current(aborted.task.taskId));
-    expect(retried.stage).toBe('done');
+    await scene.accept('start-erp-write');
+    expect((await scene.settled()).stage).toBe('done');
   });
 
   it("holds only this account's lease while the job runs: 409 stale for this task, another account untouched", async () => {
+    const scene = await scenario(server).at('actions');
+    const alice = scene.client;
     const gate = gated(handedOver());
     executor.queue(gate.script);
-    const ready = await confirmed();
-    const running = await client.accepted(await client.act(ready, 'start-erp-write'));
+    const running = await scene.accept('start-erp-write');
     await gate.running;
     expect(running).toMatchObject({ stage: 'erp', step: { kind: 'none' }, erp: { status: 'running', currentStage: 'chromium', externalWait: 'erp_response', outcome: 'none', allowedActions: ['refresh'] } });
-    expect(server.erpLease.holder(alice.account.accountId)).toEqual({ accountId: alice.account.accountId, taskId: ready.task.taskId, jobId: expect.any(String) });
+    expect(server.erpLease.holder(alice.account.accountId)).toEqual({ accountId: alice.account.accountId, taskId: scene.task.taskId, jobId: expect.any(String) });
 
-    const current = await client.current(ready.task.taskId);
-    const reread = await client.current(ready.task.taskId);
+    const current = await scene.snapshot();
+    const reread = await scene.snapshot();
     expect(reread.erp).toEqual(current.erp);
     expect(executor.runs()).toHaveLength(1);
-    expect((await client.act(current, 'set-home-city', { homeCity: '上海' })).status).toBe(409);
+    expect((await scene.act('set-home-city', { homeCity: '上海' })).status).toBe(409);
 
     // A colleague filing at the same moment is not queued behind her (ADR-0019): the lease she holds is not consulted
     // for his account, and his own is free to take.
@@ -261,24 +231,19 @@ describe('去报销 on a fake executor', () => {
     expect(((await unblocked.json()) as { error: { code: string } }).error.code).not.toBe('erp_in_use');
     expect(server.erpLease.acquire({ accountId: bob.account.accountId, taskId: bobTask.task.taskId, jobId: 'bob-job' })).toBe(true);
     // Two accounts hold it at once, and neither sees the other's holder.
-    expect(server.erpLease.holder(alice.account.accountId)).toMatchObject({ taskId: ready.task.taskId });
+    expect(server.erpLease.holder(alice.account.accountId)).toMatchObject({ taskId: scene.task.taskId });
     expect(server.erpLease.holder(bob.account.accountId)).toMatchObject({ taskId: bobTask.task.taskId });
     server.erpLease.release('bob-job');
 
     gate.release();
-    expect((await settledErp(ready.task.taskId)).stage).toBe('done');
+    expect((await scene.settled()).stage).toBe('done');
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
 
   // A 住宿 line needs its 离店日期, which only the folio carries; the hotel invoice on its own cannot be written.
   it('refuses to start when a confirmed line cannot be written to ERP, before any job', async () => {
-    const { task } = await client.createTask('杭州');
-    const uploaded = await client.upload(task.taskId, [sample('m01')]);
-    await client.accepted(await client.act(uploaded, 'start-inventory'));
-    const done = await client.withoutStayGaps(await client.settled(task.taskId));
-    const review = await client.accepted(await client.act(done, 'submit-project-assignment', { purpose: '出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
-    const ready = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
-    const response = await client.act(ready, 'start-erp-write');
+    const scene = await scenario(server).at('actions', { materials: ['m01'] });
+    const response = await scene.act('start-erp-write');
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: { code: string; message: string } };
     expect(body.error.code).toBe('erp_preflight');
@@ -288,15 +253,33 @@ describe('去报销 on a fake executor', () => {
 
   // ERP's 发票类型 enum has no 铁路电子客票 entry, but it does have 火车票, and that is what a rail e-ticket writes as.
   it('writes a 铁路电子客票 line as 火车票, the ERP enum entry for it, instead of refusing it', async () => {
-    const { task } = await client.createTask('杭州');
-    const uploaded = await client.upload(task.taskId, [sample('m07')]);
-    await client.accepted(await client.act(uploaded, 'start-inventory'));
-    const done = await client.settled(task.taskId);
-    const review = await client.accepted(await client.act(done, 'submit-project-assignment', { purpose: '出差', projects: Object.fromEntries(done.lines.map((line) => [line.lineId, 'P-2307'])) }));
-    const ready = await client.accepted(await client.act(review, 'confirm-review', { digest: review.confirmation.digest }));
-    expect(ready.lines.map((line) => line.invoiceType)).toEqual(['火车票']);
-    await client.accepted(await client.act(ready, 'start-erp-write'));
-    await settledErp(task.taskId);
+    const scene = await scenario(server).at('actions', { materials: ['m07'] });
+    expect(scene.reached.lines.map((line) => line.invoiceType)).toEqual(['火车票']);
+    await scene.accept('start-erp-write');
+    await scene.settled();
     expect(executor.runs()).toHaveLength(1);
   });
+
+  // QA 2026-09-19 (738534a): the 发票助手 stuck on its entry menu before the 发票导入单据 click, and the run was
+  // recorded as a write, leaving the task in 对账 for good. Nothing was imported, so it must come back to 去报销.
+  it('a job stuck in the invoice assistant before the import click writes nothing and returns to 去报销', async () => {
+    const scene = await scenario(server).at('actions', { erp: stuckBeforeImport });
+    await scene.accept('start-erp-write');
+    const back = await scene.settled();
+    expect(back).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, erp: { status: 'idle' }, reconcile: { status: 'none' } });
+    expect((await taskList(scene.client)).tasks[0]).toMatchObject({ abandonable: true, erpTouched: false });
+  });
 });
+
+// Reaches the 发票助手, fails to get past its entry menu, and stops: no attempt_started, so nothing counts as written.
+const stuckBeforeImport: Script = async (_plan, channel) => {
+  for (const step of ['chromium', 'login', 'catalog', 'navigate'] as const) {
+    await channel.emit({ type: 'step', step, status: 'running' });
+    await channel.emit({ type: 'step', step, status: 'done' });
+  }
+  await channel.emit({ type: 'step', step: 'import', status: 'running' });
+  await channel.emit({ type: 'step', step: 'import', status: 'failed' });
+  const event: ResultEvent = { type: 'result', status: 'aborted', code: 'invoice_assistant_stuck', message: '发票助手停在入口菜单，没有导入任何发票', billNo: null, capture: null };
+  await channel.emit(event);
+  return event;
+};

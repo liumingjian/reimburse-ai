@@ -79,7 +79,9 @@ export function testClient(app: Hono<AppEnv>, account: Account, cookie: string):
 // admitted, which is what every test but the deployment ones wants.
 // `extensionTemplate`: a built extension template (`extension/scripts/build.mjs <dir>`) for the settings page's download.
 // `schedule`: the extension channel's timers (hello deadline, reconnection window); real ones unless a test fires them.
-export async function createTestServer({ parser, projectCatalog, legacyHome = null, erpExecutor, reconcileExecutor, erpConfig, publicOrigin, extensionTemplate = null, schedule, database = ':memory:', dataDir = tempDataDir() }: { parser?: ParseExecutor; projectCatalog?: ProjectCatalog; legacyHome?: string | null; erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor; erpConfig?: ErpConfig; publicOrigin?: string; extensionTemplate?: string | null; schedule?: Schedule; database?: string; dataDir?: string } = {}): Promise<TestServer> {
+export type TestServerOptions = { parser?: ParseExecutor; projectCatalog?: ProjectCatalog; legacyHome?: string | null; erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor; erpConfig?: ErpConfig; publicOrigin?: string; extensionTemplate?: string | null; schedule?: Schedule; database?: string; dataDir?: string };
+
+export async function createTestServer({ parser, projectCatalog, legacyHome = null, erpExecutor, reconcileExecutor, erpConfig, publicOrigin, extensionTemplate = null, schedule, database = ':memory:', dataDir = tempDataDir() }: TestServerOptions = {}): Promise<TestServer> {
   const db = await openDatabase(database);
   let offset = 0;
   const clock: TestClock = { now: () => new Date(Date.now() + offset), advance: (ms) => void (offset += ms) };
