@@ -179,13 +179,23 @@ describe('设置页：浏览器扩展的下载、安装与升级', () => {
     expect(screen.getByText(/不要点这条提示上的“取消”.*同一个标签页.*接着做下去.*转去对账/)).toBeTruthy();
   });
 
+  test('独立教程的升级步骤只有下载、覆盖原来的文件夹、重新加载，不要求重新配对', async () => {
+    renderTutorial();
+    const upgrade = (await screen.findByRole('list', { name: '升级扩展' })).textContent ?? '';
+    for (const words of ['下载浏览器扩展', '原来的文件夹', '重新加载']) expect(upgrade).toContain(words);
+    expect(upgrade).not.toContain('配对');
+    expect(EXTENSION_INSTALL_COPY.upgradeLead).not.toContain('配对');
+  });
+
   test('配对的扩展比这里提供的旧时，提醒按升级步骤换新', async () => {
     window.location.hash = '#/settings';
     const adapter = createMockAdapter({ seed: 'actions', fault: null, extensionPaired: true });
     const paired = await adapter.getExtensionPairing();
     render(<App adapter={{ ...adapter, getExtensionPairing: async () => ({ ...paired, version: '0.9.0' }) }} />);
     await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.paired);
-    expect(within(extensionPanel()).getByText(EXTENSION_INSTALL_COPY.outdated('0.9.0', EXTENSION_VERSION))).toBeTruthy();
+    const notice = within(extensionPanel()).getByText(EXTENSION_INSTALL_COPY.outdated('0.9.0', EXTENSION_VERSION));
+    expect(notice).toBeTruthy();
+    expect(notice.textContent).not.toContain('配对');
   });
 
   test('配对的扩展已是这一版时不提醒升级', async () => {

@@ -137,7 +137,8 @@ export const ExtensionPairingFailureSchema = z.object({
 export type ExtensionPairingOutcome = { ok: true; pairing: ExtensionPairing } | { ok: false; error: ActionError; pairing: ExtensionPairing | null };
 
 // The one refusal both halves of version negotiation give (ADR-0021): the 配对 request and the channel's first
-// message answer with the same sentence, so an employee who hits it twice reads it once.
+// message answer with the same sentence, so an employee who hits it twice reads it once. Overwriting the same unpacked
+// directory keeps the extension ID and its stored pairing (ADR-0021), so the sentence never asks to pair again.
 export const EXTENSION_VERSION_TOO_OLD_CODE = 'version_too_old';
 
 // Null when the reported version is good enough; the sentence to show otherwise. An extension that reports no version
@@ -145,7 +146,7 @@ export const EXTENSION_VERSION_TOO_OLD_CODE = 'version_too_old';
 export function extensionVersionRefusal(reported: string | null | undefined, minimum: string): string | null {
   if (reported && compareExtensionVersions(reported, minimum) >= 0) return null;
   const which = reported ? `你装的是 ${reported} 版。` : '你装的这一版太旧，连版本号都报不上来。';
-  return `这台服务器要求浏览器扩展 ${minimum} 或更新的版本，所以没有连上。${which}请回到设置页重新下载扩展包，解压后覆盖原来的目录，到浏览器的扩展页点一次“重新加载”，然后重新配对。`;
+  return `这台服务器要求浏览器扩展 ${minimum} 或更新的版本，所以没有连上。${which}请回到设置页重新下载扩展包，解压后覆盖原来的目录，到浏览器的扩展页点一次“重新加载”。`;
 }
 
 export const EXTENSION_PAIRING_ERRORS = {
