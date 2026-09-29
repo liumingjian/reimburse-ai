@@ -40,9 +40,9 @@ const column = (fake: FakeErp, grid: 'detail' | 'receipts', index: number) =>
     .map((tr) => String(tr.children[index]?.textContent ?? '').trim());
 /** 费用明细 data rows, footer excluded — the count `addDetailRow` has to make true. */
 const detailRowCount = (fake: FakeErp) => column(fake, 'detail', 0).length;
-/** 收票单 (receipt number), the identity ERP keys a 收票行 (receipt row) by. */
+/** receipt number (收票单), the identity ERP keys a receipt row (收票行) by. */
 const receiptNumbers = (fake: FakeErp) => column(fake, 'receipts', 0);
-/** The 收票单号 link each 费用明细行 (detail row) carries, empty ones dropped. */
+/** The 收票单号 link each detail row (费用明细行) carries, empty ones dropped. */
 const receiptLinks = (fake: FakeErp) => column(fake, 'detail', 0).filter(Boolean);
 /** The 收票信息 footer's 价税合计 total. */
 const receiptTotal = (fake: FakeErp) =>
@@ -200,7 +200,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(sum!.map(asCents)).toEqual(net!.map((amount, index) => asCents(amount) + asCents(tax![index]!)));
   });
 
-  // Live 2026-09-20, on a freshly added 费用明细行 of a real 费用报销单: 项目 (a 选择类 F7 column) reported a bound,
+  // Live 2026-09-20, on a freshly added 费用明细行 of a real 费用报销单: the project (项目) column, a selection-type (选择类) F7 column, reported a bound,
   // FOCUSED input, and the `111705` typed into it landed nowhere at all — three fresh rows, three failures, while
   // the same write into a row whose editor had been opened before went in every time. A second click and a second
   // typing landed it, and the ERP then resolved the code to the project name within a second. The ERP re-renders
@@ -446,8 +446,8 @@ describe('fill job through the protocol on the fake ERP', () => {
   });
 });
 
-// What ERP does when an invoice the bill already holds is imported again: it rewrites that 收票行 (receipt row),
-// which it keys by its 收票单 (receipt number), instead of adding a second one (ADR-0026). Driven through the fill
+// What ERP does when an invoice the bill already holds is imported again: it rewrites that receipt row (收票行),
+// which it keys by its receipt number (收票单), instead of adding a second one (ADR-0026). Driven through the fill
 // job's own import step, for the reason `uploadAndImport` gives.
 // The browser extension's route (#256): no local path, so the invoices go into the assistant's file input as `File`
 // objects in a `DataTransfer` built inside the page. Same recognition, same upload/import split (ADR-0025).

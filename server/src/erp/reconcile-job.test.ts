@@ -15,7 +15,7 @@ import { createErpJobs } from './jobs';
 import type { ApprovedPreview, ReadbackEvent } from '@baox/erp-executor/protocol';
 import { reconcileFromEvents, runReconcile } from './reconcile-job';
 import { driveTo, RECONCILE_STATES, type ReconcileState } from '@baox/erp-executor/testing/reconcile-states';
-import { FAST_PACE, fakeErpOptions, reconcilePlan, withoutLayout } from './testing/scenario';
+import { FAST_PACE, fakeErpOptions, reconcilePlan, withoutLayout } from '@baox/erp-executor/testing/scenario';
 
 const golden = JSON.parse(readFileSync(new URL('./testing/reconcile-parity.golden.json', import.meta.url), 'utf8'));
 

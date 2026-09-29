@@ -6,7 +6,7 @@ import { BACKSTOP_MS } from './deadlines';
 import { createTestServer, type TestClient, type TestServer, type TestServerOptions } from './harness';
 import { presetParser, type PresetParser } from './parse-presets';
 
-// The scenario builder: put a 报销任务 (reimbursement task) at any stage in one call, through public HTTP actions only.
+// The scenario builder: put a reimbursement task (报销任务) at any stage in one call, through public HTTP actions only.
 //
 //   server = await scenarioServer();                                      // beforeEach; close() in afterEach
 //   const scene = await scenario(server).at('actions');                   // hotel invoice + folio, confirmed on P-2307
@@ -25,8 +25,8 @@ import { presetParser, type PresetParser } from './parse-presets';
 //   erp        start-erp-write, wait for the job           → erp (login wall), done, reconcile, …
 //
 // Parsing replays preset outcomes (`parse-presets.ts`) unless the server was given a real parser; the fill job is the
-// server's scripted executor, and `erp` queues the scripts it plays (before the ladder starts, so they also serve a
-// 去报销 the test starts itself from `actions`).
+// server's scripted executor, and `erp` queues the scripts this scene's task plays (right after the task is created, so
+// they also serve a 去报销 the test starts itself from `actions`, and never a later scene's task).
 
 export const SCENARIO_PROJECTS = [
   { number: 'P-2307', name: '华东客户交付' },
@@ -122,16 +122,17 @@ export function scenario(server: ScenarioServer, client?: TestClient) {
         if (failed.length > 0) throw new Error(`scenario: no preset parse outcome for ${failed.join(', ')}; pass a real parser to scenarioServer({ parser })`);
         return rung === 'erp' ? missed(snapshot, rung) : null;
       };
+      // Before the next rung: a task that is not where that rung starts (a pending item nobody answered, a blocked
+      // inventory) was passed by, and says where it is instead of letting the rung's action be refused.
+      const startsAt = (snapshot: TaskSnapshot, from: TaskStage, rung: string): void => {
+        if (snapshot.stage !== from) missed(snapshot, rung);
+      };
       const missed = (snapshot: TaskSnapshot, rung: string): never => {
         const open = snapshot.pendingItems.filter((item) => item.status === 'open').map((item) => item.itemId);
         throw new Error(`scenario: asked for stage ${stage}, but after ${rung} the task is at ${snapshot.stage} / ${snapshot.step.kind}` + (open.length ? ` (open items: ${open.join(', ')})` : '') + (snapshot.blockers.length ? ` (blockers: ${snapshot.blockers.map((b) => b.kind).join(', ')})` : ''));
       };
 
-      // Queued now, so a test that stops at `actions` and starts 去报销 itself gets them too.
-      if (options.erp) {
-        if (!server.erp) throw new Error('scenario: `erp` scripts need the scripted executor; this server was given its own erpExecutor');
-        server.erp.queue(...(typeof options.erp === 'function' ? [options.erp] : options.erp));
-      }
+      if (options.erp && !server.erp) throw new Error('scenario: `erp` scripts need the scripted executor; this server was given its own erpExecutor');
 
       const assign = options.projects ?? SCENARIO_PROJECTS[0].number;
       const projectOf = typeof assign === 'string' ? () => assign : assign;
@@ -139,6 +140,9 @@ export function scenario(server: ScenarioServer, client?: TestClient) {
       if (options.projectBook !== 'as_is') await enterProjects(owner, typeof assign === 'string' ? [assign] : []);
 
       const { task } = await http.createTask(options.homeCity ?? '杭州');
+      // Queued for this task only, so a test that stops at `actions` and starts 去报销 itself gets them too, and a later
+      // scene on the same server (which never reached 去报销 here or not) plays its own.
+      if (options.erp) server.erp!.queueFor(task.taskId, ...(typeof options.erp === 'function' ? [options.erp] : options.erp));
       const uploads = (options.materials ?? DEFAULT_MATERIALS).map((material) => (typeof material === 'string' ? sample(material) : material));
       let current = uploads.length > 0 ? await http.upload(task.taskId, uploads) : await http.current(task.taskId);
       const atUpload = stop(current, 'upload');
@@ -156,6 +160,7 @@ export function scenario(server: ScenarioServer, client?: TestClient) {
       const atProject = stop(current, 'answering the 住宿 trio');
       if (atProject) return atProject;
 
+      startsAt(current, 'project', 'answering the 住宿 trio');
       current = await http.accepted(await http.act(current, 'submit-project-assignment', {
         purpose: options.purpose ?? '上海产品评审出差',
         projects: Object.fromEntries(current.lines.map((line) => [line.lineId, projectOf(line)])),
@@ -163,11 +168,13 @@ export function scenario(server: ScenarioServer, client?: TestClient) {
       const atReview = stop(current, 'submit-project-assignment');
       if (atReview) return atReview;
 
+      startsAt(current, 'review', 'submit-project-assignment');
       current = await http.accepted(await http.act(current, 'confirm-review', { digest: current.confirmation.digest }));
       const atActions = stop(current, 'confirm-review');
       if (atActions) return atActions;
       if (stage === 'project' || stage === 'review') missed(current, 'confirm-review');
 
+      startsAt(current, 'actions', 'confirm-review');
       await http.accepted(await http.act(current, 'start-erp-write'));
       current = await settle(http.current, task.taskId);
       return stop(current, 'erp')!;

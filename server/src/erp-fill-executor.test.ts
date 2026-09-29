@@ -3,14 +3,15 @@ import { dataDirBlobs } from './erp/cdp-executor';
 import { runFillJob } from '@baox/erp-executor/job';
 import { createFakeErp, type FakeErp, type FakeErpOptions } from '@baox/erp-executor/testing/fake-erp';
 import type { FillExecutor } from './erp/fill-jobs';
-import { COMPATIBILITY, ERP_ACCOUNT, ERP_ORIGIN, FAST_PACE } from './erp/testing/scenario';
+import { COMPATIBILITY, ERP_ACCOUNT, ERP_ORIGIN, FAST_PACE } from '@baox/erp-executor/testing/scenario';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type Scene, type ScenarioServer } from './test/scenario';
 import { fakeErpFor, SCENE_RECEIPT_NUMBER } from './test/scene-erp';
+import { attemptedActions } from './test/erp-records';
 
 // The real executor (`runFillJob`) on the fake ERP, with the fill plan and the judge built from the task's confirmed
 // facts (#191): the preview identity is the probed ERP account, the invoices travel by content from the data directory.
-// The approved preview and the ERP 动作尝试 (action attempts) are read from the database: the snapshot shows neither.
+// The approved preview and the ERP action attempts (动作尝试) are read from the database: the snapshot shows neither.
 
 
 let server: ScenarioServer;
@@ -36,9 +37,6 @@ async function actionsOnFakeErp(assumeReceiptLink: boolean): Promise<Scene> {
   return scene;
 }
 
-const attemptedActions = async (taskId: string) =>
-  (await server.db.selectFrom('erp_attempt').select('action').where('task_id', '=', taskId).execute()).map((attempt) => attempt.action);
-
 describe('去报销 with the real executor on the fake ERP', () => {
   it('imports and fills a form that passes the strict read-back, then hands it over unsaved: done', async () => {
     const scene = await actionsOnFakeErp(true);
@@ -58,7 +56,7 @@ describe('去报销 with the real executor on the fake ERP', () => {
     const scene = await actionsOnFakeErp(true);
     expect((await scene.run('start-erp-write')).stage).toBe('done');
 
-    expect((await attemptedActions(scene.task.taskId)).sort()).toEqual(['fill', 'import']);
+    expect((await attemptedActions(server.db, scene.task.taskId)).sort()).toEqual(['fill', 'import']);
     expect(fake!.mutations.some((mutation) => mutation.kind === 'save')).toBe(false);
     // ERP still shows the 新增 (new) tab: the 费用报销单 never reached the ERP's database.
     expect(fake!.document.querySelector('.form-tab')!.textContent).toBe('费用报销单-新增');
@@ -77,7 +75,7 @@ describe('去报销 with the real executor on the fake ERP', () => {
     expect(stopped.erp.abortReason).toContain('处理结果');
     expect(stopped.erp.abortReason).not.toContain('结果不确定');
     // The fill never started, so there is one attempt, not two, and the form was never written to.
-    expect(await attemptedActions(scene.task.taskId)).toEqual(['import']);
+    expect(await attemptedActions(server.db, scene.task.taskId)).toEqual(['import']);
     expect(fake!.mutations.map((mutation) => mutation.kind)).toEqual(['import']);
   });
 

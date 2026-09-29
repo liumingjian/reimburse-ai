@@ -102,7 +102,7 @@ export type FakeErpOptions = {
    * lands it, and the ERP resolves the code to the project name within a second. The ERP re-renders the control as
    * it initialises its data source, so the input that was bound a moment ago is no longer the one on the page.
    * Unset (the default) is an ERP whose editors take keys the first time, which is what every other test wants.
-   * @unverified: a 选择类 (F7) column swallows the first typing while the control re-renders
+   * @unverified: a selection-type (选择类) F7 column swallows the first typing while the control re-renders
    */
   firstTypingLostOn?: string;
   /**
@@ -119,7 +119,10 @@ export type FakeErpOptions = {
   billNo?: string;
   /** The 收票单 ERP already holds. Defaults to an empty ledger: an ERP that has never seen these invoices. */
   receiptLedger?: FakeReceiptLedger;
-  /** 电脑端选取 does nothing, so the assistant never leaves its entry menu and no upload is possible. */
+  /**
+   * Pick from computer (电脑端选取) does nothing, so the assistant never leaves its entry menu and no upload is possible.
+   * @unverified: the assistant's 电脑端选取 can do nothing and leave it on its entry menu
+   */
   assistantStuckOnEntryMenu?: boolean;
   /**
    * The 不生成费用明细 menu item opens past the bottom of the viewport, where a real mouse event reaches nothing.
@@ -135,19 +138,27 @@ export type FakeErpOptions = {
    * @unverified: a click aimed at 不生成费用明细 can land on 合并生成费用明细
    */
   notFillEntryHitsNeighbour?: boolean;
-  /** Clicking a 票种 tab does nothing: the pane never changes, so rows in the other 票种 stay out of reach. */
+  /**
+   * Clicking an invoice kind (票种) tab does nothing: the pane never changes, so rows in the other 票种 stay out of reach.
+   * @unverified: a click on the assistant's 票种 tab can leave the pane unchanged
+   */
   assistantPaneSwitchDead?: boolean;
-  /** 发票号码 whose checkbox refuses to toggle — a click that lands and still leaves the row unticked. */
+  /**
+   * Invoice numbers (发票号码) whose checkbox refuses to toggle — a click that lands and still leaves the row unticked.
+   * @unverified: an assistant row's checkbox can take a click and stay unticked
+   */
   assistantDeadTickNumbers?: string[];
   /**
    * The 发票号码 whose tick point is painted over: `document.elementFromPoint` there answers the overlay `<img>`,
    * exactly as it did live on 2026-09-19 for the row sitting at the bottom edge of the 800x530 iframe viewport.
+   * @unverified: an overlay <img> paints over the tick point of the row at the assistant iframe's bottom edge
    */
   assistantCoveredTickNumbers?: string[];
   /**
    * Recognition of every upload batch after the first lands this many assistant evaluations later, and lands in
    * its own 票种 pane. The first batch's rows stay on screen throughout, so `rows.length > 0` is true the whole
    * time and cannot say whether the second batch has been recognised.
+   * @unverified: the assistant recognises every batch after the first later, in its own 票种 pane
    */
   assistantRecognitionTicks?: number;
   /**
@@ -165,7 +176,10 @@ export type FakeErpOptions = {
    * @unverified: 处理结果 opens empty and paints its report later, row by row
    */
   importReportTicks?: number;
-  /** The window opens and its report never arrives at all: the hang the budget's stall clock has to catch. */
+  /**
+   * The window opens and its report never arrives at all: the hang the budget's stall clock has to catch.
+   * @unverified: the import result window (处理结果) can open and never paint its report
+   */
   importReportStalled?: boolean;
   /**
    * 发票导入单据 does everything it should — binds the invoices, mints their 收票单, fills the 收票信息 grid — and
@@ -188,7 +202,10 @@ export type FakeErpOptions = {
    * @unverified: 处理结果 can survive its 退出 and float over 事由
    */
   importReportStaysOpen?: boolean;
-  /** 新增 is clicked and no form opens — the navigation that reports success while achieving nothing. */
+  /**
+   * New (新增) is clicked and no form opens — the navigation that reports success while achieving nothing.
+   * @unverified: a click on 新增 can land and open no form
+   */
   newFormClickDead?: boolean;
   /**
    * Raise ERP's own idle-timeout prompt (金蝶提示「系统闲置时间过长」) before the run starts, covering the element
@@ -555,10 +572,14 @@ export async function createFakeErp(options: FakeErpOptions) {
     return doc;
   }
 
-  /** A click on a recorded page: the next page when it lands where the live click did, nothing otherwise. */
+  /**
+   * A click on a recorded page: the next page when it lands where the live click did (the marked element or inside
+   * it), nothing otherwise. A click on a container around the mark lands elsewhere: live, it would have hit whatever
+   * of the container is at that point, not the mark.
+   */
   async function replayClick(el: any) {
     const mark = main.document.querySelector(`[${CLICK_MARK}]`);
-    if (!loggedIn || !mark || !(mark === el || mark.contains(el) || el.contains(mark))) return;
+    if (!loggedIn || !mark || !(mark === el || mark.contains(el))) return;
     recordedStep += 1;
     main = await render();
   }
@@ -943,7 +964,7 @@ const kendoDate = (raw: string) => {
       // re-binding puts the record's row back on this bill; the overwrite rule below then rewrites it.
       const bound = receiptLedger.get(invoice.receiptNumber);
       if (bound && !rowFor(invoice.receiptNumber)) appendRow(bound);
-      // ERP identifies a 收票行 (receipt row) by its 收票单 (receipt number): importing an invoice the bill already
+      // ERP identifies a receipt row (收票行) by its receipt number (收票单): importing an invoice the bill already
       // holds rewrites that row in place instead of adding a second one (ADR-0026). Because the identity that
       // decides this is the one the row keeps, a rewrite cannot strand a detail row's 收票单号 link.
       const held = rowFor(invoice.receiptNumber);

@@ -7,7 +7,7 @@ import { createFakeErp, type FakeErp, type FakeErpOptions, type FakeReceiptLedge
 import type { FillExecutor } from './erp/fill-jobs';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, Mutation, ResultEvent } from '@baox/erp-executor/protocol';
 import type { ReconcileExecutor } from './erp/reconcile-job';
-import { COMPATIBILITY, ERP_ORIGIN, FAST_PACE } from './erp/testing/scenario';
+import { COMPATIBILITY, ERP_ORIGIN, FAST_PACE } from '@baox/erp-executor/testing/scenario';
 import { handedOver, noFormOpen, scripted, TEST_ERP_ACCOUNT } from './erp/testing/fake-executor';
 import { api } from './test/api';
 import { tempDataDir, testClient, type TestClient } from './test/harness';

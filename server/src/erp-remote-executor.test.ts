@@ -13,17 +13,18 @@ import { fakeChrome } from '@baox/extension/testing/fake-chrome';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { catalogMismatch, loginWall, noFormOpen, TEST_ERP_ACCOUNT, uncertainSave } from './erp/testing/fake-executor';
 import { fakeExtension, type FakeExtension, type FillRunner, type ReconcileRunner } from './erp/testing/fake-extension';
-import { COMPATIBILITY, ERP_ACCOUNT, ERP_ORIGIN, FAST_PACE } from './erp/testing/scenario';
+import { COMPATIBILITY, ERP_ACCOUNT, ERP_ORIGIN, FAST_PACE } from '@baox/erp-executor/testing/scenario';
 import { BACKSTOP_MS } from './test/deadlines';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type Scene, type ScenarioServer } from './test/scenario';
 import { fakeErpFor, SCENE_RECEIPT_NUMBER } from './test/scene-erp';
+import { attemptedActions } from './test/erp-records';
 import { manualTimers } from './test/timers';
 
 // #254: the server drives an executor in the 应用账号's paired 浏览器扩展 over its channel (spec #246 seam 2). No
 // executor is passed to the app, so every job goes to the extension, as in production; a fake extension client runs the
 // executor on its side of the wire. The judgement, the attempt discipline and the lease stay the server's.
-// The job's event journal (erp_job_event), its 动作尝试 (erp_attempt) and erp_job rows are read from the database: the
+// The job's event journal (erp_job_event), its action attempts (动作尝试, erp_attempt) and erp_job rows are read from the database: the
 // snapshot shows the job's outcome, not the record these tests are about.
 
 const EXTENSION_ORIGIN = 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih';
@@ -88,7 +89,6 @@ const windowCloses = () => timers.elapse(RECONNECT_WINDOW_MS);
 const journal = async (taskId: string) =>
   (await server.db.selectFrom('erp_job_event').select(['type', 'payload']).where('task_id', '=', taskId).orderBy('created_at').orderBy('seq').execute()).map((row) => JSON.parse(row.payload) as ExecutorEvent);
 const resultsOf = async (taskId: string) => (await journal(taskId)).filter((event): event is ResultEvent => event.type === 'result');
-const attemptsOf = async (taskId: string) => server.db.selectFrom('erp_attempt').select('action').where('task_id', '=', taskId).execute();
 
 // The page the jobs below were on when they were interrupted, as the extension re-observes it: the form and identity
 // `attemptStarted` records, the 发票助手 open.
@@ -146,7 +146,7 @@ describe('去报销 in the paired 浏览器扩展', () => {
     expect(extension.sent().map((sent) => sent.type)).toContain(event);
     expect((await journal(scene.task.taskId)).map((logged) => logged.type)).toEqual(extension.sent().map((sent) => sent.type));
     expect((await resultsOf(scene.task.taskId)).map((result) => result.status)).toEqual([status]);
-    expect(await attemptsOf(scene.task.taskId)).toEqual([]);
+    expect(await attemptedActions(server.db, scene.task.taskId)).toEqual([]);
   });
 
   it('runs the read-only 对账 in the extension too', async () => {
@@ -189,7 +189,7 @@ describe('去报销 in the paired 浏览器扩展', () => {
     expect(stopped.erp.abortReason).toContain('浏览器扩展');
     expect(stopped.erp).toMatchObject({ status: 'idle', externalWait: 'extension_connection', outcome: 'none', allowedActions: ['refresh'] });
     expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_offline' }]);
-    expect(await attemptsOf(scene.task.taskId)).toEqual([]);
+    expect(await attemptedActions(server.db, scene.task.taskId)).toEqual([]);
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
 
@@ -291,7 +291,7 @@ describe('an interrupted 去报销', () => {
     const stopped = await scene.settled();
 
     expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_reconnect_expired' }]);
-    expect(await attemptsOf(scene.task.taskId)).toEqual([]);
+    expect(await attemptedActions(server.db, scene.task.taskId)).toEqual([]);
     expect(stopped.erp.status).toBe('idle');
     expect(stopped.erp.abortReason).toBe('上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：浏览器扩展和报销系统页面之间的连接中断了，两分钟内没有恢复。');
     expect(server.erpLease.acquire(other)).toBe(true);
@@ -324,7 +324,7 @@ describe('an interrupted 去报销', () => {
 
     expect(mutated).toBe(false);
     expect(stopped).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
-    expect(await attemptsOf(scene.task.taskId)).toEqual([{ action: 'import' }]);
+    expect(await attemptedActions(server.db, scene.task.taskId)).toEqual(['import']);
     // The result follows the attempt on record, and the server's guard made it 写入结果未知.
     expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(['step', 'attempt_started', 'result']);
     expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'unknown', code: 'extension_reconnect_expired' }]);
@@ -416,7 +416,7 @@ describe('an interrupted 去报销', () => {
     await scene.settled();
 
     expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(['step', 'attempt_started', 'step', 'result']);
-    expect(await attemptsOf(scene.task.taskId)).toEqual([{ action: 'import' }]);
+    expect(await attemptedActions(server.db, scene.task.taskId)).toEqual(['import']);
     expect(extension.asked().map((asked) => asked.method)).toEqual([EXECUTOR_METHODS.fill]);
     expect(back.asked()).toEqual([]);
   });
@@ -559,7 +559,7 @@ describe('the real 浏览器扩展 across an interruption', () => {
     expect(extension.asked().filter((method) => method === EXECUTOR_METHODS.resume)).toHaveLength(1);
     // One attempt per action went out, the one whose answer was lost included; nothing is on record twice.
     expect(extension.asked().filter((type) => type === 'attempt_started')).toHaveLength(2);
-    expect(await attemptsOf(scene.task.taskId)).toEqual([{ action: 'import' }, { action: 'fill' }]);
+    expect(await attemptedActions(server.db, scene.task.taskId)).toEqual(['import', 'fill']);
     expect(await onceEach(scene.task.taskId)).toBe(true);
     expect(fake!.mutations.filter((mutation) => mutation.kind === 'import')).toHaveLength(1);
     expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(0);
@@ -612,7 +612,7 @@ describe('the real 浏览器扩展 across an interruption', () => {
     expect(extension.asked().slice(-3)).toEqual([EXECUTOR_METHODS.detached, EXECUTOR_METHODS.resume, 'result']);
     expect(stopped).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
     expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'unknown', code: 'debugger_detached_mid_command' }]);
-    expect(await attemptsOf(scene.task.taskId)).toEqual([{ action: 'import' }]);
+    expect(await attemptedActions(server.db, scene.task.taskId)).toEqual(['import']);
     expect(fake!.mutations).toEqual([]);
     extension.stop();
   });

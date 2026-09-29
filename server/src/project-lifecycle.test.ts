@@ -5,6 +5,7 @@ import { databasePath } from './data-dir';
 import { api } from './test/api';
 import { createTestServer, tempDataDir, testClient, type TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
+import { bookChange, INVENTORIED } from './test/project-book';
 
 // Lifecycle facts use the same authenticated HTTP boundary as intake. The fixture starts with an administrator and a
 // regular member so public authorization is exercised without exposing another member's data.
@@ -25,16 +26,9 @@ afterEach(async () => {
   await server.close();
 });
 
-async function book(client: TestClient, path: string, input: { number: string; name?: string }) {
-  const response = await client.post(path, input);
-  expect(response.status).toBe(200);
-  return ProjectBookResultSchema.parse(await response.json());
-}
+const book = (client: TestClient, path: string, input: { number: string; name?: string }) => bookChange(client, path, input);
 
 const memberApi = api(() => member);
-
-// Hotel e-invoice + rail ticket inventoried (住宿 trio answered 确认没有), with the project book exactly as the test left it.
-const INVENTORIED = { materials: ['m01', 'm07'], projectBook: 'as_is' } as const;
 
 describe('personal project lifecycle', () => {
   it('keeps the entry, rejects duplicate intake, and appends distinct deactivation and restoration facts', async () => {
