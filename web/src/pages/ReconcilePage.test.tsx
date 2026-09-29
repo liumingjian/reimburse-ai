@@ -147,17 +147,18 @@ describe('对账', () => {
     expect(screen.getByText('已转人工处理，应用不再写入报销系统。')).toBeTruthy();
   });
 
-  test('?seed=reconcile（T1 交接步中止，未知 ⇒ 原地等待）：只有「重新对账」；读到填好、逐行一致的单据即交接完成，完成页显示固定句且没有单据编号', async () => {
+  test('?seed=reconcile（T1 交接步中止，还没对过账）：「开始对账」与「转人工」；读到填好、逐行一致的单据即交接完成，完成页显示固定句且没有单据编号', async () => {
     renderAt('#/task/T1/reconcile', 'reconcile');
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
     expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/交接单据时没有读到报销系统的结果/)).toBeTruthy();
     expect(screen.queryByRole('heading', { name: '当前对账状态' })).toBeNull();
-    expect(screen.getByTestId('reconcile-bucket').textContent).toBe('未知');
+    // 还没对过账：对账中断点尚未判定，也没有建议的处置（服务端 reconcileView 同此）。
+    expect(screen.getByTestId('reconcile-bucket').textContent).toBe('尚未判定');
     expect(screen.getByTestId('reconcile-draft-no').textContent).toBe('尚未读到单据编号');
-    expect(actionButtons()).toEqual(['重新对账', '转人工']);
+    expect(actionButtons()).toEqual(['开始对账', '转人工']);
     expect(screen.queryByTestId('human-review')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: '重新对账' }));
+    fireEvent.click(screen.getByRole('button', { name: '开始对账' }));
     expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();
     expect(screen.getByText('明细 9/9 一致')).toBeTruthy();
     expect(screen.getByTestId('handover-completed').textContent).toBe(HANDOVER_COMPLETED_NOTICE);

@@ -37,6 +37,7 @@ test('全流程：从 ?seed=pending 一路走到去打印与去报销，顺序�
   await detail.getByLabel('终点 *').fill('虹桥枢纽');
   await detail.getByRole('button', { name: '保存并标记已处理' }).click();
   await detail.getByRole('button', { name: '排除此材料' }).click();
+  await detail.getByRole('button', { name: '确认没有支付截图' }).click();
   await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
   // 项目归属还没做：整单确认页不能进。
   await jump(page, '#/task/T1/review');

@@ -112,12 +112,19 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const project = createProjectFlow(bus);
   // `?seed=catalog` / `?seed=preparation`：自动步骤接着走完，进入整单确认。
   project.resumeAutoSteps(T1_ID);
-  // 作废的任务与完全重置前的任务不再出现在列表里（内核作废是状态变更，工作区保留；快照留在内存里，免得定时器扑空）。
-  const hidden = new Set<string>();
+  // 任务作废是状态变更（服务端 lifecycle voided）：快照留着，阶段变为 voided，不再接受任何动作；作废的任务不再出现在列表里。
+  // 完全重置就是把这个账号能作废的任务都作废（正在跑的那一下留在列表里，同服务端）。
+  const voidTask = (taskId: string) => {
+    const snapshot = bus.draft(taskId);
+    snapshot.stage = 'voided';
+    snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-voided` };
+    snapshot.task.updatedAt = bus.now();
+    bus.commit(snapshot);
+  };
   const listNow = (): TaskList => {
     const tasks = bus
       .all()
-      .filter((snapshot) => !hidden.has(snapshot.task.taskId) && ownedByCurrent(snapshot.task.taskId))
+      .filter((snapshot) => snapshot.stage !== 'voided' && ownedByCurrent(snapshot.task.taskId))
       .map(toListItem)
       .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
     return TaskListSchema.parse({ homeCity: homeCityDefault(), tasks });
@@ -158,17 +165,17 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     // 作废：服务端按任务列表同一个判定（只有正在跑的那一下不能作废）再核一次。
     async abandonTask(taskId) {
       if (!auth.account()) return signedOut();
-      const snapshot = bus.all().find((candidate) => candidate.task.taskId === taskId && !hidden.has(taskId) && ownedByCurrent(taskId));
+      const snapshot = bus.all().find((candidate) => candidate.task.taskId === taskId && candidate.stage !== 'voided' && ownedByCurrent(taskId));
       if (!snapshot) return listResult({ code: 'task_not_found', message: ABANDON_TASK_COPY.notFound });
       const item = toListItem(snapshot);
       if (!item.abandonable) return listResult({ code: 'not_abandonable', message: item.abandonBlockedReason ?? ABANDON_TASK_COPY.blockedReason });
-      hidden.add(taskId);
+      voidTask(taskId);
       return listResult(null);
     },
-    // 完全重置：只清空当前账号的任务、项目簿与常驻城市；账号与登录状态保留。
+    // 完全重置：只清空当前账号的任务（作废）、项目簿与常驻城市；账号与登录状态保留。
     async resetAll() {
       if (!auth.account()) return signedOut();
-      for (const snapshot of bus.all()) if (ownedByCurrent(snapshot.task.taskId)) hidden.add(snapshot.task.taskId);
+      for (const snapshot of bus.all()) if (ownedByCurrent(snapshot.task.taskId) && snapshot.stage !== 'voided' && toListItem(snapshot).abandonable) voidTask(snapshot.task.taskId);
       book.reset();
       auth.forgetCity();
       return listResult(null);
@@ -179,9 +186,9 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     deactivateProject: book.deactivateProject,
     restoreProject: book.restoreProject,
     deleteProject: book.deleteProject,
-    // 作废或重置掉的任务不再能打开（深链接也一样）：和不存在的任务同样报错。
+    // 作废的任务仍能读到快照（阶段 voided，同服务端）；别的账号的任务和不存在的任务一样报错。
     async getSnapshot(taskId) {
-      if (hidden.has(taskId) || !ownedByCurrent(taskId)) throw new Error(`任务 ${taskId} 不存在`);
+      if (!ownedByCurrent(taskId)) throw new Error(`任务 ${taskId} 不存在`);
       return bus.draft(taskId);
     },
     subscribe: (taskId, onEvent) => bus.subscribe(taskId, onEvent),

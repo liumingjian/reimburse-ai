@@ -15,7 +15,7 @@ type Seed = { seed: string; stage: TaskStage; page: TaskPage; key: string };
 const KEY_TEXT: Readonly<Record<TaskStage, string>> = {
   upload: '把材料拖到这里',
   inventory: '盘点版本',
-  pending: '还剩 3 个',
+  pending: '还剩 4 个',
   // 吸底栏用字段组：标签「已归属」与值分开，这里认值。
   project: '2 / 9 条',
   catalog: '上海产品评审出差',
@@ -78,7 +78,7 @@ const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = 
   },
   'unsupported-material': async (page) => {
     await page.goto(open('?seed=pending&fault=unsupported-material', '#/task/T1/pending'));
-    await expect(page.getByText('还剩 4 个')).toBeVisible();
+    await expect(page.getByText('还剩 5 个')).toBeVisible();
     await expect(page.getByLabel('待确认项清单').getByRole('button', { name: /曹操出行_行程单\.pdf/ })).toBeVisible();
   },
   'erp-login-missing': async (page) => {
@@ -102,8 +102,9 @@ const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = 
   },
   'readback-mismatch': async (page) => {
     await startErp(page, 'readback-mismatch');
-    // 已保存但逐行不一致 ⇒ 停在对账，只能转人工。
+    // 严格回读停下 ⇒ 停在对账；开始对账读到已保存但逐行不一致的草稿 ⇒ 只能转人工。
     await expect(page).toHaveURL(/#\/task\/T1\/reconcile$/);
+    await page.getByRole('button', { name: '开始对账' }).click();
     await expect(page.getByTestId('readback-6')).toContainText('不一致');
     await expect(page.getByTestId('readback-6')).toContainText('74.00');
     await expect(page.getByRole('button', { name: '转人工' })).toBeVisible();

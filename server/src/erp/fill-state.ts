@@ -2,7 +2,7 @@
 // executor events, its cancel, and the task's `erp_attempt` rows. Nothing about the phase is stored. The views below
 // turn the record into the snapshot's `erp`, `readback`, `reconcile` and `catalog` sections.
 
-import { ERP_PROGRESS_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, type Catalog, type Erp, type ErpCapture, type ErpProgressStage, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
+import { ERP_PROGRESS_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, RECONCILE_UNJUDGED_BANNER, type Catalog, type Erp, type ErpCapture, type ErpProgressStage, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
 import { sql } from 'kysely';
 import type { Db } from '../db/database';
 import type { ErpHandOffTable, ErpJobTable, TaskLifecycle } from '../db/schema';
@@ -446,7 +446,7 @@ export function reconcileView(record: ErpRecord, taskId: string, lifecycle: Task
       actionCode: null,
       allowedActions,
       humanReview: false,
-      banner: notice ?? '写入报销系统的结果不确定：应用已停止写入，不会重放。请先在报销系统里查看这张报销单，再点「开始对账」只读核对；也可以直接转人工。',
+      banner: notice ?? RECONCILE_UNJUDGED_BANNER,
       reasons: fillReasons,
     };
   }

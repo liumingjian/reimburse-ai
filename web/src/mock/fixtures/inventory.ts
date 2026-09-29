@@ -1,5 +1,7 @@
 import {
   PENDING_CHOICE_KEY,
+  STAY_TRIO_CONFIRM_NONE,
+  STAY_TRIO_COPY,
   fieldAnswer,
   isAllocationAnswer,
   projectLodgingEvidence,
@@ -14,9 +16,10 @@ import {
   type PendingAnswer,
   type PendingItem,
   type TaskSnapshot,
+  stayTrioItemId,
 } from '@baox/contract';
 
-// 盘点结果夹具：11 份材料的识别结果、9 个费用事件、3 个待确认项，以及答复后的候选明细。
+// 盘点结果夹具：11 份材料的识别结果、9 个费用事件、4 个待确认项（3 个按材料，外加住宿发票缺支付截图），以及答复后的候选明细。
 // 数字与人物沿用原型；文件对应 fixtures/generated/ 里由脚本生成的示例原件（fixtures/scripts/data.mjs 是同一份数据）。
 // mock 服务端按文件名把上传的材料对到这里的档案；对不上的材料形成「不支持的材料类型」待确认项。
 
@@ -502,6 +505,8 @@ export const SEED_ANSWERS: Readonly<Record<string, PendingAnswer>> = {
   m06: { [PENDING_CHOICE_KEY]: 'exclude' },
   // 仅在 `?allocation=1` 下存在的逐段分摊：按原件给出，明细与默认相同。
   m03: { amounts: ['26.69', '20.85', '21.65'] },
+  // 住宿发票缺支付截图（#213）：原型里没有支付截图，确认没有。
+  m01: { [PENDING_CHOICE_KEY]: STAY_TRIO_CONFIRM_NONE },
 };
 
 export type InventoryResult = {
@@ -515,8 +520,8 @@ export type InventoryResult = {
 const FILE_TO_FIXTURE = new Map(Object.entries(PROFILES).flatMap(([id, profile]) => [[profile.fileName, id] as const, [profile.file, id] as const]));
 
 // 把一批已接收的材料按文件名对到识别档案，生成盘点结果。unsupportedFault 让曹操行程单（m06）变成不支持的版式；
-// allocationRequired（`?allocation=1`）让高德合并发票需要逐段分摊。
-export function inventoryResult(uploaded: readonly Material[], unsupportedFault: boolean, allocationRequired = false): InventoryResult {
+// allocationRequired（`?allocation=1`）让高德合并发票需要逐段分摊；screenshots 是已有支付截图的发票 materialId。
+export function inventoryResult(uploaded: readonly Material[], unsupportedFault: boolean, allocationRequired = false, screenshots: ReadonlySet<string> = new Set()): InventoryResult {
   const fixtureOf = new Map<string, string>();
   const actualOf = new Map<string, string>();
   for (const material of uploaded) {
@@ -570,6 +575,32 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
       fields: p.fields.map((f) => ({ ...f })),
     };
   });
+  // 住宿三件套（#213，服务端 stay-trio.ts）：住宿发票还没有支付截图，就在它的其余待确认项之后问一次。
+  // 在待确认项页上传支付截图（flows/print.ts addPaymentScreenshot）或选「确认没有支付截图」都能处理这一项。
+  for (const template of EVENTS) {
+    const voucher = materials.find((material) => material.materialId === actualOf.get(template.voucher));
+    if (template.category.code !== 'accommodation' || !voucher || screenshots.has(voucher.materialId)) continue;
+    const copy = STAY_TRIO_COPY.screenshot;
+    const itemId = stayTrioItemId('screenshot', voucher.materialId);
+    pendingItems.push({
+      itemId,
+      materialId: voucher.materialId,
+      title: copy.title(voucher.fileName),
+      why: copy.why(template.gross),
+      kind: 'choice',
+      resolver: '要你处理',
+      fields: [],
+      choices: [
+        { key: STAY_TRIO_CONFIRM_NONE, label: copy.confirmNone },
+        { key: 'exclude', label: '排除这份材料' },
+      ],
+      allocation: null,
+      status: 'open',
+      answer: null,
+    });
+    voucher.pendingItemIds = [...voucher.pendingItemIds, itemId];
+    voucher.status = 'pending';
+  }
   const events: ExpenseEvent[] = [];
   let amapSegment = 0;
   EVENTS.forEach((template, index) => {
@@ -620,6 +651,11 @@ export function applyPendingAnswer(result: InventoryResult, item: PendingItem, a
     return;
   }
   const values = fieldAnswer(answer);
+  // 确认没有支付截图：记下缺席（打印稿读它），住宿发票照常进入明细。
+  if (item.kind === 'choice' && values[PENDING_CHOICE_KEY] === STAY_TRIO_CONFIRM_NONE) {
+    material.status = 'ok';
+    return;
+  }
   if (item.kind === 'choice') {
     const choice = values[PENDING_CHOICE_KEY];
     material.role = 'excluded';
@@ -671,7 +707,8 @@ function applyAllocation(result: InventoryResult, item: PendingItem, voucher: Ma
     for (const material of result.materials) if (referenceIds.has(material.materialId)) material.checkText = `${expression}，按分守恒（逐段金额由你确认）`;
     return;
   }
-  const itemId = `p${result.pendingItems.length + 1}`;
+  // 按材料的待确认项编号为 p1、p2……；住宿三件套那一项用服务端的 id，不占编号。
+  const itemId = `p${result.pendingItems.filter((candidate) => /^p\d+$/.test(candidate.itemId)).length + 1}`;
   result.pendingItems.push({
     itemId,
     materialId: voucher.materialId,

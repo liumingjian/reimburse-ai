@@ -57,7 +57,7 @@ test('?location=unavailable：常驻城市没有默认值，提示直接填写�
   await expect(dialog(page).getByText('上次确认的常驻城市（按你的账号记住），可直接修改。')).toBeVisible();
 });
 
-test('全流程 QA：弹层创建任务，上传 sample-materials 的 11 份材料，盘点后 3 个待确认项，任务改名为 2026-08 上海出差', async ({ page }, testInfo) => {
+test('全流程 QA：弹层创建任务，上传 sample-materials 的 11 份材料，盘点后 4 个待确认项，任务改名为 2026-08 上海出差', async ({ page }, testInfo) => {
   const files = readdirSync(SAMPLES_DIR).map((name) => join(SAMPLES_DIR, name));
   expect(files).toHaveLength(11);
 
@@ -70,7 +70,7 @@ test('全流程 QA：弹层创建任务，上传 sample-materials 的 11 份材�
   await expect(page.getByRole('heading', { name: /^上传批次 #1$/ })).toHaveText('上传批次 #1');
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/inventory$/);
-  await expect(page.getByRole('link', { name: '处理 3 个待确认项' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('link', { name: '处理 4 个待确认项' })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('2026-08 上海出差', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('未识别版式')).toHaveCount(1);
   await page.screenshot({ path: testInfo.outputPath('full-flow-inventory.png'), fullPage: true });

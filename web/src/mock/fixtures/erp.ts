@@ -3,6 +3,7 @@ import {
   HUMAN_REVIEW_NOTICE,
   READBACK_FIELD_LABELS,
   RECONCILE_ACTION_LABELS,
+  RECONCILE_UNJUDGED_BANNER,
   type Erp,
   type ErpStep,
   type Line,
@@ -80,6 +81,9 @@ export function loginNotDetected(attempt: number): string {
 
 export const HANDOVER_ABORT_REASON = '交接单据时没有读到报销系统的结果，这次写入是否生效不确定。应用已停止写入，不会重放。';
 export const MISMATCH_ABORT_REASON = '严格回读发现 1 行与本地确认不一致，应用已停止，不会自动改写报销系统里的行。';
+// 停下时写入作业给出的原因（服务端 reconcile.reasons 取作业结果的 message），对账前显示在对账页。
+export const HANDOVER_STOP_REASON = '交接单据时没有读到报销系统的结果';
+export const MISMATCH_STOP_REASON = '严格回读时 No.6 的申请报销金额与本地确认不一致';
 // 写入前就停下的原因（服务端 compatibility_mismatch 一类）：报销系统没有被改动，可以直接再去报销。
 export const BEFORE_WRITE_ABORT_REASON = '报销系统的版本与上次核对时不一致，没有继续。报销系统没有被改动。';
 
@@ -203,24 +207,13 @@ export function applyErpDone(snapshot: TaskSnapshot, draftNo: string | null = nu
   snapshot.step = { kind: 'none', stepToken: `tok-${snapshot.task.taskId}-done` };
 }
 
-// 严格回读不一致：草稿已落库但与本地确认不一致，写入就此停下（已保存 + 逐行不一致 ⇒ 转人工，human_review）。
-// 停在对账（reconcile 阶段）：done 只留给「已保存且逐行一致」，没有被证明一致的草稿不算交接完成，
+// 写入停在严格回读不一致之后、第一次对账读到的结果：报销系统里有一张（员工保存过的）草稿，与本地确认逐行不一致
+// （已保存 + 逐行不一致 ⇒ 转人工，human_review）。仍停在对账：done 只留给「已保存且逐行一致」，
 // 服务端也从不把它投影成 done（fill-state.ts 只在 phase saved 时给 done）。对账页显示差异行，只接受「转人工」。
 export function applyReadbackMismatch(snapshot: TaskSnapshot, draftNo: string): void {
   const readback = readbackOf(readbackRows(snapshot.lines, MISMATCH));
   const bad = readback.rows.filter((row) => !row.matched);
-  snapshot.erp = {
-    ...erpRunning(ERP_STEP_INDEX.handover),
-    status: 'aborted',
-    steps: erpSteps(ERP_STEP_INDEX.handover, 'failed'),
-    currentStage: 'handover',
-    externalWait: 'none',
-    outcome: 'none',
-    draftNo,
-    abortReason: MISMATCH_ABORT_REASON,
-    allowedActions: ['refresh'],
-    erpAccount: { ...MOCK_ERP_ACCOUNT },
-  };
+  snapshot.erp = { ...snapshot.erp, draftNo };
   snapshot.readback = readback;
   snapshot.reconcile = {
     status: 'pending',
@@ -232,12 +225,48 @@ export function applyReadbackMismatch(snapshot: TaskSnapshot, draftNo: string): 
     capture: null,
   };
   snapshot.stage = 'reconcile';
+  snapshot.step = { kind: 'reconcile', stepToken: `tok-${snapshot.task.taskId}-reconcile-judged` };
+}
+
+// 写入结果不确定、还没对过账（服务端 reconcileView 的 !judged 分支）：对账中断点尚未判定，没有建议的处置；
+// 可以「开始对账」（只读核对）或直接转人工。reasons 是写入作业停下时给出的原因。
+export function unjudgedReconcile(reasons: readonly string[]): Reconcile {
+  return {
+    ...emptyReconcile(),
+    status: 'pending',
+    allowedActions: ['wait', 'hand_off'],
+    banner: RECONCILE_UNJUDGED_BANNER,
+    reasons: [...reasons],
+  };
+}
+
+// 写入在 stage 这一步停下、结果不确定：停在对账，等第一次对账。
+function applyUncertainStop(snapshot: TaskSnapshot, stage: 'fill' | 'handover', abortReason: string, reason: string): void {
+  snapshot.erp = {
+    ...erpRunning(ERP_STEP_INDEX[stage]),
+    status: 'aborted',
+    steps: erpSteps(ERP_STEP_INDEX[stage], 'failed'),
+    currentStage: stage,
+    externalWait: 'none',
+    outcome: 'none',
+    abortReason,
+    allowedActions: ['refresh'],
+    erpAccount: { ...MOCK_ERP_ACCOUNT },
+  };
+  snapshot.readback = emptyReadback();
+  snapshot.reconcile = unjudgedReconcile([reason]);
+  snapshot.stage = 'reconcile';
   snapshot.step = { kind: 'reconcile', stepToken: `tok-${snapshot.task.taskId}-reconcile` };
 }
 
-// 交接步中止：写入结果未知，还没读到单据（对账中断点「未知」⇒ 原地等待，只能重新对账）。
+// 严格回读不一致（`?fault=readback-mismatch`）：填写明细后的回读对不上，写入就此停下，结果不确定（服务端同此）。
+export function applyReadbackStop(snapshot: TaskSnapshot): void {
+  applyUncertainStop(snapshot, 'fill', MISMATCH_ABORT_REASON, MISMATCH_STOP_REASON);
+}
+
 // 写入前就停下：阶段退回「去打印 / 去报销」，状态回到 idle 而 abortReason 有值（见合同 ErpSchema），
 // 所以这不是 aborted。填报页要认得这一种停下，否则用户会被留在一个已经关上的页面上。
+// 没有一次写入尝试走到报销系统，所以也没有记下报销系统账号（服务端同此）。
 export function applyStopBeforeWrite(snapshot: TaskSnapshot): void {
   snapshot.stage = 'actions';
   snapshot.erp = {
@@ -246,34 +275,12 @@ export function applyStopBeforeWrite(snapshot: TaskSnapshot): void {
     currentStage: 'navigate',
     abortReason: BEFORE_WRITE_ABORT_REASON,
     allowedActions: ['refresh'],
-    erpAccount: { ...MOCK_ERP_ACCOUNT },
   };
 }
 
+// 交接步中止（`?fault=erp-write-aborted`）：写入结果未知，停在对账等第一次对账。
 export function applyAbortAtHandover(snapshot: TaskSnapshot): void {
-  snapshot.erp = {
-    ...erpRunning(ERP_STEP_INDEX.handover),
-    status: 'aborted',
-    steps: erpSteps(ERP_STEP_INDEX.handover, 'failed'),
-    currentStage: 'handover',
-    externalWait: 'none',
-    outcome: 'none',
-    abortReason: HANDOVER_ABORT_REASON,
-    allowedActions: ['refresh'],
-    erpAccount: { ...MOCK_ERP_ACCOUNT },
-  };
-  snapshot.readback = emptyReadback();
-  snapshot.reconcile = {
-    status: 'pending',
-    ...reconcileVerdict('未知'),
-    banner: '交接步中止后还没有在报销系统里读到这张单据，写入是否生效尚不确定。可以先在报销系统里查看，再点「重新对账」。',
-    draftNo: null,
-    rows: [],
-    reasons: ['没有同时读到修改页签、单据编号和严格逐行回读'],
-    capture: null,
-  };
-  snapshot.stage = 'reconcile';
-  snapshot.step = { kind: 'reconcile', stepToken: `tok-${snapshot.task.taskId}-reconcile` };
+  applyUncertainStop(snapshot, 'handover', HANDOVER_ABORT_REASON, HANDOVER_STOP_REASON);
 }
 
 // T2（对账中）：原型 §1.10 的五行，No.3 的申请报销金额不一致（182.00 / 128.00）；合计 1264.00。
