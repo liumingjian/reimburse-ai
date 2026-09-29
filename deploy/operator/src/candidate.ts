@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
 import { createCoordinatorInvocation, parseCoordinatorResponse, readCoordinatorSource } from './coordinator-transport.js';
 import { productionSshRunner, type SshRunner } from './host.js';
+import { isPhaseTimings, type PhaseTiming } from './phase-timings.js';
 import { NATIVE_PROFILE, type NativeProfile } from './profile.js';
 import type { SourceArchive } from './source.js';
 
 export type CandidateArtifactOrigin = 'direct' | 'relay';
 
 export type CandidatePreparation =
-  | { state: 'prepared'; candidateId: string; manifest: string }
+  | { state: 'prepared'; candidateId: string; manifest: string; phaseTimings?: PhaseTiming[] }
   | { state: 'busy'; operation: string; candidateId: string }
   | { state: 'not-ready'; issues: string[] }
   | { state: 'failed'; code: string; issues?: string[] }
@@ -120,7 +121,10 @@ function preparationResult(stdout: string, exitCode: number | null): CandidatePr
 function isPreparation(value: unknown): value is CandidatePreparation {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
-  if (record.state === 'prepared') return typeof record.candidateId === 'string' && typeof record.manifest === 'string';
+  if (record.state === 'prepared') {
+    return typeof record.candidateId === 'string' && typeof record.manifest === 'string'
+      && (record.phaseTimings === undefined || isPhaseTimings(record.phaseTimings));
+  }
   if (record.state === 'busy') return typeof record.operation === 'string' && typeof record.candidateId === 'string';
   if (record.state === 'not-ready') return stringArray(record.issues);
   if (record.state === 'failed') return typeof record.code === 'string' && (record.issues === undefined || stringArray(record.issues));

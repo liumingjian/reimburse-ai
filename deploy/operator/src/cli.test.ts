@@ -442,6 +442,51 @@ it('refuses a fresh deploy while the maintenance gate is already closed without 
   expect(target.commands).toEqual([{ kind: 'doctor' }, { kind: 'gate-status' }]);
 });
 
+it('ends a fresh deploy with the phase table from the verified cutover journal', async () => {
+  const repository = committedRepository();
+  const source = await createSourceRepository(repository).archive();
+  const candidateId = `${source.plan.commit.slice(0, 12)}-${source.plan.archiveSha256.slice(0, 12)}`;
+  const target = new ControllableTarget({ gate: openGate() });
+  const timing = (phase: string, durationMs: number) => ({ phase, startedAt: '2026-09-29T08:00:00.000Z', durationMs });
+  const candidate: CandidateTransport = {
+    async prepare() {
+      return { state: 'prepared', candidateId, manifest: '/opt/tools/baox/candidates/manifest.json', phaseTimings: [timing('install', 90_000)] };
+    },
+    async inspect() {
+      return { state: 'inspection', lock: { state: 'inactive' }, journal: null, manifest: null };
+    },
+  };
+  const phaseTimings = [timing('install', 90_000), timing('build', 60_500), timing('snapshot', 4_000), timing('cutover', 1_200), timing('verify', 3_000)];
+  const cutover: CutoverTransport = {
+    async cutover() {
+      return {
+        state: 'verified',
+        candidateId,
+        release: `releases/${candidateId}`,
+        snapshotId: `snapshot-${candidateId}-0123456789abcdef`,
+        manifest: '/opt/tools/baox/recovery-snapshots/manifest.json',
+        phaseTimings,
+      };
+    },
+  };
+  const run = async (...argv: string[]) => {
+    const out: string[] = [];
+    const code = await runOperatorCli(argv, { source: createSourceRepository(repository), host: target, candidate, cutover }, { out: (line) => out.push(line), err: () => undefined });
+    return { code, out };
+  };
+
+  const human = await run('deploy', 'origin/main');
+  const json = await run('deploy', 'origin/main', '--json');
+
+  expect(human.code).toBe(0);
+  const table = human.out.slice(human.out.indexOf('阶段耗时：'));
+  expect(table).toHaveLength(phaseTimings.length + 2);
+  expect(table[1]).toMatch(/^ {2}install（安装依赖）\s+90\.0 s$/u);
+  expect(table[2]).toMatch(/^ {2}build（构建软件包）\s+60\.5 s$/u);
+  expect(table.at(-1)).toMatch(/^ {2}合计\s+158\.7 s$/u);
+  expect(JSON.parse(json.out.join('\n'))).toMatchObject({ command: 'deploy', phaseTimings });
+});
+
 it('rejects a ref that does not name a committed source revision', async () => {
   const repository = committedRepository();
   const target = new ControllableTarget({ gate: openGate() });

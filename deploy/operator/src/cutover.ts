@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { createCoordinatorInvocation, parseCoordinatorResponse, readCoordinatorSource } from './coordinator-transport.js';
 import { productionSshRunner, type SshRunner } from './host.js';
+import { isPhaseTimings, type PhaseTiming } from './phase-timings.js';
 import { NATIVE_PROFILE, type NativeProfile } from './profile.js';
 
 export type CutoverRequest = Readonly<{
@@ -10,7 +11,7 @@ export type CutoverRequest = Readonly<{
 }>;
 
 export type CutoverResult =
-  | { state: 'verified'; candidateId: string; release: string; snapshotId: string; manifest: string }
+  | { state: 'verified'; candidateId: string; release: string; snapshotId: string; manifest: string; phaseTimings?: PhaseTiming[] }
   | { state: 'restored'; candidateId: string; snapshotId: string; code: string }
   | { state: 'busy'; operation: string; candidateId: string }
   | { state: 'refused'; code: string }
@@ -87,7 +88,8 @@ function isCutoverResult(value: unknown): value is CutoverResult {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
   if (record.state === 'verified') return typeof record.candidateId === 'string' && typeof record.release === 'string'
-    && validSnapshot(record) && typeof record.manifest === 'string' && record.manifest.startsWith('/');
+    && validSnapshot(record) && typeof record.manifest === 'string' && record.manifest.startsWith('/')
+    && (record.phaseTimings === undefined || isPhaseTimings(record.phaseTimings));
   if (record.state === 'restored') return typeof record.candidateId === 'string' && validSnapshot(record) && typeof record.code === 'string';
   if (record.state === 'busy') return typeof record.operation === 'string' && typeof record.candidateId === 'string';
   if (record.state === 'refused' || record.state === 'failed') return typeof record.code === 'string';

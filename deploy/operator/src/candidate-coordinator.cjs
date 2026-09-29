@@ -189,8 +189,9 @@ async function receive(request) {
     return { state: 'not-ready', issues: readiness.issues };
   }
 
-  await writeJournal(request, paths, lease, 'receiving', { readiness: readiness.public });
-  const received = await receiveArchive(paths.partialArchive);
+  // A retried candidate reuses its journal; a fresh upload starts a fresh timing list.
+  await writeJournal(request, paths, lease, 'receiving', { readiness: readiness.public, phaseTimings: [] });
+  const received = await timePhase(request, paths, lease, 'upload', () => receiveArchive(paths.partialArchive));
   await requireLease(paths, lease);
   if (received.sha256 !== request.source.archiveSha256) {
     await removeIfPresent(paths.partialArchive);
@@ -261,9 +262,11 @@ async function worker(request) {
     const archiveHash = await hashFile(paths.archive);
     if (archiveHash !== request.source.archiveSha256) throw new CandidateFailure('archive-checksum-mismatch');
     await requireLease(paths, lease);
-    await removeIfPresent(paths.source);
-    await fs.mkdir(paths.source, { recursive: true, mode: 0o700 });
-    await runLogged('tar', ['-xf', paths.archive, '-C', paths.source, '--no-same-owner'], paths.candidate, {}, paths.log);
+    await timePhase(request, paths, lease, 'extract', async () => {
+      await removeIfPresent(paths.source);
+      await fs.mkdir(paths.source, { recursive: true, mode: 0o700 });
+      await runLogged('tar', ['-xf', paths.archive, '-C', paths.source, '--no-same-owner'], paths.candidate, {}, paths.log);
+    });
     await requireLease(paths, lease);
 
     const sourceInfo = await readSourceMetadata(paths.source);
@@ -290,6 +293,7 @@ async function worker(request) {
       buildEnvironment: readiness.public.buildEnvironment,
       recovery,
       candidateConfiguration: await candidateConfiguration(paths.source),
+      phaseTimings: phaseTimingsOf(await readJson(paths.journal)),
     };
     await writeCandidateFile(paths, lease, paths.manifest, JSON.stringify(manifest, null, 2) + '\n', 0o600);
     await writeCandidateFile(paths, lease, paths.prepared, manifest.source.archiveSha256 + '\n', 0o600);
@@ -426,9 +430,12 @@ async function cutover(request) {
   if (lock.kind === 'recover-pre-access') return restoreCutoverBeforeAccess(request, paths, lock.lease, lock.journal, 'interrupted-cutover');
   if (lock.kind === 'resume-held') return continueCutover(request, paths, lock.lease, lock.held);
 
+  // The snapshot runs under its own journal operation, so its timing is carried
+  // into the cutover journal rather than recorded in place.
+  const snapshotStartedAt = new Date();
   const snapshotRequest = snapshotRequestForCutover(request);
   const held = await runSnapshotLifecycle(snapshotRequest, paths, lock.lease, { completion: 'hold' });
-  if (held.state === 'held') return continueCutover(request, paths, lock.lease, held);
+  if (held.state === 'held') return continueCutover(request, paths, lock.lease, held, [phaseTiming('snapshot', snapshotStartedAt)]);
   if (held.state === 'refused') {
     await writeJournal(request, paths, lock.lease, 'refused', { gate: held.gate, failure: held.code });
     await release(paths, lock.lease);
@@ -527,7 +534,7 @@ async function reconcileCutoverLease(request, paths, lease) {
   return { kind: 'reconcile-needed', result: { state: 'reconcile-needed', code: 'cutover-journal-not-recognized' } };
 }
 
-async function continueCutover(request, paths, lease, held) {
+async function continueCutover(request, paths, lease, held, measured = []) {
   if (!held || held.state !== 'held' || held.completion !== 'hold' || !isRecoveryPair(held.recoveryPair)) {
     await writeJournal(request, paths, lease, 'recovery-required', { failure: 'held-snapshot-not-verifiable' }).catch(() => undefined);
     await release(paths, lease).catch(() => undefined);
@@ -554,11 +561,15 @@ async function continueCutover(request, paths, lease, held) {
       snapshotId: held.snapshotId,
       manifest: snapshot.manifestPath,
       recoveryPair: held.recoveryPair,
+      phaseTimings: [...phaseTimingsOf(candidate.manifest), ...measured],
     });
-    await systemctl('stop', 'baox.service');
-    await writeJournal(request, paths, lease, 'candidate-service-stopped', { snapshotId: held.snapshotId });
-    await promoteCandidate(request, paths, lease, candidate);
-    await activateCandidate(request, paths, lease, candidate, snapshot.manifest, held.snapshotId);
+    await timePhase(request, paths, lease, 'cutover', async () => {
+      await systemctl('stop', 'baox.service');
+      await writeJournal(request, paths, lease, 'candidate-service-stopped', { snapshotId: held.snapshotId });
+      await promoteCandidate(request, paths, lease, candidate);
+      await activateCandidate(request, paths, lease, candidate, snapshot.manifest, held.snapshotId);
+    });
+    await timePhase(request, paths, lease, 'verify', () => verifyActivatedCandidate(request, paths, lease, candidate, held.snapshotId));
     await writeJournal(request, paths, lease, 'candidate-verified', {
       snapshotId: held.snapshotId,
       release: candidate.releaseReference,
@@ -602,13 +613,16 @@ async function resumePublicAccess(request, paths, lease, journal) {
 async function reopenCandidate(request, paths, lease, candidate, snapshotId) {
   try {
     await writeJournal(request, paths, lease, 'reopening', { snapshotId, release: candidate.releaseReference });
-    const gate = await commandGate(request, 'reopen');
-    if (!isOpenGate(gate)) throw new CandidateFailure('maintenance-gate-did-not-reopen');
-    await systemctl('start', 'baox-caddy.service');
-    await waitForHttp(candidate.public);
-    const observed = await commandGate(request, 'status');
-    if (!isOpenGate(observed)) throw new CandidateFailure('maintenance-gate-not-open-after-candidate-verification');
-    await writeJournal(request, paths, lease, 'completed', {
+    const observed = await timePhase(request, paths, lease, 'reopen', async () => {
+      const gate = await commandGate(request, 'reopen');
+      if (!isOpenGate(gate)) throw new CandidateFailure('maintenance-gate-did-not-reopen');
+      await systemctl('start', 'baox-caddy.service');
+      await waitForHttp(candidate.public);
+      const status = await commandGate(request, 'status');
+      if (!isOpenGate(status)) throw new CandidateFailure('maintenance-gate-not-open-after-candidate-verification');
+      return status;
+    });
+    const completed = await writeJournal(request, paths, lease, 'completed', {
       snapshotId,
       manifest: path.join(paths.snapshotRoot, snapshotId, 'manifest.json'),
       release: candidate.releaseReference,
@@ -616,7 +630,14 @@ async function reopenCandidate(request, paths, lease, candidate, snapshotId) {
       verifiedAt: new Date().toISOString(),
     });
     await release(paths, lease);
-    return { state: 'verified', candidateId: request.candidateId, release: candidate.releaseReference, snapshotId, manifest: path.join(paths.snapshotRoot, snapshotId, 'manifest.json') };
+    return {
+      state: 'verified',
+      candidateId: request.candidateId,
+      release: candidate.releaseReference,
+      snapshotId,
+      manifest: path.join(paths.snapshotRoot, snapshotId, 'manifest.json'),
+      ...phaseTimingsField(completed),
+    };
   } catch (error) {
     const code = failureCode(error, 'public-access-reopen-failed');
     await writeJournal(request, paths, lease, 'post-access-handoff', { snapshotId, failure: code }).catch(() => undefined);
@@ -728,7 +749,7 @@ async function completedCutoverResult(request, paths, journal) {
     readPublishedSnapshot(paths, journal.snapshotId, request.candidateId),
   ]);
   if (current !== release || !isOpenGate(gate) || !snapshot) return null;
-  return { state: 'verified', candidateId: request.candidateId, release, snapshotId: journal.snapshotId, manifest: snapshot.manifestPath };
+  return { state: 'verified', candidateId: request.candidateId, release, snapshotId: journal.snapshotId, manifest: snapshot.manifestPath, ...phaseTimingsField(journal) };
 }
 
 function cutoverConfigurationTargets(request) {
@@ -889,6 +910,9 @@ async function activateCandidate(request, paths, lease, candidate, snapshotManif
   await systemctl('daemon-reload');
   await writeJournal(request, paths, lease, 'candidate-switched', { snapshotId, release: candidate.releaseReference });
   await systemctl('start', 'baox.service');
+}
+
+async function verifyActivatedCandidate(request, paths, lease, candidate, snapshotId) {
   await waitForHttp(candidate.loopback);
   const active = await verifyActiveCutoverCandidate(request, paths);
   if (active.executableSha256 !== candidate.executableSha256) throw new CandidateFailure('candidate-runtime-verification-failed');
@@ -1639,7 +1663,7 @@ async function waitForTerminal(request, paths) {
   for (;;) {
     const journal = await readJson(paths.journal);
     if (!isJournalFor(journal, request)) return { state: 'reconcile-needed', code: 'journal-changed' };
-    if (journal.phase === 'prepared') return preparedResult(request, paths);
+    if (journal.phase === 'prepared') return { ...preparedResult(request, paths), ...phaseTimingsField(journal) };
     if (journal.phase === 'failed') return { state: 'failed', code: journal.failure || 'build-failed', ...(journal.readinessIssues ? { issues: journal.readinessIssues } : {}) };
     if (journal.phase === 'recovery-required') return recoveryResult(request);
     await delay(100);
@@ -2981,16 +3005,18 @@ async function buildCandidate(request, paths, source, explicitEnvironment, lease
     LANG: 'C.UTF-8',
     ...explicitEnvironment,
   };
+  await timePhase(request, paths, lease, 'install', async () => {
+    await requireLease(paths, lease);
+    await runLogged('chown', ['-R', 'baox:baox', paths.source], paths.candidate, {}, paths.log);
+    await requireLease(paths, lease);
+    await runAsBaox('/bin/mkdir', ['-p', pnpmHome, env.npm_config_store_dir], paths.source, { HOME: env.HOME, PATH: env.PATH }, paths.log);
+    await requireLease(paths, lease);
+    await runAsBaox(pnpm, ['install', '--frozen-lockfile'], paths.source, env, paths.log);
+  });
   await requireLease(paths, lease);
-  await runLogged('chown', ['-R', 'baox:baox', paths.source], paths.candidate, {}, paths.log);
+  await timePhase(request, paths, lease, 'build', () => runAsBaox(pnpm, ['build'], paths.source, env, paths.log));
   await requireLease(paths, lease);
-  await runAsBaox('/bin/mkdir', ['-p', pnpmHome, env.npm_config_store_dir], paths.source, { HOME: env.HOME, PATH: env.PATH }, paths.log);
-  await requireLease(paths, lease);
-  await runAsBaox(pnpm, ['install', '--frozen-lockfile'], paths.source, env, paths.log);
-  await requireLease(paths, lease);
-  await runAsBaox(pnpm, ['build'], paths.source, env, paths.log);
-  await requireLease(paths, lease);
-  await ensureCandidateSqlite(request, paths, env, lease);
+  await timePhase(request, paths, lease, 'native', () => ensureCandidateSqlite(request, paths, env, lease));
   await requireLease(paths, lease);
   for (const file of [
     path.join(paths.source, 'server', 'dist', 'main.mjs'),
@@ -3002,18 +3028,20 @@ async function buildCandidate(request, paths, source, explicitEnvironment, lease
   }
   const candidateCaddyfile = path.join(paths.source, 'deploy', 'intranet', 'Caddyfile');
   if (!await isRegularFile(candidateCaddyfile)) throw new CandidateFailure('candidate-caddyfile-missing');
-  const renderer = path.join(paths.source, 'deploy', 'intranet', 'render-config.mjs');
-  if (await isRegularFile(renderer)) {
-    // Routine releases retain the installed origin. A new template default must
-    // not invalidate employee extension packages and pairings during an upgrade.
-    const active = parseServiceEnvironment(await fs.readFile(path.join(request.systemdDir, 'baox.service'), 'utf8'));
-    const origin = parseOrigin(active.BAOX_PUBLIC_ORIGIN);
-    if (!origin) throw new CandidateFailure('active-public-origin-invalid');
-    await runAsBaox(path.join(runtime, 'node', 'bin', 'node'), [renderer, path.dirname(renderer)], paths.source,
-      { ...env, BAOX_PUBLIC_ORIGIN: origin.origin }, paths.log);
-    await requireLease(paths, lease);
-  }
-  await runAsBaox(path.join(request.deployRoot, 'bin', 'caddy'), ['validate', '--config', candidateCaddyfile, '--adapter', 'caddyfile'], paths.source, { HOME: env.HOME }, paths.log);
+  await timePhase(request, paths, lease, 'config', async () => {
+    const renderer = path.join(paths.source, 'deploy', 'intranet', 'render-config.mjs');
+    if (await isRegularFile(renderer)) {
+      // Routine releases retain the installed origin. A new template default must
+      // not invalidate employee extension packages and pairings during an upgrade.
+      const active = parseServiceEnvironment(await fs.readFile(path.join(request.systemdDir, 'baox.service'), 'utf8'));
+      const origin = parseOrigin(active.BAOX_PUBLIC_ORIGIN);
+      if (!origin) throw new CandidateFailure('active-public-origin-invalid');
+      await runAsBaox(path.join(runtime, 'node', 'bin', 'node'), [renderer, path.dirname(renderer)], paths.source,
+        { ...env, BAOX_PUBLIC_ORIGIN: origin.origin }, paths.log);
+      await requireLease(paths, lease);
+    }
+    await runAsBaox(path.join(request.deployRoot, 'bin', 'caddy'), ['validate', '--config', candidateCaddyfile, '--adapter', 'caddyfile'], paths.source, { HOME: env.HOME }, paths.log);
+  });
   await requireLease(paths, lease);
 }
 
@@ -3163,6 +3191,50 @@ async function writeJournal(request, paths, lease, phase, extra) {
   journal.updatedAt = new Date().toISOString();
   await writeAtomic(paths.journal, JSON.stringify(journal, null, 2) + '\n', 0o600);
   await requireLease(paths, lease);
+  return journal;
+}
+
+/**
+ * Deploy phase timings live on the journal as `phaseTimings`, in completion
+ * order: `{ phase, startedAt, durationMs, failed? }`. They only measure; no
+ * recovery decision reads them. A candidate's build phases are copied into its
+ * manifest so the cutover journal can list the whole deploy.
+ */
+async function timePhase(request, paths, lease, phase, action) {
+  const startedAt = new Date();
+  let result;
+  try {
+    result = await action();
+  } catch (error) {
+    await recordPhaseTiming(request, paths, lease, phaseTiming(phase, startedAt, true)).catch(() => undefined);
+    throw error;
+  }
+  await recordPhaseTiming(request, paths, lease, phaseTiming(phase, startedAt));
+  return result;
+}
+
+function phaseTiming(phase, startedAt, failed = false) {
+  return { phase, startedAt: startedAt.toISOString(), durationMs: Date.now() - startedAt.getTime(), ...(failed ? { failed: true } : {}) };
+}
+
+async function recordPhaseTiming(request, paths, lease, entry) {
+  await requireLease(paths, lease);
+  const journal = await readJson(paths.journal);
+  if (!isJournalFor(journal, request)) return;
+  journal.phaseTimings = [...phaseTimingsOf(journal), entry];
+  await writeAtomic(paths.journal, JSON.stringify(journal, null, 2) + '\n', 0o600);
+  await requireLease(paths, lease);
+}
+
+function phaseTimingsOf(record) {
+  return record && Array.isArray(record.phaseTimings)
+    ? record.phaseTimings.filter((entry) => entry && typeof entry.phase === 'string' && Number.isFinite(entry.durationMs))
+    : [];
+}
+
+function phaseTimingsField(record) {
+  const timings = phaseTimingsOf(record);
+  return timings.length > 0 ? { phaseTimings: timings } : {};
 }
 
 async function writeOwner(paths, request, pid, startIdentity, lease, replace = false) {

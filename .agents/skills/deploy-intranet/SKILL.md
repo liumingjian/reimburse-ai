@@ -88,9 +88,15 @@ Done when you hold the command's exit code and its `cutover` (or `candidate`) st
 Write the report in the user's language.
 
 - **`verified`**: the release name, the recovery snapshot ID, the step-3 impact lines, the excluded working-tree
-  changes from step 1, and the QA entry `http://10.250.0.222:8888`. Then end with `result:`.
+  changes from step 1, the QA entry `http://10.250.0.222:8888`, and the phase table. Then end with `result:`.
 - **Any other state** (`restored`, `busy`, `refused`, `failed`, `recovery-required`, `post-access-handoff`,
   `reconcile-needed`, or a candidate state other than `prepared`): the host is now the user's to decide on. Quote the
   operator's lines verbatim, attach `operator status` and `operator logs --lines 100`, and end with `needs input:`.
   Your part ends at the report: leave retries, `--candidate` reruns, rollback, `snapshot`, gate `admit`/`reopen`
   and `bootstrap-*` to the user.
+
+Put the phase table right before the closing `result:` or `needs input:` line in every report. Build it from the
+top-level `phaseTimings` of the deploy JSON: one row per entry in order (`phase`, `durationMs` as seconds with one
+decimal, marked failed when `failed` is true), then a total row. The host's deployment journal holds the same list.
+When `phaseTimings` is empty (neither a verified cutover nor a fresh candidate build), write "no phase timings
+recorded" instead of a table.
