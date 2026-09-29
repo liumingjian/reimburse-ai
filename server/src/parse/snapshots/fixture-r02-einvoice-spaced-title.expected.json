@@ -1,0 +1,22 @@
+{
+  "about": "#200: the title is letter-spaced across runs. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "vat_invoice/einvoice",
+  "missing": [],
+  "findings": [
+    "qr_unreadable"
+  ],
+  "facts": {
+    "invoiceNumber": "26312000000098127802",
+    "issueDate": "2026-08-21",
+    "invoiceType": "普票",
+    "buyerName": "某某科技（上海）有限公司",
+    "buyerTaxId": "91310000XXXXXXXX0A",
+    "sellerName": "上海某某酒店管理有限公司",
+    "sellerTaxId": "91310000YYYYYYYY0B",
+    "itemName": "*住宿服务*住宿费",
+    "netAmount": "264.15",
+    "taxAmount": "15.85",
+    "totalAmount": "280.00"
+  }
+}

@@ -1,38 +1,36 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { GENERATED_DIR } from '@baox/fixtures';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { KINDS } from '../../kind-policy';
 import { compact, joinedRows, matchSpan, type ParseDoc, type TextObservation } from '../doc';
 import { dispatch } from '../dispatch';
-import { parseMaterial } from '../material';
-import { pdfDoc } from '../pdf';
-import { productionReaders } from '../readers-production';
+import { caseDoc } from '../testing/snapshot-cases';
 import { einvoice, QR_SOURCE, readQr } from './einvoice';
 import { LAYOUTS } from '.';
 
-// Unit tests of the `vat_invoice/einvoice` layout on the real text layer of @baox/fixtures (the PDF adapter inline,
-// no worker), with QR payloads injected into the document model.
+// Unit tests of the `vat_invoice/einvoice` layout on the text layer of @baox/fixtures as captured in the snapshot
+// cases (`../snapshots/fixture-*`), with QR payloads injected into the document model. What each fixture reads as is
+// scored by those cases (`snapshots.test.ts`); these tests edit the documents and check the shapes behind them.
 
-const fixture = (file: string) => new Uint8Array(readFileSync(join(GENERATED_DIR, file)));
+vi.mock('unpdf', () => {
+  throw new Error('a layout test loaded pdfjs: read the document from a snapshot case');
+});
+
 const AMAP_QR = '01,32,,26312000000101557402,69.19,20260813,,A1B2C3D4';
 
 describe('vat_invoice/einvoice', () => {
-  it('recognises m01 and fills every required slot', async () => {
-    const outcome = await parseMaterial({ materialId: 'm01', fileName: '全季酒店_发票.pdf', mime: 'application/pdf', bytes: fixture('m01-hotel-invoice.pdf') }, productionReaders);
-    expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'vat_invoice', layout: 'einvoice', parserVersion: einvoice.version, kindLabel: '全电发票（专票）', missing: [] });
+  it('recognises m01 as a 专票 of this layout version', () => {
+    expect(dispatch(caseDoc('fixture-m01-hotel-invoice'), LAYOUTS)).toMatchObject({ outcome: 'recognised', kind: 'vat_invoice', layout: 'einvoice', parserVersion: einvoice.version, kindLabel: '全电发票（专票）' });
   });
 
-  it('keeps evidence refs to the text observations a value came from', async () => {
-    const outcome = dispatch(await pdfDoc(fixture('m03-amap-invoice.pdf')), LAYOUTS);
+  it('keeps evidence refs to the text observations a value came from', () => {
+    const outcome = dispatch(caseDoc('fixture-m03-amap-invoice'), LAYOUTS);
     if (outcome.outcome !== 'recognised') throw new Error(`expected recognised, got ${JSON.stringify(outcome)}`);
     const number = outcome.candidates.find((c) => c.key === 'invoiceNumber');
     expect(number?.refs).toEqual([{ page: 1, observationIds: [expect.stringMatching(/^p1\.\d+$/)], text: '发票号码：26312000000101557402' }]);
   });
 
   // #200: anchors match joined rows, so a face split into several text runs reads like any other.
-  it('recognises r01, whose 发票号码 label and digits are separate text runs', async () => {
-    const doc = await pdfDoc(fixture('r01-einvoice-split-number.pdf'));
+  it('recognises r01, whose 发票号码 label and digits are separate text runs', () => {
+    const doc = caseDoc('fixture-r01-einvoice-split-number');
     // The fixture really splits them: no single observation carries label and digits together.
     expect(doc.observations.some((o) => /^发票号码:\d{20}$/.test(compact(o.text)))).toBe(false);
 
@@ -47,26 +45,20 @@ describe('vat_invoice/einvoice', () => {
     for (const id of number?.refs[0]?.observationIds ?? []) expect(ids.has(id)).toBe(true);
   });
 
-  it('recognises r02, whose title is letter-spaced across runs', async () => {
-    const doc = await pdfDoc(fixture('r02-einvoice-spaced-title.pdf'));
+  it('recognises r02, whose title is letter-spaced across runs', () => {
+    const doc = caseDoc('fixture-r02-einvoice-spaced-title');
     expect(doc.observations.some((o) => /^电子发票\(.+\)$/.test(compact(o.text)))).toBe(false);
 
     const outcome = dispatch(doc, LAYOUTS);
     expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（普票）', missing: [] });
   });
 
-  it('recognises an invoice that bundles an unrelated fee row beside a v1 service row, and takes its totals from the 合计 row', async () => {
-    const doc = await pdfDoc(fixture('r201-bundled-fee-invoice.pdf'));
+  // Its values are scored by the snapshot case (47.38 + 1.60 is the 合计 row over both item rows; the leading 运输服务
+  // row alone is 41.55 + 1.25). Here: how the bundled row is told, and what is left without the v1 row.
+  it('recognises an invoice that bundles an unrelated fee row beside a v1 service row, and takes its totals from the 合计 row', () => {
+    const doc = caseDoc('fixture-r201-bundled-fee-invoice');
     const outcome = dispatch(doc, LAYOUTS);
     if (outcome.outcome !== 'recognised') throw new Error(`expected recognised, got ${JSON.stringify(outcome)}`);
-    expect(outcome).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', missing: [] });
-    // 47.38 + 1.60 is the 合计 row over both item rows; the leading 运输服务 row alone is 41.55 + 1.25.
-    expect(Object.fromEntries(outcome.candidates.map((c) => [c.key, c.value]))).toMatchObject({
-      itemName: '*运输服务*客运服务费',
-      netAmount: '47.38',
-      taxAmount: '1.60',
-      totalAmount: '48.98',
-    });
     expect(outcome.findings.filter((f) => f.kind === 'validation')).toEqual([]);
     // The bundled row is inside that total, so it is said out loud rather than passed over in silence.
     expect(outcome.findings).toContainEqual({ kind: 'advisory', code: 'bundled_items', message: '这张发票还开了：*经纪代理服务*平台服务费，价税合计把它们一起算了。' });
@@ -78,8 +70,8 @@ describe('vat_invoice/einvoice', () => {
 
   // #206: the shapes the real corpus showed — a 交通运输服务 item row, and anchors that share a baseline with the field
   // printed beside them, so a whole joined row matches nothing.
-  it('recognises r206, a 交通运输服务 invoice whose 发票号码 and 开票日期 share one baseline', async () => {
-    const doc = await pdfDoc(fixture('r206-transport-invoice.pdf'));
+  it('recognises r206, a 交通运输服务 invoice whose 发票号码 and 开票日期 share one baseline', () => {
+    const doc = caseDoc('fixture-r206-transport-invoice');
     // The fixture really shares baselines: the row carrying 发票号码 carries 开票日期 too, and the title row carries the
     // 联次 beside it, so neither row reads as one anchor.
     const lines = joinedRows(doc);
@@ -91,16 +83,6 @@ describe('vat_invoice/einvoice', () => {
     const outcome = dispatch(doc, LAYOUTS);
     if (outcome.outcome !== 'recognised') throw new Error(`expected recognised, got ${JSON.stringify(outcome)}`);
     expect(outcome).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（普票）', missing: [] });
-    expect(Object.fromEntries(outcome.candidates.map((c) => [c.key, c.value]))).toMatchObject({
-      invoiceNumber: '26312000000104412906',
-      issueDate: '2026-08-17',
-      invoiceType: '普票',
-      itemName: '*交通运输服务*客运服务费',
-      netAmount: '26.69',
-      taxAmount: '0.80',
-      totalAmount: '27.49',
-    });
-    expect(outcome.findings.filter((f) => f.kind === 'validation')).toEqual([]);
     // 交通运输服务 lands in the same 市内交通 category 运输服务 does: no new category, no new kind.
     const values = Object.fromEntries(outcome.candidates.filter((c) => c.source === `rule:${outcome.kind}/${outcome.layout}`).map((c) => [c.key, c.value]));
     expect(KINDS.vat_invoice.categoryLabel(values)).toBe('市内交通');
@@ -109,9 +91,10 @@ describe('vat_invoice/einvoice', () => {
   // #199: the goods table of a real face is not laid out the way a hand-written HTML table is. The column header is
   // centred over a column far wider than the label, while the cell under it is left-aligned at the column's border —
   // so the 项目名称 cell and the 合计 label are printed left of the 项目名称 header's own left edge.
-  it('reads the item table of r207, whose 项目名称 cell and 合计 label are drawn left of the centred header', async () => {
-    const doc = await pdfDoc(fixture('r207-einvoice-wide-name-column.pdf'));
-    // The fixture really carries the quirk: both cells end left of where the header label starts.
+  // Its values are scored by the snapshot case `einvoice-item-left-of-centred-header` (r207, redacted).
+  it('reads the item table of r207, whose 项目名称 cell and 合计 label are drawn left of the centred header', () => {
+    const doc = caseDoc('einvoice-item-left-of-centred-header');
+    // The case really carries the quirk: both cells end left of where the header label starts.
     const header = doc.observations.find((o) => compact(o.text) === '项目名称');
     const item = doc.observations.find((o) => compact(o.text).startsWith('*交通运输服务*'));
     const total = doc.observations.find((o) => compact(o.text) === '合计');
@@ -120,21 +103,12 @@ describe('vat_invoice/einvoice', () => {
       expect(left).toBeDefined();
       expect((left?.x ?? 0) + (left?.width ?? 0) / 2).toBeLessThan(header?.x ?? 0);
     }
-
-    const outcome = dispatch(doc, LAYOUTS);
-    if (outcome.outcome !== 'recognised') throw new Error(`expected recognised, got ${JSON.stringify(outcome)}`);
-    expect(outcome).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', missing: [] });
-    expect(Object.fromEntries(outcome.candidates.map((c) => [c.key, c.value]))).toMatchObject({
-      itemName: '*交通运输服务*客运服务费',
-      netAmount: '31.55',
-      taxAmount: '0.95',
-      totalAmount: '32.50',
-    });
-    expect(outcome.findings.filter((f) => f.kind === 'validation')).toEqual([]);
+    expect(dispatch(doc, LAYOUTS)).toMatchObject({ outcome: 'recognised', kind: 'vat_invoice', layout: 'einvoice', missing: [] });
   });
 
-  it('reads a 项目名称 wrapped onto a second line (r208) as the whole name', async () => {
-    const doc = await pdfDoc(fixture('r208-einvoice-wrapped-item-name.pdf'));
+  // Its values are scored by the snapshot case `fixture-r208-einvoice-wrapped-item-name`.
+  it('reads a 项目名称 wrapped onto a second line (r208) as the whole name', () => {
+    const doc = caseDoc('fixture-r208-einvoice-wrapped-item-name');
     // The fixture really wraps the name: no row carries the whole of it, and the tail is a row of its own.
     const whole = '*交通运输服务*客运服务费(含高速费、停车费、预约调度费)';
     const lines = joinedRows(doc, 1, 5);
@@ -143,14 +117,7 @@ describe('vat_invoice/einvoice', () => {
 
     const outcome = dispatch(doc, LAYOUTS);
     if (outcome.outcome !== 'recognised') throw new Error(`expected recognised, got ${JSON.stringify(outcome)}`);
-    expect(outcome).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', missing: [] });
-    expect(Object.fromEntries(outcome.candidates.map((c) => [c.key, c.value]))).toMatchObject({
-      itemName: '*交通运输服务*客运服务费（含高速费、停车费、预约调度费）',
-      netAmount: '46.60',
-      taxAmount: '1.40',
-      totalAmount: '48.00',
-    });
-    expect(outcome.findings.filter((f) => f.kind === 'validation')).toEqual([]);
+    expect(outcome.candidates.find((c) => c.key === 'itemName')?.value).toBe('*交通运输服务*客运服务费（含高速费、停车费、预约调度费）');
   });
 
   // The third shape the real corpus showed: a cell wider than its column. A 单价 printed to thirteen decimals reaches
@@ -192,9 +159,9 @@ describe('vat_invoice/einvoice', () => {
     expect(values['sellerName']).toBe('上海某某酒店管理有限公司');
   });
 
-  it('does not recognise an e-invoice outside the v1 kinds (m11, 餐饮) or a document without the invoice title (m06)', async () => {
-    expect(einvoice.recognise(await pdfDoc(fixture('m11-other-invoice.pdf')))).toBe(false);
-    expect(einvoice.recognise(await pdfDoc(fixture('m06-caocao-itinerary.pdf')))).toBe(false);
+  it('does not recognise an e-invoice outside the v1 kinds (m11, 餐饮) or a document without the invoice title (m06)', () => {
+    expect(einvoice.recognise(caseDoc('fixture-m11-other-invoice'))).toBe(false);
+    expect(einvoice.recognise(caseDoc('fixture-m06-caocao-itinerary'))).toBe(false);
   });
 
   it('reads a 全电 QR payload; anything else is not one', () => {
@@ -203,8 +170,8 @@ describe('vat_invoice/einvoice', () => {
     expect(readQr('https://example.com/not-an-invoice')).toBeNull();
   });
 
-  it('a QR that agrees with the face adds its candidates and a note; one that disagrees is a note too, never a 待确认项', async () => {
-    const doc = await pdfDoc(fixture('m03-amap-invoice.pdf'));
+  it('a QR that agrees with the face adds its candidates and a note; one that disagrees is a note too, never a 待确认项', () => {
+    const doc = caseDoc('fixture-m03-amap-invoice');
 
     const agreed = dispatch({ ...doc, codes: [AMAP_QR] }, LAYOUTS);
     if (agreed.outcome !== 'recognised') throw new Error('expected recognised');
@@ -225,14 +192,14 @@ describe('vat_invoice/einvoice', () => {
     expect(unreadable.findings).toEqual([expect.objectContaining({ kind: 'advisory', code: 'qr_unreadable' })]);
   });
 
-  it('reports a required slot it could not read as missing instead of guessing it', async () => {
-    const doc = await pdfDoc(fixture('m05-caocao-invoice.pdf'));
+  it('reports a required slot it could not read as missing instead of guessing it', () => {
+    const doc = caseDoc('fixture-m05-caocao-invoice');
     const withoutGross = { ...doc, observations: doc.observations.filter((o) => o.text !== '¥38.40') };
     expect(dispatch(withoutGross, LAYOUTS)).toMatchObject({ outcome: 'recognised', missing: ['totalAmount'] });
   });
 
-  it('flags amounts that do not conserve as a validation finding', async () => {
-    const doc = await pdfDoc(fixture('m05-caocao-invoice.pdf'));
+  it('flags amounts that do not conserve as a validation finding', () => {
+    const doc = caseDoc('fixture-m05-caocao-invoice');
     const altered = { ...doc, observations: doc.observations.map((o) => (o.text === '¥38.40' ? { ...o, text: '¥38.41' } : o)) };
     const outcome = dispatch(altered, LAYOUTS);
     expect(outcome).toMatchObject({ outcome: 'recognised', findings: expect.arrayContaining([expect.objectContaining({ kind: 'validation', code: 'total_not_conserved' })]) });

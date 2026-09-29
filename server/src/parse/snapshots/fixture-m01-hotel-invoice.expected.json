@@ -1,0 +1,22 @@
+{
+  "about": "@baox/fixtures m01: a 全电发票 (fully digitised e-invoice) 专票 for a hotel stay, every required slot on the face. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "vat_invoice/einvoice",
+  "missing": [],
+  "findings": [
+    "qr_unreadable"
+  ],
+  "facts": {
+    "invoiceNumber": "26312000000098127734",
+    "issueDate": "2026-08-22",
+    "invoiceType": "专票",
+    "buyerName": "某某科技（上海）有限公司",
+    "buyerTaxId": "91310000XXXXXXXX0A",
+    "sellerName": "上海某某酒店管理有限公司",
+    "sellerTaxId": "91310000YYYYYYYY0B",
+    "itemName": "*住宿服务*住宿费",
+    "netAmount": "3433.96",
+    "taxAmount": "206.04",
+    "totalAmount": "3640.00"
+  }
+}

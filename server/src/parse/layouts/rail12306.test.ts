@@ -1,53 +1,39 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { GENERATED_DIR } from '@baox/fixtures';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { KINDS } from '../../kind-policy';
 import { compact, type TextObservation } from '../doc';
 import { dispatch, type Recognised } from '../dispatch';
-import { pdfDoc } from '../pdf';
+import { caseDoc } from '../testing/snapshot-cases';
 import { LAYOUTS } from '.';
 import { rail12306 } from './rail12306';
 
 // Origin: 50931a3:kernel/test/parse.test.mjs (case `长途/26349119423005877606.pdf`: rail e-ticket, only the fare on the face,
 // net/tax absent as a face fact) and 50931a3:kernel/test/events.test.mjs (`铁路电子客票：一张票一个事件，乘车日期来自票面`:
-// the travel date, not the issue date, is the expense date; net = fare, tax = 0). Inputs are @baox/fixtures m07/m08.
+// the travel date, not the issue date, is the expense date; net = fare, tax = 0). Inputs are @baox/fixtures m07/m08,
+// read from their snapshot cases (`../snapshots/fixture-*`, which also score every face value), never through pdfjs.
 
-const fixture = (file: string) => new Uint8Array(readFileSync(join(GENERATED_DIR, file)));
+vi.mock('unpdf', () => {
+  throw new Error('a layout test loaded pdfjs: read the document from a snapshot case');
+});
+
 const SOURCE = 'rule:rail_ticket/12306';
 
-async function recognised(file: string): Promise<Recognised> {
-  const outcome = dispatch(await pdfDoc(fixture(file)), LAYOUTS);
+function recognised(name: string): Recognised {
+  const outcome = dispatch(caseDoc(name), LAYOUTS);
   if (outcome.outcome !== 'recognised') throw new Error(`expected recognised, got ${JSON.stringify(outcome)}`);
   return outcome;
 }
 const values = (outcome: Recognised) => Object.fromEntries(outcome.candidates.map((c) => [c.key, c.value]));
 
 describe('rail_ticket/12306', () => {
-  it('recognises m07 and reads the face: number, issue date, train, stations, travel date and fare', async () => {
-    const outcome = await recognised('m07-rail-0809.pdf');
+  // Every face value of m07 (and of the return ticket m08) is scored by its snapshot case.
+  it('recognises m07 and reads the face: number, issue date, train, stations, travel date and fare', () => {
+    const outcome = recognised('fixture-m07-rail-0809');
     expect(outcome).toMatchObject({ kind: 'rail_ticket', layout: '12306', parserVersion: rail12306.version, kindLabel: '铁路电子客票', missing: [], findings: [] });
-    expect(values(outcome)).toEqual({
-      invoiceNumber: '26312000000102200731',
-      issueDate: '2026-08-09',
-      trainNumber: 'G7522',
-      departStation: '杭州东',
-      arriveStation: '上海虹桥',
-      travelDate: '2026-08-09',
-      departTime: '08:30',
-      seatClass: '二等座',
-      passengerName: '林颂宜',
-      totalAmount: '73.00',
-    });
     for (const c of outcome.candidates) expect(c).toMatchObject({ source: SOURCE, evidence: 'explicit', refs: [expect.objectContaining({ page: 1 })] });
   });
 
-  it('m08 is the return ticket', async () => {
-    expect(values(await recognised('m08-rail-0822.pdf'))).toMatchObject({ invoiceNumber: '26312000000102200744', trainNumber: 'G7539', departStation: '上海虹桥', arriveStation: '杭州东', travelDate: '2026-08-22', totalAmount: '73.00' });
-  });
-
-  it('no net amount or tax is read: they are not on the face (kernel: absent, not a parse failure)', async () => {
-    const keys = (await recognised('m07-rail-0809.pdf')).candidates.map((c) => c.key);
+  it('no net amount or tax is read: they are not on the face (kernel: absent, not a parse failure)', () => {
+    const keys = recognised('fixture-m07-rail-0809').candidates.map((c) => c.key);
     expect(keys).not.toContain('netAmount');
     expect(keys).not.toContain('taxAmount');
   });
@@ -96,12 +82,11 @@ describe('rail_ticket/12306', () => {
 
   // The r204 fixture is what the hand-built document above claims a real face looks like. Without this, that test is a
   // tautology: it would pass on a fixture drawn as one run per field.
-  it('r204 really splits its runs: no text run carries 票价 with its amount, and none carries the whole trip row', async () => {
-    const doc = await pdfDoc(fixture('r204-rail-split-runs.pdf'));
-    const texts = doc.observations.map((o) => compact(o.text));
+  // (Its snapshot case, `fixture-r204-rail-split-runs`, scores what it reads as.)
+  it('r204 really splits its runs: no text run carries 票价 with its amount, and none carries the whole trip row', () => {
+    const texts = caseDoc('fixture-r204-rail-split-runs').observations.map((o) => compact(o.text));
     expect(texts.some((t) => t.includes('票价') && t.includes('314.50'))).toBe(false);
     expect(texts.some((t) => t.includes('G1376') && t.includes('广州南'))).toBe(false);
-    expect(values(await recognised('r204-rail-split-runs.pdf'))).toMatchObject({ trainNumber: 'G1376', departStation: '广州南', arriveStation: '长沙南', totalAmount: '314.50' });
   });
 
   // 车次 (train number) is what tells a trip row from any other line of CJK, digits and CJK. It has to be a text run of
@@ -123,8 +108,8 @@ describe('rail_ticket/12306', () => {
     expect(values(outcome)).toMatchObject({ trainNumber: 'G1376', departStation: '广州南', arriveStation: '长沙南' });
   });
 
-  it('forms one event: date = travel date, route from the face, net = fare and tax 0, long-distance category', async () => {
-    const draft = KINDS.rail_ticket.event(values(await recognised('m07-rail-0809.pdf')));
+  it('forms one event: date = travel date, route from the face, net = fare and tax 0, long-distance category', () => {
+    const draft = KINDS.rail_ticket.event(values(recognised('fixture-m07-rail-0809')));
     expect(draft).toMatchObject({
       category: { code: 'long_distance', label: '长途交通' },
       summary: 'G7522 杭州东 → 上海虹桥',
@@ -138,17 +123,17 @@ describe('rail_ticket/12306', () => {
       origin: '杭州东',
       destination: '上海虹桥',
     });
-    expect(KINDS.rail_ticket.categoryLabel(values(await recognised('m07-rail-0809.pdf')))).toBe('长途交通');
+    expect(KINDS.rail_ticket.categoryLabel(values(recognised('fixture-m07-rail-0809')))).toBe('长途交通');
   });
 
-  it('is not recognised on e-invoices or itineraries, and no other layout recognises a rail ticket', async () => {
-    for (const file of ['m01-hotel-invoice.pdf', 'm03-amap-invoice.pdf', 'm04-amap-itinerary.pdf']) expect(rail12306.recognise(await pdfDoc(fixture(file)))).toBe(false);
-    const doc = await pdfDoc(fixture('m07-rail-0809.pdf'));
+  it('is not recognised on e-invoices or itineraries, and no other layout recognises a rail ticket', () => {
+    for (const name of ['fixture-m01-hotel-invoice', 'fixture-m03-amap-invoice', 'fixture-m04-amap-itinerary']) expect(rail12306.recognise(caseDoc(name))).toBe(false);
+    const doc = caseDoc('fixture-m07-rail-0809');
     expect(LAYOUTS.filter((layout) => layout.recognise(doc)).map((layout) => layout.name)).toEqual(['12306']);
   });
 
-  it('reports an unreadable fare as missing instead of guessing it', async () => {
-    const doc = await pdfDoc(fixture('m07-rail-0809.pdf'));
+  it('reports an unreadable fare as missing instead of guessing it', () => {
+    const doc = caseDoc('fixture-m07-rail-0809');
     expect(dispatch({ ...doc, observations: doc.observations.filter((o) => !o.text.startsWith('票价')) }, LAYOUTS)).toMatchObject({ outcome: 'recognised', missing: ['totalAmount'] });
   });
 });

@@ -1,0 +1,22 @@
+{
+  "about": "@baox/fixtures m03: a ride-hailing 全电发票 普票. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "vat_invoice/einvoice",
+  "missing": [],
+  "findings": [
+    "qr_unreadable"
+  ],
+  "facts": {
+    "invoiceNumber": "26312000000101557402",
+    "issueDate": "2026-08-13",
+    "invoiceType": "普票",
+    "buyerName": "某某科技（上海）有限公司",
+    "buyerTaxId": "91310000XXXXXXXX0A",
+    "sellerName": "某某网约车科技（上海）有限公司",
+    "sellerTaxId": "91310000ZZZZZZZZ0C",
+    "itemName": "*运输服务*客运服务费",
+    "netAmount": "67.18",
+    "taxAmount": "2.01",
+    "totalAmount": "69.19"
+  }
+}
