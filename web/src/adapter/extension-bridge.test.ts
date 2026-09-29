@@ -40,4 +40,24 @@ describe('the page bridge, from the page', () => {
     vi.advanceTimersByTime(1_000);
     await expect(probing).resolves.toBeNull();
   });
+
+  // #291: the pair outcome is the answer, not the presence the content script may announce meanwhile.
+  test('hands over a 配对码 and resolves with the pair outcome that answers it', async () => {
+    const posted = vi.spyOn(window, 'postMessage');
+    const pairing = createWindowBridge({ pairTimeoutMs: 1_000 }).pair('K7MQ2PXD');
+    expect(posted).toHaveBeenCalledWith({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair', code: 'K7MQ2PXD' }, window.location.origin);
+    posted.mockRestore();
+
+    answer(presence);
+    answer({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair_outcome', outcome: { status: 'failed', code: 'version_too_old', message: '请升级' } });
+    await expect(pairing).resolves.toEqual({ status: 'failed', code: 'version_too_old', message: '请升级' });
+  });
+
+  test('reads a pair request nobody answers as no extension', async () => {
+    vi.useFakeTimers();
+    const pairing = createWindowBridge({ pairTimeoutMs: 1_000 }).pair('K7MQ2PXD');
+    answer({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair_outcome', outcome: { status: 'paired', accountId: 'A1' } }, { origin: 'https://evil.example' });
+    vi.advanceTimersByTime(1_000);
+    await expect(pairing).resolves.toBeNull();
+  });
 });

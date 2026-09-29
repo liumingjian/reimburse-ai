@@ -139,5 +139,18 @@ describe('page bridge messages', () => {
     const probe = { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'probe' };
     expect(ExtensionBridgePageMessageSchema.safeParse(probe).success).toBe(true);
     expect(ExtensionBridgeExtensionMessageSchema.safeParse(probe).success).toBe(false);
+    const pair = { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair', code: 'K7MQ2PXD' };
+    expect(ExtensionBridgePageMessageSchema.safeParse(pair).success).toBe(true);
+    expect(ExtensionBridgeExtensionMessageSchema.safeParse(pair).success).toBe(false);
+  });
+
+  // #291: a failed pairing carries the code and message the popup's redeem gets, so the page can show the same reason.
+  test('a pair outcome is paired with the account, or failed with a code and message', () => {
+    const outcome = (value: unknown) => ExtensionBridgeExtensionMessageSchema.safeParse({ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'pair_outcome', outcome: value }).success;
+    expect(outcome({ status: 'paired', accountId: 'a1' })).toBe(true);
+    expect(outcome({ status: 'failed', code: 'version_too_old', message: '请升级' })).toBe(true);
+    expect(outcome({ status: 'failed', message: '请升级' })).toBe(false);
+    expect(outcome({ status: 'paired' })).toBe(false);
+    expect(outcome({ status: 'somewhere-else' })).toBe(false);
   });
 });

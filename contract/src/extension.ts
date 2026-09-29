@@ -195,10 +195,30 @@ export const ExtensionBridgePresenceSchema = z.object({
 });
 export type ExtensionBridgePresence = z.infer<typeof ExtensionBridgePresenceSchema>;
 
-export const ExtensionBridgePageMessageSchema = z.discriminatedUnion('kind', [ExtensionBridgeProbeSchema]);
+// Page -> extension: "redeem this 配对码 (pairing code)". The page issues the code through the existing endpoint only
+// when the extension is present and not paired to the signed-in 应用账号 (#291); the extension redeems it through the
+// same path as a code typed into its popup. Answered with a pair outcome.
+export const ExtensionBridgePairRequestSchema = z.object({ namespace: BridgeNamespaceSchema, kind: z.literal('pair'), code: z.string().min(1).max(64) });
+export type ExtensionBridgePairRequest = z.infer<typeof ExtensionBridgePairRequestSchema>;
+
+// How a pair request ended. paired: the extension now acts for `accountId`. failed: redeeming was refused or could not
+// be done, with the same `code` and `message` the popup's redeem gets (version_too_old, network_error, the server's
+// own refusals), so the page shows the reason the popup would. #292 adds declined (the employee refused to switch the
+// extension away from another 应用账号) as a third member here.
+export const ExtensionPairOutcomeSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('paired'), accountId: z.string().min(1) }),
+  z.object({ status: z.literal('failed'), code: z.string().min(1), message: z.string().min(1) }),
+]);
+export type ExtensionPairOutcome = z.infer<typeof ExtensionPairOutcomeSchema>;
+
+// Extension -> page: the answer to a pair request.
+export const ExtensionBridgePairOutcomeSchema = z.object({ namespace: BridgeNamespaceSchema, kind: z.literal('pair_outcome'), outcome: ExtensionPairOutcomeSchema });
+export type ExtensionBridgePairOutcome = z.infer<typeof ExtensionBridgePairOutcomeSchema>;
+
+export const ExtensionBridgePageMessageSchema = z.discriminatedUnion('kind', [ExtensionBridgeProbeSchema, ExtensionBridgePairRequestSchema]);
 export type ExtensionBridgePageMessage = z.infer<typeof ExtensionBridgePageMessageSchema>;
 
-export const ExtensionBridgeExtensionMessageSchema = z.discriminatedUnion('kind', [ExtensionBridgePresenceSchema]);
+export const ExtensionBridgeExtensionMessageSchema = z.discriminatedUnion('kind', [ExtensionBridgePresenceSchema, ExtensionBridgePairOutcomeSchema]);
 export type ExtensionBridgeExtensionMessage = z.infer<typeof ExtensionBridgeExtensionMessageSchema>;
 
 // ---------------------------------------------------------------------------

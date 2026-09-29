@@ -144,7 +144,7 @@ function TutorialStep({ index, step }: { index: number; step: (typeof TUTORIAL_S
 
 export function ExtensionTutorialPage() {
   const { step } = useExtensionSetup();
-  const install = step.kind === 'notInstalled' || step.kind === 'notPairedHere';
+  const install = step.kind === 'notInstalled' || step.kind === 'notPairedHere' || step.kind === 'pairedElsewhere';
   return (
     <AppShell nav="settings">
       <div className="app-form-page app-tutorial-page">

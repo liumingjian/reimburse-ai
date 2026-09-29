@@ -1,10 +1,11 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
-import { EXTENSION_DOWNLOAD_PATH, EXTENSION_MINIMUM_VERSION, EXTENSION_PAIRING_STATUS_LABELS, EXTENSION_VERSION, LEGACY_IMPORT_ERRORS, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY } from '@baox/contract';
+import { EXTENSION_DOWNLOAD_PATH, EXTENSION_MINIMUM_VERSION, EXTENSION_PAIRING_STATUS_LABELS, EXTENSION_VERSION, LEGACY_IMPORT_ERRORS, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY, type AppAdapter, type ExtensionPairOutcome } from '@baox/contract';
 import { App } from '../App';
 import type { ExtensionBridge, ExtensionPresence } from '../adapter/extension-bridge';
 import { MOCK_ACCOUNT } from '../mock/auth';
 import { createMockAdapter } from '../mock/mock-adapter';
+import { extensionSettingsHash } from '../router';
 import { EXTENSION_TUTORIAL_COPY } from './ExtensionTutorialPage';
 import type { LegacyOption } from '../mock/options';
 import { EXTENSION_INSTALL_COPY, EXTENSION_PAIRING_COPY } from './SettingsPage';
@@ -208,21 +209,28 @@ describe('设置页：浏览器扩展的下载、安装与升级', () => {
   });
 });
 
+// Answers every probe with what `presence` returns at that moment, and every pair request with what `pair` returns;
+// null is silence. Records the 配对码 handed over.
+function fakeBridge(presence: () => ExtensionPresence | null, pair: (code: string) => ExtensionPairOutcome | null = () => null): ExtensionBridge & { probes: () => number; codes: string[] } {
+  let probes = 0;
+  const codes: string[] = [];
+  return {
+    probe: async () => {
+      probes += 1;
+      return presence();
+    },
+    pair: async (code) => {
+      codes.push(code);
+      return pair(code);
+    },
+    probes: () => probes,
+    codes,
+  };
+}
+
 // #290: the page asks the extension in this browser who it is (a fake bridge here; the real one is
 // adapter/extension-bridge.ts) and shows only the step the employee is on.
 describe('设置页：按这台浏览器里的扩展只显示当前这一步', () => {
-  // Answers every probe with what `presence` returns at that moment; null is silence.
-  function fakeBridge(presence: () => ExtensionPresence | null): ExtensionBridge & { probes: () => number } {
-    let probes = 0;
-    return {
-      probe: async () => {
-        probes += 1;
-        return presence();
-      },
-      probes: () => probes,
-    };
-  }
-
   function renderWithExtension(bridge: ExtensionBridge, { paired = false, hash = '#/settings' }: { paired?: boolean; hash?: string } = {}) {
     window.location.hash = hash;
     render(<App adapter={createMockAdapter({ seed: 'actions', fault: null, ...(paired ? { extensionPaired: true } : {}) })} bridge={bridge} />);
@@ -263,11 +271,14 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
     expect(section.getByRole('button', { name: '撤销配对' })).toBeTruthy();
   });
 
-  test('扩展配对的是另一个账号：仍走手动配对码', async () => {
-    renderWithExtension(fakeBridge(() => ({ version: EXTENSION_VERSION, paired: true, accountId: 'someone-else' })));
+  test('扩展配对的是另一个账号：仍走手动配对码，不自动生成', async () => {
+    const bridge = fakeBridge(() => ({ version: EXTENSION_VERSION, paired: true, accountId: 'someone-else' }));
+    renderWithExtension(bridge);
     const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
     expect(await section.findByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
     expect(section.getByRole('button', { name: '生成配对码' })).toBeTruthy();
+    expect(bridge.codes).toEqual([]);
+    expect(section.getByText(EXTENSION_PAIRING_STATUS_LABELS.none)).toBeTruthy();
   });
 
   test('撤销配对之后再问一次扩展，不会留着过时的已连接', async () => {
@@ -300,5 +311,88 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
     expect(await screen.findByText(EXTENSION_TUTORIAL_COPY.pairedHere)).toBeTruthy();
     expect(screen.queryByRole('list', { name: '安装步骤' })).toBeNull();
     expect(screen.queryByRole('list', { name: '升级扩展' })).toBeNull();
+  });
+});
+
+// #291: an extension that answers but is not paired to this account is handed a freshly issued 配对码 and redeems it;
+// the employee types nothing. The mock server has no extension to redeem the code, so the adapter here plays the
+// server's side once the fake bridge has "redeemed" it.
+describe('设置页：扩展应答但没有配对时一键配对', () => {
+  const unpaired: ExtensionPresence = { version: EXTENSION_VERSION, paired: false, accountId: null };
+  const mine: ExtensionPresence = { version: EXTENSION_VERSION, paired: true, accountId: MOCK_ACCOUNT.accountId };
+
+  type Redeem = (code: string) => ExtensionPairOutcome | null;
+
+  async function renderAutoPair(redeem: Redeem, hash = '#/settings') {
+    const pairedView = await createMockAdapter({ seed: 'actions', fault: null, extensionPaired: true }).getExtensionPairing();
+    const adapter = createMockAdapter({ seed: 'actions', fault: null });
+    let redeemed = false;
+    const issued: number[] = [];
+    const server: AppAdapter = {
+      ...adapter,
+      getExtensionPairing: async () => (redeemed ? pairedView : adapter.getExtensionPairing()),
+      createExtensionPairingCode: async () => {
+        issued.push(1);
+        return adapter.createExtensionPairingCode();
+      },
+    };
+    const bridge = fakeBridge(
+      () => (redeemed ? mine : unpaired),
+      (code) => {
+        const outcome = redeem(code);
+        redeemed = outcome?.status === 'paired';
+        return outcome;
+      },
+    );
+    window.location.hash = hash;
+    render(<App adapter={server} bridge={bridge} />);
+    return { bridge, issued, section: within(await screen.findByRole('region', { name: '浏览器扩展' })) };
+  }
+
+  test('没有配对：自动生成配对码交给扩展，到已连接，不用输入', async () => {
+    const { bridge, issued, section } = await renderAutoPair(() => ({ status: 'paired', accountId: MOCK_ACCOUNT.accountId }));
+    expect(await section.findByText(EXTENSION_PAIRING_COPY.connectedTitle)).toBeTruthy();
+    expect(section.getByText('已连接')).toBeTruthy();
+    expect(bridge.codes).toEqual(['K7MQ2PXD']);
+    expect(issued).toHaveLength(1);
+    expect(section.queryByText('K7MQ2PXD')).toBeNull();
+    expect(section.queryByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeNull();
+    expect(section.queryByRole('link', { name: EXTENSION_PAIRING_COPY.tutorial })).toBeNull();
+  });
+
+  test('扩展配对失败：说出扩展给的原因，仍可手动输入配对码', async () => {
+    const message = '配对码不对，或者已经过期、已经用过。请在设置页重新生成一个。';
+    const { issued, section } = await renderAutoPair(() => ({ status: 'failed', code: 'code_invalid', message }));
+    expect(await section.findByText(message)).toBeTruthy();
+    expect(section.getByText(EXTENSION_PAIRING_COPY.autoPairFailed)).toBeTruthy();
+    expect(section.getByText('K7MQ2PXD')).toBeTruthy();
+    expect(section.getByRole('button', { name: '重新生成配对码' })).toBeTruthy();
+    expect(issued).toHaveLength(1);
+  });
+
+  test('扩展没有应答：退回手动流程，显示配对码让员工填进扩展', async () => {
+    const { section } = await renderAutoPair(() => null);
+    expect(await section.findByText('K7MQ2PXD')).toBeTruthy();
+    expect(section.getByText(EXTENSION_PAIRING_COPY.autoPairSilent)).toBeTruthy();
+    expect(section.getByText(EXTENSION_PAIRING_COPY.waitingTitle)).toBeTruthy();
+    expect(section.getByText(EXTENSION_PAIRING_COPY.codeHint)).toBeTruthy();
+  });
+
+  test('从报销任务过来：自动配对之后仍能返回原任务', async () => {
+    const returnTo = '#/task/t-1/review';
+    const { section } = await renderAutoPair(() => ({ status: 'paired', accountId: MOCK_ACCOUNT.accountId }), extensionSettingsHash('t-1', 'review'));
+    expect(await section.findByText(EXTENSION_PAIRING_COPY.connectedTitle)).toBeTruthy();
+    const back = within(screen.getByRole('region', { name: '返回报销任务' })).getByRole('link', { name: '返回报销任务' });
+    expect(back.getAttribute('href')).toBe(`${returnTo}?extensionSetup=1`);
+  });
+
+  test('没有扩展应答探测时不生成配对码', async () => {
+    const adapter = createMockAdapter({ seed: 'actions', fault: null });
+    let issued = 0;
+    window.location.hash = '#/settings';
+    render(<App adapter={{ ...adapter, createExtensionPairingCode: async () => { issued += 1; return adapter.createExtensionPairingCode(); } }} bridge={fakeBridge(() => null)} />);
+    const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
+    expect(await section.findByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
+    expect(issued).toBe(0);
   });
 });

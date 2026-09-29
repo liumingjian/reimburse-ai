@@ -1,12 +1,13 @@
-import { EXTENSION_BRIDGE_NAMESPACE, EXTENSION_VERSION, type ExtensionBridgeExtensionMessage, type ExtensionBridgePageMessage, type ExtensionBridgePresence } from '@baox/contract';
+import { EXTENSION_BRIDGE_NAMESPACE, EXTENSION_VERSION, type ExtensionBridgeExtensionMessage, type ExtensionBridgePageMessage, type ExtensionBridgePairOutcome, type ExtensionBridgePresence } from '@baox/contract';
 import type { ChannelStatus } from './connection';
 import { APP_UNREACHABLE } from './messages';
-import { checkPairing, redeemPairingCode, revokePairing } from './pairing';
+import { checkPairing, redeemPairingCode, revokePairing, type PairingOutcome } from './pairing';
 
 // What the popup asks the service worker about the pairing: pair with a 配对码 (pairing code), 撤销配对 (revoke the
 // pairing), and status. The service worker only wires `chrome` into this; storage, the network and the channel are
 // injected so the whole exchange runs in a test without a browser. Anything else that pairs the extension goes through
-// `pair` too, so the version check and the refusal wording stay in one place.
+// `redeem` too (the popup through `pair`, the page bridge through `bridge`), so the version check, the refusal wording
+// and what a pairing starts stay in one place.
 //
 // The baox page asks through the page bridge (`bridge.ts`, #287) and is answered by `bridge`: a narrower set than the
 // popup's, because a web page must never be able to 撤销配对 or read the token.
@@ -60,12 +61,19 @@ export function createPairingRequests({ origin, storage, channel, browser, fetch
     return value && typeof value.token === 'string' && typeof value.accountId === 'string' ? { token: value.token, accountId: value.accountId } : null;
   }
 
-  async function pair(code: string): Promise<PopupAnswer> {
+  /** The one redeem path: exchanges a 配对码 for the pairing, stores it, and opens the channel with it. */
+  async function redeem(code: string): Promise<PairingOutcome> {
     const outcome = await redeemPairingCode({ origin, code, browser: browser(), fetchImpl });
-    if (!outcome.ok) return { ...base(), paired: false, accountId: null, error: outcome.message };
+    if (!outcome.ok) return outcome;
     const pairing = { token: outcome.token, accountId: outcome.accountId };
     await storage.set({ [PAIRING_KEY]: pairing });
     channel.start(pairing);
+    return outcome;
+  }
+
+  async function pair(code: string): Promise<PopupAnswer> {
+    const outcome = await redeem(code);
+    if (!outcome.ok) return { ...base(), paired: false, accountId: null, error: outcome.message };
     return { ...base(), paired: true, accountId: outcome.accountId };
   }
 
@@ -107,11 +115,28 @@ export function createPairingRequests({ origin, storage, channel, browser, fetch
     return { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'presence', version: EXTENSION_VERSION, paired, accountId: paired ? pairing.accountId : null };
   }
 
+  /**
+   * Redeems a 配对码 the baox page handed over (#291), the same way as one typed into the popup, and answers with the
+   * outcome; a failure keeps the redeem's code and message, so the page shows what the popup would.
+   */
+  async function pairFromPage(code: string): Promise<ExtensionBridgePairOutcome> {
+    // #292 goes here: when the extension is paired to a different 应用账号, ask the employee before redeeming, and
+    // answer declined without redeeming if they refuse.
+    const outcome = await redeem(code);
+    return {
+      namespace: EXTENSION_BRIDGE_NAMESPACE,
+      kind: 'pair_outcome',
+      outcome: outcome.ok ? { status: 'paired', accountId: outcome.accountId } : { status: 'failed', code: outcome.code, message: outcome.message },
+    };
+  }
+
   /** Answers a message from the baox page, relayed by the content script. */
   function bridge(message: ExtensionBridgePageMessage): Promise<ExtensionBridgeExtensionMessage> {
     switch (message.kind) {
       case 'probe':
         return presence();
+      case 'pair':
+        return pairFromPage(message.code);
     }
   }
 
@@ -132,5 +157,5 @@ export function createPairingRequests({ origin, storage, channel, browser, fetch
     }
   }
 
-  return { readPairing, pair, unpair, status, start, answer, presence, bridge };
+  return { readPairing, redeem, pair, unpair, status, start, answer, presence, bridge };
 }
