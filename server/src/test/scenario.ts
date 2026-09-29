@@ -18,6 +18,7 @@ import { presetParser, type PresetParser } from './parse-presets';
 //
 //   upload     create the task, upload `materials`
 //   inventory  start-inventory, wait until parsed          → pending (open items), inventory (blocked) or project
+//              (with `stayTrio: 'answered'`, the 住宿 trio items are answered with 确认没有 first)
 //   project    answer every 住宿 trio item with 确认没有    → project
 //   review     submit-project-assignment (`projects`)      → review
 //   actions    confirm-review                              → actions / choose_action
@@ -63,6 +64,10 @@ export type ScenarioOptions = {
   // entered in the account's project book first; numbers a function returns must be among them.
   projects?: string | ((line: Line) => string);
   purpose?: string;
+  // The 住宿 trio items (#213) the inventory raises for a hotel invoice. 'answered': each open one is answered with
+  // 确认没有 before the inventory rung is checked, so `at('pending')` stops on the other open items. 'open': left for
+  // the test. Default: 'open' for at('inventory' | 'pending'), 'answered' for the later stages (which need them closed).
+  stayTrio?: 'answered' | 'open';
 };
 
 export type Refusal = { status: number; code: string };
@@ -134,11 +139,13 @@ export function scenario(server: ScenarioServer, client?: TestClient) {
 
       await http.accepted(await http.act(current, 'start-inventory'));
       current = await settle(http.current, task.taskId);
+      const answerTrio = (options.stayTrio ?? (stage === 'inventory' || stage === 'pending' ? 'open' : 'answered')) === 'answered';
+      if (answerTrio) current = await http.withoutStayGaps(current);
       const atInventory = stop(current, 'inventory');
       if (atInventory) return atInventory;
       if (stage === 'inventory' || stage === 'pending') missed(current, 'inventory');
 
-      current = await http.withoutStayGaps(current);
+      if (!answerTrio) current = await http.withoutStayGaps(current);
       const atProject = stop(current, 'answering the 住宿 trio');
       if (atProject) return atProject;
 
