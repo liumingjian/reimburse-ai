@@ -48,7 +48,7 @@ describe('recognition snapshot cases', () => {
   it.each(cases)('%s', async (name) => {
     const doc = parseDocSnapshot(readFileSync(join(DIR, `${name}.doc.json`), 'utf8'));
     const expected = JSON.parse(readFileSync(join(DIR, `${name}.expected.json`), 'utf8')) as Expected;
-    const outcome = await parseMaterial({ materialId: name, fileName: `${name}.${doc.mediaType === 'pdf' ? 'pdf' : 'jpg'}`, mediaType: doc.mediaType, bytes: new Uint8Array() }, snapshotReaders(doc));
+    const outcome = await parseMaterial({ materialId: name, fileName: `${name}.${doc.mediaType === 'pdf' ? 'pdf' : 'jpg'}`, mime: doc.mediaType === 'pdf' ? 'application/pdf' : 'image/jpeg', bytes: new Uint8Array() }, snapshotReaders(doc));
 
     expect(outcome.outcome).toBe(expected.outcome);
     if (outcome.outcome !== 'recognised') return;

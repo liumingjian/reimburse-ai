@@ -6,6 +6,7 @@ import { legacyHoldings } from './legacy/import';
 import { inventoryView, type InventoryView, type ViewMaterial } from './inventory-view';
 import { occupancyBlockers, type Holding } from './occupancy-ledger';
 import type { ParseOutcome } from './parse/dispatch';
+import { declaredMedium } from './parse/media';
 import { inventoried, type TaskFacts } from './projection';
 import { assignmentOf, type Assignment, type AssignmentFact, type PinnedProject } from './assignment';
 import { bookOptions, type BookOption } from './books';
@@ -19,9 +20,9 @@ import { loadPrintFacts, type PrintFacts } from './print/facts';
 
 type Tx = Db;
 
-const IMAGE_FILE = /\.(jpe?g|png)$/i;
-
-export type MaterialRow = MaterialTable & { size: number; mime: string; row_no: number; excluded: number };
+// `medium` is the medium the upload declared, as recognition reads a name and MIME (`parse/media.ts`): what the
+// material list and print go by. Parsing sniffs the bytes instead.
+export type MaterialRow = MaterialTable & { size: number; mime: string; row_no: number; excluded: number; medium: 'pdf' | 'image' };
 
 export type LoadedTask = {
   facts: TaskFacts;
@@ -46,8 +47,6 @@ export type LoadedTask = {
   print: PrintFacts;
 };
 
-export const mediaTypeOf = (row: MaterialRow): 'pdf' | 'image' => (IMAGE_FILE.test(row.file_name) || row.mime.startsWith('image/') ? 'image' : 'pdf');
-
 const viewMaterial = (row: MaterialRow): ViewMaterial => ({
   materialId: row.material_id,
   batchId: row.batch_id,
@@ -55,14 +54,14 @@ const viewMaterial = (row: MaterialRow): ViewMaterial => ({
   relativePath: row.source_path ?? row.file_name,
   contentHash: row.blob_sha256,
   size: row.size,
-  mediaType: mediaTypeOf(row),
+  mediaType: row.medium,
   excluded: Boolean(row.excluded),
   uploadedAt: row.created_at,
   uploadSeq: row.row_no,
 });
 
 export async function materialRows(tx: Tx, taskId: string): Promise<MaterialRow[]> {
-  return tx
+  const rows = await tx
     .selectFrom('material')
     .innerJoin('blob', 'blob.sha256', 'material.blob_sha256')
     .leftJoin('material_exclusion', 'material_exclusion.material_id', 'material.material_id')
@@ -71,6 +70,7 @@ export async function materialRows(tx: Tx, taskId: string): Promise<MaterialRow[
     .where('material.task_id', '=', taskId)
     .orderBy(sql`material.rowid`)
     .execute();
+  return rows.map((row) => ({ ...row, medium: declaredMedium({ fileName: row.file_name, mime: row.mime }) }));
 }
 
 // The upload batches and rejected files the snapshot lists next to the materials.

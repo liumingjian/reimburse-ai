@@ -40,7 +40,7 @@ import type { ParseInput } from './parse/material';
 import { EXCLUDE_CHOICE, judgeAnswer, type Verdict } from './pending/answers';
 import { EDIT_COPY, EDIT_PREFIX, judgeEdit } from './pending/edits';
 import { inventoried, isNonTerminal, parseRunning, project, stepToken, type TaskFacts } from './projection';
-import { loadFacts, materialRows, mediaTypeOf, uploadHistory, type LoadedTask, type MaterialRow } from './task-facts';
+import { loadFacts, materialRows, uploadHistory, type LoadedTask, type MaterialRow } from './task-facts';
 import { relativeSourcePath, rejectByShape, rejectReason, sourceFileName, storedMime } from './upload-rules';
 import { checkAssign, checkSubmit, linesDigest } from './assignment';
 import { bookOptions, createBookService } from './books';
@@ -320,7 +320,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       confirmedRevision: loaded.confirmed?.revision ?? null,
       lines: loaded.lines,
       materials: loaded.view.materials,
-      sources: new Map(rows.filter((row) => !row.excluded).map((row) => [row.material_id, { sha256: row.blob_sha256, mediaType: mediaTypeOf(row), fileName: row.file_name }] as const)),
+      sources: new Map(rows.filter((row) => !row.excluded).map((row) => [row.material_id, { sha256: row.blob_sha256, mediaType: row.medium, fileName: row.file_name }] as const)),
       facts: loaded.print,
       trios: loaded.view.trios,
       erpAttempted: loaded.erp.attempted,
@@ -759,9 +759,9 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       const { facts, runId, parsed } = await loadFacts(db, task, rows);
       if (!runId || !parseRunning(facts)) return null;
       const todo = rows.filter((row) => !row.excluded && !parsed.has(row.material_id));
-      const next = todo.find((row) => mediaTypeOf(row) === 'pdf') ?? todo[0];
+      const next = todo.find((row) => row.medium === 'pdf') ?? todo[0];
       if (!next) return null;
-      const input = { materialId: next.material_id, fileName: next.file_name, mediaType: mediaTypeOf(next), bytes: new Uint8Array() };
+      const input = { materialId: next.material_id, fileName: next.file_name, mime: next.mime, bytes: new Uint8Array() };
       try {
         return { runId, input: { ...input, bytes: new Uint8Array(readFileSync(blobPath(dataDir, next.blob_sha256))) }, preset: null };
       } catch {

@@ -19,8 +19,8 @@ describe('preset parse outcomes', () => {
     const actual: Record<string, ParsePreset> = {};
     for (const sample of SAMPLE_MATERIALS) {
       const bytes = new Uint8Array(readFileSync(join(GENERATED_DIR, sample.file)));
-      const mediaType = sample.file.endsWith('.pdf') ? 'pdf' : 'image';
-      actual[sample.file] = { sha256: sha256(bytes), outcome: await parser.parse({ materialId: sample.file, fileName: sample.fileName, mediaType, bytes }) };
+      const mime = sample.file.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
+      actual[sample.file] = { sha256: sha256(bytes), outcome: await parser.parse({ materialId: sample.file, fileName: sample.fileName, mime, bytes }) };
     }
     if (UPDATE) writeFileSync(PARSE_PRESETS_PATH, `${JSON.stringify(actual, null, 2)}\n`);
     expect(loadParsePresets()).toEqual(actual);

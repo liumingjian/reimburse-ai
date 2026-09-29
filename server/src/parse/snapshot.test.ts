@@ -63,7 +63,7 @@ describe('the snapshot reader', () => {
   });
 
   it('round-trips a capture through its stored form', async () => {
-    const captured = await captureDoc({ mediaType: 'pdf', bytes: new Uint8Array() }, snapshotReaders(DOC));
+    const captured = await captureDoc({ fileName: 'x.pdf', mime: 'application/pdf', bytes: new Uint8Array() }, snapshotReaders(DOC));
     expect(parseDocSnapshot(formatDocSnapshot(captured))).toEqual(DOC);
     expect(formatDocSnapshot(captured).split('\n').filter((line) => line.includes('"id":'))).toHaveLength(DOC.observations.length);
   });

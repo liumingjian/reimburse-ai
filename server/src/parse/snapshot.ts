@@ -1,5 +1,6 @@
 import { rows, type ParseDoc, type TextObservation } from './doc';
 import type { ParseInput } from './material';
+import { readDoc } from './media';
 import type { DocReaders } from './readers';
 
 // The snapshot adapter of the `DocReaders` port (`readers.ts`). A document snapshot is the `ParseDoc` a real material
@@ -19,8 +20,8 @@ export function snapshotReaders(doc: ParseDoc): DocReaders {
 }
 
 // The document a material produces through `readers` (in practice the production readers), as plain data.
-export async function captureDoc(input: Pick<ParseInput, 'mediaType' | 'bytes'>, readers: DocReaders): Promise<ParseDoc> {
-  const doc = input.mediaType === 'pdf' ? await readers.pdf(input.bytes) : await readers.image(input.bytes);
+export async function captureDoc(input: Pick<ParseInput, 'fileName' | 'mime' | 'bytes'>, readers: DocReaders): Promise<ParseDoc> {
+  const doc = await readDoc(input, readers);
   return {
     mediaType: doc.mediaType,
     pageCount: doc.pageCount,
