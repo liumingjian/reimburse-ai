@@ -1,4 +1,6 @@
+import type { ExtensionBridgeExtensionMessage } from '@baox/contract';
 import { serverBlobs } from './blobs';
+import { bridgeRequestFrom, fromContentScript } from './bridge';
 import { channelWatch, createChannelClient, type ChannelClient, type ChannelStatus, type ClientSocket } from './connection';
 import { createErpRunner } from './erp-runner';
 import { dedicatedErpTab } from './erp-tab';
@@ -13,7 +15,8 @@ import { createPairingRequests, type PopupAnswer, type PopupRequest, type Stored
 //
 // Everything the popup can ask for goes through `chrome.runtime.sendMessage`, because the popup is a separate page
 // with its own lifetime and must not hold the connection itself. What it asks is answered by `pairing-requests.ts`;
-// this file only wires `chrome` into it.
+// this file only wires `chrome` into it. The baox page asks through the content script (the page bridge, `bridge.ts`),
+// over the same runtime messaging, and is answered from a narrower set.
 
 const WAKE_ALARM = 'baox-keep-alive';
 
@@ -105,8 +108,15 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === WAKE_ALARM && !client) void pairingRequests.start();
 });
 
-chrome.runtime.onMessage.addListener((message: PopupRequest, _sender, sendResponse: (answer: PopupAnswer) => void) => {
-  void pairingRequests.answer(message).then(sendResponse);
+chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse: (answer: PopupAnswer | ExtensionBridgeExtensionMessage) => void) => {
+  // A content script speaks for a web page, so it gets the page bridge's answers and nothing of the popup's.
+  if (fromContentScript(sender)) {
+    const request = bridgeRequestFrom(message, sender, BAOX_ORIGIN);
+    if (!request) return false;
+    void pairingRequests.bridge(request).then(sendResponse);
+    return true;
+  }
+  void pairingRequests.answer(message as PopupRequest).then(sendResponse);
   // Keeps the message port open for the async answer above; without it the popup gets `undefined`.
   return true;
 });

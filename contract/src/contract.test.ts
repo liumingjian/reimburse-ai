@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { CREATE_TASK_ERRORS, CreateTaskInputSchema, PENDING_ANSWER_ERRORS, isRealDate, validatePendingAnswer } from './actions';
 import { STAGE_DEFAULT_PAGE, pageAllowed, stageReached } from './stage';
 import { UrlSchema } from './primitives';
-import { extensionVersionRefusal } from './extension';
+import { EXTENSION_BRIDGE_NAMESPACE, ExtensionBridgeExtensionMessageSchema, ExtensionBridgePageMessageSchema, extensionVersionRefusal } from './extension';
 import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS, ERP_HANDOVER_STEP_COPY, ERP_PROGRESS_STEPS, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE } from './snapshot';
 import { KERNEL_PHASES } from './stage';
 
@@ -123,5 +123,21 @@ describe('扩展版本太旧的拒绝文案', () => {
       for (const step of ['重新下载扩展包', '覆盖原来的目录', '“重新加载”']) expect(refusal).toContain(step);
       expect(refusal).not.toContain('配对');
     }
+  });
+});
+
+// #290: the page and the extension ignore everything on the page's message bus that is not tagged as theirs.
+describe('page bridge messages', () => {
+  test('a presence parses only with the namespace tag', () => {
+    const presence = { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'presence', version: '1.1.0', paired: true, accountId: 'a1' };
+    expect(ExtensionBridgeExtensionMessageSchema.safeParse(presence).success).toBe(true);
+    expect(ExtensionBridgeExtensionMessageSchema.safeParse({ ...presence, namespace: 'someone-else' }).success).toBe(false);
+    expect(ExtensionBridgeExtensionMessageSchema.safeParse({ kind: 'presence', version: '1.1.0', paired: false, accountId: null }).success).toBe(false);
+  });
+
+  test('page and extension messages do not parse as each other', () => {
+    const probe = { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'probe' };
+    expect(ExtensionBridgePageMessageSchema.safeParse(probe).success).toBe(true);
+    expect(ExtensionBridgeExtensionMessageSchema.safeParse(probe).success).toBe(false);
   });
 });

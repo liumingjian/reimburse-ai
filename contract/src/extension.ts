@@ -41,7 +41,7 @@ export const extensionBlobPath = (sha256: string): string => `${EXTENSION_BLOB_P
 //
 // Releasing a changed extension: bump EXTENSION_VERSION here and rebuild; employees get it from the settings page.
 // Raise EXTENSION_MINIMUM_VERSION as well when the change is one an older extension must not be allowed to run.
-export const EXTENSION_VERSION = '1.0.1';
+export const EXTENSION_VERSION = '1.1.0';
 export const EXTENSION_MINIMUM_VERSION = '1.0.1';
 
 // ---------------------------------------------------------------------------
@@ -159,6 +159,47 @@ export const EXTENSION_PAIRING_STATUS_LABELS: Readonly<Record<(typeof EXTENSION_
   waiting: '配对码已生成，等待扩展填入',
   paired: '已配对',
 };
+
+// ---------------------------------------------------------------------------
+// The page bridge (#287)
+// ---------------------------------------------------------------------------
+
+// The baox page and the 浏览器扩展 talk directly through `window.postMessage`: the extension's content script runs on
+// the one origin stamped into its build (the same origin as `host_permissions`, so it costs no permission prompt) and
+// relays between the page and the service worker. Both sides parse every incoming message with the schemas below, so
+// a message either is one of these or is ignored.
+//
+// Every message carries EXTENSION_BRIDGE_NAMESPACE, so unrelated `postMessage` traffic on the page never parses. The
+// content script also checks that a message came from its own window and from the stamped origin; the page checks the
+// same of the answers.
+//
+// Adding a message: add its schema to the page or extension union. The page's bridge module and the extension's relay
+// both dispatch on `kind`, so a kind one side does not know is ignored there rather than misread.
+export const EXTENSION_BRIDGE_NAMESPACE = 'baox-extension-bridge';
+
+const BridgeNamespaceSchema = z.literal(EXTENSION_BRIDGE_NAMESPACE);
+
+// Page -> extension: "who are you?". Answered with a presence.
+export const ExtensionBridgeProbeSchema = z.object({ namespace: BridgeNamespaceSchema, kind: z.literal('probe') });
+export type ExtensionBridgeProbe = z.infer<typeof ExtensionBridgeProbeSchema>;
+
+// Extension -> page: installed, which version, and whether it is paired and to which 应用账号. Sent when the content
+// script loads and in answer to every probe. `paired` is what the app would accept right now, so a pairing revoked from
+// the settings page reads as unpaired at the next presence even while the token is still stored in the extension.
+export const ExtensionBridgePresenceSchema = z.object({
+  namespace: BridgeNamespaceSchema,
+  kind: z.literal('presence'),
+  version: ExtensionVersionSchema,
+  paired: z.boolean(),
+  accountId: z.string().min(1).nullable(),
+});
+export type ExtensionBridgePresence = z.infer<typeof ExtensionBridgePresenceSchema>;
+
+export const ExtensionBridgePageMessageSchema = z.discriminatedUnion('kind', [ExtensionBridgeProbeSchema]);
+export type ExtensionBridgePageMessage = z.infer<typeof ExtensionBridgePageMessageSchema>;
+
+export const ExtensionBridgeExtensionMessageSchema = z.discriminatedUnion('kind', [ExtensionBridgePresenceSchema]);
+export type ExtensionBridgeExtensionMessage = z.infer<typeof ExtensionBridgeExtensionMessageSchema>;
 
 // ---------------------------------------------------------------------------
 // The channel (ADR-0019, ADR-0020)

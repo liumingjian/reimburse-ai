@@ -5,9 +5,9 @@ import { build } from 'esbuild';
 import { manifestFor, readExtensionVersion, readOriginPlaceholder } from './manifest.mjs';
 
 // Builds the unpacked extension into `dist/` (or the directory given as the first argument) as a template: wherever
-// the app's origin belongs, in the code (esbuild `define`, see `origin.ts`) and in `host_permissions`, it writes
-// EXTENSION_ORIGIN_PLACEHOLDER. The server fills in its own origin each time the settings page downloads the zip
-// (`server/src/extension/download.ts`).
+// the app's origin belongs, in the code (esbuild `define`, see `origin.ts`), in `host_permissions` and in the content
+// script's `matches`, it writes EXTENSION_ORIGIN_PLACEHOLDER. The server fills in its own origin each time the settings
+// page downloads the zip (`server/src/extension/download.ts`).
 //
 // Why the server and not this build: the origin is only known where the server runs (`BAOX_PUBLIC_ORIGIN`), and the
 // exact-origin guard compares it as a literal string, so `http://10.250.0.222` and `http://10.250.0.222:80` are two
@@ -34,6 +34,19 @@ await build({
   outdir: dist,
   bundle: true,
   format: 'esm',
+  platform: 'browser',
+  target: 'chrome116',
+  define: { __BAOX_ORIGIN__: JSON.stringify(placeholder) },
+  logLevel: 'warning',
+});
+
+// The content script is a classic script, not a module (the manifest has no way to load it as one), so it is its own
+// self-contained bundle.
+await build({
+  entryPoints: [join(root, 'src', 'content-script.ts')],
+  outdir: dist,
+  bundle: true,
+  format: 'iife',
   platform: 'browser',
   target: 'chrome116',
   define: { __BAOX_ORIGIN__: JSON.stringify(placeholder) },

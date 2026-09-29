@@ -1,12 +1,15 @@
-import { EXTENSION_VERSION } from '@baox/contract';
+import { EXTENSION_BRIDGE_NAMESPACE, EXTENSION_VERSION, type ExtensionBridgeExtensionMessage, type ExtensionBridgePageMessage, type ExtensionBridgePresence } from '@baox/contract';
 import type { ChannelStatus } from './connection';
 import { APP_UNREACHABLE } from './messages';
-import { redeemPairingCode, revokePairing } from './pairing';
+import { checkPairing, redeemPairingCode, revokePairing } from './pairing';
 
 // What the popup asks the service worker about the pairing: pair with a 配对码 (pairing code), 撤销配对 (revoke the
 // pairing), and status. The service worker only wires `chrome` into this; storage, the network and the channel are
 // injected so the whole exchange runs in a test without a browser. Anything else that pairs the extension goes through
 // `pair` too, so the version check and the refusal wording stay in one place.
+//
+// The baox page asks through the page bridge (`bridge.ts`, #287) and is answered by `bridge`: a narrower set than the
+// popup's, because a web page must never be able to 撤销配对 or read the token.
 
 const PAIRING_KEY = 'pairing';
 
@@ -85,6 +88,33 @@ export function createPairingRequests({ origin, storage, channel, browser, fetch
     return { ...base(), paired: pairing !== null, accountId: pairing?.accountId ?? null };
   }
 
+  // Whether the app still honours the stored pairing. A pairing revoked from the settings page stays in storage (the
+  // extension is only told over the channel, and only if the channel is up), so the stored token is not enough to
+  // announce the extension as paired. The channel's refusal settles it without a request; otherwise the app is
+  // asked, and an app that cannot be reached leaves the stored pairing standing.
+  async function stillPaired(pairing: StoredPairing): Promise<boolean> {
+    const current = channel.status();
+    if (current?.state === 'refused' && current.code === 'not_paired') return false;
+    return (await checkPairing({ origin, token: pairing.token, fetchImpl })) !== 'not_paired';
+  }
+
+  /** What the extension announces to the baox page: its version, and the 应用账号 it is paired to, if the app agrees. */
+  async function presence(): Promise<ExtensionBridgePresence> {
+    const pairing = await readPairing();
+    const paired = pairing !== null && (await stillPaired(pairing));
+    // A page visit is as good a time as the popup's to bring the connection back.
+    if (pairing && paired && !channel.running()) channel.start(pairing);
+    return { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'presence', version: EXTENSION_VERSION, paired, accountId: paired ? pairing.accountId : null };
+  }
+
+  /** Answers a message from the baox page, relayed by the content script. */
+  function bridge(message: ExtensionBridgePageMessage): Promise<ExtensionBridgeExtensionMessage> {
+    switch (message.kind) {
+      case 'probe':
+        return presence();
+    }
+  }
+
   /** Opens the channel if a pairing is stored: on startup, install, and the wake alarm. */
   async function start(): Promise<void> {
     const pairing = await readPairing();
@@ -102,5 +132,5 @@ export function createPairingRequests({ origin, storage, channel, browser, fetch
     }
   }
 
-  return { readPairing, pair, unpair, status, start, answer };
+  return { readPairing, pair, unpair, status, start, answer, presence, bridge };
 }

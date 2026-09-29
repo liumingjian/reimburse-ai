@@ -3,6 +3,7 @@ import { merge as mergeCarbonFlags } from '@carbon/feature-flags';
 import { FeatureFlags } from '@carbon/react';
 import { type AppAdapter } from '@baox/contract';
 import { AppProvider, useSession } from './adapter/context';
+import type { ExtensionBridge } from './adapter/extension-bridge';
 import { AppStore } from './adapter/store';
 import { VALIDATE_SNAPSHOTS } from './env';
 import { AdminPage, ADMIN_COPY } from './pages/AdminPage';
@@ -82,13 +83,14 @@ function AuthGate({ children }: { children: ReactNode }) {
   return <AuthPending error={session.status === 'error' ? session.error : null} />;
 }
 
-export function App({ adapter }: { adapter: AppAdapter }) {
+// `bridge`: how pages reach the 浏览器扩展 (`adapter/extension-bridge.ts`). Left out, no extension ever answers.
+export function App({ adapter, bridge }: { adapter: AppAdapter; bridge?: ExtensionBridge }) {
   const store = useMemo(() => new AppStore(adapter, { validate: VALIDATE_SNAPSHOTS }), [adapter]);
   // Carbon 弹层默认用两个写着英文「Focus sentinel」的隐藏元素兜住焦点；打开这个开关改用不带哨兵元素的焦点循环。
   // 弹层（Modal）读这里的上下文开关；OverflowMenu 的浮层读全局开关，见文件顶部的 mergeCarbonFlags。
   return (
     <FeatureFlags enableFocusWrapWithoutSentinels>
-      <AppProvider store={store}>
+      <AppProvider store={store} {...(bridge ? { bridge } : {})}>
         <AuthGate>
           <Routes />
         </AuthGate>

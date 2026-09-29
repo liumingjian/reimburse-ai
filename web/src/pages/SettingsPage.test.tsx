@@ -1,8 +1,11 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
-import { EXTENSION_DOWNLOAD_PATH, EXTENSION_PAIRING_STATUS_LABELS, EXTENSION_VERSION, LEGACY_IMPORT_ERRORS, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY } from '@baox/contract';
+import { EXTENSION_DOWNLOAD_PATH, EXTENSION_MINIMUM_VERSION, EXTENSION_PAIRING_STATUS_LABELS, EXTENSION_VERSION, LEGACY_IMPORT_ERRORS, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY } from '@baox/contract';
 import { App } from '../App';
+import type { ExtensionBridge, ExtensionPresence } from '../adapter/extension-bridge';
+import { MOCK_ACCOUNT } from '../mock/auth';
 import { createMockAdapter } from '../mock/mock-adapter';
+import { EXTENSION_TUTORIAL_COPY } from './ExtensionTutorialPage';
 import type { LegacyOption } from '../mock/options';
 import { EXTENSION_INSTALL_COPY, EXTENSION_PAIRING_COPY } from './SettingsPage';
 
@@ -202,5 +205,100 @@ describe('设置页：浏览器扩展的下载、安装与升级', () => {
     renderPairing({ paired: true });
     await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.paired);
     expect(within(extensionPanel()).queryByText(/请按下面“升级扩展”的步骤/)).toBeNull();
+  });
+});
+
+// #290: the page asks the extension in this browser who it is (a fake bridge here; the real one is
+// adapter/extension-bridge.ts) and shows only the step the employee is on.
+describe('设置页：按这台浏览器里的扩展只显示当前这一步', () => {
+  // Answers every probe with what `presence` returns at that moment; null is silence.
+  function fakeBridge(presence: () => ExtensionPresence | null): ExtensionBridge & { probes: () => number } {
+    let probes = 0;
+    return {
+      probe: async () => {
+        probes += 1;
+        return presence();
+      },
+      probes: () => probes,
+    };
+  }
+
+  function renderWithExtension(bridge: ExtensionBridge, { paired = false, hash = '#/settings' }: { paired?: boolean; hash?: string } = {}) {
+    window.location.hash = hash;
+    render(<App adapter={createMockAdapter({ seed: 'actions', fault: null, ...(paired ? { extensionPaired: true } : {}) })} bridge={bridge} />);
+  }
+
+  const mine = (version = EXTENSION_VERSION): ExtensionPresence => ({ version, paired: true, accountId: MOCK_ACCOUNT.accountId });
+
+  test('没有扩展应答：安装步骤和手动配对码，和以前一样', async () => {
+    renderWithExtension(fakeBridge(() => null));
+    const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
+    expect(await section.findByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
+    expect(section.getByRole('button', { name: '生成配对码' })).toBeTruthy();
+    expect(section.getByRole('link', { name: EXTENSION_PAIRING_COPY.tutorial })).toBeTruthy();
+    expect(section.getByRole('link', { name: EXTENSION_PAIRING_COPY.download }).getAttribute('href')).toBe(EXTENSION_DOWNLOAD_PATH);
+  });
+
+  test('扩展比这个应用要求的旧：说出装的版本和要求的版本，只给升级步骤', async () => {
+    renderWithExtension(fakeBridge(() => ({ version: '1.0.0', paired: false, accountId: null })));
+    const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
+    expect(await section.findByText(EXTENSION_INSTALL_COPY.tooOld('1.0.0', EXTENSION_MINIMUM_VERSION))).toBeTruthy();
+    const steps = section.getByRole('list', { name: EXTENSION_INSTALL_COPY.upgradeTitle });
+    expect(within(steps).getAllByRole('listitem')).toHaveLength(EXTENSION_INSTALL_COPY.upgradeSteps.length);
+    expect(steps.textContent).not.toContain('配对');
+    expect(section.getByRole('link', { name: EXTENSION_PAIRING_COPY.download }).getAttribute('href')).toBe(EXTENSION_DOWNLOAD_PATH);
+    expect(section.queryByRole('button', { name: '生成配对码' })).toBeNull();
+    expect(section.queryByRole('link', { name: EXTENSION_PAIRING_COPY.tutorial })).toBeNull();
+    expect(section.queryByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeNull();
+  });
+
+  test('已经和这个账号配对：不显示教程，只显示连接状态', async () => {
+    renderWithExtension(fakeBridge(() => mine()), { paired: true });
+    const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
+    expect(await section.findByText(EXTENSION_PAIRING_COPY.connectedTitle)).toBeTruthy();
+    expect(section.getByText('已连接')).toBeTruthy();
+    expect(section.queryByRole('link', { name: EXTENSION_PAIRING_COPY.tutorial })).toBeNull();
+    expect(section.queryByRole('link', { name: EXTENSION_PAIRING_COPY.download })).toBeNull();
+    expect(section.queryByRole('button', { name: '重新生成配对码' })).toBeNull();
+    expect(section.getByRole('button', { name: '撤销配对' })).toBeTruthy();
+  });
+
+  test('扩展配对的是另一个账号：仍走手动配对码', async () => {
+    renderWithExtension(fakeBridge(() => ({ version: EXTENSION_VERSION, paired: true, accountId: 'someone-else' })));
+    const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
+    expect(await section.findByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
+    expect(section.getByRole('button', { name: '生成配对码' })).toBeTruthy();
+  });
+
+  test('撤销配对之后再问一次扩展，不会留着过时的已连接', async () => {
+    let paired = true;
+    const bridge = fakeBridge(() => (paired ? mine() : { version: EXTENSION_VERSION, paired: false, accountId: null }));
+    renderWithExtension(bridge, { paired: true });
+    const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
+    expect(await section.findByText(EXTENSION_PAIRING_COPY.connectedTitle)).toBeTruthy();
+    const before = bridge.probes();
+
+    // The extension, told by the server, answers unpaired from now on.
+    paired = false;
+    fireEvent.click(section.getByRole('button', { name: '撤销配对' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确定撤销' }));
+
+    expect(await section.findByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
+    expect(bridge.probes()).toBeGreaterThan(before);
+    expect(section.queryByText(EXTENSION_PAIRING_COPY.connectedTitle)).toBeNull();
+    expect(section.getByText(EXTENSION_PAIRING_STATUS_LABELS.none)).toBeTruthy();
+  });
+
+  test('独立教程也跟着走：扩展太旧只给升级步骤，已配对不给安装步骤', async () => {
+    renderWithExtension(fakeBridge(() => ({ version: '1.0.0', paired: false, accountId: null })), { hash: '#/settings/tutorial' });
+    expect(await screen.findByText(EXTENSION_INSTALL_COPY.tooOld('1.0.0', EXTENSION_MINIMUM_VERSION))).toBeTruthy();
+    expect(screen.getByRole('list', { name: '升级扩展' })).toBeTruthy();
+    expect(screen.queryByRole('list', { name: '安装步骤' })).toBeNull();
+    cleanup();
+
+    renderWithExtension(fakeBridge(() => mine()), { paired: true, hash: '#/settings/tutorial' });
+    expect(await screen.findByText(EXTENSION_TUTORIAL_COPY.pairedHere)).toBeTruthy();
+    expect(screen.queryByRole('list', { name: '安装步骤' })).toBeNull();
+    expect(screen.queryByRole('list', { name: '升级扩展' })).toBeNull();
   });
 });

@@ -9,6 +9,7 @@ import { AppShell } from '../shell/AppShell';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { EXTENSION_INSTALL_COPY } from './ExtensionTutorialPage';
+import { useExtensionSetup } from './extension-setup';
 
 export { EXTENSION_INSTALL_COPY } from './ExtensionTutorialPage';
 
@@ -181,16 +182,23 @@ export const EXTENSION_PAIRING_COPY = {
   revokeConfirm: '确定撤销',
   revokeDialogTitle: '撤销配对',
   revokeDialogBody: '撤销之后，那个浏览器里的扩展不能再替你去报销，要重新配对才行。你在这里仍然是登录状态。',
+  checking: '正在检测这台浏览器里的报销助手…',
+  outdatedTitle: EXTENSION_INSTALL_COPY.tooOldTitle,
+  outdatedLead: EXTENSION_INSTALL_COPY.tooOld,
+  pairedHereReconnecting: '这台浏览器里的扩展已经和这个账号配对，正在重新连上应用。稍等片刻后刷新这一页。',
   loading: '正在读取配对情况…',
   loadFailed: '配对情况加载失败',
   retryLoad: '重试',
 } as const;
 
 // The pairing panel renders the state from the existing adapter. The page never tracks a second connected flag: the
-// server's pairing read is the only authority for whether a browser is paired and connected.
+// server's pairing read is the only authority for whether a browser is paired and connected. What the extension in
+// this browser says over the page bridge (`extension-setup.ts`) decides only which step to show: the full install
+// and manual 配对码 flow, the upgrade steps alone, or no tutorial at all once this browser is paired to this account.
 function ExtensionPairingSection() {
   const store = useAppStore();
   const state = useExtensionPairing();
+  const { step, reprobe } = useExtensionSetup();
   const [busy, setBusy] = useState<'issue' | 'revoke' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -205,10 +213,13 @@ function ExtensionPairingSection() {
       return;
     }
     setConfirming(false);
+    // Both void the pairing the extension may be holding, so what it said before is stale now.
+    reprobe();
   };
 
   const view = state.data;
   const activeOrigin = view?.activeOrigin ?? '';
+  const guided = step.kind === 'notInstalled' || step.kind === 'notPairedHere';
   const next = view?.status === 'paired'
     ? view.connected
       ? { title: EXTENSION_PAIRING_COPY.connectedTitle, lead: EXTENSION_PAIRING_COPY.connectedLead(activeOrigin) }
@@ -257,69 +268,106 @@ function ExtensionPairingSection() {
               ]}
             />
           </div>
-          <div className="app-extension-next">
-            <h3>{next.title}</h3>
-            <p>{next.lead}</p>
-          </div>
-          {view.code ? (
+          {step.kind === 'checking' ? (
+            <p className="app-loading" role="status">
+              {EXTENSION_PAIRING_COPY.checking}
+            </p>
+          ) : null}
+          {step.kind === 'outdated' ? (
+            <div className="app-extension-next">
+              <h3>{EXTENSION_PAIRING_COPY.outdatedTitle}</h3>
+              <p>{EXTENSION_PAIRING_COPY.outdatedLead(step.installed, step.minimum)}</p>
+              <ol className="app-guide-steps" aria-label={EXTENSION_INSTALL_COPY.upgradeTitle}>
+                {EXTENSION_INSTALL_COPY.upgradeSteps.map((line) => <li key={line}>{line}</li>)}
+              </ol>
+              <div className="app-btn-row">
+                <Button kind="primary" href={EXTENSION_DOWNLOAD_PATH} renderIcon={Download}>
+                  {EXTENSION_PAIRING_COPY.download}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {step.kind === 'pairedHere' ? (
             <>
-              <InlineNotification kind="success" role="status" lowContrast hideCloseButton statusIconDescription="成功" title={EXTENSION_PAIRING_COPY.code} subtitle={view.code} />
-              <p className="app-caption">{EXTENSION_PAIRING_COPY.codeHint}</p>
+              <div className="app-extension-next">
+                <h3>{view.connected ? EXTENSION_PAIRING_COPY.connectedTitle : EXTENSION_PAIRING_COPY.disconnectedTitle}</h3>
+                <p>{view.connected ? EXTENSION_PAIRING_COPY.connectedLead(activeOrigin) : EXTENSION_PAIRING_COPY.pairedHereReconnecting}</p>
+              </div>
+              <div className="app-btn-row">
+                <Button kind="danger--tertiary" disabled={busy !== null} onClick={() => setConfirming(true)}>
+                  {EXTENSION_PAIRING_COPY.revoke}
+                </Button>
+              </div>
+              <p className="app-caption">{EXTENSION_PAIRING_COPY.independence}</p>
             </>
           ) : null}
-          {view.status === 'paired' && !view.connected ? (
-            <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={EXTENSION_PAIRING_COPY.migrationTitle}>
-              <p>{EXTENSION_PAIRING_COPY.migrationLead(view.activeOrigin)}</p>
-              <ol aria-label={EXTENSION_PAIRING_COPY.migrationTitle}>
-                <li>{EXTENSION_PAIRING_COPY.migrationDownload(view.activeOrigin)}</li>
-                <li>{EXTENSION_PAIRING_COPY.migrationReplace}</li>
-                <li>{EXTENSION_PAIRING_COPY.migrationPair}</li>
-                <li>{EXTENSION_PAIRING_COPY.migrationVerify}</li>
-              </ol>
-              <p>{EXTENSION_PAIRING_COPY.migrationOldPair(view.activeOrigin)}</p>
-            </InlineNotification>
-          ) : null}
-          {view.status === 'paired' && view.version !== null && compareExtensionVersions(view.version, EXTENSION_VERSION) < 0 ? (
-            <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={EXTENSION_INSTALL_COPY.outdated(view.version, EXTENSION_VERSION)} />
-          ) : null}
-          <div className="app-btn-row">
-            {view.status === 'none' ? (
-              <Button kind="primary" disabled={busy !== null} onClick={() => void act('issue')}>
-                {EXTENSION_PAIRING_COPY.firstTimeAction}
-              </Button>
-            ) : view.status === 'waiting' ? (
-              <Button kind="tertiary" disabled={busy !== null} onClick={() => void act('issue')}>
-                {EXTENSION_PAIRING_COPY.reissue}
-              </Button>
-            ) : null}
-            {view.status !== 'paired' || !view.connected ? (
-              <Button kind="secondary" href={EXTENSION_DOWNLOAD_PATH} renderIcon={Download}>
-                {EXTENSION_PAIRING_COPY.download}
-              </Button>
-            ) : null}
-            <Button kind="ghost" href={SETTINGS_TUTORIAL_HASH} target="_blank" rel="noreferrer" renderIcon={Launch}>
-              {EXTENSION_PAIRING_COPY.tutorial}
-            </Button>
-            {view.status === 'paired' && !view.connected ? (
-              <Button kind="primary" disabled={busy !== null} onClick={() => void act('issue')}>
-                {EXTENSION_PAIRING_COPY.reconnect}
-              </Button>
-            ) : null}
-            {view.status === 'paired' ? (
-              <>
-                {view.connected ? (
+          {guided ? (
+            <>
+              <div className="app-extension-next">
+                <h3>{next.title}</h3>
+                <p>{next.lead}</p>
+              </div>
+              {view.code ? (
+                <>
+                  <InlineNotification kind="success" role="status" lowContrast hideCloseButton statusIconDescription="成功" title={EXTENSION_PAIRING_COPY.code} subtitle={view.code} />
+                  <p className="app-caption">{EXTENSION_PAIRING_COPY.codeHint}</p>
+                </>
+              ) : null}
+              {view.status === 'paired' && !view.connected ? (
+                <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={EXTENSION_PAIRING_COPY.migrationTitle}>
+                  <p>{EXTENSION_PAIRING_COPY.migrationLead(view.activeOrigin)}</p>
+                  <ol aria-label={EXTENSION_PAIRING_COPY.migrationTitle}>
+                    <li>{EXTENSION_PAIRING_COPY.migrationDownload(view.activeOrigin)}</li>
+                    <li>{EXTENSION_PAIRING_COPY.migrationReplace}</li>
+                    <li>{EXTENSION_PAIRING_COPY.migrationPair}</li>
+                    <li>{EXTENSION_PAIRING_COPY.migrationVerify}</li>
+                  </ol>
+                  <p>{EXTENSION_PAIRING_COPY.migrationOldPair(view.activeOrigin)}</p>
+                </InlineNotification>
+              ) : null}
+              {view.status === 'paired' && view.version !== null && compareExtensionVersions(view.version, EXTENSION_VERSION) < 0 ? (
+                <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={EXTENSION_INSTALL_COPY.outdated(view.version, EXTENSION_VERSION)} />
+              ) : null}
+              <div className="app-btn-row">
+                {view.status === 'none' ? (
+                  <Button kind="primary" disabled={busy !== null} onClick={() => void act('issue')}>
+                    {EXTENSION_PAIRING_COPY.firstTimeAction}
+                  </Button>
+                ) : view.status === 'waiting' ? (
                   <Button kind="tertiary" disabled={busy !== null} onClick={() => void act('issue')}>
                     {EXTENSION_PAIRING_COPY.reissue}
                   </Button>
                 ) : null}
-                <Button kind="danger--tertiary" disabled={busy !== null} onClick={() => setConfirming(true)}>
-                  {EXTENSION_PAIRING_COPY.revoke}
+                {view.status !== 'paired' || !view.connected ? (
+                  <Button kind="secondary" href={EXTENSION_DOWNLOAD_PATH} renderIcon={Download}>
+                    {EXTENSION_PAIRING_COPY.download}
+                  </Button>
+                ) : null}
+                <Button kind="ghost" href={SETTINGS_TUTORIAL_HASH} target="_blank" rel="noreferrer" renderIcon={Launch}>
+                  {EXTENSION_PAIRING_COPY.tutorial}
                 </Button>
-              </>
-            ) : null}
-          </div>
-          {view.status === 'paired' ? <p className="app-caption">{EXTENSION_PAIRING_COPY.replaceHint}</p> : null}
-          {view.status === 'paired' ? <p className="app-caption">{EXTENSION_PAIRING_COPY.independence}</p> : null}
+                {view.status === 'paired' && !view.connected ? (
+                  <Button kind="primary" disabled={busy !== null} onClick={() => void act('issue')}>
+                    {EXTENSION_PAIRING_COPY.reconnect}
+                  </Button>
+                ) : null}
+                {view.status === 'paired' ? (
+                  <>
+                    {view.connected ? (
+                      <Button kind="tertiary" disabled={busy !== null} onClick={() => void act('issue')}>
+                        {EXTENSION_PAIRING_COPY.reissue}
+                      </Button>
+                    ) : null}
+                    <Button kind="danger--tertiary" disabled={busy !== null} onClick={() => setConfirming(true)}>
+                      {EXTENSION_PAIRING_COPY.revoke}
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+              {view.status === 'paired' ? <p className="app-caption">{EXTENSION_PAIRING_COPY.replaceHint}</p> : null}
+              {view.status === 'paired' ? <p className="app-caption">{EXTENSION_PAIRING_COPY.independence}</p> : null}
+            </>
+          ) : null}
           {error ? <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={error} /> : null}
         </>
       )}

@@ -7,7 +7,8 @@
 // - `host_permissions` must be the origin baked into the build, or the extension would be allowed to reach an
 //   address its code never talks to, or not allowed to reach the one it does. The build writes
 //   `EXTENSION_ORIGIN_PLACEHOLDER` (read from the contract the same way), and the server swaps in its own origin when
-//   it serves the zip.
+//   it serves the zip. The content script's `matches` is that same origin, for the same reason and one more: a match
+//   pattern inside `host_permissions` costs no new permission prompt when an employee upgrades.
 
 const VERSION_PATTERN = /^export const EXTENSION_VERSION = '([^']+)';$/m;
 const PLACEHOLDER_PATTERN = /^export const EXTENSION_ORIGIN_PLACEHOLDER = '([^']+)';$/m;
@@ -36,6 +37,9 @@ export function manifestFor(version, origin) {
     // shows is permanent and designed around rather than hidden.
     permissions: ['storage', 'alarms', 'debugger', 'tabs'],
     host_permissions: [`${origin}/*`],
+    // The page bridge (#287): relays between the baox page and the service worker, on the baox origin and nowhere
+    // else. `document_start` so it listens before the page's first probe.
+    content_scripts: [{ matches: [`${origin}/*`], js: ['content-script.js'], run_at: 'document_start' }],
     background: { service_worker: 'service-worker.js', type: 'module' },
     action: { default_popup: 'popup.html', default_title: '报销助手' },
   };

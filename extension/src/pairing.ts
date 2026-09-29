@@ -61,3 +61,23 @@ export async function revokePairing({ origin, token, fetchImpl = fetch }: Revoke
     return false;
   }
 }
+
+export type PairingCheck = 'paired' | 'not_paired' | 'unknown';
+
+export type CheckOptions = { origin: string; token: string; fetchImpl?: typeof fetch; timeoutMs?: number };
+
+/**
+ * Whether the app still honours `token`: 'not_paired' when it answers 401 (revoked from the settings page, replaced by
+ * a newer 配对码, or the account deactivated), 'unknown' when it cannot be reached within `timeoutMs` or answers
+ * anything else. The stored pairing alone cannot tell a revoked token from a live one; this is how the page bridge
+ * avoids announcing a pairing the app no longer has.
+ */
+export async function checkPairing({ origin, token, fetchImpl = fetch, timeoutMs = 800 }: CheckOptions): Promise<PairingCheck> {
+  try {
+    const response = await fetchImpl(`${origin}${EXTENSION_PAIR_PATH}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(timeoutMs) });
+    if (response.status === 401) return 'not_paired';
+    return response.ok ? 'paired' : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
