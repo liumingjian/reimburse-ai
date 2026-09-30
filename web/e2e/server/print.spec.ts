@@ -85,9 +85,9 @@ test.describe('confirmed print and ERP navigation', () => {
     expect(first.width).toBeLessThan(listBox.width / 3);
     await page.reload();
     await expect(page.getByRole('tablist', { name: '每行页数' }).getByRole('tab', { name: '每行 3 页' })).toHaveAttribute('aria-selected', 'true');
-    // A click on a page opens it large.
+    // A click on a page opens it full screen.
     await image.click();
-    await expect(page.getByRole('img', { name: '第 1 页页图（放大）' })).toBeVisible();
+    await expect(page.getByRole('img', { name: '第 1 页页图（全屏）' })).toBeVisible();
     await page.getByRole('button', { name: '关闭', exact: true }).click();
     expect((await snapshotOf(page, taskId)).confirmation).toEqual(before.confirmation);
     await page.getByRole('button', { name: '去报销', exact: true }).click();

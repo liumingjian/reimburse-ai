@@ -203,65 +203,65 @@ describe('待确认项', () => {
 
 describe('原件查看器', () => {
   const viewer = () => within(detail()).getByTestId('doc-viewer');
-  const toolbar = () => within(viewer()).queryByRole('toolbar', { name: '原件查看' });
-  const tool = (name: string) => within(viewer()).getByRole('button', { name });
-  const readout = () => within(viewer()).getByRole('status').textContent;
   const photo = () => within(viewer()).getByRole('img', { name: /原件$/ });
+  const fullscreen = () => screen.queryByRole('img', { name: /原件（全屏）$/ });
+  const openFullscreen = () => fireEvent.click(within(viewer()).getByRole('button', { name: '全屏查看' }));
+  const stage = () => screen.getByTestId('fullscreen-stage');
 
-  test('放大、缩小改变倍数读数，适应窗口回到默认；旋转 90° 改变原件方向', async () => {
+  // QA 2026-09-30: the frame is too small to read, and zooming inside it did not help. The frame only shows the whole
+  // original; reading happens full screen, with just rotate and close.
+  test('原件框里没有放大缩小；点「全屏查看」或原件打开全屏，只有旋转与关闭', async () => {
     renderPending();
     await screen.findByRole('heading', { name: '待确认项' });
-    expect(toolbar()).toBeTruthy();
-    expect(readout()).toBe('当前倍数 100%');
-    expect(photo().style.transform).toContain('rotate(0deg)');
+    expect(within(viewer()).queryByRole('toolbar')).toBeNull();
+    for (const name of ['放大', '缩小', '适应窗口']) expect(within(viewer()).queryByRole('button', { name })).toBeNull();
+    expect(fullscreen()).toBeNull();
 
-    fireEvent.click(tool('放大'));
-    expect(readout()).toBe('当前倍数 125%');
-    fireEvent.click(tool('放大'));
-    fireEvent.click(tool('放大'));
-    expect(readout()).toBe('当前倍数 200%');
-    fireEvent.click(tool('缩小'));
-    expect(readout()).toBe('当前倍数 150%');
-    fireEvent.click(tool('适应窗口'));
-    expect(readout()).toBe('当前倍数 100%');
+    openFullscreen();
+    expect(fullscreen()).toBeTruthy();
+    const dialog = stage().closest('[role="dialog"]') as HTMLElement;
+    // Only close and rotate: no zoom anywhere.
+    expect(within(dialog).getAllByRole('button')).toHaveLength(2);
+    expect(within(dialog).getByRole('button', { name: '关闭' })).toBeTruthy();
 
-    // 缩到最小档时「缩小」不可用。
-    for (let index = 0; index < 3; index += 1) fireEvent.click(tool('缩小'));
-    expect(readout()).toBe('当前倍数 25%');
-    expect(tool('缩小').hasAttribute('disabled')).toBe(true);
-    fireEvent.click(tool('适应窗口'));
-
-    fireEvent.click(tool('旋转 90°'));
+    // Rotating full screen turns the frame's original too.
+    fireEvent.click(within(dialog).getByRole('button', { name: '旋转 90°' }));
+    expect(fullscreen()?.style.transform).toContain('rotate(90deg)');
     expect(photo().style.transform).toContain('rotate(90deg)');
-    fireEvent.click(tool('旋转 90°'));
-    fireEvent.click(tool('旋转 90°'));
-    fireEvent.click(tool('旋转 90°'));
-    expect(photo().style.transform).toContain('rotate(0deg)');
+
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(fullscreen()).toBeNull());
+
+    fireEvent.click(within(viewer()).getByTestId('doc-frame'));
+    expect(fullscreen()).toBeTruthy();
+    // A click on the image itself keeps the view; a click on the blank stage closes it.
+    fireEvent.click(fullscreen() as HTMLElement);
+    expect(fullscreen()).toBeTruthy();
+    fireEvent.click(stage());
+    expect(fullscreen()).toBeNull();
   });
 
-  test('切换到另一个待确认项后，倍数与角度回到默认', async () => {
+  test('切换到另一个待确认项后，角度回到默认', async () => {
     renderPending();
     await screen.findByRole('heading', { name: '待确认项' });
-    fireEvent.click(tool('放大'));
-    fireEvent.click(tool('旋转 90°'));
-    expect(readout()).toBe('当前倍数 125%');
+    openFullscreen();
+    fireEvent.click(within(stage().closest('[role="dialog"]') as HTMLElement).getByRole('button', { name: '旋转 90°' }));
+    fireEvent.click(stage());
+    expect(photo().style.transform).toContain('rotate(90deg)');
     fireEvent.click(itemButton('下车时间不合法'));
     expect(within(detail()).getByRole('img', { name: 'IMG_4906.jpg 原件' })).toBeTruthy();
-    expect(readout()).toBe('当前倍数 100%');
     expect(photo().style.transform).toContain('rotate(0deg)');
     // 切回来也是默认。
     fireEvent.click(itemButton('补填起点与终点'));
-    expect(readout()).toBe('当前倍数 100%');
     expect(photo().style.transform).toContain('rotate(0deg)');
   });
 
-  test('PDF 渲染不了时退回浏览器自带预览，不出现工具栏', async () => {
+  test('PDF 渲染不了时退回浏览器自带预览，不提供全屏查看', async () => {
     renderPending();
     await screen.findByRole('heading', { name: '待确认项' });
     fireEvent.click(itemButton('不支持的材料类型'));
     expect((await within(detail()).findByTitle('餐饮_发票.pdf 原件')).tagName).toBe('IFRAME');
-    expect(toolbar()).toBeNull();
-    expect(within(viewer()).queryByRole('button')).toBeNull();
+    expect(within(viewer()).queryByRole('button', { name: '全屏查看' })).toBeNull();
   });
 
   test('查看操作不发出任何适配器调用', async () => {
@@ -283,10 +283,9 @@ describe('原件查看器', () => {
     await screen.findByText('对照原件补填或作出选择。还剩 4 个。');
     calls.length = 0;
 
-    for (const name of ['放大', '放大', '缩小', '旋转 90°', '适应窗口']) fireEvent.click(tool(name));
-    fireEvent.pointerDown(within(viewer()).getByTestId('doc-frame'), { button: 0, clientX: 10, clientY: 10, pointerId: 1 });
-    fireEvent.pointerMove(within(viewer()).getByTestId('doc-frame'), { clientX: 40, clientY: 40, pointerId: 1 });
-    fireEvent.pointerUp(within(viewer()).getByTestId('doc-frame'), { pointerId: 1 });
+    openFullscreen();
+    fireEvent.click(within(stage().closest('[role="dialog"]') as HTMLElement).getByRole('button', { name: '旋转 90°' }));
+    fireEvent.click(stage());
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(calls).toEqual([]);
     const snapshot = await adapter.getSnapshot('T1');

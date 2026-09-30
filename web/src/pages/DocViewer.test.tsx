@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { Material } from '@baox/contract';
 import { t1Snapshot } from '../mock/fixtures/tasks';
@@ -19,18 +19,21 @@ afterEach(() => rendered.mockReset());
 
 // QA 2026-09-30: a PDF in the browser's own viewer opened small with thumbnails and was slow to paint.
 describe('DocViewer with a PDF original', () => {
-  test('shows the PDF rendered to an image in the same viewer as a photo, with its toolbar', async () => {
+  test('shows the PDF rendered to an image, and opens the same image full screen', async () => {
     rendered.mockResolvedValue({ url: 'blob:rendered', pageCount: 1, shownPages: 1 });
     const material = pdfMaterial();
     render(<DocViewer material={material} />);
 
     const image = await screen.findByRole('img', { name: `${material.fileName} 原件` });
     expect(image.getAttribute('src')).toBe('blob:rendered');
-    expect(screen.getByRole('toolbar', { name: '原件查看' })).toBeTruthy();
     // Fitted to the frame's width, not squeezed whole into its height.
-    expect(screen.getByRole('button', { name: '适应宽度' })).toBeTruthy();
     expect(screen.getByTestId('doc-frame').style.inlineSize).toBe('100%');
     expect(screen.queryByTitle(`${material.fileName} 原件`)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '全屏查看' }));
+    expect(screen.getByRole('img', { name: `${material.fileName} 原件（全屏）` }).getAttribute('src')).toBe('blob:rendered');
+    // Rendered once, shared by the frame and the full-screen view.
+    expect(rendered).toHaveBeenCalledTimes(1);
     expect(rendered).toHaveBeenCalledWith(material.previewUrl, expect.any(AbortSignal));
   });
 

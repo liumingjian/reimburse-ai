@@ -773,23 +773,18 @@ $doc-frame-block: var(--app-doc-frame-block);
   background: $layer-01;
   border: 1px solid $border-strong-01;
 
-  // 图片：框高取原件框，框宽按（旋转后的）图片比例由 DocViewer 内联给出，缩放时不变；窄到放不下时收窄。
-  // 原件放大后在框内滚动或按住拖动平移，页面本身不跳。
+  // 图片：框高取原件框，框宽按（旋转后的）图片比例由 DocImage 内联给出；窄到放不下时收窄。
+  // 渲染出的 PDF 铺满框宽，在框内竖向滚动。点原件打开全屏查看。
   &.is-image {
     display: grid;
     block-size: $doc-frame-block;
     min-inline-size: 10rem;
     overflow: auto;
     overscroll-behavior: contain;
-    touch-action: none;
   }
 
-  &.is-pannable {
-    cursor: grab;
-
-    &:active {
-      cursor: grabbing;
-    }
+  &.is-openable {
+    cursor: zoom-in;
   }
 
   // PDF 与「没有可用的预览」：同样高度的框，宽度按材料版式的比例，占位不改变版面位置。
@@ -819,7 +814,7 @@ $doc-frame-block: var(--app-doc-frame-block);
   }
 }
 
-// 原件查看器：工具栏在上，原件框在下，两者同宽。
+// 原件框的外层：让框宽可以低于按高度算出的宽度。
 .app-doc-viewer {
   display: grid;
   // The track may shrink below the frame's height-derived width, so in a column narrower than the document (the fixed
@@ -836,17 +831,68 @@ $doc-frame-block: var(--app-doc-frame-block);
   justify-self: stretch;
 }
 
-.app-doc-toolbar {
-  display: flex;
-  align-items: center;
-  gap: $spacing-02;
+// 全屏查看（DocFullscreen）：Carbon passive Modal 铺满整个窗口。顶栏（切换条、旋转）固定，原件在下方的舞台里
+// 居中、尽量放大，比窗口高就在舞台里往下滚动；点舞台空白处关闭。
+.cds--modal.app-doc-fullscreen .cds--modal-container {
+  position: fixed;
+  inset: 0;
+  inline-size: 100%;
+  max-inline-size: none;
+  block-size: 100%;
+  max-block-size: none;
 }
 
-.app-doc-zoom {
-  margin-inline-start: $spacing-03;
-  color: $text-secondary;
-  font-variant-numeric: tabular-nums;
-  @include type.type-style('label-01');
+.app-doc-fullscreen .cds--modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-03;
+  margin-block-end: 0;
+  padding: 0 $spacing-05 $spacing-05;
+  overflow: hidden;
+}
+
+.app-fullscreen-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: $spacing-03;
+}
+
+.app-fullscreen-header {
+  flex: 1;
+  min-inline-size: 0;
+  max-inline-size: 48rem;
+}
+
+.app-fullscreen-stage {
+  display: grid;
+  flex: 1;
+  gap: $spacing-03;
+  align-content: start;
+  justify-items: center;
+  min-block-size: 0;
+  padding: $spacing-05;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: $layer-02;
+  border: 1px solid $border-subtle-01;
+
+  // Focused on open so Esc and the scroll keys work; not a control, so no focus ring.
+  &:focus {
+    outline: none;
+  }
+}
+
+.app-fullscreen-image {
+  display: grid;
+  inline-size: 100%;
+}
+
+.app-fullscreen-pdf {
+  inline-size: 100%;
+  block-size: 100%;
+  min-block-size: 30rem;
+  border: 0;
 }
 
 // 画布是旋转后原件的外接框；比框小时居中，比框大时从左上角起滚动（auto 外边距不会裁掉溢出部分）。
@@ -1720,7 +1766,7 @@ $doc-frame-block: var(--app-doc-frame-block);
   border: 1px solid $border-subtle-01;
 }
 
-// The page image opens the enlarged view; the placement icons sit over the top-right corner of each half.
+// The page image opens the full-screen view; the placement icons sit over the top-right corner of each half.
 .app-page-figure {
   position: relative;
 }
@@ -1752,12 +1798,6 @@ $doc-frame-block: var(--app-doc-frame-block);
   &.is-bottom {
     inset-block-start: calc(50% + #{$spacing-02});
   }
-}
-
-.app-page-enlarged {
-  display: block;
-  inline-size: 100%;
-  border: 1px solid $border-subtle-01;
 }
 
 // The pending page's 上传支付截图 opens this hidden input.

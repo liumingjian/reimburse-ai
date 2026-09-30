@@ -104,11 +104,11 @@ describe('打印稿预览', () => {
     expect(within(pages()).queryByText(/上半页|下半页/)).toBeNull();
   });
 
-  test('点页图放大查看这一页', async () => {
+  test('点页图全屏查看这一页', async () => {
     renderPrint(true);
     await screen.findByRole('list', { name: '打印稿页面' });
-    fireEvent.click(within(hotelCard()).getByRole('button', { name: '放大查看第 7 页' }));
-    const enlarged = await screen.findByRole('img', { name: '第 7 页页图（放大）' });
+    fireEvent.click(within(hotelCard()).getByRole('button', { name: '全屏查看第 7 页' }));
+    const enlarged = await screen.findByRole('img', { name: '第 7 页页图（全屏）' });
     expect(enlarged.getAttribute('src')).toBe(screen.getByTestId('page-image-pg7').getAttribute('src'));
   });
 

@@ -66,8 +66,9 @@ export function LodgingPreview({ snapshot, materialId }: { snapshot: TaskSnapsho
         </Button>
       ) : null}
       {selected ? (
+        // Keyed by the retry only: switching folios keeps the viewer, so an open full-screen view stays open.
         <DocViewer
-          key={`${selected.materialId}:${retry}`}
+          key={retry}
           material={selected}
           header={switcher}
           onPreviewError={() => setFailed((ids) => [...ids, selected.materialId])}
