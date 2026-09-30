@@ -18,3 +18,19 @@ appears here. Two long Chinese file names were uploaded on top of the mock sampl
 | E | No truncation rule for file names; headers and short paragraphs wrap one glyph onto a line of its own. | `03-upload-long-names`, `04-inventory-long-names-pending-long-item1`, `06-project-add-dialog` (截止日 / 期), `09-erp-in-progress` |
 | F | Tables and form rows do not align: status columns at different x across stacked tables, helper text lifting one field above its row. | `04-inventory`, `04-inventory-duplicate-blocker`, `06-project-add-dialog`, `01-tasks-list` (更新时间 clipped) |
 | G | Display bugs found on the way: a page-sized black circle while the service is disconnected, raw ISO timestamps. | `01-tasks-service-disconnected`, `13-settings-extension-disconnected` |
+
+## After
+
+`after/` holds the same states after #319's four PRs, same size and crop. Pairs worth comparing first:
+
+| State | What changed |
+| --- | --- |
+| `05-pending-lodging-missing-payment` | 结账单 / 发票 switcher inside the viewer frame; one button row (ghost · secondary · primary) with notes below; one detail list |
+| `07-review-actions` | Equal summary fields; 去打印 / 去报销 as Tiles with aligned buttons; one edit group |
+| `13-settings-extension-disconnected` | Two-column field grid, formatted times; tutorial → download → next step, 撤销配对 apart |
+| `03-upload-long-names` | Fixed file-row columns, middle ellipsis, two-line reasons |
+| `05-pending-all-done` | Handled items as a table |
+| `06-project-assign` | Lodging rows two lines like the rest |
+| `01-tasks-service-disconnected` | Inline loading instead of a black circle |
+
+Known remainders: the inventory's expanded material tables and the unassigned-materials table sit in different containers, so their status columns do not share one x; Carbon modal bodies keep Carbon's 80% text measure.

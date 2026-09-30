@@ -175,6 +175,8 @@ one the shared components cannot express, extend the shared component. Evidence 
   one supplier's files apart), full name on hover. A `DetailList` row may show the full name.
 - **Wrapping**: body text uses `text-wrap: pretty`, so no line holds one orphaned glyph; table headers do not wrap,
   except the whole-claim table's `.app-wrap-head`.
+- **Guard**: `src/layout-rules.test.ts` fails when a page hand-builds a button row, summary bar, card or label-left list,
+  or gives an action bar's buttons a size.
 - **Screen widths**: layouts hold from 1280 to 1920px. `node web/scripts/ui-shots.mjs` screenshots every mock state
   for before/after comparison of a layout change.
 
@@ -192,7 +194,7 @@ one the shared components cannot express, extend the shared component. Evidence 
 ### 待确认项：原件与表单
 
 - 上面是待确认项清单：每行只放警示或完成图标、标题、文件名。已处理的行降低对比，并带绿色「已处理」标签。契约里的处理人这一页不显示。
-- 下面两栏贴顶：左边原件栏，宽度跟着缩放后的原件走；右边占剩余宽度（下限 400px），依次是标题与原因、补填表单、读出的字段（文件名、材料类别与识别字段同在一个详情列表 `DetailList` 里）。
+- 下面两栏贴顶：左边原件栏固定占 2/5，缩放后的原件在其中居中（切换待确认项时表单栏左边不跳）；右边占其余 3/5（下限 400px），依次是标题与原因、补填表单、读出的字段（文件名、材料类别与识别字段同在一个详情列表 `DetailList` 里）。
 - 原件在「一屏高度减去顶栏、步骤条和页头」的框内等比缩放，页面滚动时原件栏贴在步骤条下。PDF 与「没有可用的预览」用同样高度的框，占位不改变版面位置。
 - 1056px 以下原件在上、表单在下。
 

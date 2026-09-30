@@ -287,7 +287,7 @@ export function ProjectBookPanel({
         ) : book.status === 'error' && book.data === null ? (
           <div className="app-empty">
             <p>{book.error}</p>
-            <Button kind="secondary" onClick={() => void (scope === 'public' ? store.loadPublicBook() : store.loadProjectBook())}>
+            <Button size="md" kind="secondary" onClick={() => void (scope === 'public' ? store.loadPublicBook() : store.loadProjectBook())}>
               重试
             </Button>
           </div>

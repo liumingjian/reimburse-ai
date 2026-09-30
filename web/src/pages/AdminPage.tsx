@@ -108,7 +108,7 @@ function AccountsSection({ myId }: { myId: string }) {
       {accounts.data === null && accounts.status === 'error' ? (
         <div className="app-empty">
           <p>{accounts.error}</p>
-          <Button kind="secondary" onClick={() => void store.loadAccounts()}>
+          <Button size="md" kind="secondary" onClick={() => void store.loadAccounts()}>
             {ADMIN_COPY.retry}
           </Button>
         </div>
@@ -122,7 +122,7 @@ function AccountsSection({ myId }: { myId: string }) {
                 <TableHeader>用户名</TableHeader>
                 <TableHeader>角色</TableHeader>
                 <TableHeader>状态</TableHeader>
-                <TableHeader className="app-sticky-end" aria-label="操作" />
+                <TableHeader className="app-sticky-end">操作</TableHeader>
               </TableRow>
             </TableHead>
             <TableBody>

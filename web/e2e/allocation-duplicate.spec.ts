@@ -112,7 +112,7 @@ test('?duplicate=1：上传后整批停，显示重复发票表与命中的任�
 
   const table = page.getByRole('table', { name: '重复发票' });
   await expect(table).toBeVisible({ timeout: 15000 });
-  await expect(table.locator('thead th')).toHaveText(['序号', '材料/明细', '参考材料', '待处理问题', '处理人']);
+  await expect(table.locator('thead th')).toHaveText(['序号', '材料/明细', '参考材料', '待处理问题', '处理人', '操作']);
   const cells = table.locator('tbody tr td');
   await expect(cells.nth(1)).toHaveText('铁路电子客票_0809.pdf');
   await expect(cells.nth(3)).toContainText('2026-06 北京培训');

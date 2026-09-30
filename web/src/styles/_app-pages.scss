@@ -12,6 +12,11 @@ $gutter: $spacing-06;
   @include type.type-style('heading-03');
 }
 
+// A section title directly over a full-bleed table keeps the same gap as over any other block.
+.app-section-title + .bleed {
+  margin-block-start: $spacing-05;
+}
+
 .app-subhead {
   margin: $spacing-06 0 $spacing-03;
   @include type.type-style('heading-compact-02');
@@ -32,6 +37,11 @@ $gutter: $spacing-06;
   > .cds--btn {
     margin-inline-start: auto;
   }
+}
+
+// The upload batch's count sits between the batch title and its file list.
+.app-block-head + .app-fields {
+  margin-block-end: $spacing-04;
 }
 
 .app-block-note {
@@ -341,6 +351,7 @@ $gutter: $spacing-06;
   }
 
   .desc {
+    margin-block-start: $spacing-01;
     color: $text-helper;
     @include type.type-style('helper-text-01');
   }
@@ -674,10 +685,11 @@ $doc-frame-block: var(--app-doc-frame-block);
   --app-doc-frame-block: max(20rem, calc(100vh - 15rem));
 }
 
-// 两栏：原件栏按缩放后的原件定宽（auto），表单栏占剩余宽度、下限 25rem；两栏贴顶。
+// Two columns, both sticking to the top: the original takes a fixed 2/5 and centres the scaled document in it, so the
+// form's left edge stays put from item to item; the form takes the rest, at least 25rem.
 .app-review-split {
   display: grid;
-  grid-template-columns: minmax(0, auto) minmax(25rem, 1fr);
+  grid-template-columns: minmax(0, 2fr) minmax(25rem, 3fr);
   align-items: start;
   gap: $spacing-07;
 }
@@ -803,6 +815,9 @@ $doc-frame-block: var(--app-doc-frame-block);
 // 原件查看器：工具栏在上，原件框在下，两者同宽。
 .app-doc-viewer {
   display: grid;
+  // The track may shrink below the frame's height-derived width, so in a column narrower than the document (the fixed
+  // 2/5 original column at 1100px) the frame's max-inline-size caps it and the document scales down by width.
+  grid-template-columns: minmax(0, auto);
   gap: $spacing-03;
   min-inline-size: 0;
   max-inline-size: 100%;
@@ -850,6 +865,13 @@ $doc-frame-block: var(--app-doc-frame-block);
   margin-inline: $spacing-03 0;
 }
 
+// Pending page with nothing left: the title, the handled items as a table, then the next step.
+.app-pending-done {
+  display: grid;
+  gap: $spacing-05;
+  justify-items: stretch;
+}
+
 // Pending item forms: the 已处理 tag (when revisited), then the button group with its caption.
 .app-choice-form {
   display: grid;
@@ -874,23 +896,7 @@ $doc-frame-block: var(--app-doc-frame-block);
   gap: $spacing-03;
 }
 
-.app-resolved-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: $spacing-03;
-  margin-block-end: $spacing-02;
-}
 
-.app-resolved-list {
-  margin: 0 0 $spacing-06;
-  padding: 0;
-  list-style: none;
-
-  li {
-    padding-block: $spacing-02;
-  }
-}
 
 // ---------- 项目归属 ----------
 
@@ -1194,11 +1200,17 @@ $doc-frame-block: var(--app-doc-frame-block);
 .app-book-form {
   display: grid;
   grid-template-columns: minmax(9rem, 12rem) minmax(18rem, 1fr) minmax(10rem, 13rem) auto;
-  align-items: flex-end;
+  // Fields line up on their labels; a field's helper text (截止日期) hangs below instead of lifting the field.
+  align-items: start;
   gap: $spacing-04;
 
   > .cds--form-item {
     min-inline-size: 0;
+  }
+
+  // The button lines up with the inputs: one label height (label-01 plus Carbon's label margin) down.
+  > .cds--btn {
+    margin-block-start: 1.5rem;
   }
 }
 
@@ -1362,7 +1374,8 @@ $doc-frame-block: var(--app-doc-frame-block);
   grid-template-columns: minmax(0, 1fr) minmax(18rem, 26rem);
   align-items: center;
 
-  > .app-btn-row {
+  > .app-action-group,
+  > .app-caption {
     grid-column: 1 / -1;
   }
 
@@ -1375,14 +1388,6 @@ $doc-frame-block: var(--app-doc-frame-block);
   min-inline-size: 0;
 }
 
-.app-tutorial-download-note {
-  display: grid;
-  gap: $spacing-02;
-
-  p {
-    margin: 0;
-  }
-}
 
 .app-tutorial-browser {
   overflow: hidden;
@@ -1562,7 +1567,8 @@ $doc-frame-block: var(--app-doc-frame-block);
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .app-tutorial-intro > .app-btn-row {
+  .app-tutorial-intro > .app-action-group,
+  .app-tutorial-intro > .app-caption {
     grid-column: auto;
   }
 
@@ -1639,6 +1645,8 @@ $doc-frame-block: var(--app-doc-frame-block);
 }
 
 .app-print-summary {
+  display: grid;
+  gap: $spacing-03;
   margin: $spacing-05 0;
 }
 
@@ -1841,14 +1849,12 @@ $doc-frame-block: var(--app-doc-frame-block);
     border-block-start: 1px solid $border-subtle-01;
   }
 
-  .crop-editor,
-  .app-two-actions {
+  .crop-editor {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .app-action-card + .app-action-card {
-    border-inline-start: 0;
-    border-block-start: 1px solid $border-subtle-01;
+  .app-card-row {
+    grid-auto-flow: row;
   }
 }
 

@@ -29,6 +29,7 @@ import { formatDateTime } from '../format';
 import { navigate, taskHash } from '../router';
 import { ActionBar } from '../shell/ActionBar';
 import { ActionGroup } from '../shell/ActionGroup';
+import { Card, CardRow } from '../shell/Card';
 import { ActionError } from '../shell/ActionError';
 import { ConfirmDialog } from '../shell/Dialog';
 import { PageHeader } from '../shell/PageHeader';
@@ -256,37 +257,45 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
             statusIconDescription="成功"
             title={`整单明细已确认${confirmation.confirmedAt ? `（${formatDateTime(confirmation.confirmedAt)}）` : ''}。下面两个按钮基于同一份确认数据，先后随意、可重复。`}
           />
-          <div className="app-two-actions bleed">
-            <div className="app-action-card">
-              <h3>去打印</h3>
+          {/* Two entry cards on Carbon Tiles: equal height, buttons pinned to the bottom so they line up whatever
+              status text a card shows above its button. */}
+          <CardRow bleed label="去打印或去报销">
+            <Card
+              title="去打印"
+              actions={
+                <Button href={taskHash(taskId, 'print')} renderIcon={Printer}>
+                  去打印
+                </Button>
+              }
+            >
               <p>生成合并 PDF：每张发票一页 A4，发票在上、证明材料在下。住宿发票的支付截图在打印稿页补充。</p>
-              <Button href={taskHash(taskId, 'print')} renderIcon={Printer}>
-                去打印
-              </Button>
-            </div>
-            <div className="app-action-card">
-              <h3>去报销</h3>
+            </Card>
+            <Card
+              title="去报销"
+              actions={
+                erpDone ? (
+                  <Button href={taskHash(taskId, 'done')}>查看结果</Button>
+                ) : erpStarted ? (
+                  <Button href={taskHash(taskId, STAGE_DEFAULT_PAGE[stage])}>查看填报进度</Button>
+                ) : (
+                  <Button renderIcon={Launch} disabled={claimAction.busy} onClick={() => void claim()}>
+                    去报销
+                  </Button>
+                )
+              }
+            >
               <p>
                 已配对的浏览器扩展会为这次报销打开报销系统标签页。你登录后，应用自动导入发票、写入 {confirmation.lineCount} 行明细并严格回读。完成时只表示单据已填好并交接给你；请你在报销系统里核对、保存并提交。
                 {erpDone ? '已交接，去完成页查看回读结果。' : ''}
               </p>
-              {erpDone ? (
-                <Button href={taskHash(taskId, 'done')}>查看结果</Button>
-              ) : erpStarted ? (
-                <Button href={taskHash(taskId, STAGE_DEFAULT_PAGE[stage])}>查看填报进度</Button>
-              ) : (
-                <Button renderIcon={Launch} disabled={claimAction.busy} onClick={() => void claim()}>
-                  去报销
-                </Button>
-              )}
               {!erpStarted && erp.abortReason ? (
                 <p className="app-caption" role="status" data-testid="erp-abort-reason">
                   {erp.abortReason}
                 </p>
               ) : null}
               <ActionError message={claimAction.error} />
-            </div>
-          </div>
+            </Card>
+          </CardRow>
           <ActionGroup
             className="app-after-actions"
             label="修改"

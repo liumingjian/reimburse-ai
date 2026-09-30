@@ -1,5 +1,5 @@
 import { useRef, useState, type ChangeEvent, type FormEvent } from 'react';
-import { Button, Tag, TextInput } from '@carbon/react';
+import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag, TextInput } from '@carbon/react';
 import { CheckmarkFilled, WarningAltFilled } from '@carbon/icons-react';
 import {
   segmentKey,
@@ -19,6 +19,7 @@ import {
 import { taskHash } from '../router';
 import { DetailList } from '../shell/DetailList';
 import { FieldGroup } from '../shell/FieldGroup';
+import { FileName } from '../shell/FileName';
 import { PageHeader } from '../shell/PageHeader';
 import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
@@ -52,7 +53,7 @@ function MaterialFields({ material }: { material: Material | undefined }) {
     label: field.label,
     value: (
       <>
-        {field.value || <span className="app-muted">未填</span>}
+        <span>{field.value || <span className="app-muted">未填</span>}</span>
         {EVIDENCE_LABELS[field.evidence] ? (
           <Tag className="app-evidence-tag" type={field.evidence === 'derived' ? 'gray' : 'red'} size="sm">
             {EVIDENCE_LABELS[field.evidence]}
@@ -331,27 +332,47 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
     return (
       <>
         <PageHeader title={copy.title} lead={items.length === 0 ? '本次盘点没有形成待确认项。' : `本次盘点的 ${items.length} 个待确认项都已处理。`} />
-        <section className="app-empty">
-          <h2>没有待确认项了</h2>
+        <section className="app-block app-pending-done" aria-labelledby="pending-done-title">
+          <h2 className="app-section-title" id="pending-done-title">
+            没有待确认项了
+          </h2>
           {items.length > 0 ? (
-            <ul className="app-resolved-list">
-              {items.map((item) => {
-                const note = gaveUpNote(item);
-                return (
-                  <li key={item.itemId}>
-                    <div className="app-resolved-head">
-                      <span>{item.title}</span> <Resolved />
-                    </div>
-                    <FieldGroup fields={[{ label: '文件名', value: <span className="app-file-name">{materialOf(item)?.fileName ?? item.materialId}</span> }]} />
-                    {note ? <div className="app-caption">{note}</div> : null}
-                  </li>
-                );
-              })}
-            </ul>
+            <div className="bleed app-table">
+              <Table aria-label="已处理的待确认项">
+                <TableHead>
+                  <TableRow>
+                    <TableHeader>待确认项</TableHeader>
+                    <TableHeader>文件</TableHeader>
+                    <TableHeader>状态</TableHeader>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {items.map((item) => {
+                    const note = gaveUpNote(item);
+                    return (
+                      <TableRow key={item.itemId}>
+                        <TableCell className="app-wrap">
+                          {item.title}
+                          {note ? <div className="app-caption">{note}</div> : null}
+                        </TableCell>
+                        <TableCell>
+                          <FileName name={materialOf(item)?.fileName ?? item.materialId} />
+                        </TableCell>
+                        <TableCell className="app-nowrap">
+                          <Resolved />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           ) : null}
-          <Button size="lg" href={taskHash(taskId, 'project')}>
-            进入项目归属
-          </Button>
+          <ActionGroup>
+            <Button size="md" href={taskHash(taskId, 'project')}>
+              进入项目归属
+            </Button>
+          </ActionGroup>
         </section>
       </>
     );

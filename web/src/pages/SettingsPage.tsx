@@ -82,7 +82,7 @@ function LegacyImportSection() {
         <div className="app-empty">
           <p>{LEGACY_IMPORT_COPY.loadFailed}</p>
           <p>{state.error}</p>
-          <Button kind="secondary" onClick={() => void store.loadLegacyImport()}>
+          <Button size="md" kind="secondary" onClick={() => void store.loadLegacyImport()}>
             {LEGACY_IMPORT_COPY.retryLoad}
           </Button>
         </div>
@@ -248,7 +248,7 @@ function ExtensionPairingSection() {
         <div className="app-empty">
           <p>{EXTENSION_PAIRING_COPY.loadFailed}</p>
           <p>{state.error}</p>
-          <Button kind="secondary" onClick={() => void store.loadExtensionPairing()}>
+          <Button size="md" kind="secondary" onClick={() => void store.loadExtensionPairing()}>
             {EXTENSION_PAIRING_COPY.retryLoad}
           </Button>
         </div>
