@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Button } from '@carbon/react';
+import { Button, ContentSwitcher, Switch } from '@carbon/react';
 import { type TaskSnapshot } from '@baox/contract';
 import { taskHash } from '../router';
+import { ActionGroup } from '../shell/ActionGroup';
+import { FileName } from '../shell/FileName';
 import { DocViewer } from './DocViewer';
 
 export function LodgingPreview({ snapshot, materialId }: { snapshot: TaskSnapshot; materialId: string }) {
@@ -32,17 +34,74 @@ export function LodgingPreview({ snapshot, materialId }: { snapshot: TaskSnapsho
   }, [previewUrl, selectedMaterialId, retry]);
   if (!evidence) return <DocViewer material={snapshot.materials.find((material) => material.materialId === materialId)} />;
   const previewFailed = selectedPreview ? !selectedPreview.available || failed.includes(selectedPreview.material.materialId) : false;
+  const selectedIndex = Math.max(0, choices.findIndex(({ material }) => material.materialId === selected?.materialId));
+  // 结账单 / 发票 is a ContentSwitcher inside the viewer frame: equal-width switches, file names with a middle ellipsis.
+  const switcher =
+    choices.length > 0 ? (
+      <ContentSwitcher className="app-doc-switcher" size="md" selectedIndex={selectedIndex} onChange={({ index }) => setSelectedId(choices[index ?? 0]?.material.materialId ?? null)}>
+        {choices.map(({ material }) => {
+          const kind = material.kind === 'hotel_folio' ? '结账单' : '发票';
+          return (
+            <Switch key={material.materialId} name={material.materialId} aria-label={`${kind}：${material.fileName}`}>
+              <span className="app-switch-kind">{kind}</span>
+              <FileName name={material.fileName} />
+            </Switch>
+          );
+        })}
+      </ContentSwitcher>
+    ) : null;
+  const retryPreview = (materialId: string) => {
+    setFailed((ids) => ids.filter((id) => id !== materialId));
+    setRetry((value) => value + 1);
+  };
   return (
-    <section aria-label="住宿材料预览">
-      <div className="app-btn-row">
-        {choices.map(({ material }) => <Button key={material.materialId} kind="tertiary" size="sm" aria-pressed={material.materialId === selected?.materialId} onClick={() => setSelectedId(material.materialId)}>{material.kind === 'hotel_folio' ? `结账单：${material.fileName}` : `发票：${material.fileName}`}</Button>)}
-      </div>
+    <section className="app-lodging-preview" aria-label="住宿材料预览">
       {evidence.state === 'missing' ? <p role="status">还没有这笔住宿的结账单。请追加结账单后重新盘点；确实没有，可在待确认项中记录缺失。</p> : null}
       {evidence.state === 'unlinked' ? <p role="status">任务中有结账单，但尚未与这笔住宿关联。请在材料盘点中核对结账单与发票的信息；打开预览不会建立关联。</p> : null}
-      {evidence.state === 'missing' || evidence.state === 'unlinked' ? <Button kind="ghost" href={taskHash(snapshot.task.taskId, evidence.state === 'missing' ? 'upload' : 'inventory')}>{evidence.state === 'missing' ? '去追加结账单' : '去核对材料关联'}</Button> : null}
-      {previewFailed && selected ? <div role="status"><p>材料已在任务中，但预览暂时不可用。这不表示缺少结账单。</p>{selected.previewUrl ? <Button kind="ghost" size="sm" onClick={() => { setFailed((ids) => ids.filter((id) => id !== selected.materialId)); setRetry((value) => value + 1); }}>重试预览</Button> : null}</div> : null}
-      {selected?.originalUrl ? <p><a href={selected.originalUrl} target="_blank" rel="noreferrer">{previewFailed ? '打开原件' : '预览空白或打不开？打开原件'}</a></p> : <Button kind="ghost" href={taskHash(snapshot.task.taskId, 'inventory')}>去检查原件状态</Button>}
-      {!previewFailed && selected ? <DocViewer key={`${selected.materialId}:${retry}`} material={selected} onPreviewError={() => setFailed((ids) => [...ids, selected.materialId])} /> : null}
+      {evidence.state === 'missing' || evidence.state === 'unlinked' ? (
+        <Button kind="ghost" size="md" href={taskHash(snapshot.task.taskId, evidence.state === 'missing' ? 'upload' : 'inventory')}>
+          {evidence.state === 'missing' ? '去追加结账单' : '去核对材料关联'}
+        </Button>
+      ) : null}
+      {selected ? (
+        <DocViewer
+          key={`${selected.materialId}:${retry}`}
+          material={selected}
+          header={switcher}
+          onPreviewError={() => setFailed((ids) => [...ids, selected.materialId])}
+          unavailable={
+            previewFailed ? (
+              <div role="status">
+                <p>材料已在任务中，但预览暂时不可用。这不表示缺少结账单。</p>
+                <ActionGroup>
+                  {selected.previewUrl ? (
+                    <Button kind="secondary" size="md" onClick={() => retryPreview(selected.materialId)}>
+                      重试预览
+                    </Button>
+                  ) : null}
+                  {selected.originalUrl ? (
+                    <Button kind="ghost" size="md" href={selected.originalUrl} target="_blank" rel="noreferrer">
+                      打开原件
+                    </Button>
+                  ) : null}
+                </ActionGroup>
+              </div>
+            ) : undefined
+          }
+        />
+      ) : null}
+      {selected?.originalUrl && !previewFailed ? (
+        <p className="app-caption app-viewer-note">
+          <a href={selected.originalUrl} target="_blank" rel="noreferrer">
+            预览空白或打不开？打开原件
+          </a>
+        </p>
+      ) : null}
+      {!selected?.originalUrl ? (
+        <Button kind="ghost" size="md" href={taskHash(snapshot.task.taskId, 'inventory')}>
+          去检查原件状态
+        </Button>
+      ) : null}
     </section>
   );
 }

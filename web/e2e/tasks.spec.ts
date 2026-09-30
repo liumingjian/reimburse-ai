@@ -13,7 +13,7 @@ test('任务列表显示三个任务及其阶段徽标', async ({ page }, testIn
   await expect(t1.getByText('3/10 材料盘点')).toBeVisible();
   await expect(t1.getByText('暂无可用日期')).toBeVisible();
   await expect(t1.getByText('暂无可用金额')).toBeVisible();
-  await expect(t1.getByRole('link', { name: '继续', exact: true })).toHaveClass(/cds--btn--primary/);
+  await expect(t1.getByRole('link', { name: '继续', exact: true })).toHaveClass(/cds--btn--ghost/);
 
   const t2 = page.getByRole('row', { name: /2026-07 深圳客户拜访/ });
   await expect(t2.getByText('对账中')).toBeVisible();

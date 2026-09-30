@@ -32,7 +32,8 @@ describe('任务列表', () => {
     expect(within(t1).getByText('暂无可用金额')).toBeTruthy();
     const continueTask = within(t1).getByRole('link', { name: '继续' });
     expect(continueTask.getAttribute('href')).toBe('#/task/T1/upload');
-    expect(continueTask.classList.contains('cds--btn--primary')).toBe(true);
+    // Row actions are small ghost buttons on every row (DESIGN.md「版式统一」), so the action column stays even.
+    expect(continueTask.classList.contains('cds--btn--ghost')).toBe(true);
 
     const t2 = await rowOf('2026-07 深圳客户拜访');
     expect(within(t2).getByText('对账中')).toBeTruthy();

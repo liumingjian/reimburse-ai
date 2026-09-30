@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Button } from '@carbon/react';
 import type { Corners } from '@baox/contract';
+import { ActionGroup } from '../shell/ActionGroup';
 
 // 四角裁剪编辑器：在原图上拖动四个角点（指针事件；选中角点后方向键微调，Shift 每次 10 像素）。
 // 角点坐标一律是原图像素：显示尺寸与原图尺寸（naturalWidth / naturalHeight）之比换算，取整并限制在原图范围内。
@@ -152,17 +153,17 @@ export function CropEditor({
             </li>
           ))}
         </ol>
-        <div className="app-btn-row">
-          <Button size="sm" disabled={busy || !natural} onClick={() => onSubmit(copy(corners))}>
-            提交裁剪
-          </Button>
-          <Button kind="ghost" size="sm" disabled={busy} onClick={() => setCorners(copy(initial))}>
-            恢复
-          </Button>
-          <Button kind="ghost" size="sm" disabled={busy} onClick={onCancel}>
+        <ActionGroup>
+          <Button kind="ghost" size="md" disabled={busy} onClick={onCancel}>
             取消
           </Button>
-        </div>
+          <Button kind="ghost" size="md" disabled={busy} onClick={() => setCorners(copy(initial))}>
+            恢复
+          </Button>
+          <Button size="md" disabled={busy || !natural} onClick={() => onSubmit(copy(corners))}>
+            提交裁剪
+          </Button>
+        </ActionGroup>
       </div>
     </div>
   );

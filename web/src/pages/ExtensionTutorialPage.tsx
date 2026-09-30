@@ -1,6 +1,7 @@
 import { Button, InlineNotification } from '@carbon/react';
 import { CheckmarkFilled, Download, Extensions, SettingsAdjust } from '@carbon/icons-react';
 import { EXTENSION_DOWNLOAD_PATH, EXTENSION_VERSION } from '@baox/contract';
+import { ActionGroup } from '../shell/ActionGroup';
 import { AppShell } from '../shell/AppShell';
 import { PageHeader } from '../shell/PageHeader';
 import { SETTINGS_HASH } from '../router';
@@ -168,9 +169,11 @@ export function ExtensionTutorialPage() {
         {step.kind === 'outdated' ? <UpgradeSection lead={EXTENSION_INSTALL_COPY.tooOld(step.installed, step.minimum)} download /> : null}
         {install ? <UpgradeSection lead={EXTENSION_TUTORIAL_COPY.upgradeLead} download={false} /> : null}
         {step.kind === 'pairedHere' || install ? <BannerSection /> : null}
-        <div className="app-btn-row">
-          <Button kind="ghost" href={SETTINGS_HASH}>{EXTENSION_TUTORIAL_COPY.back}</Button>
-        </div>
+        <ActionGroup>
+          <Button kind="ghost" size="md" href={SETTINGS_HASH}>
+            {EXTENSION_TUTORIAL_COPY.back}
+          </Button>
+        </ActionGroup>
       </div>
     </AppShell>
   );
@@ -185,15 +188,12 @@ function InstallSections() {
           <p>{EXTENSION_TUTORIAL_COPY.installLead}</p>
         </div>
         <BrowserIllustration />
-        <div className="app-btn-row">
-          <Button kind="primary" href={EXTENSION_DOWNLOAD_PATH} renderIcon={Download}>
+        <ActionGroup caption={EXTENSION_INSTALL_COPY.offeredVersion(EXTENSION_VERSION)}>
+          <Button kind="primary" size="md" href={EXTENSION_DOWNLOAD_PATH} renderIcon={Download}>
             {EXTENSION_TUTORIAL_COPY.download}
           </Button>
-          <div className="app-tutorial-download-note">
-            <p className="app-caption">{EXTENSION_INSTALL_COPY.offeredVersion(EXTENSION_VERSION)}</p>
-            <p className="app-caption">下载后使用原来的文件夹，后续升级时也会用到。</p>
-          </div>
-        </div>
+        </ActionGroup>
+        <p className="app-caption">下载后使用原来的文件夹，后续升级时也会用到。</p>
       </section>
       <section className="app-form-section" aria-label={EXTENSION_TUTORIAL_COPY.stepsTitle}>
         <h2 className="app-section-title">{EXTENSION_TUTORIAL_COPY.stepsTitle}</h2>
@@ -213,11 +213,11 @@ function PairOnSettingsSection({ switching }: { switching: boolean }) {
     <section className="app-form-section" aria-label={EXTENSION_TUTORIAL_COPY.pairOnSettingsTitle}>
       <h2 className="app-section-title">{EXTENSION_TUTORIAL_COPY.pairOnSettingsTitle}</h2>
       <p>{switching ? EXTENSION_TUTORIAL_COPY.pairOnSettingsSwitch : EXTENSION_TUTORIAL_COPY.pairOnSettings}</p>
-      <div className="app-btn-row">
-        <Button kind="primary" href={SETTINGS_HASH}>
+      <ActionGroup>
+        <Button kind="primary" size="md" href={SETTINGS_HASH}>
           {EXTENSION_TUTORIAL_COPY.pairOnSettingsAction}
         </Button>
-      </div>
+      </ActionGroup>
     </section>
   );
 }
@@ -237,11 +237,11 @@ export function UpgradeSteps({ lead, download }: { lead: string; download: boole
     <>
       <p>{lead}</p>
       {download ? (
-        <div className="app-btn-row">
-          <Button kind="primary" href={EXTENSION_DOWNLOAD_PATH} renderIcon={Download}>
+        <ActionGroup>
+          <Button kind="primary" size="md" href={EXTENSION_DOWNLOAD_PATH} renderIcon={Download}>
             {EXTENSION_TUTORIAL_COPY.download}
           </Button>
-        </div>
+        </ActionGroup>
       ) : null}
       <ol className="app-guide-steps" aria-label={EXTENSION_TUTORIAL_COPY.upgrade}>
         {EXTENSION_INSTALL_COPY.upgradeSteps.map((line) => <li key={line}>{line}</li>)}

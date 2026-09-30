@@ -76,7 +76,7 @@ e2e `e2e/carbon-zh.spec.ts` 在主要页面与打开的弹层里查整页文字�
 每张宽表（整单明细确认、任务列表、回读与对账、个人项目簿）放在 Carbon 表格自带的 `overflow-x: auto` 容器里，表格铺满。
 窗口比各列按内容收紧后的宽度之和还窄时，整张表横向滚动，不再挤压列宽。滚动时标识列固定在左（No.；没有 No. 的表是任务名 / 项目号），
 收尾列固定在右（总额；任务列表与项目簿是操作列；回读表是比对列），固定列带所在行的底色，只有那一侧真有内容被盖住时才出现一条分隔线。
-Task rows show the primary action and Abandon (作废) as adjacent text buttons. A blocked abandonment stays disabled and exposes the server-provided reason on hover or keyboard focus. Project maintenance rows show three adjacent text buttons: Edit (编辑), Deactivate/Restore (停用/恢复), and Delete (删除). Deletion uses a danger ghost button and requires confirmation; public maintenance actions are administrator-only.
+Task rows show the row's main action and Abandon (作废) as adjacent small ghost buttons on every row, whatever the task's status. A blocked abandonment stays disabled and exposes the server-provided reason on hover or keyboard focus. Project maintenance rows show three adjacent text buttons: Edit (编辑), Deactivate/Restore (停用/恢复), and Delete (删除). Deletion uses a danger ghost button and requires confirmation; public maintenance actions are administrator-only.
 整单明细表（No. 加 13 列）单元格用 body-compact、列间距用 Carbon 最小的单元格内边距，在 1440px 窗口上不横向滚动；1100px 窗口会滚动，这是预期的退路。
 项目号与费用项目是「编码 / 名称」一对，不折行；出发点、目的地、费用分类可以折行（中文 `word-break: keep-all`）。
 同一分类里与上一行相同的文字单元格变淡（值照常在），金额列不变淡。
@@ -161,6 +161,10 @@ one the shared components cannot express, extend the shared component. Evidence 
   no bare `<dl>`.
 - **Button sizes**: `ActionBar` and page-header actions use the default `lg`; in-content groups `md`; table-row actions
   `sm` ghost. Buttons of one group share one width (the widest label, at least Carbon's 196px) and one height.
+- **Page header actions** share one width too (the header's action area is laid out like a ButtonSet).
+- **Switchers vs answers**: `ContentSwitcher` only switches what is shown (结账单 / 发票, 个人 / 公共项目簿, task filters).
+  A pending item's choices submit an answer, so they stay buttons in an `ActionGroup`, the chosen one marked with
+  `aria-pressed`.
 - **Button kinds**: at most one primary per region, placed last. A reversible side action (排除这份材料, exclude this
   material) is ghost, not danger; danger is only for the irreversible confirmations under「危险确认」.
 - **Captions and errors** go under the whole button group, never between buttons.

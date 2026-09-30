@@ -2,8 +2,9 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Button, TextInput } from '@carbon/react';
 import { ChangePasswordInputSchema, CredentialsInputSchema, type AppAdapter, type AuthOutcome, type CredentialsInput, type Session } from '@baox/contract';
 import { useAppStore } from '../adapter/context';
-import { ActionError } from '../shell/ActionError';
+import { ActionGroup } from '../shell/ActionGroup';
 import { AppShell } from '../shell/AppShell';
+import { PageHeader } from '../shell/PageHeader';
 
 // 应用账号 (app accounts, ADR-0018): before anything else the browser needs a session. Which form shows is decided by
 // the server's session status: no account yet → create the admin; otherwise log in, or register a new account.
@@ -95,17 +96,16 @@ function CredentialsForm({ mode, onSwitch, registrationNotice, onRegistered }: {
           invalid={fieldErrors.password !== undefined}
           invalidText={<span role="alert">{fieldErrors.password}</span>}
         />
-        <div className="app-btn-row">
-          <Button type="submit" disabled={busy}>
-            {copy.submit}
-          </Button>
+        <ActionGroup error={error}>
           {onSwitch ? (
-            <Button kind="ghost" onClick={onSwitch}>
+            <Button kind="ghost" size="md" onClick={onSwitch}>
               {mode === 'login' ? AUTH_COPY.toRegister : AUTH_COPY.toLogin}
             </Button>
           ) : null}
-          <ActionError message={error} />
-        </div>
+          <Button type="submit" size="md" disabled={busy}>
+            {copy.submit}
+          </Button>
+        </ActionGroup>
         {registrationNotice ? <p className="app-caption" role="status">{registrationNotice}</p> : null}
       </form>
     </section>
@@ -189,21 +189,21 @@ export function ChangePasswordPage({ required = true }: { required?: boolean }) 
   return (
     <AppShell nav={required ? 'tasks' : 'settings'}>
       <section className="app-form-page app-startup" aria-labelledby="change-password-title">
-        <h1 className="app-page-title" id="change-password-title">
-          {CHANGE_PASSWORD_COPY.title}
-        </h1>
-        <p className="app-lead">{required ? CHANGE_PASSWORD_COPY.lead : '验证当前密码后，修改你自己的应用登录密码。'}</p>
+        <PageHeader title={CHANGE_PASSWORD_COPY.title} titleId="change-password-title" lead={required ? CHANGE_PASSWORD_COPY.lead : '验证当前密码后，修改你自己的应用登录密码。'} />
         {changed ? <p role="status">密码已修改。下次登录请使用新密码。</p> : null}
         <form className="app-form" onSubmit={(event) => void submit(event)} noValidate>
           <TextInput id="current-password" type="password" labelText={required ? CHANGE_PASSWORD_COPY.current : '当前密码'} autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} />
           <TextInput id="new-password" type="password" labelText={CHANGE_PASSWORD_COPY.next} autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} />
-          <div className="app-btn-row">
-            <Button type="submit" disabled={busy}>
+          <ActionGroup error={error}>
+            {!required ? (
+              <Button kind="ghost" size="md" href="#/settings">
+                返回设置
+              </Button>
+            ) : null}
+            <Button type="submit" size="md" disabled={busy}>
               {CHANGE_PASSWORD_COPY.submit}
             </Button>
-            <ActionError message={error} />
-            {!required ? <Button kind="secondary" href="#/settings">返回设置</Button> : null}
-          </div>
+          </ActionGroup>
         </form>
       </section>
     </AppShell>

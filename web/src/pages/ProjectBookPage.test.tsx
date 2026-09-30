@@ -45,13 +45,13 @@ describe('项目簿 #/projects', () => {
     expect(screen.getByText('录入项目号和项目名称后，可在新的项目归属中选择。提交去报销前仍会核对项目。')).toBeTruthy();
     expect(within(personalTable()).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['项目号', '名称', '截止日期', '状态', '']);
     expect(screen.queryByRole('table', { name: '公共项目簿' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '公共项目簿' }));
+    fireEvent.click(screen.getByRole('tab', { name: '公共项目簿' }));
     await screen.findByRole('table', { name: '公共项目簿' });
     expect(screen.queryByRole('table', { name: '个人项目簿' })).toBeNull();
     expect(await within(publicTable()).findByTestId('book-row-PUB-100')).toBeTruthy();
     expect(within(publicTable()).getByText('全员共享项目')).toBeTruthy();
     expect(screen.queryByLabelText('公共项目号')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '个人项目簿' }));
+    fireEvent.click(screen.getByRole('tab', { name: '个人项目簿' }));
     expect(bookRows()).toHaveLength(6);
     expect(within(personalTable()).getByTestId('book-row-P-4420').textContent).toContain('已过期');
   });
@@ -156,7 +156,7 @@ describe('公共项目簿管理员录入', () => {
   test('an administrator can add a public entry from the public book', async () => {
     renderApp('#/projects');
     expect(await screen.findByRole('heading', { name: '个人项目簿', level: 1 })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '公共项目簿' }));
+    fireEvent.click(screen.getByRole('tab', { name: '公共项目簿' }));
     intake('PUBLIC-ADMIN', '管理员录入的共享项目');
     expect(await screen.findByTestId('book-row-PUBLIC-ADMIN')).toBeTruthy();
     expect((await message()).textContent).toContain('已加入公共项目簿');

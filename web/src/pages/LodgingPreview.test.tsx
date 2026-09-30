@@ -22,7 +22,7 @@ describe('LodgingPreview', () => {
 
     render(<LodgingPreview snapshot={snapshot} materialId={folio.materialId} />);
 
-    expect(screen.getByRole('button', { name: `结账单：${folio.fileName}` })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: `结账单：${folio.fileName}` })).toBeTruthy();
     const original = screen.getByRole('link', { name: '预览空白或打不开？打开原件' });
     expect(original.getAttribute('href')).toBe(folio.originalUrl);
     expect(screen.getByTestId('doc-viewer')).toBeTruthy();

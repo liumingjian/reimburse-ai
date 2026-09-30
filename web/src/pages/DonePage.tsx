@@ -2,7 +2,7 @@ import { Button, InlineNotification, Tag } from '@carbon/react';
 import { CheckmarkFilled, ErrorFilled, Printer } from '@carbon/icons-react';
 import { ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE, HUMAN_REVIEW_NOTICE, type TaskSnapshot } from '@baox/contract';
 import { TASKS_HASH, taskHash } from '../router';
-import { ActionError } from '../shell/ActionError';
+import { ActionGroup } from '../shell/ActionGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { SummaryBar, SummaryField } from '../shell/SummaryBar';
 import { StatusTag } from '../shell/StatusTag';
@@ -109,12 +109,11 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
         <section className="app-block" aria-label="转人工">
           <h2 className="app-section-title">转人工</h2>
           <p className="app-lead">应用不会自动改写报销系统里的行，也不会重试写入。转人工后任务标记为人工处理，保留回读记录，之后不再自动写入报销系统。</p>
-          <div className="app-btn-row app-block-actions">
-            <Button disabled={busy} onClick={() => void run((adapter) => adapter.handOff(taskId, step.stepToken))}>
+          <ActionGroup className="app-block-actions" error={error}>
+            <Button size="md" disabled={busy} onClick={() => void run((adapter) => adapter.handOff(taskId, step.stepToken))}>
               转人工
             </Button>
-            <ActionError message={error} />
-          </div>
+          </ActionGroup>
         </section>
       ) : null}
     </>

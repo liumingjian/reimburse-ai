@@ -138,7 +138,7 @@ function AccountsSection({ myId }: { myId: string }) {
                     {row.approved && row.mustChangePassword ? <StatusTag tone="warning">{ADMIN_COPY.mustChange}</StatusTag> : null}
                   </TableCell>
                   <TableCell className="app-num app-sticky-end">
-                    <div className="app-btn-row">
+                    <div className="app-row-actions">
                       {!row.approved ? (
                         <Button kind="ghost" size="sm" disabled={busy} onClick={() => void approve(row)}>
                           {ADMIN_COPY.approve}
