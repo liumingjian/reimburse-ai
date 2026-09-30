@@ -28,9 +28,12 @@ import {
 import { formatDateTime } from '../format';
 import { navigate, taskHash } from '../router';
 import { ActionBar } from '../shell/ActionBar';
+import { ActionGroup } from '../shell/ActionGroup';
+import { Card, CardRow } from '../shell/Card';
 import { ActionError } from '../shell/ActionError';
 import { ConfirmDialog } from '../shell/Dialog';
 import { PageHeader } from '../shell/PageHeader';
+import { SummaryBar, SummaryField } from '../shell/SummaryBar';
 import { useAction } from '../shell/useAction';
 import { useReopenUpload } from '../shell/useReopenUpload';
 import { PAGE_COPY, REVIEW_ORDER_NOTE } from './page-copy';
@@ -48,49 +51,27 @@ import { DeadlineWarningList } from './DeadlineWarningList';
 // 「追加材料」先二次确认，再请服务端使确认失效并回到上传页。支付截图在打印稿页补充，不在这里。
 
 // 常驻城市：到第一次写入报销系统之前都可以改；改了会重新划分本地与外地市内交通，确认随之失效（服务端判定）。
-function HomeCityField({ snapshot, locked }: { snapshot: TaskSnapshot; locked: boolean }) {
+// The summary bar only shows it; 修改常驻城市 sits with the page's other edit actions and opens this dialog.
+function HomeCityDialog({ snapshot, onClose }: { snapshot: TaskSnapshot; onClose: () => void }) {
   const taskId = snapshot.task.taskId;
-  const current = snapshot.task.homeCity ?? '';
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(current);
+  const [value, setValue] = useState(snapshot.task.homeCity ?? '');
   const action = useAction(taskId);
   const save = async () => {
+    if (value.trim() === '') return;
     const outcome = await action.run((adapter) => adapter.setTaskHomeCity(taskId, value.trim(), snapshot.step.stepToken));
-    if (outcome.ok) setEditing(false);
+    if (outcome.ok) onClose();
   };
-  if (!editing) {
-    return (
-      <div className="app-summary-field" data-testid="review-home-city">
-        <span className="app-summary-key">常驻城市</span>
-        <span className="app-summary-value">{current || '未确认'}</span>
-        {!locked ? (
-          <Button
-            kind="ghost"
-            size="sm"
-            onClick={() => {
-              setValue(current);
-              setEditing(true);
-            }}
-          >
-            修改常驻城市
-          </Button>
-        ) : null}
-      </div>
-    );
-  }
   return (
-    <div className="app-summary-field" role="group" aria-label="修改常驻城市">
-      <TextInput id="review-home-city" labelText="常驻城市" size="sm" value={value} onChange={(event) => setValue(event.target.value)} helperText="改了会重新划分本地与外地市内交通，整单确认随之失效。" />
-      <div className="app-btn-row">
-        <Button size="sm" disabled={action.busy || value.trim() === ''} onClick={() => void save()}>
-          保存
-        </Button>
-        <Button kind="ghost" size="sm" disabled={action.busy} onClick={() => setEditing(false)}>
-          取消
-        </Button>
-      </div>
-      <ActionError message={action.error} />
-    </div>
+    <ConfirmDialog title="修改常驻城市" confirmLabel="保存" focusCancel={false} busy={action.busy} error={action.error} onConfirm={() => void save()} onCancel={onClose}>
+      <TextInput
+        id="review-home-city"
+        labelText="常驻城市"
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        helperText="改了会重新划分本地与外地市内交通，整单确认随之失效。"
+        data-modal-primary-focus
+      />
+    </ConfirmDialog>
   );
 }
 
@@ -186,6 +167,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const reopen = useReopenUpload(snapshot, () => navigate(taskHash(taskId, 'upload')));
   const confirming = confirmAction.busy;
   const [deadlineConfirmation, setDeadlineConfirmation] = useState(false);
+  const [editingCity, setEditingCity] = useState(false);
   // 「确认」只在服务端此刻接受 confirm_review（snapshot.allowedActions）且材料包就绪时可用；有缺项或核对不匹配时不可用。
   const confirmDisabled = confirming || snapshot.lines.length === 0 || !snapshot.allowedActions.includes('confirm_review') || preparation.status !== 'ready' || catalogMismatch;
   const exclude = (materialId: string) => excludeAction.run((adapter) => adapter.excludeMaterial(taskId, materialId, step.stepToken));
@@ -231,54 +213,39 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
       ) : null}
 
       {/* 摘要条：数字全部来自快照（服务端给出的条数、张数与价税合计），页面不计算。材料包清单默认收起。 */}
-      <div className="app-summary bleed" role="group" aria-label="确认摘要">
-        <div className="app-summary-field app-grow" data-testid="review-purpose">
-          <span className="app-summary-key">报销事由</span>
-          <span className="app-summary-value">{purpose ?? '未填写'}</span>
-        </div>
-        <HomeCityField snapshot={snapshot} locked={erpStarted} />
-        {confirmation.lineCount > 0 ? (
-          <div className="app-summary-field">
-            <span className="app-summary-key">明细</span>
-            <span className="app-summary-value">{confirmation.lineCount} 条</span>
-          </div>
-        ) : null}
-        {confirmation.invoiceCount > 0 ? (
-          <div className="app-summary-field">
-            <span className="app-summary-key">发票</span>
-            <span className="app-summary-value">{confirmation.invoiceCount} 张</span>
-          </div>
-        ) : null}
+      <SummaryBar label="确认摘要">
+        <SummaryField label="报销事由" value={purpose ?? '未填写'} wide testId="review-purpose" />
+        <SummaryField label="常驻城市" value={snapshot.task.homeCity || '未确认'} testId="review-home-city" />
+        {confirmation.lineCount > 0 ? <SummaryField label="明细" value={`${confirmation.lineCount} 条`} /> : null}
+        {confirmation.invoiceCount > 0 ? <SummaryField label="发票" value={`${confirmation.invoiceCount} 张`} /> : null}
         {packageFiles.length > 0 ? (
-          <section className="app-summary-field" aria-label="材料包">
-            <details className="app-pkg">
-              <summary>
-                <Folder />
-                材料包 {packageFiles.length} 份文件
-                <ChevronDown className="app-chevron" />
-              </summary>
-              <div className="app-pkg-panel">
-                <p className="app-caption" data-testid="package-files">
-                  {CATALOG_PREPARATION_COPY.packageReady(packageFiles.length)}
-                </p>
-                <ul className="app-pkg-files" aria-label="材料包文件">
-                  {packageFiles.map((file) => (
-                    <li key={file.path}>
-                      <span className="app-caption">{file.kindLabel}</span> <span>{file.path}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </details>
-          </section>
+          <SummaryField
+            label="材料包"
+            value={
+              <details className="app-pkg">
+                <summary>
+                  <Folder />
+                  {packageFiles.length} 份文件
+                  <ChevronDown className="app-chevron" />
+                </summary>
+                <div className="app-pkg-panel">
+                  <p className="app-caption" data-testid="package-files">
+                    {CATALOG_PREPARATION_COPY.packageReady(packageFiles.length)}
+                  </p>
+                  <ul className="app-pkg-files" aria-label="材料包文件">
+                    {packageFiles.map((file) => (
+                      <li key={file.path}>
+                        <span className="app-caption">{file.kindLabel}</span> <span>{file.path}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </details>
+            }
+          />
         ) : null}
-        {confirmation.grossTotal ? (
-          <div className="app-summary-field app-summary-total">
-            <span className="app-summary-key">价税合计</span>
-            <span className="app-summary-value">{confirmation.grossTotal}</span>
-          </div>
-        ) : null}
-      </div>
+        {confirmation.grossTotal ? <SummaryField label="价税合计" value={confirmation.grossTotal} total /> : null}
+      </SummaryBar>
 
       {confirmed ? (
         <section className="app-block app-review-done" aria-label="整单确认">
@@ -290,51 +257,64 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
             statusIconDescription="成功"
             title={`整单明细已确认${confirmation.confirmedAt ? `（${formatDateTime(confirmation.confirmedAt)}）` : ''}。下面两个按钮基于同一份确认数据，先后随意、可重复。`}
           />
-          <div className="app-two-actions bleed">
-            <div className="app-action-card">
-              <h3>去打印</h3>
+          {/* Two entry cards on Carbon Tiles: equal height, buttons pinned to the bottom so they line up whatever
+              status text a card shows above its button. */}
+          <CardRow bleed label="去打印或去报销">
+            <Card
+              title="去打印"
+              actions={
+                <Button href={taskHash(taskId, 'print')} renderIcon={Printer}>
+                  去打印
+                </Button>
+              }
+            >
               <p>生成合并 PDF：每张发票一页 A4，发票在上、证明材料在下。住宿发票的支付截图在打印稿页补充。</p>
-              <Button href={taskHash(taskId, 'print')} renderIcon={Printer}>
-                去打印
-              </Button>
-            </div>
-            <div className="app-action-card">
-              <h3>去报销</h3>
+            </Card>
+            <Card
+              title="去报销"
+              actions={
+                erpDone ? (
+                  <Button href={taskHash(taskId, 'done')}>查看结果</Button>
+                ) : erpStarted ? (
+                  <Button href={taskHash(taskId, STAGE_DEFAULT_PAGE[stage])}>查看填报进度</Button>
+                ) : (
+                  <Button renderIcon={Launch} disabled={claimAction.busy} onClick={() => void claim()}>
+                    去报销
+                  </Button>
+                )
+              }
+            >
               <p>
                 已配对的浏览器扩展会为这次报销打开报销系统标签页。你登录后，应用自动导入发票、写入 {confirmation.lineCount} 行明细并严格回读。完成时只表示单据已填好并交接给你；请你在报销系统里核对、保存并提交。
                 {erpDone ? '已交接，去完成页查看回读结果。' : ''}
               </p>
-              {erpDone ? (
-                <Button href={taskHash(taskId, 'done')}>查看结果</Button>
-              ) : erpStarted ? (
-                <Button href={taskHash(taskId, STAGE_DEFAULT_PAGE[stage])}>查看填报进度</Button>
-              ) : (
-                <Button renderIcon={Launch} disabled={claimAction.busy} onClick={() => void claim()}>
-                  去报销
-                </Button>
-              )}
               {!erpStarted && erp.abortReason ? (
                 <p className="app-caption" role="status" data-testid="erp-abort-reason">
                   {erp.abortReason}
                 </p>
               ) : null}
               <ActionError message={claimAction.error} />
-            </div>
-          </div>
-          <div className="app-btn-row app-after-actions">
+            </Card>
+          </CardRow>
+          <ActionGroup
+            className="app-after-actions"
+            label="修改"
+            caption="这三项都会使这次确认失效：改常驻城市会重新划分本地与外地市内交通，改派项目要重新确认，追加材料会形成新的盘点版本。"
+          >
             {!erpStarted ? (
-              <Button kind="ghost" size="sm" href={taskHash(taskId, 'project')}>
+              <Button kind="ghost" size="md" onClick={() => setEditingCity(true)}>
+                修改常驻城市
+              </Button>
+            ) : null}
+            {!erpStarted ? (
+              <Button kind="ghost" size="md" href={taskHash(taskId, 'project')}>
                 修改项目归属
               </Button>
             ) : null}
-            <span className="app-caption">改派项目会使这次确认失效。</span>
-          </div>
-          <div className="app-btn-row app-after-actions">
-            <Button kind="ghost" size="sm" disabled={erpStarted} onClick={reopen.open}>
+            <Button kind="ghost" size="md" disabled={erpStarted} onClick={reopen.open}>
               追加材料
             </Button>
-            <span className="app-caption">追加材料会形成新的盘点版本，并使这次确认失效。</span>
-          </div>
+          </ActionGroup>
         </section>
       ) : null}
 
@@ -382,11 +362,11 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
         <section className="app-block" aria-label="报销信息核对">
           <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={CATALOG_PREPARATION_COPY.catalogMismatch} />
           {!erpStarted ? (
-            <div className="app-btn-row app-block-row">
-              <Button kind="tertiary" size="sm" href={taskHash(taskId, 'project')}>
+            <ActionGroup className="app-block-row">
+              <Button kind="secondary" size="md" href={taskHash(taskId, 'project')}>
                 回到项目归属改派
               </Button>
-            </div>
+            </ActionGroup>
           ) : null}
           <div className="bleed app-table">
             <Table aria-label="不匹配项">
@@ -423,6 +403,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
                   {PREPARATION_PROBLEM_COLUMNS.map((label) => (
                     <TableHeader key={label}>{label}</TableHeader>
                   ))}
+                  <TableHeader className="app-row-action-col">操作</TableHeader>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -432,27 +413,25 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
                     <TableCell>{problem.missing}</TableCell>
                     <TableCell>{problem.subject}</TableCell>
                     <TableCell className="app-nowrap">{problem.resolver}</TableCell>
+                    <TableCell className="app-row-action-col">
+                      {problem.excludableMaterialId ? (
+                        <Button
+                          kind="ghost"
+                          size="sm"
+                          aria-label={`排除 ${problem.subject}`}
+                          disabled={excludeAction.busy || step.kind !== 'resolve_preparation'}
+                          onClick={() => void exclude(problem.excludableMaterialId ?? '')}
+                        >
+                          排除
+                        </Button>
+                      ) : null}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
-          <div className="app-btn-row app-block-actions">
-            {preparation.problems.map((problem) =>
-              problem.excludableMaterialId ? (
-                <Button
-                  key={problem.problemId}
-                  kind="secondary"
-                  size="sm"
-                  disabled={excludeAction.busy || step.kind !== 'resolve_preparation'}
-                  onClick={() => void exclude(problem.excludableMaterialId ?? '')}
-                >
-                  排除 {problem.subject}
-                </Button>
-              ) : null,
-            )}
-            <span className="app-caption">排除后这份材料不关联明细、也不进入材料包，系统会重新准备核对材料。</span>
-          </div>
+          <p className="app-caption app-table-caption">排除后这份材料不关联明细、也不进入材料包，系统会重新准备核对材料。</p>
           <ActionError message={excludeAction.error} />
         </section>
       ) : null}
@@ -476,16 +455,21 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
           actions={
             <>
               {!erpStarted ? (
-                <Button kind="ghost" size="md" href={taskHash(taskId, 'project')}>
-                  修改项目归属
-                </Button>
+                <>
+                  <Button kind="ghost" onClick={() => setEditingCity(true)}>
+                    修改常驻城市
+                  </Button>
+                  <Button kind="ghost" href={taskHash(taskId, 'project')}>
+                    修改项目归属
+                  </Button>
+                </>
               ) : null}
               {!autoNotice ? (
                 <>
-                  <Button kind="ghost" size="md" href={taskHash(taskId, 'pending')}>
+                  <Button kind="ghost" href={taskHash(taskId, 'pending')}>
                     回到待确认项
                   </Button>
-                  <Button kind="primary" size="md" disabled={confirmDisabled} onClick={requestConfirm}>
+                  <Button kind="primary" disabled={confirmDisabled} onClick={requestConfirm}>
                     确认整单明细
                   </Button>
                 </>
@@ -513,6 +497,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
         </ConfirmDialog>
       ) : null}
 
+      {editingCity ? <HomeCityDialog snapshot={snapshot} onClose={() => setEditingCity(false)} /> : null}
       {reopen.dialog}
     </>
   );

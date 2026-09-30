@@ -76,7 +76,7 @@ e2e `e2e/carbon-zh.spec.ts` 在主要页面与打开的弹层里查整页文字�
 每张宽表（整单明细确认、任务列表、回读与对账、个人项目簿）放在 Carbon 表格自带的 `overflow-x: auto` 容器里，表格铺满。
 窗口比各列按内容收紧后的宽度之和还窄时，整张表横向滚动，不再挤压列宽。滚动时标识列固定在左（No.；没有 No. 的表是任务名 / 项目号），
 收尾列固定在右（总额；任务列表与项目簿是操作列；回读表是比对列），固定列带所在行的底色，只有那一侧真有内容被盖住时才出现一条分隔线。
-Task rows show the primary action and Abandon (作废) as adjacent text buttons. A blocked abandonment stays disabled and exposes the server-provided reason on hover or keyboard focus. Project maintenance rows show three adjacent text buttons: Edit (编辑), Deactivate/Restore (停用/恢复), and Delete (删除). Deletion uses a danger ghost button and requires confirmation; public maintenance actions are administrator-only.
+Task rows show the row's main action and Abandon (作废) as adjacent small ghost buttons on every row, whatever the task's status. A blocked abandonment stays disabled and exposes the server-provided reason on hover or keyboard focus. Project maintenance rows show three adjacent text buttons: Edit (编辑), Deactivate/Restore (停用/恢复), and Delete (删除). Deletion uses a danger ghost button and requires confirmation; public maintenance actions are administrator-only.
 整单明细表（No. 加 13 列）单元格用 body-compact、列间距用 Carbon 最小的单元格内边距，在 1440px 窗口上不横向滚动；1100px 窗口会滚动，这是预期的退路。
 项目号与费用项目是「编码 / 名称」一对，不折行；出发点、目的地、费用分类可以折行（中文 `word-break: keep-all`）。
 同一分类里与上一行相同的文字单元格变淡（值照常在），金额列不变淡。
@@ -139,6 +139,47 @@ tick lines on the left, then click a project on the right.
   project appears in the list.
 - Below 1280px the panel narrows (18rem) but stays beside the table; only below 56rem does it stack under the table and stop sticking.
 
+### 版式统一 (layout consistency, #319)
+
+Every card, button group, key/value block and file name is built from one shared component in `src/shell`, and each of
+those sits on a Carbon component. A page does not hand-build a card, a button row or a key/value block; when it needs
+one the shared components cannot express, extend the shared component. Evidence of what went wrong before:
+`docs/review/ui-consistency/`.
+
+| Need | Component | On Carbon |
+| --- | --- | --- |
+| Up to about six overview fields | `FieldGroup` (字段网格, field grid): label above, 2 or 4 equal columns | `Grid` / `Column` |
+| Many fields read row by row (a material's recognised fields) | `DetailList` (详情列表, detail list): label left | `StructuredList`, condensed, flush |
+| The numbers under a page header | `SummaryBar` + `SummaryField` | hand-built, Carbon tokens |
+| Buttons in content | `ActionGroup` | `ButtonSet` |
+| Buttons of a whole step | `ActionBar` | `ButtonSet` |
+| A block with a title, text and its own actions | `Card` in a `CardRow` | `Tile` |
+| Switching between views of one thing | `ContentSwitcher` | `ContentSwitcher` |
+| A file name | `FileName` | hand-built |
+
+- **Key/value**: one form per panel, `FieldGroup` or `DetailList`, never both. No colon strings (`来源：…`), no `·` strings,
+  no bare `<dl>`.
+- **Button sizes**: `ActionBar` and page-header actions use the default `lg`; in-content groups `md`; table-row actions
+  `sm` ghost. Buttons of one group share one width (the widest label, at least Carbon's 196px) and one height.
+- **Page header actions** share one width too (the header's action area is laid out like a ButtonSet).
+- **Switchers vs answers**: `ContentSwitcher` only switches what is shown (结账单 / 发票, 个人 / 公共项目簿, task filters).
+  A pending item's choices submit an answer, so they stay buttons in an `ActionGroup`, the chosen one marked with
+  `aria-pressed`.
+- **Button kinds**: at most one primary per region, placed last. A reversible side action (排除这份材料, exclude this
+  material) is ghost, not danger; danger is only for the irreversible confirmations under「危险确认」.
+- **Captions and errors** go under the whole button group, never between buttons.
+- **Summary bar**: fields of equal width filling the row; a sentence-long value (对账结果) spans two. Display only: an edit
+  control goes to the page's actions, so the bar keeps one height.
+- **Cards**: one padding; cards in a row share its height; actions pinned to the bottom so neighbouring buttons line up.
+- **File names**: one line with a middle ellipsis keeping the last 12 characters (the date stamp and extension that tell
+  one supplier's files apart), full name on hover. A `DetailList` row may show the full name.
+- **Wrapping**: body text uses `text-wrap: pretty`, so no line holds one orphaned glyph; table headers do not wrap,
+  except the whole-claim table's `.app-wrap-head`.
+- **Guard**: `src/layout-rules.test.ts` fails when a page hand-builds a button row, summary bar, card or label-left list,
+  or gives an action bar's buttons a size.
+- **Screen widths**: layouts hold from 1280 to 1920px. `node web/scripts/ui-shots.mjs` screenshots every mock state
+  for before/after comparison of a layout change.
+
 ### 危险确认
 
 破坏性、不可撤销的确认（作废任务、完全重置）一律用确认弹层的危险变体（`ConfirmDialog danger`）：Carbon danger modal，
@@ -146,14 +187,14 @@ tick lines on the left, then click a project on the right.
 
 ### 摘要条
 
-整单明细确认、完成、对账、材料盘点页在标题下有一条通栏的摘要（`$layer-01`，上下细线）：带标签的字段（label-01 灰字 + 值），
+整单明细确认、完成、对账、材料盘点页在标题下有一条通栏的摘要（`SummaryBar`，`$layer-01`，上下细线）：等宽的带标签字段（label-01 灰字 + 值），
 价税合计用 heading-03 大一号。材料包清单是摘要条里的一个展开按钮，展开后铺在摘要条下方。所有数字来自服务端。
 盘点页的摘要条放材料、通过、需处理、主要报销凭证、参考材料的份数与盘点版本、盘点时间，取 `inventory.summary`；标题下不再另起一行大号计数。
 
 ### 待确认项：原件与表单
 
 - 上面是待确认项清单：每行只放警示或完成图标、标题、文件名。已处理的行降低对比，并带绿色「已处理」标签。契约里的处理人这一页不显示。
-- 下面两栏贴顶：左边原件栏，宽度跟着缩放后的原件走；右边占剩余宽度（下限 400px），依次是标题与原因、补填表单、读出的字段（文件名与材料类别用字段组）。
+- 下面两栏贴顶：左边原件栏固定占 2/5，缩放后的原件在其中居中（切换待确认项时表单栏左边不跳）；右边占其余 3/5（下限 400px），依次是标题与原因、补填表单、读出的字段（文件名、材料类别与识别字段同在一个详情列表 `DetailList` 里）。
 - 原件在「一屏高度减去顶栏、步骤条和页头」的框内等比缩放，页面滚动时原件栏贴在步骤条下。PDF 与「没有可用的预览」用同样高度的框，占位不改变版面位置。
 - 1056px 以下原件在上、表单在下。
 
@@ -192,7 +233,7 @@ tick lines on the left, then click a project on the right.
 - 不在标题前加小字眉题；不用全大写。
 - 页头节奏由页头组件（PageHeader）统一：标题到导语 `$spacing-03`，页头到内容 `$spacing-07`。页面不再给页头或页头后的第一块内容写间距；
   页头右侧不放孤立的返回按钮，任务内往回走交给步骤条。
-- 不用中点「·」把元信息拼成「A · B · C」一串，改用带标签的字段组（FieldGroup：label-01 灰色小标签加值，字段之间 `$spacing-07`，写法同摘要条）；
+- 不用中点「·」把元信息拼成「A · B · C」一串，改用字段网格 `FieldGroup` 或详情列表 `DetailList`（见「版式统一」）；
   服务端给出的整句（如打印卡片页眉）照原样显示。
 - 表格的 No. 列一律左对齐，列宽按内容收紧。
 - 概览条（进行中 / 对账中 / 已交接 / 待你处理的计数）暂缓：任务列表契约里还没有这些字段。

@@ -5,7 +5,9 @@ import { useAppStore, useExtensionPairing, useLegacyImport } from '../adapter/co
 import { compareExtensionVersions, EXTENSION_DOWNLOAD_PATH, EXTENSION_PAIRING_STATUS_LABELS, EXTENSION_VERSION, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY, type LegacyImportReport } from '@baox/contract';
 import { SETTINGS_PASSWORD_HASH, SETTINGS_TUTORIAL_HASH, TASKS_HASH, navigate } from '../router';
 import { ConfirmDialog } from '../shell/Dialog';
+import { ActionGroup } from '../shell/ActionGroup';
 import { AppShell } from '../shell/AppShell';
+import { formatDateTime } from '../format';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { EXTENSION_INSTALL_COPY, UpgradeSteps } from './ExtensionTutorialPage';
@@ -45,6 +47,7 @@ export const LEGACY_IMPORT_COPY = {
 function ReportFields({ report }: { report: LegacyImportReport }) {
   return (
     <FieldGroup
+      columns={2}
       fields={[
         { label: '常驻城市', value: report.homeCity ?? <span className="app-muted">没有</span> },
         { label: '个人项目簿', value: `${report.projects} 个项目` },
@@ -79,7 +82,7 @@ function LegacyImportSection() {
         <div className="app-empty">
           <p>{LEGACY_IMPORT_COPY.loadFailed}</p>
           <p>{state.error}</p>
-          <Button kind="secondary" onClick={() => void store.loadLegacyImport()}>
+          <Button size="md" kind="secondary" onClick={() => void store.loadLegacyImport()}>
             {LEGACY_IMPORT_COPY.retryLoad}
           </Button>
         </div>
@@ -120,14 +123,14 @@ function LegacyImportSection() {
           ) : null}
           {view.canRetry ? (
             <>
-              <div className="app-btn-row">
-                <Button kind="tertiary" disabled={busy !== null} onClick={() => void act('retry')}>
-                  {LEGACY_IMPORT_COPY.retry}
-                </Button>
-                <Button kind="ghost" disabled={busy !== null} onClick={() => void act('skip')}>
+              <ActionGroup>
+                <Button kind="ghost" size="md" disabled={busy !== null} onClick={() => void act('skip')}>
                   {LEGACY_IMPORT_COPY.skip}
                 </Button>
-              </div>
+                <Button kind="secondary" size="md" disabled={busy !== null} onClick={() => void act('retry')}>
+                  {LEGACY_IMPORT_COPY.retry}
+                </Button>
+              </ActionGroup>
               <p className="app-caption">{LEGACY_IMPORT_COPY.skipHint}</p>
             </>
           ) : null}
@@ -245,7 +248,7 @@ function ExtensionPairingSection() {
         <div className="app-empty">
           <p>{EXTENSION_PAIRING_COPY.loadFailed}</p>
           <p>{state.error}</p>
-          <Button kind="secondary" onClick={() => void store.loadExtensionPairing()}>
+          <Button size="md" kind="secondary" onClick={() => void store.loadExtensionPairing()}>
             {EXTENSION_PAIRING_COPY.retryLoad}
           </Button>
         </div>
@@ -263,6 +266,7 @@ function ExtensionPairingSection() {
               <span className={`app-extension-state-mark app-extension-state-mark-${view.status}`} aria-hidden="true" />
             </div>
             <FieldGroup
+              columns={2}
               fields={[
                 { label: EXTENSION_PAIRING_COPY.activeOrigin, value: view.activeOrigin },
                 ...(view.status === 'paired'
@@ -270,11 +274,11 @@ function ExtensionPairingSection() {
                       { label: EXTENSION_PAIRING_COPY.browser, value: view.browser ?? <span className="app-muted">{EXTENSION_PAIRING_COPY.unknownBrowser}</span> },
                       { label: EXTENSION_PAIRING_COPY.extensionVersion, value: view.version ?? <span className="app-muted">{EXTENSION_PAIRING_COPY.unknownBrowser}</span> },
                       { label: EXTENSION_PAIRING_COPY.connection, value: view.connected ? EXTENSION_PAIRING_COPY.connected : EXTENSION_PAIRING_COPY.disconnected },
-                      { label: EXTENSION_PAIRING_COPY.pairedAt, value: view.pairedAt ?? '' },
-                      { label: EXTENSION_PAIRING_COPY.lastConnectedAt, value: view.lastConnectedAt ?? <span className="app-muted">{EXTENSION_PAIRING_COPY.neverConnected}</span> },
+                      { label: EXTENSION_PAIRING_COPY.pairedAt, value: view.pairedAt ? formatDateTime(view.pairedAt) : '' },
+                      { label: EXTENSION_PAIRING_COPY.lastConnectedAt, value: view.lastConnectedAt ? formatDateTime(view.lastConnectedAt) : <span className="app-muted">{EXTENSION_PAIRING_COPY.neverConnected}</span> },
                     ]
                   : []),
-                ...(view.status === 'waiting' && view.codeExpiresAt ? [{ label: EXTENSION_PAIRING_COPY.codeExpiresAt, value: view.codeExpiresAt }] : []),
+                ...(view.status === 'waiting' && view.codeExpiresAt ? [{ label: EXTENSION_PAIRING_COPY.codeExpiresAt, value: formatDateTime(view.codeExpiresAt) }] : []),
               ]}
             />
           </div>
@@ -311,12 +315,11 @@ function ExtensionPairingSection() {
                 <h3>{view.connected ? EXTENSION_PAIRING_COPY.connectedTitle : EXTENSION_PAIRING_COPY.disconnectedTitle}</h3>
                 <p>{view.connected ? EXTENSION_PAIRING_COPY.connectedLead(activeOrigin) : EXTENSION_PAIRING_COPY.pairedHereReconnecting}</p>
               </div>
-              <div className="app-btn-row">
-                <Button kind="danger--tertiary" disabled={busy !== null} onClick={() => setConfirming(true)}>
+              <ActionGroup caption={EXTENSION_PAIRING_COPY.independence}>
+                <Button kind="danger--tertiary" size="md" disabled={busy !== null} onClick={() => setConfirming(true)}>
                   {EXTENSION_PAIRING_COPY.revoke}
                 </Button>
-              </div>
-              <p className="app-caption">{EXTENSION_PAIRING_COPY.independence}</p>
+              </ActionGroup>
             </>
           ) : null}
           {guided ? (
@@ -347,44 +350,39 @@ function ExtensionPairingSection() {
               {view.status === 'paired' && view.version !== null && compareExtensionVersions(view.version, EXTENSION_VERSION) < 0 ? (
                 <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={EXTENSION_INSTALL_COPY.outdated(view.version, EXTENSION_VERSION)} />
               ) : null}
-              <div className="app-btn-row">
-                {view.status === 'none' ? (
-                  <Button kind="primary" disabled={busy !== null} onClick={() => void act('issue')}>
-                    {EXTENSION_PAIRING_COPY.firstTimeAction}
-                  </Button>
-                ) : view.status === 'waiting' ? (
-                  <Button kind="tertiary" disabled={busy !== null} onClick={() => void act('issue')}>
-                    {EXTENSION_PAIRING_COPY.reissue}
-                  </Button>
-                ) : null}
+              {/* Tutorial, then download, then the one next step (primary last). Revoking sits apart in its own group. */}
+              <ActionGroup caption={view.status === 'paired' ? EXTENSION_PAIRING_COPY.replaceHint : undefined}>
+                <Button kind="ghost" size="md" href={SETTINGS_TUTORIAL_HASH} target="_blank" rel="noreferrer" renderIcon={Launch}>
+                  {EXTENSION_PAIRING_COPY.tutorial}
+                </Button>
                 {view.status !== 'paired' || !view.connected ? (
-                  <Button kind="secondary" href={EXTENSION_DOWNLOAD_PATH} renderIcon={Download}>
+                  <Button kind="secondary" size="md" href={EXTENSION_DOWNLOAD_PATH} renderIcon={Download}>
                     {EXTENSION_PAIRING_COPY.download}
                   </Button>
                 ) : null}
-                <Button kind="ghost" href={SETTINGS_TUTORIAL_HASH} target="_blank" rel="noreferrer" renderIcon={Launch}>
-                  {EXTENSION_PAIRING_COPY.tutorial}
-                </Button>
+                {view.status === 'waiting' || (view.status === 'paired' && view.connected) ? (
+                  <Button kind="secondary" size="md" disabled={busy !== null} onClick={() => void act('issue')}>
+                    {EXTENSION_PAIRING_COPY.reissue}
+                  </Button>
+                ) : null}
+                {view.status === 'none' ? (
+                  <Button kind="primary" size="md" disabled={busy !== null} onClick={() => void act('issue')}>
+                    {EXTENSION_PAIRING_COPY.firstTimeAction}
+                  </Button>
+                ) : null}
                 {view.status === 'paired' && !view.connected ? (
-                  <Button kind="primary" disabled={busy !== null} onClick={() => void act('issue')}>
+                  <Button kind="primary" size="md" disabled={busy !== null} onClick={() => void act('issue')}>
                     {EXTENSION_PAIRING_COPY.reconnect}
                   </Button>
                 ) : null}
-                {view.status === 'paired' ? (
-                  <>
-                    {view.connected ? (
-                      <Button kind="tertiary" disabled={busy !== null} onClick={() => void act('issue')}>
-                        {EXTENSION_PAIRING_COPY.reissue}
-                      </Button>
-                    ) : null}
-                    <Button kind="danger--tertiary" disabled={busy !== null} onClick={() => setConfirming(true)}>
-                      {EXTENSION_PAIRING_COPY.revoke}
-                    </Button>
-                  </>
-                ) : null}
-              </div>
-              {view.status === 'paired' ? <p className="app-caption">{EXTENSION_PAIRING_COPY.replaceHint}</p> : null}
-              {view.status === 'paired' ? <p className="app-caption">{EXTENSION_PAIRING_COPY.independence}</p> : null}
+              </ActionGroup>
+              {view.status === 'paired' ? (
+                <ActionGroup className="app-revoke-group" caption={EXTENSION_PAIRING_COPY.independence}>
+                  <Button kind="danger--tertiary" size="md" disabled={busy !== null} onClick={() => setConfirming(true)}>
+                    {EXTENSION_PAIRING_COPY.revoke}
+                  </Button>
+                </ActionGroup>
+              ) : null}
             </>
           ) : null}
           {error ? <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={error} /> : null}
@@ -440,7 +438,11 @@ export function SettingsPage({ returnTo }: { returnTo?: string }) {
         {returnTo ? (
           <section aria-label="返回报销任务">
             <p>任务选择已保留。连接完成后或暂时不连接，都可以返回原任务；返回不会自动开始填报。</p>
-            <Button kind="secondary" href={`${returnTo}?extensionSetup=1`}>返回报销任务</Button>
+            <ActionGroup>
+              <Button kind="secondary" size="md" href={`${returnTo}?extensionSetup=1`}>
+                返回报销任务
+              </Button>
+            </ActionGroup>
           </section>
         ) : null}
         <ExtensionPairingSection />
@@ -450,9 +452,11 @@ export function SettingsPage({ returnTo }: { returnTo?: string }) {
           <section className="app-form-section" aria-label={RESET_COPY.title}>
             <h2 className="app-section-title">{RESET_COPY.title}</h2>
             <p>{RESET_COPY.body}</p>
-            <Button kind="danger--tertiary" onClick={() => setOpen(true)}>
-              {RESET_COPY.button}
-            </Button>
+            <ActionGroup>
+              <Button kind="danger--tertiary" size="md" onClick={() => setOpen(true)}>
+                {RESET_COPY.button}
+              </Button>
+            </ActionGroup>
           </section>
         </details>
       </div>

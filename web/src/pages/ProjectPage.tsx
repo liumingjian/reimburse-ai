@@ -1,6 +1,6 @@
 import { useCallback, useState, type KeyboardEvent } from 'react';
-import { Button, Checkbox, ContentSwitcher, InlineNotification, Search, Switch, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag, TextInput } from '@carbon/react';
-import { Add } from '@carbon/icons-react';
+import { Button, Checkbox, ContentSwitcher, IconButton, InlineNotification, Search, Switch, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag, TextInput } from '@carbon/react';
+import { Add, View } from '@carbon/icons-react';
 import {
   PROJECT_ASSIGNMENT_ERRORS,
   PROJECT_CONFLICT_COPY,
@@ -421,7 +421,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
               onChange={() => toggle(visible.map((line) => line.lineId), !allVisibleSelected)}
             />
             {/* Filtering is not row selection: like the task list it uses a ContentSwitcher (全部 all / 未归属 unassigned). */}
-            <ContentSwitcher aria-label="明细筛选" size="sm" selectedIndex={onlyUnassigned ? 1 : 0} onChange={(data: { index?: number }) => filterUnassigned(data.index === 1)}>
+            <ContentSwitcher aria-label="明细筛选" selectedIndex={onlyUnassigned ? 1 : 0} onChange={(data: { index?: number }) => filterUnassigned(data.index === 1)}>
               <Switch name="all" text="全部" disabled={locked} />
               <Switch name="unassigned" text="未归属" disabled={locked} />
             </ContentSwitcher>
@@ -645,11 +645,11 @@ function LineRow({
           <span className="app-muted">No.{line.no}</span>
         </span>
       </TableCell>
-      <TableCell className="app-nowrap">{lodging ? <><div>入住：{lodging.fields.checkIn?.value ?? '未提供'}</div><div>离店：{lodging.fields.checkOut?.value ?? '未提供'}</div></> : dates}</TableCell>
+      <TableCell className="app-nowrap">{lodging ? `${lodging.fields.checkIn?.value ?? '入住未提供'} 至 ${lodging.fields.checkOut?.value ?? '离店未提供'}` : dates}</TableCell>
       <TableCell>{lodging ? lodging.fields.location?.value ?? '住宿地未提供' : line.city ?? line.category.label}</TableCell>
       <TableCell className="app-wrap">
         {lodging ? lodging.fields.hotelName?.value ?? '酒店名称未提供' : line.route ?? line.description}
-        {lodging ? <><Button kind="ghost" size="sm" onClick={() => setPreviewOpen(true)}>查看住宿材料 No.{line.no}</Button>{previewOpen ? <ConfirmDialog title={`住宿材料 No.${line.no}`} confirmLabel="关闭预览" single wide onConfirm={() => setPreviewOpen(false)} onCancel={() => setPreviewOpen(false)}><LodgingPreview snapshot={snapshot} materialId={line.voucherMaterialId} /></ConfirmDialog> : null}</> : null}
+        {lodging ? <><IconButton className="app-inline-icon" kind="ghost" size="sm" label={`查看住宿材料 No.${line.no}`} align="top" onClick={() => setPreviewOpen(true)}><View /></IconButton>{previewOpen ? <ConfirmDialog title={`住宿材料 No.${line.no}`} confirmLabel="关闭预览" single wide onConfirm={() => setPreviewOpen(false)} onCancel={() => setPreviewOpen(false)}><LodgingPreview snapshot={snapshot} materialId={line.voucherMaterialId} /></ConfirmDialog> : null}</> : null}
         {line.maskedNumber ? <div className="app-caption app-code">{line.maskedNumber}</div> : null}
       </TableCell>
       <TableCell data-testid={`project-of-${line.no}`}>

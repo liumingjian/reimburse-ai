@@ -220,10 +220,18 @@ $gutter: $spacing-06;
   @include type.type-style('body-01');
 }
 
+// Page header actions: one width for every button, like a ButtonSet (the widest label, at least Carbon's 196px).
 .app-page-actions {
-  display: flex;
+  display: grid;
   flex: none;
+  grid-auto-columns: minmax(12.25rem, 1fr);
+  grid-auto-flow: column;
   gap: $spacing-03;
+
+  > .cds--btn {
+    inline-size: 100%;
+    max-inline-size: none;
+  }
 }
 
 .app-caption {
@@ -257,12 +265,12 @@ $gutter: $spacing-06;
   white-space: nowrap;
 }
 
-// 带标签的字段组（FieldGroup）：代替「A · B · C」中点串，写法同摘要条字段。
-.app-fields {
-  display: flex;
-  flex-wrap: wrap;
-  gap: $spacing-03 $spacing-07;
+// Field grid (FieldGroup): fields in equal columns on Carbon's CSS grid, narrow gutter so each label starts at its
+// column edge. The grid is laid inside the sheet, not as a page grid: drop Carbon's page margin, centring and max width.
+.app-fields.cds--css-grid {
+  row-gap: $spacing-05;
   margin: 0;
+  padding-inline: 0;
 }
 
 .app-field {
@@ -270,6 +278,7 @@ $gutter: $spacing-06;
   flex-direction: column;
   gap: $spacing-01;
   min-inline-size: 0;
+  overflow-wrap: anywhere;
 }
 
 .app-field-key {
@@ -318,12 +327,183 @@ $gutter: $spacing-06;
   }
 }
 
-.app-btn-row {
+// ---------- Layout primitives (DESIGN.md「版式统一」) ----------
+
+// Detail list (DetailList): Carbon's condensed flush StructuredList. The label column shrinks to the longest label;
+// Carbon's own bottom margin and minimum width are for full-page lists.
+.app-detail-list.cds--structured-list {
+  min-inline-size: 0;
+  margin-block-end: 0;
+}
+
+.app-detail-list .cds--structured-list-td.app-detail-key {
+  inline-size: 1%;
+  padding-inline-end: $spacing-07;
+  color: $text-secondary;
+}
+
+.app-detail-list .cds--structured-list-td.app-detail-value {
+  color: $text-primary;
+  overflow-wrap: anywhere;
+}
+
+// Button groups (ActionGroup, ActionBar) on Carbon's ButtonSet. Carbon sizes each button at 100% of the set, capped at
+// 196px; in a shrink-to-fit container that collapses to the average label width. A column grid gives every button the
+// widest label's width, never less than Carbon's 196px.
+.app-action-group > .cds--btn-set,
+.app-action-bar > .cds--btn-set {
+  display: inline-grid;
+  grid-auto-columns: minmax(12.25rem, 1fr);
+  grid-auto-flow: column;
+
+  > .cds--btn {
+    max-inline-size: none;
+  }
+
+  // Ghost buttons carry no separator: Carbon draws it on <button> ghosts but not on link ghosts, so a mixed row
+  // showed it between some neighbours only.
+  > .cds--btn--ghost,
+  > .cds--btn--ghost + .cds--btn {
+    box-shadow: none;
+  }
+}
+
+// A view switcher sized to its switches (Carbon's content switcher otherwise spans its container).
+.app-scope-switcher.cds--content-switcher {
+  inline-size: fit-content;
+  justify-content: flex-start;
+
+  .cds--content-switcher-btn {
+    flex: none;
+    inline-size: auto;
+    min-inline-size: 10rem;
+  }
+}
+
+.app-action-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: $spacing-03;
+
+  > .app-caption {
+    margin: 0;
+  }
+}
+
+// Per-item actions (a print placement's 旋转 / 调整四角, a table row's 移出): small ghost buttons side by side, left
+// aligned; the error goes on the line below.
+.app-inline-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: $spacing-03;
+  gap: $spacing-02;
 }
+
+// An icon button inline with text (查看住宿材料 after a hotel name): sits on the text line instead of adding one.
+.cds--btn.app-inline-icon,
+.app-inline-icon .cds--btn {
+  block-size: 1.5rem;
+  min-block-size: 1.5rem;
+  padding: 0 $spacing-02;
+  vertical-align: middle;
+}
+
+// A table's trailing action column: as narrow as its button, never wrapping.
+.cds--data-table .app-row-action-col {
+  inline-size: 1%;
+  white-space: nowrap;
+}
+
+// A caption under a table explains what its row actions do.
+.app-table-caption {
+  margin: $spacing-03 0 0;
+}
+
+// File name with a middle ellipsis (FileName): the head shrinks, the tail always shows.
+.app-filename {
+  display: inline-flex;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.app-filename-head,
+.app-filename.is-short {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-filename.is-short {
+  display: inline-block;
+}
+
+.app-filename-tail {
+  flex: none;
+}
+
+// Cards (Card, CardRow): Carbon Tiles in equal columns with 1px dividers; actions pinned to the card's bottom.
+.app-card-row {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 1px;
+  background: $border-subtle-01;
+  border-block: 1px solid $border-subtle-01;
+}
+
+.app-card.cds--tile {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-03;
+  min-inline-size: 0;
+}
+
+.app-card-row.bleed > .app-card.cds--tile {
+  padding: $spacing-06 $gutter;
+}
+
+.app-card-title {
+  margin: 0;
+  color: $text-primary;
+  @include type.type-style('heading-03');
+}
+
+.app-card-body {
+  color: $text-secondary;
+  @include type.type-style('body-01');
+
+  p {
+    margin: 0;
+  }
+}
+
+.app-card-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: $spacing-03;
+  margin-block-start: auto;
+  padding-block-start: $spacing-05;
+}
+
+// Wrapping: no line holding one orphaned glyph (「提交。」), and table headers on one line (「截止日 / 期」). The
+// whole-claim table keeps its deliberately wrapping headers (.app-wrap-head).
+.sheet p,
+.sheet li,
+.cds--modal p,
+.app-caption,
+.app-consequence {
+  // Only the wrapping style: the `text-wrap` shorthand would also reset text-wrap-mode and undo a cell's nowrap.
+  text-wrap-style: pretty;
+}
+
+.cds--data-table th:not(.app-wrap-head) .cds--table-header-label {
+  white-space: nowrap;
+}
+
 
 .app-block {
   margin-block-start: $spacing-07;
@@ -517,6 +697,12 @@ $gutter: $spacing-06;
   }
 }
 
+// A cell's qualifier (已确认 / 待确认) on its own small line under the value, so date and amount columns stay narrow
+// enough for the whole task table to fit at 1440px.
+.app-cell-sub {
+  display: block;
+}
+
 .app-task-name {
   color: $text-primary;
   @include type.type-style('heading-compact-01');
@@ -574,13 +760,15 @@ $gutter: $spacing-06;
 
 .app-summary {
   position: relative;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  margin-block: 0;
   background: $layer-01;
   border-block: 1px solid $border-subtle-01;
 }
 
+// Equal-width fields filling the row (SummaryBar); a sentence-long value takes two columns.
 .app-summary-field {
   display: flex;
   flex-direction: column;
@@ -601,8 +789,8 @@ $gutter: $spacing-06;
     border-inline-start: 1px solid $border-subtle-01;
   }
 
-  &.app-grow {
-    flex: 1;
+  &.app-summary-wide {
+    grid-column: span 2;
   }
 }
 
@@ -772,40 +960,6 @@ $gutter: $spacing-06;
   strong {
     color: $text-primary;
     font-weight: 600;
-  }
-}
-
-// 两个并列入口（确认后的去打印 / 去报销、对账的两种处置）：工作区里的两栏，中间一条竖线。
-.app-two-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  background: $layer-01;
-  border-block: 1px solid $border-subtle-01;
-}
-
-.app-action-card {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  gap: $spacing-03;
-  padding: $spacing-06 $gutter;
-
-  & + & {
-    border-inline-start: 1px solid $border-subtle-01;
-  }
-
-  h3 {
-    margin: 0;
-    color: $text-primary;
-    @include type.type-style('heading-03');
-  }
-
-  p {
-    margin: 0;
-    color: $text-secondary;
-  }
-
-  .cds--btn {
-    justify-self: start;
   }
 }
 

@@ -48,7 +48,7 @@ test('正常上传：pdf/jpg/png 逐文件已接收，按批次列出并出现�
   await expect(first.getByText('已接收')).toHaveCount(0);
   await expect(first.getByText('拒绝', { exact: true })).toHaveCount(0);
   await expect(first).not.toContainText('sha256');
-  await expect(row(page, first, '全季酒店_发票.pdf').getByText('全季酒店_发票.pdf', { exact: true })).toHaveAttribute('title', /^内容哈希 sha256:[0-9a-f]{8}$/);
+  await expect(row(page, first, '全季酒店_发票.pdf').getByText('全季酒店_发票.pdf', { exact: true })).toHaveAttribute('title', /\n内容哈希 sha256:[0-9a-f]{8}$/);
   // PDF 与图片用不同图标。
   await expect(row(page, first, '全季酒店_发票.pdf').getByRole('img', { name: 'PDF' })).toBeVisible();
   await expect(row(page, first, 'IMG_4871.jpg').getByRole('img', { name: '图片' })).toBeVisible();

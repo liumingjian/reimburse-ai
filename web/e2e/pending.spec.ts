@@ -45,7 +45,7 @@ for (const [width, height] of [
   [1440, 900],
   [1100, 900],
 ] as const) {
-  test(`${width}：原件栏宽度跟着竖长车票照片走，表单占剩余宽度，保存按钮在首屏内；附截图`, async ({ page }, testInfo) => {
+  test(`${width}：原件栏固定占 2/5，切换待确认项时表单左边不跳，保存按钮在首屏内；附截图`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height });
     await page.goto(open('?seed=pending', '#/task/T1/pending'));
     const photo = detail(page).getByRole('img', { name: 'IMG_4871.jpg 原件' });
@@ -55,8 +55,11 @@ for (const [width, height] of [
     const form = detail(page).getByRole('form', { name: '补填起点与终点' });
     const [viewerBox, photoBox, formBox, saveBox] = await Promise.all([viewer.boundingBox(), photo.boundingBox(), form.boundingBox(), save(page).boundingBox()]);
     if (!viewerBox || !photoBox || !formBox || !saveBox) throw new Error('原件栏、原件、表单或保存按钮没有渲染');
-    // 竖长照片（3:4）旁不再有大块空白：原件栏不宽于原件加内边距与边框（允许 1px 取整）。
-    expect(viewerBox.width).toBeLessThanOrEqual(photoBox.width + VIEWER_CHROME + 1);
+    // 原件栏固定占两栏的 2/5（DESIGN.md「待确认项：原件与表单」, #319），照片在栏内居中、不溢出。
+    const share = viewerBox.width / (formBox.x + formBox.width - viewerBox.x);
+    expect(share).toBeGreaterThan(0.35);
+    expect(share).toBeLessThan(0.45);
+    expect(photoBox.width).toBeLessThanOrEqual(viewerBox.width - VIEWER_CHROME + 1);
     // 照片按高度等比缩放：宽高比保持 3:4。
     expect(Math.abs(photoBox.width / photoBox.height - 0.75)).toBeLessThan(0.01);
     // 表单在原件右侧，占剩余宽度，不窄于 400px。
@@ -64,6 +67,12 @@ for (const [width, height] of [
     expect(formBox.width).toBeGreaterThanOrEqual(400);
     // 保存按钮在首屏内。
     expect(saveBox.y + saveBox.height).toBeLessThanOrEqual(height);
+    // 换到另一项（原件比例不同），表单栏的左边不动。
+    const headingX = async () => (await detail(page).getByRole('heading', { level: 2 }).boundingBox())?.x;
+    const before = await headingX();
+    await item(page, '住宿发票').click();
+    await expect(detail(page).getByRole('heading', { level: 2 })).toContainText('支付截图');
+    expect(await headingX()).toBe(before);
     await page.screenshot({ path: testInfo.outputPath(`pending-${width}.png`) });
   });
 }

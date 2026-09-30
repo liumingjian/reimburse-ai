@@ -33,7 +33,7 @@ describe('公共项目转换', () => {
     window.location.hash = '#/projects';
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     await screen.findByRole('heading', { name: '个人项目簿', level: 1 });
-    fireEvent.click(screen.getByRole('button', { name: '公共项目簿' }));
+    fireEvent.click(screen.getByRole('tab', { name: '公共项目簿' }));
     const numberInput = screen.getByLabelText('项目号') as HTMLInputElement;
     const nameInput = screen.getByLabelText('项目名称') as HTMLInputElement;
     fireEvent.change(numberInput, { target: { value: 'P-2307' } });
@@ -56,7 +56,7 @@ describe('公共项目转换', () => {
 
     window.location.hash = '#/projects';
     window.dispatchEvent(new HashChangeEvent('hashchange'));
-    fireEvent.click(screen.getByRole('button', { name: '个人项目簿' }));
+    fireEvent.click(screen.getByRole('tab', { name: '个人项目簿' }));
     const personalTable = await screen.findByRole('table', { name: '个人项目簿' });
     await waitFor(() => expect(within(personalTable).queryByTestId('book-row-P-2307')).toBeNull());
   });
@@ -68,7 +68,7 @@ describe('公共项目转换', () => {
     window.location.hash = '#/projects';
     render(<App adapter={adapter} />);
 
-    fireEvent.click(await screen.findByRole('button', { name: '公共项目簿' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '公共项目簿' }));
     await screen.findByTestId('book-row-PUBLIC-OLD');
     fireEvent.click(screen.getByRole('button', { name: '编辑 PUBLIC-OLD' }));
     fireEvent.change(editInput('项目号'), { target: { value: 'EDIT-CONVERT' } });

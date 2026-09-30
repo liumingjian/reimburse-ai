@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
-import { Button, InlineNotification } from '@carbon/react';
+import { Button, IconButton, InlineNotification } from '@carbon/react';
+import { FitToScreen, ZoomIn, ZoomOut } from '@carbon/icons-react';
 import { type PlacementSlot, PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE, type Corners, type PaymentScreenshot, type Placement, type PrintPage as PrintSheetPage, type TaskSnapshot } from '@baox/contract';
 import { ActionError } from '../shell/ActionError';
 import { FieldGroup } from '../shell/FieldGroup';
+import { FileName } from '../shell/FileName';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
 import { navigate, taskHash } from '../router';
@@ -40,24 +42,21 @@ function ScreenshotControl({
   };
   return (
     <li>
-      <div className="app-placement-name">
-        <span className="app-caption">支付截图</span>
-        {screenshot ? <span className="app-file-name">{screenshot.fileName}</span> : <span className="app-muted">未补充</span>}
-      </div>
-      <div className="app-caption">仅用于打印稿，放在下半页右侧；不上传报销系统，也不影响整单明细确认。</div>
-      <div className="app-btn-row app-screenshot-row">
+      <FieldGroup fields={[{ label: '支付截图', value: screenshot ? <FileName name={screenshot.fileName} /> : <span className="app-muted">未补充</span> }]} />
+      <div className="app-inline-actions app-screenshot-row">
         {screenshot ? (
           <Button kind="ghost" size="sm" disabled={busy} aria-label={`移除支付截图：${voucherName}`} onClick={() => onRemove(screenshot)}>
             移除
           </Button>
         ) : (
-          <Button kind="tertiary" size="sm" disabled={busy} aria-label={`补充支付截图：${voucherName}`} onClick={() => inputRef.current?.click()}>
+          <Button kind="ghost" size="sm" disabled={busy} aria-label={`补充支付截图：${voucherName}`} onClick={() => inputRef.current?.click()}>
             补充支付截图
           </Button>
         )}
         <input ref={inputRef} type="file" accept={PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE} aria-label={`选择支付截图：${voucherName}`} onChange={onChange} />
-        <ActionError message={error} />
       </div>
+      <p className="app-caption">仅用于打印稿，放在下半页右侧；不上传报销系统，也不影响整单明细确认。</p>
+      <ActionError message={error} />
     </li>
   );
 }
@@ -141,7 +140,6 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
             ) : (
               <Button kind="secondary" href={taskHash(taskId, 'erp')}>查看填报进度</Button>
             )}
-            <ActionError message={errorAt('erp')} />
             {generated && sheet.url ? (
               <Button href={sheet.url} {...({ download: sheet.fileName ?? true } as object)}>
                 下载打印稿 PDF
@@ -149,17 +147,30 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
             ) : (
               <Button disabled>下载打印稿 PDF</Button>
             )}
-            <ActionError message={errorAt('generate')} />
           </>
         }
       />
+      {/* Header action errors sit under the header, not between its buttons. */}
+      {errorAt('erp') || errorAt('generate') ? (
+        <p className="app-notice-block">
+          <ActionError message={errorAt('erp')} />
+          <ActionError message={errorAt('generate')} />
+        </p>
+      ) : null}
 
       <p className="app-caption">去报销会自动填写已确认的明细，完成后请在报销系统中自行保存并提交。</p>
       <div className="app-print-toolbar" role="toolbar" aria-label="打印稿查看">
-        <Button kind="ghost" size="sm" onClick={() => setZoom(1)}>适应窗口</Button>
-        <Button kind="ghost" size="sm" disabled={zoom <= 0.5} onClick={() => setZoom((value) => Math.max(0.5, value - 0.25))}>缩小</Button>
-        <Button kind="ghost" size="sm" disabled={zoom >= 2} onClick={() => setZoom((value) => Math.min(2, value + 0.25))}>放大</Button>
-        <span role="status" aria-label="预览缩放">{Math.round(zoom * 100)}%</span>
+        {/* Same icon toolbar as the original viewer (DocViewer). */}
+        <IconButton kind="ghost" size="sm" label="适应窗口" align="bottom" onClick={() => setZoom(1)}>
+          <FitToScreen />
+        </IconButton>
+        <IconButton kind="ghost" size="sm" label="缩小" align="bottom" disabled={zoom <= 0.5} onClick={() => setZoom((value) => Math.max(0.5, value - 0.25))}>
+          <ZoomOut />
+        </IconButton>
+        <IconButton kind="ghost" size="sm" label="放大" align="bottom" disabled={zoom >= 2} onClick={() => setZoom((value) => Math.min(2, value + 0.25))}>
+          <ZoomIn />
+        </IconButton>
+        <span className="app-doc-zoom" role="status" aria-label="预览缩放">{Math.round(zoom * 100)}%</span>
       </div>
 
       {sheet.status === 'stale' ? (
@@ -229,17 +240,14 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
                       const rotateLabel = placement.rotate ? '改为竖放' : '旋转 90°';
                       return (
                         <li key={slot}>
-                          <div className="app-placement-name">
-                            <span className="app-caption">{SLOT_LABEL[slot]}</span>
-                            <span className="app-file-name">{placement.fileName}</span>
-                          </div>
                           <FieldGroup
                             fields={[
+                              { label: SLOT_LABEL[slot], value: <FileName name={placement.fileName} /> },
                               { label: '放置', value: placement.rotate ? '旋转 90° 放置' : '竖放' },
                               ...(placement.croppable ? [{ label: '裁剪', value: placement.cropAdjusted ? '已手动微调裁剪' : '已自动裁边矫正' }] : []),
                             ]}
                           />
-                          <div className="app-btn-row">
+                          <div className="app-inline-actions">
                             <Button kind="ghost" size="sm" disabled={busy} aria-label={`${rotateLabel}：${placement.fileName}`} onClick={() => void rotate(page, slot, placement)}>
                               {rotateLabel}
                             </Button>
@@ -257,8 +265,8 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
                                 调整四角
                               </Button>
                             ) : null}
-                            <ActionError message={errorAt(`${page.pageId}-${slot}`)} />
                           </div>
+                          <ActionError message={errorAt(`${page.pageId}-${slot}`)} />
                         </li>
                       );
                     })}

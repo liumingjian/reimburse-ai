@@ -4,6 +4,7 @@ import { type ActionOutcome, type AppAdapter, HUMAN_REVIEW_NOTICE, type Reconcil
 import { navigate, taskHash } from '../router';
 import { ActionBar } from '../shell/ActionBar';
 import { PageHeader } from '../shell/PageHeader';
+import { SummaryBar, SummaryField } from '../shell/SummaryBar';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
 import { ReadbackTable } from './ReadbackTable';
@@ -81,38 +82,13 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
         </section>
       ) : null}
 
-      <dl className="app-summary bleed" aria-label="对账摘要">
-        <div className="app-summary-field">
-          <dt className="app-summary-key">单据编号</dt>
-          <dd className="app-summary-value app-code" data-testid="reconcile-draft-no">
-            {reconcile.draftNo ?? '尚未读到单据编号'}
-          </dd>
-        </div>
-        <div className="app-summary-field">
-          <dt className="app-summary-key">对账中断点</dt>
-          <dd className="app-summary-value" data-testid="reconcile-bucket">
-            {reconcile.bucket ?? '尚未判定'}
-          </dd>
-        </div>
-        <div className="app-summary-field">
-          <dt className="app-summary-key">处置状态</dt>
-          <dd className="app-summary-value" data-testid="reconcile-status">
-            {STATUS_LABEL[reconcile.status]}
-          </dd>
-        </div>
-        <div className="app-summary-field">
-          <dt className="app-summary-key">建议处置</dt>
-          <dd className="app-summary-value">{reconcile.action ?? '尚未判定'}</dd>
-        </div>
-        {reconcile.banner ? (
-          <div className="app-summary-field app-grow">
-            <dt className="app-summary-key">对账结果</dt>
-            <dd className="app-summary-value" data-testid="reconcile-banner">
-              {reconcile.banner}
-            </dd>
-          </div>
-        ) : null}
-      </dl>
+      <SummaryBar label="对账摘要">
+        <SummaryField label="单据编号" value={reconcile.draftNo ?? '尚未读到单据编号'} mono testId="reconcile-draft-no" />
+        <SummaryField label="对账中断点" value={reconcile.bucket ?? '尚未判定'} testId="reconcile-bucket" />
+        <SummaryField label="处置状态" value={STATUS_LABEL[reconcile.status]} testId="reconcile-status" />
+        <SummaryField label="建议处置" value={reconcile.action ?? '尚未判定'} />
+        {reconcile.banner ? <SummaryField label="对账结果" value={reconcile.banner} wide testId="reconcile-banner" /> : null}
+      </SummaryBar>
       {reconcile.reasons.length > 0 ? (
         <ul className="app-reconcile-reasons" aria-label="对账原因">
           {reconcile.reasons.map((reason) => (
@@ -146,17 +122,17 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
           actions={
             <>
               {allowWait ? (
-                <Button kind={suggestHandOff ? 'secondary' : 'primary'} size="md" renderIcon={Renew} disabled={busy} onClick={() => void act((adapter) => adapter.reconcile(taskId, step.stepToken))}>
+                <Button kind={suggestHandOff ? 'secondary' : 'primary'} renderIcon={Renew} disabled={busy} onClick={() => void act((adapter) => adapter.reconcile(taskId, step.stepToken))}>
                   {reconcile.bucket === null ? '开始对账' : '重新对账'}
                 </Button>
               ) : null}
               {allowRefill ? (
-                <Button kind="primary" size="md" renderIcon={Renew} disabled={busy} onClick={() => void act((adapter) => adapter.refill(taskId, step.stepToken))}>
+                <Button kind="primary" renderIcon={Renew} disabled={busy} onClick={() => void act((adapter) => adapter.refill(taskId, step.stepToken))}>
                   {REFILL_COPY.button}
                 </Button>
               ) : null}
               {allowHandOff ? (
-                <Button kind={suggestHandOff ? 'primary' : 'secondary'} size="md" disabled={busy} onClick={() => void act((adapter) => adapter.handOff(taskId, step.stepToken))}>
+                <Button kind={suggestHandOff ? 'primary' : 'secondary'} disabled={busy} onClick={() => void act((adapter) => adapter.handOff(taskId, step.stepToken))}>
                   转人工
                 </Button>
               ) : null}

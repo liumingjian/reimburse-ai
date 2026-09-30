@@ -17,17 +17,16 @@ test('associated hotel bill leads pending review and project previews preserve s
   await expect.poll(async () => (await snapshot()).pendingItems.some((item) => item.itemId.startsWith('stay_screenshot_missing.'))).toBe(true);
   await page.goto(`/#/task/${taskId}/pending`);
   const preview = page.getByRole('region', { name: '住宿材料预览' });
-  await expect(preview.getByRole('button', { name: /^结账单：/ })).toHaveAttribute('aria-pressed', 'true');
+  await expect(preview.getByRole('tab', { name: /^结账单：/ })).toHaveAttribute('aria-selected', 'true');
   await expect(preview.getByTitle('全季酒店_结账单.pdf 原件')).toBeVisible();
-  await preview.getByRole('button', { name: /^发票：/ }).click();
+  await preview.getByRole('tab', { name: /^发票：/ }).click();
   await expect(preview.getByTitle('全季酒店_发票.pdf 原件')).toBeVisible();
 
   await answerStayGaps(page, taskId);
   await page.request.post('/api/project-book/intake', { data: { number: 'HOTEL-101', name: '住宿项目' } });
   await page.goto(`/#/task/${taskId}/project`);
   const row = page.getByTestId('line-card-1');
-  await expect(row).toContainText('入住：2026-08-09');
-  await expect(row).toContainText('离店：2026-08-22');
+  await expect(row).toContainText('2026-08-09 至 2026-08-22');
   await expect(row).toContainText('3640.00 元');
   await expect(row).toContainText('全季酒店（上海某某店）');
   await expect(row).toContainText('住宿地未提供');
@@ -37,17 +36,17 @@ test('associated hotel bill leads pending review and project previews preserve s
   const before = await snapshot();
   await page.getByRole('button', { name: '查看住宿材料 No.1' }).click();
   const dialog = page.getByRole('dialog', { name: '住宿材料 No.1' });
-  await expect(dialog.getByRole('button', { name: /^结账单：/ })).toHaveAttribute('aria-pressed', 'true');
-  await dialog.getByRole('button', { name: /^发票：/ }).click();
-  await dialog.getByRole('button', { name: /^结账单：/ }).click();
+  await expect(dialog.getByRole('tab', { name: /^结账单：/ })).toHaveAttribute('aria-selected', 'true');
+  await dialog.getByRole('tab', { name: /^发票：/ }).click();
+  await dialog.getByRole('tab', { name: /^结账单：/ }).click();
   await page.setViewportSize({ width: 1366, height: 768 });
   // Let the native PDF viewer paint before capturing visual evidence; assertions do not depend on this delay.
   await page.waitForTimeout(1000);
   await page.screenshot({ path: testInfo.outputPath('lodging-preview-1366.png') });
   const bill = before.materials.find((material) => material.kind === 'hotel_folio')!;
   await page.route(`**${bill.previewUrl}`, (route) => route.fulfill({ status: 404, body: 'preview unavailable' }));
-  await dialog.getByRole('button', { name: /^发票：/ }).click();
-  await dialog.getByRole('button', { name: /^结账单：/ }).click();
+  await dialog.getByRole('tab', { name: /^发票：/ }).click();
+  await dialog.getByRole('tab', { name: /^结账单：/ }).click();
   await expect(dialog).toContainText('材料已在任务中，但预览暂时不可用');
   await expect(dialog.getByRole('link', { name: '打开原件', exact: true })).toBeVisible();
   expect((await snapshot()).materials.find((material) => material.materialId === bill.materialId)?.linkedMaterialIds).toEqual(bill.linkedMaterialIds);

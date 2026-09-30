@@ -4,6 +4,7 @@ import { CheckmarkFilled, ErrorFilled, InProgress, Renew, WarningAltFilled } fro
 import { ERP_EXTERNAL_WAIT_COPY, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE, type ErpStep, type TaskSnapshot, STAGE_DEFAULT_PAGE } from '@baox/contract';
 import { useAppStore } from '../adapter/context';
 import { navigate, taskHash } from '../router';
+import { ActionGroup } from '../shell/ActionGroup';
 import { ActionError } from '../shell/ActionError';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
@@ -106,17 +107,16 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
                         {erp.loginNotice ? (
                           <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={erp.loginNotice} />
                         ) : null}
-                        <div className="app-btn-row">
-                          <Button disabled={busy} onClick={() => void confirmLogin()}>
-                            我已登录，继续
-                          </Button>
+                        <ActionGroup caption="应用检测到登录后才会往下走；取消不会改动报销系统。">
                           {canCancel ? (
-                            <Button kind="ghost" disabled={busy} onClick={() => void cancel()}>
+                            <Button kind="ghost" size="md" disabled={busy} onClick={() => void cancel()}>
                               取消去报销
                             </Button>
                           ) : null}
-                          <span className="app-caption">应用检测到登录后才会往下走；取消不会改动报销系统。</span>
-                        </div>
+                          <Button size="md" disabled={busy} onClick={() => void confirmLogin()}>
+                            我已登录，继续
+                          </Button>
+                        </ActionGroup>
                       </div>
                     ) : null}
                   </div>
@@ -144,15 +144,21 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
                 <span data-testid={erp.outcome === 'saved' ? 'saved-outcome' : 'handover-completed'}>{completedNotice}</span>
               </InlineNotification>
             ) : null}
-            <Button href={taskHash(taskId, 'done')}>查看完成结果</Button>
+            <ActionGroup>
+              <Button size="md" href={taskHash(taskId, 'done')}>
+                查看完成结果
+              </Button>
+            </ActionGroup>
           </>
         ) : erp.status === 'aborted' ? (
           <>
             <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={`写入报销系统已停止：${erp.abortReason ?? ''}`} />
-            {stage === 'reconcile' ? (
-              <Button href={taskHash(taskId, 'reconcile')}>进入对账</Button>
-            ) : stage === 'done' ? (
-              <Button href={taskHash(taskId, 'done')}>查看回读结果</Button>
+            {stage === 'reconcile' || stage === 'done' ? (
+              <ActionGroup>
+                <Button size="md" href={taskHash(taskId, stage)}>
+                  {stage === 'reconcile' ? '进入对账' : '查看回读结果'}
+                </Button>
+              </ActionGroup>
             ) : null}
           </>
         ) : null}

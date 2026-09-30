@@ -121,7 +121,7 @@ function TaskRow({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: Ta
         ) : (
           <>
             {formatPeriod(task.period)}
-            <span className="app-caption"> {summaryStatus === 'confirmed' ? '已确认' : '待确认'}</span>
+            <span className="app-caption app-cell-sub">{summaryStatus === 'confirmed' ? '已确认' : '待确认'}</span>
           </>
         )}
       </TableCell>
@@ -131,13 +131,13 @@ function TaskRow({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: Ta
       <TableCell>
         <Progress task={task} status={status} />
       </TableCell>
-      <TableCell className="app-num">{task.grossTotal !== null ? <>{task.grossTotal}<span className="app-caption"> 已确认</span></> : <span className="app-muted">{summaryStatus === 'pending' ? '待整单确认' : '暂无可用金额'}</span>}</TableCell>
+      <TableCell className="app-num">{task.grossTotal !== null ? <>{task.grossTotal}<span className="app-caption app-cell-sub">已确认</span></> : <span className="app-muted">{summaryStatus === 'pending' ? '待整单确认' : '暂无可用金额'}</span>}</TableCell>
       <TableCell className="app-nowrap">{task.erpDraftNo ? <span className="app-code">{task.erpDraftNo}</span> : <span className="app-muted">尚无</span>}</TableCell>
       <TableCell className="app-nowrap app-muted">{formatDateTime(task.updatedAt)}</TableCell>
       <TableCell className="app-sticky-end app-task-actions">
         <div className="app-row-actions">
           {label ? (
-            <Button kind={status.key === 'active' || status.key === 'reconcile' ? 'primary' : 'ghost'} size="sm" href={href}>
+            <Button kind="ghost" size="sm" href={href}>
               {label}
             </Button>
           ) : null}
@@ -274,7 +274,7 @@ export function TaskListPage({ newTask }: { newTask: boolean }) {
         <div className="app-empty">
           <h2>任务列表加载失败</h2>
           <p>{taskList.error}</p>
-          <Button kind="secondary" onClick={() => void store.loadTaskList()}>
+          <Button size="md" kind="secondary" onClick={() => void store.loadTaskList()}>
             重试
           </Button>
         </div>
@@ -283,7 +283,7 @@ export function TaskListPage({ newTask }: { newTask: boolean }) {
           <div className="app-empty">
             <h2>还没有报销任务</h2>
             <p>新建一个任务，然后把这次出差的材料拖进来。</p>
-            <Button renderIcon={Add} disabled={taskList.offline} onClick={() => navigate(NEW_TASK_HASH)}>新建报销任务</Button>
+            <Button size="md" renderIcon={Add} disabled={taskList.offline} onClick={() => navigate(NEW_TASK_HASH)}>新建报销任务</Button>
           </div>
         ) : (
           <TaskTable tasks={taskList.data.tasks} onAbandon={setAbandoning} />

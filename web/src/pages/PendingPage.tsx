@@ -1,5 +1,5 @@
 import { useRef, useState, type ChangeEvent, type FormEvent } from 'react';
-import { Button, Tag, TextInput } from '@carbon/react';
+import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag, TextInput } from '@carbon/react';
 import { CheckmarkFilled, WarningAltFilled } from '@carbon/icons-react';
 import {
   segmentKey,
@@ -17,10 +17,13 @@ import {
   type TaskSnapshot,
 } from '@baox/contract';
 import { taskHash } from '../router';
+import { DetailList } from '../shell/DetailList';
 import { FieldGroup } from '../shell/FieldGroup';
+import { FileName } from '../shell/FileName';
 import { PageHeader } from '../shell/PageHeader';
 import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
+import { ActionGroup } from '../shell/ActionGroup';
 import { LodgingPreview } from './LodgingPreview';
 import { DuplicateBlockers } from './DuplicateBlockers';
 import { PAGE_COPY } from './page-copy';
@@ -43,38 +46,33 @@ function Resolved() {
   return <StatusTag tone="success">已处理</StatusTag>;
 }
 
+// One detail list: file name and material type first, then the recognised fields (DESIGN.md「版式统一」).
 function MaterialFields({ material }: { material: Material | undefined }) {
   if (!material) return null;
+  const read = material.fields.map((field) => ({
+    label: field.label,
+    value: (
+      <>
+        <span>{field.value || <span className="app-muted">未填</span>}</span>
+        {EVIDENCE_LABELS[field.evidence] ? (
+          <Tag className="app-evidence-tag" type={field.evidence === 'derived' ? 'gray' : 'red'} size="sm">
+            {EVIDENCE_LABELS[field.evidence]}
+          </Tag>
+        ) : null}
+      </>
+    ),
+  }));
   return (
     <div className="app-material-fields">
-      <div className="app-preview-name">
-        <FieldGroup
-          label="材料"
-          fields={[
-            { label: '文件名', value: <span className="app-file-name">{material.fileName}</span> },
-            { label: '材料类别', value: material.kindLabel },
-          ]}
-        />
-      </div>
-      {material.fields.length > 0 ? (
-        <dl className="app-kv">
-          {material.fields.map((field) => (
-            <div key={field.key} className="app-kv-row">
-              <dt>{field.label}</dt>
-              <dd>
-                <span>{field.value || <span className="app-muted">未填</span>}</span>
-                {EVIDENCE_LABELS[field.evidence] ? (
-                  <Tag type={field.evidence === 'derived' ? 'gray' : 'red'} size="sm">
-                    {EVIDENCE_LABELS[field.evidence]}
-                  </Tag>
-                ) : null}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      ) : (
-        <p className="app-caption">没有读出字段。</p>
-      )}
+      <DetailList
+        label="材料"
+        fields={[
+          { label: '文件名', value: <span className="app-file-name">{material.fileName}</span> },
+          { label: '材料类别', value: material.kindLabel },
+          ...read,
+        ]}
+      />
+      {material.fields.length === 0 ? <p className="app-caption">没有读出字段。</p> : null}
     </div>
   );
 }
@@ -88,14 +86,6 @@ type FormProps = {
   onScreenshot: (file: File) => Promise<void>;
   state: SubmitState;
 };
-
-function ServerError({ state }: { state: SubmitState }) {
-  return state.error ? (
-    <span className="app-action-error" role="alert">
-      {state.error}
-    </span>
-  ) : null;
-}
 
 // 字段错误：Carbon 输入框的错误文字区里放一个 role="alert"，读屏立即读出。
 const fieldError = (error: string | undefined) => (error ? { invalid: true, invalidText: <span role="alert">{error}</span> } : {});
@@ -129,54 +119,50 @@ function AnswerForm({ item, onSubmit, state }: FormProps) {
           {...fieldError(errors[field.key])}
         />
       ))}
-      <div className="app-btn-row">
-        {resolved ? (
-          <Resolved />
-        ) : (
-          <Button type="submit" disabled={state.busy}>
+      {resolved ? (
+        <Resolved />
+      ) : (
+        <ActionGroup caption="补填的值同样经过核对。" error={state.error}>
+          <Button type="submit" size="md" disabled={state.busy}>
             保存并标记已处理
           </Button>
-        )}
-        <span className="app-caption">补填的值同样经过核对。</span>
-        <ServerError state={state} />
-      </div>
+        </ActionGroup>
+      )}
     </form>
   );
 }
 
-// The file input stays hidden behind the button (`.app-screenshot-row`), as on the print page.
-function ScreenshotUpload({ fileName, onScreenshot, state }: Pick<FormProps, 'fileName' | 'onScreenshot' | 'state'>) {
+// One button group: side actions (排除) first as ghost, the other answers as secondary, and for a 住宿 invoice missing
+// its payment screenshot, 上传支付截图 as the primary button last. The chosen answer keeps aria-pressed when revisited.
+// The file input stays hidden behind the upload button, as on the print page.
+function ChoiceForm({ item, fileName, onSubmit, onScreenshot, state }: FormProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const resolved = item.status === 'resolved';
+  const chosen = fieldAnswer(item.answer)[PENDING_CHOICE_KEY];
+  const manual = item.choices.some((choice) => choice.key === 'manual');
+  const excludes = item.choices.some((choice) => choice.key === 'exclude');
+  const screenshot = !resolved && isStayScreenshotItem(item);
   const copy = STAY_TRIO_COPY.screenshot;
+  const choices = [...item.choices].sort((a, b) => Number(b.key === 'exclude') - Number(a.key === 'exclude'));
   const onChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (file) void onScreenshot(file);
   };
+  const notes = [
+    screenshot ? copy.uploadNote : null,
+    excludes ? (manual ? '排除后该材料不进入明细，也不上传报销系统；自行手工处理表示你会在报销系统里另行补录，应用同样不碰它。' : '排除后该材料不进入明细，也不进材料包。') : null,
+  ].filter(Boolean);
   return (
-    <div className="app-btn-row app-screenshot-row">
-      <Button disabled={state.busy} onClick={() => inputRef.current?.click()}>
-        {copy.upload}
-      </Button>
-      <input ref={inputRef} type="file" accept={PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE} aria-label={copy.inputLabel(fileName)} onChange={onChange} />
-      <span className="app-caption">{copy.uploadNote}</span>
-    </div>
-  );
-}
-
-function ChoiceForm({ item, fileName, onSubmit, onScreenshot, state }: FormProps) {
-  const resolved = item.status === 'resolved';
-  const chosen = fieldAnswer(item.answer)[PENDING_CHOICE_KEY];
-  const manual = item.choices.some((choice) => choice.key === 'manual');
-  const excludes = item.choices.some((choice) => choice.key === 'exclude');
-  return (
-    <div>
-      {!resolved && isStayScreenshotItem(item) ? <ScreenshotUpload fileName={fileName} onScreenshot={onScreenshot} state={state} /> : null}
-      <div className="app-btn-row">
-        {item.choices.map((choice) => (
+    <div className="app-choice-form app-screenshot-row">
+      {resolved ? <Resolved /> : null}
+      {screenshot ? <input ref={inputRef} type="file" accept={PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE} aria-label={copy.inputLabel(fileName)} onChange={onChange} /> : null}
+      <ActionGroup caption={notes.length > 0 ? notes.join('') : undefined} error={state.error}>
+        {choices.map((choice) => (
           <Button
             key={choice.key}
-            kind="secondary"
+            size="md"
+            kind={choice.key === 'exclude' ? 'ghost' : 'secondary'}
             className={chosen === choice.key ? 'app-toggle is-selected' : 'app-toggle'}
             aria-pressed={chosen === choice.key}
             disabled={resolved || state.busy}
@@ -185,14 +171,12 @@ function ChoiceForm({ item, fileName, onSubmit, onScreenshot, state }: FormProps
             {choice.label}
           </Button>
         ))}
-        {resolved ? <Resolved /> : null}
-        <ServerError state={state} />
-      </div>
-      {excludes ? (
-        <p className="app-caption app-choice-note">
-          {manual ? '排除后该材料不进入明细，也不上传报销系统；自行手工处理表示你会在报销系统里另行补录，应用同样不碰它。' : '排除后该材料不进入明细，也不进材料包。'}
-        </p>
-      ) : null}
+        {screenshot ? (
+          <Button size="md" disabled={state.busy} onClick={() => inputRef.current?.click()}>
+            {copy.upload}
+          </Button>
+        ) : null}
+      </ActionGroup>
     </div>
   );
 }
@@ -249,21 +233,18 @@ function AllocationForm({ item, onSubmit, state }: FormProps) {
           {errors.allocation}
         </p>
       ) : null}
-      <div className="app-btn-row">
-        {resolved ? (
-          <Resolved />
-        ) : (
-          <>
-            <Button type="submit" disabled={state.busy}>
-              提交逐段金额
-            </Button>
-            <Button kind="secondary" disabled={state.busy} onClick={() => void onSubmit({ giveUp: true })}>
-              这张票我认不出
-            </Button>
-          </>
-        )}
-        <ServerError state={state} />
-      </div>
+      {resolved ? (
+        <Resolved />
+      ) : (
+        <ActionGroup error={state.error}>
+          <Button kind="secondary" size="md" disabled={state.busy} onClick={() => void onSubmit({ giveUp: true })}>
+            这张票我认不出
+          </Button>
+          <Button type="submit" size="md" disabled={state.busy}>
+            提交逐段金额
+          </Button>
+        </ActionGroup>
+      )}
       <p className={gaveUp ? 'app-warning-text' : 'app-caption app-choice-note'} data-testid="give-up-note">
         {gaveUp ? '你选了「这张票我认不出」。' : ''}
         {allocation.giveUpNote}
@@ -277,18 +258,15 @@ function AllocationForm({ item, onSubmit, state }: FormProps) {
 function GivenUpForm({ item, onExclude, state }: FormProps) {
   const resolved = item.status === 'resolved';
   return (
-    <div>
-      <div className="app-btn-row">
-        {resolved ? (
-          <Resolved />
-        ) : (
-          <Button kind="secondary" disabled={state.busy} onClick={() => void onExclude()}>
+    <div className="app-choice-form">
+      {resolved ? <Resolved /> : null}
+      <ActionGroup caption="排除后这张发票和它的行程单都不形成明细，也不进材料包。" error={state.error}>
+        {resolved ? null : (
+          <Button kind="secondary" size="md" disabled={state.busy} onClick={() => void onExclude()}>
             排除这张发票及其行程单
           </Button>
         )}
-        <ServerError state={state} />
-      </div>
-      <p className="app-caption app-choice-note">排除后这张发票和它的行程单都不形成明细，也不进材料包。</p>
+      </ActionGroup>
     </div>
   );
 }
@@ -354,27 +332,47 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
     return (
       <>
         <PageHeader title={copy.title} lead={items.length === 0 ? '本次盘点没有形成待确认项。' : `本次盘点的 ${items.length} 个待确认项都已处理。`} />
-        <section className="app-empty">
-          <h2>没有待确认项了</h2>
+        <section className="app-block app-pending-done" aria-labelledby="pending-done-title">
+          <h2 className="app-section-title" id="pending-done-title">
+            没有待确认项了
+          </h2>
           {items.length > 0 ? (
-            <ul className="app-resolved-list">
-              {items.map((item) => {
-                const note = gaveUpNote(item);
-                return (
-                  <li key={item.itemId}>
-                    <div className="app-resolved-head">
-                      <span>{item.title}</span> <Resolved />
-                    </div>
-                    <FieldGroup fields={[{ label: '文件名', value: <span className="app-file-name">{materialOf(item)?.fileName ?? item.materialId}</span> }]} />
-                    {note ? <div className="app-caption">{note}</div> : null}
-                  </li>
-                );
-              })}
-            </ul>
+            <div className="bleed app-table">
+              <Table aria-label="已处理的待确认项">
+                <TableHead>
+                  <TableRow>
+                    <TableHeader>待确认项</TableHeader>
+                    <TableHeader>文件</TableHeader>
+                    <TableHeader>状态</TableHeader>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {items.map((item) => {
+                    const note = gaveUpNote(item);
+                    return (
+                      <TableRow key={item.itemId}>
+                        <TableCell className="app-wrap">
+                          {item.title}
+                          {note ? <div className="app-caption">{note}</div> : null}
+                        </TableCell>
+                        <TableCell>
+                          <FileName name={materialOf(item)?.fileName ?? item.materialId} />
+                        </TableCell>
+                        <TableCell className="app-nowrap">
+                          <Resolved />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           ) : null}
-          <Button size="lg" href={taskHash(taskId, 'project')}>
-            进入项目归属
-          </Button>
+          <ActionGroup>
+            <Button size="md" href={taskHash(taskId, 'project')}>
+              进入项目归属
+            </Button>
+          </ActionGroup>
         </section>
       </>
     );

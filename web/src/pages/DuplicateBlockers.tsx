@@ -1,11 +1,12 @@
 import { Button, InlineNotification, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@carbon/react';
 import { BLOCKER_TABLE_COLUMNS, DUPLICATE_BLOCKER_COPY, type TaskSnapshot } from '@baox/contract';
 import { ActionError } from '../shell/ActionError';
+import { FileName } from '../shell/FileName';
 import { useAction } from '../shell/useAction';
 
 // 跨任务重复发票（内核 duplicate_blocked）：命中就停整批。表格列照内核 itemTable，行文字与命中的任务由服务端给出；
 // 序号按行序写，「参考材料」列内核写破折号，这里留空。盘点页与待确认项页共用。
-// 处置照内核「把文件移出」：每行一个「移出 <文件名>」，经 exclude-material（带 stepToken）请服务端把它移出本次材料；
+// 处置照内核「把文件移出」：每行末一个「移出」（可访问名称「移出 <文件名>」），经 exclude-material（带 stepToken）请服务端把它移出本次材料；
 // 能不能移出由服务端判定，移出后阻塞解除、接着划分费用事件（新快照经事件流送到）。
 
 export function DuplicateBlockers({ snapshot }: { snapshot: TaskSnapshot }) {
@@ -33,29 +34,30 @@ export function DuplicateBlockers({ snapshot }: { snapshot: TaskSnapshot }) {
               {BLOCKER_TABLE_COLUMNS.map((column) => (
                 <TableHeader key={column}>{column}</TableHeader>
               ))}
+              <TableHeader className="app-row-action-col">操作</TableHeader>
             </TableRow>
           </TableHead>
           <TableBody>
             {hits.map((hit, index) => (
               <TableRow key={hit.materialId}>
                 <TableCell className="app-nowrap">{index + 1}</TableCell>
-                <TableCell className="app-file-name">{hit.fileName}</TableCell>
+                <TableCell>
+                  <FileName name={hit.fileName} />
+                </TableCell>
                 <TableCell />
                 <TableCell>{hit.reason}</TableCell>
                 <TableCell className="app-nowrap">{hit.resolver}</TableCell>
+                <TableCell className="app-row-action-col">
+                  <Button kind="ghost" size="sm" disabled={busy} aria-label={`移出 ${hit.fileName}`} onClick={() => void remove(hit.materialId)}>
+                    移出
+                  </Button>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </div>
-      <div className="app-btn-row app-block-actions">
-        {hits.map((hit) => (
-          <Button key={hit.materialId} kind="secondary" size="sm" disabled={busy} onClick={() => void remove(hit.materialId)}>
-            移出 {hit.fileName}
-          </Button>
-        ))}
-        <span className="app-caption">移出后这份文件不参与本次盘点，也不进入材料包。</span>
-      </div>
+      <p className="app-caption app-table-caption">移出后这份文件不参与本次盘点，也不进入材料包。</p>
       <ActionError message={error} />
       {/* 另一个账号的任务占用时服务端不给任务（行文字只说已被另一个账号的任务占用），这一节不显示。 */}
       {tasks.length > 0 ? (
