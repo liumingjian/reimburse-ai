@@ -39,7 +39,9 @@ import { PAGE_COPY } from './page-copy';
 // 选择类待确认项的已选项用选中样式（aria-pressed），不用主按钮。读出的字段不显示来源。
 // A 住宿 invoice's missing-screenshot item (#213) also takes the screenshots themselves, a group of up to
 // PAYMENT_SCREENSHOT_CAP (#331): several per file dialog, uploaded one by one in order, shown as thumbnails in upload
-// order, each removable. The item stays open until the filer presses 「已传齐」.
+// order, each removable. The item stays open until the filer presses 「已传齐」. A resolved screenshot item still takes
+// additions and removals (#332), from the queue or from the all-done view, until the list is confirmed or ERP was
+// attempted; an upload after 「确认没有支付截图」 supersedes it, and removing the last screenshot opens the item again.
 
 const EVIDENCE_LABELS: Readonly<Record<Material['fields'][number]['evidence'], string>> = {
   explicit: '',
@@ -94,6 +96,8 @@ type FormProps = {
   onScreenshots: (files: readonly File[]) => Promise<void>;
   onRemoveScreenshot: (screenshotId: string) => Promise<void>;
   onCompleteScreenshots: () => Promise<void>;
+  // The group no longer takes changes: the list is confirmed or ERP was attempted (the server refuses them then).
+  screenshotsLocked: boolean;
   state: SubmitState;
 };
 
@@ -145,18 +149,19 @@ function AnswerForm({ item, onSubmit, state }: FormProps) {
 // One button group: side actions (排除) first as ghost, the other answers as secondary. For a 住宿 invoice missing its
 // payment screenshots, 上传支付截图 is secondary too and 「已传齐」 the primary, last; 「确认没有支付截图」 is offered only
 // while the group is empty. The chosen answer keeps aria-pressed when revisited. The file input stays hidden behind
-// the upload button.
-function ChoiceForm({ item, fileName, onSubmit, screenshots, onScreenshots, onRemoveScreenshot, onCompleteScreenshots, state }: FormProps) {
+// the upload button. Once resolved (unless by 排除), the group still takes uploads and removals while not locked.
+function ChoiceForm({ item, fileName, onSubmit, screenshots, onScreenshots, onRemoveScreenshot, onCompleteScreenshots, screenshotsLocked, state }: FormProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const resolved = item.status === 'resolved';
   const chosen = fieldAnswer(item.answer)[PENDING_CHOICE_KEY];
   const manual = item.choices.some((choice) => choice.key === 'manual');
   const excludes = item.choices.some((choice) => choice.key === 'exclude');
-  const screenshot = !resolved && isStayScreenshotItem(item);
+  const screenshot = isStayScreenshotItem(item) && chosen !== 'exclude';
+  const editable = screenshot && !screenshotsLocked;
   const copy = STAY_TRIO_COPY.screenshot;
   const full = screenshots.length >= PAYMENT_SCREENSHOT_CAP;
   const choices = [...item.choices]
-    .filter((choice) => !(screenshot && screenshots.length > 0 && choice.key === STAY_TRIO_CONFIRM_NONE))
+    .filter((choice) => !(screenshots.length > 0 && choice.key === STAY_TRIO_CONFIRM_NONE))
     .sort((a, b) => Number(b.key === 'exclude') - Number(a.key === 'exclude'));
   const onChange = (event: ChangeEvent<HTMLInputElement>) => {
     const files = [...(event.target.files ?? [])];
@@ -164,13 +169,14 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots, onScreenshots, onRe
     if (files.length > 0) void onScreenshots(files);
   };
   const notes = [
-    screenshot ? copy.uploadNote : null,
+    editable ? copy.uploadNote : null,
+    screenshot && screenshotsLocked ? STAY_TRIO_COPY.changeLocked : null,
     excludes ? (manual ? '排除后该材料不进入明细，也不上传报销系统；自行手工处理表示你会在报销系统里另行补录，应用同样不碰它。' : '排除后该材料不进入明细，也不进材料包。') : null,
   ].filter(Boolean);
   return (
     <div className="app-choice-form app-screenshot-row">
       {resolved ? <Resolved /> : null}
-      {screenshot ? <input ref={inputRef} type="file" multiple accept={PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE} aria-label={copy.inputLabel(fileName)} onChange={onChange} /> : null}
+      {editable ? <input ref={inputRef} type="file" multiple accept={PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE} aria-label={copy.inputLabel(fileName)} onChange={onChange} /> : null}
       {screenshot && screenshots.length > 0 ? (
         <div className="app-screenshot-group">
           <p className="app-screenshot-count">{copy.count(screenshots.length)}</p>
@@ -178,13 +184,15 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots, onScreenshots, onRe
             {screenshots.map((shot, index) => (
               <li key={shot.screenshotId}>
                 <img src={shot.url} alt={copy.thumbnail(shot.fileName, index + 1)} />
-                <IconButton kind="ghost" size="sm" align="bottom" disabled={state.busy} label={copy.remove(shot.fileName, index + 1)} onClick={() => void onRemoveScreenshot(shot.screenshotId)}>
-                  <TrashCan />
-                </IconButton>
+                {editable ? (
+                  <IconButton kind="ghost" size="sm" align="bottom" disabled={state.busy} label={copy.remove(shot.fileName, index + 1)} onClick={() => void onRemoveScreenshot(shot.screenshotId)}>
+                    <TrashCan />
+                  </IconButton>
+                ) : null}
               </li>
             ))}
           </ol>
-          {full ? <p className="app-caption">{PAYMENT_SCREENSHOT_ERRORS.cap}</p> : null}
+          {editable && full ? <p className="app-caption">{PAYMENT_SCREENSHOT_ERRORS.cap}</p> : null}
         </div>
       ) : null}
       <ActionGroup caption={notes.length > 0 ? notes.join('') : undefined} error={state.error}>
@@ -201,12 +209,12 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots, onScreenshots, onRe
             {choice.label}
           </Button>
         ))}
-        {screenshot ? (
+        {editable ? (
           <Button size="md" kind="secondary" disabled={state.busy || full} onClick={() => inputRef.current?.click()}>
             {copy.upload}
           </Button>
         ) : null}
-        {screenshot ? (
+        {editable && !resolved ? (
           <Button size="md" disabled={state.busy || screenshots.length === 0} onClick={() => void onCompleteScreenshots()}>
             {copy.complete}
           </Button>
@@ -368,6 +376,42 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
     settle(await run((adapter) => adapter.completePaymentScreenshots(taskId, item.materialId)));
   };
   const groupOf = (item: PendingItem) => (isStayScreenshotItem(item) ? snapshot.paymentScreenshots.filter((shot) => shot.voucherMaterialId === item.materialId) : []);
+  // Same lock as the server's (print/service.ts): list confirmed, or an ERP action attempt started.
+  const screenshotsLocked = snapshot.confirmation.status === 'confirmed' || snapshot.erp.status !== 'idle';
+  // A resolved screenshot item the filer can still change (#332): reachable from the all-done view too.
+  const reopenable = (item: PendingItem) => isStayScreenshotItem(item) && fieldAnswer(item.answer)[PENDING_CHOICE_KEY] !== 'exclude' && !screenshotsLocked;
+
+  // 选中项的详情：左边原件，右边标题、原因与表单，再往下是读出的字段。
+  const detailOf = (item: PendingItem) => {
+    const material = materialOf(item);
+    return (
+      <section className="app-pending-detail" aria-label="待确认项详情">
+        <div className="app-review-split">
+          <LodgingPreview key={item.itemId} snapshot={snapshot} materialId={item.materialId} />
+          <div className="app-detail-side">
+            <div className="app-detail-head">
+              <h2 className="app-section-title">{item.title}</h2>
+              <p className="app-lead app-why">{item.why}</p>
+            </div>
+            <ItemForm
+              key={item.itemId}
+              item={item}
+              fileName={material?.fileName ?? item.materialId}
+              state={state}
+              onSubmit={(answer) => submit(item, answer)}
+              onExclude={() => exclude(item)}
+              screenshots={groupOf(item)}
+              onScreenshots={(files) => attachScreenshots(item, files)}
+              onRemoveScreenshot={removeScreenshot}
+              onCompleteScreenshots={() => completeScreenshots(item)}
+              screenshotsLocked={screenshotsLocked}
+            />
+            <MaterialFields material={material} />
+          </div>
+        </div>
+      </section>
+    );
+  };
 
   // 跨任务重复发票命中：整批停，没有待确认项，也不能进入项目归属。
   if (snapshot.blockers.length > 0) {
@@ -380,6 +424,8 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
   }
 
   if (items.length === 0 || remaining === 0) {
+    // Only an item the filer opened here is shown in full; the rest stay one table row each.
+    const opened = items.find((item) => item.itemId === selectedId && reopenable(item));
     return (
       <>
         <PageHeader title={copy.title} lead={items.length === 0 ? '本次盘点没有形成待确认项。' : `本次盘点的 ${items.length} 个待确认项都已处理。`} />
@@ -405,6 +451,13 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
                         <TableCell className="app-wrap">
                           {item.title}
                           {note ? <div className="app-caption">{note}</div> : null}
+                          {reopenable(item) ? (
+                            <div>
+                              <Button kind="ghost" size="sm" aria-expanded={opened?.itemId === item.itemId} onClick={() => setSelectedId(opened?.itemId === item.itemId ? null : item.itemId)}>
+                                {STAY_TRIO_COPY.screenshot.reopen}
+                              </Button>
+                            </div>
+                          ) : null}
                         </TableCell>
                         <TableCell>
                           <FileName name={materialOf(item)?.fileName ?? item.materialId} />
@@ -425,11 +478,11 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
             </Button>
           </ActionGroup>
         </section>
+        {opened ? detailOf(opened) : null}
       </>
     );
   }
 
-  const material = materialOf(selected);
   return (
     <>
       <PageHeader title={copy.title} lead={`${copy.lead}还剩 ${remaining} 个。`} />
@@ -460,32 +513,7 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
           })}
         </ul>
       </section>
-      {selected ? (
-        <section className="app-pending-detail" aria-label="待确认项详情">
-          <div className="app-review-split">
-            <LodgingPreview key={selected.itemId} snapshot={snapshot} materialId={selected.materialId} />
-            <div className="app-detail-side">
-              <div className="app-detail-head">
-                <h2 className="app-section-title">{selected.title}</h2>
-                <p className="app-lead app-why">{selected.why}</p>
-              </div>
-              <ItemForm
-                key={selected.itemId}
-                item={selected}
-                fileName={material?.fileName ?? selected.materialId}
-                state={state}
-                onSubmit={(answer) => submit(selected, answer)}
-                onExclude={() => exclude(selected)}
-                screenshots={groupOf(selected)}
-                onScreenshots={(files) => attachScreenshots(selected, files)}
-                onRemoveScreenshot={removeScreenshot}
-                onCompleteScreenshots={() => completeScreenshots(selected)}
-              />
-              <MaterialFields material={material} />
-            </div>
-          </div>
-        </section>
-      ) : null}
+      {selected ? detailOf(selected) : null}
     </>
   );
 }

@@ -474,4 +474,53 @@ describe('逐段分摊与阻塞项', () => {
     expect(snapshot.pendingItems.find((item) => item.itemId === 'stay_screenshot_missing.m01')).toMatchObject({ status: 'resolved', answer: null });
     expect(snapshot.paymentScreenshots.map((shot) => shot.fileName)).toEqual(['IMG_5012.png', 'IMG_A.png', 'IMG_B.png', 'IMG_C.png', 'IMG_D.png', 'IMG_E.png']);
   });
+  // #332: a resolved 支付截图 item stays reachable from the all-done view: an upload supersedes 确认没有, a declared group
+  // takes additions and removals and stays resolved, and removing the last opens the item again.
+  test('已处理的支付截图项可以重新展开增删：上传取代「确认没有」，删到一张仍已处理，删空回到待处理', async () => {
+    const copy = STAY_TRIO_COPY.screenshot;
+    const adapter = renderPending('review');
+    await screen.findByRole('heading', { name: '没有待确认项了' });
+    const png = (name: string) => new File([new Uint8Array([137, 80, 78, 71])], name, { type: 'image/png' });
+    const input = () => within(detail()).getByLabelText(copy.inputLabel('全季酒店_发票.pdf'));
+    const thumbnails = () => within(within(detail()).getByRole('list', { name: '已上传的支付截图' })).getAllByRole('img').map((img) => img.getAttribute('alt'));
+    const item = async () => (await adapter.getSnapshot('T1')).pendingItems.find((candidate) => candidate.itemId === 'stay_screenshot_missing.m01');
+
+    // Seeded with 确认没有: opening it shows the chosen answer and still offers the upload, but no 「已传齐」.
+    expect(screen.queryByLabelText('待确认项详情')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: copy.reopen }));
+    expect(within(detail()).getByRole('button', { name: copy.confirmNone }).getAttribute('aria-pressed')).toBe('true');
+    expect(within(detail()).queryByRole('button', { name: copy.complete })).toBeNull();
+
+    // An upload supersedes it: the item is pending again, selected in the queue, and waits for 「已传齐」.
+    fireEvent.change(input(), { target: { files: [png('IMG_5011.png')] } });
+    await screen.findByText('对照原件补填或作出选择。还剩 1 个。');
+    expect(thumbnails()).toEqual([copy.thumbnail('IMG_5011.png', 1)]);
+    expect(within(detail()).queryByRole('button', { name: copy.confirmNone })).toBeNull();
+    expect(await item()).toMatchObject({ status: 'open', answer: null });
+    fireEvent.click(within(detail()).getByRole('button', { name: copy.complete }));
+    await screen.findByRole('heading', { name: '没有待确认项了' });
+
+    // Reopened after 「已传齐」: adding and removing keep it resolved.
+    fireEvent.click(screen.getByRole('button', { name: copy.reopen }));
+    expect(within(detail()).getByText('已处理')).toBeTruthy();
+    fireEvent.change(input(), { target: { files: [png('IMG_5012.png')] } });
+    await waitFor(() => expect(thumbnails()).toEqual([copy.thumbnail('IMG_5011.png', 1), copy.thumbnail('IMG_5012.png', 2)]));
+    fireEvent.click(within(detail()).getByRole('button', { name: copy.remove('IMG_5011.png', 1) }));
+    await waitFor(() => expect(thumbnails()).toEqual([copy.thumbnail('IMG_5012.png', 1)]));
+    expect(within(detail()).getByText(copy.count(1))).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '没有待确认项了' })).toBeTruthy();
+    expect(await item()).toMatchObject({ status: 'resolved', answer: null });
+
+    // Removing the last opens it again; 确认没有 is on offer once more.
+    fireEvent.click(within(detail()).getByRole('button', { name: copy.remove('IMG_5012.png', 1) }));
+    await screen.findByText('对照原件补填或作出选择。还剩 1 个。');
+    expect(within(detail()).getByRole('button', { name: copy.confirmNone }).getAttribute('aria-pressed')).toBe('false');
+    expect(await item()).toMatchObject({ status: 'open', answer: null });
+  });
+
+  test('整单明细确认后，已处理的支付截图项不再能展开增删', async () => {
+    renderPending('actions');
+    await screen.findByRole('heading', { name: '没有待确认项了' });
+    expect(screen.queryByRole('button', { name: STAY_TRIO_COPY.screenshot.reopen })).toBeNull();
+  });
 });

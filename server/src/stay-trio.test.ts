@@ -66,15 +66,22 @@ describe('checkStayTrios', () => {
     expect(result.trios).toEqual([expect.objectContaining({ invoiceId: null, folioId: 'fol', screenshot: null })]);
   });
 
-  it('确认没有 settles the item and records the absence; the record outlives a screenshot supplied later', () => {
+  it('确认没有 settles the item and records the absence while the group is empty', () => {
     const answers = new Map([['stay_screenshot_missing.inv', { choice: 'confirm_none' }]]);
     const confirmed = check([invoice], [folio], [], answers);
     expect(items(confirmed)).toEqual([expect.objectContaining({ itemId: 'stay_screenshot_missing.inv', status: 'resolved', answer: { choice: 'confirm_none' } })]);
     expect(confirmed.trios[0]?.screenshot).toEqual({ present: false, noneConfirmed: true });
+  });
 
-    const supplied = check([invoice], [folio], ['inv'], answers);
-    expect(items(supplied)).toEqual([expect.objectContaining({ status: 'resolved', answer: { choice: 'confirm_none' } })]);
-    expect(supplied.trios[0]?.screenshot).toEqual({ present: true, noneConfirmed: true });
+  it('a screenshot supersedes 确认没有: the item waits for 「已传齐」 and records no absence (#332)', () => {
+    const answers = new Map([['stay_screenshot_missing.inv', { choice: 'confirm_none' }]]);
+    const pending = check([invoice], [folio], [['inv', { count: 1, complete: false }]], answers);
+    expect(items(pending)).toEqual([expect.objectContaining({ status: 'open', answer: null })]);
+    expect(pending.trios[0]?.screenshot).toEqual({ present: true, noneConfirmed: false });
+
+    const declared = check([invoice], [folio], ['inv'], answers);
+    expect(items(declared)).toEqual([expect.objectContaining({ status: 'resolved', answer: null })]);
+    expect(declared.trios[0]?.screenshot).toEqual({ present: true, noneConfirmed: false });
   });
 });
 
@@ -252,6 +259,70 @@ describe('a group of 支付截图', () => {
     const after = await client.current(ready.task.taskId);
     expect(groupOf(after, invoice.materialId)).toEqual(['IMG_5011.png', 'IMG_5012.png']);
     expect(after.confirmation.status).toBe('confirmed');
+  }, 120_000);
+});
+
+// #332: a resolved screenshot item takes changes until the list is confirmed, and a screenshot supersedes 确认没有.
+describe('reopening a resolved group of 支付截图', () => {
+  it('after 「已传齐」 adding or removing one keeps it resolved; removing the last opens the item and clears 「已传齐」', async () => {
+    const start = (await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] })).reached;
+    const invoice = byFileName(start, sample('m01').name);
+    const declared = await client.accepted(await complete(await screenshots(start, invoice.materialId, [png(1), png(2)]), invoice.materialId));
+
+    const added = await screenshots(declared, invoice.materialId, [png(3)]);
+    expect(groupOf(added, invoice.materialId)).toEqual(['IMG_5011.png', 'IMG_5012.png', 'IMG_5013.png']);
+    expect(screenshotItem(added, invoice.materialId)).toMatchObject({ status: 'resolved' });
+    expect(added.stage).toBe('project');
+
+    let latest = added;
+    for (const shot of added.paymentScreenshots.slice(0, 2)) latest = await client.accepted(await remove(latest, shot.screenshotId));
+    expect(groupOf(latest, invoice.materialId)).toEqual(['IMG_5013.png']);
+    expect(screenshotItem(latest, invoice.materialId)).toMatchObject({ status: 'resolved' });
+    expect(latest.stage).toBe('project');
+
+    const emptied = await client.accepted(await remove(latest, latest.paymentScreenshots[0]?.screenshotId));
+    expect(groupOf(emptied, invoice.materialId)).toEqual([]);
+    expect(screenshotItem(emptied, invoice.materialId)).toMatchObject({ status: 'open', answer: null });
+    expect(emptied).toMatchObject({ stage: 'pending', step: { kind: 'answer_pending' } });
+    expect(byFileName(emptied, invoice.fileName)).toMatchObject({ status: 'pending' });
+
+    // The declaration went with the group: a new screenshot waits for a new 「已传齐」.
+    const refilled = await screenshots(emptied, invoice.materialId, [png(4)]);
+    expect(screenshotItem(refilled, invoice.materialId)).toMatchObject({ status: 'open' });
+    expect(screenshotItem(await client.accepted(await complete(refilled, invoice.materialId)), invoice.materialId)).toMatchObject({ status: 'resolved' });
+  });
+
+  it('an upload supersedes 确认没有 for good; with the group emptied again, 确认没有 may be chosen again', async () => {
+    const start = (await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] })).reached;
+    const invoice = byFileName(start, sample('m01').name);
+    const itemId = `stay_screenshot_missing.${invoice.materialId}`;
+    const none = await answer(start, itemId, 'confirm_none');
+    expect(screenshotItem(none, invoice.materialId)).toMatchObject({ status: 'resolved', answer: { choice: 'confirm_none' } });
+
+    const supplied = await screenshots(none, invoice.materialId, [png(1)]);
+    expect(screenshotItem(supplied, invoice.materialId)).toMatchObject({ status: 'open', answer: null });
+    expect(supplied).toMatchObject({ stage: 'pending', step: { kind: 'answer_pending' } });
+    // Not while the group holds a screenshot.
+    expect(await refused(await client.act(supplied, 'answer-pending', { itemId, answer: { choice: 'confirm_none' } }), 'check_failed')).toBe(PAYMENT_SCREENSHOT_ERRORS.noneWithScreenshots);
+
+    const emptied = await client.accepted(await remove(supplied, supplied.paymentScreenshots[0]?.screenshotId));
+    expect(screenshotItem(emptied, invoice.materialId)).toMatchObject({ status: 'open', answer: null });
+    const again = await answer(emptied, itemId, 'confirm_none');
+    expect(screenshotItem(again, invoice.materialId)).toMatchObject({ status: 'resolved', answer: { choice: 'confirm_none' } });
+    expect(again.stage).toBe('project');
+  });
+
+  it('a group declared after 确认没有 prints its screenshot, without the confirmed-none notice', async () => {
+    const scene = await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] });
+    const invoice = byFileName(scene.reached, sample('m01').name);
+    const none = await answer(scene.reached, `stay_screenshot_missing.${invoice.materialId}`, 'confirm_none');
+    const declared = await client.accepted(await complete(await screenshots(none, invoice.materialId, [png(1)]), invoice.materialId));
+    const review = await scene.accept('submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(declared.lines.map((line) => [line.lineId, 'P-2307'])) });
+    const ready = await scene.accept('confirm-review', { digest: review.confirmation.digest });
+
+    const generated = await client.accepted(await printAction(ready, 'generate-print-sheet', {}));
+    expect(generated.printSheet.pages[0]?.screenshotId).toBe(generated.paymentScreenshots[0]?.screenshotId);
+    expect(generated.printSheet.notices).toEqual([]);
   }, 120_000);
 });
 

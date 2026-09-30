@@ -1,8 +1,11 @@
 import {
+  PENDING_CHOICE_KEY,
   PAYMENT_SCREENSHOT_CAP,
   PAYMENT_SCREENSHOT_ERRORS,
   PRINT_ACTION_ERRORS,
+  STAY_TRIO_CONFIRM_NONE,
   STAY_TRIO_COPY,
+  fieldAnswer,
   stayTrioItemId,
   type ActionError,
   type ActionOutcome,
@@ -15,8 +18,8 @@ import type { MockBus } from '../bus';
 import { buildPrintSheet, cornersValid, cropPage, rotatePage } from '../fixtures/print';
 import { settlePending } from './pending';
 
-// 支付截图与打印稿（生成、旋转、四角裁剪）。这些动作都不带 stepToken，也不碰整单明细确认；支付截图的「已传齐」与删空会改变
-// 缺支付截图待确认项的状态，随之改变 step（同服务端）。
+// 支付截图与打印稿（生成、旋转、四角裁剪）。这些动作都不带 stepToken，也不碰整单明细确认；支付截图的「已传齐」、删空，以及
+// 「确认没有支付截图」之后的上传会改变缺支付截图待确认项的状态，随之改变 step（同服务端）。
 
 export type PrintFlow = Pick<AppAdapter, 'addPaymentScreenshot' | 'removePaymentScreenshot' | 'completePaymentScreenshots' | 'generatePrintSheet' | 'rotatePlacement' | 'cropPlacement'>;
 
@@ -40,11 +43,23 @@ export function createPrintFlow(bus: MockBus): PrintFlow {
   // 支付截图组（#331，同服务端 print/service.ts）：只有住宿发票（列出了它的缺支付截图待确认项）收支付截图；整单明细确认后或
   // 已开始写入报销系统后，增、删、「已传齐」都拒绝。打印稿只在确认后存在，所以截图变化从不重排已生成的打印稿。
   const refusal = (snapshot: TaskSnapshot, voucherMaterialId: string): ActionOutcome | null => {
-    if (!snapshot.pendingItems.some((item) => item.itemId === stayTrioItemId('screenshot', voucherMaterialId))) return bus.fail('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
+    const item = snapshot.pendingItems.find((candidate) => candidate.itemId === stayTrioItemId('screenshot', voucherMaterialId));
+    // An excluded invoice leaves the 住宿 trio, as on the server.
+    if (!item || fieldAnswer(item.answer)[PENDING_CHOICE_KEY] === 'exclude') return bus.fail('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
     if (snapshot.confirmation.status === 'confirmed' || snapshot.erp.status !== 'idle') return bus.fail('screenshot_locked', STAY_TRIO_COPY.changeLocked);
     return null;
   };
   const groupOf = (snapshot: TaskSnapshot, voucherMaterialId: string) => snapshot.paymentScreenshots.filter((shot) => shot.voucherMaterialId === voucherMaterialId);
+  // The invoice's screenshot item goes back to pending, its answer dropped (#332).
+  const reopen = (snapshot: TaskSnapshot, taskId: string, invoiceId: string) => {
+    const item = snapshot.pendingItems.find((candidate) => candidate.itemId === stayTrioItemId('screenshot', invoiceId));
+    if (!item) return;
+    item.status = 'open';
+    item.answer = null;
+    const invoice = snapshot.materials.find((material) => material.materialId === invoiceId);
+    if (invoice) invoice.status = 'pending';
+    settlePending(snapshot, bus.projectAllowList(taskId));
+  };
 
   // 打印稿的旋转与裁剪：只改这一页的放置（服务端立即重新渲染该页），不改原件、不碰确认状态与 step。
   const adjustPage = (taskId: string, pageId: string, slot: PlacementSlot, change: (page: PrintPage) => PrintPage | { error: ActionError }): ActionOutcome => {
@@ -63,7 +78,8 @@ export function createPrintFlow(bus: MockBus): PrintFlow {
 
   return {
     // 支付截图 (payment screenshot): images only, one per call, appended to the invoice's group in upload order, up to
-    // PAYMENT_SCREENSHOT_CAP. The item stays as it is: only 「已传齐」 settles it.
+    // PAYMENT_SCREENSHOT_CAP. The item stays as it is (only 「已传齐」 settles it), except that a screenshot supersedes
+    // 「确认没有支付截图」 for good: that item goes back to pending (#332).
     async addPaymentScreenshot(taskId, voucherMaterialId, file) {
       const snapshot = bus.draft(taskId);
       const refused = refusal(snapshot, voucherMaterialId);
@@ -73,6 +89,8 @@ export function createPrintFlow(bus: MockBus): PrintFlow {
       const screenshotId = `s${nextScreenshotNo}`;
       nextScreenshotNo += 1;
       snapshot.paymentScreenshots.push({ screenshotId, voucherMaterialId, fileName: file.name, url: objectUrl(file, screenshotId) });
+      const item = snapshot.pendingItems.find((candidate) => candidate.itemId === stayTrioItemId('screenshot', voucherMaterialId));
+      if (item && fieldAnswer(item.answer)[PENDING_CHOICE_KEY] === STAY_TRIO_CONFIRM_NONE) reopen(snapshot, taskId, voucherMaterialId);
       snapshot.task.updatedAt = bus.now();
       return bus.commit(snapshot);
     },
@@ -87,12 +105,7 @@ export function createPrintFlow(bus: MockBus): PrintFlow {
       const invoiceId = removing.voucherMaterialId;
       if (groupOf(snapshot, invoiceId).length === 0 && bus.completeScreenshotGroups(taskId).delete(invoiceId)) {
         const item = snapshot.pendingItems.find((candidate) => candidate.itemId === stayTrioItemId('screenshot', invoiceId));
-        if (item && item.answer === null) {
-          item.status = 'open';
-          const invoice = snapshot.materials.find((material) => material.materialId === invoiceId);
-          if (invoice) invoice.status = 'pending';
-          settlePending(snapshot, bus.projectAllowList(taskId));
-        }
+        if (item?.status === 'resolved' && item.answer === null) reopen(snapshot, taskId, invoiceId);
       }
       snapshot.task.updatedAt = bus.now();
       return bus.commit(snapshot);

@@ -600,9 +600,12 @@ export function inventoryView(
   const linked = new Map<string, string[]>([...stays.values()].flatMap((stay) => [[stay.invoiceId, [stay.folioId]], [stay.folioId, [stay.invoiceId]]]));
 
   // The 住宿 trio (#213), only over a finished run: a folio still being read is not yet missing.
-  const trio = results && waiting === 0 ? checkStayTrios(stayInvoices, folios, [...stays.values()], screenshots, answers) : { trios: [], items: new Map<string, PendingItem[]>() };
+  const trio = results && waiting === 0 ? checkStayTrios(stayInvoices, folios, [...stays.values()], screenshots, answers) : { trios: [], items: new Map<string, PendingItem[]>(), checks: new Map<string, AnswerCheck>() };
   for (const items of trio.items.values()) {
-    for (const item of items) answerables.set(item.itemId, { item });
+    for (const item of items) {
+      const check = trio.checks.get(item.itemId);
+      answerables.set(item.itemId, check ? { item, check } : { item });
+    }
     pendingItems.push(...items);
   }
 

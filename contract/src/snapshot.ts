@@ -451,7 +451,9 @@ export const PAYMENT_SCREENSHOT_CAP = 6;
 // invoice or folio; the item disappears once the material is supplied, or settles on the choice
 // `STAY_TRIO_CONFIRM_NONE`, which records the absence. Every 住宿 invoice carries a screenshot item: it stays open
 // while its group is empty or not yet declared complete (「已传齐」), and settles on the declaration or on
-// `STAY_TRIO_CONFIRM_NONE`. The print stage reads that record instead of judging the absence again. All filer-facing
+// `STAY_TRIO_CONFIRM_NONE` while the group is empty. An upload supersedes a `STAY_TRIO_CONFIRM_NONE` for good. A resolved
+// item's group still takes additions and removals until the list is confirmed; removing its last screenshot opens the
+// item again (#332). The print stage reads that record instead of judging the absence again. All filer-facing
 // wording of the check lives here, shared by the server and the page.
 export const STAY_TRIO_ELEMENTS = ['invoice', 'folio', 'screenshot'] as const;
 export type StayTrioElement = (typeof STAY_TRIO_ELEMENTS)[number];
@@ -496,6 +498,8 @@ export const STAY_TRIO_COPY = {
     // A thumbnail's accessible name and its remove button's.
     thumbnail: (fileName: string, index: number) => `第 ${index} 张支付截图：${fileName}`,
     remove: (fileName: string, index: number) => `移除第 ${index} 张支付截图：${fileName}`,
+    // Opens a resolved item again to add or remove screenshots (#332).
+    reopen: '修改支付截图',
   },
   invoice: {
     title: (folioFileName: string) => `结账单「${folioFileName}」缺少住宿发票`,
@@ -516,6 +520,8 @@ export const PAYMENT_SCREENSHOT_ERRORS = {
   cap: `每张发票最多 ${PAYMENT_SCREENSHOT_CAP} 张支付截图`,
   // 「已传齐」 on an empty group.
   empty: '还没有上传支付截图，传好后再点「已传齐」。',
+  // 「确认没有支付截图」 while the group holds a screenshot (#332).
+  noneWithScreenshots: '这张发票已经上传了支付截图，不能再确认没有。要确认没有，先删掉这些截图。',
 } as const;
 
 export const PaymentScreenshotSchema = z.object({
