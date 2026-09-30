@@ -73,8 +73,9 @@ test('酒店发票加全季结账单，盘点后得到一条带入住和离店�
   await expect.poll(async () => TaskSnapshotSchema.parse(await (await page.request.get(`/api/tasks/${taskId}`)).json()).stage).toBe('project');
 });
 
-// #331: the missing-screenshot 待确认项 takes a group of 支付截图 from one file dialog and settles on 「已传齐」.
-test('住宿发票的支付截图：一次选两张，看到两张缩略图，点「已传齐」后这一项处理完', async ({ page }) => {
+// #331: the missing-screenshot 待确认项 takes a group of 支付截图 from one file dialog and settles on 「已传齐」; #332: it
+// can be reopened to change the group.
+test('住宿发票的支付截图：一次选两张，看到两张缩略图，点「已传齐」后这一项处理完；重新展开删掉一张仍已处理', async ({ page }) => {
   await inventory(page, [sample('m01'), sample('m02')]);
   const taskId = /#\/task\/([^/]+)\//.exec(page.url())?.[1] ?? '';
   const read = async () => TaskSnapshotSchema.parse(await (await page.request.get(`/api/tasks/${taskId}`)).json());
@@ -101,6 +102,18 @@ test('住宿发票的支付截图：一次选两张，看到两张缩略图，�
   expect(done.pendingItems).toEqual([expect.objectContaining({ status: 'resolved' })]);
   expect(done.paymentScreenshots.map((shot) => shot.fileName)).toEqual(['IMG_5011.png', 'IMG_5012.png']);
   expect(done.stage).toBe('project');
+
+  // #332: reopened from the all-done view, removing one of the two keeps the item resolved.
+  await page.getByRole('button', { name: copy.reopen }).click();
+  await detail.getByRole('button', { name: copy.remove('IMG_5011.png', 1) }).click();
+  await expect(thumbnails).toHaveCount(1);
+  await expect(thumbnails.nth(0)).toHaveAccessibleName(copy.thumbnail('IMG_5012.png', 1));
+  await expect(detail.getByText(copy.count(1))).toBeVisible();
+  await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
+  const reopened = await read();
+  expect(reopened.pendingItems).toEqual([expect.objectContaining({ status: 'resolved' })]);
+  expect(reopened.paymentScreenshots.map((shot) => shot.fileName)).toEqual(['IMG_5012.png']);
+  expect(reopened.stage).toBe('project');
 });
 
 test('其他连锁的结账单认不出版式，转到手工补填', async ({ page, browser }) => {
