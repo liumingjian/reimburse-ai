@@ -84,7 +84,7 @@ function PdfViewer({ material, src, onPreviewError }: { material: Material; src:
     const { pdf } = state;
     return (
       <>
-        <ImageViewer src={pdf.url} alt={alt} {...(onPreviewError ? { onPreviewError } : {})} />
+        <ImageViewer src={pdf.url} alt={alt} fit="width" {...(onPreviewError ? { onPreviewError } : {})} />
         {pdf.shownPages < pdf.pageCount ? <p className="app-caption">共 {pdf.pageCount} 页，这里显示前 {pdf.shownPages} 页；其余页请打开原件查看。</p> : null}
       </>
     );
@@ -110,7 +110,11 @@ type Rotation = 0 | 90 | 180 | 270;
 
 type Size = { width: number; height: number };
 
-function ImageViewer({ src, alt, onPreviewError }: { src: string; alt: string; onPreviewError?: () => void }) {
+// `fit`: a photo fits whole into the frame (`page`); a rendered PDF fills the frame's width and scrolls down (`width`),
+// since a portrait page fitted by height came out too small to read (QA 2026-09-30).
+type Fit = 'page' | 'width';
+
+function ImageViewer({ src, alt, fit: fitMode = 'page', onPreviewError }: { src: string; alt: string; fit?: Fit; onPreviewError?: () => void }) {
   const [step, setStep] = useState(FIT_STEP);
   const [rotation, setRotation] = useState<Rotation>(0);
   const [natural, setNatural] = useState<Size | null>(null);
@@ -135,7 +139,12 @@ function ImageViewer({ src, alt, onPreviewError }: { src: string; alt: string; o
     return () => observer.disconnect();
   }, [turned?.width, turned?.height]);
 
-  const fit = turned && frame && frame.width > 0 && frame.height > 0 ? Math.min(frame.width / turned.width, frame.height / turned.height) : null;
+  const fit =
+    turned && frame && frame.width > 0 && frame.height > 0
+      ? fitMode === 'width'
+        ? frame.width / turned.width
+        : Math.min(frame.width / turned.width, frame.height / turned.height)
+      : null;
   const scale = fit === null ? null : fit * zoom;
 
   // 换档时保持框中心所看的位置不变。
@@ -171,12 +180,13 @@ function ImageViewer({ src, alt, onPreviewError }: { src: string; alt: string; o
   const canvas = turned && scale !== null ? { width: turned.width * scale, height: turned.height * scale } : null;
   const image = natural && scale !== null ? { width: natural.width * scale, height: natural.height * scale } : null;
   // 框宽按适应后的原件定（栏宽跟着走），缩放时不变，放大后在框内滚动。
-  const frameWidth = turned ? `calc(var(--app-doc-frame-block) * ${turned.width / turned.height})` : undefined;
+  const frameWidth = fitMode === 'width' ? '100%' : turned ? `calc(var(--app-doc-frame-block) * ${turned.width / turned.height})` : undefined;
+  const fitLabel = fitMode === 'width' ? '适应宽度' : '适应窗口';
 
   return (
-    <div className="app-doc-viewer">
+    <div className={`app-doc-viewer${fitMode === 'width' ? ' is-fit-width' : ''}`}>
       <div className="app-doc-toolbar" role="toolbar" aria-label="原件查看">
-        <IconButton kind="ghost" size="sm" label="适应窗口" align="bottom" onClick={() => setStep(FIT_STEP)}>
+        <IconButton kind="ghost" size="sm" label={fitLabel} align="bottom" onClick={() => setStep(FIT_STEP)}>
           <FitToScreen />
         </IconButton>
         <IconButton kind="ghost" size="sm" label="放大" align="bottom" disabled={step >= ZOOM_STEPS.length - 1} onClick={() => setStep((current) => Math.min(current + 1, ZOOM_STEPS.length - 1))}>
@@ -195,7 +205,7 @@ function ImageViewer({ src, alt, onPreviewError }: { src: string; alt: string; o
       </div>
       <div
         ref={frameRef}
-        className={`app-doc-preview is-image${zoom > 1 ? ' is-pannable' : ''}`}
+        className={`app-doc-preview is-image${zoom > 1 || fitMode === 'width' ? ' is-pannable' : ''}`}
         style={frameWidth ? { inlineSize: frameWidth } : undefined}
         data-testid="doc-frame"
         onPointerDown={onPointerDown}

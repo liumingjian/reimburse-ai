@@ -27,6 +27,9 @@ describe('DocViewer with a PDF original', () => {
     const image = await screen.findByRole('img', { name: `${material.fileName} 原件` });
     expect(image.getAttribute('src')).toBe('blob:rendered');
     expect(screen.getByRole('toolbar', { name: '原件查看' })).toBeTruthy();
+    // Fitted to the frame's width, not squeezed whole into its height.
+    expect(screen.getByRole('button', { name: '适应宽度' })).toBeTruthy();
+    expect(screen.getByTestId('doc-frame').style.inlineSize).toBe('100%');
     expect(screen.queryByTitle(`${material.fileName} 原件`)).toBeNull();
     expect(rendered).toHaveBeenCalledWith(material.previewUrl, expect.any(AbortSignal));
   });

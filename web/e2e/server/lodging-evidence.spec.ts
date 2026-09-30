@@ -41,6 +41,8 @@ test('associated hotel bill leads pending review and project previews preserve s
   await expect(dialog.getByRole('tab', { name: /^发票：/ })).toHaveCount(0);
   await page.setViewportSize({ width: 1366, height: 768 });
   await expect(dialog.getByRole('img', { name: '全季酒店_结账单.pdf 原件' })).toBeVisible();
+  // The folio fills the dialog's width instead of a thin page fitted to a short frame (QA 2026-09-30).
+  await expect.poll(async () => (await dialog.getByRole('img', { name: '全季酒店_结账单.pdf 原件' }).boundingBox())?.width ?? 0).toBeGreaterThan(600);
   await page.screenshot({ path: testInfo.outputPath('lodging-preview-1366.png') });
   const bill = before.materials.find((material) => material.kind === 'hotel_folio')!;
   await page.route(`**${bill.previewUrl}`, (route) => route.fulfill({ status: 404, body: 'preview unavailable' }));

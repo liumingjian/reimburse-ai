@@ -48,7 +48,7 @@ import { DeadlineWarningList } from './DeadlineWarningList';
 // 材料包有缺项时显示缺项表，「确认」不可用，可排除服务端标明的相关材料。
 // The server starts 去报销 after confirmation. The paired extension opens the task's ERP tab; filling ends at an
 // attended handoff, where the employee saves and submits the form.
-// 「追加材料」先二次确认，再请服务端使确认失效并回到上传页。支付截图在打印稿页补充，不在这里。
+// 「追加材料」先二次确认，再请服务端使确认失效并回到上传页。支付截图在待确认项里上传，不在这里。
 
 // 常驻城市：到第一次写入报销系统之前都可以改；改了会重新划分本地与外地市内交通，确认随之失效（服务端判定）。
 // The summary bar only shows it; 修改常驻城市 sits with the page's other edit actions and opens this dialog.
@@ -268,7 +268,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
                 </Button>
               }
             >
-              <p>生成合并 PDF：每张发票一页 A4，发票在上、证明材料在下。住宿发票的支付截图在打印稿页补充。</p>
+              <p>生成合并 PDF：每张发票一页 A4，发票在上、证明材料在下。</p>
             </Card>
             <Card
               title="去报销"

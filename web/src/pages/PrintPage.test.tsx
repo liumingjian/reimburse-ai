@@ -30,12 +30,6 @@ const hotelCard = () => within(pages()).getByRole('listitem', { name: 'No.9 · 0
 const confirmationStatus = async (adapter: AppAdapter) => (await adapter.getSnapshot('T1')).confirmation.status;
 const png = (name = 'IMG_5011.png') => new File(['png bytes'], name, { type: 'image/png' });
 
-function chooseScreenshot(file: File) {
-  const input = screen.getByLabelText('选择支付截图：全季酒店_发票.pdf');
-  Object.defineProperty(input, 'files', { value: [file], configurable: true });
-  fireEvent.change(input);
-}
-
 // 原图 900x1200 显示成 450x600：显示像素 x2 = 原图像素。
 function stubEditorImage() {
   const image = screen.getByRole('img', { name: 'IMG_4871.jpg 原图' }) as HTMLImageElement;
@@ -85,36 +79,40 @@ describe('打印稿预览', () => {
     expect(download.getAttribute('download')).toBe('打印稿_2026-08上海出差.pdf');
   });
 
-  test('支付截图只在打印稿页补充：每张主要报销凭证都有入口；非图片被拒；补上后提醒消失，移除后回来；整单明细确认不变', async () => {
-    const adapter = renderPrint(true);
+  // QA 2026-09-30: the preview only previews. A 住宿发票's payment screenshot is uploaded in its 待确认项.
+  test('预览页不补充支付截图：没有补充、移除入口，也没有文件选择框；提醒照常', async () => {
+    renderPrint(true);
     await screen.findByRole('list', { name: '打印稿页面' });
-    // 故事 61：每张主要报销凭证都能配自己的支付截图，不只住宿。7 页各有一个入口。
-    expect(within(pages()).getAllByRole('button', { name: /^补充支付截图/ })).toHaveLength(7);
-    expect(within(hotelCard()).getByRole('button', { name: '补充支付截图：全季酒店_发票.pdf' })).toBeTruthy();
-    // 提醒仍然只给住宿发票：其余页没补也不啰嗦。
+    expect(within(pages()).queryByRole('button', { name: /支付截图/ })).toBeNull();
+    expect(document.querySelector('input[type="file"]')).toBeNull();
+    expect(within(hotelCard()).queryByText(/支付截图/)).toBeNull();
     expect((await screen.findByRole('status', { name: '打印提醒' })).textContent).toContain('No.9 住宿发票还没有支付截图');
-
-    chooseScreenshot(new File(['%PDF'], '支付记录.pdf', { type: 'application/pdf' }));
-    expect((await within(hotelCard()).findByRole('alert')).textContent).toBe(PAYMENT_SCREENSHOT_ERRORS.notImage);
-    expect((await adapter.getSnapshot('T1')).paymentScreenshots).toHaveLength(0);
-
-    chooseScreenshot(png());
-    expect(await within(hotelCard()).findByText('IMG_5011.png')).toBeTruthy();
-    expect(screen.queryByRole('status', { name: '打印提醒' })).toBeNull();
-    let snapshot = await adapter.getSnapshot('T1');
-    expect(snapshot.paymentScreenshots).toMatchObject([{ voucherMaterialId: 'm01', fileName: 'IMG_5011.png' }]);
-    expect(snapshot.printSheet.pages.find((page) => page.pageId === 'pg7')?.screenshotId).toBe(snapshot.paymentScreenshots[0]?.screenshotId);
-    expect(snapshot.confirmation.status).toBe('confirmed');
-
-    fireEvent.click(within(hotelCard()).getByRole('button', { name: '移除支付截图：全季酒店_发票.pdf' }));
-    expect(await within(hotelCard()).findByRole('button', { name: '补充支付截图：全季酒店_发票.pdf' })).toBeTruthy();
-    expect(await screen.findByRole('status', { name: '打印提醒' })).toBeTruthy();
-    snapshot = await adapter.getSnapshot('T1');
-    expect(snapshot.paymentScreenshots).toHaveLength(0);
-    expect(snapshot.confirmation.status).toBe('confirmed');
   });
 
-  test('打印稿还没生成时服务端拒绝补充支付截图（入口只在打印稿页）', async () => {
+  // QA 2026-09-30: one page per screen was slow to look through; the pages tile, 3, 4 or 5 to a row.
+  test('页图平铺：默认每行 4 页，可改成 3 或 5 页，选择记在本机', async () => {
+    window.localStorage.removeItem('baox.print.perRow');
+    renderPrint(true);
+    await screen.findByRole('list', { name: '打印稿页面' });
+    const perRow = screen.getByRole('tablist', { name: '每行页数' });
+    expect(within(perRow).getByRole('tab', { name: '每行 4 页' }).getAttribute('aria-selected')).toBe('true');
+    expect(pages().style.gridTemplateColumns).toBe('repeat(4, minmax(0, 1fr))');
+    fireEvent.click(within(perRow).getByRole('tab', { name: '每行 5 页' }));
+    expect(pages().style.gridTemplateColumns).toBe('repeat(5, minmax(0, 1fr))');
+    expect(window.localStorage.getItem('baox.print.perRow')).toBe('5');
+    // 页上不再列上半页 / 下半页的文字说明。
+    expect(within(pages()).queryByText(/上半页|下半页/)).toBeNull();
+  });
+
+  test('点页图放大查看这一页', async () => {
+    renderPrint(true);
+    await screen.findByRole('list', { name: '打印稿页面' });
+    fireEvent.click(within(hotelCard()).getByRole('button', { name: '放大查看第 7 页' }));
+    const enlarged = await screen.findByRole('img', { name: '第 7 页页图（放大）' });
+    expect(enlarged.getAttribute('src')).toBe(screen.getByTestId('page-image-pg7').getAttribute('src'));
+  });
+
+  test('打印稿还没生成时服务端拒绝补充支付截图', async () => {
     const adapter = createMockAdapter({ seed: 'actions', fault: null });
     const outcome = await adapter.addPaymentScreenshot('T1', 'm01', png());
     expect(outcome).toMatchObject({ ok: false, error: { code: 'print_not_generated', message: PAYMENT_SCREENSHOT_ERRORS.notGenerated } });
@@ -168,7 +166,6 @@ describe('打印稿预览', () => {
       [234, 921],
     ]);
     expect(screen.queryByRole('region', { name: '四角裁剪' })).toBeNull();
-    expect(within(pages()).getByText(/已手动微调裁剪/)).toBeTruthy();
     expect(await confirmationStatus(adapter)).toBe('confirmed');
   });
 
