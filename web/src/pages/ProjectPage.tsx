@@ -645,7 +645,7 @@ function LineRow({
           <span className="app-muted">No.{line.no}</span>
         </span>
       </TableCell>
-      <TableCell className="app-nowrap">{lodging ? <><div>入住：{lodging.fields.checkIn?.value ?? '未提供'}</div><div>离店：{lodging.fields.checkOut?.value ?? '未提供'}</div></> : dates}</TableCell>
+      <TableCell className="app-nowrap">{lodging ? `${lodging.fields.checkIn?.value ?? '入住未提供'} 至 ${lodging.fields.checkOut?.value ?? '离店未提供'}` : dates}</TableCell>
       <TableCell>{lodging ? lodging.fields.location?.value ?? '住宿地未提供' : line.city ?? line.category.label}</TableCell>
       <TableCell className="app-wrap">
         {lodging ? lodging.fields.hotelName?.value ?? '酒店名称未提供' : line.route ?? line.description}

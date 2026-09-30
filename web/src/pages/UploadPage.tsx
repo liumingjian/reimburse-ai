@@ -6,6 +6,7 @@ import { formatBytes, hashPrefix } from '../format';
 import { navigate, taskHash } from '../router';
 import { ActionBar } from '../shell/ActionBar';
 import { FieldGroup } from '../shell/FieldGroup';
+import { FileName } from '../shell/FileName';
 import { PageHeader } from '../shell/PageHeader';
 import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
@@ -200,23 +201,22 @@ function FileRow({ file, index }: { file: UploadFileResult; index: number }) {
     <li className={rejected ? 'is-rejected' : undefined}>
       <span className="app-file-index">{String(index + 1).padStart(2, '0')}</span>
       <FileIcon fileName={file.fileName} />
-      <span className="app-file-name" title={digest ? `内容哈希 ${digest}` : undefined}>
-        {file.fileName}
+      <FileName className="app-file-name" name={file.fileName} title={digest ? `${file.fileName}\n内容哈希 ${digest}` : file.fileName} />
+      <span className="app-file-source" title={file.relativePath !== file.fileName ? `来源 ${file.relativePath}` : undefined}>
+        {file.relativePath !== file.fileName ? file.relativePath : null}
       </span>
-      {file.relativePath !== file.fileName ? (
-        <span className="app-file-source">
-          <span>来源：</span>
-          <span>{file.relativePath}</span>
-        </span>
-      ) : null}
-      {rejected ? (
-        <>
-          <Tag type="red" size="sm">
-            拒绝
-          </Tag>
-          <span className="app-file-reason">{file.reason}</span>
-        </>
-      ) : null}
+      <span className="app-file-status">
+        {rejected ? (
+          <>
+            <Tag type="red" size="sm">
+              拒绝
+            </Tag>
+            <span className="app-file-reason" title={file.reason ?? undefined}>
+              {file.reason}
+            </span>
+          </>
+        ) : null}
+      </span>
       <span className="app-file-size app-muted">{formatBytes(file.size)}</span>
     </li>
   );
@@ -231,13 +231,13 @@ function BatchPanel({ batch }: { batch: UploadBatch }) {
         <h2 className="app-section-title" id={`batch-${batch.batchId}`}>
           上传批次 #{batch.no}
         </h2>
-        <FieldGroup fields={[{ label: '材料', value: `${accepted} 份` }]} />
         {rejected === 0 ? (
           <StatusTag tone="success">已复制入任务目录</StatusTag>
         ) : (
           <StatusTag tone="warning">拒绝 {rejected} 份</StatusTag>
         )}
       </div>
+      <FieldGroup fields={[{ label: '材料', value: `${accepted} 份` }]} />
       <ul className="app-file-list bleed">
         {batch.files.map((file, index) => (
           <FileRow key={file.fileId} file={file} index={index} />

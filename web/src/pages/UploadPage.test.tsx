@@ -151,7 +151,7 @@ describe('上传材料', () => {
     const ok = rowOf(panel, '全季酒店_发票.pdf');
     expect(within(ok).queryByText('已接收')).toBeNull();
     expect(ok.textContent).not.toMatch(/sha256/);
-    expect(within(ok).getByText('全季酒店_发票.pdf').getAttribute('title')).toMatch(/^内容哈希 sha256:[0-9a-f]{8}$/);
+    expect(within(ok).getByText('全季酒店_发票.pdf').getAttribute('title')).toMatch(/\n内容哈希 sha256:[0-9a-f]{8}$/);
     expect(within(ok).getByRole('img', { name: 'PDF' })).toBeTruthy();
     expect(within(rowOf(panel, 'IMG_4871.HEIC')).getByRole('img', { name: '图片' })).toBeTruthy();
 

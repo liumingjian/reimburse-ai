@@ -103,8 +103,7 @@ test('面板列表：只列可选项目，本次已用的在前并带条数与�
 test('按类别全选：勾选「外地市内交通」组标题一次归入 P-2307，该组全部已归入，本次已归入的条数与金额随之变化', async ({ page }, testInfo) => {
   await page.goto(open('?seed=project', '#/task/T1/project'));
   await expect(page.getByRole('region', { name: '外地市内交通' })).toContainText('6 条');
-  await expect(page.getByTestId('line-card-9')).toContainText('入住：2026-08-09');
-  await expect(page.getByTestId('line-card-9')).toContainText('离店：2026-08-22');
+  await expect(page.getByTestId('line-card-9')).toContainText('2026-08-09 至 2026-08-22');
   await expect(page.getByTestId('line-card-7')).toContainText('杭州东 → 上海虹桥');
 
   await page.getByRole('checkbox', { name: '选择外地市内交通' }).locator('xpath=following-sibling::label[1]').click();

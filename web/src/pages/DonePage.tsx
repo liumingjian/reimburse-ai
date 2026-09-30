@@ -4,6 +4,7 @@ import { ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE, HUMAN_REVIEW_NOTIC
 import { TASKS_HASH, taskHash } from '../router';
 import { ActionError } from '../shell/ActionError';
 import { PageHeader } from '../shell/PageHeader';
+import { SummaryBar, SummaryField } from '../shell/SummaryBar';
 import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
 import { PAGE_COPY } from './page-copy';
@@ -42,39 +43,26 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
         }
       />
 
-      <div className="app-summary bleed" role="group" aria-label="写入结果">
-        <div className="app-summary-field">
-          <span className="app-summary-key">单据编号</span>
-          <span className="app-summary-value app-code" data-testid="draft-no">
-            {erp.draftNo ?? '尚无'}
-          </span>
-        </div>
+      <SummaryBar label="写入结果">
+        <SummaryField label="单据编号" value={erp.draftNo ?? '尚无'} mono testId="draft-no" />
         {erp.erpAccount ? (
-          <div className="app-summary-field">
-            <span className="app-summary-key">报销系统账号</span>
-            <span className="app-summary-value" data-testid="erp-account">{`${erp.erpAccount.displayName}（${erp.erpAccount.account}）· 账套 ${erp.erpAccount.tenant}`}</span>
-          </div>
+          <>
+            <SummaryField label="报销系统账号" value={`${erp.erpAccount.displayName}（${erp.erpAccount.account}）`} testId="erp-account" />
+            <SummaryField label="账套" value={erp.erpAccount.tenant} testId="erp-tenant" />
+          </>
         ) : null}
         {readback.summary ? (
-          <div className="app-summary-field">
-            <span className="app-summary-key">严格回读</span>
-            <span className="app-summary-value">
+          <SummaryField
+            label="严格回读"
+            value={
               <Tag type={matched ? 'green' : 'red'} renderIcon={matched ? CheckmarkFilled : ErrorFilled}>
                 {readback.summary}
               </Tag>
-            </span>
-          </div>
+            }
+          />
         ) : null}
-        {handedOff ? (
-          <div className="app-summary-field">
-            <span className="app-summary-key">处置</span>
-            <span className="app-summary-value">
-              <StatusTag tone="warning">已转人工</StatusTag>
-            </span>
-          </div>
-        ) : null}
-        <div className="app-summary-field app-grow" />
-      </div>
+        {handedOff ? <SummaryField label="处置" value={<StatusTag tone="warning">已转人工</StatusTag>} /> : null}
+      </SummaryBar>
 
       <div className="app-notices">
         {matched && completedNotice ? (

@@ -26,8 +26,7 @@ test('associated hotel bill leads pending review and project previews preserve s
   await page.request.post('/api/project-book/intake', { data: { number: 'HOTEL-101', name: '住宿项目' } });
   await page.goto(`/#/task/${taskId}/project`);
   const row = page.getByTestId('line-card-1');
-  await expect(row).toContainText('入住：2026-08-09');
-  await expect(row).toContainText('离店：2026-08-22');
+  await expect(row).toContainText('2026-08-09 至 2026-08-22');
   await expect(row).toContainText('3640.00 元');
   await expect(row).toContainText('全季酒店（上海某某店）');
   await expect(row).toContainText('住宿地未提供');

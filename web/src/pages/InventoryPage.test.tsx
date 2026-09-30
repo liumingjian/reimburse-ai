@@ -31,7 +31,7 @@ const FIXTURE_FILES = [
 // Summary bar fields: label -> value.
 function summaryFields(): Record<string, string> {
   const bar = screen.getByRole('group', { name: '盘点摘要' });
-  return Object.fromEntries(Array.from(bar.children).map((field) => [field.children[0]?.textContent ?? '', field.children[1]?.textContent ?? '']));
+  return Object.fromEntries(Array.from(bar.querySelectorAll('.app-summary-field')).map((field) => [field.querySelector('dt')?.textContent ?? '', field.querySelector('dd')?.textContent ?? '']));
 }
 
 function chooseFiles(names: string[]) {

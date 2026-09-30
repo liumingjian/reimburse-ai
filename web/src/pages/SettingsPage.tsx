@@ -46,6 +46,7 @@ export const LEGACY_IMPORT_COPY = {
 function ReportFields({ report }: { report: LegacyImportReport }) {
   return (
     <FieldGroup
+      columns={2}
       fields={[
         { label: '常驻城市', value: report.homeCity ?? <span className="app-muted">没有</span> },
         { label: '个人项目簿', value: `${report.projects} 个项目` },
@@ -264,6 +265,7 @@ function ExtensionPairingSection() {
               <span className={`app-extension-state-mark app-extension-state-mark-${view.status}`} aria-hidden="true" />
             </div>
             <FieldGroup
+              columns={2}
               fields={[
                 { label: EXTENSION_PAIRING_COPY.activeOrigin, value: view.activeOrigin },
                 ...(view.status === 'paired'

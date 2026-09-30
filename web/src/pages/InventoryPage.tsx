@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import {
   Button,
   Table,
@@ -18,6 +18,7 @@ import { formatDateTime } from '../format';
 import { taskHash } from '../router';
 import { ActionBar } from '../shell/ActionBar';
 import { PageHeader } from '../shell/PageHeader';
+import { SummaryBar, SummaryField } from '../shell/SummaryBar';
 import { StatusTag } from '../shell/StatusTag';
 import { DuplicateBlockers } from './DuplicateBlockers';
 import { PAGE_COPY } from './page-copy';
@@ -192,19 +193,6 @@ function GroupDetail({ group, title }: { group: Group; title: string }) {
   );
 }
 
-// The optional icon is a decorative second channel (aria-hidden); the text carries the meaning.
-function SummaryField({ label, value, grow = false, icon = null }: { label: string; value: string; grow?: boolean; icon?: ReactNode }) {
-  return (
-    <div className={grow ? 'app-summary-field app-grow' : 'app-summary-field'}>
-      <span className="app-summary-key">{label}</span>
-      <span className="app-summary-value">
-        {icon}
-        {value}
-      </span>
-    </div>
-  );
-}
-
 // Inventory progress: a vertical step list; status is icon plus text (colour is only a second channel).
 function PhaseMark({ status, index }: { status: string; index: number }) {
   if (status === 'done') return <CheckmarkFilled />;
@@ -269,7 +257,7 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
       ) : (
         <>
           {/* Summary bar, same pattern as whole-claim review; every number comes from inventory.summary. */}
-          <div className="app-summary bleed" role="group" aria-label="盘点摘要">
+          <SummaryBar label="盘点摘要">
             <SummaryField label="材料" value={`${summary.materialCount} 份`} />
             <SummaryField label="通过" value={`${summary.okCount} 份`} icon={<CheckmarkFilled className="app-summary-icon is-success" aria-hidden="true" />} />
             <SummaryField
@@ -279,9 +267,9 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
             />
             <SummaryField label={MATERIAL_ROLE_LABELS.primary_voucher} value={`${summary.voucherCount} 份`} />
             <SummaryField label={MATERIAL_ROLE_LABELS.reference} value={`${summary.referenceCount} 份`} />
-            <SummaryField label="盘点版本" value={version ?? '无'} grow />
+            <SummaryField label="盘点版本" value={version ?? '无'} />
             {finishedAt ? <SummaryField label="盘点时间" value={formatDateTime(finishedAt)} /> : null}
-          </div>
+          </SummaryBar>
           <DuplicateBlockers snapshot={snapshot} />
           {rows.length > 0 ? (
             <section className="bleed app-table app-inventory" aria-label="盘点结果">
