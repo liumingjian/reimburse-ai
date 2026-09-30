@@ -1,6 +1,7 @@
 /// <reference types="vitest/config" />
 import { copyFileSync, createReadStream, cpSync, existsSync, mkdirSync, statSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GENERATED_DIR as FIXTURES_SOURCE, REGRESSION_MATERIALS, SAMPLE_MATERIALS } from '@baox/fixtures';
 import react from '@vitejs/plugin-react';
@@ -59,13 +60,44 @@ function mockFixtures(): Plugin {
   };
 }
 
+// pdf.js reads CMaps (non-embedded CJK fonts on e-invoices) and the standard font data by URL at run time
+// (src/pages/pdf-render.ts). Copy both next to the built page as pdfjs/, and serve them from the package under dev.
+const PDFJS_ROOT = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'));
+const PDFJS_PUBLIC_PATH = '/pdfjs/';
+const PDFJS_ASSET_DIRS = ['cmaps', 'standard_fonts'] as const;
+
+function pdfjsAssets(): Plugin {
+  let outDir = 'dist';
+  return {
+    name: 'baox-pdfjs-assets',
+    configResolved(config) {
+      outDir = config.build.outDir;
+    },
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const url = (req.url ?? '').split('?')[0] ?? '';
+        if (!url.startsWith(PDFJS_PUBLIC_PATH)) return next();
+        const [dir, name, ...rest] = decodeURIComponent(url.slice(PDFJS_PUBLIC_PATH.length)).split('/');
+        if (!PDFJS_ASSET_DIRS.includes(dir as (typeof PDFJS_ASSET_DIRS)[number]) || !name || rest.length > 0 || name.includes('..')) return next();
+        const file = join(PDFJS_ROOT, dir!, name);
+        if (!existsSync(file) || !statSync(file).isFile()) return next();
+        res.setHeader('Content-Type', 'application/octet-stream');
+        createReadStream(file).pipe(res);
+      });
+    },
+    closeBundle() {
+      for (const dir of PDFJS_ASSET_DIRS) cpSync(join(PDFJS_ROOT, dir), resolve(packageRoot, outDir, 'pdfjs', dir), { recursive: true });
+    },
+  };
+}
+
 // `vite build --mode mock` 产出 dist-mock/：单文件 HTML，脚本内联，双击即可用 file:// 打开；夹具原件放在 dist-mock/fixtures/。
 // 正式构建产出 dist/，由本地应用服务托管，不含 mock 代码与夹具；相对 base 让两种产物都不依赖站点根路径。
 export default defineConfig(({ mode }) => {
   const mock = mode === 'mock';
   return {
     base: './',
-    plugins: [react(), ...(mock ? [viteSingleFile(), mockFixtures()] : [])],
+    plugins: [react(), pdfjsAssets(), ...(mock ? [viteSingleFile(), mockFixtures()] : [])],
     css: {
       preprocessorOptions: {
         scss: { loadPaths: SASS_LOAD_PATHS, quietDeps: true, silenceDeprecations: ['import', 'global-builtin'] },

@@ -1,11 +1,13 @@
-import { useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { IconButton } from '@carbon/react';
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { IconButton, InlineLoading } from '@carbon/react';
 import { FitToScreen, RotateClockwise, ZoomIn, ZoomOut } from '@carbon/icons-react';
 import type { Material } from '@baox/contract';
+import { renderPdf, type RenderedPdf } from './pdf-render';
 
 // 原件栏：一份报销材料的预览，放在待确认项页左栏（DESIGN.md「待确认项：原件与表单」「原件查看器」）。
 // 原件在「一屏高度减去顶栏、步骤条和页头」的框内等比缩放，栏宽跟着缩放后的原件走；没有预览时占位保持同样的版面位置。
 // 图片原件带查看工具栏（适应窗口、放大、缩小、旋转 90°）。查看状态只在本组件里：不写服务端，与打印稿的旋转、裁剪无关。
+// PDF 原件先用 pdf.js 渲染成一张图（逐页竖排），走同一个图片查看器；渲染失败才退回浏览器自带的 PDF 预览（iframe）。
 // 父组件按待确认项 key 重建本组件，切换待确认项时缩放与旋转自然重置。
 // `header` sits inside the sticky frame above the preview (the lodging 结账单 / 发票 switcher), so it stays with the
 // document while the page scrolls. `unavailable` replaces the preview with a message in a frame of the same size.
@@ -45,10 +47,58 @@ function DocPreview({ material, onPreviewError }: { material: Material | undefin
   if (material.mediaType === 'image') {
     return <ImageViewer src={material.previewUrl} alt={`${material.fileName} 原件`} {...(onPreviewError ? { onPreviewError } : {})} />;
   }
-  // PDF 用浏览器自带的预览（自带缩放），不显示图片工具栏。
+  return <PdfViewer key={material.previewUrl} material={material} src={material.previewUrl} {...(onPreviewError ? { onPreviewError } : {})} />;
+}
+
+// jsdom has no URL.revokeObjectURL.
+const revokeUrl = (url: string) => {
+  if (typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url);
+};
+
+type PdfState = { kind: 'rendering' } | { kind: 'rendered'; pdf: RenderedPdf } | { kind: 'native' };
+
+// A PDF is rendered to an image (pdf-render.ts) and shown in the same viewer as a photo. When rendering fails, the
+// browser's own PDF preview in an iframe is the fallback.
+function PdfViewer({ material, src, onPreviewError }: { material: Material; src: string; onPreviewError?: () => void }) {
+  const [state, setState] = useState<PdfState>({ kind: 'rendering' });
+  useEffect(() => {
+    const controller = new AbortController();
+    let url: string | null = null;
+    renderPdf(src, controller.signal).then(
+      (pdf) => {
+        url = pdf.url;
+        if (controller.signal.aborted) revokeUrl(pdf.url);
+        else setState({ kind: 'rendered', pdf });
+      },
+      () => {
+        if (!controller.signal.aborted) setState({ kind: 'native' });
+      },
+    );
+    return () => {
+      controller.abort();
+      if (url) revokeUrl(url);
+    };
+  }, [src]);
+  const alt = `${material.fileName} 原件`;
+  if (state.kind === 'rendered') {
+    const { pdf } = state;
+    return (
+      <>
+        <ImageViewer src={pdf.url} alt={alt} {...(onPreviewError ? { onPreviewError } : {})} />
+        {pdf.shownPages < pdf.pageCount ? <p className="app-caption">共 {pdf.pageCount} 页，这里显示前 {pdf.shownPages} 页；其余页请打开原件查看。</p> : null}
+      </>
+    );
+  }
+  if (state.kind === 'native') {
+    return (
+      <div className={`app-doc-preview is-boxed is-${material.shape}`}>
+        <iframe src={src} title={alt} data-testid="preview" onError={onPreviewError} />
+      </div>
+    );
+  }
   return (
-    <div className={`app-doc-preview is-boxed is-${material.shape}`}>
-      <iframe src={material.previewUrl} title={`${material.fileName} 原件`} data-testid="preview" onError={onPreviewError} />
+    <div className={`app-doc-preview is-boxed is-placeholder is-${material.shape}`} data-testid="preview">
+      <InlineLoading description="正在打开 PDF…" />
     </div>
   );
 }

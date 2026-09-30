@@ -713,6 +713,13 @@ $doc-frame-block: var(--app-doc-frame-block);
   gap: $spacing-03;
 }
 
+// Inside a modal (住宿材料 on the project page) the frame fits the modal body instead: Carbon caps the modal at 84% of
+// the viewport, less its header and footer. When the body overflowed, focusing 重试预览 on mousedown scrolled it away
+// from under the pointer and the click was lost.
+.cds--modal .app-viewer:has(> .app-viewer-header) {
+  --app-doc-frame-block: max(16rem, calc(84vh - 21rem));
+}
+
 .app-viewer-header {
   justify-self: stretch;
   min-inline-size: 0;

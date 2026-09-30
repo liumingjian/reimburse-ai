@@ -58,9 +58,9 @@ describe('待确认项', () => {
     expect(within(detail()).getByText('04213377')).toBeTruthy();
     expect(document.body.textContent).not.toMatch(FORBIDDEN_TEXT);
 
-    // 切到不支持的材料：PDF 用 iframe 预览，出现两种选择。
+    // 切到不支持的材料：jsdom 画不了 PDF，退回 iframe 预览；出现两种选择。
     fireEvent.click(itemButton('不支持的材料类型'));
-    const frame = within(detail()).getByTitle('餐饮_发票.pdf 原件');
+    const frame = await within(detail()).findByTitle('餐饮_发票.pdf 原件');
     expect(frame.tagName).toBe('IFRAME');
     expect(frame.getAttribute('src')).toBe('fixtures/m11-other-invoice.pdf');
     expect(within(detail()).getByRole('button', { name: '排除此材料' })).toBeTruthy();
@@ -255,11 +255,11 @@ describe('原件查看器', () => {
     expect(photo().style.transform).toContain('rotate(0deg)');
   });
 
-  test('PDF 原件用浏览器自带预览，不出现工具栏', async () => {
+  test('PDF 渲染不了时退回浏览器自带预览，不出现工具栏', async () => {
     renderPending();
     await screen.findByRole('heading', { name: '待确认项' });
     fireEvent.click(itemButton('不支持的材料类型'));
-    expect(within(detail()).getByTitle('餐饮_发票.pdf 原件').tagName).toBe('IFRAME');
+    expect((await within(detail()).findByTitle('餐饮_发票.pdf 原件')).tagName).toBe('IFRAME');
     expect(toolbar()).toBeNull();
     expect(within(viewer()).queryByRole('button')).toBeNull();
   });
