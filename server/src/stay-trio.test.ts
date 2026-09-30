@@ -321,7 +321,7 @@ describe('reopening a resolved group of 支付截图', () => {
     const ready = await scene.accept('confirm-review', { digest: review.confirmation.digest });
 
     const generated = await client.accepted(await printAction(ready, 'generate-print-sheet', {}));
-    expect(generated.printSheet.pages[0]?.screenshotId).toBe(generated.paymentScreenshots[0]?.screenshotId);
+    expect(generated.printSheet.pages[0]?.screenshotIds).toEqual(generated.paymentScreenshots.map((shot) => shot.screenshotId));
     expect(generated.printSheet.notices).toEqual([]);
   }, 120_000);
 });
