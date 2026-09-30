@@ -1,6 +1,6 @@
-import { STAY_TRIO_COPY, type PaymentScreenshot, type Placement, type PrintPage, type PrintSheet } from '@baox/contract';
+import { PAYMENT_SCREENSHOT_CAP, STAY_TRIO_COPY, isStayScreenshotItem, screenshotGroupOf, type PaymentScreenshot, type PendingItem, type Placement, type PrintPage, type PrintSheet } from '@baox/contract';
 import { CATEGORIES } from '../parse/slots';
-import type { PrintFacts, SheetState, StoredPage, StoredPlacement } from '../print/facts';
+import { headingOf, type PrintFacts, type SheetState, type StoredPage, type StoredPlacement } from '../print/facts';
 import { droppedMaterialsNotice, extraPagesNotice, unrecordedScreenshotNotice } from '../print/layout';
 import type { StayTrio } from '../stay-trio';
 
@@ -9,6 +9,15 @@ import type { StayTrio } from '../stay-trio';
 
 // Every file the task's print facts refer to; `GET /api/tasks/:id/files/:sha256` serves only a task's own files.
 export const fileUrl = (taskId: string, sha256: string): string => `/api/tasks/${taskId}/files/${sha256}`;
+
+// The pending items with each missing-screenshot item's group (#331): its screenshots in upload order, the cap, and
+// whether it is `locked` (`screenshotsLocked`). Every other item carries none.
+export function withScreenshotGroups(items: readonly PendingItem[], facts: Pick<PrintFacts, 'screenshots'>, locked: boolean): PendingItem[] {
+  return items.map((item) => ({
+    ...item,
+    screenshotGroup: isStayScreenshotItem(item) ? { screenshotIds: screenshotGroupOf(facts.screenshots, item.materialId).map((shot) => shot.screenshotId), cap: PAYMENT_SCREENSHOT_CAP, locked } : null,
+  }));
+}
 
 // `trios`: the inventory's 住宿 trios. Where a page's invoice has one, its record decides the missing-screenshot notice
 // (a confirmed absence), so print and inventory read one fact instead of judging the absence twice (#213). A 住宿 page
@@ -45,12 +54,8 @@ export function printView(taskId: string, taskName: string, facts: PrintFacts, s
       pages: render.pages.map((page): PrintPage => {
         const common = {
           pageId: page.pageId,
-          no: page.no,
           header: page.header,
-          nos: page.nos,
-          date: page.date,
-          categoryLabel: page.categoryLabel,
-          grossAmount: page.grossAmount,
+          ...headingOf(page),
           imageUrl: fileUrl(taskId, page.pngSha256),
           screenshotIds: page.screenshotIds,
         };

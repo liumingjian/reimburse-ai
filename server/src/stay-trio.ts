@@ -1,4 +1,4 @@
-import { fieldAnswer, PAYMENT_SCREENSHOT_ERRORS, PENDING_CHOICE_KEY, STAY_TRIO_CONFIRM_NONE, STAY_TRIO_COPY, stayTrioElementOf, stayTrioItemId, type PendingAnswer, type PendingItem, type StayTrioElement } from '@baox/contract';
+import { confirmsNone, PAYMENT_SCREENSHOT_ERRORS, STAY_TRIO_CONFIRM_NONE, STAY_TRIO_COPY, stayTrioElementOf, stayTrioItemId, stayTrioMaterialOf, type PendingAnswer, type PendingItem, type StayTrioElement } from '@baox/contract';
 import type { Stay, StayVoucher } from './hotel-stay';
 import { CATEGORIES } from './parse/slots';
 import { chosen, EXCLUDE, settle, type AnswerCheck, type StoredAnswers } from './pending/answers';
@@ -75,6 +75,7 @@ function missingItem(element: StayTrioElement, material: TrioVoucher): PendingIt
     fields: [],
     choices: [{ key: STAY_TRIO_CONFIRM_NONE, label: copy.confirmNone }, EXCLUDE],
     allocation: null,
+    screenshotGroup: null,
     status: 'open',
     answer: null,
   };
@@ -83,8 +84,8 @@ function missingItem(element: StayTrioElement, material: TrioVoucher): PendingIt
 // Whether a stored answer (given at `revision`) is a 确认没有 on a screenshot item that a later upload to its invoice
 // superseded. `uploads`: per invoice, the revision of its latest upload, removed since or not.
 export function supersededByScreenshot(itemId: string, answer: PendingAnswer, revision: number, uploads: ReadonlyMap<string, number>): boolean {
-  if (stayTrioElementOf(itemId) !== 'screenshot' || fieldAnswer(answer)[PENDING_CHOICE_KEY] !== STAY_TRIO_CONFIRM_NONE) return false;
-  const invoiceId = itemId.slice(itemId.indexOf('.') + 1);
+  const invoiceId = stayTrioMaterialOf(itemId);
+  if (stayTrioElementOf(itemId) !== 'screenshot' || !invoiceId || !confirmsNone(answer)) return false;
   return (uploads.get(invoiceId) ?? -Infinity) > revision;
 }
 
@@ -106,7 +107,7 @@ export function checkStayTrios(invoices: readonly TrioVoucher[], folios: readonl
   // open until 「已传齐」 and a new one is refused.
   const screenshotPart = (invoice: TrioVoucher): TrioPart => {
     const group = screenshots.get(invoice.materialId) ?? NO_GROUP;
-    const check: AnswerCheck = (answer) => (group.count > 0 && fieldAnswer(answer)[PENDING_CHOICE_KEY] === STAY_TRIO_CONFIRM_NONE ? PAYMENT_SCREENSHOT_ERRORS.noneWithScreenshots : null);
+    const check: AnswerCheck = (answer) => (group.count > 0 && confirmsNone(answer) ? PAYMENT_SCREENSHOT_ERRORS.noneWithScreenshots : null);
     const settled = settle(missingItem('screenshot', invoice), answers, check);
     raise(invoice, settled.status === 'open' && group.complete ? { ...settled, status: 'resolved' } : settled);
     checks.set(settled.itemId, check);

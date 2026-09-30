@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { PAYMENT_SCREENSHOT_CAP, PAYMENT_SCREENSHOT_ERRORS, PRINT_ACTION_ERRORS, PRINT_COPY, STAY_TRIO_COPY, type Corners, type Line, type Material, type PlacementSlot } from '@baox/contract';
+import { PAYMENT_SCREENSHOT_CAP, PAYMENT_SCREENSHOT_ERRORS, PRINT_ACTION_ERRORS, PRINT_COPY, STAY_TRIO_COPY, screenshotGroupOf, type Corners, type Line, type Material, type PlacementSlot } from '@baox/contract';
 import { blobPath, writeBlob } from '../data-dir';
 import type { Db } from '../db/database';
 import { paperCorners, type PaperCorners } from './straighten';
 import { composeSheet, isJpegOrPng, pdfContent, photoContent, renderPages, screenshotContent, type Content, type Drawn, type SheetPage } from './compose';
-import { sheetState, type PrintFacts, type PrintSetting, type Screenshot, type StoredPage, type StoredPlacement } from './facts';
+import { headingOf, screenshotsLocked, sheetState, type PrintFacts, type PrintSetting, type Screenshot, type StoredPage, type StoredPlacement } from './facts';
 import { storedMime } from '../upload-rules';
 import { CONTINUATION_CELLS, planPages, prefersRotation, REGIONS, type Box, type PagePlan, type Region } from './layout';
 import type { StayTrio } from '../stay-trio';
@@ -84,21 +84,18 @@ export async function crop(state: PrintState, pageId: string, slot: PlacementSlo
 // invoice has a trio screenshot part exactly when the check asks for one (open or resolved). Any other voucher is
 // refused. A group holds up to PAYMENT_SCREENSHOT_CAP, one per upload, in upload order.
 //
-// Every change to a group (add, remove, 「已传齐」) is refused once the list is confirmed or ERP was attempted: a change
-// can reopen the item, which would pull a confirmed list back into inventory. So a sheet, which exists only under a
-// standing confirmation, is never recomposed by one; it picks the group up when it is generated.
+// Every change to a group (add, remove, 「已传齐」) is refused while it is locked (`screenshotsLocked`). So a sheet, which
+// exists only under a standing confirmation, is never recomposed by one; it picks the group up when it is generated.
 //
 // `groupEditable` refuses (throws) unless `voucherMaterialId` is a 住宿 invoice whose group may still change.
 function groupEditable(state: PrintState, voucherMaterialId: string): void {
   if (!state.trios.some((trio) => trio.invoiceId === voucherMaterialId && trio.screenshot)) throw new PrintRefusal('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
-  if (state.confirmation === 'confirmed' || state.erpAttempted) throw new PrintRefusal('screenshot_locked', STAY_TRIO_COPY.changeLocked);
+  if (screenshotsLocked(state.confirmation, state.erpAttempted)) throw new PrintRefusal('screenshot_locked', STAY_TRIO_COPY.changeLocked);
 }
-
-const groupOf = (state: PrintState, voucherMaterialId: string) => state.facts.screenshots.filter((shot) => shot.voucherMaterialId === voucherMaterialId);
 
 export async function addScreenshot(state: PrintState, voucherMaterialId: string, file: { fileName: string; mime: string; bytes: Uint8Array }): Promise<PrintCommit> {
   groupEditable(state, voucherMaterialId);
-  if (groupOf(state, voucherMaterialId).length >= PAYMENT_SCREENSHOT_CAP) throw new PrintRefusal('screenshot_cap', PAYMENT_SCREENSHOT_ERRORS.cap);
+  if (screenshotGroupOf(state.facts.screenshots, voucherMaterialId).length >= PAYMENT_SCREENSHOT_CAP) throw new PrintRefusal('screenshot_cap', PAYMENT_SCREENSHOT_ERRORS.cap);
   const named = IMAGE_NAME.test(file.fileName) || (!/\.[a-z0-9]+$/i.test(file.fileName) && /^image\/(jpeg|png)$/.test(file.mime));
   if (!named || !(await isJpegOrPng(file.bytes))) throw new PrintRefusal('not_image', PAYMENT_SCREENSHOT_ERRORS.notImage);
   const sha256 = writeBlob(state.dataDir, file.bytes);
@@ -121,7 +118,7 @@ export async function removeScreenshot(state: PrintState, screenshotId: string):
 // 「已传齐」: the group is complete, and the item settles on it. Idempotent while it stands complete.
 export async function completeScreenshots(state: PrintState, voucherMaterialId: string): Promise<PrintCommit | null> {
   groupEditable(state, voucherMaterialId);
-  if (groupOf(state, voucherMaterialId).length === 0) throw new PrintRefusal('screenshot_group_empty', PAYMENT_SCREENSHOT_ERRORS.empty);
+  if (screenshotGroupOf(state.facts.screenshots, voucherMaterialId).length === 0) throw new PrintRefusal('screenshot_group_empty', PAYMENT_SCREENSHOT_ERRORS.empty);
   if (state.facts.completeGroups.has(voucherMaterialId)) return null;
   return async (tx, at, revision) => {
     await tx.insertInto('payment_screenshot_group_complete').values({ declaration_id: randomUUID(), task_id: state.taskId, account_id: state.accountId, voucher_material_id: voucherMaterialId, revision, created_at: at }).execute();
@@ -244,7 +241,7 @@ async function compose(state: PrintState, settings: ReadonlyMap<string, PrintSet
   const sheet: SheetPage[] = [];
   const pages: Omit<StoredPage, 'pngSha256'>[] = [];
   for (const plan of plans) {
-    const group = screenshots.filter((candidate) => candidate.voucherMaterialId === plan.voucherMaterialId);
+    const group = screenshotGroupOf(screenshots, plan.voucherMaterialId);
     // One screenshot shares the bottom half with the folio; two or more move to a continuation page, and the folio
     // takes the whole bottom half. Either way it is the page's `bottom` placement, so its rotate / crop still applies.
     const inline = group.length === 1;
@@ -253,7 +250,7 @@ async function compose(state: PrintState, settings: ReadonlyMap<string, PrintSet
     const drawn = [top?.drawn, bottom?.drawn].filter((d): d is Drawn => d !== undefined);
     if (inline && group[0]) drawn.push(await upright(group[0], REGIONS.bottom_right));
     sheet.push({ header: plan.header, divided: true, drawn });
-    const common = { voucherMaterialId: plan.voucherMaterialId, no: plan.no, nos: plan.nos, date: plan.date, categoryLabel: plan.categoryLabel, grossAmount: plan.grossAmount };
+    const common = { voucherMaterialId: plan.voucherMaterialId, ...headingOf(plan) };
     pages.push({
       ...common,
       pageId: plan.pageId,

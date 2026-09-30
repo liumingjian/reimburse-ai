@@ -13,7 +13,7 @@ import { bookOptions, type BookOption } from './books';
 import { pinnedCompanyRules, type CompanyRules } from './rules/company-rules';
 import { confirmationDigest, confirmationStatus, type ConfirmationDigest, type ConfirmationFact } from './confirmation';
 import { loadErp, type ErpRecord } from './erp/fill-state';
-import { loadPrintFacts, screenshotGroupsOf, type PrintFacts } from './print/facts';
+import { loadPrintFacts, screenshotGroupsOf, stayGroupsOnly, type PrintFacts } from './print/facts';
 import { supersededByScreenshot } from './stay-trio';
 
 // Loading task facts (任务事实): every read that builds what the task service decides on and projects from. Reads
@@ -133,7 +133,7 @@ async function loadOwnFacts(tx: Tx, task: TaskTable, materials?: readonly Materi
     }
   }
   // Payment screenshots are print facts, but the 住宿 trio check at inventory reads them too (#213).
-  const print = await loadPrintFacts(tx, task.task_id);
+  const stored = await loadPrintFacts(tx, task.task_id);
   const view = inventoryView(
     rows.map(viewMaterial),
     current
@@ -145,8 +145,10 @@ async function loadOwnFacts(tx: Tx, task: TaskTable, materials?: readonly Materi
       : null,
     { homeCity, rules },
     answers,
-    screenshotGroupsOf(print),
+    screenshotGroupsOf(stored),
   );
+  // Only a 住宿 invoice's screenshots form a group (#330); the trio check says which invoices those are.
+  const print = stayGroupsOnly(stored, new Set(view.trios.flatMap((trio) => (trio.invoiceId && trio.screenshot ? [trio.invoiceId] : []))));
   if (current) facts.parse = { waiting: view.waiting, openPendingItems: view.openPendingItems, blockers: [] };
   let assignment: Assignment | null = null;
   let options: BookOption[] = [];

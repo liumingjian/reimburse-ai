@@ -84,6 +84,7 @@ export function givenUpOf(item: PendingItem): PendingItem | null {
     fields: [],
     choices: [],
     allocation: null,
+    screenshotGroup: null,
     status: 'open',
     answer: null,
   };

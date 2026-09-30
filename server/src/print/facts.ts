@@ -1,4 +1,4 @@
-import type { Corners, PrintSheet } from '@baox/contract';
+import { screenshotGroupOf, type Corners, type PrintPageKind, type PrintSheet } from '@baox/contract';
 import type { Db } from '../db/database';
 import type { ScreenshotGroup } from '../stay-trio';
 
@@ -22,7 +22,7 @@ export type StoredPage = {
   pageId: string;
   // `voucher`: one primary voucher over its supporting material. `screenshots`: the 支付截图 continuation page that
   // follows a 住宿 voucher page whose group has two or more (#333); it has no placements.
-  kind: 'voucher' | 'screenshots';
+  kind: PrintPageKind;
   voucherMaterialId: string;
   no: number;
   nos: string;
@@ -40,6 +40,10 @@ export type StoredPage = {
   // Supporting materials this voucher has beyond the one on the bottom half; named in a notice, never dropped silently.
   droppedFileNames?: string[];
 };
+
+// What every page, of either kind, says of its voucher: stored from the page plan, projected into the snapshot.
+export type PageHeading = Pick<StoredPage, 'no' | 'nos' | 'date' | 'categoryLabel' | 'grossAmount'>;
+export const headingOf = ({ no, nos, date, categoryLabel, grossAmount }: PageHeading): PageHeading => ({ no, nos, date, categoryLabel, grossAmount });
 
 // A page as stored in `print_render.pages`. A render composed before #333 has neither `kind` (every page was a voucher
 // page) nor `screenshotIds`, but one nullable `screenshotId`.
@@ -120,6 +124,18 @@ async function screenshotGroups(tx: Db, taskId: string): Promise<Pick<PrintFacts
   return { screenshots: [...current.values()], completeGroups: complete };
 }
 
+// Only the groups of `invoiceIds`, the 住宿 invoices that take 支付截图 (their trio has a screenshot part). Before #330
+// the print page took a screenshot for any voucher; one left on another voucher belongs to no group: the filer can no
+// longer change it (`screenshot_not_applicable`), so it is neither printed nor in the snapshot.
+export function stayGroupsOnly(facts: PrintFacts, invoiceIds: ReadonlySet<string>): PrintFacts {
+  const keep = (voucherMaterialId: string) => invoiceIds.has(voucherMaterialId);
+  return { ...facts, screenshots: facts.screenshots.filter((shot) => keep(shot.voucherMaterialId)), completeGroups: new Set([...facts.completeGroups].filter(keep)) };
+}
+
+// A group takes no change (add, remove, 「已传齐」) once the list is confirmed or ERP was attempted: a change can reopen
+// the screenshot item, which would pull a confirmed list back into inventory.
+export const screenshotsLocked = (confirmation: 'unconfirmed' | 'confirmed' | 'invalidated', erpAttempted: boolean): boolean => confirmation === 'confirmed' || erpAttempted;
+
 // Per voucher, what the 住宿 trio check reads of its group.
 export function screenshotGroupsOf(facts: Pick<PrintFacts, 'screenshots' | 'completeGroups'>): Map<string, ScreenshotGroup> {
   const groups = new Map<string, ScreenshotGroup>();
@@ -143,7 +159,7 @@ export function sheetState(facts: PrintFacts, confirmation: 'unconfirmed' | 'con
 function printsCurrentGroups(render: Render, screenshots: readonly Screenshot[]): boolean {
   const printed = render.pages.flatMap((page) => page.screenshotIds);
   const vouchers = [...new Set(render.pages.map((page) => page.voucherMaterialId))];
-  const current = vouchers.flatMap((voucher) => screenshots.filter((shot) => shot.voucherMaterialId === voucher).map((shot) => shot.screenshotId));
+  const current = vouchers.flatMap((voucher) => screenshotGroupOf(screenshots, voucher).map((shot) => shot.screenshotId));
   return printed.length === current.length && printed.every((id, index) => id === current[index]);
 }
 

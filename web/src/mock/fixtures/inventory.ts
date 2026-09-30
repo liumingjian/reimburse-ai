@@ -383,6 +383,7 @@ const PENDING_TEMPLATES: Readonly<Record<string, PendingTemplate>> = {
     fields: TAXI_ROUTE_FIELDS('张江高科', '漕河泾开发区'),
     choices: [],
     allocation: null,
+    screenshotGroup: null,
   },
   m10: {
     title: '下车时间不合法，并补填起点与终点',
@@ -392,6 +393,7 @@ const PENDING_TEMPLATES: Readonly<Record<string, PendingTemplate>> = {
     fields: [{ key: 'alightTime', label: '下车时间', placeholder: '对照原件填写，如 19:06', required: true, format: 'time' }, ...TAXI_ROUTE_FIELDS('静安寺', '虹桥枢纽')],
     choices: [],
     allocation: null,
+    screenshotGroup: null,
   },
   m11: {
     title: '不支持的材料类型',
@@ -401,6 +403,7 @@ const PENDING_TEMPLATES: Readonly<Record<string, PendingTemplate>> = {
     fields: [],
     choices: UNSUPPORTED_CHOICES,
     allocation: null,
+    screenshotGroup: null,
   },
 };
 
@@ -427,6 +430,7 @@ const UNKNOWN_TEMPLATES: Readonly<Record<UnknownKind, PendingTemplate>> = {
     fields: [],
     choices: EXCLUDE_ONLY,
     allocation: null,
+    screenshotGroup: null,
   },
   // 内核 multi_page_invoice（next.mjs:870-872）。
   multi_page: {
@@ -437,6 +441,7 @@ const UNKNOWN_TEMPLATES: Readonly<Record<UnknownKind, PendingTemplate>> = {
     fields: [],
     choices: EXCLUDE_ONLY,
     allocation: null,
+    screenshotGroup: null,
   },
   unsupported: {
     title: '不支持的材料类型',
@@ -446,6 +451,7 @@ const UNKNOWN_TEMPLATES: Readonly<Record<UnknownKind, PendingTemplate>> = {
     fields: [],
     choices: UNSUPPORTED_CHOICES,
     allocation: null,
+    screenshotGroup: null,
   },
 };
 
@@ -496,6 +502,7 @@ function allocationTemplate(fileName: string): PendingTemplate {
     fields: [],
     choices: [],
     allocation: { segments, total: AMAP_TOTAL, giveUpNote: ALLOCATION_GIVE_UP_NOTE },
+    screenshotGroup: null,
   };
 }
 
@@ -598,6 +605,7 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
         { key: 'exclude', label: '排除这份材料' },
       ],
       allocation: null,
+      screenshotGroup: null,
       status: completeScreenshots.has(voucher.materialId) ? 'resolved' : 'open',
       answer: null,
     });
@@ -722,6 +730,7 @@ function applyAllocation(result: InventoryResult, item: PendingItem, voucher: Ma
     fields: [],
     choices: [],
     allocation: null,
+    screenshotGroup: null,
     status: 'open',
     answer: null,
   });

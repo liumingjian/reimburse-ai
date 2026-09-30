@@ -289,6 +289,18 @@ export type PendingAllocation = z.infer<typeof PendingAllocationSchema>;
 // 唯一的应用内处置是 exclude-material（materialId 就是这张发票，服务端连同它的行程单一起排除）。
 export const PENDING_ITEM_KINDS = ['form', 'choice', 'allocation', 'given_up'] as const;
 
+// A 住宿 invoice's 支付截图 group as its missing-screenshot 待确认项 carries it: the page reads the group from here, the
+// server decides it.
+export const PendingScreenshotGroupSchema = z.object({
+  // The group, in upload order; each id is a `paymentScreenshots` entry.
+  screenshotIds: z.array(IdSchema),
+  // How many the group may hold (PAYMENT_SCREENSHOT_CAP).
+  cap: z.number().int().positive(),
+  // The group takes no more changes (add, remove, 「已传齐」): the list is confirmed or ERP was attempted.
+  locked: z.boolean(),
+});
+export type PendingScreenshotGroup = z.infer<typeof PendingScreenshotGroupSchema>;
+
 // 空文本 PDF、多页发票（内核 pdf_markdown_conversion_empty / multi_page_invoice）是「要你处理」的 choice 类，
 // 只给「排除」一个选择；换原件走追加材料、重新盘点。
 export const PendingItemSchema = z.object({
@@ -302,6 +314,8 @@ export const PendingItemSchema = z.object({
   choices: z.array(PendingChoiceSchema),
   // allocation 类的逐段内容；其他类为 null。
   allocation: PendingAllocationSchema.nullable(),
+  // The missing-screenshot item's 支付截图 group (#331, see STAY_TRIO_COPY); null on every other item.
+  screenshotGroup: PendingScreenshotGroupSchema.nullable(),
   status: z.enum(['open', 'resolved']),
   answer: PendingAnswerSchema.nullable(),
 });
@@ -441,10 +455,15 @@ export type Confirmation = z.infer<typeof ConfirmationSchema>;
 // A 支付截图 (payment screenshot) is an image only (JPG, PNG). It goes on the 打印稿 (print sheet) alone and never changes
 // the lines. Only a 住宿 (accommodation) invoice takes them, and only from its missing-screenshot 待确认项 (pending
 // item; #213, see STAY_TRIO_COPY): a group of up to PAYMENT_SCREENSHOT_CAP, one image per upload, kept in upload order.
-// The group is the snapshot's `paymentScreenshots` with the invoice's `voucherMaterialId`, in list order; the filer
-// closes it with 「已传齐」 (`completePaymentScreenshots`).
+// The group is the snapshot's `paymentScreenshots` with the invoice's `voucherMaterialId`, in list order; the item
+// carries it as `screenshotGroup`, with the cap and the lock. The filer closes it with 「已传齐」
+// (`completePaymentScreenshots`). A screenshot left on any other voucher (the print page took them before #330)
+// belongs to no group: it is neither in the snapshot nor printed.
 export const PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE = '.jpg,.jpeg,.png,image/jpeg,image/png';
 export const PAYMENT_SCREENSHOT_CAP = 6;
+// A voucher's group: its screenshots out of every current one, in list (upload) order.
+export const screenshotGroupOf = <T extends { voucherMaterialId: string }>(screenshots: readonly T[], voucherMaterialId: string): T[] =>
+  screenshots.filter((shot) => shot.voucherMaterialId === voucherMaterialId);
 
 // The 住宿 (accommodation) trio check at 盘点 (inventory), #213. 住宿 reimbursement takes three materials: the 发票
 // (invoice), the 结账单 (hotel folio) and the 支付截图 (payment screenshot). Inventory raises one 待确认项 per missing
@@ -469,6 +488,13 @@ export const STAY_TRIO_CONFIRM_NONE = 'confirm_none';
 // The one place a trio item id is built and read back.
 export const stayTrioItemId = (element: StayTrioElement, materialId: string): string => `${STAY_TRIO_ITEM_CODES[element]}.${materialId}`;
 export const stayTrioElementOf = (itemId: string): StayTrioElement | null => STAY_TRIO_ELEMENTS.find((element) => itemId.startsWith(`${STAY_TRIO_ITEM_CODES[element]}.`)) ?? null;
+// The material a trio item is raised on; null for any other item.
+export const stayTrioMaterialOf = (itemId: string): string | null => {
+  const element = stayTrioElementOf(itemId);
+  return element ? itemId.slice(STAY_TRIO_ITEM_CODES[element].length + 1) : null;
+};
+// Whether an answer is the choice 确认没有 (`STAY_TRIO_CONFIRM_NONE`).
+export const confirmsNone = (answer: PendingAnswer | null): boolean => fieldAnswer(answer)[PENDING_CHOICE_KEY] === STAY_TRIO_CONFIRM_NONE;
 
 // Whether a pending item is the missing-screenshot item, which the page answers with an upload as well as a choice.
 export const isStayScreenshotItem = (item: Pick<PendingItem, 'itemId'>): boolean => stayTrioElementOf(item.itemId) === 'screenshot';
@@ -575,6 +601,7 @@ const PrintPageBaseSchema = z.object({
 // screenshots：支付截图续页（#333），页眉「No.N 支付截图（续）」带酒店名与金额；每行 3 张、至多 2 行，竖放，
 // 不旋转、不裁剪，所以没有放置（top / bottom 恒为 null）。
 export const PRINT_PAGE_KINDS = ['voucher', 'screenshots'] as const;
+export type PrintPageKind = (typeof PRINT_PAGE_KINDS)[number];
 
 export const PrintPageSchema = z.discriminatedUnion('kind', [
   PrintPageBaseSchema.extend({

@@ -125,11 +125,11 @@ type Worked = {
 };
 
 function choice(itemId: string, materialId: string, title: string, why: string, choices: PendingItem['choices']): PendingItem {
-  return { itemId, materialId, title, why, kind: 'choice', resolver: '要你处理', fields: [], choices, allocation: null, status: 'open', answer: null };
+  return { itemId, materialId, title, why, kind: 'choice', resolver: '要你处理', fields: [], choices, allocation: null, screenshotGroup: null, status: 'open', answer: null };
 }
 
 function form(itemId: string, materialId: string, title: string, why: string, fields: PendingField[]): PendingItem {
-  return { itemId, materialId, title, why, kind: 'form', resolver: '要你处理', fields, choices: [], allocation: null, status: 'open', answer: null };
+  return { itemId, materialId, title, why, kind: 'form', resolver: '要你处理', fields, choices: [], allocation: null, screenshotGroup: null, status: 'open', answer: null };
 }
 
 const pendingField = (slot: Slot): PendingField => ({ key: slot.key, label: slot.label, placeholder: '', required: slot.required, format: slot.format });

@@ -656,7 +656,9 @@ const maintenanceGate265: Migration = {
 // Before #331 only the latest unremoved screenshot per invoice counted, and its upload alone settled the item. So that
 // every row still in the table is a member of the group, each screenshot a later upload replaced is recorded as removed
 // at the replacing upload's revision; and each invoice's surviving screenshot is declared complete at its own revision,
-// so an existing task reads as a resolved group of one and never reopens.
+// so an existing task reads as a resolved group of one and never reopens. Before #330 the print page took a screenshot
+// for any voucher; which vouchers are 住宿 invoices is an inventory judgement SQL cannot make, so those get the same rows
+// and are left out on read: a screenshot on a voucher that is not a 住宿 invoice forms no group (`stayGroupsOnly`).
 const screenshotGroup331: Migration = {
   async up(db: Kysely<unknown>) {
     await db.schema

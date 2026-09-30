@@ -343,6 +343,11 @@
         }
       ],
       "allocation": null,
+      "screenshotGroup": {
+        "screenshotIds": [],
+        "cap": 6,
+        "locked": false
+      },
       "status": "resolved",
       "answer": {
         "choice": "confirm_none"

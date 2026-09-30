@@ -192,7 +192,7 @@ describe('a group of 支付截图', () => {
 
     const three = await screenshots(start, invoice.materialId, [png(1), png(2), png(3)]);
     expect(groupOf(three, invoice.materialId)).toEqual(['IMG_5011.png', 'IMG_5012.png', 'IMG_5013.png']);
-    expect(screenshotItem(three, invoice.materialId)).toMatchObject({ status: 'open' });
+    expect(screenshotItem(three, invoice.materialId)).toMatchObject({ status: 'open', screenshotGroup: { screenshotIds: three.paymentScreenshots.map((shot) => shot.screenshotId), cap: PAYMENT_SCREENSHOT_CAP, locked: false } });
     // A pending screenshot item still keeps the list from ERP 就绪.
     expect(three).toMatchObject({ stage: 'pending', step: { kind: 'answer_pending' } });
     expect(byFileName(three, invoice.fileName)).toMatchObject({ status: 'pending' });
@@ -241,6 +241,31 @@ describe('a group of 支付截图', () => {
     expect(migrated.stage).toBe('project');
   });
 
+  it('a pre-#330 screenshot on a voucher that is not a 住宿 invoice forms no group: not in the snapshot, not printed', async () => {
+    const scene = await scenario(server, alice).at('pending', { materials: ['m01', 'm02', 'm07'] });
+    const invoice = byFileName(scene.reached, sample('m01').name);
+    const other = byFileName(scene.reached, sample('m07').name);
+    const one = await screenshots(scene.reached, invoice.materialId, [png(1)]);
+    // Before #330 the print page took a screenshot for any voucher; 0020_331 settles it like any other.
+    const kept = await server.db.selectFrom('payment_screenshot').selectAll().where('task_id', '=', one.task.taskId).executeTakeFirstOrThrow();
+    await server.db
+      .insertInto('payment_screenshot')
+      .values({ ...kept, screenshot_id: 'legacy-other', voucher_material_id: other.materialId, file_name: 'legacy.png' })
+      .execute();
+    await settleLegacyScreenshots331(server.db as unknown as Kysely<unknown>);
+
+    const migrated = await client.current(one.task.taskId);
+    expect(migrated.paymentScreenshots.map((shot) => shot.fileName)).toEqual(['IMG_5011.png']);
+    expect(screenshotItem(migrated, invoice.materialId)).toMatchObject({ status: 'resolved' });
+    expect(migrated.stage).toBe('project');
+    await refused(await remove(migrated, 'legacy-other'), 'screenshot_not_found');
+
+    const review = await scene.accept('submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(migrated.lines.map((line) => [line.lineId, 'P-2307'])) });
+    const ready = await scene.accept('confirm-review', { digest: review.confirmation.digest });
+    const generated = await client.accepted(await printAction(ready, 'generate-print-sheet', {}));
+    expect(generated.printSheet.pages.flatMap((page) => page.screenshotIds)).toEqual(migrated.paymentScreenshots.map((shot) => shot.screenshotId));
+  }, 120_000);
+
   it('is locked once the list is confirmed, and the sheet prints the whole group', async () => {
     const scene = await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] });
     const invoice = byFileName(scene.reached, sample('m01').name);
@@ -258,6 +283,7 @@ describe('a group of 支付截图', () => {
     await refused(await complete(generated, invoice.materialId), 'screenshot_locked');
     const after = await client.current(ready.task.taskId);
     expect(groupOf(after, invoice.materialId)).toEqual(['IMG_5011.png', 'IMG_5012.png']);
+    expect(screenshotItem(after, invoice.materialId)?.screenshotGroup).toEqual({ screenshotIds: after.paymentScreenshots.map((shot) => shot.screenshotId), cap: PAYMENT_SCREENSHOT_CAP, locked: true });
     expect(after.confirmation.status).toBe('confirmed');
   }, 120_000);
 });

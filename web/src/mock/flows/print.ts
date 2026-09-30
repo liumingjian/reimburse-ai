@@ -3,9 +3,10 @@ import {
   PAYMENT_SCREENSHOT_CAP,
   PAYMENT_SCREENSHOT_ERRORS,
   PRINT_ACTION_ERRORS,
-  STAY_TRIO_CONFIRM_NONE,
   STAY_TRIO_COPY,
+  confirmsNone,
   fieldAnswer,
+  screenshotGroupOf,
   stayTrioItemId,
   type ActionError,
   type ActionOutcome,
@@ -40,19 +41,21 @@ function objectUrl(file: File, screenshotId: string): string {
 export function createPrintFlow(bus: MockBus): PrintFlow {
   let nextScreenshotNo = 1;
 
-  // 支付截图组（#331，同服务端 print/service.ts）：只有住宿发票（列出了它的缺支付截图待确认项）收支付截图；整单明细确认后或
-  // 已开始写入报销系统后，增、删、「已传齐」都拒绝。打印稿只在确认后存在，所以截图变化从不重排已生成的打印稿。
+  const screenshotItemOf = (snapshot: TaskSnapshot, invoiceId: string) => snapshot.pendingItems.find((candidate) => candidate.itemId === stayTrioItemId('screenshot', invoiceId));
+  // 支付截图组（#331，同服务端 print/service.ts）：只有住宿发票（列出了它的缺支付截图待确认项）收支付截图；组锁定时
+  // （screenshotGroup.locked，见 fixtures/print.ts withScreenshotGroups）增、删、「已传齐」都拒绝。打印稿只在确认后存在，
+  // 所以截图变化从不重排已生成的打印稿。
   const refusal = (snapshot: TaskSnapshot, voucherMaterialId: string): ActionOutcome | null => {
-    const item = snapshot.pendingItems.find((candidate) => candidate.itemId === stayTrioItemId('screenshot', voucherMaterialId));
+    const item = screenshotItemOf(snapshot, voucherMaterialId);
     // An excluded invoice leaves the 住宿 trio, as on the server.
-    if (!item || fieldAnswer(item.answer)[PENDING_CHOICE_KEY] === 'exclude') return bus.fail('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
-    if (snapshot.confirmation.status === 'confirmed' || snapshot.erp.status !== 'idle') return bus.fail('screenshot_locked', STAY_TRIO_COPY.changeLocked);
+    if (!item?.screenshotGroup || fieldAnswer(item.answer)[PENDING_CHOICE_KEY] === 'exclude') return bus.fail('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
+    if (item.screenshotGroup.locked) return bus.fail('screenshot_locked', STAY_TRIO_COPY.changeLocked);
     return null;
   };
-  const groupOf = (snapshot: TaskSnapshot, voucherMaterialId: string) => snapshot.paymentScreenshots.filter((shot) => shot.voucherMaterialId === voucherMaterialId);
+  const groupOf = (snapshot: TaskSnapshot, voucherMaterialId: string) => screenshotGroupOf(snapshot.paymentScreenshots, voucherMaterialId);
   // The invoice's screenshot item goes back to pending, its answer dropped (#332).
   const reopen = (snapshot: TaskSnapshot, taskId: string, invoiceId: string) => {
-    const item = snapshot.pendingItems.find((candidate) => candidate.itemId === stayTrioItemId('screenshot', invoiceId));
+    const item = screenshotItemOf(snapshot, invoiceId);
     if (!item) return;
     item.status = 'open';
     item.answer = null;
@@ -89,8 +92,7 @@ export function createPrintFlow(bus: MockBus): PrintFlow {
       const screenshotId = `s${nextScreenshotNo}`;
       nextScreenshotNo += 1;
       snapshot.paymentScreenshots.push({ screenshotId, voucherMaterialId, fileName: file.name, url: objectUrl(file, screenshotId) });
-      const item = snapshot.pendingItems.find((candidate) => candidate.itemId === stayTrioItemId('screenshot', voucherMaterialId));
-      if (item && fieldAnswer(item.answer)[PENDING_CHOICE_KEY] === STAY_TRIO_CONFIRM_NONE) reopen(snapshot, taskId, voucherMaterialId);
+      if (confirmsNone(screenshotItemOf(snapshot, voucherMaterialId)?.answer ?? null)) reopen(snapshot, taskId, voucherMaterialId);
       snapshot.task.updatedAt = bus.now();
       return bus.commit(snapshot);
     },
@@ -104,7 +106,7 @@ export function createPrintFlow(bus: MockBus): PrintFlow {
       snapshot.paymentScreenshots = snapshot.paymentScreenshots.filter((shot) => shot.screenshotId !== screenshotId);
       const invoiceId = removing.voucherMaterialId;
       if (groupOf(snapshot, invoiceId).length === 0 && bus.completeScreenshotGroups(taskId).delete(invoiceId)) {
-        const item = snapshot.pendingItems.find((candidate) => candidate.itemId === stayTrioItemId('screenshot', invoiceId));
+        const item = screenshotItemOf(snapshot, invoiceId);
         if (item?.status === 'resolved' && item.answer === null) reopen(snapshot, taskId, invoiceId);
       }
       snapshot.task.updatedAt = bus.now();
@@ -117,7 +119,7 @@ export function createPrintFlow(bus: MockBus): PrintFlow {
       if (refused) return refused;
       if (groupOf(snapshot, voucherMaterialId).length === 0) return bus.fail('screenshot_group_empty', PAYMENT_SCREENSHOT_ERRORS.empty);
       bus.completeScreenshotGroups(taskId).add(voucherMaterialId);
-      const item = snapshot.pendingItems.find((candidate) => candidate.itemId === stayTrioItemId('screenshot', voucherMaterialId));
+      const item = screenshotItemOf(snapshot, voucherMaterialId);
       if (item?.status === 'open') {
         item.status = 'resolved';
         const invoice = snapshot.materials.find((material) => material.materialId === voucherMaterialId);
