@@ -1,4 +1,4 @@
-import type { PlacementSlot, Corners, Placement, PrintPage, PrintSheet, TaskSnapshot } from '@baox/contract';
+import { PRINT_COPY, type PlacementSlot, type Corners, type Placement, type PrintPage, type PrintSheet, type TaskSnapshot } from '@baox/contract';
 
 // 打印稿夹具（mock 服务端角色）：7 页与 fixtures/scripts/data.mjs 的 PRINT_PAGES 一致，页图是生成器产出的 PNG。
 // 旋转换一张预先生成的变体页图（print-pgN-r<上><下>.png）；四角裁剪只记下坐标（mock 不重新矫正照片），页图不变。
@@ -82,6 +82,7 @@ export function buildPrintSheet(snapshot: TaskSnapshot): PrintSheet {
     const no = snapshot.lines.find((line) => line.voucherMaterialId === topId)?.no ?? pages.length + 1;
     pages.push({
       pageId: def.pageId,
+      kind: 'voucher',
       no,
       header: `${def.nos} · ${def.date.slice(5)} · ${def.categoryLabel} · ${def.grossAmount}`,
       nos: def.nos,
@@ -91,25 +92,46 @@ export function buildPrintSheet(snapshot: TaskSnapshot): PrintSheet {
       imageUrl: pageImageUrl(def, def.rotateTop, def.rotateBottom),
       top: placement(topId, def.top, def.rotateTop),
       bottom: def.bottom && bottomId ? placement(bottomId, def.bottom, def.rotateBottom) : null,
-      screenshotId: null,
+      screenshotIds: [],
     });
   }
-  const sheet: PrintSheet = { status: 'generated', fileName: PRINT_SHEET_FILE_NAME, url: PRINT_SHEET_URL, pages, notices: [] };
-  return refreshScreenshots(sheet, snapshot);
+  return { status: 'generated', fileName: PRINT_SHEET_FILE_NAME, url: PRINT_SHEET_URL, ...withScreenshots(pages, snapshot) };
 }
 
-// 每页的截图与「还没有支付截图」提醒（提醒不阻止下载）。续页（#333）之前，每页放这张发票支付截图组的第一张。
-function refreshScreenshots(sheet: PrintSheet, snapshot: TaskSnapshot): PrintSheet {
+// 支付截图（同服务端 print/service.ts）：一张放在下半页右侧；2 张及以上全部移到紧随其后的续页（#333），每行 3 张、至多 2 行，
+// 下半页整宽只放结账单。续页的页图用组里第一张截图代替（mock 不合成页图，合并 PDF 也还是那份 7 页夹具）。
+// 住宿发票一张都没有时提醒（提醒不阻止下载）。
+function withScreenshots(voucherPages: readonly PrintPage[], snapshot: TaskSnapshot): Pick<PrintSheet, 'pages' | 'notices'> {
   const notices: string[] = [];
-  const pages = sheet.pages.map((page) => {
-    if (!page.top) return page;
+  const pages = voucherPages.flatMap((page): PrintPage[] => {
+    if (!page.top) return [page];
     const voucherMaterialId = page.top.materialId;
-    const shot = snapshot.paymentScreenshots.find((candidate) => candidate.voucherMaterialId === voucherMaterialId);
-    if (!shot && expectsScreenshot(snapshot, voucherMaterialId)) notices.push(MISSING_SCREENSHOT_NOTICE(page.nos, page.categoryLabel));
-    return { ...page, screenshotId: shot?.screenshotId ?? null };
+    const group = snapshot.paymentScreenshots.filter((shot) => shot.voucherMaterialId === voucherMaterialId);
+    if (group.length === 0 && expectsScreenshot(snapshot, voucherMaterialId)) notices.push(MISSING_SCREENSHOT_NOTICE(page.nos, page.categoryLabel));
+    if (group.length < 2) return [{ ...page, screenshotIds: group.map((shot) => shot.screenshotId) }];
+    const hotelName = fieldOf(snapshot, page.bottom?.materialId, 'hotelName') ?? fieldOf(snapshot, voucherMaterialId, 'sellerName');
+    const continuation: PrintPage = {
+      pageId: `${page.pageId}.screenshots`,
+      kind: 'screenshots',
+      no: page.no,
+      header: PRINT_COPY.continuationHeader(page.nos, hotelName, page.grossAmount),
+      nos: page.nos,
+      date: page.date,
+      categoryLabel: page.categoryLabel,
+      grossAmount: page.grossAmount,
+      imageUrl: group[0]!.url,
+      hotelName,
+      top: null,
+      bottom: null,
+      screenshotIds: group.map((shot) => shot.screenshotId),
+    };
+    return [{ ...page, screenshotIds: [] }, continuation];
   });
-  return { ...sheet, pages, notices };
+  return { pages, notices };
 }
+
+const fieldOf = (snapshot: TaskSnapshot, materialId: string | undefined, key: string): string | null =>
+  snapshot.materials.find((material) => material.materialId === materialId)?.fields.find((field) => field.key === key)?.value.trim() || null;
 
 // 旋转：记下新的放置，换成对应的页图。
 export function rotatePage(page: PrintPage, slot: PlacementSlot, rotate: boolean): PrintPage {

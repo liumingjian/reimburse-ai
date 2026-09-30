@@ -19,7 +19,8 @@ type Trim = { left: number; bottom: number; right: number; top: number };
 export type Content = { kind: 'pdf'; bytes: Uint8Array; trim: Trim; size: Size; pageCount: number } | { kind: 'image'; bytes: Uint8Array; size: Size };
 
 export type Drawn = { content: Content; rotate: boolean; region: Box };
-export type SheetPage = { header: string; drawn: readonly Drawn[] };
+// `divided`: a voucher page draws the dashed line between its halves; a 支付截图 continuation page has no halves.
+export type SheetPage = { header: string; divided: boolean; drawn: readonly Drawn[] };
 
 // A pixel lighter than this in every channel counts as blank paper.
 const BLANK = 240;
@@ -79,13 +80,13 @@ export async function isJpegOrPng(bytes: Uint8Array): Promise<boolean> {
   }
 }
 
-// The merged A4 PDF: per page the header, the dashed separator, then every placement.
+// The merged A4 PDF: per page the header, the dashed separator (voucher pages), then every placement.
 export async function composeSheet(pages: readonly SheetPage[]): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   for (const sheetPage of pages) {
     const page = doc.addPage([A4.width, A4.height]);
     page.drawImage(await doc.embedPng(await headerPng(sheetPage.header)), HEADER_BOX);
-    page.drawLine({ start: { x: SEPARATOR_X[0], y: SEPARATOR_Y }, end: { x: SEPARATOR_X[1], y: SEPARATOR_Y }, thickness: 0.5, color: rgb(0.6, 0.6, 0.6), dashArray: [3, 3] });
+    if (sheetPage.divided) page.drawLine({ start: { x: SEPARATOR_X[0], y: SEPARATOR_Y }, end: { x: SEPARATOR_X[1], y: SEPARATOR_Y }, thickness: 0.5, color: rgb(0.6, 0.6, 0.6), dashArray: [3, 3] });
     for (const drawn of sheetPage.drawn) {
       const at = place(drawn.content.size, drawn.region, drawn.rotate);
       const options = { x: at.x, y: at.y, width: at.width, height: at.height, rotate: degrees(at.rotate) };

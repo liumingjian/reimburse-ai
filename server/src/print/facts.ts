@@ -20,6 +20,9 @@ export type StoredPlacement = {
 
 export type StoredPage = {
   pageId: string;
+  // `voucher`: one primary voucher over its supporting material. `screenshots`: the 支付截图 continuation page that
+  // follows a 住宿 voucher page whose group has two or more (#333); it has no placements.
+  kind: 'voucher' | 'screenshots';
   voucherMaterialId: string;
   no: number;
   nos: string;
@@ -30,10 +33,22 @@ export type StoredPage = {
   pngSha256: string;
   top: StoredPlacement | null;
   bottom: StoredPlacement | null;
-  screenshotId: string | null;
+  // The screenshots printed on this page, in upload order.
+  screenshotIds: string[];
+  // Continuation pages only: the hotel named in the header, if one is known.
+  hotelName?: string | null;
   // Supporting materials this voucher has beyond the one on the bottom half; named in a notice, never dropped silently.
   droppedFileNames?: string[];
 };
+
+// A page as stored in `print_render.pages`. A render composed before #333 has neither `kind` (every page was a voucher
+// page) nor `screenshotIds`, but one nullable `screenshotId`.
+type StoredPageJson = Omit<StoredPage, 'kind' | 'screenshotIds'> & { kind?: StoredPage['kind']; screenshotIds?: string[]; screenshotId?: string | null };
+
+function pageOf(json: StoredPageJson): StoredPage {
+  const { screenshotId, ...page } = json;
+  return { ...page, kind: json.kind ?? 'voucher', screenshotIds: json.screenshotIds ?? (screenshotId ? [screenshotId] : []) };
+}
 
 export type Render = { renderId: string; confirmationRevision: number; pdfSha256: string; pages: StoredPage[] };
 export type PrintSetting = { rotate?: boolean; corners?: Corners };
@@ -54,7 +69,7 @@ export type SheetState = PrintSheet['status'];
 
 export async function loadPrintFacts(tx: Db, taskId: string): Promise<PrintFacts> {
   const latest = await tx.selectFrom('print_render').selectAll().where('task_id', '=', taskId).orderBy('revision', 'desc').executeTakeFirst();
-  const render = latest ? { renderId: latest.render_id, confirmationRevision: latest.confirmation_revision, pdfSha256: latest.pdf_sha256, pages: JSON.parse(latest.pages) as StoredPage[] } : null;
+  const render = latest ? { renderId: latest.render_id, confirmationRevision: latest.confirmation_revision, pdfSha256: latest.pdf_sha256, pages: (JSON.parse(latest.pages) as StoredPageJson[]).map(pageOf) } : null;
   const settings = new Map<string, PrintSetting>();
   for (const row of await tx.selectFrom('print_setting').selectAll().where('task_id', '=', taskId).orderBy('revision').execute()) {
     const setting: PrintSetting = { ...settings.get(row.material_id) };
@@ -115,9 +130,21 @@ export function screenshotGroupsOf(facts: Pick<PrintFacts, 'screenshots' | 'comp
 // A sheet belongs to the confirmation it was composed from: it is `generated` only while that confirmation stands.
 // Any invalidation (the confirmation status leaves `confirmed`) or a re-confirmation (a newer confirmation row)
 // leaves it `stale` until it is generated again. Print actions need no stepToken for this: the binding is a fact.
+//
+// It must also print every voucher's current 支付截图 group. Groups are locked while the confirmation stands, but a
+// reverted change revives the confirmation it had invalidated, and with it the sheet composed then: a group changed
+// in between would leave that sheet printing screenshots the task no longer has (or missing new ones).
 export function sheetState(facts: PrintFacts, confirmation: 'unconfirmed' | 'confirmed' | 'invalidated', confirmedRevision: number | null): SheetState {
   if (!facts.render) return 'not_generated';
-  return confirmation === 'confirmed' && facts.render.confirmationRevision === confirmedRevision ? 'generated' : 'stale';
+  if (confirmation !== 'confirmed' || facts.render.confirmationRevision !== confirmedRevision) return 'stale';
+  return printsCurrentGroups(facts.render, facts.screenshots) ? 'generated' : 'stale';
+}
+
+function printsCurrentGroups(render: Render, screenshots: readonly Screenshot[]): boolean {
+  const printed = render.pages.flatMap((page) => page.screenshotIds);
+  const vouchers = [...new Set(render.pages.map((page) => page.voucherMaterialId))];
+  const current = vouchers.flatMap((voucher) => screenshots.filter((shot) => shot.voucherMaterialId === voucher).map((shot) => shot.screenshotId));
+  return printed.length === current.length && printed.every((id, index) => id === current[index]);
 }
 
 // The blobs a task's print facts refer to (all sheets ever composed, so an already loaded page image keeps working).
@@ -125,7 +152,7 @@ export async function printFileShas(tx: Db, taskId: string): Promise<Set<string>
   const shas = new Set<string>();
   for (const row of await tx.selectFrom('print_render').select(['pdf_sha256', 'pages']).where('task_id', '=', taskId).execute()) {
     shas.add(row.pdf_sha256);
-    for (const page of JSON.parse(row.pages) as StoredPage[]) shas.add(page.pngSha256);
+    for (const page of JSON.parse(row.pages) as StoredPageJson[]) shas.add(page.pngSha256);
   }
   for (const row of await tx.selectFrom('payment_screenshot').select('blob_sha256').where('task_id', '=', taskId).execute()) shas.add(row.blob_sha256);
   return shas;

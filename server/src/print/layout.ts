@@ -36,6 +36,19 @@ const BOTTOM_RIGHT: Box = { x: SIDE + leftWidth + SPLIT_GAP, y: BOTTOM, width: w
 export type Region = 'top' | 'bottom' | 'bottom_left' | 'bottom_right';
 export const REGIONS: Readonly<Record<Region, Box>> = { top: TOP, bottom: BOTTOM_HALF, bottom_left: BOTTOM_LEFT, bottom_right: BOTTOM_RIGHT };
 
+// 支付截图续页 (#333): the whole content area, no separator, as a grid of CONTINUATION_COLUMNS × CONTINUATION_ROWS cells
+// filled row by row in upload order. A group holds at most PAYMENT_SCREENSHOT_CAP, which is exactly one page of cells.
+export const CONTINUATION_COLUMNS = 3;
+export const CONTINUATION_ROWS = 2;
+const CELL_GAP = 8;
+const cellWidth = (width - (CONTINUATION_COLUMNS - 1) * CELL_GAP) / CONTINUATION_COLUMNS;
+const cellHeight = (contentTop - BOTTOM - (CONTINUATION_ROWS - 1) * CELL_GAP) / CONTINUATION_ROWS;
+export const CONTINUATION_CELLS: readonly Box[] = Array.from({ length: CONTINUATION_COLUMNS * CONTINUATION_ROWS }, (_, index) => {
+  const column = index % CONTINUATION_COLUMNS;
+  const row = Math.floor(index / CONTINUATION_COLUMNS);
+  return { x: SIDE + column * (cellWidth + CELL_GAP), y: contentTop - (row + 1) * cellHeight - row * CELL_GAP, width: cellWidth, height: cellHeight };
+});
+
 // The scale that fits `content` into `region`, upright or turned a quarter.
 export function scaleOf(content: Size, region: Size, rotate: boolean): number {
   const w = rotate ? content.height : content.width;

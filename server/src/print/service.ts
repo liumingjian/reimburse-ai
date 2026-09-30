@@ -1,13 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { PAYMENT_SCREENSHOT_CAP, PAYMENT_SCREENSHOT_ERRORS, PRINT_ACTION_ERRORS, STAY_TRIO_COPY, type Corners, type Line, type Material, type PlacementSlot } from '@baox/contract';
+import { PAYMENT_SCREENSHOT_CAP, PAYMENT_SCREENSHOT_ERRORS, PRINT_ACTION_ERRORS, PRINT_COPY, STAY_TRIO_COPY, type Corners, type Line, type Material, type PlacementSlot } from '@baox/contract';
 import { blobPath, writeBlob } from '../data-dir';
 import type { Db } from '../db/database';
 import { paperCorners, type PaperCorners } from './straighten';
-import { composeSheet, isJpegOrPng, pdfContent, photoContent, renderPages, screenshotContent, type Content, type Drawn } from './compose';
+import { composeSheet, isJpegOrPng, pdfContent, photoContent, renderPages, screenshotContent, type Content, type Drawn, type SheetPage } from './compose';
 import { sheetState, type PrintFacts, type PrintSetting, type Screenshot, type StoredPage, type StoredPlacement } from './facts';
 import { storedMime } from '../upload-rules';
-import { planPages, prefersRotation, REGIONS, type Region } from './layout';
+import { CONTINUATION_CELLS, planPages, prefersRotation, REGIONS, type Box, type PagePlan, type Region } from './layout';
 import type { StayTrio } from '../stay-trio';
 
 // 去打印 (print) actions. Each reads the task, composes outside any transaction, and hands back a commit that
@@ -237,32 +237,39 @@ async function compose(state: PrintState, settings: ReadonlyMap<string, PrintSet
     };
   };
 
-  const sheet: { header: string; drawn: Drawn[] }[] = [];
+  // Screenshots always stand upright and are never cropped.
+  const upright = async (shot: Screenshot, region: Box): Promise<Drawn> => ({ content: await screenshotContent(shotBytes.get(shot.screenshotId)!), rotate: false, region });
+
+  // Every page goes to both lists in the same position: the page images are matched to `pages` by index.
+  const sheet: SheetPage[] = [];
   const pages: Omit<StoredPage, 'pngSha256'>[] = [];
   for (const plan of plans) {
-    // Until the continuation page (#333), a page prints the first of its voucher's group.
-    const shot = screenshots.find((candidate) => candidate.voucherMaterialId === plan.voucherMaterialId) ?? null;
+    const group = screenshots.filter((candidate) => candidate.voucherMaterialId === plan.voucherMaterialId);
+    // One screenshot shares the bottom half with the folio; two or more move to a continuation page, and the folio
+    // takes the whole bottom half. Either way it is the page's `bottom` placement, so its rotate / crop still applies.
+    const inline = group.length === 1;
     const top = await prepared(plan.voucherMaterialId, 'top');
-    const bottom = await prepared(plan.bottomMaterialId, shot ? 'bottom_left' : 'bottom');
+    const bottom = await prepared(plan.bottomMaterialId, inline ? 'bottom_left' : 'bottom');
     const drawn = [top?.drawn, bottom?.drawn].filter((d): d is Drawn => d !== undefined);
-    const shotContent = shot ? shotBytes.get(shot.screenshotId) : undefined;
-    // The screenshot always stands upright in the right third.
-    if (shotContent) drawn.push({ content: await screenshotContent(shotContent), rotate: false, region: REGIONS.bottom_right });
-    sheet.push({ header: plan.header, drawn });
+    if (inline && group[0]) drawn.push(await upright(group[0], REGIONS.bottom_right));
+    sheet.push({ header: plan.header, divided: true, drawn });
+    const common = { voucherMaterialId: plan.voucherMaterialId, no: plan.no, nos: plan.nos, date: plan.date, categoryLabel: plan.categoryLabel, grossAmount: plan.grossAmount };
     pages.push({
+      ...common,
       pageId: plan.pageId,
-      voucherMaterialId: plan.voucherMaterialId,
-      no: plan.no,
-      nos: plan.nos,
+      kind: 'voucher',
       header: plan.header,
-      date: plan.date,
-      categoryLabel: plan.categoryLabel,
-      grossAmount: plan.grossAmount,
       top: top?.stored ?? null,
       bottom: bottom?.stored ?? null,
-      screenshotId: shot?.screenshotId ?? null,
+      screenshotIds: inline ? group.map((shot) => shot.screenshotId) : [],
       droppedFileNames: plan.droppedMaterialIds.map((id) => state.sources.get(id)?.fileName).filter((name): name is string => name !== undefined),
     });
+    if (group.length < 2) continue;
+    const hotelName = hotelNameOf(state.materials, plan);
+    const header = PRINT_COPY.continuationHeader(plan.nos, hotelName, plan.grossAmount);
+    // A group holds at most PAYMENT_SCREENSHOT_CAP, one continuation page of cells.
+    sheet.push({ header, divided: false, drawn: await Promise.all(group.map((shot, index) => upright(shot, CONTINUATION_CELLS[index]!))) });
+    pages.push({ ...common, pageId: `${plan.pageId}.screenshots`, kind: 'screenshots', header, hotelName, top: null, bottom: null, screenshotIds: group.map((shot) => shot.screenshotId) });
   }
   const pdf = await composeSheet(sheet);
   const images = await renderPages(pdf);
@@ -274,4 +281,10 @@ async function compose(state: PrintState, settings: ReadonlyMap<string, PrintSet
     return { ...page, pngSha256: sha256 };
   });
   return { pdfSha256: files[0]?.sha256 ?? '', pages: stored, files };
+}
+
+// The hotel a continuation page names: the folio's 酒店名称, else the invoice's 销售方名称.
+function hotelNameOf(materials: readonly Material[], plan: PagePlan): string | null {
+  const value = (materialId: string | null, key: string) => materials.find((material) => material.materialId === materialId)?.fields.find((field) => field.key === key)?.value.trim() || null;
+  return value(plan.bottomMaterialId, 'hotelName') ?? value(plan.voucherMaterialId, 'sellerName');
 }
