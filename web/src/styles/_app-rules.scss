@@ -220,10 +220,18 @@ $gutter: $spacing-06;
   @include type.type-style('body-01');
 }
 
+// Page header actions: one width for every button, like a ButtonSet (the widest label, at least Carbon's 196px).
 .app-page-actions {
-  display: flex;
+  display: grid;
   flex: none;
+  grid-auto-columns: minmax(12.25rem, 1fr);
+  grid-auto-flow: column;
   gap: $spacing-03;
+
+  > .cds--btn {
+    inline-size: 100%;
+    max-inline-size: none;
+  }
 }
 
 .app-caption {
@@ -351,6 +359,25 @@ $gutter: $spacing-06;
   > .cds--btn {
     max-inline-size: none;
   }
+
+  // Ghost buttons carry no separator: Carbon draws it on <button> ghosts but not on link ghosts, so a mixed row
+  // showed it between some neighbours only.
+  > .cds--btn--ghost,
+  > .cds--btn--ghost + .cds--btn {
+    box-shadow: none;
+  }
+}
+
+// A view switcher sized to its switches (Carbon's content switcher otherwise spans its container).
+.app-scope-switcher.cds--content-switcher {
+  inline-size: fit-content;
+  justify-content: flex-start;
+
+  .cds--content-switcher-btn {
+    flex: none;
+    inline-size: auto;
+    min-inline-size: 10rem;
+  }
 }
 
 .app-action-group {
@@ -362,6 +389,26 @@ $gutter: $spacing-06;
   > .app-caption {
     margin: 0;
   }
+}
+
+// Per-item actions (a print placement's 旋转 / 调整四角, a table row's 移出): small ghost buttons side by side, left
+// aligned; the error goes on the line below.
+.app-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $spacing-02;
+}
+
+// A table's trailing action column: as narrow as its button, never wrapping.
+.cds--data-table .app-row-action-col {
+  inline-size: 1%;
+  white-space: nowrap;
+}
+
+// A caption under a table explains what its row actions do.
+.app-table-caption {
+  margin: $spacing-03 0 0;
 }
 
 // File name with a middle ellipsis (FileName): the head shrinks, the tail always shows.

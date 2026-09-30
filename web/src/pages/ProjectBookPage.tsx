@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button } from '@carbon/react';
+import { ContentSwitcher, Switch } from '@carbon/react';
 import { PROJECT_BOOK_COPY, PUBLIC_PROJECT_BOOK_COPY } from '@baox/contract';
 import { AppShell } from '../shell/AppShell';
 import { PageHeader } from '../shell/PageHeader';
@@ -15,16 +15,20 @@ export function ProjectBookPage() {
   return (
     <AppShell nav="projects">
       <PageHeader title={copy.title} lead={copy.lead} />
-      <div className="app-btn-row" role="group" aria-label="选择项目簿">
-        <Button kind={scope === 'personal' ? 'secondary' : 'ghost'} aria-pressed={scope === 'personal'} onClick={() => setScope('personal')}>
-          个人项目簿
-        </Button>
-        <Button kind={scope === 'public' ? 'secondary' : 'ghost'} aria-pressed={scope === 'public'} onClick={() => setScope('public')}>
-          公共项目簿
-        </Button>
-      </div>
+      <ContentSwitcher
+        className="app-scope-switcher"
+        size="md"
+        aria-label="选择项目簿"
+        selectedIndex={scope === 'personal' ? 0 : 1}
+        onChange={({ name }) => setScope(name === 'public' ? 'public' : 'personal')}
+      >
+        <Switch name="personal" text="个人项目簿" />
+        <Switch name="public" text="公共项目簿" />
+      </ContentSwitcher>
       {scope === 'personal' ? (
-        <ProjectBookPanel />
+        <section className="app-block" aria-label="个人项目簿维护">
+          <ProjectBookPanel />
+        </section>
       ) : (
         <section className="app-block" aria-label="公共项目簿维护">
           <ProjectBookPanel scope="public" primaryIntake={false} canMaintain={canMaintainPublic} />

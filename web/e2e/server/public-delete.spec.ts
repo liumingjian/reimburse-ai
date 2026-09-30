@@ -10,13 +10,13 @@ for (const active of [true, false]) {
     await signIn(member, 'member');
     expect((await member.request.post('/api/public-project-book/delete', { data: { number: 'PUBLIC-DELETE' } })).status()).toBe(403);
     await member.goto('/#/projects');
-    await member.getByRole('button', { name: '公共项目簿', exact: true }).click();
+    await member.getByRole('tab', { name: '公共项目簿', exact: true }).click();
     const memberRow = member.getByTestId('book-row-PUBLIC-DELETE');
     await expect(memberRow).toBeVisible();
     await expect(memberRow.getByRole('button')).toHaveCount(0);
 
     await page.goto('/#/projects');
-    await page.getByRole('button', { name: '公共项目簿', exact: true }).click();
+    await page.getByRole('tab', { name: '公共项目簿', exact: true }).click();
     const row = page.getByTestId('book-row-PUBLIC-DELETE');
     await expect(row.getByRole('button')).toHaveCount(3);
     await expect(row.getByRole('button', { name: '编辑 PUBLIC-DELETE' })).toHaveText('编辑');
@@ -31,11 +31,11 @@ for (const active of [true, false]) {
     await dialog.getByRole('button', { name: '删除', exact: true }).click();
     await expect(row).toHaveCount(0);
     await page.reload();
-    await page.getByRole('button', { name: '公共项目簿', exact: true }).click();
+    await page.getByRole('tab', { name: '公共项目簿', exact: true }).click();
     await expect(page.getByRole('heading', { name: '公共项目簿', exact: true })).toBeVisible();
     await expect(row).toHaveCount(0);
     await member.reload();
-    await member.getByRole('button', { name: '公共项目簿', exact: true }).click();
+    await member.getByRole('tab', { name: '公共项目簿', exact: true }).click();
     await expect(member.getByRole('heading', { name: '公共项目簿', exact: true })).toBeVisible();
     await expect(memberRow).toHaveCount(0);
     const response = await member.request.post('/api/project-book/intake', { data: { number: 'PUBLIC-DELETE', name: '重新录入个人项目' } });

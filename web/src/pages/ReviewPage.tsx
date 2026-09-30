@@ -28,6 +28,7 @@ import {
 import { formatDateTime } from '../format';
 import { navigate, taskHash } from '../router';
 import { ActionBar } from '../shell/ActionBar';
+import { ActionGroup } from '../shell/ActionGroup';
 import { ActionError } from '../shell/ActionError';
 import { ConfirmDialog } from '../shell/Dialog';
 import { PageHeader } from '../shell/PageHeader';
@@ -286,28 +287,25 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
               <ActionError message={claimAction.error} />
             </div>
           </div>
-          <div className="app-btn-row app-after-actions">
+          <ActionGroup
+            className="app-after-actions"
+            label="修改"
+            caption="这三项都会使这次确认失效：改常驻城市会重新划分本地与外地市内交通，改派项目要重新确认，追加材料会形成新的盘点版本。"
+          >
             {!erpStarted ? (
-              <Button kind="ghost" size="sm" onClick={() => setEditingCity(true)}>
+              <Button kind="ghost" size="md" onClick={() => setEditingCity(true)}>
                 修改常驻城市
               </Button>
             ) : null}
-            <span className="app-caption">改常驻城市会重新划分本地与外地市内交通，并使这次确认失效。</span>
-          </div>
-          <div className="app-btn-row app-after-actions">
             {!erpStarted ? (
-              <Button kind="ghost" size="sm" href={taskHash(taskId, 'project')}>
+              <Button kind="ghost" size="md" href={taskHash(taskId, 'project')}>
                 修改项目归属
               </Button>
             ) : null}
-            <span className="app-caption">改派项目会使这次确认失效。</span>
-          </div>
-          <div className="app-btn-row app-after-actions">
-            <Button kind="ghost" size="sm" disabled={erpStarted} onClick={reopen.open}>
+            <Button kind="ghost" size="md" disabled={erpStarted} onClick={reopen.open}>
               追加材料
             </Button>
-            <span className="app-caption">追加材料会形成新的盘点版本，并使这次确认失效。</span>
-          </div>
+          </ActionGroup>
         </section>
       ) : null}
 
@@ -355,11 +353,11 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
         <section className="app-block" aria-label="报销信息核对">
           <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={CATALOG_PREPARATION_COPY.catalogMismatch} />
           {!erpStarted ? (
-            <div className="app-btn-row app-block-row">
-              <Button kind="tertiary" size="sm" href={taskHash(taskId, 'project')}>
+            <ActionGroup className="app-block-row">
+              <Button kind="secondary" size="md" href={taskHash(taskId, 'project')}>
                 回到项目归属改派
               </Button>
-            </div>
+            </ActionGroup>
           ) : null}
           <div className="bleed app-table">
             <Table aria-label="不匹配项">
@@ -396,6 +394,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
                   {PREPARATION_PROBLEM_COLUMNS.map((label) => (
                     <TableHeader key={label}>{label}</TableHeader>
                   ))}
+                  <TableHeader className="app-row-action-col">操作</TableHeader>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -405,27 +404,25 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
                     <TableCell>{problem.missing}</TableCell>
                     <TableCell>{problem.subject}</TableCell>
                     <TableCell className="app-nowrap">{problem.resolver}</TableCell>
+                    <TableCell className="app-row-action-col">
+                      {problem.excludableMaterialId ? (
+                        <Button
+                          kind="ghost"
+                          size="sm"
+                          aria-label={`排除 ${problem.subject}`}
+                          disabled={excludeAction.busy || step.kind !== 'resolve_preparation'}
+                          onClick={() => void exclude(problem.excludableMaterialId ?? '')}
+                        >
+                          排除
+                        </Button>
+                      ) : null}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
-          <div className="app-btn-row app-block-actions">
-            {preparation.problems.map((problem) =>
-              problem.excludableMaterialId ? (
-                <Button
-                  key={problem.problemId}
-                  kind="secondary"
-                  size="sm"
-                  disabled={excludeAction.busy || step.kind !== 'resolve_preparation'}
-                  onClick={() => void exclude(problem.excludableMaterialId ?? '')}
-                >
-                  排除 {problem.subject}
-                </Button>
-              ) : null,
-            )}
-            <span className="app-caption">排除后这份材料不关联明细、也不进入材料包，系统会重新准备核对材料。</span>
-          </div>
+          <p className="app-caption app-table-caption">排除后这份材料不关联明细、也不进入材料包，系统会重新准备核对材料。</p>
           <ActionError message={excludeAction.error} />
         </section>
       ) : null}
@@ -450,20 +447,20 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
             <>
               {!erpStarted ? (
                 <>
-                  <Button kind="ghost" size="md" onClick={() => setEditingCity(true)}>
+                  <Button kind="ghost" onClick={() => setEditingCity(true)}>
                     修改常驻城市
                   </Button>
-                  <Button kind="ghost" size="md" href={taskHash(taskId, 'project')}>
+                  <Button kind="ghost" href={taskHash(taskId, 'project')}>
                     修改项目归属
                   </Button>
                 </>
               ) : null}
               {!autoNotice ? (
                 <>
-                  <Button kind="ghost" size="md" href={taskHash(taskId, 'pending')}>
+                  <Button kind="ghost" href={taskHash(taskId, 'pending')}>
                     回到待确认项
                   </Button>
-                  <Button kind="primary" size="md" disabled={confirmDisabled} onClick={requestConfirm}>
+                  <Button kind="primary" disabled={confirmDisabled} onClick={requestConfirm}>
                     确认整单明细
                   </Button>
                 </>

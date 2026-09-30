@@ -694,6 +694,60 @@ $doc-frame-block: var(--app-doc-frame-block);
   border: 1px solid $border-subtle-01;
 }
 
+// A header inside the viewer frame (the lodging switcher) takes its height out of the document frame, so the frame
+// still fits the viewport.
+.app-viewer:has(> .app-viewer-header) {
+  --app-doc-frame-block: max(20rem, calc(100vh - 18rem));
+  gap: $spacing-03;
+}
+
+.app-viewer-header {
+  justify-self: stretch;
+  min-inline-size: 0;
+}
+
+// Equal-width switches; each label is 「结账单」 plus the file name with a middle ellipsis.
+.app-doc-switcher .cds--content-switcher__label {
+  display: flex;
+  gap: $spacing-02;
+  min-inline-size: 0;
+}
+
+.app-switch-kind {
+  flex: none;
+}
+
+.app-doc-unavailable {
+  display: grid;
+  gap: $spacing-05;
+  max-inline-size: 100%;
+  padding: $spacing-05;
+  text-align: start;
+
+  p {
+    margin: 0;
+  }
+}
+
+.app-lodging-preview {
+  display: grid;
+  gap: $spacing-03;
+  align-content: start;
+  min-inline-size: 0;
+
+  > p {
+    margin: 0;
+  }
+
+  > .cds--btn {
+    justify-self: start;
+  }
+}
+
+.app-viewer-note {
+  margin: 0;
+}
+
 .app-doc-preview {
   max-inline-size: 100%;
   overflow: hidden;
@@ -794,6 +848,13 @@ $doc-frame-block: var(--app-doc-frame-block);
 .app-evidence-tag.cds--tag {
   margin-block: 0;
   margin-inline: $spacing-03 0;
+}
+
+// Pending item forms: the 已处理 tag (when revisited), then the button group with its caption.
+.app-choice-form {
+  display: grid;
+  gap: $spacing-04;
+  justify-items: start;
 }
 
 // 选择类待确认项：已选项用选中样式（不用主按钮，主按钮一屏一个）。
@@ -1601,7 +1662,7 @@ $doc-frame-block: var(--app-doc-frame-block);
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: $spacing-03;
+  gap: $spacing-02;
   padding-block: $spacing-03;
   background: $background;
   border-block-end: 1px solid $border-subtle-01;

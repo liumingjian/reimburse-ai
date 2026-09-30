@@ -61,7 +61,7 @@ describe('项目簿编辑', () => {
     await member.login({ username: 'book-member', password: 'member-password' });
     window.location.hash = '#/projects';
     render(<App adapter={member} />);
-    fireEvent.click(await screen.findByRole('button', { name: '公共项目簿' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '公共项目簿' }));
     expect(await screen.findByTestId('book-row-PUBLIC-EDIT')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '编辑 PUBLIC-EDIT' })).toBeNull();
 
@@ -72,7 +72,7 @@ describe('项目簿编辑', () => {
     window.location.hash = '#/projects';
     render(<App adapter={admin} />);
     await screen.findByRole('heading', { name: '个人项目簿', level: 1 });
-    fireEvent.click(screen.getByRole('button', { name: '公共项目簿' }));
+    fireEvent.click(screen.getByRole('tab', { name: '公共项目簿' }));
     await screen.findByTestId('book-row-PUBLIC-EDIT');
     const publicTable = screen.getByRole('table', { name: '公共项目簿' });
     fireEvent.click(within(publicTable).getByRole('button', { name: '编辑 PUBLIC-EDIT' }));

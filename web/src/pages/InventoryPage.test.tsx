@@ -225,7 +225,7 @@ describe('材料盘点', () => {
     fireEvent.click(screen.getByRole('button', { name: '开始材料盘点' }));
 
     const table = await screen.findByRole('table', { name: '重复发票' }, { timeout: 3000 });
-    expect(within(table).getAllByRole('columnheader').map((node) => node.textContent)).toEqual([...BLOCKER_TABLE_COLUMNS]);
+    expect(within(table).getAllByRole('columnheader').map((node) => node.textContent)).toEqual([...BLOCKER_TABLE_COLUMNS, '操作']);
     const cells = within(table).getAllByRole('cell').map((node) => node.textContent);
     expect(cells[0]).toBe('1');
     expect(cells[1]).toBe('铁路电子客票_0809.pdf');

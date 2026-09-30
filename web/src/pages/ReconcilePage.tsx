@@ -122,17 +122,17 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
           actions={
             <>
               {allowWait ? (
-                <Button kind={suggestHandOff ? 'secondary' : 'primary'} size="md" renderIcon={Renew} disabled={busy} onClick={() => void act((adapter) => adapter.reconcile(taskId, step.stepToken))}>
+                <Button kind={suggestHandOff ? 'secondary' : 'primary'} renderIcon={Renew} disabled={busy} onClick={() => void act((adapter) => adapter.reconcile(taskId, step.stepToken))}>
                   {reconcile.bucket === null ? '开始对账' : '重新对账'}
                 </Button>
               ) : null}
               {allowRefill ? (
-                <Button kind="primary" size="md" renderIcon={Renew} disabled={busy} onClick={() => void act((adapter) => adapter.refill(taskId, step.stepToken))}>
+                <Button kind="primary" renderIcon={Renew} disabled={busy} onClick={() => void act((adapter) => adapter.refill(taskId, step.stepToken))}>
                   {REFILL_COPY.button}
                 </Button>
               ) : null}
               {allowHandOff ? (
-                <Button kind={suggestHandOff ? 'primary' : 'secondary'} size="md" disabled={busy} onClick={() => void act((adapter) => adapter.handOff(taskId, step.stepToken))}>
+                <Button kind={suggestHandOff ? 'primary' : 'secondary'} disabled={busy} onClick={() => void act((adapter) => adapter.handOff(taskId, step.stepToken))}>
                   转人工
                 </Button>
               ) : null}

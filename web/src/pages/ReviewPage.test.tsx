@@ -256,7 +256,7 @@ describe('整单明细确认', () => {
     expect(within(mismatch).getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['序号', '材料/明细', '参考材料', '待处理问题', '处理人']);
     expect(screen.getByText(CATALOG_PREPARATION_COPY.catalogMismatch)).toBeTruthy();
     const problems = screen.getByRole('table', { name: '准备缺项' });
-    expect(within(problems).getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['序号', '准备缺项', '关联材料/明细', '处理人']);
+    expect(within(problems).getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['序号', '准备缺项', '关联材料/明细', '处理人', '操作']);
     expect(screen.getByText(CATALOG_PREPARATION_COPY.preparationBlocked)).toBeTruthy();
     expect(screen.getByTestId('package-files').textContent).toBe('核对材料已生成，共 1 份文件。');
     expect((checkbox() as HTMLButtonElement).disabled).toBe(true);

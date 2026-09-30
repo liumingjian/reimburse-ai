@@ -63,7 +63,7 @@ describe('project book lifecycle controls', () => {
     window.location.hash = '#/projects';
     render(<App adapter={adapter} />);
 
-    fireEvent.click(await screen.findByRole('button', { name: '公共项目簿' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '公共项目簿' }));
     const publicTable = await screen.findByRole('table', { name: '公共项目簿' });
     expect(within(publicTable).getByTestId('book-row-PUBLIC-LIFE')).toBeTruthy();
     expect(within(publicTable).queryByRole('button')).toBeNull();
@@ -73,7 +73,7 @@ describe('project book lifecycle controls', () => {
     await adapter.login({ username: MOCK_ACCOUNT.username, password: MOCK_PASSWORD });
     render(<App adapter={adapter} />);
     await screen.findByRole('heading', { name: '个人项目簿', level: 1 });
-    fireEvent.click(screen.getByRole('button', { name: '公共项目簿' }));
+    fireEvent.click(screen.getByRole('tab', { name: '公共项目簿' }));
     expect(await screen.findByTestId('book-row-PUBLIC-LIFE')).toBeTruthy();
 
     expect(within(screen.getByTestId('book-row-PUBLIC-LIFE')).getAllByRole('button')).toHaveLength(3);
@@ -128,7 +128,7 @@ test.each([true, false])('public deletion confirms or cancels for active=%s', as
   if (!active) await adapter.deactivatePublicProject({ number: 'PUBLIC-DELETE' });
   window.location.hash = '#/projects';
   render(<App adapter={adapter} />);
-  fireEvent.click(await screen.findByRole('button', { name: '公共项目簿' }));
+  fireEvent.click(await screen.findByRole('tab', { name: '公共项目簿' }));
   const row = await screen.findByTestId('book-row-PUBLIC-DELETE');
   expect(within(row).getAllByRole('button')).toHaveLength(3);
   fireEvent.click(lifecycleItem('PUBLIC-DELETE', '删除项目 PUBLIC-DELETE'));

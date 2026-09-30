@@ -3,6 +3,7 @@ import { Button, InlineNotification } from '@carbon/react';
 import { useAppState, useAppStore, useTask } from '../adapter/context';
 import { STAGE_DEFAULT_PAGE, pageAllowed, type TaskPage, type TaskSnapshot } from '@baox/contract';
 import { TASKS_HASH, extensionSettingsHash, navigate, taskHash } from '../router';
+import { ActionGroup } from '../shell/ActionGroup';
 import { AppShell } from '../shell/AppShell';
 import { PageHeader } from '../shell/PageHeader';
 import { StepBar } from '../shell/StepBar';
@@ -50,7 +51,11 @@ function GuardPage({ snapshot, page }: { snapshot: TaskSnapshot; page: TaskPage 
     return (
       <>
         <PageHeader title="这次去报销停下了" lead={snapshot.erp.abortReason} />
-        <Button href={target}>回到当前阶段</Button>
+        <ActionGroup>
+          <Button size="md" href={target}>
+            回到当前阶段
+          </Button>
+        </ActionGroup>
       </>
     );
   }
@@ -59,14 +64,22 @@ function GuardPage({ snapshot, page }: { snapshot: TaskSnapshot; page: TaskPage 
     return (
       <>
         <PageHeader title="还没有上传材料" lead="先上传材料，再进入后续阶段。" />
-        <Button href={target}>去上传</Button>
+        <ActionGroup>
+          <Button size="md" href={target}>
+            去上传
+          </Button>
+        </ActionGroup>
       </>
     );
   }
   return (
     <>
       <PageHeader title="还不能进入这一步" lead="阶段不可跳过，请按顺序完成前面的步骤。" />
-      <Button href={target}>回到当前阶段</Button>
+      <ActionGroup>
+        <Button size="md" href={target}>
+          回到当前阶段
+        </Button>
+      </ActionGroup>
     </>
   );
 }
@@ -79,7 +92,13 @@ function ExtensionReturnNotice({ taskId, page }: { taskId: string; page: TaskPag
   return (
     <section aria-label="扩展连接检查">
       <p role="status">{pairing.status === 'loading' ? '正在检查扩展连接…' : pairing.status === 'error' ? '暂时无法读取扩展连接状态，请到设置重试。' : connected ? '扩展已连接。可以点击去报销开始自动填写。' : '扩展尚未连接。请到设置完成连接，再点击去报销。'}</p>
-      {!connected ? <Button kind="tertiary" href={extensionSettingsHash(taskId, page)}>设置浏览器扩展</Button> : null}
+      {!connected ? (
+        <ActionGroup>
+          <Button kind="secondary" size="md" href={extensionSettingsHash(taskId, page)}>
+            设置浏览器扩展
+          </Button>
+        </ActionGroup>
+      ) : null}
     </section>
   );
 }
@@ -98,14 +117,14 @@ export function TaskRoute({ taskId, page, fromExtensionSetup }: { taskId: string
     return (
       <AppShell nav="tasks">
         <PageHeader title="任务加载失败" lead={entry.error} />
-        <div className="app-btn-row">
-          <Button kind="secondary" onClick={() => void store.refreshTask(taskId)}>
-            重试
-          </Button>
-          <Button kind="ghost" href={TASKS_HASH}>
+        <ActionGroup>
+          <Button kind="ghost" size="md" href={TASKS_HASH}>
             返回任务列表
           </Button>
-        </div>
+          <Button kind="secondary" size="md" onClick={() => void store.refreshTask(taskId)}>
+            重试
+          </Button>
+        </ActionGroup>
       </AppShell>
     );
   }

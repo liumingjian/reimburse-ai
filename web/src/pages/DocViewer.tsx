@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { IconButton } from '@carbon/react';
 import { FitToScreen, RotateClockwise, ZoomIn, ZoomOut } from '@carbon/icons-react';
 import type { Material } from '@baox/contract';
@@ -7,10 +7,29 @@ import type { Material } from '@baox/contract';
 // 原件在「一屏高度减去顶栏、步骤条和页头」的框内等比缩放，栏宽跟着缩放后的原件走；没有预览时占位保持同样的版面位置。
 // 图片原件带查看工具栏（适应窗口、放大、缩小、旋转 90°）。查看状态只在本组件里：不写服务端，与打印稿的旋转、裁剪无关。
 // 父组件按待确认项 key 重建本组件，切换待确认项时缩放与旋转自然重置。
-export function DocViewer({ material, onPreviewError }: { material: Material | undefined; onPreviewError?: () => void }) {
+// `header` sits inside the sticky frame above the preview (the lodging 结账单 / 发票 switcher), so it stays with the
+// document while the page scrolls. `unavailable` replaces the preview with a message in a frame of the same size.
+export function DocViewer({
+  material,
+  onPreviewError,
+  header,
+  unavailable,
+}: {
+  material: Material | undefined;
+  onPreviewError?: () => void;
+  header?: ReactNode;
+  unavailable?: ReactNode;
+}) {
   return (
     <div className="app-viewer" data-testid="doc-viewer">
-      <DocPreview material={material} {...(onPreviewError ? { onPreviewError } : {})} />
+      {header ? <div className="app-viewer-header">{header}</div> : null}
+      {unavailable ? (
+        <div className={`app-doc-preview is-boxed is-placeholder is-${material?.shape ?? 'portrait'}`}>
+          <div className="app-doc-unavailable">{unavailable}</div>
+        </div>
+      ) : (
+        <DocPreview material={material} {...(onPreviewError ? { onPreviewError } : {})} />
+      )}
     </div>
   );
 }

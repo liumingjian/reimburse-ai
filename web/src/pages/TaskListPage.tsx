@@ -137,7 +137,7 @@ function TaskRow({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: Ta
       <TableCell className="app-sticky-end app-task-actions">
         <div className="app-row-actions">
           {label ? (
-            <Button kind={status.key === 'active' || status.key === 'reconcile' ? 'primary' : 'ghost'} size="sm" href={href}>
+            <Button kind="ghost" size="sm" href={href}>
               {label}
             </Button>
           ) : null}
