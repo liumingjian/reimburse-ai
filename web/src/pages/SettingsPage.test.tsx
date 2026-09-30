@@ -113,7 +113,7 @@ describe('设置页：浏览器扩展', () => {
     renderPairing({ paired: true });
     await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.paired);
     expect(within(extensionPanel()).getByText('Chrome 142 · Windows 11')).toBeTruthy();
-    expect(within(extensionPanel()).getByText('2026-02-03T14:20:00Z')).toBeTruthy();
+    expect(within(extensionPanel()).getByText('2026-02-03 14:20')).toBeTruthy();
     // Paired is not enough: whether 去报销 can run depends on the extension being connected right now.
     expect(within(extensionPanel()).getByText('已连接')).toBeTruthy();
 

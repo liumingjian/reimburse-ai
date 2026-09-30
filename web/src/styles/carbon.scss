@@ -28,6 +28,8 @@ $system-mono: (ui-monospace, 'SF Mono', Menlo, Consolas, monospace);
 @use '@carbon/styles/scss/reset';
 // Carbon 的尺寸与密度 token（按钮高度、内边距等引用的 --cds-layout-*），在 :root 输出。
 @use '@carbon/styles/scss/layout';
+// Carbon's CSS grid (Grid / Column): the field grid (FieldGroup) lays its fields on it.
+@use '@carbon/styles/scss/grid';
 
 @use '@carbon/styles/scss/components/button';
 @use '@carbon/styles/scss/components/ui-shell';
@@ -51,6 +53,10 @@ $system-mono: (ui-monospace, 'SF Mono', Menlo, Consolas, monospace);
 @use '@carbon/styles/scss/components/link';
 @use '@carbon/styles/scss/components/checkbox';
 @use '@carbon/styles/scss/components/overflow-menu';
+// Without it InlineLoading draws its spinner as a page-sized black circle.
+@use '@carbon/styles/scss/components/inline-loading';
+@use '@carbon/styles/scss/components/tile';
+@use '@carbon/styles/scss/components/structured-list';
 
 @use './app-rules';
 @use './app-pages';

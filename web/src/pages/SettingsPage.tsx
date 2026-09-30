@@ -6,6 +6,7 @@ import { compareExtensionVersions, EXTENSION_DOWNLOAD_PATH, EXTENSION_PAIRING_ST
 import { SETTINGS_PASSWORD_HASH, SETTINGS_TUTORIAL_HASH, TASKS_HASH, navigate } from '../router';
 import { ConfirmDialog } from '../shell/Dialog';
 import { AppShell } from '../shell/AppShell';
+import { formatDateTime } from '../format';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { EXTENSION_INSTALL_COPY, UpgradeSteps } from './ExtensionTutorialPage';
@@ -270,11 +271,11 @@ function ExtensionPairingSection() {
                       { label: EXTENSION_PAIRING_COPY.browser, value: view.browser ?? <span className="app-muted">{EXTENSION_PAIRING_COPY.unknownBrowser}</span> },
                       { label: EXTENSION_PAIRING_COPY.extensionVersion, value: view.version ?? <span className="app-muted">{EXTENSION_PAIRING_COPY.unknownBrowser}</span> },
                       { label: EXTENSION_PAIRING_COPY.connection, value: view.connected ? EXTENSION_PAIRING_COPY.connected : EXTENSION_PAIRING_COPY.disconnected },
-                      { label: EXTENSION_PAIRING_COPY.pairedAt, value: view.pairedAt ?? '' },
-                      { label: EXTENSION_PAIRING_COPY.lastConnectedAt, value: view.lastConnectedAt ?? <span className="app-muted">{EXTENSION_PAIRING_COPY.neverConnected}</span> },
+                      { label: EXTENSION_PAIRING_COPY.pairedAt, value: view.pairedAt ? formatDateTime(view.pairedAt) : '' },
+                      { label: EXTENSION_PAIRING_COPY.lastConnectedAt, value: view.lastConnectedAt ? formatDateTime(view.lastConnectedAt) : <span className="app-muted">{EXTENSION_PAIRING_COPY.neverConnected}</span> },
                     ]
                   : []),
-                ...(view.status === 'waiting' && view.codeExpiresAt ? [{ label: EXTENSION_PAIRING_COPY.codeExpiresAt, value: view.codeExpiresAt }] : []),
+                ...(view.status === 'waiting' && view.codeExpiresAt ? [{ label: EXTENSION_PAIRING_COPY.codeExpiresAt, value: formatDateTime(view.codeExpiresAt) }] : []),
               ]}
             />
           </div>
