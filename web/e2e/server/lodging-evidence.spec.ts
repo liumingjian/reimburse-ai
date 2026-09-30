@@ -20,7 +20,7 @@ test('associated hotel bill leads pending review and project previews preserve s
   await expect(preview.getByRole('tab', { name: /^结账单：/ })).toHaveAttribute('aria-selected', 'true');
   // The folio PDF is rendered to an image in the original viewer; the invoice is never offered (QA 2026-09-30).
   await expect(preview.getByRole('img', { name: '全季酒店_结账单.pdf 原件' })).toHaveAttribute('src', /^blob:/);
-  await expect(preview.getByRole('toolbar', { name: '原件查看' })).toBeVisible();
+  await expect(preview.getByRole('button', { name: '全屏查看', exact: true })).toBeVisible();
   await expect(preview.getByRole('tab')).toHaveCount(1);
 
   await answerStayGaps(page, taskId);
@@ -44,6 +44,19 @@ test('associated hotel bill leads pending review and project previews preserve s
   // The folio fills the dialog's width instead of a thin page fitted to a short frame (QA 2026-09-30).
   await expect.poll(async () => (await dialog.getByRole('img', { name: '全季酒店_结账单.pdf 原件' }).boundingBox())?.width ?? 0).toBeGreaterThan(600);
   await page.screenshot({ path: testInfo.outputPath('lodging-preview-1366.png') });
+  // Full screen from inside the dialog covers the window, not just the dialog; Esc closes only the full-screen view.
+  await dialog.getByRole('button', { name: '全屏查看', exact: true }).click();
+  const fullscreen = page.getByRole('img', { name: '全季酒店_结账单.pdf 原件（全屏）' });
+  await expect(fullscreen).toHaveAttribute('src', /^blob:/);
+  await expect.poll(async () => (await fullscreen.boundingBox())?.width ?? 0).toBeGreaterThan(900);
+  await expect(page.getByRole('dialog').filter({ has: page.getByTestId('fullscreen-stage') }).getByRole('tab', { name: /^结账单：/ })).toBeVisible();
+  await expect(page.locator('.app-doc-fullscreen')).toHaveCSS('opacity', '1');
+  // Painted over the dialog: the point at the window's centre belongs to the full-screen view.
+  expect(await page.evaluate(() => document.elementFromPoint(innerWidth / 2, innerHeight / 2)?.closest('.app-doc-fullscreen') !== null)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('lodging-fullscreen-1366.png') });
+  await page.keyboard.press('Escape');
+  await expect(fullscreen).toBeHidden();
+  await expect(dialog).toBeVisible();
   const bill = before.materials.find((material) => material.kind === 'hotel_folio')!;
   await page.route(`**${bill.previewUrl}`, (route) => route.fulfill({ status: 404, body: 'preview unavailable' }));
   // Reopen the dialog so the preview loads again, now against the failing URL.

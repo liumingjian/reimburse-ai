@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, ContentSwitcher, IconButton, InlineNotification, Modal, Switch } from '@carbon/react';
+import { Button, ContentSwitcher, IconButton, InlineNotification, Switch } from '@carbon/react';
 import { Crop, RotateClockwise, RotateCounterclockwise } from '@carbon/icons-react';
 import { type PlacementSlot, type Corners, type Placement, type PrintPage as PrintSheetPage, type TaskSnapshot } from '@baox/contract';
 import { ActionError } from '../shell/ActionError';
@@ -8,10 +8,11 @@ import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
 import { navigate, taskHash } from '../router';
 import { CropEditor, formatCorners } from './CropEditor';
+import { DocFullscreen, DocImage } from './DocFullscreen';
 import { PAGE_COPY } from './page-copy';
 
 // 打印稿预览：服务端渲染的页图平铺成网格，一屏看多页；每行几页由员工选（3、4、5，记在本机浏览器）。页眉整句来自快照，
-// 页面不拼；页序跟随统一业务序号。点页图放大看这一页。
+// 页面不拼；页序跟随统一业务序号。点页图全屏看这一页（与原件共用 DocFullscreen）。
 // 还没有打印稿（或旧稿已作废）时，进入页面即请服务端生成。旋转、四角裁剪只是打印设置：页图上每一半各有图标按钮，
 // 结果以服务端返回的新快照为准，不改原件，也不影响整单明细确认。提醒（如住宿发票还没有支付截图）不阻止下载。
 // 支付截图不在这里补充（QA 2026-09-30）：住宿发票缺支付截图在待确认项里上传；预览页只看、只调版面。
@@ -148,7 +149,7 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
             <Switch key={value} name={String(value)} text={`每行 ${value} 页`} />
           ))}
         </ContentSwitcher>
-        <span className="app-caption">点页图放大查看；页图右上角的图标调整这一半的放置与裁剪。</span>
+        <span className="app-caption">点页图全屏查看；页图右上角的图标调整这一半的放置与裁剪。</span>
       </div>
 
       {sheet.status === 'stale' ? (
@@ -212,7 +213,7 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
                   {page.header}
                 </div>
                 <div className="app-page-figure">
-                  <button type="button" className="app-page-open" aria-label={`放大查看第 ${index + 1} 页`} onClick={() => setEnlarged({ page, index })}>
+                  <button type="button" className="app-page-open" aria-label={`全屏查看第 ${index + 1} 页`} onClick={() => setEnlarged({ page, index })}>
                     <img className="app-page-image" src={page.imageUrl} alt={`第 ${index + 1} 页页图`} loading="lazy" decoding="async" data-testid={`page-image-${page.pageId}`} />
                   </button>
                   {SLOTS.map((slot) => {
@@ -239,17 +240,10 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
               </li>
             ))}
           </ol>
-          <Modal
-            open={enlarged !== null}
-            passiveModal
-            size="lg"
-            modalHeading={enlarged?.page.header ?? ''}
-            modalLabel={enlarged ? `第 ${enlarged.index + 1} 页` : undefined}
-            closeButtonLabel="关闭"
-            onRequestClose={() => setEnlarged(null)}
-          >
-            {enlarged ? <img className="app-page-enlarged" src={enlarged.page.imageUrl} alt={`第 ${enlarged.index + 1} 页页图（放大）`} /> : null}
-          </Modal>
+          {/* The same full-screen view as a 原件: only look, no page actions there. */}
+          <DocFullscreen open={enlarged !== null} heading={enlarged?.page.header ?? ''} {...(enlarged ? { label: `第 ${enlarged.index + 1} 页` } : {})} onClose={() => setEnlarged(null)}>
+            {enlarged ? <DocImage key={enlarged.page.imageUrl} src={enlarged.page.imageUrl} alt={`第 ${enlarged.index + 1} 页页图（全屏）`} rotation={0} fit="stage" /> : null}
+          </DocFullscreen>
         </>
       ) : (
         <section className="app-block">

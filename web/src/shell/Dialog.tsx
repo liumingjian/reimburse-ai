@@ -5,6 +5,10 @@ import { Button, ComposedModal, ModalBody, ModalFooter, ModalHeader } from '@car
 // 打开时焦点落到取消按钮（表单弹层传 focusCancel={false}，由带 data-modal-primary-focus 的输入框接住焦点）。
 export const DIALOG_CLOSE_LABEL = '关闭';
 
+// Carbon's defaults, plus the full-screen 原件 view (DocFullscreen): it opens over a dialog (住宿材料 on the project
+// page) from a portal, so the dialog's focus trap must let focus into it.
+const FLOATING_MENUS = ['.cds--overflow-menu-options', '.cds--tooltip', '.flatpickr-calendar', '.app-doc-fullscreen'];
+
 export function ConfirmDialog({
   title,
   children,
@@ -42,7 +46,15 @@ export function ConfirmDialog({
 }) {
   const primaryFocus = focusCancel ? { 'data-modal-primary-focus': true } : {};
   return (
-    <ComposedModal open danger={danger} size={wide ? 'lg' : 'sm'} aria-label={title} preventCloseOnClickOutside={false} onClose={() => onCancel()}>
+    <ComposedModal
+      open
+      danger={danger}
+      size={wide ? 'lg' : 'sm'}
+      aria-label={title}
+      preventCloseOnClickOutside={false}
+      selectorsFloatingMenus={FLOATING_MENUS}
+      onClose={() => onCancel()}
+    >
       <ModalHeader title={title} iconDescription={DIALOG_CLOSE_LABEL} />
       <ModalBody>
         {children}
