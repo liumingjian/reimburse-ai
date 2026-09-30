@@ -219,7 +219,7 @@ export function AuthPending({ error }: { error: string | null }) {
         <div className="app-empty">
           <h2>{AUTH_COPY.loadFailed}</h2>
           <p>{error}</p>
-          <Button kind="secondary" onClick={() => void store.loadSession()}>
+          <Button size="md" kind="secondary" onClick={() => void store.loadSession()}>
             {AUTH_COPY.retry}
           </Button>
         </div>

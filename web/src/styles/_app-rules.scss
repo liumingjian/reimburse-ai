@@ -400,6 +400,15 @@ $gutter: $spacing-06;
   gap: $spacing-02;
 }
 
+// An icon button inline with text (查看住宿材料 after a hotel name): sits on the text line instead of adding one.
+.cds--btn.app-inline-icon,
+.app-inline-icon .cds--btn {
+  block-size: 1.5rem;
+  min-block-size: 1.5rem;
+  padding: 0 $spacing-02;
+  vertical-align: middle;
+}
+
 // A table's trailing action column: as narrow as its button, never wrapping.
 .cds--data-table .app-row-action-col {
   inline-size: 1%;
@@ -487,19 +496,14 @@ $gutter: $spacing-06;
 .cds--modal p,
 .app-caption,
 .app-consequence {
-  text-wrap: pretty;
+  // Only the wrapping style: the `text-wrap` shorthand would also reset text-wrap-mode and undo a cell's nowrap.
+  text-wrap-style: pretty;
 }
 
 .cds--data-table th:not(.app-wrap-head) .cds--table-header-label {
   white-space: nowrap;
 }
 
-.app-btn-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: $spacing-03;
-}
 
 .app-block {
   margin-block-start: $spacing-07;
@@ -691,6 +695,12 @@ $gutter: $spacing-06;
     overflow: visible;
     text-overflow: clip;
   }
+}
+
+// A cell's qualifier (已确认 / 待确认) on its own small line under the value, so date and amount columns stay narrow
+// enough for the whole task table to fit at 1440px.
+.app-cell-sub {
+  display: block;
 }
 
 .app-task-name {
@@ -950,40 +960,6 @@ $gutter: $spacing-06;
   strong {
     color: $text-primary;
     font-weight: 600;
-  }
-}
-
-// 两个并列入口（确认后的去打印 / 去报销、对账的两种处置）：工作区里的两栏，中间一条竖线。
-.app-two-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  background: $layer-01;
-  border-block: 1px solid $border-subtle-01;
-}
-
-.app-action-card {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  gap: $spacing-03;
-  padding: $spacing-06 $gutter;
-
-  & + & {
-    border-inline-start: 1px solid $border-subtle-01;
-  }
-
-  h3 {
-    margin: 0;
-    color: $text-primary;
-    @include type.type-style('heading-03');
-  }
-
-  p {
-    margin: 0;
-    color: $text-secondary;
-  }
-
-  .cds--btn {
-    justify-self: start;
   }
 }
 
