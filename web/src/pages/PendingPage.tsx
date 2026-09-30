@@ -17,6 +17,7 @@ import {
   type TaskSnapshot,
 } from '@baox/contract';
 import { taskHash } from '../router';
+import { DetailList } from '../shell/DetailList';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { StatusTag } from '../shell/StatusTag';
@@ -43,38 +44,33 @@ function Resolved() {
   return <StatusTag tone="success">已处理</StatusTag>;
 }
 
+// One detail list: file name and material type first, then the recognised fields (DESIGN.md「版式统一」).
 function MaterialFields({ material }: { material: Material | undefined }) {
   if (!material) return null;
+  const read = material.fields.map((field) => ({
+    label: field.label,
+    value: (
+      <>
+        {field.value || <span className="app-muted">未填</span>}
+        {EVIDENCE_LABELS[field.evidence] ? (
+          <Tag className="app-evidence-tag" type={field.evidence === 'derived' ? 'gray' : 'red'} size="sm">
+            {EVIDENCE_LABELS[field.evidence]}
+          </Tag>
+        ) : null}
+      </>
+    ),
+  }));
   return (
     <div className="app-material-fields">
-      <div className="app-preview-name">
-        <FieldGroup
-          label="材料"
-          fields={[
-            { label: '文件名', value: <span className="app-file-name">{material.fileName}</span> },
-            { label: '材料类别', value: material.kindLabel },
-          ]}
-        />
-      </div>
-      {material.fields.length > 0 ? (
-        <dl className="app-kv">
-          {material.fields.map((field) => (
-            <div key={field.key} className="app-kv-row">
-              <dt>{field.label}</dt>
-              <dd>
-                <span>{field.value || <span className="app-muted">未填</span>}</span>
-                {EVIDENCE_LABELS[field.evidence] ? (
-                  <Tag type={field.evidence === 'derived' ? 'gray' : 'red'} size="sm">
-                    {EVIDENCE_LABELS[field.evidence]}
-                  </Tag>
-                ) : null}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      ) : (
-        <p className="app-caption">没有读出字段。</p>
-      )}
+      <DetailList
+        label="材料"
+        fields={[
+          { label: '文件名', value: <span className="app-file-name">{material.fileName}</span> },
+          { label: '材料类别', value: material.kindLabel },
+          ...read,
+        ]}
+      />
+      {material.fields.length === 0 ? <p className="app-caption">没有读出字段。</p> : null}
     </div>
   );
 }

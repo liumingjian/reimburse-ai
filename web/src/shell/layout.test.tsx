@@ -19,6 +19,11 @@ describe('FileName', () => {
     expect(splitFileName('全季酒店_发票.pdf')).toEqual({ head: '全季酒店_发票.pdf', tail: '' });
   });
 
+  test('a short name is one element holding the text and the title', () => {
+    render(<FileName name="全季酒店_发票.pdf" title="内容哈希 sha256:0123abcd" />);
+    expect(screen.getByText('全季酒店_发票.pdf').getAttribute('title')).toBe('内容哈希 sha256:0123abcd');
+  });
+
   test('the full name is the hover title and the text content', () => {
     render(<FileName name={LONG} />);
     const name = screen.getByTitle(LONG);
@@ -48,15 +53,15 @@ describe('DetailList', () => {
 });
 
 describe('SummaryBar', () => {
-  test('is a description list of equal fields; a sentence-long field spans two', () => {
+  test('is a group holding a description list of equal fields; a sentence-long field spans two', () => {
     render(
       <SummaryBar label="对账摘要">
         <SummaryField label="单据编号" value="BX-1" mono testId="no" />
         <SummaryField label="对账结果" value="已写入，待核对" wide />
       </SummaryBar>,
     );
-    const bar = screen.getByLabelText('对账摘要');
-    expect(bar.tagName).toBe('DL');
+    const bar = screen.getByRole('group', { name: '对账摘要' });
+    expect(bar.firstElementChild!.tagName).toBe('DL');
     expect(within(bar).getAllByRole('definition').map((d) => d.textContent)).toEqual(['BX-1', '已写入，待核对']);
     expect(screen.getByTestId('no').className).toContain('app-code');
     expect(within(bar).getByText('对账结果').parentElement!.className).toContain('app-summary-wide');

@@ -3,6 +3,7 @@ import { Button, InlineNotification } from '@carbon/react';
 import { type PlacementSlot, PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE, type Corners, type PaymentScreenshot, type Placement, type PrintPage as PrintSheetPage, type TaskSnapshot } from '@baox/contract';
 import { ActionError } from '../shell/ActionError';
 import { FieldGroup } from '../shell/FieldGroup';
+import { FileName } from '../shell/FileName';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
 import { navigate, taskHash } from '../router';
@@ -40,10 +41,7 @@ function ScreenshotControl({
   };
   return (
     <li>
-      <div className="app-placement-name">
-        <span className="app-caption">支付截图</span>
-        {screenshot ? <span className="app-file-name">{screenshot.fileName}</span> : <span className="app-muted">未补充</span>}
-      </div>
+      <FieldGroup fields={[{ label: '支付截图', value: screenshot ? <FileName name={screenshot.fileName} /> : <span className="app-muted">未补充</span> }]} />
       <div className="app-caption">仅用于打印稿，放在下半页右侧；不上传报销系统，也不影响整单明细确认。</div>
       <div className="app-btn-row app-screenshot-row">
         {screenshot ? (
@@ -229,12 +227,9 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
                       const rotateLabel = placement.rotate ? '改为竖放' : '旋转 90°';
                       return (
                         <li key={slot}>
-                          <div className="app-placement-name">
-                            <span className="app-caption">{SLOT_LABEL[slot]}</span>
-                            <span className="app-file-name">{placement.fileName}</span>
-                          </div>
                           <FieldGroup
                             fields={[
+                              { label: SLOT_LABEL[slot], value: <FileName name={placement.fileName} /> },
                               { label: '放置', value: placement.rotate ? '旋转 90° 放置' : '竖放' },
                               ...(placement.croppable ? [{ label: '裁剪', value: placement.cropAdjusted ? '已手动微调裁剪' : '已自动裁边矫正' }] : []),
                             ]}

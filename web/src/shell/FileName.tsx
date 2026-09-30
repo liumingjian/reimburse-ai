@@ -9,18 +9,18 @@ export function splitFileName(name: string): { head: string; tail: string } {
   return { head: name.slice(0, -TAIL), tail: name.slice(-TAIL) };
 }
 
-export function FileName({ name, className }: { name: string; className?: string }) {
+// `title` replaces the hover text when a page adds to it (the upload row appends the content hash).
+export function FileName({ name, title = name, className }: { name: string; title?: string; className?: string }) {
   const { head, tail } = splitFileName(name);
-  const cls = className ? `app-filename ${className}` : 'app-filename';
   if (!tail) {
     return (
-      <span className={cls} title={name}>
-        <span className="app-filename-head">{name}</span>
+      <span className={className ? `app-filename is-short ${className}` : 'app-filename is-short'} title={title}>
+        {name}
       </span>
     );
   }
   return (
-    <span className={cls} title={name}>
+    <span className={className ? `app-filename ${className}` : 'app-filename'} title={title}>
       <span className="app-filename-head">{head}</span>
       <span className="app-filename-tail">{tail}</span>
     </span>

@@ -48,9 +48,10 @@ describe('待确认项', () => {
     expect(within(detail()).getByRole('heading', { name: '补填起点与终点' })).toBeTruthy();
     expect(document.body.textContent).not.toContain('处理人');
     expect(document.body.textContent).not.toContain('要你处理');
-    // 文件名与材料类别是带标签的字段组，不拼中点串。
-    expect(within(detail()).getByText('文件名', { selector: 'dt' }).nextElementSibling?.textContent).toBe('IMG_4871.jpg');
-    expect(within(detail()).getByText('材料类别', { selector: 'dt' })).toBeTruthy();
+    // 文件名与材料类别是详情列表的头两行，不拼中点串。
+    const details = within(detail()).getByLabelText('材料');
+    expect(within(details).getByText('文件名').nextElementSibling?.textContent).toBe('IMG_4871.jpg');
+    expect(within(details).getByText('材料类别')).toBeTruthy();
     expect(within(detail()).queryByText(/IMG_4871\.jpg ·/)).toBeNull();
     const photo = within(detail()).getByRole('img', { name: 'IMG_4871.jpg 原件' });
     expect(photo.getAttribute('src')).toBe('fixtures/m09-taxi-photo.jpg');

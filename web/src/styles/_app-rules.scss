@@ -373,10 +373,15 @@ $gutter: $spacing-06;
   white-space: nowrap;
 }
 
-.app-filename-head {
+.app-filename-head,
+.app-filename.is-short {
   min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.app-filename.is-short {
+  display: inline-block;
 }
 
 .app-filename-tail {

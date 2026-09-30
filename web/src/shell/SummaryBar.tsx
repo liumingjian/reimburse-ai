@@ -5,9 +5,9 @@ import type { ReactNode } from 'react';
 // edit affordance goes to the page's actions so the bar keeps one height.
 export function SummaryBar({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <dl className="app-summary bleed" aria-label={label}>
-      {children}
-    </dl>
+    <div className="bleed" role="group" aria-label={label}>
+      <dl className="app-summary">{children}</dl>
+    </div>
   );
 }
 

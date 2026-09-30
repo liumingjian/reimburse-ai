@@ -108,7 +108,8 @@ describe('ERP 填报', () => {
     expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();
     // ADR-0028：交接时单据还没有保存，所以完成页没有单据编号。
     expect(screen.getByTestId('draft-no').textContent).toBe('尚无');
-    expect(screen.getByTestId('erp-account').textContent).toBe('林颂宜（lin.songyi）· 账套 安图特科技');
+    expect(screen.getByTestId('erp-account').textContent).toBe('林颂宜（lin.songyi）');
+    expect(screen.getByTestId('erp-tenant').textContent).toBe('安图特科技');
     expect(screen.getByText('明细 9/9 一致')).toBeTruthy();
     expect(screen.getByTestId('handover-completed').textContent).toBe(HANDOVER_COMPLETED_NOTICE);
     expect(screen.queryByTestId('human-review')).toBeNull();
