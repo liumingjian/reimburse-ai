@@ -190,6 +190,93 @@ function screenshot(snapshot: TaskSnapshot, voucherMaterialId: string, file: Fil
   return alice.request(`/api/tasks/${snapshot.task.taskId}/payment-screenshots`, { method: 'POST', body: form });
 }
 
+// #333: a 住宿 invoice's 支付截图 group on the sheet. The group is only open to change before the list is confirmed, so
+// every case climbs from the 待确认项: upload, 「已传齐」, then assign and confirm.
+describe('支付截图 on the sheet', () => {
+  const shot = (n: number) => new File([readFileSync(join(GENERATED_DIR, `print-pg${n}.png`))], `IMG_50${10 + n}.png`, { type: 'image/png' });
+
+  async function confirmedWith(count: number) {
+    const scene = await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] });
+    const invoice = byFileName(scene.reached, sample('m01').name);
+    let latest = scene.reached;
+    for (let n = 1; n <= count; n += 1) latest = await client.accepted(await screenshot(latest, invoice.materialId, shot(n)));
+    const declared = await client.accepted(await print(latest, 'complete-payment-screenshots', { voucherMaterialId: invoice.materialId }));
+    const review = await scene.accept('submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(declared.lines.map((line) => [line.lineId, 'P-2307'])) });
+    const ready = await scene.accept('confirm-review', { digest: review.confirmation.digest });
+    const group = ready.paymentScreenshots.map((one) => one.screenshotId);
+    return { scene, invoice, ready, group };
+  }
+
+  it('one screenshot: the invoice page is unchanged, the screenshot beside the folio', async () => {
+    const { ready, group } = await confirmedWith(1);
+    const sheet = (await client.accepted(await print(ready, 'generate-print-sheet'))).printSheet;
+    expect(sheet.pages).toEqual([
+      expect.objectContaining({ kind: 'voucher', header: 'No.1 · 08-09 · 住宿 · 3640.00', top: expect.objectContaining({ fileName: sample('m01').name }), bottom: expect.objectContaining({ fileName: sample('m02').name }), screenshotIds: group }),
+    ]);
+    expect(sheet.notices).toEqual([]);
+    expect((await download(sheet.url ?? '')).getPageCount()).toBe(1);
+
+    // A sheet composed before #333 stored one nullable `screenshotId` per page and no page kind; it still reads.
+    // (print_render is append-only: the old shape is stored as a later render of the same content.)
+    const stored = await server.db.selectFrom('print_render').selectAll().where('task_id', '=', ready.task.taskId).executeTakeFirstOrThrow();
+    const legacy = (JSON.parse(stored.pages) as Record<string, unknown>[]).map(({ kind, screenshotIds, ...page }) => (void kind, { ...page, screenshotId: (screenshotIds as string[])[0] ?? null }));
+    await server.db.insertInto('print_render').values({ ...stored, render_id: `${stored.render_id}.legacy`, pages: JSON.stringify(legacy), revision: stored.revision + 1 }).execute();
+    expect((await client.current(ready.task.taskId)).printSheet).toEqual(sheet);
+  }, 120_000);
+
+  it('three: the invoice page holds the folio only, and a continuation page follows with the three in upload order', async () => {
+    const { ready, group } = await confirmedWith(3);
+    const generated = await client.accepted(await print(ready, 'generate-print-sheet'));
+    const sheet = generated.printSheet;
+    expect(group).toHaveLength(3);
+    expect(sheet.pages).toEqual([
+      expect.objectContaining({ kind: 'voucher', header: 'No.1 · 08-09 · 住宿 · 3640.00', top: expect.objectContaining({ fileName: sample('m01').name }), bottom: expect.objectContaining({ fileName: sample('m02').name }), screenshotIds: [] }),
+      expect.objectContaining({ kind: 'screenshots', no: 1, nos: 'No.1', grossAmount: '3640.00', hotelName: '全季酒店（上海某某店）', header: 'No.1 支付截图（续） · 全季酒店（上海某某店） · 3640.00', top: null, bottom: null, screenshotIds: group }),
+    ]);
+    expect(sheet.notices).toEqual([]);
+    expect((await download(sheet.url ?? '')).getPageCount()).toBe(sheet.pages.length);
+    for (const page of sheet.pages) expect((await alice.request(page.imageUrl)).headers.get('content-type')).toBe('image/png');
+
+    // The folio is still the invoice page's bottom placement: turning it re-renders that page and keeps the continuation.
+    const [invoicePage, continuation] = sheet.pages;
+    if (!invoicePage?.bottom || !continuation) throw new Error('unexpected pages');
+    const turned = await client.accepted(await print(generated, 'rotate-placement', { pageId: invoicePage.pageId, slot: 'bottom', rotate: !invoicePage.bottom.rotate }));
+    expect(turned.printSheet.pages.map((page) => [page.kind, page.bottom?.rotate ?? null, page.screenshotIds])).toEqual([
+      ['voucher', !invoicePage.bottom.rotate, []],
+      ['screenshots', null, group],
+    ]);
+    expect(turned.printSheet.pages[0]?.imageUrl).not.toBe(invoicePage.imageUrl);
+    // A continuation page has nothing to turn or crop.
+    await refused(await print(turned, 'rotate-placement', { pageId: continuation.pageId, slot: 'top', rotate: true }), 'slot_empty');
+  }, 180_000);
+
+  it('six fit one continuation page', async () => {
+    const { ready, group } = await confirmedWith(6);
+    const sheet = (await client.accepted(await print(ready, 'generate-print-sheet'))).printSheet;
+    expect(sheet.pages.map((page) => [page.kind, page.screenshotIds])).toEqual([
+      ['voucher', []],
+      ['screenshots', group],
+    ]);
+    expect((await download(sheet.url ?? '')).getPageCount()).toBe(2);
+  }, 180_000);
+
+  it('a revived confirmation does not bring back a sheet that prints an older group', async () => {
+    const { ready, invoice, group } = await confirmedWith(2);
+    const generated = await client.accepted(await print(ready, 'generate-print-sheet'));
+    // Invalidating the list unlocks the group; reverting the change revives the confirmation (see 'the sheet follows
+    // the confirmation'), but the sheet composed under it printed two screenshots, and the invoice now has three.
+    const moved = await client.accepted(await client.act(generated, 'set-home-city', { homeCity: '上海' }));
+    const added = await client.accepted(await screenshot(moved, invoice.materialId, shot(3)));
+    const back = await client.accepted(await client.act(added, 'set-home-city', { homeCity: '杭州' }));
+    expect(back.confirmation).toEqual(generated.confirmation);
+    expect(back.printSheet.status).toBe('stale');
+
+    const again = (await client.accepted(await print(back, 'generate-print-sheet'))).printSheet;
+    expect(again.pages[1]?.screenshotIds).toEqual([...group, added.paymentScreenshots[2]?.screenshotId]);
+    expect((await download(again.url ?? '')).getPageCount()).toBe(2);
+  }, 180_000);
+});
+
 // #312: the medium is what recognition sniffs from the bytes at upload, not what the name or MIME declares. A taxi
 // photo saved as `.pdf` is listed and printed as the image it is, and does not jump the PDFs-first parse order.
 describe('a material mislabelled as a PDF', () => {

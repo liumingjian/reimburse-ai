@@ -554,7 +554,7 @@ export const PlacementSchema = z.object({
 });
 export type Placement = z.infer<typeof PlacementSchema>;
 
-export const PrintPageSchema = z.object({
+const PrintPageBaseSchema = z.object({
   pageId: IdSchema,
   no: z.number().int().positive(),
   // 页眉整句，如「No.1-3 · 08-10 · 外地市内交通 · 69.19」；范围用 ASCII 连字符。页面原样显示，不自己拼。
@@ -566,14 +566,40 @@ export const PrintPageSchema = z.object({
   grossAmount: AmountSchema,
   // 服务端按当前放置（旋转、裁剪、支付截图）渲染出的整页页图；设置变了，地址随之变。
   imageUrl: UrlSchema,
-  top: PlacementSchema.nullable(),
-  bottom: PlacementSchema.nullable(),
-  screenshotId: IdSchema.nullable(),
+  // 这一页上印的支付截图，按上传顺序（见 paymentScreenshots）。
+  screenshotIds: z.array(IdSchema),
 });
+
+// voucher：一张主要报销凭证一页，上半页凭证、下半页证明材料。住宿发票只有一张支付截图时，它在下半页右侧 1/3；
+// 有 2 张及以上时，下半页整宽只放结账单，截图全部移到紧随其后的续页。
+// screenshots：支付截图续页（#333），页眉「No.N 支付截图（续）」带酒店名与金额；每行 3 张、至多 2 行，竖放，
+// 不旋转、不裁剪，所以没有放置（top / bottom 恒为 null）。
+export const PRINT_PAGE_KINDS = ['voucher', 'screenshots'] as const;
+
+export const PrintPageSchema = z.discriminatedUnion('kind', [
+  PrintPageBaseSchema.extend({
+    kind: z.literal('voucher'),
+    top: PlacementSchema.nullable(),
+    bottom: PlacementSchema.nullable(),
+  }),
+  PrintPageBaseSchema.extend({
+    kind: z.literal('screenshots'),
+    // 酒店名（结账单上的酒店名称，其次发票的销售方名称）；都没有时为 null，页眉就不写。
+    hotelName: z.string().min(1).nullable(),
+    top: z.null(),
+    bottom: z.null(),
+  }),
+]);
 export type PrintPage = z.infer<typeof PrintPageSchema>;
 
+export const PRINT_COPY = {
+  // 续页页眉，如「No.9 支付截图（续） · 全季酒店 · 3640.00」。
+  continuationHeader: (nos: string, hotelName: string | null, grossAmount: string) => [`${nos} 支付截图（续）`, hotelName, grossAmount].filter((part) => part !== null).join(' · '),
+} as const;
+
 // not_generated：还没生成；generated：页图与合并 PDF 可用（调整后服务端立即重新渲染，仍是 generated）；
-// stale：材料变更使确认失效，旧打印稿作废，须重新确认后再生成。
+// stale：材料变更使确认失效，旧打印稿作废，须重新确认后再生成；复活的确认带回的旧打印稿若印的支付截图组与现在不同，
+// 也是 stale，页面随即重新生成。
 export const PRINT_SHEET_STATUSES = ['not_generated', 'generated', 'stale'] as const;
 
 export const PrintSheetSchema = z.object({

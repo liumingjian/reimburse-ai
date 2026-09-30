@@ -241,7 +241,7 @@ describe('a group of 支付截图', () => {
     expect(migrated.stage).toBe('project');
   });
 
-  it('is locked once the list is confirmed, and the sheet prints the first of the group', async () => {
+  it('is locked once the list is confirmed, and the sheet prints the whole group', async () => {
     const scene = await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] });
     const invoice = byFileName(scene.reached, sample('m01').name);
     const two = await screenshots(scene.reached, invoice.materialId, [png(1), png(2)]);
@@ -250,7 +250,7 @@ describe('a group of 支付截图', () => {
     const ready = await scene.accept('confirm-review', { digest: review.confirmation.digest });
 
     const generated = await client.accepted(await printAction(ready, 'generate-print-sheet', {}));
-    expect(generated.printSheet.pages[0]?.screenshotId).toBe(generated.paymentScreenshots[0]?.screenshotId);
+    expect(generated.printSheet.pages.flatMap((page) => page.screenshotIds)).toEqual(generated.paymentScreenshots.map((shot) => shot.screenshotId));
     expect(generated.printSheet.notices).toEqual([]);
 
     expect(await refused(await screenshot(generated, invoice.materialId, png(3)), 'screenshot_locked')).toBe(STAY_TRIO_COPY.changeLocked);
