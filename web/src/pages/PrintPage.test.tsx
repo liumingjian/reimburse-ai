@@ -118,6 +118,11 @@ describe('打印稿预览', () => {
     const adapter = createMockAdapter({ seed: 'review', fault: null });
     const invoice = (await adapter.getSnapshot('T1')).materials.find((material) => material.fileName === '全季酒店_发票.pdf');
     for (const name of ['IMG_5011.png', 'IMG_5012.png', 'IMG_5013.png']) expect((await adapter.addPaymentScreenshot('T1', invoice?.materialId ?? '', png(name))).ok).toBe(true);
+    // The seed answered 确认没有; the upload superseded it (#332), so the group is declared and the projects resubmitted.
+    expect((await adapter.completePaymentScreenshots('T1', invoice?.materialId ?? '')).ok).toBe(true);
+    const project = await adapter.getSnapshot('T1');
+    const projects = Object.fromEntries(project.projectAssignment.assignments.map((item) => [item.lineId, item.projectNumber]));
+    expect((await adapter.submitProjectAssignment('T1', { purpose: project.projectAssignment.purpose ?? '', projects }, project.step.stepToken)).ok).toBe(true);
     const review = await adapter.getSnapshot('T1');
     expect((await adapter.confirmReview('T1', review.confirmation.digest ?? '', review.step.stepToken)).ok).toBe(true);
     render(<App adapter={adapter} />);
