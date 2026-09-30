@@ -2,13 +2,15 @@ import { PDFDocument, degrees, rgb } from '@cantoo/pdf-lib';
 import { renderPageAsImage } from 'unpdf';
 import { straightenedJpeg, type PaperCorners } from './straighten';
 import { openPdf } from '../parse/pdf';
+import { canvasWithCjk } from './fonts';
 import { A4, HEADER_BOX, SEPARATOR_X, SEPARATOR_Y, place, type Box, type Size } from './layout';
 
 // Composition of the merged print PDF with @cantoo/pdf-lib, and its page images with pdfjs on @napi-rs/canvas.
 // A PDF original is embedded as vectors (a form XObject clipped to its inked area); a photo is embedded as the
 // straightened JPEG; the header line is a bitmap drawn with a system CJK font (pdf-lib's standard fonts have no CJK).
+// The canvas comes with a CJK fallback under the generic families (fonts.ts), for hosts whose defaults lack CJK.
 
-const canvasImport = () => import('@napi-rs/canvas');
+const canvasImport = canvasWithCjk;
 
 // Fractions of the page box (lower-left origin) that hold ink, padded; the rest is blank margin.
 type Trim = { left: number; bottom: number; right: number; top: number };
@@ -24,7 +26,7 @@ const BLANK = 240;
 const TRIM_PAD = 6;
 const HEADER_SCALE = 4;
 const HEADER_FONT_SIZE = 9;
-const HEADER_FONT = '"Hiragino Sans GB", "PingFang SC", "Heiti SC", "Songti SC", sans-serif';
+const HEADER_FONT = '"Hiragino Sans GB", "PingFang SC", "Heiti SC", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif';
 const PAGE_IMAGE_SCALE = 1.5;
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
