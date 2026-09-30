@@ -45,20 +45,16 @@ export function createPrintFlow(bus: MockBus): PrintFlow {
   };
 
   return {
-    // 支付截图 (payment screenshot): added on a generated 打印稿 (print sheet), from the print page; images only; one per
-    // invoice, another one replaces it. It touches only paymentScreenshots and the sheet, never the confirmation or step.
-    // Like the server (#213), a 住宿 invoice whose missing-screenshot item is open takes one before any sheet exists;
-    // the item then goes away.
+    // 支付截图 (payment screenshot): images only; one per invoice, another one replaces it. Like the server (#213), only
+    // a 住宿 invoice takes one, from its missing-screenshot 待确认项, whether or not a sheet exists. Here that is an
+    // invoice whose item is listed or that already has a screenshot (the item goes away once one is supplied). It
+    // touches only paymentScreenshots, that item and the sheet, never the confirmation or step.
     async addPaymentScreenshot(taskId, voucherMaterialId, file) {
       const snapshot = bus.draft(taskId);
       const trioItemId = stayTrioItemId('screenshot', voucherMaterialId);
       const asked = snapshot.pendingItems.some((item) => item.itemId === trioItemId && item.status === 'open');
-      if (snapshot.printSheet.status === 'generated') {
-        const page = snapshot.printSheet.pages.find((candidate) => candidate.top?.materialId === voucherMaterialId);
-        if (!page || !page.acceptsPaymentScreenshot) return bus.fail('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
-      } else if (!asked) {
-        return bus.fail('print_not_generated', PAYMENT_SCREENSHOT_ERRORS.notGenerated);
-      }
+      const stayInvoice = snapshot.pendingItems.some((item) => item.itemId === trioItemId) || snapshot.paymentScreenshots.some((shot) => shot.voucherMaterialId === voucherMaterialId);
+      if (!stayInvoice) return bus.fail('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
       if (!isImage(file)) return bus.fail('not_image', PAYMENT_SCREENSHOT_ERRORS.notImage);
       const screenshotId = `s${nextScreenshotNo}`;
       nextScreenshotNo += 1;

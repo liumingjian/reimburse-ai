@@ -6,8 +6,8 @@ import type { Locator, Page } from '@playwright/test';
 import { answerStayGaps, expect, signIn, test } from './fixture';
 
 // Slice 11 (#190) on the real server: 去打印. A task with a hotel invoice, its folio and a taxi photo is brought to
-// choose_action through the API; the page then generates the merged sheet, and the user rotates, crops, attaches a
-// 支付截图 (payment screenshot) and downloads the PDF. None of it touches the confirmation.
+// choose_action through the API; the page then generates the merged sheet, and the user rotates, crops and downloads
+// the PDF. None of it touches the confirmation.
 
 const samples = ['m01', 'm02', 'm09'].map((prefix) => {
   const found = SAMPLE_MATERIALS.find((sample) => sample.file.startsWith(prefix));
@@ -37,7 +37,7 @@ async function confirmedTask(page: Page, materials = samples): Promise<string> {
     expect(uploaded.ok()).toBe(true);
   }
   await act(page, await snapshotOf(page, taskId), 'start-inventory');
-  // Waits out inventory and answers the 住宿 trio gaps it raises; the 支付截图 this test adds goes on from the print page.
+  // Waits out inventory and answers the 住宿 trio gaps it raises.
   await answerStayGaps(page, taskId);
   expect((await page.request.post('/api/project-book/intake', { data: { number: 'P-2307', name: '华东客户交付' } })).ok()).toBe(true);
   const ready = await snapshotOf(page, taskId);

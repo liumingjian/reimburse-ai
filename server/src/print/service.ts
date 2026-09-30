@@ -28,8 +28,7 @@ export type PrintState = {
   // Included materials by id.
   sources: ReadonlyMap<string, PrintSource>;
   facts: PrintFacts;
-  // The inventory's 住宿 trios (#213): which invoices take a screenshot before any sheet exists, and which recorded a
-  // confirmed absence.
+  // The inventory's 住宿 trios (#213): which invoices take a screenshot, and which recorded a confirmed absence.
   trios: readonly StayTrio[];
   // Whether the task made an ERP action attempt (its facts are frozen).
   erpAttempted: boolean;
@@ -81,24 +80,18 @@ export async function crop(state: PrintState, pageId: string, slot: PlacementSlo
   };
 }
 
-// 补充支付截图; a second one replaces the first. On a generated sheet: for a page that takes one, and the sheet is
-// recomposed. Without a generated sheet this used to be refused outright. #213 relaxes that on purpose for a 住宿
-// invoice: the inventory's missing-screenshot item is answered by supplying the screenshot, before the list is
-// confirmed and before any sheet exists. Only the fact is stored then; the sheet picks it up when it is generated.
+// 补充支付截图 (#213); a second one replaces the first. Only a 住宿 invoice takes one, from its missing-screenshot
+// 待确认项, whether or not a sheet exists: the invoice has a trio screenshot part exactly when the check asks for one
+// (open or resolved). Any other voucher is refused. A generated sheet is recomposed; without one only the fact is
+// stored, and the sheet picks it up when it is generated.
 export async function addScreenshot(state: PrintState, voucherMaterialId: string, file: { fileName: string; mime: string; bytes: Uint8Array }): Promise<PrintCommit> {
-  const generated = stateOf(state) === 'generated';
-  if (generated) {
-    const page = state.facts.render?.pages.find((candidate) => candidate.voucherMaterialId === voucherMaterialId);
-    if (!page || !page.acceptsPaymentScreenshot) throw new PrintRefusal('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
-  } else if (!state.trios.some((trio) => trio.invoiceId === voucherMaterialId)) {
-    throw new PrintRefusal('print_not_generated', PAYMENT_SCREENSHOT_ERRORS.notGenerated);
-  }
+  if (!state.trios.some((trio) => trio.invoiceId === voucherMaterialId && trio.screenshot)) throw new PrintRefusal('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
   const named = IMAGE_NAME.test(file.fileName) || (!/\.[a-z0-9]+$/i.test(file.fileName) && /^image\/(jpeg|png)$/.test(file.mime));
   if (!named || !(await isJpegOrPng(file.bytes))) throw new PrintRefusal('not_image', PAYMENT_SCREENSHOT_ERRORS.notImage);
   const sha256 = writeBlob(state.dataDir, file.bytes);
   const shot: Screenshot = { screenshotId: randomUUID(), voucherMaterialId, fileName: file.fileName, sha256 };
   const screenshots = [...state.facts.screenshots.filter((s) => s.voucherMaterialId !== voucherMaterialId), shot];
-  const composed = generated ? await compose(state, state.facts.settings, screenshots) : null;
+  const composed = stateOf(state) === 'generated' ? await compose(state, state.facts.settings, screenshots) : null;
   return async (tx, at, revision) => {
     await tx.insertInto('blob').values({ sha256, size: file.bytes.byteLength, mime: storedMime(file.fileName, file.mime), created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
     await tx.insertInto('payment_screenshot').values({ screenshot_id: shot.screenshotId, task_id: state.taskId, account_id: state.accountId, voucher_material_id: voucherMaterialId, blob_sha256: sha256, file_name: file.fileName, revision, created_at: at }).execute();
@@ -108,7 +101,7 @@ export async function addScreenshot(state: PrintState, voucherMaterialId: string
 
 // Removing a 住宿 invoice's screenshot reopens its missing-screenshot item unless an absence was confirmed. Before the
 // list is confirmed that is just the check asking again; after it (or once ERP was touched) it would pull a confirmed
-// list back into inventory from the print page, so it is refused there and the screenshot can only be replaced.
+// list back into inventory, so it is refused then and the screenshot can only be replaced.
 export async function removeScreenshot(state: PrintState, screenshotId: string): Promise<PrintCommit> {
   const removing = state.facts.screenshots.find((shot) => shot.screenshotId === screenshotId);
   if (!removing) throw new PrintRefusal('screenshot_not_found', PAYMENT_SCREENSHOT_ERRORS.notFound);
@@ -253,7 +246,6 @@ async function compose(state: PrintState, settings: ReadonlyMap<string, PrintSet
       grossAmount: plan.grossAmount,
       top: top?.stored ?? null,
       bottom: bottom?.stored ?? null,
-      acceptsPaymentScreenshot: plan.acceptsPaymentScreenshot,
       screenshotId: shot?.screenshotId ?? null,
       droppedFileNames: plan.droppedMaterialIds.map((id) => state.sources.get(id)?.fileName).filter((name): name is string => name !== undefined),
     });

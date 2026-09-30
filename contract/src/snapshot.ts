@@ -439,9 +439,8 @@ export type Confirmation = z.infer<typeof ConfirmationSchema>;
 // ---- 支付截图与打印稿 ----
 
 // A 支付截图 (payment screenshot) is an image only (JPG, PNG). It goes on the 打印稿 (print sheet) alone and never changes
-// the lines. One per invoice; another one replaces it. It is added on the print page once the sheet is generated (per
-// page, `acceptsPaymentScreenshot`), and for a 住宿 (accommodation) invoice also on the 待确认项 (pending items) page
-// (#213, see STAY_TRIO_COPY).
+// the lines. One per invoice; another one replaces it. Only a 住宿 (accommodation) invoice takes one, and only from its
+// missing-screenshot 待确认项 (pending item; #213, see STAY_TRIO_COPY), whether or not a sheet exists.
 export const PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE = '.jpg,.jpeg,.png,image/jpeg,image/png';
 
 // The 住宿 (accommodation) trio check at 盘点 (inventory), #213. 住宿 reimbursement takes three materials: the 发票
@@ -503,7 +502,6 @@ export const PAYMENT_SCREENSHOT_ERRORS = {
   notImage: '只接受图片（JPG、PNG）。',
   notApplicable: '这张发票不需要支付截图。',
   notFound: '这张支付截图已经不存在。',
-  notGenerated: '请先生成打印稿，再在打印稿页补充支付截图。',
 } as const;
 
 export const PaymentScreenshotSchema = z.object({
@@ -550,8 +548,6 @@ export const PrintPageSchema = z.object({
   imageUrl: UrlSchema,
   top: PlacementSchema.nullable(),
   bottom: PlacementSchema.nullable(),
-  // 这一页的主要报销凭证能否补充支付截图（住宿发票为 true）；由服务端按票种判定，页面只据此显示入口。
-  acceptsPaymentScreenshot: z.boolean(),
   screenshotId: IdSchema.nullable(),
 });
 export type PrintPage = z.infer<typeof PrintPageSchema>;

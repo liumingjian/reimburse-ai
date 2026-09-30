@@ -51,7 +51,6 @@ export function printView(taskId: string, taskName: string, facts: PrintFacts, s
         imageUrl: fileUrl(taskId, page.pngSha256),
         top: placement(page.top),
         bottom: placement(page.bottom),
-        acceptsPaymentScreenshot: page.acceptsPaymentScreenshot,
         screenshotId: page.screenshotId,
       })),
       // Everything the sheet could not carry is said out loud: a missing payment screenshot, the pages of a multi-page

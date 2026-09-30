@@ -77,10 +77,6 @@ export type PagePlan = {
   categoryLabel: string;
   grossAmount: string;
   header: string;
-  // Every voucher may take a 支付截图 (payment screenshot): story 61 asks for proof of payment beside its invoice,
-  // not only for 住宿. With one the bottom half splits (supporting material left, screenshot right).
-  // Whether a missing one is worth a notice is not judged here: the inventory's 住宿 trio check recorded it (#213).
-  acceptsPaymentScreenshot: boolean;
 };
 
 const cents = (amount: string): number => {
@@ -120,7 +116,6 @@ export function planPages(lines: readonly Line[], materials: readonly Material[]
       categoryLabel: first.category.label,
       grossAmount,
       header: `${nos} · ${first.date.slice(5)} · ${first.category.label} · ${grossAmount}`,
-      acceptsPaymentScreenshot: true,
     });
   }
   return plans;

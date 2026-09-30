@@ -29,7 +29,6 @@ export type StoredPage = {
   pngSha256: string;
   top: StoredPlacement | null;
   bottom: StoredPlacement | null;
-  acceptsPaymentScreenshot: boolean;
   screenshotId: string | null;
   // Supporting materials this voucher has beyond the one on the bottom half; named in a notice, never dropped silently.
   droppedFileNames?: string[];

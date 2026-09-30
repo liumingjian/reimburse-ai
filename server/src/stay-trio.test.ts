@@ -108,7 +108,7 @@ describe('the 住宿 trio at inventory', () => {
     expect(start.events).toHaveLength(1);
     expect(start).toMatchObject({ stage: 'pending', step: { kind: 'answer_pending' } });
 
-    // No sheet exists yet: the print-stage precondition is relaxed for a 住宿 invoice.
+    // No sheet exists yet: the 待确认项 is where a 住宿 invoice takes its screenshot.
     const supplied = await client.accepted(await screenshot(start, invoice.materialId));
     expect(supplied.paymentScreenshots).toEqual([expect.objectContaining({ voucherMaterialId: invoice.materialId })]);
     expect(supplied.pendingItems).toEqual([]);
@@ -146,8 +146,8 @@ describe('the 住宿 trio at inventory', () => {
     const folio = byFileName(start, sample('m02').name);
     expect(openIds(start)).toEqual([`stay_invoice_missing.${folio.materialId}`]);
     expect(start.pendingItems[0]).toMatchObject({ materialId: folio.materialId, title: STAY_TRIO_COPY.invoice.title(folio.fileName) });
-    // A folio has no page of its own, so there is nowhere to attach a screenshot.
-    await refused(await screenshot(start, folio.materialId), 'print_not_generated');
+    // Only a 住宿 invoice takes a screenshot, never a folio.
+    await refused(await screenshot(start, folio.materialId), 'screenshot_not_applicable');
 
     const done = await answer(start, `stay_invoice_missing.${folio.materialId}`, 'confirm_none');
     expect(openIds(done)).toEqual([]);
@@ -163,14 +163,14 @@ describe('the 住宿 trio at inventory', () => {
     expect(openIds(again)).toEqual([`stay_screenshot_missing.${invoice.materialId}`]);
   });
 
-  it('a voucher that is not a 住宿 invoice still takes a screenshot only on a generated sheet', async () => {
+  it('a voucher that is not a 住宿 invoice takes no screenshot (#330)', async () => {
     const start = (await scenario(server, alice).at('project', { materials: ['m07'] })).reached;
-    await refused(await screenshot(start, byFileName(start, sample('m07').name).materialId), 'print_not_generated');
+    await refused(await screenshot(start, byFileName(start, sample('m07').name).materialId), 'screenshot_not_applicable');
   });
 });
 
 describe('the print stage reads the absence recorded at inventory', () => {
-  it('a confirmed absence is the print notice; a screenshot added at print clears it and can be removed again', async () => {
+  it('a confirmed absence is the print notice; a screenshot added after the sheet is generated clears it and can be removed again', async () => {
     // Reaching `actions` answers the missing screenshot with 确认没有.
     const ready = (await scenario(server, alice).at('actions', { materials: ['m01', 'm02'] })).reached;
     const invoice = byFileName(ready, sample('m01').name);

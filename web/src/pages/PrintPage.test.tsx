@@ -112,10 +112,11 @@ describe('打印稿预览', () => {
     expect(enlarged.getAttribute('src')).toBe(screen.getByTestId('page-image-pg7').getAttribute('src'));
   });
 
-  test('打印稿还没生成时服务端拒绝补充支付截图', async () => {
-    const adapter = createMockAdapter({ seed: 'actions', fault: null });
-    const outcome = await adapter.addPaymentScreenshot('T1', 'm01', png());
-    expect(outcome).toMatchObject({ ok: false, error: { code: 'print_not_generated', message: PAYMENT_SCREENSHOT_ERRORS.notGenerated } });
+  // #330: the print page is no screenshot entry. Only a 住宿 invoice takes one (from its 待确认项), sheet or not.
+  test.each([false, true])('不是住宿发票的凭证不收支付截图（打印稿已生成：%s）', async (printSheet) => {
+    const adapter = createMockAdapter(printSheet ? { seed: 'actions', fault: null, printSheet: true } : { seed: 'actions', fault: null });
+    const outcome = await adapter.addPaymentScreenshot('T1', 'm03', png());
+    expect(outcome).toMatchObject({ ok: false, error: { code: 'screenshot_not_applicable', message: PAYMENT_SCREENSHOT_ERRORS.notApplicable } });
   });
 
   test('旋转：页图换成服务端给的新地址；整单明细确认不变', async () => {

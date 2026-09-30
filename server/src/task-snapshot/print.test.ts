@@ -20,7 +20,6 @@ const page = (voucherMaterialId: string, no: number, categoryLabel: string, scre
   pngSha256: 'png',
   top: null,
   bottom: null,
-  acceptsPaymentScreenshot: true,
   screenshotId,
 });
 const facts = (pages: StoredPage[]): PrintFacts => ({ render: { renderId: 'r', confirmationRevision: 1, pdfSha256: 'pdf', pages }, settings: new Map(), screenshots: [] });

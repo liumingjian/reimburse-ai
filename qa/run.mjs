@@ -147,7 +147,7 @@ async function runAreas({ page, context, files }) {
   await area(page, 'project-book', () => qaProjectBook(page, state));
   await area(page, 'assignment', () => qaAssignment(page, state));
   await area(page, 'review', () => qaReview(page, context, state));
-  await area(page, 'print', () => qaPrint(page, files, state));
+  await area(page, 'print', () => qaPrint(page, state));
   await area(page, 'settings', () => qaSettings(page));
   await area(page, 'admin', () => qaAdmin(page));
   await area(page, 'erp-write', () => qaErpWrite(page, context, state));
@@ -855,7 +855,7 @@ async function qaReview(page, context, state) {
   state.confirmationBefore = JSON.stringify(snap?.confirmation ?? null);
 }
 
-async function qaPrint(page, files, state) {
+async function qaPrint(page, state) {
   const id = state.taskId;
   await page.goto(`${BASE}/#/task/${id}/print`);
   if (!(await visible(page.getByRole('heading', { name: '打印稿预览', level: 1 }), 20000))) {
@@ -920,28 +920,9 @@ async function qaPrint(page, files, state) {
     warn('print', 'no crop control found');
   }
 
-  // Payment screenshot: a non-image must be refused, an image accepted.
-  // The file input itself is hidden behind 补充支付截图, so look for its presence, not its visibility.
-  const shotInput = page.getByLabel(/^选择支付截图：/).first();
-  if ((await page.getByLabel(/^选择支付截图：/).count()) > 0) {
-    await shotInput.setInputFiles(files.find((f) => f.endsWith('.pdf')) ?? files[0]);
-    await page.waitForTimeout(2000);
-    if (await visible(page.getByText('只接受图片', { exact: false }), 6000)) {
-      ok('print', 'a PDF is refused as a payment screenshot');
-    } else {
-      defect('print', 'a PDF was accepted as a payment screenshot');
-    }
-    await shotInput.setInputFiles({ name: 'IMG_QA.png', mimeType: 'image/png', buffer: PNG_1X1 });
-    await page.waitForTimeout(5000);
-    if (await visible(page.getByRole('button', { name: /^移除支付截图：/ }), 15000)) {
-      ok('print', 'a payment screenshot can be attached and removed');
-    } else {
-      defect('print', 'attaching a payment screenshot left no 移除 control');
-    }
-    await shot(page, 'print-payment-screenshot');
-  } else {
-    warn('print', 'no payment-screenshot upload on any page');
-  }
+  // The print page takes no payment screenshot (QA 2026-09-30, #330): a 住宿 invoice's goes on in its 待确认项.
+  if ((await page.getByLabel(/支付截图/).count()) === 0) ok('print', 'the print page offers no payment-screenshot upload');
+  else defect('print', 'the print page still offers a payment-screenshot upload');
 
   // Download.
   const download = page.getByRole('link', { name: '下载打印稿 PDF' });
