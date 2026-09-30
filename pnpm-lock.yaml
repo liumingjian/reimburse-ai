@@ -194,6 +194,9 @@ importers:
       '@carbon/styles':
         specifier: 1.115.0
         version: 1.115.0(sass@1.104.1)
+      pdfjs-dist:
+        specifier: 6.1.200
+        version: 6.1.200
       react:
         specifier: 19.3.0
         version: 19.3.0

@@ -713,6 +713,13 @@ $doc-frame-block: var(--app-doc-frame-block);
   gap: $spacing-03;
 }
 
+// Inside a modal (住宿材料 on the project page) the frame fits the modal body instead: Carbon caps the modal at 84% of
+// the viewport, less its header and footer. When the body overflowed, focusing 重试预览 on mousedown scrolled it away
+// from under the pointer and the click was lost.
+.cds--modal .app-viewer:has(> .app-viewer-header) {
+  --app-doc-frame-block: max(16rem, calc(84vh - 21rem));
+}
+
 .app-viewer-header {
   justify-self: stretch;
   min-inline-size: 0;
@@ -821,6 +828,12 @@ $doc-frame-block: var(--app-doc-frame-block);
   gap: $spacing-03;
   min-inline-size: 0;
   max-inline-size: 100%;
+}
+
+// A rendered PDF fills the viewer's width (the frame keeps the viewport-derived height and scrolls down).
+.app-doc-viewer.is-fit-width {
+  grid-template-columns: minmax(0, 1fr);
+  justify-self: stretch;
 }
 
 .app-doc-toolbar {
@@ -1650,17 +1663,21 @@ $doc-frame-block: var(--app-doc-frame-block);
   margin: $spacing-05 0;
 }
 
+// The page tiles: `repeat(3|4|5, minmax(0, 1fr))` comes inline from the per-row switcher.
 .app-print-pages {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: $spacing-06;
-  margin: 0 auto;
+  gap: $spacing-05;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.app-print-scroll {
-  overflow-x: auto;
+.app-per-row-switcher {
+  inline-size: fit-content;
+
+  .cds--content-switcher-btn {
+    inline-size: 7rem;
+  }
 }
 
 .app-print-toolbar {
@@ -1679,8 +1696,9 @@ $doc-frame-block: var(--app-doc-frame-block);
 .app-page-card {
   display: grid;
   align-content: start;
-  gap: $spacing-03;
-  padding: $spacing-04;
+  gap: $spacing-02;
+  min-inline-size: 0;
+  padding: $spacing-03;
   background: $layer-01;
   border: 1px solid $border-subtle-01;
 }
@@ -1702,21 +1720,47 @@ $doc-frame-block: var(--app-doc-frame-block);
   border: 1px solid $border-subtle-01;
 }
 
-.app-placements {
-  display: grid;
-  gap: $spacing-03;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+// The page image opens the enlarged view; the placement icons sit over the top-right corner of each half.
+.app-page-figure {
+  position: relative;
+}
 
-  > li {
-    display: grid;
-    gap: $spacing-02;
-    padding-block-start: $spacing-03;
-    border-block-start: 1px solid $border-subtle-01;
+.app-page-open {
+  display: block;
+  inline-size: 100%;
+  padding: 0;
+  cursor: zoom-in;
+  background: none;
+  border: 0;
+
+  &:focus-visible {
+    outline: 2px solid $focus;
+    outline-offset: 2px;
   }
 }
 
+.app-placement-actions {
+  position: absolute;
+  inset-inline-end: $spacing-02;
+  display: flex;
+  gap: 1px;
+
+  &.is-top {
+    inset-block-start: $spacing-02;
+  }
+
+  &.is-bottom {
+    inset-block-start: calc(50% + #{$spacing-02});
+  }
+}
+
+.app-page-enlarged {
+  display: block;
+  inline-size: 100%;
+  border: 1px solid $border-subtle-01;
+}
+
+// The pending page's 上传支付截图 opens this hidden input.
 .app-screenshot-row input[type='file'] {
   display: none;
 }

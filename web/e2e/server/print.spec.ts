@@ -62,21 +62,33 @@ test.describe('confirmed print and ERP navigation', () => {
     await page.goto(`/#/task/${taskId}/print`);
     const image = page.locator('.app-page-image').first();
     await expectLoaded(image);
+    const list = page.getByRole('list', { name: '打印稿页面' });
+    const images = list.locator('img.app-page-image');
+    const firstRow = Math.min(await images.count(), 4);
     for (const [width, height] of [[1366, 768], [1920, 1080]]) {
       await page.setViewportSize({ width: width!, height: height! });
-      const toolbar = page.getByRole('toolbar', { name: '打印稿查看' });
-      await expect(toolbar).toBeInViewport();
-      const box = await image.boundingBox();
-      expect(box?.width).toBeGreaterThan(700);
-      const list = await page.getByRole('list', { name: '打印稿页面' }).boundingBox();
-      expect(Math.abs((list!.x + list!.width / 2) - width! / 2)).toBeLessThan(40);
+      await expect(page.getByRole('toolbar', { name: '打印稿查看' })).toBeInViewport();
+      // The pages tile, four to a row by default (QA 2026-09-30): one top edge, about a quarter of the list width each.
+      const listBox = (await list.boundingBox())!;
+      const boxes = await Promise.all(Array.from({ length: firstRow }, (_, n) => images.nth(n).boundingBox()));
+      for (const box of boxes) {
+        expect(Math.abs(box!.y - boxes[0]!.y)).toBeLessThan(2);
+        expect(box!.width).toBeLessThan(listBox.width / 4);
+        expect(box!.width).toBeGreaterThan(listBox.width / 6);
+      }
       await page.screenshot({ path: testInfo.outputPath(`print-${width}.png`) });
     }
-    const toolbar = page.getByRole('toolbar', { name: '打印稿查看' });
-    await toolbar.getByRole('button', { name: '放大', exact: true }).click();
-    await expect(toolbar.getByRole('status')).toHaveText('125%');
-    await toolbar.getByRole('button', { name: '适应窗口', exact: true }).click();
-    await expect(toolbar.getByRole('status')).toHaveText('100%');
+    await page.getByRole('tablist', { name: '每行页数' }).getByRole('tab', { name: '每行 3 页' }).click();
+    const listBox = (await list.boundingBox())!;
+    const first = (await image.boundingBox())!;
+    expect(first.width).toBeGreaterThan(listBox.width / 4);
+    expect(first.width).toBeLessThan(listBox.width / 3);
+    await page.reload();
+    await expect(page.getByRole('tablist', { name: '每行页数' }).getByRole('tab', { name: '每行 3 页' })).toHaveAttribute('aria-selected', 'true');
+    // A click on a page opens it large.
+    await image.click();
+    await expect(page.getByRole('img', { name: '第 1 页页图（放大）' })).toBeVisible();
+    await page.getByRole('button', { name: '关闭', exact: true }).click();
     expect((await snapshotOf(page, taskId)).confirmation).toEqual(before.confirmation);
     await page.getByRole('button', { name: '去报销', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`#/task/${taskId}/erp$`));
@@ -89,7 +101,7 @@ test.describe('confirmed print and ERP navigation', () => {
   });
 });
 
-test('去打印：生成合并打印稿，旋转、四角裁剪、补充支付截图，下载 PDF；整单明细确认不变', async ({ page }, testInfo) => {
+test('去打印：生成合并打印稿，旋转、四角裁剪，下载 PDF；预览页不补充支付截图；整单明细确认不变', async ({ page }, testInfo) => {
   test.setTimeout(240_000);
   await signIn(page);
   const taskId = await confirmedTask(page);
@@ -110,7 +122,7 @@ test('去打印：生成合并打印稿，旋转、四角裁剪、补充支付�
   const hotelImage = hotel.locator('img.app-page-image');
   const before = (await hotelImage.getAttribute('src')) ?? '';
   const rotateFolio = hotel.getByRole('button', { name: /^(旋转 90°|改为竖放)：全季酒店_结账单\.pdf$/ });
-  const wasTurned = ((await rotateFolio.getAttribute('aria-label')) ?? '').startsWith('改为竖放');
+  const wasTurned = (await hotel.getByRole('button', { name: '改为竖放：全季酒店_结账单.pdf' }).count()) > 0;
   await rotateFolio.click();
   await expect(hotelImage).not.toHaveAttribute('src', before);
   await expect(hotel.getByRole('button', { name: `${wasTurned ? '旋转 90°' : '改为竖放'}：全季酒店_结账单.pdf` })).toBeVisible();
@@ -125,15 +137,10 @@ test('去打印：生成合并打印稿，旋转、四角裁剪、补充支付�
   await editor.getByRole('button', { name: '提交裁剪' }).click();
   await expect(page.getByTestId('crop-receipt')).toContainText('已提交裁剪：');
   await expect(editor).toHaveCount(0);
-  await expect(taxi).toContainText('已手动微调裁剪');
 
-  // A payment screenshot: a non-image is refused in place; an image lands on the hotel page and clears the notice.
-  const chooser = hotel.getByLabel('选择支付截图：全季酒店_发票.pdf');
-  await chooser.setInputFiles({ name: '支付记录.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') });
-  await expect(hotel.getByRole('alert')).toHaveText('只接受图片（JPG、PNG）。');
-  await chooser.setInputFiles({ name: 'IMG_5011.png', mimeType: 'image/png', buffer: readFileSync(join(GENERATED_DIR, 'print-pg1.png')) });
-  await expect(hotel.getByText('IMG_5011.png')).toBeVisible();
-  await expect(page.getByRole('status', { name: '打印提醒' })).toHaveCount(0);
+  // The preview does not take payment screenshots (QA 2026-09-30); the 住宿 one is uploaded in its 待确认项.
+  await expect(page.getByRole('button', { name: /支付截图/ })).toHaveCount(0);
+  await expect(page.locator('input[type="file"]')).toHaveCount(0);
   await expectLoaded(hotelImage);
   await page.screenshot({ path: testInfo.outputPath('print.png'), fullPage: true });
 

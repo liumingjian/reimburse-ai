@@ -27,4 +27,19 @@ describe('LodgingPreview', () => {
     expect(original.getAttribute('href')).toBe(folio.originalUrl);
     expect(screen.getByTestId('doc-viewer')).toBeTruthy();
   });
+
+  // QA 2026-09-30: the invoice reminds the user of nothing; only the folio (or other 证明材料) is shown.
+  test('previews the linked folio and never offers the invoice', () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
+    const snapshot = t1Snapshot('project');
+    const folio = snapshot.materials.find((material) => material.kind === 'hotel_folio');
+    const invoice = snapshot.materials.find((material) => material.kind === 'vat_invoice' && snapshot.lodgingEvidence.some((evidence) => evidence.materialId === material.materialId && evidence.previews.some((preview) => preview.materialId === folio?.materialId)));
+    if (!folio || !invoice) throw new Error('fixture is missing a linked folio and invoice');
+
+    render(<LodgingPreview snapshot={snapshot} materialId={invoice.materialId} />);
+
+    expect(screen.getByRole('tab', { name: `结账单：${folio.fileName}` }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.queryByRole('tab', { name: /^发票：/ })).toBeNull();
+    expect(screen.getAllByRole('tab')).toHaveLength(1);
+  });
 });

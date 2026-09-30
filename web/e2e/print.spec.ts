@@ -18,7 +18,9 @@ const PAGE_HEADERS = [
 
 const pageList = (page: Page) => page.getByRole('list', { name: '打印稿页面' });
 
+// Page images load lazily; bring each into view first.
 async function expectImageLoaded(page: Page, testId: string) {
+  await page.getByTestId(testId).scrollIntoViewIfNeeded();
   await expect.poll(() => page.getByTestId(testId).evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
 }
 
@@ -85,6 +87,5 @@ test('四角裁剪：鼠标拖动角点，坐标以原图像素提交，回执�
   await editor.getByRole('button', { name: '提交裁剪' }).click();
   await expect(page.getByTestId('crop-receipt')).toHaveText(`已提交裁剪：(${expectedX}, ${expectedY}) (586, 139) (628, 893) (234, 921)`);
   await expect(editor).toHaveCount(0);
-  await expect(page.getByRole('listitem', { name: 'No.5 · 08-15 · 外地市内交通 · 32.00' })).toContainText('已手动微调裁剪');
   await expectConfirmationUnchanged(page);
 });
