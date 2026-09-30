@@ -9,7 +9,7 @@ import { fieldLabel, slotOf, type Slot } from './parse/slots';
 import { chosen, EXCLUDE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
 import { editAddress, editedValue, type Editable } from './pending/edits';
 import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/company-rules';
-import { checkStayTrios, stayVoucherIds, type StayTrio, type TrioVoucher } from './stay-trio';
+import { checkStayTrios, stayVoucherIds, type ScreenshotGroup, type StayTrio, type TrioVoucher } from './stay-trio';
 
 // The pure projection of one inventory run: uploaded materials, their parser outcomes and the stored answers in; the
 // materials view, derived 待确认项 (pending items), expense events, candidate lines and inventory counts out. Nothing
@@ -418,13 +418,13 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
 }
 
 // `answers`: the latest stored answer per item id / edit address (#187), allocation answers included — they reach
-// #184's per-leg split through `planTransport`. `screenshots`: the voucher material ids that have a current 支付截图.
+// #184's per-leg split through `planTransport`. `screenshots`: the vouchers' 支付截图 groups (#331).
 export function inventoryView(
   materials: readonly ViewMaterial[],
   results: RunResults,
   { homeCity, rules }: CategoryContext = { homeCity: '', rules: COMPANY_RULES },
   answers: StoredAnswers = new Map(),
-  screenshots: ReadonlySet<string> = new Set(),
+  screenshots: ReadonlyMap<string, ScreenshotGroup> = new Map(),
 ): InventoryView {
   const answerables = new Map<string, Answerable>();
   const editables = new Map<string, Editable>();

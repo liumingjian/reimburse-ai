@@ -137,7 +137,7 @@ describe('the sheet follows the confirmation', () => {
 });
 
 describe('print settings', () => {
-  it('rotate, crop and a payment screenshot re-render the sheet and leave the confirmation alone', async () => {
+  it('rotate and crop re-render the sheet and leave the confirmation alone', async () => {
     const task = await atActions(['m01', 'm02', 'm09']);
     const generated = await client.accepted(await print(task, 'generate-print-sheet'));
     expect(generated.printSheet.pages.map((page) => page.header)).toEqual(['No.1 · 08-15 · 外地市内交通 · 32.00', 'No.2 · 08-09 · 住宿 · 3640.00']);
@@ -166,18 +166,12 @@ describe('print settings', () => {
     // Only a 住宿 invoice takes a 支付截图 (#330): the folio and the taxi voucher are refused on a generated sheet too.
     await refused(await screenshot(task, hotel.bottom.materialId, new File([png], 'IMG_5011.png', { type: 'image/png' })), 'screenshot_not_applicable');
     await refused(await screenshot(task, taxi.top.materialId, new File([png], 'IMG_5012.png', { type: 'image/png' })), 'screenshot_not_applicable');
-    await refused(await screenshot(task, hotel.top.materialId, new File([Buffer.from('%PDF-1.4')], '支付记录.pdf', { type: 'application/pdf' })), 'not_image');
-
-    const shot = await client.accepted(await screenshot(task, hotel.top.materialId, new File([png], 'IMG_5011.png', { type: 'image/png' })));
-    expect(shot.paymentScreenshots).toEqual([expect.objectContaining({ voucherMaterialId: hotel.top.materialId, fileName: 'IMG_5011.png' })]);
-    expect(shot.printSheet.pages[1]?.screenshotId).toBe(shot.paymentScreenshots[0]?.screenshotId);
-    expect(shot.printSheet.notices).toEqual([]);
-    expect(shot.confirmation).toEqual(task.confirmation);
-    expect((await download(shot.printSheet.url ?? '')).getPageCount()).toBe(2);
-
-    const removed = await client.accepted(await print(shot, 'remove-payment-screenshot', { screenshotId: shot.paymentScreenshots[0]?.screenshotId }));
-    expect(removed.paymentScreenshots).toEqual([]);
+    // The hotel invoice's group is locked with the confirmed list (#331); screenshots on the sheet are covered in
+    // stay-trio.test.ts, where they are added before the list is confirmed.
+    await refused(await screenshot(task, hotel.top.materialId, new File([png], 'IMG_5011.png', { type: 'image/png' })), 'screenshot_locked');
+    const removed = await client.current(task.task.taskId);
     expect(removed.printSheet.notices).toEqual(['No.2 住宿发票在盘点时已确认没有支付截图，这一页不放支付截图。']);
+    expect((await download(removed.printSheet.url ?? '')).getPageCount()).toBe(2);
     await refused(await print(removed, 'remove-payment-screenshot', { screenshotId: 'gone' }), 'screenshot_not_found');
     // The settings survive: the folio keeps its rotation and the photo its corners.
     expect(removed.printSheet.pages[1]?.bottom?.rotate).toBe(!hotel.bottom.rotate);

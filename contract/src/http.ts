@@ -80,6 +80,7 @@ export const HTTP_ENDPOINTS = {
   confirmReview: action('confirm-review', 'digest', 'acceptDeadlineWarnings', 'stepToken'),
   reopenUpload: action('reopen-upload', 'stepToken'),
   removePaymentScreenshot: action('remove-payment-screenshot', 'screenshotId'),
+  completePaymentScreenshots: action('complete-payment-screenshots', 'voucherMaterialId'),
   generatePrintSheet: action('generate-print-sheet'),
   rotatePlacement: action('rotate-placement', 'pageId', 'slot', 'rotate'),
   cropPlacement: action('crop-placement', 'pageId', 'slot', 'corners'),

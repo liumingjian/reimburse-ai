@@ -523,8 +523,8 @@ export type InventoryResult = {
 const FILE_TO_FIXTURE = new Map(Object.entries(PROFILES).flatMap(([id, profile]) => [[profile.fileName, id] as const, [profile.file, id] as const]));
 
 // 把一批已接收的材料按文件名对到识别档案，生成盘点结果。unsupportedFault 让曹操行程单（m06）变成不支持的版式；
-// allocationRequired（`?allocation=1`）让高德合并发票需要逐段分摊；screenshots 是已有支付截图的发票 materialId。
-export function inventoryResult(uploaded: readonly Material[], unsupportedFault: boolean, allocationRequired = false, screenshots: ReadonlySet<string> = new Set()): InventoryResult {
+// allocationRequired（`?allocation=1`）让高德合并发票需要逐段分摊；completeScreenshots 是支付截图组已「已传齐」的发票 materialId。
+export function inventoryResult(uploaded: readonly Material[], unsupportedFault: boolean, allocationRequired = false, completeScreenshots: ReadonlySet<string> = new Set()): InventoryResult {
   const fixtureOf = new Map<string, string>();
   const actualOf = new Map<string, string>();
   for (const material of uploaded) {
@@ -578,11 +578,11 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
       fields: p.fields.map((f) => ({ ...f })),
     };
   });
-  // 住宿三件套（#213，服务端 stay-trio.ts）：住宿发票还没有支付截图，就在它的其余待确认项之后问一次。
-  // 在待确认项页上传支付截图（flows/print.ts addPaymentScreenshot）或选「确认没有支付截图」都能处理这一项。
+  // 住宿三件套（#213，服务端 stay-trio.ts）：每张住宿发票都在它的其余待确认项之后带一项支付截图（#331）。
+  // 在这一项里上传一组支付截图（flows/print.ts）后点「已传齐」，或选「确认没有支付截图」，都能处理这一项。
   for (const template of EVENTS) {
     const voucher = materials.find((material) => material.materialId === actualOf.get(template.voucher));
-    if (template.category.code !== 'accommodation' || !voucher || screenshots.has(voucher.materialId)) continue;
+    if (template.category.code !== 'accommodation' || !voucher) continue;
     const copy = STAY_TRIO_COPY.screenshot;
     const itemId = stayTrioItemId('screenshot', voucher.materialId);
     pendingItems.push({
@@ -598,11 +598,11 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
         { key: 'exclude', label: '排除这份材料' },
       ],
       allocation: null,
-      status: 'open',
+      status: completeScreenshots.has(voucher.materialId) ? 'resolved' : 'open',
       answer: null,
     });
     voucher.pendingItemIds = [...voucher.pendingItemIds, itemId];
-    voucher.status = 'pending';
+    if (!completeScreenshots.has(voucher.materialId)) voucher.status = 'pending';
   }
   const events: ExpenseEvent[] = [];
   let amapSegment = 0;

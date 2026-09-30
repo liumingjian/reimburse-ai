@@ -12,8 +12,12 @@ import { chosen, EXCLUDE, settle, type StoredAnswers } from './pending/answers';
 // cent); a screenshot is present only when one is stored for that invoice. A folio no invoice pairs with is a stay
 // missing its invoice; it has no voucher, so no screenshot is asked of it.
 //
-// A missing element is answered by supplying it (the item is then not derived at all) or by the choice
+// A missing invoice or folio is answered by supplying it (the item is then not derived at all) or by the choice
 // `STAY_TRIO_CONFIRM_NONE`, which records the absence. That record is what the print stage reads.
+//
+// The 支付截图 is a group per invoice (#331), so its item is derived for every invoice, supplied or not: the filer may
+// add several over several visits, and the item stays open until the group is declared complete (「已传齐」) or the
+// absence is confirmed.
 
 export type TrioPart = {
   present: boolean;
@@ -33,6 +37,10 @@ export type StayTrio = {
 };
 
 export type TrioVoucher = StayVoucher & { fileName: string };
+
+// An invoice's 支付截图 group: how many it holds and whether it was declared complete (「已传齐」, never while empty).
+export type ScreenshotGroup = { count: number; complete: boolean };
+const NO_GROUP: ScreenshotGroup = { count: 0, complete: false };
 
 export type TrioCheck = {
   trios: StayTrio[];
@@ -70,15 +78,23 @@ function missingItem(element: StayTrioElement, material: TrioVoucher): PendingIt
 }
 
 // `invoices`: clean 住宿 invoices that formed an event; `folios`: clean hotel folios; `stays`: their pairing;
-// `screenshots`: invoice material ids with a current payment screenshot.
-export function checkStayTrios(invoices: readonly TrioVoucher[], folios: readonly TrioVoucher[], stays: readonly Stay[], screenshots: ReadonlySet<string>, answers: StoredAnswers): TrioCheck {
+// `screenshots`: the invoices' 支付截图 groups (an invoice with none may be absent).
+export function checkStayTrios(invoices: readonly TrioVoucher[], folios: readonly TrioVoucher[], stays: readonly Stay[], screenshots: ReadonlyMap<string, ScreenshotGroup>, answers: StoredAnswers): TrioCheck {
   const items = new Map<string, PendingItem[]>();
   const trios: StayTrio[] = [];
+  const raise = (material: TrioVoucher, item: PendingItem) => items.set(material.materialId, [...(items.get(material.materialId) ?? []), item]);
   // Settles the element's item against the stored answers; the item is raised only when the element is missing.
   const part = (element: StayTrioElement, material: TrioVoucher, present: boolean): TrioPart => {
     const settled = settle(missingItem(element, material), answers);
-    if (!present) items.set(material.materialId, [...(items.get(material.materialId) ?? []), settled]);
+    if (!present) raise(material, settled);
     return { present, noneConfirmed: chosen(settled) === STAY_TRIO_CONFIRM_NONE };
+  };
+  // The screenshot item is always raised; a stored answer settles it, and so does a complete group.
+  const screenshotPart = (invoice: TrioVoucher): TrioPart => {
+    const group = screenshots.get(invoice.materialId) ?? NO_GROUP;
+    const settled = settle(missingItem('screenshot', invoice), answers);
+    raise(invoice, settled.status === 'open' && group.complete ? { ...settled, status: 'resolved' } : settled);
+    return { present: group.count > 0, noneConfirmed: chosen(settled) === STAY_TRIO_CONFIRM_NONE };
   };
   const pairedFolio = new Map(stays.map((stay) => [stay.invoiceId, stay.folioId]));
   const pairedInvoice = new Set(stays.map((stay) => stay.folioId));
@@ -90,7 +106,7 @@ export function checkStayTrios(invoices: readonly TrioVoucher[], folios: readonl
       folioId,
       invoice: PRESENT,
       folio: part('folio', invoice, folioId !== null),
-      screenshot: part('screenshot', invoice, screenshots.has(invoice.materialId)),
+      screenshot: screenshotPart(invoice),
     });
   }
   for (const folio of folios) {

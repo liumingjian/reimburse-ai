@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { PAYMENT_SCREENSHOT_ERRORS, PRINT_ACTION_ERRORS, STAY_TRIO_COPY, type Corners, type Line, type Material, type PlacementSlot } from '@baox/contract';
+import { PAYMENT_SCREENSHOT_CAP, PAYMENT_SCREENSHOT_ERRORS, PRINT_ACTION_ERRORS, STAY_TRIO_COPY, type Corners, type Line, type Material, type PlacementSlot } from '@baox/contract';
 import { blobPath, writeBlob } from '../data-dir';
 import type { Db } from '../db/database';
 import { paperCorners, type PaperCorners } from './straighten';
@@ -80,38 +80,51 @@ export async function crop(state: PrintState, pageId: string, slot: PlacementSlo
   };
 }
 
-// 补充支付截图 (#213); a second one replaces the first. Only a 住宿 invoice takes one, from its missing-screenshot
-// 待确认项, whether or not a sheet exists: the invoice has a trio screenshot part exactly when the check asks for one
-// (open or resolved). Any other voucher is refused. A generated sheet is recomposed; without one only the fact is
-// stored, and the sheet picks it up when it is generated.
-export async function addScreenshot(state: PrintState, voucherMaterialId: string, file: { fileName: string; mime: string; bytes: Uint8Array }): Promise<PrintCommit> {
+// 支付截图 (payment screenshots, #213, #331). Only a 住宿 invoice takes them, from its missing-screenshot 待确认项: the
+// invoice has a trio screenshot part exactly when the check asks for one (open or resolved). Any other voucher is
+// refused. A group holds up to PAYMENT_SCREENSHOT_CAP, one per upload, in upload order.
+//
+// Every change to a group (add, remove, 「已传齐」) is refused once the list is confirmed or ERP was attempted: a change
+// can reopen the item, which would pull a confirmed list back into inventory. So a sheet, which exists only under a
+// standing confirmation, is never recomposed by one; it picks the group up when it is generated.
+//
+// `groupEditable` refuses (throws) unless `voucherMaterialId` is a 住宿 invoice whose group may still change.
+function groupEditable(state: PrintState, voucherMaterialId: string): void {
   if (!state.trios.some((trio) => trio.invoiceId === voucherMaterialId && trio.screenshot)) throw new PrintRefusal('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
+  if (state.confirmation === 'confirmed' || state.erpAttempted) throw new PrintRefusal('screenshot_locked', STAY_TRIO_COPY.changeLocked);
+}
+
+const groupOf = (state: PrintState, voucherMaterialId: string) => state.facts.screenshots.filter((shot) => shot.voucherMaterialId === voucherMaterialId);
+
+export async function addScreenshot(state: PrintState, voucherMaterialId: string, file: { fileName: string; mime: string; bytes: Uint8Array }): Promise<PrintCommit> {
+  groupEditable(state, voucherMaterialId);
+  if (groupOf(state, voucherMaterialId).length >= PAYMENT_SCREENSHOT_CAP) throw new PrintRefusal('screenshot_cap', PAYMENT_SCREENSHOT_ERRORS.cap);
   const named = IMAGE_NAME.test(file.fileName) || (!/\.[a-z0-9]+$/i.test(file.fileName) && /^image\/(jpeg|png)$/.test(file.mime));
   if (!named || !(await isJpegOrPng(file.bytes))) throw new PrintRefusal('not_image', PAYMENT_SCREENSHOT_ERRORS.notImage);
   const sha256 = writeBlob(state.dataDir, file.bytes);
-  const shot: Screenshot = { screenshotId: randomUUID(), voucherMaterialId, fileName: file.fileName, sha256 };
-  const screenshots = [...state.facts.screenshots.filter((s) => s.voucherMaterialId !== voucherMaterialId), shot];
-  const composed = stateOf(state) === 'generated' ? await compose(state, state.facts.settings, screenshots) : null;
+  const screenshotId = randomUUID();
   return async (tx, at, revision) => {
     await tx.insertInto('blob').values({ sha256, size: file.bytes.byteLength, mime: storedMime(file.fileName, file.mime), created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
-    await tx.insertInto('payment_screenshot').values({ screenshot_id: shot.screenshotId, task_id: state.taskId, account_id: state.accountId, voucher_material_id: voucherMaterialId, blob_sha256: sha256, file_name: file.fileName, revision, created_at: at }).execute();
-    if (composed) await renderCommit(state, composed)(tx, at, revision);
+    await tx.insertInto('payment_screenshot').values({ screenshot_id: screenshotId, task_id: state.taskId, account_id: state.accountId, voucher_material_id: voucherMaterialId, blob_sha256: sha256, file_name: file.fileName, revision, created_at: at }).execute();
   };
 }
 
-// Removing a 住宿 invoice's screenshot reopens its missing-screenshot item unless an absence was confirmed. Before the
-// list is confirmed that is just the check asking again; after it (or once ERP was touched) it would pull a confirmed
-// list back into inventory, so it is refused then and the screenshot can only be replaced.
 export async function removeScreenshot(state: PrintState, screenshotId: string): Promise<PrintCommit> {
   const removing = state.facts.screenshots.find((shot) => shot.screenshotId === screenshotId);
   if (!removing) throw new PrintRefusal('screenshot_not_found', PAYMENT_SCREENSHOT_ERRORS.notFound);
-  const trio = state.trios.find((candidate) => candidate.invoiceId === removing.voucherMaterialId);
-  if (trio?.screenshot && !trio.screenshot.noneConfirmed && (state.confirmation === 'confirmed' || state.erpAttempted)) throw new PrintRefusal('screenshot_required', STAY_TRIO_COPY.removeLocked);
-  const screenshots = state.facts.screenshots.filter((shot) => shot.screenshotId !== screenshotId);
-  const composed = stateOf(state) === 'generated' ? await compose(state, state.facts.settings, screenshots) : null;
+  groupEditable(state, removing.voucherMaterialId);
   return async (tx, at, revision) => {
     await tx.insertInto('payment_screenshot_removal').values({ removal_id: randomUUID(), screenshot_id: screenshotId, task_id: state.taskId, account_id: state.accountId, revision, created_at: at }).execute();
-    if (composed) await renderCommit(state, composed)(tx, at, revision);
+  };
+}
+
+// 「已传齐」: the group is complete, and the item settles on it. Idempotent while it stands complete.
+export async function completeScreenshots(state: PrintState, voucherMaterialId: string): Promise<PrintCommit | null> {
+  groupEditable(state, voucherMaterialId);
+  if (groupOf(state, voucherMaterialId).length === 0) throw new PrintRefusal('screenshot_group_empty', PAYMENT_SCREENSHOT_ERRORS.empty);
+  if (state.facts.completeGroups.has(voucherMaterialId)) return null;
+  return async (tx, at, revision) => {
+    await tx.insertInto('payment_screenshot_group_complete').values({ declaration_id: randomUUID(), task_id: state.taskId, account_id: state.accountId, voucher_material_id: voucherMaterialId, revision, created_at: at }).execute();
   };
 }
 
@@ -227,6 +240,7 @@ async function compose(state: PrintState, settings: ReadonlyMap<string, PrintSet
   const sheet: { header: string; drawn: Drawn[] }[] = [];
   const pages: Omit<StoredPage, 'pngSha256'>[] = [];
   for (const plan of plans) {
+    // Until the continuation page (#333), a page prints the first of its voucher's group.
     const shot = screenshots.find((candidate) => candidate.voucherMaterialId === plan.voucherMaterialId) ?? null;
     const top = await prepared(plan.voucherMaterialId, 'top');
     const bottom = await prepared(plan.bottomMaterialId, shot ? 'bottom_left' : 'bottom');

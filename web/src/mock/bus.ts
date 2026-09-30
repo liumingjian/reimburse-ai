@@ -54,6 +54,9 @@ export type MockBus = {
   useProjectAllowList(source: (taskId: string) => ProjectOption[]): void;
   // 用户经 exclude-material 移出本次材料的材料（重复发票、认不出的合并发票及其行程单）：之后重新盘点也不再算它们。
   removedMaterials(taskId: string): Set<string>;
+  // 支付截图组已「已传齐」的住宿发票（#331，服务端 payment_screenshot_group_complete）：重新盘点时这一项仍按已处理算。
+  // 组被删空就不再算传齐。
+  completeScreenshotGroups(taskId: string): Set<string>;
   // 状态变了但 step 种类没变时换发的新凭据（项目归属草稿、项目簿同步）：在原凭据后加一个全局递增的序号。
   rotateToken(stepToken: string): string;
 };
@@ -78,6 +81,7 @@ export function createBus(options: MockOptions): MockBus {
   let outageScheduled = false;
   let allowListSource = (_taskId: string): ProjectOption[] => PROJECT_BOOK.map((project) => ({ ...project }));
   const removed = new Map<string, Set<string>>();
+  const completeGroups = new Map<string, Set<string>>();
   let rotation = 0;
 
   const snapshotOf = (taskId: string): TaskSnapshot => {
@@ -169,6 +173,11 @@ export function createBus(options: MockOptions): MockBus {
     removedMaterials(taskId) {
       const set = removed.get(taskId) ?? new Set<string>();
       removed.set(taskId, set);
+      return set;
+    },
+    completeScreenshotGroups(taskId) {
+      const set = completeGroups.get(taskId) ?? new Set<string>();
+      completeGroups.set(taskId, set);
       return set;
     },
     rotateToken(stepToken) {

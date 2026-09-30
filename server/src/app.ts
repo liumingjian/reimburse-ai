@@ -555,6 +555,8 @@ const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
   'rotate-placement': taskAction(z.object({ pageId: z.string().min(1), slot: PlacementSlotSchema, rotate: z.boolean() }), (tasks, id, { pageId, slot, rotate }) => tasks.rotatePlacement(id, pageId, slot, rotate)),
   'crop-placement': taskAction(CropInputSchema, (tasks, id, { pageId, slot, corners }) => tasks.cropPlacement(id, pageId, slot, corners)),
   'remove-payment-screenshot': taskAction(z.object({ screenshotId: z.string().min(1) }), (tasks, id, { screenshotId }) => tasks.removePaymentScreenshot(id, screenshotId)),
+  // 「已传齐」 (#331): the 住宿 invoice's 支付截图 group is complete.
+  'complete-payment-screenshots': taskAction(z.object({ voucherMaterialId: z.string().min(1) }), (tasks, id, { voucherMaterialId }) => tasks.completePaymentScreenshots(id, voucherMaterialId)),
   // 对账 (read-only, 409 `erp_in_use` while another task of the same 应用账号 holds the lease) and 转人工 (terminal).
   reconcile: taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.reconcile(id, stepToken)),
   'hand-off': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.handOff(id, stepToken)),

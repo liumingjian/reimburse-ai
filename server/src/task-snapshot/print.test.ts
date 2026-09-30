@@ -22,7 +22,7 @@ const page = (voucherMaterialId: string, no: number, categoryLabel: string, scre
   bottom: null,
   screenshotId,
 });
-const facts = (pages: StoredPage[]): PrintFacts => ({ render: { renderId: 'r', confirmationRevision: 1, pdfSha256: 'pdf', pages }, settings: new Map(), screenshots: [] });
+const facts = (pages: StoredPage[]): PrintFacts => ({ render: { renderId: 'r', confirmationRevision: 1, pdfSha256: 'pdf', pages }, settings: new Map(), screenshots: [], completeGroups: new Set() });
 const trio = (invoiceId: string, noneConfirmed: boolean): StayTrio => ({
   invoiceId,
   folioId: null,

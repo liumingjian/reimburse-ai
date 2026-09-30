@@ -98,8 +98,8 @@ export function buildPrintSheet(snapshot: TaskSnapshot): PrintSheet {
   return refreshScreenshots(sheet, snapshot);
 }
 
-// 支付截图变化后：每页的截图与「还没有支付截图」提醒随之更新（提醒不阻止下载）。
-export function refreshScreenshots(sheet: PrintSheet, snapshot: TaskSnapshot): PrintSheet {
+// 每页的截图与「还没有支付截图」提醒（提醒不阻止下载）。续页（#333）之前，每页放这张发票支付截图组的第一张。
+function refreshScreenshots(sheet: PrintSheet, snapshot: TaskSnapshot): PrintSheet {
   const notices: string[] = [];
   const pages = sheet.pages.map((page) => {
     if (!page.top) return page;

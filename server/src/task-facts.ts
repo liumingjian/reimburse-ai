@@ -13,7 +13,7 @@ import { bookOptions, type BookOption } from './books';
 import { pinnedCompanyRules, type CompanyRules } from './rules/company-rules';
 import { confirmationDigest, confirmationStatus, type ConfirmationDigest, type ConfirmationFact } from './confirmation';
 import { loadErp, type ErpRecord } from './erp/fill-state';
-import { loadPrintFacts, type PrintFacts } from './print/facts';
+import { loadPrintFacts, screenshotGroupsOf, type PrintFacts } from './print/facts';
 
 // Loading task facts (任务事实): every read that builds what the task service decides on and projects from. Reads
 // only, no decisions: `task-policy.ts` turns `LoadedTask.facts` into stage, step and write admission, and `tasks.ts` acts on the rest.
@@ -141,7 +141,7 @@ async function loadOwnFacts(tx: Tx, task: TaskTable, materials?: readonly Materi
       : null,
     { homeCity, rules },
     answers,
-    new Set(print.screenshots.map((shot) => shot.voucherMaterialId)),
+    screenshotGroupsOf(print),
   );
   if (current) facts.parse = { waiting: view.waiting, openPendingItems: view.openPendingItems, blockers: [] };
   let assignment: Assignment | null = null;

@@ -510,6 +510,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     confirmReview: (taskId, digest, stepToken, acceptDeadlineWarnings = false) => action(taskId, E.confirmReview, { digest, acceptDeadlineWarnings, stepToken }),
     reopenUpload: (taskId, stepToken) => action(taskId, E.reopenUpload, { stepToken }),
     removePaymentScreenshot: (taskId, screenshotId) => action(taskId, E.removePaymentScreenshot, { screenshotId }),
+    completePaymentScreenshots: (taskId, voucherMaterialId) => action(taskId, E.completePaymentScreenshots, { voucherMaterialId }),
     generatePrintSheet: (taskId) => action(taskId, E.generatePrintSheet, {}),
     rotatePlacement: (taskId, pageId, slot, rotate) => action(taskId, E.rotatePlacement, { pageId, slot, rotate }),
     cropPlacement: (taskId, pageId, slot, corners) => action(taskId, E.cropPlacement, { pageId, slot, corners }),

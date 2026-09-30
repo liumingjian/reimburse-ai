@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { App } from '../App';
-import { ALLOCATION_ERRORS, PENDING_ANSWER_ERRORS, STALE_STEP_NOTICE, STAY_TRIO_COPY } from '@baox/contract';
+import { ALLOCATION_ERRORS, PAYMENT_SCREENSHOT_ERRORS, PENDING_ANSWER_ERRORS, STALE_STEP_NOTICE, STAY_TRIO_COPY } from '@baox/contract';
 import { ALLOCATION_GIVE_UP_NOTE, GIVEN_UP_TITLE, givenUpNote } from '../mock/fixtures/inventory';
 import { t1Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
@@ -427,25 +427,51 @@ describe('逐段分摊与阻塞项', () => {
     expect(rows[1]?.textContent).toBe('下车时间不合法，并补填起点与终点IMG_4906.jpg');
   });
 
-  // #213: a 住宿 invoice missing its 支付截图 is answered by uploading the screenshot right here, or by 确认没有.
+  // #213, #331: a 住宿 invoice missing its 支付截图 takes a group of them right here, closed with 「已传齐」, or 确认没有.
   // The mock raises the item at inventory like the server does (T1 has no screenshot).
-  test('住宿发票缺少支付截图：在待确认项里直接上传支付截图，这一项随之消失', async () => {
+  test('住宿发票缺少支付截图：多选上传一组、缩略图、移除、已传 N 张、上限 6 张，点「已传齐」这一项才处理完', async () => {
+    const copy = STAY_TRIO_COPY.screenshot;
     const adapter = renderPending();
     await screen.findByRole('heading', { name: '待确认项' });
-    const title = STAY_TRIO_COPY.screenshot.title('全季酒店_发票.pdf');
+    const title = copy.title('全季酒店_发票.pdf');
     fireEvent.click(itemButton(title));
     expect(within(detail()).getByRole('heading', { name: title })).toBeTruthy();
-    expect(within(detail()).getByText(STAY_TRIO_COPY.screenshot.why('3640.00'))).toBeTruthy();
-    expect(within(detail()).getByRole('button', { name: STAY_TRIO_COPY.screenshot.confirmNone })).toBeTruthy();
-    expect(within(detail()).getByRole('button', { name: STAY_TRIO_COPY.screenshot.upload })).toBeTruthy();
+    expect(within(detail()).getByText(copy.why('3640.00'))).toBeTruthy();
+    expect(within(detail()).getByRole('button', { name: copy.confirmNone })).toBeTruthy();
+    expect(within(detail()).getByRole('button', { name: copy.upload })).toBeTruthy();
+    expect((within(detail()).getByRole('button', { name: copy.complete }) as HTMLButtonElement).disabled).toBe(true);
 
+    const png = (name: string) => new File([new Uint8Array([137, 80, 78, 71])], name, { type: 'image/png' });
     const add = vi.spyOn(adapter, 'addPaymentScreenshot');
-    const file = new File([new Uint8Array([137, 80, 78, 71])], 'IMG_5011.png', { type: 'image/png' });
-    fireEvent.change(within(detail()).getByLabelText(STAY_TRIO_COPY.screenshot.inputLabel('全季酒店_发票.pdf')), { target: { files: [file] } });
-    await waitFor(() => expect(add).toHaveBeenCalledWith('T1', 'm01', file));
+    const input = () => within(detail()).getByLabelText(copy.inputLabel('全季酒店_发票.pdf'));
+    const thumbnails = () => within(within(detail()).getByRole('list', { name: '已上传的支付截图' })).getAllByRole('img').map((img) => img.getAttribute('alt'));
+    const [first, second] = [png('IMG_5011.png'), png('IMG_5012.png')];
+    expect(input().hasAttribute('multiple')).toBe(true);
+    fireEvent.change(input(), { target: { files: [first, second] } });
+    await waitFor(() => expect(thumbnails()).toEqual([copy.thumbnail('IMG_5011.png', 1), copy.thumbnail('IMG_5012.png', 2)]));
+    // One request per file, in the order selected.
+    expect(add.mock.calls).toEqual([
+      ['T1', 'm01', first],
+      ['T1', 'm01', second],
+    ]);
+    expect(within(detail()).getByText(copy.count(2))).toBeTruthy();
+    // The item stays open and selected; 确认没有 is gone while the group holds any.
+    expect(screen.getByText('对照原件补填或作出选择。还剩 4 个。')).toBeTruthy();
+    expect(within(detail()).queryByRole('button', { name: copy.confirmNone })).toBeNull();
+
+    fireEvent.click(within(detail()).getByRole('button', { name: copy.remove('IMG_5011.png', 1) }));
+    await waitFor(() => expect(thumbnails()).toEqual([copy.thumbnail('IMG_5012.png', 1)]));
+    expect(within(detail()).getByText(copy.count(1))).toBeTruthy();
+
+    fireEvent.change(input(), { target: { files: ['A', 'B', 'C', 'D', 'E'].map((name) => png(`IMG_${name}.png`)) } });
+    await waitFor(() => expect(thumbnails()).toHaveLength(6));
+    expect(within(detail()).getByText(PAYMENT_SCREENSHOT_ERRORS.cap)).toBeTruthy();
+    expect((within(detail()).getByRole('button', { name: copy.upload }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(within(detail()).getByRole('button', { name: copy.complete }));
     await screen.findByText('对照原件补填或作出选择。还剩 3 个。');
     const snapshot = await adapter.getSnapshot('T1');
-    expect(snapshot.pendingItems.some((item) => item.itemId === 'stay_screenshot_missing.m01')).toBe(false);
-    expect(snapshot.paymentScreenshots.map((shot) => [shot.voucherMaterialId, shot.fileName])).toEqual([['m01', 'IMG_5011.png']]);
+    expect(snapshot.pendingItems.find((item) => item.itemId === 'stay_screenshot_missing.m01')).toMatchObject({ status: 'resolved', answer: null });
+    expect(snapshot.paymentScreenshots.map((shot) => shot.fileName)).toEqual(['IMG_5012.png', 'IMG_A.png', 'IMG_B.png', 'IMG_C.png', 'IMG_D.png', 'IMG_E.png']);
   });
 });

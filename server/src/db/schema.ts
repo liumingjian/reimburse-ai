@@ -372,6 +372,15 @@ export interface PaymentScreenshotRemovalTable {
   created_at: string;
 }
 
+export interface PaymentScreenshotGroupCompleteTable {
+  declaration_id: string;
+  task_id: string;
+  account_id: string;
+  voucher_material_id: string;
+  revision: number;
+  created_at: string;
+}
+
 export interface PrintRenderTable {
   render_id: string;
   task_id: string;
@@ -416,6 +425,7 @@ export interface Schema {
   print_setting: PrintSettingTable;
   payment_screenshot: PaymentScreenshotTable;
   payment_screenshot_removal: PaymentScreenshotRemovalTable;
+  payment_screenshot_group_complete: PaymentScreenshotGroupCompleteTable;
   print_render: PrintRenderTable;
   erp_reconcile_job: ErpReconcileJobTable;
   erp_hand_off: ErpHandOffTable;

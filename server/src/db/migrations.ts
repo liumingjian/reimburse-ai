@@ -389,7 +389,8 @@ const confirmation189: Migration = {
 
 // Slice #190: 打印稿 (print sheet). All append-only. `print_setting` holds the per-material print settings (rotation,
 // four crop corners; latest per material wins, so they survive a regeneration). `payment_screenshot` +
-// `payment_screenshot_removal` hold the 支付截图 (payment screenshots; the latest unremoved one per voucher is current).
+// `payment_screenshot_removal` hold the 支付截图 (payment screenshots; until #331 the latest unremoved one per voucher was
+// current, since 0020_331 every unremoved one is, as a group).
 // `print_render` is one composed sheet (merged PDF + page images, both content-addressed blobs) bound to the
 // confirmation it was made from: a sheet whose `confirmation_revision` is not the standing confirmation is stale.
 const print190: Migration = {
@@ -648,6 +649,52 @@ const maintenanceGate265: Migration = {
   },
 };
 
+// #331: a 住宿 invoice takes a group of 支付截图 (payment screenshots) in upload order, and the filer declares it complete
+// (「已传齐」). `payment_screenshot_group_complete` holds those declarations, append-only; whether a group stands complete
+// is replayed from uploads, removals and declarations in revision order (`print/facts.ts`).
+//
+// Before #331 only the latest unremoved screenshot per invoice counted, and its upload alone settled the item. So that
+// every row still in the table is a member of the group, each screenshot a later upload replaced is recorded as removed
+// at the replacing upload's revision; and each invoice's surviving screenshot is declared complete at its own revision,
+// so an existing task reads as a resolved group of one and never reopens.
+const screenshotGroup331: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('payment_screenshot_group_complete')
+      .addColumn('declaration_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('voucher_material_id', 'text', (c) => c.notNull().references('material.material_id'))
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await appendOnly(db, 'payment_screenshot_group_complete');
+    await settleLegacyScreenshots331(db);
+  },
+};
+
+// The backfill of 0020_331, part of that migration (never edit it once landed). Exported so a scenario test can turn
+// screenshots stored the pre-#331 way into what the migration leaves of them.
+export async function settleLegacyScreenshots331(db: Kysely<unknown>): Promise<void> {
+  await sql`
+    INSERT INTO payment_screenshot_removal (removal_id, screenshot_id, task_id, account_id, revision, created_at)
+    SELECT lower(hex(randomblob(16))), s.screenshot_id, s.task_id, s.account_id, n.revision, n.created_at
+    FROM payment_screenshot s
+    JOIN payment_screenshot n ON n.screenshot_id = (
+      SELECT screenshot_id FROM payment_screenshot
+      WHERE task_id = s.task_id AND voucher_material_id = s.voucher_material_id AND revision > s.revision
+      ORDER BY revision LIMIT 1
+    )
+    WHERE NOT EXISTS (SELECT 1 FROM payment_screenshot_removal r WHERE r.screenshot_id = s.screenshot_id)
+  `.execute(db);
+  await sql`
+    INSERT INTO payment_screenshot_group_complete (declaration_id, task_id, account_id, voucher_material_id, revision, created_at)
+    SELECT lower(hex(randomblob(16))), s.task_id, s.account_id, s.voucher_material_id, s.revision, s.created_at
+    FROM payment_screenshot s
+    WHERE NOT EXISTS (SELECT 1 FROM payment_screenshot_removal r WHERE r.screenshot_id = s.screenshot_id)
+  `.execute(db);
+}
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -676,4 +723,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   // Added after the already-integrated #280 migration so existing databases never need a landed migration rewritten.
   '0018_273_project_deadline': projectDeadline273,
   '0019_312_blob_medium': blobMedium312,
+  '0020_331_screenshot_group': screenshotGroup331,
 };

@@ -439,14 +439,19 @@ export type Confirmation = z.infer<typeof ConfirmationSchema>;
 // ---- 支付截图与打印稿 ----
 
 // A 支付截图 (payment screenshot) is an image only (JPG, PNG). It goes on the 打印稿 (print sheet) alone and never changes
-// the lines. One per invoice; another one replaces it. Only a 住宿 (accommodation) invoice takes one, and only from its
-// missing-screenshot 待确认项 (pending item; #213, see STAY_TRIO_COPY), whether or not a sheet exists.
+// the lines. Only a 住宿 (accommodation) invoice takes them, and only from its missing-screenshot 待确认项 (pending
+// item; #213, see STAY_TRIO_COPY): a group of up to PAYMENT_SCREENSHOT_CAP, one image per upload, kept in upload order.
+// The group is the snapshot's `paymentScreenshots` with the invoice's `voucherMaterialId`, in list order; the filer
+// closes it with 「已传齐」 (`completePaymentScreenshots`).
 export const PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE = '.jpg,.jpeg,.png,image/jpeg,image/png';
+export const PAYMENT_SCREENSHOT_CAP = 6;
 
 // The 住宿 (accommodation) trio check at 盘点 (inventory), #213. 住宿 reimbursement takes three materials: the 发票
 // (invoice), the 结账单 (hotel folio) and the 支付截图 (payment screenshot). Inventory raises one 待确认项 per missing
-// element; the item disappears once the material is supplied, or settles on the choice `STAY_TRIO_CONFIRM_NONE`,
-// which records the absence. The print stage reads that record instead of judging the absence again. All filer-facing
+// invoice or folio; the item disappears once the material is supplied, or settles on the choice
+// `STAY_TRIO_CONFIRM_NONE`, which records the absence. Every 住宿 invoice carries a screenshot item: it stays open
+// while its group is empty or not yet declared complete (「已传齐」), and settles on the declaration or on
+// `STAY_TRIO_CONFIRM_NONE`. The print stage reads that record instead of judging the absence again. All filer-facing
 // wording of the check lives here, shared by the server and the page.
 export const STAY_TRIO_ELEMENTS = ['invoice', 'folio', 'screenshot'] as const;
 export type StayTrioElement = (typeof STAY_TRIO_ELEMENTS)[number];
@@ -479,12 +484,18 @@ export const STAY_TRIO_COPY = {
   screenshot: {
     title: (invoiceFileName: string) => `住宿发票「${invoiceFileName}」缺少支付截图`,
     why: (totalAmount: string | undefined) =>
-      `${TRIO}这张住宿发票${amountNote('价税合计', totalAmount)}还没有支付截图。可以在这里直接上传支付截图（JPG、PNG）；确实没有，就选「确认没有支付截图」，打印稿这一页不放支付截图。`,
+      `${TRIO}这张住宿发票${amountNote('价税合计', totalAmount)}需要支付截图。可以在这里上传支付截图（JPG、PNG，可一次选多张，每张发票最多 ${PAYMENT_SCREENSHOT_CAP} 张），传完点「已传齐」；确实没有，就选「确认没有支付截图」，打印稿这一页不放支付截图。`,
     confirmNone: '确认没有支付截图',
     upload: '上传支付截图',
     // The file input's accessible name.
     inputLabel: (invoiceFileName: string) => `选择这张住宿发票的支付截图：${invoiceFileName}`,
-    uploadNote: '上传后这一项自动消失；支付截图只进打印稿，不上传报销系统。',
+    uploadNote: '分次付款、多种支付方式或一次付款截了几屏，都传在这里，按上传顺序排列；传齐后点「已传齐」。支付截图只进打印稿，不上传报销系统。',
+    // 「已传齐」: declares the group complete; the item settles on it.
+    complete: '已传齐',
+    count: (count: number) => `已传 ${count} 张`,
+    // A thumbnail's accessible name and its remove button's.
+    thumbnail: (fileName: string, index: number) => `第 ${index} 张支付截图：${fileName}`,
+    remove: (fileName: string, index: number) => `移除第 ${index} 张支付截图：${fileName}`,
   },
   invoice: {
     title: (folioFileName: string) => `结账单「${folioFileName}」缺少住宿发票`,
@@ -494,14 +505,17 @@ export const STAY_TRIO_COPY = {
   },
   // 打印稿 notice for a 住宿 page whose screenshot absence was confirmed at inventory.
   printNotice: (nos: string, categoryLabel: string) => `${nos} ${categoryLabel}发票在盘点时已确认没有支付截图，这一页不放支付截图。`,
-  // Refusal: removing the screenshot would reopen the check on a list that is already confirmed.
-  removeLocked: '整单明细已经确认，这张住宿发票的支付截图只能替换，不能移除。',
+  // Refusal: a change to the group would reopen the check on a list that is already confirmed (or went to ERP).
+  changeLocked: '整单明细已经确认或已开始写入报销系统，这张住宿发票的支付截图不能再增减。',
 } as const;
 
 export const PAYMENT_SCREENSHOT_ERRORS = {
   notImage: '只接受图片（JPG、PNG）。',
   notApplicable: '这张发票不需要支付截图。',
   notFound: '这张支付截图已经不存在。',
+  cap: `每张发票最多 ${PAYMENT_SCREENSHOT_CAP} 张支付截图`,
+  // 「已传齐」 on an empty group.
+  empty: '还没有上传支付截图，传好后再点「已传齐」。',
 } as const;
 
 export const PaymentScreenshotSchema = z.object({

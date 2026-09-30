@@ -377,8 +377,9 @@ async function qaStayTrio(page, context, state) {
     ];
     const unmentioned = gaps.filter(([code]) => !asked.has(trioItemId(code, invoice.materialId)));
     if (unmentioned.length > 0) defect('stay-trio', `«${invoice.fileName}» has no ${unmentioned.map(([, element]) => element).join('、')} but the 待确认项 queue does not say so`);
-    else if (gaps.length === 0 && Object.keys(STAY_TRIO).some((code) => asked.has(trioItemId(code, invoice.materialId)) && open.some((item) => item.itemId === trioItemId(code, invoice.materialId)))) defect('stay-trio', `«${invoice.fileName}» has its whole trio but still raises an open trio item`);
-    else if (gaps.length === 0) ok('stay-trio', `«${invoice.fileName}» has its whole trio and raises no item`);
+    // A screenshot group stays open until 「已传齐」 (#331), so only the folio item says the trio is incomplete.
+    else if (gaps.length === 0 && open.some((item) => item.itemId === trioItemId('stay_folio_missing', invoice.materialId))) defect('stay-trio', `«${invoice.fileName}» has its folio but still raises an open folio item`);
+    else if (gaps.length === 0) ok('stay-trio', `«${invoice.fileName}» has its folio and screenshots, and raises no folio item`);
   }
   if (open.length === 0 && cleanInvoices.length === 0) {
     ok('stay-trio', 'no 住宿 trio item in this upload; nothing more to check');
@@ -408,15 +409,32 @@ async function qaStayTrio(page, context, state) {
   }
   await shot(page, 'stay-trio-screenshot-item');
   await input.first().setInputFiles({ name: 'IMG_QA_STAY.png', mimeType: 'image/png', buffer: PNG_1X1 });
+  // The item stays open after the upload (#331); 「已传齐」 is what settles it.
   let after = null;
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await page.waitForTimeout(500);
     after = await read();
-    if (!after?.pendingItems.some((item) => item.itemId === missingShot.itemId)) break;
+    if (after?.paymentScreenshots?.some((s) => s.voucherMaterialId === missingShot.materialId)) break;
   }
   const attached = after?.paymentScreenshots?.some((s) => s.voucherMaterialId === missingShot.materialId);
-  if (attached && !after.pendingItems.some((item) => item.itemId === missingShot.itemId)) ok('stay-trio', 'attaching the screenshot from the pending page resolves the missing-screenshot item');
-  else defect('stay-trio', `attaching a screenshot from the pending page did not resolve ${missingShot.itemId} (attached: ${Boolean(attached)})`);
+  const stillOpen = after?.pendingItems.find((item) => item.itemId === missingShot.itemId)?.status === 'open';
+  if (!attached) defect('stay-trio', `uploading a screenshot from the pending page attached nothing to ${missingShot.materialId}`);
+  else if (!stillOpen) defect('stay-trio', `${missingShot.itemId} settled on the upload alone, before 「已传齐」`);
+  else ok('stay-trio', 'the uploaded screenshot shows in the group and the item waits for 「已传齐」');
+  const complete = page.getByRole('button', { name: '已传齐', exact: true });
+  if (!attached || (await complete.count()) === 0) {
+    if (attached) defect('stay-trio', `«${missingShot.title}» offers no 「已传齐」 button`);
+    await shot(page, 'stay-trio-screenshot-attached');
+    return;
+  }
+  await complete.first().click();
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await page.waitForTimeout(500);
+    after = await read();
+    if (after?.pendingItems.find((item) => item.itemId === missingShot.itemId)?.status === 'resolved') break;
+  }
+  if (after?.pendingItems.find((item) => item.itemId === missingShot.itemId)?.status === 'resolved') ok('stay-trio', '「已传齐」 resolves the missing-screenshot item');
+  else defect('stay-trio', `「已传齐」 did not resolve ${missingShot.itemId}`);
   await shot(page, 'stay-trio-screenshot-attached');
 }
 

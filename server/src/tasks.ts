@@ -643,6 +643,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     cropPlacement: (taskId: string, pageId: string, slot: PlacementSlot, corners: Corners) => printChange(taskId, (state) => printActions.crop(state, pageId, slot, corners)),
     addPaymentScreenshot: (taskId: string, voucherMaterialId: string, file: UploadedFile) => printChange(taskId, (state) => printActions.addScreenshot(state, voucherMaterialId, file)),
     removePaymentScreenshot: (taskId: string, screenshotId: string) => printChange(taskId, (state) => printActions.removeScreenshot(state, screenshotId)),
+    completePaymentScreenshots: (taskId: string, voucherMaterialId: string) => printChange(taskId, (state) => printActions.completeScreenshots(state, voucherMaterialId)),
 
     // A content-addressed file of this task (an original, a payment screenshot, a composed sheet or page image).
     async file(taskId: string, sha256: string): Promise<{ path: string; mime: string } | null> {
