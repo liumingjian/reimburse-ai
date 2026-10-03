@@ -235,10 +235,6 @@ export function reconcileReadings(readings: Readings, expectedPreview: unknown =
   };
 }
 
-/** Readings -> bucket in one call: what the server does with a reconcile job's read-back. */
-export const classifyReadings = (readings: Readings, expectedPreview: unknown = null) =>
-  classifyReconciliation(reconcileReadings(readings, expectedPreview));
-
 /**
  * The audit record of one reconcile: readings, bucket, action. Only desensitised facts (cents, row counts, reasons);
  * no copy of the page. Origin: kernel attemptRecord.

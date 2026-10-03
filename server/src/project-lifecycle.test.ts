@@ -1,6 +1,5 @@
 import { ProjectBookResultSchema, ProjectBookSchema } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { fixtureCatalog } from './catalog/project-catalog';
 import { databasePath } from './data-dir';
 import { api } from './test/api';
 import { createTestServer, tempDataDir, testClient, type TestClient } from './test/harness';
@@ -14,10 +13,8 @@ let server: ScenarioServer;
 let admin: TestClient;
 let member: TestClient;
 
-const CATALOG = fixtureCatalog([{ number: 'TASK-LIFE', name: '任务生命周期项目', audited: true, forbidden: false }]);
-
 beforeEach(async () => {
-  server = await scenarioServer({ projectCatalog: CATALOG });
+  server = await scenarioServer();
   admin = await server.signIn('admin');
   member = await server.signIn('member');
 });

@@ -1,6 +1,5 @@
 import { PROJECT_CHANGED_NOTICE, TaskListSchema, type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { fixtureCatalog } from './catalog/project-catalog';
 import { confirmationDigest } from './confirmation';
 import { COMPANY_RULES } from './rules/company-rules';
 import { api, sample } from './test/api';
@@ -10,15 +9,10 @@ import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 // Slice 10 (#189): 整单明细确认 (whole-list detail confirmation) through `app.request()`. The confirmation stores
 // `{digest, confirmedAt}`; its status is derived by comparing that digest with the current one (ADR-0014).
 
-const CATALOG = fixtureCatalog([
-  { number: 'P-2307', name: '华东客户交付', audited: true, forbidden: false },
-  { number: 'P-9001', name: '公共平台建设', audited: true, forbidden: false },
-]);
-
 let server: ScenarioServer;
 let alice: TestClient;
 beforeEach(async () => {
-  server = await scenarioServer({ projectCatalog: CATALOG });
+  server = await scenarioServer();
   alice = await server.signIn('alice');
 });
 afterEach(() => server.close());

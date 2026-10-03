@@ -24,7 +24,6 @@ import { mountExtensionDownloadRoute } from './extension/download';
 import { bearer, mountExtensionPairRoutes, mountPairingRoutes } from './extension/http';
 import { createPairingService, hasPairing } from './extension/pairing';
 import { createLegacyImport, LegacyImportRefusal } from './legacy/import';
-import { unavailableCatalog, type ProjectCatalog } from './catalog/project-catalog';
 import { admitsHost, admitsOrigin, type PublicOrigin } from './public-origin';
 import { createMaintenanceGate, MAINTENANCE_WRITE_CODE, MAINTENANCE_WRITE_MESSAGE, type MaintenanceGate } from './maintenance';
 import { ActionRefusedError, createTaskService, parseBacklogOfAllAccounts, StaleStepError, TaskNotFoundError, type ErpServiceOptions, type TaskService, type UploadedFile } from './tasks';
@@ -57,7 +56,6 @@ export type AppOptions = {
   // Where the parser job parses; the server's one worker_thread by default. Tests inject inline or gated executors.
   parser?: ParseExecutor;
   // Kept as the test seam for ERP pre-import validation. Local project-book intake no longer queries this catalog.
-  projectCatalog?: ProjectCatalog;
   // The legacy `~/.baox` read once when the first admin is created (ADR-0018). null (default) imports nothing;
   // `main.ts` passes `$BAOX_HOME` or `~/.baox`.
   legacyHome?: string | null;
@@ -80,7 +78,7 @@ type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
 const failure = (c: Context, status: 400 | 401 | 403 | 404 | 409 | 503, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor, reconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null, publicOrigin = null, extensionTemplate = null, schedule = realTimer }: AppOptions): App {
+export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor, reconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, legacyHome = null, publicOrigin = null, extensionTemplate = null, schedule = realTimer }: AppOptions): App {
   const maintenance = createMaintenanceGate(db);
   // Session lookups usually write a sliding expiry or remove an expired row. Give those narrow housekeeping writes
   // their own admission so a read route cannot cross an admitted maintenance boundary.

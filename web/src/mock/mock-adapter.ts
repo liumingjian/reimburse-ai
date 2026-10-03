@@ -270,5 +270,3 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   }
   return Object.assign(guarded as unknown as AppAdapter, { advanceElsewhere: pending.advanceElsewhere });
 }
-
-export const MOCK_MAIN_TASK_ID = T1_ID;

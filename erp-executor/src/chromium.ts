@@ -116,7 +116,3 @@ export function isCdpChromiumPage(page: unknown): page is ChromiumPage & { sessi
   const p = page as ChromiumPage | null | undefined;
   return p?.transport === 'default' && p?.browserFamily === 'chromium' && p?.automation === 'cdp' && !!p?.session && typeof p.session.send === 'function';
 }
-
-export function closeChromiumPage(page: ChromiumPage | null | undefined) {
-  try { page?.session?.close?.(); } catch { /* already closed */ }
-}

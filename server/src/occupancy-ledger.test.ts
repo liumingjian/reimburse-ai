@@ -49,8 +49,15 @@ describe('occupancy ownership', () => {
   });
 
   it('blocks another account task without naming it (ADR-0018)', async () => {
-    expect(await blockersFor([holding({ accountId: 'acc-bob' })], 'task-second')).toEqual([
+    const blockers = await blockersFor([holding({ accountId: 'acc-bob' })], 'task-second');
+    expect(blockers).toEqual([
       { kind: 'duplicate_across_tasks', materialId: mine.materialId, fileName: mine.fileName, reason: OCCUPANCY_COPY.otherAccount, resolver: '要你处理', tasks: [] },
     ]);
+    const text = JSON.stringify(blockers);
+    for (const leak of ['acc-bob', 'task-first', '上海出差']) expect(text).not.toContain(leak);
+  });
+
+  it('does not block a free invoice', async () => {
+    expect(await blockersFor([], 'task-second')).toEqual([]);
   });
 });

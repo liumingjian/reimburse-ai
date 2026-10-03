@@ -61,10 +61,6 @@ export function useBook(scope: BookScope): ProjectBookState {
   return book;
 }
 
-export function useProjectBook(): ProjectBookState {
-  return useBook('personal');
-}
-
 // 管理员页的账号列表：第一次用到时读取。
 export function useAccounts(): AccountsState {
   const store = useAppStore();
