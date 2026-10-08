@@ -1,0 +1,15 @@
+{
+  "about": "A small hotel's 水单 (folio) photo from the multi-screenshot QA set: no 结账单 title, 退房日期 for 离店日期, 收费 for 消费合计, and two fields to a line (入住日期:…日,房号:…). Every label variant reached no layout, so the folio was unrecognised. Captured from the real photo; guest, operator, company name and tax id redacted.",
+  "outcome": "recognised",
+  "layout": "hotel_folio/labelled",
+  "missing": [],
+  "findings": [],
+  "facts": {
+    "guestName": "张三",
+    "roomNumber": "1426",
+    "checkIn": "2026-09-16",
+    "checkOut": "2026-09-18",
+    "roomRate": "168.07",
+    "folioTotal": "336.14"
+  }
+}
