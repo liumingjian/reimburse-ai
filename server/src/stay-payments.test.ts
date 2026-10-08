@@ -1,13 +1,10 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { GENERATED_DIR } from '@baox/fixtures';
 import { PAYMENT_COPY, STAY_TRIO_CONFIRM_PAID, type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { ParseOutcome } from './parse/dispatch';
 import { placePayments, type PaymentShot, type PaymentStay } from './stay-payments';
 import { api, byFileName, sample, type Upload } from './test/api';
 import { type TestClient } from './test/harness';
-import { presetParser, sha256 } from './test/parse-presets';
+import { presetParser } from './test/parse-presets';
+import { paymentScreenshots } from './test/payment-screenshots';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // ADR-0032: 支付截图 materials are placed with the stay they were paid in, and a stay's screenshots are checked by sum.
@@ -79,25 +76,20 @@ describe('placePayments', () => {
 // The screenshots' outcomes are known only once a test has made them, so each test starts its own server.
 let server: ScenarioServer | null = null;
 let alice: TestClient;
-const screenshots = new Map<string, ParseOutcome>();
-beforeEach(() => screenshots.clear());
+let shots = paymentScreenshots();
+beforeEach(() => {
+  shots = paymentScreenshots();
+});
 afterEach(async () => {
   await server?.close();
   server = null;
 });
 const client = api(() => alice);
-
-const base = readFileSync(join(GENERATED_DIR, 'print-pg1.png'));
-function screenshotUpload(name: string, values: Record<string, string>): Upload {
-  const bytes = Buffer.concat([base, Buffer.from(name)]);
-  const candidates = Object.entries(values).map(([key, value]) => ({ key, value, source: 'rule:payment_screenshot/labelled', parserVersion: '1', evidence: 'explicit' as const, refs: [] }));
-  screenshots.set(sha256(bytes), { outcome: 'recognised', kind: 'payment_screenshot', layout: 'labelled', parserVersion: '1', kindLabel: '支付截图', candidates, findings: [], missing: [] });
-  return { name, bytes, type: 'image/png' };
-}
+const screenshotUpload = (name: string, values: Record<string, string>) => shots.upload(name, values);
 
 // `stage`: where the inventory leaves the task — `project` when nothing is left to answer.
 async function inventory(uploads: Upload[], stage: 'pending' | 'project' = 'pending'): Promise<TaskSnapshot> {
-  server = await scenarioServer({ parser: presetParser(Object.fromEntries(screenshots)) });
+  server = await scenarioServer({ parser: presetParser(shots.outcomes) });
   alice = await server.signIn('alice');
   return (await scenario(server, alice).at(stage, { materials: ['m01', 'm02', ...uploads] })).reached;
 }

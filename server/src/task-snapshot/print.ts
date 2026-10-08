@@ -1,6 +1,6 @@
 import { PAYMENT_SCREENSHOT_CAP, STAY_TRIO_COPY, isStayScreenshotItem, screenshotGroupOf, type PaymentScreenshot, type PendingItem, type Placement, type PrintPage, type PrintSheet } from '@baox/contract';
 import { CATEGORIES } from '../parse/slots';
-import { headingOf, type PrintFacts, type SheetState, type StoredPage, type StoredPlacement } from '../print/facts';
+import { headingOf, printedScreenshots, type PrintFacts, type SheetState, type StoredPage, type StoredPlacement } from '../print/facts';
 import { droppedMaterialsNotice, extraPagesNotice, unrecordedScreenshotNotice } from '../print/layout';
 import type { StayTrio } from '../stay-trio';
 
@@ -23,7 +23,7 @@ export function withScreenshotGroups(items: readonly PendingItem[], facts: Pick<
 // (a confirmed absence), so print and inventory read one fact instead of judging the absence twice (#213). A 住宿 page
 // with no record still gets a notice rather than silence.
 export function printView(taskId: string, taskName: string, facts: PrintFacts, state: SheetState, trios: readonly StayTrio[] = []): { printSheet: PrintSheet; paymentScreenshots: PaymentScreenshot[] } {
-  const paymentScreenshots = facts.screenshots.map((shot) => ({ screenshotId: shot.screenshotId, voucherMaterialId: shot.voucherMaterialId, fileName: shot.fileName, url: fileUrl(taskId, shot.sha256) }));
+  const paymentScreenshots = printedScreenshots(facts).map((shot) => ({ screenshotId: shot.screenshotId, voucherMaterialId: shot.voucherMaterialId, fileName: shot.fileName, url: fileUrl(taskId, shot.sha256) }));
   const render = facts.render;
   const recorded = new Map(trios.flatMap((trio) => (trio.invoiceId ? [[trio.invoiceId, trio] as const] : [])));
   // A 住宿 page says so when its invoice has no screenshot anywhere on the sheet (its own bottom half or its continuation page).

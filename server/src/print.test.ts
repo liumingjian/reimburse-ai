@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { blobPath } from './data-dir';
 import { api, byFileName, sample } from './test/api';
 import { presetParser } from './test/parse-presets';
+import { paymentScreenshots } from './test/payment-screenshots';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
@@ -279,6 +280,41 @@ describe('支付截图 on the sheet', () => {
 
 // #312: the medium is what recognition sniffs from the bytes at upload, not what the name or MIME declares. A taxi
 // photo saved as `.pdf` is listed and printed as the image it is, and does not jump the PDFs-first parse order.
+// ADR-0032: 支付截图 materials print with the invoice inventory placed them with, as many continuation pages as they fill.
+describe('支付截图 materials on the sheet', () => {
+  async function confirmedWith(count: number) {
+    const shots = paymentScreenshots();
+    // Each pays an equal part of the 3640.00 stay on its first night, so the stay is complete by sum.
+    const uploads = Array.from({ length: count }, (_, n) => shots.upload(`付款${n + 1}.png`, { amount: (3640 / count).toFixed(2), payDate: '2026-08-09', payTime: `12:00:${String(n).padStart(2, '0')}` }));
+    await server.close();
+    server = await scenarioServer({ parser: presetParser(shots.outcomes) });
+    alice = await server.signIn('alice');
+    const ready = (await scenario(server, alice).at('actions', { materials: ['m01', 'm02', ...uploads] })).reached;
+    return { ready, group: uploads.map((upload) => byFileName(ready, upload.name).materialId) };
+  }
+
+  it('one prints beside the folio', async () => {
+    const { ready, group } = await confirmedWith(1);
+    const sheet = (await client.accepted(await print(ready, 'generate-print-sheet'))).printSheet;
+    expect(sheet.pages.map((page) => [page.kind, page.bottom?.fileName ?? null, page.screenshotIds])).toEqual([['voucher', sample('m02').name, group]]);
+    expect(sheet.notices).toEqual([]);
+  }, 120_000);
+
+  it('eight fill one continuation page and start a second, in upload order', async () => {
+    const { ready, group } = await confirmedWith(8);
+    expect(ready.paymentScreenshots.map((shot) => shot.screenshotId)).toEqual(group);
+    const sheet = (await client.accepted(await print(ready, 'generate-print-sheet'))).printSheet;
+    const header = 'No.1 支付截图（续） · 全季酒店（上海某某店） · 3640.00';
+    expect(sheet.pages.map((page) => [page.kind, page.header, page.screenshotIds])).toEqual([
+      ['voucher', 'No.1 · 08-09 · 住宿 · 3640.00', []],
+      ['screenshots', header, group.slice(0, 6)],
+      ['screenshots', header, group.slice(6)],
+    ]);
+    expect(sheet.notices).toEqual([]);
+    expect((await download(sheet.url ?? '')).getPageCount()).toBe(3);
+  }, 180_000);
+});
+
 describe('a material mislabelled as a PDF', () => {
   const photoAsPdf = () => ({ ...sample('m09'), name: '出租车票.pdf', type: 'application/pdf' });
 
