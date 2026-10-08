@@ -12,6 +12,8 @@ With no model in the loop, rule parsers and the user are the only producers of �
   - `taxi_receipt`.
 
   A layout parser belongs to one kind and only recognises and extracts. The v1 layouts are `vat_invoice/einvoice`, `rail_ticket/12306`, `ride_itinerary/amap`, `hotel_folio/labelled` and `taxi_receipt/machine_printed`. Supporting 滴滴 (Didi) itineraries takes one new layout module and one registry line. A folio layout recognises on the folio's own field labels, not a chain name, so it covers every chain (#211, #212). A new kind, such as meal receipts or supplies, also needs a category and an ERP mapping, so it is outside v1.
+
+  *Amended 2026-10-08 ([#356](https://github.com/liumingjian/reimburse-ai/issues/356)).* Dining (餐饮) is admitted deliberately, as 招待费 (hospitality). v1 now has seven kinds: the five above, `payment_screenshot` (ADR-0032) and `dining_receipt`, the 餐饮小票 (a restaurant's itemised checkout slip). Its role is reference, like `hotel_folio`. It has one layout, `dining_receipt/labelled`, which recognises only when all three hold: a receipt-style title (结账单, 消费小票, 消费清单, 顾客联), an amount labelled 实付, 实收, 应付 or 合计, and none of the folio anchors (入住日期, 离店日期, 房号). The `hotel_folio/labelled` layout is unchanged, and the two never both match one document. Only `paidAmount` is required; when a slip prints both an original total and an amount paid, the amount paid is taken. Merchant, date and time, original total and discount are optional, and nothing is back-calculated. The category it brings, `hospitality`, maps to FY009001, recorded as `user_declared` until a real ERP save reads it back. Supplies stay outside v1.
 - **Dispatch.** Each layout exposes `recognise(doc)` and `parse(doc)`. `recognise` matches on hard anchors only. When exactly one layout matches, it parses. When none matches, the material is unrecognised. When several match, a blocking pending item is raised. First match wins no longer holds; it was the rule in `50931a3:kernel/src/parse.mjs` and in `extractDocument`. A recognised layout with missing fields raises `missing_required`; that material still counts as recognised.
 - **Input.** Parsers read one source-agnostic model of positioned 文字观测 (text observations). The PDF adapter (unpdf) and the OCR adapter (`onnxruntime-node`, in-process per [#147](https://github.com/liumingjian/reimburse-ai/issues/147)) both produce it. NFKC normalisation, perspective correction of the taxi photo and QR decoding run before parsing. Shared layout helpers live in a module inside `server/`, which is their only consumer.
 - **Candidates.** The shape follows [#20](https://github.com/liumingjian/reimburse-ai/issues/20).
@@ -41,11 +43,17 @@ With no model in the loop, rule parsers and the user are the only producers of �
   - `hotel_folio/labelled`: PDF and image. Each value is read by position from its label: right of it within half a text height, else directly below within one text height.
   - `taxi_receipt/machine_printed`: photo.
 
+  - `dining_receipt/labelled`: PDF and photo (*amended 2026-10-08*, #356).
+
   Anything else is unrecognised, including 曹操出行 (Caocao) itineraries, road tickets and other vouchers. Payment screenshots are never parsed. They appear on the print sheet, and at inventory only their presence is checked, for the 住宿 (accommodation) trio of invoice, folio and screenshot ([#213](https://github.com/liumingjian/reimburse-ai/issues/213)).
 
   *Amended 2026-10-08 by ADR-0032.* Payment screenshots are parsed: a sixth kind, `payment_screenshot`, with one layout, `payment_screenshot/labelled` (image), assigned to 住宿 invoices by payment date and checked by sum.
 
   `vat_invoice/einvoice` recognises an invoice when **at least one** item row names a v1 税收分类 (tax class), not when every row does: a real ride-hailing invoice bundles a 服务费 or 经纪代理服务 row beside the ride, and the whole invoice is not thrown away over it. The accepted classes are the fine ones, `住宿服务` and `运输服务`, and the parent ones, `生产生活服务` and `交通运输服务`, the parents only together with a description that names the v1 service (`住宿费`, `客运服务费`) — a parent class covers freight and much else besides. The categories are unchanged: no 费用类别 (expense category) and no 材料种类 (material kind) is added to this matrix.
+
+  *Amended 2026-10-08 (#356).* The input set gains the dining invoice and the 餐饮小票. `vat_invoice/einvoice` also accepts the fine class `餐饮服务`, which derives the category `hospitality` (招待费); an invoice for anything else, such as office supplies, stays unrecognised. A dining invoice and its 餐饮小票 pair one to one, and the invoice's 价税合计 must equal the slip's amount paid to the cent; merchant and date are not compared. Both are required: a dining invoice with no slip, a slip whose amount does not match, and a slip with no invoice each raise a blocking 待确认项 whose only answers are to supply the material or exclude, with no 「确认没有」 and no payment screenshot. The hotel invoice and 结账单 pair by the same one-to-one, exact-to-the-cent matcher, so lodging behaves as before.
+
+  **Known gap.** Every `*餐饮服务*` invoice is hospitality. A travel meal or an overtime meal cannot yet be claimed under any other expense item: the invoice face does not say which kind of meal it was, and the category is derived, never chosen (ADR-0006). Letting the user choose would reopen ADR-0006 for one category; deferring it keeps dining to a single rule until the company asks for meals under another item.
 
 ## Considered Options
 
@@ -76,6 +84,8 @@ With no model in the loop, rule parsers and the user are the only producers of �
   - `rail_ticket`: m07, m08; r204 (a trip row with a seat cell, 票价 apart from its amount);
   - `taxi_receipt`: m09, m10;
   - unrecognised: m06, m11.
+
+  *Amended 2026-10-08 (#356).* m11 becomes the supported dining invoice, and a new office-supplies invoice takes its place as the unrecognised one; synthetic 餐饮小票 fixtures (matching, mismatched, discounted, photo) cover `dining_receipt/labelled` until real samples join the private corpus.
 
   Private samples run through `test:private`, which gates per layout, medium and field (#196): text-layer PDFs must
   be 100% recognised and 100% right per field; OCR images at least 98% (`server/src/quality/private-gate.ts`).
