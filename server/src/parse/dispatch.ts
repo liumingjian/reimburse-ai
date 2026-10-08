@@ -1,6 +1,7 @@
 import type { MaterialKind } from '@baox/contract';
 import type { ParseDoc } from './doc';
 import { layoutId, type Candidate, type Finding, type Layout } from './layout';
+import { cluesOf, type Clues } from './clues';
 import { SLOTS } from './slots';
 
 // Hard-anchor dispatch (ADR-0017): exactly one recognising layout parses; none → unrecognised; several → ambiguous,
@@ -20,7 +21,8 @@ export type Recognised = {
   // Required slots of the kind that no candidate fills: `missing_required`.
   missing: string[];
 };
-export type Unrecognised = { outcome: 'unrecognised'; reason: 'no_layout' | 'unreadable_document' };
+// `clues`: the amounts and dates of a document no layout claims (`clues.ts`); outcomes stored before #341 lack them.
+export type Unrecognised = { outcome: 'unrecognised'; reason: 'no_layout' | 'unreadable_document'; clues?: Clues };
 // Each matching layout's parse is kept, so answering the ambiguity with a layout (#187) resolves the material without
 // parsing again. Outcomes stored before #187 lack it; choosing a layout for them then needs a new inventory run.
 export type Ambiguous = { outcome: 'ambiguous'; layouts: { id: string; label: string; recognised?: Recognised }[] };
@@ -31,7 +33,7 @@ export type ParseOutcome = Recognised | Unrecognised | Ambiguous | Failed;
 export function dispatch(doc: ParseDoc, layouts: readonly Layout[]): ParseOutcome {
   const matches = layouts.filter((layout) => layout.recognise(doc));
   const [layout] = matches;
-  if (!layout) return { outcome: 'unrecognised', reason: 'no_layout' };
+  if (!layout) return { outcome: 'unrecognised', reason: 'no_layout', clues: cluesOf(doc) };
   if (matches.length > 1) {
     return {
       outcome: 'ambiguous',

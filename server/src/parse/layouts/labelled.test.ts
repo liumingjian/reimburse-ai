@@ -107,10 +107,10 @@ describe('hotel_folio/labelled recognition anchors', () => {
     expect(recognised(photo(STAY('2026-08-09', '2026-08-22'))).layout).toBe('labelled');
     for (const label of ['入住日期', '离店日期', '房号', '消费合计']) {
       const doc = photo(STAY('2026-08-09', '2026-08-22').filter(([l]) => l !== label));
-      expect(dispatch(doc, LAYOUTS), label).toEqual({ outcome: 'unrecognised', reason: 'no_layout' });
+      expect(dispatch(doc, LAYOUTS), label).toMatchObject({ outcome: 'unrecognised', reason: 'no_layout' });
     }
     const untitled = photo(STAY('2026-08-09', '2026-08-22'));
-    expect(dispatch({ ...untitled, observations: untitled.observations.filter((o) => o.text !== '结账单') }, LAYOUTS)).toEqual({ outcome: 'unrecognised', reason: 'no_layout' });
+    expect(dispatch({ ...untitled, observations: untitled.observations.filter((o) => o.text !== '结账单') }, LAYOUTS)).toMatchObject({ outcome: 'unrecognised', reason: 'no_layout' });
   });
 
   it('leaves a 结账单 without accommodation labels unrecognised: the title alone never recognises', () => {
@@ -119,15 +119,15 @@ describe('hotel_folio/labelled recognition anchors', () => {
       ['人数', '4'],
       ['合计', '386.00'],
     ]);
-    expect(dispatch(restaurant, LAYOUTS)).toEqual({ outcome: 'unrecognised', reason: 'no_layout' });
+    expect(dispatch(restaurant, LAYOUTS)).toMatchObject({ outcome: 'unrecognised', reason: 'no_layout' });
     const stripped = folioDoc().observations.filter((o) => !/^(入住日期|离店日期|房号|消费合计)/.test(o.text));
-    expect(dispatch({ ...folioDoc(), observations: stripped }, LAYOUTS)).toEqual({ outcome: 'unrecognised', reason: 'no_layout' });
+    expect(dispatch({ ...folioDoc(), observations: stripped }, LAYOUTS)).toMatchObject({ outcome: 'unrecognised', reason: 'no_layout' });
   });
 
   it('anchors on the label itself, not on a longer word that starts with it', () => {
     const renamed = (from: string, to: string) => photo(STAY('2026-08-09', '2026-08-22').map(([label, value]) => [label === from ? to : label, value] as const));
-    expect(dispatch(renamed('房号', '房号类型'), LAYOUTS)).toEqual({ outcome: 'unrecognised', reason: 'no_layout' });
-    expect(dispatch(renamed('消费合计', '消费合计金额'), LAYOUTS)).toEqual({ outcome: 'unrecognised', reason: 'no_layout' });
+    expect(dispatch(renamed('房号', '房号类型'), LAYOUTS)).toMatchObject({ outcome: 'unrecognised', reason: 'no_layout' });
+    expect(dispatch(renamed('消费合计', '消费合计金额'), LAYOUTS)).toMatchObject({ outcome: 'unrecognised', reason: 'no_layout' });
     // The label with its colon, alone or with its value in one run, is still the label.
     expect(values(recognised(renamed('房号', '房号:')))).toMatchObject({ roomNumber: '0816' });
     const joined = photo(STAY('2026-08-09', '2026-08-22').map(([label, value]) => (label === '房号' ? (['房号：0816', null] as const) : ([label, value] as const))));
@@ -144,7 +144,7 @@ describe('hotel_folio/labelled recognition anchors', () => {
   it('anchors on the title box, not on any box that starts with 结账单', () => {
     const doc = photo(STAY('2026-08-09', '2026-08-22'));
     const retitled = (title: string) => ({ ...doc, observations: doc.observations.map((o) => (o.text === '结账单' ? { ...o, text: title, raw: title } : o)) });
-    expect(dispatch(retitled('结账单号:20260822001'), LAYOUTS)).toEqual({ outcome: 'unrecognised', reason: 'no_layout' });
+    expect(dispatch(retitled('结账单号:20260822001'), LAYOUTS)).toMatchObject({ outcome: 'unrecognised', reason: 'no_layout' });
     expect(recognised(retitled('结账单 GUEST FOLIO')).layout).toBe('labelled');
   });
 });

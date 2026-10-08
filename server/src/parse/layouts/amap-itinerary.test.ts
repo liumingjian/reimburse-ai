@@ -39,7 +39,7 @@ describe('ride_itinerary/amap', () => {
     const doc = caseDoc('fixture-m04-amap-itinerary');
     expect(LAYOUTS.filter((layout) => layout.recognise(doc)).map((layout) => layout.name)).toEqual(['amap']);
     for (const name of ['fixture-m06-caocao-itinerary', 'fixture-m03-amap-invoice', 'fixture-m07-rail-0809']) expect(amapItinerary.recognise(caseDoc(name))).toBe(false);
-    expect(dispatch(caseDoc('fixture-m06-caocao-itinerary'), LAYOUTS)).toEqual({ outcome: 'unrecognised', reason: 'no_layout' });
+    expect(dispatch(caseDoc('fixture-m06-caocao-itinerary'), LAYOUTS)).toMatchObject({ outcome: 'unrecognised', reason: 'no_layout' });
   });
 
   it('reads the same observations from an image (the OCR adapter, #186, fills the same model)', () => {
