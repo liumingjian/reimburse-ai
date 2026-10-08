@@ -43,6 +43,8 @@ With no model in the loop, rule parsers and the user are the only producers of �
 
   Anything else is unrecognised, including 曹操出行 (Caocao) itineraries, road tickets and other vouchers. Payment screenshots are never parsed. They appear on the print sheet, and at inventory only their presence is checked, for the 住宿 (accommodation) trio of invoice, folio and screenshot ([#213](https://github.com/liumingjian/reimburse-ai/issues/213)).
 
+  *Amended 2026-10-08 by ADR-0032.* Payment screenshots are parsed: a sixth kind, `payment_screenshot`, with one layout, `payment_screenshot/labelled` (image), assigned to 住宿 invoices by payment date and checked by sum.
+
   `vat_invoice/einvoice` recognises an invoice when **at least one** item row names a v1 税收分类 (tax class), not when every row does: a real ride-hailing invoice bundles a 服务费 or 经纪代理服务 row beside the ride, and the whole invoice is not thrown away over it. The accepted classes are the fine ones, `住宿服务` and `运输服务`, and the parent ones, `生产生活服务` and `交通运输服务`, the parents only together with a description that names the v1 service (`住宿费`, `客运服务费`) — a parent class covers freight and much else besides. The categories are unchanged: no 费用类别 (expense category) and no 材料种类 (material kind) is added to this matrix.
 
 ## Considered Options
