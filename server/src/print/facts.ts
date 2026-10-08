@@ -63,8 +63,12 @@ export type PrintFacts = {
   render: Render | null;
   // Latest rotation / corners per material.
   settings: ReadonlyMap<string, PrintSetting>;
-  // Every current screenshot, in upload order; a voucher's group is its entries here (#331).
+  // Every current screenshot in the `payment_screenshot` table, in upload order; a voucher's group is its entries here
+  // (#331). Only these can be removed or declared complete.
   screenshots: readonly Screenshot[];
+  // The 支付截图 materials inventory placed with a 住宿 invoice (ADR-0032), in upload order; `screenshotId` is the
+  // material's id. They print after the invoice's table group.
+  placed: readonly Screenshot[];
   // The vouchers whose group the filer declared complete (「已传齐」) and that is not empty.
   completeGroups: ReadonlySet<string>;
 };
@@ -81,8 +85,11 @@ export async function loadPrintFacts(tx: Db, taskId: string): Promise<PrintFacts
     if (row.corners !== null) setting.corners = JSON.parse(row.corners) as Corners;
     settings.set(row.material_id, setting);
   }
-  return { render, settings, ...(await screenshotGroups(tx, taskId)) };
+  return { render, settings, placed: [], ...(await screenshotGroups(tx, taskId)) };
 }
+
+// Every screenshot the sheet prints: each invoice's table group, then the materials placed with it.
+export const printedScreenshots = (facts: Pick<PrintFacts, 'screenshots' | 'placed'>): Screenshot[] => [...facts.screenshots, ...facts.placed];
 
 // A voucher's 支付截图 group (#331), replayed in revision order: an upload joins the group, a removal leaves it, and a
 // declaration (「已传齐」) marks it complete. An emptied group is no longer complete: it needs a new declaration once
@@ -153,7 +160,7 @@ export function screenshotGroupsOf(facts: Pick<PrintFacts, 'screenshots' | 'comp
 export function sheetState(facts: PrintFacts, confirmation: 'unconfirmed' | 'confirmed' | 'invalidated', confirmedRevision: number | null): SheetState {
   if (!facts.render) return 'not_generated';
   if (confirmation !== 'confirmed' || facts.render.confirmationRevision !== confirmedRevision) return 'stale';
-  return printsCurrentGroups(facts.render, facts.screenshots) ? 'generated' : 'stale';
+  return printsCurrentGroups(facts.render, printedScreenshots(facts)) ? 'generated' : 'stale';
 }
 
 function printsCurrentGroups(render: Render, screenshots: readonly Screenshot[]): boolean {
