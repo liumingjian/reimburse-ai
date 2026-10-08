@@ -20,16 +20,16 @@ async function inventoryOf(files: string[]) {
 }
 
 describe('mock 服务端：新建任务命名与示例材料识别', () => {
-  test('示例材料对照表与识别档案一致（11 份，m01 到 m11）', () => {
-    expect(SAMPLES).toHaveLength(11);
+  test('示例材料对照表与识别档案一致（12 份，m01 到 m12）', () => {
+    expect(SAMPLES).toHaveLength(12);
     expect(SAMPLES.map((sample) => [sample.file, sample.fileName])).toEqual(Object.values(PROFILES).map((profile) => [profile.file, profile.fileName]));
   });
 
-  test('创建时是占位名称；按业务文件名上传 11 份后盘点，名称不变（同服务端）并给出费用期间，待确认项 4 个（含住宿发票缺支付截图）', async () => {
+  test('创建时是占位名称；按业务文件名上传 12 份后盘点，名称不变（同服务端）并给出费用期间，待确认项 5 个（含住宿发票缺支付截图、餐饮发票缺餐饮小票）', async () => {
     const { snapshot } = await inventoryOf(SAMPLES.map((sample) => sample.fileName));
     expect(snapshot.task.name).toMatch(/^\d{4}-\d{2}-\d{2} 新建报销$/);
     expect(snapshot.task.period).toEqual({ start: '2026-08-09', end: '2026-08-22' });
-    expect(snapshot.pendingItems.filter((item) => item.status === 'open')).toHaveLength(4);
+    expect(snapshot.pendingItems.filter((item) => item.status === 'open')).toHaveLength(5);
     expect(snapshot.materials.filter((material) => material.kindLabel === '未识别版式')).toHaveLength(1);
   });
 
@@ -47,8 +47,20 @@ describe('mock 服务端：新建任务命名与示例材料识别', () => {
   test('按示例原件文件名（m01-hotel-invoice.pdf 等）上传也能识别', async () => {
     const { snapshot } = await inventoryOf(SAMPLES.map((sample) => sample.file));
     expect(snapshot.task.period).toEqual({ start: '2026-08-09', end: '2026-08-22' });
-    expect(snapshot.pendingItems).toHaveLength(4);
-    expect(snapshot.events).toHaveLength(9);
+    expect(snapshot.pendingItems).toHaveLength(5);
+    expect(snapshot.events).toHaveLength(10);
+  });
+
+  test('餐饮发票形成招待费明细，缺餐饮小票只能排除；排除后明细随之去掉（同服务端，#356）', async () => {
+    const { adapter, snapshot } = await inventoryOf(['餐饮_发票.pdf']);
+    expect(snapshot.lines.map((line) => [line.category, line.expenseItemCode])).toEqual([[{ code: 'hospitality', label: '招待费' }, 'FY009001']]);
+    const [item] = snapshot.pendingItems;
+    expect(item).toMatchObject({ title: '餐饮发票「餐饮_发票.pdf」缺少餐饮小票', status: 'open' });
+    expect(item?.choices.map((choice) => choice.key)).toEqual(['exclude']);
+    const answered = await adapter.answerPendingItem(snapshot.task.taskId, item?.itemId ?? '', { choice: 'exclude' }, snapshot.step.stepToken);
+    if (!answered.ok) throw new Error(answered.error.message);
+    expect(answered.snapshot.materials[0]?.status).toBe('excluded');
+    expect(answered.snapshot.lines).toEqual([]);
   });
 
   test('不认识的文件仍成为「不支持的材料类型」待确认项，名称保持占位', async () => {

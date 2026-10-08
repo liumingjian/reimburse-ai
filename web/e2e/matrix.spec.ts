@@ -70,7 +70,7 @@ const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = 
     await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles([pdf('铁路电子客票_0809.pdf')]);
     await expect(page.getByRole('heading', { name: /^上传批次 #1$/ })).toBeVisible();
     await page.getByRole('button', { name: '追加下一批' }).click();
-    await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles([pdf('铁路电子客票_0822.pdf'), pdf('餐饮_发票.pdf')]);
+    await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles([pdf('铁路电子客票_0822.pdf'), pdf('办公用品_发票.pdf')]);
     await expect(page.getByText(/^内容重复/)).toBeVisible();
     await expect(page.getByRole('heading', { name: '上传批次 #2' })).toBeVisible();
   },

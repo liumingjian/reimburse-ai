@@ -57,9 +57,9 @@ test('?location=unavailable：常驻城市没有默认值，提示直接填写�
   await expect(dialog(page).getByText('上次确认的常驻城市（按你的账号记住），可直接修改。')).toBeVisible();
 });
 
-test('全流程 QA：弹层创建任务，上传 sample-materials 的 11 份材料，盘点后 4 个待确认项，任务名称保持占位（同服务端）并有费用期间', async ({ page }, testInfo) => {
+test('全流程 QA：弹层创建任务，上传 sample-materials 的 12 份材料，盘点后 5 个待确认项，任务名称保持占位（同服务端）并有费用期间', async ({ page }, testInfo) => {
   const files = readdirSync(SAMPLES_DIR).map((name) => join(SAMPLES_DIR, name));
-  expect(files).toHaveLength(11);
+  expect(files).toHaveLength(12);
 
   await page.goto(open('', '#/tasks/new'));
   await dialog(page).getByRole('button', { name: '创建并上传材料' }).click();
@@ -70,7 +70,7 @@ test('全流程 QA：弹层创建任务，上传 sample-materials 的 11 份材�
   await expect(page.getByRole('heading', { name: /^上传批次 #1$/ })).toHaveText('上传批次 #1');
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/inventory$/);
-  await expect(page.getByRole('link', { name: '处理 4 个待确认项' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('link', { name: '处理 5 个待确认项' })).toBeVisible({ timeout: 15_000 });
   // The server never renames a task; the placeholder name stays.
   await expect(page.getByText(/^\d{4}-\d{2}-\d{2} 新建报销$/).first()).toBeVisible();
   await expect(page.getByText('未识别版式')).toHaveCount(1);

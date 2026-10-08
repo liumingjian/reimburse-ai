@@ -612,6 +612,18 @@ export const PAYMENT_COPY = {
   remove: '不属于住宿（移除）',
 } as const;
 
+// 餐饮 (dining, #356): a dining invoice (招待费) is never claimed on the invoice alone; it needs its 餐饮小票. Until it
+// has one, inventory raises a blocking item on the invoice, `<code>.<invoice materialId>`. There is no 确认没有: the
+// only answer is exclusion. All filer-facing wording of the check lives here.
+export const DINING_ITEM_CODES = { receiptMissing: 'dining_receipt_missing' } as const;
+export const DINING_COPY = {
+  receiptMissing: {
+    title: (invoiceFileName: string) => `餐饮发票「${invoiceFileName}」缺少餐饮小票`,
+    why: (totalAmount: string | undefined) =>
+      `餐饮报销要发票和餐饮小票两样，光有发票不能报销。这张餐饮发票${amountNote('价税合计', totalAmount)}没有配对到餐饮小票，也不能确认没有：没有餐饮小票，就排除这张发票。`,
+  },
+} as const;
+
 export const PaymentScreenshotSchema = z.object({
   screenshotId: IdSchema,
   voucherMaterialId: IdSchema,

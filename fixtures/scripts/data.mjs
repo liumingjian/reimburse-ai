@@ -282,9 +282,10 @@ export const TAXI_0819 = {
   faded: true,
 };
 
-export const OTHER_INVOICE = {
+// A dining (餐饮) invoice: recognised as 招待费 (hospitality, #356), and blocked until its 餐饮小票 arrives.
+export const DINING_INVOICE = {
   id: 'm11',
-  file: 'm11-other-invoice.pdf',
+  file: 'm11-dining-invoice.pdf',
   title: '电子发票（普通发票）',
   number: '26312000000103317790',
   date: '2026年08月14日',
@@ -296,8 +297,23 @@ export const OTHER_INVOICE = {
   grossWords: '贰佰肆拾圆整',
 };
 
+// An office-supplies invoice: outside the supported expenses, so it stays unrecognised (#359).
+export const OFFICE_INVOICE = {
+  id: 'm12',
+  file: 'm12-office-invoice.pdf',
+  title: '电子发票（普通发票）',
+  number: '26312000000105523361',
+  date: '2026年08月18日',
+  seller: { name: '上海某某办公用品有限公司', taxNo: '91310000WWWWWWWW0F' },
+  rows: [{ name: '*文具*签字笔', unit: '盒', qty: '2', price: '42.48', net: '84.96', rate: '13%', tax: '11.04' }],
+  net: '84.96',
+  tax: '11.04',
+  gross: '96.00',
+  grossWords: '玖拾陆圆整',
+};
+
 // ---- Regression fixtures: the text-run splits of a real PDF (#200) ----
-// The sample materials (m01…m11) draw one text run per anchor; a real invoice does not — a label and its value are
+// The sample materials (m01…m12) draw one text run per anchor; a real invoice does not — a label and its value are
 // usually two runs, and a title is often one run per glyph. These two fixtures reproduce those splits; the rest of the
 // layout matches the hotel invoice, so each uploads on its own with no folio needed.
 

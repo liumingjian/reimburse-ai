@@ -1,4 +1,6 @@
 import {
+  DINING_COPY,
+  DINING_ITEM_CODES,
   PENDING_CHOICE_KEY,
   STAY_TRIO_CONFIRM_NONE,
   STAY_TRIO_COPY,
@@ -20,7 +22,7 @@ import {
   stayTrioItemId,
 } from '@baox/contract';
 
-// 盘点结果夹具：11 份材料的识别结果、9 个费用事件、4 个待确认项（3 个按材料，外加住宿发票缺支付截图），以及答复后的候选明细。
+// 盘点结果夹具：12 份示例材料的识别结果、10 个费用事件、待确认项（按材料的，外加住宿发票缺支付截图、餐饮发票缺餐饮小票），以及答复后的候选明细。
 // 数字与人物沿用原型；文件对应 fixtures/generated/ 里由脚本生成的示例原件（fixtures/scripts/data.mjs 是同一份数据）。
 // mock 服务端按文件名把上传的材料对到这里的档案；对不上的材料形成「不支持的材料类型」待确认项。
 
@@ -36,8 +38,9 @@ export function inventoryPhases(materials: readonly Material[], status: Inventor
 
 export const FIXTURE_URL_BASE = 'fixtures/';
 
-const CATEGORY: Readonly<Record<'accommodation' | 'long_distance' | 'remote_city_transport', ExpenseCategory>> = {
+const CATEGORY: Readonly<Record<'accommodation' | 'hospitality' | 'long_distance' | 'remote_city_transport', ExpenseCategory>> = {
   accommodation: { code: 'accommodation', label: '住宿' },
+  hospitality: { code: 'hospitality', label: '招待费' },
   long_distance: { code: 'long_distance', label: '长途交通' },
   remote_city_transport: { code: 'remote_city_transport', label: '外地市内交通' },
 };
@@ -90,9 +93,10 @@ const IDENTITY: Readonly<Record<string, { kind: MaterialKind; layout: string }>>
   m08: { kind: 'rail_ticket', layout: '12306' },
   m09: { kind: 'taxi_receipt', layout: 'machine_printed' },
   m10: { kind: 'taxi_receipt', layout: 'machine_printed' },
+  m11: { kind: 'vat_invoice', layout: 'einvoice' },
 };
 
-// 以夹具材料 id（m01…m11）为键的识别档案。
+// 以夹具材料 id（m01…m12）为键的识别档案。
 export const PROFILES: Readonly<Record<string, Profile>> = {
   m01: {
     fileName: '全季酒店_发票.pdf',
@@ -290,16 +294,37 @@ export const PROFILES: Readonly<Record<string, Profile>> = {
       field('destination', '终点', '', RULE.taxi, 'missing'),
     ],
   },
+  // 餐饮发票（#356）：认作招待费，缺餐饮小票时拦住（服务端 dining.ts）。
   m11: {
     fileName: '餐饮_发票.pdf',
-    file: 'm11-other-invoice.pdf',
+    file: 'm11-dining-invoice.pdf',
+    kindLabel: '全电发票（普票）',
+    categoryLabel: '招待费',
+    role: 'primary_voucher',
+    shape: 'portrait',
+    mediaType: 'pdf',
+    status: 'ok',
+    checkText: '二维码核对一致：号码、日期、价税合计、普票',
+    linked: [],
+    fields: [
+      field('invoiceNumber', '发票号码', '26312000000103317790', RULE.vat),
+      field('issueDate', '开票日期', '2026-08-14', RULE.vat),
+      field('totalAmount', '价税合计', '240.00', RULE.vat),
+      field('netAmount', '不含税金额', '226.42', RULE.vat),
+      field('taxAmount', '税额', '13.58', RULE.vat),
+      field('sellerName', '销售方', '上海某某餐饮有限公司', RULE.vat),
+    ],
+  },
+  m12: {
+    fileName: '办公用品_发票.pdf',
+    file: 'm12-office-invoice.pdf',
     kindLabel: '未识别版式',
     categoryLabel: null,
     role: 'pending',
     shape: 'portrait',
     mediaType: 'pdf',
     status: 'pending',
-    checkText: '不属于住宿、网约车、高铁、出租车四类',
+    checkText: '不属于住宿、网约车、高铁、出租车、餐饮五类',
     linked: [],
     fields: [],
   },
@@ -349,10 +374,11 @@ const EVENTS: readonly EventTemplate[] = [
   { voucher: 'm08', refs: [], category: CATEGORY.long_distance, summary: 'G7539 上海虹桥 → 杭州东', evidenceNote: '一张铁路电子客票就是一次费用；无需参考材料', date: '2026-08-22', endDate: null, city: null, origin: '上海虹桥', destination: '杭州东', gross: '73.00', net: '73.00', tax: '0.00', invoiceType: '火车票' },
   { voucher: 'm09', refs: [], category: CATEGORY.remote_city_transport, summary: '出租车（上海）', evidenceNote: '纸质车票无参考材料；起点与终点待补填', date: '2026-08-15', endDate: null, city: '上海', origin: null, destination: null, gross: '32.00', net: '32.00', tax: '0.00', invoiceType: '普通发票' },
   { voucher: 'm10', refs: [], category: CATEGORY.remote_city_transport, summary: '出租车（上海）', evidenceNote: '纸质车票无参考材料；下车时间待修正，起点与终点待补填', date: '2026-08-19', endDate: null, city: '上海', origin: null, destination: null, gross: '47.00', net: '47.00', tax: '0.00', invoiceType: '普通发票' },
+  { voucher: 'm11', refs: [], category: CATEGORY.hospitality, summary: '餐费 · 上海某某餐饮有限公司', evidenceNote: null, date: '2026-08-14', endDate: null, city: null, origin: null, destination: null, gross: '240.00', net: '226.42', tax: '13.58', invoiceType: '普通发票' },
 ];
 
 // 内核确认表的费用分类顺序（next.mjs:520-521）：统一业务序号按它排，同一分类内保持事件顺序（排序是稳定的）。
-const CATEGORY_ORDER: readonly string[] = ['local_city_transport', 'remote_city_transport', 'long_distance', 'accommodation'];
+const CATEGORY_ORDER: readonly string[] = ['local_city_transport', 'remote_city_transport', 'long_distance', 'accommodation', 'hospitality'];
 function categoryRank(code: string): number {
   const index = CATEGORY_ORDER.indexOf(code);
   return index === -1 ? CATEGORY_ORDER.length : index;
@@ -397,9 +423,9 @@ const PENDING_TEMPLATES: Readonly<Record<string, PendingTemplate>> = {
     screenshotGroup: null,
     manualKinds: [],
   },
-  m11: {
+  m12: {
     title: '不支持的材料类型',
-    why: '第一版只处理住宿、网约车、高铁、出租车四类材料。这份发票不会被猜费用类别，请选择排除，或自行手工处理后再回来。',
+    why: '第一版只处理住宿、网约车、高铁、出租车、餐饮五类材料。这份发票不会被猜费用类别，请选择排除，或自行手工处理后再回来。',
     kind: 'choice',
     resolver: '要你处理',
     fields: [],
@@ -517,6 +543,8 @@ function allocationTemplate(fileName: string): PendingTemplate {
 export const SEED_ANSWERS: Readonly<Record<string, PendingAnswer>> = {
   m09: { origin: '张江高科', destination: '漕河泾开发区' },
   m10: { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' },
+  m12: { [PENDING_CHOICE_KEY]: 'exclude' },
+  // 餐饮发票缺餐饮小票（#356）：只能排除。
   m11: { [PENDING_CHOICE_KEY]: 'exclude' },
   // 仅在 `?fault=unsupported-material` 下存在的待确认项。
   m06: { [PENDING_CHOICE_KEY]: 'exclude' },
@@ -620,6 +648,30 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
     voucher.pendingItemIds = [...voucher.pendingItemIds, itemId];
     if (!completeScreenshots.has(voucher.materialId)) voucher.status = 'pending';
   }
+  // 餐饮发票缺餐饮小票（#356，服务端 dining.ts）：没有「确认没有」，只能排除。
+  for (const template of EVENTS) {
+    const voucher = materials.find((material) => material.materialId === actualOf.get(template.voucher));
+    if (template.category.code !== 'hospitality' || !voucher) continue;
+    const copy = DINING_COPY.receiptMissing;
+    const itemId = `${DINING_ITEM_CODES.receiptMissing}.${voucher.materialId}`;
+    pendingItems.push({
+      itemId,
+      materialId: voucher.materialId,
+      title: copy.title(voucher.fileName),
+      why: copy.why(template.gross),
+      kind: 'choice',
+      resolver: '要你处理',
+      fields: [],
+      choices: [{ key: 'exclude', label: '排除这份材料' }],
+      allocation: null,
+      screenshotGroup: null,
+      manualKinds: [],
+      status: 'open',
+      answer: null,
+    });
+    voucher.pendingItemIds = [...voucher.pendingItemIds, itemId];
+    voucher.status = 'pending';
+  }
   const events: ExpenseEvent[] = [];
   let amapSegment = 0;
   EVENTS.forEach((template, index) => {
@@ -651,7 +703,7 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
       grossAmount,
     });
   });
-  // 统一业务序号（mock 服务端给出，页面不排序）：本地市内交通 → 外地市内交通 → 长途交通 → 住宿，同一分类内保持事件顺序。
+  // 统一业务序号（mock 服务端给出，页面不排序）：本地市内交通 → 外地市内交通 → 长途交通 → 住宿 → 招待费，同一分类内保持事件顺序。
   events.sort((a, b) => categoryRank(a.category.code) - categoryRank(b.category.code));
   events.forEach((event, index) => {
     event.no = index + 1;
@@ -680,6 +732,13 @@ export function applyPendingAnswer(result: InventoryResult, item: PendingItem, a
     material.role = 'excluded';
     material.status = 'excluded';
     material.checkText = choice === 'manual' ? '已标记为自行手工处理：你会在报销系统里另行补录，应用不碰它' : '已排除：不进入明细，也不上传报销系统';
+    // 排除的发票不形成明细（同服务端）：去掉它的费用事件，其余重新编号。
+    if (result.events.some((event) => event.voucherMaterialId === material.materialId)) {
+      result.events.splice(0, result.events.length, ...result.events.filter((event) => event.voucherMaterialId !== material.materialId));
+      result.events.forEach((event, index) => {
+        event.no = index + 1;
+      });
+    }
     return;
   }
   for (const f of item.fields) {
@@ -800,6 +859,7 @@ const EXPENSE_ITEMS: Readonly<Record<string, { code: string; name: string }>> = 
   remote_city_transport: { code: 'FY020103', name: '外地市内交通费' },
   long_distance: { code: 'FY020101', name: '长途交通费' },
   accommodation: { code: 'FY020102', name: '住宿费' },
+  hospitality: { code: 'FY009001', name: '招待费' },
 };
 
 // 候选明细：一个费用事件一行，No. 沿用事件的统一业务序号（内核分类排序）。

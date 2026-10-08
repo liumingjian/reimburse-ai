@@ -28,8 +28,8 @@ test('左右分栏：原件预览随选中项切换，夹具文件能从 dist-mo
   await expect(page.getByRole('main')).not.toContainText('处理人');
 
   await item(page, '不支持的材料类型').click();
-  const frame = detail(page).locator('iframe[title="餐饮_发票.pdf 原件"]');
-  await expect(frame).toHaveAttribute('src', 'fixtures/m11-other-invoice.pdf');
+  const frame = detail(page).locator('iframe[title="办公用品_发票.pdf 原件"]');
+  await expect(frame).toHaveAttribute('src', 'fixtures/m12-office-invoice.pdf');
   await expect(detail(page).getByRole('button', { name: '排除此材料' })).toBeVisible();
 
   await item(page, '下车时间不合法').click();
