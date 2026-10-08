@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { HANDOVER_COMPLETED_NOTICE } from '@baox/contract';
 
-// spec #109 Testing Decisions：一条从登录到完成的全流程，用 dist-mock/sample-materials/ 的 11 份示例材料，其余都是 mock 默认值。
+// spec #109 Testing Decisions：一条从登录到完成的全流程，用 dist-mock/sample-materials/ 的 12 份示例材料，其余都是 mock 默认值。
 // 登录应用账号 → 新建任务 → 上传 → 盘点 → 待确认项 → 项目归属 → 报销信息核对与材料准备（自动）→ 整单确认
 // → 打印稿 → 去报销（写入报销系统）→ 完成。整条路径在同一个文档里走（只改 hash），mock 的内存状态一路保留。
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
@@ -18,10 +18,10 @@ async function jump(page: Page, hash: string) {
   }, hash);
 }
 
-test('全流程：从登录一路走到完成，上传 sample-materials 的 11 份材料', async ({ page }, testInfo) => {
+test('全流程：从登录一路走到完成，上传 sample-materials 的 12 份材料', async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   const files = readdirSync(SAMPLES_DIR).map((name) => join(SAMPLES_DIR, name));
-  expect(files).toHaveLength(11);
+  expect(files).toHaveLength(12);
 
   // 1. 登录应用账号（夹具账号，mock 密码）。
   await page.goto(`${INDEX}?auth=signed-out#/tasks`);
@@ -41,9 +41,9 @@ test('全流程：从登录一路走到完成，上传 sample-materials 的 11 �
   await expect(page.getByRole('heading', { name: /^上传批次 #1$/ })).toHaveText('上传批次 #1');
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/inventory$/);
-  await expect(page.getByRole('link', { name: '处理 4 个待确认项' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('link', { name: '处理 5 个待确认项' })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/^\d{4}-\d{2}-\d{2} 新建报销$/).first()).toBeVisible();
-  await page.getByRole('link', { name: '处理 4 个待确认项' }).click();
+  await page.getByRole('link', { name: '处理 5 个待确认项' }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/pending$/);
 
   // 4. 待确认项。
@@ -58,6 +58,10 @@ test('全流程：从登录一路走到完成，上传 sample-materials 的 11 �
   await detail.getByRole('button', { name: '保存并标记已处理' }).click();
   await detail.getByRole('button', { name: '排除此材料' }).click();
   await detail.getByRole('button', { name: '确认没有支付截图' }).click();
+  // 餐饮发票缺餐饮小票（#356）：没有「确认没有」，只能排除。
+  await expect(detail.getByRole('heading', { name: '餐饮发票「餐饮_发票.pdf」缺少餐饮小票' })).toBeVisible();
+  await expect(detail.getByRole('button', { name: /确认没有/ })).toHaveCount(0);
+  await detail.getByRole('button', { name: '排除这份材料' }).click();
   await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
 
   // 5. 项目归属（项目簿用夹具默认值）与报销事由。

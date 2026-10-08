@@ -26,10 +26,10 @@ const FIXTURE_FILES = [
   '铁路电子客票_0822.pdf',
   'IMG_4871.jpg',
   'IMG_4906.jpg',
-  '餐饮_发票.pdf',
+  '办公用品_发票.pdf',
 ];
 
-// 两张出租车票补填、不支持的餐饮发票排除、住宿发票确认没有支付截图（#213）。
+// 两张出租车票补填、不支持的办公用品发票排除、住宿发票确认没有支付截图（#213）。
 async function answerTheRest(page: Page) {
   await item(page, '补填起点与终点').click();
   await detail(page).getByLabel('起点 *').fill('张江高科');

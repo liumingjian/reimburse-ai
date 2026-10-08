@@ -256,8 +256,9 @@ export const einvoice: Layout = {
 
   recognise(doc) {
     const lines = joinedRows(doc, 1, ROW_TOLERANCE);
-    // v1 kinds cover lodging and ride-hailing only; an e-invoice for anything else (e.g. 餐饮) is not this layout. One
-    // such row is enough: real ride-hailing invoices bundle unrelated fee rows (服务费, 经纪代理服务) beside it.
+    // v1 kinds cover lodging, ride-hailing and dining (餐饮, #356) only; an e-invoice for anything else (e.g. office
+    // supplies) is not this layout. One such row is enough: real ride-hailing invoices bundle unrelated fee rows
+    // (服务费, 经纪代理服务) beside it.
     return Boolean(matchSpan(lines, TITLE) && matchSpan(lines, NUMBER)) && itemNames(lines).some((item) => vatItemCategory(item) !== null);
   },
 

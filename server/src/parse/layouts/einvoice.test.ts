@@ -64,7 +64,7 @@ describe('vat_invoice/einvoice', () => {
     expect(outcome.findings).toContainEqual({ kind: 'advisory', code: 'bundled_items', message: '这张发票还开了：*经纪代理服务*平台服务费，价税合计把它们一起算了。' });
 
     // Take the v1 service row away and nothing is left that this layout covers.
-    const noV1 = { ...doc, observations: doc.observations.map((o) => (o.text.includes('运输服务') ? { ...o, text: o.text.replace('运输服务', '餐饮服务') } : o)) };
+    const noV1 = { ...doc, observations: doc.observations.map((o) => (o.text.includes('运输服务') ? { ...o, text: o.text.replace('运输服务', '文具') } : o)) };
     expect(einvoice.recognise(noV1)).toBe(false);
   });
 
@@ -159,8 +159,9 @@ describe('vat_invoice/einvoice', () => {
     expect(values['sellerName']).toBe('上海某某酒店管理有限公司');
   });
 
-  it('does not recognise an e-invoice outside the v1 kinds (m11, 餐饮) or a document without the invoice title (m06)', () => {
-    expect(einvoice.recognise(caseDoc('fixture-m11-other-invoice'))).toBe(false);
+  it('recognises a 餐饮 invoice (m11, #356), but not one outside the v1 kinds (m12, office supplies) or a document without the invoice title (m06)', () => {
+    expect(einvoice.recognise(caseDoc('fixture-m11-dining-invoice'))).toBe(true);
+    expect(einvoice.recognise(caseDoc('fixture-m12-office-invoice'))).toBe(false);
     expect(einvoice.recognise(caseDoc('fixture-m06-caocao-itinerary'))).toBe(false);
   });
 

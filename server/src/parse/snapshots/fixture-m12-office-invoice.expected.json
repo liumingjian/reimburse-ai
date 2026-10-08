@@ -1,0 +1,4 @@
+{
+  "about": "@baox/fixtures m12: a fully-digitalised VAT e-invoice (全电发票) whose item, office supplies (*文具*), is outside the supported expenses; it takes over from m11 as the unsupported invoice (#359). @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "unrecognised"
+}

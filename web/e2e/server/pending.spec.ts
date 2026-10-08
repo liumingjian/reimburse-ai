@@ -30,29 +30,29 @@ async function inventoried(page: Page, files: readonly File[]): Promise<TaskSnap
 
 test('认不出的 PDF 选「手工补填」：在同一张表里选定材料种类、对照原件填写后，待确认项都处理完', async ({ page }) => {
   await signIn(page);
-  const catering = sample('m11');
-  const { task } = await inventoried(page, [catering]);
+  const office = sample('m12');
+  const { task } = await inventoried(page, [office]);
   await page.goto(`/#/task/${task.taskId}/pending`);
 
-  await expect(page.getByRole('heading', { name: `认不出「${catering.name}」` })).toBeVisible();
+  await expect(page.getByRole('heading', { name: `认不出「${office.name}」` })).toBeVisible();
   await page.getByRole('button', { name: '手工补填' }).click();
-  const form = page.getByRole('form', { name: `手工补填「${catering.name}」` });
+  const form = page.getByRole('form', { name: `手工补填「${office.name}」` });
   await form.getByLabel('材料种类 *').selectOption({ label: '全电发票' });
   const fill = (label: string, value: string) => form.getByLabel(`${label} *`, { exact: true }).fill(value);
-  await fill('发票号码', '26312000000103317790');
-  await fill('开票日期', '2026-08-14');
+  await fill('发票号码', '26312000000105523361');
+  await fill('开票日期', '2026-08-18');
   await fill('发票票种', '普票');
-  await fill('销售方名称', '上海某某餐饮有限公司');
-  await fill('项目名称', '*餐饮服务*餐费');
-  await fill('不含税金额', '226.42');
-  await fill('税额', '13.58');
-  await fill('价税合计', '240.00');
+  await fill('销售方名称', '上海某某办公用品有限公司');
+  await fill('项目名称', '*文具*签字笔');
+  await fill('不含税金额', '84.96');
+  await fill('税额', '11.04');
+  await fill('价税合计', '96.00');
   await form.getByRole('button', { name: '保存并标记已处理' }).click();
 
   await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
   const snapshot = await snapshotOf(await page.request.get(`/api/tasks/${task.taskId}`));
   expect(snapshot.materials[0]).toMatchObject({ kind: 'vat_invoice', layout: null, status: 'ok' });
-  expect(snapshot.materials[0]?.fields.find((field) => field.key === 'totalAmount')).toMatchObject({ value: '240.00', source: 'user', editClass: 'fact_correctable' });
+  expect(snapshot.materials[0]?.fields.find((field) => field.key === 'totalAmount')).toMatchObject({ value: '96.00', source: 'user', editClass: 'fact_correctable' });
 });
 
 test('同一张发票传了两份：重复发票只能排除，排除后留下一条明细', async ({ page }) => {

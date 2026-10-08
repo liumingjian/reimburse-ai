@@ -20,6 +20,8 @@ export const CATEGORIES = {
   // Undivided 市内交通: `deriveCategory` (rules/company-rules.ts) splits it into local / out-of-town from the expense
   // city and the task's home city; a line never carries this code.
   city_transport: { code: 'city_transport', label: '市内交通' },
+  // 招待费: every `*餐饮服务*` invoice (#356). A travel or overtime meal cannot be told apart on the face (ADR-0017).
+  hospitality: { code: 'hospitality', label: '招待费' },
 } as const satisfies Record<string, ExpenseCategory>;
 
 const VAT_INVOICE_SLOTS: readonly Slot[] = [
@@ -116,9 +118,9 @@ const PASSENGER_TRANSPORT = /^(客运|网约车|出租车|打车|专车|快车|�
 // The v1 item rows, as they are actually printed. A face names either the fine 税收分类 (`*住宿服务*`, `*运输服务*`) or
 // its parent class (`*交通运输服务*` on ride-hailing invoices, `*生产生活服务*` on hotel ones), so both spellings map
 // here — a parent class only together with a description that names the v1 service, because the parent covers more
-// than v1 does. The categories themselves are unchanged: this adds no 费用类别 (expense category) and no 材料种类
-// (material kind) to ADR-0017's v1 matrix. `vat_invoice/einvoice` gates recognition on the same map, so what the
-// layout accepts and what a line is categorised as can never drift apart.
+// than v1 does. The fine class `餐饮服务` is 招待费 (hospitality), admitted deliberately (#356, ADR-0017 amendment);
+// anything else, such as office supplies, maps to nothing. `vat_invoice/einvoice` gates recognition on the same map,
+// so what the layout accepts and what a line is categorised as can never drift apart.
 export function vatItemCategory(itemName: string | undefined): ExpenseCategory | null {
   const parts = itemParts(itemName);
   const taxClass = parts?.[1];
@@ -127,6 +129,7 @@ export function vatItemCategory(itemName: string | undefined): ExpenseCategory |
   if (taxClass === '生产生活服务') return description.startsWith('住宿费') ? CATEGORIES.accommodation : null;
   if (taxClass === '运输服务') return CATEGORIES.city_transport;
   if (taxClass === '交通运输服务') return PASSENGER_TRANSPORT.test(description) ? CATEGORIES.city_transport : null;
+  if (taxClass === '餐饮服务') return CATEGORIES.hospitality;
   return null;
 }
 

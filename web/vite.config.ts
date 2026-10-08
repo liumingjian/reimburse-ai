@@ -52,7 +52,7 @@ function mockFixtures(): Plugin {
       // 回归夹具只给测试用，不进手工 QA 产物：按文件名排除，示例材料与打印页照常复制。
       const regression = new Set(REGRESSION_MATERIALS.map((material) => material.file));
       cpSync(FIXTURES_SOURCE, resolve(packageRoot, outDir, 'fixtures'), { recursive: true, filter: (source) => !regression.has(basename(source)) });
-      // 手工 QA 用的示例材料：11 份原件按业务文件名复制到 dist-mock/sample-materials/，整个文件夹可直接拖进上传区。
+      // 手工 QA 用的示例材料：12 份原件按业务文件名复制到 dist-mock/sample-materials/，整个文件夹可直接拖进上传区。
       const samplesDir = resolve(packageRoot, outDir, 'sample-materials');
       mkdirSync(samplesDir, { recursive: true });
       for (const sample of SAMPLE_MATERIALS) copyFileSync(join(FIXTURES_SOURCE, sample.file), join(samplesDir, sample.fileName));
