@@ -5,10 +5,11 @@ import { planTransport, type PlannedLine } from './allocation';
 import { factsOf, isDerivedSource } from './parse/facts';
 import { pairHotelStays } from './hotel-stay';
 import { KINDS, type EventDraft } from './kind-policy';
-import { fieldLabel, slotOf, type Slot } from './parse/slots';
+import { CATEGORIES, fieldLabel, slotOf, type Slot } from './parse/slots';
 import { chosen, EXCLUDE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
 import { editAddress, editedValue, type Editable } from './pending/edits';
 import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/company-rules';
+import { proposeFolio, type FolioProposal, type ProposalStay } from './folio-proposal';
 import { checkPayments, type LabelledStay } from './stay-payments';
 import { checkStayTrios, stayVoucherIds, type ScreenshotGroup, type StayTrio, type TrioVoucher } from './stay-trio';
 
@@ -86,6 +87,15 @@ export const INVENTORY_COPY = {
   excludedCheck: '已排除：不参与盘点，也不进入材料包',
   referenceCheck: '作为参考材料，不形成明细',
   manualCheck: '手工补填',
+} as const;
+
+// An unrecognised image proposed as a 住宿 invoice's folio (`folio-proposal.ts`): the choice that confirms it.
+const FOLIO_CHOICE = 'folio:';
+const FOLIO_PROPOSAL_COPY = {
+  why: (p: FolioProposal) =>
+    `没有任何版式匹配这份材料，但图里有「${p.fileName}」的价税合计 ${p.folioTotal}，日期也对得上，可能是它的酒店结账单。确认后按入住 ${p.checkIn}、离店 ${p.checkOut}、消费合计 ${p.folioTotal} 记为它的结账单；对不上就手工补填。`,
+  confirm: (fileName: string) => `是「${fileName}」的结账单`,
+  check: '按发票确认',
 } as const;
 
 const REPLACE_HINT = '换原件请在上传页追加材料后重新盘点。';
@@ -238,10 +248,10 @@ function allocationAnswers(answers: StoredAnswers): Map<string, string[]> {
 const MANUAL_FORMS: PendingManualKind[] = MATERIAL_KINDS.filter((kind) => KINDS[kind].slots.length > 0).map((kind) => ({ kind, label: KINDS[kind].label, fields: KINDS[kind].slots.map(pendingField) }));
 
 // The kind and the values of a 手工补填 answer (empty values dropped), else null.
-function manualFilled(answer: PendingAnswer): { kind: MaterialKind; values: Values } | null {
+function manualFilled(answer: PendingAnswer): { kind: MaterialKind; values: Values; how: string } | null {
   const { [PENDING_CHOICE_KEY]: choice, [MANUAL_KIND_KEY]: kind, ...values } = fieldAnswer(answer);
   const form = manualKindOf({ manualKinds: MANUAL_FORMS }, { [MANUAL_KIND_KEY]: kind ?? '' });
-  return choice === MANUAL_FILL_CHOICE && form ? { kind: form.kind, values: nonEmpty(values) } : null;
+  return choice === MANUAL_FILL_CHOICE && form ? { kind: form.kind, values: nonEmpty(values), how: INVENTORY_COPY.manualCheck } : null;
 }
 
 // Before #342, 手工补填 took three answers: 手工补填 here, the kind (`manual_kind.<id>`, `kind:<kind>`), then the form
@@ -255,9 +265,21 @@ function withLegacyManual(answers: StoredAnswers, id: string): StoredAnswers {
   return new Map(answers).set(itemId, { ...fieldAnswer(form), [PENDING_CHOICE_KEY]: MANUAL_FILL_CHOICE, [MANUAL_KIND_KEY]: kind.slice('kind:'.length) });
 }
 
+// The 住宿 invoices no folio pairs with yet, by amount as `pairHotelStays` pairs them.
+function folioless(worked: readonly Worked[]): ProposalStay[] {
+  const folioTotals = new Set(worked.flatMap((w) => (w.resolved?.kind === 'hotel_folio' && w.values['folioTotal'] ? [w.values['folioTotal']] : [])));
+  return worked.flatMap((w) => {
+    const { totalAmount, issueDate } = w.values;
+    if (w.resolved?.kind !== 'vat_invoice' || w.reference || !totalAmount || !issueDate || folioTotals.has(totalAmount)) return [];
+    if (KINDS.vat_invoice.event(w.values)?.category.code !== CATEGORIES.accommodation.code) return [];
+    return [{ invoiceId: w.m.materialId, fileName: w.m.fileName, totalAmount, issueDate }];
+  });
+}
+
 // Derives one material's items, settling each against the stored answers as it goes: a later item exists only once the
 // earlier one is answered.
-function work(m: ViewMaterial, outcome: ParseOutcome, stored: StoredAnswers, answerables: Map<string, Answerable>, editables: Map<string, Editable>): Worked {
+// `stays`: the 住宿 invoices an unrecognised image may be proposed as the folio of (`folio-proposal.ts`).
+function work(m: ViewMaterial, outcome: ParseOutcome, stored: StoredAnswers, answerables: Map<string, Answerable>, editables: Map<string, Editable>, stays: readonly ProposalStay[] = []): Worked {
   const id = m.materialId;
   const answers = withLegacyManual(stored, id);
   const name = m.fileName;
@@ -273,9 +295,12 @@ function work(m: ViewMaterial, outcome: ParseOutcome, stored: StoredAnswers, ans
     case 'unrecognised': {
       const unreadable = outcome.reason === 'unreadable_document';
       w.notes.push(unreadable ? '读不出文件内容' : '没有匹配的版式');
+      const proposal = m.mediaType === 'image' && outcome.clues ? proposeFolio(outcome.clues, stays) : null;
+      const why = unreadable ? '这份文件读不出内容。' : proposal ? FOLIO_PROPOSAL_COPY.why(proposal) : '没有任何版式匹配这份材料。';
       const first = add(
         {
-          ...choice(`unrecognised.${id}`, id, `认不出「${name}」`, unreadable ? '这份文件读不出内容。' : '没有任何版式匹配这份材料。', [
+          ...choice(`unrecognised.${id}`, id, `认不出「${name}」`, why, [
+            ...(proposal ? [{ key: `${FOLIO_CHOICE}${proposal.invoiceId}`, label: FOLIO_PROPOSAL_COPY.confirm(proposal.fileName) }] : []),
             EXCLUDE,
             { key: REFERENCE, label: '作为参考材料' },
             { key: MANUAL_FILL_CHOICE, label: '手工补填' },
@@ -288,18 +313,23 @@ function work(m: ViewMaterial, outcome: ParseOutcome, stored: StoredAnswers, ans
         },
       );
       if (chosen(first) === REFERENCE) w.reference = true;
-      const filled = first.status === 'resolved' && first.answer ? manualFilled(first.answer) : null;
+      const confirmed = proposal && chosen(first) === `${FOLIO_CHOICE}${proposal.invoiceId}`;
+      const filled = confirmed
+        ? { kind: 'hotel_folio' as const, values: { checkIn: proposal.checkIn, checkOut: proposal.checkOut, folioTotal: proposal.folioTotal }, how: FOLIO_PROPOSAL_COPY.check }
+        : first.status === 'resolved' && first.answer
+          ? manualFilled(first.answer)
+          : null;
       if (filled) {
         w.resolved = {
           kind: filled.kind,
           layout: null,
           parserVersion: null,
-          kindLabel: `${KINDS[filled.kind].label}（手工补填）`,
+          kindLabel: `${KINDS[filled.kind].label}（${filled.how}）`,
           candidates: Object.entries(filled.values).map(([key, value]) => ({ key, value, source: 'user', parserVersion: '', evidence: 'explicit', refs: [] })),
           findings: [],
           missing: [],
         };
-        w.notes.splice(0, w.notes.length, INVENTORY_COPY.manualCheck);
+        w.notes.splice(0, w.notes.length, filled.how);
       }
       break;
     }
@@ -441,7 +471,10 @@ export function inventoryView(
   let waiting = 0;
   const waitingBy = { pdf: 0, image: 0 };
 
+  // An unrecognised image is worked last, once the 住宿 invoices it may be the folio of are known, and put back in
+  // upload order.
   const worked: Worked[] = [];
+  const images: { at: number; m: ViewMaterial; outcome: ParseOutcome }[] = [];
   for (const m of materials) {
     if (m.excluded || !results) continue;
     const outcome = results.outcomes.get(m.materialId);
@@ -450,8 +483,11 @@ export function inventoryView(
       waitingBy[m.mediaType] += 1;
       continue;
     }
-    worked.push(work(m, outcome, answers, answerables, editables));
+    if (outcome.outcome === 'unrecognised' && outcome.clues && m.mediaType === 'image') images.push({ at: worked.length + images.length, m, outcome });
+    else worked.push(work(m, outcome, answers, answerables, editables));
   }
+  const unpaired = folioless(worked);
+  for (const { at, m, outcome } of images) worked.splice(at, 0, work(m, outcome, answers, answerables, editables, unpaired));
 
   const variantPlan = planInvoiceVariants(worked, answers, answerables);
   const includedWorked = variantPlan.included;

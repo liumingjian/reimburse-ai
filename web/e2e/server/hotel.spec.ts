@@ -31,6 +31,20 @@ async function otherChainFolio(browser: Browser): Promise<Upload> {
   return { name: '汉庭酒店_结账单.pdf', buffer };
 }
 
+// A small hotel's receipt photographed: no layout reads it, but it prints the invoice's total and the stay's dates.
+async function receiptPhoto(browser: Browser): Promise<Upload> {
+  const page = await browser.newPage();
+  await page.setViewportSize({ width: 750, height: 900 });
+  await page.setContent(`<html><body style="margin:0;background:#fff;font-family:'PingFang SC','STHeiti',sans-serif;font-size:30px;padding:60px">
+    <div style="font-size:40px;margin-bottom:40px">某某商务宾馆</div>
+    <div style="margin:24px 0">到达 2026-08-09</div><div style="margin:24px 0">离开 2026-08-22</div>
+    <div style="margin:24px 0">合计 3640.00</div>
+  </body></html>`);
+  const buffer = await page.screenshot({ type: 'png' });
+  await page.close();
+  return { name: '宾馆收据.png', buffer };
+}
+
 async function inventory(page: Page, files: readonly Upload[]): Promise<TaskSnapshot> {
   await signIn(page);
   await page.goto('/#/tasks');
@@ -41,7 +55,7 @@ async function inventory(page: Page, files: readonly Upload[]): Promise<TaskSnap
   await expect(page).toHaveURL(/#\/task\/[^/]+\/upload$/);
   const taskId = /#\/task\/([^/]+)\//.exec(page.url())?.[1] ?? '';
 
-  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles(files.map((file) => ({ name: file.name, mimeType: 'application/pdf', buffer: file.buffer })));
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles(files.map((file) => ({ name: file.name, mimeType: file.name.endsWith('.png') ? 'image/png' : 'application/pdf', buffer: file.buffer })));
   const batch = page.locator('section', { has: page.getByRole('heading', { name: /^上传批次 #1$/ }) });
   for (const file of files) await expect(batch.getByText(file.name, { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '开始材料盘点' }).click();
@@ -151,4 +165,25 @@ test('其他连锁的结账单认不出版式，在一张表里手工补填', as
   const filled = TaskSnapshotSchema.parse(await (await page.request.get(`/api/tasks/${taskId}`)).json());
   expect(filled.materials[0]).toMatchObject({ kind: 'hotel_folio' });
   expect(filled.pendingItems.find((item) => item.itemId === `unrecognised.${material?.materialId}`)).toMatchObject({ status: 'resolved', answer: { kind: 'hotel_folio', folioTotal: '398.00' } });
+});
+
+// #336 decision 7c: the receipt is proposed as the invoice's folio, and one click pairs them into one stay.
+test('认不出的宾馆收据图片带着发票的金额和日期：提议作为这张发票的结账单，一键确认', async ({ page, browser }) => {
+  const receipt = await receiptPhoto(browser);
+  const snapshot = await inventory(page, [sample('m01'), receipt]);
+  const taskId = snapshot.task.taskId;
+  const invoice = snapshot.materials.find((material) => material.fileName === sample('m01').name);
+  const photo = snapshot.materials.find((material) => material.fileName === receipt.name);
+  expect(snapshot.pendingItems.find((item) => item.itemId === `unrecognised.${photo?.materialId}`)?.choices[0]).toEqual({ key: `folio:${invoice?.materialId}`, label: `是「${sample('m01').name}」的结账单` });
+
+  await page.goto(`/#/task/${taskId}/pending`);
+  const detail = page.getByLabel('待确认项详情');
+  await page.getByLabel('待确认项清单').getByRole('button', { name: new RegExp(`认不出「${receipt.name}」`) }).click();
+  await detail.getByRole('button', { name: `是「${sample('m01').name}」的结账单` }).click();
+  const read = async () => TaskSnapshotSchema.parse(await (await page.request.get(`/api/tasks/${taskId}`)).json());
+  await expect.poll(async () => (await read()).materials.find((material) => material.fileName === receipt.name)?.kind).toBe('hotel_folio');
+
+  const done = await read();
+  expect(done.materials.find((material) => material.fileName === receipt.name)).toMatchObject({ kind: 'hotel_folio', linkedMaterialIds: [invoice?.materialId] });
+  expect(done.lines[0]).toMatchObject({ date: '2026-08-09', endDate: '2026-08-22' });
 });
