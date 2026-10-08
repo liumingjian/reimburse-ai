@@ -1,8 +1,8 @@
 import { PDFDocument, rgb } from '@cantoo/pdf-lib';
-import type { Line, Material } from '@baox/contract';
+import { PAYMENT_SCREENSHOT_CAP, type Line, type Material } from '@baox/contract';
 import { describe, expect, it } from 'vitest';
 import { pdfContent } from './compose';
-import { droppedMaterialsNotice, extraPagesNotice, planPages } from './layout';
+import { A4, CONTINUATION_CELLS, HEADER_BOX, droppedMaterialsNotice, extraPagesNotice, planPages } from './layout';
 
 // A printed page carries one voucher and one supporting material, and embeds only page 1 of a PDF. Both limits used
 // to lose material without a word: a voucher's second 证明材料 and every page after the first just were not there.
@@ -69,5 +69,21 @@ describe('the notices for what the sheet could not carry', () => {
     expect(droppedMaterialsNotice('No.1', ['行程单.pdf'])).toContain('还有 1 份');
     expect(extraPagesNotice('No.2', '结账单.pdf', 3)).toContain('共 3 页');
     expect(extraPagesNotice('No.2', '结账单.pdf', 3)).toContain('其余 2 页');
+  });
+});
+
+describe('the 支付截图 continuation page (#333)', () => {
+  it('has a cell for every screenshot a group may hold, three to a row in reading order, inside the page', () => {
+    expect(CONTINUATION_CELLS).toHaveLength(PAYMENT_SCREENSHOT_CAP);
+    const [first, second, third, fourth] = CONTINUATION_CELLS;
+    expect([second?.y, third?.y]).toEqual([first?.y, first?.y]);
+    expect(fourth?.x).toBe(first?.x);
+    expect(fourth!.y + fourth!.height).toBeLessThan(first!.y);
+    for (const cell of CONTINUATION_CELLS) {
+      expect(cell.x).toBeGreaterThanOrEqual(0);
+      expect(cell.y).toBeGreaterThanOrEqual(0);
+      expect(cell.x + cell.width).toBeLessThanOrEqual(A4.width);
+      expect(cell.y + cell.height).toBeLessThan(HEADER_BOX.y);
+    }
   });
 });

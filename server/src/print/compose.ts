@@ -2,13 +2,15 @@ import { PDFDocument, degrees, rgb } from '@cantoo/pdf-lib';
 import { renderPageAsImage } from 'unpdf';
 import { straightenedJpeg, type PaperCorners } from './straighten';
 import { openPdf } from '../parse/pdf';
+import { canvasWithCjk } from './fonts';
 import { A4, HEADER_BOX, SEPARATOR_X, SEPARATOR_Y, place, type Box, type Size } from './layout';
 
 // Composition of the merged print PDF with @cantoo/pdf-lib, and its page images with pdfjs on @napi-rs/canvas.
 // A PDF original is embedded as vectors (a form XObject clipped to its inked area); a photo is embedded as the
 // straightened JPEG; the header line is a bitmap drawn with a system CJK font (pdf-lib's standard fonts have no CJK).
+// The canvas comes with a CJK fallback under the generic families (fonts.ts), for hosts whose defaults lack CJK.
 
-const canvasImport = () => import('@napi-rs/canvas');
+const canvasImport = canvasWithCjk;
 
 // Fractions of the page box (lower-left origin) that hold ink, padded; the rest is blank margin.
 type Trim = { left: number; bottom: number; right: number; top: number };
@@ -17,14 +19,15 @@ type Trim = { left: number; bottom: number; right: number; top: number };
 export type Content = { kind: 'pdf'; bytes: Uint8Array; trim: Trim; size: Size; pageCount: number } | { kind: 'image'; bytes: Uint8Array; size: Size };
 
 export type Drawn = { content: Content; rotate: boolean; region: Box };
-export type SheetPage = { header: string; drawn: readonly Drawn[] };
+// `divided`: a voucher page draws the dashed line between its halves; a 支付截图 continuation page has no halves.
+export type SheetPage = { header: string; divided: boolean; drawn: readonly Drawn[] };
 
 // A pixel lighter than this in every channel counts as blank paper.
 const BLANK = 240;
 const TRIM_PAD = 6;
 const HEADER_SCALE = 4;
 const HEADER_FONT_SIZE = 9;
-const HEADER_FONT = '"Hiragino Sans GB", "PingFang SC", "Heiti SC", "Songti SC", sans-serif';
+const HEADER_FONT = '"Hiragino Sans GB", "PingFang SC", "Heiti SC", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif';
 const PAGE_IMAGE_SCALE = 1.5;
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
@@ -77,13 +80,13 @@ export async function isJpegOrPng(bytes: Uint8Array): Promise<boolean> {
   }
 }
 
-// The merged A4 PDF: per page the header, the dashed separator, then every placement.
+// The merged A4 PDF: per page the header, the dashed separator (voucher pages), then every placement.
 export async function composeSheet(pages: readonly SheetPage[]): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   for (const sheetPage of pages) {
     const page = doc.addPage([A4.width, A4.height]);
     page.drawImage(await doc.embedPng(await headerPng(sheetPage.header)), HEADER_BOX);
-    page.drawLine({ start: { x: SEPARATOR_X[0], y: SEPARATOR_Y }, end: { x: SEPARATOR_X[1], y: SEPARATOR_Y }, thickness: 0.5, color: rgb(0.6, 0.6, 0.6), dashArray: [3, 3] });
+    if (sheetPage.divided) page.drawLine({ start: { x: SEPARATOR_X[0], y: SEPARATOR_Y }, end: { x: SEPARATOR_X[1], y: SEPARATOR_Y }, thickness: 0.5, color: rgb(0.6, 0.6, 0.6), dashArray: [3, 3] });
     for (const drawn of sheetPage.drawn) {
       const at = place(drawn.content.size, drawn.region, drawn.rotate);
       const options = { x: at.x, y: at.y, width: at.width, height: at.height, rotate: degrees(at.rotate) };

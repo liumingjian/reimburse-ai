@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
-import { TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
+import { STAY_TRIO_COPY, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Browser, Page } from '@playwright/test';
 import { answerStayGaps, expect, signIn, test } from './fixture';
 
@@ -71,6 +71,66 @@ test('酒店发票加全季结账单，盘点后得到一条带入住和离店�
 
   // A clean stay moves on to the project stage (#188).
   await expect.poll(async () => TaskSnapshotSchema.parse(await (await page.request.get(`/api/tasks/${taskId}`)).json()).stage).toBe('project');
+});
+
+// #331: the missing-screenshot 待确认项 takes a group of 支付截图 from one file dialog and settles on 「已传齐」; #332: it
+// can be reopened to change the group, and the confirmed list prints the group as it then is.
+test('住宿发票的支付截图：一次选两张，看到两张缩略图，点「已传齐」后这一项处理完；重新展开删掉一张仍已处理；确认后打印稿只印剩下那张', async ({ page }) => {
+  test.setTimeout(180_000);
+  await inventory(page, [sample('m01'), sample('m02')]);
+  const taskId = /#\/task\/([^/]+)\//.exec(page.url())?.[1] ?? '';
+  const read = async () => TaskSnapshotSchema.parse(await (await page.request.get(`/api/tasks/${taskId}`)).json());
+  await expect.poll(async () => (await read()).stage, { timeout: 60_000 }).toBe('pending');
+
+  await page.goto(`/#/task/${taskId}/pending`);
+  const copy = STAY_TRIO_COPY.screenshot;
+  const detail = page.getByLabel('待确认项详情');
+  await expect(detail.getByRole('heading', { name: copy.title(sample('m01').name) })).toBeVisible();
+  const png = (n: number) => ({ name: `IMG_50${10 + n}.png`, mimeType: 'image/png', buffer: readFileSync(join(GENERATED_DIR, `print-pg${n}.png`)) });
+  await detail.getByLabel(copy.inputLabel(sample('m01').name)).setInputFiles([png(1), png(2)]);
+
+  const thumbnails = detail.getByRole('list', { name: '已上传的支付截图' }).getByRole('img');
+  await expect(thumbnails).toHaveCount(2);
+  await expect(thumbnails.nth(0)).toHaveAccessibleName(copy.thumbnail('IMG_5011.png', 1));
+  await expect(thumbnails.nth(1)).toHaveAccessibleName(copy.thumbnail('IMG_5012.png', 2));
+  await expect(detail.getByText(copy.count(2))).toBeVisible();
+  // Uploads alone leave the item open.
+  expect((await read()).pendingItems).toEqual([expect.objectContaining({ itemId: expect.stringMatching(/^stay_screenshot_missing\./), status: 'open' })]);
+
+  await detail.getByRole('button', { name: copy.complete, exact: true }).click();
+  await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
+  const done = await read();
+  expect(done.pendingItems).toEqual([expect.objectContaining({ status: 'resolved' })]);
+  expect(done.paymentScreenshots.map((shot) => shot.fileName)).toEqual(['IMG_5011.png', 'IMG_5012.png']);
+  expect(done.stage).toBe('project');
+
+  // #332: reopened from the all-done view, removing one of the two keeps the item resolved.
+  await page.getByRole('button', { name: copy.reopen }).click();
+  await detail.getByRole('button', { name: copy.remove('IMG_5011.png', 1) }).click();
+  await expect(thumbnails).toHaveCount(1);
+  await expect(thumbnails.nth(0)).toHaveAccessibleName(copy.thumbnail('IMG_5012.png', 1));
+  await expect(detail.getByText(copy.count(1))).toBeVisible();
+  await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
+  const reopened = await read();
+  expect(reopened.pendingItems).toEqual([expect.objectContaining({ status: 'resolved' })]);
+  expect(reopened.paymentScreenshots.map((shot) => shot.fileName)).toEqual(['IMG_5012.png']);
+  expect(reopened.stage).toBe('project');
+
+  // Confirmed, the list prints the group as it now is: the one screenshot shares the hotel page's bottom half.
+  expect((await page.request.post('/api/project-book/intake', { data: { number: 'P-2307', name: '华东客户交付' } })).ok()).toBe(true);
+  const ready = await read();
+  const assigned = await page.request.post(`/api/tasks/${taskId}/actions/submit-project-assignment`, {
+    data: { purpose: '上海产品评审出差', projects: Object.fromEntries(ready.lines.map((line) => [line.lineId, 'P-2307'])), stepToken: ready.step.stepToken },
+  });
+  expect(assigned.ok()).toBe(true);
+  await page.goto(`/#/task/${taskId}/review`);
+  await page.getByRole('region', { name: '整单确认' }).getByRole('button', { name: '确认整单明细', exact: true }).click();
+  await page.getByRole('link', { name: '去打印', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`#/task/${taskId}/print$`));
+  await expect(page.getByRole('list', { name: '打印稿页面' }).locator('.page-hdr')).toHaveText(['No.1 · 08-09 · 住宿 · 3640.00'], { timeout: 60_000 });
+  const printed = await read();
+  expect(printed.printSheet.pages.flatMap((sheetPage) => sheetPage.screenshotIds)).toEqual(reopened.paymentScreenshots.map((shot) => shot.screenshotId));
+  expect(printed.pendingItems).toEqual([expect.objectContaining({ screenshotGroup: expect.objectContaining({ locked: true }) })]);
 });
 
 test('其他连锁的结账单认不出版式，转到手工补填', async ({ page, browser }) => {

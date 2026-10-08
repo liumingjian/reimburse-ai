@@ -9,6 +9,8 @@ import { GOLDEN_TIME } from '@baox/contract/goldens/scenarios';
 //                                  → <n, 32 digits>, numbered the same way
 //   ISO timestamps taken during the run (createdAt, updatedAt, uploadedAt, …)
 //                                  → GOLDEN_TIME (@baox/contract/goldens)
+//   The default task name's date (`<UTC date of creation> 新建报销`, tasks.ts), on a run date
+//                                  → GOLDEN_TIME's date
 //
 // Content hashes (64-hex sha256 of the fixture bytes) and dates read from the materials are stable and kept.
 
@@ -17,6 +19,7 @@ const DIGEST = /"([0-9a-f]{32})"/g;
 const TIMESTAMP = /"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)"/g;
 // A timestamp this close to the run counts as taken during it (contract times are cut to the second).
 const SLACK_MS = 2_000;
+const DEFAULT_NAME = /"(\d{4}-\d{2}-\d{2}) 新建报销"/g;
 
 // `run`: when the scenario started and ended, by the wall clock the server stamps facts with.
 export function goldenJson(snapshot: unknown, run: { start: number; end: number }): string {
@@ -36,5 +39,9 @@ export function goldenJson(snapshot: unknown, run: { start: number; end: number 
     .replace(TIMESTAMP, (match, value: string) => {
       const at = Date.parse(value);
       return at >= run.start - SLACK_MS && at <= run.end + SLACK_MS ? `"${GOLDEN_TIME}"` : match;
+    })
+    .replace(DEFAULT_NAME, (match, date: string) => {
+      const runDates = [run.start, run.end].map((at) => new Date(at).toISOString().slice(0, 10));
+      return runDates.includes(date) ? `"${GOLDEN_TIME.slice(0, 10)} 新建报销"` : match;
     });
 }

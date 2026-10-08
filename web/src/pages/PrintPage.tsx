@@ -1,68 +1,45 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
-import { Button, IconButton, InlineNotification } from '@carbon/react';
-import { FitToScreen, ZoomIn, ZoomOut } from '@carbon/icons-react';
-import { type PlacementSlot, PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE, type Corners, type PaymentScreenshot, type Placement, type PrintPage as PrintSheetPage, type TaskSnapshot } from '@baox/contract';
+import { useEffect, useRef, useState } from 'react';
+import { Button, ContentSwitcher, IconButton, InlineNotification, Switch } from '@carbon/react';
+import { Crop, RotateClockwise, RotateCounterclockwise } from '@carbon/icons-react';
+import { type PlacementSlot, type Corners, type Placement, type PrintPage as PrintSheetPage, type TaskSnapshot } from '@baox/contract';
 import { ActionError } from '../shell/ActionError';
 import { FieldGroup } from '../shell/FieldGroup';
-import { FileName } from '../shell/FileName';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
 import { navigate, taskHash } from '../router';
 import { CropEditor, formatCorners } from './CropEditor';
+import { DocFullscreen, DocImage } from './DocFullscreen';
 import { PAGE_COPY } from './page-copy';
 
-// 打印稿预览：逐页显示服务端渲染的页图与页眉（页眉整句来自快照，页面不拼）；页序跟随统一业务序号。
-// 还没有打印稿（或旧稿已作废）时，进入页面即请服务端生成。旋转、四角裁剪只是打印设置：结果以服务端返回的新快照为准，
-// 不改原件，也不影响整单明细确认。提醒（如住宿发票还没有支付截图）不阻止下载。
-// 支付截图只在这里补充：服务端标了 acceptsPaymentScreenshot 的页都有「补充支付截图」入口（每张主要报销凭证都可以补，
-// 故事 61），只影响打印稿。没补时是否提醒由服务端决定（只有住宿发票会提醒），页面照 notices 显示。
-// 页卡、页图与四角裁剪编辑器没有对应的 Carbon 组件，保持手写版式，按钮与提示用 Carbon。
+// 打印稿预览：服务端渲染的页图平铺成网格，一屏看多页；每行几页由员工选（3、4、5，记在本机浏览器）。页眉整句来自快照，
+// 页面不拼；页序跟随统一业务序号。点页图全屏看这一页（与原件共用 DocFullscreen）。
+// 还没有打印稿（或旧稿已作废）时，进入页面即请服务端生成。旋转、四角裁剪只是打印设置：页图上每一半各有图标按钮，
+// 结果以服务端返回的新快照为准，不改原件，也不影响整单明细确认。提醒（如住宿发票还没有支付截图）不阻止下载。
+// 支付截图不在这里补充（QA 2026-09-30）：住宿发票缺支付截图在待确认项里上传；预览页只看、只调版面。
+// 页卡、页图与四角裁剪编辑器没有对应的 Carbon 组件，保持手写版式，按钮、切换器与弹窗用 Carbon。
 
-function ScreenshotControl({
-  page,
-  screenshot,
-  busy,
-  error,
-  onAdd,
-  onRemove,
-}: {
-  page: PrintSheetPage;
-  screenshot: PaymentScreenshot | null;
-  busy: boolean;
-  error: string | null;
-  onAdd: (file: File) => void;
-  onRemove: (screenshot: PaymentScreenshot) => void;
-}) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const voucherName = page.top?.fileName ?? page.pageId;
-  const onChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (file) onAdd(file);
-  };
-  return (
-    <li>
-      <FieldGroup fields={[{ label: '支付截图', value: screenshot ? <FileName name={screenshot.fileName} /> : <span className="app-muted">未补充</span> }]} />
-      <div className="app-inline-actions app-screenshot-row">
-        {screenshot ? (
-          <Button kind="ghost" size="sm" disabled={busy} aria-label={`移除支付截图：${voucherName}`} onClick={() => onRemove(screenshot)}>
-            移除
-          </Button>
-        ) : (
-          <Button kind="ghost" size="sm" disabled={busy} aria-label={`补充支付截图：${voucherName}`} onClick={() => inputRef.current?.click()}>
-            补充支付截图
-          </Button>
-        )}
-        <input ref={inputRef} type="file" accept={PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE} aria-label={`选择支付截图：${voucherName}`} onChange={onChange} />
-      </div>
-      <p className="app-caption">仅用于打印稿，放在下半页右侧；不上传报销系统，也不影响整单明细确认。</p>
-      <ActionError message={error} />
-    </li>
-  );
+const SLOTS: readonly PlacementSlot[] = ['top', 'bottom'];
+const PER_ROW = [3, 4, 5] as const;
+type PerRow = (typeof PER_ROW)[number];
+const PER_ROW_KEY = 'baox.print.perRow';
+const DEFAULT_PER_ROW: PerRow = 4;
+
+function readPerRow(): PerRow {
+  try {
+    const stored = Number(globalThis.localStorage?.getItem(PER_ROW_KEY));
+    return PER_ROW.find((value) => value === stored) ?? DEFAULT_PER_ROW;
+  } catch {
+    return DEFAULT_PER_ROW;
+  }
 }
 
-const SLOT_LABEL: Readonly<Record<PlacementSlot, string>> = { top: '上半页', bottom: '下半页' };
-const SLOTS: readonly PlacementSlot[] = ['top', 'bottom'];
+function storePerRow(value: PerRow) {
+  try {
+    globalThis.localStorage?.setItem(PER_ROW_KEY, String(value));
+  } catch {
+    // Private mode or storage disabled: the choice lasts for this page only.
+  }
+}
 
 type Editing = { pageId: string; slot: PlacementSlot };
 
@@ -76,7 +53,8 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const { busy, run, errorAt } = useAction(taskId);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [receipt, setReceipt] = useState<string | null>(null);
-  const [zoom, setZoom] = useState(1);
+  const [perRow, setPerRow] = useState<PerRow>(readPerRow);
+  const [enlarged, setEnlarged] = useState<{ page: PrintSheetPage; index: number } | null>(null);
   const requested = useRef(false);
   const cropPanel = useRef<HTMLElement>(null);
 
@@ -106,10 +84,6 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   const rotate = (page: PrintSheetPage, slot: PlacementSlot, placement: Placement) =>
     run((adapter) => adapter.rotatePlacement(taskId, page.pageId, slot, !placement.rotate), `${page.pageId}-${slot}`);
-  const addScreenshot = (page: PrintSheetPage, voucherMaterialId: string, file: File) =>
-    run((adapter) => adapter.addPaymentScreenshot(taskId, voucherMaterialId, file), `shot-${page.pageId}`);
-  const removeScreenshot = (page: PrintSheetPage, screenshot: PaymentScreenshot) =>
-    run((adapter) => adapter.removePaymentScreenshot(taskId, screenshot.screenshotId), `shot-${page.pageId}`);
 
   const fillErp = async () => {
     const outcome = await run((adapter) => adapter.startErpWrite(taskId, snapshot.step.stepToken), 'erp');
@@ -160,17 +134,22 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
       <p className="app-caption">去报销会自动填写已确认的明细，完成后请在报销系统中自行保存并提交。</p>
       <div className="app-print-toolbar" role="toolbar" aria-label="打印稿查看">
-        {/* Same icon toolbar as the original viewer (DocViewer). */}
-        <IconButton kind="ghost" size="sm" label="适应窗口" align="bottom" onClick={() => setZoom(1)}>
-          <FitToScreen />
-        </IconButton>
-        <IconButton kind="ghost" size="sm" label="缩小" align="bottom" disabled={zoom <= 0.5} onClick={() => setZoom((value) => Math.max(0.5, value - 0.25))}>
-          <ZoomOut />
-        </IconButton>
-        <IconButton kind="ghost" size="sm" label="放大" align="bottom" disabled={zoom >= 2} onClick={() => setZoom((value) => Math.min(2, value + 0.25))}>
-          <ZoomIn />
-        </IconButton>
-        <span className="app-doc-zoom" role="status" aria-label="预览缩放">{Math.round(zoom * 100)}%</span>
+        <ContentSwitcher
+          className="app-per-row-switcher"
+          size="sm"
+          aria-label="每行页数"
+          selectedIndex={PER_ROW.indexOf(perRow)}
+          onChange={({ index }) => {
+            const value = PER_ROW[index ?? 0] ?? DEFAULT_PER_ROW;
+            setPerRow(value);
+            storePerRow(value);
+          }}
+        >
+          {PER_ROW.map((value) => (
+            <Switch key={value} name={String(value)} text={`每行 ${value} 页`} />
+          ))}
+        </ContentSwitcher>
+        <span className="app-caption">点页图全屏查看；页图右上角的图标调整这一半的放置与裁剪。</span>
       </div>
 
       {sheet.status === 'stale' ? (
@@ -227,64 +206,44 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
             />
             <p className="app-caption">旋转与裁剪只保存为打印设置，不改原件，也不影响整单明细确认。</p>
           </div>
-          <div className="app-print-scroll">
-            <ol className="app-print-pages" aria-label="打印稿页面" style={{ width: `${52 * zoom}rem`, maxWidth: zoom === 1 ? '100%' : undefined }}>
-              {sheet.pages.map((page, index) => (
-                <li key={page.pageId} className="app-page-card" aria-label={page.header}>
-                  <div className="page-hdr">{page.header}</div>
-                  <img className="app-page-image" src={page.imageUrl} alt={`第 ${index + 1} 页页图`} data-testid={`page-image-${page.pageId}`} />
-                  <ul className="app-placements">
-                    {SLOTS.map((slot) => {
-                      const placement = page[slot];
-                      if (!placement) return null;
-                      const rotateLabel = placement.rotate ? '改为竖放' : '旋转 90°';
-                      return (
-                        <li key={slot}>
-                          <FieldGroup
-                            fields={[
-                              { label: SLOT_LABEL[slot], value: <FileName name={placement.fileName} /> },
-                              { label: '放置', value: placement.rotate ? '旋转 90° 放置' : '竖放' },
-                              ...(placement.croppable ? [{ label: '裁剪', value: placement.cropAdjusted ? '已手动微调裁剪' : '已自动裁边矫正' }] : []),
-                            ]}
-                          />
-                          <div className="app-inline-actions">
-                            <Button kind="ghost" size="sm" disabled={busy} aria-label={`${rotateLabel}：${placement.fileName}`} onClick={() => void rotate(page, slot, placement)}>
-                              {rotateLabel}
-                            </Button>
-                            {placement.croppable && placement.corners && placement.imageUrl ? (
-                              <Button
-                                kind="ghost"
-                                size="sm"
-                                disabled={busy}
-                                aria-label={`调整四角：${placement.fileName}`}
-                                onClick={() => {
-                                  setReceipt(null);
-                                  setEditing({ pageId: page.pageId, slot });
-                                }}
-                              >
-                                调整四角
-                              </Button>
-                            ) : null}
-                          </div>
-                          <ActionError message={errorAt(`${page.pageId}-${slot}`)} />
-                        </li>
-                      );
-                    })}
-                    {page.acceptsPaymentScreenshot && page.top ? (
-                      <ScreenshotControl
-                        page={page}
-                        screenshot={snapshot.paymentScreenshots.find((shot) => shot.screenshotId === page.screenshotId) ?? null}
+          <ol className="app-print-pages" aria-label="打印稿页面" style={{ gridTemplateColumns: `repeat(${perRow}, minmax(0, 1fr))` }}>
+            {sheet.pages.map((page, index) => (
+              <li key={page.pageId} className="app-page-card" aria-label={page.header}>
+                <div className="page-hdr" title={page.header}>
+                  {page.header}
+                </div>
+                <div className="app-page-figure">
+                  <button type="button" className="app-page-open" aria-label={`全屏查看第 ${index + 1} 页`} onClick={() => setEnlarged({ page, index })}>
+                    <img className="app-page-image" src={page.imageUrl} alt={`第 ${index + 1} 页页图`} loading="lazy" decoding="async" data-testid={`page-image-${page.pageId}`} />
+                  </button>
+                  {SLOTS.map((slot) => {
+                    const placement = page[slot];
+                    if (!placement) return null;
+                    return (
+                      <PlacementActions
+                        key={slot}
+                        slot={slot}
+                        placement={placement}
                         busy={busy}
-                        error={errorAt(`shot-${page.pageId}`)}
-                        onAdd={(file) => void addScreenshot(page, page.top?.materialId ?? '', file)}
-                        onRemove={(shot) => void removeScreenshot(page, shot)}
+                        onRotate={() => void rotate(page, slot, placement)}
+                        onCrop={() => {
+                          setReceipt(null);
+                          setEditing({ pageId: page.pageId, slot });
+                        }}
                       />
-                    ) : null}
-                  </ul>
-                </li>
-              ))}
-            </ol>
-          </div>
+                    );
+                  })}
+                </div>
+                {SLOTS.map((slot) => (
+                  <ActionError key={slot} message={errorAt(`${page.pageId}-${slot}`)} />
+                ))}
+              </li>
+            ))}
+          </ol>
+          {/* The same full-screen view as a 原件: only look, no page actions there. */}
+          <DocFullscreen open={enlarged !== null} heading={enlarged?.page.header ?? ''} {...(enlarged ? { label: `第 ${enlarged.index + 1} 页` } : {})} onClose={() => setEnlarged(null)}>
+            {enlarged ? <DocImage key={enlarged.page.imageUrl} src={enlarged.page.imageUrl} alt={`第 ${enlarged.index + 1} 页页图（全屏）`} rotation={0} fit="stage" /> : null}
+          </DocFullscreen>
         </>
       ) : (
         <section className="app-block">
@@ -294,5 +253,35 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
         </section>
       )}
     </>
+  );
+}
+
+// Icon buttons over one half of the page image (the voucher on top, the 证明材料 below): rotate or back to upright,
+// and adjust the four corners of a photo. The accessible name carries the file name.
+function PlacementActions({
+  slot,
+  placement,
+  busy,
+  onRotate,
+  onCrop,
+}: {
+  slot: PlacementSlot;
+  placement: Placement;
+  busy: boolean;
+  onRotate: () => void;
+  onCrop: () => void;
+}) {
+  const rotateLabel = placement.rotate ? '改为竖放' : '旋转 90°';
+  return (
+    <div className={`app-placement-actions is-${slot}`}>
+      <IconButton kind="secondary" size="sm" align="left" disabled={busy} label={`${rotateLabel}：${placement.fileName}`} onClick={onRotate}>
+        {placement.rotate ? <RotateCounterclockwise /> : <RotateClockwise />}
+      </IconButton>
+      {placement.croppable && placement.corners && placement.imageUrl ? (
+        <IconButton kind="secondary" size="sm" align="left" disabled={busy} label={`调整四角：${placement.fileName}`} onClick={onCrop}>
+          <Crop />
+        </IconButton>
+      ) : null}
+    </div>
   );
 }

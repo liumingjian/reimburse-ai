@@ -12,11 +12,12 @@ import {
 import { withInventoryProjection, withLodgingEvidenceProjection } from './fixtures/inventory';
 import { withAllowedActions } from './fixtures/allowed-actions';
 import { PROJECT_BOOK, withProjectUsage } from './fixtures/projects';
+import { withScreenshotGroups } from './fixtures/print';
 import type { MockOptions } from './options';
 
 // mock 服务端的公共底座：内存里的快照仓库、事件总线、服务断连模拟、stepToken 核对与 mock 时钟。
-// 各业务流程（./flows/*）只经过这里读写快照：每份存进去的快照都带上服务端投影（盘点计数、「本次已归入」的条数与金额、此刻接受的动作），
-// 并过 schema 校验（失败即抛出）。
+// 各业务流程（./flows/*）只经过这里读写快照：每份存进去的快照都带上服务端投影（盘点计数、「本次已归入」的条数与金额、此刻接受的动作、
+// 缺支付截图待确认项的截图组），并过 schema 校验（失败即抛出）。
 
 const EMIT_DELAY_MS = 20;
 // `?fault=service-disconnected`：服务停一次。第一次读任务列表时立即断开（任务列表的头几次加载失败），
@@ -54,6 +55,9 @@ export type MockBus = {
   useProjectAllowList(source: (taskId: string) => ProjectOption[]): void;
   // 用户经 exclude-material 移出本次材料的材料（重复发票、认不出的合并发票及其行程单）：之后重新盘点也不再算它们。
   removedMaterials(taskId: string): Set<string>;
+  // 支付截图组已「已传齐」的住宿发票（#331，服务端 payment_screenshot_group_complete）：重新盘点时这一项仍按已处理算。
+  // 组被删空就不再算传齐。
+  completeScreenshotGroups(taskId: string): Set<string>;
   // 状态变了但 step 种类没变时换发的新凭据（项目归属草稿、项目簿同步）：在原凭据后加一个全局递增的序号。
   rotateToken(stepToken: string): string;
 };
@@ -78,6 +82,7 @@ export function createBus(options: MockOptions): MockBus {
   let outageScheduled = false;
   let allowListSource = (_taskId: string): ProjectOption[] => PROJECT_BOOK.map((project) => ({ ...project }));
   const removed = new Map<string, Set<string>>();
+  const completeGroups = new Map<string, Set<string>>();
   let rotation = 0;
 
   const snapshotOf = (taskId: string): TaskSnapshot => {
@@ -88,7 +93,7 @@ export function createBus(options: MockOptions): MockBus {
 
   const put = (snapshot: TaskSnapshot, advanceRevision = false) => {
     const next = advanceRevision ? { ...snapshot, revision: snapshot.revision + 1 } : snapshot;
-    snapshots.set(next.task.taskId, TaskSnapshotSchema.parse(withAllowedActions(withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(next))))));
+    snapshots.set(next.task.taskId, TaskSnapshotSchema.parse(withAllowedActions(withLodgingEvidenceProjection(withScreenshotGroups(withProjectUsage(withInventoryProjection(next)))))));
   };
 
   // 断开期间事件流不送达（恢复后页面会重新拉取快照）。
@@ -169,6 +174,11 @@ export function createBus(options: MockOptions): MockBus {
     removedMaterials(taskId) {
       const set = removed.get(taskId) ?? new Set<string>();
       removed.set(taskId, set);
+      return set;
+    },
+    completeScreenshotGroups(taskId) {
+      const set = completeGroups.get(taskId) ?? new Set<string>();
+      completeGroups.set(taskId, set);
       return set;
     },
     rotateToken(stepToken) {

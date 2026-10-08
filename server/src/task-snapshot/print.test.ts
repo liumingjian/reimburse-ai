@@ -8,8 +8,9 @@ import { printView } from './print';
 // The missing-screenshot notice on a generated sheet (#213). The inventory's 住宿 trio record decides it where there
 // is one; a 住宿 page without a record (a task inventoried before the trio check) still gets a notice.
 
-const page = (voucherMaterialId: string, no: number, categoryLabel: string, screenshotId: string | null = null): StoredPage => ({
+const page = (voucherMaterialId: string, no: number, categoryLabel: string, screenshotIds: string[] = []): StoredPage => ({
   pageId: `page.${voucherMaterialId}`,
+  kind: 'voucher',
   voucherMaterialId,
   no,
   nos: `No.${no}`,
@@ -20,10 +21,9 @@ const page = (voucherMaterialId: string, no: number, categoryLabel: string, scre
   pngSha256: 'png',
   top: null,
   bottom: null,
-  acceptsPaymentScreenshot: true,
-  screenshotId,
+  screenshotIds,
 });
-const facts = (pages: StoredPage[]): PrintFacts => ({ render: { renderId: 'r', confirmationRevision: 1, pdfSha256: 'pdf', pages }, settings: new Map(), screenshots: [] });
+const facts = (pages: StoredPage[]): PrintFacts => ({ render: { renderId: 'r', confirmationRevision: 1, pdfSha256: 'pdf', pages }, settings: new Map(), screenshots: [], completeGroups: new Set() });
 const trio = (invoiceId: string, noneConfirmed: boolean): StayTrio => ({
   invoiceId,
   folioId: null,
@@ -43,7 +43,12 @@ describe('printView missing-screenshot notice', () => {
   });
 
   it('says nothing for a page that has its screenshot', () => {
-    expect(notices([page('a', 1, '住宿', 's1')], [])).toEqual([]);
-    expect(notices([page('a', 1, '住宿', 's1')], [trio('a', true)])).toEqual([]);
+    expect(notices([page('a', 1, '住宿', ['s1'])], [])).toEqual([]);
+    expect(notices([page('a', 1, '住宿', ['s1'])], [trio('a', true)])).toEqual([]);
+  });
+
+  it('says nothing for a page whose screenshots moved to its continuation page (#333)', () => {
+    const continuation: StoredPage = { ...page('a', 1, '住宿', ['s1', 's2']), pageId: 'page.a.screenshots', kind: 'screenshots', hotelName: null };
+    expect(notices([page('a', 1, '住宿'), continuation], [])).toEqual([]);
   });
 });

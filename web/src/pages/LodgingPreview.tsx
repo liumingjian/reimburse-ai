@@ -12,11 +12,13 @@ export function LodgingPreview({ snapshot, materialId }: { snapshot: TaskSnapsho
   const [retry, setRetry] = useState(0);
   const evidence = snapshot.lodgingEvidence.find((candidate) => candidate.materialId === materialId);
   const materials = new Map(snapshot.materials.map((material) => [material.materialId, material]));
+  // Only the 结账单 or other 证明材料 is previewed, never the invoice: the folio lists the stay's items and amounts that
+  // remind the user what to fill in, while an invoice alone does not (QA 2026-09-30).
   const choices = (evidence?.previews ?? []).flatMap((preview) => {
     const material = materials.get(preview.materialId);
-    return material ? [{ ...preview, material }] : [];
+    return material && material.kind !== 'vat_invoice' ? [{ ...preview, material }] : [];
   });
-  const selectedPreview = choices.find((preview) => preview.material.materialId === selectedId) ?? choices.find((preview) => preview.material.materialId === evidence?.defaultMaterialId);
+  const selectedPreview = choices.find((preview) => preview.material.materialId === selectedId) ?? choices.find((preview) => preview.material.materialId === evidence?.defaultMaterialId) ?? choices[0];
   const selected = selectedPreview?.material;
   const selectedMaterialId = selected?.materialId;
   const previewUrl = selected?.previewUrl;
@@ -35,12 +37,12 @@ export function LodgingPreview({ snapshot, materialId }: { snapshot: TaskSnapsho
   if (!evidence) return <DocViewer material={snapshot.materials.find((material) => material.materialId === materialId)} />;
   const previewFailed = selectedPreview ? !selectedPreview.available || failed.includes(selectedPreview.material.materialId) : false;
   const selectedIndex = Math.max(0, choices.findIndex(({ material }) => material.materialId === selected?.materialId));
-  // 结账单 / 发票 is a ContentSwitcher inside the viewer frame: equal-width switches, file names with a middle ellipsis.
+  // The folios are a ContentSwitcher inside the viewer frame: equal-width switches, file names with a middle ellipsis.
   const switcher =
     choices.length > 0 ? (
       <ContentSwitcher className="app-doc-switcher" size="md" selectedIndex={selectedIndex} onChange={({ index }) => setSelectedId(choices[index ?? 0]?.material.materialId ?? null)}>
         {choices.map(({ material }) => {
-          const kind = material.kind === 'hotel_folio' ? '结账单' : '发票';
+          const kind = material.kind === 'hotel_folio' ? '结账单' : '证明材料';
           return (
             <Switch key={material.materialId} name={material.materialId} aria-label={`${kind}：${material.fileName}`}>
               <span className="app-switch-kind">{kind}</span>
@@ -64,8 +66,9 @@ export function LodgingPreview({ snapshot, materialId }: { snapshot: TaskSnapsho
         </Button>
       ) : null}
       {selected ? (
+        // Keyed by the retry only: switching folios keeps the viewer, so an open full-screen view stays open.
         <DocViewer
-          key={`${selected.materialId}:${retry}`}
+          key={retry}
           material={selected}
           header={switcher}
           onPreviewError={() => setFailed((ids) => [...ids, selected.materialId])}

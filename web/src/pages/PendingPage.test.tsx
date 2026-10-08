@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { App } from '../App';
-import { ALLOCATION_ERRORS, PENDING_ANSWER_ERRORS, STALE_STEP_NOTICE, STAY_TRIO_COPY } from '@baox/contract';
+import { ALLOCATION_ERRORS, PAYMENT_SCREENSHOT_ERRORS, PENDING_ANSWER_ERRORS, STALE_STEP_NOTICE, STAY_TRIO_COPY } from '@baox/contract';
 import { ALLOCATION_GIVE_UP_NOTE, GIVEN_UP_TITLE, givenUpNote } from '../mock/fixtures/inventory';
 import { t1Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
@@ -58,9 +58,9 @@ describe('待确认项', () => {
     expect(within(detail()).getByText('04213377')).toBeTruthy();
     expect(document.body.textContent).not.toMatch(FORBIDDEN_TEXT);
 
-    // 切到不支持的材料：PDF 用 iframe 预览，出现两种选择。
+    // 切到不支持的材料：jsdom 画不了 PDF，退回 iframe 预览；出现两种选择。
     fireEvent.click(itemButton('不支持的材料类型'));
-    const frame = within(detail()).getByTitle('餐饮_发票.pdf 原件');
+    const frame = await within(detail()).findByTitle('餐饮_发票.pdf 原件');
     expect(frame.tagName).toBe('IFRAME');
     expect(frame.getAttribute('src')).toBe('fixtures/m11-other-invoice.pdf');
     expect(within(detail()).getByRole('button', { name: '排除此材料' })).toBeTruthy();
@@ -203,65 +203,65 @@ describe('待确认项', () => {
 
 describe('原件查看器', () => {
   const viewer = () => within(detail()).getByTestId('doc-viewer');
-  const toolbar = () => within(viewer()).queryByRole('toolbar', { name: '原件查看' });
-  const tool = (name: string) => within(viewer()).getByRole('button', { name });
-  const readout = () => within(viewer()).getByRole('status').textContent;
   const photo = () => within(viewer()).getByRole('img', { name: /原件$/ });
+  const fullscreen = () => screen.queryByRole('img', { name: /原件（全屏）$/ });
+  const openFullscreen = () => fireEvent.click(within(viewer()).getByRole('button', { name: '全屏查看' }));
+  const stage = () => screen.getByTestId('fullscreen-stage');
 
-  test('放大、缩小改变倍数读数，适应窗口回到默认；旋转 90° 改变原件方向', async () => {
+  // QA 2026-09-30: the frame is too small to read, and zooming inside it did not help. The frame only shows the whole
+  // original; reading happens full screen, with just rotate and close.
+  test('原件框里没有放大缩小；点「全屏查看」或原件打开全屏，只有旋转与关闭', async () => {
     renderPending();
     await screen.findByRole('heading', { name: '待确认项' });
-    expect(toolbar()).toBeTruthy();
-    expect(readout()).toBe('当前倍数 100%');
-    expect(photo().style.transform).toContain('rotate(0deg)');
+    expect(within(viewer()).queryByRole('toolbar')).toBeNull();
+    for (const name of ['放大', '缩小', '适应窗口']) expect(within(viewer()).queryByRole('button', { name })).toBeNull();
+    expect(fullscreen()).toBeNull();
 
-    fireEvent.click(tool('放大'));
-    expect(readout()).toBe('当前倍数 125%');
-    fireEvent.click(tool('放大'));
-    fireEvent.click(tool('放大'));
-    expect(readout()).toBe('当前倍数 200%');
-    fireEvent.click(tool('缩小'));
-    expect(readout()).toBe('当前倍数 150%');
-    fireEvent.click(tool('适应窗口'));
-    expect(readout()).toBe('当前倍数 100%');
+    openFullscreen();
+    expect(fullscreen()).toBeTruthy();
+    const dialog = stage().closest('[role="dialog"]') as HTMLElement;
+    // Only close and rotate: no zoom anywhere.
+    expect(within(dialog).getAllByRole('button')).toHaveLength(2);
+    expect(within(dialog).getByRole('button', { name: '关闭' })).toBeTruthy();
 
-    // 缩到最小档时「缩小」不可用。
-    for (let index = 0; index < 3; index += 1) fireEvent.click(tool('缩小'));
-    expect(readout()).toBe('当前倍数 25%');
-    expect(tool('缩小').hasAttribute('disabled')).toBe(true);
-    fireEvent.click(tool('适应窗口'));
-
-    fireEvent.click(tool('旋转 90°'));
+    // Rotating full screen turns the frame's original too.
+    fireEvent.click(within(dialog).getByRole('button', { name: '旋转 90°' }));
+    expect(fullscreen()?.style.transform).toContain('rotate(90deg)');
     expect(photo().style.transform).toContain('rotate(90deg)');
-    fireEvent.click(tool('旋转 90°'));
-    fireEvent.click(tool('旋转 90°'));
-    fireEvent.click(tool('旋转 90°'));
-    expect(photo().style.transform).toContain('rotate(0deg)');
+
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(fullscreen()).toBeNull());
+
+    fireEvent.click(within(viewer()).getByTestId('doc-frame'));
+    expect(fullscreen()).toBeTruthy();
+    // A click on the image itself keeps the view; a click on the blank stage closes it.
+    fireEvent.click(fullscreen() as HTMLElement);
+    expect(fullscreen()).toBeTruthy();
+    fireEvent.click(stage());
+    expect(fullscreen()).toBeNull();
   });
 
-  test('切换到另一个待确认项后，倍数与角度回到默认', async () => {
+  test('切换到另一个待确认项后，角度回到默认', async () => {
     renderPending();
     await screen.findByRole('heading', { name: '待确认项' });
-    fireEvent.click(tool('放大'));
-    fireEvent.click(tool('旋转 90°'));
-    expect(readout()).toBe('当前倍数 125%');
+    openFullscreen();
+    fireEvent.click(within(stage().closest('[role="dialog"]') as HTMLElement).getByRole('button', { name: '旋转 90°' }));
+    fireEvent.click(stage());
+    expect(photo().style.transform).toContain('rotate(90deg)');
     fireEvent.click(itemButton('下车时间不合法'));
     expect(within(detail()).getByRole('img', { name: 'IMG_4906.jpg 原件' })).toBeTruthy();
-    expect(readout()).toBe('当前倍数 100%');
     expect(photo().style.transform).toContain('rotate(0deg)');
     // 切回来也是默认。
     fireEvent.click(itemButton('补填起点与终点'));
-    expect(readout()).toBe('当前倍数 100%');
     expect(photo().style.transform).toContain('rotate(0deg)');
   });
 
-  test('PDF 原件用浏览器自带预览，不出现工具栏', async () => {
+  test('PDF 渲染不了时退回浏览器自带预览，不提供全屏查看', async () => {
     renderPending();
     await screen.findByRole('heading', { name: '待确认项' });
     fireEvent.click(itemButton('不支持的材料类型'));
-    expect(within(detail()).getByTitle('餐饮_发票.pdf 原件').tagName).toBe('IFRAME');
-    expect(toolbar()).toBeNull();
-    expect(within(viewer()).queryByRole('button')).toBeNull();
+    expect((await within(detail()).findByTitle('餐饮_发票.pdf 原件')).tagName).toBe('IFRAME');
+    expect(within(viewer()).queryByRole('button', { name: '全屏查看' })).toBeNull();
   });
 
   test('查看操作不发出任何适配器调用', async () => {
@@ -283,10 +283,9 @@ describe('原件查看器', () => {
     await screen.findByText('对照原件补填或作出选择。还剩 4 个。');
     calls.length = 0;
 
-    for (const name of ['放大', '放大', '缩小', '旋转 90°', '适应窗口']) fireEvent.click(tool(name));
-    fireEvent.pointerDown(within(viewer()).getByTestId('doc-frame'), { button: 0, clientX: 10, clientY: 10, pointerId: 1 });
-    fireEvent.pointerMove(within(viewer()).getByTestId('doc-frame'), { clientX: 40, clientY: 40, pointerId: 1 });
-    fireEvent.pointerUp(within(viewer()).getByTestId('doc-frame'), { pointerId: 1 });
+    openFullscreen();
+    fireEvent.click(within(stage().closest('[role="dialog"]') as HTMLElement).getByRole('button', { name: '旋转 90°' }));
+    fireEvent.click(stage());
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(calls).toEqual([]);
     const snapshot = await adapter.getSnapshot('T1');
@@ -428,25 +427,100 @@ describe('逐段分摊与阻塞项', () => {
     expect(rows[1]?.textContent).toBe('下车时间不合法，并补填起点与终点IMG_4906.jpg');
   });
 
-  // #213: a 住宿 invoice missing its 支付截图 is answered by uploading the screenshot right here, or by 确认没有.
+  // #213, #331: a 住宿 invoice missing its 支付截图 takes a group of them right here, closed with 「已传齐」, or 确认没有.
   // The mock raises the item at inventory like the server does (T1 has no screenshot).
-  test('住宿发票缺少支付截图：在待确认项里直接上传支付截图，这一项随之消失', async () => {
+  test('住宿发票缺少支付截图：多选上传一组、缩略图、移除、已传 N 张、上限 6 张，点「已传齐」这一项才处理完', async () => {
+    const copy = STAY_TRIO_COPY.screenshot;
     const adapter = renderPending();
     await screen.findByRole('heading', { name: '待确认项' });
-    const title = STAY_TRIO_COPY.screenshot.title('全季酒店_发票.pdf');
+    const title = copy.title('全季酒店_发票.pdf');
     fireEvent.click(itemButton(title));
     expect(within(detail()).getByRole('heading', { name: title })).toBeTruthy();
-    expect(within(detail()).getByText(STAY_TRIO_COPY.screenshot.why('3640.00'))).toBeTruthy();
-    expect(within(detail()).getByRole('button', { name: STAY_TRIO_COPY.screenshot.confirmNone })).toBeTruthy();
-    expect(within(detail()).getByRole('button', { name: STAY_TRIO_COPY.screenshot.upload })).toBeTruthy();
+    expect(within(detail()).getByText(copy.why('3640.00'))).toBeTruthy();
+    expect(within(detail()).getByRole('button', { name: copy.confirmNone })).toBeTruthy();
+    expect(within(detail()).getByRole('button', { name: copy.upload })).toBeTruthy();
+    expect((within(detail()).getByRole('button', { name: copy.complete }) as HTMLButtonElement).disabled).toBe(true);
 
+    const png = (name: string) => new File([new Uint8Array([137, 80, 78, 71])], name, { type: 'image/png' });
     const add = vi.spyOn(adapter, 'addPaymentScreenshot');
-    const file = new File([new Uint8Array([137, 80, 78, 71])], 'IMG_5011.png', { type: 'image/png' });
-    fireEvent.change(within(detail()).getByLabelText(STAY_TRIO_COPY.screenshot.inputLabel('全季酒店_发票.pdf')), { target: { files: [file] } });
-    await waitFor(() => expect(add).toHaveBeenCalledWith('T1', 'm01', file));
+    const input = () => within(detail()).getByLabelText(copy.inputLabel('全季酒店_发票.pdf'));
+    const thumbnails = () => within(within(detail()).getByRole('list', { name: '已上传的支付截图' })).getAllByRole('img').map((img) => img.getAttribute('alt'));
+    const [first, second] = [png('IMG_5011.png'), png('IMG_5012.png')];
+    expect(input().hasAttribute('multiple')).toBe(true);
+    fireEvent.change(input(), { target: { files: [first, second] } });
+    await waitFor(() => expect(thumbnails()).toEqual([copy.thumbnail('IMG_5011.png', 1), copy.thumbnail('IMG_5012.png', 2)]));
+    // One request per file, in the order selected.
+    expect(add.mock.calls).toEqual([
+      ['T1', 'm01', first],
+      ['T1', 'm01', second],
+    ]);
+    expect(within(detail()).getByText(copy.count(2))).toBeTruthy();
+    // The item stays open and selected; 确认没有 is gone while the group holds any.
+    expect(screen.getByText('对照原件补填或作出选择。还剩 4 个。')).toBeTruthy();
+    expect(within(detail()).queryByRole('button', { name: copy.confirmNone })).toBeNull();
+
+    fireEvent.click(within(detail()).getByRole('button', { name: copy.remove('IMG_5011.png', 1) }));
+    await waitFor(() => expect(thumbnails()).toEqual([copy.thumbnail('IMG_5012.png', 1)]));
+    expect(within(detail()).getByText(copy.count(1))).toBeTruthy();
+
+    fireEvent.change(input(), { target: { files: ['A', 'B', 'C', 'D', 'E'].map((name) => png(`IMG_${name}.png`)) } });
+    await waitFor(() => expect(thumbnails()).toHaveLength(6));
+    expect(within(detail()).getByText(PAYMENT_SCREENSHOT_ERRORS.cap)).toBeTruthy();
+    expect((within(detail()).getByRole('button', { name: copy.upload }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(within(detail()).getByRole('button', { name: copy.complete }));
     await screen.findByText('对照原件补填或作出选择。还剩 3 个。');
     const snapshot = await adapter.getSnapshot('T1');
-    expect(snapshot.pendingItems.some((item) => item.itemId === 'stay_screenshot_missing.m01')).toBe(false);
-    expect(snapshot.paymentScreenshots.map((shot) => [shot.voucherMaterialId, shot.fileName])).toEqual([['m01', 'IMG_5011.png']]);
+    expect(snapshot.pendingItems.find((item) => item.itemId === 'stay_screenshot_missing.m01')).toMatchObject({ status: 'resolved', answer: null });
+    expect(snapshot.paymentScreenshots.map((shot) => shot.fileName)).toEqual(['IMG_5012.png', 'IMG_A.png', 'IMG_B.png', 'IMG_C.png', 'IMG_D.png', 'IMG_E.png']);
+  });
+  // #332: a resolved 支付截图 item stays reachable from the all-done view: an upload supersedes 确认没有, a declared group
+  // takes additions and removals and stays resolved, and removing the last opens the item again.
+  test('已处理的支付截图项可以重新展开增删：上传取代「确认没有」，删到一张仍已处理，删空回到待处理', async () => {
+    const copy = STAY_TRIO_COPY.screenshot;
+    const adapter = renderPending('review');
+    await screen.findByRole('heading', { name: '没有待确认项了' });
+    const png = (name: string) => new File([new Uint8Array([137, 80, 78, 71])], name, { type: 'image/png' });
+    const input = () => within(detail()).getByLabelText(copy.inputLabel('全季酒店_发票.pdf'));
+    const thumbnails = () => within(within(detail()).getByRole('list', { name: '已上传的支付截图' })).getAllByRole('img').map((img) => img.getAttribute('alt'));
+    const item = async () => (await adapter.getSnapshot('T1')).pendingItems.find((candidate) => candidate.itemId === 'stay_screenshot_missing.m01');
+
+    // Seeded with 确认没有: opening it shows the chosen answer and still offers the upload, but no 「已传齐」.
+    expect(screen.queryByLabelText('待确认项详情')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: copy.reopen }));
+    expect(within(detail()).getByRole('button', { name: copy.confirmNone }).getAttribute('aria-pressed')).toBe('true');
+    expect(within(detail()).queryByRole('button', { name: copy.complete })).toBeNull();
+
+    // An upload supersedes it: the item is pending again, selected in the queue, and waits for 「已传齐」.
+    fireEvent.change(input(), { target: { files: [png('IMG_5011.png')] } });
+    await screen.findByText('对照原件补填或作出选择。还剩 1 个。');
+    expect(thumbnails()).toEqual([copy.thumbnail('IMG_5011.png', 1)]);
+    expect(within(detail()).queryByRole('button', { name: copy.confirmNone })).toBeNull();
+    expect(await item()).toMatchObject({ status: 'open', answer: null });
+    fireEvent.click(within(detail()).getByRole('button', { name: copy.complete }));
+    await screen.findByRole('heading', { name: '没有待确认项了' });
+
+    // Reopened after 「已传齐」: adding and removing keep it resolved.
+    fireEvent.click(screen.getByRole('button', { name: copy.reopen }));
+    expect(within(detail()).getByText('已处理')).toBeTruthy();
+    fireEvent.change(input(), { target: { files: [png('IMG_5012.png')] } });
+    await waitFor(() => expect(thumbnails()).toEqual([copy.thumbnail('IMG_5011.png', 1), copy.thumbnail('IMG_5012.png', 2)]));
+    fireEvent.click(within(detail()).getByRole('button', { name: copy.remove('IMG_5011.png', 1) }));
+    await waitFor(() => expect(thumbnails()).toEqual([copy.thumbnail('IMG_5012.png', 1)]));
+    expect(within(detail()).getByText(copy.count(1))).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '没有待确认项了' })).toBeTruthy();
+    expect(await item()).toMatchObject({ status: 'resolved', answer: null });
+
+    // Removing the last opens it again; 确认没有 is on offer once more.
+    fireEvent.click(within(detail()).getByRole('button', { name: copy.remove('IMG_5012.png', 1) }));
+    await screen.findByText('对照原件补填或作出选择。还剩 1 个。');
+    expect(within(detail()).getByRole('button', { name: copy.confirmNone }).getAttribute('aria-pressed')).toBe('false');
+    expect(await item()).toMatchObject({ status: 'open', answer: null });
+  });
+
+  test('整单明细确认后，已处理的支付截图项不再能展开增删', async () => {
+    renderPending('actions');
+    await screen.findByRole('heading', { name: '没有待确认项了' });
+    expect(screen.queryByRole('button', { name: STAY_TRIO_COPY.screenshot.reopen })).toBeNull();
   });
 });

@@ -63,7 +63,7 @@ Mock entries are development fixtures, scoped to the fixture account; new accoun
   同一分类内按事件顺序。示例材料得到 No.1-3 高德、No.4 曹操、No.5-6 出租车、No.7-8 铁路、No.9 住宿，合计 3972.59。
 - 整单确认表照内核 `preparationConfirmationTable`：No. 加 13 列（发票 | 项目号 | 起始日期 | 结束日期 | 住宿地/城市 | 出发点 | 目的地 | 费用分类 | 费用项目 | 发票类型 | 费用金额 | 税额 | 总额，
   列名常量 `CONFIRMATION_TABLE_COLUMNS`），无组标题、无合计行，表内不展示文件名；表下「材料包」一节写文件数并列出材料包文件（#114 要求），文件名只出现在这一节，整页没有「参考材料」字样（行程单、结账单在材料包里的类别名是「证明材料」）。只能「确认」，有不对的地方回到对应步骤修改。
-- 整单确认绑定项目归属：确认后在项目归属页改派项目或改事由，确认失效并提示重新确认。支付截图只在打印稿页的住宿页补充。
+- 整单确认绑定项目归属：确认后在项目归属页改派项目或改事由，确认失效并提示重新确认。支付截图在住宿发票的待确认项里上传，打印稿预览页不补充。
 
 ## QA：`?seed=` 与 `?fault=`
 
@@ -74,7 +74,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 | --- | --- |
 | `upload`（默认） | 还没有材料，显示拖拽区 |
 | `inventory` | 11 份材料已盘点，结果按费用事件归组 |
-| `pending` | 4 个待确认项未处理（含住宿发票缺支付截图：可在这一项上直接上传支付截图，或选「确认没有支付截图」） |
+| `pending` | 4 个待确认项未处理（含住宿发票缺支付截图：可在这一项上上传一组支付截图（至多 6 张）后点「已传齐」，或选「确认没有支付截图」） |
 | `project` / `assign` | 待确认项已处理，项目归属进行中，No.1、No.2 已归入 P-2307（「归入项目」面板的「本次已归入」显示 2 条 / 47.54 元）；整单确认页还不能进 |
 | `review` | 9 行整单明细（项目归属已提交）待「确认」 |
 | `actions` | 整单明细已确认，出现「去打印」「去报销」 |
@@ -172,7 +172,7 @@ mock 与服务端的对照见 `src/mock/parity.test.ts`：每个黄金快照场�
   是否按分守恒由服务端判定，不守恒返回 `{ error }`（文案 `ALLOCATION_ERRORS.notConserved`），页面只显示。「认不出」的后果由服务端写在 `giveUpNote`；照内核，放弃之后出现一条阻塞的 `given_up` 项（`why` 是后果说明），它不接受 `answer-pending`（`PENDING_ANSWER_ERRORS.notAnswerable`），只能用 `exclude-material` 排除这张发票，或追加材料后重新盘点。
 - 跨任务重复发票（内核 `duplicate_blocked`）：快照 `blockers: [{ kind: 'duplicate_across_tasks', materialId, fileName, reason, resolver, tasks: [{ taskId, name }] }]`。有阻塞项时整批停：盘点结束但 `events`、`pendingItems` 为空，阶段停在 `inventory`，step 为 `none`。处置是 `exclude-material`（阻塞项的 `materialId`）：服务端把这份移出本次材料，阻塞解除后接着划分费用事件。表格列 `BLOCKER_TABLE_COLUMNS`，说明文案 `DUPLICATE_BLOCKER_COPY`。
 - 响应约定：成功 200 返回整份新快照；失败 `{ error: { code, message } }`（`message` 直接显示在按钮旁）；`stepToken` 过期返回 409 与 `{ error, snapshot }`（最新快照）。事件流为 SSE，`event: snapshot`，`data` 为整份快照；客户端断开后按 0.5 s 起翻倍、封顶 10 s 重连，恢复后重新拉取快照。
-- 值：金额两位小数字符串，日期 `YYYY-MM-DD`，时间 `HH:MM`，ID 不透明。上传为 multipart（`files`；支付截图为 `voucherMaterialId` + `file`，只在打印稿生成后接受）。
+- 值：金额两位小数字符串，日期 `YYYY-MM-DD`，时间 `HH:MM`，ID 不透明。上传为 multipart（`files`；支付截图为 `voucherMaterialId` + `file`，一次一张，只接受住宿发票，每张发票至多 6 张；「已传齐」是 `complete-payment-screenshots`（`voucherMaterialId`）；整单明细确认后这三个动作都拒绝，`screenshot_locked`）。
 - 验收样本：`src/mock/fixtures/`（各阶段快照）与 `fixtures/generated/`（原件、页图、PDF）。
 - mock 与服务端对照：`src/mock/parity.test.ts` 把服务端录制黄金快照（`@baox/contract/goldens`）的每个场景在 mock 里走一遍，
   逐项比对阶段、step、`allowedActions`、ERP 与对账处置等页面据以分支的字段。mock 流程改动让它失败时，改 mock 去跟服务端一致，不要改黄金快照。

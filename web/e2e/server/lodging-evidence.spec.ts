@@ -18,9 +18,10 @@ test('associated hotel bill leads pending review and project previews preserve s
   await page.goto(`/#/task/${taskId}/pending`);
   const preview = page.getByRole('region', { name: '住宿材料预览' });
   await expect(preview.getByRole('tab', { name: /^结账单：/ })).toHaveAttribute('aria-selected', 'true');
-  await expect(preview.getByTitle('全季酒店_结账单.pdf 原件')).toBeVisible();
-  await preview.getByRole('tab', { name: /^发票：/ }).click();
-  await expect(preview.getByTitle('全季酒店_发票.pdf 原件')).toBeVisible();
+  // The folio PDF is rendered to an image in the original viewer; the invoice is never offered (QA 2026-09-30).
+  await expect(preview.getByRole('img', { name: '全季酒店_结账单.pdf 原件' })).toHaveAttribute('src', /^blob:/);
+  await expect(preview.getByRole('button', { name: '全屏查看', exact: true })).toBeVisible();
+  await expect(preview.getByRole('tab')).toHaveCount(1);
 
   await answerStayGaps(page, taskId);
   await page.request.post('/api/project-book/intake', { data: { number: 'HOTEL-101', name: '住宿项目' } });
@@ -37,22 +38,36 @@ test('associated hotel bill leads pending review and project previews preserve s
   await page.getByRole('button', { name: '查看住宿材料 No.1' }).click();
   const dialog = page.getByRole('dialog', { name: '住宿材料 No.1' });
   await expect(dialog.getByRole('tab', { name: /^结账单：/ })).toHaveAttribute('aria-selected', 'true');
-  await dialog.getByRole('tab', { name: /^发票：/ }).click();
-  await dialog.getByRole('tab', { name: /^结账单：/ }).click();
+  await expect(dialog.getByRole('tab', { name: /^发票：/ })).toHaveCount(0);
   await page.setViewportSize({ width: 1366, height: 768 });
-  // Let the native PDF viewer paint before capturing visual evidence; assertions do not depend on this delay.
-  await page.waitForTimeout(1000);
+  await expect(dialog.getByRole('img', { name: '全季酒店_结账单.pdf 原件' })).toBeVisible();
+  // The folio fills the dialog's width instead of a thin page fitted to a short frame (QA 2026-09-30).
+  await expect.poll(async () => (await dialog.getByRole('img', { name: '全季酒店_结账单.pdf 原件' }).boundingBox())?.width ?? 0).toBeGreaterThan(600);
   await page.screenshot({ path: testInfo.outputPath('lodging-preview-1366.png') });
+  // Full screen from inside the dialog covers the window, not just the dialog; Esc closes only the full-screen view.
+  await dialog.getByRole('button', { name: '全屏查看', exact: true }).click();
+  const fullscreen = page.getByRole('img', { name: '全季酒店_结账单.pdf 原件（全屏）' });
+  await expect(fullscreen).toHaveAttribute('src', /^blob:/);
+  await expect.poll(async () => (await fullscreen.boundingBox())?.width ?? 0).toBeGreaterThan(900);
+  await expect(page.getByRole('dialog').filter({ has: page.getByTestId('fullscreen-stage') }).getByRole('tab', { name: /^结账单：/ })).toBeVisible();
+  await expect(page.locator('.app-doc-fullscreen')).toHaveCSS('opacity', '1');
+  // Painted over the dialog: the point at the window's centre belongs to the full-screen view.
+  expect(await page.evaluate(() => document.elementFromPoint(innerWidth / 2, innerHeight / 2)?.closest('.app-doc-fullscreen') !== null)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('lodging-fullscreen-1366.png') });
+  await page.keyboard.press('Escape');
+  await expect(fullscreen).toBeHidden();
+  await expect(dialog).toBeVisible();
   const bill = before.materials.find((material) => material.kind === 'hotel_folio')!;
   await page.route(`**${bill.previewUrl}`, (route) => route.fulfill({ status: 404, body: 'preview unavailable' }));
-  await dialog.getByRole('tab', { name: /^发票：/ }).click();
-  await dialog.getByRole('tab', { name: /^结账单：/ }).click();
+  // Reopen the dialog so the preview loads again, now against the failing URL.
+  await dialog.getByRole('button', { name: '关闭预览', exact: true }).click();
+  await page.getByRole('button', { name: '查看住宿材料 No.1' }).click();
   await expect(dialog).toContainText('材料已在任务中，但预览暂时不可用');
   await expect(dialog.getByRole('link', { name: '打开原件', exact: true })).toBeVisible();
   expect((await snapshot()).materials.find((material) => material.materialId === bill.materialId)?.linkedMaterialIds).toEqual(bill.linkedMaterialIds);
   await page.unroute(`**${bill.previewUrl}`);
   await dialog.getByRole('button', { name: '重试预览', exact: true }).click();
-  await expect(dialog.getByTitle('全季酒店_结账单.pdf 原件')).toBeVisible();
+  await expect(dialog.getByRole('img', { name: '全季酒店_结账单.pdf 原件' })).toHaveAttribute('src', /^blob:/);
   await dialog.getByRole('button', { name: '关闭预览', exact: true }).click();
   await expect(check).toBeChecked();
   await expect(page.getByLabel('报销事由')).toHaveValue('住宿材料核对');

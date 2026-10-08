@@ -6,8 +6,8 @@ import type { Locator, Page } from '@playwright/test';
 import { answerStayGaps, expect, signIn, test } from './fixture';
 
 // Slice 11 (#190) on the real server: 去打印. A task with a hotel invoice, its folio and a taxi photo is brought to
-// choose_action through the API; the page then generates the merged sheet, and the user rotates, crops, attaches a
-// 支付截图 (payment screenshot) and downloads the PDF. None of it touches the confirmation.
+// choose_action through the API; the page then generates the merged sheet, and the user rotates, crops and downloads
+// the PDF. None of it touches the confirmation.
 
 const samples = ['m01', 'm02', 'm09'].map((prefix) => {
   const found = SAMPLE_MATERIALS.find((sample) => sample.file.startsWith(prefix));
@@ -28,7 +28,8 @@ async function act(page: Page, snapshot: TaskSnapshot, name: string, body: Recor
   return TaskSnapshotSchema.parse(await response.json());
 }
 
-async function confirmedTask(page: Page, materials = samples): Promise<string> {
+// `screenshots`: how many 支付截图 the hotel invoice gets in its 待确认项 (then 「已传齐」) before the list is confirmed.
+async function confirmedTask(page: Page, materials = samples, screenshots = 0): Promise<string> {
   const created = TaskSnapshotSchema.parse(await (await page.request.post('/api/tasks', { data: { homeCity: '杭州' } })).json());
   const taskId = created.task.taskId;
   for (const sample of materials) {
@@ -37,7 +38,8 @@ async function confirmedTask(page: Page, materials = samples): Promise<string> {
     expect(uploaded.ok()).toBe(true);
   }
   await act(page, await snapshotOf(page, taskId), 'start-inventory');
-  // Waits out inventory and answers the 住宿 trio gaps it raises; the 支付截图 this test adds goes on from the print page.
+  if (screenshots > 0) await attachScreenshots(page, taskId, screenshots);
+  // Waits out inventory and answers the 住宿 trio gaps it raises.
   await answerStayGaps(page, taskId);
   expect((await page.request.post('/api/project-book/intake', { data: { number: 'P-2307', name: '华东客户交付' } })).ok()).toBe(true);
   const ready = await snapshotOf(page, taskId);
@@ -45,6 +47,18 @@ async function confirmedTask(page: Page, materials = samples): Promise<string> {
   const confirmed = await act(page, review, 'confirm-review', { digest: review.confirmation.digest });
   expect(confirmed).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' } });
   return taskId;
+}
+
+async function attachScreenshots(page: Page, taskId: string, count: number) {
+  await expect.poll(async () => (await snapshotOf(page, taskId)).inventory.status, { timeout: 60_000 }).toBe('done');
+  const invoice = (await snapshotOf(page, taskId)).materials.find((material) => material.fileName === samples[0]!.fileName);
+  for (let n = 1; n <= count; n += 1) {
+    const file = { name: `IMG_50${10 + n}.png`, mimeType: 'image/png', buffer: readFileSync(join(GENERATED_DIR, `print-pg${n}.png`)) };
+    const uploaded = await page.request.post(`/api/tasks/${taskId}/payment-screenshots`, { multipart: { voucherMaterialId: invoice?.materialId ?? '', file } });
+    expect(uploaded.ok()).toBe(true);
+  }
+  const declared = await page.request.post(`/api/tasks/${taskId}/actions/complete-payment-screenshots`, { data: { voucherMaterialId: invoice?.materialId } });
+  expect(declared.ok()).toBe(true);
 }
 
 async function expectLoaded(image: Locator) {
@@ -62,21 +76,33 @@ test.describe('confirmed print and ERP navigation', () => {
     await page.goto(`/#/task/${taskId}/print`);
     const image = page.locator('.app-page-image').first();
     await expectLoaded(image);
+    const list = page.getByRole('list', { name: '打印稿页面' });
+    const images = list.locator('img.app-page-image');
+    const firstRow = Math.min(await images.count(), 4);
     for (const [width, height] of [[1366, 768], [1920, 1080]]) {
       await page.setViewportSize({ width: width!, height: height! });
-      const toolbar = page.getByRole('toolbar', { name: '打印稿查看' });
-      await expect(toolbar).toBeInViewport();
-      const box = await image.boundingBox();
-      expect(box?.width).toBeGreaterThan(700);
-      const list = await page.getByRole('list', { name: '打印稿页面' }).boundingBox();
-      expect(Math.abs((list!.x + list!.width / 2) - width! / 2)).toBeLessThan(40);
+      await expect(page.getByRole('toolbar', { name: '打印稿查看' })).toBeInViewport();
+      // The pages tile, four to a row by default (QA 2026-09-30): one top edge, about a quarter of the list width each.
+      const listBox = (await list.boundingBox())!;
+      const boxes = await Promise.all(Array.from({ length: firstRow }, (_, n) => images.nth(n).boundingBox()));
+      for (const box of boxes) {
+        expect(Math.abs(box!.y - boxes[0]!.y)).toBeLessThan(2);
+        expect(box!.width).toBeLessThan(listBox.width / 4);
+        expect(box!.width).toBeGreaterThan(listBox.width / 6);
+      }
       await page.screenshot({ path: testInfo.outputPath(`print-${width}.png`) });
     }
-    const toolbar = page.getByRole('toolbar', { name: '打印稿查看' });
-    await toolbar.getByRole('button', { name: '放大', exact: true }).click();
-    await expect(toolbar.getByRole('status')).toHaveText('125%');
-    await toolbar.getByRole('button', { name: '适应窗口', exact: true }).click();
-    await expect(toolbar.getByRole('status')).toHaveText('100%');
+    await page.getByRole('tablist', { name: '每行页数' }).getByRole('tab', { name: '每行 3 页' }).click();
+    const listBox = (await list.boundingBox())!;
+    const first = (await image.boundingBox())!;
+    expect(first.width).toBeGreaterThan(listBox.width / 4);
+    expect(first.width).toBeLessThan(listBox.width / 3);
+    await page.reload();
+    await expect(page.getByRole('tablist', { name: '每行页数' }).getByRole('tab', { name: '每行 3 页' })).toHaveAttribute('aria-selected', 'true');
+    // A click on a page opens it full screen.
+    await image.click();
+    await expect(page.getByRole('img', { name: '第 1 页页图（全屏）' })).toBeVisible();
+    await page.getByRole('button', { name: '关闭', exact: true }).click();
     expect((await snapshotOf(page, taskId)).confirmation).toEqual(before.confirmation);
     await page.getByRole('button', { name: '去报销', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`#/task/${taskId}/erp$`));
@@ -89,7 +115,7 @@ test.describe('confirmed print and ERP navigation', () => {
   });
 });
 
-test('去打印：生成合并打印稿，旋转、四角裁剪、补充支付截图，下载 PDF；整单明细确认不变', async ({ page }, testInfo) => {
+test('去打印：生成合并打印稿，旋转、四角裁剪，下载 PDF；预览页不补充支付截图；整单明细确认不变', async ({ page }, testInfo) => {
   test.setTimeout(240_000);
   await signIn(page);
   const taskId = await confirmedTask(page);
@@ -110,7 +136,7 @@ test('去打印：生成合并打印稿，旋转、四角裁剪、补充支付�
   const hotelImage = hotel.locator('img.app-page-image');
   const before = (await hotelImage.getAttribute('src')) ?? '';
   const rotateFolio = hotel.getByRole('button', { name: /^(旋转 90°|改为竖放)：全季酒店_结账单\.pdf$/ });
-  const wasTurned = ((await rotateFolio.getAttribute('aria-label')) ?? '').startsWith('改为竖放');
+  const wasTurned = (await hotel.getByRole('button', { name: '改为竖放：全季酒店_结账单.pdf' }).count()) > 0;
   await rotateFolio.click();
   await expect(hotelImage).not.toHaveAttribute('src', before);
   await expect(hotel.getByRole('button', { name: `${wasTurned ? '旋转 90°' : '改为竖放'}：全季酒店_结账单.pdf` })).toBeVisible();
@@ -125,15 +151,10 @@ test('去打印：生成合并打印稿，旋转、四角裁剪、补充支付�
   await editor.getByRole('button', { name: '提交裁剪' }).click();
   await expect(page.getByTestId('crop-receipt')).toContainText('已提交裁剪：');
   await expect(editor).toHaveCount(0);
-  await expect(taxi).toContainText('已手动微调裁剪');
 
-  // A payment screenshot: a non-image is refused in place; an image lands on the hotel page and clears the notice.
-  const chooser = hotel.getByLabel('选择支付截图：全季酒店_发票.pdf');
-  await chooser.setInputFiles({ name: '支付记录.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') });
-  await expect(hotel.getByRole('alert')).toHaveText('只接受图片（JPG、PNG）。');
-  await chooser.setInputFiles({ name: 'IMG_5011.png', mimeType: 'image/png', buffer: readFileSync(join(GENERATED_DIR, 'print-pg1.png')) });
-  await expect(hotel.getByText('IMG_5011.png')).toBeVisible();
-  await expect(page.getByRole('status', { name: '打印提醒' })).toHaveCount(0);
+  // The preview does not take payment screenshots (QA 2026-09-30); the 住宿 one is uploaded in its 待确认项.
+  await expect(page.getByRole('button', { name: /支付截图/ })).toHaveCount(0);
+  await expect(page.locator('input[type="file"]')).toHaveCount(0);
   await expectLoaded(hotelImage);
   await page.screenshot({ path: testInfo.outputPath('print.png'), fullPage: true });
 
@@ -147,4 +168,33 @@ test('去打印：生成合并打印稿，旋转、四角裁剪、补充支付�
   expect(bytes.toString('latin1').match(/\/Type\s*\/Page[^s]/g)?.length).toBe(2);
 
   expect((await snapshotOf(page, taskId)).confirmation).toEqual(confirmation);
+});
+
+// #333: three 支付截图 move to a continuation page right after the hotel invoice's page. It tiles, opens full screen and
+// is in the downloaded PDF like any other page.
+test('住宿发票有 3 张支付截图：发票页后紧跟支付截图续页，可全屏查看，下载的 PDF 含续页', async ({ page }) => {
+  test.setTimeout(180_000);
+  await signIn(page);
+  const taskId = await confirmedTask(page, samples.filter((sample) => sample.file.endsWith('.pdf')), 3);
+  const hotelHeader = 'No.1 · 08-09 · 住宿 · 3640.00';
+  const continuationHeader = 'No.1 支付截图（续） · 全季酒店（上海某某店） · 3640.00';
+
+  await page.goto(`/#/task/${taskId}/print`);
+  const pages = page.getByRole('list', { name: '打印稿页面' });
+  await expect(pages.locator('.page-hdr')).toHaveText([hotelHeader, continuationHeader], { timeout: 60_000 });
+  await expect(page.getByRole('status', { name: '打印提醒' })).toHaveCount(0);
+  const continuation = pages.getByRole('listitem', { name: continuationHeader, exact: true });
+  await expectLoaded(continuation.locator('img.app-page-image'));
+  // Screenshots are neither turned nor cropped: the continuation page has no placement actions; the folio keeps its own.
+  await expect(continuation.getByRole('button', { name: /旋转|改为竖放|调整四角/ })).toHaveCount(0);
+  await expect(pages.getByRole('listitem', { name: hotelHeader, exact: true }).getByRole('button', { name: /^(旋转 90°|改为竖放)：全季酒店_结账单\.pdf$/ })).toBeVisible();
+
+  await continuation.getByRole('button', { name: '全屏查看第 2 页' }).click();
+  await expect(page.getByRole('img', { name: '第 2 页页图（全屏）' })).toBeVisible();
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+
+  const downloading = page.waitForEvent('download');
+  await page.getByRole('link', { name: '下载打印稿 PDF' }).click();
+  const bytes = readFileSync(await (await downloading).path());
+  expect(bytes.toString('latin1').match(/\/Type\s*\/Page[^s]/g)?.length).toBe(2);
 });
