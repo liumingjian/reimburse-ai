@@ -427,6 +427,48 @@ describe('逐段分摊与阻塞项', () => {
     expect(rows[1]?.textContent).toBe('下车时间不合法，并补填起点与终点IMG_4906.jpg');
   });
 
+  // #342: 手工补填 is one form. The button opens it in place; the 材料种类 is picked inline and its fields follow, and one
+  // answer carries the kind and the values.
+  test('手工补填一步完成：选种类、填字段，一次提交', async () => {
+    const snapshot = t1Snapshot('pending');
+    const [first, ...rest] = snapshot.pendingItems;
+    if (!first) throw new Error('夹具里没有待确认项');
+    const field = (key: string, label: string, format: 'money' | 'date' | 'text', required = true) => ({ key, label, placeholder: '', required, format });
+    const unrecognised = {
+      ...first,
+      itemId: `unrecognised.${first.materialId}`,
+      title: '认不出这份材料',
+      kind: 'choice' as const,
+      fields: [],
+      choices: [{ key: 'exclude', label: '排除这份材料' }, { key: 'reference', label: '作为参考材料' }, { key: 'manual_fill', label: '手工补填' }],
+      manualKinds: [
+        { kind: 'vat_invoice' as const, label: '全电发票', fields: [field('totalAmount', '价税合计', 'money')] },
+        { kind: 'payment_screenshot' as const, label: '支付截图', fields: [field('amount', '支付金额', 'money'), field('payDate', '支付日期', 'date'), field('payee', '收款方', 'text', false)] },
+      ],
+    };
+    const adapter = createMockAdapter({ seed: 'pending', fault: null });
+    const answer = vi.spyOn(adapter, 'answerPendingItem');
+    render(
+      <AppProvider store={new AppStore(adapter, { validate: true })}>
+        <PendingPage snapshot={{ ...snapshot, pendingItems: [unrecognised, ...rest] }} />
+      </AppProvider>,
+    );
+    fireEvent.click(within(detail()).getByRole('button', { name: '手工补填' }));
+    expect(answer).not.toHaveBeenCalled();
+    const form = within(detail()).getByRole('form', { name: /^手工补填「/ });
+    fireEvent.click(within(form).getByRole('button', { name: '保存并标记已处理' }));
+    expect(within(form).getByText(PENDING_ANSWER_ERRORS.kind)).toBeTruthy();
+
+    fireEvent.change(within(form).getByLabelText('材料种类 *'), { target: { value: 'payment_screenshot' } });
+    expect(within(form).queryByLabelText('价税合计 *')).toBeNull();
+    fireEvent.change(within(form).getByLabelText('支付金额 *'), { target: { value: '178.48' } });
+    fireEvent.change(within(form).getByLabelText('支付日期 *'), { target: { value: '2026-09-16' } });
+    fireEvent.click(within(form).getByRole('button', { name: '保存并标记已处理' }));
+    await waitFor(() =>
+      expect(answer).toHaveBeenCalledWith('T1', unrecognised.itemId, { choice: 'manual_fill', kind: 'payment_screenshot', amount: '178.48', payDate: '2026-09-16', payee: '' }, snapshot.step.stepToken),
+    );
+  });
+
   // #213, ADR-0032: a 住宿 invoice missing its 支付截图 takes them right here, all in one upload that the server places with
   // this invoice before it inventories again. The mock raises the item at inventory like the server does (T1 has no
   // screenshot) and, having no parser, counts the upload as covering the invoice.

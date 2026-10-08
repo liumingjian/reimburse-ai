@@ -347,6 +347,7 @@
         "screenshotIds": [],
         "locked": true
       },
+      "manualKinds": [],
       "status": "resolved",
       "answer": {
         "choice": "confirm_none"

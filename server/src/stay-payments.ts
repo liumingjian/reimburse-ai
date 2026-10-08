@@ -64,7 +64,7 @@ export type LabelledStay = PaymentStay & { label: string };
 
 const STAY_CHOICE = 'stay:';
 const item = (code: string, materialId: string, title: string, why: string, choices: PendingItem['choices']): PendingItem => ({
-  itemId: `${code}.${materialId}`, materialId, title, why, kind: 'choice', resolver: '要你处理', fields: [], choices, allocation: null, screenshotGroup: null, status: 'open', answer: null,
+  itemId: `${code}.${materialId}`, materialId, title, why, kind: 'choice', resolver: '要你处理', fields: [], choices, allocation: null, screenshotGroup: null, manualKinds: [], status: 'open', answer: null,
 });
 
 // `tableGroups`: invoices holding screenshots stored the #331 way, which have no amount: their sum is not shown.

@@ -81,6 +81,7 @@ function missingItem(element: StayTrioElement, material: TrioVoucher): PendingIt
     choices: [{ key: STAY_TRIO_CONFIRM_NONE, label: copy.confirmNone }, EXCLUDE],
     allocation: null,
     screenshotGroup: null,
+    manualKinds: [],
     status: 'open',
     answer: null,
   };

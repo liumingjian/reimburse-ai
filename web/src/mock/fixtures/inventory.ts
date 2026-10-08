@@ -384,6 +384,7 @@ const PENDING_TEMPLATES: Readonly<Record<string, PendingTemplate>> = {
     choices: [],
     allocation: null,
     screenshotGroup: null,
+    manualKinds: [],
   },
   m10: {
     title: '下车时间不合法，并补填起点与终点',
@@ -394,6 +395,7 @@ const PENDING_TEMPLATES: Readonly<Record<string, PendingTemplate>> = {
     choices: [],
     allocation: null,
     screenshotGroup: null,
+    manualKinds: [],
   },
   m11: {
     title: '不支持的材料类型',
@@ -404,6 +406,7 @@ const PENDING_TEMPLATES: Readonly<Record<string, PendingTemplate>> = {
     choices: UNSUPPORTED_CHOICES,
     allocation: null,
     screenshotGroup: null,
+    manualKinds: [],
   },
 };
 
@@ -431,6 +434,7 @@ const UNKNOWN_TEMPLATES: Readonly<Record<UnknownKind, PendingTemplate>> = {
     choices: EXCLUDE_ONLY,
     allocation: null,
     screenshotGroup: null,
+    manualKinds: [],
   },
   // 内核 multi_page_invoice（next.mjs:870-872）。
   multi_page: {
@@ -442,6 +446,7 @@ const UNKNOWN_TEMPLATES: Readonly<Record<UnknownKind, PendingTemplate>> = {
     choices: EXCLUDE_ONLY,
     allocation: null,
     screenshotGroup: null,
+    manualKinds: [],
   },
   unsupported: {
     title: '不支持的材料类型',
@@ -452,6 +457,7 @@ const UNKNOWN_TEMPLATES: Readonly<Record<UnknownKind, PendingTemplate>> = {
     choices: UNSUPPORTED_CHOICES,
     allocation: null,
     screenshotGroup: null,
+    manualKinds: [],
   },
 };
 
@@ -503,6 +509,7 @@ function allocationTemplate(fileName: string): PendingTemplate {
     choices: [],
     allocation: { segments, total: AMAP_TOTAL, giveUpNote: ALLOCATION_GIVE_UP_NOTE },
     screenshotGroup: null,
+    manualKinds: [],
   };
 }
 
@@ -606,6 +613,7 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
       ],
       allocation: null,
       screenshotGroup: null,
+      manualKinds: [],
       status: completeScreenshots.has(voucher.materialId) ? 'resolved' : 'open',
       answer: null,
     });
@@ -731,6 +739,7 @@ function applyAllocation(result: InventoryResult, item: PendingItem, voucher: Ma
     choices: [],
     allocation: null,
     screenshotGroup: null,
+    manualKinds: [],
     status: 'open',
     answer: null,
   });
