@@ -7,7 +7,7 @@ import {
   PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE,
   PAYMENT_SCREENSHOT_ERRORS,
   STAY_TRIO_COPY,
-  STAY_TRIO_CONFIRM_NONE,
+  STAY_TRIO_CONFIRM_NONE, STAY_TRIO_CONFIRM_PAID,
   PENDING_CHOICE_KEY,
   fieldAnswer,
   isAllocationAnswer,
@@ -163,6 +163,8 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state }: For
   const screenshots = group?.shots ?? [];
   const copy = STAY_TRIO_COPY.screenshot;
   const full = screenshots.length >= (group?.cap ?? Infinity);
+  // A stay whose 支付截图 materials fall short of the invoice is confirmed with the item's own 「已传齐」 choice (ADR-0032).
+  const confirmsPaid = item.choices.some((choice) => choice.key === STAY_TRIO_CONFIRM_PAID);
   const choices = [...item.choices]
     .filter((choice) => !(screenshots.length > 0 && choice.key === STAY_TRIO_CONFIRM_NONE))
     .sort((a, b) => Number(b.key === 'exclude') - Number(a.key === 'exclude'));
@@ -217,7 +219,7 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state }: For
             {copy.upload}
           </Button>
         ) : null}
-        {editable && !resolved ? (
+        {editable && !resolved && !confirmsPaid ? (
           <Button size="md" disabled={state.busy || screenshots.length === 0} onClick={() => void group?.onComplete()}>
             {copy.complete}
           </Button>
