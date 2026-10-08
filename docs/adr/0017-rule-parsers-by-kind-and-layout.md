@@ -85,7 +85,7 @@ With no model in the loop, rule parsers and the user are the only producers of �
   - `taxi_receipt`: m09, m10;
   - unrecognised: m06, m11.
 
-  *Amended 2026-10-08 (#356).* m11 becomes the supported dining invoice, and a new office-supplies invoice takes its place as the unrecognised one; synthetic 餐饮小票 fixtures (matching, mismatched, discounted, photo) cover `dining_receipt/labelled` until real samples join the private corpus.
+  *Amended 2026-10-08 (#356).* m11 becomes the supported dining invoice, and a new office-supplies invoice takes its place as the unrecognised one; synthetic 餐饮小票 fixtures (matching, mismatched, discounted, photo) cover `dining_receipt/labelled` until real samples join the private corpus. So far: m13 (a 结账单 whose 实收 equals m11's 价税合计) and m14 (a discounted 消费清单 whose 实付 does).
 
   Private samples run through `test:private`, which gates per layout, medium and field (#196): text-layer PDFs must
   be 100% recognised and 100% right per field; OCR images at least 98% (`server/src/quality/private-gate.ts`).

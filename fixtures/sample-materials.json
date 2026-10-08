@@ -10,5 +10,7 @@
   { "file": "m09-taxi-photo.jpg", "fileName": "IMG_4871.jpg" },
   { "file": "m10-taxi-photo.jpg", "fileName": "IMG_4906.jpg" },
   { "file": "m11-dining-invoice.pdf", "fileName": "餐饮_发票.pdf" },
-  { "file": "m12-office-invoice.pdf", "fileName": "办公用品_发票.pdf" }
+  { "file": "m12-office-invoice.pdf", "fileName": "办公用品_发票.pdf" },
+  { "file": "m13-dining-receipt.pdf", "fileName": "餐饮_结账单.pdf" },
+  { "file": "m14-dining-receipt-discounted.pdf", "fileName": "餐饮_消费清单.pdf" }
 ]

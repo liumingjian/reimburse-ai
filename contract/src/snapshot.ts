@@ -58,8 +58,9 @@ export const EvidenceStateSchema = z.enum(EVIDENCE_STATES);
 export type EvidenceState = z.infer<typeof EvidenceStateSchema>;
 
 // 材料种类 (material kind, ADR-0017): owns the slot schema, checks and manual-fill form. v1 had five kinds;
-// ADR-0032 adds the 支付截图 (payment screenshot). A 版式 (layout) belongs to exactly one kind.
-export const MATERIAL_KINDS = ['vat_invoice', 'rail_ticket', 'ride_itinerary', 'hotel_folio', 'taxi_receipt', 'payment_screenshot'] as const;
+// ADR-0032 adds the 支付截图 (payment screenshot), #356 the 餐饮小票 (dining receipt). A 版式 (layout) belongs to
+// exactly one kind.
+export const MATERIAL_KINDS = ['vat_invoice', 'rail_ticket', 'ride_itinerary', 'hotel_folio', 'taxi_receipt', 'payment_screenshot', 'dining_receipt'] as const;
 export const MaterialKindSchema = z.enum(MATERIAL_KINDS);
 export type MaterialKind = z.infer<typeof MaterialKindSchema>;
 
@@ -612,15 +613,17 @@ export const PAYMENT_COPY = {
   remove: '不属于住宿（移除）',
 } as const;
 
-// 餐饮 (dining, #356): a dining invoice (招待费) is never claimed on the invoice alone; it needs its 餐饮小票. Until it
-// has one, inventory raises a blocking item on the invoice, `<code>.<invoice materialId>`. There is no 确认没有: the
-// only answer is exclusion. All filer-facing wording of the check lives here.
+// 餐饮 (dining, #356): a dining invoice (招待费) is never claimed on the invoice alone; it needs its 餐饮小票, paired one
+// to one when the slip's amount actually paid equals the invoice's 价税合计 to the cent (`server/src/dining.ts`). Until
+// it has one, inventory raises a blocking item on the invoice, `<code>.<invoice materialId>`. It is answered by
+// supplying the slip (an upload and a new inventory, after which the item is no longer derived) or by excluding the
+// invoice; there is no 确认没有. All filer-facing wording of the check lives here.
 export const DINING_ITEM_CODES = { receiptMissing: 'dining_receipt_missing' } as const;
 export const DINING_COPY = {
   receiptMissing: {
     title: (invoiceFileName: string) => `餐饮发票「${invoiceFileName}」缺少餐饮小票`,
     why: (totalAmount: string | undefined) =>
-      `餐饮报销要发票和餐饮小票两样，光有发票不能报销。这张餐饮发票${amountNote('价税合计', totalAmount)}没有配对到餐饮小票，也不能确认没有：没有餐饮小票，就排除这张发票。`,
+      `餐饮报销要发票和餐饮小票两样，光有发票不能报销。这张餐饮发票${amountNote('价税合计', totalAmount)}没有配对到餐饮小票：小票的实付金额要和发票价税合计一分不差，才算同一顿饭。请在上传页追加餐饮小票后重新盘点；没有餐饮小票，就排除这张发票，不能确认没有。`,
   },
 } as const;
 

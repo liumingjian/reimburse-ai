@@ -20,12 +20,12 @@ async function inventoryOf(files: string[]) {
 }
 
 describe('mock 服务端：新建任务命名与示例材料识别', () => {
-  test('示例材料对照表与识别档案一致（12 份，m01 到 m12）', () => {
-    expect(SAMPLES).toHaveLength(12);
+  test('示例材料对照表与识别档案一致（14 份，m01 到 m14）', () => {
+    expect(SAMPLES).toHaveLength(14);
     expect(SAMPLES.map((sample) => [sample.file, sample.fileName])).toEqual(Object.values(PROFILES).map((profile) => [profile.file, profile.fileName]));
   });
 
-  test('创建时是占位名称；按业务文件名上传 12 份后盘点，名称不变（同服务端）并给出费用期间，待确认项 5 个（含住宿发票缺支付截图、餐饮发票缺餐饮小票）', async () => {
+  test('创建时是占位名称；按业务文件名上传 14 份后盘点，名称不变（同服务端）并给出费用期间，待确认项 5 个（含住宿发票缺支付截图；两张同金额的餐饮小票都配不上，餐饮发票缺餐饮小票）', async () => {
     const { snapshot } = await inventoryOf(SAMPLES.map((sample) => sample.fileName));
     expect(snapshot.task.name).toMatch(/^\d{4}-\d{2}-\d{2} 新建报销$/);
     expect(snapshot.task.period).toEqual({ start: '2026-08-09', end: '2026-08-22' });
@@ -61,6 +61,19 @@ describe('mock 服务端：新建任务命名与示例材料识别', () => {
     if (!answered.ok) throw new Error(answered.error.message);
     expect(answered.snapshot.materials[0]?.status).toBe('excluded');
     expect(answered.snapshot.lines).toEqual([]);
+  });
+
+  test('餐饮发票与实付金额一致的餐饮小票配对：没有待确认项，明细以小票为参考材料；同金额的小票有两张就都不配（同服务端，#360）', async () => {
+    const { snapshot } = await inventoryOf(['餐饮_发票.pdf', '餐饮_消费清单.pdf']);
+    const [invoice, slip] = snapshot.materials;
+    expect(snapshot.pendingItems).toEqual([]);
+    expect(slip).toMatchObject({ kind: 'dining_receipt', role: 'reference', linkedMaterialIds: [invoice?.materialId] });
+    expect(invoice?.linkedMaterialIds).toEqual([slip?.materialId]);
+    expect(snapshot.lines.map((line) => line.referenceMaterialIds)).toEqual([[slip?.materialId]]);
+
+    const both = (await inventoryOf(['餐饮_发票.pdf', '餐饮_结账单.pdf', '餐饮_消费清单.pdf'])).snapshot;
+    expect(both.pendingItems.map((item) => item.title)).toEqual(['餐饮发票「餐饮_发票.pdf」缺少餐饮小票']);
+    expect(both.lines.map((line) => line.referenceMaterialIds)).toEqual([[]]);
   });
 
   test('不认识的文件仍成为「不支持的材料类型」待确认项，名称保持占位', async () => {

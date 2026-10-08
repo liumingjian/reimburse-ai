@@ -12,7 +12,7 @@ import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/compan
 import { proposeFolio, type FolioProposal, type ProposalStay } from './folio-proposal';
 import { checkPayments, type LabelledStay } from './stay-payments';
 import { checkStayTrios, stayVoucherIds, type ScreenshotGroup, type StayTrio, type TrioVoucher } from './stay-trio';
-import { checkDining } from './dining';
+import { checkDining, type DiningVoucher } from './dining';
 
 // The pure projection of one inventory run: uploaded materials, their parser outcomes and the stored answers in; the
 // materials view, derived 待确认项 (pending items), expense events, candidate lines and inventory counts out. Nothing
@@ -22,7 +22,7 @@ import { checkDining } from './dining';
 // Item codes: unrecognised (with 手工补填, manual fill, in one step), ambiguous_layout, parse_failed,
 // validation_failure, missing_required, duplicate_invoice (重复发票 inside the task),
 // category_city_missing (#188), stay_invoice_missing / stay_folio_missing / stay_screenshot_missing (the 住宿 trio,
-// #213, `stay-trio.ts`), dining_receipt_missing (a 餐饮 invoice without its 餐饮小票, #356, `dining.ts`); allocation,
+// #213, `stay-trio.ts`), dining_receipt_missing (a 餐饮 invoice paired with no 餐饮小票, #356, `dining.ts`); allocation,
 // itinerary_ambiguous and given_up come from #184's transport plan (`allocation.ts`), answered generically
 // (`pending/answers.ts`).
 
@@ -588,6 +588,7 @@ export function inventoryView(
   const drafts: ({ material: ViewMaterial } & Omit<PlannedLine, 'draft'> & { draft: ResolvedLineDraft })[] = [];
   const pendingItems: PendingItem[] = [];
   const folios: TrioVoucher[] = [];
+  const receipts: DiningVoucher[] = [];
   for (const w of includedWorked) {
     const { m, resolved } = w;
     const spec = resolved ? KINDS[resolved.kind] : null;
@@ -617,6 +618,7 @@ export function inventoryView(
     }
     const open = w.items.some(isOpen);
     if (!open && !w.reference && resolved?.kind === 'hotel_folio') folios.push({ materialId: m.materialId, fileName: m.fileName, values: w.values });
+    if (!open && !w.reference && resolved?.kind === 'dining_receipt') receipts.push({ materialId: m.materialId, fileName: m.fileName, values: w.values });
     pendingItems.push(...w.items);
     const role = open ? 'pending' : w.reference ? 'reference' : spec ? spec.role : 'pending';
     views.set(m.materialId, {
@@ -687,10 +689,17 @@ export function inventoryView(
     pendingItems.push(...items);
   }
 
-  // The 餐饮 check (#356), like the trio only over a finished run.
+  // The 餐饮 check (#356): a dining invoice and its 餐饮小票 form one meal (`dining.ts`); like the trio, an invoice left
+  // without one raises its item only over a finished run.
   const diningIds = new Set(drafts.flatMap(({ material, draft }) => (draft.category.code === CATEGORIES.hospitality.code ? [material.materialId] : [])));
   const diningInvoices = includedWorked.flatMap((w) => (diningIds.has(w.m.materialId) ? [{ materialId: w.m.materialId, fileName: w.m.fileName, values: w.values }] : []));
-  const dining = results && waiting === 0 ? checkDining(diningInvoices, answers) : new Map<string, PendingItem[]>();
+  const diningCheck = checkDining(diningInvoices, receipts, answers);
+  const meals = new Map(diningCheck.meals.map((meal) => [meal.invoiceId, meal]));
+  for (const meal of meals.values()) {
+    linked.set(meal.invoiceId, [...(linked.get(meal.invoiceId) ?? []), meal.receiptId]);
+    linked.set(meal.receiptId, [meal.invoiceId]);
+  }
+  const dining = results && waiting === 0 ? diningCheck.items : new Map<string, PendingItem[]>();
   for (const items of dining.values()) {
     for (const item of items) answerables.set(item.itemId, { item });
     pendingItems.push(...items);
@@ -728,10 +737,11 @@ export function inventoryView(
     const key = leg === null ? material.materialId : `${material.materialId}.${leg}`;
     const eventId = `event.${key}`;
     const stay = stays.get(material.materialId);
+    const meal = meals.get(material.materialId);
     const draft = stay ? { ...own, date: stay.checkIn, endDate: stay.checkOut } : own;
-    const referenceMaterialIds = stay ? [stay.folioId] : legReferences;
+    const referenceMaterialIds = stay ? [stay.folioId] : meal ? [meal.receiptId] : legReferences;
     const trip = { city: draft.city ?? null, origin: draft.origin ?? null, destination: draft.destination ?? null };
-    events.push({ eventId, no: index + 1, voucherMaterialId: material.materialId, referenceMaterialIds, category: draft.category, summary: draft.summary, evidenceNote: stay?.note ?? legNote, date: draft.date, endDate: draft.endDate, ...trip, grossAmount: draft.grossAmount });
+    events.push({ eventId, no: index + 1, voucherMaterialId: material.materialId, referenceMaterialIds, category: draft.category, summary: draft.summary, evidenceNote: stay?.note ?? meal?.note ?? legNote, date: draft.date, endDate: draft.endDate, ...trip, grossAmount: draft.grossAmount });
     lines.push({
       lineId: `line.${key}`,
       no: index + 1,

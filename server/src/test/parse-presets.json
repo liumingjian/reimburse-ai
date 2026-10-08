@@ -2049,5 +2049,214 @@
         ]
       }
     }
+  },
+  "m13-dining-receipt.pdf": {
+    "sha256": "a7836bf380b956c3be1069f9620a81c8e4d87580eb472c7c7bac1d6a99640e3b",
+    "outcome": {
+      "outcome": "recognised",
+      "kind": "dining_receipt",
+      "layout": "labelled",
+      "parserVersion": "1",
+      "kindLabel": "餐饮小票",
+      "candidates": [
+        {
+          "key": "merchantName",
+          "value": "上海某某餐饮（某某店）",
+          "source": "rule:dining_receipt/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.2"
+              ],
+              "text": "门店：上海某某餐饮（某某店）"
+            }
+          ]
+        },
+        {
+          "key": "date",
+          "value": "2026-08-14",
+          "source": "rule:dining_receipt/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.5"
+              ],
+              "text": "结账时间：2026-08-14 12:36"
+            }
+          ]
+        },
+        {
+          "key": "time",
+          "value": "12:36",
+          "source": "rule:dining_receipt/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.5"
+              ],
+              "text": "结账时间：2026-08-14 12:36"
+            }
+          ]
+        },
+        {
+          "key": "paidAmount",
+          "value": "240.00",
+          "source": "rule:dining_receipt/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.26",
+                "p1.27"
+              ],
+              "text": "实收 240.00"
+            }
+          ]
+        },
+        {
+          "key": "originalTotal",
+          "value": "240.00",
+          "source": "rule:dining_receipt/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.24",
+                "p1.25"
+              ],
+              "text": "合计 240.00"
+            }
+          ]
+        }
+      ],
+      "findings": [],
+      "missing": []
+    }
+  },
+  "m14-dining-receipt-discounted.pdf": {
+    "sha256": "5a8f0cc84128fa96395d2525912771125917b2f4f8ba9bfd456dc71afc6e9c72",
+    "outcome": {
+      "outcome": "recognised",
+      "kind": "dining_receipt",
+      "layout": "labelled",
+      "parserVersion": "1",
+      "kindLabel": "餐饮小票",
+      "candidates": [
+        {
+          "key": "merchantName",
+          "value": "上海某某餐饮（某某店）",
+          "source": "rule:dining_receipt/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.2"
+              ],
+              "text": "门店：上海某某餐饮（某某店）"
+            }
+          ]
+        },
+        {
+          "key": "date",
+          "value": "2026-08-14",
+          "source": "rule:dining_receipt/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.5"
+              ],
+              "text": "结账时间：2026-08-14 19:08"
+            }
+          ]
+        },
+        {
+          "key": "time",
+          "value": "19:08",
+          "source": "rule:dining_receipt/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.5"
+              ],
+              "text": "结账时间：2026-08-14 19:08"
+            }
+          ]
+        },
+        {
+          "key": "discount",
+          "value": "28.00",
+          "source": "rule:dining_receipt/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.29",
+                "p1.30"
+              ],
+              "text": "优惠 -28.00"
+            }
+          ]
+        },
+        {
+          "key": "paidAmount",
+          "value": "240.00",
+          "source": "rule:dining_receipt/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.31",
+                "p1.32"
+              ],
+              "text": "实付 240.00"
+            }
+          ]
+        },
+        {
+          "key": "originalTotal",
+          "value": "268.00",
+          "source": "rule:dining_receipt/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.27",
+                "p1.28"
+              ],
+              "text": "合计 268.00"
+            }
+          ]
+        }
+      ],
+      "findings": [],
+      "missing": []
+    }
   }
 }

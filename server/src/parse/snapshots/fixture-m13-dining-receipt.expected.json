@@ -1,0 +1,14 @@
+{
+  "about": "@baox/fixtures m13 (#360): a restaurant's 餐饮小票 titled 结账单（顾客联） on a PDF text layer, stating what was paid under 实收, the same as its 合计; a reference material for the m11 dining invoice. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "dining_receipt/labelled",
+  "missing": [],
+  "findings": [],
+  "facts": {
+    "merchantName": "上海某某餐饮（某某店）",
+    "date": "2026-08-14",
+    "time": "12:36",
+    "originalTotal": "240.00",
+    "paidAmount": "240.00"
+  }
+}

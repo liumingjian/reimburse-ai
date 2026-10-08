@@ -201,4 +201,17 @@ export const KINDS: Readonly<Record<MaterialKind, KindSpec>> = {
       return null;
     },
   },
+  // A 餐饮小票 forms no event and has no invoice identity: `dining.ts` pairs it with its dining invoice by amount.
+  dining_receipt: {
+    kind: 'dining_receipt',
+    label: '餐饮小票',
+    role: 'reference',
+    slots: SLOTS.dining_receipt,
+    categoryLabel: () => CATEGORIES.hospitality.label,
+    event: noEvent,
+    check({ paidAmount }) {
+      if (paidAmount !== undefined && (slotCents(paidAmount) ?? 0) <= 0) return '实付金额应大于 0。';
+      return null;
+    },
+  },
 };

@@ -57,9 +57,9 @@ test('?location=unavailable：常驻城市没有默认值，提示直接填写�
   await expect(dialog(page).getByText('上次确认的常驻城市（按你的账号记住），可直接修改。')).toBeVisible();
 });
 
-test('全流程 QA：弹层创建任务，上传 sample-materials 的 12 份材料，盘点后 5 个待确认项，任务名称保持占位（同服务端）并有费用期间', async ({ page }, testInfo) => {
+test('全流程 QA：弹层创建任务，上传 sample-materials 的 14 份材料，盘点后 5 个待确认项，任务名称保持占位（同服务端）并有费用期间', async ({ page }, testInfo) => {
   const files = readdirSync(SAMPLES_DIR).map((name) => join(SAMPLES_DIR, name));
-  expect(files).toHaveLength(12);
+  expect(files).toHaveLength(14);
 
   await page.goto(open('', '#/tasks/new'));
   await dialog(page).getByRole('button', { name: '创建并上传材料' }).click();

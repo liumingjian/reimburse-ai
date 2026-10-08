@@ -1,0 +1,15 @@
+{
+  "about": "@baox/fixtures m14 (#360): a discounted 餐饮小票 titled 消费清单 on a PDF text layer: 合计 268.00, 优惠 -28.00, 实付 240.00. The paid amount is the one under 实付, never the 合计, and nothing is worked out from the discount. @baox/fixtures is synthetic, so the capture is unredacted.",
+  "outcome": "recognised",
+  "layout": "dining_receipt/labelled",
+  "missing": [],
+  "findings": [],
+  "facts": {
+    "merchantName": "上海某某餐饮（某某店）",
+    "date": "2026-08-14",
+    "time": "19:08",
+    "originalTotal": "268.00",
+    "discount": "28.00",
+    "paidAmount": "240.00"
+  }
+}

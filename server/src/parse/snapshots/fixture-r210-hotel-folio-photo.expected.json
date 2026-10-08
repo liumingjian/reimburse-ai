@@ -1,5 +1,5 @@
 {
-  "about": "#212: a photographed folio as OCR returned it (every label and value its own box; dates printed 2026/08/09 and 2026年08月22日). @baox/fixtures is synthetic, so the capture is unredacted.",
+  "about": "#212: a photographed folio as OCR returned it (every label and value its own box; dates printed 2026/08/09 and 2026年08月22日). @baox/fixtures is synthetic, so the capture is unredacted. Its 结账单 title and 消费合计 also meet the 餐饮小票 anchors: only its stay labels keep it from being read as one (#360).",
   "outcome": "recognised",
   "layout": "hotel_folio/labelled",
   "missing": [],

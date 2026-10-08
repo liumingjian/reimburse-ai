@@ -16,6 +16,8 @@ import {
   HOTEL_FOLIO_PHOTO,
   HOTEL_INVOICE,
   DINING_INVOICE,
+  DINING_RECEIPT,
+  DINING_RECEIPT_DISCOUNTED,
   OFFICE_INVOICE,
   PRINT_PAGES,
   PRINT_VARIANTS,
@@ -113,6 +115,41 @@ function invoice(data, accent) {
   <div class="foot"><span>备注：本发票由夹具生成器生成，人物与数字均为虚构。</span><span>开票人：某某</span></div>
   <div class="stamp">上海某某<br>发票专用章<br>（示例）</div>
 </div>`;
+  return { id: data.id, ...A4, css, body };
+}
+
+// ---- 餐饮小票 (dining receipt): a narrow thermal-paper slip on an A4 page ----
+function diningReceipt(data) {
+  const css = `
+.slip-page { width: 794px; height: 1123px; padding-top: 64px; background: #fff; }
+.slip { width: 360px; margin: 0 auto; padding: 28px 24px; font-family: ${FONT}; color: #222; font-size: 13px; background: #fff; border: 1px dashed #bbb; }
+.slip h1 { font-size: 18px; font-weight: 600; text-align: center; margin: 0 0 14px; }
+.slip .info { line-height: 1.8; margin-bottom: 12px; }
+.slip table { width: 100%; border-collapse: collapse; border-top: 1px dashed #999; border-bottom: 1px dashed #999; }
+.slip th, .slip td { padding: 4px 2px; text-align: left; font-weight: 400; }
+.slip th { color: #666; font-size: 12px; }
+.slip td.num, .slip th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.slip .sum { margin-top: 12px; display: grid; grid-template-columns: 1fr auto; gap: 4px 24px; font-size: 14px; }
+.slip .sum b { font-weight: 600; }
+.slip .note { margin-top: 20px; color: #777; font-size: 11px; text-align: center; }
+`;
+  const rows = data.rows.map(([dish, qty, amount]) => `<tr><td>${esc(dish)}</td><td class="num">${esc(qty)}</td><td class="num">${esc(amount)}</td></tr>`);
+  const sums = [['合计', data.total], ...(data.discount ? [['优惠', data.discount]] : []), [data.paidLabel, data.paid]];
+  const body = `
+<div class="slip-page"><div class="slip">
+  <h1>${esc(data.title)}</h1>
+  <div class="info">
+    <div>门店：${esc(data.merchant)}</div>
+    <div>桌号：${esc(data.table)}　人数：${esc(data.guests)}</div>
+    <div>结账时间：${esc(data.time)}</div>
+  </div>
+  <table>
+    <tr><th>菜品</th><th class="num">数量</th><th class="num">小计</th></tr>
+    ${rows.join('')}
+  </table>
+  <div class="sum">${sums.map(([label, value]) => `<span>${esc(label)}</span><b>${esc(value)}</b>`).join('')}</div>
+  <div class="note">谢谢惠顾。本小票为夹具生成器生成的示例，不是真实餐厅单据。</div>
+</div></div>`;
   return { id: data.id, ...A4, css, body };
 }
 
@@ -321,6 +358,8 @@ export const DOCS = {
   m10: taxiPhoto(TAXI_0819),
   m11: invoice(DINING_INVOICE, '#8b3a3a'),
   m12: invoice(OFFICE_INVOICE, '#8b3a3a'),
+  m13: diningReceipt(DINING_RECEIPT),
+  m14: diningReceipt(DINING_RECEIPT_DISCOUNTED),
   r01: invoice(SPLIT_NUMBER_INVOICE, '#8b3a3a'),
   r02: invoice(SPACED_TITLE_INVOICE, '#8b3a3a'),
   r201: invoice(BUNDLED_FEE_INVOICE, '#8b3a3a'),

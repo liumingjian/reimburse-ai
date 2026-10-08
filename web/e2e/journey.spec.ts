@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { HANDOVER_COMPLETED_NOTICE } from '@baox/contract';
 
-// spec #109 Testing Decisions：一条从登录到完成的全流程，用 dist-mock/sample-materials/ 的 12 份示例材料，其余都是 mock 默认值。
+// spec #109 Testing Decisions：一条从登录到完成的全流程，用 dist-mock/sample-materials/ 的 14 份示例材料，其余都是 mock 默认值。
 // 登录应用账号 → 新建任务 → 上传 → 盘点 → 待确认项 → 项目归属 → 报销信息核对与材料准备（自动）→ 整单确认
 // → 打印稿 → 去报销（写入报销系统）→ 完成。整条路径在同一个文档里走（只改 hash），mock 的内存状态一路保留。
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
@@ -18,10 +18,10 @@ async function jump(page: Page, hash: string) {
   }, hash);
 }
 
-test('全流程：从登录一路走到完成，上传 sample-materials 的 12 份材料', async ({ page }, testInfo) => {
+test('全流程：从登录一路走到完成，上传 sample-materials 的 14 份材料', async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   const files = readdirSync(SAMPLES_DIR).map((name) => join(SAMPLES_DIR, name));
-  expect(files).toHaveLength(12);
+  expect(files).toHaveLength(14);
 
   // 1. 登录应用账号（夹具账号，mock 密码）。
   await page.goto(`${INDEX}?auth=signed-out#/tasks`);

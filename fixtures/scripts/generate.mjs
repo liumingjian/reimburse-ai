@@ -36,11 +36,13 @@ export const MATERIAL_FILES = {
   m10: 'm10-taxi-photo.jpg',
   m11: 'm11-dining-invoice.pdf',
   m12: 'm12-office-invoice.pdf',
+  m13: 'm13-dining-receipt.pdf',
+  m14: 'm14-dining-receipt-discounted.pdf',
 };
 
 // Regression fixtures (#200 onwards): they reproduce how a real face is drawn — the text-run splits of a real PDF, or a
 // photo whose labels and values OCR reads as separate boxes (r210). They are not part of the
-// twelve sample materials' script and are not copied into the mock's sample-material directory.
+// fourteen sample materials' script and are not copied into the mock's sample-material directory.
 export const REGRESSION_FILES = {
   r01: 'r01-einvoice-split-number.pdf',
   r02: 'r02-einvoice-spaced-title.pdf',

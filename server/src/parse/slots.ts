@@ -98,6 +98,18 @@ const PAYMENT_SCREENSHOT_SLOTS: readonly Slot[] = [
   { key: 'transactionNumber', label: '交易单号', required: false, format: 'text' },
 ];
 
+// 餐饮小票 (dining receipt, #356): reference material for a dining invoice. `paidAmount`, the amount actually paid, is
+// what pairs it with the invoice's 价税合计; when a slip prints an original total and a discount as well, those are
+// shown, never used to work the paid amount out (ADR-0017). Merchant and date are shown, never compared.
+const DINING_RECEIPT_SLOTS: readonly Slot[] = [
+  { key: 'merchantName', label: '商户名称', required: false, format: 'text' },
+  { key: 'date', label: '消费日期', required: false, format: 'date' },
+  { key: 'time', label: '消费时间', required: false, format: 'text' },
+  { key: 'originalTotal', label: '消费合计', required: false, format: 'money' },
+  { key: 'discount', label: '优惠金额', required: false, format: 'money' },
+  { key: 'paidAmount', label: '实付金额', required: true, format: 'money' },
+];
+
 export const SLOTS: Readonly<Record<MaterialKind, readonly Slot[]>> = {
   vat_invoice: VAT_INVOICE_SLOTS,
   rail_ticket: RAIL_TICKET_SLOTS,
@@ -105,6 +117,7 @@ export const SLOTS: Readonly<Record<MaterialKind, readonly Slot[]>> = {
   hotel_folio: HOTEL_FOLIO_SLOTS,
   taxi_receipt: TAXI_RECEIPT_SLOTS,
   payment_screenshot: PAYMENT_SCREENSHOT_SLOTS,
+  dining_receipt: DINING_RECEIPT_SLOTS,
 };
 
 // `*住宿服务*住宿费` → 住宿费; the 税收分类 (tax class) between the asterisks decides the category.

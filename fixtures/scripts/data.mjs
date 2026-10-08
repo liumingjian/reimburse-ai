@@ -312,8 +312,53 @@ export const OFFICE_INVOICE = {
   grossWords: '玖拾陆圆整',
 };
 
+// 餐饮小票 (dining receipts, #356): reference material for the m11 dining invoice, paired by the amount actually paid.
+// `rows` are [dish, quantity, amount]; they add up to `total`. m13 states what was paid under 实收, the same as its
+// 合计; m14 is discounted, so its 合计 is the price before the discount and only 实付 equals the invoice's 价税合计.
+export const DINING_RECEIPT = {
+  id: 'm13',
+  file: 'm13-dining-receipt.pdf',
+  title: '结账单（顾客联）',
+  merchant: '上海某某餐饮（某某店）',
+  table: 'A08',
+  guests: '4',
+  time: '2026-08-14 12:36',
+  rows: [
+    ['宫保鸡丁', '1', '68.00'],
+    ['清蒸鲈鱼', '1', '98.00'],
+    ['清炒时蔬', '1', '38.00'],
+    ['米饭', '4', '16.00'],
+    ['茶位', '4', '20.00'],
+  ],
+  total: '240.00',
+  paidLabel: '实收',
+  paid: '240.00',
+};
+
+export const DINING_RECEIPT_DISCOUNTED = {
+  id: 'm14',
+  file: 'm14-dining-receipt-discounted.pdf',
+  title: '消费清单',
+  merchant: '上海某某餐饮（某某店）',
+  table: 'B12',
+  guests: '4',
+  time: '2026-08-14 19:08',
+  rows: [
+    ['宫保鸡丁', '1', '68.00'],
+    ['清蒸鲈鱼', '1', '98.00'],
+    ['清炒时蔬', '1', '38.00'],
+    ['米饭', '4', '16.00'],
+    ['茶位', '4', '20.00'],
+    ['酸梅汤', '1', '28.00'],
+  ],
+  total: '268.00',
+  discount: '-28.00',
+  paidLabel: '实付',
+  paid: '240.00',
+};
+
 // ---- Regression fixtures: the text-run splits of a real PDF (#200) ----
-// The sample materials (m01…m12) draw one text run per anchor; a real invoice does not — a label and its value are
+// The sample materials (m01…m14) draw one text run per anchor; a real invoice does not — a label and its value are
 // usually two runs, and a title is often one run per glyph. These two fixtures reproduce those splits; the rest of the
 // layout matches the hotel invoice, so each uploads on its own with no folio needed.
 

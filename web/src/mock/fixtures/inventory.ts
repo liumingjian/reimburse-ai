@@ -22,7 +22,7 @@ import {
   stayTrioItemId,
 } from '@baox/contract';
 
-// 盘点结果夹具：12 份示例材料的识别结果、10 个费用事件、待确认项（按材料的，外加住宿发票缺支付截图、餐饮发票缺餐饮小票），以及答复后的候选明细。
+// 盘点结果夹具：14 份示例材料的识别结果、10 个费用事件、待确认项（按材料的，外加住宿发票缺支付截图、餐饮发票缺餐饮小票），以及答复后的候选明细。
 // 数字与人物沿用原型；文件对应 fixtures/generated/ 里由脚本生成的示例原件（fixtures/scripts/data.mjs 是同一份数据）。
 // mock 服务端按文件名把上传的材料对到这里的档案；对不上的材料形成「不支持的材料类型」待确认项。
 
@@ -79,6 +79,7 @@ const RULE = {
   caocao: 'rule:ride_itinerary/caocao',
   rail: 'rule:rail_ticket/12306',
   taxi: 'rule:taxi_receipt/machine_printed',
+  dining: 'rule:dining_receipt/labelled',
 } as const;
 
 // 材料种类 / 版式 per fixture id; absent = unrecognised.
@@ -94,9 +95,11 @@ const IDENTITY: Readonly<Record<string, { kind: MaterialKind; layout: string }>>
   m09: { kind: 'taxi_receipt', layout: 'machine_printed' },
   m10: { kind: 'taxi_receipt', layout: 'machine_printed' },
   m11: { kind: 'vat_invoice', layout: 'einvoice' },
+  m13: { kind: 'dining_receipt', layout: 'labelled' },
+  m14: { kind: 'dining_receipt', layout: 'labelled' },
 };
 
-// 以夹具材料 id（m01…m12）为键的识别档案。
+// 以夹具材料 id（m01…m14）为键的识别档案。
 export const PROFILES: Readonly<Record<string, Profile>> = {
   m01: {
     fileName: '全季酒店_发票.pdf',
@@ -328,7 +331,62 @@ export const PROFILES: Readonly<Record<string, Profile>> = {
     linked: [],
     fields: [],
   },
+  // 餐饮小票（#360）：餐饮发票的参考材料，实付金额和发票价税合计一分不差才配对（服务端 dining.ts）。
+  m13: {
+    fileName: '餐饮_结账单.pdf',
+    file: 'm13-dining-receipt.pdf',
+    kindLabel: '餐饮小票',
+    categoryLabel: '招待费',
+    role: 'reference',
+    shape: 'portrait',
+    mediaType: 'pdf',
+    status: 'ok',
+    checkText: '',
+    linked: [],
+    fields: [
+      field('merchantName', '商户名称', '上海某某餐饮（某某店）', RULE.dining),
+      field('date', '消费日期', '2026-08-14', RULE.dining),
+      field('time', '消费时间', '12:36', RULE.dining),
+      field('originalTotal', '消费合计', '240.00', RULE.dining),
+      field('paidAmount', '实付金额', '240.00', RULE.dining),
+    ],
+  },
+  m14: {
+    fileName: '餐饮_消费清单.pdf',
+    file: 'm14-dining-receipt-discounted.pdf',
+    kindLabel: '餐饮小票',
+    categoryLabel: '招待费',
+    role: 'reference',
+    shape: 'portrait',
+    mediaType: 'pdf',
+    status: 'ok',
+    checkText: '',
+    linked: [],
+    fields: [
+      field('merchantName', '商户名称', '上海某某餐饮（某某店）', RULE.dining),
+      field('date', '消费日期', '2026-08-14', RULE.dining),
+      field('time', '消费时间', '19:08', RULE.dining),
+      field('originalTotal', '消费合计', '268.00', RULE.dining),
+      field('discount', '优惠金额', '28.00', RULE.dining),
+      field('paidAmount', '实付金额', '240.00', RULE.dining),
+    ],
+  },
 };
+
+// 餐饮发票与餐饮小票按金额一对一配对（服务端 dining.ts 用 amount-pairing.ts）：小票实付金额等于发票价税合计，
+// 且这个金额两边各只有一份才配对；同金额的小票有两张就都不配。返回发票夹具 id → 小票夹具 id。
+const DINING_SLIPS = ['m13', 'm14'] as const;
+function diningMeals(present: ReadonlySet<string>): Map<string, string> {
+  const meals = new Map<string, string>();
+  const paidOf = (id: string) => PROFILES[id]?.fields.find((f) => f.key === 'paidAmount')?.value;
+  const invoices = EVENTS.filter((event) => event.category.code === 'hospitality' && present.has(event.voucher));
+  for (const invoice of invoices) {
+    const slips = DINING_SLIPS.filter((id) => present.has(id) && paidOf(id) === invoice.gross);
+    const rivals = invoices.filter((other) => other.gross === invoice.gross);
+    if (slips.length === 1 && rivals.length === 1 && slips[0]) meals.set(invoice.voucher, slips[0]);
+  }
+  return meals;
+}
 
 const UNSUPPORTED_PROFILE: Profile = {
   fileName: '',
@@ -648,10 +706,17 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
     voucher.pendingItemIds = [...voucher.pendingItemIds, itemId];
     if (!completeScreenshots.has(voucher.materialId)) voucher.status = 'pending';
   }
-  // 餐饮发票缺餐饮小票（#356，服务端 dining.ts）：没有「确认没有」，只能排除。
+  // 餐饮发票配上餐饮小票（#360）就互相关联；配不上就缺餐饮小票（#356，服务端 dining.ts）：没有「确认没有」，追加小票或排除。
+  const meals = diningMeals(new Set(actualOf.keys()));
   for (const template of EVENTS) {
     const voucher = materials.find((material) => material.materialId === actualOf.get(template.voucher));
     if (template.category.code !== 'hospitality' || !voucher) continue;
+    const slip = materials.find((material) => material.materialId === actualOf.get(meals.get(template.voucher) ?? ''));
+    if (slip) {
+      voucher.linkedMaterialIds = [slip.materialId];
+      slip.linkedMaterialIds = [voucher.materialId];
+      continue;
+    }
     const copy = DINING_COPY.receiptMissing;
     const itemId = `${DINING_ITEM_CODES.receiptMissing}.${voucher.materialId}`;
     pendingItems.push({
@@ -677,8 +742,9 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
   EVENTS.forEach((template, index) => {
     const voucherMaterialId = actualOf.get(template.voucher);
     if (!voucherMaterialId) return;
-    const refs = template.refs.map((id) => actualOf.get(id)).filter((id): id is string => Boolean(id));
-    let evidenceNote = template.evidenceNote;
+    const meal = meals.get(template.voucher);
+    const refs = [...template.refs, ...(meal ? [meal] : [])].map((id) => actualOf.get(id)).filter((id): id is string => Boolean(id));
+    let evidenceNote = meal ? `餐饮发票与餐饮小票配对：金额 ${template.gross} 一致` : template.evidenceNote;
     if (template.voucher === 'm05' && refs.length === 0) evidenceNote = '没有找到可配对的行程单，按发票 1 段计一次费用';
     // 逐段分摊之前，高德各段先按行程单读数记（第 3 段读错）；答复后换成用户给的金额。
     let grossAmount = template.gross;

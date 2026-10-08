@@ -18,7 +18,7 @@ Vite 7 + React 19 + TypeScript，只支持 Chrome，只做 zh-CN。视觉唯一�
 ## mock 构建
 
 `build:mock` 产出 `dist-mock/`：`index.html` 是单文件（脚本内联），示例原件在 `dist-mock/fixtures/`，
-另有一份可直接拖进上传区的 `dist-mock/sample-materials/`（同样 12 份原件，按业务文件名命名，如 `全季酒店_发票.pdf`；对照表是 `fixtures/sample-materials.json`）。
+另有一份可直接拖进上传区的 `dist-mock/sample-materials/`（同样 14 份原件，按业务文件名命名，如 `全季酒店_发票.pdf`；对照表是 `fixtures/sample-materials.json`）。
 双击 `dist-mock/index.html`（`file://`）就能在 Chrome 里跑完整个模块，顶栏显示「模拟数据」。
 
 正式构建 `build` 产出 `dist/`，由本地应用服务托管，不含 mock 代码、测试钩子、夹具与示例材料（见 `check:dist`）。
@@ -55,7 +55,7 @@ Mock entries are development fixtures, scoped to the fixture account; new accoun
   没有名称和日期，任务名称由服务端生成，创建时是占位名 `<日期> 新建报销`，名称之后不变（同服务端），盘点结束后给出费用期间。
 - 常驻城市的默认值由服务端给出：第一次是网络位置候选「杭州」（说明「根据网络位置推测…」）；创建过任务后是这个报销人身份上次确认的城市（按账套 + 登录账号持久记住，刷新页面后仍预填，说明「上次确认的常驻城市…」）。
   `?location=unavailable` 模拟位置获取失败：第一次打开时常驻城市留空，提示直接填写。它不是故障场景，可与 seed/fault 同用。
-- 全流程：新建任务后把 `dist-mock/sample-materials/` 里的 12 份文件一起拖进上传区，开始材料盘点，得到 5 个待确认项（两张出租车票、一张办公用品发票，以及住宿发票缺支付截图、餐饮发票缺餐饮小票）。
+- 全流程：新建任务后把 `dist-mock/sample-materials/` 里的 14 份文件一起拖进上传区，开始材料盘点，得到 5 个待确认项（两张出租车票、一张办公用品发票，以及住宿发票缺支付截图、餐饮发票缺餐饮小票：两张餐饮小票金额相同，都配不上）。
   处理完进入项目归属（为每条明细选项目并填写报销事由）；提交后直接进入唯一一次整单明细确认（报销信息在去报销的作业里核对）。
   确认后「去打印」进入打印稿预览；「去报销」直接启动浏览器，登录后自动写入，没有「开始填报」。
   mock 按业务文件名或示例原件文件名（`m01-hotel-invoice.pdf` 等）识别材料；其他文件成为「不支持的材料类型」待确认项。
