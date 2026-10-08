@@ -33,7 +33,9 @@ so the app tells which files are payment screenshots and puts each with its stay
   the user keeps one. Nothing is dropped silently.
 - **No cap.** #331's limit of 6 per invoice goes; the print continuation page grows to as many pages as the group
   needs.
-- **The 待确认项 upload stays** as a shortcut: it adds `payment_screenshot` materials already assigned to that invoice.
+- **The 待确认项 upload stays** as a shortcut: it adds `payment_screenshot` materials already assigned to that invoice,
+  as a new upload batch, and starts inventory again over it (adding a file is a new inventory version). Nothing is written
+  to the `payment_screenshot` table any more.
 
 ## Considered Options
 

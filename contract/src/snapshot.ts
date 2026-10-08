@@ -303,14 +303,13 @@ export type PendingAllocation = z.infer<typeof PendingAllocationSchema>;
 // 唯一的应用内处置是 exclude-material（materialId 就是这张发票，服务端连同它的行程单一起排除）。
 export const PENDING_ITEM_KINDS = ['form', 'choice', 'allocation', 'given_up'] as const;
 
-// A 住宿 invoice's 支付截图 group as its missing-screenshot 待确认项 carries it: the page reads the group from here, the
-// server decides it.
+// A 住宿 invoice's 支付截图 as its missing-screenshot 待确认项 carries them: the page reads them from here, the server
+// decides them. `screenshotIds` are those stored in the `payment_screenshot` table (#331); screenshots uploaded since
+// ADR-0032 are materials and are listed with the stay's materials instead.
 export const PendingScreenshotGroupSchema = z.object({
-  // The group, in upload order; each id is a `paymentScreenshots` entry.
+  // The table group, in upload order; each id is a `paymentScreenshots` entry.
   screenshotIds: z.array(IdSchema),
-  // How many the group may hold (PAYMENT_SCREENSHOT_CAP).
-  cap: z.number().int().positive(),
-  // The group takes no more changes (add, remove, 「已传齐」): the list is confirmed or ERP was attempted.
+  // The stay's screenshots take no more changes (upload, remove, 「已传齐」): the list is confirmed or ERP was attempted.
   locked: z.boolean(),
 });
 export type PendingScreenshotGroup = z.infer<typeof PendingScreenshotGroupSchema>;
@@ -466,15 +465,16 @@ export type Confirmation = z.infer<typeof ConfirmationSchema>;
 
 // ---- 支付截图与打印稿 ----
 
-// A 支付截图 (payment screenshot) is an image only (JPG, PNG). It goes on the 打印稿 (print sheet) alone and never changes
-// the lines. Only a 住宿 (accommodation) invoice takes them, and only from its missing-screenshot 待确认项 (pending
-// item; #213, see STAY_TRIO_COPY): a group of up to PAYMENT_SCREENSHOT_CAP, one image per upload, kept in upload order.
-// The group is the snapshot's `paymentScreenshots` with the invoice's `voucherMaterialId`, in list order; the item
-// carries it as `screenshotGroup`, with the cap and the lock. The filer closes it with 「已传齐」
-// (`completePaymentScreenshots`). A screenshot left on any other voucher (the print page took them before #330)
-// belongs to no group: it is neither in the snapshot nor printed.
+// A 支付截图 (payment screenshot) is an image only (JPG, PNG) and never changes the lines. Since ADR-0032 it is a material
+// (`payment_screenshot`), uploaded with the rest or from a 住宿 invoice's missing-screenshot 待确认项 (#213, see
+// STAY_TRIO_COPY), which adds them as a new batch placed with that invoice and inventories again.
+//
+// Before that, the item stored them in the `payment_screenshot` table (#331): the snapshot's `paymentScreenshots`
+// with the invoice's `voucherMaterialId`, in list order, which the item carries as `screenshotGroup` with the lock.
+// Such a group can still be emptied or closed with 「已传齐」 (`completePaymentScreenshots`), never added to. A
+// screenshot left on any other voucher (the print page took them before #330) belongs to no group: it is neither in
+// the snapshot nor printed.
 export const PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE = '.jpg,.jpeg,.png,image/jpeg,image/png';
-export const PAYMENT_SCREENSHOT_CAP = 6;
 // A voucher's group: its screenshots out of every current one, in list (upload) order.
 export const screenshotGroupOf = <T extends { voucherMaterialId: string }>(screenshots: readonly T[], voucherMaterialId: string): T[] =>
   screenshots.filter((shot) => shot.voucherMaterialId === voucherMaterialId);
@@ -526,12 +526,12 @@ export const STAY_TRIO_COPY = {
   screenshot: {
     title: (invoiceFileName: string) => `住宿发票「${invoiceFileName}」缺少支付截图`,
     why: (totalAmount: string | undefined) =>
-      `${TRIO}这张住宿发票${amountNote('价税合计', totalAmount)}需要支付截图。可以在这里上传支付截图（JPG、PNG，可一次选多张，每张发票最多 ${PAYMENT_SCREENSHOT_CAP} 张），传完点「已传齐」；确实没有，就选「确认没有支付截图」，打印稿这一页不放支付截图。`,
+      `${TRIO}这张住宿发票${amountNote('价税合计', totalAmount)}需要支付截图。可以在这里上传支付截图（JPG、PNG，可一次选多张），上传后会重新盘点，截图金额合计不少于发票价税合计就算齐了；确实没有，就选「确认没有支付截图」，打印稿这一页不放支付截图。`,
     confirmNone: '确认没有支付截图',
     upload: '上传支付截图',
     // The file input's accessible name.
     inputLabel: (invoiceFileName: string) => `选择这张住宿发票的支付截图：${invoiceFileName}`,
-    uploadNote: '分次付款、多种支付方式或一次付款截了几屏，都传在这里，按上传顺序排列；传齐后点「已传齐」。支付截图只进打印稿，不上传报销系统。',
+    uploadNote: '分次付款、多种支付方式或一次付款截了几屏，都传在这里。上传后会重新盘点。支付截图只进打印稿，不上传报销系统。',
     // 「已传齐」: declares the group complete; the item settles on it.
     complete: '已传齐',
     count: (count: number) => `已传 ${count} 张`,
@@ -557,7 +557,8 @@ export const PAYMENT_SCREENSHOT_ERRORS = {
   notImage: '只接受图片（JPG、PNG）。',
   notApplicable: '这张发票不需要支付截图。',
   notFound: '这张支付截图已经不存在。',
-  cap: `每张发票最多 ${PAYMENT_SCREENSHOT_CAP} 张支付截图`,
+  // Every file of an upload is already in the task.
+  alreadyUploaded: '这些截图已经上传过了。',
   // 「已传齐」 on an empty group.
   empty: '还没有上传支付截图，传好后再点「已传齐」。',
   // 「确认没有支付截图」 while the group holds a screenshot (#332).

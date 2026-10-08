@@ -1,10 +1,8 @@
 import {
   PENDING_CHOICE_KEY,
-  PAYMENT_SCREENSHOT_CAP,
   PAYMENT_SCREENSHOT_ERRORS,
   PRINT_ACTION_ERRORS,
   STAY_TRIO_COPY,
-  confirmsNone,
   fieldAnswer,
   screenshotGroupOf,
   stayTrioItemId,
@@ -22,7 +20,7 @@ import { settlePending } from './pending';
 // 支付截图与打印稿（生成、旋转、四角裁剪）。这些动作都不带 stepToken，也不碰整单明细确认；支付截图的「已传齐」、删空，以及
 // 「确认没有支付截图」之后的上传会改变缺支付截图待确认项的状态，随之改变 step（同服务端）。
 
-export type PrintFlow = Pick<AppAdapter, 'addPaymentScreenshot' | 'removePaymentScreenshot' | 'completePaymentScreenshots' | 'generatePrintSheet' | 'rotatePlacement' | 'cropPlacement'>;
+export type PrintFlow = Pick<AppAdapter, 'addPaymentScreenshots' | 'removePaymentScreenshot' | 'completePaymentScreenshots' | 'generatePrintSheet' | 'rotatePlacement' | 'cropPlacement'>;
 
 // 图片判定按扩展名，其次按 MIME（无扩展名时）。
 function isImage(file: File): boolean {
@@ -80,19 +78,51 @@ export function createPrintFlow(bus: MockBus): PrintFlow {
   };
 
   return {
-    // 支付截图 (payment screenshot): images only, one per call, appended to the invoice's group in upload order, up to
-    // PAYMENT_SCREENSHOT_CAP. The item stays as it is (only 「已传齐」 settles it), except that a screenshot supersedes
-    // 「确认没有支付截图」 for good: that item goes back to pending (#332).
-    async addPaymentScreenshot(taskId, voucherMaterialId, file) {
+    // 支付截图 from the item (ADR-0032): the server adds them as a batch placed with this invoice and inventories again.
+    // The mock has no parser, so it lists them as screenshots placed with the invoice that cover it, and settles the
+    // item at once.
+    async addPaymentScreenshots(taskId, voucherMaterialId, files) {
       const snapshot = bus.draft(taskId);
       const refused = refusal(snapshot, voucherMaterialId);
       if (refused) return refused;
-      if (groupOf(snapshot, voucherMaterialId).length >= PAYMENT_SCREENSHOT_CAP) return bus.fail('screenshot_cap', PAYMENT_SCREENSHOT_ERRORS.cap);
-      if (!isImage(file)) return bus.fail('not_image', PAYMENT_SCREENSHOT_ERRORS.notImage);
-      const screenshotId = `s${nextScreenshotNo}`;
-      nextScreenshotNo += 1;
-      snapshot.paymentScreenshots.push({ screenshotId, voucherMaterialId, fileName: file.name, url: objectUrl(file, screenshotId) });
-      if (confirmsNone(screenshotItemOf(snapshot, voucherMaterialId)?.answer ?? null)) reopen(snapshot, taskId, voucherMaterialId);
+      if (files.some((file) => !isImage(file))) return bus.fail('not_image', PAYMENT_SCREENSHOT_ERRORS.notImage);
+      const invoice = snapshot.materials.find((material) => material.materialId === voucherMaterialId);
+      if (!invoice) return bus.fail('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
+      for (const file of files) {
+        const materialId = `s${nextScreenshotNo}`;
+        nextScreenshotNo += 1;
+        snapshot.materials.push({
+          ...invoice,
+          materialId,
+          fileName: file.name,
+          relativePath: file.name,
+          contentHash: `mock-${materialId}`,
+          kind: 'payment_screenshot',
+          layout: 'labelled',
+          kindLabel: '支付截图',
+          role: 'reference',
+          shape: 'photo',
+          mediaType: 'image',
+          status: 'ok',
+          checkText: '',
+          linkedMaterialIds: [voucherMaterialId],
+          pendingItemIds: [],
+          originalUrl: objectUrl(file, materialId),
+          previewUrl: null,
+          variants: [],
+          fields: [],
+          payment: { invoiceId: voucherMaterialId, chosen: true, options: [] },
+        });
+        invoice.linkedMaterialIds = [...invoice.linkedMaterialIds, materialId];
+        // As on the server, the snapshot's 支付截图 list also carries the placed materials: they print.
+        snapshot.paymentScreenshots.push({ screenshotId: materialId, voucherMaterialId, fileName: file.name, url: objectUrl(file, materialId) });
+      }
+      const item = screenshotItemOf(snapshot, voucherMaterialId);
+      if (item?.status === 'open') {
+        item.status = 'resolved';
+        item.answer = null;
+        settlePending(snapshot, bus.projectAllowList(taskId));
+      }
       snapshot.task.updatedAt = bus.now();
       return bus.commit(snapshot);
     },

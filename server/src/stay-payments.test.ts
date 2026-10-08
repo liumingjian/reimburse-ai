@@ -4,7 +4,7 @@ import { placePayments, type PaymentShot, type PaymentStay } from './stay-paymen
 import { api, byFileName, sample, type Upload } from './test/api';
 import { type TestClient } from './test/harness';
 import { presetParser } from './test/parse-presets';
-import { paymentScreenshots } from './test/payment-screenshots';
+import { paymentScreenshots, postStayScreenshots } from './test/payment-screenshots';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // ADR-0032: 支付截图 materials are placed with the stay they were paid in, and a stay's screenshots are checked by sum.
@@ -153,5 +153,44 @@ describe('支付截图 at inventory', () => {
     expect(refused.status).toBe(400);
     const moved = await answer(start, address, { value: invoice.materialId });
     expect(byFileName(moved, '付款.png').payment).toMatchObject({ invoiceId: invoice.materialId, chosen: true });
+  });
+});
+
+// ADR-0032: the 待确认项's upload is a batch placed with its invoice, and inventory runs again over it.
+describe('支付截图 from the 待确认项', () => {
+  it('adds a batch placed with the invoice, inventories again, and the stay settles by sum', async () => {
+    const files = [
+      screenshotUpload('付款第1天.png', { amount: '1800.00', payDate: '2026-08-09' }),
+      screenshotUpload('付款第2天.png', { amount: '1840.00', payDate: '2026-08-30' }),
+    ].map((upload) => new File([upload.bytes], upload.name, { type: 'image/png' }));
+    server = await scenarioServer({ parser: presetParser(shots.outcomes) });
+    alice = await server.signIn('alice');
+    const scene = await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] });
+    const invoice = byFileName(scene.reached, sample('m01').name);
+
+    const started = await client.accepted(await postStayScreenshots(alice, scene.reached, invoice.materialId, files));
+    expect(started.inventory.status).toBe('running');
+    const done = await scene.settled();
+    // 2026-08-30 is 8 days after check-out, outside every window: the second is placed only because the upload placed
+    // both with this invoice, as the filer's choice.
+    for (const name of ['付款第1天.png', '付款第2天.png']) expect(byFileName(done, name)).toMatchObject({ kind: 'payment_screenshot', status: 'ok', payment: { invoiceId: invoice.materialId, chosen: true } });
+    expect(item(done, `stay_screenshot_missing.${invoice.materialId}`)).toMatchObject({ status: 'resolved', answer: null });
+    expect(done.stage).toBe('project');
+
+    // The same files again add nothing.
+    const again = await postStayScreenshots(alice, done, invoice.materialId, files);
+    expect(again.status).toBe(400);
+    expect(((await again.json()) as { error: { code: string } }).error.code).toBe('duplicate_content');
+  });
+
+  it('takes images only, and only for a 住宿 invoice', async () => {
+    server = await scenarioServer();
+    alice = await server.signIn('alice');
+    const start = (await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] })).reached;
+    const [invoice, folio] = [byFileName(start, sample('m01').name), byFileName(start, sample('m02').name)];
+    const code = async (response: Response) => ((await response.json()) as { error: { code: string } }).error.code;
+    expect(await code(await postStayScreenshots(alice, start, invoice.materialId, [new File([Buffer.from('%PDF-1.4')], '支付记录.pdf', { type: 'application/pdf' })]))).toBe('not_image');
+    expect(await code(await postStayScreenshots(alice, start, folio.materialId, [new File([shots.upload('x.png', {}).bytes], 'x.png', { type: 'image/png' })]))).toBe('screenshot_not_applicable');
+    expect((await client.current(start.task.taskId)).inventory.status).toBe('done');
   });
 });

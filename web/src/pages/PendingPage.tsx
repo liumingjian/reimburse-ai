@@ -5,7 +5,6 @@ import {
   segmentKey,
   validatePendingAnswer,
   PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE,
-  PAYMENT_SCREENSHOT_ERRORS,
   STAY_TRIO_COPY,
   STAY_TRIO_CONFIRM_NONE, STAY_TRIO_CONFIRM_PAID,
   PENDING_CHOICE_KEY,
@@ -19,7 +18,7 @@ import {
   type PendingScreenshotGroup,
   type TaskSnapshot,
 } from '@baox/contract';
-import { taskHash } from '../router';
+import { navigate, taskHash } from '../router';
 import { DetailList } from '../shell/DetailList';
 import { FieldGroup } from '../shell/FieldGroup';
 import { FileName } from '../shell/FileName';
@@ -36,12 +35,11 @@ import { PAGE_COPY } from './page-copy';
 // 契约里的处理人（resolver）这一页不显示。
 // 所有答复经 answerPendingItem 携带 stepToken 提交；页面只做格式校验，采用与否由服务端决定（逐段分摊是否按分守恒也是）。
 // 选择类待确认项的已选项用选中样式（aria-pressed），不用主按钮。读出的字段不显示来源。
-// A 住宿 invoice's missing-screenshot item (#213) also takes the screenshots themselves, the group its `screenshotGroup`
-// names, up to its cap (#331): several per file dialog, uploaded one by one in order, shown as thumbnails in upload
-// order, each removable. The item stays open until the filer presses 「已传齐」. A resolved screenshot item still takes
-// additions and removals (#332), from the queue or from the all-done view, until the server locks the group
-// (`screenshotGroup.locked`); an upload after 「确认没有支付截图」 supersedes it, and removing the last screenshot opens
-// the item again.
+// A 住宿 invoice's missing-screenshot item (#213) also takes the screenshots themselves (ADR-0032): one file dialog, any
+// number, sent as one upload that the server places with this invoice before it inventories again, so the page moves
+// on to 材料盘点. Screenshots stored before that (#331) show as the item's `screenshotGroup`, as thumbnails, each
+// removable, and that group still closes with 「已传齐」. A resolved screenshot item still takes uploads and removals
+// (#332), from the queue or from the all-done view, until the server locks it (`screenshotGroup.locked`).
 
 const EVIDENCE_LABELS: Readonly<Record<Material['fields'][number]['evidence'], string>> = {
   explicit: '',
@@ -95,8 +93,8 @@ type FormProps = {
   screenshots?: ScreenshotGroupProps | undefined;
   state: SubmitState;
 };
-// What the item's `screenshotGroup` says (cap, lock), its screenshots in upload order, and the group's actions.
-type ScreenshotGroupProps = Pick<PendingScreenshotGroup, 'cap' | 'locked'> & {
+// What the item's `screenshotGroup` says (the lock), its #331 screenshots in upload order, and the group's actions.
+type ScreenshotGroupProps = Pick<PendingScreenshotGroup, 'locked'> & {
   shots: readonly PaymentScreenshot[];
   onAdd: (files: readonly File[]) => Promise<void>;
   onRemove: (screenshotId: string) => Promise<void>;
@@ -162,7 +160,6 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state }: For
   const editable = screenshot && !group?.locked;
   const screenshots = group?.shots ?? [];
   const copy = STAY_TRIO_COPY.screenshot;
-  const full = screenshots.length >= (group?.cap ?? Infinity);
   // A stay whose 支付截图 materials fall short of the invoice is confirmed with the item's own 「已传齐」 choice (ADR-0032).
   const confirmsPaid = item.choices.some((choice) => choice.key === STAY_TRIO_CONFIRM_PAID);
   const choices = [...item.choices]
@@ -197,7 +194,6 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state }: For
               </li>
             ))}
           </ol>
-          {editable && full ? <p className="app-caption">{PAYMENT_SCREENSHOT_ERRORS.cap}</p> : null}
         </div>
       ) : null}
       <ActionGroup caption={notes.length > 0 ? notes.join('') : undefined} error={state.error}>
@@ -215,7 +211,7 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state }: For
           </Button>
         ))}
         {editable ? (
-          <Button size="md" kind="secondary" disabled={state.busy || full} onClick={() => inputRef.current?.click()}>
+          <Button size="md" kind="secondary" disabled={state.busy} onClick={() => inputRef.current?.click()}>
             {copy.upload}
           </Button>
         ) : null}
@@ -362,17 +358,10 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const exclude = async (item: PendingItem) => {
     settle(await run((adapter) => adapter.excludeMaterial(taskId, item.materialId, snapshot.step.stepToken)));
   };
-  // Several files go up one request each, in order; the first refusal (the cap, a non-image) stops the rest. The item
-  // stays selected: uploading does not settle it.
+  // The files go up together and the server inventories again: the page follows it to 材料盘点.
   const attachScreenshots = async (item: PendingItem, files: readonly File[]) => {
-    await run(async (adapter) => {
-      let outcome = await adapter.addPaymentScreenshot(taskId, item.materialId, files[0]!);
-      for (const file of files.slice(1)) {
-        if (!outcome.ok) break;
-        outcome = await adapter.addPaymentScreenshot(taskId, item.materialId, file);
-      }
-      return outcome;
-    });
+    const outcome = await run((adapter) => adapter.addPaymentScreenshots(taskId, item.materialId, files, snapshot.step.stepToken));
+    if (outcome.ok) navigate(taskHash(taskId, 'inventory'));
   };
   const removeScreenshot = async (screenshotId: string) => {
     await run((adapter) => adapter.removePaymentScreenshot(taskId, screenshotId));
@@ -386,7 +375,6 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
     if (!group) return undefined;
     const shots = group.screenshotIds.flatMap((id) => snapshot.paymentScreenshots.find((shot) => shot.screenshotId === id) ?? []);
     return {
-      cap: group.cap,
       locked: group.locked,
       shots,
       onAdd: (files) => attachScreenshots(item, files),

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_DIR } from '@baox/fixtures';
-import { PAYMENT_COPY, PAYMENT_SCREENSHOT_CAP, PAYMENT_SCREENSHOT_ERRORS, STAY_TRIO_CONFIRM_PAID, STAY_TRIO_COPY, type PendingItem, type TaskSnapshot } from '@baox/contract';
+import { PAYMENT_COPY, PAYMENT_SCREENSHOT_ERRORS, STAY_TRIO_CONFIRM_PAID, STAY_TRIO_COPY, type PendingItem, type TaskSnapshot } from '@baox/contract';
 import type { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { pairHotelStays } from './hotel-stay';
@@ -9,6 +9,7 @@ import { settleLegacyScreenshots331 } from './db/migrations';
 import { checkStayTrios, type ScreenshotGroup, type TrioVoucher } from './stay-trio';
 import { api, byFileName, sample } from './test/api';
 import { type TestClient } from './test/harness';
+import { postStayScreenshots, seedTableScreenshots } from './test/payment-screenshots';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // #213: the 住宿 (accommodation) trio — 发票 (invoice), 结账单 (hotel folio), 支付截图 (payment screenshot) — is checked
@@ -134,18 +135,11 @@ const client = api(() => alice);
 // Distinct images, so a group's order can be read back from the file names.
 const png = (n = 1, name = `IMG_50${10 + n}.png`) => new File([readFileSync(join(GENERATED_DIR, `print-pg${n}.png`))], name, { type: 'image/png' });
 
-// One 支付截图 per request, no stepToken (ADR 0014); several are sent one after another, as the page does.
-function screenshot(snapshot: TaskSnapshot, voucherMaterialId: string, file = png()): Promise<Response> {
-  const form = new FormData();
-  form.append('voucherMaterialId', voucherMaterialId);
-  form.append('file', file);
-  return alice.request(`/api/tasks/${snapshot.task.taskId}/payment-screenshots`, { method: 'POST', body: form });
-}
 async function screenshots(snapshot: TaskSnapshot, voucherMaterialId: string, files: File[]): Promise<TaskSnapshot> {
-  let latest = snapshot;
-  for (const file of files) latest = await client.accepted(await screenshot(latest, voucherMaterialId, file));
-  return latest;
+  await seedTableScreenshots(server, snapshot.task.taskId, voucherMaterialId, files);
+  return client.current(snapshot.task.taskId);
 }
+const upload = (snapshot: TaskSnapshot, voucherMaterialId: string, files: File[] = [png()]) => postStayScreenshots(alice, snapshot, voucherMaterialId, files);
 const printAction = (snapshot: TaskSnapshot, name: string, body: Record<string, unknown>) => alice.post(`/api/tasks/${snapshot.task.taskId}/actions/${name}`, body);
 const complete = (snapshot: TaskSnapshot, voucherMaterialId: string) => printAction(snapshot, 'complete-payment-screenshots', { voucherMaterialId });
 const remove = (snapshot: TaskSnapshot, screenshotId: string | undefined) => printAction(snapshot, 'remove-payment-screenshot', { screenshotId });
@@ -178,7 +172,7 @@ describe('the 住宿 trio at inventory', () => {
   it('an invoice without its folio: the queue names the 结账单; 确认没有 lets the list proceed with the absence recorded', async () => {
     const start = (await scenario(server, alice).at('pending', { materials: ['m01'] })).reached;
     const invoice = byFileName(start, sample('m01').name);
-    const supplied = await client.accepted(await screenshot(start, invoice.materialId));
+    const supplied = await screenshots(start, invoice.materialId, [png()]);
     const declared = await client.accepted(await complete(supplied, invoice.materialId));
     expect(openIds(declared)).toEqual([`stay_folio_missing.${invoice.materialId}`]);
     expect(declared.pendingItems[0]).toMatchObject({ title: '住宿发票「全季酒店_发票.pdf」缺少结账单' });
@@ -196,7 +190,7 @@ describe('the 住宿 trio at inventory', () => {
     expect(openIds(start)).toEqual([`stay_invoice_missing.${folio.materialId}`]);
     expect(start.pendingItems[0]).toMatchObject({ materialId: folio.materialId, title: STAY_TRIO_COPY.invoice.title(folio.fileName) });
     // Only a 住宿 invoice takes a screenshot, never a folio.
-    await refused(await screenshot(start, folio.materialId), 'screenshot_not_applicable');
+    await refused(await upload(start, folio.materialId), 'screenshot_not_applicable');
     await refused(await complete(start, folio.materialId), 'screenshot_not_applicable');
 
     const done = await answer(start, `stay_invoice_missing.${folio.materialId}`, 'confirm_none');
@@ -215,21 +209,20 @@ describe('the 住宿 trio at inventory', () => {
 
   it('a voucher that is not a 住宿 invoice takes no screenshot (#330)', async () => {
     const start = (await scenario(server, alice).at('project', { materials: ['m07'] })).reached;
-    await refused(await screenshot(start, byFileName(start, sample('m07').name).materialId), 'screenshot_not_applicable');
+    await refused(await upload(start, byFileName(start, sample('m07').name).materialId), 'screenshot_not_applicable');
   });
 });
 
-// #331: a 住宿 invoice takes a group of up to 6 支付截图, and its item settles only when the filer says 「已传齐」.
+// #331: a 住宿 invoice's 支付截图 stored in the table form a group, and its item settles only when the filer says 「已传齐」.
 describe('a group of 支付截图', () => {
-  it('stays pending through three uploads, resolves on 「已传齐」, lists them in upload order and refuses a 7th', async () => {
+  it('stays pending with three, resolves on 「已传齐」 and lists them in upload order', async () => {
     const start = (await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] })).reached;
     const invoice = byFileName(start, sample('m01').name);
     await refused(await complete(start, invoice.materialId), 'screenshot_group_empty');
-    await refused(await screenshot(start, invoice.materialId, new File([Buffer.from('%PDF-1.4')], '支付记录.pdf', { type: 'application/pdf' })), 'not_image');
 
     const three = await screenshots(start, invoice.materialId, [png(1), png(2), png(3)]);
     expect(groupOf(three, invoice.materialId)).toEqual(['IMG_5011.png', 'IMG_5012.png', 'IMG_5013.png']);
-    expect(screenshotItem(three, invoice.materialId)).toMatchObject({ status: 'open', screenshotGroup: { screenshotIds: three.paymentScreenshots.map((shot) => shot.screenshotId), cap: PAYMENT_SCREENSHOT_CAP, locked: false } });
+    expect(screenshotItem(three, invoice.materialId)).toMatchObject({ status: 'open', screenshotGroup: { screenshotIds: three.paymentScreenshots.map((shot) => shot.screenshotId), locked: false } });
     // A pending screenshot item still keeps the list from ERP 就绪.
     expect(three).toMatchObject({ stage: 'pending', step: { kind: 'answer_pending' } });
     expect(byFileName(three, invoice.fileName)).toMatchObject({ status: 'pending' });
@@ -246,11 +239,6 @@ describe('a group of 支付截图', () => {
     const again = await client.current(declared.task.taskId);
     expect(groupOf(again, invoice.materialId)).toEqual(['IMG_5011.png', 'IMG_5012.png', 'IMG_5013.png']);
     expect(again.inventory.summary).toMatchObject({ openPendingItemCount: 0, pendingMaterialCount: 0 });
-
-    const six = await screenshots(again, invoice.materialId, [png(4), png(5), png(6)]);
-    expect(groupOf(six, invoice.materialId)).toHaveLength(PAYMENT_SCREENSHOT_CAP);
-    expect(await refused(await screenshot(six, invoice.materialId, png(7)), 'screenshot_cap')).toBe(PAYMENT_SCREENSHOT_ERRORS.cap);
-    expect((await client.current(six.task.taskId)).paymentScreenshots).toHaveLength(PAYMENT_SCREENSHOT_CAP);
   });
 
   it('removing one from a group not yet declared complete keeps the rest in order and the item pending', async () => {
@@ -315,12 +303,12 @@ describe('a group of 支付截图', () => {
     expect(generated.printSheet.pages.flatMap((page) => page.screenshotIds)).toEqual(generated.paymentScreenshots.map((shot) => shot.screenshotId));
     expect(generated.printSheet.notices).toEqual([]);
 
-    expect(await refused(await screenshot(generated, invoice.materialId, png(3)), 'screenshot_locked')).toBe(STAY_TRIO_COPY.changeLocked);
+    expect(await refused(await upload(generated, invoice.materialId, [png(3)]), 'screenshot_locked')).toBe(STAY_TRIO_COPY.changeLocked);
     await refused(await remove(generated, generated.paymentScreenshots[0]?.screenshotId), 'screenshot_locked');
     await refused(await complete(generated, invoice.materialId), 'screenshot_locked');
     const after = await client.current(ready.task.taskId);
     expect(groupOf(after, invoice.materialId)).toEqual(['IMG_5011.png', 'IMG_5012.png']);
-    expect(screenshotItem(after, invoice.materialId)?.screenshotGroup).toEqual({ screenshotIds: after.paymentScreenshots.map((shot) => shot.screenshotId), cap: PAYMENT_SCREENSHOT_CAP, locked: true });
+    expect(screenshotItem(after, invoice.materialId)?.screenshotGroup).toEqual({ screenshotIds: after.paymentScreenshots.map((shot) => shot.screenshotId), locked: true });
     expect(after.confirmation.status).toBe('confirmed');
   }, 120_000);
 });
@@ -397,6 +385,6 @@ describe('the print stage reads the absence recorded at inventory', () => {
     expect(ready.pendingItems).toEqual([expect.objectContaining({ itemId: `stay_screenshot_missing.${invoice.materialId}`, status: 'resolved', answer: { choice: 'confirm_none' } })]);
     const generated = await client.accepted(await printAction(ready, 'generate-print-sheet', {}));
     expect(generated.printSheet.notices).toEqual([STAY_TRIO_COPY.printNotice('No.1', '住宿')]);
-    await refused(await screenshot(generated, invoice.materialId), 'screenshot_locked');
+    await refused(await upload(generated, invoice.materialId), 'screenshot_locked');
   }, 120_000);
 });

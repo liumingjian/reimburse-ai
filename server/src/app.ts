@@ -185,7 +185,6 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // An 上传批次 may carry several files; one 支付截图 is a single image. Both leave room for multipart framing.
   const tooLarge = (c: Context) => failure(c, 400, 'too_large', UPLOAD_REJECT_MESSAGES.too_large);
   const batchLimit = bodyLimit({ maxSize: UPLOAD_MAX_FILE_BYTES * UPLOAD_BATCH_MAX_FILES, onError: tooLarge });
-  const screenshotLimit = bodyLimit({ maxSize: UPLOAD_MAX_FILE_BYTES * 2, onError: tooLarge });
 
   // Only the address the app is served at may talk to it (story 82). Neither binding to 127.0.0.1 nor sitting on the
   // company VPN is enough on its own: a page on the attacker's domain can point that domain at this app's address
@@ -405,14 +404,18 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     return c.json(await tasksOf(c).upload(c.req.param('id'), files));
   });
 
-  // 补充支付截图 (multipart `voucherMaterialId`, `file`): print-only, no stepToken.
-  app.post('/api/tasks/:id/payment-screenshots', screenshotLimit, async (c) => {
-    const body = await c.req.parseBody();
-    const file = body['file'];
+  // 支付截图 from a 住宿 invoice's 待确认项 (multipart `voucherMaterialId`, `stepToken`, one `files` per image): a new batch
+  // placed with that invoice, and a new inventory run (ADR-0032).
+  app.post('/api/tasks/:id/payment-screenshots', batchLimit, async (c) => {
+    const body = await c.req.parseBody({ all: true });
     const voucherMaterialId = body['voucherMaterialId'];
-    if (!(file instanceof File) || typeof voucherMaterialId !== 'string' || voucherMaterialId === '') return failure(c, 400, 'invalid_input', '请求无效。');
-    const uploaded: UploadedFile = { fileName: file.name, mime: file.type, bytes: new Uint8Array(await file.arrayBuffer()) };
-    return c.json(await tasksOf(c).addPaymentScreenshot(c.req.param('id'), voucherMaterialId, uploaded));
+    const stepToken = body['stepToken'];
+    const files: UploadedFile[] = [];
+    for (const entry of ([] as unknown[]).concat(body['files'] ?? [])) {
+      if (entry instanceof File) files.push({ fileName: entry.name, mime: entry.type || 'application/octet-stream', bytes: new Uint8Array(await entry.arrayBuffer()) });
+    }
+    if (files.length === 0 || typeof voucherMaterialId !== 'string' || voucherMaterialId === '' || typeof stepToken !== 'string') return failure(c, 400, 'invalid_input', '请求无效。');
+    return c.json(await tasksOf(c).addPaymentScreenshots(c.req.param('id'), voucherMaterialId, files, stepToken));
   });
 
   // A content-addressed file of the task: originals (the corner editor's photo), payment screenshots, the merged print
