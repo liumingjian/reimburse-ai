@@ -57,9 +57,9 @@ export const EVIDENCE_STATES = ['explicit', 'derived', 'ambiguous', 'missing'] a
 export const EvidenceStateSchema = z.enum(EVIDENCE_STATES);
 export type EvidenceState = z.infer<typeof EvidenceStateSchema>;
 
-// 材料种类 (material kind, ADR-0017): owns the slot schema, checks and manual-fill form. v1 has five kinds; a
-// 版式 (layout) belongs to exactly one kind.
-export const MATERIAL_KINDS = ['vat_invoice', 'rail_ticket', 'ride_itinerary', 'hotel_folio', 'taxi_receipt'] as const;
+// 材料种类 (material kind, ADR-0017): owns the slot schema, checks and manual-fill form. v1 had five kinds;
+// ADR-0032 adds the 支付截图 (payment screenshot). A 版式 (layout) belongs to exactly one kind.
+export const MATERIAL_KINDS = ['vat_invoice', 'rail_ticket', 'ride_itinerary', 'hotel_folio', 'taxi_receipt', 'payment_screenshot'] as const;
 export const MaterialKindSchema = z.enum(MATERIAL_KINDS);
 export type MaterialKind = z.infer<typeof MaterialKindSchema>;
 
