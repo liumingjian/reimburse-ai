@@ -201,14 +201,14 @@
       "outcome": "recognised",
       "kind": "hotel_folio",
       "layout": "labelled",
-      "parserVersion": "1",
+      "parserVersion": "2",
       "kindLabel": "酒店结账单",
       "candidates": [
         {
           "key": "hotelName",
           "value": "全季酒店（上海某某店）",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "refs": [
             {
@@ -224,7 +224,7 @@
           "key": "guestName",
           "value": "林颂宜",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "refs": [
             {
@@ -240,7 +240,7 @@
           "key": "roomNumber",
           "value": "1208",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "refs": [
             {
@@ -256,7 +256,7 @@
           "key": "checkIn",
           "value": "2026-08-09",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "refs": [
             {
@@ -272,7 +272,7 @@
           "key": "checkOut",
           "value": "2026-08-22",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "refs": [
             {
@@ -288,7 +288,7 @@
           "key": "nights",
           "value": "13",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "refs": [
             {
@@ -304,7 +304,7 @@
           "key": "roomRate",
           "value": "280.00",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "refs": [
             {
@@ -320,7 +320,7 @@
           "key": "folioTotal",
           "value": "3640.00",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "refs": [
             {
@@ -337,7 +337,7 @@
           "key": "paidAmount",
           "value": "3640.00",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "refs": [
             {
