@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_DIR } from '@baox/fixtures';
-import { PAYMENT_SCREENSHOT_CAP, PAYMENT_SCREENSHOT_ERRORS, STAY_TRIO_COPY, type PendingItem, type TaskSnapshot } from '@baox/contract';
+import { PAYMENT_COPY, PAYMENT_SCREENSHOT_CAP, PAYMENT_SCREENSHOT_ERRORS, STAY_TRIO_CONFIRM_PAID, STAY_TRIO_COPY, type PendingItem, type TaskSnapshot } from '@baox/contract';
 import type { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { pairHotelStays } from './hotel-stay';
@@ -19,8 +19,8 @@ describe('checkStayTrios', () => {
   const folio: TrioVoucher = { materialId: 'fol', fileName: '全季酒店_结账单.pdf', values: { folioTotal: '3640.00', checkIn: '2026-08-09', checkOut: '2026-08-22' } };
   const otherFolio: TrioVoucher = { ...folio, materialId: 'fol2', fileName: '汉庭_结账单.jpg', values: { ...folio.values, folioTotal: '399.00' } };
   // `screenshots`: the invoices with a group of one, declared complete unless given as a group.
-  const check = (invoices: TrioVoucher[], folios: TrioVoucher[], screenshots: (string | [string, ScreenshotGroup])[], answers = new Map()) =>
-    checkStayTrios(invoices, folios, pairHotelStays(invoices, folios), new Map(screenshots.map((entry) => (typeof entry === 'string' ? [entry, { count: 1, complete: true }] : entry))), answers);
+  const check = (invoices: TrioVoucher[], folios: TrioVoucher[], screenshots: (string | [string, ScreenshotGroup])[], answers = new Map(), paid = new Map<string, number[]>()) =>
+    checkStayTrios(invoices, folios, pairHotelStays(invoices, folios), new Map(screenshots.map((entry) => (typeof entry === 'string' ? [entry, { count: 1, complete: true }] : entry))), paid, answers);
   const items = (result: ReturnType<typeof check>): PendingItem[] => [...result.items.values()].flat();
 
   it('a complete trio: only the screenshot item, settled on its complete group', () => {
@@ -82,6 +82,43 @@ describe('checkStayTrios', () => {
     const declared = check([invoice], [folio], ['inv'], answers);
     expect(items(declared)).toEqual([expect.objectContaining({ status: 'resolved', answer: null })]);
     expect(declared.trios[0]?.screenshot).toEqual({ present: true, noneConfirmed: false });
+  });
+});
+
+// ADR-0032: 支付截图 materials carry amounts, so their stay is checked by sum.
+describe('checkStayTrios by sum', () => {
+  const invoice: TrioVoucher = { materialId: 'inv', fileName: '全季酒店_发票.pdf', values: { totalAmount: '3640.00' } };
+  const folio: TrioVoucher = { materialId: 'fol', fileName: '全季酒店_结账单.pdf', values: { folioTotal: '3640.00', checkIn: '2026-08-09', checkOut: '2026-08-22' } };
+  const check = (paid: number[], answers = new Map(), groups = new Map<string, ScreenshotGroup>()) =>
+    checkStayTrios([invoice], [folio], pairHotelStays([invoice], [folio]), groups, new Map([['inv', paid]]), answers);
+  const item = (result: ReturnType<typeof check>) => result.items.get('inv')?.[0];
+
+  it('at least the invoice total settles the item by itself, however much more was paid', () => {
+    expect(item(check([364000]))).toMatchObject({ status: 'resolved', answer: null });
+    expect(item(check([200000, 170000]))).toMatchObject({ status: 'resolved', answer: null });
+  });
+
+  it('less keeps it open, says by how much, and offers 「已传齐」 in place of 确认没有', () => {
+    const short = item(check([100000]));
+    expect(short).toMatchObject({ status: 'open', title: PAYMENT_COPY.shortfallTitle(invoice.fileName), why: PAYMENT_COPY.shortfallWhy('1000.00', '3640.00', '2640.00') });
+    expect(short?.choices.map((choice) => choice.key)).toEqual([STAY_TRIO_CONFIRM_PAID, 'exclude']);
+  });
+
+  it('「已传齐」 settles a shortfall, and does not fit once no screenshot is placed', () => {
+    const answers = new Map([['stay_screenshot_missing.inv', { choice: STAY_TRIO_CONFIRM_PAID }]]);
+    expect(item(check([100000], answers))).toMatchObject({ status: 'resolved', answer: { choice: STAY_TRIO_CONFIRM_PAID } });
+    expect(item(check([], answers))).toMatchObject({ status: 'open' });
+  });
+
+  it('确认没有 is refused while a screenshot material is placed', () => {
+    const answers = new Map([['stay_screenshot_missing.inv', { choice: 'confirm_none' }]]);
+    expect(item(check([364000], answers))).toMatchObject({ status: 'resolved', answer: null });
+    expect(check([364000], answers).trios[0]?.screenshot).toEqual({ present: true, noneConfirmed: false });
+  });
+
+  it('a #331 group beside them has no amount: the group rule decides, not the sum', () => {
+    const groups = new Map([['inv', { count: 1, complete: false }]]);
+    expect(item(check([364000], new Map(), groups))).toMatchObject({ status: 'open', title: STAY_TRIO_COPY.screenshot.title(invoice.fileName) });
   });
 });
 

@@ -1,4 +1,4 @@
-import { MATERIAL_KINDS, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type Line, type Material, type MaterialKind, type PendingField, type PendingItem } from '@baox/contract';
+import { MATERIAL_KINDS, PAYMENT_COPY, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type Line, type Material, type MaterialKind, type PendingField, type PendingItem } from '@baox/contract';
 import { erpInvoiceTypeOf, ERP_INVOICE_TYPES, type ResolvedErpInvoiceType } from '@baox/erp-executor/invoice-type';
 import type { ParseOutcome, Recognised } from './parse/dispatch';
 import { planTransport, type PlannedLine } from './allocation';
@@ -9,6 +9,7 @@ import { fieldLabel, slotOf, type Slot } from './parse/slots';
 import { chosen, EXCLUDE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
 import { editAddress, editedValue, type Editable } from './pending/edits';
 import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/company-rules';
+import { checkPayments, type LabelledStay } from './stay-payments';
 import { checkStayTrios, stayVoucherIds, type ScreenshotGroup, type StayTrio, type TrioVoucher } from './stay-trio';
 
 // The pure projection of one inventory run: uploaded materials, their parser outcomes and the stored answers in; the
@@ -599,8 +600,38 @@ export function inventoryView(
   const stays = new Map(pairHotelStays(stayInvoices, folios).map((stay) => [stay.invoiceId, stay]));
   const linked = new Map<string, string[]>([...stays.values()].flatMap((stay) => [[stay.invoiceId, [stay.folioId]], [stay.folioId, [stay.invoiceId]]]));
 
+  // 支付截图 materials, placed with the 住宿 invoices (ADR-0032), only over a finished run like the trio below.
+  const invoiceNo = new Map([...new Set(drafts.map((d) => d.material.materialId))].map((id, index) => [id, index + 1]));
+  const folioValues = new Map(folios.map((folio) => [folio.materialId, folio.values]));
+  const paymentStays = stayInvoices.map((invoice): LabelledStay => {
+    const stay = stays.get(invoice.materialId);
+    const hotel = stay ? folioValues.get(stay.folioId)?.['hotelName'] : undefined;
+    const seller = invoice.values['sellerName'];
+    const totalAmount = invoice.values['totalAmount'] ?? '';
+    return {
+      invoiceId: invoice.materialId,
+      totalAmount,
+      checkIn: stay?.checkIn ?? null,
+      checkOut: stay?.checkOut ?? null,
+      issueDate: invoice.values['issueDate'] ?? null,
+      hotelNames: [hotel, seller].filter((name): name is string => Boolean(name)),
+      label: PAYMENT_COPY.stayLabel(`发票${invoiceNo.get(invoice.materialId)}`, hotel ?? seller ?? null, stay ? `${stay.checkIn}~${stay.checkOut}` : null, totalAmount),
+    };
+  });
+  const shots = includedWorked.flatMap((w) => (w.resolved?.kind === 'payment_screenshot' && !w.items.some(isOpen) ? [{ materialId: w.m.materialId, fileName: w.m.fileName, values: w.values }] : []));
+  const payments = results && waiting === 0 ? checkPayments(shots, paymentStays, new Set(screenshots.keys()), answers) : null;
+  for (const editable of payments?.editables ?? []) editables.set(editable.address, editable);
+  for (const items of payments?.items.values() ?? []) {
+    for (const item of items) answerables.set(item.itemId, { item });
+    pendingItems.push(...items);
+  }
+  for (const [shotId, invoiceId] of payments?.placement.assigned ?? []) {
+    linked.set(shotId, [invoiceId]);
+    linked.set(invoiceId, [...(linked.get(invoiceId) ?? []), shotId]);
+  }
+
   // The 住宿 trio (#213), only over a finished run: a folio still being read is not yet missing.
-  const trio = results && waiting === 0 ? checkStayTrios(stayInvoices, folios, [...stays.values()], screenshots, answers) : { trios: [], items: new Map<string, PendingItem[]>(), checks: new Map<string, AnswerCheck>() };
+  const trio = results && waiting === 0 ? checkStayTrios(stayInvoices, folios, [...stays.values()], screenshots, payments?.paid ?? new Map(), answers) : { trios: [], items: new Map<string, PendingItem[]>(), checks: new Map<string, AnswerCheck>() };
   for (const items of trio.items.values()) {
     for (const item of items) {
       const check = trio.checks.get(item.itemId);
@@ -618,18 +649,22 @@ export function inventoryView(
       return [{ ...baseMaterial(m), ...identity, role: 'excluded', status: 'excluded', checkText: INVENTORY_COPY.excludedCheck }];
     }
     const view = views.get(m.materialId) ?? baseMaterial(m);
-    // A trio item sits on a material that is otherwise clean: it keeps its role, but is pending while the item is open.
-    const trioItems = trio.items.get(m.materialId) ?? [];
+    // A trio or payment item sits on a material that is otherwise clean: it keeps its role, but is pending while the
+    // item is open.
+    const laterItems = [...(trio.items.get(m.materialId) ?? []), ...(payments?.items.get(m.materialId) ?? [])];
+    const note = payments?.notes.get(m.materialId);
+    const assignment = payments?.assignments.get(m.materialId);
     return [{
       ...view,
       variants: (variantPlan.variantsByCanonical.get(m.materialId) ?? []).map(variantView),
-      status: trioItems.some(isOpen) ? 'pending' : view.status,
-      pendingItemIds: [...view.pendingItemIds, ...trioItems.map((item) => item.itemId)],
+      status: laterItems.some(isOpen) ? 'pending' : view.status,
+      checkText: note ? [view.checkText, note].filter(Boolean).join('；') : view.checkText,
+      pendingItemIds: [...view.pendingItemIds, ...laterItems.map((item) => item.itemId)],
       linkedMaterialIds: linked.get(m.materialId) ?? view.linkedMaterialIds,
+      ...(assignment ? { payment: assignment } : {}),
     }];
   });
 
-  const invoiceNo = new Map([...new Set(drafts.map((d) => d.material.materialId))].map((id, index) => [id, index + 1]));
   const events: ExpenseEvent[] = [];
   const lines: Line[] = [];
   ordered.forEach(({ material, draft: own, leg, referenceMaterialIds: legReferences, evidenceNote: legNote }, index) => {
@@ -668,7 +703,7 @@ export function inventoryView(
   });
 
   const openPendingItems = pendingItems.filter(isOpen).length;
-  const grouped = new Set(events.flatMap((e) => [e.voucherMaterialId, ...e.referenceMaterialIds]));
+  const grouped = new Set([...events.flatMap((e) => [e.voucherMaterialId, ...e.referenceMaterialIds]), ...(payments?.placement.assigned.keys() ?? [])]);
   const done = results !== null && waiting === 0;
   const progress: RunProgress = {
     status: !results ? 'not_started' : done ? 'done' : 'running',

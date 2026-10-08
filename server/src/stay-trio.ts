@@ -1,5 +1,6 @@
-import { confirmsNone, PAYMENT_SCREENSHOT_ERRORS, STAY_TRIO_CONFIRM_NONE, STAY_TRIO_COPY, stayTrioElementOf, stayTrioItemId, stayTrioMaterialOf, type PendingAnswer, type PendingItem, type StayTrioElement } from '@baox/contract';
+import { confirmsNone, PAYMENT_COPY, PAYMENT_SCREENSHOT_ERRORS, STAY_TRIO_CONFIRM_NONE, STAY_TRIO_CONFIRM_PAID, STAY_TRIO_COPY, stayTrioElementOf, stayTrioItemId, stayTrioMaterialOf, type PendingAnswer, type PendingItem, type StayTrioElement } from '@baox/contract';
 import type { Stay, StayVoucher } from './hotel-stay';
+import { money, slotCents } from './money-date';
 import { CATEGORIES } from './parse/slots';
 import { chosen, EXCLUDE, settle, type AnswerCheck, type StoredAnswers } from './pending/answers';
 
@@ -19,6 +20,10 @@ import { chosen, EXCLUDE, settle, type AnswerCheck, type StoredAnswers } from '.
 // add several over several visits, and the item stays open until the group is declared complete (「已传齐」) or the
 // absence is confirmed. A 确认没有 given before a screenshot was uploaded is superseded for good (#332): emptying the group
 // again leaves the item open, and the filer may choose 确认没有 again.
+//
+// 支付截图 materials (ADR-0032) carry their amounts, so an invoice whose screenshots are all materials is checked by
+// sum instead: at least its 价税合计 settles the item by itself; less keeps it open with 「已传齐」 to confirm that is
+// all. Screenshots stored the #331 way have no amount; an invoice with any of them keeps the group rule above.
 
 export type TrioPart = {
   present: boolean;
@@ -90,8 +95,9 @@ export function supersededByScreenshot(itemId: string, answer: PendingAnswer, re
 }
 
 // `invoices`: clean 住宿 invoices that formed an event; `folios`: clean hotel folios; `stays`: their pairing;
-// `screenshots`: the invoices' 支付截图 groups (an invoice with none may be absent).
-export function checkStayTrios(invoices: readonly TrioVoucher[], folios: readonly TrioVoucher[], stays: readonly Stay[], screenshots: ReadonlyMap<string, ScreenshotGroup>, answers: StoredAnswers): TrioCheck {
+// `screenshots`: the invoices' 支付截图 groups (an invoice with none may be absent); `paid`: per invoice, the amounts
+// (cents) of the 支付截图 materials placed with it.
+export function checkStayTrios(invoices: readonly TrioVoucher[], folios: readonly TrioVoucher[], stays: readonly Stay[], screenshots: ReadonlyMap<string, ScreenshotGroup>, paid: ReadonlyMap<string, readonly number[]>, answers: StoredAnswers): TrioCheck {
   const items = new Map<string, PendingItem[]>();
   const checks = new Map<string, AnswerCheck>();
   const trios: StayTrio[] = [];
@@ -107,11 +113,22 @@ export function checkStayTrios(invoices: readonly TrioVoucher[], folios: readonl
   // open until 「已传齐」 and a new one is refused.
   const screenshotPart = (invoice: TrioVoucher): TrioPart => {
     const group = screenshots.get(invoice.materialId) ?? NO_GROUP;
-    const check: AnswerCheck = (answer) => (group.count > 0 && confirmsNone(answer) ? PAYMENT_SCREENSHOT_ERRORS.noneWithScreenshots : null);
-    const settled = settle(missingItem('screenshot', invoice), answers, check);
-    raise(invoice, settled.status === 'open' && group.complete ? { ...settled, status: 'resolved' } : settled);
+    const amounts = paid.get(invoice.materialId) ?? [];
+    const count = group.count + amounts.length;
+    const sum = amounts.reduce((acc, value) => acc + value, 0);
+    const total = slotCents(invoice.values['totalAmount']);
+    const byAmount = group.count === 0 && amounts.length > 0 && total !== null;
+    const owed = byAmount && total !== null && sum < total ? total : null;
+    const item = missingItem('screenshot', invoice);
+    const asked = owed !== null
+      ? { ...item, title: PAYMENT_COPY.shortfallTitle(invoice.fileName), why: PAYMENT_COPY.shortfallWhy(money(sum), money(owed), money(owed - sum)), choices: [{ key: STAY_TRIO_CONFIRM_PAID, label: PAYMENT_COPY.confirmPaid }, EXCLUDE] }
+      : item;
+    const check: AnswerCheck = (answer) => (count > 0 && confirmsNone(answer) ? PAYMENT_SCREENSHOT_ERRORS.noneWithScreenshots : null);
+    const settled = settle(asked, answers, check);
+    const done = group.complete || (byAmount && owed === null);
+    raise(invoice, settled.status === 'open' && done ? { ...settled, status: 'resolved' } : settled);
     checks.set(settled.itemId, check);
-    return { present: group.count > 0, noneConfirmed: chosen(settled) === STAY_TRIO_CONFIRM_NONE };
+    return { present: count > 0, noneConfirmed: chosen(settled) === STAY_TRIO_CONFIRM_NONE };
   };
   const pairedFolio = new Map(stays.map((stay) => [stay.invoiceId, stay.folioId]));
   const pairedInvoice = new Set(stays.map((stay) => stay.folioId));

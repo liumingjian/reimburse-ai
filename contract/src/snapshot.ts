@@ -120,6 +120,18 @@ export const MaterialVariantSchema = z.object({
 });
 export type MaterialVariant = z.infer<typeof MaterialVariantSchema>;
 
+// Which 住宿 invoice a 支付截图 material counts for (ADR-0032). The server derives it at every inventory unless the
+// filer chose one; `options` are the stays it may be moved to (改归属), submitted as the field edit
+// `edit.<materialId>.stay` with the invoice's material id as the value.
+export const PAYMENT_STAY_FIELD = 'stay';
+export const PaymentAssignmentSchema = z.object({
+  // The invoice it counts for; null while no stay takes it.
+  invoiceId: IdSchema.nullable(),
+  chosen: z.boolean(),
+  options: z.array(z.object({ invoiceId: IdSchema, label: z.string().min(1) })),
+});
+export type PaymentAssignment = z.infer<typeof PaymentAssignmentSchema>;
+
 export const MaterialSchema = z.object({
   materialId: IdSchema,
   batchId: IdSchema,
@@ -149,6 +161,8 @@ export const MaterialSchema = z.object({
   // Alternate originals of this invoice. The server chooses the canonical material; clients only render this list.
   variants: z.array(MaterialVariantSchema),
   fields: z.array(FieldCandidateSchema),
+  // 支付截图 materials only.
+  payment: PaymentAssignmentSchema.optional(),
 });
 export type Material = z.infer<typeof MaterialSchema>;
 
@@ -548,6 +562,40 @@ export const PAYMENT_SCREENSHOT_ERRORS = {
   empty: '还没有上传支付截图，传好后再点「已传齐」。',
   // 「确认没有支付截图」 while the group holds a screenshot (#332).
   noneWithScreenshots: '这张发票已经上传了支付截图，不能再确认没有。要确认没有，先删掉这些截图。',
+} as const;
+
+// 支付截图 materials (ADR-0032): placing them with a stay, and checking a stay's payments against its invoice.
+export const STAY_TRIO_CONFIRM_PAID = 'confirm_paid';
+export const PAYMENT_ITEM_CODES = { unassigned: 'payment_unassigned', duplicate: 'payment_duplicate' } as const;
+export const PAYMENT_COPY = {
+  // A stay as the filer picks it: 发票 number in the list, hotel, dates, amount.
+  stayLabel: (invoiceLabel: string, hotel: string | null, dates: string | null, totalAmount: string) => [invoiceLabel, hotel, dates, `价税合计 ${totalAmount}`].filter(Boolean).join(' · '),
+  unassignedTitle: (fileName: string) => `支付截图「${fileName}」不知道归哪次住宿`,
+  unassignedWhy: (amount: string, payDate: string, hasStays: boolean) =>
+    hasStays
+      ? `这张支付截图（${payDate} 支付 ${amount} 元）的支付日期不在任何一次住宿的范围内（入住前 30 天到离店后 1 天），或者几次住宿一样合适。请选它属于哪次住宿；不属于住宿就排除它。`
+      : `这张支付截图（${payDate} 支付 ${amount} 元）没有住宿发票可以归属。支付截图只用于住宿报销；不需要就排除它，或在上传页追加它的住宿发票后重新盘点。`,
+  assignTo: (stayLabel: string) => `归到 ${stayLabel}`,
+  duplicateTitle: (fileName: string, otherFileName: string) => `支付截图「${fileName}」和「${otherFileName}」是同一笔支付`,
+  duplicateWhy: (byNumber: boolean) =>
+    `${byNumber ? '两张截图的交易单号相同' : '两张截图的金额和支付时间（精确到秒）都相同'}，同一笔支付只能算一次。请排除这一张。`,
+  // The 支付截图 item of a stay whose screenshots add up to less than its invoice.
+  shortfallTitle: (invoiceFileName: string) => `住宿发票「${invoiceFileName}」的支付截图不够发票金额`,
+  shortfallWhy: (paid: string, total: string, short: string) =>
+    `这次住宿的支付截图合计 ${paid} 元，比发票价税合计 ${total} 元少 ${short} 元。可以在上传页追加支付截图后重新盘点，或修改读错的金额；确实就这些，点「已传齐」。`,
+  confirmPaid: '已传齐',
+  // The invoice's 校验 note once its screenshots are placed.
+  paidNote: (paid: string, total: string) => {
+    const [p, t] = [Math.round(Number(paid) * 100), Math.round(Number(total) * 100)];
+    if (p === t) return `支付截图合计 ${paid} 元，与发票一致`;
+    const diff = (Math.abs(p - t) / 100).toFixed(2);
+    return p > t ? `支付截图合计 ${paid} 元，实付比发票多 ${diff} 元` : `支付截图合计 ${paid} 元，比发票少 ${diff} 元`;
+  },
+  // A screenshot's 校验 note.
+  assignedNote: (stayLabel: string) => `归到 ${stayLabel}`,
+  unassignedNote: '还没有归到住宿',
+  reassign: '改归属',
+  remove: '不属于住宿（移除）',
 } as const;
 
 export const PaymentScreenshotSchema = z.object({
