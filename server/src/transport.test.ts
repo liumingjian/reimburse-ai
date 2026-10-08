@@ -106,6 +106,7 @@ describe('ride-hailing invoice + 高德 itinerary', () => {
           giveUpNote: expect.any(String),
         },
         screenshotGroup: null,
+        manualKinds: [],
         status: 'open',
         answer: null,
       },

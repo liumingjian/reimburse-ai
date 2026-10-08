@@ -86,12 +86,23 @@ const RIDE_ITINERARY_SLOTS: readonly Slot[] = [
   { key: 'itineraryTotal', label: '行程单合计', required: true, format: 'money' },
 ];
 
+// 支付截图 (payment screenshot, ADR-0032): reference material that places a stay's payments. Amount and date are what
+// assignment and the sum check need; the rest is shown, never sent to ERP.
+const PAYMENT_SCREENSHOT_SLOTS: readonly Slot[] = [
+  { key: 'amount', label: '支付金额', required: true, format: 'money' },
+  { key: 'payDate', label: '支付日期', required: true, format: 'date' },
+  { key: 'payTime', label: '支付时间', required: false, format: 'text' },
+  { key: 'payee', label: '收款方', required: false, format: 'text' },
+  { key: 'transactionNumber', label: '交易单号', required: false, format: 'text' },
+];
+
 export const SLOTS: Readonly<Record<MaterialKind, readonly Slot[]>> = {
   vat_invoice: VAT_INVOICE_SLOTS,
   rail_ticket: RAIL_TICKET_SLOTS,
   ride_itinerary: RIDE_ITINERARY_SLOTS,
   hotel_folio: HOTEL_FOLIO_SLOTS,
   taxi_receipt: TAXI_RECEIPT_SLOTS,
+  payment_screenshot: PAYMENT_SCREENSHOT_SLOTS,
 };
 
 // `*住宿服务*住宿费` → 住宿费; the 税收分类 (tax class) between the asterisks decides the category.

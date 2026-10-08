@@ -37,7 +37,7 @@ export type Region = 'top' | 'bottom' | 'bottom_left' | 'bottom_right';
 export const REGIONS: Readonly<Record<Region, Box>> = { top: TOP, bottom: BOTTOM_HALF, bottom_left: BOTTOM_LEFT, bottom_right: BOTTOM_RIGHT };
 
 // 支付截图续页 (#333): the whole content area, no separator, as a grid of CONTINUATION_COLUMNS × CONTINUATION_ROWS cells
-// filled row by row in upload order. A group holds at most PAYMENT_SCREENSHOT_CAP, which is exactly one page of cells.
+// filled row by row in upload order; a group that fills one page goes on to the next (no cap, ADR-0032).
 export const CONTINUATION_COLUMNS = 3;
 export const CONTINUATION_ROWS = 2;
 const CELL_GAP = 8;
@@ -107,7 +107,8 @@ export function planPages(lines: readonly Line[], materials: readonly Material[]
     group.push(line);
     groups.set(line.voucherMaterialId, group);
   }
-  const known = new Set(materials.map((material) => material.materialId));
+  // 支付截图 materials are linked with their invoice too, but print as screenshots, never as the bottom half (ADR-0032).
+  const known = new Set(materials.filter((material) => material.kind !== 'payment_screenshot').map((material) => material.materialId));
   const plans: PagePlan[] = [];
   for (const [voucherMaterialId, group] of groups) {
     const first = group[0];

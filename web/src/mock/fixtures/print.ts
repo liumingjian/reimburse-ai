@@ -1,4 +1,4 @@
-import { PAYMENT_SCREENSHOT_CAP, PRINT_COPY, isStayScreenshotItem, screenshotGroupOf, type PlacementSlot, type Corners, type Placement, type PrintPage, type PrintSheet, type TaskSnapshot } from '@baox/contract';
+import { PRINT_COPY, isStayScreenshotItem, screenshotGroupOf, type PlacementSlot, type Corners, type Placement, type PrintPage, type PrintSheet, type TaskSnapshot } from '@baox/contract';
 
 // 打印稿夹具（mock 服务端角色）：7 页与 fixtures/scripts/data.mjs 的 PRINT_PAGES 一致，页图是生成器产出的 PNG。
 // 旋转换一张预先生成的变体页图（print-pgN-r<上><下>.png）；四角裁剪只记下坐标（mock 不重新矫正照片），页图不变。
@@ -130,12 +130,15 @@ function withScreenshots(voucherPages: readonly PrintPage[], snapshot: TaskSnaps
   return { pages, notices };
 }
 
-// 服务端投影（task-snapshot/print.ts withScreenshotGroups）：缺支付截图待确认项带上它的截图组、上限与是否锁定。整单明细已确认、
-// 或已开始写入报销系统时锁定，增、删、「已传齐」都拒绝（flows/print.ts 读这里）。mock 每次存快照前都调用一次。
+// 服务端投影（task-snapshot/print.ts withScreenshotGroups）：缺支付截图待确认项带上它的 #331 旧截图组与是否锁定。整单明细已确认、
+// 或已开始写入报销系统时锁定，上传、删、「已传齐」都拒绝（flows/print.ts 读这里）。支付截图材料（ADR-0032）也在
+// paymentScreenshots 里（打印用），但不进这个组。mock 每次存快照前都调用一次。
 export function withScreenshotGroups(snapshot: TaskSnapshot): TaskSnapshot {
   const locked = snapshot.confirmation.status === 'confirmed' || snapshot.erp.status !== 'idle';
+  const materials = new Set(snapshot.materials.map((material) => material.materialId));
+  const table = snapshot.paymentScreenshots.filter((shot) => !materials.has(shot.screenshotId));
   for (const item of snapshot.pendingItems) {
-    item.screenshotGroup = isStayScreenshotItem(item) ? { screenshotIds: screenshotGroupOf(snapshot.paymentScreenshots, item.materialId).map((shot) => shot.screenshotId), cap: PAYMENT_SCREENSHOT_CAP, locked } : null;
+    item.screenshotGroup = isStayScreenshotItem(item) ? { screenshotIds: screenshotGroupOf(table, item.materialId).map((shot) => shot.screenshotId), locked } : null;
   }
   return snapshot;
 }

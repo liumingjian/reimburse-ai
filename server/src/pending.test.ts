@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { ActionFailureSchema, OCCUPANCY_COPY, type PendingItem, type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { inlineExecutor } from './parse/executor';
@@ -58,25 +59,19 @@ const M11 = {
 };
 
 describe('an unrecognised material', () => {
-  it('manual fill: pick a 材料种类 (material kind), fill its form, and the values become `user` candidates', async () => {
+  it('manual fill: one answer picks the 材料种类 (material kind) and fills its form, and the values become `user` candidates', async () => {
     const start = await inventory('pending', ['m11']);
     const m11 = byFileName(start, sample('m11').name);
     const id = m11.materialId;
-    expect(item(start, `unrecognised.${id}`).choices.map((c) => c.key)).toEqual(['exclude', 'reference', 'manual_fill']);
+    const unrecognised = item(start, `unrecognised.${id}`);
+    expect(unrecognised.choices.map((c) => c.key)).toEqual(['exclude', 'reference', 'manual_fill']);
+    expect(unrecognised.manualKinds.map((manual) => manual.label)).toContain('全电发票');
+    const form = unrecognised.manualKinds.find((manual) => manual.kind === 'vat_invoice');
+    expect(form?.fields.find((f) => f.key === 'totalAmount')).toMatchObject({ format: 'money', required: true });
+    expect(form?.fields.find((f) => f.key === 'issueDate')).toMatchObject({ format: 'date' });
 
-    const picking = await answered(start, `unrecognised.${id}`, { choice: 'manual_fill' });
-    expect(item(picking, `unrecognised.${id}`)).toMatchObject({ status: 'resolved', answer: { choice: 'manual_fill' } });
-    const kindItem = item(picking, `manual_kind.${id}`);
-    expect(kindItem).toMatchObject({ kind: 'choice', status: 'open' });
-    expect(kindItem.choices).toContainEqual({ key: 'kind:vat_invoice', label: '全电发票' });
-
-    const filling = await answered(picking, `manual_kind.${id}`, { choice: 'kind:vat_invoice' });
-    const form = item(filling, `manual_fill.${id}`);
-    expect(form).toMatchObject({ kind: 'form', status: 'open' });
-    expect(form.fields.find((f) => f.key === 'totalAmount')).toMatchObject({ format: 'money', required: true });
-    expect(form.fields.find((f) => f.key === 'issueDate')).toMatchObject({ format: 'date' });
-
-    const done = await answered(filling, `manual_fill.${id}`, M11);
+    const done = await answered(start, `unrecognised.${id}`, { choice: 'manual_fill', kind: 'vat_invoice', ...M11 });
+    expect(done.pendingItems.map((i) => i.itemId)).not.toContain(`manual_kind.${id}`);
     const material = byFileName(done, sample('m11').name);
     expect(material).toMatchObject({ kind: 'vat_invoice', layout: null, status: 'ok', role: 'primary_voucher' });
     expect(Object.fromEntries(material.fields.map((f) => [f.key, f.value]))).toMatchObject(M11);
@@ -86,15 +81,33 @@ describe('an unrecognised material', () => {
     expect(done.stage).toBe('inventory');
   });
 
-  it('manual fill refuses values that fail the kind check, and back-calculates nothing', async () => {
+  it('manual fill refuses a missing kind and values that fail the kind check, and back-calculates nothing', async () => {
     const start = await inventory('pending', ['m11']);
     const id = byFileName(start, sample('m11').name).materialId;
-    const picking = await answered(start, `unrecognised.${id}`, { choice: 'manual_fill' });
-    const filling = await answered(picking, `manual_kind.${id}`, { choice: 'kind:vat_invoice' });
-    const failure = await refused(await answer(filling, `manual_fill.${id}`, { ...M11, totalAmount: '241.00' }), 'check_failed');
+    await refused(await answer(start, `unrecognised.${id}`, { choice: 'manual_fill' }), 'invalid_answer');
+    await refused(await answer(start, `unrecognised.${id}`, { choice: 'manual_fill', kind: 'boarding_pass', ...M11 }), 'invalid_answer');
+    const failure = await refused(await answer(start, `unrecognised.${id}`, { choice: 'manual_fill', kind: 'vat_invoice', ...M11, totalAmount: '241.00' }), 'check_failed');
     expect(failure.error.message).toContain('不会倒算');
-    expect(item(failure.snapshot ?? filling, `manual_fill.${id}`).status).toBe('open');
-    await refused(await answer(filling, `manual_fill.${id}`, { ...M11, totalAmount: '240' }), 'invalid_answer');
+    expect(item(failure.snapshot ?? start, `unrecognised.${id}`).status).toBe('open');
+    await refused(await answer(start, `unrecognised.${id}`, { choice: 'manual_fill', kind: 'vat_invoice', ...M11, totalAmount: '240' }), 'invalid_answer');
+  });
+
+  it('a material filled the three-step way (手工补填, then the kind, then the form) still reads as filled', async () => {
+    const start = await inventory('pending', ['m11']);
+    const id = byFileName(start, sample('m11').name).materialId;
+    const taskId = start.task.taskId;
+    const task = await server.db.selectFrom('task').select(['revision', 'account_id']).where('task_id', '=', taskId).executeTakeFirstOrThrow();
+    const at = new Date().toISOString();
+    const stored = { [`unrecognised.${id}`]: { choice: 'manual_fill' }, [`manual_kind.${id}`]: { choice: 'kind:vat_invoice' }, [`manual_fill.${id}`]: M11 };
+    for (const [itemId, value] of Object.entries(stored)) {
+      await server.db.insertInto('pending_answer').values({ answer_id: randomUUID(), task_id: taskId, account_id: task.account_id, item_id: itemId, material_id: id, answer: JSON.stringify(value), revision: task.revision + 1, created_at: at }).execute();
+    }
+    await server.db.updateTable('task').set({ revision: task.revision + 1 }).where('task_id', '=', taskId).execute();
+
+    const done = await client.current(taskId);
+    expect(item(done, `unrecognised.${id}`)).toMatchObject({ status: 'resolved', answer: { choice: 'manual_fill', kind: 'vat_invoice', ...M11 } });
+    expect(byFileName(done, sample('m11').name)).toMatchObject({ kind: 'vat_invoice', status: 'ok', role: 'primary_voucher' });
+    expect(done.inventory.summary?.openPendingItemCount).toBe(0);
   });
 
   it('mark as reference: resolved, the material becomes a 参考材料 and forms no line', async () => {
@@ -173,9 +186,7 @@ describe('edit classes', () => {
   it('fact_correctable: a manual value is corrected, re-checked, and nothing is back-calculated', async () => {
     const start = await inventory('pending', ['m11']);
     const id = byFileName(start, sample('m11').name).materialId;
-    const picking = await answered(start, `unrecognised.${id}`, { choice: 'manual_fill' });
-    const filling = await answered(picking, `manual_kind.${id}`, { choice: 'kind:vat_invoice' });
-    const filled = await answered(filling, `manual_fill.${id}`, M11);
+    const filled = await answered(start, `unrecognised.${id}`, { choice: 'manual_fill', kind: 'vat_invoice', ...M11 });
 
     // Net 226.00 + tax 13.58 no longer makes 240.00; the total is not recomputed to fit.
     const failure = await refused(await answer(filled, `edit.${id}.netAmount`, { value: '226.00' }), 'check_failed');

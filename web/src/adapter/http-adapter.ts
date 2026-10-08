@@ -499,11 +499,12 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
         }
       });
     },
-    addPaymentScreenshot(taskId, voucherMaterialId, file) {
+    addPaymentScreenshots(taskId, voucherMaterialId, files, stepToken) {
       const form = new FormData();
       form.append('voucherMaterialId', voucherMaterialId);
-      form.append('file', file, file.name);
-      return post(url(E.addPaymentScreenshot.path, taskId), form);
+      form.append('stepToken', stepToken);
+      for (const file of files) form.append('files', file, file.name);
+      return post(url(E.addPaymentScreenshots.path, taskId), form);
     },
     startInventory: (taskId, stepToken) => action(taskId, E.startInventory, { stepToken }),
     answerPendingItem: (taskId, itemId, answer, stepToken) => action(taskId, E.answerPendingItem, { itemId, answer, stepToken }),

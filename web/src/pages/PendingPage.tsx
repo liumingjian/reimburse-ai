@@ -1,25 +1,29 @@
 import { useRef, useState, type ChangeEvent, type FormEvent } from 'react';
-import { Button, IconButton, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag, TextInput } from '@carbon/react';
+import { Button, IconButton, Select, SelectItem, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag, TextInput } from '@carbon/react';
 import { CheckmarkFilled, TrashCan, WarningAltFilled } from '@carbon/icons-react';
 import {
   segmentKey,
+  manualKindOf,
+  normalizePendingAnswer,
   validatePendingAnswer,
+  MANUAL_FILL_CHOICE,
+  MANUAL_KIND_KEY,
   PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE,
-  PAYMENT_SCREENSHOT_ERRORS,
   STAY_TRIO_COPY,
-  STAY_TRIO_CONFIRM_NONE,
+  STAY_TRIO_CONFIRM_NONE, STAY_TRIO_CONFIRM_PAID,
   PENDING_CHOICE_KEY,
   fieldAnswer,
   isAllocationAnswer,
   type FieldAnswer,
   type Material,
   type PendingAnswer,
+  type PendingField,
   type PaymentScreenshot,
   type PendingItem,
   type PendingScreenshotGroup,
   type TaskSnapshot,
 } from '@baox/contract';
-import { taskHash } from '../router';
+import { navigate, taskHash } from '../router';
 import { DetailList } from '../shell/DetailList';
 import { FieldGroup } from '../shell/FieldGroup';
 import { FileName } from '../shell/FileName';
@@ -36,12 +40,11 @@ import { PAGE_COPY } from './page-copy';
 // 契约里的处理人（resolver）这一页不显示。
 // 所有答复经 answerPendingItem 携带 stepToken 提交；页面只做格式校验，采用与否由服务端决定（逐段分摊是否按分守恒也是）。
 // 选择类待确认项的已选项用选中样式（aria-pressed），不用主按钮。读出的字段不显示来源。
-// A 住宿 invoice's missing-screenshot item (#213) also takes the screenshots themselves, the group its `screenshotGroup`
-// names, up to its cap (#331): several per file dialog, uploaded one by one in order, shown as thumbnails in upload
-// order, each removable. The item stays open until the filer presses 「已传齐」. A resolved screenshot item still takes
-// additions and removals (#332), from the queue or from the all-done view, until the server locks the group
-// (`screenshotGroup.locked`); an upload after 「确认没有支付截图」 supersedes it, and removing the last screenshot opens
-// the item again.
+// A 住宿 invoice's missing-screenshot item (#213) also takes the screenshots themselves (ADR-0032): one file dialog, any
+// number, sent as one upload that the server places with this invoice before it inventories again, so the page moves
+// on to 材料盘点. Screenshots stored before that (#331) show as the item's `screenshotGroup`, as thumbnails, each
+// removable, and that group still closes with 「已传齐」. A resolved screenshot item still takes uploads and removals
+// (#332), from the queue or from the all-done view, until the server locks it (`screenshotGroup.locked`).
 
 const EVIDENCE_LABELS: Readonly<Record<Material['fields'][number]['evidence'], string>> = {
   explicit: '',
@@ -95,8 +98,8 @@ type FormProps = {
   screenshots?: ScreenshotGroupProps | undefined;
   state: SubmitState;
 };
-// What the item's `screenshotGroup` says (cap, lock), its screenshots in upload order, and the group's actions.
-type ScreenshotGroupProps = Pick<PendingScreenshotGroup, 'cap' | 'locked'> & {
+// What the item's `screenshotGroup` says (the lock), its #331 screenshots in upload order, and the group's actions.
+type ScreenshotGroupProps = Pick<PendingScreenshotGroup, 'locked'> & {
   shots: readonly PaymentScreenshot[];
   onAdd: (files: readonly File[]) => Promise<void>;
   onRemove: (screenshotId: string) => Promise<void>;
@@ -122,23 +125,74 @@ function AnswerForm({ item, onSubmit, state }: FormProps) {
   const resolved = item.status === 'resolved';
   return (
     <form className="app-form" onSubmit={submit} noValidate aria-label={item.title}>
-      {item.fields.map((field) => (
-        <TextInput
-          key={field.key}
-          id={`pf-${item.itemId}-${field.key}`}
-          name={field.key}
-          labelText={`${field.label}${field.required ? ' *' : ''}`}
-          placeholder={field.placeholder}
-          value={values[field.key] ?? ''}
-          disabled={resolved || state.busy}
-          onChange={(event) => setValues({ ...values, [field.key]: event.target.value })}
-          {...fieldError(errors[field.key])}
-        />
-      ))}
+      <FieldInputs idPrefix={`pf-${item.itemId}`} fields={item.fields} values={values} errors={errors} disabled={resolved || state.busy} onChange={setValues} />
       {resolved ? (
         <Resolved />
       ) : (
         <ActionGroup caption="补填的值同样经过核对。" error={state.error}>
+          <Button type="submit" size="md" disabled={state.busy}>
+            保存并标记已处理
+          </Button>
+        </ActionGroup>
+      )}
+    </form>
+  );
+}
+
+type FieldInputsProps = { idPrefix: string; fields: readonly PendingField[]; values: FieldAnswer; errors: Record<string, string>; disabled: boolean; onChange: (values: FieldAnswer) => void };
+
+function FieldInputs({ idPrefix, fields, values, errors, disabled, onChange }: FieldInputsProps) {
+  return fields.map((field) => (
+    <TextInput
+      key={field.key}
+      id={`${idPrefix}-${field.key}`}
+      name={field.key}
+      labelText={`${field.label}${field.required ? ' *' : ''}`}
+      placeholder={field.placeholder}
+      value={values[field.key] ?? ''}
+      disabled={disabled}
+      onChange={(event) => onChange({ ...values, [field.key]: event.target.value })}
+      {...fieldError(errors[field.key])}
+    />
+  ));
+}
+
+// 手工补填 in one step (#342): the 材料种类 is picked inline and its fields follow; one answer carries both, and the
+// server checks it like any read value. A resolved item shows what was filled.
+function ManualForm({ item, fileName, onSubmit, state }: Pick<FormProps, 'item' | 'fileName' | 'onSubmit' | 'state'>) {
+  const answered = fieldAnswer(item.answer);
+  const [values, setValues] = useState<FieldAnswer>(answered[PENDING_CHOICE_KEY] === MANUAL_FILL_CHOICE ? answered : { [PENDING_CHOICE_KEY]: MANUAL_FILL_CHOICE });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const manual = manualKindOf(item, values);
+  const resolved = item.status === 'resolved';
+  const disabled = resolved || state.busy;
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const nextErrors = validatePendingAnswer(item, values);
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+    void onSubmit(normalizePendingAnswer(item, values));
+  };
+
+  return (
+    <form className="app-form" onSubmit={submit} noValidate aria-label={`手工补填「${fileName}」`}>
+      <Select
+        id={`pm-${item.itemId}-kind`}
+        labelText="材料种类 *"
+        value={values[MANUAL_KIND_KEY] ?? ''}
+        disabled={disabled}
+        onChange={(event) => setValues({ ...values, [MANUAL_KIND_KEY]: event.target.value })}
+        {...fieldError(errors[MANUAL_KIND_KEY])}
+      >
+        <SelectItem value="" text="选择材料种类" disabled />
+        {item.manualKinds.map((option) => (
+          <SelectItem key={option.kind} value={option.kind} text={option.label} />
+        ))}
+      </Select>
+      {manual ? <FieldInputs idPrefix={`pm-${item.itemId}`} fields={manual.fields} values={values} errors={errors} disabled={disabled} onChange={setValues} /> : null}
+      {resolved ? null : (
+        <ActionGroup caption="对照原件填写所选种类的字段。补填的值同样经过核对，系统不会倒算任何金额。" error={state.error}>
           <Button type="submit" size="md" disabled={state.busy}>
             保存并标记已处理
           </Button>
@@ -156,13 +210,17 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state }: For
   const inputRef = useRef<HTMLInputElement>(null);
   const resolved = item.status === 'resolved';
   const chosen = fieldAnswer(item.answer)[PENDING_CHOICE_KEY];
+  // 手工补填 opens its form here instead of answering (#342).
+  const [filling, setFilling] = useState(chosen === MANUAL_FILL_CHOICE);
+  const fills = (key: string) => key === MANUAL_FILL_CHOICE && item.manualKinds.length > 0;
   const manual = item.choices.some((choice) => choice.key === 'manual');
   const excludes = item.choices.some((choice) => choice.key === 'exclude');
   const screenshot = group !== undefined && chosen !== 'exclude';
   const editable = screenshot && !group?.locked;
   const screenshots = group?.shots ?? [];
   const copy = STAY_TRIO_COPY.screenshot;
-  const full = screenshots.length >= (group?.cap ?? Infinity);
+  // A stay whose 支付截图 materials fall short of the invoice is confirmed with the item's own 「已传齐」 choice (ADR-0032).
+  const confirmsPaid = item.choices.some((choice) => choice.key === STAY_TRIO_CONFIRM_PAID);
   const choices = [...item.choices]
     .filter((choice) => !(screenshots.length > 0 && choice.key === STAY_TRIO_CONFIRM_NONE))
     .sort((a, b) => Number(b.key === 'exclude') - Number(a.key === 'exclude'));
@@ -195,7 +253,6 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state }: For
               </li>
             ))}
           </ol>
-          {editable && full ? <p className="app-caption">{PAYMENT_SCREENSHOT_ERRORS.cap}</p> : null}
         </div>
       ) : null}
       <ActionGroup caption={notes.length > 0 ? notes.join('') : undefined} error={state.error}>
@@ -204,25 +261,26 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state }: For
             key={choice.key}
             size="md"
             kind={choice.key === 'exclude' ? 'ghost' : 'secondary'}
-            className={chosen === choice.key ? 'app-toggle is-selected' : 'app-toggle'}
-            aria-pressed={chosen === choice.key}
+            className={chosen === choice.key || (filling && fills(choice.key)) ? 'app-toggle is-selected' : 'app-toggle'}
+            aria-pressed={chosen === choice.key || (filling && fills(choice.key))}
             disabled={resolved || state.busy}
-            onClick={() => void onSubmit({ [PENDING_CHOICE_KEY]: choice.key })}
+            onClick={() => (fills(choice.key) ? setFilling(true) : void onSubmit({ [PENDING_CHOICE_KEY]: choice.key }))}
           >
             {choice.label}
           </Button>
         ))}
         {editable ? (
-          <Button size="md" kind="secondary" disabled={state.busy || full} onClick={() => inputRef.current?.click()}>
+          <Button size="md" kind="secondary" disabled={state.busy} onClick={() => inputRef.current?.click()}>
             {copy.upload}
           </Button>
         ) : null}
-        {editable && !resolved ? (
+        {editable && !resolved && !confirmsPaid ? (
           <Button size="md" disabled={state.busy || screenshots.length === 0} onClick={() => void group?.onComplete()}>
             {copy.complete}
           </Button>
         ) : null}
       </ActionGroup>
+      {filling ? <ManualForm item={item} fileName={fileName} onSubmit={onSubmit} state={state} /> : null}
     </div>
   );
 }
@@ -360,17 +418,10 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const exclude = async (item: PendingItem) => {
     settle(await run((adapter) => adapter.excludeMaterial(taskId, item.materialId, snapshot.step.stepToken)));
   };
-  // Several files go up one request each, in order; the first refusal (the cap, a non-image) stops the rest. The item
-  // stays selected: uploading does not settle it.
+  // The files go up together and the server inventories again: the page follows it to 材料盘点.
   const attachScreenshots = async (item: PendingItem, files: readonly File[]) => {
-    await run(async (adapter) => {
-      let outcome = await adapter.addPaymentScreenshot(taskId, item.materialId, files[0]!);
-      for (const file of files.slice(1)) {
-        if (!outcome.ok) break;
-        outcome = await adapter.addPaymentScreenshot(taskId, item.materialId, file);
-      }
-      return outcome;
-    });
+    const outcome = await run((adapter) => adapter.addPaymentScreenshots(taskId, item.materialId, files, snapshot.step.stepToken));
+    if (outcome.ok) navigate(taskHash(taskId, 'inventory'));
   };
   const removeScreenshot = async (screenshotId: string) => {
     await run((adapter) => adapter.removePaymentScreenshot(taskId, screenshotId));
@@ -384,7 +435,6 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
     if (!group) return undefined;
     const shots = group.screenshotIds.flatMap((id) => snapshot.paymentScreenshots.find((shot) => shot.screenshotId === id) ?? []);
     return {
-      cap: group.cap,
       locked: group.locked,
       shots,
       onAdd: (files) => attachScreenshots(item, files),

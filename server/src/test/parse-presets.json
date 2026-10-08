@@ -1149,7 +1149,15 @@
     "sha256": "27d823555ed0243e348077601156d31266de345b773aaa03670ab97492b24566",
     "outcome": {
       "outcome": "unrecognised",
-      "reason": "no_layout"
+      "reason": "no_layout",
+      "clues": {
+        "amounts": [
+          "38.40"
+        ],
+        "dates": [
+          "2026-08-11"
+        ]
+      }
     }
   },
   "m07-rail-0809.pdf": {
@@ -1832,7 +1840,17 @@
     "sha256": "2fe58bb4dfb5f936028c498a27b1ee87fb48428353d2c0ec7f1609b220455a78",
     "outcome": {
       "outcome": "unrecognised",
-      "reason": "no_layout"
+      "reason": "no_layout",
+      "clues": {
+        "amounts": [
+          "13.58",
+          "226.42",
+          "240.00"
+        ],
+        "dates": [
+          "2026-08-14"
+        ]
+      }
     }
   }
 }

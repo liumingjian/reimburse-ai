@@ -148,7 +148,11 @@ async function loadOwnFacts(tx: Tx, task: TaskTable, materials?: readonly Materi
     screenshotGroupsOf(stored),
   );
   // Only a 住宿 invoice's screenshots form a group (#330); the trio check says which invoices those are.
-  const print = stayGroupsOnly(stored, new Set(view.trios.flatMap((trio) => (trio.invoiceId && trio.screenshot ? [trio.invoiceId] : []))));
+  const print: PrintFacts = {
+    ...stayGroupsOnly(stored, new Set(view.trios.flatMap((trio) => (trio.invoiceId && trio.screenshot ? [trio.invoiceId] : [])))),
+    // 支付截图 materials print with the invoice inventory placed them with (ADR-0032).
+    placed: view.materials.flatMap((m) => (m.payment?.invoiceId ? [{ screenshotId: m.materialId, voucherMaterialId: m.payment.invoiceId, fileName: m.fileName, sha256: m.contentHash }] : [])),
+  };
   if (current) facts.parse = { waiting: view.waiting, openPendingItems: view.openPendingItems, blockers: [] };
   let assignment: Assignment | null = null;
   let options: BookOption[] = [];

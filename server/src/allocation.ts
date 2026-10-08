@@ -166,6 +166,7 @@ export function planTransport(materials: readonly TransportMaterial[], answers: 
       choices: [{ key: 'exclude', label: '排除这份材料' }],
       allocation: null,
       screenshotGroup: null,
+      manualKinds: [],
       status: 'open',
       answer: null,
     });
@@ -205,6 +206,7 @@ export function planTransport(materials: readonly TransportMaterial[], answers: 
           giveUpNote: ALLOCATION_GIVE_UP_NOTE,
         },
         screenshotGroup: null,
+        manualKinds: [],
         status: 'open',
         answer: null,
       });

@@ -1,12 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { PAYMENT_SCREENSHOT_CAP, PAYMENT_SCREENSHOT_ERRORS, PRINT_ACTION_ERRORS, PRINT_COPY, STAY_TRIO_COPY, screenshotGroupOf, type Corners, type Line, type Material, type PlacementSlot } from '@baox/contract';
+import { PAYMENT_SCREENSHOT_ERRORS, PRINT_ACTION_ERRORS, PRINT_COPY, STAY_TRIO_COPY, screenshotGroupOf, type Corners, type Line, type Material, type PlacementSlot } from '@baox/contract';
 import { blobPath, writeBlob } from '../data-dir';
 import type { Db } from '../db/database';
 import { paperCorners, type PaperCorners } from './straighten';
 import { composeSheet, isJpegOrPng, pdfContent, photoContent, renderPages, screenshotContent, type Content, type Drawn, type SheetPage } from './compose';
-import { headingOf, screenshotsLocked, sheetState, type PrintFacts, type PrintSetting, type Screenshot, type StoredPage, type StoredPlacement } from './facts';
-import { storedMime } from '../upload-rules';
+import { headingOf, printedScreenshots, screenshotsLocked, sheetState, type PrintFacts, type PrintSetting, type Screenshot, type StoredPage, type StoredPlacement } from './facts';
 import { CONTINUATION_CELLS, planPages, prefersRotation, REGIONS, type Box, type PagePlan, type Region } from './layout';
 import type { StayTrio } from '../stay-trio';
 
@@ -53,14 +52,14 @@ export async function generate(state: PrintState): Promise<PrintCommit | null> {
   if (state.confirmation !== 'confirmed') throw new PrintRefusal('not_confirmed', PRINT_ACTION_ERRORS.notConfirmed);
   // Idempotent: a sheet of the standing confirmation is returned as is.
   if (stateOf(state) === 'generated') return null;
-  const composed = await compose(state, state.facts.settings, state.facts.screenshots);
+  const composed = await compose(state, state.facts.settings, printedScreenshots(state.facts));
   return renderCommit(state, composed);
 }
 
 export async function rotate(state: PrintState, pageId: string, slot: PlacementSlot, turned: boolean): Promise<PrintCommit> {
   const placement = placementOf(state, pageId, slot);
   const settings = withSetting(state.facts.settings, placement.materialId, { rotate: turned });
-  const composed = await compose(state, settings, state.facts.screenshots);
+  const composed = await compose(state, settings, printedScreenshots(state.facts));
   return async (tx, at, revision) => {
     await tx.insertInto('print_setting').values({ setting_id: randomUUID(), task_id: state.taskId, account_id: state.accountId, material_id: placement.materialId, rotate: turned ? 1 : 0, corners: null, revision, created_at: at }).execute();
     await renderCommit(state, composed)(tx, at, revision);
@@ -73,18 +72,18 @@ export async function crop(state: PrintState, pageId: string, slot: PlacementSlo
   const rounded = corners.map(([x, y]) => [Math.round(x), Math.round(y)]) as Corners;
   if (!cornersValid(rounded, placement.original)) throw new PrintRefusal('invalid_corners', PRINT_ACTION_ERRORS.invalidCorners);
   const settings = withSetting(state.facts.settings, placement.materialId, { corners: rounded });
-  const composed = await compose(state, settings, state.facts.screenshots);
+  const composed = await compose(state, settings, printedScreenshots(state.facts));
   return async (tx, at, revision) => {
     await tx.insertInto('print_setting').values({ setting_id: randomUUID(), task_id: state.taskId, account_id: state.accountId, material_id: placement.materialId, rotate: null, corners: JSON.stringify(rounded), revision, created_at: at }).execute();
     await renderCommit(state, composed)(tx, at, revision);
   };
 }
 
-// 支付截图 (payment screenshots, #213, #331). Only a 住宿 invoice takes them, from its missing-screenshot 待确认项: the
-// invoice has a trio screenshot part exactly when the check asks for one (open or resolved). Any other voucher is
-// refused. A group holds up to PAYMENT_SCREENSHOT_CAP, one per upload, in upload order.
+// 支付截图 (payment screenshots, #213, #331) stored in the `payment_screenshot` table, in upload order. New screenshots
+// are materials (ADR-0032, `tasks.addPaymentScreenshots`); a group already in the table can still be emptied or declared
+// complete. Only a 住宿 invoice has one: the invoice has a trio screenshot part exactly when the check asks for one.
 //
-// Every change to a group (add, remove, 「已传齐」) is refused while it is locked (`screenshotsLocked`). So a sheet, which
+// Every change to a group (remove, 「已传齐」) is refused while it is locked (`screenshotsLocked`). So a sheet, which
 // exists only under a standing confirmation, is never recomposed by one; it picks the group up when it is generated.
 //
 // `groupEditable` refuses (throws) unless `voucherMaterialId` is a 住宿 invoice whose group may still change.
@@ -93,17 +92,10 @@ function groupEditable(state: PrintState, voucherMaterialId: string): void {
   if (screenshotsLocked(state.confirmation, state.erpAttempted)) throw new PrintRefusal('screenshot_locked', STAY_TRIO_COPY.changeLocked);
 }
 
-export async function addScreenshot(state: PrintState, voucherMaterialId: string, file: { fileName: string; mime: string; bytes: Uint8Array }): Promise<PrintCommit> {
-  groupEditable(state, voucherMaterialId);
-  if (screenshotGroupOf(state.facts.screenshots, voucherMaterialId).length >= PAYMENT_SCREENSHOT_CAP) throw new PrintRefusal('screenshot_cap', PAYMENT_SCREENSHOT_ERRORS.cap);
+// Whether an upload is a screenshot: named as a JPG or PNG (or unnamed with such a type), and its bytes are one.
+export async function isScreenshotImage(file: { fileName: string; mime: string; bytes: Uint8Array }): Promise<boolean> {
   const named = IMAGE_NAME.test(file.fileName) || (!/\.[a-z0-9]+$/i.test(file.fileName) && /^image\/(jpeg|png)$/.test(file.mime));
-  if (!named || !(await isJpegOrPng(file.bytes))) throw new PrintRefusal('not_image', PAYMENT_SCREENSHOT_ERRORS.notImage);
-  const sha256 = writeBlob(state.dataDir, file.bytes);
-  const screenshotId = randomUUID();
-  return async (tx, at, revision) => {
-    await tx.insertInto('blob').values({ sha256, size: file.bytes.byteLength, mime: storedMime(file.fileName, file.mime), created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
-    await tx.insertInto('payment_screenshot').values({ screenshot_id: screenshotId, task_id: state.taskId, account_id: state.accountId, voucher_material_id: voucherMaterialId, blob_sha256: sha256, file_name: file.fileName, revision, created_at: at }).execute();
-  };
+  return named && (await isJpegOrPng(file.bytes));
 }
 
 export async function removeScreenshot(state: PrintState, screenshotId: string): Promise<PrintCommit> {
@@ -264,9 +256,13 @@ async function compose(state: PrintState, settings: ReadonlyMap<string, PrintSet
     if (group.length < 2) continue;
     const hotelName = hotelNameOf(state.materials, plan);
     const header = PRINT_COPY.continuationHeader(plan.nos, hotelName, plan.grossAmount);
-    // A group holds at most PAYMENT_SCREENSHOT_CAP, one continuation page of cells.
-    sheet.push({ header, divided: false, drawn: await Promise.all(group.map((shot, index) => upright(shot, CONTINUATION_CELLS[index]!))) });
-    pages.push({ ...common, pageId: `${plan.pageId}.screenshots`, kind: 'screenshots', header, hotelName, top: null, bottom: null, screenshotIds: group.map((shot) => shot.screenshotId) });
+    // As many continuation pages as the group fills, each a full grid of cells but the last.
+    for (let start = 0; start < group.length; start += CONTINUATION_CELLS.length) {
+      const cells = group.slice(start, start + CONTINUATION_CELLS.length);
+      const page = start / CONTINUATION_CELLS.length;
+      sheet.push({ header, divided: false, drawn: await Promise.all(cells.map((shot, index) => upright(shot, CONTINUATION_CELLS[index]!))) });
+      pages.push({ ...common, pageId: `${plan.pageId}.screenshots${page === 0 ? '' : `.${page + 1}`}`, kind: 'screenshots', header, hotelName, top: null, bottom: null, screenshotIds: cells.map((shot) => shot.screenshotId) });
+    }
   }
   const pdf = await composeSheet(sheet);
   const images = await renderPages(pdf);

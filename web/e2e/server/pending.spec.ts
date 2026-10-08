@@ -28,7 +28,7 @@ async function inventoried(page: Page, files: readonly File[]): Promise<TaskSnap
   return snapshotOf(await page.request.get(`/api/tasks/${taskId}`));
 }
 
-test('认不出的 PDF 选「手工补填」：选定材料种类、对照原件填写后，待确认项都处理完', async ({ page }) => {
+test('认不出的 PDF 选「手工补填」：在同一张表里选定材料种类、对照原件填写后，待确认项都处理完', async ({ page }) => {
   await signIn(page);
   const catering = sample('m11');
   const { task } = await inventoried(page, [catering]);
@@ -36,10 +36,8 @@ test('认不出的 PDF 选「手工补填」：选定材料种类、对照原件
 
   await expect(page.getByRole('heading', { name: `认不出「${catering.name}」` })).toBeVisible();
   await page.getByRole('button', { name: '手工补填' }).click();
-  await expect(page.getByRole('heading', { name: `「${catering.name}」是哪一种材料` })).toBeVisible();
-  await page.getByRole('button', { name: '全电发票' }).click();
-
   const form = page.getByRole('form', { name: `手工补填「${catering.name}」` });
+  await form.getByLabel('材料种类 *').selectOption({ label: '全电发票' });
   const fill = (label: string, value: string) => form.getByLabel(`${label} *`, { exact: true }).fill(value);
   await fill('发票号码', '26312000000103317790');
   await fill('开票日期', '2026-08-14');

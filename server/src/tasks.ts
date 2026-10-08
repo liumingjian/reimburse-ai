@@ -7,7 +7,10 @@ import {
   ERP_ACTION_ERRORS,
   HOME_CITY_ERRORS,
   PENDING_ANSWER_ERRORS,
+  PAYMENT_SCREENSHOT_ERRORS,
+  PAYMENT_STAY_FIELD,
   PENDING_CHOICE_KEY,
+  STAY_TRIO_COPY,
   PROJECT_ASSIGNMENT_ERRORS,
   fieldAnswer,
   type ActionError,
@@ -19,6 +22,7 @@ import {
   type TaskList,
   type TaskListItem,
   type TaskSnapshot,
+  type UploadRejectCode,
 } from '@baox/contract';
 import { sql } from 'kysely';
 import type { Db } from './db/database';
@@ -29,7 +33,7 @@ import type { ParseOutcome } from './parse/dispatch';
 import type { ParseInput } from './parse/material';
 import { mediumOf } from './parse/media';
 import { EXCLUDE_CHOICE, judgeAnswer, type Verdict } from './pending/answers';
-import { EDIT_COPY, EDIT_PREFIX, judgeEdit } from './pending/edits';
+import { EDIT_COPY, EDIT_PREFIX, editAddress, judgeEdit } from './pending/edits';
 import { ACTION_COPY, ERP_IN_USE, STALE_JOB, isNonTerminal, parseRunning, stepToken, taskPolicy, type ActionName, type Refusal, type TaskFacts } from './task-policy';
 import { loadFacts, materialRows, uploadHistory, type LoadedTask } from './task-facts';
 import { projectListItem, projectSnapshot } from './task-snapshot';
@@ -55,6 +59,10 @@ import { PrintRefusal, type PrintCommit, type PrintState } from './print/service
 // revision bump, then `onChange` (SSE).
 
 export type UploadedFile = { fileName: string; mime: string; bytes: Uint8Array; relativePath?: string | null };
+
+// An uploaded file as a batch records it: its name and source path as stored, a shape rejection if any, its content
+// hash.
+type JudgedFile = UploadedFile & { relativePath: string; shape: UploadRejectCode | null; sha256: string };
 
 // Contract times are ISO 8601 to the second.
 const now = () => `${new Date().toISOString().slice(0, 19)}Z`;
@@ -142,6 +150,57 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
   // a job running, the ERP freeze, the action's own step), let `apply` refuse or append facts, bump the revision, then
   // publish the fresh snapshot. A refusal or stale token writes nothing. The rules themselves live in task-policy.ts.
   // `request`: the refusal of the request's input that the policy ranks ahead of the action's own precondition.
+  // Accepted bytes land on disk (content-addressed) before any row can refer to them.
+  function judgeFiles(files: readonly UploadedFile[]): JudgedFile[] {
+    const judged = files.map((file) => {
+      const fileName = sourceFileName(file.fileName);
+      return { ...file, fileName, relativePath: relativeSourcePath(fileName, file.relativePath), shape: rejectByShape(fileName, file.mime, file.bytes.byteLength), sha256: createHash('sha256').update(file.bytes).digest('hex') };
+    });
+    for (const file of judged) if (file.shape === null) writeBlob(dataDir, file.bytes);
+    return judged;
+  }
+
+  // The task's contents so far, by sha256: a file already among them is rejected as a duplicate.
+  async function knownContent(tx: Db, taskId: string): Promise<Map<string, string>> {
+    const known = new Map<string, string>();
+    for (const row of await tx.selectFrom('material').select(['blob_sha256', 'file_name', 'source_path']).where('task_id', '=', taskId).orderBy(sql`rowid`).execute()) {
+      if (!known.has(row.blob_sha256)) known.set(row.blob_sha256, row.source_path ?? row.file_name);
+    }
+    return known;
+  }
+
+  // Writes one upload batch of judged files: a rejection row for each refused file, a material for each accepted one.
+  // The accepted materials' ids, in batch order.
+  async function writeBatch(tx: Db, taskId: string, judged: readonly JudgedFile[], at: string): Promise<string[]> {
+    const known = await knownContent(tx, taskId);
+    const last = await tx.selectFrom('upload_batch').select((eb) => eb.fn.max('no').as('no')).where('task_id', '=', taskId).executeTakeFirst();
+    const batchId = randomUUID();
+    await tx.insertInto('upload_batch').values({ batch_id: batchId, task_id: taskId, account_id: accountId, no: (last?.no ?? 0) + 1, uploaded_at: at }).execute();
+    const accepted: string[] = [];
+    for (const [seq, file] of judged.entries()) {
+      const duplicateOf = file.shape === null ? known.get(file.sha256) : undefined;
+      const code = file.shape ?? (duplicateOf !== undefined ? 'duplicate_content' : null);
+      if (code) {
+        await tx
+          .insertInto('upload_rejection')
+          .values({ rejection_id: randomUUID(), task_id: taskId, account_id: accountId, batch_id: batchId, batch_seq: seq, file_name: file.fileName, source_path: file.relativePath, size: file.bytes.byteLength, reason_code: code, reason: rejectReason(code, duplicateOf), created_at: at })
+          .execute();
+        continue;
+      }
+      known.set(file.sha256, file.relativePath);
+      const mime = storedMime(file.fileName, file.mime);
+      // The medium is recognition's to sniff (#312); the material list, print and the parse order read it back.
+      await tx.insertInto('blob').values({ sha256: file.sha256, size: file.bytes.byteLength, mime, medium: mediumOf({ fileName: file.fileName, mime, bytes: file.bytes }), created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
+      const materialId = randomUUID();
+      await tx
+        .insertInto('material')
+        .values({ material_id: materialId, task_id: taskId, account_id: accountId, batch_id: batchId, blob_sha256: file.sha256, file_name: file.fileName, source_path: file.relativePath, created_at: at, batch_seq: seq })
+        .execute();
+      accepted.push(materialId);
+    }
+    return accepted;
+  }
+
   async function mutate(taskId: string, token: string | null, action: ActionName, apply: (ctx: Context) => Promise<Refusal | void>, request: Refusal | null = null): Promise<TaskSnapshot> {
     const outcome = await db.transaction().execute(async (tx): Promise<{ kind: 'ok' } | { kind: 'stale' } | ({ kind: 'refused' } & Refusal)> => {
       const task = await taskRow(tx, taskId);
@@ -359,41 +418,36 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       return snapshot(taskId);
     },
 
-    // One 上传批次 (upload batch). Each file is accepted or rejected with a reason code; accepted bytes land on disk
-    // (content-addressed) before any row refers to them. A batch that adds a material forms a new inventory version.
+    // One 上传批次 (upload batch). Each file is accepted or rejected with a reason code. A batch that adds a material
+    // forms a new inventory version.
     async upload(taskId: string, files: readonly UploadedFile[]): Promise<TaskSnapshot> {
-      const judged = files.map((file) => {
-        const fileName = sourceFileName(file.fileName);
-        return { ...file, fileName, relativePath: relativeSourcePath(fileName, file.relativePath), shape: rejectByShape(fileName, file.mime, file.bytes.byteLength), sha256: createHash('sha256').update(file.bytes).digest('hex') };
-      });
-      for (const file of judged) if (file.shape === null) writeBlob(dataDir, file.bytes);
+      const judged = judgeFiles(files);
       return mutate(taskId, null, 'upload', async ({ tx, at }) => {
-        const known = new Map<string, string>();
-        for (const row of await tx.selectFrom('material').select(['blob_sha256', 'file_name', 'source_path']).where('task_id', '=', taskId).orderBy(sql`rowid`).execute()) {
-          if (!known.has(row.blob_sha256)) known.set(row.blob_sha256, row.source_path ?? row.file_name);
-        }
-        const last = await tx.selectFrom('upload_batch').select((eb) => eb.fn.max('no').as('no')).where('task_id', '=', taskId).executeTakeFirst();
-        const batchId = randomUUID();
-        await tx.insertInto('upload_batch').values({ batch_id: batchId, task_id: taskId, account_id: accountId, no: (last?.no ?? 0) + 1, uploaded_at: at }).execute();
-        for (const [seq, file] of judged.entries()) {
-          const duplicateOf = file.shape === null ? known.get(file.sha256) : undefined;
-          const code = file.shape ?? (duplicateOf !== undefined ? 'duplicate_content' : null);
-          if (code) {
-            await tx
-              .insertInto('upload_rejection')
-              .values({ rejection_id: randomUUID(), task_id: taskId, account_id: accountId, batch_id: batchId, batch_seq: seq, file_name: file.fileName, source_path: file.relativePath, size: file.bytes.byteLength, reason_code: code, reason: rejectReason(code, duplicateOf), created_at: at })
-              .execute();
-            continue;
-          }
-          known.set(file.sha256, file.relativePath);
-          const mime = storedMime(file.fileName, file.mime);
-          // The medium is recognition's to sniff (#312); the material list, print and the parse order read it back.
-          await tx.insertInto('blob').values({ sha256: file.sha256, size: file.bytes.byteLength, mime, medium: mediumOf({ fileName: file.fileName, mime, bytes: file.bytes }), created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
+        await writeBatch(tx, taskId, judged, at);
+      });
+    },
+
+    // 支付截图 added from a 住宿 invoice's 待确认项 (ADR-0032): a new upload batch whose screenshots are placed with that
+    // invoice (stored as the filer's 改归属) and a new inventory run over it, in one change, so the screenshots are
+    // read and checked by sum like any other. Admitted where reopening upload is; refused, like any change to a stay's
+    // screenshots, once the list is confirmed.
+    async addPaymentScreenshots(taskId: string, invoiceId: string, files: readonly UploadedFile[], token: string): Promise<TaskSnapshot> {
+      const judged = judgeFiles(files);
+      const images = await Promise.all(judged.map((file) => printActions.isScreenshotImage(file)));
+      return mutate(taskId, token, 'reopen_upload', async ({ tx, facts, view, at, revision }) => {
+        if (!view.trios.some((trio) => trio.invoiceId === invoiceId && trio.screenshot)) return { code: 'screenshot_not_applicable', message: PAYMENT_SCREENSHOT_ERRORS.notApplicable };
+        if (facts.confirmation === 'confirmed') return { code: 'screenshot_locked', message: STAY_TRIO_COPY.changeLocked };
+        if (images.some((image) => !image)) return { code: 'not_image', message: PAYMENT_SCREENSHOT_ERRORS.notImage };
+        const known = await knownContent(tx, taskId);
+        if (judged.every((file) => file.shape !== null || known.has(file.sha256))) return { code: 'duplicate_content', message: PAYMENT_SCREENSHOT_ERRORS.alreadyUploaded };
+        for (const materialId of await writeBatch(tx, taskId, judged, at)) {
+          const answer: PendingAnswer = { value: invoiceId };
           await tx
-            .insertInto('material')
-            .values({ material_id: randomUUID(), task_id: taskId, account_id: accountId, batch_id: batchId, blob_sha256: file.sha256, file_name: file.fileName, source_path: file.relativePath, created_at: at, batch_seq: seq })
+            .insertInto('pending_answer')
+            .values({ answer_id: randomUUID(), task_id: taskId, account_id: accountId, item_id: editAddress(materialId, PAYMENT_STAY_FIELD), material_id: materialId, answer: JSON.stringify(answer), revision, created_at: at })
             .execute();
         }
+        await tx.insertInto('inventory_run').values({ run_id: randomUUID(), task_id: taskId, account_id: accountId, version_no: facts.versionNo + 1, revision, started_at: at }).execute();
       });
     },
 
@@ -641,7 +695,6 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     generatePrintSheet: (taskId: string) => printChange(taskId, (state) => printActions.generate(state)),
     rotatePlacement: (taskId: string, pageId: string, slot: PlacementSlot, rotate: boolean) => printChange(taskId, (state) => printActions.rotate(state, pageId, slot, rotate)),
     cropPlacement: (taskId: string, pageId: string, slot: PlacementSlot, corners: Corners) => printChange(taskId, (state) => printActions.crop(state, pageId, slot, corners)),
-    addPaymentScreenshot: (taskId: string, voucherMaterialId: string, file: UploadedFile) => printChange(taskId, (state) => printActions.addScreenshot(state, voucherMaterialId, file)),
     removePaymentScreenshot: (taskId: string, screenshotId: string) => printChange(taskId, (state) => printActions.removeScreenshot(state, screenshotId)),
     completePaymentScreenshots: (taskId: string, voucherMaterialId: string) => printChange(taskId, (state) => printActions.completeScreenshots(state, voucherMaterialId)),
 
