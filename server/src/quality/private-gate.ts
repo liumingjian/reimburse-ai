@@ -44,6 +44,8 @@ export const REQUIRED_EXPECTATIONS: Readonly<Record<string, readonly string[]>> 
   // #212: a folio exists to prove a hotel invoice's stay dates. Both folio photos reached no layout while every scored
   // row stayed green, because no folio sample was in the corpus at all; a folio sample must write both dates down.
   'hotel_folio/labelled': ['checkIn', 'checkOut'],
+  // ADR-0032: a screenshot is placed with its stay by its date and counted by its amount.
+  'payment_screenshot/labelled': ['amount', 'payDate'],
 };
 
 export type CorpusParser = (input: ParseInput) => Promise<ParseOutcome>;

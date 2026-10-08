@@ -1,0 +1,14 @@
+{
+  "about": "QA 2026-10-08 (#339): a WeChat Pay 账单 screenshot of a night paid at the hotel desk; 支付时间 printed as 2026年9月17日08:46:16, payee under 商户全称. Merchant name and order numbers redacted.",
+  "outcome": "recognised",
+  "layout": "payment_screenshot/labelled",
+  "missing": [],
+  "findings": [],
+  "facts": {
+    "amount": "179.00",
+    "payDate": "2026-09-17",
+    "payTime": "08:46:16",
+    "payee": "示例某某酒店管理有限公司",
+    "transactionNumber": "4200000000202609170000000003"
+  }
+}

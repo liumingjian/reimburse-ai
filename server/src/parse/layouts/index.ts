@@ -2,6 +2,7 @@ import type { Layout } from '../layout';
 import { amapItinerary } from './amap-itinerary';
 import { einvoice } from './einvoice';
 import { labelled } from './labelled';
+import { paymentScreenshot } from './payment-screenshot';
 import { rail12306 } from './rail12306';
 import { machinePrinted } from './taxi';
 
@@ -14,4 +15,5 @@ export const LAYOUTS: readonly Layout[] = [
   amapItinerary,
   labelled,
   machinePrinted,
+  paymentScreenshot,
 ];

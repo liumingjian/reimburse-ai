@@ -1,0 +1,14 @@
+{
+  "about": "QA 2026-10-08 (#339): an Alipay 账单详情 screenshot of a hotel night booked through 高德; the payee is the platform (高德酒店), the amount the negative headline. Order numbers redacted.",
+  "outcome": "recognised",
+  "layout": "payment_screenshot/labelled",
+  "missing": [],
+  "findings": [],
+  "facts": {
+    "amount": "178.48",
+    "payDate": "2026-09-16",
+    "payTime": "13:01:12",
+    "payee": "高德酒店",
+    "transactionNumber": "2026091600000000000000000001"
+  }
+}
