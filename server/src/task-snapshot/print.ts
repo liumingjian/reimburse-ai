@@ -1,6 +1,6 @@
-import { STAY_TRIO_COPY, type PaymentScreenshot, type Placement, type PrintSheet } from '@baox/contract';
+import { PAYMENT_SCREENSHOT_CAP, STAY_TRIO_COPY, isStayScreenshotItem, screenshotGroupOf, type PaymentScreenshot, type PendingItem, type Placement, type PrintPage, type PrintSheet } from '@baox/contract';
 import { CATEGORIES } from '../parse/slots';
-import type { PrintFacts, SheetState, StoredPage, StoredPlacement } from '../print/facts';
+import { headingOf, type PrintFacts, type SheetState, type StoredPage, type StoredPlacement } from '../print/facts';
 import { droppedMaterialsNotice, extraPagesNotice, unrecordedScreenshotNotice } from '../print/layout';
 import type { StayTrio } from '../stay-trio';
 
@@ -10,6 +10,15 @@ import type { StayTrio } from '../stay-trio';
 // Every file the task's print facts refer to; `GET /api/tasks/:id/files/:sha256` serves only a task's own files.
 export const fileUrl = (taskId: string, sha256: string): string => `/api/tasks/${taskId}/files/${sha256}`;
 
+// The pending items with each missing-screenshot item's group (#331): its screenshots in upload order, the cap, and
+// whether it is `locked` (`screenshotsLocked`). Every other item carries none.
+export function withScreenshotGroups(items: readonly PendingItem[], facts: Pick<PrintFacts, 'screenshots'>, locked: boolean): PendingItem[] {
+  return items.map((item) => ({
+    ...item,
+    screenshotGroup: isStayScreenshotItem(item) ? { screenshotIds: screenshotGroupOf(facts.screenshots, item.materialId).map((shot) => shot.screenshotId), cap: PAYMENT_SCREENSHOT_CAP, locked } : null,
+  }));
+}
+
 // `trios`: the inventory's 住宿 trios. Where a page's invoice has one, its record decides the missing-screenshot notice
 // (a confirmed absence), so print and inventory read one fact instead of judging the absence twice (#213). A 住宿 page
 // with no record still gets a notice rather than silence.
@@ -17,8 +26,10 @@ export function printView(taskId: string, taskName: string, facts: PrintFacts, s
   const paymentScreenshots = facts.screenshots.map((shot) => ({ screenshotId: shot.screenshotId, voucherMaterialId: shot.voucherMaterialId, fileName: shot.fileName, url: fileUrl(taskId, shot.sha256) }));
   const render = facts.render;
   const recorded = new Map(trios.flatMap((trio) => (trio.invoiceId ? [[trio.invoiceId, trio] as const] : [])));
+  // A 住宿 page says so when its invoice has no screenshot anywhere on the sheet (its own bottom half or its continuation page).
+  const printedFor = (voucherMaterialId: string) => render?.pages.some((page) => page.voucherMaterialId === voucherMaterialId && page.screenshotIds.length > 0) ?? false;
   const screenshotNotice = (page: StoredPage): string[] => {
-    if (page.screenshotId !== null) return [];
+    if (page.kind !== 'voucher' || printedFor(page.voucherMaterialId)) return [];
     const trio = recorded.get(page.voucherMaterialId);
     if (trio) return trio.screenshot?.noneConfirmed ? [STAY_TRIO_COPY.printNotice(page.nos, page.categoryLabel)] : [];
     return page.categoryLabel === CATEGORIES.accommodation.label ? [unrecordedScreenshotNotice(page.nos, page.categoryLabel)] : [];
@@ -40,20 +51,18 @@ export function printView(taskId: string, taskName: string, facts: PrintFacts, s
       status: 'generated',
       fileName: `打印稿_${taskName}.pdf`,
       url: fileUrl(taskId, render.pdfSha256),
-      pages: render.pages.map((page) => ({
-        pageId: page.pageId,
-        no: page.no,
-        header: page.header,
-        nos: page.nos,
-        date: page.date,
-        categoryLabel: page.categoryLabel,
-        grossAmount: page.grossAmount,
-        imageUrl: fileUrl(taskId, page.pngSha256),
-        top: placement(page.top),
-        bottom: placement(page.bottom),
-        acceptsPaymentScreenshot: page.acceptsPaymentScreenshot,
-        screenshotId: page.screenshotId,
-      })),
+      pages: render.pages.map((page): PrintPage => {
+        const common = {
+          pageId: page.pageId,
+          header: page.header,
+          ...headingOf(page),
+          imageUrl: fileUrl(taskId, page.pngSha256),
+          screenshotIds: page.screenshotIds,
+        };
+        return page.kind === 'screenshots'
+          ? { ...common, kind: 'screenshots', hotelName: page.hotelName ?? null, top: null, bottom: null }
+          : { ...common, kind: 'voucher', top: placement(page.top), bottom: placement(page.bottom) };
+      }),
       // Everything the sheet could not carry is said out loud: a missing payment screenshot, the pages of a multi-page
       // original that were not embedded, and the supporting materials a one-per-page bottom half had no room for.
       notices: [

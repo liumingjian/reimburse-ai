@@ -303,6 +303,7 @@ export const ACTION_NAMES = [
   'confirm-review',
   'reopen-upload',
   'remove-payment-screenshot',
+  'complete-payment-screenshots',
   'generate-print-sheet',
   'rotate-placement',
   'crop-placement',

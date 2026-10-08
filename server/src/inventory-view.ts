@@ -9,7 +9,7 @@ import { fieldLabel, slotOf, type Slot } from './parse/slots';
 import { chosen, EXCLUDE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
 import { editAddress, editedValue, type Editable } from './pending/edits';
 import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/company-rules';
-import { checkStayTrios, stayVoucherIds, type StayTrio, type TrioVoucher } from './stay-trio';
+import { checkStayTrios, stayVoucherIds, type ScreenshotGroup, type StayTrio, type TrioVoucher } from './stay-trio';
 
 // The pure projection of one inventory run: uploaded materials, their parser outcomes and the stored answers in; the
 // materials view, derived 待确认项 (pending items), expense events, candidate lines and inventory counts out. Nothing
@@ -125,11 +125,11 @@ type Worked = {
 };
 
 function choice(itemId: string, materialId: string, title: string, why: string, choices: PendingItem['choices']): PendingItem {
-  return { itemId, materialId, title, why, kind: 'choice', resolver: '要你处理', fields: [], choices, allocation: null, status: 'open', answer: null };
+  return { itemId, materialId, title, why, kind: 'choice', resolver: '要你处理', fields: [], choices, allocation: null, screenshotGroup: null, status: 'open', answer: null };
 }
 
 function form(itemId: string, materialId: string, title: string, why: string, fields: PendingField[]): PendingItem {
-  return { itemId, materialId, title, why, kind: 'form', resolver: '要你处理', fields, choices: [], allocation: null, status: 'open', answer: null };
+  return { itemId, materialId, title, why, kind: 'form', resolver: '要你处理', fields, choices: [], allocation: null, screenshotGroup: null, status: 'open', answer: null };
 }
 
 const pendingField = (slot: Slot): PendingField => ({ key: slot.key, label: slot.label, placeholder: '', required: slot.required, format: slot.format });
@@ -418,13 +418,13 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
 }
 
 // `answers`: the latest stored answer per item id / edit address (#187), allocation answers included — they reach
-// #184's per-leg split through `planTransport`. `screenshots`: the voucher material ids that have a current 支付截图.
+// #184's per-leg split through `planTransport`. `screenshots`: the vouchers' 支付截图 groups (#331).
 export function inventoryView(
   materials: readonly ViewMaterial[],
   results: RunResults,
   { homeCity, rules }: CategoryContext = { homeCity: '', rules: COMPANY_RULES },
   answers: StoredAnswers = new Map(),
-  screenshots: ReadonlySet<string> = new Set(),
+  screenshots: ReadonlyMap<string, ScreenshotGroup> = new Map(),
 ): InventoryView {
   const answerables = new Map<string, Answerable>();
   const editables = new Map<string, Editable>();
@@ -600,9 +600,12 @@ export function inventoryView(
   const linked = new Map<string, string[]>([...stays.values()].flatMap((stay) => [[stay.invoiceId, [stay.folioId]], [stay.folioId, [stay.invoiceId]]]));
 
   // The 住宿 trio (#213), only over a finished run: a folio still being read is not yet missing.
-  const trio = results && waiting === 0 ? checkStayTrios(stayInvoices, folios, [...stays.values()], screenshots, answers) : { trios: [], items: new Map<string, PendingItem[]>() };
+  const trio = results && waiting === 0 ? checkStayTrios(stayInvoices, folios, [...stays.values()], screenshots, answers) : { trios: [], items: new Map<string, PendingItem[]>(), checks: new Map<string, AnswerCheck>() };
   for (const items of trio.items.values()) {
-    for (const item of items) answerables.set(item.itemId, { item });
+    for (const item of items) {
+      const check = trio.checks.get(item.itemId);
+      answerables.set(item.itemId, check ? { item, check } : { item });
+    }
     pendingItems.push(...items);
   }
 

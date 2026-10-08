@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 
-// 打印稿预览（mock 独有的状态）：?seed=print 直接打开的夹具页图与合并 PDF、鼠标拖动角点的像素换算。生成、旋转、支付截图与下载由 e2e/server/print.spec.ts 在真实服务端上覆盖。
+// 打印稿预览（mock 独有的状态）：?seed=print 直接打开的夹具页图与合并 PDF、鼠标拖动角点的像素换算。生成、旋转、裁剪与下载由 e2e/server/print.spec.ts 在真实服务端上覆盖。
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 

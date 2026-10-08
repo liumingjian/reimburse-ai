@@ -2,7 +2,9 @@ import {
   ALLOCATION_ERRORS,
   CONFIRM_REVIEW_ERRORS,
   EXCLUDE_MATERIAL_ERRORS,
+  PAYMENT_SCREENSHOT_ERRORS,
   PENDING_ANSWER_ERRORS,
+  confirmsNone,
   normalizePendingAnswer,
   validatePendingAnswer,
   type AppAdapter,
@@ -93,6 +95,10 @@ export function createPendingFlow(bus: MockBus): PendingFlow {
         const errors = validatePendingAnswer(item, normalized);
         const firstError = Object.values(errors)[0];
         if (firstError) return { error: { code: 'invalid_answer', message: firstError } };
+        // A screenshot supersedes 「确认没有支付截图」: not while the invoice's group holds one (#332, server stay-trio.ts).
+        if (confirmsNone(normalized) && (item.screenshotGroup?.screenshotIds.length ?? 0) > 0) {
+          return { error: { code: 'check_failed', message: PAYMENT_SCREENSHOT_ERRORS.noneWithScreenshots } };
+        }
         // 逐段分摊：各段之和必须与票面价税合计按分相等（内核 submitAllocation）；差一分就整轮退回，差额不抹到任何一段上。
         if (item.kind === 'allocation' && item.allocation && isAllocationAnswer(normalized) && 'amounts' in normalized) {
           const cents = normalized.amounts.reduce((sum, amount) => sum + Math.round(Number(amount) * 100), 0);

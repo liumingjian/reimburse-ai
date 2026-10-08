@@ -147,7 +147,7 @@ async function runAreas({ page, context, files }) {
   await area(page, 'project-book', () => qaProjectBook(page, state));
   await area(page, 'assignment', () => qaAssignment(page, state));
   await area(page, 'review', () => qaReview(page, context, state));
-  await area(page, 'print', () => qaPrint(page, files, state));
+  await area(page, 'print', () => qaPrint(page, state));
   await area(page, 'settings', () => qaSettings(page));
   await area(page, 'admin', () => qaAdmin(page));
   await area(page, 'erp-write', () => qaErpWrite(page, context, state));
@@ -377,8 +377,9 @@ async function qaStayTrio(page, context, state) {
     ];
     const unmentioned = gaps.filter(([code]) => !asked.has(trioItemId(code, invoice.materialId)));
     if (unmentioned.length > 0) defect('stay-trio', `«${invoice.fileName}» has no ${unmentioned.map(([, element]) => element).join('、')} but the 待确认项 queue does not say so`);
-    else if (gaps.length === 0 && Object.keys(STAY_TRIO).some((code) => asked.has(trioItemId(code, invoice.materialId)) && open.some((item) => item.itemId === trioItemId(code, invoice.materialId)))) defect('stay-trio', `«${invoice.fileName}» has its whole trio but still raises an open trio item`);
-    else if (gaps.length === 0) ok('stay-trio', `«${invoice.fileName}» has its whole trio and raises no item`);
+    // A screenshot group stays open until 「已传齐」 (#331), so only the folio item says the trio is incomplete.
+    else if (gaps.length === 0 && open.some((item) => item.itemId === trioItemId('stay_folio_missing', invoice.materialId))) defect('stay-trio', `«${invoice.fileName}» has its folio but still raises an open folio item`);
+    else if (gaps.length === 0) ok('stay-trio', `«${invoice.fileName}» has its folio and screenshots, and raises no folio item`);
   }
   if (open.length === 0 && cleanInvoices.length === 0) {
     ok('stay-trio', 'no 住宿 trio item in this upload; nothing more to check');
@@ -408,15 +409,32 @@ async function qaStayTrio(page, context, state) {
   }
   await shot(page, 'stay-trio-screenshot-item');
   await input.first().setInputFiles({ name: 'IMG_QA_STAY.png', mimeType: 'image/png', buffer: PNG_1X1 });
+  // The item stays open after the upload (#331); 「已传齐」 is what settles it.
   let after = null;
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await page.waitForTimeout(500);
     after = await read();
-    if (!after?.pendingItems.some((item) => item.itemId === missingShot.itemId)) break;
+    if (after?.paymentScreenshots?.some((s) => s.voucherMaterialId === missingShot.materialId)) break;
   }
   const attached = after?.paymentScreenshots?.some((s) => s.voucherMaterialId === missingShot.materialId);
-  if (attached && !after.pendingItems.some((item) => item.itemId === missingShot.itemId)) ok('stay-trio', 'attaching the screenshot from the pending page resolves the missing-screenshot item');
-  else defect('stay-trio', `attaching a screenshot from the pending page did not resolve ${missingShot.itemId} (attached: ${Boolean(attached)})`);
+  const stillOpen = after?.pendingItems.find((item) => item.itemId === missingShot.itemId)?.status === 'open';
+  if (!attached) defect('stay-trio', `uploading a screenshot from the pending page attached nothing to ${missingShot.materialId}`);
+  else if (!stillOpen) defect('stay-trio', `${missingShot.itemId} settled on the upload alone, before 「已传齐」`);
+  else ok('stay-trio', 'the uploaded screenshot shows in the group and the item waits for 「已传齐」');
+  const complete = page.getByRole('button', { name: '已传齐', exact: true });
+  if (!attached || (await complete.count()) === 0) {
+    if (attached) defect('stay-trio', `«${missingShot.title}» offers no 「已传齐」 button`);
+    await shot(page, 'stay-trio-screenshot-attached');
+    return;
+  }
+  await complete.first().click();
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await page.waitForTimeout(500);
+    after = await read();
+    if (after?.pendingItems.find((item) => item.itemId === missingShot.itemId)?.status === 'resolved') break;
+  }
+  if (after?.pendingItems.find((item) => item.itemId === missingShot.itemId)?.status === 'resolved') ok('stay-trio', '「已传齐」 resolves the missing-screenshot item');
+  else defect('stay-trio', `「已传齐」 did not resolve ${missingShot.itemId}`);
   await shot(page, 'stay-trio-screenshot-attached');
 }
 
@@ -855,7 +873,7 @@ async function qaReview(page, context, state) {
   state.confirmationBefore = JSON.stringify(snap?.confirmation ?? null);
 }
 
-async function qaPrint(page, files, state) {
+async function qaPrint(page, state) {
   const id = state.taskId;
   await page.goto(`${BASE}/#/task/${id}/print`);
   if (!(await visible(page.getByRole('heading', { name: '打印稿预览', level: 1 }), 20000))) {
@@ -920,28 +938,9 @@ async function qaPrint(page, files, state) {
     warn('print', 'no crop control found');
   }
 
-  // Payment screenshot: a non-image must be refused, an image accepted.
-  // The file input itself is hidden behind 补充支付截图, so look for its presence, not its visibility.
-  const shotInput = page.getByLabel(/^选择支付截图：/).first();
-  if ((await page.getByLabel(/^选择支付截图：/).count()) > 0) {
-    await shotInput.setInputFiles(files.find((f) => f.endsWith('.pdf')) ?? files[0]);
-    await page.waitForTimeout(2000);
-    if (await visible(page.getByText('只接受图片', { exact: false }), 6000)) {
-      ok('print', 'a PDF is refused as a payment screenshot');
-    } else {
-      defect('print', 'a PDF was accepted as a payment screenshot');
-    }
-    await shotInput.setInputFiles({ name: 'IMG_QA.png', mimeType: 'image/png', buffer: PNG_1X1 });
-    await page.waitForTimeout(5000);
-    if (await visible(page.getByRole('button', { name: /^移除支付截图：/ }), 15000)) {
-      ok('print', 'a payment screenshot can be attached and removed');
-    } else {
-      defect('print', 'attaching a payment screenshot left no 移除 control');
-    }
-    await shot(page, 'print-payment-screenshot');
-  } else {
-    warn('print', 'no payment-screenshot upload on any page');
-  }
+  // The print page takes no payment screenshot (QA 2026-09-30, #330): a 住宿 invoice's goes on in its 待确认项.
+  if ((await page.getByLabel(/支付截图/).count()) === 0) ok('print', 'the print page offers no payment-screenshot upload');
+  else defect('print', 'the print page still offers a payment-screenshot upload');
 
   // Download.
   const download = page.getByRole('link', { name: '下载打印稿 PDF' });

@@ -112,10 +112,45 @@ describe('打印稿预览', () => {
     expect(enlarged.getAttribute('src')).toBe(screen.getByTestId('page-image-pg7').getAttribute('src'));
   });
 
-  test('打印稿还没生成时服务端拒绝补充支付截图', async () => {
-    const adapter = createMockAdapter({ seed: 'actions', fault: null });
-    const outcome = await adapter.addPaymentScreenshot('T1', 'm01', png());
-    expect(outcome).toMatchObject({ ok: false, error: { code: 'print_not_generated', message: PAYMENT_SCREENSHOT_ERRORS.notGenerated } });
+  // #333: two or more 支付截图 move to a continuation page right after the invoice's page; it tiles and opens like any other.
+  test('住宿发票有 3 张支付截图：发票页之后紧跟支付截图续页，续页同样平铺、全屏查看，没有放置按钮', async () => {
+    window.location.hash = '#/task/T1/print';
+    const adapter = createMockAdapter({ seed: 'review', fault: null });
+    const invoice = (await adapter.getSnapshot('T1')).materials.find((material) => material.fileName === '全季酒店_发票.pdf');
+    for (const name of ['IMG_5011.png', 'IMG_5012.png', 'IMG_5013.png']) expect((await adapter.addPaymentScreenshot('T1', invoice?.materialId ?? '', png(name))).ok).toBe(true);
+    // The seed answered 确认没有; the upload superseded it (#332), so the group is declared and the projects resubmitted.
+    expect((await adapter.completePaymentScreenshots('T1', invoice?.materialId ?? '')).ok).toBe(true);
+    const project = await adapter.getSnapshot('T1');
+    const projects = Object.fromEntries(project.projectAssignment.assignments.map((item) => [item.lineId, item.projectNumber]));
+    expect((await adapter.submitProjectAssignment('T1', { purpose: project.projectAssignment.purpose ?? '', projects }, project.step.stepToken)).ok).toBe(true);
+    const review = await adapter.getSnapshot('T1');
+    expect((await adapter.confirmReview('T1', review.confirmation.digest ?? '', review.step.stepToken)).ok).toBe(true);
+    render(<App adapter={adapter} />);
+
+    await screen.findByRole('list', { name: '打印稿页面' });
+    const header = 'No.9 支付截图（续） · 上海某某酒店管理有限公司 · 3640.00';
+    const cards = within(pages())
+      .getAllByRole('listitem')
+      .filter((item) => item.parentElement === pages() && item.hasAttribute('aria-label'))
+      .map((card) => card.getAttribute('aria-label'));
+    expect(cards.slice(-2)).toEqual(['No.9 · 08-09 · 住宿 · 3640.00', header]);
+    expect(screen.getByText('8 页 A4 纵向')).toBeTruthy();
+    expect(screen.queryByRole('status', { name: '打印提醒' })).toBeNull();
+
+    const continuation = within(pages()).getByRole('listitem', { name: header });
+    expect(within(continuation).queryByRole('button', { name: /旋转|调整四角|改为竖放/ })).toBeNull();
+    fireEvent.click(within(continuation).getByRole('button', { name: '全屏查看第 8 页' }));
+    const enlarged = await screen.findByRole('img', { name: '第 8 页页图（全屏）' });
+    expect(enlarged.getAttribute('src')).toBe(within(continuation).getByRole('img', { name: '第 8 页页图' }).getAttribute('src'));
+    // The hotel folio keeps its own page's placement actions.
+    expect(within(hotelCard()).getByRole('button', { name: /全季酒店_结账单\.pdf/ })).toBeTruthy();
+  });
+
+  // #330: the print page is no screenshot entry. Only a 住宿 invoice takes one (from its 待确认项), sheet or not.
+  test.each([false, true])('不是住宿发票的凭证不收支付截图（打印稿已生成：%s）', async (printSheet) => {
+    const adapter = createMockAdapter(printSheet ? { seed: 'actions', fault: null, printSheet: true } : { seed: 'actions', fault: null });
+    const outcome = await adapter.addPaymentScreenshot('T1', 'm03', png());
+    expect(outcome).toMatchObject({ ok: false, error: { code: 'screenshot_not_applicable', message: PAYMENT_SCREENSHOT_ERRORS.notApplicable } });
   });
 
   test('旋转：页图换成服务端给的新地址；整单明细确认不变', async () => {

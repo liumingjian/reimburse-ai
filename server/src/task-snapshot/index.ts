@@ -1,13 +1,13 @@
 import { ABANDON_TASK_COPY, TASK_ACTIONS, projectLodgingEvidence, type Confirmation, type Line, type TaskListItem, type TaskSnapshot, type UploadBatch, type UploadFileResult } from '@baox/contract';
 import type { TaskTable, UploadBatchTable, UploadRejectionTable } from '../db/schema';
 import type { InventoryView } from '../inventory-view';
-import { sheetState } from '../print/facts';
+import { screenshotsLocked, sheetState } from '../print/facts';
 import type { LoadedTask, MaterialRow } from '../task-facts';
 import { taskPolicy } from '../task-policy';
 import { confirmationView } from './confirmation';
 import { catalogView, erpView, legacyErpView, legacyReconcileView, readbackView, reconcileView } from './erp';
 import { inventorySection } from './inventory';
-import { printView } from './print';
+import { printView, withScreenshotGroups } from './print';
 
 // The snapshot projection: a reimbursement task (报销任务)'s loaded facts (`task-facts.ts`) -> the contract's
 // TaskSnapshot and TaskListItem. Pure: no reads, no writes. A snapshot field change touches this directory and
@@ -85,7 +85,7 @@ export function projectSnapshot(task: TaskTable, { facts, view, homeCity, assign
     materials: snapshotMaterials,
     inventory: inventorySection(view, facts.versionNo),
     events: view.events,
-    pendingItems: view.pendingItems,
+    pendingItems: withScreenshotGroups(view.pendingItems, print, screenshotsLocked(facts.confirmation, erp.attempted)),
     blockers,
     lines,
     lodgingEvidence: projectLodgingEvidence({ materials: snapshotMaterials, lines }),

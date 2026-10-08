@@ -13,6 +13,7 @@ import { createTaskService } from '../tasks';
 import { tempDataDir } from '../test/harness';
 import { DatabaseTooNewError, openDatabase } from './database';
 import { MIGRATIONS } from './migrations';
+import { loadPrintFacts } from '../print/facts';
 
 // Startup migration safety (ADR-0015): a VACUUM INTO backup before migrating an existing database (last 5 kept),
 // a database newer than the app refuses to start, and each migration runs on a fixture of the prior version.
@@ -214,6 +215,33 @@ describe('migrations on an existing database', () => {
                        VALUES ('bogus', 'old-task', ${owner}, 'fill', 'whatever', 'digest', '{}', 4, ${at})`.execute(migrated)).rejects.toThrow();
       await expect(sql`UPDATE erp_job SET trigger = 'start' WHERE job_id = 'new-refill'`.execute(migrated)).rejects.toThrow();
       await expect(sql`DELETE FROM erp_job WHERE job_id = 'new-refill'`.execute(migrated)).rejects.toThrow();
+    } finally {
+      await migrated.destroy();
+    }
+  });
+
+  // 0020_331: before it, only the latest unremoved screenshot per invoice counted and settled the item. After it, every
+  // unremoved row is a member of the group, so replaced ones are recorded removed and the survivor declared complete.
+  it('migrates 0019 → latest: a replaced screenshot leaves the group and the survivor is a complete group of one', async () => {
+    const owner = await priorVersionFixture('0019_312_blob_medium');
+    const at = '2026-09-01T10:00:00Z';
+    const db = new Kysely<any>({ dialect: new SqliteDialect({ database: new Database(databasePath(dataDir)) }) });
+    await sql`INSERT INTO material (material_id, task_id, account_id, batch_id, blob_sha256, file_name, created_at)
+              VALUES ('old-removed', 'old-task', ${owner}, 'old-batch', ${'a'.repeat(64)}, 'removed.pdf', ${at})`.execute(db);
+    for (const [id, material, revision] of [['old-first', 'old-material', 4], ['old-second', 'old-material', 5], ['old-gone', 'old-removed', 6]] as const) {
+      await sql`INSERT INTO payment_screenshot (screenshot_id, task_id, account_id, voucher_material_id, blob_sha256, file_name, revision, created_at)
+                VALUES (${id}, 'old-task', ${owner}, ${material}, ${'a'.repeat(64)}, ${id + '.png'}, ${revision}, ${at})`.execute(db);
+    }
+    await sql`INSERT INTO payment_screenshot_removal (removal_id, screenshot_id, task_id, account_id, revision, created_at)
+              VALUES ('old-removal', 'old-gone', 'old-task', ${owner}, 7, ${at})`.execute(db);
+    await db.destroy();
+
+    const migrated = await openDatabase(databasePath(dataDir));
+    try {
+      const facts = await loadPrintFacts(migrated, 'old-task');
+      expect(facts.screenshots.map((shot) => shot.screenshotId)).toEqual(['old-second']);
+      expect([...facts.completeGroups]).toEqual(['old-material']);
+      await expect(sql`DELETE FROM payment_screenshot_group_complete`.execute(migrated)).rejects.toThrow();
     } finally {
       await migrated.destroy();
     }
