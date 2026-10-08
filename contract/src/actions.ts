@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { DateSchema, IdSchema } from './primitives';
-import { CornersSchema, PENDING_CHOICE_KEY, TaskSnapshotSchema, fieldAnswer, isAllocationAnswer, type PendingAnswer, type PendingItem } from './snapshot';
+import { CornersSchema, MANUAL_FILL_CHOICE, MANUAL_KIND_KEY, PENDING_CHOICE_KEY, TaskSnapshotSchema, fieldAnswer, isAllocationAnswer, type FieldAnswer, type PendingAnswer, type PendingField, type PendingItem, type PendingManualKind } from './snapshot';
 import { TaskListSchema } from './task-list';
 
 // 接口三：动作端点。成功返回新快照；失败返回 { error }；stepToken 过期返回 HTTP 409 与 { error, snapshot }。
@@ -58,6 +58,7 @@ export const PENDING_ANSWER_ERRORS = {
   date: '格式应为 YYYY-MM-DD，且是真实存在的日期。',
   money: '金额要写两位小数，例如 226.42。',
   choice: '请选择一种处理方式。',
+  kind: '请选择材料种类。',
   notOpen: '这个待确认项已经处理过了。',
   // given_up 项不接受答复：出路在材料一侧（排除这张发票，或追加逐段行程单后重新盘点）。
   notAnswerable: '这一项不能直接答复：请排除这张发票，或在上传页追加列了逐段金额的行程单后重新盘点。',
@@ -77,7 +78,7 @@ export const segmentKey = (index: number): string => `segment-${index}`;
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const AMOUNT_PATTERN = /^(?:0|[1-9]\d*)\.\d{2}$/;
 
-type AnswerTarget = Pick<PendingItem, 'kind' | 'fields' | 'choices'> & { allocation?: PendingItem['allocation'] };
+type AnswerTarget = Pick<PendingItem, 'kind' | 'fields' | 'choices'> & Partial<Pick<PendingItem, 'allocation' | 'manualKinds'>>;
 
 // 返回按字段 key 归档的错误；空对象表示合法。值先 trim 再判定。
 export function validatePendingAnswer(item: AnswerTarget, answer: PendingAnswer): Record<string, string> {
@@ -105,9 +106,25 @@ export function validatePendingAnswer(item: AnswerTarget, answer: PendingAnswer)
   if (item.kind === 'choice') {
     const chosen = (values[PENDING_CHOICE_KEY] ?? '').trim();
     if (!item.choices.some((choice) => choice.key === chosen)) errors[PENDING_CHOICE_KEY] = PENDING_ANSWER_ERRORS.choice;
+    else if (chosen === MANUAL_FILL_CHOICE && item.manualKinds?.length) {
+      const manual = manualKindOf(item, values);
+      if (!manual) errors[MANUAL_KIND_KEY] = PENDING_ANSWER_ERRORS.kind;
+      else Object.assign(errors, fieldErrors(manual.fields, values));
+    }
     return errors;
   }
-  for (const field of item.fields) {
+  return fieldErrors(item.fields, values);
+}
+
+// The 手工补填 form an answer picked, if it names one the item offers.
+export function manualKindOf(item: Partial<Pick<PendingItem, 'manualKinds'>>, values: FieldAnswer): PendingManualKind | undefined {
+  const kind = (values[MANUAL_KIND_KEY] ?? '').trim();
+  return item.manualKinds?.find((manual) => manual.kind === kind);
+}
+
+function fieldErrors(fields: readonly PendingField[], values: FieldAnswer): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const field of fields) {
     const value = (values[field.key] ?? '').trim();
     if (!value) {
       if (field.required) errors[field.key] = PENDING_ANSWER_ERRORS.required;
@@ -121,13 +138,14 @@ export function validatePendingAnswer(item: AnswerTarget, answer: PendingAnswer)
 }
 
 // 去掉首尾空白后的答复；只保留该项定义的键（逐段分摊只保留 amounts 或 giveUp）。
-export function normalizePendingAnswer(item: Pick<PendingItem, 'kind' | 'fields'>, answer: PendingAnswer): PendingAnswer {
+export function normalizePendingAnswer(item: Pick<PendingItem, 'kind' | 'fields'> & Partial<Pick<PendingItem, 'manualKinds'>>, answer: PendingAnswer): PendingAnswer {
   if (item.kind === 'allocation') {
     if (!isAllocationAnswer(answer)) return { amounts: [] };
     return 'giveUp' in answer ? { giveUp: true } : { amounts: answer.amounts.map((amount) => amount.trim()) };
   }
   const values = fieldAnswer(answer);
-  const keys = item.kind === 'choice' ? [PENDING_CHOICE_KEY] : item.fields.map((field) => field.key);
+  const manual = item.kind === 'choice' && values[PENDING_CHOICE_KEY]?.trim() === MANUAL_FILL_CHOICE ? manualKindOf(item, values) : undefined;
+  const keys = manual ? [PENDING_CHOICE_KEY, MANUAL_KIND_KEY, ...manual.fields.map((field) => field.key)] : item.kind === 'choice' ? [PENDING_CHOICE_KEY] : item.fields.map((field) => field.key);
   const out: Record<string, string> = {};
   for (const key of keys) out[key] = (values[key] ?? '').trim();
   return out;

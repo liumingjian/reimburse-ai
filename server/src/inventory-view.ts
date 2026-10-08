@@ -1,4 +1,4 @@
-import { MATERIAL_KINDS, PAYMENT_COPY, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type Line, type Material, type MaterialKind, type PendingField, type PendingItem } from '@baox/contract';
+import { MANUAL_FILL_CHOICE, MANUAL_KIND_KEY, MATERIAL_KINDS, manualKindOf, PAYMENT_COPY, PENDING_CHOICE_KEY, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type Line, type Material, type MaterialKind, type PendingAnswer, type PendingField, type PendingItem, type PendingManualKind } from '@baox/contract';
 import { erpInvoiceTypeOf, ERP_INVOICE_TYPES, type ResolvedErpInvoiceType } from '@baox/erp-executor/invoice-type';
 import type { ParseOutcome, Recognised } from './parse/dispatch';
 import { planTransport, type PlannedLine } from './allocation';
@@ -17,7 +17,7 @@ import { checkStayTrios, stayVoucherIds, type ScreenshotGroup, type StayTrio, ty
 // here is stored. Pending items are derived per run with stable ids `<code>.<materialId>[.<key>]`, which is the
 // answer key `(kind, materialId, field|segment)`: a re-derived item meets its earlier answer (ADR-0014).
 //
-// Item codes: unrecognised → manual_kind → manual_fill (手工补填, manual fill), ambiguous_layout, parse_failed,
+// Item codes: unrecognised (with 手工补填, manual fill, in one step), ambiguous_layout, parse_failed,
 // validation_failure, missing_required, duplicate_invoice (重复发票 inside the task),
 // category_city_missing (#188), stay_invoice_missing / stay_folio_missing / stay_screenshot_missing (the 住宿 trio,
 // #213, `stay-trio.ts`); allocation, itinerary_ambiguous and given_up come from #184's transport plan
@@ -89,7 +89,6 @@ export const INVENTORY_COPY = {
 } as const;
 
 const REPLACE_HINT = '换原件请在上传页追加材料后重新盘点。';
-const MANUAL_FILL = 'manual_fill';
 const REFERENCE = 'reference';
 const CITY_MISSING_CHECK = '取不到费用发生城市';
 // A recognised material missing a required slot said nothing in the 校验 column, which rendered as 无; it now names the
@@ -126,11 +125,11 @@ type Worked = {
 };
 
 function choice(itemId: string, materialId: string, title: string, why: string, choices: PendingItem['choices']): PendingItem {
-  return { itemId, materialId, title, why, kind: 'choice', resolver: '要你处理', fields: [], choices, allocation: null, screenshotGroup: null, status: 'open', answer: null };
+  return { itemId, materialId, title, why, kind: 'choice', resolver: '要你处理', fields: [], choices, allocation: null, screenshotGroup: null, manualKinds: [], status: 'open', answer: null };
 }
 
 function form(itemId: string, materialId: string, title: string, why: string, fields: PendingField[]): PendingItem {
-  return { itemId, materialId, title, why, kind: 'form', resolver: '要你处理', fields, choices: [], allocation: null, screenshotGroup: null, status: 'open', answer: null };
+  return { itemId, materialId, title, why, kind: 'form', resolver: '要你处理', fields, choices: [], allocation: null, screenshotGroup: null, manualKinds: [], status: 'open', answer: null };
 }
 
 const pendingField = (slot: Slot): PendingField => ({ key: slot.key, label: slot.label, placeholder: '', required: slot.required, format: slot.format });
@@ -236,12 +235,31 @@ function allocationAnswers(answers: StoredAnswers): Map<string, string[]> {
   return found;
 }
 
-const MANUAL_KINDS = MATERIAL_KINDS.filter((kind) => KINDS[kind].slots.length > 0);
+const MANUAL_FORMS: PendingManualKind[] = MATERIAL_KINDS.filter((kind) => KINDS[kind].slots.length > 0).map((kind) => ({ kind, label: KINDS[kind].label, fields: KINDS[kind].slots.map(pendingField) }));
+
+// The kind and the values of a 手工补填 answer (empty values dropped), else null.
+function manualFilled(answer: PendingAnswer): { kind: MaterialKind; values: Values } | null {
+  const { [PENDING_CHOICE_KEY]: choice, [MANUAL_KIND_KEY]: kind, ...values } = fieldAnswer(answer);
+  const form = manualKindOf({ manualKinds: MANUAL_FORMS }, { [MANUAL_KIND_KEY]: kind ?? '' });
+  return choice === MANUAL_FILL_CHOICE && form ? { kind: form.kind, values: nonEmpty(values) } : null;
+}
+
+// Before #342, 手工补填 took three answers: 手工补填 here, the kind (`manual_kind.<id>`, `kind:<kind>`), then the form
+// (`manual_fill.<id>`). A material answered that way reads as the one answer the three stand for.
+function withLegacyManual(answers: StoredAnswers, id: string): StoredAnswers {
+  const itemId = `unrecognised.${id}`;
+  const first = fieldAnswer(answers.get(itemId) ?? null);
+  const kind = fieldAnswer(answers.get(`manual_kind.${id}`) ?? null)[PENDING_CHOICE_KEY];
+  const form = answers.get(`manual_fill.${id}`);
+  if (first[PENDING_CHOICE_KEY] !== MANUAL_FILL_CHOICE || first[MANUAL_KIND_KEY] || !kind?.startsWith('kind:') || !form) return answers;
+  return new Map(answers).set(itemId, { ...fieldAnswer(form), [PENDING_CHOICE_KEY]: MANUAL_FILL_CHOICE, [MANUAL_KIND_KEY]: kind.slice('kind:'.length) });
+}
 
 // Derives one material's items, settling each against the stored answers as it goes: a later item exists only once the
-// earlier one is answered (unrecognised → pick a kind → fill its form).
-function work(m: ViewMaterial, outcome: ParseOutcome, answers: StoredAnswers, answerables: Map<string, Answerable>, editables: Map<string, Editable>): Worked {
+// earlier one is answered.
+function work(m: ViewMaterial, outcome: ParseOutcome, stored: StoredAnswers, answerables: Map<string, Answerable>, editables: Map<string, Editable>): Worked {
   const id = m.materialId;
+  const answers = withLegacyManual(stored, id);
   const name = m.fileName;
   const w: Worked = { m, items: [], resolved: null, reference: false, values: {}, fields: [], notes: [], kindLabel: INVENTORY_COPY.unrecognised };
   const add = (item: PendingItem, check?: AnswerCheck): PendingItem => {
@@ -256,41 +274,32 @@ function work(m: ViewMaterial, outcome: ParseOutcome, answers: StoredAnswers, an
       const unreadable = outcome.reason === 'unreadable_document';
       w.notes.push(unreadable ? '读不出文件内容' : '没有匹配的版式');
       const first = add(
-        choice(`unrecognised.${id}`, id, `认不出「${name}」`, unreadable ? '这份文件读不出内容。' : '没有任何版式匹配这份材料。', [
-          EXCLUDE,
-          { key: REFERENCE, label: '作为参考材料' },
-          { key: MANUAL_FILL, label: '手工补填' },
-        ]),
+        {
+          ...choice(`unrecognised.${id}`, id, `认不出「${name}」`, unreadable ? '这份文件读不出内容。' : '没有任何版式匹配这份材料。', [
+            EXCLUDE,
+            { key: REFERENCE, label: '作为参考材料' },
+            { key: MANUAL_FILL_CHOICE, label: '手工补填' },
+          ]),
+          manualKinds: MANUAL_FORMS,
+        },
+        (answer) => {
+          const filled = manualFilled(answer);
+          return filled ? (KINDS[filled.kind].check?.(filled.values) ?? null) : null;
+        },
       );
       if (chosen(first) === REFERENCE) w.reference = true;
-      if (chosen(first) === MANUAL_FILL) {
-        const picking = add(
-          choice(`manual_kind.${id}`, id, `「${name}」是哪一种材料`, '选定材料种类后，对照原件逐项填写这个种类的字段；填写的值同样要通过核对。', [
-            ...MANUAL_KINDS.map((kind) => ({ key: `kind:${kind}`, label: KINDS[kind].label })),
-            EXCLUDE,
-          ]),
-        );
-        const picked = chosen(picking)?.replace(/^kind:/, '') as MaterialKind | undefined;
-        if (picked && MANUAL_KINDS.includes(picked)) {
-          const spec = KINDS[picked];
-          const filled = add(
-            form(`manual_fill.${id}`, id, `手工补填「${name}」`, `按${spec.label}的字段对照原件填写。系统不会倒算任何金额。`, spec.slots.map(pendingField)),
-            (answer) => spec.check?.(nonEmpty(fieldAnswer(answer))) ?? null,
-          );
-          if (filled.status === 'resolved') {
-            const values = nonEmpty(fieldAnswer(filled.answer));
-            w.resolved = {
-              kind: picked,
-              layout: null,
-              parserVersion: null,
-              kindLabel: `${spec.label}（手工补填）`,
-              candidates: Object.entries(values).map(([key, value]) => ({ key, value, source: 'user', parserVersion: '', evidence: 'explicit', refs: [] })),
-              findings: [],
-              missing: [],
-            };
-            w.notes.splice(0, w.notes.length, INVENTORY_COPY.manualCheck);
-          }
-        }
+      const filled = first.status === 'resolved' && first.answer ? manualFilled(first.answer) : null;
+      if (filled) {
+        w.resolved = {
+          kind: filled.kind,
+          layout: null,
+          parserVersion: null,
+          kindLabel: `${KINDS[filled.kind].label}（手工补填）`,
+          candidates: Object.entries(filled.values).map(([key, value]) => ({ key, value, source: 'user', parserVersion: '', evidence: 'explicit', refs: [] })),
+          findings: [],
+          missing: [],
+        };
+        w.notes.splice(0, w.notes.length, INVENTORY_COPY.manualCheck);
       }
       break;
     }

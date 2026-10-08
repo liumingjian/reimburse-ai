@@ -6,7 +6,7 @@ import type { Browser, Page } from '@playwright/test';
 import { answerStayGaps, expect, paymentScreenshot, signIn, test } from './fixture';
 
 // Slice 06 (#185) on the real server: a hotel invoice plus a 全季 结账单 (folio) give one line with check-in and
-// check-out dates; a folio from another chain is unrecognised and offers 手工补填 (manual fill).
+// check-out dates; a folio from another chain is unrecognised and is filled by hand (手工补填) in one form.
 
 type Upload = { name: string; buffer: Buffer };
 
@@ -123,7 +123,7 @@ test('住宿发票的支付截图：在待确认项里一次选两张，重新�
   expect(printed.printSheet.pages[1]?.screenshotIds).toEqual(shots.map((shot) => printed.materials.find((material) => material.fileName === shot.name)?.materialId));
 });
 
-test('其他连锁的结账单认不出版式，转到手工补填', async ({ page, browser }) => {
+test('其他连锁的结账单认不出版式，在一张表里手工补填', async ({ page, browser }) => {
   const other = await otherChainFolio(browser);
   const snapshot = await inventory(page, [other]);
 
@@ -135,4 +135,20 @@ test('其他连锁的结账单认不出版式，转到手工补填', async ({ pa
   ]);
   expect(snapshot.lines).toEqual([]);
   expect(snapshot.stage).toBe('pending');
+
+  // #342: 手工补填 opens its form in place; the kind is picked there and one submit fills the folio.
+  const taskId = snapshot.task.taskId;
+  await page.goto(`/#/task/${taskId}/pending`);
+  const detail = page.getByLabel('待确认项详情');
+  await detail.getByRole('button', { name: '手工补填' }).click();
+  const form = detail.getByRole('form', { name: `手工补填「${other.name}」` });
+  await form.getByLabel('材料种类 *').selectOption({ label: '酒店结账单' });
+  await form.getByLabel('入住日期 *').fill('2026-08-09');
+  await form.getByLabel('离店日期 *').fill('2026-08-11');
+  await form.getByLabel('消费合计 *').fill('398.00');
+  await form.getByRole('button', { name: '保存并标记已处理' }).click();
+  await expect(form.getByRole('button', { name: '保存并标记已处理' })).toBeHidden();
+  const filled = TaskSnapshotSchema.parse(await (await page.request.get(`/api/tasks/${taskId}`)).json());
+  expect(filled.materials[0]).toMatchObject({ kind: 'hotel_folio' });
+  expect(filled.pendingItems.find((item) => item.itemId === `unrecognised.${material?.materialId}`)).toMatchObject({ status: 'resolved', answer: { kind: 'hotel_folio', folioTotal: '398.00' } });
 });

@@ -314,6 +314,17 @@ export const PendingScreenshotGroupSchema = z.object({
 });
 export type PendingScreenshotGroup = z.infer<typeof PendingScreenshotGroupSchema>;
 
+// 手工补填 in one step (#342): the unrecognised item offers the 手工补填 choice together with every kind's form, the
+// kind picked inline. Its answer is `{ choice: MANUAL_FILL_CHOICE, kind: <MaterialKind>, ...that kind's fields }`.
+export const MANUAL_FILL_CHOICE = 'manual_fill';
+export const MANUAL_KIND_KEY = 'kind';
+export const PendingManualKindSchema = z.object({
+  kind: z.enum(MATERIAL_KINDS),
+  label: z.string().min(1),
+  fields: z.array(PendingFieldSchema),
+});
+export type PendingManualKind = z.infer<typeof PendingManualKindSchema>;
+
 // 空文本 PDF、多页发票（内核 pdf_markdown_conversion_empty / multi_page_invoice）是「要你处理」的 choice 类，
 // 只给「排除」一个选择；换原件走追加材料、重新盘点。
 export const PendingItemSchema = z.object({
@@ -329,6 +340,8 @@ export const PendingItemSchema = z.object({
   allocation: PendingAllocationSchema.nullable(),
   // The missing-screenshot item's 支付截图 group (#331, see STAY_TRIO_COPY); null on every other item.
   screenshotGroup: PendingScreenshotGroupSchema.nullable(),
+  // The unrecognised item's 手工补填 forms, one per kind; empty on every other item.
+  manualKinds: z.array(PendingManualKindSchema),
   status: z.enum(['open', 'resolved']),
   answer: PendingAnswerSchema.nullable(),
 });
